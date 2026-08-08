@@ -1,0 +1,15 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" path="res://scripts/core/navigation_controller.gd" id="2_navigation"]
+[ext_resource type="PackedScene" path="res://scenes/ui/DebugUI.tscn" id="3_debug"]
+
+[node name="Main" type="Node2D"]
+script = ExtResource("1_main")
+
+[node name="CurrentMapRoot" type="Node2D" parent="."]
+
+[node name="NavigationController" type="Node" parent="."]
+script = ExtResource("2_navigation")
+
+[node name="DebugUI" parent="." instance=ExtResource("3_debug")]

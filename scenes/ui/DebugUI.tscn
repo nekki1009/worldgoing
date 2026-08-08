@@ -1,0 +1,173 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/debug_ui.gd" id="1_ui"]
+
+[node name="DebugUI" type="CanvasLayer"]
+layer = 10
+script = ExtResource("1_ui")
+
+[node name="Panel" type="PanelContainer" parent="."]
+offset_left = 24.0
+offset_top = 24.0
+offset_right = 510.0
+offset_bottom = 900.0
+mouse_filter = 2
+
+[node name="Margin" type="MarginContainer" parent="Panel"]
+layout_mode = 2
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 14
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 14
+
+[node name="VBox" type="VBoxContainer" parent="Panel/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 3
+
+[node name="Title" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "THREE-LAYER MAP PROTOTYPE"
+
+[node name="Layer" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "Layer: ??"
+
+[node name="DebugView" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "Debug View: ??"
+
+[node name="CurrentRegion" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "Current Region: ??"
+
+[node name="WorldSeed" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "World Seed: ??"
+
+[node name="WorldTime" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "World Time: ??"
+
+[node name="Party" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "Party: ??"
+
+[node name="PartyPosition" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "Party Position: ??"
+
+[node name="PartyState" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "Party State: ??"
+
+[node name="WorldCell" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "World Cell: ??"
+
+[node name="HoveredRegionCell" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "Hovered Region Cell: ??"
+
+[node name="SelectedRegionCell" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "Selected Region Cell: ??"
+
+[node name="GlobalRegionCell" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "Hovered Global Region Cell: ??"
+
+[node name="GlobalMeter" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "Hovered Global Meter Position: ??"
+
+[node name="Elevation" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "Elevation: ??"
+
+[node name="Moisture" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "Moisture: ??"
+
+[node name="River" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "River: ??"
+
+[node name="TerrainType" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "Terrain: ??"
+
+[node name="POIId" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "POI ID: ??"
+
+[node name="POIType" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "POI Type: ??"
+
+[node name="POIName" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "POI Name: ??"
+
+[node name="POICandidate" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "POI Candidate Cell: ??"
+
+[node name="POIPriority" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "POI Priority: ??"
+
+[node name="POIRiver" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "POI River Nearby: ??"
+
+[node name="Road" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "Road: ??"
+
+[node name="RiverCrossing" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "River Crossing: ??"
+
+[node name="RouteIDs" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "Route IDs: ??"
+
+[node name="RouteDetails" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+autowrap_mode = 2
+text = "Route: ??"
+
+[node name="Destination" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "Destination: ??"
+
+[node name="PathDistance" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "Path Distance: ??"
+
+[node name="EstimatedTravel" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "Estimated Travel: ??"
+
+[node name="PathCells" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "Path Cells: ??"
+
+[node name="Travel" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "Travel: ??"
+
+[node name="POIReached" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "POI Reached: ??"
+
+[node name="Site" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+text = "Site: ??"
+
+[node name="Instruction" type="Label" parent="Panel/Margin/VBox"]
+custom_minimum_size = Vector2(0, 45)
+layout_mode = 2
+autowrap_mode = 2
+text = "Controls"

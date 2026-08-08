@@ -1,0 +1,550 @@
+class_name RegionMap
+extends Node2D
+
+const GlobalTravelPathType = preload("res://scripts/data/global_travel_path.gd")
+
+signal site_enter_requested(region_cell: Vector2i)
+signal debug_state_changed(state: Dictionary)
+signal local_travel_confirm_requested(path: PartyPathResult)
+signal global_travel_confirm_requested
+
+enum DebugView {
+	NORMAL,
+	ELEVATION,
+	MOISTURE,
+	RIVER,
+	POI,
+	ROAD,
+	TRAVEL,
+	GLOBAL_TRAVEL,
+}
+
+const GRID_SIZE: Vector2i = Vector2i(WorldCoordinates.REGION_GRID_SIZE, WorldCoordinates.REGION_GRID_SIZE)
+const CELL_PIXEL_SIZE: float = 64.0
+const MAP_ORIGIN: Vector2 = Vector2.ZERO
+const CAMERA_SPEED: float = 900.0
+const VISUAL_STEP_DURATION: float = 0.2
+
+@onready var camera: Camera2D = $Camera2D
+
+var region: RegionData
+var terrain_data: RegionTerrainData
+var pois: Array[WorldPOIData] = []
+var road_overlay: RegionRoadOverlay = RegionRoadOverlay.new()
+var session: GameSession
+var hovered_region_cell: Vector2i = Vector2i(-1, -1)
+var debug_view: int = DebugView.NORMAL
+var party_pathfinder: PartyPathfinder = PartyPathfinder.new()
+var party_in_region: bool = false
+var destination_region_cell: Vector2i = Vector2i(-1, -1)
+var path_preview: PartyPathResult
+var preview_error: String = ""
+var is_moving: bool = false
+var party_visual_position: Vector2 = Vector2.ZERO
+
+func setup(
+		p_region: RegionData,
+		p_terrain_data: RegionTerrainData,
+		p_pois: Array[WorldPOIData],
+		p_session: GameSession,
+		p_road_overlay: RegionRoadOverlay = null
+	) -> void:
+	region = p_region
+	terrain_data = p_terrain_data
+	pois = p_pois
+	road_overlay = p_road_overlay if p_road_overlay != null else RegionRoadOverlay.new()
+	session = p_session
+	party_in_region = session.party.initialized \
+		and session.party.get_world_cell() == session.selected_world_cell
+	is_moving = session.is_traveling()
+	if party_in_region:
+		session.selected_region_cell = session.party.get_region_cell()
+	_configure_pathfinder()
+	destination_region_cell = Vector2i(-1, -1)
+	path_preview = null
+	preview_error = ""
+	party_visual_position = _cell_center(session.party.get_region_cell()) if party_in_region else Vector2.ZERO
+	camera.position = _cell_center(session.selected_region_cell)
+	camera.zoom = Vector2.ONE
+	queue_redraw()
+	debug_state_changed.emit(get_debug_state())
+
+func _process(delta: float) -> void:
+	if session == null:
+		return
+	var direction: Vector2 = Vector2.ZERO
+	if Input.is_key_pressed(KEY_A):
+		direction.x -= 1.0
+	if Input.is_key_pressed(KEY_D):
+		direction.x += 1.0
+	if Input.is_key_pressed(KEY_W):
+		direction.y -= 1.0
+	if Input.is_key_pressed(KEY_S):
+		direction.y += 1.0
+	if direction != Vector2.ZERO:
+		camera.position += direction.normalized() * CAMERA_SPEED * delta / camera.zoom.x
+
+func _unhandled_input(event: InputEvent) -> void:
+	if session == null:
+		return
+	if event is InputEventMouseMotion:
+		_set_hovered_region_cell(_cell_from_global_position(get_global_mouse_position()))
+		return
+	if event is InputEventMouseButton:
+		var mouse_event: InputEventMouseButton = event as InputEventMouseButton
+		if mouse_event.button_index == MOUSE_BUTTON_WHEEL_UP and mouse_event.pressed:
+			_set_zoom(1.1)
+			get_viewport().set_input_as_handled()
+		elif mouse_event.button_index == MOUSE_BUTTON_WHEEL_DOWN and mouse_event.pressed:
+			_set_zoom(0.9)
+			get_viewport().set_input_as_handled()
+		elif mouse_event.button_index == MOUSE_BUTTON_LEFT and mouse_event.pressed:
+			var region_cell: Vector2i = _cell_from_global_position(get_global_mouse_position())
+			if _is_valid_region_cell(region_cell):
+				if not session.is_traveling() and not session.has_travel_plan():
+					if path_preview != null and destination_region_cell == region_cell:
+						confirm_destination()
+					else:
+						select_destination(region_cell)
+				get_viewport().set_input_as_handled()
+		return
+	if event is InputEventKey:
+		var key_event: InputEventKey = event as InputEventKey
+		if key_event.pressed and not key_event.echo and key_event.keycode == KEY_F1:
+			debug_view = posmod(debug_view + 1, DebugView.GLOBAL_TRAVEL + 1)
+			queue_redraw()
+			debug_state_changed.emit(get_debug_state())
+			get_viewport().set_input_as_handled()
+			return
+		if key_event.pressed and not key_event.echo and key_event.keycode == KEY_ENTER:
+			if session.has_travel_plan() and not session.is_traveling():
+				global_travel_confirm_requested.emit()
+				get_viewport().set_input_as_handled()
+			elif path_preview != null:
+				confirm_destination()
+				get_viewport().set_input_as_handled()
+			elif party_in_region and _poi_at(session.party.get_region_cell()) != null:
+				site_enter_requested.emit(session.party.get_region_cell())
+				get_viewport().set_input_as_handled()
+			return
+		if key_event.pressed and not key_event.echo and key_event.keycode == KEY_ESCAPE:
+			if session.is_traveling():
+				return
+			elif path_preview != null:
+				cancel_path_preview()
+				get_viewport().set_input_as_handled()
+
+func select_destination(region_cell: Vector2i) -> bool:
+	if session.is_traveling() or session.has_travel_plan() or not party_in_region or not _is_valid_region_cell(region_cell):
+		return false
+	_configure_pathfinder()
+	session.selected_region_cell = region_cell
+	destination_region_cell = region_cell
+	path_preview = party_pathfinder.find_path(
+			terrain_data,
+			road_overlay,
+			session.party.current_region_cell,
+			region_cell,
+			session.party.base_walk_speed_kmh
+		)
+	preview_error = "" if path_preview.has_path() else "No Path"
+	queue_redraw()
+	debug_state_changed.emit(get_debug_state())
+	return path_preview.has_path()
+
+func confirm_destination() -> bool:
+	if session.is_traveling() or path_preview == null or not path_preview.has_path():
+		return false
+	local_travel_confirm_requested.emit(path_preview)
+	queue_redraw()
+	debug_state_changed.emit(get_debug_state())
+	return true
+
+func cancel_path_preview() -> void:
+	if is_moving:
+		return
+	path_preview = null
+	destination_region_cell = Vector2i(-1, -1)
+	preview_error = ""
+	if party_in_region:
+		session.selected_region_cell = session.party.current_region_cell
+	queue_redraw()
+	debug_state_changed.emit(get_debug_state())
+
+func has_path_preview() -> bool:
+	return path_preview != null and path_preview.has_path()
+
+func clear_local_path_preview() -> void:
+	path_preview = null
+	destination_region_cell = Vector2i(-1, -1)
+	preview_error = ""
+	is_moving = session.is_traveling()
+	if party_in_region:
+		session.selected_region_cell = session.party.get_region_cell()
+	queue_redraw()
+
+func animate_party_step(next_region_cell: Vector2i, playback_multiplier: float = 1.0) -> void:
+	var tween: Tween = create_tween()
+	var duration: float = VISUAL_STEP_DURATION / maxf(playback_multiplier, 0.01)
+	tween.tween_property(self, "party_visual_position", _cell_center(next_region_cell), duration)
+	await tween.finished
+
+func sync_party_position() -> void:
+	party_in_region = session.party.initialized \
+		and session.party.get_world_cell() == session.selected_world_cell
+	is_moving = session.is_traveling()
+	if party_in_region:
+		session.selected_region_cell = session.party.get_region_cell()
+		party_visual_position = _cell_center(session.party.get_region_cell())
+	queue_redraw()
+	debug_state_changed.emit(get_debug_state())
+
+func get_debug_state() -> Dictionary:
+	_configure_pathfinder()
+	var displayed_region_cell: Vector2i = session.selected_region_cell
+	if _is_valid_region_cell(hovered_region_cell):
+		displayed_region_cell = hovered_region_cell
+	var global_region_cell: Vector2i = WorldCoordinates.world_region_to_global_region_cell(
+		session.selected_world_cell,
+		displayed_region_cell
+	)
+	var global_meters: Vector2i = WorldCoordinates.world_region_to_global_meters(
+		session.selected_world_cell,
+		displayed_region_cell
+	)
+	var terrain_type: int = -1
+	var elevation: float = 0.0
+	var moisture: float = 0.0
+	var river_strength: float = 0.0
+	if terrain_data != null:
+		terrain_type = terrain_data.get_terrain(displayed_region_cell)
+		elevation = terrain_data.get_elevation(displayed_region_cell)
+		moisture = terrain_data.get_moisture(displayed_region_cell)
+		river_strength = terrain_data.get_river_strength(displayed_region_cell)
+	var base_terrain_name: String = TerrainType.to_display_name(terrain_type)
+	var final_terrain_name: String = base_terrain_name
+	if river_strength > 0.0:
+		final_terrain_name = "River / %s" % base_terrain_name
+	var hovered_poi: WorldPOIData = _poi_at(displayed_region_cell)
+	var road_flags: int = road_overlay.get_flags(displayed_region_cell)
+	var route_ids: Array[String] = road_overlay.get_route_ids(displayed_region_cell)
+	var cell_info: Dictionary = party_pathfinder.get_cell_info(displayed_region_cell)
+	var speed: float = float(cell_info.get("speed", 0.0))
+	var cell_travel_seconds: int = roundi(TravelCostConfig.travel_seconds(
+			float(WorldCoordinates.REGION_CELL_SIZE_METERS), speed
+		)) if bool(cell_info.get("passable", false)) else 0
+	var reached_poi: WorldPOIData = _poi_at(session.party.get_region_cell()) if party_in_region else null
+	var region_label: String = "??"
+	if region != null:
+		region_label = "%s (%s)" % [region.region_name, region.region_id]
+	var active_path: GlobalTravelPathType = session.active_global_travel_path
+	var path_distance: String = "%.3f km" % (path_preview.total_distance_meters / 1000.0) if path_preview != null else "None"
+	var estimated_travel: String = path_preview.estimated_duration() if path_preview != null else "None"
+	var path_cells: String = str(path_preview.cells.size()) if path_preview != null else "0"
+	var destination_global_cell: String = "None"
+	var current_path_index: String = "0"
+	var total_path_cells: String = "0"
+	var remaining_path_cells: String = "0"
+	var regions_crossed: String = "0"
+	var remaining_distance: String = "None"
+	var remaining_eta: String = "None"
+	if active_path != null:
+		destination_global_cell = _format_cell(active_path.destination_global_cell)
+		current_path_index = str(session.global_travel_path_index)
+		total_path_cells = str(active_path.cells.size())
+		remaining_path_cells = str(maxi(active_path.cells.size() - session.global_travel_path_index - 1, 0))
+		path_distance = "%.3f / %.3f km" % [
+			active_path.total_distance_meters / 1000.0,
+			active_path.remaining_distance_from(session.global_travel_path_index) / 1000.0,
+		]
+		estimated_travel = "%s / %s" % [
+			active_path.estimated_duration(),
+			active_path.remaining_duration_from(session.global_travel_path_index),
+		]
+		path_cells = "%d / %d" % [session.global_travel_path_index, active_path.cells.size()]
+		regions_crossed = str(active_path.regions_crossed)
+		remaining_distance = "%.3f km" % (active_path.remaining_distance_from(session.global_travel_path_index) / 1000.0)
+		remaining_eta = active_path.remaining_duration_from(session.global_travel_path_index)
+	return {
+		"layer": "REGION MAP",
+		"current_region": region_label,
+		"world_seed": session.world_seed,
+		"world_time": session.format_world_time(),
+		"party_id": session.party.party_id,
+		"party_position": "%s / Global %s" % [_format_cell(session.party.get_region_cell()), _format_cell(session.party.current_global_region_cell)] if party_in_region else "Away",
+		"party_state": "Moving" if session.is_traveling() else ("Ready" if party_in_region else "Away"),
+		"destination": _format_optional_cell(destination_region_cell),
+		"path_distance": path_distance,
+		"remaining_distance": remaining_distance,
+		"estimated_travel": estimated_travel,
+		"remaining_eta": remaining_eta,
+		"path_cells": path_cells,
+		"current_path_index": current_path_index,
+		"total_path_cells": total_path_cells,
+		"remaining_path_cells": remaining_path_cells,
+		"destination_global_cell": destination_global_cell,
+		"regions_crossed": regions_crossed,
+		"travel_status": session.last_travel_message,
+		"travel_error": session.travel_error,
+		"travel_speed_multiplier": "%.0fx" % session.travel_speed_multiplier,
+		"path_search_time": "%.2f ms" % active_path.path_calculation_milliseconds if active_path != null else "None",
+		"preview_error": preview_error,
+		"passable": "Yes" if bool(cell_info.get("passable", false)) else "No",
+		"effective_speed": "%.1f km/h" % speed if speed > 0.0 else "--",
+		"cell_travel_time": "%ds" % cell_travel_seconds if cell_travel_seconds > 0 else "--",
+		"poi_reached": reached_poi.site_name if reached_poi != null else "No",
+		"debug_view": _debug_view_name(),
+		"world_cell": _format_cell(session.selected_world_cell),
+		"hovered_region_cell": _format_optional_cell(hovered_region_cell),
+		"selected_region_cell": _format_cell(session.selected_region_cell),
+		"global_region_cell": _format_cell(global_region_cell),
+		"global_meter_position": _format_meters(global_meters),
+		"base_terrain_type": base_terrain_name,
+		"terrain_type": final_terrain_name,
+		"elevation": "%.2f" % elevation,
+		"moisture": "%.2f" % moisture,
+		"river_strength": "%.2f" % river_strength,
+		"river_mask": "Yes" if river_strength > 0.0 else "No",
+		"site": _poi_label(session.selected_region_cell),
+		"poi_id": hovered_poi.poi_id if hovered_poi != null else "No POI",
+		"poi_type": WorldPOIType.to_display_name(hovered_poi.poi_type) if hovered_poi != null else "No POI",
+		"poi_name": hovered_poi.site_name if hovered_poi != null else "No POI",
+		"poi_candidate_cell": _format_cell(hovered_poi.candidate_cell) if hovered_poi != null else "??",
+		"poi_priority": "%.3f" % hovered_poi.deterministic_priority if hovered_poi != null else "??",
+		"poi_river_nearby": "Yes" if hovered_poi != null and hovered_poi.river_nearby else "No",
+		"road": "Yes" if (road_flags & RegionRoadOverlay.ROAD) != 0 else "No",
+		"river_crossing": "Yes" if (road_flags & RegionRoadOverlay.RIVER_CROSSING) != 0 else "No",
+		"route_ids": ", ".join(route_ids) if not route_ids.is_empty() else "None",
+		"route_details": _route_details(route_ids),
+		"instruction": "WASD: Camera   Wheel: Zoom   Left Click: Select Destination   Same Click / Enter: Confirm   T: World Map   ESC: Cancel Preview / World   1/2/3: Travel Speed   F1: Debug View"
+	}
+
+func _draw() -> void:
+	if region == null or terrain_data == null:
+		return
+	var map_size: Vector2 = Vector2(GRID_SIZE.x, GRID_SIZE.y) * CELL_PIXEL_SIZE
+	draw_rect(Rect2(MAP_ORIGIN - Vector2(12, 12), map_size + Vector2(24, 24)), Color("17211e"))
+	for y: int in range(GRID_SIZE.y):
+		for x: int in range(GRID_SIZE.x):
+			var region_cell: Vector2i = Vector2i(x, y)
+			var cell_rect: Rect2 = Rect2(
+				MAP_ORIGIN + Vector2(x, y) * CELL_PIXEL_SIZE,
+				Vector2.ONE * CELL_PIXEL_SIZE
+			)
+			draw_rect(cell_rect, _cell_color(region_cell))
+			draw_rect(cell_rect, Color("2c4036"), false, 1.0)
+			if region_cell == session.selected_region_cell:
+				draw_rect(cell_rect, Color("ffe082"), false, 5.0)
+			if region_cell == hovered_region_cell:
+				draw_rect(cell_rect.grow(-5.0), Color("ffffff"), false, 3.0)
+
+	_draw_roads()
+	_draw_path_preview()
+
+	for poi: WorldPOIData in pois:
+		var poi_center: Vector2 = _cell_center(poi.region_cell)
+		draw_circle(poi_center, 22.0, Color("182018"))
+		draw_circle(poi_center, 17.0, WorldPOIType.to_color(poi.poi_type))
+		draw_circle(poi_center, 7.0, Color("ffffff"))
+	_draw_party()
+
+func _cell_color(region_cell: Vector2i) -> Color:
+	var elevation: float = terrain_data.get_elevation(region_cell)
+	var moisture: float = terrain_data.get_moisture(region_cell)
+	match debug_view:
+		DebugView.ELEVATION:
+			return Color(elevation, elevation, elevation)
+		DebugView.MOISTURE:
+			return Color(0.03 + moisture * 0.12, 0.12 + moisture * 0.70, 0.18 + moisture * 0.55)
+		DebugView.RIVER:
+			return Color("55c7ff") if terrain_data.has_river(region_cell) else Color("30343b")
+		DebugView.POI:
+			return TerrainType.to_color(terrain_data.get_terrain(region_cell)).darkened(0.45)
+		DebugView.ROAD:
+			return TerrainType.to_color(terrain_data.get_terrain(region_cell)).darkened(0.62)
+		DebugView.TRAVEL:
+			return _travel_cell_color(region_cell)
+		DebugView.GLOBAL_TRAVEL:
+			return _travel_cell_color(region_cell)
+		_:
+			if terrain_data.has_river(region_cell):
+				return Color("49a9cf")
+			return TerrainType.to_color(terrain_data.get_terrain(region_cell))
+
+func _debug_view_name() -> String:
+	match debug_view:
+		DebugView.ELEVATION:
+			return "ELEVATION"
+		DebugView.MOISTURE:
+			return "MOISTURE"
+		DebugView.RIVER:
+			return "RIVER"
+		DebugView.POI:
+			return "POI"
+		DebugView.ROAD:
+			return "ROAD"
+		DebugView.TRAVEL:
+			return "TRAVEL"
+		DebugView.GLOBAL_TRAVEL:
+			return "GLOBAL_TRAVEL"
+		_:
+			return "NORMAL"
+
+func _cell_from_global_position(mouse_global_position: Vector2) -> Vector2i:
+	var map_position: Vector2 = to_local(mouse_global_position)
+	return Vector2i(
+		floori((map_position.x - MAP_ORIGIN.x) / CELL_PIXEL_SIZE),
+		floori((map_position.y - MAP_ORIGIN.y) / CELL_PIXEL_SIZE)
+	)
+
+func _cell_center(region_cell: Vector2i) -> Vector2:
+	return MAP_ORIGIN + Vector2(region_cell.x, region_cell.y) * CELL_PIXEL_SIZE + Vector2.ONE * CELL_PIXEL_SIZE * 0.5
+
+func _is_valid_region_cell(region_cell: Vector2i) -> bool:
+	return region_cell.x >= 0 and region_cell.y >= 0 \
+		and region_cell.x < GRID_SIZE.x and region_cell.y < GRID_SIZE.y
+
+func _set_hovered_region_cell(region_cell: Vector2i) -> void:
+	if not _is_valid_region_cell(region_cell):
+		region_cell = Vector2i(-1, -1)
+	if hovered_region_cell == region_cell:
+		return
+	hovered_region_cell = region_cell
+	queue_redraw()
+	debug_state_changed.emit(get_debug_state())
+
+func _set_zoom(factor: float) -> void:
+	var next_zoom: float = clampf(camera.zoom.x * factor, 0.25, 2.0)
+	camera.zoom = Vector2.ONE * next_zoom
+
+func _configure_pathfinder() -> void:
+	party_pathfinder.terrain_data = terrain_data
+	party_pathfinder.road_overlay = road_overlay
+	party_pathfinder.base_speed_kmh = session.party.base_walk_speed_kmh if session != null else TravelCostConfig.DEFAULT_WALK_SPEED_KMH
+
+func _poi_at(region_cell: Vector2i) -> WorldPOIData:
+	for poi: WorldPOIData in pois:
+		if poi.region_cell == region_cell:
+			return poi
+	return null
+
+func _poi_label(region_cell: Vector2i) -> String:
+	var poi: WorldPOIData = _poi_at(region_cell)
+	if poi == null:
+		return "No POI at selected cell"
+	return "%s (%s)" % [poi.site_name, WorldPOIType.to_display_name(poi.poi_type)]
+
+func _draw_roads() -> void:
+	for y: int in range(GRID_SIZE.y):
+		for x: int in range(GRID_SIZE.x):
+			var region_cell: Vector2i = Vector2i(x, y)
+			var flags: int = road_overlay.get_flags(region_cell)
+			if (flags & RegionRoadOverlay.ROAD) == 0:
+				continue
+			var road_color: Color = Color("d5a34d")
+			if debug_view == DebugView.TRAVEL or debug_view == DebugView.GLOBAL_TRAVEL:
+				road_color = Color("5f9dff")
+			if (flags & RegionRoadOverlay.RIVER_CROSSING) != 0:
+				road_color = Color("55e4e8") if debug_view != DebugView.TRAVEL and debug_view != DebugView.GLOBAL_TRAVEL else Color("86f4ff")
+			var cell_rect: Rect2 = Rect2(
+				MAP_ORIGIN + Vector2(x, y) * CELL_PIXEL_SIZE,
+				Vector2.ONE * CELL_PIXEL_SIZE
+			)
+			draw_rect(cell_rect.grow(-23.0), road_color.darkened(0.15), true)
+			draw_rect(cell_rect.grow(-23.0), road_color, false, 2.0)
+
+func _travel_cell_color(region_cell: Vector2i) -> Color:
+	var info: Dictionary = party_pathfinder.get_cell_info(region_cell)
+	if not bool(info.get("passable", false)):
+		return Color("111318")
+	if bool(info.get("road", false)):
+		return Color("3f8dff")
+	var speed: float = float(info.get("speed", 0.0))
+	if speed <= 2.25:
+		return Color("d95757")
+	if speed < 4.0:
+		return Color("e0a44b")
+	return Color("5bbf70")
+
+func _draw_path_preview() -> void:
+	if session != null and session.active_global_travel_path != null:
+		_draw_global_path_segment()
+		return
+	if path_preview == null or path_preview.cells.is_empty():
+		return
+	var points: PackedVector2Array = PackedVector2Array()
+	for cell: Vector2i in path_preview.cells:
+		points.append(_cell_center(cell))
+	if points.size() >= 2:
+		draw_polyline(points, Color("fff1a8"), 9.0, true)
+	for cell: Vector2i in path_preview.cells:
+		draw_circle(_cell_center(cell), 8.0, Color("fff7c2"))
+	var destination_rect: Rect2 = Rect2(
+			_cell_center(destination_region_cell) - Vector2.ONE * 24.0,
+			Vector2.ONE * 48.0
+	)
+	draw_rect(destination_rect, Color("fff1a8"), false, 4.0)
+
+func _draw_global_path_segment() -> void:
+	var path: GlobalTravelPathType = session.active_global_travel_path
+	if path == null or region == null:
+		return
+	var points: PackedVector2Array = PackedVector2Array()
+	for global_cell: Vector2i in path.cells:
+		var converted: Dictionary = WorldCoordinates.global_region_cell_to_world_region(global_cell)
+		if converted["world_cell"] as Vector2i != region.world_cell:
+			continue
+		var local_cell: Vector2i = converted["region_cell"] as Vector2i
+		points.append(_cell_center(local_cell))
+	if points.size() >= 2:
+		draw_polyline(points, Color("fff1a8"), 9.0, true)
+	for point: Vector2 in points:
+		draw_circle(point, 8.0, Color("fff7c2"))
+	var destination_region: Dictionary = WorldCoordinates.global_region_cell_to_world_region(
+		path.destination_global_cell
+	)
+	if destination_region["world_cell"] as Vector2i == region.world_cell:
+		var destination_cell: Vector2i = destination_region["region_cell"] as Vector2i
+		var destination_rect: Rect2 = Rect2(
+				_cell_center(destination_cell) - Vector2.ONE * 24.0,
+				Vector2.ONE * 48.0
+		)
+		draw_rect(destination_rect, Color("fff1a8"), false, 4.0)
+
+func _draw_party() -> void:
+	if not party_in_region or not session.party.initialized:
+		return
+	draw_circle(party_visual_position, 20.0, Color("17233c"))
+	draw_circle(party_visual_position, 15.0, Color("4f8cff"))
+	draw_line(
+		party_visual_position + Vector2(12.0, -10.0),
+		party_visual_position + Vector2(12.0, -34.0),
+		Color("d9e7ff"),
+		3.0
+	)
+	draw_colored_polygon(PackedVector2Array([
+		party_visual_position + Vector2(12.0, -34.0),
+		party_visual_position + Vector2(30.0, -28.0),
+		party_visual_position + Vector2(12.0, -21.0),
+	]), Color("d9e7ff"))
+
+func _route_details(route_ids: Array[String]) -> String:
+	if route_ids.is_empty():
+		return "None"
+	var details: Array[String] = []
+	for route_id: String in route_ids:
+		var route: WorldRoadRoute = road_overlay.get_route(route_id)
+		if route != null:
+			details.append(route.debug_summary())
+	return " || ".join(details)
+
+func _format_cell(cell: Vector2i) -> String:
+	return "(%d, %d)" % [cell.x, cell.y]
+
+func _format_optional_cell(cell: Vector2i) -> String:
+	if not _is_valid_region_cell(cell):
+		return "??"
+	return _format_cell(cell)
+
+func _format_meters(meters: Vector2i) -> String:
+	return "(%dm, %dm)" % [meters.x, meters.y]
