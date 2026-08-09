@@ -2,12 +2,14 @@ class_name RegionMap
 extends Node2D
 
 const GlobalTravelPathType = preload("res://scripts/data/global_travel_path.gd")
+const BattlePreviewRuntimeType = preload("res://scripts/runtime/battle_preview_runtime.gd")
 const RegionRuntimeType = preload("res://scripts/runtime/region_runtime.gd")
 const TravelRuntimeType = preload("res://scripts/runtime/travel_runtime.gd")
 const TravelFailureReasonType = preload("res://scripts/runtime/travel_failure_reason.gd")
 const TravelStatusType = preload("res://scripts/runtime/travel_status.gd")
 
 signal site_enter_requested(region_cell: Vector2i)
+signal battle_preview_requested(snapshot: BattleSiteSnapshot)
 signal debug_state_changed(state: Dictionary)
 
 enum DebugView {
@@ -39,6 +41,7 @@ var resolved_region: RegionStateResolver
 var hovered_region_cell: Vector2i = Vector2i(-1, -1)
 var debug_view: int = DebugView.NORMAL
 var travel_runtime: TravelRuntime
+var battle_preview_runtime: BattlePreviewRuntime
 var party_in_region: bool = false
 var destination_region_cell: Vector2i = Vector2i(-1, -1)
 var path_preview: TravelPreviewResult
@@ -56,7 +59,9 @@ func setup(
 		p_session: GameSession,
 		p_road_overlay: RegionRoadOverlay = null,
 		p_runtime: TravelRuntime = null,
-		p_region_runtime: RegionRuntime = null
+		p_region_runtime: RegionRuntime = null,
+		p_battle_preview_runtime: BattlePreviewRuntime = null,
+		p_preserve_selection: bool = false
 	) -> void:
 	region = p_region
 	terrain_data = p_terrain_data
@@ -67,12 +72,15 @@ func setup(
 	travel_runtime.bind(session, travel_runtime.world_data)
 	region_runtime = p_region_runtime if p_region_runtime != null else RegionRuntimeType.new(session, travel_runtime.world_data)
 	region_runtime.bind(session, region_runtime.world_data)
+	battle_preview_runtime = p_battle_preview_runtime if p_battle_preview_runtime != null \
+		else BattlePreviewRuntimeType.new(session, travel_runtime.world_data, region_runtime)
+	battle_preview_runtime.bind(session, travel_runtime.world_data, region_runtime)
 	region_runtime.set_region_context(region, terrain_data, pois, road_overlay)
 	resolved_region = region_runtime.query_region(region.world_cell)
 	party_in_region = session.party.initialized \
 		and session.party.get_world_cell() == session.selected_world_cell
 	is_moving = session.is_traveling()
-	if party_in_region:
+	if party_in_region and not p_preserve_selection:
 		session.selected_region_cell = session.party.get_region_cell()
 	destination_region_cell = Vector2i(-1, -1)
 	path_preview = null
@@ -124,6 +132,23 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event is InputEventKey:
 		var key_event: InputEventKey = event as InputEventKey
+		if key_event.pressed and not key_event.echo and key_event.keycode == KEY_B:
+			if _is_valid_region_cell(session.selected_region_cell):
+				var battle_global_cell: Vector2i = WorldCoordinates.world_region_to_global_region_cell(
+					session.selected_world_cell,
+					session.selected_region_cell
+				)
+				var battle_snapshot: BattleSiteSnapshot = battle_preview_runtime.query_debug_preview(
+					battle_global_cell
+				)
+				if battle_snapshot.has_preview():
+					preview_error = ""
+					battle_preview_requested.emit(battle_snapshot)
+				else:
+					preview_error = BattleSiteSnapshot.failure_code(battle_snapshot.failure_reason)
+					debug_state_changed.emit(get_debug_state())
+			get_viewport().set_input_as_handled()
+			return
 		if key_event.pressed and not key_event.echo and key_event.keycode == KEY_F1:
 			debug_view = posmod(debug_view + 1, DebugView.GLOBAL_TRAVEL + 1)
 			queue_redraw()
@@ -342,7 +367,7 @@ func get_debug_state() -> Dictionary:
 		"river_crossing": "Yes" if (road_flags & RegionRoadOverlay.RIVER_CROSSING) != 0 else "No",
 		"route_ids": ", ".join(route_ids) if not route_ids.is_empty() else "None",
 		"route_details": _route_details(route_ids),
-		"instruction": "WASD: Camera   Wheel: Zoom   Left Click: Select Destination   Same Click / Enter: Confirm   T: World Map   ESC: Cancel Preview / World   1/2/3: Travel Speed   F1: Debug View"
+		"instruction": "WASD: Camera   Wheel: Zoom   Left Click: Select Destination   B: Test Battle   Same Click / Enter: Confirm   T: World Map   ESC: Cancel Preview / World   1/2/3: Travel Speed   F1: Debug View"
 	}
 
 func _travel_status_label() -> String:

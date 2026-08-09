@@ -14,9 +14,10 @@
 | Session runtime | Run-lifetime Party, World Time, selected layer context, travel plan, Region and Site runtime states | `GameSession`, `PartyData`, travel state, `RegionRuntimeState` map, lazy `SiteRuntimeState` map | Data and core services | View nodes, TileMap, Sprite | Implemented |
 | Site runtime | Sparse mutable Site state, revision and detached snapshots | `SiteRuntimeState`: test flag, added/removed stable feature records | SiteData, Session, typed Site query/command results | SiteMap, RegionMap, generators, UI, localization | Implemented as a minimal test-only contract |
 | Runtime travel API | Typed travel query/command results, path/cost decisions, Site Entry Query, Site runtime query/commands, authoritative travel step mutation | Operates `GameSession` through its API; no duplicate manager state | Session, WorldData, core travel services, typed result data | Map scenes, Camera, TileMap, UI | Implemented as `TravelRuntime` |
-| Runtime navigation | Composes World/Region/Site views and runs the existing travel loop | Active view reference only; authoritative state stays in Session/WorldData/TravelRuntime | Session, WorldData, TravelRuntime, map scene contracts | Pathfinder, Travel Cost, gameplay eligibility decisions | Implemented; map animation is an optional view contract |
+| Battle preview runtime | Read-only deterministic tactical preview query over resolved Region state | No authoritative state; returns detached `BattleSiteSnapshot` data | Session read state, `RegionRuntime`, deterministic Battle Site generator | Scene nodes, UI, mutable battle/combat state | Implemented as a debug-only architecture preview; Combat is NOT IMPLEMENTED |
+| Runtime navigation | Composes World/Region/Site/Battle Preview views and runs the existing travel loop | Active view reference only; authoritative state stays in Session/WorldData/Runtime services | Session, WorldData, TravelRuntime, BattlePreviewRuntime, map scene contracts | Pathfinder, Travel Cost, gameplay eligibility decisions | Implemented; map animation is an optional view contract |
 | Presentation | Draw maps, camera, hover/preview/visual interpolation, Debug UI | View-only hover, preview and visual positions | Session/data snapshots, Runtime query/command results and signals | Pathfinder, Travel Cost, authoritative Party/World Time mutation | Implemented |
-| Persistence | Future Seed + Delta save/load boundary | Not implemented | Session/runtime snapshots and generated data versions | Scene nodes and presentation state | NOT IMPLEMENTED |
+| Persistence | Seed + Delta save/load boundary for Session and Region runtime | Serialized `SessionSaveData` snapshots only; authoritative state remains in `GameSession` | Session/runtime snapshots, generated data versions, JSON/FileAccess | Scene nodes, UI, caches, Site Runtime, active Travel Path | Implemented for Session + Region; Site/active Travel persistence is NOT IMPLEMENTED |
 
 ## World → Region → Site
 
@@ -74,6 +75,15 @@ The Site layer now has stable POI-backed definitions, lazy Session-owned runtime
 - `RegionMap`, `WorldMap`, and `SiteMap` contain no direct `PartyPathfinder`, `TravelCostConfig`, or Site eligibility calls. NavigationController contains no direct Pathfinder/Travel Cost calls.
 - `RegionRuntime.query_region()` returns resolved Base + Delta queries. Its test-only mutation commands own terrain override, feature add/remove, and Region value changes; map scenes do not write `RegionDelta`.
 
+## Battle preview command/query boundary
+
+- `BattlePreviewRuntime.query_preview()` is a read-only query. It validates typed participant/context inputs, rejects active Travel, resolves the complete 3x3 footprint through `RegionRuntime`, and returns a detached typed `BattleSiteSnapshot`.
+- `BattleSiteGenerator` receives resolved cell input and produces deterministic preview geometry only. It does not read `WorldData`, `GameSession`, Region Delta, Scene nodes, TileMap, UI, or mutable combat state.
+- `RegionMap` converts the selected cell to a global coordinate, sends the preview query, renders typed failure status, and emits only a successful snapshot. It does not calculate Battle eligibility, terrain, roads, rivers, frontage, or deployment.
+- `NavigationController` only replaces the current view with `BattleSiteMap`; it does not construct participants, validate terrain, or store Battle state in `GameSession`.
+- `BattleSiteMap` consumes `BattleSiteSnapshot` and owns camera/drawing/debug presentation only. It has no `WorldData`, `GameSession`, `RegionRuntime`, or generator dependency.
+- Battle Preview is disposable presentation/query data and is intentionally excluded from Persistence. No battle command, active battle state, unit simulation, damage, AI, or combat resolution exists.
+
 ## Corrective logic closure
 
 - `TravelRuntime.finish_travel()` now verifies the active path, committed path index, and authoritative Party destination before marking `ARRIVED`; incomplete or stale steps cannot clear travel as an arrival.
@@ -92,7 +102,16 @@ The Site layer now has stable POI-backed definitions, lazy Session-owned runtime
 - `RegionRuntimeState` is session-owned. Its `RegionDelta` stores only sparse terrain overrides, added feature records, removed/disabled stable feature IDs, owner/development values, base generation version, and revision. Discovery remains the existing placeholder and is not expanded here.
 - `RegionStateResolver` validates Region identity and base generation version before exposing `get_terrain()`, feature queries, owner, and development. A mismatch reports `DELTA_REGION_MISMATCH` or `DELTA_BASE_VERSION_MISMATCH` and is not silently applied.
 - Generated POIs use their existing stable `poi_id`; generated roads use their existing stable `route_id`. Delta never stores Node IDs, array indexes, or scene paths.
-- `WorldData.clear_generated_cache()` clears only generated base/cache objects. The same Seed plus a copied Delta reconstructs the same resolved query. No Disk Save/Load or serializer was added.
+- `WorldData.clear_generated_cache()` clears only generated base/cache objects. The same Seed plus a copied Delta reconstructs the same resolved query. Persistence now serializes Session Seed + Region Delta without serializing generated caches.
+
+## Persistence boundary
+
+- `PersistenceService` is a small `RefCounted` service. It captures typed `SessionSaveData` and returns typed `PersistenceResult` values; it does not own a second runtime Session.
+- Session Save stores World Seed, current generation versions, World Time, Party data, and sparse Session-owned `RegionRuntimeState` / `RegionDelta` records. Generated terrain, POI, road caches, Scenes, UI, TileMaps, camera state, and path preview data are excluded.
+- Save validates the complete snapshot before writing and rejects any active Travel plan with `TRAVEL_IN_PROGRESS`; active Travel Path persistence is intentionally deferred.
+- Load parses and validates the complete wire payload, including format and generation versions, before constructing a new `GameSession`. A failed load returns no replacement Session and does not mutate the existing one.
+- `NavigationController.replace_session()` is the Presentation orchestration hook for a validated replacement. It rebinds `RegionRuntime` and `TravelRuntime` and may refresh the current view; `PersistenceService` never loads Scenes or controls a Camera.
+- The JSON wire format is an implementation detail of Persistence. Runtime callers use typed snapshot/result objects and typed failure codes; no localization string crosses the boundary.
 
 ## Verification status
 
@@ -106,7 +125,9 @@ The Site layer now has stable POI-backed definitions, lazy Session-owned runtime
 - `cross_region_runtime_test.gd`: Global travel and cancel runtime PASS.
 - Existing tests: Coordinate 4/4, Terrain 9/9, POI 10/10, Road 12/12, Party movement 16/16, Cross-Region Travel 18/18, Region Seed + Delta 22/22 PASS. Runtime command/query also covers a shared cross-Region Preview Query.
 - Party movement still reports a Godot ObjectDB/resource cleanup warning at process shutdown; POI teardown is clean after releasing its temporary SiteMap. Party gameplay assertions and exit code are successful. This remaining warning is a test-harness cleanup gap, not a persistent runtime gameplay error.
+- `persistence_test.gd`: 9/9 PASS for Session round-trip, Region Delta reconstruction, active Travel rejection, corrupt/version/data validation, view-state exclusion, Presentation dependency scan, and Navigation Session replacement.
+- `battle_site_test.gd`: 17/17 PASS for typed/read-only preview queries, input validation, Region boundary resolution, Region Delta projection, typed failures, detached snapshots, Presentation dependency separation, deterministic regeneration, and Region/Battle Scene replacement.
 
 ## Not implemented by design
 
-Site generation/grid/cell simulation, Site gameplay, discovery gameplay, Site delta serialization and Save/Load are NOT IMPLEMENTED. Exploration rules, construction, settlement gameplay, economy, characters, paper doll, combat, NPC, AI, events, weather, and quests remain future work. Their absence is not treated as a missing architecture skeleton when the current contract has a clear owner boundary.
+Site generation/grid/cell simulation, Site gameplay, Site Runtime persistence, active Travel persistence, and Save UI are NOT IMPLEMENTED. The current Battle Site is a deterministic read-only debug preview, not Combat. Exploration rules, construction, settlement gameplay, economy, characters, paper doll, combat runtime/resolution, NPC, AI, events, weather, quests, migrations, and multi-slot saves remain future work. Their absence is not treated as a missing architecture skeleton when the current contract has a clear owner boundary.

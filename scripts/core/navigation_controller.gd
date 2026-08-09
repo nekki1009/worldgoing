@@ -2,6 +2,7 @@ class_name NavigationController
 extends Node
 
 const GlobalTravelPathType = preload("res://scripts/data/global_travel_path.gd")
+const BattlePreviewRuntimeType = preload("res://scripts/runtime/battle_preview_runtime.gd")
 const RegionRuntimeType = preload("res://scripts/runtime/region_runtime.gd")
 const TravelRuntimeType = preload("res://scripts/runtime/travel_runtime.gd")
 const TravelFailureReasonType = preload("res://scripts/runtime/travel_failure_reason.gd")
@@ -10,6 +11,7 @@ enum MapLayer {
 	WORLD,
 	REGION,
 	SITE,
+	BATTLE_SITE,
 }
 
 signal debug_state_changed(state: Dictionary)
@@ -17,6 +19,7 @@ signal debug_state_changed(state: Dictionary)
 const WORLD_MAP_SCENE: PackedScene = preload("res://scenes/world/WorldMap.tscn")
 const REGION_MAP_SCENE: PackedScene = preload("res://scenes/region/RegionMap.tscn")
 const SITE_MAP_SCENE: PackedScene = preload("res://scenes/site/SiteMap.tscn")
+const BATTLE_SITE_SCENE: PackedScene = preload("res://scenes/site/BattleSite.tscn")
 
 var session: GameSession = GameSession.new()
 var world_data: WorldData = WorldData.new()
@@ -25,6 +28,7 @@ var map_root: Node2D
 var current_map: Node2D
 var region_runtime: RegionRuntime
 var travel_runtime: TravelRuntime
+var battle_preview_runtime: BattlePreviewRuntime
 var pending_global_destination: Vector2i = Vector2i(-1, -1)
 var pending_global_poi_id: String = ""
 var travel_loop_running: bool = false
@@ -32,6 +36,7 @@ var travel_loop_running: bool = false
 func _init() -> void:
 	region_runtime = RegionRuntimeType.new(session, world_data)
 	travel_runtime = TravelRuntimeType.new(session, world_data)
+	battle_preview_runtime = BattlePreviewRuntimeType.new(session, world_data, region_runtime)
 	travel_runtime.travel_started.connect(_on_travel_started)
 
 func setup(p_map_root: Node2D) -> void:
@@ -52,6 +57,24 @@ func get_current_map() -> Node2D:
 func get_session() -> GameSession:
 	return session
 
+func replace_session(p_session: GameSession) -> bool:
+	if p_session == null or p_session.party == null:
+		return false
+	var global_cell: Vector2i = p_session.party.current_global_region_cell
+	var converted: Dictionary = WorldCoordinates.global_region_cell_to_world_region(global_cell)
+	var world_cell: Vector2i = converted["world_cell"] as Vector2i
+	if not world_data.is_valid_world_cell(world_cell):
+		return false
+	session = p_session
+	session.selected_world_cell = world_cell
+	session.selected_region_cell = converted["region_cell"] as Vector2i
+	pending_global_destination = Vector2i(-1, -1)
+	pending_global_poi_id = ""
+	_sync_runtime()
+	if map_root != null:
+		show_region()
+	return true
+
 func show_world() -> void:
 	_sync_runtime()
 	current_layer = MapLayer.WORLD
@@ -61,7 +84,7 @@ func show_world() -> void:
 	world_map.debug_state_changed.connect(_on_map_debug_state_changed)
 	world_map.setup(world_data, session, travel_runtime)
 
-func show_region() -> void:
+func show_region(preserve_selection: bool = false) -> void:
 	_sync_runtime()
 	var region: RegionData = world_data.get_region(session.selected_world_cell)
 	if region == null:
@@ -80,6 +103,7 @@ func show_region() -> void:
 	travel_runtime.ensure_party_spawn(session.selected_world_cell, session.selected_region_cell)
 	var region_map: RegionMap = _replace_map(REGION_MAP_SCENE) as RegionMap
 	region_map.site_enter_requested.connect(enter_site_at)
+	region_map.battle_preview_requested.connect(show_battle_site)
 	region_map.debug_state_changed.connect(_on_map_debug_state_changed)
 	region_map.setup(
 		region,
@@ -88,7 +112,9 @@ func show_region() -> void:
 		session,
 		road_overlay,
 		travel_runtime,
-		region_runtime
+		region_runtime,
+		battle_preview_runtime,
+		preserve_selection
 	)
 
 func show_site(
@@ -119,6 +145,16 @@ func show_site(
 	var site_map: SiteMap = _replace_map(SITE_MAP_SCENE) as SiteMap
 	site_map.debug_state_changed.connect(_on_map_debug_state_changed)
 	site_map.setup(poi, region, session, travel_runtime, site_definition, site_snapshot)
+
+func show_battle_site(snapshot: BattleSiteSnapshot) -> void:
+	_sync_runtime()
+	if snapshot == null or not snapshot.has_preview():
+		return
+	current_layer = MapLayer.BATTLE_SITE
+	session.current_site_id = ""
+	var battle_site: BattleSiteMap = _replace_map(BATTLE_SITE_SCENE) as BattleSiteMap
+	battle_site.debug_state_changed.connect(_on_map_debug_state_changed)
+	battle_site.setup(snapshot)
 
 func _replace_map(scene: PackedScene) -> Node2D:
 	if is_instance_valid(current_map):
@@ -259,6 +295,10 @@ func _sync_runtime() -> void:
 		travel_runtime = TravelRuntimeType.new(session, world_data)
 		travel_runtime.travel_started.connect(_on_travel_started)
 	travel_runtime.bind(session, world_data)
+	if battle_preview_runtime == null:
+		battle_preview_runtime = BattlePreviewRuntimeType.new(session, world_data, region_runtime)
+	else:
+		battle_preview_runtime.bind(session, world_data, region_runtime)
 
 func _on_map_debug_state_changed(state: Dictionary) -> void:
 	debug_state_changed.emit(state)
@@ -297,6 +337,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	match current_layer:
 		MapLayer.SITE:
 			show_region()
+		MapLayer.BATTLE_SITE:
+			show_region(true)
 		MapLayer.REGION:
 			show_world()
 		MapLayer.WORLD:

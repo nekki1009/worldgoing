@@ -1,0 +1,47 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/battle/battle_site_map.gd" id="1_battle"]
+
+[node name="BattleSite" type="Node2D"]
+script = ExtResource("1_battle")
+
+[node name="Camera2D" type="Camera2D" parent="."]
+position = Vector2(600, 600)
+zoom = Vector2(0.85, 0.85)
+
+[node name="BattleDebugPanel" type="CanvasLayer" parent="."]
+layer = 20
+
+[node name="Panel" type="PanelContainer" parent="BattleDebugPanel"]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -770.0
+offset_top = 24.0
+offset_right = -24.0
+offset_bottom = 810.0
+grow_horizontal = 0
+mouse_filter = 2
+
+[node name="Margin" type="MarginContainer" parent="BattleDebugPanel/Panel"]
+layout_mode = 2
+theme_override_constants/margin_left = 20
+theme_override_constants/margin_top = 18
+theme_override_constants/margin_right = 20
+theme_override_constants/margin_bottom = 18
+
+[node name="BattleDebugLabel" type="Label" parent="BattleDebugPanel/Panel/Margin"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 21
+text = "BATTLE SITE PROTOTYPE"
+
+[node name="Orientation" type="Label" parent="BattleDebugPanel"]
+anchors_preset = 10
+anchor_right = 1.0
+offset_top = 18.0
+offset_bottom = 58.0
+grow_horizontal = 2
+theme_override_colors/font_color = Color(1, 0.95, 0.78, 1)
+theme_override_font_sizes/font_size = 24
+text = "NORTH ↑  (Global Y−)     EAST →  (Global X+)"
+horizontal_alignment = 1

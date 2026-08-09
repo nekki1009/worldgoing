@@ -1,0 +1,467 @@
+extends SceneTree
+
+const TEST_SEED: int = 123456789
+const EXAMPLE_CENTER: Vector2i = Vector2i(352, 431)
+const TEST_WORLD_CELL: Vector2i = Vector2i(3, 4)
+const INVALID_CELL: Vector2i = Vector2i(2_147_483_647, 2_147_483_647)
+
+class FastWorldData:
+	extends WorldData
+
+	var road_overlays: Dictionary = {}
+
+	func get_roads_for_region(world_cell: Vector2i, _world_seed: int) -> RegionRoadOverlay:
+		var stored: Variant = road_overlays.get(world_cell, null)
+		return stored as RegionRoadOverlay if stored is RegionRoadOverlay else RegionRoadOverlay.new()
+
+func _init() -> void:
+	call_deferred("_run")
+
+func _run() -> void:
+	assert(load("res://scenes/Main.tscn") is PackedScene, "Main scene could not be loaded")
+	assert(load("res://scenes/site/BattleSite.tscn") is PackedScene, "Battle Site scene could not be loaded")
+	var world_data: FastWorldData = FastWorldData.new()
+	var session: GameSession = _test_session(EXAMPLE_CENTER)
+	var region_runtime: RegionRuntime = RegionRuntime.new(session, world_data)
+	var runtime: BattlePreviewRuntime = BattlePreviewRuntime.new(session, world_data, region_runtime)
+	var context: BattleSiteContext = _test_context(EXAMPLE_CENTER)
+
+	_test_context_and_footprint(context)
+	_test_context_validation()
+	print("TEST 1-2 PASS: deterministic identity, exact footprint and trust-boundary validation")
+
+	var snapshot: BattleSiteSnapshot = runtime.query_debug_preview(EXAMPLE_CENTER)
+	assert(snapshot.has_preview(), "Battle preview query returned no snapshot")
+	assert(snapshot.size_meters == Vector2(300.0, 300.0), "3 x 100m did not produce a 300m preview")
+	assert(snapshot.footprint_cells.size() == 9, "Battle preview did not project exactly nine cells")
+	print("TEST 3 PASS: typed BattleSiteSnapshot represents the 300m x 300m preview")
+
+	_test_frontage()
+	print("TEST 4 PASS: terrain frontage splits deployment from reserve")
+
+	_test_cross_region_border(world_data)
+	print("TEST 5 PASS: resolved footprint crosses into the adjacent Region")
+
+	_test_negative_runtime_boundary(runtime)
+	print("TEST 6 PASS: negative coordinates convert correctly and finite Runtime rejects out-of-world preview")
+
+	_test_entry_directions()
+	print("TEST 7 PASS: deployment zones and facing are correct")
+
+	_test_terrain_orientation(world_data)
+	print("TEST 8 PASS: resolved cells preserve north/east/south/west orientation")
+
+	_test_road_and_river_projection()
+	print("TEST 9 PASS: resolved Road and River data project into corridor data")
+
+	_test_determinism(runtime)
+	print("TEST 10 PASS: repeated Runtime preview queries are deterministic")
+
+	_test_query_is_read_only(world_data)
+	print("TEST 11 PASS: Battle preview query does not mutate gameplay state")
+
+	_test_region_delta_projection()
+	print("TEST 12 PASS: Region Delta terrain override is reflected in Battle preview")
+
+	_test_typed_failure()
+	print("TEST 13 PASS: invalid and impassable destinations return typed failure reasons")
+
+	_test_snapshot_is_detached(runtime)
+	print("TEST 14 PASS: Presentation snapshot mutation cannot change Runtime data")
+
+	_test_dependency_boundary()
+	print("TEST 15 PASS: Navigation and BattleSiteMap are orchestration/presentation only")
+
+	await _test_region_battle_return()
+	print("TEST 16 PASS: Region -> Battle Preview -> Region replaces the Scene without losing selection")
+	print("TEST 17 PASS: preview uses draw data, not soldier or AI Nodes")
+	print("Battle preview boundary tests passed: 17 cases")
+	quit()
+
+func _test_context_and_footprint(context: BattleSiteContext) -> void:
+	assert(context != null, "BattleSiteContext creation failed")
+	assert(context.center_world_cell == Vector2i(3, 4), "Center World Cell conversion failed")
+	assert(context.center_region_cell == Vector2i(52, 31), "Center Region Cell conversion failed")
+	assert(context.footprint_size == Vector2i(3, 3), "Battle footprint metadata is not 3x3")
+	var expected: Array[Vector2i] = [
+		Vector2i(351, 430), Vector2i(352, 430), Vector2i(353, 430),
+		Vector2i(351, 431), Vector2i(352, 431), Vector2i(353, 431),
+		Vector2i(351, 432), Vector2i(352, 432), Vector2i(353, 432),
+	]
+	assert(BattleSiteGenerator.footprint_global_cells(EXAMPLE_CENTER) == expected, "3x3 global footprint is incorrect")
+	var duplicate: BattleSiteContext = _test_context(EXAMPLE_CENTER)
+	assert(context.battle_id == duplicate.battle_id, "Deterministic Battle ID changed")
+	assert(context.battle_seed == duplicate.battle_seed, "Deterministic Battle Seed changed")
+
+func _test_context_validation() -> void:
+	var valid_attacker: BattleParticipantData = BattleParticipantData.new("a", "A", 10)
+	var valid_defender: BattleParticipantData = BattleParticipantData.new("d", "D", 10)
+	assert(BattleSiteContext.create(TEST_SEED, EXAMPLE_CENTER, null, valid_defender, 0, 2) == null)
+	assert(BattleSiteContext.create(TEST_SEED, EXAMPLE_CENTER, BattleParticipantData.new("", "A", 10), valid_defender, 0, 2) == null)
+	assert(BattleSiteContext.create(TEST_SEED, EXAMPLE_CENTER, valid_attacker, BattleParticipantData.new("a", "D", 10), 0, 2) == null)
+	assert(BattleSiteContext.create(TEST_SEED, EXAMPLE_CENTER, BattleParticipantData.new("a", "A", 0), valid_defender, 0, 2) == null)
+	assert(BattleSiteContext.create(TEST_SEED, EXAMPLE_CENTER, valid_attacker, valid_defender, 0, 2, -1) == null)
+	var context: BattleSiteContext = BattleSiteContext.create(TEST_SEED, EXAMPLE_CENTER, valid_attacker, valid_defender, 0, 2)
+	valid_attacker.participant_id = "changed"
+	assert(context != null and context.attacker.participant_id == "a", "Context retained mutable caller participant data")
+
+func _test_frontage() -> void:
+	var forest: Dictionary = BattleRules.deployment(1000, TerrainType.FOREST)
+	assert(forest["initial_deployed_personnel"] == 500 and forest["reserve_personnel"] == 500)
+	var plains: Dictionary = BattleRules.deployment(1000, TerrainType.PLAINS)
+	assert(plains["initial_deployed_personnel"] == 1000 and plains["reserve_personnel"] == 0)
+	var mountain: Dictionary = BattleRules.deployment(1000, TerrainType.MOUNTAIN)
+	assert(mountain["initial_deployed_personnel"] == 250 and mountain["reserve_personnel"] == 750)
+	var water: Dictionary = BattleRules.deployment(1000, TerrainType.WATER)
+	assert(water["initial_deployed_personnel"] == 0 and water["reserve_personnel"] == 1000)
+
+func _test_cross_region_border(world_data: FastWorldData) -> void:
+	var center: Vector2i = _find_passable_border_center(world_data)
+	assert(center != INVALID_CELL, "No passable Region-border center was found")
+	var runtime: BattlePreviewRuntime = _runtime_for(world_data, _test_session(center))
+	var snapshot: BattleSiteSnapshot = runtime.query_debug_preview(center)
+	assert(snapshot.has_preview(), "Cross-Region preview query failed")
+	var seen_adjacent_region: bool = false
+	for cell: Dictionary in snapshot.footprint_cells:
+		if cell["world_cell"] == Vector2i(4, 4):
+			seen_adjacent_region = true
+			assert((cell["region_cell"] as Vector2i).x == 0, "Adjacent Region local x is not zero")
+	assert(seen_adjacent_region, "Right-hand adjacent Region was not resolved")
+
+func _test_negative_runtime_boundary(runtime: BattlePreviewRuntime) -> void:
+	var footprint: Array[Vector2i] = BattleSiteGenerator.footprint_global_cells(Vector2i(-1, -1))
+	assert(footprint.front() == Vector2i(-2, -2) and footprint.back() == Vector2i.ZERO)
+	for global_cell: Vector2i in footprint:
+		var converted: Dictionary = WorldCoordinates.global_region_cell_to_world_region(global_cell)
+		assert(WorldCoordinates.is_valid_region_cell(converted["region_cell"] as Vector2i))
+	var rejected: BattleSiteSnapshot = runtime.query_debug_preview(Vector2i(-1, -1))
+	assert(not rejected.success and rejected.failure_reason == BattleSiteSnapshot.FailureReason.INVALID_DESTINATION)
+
+func _test_entry_directions() -> void:
+	var size: Vector2 = Vector2(300.0, 300.0)
+	var north: Rect2 = BattleRules.deployment_zone(size, BattleSiteContext.EntryDirection.NORTH)
+	var south: Rect2 = BattleRules.deployment_zone(size, BattleSiteContext.EntryDirection.SOUTH)
+	var west: Rect2 = BattleRules.deployment_zone(size, BattleSiteContext.EntryDirection.WEST)
+	var east: Rect2 = BattleRules.deployment_zone(size, BattleSiteContext.EntryDirection.EAST)
+	assert(north == Rect2(0.0, 0.0, 300.0, 60.0))
+	assert(south == Rect2(0.0, 240.0, 300.0, 60.0))
+	assert(west == Rect2(0.0, 0.0, 60.0, 300.0))
+	assert(east == Rect2(240.0, 0.0, 60.0, 300.0))
+	assert(BattleRules.facing_vector(BattleSiteContext.EntryDirection.SOUTH) == Vector2.UP)
+	assert(BattleRules.facing_vector(BattleSiteContext.EntryDirection.NORTH) == Vector2.DOWN)
+	assert(BattleRules.facing_vector(BattleSiteContext.EntryDirection.WEST) == Vector2.RIGHT)
+	assert(BattleRules.facing_vector(BattleSiteContext.EntryDirection.EAST) == Vector2.LEFT)
+
+func _test_terrain_orientation(world_data: FastWorldData) -> void:
+	var center: Vector2i = _find_terrain_boundary(world_data)
+	assert(center != INVALID_CELL, "No passable mixed-terrain footprint was found")
+	var snapshot: BattleSiteSnapshot = _runtime_for(world_data, _test_session(center)).query_debug_preview(center)
+	assert(snapshot.has_preview(), "Orientation preview query failed")
+	var cells: Array[Dictionary] = snapshot.footprint_cells
+	assert(cells[1]["global_region_cell"] == center + Vector2i.UP)
+	assert(cells[1]["local_origin_meters"] == Vector2(100.0, 0.0))
+	assert(cells[5]["global_region_cell"] == center + Vector2i.RIGHT)
+	assert(cells[5]["local_origin_meters"] == Vector2(200.0, 100.0))
+	assert(cells[7]["global_region_cell"] == center + Vector2i.DOWN)
+	assert(cells[7]["local_origin_meters"] == Vector2(100.0, 200.0))
+	assert(cells[3]["global_region_cell"] == center + Vector2i.LEFT)
+	assert(cells[3]["local_origin_meters"] == Vector2(0.0, 100.0))
+
+func _test_road_and_river_projection() -> void:
+	var road_world: FastWorldData = FastWorldData.new()
+	road_world.road_overlays[TEST_WORLD_CELL] = _test_road_overlay()
+	var road_snapshot: BattleSiteSnapshot = _runtime_for(
+		road_world,
+		_test_session(EXAMPLE_CENTER)
+	).query_debug_preview(EXAMPLE_CENTER)
+	assert(road_snapshot.has_preview(), "Road preview query failed")
+	var road_center: Dictionary = road_snapshot.center_cell
+	assert(bool(road_center["road"]), "Resolved Road disappeared from preview")
+	var road_offsets: Array = road_center["road_connection_offsets"] as Array
+	assert(road_offsets.has(Vector2i.LEFT) and road_offsets.has(Vector2i.RIGHT), "Road direction changed")
+
+	var river_world: FastWorldData = FastWorldData.new()
+	var river_center: Vector2i = _find_passable_center_near_river(river_world)
+	assert(river_center != INVALID_CELL, "No passable center near a River was found")
+	var river_snapshot: BattleSiteSnapshot = _runtime_for(
+		river_world,
+		_test_session(river_center)
+	).query_debug_preview(river_center)
+	assert(river_snapshot.has_preview(), "River preview query failed")
+	var river_seen: bool = false
+	for cell: Dictionary in river_snapshot.footprint_cells:
+		if bool(cell["river"]):
+			river_seen = true
+			assert(not (cell["river_connection_offsets"] as Array).is_empty(), "River corridor has no direction")
+	assert(river_seen, "Resolved River disappeared from preview")
+
+func _test_determinism(runtime: BattlePreviewRuntime) -> void:
+	var first: BattleSiteSnapshot = runtime.query_debug_preview(EXAMPLE_CENTER)
+	var second: BattleSiteSnapshot = runtime.query_debug_preview(EXAMPLE_CENTER)
+	assert(first.terrain_hash == second.terrain_hash, "Battle terrain changed on regeneration")
+	assert(first.preview_hash == second.preview_hash, "Deployment preview changed on regeneration")
+	assert(first.terrain_debug_representation == second.terrain_debug_representation)
+
+func _test_query_is_read_only(world_data: FastWorldData) -> void:
+	var session: GameSession = _test_session(EXAMPLE_CENTER)
+	var runtime: BattlePreviewRuntime = _runtime_for(world_data, session)
+	var position_before: Vector2i = session.party.current_global_region_cell
+	var time_before: int = session.world_time_seconds
+	var path_before: GlobalTravelPath = session.active_global_travel_path
+	var region_state_count_before: int = session.region_runtime_states.size()
+	var snapshot: BattleSiteSnapshot = runtime.query_debug_preview(EXAMPLE_CENTER)
+	assert(snapshot.has_preview())
+	assert(session.party.current_global_region_cell == position_before)
+	assert(session.world_time_seconds == time_before)
+	assert(session.active_global_travel_path == path_before)
+	assert(session.region_runtime_states.size() == region_state_count_before)
+
+func _test_region_delta_projection() -> void:
+	var world_data: FastWorldData = FastWorldData.new()
+	var center: Vector2i = _find_plain_or_forest_center(world_data)
+	assert(center != INVALID_CELL, "No Delta test center found")
+	var session: GameSession = _test_session(center)
+	var region_runtime: RegionRuntime = RegionRuntime.new(session, world_data)
+	var runtime: BattlePreviewRuntime = BattlePreviewRuntime.new(session, world_data, region_runtime)
+	var before: BattleSiteSnapshot = runtime.query_debug_preview(center)
+	assert(before.has_preview())
+	var converted: Dictionary = WorldCoordinates.global_region_cell_to_world_region(center)
+	var replacement: int = TerrainType.FOREST if before.center_terrain == TerrainType.PLAINS else TerrainType.PLAINS
+	assert(region_runtime.apply_test_terrain_override(
+		converted["world_cell"] as Vector2i,
+		converted["region_cell"] as Vector2i,
+		replacement
+	))
+	var after: BattleSiteSnapshot = runtime.query_debug_preview(center)
+	assert(after.has_preview() and after.center_terrain == replacement)
+	assert(after.terrain_hash != before.terrain_hash, "Delta did not change resolved terrain hash")
+
+func _test_typed_failure() -> void:
+	var world_data: FastWorldData = FastWorldData.new()
+	var center: Vector2i = _find_plain_or_forest_center(world_data)
+	var session: GameSession = _test_session(center)
+	var region_runtime: RegionRuntime = RegionRuntime.new(session, world_data)
+	var runtime: BattlePreviewRuntime = BattlePreviewRuntime.new(session, world_data, region_runtime)
+	var converted: Dictionary = WorldCoordinates.global_region_cell_to_world_region(center)
+	assert(region_runtime.apply_test_terrain_override(
+		converted["world_cell"] as Vector2i,
+		converted["region_cell"] as Vector2i,
+		TerrainType.WATER
+	))
+	var impassable: BattleSiteSnapshot = runtime.query_debug_preview(center)
+	assert(not impassable.success and impassable.failure_reason == BattleSiteSnapshot.FailureReason.IMPASSABLE)
+	var invalid: BattleSiteSnapshot = runtime.query_debug_preview(Vector2i(-1000, -1000))
+	assert(not invalid.success and invalid.failure_reason == BattleSiteSnapshot.FailureReason.INVALID_DESTINATION)
+	var invalid_participant: BattleSiteSnapshot = runtime.query_preview(
+		center,
+		BattleParticipantData.new("", "Invalid", 10),
+		BattleParticipantData.new("defender", "Defender", 10),
+		BattleSiteContext.EntryDirection.SOUTH,
+		BattleSiteContext.EntryDirection.NORTH
+	)
+	assert(not invalid_participant.success \
+		and invalid_participant.failure_reason == BattleSiteSnapshot.FailureReason.INVALID_PARTICIPANT)
+	session.active_global_travel_path = GlobalTravelPath.new()
+	var travelling: BattleSiteSnapshot = runtime.query_debug_preview(center)
+	assert(not travelling.success \
+		and travelling.failure_reason == BattleSiteSnapshot.FailureReason.TRAVEL_IN_PROGRESS)
+
+func _test_snapshot_is_detached(runtime: BattlePreviewRuntime) -> void:
+	var snapshot: BattleSiteSnapshot = runtime.query_debug_preview(EXAMPLE_CENTER)
+	var original_terrain: int = snapshot.center_terrain
+	snapshot.center_cell["terrain_type"] = TerrainType.WATER
+	snapshot.footprint_cells.clear()
+	var queried_again: BattleSiteSnapshot = runtime.query_debug_preview(EXAMPLE_CENTER)
+	assert(queried_again.has_preview() and queried_again.center_terrain == original_terrain)
+
+func _test_dependency_boundary() -> void:
+	var region_source: String = FileAccess.get_file_as_string("res://scripts/region/region_map.gd")
+	var navigation_source: String = FileAccess.get_file_as_string("res://scripts/core/navigation_controller.gd")
+	var map_source: String = FileAccess.get_file_as_string("res://scripts/battle/battle_site_map.gd")
+	var runtime_source: String = FileAccess.get_file_as_string("res://scripts/runtime/battle_preview_runtime.gd")
+	var session_source: String = FileAccess.get_file_as_string("res://scripts/core/game_session.gd")
+	assert(region_source.find("BattleSiteGenerator") == -1 and region_source.find("BattleRules") == -1)
+	assert(region_source.find("BATTLE_CELL_IMPASSABLE") == -1)
+	assert(navigation_source.find("BattleParticipantData.new") == -1)
+	assert(navigation_source.find("active_battle_context") == -1)
+	assert(map_source.find("WorldData") == -1 and map_source.find("GameSession") == -1)
+	assert(map_source.find("BattleSiteGenerator") == -1)
+	assert(runtime_source.find("RegionMap") == -1 and runtime_source.find("BattleSiteMap") == -1)
+	assert(runtime_source.find("Camera2D") == -1 and runtime_source.find("TileMapLayer") == -1)
+	assert(session_source.find("active_battle_context") == -1)
+
+func _test_region_battle_return() -> void:
+	var world_data: FastWorldData = FastWorldData.new()
+	var navigation: NavigationController = NavigationController.new()
+	var map_root: Node2D = Node2D.new()
+	get_root().add_child(map_root)
+	get_root().add_child(navigation)
+	navigation.world_data = world_data
+	navigation.session = _test_session(EXAMPLE_CENTER)
+	navigation.setup(map_root)
+	navigation.show_region()
+	await process_frame
+	var selected_local: Vector2i = _find_passable_local(world_data)
+	assert(selected_local != Vector2i(-1, -1), "No passable Battle preview cell found")
+	var selected_world: Vector2i = navigation.session.selected_world_cell
+	navigation.session.selected_region_cell = selected_local
+	var region_map: RegionMap = navigation.get_current_map() as RegionMap
+	var battle_key: InputEventKey = InputEventKey.new()
+	battle_key.keycode = KEY_B
+	battle_key.pressed = true
+	region_map._unhandled_input(battle_key)
+	await process_frame
+	assert(navigation.get_current_layer() == NavigationController.MapLayer.BATTLE_SITE, "B did not enter Battle preview")
+	var battle_site: BattleSiteMap = navigation.get_current_map() as BattleSiteMap
+	assert(battle_site != null and battle_site.snapshot.has_preview(), "Battle preview Scene received no snapshot")
+	var first_battle_id: String = battle_site.snapshot.context.battle_id
+	var first_terrain_hash: String = battle_site.snapshot.terrain_hash
+	var first_preview_hash: String = battle_site.snapshot.preview_hash
+	assert(battle_site.preview_marker_count("attacker") == 10)
+	assert(battle_site.preview_marker_count("defender") == 10)
+	assert(_descendant_count(battle_site) < 20, "Battle preview instantiated a large Node population")
+	assert(not _has_soldier_nodes(battle_site), "Battle preview instantiated soldier/AI Nodes")
+	var escape_key: InputEventKey = InputEventKey.new()
+	escape_key.keycode = KEY_ESCAPE
+	escape_key.pressed = true
+	navigation._unhandled_input(escape_key)
+	await process_frame
+	assert(navigation.get_current_layer() == NavigationController.MapLayer.REGION)
+	assert(navigation.session.selected_world_cell == selected_world)
+	assert(navigation.session.selected_region_cell == selected_local)
+	var returned_map: RegionMap = navigation.get_current_map() as RegionMap
+	returned_map._unhandled_input(battle_key)
+	await process_frame
+	var second_site: BattleSiteMap = navigation.get_current_map() as BattleSiteMap
+	assert(second_site.snapshot.context.battle_id == first_battle_id)
+	assert(second_site.snapshot.terrain_hash == first_terrain_hash)
+	assert(second_site.snapshot.preview_hash == first_preview_hash)
+	navigation._unhandled_input(escape_key)
+	await process_frame
+	map_root.queue_free()
+	navigation.queue_free()
+	await process_frame
+
+func _runtime_for(world_data: WorldData, session: GameSession) -> BattlePreviewRuntime:
+	var region_runtime: RegionRuntime = RegionRuntime.new(session, world_data)
+	return BattlePreviewRuntime.new(session, world_data, region_runtime)
+
+func _test_session(center: Vector2i) -> GameSession:
+	var session: GameSession = GameSession.new()
+	session.world_seed = TEST_SEED
+	var converted: Dictionary = WorldCoordinates.global_region_cell_to_world_region(center)
+	session.selected_world_cell = converted["world_cell"] as Vector2i
+	session.selected_region_cell = converted["region_cell"] as Vector2i
+	session.party.set_global_region_cell(center)
+	session.party.initialized = true
+	return session
+
+func _test_context(center: Vector2i) -> BattleSiteContext:
+	return BattleSiteContext.create(
+		TEST_SEED,
+		center,
+		BattleParticipantData.new("test_attacker", "Army A", 1000),
+		BattleParticipantData.new("test_defender", "Army B", 800),
+		BattleSiteContext.EntryDirection.SOUTH,
+		BattleSiteContext.EntryDirection.NORTH,
+		0,
+		GameSession.INITIAL_WORLD_TIME_SECONDS
+	)
+
+func _test_road_overlay() -> RegionRoadOverlay:
+	var overlay: RegionRoadOverlay = RegionRoadOverlay.new()
+	var route: WorldRoadRoute = WorldRoadRoute.new(
+		"road_battle_projection_test",
+		"test_west",
+		"test_east",
+		EXAMPLE_CENTER + Vector2i.LEFT,
+		EXAMPLE_CENTER + Vector2i.RIGHT
+	)
+	route.path = [EXAMPLE_CENTER + Vector2i.LEFT, EXAMPLE_CENTER, EXAMPLE_CENTER + Vector2i.RIGHT]
+	route.path_generated = true
+	for global_cell: Vector2i in route.path:
+		var converted: Dictionary = WorldCoordinates.global_region_cell_to_world_region(global_cell)
+		overlay.add_route_cell(converted["region_cell"] as Vector2i, RegionRoadOverlay.ROAD, route)
+	return overlay
+
+func _find_passable_border_center(world_data: WorldData) -> Vector2i:
+	for y: int in range(1, 99):
+		var global_cell: Vector2i = WorldCoordinates.world_region_to_global_region_cell(TEST_WORLD_CELL, Vector2i(99, y))
+		if _base_cell_passable(world_data, global_cell):
+			return global_cell
+	return INVALID_CELL
+
+func _find_terrain_boundary(world_data: WorldData) -> Vector2i:
+	for y: int in range(401, 499):
+		for x: int in range(301, 399):
+			var center: Vector2i = Vector2i(x, y)
+			if not _base_cell_passable(world_data, center):
+				continue
+			var terrain_types: Dictionary = {}
+			for global_cell: Vector2i in BattleSiteGenerator.footprint_global_cells(center):
+				terrain_types[_base_terrain(world_data, global_cell)] = true
+			if terrain_types.size() >= 2:
+				return center
+	return INVALID_CELL
+
+func _find_passable_center_near_river(world_data: WorldData) -> Vector2i:
+	for y: int in range(401, 499):
+		for x: int in range(301, 399):
+			var center: Vector2i = Vector2i(x, y)
+			if not _base_cell_passable(world_data, center):
+				continue
+			for global_cell: Vector2i in BattleSiteGenerator.footprint_global_cells(center):
+				if world_data.terrain_generator.macro_sampler.is_river(TEST_SEED, global_cell):
+					return center
+	return INVALID_CELL
+
+func _find_plain_or_forest_center(world_data: WorldData) -> Vector2i:
+	for y: int in range(401, 499):
+		for x: int in range(301, 399):
+			var center: Vector2i = Vector2i(x, y)
+			var terrain: int = _base_terrain(world_data, center)
+			if (terrain == TerrainType.PLAINS or terrain == TerrainType.FOREST) \
+					and _base_cell_passable(world_data, center):
+				return center
+	return INVALID_CELL
+
+func _find_passable_local(world_data: WorldData) -> Vector2i:
+	for radius: int in range(50):
+		for y: int in range(50 - radius, 50 + radius + 1):
+			for x: int in range(50 - radius, 50 + radius + 1):
+				if maxi(absi(x - 50), absi(y - 50)) != radius:
+					continue
+				var local_cell: Vector2i = Vector2i(x, y)
+				if not WorldCoordinates.is_valid_region_cell(local_cell):
+					continue
+				var global_cell: Vector2i = WorldCoordinates.world_region_to_global_region_cell(TEST_WORLD_CELL, local_cell)
+				var sample: Vector3 = world_data.terrain_generator.macro_sampler.sample(TEST_SEED, global_cell)
+				if world_data.terrain_generator.classify_sample(sample) == TerrainType.FOREST \
+						and sample.z <= 0.0:
+					return local_cell
+	return Vector2i(-1, -1)
+
+func _base_cell_passable(world_data: WorldData, global_cell: Vector2i) -> bool:
+	var sample: Vector3 = world_data.terrain_generator.macro_sampler.sample(TEST_SEED, global_cell)
+	return TravelCostConfig.is_passable(
+		world_data.terrain_generator.classify_sample(sample),
+		sample.z > 0.0,
+		false
+	)
+
+func _base_terrain(world_data: WorldData, global_cell: Vector2i) -> int:
+	return world_data.terrain_generator.classify_sample(
+		world_data.terrain_generator.macro_sampler.sample(TEST_SEED, global_cell)
+	)
+
+func _descendant_count(node: Node) -> int:
+	var count: int = 0
+	for child: Node in node.get_children():
+		count += 1 + _descendant_count(child)
+	return count
+
+func _has_soldier_nodes(node: Node) -> bool:
+	for child: Node in node.get_children():
+		if child is CharacterBody2D or child is NavigationAgent2D or _has_soldier_nodes(child):
+			return true
+	return false
