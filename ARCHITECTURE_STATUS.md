@@ -10,9 +10,10 @@
 | World data | Region index, generated terrain/POI/road access, deterministic caches | `RegionData`, generated `RegionTerrainData`, POI and road cache entries | Generators, data types, core utilities | Party, World Time, Scene nodes, UI, Region Delta | Implemented; cache is non-authoritative and rebuildable |
 | Region data | Regenerable 100×100 strategic data, derived Region seed, generated feature references | `RegionData.seed`, frozen base terrain, generated POI/route IDs | Coordinates and generator output | TileMap, presentation state, session mutation | Implemented |
 | Region runtime | Mutable Region state that must survive view replacement | `RegionRuntimeState`, `RegionDelta`, discovery placeholder | Session-owned state types, Region Runtime/Resolver | Generators, TileMap, UI as state owners | Implemented; gameplay mutation is test-only |
-| Site definition | Stable Site identity and deterministic Site context derived from a Region POI | `SiteData`, with `site_id == WorldPOIData.poi_id` | `WorldPOIData`, WorldData, coordinate/data types | Runtime mutation, Scene nodes, UI | Implemented; no Site gameplay data |
+| Site definition | Rebuildable deterministic Site base and explicit Region/Site entrance anchor | `SiteData`: stable ID, base version, Site Seed, local/global entrance meters and copied POI context | `WorldPOIData`, coordinates, deterministic hash | Runtime mutation, Scene nodes, UI | Implemented |
+| Site generated layout | Deterministic Site-local bounds and presentation anchors | Rebuildable `SiteLayoutData`; no mutable or cached authority | SiteData, deterministic hash | Session, runtime state, Scene nodes, UI | Implemented as minimal layout data; Site gameplay/content is NOT IMPLEMENTED |
 | Session runtime | Run-lifetime Party, World Time, selected layer context, travel plan, Region and Site runtime states | `GameSession`, `PartyData`, travel state, `RegionRuntimeState` map, lazy `SiteRuntimeState` map | Data and core services | View nodes, TileMap, Sprite | Implemented |
-| Site runtime | Sparse mutable Site state, revision and detached snapshots | `SiteRuntimeState`: test flag, added/removed stable feature records | SiteData, Session, typed Site query/command results | SiteMap, RegionMap, generators, UI, localization | Implemented as a minimal test-only contract |
+| Site runtime | Sparse mutable Site state, revision and detached Base + Runtime query snapshots | `SiteRuntimeState`: base identity stamp, test flag, added/removed stable feature records | SiteData, Session, typed Site query/command results | SiteMap, RegionMap, generators, UI, localization | Implemented as a minimal test-only contract |
 | Runtime travel API | Typed travel query/command results, path/cost decisions, Site Entry Query, Site runtime query/commands, authoritative travel step mutation | Operates `GameSession` through its API; no duplicate manager state | Session, WorldData, core travel services, typed result data | Map scenes, Camera, TileMap, UI | Implemented as `TravelRuntime` |
 | Battle preview runtime | Read-only deterministic tactical preview query over resolved Region state | No authoritative state; returns detached `BattleSiteSnapshot` data | Session read state, `RegionRuntime`, deterministic Battle Site generator | Scene nodes, UI, mutable battle/combat state | Implemented as a debug-only architecture preview; Combat is NOT IMPLEMENTED |
 | Runtime navigation | Composes World/Region/Site/Battle Preview views and runs the existing travel loop | Active view reference only; authoritative state stays in Session/WorldData/Runtime services | Session, WorldData, TravelRuntime, BattlePreviewRuntime, map scene contracts | Pathfinder, Travel Cost, gameplay eligibility decisions | Implemented; map animation is an optional view contract |
@@ -26,26 +27,28 @@
 - `RegionData` records deterministic identity and generated base/cache references. `RegionData.terrain_data` is frozen after generation; clearing the cache removes only the rebuildable object.
 - `PartyData.current_global_region_cell` is the single authoritative Party position. World/Region cells are derived with `WorldCoordinates`.
 - `GameSession` owns World Time, travel plan/progress, and Region runtime state, so replacing `WorldMap`, `RegionMap`, or `SiteMap` does not erase them.
-- `WorldPOIData` is the generated Region-level Site entry. `SiteMap` receives that entry and the parent Region context; it does not become a second world or region state owner.
-- `SiteData` is derived from the stable `WorldPOIData.poi_id`; it carries Site definition/context only and does not contain mutable gameplay state.
+- `WorldPOIData` is the generated Region-level Site entry. `SiteData.from_poi()` copies its stable context into a rebuildable Site base; `SiteMap` does not retain the POI, Region, Session, or Runtime owner.
+- `SiteData` reuses `WorldPOIData.poi_id`, derives a versioned deterministic Site Seed, and defines Site-local meters through a reversible local/global entrance anchor at the center of the parent Strategic Cell. It does not contain mutable gameplay state or fix a Site grid size.
+- `SiteLayoutGenerator` deterministically rebuilds bounded Site-local layout anchors from `SiteData`; `WorldData` exposes that generated data without storing a second authoritative Site state.
 - `GameSession.site_runtime_states` lazily owns `SiteRuntimeState` by `site_id`. A Site query can return an unallocated detached snapshot; entering or mutating a Site allocates its runtime state.
-- `SiteRuntimeState` stores only the current architecture contract: revision, test flag, added test feature records and removed stable feature IDs. It contains no Node, Scene or presentation reference.
-- `SiteMap` receives a `SiteRuntimeSnapshot` from `TravelRuntime` and is a view. Different SiteMap instances for the same `site_id` consume the same Session-owned state.
+- `SiteRuntimeState` stores only the current architecture contract: base identity/version stamp, revision, test flag, added test feature records and removed stable feature IDs. It contains no Node, Scene or presentation reference.
+- `SiteMap` receives one detached `SiteRuntimeSnapshot` from `TravelRuntime` and is a view. It has no `GameSession`, `TravelRuntime`, `WorldPOIData`, or `RegionData` dependency.
 
 ## Generator / runtime / presentation boundary
 
 - `RegionTerrainGenerator`, `WorldPOIGenerator`, and `WorldRoadGenerator` are deterministic generators. They contain no Party, discovery, construction, combat, quest, or view state and never read TileMap nodes.
+- `SiteData.from_poi()` derives the Site base. `SiteLayoutGenerator` consumes only that base and emits detached `SiteLayoutData`; it has no Session, Runtime, Scene, UI, or mutable gameplay dependency.
 - `WorldData` may cache generated results for performance. Clearing those caches must not change results.
 - `GameSession` owns `RegionRuntimeState` instances; each state owns a sparse `RegionDelta`. `RegionStateResolver` is the only Base + Delta read path.
 - `GameSession` and `RegionRuntimeState` hold mutable run state. No map Scene is required to keep Party position, World Time, travel progress, or Region runtime fields alive.
-- `TravelRuntime.query_site_snapshot()` is read-only and returns copied Site collections; Site commands validate Site identity and update revision only on real mutations.
-- Map Scenes and `DebugUI` consume data and session state. Their hover, preview, camera, and interpolation fields are presentation state only.
+- `TravelRuntime.query_site_snapshot()` is read-only and resolves copied Site Base + Runtime + Session read context; Site commands validate Site identity and update revision only on real mutations.
+- Map Scenes and `DebugUI` consume data or detached snapshots. Their hover, preview, camera, and interpolation fields are presentation state only.
 
 ## Audit status
 
 ### Site runtime completion
 
-The Site layer now has stable POI-backed definitions, lazy Session-owned runtime state, detached snapshots, typed query/command results, and 24 focused architecture tests. Site generation, grid/cell simulation, gameplay mutation, and persistence remain intentionally outside this stage.
+The Site layer now has deterministic POI-backed base definitions, explicit local/global entrance anchors, generated local layout data, lazy Session-owned runtime state, detached snapshots, typed query/command results, and 33 focused architecture tests. Site grid/cell simulation, semantic gameplay content, gameplay mutation, and persistence remain intentionally outside this stage.
 
 - A — Skeleton complete: three map Scenes, coordinate contract, deterministic terrain/POI/road generation, and existing Party/Travel/World Time test coverage are present; Main and Runtime smoke now pass with the normal Godot CLI user/cache environment.
 - B — Corrected: Region mutable ownership was separated from `RegionData`; `RegionData.seed` is now the generated-cache seed contract.
@@ -57,12 +60,12 @@ The Site layer now has stable POI-backed definitions, lazy Session-owned runtime
 - H — Complete for current state: Party/World Time/Travel are Session-owned; Region mutable fields are `RegionRuntimeState`-owned.
 - I — Smoke coverage added for World/Region view replacement. Site gameplay persistence is not implemented because Site gameplay is a future phase.
 - J — Future module boundaries are documented above; no future gameplay feature was implemented.
-- K — Added `scripts/tests/runtime_command_query_test.gd` with the 16 requested boundary checks. Editor parse, static dependency scans, headless Main startup, and the Runtime command/query tests pass with writable Godot user/cache directories. The managed sandbox's prior signal 11 is an environment limitation, not a project dependency.
+- K — Added `scripts/tests/runtime_command_query_test.gd` with 18 focused boundary checks. Editor parse, static dependency scans, headless Main startup, and the Runtime command/query tests pass with writable Godot user/cache directories. The managed sandbox's prior signal 11 is an environment limitation, not a project dependency.
 - L — Added `RegionDelta`, `RegionStateResolver`, and `RegionRuntime` for the in-session Seed + Delta contract. `scripts/tests/region_seed_delta_test.gd` contains the 20 requested reconstruction/boundary checks.
 
 ## Runtime command/query boundary
 
-- `TravelRuntime.query_site_snapshot()` is the Site read boundary. `ensure_site_runtime_state()`, `set_site_test_flag()`, `add_site_test_feature()`, and `remove_site_test_feature()` are typed Site commands; `SiteMap` only consumes the returned `SiteRuntimeSnapshot`.
+- `TravelRuntime.query_site_snapshot()` is the Site read boundary. It rebuilds `SiteData` plus deterministic `SiteLayoutData`, validates any Session-owned runtime state, and returns one detached Base + Runtime + Session read snapshot without allocating gameplay state. `ensure_site_runtime_state()`, `set_site_test_flag()`, `add_site_test_feature()`, and `remove_site_test_feature()` remain typed Site commands.
 - Site runtime commands re-resolve the deterministic POI definition by `site_id`, reject identity mismatch, reject duplicate features, and do not trust or mutate a Presentation-held snapshot.
 - Site runtime failure codes are typed in `SiteRuntimeFailureReason`; no localization or UI string is returned by the Runtime boundary.
 - `TravelRuntime.query_travel_preview()` is read-only with respect to Party position, World Time, active Travel State and Region runtime state. Its pathfinder/cache internals may change.
@@ -120,7 +123,7 @@ The Site layer now has stable POI-backed definitions, lazy Session-owned runtime
 - `Godot --headless --editor --recovery-mode --quit`: project script/class scan PASS. Godot Mono emits a known editor-only `HotReloadAssemblyWatcher` timer message during headless editor shutdown; no project script parse error was reported.
 - Main headless startup with `--rendering-method gl_compatibility`: PASS, exit 0.
 - `runtime_command_query_test.gd`: 18/18 PASS.
-- `site_runtime_test.gd`: 24/24 PASS.
+- `site_runtime_test.gd`: 33/33 PASS, including deterministic Site Seed/base/layout reconstruction, bounded local anchors, detached read-only snapshots, Scene re-entry stability, and one-way generator/runtime/presentation dependencies.
 - `architecture_smoke_test.gd`: PASS.
 - `cross_region_runtime_test.gd`: Global travel and cancel runtime PASS.
 - Existing tests: Coordinate 4/4, Terrain 9/9, POI 10/10, Road 12/12, Party movement 16/16, Cross-Region Travel 18/18, Region Seed + Delta 22/22 PASS. Runtime command/query also covers a shared cross-Region Preview Query.
@@ -130,4 +133,4 @@ The Site layer now has stable POI-backed definitions, lazy Session-owned runtime
 
 ## Not implemented by design
 
-Site generation/grid/cell simulation, Site gameplay, Site Runtime persistence, active Travel persistence, and Save UI are NOT IMPLEMENTED. The current Battle Site is a deterministic read-only debug preview, not Combat. Exploration rules, construction, settlement gameplay, economy, characters, paper doll, combat runtime/resolution, NPC, AI, events, weather, quests, migrations, and multi-slot saves remain future work. Their absence is not treated as a missing architecture skeleton when the current contract has a clear owner boundary.
+Semantic Site content, Site grid/cell simulation, Site movement/gameplay, Site Runtime persistence, active Travel persistence, and Save UI are NOT IMPLEMENTED. The generated Site layout contains only bounds and visual anchor points; it does not define buildings, resources, NPCs, collision, or gameplay rules. The current Battle Site is a deterministic read-only debug preview, not Combat. Exploration rules, construction, settlement gameplay, economy, characters, paper doll, combat runtime/resolution, NPC, AI, events, weather, quests, migrations, and multi-slot saves remain future work. Their absence is not treated as a missing architecture skeleton when the current contract has a clear owner boundary.

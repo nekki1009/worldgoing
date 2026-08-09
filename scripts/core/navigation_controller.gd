@@ -137,14 +137,11 @@ func show_site(
 		if not query_result.success:
 			return
 		site_snapshot = query_result.snapshot
-	var region: RegionData = world_data.get_region(session.selected_world_cell)
-	if region == null:
-		return
 	current_layer = MapLayer.SITE
 	session.current_site_id = site_definition.site_id
 	var site_map: SiteMap = _replace_map(SITE_MAP_SCENE) as SiteMap
 	site_map.debug_state_changed.connect(_on_map_debug_state_changed)
-	site_map.setup(poi, region, session, travel_runtime, site_definition, site_snapshot)
+	site_map.setup(site_snapshot)
 
 func show_battle_site(snapshot: BattleSiteSnapshot) -> void:
 	_sync_runtime()

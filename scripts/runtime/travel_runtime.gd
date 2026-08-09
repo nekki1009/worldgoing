@@ -347,7 +347,7 @@ func query_site_snapshot(site_id: String) -> SiteRuntimeQueryResult:
 		if not state.matches_definition(definition):
 			result.failure_reason = SiteRuntimeFailureReasonType.Code.SITE_IDENTITY_MISMATCH
 			return result
-		result.snapshot = state.to_snapshot(true)
+		result.snapshot = _snapshot_for_definition(definition, state.to_snapshot(true))
 	result.revision = result.snapshot.revision
 	result.success = true
 	return result
@@ -632,14 +632,44 @@ func _find_site_definition(site_id: String) -> SiteData:
 	var poi: WorldPOIData = _find_poi_by_id(site_id)
 	return world_data.get_site_definition(poi) if poi != null else null
 
-func _snapshot_for_definition(definition: SiteData) -> SiteRuntimeSnapshot:
-	var snapshot: SiteRuntimeSnapshot = SiteRuntimeSnapshotType.new()
+func _snapshot_for_definition(
+		definition: SiteData,
+		snapshot: SiteRuntimeSnapshot = null
+	) -> SiteRuntimeSnapshot:
+	if snapshot == null:
+		snapshot = SiteRuntimeSnapshotType.new()
 	snapshot.site_id = definition.site_id
 	snapshot.source_poi_id = definition.source_poi_id
+	snapshot.site_name = definition.site_name
+	snapshot.site_type = definition.site_type
 	snapshot.parent_world_cell = definition.parent_world_cell
 	snapshot.parent_region_cell = definition.parent_region_cell
 	snapshot.global_region_cell = definition.global_region_cell
-	snapshot.runtime_allocated = false
+	snapshot.base_generation_version = definition.base_generation_version
+	snapshot.site_seed = definition.site_seed
+	snapshot.entrance_local_meters = definition.entrance_local_meters
+	snapshot.entrance_global_meters = definition.entrance_global_meters
+	snapshot.source_terrain_type = definition.source_terrain_type
+	snapshot.source_elevation = definition.source_elevation
+	snapshot.source_moisture = definition.source_moisture
+	snapshot.source_river_nearby = definition.source_river_nearby
+	snapshot.source_candidate_cell = definition.source_candidate_cell
+	snapshot.source_priority = definition.source_priority
+	snapshot.layout = world_data.get_site_layout(definition) if world_data != null else null
+	var parent_region: RegionData = world_data.get_region(definition.parent_world_cell) \
+		if world_data != null else null
+	if parent_region != null:
+		snapshot.parent_region_id = parent_region.region_id
+		snapshot.parent_region_name = parent_region.region_name
+	if session != null:
+		snapshot.world_seed = session.world_seed
+		snapshot.world_time_seconds = session.world_time_seconds
+		if session.party != null:
+			snapshot.party_id = session.party.party_id
+			snapshot.party_global_region_cell = session.party.current_global_region_cell
+			snapshot.party_at_site = session.party.initialized \
+				and not session.is_traveling() \
+				and session.party.current_global_region_cell == definition.global_region_cell
 	return snapshot
 
 func _prepare_site_runtime_command(site_id: String) -> SiteRuntimeCommandResult:

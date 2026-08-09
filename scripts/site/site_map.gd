@@ -1,67 +1,72 @@
 class_name SiteMap
 extends Node2D
 
+const SiteLayoutDataType = preload("res://scripts/data/site_layout_data.gd")
+
 signal debug_state_changed(state: Dictionary)
 
-var poi: WorldPOIData
-var region: RegionData
-var session: GameSession
-var travel_runtime: TravelRuntime
-var site_definition: SiteData
 var runtime_snapshot: SiteRuntimeSnapshot
 
-func setup(
-		p_poi: WorldPOIData,
-		p_region: RegionData,
-		p_session: GameSession,
-		p_runtime: TravelRuntime,
-		p_site_definition: SiteData,
-		p_runtime_snapshot: SiteRuntimeSnapshot
-	) -> void:
-	poi = p_poi
-	region = p_region
-	session = p_session
-	travel_runtime = p_runtime
-	site_definition = p_site_definition
+func setup(p_runtime_snapshot: SiteRuntimeSnapshot) -> void:
 	runtime_snapshot = p_runtime_snapshot
+	var camera: Camera2D = get_node_or_null("Camera2D") as Camera2D
+	if camera != null and runtime_snapshot != null and runtime_snapshot.layout != null:
+		camera.position = Vector2(runtime_snapshot.layout.bounds_meters.position) \
+			+ Vector2(runtime_snapshot.layout.bounds_meters.size) * 0.5
 	queue_redraw()
 	debug_state_changed.emit(get_debug_state())
 
 func get_debug_state() -> Dictionary:
-	var global_region_cell: Vector2i = poi.global_region_cell
-	var global_meters: Vector2i = WorldCoordinates.global_region_cell_to_global_meters(global_region_cell)
-	var entry: SiteEntryQueryResult = travel_runtime.query_site_entry(session.party.party_id, poi.poi_id)
+	if runtime_snapshot == null:
+		return {"layer": "SITE MAP", "instruction": "Site snapshot unavailable"}
+	var region_label: String = "World %s" % _format_cell(runtime_snapshot.parent_world_cell)
+	if not runtime_snapshot.parent_region_name.is_empty():
+		region_label = "%s (%s)" % [
+			runtime_snapshot.parent_region_name,
+			runtime_snapshot.parent_region_id,
+		]
 	return {
 		"layer": "SITE MAP",
-		"current_region": "%s (%s)" % [region.region_name, region.region_id],
-		"world_seed": session.world_seed,
-		"world_time": session.format_world_time(),
-		"party_id": session.party.party_id,
-		"party_position": "%s / Global %s" % [_format_cell(session.party.get_region_cell()), _format_cell(session.party.current_global_region_cell)],
-		"party_state": "At POI" if entry.can_enter else "Away",
-		"world_cell": _format_cell(poi.world_cell),
+		"current_region": region_label,
+		"world_seed": runtime_snapshot.world_seed,
+		"world_time": _format_world_time(runtime_snapshot.world_time_seconds),
+		"party_id": runtime_snapshot.party_id,
+		"party_position": "Global %s" % _format_cell(runtime_snapshot.party_global_region_cell),
+		"party_state": "At POI" if runtime_snapshot.party_at_site else "Away",
+		"world_cell": _format_cell(runtime_snapshot.parent_world_cell),
 		"hovered_region_cell": "??",
-		"selected_region_cell": _format_cell(poi.region_cell),
-		"global_region_cell": _format_cell(global_region_cell),
-		"global_meter_position": _format_meters(global_meters),
-		"terrain_type": TerrainType.to_display_name(poi.terrain_type),
-		"elevation": "%.2f" % poi.elevation,
-		"moisture": "%.2f" % poi.moisture,
-		"river_mask": "Yes" if poi.river_nearby else "No",
-		"river_strength": "nearby" if poi.river_nearby else "0.00",
-		"poi_id": poi.poi_id,
-		"site_id": site_definition.site_id,
+		"selected_region_cell": _format_cell(runtime_snapshot.parent_region_cell),
+		"global_region_cell": _format_cell(runtime_snapshot.global_region_cell),
+		"global_meter_position": _format_meters(runtime_snapshot.entrance_global_meters),
+		"terrain_type": TerrainType.to_display_name(runtime_snapshot.source_terrain_type),
+		"elevation": "%.2f" % runtime_snapshot.source_elevation,
+		"moisture": "%.2f" % runtime_snapshot.source_moisture,
+		"river_mask": "Yes" if runtime_snapshot.source_river_nearby else "No",
+		"river_strength": "nearby" if runtime_snapshot.source_river_nearby else "0.00",
+		"poi_id": runtime_snapshot.source_poi_id,
+		"site_id": runtime_snapshot.site_id,
+		"site_seed": runtime_snapshot.site_seed,
+		"site_base_version": runtime_snapshot.base_generation_version,
+		"site_entrance_local_meters": _format_meters(runtime_snapshot.entrance_local_meters),
+		"site_entrance_global_meters": _format_meters(runtime_snapshot.entrance_global_meters),
+		"site_layout_version": runtime_snapshot.layout.generation_version if runtime_snapshot.layout != null else 0,
+		"site_layout_bounds": str(runtime_snapshot.layout.bounds_meters) if runtime_snapshot.layout != null else "unavailable",
+		"site_layout_path_points": runtime_snapshot.layout.primary_path_meters.size() if runtime_snapshot.layout != null else 0,
+		"site_layout_landmarks": runtime_snapshot.layout.landmark_points_meters.size() if runtime_snapshot.layout != null else 0,
 		"site_revision": runtime_snapshot.revision,
 		"site_runtime_allocated": runtime_snapshot.runtime_allocated,
 		"site_test_flag": runtime_snapshot.architecture_test_flag,
 		"site_feature_ids": _feature_ids(),
-		"poi_type": WorldPOIType.to_display_name(poi.poi_type),
-		"poi_name": poi.site_name,
-		"poi_candidate_cell": _format_cell(poi.candidate_cell),
-		"poi_priority": "%.3f" % poi.deterministic_priority,
-		"poi_river_nearby": "Yes" if poi.river_nearby else "No",
-		"site": "%s (%s)" % [poi.site_name, WorldPOIType.to_display_name(poi.poi_type)],
-		"instruction": "Placeholder Site Map   ESC: Return to Region Map"
+		"poi_type": WorldPOIType.to_display_name(runtime_snapshot.site_type),
+		"poi_name": runtime_snapshot.site_name,
+		"poi_candidate_cell": _format_cell(runtime_snapshot.source_candidate_cell),
+		"poi_priority": "%.3f" % runtime_snapshot.source_priority,
+		"poi_river_nearby": "Yes" if runtime_snapshot.source_river_nearby else "No",
+		"site": "%s (%s)" % [
+			runtime_snapshot.site_name,
+			WorldPOIType.to_display_name(runtime_snapshot.site_type),
+		],
+		"instruction": "Deterministic Site Layout   ESC: Return to Region Map"
 	}
 
 func _feature_ids() -> Array[String]:
@@ -72,15 +77,31 @@ func _feature_ids() -> Array[String]:
 	return ids
 
 func _draw() -> void:
-	draw_rect(Rect2(-1100, -600, 2200, 1200), Color("211d2b"))
-	draw_rect(Rect2(-900, -400, 1800, 800), Color("3d5260"))
-	draw_rect(Rect2(-760, -300, 1520, 600), Color("577667"))
-	draw_circle(Vector2.ZERO, 170.0, Color("d79b55"))
-	draw_circle(Vector2.ZERO, 120.0, Color("7b4c3b"))
-	draw_rect(Rect2(-260, 180, 520, 56), Color("263541"))
+	if runtime_snapshot == null or runtime_snapshot.layout == null \
+		or not runtime_snapshot.layout.is_valid():
+		return
+	var layout: SiteLayoutDataType = runtime_snapshot.layout
+	var bounds: Rect2 = Rect2(Vector2(layout.bounds_meters.position), Vector2(layout.bounds_meters.size))
+	draw_rect(bounds.grow(60.0), Color("211d2b"))
+	draw_rect(bounds, TerrainType.to_color(runtime_snapshot.source_terrain_type).darkened(0.18))
+	var path: PackedVector2Array = PackedVector2Array()
+	for point: Vector2i in layout.primary_path_meters:
+		path.append(Vector2(point))
+	draw_polyline(path, Color("caa66b"), 18.0, true)
+	var landmark_color: Color = WorldPOIType.to_color(runtime_snapshot.site_type).darkened(0.22)
+	for point: Vector2i in layout.landmark_points_meters:
+		draw_circle(Vector2(point), 18.0, landmark_color)
+	draw_circle(Vector2(layout.hub_local_meters), 34.0, WorldPOIType.to_color(runtime_snapshot.site_type))
+	draw_circle(Vector2(layout.entrance_local_meters), 14.0, Color("e8f0f2"))
 
 func _format_cell(cell: Vector2i) -> String:
 	return "(%d, %d)" % [cell.x, cell.y]
 
 func _format_meters(meters: Vector2i) -> String:
 	return "(%dm, %dm)" % [meters.x, meters.y]
+
+func _format_world_time(seconds: int) -> String:
+	var day: int = floori(float(seconds) / 86400.0)
+	var hour: int = floori(float(seconds % 86400) / 3600.0)
+	var minute: int = floori(float(seconds % 3600) / 60.0)
+	return "Day %d  %02d:%02d" % [day, hour, minute]

@@ -1,6 +1,9 @@
 class_name WorldData
 extends RefCounted
 
+const SiteLayoutDataType = preload("res://scripts/data/site_layout_data.gd")
+const SiteLayoutGeneratorType = preload("res://scripts/core/site_layout_generator.gd")
+
 const WORLD_CELLS: Vector2i = Vector2i(10, 10)
 
 var regions: Dictionary = {}
@@ -199,6 +202,9 @@ func find_poi_at(world_cell: Vector2i, region_cell: Vector2i, world_seed: int) -
 
 func get_site_definition(poi: WorldPOIData) -> SiteData:
 	return SiteData.from_poi(poi)
+
+func get_site_layout(definition: SiteData) -> SiteLayoutDataType:
+	return SiteLayoutGeneratorType.generate(definition)
 
 func get_sites_for_region(world_cell: Vector2i, world_seed: int) -> Array[SiteData]:
 	var result: Array[SiteData] = []

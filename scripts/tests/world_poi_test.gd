@@ -162,7 +162,7 @@ func _test_site_context(generator: WorldPOIGenerator) -> void:
 	var runtime: TravelRuntime = TravelRuntime.new(session, world_data)
 	var definition: SiteData = world_data.get_site_definition(queried_poi)
 	var snapshot: SiteRuntimeSnapshot = runtime.query_site_snapshot(definition.site_id).snapshot
-	site_map.setup(queried_poi, world_data.get_region(poi.world_cell), session, runtime, definition, snapshot)
+	site_map.setup(snapshot)
 	var state: Dictionary = site_map.get_debug_state()
 	assert(state["poi_id"] == poi.poi_id, "Site context lost POI ID")
 	assert(state["poi_type"] == WorldPOIType.to_display_name(poi.poi_type), "Site context lost POI type")
