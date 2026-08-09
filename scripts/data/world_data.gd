@@ -15,7 +15,7 @@ var travel_data_cache: Dictionary = {}
 
 func _init() -> void:
 	poi_generator = WorldPOIGenerator.new(terrain_generator)
-	road_generator = WorldRoadGenerator.new(terrain_generator, Callable(self, "get_pois_for_region"))
+	road_generator = WorldRoadGenerator.new(terrain_generator, Callable(self, "_get_road_pois_for_generator"))
 	_build_test_data()
 
 func _build_test_data() -> void:
@@ -81,6 +81,11 @@ func get_or_generate_region_thumbnail(world_cell: Vector2i, world_seed: int) -> 
 
 func get_pois_for_region(world_cell: Vector2i, world_seed: int) -> Array[WorldPOIData]:
 	var region: RegionData = get_region(world_cell)
+	var generated: Array[WorldPOIData] = _get_pois_for_generator(world_cell, world_seed)
+	_record_generated_poi_ids(region, generated)
+	return _copy_pois(generated)
+
+func _get_pois_for_generator(world_cell: Vector2i, world_seed: int) -> Array[WorldPOIData]:
 	var cache_key: String = "poi:%d:%d:%d:%d" % [
 		world_seed,
 		world_cell.x,
@@ -89,15 +94,19 @@ func get_pois_for_region(world_cell: Vector2i, world_seed: int) -> Array[WorldPO
 	]
 	var cached: Variant = poi_cache.get(cache_key, null)
 	if cached is Array:
-		_record_generated_poi_ids(region, cached as Array)
-		return _copy_pois(cached)
+		return cached as Array[WorldPOIData]
 	var generated: Array[WorldPOIData] = poi_generator.generate_for_region(world_seed, world_cell)
 	poi_cache[cache_key] = generated
-	_record_generated_poi_ids(region, generated)
-	return _copy_pois(generated)
+	return generated
+
+func _get_road_pois_for_generator(world_cell: Vector2i, world_seed: int) -> Array[WorldPOIData]:
+	if not is_valid_world_cell(world_cell):
+		return []
+	return _get_pois_for_generator(world_cell, world_seed)
 
 func clear_poi_cache() -> void:
 	poi_cache.clear()
+	poi_generator.clear_cache()
 	for region: RegionData in regions.values():
 		region.generated_poi_ids.clear()
 
@@ -129,6 +138,7 @@ func clear_generated_cache() -> void:
 		region.generated_poi_ids.clear()
 		region.generated_route_ids.clear()
 	poi_cache.clear()
+	poi_generator.clear_cache()
 	road_generator.clear_cache()
 	travel_data_cache.clear()
 
@@ -142,7 +152,8 @@ func sample_travel_data(world_seed: int, global_region_cell: Vector2i) -> Dictio
 	var converted: Dictionary = WorldCoordinates.global_region_cell_to_world_region(global_region_cell)
 	var world_cell: Vector2i = converted["world_cell"] as Vector2i
 	var region_cell: Vector2i = converted["region_cell"] as Vector2i
-	var road_overlay: RegionRoadOverlay = get_roads_for_region(world_cell, world_seed)
+	# Travel sampling only needs the generated overlay; Region metadata is recorded by the public Region query.
+	var road_overlay: RegionRoadOverlay = road_generator.get_roads_for_region(world_cell, world_seed)
 	var road: bool = road_overlay != null and road_overlay.has_road(region_cell)
 	var river: bool = macro_sample.z > 0.0
 	var river_crossing: bool = road_overlay != null and road_overlay.has_river_crossing(region_cell)

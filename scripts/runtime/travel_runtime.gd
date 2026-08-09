@@ -25,6 +25,8 @@ var world_data: WorldData
 var party_pathfinder: PartyPathfinder = PartyPathfinderType.new()
 var region_runtime: RegionRuntime
 var local_path_world_cell: Vector2i = Vector2i(-1, -1)
+var path_query_resolver_cache: Dictionary = {}
+var path_query_active: bool = false
 
 func _init(p_session: GameSession = null, p_world_data: WorldData = null) -> void:
 	bind(p_session, p_world_data)
@@ -32,6 +34,8 @@ func _init(p_session: GameSession = null, p_world_data: WorldData = null) -> voi
 func bind(p_session: GameSession, p_world_data: WorldData) -> void:
 	session = p_session
 	world_data = p_world_data
+	path_query_resolver_cache.clear()
+	path_query_active = false
 	if region_runtime == null:
 		region_runtime = RegionRuntimeType.new()
 	region_runtime.bind(session, world_data)
@@ -68,6 +72,8 @@ func query_travel_preview(
 	if not world_data.is_valid_world_cell(destination_world_cell):
 		result.failure_reason = TravelFailureReasonType.Code.INVALID_DESTINATION
 		return result
+	path_query_resolver_cache.clear()
+	path_query_active = true
 	var path: GlobalTravelPath
 	if start_region["world_cell"] as Vector2i == destination_world_cell:
 		path = _find_local_path(
@@ -84,6 +90,8 @@ func query_travel_preview(
 			session.party.base_walk_speed_kmh,
 			Callable(self, "_travel_cell_info")
 		)
+	path_query_active = false
+	path_query_resolver_cache.clear()
 	if path == null or not path.has_path():
 		result.failure_reason = _failure_for_path(path, result.start_global_cell, destination_global_cell)
 		return result
@@ -482,7 +490,11 @@ func _travel_cell_info(global_cell: Vector2i) -> Dictionary:
 			"world_cell": world_cell,
 			"region_cell": region_cell,
 		}
-	var resolver: RegionStateResolver = region_runtime.query_region(world_cell) if region_runtime != null else null
+	var resolver: RegionStateResolver = path_query_resolver_cache.get(world_cell) as RegionStateResolver
+	if resolver == null and region_runtime != null:
+		resolver = region_runtime.query_region(world_cell)
+		if path_query_active and resolver != null:
+			path_query_resolver_cache[world_cell] = resolver
 	if resolver == null or not resolver.is_valid():
 		return {
 			"valid": false,

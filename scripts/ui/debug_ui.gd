@@ -37,6 +37,9 @@ extends CanvasLayer
 @onready var site_label: Label = $Panel/Margin/VBox/Site
 @onready var instruction_label: Label = $Panel/Margin/VBox/Instruction
 
+func _process(_delta: float) -> void:
+	$FPS.text = "FPS: %d" % Engine.get_frames_per_second()
+
 func update_state(state: Dictionary) -> void:
 	layer_label.text = "Layer: %s" % state.get("layer", "??")
 	debug_view_label.text = "Debug View: %s" % state.get("debug_view", "??")

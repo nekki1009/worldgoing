@@ -230,8 +230,22 @@ func cancel_travel() -> void:
 func _start_travel_loop() -> void:
 	if travel_loop_running:
 		return
+	_prewarm_active_travel_regions()
 	travel_loop_running = true
 	call_deferred("_run_travel_loop")
+
+func _prewarm_active_travel_regions() -> void:
+	var path: GlobalTravelPathType = session.active_global_travel_path
+	if path == null:
+		return
+	var warmed_regions: Dictionary = {}
+	for global_cell: Vector2i in path.cells:
+		var converted: Dictionary = WorldCoordinates.global_region_cell_to_world_region(global_cell)
+		var world_cell: Vector2i = converted["world_cell"] as Vector2i
+		if warmed_regions.has(world_cell):
+			continue
+		warmed_regions[world_cell] = true
+		world_data.get_or_generate_region_terrain(world_cell, session.world_seed)
 
 func _run_travel_loop() -> void:
 	var path: GlobalTravelPathType = session.active_global_travel_path
@@ -262,14 +276,12 @@ func _run_travel_loop() -> void:
 			if current_map != null and is_instance_valid(current_map) \
 				and current_map.has_method("sync_party_position"):
 				current_map.call("sync_party_position")
-	_emit_current_debug_state()
 	if path != null and session.is_traveling():
 		if not travel_runtime.finish_travel():
 			travel_runtime.fail_travel(TravelFailureReasonType.Code.TRAVEL_STEP_FAILED)
 		if current_map != null and is_instance_valid(current_map) \
 			and current_map.has_method("sync_party_position"):
 			current_map.call("sync_party_position")
-		_emit_current_debug_state()
 	travel_loop_running = false
 
 func _emit_current_debug_state() -> void:

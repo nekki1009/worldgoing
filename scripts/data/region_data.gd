@@ -30,5 +30,5 @@ func _init(
 	region_name = p_region_name
 	terrain_type = p_terrain_type
 
-static func derive_seed(world_seed: int, world_cell: Vector2i, generation_version: int) -> int:
-	return DeterministicHash.value(world_seed, world_cell, REGION_SEED_SALT + generation_version)
+static func derive_seed(world_seed: int, p_world_cell: Vector2i, generation_version: int) -> int:
+	return DeterministicHash.value(world_seed, p_world_cell, REGION_SEED_SALT + generation_version)

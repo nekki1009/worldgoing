@@ -48,6 +48,17 @@ func get_terrain(region_cell: Vector2i) -> int:
 		return delta.get_terrain_override(region_cell)
 	return base_terrain.get_terrain(region_cell)
 
+func get_terrain_snapshot() -> PackedByteArray:
+	if not valid:
+		return PackedByteArray()
+	var result: PackedByteArray = base_terrain.terrain_array.duplicate()
+	if delta == null:
+		return result
+	for region_cell: Vector2i in delta.terrain_overrides:
+		var cell_index: int = region_cell.y * WorldCoordinates.REGION_GRID_SIZE + region_cell.x
+		result[cell_index] = delta.get_terrain_override(region_cell)
+	return result
+
 func get_base_terrain(region_cell: Vector2i) -> int:
 	if not valid:
 		return -1
@@ -69,9 +80,13 @@ func has_road(region_cell: Vector2i) -> bool:
 	if not valid or not WorldCoordinates.is_valid_region_cell(region_cell):
 		return false
 	if base_roads != null:
-		for route_id: String in base_roads.get_route_ids(region_cell):
-			if _is_active(route_id):
+		if delta == null or delta.removed_feature_ids.is_empty():
+			if base_roads.has_road(region_cell):
 				return true
+		else:
+			for route_id: String in base_roads.get_route_ids(region_cell):
+				if _is_active(route_id):
+					return true
 	if delta != null:
 		for item: Variant in delta.added_features.values():
 			if item is RegionFeatureDelta:
@@ -88,12 +103,16 @@ func has_river_crossing(region_cell: Vector2i) -> bool:
 			region_cell
 		)
 	if base_roads != null:
-		for route_id: String in base_roads.get_route_ids(region_cell):
-			if not _is_active(route_id):
-				continue
-			var route: WorldRoadRoute = base_roads.get_route(route_id)
-			if route != null and route.river_crossing_cells.has(global_cell):
+		if delta == null or delta.removed_feature_ids.is_empty():
+			if base_roads.has_river_crossing(region_cell):
 				return true
+		else:
+			for route_id: String in base_roads.get_route_ids(region_cell):
+				if not _is_active(route_id):
+					continue
+				var route: WorldRoadRoute = base_roads.get_route(route_id)
+				if route != null and route.river_crossing_cells.has(global_cell):
+					return true
 	if delta != null:
 		for item: Variant in delta.added_features.values():
 			if item is RegionFeatureDelta:
@@ -137,6 +156,18 @@ func get_features_at(region_cell: Vector2i) -> Array[RegionFeatureDelta]:
 				var feature: RegionFeatureDelta = item as RegionFeatureDelta
 				if feature.region_cell == region_cell and _is_active(feature.feature_id):
 					result.append(feature.copy())
+	result.sort_custom(Callable(self, "_feature_less"))
+	return result
+
+func get_runtime_features_by_type(feature_type: StringName) -> Array[RegionFeatureDelta]:
+	var result: Array[RegionFeatureDelta] = []
+	if not valid or delta == null:
+		return result
+	for item: Variant in delta.added_features.values():
+		if item is RegionFeatureDelta:
+			var feature: RegionFeatureDelta = item as RegionFeatureDelta
+			if feature.feature_type == feature_type and _is_active(feature.feature_id):
+				result.append(feature.copy())
 	result.sort_custom(Callable(self, "_feature_less"))
 	return result
 

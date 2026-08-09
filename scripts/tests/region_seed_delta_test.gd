@@ -48,7 +48,13 @@ func _test_terrain_override() -> void:
 	var cell: Vector2i = _find_terrain(base, TerrainType.FOREST)
 	assert(cell != Vector2i(-1, -1), "No Forest cell found")
 	assert(region_runtime.apply_test_terrain_override(REGION_CELL, cell, TerrainType.PLAINS), "Terrain override was rejected")
-	assert(region_runtime.query_region(REGION_CELL).get_terrain(cell) == TerrainType.PLAINS, "Terrain override was not resolved")
+	var resolved: RegionStateResolver = region_runtime.query_region(REGION_CELL)
+	assert(resolved.get_terrain(cell) == TerrainType.PLAINS, "Terrain override was not resolved")
+	var snapshot: PackedByteArray = resolved.get_terrain_snapshot()
+	var cell_index: int = cell.y * WorldCoordinates.REGION_GRID_SIZE + cell.x
+	assert(snapshot[cell_index] == TerrainType.PLAINS, "Terrain snapshot omitted the sparse override")
+	snapshot[cell_index] = TerrainType.MOUNTAIN
+	assert(resolved.get_terrain(cell) == TerrainType.PLAINS, "Terrain snapshot exposed authoritative state")
 	assert(base.get_terrain(cell) == TerrainType.FOREST, "Terrain override modified Base")
 	print("TEST 2 PASS: Sparse Terrain Override resolves without changing Base")
 

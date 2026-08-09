@@ -2,6 +2,8 @@ extends SceneTree
 
 var movement_session: GameSession
 var movement_navigation: NavigationController
+var movement_redraw_count: int = 0
+var static_redraw_count: int = 0
 
 func _init() -> void:
 	call_deferred("_run")
@@ -210,6 +212,21 @@ func _test_region_preview_and_movement() -> void:
 	var region: RegionData = movement_navigation.world_data.get_region(Vector2i.ZERO)
 	var empty_pois: Array[WorldPOIData] = []
 	map.setup(region, data, empty_pois, movement_session, roads, movement_navigation.travel_runtime)
+	await process_frame
+	assert(map.static_visual.terrain_texture != null, "Region terrain was not cached as a static texture")
+	static_redraw_count = 0
+	map.static_visual.draw.connect(_on_static_visual_draw)
+	map.sync_party_position()
+	await process_frame
+	assert(static_redraw_count == 0, "Party state refresh redrew static Region terrain")
+	map.static_visual.draw.disconnect(_on_static_visual_draw)
+	movement_redraw_count = 0
+	map.draw.connect(_on_movement_map_draw)
+	var marker_start: Vector2 = map.party_marker.position
+	await map.animate_party_step(movement_session.party.get_region_cell() + Vector2i.RIGHT)
+	assert(movement_redraw_count == 0, "Party tween redrew the complete RegionMap")
+	map.party_marker.position = marker_start
+	map.draw.disconnect(_on_movement_map_draw)
 	var destination_global_cell: Vector2i = _find_runtime_destination(
 		movement_navigation.travel_runtime,
 		movement_session
@@ -248,6 +265,12 @@ func _test_region_preview_and_movement() -> void:
 	map = null
 	movement_navigation = null
 	movement_session = null
+
+func _on_movement_map_draw() -> void:
+	movement_redraw_count += 1
+
+func _on_static_visual_draw() -> void:
+	static_redraw_count += 1
 
 func _find_runtime_destination(runtime: TravelRuntime, session: GameSession) -> Vector2i:
 	var start_region_cell: Vector2i = session.party.get_region_cell()

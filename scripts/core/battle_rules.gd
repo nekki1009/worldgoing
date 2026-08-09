@@ -65,7 +65,7 @@ static func formation_marker_positions(
 	var horizontal_edge: bool = entry_direction == BattleSiteContext.EntryDirection.NORTH \
 		or entry_direction == BattleSiteContext.EntryDirection.SOUTH
 	for marker_index: int in range(marker_count):
-		var rank: int = marker_index / FORMATIONS_PER_RANK
+		var rank: int = floori(float(marker_index) / float(FORMATIONS_PER_RANK))
 		var slot: int = marker_index % FORMATIONS_PER_RANK
 		var markers_in_rank: int = mini(
 			FORMATIONS_PER_RANK,

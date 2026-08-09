@@ -26,6 +26,7 @@ const NAME_SUFFIXES: Array[String] = ["ford", "hill", "vale", "keep", "watch", "
 
 var terrain_generator: RegionTerrainGenerator
 var macro_sampler: WorldMacroTerrainSampler
+var candidate_type_cache_by_seed: Dictionary = {}
 
 func _init(p_terrain_generator: RegionTerrainGenerator = null) -> void:
 	terrain_generator = p_terrain_generator if p_terrain_generator != null else RegionTerrainGenerator.new()
@@ -61,6 +62,9 @@ func generate_for_region(world_seed: int, world_cell: Vector2i) -> Array[WorldPO
 				continue
 			result.append(poi)
 	return result
+
+func clear_cache() -> void:
+	candidate_type_cache_by_seed.clear()
 
 static func candidate_cell_for_global_region_cell(global_region_cell: Vector2i) -> Vector2i:
 	return Vector2i(
@@ -107,6 +111,16 @@ func _generate_candidate(world_seed: int, candidate_cell: Vector2i) -> WorldPOID
 	)
 
 func _candidate_type(world_seed: int, candidate_cell: Vector2i) -> int:
+	var seed_cache: Dictionary = candidate_type_cache_by_seed.get(world_seed, {}) as Dictionary
+	if not candidate_type_cache_by_seed.has(world_seed):
+		candidate_type_cache_by_seed[world_seed] = seed_cache
+	if seed_cache.has(candidate_cell):
+		return int(seed_cache[candidate_cell])
+	var result: int = _calculate_candidate_type(world_seed, candidate_cell)
+	seed_cache[candidate_cell] = result
+	return result
+
+func _calculate_candidate_type(world_seed: int, candidate_cell: Vector2i) -> int:
 	if DeterministicHash.normalized(world_seed, candidate_cell, EXISTENCE_SALT) >= CANDIDATE_EXISTS_CHANCE:
 		return -1
 	var global_region_cell: Vector2i = _candidate_global_cell(world_seed, candidate_cell)

@@ -1,12 +1,11 @@
 class_name WorldRoadGenerator
 extends RefCounted
 
-const GENERATION_VERSION: int = 2
+const GENERATION_VERSION: int = 3
 
 # These are global Region Cells: 1 cell = 100m.
 const ROAD_CONNECTION_RADIUS_CELLS: int = 300
 const ROAD_PATH_MARGIN_CELLS: int = 48
-const ROAD_PATH_FALLBACK_MARGIN_CELLS: int = 96
 const ROAD_PATH_MAX_EXPANSIONS: int = 300_000
 const ROAD_QUERY_SOURCE_PADDING_CELLS: int = ROAD_CONNECTION_RADIUS_CELLS + ROAD_PATH_MARGIN_CELLS
 const ROAD_QUERY_POOL_PADDING_CELLS: int = ROAD_CONNECTION_RADIUS_CELLS * 2 + ROAD_PATH_MARGIN_CELLS
@@ -20,7 +19,10 @@ var terrain_generator: RegionTerrainGenerator
 var macro_sampler: WorldMacroTerrainSampler
 var poi_provider: Callable
 var grid_pathfinder: WeightedGridPathfinder = WeightedGridPathfinder.new()
+# Temporary inputs/cache for one deterministic overlay build; never Runtime state.
 var path_world_seed: int = 0
+var path_start_cell: Vector2i = Vector2i.ZERO
+var path_goal_cell: Vector2i = Vector2i.ZERO
 var path_sample_cache: Dictionary = {}
 var graph_cache: Dictionary = {}
 var overlay_cache: Dictionary = {}
@@ -43,6 +45,8 @@ func get_roads_for_region(world_cell: Vector2i, world_seed: int) -> RegionRoadOv
 		WorldCoordinates.REGION_GRID_SIZE - 1,
 		WorldCoordinates.REGION_GRID_SIZE - 1
 	)
+	path_world_seed = world_seed
+	path_sample_cache.clear()
 	for route: WorldRoadRoute in get_route_edges_for_region(world_cell, world_seed):
 		if not _route_may_reach_region(route, global_min, global_max):
 			continue
@@ -57,6 +61,7 @@ func get_roads_for_region(world_cell: Vector2i, world_seed: int) -> RegionRoadOv
 			if route.river_crossing_cells.has(global_cell):
 				cell_flags |= RegionRoadOverlay.RIVER_CROSSING
 			overlay.add_route_cell(region_cell, cell_flags, route)
+	path_sample_cache.clear()
 	overlay_cache[cache_key] = overlay
 	return overlay
 
@@ -257,7 +262,7 @@ func _get_or_create_route(
 func _ensure_route_path(route: WorldRoadRoute, world_seed: int) -> void:
 	if route.path_generated:
 		return
-	var result: Dictionary = _find_path_with_fallback(
+	var result: Dictionary = _find_route_path(
 		world_seed,
 		route.start_global_cell,
 		route.end_global_cell
@@ -281,36 +286,35 @@ func _route_may_reach_region(
 		global_min: Vector2i,
 		global_max: Vector2i
 	) -> bool:
-	var route_min: Vector2i = Vector2i(
-		mini(route.start_global_cell.x, route.end_global_cell.x) - ROAD_PATH_FALLBACK_MARGIN_CELLS,
-		mini(route.start_global_cell.y, route.end_global_cell.y) - ROAD_PATH_FALLBACK_MARGIN_CELLS
-	)
-	var route_max: Vector2i = Vector2i(
-		maxi(route.start_global_cell.x, route.end_global_cell.x) + ROAD_PATH_FALLBACK_MARGIN_CELLS,
-		maxi(route.start_global_cell.y, route.end_global_cell.y) + ROAD_PATH_FALLBACK_MARGIN_CELLS
-	)
-	return not (
-		route_max.x < global_min.x
-		or route_min.x > global_max.x
-		or route_max.y < global_min.y
-		or route_min.y > global_max.y
-	)
+	var expanded_min: Vector2 = Vector2(global_min - Vector2i.ONE * ROAD_PATH_MARGIN_CELLS)
+	var expanded_max: Vector2 = Vector2(global_max + Vector2i.ONE * ROAD_PATH_MARGIN_CELLS)
+	var start: Vector2 = Vector2(route.start_global_cell)
+	var finish: Vector2 = Vector2(route.end_global_cell)
+	var bounds: Rect2 = Rect2(expanded_min, expanded_max - expanded_min + Vector2.ONE)
+	if bounds.has_point(start) or bounds.has_point(finish):
+		return true
+	var corners: Array[Vector2] = [
+		expanded_min,
+		Vector2(expanded_max.x, expanded_min.y),
+		expanded_max,
+		Vector2(expanded_min.x, expanded_max.y),
+	]
+	for index: int in range(corners.size()):
+		if Geometry2D.segment_intersects_segment(
+			start,
+			finish,
+			corners[index],
+			corners[(index + 1) % corners.size()]
+		) != null:
+			return true
+	return false
 
-func _find_path_with_fallback(world_seed: int, start: Vector2i, goal: Vector2i) -> Dictionary:
-	var result: Dictionary = _find_path_in_bounds(
-		world_seed,
-		start,
-		goal,
-		ROAD_PATH_MARGIN_CELLS
-	)
-	var path: Variant = result.get("path", [])
-	if path is Array and not (path as Array).is_empty():
-		return result
+func _find_route_path(world_seed: int, start: Vector2i, goal: Vector2i) -> Dictionary:
 	return _find_path_in_bounds(
 		world_seed,
 		start,
 		goal,
-		ROAD_PATH_FALLBACK_MARGIN_CELLS
+		ROAD_PATH_MARGIN_CELLS
 	)
 
 func _find_path_in_bounds(
@@ -327,8 +331,11 @@ func _find_path_in_bounds(
 		maxi(start.x, goal.x) + margin,
 		maxi(start.y, goal.y) + margin
 	)
-	path_world_seed = world_seed
-	path_sample_cache.clear()
+	if path_world_seed != world_seed:
+		path_world_seed = world_seed
+		path_sample_cache.clear()
+	path_start_cell = start
+	path_goal_cell = goal
 	var astar_result: Dictionary = grid_pathfinder.find_path(
 			start,
 			goal,
@@ -336,7 +343,11 @@ func _find_path_in_bounds(
 			bounds_max,
 			Callable(self, "_road_cell_info"),
 			Callable(self, "_road_step_cost"),
-			TravelCostConfig.minimum_step_seconds(TravelCostConfig.DEFAULT_WALK_SPEED_KMH),
+			# Generated-road search has no existing-road speed bonus, so this remains admissible.
+			TravelCostConfig.travel_seconds(
+				float(WorldCoordinates.REGION_CELL_SIZE_METERS),
+				TravelCostConfig.DEFAULT_WALK_SPEED_KMH
+			),
 			ROAD_PATH_MAX_EXPANSIONS
 		)
 	var raw_path: Variant = astar_result.get("path", [])
@@ -363,16 +374,17 @@ func _empty_path_result() -> Dictionary:
 	return {"path": [], "cost": 0.0, "river_crossing_cells": []}
 
 func _road_cell_info(global_cell: Vector2i) -> Dictionary:
+	# The same corridor used by the Region reach test keeps lazy overlays complete.
+	if _distance_squared_to_path_segment(global_cell) \
+			> float(ROAD_PATH_MARGIN_CELLS * ROAD_PATH_MARGIN_CELLS):
+		return {"passable": false}
 	var cached: Variant = path_sample_cache.get(global_cell, null)
-	var sample: Vector3
-	if cached is Vector3:
-		sample = cached as Vector3
-	else:
-		sample = macro_sampler.sample(path_world_seed, global_cell)
-		path_sample_cache[global_cell] = sample
+	if cached is Dictionary:
+		return cached as Dictionary
+	var sample: Vector3 = macro_sampler.sample(path_world_seed, global_cell)
 	var terrain_type: int = terrain_generator.classify_sample(sample)
 	var river: bool = sample.z > 0.0
-	return {
+	var result: Dictionary = {
 		"passable": TravelCostConfig.is_passable(terrain_type, river, river),
 		"terrain_type": terrain_type,
 		"road": false,
@@ -380,6 +392,18 @@ func _road_cell_info(global_cell: Vector2i) -> Dictionary:
 		"river_crossing": river,
 		"elevation": sample.x,
 	}
+	path_sample_cache[global_cell] = result
+	return result
+
+func _distance_squared_to_path_segment(global_cell: Vector2i) -> float:
+	var start: Vector2 = Vector2(path_start_cell)
+	var segment: Vector2 = Vector2(path_goal_cell - path_start_cell)
+	var length_squared: float = segment.length_squared()
+	if length_squared <= 0.0:
+		return Vector2(global_cell).distance_squared_to(start)
+	var offset: Vector2 = Vector2(global_cell) - start
+	var fraction: float = clampf(offset.dot(segment) / length_squared, 0.0, 1.0)
+	return Vector2(global_cell).distance_squared_to(start + segment * fraction)
 
 func _road_step_cost(
 		_current: Vector2i,

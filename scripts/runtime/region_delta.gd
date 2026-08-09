@@ -45,13 +45,13 @@ func add_feature(feature: RegionFeatureDelta) -> bool:
 	if feature == null or feature.feature_id.is_empty() \
 		or not WorldCoordinates.is_valid_region_cell(feature.region_cell):
 		return false
-	var copy: RegionFeatureDelta = feature.copy()
-	var previous: Variant = added_features.get(copy.feature_id, null)
+	var feature_copy: RegionFeatureDelta = feature.copy()
+	var previous: Variant = added_features.get(feature_copy.feature_id, null)
 	if previous is RegionFeatureDelta \
-		and _same_feature(previous as RegionFeatureDelta, copy):
+		and _same_feature(previous as RegionFeatureDelta, feature_copy):
 		return false
-	added_features[copy.feature_id] = copy
-	removed_feature_ids.erase(copy.feature_id)
+	added_features[feature_copy.feature_id] = feature_copy
+	removed_feature_ids.erase(feature_copy.feature_id)
 	revision += 1
 	return true
 
@@ -92,10 +92,6 @@ func set_development_level(value: int) -> bool:
 	development_level = value
 	revision += 1
 	return true
-
-func ensure_base_generation_version(current_version: int) -> void:
-	if revision == 0 and base_generation_version == 0:
-		base_generation_version = current_version
 
 func copy() -> RegionDelta:
 	var result: RegionDelta = RegionDelta.new(world_cell, base_generation_version)
