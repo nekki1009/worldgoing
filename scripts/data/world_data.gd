@@ -4,7 +4,6 @@ extends RefCounted
 const WORLD_CELLS: Vector2i = Vector2i(10, 10)
 
 var regions: Dictionary = {}
-var sites_by_region: Dictionary = {}
 var terrain_generator: RegionTerrainGenerator = RegionTerrainGenerator.new()
 var poi_generator: WorldPOIGenerator
 var road_generator: WorldRoadGenerator
@@ -30,10 +29,6 @@ func _build_test_data() -> void:
 			)
 			regions[world_cell] = region
 
-			var sites: Array[SiteData] = []
-			sites.append(SiteData.new("test_village", "Test Village", Vector2i(50, 50), "Village"))
-			sites_by_region[world_cell] = sites
-
 func is_valid_world_cell(world_cell: Vector2i) -> bool:
 	return world_cell.x >= 0 and world_cell.y >= 0 \
 		and world_cell.x < WORLD_CELLS.x and world_cell.y < WORLD_CELLS.y
@@ -45,11 +40,20 @@ func get_or_generate_region_terrain(world_cell: Vector2i, world_seed: int) -> Re
 	var region: RegionData = get_region(world_cell)
 	if region == null:
 		return null
+	var region_seed: int = RegionData.derive_seed(
+		world_seed,
+		world_cell,
+		RegionTerrainGenerator.GENERATION_VERSION
+	)
 	if region.terrain_data == null \
-		or region.seed != world_seed \
+		or region.source_world_seed != world_seed \
+		or region.seed != region_seed \
 		or region.terrain_generation_version != RegionTerrainGenerator.GENERATION_VERSION:
 		region.terrain_data = terrain_generator.generate(world_seed, world_cell)
-		region.seed = world_seed
+		region.generated_poi_ids.clear()
+		region.generated_route_ids.clear()
+		region.source_world_seed = world_seed
+		region.seed = region_seed
 		region.terrain_generation_version = RegionTerrainGenerator.GENERATION_VERSION
 	return region.terrain_data
 
@@ -57,15 +61,23 @@ func get_or_generate_region_thumbnail(world_cell: Vector2i, world_seed: int) -> 
 	var region: RegionData = get_region(world_cell)
 	if region == null:
 		return PackedByteArray()
+	var region_seed: int = RegionData.derive_seed(
+		world_seed,
+		world_cell,
+		RegionTerrainGenerator.GENERATION_VERSION
+	)
 	if region.terrain_thumbnail_data.size() != RegionTerrainGenerator.THUMBNAIL_CELL_COUNT \
-		or region.terrain_thumbnail_seed != world_seed \
+		or region.source_world_seed != world_seed \
+		or region.terrain_thumbnail_seed != region_seed \
 		or region.terrain_thumbnail_generation_version != RegionTerrainGenerator.GENERATION_VERSION:
 		region.terrain_thumbnail_data = terrain_generator.generate_thumbnail(world_seed, world_cell)
-		region.terrain_thumbnail_seed = world_seed
+		region.source_world_seed = world_seed
+		region.terrain_thumbnail_seed = region_seed
 		region.terrain_thumbnail_generation_version = RegionTerrainGenerator.GENERATION_VERSION
 	return region.terrain_thumbnail_data
 
 func get_pois_for_region(world_cell: Vector2i, world_seed: int) -> Array[WorldPOIData]:
+	var region: RegionData = get_region(world_cell)
 	var cache_key: String = "poi:%d:%d:%d:%d" % [
 		world_seed,
 		world_cell.x,
@@ -74,21 +86,46 @@ func get_pois_for_region(world_cell: Vector2i, world_seed: int) -> Array[WorldPO
 	]
 	var cached: Variant = poi_cache.get(cache_key, null)
 	if cached is Array:
+		_record_generated_poi_ids(region, cached as Array)
 		return _copy_pois(cached)
 	var generated: Array[WorldPOIData] = poi_generator.generate_for_region(world_seed, world_cell)
 	poi_cache[cache_key] = generated
+	_record_generated_poi_ids(region, generated)
 	return _copy_pois(generated)
 
 func clear_poi_cache() -> void:
 	poi_cache.clear()
+	for region: RegionData in regions.values():
+		region.generated_poi_ids.clear()
 
 func get_roads_for_region(world_cell: Vector2i, world_seed: int) -> RegionRoadOverlay:
-	return road_generator.get_roads_for_region(world_cell, world_seed)
+	var overlay: RegionRoadOverlay = road_generator.get_roads_for_region(world_cell, world_seed)
+	_record_generated_route_ids(get_region(world_cell), get_route_edges_for_region(world_cell, world_seed))
+	return overlay
 
 func get_route_edges_for_region(world_cell: Vector2i, world_seed: int) -> Array[WorldRoadRoute]:
-	return road_generator.get_route_edges_for_region(world_cell, world_seed)
+	var routes: Array[WorldRoadRoute] = road_generator.get_route_edges_for_region(world_cell, world_seed)
+	_record_generated_route_ids(get_region(world_cell), routes)
+	return routes
 
 func clear_road_cache() -> void:
+	road_generator.clear_cache()
+	travel_data_cache.clear()
+	for region: RegionData in regions.values():
+		region.generated_route_ids.clear()
+
+func clear_generated_cache() -> void:
+	for region: RegionData in regions.values():
+		region.terrain_data = null
+		region.source_world_seed = 0
+		region.seed = 0
+		region.terrain_generation_version = 0
+		region.terrain_thumbnail_data = PackedByteArray()
+		region.terrain_thumbnail_seed = 0
+		region.terrain_thumbnail_generation_version = 0
+		region.generated_poi_ids.clear()
+		region.generated_route_ids.clear()
+	poi_cache.clear()
 	road_generator.clear_cache()
 	travel_data_cache.clear()
 
@@ -160,18 +197,20 @@ func find_poi_at(world_cell: Vector2i, region_cell: Vector2i, world_seed: int) -
 			return poi
 	return null
 
-func get_sites_for_region(world_cell: Vector2i) -> Array[SiteData]:
+func get_site_definition(poi: WorldPOIData) -> SiteData:
+	return SiteData.from_poi(poi)
+
+func get_sites_for_region(world_cell: Vector2i, world_seed: int) -> Array[SiteData]:
 	var result: Array[SiteData] = []
-	var stored_sites: Variant = sites_by_region.get(world_cell, [])
-	if stored_sites is Array:
-		for site: Variant in stored_sites:
-			if site is SiteData:
-				result.append(site as SiteData)
+	for poi: WorldPOIData in get_pois_for_region(world_cell, world_seed):
+		var definition: SiteData = get_site_definition(poi)
+		if definition != null:
+			result.append(definition)
 	return result
 
-func find_site_at(world_cell: Vector2i, region_cell: Vector2i) -> SiteData:
-	for site: SiteData in get_sites_for_region(world_cell):
-		if site.region_cell == region_cell:
+func find_site_at(world_cell: Vector2i, region_cell: Vector2i, world_seed: int) -> SiteData:
+	for site: SiteData in get_sites_for_region(world_cell, world_seed):
+		if site.parent_region_cell == region_cell:
 			return site
 	return null
 
@@ -181,6 +220,21 @@ func _copy_pois(source: Array) -> Array[WorldPOIData]:
 		if item is WorldPOIData:
 			result.append(item as WorldPOIData)
 	return result
+
+func _record_generated_poi_ids(region: RegionData, source: Array) -> void:
+	if region == null:
+		return
+	region.generated_poi_ids.clear()
+	for item: Variant in source:
+		if item is WorldPOIData:
+			region.generated_poi_ids.append((item as WorldPOIData).poi_id)
+
+func _record_generated_route_ids(region: RegionData, source: Array[WorldRoadRoute]) -> void:
+	if region == null:
+		return
+	region.generated_route_ids.clear()
+	for route: WorldRoadRoute in source:
+		region.generated_route_ids.append(route.route_id)
 
 func _terrain_for_world_cell(world_cell: Vector2i) -> String:
 	var terrain_index: int = posmod(world_cell.x + world_cell.y * 3, 4)

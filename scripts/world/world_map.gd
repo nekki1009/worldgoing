@@ -2,11 +2,12 @@ class_name WorldMap
 extends Node2D
 
 const GlobalTravelPathType = preload("res://scripts/data/global_travel_path.gd")
+const TravelRuntimeType = preload("res://scripts/runtime/travel_runtime.gd")
+const TravelFailureReasonType = preload("res://scripts/runtime/travel_failure_reason.gd")
+const TravelStatusType = preload("res://scripts/runtime/travel_status.gd")
 
 signal region_enter_requested(world_cell: Vector2i)
 signal debug_state_changed(state: Dictionary)
-signal travel_plan_requested(destination_global_cell: Vector2i, destination_poi_id: String)
-signal travel_confirm_requested
 
 const GRID_SIZE: Vector2i = Vector2i(10, 10)
 const CELL_PIXEL_SIZE: float = 64.0
@@ -17,13 +18,20 @@ const CAMERA_SPEED: float = 900.0
 
 var world_data: WorldData
 var session: GameSession
+var travel_runtime: TravelRuntime
 var hovered_world_cell: Vector2i = Vector2i(-1, -1)
 var selected_poi: WorldPOIData
+var travel_preview: TravelPreviewResult
+var preview_error: String = ""
 
-func setup(p_world_data: WorldData, p_session: GameSession) -> void:
+func setup(p_world_data: WorldData, p_session: GameSession, p_runtime: TravelRuntime = null) -> void:
 	world_data = p_world_data
 	session = p_session
+	travel_runtime = p_runtime if p_runtime != null else TravelRuntimeType.new(session, world_data)
+	travel_runtime.bind(session, world_data)
 	selected_poi = null
+	travel_preview = null
+	preview_error = ""
 	camera.position = MAP_ORIGIN + Vector2(GRID_SIZE.x, GRID_SIZE.y) * CELL_PIXEL_SIZE * 0.5
 	camera.zoom = Vector2.ONE
 	queue_redraw()
@@ -74,23 +82,46 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey:
 		var key_event: InputEventKey = event as InputEventKey
 		if key_event.pressed and not key_event.echo and key_event.keycode == KEY_P:
-			if session.has_travel_plan():
+			if session.is_traveling():
 				return
-			var destination_global_cell: Vector2i = _selected_destination_global_cell()
-			if destination_global_cell != Vector2i(-1, -1):
-				travel_plan_requested.emit(
+			var destination_global_cell: Vector2i = selected_poi.global_region_cell \
+				if selected_poi != null else travel_runtime.resolve_world_destination(session.selected_world_cell)
+			travel_preview = travel_runtime.query_travel_preview(
+					session.party.party_id,
 					destination_global_cell,
 					selected_poi.poi_id if selected_poi != null else ""
 				)
-				get_viewport().set_input_as_handled()
+			preview_error = "" if travel_preview.has_path() else TravelFailureReasonType.to_code(travel_preview.failure_reason)
+			queue_redraw()
+			debug_state_changed.emit(get_debug_state())
+			get_viewport().set_input_as_handled()
 			return
 		if key_event.pressed and not key_event.echo and key_event.keycode == KEY_ENTER:
-			if session.has_travel_plan() and not session.is_traveling():
-				travel_confirm_requested.emit()
+			if travel_preview != null and travel_preview.has_path():
+				var command: TravelCommandResult = travel_runtime.start_travel(
+						session.party.party_id,
+						travel_preview.destination_global_cell,
+						travel_preview.destination_poi_id
+					)
+				if command.success:
+					travel_preview = null
+					preview_error = ""
+				else:
+					preview_error = TravelFailureReasonType.to_code(command.failure_reason)
+				queue_redraw()
+				debug_state_changed.emit(get_debug_state())
 				get_viewport().set_input_as_handled()
 				return
 			if _is_valid_world_cell(session.selected_world_cell):
 				region_enter_requested.emit(session.selected_world_cell)
+				get_viewport().set_input_as_handled()
+				return
+		if key_event.pressed and not key_event.echo and key_event.keycode == KEY_ESCAPE:
+			if travel_preview != null:
+				travel_preview = null
+				preview_error = ""
+				queue_redraw()
+				debug_state_changed.emit(get_debug_state())
 				get_viewport().set_input_as_handled()
 
 func get_debug_state() -> Dictionary:
@@ -126,6 +157,13 @@ func get_debug_state() -> Dictionary:
 	var remaining_path_cells: String = "0"
 	var regions_crossed: String = "0"
 	var path_search_time: String = "None"
+	if travel_preview != null and travel_preview.has_path():
+		path_distance = "%.3f km" % (travel_preview.total_distance_meters / 1000.0)
+		estimated_travel = travel_preview.estimated_duration()
+		path_cells = str(travel_preview.path.cells.size())
+		destination_global_cell = _format_cell(travel_preview.destination_global_cell)
+		regions_crossed = str(travel_preview.regions_crossed)
+		path_search_time = "%.2f ms" % travel_preview.path.path_calculation_milliseconds
 	if active_path != null:
 		path_distance = "%.3f / %.3f km" % [
 			active_path.total_distance_meters / 1000.0,
@@ -173,13 +211,28 @@ func get_debug_state() -> Dictionary:
 		"total_path_cells": total_path_cells,
 		"remaining_path_cells": remaining_path_cells,
 		"regions_crossed": regions_crossed,
-		"travel_status": session.last_travel_message,
-		"travel_error": session.travel_error,
+		"travel_status": _travel_status_label(),
+		"travel_error": preview_error if not preview_error.is_empty() else TravelFailureReasonType.to_code(session.travel_failure_reason),
 		"travel_speed_multiplier": "%.0fx" % session.travel_speed_multiplier,
 		"path_search_time": path_search_time,
 		"poi_name": selected_poi.site_name if selected_poi != null else "No POI",
 		"instruction": "WASD: Move   Wheel: Zoom   Left Click: Select Region/POI   P: Plan Travel   Enter: Confirm / Enter Region   1/2/3: Travel Speed"
 	}
+
+func _travel_status_label() -> String:
+	match session.last_travel_status:
+		TravelStatusType.Code.STARTED:
+			return "Travel started"
+		TravelStatusType.Code.CANCEL_REQUESTED:
+			return "Travel cancelling"
+		TravelStatusType.Code.CANCELLED:
+			return "Travel cancelled"
+		TravelStatusType.Code.ARRIVED:
+			return "Arrived"
+		TravelStatusType.Code.FAILED:
+			return "Travel failed"
+		_:
+			return ""
 
 func _draw() -> void:
 	if world_data == null:
@@ -201,6 +254,7 @@ func _draw() -> void:
 				draw_rect(cell_rect.grow(-5.0), Color("ffffff"), false, 3.0)
 	_draw_poi_markers()
 	_draw_party_marker()
+	_draw_travel_preview()
 	if selected_poi != null:
 		var selected_position: Vector2 = _poi_map_position(selected_poi)
 		draw_circle(selected_position, 9.0, Color("fff1a8"), false, 3.0)
@@ -222,16 +276,16 @@ func _draw_party_marker() -> void:
 	draw_circle(center, 10.0, Color("4f8cff"))
 	draw_circle(center, 13.0, Color("d9e7ff"), false, 2.0)
 
-func _selected_destination_global_cell() -> Vector2i:
-	if selected_poi != null:
-		return selected_poi.global_region_cell
-	if not _is_valid_world_cell(session.selected_world_cell):
-		return Vector2i(-1, -1)
-	return world_data.find_nearest_passable_global_cell(
-		session.selected_world_cell,
-		Vector2i(50, 50),
-		session.world_seed
-	)
+func _draw_travel_preview() -> void:
+	if travel_preview == null or not travel_preview.has_path():
+		return
+	var points: PackedVector2Array = PackedVector2Array()
+	for global_cell: Vector2i in travel_preview.path.cells:
+		points.append(_global_cell_map_position(global_cell))
+	if points.size() >= 2:
+		draw_polyline(points, Color("fff1a8"), 7.0, true)
+	for point: Vector2 in points:
+		draw_circle(point, 5.0, Color("fff7c2"))
 
 func _poi_at_map_position(mouse_global_position: Vector2) -> WorldPOIData:
 	var nearest: WorldPOIData
@@ -248,6 +302,14 @@ func _poi_at_map_position(mouse_global_position: Vector2) -> WorldPOIData:
 func _poi_map_position(poi: WorldPOIData) -> Vector2:
 	return MAP_ORIGIN + Vector2(poi.world_cell.x, poi.world_cell.y) * CELL_PIXEL_SIZE \
 		+ (Vector2(poi.region_cell.x, poi.region_cell.y) + Vector2.ONE * 0.5) \
+		* (CELL_PIXEL_SIZE / float(WorldCoordinates.REGION_GRID_SIZE))
+
+func _global_cell_map_position(global_cell: Vector2i) -> Vector2:
+	var converted: Dictionary = WorldCoordinates.global_region_cell_to_world_region(global_cell)
+	var world_cell: Vector2i = converted["world_cell"] as Vector2i
+	var region_cell: Vector2i = converted["region_cell"] as Vector2i
+	return MAP_ORIGIN + Vector2(world_cell.x, world_cell.y) * CELL_PIXEL_SIZE \
+		+ (Vector2(region_cell.x, region_cell.y) + Vector2.ONE * 0.5) \
 		* (CELL_PIXEL_SIZE / float(WorldCoordinates.REGION_GRID_SIZE))
 
 func _draw_region_thumbnail(cell_rect: Rect2, thumbnail: PackedByteArray) -> void:

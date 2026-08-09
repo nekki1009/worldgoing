@@ -108,17 +108,20 @@ func _build_route_graph(
 	var routes: Array[WorldRoadRoute] = []
 	var edge_keys: Dictionary = {}
 	var degree: Dictionary = {}
+	for candidate: WorldPOIData in pool:
+		degree[candidate.poi_id] = 0
 	for source: WorldPOIData in sources:
 		degree[source.poi_id] = 0
 
 	for source: WorldPOIData in sources:
 		var candidates: Array[Dictionary] = _rank_neighbors(source, pool)
 		var connection_limit: int = _max_connections(source.poi_type)
-		var selected: int = 0
 		for entry: Dictionary in candidates:
-			if selected >= connection_limit:
+			if int(degree.get(source.poi_id, 0)) >= connection_limit:
 				break
 			var candidate: WorldPOIData = entry["poi"] as WorldPOIData
+			if int(degree.get(candidate.poi_id, 0)) >= _max_connections(candidate.poi_type):
+				continue
 			var edge_key: String = stable_route_id(source.poi_id, candidate.poi_id)
 			if edge_keys.has(edge_key):
 				continue
@@ -126,21 +129,26 @@ func _build_route_graph(
 			routes.append(_get_or_create_route(world_seed, source, candidate))
 			degree[source.poi_id] = int(degree.get(source.poi_id, 0)) + 1
 			degree[candidate.poi_id] = int(degree.get(candidate.poi_id, 0)) + 1
-			selected += 1
 
 	# A nearby settlement that had no outgoing choice gets one deterministic fallback.
 	for source: WorldPOIData in sources:
 		if int(degree.get(source.poi_id, 0)) > 0:
 			continue
+		if _max_connections(source.poi_type) <= 0:
+			continue
 		var fallback: Array[Dictionary] = _rank_neighbors(source, pool)
 		for entry: Dictionary in fallback:
 			var candidate: WorldPOIData = entry["poi"] as WorldPOIData
+			if int(degree.get(source.poi_id, 0)) >= _max_connections(source.poi_type):
+				break
+			if int(degree.get(candidate.poi_id, 0)) >= _max_connections(candidate.poi_type):
+				continue
 			var edge_key: String = stable_route_id(source.poi_id, candidate.poi_id)
 			if edge_keys.has(edge_key):
 				continue
 			edge_keys[edge_key] = true
 			routes.append(_get_or_create_route(world_seed, source, candidate))
-			degree[source.poi_id] = 1
+			degree[source.poi_id] = int(degree.get(source.poi_id, 0)) + 1
 			degree[candidate.poi_id] = int(degree.get(candidate.poi_id, 0)) + 1
 			break
 

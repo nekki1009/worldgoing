@@ -1,0 +1,50 @@
+class_name TravelFailureReason
+extends RefCounted
+
+enum Code {
+	NONE,
+	INVALID_PARTY,
+	PARTY_NOT_READY,
+	INVALID_DESTINATION,
+	IMPASSABLE,
+	NO_PATH,
+	DESTINATION_TOO_FAR,
+	ALREADY_TRAVELLING,
+	NO_ACTIVE_TRAVEL,
+	SITE_NOT_FOUND,
+	NOT_AT_SITE,
+	INVALID_PARTY_POSITION,
+	STALE_TRAVEL_STEP,
+	TRAVEL_STEP_FAILED,
+}
+
+static func to_code(reason: int) -> String:
+	match reason:
+		Code.INVALID_PARTY:
+			return "INVALID_PARTY"
+		Code.PARTY_NOT_READY:
+			return "PARTY_NOT_READY"
+		Code.INVALID_DESTINATION:
+			return "INVALID_DESTINATION"
+		Code.IMPASSABLE:
+			return "IMPASSABLE"
+		Code.NO_PATH:
+			return "NO_PATH"
+		Code.DESTINATION_TOO_FAR:
+			return "DESTINATION_TOO_FAR"
+		Code.ALREADY_TRAVELLING:
+			return "ALREADY_TRAVELLING"
+		Code.NO_ACTIVE_TRAVEL:
+			return "NO_ACTIVE_TRAVEL"
+		Code.SITE_NOT_FOUND:
+			return "SITE_NOT_FOUND"
+		Code.NOT_AT_SITE:
+			return "NOT_AT_SITE"
+		Code.INVALID_PARTY_POSITION:
+			return "INVALID_PARTY_POSITION"
+		Code.STALE_TRAVEL_STEP:
+			return "STALE_TRAVEL_STEP"
+		Code.TRAVEL_STEP_FAILED:
+			return "TRAVEL_STEP_FAILED"
+		_:
+			return "NONE"

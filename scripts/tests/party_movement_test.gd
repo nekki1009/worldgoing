@@ -186,34 +186,53 @@ func _test_region_preview_and_movement() -> void:
 	var map: RegionMap = scene.instantiate() as RegionMap
 	get_root().add_child(map)
 	await process_frame
-	var data: RegionTerrainData = _plains_data()
 	movement_session = GameSession.new()
+	movement_session.world_seed = GameSession.DEFAULT_WORLD_SEED
 	movement_session.selected_world_cell = Vector2i.ZERO
-	movement_session.party.initialized = true
+	movement_session.party.initialized = false
 	movement_session.party.current_world_cell = Vector2i.ZERO
 	movement_session.party.current_region_cell = Vector2i(10, 10)
 	movement_navigation = NavigationController.new()
 	get_root().add_child(movement_navigation)
 	movement_navigation.session = movement_session
+	movement_navigation.travel_runtime.bind(movement_session, movement_navigation.world_data)
+	movement_navigation.travel_runtime.ensure_party_spawn(Vector2i.ZERO, Vector2i(10, 10))
+	var data: RegionTerrainData = movement_navigation.world_data.get_or_generate_region_terrain(
+			Vector2i.ZERO,
+			movement_session.world_seed
+		)
+	var roads: RegionRoadOverlay = movement_navigation.world_data.get_roads_for_region(
+			Vector2i.ZERO,
+			movement_session.world_seed
+		)
 	movement_navigation.current_map = map
 	movement_navigation.current_layer = NavigationController.MapLayer.REGION
-	map.local_travel_confirm_requested.connect(movement_navigation.begin_local_travel)
-	var region: RegionData = RegionData.new("test", Vector2i.ZERO, "Test", "Plains")
+	var region: RegionData = movement_navigation.world_data.get_region(Vector2i.ZERO)
 	var empty_pois: Array[WorldPOIData] = []
-	map.setup(region, data, empty_pois, movement_session, RegionRoadOverlay.new())
+	map.setup(region, data, empty_pois, movement_session, roads, movement_navigation.travel_runtime)
+	var destination_global_cell: Vector2i = _find_runtime_destination(
+		movement_navigation.travel_runtime,
+		movement_session
+	)
+	var destination_region: Dictionary = WorldCoordinates.global_region_cell_to_world_region(destination_global_cell)
+	var expected_preview: TravelPreviewResult = movement_navigation.travel_runtime.query_travel_preview(
+			movement_session.party.party_id,
+			destination_global_cell
+		)
+	var expected_travel_seconds: int = expected_preview.estimated_travel_seconds
 
-	assert(map.select_destination(Vector2i(20, 10)), "Valid destination did not create preview")
+	assert(map.select_destination(destination_region["region_cell"] as Vector2i), "Valid destination did not create preview")
 	var before_cancel: int = movement_session.world_time_seconds
 	map.cancel_path_preview()
 	assert(not map.has_path_preview(), "Preview did not cancel")
 	assert(movement_session.world_time_seconds == before_cancel, "Cancel advanced World Time")
 
-	assert(map.select_destination(Vector2i(20, 10)), "Preview could not be recreated")
+	assert(map.select_destination(destination_region["region_cell"] as Vector2i), "Preview could not be recreated")
 	assert(map.confirm_destination(), "Destination confirmation failed")
 	while movement_navigation.travel_loop_running:
 		await process_frame
-	assert(movement_session.party.current_region_cell == Vector2i(20, 10), "Party missed destination")
-	assert(movement_session.world_time_seconds == before_cancel + 720, "Live movement time is not incremental")
+	assert(movement_session.party.current_global_region_cell == destination_global_cell, "Party missed destination")
+	assert(movement_session.world_time_seconds == before_cancel + expected_travel_seconds, "Live movement time is not incremental")
 	assert(not map.is_moving, "Party remained in moving state")
 	for _index: int in range(RegionMap.DebugView.GLOBAL_TRAVEL):
 		var f1_event: InputEventKey = InputEventKey.new()
@@ -221,9 +240,31 @@ func _test_region_preview_and_movement() -> void:
 		f1_event.pressed = true
 		map._unhandled_input(f1_event)
 	assert(map.debug_view == RegionMap.DebugView.GLOBAL_TRAVEL, "F1 did not reach GLOBAL_TRAVEL Debug View")
-	map.queue_free()
-	movement_navigation.queue_free()
-	await process_frame
+	movement_navigation.current_map = null
+	if movement_navigation.travel_runtime.travel_started.is_connected(movement_navigation._on_travel_started):
+		movement_navigation.travel_runtime.travel_started.disconnect(movement_navigation._on_travel_started)
+	map.free()
+	movement_navigation.free()
+	map = null
+	movement_navigation = null
+	movement_session = null
+
+func _find_runtime_destination(runtime: TravelRuntime, session: GameSession) -> Vector2i:
+	var start_region_cell: Vector2i = session.party.get_region_cell()
+	for radius: int in range(1, 20):
+		for y: int in range(maxi(0, start_region_cell.y - radius), mini(WorldCoordinates.REGION_GRID_SIZE - 1, start_region_cell.y + radius) + 1):
+			for x: int in range(maxi(0, start_region_cell.x - radius), mini(WorldCoordinates.REGION_GRID_SIZE - 1, start_region_cell.x + radius) + 1):
+				if maxi(abs(x - start_region_cell.x), abs(y - start_region_cell.y)) != radius:
+					continue
+				var destination: Vector2i = WorldCoordinates.world_region_to_global_region_cell(
+					session.party.get_world_cell(),
+					Vector2i(x, y)
+				)
+				var preview: TravelPreviewResult = runtime.query_travel_preview(session.party.party_id, destination)
+				if preview.success and preview.path != null and preview.path.cells.size() > 1:
+					return destination
+	assert(false, "Could not find a nearby Runtime movement destination")
+	return session.party.current_global_region_cell
 
 func _path(
 		data: RegionTerrainData,

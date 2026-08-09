@@ -1,7 +1,7 @@
 class_name RegionTerrainGenerator
 extends RefCounted
 
-const GENERATION_VERSION: int = 2
+const GENERATION_VERSION: int = RegionData.BASE_GENERATION_VERSION
 const MOUNTAIN_THRESHOLD: float = 0.64
 const FOREST_MOISTURE_THRESHOLD: float = 0.60
 const THUMBNAIL_GRID_SIZE: int = 8
@@ -25,6 +25,7 @@ func generate(world_seed: int, world_cell: Vector2i) -> RegionTerrainData:
 			terrain_data.set_moisture(region_cell, macro_sample.y)
 			terrain_data.set_river_strength(region_cell, macro_sample.z)
 			terrain_data.set_terrain(region_cell, classify_sample(macro_sample))
+	terrain_data.freeze()
 	return terrain_data
 
 func generate_thumbnail(world_seed: int, world_cell: Vector2i) -> PackedByteArray:

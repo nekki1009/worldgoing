@@ -24,7 +24,14 @@ func _run() -> void:
 	var initial_time: int = session.world_time_seconds
 	var terrain: RegionTerrainData = navigation.world_data.get_or_generate_region_terrain(region_coord, TEST_SEED)
 	assert(terrain != null, "Region terrain was not generated through WorldData")
-	assert(navigation.world_data.get_region(region_coord).seed == TEST_SEED, "Region seed was not recorded on RegionData")
+	assert(
+		navigation.world_data.get_region(region_coord).seed == RegionData.derive_seed(
+			TEST_SEED,
+			region_coord,
+			RegionTerrainGenerator.GENERATION_VERSION
+		),
+		"Region seed was not recorded on RegionData"
+	)
 
 	navigation.show_region()
 	await process_frame

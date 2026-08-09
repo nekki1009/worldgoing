@@ -3,6 +3,9 @@ extends RefCounted
 
 const GlobalTravelPathType = preload("res://scripts/data/global_travel_path.gd")
 const RegionRuntimeStateType = preload("res://scripts/runtime/region_runtime_state.gd")
+const SiteRuntimeStateType = preload("res://scripts/runtime/site_runtime_state.gd")
+const TravelFailureReasonType = preload("res://scripts/runtime/travel_failure_reason.gd")
+const TravelStatusType = preload("res://scripts/runtime/travel_status.gd")
 
 const DEFAULT_WORLD_SEED: int = 123456789
 const INITIAL_WORLD_TIME_SECONDS: int = 1 * 86400 + 8 * 3600
@@ -14,14 +17,15 @@ var current_region_id: String = ""
 var current_site_id: String = ""
 var party: PartyData = PartyData.new()
 var region_runtime_states: Dictionary = {}
+var site_runtime_states: Dictionary = {}
 var world_time_seconds: int = INITIAL_WORLD_TIME_SECONDS
 var active_global_travel_path: GlobalTravelPathType
 var global_travel_path_index: int = -1
 var global_travel_confirmed: bool = false
 var travel_speed_multiplier: float = 1.0
 var travel_cancel_requested: bool = false
-var travel_error: String = ""
-var last_travel_message: String = ""
+var travel_failure_reason: int = TravelFailureReasonType.Code.NONE
+var last_travel_status: int = TravelStatusType.Code.NONE
 
 func has_travel_plan() -> bool:
 	return active_global_travel_path != null
@@ -34,7 +38,8 @@ func set_travel_plan(path: GlobalTravelPathType, poi_id: String = "") -> void:
 	global_travel_path_index = 0
 	global_travel_confirmed = false
 	travel_cancel_requested = false
-	travel_error = "" if path == null else path.error_message
+	travel_failure_reason = TravelFailureReasonType.Code.NONE \
+		if path != null and path.has_path() else TravelFailureReasonType.Code.NO_PATH
 	if path != null:
 		path.destination_poi_id = poi_id
 
@@ -60,6 +65,26 @@ func get_region_runtime_state(region_coord: Vector2i) -> RegionRuntimeState:
 		return stored as RegionRuntimeState
 	var created: RegionRuntimeState = RegionRuntimeStateType.new(region_coord)
 	region_runtime_states[region_coord] = created
+	return created
+
+func find_region_runtime_state(region_coord: Vector2i) -> RegionRuntimeState:
+	var stored: Variant = region_runtime_states.get(region_coord, null)
+	return stored as RegionRuntimeState if stored is RegionRuntimeState else null
+
+func find_site_runtime_state(site_id: String) -> SiteRuntimeState:
+	var stored: Variant = site_runtime_states.get(site_id, null)
+	if stored is SiteRuntimeState:
+		return stored as SiteRuntimeState
+	return null
+
+func ensure_site_runtime_state(definition: SiteData) -> SiteRuntimeState:
+	if definition == null or definition.site_id.is_empty():
+		return null
+	var existing: SiteRuntimeState = find_site_runtime_state(definition.site_id)
+	if existing != null:
+		return existing if existing.matches_definition(definition) else null
+	var created: SiteRuntimeState = SiteRuntimeStateType.new(definition)
+	site_runtime_states[definition.site_id] = created
 	return created
 
 func advance_world_time(seconds: int) -> void:

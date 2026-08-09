@@ -20,6 +20,7 @@ var base_speed_kmh: float = TravelCostConfig.DEFAULT_WALK_SPEED_KMH
 var global_world_data: WorldData
 var global_world_seed: int = 0
 var global_cell_info_cache: Dictionary = {}
+var global_cell_info_provider: Callable = Callable()
 
 func find_path(
 		p_terrain_data: RegionTerrainData,
@@ -27,6 +28,23 @@ func find_path(
 		start: Vector2i,
 		destination: Vector2i,
 		p_base_speed_kmh: float
+	) -> PartyPathResult:
+	return find_path_with_cell_info(
+			start,
+			destination,
+			p_base_speed_kmh,
+			Callable(self, "_cell_info"),
+			p_terrain_data,
+			p_road_overlay
+		)
+
+func find_path_with_cell_info(
+		start: Vector2i,
+		destination: Vector2i,
+		p_base_speed_kmh: float,
+		cell_info_provider: Callable,
+		p_terrain_data: RegionTerrainData = null,
+		p_road_overlay: RegionRoadOverlay = null
 	) -> PartyPathResult:
 	var result: PartyPathResult = PartyPathResult.new()
 	terrain_data = p_terrain_data
@@ -37,7 +55,7 @@ func find_path(
 			destination,
 			BOUNDS_MIN,
 			BOUNDS_MAX,
-			Callable(self, "_cell_info"),
+			cell_info_provider,
 			Callable(self, "_step_cost"),
 			TravelCostConfig.minimum_step_seconds(base_speed_kmh)
 		)
@@ -50,7 +68,7 @@ func find_path(
 	if result.cells.is_empty():
 		return result
 	result.total_cost = float(astar_result.get("cost", 0.0))
-	_calculate_path_totals(result)
+	_calculate_path_totals(result, cell_info_provider)
 	return result
 
 func find_global_path(
@@ -58,13 +76,15 @@ func find_global_path(
 		start_global_region_cell: Vector2i,
 		destination_global_region_cell: Vector2i,
 		p_world_seed: int,
-		p_base_speed_kmh: float
+		p_base_speed_kmh: float,
+		p_cell_info_provider: Callable = Callable()
 	) -> GlobalTravelPathType:
 	var result: GlobalTravelPathType = GlobalTravelPathType.new()
 	result.start_global_cell = start_global_region_cell
 	result.destination_global_cell = destination_global_region_cell
 	global_world_data = p_world_data
 	global_world_seed = p_world_seed
+	global_cell_info_provider = p_cell_info_provider
 	base_speed_kmh = p_base_speed_kmh
 	global_cell_info_cache.clear()
 	var started_at_usec: int = Time.get_ticks_usec()
@@ -168,7 +188,7 @@ func _step_cost(
 			base_speed_kmh
 		)
 
-func _calculate_path_totals(result: PartyPathResult) -> void:
+func _calculate_path_totals(result: PartyPathResult, cell_info_provider: Callable) -> void:
 	var distance: float = 0.0
 	var total_seconds: int = 0
 	result.step_travel_seconds.clear()
@@ -178,8 +198,8 @@ func _calculate_path_totals(result: PartyPathResult) -> void:
 		var direction: Vector2i = to_cell - from_cell
 		distance += TravelCostConfig.step_distance_meters(direction)
 		var step_seconds: int = maxi(roundi(TravelCostConfig.step_travel_seconds(
-			get_cell_info(from_cell),
-			get_cell_info(to_cell),
+			_cell_info_from_provider(cell_info_provider, from_cell),
+			_cell_info_from_provider(cell_info_provider, to_cell),
 			direction,
 			base_speed_kmh
 		)), 0)
@@ -194,9 +214,18 @@ func _global_cell_info(global_region_cell: Vector2i) -> Dictionary:
 		return cached as Dictionary
 	if global_world_data == null:
 		return {"passable": false}
-	var result: Dictionary = global_world_data.sample_travel_data(global_world_seed, global_region_cell)
+	var result: Dictionary
+	if global_cell_info_provider.is_valid():
+		var provided: Variant = global_cell_info_provider.call(global_region_cell)
+		result = provided as Dictionary if provided is Dictionary else {"passable": false}
+	else:
+		result = global_world_data.sample_travel_data(global_world_seed, global_region_cell)
 	global_cell_info_cache[global_region_cell] = result
 	return result
+
+func _cell_info_from_provider(cell_info_provider: Callable, cell: Vector2i) -> Dictionary:
+	var provided: Variant = cell_info_provider.call(cell)
+	return provided as Dictionary if provided is Dictionary else {"passable": false}
 
 func _global_step_cost(
 		_current: Vector2i,

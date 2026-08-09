@@ -2,6 +2,7 @@ extends SceneTree
 
 const TEST_SEED: int = 123456789
 const GlobalTravelPathType = preload("res://scripts/data/global_travel_path.gd")
+const TravelStatusType = preload("res://scripts/runtime/travel_status.gd")
 
 func _init() -> void:
 	call_deferred("_run")
@@ -47,7 +48,7 @@ func _run() -> void:
 	assert(navigation.session.party.current_global_region_cell == destination, "Runtime Party missed the destination")
 	assert(navigation.session.world_time_seconds == initial_time + path.estimated_travel_seconds, "Runtime World Time did not advance per stored step cost")
 	assert(path.path_hash() == path_hash, "Runtime travel mutated the stored path")
-	assert(navigation.session.last_travel_message.begins_with("Arrived at"), "Arrival message was not emitted")
+	assert(navigation.session.last_travel_status == TravelStatusType.Code.ARRIVED, "Arrival status was not emitted")
 	assert(navigation.session.party.get_world_cell() != WorldCoordinates.global_region_cell_to_world_region(start)["world_cell"], "Runtime travel never changed Region")
 	print("RUNTIME PASS: %.1f km Global Travel crossed %d Regions at 16x playback in %d frames" % [
 		path.total_distance_meters / 1000.0,
