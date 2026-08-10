@@ -4,6 +4,7 @@ extends Node2D
 const SiteLayoutDataType = preload("res://scripts/data/site_layout_data.gd")
 
 signal debug_state_changed(state: Dictionary)
+signal move_requested(direction: Vector2i)
 
 var runtime_snapshot: SiteRuntimeSnapshot
 
@@ -13,6 +14,7 @@ func setup(p_runtime_snapshot: SiteRuntimeSnapshot) -> void:
 	if camera != null and runtime_snapshot != null and runtime_snapshot.layout != null:
 		camera.position = Vector2(runtime_snapshot.layout.bounds_meters.position) \
 			+ Vector2(runtime_snapshot.layout.bounds_meters.size) * 0.5
+		camera.zoom = Vector2(8.0, 8.0)
 	queue_redraw()
 	debug_state_changed.emit(get_debug_state())
 
@@ -31,7 +33,11 @@ func get_debug_state() -> Dictionary:
 		"world_seed": runtime_snapshot.world_seed,
 		"world_time": _format_world_time(runtime_snapshot.world_time_seconds),
 		"party_id": runtime_snapshot.party_id,
-		"party_position": "Global %s" % _format_cell(runtime_snapshot.party_global_region_cell),
+		"party_position": "Site %s / Global %s" % [
+			_format_cell(runtime_snapshot.party_site_local_cell),
+			_format_cell(runtime_snapshot.party_global_region_cell),
+		] if SiteLayoutDataType.is_valid_cell(runtime_snapshot.party_site_local_cell) \
+			else "Global %s" % _format_cell(runtime_snapshot.party_global_region_cell),
 		"party_state": "At POI" if runtime_snapshot.party_at_site else "Away",
 		"world_cell": _format_cell(runtime_snapshot.parent_world_cell),
 		"hovered_region_cell": "??",
@@ -66,7 +72,7 @@ func get_debug_state() -> Dictionary:
 			runtime_snapshot.site_name,
 			WorldPOIType.to_display_name(runtime_snapshot.site_type),
 		],
-		"instruction": "Deterministic Site Layout   ESC: Return to Region Map"
+		"instruction": "WASD / Arrows: Move   ESC / T: Return to Region Map"
 	}
 
 func _feature_ids() -> Array[String]:
@@ -82,17 +88,40 @@ func _draw() -> void:
 		return
 	var layout: SiteLayoutDataType = runtime_snapshot.layout
 	var bounds: Rect2 = Rect2(Vector2(layout.bounds_meters.position), Vector2(layout.bounds_meters.size))
-	draw_rect(bounds.grow(60.0), Color("211d2b"))
+	draw_rect(bounds.grow(8.0), Color("211d2b"))
 	draw_rect(bounds, TerrainType.to_color(runtime_snapshot.source_terrain_type).darkened(0.18))
 	var path: PackedVector2Array = PackedVector2Array()
 	for point: Vector2i in layout.primary_path_meters:
 		path.append(Vector2(point))
-	draw_polyline(path, Color("caa66b"), 18.0, true)
+	draw_polyline(path, Color("caa66b"), 3.0, true)
 	var landmark_color: Color = WorldPOIType.to_color(runtime_snapshot.site_type).darkened(0.22)
 	for point: Vector2i in layout.landmark_points_meters:
-		draw_circle(Vector2(point), 18.0, landmark_color)
-	draw_circle(Vector2(layout.hub_local_meters), 34.0, WorldPOIType.to_color(runtime_snapshot.site_type))
-	draw_circle(Vector2(layout.entrance_local_meters), 14.0, Color("e8f0f2"))
+		draw_circle(Vector2(point), 3.0, landmark_color)
+	draw_circle(Vector2(layout.hub_local_meters), 5.0, WorldPOIType.to_color(runtime_snapshot.site_type))
+	draw_circle(Vector2(layout.entrance_local_meters), 2.0, Color("e8f0f2"))
+	if SiteLayoutDataType.is_valid_cell(runtime_snapshot.party_site_local_cell):
+		draw_circle(layout.cell_center_meters(runtime_snapshot.party_site_local_cell), 2.5, Color("ffe066"))
+
+func _unhandled_input(event: InputEvent) -> void:
+	if not event is InputEventKey:
+		return
+	var key_event: InputEventKey = event as InputEventKey
+	if not key_event.pressed or key_event.echo:
+		return
+	var direction: Vector2i = Vector2i.ZERO
+	match key_event.keycode:
+		KEY_W, KEY_UP:
+			direction = Vector2i.UP
+		KEY_A, KEY_LEFT:
+			direction = Vector2i.LEFT
+		KEY_S, KEY_DOWN:
+			direction = Vector2i.DOWN
+		KEY_D, KEY_RIGHT:
+			direction = Vector2i.RIGHT
+	if direction == Vector2i.ZERO:
+		return
+	move_requested.emit(direction)
+	get_viewport().set_input_as_handled()
 
 func _format_cell(cell: Vector2i) -> String:
 	return "(%d, %d)" % [cell.x, cell.y]

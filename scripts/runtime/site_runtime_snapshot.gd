@@ -28,6 +28,7 @@ var world_time_seconds: int = 0
 var party_id: String = ""
 var party_global_region_cell: Vector2i = Vector2i(-1, -1)
 var party_at_site: bool = false
+var party_site_local_cell: Vector2i = SiteLayoutDataType.INVALID_CELL
 var revision: int = 0
 var runtime_allocated: bool = false
 var architecture_test_flag: bool = false

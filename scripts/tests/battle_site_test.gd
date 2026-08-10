@@ -34,7 +34,11 @@ func _run() -> void:
 	assert(snapshot.has_preview(), "Battle preview query returned no snapshot")
 	assert(snapshot.size_meters == Vector2(300.0, 300.0), "3 x 100m did not produce a 300m preview")
 	assert(snapshot.footprint_cells.size() == 9, "Battle preview did not project exactly nine cells")
-	print("TEST 3 PASS: typed BattleSiteSnapshot represents the 300m x 300m preview")
+	assert(snapshot.site_layouts.size() == 9, "Battle preview did not compose nine Site bases")
+	for layout: SiteLayoutData in snapshot.site_layouts:
+		assert(layout.layout_kind == SiteLayoutData.LayoutKind.CELL_BASE)
+		assert(layout.has_navigation_base())
+	print("TEST 3 PASS: typed BattleSiteSnapshot represents nine Site bases in a 300m x 300m preview")
 
 	_test_frontage()
 	print("TEST 4 PASS: terrain frontage splits deployment from reserve")
@@ -68,14 +72,20 @@ func _run() -> void:
 
 	_test_snapshot_is_detached(runtime)
 	print("TEST 14 PASS: Presentation snapshot mutation cannot change Runtime data")
+	_test_active_battle_runtime(runtime, snapshot, session)
+	print("TEST 15 PASS: active Battle Runtime owns formations, path commands, movement, and detached snapshots")
 
 	_test_dependency_boundary()
-	print("TEST 15 PASS: Navigation and BattleSiteMap are orchestration/presentation only")
+	print("TEST 16 PASS: Navigation and BattleSiteMap are orchestration/presentation only")
 
 	await _test_region_battle_return()
-	print("TEST 16 PASS: Region -> Battle Preview -> Region replaces the Scene without losing selection")
-	print("TEST 17 PASS: preview uses draw data, not soldier or AI Nodes")
-	print("Battle preview boundary tests passed: 17 cases")
+	print("TEST 17 PASS: Region -> Battle Preview -> Region replaces the Scene without losing selection")
+	print("TEST 18 PASS: preview uses draw data, not soldier or AI Nodes")
+	_test_formation_visual_contract()
+	print("TEST 19 PASS: 100-person Formation geometry and 5-column ranks are deterministic")
+	await _test_max_personnel_visual()
+	print("TEST 20 PASS: 9,000 personnel render as 9,000 GPU instances without Soldier Nodes")
+	print("Battle preview boundary tests passed: 20 cases")
 	quit()
 
 func _test_context_and_footprint(context: BattleSiteContext) -> void:
@@ -101,6 +111,14 @@ func _test_context_validation() -> void:
 	assert(BattleSiteContext.create(TEST_SEED, EXAMPLE_CENTER, valid_attacker, BattleParticipantData.new("a", "D", 10), 0, 2) == null)
 	assert(BattleSiteContext.create(TEST_SEED, EXAMPLE_CENTER, BattleParticipantData.new("a", "A", 0), valid_defender, 0, 2) == null)
 	assert(BattleSiteContext.create(TEST_SEED, EXAMPLE_CENTER, valid_attacker, valid_defender, 0, 2, -1) == null)
+	assert(BattleSiteContext.create(
+		TEST_SEED,
+		EXAMPLE_CENTER,
+		BattleParticipantData.new("a", "A", 4_501),
+		BattleParticipantData.new("d", "D", 4_500),
+		0,
+		2
+	) == null)
 	var context: BattleSiteContext = BattleSiteContext.create(TEST_SEED, EXAMPLE_CENTER, valid_attacker, valid_defender, 0, 2)
 	valid_attacker.participant_id = "changed"
 	assert(context != null and context.attacker.participant_id == "a", "Context retained mutable caller participant data")
@@ -274,6 +292,37 @@ func _test_snapshot_is_detached(runtime: BattlePreviewRuntime) -> void:
 	var queried_again: BattleSiteSnapshot = runtime.query_debug_preview(EXAMPLE_CENTER)
 	assert(queried_again.has_preview() and queried_again.center_terrain == original_terrain)
 
+func _test_active_battle_runtime(
+		runtime: BattlePreviewRuntime,
+		preview: BattleSiteSnapshot,
+		session: GameSession
+	) -> void:
+	var begin: BattleRuntimeResult = runtime.begin_battle(preview)
+	assert(begin.success and begin.snapshot != null, "Active Battle Runtime did not begin")
+	assert(session.has_active_battle(), "GameSession did not own active Battle state")
+	var state: BattleRuntimeState = session.active_battle_state
+	assert(state.formations.size() == 18, "Deployment did not create deterministic formations")
+	var attacker_id: String = ""
+	for key: Variant in state.formations.keys():
+		var formation: BattleFormationData = state.formations[key] as BattleFormationData
+		if formation != null and formation.side == BattleFormationData.Side.ATTACKER:
+			attacker_id = formation.formation_id
+			break
+	assert(not attacker_id.is_empty(), "Attacker formation was not created")
+	var move: BattleRuntimeResult = runtime.issue_move(attacker_id, Vector2(150.0, 150.0))
+	assert(move.success and move.path.size() > 1, "Formation move command did not produce a path")
+	var before: Vector2 = state.find_formation(attacker_id).battle_position_m
+	var advance: BattleRuntimeResult = runtime.advance_battle(1.0)
+	assert(advance.success and advance.changed, "Battle time did not advance formation movement")
+	var after: Vector2 = state.find_formation(attacker_id).battle_position_m
+	assert(after != before, "Formation position did not change continuously")
+	var active_snapshot: BattleSiteSnapshot = runtime.active_snapshot()
+	assert(active_snapshot != null and active_snapshot.active_battle)
+	assert(active_snapshot.formations.size() == state.formations.size())
+	active_snapshot.formations[0].battle_position_m = Vector2.ZERO
+	assert(state.formations[active_snapshot.formations[0].formation_id].battle_position_m != Vector2.ZERO)
+	assert(runtime.leave_battle().success and not session.has_active_battle())
+
 func _test_dependency_boundary() -> void:
 	var region_source: String = FileAccess.get_file_as_string("res://scripts/region/region_map.gd")
 	var navigation_source: String = FileAccess.get_file_as_string("res://scripts/core/navigation_controller.gd")
@@ -317,8 +366,10 @@ func _test_region_battle_return() -> void:
 	var first_battle_id: String = battle_site.snapshot.context.battle_id
 	var first_terrain_hash: String = battle_site.snapshot.terrain_hash
 	var first_preview_hash: String = battle_site.snapshot.preview_hash
-	assert(battle_site.preview_marker_count("attacker") == 10)
-	assert(battle_site.preview_marker_count("defender") == 10)
+	assert(battle_site.preview_marker_count("attacker") == 5)
+	assert(battle_site.preview_marker_count("defender") == 5)
+	assert(battle_site.soldier_multimesh.instance_count == 1_800)
+	assert(battle_site.soldier_multimesh.visible_instance_count == 1_800)
 	assert(_descendant_count(battle_site) < 20, "Battle preview instantiated a large Node population")
 	assert(not _has_soldier_nodes(battle_site), "Battle preview instantiated soldier/AI Nodes")
 	var escape_key: InputEventKey = InputEventKey.new()
@@ -340,6 +391,63 @@ func _test_region_battle_return() -> void:
 	await process_frame
 	map_root.queue_free()
 	navigation.queue_free()
+	await process_frame
+
+func _test_formation_visual_contract() -> void:
+	assert(BattleFormationData.DEFAULT_PERSONNEL == 100)
+	assert(BattleRules.PERSONNEL_PER_FORMATION_MARKER == 100)
+	assert(BattleRules.FORMATIONS_PER_RANK == 5)
+	var deployment_zone: Rect2 = BattleRules.deployment_zone(
+		Vector2(300.0, 300.0),
+		BattleSiteContext.EntryDirection.SOUTH
+	)
+	var positions: Array[Vector2] = BattleRules.formation_marker_positions(
+		deployment_zone,
+		BattleSiteContext.EntryDirection.SOUTH,
+		10
+	)
+	assert(positions.size() == 10)
+	assert(positions[0].y != positions[5].y and positions[0].x == positions[5].x)
+	var formation: BattleFormationData = BattleFormationData.new(
+		"visual_test",
+		BattleFormationData.Side.ATTACKER,
+		100,
+		Vector2(100.0, 100.0)
+	)
+	formation.facing_direction = Vector2.UP
+	assert(BattleSiteMap._formation_world_position(formation, Vector2(0.0, 4.0)) == Vector2(100.0, 96.0))
+	assert(BattleSiteMap._formation_world_position(formation, Vector2(1.0, 0.0)) == Vector2(99.0, 100.0))
+	var first_slot: Vector2 = BattleSiteMap._formation_slot_local(0, 100, 20.0, 10.0)
+	assert(is_equal_approx(first_slot.x, -0.5))
+	assert(is_equal_approx(first_slot.y, 4.0))
+
+func _test_max_personnel_visual() -> void:
+	var world_data: FastWorldData = FastWorldData.new()
+	var center: Vector2i = _find_plain_or_forest_center(world_data)
+	assert(center != INVALID_CELL, "No maximum-personnel test center found")
+	var session: GameSession = _test_session(center)
+	var runtime: BattlePreviewRuntime = _runtime_for(world_data, session)
+	var preview: BattleSiteSnapshot = runtime.query_preview(
+		center,
+		BattleParticipantData.new("max_attacker", "Max Army A", 4_500),
+		BattleParticipantData.new("max_defender", "Max Army B", 4_500),
+		BattleSiteContext.EntryDirection.SOUTH,
+		BattleSiteContext.EntryDirection.NORTH
+	)
+	assert(preview.has_preview())
+	var begin: BattleRuntimeResult = runtime.begin_battle(preview)
+	assert(begin.success and begin.snapshot != null)
+	var battle_site: BattleSiteMap = load("res://scenes/site/BattleSite.tscn").instantiate() as BattleSiteMap
+	get_root().add_child(battle_site)
+	await process_frame
+	battle_site.setup(begin.snapshot)
+	await process_frame
+	assert(battle_site.soldier_multimesh.instance_count == 9_000)
+	assert(battle_site.soldier_multimesh.visible_instance_count == 9_000)
+	assert(_descendant_count(battle_site) < 20)
+	assert(not _has_soldier_nodes(battle_site))
+	battle_site.queue_free()
+	runtime.leave_battle()
 	await process_frame
 
 func _runtime_for(world_data: WorldData, session: GameSession) -> BattlePreviewRuntime:

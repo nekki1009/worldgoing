@@ -10,6 +10,7 @@ enum EntryDirection {
 
 const FOOTPRINT_SIZE_CELLS: Vector2i = Vector2i(3, 3)
 const BATTLE_ID_SALT: int = 41_009
+const MAX_TOTAL_PERSONNEL: int = 9_000
 
 var battle_id: String = ""
 var battle_seed: int = 0
@@ -42,6 +43,7 @@ static func create(
 			or p_attacker.participant_id == p_defender.participant_id \
 			or p_attacker.total_personnel <= 0 \
 			or p_defender.total_personnel <= 0 \
+			or p_attacker.total_personnel + p_defender.total_personnel > MAX_TOTAL_PERSONNEL \
 			or p_battle_sequence < 0:
 		return null
 	if not is_valid_entry_direction(p_attacker_entry_direction) \

@@ -63,11 +63,18 @@ world_meters = global_cell * CELL_SIZE_METERS + intra_cell_offset
 Site 是掛在某個 Region Strategic Cell 上的小尺度場景：
 
 - 例：村莊、洞穴、遺跡。
+- 固定大小：`50 × 50 Site Cell`。
+- 每格代表：`2m × 2m`。
+- Site 實際範圍：`100m × 100m`，正好對應一個 Region Strategic Cell 的實際範圍。
 - Site 有自己的局部座標與場景資料。
 - Site 不取代 Region；Region 只保存 Site 的索引、入口與狀態。
 - 從 Region 進入 Site 時，才載入 Site 的細部地圖與玩法。
 
-Site 座標不可直接當成 Region 座標使用；兩者之間必須透過明確的入口錨點轉換。
+Site 的 `50 × 50` 是座標與邊界契約，不代表必須保存 2,500 筆格子資料；未改動內容仍應由 Seed 重建，玩家改動使用稀疏 Delta。
+
+Site 座標不可直接當成 Region 座標使用；兩者之間必須透過位於父 Strategic Cell 中央的入口錨點轉換。Site 的 `100m × 100m` 局部邊界必須與父 Strategic Cell 的世界公尺邊界一致，但不改變 Region 的 `100 × 100` 戰略格大小。
+
+Party 進入 Site 時從 `(25, 25)` 開始；`PartyData.current_site_local_cell` 是目前 Site 局部位置的唯一真實來源。進入、退出與每次上下左右一格的基本移動都由 `TravelRuntime` 驗證及修改；`SiteMap` 只送出 WASD／方向鍵意圖並顯示 Runtime Snapshot，不能直接改位置。
 
 ## 二、資料與顯示的分離
 
@@ -75,6 +82,21 @@ Site 座標不可直接當成 Region 座標使用；兩者之間必須透過明�
 
 ```text
 RegionCoord + seed
+```
+
+## Battle composite and runtime boundary
+
+Battlefields are composed from nine adjacent Site-sized bases, not a second tactical world:
+
+- Each base is the canonical `SiteLayoutData` 50x50 grid at 2m per cell (100m x 100m).
+- The 3x3 composite is 150x150 derived navigation cells and 300m x 300m; `Region` and normal Site sizes do not change.
+- `SiteLayoutGenerator.generate_cell_base()` supplies compact deterministic terrain/road/river navigation flags. It does not allocate nine POI `SiteRuntimeState` objects.
+- `GameSession.active_battle_state` owns formations, continuous meter positions, paths, revision and elapsed battle time. `BattleSiteMap` consumes detached snapshots and emits movement intents.
+- A Formation represents 100 personnel with a 20m x 10m footprint and 20 x 5 visual slots. The Battle context caps both sides together at 9,000 personnel.
+- `BattleSiteMap` renders one soldier marker per participant through one GPU-instanced `MultiMesh`; Formation state remains the only runtime command/simulation unit. Reserve personnel are presentation-only staging instances until a future command activates them.
+- Active Battle is currently a movement slice only. Damage, AI, combat resolution and Battle persistence are deliberately deferred; saves return typed `BATTLE_ACTIVE` while a battle is running.
+
+```text
         ↓
 RegionGenerator
         ↓
@@ -145,7 +167,11 @@ TileMap、地形預覽、探索 UI
 加入村莊、洞穴、遺跡等真正的小尺度地圖：
 
 - Site 由 Region 入口索引。
-- Site 使用自己的局部資料與場景。
+- Site 使用固定 `50 × 50`、每格 `2m` 的局部座標與場景。
+- Site 邊界對應父 Region Strategic Cell 的 `100m × 100m` 實際範圍。
+- 不預先建立完整格子狀態；維持可重建 Base + 稀疏 Delta。
+- Party 從 `(25, 25)` 進入，基本移動一次一格；位置由 `PartyData` 擁有並由 `TravelRuntime` 驗證修改。
+- `SiteMap` 只負責輸入訊號、Party 標記與其他顯示。
 - 從 Site 返回 Region 時保留必要狀態。
 
 ### 7. Construction Mode
@@ -167,6 +193,8 @@ TileMap、地形預覽、探索 UI
 ### 9. 戰鬥與更細的 Site Gameplay
 
 最後加入戰鬥、互動與 Site 內的細部玩法。這些系統必須建立在前面已穩定的 Region、Site、Unit 與持久化契約上。
+
+目前已先落地 Battle composite 的最小移動切片：戰場由九個 Site base 組成，Formation 是 100 人的執行單位，個人只作為 GPU 視覺實例；完整戰鬥解析仍留在後續階段。
 
 ## 四、後續實作的共通驗證原則
 

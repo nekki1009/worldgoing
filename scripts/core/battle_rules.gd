@@ -1,9 +1,17 @@
 class_name BattleRules
 extends RefCounted
 
+const SiteLayoutDataType = preload("res://scripts/data/site_layout_data.gd")
+const BattleFormationDataType = preload("res://scripts/data/battle_formation_data.gd")
+
 const DEPLOYMENT_ZONE_RATIO: float = 0.20
-const PERSONNEL_PER_FORMATION_MARKER: int = 50
-const FORMATIONS_PER_RANK: int = 10
+const PERSONNEL_PER_FORMATION_MARKER: int = BattleFormationDataType.DEFAULT_PERSONNEL
+const FORMATIONS_PER_RANK: int = 5
+const ROAD_SPEED_MULTIPLIER: float = 1.20
+const PLAINS_SPEED_MULTIPLIER: float = 1.00
+const FOREST_SPEED_MULTIPLIER: float = 0.65
+const MOUNTAIN_SPEED_MULTIPLIER: float = 0.40
+const CROSSING_SPEED_MULTIPLIER: float = 0.67
 
 static func combat_frontage(terrain_type: int) -> int:
 	match terrain_type:
@@ -106,3 +114,47 @@ static func deployment_preview(
 	split["marker_positions_meters"] = formation_marker_positions(zone, entry_direction, marker_count)
 	split["facing"] = facing_vector(entry_direction)
 	return split
+
+static func tactical_speed_multiplier(
+		terrain_type: int,
+		has_road: bool,
+		river_crossing: bool
+	) -> float:
+	if has_road:
+		return ROAD_SPEED_MULTIPLIER
+	var terrain_multiplier: float = PLAINS_SPEED_MULTIPLIER
+	match terrain_type:
+		TerrainType.FOREST:
+			terrain_multiplier = FOREST_SPEED_MULTIPLIER
+		TerrainType.MOUNTAIN:
+			terrain_multiplier = MOUNTAIN_SPEED_MULTIPLIER
+		TerrainType.WATER:
+			return 0.0
+	if river_crossing:
+		terrain_multiplier *= CROSSING_SPEED_MULTIPLIER
+	return terrain_multiplier
+
+static func tactical_step_seconds(
+		current_info: Dictionary,
+		next_info: Dictionary,
+		direction: Vector2i,
+		base_speed_mps: float
+	) -> float:
+	var speed: float = maxf(base_speed_mps, 0.01) * minf(
+		tactical_speed_multiplier(
+			int(next_info.get("terrain_type", TerrainType.WATER)),
+			bool(next_info.get("road", false)),
+			bool(next_info.get("river_crossing", false))
+		),
+		tactical_speed_multiplier(
+			int(current_info.get("terrain_type", TerrainType.WATER)),
+			bool(current_info.get("road", false)),
+			bool(current_info.get("river_crossing", false))
+		)
+	)
+	if speed <= 0.0:
+		return INF
+	var distance: float = float(SiteLayoutDataType.CELL_SIZE_METERS)
+	if direction.x != 0 and direction.y != 0:
+		distance *= sqrt(2.0)
+	return distance / speed

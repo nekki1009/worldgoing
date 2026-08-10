@@ -43,7 +43,8 @@ func _run() -> void:
 	_test_site_layout_bounds()
 	_test_site_layout_snapshot_is_detached()
 	_test_site_layout_dependency_boundary()
-	print("Site runtime tests passed: 33 cases")
+	_test_site_movement_command_guards()
+	print("Site runtime tests passed: 34 cases")
 	quit()
 
 func _test_stable_identity() -> void:
@@ -192,15 +193,38 @@ func _test_region_site_region_lifecycle() -> void:
 	navigation.enter_site_at(poi.region_cell)
 	await process_frame
 	assert(navigation.current_layer == NavigationController.MapLayer.SITE, "Region did not enter Site view")
+	assert(
+		navigation.session.party.current_site_local_cell == SiteLayoutDataType.ENTRANCE_CELL,
+		"Party did not enter Site at the canonical entrance cell"
+	)
+	var site_map: SiteMap = navigation.current_map as SiteMap
+	var movement_key: InputEventKey = InputEventKey.new()
+	movement_key.pressed = true
+	movement_key.keycode = KEY_D
+	site_map._unhandled_input(movement_key)
+	assert(
+		navigation.session.party.current_site_local_cell
+			== SiteLayoutDataType.ENTRANCE_CELL + Vector2i.RIGHT,
+		"Site keyboard input did not move the authoritative Party position"
+	)
+	assert(
+		site_map.runtime_snapshot.party_site_local_cell
+			== navigation.session.party.current_site_local_cell,
+		"SiteMap did not refresh from the Runtime snapshot after movement"
+	)
 	navigation.show_region()
 	await process_frame
 	assert(navigation.current_layer == NavigationController.MapLayer.REGION, "Site did not return to Region view")
 	assert(navigation.session.current_site_id.is_empty(), "Region view kept stale Site identity")
+	assert(
+		navigation.session.party.current_site_local_cell == SiteLayoutDataType.INVALID_CELL,
+		"Leaving Site kept a stale local Party position"
+	)
 	assert(navigation.travel_runtime.set_site_test_flag(poi.poi_id, true).success, "Lifecycle Site command failed")
 	assert(navigation.travel_runtime.get_site_snapshot(poi.poi_id).architecture_test_flag, "Lifecycle Site state was lost")
 	main.queue_free()
 	await process_frame
-	print("SITE TEST 13 PASS: Region/Site/Region lifecycle preserves Site state")
+	print("SITE TEST 13 PASS: Site keyboard movement and Region return preserve ownership")
 
 func _test_site_map_instances_share_logical_state() -> void:
 	var poi: WorldPOIData = _first_poi()
@@ -281,7 +305,9 @@ func _test_navigation_has_no_site_state_ownership() -> void:
 	var source: String = _source("res://scripts/core/navigation_controller.gd")
 	assert(not source.contains("site_runtime_states"), "NavigationController owns Session Site runtime dictionary")
 	assert(not source.contains("SiteRuntimeState"), "NavigationController directly constructs SiteRuntimeState")
-	assert(source.contains("ensure_site_runtime_state"), "NavigationController does not use Site Runtime boundary")
+	assert(not source.contains("current_site_local_cell ="), "NavigationController mutates authoritative Site position")
+	assert(source.contains("begin_site_visit") and source.contains("leave_site"), "NavigationController bypasses Site visit commands")
+	assert(source.contains("move_party_in_site"), "NavigationController does not route Site movement through Runtime")
 	print("SITE TEST 21 PASS: NavigationController delegates Site state to Runtime")
 
 func _test_site_map_consumes_snapshot() -> void:
@@ -401,13 +427,31 @@ func _test_site_layout_isolation() -> void:
 func _test_site_layout_bounds() -> void:
 	var definition: SiteData = world_data.get_site_definition(_first_poi())
 	var layout: SiteLayoutDataType = world_data.get_site_layout(definition)
+	var expected_global_origin: Vector2i = WorldCoordinates.global_region_cell_to_global_meters(
+		definition.global_region_cell
+	)
 	assert(layout != null and layout.is_valid(), "Generated Site layout contract is invalid")
+	assert(SiteLayoutDataType.GRID_SIZE == Vector2i(50, 50), "Site grid is not 50x50")
+	assert(SiteLayoutDataType.CELL_SIZE_METERS == 2, "Site cell is not 2m")
+	assert(
+		layout.bounds_meters.size == Vector2i.ONE * WorldCoordinates.REGION_CELL_SIZE_METERS,
+		"Site physical bounds do not match one Region Strategic Cell"
+	)
+	assert(
+		definition.local_to_global_meters(layout.bounds_meters.position) == expected_global_origin,
+		"Site minimum does not align with its Region Strategic Cell"
+	)
+	assert(
+		definition.local_to_global_meters(layout.bounds_meters.end)
+			== expected_global_origin + layout.bounds_meters.size,
+		"Site maximum does not align with its Region Strategic Cell"
+	)
 	assert(layout.entrance_local_meters == definition.entrance_local_meters, "Layout lost the Site entrance anchor")
 	for point: Vector2i in layout.primary_path_meters:
 		assert(layout.bounds_meters.has_point(point), "Primary path point escaped Site bounds")
 	for point: Vector2i in layout.landmark_points_meters:
 		assert(layout.bounds_meters.has_point(point), "Landmark point escaped Site bounds")
-	print("SITE TEST 31 PASS: Site layout bounds contain entry, hub, path and landmarks")
+	print("SITE TEST 31 PASS: 50x50 Site grid aligns with one Region Strategic Cell")
 
 func _test_site_layout_snapshot_is_detached() -> void:
 	var poi: WorldPOIData = _first_poi()
@@ -434,8 +478,80 @@ func _test_site_layout_dependency_boundary() -> void:
 	var map_source: String = _source("res://scripts/site/site_map.gd")
 	assert(not map_source.contains("SiteLayoutGenerator"), "SiteMap generates authoritative Site layout")
 	assert(not map_source.contains("WorldData"), "SiteMap bypasses the Runtime snapshot boundary")
+	assert(not map_source.contains("move_party_in_site"), "SiteMap mutates Party position directly")
+	assert(map_source.contains("move_requested"), "SiteMap does not expose presentation-only movement input")
 	assert(map_source.contains("runtime_snapshot.layout"), "SiteMap does not render the snapshot layout")
 	print("SITE TEST 33 PASS: Site generator/runtime/presentation dependencies stay one-way")
+
+func _test_site_movement_command_guards() -> void:
+	var poi: WorldPOIData = _first_poi()
+	var session: GameSession = _new_session()
+	session.party.set_global_region_cell(poi.global_region_cell)
+	var runtime: TravelRuntime = TravelRuntime.new(session, world_data)
+	var inactive: SiteRuntimeCommandResult = runtime.move_party_in_site(
+		session.party.party_id,
+		poi.poi_id,
+		Vector2i.RIGHT
+	)
+	assert(
+		not inactive.success
+			and inactive.failure_reason == SiteRuntimeFailureReasonType.Code.PARTY_NOT_AT_SITE,
+		"Inactive Site movement was not rejected with a typed reason"
+	)
+	var began: SiteRuntimeCommandResult = runtime.begin_site_visit(session.party.party_id, poi.poi_id)
+	assert(
+		began.success
+			and session.current_site_id == poi.poi_id
+			and session.party.current_site_local_cell == SiteLayoutDataType.ENTRANCE_CELL,
+		"Site visit command did not initialize the canonical entrance"
+	)
+	var invalid: SiteRuntimeCommandResult = runtime.move_party_in_site(
+		session.party.party_id,
+		poi.poi_id,
+		Vector2i(1, 1)
+	)
+	assert(
+		not invalid.success
+			and invalid.failure_reason == SiteRuntimeFailureReasonType.Code.INVALID_DIRECTION,
+		"Diagonal Site movement was not rejected"
+	)
+	session.party.current_site_local_cell = Vector2i(49, 25)
+	var outside: SiteRuntimeCommandResult = runtime.move_party_in_site(
+		session.party.party_id,
+		poi.poi_id,
+		Vector2i.RIGHT
+	)
+	assert(
+		not outside.success
+			and outside.failure_reason == SiteRuntimeFailureReasonType.Code.OUT_OF_BOUNDS,
+		"Out-of-bounds Site movement was accepted"
+	)
+	var global_before: Vector2i = session.party.current_global_region_cell
+	var time_before: int = session.world_time_seconds
+	var moved: SiteRuntimeCommandResult = runtime.move_party_in_site(
+		session.party.party_id,
+		poi.poi_id,
+		Vector2i.LEFT
+	)
+	assert(moved.success and moved.changed, "Valid Site movement command failed")
+	assert(session.party.current_site_local_cell == Vector2i(48, 25), "Site movement missed its destination")
+	assert(
+		runtime.get_site_snapshot(poi.poi_id).party_site_local_cell == Vector2i(48, 25),
+		"Site movement snapshot lost the authoritative Party position"
+	)
+	assert(
+		session.party.current_global_region_cell == global_before
+			and session.world_time_seconds == time_before,
+		"Minimal Site movement changed Region position or World Time"
+	)
+	var left: SiteRuntimeCommandResult = runtime.leave_site(session.party.party_id)
+	assert(
+		left.success
+			and session.current_site_id.is_empty()
+			and session.party.current_site_local_cell == SiteLayoutDataType.INVALID_CELL,
+		"Site leave command kept active local position"
+	)
+	print("SITE TEST 34 PASS: typed Site movement enforces direction and 50x50 bounds")
 
 func _layout_signature(layout: SiteLayoutDataType) -> String:
 	if layout == null:

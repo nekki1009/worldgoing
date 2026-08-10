@@ -1,6 +1,7 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://scripts/battle/battle_site_map.gd" id="1_battle"]
+[ext_resource type="Texture2D" path="res://assets/battle/soldier_dot.svg" id="2_soldier_dot"]
 
 [node name="BattleSite" type="Node2D"]
 script = ExtResource("1_battle")
@@ -8,6 +9,10 @@ script = ExtResource("1_battle")
 [node name="Camera2D" type="Camera2D" parent="."]
 position = Vector2(600, 600)
 zoom = Vector2(0.85, 0.85)
+
+[node name="SoldierInstances" type="MultiMeshInstance2D" parent="."]
+texture = ExtResource("2_soldier_dot")
+z_index = 2
 
 [node name="BattleDebugPanel" type="CanvasLayer" parent="."]
 layer = 20

@@ -10,6 +10,7 @@ const TravelPreviewResultType = preload("res://scripts/runtime/travel_preview_re
 const TravelCommandResultType = preload("res://scripts/runtime/travel_command_result.gd")
 const TravelCellResultType = preload("res://scripts/runtime/travel_cell_result.gd")
 const SiteEntryQueryResultType = preload("res://scripts/runtime/site_entry_query_result.gd")
+const SiteLayoutDataType = preload("res://scripts/data/site_layout_data.gd")
 const SiteFeatureStateType = preload("res://scripts/runtime/site_feature_state.gd")
 const SiteRuntimeCommandResultType = preload("res://scripts/runtime/site_runtime_command_result.gd")
 const SiteRuntimeFailureReasonType = preload("res://scripts/runtime/site_runtime_failure_reason.gd")
@@ -364,6 +365,87 @@ func get_site_snapshot(site_id: String) -> SiteRuntimeSnapshot:
 	var result: SiteRuntimeQueryResult = query_site_snapshot(site_id)
 	return result.snapshot if result.success else null
 
+func begin_site_visit(party_id: String, site_id: String) -> SiteRuntimeCommandResult:
+	var result: SiteRuntimeCommandResult = SiteRuntimeCommandResultType.new()
+	result.site_id = site_id
+	if session == null or session.party == null or session.party.party_id != party_id:
+		result.failure_reason = SiteRuntimeFailureReasonType.Code.INVALID_PARTY
+		return result
+	if site_id.is_empty():
+		result.failure_reason = SiteRuntimeFailureReasonType.Code.INVALID_SITE_ID
+		return result
+	var definition: SiteData = _find_site_definition(site_id)
+	if definition == null:
+		result.failure_reason = SiteRuntimeFailureReasonType.Code.SITE_NOT_FOUND
+		return result
+	if not session.party.initialized \
+		or session.is_traveling() \
+		or not session.party.is_at(definition.parent_world_cell, definition.parent_region_cell):
+		result.failure_reason = SiteRuntimeFailureReasonType.Code.PARTY_NOT_AT_SITE
+		return result
+	var prepared: SiteRuntimeCommandResult = ensure_site_runtime_state(site_id)
+	if not prepared.success:
+		return prepared
+	result.success = true
+	result.changed = prepared.changed \
+		or session.current_site_id != site_id \
+		or session.party.current_site_local_cell != SiteLayoutDataType.ENTRANCE_CELL
+	result.revision = prepared.revision
+	session.current_site_id = site_id
+	session.party.current_site_local_cell = SiteLayoutDataType.ENTRANCE_CELL
+	return result
+
+func leave_site(party_id: String) -> SiteRuntimeCommandResult:
+	var result: SiteRuntimeCommandResult = SiteRuntimeCommandResultType.new()
+	if session == null or session.party == null or session.party.party_id != party_id:
+		result.failure_reason = SiteRuntimeFailureReasonType.Code.INVALID_PARTY
+		return result
+	result.site_id = session.current_site_id
+	result.success = true
+	result.changed = not session.current_site_id.is_empty() \
+		or SiteLayoutDataType.is_valid_cell(session.party.current_site_local_cell)
+	session.current_site_id = ""
+	session.party.current_site_local_cell = SiteLayoutDataType.INVALID_CELL
+	return result
+
+func move_party_in_site(
+		party_id: String,
+		site_id: String,
+		direction: Vector2i
+	) -> SiteRuntimeCommandResult:
+	var result: SiteRuntimeCommandResult = SiteRuntimeCommandResultType.new()
+	result.site_id = site_id
+	if session == null or session.party == null or session.party.party_id != party_id:
+		result.failure_reason = SiteRuntimeFailureReasonType.Code.INVALID_PARTY
+		return result
+	if site_id.is_empty():
+		result.failure_reason = SiteRuntimeFailureReasonType.Code.INVALID_SITE_ID
+		return result
+	var definition: SiteData = _find_site_definition(site_id)
+	if definition == null:
+		result.failure_reason = SiteRuntimeFailureReasonType.Code.SITE_NOT_FOUND
+		return result
+	if session.current_site_id != site_id \
+		or not session.party.initialized \
+		or session.is_traveling() \
+		or not session.party.is_at(definition.parent_world_cell, definition.parent_region_cell) \
+		or not SiteLayoutDataType.is_valid_cell(session.party.current_site_local_cell):
+		result.failure_reason = SiteRuntimeFailureReasonType.Code.PARTY_NOT_AT_SITE
+		return result
+	if absi(direction.x) + absi(direction.y) != 1:
+		result.failure_reason = SiteRuntimeFailureReasonType.Code.INVALID_DIRECTION
+		return result
+	var destination: Vector2i = session.party.current_site_local_cell + direction
+	if not SiteLayoutDataType.is_valid_cell(destination):
+		result.failure_reason = SiteRuntimeFailureReasonType.Code.OUT_OF_BOUNDS
+		return result
+	session.party.current_site_local_cell = destination
+	var state: SiteRuntimeState = session.find_site_runtime_state(site_id)
+	result.success = true
+	result.changed = true
+	result.revision = state.revision if state != null else 0
+	return result
+
 func set_site_test_flag(site_id: String, enabled: bool) -> SiteRuntimeCommandResult:
 	var result: SiteRuntimeCommandResult = _prepare_site_runtime_command(site_id)
 	if not result.success:
@@ -682,6 +764,8 @@ func _snapshot_for_definition(
 			snapshot.party_at_site = session.party.initialized \
 				and not session.is_traveling() \
 				and session.party.current_global_region_cell == definition.global_region_cell
+			if snapshot.party_at_site and session.current_site_id == definition.site_id:
+				snapshot.party_site_local_cell = session.party.current_site_local_cell
 	return snapshot
 
 func _prepare_site_runtime_command(site_id: String) -> SiteRuntimeCommandResult:

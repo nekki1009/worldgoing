@@ -4,6 +4,7 @@ extends RefCounted
 var party_id: String = "party_1"
 var display_name: String = "Exploration Party"
 var current_global_region_cell: Vector2i = Vector2i(350, 450)
+var current_site_local_cell: Vector2i = SiteLayoutData.INVALID_CELL
 var current_world_cell: Vector2i:
 	get:
 		return get_world_cell()

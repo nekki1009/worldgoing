@@ -1,6 +1,9 @@
 class_name BattleSiteGenerator
 extends RefCounted
 
+const SiteLayoutGeneratorType = preload("res://scripts/core/site_layout_generator.gd")
+const SiteLayoutDataType = preload("res://scripts/data/site_layout_data.gd")
+
 const FOREST_TREE_COUNT: int = 16
 const FOREST_BUSH_COUNT: int = 6
 const PLAINS_GRASS_COUNT: int = 10
@@ -10,7 +13,6 @@ const TREE_SALT: int = 61_101
 const BUSH_SALT: int = 61_201
 const GRASS_SALT: int = 61_301
 const ROCK_SALT: int = 61_401
-const CORRIDOR_SALT: int = 61_501
 
 static func footprint_global_cells(center_global_region_cell: Vector2i) -> Array[Vector2i]:
 	var result: Array[Vector2i] = []
@@ -41,11 +43,13 @@ func generate(
 		float(context.footprint_size.y * WorldCoordinates.REGION_CELL_SIZE_METERS)
 	)
 	var cells: Array[Dictionary] = []
+	var site_layouts: Array[SiteLayoutData] = []
 	for resolved_cell: Dictionary in resolved_cells:
 		var generated_cell: Dictionary = _generate_cell(context, resolved_cell)
 		if generated_cell.is_empty():
 			return {}
 		cells.append(generated_cell)
+		site_layouts.append(generated_cell["site_layout"] as SiteLayoutData)
 	var center_cell: Dictionary = cells[4]
 	var center_terrain: int = int(center_cell["terrain_type"])
 	var attacker_deployment: Dictionary = BattleRules.deployment_preview(
@@ -69,6 +73,7 @@ func generate(
 	return {
 		"context": context,
 		"footprint_cells": cells,
+		"site_layouts": site_layouts,
 		"size_meters": size_meters,
 		"bounds_meters": Rect2(Vector2.ZERO, size_meters),
 		"center_cell": center_cell,
@@ -95,21 +100,29 @@ func _generate_cell(
 	var terrain_type: int = int(resolved_cell["terrain_type"])
 	var has_road: bool = bool(resolved_cell["road"])
 	var has_river: bool = bool(resolved_cell["river"])
+	var site_layout: SiteLayoutData = SiteLayoutGeneratorType.generate_cell_base(
+		context.world_seed,
+		resolved_cell
+	)
+	if site_layout == null or not site_layout.has_navigation_base():
+		return {}
 	var local_origin: Vector2 = battle_local_origin_for(
 		global_cell,
 		context.center_global_region_cell
 	)
-	var road_offsets: Array[Vector2i] = _copy_offsets(
-		resolved_cell.get("road_connection_offsets", []) as Array
+	var road_offsets: Array[Vector2i] = site_layout.road_connection_offsets.duplicate()
+	var river_offsets: Array[Vector2i] = site_layout.river_connection_offsets.duplicate()
+	var details: Dictionary = _generate_details(
+		context,
+		global_cell,
+		local_origin,
+		terrain_type,
+		has_road or has_river,
+		site_layout.site_seed
 	)
-	if has_road and road_offsets.is_empty():
-		_append_fallback_corridor(road_offsets, context, global_cell, CORRIDOR_SALT)
-	var river_offsets: Array[Vector2i] = _copy_offsets(
-		resolved_cell.get("river_connection_offsets", []) as Array
-	)
-	if has_river and river_offsets.is_empty():
-		_append_fallback_corridor(river_offsets, context, global_cell, CORRIDOR_SALT + 1)
+	site_layout.details = details
 	return {
+		"site_layout": site_layout,
 		"global_region_cell": global_cell,
 		"world_cell": resolved_cell["world_cell"] as Vector2i,
 		"region_cell": resolved_cell["region_cell"] as Vector2i,
@@ -124,72 +137,40 @@ func _generate_cell(
 		"river_crossing": bool(resolved_cell["river_crossing"]),
 		"road_connection_offsets": road_offsets,
 		"river_connection_offsets": river_offsets,
-		"details": _generate_details(
-			context,
-			global_cell,
-			local_origin,
-			terrain_type,
-			has_road or has_river
-		),
+		"details": details,
 	}
-
-func _copy_offsets(source: Array) -> Array[Vector2i]:
-	var result: Array[Vector2i] = []
-	for value: Variant in source:
-		if value is Vector2i:
-			_append_unique_offset(result, value as Vector2i)
-	result.sort_custom(Callable(self, "_offset_less"))
-	return result
-
-func _append_unique_offset(result: Array[Vector2i], delta: Vector2i) -> void:
-	var offset: Vector2i = Vector2i(
-		clampi(delta.x, -1, 1),
-		clampi(delta.y, -1, 1)
-	)
-	if offset != Vector2i.ZERO and not result.has(offset):
-		result.append(offset)
-
-func _append_fallback_corridor(
-		result: Array[Vector2i],
-		context: BattleSiteContext,
-		global_cell: Vector2i,
-		salt: int
-	) -> void:
-	if DeterministicHash.value(context.battle_seed, global_cell, salt) % 2 == 0:
-		result.append(Vector2i(-1, 0))
-		result.append(Vector2i(1, 0))
-	else:
-		result.append(Vector2i(0, -1))
-		result.append(Vector2i(0, 1))
 
 func _generate_details(
 		context: BattleSiteContext,
 		global_cell: Vector2i,
 		local_origin: Vector2,
 		terrain_type: int,
-		has_corridor: bool
+		has_corridor: bool,
+		site_seed: int
 	) -> Dictionary:
 	var details: Dictionary = {}
 	match terrain_type:
 		TerrainType.FOREST:
-			var clearing_local: Vector2 = _detail_point(context, global_cell, CLEARING_SALT, 0)
+			var clearing_local: Vector2 = _detail_point(
+				context, global_cell, site_seed, CLEARING_SALT, 0
+			)
 			details["clearing_center_meters"] = local_origin + clearing_local
 			details["trees"] = _detail_points(
-				context, global_cell, local_origin, TREE_SALT, FOREST_TREE_COUNT,
+				context, global_cell, site_seed, local_origin, TREE_SALT, FOREST_TREE_COUNT,
 				clearing_local, 18.0, has_corridor
 			)
 			details["bushes"] = _detail_points(
-				context, global_cell, local_origin, BUSH_SALT, FOREST_BUSH_COUNT,
+				context, global_cell, site_seed, local_origin, BUSH_SALT, FOREST_BUSH_COUNT,
 				clearing_local, 13.0, has_corridor
 			)
 		TerrainType.PLAINS:
 			details["grass"] = _detail_points(
-				context, global_cell, local_origin, GRASS_SALT, PLAINS_GRASS_COUNT,
+				context, global_cell, site_seed, local_origin, GRASS_SALT, PLAINS_GRASS_COUNT,
 				Vector2(-1000.0, -1000.0), 0.0, has_corridor
 			)
 		TerrainType.MOUNTAIN:
 			details["rocks"] = _detail_points(
-				context, global_cell, local_origin, ROCK_SALT, MOUNTAIN_ROCK_COUNT,
+				context, global_cell, site_seed, local_origin, ROCK_SALT, MOUNTAIN_ROCK_COUNT,
 				Vector2(-1000.0, -1000.0), 0.0, has_corridor
 			)
 	return details
@@ -197,6 +178,7 @@ func _generate_details(
 func _detail_points(
 		context: BattleSiteContext,
 		global_cell: Vector2i,
+		site_seed: int,
 		local_origin: Vector2,
 		salt: int,
 		count: int,
@@ -206,7 +188,9 @@ func _detail_points(
 	) -> Array[Vector2]:
 	var result: Array[Vector2] = []
 	for attempt: int in range(count * 3):
-		var local_point: Vector2 = _detail_point(context, global_cell, salt, attempt)
+		var local_point: Vector2 = _detail_point(
+			context, global_cell, site_seed, salt, attempt
+		)
 		if clearing_radius > 0.0 and local_point.distance_to(clearing_local) < clearing_radius:
 			continue
 		if has_corridor and (absf(local_point.x - 50.0) < 11.0 or absf(local_point.y - 50.0) < 11.0):
@@ -219,13 +203,14 @@ func _detail_points(
 func _detail_point(
 		context: BattleSiteContext,
 		global_cell: Vector2i,
+		site_seed: int,
 		salt: int,
 		index: int
 	) -> Vector2:
 	var feature_seed: int = DeterministicHash.value(
 		context.world_seed,
 		global_cell,
-		context.battle_seed + salt
+		site_seed + salt
 	)
 	return Vector2(
 		float(DeterministicHash.int_range(feature_seed, global_cell, salt + index * 2, 8, 92)),
@@ -289,6 +274,3 @@ func _detail_representation(value: Variant) -> String:
 			values.append(_detail_representation(item))
 		return ";".join(values)
 	return str(value)
-
-func _offset_less(a: Vector2i, b: Vector2i) -> bool:
-	return a.y < b.y or (a.y == b.y and a.x < b.x)

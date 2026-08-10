@@ -6,6 +6,7 @@ const RegionRuntimeStateType = preload("res://scripts/runtime/region_runtime_sta
 const SiteRuntimeStateType = preload("res://scripts/runtime/site_runtime_state.gd")
 const TravelFailureReasonType = preload("res://scripts/runtime/travel_failure_reason.gd")
 const TravelStatusType = preload("res://scripts/runtime/travel_status.gd")
+const BattleRuntimeStateType = preload("res://scripts/runtime/battle_runtime_state.gd")
 
 const DEFAULT_WORLD_SEED: int = 123456789
 const INITIAL_WORLD_TIME_SECONDS: int = 1 * 86400 + 8 * 3600
@@ -26,6 +27,19 @@ var travel_speed_multiplier: float = 1.0
 var travel_cancel_requested: bool = false
 var travel_failure_reason: int = TravelFailureReasonType.Code.NONE
 var last_travel_status: int = TravelStatusType.Code.NONE
+var active_battle_state: BattleRuntimeState
+
+func has_active_battle() -> bool:
+	return active_battle_state != null and active_battle_state.is_valid()
+
+func set_active_battle_state(state: BattleRuntimeState) -> bool:
+	if state == null or not state.is_valid():
+		return false
+	active_battle_state = state
+	return true
+
+func clear_active_battle() -> void:
+	active_battle_state = null
 
 func has_travel_plan() -> bool:
 	return active_global_travel_path != null

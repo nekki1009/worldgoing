@@ -9,6 +9,10 @@ enum Code {
 	INVALID_FEATURE_ID,
 	DUPLICATE_FEATURE,
 	FEATURE_NOT_FOUND,
+	INVALID_PARTY,
+	PARTY_NOT_AT_SITE,
+	INVALID_DIRECTION,
+	OUT_OF_BOUNDS,
 }
 
 static func to_code(reason: int) -> String:
@@ -25,5 +29,13 @@ static func to_code(reason: int) -> String:
 			return "DUPLICATE_FEATURE"
 		Code.FEATURE_NOT_FOUND:
 			return "FEATURE_NOT_FOUND"
+		Code.INVALID_PARTY:
+			return "INVALID_PARTY"
+		Code.PARTY_NOT_AT_SITE:
+			return "PARTY_NOT_AT_SITE"
+		Code.INVALID_DIRECTION:
+			return "INVALID_DIRECTION"
+		Code.OUT_OF_BOUNDS:
+			return "OUT_OF_BOUNDS"
 		_:
 			return "NONE"

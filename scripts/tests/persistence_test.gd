@@ -2,6 +2,7 @@ extends SceneTree
 
 const TEST_SEED: int = 246813579
 const REGION_CELL: Vector2i = Vector2i(3, 4)
+const BATTLE_CENTER: Vector2i = Vector2i(352, 431)
 const SAVE_PATH: String = "user://v012_persistence_test.json"
 
 var world_data: WorldData
@@ -17,6 +18,8 @@ func _run() -> void:
 	_test_round_trip()
 	_test_delta_reconstruction()
 	_test_save_rejects_active_travel()
+	_test_save_rejects_active_site()
+	_test_save_rejects_active_battle()
 	_test_corrupt_load_is_atomic()
 	_test_generation_version_validation()
 	_test_invalid_region_data()
@@ -24,7 +27,7 @@ func _run() -> void:
 	_test_no_presentation_dependency()
 	await _test_navigation_session_replacement()
 	_remove_save_file()
-	print("Persistence tests passed: 9 cases")
+	print("Persistence tests passed: 10 cases")
 	quit()
 
 func _test_round_trip() -> void:
@@ -79,6 +82,35 @@ func _test_save_rejects_active_travel() -> void:
 	assert(not result.success, "Save accepted active Travel")
 	assert(result.failure_reason == PersistenceResult.Code.TRAVEL_IN_PROGRESS, "Active Travel failure was not typed")
 	print("TEST 3 PASS: Active Travel save is rejected with typed reason")
+
+func _test_save_rejects_active_site() -> void:
+	var source: GameSession = _new_session()
+	source.current_site_id = "site_active"
+	source.party.current_site_local_cell = SiteLayoutData.ENTRANCE_CELL
+	var result: PersistenceResult = persistence.save_session(source, SAVE_PATH)
+	assert(not result.success, "Save accepted active Site position without persistence support")
+	assert(result.failure_reason == PersistenceResult.Code.SITE_ACTIVE, "Active Site failure was not typed")
+	print("TEST 3B PASS: Active Site save is rejected until local position persistence exists")
+
+func _test_save_rejects_active_battle() -> void:
+	var source: GameSession = _new_session()
+	var converted: Dictionary = WorldCoordinates.global_region_cell_to_world_region(BATTLE_CENTER)
+	source.selected_world_cell = converted["world_cell"] as Vector2i
+	source.selected_region_cell = converted["region_cell"] as Vector2i
+	source.party.set_global_region_cell(BATTLE_CENTER)
+	var runtime: BattlePreviewRuntime = BattlePreviewRuntime.new(
+		source,
+		world_data,
+		RegionRuntime.new(source, world_data)
+	)
+	var preview: BattleSiteSnapshot = runtime.query_debug_preview(BATTLE_CENTER)
+	assert(preview.has_preview(), "Active Battle save test could not build preview")
+	assert(runtime.begin_battle(preview).success, "Active Battle save test could not begin battle")
+	var result: PersistenceResult = persistence.save_session(source, SAVE_PATH)
+	assert(not result.success, "Save accepted active Battle without persistence support")
+	assert(result.failure_reason == PersistenceResult.Code.BATTLE_ACTIVE, "Active Battle failure was not typed")
+	runtime.leave_battle()
+	print("TEST 3C PASS: Active Battle save is rejected until battle persistence exists")
 
 func _test_corrupt_load_is_atomic() -> void:
 	var source: GameSession = _new_session()

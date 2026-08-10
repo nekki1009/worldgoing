@@ -6,6 +6,7 @@ const BattlePreviewRuntimeType = preload("res://scripts/runtime/battle_preview_r
 const RegionRuntimeType = preload("res://scripts/runtime/region_runtime.gd")
 const TravelRuntimeType = preload("res://scripts/runtime/travel_runtime.gd")
 const TravelFailureReasonType = preload("res://scripts/runtime/travel_failure_reason.gd")
+const BattleRuntimeResultType = preload("res://scripts/runtime/battle_runtime_result.gd")
 
 enum MapLayer {
 	WORLD,
@@ -77,8 +78,10 @@ func replace_session(p_session: GameSession) -> bool:
 
 func show_world() -> void:
 	_sync_runtime()
+	if session.has_active_battle():
+		battle_preview_runtime.leave_battle()
 	current_layer = MapLayer.WORLD
-	session.current_site_id = ""
+	travel_runtime.leave_site(session.party.party_id)
 	var world_map: WorldMap = _replace_map(WORLD_MAP_SCENE) as WorldMap
 	world_map.region_enter_requested.connect(enter_region)
 	world_map.debug_state_changed.connect(_on_map_debug_state_changed)
@@ -86,11 +89,13 @@ func show_world() -> void:
 
 func show_region(preserve_selection: bool = false) -> void:
 	_sync_runtime()
+	if session.has_active_battle():
+		battle_preview_runtime.leave_battle()
 	var region: RegionData = world_data.get_region(session.selected_world_cell)
 	if region == null:
 		return
 	current_layer = MapLayer.REGION
-	session.current_site_id = ""
+	travel_runtime.leave_site(session.party.party_id)
 	session.current_region_id = region.region_id
 	var terrain_data: RegionTerrainData = world_data.get_or_generate_region_terrain(
 		session.selected_world_cell,
@@ -128,8 +133,11 @@ func show_site(
 	var site_definition: SiteData = definition if definition != null else world_data.get_site_definition(poi)
 	if site_definition == null:
 		return
-	var ensure_result: SiteRuntimeCommandResult = travel_runtime.ensure_site_runtime_state(site_definition.site_id)
-	if not ensure_result.success:
+	var begin_result: SiteRuntimeCommandResult = travel_runtime.begin_site_visit(
+		session.party.party_id,
+		site_definition.site_id
+	)
+	if not begin_result.success:
 		return
 	var site_snapshot: SiteRuntimeSnapshot = snapshot
 	if site_snapshot == null:
@@ -138,8 +146,9 @@ func show_site(
 			return
 		site_snapshot = query_result.snapshot
 	current_layer = MapLayer.SITE
-	session.current_site_id = site_definition.site_id
+	site_snapshot.party_site_local_cell = session.party.current_site_local_cell
 	var site_map: SiteMap = _replace_map(SITE_MAP_SCENE) as SiteMap
+	site_map.move_requested.connect(_on_site_move_requested)
 	site_map.debug_state_changed.connect(_on_map_debug_state_changed)
 	site_map.setup(site_snapshot)
 
@@ -147,11 +156,40 @@ func show_battle_site(snapshot: BattleSiteSnapshot) -> void:
 	_sync_runtime()
 	if snapshot == null or not snapshot.has_preview():
 		return
+	var begin_result: BattleRuntimeResult = battle_preview_runtime.begin_battle(snapshot)
+	if not begin_result.success or begin_result.snapshot == null:
+		return
 	current_layer = MapLayer.BATTLE_SITE
-	session.current_site_id = ""
+	travel_runtime.leave_site(session.party.party_id)
 	var battle_site: BattleSiteMap = _replace_map(BATTLE_SITE_SCENE) as BattleSiteMap
 	battle_site.debug_state_changed.connect(_on_map_debug_state_changed)
-	battle_site.setup(snapshot)
+	battle_site.formation_move_requested.connect(_on_battle_formation_move_requested)
+	battle_site.setup(begin_result.snapshot)
+
+func _process(delta: float) -> void:
+	if current_layer != MapLayer.BATTLE_SITE or not session.has_active_battle():
+		return
+	var advance_result: BattleRuntimeResult = battle_preview_runtime.advance_battle(delta)
+	if advance_result.success and advance_result.changed:
+		_refresh_battle_site()
+
+func _refresh_battle_site() -> void:
+	if current_map is BattleSiteMap:
+		var snapshot: BattleSiteSnapshot = battle_preview_runtime.active_snapshot()
+		if snapshot != null:
+			(current_map as BattleSiteMap).setup(snapshot)
+
+func _on_battle_formation_move_requested(
+		formation_id: String,
+		target_position_m: Vector2
+	) -> void:
+	_sync_runtime()
+	var result: BattleRuntimeResult = battle_preview_runtime.issue_move(
+		formation_id,
+		target_position_m
+	)
+	if result.success:
+		_refresh_battle_site()
 
 func _replace_map(scene: PackedScene) -> Node2D:
 	if is_instance_valid(current_map):
@@ -312,6 +350,21 @@ func _sync_runtime() -> void:
 func _on_map_debug_state_changed(state: Dictionary) -> void:
 	debug_state_changed.emit(state)
 
+func _on_site_move_requested(direction: Vector2i) -> void:
+	_sync_runtime()
+	if current_layer != MapLayer.SITE or session.current_site_id.is_empty():
+		return
+	var command: SiteRuntimeCommandResult = travel_runtime.move_party_in_site(
+		session.party.party_id,
+		session.current_site_id,
+		direction
+	)
+	if not command.success:
+		return
+	var query: SiteRuntimeQueryResult = travel_runtime.query_site_snapshot(session.current_site_id)
+	if query.success and current_map is SiteMap:
+		(current_map as SiteMap).setup(query.snapshot)
+
 func _unhandled_input(event: InputEvent) -> void:
 	if not event is InputEventKey:
 		return
@@ -347,6 +400,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		MapLayer.SITE:
 			show_region()
 		MapLayer.BATTLE_SITE:
+			battle_preview_runtime.leave_battle()
 			show_region(true)
 		MapLayer.REGION:
 			show_world()

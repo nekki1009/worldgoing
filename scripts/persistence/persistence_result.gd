@@ -12,6 +12,8 @@ enum Code {
 	INVALID_DATA,
 	INVALID_REGION_DELTA,
 	INVALID_WORLD_POSITION,
+	SITE_ACTIVE,
+	BATTLE_ACTIVE,
 }
 
 var success: bool = false
@@ -40,5 +42,9 @@ static func to_code(reason: int) -> String:
 			return "INVALID_REGION_DELTA"
 		Code.INVALID_WORLD_POSITION:
 			return "INVALID_WORLD_POSITION"
+		Code.SITE_ACTIVE:
+			return "SITE_ACTIVE"
+		Code.BATTLE_ACTIVE:
+			return "BATTLE_ACTIVE"
 		_:
 			return "NONE"

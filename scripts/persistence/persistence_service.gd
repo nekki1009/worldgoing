@@ -24,6 +24,13 @@ func save_session(session: GameSession, file_path: String = DEFAULT_SAVE_PATH) -
 	if session.has_travel_plan():
 		result.failure_reason = PersistenceResultType.Code.TRAVEL_IN_PROGRESS
 		return result
+	if session.has_active_battle():
+		result.failure_reason = PersistenceResultType.Code.BATTLE_ACTIVE
+		return result
+	if not session.current_site_id.is_empty() \
+		or session.party.current_site_local_cell != SiteLayoutData.INVALID_CELL:
+		result.failure_reason = PersistenceResultType.Code.SITE_ACTIVE
+		return result
 	var snapshot: SessionSaveData = SessionSaveDataType.capture(session)
 	var validation_reason: int = _validate_snapshot(snapshot, world_data)
 	if validation_reason != PersistenceResultType.Code.NONE:
