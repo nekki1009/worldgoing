@@ -26,7 +26,7 @@ offset_top = 24.0
 offset_right = -24.0
 offset_bottom = 810.0
 grow_horizontal = 0
-mouse_filter = 2
+mouse_filter = 1
 
 [node name="Margin" type="MarginContainer" parent="BattleDebugPanel/Panel"]
 layout_mode = 2
@@ -35,10 +35,44 @@ theme_override_constants/margin_top = 18
 theme_override_constants/margin_right = 20
 theme_override_constants/margin_bottom = 18
 
-[node name="BattleDebugLabel" type="Label" parent="BattleDebugPanel/Panel/Margin"]
+[node name="Content" type="VBoxContainer" parent="BattleDebugPanel/Panel/Margin"]
+layout_mode = 2
+
+[node name="BattleDebugLabel" type="Label" parent="BattleDebugPanel/Panel/Margin/Content"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 21
 text = "BATTLE SITE PROTOTYPE"
+
+[node name="CommandGrid" type="GridContainer" parent="BattleDebugPanel/Panel/Margin/Content"]
+layout_mode = 2
+theme_override_constants/h_separation = 6
+theme_override_constants/v_separation = 6
+columns = 3
+
+[node name="AdvanceButton" type="Button" parent="BattleDebugPanel/Panel/Margin/Content/CommandGrid"]
+custom_minimum_size = Vector2(0, 38)
+layout_mode = 2
+text = "1  Advance"
+
+[node name="FallBackButton" type="Button" parent="BattleDebugPanel/Panel/Margin/Content/CommandGrid"]
+custom_minimum_size = Vector2(0, 38)
+layout_mode = 2
+text = "2  Fall Back"
+
+[node name="AttackButton" type="Button" parent="BattleDebugPanel/Panel/Margin/Content/CommandGrid"]
+custom_minimum_size = Vector2(0, 38)
+layout_mode = 2
+text = "3  Attack"
+
+[node name="WithdrawButton" type="Button" parent="BattleDebugPanel/Panel/Margin/Content/CommandGrid"]
+custom_minimum_size = Vector2(0, 38)
+layout_mode = 2
+text = "4  Withdraw"
+
+[node name="FlankRearButton" type="Button" parent="BattleDebugPanel/Panel/Margin/Content/CommandGrid"]
+custom_minimum_size = Vector2(0, 38)
+layout_mode = 2
+text = "5  Flank Rear"
 
 [node name="Orientation" type="Label" parent="BattleDebugPanel"]
 anchors_preset = 10

@@ -321,7 +321,123 @@ func _test_active_battle_runtime(
 	assert(active_snapshot.formations.size() == state.formations.size())
 	active_snapshot.formations[0].battle_position_m = Vector2.ZERO
 	assert(state.formations[active_snapshot.formations[0].formation_id].battle_position_m != Vector2.ZERO)
+	_test_command_authority(runtime, preview, session)
 	assert(runtime.leave_battle().success and not session.has_active_battle())
+
+func _test_command_authority(
+		runtime: BattlePreviewRuntime,
+		preview: BattleSiteSnapshot,
+		session: GameSession
+	) -> void:
+	var state: BattleRuntimeState = session.active_battle_state
+	var commander_id: String = str(
+		state.commander_formation_ids[BattleFormationData.Side.ATTACKER]
+	)
+	var subordinate_id: String = ""
+	for key: Variant in state.formations.keys():
+		var formation: BattleFormationData = state.formations[key] as BattleFormationData
+		if formation != null and formation.side == BattleFormationData.Side.ATTACKER \
+			and formation.formation_id != commander_id:
+			subordinate_id = formation.formation_id
+			break
+	assert(not commander_id.is_empty() and not subordinate_id.is_empty())
+	assert(state.find_formation(commander_id).is_commander_formation)
+	assert(state.find_formation(subordinate_id).is_controllable() == false)
+	var simple: BattleRuntimeResult = runtime.issue_simple_order(
+		session.party.party_id,
+		subordinate_id,
+		BattleOrderData.SimpleIntent.ADVANCE
+	)
+	assert(simple.success and simple.failure_code == BattleRuntimeResult.Code.ORDER_QUEUED)
+	assert(simple.order_state == BattleOrderData.State.QUEUED)
+	runtime.advance_battle(simple.cost_seconds * 0.5)
+	assert(runtime.query_order(simple.order_id).order_state == BattleOrderData.State.QUEUED)
+	runtime.advance_battle(simple.cost_seconds)
+	var simple_status: BattleRuntimeResult = runtime.query_order(simple.order_id)
+	assert(simple_status.success and simple_status.order_state == BattleOrderData.State.DELIVERED)
+	assert(state.find_formation(subordinate_id).intent == BattleFormationData.Intent.ADVANCE)
+	var before_simple_move: Vector2 = state.find_formation(subordinate_id).battle_position_m
+	runtime.advance_battle(10.0)
+	assert(state.find_formation(subordinate_id).battle_position_m != before_simple_move,
+		"Delivered ADVANCE order did not move the subordinate Formation")
+	var fine: BattleRuntimeResult = runtime.issue_fine_order(
+		session.party.party_id,
+		subordinate_id,
+		BattleOrderData.FineIntent.MOVE_TO,
+		state.find_formation(subordinate_id).battle_position_m + Vector2(30.0, 0.0)
+	)
+	assert(fine.success and fine.failure_code == BattleRuntimeResult.Code.DISPATCH_CREATED)
+	assert(runtime.query_order(fine.order_id).order_state == BattleOrderData.State.EN_ROUTE)
+	runtime.advance_battle(100.0)
+	assert(runtime.query_order(fine.order_id).success, "Fine dispatch was not delivered")
+	assert(runtime.query_order(fine.order_id).order_state == BattleOrderData.State.DELIVERED)
+
+	runtime.leave_battle()
+	var restarted: BattleRuntimeResult = runtime.begin_battle(preview)
+	assert(restarted.success)
+	state = session.active_battle_state
+	commander_id = str(state.commander_formation_ids[BattleFormationData.Side.ATTACKER])
+	subordinate_id = ""
+	for key: Variant in state.formations.keys():
+		var formation: BattleFormationData = state.formations[key] as BattleFormationData
+		if formation != null and formation.side == BattleFormationData.Side.ATTACKER \
+			and formation.formation_id != commander_id:
+			subordinate_id = formation.formation_id
+			break
+	var intercepted: BattleRuntimeResult = runtime.issue_fine_order(
+		session.party.party_id,
+		subordinate_id,
+		BattleOrderData.FineIntent.MOVE_TO,
+		state.find_formation(subordinate_id).battle_position_m + Vector2(30.0, 0.0)
+	)
+	assert(intercepted.success and intercepted.failure_code == BattleRuntimeResult.Code.DISPATCH_CREATED)
+	var dispatch: BattleDispatchData = state.find_dispatch(intercepted.order_id)
+	assert(dispatch != null and dispatch.path.size() > 2)
+	var defender_id: String = ""
+	for key: Variant in state.formations.keys():
+		var formation: BattleFormationData = state.formations[key] as BattleFormationData
+		if formation != null and formation.side == BattleFormationData.Side.DEFENDER:
+			defender_id = formation.formation_id
+			break
+	var intercept_cell: Vector2i = dispatch.path[dispatch.path.size() / 2]
+	state.find_formation(defender_id).battle_position_m = Vector2(intercept_cell) * float(SiteLayoutData.CELL_SIZE_METERS) \
+		+ Vector2.ONE * float(SiteLayoutData.CELL_SIZE_METERS) * 0.5
+	runtime.advance_battle(100.0)
+	var intercepted_status: BattleRuntimeResult = runtime.query_order(intercepted.order_id)
+	assert(not intercepted_status.success \
+		and intercepted_status.failure_code == BattleRuntimeResult.Code.MESSENGER_INTERCEPTED)
+	assert(state.find_dispatch(intercepted.order_id).state == BattleOrderData.State.INTERCEPTED)
+	runtime.leave_battle()
+
+	var npc_attacker: BattleParticipantData = BattleParticipantData.new(
+		"npc_attacker",
+		"NPC Army",
+		1000,
+		"npc_commander",
+		BattleParticipantData.CommanderKind.NPC,
+		0
+	)
+	var npc_defender: BattleParticipantData = BattleParticipantData.new("npc_defender", "NPC Enemy", 800)
+	var npc_preview: BattleSiteSnapshot = runtime.query_preview(
+		preview.context.center_global_region_cell,
+		npc_attacker,
+		npc_defender,
+		BattleSiteContext.EntryDirection.SOUTH,
+		BattleSiteContext.EntryDirection.NORTH
+	)
+	assert(npc_preview.has_preview() and npc_preview.context.attacker.commander_kind == BattleParticipantData.CommanderKind.NPC)
+	assert(runtime.begin_battle(npc_preview).success)
+	state = session.active_battle_state
+	commander_id = str(state.commander_formation_ids[BattleFormationData.Side.ATTACKER])
+	var npc_direct: BattleRuntimeResult = runtime.issue_fine_order(
+		"npc_commander",
+		commander_id,
+		BattleOrderData.FineIntent.SET_FACING,
+		Vector2.ZERO,
+		Vector2.LEFT
+	)
+	assert(npc_direct.success and npc_direct.failure_code == BattleRuntimeResult.Code.ORDER_APPLIED)
+	assert(state.find_formation(commander_id).facing_direction == Vector2.LEFT)
 
 func _test_dependency_boundary() -> void:
 	var region_source: String = FileAccess.get_file_as_string("res://scripts/region/region_map.gd")
@@ -372,6 +488,27 @@ func _test_region_battle_return() -> void:
 	assert(battle_site.soldier_multimesh.visible_instance_count == 1_800)
 	assert(_descendant_count(battle_site) < 20, "Battle preview instantiated a large Node population")
 	assert(not _has_soldier_nodes(battle_site), "Battle preview instantiated soldier/AI Nodes")
+	var selected_attacker: BattleFormationData = null
+	for formation: BattleFormationData in battle_site.active_formations:
+		if formation.side == BattleFormationData.Side.ATTACKER:
+			selected_attacker = formation
+			break
+	assert(selected_attacker != null, "Battle preview has no selectable attacker Formation")
+	battle_site._select_formation(selected_attacker.battle_position_m)
+	var advance_button: Button = battle_site.get_node(
+		"BattleDebugPanel/Panel/Margin/Content/CommandGrid/AdvanceButton"
+	) as Button
+	assert(advance_button != null and not advance_button.disabled,
+		"Advance command button is not available after Formation selection")
+	advance_button.emit_signal("pressed")
+	assert(battle_site.active_orders.size() == 1, "Command button did not reach Battle Runtime")
+	var advance_key: InputEventKey = InputEventKey.new()
+	advance_key.keycode = KEY_1
+	advance_key.pressed = true
+	battle_site._unhandled_input(advance_key)
+	assert(battle_site.selected_formation_id == selected_attacker.formation_id)
+	assert(battle_site.active_orders.size() == 2, "Command shortcut did not reach Battle Runtime")
+	assert(str(battle_site.get_debug_state()["instruction"]).find("1-5") >= 0)
 	var escape_key: InputEventKey = InputEventKey.new()
 	escape_key.keycode = KEY_ESCAPE
 	escape_key.pressed = true
@@ -444,6 +581,16 @@ func _test_max_personnel_visual() -> void:
 	await process_frame
 	assert(battle_site.soldier_multimesh.instance_count == 9_000)
 	assert(battle_site.soldier_multimesh.visible_instance_count == 9_000)
+	assert(battle_site.soldier_instances.texture != null, "Person dot texture is missing")
+	var active_personnel: int = 0
+	var active_visual_instances: int = 0
+	for formation: BattleFormationData in battle_site.active_formations:
+		active_personnel += formation.personnel_count
+		var range_value: Dictionary = battle_site.formation_instance_ranges[formation.formation_id]
+		active_visual_instances += int(range_value["count"])
+	assert(active_visual_instances == active_personnel,
+		"Formation personnel is not mapped one-dot-per-person")
+	assert(battle_site.get_debug_state()["person_visual"] == "1 dot per person (1.60m)")
 	assert(_descendant_count(battle_site) < 20)
 	assert(not _has_soldier_nodes(battle_site))
 	battle_site.queue_free()

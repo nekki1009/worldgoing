@@ -238,5 +238,14 @@ Runtime 依下列順序驗證：
 - 其他隊伍收到的是延遲中的簡單 intent；精細命令會顯示傳令中，傳令到達後才執行。
 - 傳令在途中可能被敵方 Formation 攔截；被攔截的精細命令不會執行，且不會自動重派。
 - 把 PC 換成 NPC commander 不改變上述規則。
+
+## 10. 本次實作紀錄
+
+- Phase 0–1：已完成 commander identity、commander Formation 標記、同方權限與 PC/NPC 直屬精細命令。
+- Phase 2：已完成五種簡單命令的 deterministic delay queue。
+- Phase 3：已完成 data-only messenger、路徑移動、線段攔截、`query_order()` 非同步狀態與 typed failure。
+- Phase 4：已完成 Formation 接敵狀態、隊長自治與命令 deferred/resume。
+- Phase 5：已完成 BattleSiteMap 的命令狀態、傳令位置／攔截標記與架構文件更新。
+- 回歸證據：`battle_site_test.gd` 20/20 PASS，包含 PC/NPC、延遲 `ADVANCE` 命令確實移動 subordinate、傳令抵達、攔截與既有 100 人／9,000 人視覺契約；Godot editor parse 與 `git diff --check` 另行執行。
 - 直接遇敵時由隊長先做局部決定，遠端命令不會瞬間奪權。
 - 所有狀態都由 Session／Battle Runtime 保存，畫面只是 detached snapshot 的呈現。

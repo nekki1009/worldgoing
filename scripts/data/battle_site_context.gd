@@ -41,6 +41,9 @@ static func create(
 	if p_attacker.participant_id.strip_edges().is_empty() \
 			or p_defender.participant_id.strip_edges().is_empty() \
 			or p_attacker.participant_id == p_defender.participant_id \
+			or not p_attacker.has_valid_commander() \
+			or not p_defender.has_valid_commander() \
+			or p_attacker.commander_id == p_defender.commander_id \
 			or p_attacker.total_personnel <= 0 \
 			or p_defender.total_personnel <= 0 \
 			or p_attacker.total_personnel + p_defender.total_personnel > MAX_TOTAL_PERSONNEL \

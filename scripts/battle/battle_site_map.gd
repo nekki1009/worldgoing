@@ -3,25 +3,29 @@ extends Node2D
 
 signal debug_state_changed(state: Dictionary)
 signal formation_move_requested(formation_id: String, target_position_m: Vector2)
+signal simple_order_requested(formation_id: String, intent: int)
 
 const BATTLE_PIXELS_PER_METER: float = 4.0
 const CAMERA_SPEED_PIXELS: float = 900.0
 const CAMERA_MARGIN_METERS: float = 60.0
 const MIN_ZOOM: float = 0.50
 const MAX_ZOOM: float = 2.50
-const SOLDIER_MARKER_SIZE_METERS: float = 0.60
+const SOLDIER_MARKER_SIZE_METERS: float = 1.60
 const FORMATION_COLUMNS: int = 20
 const FORMATION_ROWS: int = 5
 const RESERVE_STAGING_BAND_METERS: float = 60.0
 
 @onready var camera: Camera2D = $Camera2D
 @onready var soldier_instances: MultiMeshInstance2D = $SoldierInstances
-@onready var battle_debug_label: Label = $BattleDebugPanel/Panel/Margin/BattleDebugLabel
+@onready var battle_debug_label: Label = $BattleDebugPanel/Panel/Margin/Content/BattleDebugLabel
+@onready var command_grid: GridContainer = $BattleDebugPanel/Panel/Margin/Content/CommandGrid
 
 var context: BattleSiteContext
 var snapshot: BattleSiteSnapshot
 var generated: Dictionary = {}
 var active_formations: Array[BattleFormationData] = []
+var active_orders: Array[BattleOrderData] = []
+var active_dispatches: Array[BattleDispatchData] = []
 var selected_formation_id: String = ""
 var camera_initialized: bool = false
 var soldier_multimesh: MultiMesh
@@ -31,6 +35,7 @@ var visual_reserve_counts: Dictionary = {}
 var visual_battle_id: String = ""
 var visual_revision: int = -1
 var visual_total_personnel: int = -1
+var command_status: String = ""
 
 func _ready() -> void:
 	var soldier_mesh: QuadMesh = QuadMesh.new()
@@ -40,6 +45,24 @@ func _ready() -> void:
 	soldier_multimesh.use_colors = true
 	soldier_multimesh.mesh = soldier_mesh
 	soldier_instances.multimesh = soldier_multimesh
+	if soldier_instances.texture == null:
+		soldier_instances.texture = load("res://assets/battle/soldier_dot.svg") as Texture2D
+	$BattleDebugPanel/Panel/Margin/Content/CommandGrid/AdvanceButton.pressed.connect(
+		_emit_simple_command.bind(BattleOrderData.SimpleIntent.ADVANCE)
+	)
+	$BattleDebugPanel/Panel/Margin/Content/CommandGrid/FallBackButton.pressed.connect(
+		_emit_simple_command.bind(BattleOrderData.SimpleIntent.FALL_BACK)
+	)
+	$BattleDebugPanel/Panel/Margin/Content/CommandGrid/AttackButton.pressed.connect(
+		_emit_simple_command.bind(BattleOrderData.SimpleIntent.ATTACK)
+	)
+	$BattleDebugPanel/Panel/Margin/Content/CommandGrid/WithdrawButton.pressed.connect(
+		_emit_simple_command.bind(BattleOrderData.SimpleIntent.WITHDRAW)
+	)
+	$BattleDebugPanel/Panel/Margin/Content/CommandGrid/FlankRearButton.pressed.connect(
+		_emit_simple_command.bind(BattleOrderData.SimpleIntent.FLANK_REAR)
+	)
+	_update_command_controls()
 
 func setup(p_snapshot: BattleSiteSnapshot) -> void:
 	if p_snapshot == null or not p_snapshot.has_preview():
@@ -62,6 +85,12 @@ func setup(p_snapshot: BattleSiteSnapshot) -> void:
 		"preview_hash": snapshot.preview_hash,
 	}
 	active_formations = _presentation_formations(snapshot)
+	active_orders.clear()
+	for order: BattleOrderData in snapshot.orders:
+		active_orders.append(order.copy())
+	active_dispatches.clear()
+	for dispatch: BattleDispatchData in snapshot.dispatches:
+		active_dispatches.append(dispatch.copy())
 	var rebuild_soldiers: bool = _visual_layout_changed()
 	if rebuild_soldiers:
 		_rebuild_soldier_instances()
@@ -69,11 +98,13 @@ func setup(p_snapshot: BattleSiteSnapshot) -> void:
 		_sync_active_soldier_instances()
 	visual_revision = snapshot.revision
 	if reset_camera:
+		command_status = ""
 		var size_meters: Vector2 = generated["size_meters"] as Vector2
 		camera.position = meters_to_pixels(size_meters * 0.5)
 		camera.zoom = Vector2(0.85, 0.85)
 		camera_initialized = true
 	_update_debug_panel()
+	_update_command_controls()
 	queue_redraw()
 	debug_state_changed.emit(get_debug_state())
 
@@ -100,6 +131,15 @@ func _process(delta: float) -> void:
 		_clamp_camera()
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey:
+		var key_event: InputEventKey = event as InputEventKey
+		if not key_event.pressed or key_event.echo:
+			return
+		var simple_intent: int = _simple_intent_for_key(key_event.keycode)
+		if simple_intent >= 0:
+			_emit_simple_command(simple_intent)
+			get_viewport().set_input_as_handled()
+		return
 	if not event is InputEventMouseButton:
 		return
 	var mouse_event: InputEventMouseButton = event as InputEventMouseButton
@@ -139,6 +179,11 @@ func get_debug_state() -> Dictionary:
 		],
 		"party_state": "Click to select | Right-click to move" if snapshot.active_battle \
 			else "Initial deployment / Off-map reserve",
+		"person_visual": "1 dot per person (%.2fm)" % SOLDIER_MARKER_SIZE_METERS,
+		"selected_formation": selected_formation_id,
+		"command_status": command_status,
+		"order_count": active_orders.size(),
+		"dispatch_count": active_dispatches.size(),
 		"world_cell": _format_cell(context.center_world_cell),
 		"hovered_region_cell": "??",
 		"selected_region_cell": _format_cell(context.center_region_cell),
@@ -154,8 +199,54 @@ func get_debug_state() -> Dictionary:
 		"road": "Yes" if bool(center["road"]) else "No",
 		"river_crossing": "Yes" if bool(center["river_crossing"]) else "No",
 		"site": context.battle_id,
-		"instruction": "WASD: Camera   Wheel: Zoom   Click: Select   Right-click: Move   ESC: Return",
+		"instruction": "WASD: Camera   Wheel: Zoom   Click: Select   Right-click: Move   1-5: Commands   ESC: Return",
 	}
+
+func set_command_result(result: BattleRuntimeResult) -> void:
+	if result == null:
+		return
+	var code: String = BattleRuntimeResult.code_name(result.failure_code)
+	if result.order_id.is_empty():
+		command_status = code
+	else:
+		command_status = "%s %s (%s)" % [
+			result.order_id,
+			BattleOrderData.state_code(result.order_state),
+			code,
+		]
+	_update_debug_panel()
+	queue_redraw()
+	debug_state_changed.emit(get_debug_state())
+
+func _emit_simple_command(intent: int) -> void:
+	if selected_formation_id.is_empty():
+		command_status = "SELECT_FORMATION_FIRST"
+		_update_debug_panel()
+		debug_state_changed.emit(get_debug_state())
+		return
+	simple_order_requested.emit(selected_formation_id, intent)
+
+func _simple_intent_for_key(keycode: Key) -> int:
+	match keycode:
+		KEY_1:
+			return BattleOrderData.SimpleIntent.ADVANCE
+		KEY_2:
+			return BattleOrderData.SimpleIntent.FALL_BACK
+		KEY_3:
+			return BattleOrderData.SimpleIntent.ATTACK
+		KEY_4:
+			return BattleOrderData.SimpleIntent.WITHDRAW
+		KEY_5:
+			return BattleOrderData.SimpleIntent.FLANK_REAR
+		_:
+			return -1
+
+func _update_command_controls() -> void:
+	if command_grid == null:
+		return
+	for child: Node in command_grid.get_children():
+		if child is BaseButton:
+			(child as BaseButton).disabled = selected_formation_id.is_empty()
 
 func preview_marker_count(side: String) -> int:
 	var key: String = "attacker_deployment" if side == "attacker" else "defender_deployment"
@@ -181,6 +272,7 @@ func _draw() -> void:
 	_draw_grid(size_pixels)
 	_draw_deployment_preview(generated["attacker_deployment"] as Dictionary, Color("3f8cff"))
 	_draw_deployment_preview(generated["defender_deployment"] as Dictionary, Color("e85f62"))
+	_draw_dispatches()
 	_draw_formations()
 
 func _draw_ground_cell(cell: Dictionary) -> void:
@@ -299,33 +391,15 @@ func _draw_deployment_preview(deployment: Dictionary, color: Color) -> void:
 	draw_rect(zone_pixels, color.lightened(0.25), false, 4.0)
 	if snapshot != null and snapshot.active_battle:
 		return
-	var facing: Vector2 = deployment["facing"] as Vector2
-	for value: Variant in deployment["marker_positions_meters"] as Array:
-		var marker: Vector2 = meters_to_pixels(value as Vector2)
-		draw_circle(marker, 13.0, Color("152132"))
-		draw_circle(marker, 9.0, color)
-		draw_line(marker, marker + facing * 18.0, Color.WHITE, 3.0, true)
 
 func _draw_formations() -> void:
 	for formation: BattleFormationData in active_formations:
-		var center: Vector2 = meters_to_pixels(formation.battle_position_m)
-		var color: Color = Color("4d98ff") if formation.side == BattleFormationData.Side.ATTACKER \
-			else Color("e8646a")
-		var fill_color: Color = color
-		fill_color.a = 0.26 if formation.formation_id == selected_formation_id else 0.10
 		if formation.formation_id == selected_formation_id:
-			color = color.lightened(0.30)
-		draw_set_transform(center, _formation_rotation(formation), Vector2.ONE)
-		var size_pixels: Vector2 = Vector2(formation.width_m, formation.depth_m) * BATTLE_PIXELS_PER_METER
-		draw_rect(Rect2(-size_pixels * 0.5, size_pixels), fill_color)
-		draw_rect(Rect2(-size_pixels * 0.5, size_pixels), Color.WHITE, false, 2.0)
-		draw_line(
-			Vector2(0.0, 0.0),
-			Vector2(0.0, formation.depth_m * BATTLE_PIXELS_PER_METER * 0.65),
-			Color.WHITE,
-			3.0
-		)
-		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+			var center: Vector2 = meters_to_pixels(formation.battle_position_m)
+			draw_set_transform(center, _formation_rotation(formation), Vector2.ONE)
+			var size_pixels: Vector2 = Vector2(formation.width_m, formation.depth_m) * BATTLE_PIXELS_PER_METER
+			draw_rect(Rect2(-size_pixels * 0.5, size_pixels), Color.WHITE, false, 2.0)
+			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 		if formation.formation_id == selected_formation_id and formation.path.size() > 1:
 			var path_points: PackedVector2Array = PackedVector2Array()
 			for cell: Vector2i in formation.path:
@@ -334,6 +408,18 @@ func _draw_formations() -> void:
 					+ Vector2.ONE * float(SiteLayoutData.CELL_SIZE_METERS) * 0.5
 				))
 			draw_polyline(path_points, Color(1.0, 1.0, 1.0, 0.65), 3.0, true)
+
+func _draw_dispatches() -> void:
+	for dispatch: BattleDispatchData in active_dispatches:
+		var point: Vector2 = meters_to_pixels(dispatch.position_m)
+		if dispatch.state == BattleOrderData.State.EN_ROUTE:
+			draw_circle(point, 6.0, Color("f8d477"))
+			draw_line(point + Vector2(-10.0, 0.0), point + Vector2(10.0, 0.0), Color("fff2b2"), 2.0)
+			draw_line(point + Vector2(0.0, -10.0), point + Vector2(0.0, 10.0), Color("fff2b2"), 2.0)
+		elif dispatch.state == BattleOrderData.State.INTERCEPTED:
+			point = meters_to_pixels(dispatch.intercepted_at_m)
+			draw_line(point + Vector2(-12.0, -12.0), point + Vector2(12.0, 12.0), Color("ff5d6c"), 4.0)
+			draw_line(point + Vector2(12.0, -12.0), point + Vector2(-12.0, 12.0), Color("ff5d6c"), 4.0)
 
 func _select_formation(position_m: Vector2) -> void:
 	selected_formation_id = ""
@@ -344,6 +430,7 @@ func _select_formation(position_m: Vector2) -> void:
 		if absf(local.x) <= formation.width_m * 0.5 and absf(local.y) <= formation.depth_m * 0.5:
 			selected_formation_id = formation.formation_id
 			break
+	_update_command_controls()
 	queue_redraw()
 
 func _presentation_formations(source: BattleSiteSnapshot) -> Array[BattleFormationData]:
@@ -493,12 +580,12 @@ func _write_reserve_instances(
 	return start_index + reserve
 
 func _set_soldier_instance(index: int, position_m: Vector2, color: Color) -> void:
-	var transform: Transform2D = Transform2D()
-	transform.origin = meters_to_pixels(position_m)
+	var instance_transform: Transform2D = Transform2D()
+	instance_transform.origin = meters_to_pixels(position_m)
 	var marker_pixels: float = SOLDIER_MARKER_SIZE_METERS * BATTLE_PIXELS_PER_METER
-	transform.x = Vector2(marker_pixels, 0.0)
-	transform.y = Vector2(0.0, marker_pixels)
-	soldier_multimesh.set_instance_transform_2d(index, transform)
+	instance_transform.x = Vector2(marker_pixels, 0.0)
+	instance_transform.y = Vector2(0.0, marker_pixels)
+	soldier_multimesh.set_instance_transform_2d(index, instance_transform)
 	soldier_multimesh.set_instance_color(index, color)
 
 static func _formation_slot_local(
@@ -509,10 +596,10 @@ static func _formation_slot_local(
 ) -> Vector2:
 	var count: int = clampi(personnel_count, 1, FORMATION_COLUMNS * FORMATION_ROWS)
 	var rows_used: int = ceili(float(count) / float(FORMATION_COLUMNS))
-	var row: int = index / FORMATION_COLUMNS
+	var row: int = floori(float(index) / float(FORMATION_COLUMNS))
 	var slot: int = index % FORMATION_COLUMNS
 	var count_in_row: int = mini(FORMATION_COLUMNS, count - row * FORMATION_COLUMNS)
-	var row_offset: int = (FORMATION_ROWS - rows_used) / 2
+	var row_offset: int = floori(float(FORMATION_ROWS - rows_used) / 2.0)
 	var actual_row: int = row_offset + row
 	var column: int = _center_out_column(slot, count_in_row)
 	var x: float = -width_m * 0.5 + width_m * (float(column) + 0.5) / float(FORMATION_COLUMNS)
@@ -555,7 +642,7 @@ static func _reserve_person_position(
 		or entry_direction == BattleSiteContext.EntryDirection.SOUTH else size_meters.y
 	var lateral_slots: int = maxi(floori(lateral_size), 1)
 	var lateral_index: int = index % lateral_slots
-	var depth_index: int = index / lateral_slots
+	var depth_index: int = floori(float(index) / float(lateral_slots))
 	var lateral: float = (float(lateral_index) + 0.5) * lateral_size / float(lateral_slots)
 	var depth: float = (float(depth_index) + 0.5) * 2.0
 	match entry_direction:
@@ -625,6 +712,7 @@ Center Global Cell: %s
 Battle Size: 300m x 300m
 Center Terrain: %s
 Terrain Hash: %s
+Command: %s
 Road Cells: %d   River Cells: %d
 
 ATTACKER
@@ -633,7 +721,8 @@ Total: %d
 Initial Deployed: %d
 Reserve: %d (%d formations off-map)
 Entry: %s
-Preview Markers: %d x %d personnel
+Preview Formations: %d x %d people
+Visual: 1 dot per person (%.2fm)
 
 DEFENDER
 %s
@@ -641,13 +730,16 @@ Total: %d
 Initial Deployed: %d
 Reserve: %d (%d formations off-map)
 Entry: %s
-Preview Markers: %d x %d personnel
+Preview Formations: %d x %d people
+Visual: 1 dot per person (%.2fm)
 
+COMMANDS: 1 Advance | 2 Fall Back | 3 Attack | 4 Withdraw | 5 Flank Rear
 WASD Camera | Wheel Zoom | ESC Return""" % [
 		context.battle_id,
 		_format_cell(context.center_global_region_cell),
 		TerrainType.to_display_name(int(center["terrain_type"])).to_upper(),
 		str(generated["terrain_hash"]).left(12),
+		command_status if not command_status.is_empty() else "NONE",
 		_feature_cell_count("road"),
 		_feature_cell_count("river"),
 		context.attacker.display_name,
@@ -658,6 +750,7 @@ WASD Camera | Wheel Zoom | ESC Return""" % [
 		BattleSiteContext.entry_name(context.attacker_entry_direction),
 		int(attacker_deployment["marker_count"]),
 		BattleRules.PERSONNEL_PER_FORMATION_MARKER,
+		SOLDIER_MARKER_SIZE_METERS,
 		context.defender.display_name,
 		context.defender.total_personnel,
 		int(defender_deployment["initial_deployed_personnel"]),
@@ -666,6 +759,7 @@ WASD Camera | Wheel Zoom | ESC Return""" % [
 		BattleSiteContext.entry_name(context.defender_entry_direction),
 		int(defender_deployment["marker_count"]),
 		BattleRules.PERSONNEL_PER_FORMATION_MARKER,
+		SOLDIER_MARKER_SIZE_METERS,
 	]
 
 func _feature_cell_count(key: String) -> int:

@@ -11,6 +11,20 @@ enum State {
 	MOVING,
 }
 
+enum Intent {
+	HOLD,
+	ADVANCE,
+	FALL_BACK,
+	ATTACK,
+	WITHDRAW,
+	FLANK_REAR,
+}
+
+enum AutonomyState {
+	NONE,
+	ENGAGED,
+}
+
 const DEFAULT_PERSONNEL: int = 100
 const DEFAULT_MOVE_SPEED_MPS: float = 1.5
 const DEFAULT_WIDTH_METERS: float = 20.0
@@ -28,6 +42,12 @@ var depth_m: float = DEFAULT_DEPTH_METERS
 var state: int = State.IDLE
 var path: Array[Vector2i] = []
 var path_index: int = -1
+var intent: int = Intent.HOLD
+var intent_target_formation_id: String = ""
+var is_commander_formation: bool = false
+var captain_id: String = ""
+var autonomy_state: int = AutonomyState.NONE
+var contact_target_id: String = ""
 
 func _init(
 		p_formation_id: String = "",
@@ -42,7 +62,7 @@ func _init(
 	target_position_m = p_position_m
 
 func is_controllable() -> bool:
-	return side == Side.ATTACKER
+	return is_commander_formation
 
 func clear_path() -> void:
 	path.clear()
@@ -65,6 +85,12 @@ func copy() -> BattleFormationData:
 	result.state = state
 	result.path = path.duplicate()
 	result.path_index = path_index
+	result.intent = intent
+	result.intent_target_formation_id = intent_target_formation_id
+	result.is_commander_formation = is_commander_formation
+	result.captain_id = captain_id
+	result.autonomy_state = autonomy_state
+	result.contact_target_id = contact_target_id
 	return result
 
 static func side_code(value: int) -> String:

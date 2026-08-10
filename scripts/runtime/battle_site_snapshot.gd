@@ -27,6 +27,8 @@ var preview_hash: String = ""
 var active_battle: bool = false
 var revision: int = 0
 var formations: Array[BattleFormationData] = []
+var orders: Array[BattleOrderData] = []
+var dispatches: Array[BattleDispatchData] = []
 
 func has_preview() -> bool:
 	return success and context != null \
@@ -55,6 +57,10 @@ func copy() -> BattleSiteSnapshot:
 	result.revision = revision
 	for formation: BattleFormationData in formations:
 		result.formations.append(formation.copy())
+	for order: BattleOrderData in orders:
+		result.orders.append(order.copy())
+	for dispatch: BattleDispatchData in dispatches:
+		result.dispatches.append(dispatch.copy())
 	return result
 
 static func failure_code(reason: int) -> String:

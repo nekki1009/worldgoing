@@ -6,6 +6,8 @@ const BattleSiteGeneratorType = preload("res://scripts/core/battle_site_generato
 const BattleRuntimeStateType = preload("res://scripts/runtime/battle_runtime_state.gd")
 const BattleRuntimeResultType = preload("res://scripts/runtime/battle_runtime_result.gd")
 const BattleFormationDataType = preload("res://scripts/data/battle_formation_data.gd")
+const BattleOrderDataType = preload("res://scripts/data/battle_order_data.gd")
+const BattleDispatchDataType = preload("res://scripts/data/battle_dispatch_data.gd")
 const WeightedGridPathfinderType = preload("res://scripts/core/weighted_grid_pathfinder.gd")
 
 const BATTLE_GRID_SIZE: Vector2i = Vector2i(150, 150)
@@ -36,10 +38,15 @@ func bind(
 	region_runtime = p_region_runtime
 
 func query_debug_preview(center_global_cell: Vector2i) -> BattleSiteSnapshot:
+	var attacker: BattleParticipantData = BattleParticipantData.new("test_attacker", "Army A", 1000)
+	if session != null and session.party != null:
+		attacker.commander_id = session.party.party_id
+		attacker.commander_kind = BattleParticipantData.CommanderKind.PLAYER
+	var defender: BattleParticipantData = BattleParticipantData.new("test_defender", "Army B", 800)
 	return query_preview(
 		center_global_cell,
-		BattleParticipantData.new("test_attacker", "Army A", 1000),
-		BattleParticipantData.new("test_defender", "Army B", 800),
+		attacker,
+		defender,
 		BattleSiteContext.EntryDirection.SOUTH,
 		BattleSiteContext.EntryDirection.NORTH
 	)
@@ -117,7 +124,8 @@ func begin_battle(preview: BattleSiteSnapshot) -> BattleRuntimeResult:
 		return result.failure(BattleRuntimeResult.Code.INVALID_BATTLE)
 	var state: BattleRuntimeState = BattleRuntimeStateType.new(refreshed)
 	_build_clearance_mask(state)
-	_create_formations(state)
+	if not _create_formations(state):
+		return result.failure(BattleRuntimeResult.Code.INVALID_BATTLE)
 	if not session.set_active_battle_state(state):
 		return result.failure(BattleRuntimeResult.Code.INVALID_BATTLE)
 	result.snapshot = state.snapshot()
@@ -138,47 +146,195 @@ func leave_battle() -> BattleRuntimeResult:
 	return result.succeed()
 
 func issue_move(formation_id: String, target_position_m: Vector2) -> BattleRuntimeResult:
+	if session == null:
+		return BattleRuntimeResultType.new().failure(BattleRuntimeResult.Code.RUNTIME_UNAVAILABLE)
+	return issue_fine_order(
+		session.party.party_id,
+		formation_id,
+		BattleOrderData.FineIntent.MOVE_TO,
+		target_position_m
+	)
+
+func issue_simple_order(
+		source_id: String,
+		target_formation_id: String,
+		intent: int,
+		focus_target_formation_id: String = ""
+	) -> BattleRuntimeResult:
+	return issue_order(
+		source_id,
+		target_formation_id,
+		BattleOrderDataType.make_simple(
+			source_id,
+			target_formation_id,
+			intent,
+			focus_target_formation_id
+		)
+	)
+
+func issue_fine_order(
+		source_id: String,
+		target_formation_id: String,
+		intent: int,
+		target_position_m: Vector2 = Vector2.ZERO,
+		target_facing: Vector2 = Vector2.DOWN,
+		focus_target_formation_id: String = ""
+	) -> BattleRuntimeResult:
+	return issue_order(
+		source_id,
+		target_formation_id,
+		BattleOrderDataType.make_fine(
+			source_id,
+			target_formation_id,
+			intent,
+			target_position_m,
+			target_facing,
+			focus_target_formation_id
+		)
+	)
+
+func issue_order(
+		source_id: String,
+		target_formation_id: String,
+		order: BattleOrderData
+	) -> BattleRuntimeResult:
 	var result: BattleRuntimeResult = BattleRuntimeResultType.new()
 	if session == null or not session.has_active_battle():
 		return result.failure(BattleRuntimeResult.Code.NO_ACTIVE_BATTLE)
-	var state: BattleRuntimeState = session.active_battle_state
-	var formation: BattleFormationData = state.find_formation(formation_id)
-	if formation == null:
-		return result.failure(BattleRuntimeResult.Code.INVALID_FORMATION)
-	result.formation_id = formation_id
-	if not formation.is_controllable():
-		return result.failure(BattleRuntimeResult.Code.NOT_CONTROLLABLE)
-	if not _is_valid_target(target_position_m):
+	if order == null or (not order.is_simple() and not order.is_fine()):
 		return result.failure(BattleRuntimeResult.Code.INVALID_TARGET)
-	if _formation_target_occupied(state, formation, target_position_m):
-		return result.failure(BattleRuntimeResult.Code.OCCUPIED)
-	var start: Vector2i = _position_to_cell(formation.battle_position_m)
-	var goal: Vector2i = _position_to_cell(target_position_m)
-	var path_result: Dictionary = pathfinder.find_path(
-		start,
-		goal,
-		BATTLE_GRID_MIN,
-		BATTLE_GRID_MAX,
-		Callable(self, "_battle_cell_info"),
-		Callable(self, "_battle_step_cost"),
-		0.01
+	var state: BattleRuntimeState = session.active_battle_state
+	var target: BattleFormationData = state.find_formation(target_formation_id)
+	if target == null:
+		return result.failure(BattleRuntimeResult.Code.INVALID_FORMATION)
+	var side: int = _side_for_commander(source_id, state.base_snapshot.context)
+	if side < 0 or target.side != side:
+		return result.failure(BattleRuntimeResult.Code.NOT_CONTROLLABLE)
+	var commander_formation_id: String = str(state.commander_formation_ids.get(side, ""))
+	var commander_formation: BattleFormationData = state.find_formation(commander_formation_id)
+	if commander_formation == null:
+		return result.failure(BattleRuntimeResult.Code.INVALID_BATTLE)
+	if order.is_fine() and state.has_dispatch_for_target(target_formation_id):
+		return result.failure(BattleRuntimeResult.Code.ORDER_IN_TRANSIT)
+	order.source_id = source_id
+	order.source_formation_id = commander_formation_id
+	order.target_formation_id = target_formation_id
+	order.order_id = _allocate_order_id(state, side)
+	order.issued_at = state.elapsed_seconds
+	if not state.add_order(order):
+		return result.failure(BattleRuntimeResult.Code.INVALID_BATTLE)
+	if target_formation_id == commander_formation_id:
+		var direct_result: BattleRuntimeResult = _apply_order_to_formation(state, order, target)
+		result.order_id = order.order_id
+		result.order_state = order.state
+		if not direct_result.success:
+			order.state = BattleOrderData.State.FAILED
+			order.failure_code = direct_result.failure_code
+			result.order_state = order.state
+			return result.failure(direct_result.failure_code)
+		if order.state != BattleOrderData.State.DEFERRED:
+			order.state = BattleOrderData.State.DELIVERED
+		result.order_state = order.state
+		result.formation_id = target_formation_id
+		result.path = target.path.duplicate()
+		result.changed = true
+		state.revision += 1
+		return result.succeed_with_code(BattleRuntimeResult.Code.ORDER_APPLIED)
+	if order.is_simple():
+		order.execute_at = state.elapsed_seconds + _command_delay(commander_formation, target)
+		order.state = BattleOrderData.State.QUEUED
+		state.pending_orders.append(order)
+		result.order_id = order.order_id
+		result.order_state = order.state
+		result.cost_seconds = order.execute_at - state.elapsed_seconds
+		return result.succeed_with_code(BattleRuntimeResult.Code.ORDER_QUEUED)
+	return _create_dispatch(state, order, commander_formation, target)
+
+func query_order(order_id: String) -> BattleRuntimeResult:
+	var result: BattleRuntimeResult = BattleRuntimeResultType.new()
+	if session == null or not session.has_active_battle():
+		return result.failure(BattleRuntimeResult.Code.NO_ACTIVE_BATTLE)
+	var order: BattleOrderData = session.active_battle_state.find_order(order_id)
+	if order == null:
+		return result.failure(BattleRuntimeResult.Code.ORDER_NOT_FOUND)
+	result.order_id = order.order_id
+	result.order_state = order.state
+	var dispatch: BattleDispatchData = session.active_battle_state.find_dispatch(order.order_id)
+	if dispatch != null:
+		result.dispatch_position_m = dispatch.position_m
+	match order.state:
+		BattleOrderData.State.INTERCEPTED:
+			return result.failure(BattleRuntimeResult.Code.MESSENGER_INTERCEPTED)
+		BattleOrderData.State.TARGET_UNAVAILABLE:
+			return result.failure(BattleRuntimeResult.Code.TARGET_UNAVAILABLE)
+		BattleOrderData.State.FAILED:
+			return result.failure(order.failure_code)
+		_:
+			return result.succeed()
+
+func _allocate_order_id(state: BattleRuntimeState, side: int) -> String:
+	state.order_sequence += 1
+	return "%s_order_%s_%04d" % [
+		state.base_snapshot.context.battle_id,
+		BattleFormationData.side_code(side),
+		state.order_sequence,
+	]
+
+func _side_for_commander(source_id: String, context: BattleSiteContext) -> int:
+	if context == null:
+		return -1
+	if context.attacker.commander_id == source_id:
+		return BattleFormationData.Side.ATTACKER
+	if context.defender.commander_id == source_id:
+		return BattleFormationData.Side.DEFENDER
+	return -1
+
+func _command_delay(
+		commander_formation: BattleFormationData,
+		target: BattleFormationData
+	) -> float:
+	return BattleRules.COMMAND_BASE_DELAY_SECONDS \
+		+ commander_formation.battle_position_m.distance_to(target.battle_position_m) \
+		/ BattleRules.COMMAND_SIGNAL_SPEED_MPS
+
+func _create_dispatch(
+		state: BattleRuntimeState,
+		order: BattleOrderData,
+		commander_formation: BattleFormationData,
+		target: BattleFormationData
+	) -> BattleRuntimeResult:
+	var result: BattleRuntimeResult = BattleRuntimeResultType.new()
+	var path_result: Dictionary = _find_path(
+		_position_to_cell(commander_formation.battle_position_m),
+		_position_to_cell(target.battle_position_m),
+		Callable(self, "_battle_step_cost")
 	)
 	var path_value: Variant = path_result.get("path", [])
 	if not path_value is Array or (path_value as Array).is_empty():
-		return result.failure(BattleRuntimeResult.Code.NO_PATH)
-	formation.path.clear()
+		order.state = BattleOrderData.State.FAILED
+		order.failure_code = BattleRuntimeResult.Code.NO_MESSENGER_ROUTE
+		return result.failure(BattleRuntimeResult.Code.NO_MESSENGER_ROUTE)
+	var dispatch: BattleDispatchData = BattleDispatchDataType.new()
+	dispatch.order_id = order.order_id
+	dispatch.target_formation_id = target.formation_id
+	dispatch.position_m = commander_formation.battle_position_m
+	dispatch.previous_position_m = dispatch.position_m
 	for cell: Variant in path_value as Array:
 		if cell is Vector2i:
-			formation.path.append(cell as Vector2i)
-	formation.path_index = 0
-	formation.target_position_m = _cell_to_position(goal)
-	formation.state = BattleFormationData.State.MOVING if formation.path.size() > 1 \
-		else BattleFormationData.State.IDLE
-	state.revision += 1
-	result.path = formation.path.duplicate()
-	result.cost_seconds = float(path_result.get("cost", 0.0))
-	result.changed = true
-	return result.succeed()
+			dispatch.path.append(cell as Vector2i)
+	dispatch.speed_mps = BattleRules.MESSENGER_SPEED_MPS
+	dispatch.eta_seconds = state.elapsed_seconds + _path_seconds(
+		dispatch.path,
+		dispatch.speed_mps
+	)
+	dispatch.state = BattleOrderData.State.EN_ROUTE
+	order.state = BattleOrderData.State.EN_ROUTE
+	state.add_dispatch(dispatch)
+	result.order_id = order.order_id
+	result.order_state = order.state
+	result.dispatch_position_m = dispatch.position_m
+	result.cost_seconds = dispatch.eta_seconds - state.elapsed_seconds
+	return result.succeed_with_code(BattleRuntimeResult.Code.DISPATCH_CREATED)
 
 func advance_battle(seconds: float) -> BattleRuntimeResult:
 	var result: BattleRuntimeResult = BattleRuntimeResultType.new()
@@ -200,6 +356,12 @@ func advance_battle(seconds: float) -> BattleRuntimeResult:
 		if _advance_formation(state, formation, budget):
 			changed = true
 	state.elapsed_seconds += budget
+	if _resolve_contacts(state):
+		changed = true
+	if _process_pending_orders(state):
+		changed = true
+	if _advance_dispatches(state, budget):
+		changed = true
 	if changed:
 		state.revision += 1
 	result.changed = changed
@@ -252,7 +414,401 @@ func _advance_formation(
 			changed = true
 	return changed
 
-func _create_formations(state: BattleRuntimeState) -> void:
+func _apply_order_to_formation(
+		state: BattleRuntimeState,
+		order: BattleOrderData,
+		formation: BattleFormationData
+	) -> BattleRuntimeResult:
+	var result: BattleRuntimeResult = BattleRuntimeResultType.new()
+	if formation == null:
+		return result.failure(BattleRuntimeResult.Code.TARGET_UNAVAILABLE)
+	if formation.autonomy_state == BattleFormationData.AutonomyState.ENGAGED:
+		order.state = BattleOrderData.State.DEFERRED
+		if not state.pending_orders.has(order):
+			state.pending_orders.append(order)
+		return result.succeed_with_code(BattleRuntimeResult.Code.ORDER_APPLIED)
+	if order.is_simple():
+		return _apply_simple_order(state, order, formation)
+	match order.fine_intent:
+		BattleOrderData.FineIntent.MOVE_TO:
+			formation.intent = BattleFormationData.Intent.HOLD
+			formation.intent_target_formation_id = ""
+			return _start_formation_move(state, formation, order.target_position_m)
+		BattleOrderData.FineIntent.SET_FACING:
+			if order.target_facing.length_squared() <= 0.000001:
+				return result.failure(BattleRuntimeResult.Code.INVALID_TARGET)
+			formation.facing_direction = order.target_facing.normalized()
+			formation.intent = BattleFormationData.Intent.HOLD
+			formation.intent_target_formation_id = ""
+			formation.clear_path()
+			return result.succeed_with_code(BattleRuntimeResult.Code.ORDER_APPLIED)
+		BattleOrderData.FineIntent.HOLD_POSITION:
+			formation.intent = BattleFormationData.Intent.HOLD
+			formation.intent_target_formation_id = ""
+			formation.clear_path()
+			return result.succeed_with_code(BattleRuntimeResult.Code.ORDER_APPLIED)
+		BattleOrderData.FineIntent.FOCUS_TARGET:
+			var enemy: BattleFormationData = state.find_formation(order.focus_target_formation_id)
+			if enemy == null or enemy.side == formation.side:
+				return result.failure(BattleRuntimeResult.Code.INVALID_TARGET)
+			formation.intent = BattleFormationData.Intent.ATTACK
+			formation.intent_target_formation_id = enemy.formation_id
+			return _start_formation_move(state, formation, enemy.battle_position_m)
+		_:
+			return result.failure(BattleRuntimeResult.Code.INVALID_TARGET)
+
+func _apply_simple_order(
+		state: BattleRuntimeState,
+		order: BattleOrderData,
+		formation: BattleFormationData
+	) -> BattleRuntimeResult:
+	var result: BattleRuntimeResult = BattleRuntimeResultType.new()
+	var goal: Vector2 = formation.battle_position_m
+	var facing: Vector2 = formation.facing_direction.normalized()
+	if facing.length_squared() <= 0.000001:
+		facing = Vector2.DOWN
+	var focus: BattleFormationData = state.find_formation(order.focus_target_formation_id)
+	match order.simple_intent:
+		BattleOrderData.SimpleIntent.ADVANCE:
+			formation.intent = BattleFormationData.Intent.ADVANCE
+			goal += facing * 60.0
+		BattleOrderData.SimpleIntent.FALL_BACK:
+			formation.intent = BattleFormationData.Intent.FALL_BACK
+			goal -= facing * 60.0
+		BattleOrderData.SimpleIntent.ATTACK:
+			formation.intent = BattleFormationData.Intent.ATTACK
+			if focus != null and focus.side != formation.side:
+				formation.intent_target_formation_id = focus.formation_id
+				goal = focus.battle_position_m
+			else:
+				goal += facing * 60.0
+		BattleOrderData.SimpleIntent.WITHDRAW:
+			formation.intent = BattleFormationData.Intent.WITHDRAW
+			goal -= facing * 120.0
+		BattleOrderData.SimpleIntent.FLANK_REAR:
+			formation.intent = BattleFormationData.Intent.FLANK_REAR
+			if focus != null and focus.side != formation.side:
+				formation.intent_target_formation_id = focus.formation_id
+				var enemy_facing: Vector2 = focus.facing_direction.normalized()
+				if enemy_facing.length_squared() <= 0.000001:
+					enemy_facing = Vector2.DOWN
+				goal = focus.battle_position_m + enemy_facing * 40.0
+			else:
+				goal += facing.orthogonal() * 60.0
+		_:
+			return result.failure(BattleRuntimeResult.Code.INVALID_TARGET)
+	if not _is_valid_target(goal):
+		return result.failure(BattleRuntimeResult.Code.INVALID_TARGET)
+	return _start_formation_move(state, formation, goal)
+
+func _start_formation_move(
+		state: BattleRuntimeState,
+		formation: BattleFormationData,
+		target_position_m: Vector2
+	) -> BattleRuntimeResult:
+	var result: BattleRuntimeResult = BattleRuntimeResultType.new()
+	if formation == null or not _is_valid_target(target_position_m):
+		return result.failure(BattleRuntimeResult.Code.INVALID_TARGET)
+	var start: Vector2i = _position_to_cell(formation.battle_position_m)
+	var goal: Vector2i = _position_to_cell(target_position_m)
+	var path_result: Dictionary = _find_path(
+		start,
+		goal,
+		Callable(self, "_battle_step_cost")
+	)
+	var path_value: Variant = path_result.get("path", [])
+	if not path_value is Array or (path_value as Array).is_empty():
+		return result.failure(BattleRuntimeResult.Code.NO_PATH)
+	formation.path.clear()
+	for cell: Variant in path_value as Array:
+		if cell is Vector2i:
+			formation.path.append(cell as Vector2i)
+	formation.path_index = 0
+	formation.target_position_m = target_position_m
+	formation.state = BattleFormationData.State.MOVING if formation.path.size() > 1 \
+		else BattleFormationData.State.IDLE
+	if formation.path.size() > 1:
+		formation.facing_direction = Vector2(formation.path[1] - formation.path[0]).normalized()
+	result.formation_id = formation.formation_id
+	result.path = formation.path.duplicate()
+	return result.succeed_with_code(BattleRuntimeResult.Code.ORDER_APPLIED)
+
+func _find_path(start: Vector2i, goal: Vector2i, cost: Callable) -> Dictionary:
+	return pathfinder.find_path(
+		start,
+		goal,
+		BATTLE_GRID_MIN,
+		BATTLE_GRID_MAX,
+		Callable(self, "_battle_cell_info"),
+		cost
+	)
+
+func _process_pending_orders(state: BattleRuntimeState) -> bool:
+	if state.pending_orders.is_empty():
+		return false
+	var changed: bool = false
+	var remaining: Array[BattleOrderData] = []
+	for order: BattleOrderData in state.pending_orders:
+		if order == null:
+			continue
+		if order.state == BattleOrderData.State.QUEUED and state.elapsed_seconds < order.execute_at:
+			remaining.append(order)
+			continue
+		var target: BattleFormationData = state.find_formation(order.target_formation_id)
+		if target == null:
+			order.state = BattleOrderData.State.TARGET_UNAVAILABLE
+			order.failure_code = BattleRuntimeResult.Code.TARGET_UNAVAILABLE
+			changed = true
+			continue
+		var applied: BattleRuntimeResult = _apply_order_to_formation(state, order, target)
+		if not applied.success:
+			order.state = BattleOrderData.State.FAILED
+			order.failure_code = applied.failure_code
+			changed = true
+			continue
+		if order.state == BattleOrderData.State.DEFERRED:
+			remaining.append(order)
+			continue
+		order.state = BattleOrderData.State.DELIVERED
+		changed = true
+	state.pending_orders = remaining
+	return changed
+
+func _advance_dispatches(state: BattleRuntimeState, budget: float) -> bool:
+	var changed: bool = false
+	var keys: Array[String] = []
+	for key: Variant in state.dispatches.keys():
+		keys.append(str(key))
+	keys.sort()
+	for key: String in keys:
+		var dispatch: BattleDispatchData = state.dispatches[key] as BattleDispatchData
+		if dispatch == null or dispatch.state != BattleOrderData.State.EN_ROUTE:
+			continue
+		var order: BattleOrderData = state.find_order(dispatch.order_id)
+		if order == null:
+			dispatch.state = BattleOrderData.State.FAILED
+			changed = true
+			continue
+		var target: BattleFormationData = state.find_formation(dispatch.target_formation_id)
+		if target == null:
+			order.state = BattleOrderData.State.TARGET_UNAVAILABLE
+			order.failure_code = BattleRuntimeResult.Code.TARGET_UNAVAILABLE
+			dispatch.state = BattleOrderData.State.TARGET_UNAVAILABLE
+			changed = true
+			continue
+		var source: BattleFormationData = state.find_formation(order.source_formation_id)
+		var enemy_side: int = BattleFormationData.Side.DEFENDER if source == null \
+			or source.side == BattleFormationData.Side.ATTACKER \
+			else BattleFormationData.Side.ATTACKER
+		var interceptor: BattleFormationData = _find_interceptor(
+			state,
+			dispatch.position_m,
+			dispatch.position_m,
+			enemy_side
+		)
+		if interceptor != null:
+			_mark_dispatch_intercepted(dispatch, order, interceptor)
+			changed = true
+			continue
+		var remaining: float = budget
+		while remaining > 0.0 and dispatch.state == BattleOrderData.State.EN_ROUTE:
+			if dispatch.path_index + 1 >= dispatch.path.size():
+				_complete_dispatch(state, dispatch, order, target)
+				changed = true
+				break
+			var next_cell: Vector2i = dispatch.path[dispatch.path_index + 1]
+			var current_cell: Vector2i = _position_to_cell(dispatch.position_m)
+			var direction: Vector2i = next_cell - current_cell
+			var step_seconds: float = BattleRules.tactical_step_seconds(
+				_battle_cell_info(current_cell),
+				_battle_cell_info(next_cell),
+				direction,
+				dispatch.speed_mps
+			)
+			if not is_finite(step_seconds) or step_seconds <= 0.0:
+				dispatch.state = BattleOrderData.State.FAILED
+				order.state = BattleOrderData.State.FAILED
+				order.failure_code = BattleRuntimeResult.Code.NO_MESSENGER_ROUTE
+				changed = true
+				break
+			var next_position: Vector2 = _cell_to_position(next_cell)
+			var previous: Vector2 = dispatch.position_m
+			if remaining >= step_seconds:
+				dispatch.position_m = next_position
+				dispatch.path_index += 1
+				remaining -= step_seconds
+			else:
+				dispatch.position_m = previous.lerp(next_position, remaining / step_seconds)
+				remaining = 0.0
+			dispatch.previous_position_m = previous
+			interceptor = _find_interceptor(state, previous, dispatch.position_m, enemy_side)
+			changed = true
+			if interceptor != null:
+				_mark_dispatch_intercepted(dispatch, order, interceptor)
+				break
+		if dispatch.state == BattleOrderData.State.EN_ROUTE \
+				and dispatch.path_index + 1 >= dispatch.path.size():
+			_complete_dispatch(state, dispatch, order, target)
+			changed = true
+	return changed
+
+func _complete_dispatch(
+		state: BattleRuntimeState,
+		dispatch: BattleDispatchData,
+		order: BattleOrderData,
+		target: BattleFormationData
+	) -> void:
+	dispatch.state = BattleOrderData.State.DELIVERED
+	var applied: BattleRuntimeResult = _apply_order_to_formation(state, order, target)
+	if applied.success:
+		if order.state != BattleOrderData.State.DEFERRED:
+			order.state = BattleOrderData.State.DELIVERED
+	else:
+		order.state = BattleOrderData.State.FAILED
+		order.failure_code = applied.failure_code
+
+func _mark_dispatch_intercepted(
+		dispatch: BattleDispatchData,
+		order: BattleOrderData,
+		interceptor: BattleFormationData
+	) -> void:
+	dispatch.state = BattleOrderData.State.INTERCEPTED
+	dispatch.intercepted_by_formation_id = interceptor.formation_id
+	dispatch.intercepted_at_m = dispatch.position_m
+	order.state = BattleOrderData.State.INTERCEPTED
+	order.failure_code = BattleRuntimeResult.Code.MESSENGER_INTERCEPTED
+
+func _find_interceptor(
+		state: BattleRuntimeState,
+		segment_start: Vector2,
+		segment_end: Vector2,
+		enemy_side: int
+	) -> BattleFormationData:
+	var best: BattleFormationData = null
+	var best_distance: float = INF
+	var ids: Array[String] = []
+	for key: Variant in state.formations.keys():
+		ids.append(str(key))
+	ids.sort()
+	for id: String in ids:
+		var formation: BattleFormationData = state.formations[id] as BattleFormationData
+		if formation == null or formation.side != enemy_side:
+			continue
+		var distance: float = _distance_to_segment(
+			formation.battle_position_m,
+			segment_start,
+			segment_end
+		)
+		var radius: float = BattleRules.MESSENGER_INTERCEPT_RADIUS_M \
+			+ maxf(formation.width_m, formation.depth_m) * 0.5
+		if distance > radius:
+			continue
+		if best == null or distance < best_distance - 0.001 \
+			or (is_equal_approx(distance, best_distance) and id < best.formation_id):
+			best = formation
+			best_distance = distance
+	return best
+
+func _distance_to_segment(point: Vector2, start: Vector2, end: Vector2) -> float:
+	var segment: Vector2 = end - start
+	var length_squared: float = segment.length_squared()
+	if length_squared <= 0.000001:
+		return point.distance_to(start)
+	var t: float = clampf((point - start).dot(segment) / length_squared, 0.0, 1.0)
+	return point.distance_to(start + segment * t)
+
+func _path_seconds(path: Array[Vector2i], speed_mps: float) -> float:
+	var total: float = 0.0
+	for index: int in range(path.size() - 1):
+		var current: Vector2i = path[index]
+		var next: Vector2i = path[index + 1]
+		var step: float = BattleRules.tactical_step_seconds(
+			_battle_cell_info(current),
+			_battle_cell_info(next),
+			next - current,
+			speed_mps
+		)
+		if not is_finite(step):
+			return INF
+		total += step
+	return total
+
+func _resolve_contacts(state: BattleRuntimeState) -> bool:
+	var changed: bool = false
+	var keys: Array[String] = []
+	for key: Variant in state.formations.keys():
+		keys.append(str(key))
+	keys.sort()
+	for key: String in keys:
+		var formation: BattleFormationData = state.formations[key] as BattleFormationData
+		if formation == null:
+			continue
+		var enemy: BattleFormationData = _nearest_contact(state, formation)
+		if enemy == null:
+			if formation.autonomy_state != BattleFormationData.AutonomyState.NONE:
+				formation.autonomy_state = BattleFormationData.AutonomyState.NONE
+				formation.contact_target_id = ""
+				changed = true
+			continue
+		if formation.autonomy_state != BattleFormationData.AutonomyState.ENGAGED \
+			or formation.contact_target_id != enemy.formation_id:
+			formation.autonomy_state = BattleFormationData.AutonomyState.ENGAGED
+			formation.contact_target_id = enemy.formation_id
+			_apply_captain_decision(state, formation, enemy)
+			changed = true
+	return changed
+
+func _nearest_contact(
+		state: BattleRuntimeState,
+		formation: BattleFormationData
+	) -> BattleFormationData:
+	var best: BattleFormationData = null
+	var best_distance: float = INF
+	var ids: Array[String] = []
+	for key: Variant in state.formations.keys():
+		ids.append(str(key))
+	ids.sort()
+	for id: String in ids:
+		var other: BattleFormationData = state.formations[id] as BattleFormationData
+		if other == null or other.side == formation.side:
+			continue
+		var contact_distance: float = maxf(formation.width_m, formation.depth_m) * 0.5 \
+			+ maxf(other.width_m, other.depth_m) * 0.5 \
+			+ BattleRules.FORMATION_CONTACT_RADIUS_M
+		var distance: float = formation.battle_position_m.distance_to(other.battle_position_m)
+		if distance > contact_distance:
+			continue
+		if best == null or distance < best_distance - 0.001 \
+			or (is_equal_approx(distance, best_distance) and id < best.formation_id):
+			best = other
+			best_distance = distance
+	return best
+
+func _apply_captain_decision(
+		state: BattleRuntimeState,
+		formation: BattleFormationData,
+		enemy: BattleFormationData
+	) -> void:
+	match formation.intent:
+		BattleFormationData.Intent.FALL_BACK, BattleFormationData.Intent.WITHDRAW:
+			var away: Vector2 = formation.battle_position_m - enemy.battle_position_m
+			if away.length_squared() > 0.000001:
+				_start_formation_move(
+					state,
+					formation,
+					formation.battle_position_m + away.normalized() * 50.0
+				)
+			else:
+				formation.clear_path()
+		BattleFormationData.Intent.ATTACK, BattleFormationData.Intent.ADVANCE, \
+			BattleFormationData.Intent.FLANK_REAR:
+			formation.intent = BattleFormationData.Intent.ATTACK
+			formation.intent_target_formation_id = enemy.formation_id
+			formation.clear_path()
+		_:
+			formation.clear_path()
+
+func _create_formations(state: BattleRuntimeState) -> bool:
 	_create_side_formations(
 		state,
 		state.base_snapshot.attacker_deployment,
@@ -263,6 +819,8 @@ func _create_formations(state: BattleRuntimeState) -> void:
 		state.base_snapshot.defender_deployment,
 		BattleFormationData.Side.DEFENDER
 	)
+	return state.commander_formation_ids.has(BattleFormationData.Side.ATTACKER) \
+		and state.commander_formation_ids.has(BattleFormationData.Side.DEFENDER)
 
 func _create_side_formations(
 		state: BattleRuntimeState,
@@ -272,6 +830,9 @@ func _create_side_formations(
 	var deployed: int = int(deployment.get("initial_deployed_personnel", 0))
 	var positions: Array = deployment.get("marker_positions_meters", []) as Array
 	var facing: Vector2 = deployment.get("facing", Vector2.DOWN) as Vector2
+	var context: BattleSiteContext = state.base_snapshot.context
+	var participant: BattleParticipantData = context.attacker if side == BattleFormationData.Side.ATTACKER \
+		else context.defender
 	for index: int in range(positions.size()):
 		var position: Vector2 = positions[index] as Vector2
 		var personnel: int = mini(
@@ -292,7 +853,11 @@ func _create_side_formations(
 			position
 		)
 		formation.facing_direction = facing
+		formation.is_commander_formation = index == participant.commander_formation_index
+		formation.captain_id = "%s_captain" % id
 		state.add_formation(formation)
+		if formation.is_commander_formation:
+			state.commander_formation_ids[side] = id
 
 func _build_clearance_mask(state: BattleRuntimeState) -> void:
 	state.clearance_blocked.resize(BATTLE_GRID_SIZE.x * BATTLE_GRID_SIZE.y)

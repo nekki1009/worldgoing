@@ -93,8 +93,15 @@ Battlefields are composed from nine adjacent Site-sized bases, not a second tact
 - `SiteLayoutGenerator.generate_cell_base()` supplies compact deterministic terrain/road/river navigation flags. It does not allocate nine POI `SiteRuntimeState` objects.
 - `GameSession.active_battle_state` owns formations, continuous meter positions, paths, revision and elapsed battle time. `BattleSiteMap` consumes detached snapshots and emits movement intents.
 - A Formation represents 100 personnel with a 20m x 10m footprint and 20 x 5 visual slots. The Battle context caps both sides together at 9,000 personnel.
-- `BattleSiteMap` renders one soldier marker per participant through one GPU-instanced `MultiMesh`; Formation state remains the only runtime command/simulation unit. Reserve personnel are presentation-only staging instances until a future command activates them.
+- `BattleSiteMap` renders one circular marker per person through one GPU-instanced `MultiMesh`; a 100-person Formation therefore owns 100 visual instances. Formation state remains the only runtime command/simulation unit. Reserve personnel are presentation-only staging instances until a future command activates them.
 - Active Battle is currently a movement slice only. Damage, AI, combat resolution and Battle persistence are deliberately deferred; saves return typed `BATTLE_ACTIVE` while a battle is running.
+
+Battle command authority is also Session-owned and Formation-level:
+
+- `BattleParticipantData` identifies a `PLAYER` or `NPC` commander and the commander's Formation index. Only that Formation is directly controllable by its commander.
+- Simple subordinate intents (`ADVANCE`, `FALL_BACK`, `ATTACK`, `WITHDRAW`, `FLANK_REAR`) enter `BattleRuntimeState.pending_orders` and execute after a deterministic signal delay.
+- Fine subordinate intents (`MOVE_TO`, `SET_FACING`, `HOLD_POSITION`, `FOCUS_TARGET`) are data-only `BattleOrderData` payloads carried by `BattleDispatchData`. The messenger follows a bounded path and can be intercepted by an enemy Formation; interception discards the payload and is observable through `query_order()` as `MESSENGER_INTERCEPTED`.
+- `BattleFormationData` records captain autonomy on direct contact. Orders arriving while a Formation is engaged are deferred until contact clears; no Soldier, AI, NavigationAgent, Command Bus, or event-bus node is introduced.
 
 ```text
         ↓

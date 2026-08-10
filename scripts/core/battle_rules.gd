@@ -12,6 +12,11 @@ const PLAINS_SPEED_MULTIPLIER: float = 1.00
 const FOREST_SPEED_MULTIPLIER: float = 0.65
 const MOUNTAIN_SPEED_MULTIPLIER: float = 0.40
 const CROSSING_SPEED_MULTIPLIER: float = 0.67
+const COMMAND_BASE_DELAY_SECONDS: float = 1.0
+const COMMAND_SIGNAL_SPEED_MPS: float = 25.0
+const MESSENGER_SPEED_MPS: float = 12.0
+const MESSENGER_INTERCEPT_RADIUS_M: float = 4.0
+const FORMATION_CONTACT_RADIUS_M: float = 8.0
 
 static func combat_frontage(terrain_type: int) -> int:
 	match terrain_type:
