@@ -27,8 +27,12 @@ enum AutonomyState {
 
 const DEFAULT_PERSONNEL: int = 100
 const DEFAULT_MOVE_SPEED_MPS: float = 1.5
-const DEFAULT_WIDTH_METERS: float = 20.0
-const DEFAULT_DEPTH_METERS: float = 10.0
+const FORMATION_COLUMNS: int = 20
+const FORMATION_ROWS: int = 5
+const SOLDIER_CANVAS_SIZE_METERS: Vector2 = Vector2(1.20, 2.40)
+const SOLDIER_SPACING_METERS: Vector2 = Vector2(0.50, 0.80)
+const DEFAULT_WIDTH_METERS: float = 33.50
+const DEFAULT_DEPTH_METERS: float = 15.20
 
 var formation_id: String = ""
 var side: int = Side.ATTACKER
@@ -60,6 +64,20 @@ func _init(
 	personnel_count = maxi(p_personnel_count, 0)
 	battle_position_m = p_position_m
 	target_position_m = p_position_m
+	var formation_size: Vector2 = formation_size_for_personnel(personnel_count)
+	width_m = formation_size.x
+	depth_m = formation_size.y
+
+static func formation_size_for_personnel(personnel: int) -> Vector2:
+	var count: int = clampi(personnel, 1, FORMATION_COLUMNS * FORMATION_ROWS)
+	var columns: int = mini(FORMATION_COLUMNS, count)
+	var rows: int = ceili(float(count) / float(FORMATION_COLUMNS))
+	return Vector2(
+		float(columns) * SOLDIER_CANVAS_SIZE_METERS.x
+			+ float(maxi(columns - 1, 0)) * SOLDIER_SPACING_METERS.x,
+		float(rows) * SOLDIER_CANVAS_SIZE_METERS.y
+			+ float(maxi(rows - 1, 0)) * SOLDIER_SPACING_METERS.y
+	)
 
 func is_controllable() -> bool:
 	return is_commander_formation

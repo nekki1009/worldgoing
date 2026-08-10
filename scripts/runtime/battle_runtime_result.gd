@@ -20,6 +20,8 @@ enum Code {
 	NO_MESSENGER_ROUTE,
 	ORDER_NOT_FOUND,
 	TARGET_UNAVAILABLE,
+	SPEED_CHANGED,
+	INVALID_SPEED,
 }
 
 var success: bool = false
@@ -32,6 +34,7 @@ var snapshot: BattleSiteSnapshot
 var order_id: String = ""
 var order_state: int = BattleOrderData.State.FAILED
 var dispatch_position_m: Vector2 = Vector2.ZERO
+var battle_speed_multiplier: float = 1.0
 
 func failure(code: int) -> BattleRuntimeResult:
 	success = false
@@ -84,5 +87,9 @@ static func code_name(code: int) -> String:
 			return "ORDER_NOT_FOUND"
 		Code.TARGET_UNAVAILABLE:
 			return "TARGET_UNAVAILABLE"
+		Code.SPEED_CHANGED:
+			return "SPEED_CHANGED"
+		Code.INVALID_SPEED:
+			return "INVALID_SPEED"
 		_:
 			return "NONE"

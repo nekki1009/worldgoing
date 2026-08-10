@@ -11,6 +11,7 @@ var clearance_blocked: PackedByteArray = PackedByteArray()
 var revision: int = 0
 var elapsed_seconds: float = 0.0
 var order_sequence: int = 0
+var battle_speed_multiplier: float = 1.0
 
 func _init(p_snapshot: BattleSiteSnapshot = null) -> void:
 	base_snapshot = p_snapshot.copy() if p_snapshot != null else null
@@ -62,6 +63,7 @@ func snapshot() -> BattleSiteSnapshot:
 	var result: BattleSiteSnapshot = base_snapshot.copy()
 	result.active_battle = true
 	result.revision = revision
+	result.battle_speed_multiplier = battle_speed_multiplier
 	result.formations.clear()
 	var keys: Array[String] = []
 	for key: Variant in formations.keys():

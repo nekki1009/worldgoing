@@ -26,6 +26,7 @@ var terrain_hash: String = ""
 var preview_hash: String = ""
 var active_battle: bool = false
 var revision: int = 0
+var battle_speed_multiplier: float = 1.0
 var formations: Array[BattleFormationData] = []
 var orders: Array[BattleOrderData] = []
 var dispatches: Array[BattleDispatchData] = []
@@ -55,6 +56,7 @@ func copy() -> BattleSiteSnapshot:
 	result.preview_hash = preview_hash
 	result.active_battle = active_battle
 	result.revision = revision
+	result.battle_speed_multiplier = battle_speed_multiplier
 	for formation: BattleFormationData in formations:
 		result.formations.append(formation.copy())
 	for order: BattleOrderData in orders:

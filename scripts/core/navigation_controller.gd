@@ -165,6 +165,7 @@ func show_battle_site(snapshot: BattleSiteSnapshot) -> void:
 	battle_site.debug_state_changed.connect(_on_map_debug_state_changed)
 	battle_site.formation_move_requested.connect(_on_battle_formation_move_requested)
 	battle_site.simple_order_requested.connect(_on_battle_simple_order_requested)
+	battle_site.battle_speed_requested.connect(_on_battle_speed_requested)
 	battle_site.setup(begin_result.snapshot)
 
 func _process(delta: float) -> void:
@@ -203,6 +204,14 @@ func _on_battle_simple_order_requested(formation_id: String, intent: int) -> voi
 	)
 	if current_map is BattleSiteMap:
 		(current_map as BattleSiteMap).set_command_result(result)
+	if result.success:
+		_refresh_battle_site()
+
+func _on_battle_speed_requested(multiplier: float) -> void:
+	_sync_runtime()
+	var result: BattleRuntimeResult = battle_preview_runtime.set_battle_speed_multiplier(multiplier)
+	if current_map is BattleSiteMap:
+		(current_map as BattleSiteMap).set_battle_speed_result(result)
 	if result.success:
 		_refresh_battle_site()
 

@@ -145,6 +145,23 @@ func leave_battle() -> BattleRuntimeResult:
 	session.clear_active_battle()
 	return result.succeed()
 
+func set_battle_speed_multiplier(multiplier: float) -> BattleRuntimeResult:
+	var result: BattleRuntimeResult = BattleRuntimeResultType.new()
+	if session == null:
+		return result.failure(BattleRuntimeResult.Code.RUNTIME_UNAVAILABLE)
+	if not session.has_active_battle():
+		return result.failure(BattleRuntimeResult.Code.NO_ACTIVE_BATTLE)
+	if not BattleRules.is_valid_battle_speed(multiplier):
+		return result.failure(BattleRuntimeResult.Code.INVALID_SPEED)
+	var state: BattleRuntimeState = session.active_battle_state
+	var changed: bool = not is_equal_approx(state.battle_speed_multiplier, multiplier)
+	state.battle_speed_multiplier = multiplier
+	if changed:
+		state.revision += 1
+	result.battle_speed_multiplier = multiplier
+	result.changed = changed
+	return result.succeed_with_code(BattleRuntimeResult.Code.SPEED_CHANGED)
+
 func issue_move(formation_id: String, target_position_m: Vector2) -> BattleRuntimeResult:
 	if session == null:
 		return BattleRuntimeResultType.new().failure(BattleRuntimeResult.Code.RUNTIME_UNAVAILABLE)
@@ -341,7 +358,7 @@ func advance_battle(seconds: float) -> BattleRuntimeResult:
 	if session == null or not session.has_active_battle():
 		return result.failure(BattleRuntimeResult.Code.NO_ACTIVE_BATTLE)
 	var state: BattleRuntimeState = session.active_battle_state
-	var budget: float = maxf(seconds, 0.0)
+	var budget: float = maxf(seconds, 0.0) * state.battle_speed_multiplier
 	if budget <= 0.0:
 		return result.succeed()
 	var changed: bool = false

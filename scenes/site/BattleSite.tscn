@@ -74,6 +74,47 @@ custom_minimum_size = Vector2(0, 38)
 layout_mode = 2
 text = "5  Flank Rear"
 
+[node name="SpeedLabel" type="Label" parent="BattleDebugPanel/Panel/Margin/Content"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "Battle Speed"
+
+[node name="SpeedGrid" type="GridContainer" parent="BattleDebugPanel/Panel/Margin/Content"]
+layout_mode = 2
+theme_override_constants/h_separation = 6
+theme_override_constants/v_separation = 6
+columns = 3
+
+[node name="SpeedHalfButton" type="Button" parent="BattleDebugPanel/Panel/Margin/Content/SpeedGrid"]
+custom_minimum_size = Vector2(0, 34)
+layout_mode = 2
+text = "0.5x"
+
+[node name="Speed1Button" type="Button" parent="BattleDebugPanel/Panel/Margin/Content/SpeedGrid"]
+custom_minimum_size = Vector2(0, 34)
+layout_mode = 2
+text = "1x"
+
+[node name="Speed2Button" type="Button" parent="BattleDebugPanel/Panel/Margin/Content/SpeedGrid"]
+custom_minimum_size = Vector2(0, 34)
+layout_mode = 2
+text = "2x"
+
+[node name="Speed4Button" type="Button" parent="BattleDebugPanel/Panel/Margin/Content/SpeedGrid"]
+custom_minimum_size = Vector2(0, 34)
+layout_mode = 2
+text = "4x"
+
+[node name="Speed8Button" type="Button" parent="BattleDebugPanel/Panel/Margin/Content/SpeedGrid"]
+custom_minimum_size = Vector2(0, 34)
+layout_mode = 2
+text = "8x"
+
+[node name="Speed16Button" type="Button" parent="BattleDebugPanel/Panel/Margin/Content/SpeedGrid"]
+custom_minimum_size = Vector2(0, 34)
+layout_mode = 2
+text = "16x"
+
 [node name="Orientation" type="Label" parent="BattleDebugPanel"]
 anchors_preset = 10
 anchor_right = 1.0

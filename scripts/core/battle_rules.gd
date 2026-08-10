@@ -17,6 +17,13 @@ const COMMAND_SIGNAL_SPEED_MPS: float = 25.0
 const MESSENGER_SPEED_MPS: float = 12.0
 const MESSENGER_INTERCEPT_RADIUS_M: float = 4.0
 const FORMATION_CONTACT_RADIUS_M: float = 8.0
+const BATTLE_SPEED_OPTIONS: Array = [0.5, 1.0, 2.0, 4.0, 8.0, 16.0]
+
+static func is_valid_battle_speed(multiplier: float) -> bool:
+	for option: float in BATTLE_SPEED_OPTIONS:
+		if is_equal_approx(multiplier, option):
+			return true
+	return false
 
 static func combat_frontage(terrain_type: int) -> int:
 	match terrain_type:

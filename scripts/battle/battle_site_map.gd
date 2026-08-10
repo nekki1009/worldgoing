@@ -4,15 +4,16 @@ extends Node2D
 signal debug_state_changed(state: Dictionary)
 signal formation_move_requested(formation_id: String, target_position_m: Vector2)
 signal simple_order_requested(formation_id: String, intent: int)
+signal battle_speed_requested(multiplier: float)
 
 const BATTLE_PIXELS_PER_METER: float = 4.0
-const CAMERA_SPEED_PIXELS: float = 900.0
 const CAMERA_MARGIN_METERS: float = 60.0
+const CAMERA_DRAG_THRESHOLD_PIXELS: float = 3.0
 const MIN_ZOOM: float = 0.50
-const MAX_ZOOM: float = 2.50
-const SOLDIER_MARKER_SIZE_METERS: float = 1.60
-const FORMATION_COLUMNS: int = 20
-const FORMATION_ROWS: int = 5
+const MAX_ZOOM: float = 16.00
+const SOLDIER_CANVAS_SIZE_METERS: Vector2 = BattleFormationData.SOLDIER_CANVAS_SIZE_METERS
+const FORMATION_COLUMNS: int = BattleFormationData.FORMATION_COLUMNS
+const FORMATION_ROWS: int = BattleFormationData.FORMATION_ROWS
 const RESERVE_STAGING_BAND_METERS: float = 60.0
 
 @onready var camera: Camera2D = $Camera2D
@@ -36,6 +37,9 @@ var visual_battle_id: String = ""
 var visual_revision: int = -1
 var visual_total_personnel: int = -1
 var command_status: String = ""
+var battle_speed_multiplier: float = 1.0
+var camera_dragging: bool = false
+var camera_drag_moved: bool = false
 
 func _ready() -> void:
 	var soldier_mesh: QuadMesh = QuadMesh.new()
@@ -62,6 +66,24 @@ func _ready() -> void:
 	$BattleDebugPanel/Panel/Margin/Content/CommandGrid/FlankRearButton.pressed.connect(
 		_emit_simple_command.bind(BattleOrderData.SimpleIntent.FLANK_REAR)
 	)
+	$BattleDebugPanel/Panel/Margin/Content/SpeedGrid/SpeedHalfButton.pressed.connect(
+		_emit_battle_speed.bind(0.5)
+	)
+	$BattleDebugPanel/Panel/Margin/Content/SpeedGrid/Speed1Button.pressed.connect(
+		_emit_battle_speed.bind(1.0)
+	)
+	$BattleDebugPanel/Panel/Margin/Content/SpeedGrid/Speed2Button.pressed.connect(
+		_emit_battle_speed.bind(2.0)
+	)
+	$BattleDebugPanel/Panel/Margin/Content/SpeedGrid/Speed4Button.pressed.connect(
+		_emit_battle_speed.bind(4.0)
+	)
+	$BattleDebugPanel/Panel/Margin/Content/SpeedGrid/Speed8Button.pressed.connect(
+		_emit_battle_speed.bind(8.0)
+	)
+	$BattleDebugPanel/Panel/Margin/Content/SpeedGrid/Speed16Button.pressed.connect(
+		_emit_battle_speed.bind(16.0)
+	)
 	_update_command_controls()
 
 func setup(p_snapshot: BattleSiteSnapshot) -> void:
@@ -71,6 +93,7 @@ func setup(p_snapshot: BattleSiteSnapshot) -> void:
 		or context.battle_id != p_snapshot.context.battle_id
 	snapshot = p_snapshot
 	context = snapshot.context
+	battle_speed_multiplier = snapshot.battle_speed_multiplier
 	generated = {
 		"site_layouts": snapshot.site_layouts,
 		"footprint_cells": snapshot.footprint_cells,
@@ -114,22 +137,6 @@ static func meters_to_pixels(battle_local_meter_position: Vector2) -> Vector2:
 static func pixels_to_meters(battle_local_pixel_position: Vector2) -> Vector2:
 	return battle_local_pixel_position / BATTLE_PIXELS_PER_METER
 
-func _process(delta: float) -> void:
-	if generated.is_empty():
-		return
-	var direction: Vector2 = Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
-	if Input.is_key_pressed(KEY_A):
-		direction.x -= 1.0
-	if Input.is_key_pressed(KEY_D):
-		direction.x += 1.0
-	if Input.is_key_pressed(KEY_W):
-		direction.y -= 1.0
-	if Input.is_key_pressed(KEY_S):
-		direction.y += 1.0
-	if direction != Vector2.ZERO:
-		camera.position += direction.normalized() * CAMERA_SPEED_PIXELS * delta / camera.zoom.x
-		_clamp_camera()
-
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey:
 		var key_event: InputEventKey = event as InputEventKey
@@ -140,21 +147,41 @@ func _unhandled_input(event: InputEvent) -> void:
 			_emit_simple_command(simple_intent)
 			get_viewport().set_input_as_handled()
 		return
+	if event is InputEventMouseMotion:
+		if not camera_dragging:
+			return
+		var motion_event: InputEventMouseMotion = event as InputEventMouseMotion
+		if motion_event.relative.length() >= CAMERA_DRAG_THRESHOLD_PIXELS:
+			camera_drag_moved = true
+			camera.position -= motion_event.relative / camera.zoom.x
+			_clamp_camera()
+		get_viewport().set_input_as_handled()
+		return
 	if not event is InputEventMouseButton:
 		return
 	var mouse_event: InputEventMouseButton = event as InputEventMouseButton
-	if not mouse_event.pressed:
-		return
 	if mouse_event.button_index == MOUSE_BUTTON_WHEEL_UP:
+		if not mouse_event.pressed:
+			return
 		_set_zoom(1.1)
 		get_viewport().set_input_as_handled()
 	elif mouse_event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+		if not mouse_event.pressed:
+			return
 		_set_zoom(0.9)
 		get_viewport().set_input_as_handled()
 	elif mouse_event.button_index == MOUSE_BUTTON_LEFT:
-		_select_formation(pixels_to_meters(get_local_mouse_position()))
+		if mouse_event.pressed:
+			camera_dragging = true
+			camera_drag_moved = false
+		else:
+			if camera_dragging and not camera_drag_moved:
+				_select_formation(pixels_to_meters(get_local_mouse_position()))
+			camera_dragging = false
+			camera_drag_moved = false
 		get_viewport().set_input_as_handled()
-	elif mouse_event.button_index == MOUSE_BUTTON_RIGHT and not selected_formation_id.is_empty():
+	elif mouse_event.button_index == MOUSE_BUTTON_RIGHT \
+			and mouse_event.pressed and not selected_formation_id.is_empty():
 		formation_move_requested.emit(
 			selected_formation_id,
 			pixels_to_meters(get_local_mouse_position())
@@ -179,7 +206,12 @@ func get_debug_state() -> Dictionary:
 		],
 		"party_state": "Click to select | Right-click to move" if snapshot.active_battle \
 			else "Initial deployment / Off-map reserve",
-		"person_visual": "1 dot per person (%.2fm)" % SOLDIER_MARKER_SIZE_METERS,
+		"person_visual": "1 rectangle per person (%.2fm x %.2fm)" % [
+			SOLDIER_CANVAS_SIZE_METERS.x,
+			SOLDIER_CANVAS_SIZE_METERS.y,
+		],
+		"battle_speed_multiplier": battle_speed_multiplier,
+		"zoom": camera.zoom.x,
 		"selected_formation": selected_formation_id,
 		"command_status": command_status,
 		"order_count": active_orders.size(),
@@ -199,7 +231,7 @@ func get_debug_state() -> Dictionary:
 		"road": "Yes" if bool(center["road"]) else "No",
 		"river_crossing": "Yes" if bool(center["river_crossing"]) else "No",
 		"site": context.battle_id,
-		"instruction": "WASD: Camera   Wheel: Zoom   Click: Select   Right-click: Move   1-5: Commands   ESC: Return",
+		"instruction": "Left drag: Pan   Wheel: Zoom 0.5x-16x   Click: Select   Right-click: Move   1-5: Commands   Speed: 0.5-16x   ESC: Return",
 	}
 
 func set_command_result(result: BattleRuntimeResult) -> void:
@@ -218,6 +250,21 @@ func set_command_result(result: BattleRuntimeResult) -> void:
 	queue_redraw()
 	debug_state_changed.emit(get_debug_state())
 
+func set_battle_speed_result(result: BattleRuntimeResult) -> void:
+	if result == null:
+		return
+	if result.success:
+		battle_speed_multiplier = result.battle_speed_multiplier
+		command_status = "BATTLE_SPEED %.1fx (%s)" % [
+			battle_speed_multiplier,
+			BattleRuntimeResult.code_name(result.failure_code),
+		]
+	else:
+		command_status = BattleRuntimeResult.code_name(result.failure_code)
+	_update_debug_panel()
+	queue_redraw()
+	debug_state_changed.emit(get_debug_state())
+
 func _emit_simple_command(intent: int) -> void:
 	if selected_formation_id.is_empty():
 		command_status = "SELECT_FORMATION_FIRST"
@@ -225,6 +272,9 @@ func _emit_simple_command(intent: int) -> void:
 		debug_state_changed.emit(get_debug_state())
 		return
 	simple_order_requested.emit(selected_formation_id, intent)
+
+func _emit_battle_speed(multiplier: float) -> void:
+	battle_speed_requested.emit(multiplier)
 
 func _simple_intent_for_key(keycode: Key) -> int:
 	match keycode:
@@ -582,9 +632,9 @@ func _write_reserve_instances(
 func _set_soldier_instance(index: int, position_m: Vector2, color: Color) -> void:
 	var instance_transform: Transform2D = Transform2D()
 	instance_transform.origin = meters_to_pixels(position_m)
-	var marker_pixels: float = SOLDIER_MARKER_SIZE_METERS * BATTLE_PIXELS_PER_METER
-	instance_transform.x = Vector2(marker_pixels, 0.0)
-	instance_transform.y = Vector2(0.0, marker_pixels)
+	var marker_pixels: Vector2 = SOLDIER_CANVAS_SIZE_METERS * BATTLE_PIXELS_PER_METER
+	instance_transform.x = Vector2(marker_pixels.x, 0.0)
+	instance_transform.y = Vector2(0.0, marker_pixels.y)
 	soldier_multimesh.set_instance_transform_2d(index, instance_transform)
 	soldier_multimesh.set_instance_color(index, color)
 
@@ -595,27 +645,22 @@ static func _formation_slot_local(
 	depth_m: float
 ) -> Vector2:
 	var count: int = clampi(personnel_count, 1, FORMATION_COLUMNS * FORMATION_ROWS)
-	var rows_used: int = ceili(float(count) / float(FORMATION_COLUMNS))
 	var row: int = floori(float(index) / float(FORMATION_COLUMNS))
 	var slot: int = index % FORMATION_COLUMNS
 	var count_in_row: int = mini(FORMATION_COLUMNS, count - row * FORMATION_COLUMNS)
-	var row_offset: int = floori(float(FORMATION_ROWS - rows_used) / 2.0)
-	var actual_row: int = row_offset + row
-	var column: int = _center_out_column(slot, count_in_row)
-	var x: float = -width_m * 0.5 + width_m * (float(column) + 0.5) / float(FORMATION_COLUMNS)
-	var row_step: float = depth_m / float(FORMATION_ROWS)
-	var y: float = depth_m * 0.5 - row_step * (float(actual_row) + 0.5)
+	var row_width: float = float(count_in_row) * SOLDIER_CANVAS_SIZE_METERS.x \
+		+ float(maxi(count_in_row - 1, 0)) * BattleFormationData.SOLDIER_SPACING_METERS.x
+	var row_start_x: float = -width_m * 0.5 \
+		+ (width_m - row_width) * 0.5 \
+		+ SOLDIER_CANVAS_SIZE_METERS.x * 0.5
+	var x: float = row_start_x + float(slot) * (
+		SOLDIER_CANVAS_SIZE_METERS.x + BattleFormationData.SOLDIER_SPACING_METERS.x
+	)
+	var row_start_y: float = depth_m * 0.5 - SOLDIER_CANVAS_SIZE_METERS.y * 0.5
+	var y: float = row_start_y - float(row) * (
+		SOLDIER_CANVAS_SIZE_METERS.y + BattleFormationData.SOLDIER_SPACING_METERS.y
+	)
 	return Vector2(x, y)
-
-static func _center_out_column(slot: int, count: int) -> int:
-	var left: int = floori(float(count - 1) * 0.5)
-	var right: int = ceili(float(count - 1) * 0.5)
-	if slot == 0:
-		return left
-	if slot == 1:
-		return right
-	var offset: int = floori(float(slot) * 0.5)
-	return left - offset if slot % 2 == 0 else right + offset
 
 static func _formation_rotation(formation: BattleFormationData) -> float:
 	var facing: Vector2 = formation.facing_direction.normalized()
@@ -713,6 +758,8 @@ Battle Size: 300m x 300m
 Center Terrain: %s
 Terrain Hash: %s
 Command: %s
+Battle Speed: %.1fx
+Zoom: %.2fx (0.5x-16x)
 Road Cells: %d   River Cells: %d
 
 ATTACKER
@@ -722,7 +769,7 @@ Initial Deployed: %d
 Reserve: %d (%d formations off-map)
 Entry: %s
 Preview Formations: %d x %d people
-Visual: 1 dot per person (%.2fm)
+Visual: 1 rectangle per person (%.2fm x %.2fm)
 
 DEFENDER
 %s
@@ -731,15 +778,18 @@ Initial Deployed: %d
 Reserve: %d (%d formations off-map)
 Entry: %s
 Preview Formations: %d x %d people
-Visual: 1 dot per person (%.2fm)
+Visual: 1 rectangle per person (%.2fm x %.2fm)
 
 COMMANDS: 1 Advance | 2 Fall Back | 3 Attack | 4 Withdraw | 5 Flank Rear
-WASD Camera | Wheel Zoom | ESC Return""" % [
+SPEED: 0.5x | 1x | 2x | 4x | 8x | 16x
+Left drag Pan | Wheel Zoom 0.5x-16x | ESC Return""" % [
 		context.battle_id,
 		_format_cell(context.center_global_region_cell),
 		TerrainType.to_display_name(int(center["terrain_type"])).to_upper(),
 		str(generated["terrain_hash"]).left(12),
 		command_status if not command_status.is_empty() else "NONE",
+		battle_speed_multiplier,
+		camera.zoom.x,
 		_feature_cell_count("road"),
 		_feature_cell_count("river"),
 		context.attacker.display_name,
@@ -750,7 +800,8 @@ WASD Camera | Wheel Zoom | ESC Return""" % [
 		BattleSiteContext.entry_name(context.attacker_entry_direction),
 		int(attacker_deployment["marker_count"]),
 		BattleRules.PERSONNEL_PER_FORMATION_MARKER,
-		SOLDIER_MARKER_SIZE_METERS,
+		SOLDIER_CANVAS_SIZE_METERS.x,
+		SOLDIER_CANVAS_SIZE_METERS.y,
 		context.defender.display_name,
 		context.defender.total_personnel,
 		int(defender_deployment["initial_deployed_personnel"]),
@@ -759,7 +810,8 @@ WASD Camera | Wheel Zoom | ESC Return""" % [
 		BattleSiteContext.entry_name(context.defender_entry_direction),
 		int(defender_deployment["marker_count"]),
 		BattleRules.PERSONNEL_PER_FORMATION_MARKER,
-		SOLDIER_MARKER_SIZE_METERS,
+		SOLDIER_CANVAS_SIZE_METERS.x,
+		SOLDIER_CANVAS_SIZE_METERS.y,
 	]
 
 func _feature_cell_count(key: String) -> int:

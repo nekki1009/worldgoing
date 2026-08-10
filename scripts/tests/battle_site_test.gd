@@ -321,6 +321,19 @@ func _test_active_battle_runtime(
 	assert(active_snapshot.formations.size() == state.formations.size())
 	active_snapshot.formations[0].battle_position_m = Vector2.ZERO
 	assert(state.formations[active_snapshot.formations[0].formation_id].battle_position_m != Vector2.ZERO)
+	var elapsed_before_speed: float = state.elapsed_seconds
+	for option: float in BattleRules.BATTLE_SPEED_OPTIONS:
+		var speed_result: BattleRuntimeResult = runtime.set_battle_speed_multiplier(option)
+		assert(speed_result.success and speed_result.failure_code == BattleRuntimeResult.Code.SPEED_CHANGED)
+		assert(is_equal_approx(state.battle_speed_multiplier, option))
+	var invalid_speed: BattleRuntimeResult = runtime.set_battle_speed_multiplier(3.0)
+	assert(not invalid_speed.success and invalid_speed.failure_code == BattleRuntimeResult.Code.INVALID_SPEED)
+	var speed_advance: BattleRuntimeResult = runtime.advance_battle(1.0)
+	assert(speed_advance.success and is_equal_approx(
+		state.elapsed_seconds,
+		elapsed_before_speed + 16.0
+	))
+	assert(runtime.set_battle_speed_multiplier(1.0).success)
 	_test_command_authority(runtime, preview, session)
 	assert(runtime.leave_battle().success and not session.has_active_battle())
 
@@ -486,7 +499,7 @@ func _test_region_battle_return() -> void:
 	assert(battle_site.preview_marker_count("defender") == 5)
 	assert(battle_site.soldier_multimesh.instance_count == 1_800)
 	assert(battle_site.soldier_multimesh.visible_instance_count == 1_800)
-	assert(_descendant_count(battle_site) < 20, "Battle preview instantiated a large Node population")
+	assert(_descendant_count(battle_site) < 30, "Battle preview instantiated a large Node population")
 	assert(not _has_soldier_nodes(battle_site), "Battle preview instantiated soldier/AI Nodes")
 	var selected_attacker: BattleFormationData = null
 	for formation: BattleFormationData in battle_site.active_formations:
@@ -509,6 +522,36 @@ func _test_region_battle_return() -> void:
 	assert(battle_site.selected_formation_id == selected_attacker.formation_id)
 	assert(battle_site.active_orders.size() == 2, "Command shortcut did not reach Battle Runtime")
 	assert(str(battle_site.get_debug_state()["instruction"]).find("1-5") >= 0)
+	var speed_button: Button = battle_site.get_node(
+		"BattleDebugPanel/Panel/Margin/Content/SpeedGrid/Speed16Button"
+	) as Button
+	assert(speed_button != null, "Battle speed controls are missing")
+	speed_button.emit_signal("pressed")
+	assert(is_equal_approx(battle_site.battle_speed_multiplier, 16.0))
+	assert(is_equal_approx(navigation.session.active_battle_state.battle_speed_multiplier, 16.0))
+	battle_site._set_zoom(100.0)
+	assert(is_equal_approx(battle_site.camera.zoom.x, BattleSiteMap.MAX_ZOOM))
+	battle_site._set_zoom(0.001)
+	assert(is_equal_approx(battle_site.camera.zoom.x, BattleSiteMap.MIN_ZOOM))
+	assert(str(battle_site.get_debug_state()["instruction"]).find("0.5x-16x") >= 0)
+	var camera_before_drag: Vector2 = battle_site.camera.position
+	var drag_press: InputEventMouseButton = InputEventMouseButton.new()
+	drag_press.button_index = MOUSE_BUTTON_LEFT
+	drag_press.pressed = true
+	drag_press.position = Vector2(500.0, 500.0)
+	battle_site._unhandled_input(drag_press)
+	var drag_motion: InputEventMouseMotion = InputEventMouseMotion.new()
+	drag_motion.position = Vector2(560.0, 500.0)
+	drag_motion.relative = Vector2(60.0, 0.0)
+	battle_site._unhandled_input(drag_motion)
+	var drag_release: InputEventMouseButton = InputEventMouseButton.new()
+	drag_release.button_index = MOUSE_BUTTON_LEFT
+	drag_release.pressed = false
+	drag_release.position = Vector2(560.0, 500.0)
+	battle_site._unhandled_input(drag_release)
+	assert(battle_site.camera.position.x < camera_before_drag.x, "Left drag did not pan the Battle camera")
+	assert(battle_site.selected_formation_id == selected_attacker.formation_id,
+		"Camera drag changed Formation selection")
 	var escape_key: InputEventKey = InputEventKey.new()
 	escape_key.keycode = KEY_ESCAPE
 	escape_key.pressed = true
@@ -552,11 +595,22 @@ func _test_formation_visual_contract() -> void:
 		Vector2(100.0, 100.0)
 	)
 	formation.facing_direction = Vector2.UP
+	var full_size: Vector2 = BattleFormationData.formation_size_for_personnel(100)
+	assert(is_equal_approx(formation.width_m, full_size.x))
+	assert(is_equal_approx(formation.depth_m, full_size.y))
+	var partial_size: Vector2 = BattleFormationData.formation_size_for_personnel(37)
+	assert(is_equal_approx(partial_size.x, full_size.x) and partial_size.y < full_size.y)
+	var small_size: Vector2 = BattleFormationData.formation_size_for_personnel(7)
+	assert(small_size.x < full_size.x and small_size.y < full_size.y)
 	assert(BattleSiteMap._formation_world_position(formation, Vector2(0.0, 4.0)) == Vector2(100.0, 96.0))
 	assert(BattleSiteMap._formation_world_position(formation, Vector2(1.0, 0.0)) == Vector2(99.0, 100.0))
-	var first_slot: Vector2 = BattleSiteMap._formation_slot_local(0, 100, 20.0, 10.0)
-	assert(is_equal_approx(first_slot.x, -0.5))
-	assert(is_equal_approx(first_slot.y, 4.0))
+	var first_slot: Vector2 = BattleSiteMap._formation_slot_local(0, 100, full_size.x, full_size.y)
+	assert(is_equal_approx(first_slot.x, -16.15))
+	assert(is_equal_approx(first_slot.y, 6.40))
+	var second_slot: Vector2 = BattleSiteMap._formation_slot_local(1, 100, full_size.x, full_size.y)
+	var next_row_slot: Vector2 = BattleSiteMap._formation_slot_local(20, 100, full_size.x, full_size.y)
+	assert(is_equal_approx(second_slot.x - first_slot.x, 1.70))
+	assert(is_equal_approx(first_slot.y - next_row_slot.y, 3.20))
 
 func _test_max_personnel_visual() -> void:
 	var world_data: FastWorldData = FastWorldData.new()
@@ -590,8 +644,8 @@ func _test_max_personnel_visual() -> void:
 		active_visual_instances += int(range_value["count"])
 	assert(active_visual_instances == active_personnel,
 		"Formation personnel is not mapped one-dot-per-person")
-	assert(battle_site.get_debug_state()["person_visual"] == "1 dot per person (1.60m)")
-	assert(_descendant_count(battle_site) < 20)
+	assert(battle_site.get_debug_state()["person_visual"] == "1 rectangle per person (1.20m x 2.40m)")
+	assert(_descendant_count(battle_site) < 30)
 	assert(not _has_soldier_nodes(battle_site))
 	battle_site.queue_free()
 	runtime.leave_battle()
