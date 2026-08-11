@@ -3,7 +3,7 @@ extends RefCounted
 
 const SiteLayoutDataType = preload("res://scripts/data/site_layout_data.gd")
 
-const GENERATION_VERSION: int = 4
+const GENERATION_VERSION: int = 5
 const THUMBNAIL_GRID_SIZE: int = 8
 const DETAIL_MARGIN_METERS: int = 8
 const MIN_DETAIL_SEPARATION_METERS: int = 12
@@ -19,6 +19,7 @@ const ROAD_HALF_WIDTH_METERS: float = 3.0
 const RIVER_HALF_WIDTH_METERS: float = 4.0
 const CROSSING_RADIUS_METERS: float = 12.0
 const PATH_HALF_WIDTH_METERS: float = 2.5
+const PASSAGE_HALF_WIDTH_METERS: float = 10.0
 const LANDMARK_RADIUS_METERS: float = 5.0
 const HUB_RADIUS_METERS: float = 5.0
 
@@ -30,8 +31,11 @@ static func generate(definition: SiteData) -> SiteLayoutDataType:
 	layout.site_id = definition.site_id
 	layout.generation_version = GENERATION_VERSION
 	layout.site_seed = definition.site_seed
+	layout.global_region_cell = definition.global_region_cell
 	layout.entrance_local_meters = definition.entrance_local_meters
 	layout.terrain_type = definition.source_terrain_type
+	layout.site_landform = definition.site_landform
+	layout.travel_exit_mask = definition.travel_exit_mask
 	layout.elevation = definition.source_elevation
 	layout.moisture = definition.source_moisture
 	layout.river_strength = 1.0 if definition.source_river_nearby else 0.0
@@ -71,6 +75,7 @@ static func generate(definition: SiteData) -> SiteLayoutDataType:
 	layout.primary_path_meters.append(midpoint)
 	layout.primary_path_meters.append(layout.hub_local_meters)
 	_generate_landmarks(layout, definition, minimum, maximum)
+	_generate_navigation_flags(layout)
 	_generate_visual_cells(layout)
 	return layout
 
@@ -81,14 +86,8 @@ static func generate_cell_base(
 	var layout: SiteLayoutDataType = _build_cell_base_layout(p_world_seed, resolved_cell)
 	if layout == null:
 		return null
-	layout.navigation_flags.resize(SiteLayoutDataType.NAVIGATION_CELL_COUNT)
-	layout.visual_cells.resize(SiteLayoutDataType.NAVIGATION_CELL_COUNT)
-	for y: int in range(SiteLayoutDataType.GRID_SIZE.y):
-		for x: int in range(SiteLayoutDataType.GRID_SIZE.x):
-			var local_cell: Vector2i = Vector2i(x, y)
-			var cell_index: int = y * SiteLayoutDataType.GRID_SIZE.x + x
-			layout.navigation_flags[cell_index] = _cell_base_navigation_flags(layout, local_cell)
-			layout.visual_cells[cell_index] = _visual_code_for_layout_cell(layout, local_cell)
+	_generate_navigation_flags(layout)
+	_generate_visual_cells(layout)
 	return layout
 
 static func generate_cell_base_thumbnail(
@@ -141,6 +140,14 @@ static func _build_cell_base_layout(
 	)
 	layout.bounds_meters = Rect2i(-half_size, SiteLayoutDataType.SIZE_METERS)
 	layout.terrain_type = int(resolved_cell.get("terrain_type", TerrainType.PLAINS))
+	layout.site_landform = int(resolved_cell.get(
+		"site_landform",
+		SiteLayoutDataType.Landform.NONE
+	))
+	layout.travel_exit_mask = int(resolved_cell.get(
+		"travel_exit_mask",
+		SiteLayoutDataType.EXIT_ALL
+	))
 	layout.elevation = float(resolved_cell.get("elevation", 0.0))
 	layout.moisture = float(resolved_cell.get("moisture", 0.0))
 	layout.river_strength = float(resolved_cell.get("river_strength", 0.0))
@@ -183,12 +190,24 @@ static func _generate_visual_cells(layout: SiteLayoutDataType) -> void:
 				local_cell
 			)
 
-static func _cell_base_navigation_flags(
+static func _generate_navigation_flags(layout: SiteLayoutDataType) -> void:
+	if layout == null:
+		return
+	layout.navigation_flags.resize(SiteLayoutDataType.NAVIGATION_CELL_COUNT)
+	for y: int in range(SiteLayoutDataType.GRID_SIZE.y):
+		for x: int in range(SiteLayoutDataType.GRID_SIZE.x):
+			var local_cell: Vector2i = Vector2i(x, y)
+			layout.navigation_flags[y * SiteLayoutDataType.GRID_SIZE.x + x] = \
+				_navigation_flags_for_layout_cell(layout, local_cell)
+
+static func _navigation_flags_for_layout_cell(
 		layout: SiteLayoutDataType,
 		local_cell: Vector2i
 	) -> int:
 	var point: Vector2 = layout.cell_center_meters(local_cell)
 	var flags: int = 0
+	if not _passage_open_at(layout, point):
+		flags |= SiteLayoutDataType.NAV_BLOCKED
 	if not layout.road_connection_offsets.is_empty() \
 		and _near_segments(point, layout.road_connection_offsets, ROAD_HALF_WIDTH_METERS):
 		flags |= SiteLayoutDataType.NAV_ROAD
@@ -209,7 +228,7 @@ static func _visual_code_for_layout_cell(
 	var code: int = terrain_type & SiteLayoutDataType.VISUAL_TERRAIN_MASK
 	var point: Vector2 = layout.cell_center_meters(local_cell)
 	if layout.layout_kind == SiteLayoutDataType.LayoutKind.CELL_BASE:
-		var navigation: int = _cell_base_navigation_flags(layout, local_cell)
+		var navigation: int = _navigation_flags_for_layout_cell(layout, local_cell)
 		if navigation & SiteLayoutDataType.NAV_ROAD:
 			code |= SiteLayoutDataType.VISUAL_ROAD
 		if navigation & SiteLayoutDataType.NAV_RIVER:
@@ -217,6 +236,13 @@ static func _visual_code_for_layout_cell(
 		if navigation & SiteLayoutDataType.NAV_CROSSING:
 			code |= SiteLayoutDataType.VISUAL_ROAD | SiteLayoutDataType.VISUAL_RIVER
 		return code
+	if layout.site_landform == SiteLayoutDataType.Landform.MOUNTAIN_PASS \
+		and _near_segments(
+			point,
+			SiteLayoutDataType.exit_offsets(layout.travel_exit_mask),
+			PATH_HALF_WIDTH_METERS
+		):
+		code |= SiteLayoutDataType.VISUAL_PATH
 	if _near_polyline(point, layout.primary_path_meters, PATH_HALF_WIDTH_METERS):
 		code |= SiteLayoutDataType.VISUAL_PATH
 	for landmark: Vector2i in layout.landmark_points_meters:
@@ -228,6 +254,23 @@ static func _visual_code_for_layout_cell(
 	if layout.river_strength > 0.0 and _poi_river_band_contains(layout, point):
 		code |= SiteLayoutDataType.VISUAL_RIVER
 	return code
+
+static func _passage_open_at(layout: SiteLayoutDataType, point: Vector2) -> bool:
+	if layout.site_landform != SiteLayoutDataType.Landform.MOUNTAIN_PASS:
+		return true
+	var exits: Array[Vector2i] = SiteLayoutDataType.exit_offsets(layout.travel_exit_mask)
+	if exits.is_empty() or _near_segments(point, exits, PASSAGE_HALF_WIDTH_METERS):
+		return true
+	if layout.layout_kind != SiteLayoutDataType.LayoutKind.POI:
+		return false
+	if _near_polyline(point, layout.primary_path_meters, PATH_HALF_WIDTH_METERS):
+		return true
+	if point.distance_to(Vector2(layout.hub_local_meters)) <= HUB_RADIUS_METERS:
+		return true
+	for landmark: Vector2i in layout.landmark_points_meters:
+		if point.distance_to(Vector2(landmark)) <= LANDMARK_RADIUS_METERS:
+			return true
+	return false
 
 static func _poi_river_band_contains(layout: SiteLayoutDataType, point: Vector2) -> bool:
 	var axis: int = posmod(layout.site_seed, 2)

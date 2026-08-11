@@ -93,6 +93,15 @@ func query_preview(
 	for cell: Dictionary in cells:
 		if bool(cell["road"]):
 			cell["road_connection_offsets"] = _road_connection_offsets(cell)
+		cell["site_landform"] = SiteLayoutData.landform_for_travel_cell(
+			int(cell["terrain_type"]),
+			cell["road_connection_offsets"]
+		)
+		cell["travel_exit_mask"] = SiteLayoutData.exit_mask_for_travel_cell(
+			bool(cell["passable"]),
+			int(cell["site_landform"]),
+			cell["road_connection_offsets"]
+		)
 		if bool(cell["river"]):
 			cell["river_connection_offsets"] = _river_connection_offsets(
 				cell["global_region_cell"] as Vector2i
@@ -918,7 +927,8 @@ func _base_cell_info(state: BattleRuntimeState, cell: Vector2i) -> Dictionary:
 	var road: bool = (flags & SiteLayoutData.NAV_ROAD) != 0
 	var crossing: bool = layout.river_crossing and (flags & SiteLayoutData.NAV_CROSSING) != 0
 	return {
-		"passable": TravelCostConfig.is_passable(layout.terrain_type, river, crossing),
+		"passable": (flags & SiteLayoutData.NAV_BLOCKED) == 0 \
+			and TravelCostConfig.is_passable(layout.terrain_type, river, crossing),
 		"terrain_type": layout.terrain_type,
 		"road": road,
 		"river": river,
@@ -1019,28 +1029,12 @@ func _query_resolved_cell(global_cell: Vector2i) -> Dictionary:
 	}
 
 func _road_connection_offsets(cell: Dictionary) -> Array[Vector2i]:
-	var result: Array[Vector2i] = []
 	var resolver: RegionStateResolver = cell["resolver"] as RegionStateResolver
-	var overlay: RegionRoadOverlay = resolver.base_roads if resolver != null else null
 	var region_cell: Vector2i = cell["region_cell"] as Vector2i
-	var global_cell: Vector2i = cell["global_region_cell"] as Vector2i
-	if overlay == null:
-		return result
-	for route_id: String in overlay.get_route_ids(region_cell):
-		if not resolver.is_feature_active(route_id):
-			continue
-		var route: WorldRoadRoute = overlay.get_route(route_id)
-		if route == null:
-			continue
-		for index: int in range(route.path.size()):
-			if route.path[index] != global_cell:
-				continue
-			if index > 0:
-				_append_unique_offset(result, route.path[index - 1] - global_cell)
-			if index + 1 < route.path.size():
-				_append_unique_offset(result, route.path[index + 1] - global_cell)
-	result.sort_custom(Callable(self, "_offset_less"))
-	return result
+	if resolver == null:
+		var empty: Array[Vector2i] = []
+		return empty
+	return resolver.get_road_connection_offsets(region_cell)
 
 func _river_connection_offsets(global_cell: Vector2i) -> Array[Vector2i]:
 	var result: Array[Vector2i] = []
@@ -1054,11 +1048,6 @@ func _river_connection_offsets(global_cell: Vector2i) -> Array[Vector2i]:
 				result.append(offset)
 	result.sort_custom(Callable(self, "_offset_less"))
 	return result
-
-func _append_unique_offset(result: Array[Vector2i], delta: Vector2i) -> void:
-	var offset: Vector2i = Vector2i(clampi(delta.x, -1, 1), clampi(delta.y, -1, 1))
-	if offset != Vector2i.ZERO and not result.has(offset):
-		result.append(offset)
 
 func _apply_generated(snapshot: BattleSiteSnapshot, generated: Dictionary) -> void:
 	snapshot.context = generated["context"] as BattleSiteContext

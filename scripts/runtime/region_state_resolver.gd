@@ -123,6 +123,20 @@ func has_river_crossing(region_cell: Vector2i) -> bool:
 					return true
 	return false
 
+func get_road_connection_offsets(region_cell: Vector2i) -> Array[Vector2i]:
+	if not valid or base_roads == null or not WorldCoordinates.is_valid_region_cell(region_cell):
+		var empty: Array[Vector2i] = []
+		return empty
+	var global_cell: Vector2i = WorldCoordinates.world_region_to_global_region_cell(
+		base_region.world_cell,
+		region_cell
+	)
+	return base_roads.get_connection_offsets(
+		region_cell,
+		global_cell,
+		Callable(self, "is_feature_active")
+	)
+
 func get_owner() -> String:
 	return delta.owner_id if valid and delta != null else "neutral"
 

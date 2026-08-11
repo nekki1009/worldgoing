@@ -24,6 +24,7 @@ func _init() -> void:
 	_test_cache_independence(world_data, TEST_SEED, test_region)
 	_test_no_duplicate_edges(world_data, TEST_SEED, test_region)
 	_test_reaches_settlement(world_data, TEST_SEED, test_region)
+	_test_mountain_pass_profile(world_data)
 
 	var different_seed_routes: Array[WorldRoadRoute] = world_data.get_route_edges_for_region(
 		test_region,
@@ -31,7 +32,7 @@ func _init() -> void:
 	)
 	assert(_route_signature(graph_a) != _route_signature(different_seed_routes), "Different seed kept identical road graph")
 	print("Road test region: %s" % test_region)
-	print("World road tests passed: 12 cases")
+	print("World road tests passed: 13 cases")
 	quit()
 
 func _test_deterministic_graph(
@@ -206,6 +207,19 @@ func _test_reaches_settlement(
 	assert(route.path.front() == route.start_global_cell, "Route path does not start at settlement cell")
 	assert(route.path.back() == route.end_global_cell, "Route path does not end at settlement cell")
 	print("TEST 12 PASS: Route Path reaches both settlement POI cells")
+
+func _test_mountain_pass_profile(world_data: WorldData) -> void:
+	var global_cell: Vector2i = Vector2i(1832, 38)
+	var info: Dictionary = world_data.sample_travel_data(TEST_SEED, global_cell)
+	assert(int(info["terrain_type"]) == TerrainType.MOUNTAIN, "Mountain Pass fixture left Mountain terrain")
+	assert(
+		int(info["site_landform"]) == SiteLayoutData.Landform.MOUNTAIN_PASS,
+		"Mountain Road did not resolve to a Site pass"
+	)
+	var exit_mask: int = int(info["travel_exit_mask"])
+	assert((exit_mask & (exit_mask - 1)) != 0, "Mountain Pass has fewer than two exits")
+	assert((info["road_connection_offsets"] as Array).size() >= 2, "Mountain Pass lost Road topology")
+	print("TEST 13 PASS: actual Mountain Road Site exposes a directional pass profile")
 
 func _find_region_with_routes(world_data: WorldData, world_seed: int) -> Vector2i:
 	for y: int in range(0, 6):

@@ -4,6 +4,17 @@ const TEST_SEED: int = 123456789
 const SiteRuntimeFailureReasonType = preload("res://scripts/runtime/site_runtime_failure_reason.gd")
 const SiteLayoutDataType = preload("res://scripts/data/site_layout_data.gd")
 
+class PassWorldData:
+	extends WorldData
+
+	func get_site_definition(poi: WorldPOIData) -> SiteData:
+		var definition: SiteData = SiteData.from_poi(poi)
+		if definition != null:
+			definition.source_terrain_type = TerrainType.MOUNTAIN
+			definition.site_landform = SiteLayoutDataType.Landform.MOUNTAIN_PASS
+			definition.travel_exit_mask = SiteLayoutDataType.EXIT_EAST | SiteLayoutDataType.EXIT_WEST
+		return definition
+
 var world_data: WorldData = WorldData.new()
 
 func _init() -> void:
@@ -44,7 +55,9 @@ func _run() -> void:
 	_test_site_layout_snapshot_is_detached()
 	_test_site_layout_dependency_boundary()
 	_test_site_movement_command_guards()
-	print("Site runtime tests passed: 34 cases")
+	_test_mountain_pass_contract()
+	_test_mountain_pass_blocks_local_movement()
+	print("Site runtime tests passed: 36 cases")
 	quit()
 
 func _test_stable_identity() -> void:
@@ -553,6 +566,75 @@ func _test_site_movement_command_guards() -> void:
 	)
 	print("SITE TEST 34 PASS: typed Site movement enforces direction and 50x50 bounds")
 
+func _test_mountain_pass_contract() -> void:
+	var road_offsets: Array[Vector2i] = [Vector2i.LEFT, Vector2i.RIGHT]
+	var landform: int = SiteLayoutDataType.landform_for_travel_cell(
+		TerrainType.MOUNTAIN,
+		road_offsets
+	)
+	var exit_mask: int = SiteLayoutDataType.exit_mask_for_travel_cell(
+		true,
+		landform,
+		road_offsets
+	)
+	assert(landform == SiteLayoutDataType.Landform.MOUNTAIN_PASS, "Mountain Road did not become a pass")
+	assert(
+		exit_mask == SiteLayoutDataType.EXIT_EAST | SiteLayoutDataType.EXIT_WEST,
+		"Mountain Pass lost its exact Road exits"
+	)
+	var open_cell: Dictionary = {
+		"passable": true,
+		"travel_exit_mask": SiteLayoutDataType.EXIT_ALL,
+	}
+	var pass_cell: Dictionary = {
+		"passable": true,
+		"travel_exit_mask": exit_mask,
+	}
+	assert(
+		TravelCostConfig.can_traverse_site_edge(open_cell, pass_cell, Vector2i.RIGHT),
+		"Strategic path cannot enter the Mountain Pass from the west"
+	)
+	assert(
+		not TravelCostConfig.can_traverse_site_edge(open_cell, pass_cell, Vector2i.DOWN),
+		"Strategic path entered an east-west Mountain Pass from the north"
+	)
+	print("SITE TEST 35 PASS: strategic Site exits constrain Mountain Pass travel")
+
+func _test_mountain_pass_blocks_local_movement() -> void:
+	var pass_world: PassWorldData = PassWorldData.new()
+	var poi: WorldPOIData = _first_poi_for(pass_world)
+	assert(poi != null, "Mountain Pass movement test has no POI")
+	var definition: SiteData = pass_world.get_site_definition(poi)
+	var layout: SiteLayoutDataType = pass_world.get_site_layout(definition)
+	assert(layout != null and layout.has_navigation_base(), "Mountain Pass has no local navigation base")
+	assert(
+		(layout.navigation_flags_at(SiteLayoutDataType.ENTRANCE_CELL) & SiteLayoutDataType.NAV_BLOCKED) == 0,
+		"Mountain Pass entrance is blocked"
+	)
+	assert(
+		(layout.navigation_flags_at(Vector2i(25, 40)) & SiteLayoutDataType.NAV_BLOCKED) != 0,
+		"Mountain cliff did not block cells outside the pass corridor"
+	)
+	var session: GameSession = _new_session()
+	session.party.set_global_region_cell(poi.global_region_cell)
+	var runtime: TravelRuntime = TravelRuntime.new(session, pass_world)
+	assert(runtime.begin_site_visit(session.party.party_id, poi.poi_id).success, "Mountain Pass visit failed")
+	var blocked: bool = false
+	for _step: int in range(12):
+		var before: Vector2i = session.party.current_site_local_cell
+		var move: SiteRuntimeCommandResult = runtime.move_party_in_site(
+			session.party.party_id,
+			poi.poi_id,
+			Vector2i.DOWN
+		)
+		if not move.success:
+			assert(move.failure_reason == SiteRuntimeFailureReasonType.Code.BLOCKED, "Cliff failure is not typed")
+			assert(session.party.current_site_local_cell == before, "Blocked movement changed Party position")
+			blocked = true
+			break
+	assert(blocked, "Party walked through the Mountain Pass cliff")
+	print("SITE TEST 36 PASS: generated cliffs block authoritative Site movement")
+
 func _layout_signature(layout: SiteLayoutDataType) -> String:
 	if layout == null:
 		return "null"
@@ -572,6 +654,17 @@ func _new_session() -> GameSession:
 func _first_poi() -> WorldPOIData:
 	var pois: Array[WorldPOIData] = _first_two_pois()
 	return pois[0] if not pois.is_empty() else null
+
+func _first_poi_for(source_world: WorldData) -> WorldPOIData:
+	for y: int in range(WorldData.WORLD_CELLS.y):
+		for x: int in range(WorldData.WORLD_CELLS.x):
+			var pois: Array[WorldPOIData] = source_world.get_pois_for_region(
+				Vector2i(x, y),
+				TEST_SEED
+			)
+			if not pois.is_empty():
+				return pois[0]
+	return null
 
 func _first_two_pois() -> Array[WorldPOIData]:
 	var result: Array[WorldPOIData] = []

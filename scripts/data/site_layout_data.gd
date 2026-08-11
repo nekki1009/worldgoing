@@ -6,6 +6,11 @@ enum LayoutKind {
 	CELL_BASE,
 }
 
+enum Landform {
+	NONE,
+	MOUNTAIN_PASS,
+}
+
 const GRID_SIZE: Vector2i = Vector2i(50, 50)
 const CELL_SIZE_METERS: int = 2
 const SIZE_METERS: Vector2i = GRID_SIZE * CELL_SIZE_METERS
@@ -15,6 +20,26 @@ const NAVIGATION_CELL_COUNT: int = GRID_SIZE.x * GRID_SIZE.y
 const NAV_ROAD: int = 1
 const NAV_RIVER: int = 2
 const NAV_CROSSING: int = 4
+const NAV_BLOCKED: int = 8
+const EXIT_NORTH: int = 1 << 0
+const EXIT_NORTH_EAST: int = 1 << 1
+const EXIT_EAST: int = 1 << 2
+const EXIT_SOUTH_EAST: int = 1 << 3
+const EXIT_SOUTH: int = 1 << 4
+const EXIT_SOUTH_WEST: int = 1 << 5
+const EXIT_WEST: int = 1 << 6
+const EXIT_NORTH_WEST: int = 1 << 7
+const EXIT_ALL: int = 0xff
+const EXIT_DIRECTIONS: Array[Vector2i] = [
+	Vector2i.UP,
+	Vector2i(1, -1),
+	Vector2i.RIGHT,
+	Vector2i(1, 1),
+	Vector2i.DOWN,
+	Vector2i(-1, 1),
+	Vector2i.LEFT,
+	Vector2i(-1, -1),
+]
 const VISUAL_TERRAIN_MASK: int = 0x07
 const VISUAL_ROAD: int = 0x08
 const VISUAL_RIVER: int = 0x10
@@ -33,6 +58,8 @@ var hub_local_meters: Vector2i = Vector2i.ZERO
 var primary_path_meters: Array[Vector2i] = []
 var landmark_points_meters: Array[Vector2i] = []
 var terrain_type: int = -1
+var site_landform: int = Landform.NONE
+var travel_exit_mask: int = EXIT_ALL
 var elevation: float = 0.0
 var moisture: float = 0.0
 var river_strength: float = 0.0
@@ -77,6 +104,50 @@ func navigation_flags_at(cell: Vector2i) -> int:
 		return 0
 	return int(navigation_flags[cell.y * GRID_SIZE.x + cell.x])
 
+static func exit_bit(direction: Vector2i) -> int:
+	var normalized: Vector2i = Vector2i(clampi(direction.x, -1, 1), clampi(direction.y, -1, 1))
+	for index: int in range(EXIT_DIRECTIONS.size()):
+		if EXIT_DIRECTIONS[index] == normalized:
+			return 1 << index
+	return 0
+
+static func exit_mask_from_offsets(offsets: Variant) -> int:
+	var result: int = 0
+	if offsets is Array:
+		for value: Variant in offsets as Array:
+			if value is Vector2i:
+				result |= exit_bit(value as Vector2i)
+	return result
+
+static func exit_offsets(exit_mask: int) -> Array[Vector2i]:
+	var result: Array[Vector2i] = []
+	for index: int in range(EXIT_DIRECTIONS.size()):
+		if (exit_mask & (1 << index)) != 0:
+			result.append(EXIT_DIRECTIONS[index])
+	return result
+
+static func landform_for_travel_cell(terrain_type: int, road_connection_offsets: Variant) -> int:
+	var road_mask: int = exit_mask_from_offsets(road_connection_offsets)
+	if terrain_type == TerrainType.MOUNTAIN and (road_mask & (road_mask - 1)) != 0:
+		return Landform.MOUNTAIN_PASS
+	return Landform.NONE
+
+static func exit_mask_for_travel_cell(
+		passable: bool,
+		landform: int,
+		road_connection_offsets: Variant
+	) -> int:
+	if not passable:
+		return 0
+	if landform == Landform.MOUNTAIN_PASS:
+		var road_mask: int = exit_mask_from_offsets(road_connection_offsets)
+		if road_mask != 0:
+			return road_mask
+	return EXIT_ALL
+
+static func landform_name(landform: int) -> String:
+	return "Mountain Pass" if landform == Landform.MOUNTAIN_PASS else "None"
+
 func visual_code_at(cell: Vector2i) -> int:
 	if not has_visual_base() or not is_valid_cell(cell):
 		return 0
@@ -114,6 +185,8 @@ func copy() -> SiteLayoutData:
 	result.primary_path_meters = primary_path_meters.duplicate()
 	result.landmark_points_meters = landmark_points_meters.duplicate()
 	result.terrain_type = terrain_type
+	result.site_landform = site_landform
+	result.travel_exit_mask = travel_exit_mask
 	result.elevation = elevation
 	result.moisture = moisture
 	result.river_strength = river_strength

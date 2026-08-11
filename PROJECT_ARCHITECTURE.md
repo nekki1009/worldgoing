@@ -5,7 +5,7 @@
 本專案採用「世界層 → Region 層 → Site 層」的三層架構：
 
 - 世界層負責 Region 之間的關係、Party 所在位置與全局時間。
-- Region 層負責 100×100 的戰略地形資料、探索移動與大型建設。
+- Region 層負責 100×100 Strategic Cells 的生成／彙整、輕量 Site 通行摘要、資源內容索引、探索移動與大型建設。
 - Site 層負責村莊、洞穴、遺跡等小尺度地圖與細部玩法。
 
 核心原則：資料模型先於顯示、程序生成可重現、世界不保存不必要的完整地圖。
@@ -33,6 +33,7 @@ World 層不直接持有 TileMap，也不負責繪製地形。
 - `RegionCoord` 決定 Region 的世界位置。
 - `RegionData.seed` 決定該 Region 的程序生成結果。
 - Region 資料可被重新生成，不依賴 TileMap 是否存在。
+- 每個 Strategic Cell 可按需解析為輕量 Site Travel Profile；Region 不保存 10,000 個完整 Site Layout 或 Runtime。
 
 Region 內座標限制：
 
@@ -69,12 +70,15 @@ Site 是掛在某個 Region Strategic Cell 上的小尺度場景：
 - Site 有自己的局部座標與場景資料。
 - Site 不取代 Region；Region 只保存 Site 的索引、入口與狀態。
 - 從 Region 進入 Site 時，才載入 Site 的細部地圖與玩法。
+- Strategic A* 以 Site Travel Profile 為 100m 尋路節點，但不展開沿途 Site 的 50×50 局部格。
 
 Site 的 `50 × 50` 是座標與邊界契約，不代表必須保存 2,500 筆格子資料；未改動內容仍應由 Seed 重建，玩家改動使用稀疏 Delta。
 
 Site 座標不可直接當成 Region 座標使用；兩者之間必須透過位於父 Strategic Cell 中央的入口錨點轉換。Site 的 `100m × 100m` 局部邊界必須與父 Strategic Cell 的世界公尺邊界一致，但不改變 Region 的 `100 × 100` 戰略格大小。
 
-Party 進入 Site 時從 `(25, 25)` 開始；`PartyData.current_site_local_cell` 是目前 Site 局部位置的唯一真實來源。進入、退出與每次上下左右一格的基本移動都由 `TravelRuntime` 驗證及修改；`SiteMap` 只送出 WASD／方向鍵意圖並顯示 Runtime Snapshot，不能直接改位置。
+Party 進入 Site 時從 `(25, 25)` 開始；`PartyData.current_site_local_cell` 是目前 Site 局部位置的唯一真實來源。進入、退出與每次上下左右一格的基本移動都由 `TravelRuntime` 驗證及修改；移動不得進入 generated `NAV_BLOCKED` 格。`SiteMap` 只送出 WASD／方向鍵意圖並顯示 Runtime Snapshot，不能直接改位置。
+
+戰略通行資料使用同一個 Site 契約：一般可通行格持有全方向遮罩，不可通行格為 0；山地主地形中具有至少兩個實際道路出口的格為 `MOUNTAIN_PASS`，以 1 byte 八方向 `travel_exit_mask` 保存真實 Route 連接。八方向是為了對齊既有斜向 A*；進入完整 Site 後，`SiteLayoutGenerator` 用同一遮罩生成中央通道及兩側 `NAV_BLOCKED` 山壁。Region 可負責日後的 Site 資源／內容基礎生成與彙整，但詳細 Layout 仍保持 lazy，玩家改動仍只寫稀疏 Delta。
 
 ## 二、資料與顯示的分離
 

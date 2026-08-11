@@ -50,6 +50,8 @@ func get_debug_state() -> Dictionary:
 		"global_region_cell": _format_cell(runtime_snapshot.global_region_cell),
 		"global_meter_position": _format_meters(runtime_snapshot.entrance_global_meters),
 		"terrain_type": TerrainType.to_display_name(runtime_snapshot.source_terrain_type),
+		"site_landform": SiteLayoutDataType.landform_name(runtime_snapshot.site_landform),
+		"travel_exit_mask": runtime_snapshot.travel_exit_mask,
 		"elevation": "%.2f" % runtime_snapshot.source_elevation,
 		"moisture": "%.2f" % runtime_snapshot.source_moisture,
 		"river_mask": "Yes" if runtime_snapshot.source_river_nearby else "No",
@@ -128,7 +130,10 @@ func _build_layout_texture(layout: SiteLayoutDataType) -> Texture2D:
 		for x: int in range(SiteLayoutDataType.GRID_SIZE.x):
 			var cell: Vector2i = Vector2i(x, y)
 			var code: int = layout.visual_code_at(cell)
-			image.set_pixel(x, y, SiteLayoutDataType.visual_color(code))
+			var color: Color = SiteLayoutDataType.visual_color(code)
+			if (layout.navigation_flags_at(cell) & SiteLayoutDataType.NAV_BLOCKED) != 0:
+				color = TerrainType.to_color(layout.terrain_type).darkened(0.55)
+			image.set_pixel(x, y, color)
 	return ImageTexture.create_from_image(image)
 
 func _unhandled_input(event: InputEvent) -> void:

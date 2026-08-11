@@ -53,7 +53,7 @@ static func step_travel_seconds(
 		direction: Vector2i,
 		base_speed_kmh: float
 	) -> float:
-	if not bool(next_info.get("passable", false)):
+	if not can_traverse_site_edge(current_info, next_info, direction):
 		return INF
 	var speed: float = get_speed_kmh(
 			int(next_info.get("terrain_type", TerrainType.PLAINS)),
@@ -68,6 +68,22 @@ static func step_travel_seconds(
 		and not bool(current_info.get("river", false)):
 		seconds += float(RIVER_CROSSING_PENALTY_SECONDS)
 	return seconds
+
+static func can_traverse_site_edge(
+		current_info: Dictionary,
+		next_info: Dictionary,
+		direction: Vector2i
+	) -> bool:
+	if not bool(current_info.get("passable", false)) \
+		or not bool(next_info.get("passable", false)):
+		return false
+	var exit_bit: int = SiteLayoutData.exit_bit(direction)
+	var entry_bit: int = SiteLayoutData.exit_bit(-direction)
+	if exit_bit == 0 or entry_bit == 0:
+		return false
+	var current_mask: int = int(current_info.get("travel_exit_mask", SiteLayoutData.EXIT_ALL))
+	var next_mask: int = int(next_info.get("travel_exit_mask", SiteLayoutData.EXIT_ALL))
+	return (current_mask & exit_bit) != 0 and (next_mask & entry_bit) != 0
 
 static func minimum_step_seconds(base_speed_kmh: float) -> float:
 	return travel_seconds(

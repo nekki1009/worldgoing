@@ -13,6 +13,7 @@ enum Code {
 	PARTY_NOT_AT_SITE,
 	INVALID_DIRECTION,
 	OUT_OF_BOUNDS,
+	BLOCKED,
 }
 
 static func to_code(reason: int) -> String:
@@ -37,5 +38,7 @@ static func to_code(reason: int) -> String:
 			return "INVALID_DIRECTION"
 		Code.OUT_OF_BOUNDS:
 			return "OUT_OF_BOUNDS"
+		Code.BLOCKED:
+			return "BLOCKED"
 		_:
 			return "NONE"

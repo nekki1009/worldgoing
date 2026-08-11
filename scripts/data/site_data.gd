@@ -1,7 +1,7 @@
 class_name SiteData
 extends RefCounted
 
-const BASE_GENERATION_VERSION: int = 1
+const BASE_GENERATION_VERSION: int = 2
 const SITE_SEED_SALT: int = 29_011
 
 var site_id: String = ""
@@ -16,6 +16,8 @@ var site_seed: int = 0
 var entrance_local_meters: Vector2i = Vector2i.ZERO
 var entrance_global_meters: Vector2i = Vector2i.ZERO
 var source_terrain_type: int = TerrainType.PLAINS
+var site_landform: int = SiteLayoutData.Landform.NONE
+var travel_exit_mask: int = SiteLayoutData.EXIT_ALL
 var source_elevation: float = 0.0
 var source_moisture: float = 0.0
 var source_river_nearby: bool = false

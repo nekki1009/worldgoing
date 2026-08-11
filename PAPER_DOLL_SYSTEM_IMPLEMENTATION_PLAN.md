@@ -1,6 +1,8 @@
 # 紙娃娃系統與 ChatGPT 美術實作計畫
 
-狀態：待核准後依 Gate 分階段實作
+狀態：角色生成器前置 Gate 完成前暫緩實作
+
+> 2026-08-11 優先順序修正：先執行 [`CHARACTER_CREATOR_IMPLEMENTATION_PLAN.md`](CHARACTER_CREATOR_IMPLEMENTATION_PLAN.md)，完成 PC 固有外觀、素材實驗室、動畫／素材驗收與存檔契約後，才回到本文件的離線合成與 Battle GPU 接線。若兩份文件在前置資料型別、Composer、素材驗收或里程碑順序上衝突，以角色生成器計畫為準；Battle 仍維持既有 MultiMesh，這次不接紙娃娃。
 
 本文件定義 Worldgoing 紙娃娃顯示、美術產製、離線烘焙與 Battle GPU 接線的落地順序。`PROJECT_ARCHITECTURE.md` 仍是最高架構真實來源；本文件不建立新的 gameplay 權威，也不代表 PaperDoll、Unit、Equipment、Demography、Bakery 或 Battle shader 已經完成。
 

@@ -12,9 +12,9 @@ V3 將 World Layer 定義為**有限但可擴充**的平面整數網格。初始
 
 世界不得因規模而預先建立完整地形、Site、道路圖或 Scene。未修改內容由 Seed 依座標重建，玩家修改內容由 Sparse Delta 保存；只生成目前視窗、旅行查詢或玩法需要的資料。
 
-目前已落地的基線包含：三層座標、確定性地形／POI／道路生成、GameSession 與 TravelRuntime、Region Seed + Sparse Delta、Region Outpost、Seed + Delta Persistence、九區 Battle composite、Formation 移動、命令延遲、傳令攔截與隊長自治。
+目前已落地的基線包含：三層座標、確定性地形／POI／道路生成、輕量 Site Travel Profile 與山地隘口方向遮罩、GameSession 與 TravelRuntime、Region Seed + Sparse Delta、Region Outpost、Seed + Delta Persistence、九區 Battle composite、Formation 移動、命令延遲、傳令攔截與隊長自治。
 
-目前已完成 V3 的 256×256 lazy World bounds、無素材 placeholder 的 World／Region／Site 三層視覺組成與 30 FPS 以上 runtime 驗證；尚未完成的功能包含：正式 Site 美術資料與 MapBaker dirty-cell 烘焙、Formation Breadcrumb／CHOKE／REGROUPING、PaperDollBakery、完整戰鬥解析與 Site 語意內容。
+目前已完成 V3 的 256×256 lazy World bounds、無素材 placeholder 的 World／Region／Site 三層視覺組成、方向受限的山地隘口垂直切片與 30 FPS 以上 runtime 驗證；尚未完成的功能包含：正式 Site 美術資料與 MapBaker dirty-cell 烘焙、Formation Breadcrumb／CHOKE／REGROUPING、PaperDollBakery、完整戰鬥解析與隘口以外的 Site 語意內容。
 
 ## 一、專案總覽與系統目標
 
@@ -45,7 +45,7 @@ MapBaker 必須支援 lazy／dirty-cell 更新，快取至少受 world seed、ge
 | Region Layer | 100×100 Strategic Cells | 100m×100m | 10km×10km | RegionData、RegionRuntimeState | RegionMap |
 | Site Layer | 50×50 Local Cells | 2m×2m | 100m×100m | SiteData、SiteRuntimeState | SiteMap |
 
-World Cell 是 Region 的外部座標；Region 的 100×100 Strategic Cells 不因 World 擴充而改變。Site 只在 POI、進入玩法或其他明確需要時生成，不代表每個 Strategic Cell 都必須常駐一個完整 Site Runtime。
+World Cell 是 Region 的外部座標；Region 的 100×100 Strategic Cells 不因 World 擴充而改變。每個 Strategic Cell 都可依座標查詢一份輕量 Site Travel Profile，但完整 SiteData、50×50 Layout 與 SiteRuntimeState 只在 POI、進入玩法、Battle 或其他明確需要時生成，不得為所有 Strategic Cells 常駐完整 Site Runtime。
 
 ### 2.2 座標換算
 
@@ -101,6 +101,22 @@ WorldRoadGenerator 依地形移動成本、POI settlement graph 與 WeightedGrid
 - 依 terrain、river、crossing 計算成本；
 - 48 Cells 是 route search corridor margin／bounded search 的限制，不宣稱為所有道路的最大長度；
 - generated graph、path、overlay 都是可清除的 cache，不是 Runtime authority。
+
+### 3.5 Site Travel Profile、Region 內容責任與隘口
+
+Region 是 100×100 Strategic Cells 的生成、索引與彙整單位。每個 Strategic Cell 的基礎地形、資源／內容摘要與通行資料應由 World／Region Seed、Global Cell、generation version 及 Region Delta 解析；詳細資源擺放與 50×50 Site Layout 只在進入 Site 或玩法需要時展開。資源系統尚未實作，不得先配置 10,000 個完整 Site 物件。
+
+所有戰略尋路統一讀取輕量 Site Travel Profile，不得展開路徑沿線的 50×50 局部格。Profile 至少包含：
+
+- terrain_type、site_landform、passable 與 travel cost／speed；
+- road、river、river_crossing；
+- travel_exit_mask 與實際 road connection offsets。
+
+現行 WeightedGridPathfinder 支援八方向，因此 travel_exit_mask 使用 1 byte 的八方向位元，而不是會切斷斜向道路的四方向遮罩。一般可通行 Site 為全方向，完全不可通行 Site 為 0；山地主地形中具有至少兩個實際 Route 出口的道路格解析為 MOUNTAIN_PASS，遮罩只保留該格的真實道路出口。
+
+同一份 MOUNTAIN_PASS 遮罩必須投影到 SiteLayoutData：通道中心線外 10m 以上的局部格標記 NAV_BLOCKED，SiteMap placeholder 以深色山壁顯示，TravelRuntime.move_party_in_site() 以 typed BLOCKED 拒絕穿牆且不得改變 Party 位置。SiteData Base generation version 為 2，SiteLayoutGenerator generation version 為 5。
+
+目前 MOUNTAIN_PASS 只限制隘口 Site 自身的進出方向；一般 Mountain 仍可用既有低速成本通行。因此它已能表現局部／道路型隘口，但尚未把整條高山稜線變成宏觀不可穿越障壁。若未來需要真正的世界級唯一關口，應在同一 Profile 規則中加入可重建的 ridge／high-mountain blocked landform，不得另建第二套尋路資料。
 
 ## 四、Runtime 與狀態管理
 
@@ -233,13 +249,13 @@ DebugUI 顯示 World Time、座標、Party、旅行 preview、Region constructio
 - Coordinate 4/4；
 - Terrain 9/9；
 - POI 10/10；
-- Road 12/12；
+- Road 13/13；
 - Party movement 16/16；
 - Cross-Region Travel 18/18；
 - Cross-Region Runtime PASS；
 - Runtime command/query 18/18；
 - Region Seed + Delta 22/22；
-- Site runtime 34/34；
+- Site runtime 36/36；
 - Region construction 13/13；
 - Persistence 10/10；
 - Battle boundary 20/20；
@@ -258,4 +274,4 @@ V3 必須新增：
 
 ## 九、明確不在 V3 首批實作
 
-Site 語意內容、建築／資源／NPC、逐格 collision、完整 Site pathfinding、Site movement time／animation、Site-local Party persistence、Site Runtime persistence、active Travel persistence、Save UI、多槽存檔、經濟、事件、天氣、任務、遷徙、完整 Combat damage／AI／resolution，均不因 V3 的 256×256 World bounds 而自動加入。
+除 MOUNTAIN_PASS 的 NAV_BLOCKED 通道切片外，Site 語意內容、建築／資源／NPC、一般逐格 collision、完整 Site pathfinding、Site movement time／animation、Site-local Party persistence、Site Runtime persistence、active Travel persistence、Save UI、多槽存檔、經濟、事件、天氣、任務、遷徙、完整 Combat damage／AI／resolution，均不因 V3 的 256×256 World bounds 而自動加入。

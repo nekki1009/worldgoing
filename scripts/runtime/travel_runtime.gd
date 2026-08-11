@@ -135,6 +135,8 @@ func query_travel_cell(global_cell: Vector2i) -> TravelCellResult:
 	result.success = true
 	result.passable = bool(info.get("passable", false))
 	result.terrain_type = int(info.get("terrain_type", -1))
+	result.site_landform = int(info.get("site_landform", SiteLayoutDataType.Landform.NONE))
+	result.travel_exit_mask = int(info.get("travel_exit_mask", 0))
 	result.road = bool(info.get("road", false))
 	result.river = bool(info.get("river", false))
 	result.river_crossing = bool(info.get("river_crossing", false))
@@ -439,6 +441,13 @@ func move_party_in_site(
 	if not SiteLayoutDataType.is_valid_cell(destination):
 		result.failure_reason = SiteRuntimeFailureReasonType.Code.OUT_OF_BOUNDS
 		return result
+	var layout: SiteLayoutDataType = world_data.get_site_layout(definition) if world_data != null else null
+	if layout == null or not layout.has_navigation_base():
+		result.failure_reason = SiteRuntimeFailureReasonType.Code.SITE_NOT_FOUND
+		return result
+	if (layout.navigation_flags_at(destination) & SiteLayoutDataType.NAV_BLOCKED) != 0:
+		result.failure_reason = SiteRuntimeFailureReasonType.Code.BLOCKED
+		return result
 	session.party.current_site_local_cell = destination
 	var state: SiteRuntimeState = session.find_site_runtime_state(site_id)
 	result.success = true
@@ -587,8 +596,16 @@ func _travel_cell_info(global_cell: Vector2i) -> Dictionary:
 		}
 	var terrain_type: int = resolver.get_terrain(region_cell)
 	var road: bool = resolver.has_road(region_cell)
+	var road_connection_offsets: Array[Vector2i] = []
+	if road:
+		road_connection_offsets = resolver.get_road_connection_offsets(region_cell)
 	var river: bool = resolver.has_river(region_cell)
 	var river_crossing: bool = resolver.has_river_crossing(region_cell)
+	var passable: bool = TravelCostConfig.is_passable(terrain_type, river, river_crossing)
+	var site_landform: int = SiteLayoutDataType.landform_for_travel_cell(
+		terrain_type,
+		road_connection_offsets
+	)
 	var speed: float = TravelCostConfig.get_speed_kmh(
 			terrain_type,
 			road,
@@ -596,9 +613,16 @@ func _travel_cell_info(global_cell: Vector2i) -> Dictionary:
 		)
 	return {
 		"valid": true,
-		"passable": TravelCostConfig.is_passable(terrain_type, river, river_crossing),
+		"passable": passable,
 		"terrain_type": terrain_type,
+		"site_landform": site_landform,
+		"travel_exit_mask": SiteLayoutDataType.exit_mask_for_travel_cell(
+			passable,
+			site_landform,
+			road_connection_offsets
+		),
 		"road": road,
+		"road_connection_offsets": road_connection_offsets,
 		"river": river,
 		"river_crossing": river_crossing,
 		"elevation": resolver.get_elevation(region_cell),
@@ -738,6 +762,8 @@ func _snapshot_for_definition(
 	snapshot.entrance_local_meters = definition.entrance_local_meters
 	snapshot.entrance_global_meters = definition.entrance_global_meters
 	snapshot.source_terrain_type = definition.source_terrain_type
+	snapshot.site_landform = definition.site_landform
+	snapshot.travel_exit_mask = definition.travel_exit_mask
 	snapshot.source_elevation = definition.source_elevation
 	snapshot.source_moisture = definition.source_moisture
 	snapshot.source_river_nearby = definition.source_river_nearby

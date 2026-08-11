@@ -165,12 +165,27 @@ func sample_travel_data(world_seed: int, global_region_cell: Vector2i) -> Dictio
 	# Travel sampling only needs the generated overlay; Region metadata is recorded by the public Region query.
 	var road_overlay: RegionRoadOverlay = road_generator.get_roads_for_region(world_cell, world_seed)
 	var road: bool = road_overlay != null and road_overlay.has_road(region_cell)
+	var road_connection_offsets: Array[Vector2i] = []
+	if road_overlay != null and road:
+		road_connection_offsets = road_overlay.get_connection_offsets(region_cell, global_region_cell)
 	var river: bool = macro_sample.z > 0.0
 	var river_crossing: bool = road_overlay != null and road_overlay.has_river_crossing(region_cell)
+	var passable: bool = TravelCostConfig.is_passable(terrain_type, river, river_crossing)
+	var site_landform: int = SiteLayoutDataType.landform_for_travel_cell(
+		terrain_type,
+		road_connection_offsets
+	)
 	var result: Dictionary = {
-		"passable": TravelCostConfig.is_passable(terrain_type, river, river_crossing),
+		"passable": passable,
 		"terrain_type": terrain_type,
+		"site_landform": site_landform,
+		"travel_exit_mask": SiteLayoutDataType.exit_mask_for_travel_cell(
+			passable,
+			site_landform,
+			road_connection_offsets
+		),
 		"road": road,
+		"road_connection_offsets": road_connection_offsets,
 		"river": river,
 		"river_crossing": river_crossing,
 		"elevation": macro_sample.x,
@@ -227,7 +242,19 @@ func find_poi_by_id(poi_id: String, world_seed: int) -> WorldPOIData:
 	return poi_id_cache.get(_poi_id_cache_key(world_seed, poi_id)) as WorldPOIData
 
 func get_site_definition(poi: WorldPOIData) -> SiteData:
-	return SiteData.from_poi(poi)
+	var definition: SiteData = SiteData.from_poi(poi)
+	if definition == null:
+		return null
+	var travel_data: Dictionary = sample_travel_data(poi.generation_seed, poi.global_region_cell)
+	definition.site_landform = int(travel_data.get(
+		"site_landform",
+		SiteLayoutDataType.Landform.NONE
+	))
+	definition.travel_exit_mask = int(travel_data.get(
+		"travel_exit_mask",
+		SiteLayoutDataType.EXIT_ALL
+	))
+	return definition
 
 func get_site_layout(definition: SiteData) -> SiteLayoutDataType:
 	return SiteLayoutGeneratorType.generate(definition)
