@@ -1,7 +1,7 @@
 class_name WorldRoadGenerator
 extends RefCounted
 
-const GENERATION_VERSION: int = 3
+const GENERATION_VERSION: int = 4
 
 # These are global Region Cells: 1 cell = 100m.
 const ROAD_CONNECTION_RADIUS_CELLS: int = 300
@@ -381,7 +381,7 @@ func _road_cell_info(global_cell: Vector2i) -> Dictionary:
 	var cached: Variant = path_sample_cache.get(global_cell, null)
 	if cached is Dictionary:
 		return cached as Dictionary
-	var sample: Vector3 = macro_sampler.sample(path_world_seed, global_cell)
+	var sample: Vector4 = macro_sampler.sample(path_world_seed, global_cell)
 	var terrain_type: int = terrain_generator.classify_sample(sample)
 	var river: bool = sample.z > 0.0
 	var result: Dictionary = {

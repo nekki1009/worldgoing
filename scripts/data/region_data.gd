@@ -2,7 +2,7 @@ class_name RegionData
 extends RefCounted
 
 const REGION_SEED_SALT: int = 17_009
-const BASE_GENERATION_VERSION: int = 2
+const BASE_GENERATION_VERSION: int = 3
 
 var region_id: String = ""
 var world_cell: Vector2i = Vector2i.ZERO

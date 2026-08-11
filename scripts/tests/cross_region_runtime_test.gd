@@ -16,8 +16,8 @@ func _run() -> void:
 	var navigation: NavigationController = main.get_node("NavigationController") as NavigationController
 	assert(navigation != null, "NavigationController missing from Main scene")
 	navigation.session.world_seed = TEST_SEED
-	var start: Vector2i = _find_clear_cell(navigation.world_data, Vector2i(0, 0))
-	var destination: Vector2i = _find_clear_cell(navigation.world_data, Vector2i(2, 0))
+	var start: Vector2i = _find_clear_cell(navigation.world_data, Vector2i(3, 4))
+	var destination: Vector2i = _find_clear_cell(navigation.world_data, Vector2i(4, 4))
 	assert(start != Vector2i(-1, -1) and destination != Vector2i(-1, -1), "Runtime path endpoints are not passable")
 	var pathfinder: PartyPathfinder = PartyPathfinder.new()
 	var path: GlobalTravelPathType = pathfinder.find_global_path(
@@ -85,9 +85,9 @@ func _find_clear_cell(world_data: WorldData, world_cell: Vector2i) -> Vector2i:
 				if maxi(abs(x - center.x), abs(y - center.y)) != radius:
 					continue
 				var global_cell: Vector2i = Vector2i(x, y)
-				var sample: Vector3 = world_data.terrain_generator.macro_sampler.sample(TEST_SEED, global_cell)
+				var sample: Vector4 = world_data.terrain_generator.macro_sampler.sample(TEST_SEED, global_cell)
 				var terrain_type: int = world_data.terrain_generator.classify_sample(sample)
-				if terrain_type != TerrainType.WATER and sample.z <= 0.0:
+				if not TerrainType.is_water_like(terrain_type) and sample.z <= 0.0:
 					return global_cell
 	return Vector2i(-1, -1)
 

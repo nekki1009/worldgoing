@@ -9,7 +9,7 @@ const TravelStatusType = preload("res://scripts/runtime/travel_status.gd")
 signal region_enter_requested(world_cell: Vector2i)
 signal debug_state_changed(state: Dictionary)
 
-const GRID_SIZE: Vector2i = Vector2i(10, 10)
+const GRID_SIZE: Vector2i = WorldData.WORLD_CELLS
 const CELL_PIXEL_SIZE: float = 64.0
 const MAP_ORIGIN: Vector2 = Vector2(900, 400)
 const CAMERA_SPEED: float = 900.0
@@ -23,6 +23,12 @@ var hovered_world_cell: Vector2i = Vector2i(-1, -1)
 var selected_poi: WorldPOIData
 var travel_preview: TravelPreviewResult
 var preview_error: String = ""
+var world_texture: Texture2D
+var world_texture_rect: Rect2 = Rect2()
+var world_texture_cells: Rect2i = Rect2i()
+
+func _ready() -> void:
+	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 
 func setup(p_world_data: WorldData, p_session: GameSession, p_runtime: TravelRuntime = null) -> void:
 	world_data = p_world_data
@@ -32,6 +38,9 @@ func setup(p_world_data: WorldData, p_session: GameSession, p_runtime: TravelRun
 	selected_poi = null
 	travel_preview = null
 	preview_error = ""
+	world_texture = null
+	world_texture_rect = Rect2()
+	world_texture_cells = Rect2i()
 	camera.position = MAP_ORIGIN + Vector2(GRID_SIZE.x, GRID_SIZE.y) * CELL_PIXEL_SIZE * 0.5
 	camera.zoom = Vector2.ONE
 	queue_redraw()
@@ -239,32 +248,68 @@ func _draw() -> void:
 		return
 	var map_size: Vector2 = Vector2(GRID_SIZE.x, GRID_SIZE.y) * CELL_PIXEL_SIZE
 	draw_rect(Rect2(MAP_ORIGIN - Vector2(16, 16), map_size + Vector2(32, 32)), Color("18202a"))
-	for y: int in range(GRID_SIZE.y):
-		for x: int in range(GRID_SIZE.x):
+	var visible_cells: Rect2i = _visible_world_cells()
+	_ensure_world_texture(visible_cells)
+	if world_texture != null:
+		draw_texture_rect(world_texture, world_texture_rect, false)
+	for y: int in range(visible_cells.position.y, visible_cells.end.y):
+		for x: int in range(visible_cells.position.x, visible_cells.end.x):
 			var world_cell: Vector2i = Vector2i(x, y)
 			var cell_rect: Rect2 = Rect2(
 				MAP_ORIGIN + Vector2(x, y) * CELL_PIXEL_SIZE,
 				Vector2.ONE * CELL_PIXEL_SIZE
 			)
-			_draw_region_thumbnail(cell_rect, world_data.get_or_generate_region_thumbnail(world_cell, session.world_seed))
 			draw_rect(cell_rect, Color("283746"), false, 2.0)
 			if world_cell == session.selected_world_cell:
 				draw_rect(cell_rect, Color("ffe082"), false, 5.0)
 			if world_cell == hovered_world_cell:
 				draw_rect(cell_rect.grow(-5.0), Color("ffffff"), false, 3.0)
-	_draw_poi_markers()
 	_draw_party_marker()
 	_draw_travel_preview()
 	if selected_poi != null:
 		var selected_position: Vector2 = _poi_map_position(selected_poi)
 		draw_circle(selected_position, 9.0, Color("fff1a8"), false, 3.0)
 
-func _draw_poi_markers() -> void:
-	for y: int in range(WorldData.WORLD_CELLS.y):
-		for x: int in range(WorldData.WORLD_CELLS.x):
-			var world_cell: Vector2i = Vector2i(x, y)
+func _ensure_world_texture(visible_cells: Rect2i) -> void:
+	if world_data == null or session == null or visible_cells == world_texture_cells and world_texture != null:
+		return
+	var thumbnail_size: int = RegionTerrainGenerator.THUMBNAIL_GRID_SIZE
+	var image: Image = Image.create(
+		visible_cells.size.x * thumbnail_size,
+		visible_cells.size.y * thumbnail_size,
+		false,
+		Image.FORMAT_RGBA8
+	)
+	for local_y: int in range(visible_cells.size.y):
+		for local_x: int in range(visible_cells.size.x):
+			var world_cell: Vector2i = visible_cells.position + Vector2i(local_x, local_y)
+			var thumbnail: PackedByteArray = world_data.get_or_generate_region_thumbnail(
+				world_cell,
+				session.world_seed
+			)
+			for sub_y: int in range(thumbnail_size):
+				for sub_x: int in range(thumbnail_size):
+					var packed_cell: int = thumbnail[sub_y * thumbnail_size + sub_x]
+					var color: Color = TerrainType.to_color(RegionTerrainGenerator.thumbnail_terrain(packed_cell))
+					if RegionTerrainGenerator.thumbnail_has_river(packed_cell):
+						color = Color("49a9cf")
+					image.set_pixel(
+						local_x * thumbnail_size + sub_x,
+						local_y * thumbnail_size + sub_y,
+						color
+					)
 			for poi: WorldPOIData in world_data.get_pois_for_region(world_cell, session.world_seed):
-				draw_circle(_poi_map_position(poi), 3.0, WorldPOIType.to_color(poi.poi_type))
+				var marker: Vector2i = Vector2i(
+					local_x * thumbnail_size + clampi(poi.region_cell.x * thumbnail_size / WorldCoordinates.REGION_GRID_SIZE, 0, thumbnail_size - 1),
+					local_y * thumbnail_size + clampi(poi.region_cell.y * thumbnail_size / WorldCoordinates.REGION_GRID_SIZE, 0, thumbnail_size - 1)
+				)
+				image.set_pixel(marker.x, marker.y, WorldPOIType.to_color(poi.poi_type))
+	world_texture = ImageTexture.create_from_image(image)
+	world_texture_cells = visible_cells
+	world_texture_rect = Rect2(
+		MAP_ORIGIN + Vector2(visible_cells.position) * CELL_PIXEL_SIZE,
+		Vector2(visible_cells.size) * CELL_PIXEL_SIZE
+	)
 
 func _draw_party_marker() -> void:
 	if not session.party.initialized:
@@ -290,8 +335,9 @@ func _draw_travel_preview() -> void:
 func _poi_at_map_position(mouse_global_position: Vector2) -> WorldPOIData:
 	var nearest: WorldPOIData
 	var nearest_distance: float = 12.0
-	for y: int in range(WorldData.WORLD_CELLS.y):
-		for x: int in range(WorldData.WORLD_CELLS.x):
+	var visible_cells: Rect2i = _visible_world_cells().grow(2)
+	for y: int in range(visible_cells.position.y, visible_cells.end.y):
+		for x: int in range(visible_cells.position.x, visible_cells.end.x):
 			for poi: WorldPOIData in world_data.get_pois_for_region(Vector2i(x, y), session.world_seed):
 				var distance: float = _poi_map_position(poi).distance_to(to_local(mouse_global_position))
 				if distance < nearest_distance:
@@ -339,6 +385,26 @@ func _cell_from_global_position(mouse_global_position: Vector2) -> Vector2i:
 func _is_valid_world_cell(world_cell: Vector2i) -> bool:
 	return world_cell.x >= 0 and world_cell.y >= 0 \
 		and world_cell.x < GRID_SIZE.x and world_cell.y < GRID_SIZE.y
+
+func _visible_world_cells() -> Rect2i:
+	if camera == null:
+		return Rect2i(Vector2i.ZERO, GRID_SIZE)
+	var half_view: Vector2 = get_viewport_rect().size / (2.0 * camera.zoom.x)
+	var minimum: Vector2 = camera.position - half_view
+	var maximum: Vector2 = camera.position + half_view
+	var min_cell: Vector2i = Vector2i(
+		floori((minimum.x - MAP_ORIGIN.x) / CELL_PIXEL_SIZE) - 1,
+		floori((minimum.y - MAP_ORIGIN.y) / CELL_PIXEL_SIZE) - 1
+	)
+	var max_cell: Vector2i = Vector2i(
+		ceili((maximum.x - MAP_ORIGIN.x) / CELL_PIXEL_SIZE) + 1,
+		ceili((maximum.y - MAP_ORIGIN.y) / CELL_PIXEL_SIZE) + 1
+	)
+	min_cell.x = clampi(min_cell.x, 0, GRID_SIZE.x)
+	min_cell.y = clampi(min_cell.y, 0, GRID_SIZE.y)
+	max_cell.x = clampi(max_cell.x, min_cell.x, GRID_SIZE.x)
+	max_cell.y = clampi(max_cell.y, min_cell.y, GRID_SIZE.y)
+	return Rect2i(min_cell, max_cell - min_cell)
 
 func _set_hovered_world_cell(world_cell: Vector2i) -> void:
 	if not _is_valid_world_cell(world_cell):

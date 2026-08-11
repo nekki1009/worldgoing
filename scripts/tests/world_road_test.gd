@@ -127,9 +127,9 @@ func _test_terrain_avoidance(
 	var route: WorldRoadRoute = path_info["route"] as WorldRoadRoute
 	var mountain_cells: int = 0
 	for global_cell: Vector2i in route.path:
-		var sample: Vector3 = world_data.terrain_generator.macro_sampler.sample(world_seed, global_cell)
+		var sample: Vector4 = world_data.terrain_generator.macro_sampler.sample(world_seed, global_cell)
 		var terrain_type: int = world_data.terrain_generator.classify_sample(sample)
-		assert(terrain_type != TerrainType.WATER, "Road crossed impassable large water")
+		assert(not TerrainType.is_water_like(terrain_type), "Road crossed impassable water")
 		if terrain_type == TerrainType.MOUNTAIN:
 			mountain_cells += 1
 	var overlay_region: Vector2i = Vector2i.ZERO

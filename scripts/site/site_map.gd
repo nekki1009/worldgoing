@@ -7,9 +7,14 @@ signal debug_state_changed(state: Dictionary)
 signal move_requested(direction: Vector2i)
 
 var runtime_snapshot: SiteRuntimeSnapshot
+var site_texture: Texture2D
+
+func _ready() -> void:
+	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 
 func setup(p_runtime_snapshot: SiteRuntimeSnapshot) -> void:
 	runtime_snapshot = p_runtime_snapshot
+	site_texture = _build_layout_texture(runtime_snapshot.layout if runtime_snapshot != null else null)
 	var camera: Camera2D = get_node_or_null("Camera2D") as Camera2D
 	if camera != null and runtime_snapshot != null and runtime_snapshot.layout != null:
 		camera.position = Vector2(runtime_snapshot.layout.bounds_meters.position) \
@@ -89,7 +94,15 @@ func _draw() -> void:
 	var layout: SiteLayoutDataType = runtime_snapshot.layout
 	var bounds: Rect2 = Rect2(Vector2(layout.bounds_meters.position), Vector2(layout.bounds_meters.size))
 	draw_rect(bounds.grow(8.0), Color("211d2b"))
-	draw_rect(bounds, TerrainType.to_color(runtime_snapshot.source_terrain_type).darkened(0.18))
+	if site_texture != null:
+		draw_texture_rect(site_texture, bounds, false)
+	else:
+		draw_rect(bounds, TerrainType.to_color(runtime_snapshot.source_terrain_type).darkened(0.18))
+	for grid: int in range(0, SiteLayoutDataType.GRID_SIZE.x + 1, 5):
+		var grid_x: float = bounds.position.x + float(grid * SiteLayoutDataType.CELL_SIZE_METERS)
+		var grid_y: float = bounds.position.y + float(grid * SiteLayoutDataType.CELL_SIZE_METERS)
+		draw_line(Vector2(grid_x, bounds.position.y), Vector2(grid_x, bounds.end.y), Color(1.0, 1.0, 1.0, 0.10), 0.35)
+		draw_line(Vector2(bounds.position.x, grid_y), Vector2(bounds.end.x, grid_y), Color(1.0, 1.0, 1.0, 0.10), 0.35)
 	var path: PackedVector2Array = PackedVector2Array()
 	for point: Vector2i in layout.primary_path_meters:
 		path.append(Vector2(point))
@@ -101,6 +114,22 @@ func _draw() -> void:
 	draw_circle(Vector2(layout.entrance_local_meters), 2.0, Color("e8f0f2"))
 	if SiteLayoutDataType.is_valid_cell(runtime_snapshot.party_site_local_cell):
 		draw_circle(layout.cell_center_meters(runtime_snapshot.party_site_local_cell), 2.5, Color("ffe066"))
+
+func _build_layout_texture(layout: SiteLayoutDataType) -> Texture2D:
+	if layout == null or not layout.has_visual_base():
+		return null
+	var image: Image = Image.create(
+		SiteLayoutDataType.GRID_SIZE.x,
+		SiteLayoutDataType.GRID_SIZE.y,
+		false,
+		Image.FORMAT_RGBA8
+	)
+	for y: int in range(SiteLayoutDataType.GRID_SIZE.y):
+		for x: int in range(SiteLayoutDataType.GRID_SIZE.x):
+			var cell: Vector2i = Vector2i(x, y)
+			var code: int = layout.visual_code_at(cell)
+			image.set_pixel(x, y, SiteLayoutDataType.visual_color(code))
+	return ImageTexture.create_from_image(image)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not event is InputEventKey:

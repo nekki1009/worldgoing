@@ -265,9 +265,9 @@ func _find_clear_global_cell_near(center: Vector2i) -> Vector2i:
 				if maxi(abs(x - center.x), abs(y - center.y)) != radius:
 					continue
 				var global_cell: Vector2i = Vector2i(x, y)
-				var sample: Vector3 = world_data.terrain_generator.macro_sampler.sample(TEST_SEED, global_cell)
+				var sample: Vector4 = world_data.terrain_generator.macro_sampler.sample(TEST_SEED, global_cell)
 				var terrain_type: int = world_data.terrain_generator.classify_sample(sample)
-				if terrain_type != TerrainType.WATER and sample.z <= 0.0:
+				if not TerrainType.is_water_like(terrain_type) and sample.z <= 0.0:
 					return global_cell
 	return Vector2i(-1, -1)
 

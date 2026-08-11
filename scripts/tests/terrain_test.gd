@@ -12,10 +12,10 @@ func _init() -> void:
 	var sample_cell: Vector2i = Vector2i(537, 280)
 
 	_test_deterministic_sampler(sampler, sample_cell)
-	print("TEST 1 PASS: same seed and global cell produce identical elevation/moisture/river")
+	print("TEST 1 PASS: same seed and global cell produce identical elevation/moisture/river/temperature")
 
-	var first_sample: Vector3 = sampler.sample(TEST_SEED, sample_cell)
-	var other_sample: Vector3 = sampler.sample(DIFFERENT_SEED, sample_cell)
+	var first_sample: Vector4 = sampler.sample(TEST_SEED, sample_cell)
+	var other_sample: Vector4 = sampler.sample(DIFFERENT_SEED, sample_cell)
 	assert(first_sample != other_sample, "Different seeds produced identical macro samples")
 	print("TEST 2 PASS: different seed changes the World Macro Terrain sample")
 
@@ -55,12 +55,13 @@ func _init() -> void:
 	quit()
 
 func _test_deterministic_sampler(sampler: WorldMacroTerrainSampler, global_cell: Vector2i) -> void:
-	var first: Vector3 = sampler.sample(TEST_SEED, global_cell)
-	var second: Vector3 = sampler.sample(TEST_SEED, global_cell)
+	var first: Vector4 = sampler.sample(TEST_SEED, global_cell)
+	var second: Vector4 = sampler.sample(TEST_SEED, global_cell)
 	assert(first == second, "Same seed and global cell are not deterministic")
 	assert(first.x >= 0.0 and first.x <= 1.0, "Elevation is not normalized")
 	assert(first.y >= 0.0 and first.y <= 1.0, "Moisture is not normalized")
 	assert(first.z >= 0.0 and first.z <= 1.0, "River strength is not normalized")
+	assert(first.w >= 0.0 and first.w <= 1.0, "Temperature is not normalized")
 
 func _test_horizontal_border(sampler: WorldMacroTerrainSampler) -> void:
 	var left_global_cell: Vector2i = WorldCoordinates.world_region_to_global_region_cell(
@@ -73,8 +74,8 @@ func _test_horizontal_border(sampler: WorldMacroTerrainSampler) -> void:
 	)
 	assert(left_global_cell == Vector2i(99, 50), "Horizontal left border coordinate failed")
 	assert(right_global_cell == Vector2i(100, 50), "Horizontal right border coordinate failed")
-	var left_sample: Vector3 = sampler.sample(TEST_SEED, left_global_cell)
-	var right_sample: Vector3 = sampler.sample(TEST_SEED, right_global_cell)
+	var left_sample: Vector4 = sampler.sample(TEST_SEED, left_global_cell)
+	var right_sample: Vector4 = sampler.sample(TEST_SEED, right_global_cell)
 	assert(left_sample == sampler.sample(TEST_SEED, Vector2i(99, 50)), "Left border is not from the shared field")
 	assert(right_sample == sampler.sample(TEST_SEED, Vector2i(100, 50)), "Right border is not from the shared field")
 
@@ -87,8 +88,8 @@ func _test_independent_slices(
 	for y: int in range(WorldCoordinates.REGION_GRID_SIZE):
 		for x: int in range(WorldCoordinates.REGION_GRID_SIZE):
 			var region_cell: Vector2i = Vector2i(x, y)
-			var sample_a: Vector3 = sampler.sample(TEST_SEED, Vector2i(x, y))
-			var sample_b: Vector3 = sampler.sample(TEST_SEED, Vector2i(x + WorldCoordinates.REGION_GRID_SIZE, y))
+			var sample_a: Vector4 = sampler.sample(TEST_SEED, Vector2i(x, y))
+			var sample_b: Vector4 = sampler.sample(TEST_SEED, Vector2i(x + WorldCoordinates.REGION_GRID_SIZE, y))
 			assert(region_a.get_terrain(region_cell) == generator.classify_sample(sample_a), "Region A terrain slice mismatch")
 			assert(region_b.get_terrain(region_cell) == generator.classify_sample(sample_b), "Region B terrain slice mismatch")
 			assert(absf(region_a.get_elevation(region_cell) - sample_a.x) <= 0.5 / 255.0 + 0.00001, "Region A elevation slice mismatch")
@@ -120,10 +121,11 @@ func _test_negative_coordinate(sampler: WorldMacroTerrainSampler) -> void:
 		Vector2i(99, 50)
 	)
 	assert(negative_global_cell == Vector2i(-1, 50), "Negative global coordinate was clamped or converted incorrectly")
-	var sample: Vector3 = sampler.sample(TEST_SEED, negative_global_cell)
+	var sample: Vector4 = sampler.sample(TEST_SEED, negative_global_cell)
 	assert(sample.x >= 0.0 and sample.x <= 1.0, "Negative elevation sample is invalid")
 	assert(sample.y >= 0.0 and sample.y <= 1.0, "Negative moisture sample is invalid")
 	assert(sample.z >= 0.0 and sample.z <= 1.0, "Negative river sample is invalid")
+	assert(sample.w >= 0.0 and sample.w <= 1.0, "Negative temperature sample is invalid")
 
 func _find_river_border_crossing(sampler: WorldMacroTerrainSampler) -> Vector4i:
 	for region_boundary: int in range(-BORDER_SCAN_RADIUS, BORDER_SCAN_RADIUS + 1):
@@ -151,7 +153,9 @@ func _test_region_reentry(generator: RegionTerrainGenerator) -> void:
 	assert(first.river_strength_data == regenerated.river_strength_data, "Re-entry river data differs from deterministic regeneration")
 
 func _count_terrain_types(terrain_data: RegionTerrainData) -> Array[int]:
-	var counts: Array[int] = [0, 0, 0, 0]
+	var counts: Array[int] = []
+	counts.resize(TerrainType.COUNT)
+	counts.fill(0)
 	for terrain_type: int in terrain_data.terrain_array:
 		counts[terrain_type] += 1
 	return counts

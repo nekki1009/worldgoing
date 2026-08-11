@@ -55,8 +55,8 @@ func _test_different_seed(generator: WorldPOIGenerator) -> void:
 	assert(_signature(first) != _signature(second), "Different seeds produced identical POI distribution")
 
 func _find_first_poi(generator: WorldPOIGenerator, world_seed: int) -> WorldPOIData:
-	for y: int in range(6):
-		for x: int in range(6):
+	for y: int in range(0, WorldData.WORLD_CELLS.y, 8):
+		for x: int in range(0, WorldData.WORLD_CELLS.x, 8):
 			var pois: Array[WorldPOIData] = generator.generate_for_region(world_seed, Vector2i(x, y))
 			if not pois.is_empty():
 				return pois[0]
@@ -110,19 +110,19 @@ func _test_negative_coordinate(generator: WorldPOIGenerator) -> void:
 	assert(converted["world_cell"] as Vector2i == Vector2i(-1, 0), "Negative World Cell conversion failed")
 	assert(converted["region_cell"] as Vector2i == Vector2i(99, 50), "Negative Region Cell conversion failed")
 	assert(WorldCoordinates.floor_divide(-1, WorldPOIGenerator.POI_CANDIDATE_GRID_SIZE) == -1, "Negative candidate floor division failed")
-	var negative_sample: Vector3 = generator.macro_sampler.sample(TEST_SEED, Vector2i(-1, 50))
+	var negative_sample: Vector4 = generator.macro_sampler.sample(TEST_SEED, Vector2i(-1, 50))
 	assert(negative_sample.x >= 0.0 and negative_sample.x <= 1.0, "Negative POI terrain sample failed")
 
 func _test_terrain_suitability(generator: WorldPOIGenerator, terrain_generator: RegionTerrainGenerator) -> void:
 	var counts: Array[int] = [0, 0, 0, 0, 0]
-	for y: int in range(6):
-		for x: int in range(6):
+	for y: int in range(0, WorldData.WORLD_CELLS.y, 8):
+		for x: int in range(0, WorldData.WORLD_CELLS.x, 8):
 			for poi: WorldPOIData in generator.generate_for_region(TEST_SEED, Vector2i(x, y)):
 				counts[poi.poi_type] += 1
 				if poi.poi_type == WorldPOIType.VILLAGE or poi.poi_type == WorldPOIType.TOWN:
-					assert(poi.terrain_type != TerrainType.WATER, "Settlement generated in Water")
+					assert(not TerrainType.is_water_like(poi.terrain_type), "Settlement generated in water")
 				if poi.poi_type == WorldPOIType.CASTLE:
-					assert(poi.terrain_type != TerrainType.WATER, "Castle generated in Water")
+					assert(not TerrainType.is_water_like(poi.terrain_type), "Castle generated in water")
 				if poi.poi_type == WorldPOIType.CAVE:
 					assert(_has_mountain_nearby(generator, terrain_generator, poi), "Cave lacks mountain/high elevation context")
 	for poi_type: int in range(WorldPOIType.CAVE + 1):
@@ -137,11 +137,12 @@ func _has_mountain_nearby(
 		return true
 	for offset_y: int in range(-1, 2):
 		for offset_x: int in range(-1, 2):
-			var sample: Vector3 = generator.macro_sampler.sample(
+			var sample: Vector4 = generator.macro_sampler.sample(
 				TEST_SEED,
 				poi.global_region_cell + Vector2i(offset_x, offset_y)
 			)
-			if terrain_generator.classify_sample(sample) == TerrainType.MOUNTAIN:
+			if terrain_generator.classify_sample(sample) == TerrainType.MOUNTAIN \
+				or sample.x >= RegionTerrainGenerator.MOUNTAIN_THRESHOLD:
 				return true
 	return false
 
@@ -191,8 +192,8 @@ func _signature(pois: Array[WorldPOIData]) -> String:
 
 func _count_types(generator: WorldPOIGenerator) -> Array[int]:
 	var counts: Array[int] = [0, 0, 0, 0, 0]
-	for y: int in range(6):
-		for x: int in range(6):
+	for y: int in range(0, WorldData.WORLD_CELLS.y, 8):
+		for x: int in range(0, WorldData.WORLD_CELLS.x, 8):
 			for poi: WorldPOIData in generator.generate_for_region(TEST_SEED, Vector2i(x, y)):
 				counts[poi.poi_type] += 1
 	return counts

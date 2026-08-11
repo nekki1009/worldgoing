@@ -3,7 +3,8 @@ extends RefCounted
 
 const SiteLayoutDataType = preload("res://scripts/data/site_layout_data.gd")
 
-const GENERATION_VERSION: int = 2
+const GENERATION_VERSION: int = 4
+const THUMBNAIL_GRID_SIZE: int = 8
 const DETAIL_MARGIN_METERS: int = 8
 const MIN_DETAIL_SEPARATION_METERS: int = 12
 const PATH_BEND_LIMIT_METERS: int = 12
@@ -17,6 +18,9 @@ const CELL_RIVER_FALLBACK_SALT: int = 41_502
 const ROAD_HALF_WIDTH_METERS: float = 3.0
 const RIVER_HALF_WIDTH_METERS: float = 4.0
 const CROSSING_RADIUS_METERS: float = 12.0
+const PATH_HALF_WIDTH_METERS: float = 2.5
+const LANDMARK_RADIUS_METERS: float = 5.0
+const HUB_RADIUS_METERS: float = 5.0
 
 static func generate(definition: SiteData) -> SiteLayoutDataType:
 	if definition == null or definition.site_id.is_empty() or definition.site_seed == 0:
@@ -27,6 +31,10 @@ static func generate(definition: SiteData) -> SiteLayoutDataType:
 	layout.generation_version = GENERATION_VERSION
 	layout.site_seed = definition.site_seed
 	layout.entrance_local_meters = definition.entrance_local_meters
+	layout.terrain_type = definition.source_terrain_type
+	layout.elevation = definition.source_elevation
+	layout.moisture = definition.source_moisture
+	layout.river_strength = 1.0 if definition.source_river_nearby else 0.0
 	var half_size: Vector2i = Vector2i(
 		floori(float(SiteLayoutDataType.SIZE_METERS.x) * 0.5),
 		floori(float(SiteLayoutDataType.SIZE_METERS.y) * 0.5)
@@ -63,9 +71,53 @@ static func generate(definition: SiteData) -> SiteLayoutDataType:
 	layout.primary_path_meters.append(midpoint)
 	layout.primary_path_meters.append(layout.hub_local_meters)
 	_generate_landmarks(layout, definition, minimum, maximum)
+	_generate_visual_cells(layout)
 	return layout
 
 static func generate_cell_base(
+		p_world_seed: int,
+		resolved_cell: Dictionary
+	) -> SiteLayoutDataType:
+	var layout: SiteLayoutDataType = _build_cell_base_layout(p_world_seed, resolved_cell)
+	if layout == null:
+		return null
+	layout.navigation_flags.resize(SiteLayoutDataType.NAVIGATION_CELL_COUNT)
+	layout.visual_cells.resize(SiteLayoutDataType.NAVIGATION_CELL_COUNT)
+	for y: int in range(SiteLayoutDataType.GRID_SIZE.y):
+		for x: int in range(SiteLayoutDataType.GRID_SIZE.x):
+			var local_cell: Vector2i = Vector2i(x, y)
+			var cell_index: int = y * SiteLayoutDataType.GRID_SIZE.x + x
+			layout.navigation_flags[cell_index] = _cell_base_navigation_flags(layout, local_cell)
+			layout.visual_cells[cell_index] = _visual_code_for_layout_cell(layout, local_cell)
+	return layout
+
+static func generate_cell_base_thumbnail(
+		p_world_seed: int,
+		resolved_cell: Dictionary,
+		thumbnail_size: int = THUMBNAIL_GRID_SIZE
+	) -> PackedByteArray:
+	var layout: SiteLayoutDataType = _build_cell_base_layout(p_world_seed, resolved_cell)
+	var result: PackedByteArray = PackedByteArray()
+	if layout == null or thumbnail_size <= 0:
+		return result
+	result.resize(thumbnail_size * thumbnail_size)
+	for y: int in range(thumbnail_size):
+		for x: int in range(thumbnail_size):
+			var local_cell: Vector2i = _thumbnail_local_cell(Vector2i(x, y), thumbnail_size)
+			result[y * thumbnail_size + x] = _visual_code_for_layout_cell(layout, local_cell)
+	return result
+
+static func generate_cell_base_visual_code(
+		p_world_seed: int,
+		resolved_cell: Dictionary,
+		local_cell: Vector2i = Vector2i(25, 25)
+	) -> int:
+	var layout: SiteLayoutDataType = _build_cell_base_layout(p_world_seed, resolved_cell)
+	if layout == null or not SiteLayoutDataType.is_valid_cell(local_cell):
+		return 0
+	return _visual_code_for_layout_cell(layout, local_cell)
+
+static func _build_cell_base_layout(
 		p_world_seed: int,
 		resolved_cell: Dictionary
 	) -> SiteLayoutDataType:
@@ -88,45 +140,113 @@ static func generate_cell_base(
 		floori(float(SiteLayoutDataType.SIZE_METERS.y) * 0.5)
 	)
 	layout.bounds_meters = Rect2i(-half_size, SiteLayoutDataType.SIZE_METERS)
-	layout.terrain_type = int(resolved_cell.get("terrain_type", -1))
+	layout.terrain_type = int(resolved_cell.get("terrain_type", TerrainType.PLAINS))
 	layout.elevation = float(resolved_cell.get("elevation", 0.0))
 	layout.moisture = float(resolved_cell.get("moisture", 0.0))
 	layout.river_strength = float(resolved_cell.get("river_strength", 0.0))
 	layout.river_crossing = bool(resolved_cell.get("river_crossing", false))
-	var road_offsets: Array[Vector2i] = []
 	if bool(resolved_cell.get("road", false)):
-		road_offsets = _normalized_offsets(
+		layout.road_connection_offsets = _normalized_offsets(
 			resolved_cell.get("road_connection_offsets", []),
 			site_seed,
 			global_cell,
 			CELL_ROAD_FALLBACK_SALT
 		)
-	layout.road_connection_offsets = road_offsets
-	var river_offsets: Array[Vector2i] = []
 	if bool(resolved_cell.get("river", false)):
-		river_offsets = _normalized_offsets(
+		layout.river_connection_offsets = _normalized_offsets(
 			resolved_cell.get("river_connection_offsets", []),
 			site_seed,
 			global_cell,
 			CELL_RIVER_FALLBACK_SALT
 		)
-	layout.river_connection_offsets = river_offsets
-	layout.navigation_flags.resize(SiteLayoutDataType.NAVIGATION_CELL_COUNT)
+	return layout
+
+static func _thumbnail_local_cell(thumbnail_cell: Vector2i, thumbnail_size: int) -> Vector2i:
+	if thumbnail_size <= 1:
+		return Vector2i.ZERO
+	var last_thumbnail_cell: float = float(thumbnail_size - 1)
+	var last_local_cell: float = float(SiteLayoutDataType.GRID_SIZE.x - 1)
+	return Vector2i(
+		clampi(roundi(float(thumbnail_cell.x) * last_local_cell / last_thumbnail_cell), 0, SiteLayoutDataType.GRID_SIZE.x - 1),
+		clampi(roundi(float(thumbnail_cell.y) * last_local_cell / last_thumbnail_cell), 0, SiteLayoutDataType.GRID_SIZE.y - 1)
+	)
+
+static func _generate_visual_cells(layout: SiteLayoutDataType) -> void:
+	if layout == null:
+		return
+	layout.visual_cells.resize(SiteLayoutDataType.NAVIGATION_CELL_COUNT)
 	for y: int in range(SiteLayoutDataType.GRID_SIZE.y):
 		for x: int in range(SiteLayoutDataType.GRID_SIZE.x):
 			var local_cell: Vector2i = Vector2i(x, y)
-			var point: Vector2 = layout.cell_center_meters(local_cell)
-			var flags: int = 0
-			if bool(resolved_cell.get("road", false)) \
-				and _near_segments(point, layout.road_connection_offsets, ROAD_HALF_WIDTH_METERS):
-				flags |= SiteLayoutDataType.NAV_ROAD
-			if bool(resolved_cell.get("river", false)) \
-				and _near_segments(point, layout.river_connection_offsets, RIVER_HALF_WIDTH_METERS):
-				flags |= SiteLayoutDataType.NAV_RIVER
-			if layout.river_crossing and point.length() <= CROSSING_RADIUS_METERS:
-				flags |= SiteLayoutDataType.NAV_CROSSING
-			layout.navigation_flags[y * SiteLayoutDataType.GRID_SIZE.x + x] = flags
-	return layout
+			layout.visual_cells[y * SiteLayoutDataType.GRID_SIZE.x + x] = _visual_code_for_layout_cell(
+				layout,
+				local_cell
+			)
+
+static func _cell_base_navigation_flags(
+		layout: SiteLayoutDataType,
+		local_cell: Vector2i
+	) -> int:
+	var point: Vector2 = layout.cell_center_meters(local_cell)
+	var flags: int = 0
+	if not layout.road_connection_offsets.is_empty() \
+		and _near_segments(point, layout.road_connection_offsets, ROAD_HALF_WIDTH_METERS):
+		flags |= SiteLayoutDataType.NAV_ROAD
+	if not layout.river_connection_offsets.is_empty() \
+		and _near_segments(point, layout.river_connection_offsets, RIVER_HALF_WIDTH_METERS):
+		flags |= SiteLayoutDataType.NAV_RIVER
+	if layout.river_crossing and point.length() <= CROSSING_RADIUS_METERS:
+		flags |= SiteLayoutDataType.NAV_CROSSING
+	return flags
+
+static func _visual_code_for_layout_cell(
+		layout: SiteLayoutDataType,
+		local_cell: Vector2i
+	) -> int:
+	var terrain_type: int = layout.terrain_type
+	if not TerrainType.is_valid(terrain_type):
+		terrain_type = TerrainType.PLAINS
+	var code: int = terrain_type & SiteLayoutDataType.VISUAL_TERRAIN_MASK
+	var point: Vector2 = layout.cell_center_meters(local_cell)
+	if layout.layout_kind == SiteLayoutDataType.LayoutKind.CELL_BASE:
+		var navigation: int = _cell_base_navigation_flags(layout, local_cell)
+		if navigation & SiteLayoutDataType.NAV_ROAD:
+			code |= SiteLayoutDataType.VISUAL_ROAD
+		if navigation & SiteLayoutDataType.NAV_RIVER:
+			code |= SiteLayoutDataType.VISUAL_RIVER
+		if navigation & SiteLayoutDataType.NAV_CROSSING:
+			code |= SiteLayoutDataType.VISUAL_ROAD | SiteLayoutDataType.VISUAL_RIVER
+		return code
+	if _near_polyline(point, layout.primary_path_meters, PATH_HALF_WIDTH_METERS):
+		code |= SiteLayoutDataType.VISUAL_PATH
+	for landmark: Vector2i in layout.landmark_points_meters:
+		if point.distance_to(Vector2(landmark)) <= LANDMARK_RADIUS_METERS:
+			code |= SiteLayoutDataType.VISUAL_LANDMARK
+			break
+	if point.distance_to(Vector2(layout.hub_local_meters)) <= HUB_RADIUS_METERS:
+		code |= SiteLayoutDataType.VISUAL_HUB
+	if layout.river_strength > 0.0 and _poi_river_band_contains(layout, point):
+		code |= SiteLayoutDataType.VISUAL_RIVER
+	return code
+
+static func _poi_river_band_contains(layout: SiteLayoutDataType, point: Vector2) -> bool:
+	var axis: int = posmod(layout.site_seed, 2)
+	var center: float = float(
+		DeterministicHash.int_range(layout.site_seed, layout.global_region_cell, CELL_RIVER_FALLBACK_SALT, -18, 18)
+	)
+	return absf(point.x - center) <= RIVER_HALF_WIDTH_METERS if axis == 0 else absf(point.y - center) <= RIVER_HALF_WIDTH_METERS
+
+static func _near_polyline(point: Vector2, points: Array[Vector2i], half_width: float) -> bool:
+	if points.size() < 2:
+		return false
+	for index: int in range(points.size() - 1):
+		if _distance_to_segment(
+				point,
+				Vector2(points[index]),
+				Vector2(points[index + 1])
+			) <= half_width:
+			return true
+	return false
 
 static func _normalized_offsets(
 		source: Variant,

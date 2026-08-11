@@ -76,10 +76,12 @@ func _test_party_and_travel_eligibility() -> void:
 
 func _test_terrain_and_occupancy_rules() -> void:
 	_reset()
-	var impassable: Vector2i = _find_cell_with_failure(RegionConstructionResultType.FailureReason.IMPASSABLE)
-	var occupied: Vector2i = _find_cell_with_failure(RegionConstructionResultType.FailureReason.OCCUPIED)
-	assert(impassable != Vector2i(-1, -1), "No impassable construction cell found")
-	assert(occupied != Vector2i(-1, -1), "No occupied construction cell found")
+	var impassable: Vector2i = _find_buildable_cell()
+	assert(runtime.apply_test_terrain_override(REGION_CELL, impassable, TerrainType.OCEAN), "Impassable terrain setup failed")
+	assert(runtime.query_outpost_preview(REGION_CELL, impassable).failure_reason == RegionConstructionResultType.FailureReason.IMPASSABLE, "Ocean construction cell was accepted")
+	var occupied: Vector2i = _find_buildable_cell()
+	assert(runtime.apply_test_feature_add(REGION_CELL, "construction_blocker", &"test", occupied), "Occupied setup failed")
+	assert(runtime.query_outpost_preview(REGION_CELL, occupied).failure_reason == RegionConstructionResultType.FailureReason.OCCUPIED, "Occupied construction cell was accepted")
 	print("CONSTRUCTION TEST 4 PASS: terrain and occupancy rules are Runtime decisions")
 
 func _test_place_outpost_uses_sparse_delta() -> void:
@@ -180,6 +182,7 @@ func _test_presentation_lifecycle() -> void:
 	var cell: Vector2i = _find_buildable_cell()
 	var scene: PackedScene = load("res://scenes/region/RegionMap.tscn") as PackedScene
 	var first: RegionMap = scene.instantiate() as RegionMap
+	first.debug_view = RegionMap.DebugView.ELEVATION
 	get_root().add_child(first)
 	await process_frame
 	first.setup(world_data.get_region(REGION_CELL), terrain, pois, session, roads, TravelRuntime.new(session, world_data), runtime)
@@ -191,6 +194,7 @@ func _test_presentation_lifecycle() -> void:
 	first.queue_free()
 	await process_frame
 	var second: RegionMap = scene.instantiate() as RegionMap
+	second.debug_view = RegionMap.DebugView.ELEVATION
 	get_root().add_child(second)
 	await process_frame
 	second.setup(world_data.get_region(REGION_CELL), terrain, pois, session, roads, TravelRuntime.new(session, world_data), runtime)
@@ -200,7 +204,11 @@ func _test_presentation_lifecycle() -> void:
 	print("CONSTRUCTION TEST 13 PASS: preview is visual and Region replacement keeps Outpost")
 
 func _reset() -> void:
-	world_data = WorldData.new()
+	if world_data == null:
+		world_data = WorldData.new()
+		terrain = world_data.get_or_generate_region_terrain(REGION_CELL, TEST_SEED)
+		pois = world_data.get_pois_for_region(REGION_CELL, TEST_SEED)
+		roads = RegionRoadOverlay.new()
 	session = GameSession.new()
 	session.world_seed = TEST_SEED
 	session.selected_world_cell = REGION_CELL
@@ -210,9 +218,6 @@ func _reset() -> void:
 		Vector2i(50, 50)
 	))
 	session.party.initialized = true
-	terrain = world_data.get_or_generate_region_terrain(REGION_CELL, TEST_SEED)
-	pois = world_data.get_pois_for_region(REGION_CELL, TEST_SEED)
-	roads = world_data.get_roads_for_region(REGION_CELL, TEST_SEED)
 	runtime = RegionRuntime.new(session, world_data)
 	runtime.set_region_context(world_data.get_region(REGION_CELL), terrain, pois, roads)
 
@@ -223,14 +228,6 @@ func _find_buildable_cell() -> Vector2i:
 			if runtime.query_outpost_preview(REGION_CELL, cell).success:
 				return cell
 	assert(false, "No deterministic buildable Cell found")
-	return Vector2i(-1, -1)
-
-func _find_cell_with_failure(reason: int) -> Vector2i:
-	for y: int in range(WorldCoordinates.REGION_GRID_SIZE):
-		for x: int in range(WorldCoordinates.REGION_GRID_SIZE):
-			var cell: Vector2i = Vector2i(x, y)
-			if runtime.query_outpost_preview(REGION_CELL, cell).failure_reason == reason:
-				return cell
 	return Vector2i(-1, -1)
 
 func _remove_save_file() -> void:

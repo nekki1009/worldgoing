@@ -2,6 +2,8 @@ class_name RegionMap
 extends Node2D
 
 const GlobalTravelPathType = preload("res://scripts/data/global_travel_path.gd")
+const SiteLayoutDataType = preload("res://scripts/data/site_layout_data.gd")
+const SiteLayoutGeneratorType = preload("res://scripts/core/site_layout_generator.gd")
 const BattlePreviewRuntimeType = preload("res://scripts/runtime/battle_preview_runtime.gd")
 const RegionConstructionResultType = preload("res://scripts/runtime/region_construction_result.gd")
 const RegionRuntimeType = preload("res://scripts/runtime/region_runtime.gd")
@@ -98,6 +100,7 @@ const FOREST_COLOR: Color = Color("3f7857")
 const MOUNTAIN_COLOR: Color = Color("777b83")
 const WATER_COLOR: Color = Color("4d87a1")
 const RIVER_COLOR: Color = Color("49a9cf")
+const SITE_THUMBNAIL_GRID_SIZE: int = SiteLayoutGeneratorType.THUMBNAIL_GRID_SIZE
 
 @onready var camera: Camera2D = $Camera2D
 
@@ -564,7 +567,9 @@ func _draw() -> void:
 func _refresh_static_visual() -> void:
 	if static_visual == null or resolved_region == null or not resolved_region.is_valid():
 		return
-	var image: Image = Image.create(GRID_SIZE.x, GRID_SIZE.y, false, Image.FORMAT_RGBA8)
+	var composed_visual: bool = debug_view == DebugView.NORMAL
+	var visual_grid_size: Vector2i = GRID_SIZE * SITE_THUMBNAIL_GRID_SIZE if composed_visual else GRID_SIZE
+	var image: Image = Image.create(visual_grid_size.x, visual_grid_size.y, false, Image.FORMAT_RGBA8)
 	var road_cells: Array[Vector3i] = []
 	var resolved_terrain: PackedByteArray = resolved_region.get_terrain_snapshot()
 	for y: int in range(GRID_SIZE.y):
@@ -572,34 +577,43 @@ func _refresh_static_visual() -> void:
 			var region_cell: Vector2i = Vector2i(x, y)
 			var cell_index: int = y * GRID_SIZE.x + x
 			var terrain_type: int = resolved_terrain[cell_index]
-			var terrain_color: Color = PLAINS_COLOR
-			match terrain_type:
-				TerrainType.FOREST:
-					terrain_color = FOREST_COLOR
-				TerrainType.MOUNTAIN:
-					terrain_color = MOUNTAIN_COLOR
-				TerrainType.WATER:
-					terrain_color = WATER_COLOR
-			var cell_color: Color = terrain_color
-			match debug_view:
-				DebugView.ELEVATION:
-					var elevation: float = float(terrain_data.elevation_data[cell_index]) / 255.0
-					cell_color = Color(elevation, elevation, elevation)
-				DebugView.MOISTURE:
-					var moisture: float = float(terrain_data.moisture_data[cell_index]) / 255.0
-					cell_color = Color(0.03 + moisture * 0.12, 0.12 + moisture * 0.70, 0.18 + moisture * 0.55)
-				DebugView.RIVER:
-					cell_color = Color("55c7ff") if terrain_data.river_strength_data[cell_index] > 0 else Color("30343b")
-				DebugView.POI:
-					cell_color = terrain_color.darkened(0.45)
-				DebugView.ROAD:
-					cell_color = terrain_color.darkened(0.62)
-				DebugView.TRAVEL, DebugView.GLOBAL_TRAVEL:
-					cell_color = _travel_cell_color(region_cell)
-				_:
-					if terrain_data.river_strength_data[cell_index] > 0:
-						cell_color = RIVER_COLOR
-			image.set_pixel(x, y, cell_color)
+			var base_cell: Dictionary = {
+				"global_region_cell": WorldCoordinates.world_region_to_global_region_cell(
+					region.world_cell,
+					region_cell
+				),
+				"terrain_type": terrain_type,
+				"elevation": resolved_region.get_elevation(region_cell),
+				"moisture": resolved_region.get_moisture(region_cell),
+				"river_strength": resolved_region.get_river_strength(region_cell),
+				"river": resolved_region.has_river(region_cell),
+				"road": resolved_region.has_road(region_cell),
+				"river_crossing": resolved_region.has_river_crossing(region_cell),
+			}
+			if not composed_visual:
+				image.set_pixel(
+					x,
+					y,
+					_region_visual_cell_color(region_cell, terrain_type, cell_index, 0)
+				)
+			else:
+				var cell_origin: Vector2i = region_cell * SITE_THUMBNAIL_GRID_SIZE
+				var cell_visual: PackedByteArray = PackedByteArray()
+				cell_visual = SiteLayoutGeneratorType.generate_cell_base_thumbnail(
+					session.world_seed,
+					base_cell,
+					SITE_THUMBNAIL_GRID_SIZE
+				)
+				for sub_y: int in range(SITE_THUMBNAIL_GRID_SIZE):
+					for sub_x: int in range(SITE_THUMBNAIL_GRID_SIZE):
+						var visual_code: int = cell_visual[sub_y * SITE_THUMBNAIL_GRID_SIZE + sub_x]
+						var cell_color: Color = _region_visual_cell_color(
+							region_cell,
+							terrain_type,
+							cell_index,
+							visual_code
+						)
+						image.set_pixel(cell_origin.x + sub_x, cell_origin.y + sub_y, cell_color)
 			if (road_overlay.flags[cell_index] & RegionRoadOverlay.ROAD) != 0:
 				var road_flags: int = _resolved_road_flags(region_cell)
 				if (road_flags & RegionRoadOverlay.ROAD) != 0:
@@ -609,6 +623,36 @@ func _refresh_static_visual() -> void:
 		road_cells,
 		debug_view == DebugView.TRAVEL or debug_view == DebugView.GLOBAL_TRAVEL
 	)
+
+func _region_visual_cell_color(
+		region_cell: Vector2i,
+		terrain_type: int,
+		cell_index: int,
+		visual_code: int
+	) -> Color:
+	if debug_view == DebugView.NORMAL:
+		return SiteLayoutDataType.visual_color(visual_code)
+	var terrain_color: Color = TerrainType.to_color(terrain_type)
+	var cell_color: Color = terrain_color
+	match debug_view:
+		DebugView.ELEVATION:
+			var elevation: float = float(terrain_data.elevation_data[cell_index]) / 255.0
+			cell_color = Color(elevation, elevation, elevation)
+		DebugView.MOISTURE:
+			var moisture: float = float(terrain_data.moisture_data[cell_index]) / 255.0
+			cell_color = Color(0.03 + moisture * 0.12, 0.12 + moisture * 0.70, 0.18 + moisture * 0.55)
+		DebugView.RIVER:
+			cell_color = Color("55c7ff") if terrain_data.river_strength_data[cell_index] > 0 else Color("30343b")
+		DebugView.POI:
+			cell_color = terrain_color.darkened(0.45)
+		DebugView.ROAD:
+			cell_color = terrain_color.darkened(0.62)
+		DebugView.TRAVEL, DebugView.GLOBAL_TRAVEL:
+			cell_color = _travel_cell_color(region_cell)
+		_:
+			if terrain_data.river_strength_data[cell_index] > 0:
+				cell_color = RIVER_COLOR
+	return cell_color
 func _debug_view_name() -> String:
 	match debug_view:
 		DebugView.ELEVATION:

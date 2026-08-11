@@ -1,7 +1,7 @@
 class_name WorldPOIGenerator
 extends RefCounted
 
-const GENERATION_VERSION: int = 1
+const GENERATION_VERSION: int = 2
 const POI_CANDIDATE_GRID_SIZE: int = 10
 const SETTLEMENT_SPACING_RADIUS: int = 1
 const CANDIDATE_EXISTS_CHANCE: float = 0.24
@@ -77,7 +77,7 @@ func _generate_candidate(world_seed: int, candidate_cell: Vector2i) -> WorldPOID
 	if poi_type < 0:
 		return null
 	var global_region_cell: Vector2i = _candidate_global_cell(world_seed, candidate_cell)
-	var macro_sample: Vector3 = macro_sampler.sample(world_seed, global_region_cell)
+	var macro_sample: Vector4 = macro_sampler.sample(world_seed, global_region_cell)
 	var terrain_type: int = terrain_generator.classify_sample(macro_sample)
 	var river_nearby: bool = _river_nearby(world_seed, global_region_cell)
 	var priority: float = DeterministicHash.normalized(world_seed, candidate_cell, PRIORITY_SALT)
@@ -124,7 +124,7 @@ func _calculate_candidate_type(world_seed: int, candidate_cell: Vector2i) -> int
 	if DeterministicHash.normalized(world_seed, candidate_cell, EXISTENCE_SALT) >= CANDIDATE_EXISTS_CHANCE:
 		return -1
 	var global_region_cell: Vector2i = _candidate_global_cell(world_seed, candidate_cell)
-	var macro_sample: Vector3 = macro_sampler.sample(world_seed, global_region_cell)
+	var macro_sample: Vector4 = macro_sampler.sample(world_seed, global_region_cell)
 	var terrain_type: int = terrain_generator.classify_sample(macro_sample)
 	var river_nearby: bool = _river_nearby(world_seed, global_region_cell)
 	var mountain_nearby: bool = _mountain_nearby(world_seed, global_region_cell)
@@ -222,41 +222,69 @@ func _suitability(
 	) -> float:
 	match poi_type:
 		WorldPOIType.VILLAGE:
-			if terrain_type == TerrainType.WATER or terrain_type == TerrainType.MOUNTAIN:
+			if TerrainType.is_water_like(terrain_type) or terrain_type == TerrainType.MOUNTAIN:
 				return 0.0
-			var village_score: float = 1.0 if terrain_type == TerrainType.PLAINS else 0.68
+			var village_score: float = 0.68
+			match terrain_type:
+				TerrainType.PLAINS:
+					village_score = 1.0
+				TerrainType.SAND:
+					village_score = 0.30 if river_nearby else 0.0
+				TerrainType.SNOW:
+					village_score = 0.24
+				TerrainType.SWAMP:
+					village_score = 0.20
+			if village_score <= 0.0:
+				return 0.0
 			village_score *= 0.80 + clampf(1.0 - absf(elevation - 0.50), 0.0, 1.0) * 0.25
 			if river_nearby:
 				village_score += 0.20
 			return village_score + moisture * 0.10
 		WorldPOIType.TOWN:
-			if terrain_type == TerrainType.WATER or terrain_type == TerrainType.MOUNTAIN:
+			if TerrainType.is_water_like(terrain_type) \
+				or terrain_type == TerrainType.MOUNTAIN \
+				or terrain_type == TerrainType.SWAMP:
 				return 0.0
-			var town_score: float = 1.25 if terrain_type == TerrainType.PLAINS else 0.20
+			var town_score: float = 0.20
+			match terrain_type:
+				TerrainType.PLAINS:
+					town_score = 1.25
+				TerrainType.SAND:
+					town_score = 0.12 if river_nearby else 0.0
+				TerrainType.SNOW:
+					town_score = 0.06
 			town_score *= 0.75 + clampf(1.0 - absf(elevation - 0.48), 0.0, 1.0) * 0.30
 			if river_nearby:
 				town_score += 0.35
 			return town_score
 		WorldPOIType.CASTLE:
-			if terrain_type == TerrainType.WATER:
+			if TerrainType.is_water_like(terrain_type):
 				return 0.0
 			var castle_score: float = 0.85 if terrain_type == TerrainType.PLAINS else 0.35
+			if terrain_type == TerrainType.SNOW:
+				castle_score = 0.25
+			elif terrain_type == TerrainType.SWAMP:
+				castle_score = 0.18
 			if mountain_nearby:
 				castle_score += 0.45
 			castle_score += clampf(1.0 - absf(elevation - 0.62) * 3.0, 0.0, 1.0) * 0.25
 			return castle_score
 		WorldPOIType.RUINS:
-			if terrain_type == TerrainType.WATER:
+			if TerrainType.is_water_like(terrain_type):
 				return 0.0
 			var ruins_score: float = 0.70 if terrain_type == TerrainType.PLAINS else 0.85
+			if terrain_type == TerrainType.SWAMP:
+				ruins_score = 0.95
 			if mountain_nearby:
 				ruins_score += 0.30
 			return ruins_score
 		WorldPOIType.CAVE:
-			if terrain_type == TerrainType.WATER or (not mountain_nearby and elevation < 0.58):
+			if TerrainType.is_water_like(terrain_type) \
+				or (not mountain_nearby and elevation < 0.58):
 				return 0.0
 			var cave_score: float = 0.55
-			if terrain_type == TerrainType.MOUNTAIN:
+			if terrain_type == TerrainType.MOUNTAIN \
+				or (terrain_type == TerrainType.SNOW and elevation >= 0.58):
 				cave_score += 0.90
 			if mountain_nearby:
 				cave_score += 0.30
@@ -281,8 +309,9 @@ func _mountain_nearby(world_seed: int, global_region_cell: Vector2i) -> bool:
 	for offset_y: int in range(-1, 2):
 		for offset_x: int in range(-1, 2):
 			var sample_cell: Vector2i = global_region_cell + Vector2i(offset_x, offset_y)
-			var sample: Vector3 = macro_sampler.sample(world_seed, sample_cell)
-			if terrain_generator.classify_sample(sample) == TerrainType.MOUNTAIN:
+			var sample: Vector4 = macro_sampler.sample(world_seed, sample_cell)
+			if terrain_generator.classify_sample(sample) == TerrainType.MOUNTAIN \
+				or sample.x >= RegionTerrainGenerator.MOUNTAIN_THRESHOLD:
 				return true
 	return false
 

@@ -69,7 +69,10 @@ func _test_water_is_impassable() -> void:
 	data.set_terrain(Vector2i(2, 0), TerrainType.WATER)
 	var result: PartyPathResult = _path(data, RegionRoadOverlay.new(), Vector2i(0, 0), Vector2i(2, 0))
 	assert(not result.has_path(), "Water destination unexpectedly had a path")
-	print("TEST 6 PASS: Large Water has no path")
+	data.set_terrain(Vector2i(2, 0), TerrainType.OCEAN)
+	result = _path(data, RegionRoadOverlay.new(), Vector2i(0, 0), Vector2i(2, 0))
+	assert(not result.has_path(), "Ocean destination unexpectedly had a path")
+	print("TEST 6 PASS: Water and Ocean have no path")
 
 func _test_river_requires_crossing() -> void:
 	var data: RegionTerrainData = _plains_data()

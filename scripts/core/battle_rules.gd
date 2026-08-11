@@ -11,6 +11,9 @@ const ROAD_SPEED_MULTIPLIER: float = 1.20
 const PLAINS_SPEED_MULTIPLIER: float = 1.00
 const FOREST_SPEED_MULTIPLIER: float = 0.65
 const MOUNTAIN_SPEED_MULTIPLIER: float = 0.40
+const SAND_SPEED_MULTIPLIER: float = 0.80
+const SNOW_SPEED_MULTIPLIER: float = 0.60
+const SWAMP_SPEED_MULTIPLIER: float = 0.50
 const CROSSING_SPEED_MULTIPLIER: float = 0.67
 const COMMAND_BASE_DELAY_SECONDS: float = 1.0
 const COMMAND_SIGNAL_SPEED_MPS: float = 25.0
@@ -33,7 +36,13 @@ static func combat_frontage(terrain_type: int) -> int:
 			return 500
 		TerrainType.MOUNTAIN:
 			return 250
-		TerrainType.WATER:
+		TerrainType.SAND:
+			return 1500
+		TerrainType.SNOW:
+			return 1200
+		TerrainType.SWAMP:
+			return 400
+		TerrainType.WATER, TerrainType.OCEAN:
 			return 0
 		_:
 			return 0
@@ -140,7 +149,13 @@ static func tactical_speed_multiplier(
 			terrain_multiplier = FOREST_SPEED_MULTIPLIER
 		TerrainType.MOUNTAIN:
 			terrain_multiplier = MOUNTAIN_SPEED_MULTIPLIER
-		TerrainType.WATER:
+		TerrainType.SAND:
+			terrain_multiplier = SAND_SPEED_MULTIPLIER
+		TerrainType.SNOW:
+			terrain_multiplier = SNOW_SPEED_MULTIPLIER
+		TerrainType.SWAMP:
+			terrain_multiplier = SWAMP_SPEED_MULTIPLIER
+		TerrainType.WATER, TerrainType.OCEAN:
 			return 0.0
 	if river_crossing:
 		terrain_multiplier *= CROSSING_SPEED_MULTIPLIER

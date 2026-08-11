@@ -5,6 +5,9 @@ const DEFAULT_WALK_SPEED_KMH: float = 5.0
 const ROAD_SPEED_KMH: float = 6.0
 const FOREST_SPEED_MULTIPLIER: float = 0.70
 const MOUNTAIN_SPEED_MULTIPLIER: float = 0.40
+const SAND_SPEED_MULTIPLIER: float = 0.80
+const SNOW_SPEED_MULTIPLIER: float = 0.60
+const SWAMP_SPEED_MULTIPLIER: float = 0.50
 const RIVER_CROSSING_PENALTY_SECONDS: int = 180
 const SLOPE_PENALTY_SECONDS_PER_ELEVATION: float = 60.0
 
@@ -17,17 +20,21 @@ static func get_speed_kmh(terrain_type: int, has_road: bool, base_speed_kmh: flo
 			return base_speed * FOREST_SPEED_MULTIPLIER
 		TerrainType.MOUNTAIN:
 			return base_speed * MOUNTAIN_SPEED_MULTIPLIER
+		TerrainType.SAND:
+			return base_speed * SAND_SPEED_MULTIPLIER
+		TerrainType.SNOW:
+			return base_speed * SNOW_SPEED_MULTIPLIER
+		TerrainType.SWAMP:
+			return base_speed * SWAMP_SPEED_MULTIPLIER
 		_:
 			return base_speed
 
 static func is_passable(terrain_type: int, river: bool, river_crossing: bool) -> bool:
-	if terrain_type == TerrainType.WATER:
+	if not TerrainType.is_valid(terrain_type) or TerrainType.is_water_like(terrain_type):
 		return false
 	if river and not river_crossing:
 		return false
-	return terrain_type == TerrainType.PLAINS \
-		or terrain_type == TerrainType.FOREST \
-		or terrain_type == TerrainType.MOUNTAIN
+	return true
 
 static func step_distance_meters(direction: Vector2i) -> float:
 	return float(WorldCoordinates.REGION_CELL_SIZE_METERS) * (

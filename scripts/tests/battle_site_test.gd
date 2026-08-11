@@ -714,8 +714,8 @@ func _find_terrain_boundary(world_data: WorldData) -> Vector2i:
 	return INVALID_CELL
 
 func _find_passable_center_near_river(world_data: WorldData) -> Vector2i:
-	for y: int in range(401, 499):
-		for x: int in range(301, 399):
+	for y: int in range(1, 99):
+		for x: int in range(1, 99):
 			var center: Vector2i = Vector2i(x, y)
 			if not _base_cell_passable(world_data, center):
 				continue
@@ -744,14 +744,14 @@ func _find_passable_local(world_data: WorldData) -> Vector2i:
 				if not WorldCoordinates.is_valid_region_cell(local_cell):
 					continue
 				var global_cell: Vector2i = WorldCoordinates.world_region_to_global_region_cell(TEST_WORLD_CELL, local_cell)
-				var sample: Vector3 = world_data.terrain_generator.macro_sampler.sample(TEST_SEED, global_cell)
+				var sample: Vector4 = world_data.terrain_generator.macro_sampler.sample(TEST_SEED, global_cell)
 				if world_data.terrain_generator.classify_sample(sample) == TerrainType.FOREST \
 						and sample.z <= 0.0:
 					return local_cell
 	return Vector2i(-1, -1)
 
 func _base_cell_passable(world_data: WorldData, global_cell: Vector2i) -> bool:
-	var sample: Vector3 = world_data.terrain_generator.macro_sampler.sample(TEST_SEED, global_cell)
+	var sample: Vector4 = world_data.terrain_generator.macro_sampler.sample(TEST_SEED, global_cell)
 	return TravelCostConfig.is_passable(
 		world_data.terrain_generator.classify_sample(sample),
 		sample.z > 0.0,

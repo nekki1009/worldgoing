@@ -2,7 +2,6 @@ extends SceneTree
 
 const TEST_SEED: int = 246813579
 const REGION_CELL: Vector2i = Vector2i(3, 4)
-const BATTLE_CENTER: Vector2i = Vector2i(352, 431)
 const SAVE_PATH: String = "user://v012_persistence_test.json"
 
 var world_data: WorldData
@@ -94,16 +93,18 @@ func _test_save_rejects_active_site() -> void:
 
 func _test_save_rejects_active_battle() -> void:
 	var source: GameSession = _new_session()
-	var converted: Dictionary = WorldCoordinates.global_region_cell_to_world_region(BATTLE_CENTER)
+	var battle_center: Vector2i = _find_passable_battle_center()
+	assert(battle_center != Vector2i(-1, -1), "Active Battle save test found no passable center")
+	var converted: Dictionary = WorldCoordinates.global_region_cell_to_world_region(battle_center)
 	source.selected_world_cell = converted["world_cell"] as Vector2i
 	source.selected_region_cell = converted["region_cell"] as Vector2i
-	source.party.set_global_region_cell(BATTLE_CENTER)
+	source.party.set_global_region_cell(battle_center)
 	var runtime: BattlePreviewRuntime = BattlePreviewRuntime.new(
 		source,
 		world_data,
 		RegionRuntime.new(source, world_data)
 	)
-	var preview: BattleSiteSnapshot = runtime.query_debug_preview(BATTLE_CENTER)
+	var preview: BattleSiteSnapshot = runtime.query_debug_preview(battle_center)
 	assert(preview.has_preview(), "Active Battle save test could not build preview")
 	assert(runtime.begin_battle(preview).success, "Active Battle save test could not begin battle")
 	var result: PersistenceResult = persistence.save_session(source, SAVE_PATH)
@@ -111,6 +112,22 @@ func _test_save_rejects_active_battle() -> void:
 	assert(result.failure_reason == PersistenceResult.Code.BATTLE_ACTIVE, "Active Battle failure was not typed")
 	runtime.leave_battle()
 	print("TEST 3C PASS: Active Battle save is rejected until battle persistence exists")
+
+func _find_passable_battle_center() -> Vector2i:
+	for y: int in range(1, WorldCoordinates.REGION_GRID_SIZE - 1):
+		for x: int in range(1, WorldCoordinates.REGION_GRID_SIZE - 1):
+			var global_cell: Vector2i = WorldCoordinates.world_region_to_global_region_cell(
+				REGION_CELL,
+				Vector2i(x, y)
+			)
+			var sample: Vector4 = world_data.terrain_generator.macro_sampler.sample(
+				TEST_SEED,
+				global_cell
+			)
+			var terrain_type: int = world_data.terrain_generator.classify_sample(sample)
+			if TravelCostConfig.is_passable(terrain_type, sample.z > 0.0, false):
+				return global_cell
+	return Vector2i(-1, -1)
 
 func _test_corrupt_load_is_atomic() -> void:
 	var source: GameSession = _new_session()

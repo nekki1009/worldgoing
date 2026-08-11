@@ -77,9 +77,13 @@ func _test_preview_result() -> void:
 
 func _test_invalid_destination_reason() -> void:
 	var session: GameSession = _new_session()
+	var invalid_destination: Vector2i = WorldCoordinates.world_region_to_global_region_cell(
+		WorldData.WORLD_CELLS,
+		Vector2i.ZERO
+	)
 	var result: TravelPreviewResult = _new_runtime(session).query_travel_preview(
 			session.party.party_id,
-			Vector2i(1000, 1000)
+			invalid_destination
 		)
 	assert(not result.success, "Invalid destination unexpectedly succeeded")
 	assert(
@@ -211,10 +215,10 @@ func _test_cross_region_runtime_query() -> void:
 	var session: GameSession = GameSession.new()
 	session.world_seed = TEST_SEED
 	var start: Vector2i = _find_clear_global_cell_near(
-		WorldCoordinates.world_region_to_global_region_cell(Vector2i.ZERO, Vector2i(50, 50))
+		WorldCoordinates.world_region_to_global_region_cell(Vector2i(3, 4), Vector2i(50, 50))
 	)
 	var destination: Vector2i = _find_clear_global_cell_near(
-		WorldCoordinates.world_region_to_global_region_cell(Vector2i(1, 0), Vector2i(50, 50))
+		WorldCoordinates.world_region_to_global_region_cell(Vector2i(4, 4), Vector2i(50, 50))
 	)
 	assert(start != Vector2i(-1, -1) and destination != Vector2i(-1, -1), "Could not find cross-Region Runtime endpoints")
 	session.party.set_global_region_cell(start)
@@ -231,10 +235,11 @@ func _test_presentation_preview_state() -> void:
 	get_root().add_child(map)
 	var session: GameSession = _new_session()
 	var runtime: TravelRuntime = _new_runtime(session)
-	var terrain: RegionTerrainData = world_data.get_or_generate_region_terrain(Vector2i.ZERO, session.world_seed)
-	var roads: RegionRoadOverlay = world_data.get_roads_for_region(Vector2i.ZERO, session.world_seed)
-	var region: RegionData = world_data.get_region(Vector2i.ZERO)
-	var pois: Array[WorldPOIData] = world_data.get_pois_for_region(Vector2i.ZERO, session.world_seed)
+	var world_cell: Vector2i = session.party.get_world_cell()
+	var terrain: RegionTerrainData = world_data.get_or_generate_region_terrain(world_cell, session.world_seed)
+	var roads: RegionRoadOverlay = world_data.get_roads_for_region(world_cell, session.world_seed)
+	var region: RegionData = world_data.get_region(world_cell)
+	var pois: Array[WorldPOIData] = world_data.get_pois_for_region(world_cell, session.world_seed)
 	map.setup(region, terrain, pois, session, roads, runtime)
 	var before: Dictionary = _state_snapshot(session)
 	var destination: Vector2i = _find_destination(runtime, session)
@@ -287,7 +292,7 @@ func _new_session() -> GameSession:
 	var session: GameSession = GameSession.new()
 	session.world_seed = TEST_SEED
 	var start_global_cell: Vector2i = _find_clear_global_cell_near(
-		WorldCoordinates.world_region_to_global_region_cell(Vector2i.ZERO, Vector2i(10, 10))
+		WorldCoordinates.world_region_to_global_region_cell(Vector2i(3, 4), Vector2i(10, 10))
 	)
 	assert(start_global_cell != Vector2i(-1, -1), "Could not find a passable Runtime test start")
 	var converted: Dictionary = WorldCoordinates.global_region_cell_to_world_region(start_global_cell)
@@ -322,9 +327,12 @@ func _find_clear_global_cell_near(center: Vector2i) -> Vector2i:
 				if maxi(abs(x - center.x), abs(y - center.y)) != radius:
 					continue
 				var global_cell: Vector2i = Vector2i(x, y)
-				var sample: Vector3 = world_data.terrain_generator.macro_sampler.sample(TEST_SEED, global_cell)
+				var converted: Dictionary = WorldCoordinates.global_region_cell_to_world_region(global_cell)
+				if not world_data.is_valid_world_cell(converted["world_cell"] as Vector2i):
+					continue
+				var sample: Vector4 = world_data.terrain_generator.macro_sampler.sample(TEST_SEED, global_cell)
 				var terrain_type: int = world_data.terrain_generator.classify_sample(sample)
-				if terrain_type != TerrainType.WATER and sample.z <= 0.0:
+				if not TerrainType.is_water_like(terrain_type) and sample.z <= 0.0:
 					return global_cell
 	return Vector2i(-1, -1)
 

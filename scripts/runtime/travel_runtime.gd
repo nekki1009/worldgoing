@@ -712,13 +712,7 @@ func _find_passable_spawn(
 func _find_poi_by_id(poi_id: String) -> WorldPOIData:
 	if world_data == null or session == null or poi_id.is_empty():
 		return null
-	# ponytail: scan the fixed 10x10 POI set; add a world-owned ID index when Site count grows.
-	for y: int in range(WorldData.WORLD_CELLS.y):
-		for x: int in range(WorldData.WORLD_CELLS.x):
-			for poi: WorldPOIData in world_data.get_pois_for_region(Vector2i(x, y), session.world_seed):
-				if poi.poi_id == poi_id:
-					return poi
-	return null
+	return world_data.find_poi_by_id(poi_id, session.world_seed)
 
 func _find_site_definition(site_id: String) -> SiteData:
 	if world_data == null or site_id.is_empty():
