@@ -1,0 +1,364 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/character_creator.gd" id="1_creator"]
+[ext_resource type="Script" path="res://scripts/ui/paper_doll_composer.gd" id="2_composer"]
+
+[node name="CharacterCreator" type="CanvasLayer"]
+layer = 100
+visible = false
+script = ExtResource("1_creator")
+
+[node name="Backdrop" type="ColorRect" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 0
+color = Color(0.025, 0.035, 0.05, 0.96)
+
+[node name="Center" type="CenterContainer" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 32.0
+offset_top = 32.0
+offset_right = -32.0
+offset_bottom = -32.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Panel" type="PanelContainer" parent="Center"]
+custom_minimum_size = Vector2(1900, 1160)
+layout_mode = 2
+
+[node name="Margin" type="MarginContainer" parent="Center/Panel"]
+layout_mode = 2
+theme_override_constants/margin_left = 24
+theme_override_constants/margin_top = 20
+theme_override_constants/margin_right = 24
+theme_override_constants/margin_bottom = 20
+
+[node name="Layout" type="VBoxContainer" parent="Center/Panel/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 14
+
+[node name="Header" type="HBoxContainer" parent="Center/Panel/Margin/Layout"]
+layout_mode = 2
+
+[node name="Title" type="Label" parent="Center/Panel/Margin/Layout/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 30
+text = "WORLDGOING — 角色生成器／紙娃娃素材實驗室"
+
+[node name="CloseButton" type="Button" parent="Center/Panel/Margin/Layout/Header"]
+custom_minimum_size = Vector2(130, 48)
+layout_mode = 2
+text = "Close (ESC)"
+
+[node name="Tabs" type="TabContainer" parent="Center/Panel/Margin/Layout"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="PCAppearance" type="VBoxContainer" parent="Center/Panel/Margin/Layout/Tabs"]
+layout_mode = 2
+alignment = 1
+
+[node name="Placeholder" type="Label" parent="Center/Panel/Margin/Layout/Tabs/PCAppearance"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "PC 固有外觀的 Session 套用與持久化屬於 Milestone 2。\nMilestone 1 不取得 GameSession，也不提供假 Apply。"
+horizontal_alignment = 1
+
+[node name="AssetLab" type="HSplitContainer" parent="Center/Panel/Margin/Layout/Tabs"]
+layout_mode = 2
+split_offset = 620
+
+[node name="Controls" type="ScrollContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab"]
+custom_minimum_size = Vector2(620, 0)
+layout_mode = 2
+
+[node name="ControlLayout" type="VBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 9
+
+[node name="LabTitle" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 22
+text = "素材選擇（只存在於 Preview Draft）"
+
+[node name="GenderRow" type="HBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/GenderRow"]
+custom_minimum_size = Vector2(170, 0)
+layout_mode = 2
+text = "Gender"
+
+[node name="GenderOption" type="OptionButton" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/GenderRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="MountedToggle" type="CheckBox" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
+layout_mode = 2
+text = "Mounted pose"
+
+[node name="MountRow" type="HBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/MountRow"]
+custom_minimum_size = Vector2(170, 0)
+layout_mode = 2
+text = "Mount"
+
+[node name="MountOption" type="OptionButton" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/MountRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="BodyRow" type="HBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/BodyRow"]
+custom_minimum_size = Vector2(170, 0)
+layout_mode = 2
+text = "Body (required)"
+
+[node name="BodyOption" type="OptionButton" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/BodyRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ArmorRow" type="HBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/ArmorRow"]
+custom_minimum_size = Vector2(170, 0)
+layout_mode = 2
+text = "Armor"
+
+[node name="ArmorOption" type="OptionButton" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/ArmorRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="HairRow" type="HBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/HairRow"]
+custom_minimum_size = Vector2(170, 0)
+layout_mode = 2
+text = "Hair"
+
+[node name="HairOption" type="OptionButton" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/HairRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="HelmetRow" type="HBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/HelmetRow"]
+custom_minimum_size = Vector2(170, 0)
+layout_mode = 2
+text = "Helmet"
+
+[node name="HelmetOption" type="OptionButton" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/HelmetRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="CapeRow" type="HBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/CapeRow"]
+custom_minimum_size = Vector2(170, 0)
+layout_mode = 2
+text = "Cape"
+
+[node name="CapeOption" type="OptionButton" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/CapeRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="WeaponRow" type="HBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/WeaponRow"]
+custom_minimum_size = Vector2(170, 0)
+layout_mode = 2
+text = "Weapon"
+
+[node name="WeaponOption" type="OptionButton" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/WeaponRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ShieldRow" type="HBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/ShieldRow"]
+custom_minimum_size = Vector2(170, 0)
+layout_mode = 2
+text = "Shield"
+
+[node name="ShieldOption" type="OptionButton" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/ShieldRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="BardingRow" type="HBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/BardingRow"]
+custom_minimum_size = Vector2(170, 0)
+layout_mode = 2
+text = "Mount Barding"
+
+[node name="BardingOption" type="OptionButton" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/BardingRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="DirectionTitle" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Direction"
+
+[node name="DirectionGrid" type="GridContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
+layout_mode = 2
+columns = 4
+
+[node name="DownButton" type="Button" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/DirectionGrid"]
+layout_mode = 2
+text = "DOWN"
+
+[node name="UpButton" type="Button" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/DirectionGrid"]
+layout_mode = 2
+text = "UP"
+
+[node name="RightButton" type="Button" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/DirectionGrid"]
+layout_mode = 2
+text = "RIGHT"
+
+[node name="LeftButton" type="Button" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/DirectionGrid"]
+layout_mode = 2
+text = "LEFT"
+
+[node name="FrameRow" type="HBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
+layout_mode = 2
+
+[node name="PreviousFrameButton" type="Button" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/FrameRow"]
+layout_mode = 2
+text = "< Frame"
+
+[node name="FrameSlider" type="HSlider" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/FrameRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+max_value = 7.0
+step = 1.0
+
+[node name="NextFrameButton" type="Button" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/FrameRow"]
+layout_mode = 2
+text = "Frame >"
+
+[node name="FrameLabel" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/FrameRow"]
+custom_minimum_size = Vector2(75, 0)
+layout_mode = 2
+text = "0 / 7"
+
+[node name="PlaybackRow" type="HBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
+layout_mode = 2
+
+[node name="PlayPauseButton" type="Button" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/PlaybackRow"]
+custom_minimum_size = Vector2(120, 0)
+layout_mode = 2
+text = "Pause"
+
+[node name="FPSLabel" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/PlaybackRow"]
+layout_mode = 2
+text = "FPS"
+
+[node name="FPSSpin" type="SpinBox" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/PlaybackRow"]
+layout_mode = 2
+min_value = 1.0
+max_value = 16.0
+value = 8.0
+
+[node name="ActionRow" type="HBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
+layout_mode = 2
+
+[node name="CheckAllButton" type="Button" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/ActionRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Check All"
+
+[node name="ExportAllButton" type="Button" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/ActionRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Export Contact Sheets"
+
+[node name="FailureRow" type="HBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
+layout_mode = 2
+
+[node name="PreviousFailureButton" type="Button" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/FailureRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "< Previous Failure"
+
+[node name="NextFailureButton" type="Button" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/FailureRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Next Failure >"
+
+[node name="Status" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
+custom_minimum_size = Vector2(0, 120)
+layout_mode = 2
+autowrap_mode = 2
+text = "Catalog not loaded"
+
+[node name="Preview" type="VBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="PreviewTitle" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Preview"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 22
+text = "64×64 Anchor Preview — cyan cross = (32,56)"
+horizontal_alignment = 1
+
+[node name="PreviewFrame" type="PanelContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Preview"]
+custom_minimum_size = Vector2(760, 760)
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="PreviewViewport" type="SubViewportContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Preview/PreviewFrame"]
+layout_mode = 2
+stretch = true
+
+[node name="SubViewport" type="SubViewport" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Preview/PreviewFrame/PreviewViewport"]
+transparent_bg = true
+size = Vector2i(760, 760)
+render_target_update_mode = 4
+
+[node name="PaperDollComposer" type="Node2D" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Preview/PreviewFrame/PreviewViewport/SubViewport"]
+position = Vector2(380, 530)
+scale = Vector2(6, 6)
+script = ExtResource("2_composer")
+
+[node name="AnchorHorizontal" type="Line2D" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Preview/PreviewFrame/PreviewViewport/SubViewport"]
+points = PackedVector2Array(350, 530, 410, 530)
+width = 1.0
+default_color = Color(0, 1, 1, 0.65)
+
+[node name="AnchorVertical" type="Line2D" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Preview/PreviewFrame/PreviewViewport/SubViewport"]
+points = PackedVector2Array(380, 500, 380, 560)
+width = 1.0
+default_color = Color(0, 1, 1, 0.65)
+
+[node name="Direction" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Preview"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Direction: DOWN"
+horizontal_alignment = 1
+
+[node name="Contract" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Preview"]
+layout_mode = 2
+text = "8 columns × 3 source rows; LEFT = RIGHT row + flip_h. One Timer updates all 11 Sprite2D layers."
+horizontal_alignment = 1
+
+[node name="AnimationTimer" type="Timer" parent="."]
+wait_time = 0.125

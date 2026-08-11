@@ -1,6 +1,9 @@
 class_name DebugUI
 extends CanvasLayer
 
+signal character_creator_requested
+
+@onready var character_creator_button: Button = $CharacterCreatorButton
 @onready var layer_label: Label = $Panel/Margin/VBox/Layer
 @onready var debug_view_label: Label = $Panel/Margin/VBox/DebugView
 @onready var current_region_label: Label = $Panel/Margin/VBox/CurrentRegion
@@ -36,6 +39,9 @@ extends CanvasLayer
 @onready var poi_reached_label: Label = $Panel/Margin/VBox/POIReached
 @onready var site_label: Label = $Panel/Margin/VBox/Site
 @onready var instruction_label: Label = $Panel/Margin/VBox/Instruction
+
+func _ready() -> void:
+	character_creator_button.pressed.connect(_on_character_creator_pressed)
 
 func _process(_delta: float) -> void:
 	$FPS.text = "FPS: %d" % Engine.get_frames_per_second()
@@ -83,3 +89,6 @@ func update_state(state: Dictionary) -> void:
 	poi_reached_label.text = "POI Reached: %s" % state.get("poi_reached", "??")
 	site_label.text = "Site: %s" % state.get("site", "??")
 	instruction_label.text = str(state.get("instruction", ""))
+
+func _on_character_creator_pressed() -> void:
+	character_creator_requested.emit()

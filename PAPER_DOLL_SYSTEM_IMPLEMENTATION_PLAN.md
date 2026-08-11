@@ -1,18 +1,18 @@
 # 紙娃娃系統與 ChatGPT 美術實作計畫
 
-狀態：角色生成器前置 Gate 完成前暫緩實作
+狀態：角色生成器 Gate 0／Milestone 1 已完成；Art Gate 1 與 Battle 前置 Gate 待執行
 
-> 2026-08-11 優先順序修正：先執行 [`CHARACTER_CREATOR_IMPLEMENTATION_PLAN.md`](CHARACTER_CREATOR_IMPLEMENTATION_PLAN.md)，完成 PC 固有外觀、素材實驗室、動畫／素材驗收與存檔契約後，才回到本文件的離線合成與 Battle GPU 接線。若兩份文件在前置資料型別、Composer、素材驗收或里程碑順序上衝突，以角色生成器計畫為準；Battle 仍維持既有 MultiMesh，這次不接紙娃娃。
+> 2026-08-11 優先順序修正：[`CHARACTER_CREATOR_IMPLEMENTATION_PLAN.md`](CHARACTER_CREATOR_IMPLEMENTATION_PLAN.md) 的 Gate 0／Milestone 1 已完成。下一步是 ChatGPT Art Gate 1；PC 外觀持久化、Battle variant cache 與 GPU 接線仍不得提前。若兩份文件衝突，以角色生成器計畫與 `PROJECT_ARCHITECTURE.md` 為準。
 
-本文件定義 Worldgoing 紙娃娃顯示、美術產製、離線烘焙與 Battle GPU 接線的落地順序。`PROJECT_ARCHITECTURE.md` 仍是最高架構真實來源；本文件不建立新的 gameplay 權威，也不代表 PaperDoll、Unit、Equipment、Demography、Bakery 或 Battle shader 已經完成。
+本文件定義 Worldgoing 紙娃娃顯示、美術產製、離線合成與 Battle GPU 接線的落地順序。`PROJECT_ARCHITECTURE.md` 仍是最高架構真實來源；本文件不建立新的 gameplay 權威，也不代表 Unit、Equipment、Demography、Battle variant cache 或 Battle shader 已經完成。
 
-本輪只新增計畫文件，不修改遊戲程式、美術資產、場景、測試或架構狀態。
+目前已新增 synthetic 素材實驗室、Recipe、Composer、純 Image contact sheet、UI 場景與聚焦測試；尚未新增正式美術、PC gameplay owner、存檔欄位或 Battle 接線。
 
 ## 1. 計畫結論
 
 紙娃娃系統分成兩條先獨立驗收、之後才匯合的工作流：
 
-1. **工程工作流**：資料定義、已解析 Recipe、固定節點 Composer、SubViewport Bakery、Texture2DArray 與既有 Battle MultiMesh 接線。
+1. **工程工作流**：presentation 視覺定義、已解析 Recipe、固定節點 Composer、純 Image 離線合成、Texture2DArray 與既有 Battle MultiMesh 接線。
 2. **ChatGPT 美術工作流**：風格與對齊模板、分層部件、坐騎部件、透明背景清理、尺寸正規化與遊戲內視覺驗收。
 
 第一個實作切片只完成資料定義、Recipe、Composer 與合成測試材質。正式美術不阻塞這個切片；ChatGPT 美術必須等畫布、Anchor、方向與影格契約鎖定後才開始批量生成。
@@ -26,7 +26,7 @@ Battle 仍只使用既有單一 GPU `MultiMesh`。`PaperDollComposer` 不得出�
 3. Formation 仍是唯一的移動、命令與模擬單位；不得新增 Soldier、AI、NavigationAgent、物理 body 或每人一個 Node。
 4. 紙娃娃 Resource 只描述可重用的視覺定義，不保存角色生命、裝備耐久、坐騎所有權或 Battle 狀態。
 5. `PaperDollRecipe` 是交給顯示層的已解析快照，不是可變的角色資料容器。
-6. `PaperDollComposer` 只用於 UI 單人預覽、SubViewport 烘焙與聚焦渲染測試。
+6. `PaperDollComposer` 只用於 UI 單人預覽；離線 contact sheet／未來 variant sheet 使用純 Image 合成。
 7. Texture2DArray、烘焙結果與 UI preview 都是可重建的 Presentation cache，不得進入 Seed + Delta 存檔。
 8. ChatGPT 產生的是視覺素材；裝備規則、性別規則、坐騎狀態、Formation 分配與 shader instance data 仍由程式契約決定。
 
@@ -80,16 +80,16 @@ LEFT 必須是逐部件鏡像、重新套用 LEFT Z-order 後的獨立烘焙列�
 
 | 裝備／來源 | 渲染層 |
 | --- | --- |
-| MountData.tail | `MOUNT_TAIL` |
+| PaperDollMountVisual.tail | `MOUNT_TAIL` |
 | CAPE | `CAPE` |
-| MountData.body | `MOUNT_BODY` |
+| PaperDollMountVisual.body | `MOUNT_BODY` |
 | base body | `BODY` |
 | BODY 裝備 | `ARMOR` |
 | hair visual | `HAIR` |
 | HEAD 裝備 | `HELMET` |
 | WEAPON | `WEAPON` |
 | SHIELD | `SHIELD` |
-| MountData.head | `MOUNT_HEAD` |
+| PaperDollMountVisual.head | `MOUNT_HEAD` |
 | MOUNT_BARDING | `MOUNT_BARDING` |
 
 Composer 必須固定重用以上 11 個 `Sprite2D`，並遵守下表：
@@ -108,99 +108,29 @@ Composer 必須固定重用以上 11 個 `Sprite2D`，並遵守下表：
 | MountHead | 20 | -5 | 20 | 20 |
 | MountBarding | 21 | 1 | 21 | 21 |
 
-## 5. 資料層計畫
+## 5. Presentation 視覺資料（Milestone 1 已完成）
 
-預計新增：
+已新增：
 
 ```text
-scripts/data/paper_doll_sprite_set.gd
-scripts/data/item_data.gd
-scripts/data/mount_data.gd
+scripts/data/paper_doll_layer_visual.gd
+scripts/data/paper_doll_mount_visual.gd
+scripts/data/paper_doll_catalog.gd
+scripts/data/paper_doll_preview_draft.gd
 scripts/data/paper_doll_recipe.gd
 ```
 
-### 5.1 PaperDollSpriteSet
+- `PaperDollLayerVisual extends Resource` 集中 Gender、Facing、11 個 RenderLayer、64×64／8×3／Anchor 常數，以及 GENDERED／UNISEX Texture 解析與尺寸驗證。
+- `PaperDollMountVisual extends Resource` 只組合 tail／body／head 三個 presentation layer visual，不表示坐騎所有權或 gameplay 狀態。
+- `PaperDollCatalog extends Resource` 負責穩定 ID 查找、預設 body／hair、重複 ID／texture matrix 驗證，以及從 Preview Draft 解析 Recipe。
+- `PaperDollPreviewDraft extends RefCounted` 保存素材實驗室的可變選擇；它沒有 Session 或 Persistence 路徑。
+- `PaperDollRecipe extends RefCounted` 只保存已解析的固定 11 層 Texture 與 mounted flag，交給 Composer／contact sheet 消費。
 
-`PaperDollSpriteSet extends Resource` 是共用視覺定義，也是原需求中缺少的第三個 Resource 類別。
+Gate 0 撤銷了先建立 gameplay `ItemData`／`MountData`／ArmorWeight 的舊方案。Heavy Armor → UNISEX 是未來 Equipment owner 的規則；目前素材層只驗證被標記為 UNISEX 的 visual 在男女選擇下解析到同一 Texture。這避免素材實驗室搶先成為裝備或坐騎權威。
 
-最小欄位：
+## 6. PaperDollComposer（Milestone 1 已完成）
 
-- `visual_id: StringName`
-- `on_foot_male: Texture2D`
-- `on_foot_female: Texture2D`
-- `on_foot_unisex: Texture2D`
-- `mounted_male: Texture2D`
-- `mounted_female: Texture2D`
-- `mounted_unisex: Texture2D`
-
-提供 `resolve(gender, is_mounted, force_unisex)`，只回傳已匯入的 `Texture2D`，不得在 Composer 中以字串執行 `load()`。
-
-Godot `Resource` 並非語言層級不可變。這些檔案採「編輯器可編輯、runtime 不修改」契約；驗證器檢查缺圖、尺寸與不合法的 fallback。
-
-### 5.2 ItemData
-
-`ItemData extends Resource` 的最小欄位：
-
-- `item_id: StringName`
-- `slot_type: Slot`
-- `armor_weight: ArmorWeight`
-- `visuals: PaperDollSpriteSet`
-
-第一版 Slot：
-
-```text
-HEAD, BODY, WEAPON, SHIELD, CAPE, MOUNT_BARDING
-```
-
-第一版 ArmorWeight：
-
-```text
-NOT_ARMOR, LIGHT, MEDIUM, HEAVY
-```
-
-規則：
-
-- 只有 HEAD／BODY 可使用 LIGHT、MEDIUM、HEAVY。
-- HEAVY 強制解析 Unisex texture。
-- 非 Heavy 先解析對應性別；是否允許 Unisex fallback 必須由建構驗證明確處理，不能靜默選錯圖。
-
-### 5.3 MountData
-
-`MountData extends Resource` 的最小欄位：
-
-- `mount_id: StringName`
-- `tail_sheet: Texture2D`
-- `body_sheet: Texture2D`
-- `head_sheet: Texture2D`
-
-三個部件必須分開，才能實作既定 Z-order。馬鎧由 `MOUNT_BARDING` 裝備槽提供，不放進 MountData。
-
-### 5.4 PaperDollRecipe
-
-`PaperDollRecipe extends RefCounted` 是已解析、API-level read-only 的顯示快照。
-
-內容：
-
-- `gender`
-- `is_mounted`
-- 穩定、可重建的 `variant_key`
-- 私有 `RenderLayer -> Texture2D` 映射
-
-Recipe builder 接收 base body、可選 hair、equipment 定義、可選 MountData 與目前是否騎乘，完成：
-
-1. 裝備槽驗證。
-2. Heavy／Unisex 規則。
-3. 裝備槽到渲染層映射。
-4. 步行／騎乘 texture 解析。
-5. mounted 但缺少 MountData 的錯誤回報。
-6. 來源 Sheet 尺寸驗證。
-7. 依固定層順序產生 deterministic `variant_key`。
-
-Recipe 不公開內部 Dictionary，也不讓 Composer 讀取 ItemData。建構失敗使用同檔案內的小型 `BuildResult` 回傳錯誤；第一版不新增全域 Result framework 或 Recipe factory service。
-
-## 6. PaperDollComposer 計畫
-
-預計新增：
+已新增：
 
 ```text
 scripts/ui/paper_doll_composer.gd
@@ -295,7 +225,7 @@ Runtime 部件命名：
 - 一匹 mount：tail、body、head。
 - 一件 mount barding。
 
-這批通過 Composer 與 Bakery Gate 後，才批量增加更多裝備、髮型、坐騎或染色變體。
+這批通過 Composer、Catalog、contact sheet 與 runtime preview Gate 後，才批量增加更多裝備、髮型、坐騎或染色變體。
 
 ### 7.4 每張部件的美術驗收
 
@@ -310,63 +240,34 @@ Runtime 部件命名：
 9. 步行與騎乘切換時，世界 Anchor 不跳動。
 10. 通過程式尺寸檢查、Composer contact sheet 與人工視覺審核後才可登記為 runtime asset。
 
-## 8. 聚焦測試計畫
+## 8. 聚焦測試（Milestone 1 已完成）
 
-預計新增：
+已新增 `scripts/tests/character_creator_test.gd`，使用程式產生的 asymmetric RGBA8 `ImageTexture`，不依賴正式美術。7 個案例涵蓋：
 
-```text
-scripts/tests/paper_doll_composer_test.gd
-```
-
-第一階段使用程式建立的純色 `ImageTexture`，不依賴正式美術：
-
-1. Heavy armor 在男女 Recipe 中解析到同一張 Unisex texture。
-2. Light／Medium 正確解析性別 texture；缺失 fallback 會回報錯誤。
-3. slot 不符、來源尺寸錯誤、mounted 但缺少 MountData 時建構失敗。
-4. Recipe 與輸入 equipment Dictionary 分離；外部修改不污染已建 Recipe。
-5. Recipe 不公開可變的 layer Dictionary。
-6. 重複 `apply_recipe()` 不增加節點，固定維持 11 個 Sprite2D。
-7. 所有可見部件使用相同 frame coordinates、hframes、vframes、offset。
-8. 四方向 row、LEFT flip 與離開 LEFT 後的 flip reset 正確。
-9. 四方向完整 Z-order 表正確。
-10. 步行 Recipe 隱藏 mount layers；騎乘 Recipe 依資料顯示 mount 與 barding。
-11. 64×64 SubViewport 中的測試標記精確落在 `(32, 56)` Anchor。
-12. Composer 銷毀並重建後，同一 Recipe 產生相同畫面資料。
+1. Catalog ID、GENDERED／UNISEX、512×192 texture matrix、預設 body／hair 與 Mount 三部件驗證。
+2. Preview Draft 深拷貝、步行／騎乘 Recipe、mount-only visibility 與缺 Mount 失敗。
+3. 固定 11 Sprite 節點池、重複套用零增生、8×3、Anchor、nearest filter、四方向 frame／flip reset 與完整 z-order。
+4. 純 Image 4×8 contact sheet，以及 LEFT 確實由 RIGHT source frame 鏡像。
+5. 素材實驗室單一 Timer、播放、方向、mounted 切換、全 Catalog 檢查與 34 張 contact sheet 匯出。
+6. DebugUI lazy entry、同一 CharacterCreator 重用與 NavigationController 輸入狀態恢復。
+7. 靜態依賴掃描：素材實驗室沒有 GameSession、Persistence、AnimatedSprite2D、Battle、ItemData 或 gameplay MountData。
 
 正式美術加入後，在同一測試入口增加資產契約掃描；視覺品質仍由 contact sheet／runtime capture 人工核准，不用脆弱的全圖 hash 取代美術審核。
 
 每個 Gate 都必須重跑既有 `scripts/tests/battle_site_test.gd`，確認 9,000 instances、無 Soldier Node、Formation geometry 與 Presentation dependency 邊界沒有退化。
 
-## 9. PaperDollBakery 計畫
+## 9. 未來 Battle variant cache
 
-只有資料、Composer、測試與第一批 ChatGPT 美術通過後才新增：
+Milestone 1 已用 `PaperDollContactSheet` 證明純 Image 合成路徑：逐 texture `get_region()`、LEFT component `flip_x()`、按方向 z-order `blend_rect()`，直接得到 `512×256` 四方向完成圖。未來 Art Gate 與 Unit snapshot 通過後，優先延伸同一路徑建立排序後的 variant sheets／Texture2DArray；不另建 SubViewport Bakery、常駐 Singleton、背景 worker 或磁碟 cache。
 
-```text
-scripts/ui/paper_doll_bakery.gd
-```
+未來最小流程：
 
-最小流程：
+1. Unit snapshot 提供已核准且數量受限的 deterministic variant keys。
+2. 依 key 解析 Recipe，使用既有 Image 合成器產生 `512×256` sheet。
+3. 驗證所有 sheet 尺寸、format 與 mipmap 契約後，才一次發布 Texture2DArray 與唯讀 key→layer mapping。
+4. 先量測 variant 數量、峰值記憶體與產製時間，再決定是否需要磁碟 cache 或非同步處理。
 
-1. 重用一個透明背景、`64×64`、停用 3D 的 `SubViewport`。
-2. Composer 放在 viewport 的 `(32, 56)`。
-3. 依固定 variant key 順序，逐一套用 Recipe。
-4. 對 DOWN、UP、RIGHT、LEFT 各烘焙 8 個 frame。
-5. LEFT 先在 Composer 中逐部件 flip 並套用 LEFT Z-order。
-6. 設定一次更新並等待 `RenderingServer.frame_post_draw` 後擷取畫面。
-7. 將 32 張 frame 組成一張 `512×256` variant sheet。
-8. 依排序後的 variant key 將所有同尺寸 sheet 建立為 `Texture2DArray`。
-9. 回傳 Texture2DArray 與 `variant_key -> array_layer` 的唯讀結果。
-
-第一版只做記憶體內烘焙；不建立常駐 Bakery Singleton、不寫 user save、不新增背景 worker framework。需要磁碟 cache、threading 或增量 dirty rebuild，必須先以實測烘焙時間與記憶體數據證明必要性。
-
-Bakery 驗收：
-
-- 每層正好 `512×256`。
-- 所有 layers 尺寸與 mipmap 契約一致。
-- 相同輸入與排序產生相同 variant key／layer mapping。
-- LEFT 列是獨立合成，不是完成圖鏡像。
-- SubViewport 失敗或空 texture 會回傳明確錯誤，不發布半完成陣列。
-- Composer／SubViewport 可重用，批次中不持續增加 Node。
+只有未來加入無法由 CPU Image 重現的 per-part shader 效果，且實測證明必要時，才另行審核 SubViewport capture；目前沒有此需求。
 
 ## 10. Battle GPU 接線 Gate
 
@@ -397,19 +298,23 @@ Battle 驗收必須包含：
 
 ### Gate 0：契約同步
 
+狀態：**完成（2026-08-11）**
+
 交付：
 
-- 在 `PROJECT_ARCHITECTURE.md` 增補 Composer／Bakery／Battle 邊界。
-- 在 `ARCHITECTURE_STATUS.md` 保持 PaperDoll 為未實作，直到相應 Gate 真正完成。
+- 在 `PROJECT_ARCHITECTURE.md` 增補 Composer／Image 合成／Battle 邊界。
+- 在 `ARCHITECTURE_STATUS.md` 分開記錄已完成的 synthetic asset lab 與仍未完成的 PC／正式美術／Battle 部分。
 - 修正 `PROJECT_SPECIFICATION_V3.md` 中以 runtime `flip_h` 表示 LEFT 的模糊描述，改為 source-side component flip 與 baked LEFT row。
 
-通過條件：來源 512×192、輸出 512×256、Anchor、方向、Z-order、資料 owner 與非目標範圍全部核准。
+通過證據：來源 512×192、輸出 512×256、Anchor、方向、Z-order、presentation visual owner、未來 PC owner／存檔欄位、LEFT component flip、純 Image 合成與非目標範圍已同步至三份架構／規格文件。
 
 ### Milestone 1：資料、Recipe、Composer
 
+狀態：**完成（2026-08-11）**
+
 交付：第 5、6、8 節所列腳本與聚焦測試，使用合成測試材質。
 
-通過條件：聚焦測試全數 PASS、Godot parse PASS、`git diff --check` PASS、既有 Battle boundary 20/20 不退化。
+通過證據：`character_creator_test.gd` 7/7、Godot 4.6.2 class scan、Main startup、Architecture smoke、專案預設 D3D12 Forward+ 實際 UI capture 與既有 Battle boundary 20/20 PASS；`git diff --check` PASS。
 
 ### Art Gate 1：ChatGPT 對齊模板與第一批素材
 
@@ -417,17 +322,17 @@ Battle 驗收必須包含：
 
 通過條件：第 7.4 節全部符合；未通過的部件只重做該部件，不擴大量產。
 
-### Milestone 2：Bakery
-
-交付：可重用 SubViewport Bakery、`512×256` variants、Texture2DArray 與 deterministic layer mapping。
-
-通過條件：Bakery 測試 PASS、第一批正式美術四方向合成正確、重複烘焙不增加 Node 或發布半完成 cache。
-
 ### Gate 2：Unit snapshot 與世界尺寸
 
 交付：Unit 視覺 snapshot owner、variant template 分配、步兵／坐騎公尺尺寸與 Formation footprint 決策。
 
 通過條件：不建立第二套角色權威、不以 Scene 查詢 Unit、不改變既有 Formation 命令 owner，且架構文件同步。
+
+### Milestone 2：Battle variant cache
+
+交付：延伸既有純 Image 合成器，產生 `512×256` variants、Texture2DArray 與 deterministic layer mapping。
+
+通過條件：variant cache 測試 PASS、第一批正式美術四方向合成正確、相同輸入 mapping 穩定，且不發布半完成 cache。
 
 ### Milestone 3：Battle MultiMesh shader
 
@@ -435,9 +340,9 @@ Battle 驗收必須包含：
 
 通過條件：9,000 人容量、無 Soldier Node、方向／frame／variant 正確、Scene replacement、架構掃描與實際 GPU benchmark 全數完成。
 
-### Milestone 4：UI 預覽
+### Milestone 4：PC／裝備 UI 整合
 
-交付：在真正需要的角色／裝備 UI 中重用一個 PaperDollComposer。
+交付：在素材實驗室以外的真正 PC／裝備 UI 中重用一個 PaperDollComposer。
 
 通過條件：UI 只發出裝備意圖並顯示 Recipe，不直接修改 gameplay Resource；關閉與重開 UI 後可從權威資料重建。
 
@@ -448,7 +353,7 @@ Battle 驗收必須包含：
 - 完整 Battle damage、AI、士氣與 combat resolution。
 - 9000 個 CharacterProfile／PaperDollComposer／Sprite2D。
 - 自訂 Command Bus、CQRS、event bus 或第二套 renderer framework。
-- 無量測依據的磁碟 cache、thread pool、增量 Bakery 或素材串流。
+- 無量測依據的磁碟 cache、thread pool、增量 variant cache 或素材串流。
 - 批量生成所有裝備、髮型與坐騎；第一批只驗證完整管線。
 - 將 AI 生成圖直接視為可用資產而跳過尺寸、透明、對齊與遊戲內驗收。
 
@@ -457,10 +362,10 @@ Battle 驗收必須包含：
 只有同時滿足以下條件，才能把 PaperDoll 從 `ARCHITECTURE_STATUS.md` 的未實作項目移除：
 
 1. 正式資料 owner 與 Recipe snapshot 已落地。
-2. Composer、ChatGPT 第一批美術與 Bakery 均通過各自驗收。
+2. Composer、ChatGPT 第一批美術與純 Image variant cache 均通過各自驗收。
 3. Battle 使用既有單一 MultiMesh 顯示紙娃娃 variant，沒有個人士兵 Node。
 4. 9,000 人回歸與 GPU benchmark 有實際證據。
 5. UI／Battle Scene 銷毀重建不改變權威資料。
 6. 架構、狀態文件與實際程式一致，未完成項目仍明確標記為未實作。
 
-推薦下一次只核准 Gate 0、Milestone 1 與 Art Gate 1。Bakery、Unit snapshot、世界尺寸與 Battle shader 必須等前一 Gate 通過後再開始。
+Gate 0／Milestone 1 已完成。推薦下一次只執行 Art Gate 1；PC 外觀持久化、Unit snapshot、世界尺寸、Battle variant cache 與 shader 必須等各自前置 Gate 通過後再開始。

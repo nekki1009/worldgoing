@@ -14,7 +14,7 @@ V3 將 World Layer 定義為**有限但可擴充**的平面整數網格。初始
 
 目前已落地的基線包含：三層座標、確定性地形／POI／道路生成、輕量 Site Travel Profile 與山地隘口方向遮罩、GameSession 與 TravelRuntime、Region Seed + Sparse Delta、Region Outpost、Seed + Delta Persistence、九區 Battle composite、Formation 移動、命令延遲、傳令攔截與隊長自治。
 
-目前已完成 V3 的 256×256 lazy World bounds、無素材 placeholder 的 World／Region／Site 三層視覺組成、方向受限的山地隘口垂直切片與 30 FPS 以上 runtime 驗證；尚未完成的功能包含：正式 Site 美術資料與 MapBaker dirty-cell 烘焙、Formation Breadcrumb／CHOKE／REGROUPING、PaperDollBakery、完整戰鬥解析與隘口以外的 Site 語意內容。
+目前已完成 V3 的 256×256 lazy World bounds、無素材 placeholder 的 World／Region／Site 三層視覺組成、方向受限的山地隘口垂直切片、synthetic 紙娃娃素材實驗室與 30 FPS 以上 runtime 驗證；尚未完成的功能包含：正式 Site／紙娃娃美術資料、MapBaker dirty-cell 烘焙、Formation Breadcrumb／CHOKE／REGROUPING、Battle paper-doll variant cache／shader、完整戰鬥解析與隘口以外的 Site 語意內容。
 
 ## 一、專案總覽與系統目標
 
@@ -188,14 +188,17 @@ Formation 是命令與模擬的最小單位，但**不是固定 100 人，也沒
 
 ### 5.4 PaperDoll 與 GPU
 
-PaperDollBakery 是 V3 後續功能，依賴未來的 Unit、Equipment、Demography 與美術資產 owner。它應：
+目前只有 Presentation 素材實驗室：固定 11 個 Sprite 的 `PaperDollComposer`、synthetic Catalog、純 Image contact sheet 與 UI 預覽。它沒有 PC／Unit 權威資料、正式美術、Texture2DArray 或 Battle 接線。
+
+Battle PaperDoll variant cache 是 V3 後續功能，依賴未來的 Unit、Equipment、Demography 與美術資產 owner。它應：
 
 - 將 captain／hero 與 subordinate template 組合成可重建的 Texture2DArray；
-- 以 variant_id、frame_index、flip_h 等 instance data 驅動 shader；
+- 來源 sheet 只含 DOWN／UP／RIGHT；離線合成時先逐部件鏡像 LEFT 並套用 LEFT Z-order，再產生四方向完成圖；
+- 以 variant layer、frame_x、facing_row 等 instance data 驅動 shader，不以完成圖 runtime `flip_h` 取代 LEFT 遮擋；
 - 維持 BattleSiteMap presentation-only；
 - 以實測資料驗證 GPU instance 數、顯示品質與目標 FPS。
 
-目前實作的 9,000 人測試只證明 MultiMesh instance capacity 與無 Soldier Node，不等同 PaperDollBakery 或 shader 已完成。
+目前實作的 9,000 人測試只證明 MultiMesh instance capacity 與無 Soldier Node，不等同 Battle paper-doll variant cache 或 shader 已完成。
 
 ### 5.5 命令、傳令與自治
 

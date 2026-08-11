@@ -1,12 +1,12 @@
 # Worldgoing 角色生成器與紙娃娃素材實驗室實作計畫
 
-狀態：規劃完成，待核准後實作
+狀態：Gate 0 與 Milestone 1 已完成；Art Gate 1 待執行
 
 日期：2026-08-11
 
-`PROJECT_ARCHITECTURE.md` 仍是最高架構真實來源。本文件只規劃第一個 PC 固有外觀資料切片、角色生成器 UI，以及供 ChatGPT 美術使用的紙娃娃素材／動畫驗收工具；不代表 Character、Equipment、Mount、PaperDoll 或 Battle shader 已經實作。
+`PROJECT_ARCHITECTURE.md` 仍是最高架構真實來源。目前只完成角色生成器的 Presentation 素材實驗室、synthetic Catalog、Recipe、Composer、contact sheet 與聚焦測試；Character、PC 權威外觀、Equipment、Mount gameplay、正式紙娃娃美術與 Battle shader 尚未實作。
 
-本輪只修改計畫文件，不修改程式、場景、美術、存檔格式或架構狀態。
+Gate 0 已同步架構與規格文件；Milestone 1 已新增程式與場景，但沒有修改存檔格式或建立 PC gameplay owner。
 
 ## 1. 審核結論
 
@@ -231,17 +231,21 @@ ChatGPT 先小批量產生，再由確定性工具組裝或正規化成 runtime 
 
 ### Gate 0：架構與格式鎖定
 
+狀態：**完成（2026-08-11）**
+
 修改：
 
 - `PROJECT_ARCHITECTURE.md`：新增最小 PC 外觀 owner，以及角色生成器／素材實驗室的 Presentation 邊界。
-- `ARCHITECTURE_STATUS.md`：仍標為未實作，直到對應驗證通過；不得只因新增檔案就改成 Implemented。
+- `ARCHITECTURE_STATUS.md`：分開標示 synthetic 素材實驗室已實作，以及 PC 權威外觀、正式美術與 Battle 接線仍未實作；不得用局部完成掩蓋後續範圍。
 - 本文件與紙娃娃總計畫：同步 sheet、Anchor、Layer 與優先順序。
 
-通過條件：owner、存檔欄位、預設 visual IDs、11 層與 ChatGPT 輸入契約沒有未決項。
+通過證據：owner、未來 v2 存檔欄位、正式 male／female 預設 visual IDs、11 層、512×192 來源 sheet、Anchor、LEFT component flip 與 ChatGPT 輸入契約均已寫入最高架構文件及 V3 規格；synthetic `debug_*` ID 明確禁止進入存檔。
 
 ### Milestone 1：顯示核心與素材實驗室
 
-預計新增：
+狀態：**完成（2026-08-11）**
+
+已新增：
 
 ```text
 scripts/data/paper_doll_layer_visual.gd
@@ -256,9 +260,9 @@ scenes/ui/CharacterCreator.tscn
 scripts/tests/character_creator_test.gd
 ```
 
-預計修改：`scripts/main.gd`、`scenes/Main.tscn`、`scripts/ui/debug_ui.gd`、`scenes/ui/DebugUI.tscn`。
+已修改：`scripts/main.gd`、`scripts/ui/debug_ui.gd`、`scenes/ui/DebugUI.tscn`。`Main.tscn` 不需修改；`Main` 在第一次按下入口時才 lazy instantiate，之後重用同一實例。
 
-通過條件：合成測試材質可在四方向 × 八影格切換；LEFT 正確鏡像與復位；11 個 Sprite 不隨套用次數增加；所有 z-index、Anchor、mounted visibility 與 contact sheet 測試 PASS；開關 UI 時地圖輸入確實停用／恢復。
+通過證據：`character_creator_test.gd` 7/7 PASS；合成測試材質可在四方向 × 八影格切換，LEFT 正確鏡像與復位，11 個 Sprite 重複套用不增生，完整 z-index、Anchor、mounted visibility、RGBA8／alpha／空 frame 驗證、34 張全 Catalog 匯出與 contact sheet 驗證 PASS；DebugUI lazy entry 與 NavigationController 輸入停用／恢復 PASS。Godot 4.6.2 class scan、Main headless startup、Architecture smoke 與專案預設 D3D12 Forward+ 實際 UI capture 均 PASS。
 
 ### Art Gate 1：ChatGPT 最小素材包
 

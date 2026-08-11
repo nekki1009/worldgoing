@@ -88,6 +88,30 @@ Party 進入 Site 時從 `(25, 25)` 開始；`PartyData.current_site_local_cell`
 RegionCoord + seed
 ```
 
+## PC 外觀與紙娃娃素材實驗室邊界
+
+角色生成器先落地的 Gate 0／Milestone 1 只建立 Presentation 素材實驗室，不建立 Character、Equipment 或 Mount gameplay：
+
+- `PaperDollLayerVisual` 與 `PaperDollMountVisual` 是 runtime 不修改的視覺 Resource；它們只保存穩定 visual ID、渲染層、性別政策與 Texture。
+- `PaperDollCatalog` 是已核准素材的查找與驗證入口；目前 Main 開啟的是程式產生的 synthetic debug Catalog，正式 ChatGPT 素材尚未加入。
+- `PaperDollPreviewDraft` 是素材實驗室的可變 View 草稿，永不進入 `GameSession` 或 Persistence。
+- `PaperDollRecipe` 是從 Catalog 解析出的 detached 顯示快照；`PaperDollComposer` 只消費 Recipe，固定重用 11 個 `Sprite2D`。
+- `CharacterCreator` 目前只啟用素材實驗室。PC 外觀頁明確停在 Milestone 2 placeholder；腳本沒有 `GameSession`、Persistence 或 Battle 依賴。
+- `PaperDollContactSheet` 使用純 `Image.get_region()`、逐部件 LEFT 鏡像與 `blend_rect()` 合成 4×8 驗收表；UI 的 `SubViewport` 只負責單人即時預覽，不作 Battle Bakery。
+
+來源素材契約固定為每格 `64×64`、`8×3` sheet（`512×192`），row 為 DOWN／UP／RIGHT；LEFT 使用 RIGHT row 並逐部件 `flip_h`。所有部件的 frame 內世界 Anchor 固定為 `(32,56)`，Composer 使用 `centered = false` 與 `offset = (-32,-56)`。11 個 render layers 與方向 Z-order 由 `PaperDollLayerVisual.RenderLayer`／`PaperDollComposer.z_index_for()` 單一實作。
+
+Milestone 2 才允許加入 PC 權威外觀。已鎖定的資料契約為 `GameSession.player_appearance` 持有一份 `PlayerAppearanceData extends RefCounted` 深拷貝，只包含 `gender`、`body_visual_id`、`hair_visual_id`；唯一 mutation 入口為 `GameSession.apply_player_appearance()`。Persistence v2 只逐欄位保存這三項，v1 讀取遷移使用 male 預設；正式 Catalog 必須提供以下穩定 ID：
+
+```text
+body_male_default
+body_female_default
+hair_male_default
+hair_female_default
+```
+
+Art Gate 1 未通過前不得實作 Milestone 2、不得把 synthetic `debug_*` ID 寫入存檔。Equipment／Mount owner 未建立前，盔甲、武器、盾牌、披風、馬匹與騎乘狀態都只能存在 Preview Draft。Battle 仍只使用既有單一 MultiMesh；角色生成器的 Sprite、SubViewport、Recipe 或 Catalog 不得成為 9,000 人 Battle runtime state。
+
 ## Battle composite and runtime boundary
 
 Battlefields are composed from nine adjacent Site-sized bases, not a second tactical world:
@@ -200,6 +224,7 @@ TileMap、地形預覽、探索 UI
 - Unit 的位置仍由資料層管理。
 - 紙娃娃是 Unit 狀態的顯示結果。
 - 不讓紙娃娃節點成為位置或生命週期的唯一真實來源。
+- 已完成的素材實驗室只是 Unit 前置 Presentation 工具；PC 外觀 owner、正式素材、Unit snapshot 與 Battle shader 仍需依各自 Gate 後續實作。
 
 ### 9. 戰鬥與更細的 Site Gameplay
 

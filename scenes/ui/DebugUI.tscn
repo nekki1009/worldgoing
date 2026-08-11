@@ -22,6 +22,17 @@ theme_override_font_sizes/font_size = 24
 text = "FPS: 0"
 horizontal_alignment = 2
 
+[node name="CharacterCreatorButton" type="Button" parent="."]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -390.0
+offset_top = 72.0
+offset_right = -24.0
+offset_bottom = 120.0
+grow_horizontal = 0
+text = "角色生成器／素材實驗室"
+
 [node name="Panel" type="PanelContainer" parent="."]
 offset_left = 24.0
 offset_top = 24.0
