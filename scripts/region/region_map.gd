@@ -3,7 +3,9 @@ extends Node2D
 
 const GlobalTravelPathType = preload("res://scripts/data/global_travel_path.gd")
 const SiteLayoutDataType = preload("res://scripts/data/site_layout_data.gd")
+const MapArtCatalogType = preload("res://scripts/data/map_art_catalog.gd")
 const SiteLayoutGeneratorType = preload("res://scripts/core/site_layout_generator.gd")
+const SiteContentTypesType = preload("res://scripts/data/site_content_types.gd")
 const BattlePreviewRuntimeType = preload("res://scripts/runtime/battle_preview_runtime.gd")
 const RegionConstructionResultType = preload("res://scripts/runtime/region_construction_result.gd")
 const RegionRuntimeType = preload("res://scripts/runtime/region_runtime.gd")
@@ -70,16 +72,18 @@ class RegionStaticVisual:
 			draw_line(
 				Vector2(line_x, RegionMap.MAP_ORIGIN.y),
 				Vector2(line_x, RegionMap.MAP_ORIGIN.y + map_size.y),
-				Color("2c4036")
+				Color(0.17, 0.25, 0.21, 0.10)
 			)
 		for y: int in range(RegionMap.GRID_SIZE.y + 1):
 			var line_y: float = RegionMap.MAP_ORIGIN.y + float(y) * RegionMap.CELL_PIXEL_SIZE
 			draw_line(
 				Vector2(RegionMap.MAP_ORIGIN.x, line_y),
 				Vector2(RegionMap.MAP_ORIGIN.x + map_size.x, line_y),
-				Color("2c4036")
+				Color(0.17, 0.25, 0.21, 0.10)
 			)
 		for road_cell: Vector3i in road_cells:
+			if not travel_debug_view:
+				continue
 			var road_color: Color = Color("5f9dff") if travel_debug_view else Color("d5a34d")
 			if (road_cell.z & RegionRoadOverlay.RIVER_CROSSING) != 0:
 				road_color = Color("86f4ff") if travel_debug_view else Color("55e4e8")
@@ -108,6 +112,7 @@ var static_visual: RegionStaticVisual
 var party_marker: PartyMarkerVisual
 var region: RegionData
 var terrain_data: RegionTerrainData
+var site_content_data: RegionSiteContentData
 var pois: Array[WorldPOIData] = []
 var road_overlay: RegionRoadOverlay = RegionRoadOverlay.new()
 var session: GameSession
@@ -124,12 +129,15 @@ var preview_error: String = ""
 var construction_mode: bool = false
 var construction_preview: RegionConstructionResultType
 var is_moving: bool = false
+var resource_visual_types: PackedInt32Array = PackedInt32Array()
+var resource_visual_amounts: PackedInt32Array = PackedInt32Array()
 
 func _ready() -> void:
+	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 	static_visual = RegionStaticVisual.new()
 	static_visual.name = "StaticVisual"
 	static_visual.show_behind_parent = true
-	static_visual.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	static_visual.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 	add_child(static_visual)
 	party_marker = PartyMarkerVisual.new()
 	party_marker.name = "PartyMarker"
@@ -162,6 +170,10 @@ func setup(
 	battle_preview_runtime.bind(session, travel_runtime.world_data, region_runtime)
 	region_runtime.set_region_context(region, terrain_data, pois, road_overlay)
 	resolved_region = region_runtime.query_region(region.world_cell)
+	site_content_data = travel_runtime.world_data.get_or_generate_region_site_content(
+		region.world_cell,
+		session.world_seed
+	) if travel_runtime != null and travel_runtime.world_data != null else null
 	party_in_region = session.party.initialized \
 		and session.party.get_world_cell() == session.selected_world_cell
 	is_moving = session.is_traveling()
@@ -215,8 +227,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				if construction_mode:
 					place_outpost_at(region_cell)
 				elif not session.is_traveling() and not session.has_travel_plan():
-					if path_preview != null and destination_region_cell == region_cell:
-						confirm_destination()
+					if mouse_event.double_click \
+						or (path_preview != null and path_preview.has_path() \
+							and destination_region_cell == region_cell):
+						_try_enter_site_at(region_cell)
 					else:
 						select_destination(region_cell)
 				get_viewport().set_input_as_handled()
@@ -258,22 +272,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 		if key_event.pressed and not key_event.echo and key_event.keycode == KEY_ENTER:
-			if path_preview != null:
-				confirm_destination()
+			if _request_site_entry_at(session.selected_region_cell):
 				get_viewport().set_input_as_handled()
-			elif party_in_region:
-				var poi: WorldPOIData = _poi_at(session.party.get_region_cell())
-				if poi != null:
-					var entry: SiteEntryQueryResult = travel_runtime.query_site_entry(
-							session.party.party_id,
-							poi.poi_id
-						)
-					if entry.can_enter:
-						site_enter_requested.emit(session.party.get_region_cell())
-					else:
-						preview_error = TravelFailureReasonType.to_code(entry.failure_reason)
-						debug_state_changed.emit(get_debug_state())
-					get_viewport().set_input_as_handled()
+			return
+		if key_event.pressed and not key_event.echo and key_event.keycode == KEY_SPACE:
+			if confirm_destination():
+				get_viewport().set_input_as_handled()
 			return
 		if key_event.pressed and not key_event.echo and key_event.keycode == KEY_ESCAPE:
 			if construction_mode:
@@ -329,10 +333,24 @@ func _refresh_construction_preview() -> void:
 	preview_error = "" if construction_preview.success \
 		else RegionConstructionResultType.failure_code(construction_preview.failure_reason)
 
-func select_destination(region_cell: Vector2i) -> bool:
-	if session.is_traveling() or not party_in_region or not _is_valid_region_cell(region_cell):
+func select_region_cell(region_cell: Vector2i) -> bool:
+	if not _is_valid_region_cell(region_cell):
 		return false
 	session.selected_region_cell = region_cell
+	queue_redraw()
+	debug_state_changed.emit(get_debug_state())
+	return true
+
+func select_destination(region_cell: Vector2i) -> bool:
+	if not select_region_cell(region_cell):
+		return false
+	if session.is_traveling():
+		destination_region_cell = Vector2i(-1, -1)
+		path_preview = null
+		preview_error = ""
+		queue_redraw()
+		debug_state_changed.emit(get_debug_state())
+		return false
 	destination_region_cell = region_cell
 	var destination_global_cell: Vector2i = WorldCoordinates.world_region_to_global_region_cell(
 			session.selected_world_cell,
@@ -346,6 +364,23 @@ func select_destination(region_cell: Vector2i) -> bool:
 	queue_redraw()
 	debug_state_changed.emit(get_debug_state())
 	return path_preview.has_path()
+
+func _try_enter_site_at(region_cell: Vector2i) -> bool:
+	return _request_site_entry_at(region_cell)
+
+func _request_site_entry_at(region_cell: Vector2i) -> bool:
+	var entry: SiteEntryQueryResult = travel_runtime.query_site_entry_at(
+			session.party.party_id,
+			session.selected_world_cell,
+			region_cell
+		)
+	if entry.can_enter:
+		site_enter_requested.emit(region_cell)
+	else:
+		preview_error = TravelFailureReasonType.to_code(entry.failure_reason)
+		queue_redraw()
+		debug_state_changed.emit(get_debug_state())
+	return true
 
 func confirm_destination() -> bool:
 	if session.is_traveling() or path_preview == null or not path_preview.has_path():
@@ -528,7 +563,7 @@ func get_debug_state() -> Dictionary:
 func _instruction() -> String:
 	if construction_mode:
 		return "OUTPOST MODE   Left Click: Place   Right Click: Remove   ESC: Exit Construction"
-	return "WASD: Camera   Wheel: Zoom   Left Click: Select Destination   C: Outpost Mode   B: Test Battle   Same Click / Enter: Confirm   T: World Map   ESC: Cancel Preview / World   1/2/3: Travel Speed   F1: Debug View"
+	return "WASD: Camera   Wheel: Zoom   Left Click: Select   Same Click / Double Click / Enter: Open Site   Space: Confirm Travel   C: Outpost Mode   B: Test Battle   T: World Map   ESC: Cancel Preview / World   1/2/3: Travel Speed   F1: Debug View"
 
 func _travel_status_label() -> String:
 	match session.last_travel_status:
@@ -552,6 +587,10 @@ func _draw() -> void:
 		draw_rect(_cell_rect(session.selected_region_cell), Color("ffe082"), false, 5.0)
 	if _is_valid_region_cell(hovered_region_cell):
 		draw_rect(_cell_rect(hovered_region_cell).grow(-5.0), Color("ffffff"), false, 3.0)
+	_draw_region_rivers()
+	_draw_region_relief_contours()
+	_draw_region_resources()
+	_draw_region_roads()
 	_draw_outposts()
 	_draw_path_preview()
 
@@ -559,9 +598,17 @@ func _draw() -> void:
 		if resolved_region != null and not resolved_region.is_feature_active(poi.poi_id):
 			continue
 		var poi_center: Vector2 = _cell_center(poi.region_cell)
-		draw_circle(poi_center, 22.0, Color("182018"))
-		draw_circle(poi_center, 17.0, WorldPOIType.to_color(poi.poi_type))
-		draw_circle(poi_center, 7.0, Color("ffffff"))
+		var poi_texture: Texture2D = MapArtCatalogType.poi_texture(poi.poi_type)
+		if poi_texture != null:
+			draw_texture_rect(
+				poi_texture,
+				Rect2(poi_center - Vector2.ONE * 24.0, Vector2.ONE * 48.0),
+				false
+			)
+		else:
+			draw_circle(poi_center, 22.0, Color("182018"))
+			draw_circle(poi_center, 17.0, WorldPOIType.to_color(poi.poi_type))
+			draw_circle(poi_center, 7.0, Color("ffffff"))
 	_draw_construction_preview()
 
 func _refresh_static_visual() -> void:
@@ -572,11 +619,30 @@ func _refresh_static_visual() -> void:
 	var image: Image = Image.create(visual_grid_size.x, visual_grid_size.y, false, Image.FORMAT_RGBA8)
 	var road_cells: Array[Vector3i] = []
 	var resolved_terrain: PackedByteArray = resolved_region.get_terrain_snapshot()
+	resource_visual_types.resize(GRID_SIZE.x * GRID_SIZE.y)
+	resource_visual_amounts.resize(GRID_SIZE.x * GRID_SIZE.y)
+	resource_visual_types.fill(-1)
+	resource_visual_amounts.fill(0)
 	for y: int in range(GRID_SIZE.y):
 		for x: int in range(GRID_SIZE.x):
 			var region_cell: Vector2i = Vector2i(x, y)
 			var cell_index: int = y * GRID_SIZE.x + x
 			var terrain_type: int = resolved_terrain[cell_index]
+			if site_content_data != null and site_content_data.is_valid():
+				var profile: Dictionary = site_content_data.profile_at(region_cell)
+				var amounts: PackedInt32Array = profile.get("resource_amounts", PackedInt32Array())
+				var dominant_resource: int = -1
+				var dominant_amount: int = 0
+				for resource_type: int in range(SiteContentTypesType.RESOURCE_COUNT):
+					# Grass and forest are native ground cover, not discrete Region
+					# pins. Fruit trees and ores remain explicit resource markers.
+					if resource_type in [SiteContentTypesType.RESOURCE_GRASS, SiteContentTypesType.RESOURCE_FOREST]:
+						continue
+					if resource_type < amounts.size() and int(amounts[resource_type]) > dominant_amount:
+						dominant_resource = resource_type
+						dominant_amount = int(amounts[resource_type])
+				resource_visual_types[cell_index] = dominant_resource
+				resource_visual_amounts[cell_index] = dominant_amount
 			var base_cell: Dictionary = {
 				"global_region_cell": WorldCoordinates.world_region_to_global_region_cell(
 					region.world_cell,
@@ -586,7 +652,10 @@ func _refresh_static_visual() -> void:
 				"elevation": resolved_region.get_elevation(region_cell),
 				"moisture": resolved_region.get_moisture(region_cell),
 				"river_strength": resolved_region.get_river_strength(region_cell),
-				"river": resolved_region.has_river(region_cell),
+				# The thumbnail generator is a terrain sampler, not the river
+				# renderer.  Draw one continuous channel above the surface below;
+				# otherwise every positive noise sample becomes a cyan square.
+				"river": false,
 				"road": resolved_region.has_road(region_cell),
 				"river_crossing": resolved_region.has_river_crossing(region_cell),
 			}
@@ -611,7 +680,8 @@ func _refresh_static_visual() -> void:
 							region_cell,
 							terrain_type,
 							cell_index,
-							visual_code
+							visual_code,
+							Vector2i(sub_x, sub_y)
 						)
 						image.set_pixel(cell_origin.x + sub_x, cell_origin.y + sub_y, cell_color)
 			if (road_overlay.flags[cell_index] & RegionRoadOverlay.ROAD) != 0:
@@ -628,10 +698,27 @@ func _region_visual_cell_color(
 		region_cell: Vector2i,
 		terrain_type: int,
 		cell_index: int,
-		visual_code: int
+		visual_code: int,
+		thumbnail_cell: Vector2i = Vector2i.ZERO
 	) -> Color:
 	if debug_view == DebugView.NORMAL:
-		return SiteLayoutDataType.visual_color(visual_code)
+		var base_color: Color = MapArtCatalogType.thumbnail_color(
+			terrain_type,
+			visual_code,
+			thumbnail_cell,
+			SITE_THUMBNAIL_GRID_SIZE
+		)
+		if cell_index < resource_visual_types.size() and resource_visual_types[cell_index] >= 0:
+			var resource_amount: int = resource_visual_amounts[cell_index]
+			var resource_color: Color = _resource_visual_color(resource_visual_types[cell_index])
+			var resource_strength: float = clampf(float(resource_amount) / 120.0, 0.0, 1.0)
+			base_color = base_color.lerp(resource_color, 0.08 + resource_strength * 0.12)
+		if terrain_data != null and cell_index < terrain_data.elevation_data.size():
+			var elevation: float = float(terrain_data.elevation_data[cell_index]) / 255.0
+			var relief_strength: float = clampf(absf(elevation - 0.5) * 0.75, 0.0, 0.36)
+			var relief_color: Color = Color("c4a96b") if elevation > 0.5 else Color("477c5c")
+			base_color = base_color.lerp(relief_color, relief_strength)
+		return base_color
 	var terrain_color: Color = TerrainType.to_color(terrain_type)
 	var cell_color: Color = terrain_color
 	match debug_view:
@@ -715,7 +802,7 @@ func _poi_at(region_cell: Vector2i) -> WorldPOIData:
 func _poi_label(region_cell: Vector2i) -> String:
 	var poi: WorldPOIData = _poi_at(region_cell)
 	if poi == null:
-		return "No POI at selected cell"
+		return "Strategic Site at selected cell"
 	return "%s (%s)" % [poi.site_name, WorldPOIType.to_display_name(poi.poi_type)]
 
 func _draw_outposts() -> void:
@@ -723,9 +810,223 @@ func _draw_outposts() -> void:
 			RegionRuntime.OUTPOST_FEATURE_TYPE
 		):
 		var center: Vector2 = _cell_center(feature.region_cell)
-		var marker: Rect2 = Rect2(center - Vector2.ONE * 15.0, Vector2.ONE * 30.0)
-		draw_rect(marker, Color("d6a84a"))
-		draw_rect(marker, Color("fff0b0"), false, 3.0)
+		var outpost_texture: Texture2D = MapArtCatalogType.outpost_texture()
+		if outpost_texture != null:
+			draw_texture_rect(
+				outpost_texture,
+				Rect2(center - Vector2.ONE * 24.0, Vector2.ONE * 48.0),
+				false
+			)
+		else:
+			var marker: Rect2 = Rect2(center - Vector2.ONE * 15.0, Vector2.ONE * 30.0)
+			draw_rect(marker, Color("d6a84a"))
+			draw_rect(marker, Color("fff0b0"), false, 3.0)
+
+func _draw_region_roads() -> void:
+	if debug_view != DebugView.NORMAL or road_overlay == null or region == null:
+		return
+	var road_cells: Dictionary = {}
+	for y: int in range(GRID_SIZE.y):
+		for x: int in range(GRID_SIZE.x):
+			var cell: Vector2i = Vector2i(x, y)
+			if resolved_region != null and resolved_region.has_road(cell):
+				road_cells[cell] = true
+	if road_cells.is_empty():
+		return
+	# Draw links first and tiles second. Every link is cardinal and every
+	# corner is a square tile, so the road can never become a diagonal spline.
+	for cell_variant: Variant in road_cells.keys():
+		var cell: Vector2i = cell_variant as Vector2i
+		var center: Vector2 = _cell_center(cell)
+		if road_cells.has(cell + Vector2i.RIGHT):
+			_draw_region_road_link(center, _cell_center(cell + Vector2i.RIGHT))
+		if road_cells.has(cell + Vector2i.DOWN):
+			_draw_region_road_link(center, _cell_center(cell + Vector2i.DOWN))
+	for cell_variant: Variant in road_cells.keys():
+		var cell: Vector2i = cell_variant as Vector2i
+		var center: Vector2 = _cell_center(cell)
+		var road_tile: Rect2 = Rect2(center - Vector2.ONE * 15.0, Vector2.ONE * 30.0)
+		draw_rect(road_tile, Color(0.12, 0.09, 0.06, 0.94))
+		draw_rect(road_tile.grow(-2.0), Color("d1aa68"))
+		var road_flags: int = _resolved_road_flags(cell)
+		if (road_flags & RegionRoadOverlay.RIVER_CROSSING) != 0:
+			draw_rect(road_tile.grow(-8.0), Color("75d8df"), false, 3.0)
+
+func _draw_region_road_link(from: Vector2, to: Vector2) -> void:
+	draw_line(from, to, Color(0.12, 0.09, 0.06, 0.94), 30.0, true)
+	draw_line(from, to, Color("d1aa68"), 26.0, true)
+
+func _draw_region_rivers() -> void:
+	if debug_view != DebugView.NORMAL or resolved_region == null:
+		return
+	var max_strength: float = 0.0
+	var min_x: int = GRID_SIZE.x
+	var max_x: int = -1
+	var min_y: int = GRID_SIZE.y
+	var max_y: int = -1
+	for y: int in range(GRID_SIZE.y):
+		for x: int in range(GRID_SIZE.x):
+			var strength: float = resolved_region.get_river_strength(Vector2i(x, y))
+			max_strength = maxf(max_strength, strength)
+	var channel_threshold: float = clampf(max_strength * 0.65, 0.12, 0.78)
+	var channel_cells: Dictionary = {}
+	for y: int in range(GRID_SIZE.y):
+		for x: int in range(GRID_SIZE.x):
+			var cell: Vector2i = Vector2i(x, y)
+			# River strength is a normalized noise-line confidence.  Keep the
+			# strongest band in this Region as the visible channel; treating
+			# every positive sample as water creates a full cyan mesh while the
+			# debug field still exposes the raw Yes/No value.
+			if resolved_region.get_river_strength(cell) < channel_threshold:
+				continue
+			channel_cells[cell] = true
+			min_x = mini(min_x, x)
+			max_x = maxi(max_x, x)
+			min_y = mini(min_y, y)
+			max_y = maxi(max_y, y)
+	if channel_cells.is_empty():
+		return
+	# Collapse the strength band to one center sample per travel axis. This
+	# keeps a major river readable as a smooth channel instead of a cell mesh.
+	var horizontal: bool = (max_x - min_x) >= (max_y - min_y)
+	var points: PackedVector2Array = PackedVector2Array()
+	if horizontal:
+		for x: int in range(min_x, max_x + 1):
+			var best_cell: Vector2i = Vector2i(-1, -1)
+			var best_strength: float = channel_threshold
+			for y: int in range(min_y, max_y + 1):
+				var candidate: Vector2i = Vector2i(x, y)
+				if not channel_cells.has(candidate):
+					continue
+				var candidate_strength: float = resolved_region.get_river_strength(candidate)
+				if candidate_strength > best_strength:
+					best_strength = candidate_strength
+					best_cell = candidate
+			if best_cell.x >= 0:
+				points.append(_cell_center(best_cell))
+	else:
+		for y: int in range(min_y, max_y + 1):
+			var best_cell: Vector2i = Vector2i(-1, -1)
+			var best_strength: float = channel_threshold
+			for x: int in range(min_x, max_x + 1):
+				var candidate: Vector2i = Vector2i(x, y)
+				if not channel_cells.has(candidate):
+					continue
+				var candidate_strength: float = resolved_region.get_river_strength(candidate)
+				if candidate_strength > best_strength:
+					best_strength = candidate_strength
+					best_cell = candidate
+			if best_cell.x >= 0:
+				points.append(_cell_center(best_cell))
+	_draw_river_segments(points)
+
+func _draw_river_segments(points: PackedVector2Array) -> void:
+	if points.is_empty():
+		return
+	var segment: PackedVector2Array = PackedVector2Array()
+	for point: Vector2 in points:
+		if not segment.is_empty() and segment[-1].distance_to(point) > CELL_PIXEL_SIZE * 2.5:
+			_draw_river_segment(segment)
+			segment = PackedVector2Array()
+		segment.append(point)
+	if not segment.is_empty():
+		_draw_river_segment(segment)
+
+func _draw_river_segment(points: PackedVector2Array) -> void:
+	if points.size() == 1:
+		draw_circle(points[0], 10.0, Color("24566b"))
+		draw_circle(points[0], 6.0, Color("62cfe2"))
+		return
+	draw_polyline(points, Color("24566b"), 24.0, true)
+	draw_polyline(points, Color("62cfe2"), 13.0, true)
+
+func _draw_region_resources() -> void:
+	if debug_view != DebugView.NORMAL or site_content_data == null or not site_content_data.is_valid():
+		return
+	for y: int in range(1, GRID_SIZE.y, 4):
+		for x: int in range(1, GRID_SIZE.x, 4):
+			var cell_index: int = y * GRID_SIZE.x + x
+			if cell_index >= resource_visual_types.size():
+				continue
+			var resource_type: int = resource_visual_types[cell_index]
+			var amount: int = resource_visual_amounts[cell_index]
+			if resource_type < 0 or amount < 8 \
+				or not _region_resource_marker_is_peak(Vector2i(x, y), resource_type, amount):
+				continue
+			var marker_center: Vector2 = _cell_center(Vector2i(x, y))
+			draw_circle(marker_center, 18.0, Color("1b2420"))
+			draw_circle(marker_center, 11.0, _resource_visual_color(resource_type))
+			draw_circle(marker_center - Vector2(3.0, 3.0), 2.5, Color("fff4bd"))
+
+func _region_resource_marker_is_peak(cell: Vector2i, resource_type: int, amount: int) -> bool:
+	for offset: Vector2i in [
+		Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN,
+		Vector2i(-1, -1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(1, 1)
+	]:
+		var neighbor: Vector2i = cell + offset
+		if not WorldCoordinates.is_valid_region_cell(neighbor):
+			continue
+		var neighbor_index: int = neighbor.y * GRID_SIZE.x + neighbor.x
+		if neighbor_index >= resource_visual_types.size() \
+			or resource_visual_types[neighbor_index] != resource_type:
+			continue
+		var neighbor_amount: int = resource_visual_amounts[neighbor_index]
+		if neighbor_amount > amount:
+			return false
+		if neighbor_amount == amount and (neighbor.y < cell.y \
+			or (neighbor.y == cell.y and neighbor.x < cell.x)):
+			return false
+	return true
+
+func _draw_region_relief_contours() -> void:
+	if debug_view != DebugView.NORMAL or resolved_region == null:
+		return
+	for y: int in range(GRID_SIZE.y):
+		for x: int in range(GRID_SIZE.x):
+			var cell: Vector2i = Vector2i(x, y)
+			var elevation: float = resolved_region.get_elevation(cell)
+			if x + 1 < GRID_SIZE.x:
+				var east_elevation: float = resolved_region.get_elevation(cell + Vector2i.RIGHT)
+				var east_delta: float = east_elevation - elevation
+				if absf(east_delta) >= 0.09:
+					var boundary_x: float = MAP_ORIGIN.x + float(x + 1) * CELL_PIXEL_SIZE
+					draw_line(
+						Vector2(boundary_x, MAP_ORIGIN.y + float(y) * CELL_PIXEL_SIZE + 4.0),
+						Vector2(boundary_x, MAP_ORIGIN.y + float(y + 1) * CELL_PIXEL_SIZE - 4.0),
+						Color(0.18, 0.22, 0.16, clampf(absf(east_delta) * 1.8, 0.12, 0.34)),
+						2.0,
+						true
+					)
+			if y + 1 < GRID_SIZE.y:
+				var south_elevation: float = resolved_region.get_elevation(cell + Vector2i.DOWN)
+				var south_delta: float = south_elevation - elevation
+				if absf(south_delta) >= 0.09:
+					var boundary_y: float = MAP_ORIGIN.y + float(y + 1) * CELL_PIXEL_SIZE
+					draw_line(
+						Vector2(MAP_ORIGIN.x + float(x) * CELL_PIXEL_SIZE + 4.0, boundary_y),
+						Vector2(MAP_ORIGIN.x + float(x + 1) * CELL_PIXEL_SIZE - 4.0, boundary_y),
+						Color(0.18, 0.22, 0.16, clampf(absf(south_delta) * 1.8, 0.12, 0.34)),
+						2.0,
+						true
+					)
+
+func _resource_visual_color(resource_type: int) -> Color:
+	match resource_type:
+		SiteContentTypesType.RESOURCE_GRASS:
+			return Color("9fd36b")
+		SiteContentTypesType.RESOURCE_FRUIT_TREE:
+			return Color("f2a24b")
+		SiteContentTypesType.RESOURCE_FOREST:
+			return Color("2c8f58")
+		SiteContentTypesType.RESOURCE_STONE_ORE:
+			return Color("b8bec4")
+		SiteContentTypesType.RESOURCE_IRON_ORE:
+			return Color("bd694c")
+		SiteContentTypesType.RESOURCE_SILVER_ORE:
+			return Color("d7e4ec")
+		SiteContentTypesType.RESOURCE_GOLD_ORE:
+			return Color("f4d15b")
+	return Color("ffffff")
 
 func _draw_construction_preview() -> void:
 	if not construction_mode or construction_preview == null:

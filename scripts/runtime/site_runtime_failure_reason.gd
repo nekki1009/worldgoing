@@ -14,6 +14,8 @@ enum Code {
 	INVALID_DIRECTION,
 	OUT_OF_BOUNDS,
 	BLOCKED,
+	INVALID_FACILITY_TYPE,
+	INVALID_FOOTPRINT,
 }
 
 static func to_code(reason: int) -> String:
@@ -40,5 +42,9 @@ static func to_code(reason: int) -> String:
 			return "OUT_OF_BOUNDS"
 		Code.BLOCKED:
 			return "BLOCKED"
+		Code.INVALID_FACILITY_TYPE:
+			return "INVALID_FACILITY_TYPE"
+		Code.INVALID_FOOTPRINT:
+			return "INVALID_FOOTPRINT"
 		_:
 			return "NONE"

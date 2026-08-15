@@ -6,12 +6,18 @@ signal formation_move_requested(formation_id: String, target_position_m: Vector2
 signal simple_order_requested(formation_id: String, intent: int)
 signal battle_speed_requested(multiplier: float)
 
+const MapArtCatalogType = preload("res://scripts/data/map_art_catalog.gd")
+const SiteLayoutDataType = preload("res://scripts/data/site_layout_data.gd")
 const BATTLE_PIXELS_PER_METER: float = 4.0
 const CAMERA_MARGIN_METERS: float = 60.0
 const CAMERA_DRAG_THRESHOLD_PIXELS: float = 3.0
 const MIN_ZOOM: float = 0.50
 const MAX_ZOOM: float = 16.00
 const SOLDIER_CANVAS_SIZE_METERS: Vector2 = BattleFormationData.SOLDIER_CANVAS_SIZE_METERS
+const NPC_REFERENCE_SHEET_PATH: String = "res://assets/paper_doll/reference_match/reference_match_body_on_foot_unisex.png"
+const NPC_REFERENCE_FRAME: Rect2 = Rect2(0.0, 0.0, 64.0, 64.0)
+const NPC_REFERENCE_VISIBLE_BOUNDS: Vector2 = Vector2(38.0, 56.0)
+const NPC_SPRITE_SIZE_METERS: Vector2 = MapArtCatalogType.PERSON_REFERENCE_SIZE_METERS
 const FORMATION_COLUMNS: int = BattleFormationData.FORMATION_COLUMNS
 const FORMATION_ROWS: int = BattleFormationData.FORMATION_ROWS
 const RESERVE_STAGING_BAND_METERS: float = 60.0
@@ -42,13 +48,24 @@ var camera_dragging: bool = false
 var camera_drag_moved: bool = false
 
 func _ready() -> void:
+	# Match the authored Site scene paintings instead of filtering the 3x3
+	# composition into a blurry macro terrain sheet.
+	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	var soldier_mesh: QuadMesh = QuadMesh.new()
+	# Keep the unit quad; the per-instance transform below supplies the actual
+	# 64x64 reference-frame size in canvas pixels.
 	soldier_mesh.size = Vector2.ONE
 	soldier_multimesh = MultiMesh.new()
 	soldier_multimesh.transform_format = MultiMesh.TRANSFORM_2D
 	soldier_multimesh.use_colors = true
 	soldier_multimesh.mesh = soldier_mesh
 	soldier_instances.multimesh = soldier_multimesh
+	var reference_sheet: Texture2D = _load_reference_sheet()
+	if reference_sheet != null:
+		var reference_frame := AtlasTexture.new()
+		reference_frame.atlas = reference_sheet
+		reference_frame.region = NPC_REFERENCE_FRAME
+		soldier_instances.texture = reference_frame
 	if soldier_instances.texture == null:
 		soldier_instances.texture = load("res://assets/battle/soldier_dot.svg") as Texture2D
 	$BattleDebugPanel/Panel/Margin/Content/CommandGrid/AdvanceButton.pressed.connect(
@@ -85,6 +102,19 @@ func _ready() -> void:
 		_emit_battle_speed.bind(16.0)
 	)
 	_update_command_controls()
+
+func _load_reference_sheet() -> Texture2D:
+	# Use the same bounded PNG fallback as PaperDollCatalog so a fresh Dropbox
+	# checkout does not silently fall back to the old dot marker while imports
+	# are still warming up.
+	var file: FileAccess = FileAccess.open(NPC_REFERENCE_SHEET_PATH, FileAccess.READ)
+	if file == null:
+		return null
+	var image: Image = Image.new()
+	image.load_png_from_buffer(file.get_buffer(file.get_length()))
+	if image.is_empty():
+		return null
+	return ImageTexture.create_from_image(image)
 
 func setup(p_snapshot: BattleSiteSnapshot) -> void:
 	if p_snapshot == null or not p_snapshot.has_preview():
@@ -206,9 +236,9 @@ func get_debug_state() -> Dictionary:
 		],
 		"party_state": "Click to select | Right-click to move" if snapshot.active_battle \
 			else "Initial deployment / Off-map reserve",
-		"person_visual": "1 rectangle per person (%.2fm x %.2fm)" % [
-			SOLDIER_CANVAS_SIZE_METERS.x,
-			SOLDIER_CANVAS_SIZE_METERS.y,
+		"person_visual": "reference NPC (64x64 / %.2fm x %.2fm)" % [
+			NPC_SPRITE_SIZE_METERS.x,
+			NPC_SPRITE_SIZE_METERS.y,
 		],
 		"battle_speed_multiplier": battle_speed_multiplier,
 		"zoom": camera.zoom.x,
@@ -316,10 +346,12 @@ func _draw() -> void:
 	_draw_reserve_staging(generated["size_meters"] as Vector2)
 	for cell: Dictionary in generated["footprint_cells"] as Array[Dictionary]:
 		_draw_ground_cell(cell)
+	_draw_site_boundary_variants()
 	for cell: Dictionary in generated["footprint_cells"] as Array[Dictionary]:
 		_draw_cell_details(cell)
 		_draw_cell_corridors(cell)
 	_draw_grid(size_pixels)
+	_draw_battle_legend()
 	_draw_deployment_preview(generated["attacker_deployment"] as Dictionary, Color("3f8cff"))
 	_draw_deployment_preview(generated["defender_deployment"] as Dictionary, Color("e85f62"))
 	_draw_dispatches()
@@ -329,14 +361,28 @@ func _draw_ground_cell(cell: Dictionary) -> void:
 	var origin: Vector2 = meters_to_pixels(cell["local_origin_meters"] as Vector2)
 	var cell_pixels: float = float(WorldCoordinates.REGION_CELL_SIZE_METERS) * BATTLE_PIXELS_PER_METER
 	var elevation: float = float(cell["elevation"])
-	var color: Color = TerrainType.to_color(int(cell["terrain_type"]))
-	color = color.lightened((elevation - 0.5) * 0.16) if elevation >= 0.5 \
-		else color.darkened((0.5 - elevation) * 0.16)
-	draw_rect(Rect2(origin, Vector2.ONE * cell_pixels), color)
-	if int(cell["terrain_type"]) == TerrainType.MOUNTAIN:
+	var cell_rect: Rect2 = Rect2(origin, Vector2.ONE * cell_pixels)
+	var layout: SiteLayoutDataType = cell.get("site_layout", null) as SiteLayoutDataType
+	var scene_texture: Texture2D = MapArtCatalogType.site_scene_texture(layout)
+	if scene_texture != null:
+		draw_texture_rect(scene_texture, cell_rect, false)
+	else:
+		var terrain_texture: Texture2D = MapArtCatalogType.terrain_texture(int(cell["terrain_type"]))
+		if terrain_texture != null:
+			draw_texture_rect(terrain_texture, cell_rect, false)
+		else:
+			draw_rect(cell_rect, TerrainType.to_color(int(cell["terrain_type"])))
+	var elevation_delta: float = (elevation - 0.5) * 0.22
+	if scene_texture == null and absf(elevation_delta) > 0.01:
+		var elevation_tint: Color = Color(1.0, 1.0, 1.0, elevation_delta) \
+			if elevation_delta > 0.0 else Color(0.0, 0.0, 0.0, -elevation_delta)
+		draw_rect(cell_rect, elevation_tint)
+	if scene_texture == null and int(cell["terrain_type"]) == TerrainType.MOUNTAIN:
 		draw_circle(origin + Vector2.ONE * cell_pixels * 0.5, cell_pixels * 0.33, Color(0.25, 0.27, 0.30, 0.22))
 
 func _draw_cell_details(cell: Dictionary) -> void:
+	if _cell_has_scene_art(cell):
+		return
 	var details: Dictionary = cell["details"] as Dictionary
 	if details.has("clearing_center_meters"):
 		draw_circle(
@@ -350,6 +396,11 @@ func _draw_cell_details(cell: Dictionary) -> void:
 		draw_line(point + Vector2(5.0, 5.0), point + Vector2(0.0, -7.0), Color("91aa55"), 2.0)
 	for value: Variant in details.get("rocks", []):
 		var point: Vector2 = meters_to_pixels(value as Vector2)
+		_draw_battle_detail_texture(
+			MapArtCatalogType.site_texture("rock_cluster"),
+			point,
+			Vector2(26.0, 26.0)
+		)
 		draw_colored_polygon(PackedVector2Array([
 			point + Vector2(-13.0, 8.0),
 			point + Vector2(-7.0, -10.0),
@@ -365,6 +416,11 @@ func _draw_cell_details(cell: Dictionary) -> void:
 		]), Color("9298a0"), 2.0)
 	for value: Variant in details.get("bushes", []):
 		var point: Vector2 = meters_to_pixels(value as Vector2)
+		_draw_battle_detail_texture(
+			MapArtCatalogType.site_texture("dry_bush"),
+			point,
+			Vector2(22.0, 22.0)
+		)
 		draw_circle(point, 10.0, Color("25553c"))
 		draw_circle(point + Vector2(5.0, -3.0), 7.0, Color("35704e"))
 	for value: Variant in details.get("trees", []):
@@ -373,8 +429,36 @@ func _draw_cell_details(cell: Dictionary) -> void:
 		draw_circle(point + Vector2(-5.0, -5.0), 13.0, Color("245e3f"))
 		draw_circle(point + Vector2(6.0, -7.0), 11.0, Color("32734c"))
 		draw_circle(point, 4.0, Color("5b4030"))
+	# Final texture pass keeps the generated hand-painted objects visible above
+	# the compatibility fallback shapes used for debug readability.
+	for value: Variant in details.get("rocks", []):
+		_draw_battle_detail_texture(
+			MapArtCatalogType.site_texture("rock_cluster"),
+			meters_to_pixels(value as Vector2),
+			Vector2(32.0, 32.0)
+		)
+	for value: Variant in details.get("bushes", []):
+		_draw_battle_detail_texture(
+			MapArtCatalogType.site_texture("dry_bush"),
+			meters_to_pixels(value as Vector2),
+			Vector2(28.0, 28.0)
+		)
+	for value: Variant in details.get("trees", []):
+		_draw_battle_detail_texture(
+			MapArtCatalogType.site_texture("tree_cluster"),
+			meters_to_pixels(value as Vector2),
+			Vector2(40.0, 40.0)
+		)
+
+func _draw_battle_detail_texture(texture: Texture2D, center_pixels: Vector2, size_pixels: Vector2) -> void:
+	if texture == null:
+		return
+	draw_texture_rect(texture, Rect2(center_pixels - size_pixels * 0.5, size_pixels), false)
 
 func _draw_cell_corridors(cell: Dictionary) -> void:
+	if _cell_has_scene_art(cell):
+		_draw_scene_connections(cell)
+		return
 	var origin_meters: Vector2 = cell["local_origin_meters"] as Vector2
 	var center_meters: Vector2 = origin_meters + Vector2.ONE * 50.0
 	if bool(cell["river"]):
@@ -390,22 +474,332 @@ func _draw_cell_corridors(cell: Dictionary) -> void:
 			Color("56a8c5"),
 			8.0 * BATTLE_PIXELS_PER_METER
 		)
+		_draw_corridor_art(
+			center_meters,
+			cell["river_connection_offsets"] as Array,
+			MapArtCatalogType.site_texture("river_straight"),
+			10.0
+		)
+		_draw_corridor_junction_art(
+			center_meters,
+			cell["river_connection_offsets"] as Array,
+			true
+		)
 	if bool(cell["road"]):
 		_draw_corridor(
 			center_meters,
 			cell["road_connection_offsets"] as Array,
-			Color("493c2b"),
+			Color("715238"),
 			9.0 * BATTLE_PIXELS_PER_METER
 		)
 		_draw_corridor(
 			center_meters,
 			cell["road_connection_offsets"] as Array,
-			Color("b7925d"),
+			Color("c49a5c"),
 			6.0 * BATTLE_PIXELS_PER_METER
 		)
 	if bool(cell["river_crossing"]):
-		var bridge_size: Vector2 = Vector2(22.0, 9.0) * BATTLE_PIXELS_PER_METER
-		draw_rect(Rect2(meters_to_pixels(center_meters) - bridge_size * 0.5, bridge_size), Color("d0ad73"))
+		var bridge_texture: Texture2D = MapArtCatalogType.site_texture("bridge")
+		var river_axis: int = _river_axis(cell["river_connection_offsets"] as Array)
+		draw_set_transform(
+			meters_to_pixels(center_meters),
+			PI * 0.5 if river_axis == 1 else 0.0,
+			Vector2.ONE
+		)
+		_draw_battle_detail_texture(bridge_texture, Vector2.ZERO, Vector2(88.0, 36.0))
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+func _draw_site_boundary_variants() -> void:
+	if generated.is_empty():
+		return
+	var cells_by_global: Dictionary = {}
+	for cell: Dictionary in generated["footprint_cells"] as Array[Dictionary]:
+		var global_cell: Vector2i = cell.get("global_region_cell", Vector2i.ZERO) as Vector2i
+		cells_by_global[global_cell] = cell
+	for cell: Dictionary in generated["footprint_cells"] as Array[Dictionary]:
+		var global_cell: Vector2i = cell.get("global_region_cell", Vector2i.ZERO) as Vector2i
+		for direction: Vector2i in [Vector2i.RIGHT, Vector2i.DOWN]:
+			var neighbor_value: Variant = cells_by_global.get(global_cell + direction, null)
+			if not neighbor_value is Dictionary:
+				continue
+			var neighbor: Dictionary = neighbor_value as Dictionary
+			if not _cell_has_scene_art(cell) and not _cell_has_scene_art(neighbor):
+				continue
+			_draw_site_boundary_pair(cell, neighbor, direction)
+
+func _draw_site_boundary_pair(
+		cell: Dictionary,
+		neighbor: Dictionary,
+		direction: Vector2i
+	) -> void:
+	var origin_meters: Vector2 = cell["local_origin_meters"] as Vector2
+	var boundary_center_meters: Vector2 = origin_meters + Vector2.ONE * 50.0
+	if direction == Vector2i.RIGHT:
+		boundary_center_meters = origin_meters + Vector2(100.0, 50.0)
+	elif direction == Vector2i.DOWN:
+		boundary_center_meters = origin_meters + Vector2(50.0, 100.0)
+	var has_road: bool = _has_connection_pair(
+		cell,
+		neighbor,
+		"road_connection_offsets",
+		direction
+	)
+	var has_river: bool = _has_connection_pair(
+		cell,
+		neighbor,
+		"river_connection_offsets",
+		direction
+	)
+	var elevation_delta: float = absf(
+		float(cell.get("elevation", 0.0)) - float(neighbor.get("elevation", 0.0))
+	)
+	_draw_natural_site_seam(
+		cell,
+		neighbor,
+		boundary_center_meters,
+		direction,
+		not has_road and not has_river
+	)
+	if has_road and _should_draw_height_boundary(cell, neighbor, elevation_delta):
+		_draw_boundary_overlay(
+			boundary_center_meters,
+			"site_cliff_horizontal" if direction == Vector2i.DOWN else "site_cliff_vertical"
+		)
+	# A short seam cap hides a one-pixel alpha gap when two independently
+	# generated half-segments meet exactly at the shared Site edge.
+	if has_road:
+		_draw_boundary_join(boundary_center_meters, direction, false)
+	if has_river:
+		_draw_river_boundary_transition(cell, neighbor, boundary_center_meters, direction)
+
+func _draw_natural_site_seam(
+		cell: Dictionary,
+		neighbor: Dictionary,
+		center_meters: Vector2,
+		direction: Vector2i,
+		add_details: bool
+	) -> void:
+	if not _cell_has_scene_art(cell) and not _cell_has_scene_art(neighbor):
+		return
+	# Scene paintings are complete 100m compositions, so their raw rectangular
+	# edges can read like a 3x3 collage when terrain changes at a shared edge.
+	# A low-alpha, deterministic irregular band breaks that artificial straight
+	# line; roads, rivers and cliffs are drawn later as stronger joins. Details
+	# are omitted from connected edges so they never obstruct a corridor.
+	var along_x: bool = direction.y != 0
+	var offsets: Array[float] = [0.0, -2.2, 1.6, -1.3, 2.0, -1.1, 0.0]
+	var points: PackedVector2Array = PackedVector2Array()
+	for index: int in range(offsets.size()):
+		var progress: float = float(index) / float(offsets.size() - 1)
+		if along_x:
+			points.append(Vector2(
+				center_meters.x - 50.0 + progress * 100.0,
+				center_meters.y + offsets[index]
+			))
+		else:
+			points.append(Vector2(
+				center_meters.x + offsets[index],
+				center_meters.y - 50.0 + progress * 100.0
+			))
+	var half_width: float = 5.5
+	var seam_polygon: PackedVector2Array = PackedVector2Array()
+	for point: Vector2 in points:
+		seam_polygon.append(meters_to_pixels(point - (Vector2.DOWN if along_x else Vector2.RIGHT) * half_width))
+	for index: int in range(points.size() - 1, -1, -1):
+		var point: Vector2 = points[index]
+		seam_polygon.append(meters_to_pixels(point + (Vector2.DOWN if along_x else Vector2.RIGHT) * half_width))
+	draw_colored_polygon(seam_polygon, Color(0.20, 0.18, 0.14, 0.12))
+	var seam_pixels: PackedVector2Array = PackedVector2Array()
+	for point: Vector2 in points:
+		seam_pixels.append(meters_to_pixels(point))
+	draw_polyline(seam_pixels, Color(0.10, 0.12, 0.10, 0.10), 1.4 * BATTLE_PIXELS_PER_METER, true)
+	if not add_details:
+		return
+	var detail_kind: String = _boundary_detail_kind(cell, neighbor)
+	var detail_texture: Texture2D = MapArtCatalogType.site_texture(detail_kind)
+	if detail_texture == null:
+		return
+	for index: int in [1, 4]:
+		var point: Vector2 = points[index]
+		_draw_battle_detail_texture(
+			detail_texture,
+			meters_to_pixels(point),
+			Vector2.ONE * 5.5 * BATTLE_PIXELS_PER_METER
+		)
+
+func _boundary_detail_kind(cell: Dictionary, neighbor: Dictionary) -> String:
+	var terrain_types: Array[int] = [
+		int(cell.get("terrain_type", TerrainType.PLAINS)),
+		int(neighbor.get("terrain_type", TerrainType.PLAINS)),
+	]
+	if terrain_types.has(TerrainType.MOUNTAIN):
+		return "rock_cluster"
+	if terrain_types.has(TerrainType.SNOW):
+		return "snowdrift"
+	if terrain_types.has(TerrainType.SAND):
+		return "dry_bush"
+	if terrain_types.has(TerrainType.SWAMP):
+		return "swamp_reeds"
+	if terrain_types.has(TerrainType.FOREST):
+		return "tree_cluster"
+	if terrain_types.has(TerrainType.WATER) or terrain_types.has(TerrainType.OCEAN):
+		return "rock_cluster"
+	return "dry_bush"
+
+func _draw_river_boundary_transition(
+		cell: Dictionary,
+		neighbor: Dictionary,
+		center_meters: Vector2,
+		direction: Vector2i
+	) -> void:
+	var horizontal: bool = direction.x != 0
+	var width_meters: float = maxf(
+		_river_scene_width_meters(cell),
+		_river_scene_width_meters(neighbor)
+	)
+	var length_meters: float = 18.0
+	var texture_kind: String = "site_river_horizontal" if horizontal else "site_river_vertical"
+	var texture: Texture2D = MapArtCatalogType.site_texture(texture_kind)
+	if texture == null:
+		return
+	var size_meters: Vector2 = Vector2(length_meters, width_meters) \
+		if horizontal else Vector2(width_meters, length_meters)
+	draw_texture_rect(
+		texture,
+		Rect2(
+			meters_to_pixels(center_meters - size_meters * 0.5),
+			meters_to_pixels(size_meters)
+		),
+		false
+	)
+
+func _river_scene_width_meters(cell: Dictionary) -> float:
+	var layout: SiteLayoutDataType = cell.get("site_layout", null) as SiteLayoutDataType
+	var kind: String = MapArtCatalogType.site_scene_kind(layout)
+	if kind.begins_with("river_bridge") or kind.begins_with("strategic_river"):
+		return 30.0
+	return 10.0
+
+func _draw_scene_connections(cell: Dictionary) -> void:
+	var origin_meters: Vector2 = cell["local_origin_meters"] as Vector2
+	var center_meters: Vector2 = origin_meters + Vector2.ONE * 50.0
+	var road_offsets: Array = cell.get("road_connection_offsets", []) as Array
+	_draw_scene_connection_segments(
+		center_meters,
+		road_offsets,
+		false
+	)
+	_draw_corridor_junction_art(center_meters, road_offsets, false)
+	# Authored river scenes already carry their bank, water and bridge through
+	# the full 100m tile.  Do not paint a narrow debug-like strip over that
+	# water; only non-river scene tiles need a generated river connector.
+	if not _cell_has_river_scene(cell):
+		var river_offsets: Array = cell.get("river_connection_offsets", []) as Array
+		_draw_scene_connection_segments(
+			center_meters,
+			river_offsets,
+			true
+		)
+		_draw_corridor_junction_art(center_meters, river_offsets, true)
+
+func _draw_scene_connection_segments(
+	center_meters: Vector2,
+	connection_offsets: Array,
+	is_river: bool
+) -> void:
+	var width_meters: float = 10.0 if is_river else 9.0
+	for value: Variant in connection_offsets:
+		if not value is Vector2i:
+			continue
+		var offset: Vector2i = value as Vector2i
+		if offset == Vector2i.ZERO:
+			continue
+		var edge_meters: Vector2 = center_meters + Vector2(offset) * 50.0
+		var horizontal: bool = offset.x != 0
+		var texture_kind: String
+		if is_river:
+			texture_kind = "site_river_horizontal" if horizontal else "site_river_vertical"
+		else:
+			texture_kind = "site_path_horizontal" if horizontal else "site_path_vertical"
+		var texture: Texture2D = MapArtCatalogType.site_texture(texture_kind)
+		if texture == null:
+			continue
+		var center_pixels: Vector2 = meters_to_pixels(center_meters)
+		var edge_pixels: Vector2 = meters_to_pixels(edge_meters)
+		var length_pixels: float = center_pixels.distance_to(edge_pixels)
+		var width_pixels: float = width_meters * BATTLE_PIXELS_PER_METER
+		var segment_size: Vector2 = Vector2(length_pixels, width_pixels) \
+			if horizontal else Vector2(width_pixels, length_pixels)
+		draw_texture_rect(
+			texture,
+			Rect2((center_pixels + edge_pixels) * 0.5 - segment_size * 0.5, segment_size),
+			false
+		)
+
+func _draw_boundary_overlay(center_meters: Vector2, texture_kind: String) -> void:
+	var texture: Texture2D = MapArtCatalogType.site_texture(texture_kind)
+	if texture == null:
+		return
+	var cell_pixels: float = float(WorldCoordinates.REGION_CELL_SIZE_METERS) * BATTLE_PIXELS_PER_METER
+	var center_pixels: Vector2 = meters_to_pixels(center_meters)
+	draw_texture_rect(
+		texture,
+		Rect2(center_pixels - Vector2.ONE * cell_pixels * 0.5, Vector2.ONE * cell_pixels),
+		false
+	)
+
+func _draw_boundary_join(
+	center_meters: Vector2,
+	direction: Vector2i,
+	is_river: bool
+) -> void:
+	var horizontal: bool = direction.x != 0
+	var texture_kind: String
+	if is_river:
+		texture_kind = "site_river_horizontal" if horizontal else "site_river_vertical"
+	else:
+		texture_kind = "site_path_horizontal" if horizontal else "site_path_vertical"
+	var texture: Texture2D = MapArtCatalogType.site_texture(texture_kind)
+	if texture == null:
+		return
+	var join_length_meters: float = 5.0
+	var width_meters: float = 10.0 if is_river else 9.0
+	var center_pixels: Vector2 = meters_to_pixels(center_meters)
+	var join_size: Vector2 = Vector2(
+		join_length_meters * BATTLE_PIXELS_PER_METER,
+		width_meters * BATTLE_PIXELS_PER_METER
+	) if horizontal else Vector2(
+		width_meters * BATTLE_PIXELS_PER_METER,
+		join_length_meters * BATTLE_PIXELS_PER_METER
+	)
+	draw_texture_rect(texture, Rect2(center_pixels - join_size * 0.5, join_size), false)
+
+func _has_connection_pair(
+	cell: Dictionary,
+	neighbor: Dictionary,
+	key: String,
+	direction: Vector2i
+) -> bool:
+	return _has_connection(cell, key, direction) \
+		and _has_connection(neighbor, key, -direction)
+
+func _has_connection(cell: Dictionary, key: String, direction: Vector2i) -> bool:
+	var values: Array = cell.get(key, []) as Array
+	for value: Variant in values:
+		if value is Vector2i and (value as Vector2i) == direction:
+			return true
+	return false
+
+func _should_draw_height_boundary(
+	cell: Dictionary,
+	neighbor: Dictionary,
+	elevation_delta: float
+) -> bool:
+	if elevation_delta < 0.08:
+		return false
+	var water_types: Array[int] = [TerrainType.WATER, TerrainType.OCEAN]
+	return not water_types.has(int(cell.get("terrain_type", TerrainType.PLAINS))) \
+		and not water_types.has(int(neighbor.get("terrain_type", TerrainType.PLAINS)))
 
 func _draw_corridor(
 		center_meters: Vector2,
@@ -421,13 +815,106 @@ func _draw_corridor(
 		var edge_meters: Vector2 = center_meters + Vector2(offset) * 50.0
 		draw_line(center_pixels, meters_to_pixels(edge_meters), color, width_pixels, true)
 
+func _draw_corridor_art(
+	center_meters: Vector2,
+	connection_offsets: Array,
+	texture: Texture2D,
+	width_meters: float
+) -> void:
+	if texture == null:
+		return
+	var center_pixels: Vector2 = meters_to_pixels(center_meters)
+	for value: Variant in connection_offsets:
+		if not value is Vector2i:
+			continue
+		var offset: Vector2i = value as Vector2i
+		var edge_meters: Vector2 = center_meters + Vector2(offset) * 50.0
+		var delta_pixels: Vector2 = meters_to_pixels(edge_meters) - center_pixels
+		var length_pixels: float = delta_pixels.length()
+		if length_pixels <= 0.1:
+			continue
+		draw_set_transform(center_pixels + delta_pixels * 0.5, delta_pixels.angle(), Vector2.ONE)
+		draw_texture_rect(
+			texture,
+			Rect2(
+				Vector2(-length_pixels * 0.5, -width_meters * BATTLE_PIXELS_PER_METER * 0.5),
+				Vector2(length_pixels, width_meters * BATTLE_PIXELS_PER_METER)
+			),
+			false
+		)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+func _draw_corridor_junction_art(
+	center_meters: Vector2,
+	connection_offsets: Array,
+	is_river: bool
+) -> void:
+	var count: int = 0
+	for value: Variant in connection_offsets:
+		if value is Vector2i:
+			count += 1
+	if count < 2:
+		return
+	if count == 2 and _connection_offsets_are_straight(connection_offsets):
+		return
+	var kind: String = "river_bend" if is_river else "road_bend"
+	if count == 3:
+		kind = "road_t_junction"
+	elif count >= 4:
+		kind = "road_crossing"
+	_draw_battle_detail_texture(
+		MapArtCatalogType.site_texture(kind),
+		meters_to_pixels(center_meters),
+		Vector2(34.0, 34.0)
+	)
+
+func _connection_offsets_are_straight(connection_offsets: Array) -> bool:
+	var has_up: bool = false
+	var has_right: bool = false
+	var has_down: bool = false
+	var has_left: bool = false
+	for value: Variant in connection_offsets:
+		if not value is Vector2i:
+			continue
+		var offset: Vector2i = value as Vector2i
+		if offset == Vector2i.UP:
+			has_up = true
+		elif offset == Vector2i.RIGHT:
+			has_right = true
+		elif offset == Vector2i.DOWN:
+			has_down = true
+		elif offset == Vector2i.LEFT:
+			has_left = true
+	return (has_up and has_down) or (has_left and has_right)
+
+func _river_axis(connection_offsets: Array) -> int:
+	for value: Variant in connection_offsets:
+		if not value is Vector2i:
+			continue
+		var offset: Vector2i = value as Vector2i
+		if offset.x != 0:
+			return 1
+		if offset.y != 0:
+			return 0
+	return 0
+
 func _draw_grid(size_pixels: Vector2) -> void:
 	var cell_pixels: float = float(WorldCoordinates.REGION_CELL_SIZE_METERS) * BATTLE_PIXELS_PER_METER
-	for index: int in range(4):
+	for index: int in range(1, 3):
 		var offset: float = float(index) * cell_pixels
-		draw_line(Vector2(offset, 0.0), Vector2(offset, size_pixels.y), Color(0.07, 0.10, 0.12, 0.78), 3.0)
-		draw_line(Vector2(0.0, offset), Vector2(size_pixels.x, offset), Color(0.07, 0.10, 0.12, 0.78), 3.0)
-	draw_rect(Rect2(Vector2.ZERO, size_pixels), Color("e6dcc5"), false, 5.0)
+		draw_line(Vector2(offset, 0.0), Vector2(offset, size_pixels.y), Color(0.05, 0.08, 0.10, 0.16), 1.0)
+		draw_line(Vector2(0.0, offset), Vector2(size_pixels.x, offset), Color(0.05, 0.08, 0.10, 0.16), 1.0)
+	draw_rect(Rect2(Vector2.ZERO, size_pixels), Color(0.90, 0.86, 0.74, 0.35), false, 2.0)
+
+func _cell_has_scene_art(cell: Dictionary) -> bool:
+	var layout: SiteLayoutDataType = cell.get("site_layout", null) as SiteLayoutDataType
+	return MapArtCatalogType.site_scene_texture(layout) != null
+
+func _cell_has_river_scene(cell: Dictionary) -> bool:
+	var layout: SiteLayoutDataType = cell.get("site_layout", null) as SiteLayoutDataType
+	var scene_kind: String = MapArtCatalogType.site_scene_kind(layout)
+	return scene_kind.begins_with("river_bridge") \
+		or scene_kind.begins_with("strategic_river")
 
 func _draw_deployment_preview(deployment: Dictionary, color: Color) -> void:
 	var zone_meters: Rect2 = deployment["zone_meters"] as Rect2
@@ -457,7 +944,35 @@ func _draw_formations() -> void:
 					Vector2(cell) * float(SiteLayoutData.CELL_SIZE_METERS) \
 					+ Vector2.ONE * float(SiteLayoutData.CELL_SIZE_METERS) * 0.5
 				))
+			if path_points.size() < 2:
+				continue
 			draw_polyline(path_points, Color(1.0, 1.0, 1.0, 0.65), 3.0, true)
+
+func _draw_battle_legend() -> void:
+	# Minimal canvas legend for the reference NPC sprites.  Side tint is
+	# presentation-only; formation/deployment data remains unchanged.
+	var origin: Vector2 = meters_to_pixels(Vector2(6.0, 6.0))
+	var row_height: float = 22.0
+	var entries: Array[Dictionary] = [
+		{"label": "ATTACKER", "color": Color("4d98ff")},
+		{"label": "DEFENDER", "color": Color("e8646a")},
+		{"label": "COMMANDER", "color": Color("ffd166")},
+	]
+	var panel_size: Vector2 = Vector2(132.0, row_height * entries.size() + 12.0)
+	draw_rect(Rect2(origin - Vector2(6.0, 6.0), panel_size), Color(0.03, 0.05, 0.07, 0.78))
+	for index: int in range(entries.size()):
+		var entry: Dictionary = entries[index]
+		var point: Vector2 = origin + Vector2(0.0, float(index) * row_height)
+		draw_rect(Rect2(point, Vector2(12.0, 12.0)), entry["color"] as Color)
+		draw_string(
+			ThemeDB.fallback_font,
+			point + Vector2(18.0, 11.0),
+			str(entry["label"]),
+			HORIZONTAL_ALIGNMENT_LEFT,
+			-1.0,
+			12,
+			Color("f4ead2")
+		)
 
 func _draw_dispatches() -> void:
 	for dispatch: BattleDispatchData in active_dispatches:
@@ -632,11 +1147,22 @@ func _write_reserve_instances(
 func _set_soldier_instance(index: int, position_m: Vector2, color: Color) -> void:
 	var instance_transform: Transform2D = Transform2D()
 	instance_transform.origin = meters_to_pixels(position_m)
-	var marker_pixels: Vector2 = SOLDIER_CANVAS_SIZE_METERS * BATTLE_PIXELS_PER_METER
+	# The reference sheet includes transparent padding.  Scale the full 64x64
+	# frame from its measured 38x56 visible silhouette so the visible NPC, not
+	# the transparent canvas, matches the shared 0.60m x 1.80m Site contract.
+	var visible_pixels: Vector2 = NPC_SPRITE_SIZE_METERS * BATTLE_PIXELS_PER_METER
+	var marker_pixels: Vector2 = Vector2(
+		visible_pixels.x * NPC_REFERENCE_FRAME.size.x / NPC_REFERENCE_VISIBLE_BOUNDS.x,
+		visible_pixels.y * NPC_REFERENCE_FRAME.size.y / NPC_REFERENCE_VISIBLE_BOUNDS.y
+	)
 	instance_transform.x = Vector2(marker_pixels.x, 0.0)
 	instance_transform.y = Vector2(0.0, marker_pixels.y)
 	soldier_multimesh.set_instance_transform_2d(index, instance_transform)
-	soldier_multimesh.set_instance_color(index, color)
+	# Keep the reference palette inspectable while retaining only a light side
+	# cue; the sprite must not turn into a red/blue replacement character.
+	var sprite_color: Color = Color.WHITE.lerp(color, 0.18)
+	sprite_color.a = color.a
+	soldier_multimesh.set_instance_color(index, sprite_color)
 
 static func _formation_slot_local(
 	index: int,
@@ -644,23 +1170,12 @@ static func _formation_slot_local(
 	width_m: float,
 	depth_m: float
 ) -> Vector2:
-	var count: int = clampi(personnel_count, 1, FORMATION_COLUMNS * FORMATION_ROWS)
-	var row: int = floori(float(index) / float(FORMATION_COLUMNS))
-	var slot: int = index % FORMATION_COLUMNS
-	var count_in_row: int = mini(FORMATION_COLUMNS, count - row * FORMATION_COLUMNS)
-	var row_width: float = float(count_in_row) * SOLDIER_CANVAS_SIZE_METERS.x \
-		+ float(maxi(count_in_row - 1, 0)) * BattleFormationData.SOLDIER_SPACING_METERS.x
-	var row_start_x: float = -width_m * 0.5 \
-		+ (width_m - row_width) * 0.5 \
-		+ SOLDIER_CANVAS_SIZE_METERS.x * 0.5
-	var x: float = row_start_x + float(slot) * (
-		SOLDIER_CANVAS_SIZE_METERS.x + BattleFormationData.SOLDIER_SPACING_METERS.x
+	return BattleFormationData.formation_slot_local(
+		index,
+		personnel_count,
+		width_m,
+		depth_m
 	)
-	var row_start_y: float = depth_m * 0.5 - SOLDIER_CANVAS_SIZE_METERS.y * 0.5
-	var y: float = row_start_y - float(row) * (
-		SOLDIER_CANVAS_SIZE_METERS.y + BattleFormationData.SOLDIER_SPACING_METERS.y
-	)
-	return Vector2(x, y)
 
 static func _formation_rotation(formation: BattleFormationData) -> float:
 	var facing: Vector2 = formation.facing_direction.normalized()
@@ -672,11 +1187,11 @@ static func _formation_world_position(
 	formation: BattleFormationData,
 	local_slot: Vector2
 ) -> Vector2:
-	var facing: Vector2 = formation.facing_direction.normalized()
-	if facing == Vector2.ZERO:
-		facing = Vector2.DOWN
-	var lateral: Vector2 = Vector2(facing.y, -facing.x)
-	return formation.battle_position_m + lateral * local_slot.x + facing * local_slot.y
+	return BattleFormationData.formation_world_position(
+		formation.battle_position_m,
+		formation.facing_direction,
+		local_slot
+	)
 
 static func _reserve_person_position(
 	index: int,
@@ -769,7 +1284,7 @@ Initial Deployed: %d
 Reserve: %d (%d formations off-map)
 Entry: %s
 Preview Formations: %d x %d people
-Visual: 1 rectangle per person (%.2fm x %.2fm)
+Visual: reference NPC (64x64 / %.2fm x %.2fm)
 
 DEFENDER
 %s
@@ -778,7 +1293,7 @@ Initial Deployed: %d
 Reserve: %d (%d formations off-map)
 Entry: %s
 Preview Formations: %d x %d people
-Visual: 1 rectangle per person (%.2fm x %.2fm)
+Visual: reference NPC (64x64 / %.2fm x %.2fm)
 
 COMMANDS: 1 Advance | 2 Fall Back | 3 Attack | 4 Withdraw | 5 Flank Rear
 SPEED: 0.5x | 1x | 2x | 4x | 8x | 16x
@@ -800,8 +1315,8 @@ Left drag Pan | Wheel Zoom 0.5x-16x | ESC Return""" % [
 		BattleSiteContext.entry_name(context.attacker_entry_direction),
 		int(attacker_deployment["marker_count"]),
 		BattleRules.PERSONNEL_PER_FORMATION_MARKER,
-		SOLDIER_CANVAS_SIZE_METERS.x,
-		SOLDIER_CANVAS_SIZE_METERS.y,
+		NPC_SPRITE_SIZE_METERS.x,
+		NPC_SPRITE_SIZE_METERS.y,
 		context.defender.display_name,
 		context.defender.total_personnel,
 		int(defender_deployment["initial_deployed_personnel"]),
@@ -810,8 +1325,8 @@ Left drag Pan | Wheel Zoom 0.5x-16x | ESC Return""" % [
 		BattleSiteContext.entry_name(context.defender_entry_direction),
 		int(defender_deployment["marker_count"]),
 		BattleRules.PERSONNEL_PER_FORMATION_MARKER,
-		SOLDIER_CANVAS_SIZE_METERS.x,
-		SOLDIER_CANVAS_SIZE_METERS.y,
+		NPC_SPRITE_SIZE_METERS.x,
+		NPC_SPRITE_SIZE_METERS.y,
 	]
 
 func _feature_cell_count(key: String) -> int:

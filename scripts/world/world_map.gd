@@ -2,6 +2,8 @@ class_name WorldMap
 extends Node2D
 
 const GlobalTravelPathType = preload("res://scripts/data/global_travel_path.gd")
+const MapArtCatalogType = preload("res://scripts/data/map_art_catalog.gd")
+const SiteLayoutDataType = preload("res://scripts/data/site_layout_data.gd")
 const TravelRuntimeType = preload("res://scripts/runtime/travel_runtime.gd")
 const TravelFailureReasonType = preload("res://scripts/runtime/travel_failure_reason.gd")
 const TravelStatusType = preload("res://scripts/runtime/travel_status.gd")
@@ -26,21 +28,25 @@ var preview_error: String = ""
 var world_texture: Texture2D
 var world_texture_rect: Rect2 = Rect2()
 var world_texture_cells: Rect2i = Rect2i()
+var overview: WorldOverviewData
+var world_poi_cache: Dictionary = {}
 
 func _ready() -> void:
-	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 
 func setup(p_world_data: WorldData, p_session: GameSession, p_runtime: TravelRuntime = null) -> void:
 	world_data = p_world_data
 	session = p_session
 	travel_runtime = p_runtime if p_runtime != null else TravelRuntimeType.new(session, world_data)
 	travel_runtime.bind(session, world_data)
+	overview = world_data.get_or_generate_world_overview(session.world_seed)
 	selected_poi = null
 	travel_preview = null
 	preview_error = ""
 	world_texture = null
 	world_texture_rect = Rect2()
 	world_texture_cells = Rect2i()
+	world_poi_cache.clear()
 	camera.position = MAP_ORIGIN + Vector2(GRID_SIZE.x, GRID_SIZE.y) * CELL_PIXEL_SIZE * 0.5
 	camera.zoom = Vector2.ONE
 	queue_redraw()
@@ -93,6 +99,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		if key_event.pressed and not key_event.echo and key_event.keycode == KEY_P:
 			if session.is_traveling():
 				return
+			travel_runtime.ensure_party_ready()
 			var destination_global_cell: Vector2i = selected_poi.global_region_cell \
 				if selected_poi != null else travel_runtime.resolve_world_destination(session.selected_world_cell)
 			travel_preview = travel_runtime.query_travel_preview(
@@ -134,24 +141,11 @@ func _unhandled_input(event: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 
 func get_debug_state() -> Dictionary:
-	var selected_region: RegionData = world_data.get_region(session.selected_world_cell)
-	var region_label: String = "??"
-	var terrain_type_name: String = "??"
-	if selected_region != null:
-		region_label = "%s (%s)" % [selected_region.region_name, selected_region.region_id]
-		terrain_type_name = selected_region.terrain_type
-		var thumbnail: PackedByteArray = world_data.get_or_generate_region_thumbnail(
-			session.selected_world_cell,
-			session.world_seed
-		)
-		if thumbnail.size() == RegionTerrainGenerator.THUMBNAIL_CELL_COUNT:
-			var center_index: int = 4 * RegionTerrainGenerator.THUMBNAIL_GRID_SIZE + 4
-			var packed_center: int = thumbnail[center_index]
-			terrain_type_name = TerrainType.to_display_name(
-				RegionTerrainGenerator.thumbnail_terrain(packed_center)
-			)
-			if RegionTerrainGenerator.thumbnail_has_river(packed_center):
-				terrain_type_name = "River / %s" % terrain_type_name
+	var region_label: String = "Region %03d,%03d (lazy)" % [session.selected_world_cell.x, session.selected_world_cell.y]
+	var terrain_type_name: String = TerrainType.to_display_name(overview.biome_at(session.selected_world_cell)) \
+		if overview != null else "??"
+	if overview != null and (overview.features_at(session.selected_world_cell) & WorldOverviewData.FEATURE_RIVER) != 0:
+		terrain_type_name = "River / %s" % terrain_type_name
 	var active_path: GlobalTravelPathType = session.active_global_travel_path
 	var party_global_cell: Vector2i = session.party.current_global_region_cell
 	var party_global_meters: Vector2i = WorldCoordinates.global_region_cell_to_global_meters(party_global_cell)
@@ -224,8 +218,8 @@ func get_debug_state() -> Dictionary:
 		"travel_error": preview_error if not preview_error.is_empty() else TravelFailureReasonType.to_code(session.travel_failure_reason),
 		"travel_speed_multiplier": "%.0fx" % session.travel_speed_multiplier,
 		"path_search_time": path_search_time,
-		"poi_name": selected_poi.site_name if selected_poi != null else "No POI",
-		"instruction": "WASD: Move   Wheel: Zoom   Left Click: Select Region/POI   P: Plan Travel   Enter: Confirm / Enter Region   1/2/3: Travel Speed"
+		"poi_name": "Generated on Region entry",
+		"instruction": "WASD: Move   Wheel: Zoom   Left Click: Select Region   P: Plan Travel   Enter: Confirm / Enter Region   1/2/3: Travel Speed"
 	}
 
 func _travel_status_label() -> String:
@@ -259,11 +253,12 @@ func _draw() -> void:
 				MAP_ORIGIN + Vector2(x, y) * CELL_PIXEL_SIZE,
 				Vector2.ONE * CELL_PIXEL_SIZE
 			)
-			draw_rect(cell_rect, Color("283746"), false, 2.0)
+			draw_rect(cell_rect, Color(0.18, 0.24, 0.30, 0.42), false, 2.0)
 			if world_cell == session.selected_world_cell:
 				draw_rect(cell_rect, Color("ffe082"), false, 5.0)
 			if world_cell == hovered_world_cell:
 				draw_rect(cell_rect.grow(-5.0), Color("ffffff"), false, 3.0)
+	_draw_world_features(visible_cells)
 	_draw_party_marker()
 	_draw_travel_preview()
 	if selected_poi != null:
@@ -271,9 +266,10 @@ func _draw() -> void:
 		draw_circle(selected_position, 9.0, Color("fff1a8"), false, 3.0)
 
 func _ensure_world_texture(visible_cells: Rect2i) -> void:
-	if world_data == null or session == null or visible_cells == world_texture_cells and world_texture != null:
+	if world_data == null or session == null or overview == null \
+		or visible_cells == world_texture_cells and world_texture != null:
 		return
-	var thumbnail_size: int = RegionTerrainGenerator.THUMBNAIL_GRID_SIZE
+	var thumbnail_size: int = 8
 	var image: Image = Image.create(
 		visible_cells.size.x * thumbnail_size,
 		visible_cells.size.y * thumbnail_size,
@@ -283,33 +279,227 @@ func _ensure_world_texture(visible_cells: Rect2i) -> void:
 	for local_y: int in range(visible_cells.size.y):
 		for local_x: int in range(visible_cells.size.x):
 			var world_cell: Vector2i = visible_cells.position + Vector2i(local_x, local_y)
-			var thumbnail: PackedByteArray = world_data.get_or_generate_region_thumbnail(
+			var biome: int = overview.biome_at(world_cell)
+			var features: int = overview.features_at(world_cell)
+			var region_thumbnail: PackedByteArray = world_data.get_or_generate_region_thumbnail(
 				world_cell,
 				session.world_seed
 			)
+			var resource_total: int = 0
+			for resource_type: int in range(SiteContentTypes.RESOURCE_COUNT):
+				resource_total += overview.resource_budget_at(world_cell, resource_type)
 			for sub_y: int in range(thumbnail_size):
 				for sub_x: int in range(thumbnail_size):
-					var packed_cell: int = thumbnail[sub_y * thumbnail_size + sub_x]
-					var color: Color = TerrainType.to_color(RegionTerrainGenerator.thumbnail_terrain(packed_cell))
-					if RegionTerrainGenerator.thumbnail_has_river(packed_cell):
-						color = Color("49a9cf")
+					var pixel_terrain: int = biome
+					var pixel_visual_code: int = 0
+					if region_thumbnail.size() == RegionTerrainGenerator.THUMBNAIL_CELL_COUNT:
+						var packed_cell: int = region_thumbnail[sub_y * thumbnail_size + sub_x]
+						pixel_terrain = RegionTerrainGenerator.thumbnail_terrain(packed_cell)
+						if RegionTerrainGenerator.thumbnail_has_river(packed_cell):
+							pixel_visual_code = SiteLayoutDataType.VISUAL_RIVER
+					var color: Color = MapArtCatalogType.thumbnail_color(
+						pixel_terrain,
+						pixel_visual_code,
+						Vector2i(sub_x, sub_y),
+						thumbnail_size
+					)
+					var river_horizontal: bool = _river_runs_horizontal(world_cell)
+					if (features & WorldOverviewData.FEATURE_RIVER) != 0 \
+						and ((river_horizontal and abs(sub_y - 3) <= 1) \
+						or (not river_horizontal and abs(sub_x - 3) <= 1)):
+						color = color.lerp(Color("3b9ab2"), 0.82)
+					elif (features & WorldOverviewData.FEATURE_RIDGE) != 0 \
+						and sub_y in [2, 3]:
+						color = color.darkened(0.20)
+					if (features & WorldOverviewData.FEATURE_COAST) != 0 \
+						and (sub_x == 0 or sub_x == thumbnail_size - 1 \
+						or sub_y == 0 or sub_y == thumbnail_size - 1):
+						color = color.lerp(Color("e6cf8e"), 0.36)
+					var resource_tint: float = clampf(float(resource_total) / 24000.0, 0.0, 1.0)
+					color = color.lightened(resource_tint * 0.15)
 					image.set_pixel(
 						local_x * thumbnail_size + sub_x,
 						local_y * thumbnail_size + sub_y,
 						color
 					)
-			for poi: WorldPOIData in world_data.get_pois_for_region(world_cell, session.world_seed):
-				var marker: Vector2i = Vector2i(
-					local_x * thumbnail_size + clampi(poi.region_cell.x * thumbnail_size / WorldCoordinates.REGION_GRID_SIZE, 0, thumbnail_size - 1),
-					local_y * thumbnail_size + clampi(poi.region_cell.y * thumbnail_size / WorldCoordinates.REGION_GRID_SIZE, 0, thumbnail_size - 1)
-				)
-				image.set_pixel(marker.x, marker.y, WorldPOIType.to_color(poi.poi_type))
 	world_texture = ImageTexture.create_from_image(image)
 	world_texture_cells = visible_cells
 	world_texture_rect = Rect2(
 		MAP_ORIGIN + Vector2(visible_cells.position) * CELL_PIXEL_SIZE,
 		Vector2(visible_cells.size) * CELL_PIXEL_SIZE
 	)
+
+func _draw_world_features(visible_cells: Rect2i) -> void:
+	if overview == null:
+		return
+	for y: int in range(visible_cells.position.y, visible_cells.end.y):
+		for x: int in range(visible_cells.position.x, visible_cells.end.x):
+			var world_cell: Vector2i = Vector2i(x, y)
+			var cell_rect: Rect2 = Rect2(
+				MAP_ORIGIN + Vector2(x, y) * CELL_PIXEL_SIZE,
+				Vector2.ONE * CELL_PIXEL_SIZE
+			)
+			var center: Vector2 = cell_rect.position + cell_rect.size * 0.5
+			var features: int = overview.features_at(world_cell)
+			if (features & WorldOverviewData.FEATURE_RIVER) != 0:
+				var horizontal: bool = _river_runs_horizontal(world_cell)
+				var start: Vector2 = cell_rect.position + (Vector2(0.0, 32.0) if horizontal else Vector2(32.0, 0.0))
+				var finish: Vector2 = cell_rect.position + (Vector2(64.0, 32.0) if horizontal else Vector2(32.0, 64.0))
+				draw_line(start, finish, Color("1b526a"), 13.0, true)
+				draw_line(start, finish, Color("67d5e5"), 7.0, true)
+			if (features & WorldOverviewData.FEATURE_COAST) != 0:
+				draw_rect(cell_rect.grow(-4.0), Color("f1d998"), false, 3.0)
+			if (features & WorldOverviewData.FEATURE_RIDGE) != 0:
+				draw_line(
+					cell_rect.position + Vector2(10.0, 47.0),
+					cell_rect.position + Vector2(54.0, 17.0),
+					Color("303840"),
+					6.0,
+					true
+				)
+				draw_line(
+					cell_rect.position + Vector2(12.0, 39.0),
+					cell_rect.position + Vector2(51.0, 13.0),
+					Color("b7c0c0"),
+					2.0,
+					true
+				)
+			_draw_world_resource_marker(world_cell, center)
+			_draw_world_passage(world_cell, cell_rect)
+	_draw_world_pois(visible_cells)
+
+func _draw_world_resource_marker(world_cell: Vector2i, center: Vector2) -> void:
+	if overview == null:
+		return
+	var dominant_resource: int = -1
+	var dominant_amount: int = 0
+	for resource_type: int in range(SiteContentTypes.RESOURCE_COUNT):
+		# Grass and forest are native ground cover on the strategic overview, not
+		# discrete pins.  The old rule selected them in most cells, producing a
+		# misleading dotted grid.  Rare resources remain explicit markers.
+		if resource_type in [SiteContentTypes.RESOURCE_GRASS, SiteContentTypes.RESOURCE_FOREST]:
+			continue
+		var amount: int = overview.resource_budget_at(world_cell, resource_type)
+		if amount > dominant_amount:
+			dominant_amount = amount
+			dominant_resource = resource_type
+	if dominant_resource < 0 or dominant_amount < 500 or not _world_resource_marker_is_peak(
+		world_cell,
+		dominant_resource,
+		dominant_amount
+	):
+		return
+	var marker_color: Color = _resource_color(dominant_resource)
+	draw_circle(center + Vector2(21.0, -20.0), 8.0, Color(0.06, 0.08, 0.09, 0.85))
+	draw_circle(center + Vector2(21.0, -20.0), 5.0, marker_color)
+
+func _world_resource_marker_is_peak(world_cell: Vector2i, resource_type: int, amount: int) -> bool:
+	if overview == null:
+		return false
+	for offset: Vector2i in [
+		Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN,
+		Vector2i(-1, -1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(1, 1)
+	]:
+		var neighbor: Vector2i = world_cell + offset
+		var neighbor_amount: int = overview.resource_budget_at(neighbor, resource_type)
+		if neighbor_amount > amount:
+			return false
+		if neighbor_amount == amount and (neighbor.y < world_cell.y \
+			or (neighbor.y == world_cell.y and neighbor.x < world_cell.x)):
+			return false
+	return true
+
+func _draw_world_passage(world_cell: Vector2i, cell_rect: Rect2) -> void:
+	if overview == null:
+		return
+	var mask: int = overview.passage_mask_at(world_cell)
+	if mask == SiteLayoutDataType.EXIT_ALL or mask == 0:
+		return
+	var center: Vector2 = cell_rect.position + cell_rect.size * 0.5
+	var endpoints: PackedVector2Array = PackedVector2Array()
+	if (mask & SiteLayoutDataType.EXIT_NORTH) != 0:
+		endpoints.append(cell_rect.position + Vector2(32.0, 2.0))
+	if (mask & SiteLayoutDataType.EXIT_EAST) != 0:
+		endpoints.append(cell_rect.position + Vector2(62.0, 32.0))
+	if (mask & SiteLayoutDataType.EXIT_SOUTH) != 0:
+		endpoints.append(cell_rect.position + Vector2(32.0, 62.0))
+	if (mask & SiteLayoutDataType.EXIT_WEST) != 0:
+		endpoints.append(cell_rect.position + Vector2(2.0, 32.0))
+	for endpoint: Vector2 in endpoints:
+		draw_line(center, endpoint, Color("4b3422"), 8.0, true)
+		draw_line(center, endpoint, Color("d7a968"), 4.0, true)
+
+func _draw_world_pois(visible_cells: Rect2i) -> void:
+	if world_data == null or session == null:
+		return
+	for y: int in range(visible_cells.position.y, visible_cells.end.y):
+		for x: int in range(visible_cells.position.x, visible_cells.end.x):
+			var world_cell: Vector2i = Vector2i(x, y)
+			var generated: Array = world_poi_cache.get(world_cell, [])
+			if not world_poi_cache.has(world_cell):
+				generated = world_data.get_pois_for_region(world_cell, session.world_seed)
+				world_poi_cache[world_cell] = generated
+			for poi: WorldPOIData in _world_poi_display_list(generated):
+				var poi_position: Vector2 = _poi_map_position(poi)
+				draw_circle(poi_position, 11.0, Color("17202a"))
+				draw_circle(poi_position, 7.0, WorldPOIType.to_color(poi.poi_type))
+				draw_circle(poi_position, 2.5, Color("fff5c4"))
+
+func _world_poi_display_list(generated: Array) -> Array[WorldPOIData]:
+	var important: Array[WorldPOIData] = []
+	for item: Variant in generated:
+		if not item is WorldPOIData:
+			continue
+		var poi: WorldPOIData = item as WorldPOIData
+		# One strategic marker represents a 4x4 World-cell cluster. The full
+		# candidate list remains available after entering the Region.
+		if posmod(poi.world_cell.x, 4) != 0 or posmod(poi.world_cell.y, 4) != 0:
+			continue
+		if poi.poi_type == WorldPOIType.CASTLE \
+			or (poi.poi_type == WorldPOIType.TOWN and poi.deterministic_priority >= 0.82):
+			important.append(poi)
+	important.sort_custom(func(left: WorldPOIData, right: WorldPOIData) -> bool:
+		return left.importance > right.importance \
+			or (left.importance == right.importance \
+			and left.deterministic_priority > right.deterministic_priority)
+	)
+	# World view is a strategic overview: only towns/castles are drawn here.
+	# Villages, caves and ruins remain queryable and appear when their Region is
+	# opened, rather than creating one marker per visible World Cell.
+	if important.size() > 1:
+		important.resize(1)
+	return important
+
+func _resource_color(resource_type: int) -> Color:
+	match resource_type:
+		SiteContentTypes.RESOURCE_GRASS:
+			return Color("9fd36b")
+		SiteContentTypes.RESOURCE_FRUIT_TREE:
+			return Color("f2a24b")
+		SiteContentTypes.RESOURCE_FOREST:
+			return Color("2c8f58")
+		SiteContentTypes.RESOURCE_STONE_ORE:
+			return Color("b8bec4")
+		SiteContentTypes.RESOURCE_IRON_ORE:
+			return Color("bd694c")
+		SiteContentTypes.RESOURCE_SILVER_ORE:
+			return Color("d7e4ec")
+		SiteContentTypes.RESOURCE_GOLD_ORE:
+			return Color("f4d15b")
+	return Color("ffffff")
+
+func _river_runs_horizontal(world_cell: Vector2i) -> bool:
+	if overview == null:
+		return false
+	var horizontal: int = 0
+	var vertical: int = 0
+	for neighbor: Vector2i in [world_cell + Vector2i.LEFT, world_cell + Vector2i.RIGHT]:
+		if _is_valid_world_cell(neighbor) and (overview.features_at(neighbor) & WorldOverviewData.FEATURE_RIVER) != 0:
+			horizontal += 1
+	for neighbor: Vector2i in [world_cell + Vector2i.UP, world_cell + Vector2i.DOWN]:
+		if _is_valid_world_cell(neighbor) and (overview.features_at(neighbor) & WorldOverviewData.FEATURE_RIVER) != 0:
+			vertical += 1
+	return horizontal >= vertical
 
 func _draw_party_marker() -> void:
 	if not session.party.initialized:
@@ -332,18 +522,24 @@ func _draw_travel_preview() -> void:
 	for point: Vector2 in points:
 		draw_circle(point, 5.0, Color("fff7c2"))
 
-func _poi_at_map_position(mouse_global_position: Vector2) -> WorldPOIData:
-	var nearest: WorldPOIData
-	var nearest_distance: float = 12.0
-	var visible_cells: Rect2i = _visible_world_cells().grow(2)
-	for y: int in range(visible_cells.position.y, visible_cells.end.y):
-		for x: int in range(visible_cells.position.x, visible_cells.end.x):
-			for poi: WorldPOIData in world_data.get_pois_for_region(Vector2i(x, y), session.world_seed):
-				var distance: float = _poi_map_position(poi).distance_to(to_local(mouse_global_position))
-				if distance < nearest_distance:
-					nearest = poi
-					nearest_distance = distance
-	return nearest
+func _poi_at_map_position(_mouse_global_position: Vector2) -> WorldPOIData:
+	if world_data == null or session == null:
+		return null
+	var local_position: Vector2 = to_local(_mouse_global_position)
+	var cell: Vector2i = _cell_from_global_position(_mouse_global_position)
+	if not _is_valid_world_cell(cell):
+		return null
+	var generated: Array = world_poi_cache.get(cell, [])
+	if not world_poi_cache.has(cell):
+		generated = world_data.get_pois_for_region(cell, session.world_seed)
+		world_poi_cache[cell] = generated
+	for item: Variant in generated:
+		if not item is WorldPOIData:
+			continue
+		var poi: WorldPOIData = item as WorldPOIData
+		if local_position.distance_to(_poi_map_position(poi)) <= 20.0:
+			return poi
+	return null
 
 func _poi_map_position(poi: WorldPOIData) -> Vector2:
 	return MAP_ORIGIN + Vector2(poi.world_cell.x, poi.world_cell.y) * CELL_PIXEL_SIZE \
@@ -366,9 +562,14 @@ func _draw_region_thumbnail(cell_rect: Rect2, thumbnail: PackedByteArray) -> voi
 		for x: int in range(RegionTerrainGenerator.THUMBNAIL_GRID_SIZE):
 			var thumbnail_index: int = y * RegionTerrainGenerator.THUMBNAIL_GRID_SIZE + x
 			var packed_cell: int = thumbnail[thumbnail_index]
-			var color: Color = TerrainType.to_color(RegionTerrainGenerator.thumbnail_terrain(packed_cell))
-			if RegionTerrainGenerator.thumbnail_has_river(packed_cell):
-				color = Color("49a9cf")
+			var visual_code: int = SiteLayoutDataType.VISUAL_RIVER \
+				if RegionTerrainGenerator.thumbnail_has_river(packed_cell) else 0
+			var color: Color = MapArtCatalogType.thumbnail_color(
+				RegionTerrainGenerator.thumbnail_terrain(packed_cell),
+				visual_code,
+				Vector2i(x, y),
+				RegionTerrainGenerator.THUMBNAIL_GRID_SIZE
+			)
 			var thumbnail_rect: Rect2 = Rect2(
 				cell_rect.position + Vector2(x, y) * thumbnail_cell_size,
 				Vector2.ONE * thumbnail_cell_size

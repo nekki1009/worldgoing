@@ -78,7 +78,11 @@ func _generate_candidate(world_seed: int, candidate_cell: Vector2i) -> WorldPOID
 		return null
 	var global_region_cell: Vector2i = _candidate_global_cell(world_seed, candidate_cell)
 	var macro_sample: Vector4 = macro_sampler.sample(world_seed, global_region_cell)
-	var terrain_type: int = terrain_generator.classify_sample(macro_sample)
+	var terrain_type: int = terrain_generator.classify_region_sample(
+		world_seed,
+		global_region_cell,
+		macro_sample
+	)
 	var river_nearby: bool = _river_nearby(world_seed, global_region_cell)
 	var priority: float = DeterministicHash.normalized(world_seed, candidate_cell, PRIORITY_SALT)
 	if WorldPOIType.is_settlement(poi_type) \
@@ -125,7 +129,11 @@ func _calculate_candidate_type(world_seed: int, candidate_cell: Vector2i) -> int
 		return -1
 	var global_region_cell: Vector2i = _candidate_global_cell(world_seed, candidate_cell)
 	var macro_sample: Vector4 = macro_sampler.sample(world_seed, global_region_cell)
-	var terrain_type: int = terrain_generator.classify_sample(macro_sample)
+	var terrain_type: int = terrain_generator.classify_region_sample(
+		world_seed,
+		global_region_cell,
+		macro_sample
+	)
 	var river_nearby: bool = _river_nearby(world_seed, global_region_cell)
 	var mountain_nearby: bool = _mountain_nearby(world_seed, global_region_cell)
 	var village_score: float = VILLAGE_WEIGHT * _suitability(
@@ -310,7 +318,7 @@ func _mountain_nearby(world_seed: int, global_region_cell: Vector2i) -> bool:
 		for offset_x: int in range(-1, 2):
 			var sample_cell: Vector2i = global_region_cell + Vector2i(offset_x, offset_y)
 			var sample: Vector4 = macro_sampler.sample(world_seed, sample_cell)
-			if terrain_generator.classify_sample(sample) == TerrainType.MOUNTAIN \
+			if terrain_generator.classify_region_sample(world_seed, sample_cell, sample) == TerrainType.MOUNTAIN \
 				or sample.x >= RegionTerrainGenerator.MOUNTAIN_THRESHOLD:
 				return true
 	return false

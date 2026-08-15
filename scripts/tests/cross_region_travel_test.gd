@@ -16,7 +16,7 @@ func _run() -> void:
 	_test_east_west_border()
 	_test_north_south_border()
 	_test_negative_border()
-	_test_diagonal_border()
+	_test_corner_border()
 	_test_border_cost_matches_local()
 	_test_lazy_world_sampling()
 	_test_global_path()
@@ -67,12 +67,14 @@ func _test_negative_border() -> void:
 	assert(converted["region_cell"] == Vector2i(99, 50), "Negative border region conversion failed")
 	print("TEST 4 PASS: negative global coordinate uses floor division")
 
-func _test_diagonal_border() -> void:
+func _test_corner_border() -> void:
 	var converted: Dictionary = WorldCoordinates.global_region_cell_to_world_region(Vector2i(100, 100))
-	assert(converted["world_cell"] == Vector2i(1, 1), "Diagonal border world conversion failed")
-	assert(converted["region_cell"] == Vector2i.ZERO, "Diagonal border region conversion failed")
-	assert(is_equal_approx(TravelCostConfig.step_distance_meters(Vector2i.ONE), 141.421356), "Diagonal distance changed")
-	print("TEST 5 PASS: diagonal Region border and 141.421m distance")
+	assert(converted["world_cell"] == Vector2i(1, 1), "Corner border world conversion failed")
+	assert(converted["region_cell"] == Vector2i.ZERO, "Corner border region conversion failed")
+	assert(not is_finite(TravelCostConfig.step_distance_meters(Vector2i.ONE)), "Diagonal travel distance was accepted")
+	var info: Dictionary = {"passable": true, "travel_exit_mask": SiteLayoutData.EXIT_ALL}
+	assert(not TravelCostConfig.can_traverse_site_edge(info, info, Vector2i.ONE), "Diagonal Site edge was accepted")
+	print("TEST 5 PASS: corner coordinate conversion is separate from four-way travel")
 
 func _test_border_cost_matches_local() -> void:
 	var info: Dictionary = {
@@ -132,8 +134,8 @@ func _test_global_path_metadata_and_continuity() -> void:
 	assert(global_path.search_margin <= PartyPathfinder.GLOBAL_PATH_FALLBACK_MARGINS.back(), "Global Path margin exceeded fallback limit")
 	for index: int in range(1, global_path.cells.size()):
 		var delta: Vector2i = global_path.cells[index] - global_path.cells[index - 1]
-		assert(abs(delta.x) <= 1 and abs(delta.y) <= 1, "Global Path jumped across a Region border")
-	print("TEST 9 PASS: one continuous bounded Global Path with metadata")
+		assert(absi(delta.x) + absi(delta.y) == 1, "Global Path contains a diagonal or zero-length step")
+	print("TEST 9 PASS: one continuous bounded orthogonal Global Path with metadata")
 
 func _test_regions_crossed_are_distinct() -> void:
 	var distinct: Dictionary = {}
@@ -238,9 +240,9 @@ func _test_poi_site_gate() -> void:
 	navigation.session.party.set_global_region_cell(
 		WorldCoordinates.world_region_to_global_region_cell(poi.world_cell, away)
 	)
-	assert(not navigation.can_enter_site_at(poi.region_cell), "Remote Site entry bypassed exact POI position")
+	assert(navigation.can_enter_site_at(poi.region_cell), "Site entry still depends on Party position")
 	navigation.free()
-	print("TEST 17 PASS: long-distance POI arrival still requires Enter Site at POI")
+	print("TEST 17 PASS: any Region tile can enter Site without Party locality")
 
 func _test_search_limit() -> void:
 	var far: Vector2i = _find_clear_global_cell_near(global_path.start_global_cell + Vector2i(5000, 0))

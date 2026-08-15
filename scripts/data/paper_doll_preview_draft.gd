@@ -3,6 +3,7 @@ extends RefCounted
 
 var gender: int = PaperDollLayerVisual.Gender.MALE
 var is_mounted: bool = false
+var action: int = PaperDollAnimation.Action.IDLE
 var mount_visual_id: StringName = &""
 var layer_visual_ids: Dictionary = {}
 
@@ -32,6 +33,7 @@ func copy() -> PaperDollPreviewDraft:
 	var result: PaperDollPreviewDraft = PaperDollPreviewDraft.new()
 	result.gender = gender
 	result.is_mounted = is_mounted
+	result.action = action
 	result.mount_visual_id = mount_visual_id
 	result.layer_visual_ids = layer_visual_ids.duplicate()
 	return result

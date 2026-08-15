@@ -24,7 +24,7 @@ func _open_character_creator() -> void:
 		return
 	_navigation_input_was_enabled = navigation_controller.is_processing_unhandled_input()
 	navigation_controller.set_process_unhandled_input(false)
-	character_creator.open(PaperDollCatalog.create_debug_catalog())
+	character_creator.open(PaperDollCatalog.create_art_gate1_catalog())
 
 func _on_character_creator_closed() -> void:
 	navigation_controller.set_process_unhandled_input(_navigation_input_was_enabled)

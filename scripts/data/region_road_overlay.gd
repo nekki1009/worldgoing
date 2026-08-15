@@ -91,9 +91,10 @@ func _index_for(region_cell: Vector2i) -> int:
 	return region_cell.y * WorldCoordinates.REGION_GRID_SIZE + region_cell.x
 
 func _append_unique_offset(result: Array[Vector2i], delta: Vector2i) -> void:
-	var offset: Vector2i = Vector2i(clampi(delta.x, -1, 1), clampi(delta.y, -1, 1))
-	if offset != Vector2i.ZERO and not result.has(offset):
-		result.append(offset)
+	if absi(delta.x) + absi(delta.y) != 1:
+		return
+	if not result.has(delta):
+		result.append(delta)
 
 func _offset_less(left: Vector2i, right: Vector2i) -> bool:
 	return left.y < right.y or (left.y == right.y and left.x < right.x)

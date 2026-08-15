@@ -145,21 +145,18 @@ func _count_major_rivers_to_ocean(
 			var terrain_type: int = terrain_cells[index]
 			if not TerrainType.is_water_like(terrain_type):
 				land_pixels += 1
-			for offset_y: int in range(-1, 2):
-				for offset_x: int in range(-1, 2):
-					if offset_x == 0 and offset_y == 0:
-						continue
-					var neighbor: Vector2i = point + Vector2i(offset_x, offset_y)
-					if neighbor.x < 0 or neighbor.y < 0 \
-						or neighbor.x >= OVERVIEW_SIZE.x or neighbor.y >= OVERVIEW_SIZE.y:
-						continue
-					var neighbor_index: int = neighbor.y * OVERVIEW_SIZE.x + neighbor.x
-					if terrain_cells[neighbor_index] == TerrainType.OCEAN:
-						touches_ocean = true
-					if major_river_cells[neighbor_index] == 0 or visited[neighbor_index] != 0:
-						continue
-					visited[neighbor_index] = 1
-					queue.append(neighbor_index)
+			for offset: Vector2i in [Vector2i.UP, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT]:
+				var neighbor: Vector2i = point + offset
+				if neighbor.x < 0 or neighbor.y < 0 \
+					or neighbor.x >= OVERVIEW_SIZE.x or neighbor.y >= OVERVIEW_SIZE.y:
+					continue
+				var neighbor_index: int = neighbor.y * OVERVIEW_SIZE.x + neighbor.x
+				if terrain_cells[neighbor_index] == TerrainType.OCEAN:
+					touches_ocean = true
+				if major_river_cells[neighbor_index] == 0 or visited[neighbor_index] != 0:
+					continue
+				visited[neighbor_index] = 1
+				queue.append(neighbor_index)
 		if touches_ocean and land_pixels >= MIN_MAJOR_RIVER_LAND_PIXELS:
 			result += 1
 	return result

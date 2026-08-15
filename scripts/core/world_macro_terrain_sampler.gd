@@ -4,8 +4,8 @@ extends RefCounted
 # One sampler owns every world-scale field. Regions only slice this field.
 const CONTINENTAL_FREQUENCY: float = 0.00009
 const REGIONAL_ELEVATION_FREQUENCY: float = 0.0007
-const ELEVATION_DETAIL_FREQUENCY: float = 0.0045
-const MOISTURE_FREQUENCY: float = 0.0008
+const ELEVATION_DETAIL_FREQUENCY: float = 0.008
+const MOISTURE_FREQUENCY: float = 0.0025
 const TEMPERATURE_FREQUENCY: float = 0.00018
 const RIVER_FREQUENCY: float = 0.0018
 const MAJOR_RIVER_FREQUENCY: float = 0.00008
@@ -81,7 +81,10 @@ func _sample_elevation(global_region_cell: Vector2i) -> float:
 	var detail: float = _normalize_noise(
 		elevation_detail_noise.get_noise_2d(global_region_cell.x, global_region_cell.y)
 	)
-	return clampf(continental * 0.72 + regional * 0.22 + detail * 0.06, 0.0, 1.0)
+	# Keep the continental and regional fields dominant, but give a Region
+	# enough deterministic local relief to form readable terrain bands instead
+	# of collapsing a 100x100 Region into one Plains block.
+	return clampf(continental * 0.68 + regional * 0.21 + detail * 0.11, 0.0, 1.0)
 
 func _sample_temperature(global_region_cell: Vector2i, elevation: float) -> float:
 	var climate: float = _normalize_noise(

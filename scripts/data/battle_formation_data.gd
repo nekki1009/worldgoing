@@ -79,6 +79,41 @@ static func formation_size_for_personnel(personnel: int) -> Vector2:
 			+ float(maxi(rows - 1, 0)) * SOLDIER_SPACING_METERS.y
 	)
 
+static func formation_slot_local(
+	index: int,
+	personnel_count: int,
+	width_m: float,
+	depth_m: float
+) -> Vector2:
+	var count: int = clampi(personnel_count, 1, FORMATION_COLUMNS * FORMATION_ROWS)
+	var row: int = floori(float(index) / float(FORMATION_COLUMNS))
+	var slot: int = index % FORMATION_COLUMNS
+	var count_in_row: int = mini(FORMATION_COLUMNS, count - row * FORMATION_COLUMNS)
+	var row_width: float = float(count_in_row) * SOLDIER_CANVAS_SIZE_METERS.x \
+		+ float(maxi(count_in_row - 1, 0)) * SOLDIER_SPACING_METERS.x
+	var row_start_x: float = -width_m * 0.5 \
+		+ (width_m - row_width) * 0.5 \
+		+ SOLDIER_CANVAS_SIZE_METERS.x * 0.5
+	var x: float = row_start_x + float(slot) * (
+		SOLDIER_CANVAS_SIZE_METERS.x + SOLDIER_SPACING_METERS.x
+	)
+	var row_start_y: float = depth_m * 0.5 - SOLDIER_CANVAS_SIZE_METERS.y * 0.5
+	var y: float = row_start_y - float(row) * (
+		SOLDIER_CANVAS_SIZE_METERS.y + SOLDIER_SPACING_METERS.y
+	)
+	return Vector2(x, y)
+
+static func formation_world_position(
+	position_m: Vector2,
+	facing_direction: Vector2,
+	local_slot: Vector2
+) -> Vector2:
+	var facing: Vector2 = facing_direction.normalized()
+	if facing == Vector2.ZERO:
+		facing = Vector2.DOWN
+	var lateral: Vector2 = Vector2(facing.y, -facing.x)
+	return position_m + lateral * local_slot.x + facing * local_slot.y
+
 func is_controllable() -> bool:
 	return is_commander_formation
 

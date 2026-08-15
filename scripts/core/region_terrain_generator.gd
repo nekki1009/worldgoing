@@ -13,6 +13,10 @@ const SWAMP_MOISTURE_THRESHOLD: float = 0.68
 const SAND_TEMPERATURE_THRESHOLD: float = 0.52
 const SAND_MOISTURE_THRESHOLD: float = 0.42
 const FOREST_MOISTURE_THRESHOLD: float = 0.55
+const REGION_PATCH_SIZE: int = 8
+const REGION_PATCH_ELEVATION_SALT: int = 61_001
+const REGION_PATCH_MOISTURE_SALT: int = 61_003
+const REGION_PATCH_TEMPERATURE_SALT: int = 61_007
 const THUMBNAIL_GRID_SIZE: int = 8
 const THUMBNAIL_CELL_COUNT: int = THUMBNAIL_GRID_SIZE * THUMBNAIL_GRID_SIZE
 const THUMBNAIL_TERRAIN_MASK: int = SiteLayoutDataType.VISUAL_TERRAIN_MASK
@@ -33,7 +37,10 @@ func generate(world_seed: int, world_cell: Vector2i) -> RegionTerrainData:
 			terrain_data.set_elevation(region_cell, macro_sample.x)
 			terrain_data.set_moisture(region_cell, macro_sample.y)
 			terrain_data.set_river_strength(region_cell, macro_sample.z)
-			terrain_data.set_terrain(region_cell, classify_sample(macro_sample))
+			terrain_data.set_terrain(
+				region_cell,
+				classify_region_sample(world_seed, global_region_cell, macro_sample)
+			)
 	terrain_data.freeze()
 	return terrain_data
 
@@ -49,7 +56,11 @@ func generate_thumbnail(world_seed: int, world_cell: Vector2i) -> PackedByteArra
 				region_cell
 			)
 			var macro_sample: Vector4 = macro_sampler.sample(world_seed, global_region_cell)
-			var terrain_type: int = classify_sample(macro_sample)
+			var terrain_type: int = classify_region_sample(
+				world_seed,
+				global_region_cell,
+				macro_sample
+			)
 			var visual_code: int = SiteLayoutGeneratorType.generate_cell_base_visual_code(
 				world_seed,
 				{
@@ -94,6 +105,65 @@ func classify_sample(macro_sample: Vector4) -> int:
 	if macro_sample.y > FOREST_MOISTURE_THRESHOLD:
 		return TerrainType.FOREST
 	return TerrainType.PLAINS
+
+func classify_region_sample(
+		world_seed: int,
+		global_region_cell: Vector2i,
+		macro_sample: Vector4
+	) -> int:
+	var base_terrain: int = classify_sample(macro_sample)
+	if TerrainType.is_water_like(base_terrain):
+		return base_terrain
+	# The macro sampler deliberately keeps World biomes broad. Region cells get
+	# a second deterministic patch field so a 100x100 Region contains readable
+	# local forest/sand/swamp/highland bands without allocating Site layouts.
+	var local_elevation: float = clampf(
+		macro_sample.x + (_patch_field(
+			world_seed,
+			global_region_cell,
+			REGION_PATCH_ELEVATION_SALT
+		) - 0.5) * 0.34,
+		0.0,
+		1.0
+	)
+	var local_moisture: float = clampf(
+		macro_sample.y + (_patch_field(
+			world_seed,
+			global_region_cell,
+			REGION_PATCH_MOISTURE_SALT
+		) - 0.5) * 0.48,
+		0.0,
+		1.0
+	)
+	var local_temperature: float = clampf(
+		macro_sample.w + (_patch_field(
+			world_seed,
+			global_region_cell,
+			REGION_PATCH_TEMPERATURE_SALT
+		) - 0.5) * 0.28,
+		0.0,
+		1.0
+	)
+	var local_terrain: int = classify_sample(Vector4(
+		local_elevation,
+		local_moisture,
+		macro_sample.z,
+		local_temperature
+	))
+	# A land patch may become a mountain/forest/sand/swamp/snow patch, but
+	# inland river/ocean classification remains owned by the macro water field.
+	return base_terrain if TerrainType.is_water_like(local_terrain) else local_terrain
+
+func _patch_field(world_seed: int, global_region_cell: Vector2i, salt: int) -> float:
+	var patch_x: int = WorldCoordinates.floor_divide(global_region_cell.x, REGION_PATCH_SIZE)
+	var patch_y: int = WorldCoordinates.floor_divide(global_region_cell.y, REGION_PATCH_SIZE)
+	var local_x: float = float(posmod(global_region_cell.x, REGION_PATCH_SIZE)) / float(REGION_PATCH_SIZE)
+	var local_y: float = float(posmod(global_region_cell.y, REGION_PATCH_SIZE)) / float(REGION_PATCH_SIZE)
+	var p00: float = DeterministicHash.normalized(world_seed, Vector2i(patch_x, patch_y), salt)
+	var p10: float = DeterministicHash.normalized(world_seed, Vector2i(patch_x + 1, patch_y), salt)
+	var p01: float = DeterministicHash.normalized(world_seed, Vector2i(patch_x, patch_y + 1), salt)
+	var p11: float = DeterministicHash.normalized(world_seed, Vector2i(patch_x + 1, patch_y + 1), salt)
+	return lerpf(lerpf(p00, p10, local_x), lerpf(p01, p11, local_x), local_y)
 
 func _thumbnail_region_cell(thumbnail_cell: Vector2i) -> Vector2i:
 	var last_region_cell: float = float(WorldCoordinates.REGION_GRID_SIZE - 1)

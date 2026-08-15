@@ -3,6 +3,7 @@ extends RefCounted
 
 const GlobalTravelPathType = preload("res://scripts/data/global_travel_path.gd")
 const PartyPathfinderType = preload("res://scripts/core/party_pathfinder.gd")
+const WeightedGridPathfinderType = preload("res://scripts/core/weighted_grid_pathfinder.gd")
 const RegionRuntimeType = preload("res://scripts/runtime/region_runtime.gd")
 const TravelFailureReasonType = preload("res://scripts/runtime/travel_failure_reason.gd")
 const TravelStatusType = preload("res://scripts/runtime/travel_status.gd")
@@ -24,6 +25,7 @@ signal travel_cancelled(result: TravelCommandResult)
 var session: GameSession
 var world_data: WorldData
 var party_pathfinder: PartyPathfinder = PartyPathfinderType.new()
+var site_pathfinder: WeightedGridPathfinder = WeightedGridPathfinderType.new()
 var region_runtime: RegionRuntime
 var local_path_world_cell: Vector2i = Vector2i(-1, -1)
 var path_query_resolver_cache: Dictionary = {}
@@ -309,15 +311,6 @@ func query_site_entry(party_id: String, poi_id: String) -> SiteEntryQueryResult:
 	result.site_definition = world_data.get_site_definition(poi)
 	result.world_cell = poi.world_cell
 	result.region_cell = poi.region_cell
-	if session == null or session.party == null or session.party.party_id != party_id:
-		result.failure_reason = TravelFailureReasonType.Code.INVALID_PARTY
-		return result
-	if not session.party.initialized:
-		result.failure_reason = TravelFailureReasonType.Code.PARTY_NOT_READY
-		return result
-	if session.is_traveling() or not session.party.is_at(poi.world_cell, poi.region_cell):
-		result.failure_reason = TravelFailureReasonType.Code.NOT_AT_SITE
-		return result
 	result.can_enter = true
 	return result
 
@@ -380,21 +373,21 @@ func begin_site_visit(party_id: String, site_id: String) -> SiteRuntimeCommandRe
 	if definition == null:
 		result.failure_reason = SiteRuntimeFailureReasonType.Code.SITE_NOT_FOUND
 		return result
-	if not session.party.initialized \
-		or session.is_traveling() \
-		or not session.party.is_at(definition.parent_world_cell, definition.parent_region_cell):
-		result.failure_reason = SiteRuntimeFailureReasonType.Code.PARTY_NOT_AT_SITE
-		return result
 	var prepared: SiteRuntimeCommandResult = ensure_site_runtime_state(site_id)
 	if not prepared.success:
 		return prepared
+	var party_at_site: bool = session.party.initialized \
+		and session.party.current_global_region_cell == definition.global_region_cell
 	result.success = true
 	result.changed = prepared.changed \
 		or session.current_site_id != site_id \
-		or session.party.current_site_local_cell != SiteLayoutDataType.ENTRANCE_CELL
+		or (party_at_site and session.party.current_site_local_cell != SiteLayoutDataType.ENTRANCE_CELL)
 	result.revision = prepared.revision
 	session.current_site_id = site_id
-	session.party.current_site_local_cell = SiteLayoutDataType.ENTRANCE_CELL
+	if party_at_site:
+		session.party.current_site_local_cell = SiteLayoutDataType.ENTRANCE_CELL
+	else:
+		session.party.current_site_local_cell = SiteLayoutDataType.INVALID_CELL
 	return result
 
 func leave_site(party_id: String) -> SiteRuntimeCommandResult:
@@ -441,11 +434,11 @@ func move_party_in_site(
 	if not SiteLayoutDataType.is_valid_cell(destination):
 		result.failure_reason = SiteRuntimeFailureReasonType.Code.OUT_OF_BOUNDS
 		return result
-	var layout: SiteLayoutDataType = world_data.get_site_layout(definition) if world_data != null else null
+	var layout: SiteLayoutDataType = _resolved_site_layout(definition)
 	if layout == null or not layout.has_navigation_base():
 		result.failure_reason = SiteRuntimeFailureReasonType.Code.SITE_NOT_FOUND
 		return result
-	if (layout.navigation_flags_at(destination) & SiteLayoutDataType.NAV_BLOCKED) != 0:
+	if not layout.can_traverse(session.party.current_site_local_cell, destination):
 		result.failure_reason = SiteRuntimeFailureReasonType.Code.BLOCKED
 		return result
 	session.party.current_site_local_cell = destination
@@ -454,6 +447,74 @@ func move_party_in_site(
 	result.changed = true
 	result.revision = state.revision if state != null else 0
 	return result
+
+func query_site_path(
+		site_id: String,
+		start: Vector2i,
+		destination: Vector2i
+	) -> PartyPathResult:
+	var result: PartyPathResult = PartyPathResult.new()
+	if world_data == null or site_id.is_empty():
+		return result
+	var definition: SiteData = _find_site_definition(site_id)
+	if definition == null:
+		return result
+	var layout: SiteLayoutDataType = _resolved_site_layout(definition)
+	if layout == null or not layout.is_valid() \
+		or not SiteLayoutDataType.is_valid_cell(start) \
+		or not SiteLayoutDataType.is_valid_cell(destination):
+		return result
+	var astar: Dictionary = site_pathfinder.find_path(
+		start,
+		destination,
+		Vector2i.ZERO,
+		SiteLayoutDataType.GRID_SIZE - Vector2i.ONE,
+		Callable(self, "_site_cell_info").bind(layout),
+		Callable(self, "_site_step_cost").bind(layout),
+		1.0,
+		SiteLayoutDataType.NAVIGATION_CELL_COUNT * 4
+	)
+	var raw_path: Variant = astar.get("path", [])
+	if not raw_path is Array:
+		return result
+	for cell: Variant in raw_path:
+		if cell is Vector2i:
+			result.cells.append(cell as Vector2i)
+	if result.cells.is_empty():
+		return result
+	result.total_cost = float(astar.get("cost", 0.0))
+	result.total_distance_meters = float(result.cells.size() - 1) * SiteLayoutDataType.CELL_SIZE_METERS
+	result.step_travel_seconds.clear()
+	for _step: int in range(1, result.cells.size()):
+		result.step_travel_seconds.append(1)
+		result.estimated_travel_seconds += 1
+	return result
+
+func _site_cell_info(cell: Vector2i, layout: SiteLayoutDataType) -> Dictionary:
+	if layout == null or not SiteLayoutDataType.is_valid_cell(cell):
+		return {"passable": false}
+	var flags: int = layout.navigation_flags_at(cell)
+	var surface: int = layout.surface_flags_at(cell)
+	var passable: bool = (flags & SiteLayoutDataType.NAV_BLOCKED) == 0 \
+		and (not SiteContentTypes.is_water_surface(layout.native_surface_at(cell)) \
+		or (surface & (SiteLayoutDataType.SURFACE_BRIDGE | SiteLayoutDataType.SURFACE_DOCK)) != 0)
+	return {
+		"passable": passable,
+		"elevation": layout.elevation_level_at(cell),
+		"surface_flags": surface,
+	}
+
+func _site_step_cost(
+		current: Vector2i,
+		next: Vector2i,
+		_direction: Vector2i,
+		_current_info: Dictionary,
+		_next_info: Dictionary,
+		layout: SiteLayoutDataType
+	) -> float:
+	if layout == null or not layout.can_traverse(current, next):
+		return INF
+	return 1.0 + float(abs(layout.elevation_level_at(next) - layout.elevation_level_at(current)))
 
 func set_site_test_flag(site_id: String, enabled: bool) -> SiteRuntimeCommandResult:
 	var result: SiteRuntimeCommandResult = _prepare_site_runtime_command(site_id)
@@ -515,6 +576,121 @@ func remove_site_test_feature(site_id: String, feature_id: String) -> SiteRuntim
 	result.revision = state.revision
 	return result
 
+func remove_generated_site_feature(site_id: String, feature_id: String) -> SiteRuntimeCommandResult:
+	var result: SiteRuntimeCommandResult = _prepare_site_runtime_command(site_id)
+	if not result.success:
+		return result
+	if feature_id.is_empty() or not feature_id.begins_with("generated:%s:" % site_id):
+		result.success = false
+		result.failure_reason = SiteRuntimeFailureReasonType.Code.INVALID_FEATURE_ID
+		return result
+	var definition: SiteData = _find_site_definition(site_id)
+	var layout: SiteLayoutDataType = world_data.get_site_layout(definition) if world_data != null else null
+	if layout == null \
+		or (layout.generated_resource(feature_id).is_empty() \
+		and layout.generated_facility(feature_id).is_empty() \
+		and not _layout_has_wall(layout, feature_id)):
+		result.success = false
+		result.failure_reason = SiteRuntimeFailureReasonType.Code.FEATURE_NOT_FOUND
+		return result
+	var state: SiteRuntimeState = session.find_site_runtime_state(site_id)
+	var code: int = state.mark_generated_feature_removed(feature_id)
+	result.failure_reason = code
+	result.success = code == SiteRuntimeFailureReasonType.Code.NONE
+	result.changed = result.success
+	result.revision = state.revision
+	return result
+
+func harvest_site_resource(site_id: String, resource_id: String) -> SiteRuntimeCommandResult:
+	var result: SiteRuntimeCommandResult = SiteRuntimeCommandResultType.new()
+	result.site_id = site_id
+	if session == null or site_id.is_empty():
+		result.failure_reason = SiteRuntimeFailureReasonType.Code.INVALID_SITE_ID
+		return result
+	var definition: SiteData = _find_site_definition(site_id)
+	if definition == null:
+		result.failure_reason = SiteRuntimeFailureReasonType.Code.SITE_NOT_FOUND
+		return result
+	var layout: SiteLayoutDataType = world_data.get_site_layout(definition) if world_data != null else null
+	if layout == null or layout.generated_resource(resource_id).is_empty():
+		result.failure_reason = SiteRuntimeFailureReasonType.Code.FEATURE_NOT_FOUND
+		return result
+	return remove_generated_site_feature(site_id, resource_id)
+
+func add_site_facility(
+		site_id: String,
+		feature_id: String,
+		facility_type: int,
+		origin: Vector2i,
+		size: Vector2i = Vector2i.ONE,
+		orientation: int = SiteContentTypes.Orientation.HORIZONTAL,
+		target: Vector2i = SiteLayoutDataType.INVALID_CELL,
+		definition_id: String = ""
+	) -> SiteRuntimeCommandResult:
+	var result: SiteRuntimeCommandResult = SiteRuntimeCommandResultType.new()
+	result.site_id = site_id
+	if session == null or site_id.is_empty():
+		result.failure_reason = SiteRuntimeFailureReasonType.Code.INVALID_SITE_ID
+		return result
+	if feature_id.is_empty() or feature_id.begins_with("generated:"):
+		result.failure_reason = SiteRuntimeFailureReasonType.Code.INVALID_FEATURE_ID
+		return result
+	if not SiteContentTypes.is_facility(facility_type):
+		result.failure_reason = SiteRuntimeFailureReasonType.Code.INVALID_FACILITY_TYPE
+		return result
+	var definition: SiteData = _find_site_definition(site_id)
+	if definition == null:
+		result.failure_reason = SiteRuntimeFailureReasonType.Code.SITE_NOT_FOUND
+		return result
+	var layout: SiteLayoutDataType = _resolved_site_layout(definition)
+	var placement: Dictionary = SiteContentTypes.make_facility(
+		feature_id,
+		facility_type,
+		origin,
+		size,
+		orientation,
+		target,
+		definition_id
+	)
+	if layout == null or not _facility_placement_valid(layout, placement):
+		result.failure_reason = SiteRuntimeFailureReasonType.Code.INVALID_FOOTPRINT
+		return result
+	var prepared: SiteRuntimeCommandResult = _prepare_site_runtime_command(site_id)
+	if not prepared.success:
+		return prepared
+	var state: SiteRuntimeState = session.find_site_runtime_state(site_id)
+	var code: int = state.add_feature(SiteFeatureStateType.new(
+		feature_id,
+		"FACILITY",
+		true,
+		placement
+	))
+	prepared.failure_reason = code
+	prepared.success = code == SiteRuntimeFailureReasonType.Code.NONE
+	prepared.changed = prepared.success
+	prepared.revision = state.revision
+	return prepared
+
+func remove_site_facility(site_id: String, feature_id: String) -> SiteRuntimeCommandResult:
+	if session == null or site_id.is_empty():
+		var invalid: SiteRuntimeCommandResult = SiteRuntimeCommandResultType.new()
+		invalid.site_id = site_id
+		invalid.failure_reason = SiteRuntimeFailureReasonType.Code.INVALID_SITE_ID
+		return invalid
+	var state: SiteRuntimeState = session.find_site_runtime_state(site_id)
+	if state == null:
+		var missing: SiteRuntimeCommandResult = SiteRuntimeCommandResultType.new()
+		missing.site_id = site_id
+		missing.failure_reason = SiteRuntimeFailureReasonType.Code.FEATURE_NOT_FOUND
+		return missing
+	for feature: SiteFeatureState in state.added_features:
+		if feature.feature_id == feature_id and feature.feature_type == "FACILITY":
+			return remove_site_test_feature(site_id, feature_id)
+	var not_found: SiteRuntimeCommandResult = SiteRuntimeCommandResultType.new()
+	not_found.site_id = site_id
+	not_found.failure_reason = SiteRuntimeFailureReasonType.Code.FEATURE_NOT_FOUND
+	return not_found
+
 func query_site_entry_at(
 		party_id: String,
 		world_cell: Vector2i,
@@ -527,11 +703,22 @@ func query_site_entry_at(
 	if world_data == null or session == null:
 		result.failure_reason = TravelFailureReasonType.Code.SITE_NOT_FOUND
 		return result
-	var poi: WorldPOIData = world_data.find_poi_at(world_cell, region_cell, session.world_seed)
-	if poi == null:
+	var definition: SiteData = world_data.get_site_definition_at(
+		world_cell,
+		region_cell,
+		session.world_seed
+	)
+	if definition == null:
 		result.failure_reason = TravelFailureReasonType.Code.SITE_NOT_FOUND
 		return result
-	return query_site_entry(party_id, poi.poi_id)
+	result.can_enter = true
+	result.site_id = definition.site_id
+	result.site_definition = definition
+	var poi: WorldPOIData = world_data.find_poi_at(world_cell, region_cell, session.world_seed)
+	if poi != null:
+		result.poi = poi
+		result.poi_id = poi.poi_id
+	return result
 
 func ensure_party_ready() -> void:
 	if session == null or session.party == null or session.party.initialized or world_data == null:
@@ -741,8 +928,74 @@ func _find_poi_by_id(poi_id: String) -> WorldPOIData:
 func _find_site_definition(site_id: String) -> SiteData:
 	if world_data == null or site_id.is_empty():
 		return null
-	var poi: WorldPOIData = _find_poi_by_id(site_id)
-	return world_data.get_site_definition(poi) if poi != null else null
+	return world_data.get_site_definition_by_id(site_id, session.world_seed if session != null else 0)
+
+func _resolved_site_layout(definition: SiteData) -> SiteLayoutDataType:
+	if world_data == null or definition == null:
+		return null
+	var layout: SiteLayoutDataType = world_data.get_site_layout(definition)
+	var state: SiteRuntimeState = session.find_site_runtime_state(definition.site_id) \
+		if session != null else null
+	return layout.resolved_with_delta(state.added_features, state.removed_feature_ids) \
+		if layout != null and state != null else layout
+
+func _facility_placement_valid(layout: SiteLayoutDataType, placement: Dictionary) -> bool:
+	if layout == null:
+		return false
+	var facility_type: int = int(placement.get("type", -1))
+	var origin_value: Variant = placement.get("origin", SiteLayoutDataType.INVALID_CELL)
+	var size_value: Variant = placement.get("size", Vector2i.ZERO)
+	if not origin_value is Vector2i or not size_value is Vector2i:
+		return false
+	var origin: Vector2i = origin_value as Vector2i
+	var size: Vector2i = size_value as Vector2i
+	if size.x <= 0 or size.y <= 0 \
+		or not SiteLayoutDataType.is_valid_cell(origin) \
+		or not SiteLayoutDataType.is_valid_cell(origin + size - Vector2i.ONE):
+		return false
+	if facility_type in [SiteContentTypes.Facility.WOOD_WALL, SiteContentTypes.Facility.STONE_WALL,
+		SiteContentTypes.Facility.WOOD_STAIR, SiteContentTypes.Facility.STONE_STAIR]:
+		var target_value: Variant = placement.get("target", SiteLayoutDataType.INVALID_CELL)
+		if not target_value is Vector2i:
+			return false
+		var target: Vector2i = target_value as Vector2i
+		if not SiteLayoutDataType.is_valid_cell(target) \
+			or absi(target.x - origin.x) + absi(target.y - origin.y) != 1:
+			return false
+		if facility_type in [SiteContentTypes.Facility.WOOD_STAIR, SiteContentTypes.Facility.STONE_STAIR] \
+			and layout.elevation_level_at(origin) == layout.elevation_level_at(target):
+			return false
+	if facility_type == SiteContentTypes.Facility.BRIDGE:
+		if size.x > 1 and size.y > 1:
+			return false
+		for y: int in range(size.y):
+			for x: int in range(size.x):
+				if not SiteContentTypes.is_water_surface(layout.native_surface_at(origin + Vector2i(x, y))):
+					return false
+	else:
+		for y: int in range(size.y):
+			for x: int in range(size.x):
+				if SiteContentTypes.is_water_surface(layout.native_surface_at(origin + Vector2i(x, y))):
+					return false
+	for facility: Dictionary in layout.facility_placements:
+		if _rects_overlap(origin, size, facility):
+			return false
+	return true
+
+func _rects_overlap(origin: Vector2i, size: Vector2i, placement: Dictionary) -> bool:
+	var other_origin_value: Variant = placement.get("origin", SiteLayoutDataType.INVALID_CELL)
+	var other_size_value: Variant = placement.get("size", Vector2i.ZERO)
+	if not other_origin_value is Vector2i or not other_size_value is Vector2i:
+		return false
+	var other_origin: Vector2i = other_origin_value as Vector2i
+	var other_size: Vector2i = other_size_value as Vector2i
+	return Rect2i(origin, size).intersects(Rect2i(other_origin, other_size))
+
+func _layout_has_wall(layout: SiteLayoutDataType, feature_id: String) -> bool:
+	for wall: Dictionary in layout.wall_edges:
+		if str(wall.get("id", "")) == feature_id:
+			return true
+	return false
 
 func _snapshot_for_definition(
 		definition: SiteData,
@@ -769,7 +1022,7 @@ func _snapshot_for_definition(
 	snapshot.source_river_nearby = definition.source_river_nearby
 	snapshot.source_candidate_cell = definition.source_candidate_cell
 	snapshot.source_priority = definition.source_priority
-	snapshot.layout = world_data.get_site_layout(definition) if world_data != null else null
+	snapshot.layout = _resolved_site_layout(definition)
 	var parent_region: RegionData = world_data.get_region(definition.parent_world_cell) \
 		if world_data != null else null
 	if parent_region != null:

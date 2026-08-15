@@ -306,13 +306,13 @@ func _test_site_entry_regression() -> void:
 	var session: GameSession = _new_session()
 	var runtime: TravelRuntime = TravelRuntime.new(session, world_data)
 	session.party.set_global_region_cell(poi.global_region_cell + Vector2i.RIGHT)
-	var denied: SiteEntryQueryResult = runtime.query_site_entry(session.party.party_id, poi.poi_id)
-	assert(not denied.can_enter, "Party away from Site was allowed to enter")
+	var remote: SiteEntryQueryResult = runtime.query_site_entry(session.party.party_id, poi.poi_id)
+	assert(remote.can_enter, "POI Site entry still depends on Party locality")
 	session.party.set_global_region_cell(poi.global_region_cell)
 	var allowed: SiteEntryQueryResult = runtime.query_site_entry(session.party.party_id, poi.poi_id)
 	assert(allowed.can_enter and allowed.site_id == poi.poi_id, "Party at Site was rejected or identity was lost")
 	assert(allowed.site_definition != null, "Site Entry Query did not resolve Site definition")
-	print("SITE TEST 20 PASS: Site Entry Query still validates Party location")
+	print("SITE TEST 20 PASS: Site Entry Query ignores Party locality")
 
 func _test_navigation_has_no_site_state_ownership() -> void:
 	var source: String = _source("res://scripts/core/navigation_controller.gd")
@@ -462,6 +462,10 @@ func _test_site_layout_bounds() -> void:
 	assert(layout.entrance_local_meters == definition.entrance_local_meters, "Layout lost the Site entrance anchor")
 	for point: Vector2i in layout.primary_path_meters:
 		assert(layout.bounds_meters.has_point(point), "Primary path point escaped Site bounds")
+	for index: int in range(1, layout.primary_path_meters.size()):
+		var delta: Vector2i = layout.primary_path_meters[index] - layout.primary_path_meters[index - 1]
+		assert(absi(delta.x) + absi(delta.y) > 0, "Primary path contains a duplicate point")
+		assert(delta.x == 0 or delta.y == 0, "Primary Site path contains a diagonal segment")
 	for point: Vector2i in layout.landmark_points_meters:
 		assert(layout.bounds_meters.has_point(point), "Landmark point escaped Site bounds")
 	print("SITE TEST 31 PASS: 50x50 Site grid aligns with one Region Strategic Cell")
@@ -598,6 +602,10 @@ func _test_mountain_pass_contract() -> void:
 		not TravelCostConfig.can_traverse_site_edge(open_cell, pass_cell, Vector2i.DOWN),
 		"Strategic path entered an east-west Mountain Pass from the north"
 	)
+	assert(
+		not TravelCostConfig.can_traverse_site_edge(open_cell, open_cell, Vector2i.ONE),
+		"Strategic path accepted a diagonal Site edge"
+	)
 	print("SITE TEST 35 PASS: strategic Site exits constrain Mountain Pass travel")
 
 func _test_mountain_pass_blocks_local_movement() -> void:
@@ -638,12 +646,31 @@ func _test_mountain_pass_blocks_local_movement() -> void:
 func _layout_signature(layout: SiteLayoutDataType) -> String:
 	if layout == null:
 		return "null"
-	return "%s|%s|%s|%s" % [
+	return "%s|%s|%s|%s|%s|%s|%s|%s" % [
 		str(layout.bounds_meters),
 		str(layout.hub_local_meters),
 		str(layout.primary_path_meters),
 		str(layout.landmark_points_meters),
+		str(layout.elevation_levels),
+		str(layout.surface_flags),
+		str(layout.height_edge_flags),
+		_transition_layout_signature(layout),
 	]
+
+func _transition_layout_signature(layout: SiteLayoutDataType) -> String:
+	var values: Array[String] = []
+	for transition: SiteTransitionData in layout.transitions:
+		if transition == null:
+			continue
+		values.append("%s>%s:%d/%d/%d/%d" % [
+			str(transition.from_cell),
+			str(transition.to_cell),
+			transition.from_level,
+			transition.to_level,
+			transition.kind,
+			transition.width_cells,
+		])
+	return ";".join(values)
 
 func _new_session() -> GameSession:
 	var session: GameSession = GameSession.new()

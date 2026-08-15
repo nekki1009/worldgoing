@@ -1,6 +1,7 @@
 extends SceneTree
 
 const TEST_SEED: int = 123456789
+const MapArtCatalogType = preload("res://scripts/data/map_art_catalog.gd")
 const SiteLayoutDataType = preload("res://scripts/data/site_layout_data.gd")
 const SiteLayoutGeneratorType = preload("res://scripts/core/site_layout_generator.gd")
 
@@ -15,8 +16,10 @@ func _run() -> void:
 	_test_eight_terrain_visual_codes()
 	_test_world_thumbnail_uses_site_visual_rules()
 	_test_world_bounds_are_lazy()
+	_test_map_art_assets()
+	_test_site_art_assets_and_generated_layout()
 	await _test_map_textures()
-	print("Visual composition tests passed: 6 cases")
+	print("Visual composition tests passed: 8 cases")
 	quit()
 
 func _test_site_visual_base() -> void:
@@ -111,6 +114,45 @@ func _test_world_bounds_are_lazy() -> void:
 	assert(bounded_data.get_region(Vector2i(256, 0)) == null, "World bounds accepted an out-of-range cell")
 	print("VISUAL TEST 5 PASS: 256x256 World bounds are centralized and lazy")
 
+func _test_map_art_assets() -> void:
+	for terrain_type: int in range(TerrainType.COUNT):
+		var texture: Texture2D = MapArtCatalogType.terrain_texture(terrain_type)
+		assert(texture != null, "Missing map art texture for terrain %d" % terrain_type)
+		assert(texture.get_width() == 256 and texture.get_height() == 256, "Map art texture size is not 256x256")
+	for poi_type: int in range(5):
+		var poi_texture: Texture2D = MapArtCatalogType.poi_texture(poi_type)
+		assert(poi_texture != null, "Missing POI art texture for type %d" % poi_type)
+		assert(poi_texture.get_width() == 128 and poi_texture.get_height() == 128, "POI art texture size is not 128x128")
+	var outpost_texture: Texture2D = MapArtCatalogType.outpost_texture()
+	assert(outpost_texture != null, "Missing outpost art texture")
+	assert(outpost_texture.get_width() == 128 and outpost_texture.get_height() == 128, "Outpost art texture size is not 128x128")
+	print("VISUAL TEST 6 PASS: terrain and POI map art load through the shared catalog")
+
+func _test_site_art_assets_and_generated_layout() -> void:
+	var expected_keys: Array[String] = [
+		"path_straight", "road_bend", "road_t_junction", "road_crossing",
+		"river_straight", "river_bend", "river_source", "river_mouth",
+		"bridge", "mountain_pass_cliff", "entrance_gate", "stone_marker",
+		"tree_cluster", "rock_cluster", "swamp_reeds", "snow_dune",
+		"sand_dune", "dry_bush", "snowdrift", "deadwood",
+	]
+	for key: String in expected_keys:
+		var texture: Texture2D = MapArtCatalogType.site_texture(key)
+		assert(texture != null, "Missing Site art texture: %s" % key)
+		assert(texture.get_width() > 0 and texture.get_height() > 0, "Empty Site art texture: %s" % key)
+		var image: Image = texture.get_image()
+		assert(image != null and not image.is_empty(), "Site art texture has no image: %s" % key)
+		assert(image.get_pixel(0, 0).a < 0.1, "Site art texture is not transparent at border: %s" % key)
+	var poi: WorldPOIData = _first_poi()
+	var definition: SiteData = world_data.get_site_definition(poi)
+	var layout: SiteLayoutData = world_data.get_site_layout(definition)
+	assert(layout != null and layout.is_valid(), "Generated Site layout is invalid for art coverage")
+	assert(layout.primary_path_meters.size() >= 3, "Generated Site path is incomplete for art coverage")
+	assert(layout.landmark_points_meters.size() >= 4, "Generated Site landmarks are incomplete for art coverage")
+	assert(layout.has_visual_base(), "Generated Site visual base missing for art coverage")
+	assert(SiteLayoutDataType.visual_has_crossing(SiteLayoutDataType.VISUAL_ROAD | SiteLayoutDataType.VISUAL_RIVER), "Visual crossing contract was lost")
+	print("VISUAL TEST 8 PASS: Site traffic, landmark, transport, cliff and terrain-detail art load and cover a generated layout")
+
 func _test_map_textures() -> void:
 	var poi: WorldPOIData = _first_poi()
 	var main_scene: PackedScene = load("res://scenes/Main.tscn") as PackedScene
@@ -131,10 +173,13 @@ func _test_map_textures() -> void:
 	await process_frame
 	var site_map: SiteMap = navigation.get_current_map() as SiteMap
 	assert(site_map != null and site_map.site_texture != null, "SiteMap did not create a visual texture")
-	assert(site_map.site_texture.get_width() == SiteLayoutDataType.GRID_SIZE.x, "Site texture is not 50 cells wide")
+	assert(
+		site_map.site_texture.get_width() == MapArtCatalogType.SITE_DETAIL_SURFACE_PIXELS,
+		"Site texture did not use the near-camera detail surface"
+	)
 	main.queue_free()
 	await process_frame
-	print("VISUAL TEST 6 PASS: World -> Region -> Site presentation textures are present")
+	print("VISUAL TEST 7 PASS: World -> Region -> Site presentation textures are present")
 
 func _first_poi() -> WorldPOIData:
 	for y: int in range(WorldData.WORLD_CELLS.y):

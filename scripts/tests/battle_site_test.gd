@@ -210,7 +210,10 @@ func _test_road_and_river_projection() -> void:
 	for cell: Dictionary in river_snapshot.footprint_cells:
 		if bool(cell["river"]):
 			river_seen = true
-			assert(not (cell["river_connection_offsets"] as Array).is_empty(), "River corridor has no direction")
+			var river_offsets: Array = cell["river_connection_offsets"] as Array
+			assert(not river_offsets.is_empty(), "River corridor has no direction")
+			for value: Variant in river_offsets:
+				assert(value is Vector2i and absi((value as Vector2i).x) + absi((value as Vector2i).y) == 1, "River corridor contains a diagonal connection")
 	assert(river_seen, "Resolved River disappeared from preview")
 
 func _test_determinism(runtime: BattlePreviewRuntime) -> void:
@@ -301,7 +304,14 @@ func _test_active_battle_runtime(
 	assert(begin.success and begin.snapshot != null, "Active Battle Runtime did not begin")
 	assert(session.has_active_battle(), "GameSession did not own active Battle state")
 	var state: BattleRuntimeState = session.active_battle_state
-	assert(state.formations.size() == 18, "Deployment did not create deterministic formations")
+	var deployed_personnel: int = 0
+	for value: Variant in state.formations.values():
+		if value is BattleFormationData:
+			deployed_personnel += (value as BattleFormationData).personnel_count
+	var expected_deployed: int = int(state.base_snapshot.attacker_deployment["initial_deployed_personnel"]) \
+		+ int(state.base_snapshot.defender_deployment["initial_deployed_personnel"])
+	assert(state.formations.size() >= 2 and deployed_personnel == expected_deployed,
+		"Deployment must keep both commanders and account for every deployed soldier")
 	var attacker_id: String = ""
 	for key: Variant in state.formations.keys():
 		var formation: BattleFormationData = state.formations[key] as BattleFormationData
@@ -495,10 +505,13 @@ func _test_region_battle_return() -> void:
 	var first_battle_id: String = battle_site.snapshot.context.battle_id
 	var first_terrain_hash: String = battle_site.snapshot.terrain_hash
 	var first_preview_hash: String = battle_site.snapshot.preview_hash
-	assert(battle_site.preview_marker_count("attacker") == 5)
-	assert(battle_site.preview_marker_count("defender") == 5)
-	assert(battle_site.soldier_multimesh.instance_count == 1_800)
-	assert(battle_site.soldier_multimesh.visible_instance_count == 1_800)
+	assert(battle_site.preview_marker_count("attacker") > 0)
+	assert(battle_site.preview_marker_count("defender") > 0)
+	var expected_battle_personnel: int = 0
+	for formation: BattleFormationData in battle_site.active_formations:
+		expected_battle_personnel += formation.personnel_count
+	assert(battle_site.soldier_multimesh.instance_count == expected_battle_personnel)
+	assert(battle_site.soldier_multimesh.visible_instance_count == expected_battle_personnel)
 	assert(_descendant_count(battle_site) < 30, "Battle preview instantiated a large Node population")
 	assert(not _has_soldier_nodes(battle_site), "Battle preview instantiated soldier/AI Nodes")
 	var selected_attacker: BattleFormationData = null
@@ -644,7 +657,7 @@ func _test_max_personnel_visual() -> void:
 		active_visual_instances += int(range_value["count"])
 	assert(active_visual_instances == active_personnel,
 		"Formation personnel is not mapped one-dot-per-person")
-	assert(battle_site.get_debug_state()["person_visual"] == "1 rectangle per person (1.20m x 2.40m)")
+	assert(battle_site.get_debug_state()["person_visual"] == "reference NPC (64x64 / 0.60m x 1.80m)")
 	assert(_descendant_count(battle_site) < 30)
 	assert(not _has_soldier_nodes(battle_site))
 	battle_site.queue_free()

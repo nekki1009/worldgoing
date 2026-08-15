@@ -13,7 +13,7 @@ func _run() -> void:
 	_test_road_travel_time()
 	_test_forest_travel_time()
 	_test_mountain_travel_time()
-	_test_diagonal_distance()
+	_test_orthogonal_path_to_diagonal_goal()
 	_test_water_is_impassable()
 	_test_river_requires_crossing()
 	_test_river_road_crossing()
@@ -58,11 +58,15 @@ func _test_mountain_travel_time() -> void:
 	assert(result.estimated_travel_seconds == 180, "100m Mountain should take 180 seconds")
 	print("TEST 4 PASS: 100m Mountain = 180 seconds")
 
-func _test_diagonal_distance() -> void:
+func _test_orthogonal_path_to_diagonal_goal() -> void:
 	var result: PartyPathResult = _path(_plains_data(), RegionRoadOverlay.new(), Vector2i(0, 0), Vector2i(1, 1))
-	assert(is_equal_approx(result.total_distance_meters, 141.421356), "Diagonal distance is not 141.421m")
-	assert(result.estimated_travel_seconds == 102, "Diagonal Plains time is not scaled by sqrt(2)")
-	print("TEST 5 PASS: diagonal distance and travel time use sqrt(2)")
+	assert(result.has_path(), "Orthogonal path to diagonal goal is missing")
+	assert(result.total_distance_meters == 200.0, "Two cardinal steps should total 200m")
+	assert(result.estimated_travel_seconds == 144, "Two cardinal Plains steps should take 144 seconds")
+	for index: int in range(1, result.cells.size()):
+		var delta: Vector2i = result.cells[index] - result.cells[index - 1]
+		assert(absi(delta.x) + absi(delta.y) == 1, "Party path contains a diagonal step")
+	print("TEST 5 PASS: diagonal goal is reached through four-way movement")
 
 func _test_water_is_impassable() -> void:
 	var data: RegionTerrainData = _plains_data()
@@ -166,8 +170,8 @@ func _test_poi_entry_distance() -> void:
 	assert(navigation.can_enter_site_at(poi.region_cell), "Party at POI could not enter Site")
 	var away: Vector2i = poi.region_cell + Vector2i(1, 0) if poi.region_cell.x < 99 else poi.region_cell - Vector2i(1, 0)
 	navigation.session.party.current_region_cell = away
-	assert(not navigation.can_enter_site_at(poi.region_cell), "Remote Site entry was allowed")
-	print("TEST 13 PASS: POI entry requires Party Cell match")
+	assert(navigation.can_enter_site_at(poi.region_cell), "Remote Site entry still requires Party Cell match")
+	print("TEST 13 PASS: Region tile Site entry is independent from Party Cell match")
 
 func _test_preview_cancel() -> void:
 	# The live RegionMap movement test above exercises the public preview API.

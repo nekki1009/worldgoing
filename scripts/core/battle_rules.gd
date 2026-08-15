@@ -181,7 +181,7 @@ static func tactical_step_seconds(
 	)
 	if speed <= 0.0:
 		return INF
+	if absi(direction.x) + absi(direction.y) != 1:
+		return INF
 	var distance: float = float(SiteLayoutDataType.CELL_SIZE_METERS)
-	if direction.x != 0 and direction.y != 0:
-		distance *= sqrt(2.0)
 	return distance / speed

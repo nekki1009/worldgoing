@@ -39,6 +39,14 @@ const FRAME_COLUMNS: int = 8
 const SOURCE_ROWS: int = 3
 const WORLD_ANCHOR: Vector2 = Vector2(32.0, 56.0)
 const SPRITE_OFFSET: Vector2 = -WORLD_ANCHOR
+const CAPE_SHOULDER_TOP: int = 22
+# Side-facing horse muzzle pixels may remain in this upper band; every horse
+# foreground pixel below it must leave the rider's Body/Armor silhouette clear.
+const MOUNT_RIDER_CLEARANCE_HEAD_END: int = 12
+# In frontal mounted views the horse neck/head belongs in front of the
+# rider's lower torso.  Preserve that overlap below the rider's chest while
+# keeping the face/head band clear.
+const MOUNT_FRONT_HEAD_OVERLAP_START: int = 28
 
 @export var visual_id: StringName = &""
 @export_enum(
@@ -57,6 +65,19 @@ const SPRITE_OFFSET: Vector2 = -WORLD_ANCHOR
 @export var mounted_female: Texture2D
 @export var mounted_unisex: Texture2D
 
+## Optional action-specific sheets.  Indexes use PaperDollAnimation.Action.
+## Each supplied sheet keeps the same 8 columns x 3 direction rows contract.
+## Empty entries deliberately fall back to the pose's base sheet.
+@export_group("Optional Action Sheets")
+@export var on_foot_action_sheets: Array[Texture2D] = []
+@export var mounted_action_sheets: Array[Texture2D] = []
+
+func has_action_sheet(is_mounted: bool, action: int) -> bool:
+	if not PaperDollAnimation.is_valid_action(action):
+		return false
+	var sheets: Array[Texture2D] = mounted_action_sheets if is_mounted else on_foot_action_sheets
+	return action < sheets.size() and sheets[action] != null
+
 func resolve(gender: int, is_mounted: bool) -> Texture2D:
 	if not is_valid_gender(gender):
 		return null
@@ -67,6 +88,15 @@ func resolve(gender: int, is_mounted: bool) -> Texture2D:
 	if is_mounted:
 		return mounted_male if gender == Gender.MALE else mounted_female
 	return on_foot_male if gender == Gender.MALE else on_foot_female
+
+func resolve_action(gender: int, is_mounted: bool, action: int) -> Texture2D:
+	var base: Texture2D = resolve(gender, is_mounted)
+	if not PaperDollAnimation.is_valid_action(action):
+		return base
+	var sheets: Array[Texture2D] = mounted_action_sheets if is_mounted else on_foot_action_sheets
+	if action < sheets.size() and sheets[action] != null:
+		return sheets[action]
+	return base
 
 func validation_issues() -> PackedStringArray:
 	var issues: PackedStringArray = []
@@ -88,6 +118,7 @@ func validation_issues() -> PackedStringArray:
 		else:
 			_append_texture_issue(issues, mounted_male, "%s mounted_male" % label)
 			_append_texture_issue(issues, mounted_female, "%s mounted_female" % label)
+		_validate_action_sheets(issues, label)
 		return issues
 
 	if gender_policy == GenderPolicy.UNISEX:
@@ -98,7 +129,23 @@ func validation_issues() -> PackedStringArray:
 		_append_texture_issue(issues, on_foot_female, "%s on_foot_female" % label)
 		_append_texture_issue(issues, mounted_male, "%s mounted_male" % label)
 		_append_texture_issue(issues, mounted_female, "%s mounted_female" % label)
+	_validate_action_sheets(issues, label)
 	return issues
+
+func _validate_action_sheets(issues: PackedStringArray, label: String) -> void:
+	for action: int in range(PaperDollAnimation.Action.COUNT):
+		if action < on_foot_action_sheets.size() and on_foot_action_sheets[action] != null:
+			_append_texture_issue(
+				issues,
+				on_foot_action_sheets[action],
+				"%s on_foot action %s" % [label, PaperDollAnimation.action_name(action)]
+			)
+		if action < mounted_action_sheets.size() and mounted_action_sheets[action] != null:
+			_append_texture_issue(
+				issues,
+				mounted_action_sheets[action],
+				"%s mounted action %s" % [label, PaperDollAnimation.action_name(action)]
+			)
 
 static func is_valid_visual_id(value: StringName) -> bool:
 	var text: String = str(value)
@@ -133,6 +180,13 @@ static func is_mounted_only_layer(layer: int) -> bool:
 
 static func source_row_for(facing: int) -> int:
 	return Facing.RIGHT if facing == Facing.LEFT else facing
+
+static func armor_top_cut(_is_mounted: bool, _source_row: int) -> int:
+	# The reference armor includes shoulder/collar pixels above the Body's
+	# torso centre.  Keep that upper shoulder band; the packer separately clears
+	# only pixels that actually overlap the face.  This prevents the runtime
+	# armor from degenerating into leg plates while preserving the head slot.
+	return 18
 
 static func layer_name(layer: int) -> String:
 	match layer:

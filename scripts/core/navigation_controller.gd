@@ -46,7 +46,7 @@ func setup(p_map_root: Node2D) -> void:
 
 func start() -> void:
 	_sync_runtime()
-	travel_runtime.ensure_party_ready()
+	world_data.get_or_generate_world_overview(session.world_seed)
 	show_world()
 
 func get_current_layer() -> int:
@@ -101,6 +101,13 @@ func show_region(preserve_selection: bool = false) -> void:
 		session.selected_world_cell,
 		session.world_seed
 	)
+	# Region Site profiles are packed strategic-cell data.  Materialise them at
+	# Region entry so every later Site (POI or ordinary tile) reads the same
+	# deterministic allocation instead of falling back to a second formula.
+	world_data.get_or_generate_region_site_content(
+		session.selected_world_cell,
+		session.world_seed
+	)
 	var road_overlay: RegionRoadOverlay = world_data.get_roads_for_region(
 		session.selected_world_cell,
 		session.world_seed
@@ -133,20 +140,28 @@ func show_site(
 	var site_definition: SiteData = definition if definition != null else world_data.get_site_definition(poi)
 	if site_definition == null:
 		return
+	show_site_definition(site_definition, snapshot)
+
+func show_site_definition(
+		definition: SiteData,
+		snapshot: SiteRuntimeSnapshot = null
+	) -> void:
+	_sync_runtime()
+	if definition == null:
+		return
 	var begin_result: SiteRuntimeCommandResult = travel_runtime.begin_site_visit(
 		session.party.party_id,
-		site_definition.site_id
+		definition.site_id
 	)
 	if not begin_result.success:
 		return
 	var site_snapshot: SiteRuntimeSnapshot = snapshot
 	if site_snapshot == null:
-		var query_result: SiteRuntimeQueryResult = travel_runtime.query_site_snapshot(site_definition.site_id)
+		var query_result: SiteRuntimeQueryResult = travel_runtime.query_site_snapshot(definition.site_id)
 		if not query_result.success:
 			return
 		site_snapshot = query_result.snapshot
 	current_layer = MapLayer.SITE
-	site_snapshot.party_site_local_cell = session.party.current_site_local_cell
 	var site_map: SiteMap = _replace_map(SITE_MAP_SCENE) as SiteMap
 	site_map.move_requested.connect(_on_site_move_requested)
 	site_map.debug_state_changed.connect(_on_map_debug_state_changed)
@@ -227,6 +242,7 @@ func enter_region(world_cell: Vector2i) -> void:
 	if not world_data.is_valid_world_cell(world_cell):
 		return
 	session.selected_world_cell = world_cell
+	travel_runtime.ensure_party_spawn(world_cell, session.selected_region_cell)
 	show_region()
 
 func enter_site_at(region_cell: Vector2i) -> void:
@@ -239,9 +255,7 @@ func enter_site_at(region_cell: Vector2i) -> void:
 	if not entry.can_enter:
 		return
 	session.selected_region_cell = region_cell
-	var poi: WorldPOIData = entry.poi
-	if poi != null:
-		show_site(poi, entry.site_definition)
+	show_site_definition(entry.site_definition)
 
 func can_enter_site_at(region_cell: Vector2i) -> bool:
 	_sync_runtime()
@@ -352,8 +366,11 @@ func _emit_current_debug_state() -> void:
 
 func _on_travel_started(_result: TravelCommandResult) -> void:
 	_sync_runtime()
-	if current_layer != MapLayer.REGION and map_root != null:
-		session.selected_world_cell = session.party.get_world_cell()
+	var party_world_cell: Vector2i = session.party.get_world_cell()
+	var region_tracks_party: bool = current_layer == MapLayer.REGION \
+		and session.selected_world_cell == party_world_cell
+	if not region_tracks_party and map_root != null:
+		session.selected_world_cell = party_world_cell
 		session.selected_region_cell = session.party.get_region_cell()
 		show_region()
 	_start_travel_loop()

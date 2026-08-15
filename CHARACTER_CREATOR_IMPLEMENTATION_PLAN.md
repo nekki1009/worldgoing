@@ -1,19 +1,57 @@
 # Worldgoing 角色生成器與紙娃娃素材實驗室實作計畫
 
-狀態：Gate 0 與 Milestone 1 已完成；Art Gate 1 待執行
+## 2026-08-13 目前實作狀態（可直接驗收）
+
+### 已完成
+
+- `CharacterCreator` 是 presentation-only 素材實驗室；不寫入 `GameSession`、Persistence、gameplay Item/Mount 或 Battle。
+- `PaperDollPreviewDraft` 可逐槽替換 Body、Armor、Hair、Helmet、Cape、Weapon、Shield、Mount Barding，以及三個坐騎部件；正式預設為白髮銀甲，Helmet/Shield 可由選單主動加入。
+- `PaperDollComposer` 只建立並重用固定 11 個 `Sprite2D`，統一控制 8×3 影格、LEFT 鏡像、Anchor `(32,56)`、Z-order；禁止 `AnimatedSprite2D`。
+- 動作選單可選 `IDLE/WALK/RUN/ATTACK/SPRINT_ATTACK/WORK/HIT/DOWN`。尚未有通過人工輪廓審核的逐動作分件美術時，`PaperDollActionSheet` 以同一套部件產生同步 fallback；UI 明確顯示 `reference-locked split layers + synchronized fallback`。
+- 染色分組已完成且互斥：
+  - `HAIR_BROWS`：頭髮與眉毛同色；眼睛像素保持不變。
+  - `ARMOR`：鎧甲與 Mount Barding。
+  - `CAPE`：披風。
+  - `MOUNT`：馬尾、馬身、馬頭；不會改到馬鎧。
+- 替換部件與染色皆為暫時預覽狀態，不污染原始 `Texture2D`；每個染色路徑先複製 `Image`。
+- 目前唯一的開啟預設已鎖定為「白髮／銀甲／深海軍藍披風」；Horse Dye 只在騎乘時影響馬匹，部件選單仍完整保留。
+- 已生成新的白髮銀甲攻擊板候選 `art_source/paper_doll/action_generated/worldgoing_attack_board_v2.png`，並成功離線拆出候選 sheets；因人工檢視仍未達正式分件品質，維持候選區，不接入 Catalog。
+
+### 驗收證據
+
+- Godot 4.6.2 editor scan：PASS，無腳本解析錯誤。
+- `scripts/tests/character_creator_test.gd`：PASS，10 cases；涵蓋逐槽替換、8 個動作、固定 Sprite pool、四方向、Anchor、Z-order、染色與 UI lifecycle。
+- `scripts/tools/verify_paper_doll_actions.gd`：PASS，8 actions × on-foot/mounted；逐方向確認 frame row、LEFT mirror、Z-order 與部件同步。
+- `scripts/tools/verify_paper_doll_visual.gd`：PASS，256 runtime frames；另外檢查 alternate alpha geometry、chroma-key、armor/body、horse clearance 與 dye ownership。
+- GPU capture：PASS，最新輸出位於 `.visual_captures/paper_doll/`，包含 `character_creator_split_on_foot_default_white_hair.png`、`character_creator_alternate_mounted_dyes.png`、`character_creator_split_mounted_sprint_dyed.png`；人工確認預設配色與獨立坐騎染色。
+
+### 尚未完成／不得誤標為完成
+
+- 目前 7 個非 IDLE 動作仍是可驗收的同步程式化 fallback，不是逐動作、逐部件的正式 ChatGPT 美術。第一張 ImageGen WALK board 雖通過尺寸與去背，但人工輪廓／比例未通過，因此沒有掛進正式 Catalog。
+- RUN、ATTACK、SPRINT_ATTACK、WORK、HIT、DOWN，以及 mounted 版本的正式分件動作素材仍需生成、拆層、對位、人工檢視後才可啟用。
+- PC 外觀持久化、gameplay equipment/mount owner、Battle `Texture2DArray`/shader 接線仍不在本計畫切片。
+
+### 下一個實作切片
+
+1. 以 `assets/doll/reference` 的白髮銀甲與騎乘範例為唯一比例基準，生成一個動作 board；禁止直接把完整 composite 當成單一部件。
+2. 先拆成每個 render layer 的 512×192 RGBA8 sheets，再跑去背、64×64 frame、Anchor、alpha mask、方向同步與染色回歸。
+3. 只有通過數值 gate 且人工查看四方向 contact sheet 與 GPU capture 後，才將該動作加入 `APPROVED_AUTHORED_ACTIONS`；失敗素材留在 `art_source/paper_doll/action_generated/`，不得進正式 Catalog。
+4. 每次啟用一個動作後，重跑 editor、character creator、action QA、visual QA 與 GPU capture；任何錯位都維持 fallback，不得退回完整板按鈕。
+
+狀態：Gate 0、Milestone 1 工程驗證完成；角色生成器正式預覽只驗收白髮銀甲完整 reference
 
 日期：2026-08-11
 
-`PROJECT_ARCHITECTURE.md` 仍是最高架構真實來源。目前只完成角色生成器的 Presentation 素材實驗室、synthetic Catalog、Recipe、Composer、contact sheet 與聚焦測試；Character、PC 權威外觀、Equipment、Mount gameplay、正式紙娃娃美術與 Battle shader 尚未實作。
+`PROJECT_ARCHITECTURE.md` 仍是最高架構真實來源。目前已完成角色生成器的 Presentation 素材實驗室、reference-derived Recipe／Composer／contact sheet 與聚焦測試；`artgate1_*` 22 張 runtime PNG 已由專案 `assets/doll/` 與 ChatGPT reference board 產出並接入 Catalog，但合成後的視覺品質仍未通過人工驗收，正在重做對位。Character、PC 權威外觀、Equipment、Mount gameplay、擴充紙娃娃美術與 Battle shader 尚未實作。
 
 Gate 0 已同步架構與規格文件；Milestone 1 已新增程式與場景，但沒有修改存檔格式或建立 PC gameplay owner。
 
 ## 1. 審核結論
 
-先做角色生成器是合適的，但第一版必須同時提供兩種嚴格分離的模式：
+先做角色生成器是合適的；第一版以白髮銀甲 reference 作為唯一可見生成器輸出，分層候選只由離線 QA 驗證：
 
 1. **PC 外觀模式**：編輯並保存角色固有外觀，只包含性別、身體外觀 ID 與髮型外觀 ID。
-2. **素材實驗室模式**：暫時掛載全部紙娃娃層、坐騎、方向與動畫，供逐項驗收美術；所有選擇都是 View 草稿，絕不寫入 PC、裝備、坐騎或存檔。
+2. **素材實驗室模式**：生成器以白髮銀甲作為預設，顯示由 Catalog 解析的獨立分層部件、動作與暫時染色；完整 reference 仍由 contact sheet 與離線 verifier 驗收，不作正式輸出。
 
 這個切分避免在 Equipment、Mount 與 Character gameplay 尚未建立前，讓一個開發工具搶先成為其資料 owner。角色生成器會產生可重用的外觀快照與已解析 Recipe；目前的 World／Region Party 標記維持原狀，Battle 也不在本計畫接入紙娃娃。
 
@@ -36,7 +74,7 @@ PC 外觀模式  -> detached draft -> GameSession.apply_player_appearance() -> �
 - PC 外觀的 Session owner、原子套用、取消不寫入，以及存檔 round-trip。
 - 可列舉 Catalog 全部素材的檢查面板、逐項上一個／下一個、播放／暫停、方向、影格與騎乘切換。
 - 由純 `Image` 合成的四方向 contact sheet 匯出，供自動檢查與 ChatGPT 視覺複核。
-- 一組合成測試材質，讓工程驗證不必等待正式美術。
+- 一組 reference-derived runtime 素材，以及一組合成測試材質供負向／格式驗證使用。
 - ChatGPT 美術的 staging、正規化、Catalog 登錄與驗收 Gate。
 
 ### 2.2 明確不做
@@ -161,13 +199,16 @@ Composer 只在 `_ready()` 建立一次 11 個 `Sprite2D`：
 
 ### 5.3 素材實驗室模式
 
-- Body、Armor、Hair、Helmet、Cape、Weapon、Shield、Mount、MountBarding 各一個選擇器；非必要層可選 `None`。
-- Mounted 開關；未選 Mount 時不可啟用 mounted，並顯示可讀錯誤。
+- 角色生成器以 `reference_parts` 的拆分部件作正式預覽，並以白髮銀甲作為 deterministic default；`reference_match_body_on_foot_unisex.png` 與 `reference_match_body_mounted_unisex.png` 只作離線人工驗收 fixture。
+- UI 不提供「Accepted reference／Layer preview」切換按鈕；金髮紫披風及其他未通過對位的分層組合只保留在離線 `reference_parts` Catalog，避免誤成為驗收畫面。
+- Mounted 開關只切換 approved reference 的步行／騎乘板，並保留同一 Anchor、方向與 frame 控制契約。
+
+- Body、Armor、Hair、Helmet、Cape、Weapon、Shield、Mount、MountBarding 的選擇器節點保留給離線 Catalog QA，但正式生成器畫面隱藏並鎖定 disabled，不得切換到未通過對位的分層組合。
+- Mounted 開關只切換 approved reference 的步行／騎乘板；未選 Mount 時不可啟用 mounted，並顯示可讀錯誤。
 - DOWN／UP／RIGHT／LEFT 四方向按鈕。
 - frame 0–7 滑桿、上一格／下一格、播放／暫停與 FPS（1–16）控制。
-- 切換性別、姿勢、方向或素材時保留目前 frame，方便直接比較 Anchor 與抖動；關閉視窗時 Timer 停止。
-- 「檢查全部」依 `visual_id` 排序，列出 PASS／FAIL、錯誤原因與下一個失敗項目。
-- 「匯出 Contact Sheets」產生每項素材的 4×8 邏輯方向表；LEFT 必須是實際鏡像後的結果，而非複製 RIGHT 像素。
+- approved reference 支援步行／騎乘、四方向與統一 frame row；若 reference sheet 的 8 格是靜態複製，播放／scrub 控制會誠實停用，避免假動畫。關閉視窗時 Timer 停止。
+- `Check All`、`Export Contact Sheets` 與 failure 導覽只保留給離線測試入口；正式預覽介面不顯示它們，避免把未通過對位的候選重新帶回驗收畫面。
 
 素材實驗室不得取得 `GameSession.apply_player_appearance` 的 Callable，也不得在切換頁籤時把裝備／坐騎選擇拷入 PC 草稿。這項隔離需要自動測試，而不只靠程式註解。
 
@@ -236,7 +277,7 @@ ChatGPT 先小批量產生，再由確定性工具組裝或正規化成 runtime 
 修改：
 
 - `PROJECT_ARCHITECTURE.md`：新增最小 PC 外觀 owner，以及角色生成器／素材實驗室的 Presentation 邊界。
-- `ARCHITECTURE_STATUS.md`：分開標示 synthetic 素材實驗室已實作，以及 PC 權威外觀、正式美術與 Battle 接線仍未實作；不得用局部完成掩蓋後續範圍。
+- `ARCHITECTURE_STATUS.md`：分開標示 reference-derived Art Gate 1 素材實驗室已實作，以及 PC 權威外觀、擴充美術庫與 Battle 接線仍未實作；不得用局部完成掩蓋後續範圍。
 - 本文件與紙娃娃總計畫：同步 sheet、Anchor、Layer 與優先順序。
 
 通過證據：owner、未來 v2 存檔欄位、正式 male／female 預設 visual IDs、11 層、512×192 來源 sheet、Anchor、LEFT component flip 與 ChatGPT 輸入契約均已寫入最高架構文件及 V3 規格；synthetic `debug_*` ID 明確禁止進入存檔。
@@ -262,13 +303,19 @@ scripts/tests/character_creator_test.gd
 
 已修改：`scripts/main.gd`、`scripts/ui/debug_ui.gd`、`scenes/ui/DebugUI.tscn`。`Main.tscn` 不需修改；`Main` 在第一次按下入口時才 lazy instantiate，之後重用同一實例。
 
-通過證據：`character_creator_test.gd` 7/7 PASS；合成測試材質可在四方向 × 八影格切換，LEFT 正確鏡像與復位，11 個 Sprite 重複套用不增生，完整 z-index、Anchor、mounted visibility、RGBA8／alpha／空 frame 驗證、34 張全 Catalog 匯出與 contact sheet 驗證 PASS；DebugUI lazy entry 與 NavigationController 輸入停用／恢復 PASS。Godot 4.6.2 class scan、Main headless startup、Architecture smoke 與專案預設 D3D12 Forward+ 實際 UI capture 均 PASS。
+工程通過證據：`character_creator_test.gd` 10/10 PASS；approved reference 的步行／騎乘、方向／鏡像、Anchor 與 UI 啟動均由實際 Godot runtime capture 驗證。`reference_parts` Catalog 仍由離線 `verify_paper_doll_visual.gd` 逐格檢查 256 格與 42 張 contact sheet；這些是工程護欄，不等同於美術驗收。
 
-### Art Gate 1：ChatGPT 最小素材包
+### Art Gate 1：ChatGPT 參考素材導入
 
-依第 6.2 節生成第一批素材，只有自動檢查與兩組完整疊層 capture 都通過者才加入 Catalog。
+目前對位修正集中在 reference packer：armor 不再裁掉鞋底，並以 Body 每條 scanline 作為水平骨架；側向 weapon／shield 以手持側／背側偏移；騎乘 DOWN/UP 的馬頭僅在騎士胸口以下覆蓋。逐格 QA 同時驗證中心線、腳底線、silhouette 外溢與側向武器位置，避免「測試有像素但頭／衣服／武器仍漂移」的假通過。
 
-通過條件：PC 的 male／female body 與 hair 有有效預設值；每個 layer 至少一件測試素材；Mount 三部件完整；素材實驗室「檢查全部」為 PASS；人工／ChatGPT 複核 contact sheets 沒有可見錯位。
+狀態：**工程管線完成；視覺驗收未通過（2026-08-11）**。`assets/paper_doll/reference_parts/` 的 22 張 `512×192` RGBA8 runtime PNG 由 `scripts/tools/build_paper_doll_reference_pack.gd` 從 reference board 去背、裁切、nearest 對齊後產出；pack tool 會先檢查 `assets/doll/` 六張專案 reference image 仍存在，避免素材來源被悄悄換掉。`PaperDollCatalog.create_art_gate1_catalog()` 已優先載入這些 Texture，缺檔才回退到工程用 procedural fallback；但整體角色／坐騎合成仍需人工視覺複核與對位重工。
+
+通過證據：角色生成器可由拆分 Catalog 開啟白髮銀甲預設，mounted toggle 切換同一組拆分部件的馬匹層且保留 frame；UI 不提供完整板切換。`reference_match` 仍由 Catalog、42 張 contact sheets 與 verifier 作離線驗收 fixture。
+
+reference source：`art_source/paper_doll/reference_generated/` 的角色／裝備／坐騎 reference board；runtime pack 與 UI 仍沿用同一 Catalog／Composer／ContactSheet，不另建第二套渲染管線。
+
+生成器初始素材實驗室預覽會清除 Helmet／Shield，保留 Body、Armor、Hair、Cape、Weapon 以確保臉部與 Anchor 可直接目視；Helmet／Shield 仍可由選擇器加入，完整壓力配方與逐格 QA 不省略任何 layer。
 
 ### Milestone 2：PC 外觀 owner、套用與持久化
 
@@ -313,7 +360,11 @@ ChatGPT 依小批次擴充 Catalog。每批都執行相同自動檢查、逐素�
 | Visual | 每素材 contact sheet、步行／騎乘全層壓力配方 | `.visual_captures/paper_doll/` |
 | Runtime UI | 開關、ESC、輸入停用／恢復、Forward Plus 實畫面 | 實際執行與 exit code |
 
-單元與資料驗證 PASS 不等於美術驗收 PASS；headless 測試也不取代 Forward Plus 畫面檢查。最終交付需分別報告自動測試、實際 UI capture 與仍需人工判斷的動畫美感。
+- `scripts/tools/verify_paper_doll_visual.gd` 已通過逐格工程視覺護欄：不經 UI／guides，直接合成完整壓力配方與臉部可讀預覽配方，男女各跑步行／騎乘 4 方向 × 8 影格（共 256 格），檢查去背殘留、影格越界、Anchor 下緣、Body head→torso→feet 連通、Armor 肩線／中心／腳底／silhouette 外溢、側向 weapon／shield 手持側、Armor/Body face ROI 交集、頭部可見性與馬頭／馬身關係，並輸出放大 QA 圖至 `.visual_captures/paper_doll/qa/`。披風各方向在打包時清除高於頭部的肩線溢出，UP 列另保留既定 z-index 並清出頭部開口；MountHead 只允許 DOWN/UP 胸口以下前景重疊，MountBarding 不得覆蓋騎士。這仍不是最終美術簽核。
+
+單元與資料驗證 PASS 不等於美術驗收 PASS；headless 測試也不取代 Forward Plus 畫面檢查。騎乘素材特別要求：`MountBarding` 即使維持規格 z-index，也必須在 pack 階段對 Body+Armor 建立透明 rider-clearance；`MountHead` 僅允許 DOWN/UP 胸口以下的前景重疊，不能覆蓋臉部。否則會出現「頭在馬腿上」的假通過。最終交付需分別報告自動測試、實際 UI capture 與仍需人工判斷的動畫美感。
+
+本輪另補上 row-packed 素材的漏像素 gate：reference packer 在 trim 前清除 Helmet／Armor 的下一列連通島，並逐 frame 清理 Cape／Weapon／Shield 的外來像素；runtime QA 逐格拒絕 Weapon 多連通元件、Shield foreign-row band 與非紫色 Cape 孤島。驗證順序固定為重建 PNG、強制 Godot import、runtime Texture2D QA、最後才看 OpenGL UI capture，避免匯入快取造成舊圖假通過。工程漏像素 gate 已 PASS；人工 Art Gate 仍需依最新 montage 簽核。
 
 ## 10. 完成定義
 
@@ -328,3 +379,111 @@ ChatGPT 依小批次擴充 Catalog。每批都執行相同自動檢查、逐素�
 7. `PROJECT_ARCHITECTURE.md`、`ARCHITECTURE_STATUS.md` 與兩份實作計畫反映相同的實際完成狀態。
 
 完成後的下一個合理工作是擴充 ChatGPT 素材庫；不是立即接 Battle。Battle 接線仍要等待真正的 Character／Equipment／Unit snapshot 契約。
+## 2026-08-13 Split Parts / Action / Dye Revision
+
+The formal generator now uses split parts, action clips, and transient dyes. Complete reference sheets remain offline acceptance fixtures only.
+
+- `CharacterCreator` is presentation-only and does not write `GameSession`, Persistence, gameplay equipment, mount ownership, or Battle state.
+- `PaperDollCatalog` resolves independent Body, Armor, Hair, Helmet, Cape, Weapon, Shield, Mount Barding, and Mount Tail/Body/Head parts from `assets/paper_doll/reference_parts/`.
+- `PaperDollComposer` reuses one fixed pool of 11 `Sprite2D` nodes. `AnimatedSprite2D` and per-soldier Nodes are forbidden.
+- `PaperDollAnimation.Action` exposes `IDLE`, `WALK`, `RUN`, `ATTACK`, `SPRINT_ATTACK`, `WORK`, `HIT`, and `DOWN`. Authored action sheets remain optional; when absent, `PaperDollActionSheet` generates a deterministic 512x192 sheet per split part, keeping weapon swing, cape sway, recoil, knockdown and all frame changes synchronized.
+- Hair + eyebrows share one dye group; Armor, Cape, and Mount have independent dye groups. Dyes are transient preview state and are never persisted.
+- `reference_match` complete boards and the accepted reference image are QA fixtures, not formal split-part generator output.
+
+Verification evidence for this revision:
+
+- Godot 4.6.2 editor scan: PASS, no project parse/script errors.
+- Canonical headless `character_creator_test.gd`: PASS, 10 cases, including split recipe visibility, all seven non-idle distinct action sheets, clip advance, four dye groups, mounted toggle, fixed Sprite pool, mirror, anchor, z-order, and dependency boundary.
+- Focused action QA: PASS for all 8 actions in on-foot and mounted recipes, with fixed-pool frame/mirror/z-order synchronization; montages are in `.visual_captures/paper_doll/qa/`.
+- Canonical GPU capture: PASS; inspect `.visual_captures/paper_doll/character_creator_action_*.png`, `character_creator_split_on_foot_walk_dyed.png`, and `character_creator_split_mounted_sprint_dyed.png`.
+- Dedicated per-layer action art is not yet present. The ImageGen attack candidate remains a staged composite and is not attached to a single split layer. The procedural action fallback has headless and GPU evidence; authored replacement art must pass the same size, alpha, anchor, synchronization and visual capture gates.
+
+Revision note: the current Asset Lab intentionally exposes independent split
+part selectors and transient dye controls. The default acceptance capture is
+white hair with silver armor; Helmet is opt-in and suppresses Hair to prevent a
+double head. The ImageGen attack candidate at
+`assets/paper_doll/action_candidates/worldgoing_attack_candidate.png` is a
+complete composite source, so it is staged for layer extraction and is not
+attached to any split layer.
+
+### 2026-08-13 multi-visual and dye verification correction
+
+- The Catalog now exposes 16 layer visuals and two mount bundles. `artgate1_*`
+  remains the default; `alt_*` entries are selectable and resolved per slot.
+- Alternate geometry inherits approved reference sheets and is recoloured by
+  the deterministic packer. The raw ImageGen board remains staged because its
+  direct crops failed the anchor/scale gate.
+- Runtime tests switch armor, hair, cape, weapon, shield, and the complete
+  alternate horse bundle, then capture both on-foot and mounted states. Dye
+  isolation is checked in both poses: hair+brows, armor+barding, cape, and
+  horse coat have no cross-layer mutations.
+- Accepted captures:
+  `.visual_captures/paper_doll/character_creator_alternate_on_foot_dyes.png`
+  and
+  `.visual_captures/paper_doll/character_creator_alternate_mounted_dyes.png`.
+- Visual QA compares each alternate alpha mask with its approved base for
+  armor, hair, cape, weapon, shield, barding, and all three horse parts; this
+  prevents a colour-only variant from hiding a new alignment regression.
+
+### 2026-08-14 Asset Lab shared-base correction
+
+- The accepted white-hair/silver-armor preset keeps the same calibrated
+  `reference_match_body_*` BODY sheet for every Asset Lab action. Selecting
+  `WALK`, `RUN`, `ATTACK`, or another action changes the unified frame column;
+  it must not replace the complete base with a legacy split/procedural body
+  sheet.
+- The catalog revision now contains 26 layer visuals, including eight approved
+  hairstyle silhouettes plus the light armor and light armor helmet; the older
+  16/24-visual counts above are historical.
+- The mounted checkbox is exercised through the real `CheckBox.toggled`
+  signal. Mounted preview uses the calibrated rider+horse BODY board, so the
+  intrinsic MountBody Sprite2D remains hidden instead of drawing a second horse.
+- Approved hairstyles are composited into that same base. Front/profile rows
+  align the hairstyle face opening to the calibrated head; the UP row keeps its
+  rear-head placement. The dye mask uses the identical row placement.
+- `scripts/tools/capture_character_creator_lab_visual.gd` now captures on-foot,
+  mounted, WALK, and mounted hairstyle direction states and asserts the shared
+  base plus actual OptionButton/CheckBox signal paths. The latest visual files
+  are under `.visual_captures/paper_doll/lab_visual/`.
+- The eight approved hairstyle IDs now use `GenderPolicy.GENDERED`: each owns
+  separate male/female 512x192 hair-only source sheets (16 PNGs total), while
+  the Asset Lab still exposes eight style choices for whichever gender is
+  selected. Mounted recipes reuse the corresponding gender's calibrated hair
+  source so gender switching cannot change alignment.
+- A later Godot verification attempt was blocked by a Mono signal-11 startup
+  crash after the code change; that timeout/crash is not treated as a pass and
+  requires a fresh isolated runtime before accepting new captures.
+
+### 2026-08-15 Gendered hairstyle acceptance
+
+- The isolated `.gender_lab_probe` runs the production `CharacterCreator`,
+  production `PaperDollCatalog._gendered_hair_visual`,
+  `PaperDollComposer`, and scene with the same 16 runtime
+  hairstyle sheets. The focused GPU run exits 0 in 7.69 s and writes
+  `.visual_captures/gendered_hair_lab/report.json`.
+- Reported gates: `male_styles=8`, `female_styles=8`, `hair_option_count=9`
+  (None + eight styles), real `GenderOption` signal `PASS`, distinct source
+  resources, and distinct source pixels for every male/female pair. The same
+  probe toggles `Mounted pose` and captures all 16 mounted combinations;
+  `mounted_signal=PASS`, `mounted_gendered_styles=16`.
+- The full Dropbox project launch remains a separate unverified boundary because
+  its 60-second headless startup timed out without script output; the isolated
+  result is the accepted focused evidence and is not misreported as a full
+  project runtime pass.
+
+### 2026-08-15 Light armor and crafting recipe acceptance
+
+- `PaperDollCatalog.create_art_gate1_catalog()` now exposes the unisex
+  `light_armor` and `light_armor_helmet` visuals for both on-foot and mounted
+  poses. All four checked-in sheets are 512x192, 8x3, RGBA PNGs with transparent
+  corners and are loaded directly from source PNGs before any optional Godot
+  import cache.
+- The Asset Lab keeps Armor and Helmet as independent OptionButton selections.
+  `PaperDollCraftingRecipe` records presentation-only costs using existing
+  canonical resource IDs (`forest`, `grass`, `iron_ore`) and exposes a pure
+  affordability query; it does not mutate inventory or become a gameplay owner.
+- The focused production-Catalog GPU probe writes four captures under
+  `.gender_lab_probe/.visual_captures/light_armor_lab/` and reports PASS for
+  both selectors, on-foot/mounted resolution, anchor-aligned rendering, and
+  sufficient/insufficient material queries. Full-project Editor startup remains
+  an independent environment boundary and is not claimed by this probe.

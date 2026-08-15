@@ -8,13 +8,18 @@ const WORLD_CELLS: Vector2i = Vector2i(256, 256)
 
 var regions: Dictionary = {}
 var terrain_generator: RegionTerrainGenerator = RegionTerrainGenerator.new()
+var overview_generator: WorldOverviewGenerator
+var site_content_generator: RegionSiteContentGenerator = RegionSiteContentGenerator.new()
 var poi_generator: WorldPOIGenerator
 var road_generator: WorldRoadGenerator
+var world_overview: WorldOverviewData
+var manifest_cache: Dictionary = {}
 var poi_cache: Dictionary = {}
 var poi_id_cache: Dictionary = {}
 var travel_data_cache: Dictionary = {}
 
 func _init() -> void:
+	overview_generator = WorldOverviewGenerator.new(terrain_generator)
 	poi_generator = WorldPOIGenerator.new(terrain_generator)
 	road_generator = WorldRoadGenerator.new(terrain_generator, Callable(self, "_get_road_pois_for_generator"))
 	_build_test_data()
@@ -43,6 +48,38 @@ func get_region(world_cell: Vector2i) -> RegionData:
 	regions[world_cell] = region
 	return region
 
+func get_or_generate_world_overview(world_seed: int) -> WorldOverviewData:
+	if world_seed == 0:
+		return null
+	if world_overview == null or not world_overview.is_valid() or world_overview.world_seed != world_seed:
+		world_overview = overview_generator.generate(world_seed, WORLD_CELLS)
+		manifest_cache.clear()
+	return world_overview
+
+func get_or_generate_region_manifest(
+		world_cell: Vector2i,
+		world_seed: int
+	) -> RegionGenerationManifest:
+	if not is_valid_world_cell(world_cell) or world_seed == 0:
+		return null
+	var cache_key: String = "%d:%d:%d:%d" % [
+		world_seed,
+		world_cell.x,
+		world_cell.y,
+		RegionGenerationManifest.GENERATION_VERSION,
+	]
+	var cached: Variant = manifest_cache.get(cache_key, null)
+	if cached is RegionGenerationManifest:
+		return (cached as RegionGenerationManifest).copy()
+	var overview: WorldOverviewData = get_or_generate_world_overview(world_seed)
+	var generated: RegionGenerationManifest = overview_generator.manifest_for(
+		world_seed,
+		world_cell,
+		overview
+	)
+	manifest_cache[cache_key] = generated
+	return generated.copy() if generated != null else null
+
 func get_or_generate_region_terrain(world_cell: Vector2i, world_seed: int) -> RegionTerrainData:
 	var region: RegionData = get_region(world_cell)
 	if region == null:
@@ -63,6 +100,25 @@ func get_or_generate_region_terrain(world_cell: Vector2i, world_seed: int) -> Re
 		region.seed = region_seed
 		region.terrain_generation_version = RegionTerrainGenerator.GENERATION_VERSION
 	return region.terrain_data
+
+func get_or_generate_region_site_content(
+		world_cell: Vector2i,
+		world_seed: int
+	) -> RegionSiteContentData:
+	var region: RegionData = get_region(world_cell)
+	if region == null:
+		return null
+	var manifest: RegionGenerationManifest = get_or_generate_region_manifest(world_cell, world_seed)
+	var terrain: RegionTerrainData = get_or_generate_region_terrain(world_cell, world_seed)
+	if manifest == null or terrain == null:
+		return null
+	if region.site_content_data == null \
+		or not region.site_content_data.is_valid() \
+		or region.site_content_data.world_seed != world_seed \
+		or region.site_content_data.generation_version != RegionSiteContentData.GENERATION_VERSION:
+		region.generation_manifest = manifest.copy()
+		region.site_content_data = site_content_generator.generate(manifest, terrain)
+	return region.site_content_data
 
 func get_or_generate_region_thumbnail(world_cell: Vector2i, world_seed: int) -> PackedByteArray:
 	var region: RegionData = get_region(world_cell)
@@ -145,12 +201,16 @@ func clear_generated_cache() -> void:
 		region.terrain_thumbnail_generation_version = 0
 		region.generated_poi_ids.clear()
 		region.generated_route_ids.clear()
+		region.generation_manifest = null
+		region.site_content_data = null
 	poi_cache.clear()
 	# Deterministic POI identity references stay available to detached Runtime
 	# queries even when generated terrain/POI arrays are discarded.
 	poi_generator.clear_cache()
 	road_generator.clear_cache()
 	travel_data_cache.clear()
+	manifest_cache.clear()
+	world_overview = null
 
 func sample_travel_data(world_seed: int, global_region_cell: Vector2i) -> Dictionary:
 	var cache_key: String = "travel:%d:%d:%d" % [world_seed, global_region_cell.x, global_region_cell.y]
@@ -158,7 +218,11 @@ func sample_travel_data(world_seed: int, global_region_cell: Vector2i) -> Dictio
 	if cached is Dictionary:
 		return cached as Dictionary
 	var macro_sample: Vector4 = terrain_generator.macro_sampler.sample(world_seed, global_region_cell)
-	var terrain_type: int = terrain_generator.classify_sample(macro_sample)
+	var terrain_type: int = terrain_generator.classify_region_sample(
+		world_seed,
+		global_region_cell,
+		macro_sample
+	)
 	var converted: Dictionary = WorldCoordinates.global_region_cell_to_world_region(global_region_cell)
 	var world_cell: Vector2i = converted["world_cell"] as Vector2i
 	var region_cell: Vector2i = converted["region_cell"] as Vector2i
@@ -200,8 +264,75 @@ func sample_travel_data(world_seed: int, global_region_cell: Vector2i) -> Dictio
 		"world_cell": world_cell,
 		"region_cell": region_cell,
 	}
+	var profile: Dictionary = _site_content_profile_for(world_cell, region_cell, world_seed)
+	for key: Variant in profile.keys():
+		result[key] = profile[key]
 	travel_data_cache[cache_key] = result
 	return result
+
+func _site_content_profile_for(
+		world_cell: Vector2i,
+		region_cell: Vector2i,
+		world_seed: int
+	) -> Dictionary:
+	var region: RegionData = regions.get(world_cell) as RegionData
+	if region != null and region.site_content_data != null \
+		and region.site_content_data.world_seed == world_seed:
+		return region.site_content_data.profile_at(region_cell)
+	var global_cell: Vector2i = WorldCoordinates.world_region_to_global_region_cell(
+		world_cell,
+		region_cell
+	)
+	var sample: Vector4 = terrain_generator.macro_sampler.sample(world_seed, global_cell)
+	var terrain_type: int = terrain_generator.classify_region_sample(
+		world_seed,
+		global_cell,
+		sample
+	)
+	var amounts: PackedInt32Array = PackedInt32Array()
+	amounts.resize(SiteContentTypes.RESOURCE_COUNT)
+	for resource_type: int in range(SiteContentTypes.RESOURCE_COUNT):
+		amounts[resource_type] = maxi(0, DeterministicHash.int_range(
+			world_seed,
+			global_cell,
+			73_000 + resource_type,
+			0,
+			_site_profile_resource_max(terrain_type, resource_type)
+		))
+	return {
+		"native_surface_hint": _native_surface_hint(terrain_type),
+		"rock_ratio": 0.82 if terrain_type == TerrainType.MOUNTAIN else 0.08,
+		"river_width_class": clampi(ceili(sample.z * 3.0), 0, 3),
+		"coast_mask": 0,
+		"resource_amounts": amounts,
+	}
+
+func _native_surface_hint(terrain_type: int) -> int:
+	if terrain_type == TerrainType.OCEAN:
+		return SiteContentTypes.NativeSurface.SEA_WATER
+	if terrain_type == TerrainType.WATER:
+		return SiteContentTypes.NativeSurface.RIVER_WATER
+	if terrain_type == TerrainType.MOUNTAIN:
+		return SiteContentTypes.NativeSurface.ROCK
+	return SiteContentTypes.NativeSurface.DIRT
+
+func _site_profile_resource_max(terrain_type: int, resource_type: int) -> int:
+	match resource_type:
+		SiteContentTypes.RESOURCE_GRASS:
+			return 140 if not TerrainType.is_water_like(terrain_type) else 0
+		SiteContentTypes.RESOURCE_FRUIT_TREE:
+			return 18 if terrain_type in [TerrainType.PLAINS, TerrainType.FOREST, TerrainType.SWAMP] else 0
+		SiteContentTypes.RESOURCE_FOREST:
+			return 80 if terrain_type in [TerrainType.FOREST, TerrainType.PLAINS] else 0
+		SiteContentTypes.RESOURCE_STONE_ORE:
+			return 90 if terrain_type in [TerrainType.MOUNTAIN, TerrainType.SNOW] else 8
+		SiteContentTypes.RESOURCE_IRON_ORE:
+			return 28 if terrain_type == TerrainType.MOUNTAIN else 0
+		SiteContentTypes.RESOURCE_SILVER_ORE:
+			return 8 if terrain_type == TerrainType.MOUNTAIN else 0
+		SiteContentTypes.RESOURCE_GOLD_ORE:
+			return 3 if terrain_type == TerrainType.MOUNTAIN else 0
+	return 0
 
 func find_nearest_passable_global_cell(
 		world_cell: Vector2i,
@@ -254,7 +385,46 @@ func get_site_definition(poi: WorldPOIData) -> SiteData:
 		"travel_exit_mask",
 		SiteLayoutDataType.EXIT_ALL
 	))
+	definition.apply_content_profile(travel_data)
 	return definition
+
+func get_site_definition_at(
+		world_cell: Vector2i,
+		region_cell: Vector2i,
+		world_seed: int
+	) -> SiteData:
+	if not is_valid_world_cell(world_cell) or not WorldCoordinates.is_valid_region_cell(region_cell):
+		return null
+	var poi: WorldPOIData = find_poi_at(world_cell, region_cell, world_seed)
+	if poi != null:
+		return get_site_definition(poi)
+	var global_cell: Vector2i = WorldCoordinates.world_region_to_global_region_cell(
+		world_cell,
+		region_cell
+	)
+	return SiteData.from_region_cell(
+		world_seed,
+		world_cell,
+		region_cell,
+		sample_travel_data(world_seed, global_cell)
+	)
+
+func get_site_definition_by_id(site_id: String, world_seed: int) -> SiteData:
+	if site_id.is_empty():
+		return null
+	var poi: WorldPOIData = find_poi_by_id(site_id, world_seed)
+	if poi != null:
+		return get_site_definition(poi)
+	var parts: PackedStringArray = site_id.split("_")
+	if parts.size() != 4 or parts[0] != "site" or parts[1] != "cell":
+		return null
+	if not _is_integer_string(parts[2]) or not _is_integer_string(parts[3]):
+		return null
+	var global_cell: Vector2i = Vector2i(int(parts[2]), int(parts[3]))
+	var converted: Dictionary = WorldCoordinates.global_region_cell_to_world_region(global_cell)
+	var world_cell: Vector2i = converted["world_cell"] as Vector2i
+	var region_cell: Vector2i = converted["region_cell"] as Vector2i
+	return get_site_definition_at(world_cell, region_cell, world_seed)
 
 func get_site_layout(definition: SiteData) -> SiteLayoutDataType:
 	return SiteLayoutGeneratorType.generate(definition)
@@ -268,10 +438,10 @@ func get_sites_for_region(world_cell: Vector2i, world_seed: int) -> Array[SiteDa
 	return result
 
 func find_site_at(world_cell: Vector2i, region_cell: Vector2i, world_seed: int) -> SiteData:
-	for site: SiteData in get_sites_for_region(world_cell, world_seed):
-		if site.parent_region_cell == region_cell:
-			return site
-	return null
+	return get_site_definition_at(world_cell, region_cell, world_seed)
+
+func _is_integer_string(value: String) -> bool:
+	return not value.is_empty() and value.is_valid_int()
 
 func _copy_pois(source: Array) -> Array[WorldPOIData]:
 	var result: Array[WorldPOIData] = []

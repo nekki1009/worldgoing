@@ -369,3 +369,58 @@ Battle 驗收必須包含：
 6. 架構、狀態文件與實際程式一致，未完成項目仍明確標記為未實作。
 
 Gate 0／Milestone 1 已完成。推薦下一次只執行 Art Gate 1；PC 外觀持久化、Unit snapshot、世界尺寸、Battle variant cache 與 shader 必須等各自前置 Gate 通過後再開始。
+
+### 2026-08-13 RUN component candidates and composition rejection
+
+The RUN vertical slice now has staged, independently generated boards: `worldgoing_run_armor_board_v1.png`, `worldgoing_run_body_board_v1.png`, `worldgoing_run_hair_board_v1.png`, `worldgoing_run_cape_board_v1.png`, and `worldgoing_run_weapon_board_v1.png`. The packer normalizes non-contract ImageGen canvases into 512x192 sheets, applies layer-specific scale/anchor limits, and keeps all outputs under `art_source/paper_doll/action_generated/attack_split_v2/`; no candidate is attached to `PaperDollCatalog`.
+
+The five-part QA composite is `run_components_on_foot_composite_x4.png`. Numeric comparison against the accepted reference confirms the same failures: generated Armor starts around y=23-27 instead of the required shoulder band y=22 with the full torso width, generated Cape is narrower than the accepted DOWN/UP masks, generated Hair is close but still changes the head footprint, and generated Weapon is a full sword silhouette rather than the reference hand-side action layer.  It proves the split layers can be rebuilt independently, but visual review rejects it: the sword crosses the DOWN/UP face, the armor shoulder coverage is too small, and cape/body silhouettes do not match the accepted white-hair/silver-armor reference. This is a deliberate gate failure, not a runtime approval.
+
+The latest packer run passed (`.godot-temp/godot_verify/20260813_130153_369/result.json`) and the editor scan passed (`.godot-temp/godot_verify/20260813_125951_380/result.json`). Existing character creator and synchronized fallback action QA remain the active runtime evidence; formal authored RUN art is still pending.
+
+### 2026-08-13 split-action gate hardening and dye verification
+
+The action packer now keeps all ImageGen RUN boards in the staging area and
+normalizes each independently generated part to the shared 512x192 / 8x3
+contract.  The weapon normalizer uses row-specific limits: DOWN and UP are
+short hand-held overlays in the lower body band, while SIDE follows the
+accepted narrow upright side weapon.  This prevents a generated blade from
+crossing the face or being silently clipped at a sheet edge.  The packer and
+editor scan both pass after this change (`.godot-temp/godot_verify/20260813_132251_439/result.json`,
+`.godot-temp/godot_verify/20260813_132443_773/result.json`).
+
+The authored-candidate verifier is opt-in (`--check-authored-candidates`) so
+normal action regression remains independent from unfinished art.  The gate
+now passes the staged `worldgoing_run_weapon_board_v3.png` candidate
+(`.godot-temp/godot_verify/20260813_132357_462/result.json`),
+but this does not approve the whole RUN set: the generated body, armor, hair,
+and cape still require a human silhouette/coverage review before Catalog
+integration.  `APPROVED_AUTHORED_ACTIONS` remains false and no staged RUN
+texture is loaded by `PaperDollCatalog`.
+
+The real runtime checks now cover the requested split and dye contract:
+`character_creator_test.gd` passes all 10 cases, including independent Body /
+Armor / Hair / Cape / Weapon / Shield selection, synchronized frame updates,
+hair-plus-brows recoloring, independent armor/cape/mount dyes, mounted bundle
+replacement, and the no-AnimatedSprite2D/no-gameplay-dependency boundary
+(`.godot-temp/godot_verify/20260813_131403_431/result.json`).  The focused action
+regression passes 8 actions for both on-foot and mounted recipes
+(`.godot-temp/godot_verify/20260813_132357_462/result.json`), and the full
+visual gate passes 256 runtime frames plus the reference-image and dye-group
+ownership checks (`.godot-temp/godot_verify/20260813_132536_166/result.json`).
+
+Current delivery boundary: the presentation-only generator, split layer pool,
+all requested action fallbacks, and four dye groups are working; formal
+ImageGen-authored action art remains staged until every component composite
+matches the accepted white-hair/silver-armor reference in all directions.
+
+The UI capture helper now removes only the same test-owned PNG before writing.
+This avoids a Dropbox placeholder/lock making a successful mounted capture look
+like a render failure.  The bounded visual run then passed with fresh outputs
+for the default white-hair split, alternate on-foot dyes, alternate mounted
+dyes, RUN, DOWN, and mounted SPRINT_ATTACK
+(`.godot-temp/godot_verify/20260813_134755_214/result.json`).  The generated
+screenshots were inspected after the run; no missing output or stale-image
+substitution was accepted.
+
+The post-capture editor scan also passes (`.godot-temp/godot_verify/20260813_135216_161/result.json`); the certificate-store message is the known Godot Windows environment noise, not a project error.

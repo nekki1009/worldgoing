@@ -1,7 +1,7 @@
 class_name WorldRoadGenerator
 extends RefCounted
 
-const GENERATION_VERSION: int = 4
+const GENERATION_VERSION: int = 5
 
 # These are global Region Cells: 1 cell = 100m.
 const ROAD_CONNECTION_RADIUS_CELLS: int = 300
@@ -19,11 +19,12 @@ var terrain_generator: RegionTerrainGenerator
 var macro_sampler: WorldMacroTerrainSampler
 var poi_provider: Callable
 var grid_pathfinder: WeightedGridPathfinder = WeightedGridPathfinder.new()
-# Temporary inputs/cache for one deterministic overlay build; never Runtime state.
+# Temporary cache for one deterministic overlay build; never Runtime state.
 var path_world_seed: int = 0
+var path_sample_cache: Dictionary = {}
 var path_start_cell: Vector2i = Vector2i.ZERO
 var path_goal_cell: Vector2i = Vector2i.ZERO
-var path_sample_cache: Dictionary = {}
+var path_detour_margin: int = 0
 var graph_cache: Dictionary = {}
 var overlay_cache: Dictionary = {}
 var route_cache: Dictionary = {}
@@ -162,17 +163,15 @@ func _build_route_graph(
 
 func _rank_neighbors(source: WorldPOIData, pool: Array[WorldPOIData]) -> Array[Dictionary]:
 	var ranked: Array[Dictionary] = []
-	var radius_squared: int = ROAD_CONNECTION_RADIUS_CELLS * ROAD_CONNECTION_RADIUS_CELLS
 	for candidate: WorldPOIData in pool:
 		if candidate.poi_id == source.poi_id:
 			continue
 		var delta: Vector2i = candidate.global_region_cell - source.global_region_cell
-		var distance_squared: int = delta.x * delta.x + delta.y * delta.y
-		if distance_squared > radius_squared:
+		var distance: int = absi(delta.x) + absi(delta.y)
+		if distance > ROAD_CONNECTION_RADIUS_CELLS:
 			continue
-		var distance: float = sqrt(float(distance_squared))
 		var type_rank: int = _type_preference_rank(source.poi_type, candidate.poi_type)
-		var score: float = distance + float(type_rank * 24) - float(candidate.importance * 5)
+		var score: float = float(distance + type_rank * 24) - float(candidate.importance * 5)
 		ranked.append({
 			"poi": candidate,
 			"score": score,
@@ -286,28 +285,21 @@ func _route_may_reach_region(
 		global_min: Vector2i,
 		global_max: Vector2i
 	) -> bool:
-	var expanded_min: Vector2 = Vector2(global_min - Vector2i.ONE * ROAD_PATH_MARGIN_CELLS)
-	var expanded_max: Vector2 = Vector2(global_max + Vector2i.ONE * ROAD_PATH_MARGIN_CELLS)
-	var start: Vector2 = Vector2(route.start_global_cell)
-	var finish: Vector2 = Vector2(route.end_global_cell)
-	var bounds: Rect2 = Rect2(expanded_min, expanded_max - expanded_min + Vector2.ONE)
-	if bounds.has_point(start) or bounds.has_point(finish):
-		return true
-	var corners: Array[Vector2] = [
-		expanded_min,
-		Vector2(expanded_max.x, expanded_min.y),
-		expanded_max,
-		Vector2(expanded_min.x, expanded_max.y),
-	]
-	for index: int in range(corners.size()):
-		if Geometry2D.segment_intersects_segment(
-			start,
-			finish,
-			corners[index],
-			corners[(index + 1) % corners.size()]
-		) != null:
-			return true
-	return false
+	# A four-way A* route stays inside the endpoint bounding rectangle plus its
+	# configured detour margin. Test that tile rectangle directly; a diagonal
+	# endpoint segment would incorrectly reject valid cardinal detours.
+	var path_min: Vector2i = Vector2i(
+		mini(route.start_global_cell.x, route.end_global_cell.x) - ROAD_PATH_MARGIN_CELLS,
+		mini(route.start_global_cell.y, route.end_global_cell.y) - ROAD_PATH_MARGIN_CELLS
+	)
+	var path_max: Vector2i = Vector2i(
+		maxi(route.start_global_cell.x, route.end_global_cell.x) + ROAD_PATH_MARGIN_CELLS,
+		maxi(route.start_global_cell.y, route.end_global_cell.y) + ROAD_PATH_MARGIN_CELLS
+	)
+	return not (
+		path_max.x < global_min.x or path_min.x > global_max.x
+		or path_max.y < global_min.y or path_min.y > global_max.y
+	)
 
 func _find_route_path(world_seed: int, start: Vector2i, goal: Vector2i) -> Dictionary:
 	return _find_path_in_bounds(
@@ -333,9 +325,12 @@ func _find_path_in_bounds(
 	)
 	if path_world_seed != world_seed:
 		path_world_seed = world_seed
-		path_sample_cache.clear()
 	path_start_cell = start
 	path_goal_cell = goal
+	path_detour_margin = maxi(margin, 0)
+	# Cell passability is cheap to recompute, while the Manhattan corridor is
+	# route-specific; never reuse a filtered result for another endpoint pair.
+	path_sample_cache.clear()
 	var astar_result: Dictionary = grid_pathfinder.find_path(
 			start,
 			goal,
@@ -374,13 +369,23 @@ func _empty_path_result() -> Dictionary:
 	return {"path": [], "cost": 0.0, "river_crossing_cells": []}
 
 func _road_cell_info(global_cell: Vector2i) -> Dictionary:
-	# The same corridor used by the Region reach test keeps lazy overlays complete.
-	if _distance_squared_to_path_segment(global_cell) \
-			> float(ROAD_PATH_MARGIN_CELLS * ROAD_PATH_MARGIN_CELLS):
-		return {"passable": false}
 	var cached: Variant = path_sample_cache.get(global_cell, null)
 	if cached is Dictionary:
 		return cached as Dictionary
+	# Keep the search corridor orthogonal as well: a cell may be visited when
+	# it lies within the configured Manhattan detour budget of the endpoints.
+	# This replaces the old Euclidean distance-to-diagonal-segment shortcut,
+	# which could discard valid cardinal routes around an obstacle.
+	var direct_distance: int = absi(path_goal_cell.x - path_start_cell.x) \
+		+ absi(path_goal_cell.y - path_start_cell.y)
+	var via_start: int = absi(global_cell.x - path_start_cell.x) \
+		+ absi(global_cell.y - path_start_cell.y)
+	var via_goal: int = absi(path_goal_cell.x - global_cell.x) \
+		+ absi(path_goal_cell.y - global_cell.y)
+	if via_start + via_goal > direct_distance + path_detour_margin * 2:
+		var outside: Dictionary = {"passable": false}
+		path_sample_cache[global_cell] = outside
+		return outside
 	var sample: Vector4 = macro_sampler.sample(path_world_seed, global_cell)
 	var terrain_type: int = terrain_generator.classify_sample(sample)
 	var river: bool = sample.z > 0.0
@@ -394,16 +399,6 @@ func _road_cell_info(global_cell: Vector2i) -> Dictionary:
 	}
 	path_sample_cache[global_cell] = result
 	return result
-
-func _distance_squared_to_path_segment(global_cell: Vector2i) -> float:
-	var start: Vector2 = Vector2(path_start_cell)
-	var segment: Vector2 = Vector2(path_goal_cell - path_start_cell)
-	var length_squared: float = segment.length_squared()
-	if length_squared <= 0.0:
-		return Vector2(global_cell).distance_squared_to(start)
-	var offset: Vector2 = Vector2(global_cell) - start
-	var fraction: float = clampf(offset.dot(segment) / length_squared, 0.0, 1.0)
-	return Vector2(global_cell).distance_squared_to(start + segment * fraction)
 
 func _road_step_cost(
 		_current: Vector2i,

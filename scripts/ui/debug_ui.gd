@@ -42,6 +42,11 @@ signal character_creator_requested
 
 func _ready() -> void:
 	character_creator_button.pressed.connect(_on_character_creator_pressed)
+	# Keep the diagnostic readout available without covering most of the map.
+	# The layout still reserves its original width so long values do not reflow;
+	# only the presentation is compacted on screen.
+	$Panel.scale = Vector2(0.72, 0.72)
+	$Panel.modulate = Color(1.0, 1.0, 1.0, 0.88)
 
 func _process(_delta: float) -> void:
 	$FPS.text = "FPS: %d" % Engine.get_frames_per_second()

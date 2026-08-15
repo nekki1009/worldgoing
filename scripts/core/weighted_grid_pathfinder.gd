@@ -1,16 +1,12 @@
 class_name WeightedGridPathfinder
 extends RefCounted
 
-# Shared bounded 8-direction A*. Callers own the cell data and step costs.
+# Shared bounded four-direction A*. Callers own the cell data and step costs.
 const NEIGHBOR_DIRECTIONS: Array[Vector2i] = [
 	Vector2i(0, -1),
-	Vector2i(1, -1),
 	Vector2i(1, 0),
-	Vector2i(1, 1),
 	Vector2i(0, 1),
-	Vector2i(-1, 1),
 	Vector2i(-1, 0),
-	Vector2i(-1, -1),
 ]
 const DEFAULT_MAX_EXPANSIONS: int = 300_000
 
@@ -61,13 +57,6 @@ func find_path(
 			var next_info: Dictionary = _get_cell_info(next, cell_info, info_cache)
 			if not bool(next_info.get("passable", false)):
 				continue
-			if direction.x != 0 and direction.y != 0 and _corner_cut_blocked(
-				current,
-				direction,
-				cell_info,
-				info_cache
-			):
-				continue
 			var movement_cost: float = float(step_cost.call(
 				current,
 				next,
@@ -99,22 +88,12 @@ func _get_cell_info(cell: Vector2i, cell_info: Callable, cache: Dictionary) -> D
 	cache[cell] = result
 	return result
 
-func _corner_cut_blocked(
-		current: Vector2i,
-		direction: Vector2i,
-		cell_info: Callable,
-		cache: Dictionary
-	) -> bool:
-	var side_a: Dictionary = _get_cell_info(current + Vector2i(direction.x, 0), cell_info, cache)
-	var side_b: Dictionary = _get_cell_info(current + Vector2i(0, direction.y), cell_info, cache)
-	return not bool(side_a.get("passable", false)) and not bool(side_b.get("passable", false))
-
 func _heuristic(from: Vector2i, to: Vector2i, minimum_step_cost: float) -> float:
 	if minimum_step_cost <= 0.0:
 		return 0.0
 	var dx: float = absf(float(to.x - from.x))
 	var dy: float = absf(float(to.y - from.y))
-	return (maxf(dx, dy) + (sqrt(2.0) - 1.0) * minf(dx, dy)) * minimum_step_cost
+	return (dx + dy) * minimum_step_cost
 
 func _reconstruct_path(came_from: Dictionary, start: Vector2i, goal: Vector2i) -> Array[Vector2i]:
 	var reversed_path: Array[Vector2i] = [goal]

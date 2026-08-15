@@ -2,7 +2,7 @@ class_name RegionData
 extends RefCounted
 
 const REGION_SEED_SALT: int = 17_009
-const BASE_GENERATION_VERSION: int = 3
+const BASE_GENERATION_VERSION: int = 4
 
 var region_id: String = ""
 var world_cell: Vector2i = Vector2i.ZERO
@@ -18,6 +18,8 @@ var terrain_thumbnail_seed: int = 0
 var terrain_thumbnail_generation_version: int = 0
 var generated_poi_ids: Array[String] = []
 var generated_route_ids: Array[String] = []
+var generation_manifest: RegionGenerationManifest
+var site_content_data: RegionSiteContentData
 
 func _init(
 		p_region_id: String,

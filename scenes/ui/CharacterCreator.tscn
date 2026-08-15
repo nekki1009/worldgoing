@@ -50,7 +50,7 @@ layout_mode = 2
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_font_sizes/font_size = 30
-text = "WORLDGOING — 角色生成器／紙娃娃素材實驗室"
+text = "WORLDGOING - Character Creator / Paper Doll Lab"
 
 [node name="CloseButton" type="Button" parent="Center/Panel/Margin/Layout/Header"]
 custom_minimum_size = Vector2(130, 48)
@@ -68,7 +68,7 @@ alignment = 1
 [node name="Placeholder" type="Label" parent="Center/Panel/Margin/Layout/Tabs/PCAppearance"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 24
-text = "PC 固有外觀的 Session 套用與持久化屬於 Milestone 2。\nMilestone 1 不取得 GameSession，也不提供假 Apply。"
+text = "PC appearance persistence belongs to a later Session milestone. This lab is presentation-only."
 horizontal_alignment = 1
 
 [node name="AssetLab" type="HSplitContainer" parent="Center/Panel/Margin/Layout/Tabs"]
@@ -87,7 +87,7 @@ theme_override_constants/separation = 9
 [node name="LabTitle" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 22
-text = "素材選擇（只存在於 Preview Draft）"
+text = "Choose parts / actions | Default: white hair + silver armor + navy cape"
 
 [node name="GenderRow" type="HBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
 layout_mode = 2
@@ -104,6 +104,72 @@ size_flags_horizontal = 3
 [node name="MountedToggle" type="CheckBox" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
 layout_mode = 2
 text = "Mounted pose"
+
+[node name="ActionSelectRow" type="HBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/ActionSelectRow"]
+custom_minimum_size = Vector2(170, 0)
+layout_mode = 2
+text = "Action"
+
+[node name="ActionOption" type="OptionButton" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/ActionSelectRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="HairDyeRow" type="HBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/HairDyeRow"]
+custom_minimum_size = Vector2(170, 0)
+layout_mode = 2
+text = "Hair + Brows"
+
+[node name="HairDye" type="ColorPickerButton" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/HairDyeRow"]
+custom_minimum_size = Vector2(72, 32)
+layout_mode = 2
+color = Color(0.9098, 0.9137, 0.9373, 1)
+tooltip_text = "Hair and eyebrows share one dye"
+
+[node name="ArmorDyeRow" type="HBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/ArmorDyeRow"]
+custom_minimum_size = Vector2(170, 0)
+layout_mode = 2
+text = "Armor Dye"
+
+[node name="ArmorDye" type="ColorPickerButton" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/ArmorDyeRow"]
+custom_minimum_size = Vector2(72, 32)
+layout_mode = 2
+color = Color(0.7176, 0.7569, 0.8235, 1)
+
+[node name="CapeDyeRow" type="HBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/CapeDyeRow"]
+custom_minimum_size = Vector2(170, 0)
+layout_mode = 2
+text = "Cape Dye"
+
+[node name="CapeDye" type="ColorPickerButton" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/CapeDyeRow"]
+custom_minimum_size = Vector2(72, 32)
+layout_mode = 2
+color = Color(0.149, 0.2, 0.3294, 1)
+
+[node name="MountDyeRow" type="HBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/MountDyeRow"]
+custom_minimum_size = Vector2(170, 0)
+layout_mode = 2
+text = "Horse Dye"
+
+[node name="MountDye" type="ColorPickerButton" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/MountDyeRow"]
+custom_minimum_size = Vector2(72, 32)
+layout_mode = 2
+color = Color(0.6039, 0.4392, 0.302, 1)
+tooltip_text = "Applies only while mounted"
 
 [node name="MountRow" type="HBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
 layout_mode = 2
@@ -278,21 +344,23 @@ min_value = 1.0
 max_value = 16.0
 value = 8.0
 
-[node name="ActionRow" type="HBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
+[node name="QAActionRow" type="HBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
 layout_mode = 2
+visible = false
 
-[node name="CheckAllButton" type="Button" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/ActionRow"]
+[node name="CheckAllButton" type="Button" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/QAActionRow"]
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Check All"
 
-[node name="ExportAllButton" type="Button" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/ActionRow"]
+[node name="ExportAllButton" type="Button" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/QAActionRow"]
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Export Contact Sheets"
 
 [node name="FailureRow" type="HBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
 layout_mode = 2
+visible = false
 
 [node name="PreviousFailureButton" type="Button" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout/FailureRow"]
 layout_mode = 2
@@ -310,6 +378,12 @@ layout_mode = 2
 autowrap_mode = 2
 text = "Catalog not loaded"
 
+[node name="CraftingRequirements" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Controls/ControlLayout"]
+custom_minimum_size = Vector2(0, 72)
+layout_mode = 2
+autowrap_mode = 2
+text = "Crafting materials: catalog not loaded"
+
 [node name="Preview" type="VBoxContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab"]
 layout_mode = 2
 theme_override_constants/separation = 10
@@ -317,7 +391,7 @@ theme_override_constants/separation = 10
 [node name="PreviewTitle" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Preview"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 22
-text = "64×64 Anchor Preview — cyan cross = (32,56)"
+text = "64x64 Anchor Preview - cyan cross = (32,56)"
 horizontal_alignment = 1
 
 [node name="PreviewFrame" type="PanelContainer" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Preview"]
@@ -357,7 +431,7 @@ horizontal_alignment = 1
 
 [node name="Contract" type="Label" parent="Center/Panel/Margin/Layout/Tabs/AssetLab/Preview"]
 layout_mode = 2
-text = "8 columns × 3 source rows; LEFT = RIGHT row + flip_h. One Timer updates all 11 Sprite2D layers."
+text = "8 columns x 3 source rows; LEFT = RIGHT row + flip_h. One Timer updates all 11 Sprite2D layers."
 horizontal_alignment = 1
 
 [node name="AnimationTimer" type="Timer" parent="."]

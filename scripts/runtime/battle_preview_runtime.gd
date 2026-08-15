@@ -400,6 +400,7 @@ func _advance_formation(
 	) -> bool:
 	var changed: bool = false
 	var remaining: float = budget
+	var replans: int = 0
 	while remaining > 0.0 and formation.state == BattleFormationData.State.MOVING:
 		if formation.path_index < 0 or formation.path_index + 1 >= formation.path.size():
 			formation.clear_path()
@@ -408,17 +409,44 @@ func _advance_formation(
 		var next_cell: Vector2i = formation.path[formation.path_index + 1]
 		var next_position: Vector2 = _cell_to_position(next_cell)
 		var next_info: Dictionary = _battle_cell_info(next_cell)
-		var occupied: bool = _formation_cell_occupied(state, formation, next_position)
-		if not bool(next_info.get("passable", false)) or occupied:
+		if not bool(next_info.get("passable", false)):
+			if replans < 4 and _repath_formation(state, formation):
+				replans += 1
+				changed = true
+				continue
 			formation.clear_path()
 			changed = true
 			break
-		var current_cell: Vector2i = _position_to_cell(formation.battle_position_m)
+		var blocker: BattleFormationData = _formation_blocker_at(
+			state,
+			formation,
+			next_position
+		)
+		if blocker != null:
+			if blocker.side == formation.side \
+					and replans < 4 \
+					and _repath_formation(state, formation):
+				replans += 1
+				changed = true
+				continue
+			# Enemy formations are deliberate stopping points: clearing the
+			# path lets the contact resolver engage both sides instead of
+			# forcing either formation through the enemy footprint.
+			formation.clear_path()
+			changed = true
+			break
+		# Keep the path cursor authoritative while a formation is between cell
+		# centers.  Deriving the cursor from the interpolated world position can
+		# advance to the next cell before `path_index` does, producing a zero
+		# direction on the following tick and stopping movement after one step.
+		var current_cell: Vector2i = formation.path[formation.path_index]
 		var direction: Vector2i = next_cell - current_cell
-		var step_seconds: float = BattleRules.tactical_step_seconds(
+		var step_seconds: float = _step_seconds_at_speed(
+			current_cell,
+			next_cell,
+			direction,
 			_battle_cell_info(current_cell),
 			_battle_cell_info(next_cell),
-			direction,
 			formation.base_move_speed_mps
 		)
 		if not is_finite(step_seconds) or step_seconds <= 0.0:
@@ -426,9 +454,17 @@ func _advance_formation(
 			changed = true
 			break
 		formation.facing_direction = Vector2(direction).normalized()
+		var cell_center_distance: float = _cell_to_position(current_cell).distance_to(next_position)
+		var remaining_distance: float = formation.battle_position_m.distance_to(next_position)
+		if cell_center_distance > 0.000001:
+			# The first node can be a little away from the exact cell center.
+			# Scale the edge duration to the actual remaining distance so the
+			# formation never gets a free extra burst of speed.
+			step_seconds *= remaining_distance / cell_center_distance
 		if remaining >= step_seconds:
 			formation.battle_position_m = next_position
 			formation.path_index += 1
+			replans = 0
 			remaining -= step_seconds
 			changed = true
 			if formation.path_index + 1 >= formation.path.size():
@@ -540,7 +576,8 @@ func _start_formation_move(
 	var path_result: Dictionary = _find_path(
 		start,
 		goal,
-		Callable(self, "_battle_step_cost")
+		Callable(self, "_battle_step_cost"),
+		formation
 	)
 	var path_value: Variant = path_result.get("path", [])
 	if not path_value is Array or (path_value as Array).is_empty():
@@ -559,15 +596,70 @@ func _start_formation_move(
 	result.path = formation.path.duplicate()
 	return result.succeed_with_code(BattleRuntimeResult.Code.ORDER_APPLIED)
 
-func _find_path(start: Vector2i, goal: Vector2i, cost: Callable) -> Dictionary:
+func _find_path(
+		start: Vector2i,
+		goal: Vector2i,
+		cost: Callable,
+		formation: BattleFormationData = null
+	) -> Dictionary:
+	var cell_info: Callable = Callable(self, "_battle_cell_info")
+	if formation != null:
+		cell_info = _formation_cell_info_callable(formation)
+	# Tactical costs are never below a two-metre cell divided by the fastest
+	# legal formation speed (the road multiplier is the global upper bound).
+	# Supplying this admissible lower bound keeps A* from degenerating into a
+	# full 150x150 Dijkstra search while preserving the exact edge-cost rules.
+	var minimum_step_seconds: float = float(SiteLayoutData.CELL_SIZE_METERS) \
+		/ (BattleFormationData.DEFAULT_MOVE_SPEED_MPS * BattleRules.ROAD_SPEED_MULTIPLIER)
 	return pathfinder.find_path(
 		start,
 		goal,
 		BATTLE_GRID_MIN,
 		BATTLE_GRID_MAX,
-		Callable(self, "_battle_cell_info"),
-		cost
+		cell_info,
+		cost,
+		minimum_step_seconds
 	)
+
+func _formation_cell_info_callable(formation: BattleFormationData) -> Callable:
+	return Callable(self, "_battle_cell_info_for_formation").bind(formation)
+
+func _battle_cell_info_for_formation(
+		cell: Vector2i,
+		formation: BattleFormationData
+	) -> Dictionary:
+	var info: Dictionary = _battle_cell_info(cell)
+	if bool(info.get("passable", false)) \
+			and _friendly_formation_blocks_cell(formation, cell):
+		info["passable"] = false
+	return info
+
+func _repath_formation(
+		_state: BattleRuntimeState,
+		formation: BattleFormationData
+	) -> bool:
+	if formation == null or not _is_valid_target(formation.target_position_m):
+		return false
+	var path_result: Dictionary = _find_path(
+		_position_to_cell(formation.battle_position_m),
+		_position_to_cell(formation.target_position_m),
+		Callable(self, "_battle_step_cost"),
+		formation
+	)
+	var path_value: Variant = path_result.get("path", [])
+	if not path_value is Array or (path_value as Array).size() <= 1:
+		return false
+	var replacement: Array[Vector2i] = []
+	for cell: Variant in path_value as Array:
+		if cell is Vector2i:
+			replacement.append(cell as Vector2i)
+	if replacement.size() <= 1:
+		return false
+	formation.path = replacement
+	formation.path_index = 0
+	formation.state = BattleFormationData.State.MOVING
+	formation.facing_direction = Vector2(replacement[1] - replacement[0]).normalized()
+	return true
 
 func _process_pending_orders(state: BattleRuntimeState) -> bool:
 	if state.pending_orders.is_empty():
@@ -645,10 +737,12 @@ func _advance_dispatches(state: BattleRuntimeState, budget: float) -> bool:
 			var next_cell: Vector2i = dispatch.path[dispatch.path_index + 1]
 			var current_cell: Vector2i = _position_to_cell(dispatch.position_m)
 			var direction: Vector2i = next_cell - current_cell
-			var step_seconds: float = BattleRules.tactical_step_seconds(
+			var step_seconds: float = _step_seconds_at_speed(
+				current_cell,
+				next_cell,
+				direction,
 				_battle_cell_info(current_cell),
 				_battle_cell_info(next_cell),
-				direction,
 				dispatch.speed_mps
 			)
 			if not is_finite(step_seconds) or step_seconds <= 0.0:
@@ -748,10 +842,12 @@ func _path_seconds(path: Array[Vector2i], speed_mps: float) -> float:
 	for index: int in range(path.size() - 1):
 		var current: Vector2i = path[index]
 		var next: Vector2i = path[index + 1]
-		var step: float = BattleRules.tactical_step_seconds(
+		var step: float = _step_seconds_at_speed(
+			current,
+			next,
+			next - current,
 			_battle_cell_info(current),
 			_battle_cell_info(next),
-			next - current,
 			speed_mps
 		)
 		if not is_finite(step):
@@ -855,6 +951,7 @@ func _create_side_formations(
 	) -> void:
 	var deployed: int = int(deployment.get("initial_deployed_personnel", 0))
 	var positions: Array = deployment.get("marker_positions_meters", []) as Array
+	var marker_personnel: Array = deployment.get("marker_personnel", []) as Array
 	var facing: Vector2 = deployment.get("facing", Vector2.DOWN) as Vector2
 	var context: BattleSiteContext = state.base_snapshot.context
 	var participant: BattleParticipantData = context.attacker if side == BattleFormationData.Side.ATTACKER \
@@ -865,6 +962,8 @@ func _create_side_formations(
 			BattleFormationData.DEFAULT_PERSONNEL,
 			maxi(deployed - index * BattleFormationData.DEFAULT_PERSONNEL, 0)
 		)
+		if index < marker_personnel.size():
+			personnel = maxi(int(marker_personnel[index]), 0)
 		if personnel <= 0:
 			continue
 		var id: String = "%s_%s_%03d" % [
@@ -886,22 +985,41 @@ func _create_side_formations(
 			state.commander_formation_ids[side] = id
 
 func _build_clearance_mask(state: BattleRuntimeState) -> void:
-	state.clearance_blocked.resize(BATTLE_GRID_SIZE.x * BATTLE_GRID_SIZE.y)
-	for y: int in range(BATTLE_GRID_SIZE.y):
-		for x: int in range(BATTLE_GRID_SIZE.x):
-			var cell: Vector2i = Vector2i(x, y)
-			var blocked: bool = false
-			for offset_y: int in range(-FORMATION_CLEARANCE_CELLS, FORMATION_CLEARANCE_CELLS + 1):
-				for offset_x: int in range(-FORMATION_CLEARANCE_CELLS, FORMATION_CLEARANCE_CELLS + 1):
-					if Vector2i(offset_x, offset_y).length_squared() > FORMATION_CLEARANCE_CELLS * FORMATION_CLEARANCE_CELLS:
-						continue
-					var neighbor: Vector2i = cell + Vector2i(offset_x, offset_y)
-					if not _contains_battle_cell(neighbor) or not _base_cell_passable(state, neighbor):
-						blocked = true
-						break
-				if blocked:
-					break
-			state.clearance_blocked[y * BATTLE_GRID_SIZE.x + x] = 1 if blocked else 0
+	var width: int = BATTLE_GRID_SIZE.x
+	var height: int = BATTLE_GRID_SIZE.y
+	var stride: int = width + 1
+	var blocked_prefix: PackedInt32Array = PackedInt32Array()
+	blocked_prefix.resize((width + 1) * (height + 1))
+	blocked_prefix.fill(0)
+	for y: int in range(height):
+		var row_sum: int = 0
+		for x: int in range(width):
+			if not _base_cell_passable(state, Vector2i(x, y)):
+				row_sum += 1
+			var prefix_index: int = (y + 1) * stride + (x + 1)
+			blocked_prefix[prefix_index] = row_sum \
+				+ int(blocked_prefix[y * stride + (x + 1)])
+	state.clearance_blocked.resize(width * height)
+	state.clearance_blocked.fill(0)
+	# Query a square 10m clearance around each Formation center in O(1).
+	# This preserves the existing conservative clearance contract while
+	# avoiding an 11x11 scan for every one of the 22,500 cells.
+	for y: int in range(height):
+		for x: int in range(width):
+			var min_x: int = maxi(0, x - FORMATION_CLEARANCE_CELLS)
+			var max_x: int = mini(width - 1, x + FORMATION_CLEARANCE_CELLS)
+			var min_y: int = maxi(0, y - FORMATION_CLEARANCE_CELLS)
+			var max_y: int = mini(height - 1, y + FORMATION_CLEARANCE_CELLS)
+			var touches_battle_edge: bool = x < FORMATION_CLEARANCE_CELLS \
+				or y < FORMATION_CLEARANCE_CELLS \
+				or x >= width - FORMATION_CLEARANCE_CELLS \
+				or y >= height - FORMATION_CLEARANCE_CELLS
+			var blocked_count: int = int(blocked_prefix[(max_y + 1) * stride + (max_x + 1)]) \
+				- int(blocked_prefix[min_y * stride + (max_x + 1)]) \
+				- int(blocked_prefix[(max_y + 1) * stride + min_x]) \
+				+ int(blocked_prefix[min_y * stride + min_x])
+			state.clearance_blocked[y * width + x] = 1 \
+				if touches_battle_edge or blocked_count > 0 else 0
 
 func _battle_cell_info(cell: Vector2i) -> Dictionary:
 	if session == null or not session.has_active_battle() or not _contains_battle_cell(cell):
@@ -946,12 +1064,83 @@ func _battle_step_cost(
 		current_info: Dictionary,
 		next_info: Dictionary
 	) -> float:
+	return _step_seconds_at_speed(
+		_current,
+		_next,
+		direction,
+		current_info,
+		next_info,
+		BattleFormationData.DEFAULT_MOVE_SPEED_MPS
+	)
+
+func _step_seconds_at_speed(
+		current: Vector2i,
+		next: Vector2i,
+		direction: Vector2i,
+		current_info: Dictionary,
+		next_info: Dictionary,
+		base_speed_mps: float
+	) -> float:
+	if session == null or not session.has_active_battle():
+		return INF
+	if not bool(current_info.get("passable", false)) \
+			or not bool(next_info.get("passable", false)):
+		return INF
+	var state: BattleRuntimeState = session.active_battle_state
+	# A passable cell is not enough to cross a height edge.  SiteLayoutData
+	# owns the stair/ramp/bridge transitions, so tactical A* must use the same
+	# edge contract instead of walking through a cliff just because both cells
+	# have ground flags.
+	if not _battle_transition_allowed(state, current, next):
+		return INF
 	return BattleRules.tactical_step_seconds(
 		current_info,
 		next_info,
 		direction,
-		BattleFormationData.DEFAULT_MOVE_SPEED_MPS
+		base_speed_mps
 	)
+
+func _battle_transition_allowed(
+		state: BattleRuntimeState,
+		from_cell: Vector2i,
+		to_cell: Vector2i
+	) -> bool:
+	if state == null or state.base_snapshot == null \
+			or not _contains_battle_cell(from_cell) \
+			or not _contains_battle_cell(to_cell):
+		return false
+	if absi(to_cell.x - from_cell.x) + absi(to_cell.y - from_cell.y) != 1:
+		return false
+	var from_tile: Vector2i = Vector2i(
+		floori(float(from_cell.x) / float(SiteLayoutData.GRID_SIZE.x)),
+		floori(float(from_cell.y) / float(SiteLayoutData.GRID_SIZE.y))
+	)
+	var to_tile: Vector2i = Vector2i(
+		floori(float(to_cell.x) / float(SiteLayoutData.GRID_SIZE.x)),
+		floori(float(to_cell.y) / float(SiteLayoutData.GRID_SIZE.y))
+	)
+	var from_index: int = from_tile.y * 3 + from_tile.x
+	var to_index: int = to_tile.y * 3 + to_tile.x
+	if from_index < 0 or from_index >= state.base_snapshot.site_layouts.size() \
+			or to_index < 0 or to_index >= state.base_snapshot.site_layouts.size():
+		return false
+	var from_layout: SiteLayoutData = state.base_snapshot.site_layouts[from_index]
+	var to_layout: SiteLayoutData = state.base_snapshot.site_layouts[to_index]
+	if from_layout == null or to_layout == null:
+		return false
+	var from_local: Vector2i = Vector2i(
+		posmod(from_cell.x, SiteLayoutData.GRID_SIZE.x),
+		posmod(from_cell.y, SiteLayoutData.GRID_SIZE.y)
+	)
+	var to_local: Vector2i = Vector2i(
+		posmod(to_cell.x, SiteLayoutData.GRID_SIZE.x),
+		posmod(to_cell.y, SiteLayoutData.GRID_SIZE.y)
+	)
+	if from_index == to_index:
+		return from_layout.can_traverse(from_local, to_local)
+	# Region-cell boundaries have no separate stair entity.  A boundary is
+	# therefore legal only when both Site floors meet at the same height.
+	return from_layout.elevation_level_at(from_local) == to_layout.elevation_level_at(to_local)
 
 func _formation_target_occupied(
 		state: BattleRuntimeState,
@@ -971,11 +1160,51 @@ func _formation_cell_occupied(
 		formation: BattleFormationData,
 		position_m: Vector2
 	) -> bool:
-	for other: Variant in state.formations.values():
-		if other is BattleFormationData \
-			and (other as BattleFormationData).formation_id != formation.formation_id \
-			and (other as BattleFormationData).battle_position_m.distance_to(position_m) \
-			< minf(formation.width_m, formation.depth_m):
+	return _formation_blocker_at(state, formation, position_m) != null
+
+func _formation_blocker_at(
+		state: BattleRuntimeState,
+		formation: BattleFormationData,
+		position_m: Vector2
+	) -> BattleFormationData:
+	if state == null or formation == null:
+		return null
+	var best: BattleFormationData = null
+	var best_distance: float = INF
+	for value: Variant in state.formations.values():
+		if not value is BattleFormationData:
+			continue
+		var other: BattleFormationData = value as BattleFormationData
+		if other.formation_id == formation.formation_id:
+			continue
+		var distance: float = other.battle_position_m.distance_to(position_m)
+		if distance >= minf(formation.width_m, formation.depth_m):
+			continue
+		if best == null or distance < best_distance:
+			best = other
+			best_distance = distance
+	return best
+
+func _friendly_formation_blocks_cell(
+		formation: BattleFormationData,
+		cell: Vector2i
+	) -> bool:
+	if session == null or not session.has_active_battle() or formation == null:
+		return false
+	# The moving formation must be allowed to start from its current cell even
+	# when it is already close to a friendly formation.
+	if cell == _position_to_cell(formation.battle_position_m):
+		return false
+	var state: BattleRuntimeState = session.active_battle_state
+	var position_m: Vector2 = _cell_to_position(cell)
+	for value: Variant in state.formations.values():
+		if not value is BattleFormationData:
+			continue
+		var other: BattleFormationData = value as BattleFormationData
+		if other.formation_id == formation.formation_id or other.side != formation.side:
+			continue
+		if other.battle_position_m.distance_to(position_m) \
+				< minf(formation.width_m, formation.depth_m):
 			return true
 	return false
 
@@ -1038,14 +1267,10 @@ func _road_connection_offsets(cell: Dictionary) -> Array[Vector2i]:
 
 func _river_connection_offsets(global_cell: Vector2i) -> Array[Vector2i]:
 	var result: Array[Vector2i] = []
-	for offset_y: int in range(-1, 2):
-		for offset_x: int in range(-1, 2):
-			var offset: Vector2i = Vector2i(offset_x, offset_y)
-			if offset == Vector2i.ZERO:
-				continue
-			var neighbor: Dictionary = _query_resolved_cell(global_cell + offset)
-			if not neighbor.is_empty() and bool(neighbor["river"]):
-				result.append(offset)
+	for offset: Vector2i in [Vector2i.UP, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT]:
+		var neighbor: Dictionary = _query_resolved_cell(global_cell + offset)
+		if not neighbor.is_empty() and bool(neighbor["river"]):
+			result.append(offset)
 	result.sort_custom(Callable(self, "_offset_less"))
 	return result
 

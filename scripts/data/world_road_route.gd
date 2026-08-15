@@ -29,13 +29,10 @@ func crosses_river() -> bool:
 	return not river_crossing_cells.is_empty()
 
 func straight_distance_cells() -> float:
-	return Vector2(
-		float(start_global_cell.x),
-		float(start_global_cell.y)
-	).distance_to(Vector2(
-		float(end_global_cell.x),
-		float(end_global_cell.y)
-	))
+	return float(
+		absi(end_global_cell.x - start_global_cell.x)
+		+ absi(end_global_cell.y - start_global_cell.y)
+	)
 
 func path_length_cells() -> float:
 	if path.size() < 2:
@@ -43,7 +40,8 @@ func path_length_cells() -> float:
 	var length: float = 0.0
 	for index: int in range(1, path.size()):
 		var delta: Vector2i = path[index] - path[index - 1]
-		length += sqrt(2.0) if delta.x != 0 and delta.y != 0 else 1.0
+		assert(absi(delta.x) + absi(delta.y) == 1, "World road path contains a diagonal step")
+		length += 1.0
 	return length
 
 func path_length_meters() -> float:

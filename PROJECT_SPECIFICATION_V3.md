@@ -14,7 +14,7 @@ V3 將 World Layer 定義為**有限但可擴充**的平面整數網格。初始
 
 目前已落地的基線包含：三層座標、確定性地形／POI／道路生成、輕量 Site Travel Profile 與山地隘口方向遮罩、GameSession 與 TravelRuntime、Region Seed + Sparse Delta、Region Outpost、Seed + Delta Persistence、九區 Battle composite、Formation 移動、命令延遲、傳令攔截與隊長自治。
 
-目前已完成 V3 的 256×256 lazy World bounds、無素材 placeholder 的 World／Region／Site 三層視覺組成、方向受限的山地隘口垂直切片、synthetic 紙娃娃素材實驗室與 30 FPS 以上 runtime 驗證；尚未完成的功能包含：正式 Site／紙娃娃美術資料、MapBaker dirty-cell 烘焙、Formation Breadcrumb／CHOKE／REGROUPING、Battle paper-doll variant cache／shader、完整戰鬥解析與隘口以外的 Site 語意內容。
+目前已完成 V3 的 256×256 packed World Overview 與三層 lazy 生成、World／Region／Site 三層視覺組成、任意 Region tile 的 Site 入口、四種 Site 原生表面、局部高度／峭壁、橋與木／石梯、木／石牆、七種資源 placement、最小多格建築、sparse Site Delta、Site 2m 視覺比例 metadata／scale guide、紙娃娃素材實驗室、reference-derived Art Gate 1 runtime pack 與實際 GPU 預覽驗證。尚未完成的功能包含：大型 POI 多 tile 組合、正式美術師版 Site 邊界／岸線 polish、沙／雪／沼澤 overlay polish、資源再生與完整採集／建造玩法、擴充紙娃娃美術庫、MapBaker dirty-cell 烘焙、Formation Breadcrumb／CHOKE／REGROUPING、Battle paper-doll variant cache／shader與完整戰鬥解析。大型 POI 圖示目前僅保留在 catalog，SiteMap 不繪製，待多 tile 組合實作後再接入。
 
 ## 一、專案總覽與系統目標
 
@@ -31,7 +31,17 @@ Worldgoing 是一款以 Godot 4.6 開發的程序化沙盒戰略 RPG。世界從
 
 專案視覺資產以 Site Layer 的 2m×2m 規格為主。Region Layer 不建立第二套獨立大地圖 Tileset。
 
-目前 placeholder 階段由 SiteLayoutGenerator 產生 50×50 Site visual cells，RegionMap 以每個 Strategic Cell 的 8×8 Site thumbnail 組成 Region，WorldMap 再以 Region thumbnail 組成 World；正式 MapBaker 是 V3 後續功能，應接收已解析的 Site visual data，使用同一套 Site 視覺規則輸出 32×32 nearest-neighbor Region cell thumbnail。烘焙結果是可丟棄的 generated cache，不是 Session state。
+目前由 `SiteLayoutGenerator` 依需求產生 50×50 Site visual cells；RegionMap 只取每個 Strategic Cell 的低成本 8×8 thumbnail，WorldMap 開局只讀 256×256 packed Overview，不會為世界畫面展開 Region 或 Site。正式 MapBaker 是 V3 後續功能，應接收已解析的 Site visual data，使用同一套 Site 視覺規則輸出 32×32 nearest-neighbor Region cell thumbnail。烘焙結果是可丟棄的 generated cache，不是 Session state。
+
+Site 視覺比例固定由 `SiteLayoutData` 提供：50×50、每格 2m（200cm）、100m×100m；`MapArtCatalog` 的 256px presentation surface 只負責公尺尺寸換算，近景層以 16px／2m 格生成 800px nearest-neighbor 表面。F2 scale guide 可視化 2m 網格與 0.60m×1.80m 人物參考框；它不建立 Occupancy、collision 或第二套尋路資料。已實作的 7×5 木屋與 9×7 石廳是用來驗證 footprint、牆與入口的最小 building definition；大型 POI 仍延後，未來應由多個 2m tiles 組合 footprint、入口與接線。
+
+### 1.3 Site 詳細場景與原生地表（已完成基礎重構）
+
+Site 詳細場景採局部離散高度，而不是完整 3D 地形：每個 2m 格有可重建的 `elevation_level`，高度邊界推導峭壁／牆面，樓梯與橋以明確轉接資料連接相鄰格。`source_elevation` 仍是 Region 的宏觀高程，不能直接當作局部格高度。斜坡／碼頭可沿用同一 transition 契約，但本階段沒有新增獨立玩法。
+
+Site 逐格原生表面固定為 `DIRT`、`ROCK`、`RIVER_WATER`、`SEA_WATER`；峭壁是高度邊界而非第五種可站立 floor。草、果樹、森林、石／鐵／銀／金礦是資源 placement；橋、木／石梯、木／石牆與建築是設施 placement。沙／雪／沼澤保留為宏觀 Region terrain，投影到 Site 時使用原生表面加 overlay／material variant，不增加互斥 floor enum。
+
+Runtime 由 `TravelRuntime` 驗證相鄰格、牆、水面與高度轉接，`SiteMap` 只顯示 detached resolved snapshot；沒有橋的水面、沒有樓梯的高度差及牆邊界都必須阻擋。生成 Base 可依 Seed 重建；採集、拆除及玩家新增／拆除設施只寫 Session-owned sparse Site Delta。完整重構與 P0–P6 證據以 [SITE_NATIVE_SURFACE_LAZY_GENERATION_REFACTOR_PLAN.md](SITE_NATIVE_SURFACE_LAZY_GENERATION_REFACTOR_PLAN.md) 為準。
 
 MapBaker 必須支援 lazy／dirty-cell 更新，快取至少受 world seed、generation version、art version 與相關 Delta revision 影響。不得在載入時預先烘焙整個 256×256 世界。
 
@@ -45,7 +55,7 @@ MapBaker 必須支援 lazy／dirty-cell 更新，快取至少受 world seed、ge
 | Region Layer | 100×100 Strategic Cells | 100m×100m | 10km×10km | RegionData、RegionRuntimeState | RegionMap |
 | Site Layer | 50×50 Local Cells | 2m×2m | 100m×100m | SiteData、SiteRuntimeState | SiteMap |
 
-World Cell 是 Region 的外部座標；Region 的 100×100 Strategic Cells 不因 World 擴充而改變。每個 Strategic Cell 都可依座標查詢一份輕量 Site Travel Profile，但完整 SiteData、50×50 Layout 與 SiteRuntimeState 只在 POI、進入玩法、Battle 或其他明確需要時生成，不得為所有 Strategic Cells 常駐完整 Site Runtime。
+World Cell 是 Region 的外部座標；Region 的 100×100 Strategic Cells 不因 World 擴充而改變。每個 Strategic Cell 都可依座標查詢一份輕量 Site Travel Profile，並可在選定時懶生成對應的 Site Base；POI 只是該 Site 的可選內容 overlay，不是進入條件。完整 50×50 Layout 與 SiteRuntimeState 只在進入玩法、Battle 或其他明確需要時生成，不得為所有 Strategic Cells 常駐完整 Site Runtime。
 
 ### 2.2 座標換算
 
@@ -81,7 +91,7 @@ Region Seed：
         REGION_SEED_SALT + generation_version
     )
 
-Site Seed 由 POI 的穩定生成資料、Global Region Cell、Site generation version 與 POI type 推導。既有 Site POI 的 Seed 不得因 World bounds 擴大而改變。
+POI Site Seed 由 POI 的穩定生成資料、Global Region Cell、Site generation version 與 POI type 推導；無 POI 的 Strategic Cell Site Seed 則由 World Seed、Global Region Cell 與 Site generation version 推導。既有 Site Seed 不得因 World bounds 擴大而改變。
 
 ### 3.2 Region 地形
 
@@ -93,7 +103,11 @@ WorldPOIGenerator 以穩定座標與 Seed 產生 VILLAGE、TOWN、CASTLE、RUINS
 
 ### 3.4 道路
 
-WorldRoadGenerator 依地形移動成本、POI settlement graph 與 WeightedGridPathfinder 產生 Route。道路結果寫入 RegionRoadOverlay，Route 使用穩定 route_id。
+WorldRoadGenerator 依地形移動成本、POI settlement graph 與四方向 WeightedGridPathfinder 產生 Route。道路結果寫入 RegionRoadOverlay，Route 使用穩定 route_id；World／Region／Site 的道路折線只沿 tile 邊繪製。
+
+Site 的道路顯示為連續、不透明的人工清理帶；道路本體不再重複鋪設帶碎石／草邊的裝飾貼圖，資源與自然裝飾維持在道路清除範圍外。這是顯示層規則，不改變道路資料、出口或尋路成本。
+
+MOUNTAIN_PASS 的抬高平台不再複製帶碎石的原始地表 tile，再以獨立的窄道路帶繪製東西／南北出口；平台底色、峭壁立面與通行道路分層，避免原生岩石底圖穿透或與道路重疊。
 
 道路具備：
 
@@ -104,17 +118,20 @@ WorldRoadGenerator 依地形移動成本、POI settlement graph 與 WeightedGrid
 
 ### 3.5 Site Travel Profile、Region 內容責任與隘口
 
-Region 是 100×100 Strategic Cells 的生成、索引與彙整單位。每個 Strategic Cell 的基礎地形、資源／內容摘要與通行資料應由 World／Region Seed、Global Cell、generation version 及 Region Delta 解析；詳細資源擺放與 50×50 Site Layout 只在進入 Site 或玩法需要時展開。資源系統尚未實作，不得先配置 10,000 個完整 Site 物件。
+World 開局只建立 256×256 packed `WorldOverviewData`，保存每個 World Cell 的宏觀 biome、通道、海岸／河／山脊旗標與七種資源總配額；不得因此建立 65,536 個 `RegionData`。進入 Region 時才由 `RegionGenerationManifest` 與 100×100 Region terrain 產生 packed `RegionSiteContentData`，以確定性 largest-remainder／穩定排序把七種配額分配到 Strategic Cells。RegionMap 只讀摘要與 thumbnail，不建立任何 50×50 Site placement。
+
+每個 Strategic Cell 的基礎地形、資源／內容摘要與通行資料由 World／Region Seed、Global Cell、generation version 及 Region Delta 解析；任意有效 Strategic Cell 都能展開成 Site，POI 只補充該格內容。詳細資源／設施 placement 與 50×50 Site Layout 只在進入 Site 或玩法明確需要時展開，不得先配置 10,000 個完整 Site 物件。
 
 所有戰略尋路統一讀取輕量 Site Travel Profile，不得展開路徑沿線的 50×50 局部格。Profile 至少包含：
 
 - terrain_type、site_landform、passable 與 travel cost／speed；
 - road、river、river_crossing；
-- travel_exit_mask 與實際 road connection offsets。
+- travel_exit_mask 與實際 road connection offsets；
+- native_surface_hint、rock_ratio、river_width_class、coast_mask 與七種 resource_amounts 摘要。
 
-現行 WeightedGridPathfinder 支援八方向，因此 travel_exit_mask 使用 1 byte 的八方向位元，而不是會切斷斜向道路的四方向遮罩。一般可通行 Site 為全方向，完全不可通行 Site 為 0；山地主地形中具有至少兩個實際 Route 出口的道路格解析為 MOUNTAIN_PASS，遮罩只保留該格的真實道路出口。
+現行 World／Region／Site 尋路統一使用四方向 tile 邊（北、東、南、西）；`travel_exit_mask` 使用 4 bit cardinal 位元，斜向出口與斜向移動一律無效。一般可通行 Site 為四方向全開，完全不可通行 Site 為 0；山地主地形中具有至少兩個實際 Route 出口的道路格解析為 MOUNTAIN_PASS，遮罩只保留該格的真實道路出口。
 
-同一份 MOUNTAIN_PASS 遮罩必須投影到 SiteLayoutData：通道中心線外 10m 以上的局部格標記 NAV_BLOCKED，SiteMap placeholder 以深色山壁顯示，TravelRuntime.move_party_in_site() 以 typed BLOCKED 拒絕穿牆且不得改變 Party 位置。SiteData Base generation version 為 2，SiteLayoutGenerator generation version 為 5。
+同一份 MOUNTAIN_PASS 遮罩必須投影到 `SiteLayoutData`：生成器建立連接真實出口的正交可通行走廊，走廊兩側抬高成岩石高地，由 `height_edge_flags` 推導峭壁；只有明確的 stair transition 能跨越高低差。`TravelRuntime.move_party_in_site()` 與 Site A* 讀同一份 resolved layout 並以 typed `BLOCKED` 拒絕穿崖。SiteData Base generation version 為 3，`SiteLayoutGenerator` generation version 為 8。
 
 目前 MOUNTAIN_PASS 只限制隘口 Site 自身的進出方向；一般 Mountain 仍可用既有低速成本通行。因此它已能表現局部／道路型隘口，但尚未把整條高山稜線變成宏觀不可穿越障壁。若未來需要真正的世界級唯一關口，應在同一 Profile 規則中加入可重建的 ridge／high-mountain blocked landform，不得另建第二套尋路資料。
 
@@ -133,14 +150,14 @@ TravelRuntime 提供唯讀 query：
 
 - query_travel_preview()
 - query_site_snapshot()
-- query_site_entry()
+- query_site_entry()／query_site_entry_at()
 
 並擁有：
 
     start_travel() → commit_travel_step() → finish_travel()
     start_travel() → cancel_travel()
 
-TravelRuntime 是 pathfinding、travel cost、Site entry eligibility 與 authoritative Party／World Time mutation 的唯一 Runtime owner。Presentation 不得提交未重新驗證的 preview path。
+TravelRuntime 是 pathfinding、travel cost、Site tile entry query 與 authoritative Party／World Time mutation 的唯一 Runtime owner；`query_site_entry_at()` 不以 Party 位置或 POI 存在作為進入門檻。Presentation 不得提交未重新驗證的 preview path。
 
 ### 4.3 RegionRuntime 與 Delta
 
@@ -188,7 +205,7 @@ Formation 是命令與模擬的最小單位，但**不是固定 100 人，也沒
 
 ### 5.4 PaperDoll 與 GPU
 
-目前只有 Presentation 素材實驗室：固定 11 個 Sprite 的 `PaperDollComposer`、synthetic Catalog、純 Image contact sheet 與 UI 預覽。它沒有 PC／Unit 權威資料、正式美術、Texture2DArray 或 Battle 接線。
+目前只有 Presentation 素材實驗室：固定 11 個 Sprite 的 `PaperDollComposer`、由 `assets/doll/` reference board 產出的 Art Gate 1 Catalog、純 Image contact sheet 與 UI 預覽。它沒有 PC／Unit 權威資料、Texture2DArray 或 Battle 接線。
 
 Battle PaperDoll variant cache 是 V3 後續功能，依賴未來的 Unit、Equipment、Demography 與美術資產 owner。它應：
 
@@ -245,24 +262,29 @@ DebugUI 顯示 World Time、座標、Party、旅行 preview、Region constructio
 
 ## 八、測試與驗證
 
-目前 scripts/tests/ 有 14 個可執行 GDScript 測試檔案，靜態約有 750 個 assert() 呼叫，超過 200 項單元與邊界斷言。
+目前 `scripts/tests/` 有 22 個可執行 GDScript 測試檔案，靜態超過 1,000 個 `assert()` 呼叫。
 
 目前已驗證的基線：
 
 - Coordinate 4/4；
 - Terrain 9/9；
 - POI 10/10；
-- Road 13/13；
+- Road 14/14（含正交 tile 邊檢查）；
 - Party movement 16/16；
 - Cross-Region Travel 18/18；
 - Cross-Region Runtime PASS；
-- Runtime command/query 18/18；
+- Runtime command/query 19/19；
 - Region Seed + Delta 22/22；
 - Site runtime 36/36；
 - Region construction 13/13；
 - Persistence 10/10；
 - Battle boundary 20/20；
 - Architecture smoke PASS。
+- Site native surface refactor 9/9：Overview 預算與零 Region 開局、共享邊界、七資源守恆、四原生表面、橋／梯移除、7×5 房屋門牆及 sparse Delta；
+- Site detailed scene 6/6：高度、峭壁、樓梯、橋、Runtime A* 與 detail surface；
+- Site visual scale 8/8：50×50／2m／200cm／100m／256px、800px detail surface、人物參考框、八張地形接縫、Site bounds 與 wheel zoom clamp；
+- 實際非 headless map art scale capture（最新 renderer）：World engine 61 FPS、Site scale guide 147.36 FPS、Site debug engine 112 FPS、Battle engine 30 FPS、全流程 measured 147.34 FPS；均達到 30 FPS gate。輸出在 `.visual_captures/map_art_scale_v1/`。
+- P6 實際 GPU Site capture：草地聚落、森林果樹、礦區、雙峭壁隘口、河流＋橋＋樓梯，各有全景與近景，共 10/10 張並逐張人工檢查；道路折線已驗證為正交 tile 邊，且道路顯示為連續乾淨清理帶。1280×720、VSync 關閉的 uncapped gate 最新最低量測 3488.07 FPS；此數字只證明通過 30 FPS gate，不作一般遊玩幀率承諾。輸出在 `.visual_captures/site_native_surface_p6/`。
 
 Battle 20/20 目前涵蓋九區合成、typed query、命令權、延遲命令、傳令攔截、隊長自治、Formation 基本幾何、移動、9,000 MultiMesh instance 與 Scene replacement；不涵蓋 Breadcrumb、CHOKE／REGROUPING、PaperDoll shader 或 60 FPS benchmark。
 
@@ -277,4 +299,4 @@ V3 必須新增：
 
 ## 九、明確不在 V3 首批實作
 
-除 MOUNTAIN_PASS 的 NAV_BLOCKED 通道切片外，Site 語意內容、建築／資源／NPC、一般逐格 collision、完整 Site pathfinding、Site movement time／animation、Site-local Party persistence、Site Runtime persistence、active Travel persistence、Save UI、多槽存檔、經濟、事件、天氣、任務、遷徙、完整 Combat damage／AI／resolution，均不因 V3 的 256×256 World bounds 而自動加入。
+本次 Site 重構只完成 deterministic 生成、導航規則、資源／設施資料 placement、最小建築 definition、sparse Delta 命令與實際美術預覽；不因此加入完整採集收益、資源再生、生態 AI、建造成本／工期／耐久、建築室內玩法、NPC、經濟、生產鏈或船舶。大型 POI 多 tile 組合、沙／雪／沼澤正式 overlay polish、Site movement time／animation、Site-local Party persistence、Site Runtime persistence、active Travel persistence、Save UI、多槽存檔、事件、天氣、任務、遷徙與完整 Combat damage／AI／resolution 仍屬後續範圍。

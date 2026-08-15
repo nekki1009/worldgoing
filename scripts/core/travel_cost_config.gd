@@ -37,9 +37,9 @@ static func is_passable(terrain_type: int, river: bool, river_crossing: bool) ->
 	return true
 
 static func step_distance_meters(direction: Vector2i) -> float:
-	return float(WorldCoordinates.REGION_CELL_SIZE_METERS) * (
-		sqrt(2.0) if direction.x != 0 and direction.y != 0 else 1.0
-	)
+	if absi(direction.x) + absi(direction.y) != 1:
+		return INF
+	return float(WorldCoordinates.REGION_CELL_SIZE_METERS)
 
 static func travel_seconds(distance_meters: float, speed_kmh: float) -> float:
 	return distance_meters / 1000.0 / maxf(speed_kmh, 0.01) * 3600.0

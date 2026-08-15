@@ -2,4 +2,5 @@
 .godot/
 .godot-user-cache/
 .godot-user-data/
+.godot-temp*/
 /android/

@@ -16,6 +16,7 @@ func _init() -> void:
 	var path_info: Dictionary = _find_path_route(world_data, TEST_SEED, test_region)
 	assert(not path_info.is_empty(), "No generated route path was found")
 	_test_deterministic_path(world_data, TEST_SEED, path_info)
+	_test_orthogonal_path(path_info)
 	_test_cross_region_border(world_data, TEST_SEED, test_region)
 	_test_pass_through_region(world_data, TEST_SEED, test_region)
 	_test_terrain_avoidance(world_data, TEST_SEED, path_info)
@@ -32,7 +33,7 @@ func _init() -> void:
 	)
 	assert(_route_signature(graph_a) != _route_signature(different_seed_routes), "Different seed kept identical road graph")
 	print("Road test region: %s" % test_region)
-	print("World road tests passed: 13 cases")
+	print("World road tests passed: 14 cases")
 	quit()
 
 func _test_deterministic_graph(
@@ -65,6 +66,13 @@ func _test_stable_route_id(route: WorldRoadRoute) -> void:
 		"Reverse endpoint order produced a different route ID"
 	)
 	assert(route.start_poi_id < route.end_poi_id, "Route endpoints were not canonicalized")
+	assert(
+		is_equal_approx(
+			route.straight_distance_cells(),
+			float(absi(route.end_global_cell.x - route.start_global_cell.x) + absi(route.end_global_cell.y - route.start_global_cell.y))
+		),
+		"Straight Route distance is not tile-Manhattan"
+	)
 	print("TEST 3 PASS: stable route ID and A-B/B-A dedupe")
 
 func _test_deterministic_path(
@@ -81,6 +89,14 @@ func _test_deterministic_path(
 	assert(first_signature == _path_signature(second_route), "Route path changed after cache clear")
 	print("TEST 4 PASS: deterministic terrain-aware path")
 
+func _test_orthogonal_path(path_info: Dictionary) -> void:
+	var route: WorldRoadRoute = path_info["route"] as WorldRoadRoute
+	for index: int in range(1, route.path.size()):
+		var delta: Vector2i = route.path[index] - route.path[index - 1]
+		assert(absi(delta.x) + absi(delta.y) == 1, "World Route contains a diagonal step")
+	assert(is_equal_approx(route.path_length_cells(), float(maxi(route.path.size() - 1, 0))), "Orthogonal route length is incorrect")
+	print("TEST 5 PASS: World Route uses only cardinal tile edges")
+
 func _test_cross_region_border(
 		world_data: WorldData,
 		world_seed: int,
@@ -95,7 +111,7 @@ func _test_cross_region_border(
 		if previous_region != current_region:
 			assert(abs((route.path[index] - route.path[index - 1]).x) <= 1, "Border step jumped in x")
 			assert(abs((route.path[index] - route.path[index - 1]).y) <= 1, "Border step jumped in y")
-			print("TEST 5 PASS: global path is continuous across Region border")
+			print("TEST 6 PASS: global path is continuous across Region border")
 			return
 	assert(false, "Route did not contain a Region border transition")
 
@@ -116,7 +132,7 @@ func _test_pass_through_region(
 		var overlay: RegionRoadOverlay = world_data.get_roads_for_region(middle_region, world_seed)
 		var local_cell: Vector2i = _region_cell_for_global(global_cell)
 		assert(overlay.has_road(local_cell), "Pass-through road was missing from its Region overlay")
-		print("TEST 6 PASS: pass-through Region query includes endpoint-external road")
+		print("TEST 7 PASS: pass-through Region query includes endpoint-external road")
 		return
 	assert(false, "Route did not pass through an endpoint-external Region")
 
@@ -142,7 +158,7 @@ func _test_terrain_avoidance(
 		).terrain_array
 	assert(before == after, "Road overlay modified base terrain data")
 	assert(route.estimated_cost >= route.path_length_cells(), "Terrain weights were not applied")
-	print("TEST 7 PASS: water avoided, terrain weights applied, overlay is separate (%d mountain cells)" % mountain_cells)
+	print("TEST 8 PASS: water avoided, terrain weights applied, overlay is separate (%d mountain cells)" % mountain_cells)
 
 func _test_river_crossing(
 		world_data: WorldData,
@@ -161,7 +177,7 @@ func _test_river_crossing(
 			crossing_seen = true
 			break
 	assert(crossing_seen, "River crossing flag was not copied to Region overlay")
-	print("TEST 8 PASS: river crossing is passable and flagged")
+	print("TEST 9 PASS: river crossing is passable and flagged")
 
 func _test_negative_coordinate(world_data: WorldData) -> void:
 	var overlay: RegionRoadOverlay = world_data.get_roads_for_region(Vector2i(-1, 0), TEST_SEED)
@@ -169,7 +185,7 @@ func _test_negative_coordinate(world_data: WorldData) -> void:
 	var routes: Array[WorldRoadRoute] = world_data.get_route_edges_for_region(Vector2i(-1, 0), TEST_SEED)
 	for route: WorldRoadRoute in routes:
 		assert(route.route_id == WorldRoadGenerator.stable_route_id(route.start_poi_id, route.end_poi_id), "Negative route ID is unstable")
-	print("TEST 9 PASS: negative World Cell road query")
+	print("TEST 10 PASS: negative World Cell road query")
 
 func _test_cache_independence(
 		world_data: WorldData,
@@ -180,7 +196,7 @@ func _test_cache_independence(
 	world_data.clear_road_cache()
 	var second: String = _overlay_signature(world_data.get_roads_for_region(region, world_seed))
 	assert(first == second, "Clearing route and overlay caches changed roads")
-	print("TEST 10 PASS: graph/path cache only affects performance")
+	print("TEST 11 PASS: graph/path cache only affects performance")
 
 func _test_no_duplicate_edges(
 		world_data: WorldData,
@@ -194,7 +210,7 @@ func _test_no_duplicate_edges(
 		assert(route.start_poi_id < route.end_poi_id, "Route Edge is not canonical")
 		assert(not route.start_poi_id.contains("ruins") and not route.end_poi_id.contains("ruins"), "Ruins entered road graph")
 		assert(not route.start_poi_id.contains("cave") and not route.end_poi_id.contains("cave"), "Cave entered road graph")
-	print("TEST 11 PASS: no duplicate edges and no Ruins/Cave endpoints")
+	print("TEST 12 PASS: no duplicate edges and no Ruins/Cave endpoints")
 
 func _test_reaches_settlement(
 		world_data: WorldData,
@@ -206,7 +222,7 @@ func _test_reaches_settlement(
 	var route: WorldRoadRoute = info["route"] as WorldRoadRoute
 	assert(route.path.front() == route.start_global_cell, "Route path does not start at settlement cell")
 	assert(route.path.back() == route.end_global_cell, "Route path does not end at settlement cell")
-	print("TEST 12 PASS: Route Path reaches both settlement POI cells")
+	print("TEST 13 PASS: Route Path reaches both settlement POI cells")
 
 func _test_mountain_pass_profile(world_data: WorldData) -> void:
 	var global_cell: Vector2i = Vector2i(1832, 38)
@@ -219,7 +235,7 @@ func _test_mountain_pass_profile(world_data: WorldData) -> void:
 	var exit_mask: int = int(info["travel_exit_mask"])
 	assert((exit_mask & (exit_mask - 1)) != 0, "Mountain Pass has fewer than two exits")
 	assert((info["road_connection_offsets"] as Array).size() >= 2, "Mountain Pass lost Road topology")
-	print("TEST 13 PASS: actual Mountain Road Site exposes a directional pass profile")
+	print("TEST 14 PASS: actual Mountain Road Site exposes a directional pass profile")
 
 func _find_region_with_routes(world_data: WorldData, world_seed: int) -> Vector2i:
 	for y: int in range(0, 6):

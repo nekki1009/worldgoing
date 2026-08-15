@@ -6,7 +6,7 @@
 
 - 世界層負責 Region 之間的關係、Party 所在位置與全局時間。
 - Region 層負責 100×100 Strategic Cells 的生成／彙整、輕量 Site 通行摘要、資源內容索引、探索移動與大型建設。
-- Site 層負責村莊、洞穴、遺跡等小尺度地圖與細部玩法。
+- Site 層負責每個 Strategic Cell 的小尺度地圖與細部玩法；村莊、洞穴、遺跡等 POI 是可選的 Site 內容。
 
 核心原則：資料模型先於顯示、程序生成可重現、世界不保存不必要的完整地圖。
 
@@ -14,14 +14,15 @@
 
 ### 1. World 層
 
-World 層只處理跨 Region 的狀態與流程：
+World 層只處理跨 Region 的狀態與流程，並在開局建立一份受預算約束的 256×256 packed Overview：
 
 - `RegionCoord`: Region 在世界中的整數座標，例如 `(3, -2)`。
 - Party 所在的 Region 與 Strategic Cell。
 - 全局時間、跨 Region 移動與載入相鄰 Region。
 - Region 的 Seed 與玩家造成的 Delta 索引。
+- `WorldOverviewData` 的宏觀 biome、共享通道、海岸／河／山脊旗標與七種 Region 資源總配額。
 
-World 層不直接持有 TileMap，也不負責繪製地形。
+World 層不直接持有 TileMap，也不負責繪製地形。建立 Overview 不得配置 65,536 個 `RegionData`；Region Manifest、Region Base 與 Site 內容都維持按需生成。
 
 ### 2. Region 層
 
@@ -33,7 +34,7 @@ World 層不直接持有 TileMap，也不負責繪製地形。
 - `RegionCoord` 決定 Region 的世界位置。
 - `RegionData.seed` 決定該 Region 的程序生成結果。
 - Region 資料可被重新生成，不依賴 TileMap 是否存在。
-- 每個 Strategic Cell 可按需解析為輕量 Site Travel Profile；Region 不保存 10,000 個完整 Site Layout 或 Runtime。
+- 每個 Strategic Cell 都是一個可進入的 Site 來源；進入 Region 時才由 Manifest 生成 packed 100×100 `RegionSiteContentData`，保存原生表面提示與七種資源配額，不保存 10,000 個完整 Site Layout 或 Runtime。
 
 Region 內座標限制：
 
@@ -67,18 +68,22 @@ Site 是掛在某個 Region Strategic Cell 上的小尺度場景：
 - 固定大小：`50 × 50 Site Cell`。
 - 每格代表：`2m × 2m`。
 - Site 實際範圍：`100m × 100m`，正好對應一個 Region Strategic Cell 的實際範圍。
-- Site 有自己的局部座標與場景資料。
-- Site 不取代 Region；Region 只保存 Site 的索引、入口與狀態。
-- 從 Region 進入 Site 時，才載入 Site 的細部地圖與玩法。
+- Site 有自己的局部座標與場景資料；每個 Strategic Cell 都能依 Global Cell 懶生成一份 Site Base。
+- Site 不取代 Region；Region 只保存 Site 的座標索引、入口與狀態。POI 是選定 Site 的可選附加內容，不是進入條件。
+- 從 Region 選定任意有效 Strategic Cell 進入 Site 時，才載入該 Site 的細部地圖與玩法。
 - Strategic A* 以 Site Travel Profile 為 100m 尋路節點，但不展開沿途 Site 的 50×50 局部格。
 
 Site 的 `50 × 50` 是座標與邊界契約，不代表必須保存 2,500 筆格子資料；未改動內容仍應由 Seed 重建，玩家改動使用稀疏 Delta。
 
 Site 座標不可直接當成 Region 座標使用；兩者之間必須透過位於父 Strategic Cell 中央的入口錨點轉換。Site 的 `100m × 100m` 局部邊界必須與父 Strategic Cell 的世界公尺邊界一致，但不改變 Region 的 `100 × 100` 戰略格大小。
 
-Party 進入 Site 時從 `(25, 25)` 開始；`PartyData.current_site_local_cell` 是目前 Site 局部位置的唯一真實來源。進入、退出與每次上下左右一格的基本移動都由 `TravelRuntime` 驗證及修改；移動不得進入 generated `NAV_BLOCKED` 格。`SiteMap` 只送出 WASD／方向鍵意圖並顯示 Runtime Snapshot，不能直接改位置。
+若 Party 與選定 Site 位於同一 Strategic Cell，進入時可從 `(25, 25)` 顯示；若 Party 不在該格，Site 仍可作為 detached map 檢視，且不建立 Party 顯示標記。`PartyData.current_site_local_cell` 仍是局部位置的唯一真實來源；進入、退出與每次上下左右一格的基本移動都由 `TravelRuntime` 驗證及修改，移動不得進入 generated `NAV_BLOCKED` 格。`SiteMap` 只送出 WASD／方向鍵意圖並顯示 Runtime Snapshot，不能直接改位置。
 
-戰略通行資料使用同一個 Site 契約：一般可通行格持有全方向遮罩，不可通行格為 0；山地主地形中具有至少兩個實際道路出口的格為 `MOUNTAIN_PASS`，以 1 byte 八方向 `travel_exit_mask` 保存真實 Route 連接。八方向是為了對齊既有斜向 A*；進入完整 Site 後，`SiteLayoutGenerator` 用同一遮罩生成中央通道及兩側 `NAV_BLOCKED` 山壁。Region 可負責日後的 Site 資源／內容基礎生成與彙整，但詳細 Layout 仍保持 lazy，玩家改動仍只寫稀疏 Delta。
+戰略通行資料使用同一個 Site 契約：一般可通行格持有北／東／南／西四方向遮罩，不可通行格為 0；山地主地形中具有至少兩個實際道路出口的格為 `MOUNTAIN_PASS`，以 4 bit cardinal `travel_exit_mask` 保存真實 Route 連接。World、Region、Site 的 WeightedGridPathfinder 與道路繪製都只沿 tile 邊移動，不產生斜向步驟或斜向出口。進入完整 Site 後，`SiteLayoutGenerator` 用同一遮罩生成正交中央可通行走廊、兩側岩石高地與推導峭壁。Region 的 packed Profile 負責 Site 資源／內容摘要；詳細 placement 與 Layout 保持 lazy，玩家改動只寫稀疏 Delta。
+
+### Site 原生地表與詳細場景邊界（已實作）
+
+`SiteLayoutData` 以 `DIRT`、`ROCK`、`RIVER_WATER`、`SEA_WATER` 四種逐格原生表面，加上整數 `elevation_level`、相鄰格高度邊界及少量 `SiteTransitionData` 表達台地、峭壁、樓梯與橋；峭壁不是第五種 floor。草、果樹、森林、石／鐵／銀／金礦是資源 placement；橋、木／石梯、木／石牆與最小 building definition 是設施 placement。`SiteMap` 只繪製 resolved snapshot，`TravelRuntime` 才能決定水面、高度差及牆是否可跨越。不建立 3D 世界、第二套座標、每格 Scene Node 或平行資源／建築 manager。完整 P0–P6 分期與驗收見 `SITE_NATIVE_SURFACE_LAZY_GENERATION_REFACTOR_PLAN.md`。
 
 ## 二、資料與顯示的分離
 
@@ -93,10 +98,10 @@ RegionCoord + seed
 角色生成器先落地的 Gate 0／Milestone 1 只建立 Presentation 素材實驗室，不建立 Character、Equipment 或 Mount gameplay：
 
 - `PaperDollLayerVisual` 與 `PaperDollMountVisual` 是 runtime 不修改的視覺 Resource；它們只保存穩定 visual ID、渲染層、性別政策與 Texture。
-- `PaperDollCatalog` 是已核准素材的查找與驗證入口；目前 Main 開啟的是程式產生的 synthetic debug Catalog，正式 ChatGPT 素材尚未加入。
+- `PaperDollCatalog` 是素材候選的查找與驗證入口；角色生成器正式預覽使用 `assets/paper_doll/reference_parts/` 的拆分部件，並提供 Body、Armor、Hair、Helmet、Cape、Weapon、Shield、Mount Barding 與 Mount parts 的獨立選擇。`reference_match` 完整板只保留為離線驗收 fixture，不是正式輸出；舊 `debug_*` Catalog 只保留為工程 fallback，不得寫入存檔。
 - `PaperDollPreviewDraft` 是素材實驗室的可變 View 草稿，永不進入 `GameSession` 或 Persistence。
-- `PaperDollRecipe` 是從 Catalog 解析出的 detached 顯示快照；`PaperDollComposer` 只消費 Recipe，固定重用 11 個 `Sprite2D`。
-- `CharacterCreator` 目前只啟用素材實驗室。PC 外觀頁明確停在 Milestone 2 placeholder；腳本沒有 `GameSession`、Persistence 或 Battle 依賴。
+- `PaperDollRecipe` 是從 Catalog 解析出的 detached 顯示快照；`PaperDollComposer` 只消費 Recipe，固定重用 11 個 `Sprite2D`。`PaperDollAnimation` 支援 IDLE、WALK、RUN、ATTACK、SPRINT_ATTACK、WORK、HIT、DOWN；缺少逐部件動作圖時由 `PaperDollActionSheet` 產生保持 512×192 契約的程序化分件動作片。Hair+eyebrows、Armor、Cape、Mount 是四個獨立的暫時染色群組。
+- `CharacterCreator` 目前只啟用素材實驗室，且以白髮銀甲 approved reference 為唯一預覽輸出；正式畫面不顯示金髮紫披風等未通過對位的分層候選，也不顯示離線 Check All／Contact Sheet／failure 導覽。PC 外觀頁明確停在 Milestone 2 placeholder。腳本沒有 `GameSession`、Persistence 或 Battle 依賴。
 - `PaperDollContactSheet` 使用純 `Image.get_region()`、逐部件 LEFT 鏡像與 `blend_rect()` 合成 4×8 驗收表；UI 的 `SubViewport` 只負責單人即時預覽，不作 Battle Bakery。
 
 來源素材契約固定為每格 `64×64`、`8×3` sheet（`512×192`），row 為 DOWN／UP／RIGHT；LEFT 使用 RIGHT row 並逐部件 `flip_h`。所有部件的 frame 內世界 Anchor 固定為 `(32,56)`，Composer 使用 `centered = false` 與 `offset = (-32,-56)`。11 個 render layers 與方向 Z-order 由 `PaperDollLayerVisual.RenderLayer`／`PaperDollComposer.z_index_for()` 單一實作。
@@ -110,7 +115,7 @@ hair_male_default
 hair_female_default
 ```
 
-Art Gate 1 未通過前不得實作 Milestone 2、不得把 synthetic `debug_*` ID 寫入存檔。Equipment／Mount owner 未建立前，盔甲、武器、盾牌、披風、馬匹與騎乘狀態都只能存在 Preview Draft。Battle 仍只使用既有單一 MultiMesh；角色生成器的 Sprite、SubViewport、Recipe 或 Catalog 不得成為 9,000 人 Battle runtime state。
+Art Gate 1 已提供 reference-derived runtime 素材包與 PC 預設 visual ID 候選；角色生成器正式畫面鎖定白髮銀甲 approved sheet，分層合成仍只在離線 QA 使用。Milestone 2 仍必須先建立 `GameSession.player_appearance`、深拷貝套用與 Persistence v2，且不得把 synthetic `debug_*` ID 寫入存檔。Equipment／Mount owner 未建立前，盔甲、武器、盾牌、披風、馬匹與騎乘狀態都只能存在 Preview Draft。Battle 仍只使用既有單一 MultiMesh；角色生成器的 Sprite、SubViewport、Recipe 或 Catalog 不得成為 9,000 人 Battle runtime state。
 
 ## Battle composite and runtime boundary
 
@@ -268,3 +273,8 @@ TileMap、地形預覽、探索 UI
 3. 確定性驗證如何執行，以及驗證結果。
 4. 尚未處理的邊界條件或後續工作。
 ```
+## Site 原生地表重構狀態（2026-08-12）
+
+`SiteData` base generation version 3、`WorldOverviewData` version 2、`WorldRoadGenerator` version 5 與 `SiteLayoutGenerator` generation version 8 已完成 `WorldOverviewData` → `RegionGenerationManifest`／packed `RegionSiteContentData` → lazy `SiteLayoutData` 的三層生成路徑。`SiteLayoutData` 擁有 deterministic 原生表面、高度、峭壁邊界、資源／設施 placement、牆邊與 transition；`TravelRuntime` 解析生成 Base + Session sparse Delta，擁有採集、增刪設施、逐格移動與 bounded Site A* 的重新驗證；`SiteMap` 只渲染 detached snapshot。
+
+P0–P6 已以 9/9 focused refactor tests、既有 Runtime／跨區／持久化回歸、隔離 editor scan，以及五種實際 GPU 場景共 10 張預覽完成驗收。大型 POI 組合、完整採集／建造玩法及正式邊界／岸線 polish 仍延後，且不新增第二座標、3D world、per-cell Node 或平行 manager。

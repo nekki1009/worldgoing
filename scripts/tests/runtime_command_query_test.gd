@@ -6,6 +6,7 @@ const TravelFailureReasonType = preload("res://scripts/runtime/travel_failure_re
 
 var world_data: WorldData = WorldData.new()
 var cancellation_signal_seen: bool = false
+var site_entry_signal_cell: Vector2i = Vector2i(-1, -1)
 
 func _init() -> void:
 	call_deferred("_run")
@@ -21,6 +22,7 @@ func _run() -> void:
 	_test_cancel_travel_command()
 	_test_travel_terminal_guards()
 	_test_site_entry_query()
+	await _test_region_tile_selection_and_site_entry()
 	_test_navigation_has_no_gameplay_pathfinding()
 	await _test_scene_replacement_contract()
 	_test_existing_local_travel_contract()
@@ -29,7 +31,7 @@ func _run() -> void:
 	_test_runtime_without_region_map()
 	_test_runtime_without_ui()
 	_test_runtime_dependency_scan()
-	print("Runtime command/query tests passed: 18 cases")
+	print("Runtime command/query tests passed: 19 cases")
 	quit()
 
 func _test_query_is_read_only() -> void:
@@ -156,9 +158,85 @@ func _test_site_entry_query() -> void:
 	var allowed: SiteEntryQueryResult = runtime.query_site_entry(session.party.party_id, poi.poi_id)
 	assert(allowed.can_enter, "Party at POI was rejected by Site Entry Query")
 	session.party.set_global_region_cell(poi.global_region_cell + Vector2i.RIGHT)
-	var denied: SiteEntryQueryResult = runtime.query_site_entry(session.party.party_id, poi.poi_id)
-	assert(not denied.can_enter and denied.failure_reason == TravelFailureReasonType.Code.NOT_AT_SITE, "Remote Site Entry was allowed")
+	var remote: SiteEntryQueryResult = runtime.query_site_entry(session.party.party_id, poi.poi_id)
+	assert(remote.can_enter, "POI Site entry still depends on Party locality")
+	var generic_region_cell: Vector2i = _find_non_poi_cell(poi.world_cell, session.world_seed)
+	var generic: SiteEntryQueryResult = runtime.query_site_entry_at(
+		session.party.party_id,
+		poi.world_cell,
+		generic_region_cell
+	)
+	assert(generic.can_enter, "A non-POI Region tile was rejected as a Site")
+	assert(generic.poi == null and generic.site_definition.source_poi_id.is_empty(), "Generic tile Site incorrectly requires POI data")
+	assert(generic.site_definition.layout_kind == SiteLayoutData.LayoutKind.CELL_BASE, "Generic tile Site did not use the cell layout")
 	print("TEST 9 PASS: Site Entry belongs to Runtime Query")
+
+func _test_region_tile_selection_and_site_entry() -> void:
+	var map_scene: PackedScene = load("res://scenes/region/RegionMap.tscn") as PackedScene
+	var map: RegionMap = map_scene.instantiate() as RegionMap
+	get_root().add_child(map)
+	await process_frame
+	var session: GameSession = _new_session()
+	var runtime: TravelRuntime = _new_runtime(session)
+	var remote_world_cell: Vector2i = session.party.get_world_cell() + Vector2i.RIGHT
+	var remote_region: RegionData = world_data.get_region(remote_world_cell)
+	var remote_terrain: RegionTerrainData = world_data.get_or_generate_region_terrain(
+		remote_world_cell,
+		session.world_seed
+	)
+	var remote_roads: RegionRoadOverlay = world_data.get_roads_for_region(
+		remote_world_cell,
+		session.world_seed
+	)
+	session.selected_world_cell = remote_world_cell
+	session.selected_region_cell = Vector2i(12, 13)
+	map.setup(
+		remote_region,
+		remote_terrain,
+		world_data.get_pois_for_region(remote_world_cell, session.world_seed),
+		session,
+		remote_roads,
+		runtime
+	)
+	assert(not map.party_in_region, "Remote Region unexpectedly claimed the Party")
+	assert(map.select_region_cell(Vector2i(14, 15)), "Remote Region tile could not be selected")
+	assert(session.selected_region_cell == Vector2i(14, 15), "Remote Region tile selection was discarded")
+
+	var generic_region_cell: Vector2i = _find_non_poi_cell(remote_world_cell, session.world_seed)
+	session.selected_region_cell = generic_region_cell
+	site_entry_signal_cell = Vector2i(-1, -1)
+	if not map.site_enter_requested.is_connected(_on_test_site_enter_requested):
+		map.site_enter_requested.connect(_on_test_site_enter_requested)
+	map.setup(
+		remote_region,
+		remote_terrain,
+		world_data.get_pois_for_region(remote_world_cell, session.world_seed),
+		session,
+		remote_roads,
+		runtime
+	)
+	assert(map._try_enter_site_at(generic_region_cell), "Non-POI Region tile did not resolve as a Site entry")
+	assert(site_entry_signal_cell == generic_region_cell, "Region did not emit the generic Site entry request")
+	site_entry_signal_cell = Vector2i(-1, -1)
+	map.setup(
+		remote_region,
+		remote_terrain,
+		world_data.get_pois_for_region(remote_world_cell, session.world_seed),
+		session,
+		remote_roads,
+		runtime
+	)
+	var enter_event: InputEventKey = InputEventKey.new()
+	enter_event.keycode = KEY_ENTER
+	enter_event.pressed = true
+	map._unhandled_input(enter_event)
+	assert(site_entry_signal_cell == generic_region_cell, "Enter on a selected non-POI tile did not emit the Site entry request")
+	map.queue_free()
+	await process_frame
+	print("TEST 9B PASS: Any Region tile opens Site independently from Party locality and POI presence")
+
+func _on_test_site_enter_requested(region_cell: Vector2i) -> void:
+	site_entry_signal_cell = region_cell
 
 func _test_navigation_has_no_gameplay_pathfinding() -> void:
 	var source: String = _source("res://scripts/core/navigation_controller.gd")
@@ -349,6 +427,14 @@ func _first_poi() -> WorldPOIData:
 			if not pois.is_empty():
 				return pois[0]
 	return null
+
+func _find_non_poi_cell(world_cell: Vector2i, world_seed: int) -> Vector2i:
+	for y: int in range(WorldCoordinates.REGION_GRID_SIZE):
+		for x: int in range(WorldCoordinates.REGION_GRID_SIZE):
+			var candidate: Vector2i = Vector2i(x, y)
+			if world_data.find_poi_at(world_cell, candidate, world_seed) == null:
+				return candidate
+	return Vector2i.ZERO
 
 func _state_snapshot(session: GameSession) -> Dictionary:
 	var region_state: RegionRuntimeState = session.region_runtime_states.get(
