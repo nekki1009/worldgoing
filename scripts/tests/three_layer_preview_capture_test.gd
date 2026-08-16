@@ -3,6 +3,7 @@ extends SceneTree
 const TEST_SEED: int = 123456789
 const CAPTURE_DIR: String = "res://.visual_captures/three_layer_preview"
 const INVALID_CELL: Vector2i = Vector2i(-1, -1)
+const SiteLayoutDataType = preload("res://scripts/data/site_layout_data.gd")
 
 var capture_count: int = 0
 
@@ -42,13 +43,9 @@ func _run() -> void:
 	world_map.camera.zoom = Vector2.ONE * 1.35
 	await _settle(20)
 	_capture("01_world_map")
-	var displayed_world_pois: int = 0
-	for cached: Variant in world_map.world_poi_cache.values():
-		if cached is Array:
-			displayed_world_pois += world_map._world_poi_display_list(cached as Array).size()
-	assert(displayed_world_pois <= 80,
-		"World overview POI display is too dense: %d" % displayed_world_pois)
-	print("THREE LAYER WORLD DISPLAY POIS: %d" % displayed_world_pois)
+	# POIs are intentionally deferred to Region/Site entry; World is an
+	# Overview-only layer and must not allocate or draw a POI list.
+	print("THREE LAYER WORLD DISPLAY POIS: 0 (deferred)")
 
 	navigation.enter_region(Vector2i.ZERO)
 	await _settle(60)
@@ -86,11 +83,32 @@ func _run() -> void:
 
 	var site_cell: Vector2i = _find_enterable_site(navigation)
 	assert(site_cell != INVALID_CELL, "No enterable Site tile was found in the Region")
+	_assert_region_contract(navigation, region_map, site_cell)
 	navigation.enter_site_at(site_cell)
 	await _settle(60)
 	var site_map: SiteMap = navigation.get_current_map() as SiteMap
 	assert(site_map != null, "Site map was not displayed")
-	site_map.camera.zoom = Vector2.ONE * 12.0
+	assert(site_map.is_composite_view(), "Region entry did not display a 3x3 Site composite")
+	assert(site_map.composite_tiles.size() == 9, "Site composite did not contain nine Site tiles")
+	var rendered_river_tiles: int = 0
+	for river_tile: SiteMap in site_map.composite_tiles:
+		if river_tile.runtime_snapshot.layout != null \
+			and not river_tile.runtime_snapshot.layout.river_connection_offsets.is_empty():
+			rendered_river_tiles += 1
+	if rendered_river_tiles > 0:
+		assert(site_map.composite_scene_river_axis >= 0, "Site composite did not resolve a shared river axis")
+	assert(
+		site_map.composite_background_kind == "generated_mixed_v1",
+		"River Site composite did not select one native stitched background"
+	)
+	assert(site_map.composite_background_texture != null, "Site composite background texture was missing")
+	_assert_site_contract(navigation, site_map)
+	for tile: SiteMap in site_map.composite_tiles:
+		assert(
+			tile.composite_scene_river_axis == site_map.composite_scene_river_axis,
+			"Site composite river artwork broke the shared-edge axis"
+		)
+	site_map.camera.zoom = Vector2.ONE * 3.4
 	await _settle(20)
 	_capture("03_site_map")
 
@@ -104,6 +122,26 @@ func _run() -> void:
 
 func _find_enterable_site(navigation: NavigationController) -> Vector2i:
 	var center: int = floori(float(WorldCoordinates.REGION_GRID_SIZE) * 0.5)
+	var fallback: Vector2i = INVALID_CELL
+	# Prefer a river cell so the captured three-layer proof exercises the
+	# Region/Site water direction contract instead of only showing plain land.
+	for y: int in range(1, WorldCoordinates.REGION_GRID_SIZE - 1):
+		for x: int in range(1, WorldCoordinates.REGION_GRID_SIZE - 1):
+			var cell: Vector2i = Vector2i(x, y)
+			var global_cell: Vector2i = WorldCoordinates.world_region_to_global_region_cell(
+				navigation.session.selected_world_cell,
+				cell
+			)
+			var info: Dictionary = navigation.travel_runtime._travel_cell_info(global_cell)
+			if not bool(info.get("valid", false)):
+				continue
+			if bool(info.get("river", false)) \
+				and not _cardinal_offsets(info.get("river_connection_offsets", [])).is_empty():
+				return cell
+			if fallback == INVALID_CELL and bool(info.get("road", false)):
+				fallback = cell
+	if fallback != INVALID_CELL:
+		return fallback
 	for radius: int in range(0, center + 1):
 		var candidates: Array[Vector2i] = [
 			Vector2i(center + radius, center),
@@ -115,6 +153,123 @@ func _find_enterable_site(navigation: NavigationController) -> Vector2i:
 			if navigation.can_enter_site_at(cell):
 				return cell
 	return INVALID_CELL
+
+func _assert_region_contract(
+		navigation: NavigationController,
+		region_map: RegionMap,
+		center_region_cell: Vector2i
+	) -> void:
+	var center_global_cell: Vector2i = WorldCoordinates.world_region_to_global_region_cell(
+		navigation.session.selected_world_cell,
+		center_region_cell
+	)
+	for offset_y: int in range(-1, 2):
+		for offset_x: int in range(-1, 2):
+			var region_cell: Vector2i = center_region_cell + Vector2i(offset_x, offset_y)
+			if not WorldCoordinates.is_valid_region_cell(region_cell):
+				continue
+			var global_cell: Vector2i = center_global_cell + Vector2i(offset_x, offset_y)
+			var info: Dictionary = navigation.travel_runtime._travel_cell_info(global_cell)
+			assert(bool(info.get("valid", false)), "Region travel contract was invalid")
+			var expected_river: bool = bool(info.get("river", false)) \
+				and not _cardinal_offsets(info.get("river_connection_offsets", [])).is_empty()
+			assert(
+				region_map.travel_river_cells.has(region_cell) == expected_river,
+				"Region river visual diverged from travel contract at %s" % region_cell
+			)
+			assert(
+				_offsets_equal(
+					region_map.travel_river_offsets.get(region_cell, []),
+					info.get("river_connection_offsets", [])
+				),
+				"Region river direction diverged from travel contract at %s" % region_cell
+			)
+			var expected_road: bool = bool(info.get("road", false))
+			assert(
+				region_map.travel_road_cells.has(region_cell) == expected_road,
+				"Region road visual diverged from travel contract at %s" % region_cell
+			)
+			assert(
+				_offsets_equal(
+					region_map.travel_road_offsets.get(region_cell, []),
+					info.get("road_connection_offsets", [])
+				),
+				"Region road direction diverged from travel contract at %s" % region_cell
+			)
+	for crossing_variant: Variant in region_map.travel_road_crossings.keys():
+		var crossing_cell: Vector2i = crossing_variant as Vector2i
+		assert(
+			region_map.travel_river_cells.has(crossing_cell),
+			"Region road crossing has no matching river contract at %s" % crossing_cell
+		)
+	print("THREE LAYER CONTRACT: Region visual water/roads use the selected global cell contract")
+
+func _assert_site_contract(
+		navigation: NavigationController,
+		site_map: SiteMap
+	) -> void:
+	for tile: SiteMap in site_map.composite_tiles:
+		var snapshot: SiteRuntimeSnapshot = tile.runtime_snapshot
+		assert(snapshot != null and snapshot.layout != null, "Composite tile lost its Site layout")
+		var info: Dictionary = navigation.travel_runtime._travel_cell_info(
+			snapshot.global_region_cell
+		)
+		assert(bool(info.get("valid", false)), "Site tile travel contract was invalid")
+		assert(
+			snapshot.layout.terrain_type == int(info.get("terrain_type", -1)),
+			"Site terrain diverged from Region at %s" % snapshot.global_region_cell
+		)
+		var site_river_offsets: Array[Vector2i] = _cardinal_offsets(
+			snapshot.layout.river_connection_offsets
+		)
+		var contract_river_offsets: Array[Vector2i] = _cardinal_offsets(
+			info.get("river_connection_offsets", [])
+		)
+		assert(
+			_offsets_equal(site_river_offsets, contract_river_offsets),
+			"Site river direction diverged from Region at %s" % snapshot.global_region_cell
+		)
+		assert(
+			_offsets_equal(
+				snapshot.layout.road_connection_offsets,
+				info.get("road_connection_offsets", [])
+			),
+			"Site road direction diverged from Region at %s" % snapshot.global_region_cell
+		)
+		var expected_water: bool = TerrainType.is_water_like(int(info.get("terrain_type", -1))) \
+			or bool(info.get("river", false))
+		assert(
+			_layout_has_water(snapshot.layout) == expected_water,
+			"Region/Site water presence diverged at %s" % snapshot.global_region_cell
+		)
+	print("THREE LAYER CONTRACT: Site terrain/water/road/river directions match Region")
+
+func _layout_has_water(layout: SiteLayoutDataType) -> bool:
+	for y: int in range(SiteLayoutDataType.GRID_SIZE.y):
+		for x: int in range(SiteLayoutDataType.GRID_SIZE.x):
+			if SiteContentTypes.is_water_surface(layout.native_surface_at(Vector2i(x, y))):
+				return true
+	return false
+
+func _offsets_equal(left_value: Variant, right_value: Variant) -> bool:
+	var left: Dictionary = {}
+	var right: Dictionary = {}
+	for offset: Vector2i in _cardinal_offsets(left_value):
+		left[offset] = true
+	for offset: Vector2i in _cardinal_offsets(right_value):
+		right[offset] = true
+	return left == right
+
+func _cardinal_offsets(value: Variant) -> Array[Vector2i]:
+	var result: Array[Vector2i] = []
+	if not value is Array:
+		return result
+	for offset: Variant in value as Array:
+		if offset is Vector2i:
+			var direction: Vector2i = offset as Vector2i
+			if absi(direction.x) + absi(direction.y) == 1 and not result.has(direction):
+				result.append(direction)
+	return result
 
 func _settle(frame_count: int) -> void:
 	for _frame: int in range(frame_count):

@@ -131,6 +131,13 @@ var construction_preview: RegionConstructionResultType
 var is_moving: bool = false
 var resource_visual_types: PackedInt32Array = PackedInt32Array()
 var resource_visual_amounts: PackedInt32Array = PackedInt32Array()
+# Region and Site must render the same resolved edge contract.  These caches are
+# built once per Region view instead of re-sampling 10,000 cells every draw.
+var travel_river_cells: Dictionary = {}
+var travel_river_offsets: Dictionary = {}
+var travel_road_cells: Dictionary = {}
+var travel_road_offsets: Dictionary = {}
+var travel_road_crossings: Dictionary = {}
 
 func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
@@ -170,6 +177,7 @@ func setup(
 	battle_preview_runtime.bind(session, travel_runtime.world_data, region_runtime)
 	region_runtime.set_region_context(region, terrain_data, pois, road_overlay)
 	resolved_region = region_runtime.query_region(region.world_cell)
+	_refresh_travel_visual_contract()
 	site_content_data = travel_runtime.world_data.get_or_generate_region_site_content(
 		region.world_cell,
 		session.world_seed
@@ -321,6 +329,36 @@ func remove_outpost_at(region_cell: Vector2i) -> RegionConstructionResultType:
 func _refresh_resolved_region() -> void:
 	if region_runtime != null and region != null:
 		resolved_region = region_runtime.query_region(region.world_cell)
+		_refresh_travel_visual_contract()
+
+func _refresh_travel_visual_contract() -> void:
+	travel_river_cells.clear()
+	travel_river_offsets.clear()
+	travel_road_cells.clear()
+	travel_road_offsets.clear()
+	travel_road_crossings.clear()
+	if region == null or travel_runtime == null or session == null:
+		return
+	for y: int in range(GRID_SIZE.y):
+		for x: int in range(GRID_SIZE.x):
+			var region_cell: Vector2i = Vector2i(x, y)
+			var info: Dictionary = _region_travel_info(region_cell)
+			if not bool(info.get("valid", false)):
+				continue
+			var road_offsets: Array[Vector2i] = _cardinal_offsets(
+				info.get("road_connection_offsets", [])
+			)
+			if bool(info.get("road", false)):
+				travel_road_cells[region_cell] = true
+				travel_road_offsets[region_cell] = road_offsets
+				if bool(info.get("river_crossing", false)):
+					travel_road_crossings[region_cell] = true
+			var river_offsets: Array[Vector2i] = _cardinal_offsets(
+				info.get("river_connection_offsets", [])
+			)
+			if bool(info.get("river", false)) and not river_offsets.is_empty():
+				travel_river_cells[region_cell] = true
+				travel_river_offsets[region_cell] = river_offsets
 
 func _refresh_construction_preview() -> void:
 	if not construction_mode or not _is_valid_region_cell(hovered_region_cell):
@@ -459,15 +497,15 @@ func get_debug_state() -> Dictionary:
 	var elevation: float = resolved_region.get_elevation(displayed_region_cell) if resolved_region != null else 0.0
 	var moisture: float = resolved_region.get_moisture(displayed_region_cell) if resolved_region != null else 0.0
 	var river_strength: float = resolved_region.get_river_strength(displayed_region_cell) if resolved_region != null else 0.0
+	var global_cell_info: TravelCellResult = travel_runtime.query_travel_cell(global_region_cell)
 	var base_terrain_name: String = TerrainType.to_display_name(base_terrain_type)
 	var resolved_terrain_name: String = TerrainType.to_display_name(terrain_type)
 	var final_terrain_name: String = resolved_terrain_name
-	if river_strength > 0.0:
+	if global_cell_info.river:
 		final_terrain_name = "River / %s" % resolved_terrain_name
 	var hovered_poi: WorldPOIData = _poi_at(displayed_region_cell)
 	var road_flags: int = _resolved_road_flags(displayed_region_cell)
 	var route_ids: Array[String] = _resolved_route_ids(displayed_region_cell)
-	var global_cell_info: TravelCellResult = travel_runtime.query_travel_cell(global_region_cell)
 	var speed: float = global_cell_info.speed
 	var cell_travel_seconds: int = global_cell_info.travel_seconds
 	var reached_poi: WorldPOIData = _poi_at(session.party.get_region_cell()) if party_in_region else null
@@ -543,7 +581,7 @@ func get_debug_state() -> Dictionary:
 		"elevation": "%.2f" % elevation,
 		"moisture": "%.2f" % moisture,
 		"river_strength": "%.2f" % river_strength,
-		"river_mask": "Yes" if river_strength > 0.0 else "No",
+		"river_mask": "Yes" if global_cell_info.river else "No",
 		"site": _poi_label(session.selected_region_cell),
 		"poi_id": hovered_poi.poi_id if hovered_poi != null else "No POI",
 		"poi_type": WorldPOIType.to_display_name(hovered_poi.poi_type) if hovered_poi != null else "No POI",
@@ -614,6 +652,29 @@ func _draw() -> void:
 func _refresh_static_visual() -> void:
 	if static_visual == null or resolved_region == null or not resolved_region.is_valid():
 		return
+	# Contract/runtime tests still need a valid Region map node and terrain data,
+	# but they do not inspect the GPU thumbnail. Avoid the 100x100x8x8 GDScript
+	# raster in headless mode; visual verification runs without this feature and
+	# therefore exercises the full composed Region artwork.
+	if OS.has_feature("headless"):
+		var headless_image: Image = Image.create(
+			GRID_SIZE.x,
+			GRID_SIZE.y,
+			false,
+			Image.FORMAT_RGBA8
+		)
+		var headless_terrain: PackedByteArray = resolved_region.get_terrain_snapshot()
+		for y: int in range(GRID_SIZE.y):
+			for x: int in range(GRID_SIZE.x):
+				var cell_index: int = y * GRID_SIZE.x + x
+				var terrain_type: int = headless_terrain[cell_index]
+				headless_image.set_pixel(
+					x,
+					y,
+					_region_visual_cell_color(Vector2i(x, y), terrain_type, cell_index, 0)
+				)
+		static_visual.configure(ImageTexture.create_from_image(headless_image), [], false)
+		return
 	var composed_visual: bool = debug_view == DebugView.NORMAL
 	var visual_grid_size: Vector2i = GRID_SIZE * SITE_THUMBNAIL_GRID_SIZE if composed_visual else GRID_SIZE
 	var image: Image = Image.create(visual_grid_size.x, visual_grid_size.y, false, Image.FORMAT_RGBA8)
@@ -656,8 +717,13 @@ func _refresh_static_visual() -> void:
 				# renderer.  Draw one continuous channel above the surface below;
 				# otherwise every positive noise sample becomes a cyan square.
 				"river": false,
-				"road": resolved_region.has_road(region_cell),
-				"river_crossing": resolved_region.has_river_crossing(region_cell),
+				# Roads and crossings are artificial facilities. They are drawn by
+				# _draw_region_roads from the authoritative RegionRoadOverlay, never
+				# baked into the native terrain thumbnail. This keeps a plain tile
+				# from looking like it contains a road just because it is adjacent
+				# to a route.
+				"road": false,
+				"river_crossing": false,
 			}
 			if not composed_visual:
 				image.set_pixel(
@@ -825,31 +891,43 @@ func _draw_outposts() -> void:
 func _draw_region_roads() -> void:
 	if debug_view != DebugView.NORMAL or road_overlay == null or region == null:
 		return
-	var road_cells: Dictionary = {}
-	for y: int in range(GRID_SIZE.y):
-		for x: int in range(GRID_SIZE.x):
-			var cell: Vector2i = Vector2i(x, y)
-			if resolved_region != null and resolved_region.has_road(cell):
-				road_cells[cell] = true
-	if road_cells.is_empty():
+	if travel_road_cells.is_empty():
 		return
-	# Draw links first and tiles second. Every link is cardinal and every
-	# corner is a square tile, so the road can never become a diagonal spline.
-	for cell_variant: Variant in road_cells.keys():
+	# Draw only explicit route edges. Merely touching two road cells is not enough:
+	# the reciprocal edge must exist in both cells, otherwise Site would render a
+	# different connection at the same global coordinate.
+	for cell_variant: Variant in travel_road_cells.keys():
 		var cell: Vector2i = cell_variant as Vector2i
 		var center: Vector2 = _cell_center(cell)
-		if road_cells.has(cell + Vector2i.RIGHT):
-			_draw_region_road_link(center, _cell_center(cell + Vector2i.RIGHT))
-		if road_cells.has(cell + Vector2i.DOWN):
-			_draw_region_road_link(center, _cell_center(cell + Vector2i.DOWN))
-	for cell_variant: Variant in road_cells.keys():
+		var offsets: Array[Vector2i] = travel_road_offsets.get(cell, []) as Array[Vector2i]
+		for direction: Vector2i in offsets:
+			var neighbor: Vector2i = cell + direction
+			if _is_valid_region_cell(neighbor):
+				if not travel_road_cells.has(neighbor):
+					continue
+				var neighbor_offsets: Array[Vector2i] = travel_road_offsets.get(
+					neighbor,
+					[]
+				) as Array[Vector2i]
+				if -direction not in neighbor_offsets:
+					continue
+				# Draw each shared edge once.
+				if cell.x > neighbor.x or (cell.x == neighbor.x and cell.y > neighbor.y):
+					continue
+				_draw_region_road_link(center, _cell_center(neighbor))
+			else:
+				# The neighboring Region draws its reciprocal half.
+				_draw_region_road_link(
+					center,
+					center + Vector2(direction) * CELL_PIXEL_SIZE * 0.5
+				)
+	for cell_variant: Variant in travel_road_cells.keys():
 		var cell: Vector2i = cell_variant as Vector2i
 		var center: Vector2 = _cell_center(cell)
 		var road_tile: Rect2 = Rect2(center - Vector2.ONE * 15.0, Vector2.ONE * 30.0)
 		draw_rect(road_tile, Color(0.12, 0.09, 0.06, 0.94))
 		draw_rect(road_tile.grow(-2.0), Color("d1aa68"))
-		var road_flags: int = _resolved_road_flags(cell)
-		if (road_flags & RegionRoadOverlay.RIVER_CROSSING) != 0:
+		if bool(travel_road_crossings.get(cell, false)):
 			draw_rect(road_tile.grow(-8.0), Color("75d8df"), false, 3.0)
 
 func _draw_region_road_link(from: Vector2, to: Vector2) -> void:
@@ -859,86 +937,69 @@ func _draw_region_road_link(from: Vector2, to: Vector2) -> void:
 func _draw_region_rivers() -> void:
 	if debug_view != DebugView.NORMAL or resolved_region == null:
 		return
-	var max_strength: float = 0.0
-	var min_x: int = GRID_SIZE.x
-	var max_x: int = -1
-	var min_y: int = GRID_SIZE.y
-	var max_y: int = -1
-	for y: int in range(GRID_SIZE.y):
-		for x: int in range(GRID_SIZE.x):
-			var strength: float = resolved_region.get_river_strength(Vector2i(x, y))
-			max_strength = maxf(max_strength, strength)
-	var channel_threshold: float = clampf(max_strength * 0.65, 0.12, 0.78)
-	var channel_cells: Dictionary = {}
-	for y: int in range(GRID_SIZE.y):
-		for x: int in range(GRID_SIZE.x):
-			var cell: Vector2i = Vector2i(x, y)
-			# River strength is a normalized noise-line confidence.  Keep the
-			# strongest band in this Region as the visible channel; treating
-			# every positive sample as water creates a full cyan mesh while the
-			# debug field still exposes the raw Yes/No value.
-			if resolved_region.get_river_strength(cell) < channel_threshold:
-				continue
-			channel_cells[cell] = true
-			min_x = mini(min_x, x)
-			max_x = maxi(max_x, x)
-			min_y = mini(min_y, y)
-			max_y = maxi(max_y, y)
-	if channel_cells.is_empty():
+	if travel_river_cells.is_empty():
 		return
-	# Collapse the strength band to one center sample per travel axis. This
-	# keeps a major river readable as a smooth channel instead of a cell mesh.
-	var horizontal: bool = (max_x - min_x) >= (max_y - min_y)
-	var points: PackedVector2Array = PackedVector2Array()
-	if horizontal:
-		for x: int in range(min_x, max_x + 1):
-			var best_cell: Vector2i = Vector2i(-1, -1)
-			var best_strength: float = channel_threshold
-			for y: int in range(min_y, max_y + 1):
-				var candidate: Vector2i = Vector2i(x, y)
-				if not channel_cells.has(candidate):
+	# Use the same reciprocal cardinal edges that CELL_BASE Sites use. Region
+	# must not derive a second river centreline from scalar noise strength.
+	for cell_variant: Variant in travel_river_cells.keys():
+		var cell: Vector2i = cell_variant as Vector2i
+		var center: Vector2 = _cell_center(cell)
+		var offsets: Array[Vector2i] = travel_river_offsets.get(cell, []) as Array[Vector2i]
+		for direction: Vector2i in offsets:
+			var neighbor: Vector2i = cell + direction
+			if _is_valid_region_cell(neighbor):
+				if not travel_river_cells.has(neighbor):
 					continue
-				var candidate_strength: float = resolved_region.get_river_strength(candidate)
-				if candidate_strength > best_strength:
-					best_strength = candidate_strength
-					best_cell = candidate
-			if best_cell.x >= 0:
-				points.append(_cell_center(best_cell))
-	else:
-		for y: int in range(min_y, max_y + 1):
-			var best_cell: Vector2i = Vector2i(-1, -1)
-			var best_strength: float = channel_threshold
-			for x: int in range(min_x, max_x + 1):
-				var candidate: Vector2i = Vector2i(x, y)
-				if not channel_cells.has(candidate):
+				var neighbor_offsets: Array[Vector2i] = travel_river_offsets.get(
+					neighbor,
+					[]
+				) as Array[Vector2i]
+				if -direction not in neighbor_offsets:
 					continue
-				var candidate_strength: float = resolved_region.get_river_strength(candidate)
-				if candidate_strength > best_strength:
-					best_strength = candidate_strength
-					best_cell = candidate
-			if best_cell.x >= 0:
-				points.append(_cell_center(best_cell))
-	_draw_river_segments(points)
+				# Draw each shared edge once.
+				if cell.x > neighbor.x or (cell.x == neighbor.x and cell.y > neighbor.y):
+					continue
+				_draw_river_segment(center, _cell_center(neighbor))
+			else:
+				# The adjacent Region draws its reciprocal half.
+				_draw_river_segment(
+					center,
+					center + Vector2(direction) * CELL_PIXEL_SIZE * 0.5
+				)
+		draw_circle(center, 12.0, Color("24566b"))
+		draw_circle(center, 7.0, Color("62cfe2"))
 
-func _draw_river_segments(points: PackedVector2Array) -> void:
-	if points.is_empty():
-		return
-	var segment: PackedVector2Array = PackedVector2Array()
-	for point: Vector2 in points:
-		if not segment.is_empty() and segment[-1].distance_to(point) > CELL_PIXEL_SIZE * 2.5:
-			_draw_river_segment(segment)
-			segment = PackedVector2Array()
-		segment.append(point)
-	if not segment.is_empty():
-		_draw_river_segment(segment)
+func _draw_river_segment(from: Vector2, to: Vector2) -> void:
+	draw_line(from, to, Color("24566b"), 24.0, true)
+	draw_line(from, to, Color("62cfe2"), 13.0, true)
 
-func _draw_river_segment(points: PackedVector2Array) -> void:
-	if points.size() == 1:
-		draw_circle(points[0], 10.0, Color("24566b"))
-		draw_circle(points[0], 6.0, Color("62cfe2"))
-		return
-	draw_polyline(points, Color("24566b"), 24.0, true)
-	draw_polyline(points, Color("62cfe2"), 13.0, true)
+func _region_travel_info(region_cell: Vector2i) -> Dictionary:
+	if travel_runtime == null or session == null or region == null \
+		or not _is_valid_region_cell(region_cell):
+		return {"valid": false}
+	var global_cell: Vector2i = WorldCoordinates.world_region_to_global_region_cell(
+		region.world_cell,
+		region_cell
+	)
+	return travel_runtime._travel_cell_info(global_cell)
+
+func _cardinal_offsets(value: Variant) -> Array[Vector2i]:
+	var result: Array[Vector2i] = []
+	if not value is Array:
+		return result
+	for offset: Variant in value as Array:
+		if not offset is Vector2i:
+			continue
+		var direction: Vector2i = offset as Vector2i
+		if absi(direction.x) + absi(direction.y) != 1:
+			continue
+		if not result.has(direction):
+			result.append(direction)
+	result.sort_custom(Callable(self, "_offset_less"))
+	return result
+
+func _offset_less(left: Vector2i, right: Vector2i) -> bool:
+	return left.y < right.y or (left.y == right.y and left.x < right.x)
 
 func _draw_region_resources() -> void:
 	if debug_view != DebugView.NORMAL or site_content_data == null or not site_content_data.is_valid():

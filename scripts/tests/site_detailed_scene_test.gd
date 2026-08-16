@@ -47,9 +47,10 @@ func _test_height_generation_is_deterministic() -> void:
 	for level: int in first.elevation_levels:
 		minimum = mini(minimum, level)
 		maximum = maxi(maximum, level)
-	assert(minimum == 0 and maximum >= 2, "Mountain sample did not produce visible 0/2m levels")
-	assert(first.transitions.size() >= 2, "Mountain sample did not produce two stairs")
+	assert(minimum == 0 and maximum >= 1, "Mountain sample did not produce visible 0/1-level height difference")
+	assert(first.transitions.size() >= 2, "Mountain sample did not produce two boundary stairs")
 	for transition: SiteTransitionData in first.transitions:
+		assert(transition.height_delta() > 0, "Mountain sample contains a flat stair transition")
 		assert(
 			SiteLayoutDataType.is_valid_cell(transition.from_cell)
 				and SiteLayoutDataType.is_valid_cell(transition.to_cell),

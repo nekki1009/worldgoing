@@ -22,14 +22,12 @@ var world_data: WorldData
 var session: GameSession
 var travel_runtime: TravelRuntime
 var hovered_world_cell: Vector2i = Vector2i(-1, -1)
-var selected_poi: WorldPOIData
 var travel_preview: TravelPreviewResult
 var preview_error: String = ""
 var world_texture: Texture2D
 var world_texture_rect: Rect2 = Rect2()
 var world_texture_cells: Rect2i = Rect2i()
 var overview: WorldOverviewData
-var world_poi_cache: Dictionary = {}
 
 func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
@@ -40,13 +38,11 @@ func setup(p_world_data: WorldData, p_session: GameSession, p_runtime: TravelRun
 	travel_runtime = p_runtime if p_runtime != null else TravelRuntimeType.new(session, world_data)
 	travel_runtime.bind(session, world_data)
 	overview = world_data.get_or_generate_world_overview(session.world_seed)
-	selected_poi = null
 	travel_preview = null
 	preview_error = ""
 	world_texture = null
 	world_texture_rect = Rect2()
 	world_texture_cells = Rect2i()
-	world_poi_cache.clear()
 	camera.position = MAP_ORIGIN + Vector2(GRID_SIZE.x, GRID_SIZE.y) * CELL_PIXEL_SIZE * 0.5
 	camera.zoom = Vector2.ONE
 	queue_redraw()
@@ -84,9 +80,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif mouse_event.button_index == MOUSE_BUTTON_LEFT and mouse_event.pressed:
 			var world_cell: Vector2i = _cell_from_global_position(get_global_mouse_position())
 			if _is_valid_world_cell(world_cell):
-				selected_poi = _poi_at_map_position(get_global_mouse_position())
-				if selected_poi != null:
-					world_cell = selected_poi.world_cell
+				# World is an Overview-only layer. POIs are resolved after Region entry.
 				session.selected_world_cell = world_cell
 				queue_redraw()
 				debug_state_changed.emit(get_debug_state())
@@ -100,12 +94,13 @@ func _unhandled_input(event: InputEvent) -> void:
 			if session.is_traveling():
 				return
 			travel_runtime.ensure_party_ready()
-			var destination_global_cell: Vector2i = selected_poi.global_region_cell \
-				if selected_poi != null else travel_runtime.resolve_world_destination(session.selected_world_cell)
+			var destination_global_cell: Vector2i = travel_runtime.resolve_world_destination(
+				session.selected_world_cell
+			)
 			travel_preview = travel_runtime.query_travel_preview(
 					session.party.party_id,
-					destination_global_cell,
-					selected_poi.poi_id if selected_poi != null else ""
+				destination_global_cell,
+				""
 				)
 			preview_error = "" if travel_preview.has_path() else TravelFailureReasonType.to_code(travel_preview.failure_reason)
 			queue_redraw()
@@ -261,9 +256,6 @@ func _draw() -> void:
 	_draw_world_features(visible_cells)
 	_draw_party_marker()
 	_draw_travel_preview()
-	if selected_poi != null:
-		var selected_position: Vector2 = _poi_map_position(selected_poi)
-		draw_circle(selected_position, 9.0, Color("fff1a8"), false, 3.0)
 
 func _ensure_world_texture(visible_cells: Rect2i) -> void:
 	if world_data == null or session == null or overview == null \
@@ -281,10 +273,6 @@ func _ensure_world_texture(visible_cells: Rect2i) -> void:
 			var world_cell: Vector2i = visible_cells.position + Vector2i(local_x, local_y)
 			var biome: int = overview.biome_at(world_cell)
 			var features: int = overview.features_at(world_cell)
-			var region_thumbnail: PackedByteArray = world_data.get_or_generate_region_thumbnail(
-				world_cell,
-				session.world_seed
-			)
 			var resource_total: int = 0
 			for resource_type: int in range(SiteContentTypes.RESOURCE_COUNT):
 				resource_total += overview.resource_budget_at(world_cell, resource_type)
@@ -292,11 +280,6 @@ func _ensure_world_texture(visible_cells: Rect2i) -> void:
 				for sub_x: int in range(thumbnail_size):
 					var pixel_terrain: int = biome
 					var pixel_visual_code: int = 0
-					if region_thumbnail.size() == RegionTerrainGenerator.THUMBNAIL_CELL_COUNT:
-						var packed_cell: int = region_thumbnail[sub_y * thumbnail_size + sub_x]
-						pixel_terrain = RegionTerrainGenerator.thumbnail_terrain(packed_cell)
-						if RegionTerrainGenerator.thumbnail_has_river(packed_cell):
-							pixel_visual_code = SiteLayoutDataType.VISUAL_RIVER
 					var color: Color = MapArtCatalogType.thumbnail_color(
 						pixel_terrain,
 						pixel_visual_code,
@@ -366,7 +349,6 @@ func _draw_world_features(visible_cells: Rect2i) -> void:
 				)
 			_draw_world_resource_marker(world_cell, center)
 			_draw_world_passage(world_cell, cell_rect)
-	_draw_world_pois(visible_cells)
 
 func _draw_world_resource_marker(world_cell: Vector2i, center: Vector2) -> void:
 	if overview == null:
@@ -429,47 +411,6 @@ func _draw_world_passage(world_cell: Vector2i, cell_rect: Rect2) -> void:
 		draw_line(center, endpoint, Color("4b3422"), 8.0, true)
 		draw_line(center, endpoint, Color("d7a968"), 4.0, true)
 
-func _draw_world_pois(visible_cells: Rect2i) -> void:
-	if world_data == null or session == null:
-		return
-	for y: int in range(visible_cells.position.y, visible_cells.end.y):
-		for x: int in range(visible_cells.position.x, visible_cells.end.x):
-			var world_cell: Vector2i = Vector2i(x, y)
-			var generated: Array = world_poi_cache.get(world_cell, [])
-			if not world_poi_cache.has(world_cell):
-				generated = world_data.get_pois_for_region(world_cell, session.world_seed)
-				world_poi_cache[world_cell] = generated
-			for poi: WorldPOIData in _world_poi_display_list(generated):
-				var poi_position: Vector2 = _poi_map_position(poi)
-				draw_circle(poi_position, 11.0, Color("17202a"))
-				draw_circle(poi_position, 7.0, WorldPOIType.to_color(poi.poi_type))
-				draw_circle(poi_position, 2.5, Color("fff5c4"))
-
-func _world_poi_display_list(generated: Array) -> Array[WorldPOIData]:
-	var important: Array[WorldPOIData] = []
-	for item: Variant in generated:
-		if not item is WorldPOIData:
-			continue
-		var poi: WorldPOIData = item as WorldPOIData
-		# One strategic marker represents a 4x4 World-cell cluster. The full
-		# candidate list remains available after entering the Region.
-		if posmod(poi.world_cell.x, 4) != 0 or posmod(poi.world_cell.y, 4) != 0:
-			continue
-		if poi.poi_type == WorldPOIType.CASTLE \
-			or (poi.poi_type == WorldPOIType.TOWN and poi.deterministic_priority >= 0.82):
-			important.append(poi)
-	important.sort_custom(func(left: WorldPOIData, right: WorldPOIData) -> bool:
-		return left.importance > right.importance \
-			or (left.importance == right.importance \
-			and left.deterministic_priority > right.deterministic_priority)
-	)
-	# World view is a strategic overview: only towns/castles are drawn here.
-	# Villages, caves and ruins remain queryable and appear when their Region is
-	# opened, rather than creating one marker per visible World Cell.
-	if important.size() > 1:
-		important.resize(1)
-	return important
-
 func _resource_color(resource_type: int) -> Color:
 	match resource_type:
 		SiteContentTypes.RESOURCE_GRASS:
@@ -522,30 +463,6 @@ func _draw_travel_preview() -> void:
 	for point: Vector2 in points:
 		draw_circle(point, 5.0, Color("fff7c2"))
 
-func _poi_at_map_position(_mouse_global_position: Vector2) -> WorldPOIData:
-	if world_data == null or session == null:
-		return null
-	var local_position: Vector2 = to_local(_mouse_global_position)
-	var cell: Vector2i = _cell_from_global_position(_mouse_global_position)
-	if not _is_valid_world_cell(cell):
-		return null
-	var generated: Array = world_poi_cache.get(cell, [])
-	if not world_poi_cache.has(cell):
-		generated = world_data.get_pois_for_region(cell, session.world_seed)
-		world_poi_cache[cell] = generated
-	for item: Variant in generated:
-		if not item is WorldPOIData:
-			continue
-		var poi: WorldPOIData = item as WorldPOIData
-		if local_position.distance_to(_poi_map_position(poi)) <= 20.0:
-			return poi
-	return null
-
-func _poi_map_position(poi: WorldPOIData) -> Vector2:
-	return MAP_ORIGIN + Vector2(poi.world_cell.x, poi.world_cell.y) * CELL_PIXEL_SIZE \
-		+ (Vector2(poi.region_cell.x, poi.region_cell.y) + Vector2.ONE * 0.5) \
-		* (CELL_PIXEL_SIZE / float(WorldCoordinates.REGION_GRID_SIZE))
-
 func _global_cell_map_position(global_cell: Vector2i) -> Vector2:
 	var converted: Dictionary = WorldCoordinates.global_region_cell_to_world_region(global_cell)
 	var world_cell: Vector2i = converted["world_cell"] as Vector2i
@@ -553,28 +470,6 @@ func _global_cell_map_position(global_cell: Vector2i) -> Vector2:
 	return MAP_ORIGIN + Vector2(world_cell.x, world_cell.y) * CELL_PIXEL_SIZE \
 		+ (Vector2(region_cell.x, region_cell.y) + Vector2.ONE * 0.5) \
 		* (CELL_PIXEL_SIZE / float(WorldCoordinates.REGION_GRID_SIZE))
-
-func _draw_region_thumbnail(cell_rect: Rect2, thumbnail: PackedByteArray) -> void:
-	if thumbnail.size() != RegionTerrainGenerator.THUMBNAIL_CELL_COUNT:
-		return
-	var thumbnail_cell_size: float = CELL_PIXEL_SIZE / float(RegionTerrainGenerator.THUMBNAIL_GRID_SIZE)
-	for y: int in range(RegionTerrainGenerator.THUMBNAIL_GRID_SIZE):
-		for x: int in range(RegionTerrainGenerator.THUMBNAIL_GRID_SIZE):
-			var thumbnail_index: int = y * RegionTerrainGenerator.THUMBNAIL_GRID_SIZE + x
-			var packed_cell: int = thumbnail[thumbnail_index]
-			var visual_code: int = SiteLayoutDataType.VISUAL_RIVER \
-				if RegionTerrainGenerator.thumbnail_has_river(packed_cell) else 0
-			var color: Color = MapArtCatalogType.thumbnail_color(
-				RegionTerrainGenerator.thumbnail_terrain(packed_cell),
-				visual_code,
-				Vector2i(x, y),
-				RegionTerrainGenerator.THUMBNAIL_GRID_SIZE
-			)
-			var thumbnail_rect: Rect2 = Rect2(
-				cell_rect.position + Vector2(x, y) * thumbnail_cell_size,
-				Vector2.ONE * thumbnail_cell_size
-			)
-			draw_rect(thumbnail_rect, color)
 
 func _cell_from_global_position(mouse_global_position: Vector2) -> Vector2i:
 	var map_position: Vector2 = to_local(mouse_global_position)

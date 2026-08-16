@@ -25,8 +25,6 @@ const PATH_HALF_WIDTH_METERS: float = 2.5
 const PASSAGE_HALF_WIDTH_METERS: float = 6.0
 const LANDMARK_RADIUS_METERS: float = 5.0
 const HUB_RADIUS_METERS: float = 5.0
-const HEIGHT_TERRACE_SALT: int = 42_001
-const HEIGHT_STAIR_SALT: int = 42_002
 const HEIGHT_WALL_LEVEL: int = 4
 
 static func generate(definition: SiteData) -> SiteLayoutDataType:
@@ -46,7 +44,9 @@ static func generate(definition: SiteData) -> SiteLayoutDataType:
 	layout.travel_exit_mask = definition.travel_exit_mask
 	layout.elevation = definition.source_elevation
 	layout.moisture = definition.source_moisture
-	layout.river_strength = 1.0 if definition.source_river_nearby else 0.0
+	layout.river_strength = definition.source_river_strength \
+		if definition.source_river_strength > 0.0 \
+		else (1.0 if definition.source_river_nearby else 0.0)
 	layout.details["native_surface_hint"] = definition.native_surface_hint
 	layout.details["rock_ratio"] = definition.rock_ratio
 	layout.details["river_width_class"] = definition.river_width_class
@@ -82,7 +82,7 @@ static func generate(definition: SiteData) -> SiteLayoutDataType:
 			)
 		if definition.source_river_nearby:
 			layout.river_connection_offsets = _normalized_offsets(
-				[],
+				definition.source_river_connection_offsets,
 				definition.site_seed,
 				key,
 				CELL_RIVER_FALLBACK_SALT
@@ -92,6 +92,18 @@ static func generate(definition: SiteData) -> SiteLayoutDataType:
 		_generate_navigation_flags(layout)
 		_generate_visual_cells(layout)
 		return layout
+	# POI Sites can sit on the same Region travel cell as the 3x3 composite.
+	# Preserve the explicit reciprocal river/road edges on those authored
+	# layouts too; otherwise the POI branch would silently drop the direction
+	# that Region and CELL_BASE Sites already use.
+	if definition.source_road:
+		layout.road_connection_offsets = _contract_offsets(
+			definition.source_road_connection_offsets
+		)
+	if definition.source_river_nearby:
+		layout.river_connection_offsets = _contract_offsets(
+			definition.source_river_connection_offsets
+		)
 	var minimum: Vector2i = layout.bounds_meters.position + Vector2i.ONE * DETAIL_MARGIN_METERS
 	var maximum: Vector2i = layout.bounds_meters.end - Vector2i.ONE * (DETAIL_MARGIN_METERS + 1)
 	layout.hub_local_meters = Vector2i(
@@ -456,7 +468,10 @@ static func _is_water_cell(layout: SiteLayoutDataType, point: Vector2) -> bool:
 		return true
 	if not layout.river_connection_offsets.is_empty():
 		return _near_segments(point, layout.river_connection_offsets, RIVER_HALF_WIDTH_METERS)
-	return layout.river_strength > 0.0 and _poi_river_band_contains(layout, point)
+	# river_strength is a macro/Region confidence value, not permission to paint
+	# water.  The reciprocal cardinal edge contract is the only source of a
+	# generated river surface for both CELL_BASE and POI Sites.
+	return false
 
 static func _surface_hint_for_terrain(terrain_type: int) -> int:
 	if terrain_type == TerrainType.OCEAN:
@@ -500,30 +515,55 @@ static func _set_native_surface(
 	layout.native_surface_cells[cell.y * SiteLayoutDataType.GRID_SIZE.x + cell.x] = native_surface
 
 static func _apply_mountain_terraces(layout: SiteLayoutDataType) -> void:
-	var seed_offset: int = DeterministicHash.int_range(
-		layout.site_seed,
-		layout.global_region_cell,
-		HEIGHT_TERRACE_SALT,
-		0,
-		5
+	# A normal Mountain Site gets one continuous raised plateau.  The old
+	# two-band strip pattern put two stairs on a mostly flat-looking horizontal
+	# seam and left the final level-2 drop without a matching transition.  Build
+	# the high ground first, then derive the stair endpoints from its actual
+	# boundary so a stair can never float in level 0 terrain.
+	var center: Vector2 = Vector2(
+		float(SiteLayoutDataType.GRID_SIZE.x - 1) * 0.5,
+		float(SiteLayoutDataType.GRID_SIZE.y - 1) * 0.5
 	)
-	var first_band: int = 15 + seed_offset
-	var second_band: int = first_band + 9
-	var min_x: int = 6
-	var max_x: int = SiteLayoutDataType.GRID_SIZE.x - 7
-	for y: int in range(first_band, SiteLayoutDataType.GRID_SIZE.y - 5):
-		var level: int = 1 if y < second_band else 2
-		for x: int in range(min_x, max_x + 1):
-			_set_cell_surface(layout, Vector2i(x, y), level, SiteLayoutDataType.SURFACE_PLATFORM)
-	var stair_x: int = 10 + DeterministicHash.int_range(
-		layout.site_seed,
-		layout.global_region_cell,
-		HEIGHT_STAIR_SALT,
-		0,
-		max_x - min_x
-	)
-	_add_stair(layout, Vector2i(stair_x, first_band - 1), Vector2i(stair_x, first_band))
-	_add_stair(layout, Vector2i(stair_x, second_band - 1), Vector2i(stair_x, second_band))
+	var radius: Vector2 = Vector2(17.0, 12.0)
+	var plateau_cells: Array[Vector2i] = []
+	for y: int in range(SiteLayoutDataType.GRID_SIZE.y):
+		for x: int in range(SiteLayoutDataType.GRID_SIZE.x):
+			var normalized: Vector2 = Vector2(
+				(float(x) - center.x) / radius.x,
+				(float(y) - center.y) / radius.y
+			)
+			if normalized.length_squared() > 1.0:
+				continue
+			var cell := Vector2i(x, y)
+			plateau_cells.append(cell)
+			_set_cell_surface(layout, cell, 1, SiteLayoutDataType.SURFACE_PLATFORM)
+
+	# Use the centre line to enter and leave the plateau.  Both transitions are
+	# found from the generated level field rather than from a free-floating seed
+	# coordinate, so they remain attached to a visible cliff edge.
+	var stair_x: int = floori(center.x)
+	var first_plateau_y: int = -1
+	var last_plateau_y: int = -1
+	for cell: Vector2i in plateau_cells:
+		if cell.x != stair_x:
+			continue
+		if first_plateau_y < 0 or cell.y < first_plateau_y:
+			first_plateau_y = cell.y
+		if cell.y > last_plateau_y:
+			last_plateau_y = cell.y
+	if first_plateau_y > 0:
+		_add_stair(
+			layout,
+			Vector2i(stair_x, first_plateau_y - 1),
+			Vector2i(stair_x, first_plateau_y)
+		)
+	if last_plateau_y >= 0 and last_plateau_y < SiteLayoutDataType.GRID_SIZE.y - 1:
+		_add_stair(
+			layout,
+			Vector2i(stair_x, last_plateau_y),
+			Vector2i(stair_x, last_plateau_y + 1)
+		)
+	layout.details["mountain_plateau_cells"] = plateau_cells.duplicate()
 	layout.details["scene_template"] = "MOUNTAIN_TERRACE"
 
 static func _apply_poi_height_template(layout: SiteLayoutDataType) -> void:
@@ -536,7 +576,7 @@ static func _apply_poi_height_template(layout: SiteLayoutDataType) -> void:
 		WorldPOIType.CAVE:
 			_apply_cave_entrance(layout, center)
 		_:
-			if layout.river_strength > 0.0:
+			if not layout.river_connection_offsets.is_empty():
 				layout.details["scene_template"] = "RIVER_DOCK"
 
 static func _apply_castle_courtyard(layout: SiteLayoutDataType, center: Vector2i) -> void:
@@ -727,10 +767,11 @@ static func _add_stair(layout: SiteLayoutDataType, from_cell: Vector2i, to_cell:
 		return
 	var from_level: int = layout.elevation_level_at(from_cell)
 	var to_level: int = layout.elevation_level_at(to_cell)
+	if from_level == to_level:
+		# A stair is a height transition, never a decoration on a flat cell.
+		return
 	_set_cell_surface(layout, from_cell, from_level, layout.surface_flags_at(from_cell) | SiteLayoutDataType.SURFACE_STAIR)
 	_set_cell_surface(layout, to_cell, to_level, layout.surface_flags_at(to_cell) | SiteLayoutDataType.SURFACE_STAIR)
-	if from_level == to_level:
-		return
 	for existing: SiteTransitionData in layout.transitions:
 		if existing != null and existing.connects(from_cell, to_cell):
 			return
@@ -784,8 +825,8 @@ static func _generate_rectangular_building(
 	var size: Vector2i = Vector2i(9, 7) if wall_type == SiteContentTypes.Facility.STONE_WALL \
 		else Vector2i(7, 5)
 	var origin: Vector2i = Vector2i(
-		clampi(center.x - size.x / 2, 1, SiteLayoutDataType.GRID_SIZE.x - size.x - 1),
-		clampi(center.y - size.y / 2, 1, SiteLayoutDataType.GRID_SIZE.y - size.y - 1)
+		clampi(center.x - floori(float(size.x) * 0.5), 1, SiteLayoutDataType.GRID_SIZE.x - size.x - 1),
+		clampi(center.y - floori(float(size.y) * 0.5), 1, SiteLayoutDataType.GRID_SIZE.y - size.y - 1)
 	)
 	layout.facility_placements.append(SiteContentTypes.make_facility(
 		"generated:%s:building:%s" % [layout.site_id, definition_id],
@@ -796,7 +837,7 @@ static func _generate_rectangular_building(
 		Vector2i(-1, -1),
 		definition_id
 	))
-	var door_x: int = origin.x + size.x / 2
+	var door_x: int = origin.x + floori(float(size.x) * 0.5)
 	for x: int in range(origin.x, origin.x + size.x):
 		_add_wall_edge(layout, Vector2i(x, origin.y), Vector2i(x, origin.y - 1), wall_type)
 		if x != door_x:
@@ -837,6 +878,14 @@ static func _generate_resources(layout: SiteLayoutDataType) -> void:
 	for resource_type: int in range(mini(amounts.size(), SiteContentTypes.RESOURCE_COUNT)):
 		var remaining: int = amounts[resource_type]
 		if remaining <= 0:
+			continue
+		if resource_type == SiteContentTypes.RESOURCE_FOREST \
+			and layout.terrain_type == TerrainType.FOREST:
+			# A Forest Site is a wood-resource field, not one central grove. Use a
+			# deterministic interior lattice so the authoritative placements cover
+			# the Site while the renderer can leave only true terrain joins clear.
+			var forest_unplaced: int = _generate_forest_resources(layout, remaining, occupied)
+			layout.details["resource_unplaced_%d" % resource_type] = forest_unplaced
 			continue
 		var cluster_quantity: int = _resource_cluster_quantity(resource_type)
 		var cluster_center: Vector2i = _resource_cluster_center(layout, resource_type)
@@ -879,6 +928,54 @@ static func _generate_resources(layout: SiteLayoutDataType) -> void:
 			occupied[cell] = true
 			remaining -= quantity
 		layout.details["resource_unplaced_%d" % resource_type] = remaining
+
+static func _generate_forest_resources(
+		layout: SiteLayoutDataType,
+		remaining: int,
+		occupied: Dictionary
+	) -> int:
+	var candidates: Array[Dictionary] = []
+	# Keep resource centres away from the Site frame itself.  The visual layer
+	# may use the full edge when the neighbour is also Forest, but it can then
+	# suppress only the side that actually joins another terrain.
+	var margin: int = 3
+	var step: int = 6
+	for y: int in range(margin, SiteLayoutDataType.GRID_SIZE.y - margin, step):
+		for x: int in range(margin, SiteLayoutDataType.GRID_SIZE.x - margin, step):
+			var cell: Vector2i = Vector2i(
+				clampi(x + DeterministicHash.int_range(layout.site_seed, Vector2i(x, y), 46_610, -1, 1), margin, SiteLayoutDataType.GRID_SIZE.x - margin - 1),
+				clampi(y + DeterministicHash.int_range(layout.site_seed, Vector2i(x, y), 46_611, -1, 1), margin, SiteLayoutDataType.GRID_SIZE.y - margin - 1)
+			)
+			if occupied.has(cell) or not _resource_cell_valid(layout, cell, SiteContentTypes.RESOURCE_FOREST):
+				continue
+			candidates.append({
+				"cell": cell,
+				"rank": DeterministicHash.value(
+					layout.site_seed,
+					layout.global_region_cell + cell,
+					46_612
+				),
+			})
+	candidates.sort_custom(func(left: Dictionary, right: Dictionary) -> bool:
+		return int(left["rank"]) < int(right["rank"])
+	)
+	for candidate: Dictionary in candidates:
+		if remaining <= 0:
+			break
+		var cell: Vector2i = candidate["cell"] as Vector2i
+		if occupied.has(cell):
+			continue
+		var quantity: int = mini(_resource_cluster_quantity(SiteContentTypes.RESOURCE_FOREST), remaining)
+		layout.resource_placements.append(SiteContentTypes.make_resource(
+			"generated:%s:resource:forest:%d" % [layout.site_id, layout.resource_placements.size()],
+			SiteContentTypes.RESOURCE_FOREST,
+			cell,
+			Vector2i.ONE,
+			quantity
+		))
+		occupied[cell] = true
+		remaining -= quantity
+	return remaining
 
 static func _resource_cell_valid(
 		layout: SiteLayoutDataType,
@@ -1110,7 +1207,8 @@ static func _visual_code_for_layout_cell(
 			break
 	if point.distance_to(Vector2(layout.hub_local_meters)) <= HUB_RADIUS_METERS:
 		code |= SiteLayoutDataType.VISUAL_HUB
-	if layout.river_strength > 0.0 and _poi_river_band_contains(layout, point):
+	if not layout.river_connection_offsets.is_empty() \
+		and _near_segments(point, layout.river_connection_offsets, RIVER_HALF_WIDTH_METERS):
 		code |= SiteLayoutDataType.VISUAL_RIVER
 	return code
 
@@ -1140,13 +1238,6 @@ static func _passage_open_at(layout: SiteLayoutDataType, point: Vector2) -> bool
 		if point.distance_to(Vector2(landmark)) <= LANDMARK_RADIUS_METERS:
 			return true
 	return false
-
-static func _poi_river_band_contains(layout: SiteLayoutDataType, point: Vector2) -> bool:
-	var axis: int = posmod(layout.site_seed, 2)
-	var center: float = float(
-		DeterministicHash.int_range(layout.site_seed, layout.global_region_cell, CELL_RIVER_FALLBACK_SALT, -18, 18)
-	)
-	return absf(point.x - center) <= RIVER_HALF_WIDTH_METERS if axis == 0 else absf(point.y - center) <= RIVER_HALF_WIDTH_METERS
 
 static func _near_polyline(point: Vector2, points: Array[Vector2i], half_width: float) -> bool:
 	if points.size() < 2:
@@ -1180,6 +1271,15 @@ static func _normalized_offsets(
 	else:
 		result.append(Vector2i(0, -1))
 		result.append(Vector2i(0, 1))
+	return result
+
+static func _contract_offsets(source: Variant) -> Array[Vector2i]:
+	var result: Array[Vector2i] = []
+	if source is Array:
+		for value: Variant in source as Array:
+			if value is Vector2i:
+				_append_unique_offset(result, value as Vector2i)
+	result.sort_custom(Callable(SiteLayoutGenerator, "_offset_less"))
 	return result
 
 static func _append_unique_offset(result: Array[Vector2i], delta: Vector2i) -> void:

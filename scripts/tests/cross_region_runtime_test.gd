@@ -16,6 +16,20 @@ func _run() -> void:
 	var navigation: NavigationController = main.get_node("NavigationController") as NavigationController
 	assert(navigation != null, "NavigationController missing from Main scene")
 	navigation.session.world_seed = TEST_SEED
+	var edge_runtime: TravelRuntime = navigation.travel_runtime
+	var edge_footprint: Array[SiteRuntimeSnapshot] = edge_runtime.query_site_snapshot_footprint(
+		Vector2i(1, 1),
+		Vector2i(0, 50),
+		1,
+		false
+	)
+	assert(edge_footprint.size() == 9, "Cross-Region Site footprint lost edge neighbours")
+	var edge_globals: Dictionary = {}
+	for edge_snapshot: SiteRuntimeSnapshot in edge_footprint:
+		edge_globals[edge_snapshot.global_region_cell] = true
+	assert(edge_globals.has(Vector2i(99, 150)) and edge_globals.has(Vector2i(101, 150)),
+		"Cross-Region Site footprint used local Region coordinates")
+	print("RUNTIME PASS: Cross-Region Site footprint keeps global edge coordinates")
 	var start: Vector2i = _find_clear_cell(navigation.world_data, Vector2i(3, 4))
 	var destination: Vector2i = _find_clear_cell(navigation.world_data, Vector2i(4, 4))
 	assert(start != Vector2i(-1, -1) and destination != Vector2i(-1, -1), "Runtime path endpoints are not passable")

@@ -33,6 +33,7 @@ textures/default_filters/use_nearest_mipmap_filter=false
 $files = @(
     'scripts/data/paper_doll_action_sheet.gd',
     'scripts/data/paper_doll_animation.gd',
+    'scripts/data/paper_doll_crafting_recipe.gd',
     'scripts/data/paper_doll_catalog.gd',
     'scripts/data/paper_doll_layer_visual.gd',
     'scripts/data/paper_doll_mount_visual.gd',

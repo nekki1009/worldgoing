@@ -302,6 +302,18 @@ func _populate_action_option() -> void:
 
 func _on_gender_selected(index: int) -> void:
 	preview_draft.gender = gender_option.get_item_id(index)
+	# Body is a gender-owned slot, not a generic unisex fallback.  The old
+	# resolver kept `body_male_default` because that sheet was technically valid
+	# for both genders, so the UI said Female while the mounted preview still
+	# rendered the male head (and therefore appeared to lose the female eyes).
+	# Resolve the canonical body ID explicitly before repairing optional slots.
+	var body_id: StringName = catalog.default_visual_id(
+		PaperDollLayerVisual.RenderLayer.BODY,
+		preview_draft.gender,
+		preview_draft.is_mounted
+	)
+	if not body_id.is_empty():
+		preview_draft.set_visual(PaperDollLayerVisual.RenderLayer.BODY, body_id)
 	for render_layer: int in SELECTABLE_LAYERS:
 		var selected_id: StringName = preview_draft.visual_id_for(render_layer)
 		# An empty optional slot is an intentional None choice.  Gender changes
@@ -465,11 +477,11 @@ func _refresh_crafting_requirements() -> void:
 		return
 	var lines: PackedStringArray = ["Crafting materials (world resources)"]
 	var found_recipe: bool = false
-	for layer: int in [
+	for render_layer: int in [
 		PaperDollLayerVisual.RenderLayer.ARMOR,
 		PaperDollLayerVisual.RenderLayer.HELMET,
 	]:
-		var visual_id: StringName = preview_draft.visual_id_for(layer)
+		var visual_id: StringName = preview_draft.visual_id_for(render_layer)
 		var recipe: Resource = catalog.crafting_recipe_for(visual_id)
 		if recipe == null:
 			continue
@@ -565,15 +577,15 @@ func _recipe_uses_procedural_action(recipe: PaperDollRecipe) -> bool:
 	# available. Keep this label explicit so the lab never claims a generated
 	# clip is dedicated art, while still showing that the action is real and
 	# synchronized across all selected parts.
-	for layer: int in range(PaperDollLayerVisual.RenderLayer.COUNT):
-		var texture: Texture2D = recipe.texture_for(layer)
+	for render_layer: int in range(PaperDollLayerVisual.RenderLayer.COUNT):
+		var texture: Texture2D = recipe.texture_for(render_layer)
 		if texture == null:
 			continue
-		if layer == PaperDollLayerVisual.RenderLayer.MOUNT_TAIL \
-				or layer == PaperDollLayerVisual.RenderLayer.MOUNT_BODY \
-				or layer == PaperDollLayerVisual.RenderLayer.MOUNT_HEAD:
+		if render_layer == PaperDollLayerVisual.RenderLayer.MOUNT_TAIL \
+				or render_layer == PaperDollLayerVisual.RenderLayer.MOUNT_BODY \
+				or render_layer == PaperDollLayerVisual.RenderLayer.MOUNT_HEAD:
 			continue
-		var visual: PaperDollLayerVisual = catalog.find_visual(preview_draft.visual_id_for(layer))
+		var visual: PaperDollLayerVisual = catalog.find_visual(preview_draft.visual_id_for(render_layer))
 		if visual != null and not visual.has_action_sheet(preview_draft.is_mounted, recipe.action):
 			return true
 	return false

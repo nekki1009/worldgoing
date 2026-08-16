@@ -1,0 +1,148 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/paper_doll_v2_lab.gd" id="1_lab"]
+[ext_resource type="Script" path="res://scripts/ui/paper_doll_v2_composer.gd" id="2_composer"]
+
+[node name="PaperDollV2Lab" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = null
+script = ExtResource("1_lab")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.025, 0.035, 0.05, 1)
+
+[node name="Layout" type="VBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 40.0
+offset_top = 32.0
+offset_right = -40.0
+offset_bottom = -32.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 12
+
+[node name="Title" type="Label" parent="Layout"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 30
+text = "WORLDGOING — Paper Doll V2 Material Lab"
+horizontal_alignment = 1
+
+[node name="Toolbar" type="HBoxContainer" parent="Layout"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="Gender" type="OptionButton" parent="Layout/Toolbar"]
+custom_minimum_size = Vector2(160, 42)
+layout_mode = 2
+
+[node name="Mounted" type="CheckBox" parent="Layout/Toolbar"]
+custom_minimum_size = Vector2(180, 42)
+layout_mode = 2
+text = "Mounted (64×96)"
+
+[node name="Play" type="Button" parent="Layout/Toolbar"]
+custom_minimum_size = Vector2(120, 42)
+layout_mode = 2
+text = "Pause"
+
+[node name="PreviewColumn" type="VBoxContainer" parent="Layout"]
+layout_mode = 2
+size_flags_vertical = 3
+alignment = 1
+theme_override_constants/separation = 10
+
+[node name="Preview" type="CenterContainer" parent="Layout/PreviewColumn"]
+custom_minimum_size = Vector2(640, 580)
+layout_mode = 2
+size_flags_vertical = 3
+size_flags_horizontal = 3
+
+[node name="ViewportHost" type="SubViewportContainer" parent="Layout/PreviewColumn/Preview"]
+custom_minimum_size = Vector2(640, 580)
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+stretch = false
+
+[node name="Viewport" type="SubViewport" parent="Layout/PreviewColumn/Preview/ViewportHost"]
+transparent_bg = true
+size = Vector2i(640, 580)
+render_target_update_mode = 4
+canvas_item_default_texture_filter = 1
+
+[node name="PaperDollV2Composer" type="Node2D" parent="Layout/PreviewColumn/Preview/ViewportHost/Viewport"]
+position = Vector2(192, 336)
+scale = Vector2(6, 6)
+script = ExtResource("2_composer")
+
+[node name="Contract" type="Label" parent="Layout/PreviewColumn"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "V2 contract"
+horizontal_alignment = 1
+
+[node name="DirectionBar" type="HBoxContainer" parent="Layout"]
+layout_mode = 2
+alignment = 1
+theme_override_constants/separation = 10
+
+[node name="Down" type="Button" parent="Layout/DirectionBar"]
+custom_minimum_size = Vector2(110, 40)
+layout_mode = 2
+text = "DOWN"
+
+[node name="Up" type="Button" parent="Layout/DirectionBar"]
+custom_minimum_size = Vector2(110, 40)
+layout_mode = 2
+text = "UP"
+
+[node name="Right" type="Button" parent="Layout/DirectionBar"]
+custom_minimum_size = Vector2(110, 40)
+layout_mode = 2
+text = "RIGHT"
+
+[node name="Left" type="Button" parent="Layout/DirectionBar"]
+custom_minimum_size = Vector2(110, 40)
+layout_mode = 2
+text = "LEFT"
+
+[node name="FrameBar" type="HBoxContainer" parent="Layout"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="Slider" type="HSlider" parent="Layout/FrameBar"]
+custom_minimum_size = Vector2(520, 32)
+layout_mode = 2
+size_flags_horizontal = 3
+max_value = 7.0
+step = 1.0
+
+[node name="Label" type="Label" parent="Layout/FrameBar"]
+custom_minimum_size = Vector2(100, 0)
+layout_mode = 2
+text = "Frame 0 / 7"
+
+[node name="Status" type="Label" parent="Layout"]
+custom_minimum_size = Vector2(0, 48)
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "Loading V2 catalog..."
+horizontal_alignment = 1
+
+[node name="AnimationTimer" type="Timer" parent="."]
+wait_time = 0.125
+autostart = true

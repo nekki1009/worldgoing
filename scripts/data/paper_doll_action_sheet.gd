@@ -108,8 +108,6 @@ static func _transform_frame(
 				return _rotate_frame(frame, angle, pivot, Vector2.ZERO)
 			bounce = 2
 
-	var result: Image = frame.duplicate()
-
 	if layer == PaperDollLayerVisual.RenderLayer.WEAPON \
 			and action in [PaperDollAnimation.Action.ATTACK, PaperDollAnimation.Action.SPRINT_ATTACK]:
 		var angle_start: float = -0.75 if row != PaperDollLayerVisual.Facing.UP else 0.75
@@ -128,7 +126,7 @@ static func _transform_frame(
 		return _shift_frame(frame, cape_sway, bounce)
 	if layer == PaperDollLayerVisual.RenderLayer.MOUNT_HEAD \
 			and action in [PaperDollAnimation.Action.RUN, PaperDollAnimation.Action.SPRINT_ATTACK]:
-		return _shift_frame(frame, 0, bounce / 2)
+		return _shift_frame(frame, 0, floori(float(bounce) * 0.5))
 	if layer == PaperDollLayerVisual.RenderLayer.MOUNT_BODY \
 			and action in [PaperDollAnimation.Action.WORK, PaperDollAnimation.Action.HIT]:
 		return _split_shift_frame(frame, Vector2i(0, bounce), Vector2i([0, -1, 1, 1, 0, -1, 1, 0][frame_x], 0), 38)
@@ -150,7 +148,7 @@ static func _rider_layers() -> Array[int]:
 
 static func _attack_weapon_frame(
 		frame: Image,
-		row: int,
+		_row: int,
 		frame_x: int,
 		mounted: bool,
 		delta_y: int
@@ -158,11 +156,11 @@ static func _attack_weapon_frame(
 	# The source weapon is already aligned to the hand for each direction.  Use
 	# a small swing around that hand pivot instead of rotating around the frame
 	# centre (which was the source of detached/off-screen weapons).
-	var pivot := Vector2(34.0, 28.0) if row <= PaperDollLayerVisual.Facing.UP else Vector2(35.0, 38.0)
+	var pivot := Vector2(34.0, 28.0) if _row <= PaperDollLayerVisual.Facing.UP else Vector2(35.0, 38.0)
 	if mounted:
 		pivot += Vector2(0.0, -3.0)
-	var angle_start: float = -0.22 if row != PaperDollLayerVisual.Facing.UP else 0.22
-	var angle_end: float = 0.42 if row != PaperDollLayerVisual.Facing.UP else -0.42
+	var angle_start: float = -0.22 if _row != PaperDollLayerVisual.Facing.UP else 0.22
+	var angle_end: float = 0.42 if _row != PaperDollLayerVisual.Facing.UP else -0.42
 	return _rotate_frame(
 		frame,
 		lerpf(angle_start, angle_end, float(frame_x) / 7.0),
@@ -174,7 +172,7 @@ static func _walk_or_run_frame(
 		frame: Image,
 		layer: int,
 		frame_x: int,
-		row: int,
+		_row: int,
 		mounted: bool,
 		run: bool
 	) -> Image:

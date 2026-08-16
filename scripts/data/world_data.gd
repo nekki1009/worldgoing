@@ -17,6 +17,8 @@ var manifest_cache: Dictionary = {}
 var poi_cache: Dictionary = {}
 var poi_id_cache: Dictionary = {}
 var travel_data_cache: Dictionary = {}
+var site_layout_cache: Dictionary = {}
+var macro_sample_cache: Dictionary = {}
 
 func _init() -> void:
 	overview_generator = WorldOverviewGenerator.new(terrain_generator)
@@ -94,6 +96,8 @@ func get_or_generate_region_terrain(world_cell: Vector2i, world_seed: int) -> Re
 		or region.seed != region_seed \
 		or region.terrain_generation_version != RegionTerrainGenerator.GENERATION_VERSION:
 		region.terrain_data = terrain_generator.generate(world_seed, world_cell)
+		region.generation_manifest = null
+		region.site_content_data = null
 		region.generated_poi_ids.clear()
 		region.generated_route_ids.clear()
 		region.source_world_seed = world_seed
@@ -118,6 +122,10 @@ func get_or_generate_region_site_content(
 		or region.site_content_data.generation_version != RegionSiteContentData.GENERATION_VERSION:
 		region.generation_manifest = manifest.copy()
 		region.site_content_data = site_content_generator.generate(manifest, terrain)
+		# sample_travel_data may have been queried before Site entry. Its cached
+		# dictionary includes the fallback profile, so invalidate it when the
+		# packed Region profile becomes authoritative.
+		travel_data_cache.clear()
 	return region.site_content_data
 
 func get_or_generate_region_thumbnail(world_cell: Vector2i, world_seed: int) -> PackedByteArray:
@@ -209,6 +217,8 @@ func clear_generated_cache() -> void:
 	poi_generator.clear_cache()
 	road_generator.clear_cache()
 	travel_data_cache.clear()
+	site_layout_cache.clear()
+	macro_sample_cache.clear()
 	manifest_cache.clear()
 	world_overview = null
 
@@ -217,7 +227,7 @@ func sample_travel_data(world_seed: int, global_region_cell: Vector2i) -> Dictio
 	var cached: Variant = travel_data_cache.get(cache_key, null)
 	if cached is Dictionary:
 		return cached as Dictionary
-	var macro_sample: Vector4 = terrain_generator.macro_sampler.sample(world_seed, global_region_cell)
+	var macro_sample: Vector4 = _macro_sample(world_seed, global_region_cell)
 	var terrain_type: int = terrain_generator.classify_region_sample(
 		world_seed,
 		global_region_cell,
@@ -232,8 +242,29 @@ func sample_travel_data(world_seed: int, global_region_cell: Vector2i) -> Dictio
 	var road_connection_offsets: Array[Vector2i] = []
 	if road_overlay != null and road:
 		road_connection_offsets = road_overlay.get_connection_offsets(region_cell, global_region_cell)
-	var river: bool = macro_sample.z > 0.0
-	var river_crossing: bool = road_overlay != null and road_overlay.has_river_crossing(region_cell)
+	var river_threshold: float = _river_channel_threshold(
+		world_seed,
+		global_region_cell,
+		macro_sample.z
+	)
+	var river_candidate: bool = macro_sample.z >= river_threshold
+	var river_connection_offsets: Array[Vector2i] = _river_connection_offsets(
+		world_seed,
+		global_region_cell,
+		macro_sample.z if river_candidate else 0.0,
+		river_threshold
+	)
+	# Only the resolved cardinal channel is a Site river. A nearby macro
+	# confidence value without a reciprocal edge is a Region hint, not a water
+	# strip; keeping this boolean in lockstep with the offsets prevents several
+	# parallel bands from appearing in a 3x3 composite.
+	var river: bool = not river_connection_offsets.is_empty()
+	# A road route may have been planned across a scalar river hint that does not
+	# survive the reciprocal channel filter.  A bridge is valid only when the
+	# same authoritative river contract marks this cell as water.
+	var river_crossing: bool = river \
+		and road_overlay != null \
+		and road_overlay.has_river_crossing(region_cell)
 	var passable: bool = TravelCostConfig.is_passable(terrain_type, river, river_crossing)
 	var site_landform: int = SiteLayoutDataType.landform_for_travel_cell(
 		terrain_type,
@@ -251,6 +282,7 @@ func sample_travel_data(world_seed: int, global_region_cell: Vector2i) -> Dictio
 		"road": road,
 		"road_connection_offsets": road_connection_offsets,
 		"river": river,
+		"river_connection_offsets": river_connection_offsets,
 		"river_crossing": river_crossing,
 		"elevation": macro_sample.x,
 		"moisture": macro_sample.y,
@@ -270,6 +302,97 @@ func sample_travel_data(world_seed: int, global_region_cell: Vector2i) -> Dictio
 	travel_data_cache[cache_key] = result
 	return result
 
+func _river_connection_offsets(
+		world_seed: int,
+		global_region_cell: Vector2i,
+		strength: float,
+		threshold: float
+	) -> Array[Vector2i]:
+	if strength <= 0.0:
+		return []
+	var raw: Array[Vector2i] = _raw_river_connection_offsets(
+		world_seed,
+		global_region_cell,
+		strength,
+		threshold
+	)
+	var result: Array[Vector2i] = []
+	for direction: Vector2i in raw:
+		var neighbor_cell: Vector2i = global_region_cell + direction
+		var neighbor_strength: float = _macro_sample(world_seed, neighbor_cell).z
+		var neighbor_threshold: float = _river_channel_threshold(
+			world_seed,
+			neighbor_cell,
+			neighbor_strength
+		)
+		if neighbor_strength < neighbor_threshold:
+			continue
+		var neighbor_raw: Array[Vector2i] = _raw_river_connection_offsets(
+			world_seed,
+			neighbor_cell,
+			neighbor_strength,
+			neighbor_threshold
+		)
+		if -direction in neighbor_raw:
+			result.append(direction)
+	return result
+
+func _raw_river_connection_offsets(
+		world_seed: int,
+		global_region_cell: Vector2i,
+		strength: float,
+		threshold: float
+	) -> Array[Vector2i]:
+	if strength <= 0.0:
+		return []
+	# The Region layer stores river confidence as a scalar.  Derive one
+	# cardinal presentation axis from neighboring confidence values so adjacent
+	# Site tiles do not fall back to unrelated random horizontal/vertical bands.
+	var left: float = _macro_sample(world_seed, global_region_cell + Vector2i.LEFT).z
+	var right: float = _macro_sample(world_seed, global_region_cell + Vector2i.RIGHT).z
+	var up: float = _macro_sample(world_seed, global_region_cell + Vector2i.UP).z
+	var down: float = _macro_sample(world_seed, global_region_cell + Vector2i.DOWN).z
+	var horizontal: bool = left + right >= up + down
+	var perpendicular_max: float = maxf(up, down) if horizontal else maxf(left, right)
+	# Keep a single ridge of the scalar river field instead of turning every
+	# high-confidence row in a broad major-river band into a parallel channel.
+	# A small epsilon retains deterministic ties at the actual center line while
+	# rejecting the lower-confidence shoulder cells.
+	if strength + 0.015 < perpendicular_max:
+		return []
+	var along_floor: float = maxf(threshold, strength * 0.55)
+	var result: Array[Vector2i] = []
+	if horizontal:
+		if left >= along_floor:
+			result.append(Vector2i.LEFT)
+		if right >= along_floor:
+			result.append(Vector2i.RIGHT)
+	else:
+		if up >= along_floor:
+			result.append(Vector2i.UP)
+		if down >= along_floor:
+			result.append(Vector2i.DOWN)
+	return result
+
+func _river_channel_threshold(
+		_world_seed: int,
+		_global_region_cell: Vector2i,
+		strength: float
+	) -> float:
+	# Keep the hot travel-query path scalar-only. The four-neighbour samples in
+	# _river_connection_offsets are only requested after this gate, so ordinary
+	# non-river cells do not pay a second 3x3 sampler pass.
+	return clampf(maxf(0.30, strength * 0.65), 0.30, 0.78)
+
+func _macro_sample(world_seed: int, global_region_cell: Vector2i) -> Vector4:
+	var cache_key: String = "%d:%d:%d" % [world_seed, global_region_cell.x, global_region_cell.y]
+	var cached: Variant = macro_sample_cache.get(cache_key, null)
+	if cached is Vector4:
+		return cached as Vector4
+	var sample: Vector4 = terrain_generator.macro_sampler.sample(world_seed, global_region_cell)
+	macro_sample_cache[cache_key] = sample
+	return sample
+
 func _site_content_profile_for(
 		world_cell: Vector2i,
 		region_cell: Vector2i,
@@ -283,7 +406,7 @@ func _site_content_profile_for(
 		world_cell,
 		region_cell
 	)
-	var sample: Vector4 = terrain_generator.macro_sampler.sample(world_seed, global_cell)
+	var sample: Vector4 = _macro_sample(world_seed, global_cell)
 	var terrain_type: int = terrain_generator.classify_region_sample(
 		world_seed,
 		global_cell,
@@ -370,44 +493,83 @@ func find_poi_at(world_cell: Vector2i, region_cell: Vector2i, world_seed: int) -
 func find_poi_by_id(poi_id: String, world_seed: int) -> WorldPOIData:
 	if poi_id.is_empty():
 		return null
-	return poi_id_cache.get(_poi_id_cache_key(world_seed, poi_id)) as WorldPOIData
+	var cached: WorldPOIData = poi_id_cache.get(_poi_id_cache_key(world_seed, poi_id)) as WorldPOIData
+	if cached != null:
+		return cached
+	# Rehydrate a cold POI ID from its deterministic global-cell suffix instead
+	# of requiring a prior World/Region click to populate the identity cache.
+	var parts: PackedStringArray = poi_id.split("_")
+	if parts.size() < 4 \
+		or not _is_integer_string(parts[parts.size() - 2]) \
+		or not _is_integer_string(parts[parts.size() - 1]):
+		return null
+	var global_cell: Vector2i = Vector2i(
+		int(parts[parts.size() - 2]),
+		int(parts[parts.size() - 1])
+	)
+	var converted: Dictionary = WorldCoordinates.global_region_cell_to_world_region(global_cell)
+	var world_cell: Vector2i = converted["world_cell"] as Vector2i
+	for poi: WorldPOIData in _get_pois_for_generator(world_cell, world_seed):
+		if poi.poi_id == poi_id:
+			return poi
+	return null
 
 func get_site_definition(poi: WorldPOIData) -> SiteData:
+	return _get_site_definition_for_seed(poi, poi.world_seed)
+
+func _get_site_definition_for_seed(
+		poi: WorldPOIData,
+		world_seed: int,
+		travel_data_override: Dictionary = {}
+	) -> SiteData:
 	var definition: SiteData = SiteData.from_poi(poi)
 	if definition == null:
 		return null
-	var travel_data: Dictionary = sample_travel_data(poi.generation_seed, poi.global_region_cell)
-	definition.site_landform = int(travel_data.get(
-		"site_landform",
-		SiteLayoutDataType.Landform.NONE
-	))
-	definition.travel_exit_mask = int(travel_data.get(
-		"travel_exit_mask",
-		SiteLayoutDataType.EXIT_ALL
-	))
-	definition.apply_content_profile(travel_data)
+	# Site content is the first consumer that needs the packed Region profile.
+	# Materialise it here so a direct POI query cannot observe a different
+	# fallback profile merely because Region was not opened first.
+	if world_seed != 0:
+		get_or_generate_region_site_content(poi.world_cell, world_seed)
+	var travel_data: Dictionary = sample_travel_data(
+		world_seed if world_seed != 0 else poi.generation_seed,
+		poi.global_region_cell
+	)
+	_merge_travel_projection(travel_data, travel_data_override)
+	definition.apply_travel_projection(travel_data)
 	return definition
 
 func get_site_definition_at(
 		world_cell: Vector2i,
 		region_cell: Vector2i,
-		world_seed: int
+		world_seed: int,
+		travel_data_override: Dictionary = {}
 	) -> SiteData:
 	if not is_valid_world_cell(world_cell) or not WorldCoordinates.is_valid_region_cell(region_cell):
 		return null
 	var poi: WorldPOIData = find_poi_at(world_cell, region_cell, world_seed)
 	if poi != null:
-		return get_site_definition(poi)
+		return _get_site_definition_for_seed(poi, world_seed, travel_data_override)
 	var global_cell: Vector2i = WorldCoordinates.world_region_to_global_region_cell(
 		world_cell,
 		region_cell
 	)
+	get_or_generate_region_site_content(world_cell, world_seed)
+	var travel_data: Dictionary = sample_travel_data(world_seed, global_cell)
+	_merge_travel_projection(travel_data, travel_data_override)
 	return SiteData.from_region_cell(
 		world_seed,
 		world_cell,
 		region_cell,
-		sample_travel_data(world_seed, global_cell)
+		travel_data
 	)
+
+func _merge_travel_projection(target: Dictionary, override: Dictionary) -> void:
+	for key: Variant in override.keys():
+		target[key] = override[key]
+	if override.has("terrain_type") and not override.has("native_surface_hint"):
+		target["native_surface_hint"] = _native_surface_hint(
+			int(override["terrain_type"])
+		)
 
 func get_site_definition_by_id(site_id: String, world_seed: int) -> SiteData:
 	if site_id.is_empty():
@@ -427,7 +589,30 @@ func get_site_definition_by_id(site_id: String, world_seed: int) -> SiteData:
 	return get_site_definition_at(world_cell, region_cell, world_seed)
 
 func get_site_layout(definition: SiteData) -> SiteLayoutDataType:
-	return SiteLayoutGeneratorType.generate(definition)
+	if definition == null:
+		return null
+	# Generated Site Base is deterministic and immutable by contract. Keep one
+	# authoritative cached copy, but return a detached copy to every caller so
+	# presentation/runtime queries cannot mutate the cache or each other.
+	var cache_key: String = "%s|%d|%d|%d|%d|%d|%s|%s|%s" % [
+		definition.site_id,
+		definition.site_seed,
+		definition.source_terrain_type,
+		definition.site_landform,
+		definition.travel_exit_mask,
+		int(definition.source_river_crossing),
+		str(definition.source_road_connection_offsets),
+		str(definition.source_river_connection_offsets),
+		str(definition.resource_amounts),
+	]
+	var cached: Variant = site_layout_cache.get(cache_key, null)
+	if cached is SiteLayoutDataType:
+		return (cached as SiteLayoutDataType).copy()
+	var generated: SiteLayoutDataType = SiteLayoutGeneratorType.generate(definition)
+	if generated == null:
+		return null
+	site_layout_cache[cache_key] = generated
+	return generated.copy()
 
 func get_sites_for_region(world_cell: Vector2i, world_seed: int) -> Array[SiteData]:
 	var result: Array[SiteData] = []

@@ -1,0 +1,182 @@
+{
+  "contract": "paper_doll_v2",
+  "pack_id": "pack_02",
+  "version": "v2_1",
+  "status": "STAGING_SPEC_ONLY",
+  "catalog_admission": "BLOCKED_UNTIL_VALIDATED",
+  "global": {
+    "frame_columns": 8,
+    "source_rows": ["DOWN", "UP", "RIGHT"],
+    "left_policy": "RIGHT_FLIP_H",
+    "on_foot": {
+      "frame_size": [64, 64],
+      "sheet_size": [512, 192],
+      "anchor_px": [32, 56],
+      "sprite_offset": [-32, -56]
+    },
+    "mounted": {
+      "frame_size": [64, 96],
+      "sheet_size": [512, 288],
+      "anchor_px": [32, 88],
+      "sprite_offset": [-32, -88]
+    }
+  },
+  "entries": [
+    {
+      "visual_id": "pack02_hair_short_braid_01",
+      "layer": "HAIR",
+      "count": 1,
+      "gender_policy": "GENDERED",
+      "states": ["ON_FOOT", "MOUNTED"],
+      "files": {
+        "ON_FOOT": ["pack02_hair_short_braid_01_on_foot_male.png", "pack02_hair_short_braid_01_on_foot_female.png"],
+        "MOUNTED": ["pack02_hair_short_braid_01_mounted_male.png", "pack02_hair_short_braid_01_mounted_female.png"]
+      },
+      "symmetry_policy": "MIRROR_RIGHT",
+      "content_rect": {"ON_FOOT": [4, 0, 56, 36], "MOUNTED": [4, 32, 56, 36]},
+      "protected_masks": ["face_eyes_nose", "cape", "body_core"],
+      "dye_masks": ["HAIR_BROWS"]
+    },
+    {
+      "visual_id": "pack02_leather_scale_armor_01",
+      "layer": "ARMOR",
+      "count": 1,
+      "gender_policy": "UNISEX",
+      "states": ["ON_FOOT", "MOUNTED"],
+      "files": {"ON_FOOT": ["pack02_leather_scale_armor_01_on_foot_unisex.png"], "MOUNTED": ["pack02_leather_scale_armor_01_mounted_unisex.png"]},
+      "symmetry_policy": "MIRROR_RIGHT",
+      "content_rect": {"ON_FOOT": [4, 18, 56, 38], "MOUNTED": [4, 50, 56, 38]},
+      "protected_masks": ["head", "face_eyes_nose", "boots", "cape_outer"],
+      "dye_masks": ["ARMOR"]
+    },
+    {
+      "visual_id": "pack02_riding_boots_01",
+      "layer": "BOOTS",
+      "count": 1,
+      "gender_policy": "UNISEX",
+      "states": ["ON_FOOT", "MOUNTED"],
+      "files": {"ON_FOOT": ["pack02_riding_boots_01_on_foot_unisex.png"], "MOUNTED": ["pack02_riding_boots_01_mounted_unisex.png"]},
+      "symmetry_policy": "MIRROR_RIGHT",
+      "content_rect": {"ON_FOOT": [4, 38, 56, 18], "MOUNTED": [4, 70, 56, 18]},
+      "protected_masks": ["knee_above", "ground_below_anchor"],
+      "dye_masks": ["BOOTS"]
+    },
+    {
+      "visual_id": "pack02_open_sallet_01",
+      "layer": "HELMET",
+      "count": 1,
+      "gender_policy": "UNISEX",
+      "states": ["ON_FOOT", "MOUNTED"],
+      "files": {"ON_FOOT": ["pack02_open_sallet_01_on_foot_unisex.png"], "MOUNTED": ["pack02_open_sallet_01_mounted_unisex.png"]},
+      "symmetry_policy": "MIRROR_RIGHT",
+      "content_rect": {"ON_FOOT": [6, 0, 52, 32], "MOUNTED": [6, 32, 52, 32]},
+      "protected_masks": ["face_eyes_nose", "hairline"],
+      "dye_masks": ["ARMOR"]
+    },
+    {
+      "visual_id": "pack02_forest_cape_01",
+      "layer": "CAPE",
+      "count": 1,
+      "gender_policy": "UNISEX",
+      "states": ["ON_FOOT", "MOUNTED"],
+      "files": {"ON_FOOT": ["pack02_forest_cape_01_on_foot_unisex.png"], "MOUNTED": ["pack02_forest_cape_01_mounted_unisex.png"]},
+      "symmetry_policy": "MIRROR_RIGHT",
+      "content_rect": {"ON_FOOT": [0, 18, 64, 38], "MOUNTED": [0, 50, 64, 38]},
+      "protected_masks": ["head", "body_core", "weapon_grip"],
+      "dye_masks": ["CAPE"]
+    },
+    {
+      "visual_id": "pack02_short_spear_01",
+      "layer": "WEAPON",
+      "count": 1,
+      "gender_policy": "UNISEX",
+      "states": ["ON_FOOT", "MOUNTED"],
+      "files": {"ON_FOOT": ["pack02_short_spear_01_on_foot_unisex.png"], "MOUNTED": ["pack02_short_spear_01_mounted_unisex.png"]},
+      "symmetry_policy": "ASYMMETRIC_ALLOWED",
+      "content_rect": {"ON_FOOT": [0, 8, 64, 48], "MOUNTED": [0, 40, 64, 48]},
+      "protected_masks": ["body_core", "shield"],
+      "dye_masks": []
+    },
+    {
+      "visual_id": "pack02_round_shield_01",
+      "layer": "SHIELD",
+      "count": 1,
+      "gender_policy": "UNISEX",
+      "states": ["ON_FOOT", "MOUNTED"],
+      "files": {"ON_FOOT": ["pack02_round_shield_01_on_foot_unisex.png"], "MOUNTED": ["pack02_round_shield_01_mounted_unisex.png"]},
+      "symmetry_policy": "ASYMMETRIC_ALLOWED",
+      "content_rect": {"ON_FOOT": [0, 14, 64, 42], "MOUNTED": [0, 46, 64, 42]},
+      "protected_masks": ["face_eyes_nose", "body_core"],
+      "dye_masks": ["ARMOR"]
+    },
+    {
+      "visual_id": "pack02_chestnut_horse_tail_01",
+      "layer": "MOUNT_TAIL",
+      "count": 1,
+      "gender_policy": "UNISEX",
+      "states": ["MOUNTED"],
+      "files": {"MOUNTED": ["pack02_chestnut_horse_tail_01_mounted_unisex.png"]},
+      "symmetry_policy": "MIRROR_RIGHT",
+      "content_rect": {"MOUNTED": [0, 50, 64, 38]},
+      "protected_masks": ["rider_core", "mount_head"],
+      "dye_masks": ["MOUNT"]
+    },
+    {
+      "visual_id": "pack02_chestnut_horse_body_01",
+      "layer": "MOUNT_BODY",
+      "count": 1,
+      "gender_policy": "UNISEX",
+      "states": ["MOUNTED"],
+      "files": {"MOUNTED": ["pack02_chestnut_horse_body_01_mounted_unisex.png"]},
+      "symmetry_policy": "MIRROR_RIGHT",
+      "content_rect": {"MOUNTED": [0, 52, 64, 36]},
+      "protected_masks": ["rider_core", "mount_head", "mount_tail"],
+      "dye_masks": ["MOUNT"]
+    },
+    {
+      "visual_id": "pack02_chestnut_horse_head_01",
+      "layer": "MOUNT_HEAD",
+      "count": 1,
+      "gender_policy": "UNISEX",
+      "states": ["MOUNTED"],
+      "files": {"MOUNTED": ["pack02_chestnut_horse_head_01_mounted_unisex.png"]},
+      "symmetry_policy": "MIRROR_RIGHT",
+      "content_rect": {"MOUNTED": [0, 32, 64, 48]},
+      "protected_masks": ["rider_face", "rider_core", "mount_barding"],
+      "dye_masks": ["MOUNT"]
+    },
+    {
+      "visual_id": "pack02_forest_barding_01",
+      "layer": "MOUNT_BARDING",
+      "count": 1,
+      "gender_policy": "UNISEX",
+      "states": ["MOUNTED"],
+      "files": {"MOUNTED": ["pack02_forest_barding_01_mounted_unisex.png"]},
+      "symmetry_policy": "MIRROR_RIGHT",
+      "content_rect": {"MOUNTED": [0, 46, 64, 42]},
+      "protected_masks": ["rider_core", "mount_head", "mount_tail"],
+      "dye_masks": ["MOUNT_BARDING"]
+    }
+  ],
+  "z_order": {
+    "MountTail": [-10, -10, -10, -10],
+    "Cape": [-5, 15, 5, 5],
+    "MountBody": [0, 0, 0, 0],
+    "Body": [10, 10, 10, 10],
+    "Boots": [11, 11, 11, 11],
+    "Armor": [12, 12, 12, 12],
+    "Hair": [13, 13, 13, 13],
+    "Helmet": [14, 14, 14, 14],
+    "Weapon": [15, -1, 15, -1],
+    "Shield": [16, -2, -2, 16],
+    "MountHead": [20, -5, 20, 20],
+    "MountBarding": [21, 1, 21, 21]
+  },
+  "validation": {
+    "anchor_tolerance_px": 1,
+    "nearest_only": true,
+    "required_contact_sheet": "4 directions x 8 frames",
+    "required_masks": true,
+    "catalog_admission": "all entries PASS before copy from staging"
+  }
+}

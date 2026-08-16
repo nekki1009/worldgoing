@@ -138,8 +138,8 @@ func _make_probe_catalog() -> PaperDollCatalog:
 	))
 	visuals.append(_unisex_visual(
 		&"body_female_default", PaperDollLayerVisual.RenderLayer.BODY,
-		"reference_match/reference_match_body_on_foot_unisex.png",
-		"reference_match/reference_match_body_mounted_unisex.png"
+		"reference_match/reference_match_female_body_on_foot.png",
+		"reference_match/reference_match_female_body_mounted.png"
 	))
 	visuals.append(_unisex_visual(
 		&"artgate1_armor", PaperDollLayerVisual.RenderLayer.ARMOR,

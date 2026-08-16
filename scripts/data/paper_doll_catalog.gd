@@ -637,17 +637,20 @@ static func _reference_visual(
 	result.render_layer = layer
 	result.gender_policy = policy
 	var prefix: String = str(visual_id)
-	# The accepted male default is a complete, already aligned silhouette.  The
-	# independently packed body source is retained for catalog QA, but it must
-	# not become the character creator's visible body: layering it with the
-	# separately packed hair/armor/cape recreates the exact head-and-armor drift
-	# rejected by the visual gate.
+	# The accepted body boards are complete, already aligned silhouettes.  Keep
+	# the female board separate: reusing the male mounted board for the female
+	# ID makes the female face/eyes disappear behind the wrong rider geometry.
 	if visual_id in [&"body_male_default", &"body_female_default"]:
+		var gender_prefix := "female" if visual_id == &"body_female_default" else "body"
+		var foot_file := "reference_match_female_body_on_foot.png" \
+			if gender_prefix == "female" else "reference_match_body_on_foot_unisex.png"
+		var mounted_file := "reference_match_female_body_mounted.png" \
+			if gender_prefix == "female" else "reference_match_body_mounted_unisex.png"
 		result.on_foot_unisex = _load_reference_match_texture(
-			"reference_match_body_on_foot_unisex.png"
+			foot_file
 		)
 		result.mounted_unisex = _load_reference_match_texture(
-			"reference_match_body_mounted_unisex.png"
+			mounted_file
 		)
 		_attach_authored_walk_sheet(result)
 		return result if result.validation_issues().is_empty() else null

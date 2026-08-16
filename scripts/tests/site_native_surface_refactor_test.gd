@@ -138,7 +138,41 @@ func _test_native_surface_and_resource_placements() -> void:
 			"Native surface fixture did not generate %s" % expected_surface
 		)
 		fixture_index += 1
+	var plains_height: SiteLayoutData = SiteLayoutGenerator.generate_cell_base(TEST_SEED, {
+		"global_region_cell": Vector2i(720, 700),
+		"terrain_type": TerrainType.PLAINS,
+		"site_landform": SiteLayoutData.Landform.NONE,
+		"travel_exit_mask": SiteLayoutData.EXIT_ALL,
+		"elevation": 0.45,
+		"moisture": 0.50,
+		"native_surface_hint": SiteContentTypes.NativeSurface.DIRT,
+		"rock_ratio": 0.0,
+		"resource_amounts": PackedInt32Array([0, 0, 0, 0, 0, 0, 0]),
+	})
+	var mountain_height: SiteLayoutData = SiteLayoutGenerator.generate_cell_base(TEST_SEED, {
+		"global_region_cell": Vector2i(721, 700),
+		"terrain_type": TerrainType.MOUNTAIN,
+		"site_landform": SiteLayoutData.Landform.NONE,
+		"travel_exit_mask": SiteLayoutData.EXIT_ALL,
+		"elevation": 0.72,
+		"moisture": 0.35,
+		"native_surface_hint": SiteContentTypes.NativeSurface.ROCK,
+		"rock_ratio": 1.0,
+		"resource_amounts": PackedInt32Array([0, 0, 0, 0, 0, 0, 0]),
+	})
+	assert(plains_height != null and mountain_height != null, "Height-rule fixtures are invalid")
+	assert(plains_height.transitions.is_empty(), "Plain generated a height transition")
+	assert(_max_height(plains_height) == 0, "Plain generated a raised surface")
+	assert(_max_height(mountain_height) >= 1, "Mountain did not generate a raised surface")
+	assert(not mountain_height.transitions.is_empty(), "Mountain did not generate stairs")
+	print("P3 HEIGHT RULE PASS: Plains flat; Mountain terraces/stairs generated")
 	print("P3/P4 TEST PASS: four native surfaces and stable resource placements preserve Profile totals")
+
+func _max_height(layout: SiteLayoutData) -> int:
+	var result: int = 0
+	for level: int in layout.elevation_levels:
+		result = maxi(result, level)
+	return result
 
 func _test_site_habitat_rules() -> void:
 	var sand: SiteLayoutData = SiteLayoutGenerator.generate_cell_base(TEST_SEED, {

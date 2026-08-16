@@ -36,6 +36,20 @@ const TERRAIN_TEXTURE_PATHS: Dictionary = {
 	TerrainType.OCEAN: "res://assets/map/terrain/ocean_v2.png",
 }
 
+# Natural Site ground uses the same painterly language as the approved
+# strategic reference art, but without roads, stairs, cliffs or platforms
+# baked into the floor.  These are presentation-only sources; the generated
+# native surface, height levels and facility overlays remain authoritative.
+const NATIVE_STYLE_TEXTURE_PATHS: Dictionary = {
+	# Native terrain is the ground layer only. Forest is a resource placement,
+	# so trees come from the deterministic forest_resource overlay rather than
+	# being baked into every Plains/Forest Site floor.
+	TerrainType.PLAINS: "res://assets/map/site/scenes/strategic_natural_meadow_ground_v1.png",
+	TerrainType.FOREST: "res://assets/map/site/scenes/strategic_natural_meadow_ground_v1.png",
+	TerrainType.MOUNTAIN: "res://assets/map/site/scenes/strategic_natural_mountain_ground_v1.png",
+	TerrainType.SAND: "res://assets/map/site/scenes/strategic_natural_sand_v1.png",
+}
+
 const POI_TEXTURE_PATHS: Dictionary = {
 	WorldPOIType.VILLAGE: "res://assets/map/poi/village.png",
 	WorldPOIType.TOWN: "res://assets/map/poi/town.png",
@@ -120,6 +134,14 @@ const SITE_SCENE_TEXTURE_PATHS: Dictionary = {
 	"strategic_snow_v1": "res://assets/map/site/scenes/strategic_snow_v1.png",
 	"strategic_swamp_v1": "res://assets/map/site/scenes/strategic_swamp_v1.png",
 	"strategic_ocean_v1": "res://assets/map/site/scenes/strategic_ocean_v1.png",
+	# A single continuous no-river grassland/forest footprint.  It is selected
+	# only when the visible 3x3 Sites share a compatible native terrain and no
+	# river edge, so one child can never fall back to the old low-resolution
+	# surface while its neighbours use painted strategic art.
+	"strategic_3x3_meadow_v1": "res://assets/map/site/scenes/strategic_3x3_meadow_v1.png",
+	# A single seamless 3x3 natural footprint used only when a river meadow
+	# composite is shown. Runtime resources/facilities remain data-backed.
+	"strategic_3x3_composite_v1": "res://assets/map/site/scenes/strategic_3x3_composite_v1.png",
 }
 
 # Sizes are presentation metadata, not a second navigation/collision system.
@@ -181,6 +203,8 @@ static var _thumbnail_cache: Dictionary = {}
 static var _poi_texture_cache: Dictionary = {}
 static var _site_art_texture_cache: Dictionary = {}
 static var _site_scene_texture_cache: Dictionary = {}
+static var _layout_composite_image_cache: Dictionary = {}
+static var _native_style_image_cache: Dictionary = {}
 static var _outpost_texture: Texture2D
 
 static func terrain_texture(terrain_type: int) -> Texture2D:
@@ -254,6 +278,9 @@ static func _load_png_texture(path: String) -> Texture2D:
 
 static func site_scene_texture(layout: SiteLayoutDataType) -> Texture2D:
 	var kind: String = site_scene_kind(layout)
+	return site_scene_texture_kind(kind)
+
+static func site_scene_texture_kind(kind: String) -> Texture2D:
 	if kind.is_empty():
 		return null
 	if _site_scene_texture_cache.has(kind):
@@ -289,41 +316,31 @@ static func site_scene_kind(layout: SiteLayoutDataType) -> String:
 	if layout.site_landform == SiteLayoutDataType.Landform.MOUNTAIN_PASS:
 		return "mountain_pass"
 	var scene_template: String = str(layout.details.get("scene_template", ""))
+	var is_generated_strategic_cell: bool = layout.layout_kind == SiteLayoutDataType.LayoutKind.CELL_BASE \
+		and layout.details.has("site_visual_archetype")
+	# A generated Region cell keeps its native terrain as the background owner.
+	# Do not select one of the authored strategic paintings here: those paintings
+	# contain decorative terraces and paths for presentation samples, so using
+	# them as a Region-cell base makes a flat plain look elevated and makes every
+	# tile appear to have a road.  Native terrain, height data, and facility data
+	# are rendered by SiteMap as separate layers.  Explicit scene_art and POI
+	# scenes below remain available for their own detail previews.
+	if is_generated_strategic_cell:
+		return ""
+	# Forest is a native ground type plus a data-backed wood-resource overlay.
+	# Never select the authored forest/orchard painting for a CELL_BASE Site;
+	# that image bakes harvestable trees into the floor and duplicates the
+	# deterministic RESOURCE_FOREST placements. Explicit scene_art remains an
+	# opt-in POI presentation above this guard.
+	if layout.layout_kind == SiteLayoutDataType.LayoutKind.CELL_BASE \
+		and layout.terrain_type == TerrainType.FOREST:
+		return ""
 	# A river nearby is a native surface condition, not a bridge.  A bridge
 	# scene is reserved for the explicit crossing flag; otherwise the normal
 	# terrain renderer draws the water band and keeps the site traversable only
 	# where the generated bridge transition exists.
 	if layout.river_crossing:
 		return _river_scene_kind(layout)
-	var is_generated_strategic_cell: bool = layout.layout_kind == SiteLayoutDataType.LayoutKind.CELL_BASE \
-		and layout.details.has("site_visual_archetype")
-	# Strategic Region cells use authored natural compositions for every terrain
-	# that has a dedicated background. The third deterministic variant is still
-	# an authored scene; SiteMap mirrors it at draw time to preserve the same
-	# pixel language without making every cell an identical copy. A nearby river
-	# gets its own natural composition; crossing Sites still use the bridge scene.
-	if is_generated_strategic_cell:
-		var visual_variant: int = posmod(int(layout.details.get("site_visual_variant", 0)), 3)
-		if layout.terrain_type in [TerrainType.PLAINS, TerrainType.FOREST]:
-			if layout.river_strength > 0.0 or not layout.river_connection_offsets.is_empty():
-				return _strategic_river_scene_kind(layout)
-			if visual_variant == 0:
-				return "strategic_meadow_v1"
-			if visual_variant in [1, 2]:
-				return "strategic_meadow_v2"
-			return "strategic_meadow_v1"
-		match layout.terrain_type:
-			TerrainType.MOUNTAIN:
-				return "strategic_mountain_v1"
-			TerrainType.SAND:
-				return "strategic_sand_v1"
-			TerrainType.SNOW:
-				return "strategic_snow_v1"
-			TerrainType.SWAMP:
-				return "strategic_swamp_v1"
-			TerrainType.OCEAN:
-				return "strategic_ocean_v1"
-		return ""
 	if scene_template in ["RIVER_DOCK", "BRIDGE"]:
 		return ""
 	# A CELL_BASE Site is a strategic terrain tile, not a settlement.  The
@@ -462,7 +479,8 @@ static func site_decor_texture(terrain_type: int, variant: int = 0) -> Texture2D
 static func _site_decor_kinds(terrain_type: int) -> Array[String]:
 	match _resolved_terrain(terrain_type):
 		TerrainType.FOREST:
-			return ["tree_cluster", "rock_cluster"]
+			# Forest trees are harvestable resource placements, not native decor.
+			return ["dry_bush", "rock_cluster"]
 		TerrainType.MOUNTAIN:
 			return ["rock_cluster"]
 		TerrainType.SAND:
@@ -543,6 +561,67 @@ static func build_layout_base_image(layout: SiteLayoutData, pixel_size: int = 25
 			image.set_pixel(x, y, color)
 	return image
 
+static func build_layout_composite_image(layout: SiteLayoutData, pixel_size: int) -> Image:
+	# The 3x3 Region preview only needs the final composite resolution. Building
+	# nine full 800px Site surfaces first made a navigation round-trip spend
+	# most of its time in per-pixel GDScript. Sample the same native 800px
+	# coordinate field directly at the requested output size instead; the shared
+	# global phase remains identical while the work scales with the visible image.
+	if layout == null or pixel_size <= 0:
+		return null
+	# A World/Region/Site round-trip can ask for the same nine generated cells
+	# more than once in one session. The raster is presentation-only and the
+	# layout is deterministic, so keep one immutable source image per layout and
+	# hand callers a detached copy. This avoids rebuilding the same 418px field
+	# while preserving the existing renderer ownership boundary.
+	var cache_key: String = "%s|%d|%d|%d|%d|%d|%d" % [
+		layout.site_id,
+		pixel_size,
+		layout.site_seed,
+		layout.terrain_type,
+		layout.site_landform,
+		layout.global_region_cell.x,
+		layout.global_region_cell.y,
+	]
+	if _layout_composite_image_cache.has(cache_key):
+		var cached: Image = _layout_composite_image_cache[cache_key] as Image
+		return cached.duplicate() as Image if cached != null else null
+	var image: Image = Image.create(pixel_size, pixel_size, false, Image.FORMAT_RGBA8)
+	var conceptual_size: int = SITE_DETAIL_SURFACE_PIXELS
+	for y: int in range(pixel_size):
+		var source_y: int = clampi(
+			floori(float(y) * float(conceptual_size) / float(pixel_size)),
+			0,
+			conceptual_size - 1
+		)
+		for x: int in range(pixel_size):
+			var source_x: int = clampi(
+				floori(float(x) * float(conceptual_size) / float(pixel_size)),
+				0,
+				conceptual_size - 1
+			)
+			var cell: Vector2i = Vector2i(
+				mini(floori(float(source_x) / float(SITE_DETAIL_TILE_PIXELS)), SiteLayoutDataType.GRID_SIZE.x - 1),
+				mini(floori(float(source_y) / float(SITE_DETAIL_TILE_PIXELS)), SiteLayoutDataType.GRID_SIZE.y - 1)
+			)
+			var local_pixel: Vector2i = Vector2i(
+				posmod(source_x, SITE_DETAIL_TILE_PIXELS),
+				posmod(source_y, SITE_DETAIL_TILE_PIXELS)
+			)
+			var native_surface: int = layout.native_surface_at(cell)
+			var color: Color = _site_tile_color(
+				layout,
+				cell,
+				native_surface,
+				local_pixel,
+				SITE_DETAIL_TILE_PIXELS
+			)
+			if (layout.surface_flags_at(cell) & SiteLayoutDataType.SURFACE_CLIFF) != 0:
+				color = color.darkened(0.08)
+			image.set_pixel(x, y, color)
+	_layout_composite_image_cache[cache_key] = image
+	return image.duplicate() as Image
+
 static func _build_detail_layout_base_image(layout: SiteLayoutData, pixel_size: int) -> Image:
 	var image: Image = Image.create(pixel_size, pixel_size, false, Image.FORMAT_RGBA8)
 	var pixels_per_tile: int = maxi(1, floori(float(pixel_size) / float(SiteLayoutDataType.GRID_SIZE.x)))
@@ -579,48 +658,39 @@ static func _site_tile_color(
 	# repeats at full-map zoom.
 	var base: Color = _site_surface_palette(layout.terrain_type, native_surface)
 	var texture: Image = _detail_surface_image(layout.terrain_type, native_surface)
-	var global_pixel: Vector2i = cell * pixels_per_tile + local_pixel
+	# Sample the native field in Region coordinates, not from (0,0) for every
+	# Site.  Adjacent Sites therefore share the same texture phase at their
+	# common edge; resetting the sample origin per tile was the source of the
+	# visible horizontal/vertical seams in the 3x3 preview.
+	var global_pixel: Vector2i = layout.global_region_cell * SITE_DETAIL_SURFACE_PIXELS \
+		+ cell * pixels_per_tile + local_pixel
 	if texture != null and not texture.is_empty():
-		var texture_x: int = clampi(
+		var texture_x: int = _texture_index(
 			floori(float(global_pixel.x) * float(texture.get_width()) / float(SITE_DETAIL_SURFACE_PIXELS)),
-			0,
-			texture.get_width() - 1
+			texture.get_width()
 		)
-		var texture_y: int = clampi(
+		var texture_y: int = _texture_index(
 			floori(float(global_pixel.y) * float(texture.get_height()) / float(SITE_DETAIL_SURFACE_PIXELS)),
-			0,
-			texture.get_height() - 1
+			texture.get_height()
 		)
 		var sampled: Color = texture.get_pixel(texture_x, texture_y)
 		if sampled.a > 0.0:
 			base = sampled
-	var field: float = _site_macro_field(layout, global_pixel, 46_100 + native_surface)
-	# Keep the authored pixel-art texture as the dominant style.  A broad field
-	# may vary neighboring Sites, but it must not become large translucent blobs
-	# over the ground; those blobs were the source of the recent style break.
-	if field < 0.22:
-		base = base.darkened(0.04)
-	elif field > 0.82:
-		base = base.lightened(0.04)
-	var terrain: int = _resolved_terrain(layout.terrain_type)
-	if terrain == TerrainType.SAND and field < 0.34:
-		base = base.lerp(Color("a4773d"), 0.06)
-	elif terrain == TerrainType.SNOW and field < 0.30:
-		base = base.lerp(Color("9cbdd1"), 0.08)
-	elif terrain == TerrainType.SWAMP and field < 0.28:
-		base = base.lerp(Color("263d35"), 0.09)
-	elif terrain == TerrainType.FOREST and field > 0.72:
-		base = base.darkened(0.05)
-	var accent_hash: int = DeterministicHash.value(
-		layout.site_seed,
-		layout.global_region_cell + cell,
-		46_700 + native_surface
-	)
-	if posmod(accent_hash, 17) == 0 \
-		and local_pixel.x >= 5 and local_pixel.x <= pixels_per_tile - 5 \
-		and local_pixel.y >= 5 and local_pixel.y <= pixels_per_tile - 5:
-		return base.lightened(0.13) if (accent_hash & 1) == 0 else base.darkened(0.13)
+	# Do not add a second procedural noise field over authored ground.  The
+	# previous macro light/dark blobs and per-cell accent hash read as stray
+	# pixels at Site zoom and made adjacent terrain look like unrelated tiles.
+	# Natural variation now comes from the shared style plate plus data-backed
+	# resources/decorations drawn by SiteMap.
 	return base
+
+static func _texture_index(value: int, size: int) -> int:
+	if size <= 1:
+		return 0
+	# Repeat the authored field in one orientation only.  Mirror-repeat made
+	# every other texture period reverse tree trunks and rock silhouettes, so a
+	# 3x3 Region view looked as if individual objects had been rotated.  The
+	# shared global phase is retained; only the directional flip is removed.
+	return posmod(value, size)
 
 static func _site_macro_field(layout: SiteLayoutDataType, pixel: Vector2i, salt: int) -> float:
 	# The field is evaluated in presentation pixels, not once per 2m cell. This
@@ -670,11 +740,46 @@ static func _detail_surface_image(terrain_type: int, native_surface: int) -> Ima
 		SiteContentTypes.NativeSurface.SEA_WATER:
 			return _detail_theme_image(TerrainType.OCEAN)
 		SiteContentTypes.NativeSurface.ROCK:
-			return terrain_image(TerrainType.MOUNTAIN)
+			# ROCK is a native navigation surface, but a small outcrop inside a
+			# plain/forest Site is not a whole mountain tile. Keep the authored
+			# biome ground underneath and let SiteMap place a compact rock cluster
+			# on the deterministic rock cells. A Mountain Site uses the walkable
+			# rocky-ground plate; the old dense mountain texture is only a fallback.
+			var rock_biome: int = _resolved_terrain(terrain_type)
+			var rock_natural_style: Image = _native_style_image(rock_biome)
+			if rock_natural_style != null and not rock_natural_style.is_empty():
+				return rock_natural_style
+			if rock_biome == TerrainType.MOUNTAIN:
+				return terrain_image(TerrainType.MOUNTAIN)
+			return _detail_theme_image(rock_biome)
 		_:
 			var resolved_type: int = _resolved_terrain(terrain_type)
+			var natural_style: Image = _native_style_image(resolved_type)
+			if natural_style != null and not natural_style.is_empty():
+				return natural_style
 			return terrain_image(resolved_type) if resolved_type == TerrainType.MOUNTAIN \
 				else _detail_theme_image(resolved_type)
+
+static func _native_style_image(terrain_type: int) -> Image:
+	var resolved_type: int = _resolved_terrain(terrain_type)
+	if _native_style_image_cache.has(resolved_type):
+		return _native_style_image_cache[resolved_type] as Image
+	var path: String = str(NATIVE_STYLE_TEXTURE_PATHS.get(resolved_type, ""))
+	if path.is_empty():
+		_native_style_image_cache[resolved_type] = null
+		return null
+	var file: FileAccess = FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		_native_style_image_cache[resolved_type] = null
+		return null
+	var image: Image = Image.new()
+	image.load_png_from_buffer(file.get_buffer(file.get_length()))
+	if image.is_empty():
+		_native_style_image_cache[resolved_type] = null
+		return null
+	image.convert(Image.FORMAT_RGBA8)
+	_native_style_image_cache[resolved_type] = image
+	return image
 
 static func _detail_theme_image(terrain_type: int) -> Image:
 	var resolved_type: int = _resolved_terrain(terrain_type)

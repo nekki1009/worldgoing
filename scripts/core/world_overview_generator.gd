@@ -18,7 +18,7 @@ func generate(world_seed: int, grid_size: Vector2i) -> WorldOverviewData:
 		for x: int in range(grid_size.x):
 			var world_cell: Vector2i = Vector2i(x, y)
 			var global_center: Vector2i = world_cell * WorldCoordinates.REGION_GRID_SIZE \
-				+ Vector2i.ONE * (WorldCoordinates.REGION_GRID_SIZE / 2)
+				+ Vector2i.ONE * floori(float(WorldCoordinates.REGION_GRID_SIZE) / 2.0)
 			var sample: Vector4 = terrain_generator.macro_sampler.sample(world_seed, global_center)
 			var biome: int = terrain_generator.classify_sample(sample)
 			var index: int = y * grid_size.x + x
@@ -113,17 +113,17 @@ func _surface_quotas(biome: int, feature_flags: int) -> PackedInt32Array:
 		TerrainType.OCEAN:
 			result[SiteContentTypes.NativeSurface.SEA_WATER] = cell_count
 		TerrainType.WATER:
-			result[SiteContentTypes.NativeSurface.RIVER_WATER] = cell_count * 3 / 5
+			result[SiteContentTypes.NativeSurface.RIVER_WATER] = floori(float(cell_count * 3) / 5.0)
 			result[SiteContentTypes.NativeSurface.DIRT] = cell_count - result[SiteContentTypes.NativeSurface.RIVER_WATER]
 		TerrainType.MOUNTAIN:
-			result[SiteContentTypes.NativeSurface.ROCK] = cell_count * 4 / 5
+			result[SiteContentTypes.NativeSurface.ROCK] = floori(float(cell_count * 4) / 5.0)
 			result[SiteContentTypes.NativeSurface.DIRT] = cell_count - result[SiteContentTypes.NativeSurface.ROCK]
 		_:
-			result[SiteContentTypes.NativeSurface.ROCK] = cell_count / 10
+			result[SiteContentTypes.NativeSurface.ROCK] = floori(float(cell_count) / 10.0)
 			result[SiteContentTypes.NativeSurface.DIRT] = cell_count - result[SiteContentTypes.NativeSurface.ROCK]
 	if (feature_flags & WorldOverviewData.FEATURE_RIVER) != 0 \
 		and result[SiteContentTypes.NativeSurface.SEA_WATER] == 0:
-		var river_quota: int = cell_count / 20
+		var river_quota: int = floori(float(cell_count) / 20.0)
 		result[SiteContentTypes.NativeSurface.RIVER_WATER] += river_quota
 		var land_surface: int = SiteContentTypes.NativeSurface.ROCK \
 			if result[SiteContentTypes.NativeSurface.ROCK] >= river_quota \
@@ -163,11 +163,13 @@ func _shared_edge(
 	var second_flags: int = overview.features_at(second)
 	return {
 		"endpoint": endpoint,
+		# A river edge is a shared channel contract, not a union of two broad
+		# Region hints. Both endpoints must carry the river feature before this
+		# edge is advertised; Site-level reciprocal offsets remain authoritative.
 		"river": (first_flags & WorldOverviewData.FEATURE_RIVER) != 0 \
-			or (second_flags & WorldOverviewData.FEATURE_RIVER) != 0,
+			and (second_flags & WorldOverviewData.FEATURE_RIVER) != 0,
 		"coast": (first_flags & WorldOverviewData.FEATURE_COAST) != 0 \
 			or (second_flags & WorldOverviewData.FEATURE_COAST) != 0,
 		"ridge": (first_flags & WorldOverviewData.FEATURE_RIDGE) != 0 \
 			and (second_flags & WorldOverviewData.FEATURE_RIDGE) != 0,
 	}
-

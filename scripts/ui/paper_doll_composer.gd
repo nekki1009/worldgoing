@@ -250,11 +250,11 @@ func _refresh_dyed_textures() -> void:
 func _is_flat_reference_recipe() -> bool:
 	if _last_recipe == null:
 		return false
-	var visible: int = 0
+	var visible_count: int = 0
 	for texture: Texture2D in _base_textures:
 		if texture != null:
-			visible += 1
-	return visible == 1 and _base_textures[PaperDollLayerVisual.RenderLayer.BODY] != null
+			visible_count += 1
+	return visible_count == 1 and _base_textures[PaperDollLayerVisual.RenderLayer.BODY] != null
 
 func _is_accepted_reference_recipe(recipe: PaperDollRecipe) -> bool:
 	return recipe != null and recipe.is_accepted_reference
@@ -426,16 +426,16 @@ static func _mounted_reference_hair_component(frame: Image) -> Dictionary:
 			var max_x: int = -1
 			var max_y: int = -1
 			while cursor < queue.size():
-				var position: Vector2i = queue[cursor]
+				var pixel_position: Vector2i = queue[cursor]
 				cursor += 1
 				count += 1
-				component[position] = true
-				min_x = mini(min_x, position.x)
-				min_y = mini(min_y, position.y)
-				max_x = maxi(max_x, position.x)
-				max_y = maxi(max_y, position.y)
+				component[pixel_position] = true
+				min_x = mini(min_x, pixel_position.x)
+				min_y = mini(min_y, pixel_position.y)
+				max_x = maxi(max_x, pixel_position.x)
+				max_y = maxi(max_y, pixel_position.y)
 				for delta: Vector2i in neighbours:
-					var next: Vector2i = position + delta
+					var next: Vector2i = pixel_position + delta
 					if next.x < 0 or next.x >= frame.get_width() \
 						or next.y < 0 or next.y >= mini(27, frame.get_height()):
 						continue
@@ -458,11 +458,11 @@ static func _mounted_reference_hair_rect(frame: Image) -> Rect2i:
 	var max_x: int = -1
 	var max_y: int = -1
 	for value: Variant in component.keys():
-		var position: Vector2i = value as Vector2i
-		min_x = mini(min_x, position.x)
-		min_y = mini(min_y, position.y)
-		max_x = maxi(max_x, position.x)
-		max_y = maxi(max_y, position.y)
+		var pixel_position: Vector2i = value as Vector2i
+		min_x = mini(min_x, pixel_position.x)
+		min_y = mini(min_y, pixel_position.y)
+		max_x = maxi(max_x, pixel_position.x)
+		max_y = maxi(max_y, pixel_position.y)
 	if max_x < min_x or max_y < min_y:
 		return Rect2i()
 	return Rect2i(min_x, min_y, max_x - min_x + 1, max_y - min_y + 1)
@@ -705,7 +705,7 @@ static func _normalized_hair_image(texture: Texture2D) -> Image:
 		return image
 	image = image.duplicate()
 	for y: int in range(image.get_height()):
-		var row: int = y / PaperDollLayerVisual.FRAME_SIZE.y
+		var row: int = floori(float(y) / float(PaperDollLayerVisual.FRAME_SIZE.y))
 		var local_y: int = y % PaperDollLayerVisual.FRAME_SIZE.y
 		for x: int in range(image.get_width()):
 			var local_x: int = x % PaperDollLayerVisual.FRAME_SIZE.x
@@ -924,10 +924,10 @@ static func _tint_brows_on_image(
 			# forehead/nose specks during hair dye.
 			var brow_targets: Array[Vector2i] = _brow_targets_for_frame(image, frame_origin, row)
 			for local: Vector2i in brow_targets:
-				var position := frame_origin + local
-				var source: Color = image.get_pixelv(position)
+				var pixel_position := frame_origin + local
+				var source: Color = image.get_pixelv(pixel_position)
 				if _is_existing_brow_pixel(source):
-					image.set_pixelv(position, _dye_hair_pixel(source, target))
+					image.set_pixelv(pixel_position, _dye_hair_pixel(source, target))
 
 static func _brow_targets_for_frame(image: Image, origin: Vector2i, row: int) -> Array[Vector2i]:
 	var result: Array[Vector2i] = []
@@ -1000,7 +1000,7 @@ func _tint_reference_sheet(texture: Texture2D, mounted: bool) -> Texture2D:
 			if source.a <= 0.05:
 				continue
 			var local: Vector2i = Vector2i(posmod(x, PaperDollLayerVisual.FRAME_SIZE.x), posmod(y, PaperDollLayerVisual.FRAME_SIZE.y))
-			var source_row: int = y / PaperDollLayerVisual.FRAME_SIZE.y
+			var source_row: int = floori(float(y) / float(PaperDollLayerVisual.FRAME_SIZE.y))
 			var group: int = -1
 			if hair_dye_enabled and hair_mask != null \
 					and hair_mask.get_pixel(x, y).a > 0.05:

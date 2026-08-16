@@ -54,13 +54,34 @@ func _allocate_resource(
 			})
 	if candidates.is_empty() or weight_total <= 0:
 		return
+	# A Forest terrain is itself the wood-resource habitat. Reserve one unit for
+	# each Forest Site before the weighted remainder is spread across the Region;
+	# this keeps every Forest Site visually/resource-wise a forest while the
+	# original Region budget remains exactly conserved. If the budget is smaller
+	# than the number of Forest Sites, deterministic tie order chooses the subset.
+	if resource_type == SiteContentTypes.RESOURCE_FOREST:
+		var forest_candidates: Array[Dictionary] = []
+		for item: Dictionary in candidates:
+			var forest_cell: Vector2i = item["cell"] as Vector2i
+			if terrain.get_terrain(forest_cell) == TerrainType.FOREST:
+				forest_candidates.append(item)
+		forest_candidates.sort_custom(func(left: Dictionary, right: Dictionary) -> bool:
+			return int(left["tie"]) < int(right["tie"])
+			)
+		var guaranteed_count: int = mini(budget, forest_candidates.size())
+		for index: int in range(guaranteed_count):
+			var guaranteed_cell: Vector2i = forest_candidates[index]["cell"] as Vector2i
+			result.resource_amounts[_resource_index(guaranteed_cell, resource_type)] += 1
+		budget -= guaranteed_count
+		if budget <= 0:
+			return
 	var assigned: int = 0
 	for item: Dictionary in candidates:
 		var numerator: int = budget * int(item["weight"])
-		var amount: int = numerator / weight_total
+		var amount: int = floori(float(numerator) / float(weight_total))
 		item["remainder"] = numerator % weight_total
 		var cell: Vector2i = item["cell"] as Vector2i
-		result.resource_amounts[_resource_index(cell, resource_type)] = amount
+		result.resource_amounts[_resource_index(cell, resource_type)] += amount
 		assigned += amount
 	var remaining: int = budget - assigned
 	candidates.sort_custom(func(left: Dictionary, right: Dictionary) -> bool:

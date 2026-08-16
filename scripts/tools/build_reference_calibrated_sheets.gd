@@ -17,7 +17,14 @@ const FRAME_COLUMNS := 8
 const FOOT_ANCHOR_Y := 56
 const FIT_HEIGHT := 56
 const MOUNT_BODY_PART := "res://assets/paper_doll/parts/artgate1_horse_body_mounted_unisex.png"
-
+# The accepted mounted front reference has two dark eye components in the
+# source image.  They are deliberately measured from the source rather than
+# redrawn with a hard-coded colour: the
+# small runtime cell otherwise reduces each authored eye to only 1-2 pixels.
+const MOUNT_FRONT_EYE_RECTS := [
+	Rect2i(310, 163, 13, 35),
+	Rect2i(371, 163, 13, 35),
+]
 # Rectangles are the connected character silhouettes measured from the
 # checked-in reference boards.  They are ordered DOWN, UP, SIDE (the source
 # side drawings face left and are mirrored once below to become canonical
@@ -73,7 +80,9 @@ func _build() -> Error:
 		var source: Image = _load_source(str(job[0]))
 		if source == null:
 			return ERR_FILE_NOT_FOUND
-		error = _write_sheet(source, job[1] as Array, str(job[2]), output_path)
+		var mounted_eye_rects: Array = MOUNT_FRONT_EYE_RECTS \
+			if str(job[2]) == "reference_match_body_mounted_unisex.png" else []
+		error = _write_sheet(source, job[1] as Array, str(job[2]), output_path, mounted_eye_rects)
 		if error != OK:
 			return error
 	# The accepted mounted board is a flattened rider+horse silhouette.  Its
@@ -85,6 +94,8 @@ func _build() -> Error:
 	error = _restore_mounted_leg_highlights(output_path)
 	if error != OK:
 		return error
+	# The only mounted adjustment is the source-derived front-eye sample above;
+	# no eye processing runs for walking sheets or for the mounted UP/SIDE rows.
 	return OK
 
 func _restore_mounted_leg_highlights(output_path: String) -> Error:
@@ -141,7 +152,13 @@ func _load_source(file_name: String) -> Image:
 		image.convert(Image.FORMAT_RGBA8)
 	return image
 
-func _write_sheet(source: Image, rectangles: Array, file_name: String, output_path: String) -> Error:
+func _write_sheet(
+		source: Image,
+		rectangles: Array,
+		file_name: String,
+		output_path: String,
+		mounted_eye_rects: Array = []
+) -> Error:
 	var sheet: Image = Image.create(
 		SHEET_SIZE.x,
 		SHEET_SIZE.y,
@@ -159,6 +176,7 @@ func _write_sheet(source: Image, rectangles: Array, file_name: String, output_pa
 			push_error("Reference crop is empty: %s row %d" % [file_name, direction])
 			return ERR_FILE_CORRUPT
 		crop = crop.get_region(used)
+		var source_crop: Image = crop.duplicate()
 		var scale: float = minf(
 			float(FIT_HEIGHT) / float(crop.get_height()),
 			60.0 / float(crop.get_width())
@@ -170,6 +188,8 @@ func _write_sheet(source: Image, rectangles: Array, file_name: String, output_pa
 		crop.resize(fitted_size.x, fitted_size.y, Image.INTERPOLATE_NEAREST)
 		if direction == PaperDollLayerVisual.Facing.RIGHT:
 			crop.flip_x()
+		if direction == PaperDollLayerVisual.Facing.DOWN and not mounted_eye_rects.is_empty():
+			_apply_mounted_reference_eyes(crop, source_crop, mounted_eye_rects, rectangle.position, used, scale)
 		fitted_views.append(crop)
 	# The front drawing is the facing footprint authority.  If the back drawing
 	# is broader, reduce only UP so it cannot become wider than DOWN (the exact
@@ -192,8 +212,51 @@ func _write_sheet(source: Image, rectangles: Array, file_name: String, output_pa
 		for frame_x: int in range(FRAME_COLUMNS):
 			var frame_origin := Vector2i(frame_x * FRAME_SIZE.x, direction * FRAME_SIZE.y)
 			_blit_clipped(sheet, crop, frame_origin, position)
+	# Do not run a connected-component cleanup here.  Mounted eyes and hair
+	# tips can be intentional 1-8 px components after nearest-neighbour fit;
+	# removing them makes the accepted reference lose authored features.  The
+	# source border flood-fill above is the only background-removal authority.
 	var path: String = output_path.path_join(file_name)
 	return sheet.save_png(path)
+
+func _apply_mounted_reference_eyes(
+		fitted: Image,
+		source_crop: Image,
+		eye_rects: Array,
+		view_origin: Vector2i,
+		used: Rect2i,
+		scale: float
+) -> void:
+	# Copy a nearest-neighbour sample of each authored source eye into the
+	# mounted front crop.  The target size is derived from the measured source
+	# component aspect ratio, then kept to a one-pixel dark core (male reference:
+	# 13x35 -> 1x4) so the eye does not dominate the compact mounted face.  Only
+	# the mounted body sheet calls this function; all foot sheets
+	# receive the default empty list and remain byte-for-byte untouched.
+	for full_rect_value: Variant in eye_rects:
+		var full_rect: Rect2i = full_rect_value
+		var local_rect := Rect2i(
+			full_rect.position - view_origin - used.position,
+			full_rect.size
+		)
+		if local_rect.position.x < 0 or local_rect.position.y < 0 \
+				or local_rect.end.x > source_crop.get_width() \
+				or local_rect.end.y > source_crop.get_height():
+			push_warning("Mounted eye sample outside source crop: %s" % local_rect)
+			continue
+		var target_height := 4 if full_rect.size.y >= 30 else 4
+		var target_width := maxi(1, int(floor(
+			float(full_rect.size.x) * float(target_height) / float(full_rect.size.y)
+		)))
+		var patch: Image = source_crop.get_region(local_rect)
+		patch.resize(target_width, target_height, Image.INTERPOLATE_NEAREST)
+		var source_center := Vector2(local_rect.position) + Vector2(local_rect.size) * 0.5
+		var target_center := source_center * scale
+		var target_position := Vector2i(
+			int(round(target_center.x - float(target_width) * 0.5)),
+			int(round(target_center.y - float(target_height) * 0.5))
+		)
+		_blit_clipped(fitted, patch, Vector2i.ZERO, target_position)
 
 func _blit_clipped(sheet: Image, source: Image, frame_origin: Vector2i, position: Vector2i) -> void:
 	var source_rect := Rect2i(Vector2i.ZERO, source.get_size())
@@ -215,8 +278,9 @@ func _blit_clipped(sheet: Image, source: Image, frame_origin: Vector2i, position
 	sheet.blit_rect(source, source_rect, frame_origin + destination)
 
 func _remove_white_background(image: Image) -> void:
-	# Flood-fill only from the crop border.  White hair/armor highlights inside
-	# a black outline remain opaque; a global white-key would destroy them.
+	# Flood-fill only from the crop border.  The tolerance includes the neutral
+	# anti-aliased pixels belonging to the white source matte, while enclosed
+	# white hair and silver armor remain protected by their dark outline.
 	var width: int = image.get_width()
 	var height: int = image.get_height()
 	var visited := PackedByteArray()
@@ -252,6 +316,11 @@ func _enqueue_background(
 	queue.append(position)
 
 func _is_background(color: Color) -> bool:
+	# Treat the black/dark contour as the hard boundary.  The source boards have
+	# a light anti-aliased matte outside that contour; the old 0.90 threshold left
+	# those gray/white pixels as detached specks.  A wider neutral threshold is
+	# safe because flood-fill starts at the crop border and cannot cross the
+	# closed dark outline, so enclosed white hair and silver highlights remain.
 	var minimum: float = minf(color.r, minf(color.g, color.b))
 	var maximum: float = maxf(color.r, maxf(color.g, color.b))
-	return minimum >= 0.91 and maximum - minimum <= 0.08 and color.a > 0.05
+	return minimum >= 0.72 and maximum - minimum <= 0.22 and color.a > 0.05

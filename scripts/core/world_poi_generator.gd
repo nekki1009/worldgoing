@@ -111,7 +111,8 @@ func _generate_candidate(world_seed: int, candidate_cell: Vector2i) -> WorldPOID
 		macro_sample.y,
 		river_nearby,
 		generation_seed,
-		_importance(poi_type)
+		_importance(poi_type),
+		world_seed
 	)
 
 func _candidate_type(world_seed: int, candidate_cell: Vector2i) -> int:

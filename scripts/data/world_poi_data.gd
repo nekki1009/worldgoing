@@ -8,6 +8,7 @@ var world_cell: Vector2i = Vector2i.ZERO
 var region_cell: Vector2i = Vector2i.ZERO
 var site_name: String = ""
 var importance: int = 0
+var world_seed: int = 0
 var generation_seed: int = 0
 var candidate_cell: Vector2i = Vector2i.ZERO
 var deterministic_priority: float = 0.0
@@ -30,7 +31,8 @@ func _init(
 		p_moisture: float,
 		p_river_nearby: bool,
 		p_generation_seed: int,
-		p_importance: int = 0
+		p_importance: int = 0,
+		p_world_seed: int = 0
 	) -> void:
 	poi_id = p_poi_id
 	poi_type = p_poi_type
@@ -44,5 +46,6 @@ func _init(
 	elevation = p_elevation
 	moisture = p_moisture
 	river_nearby = p_river_nearby
+	world_seed = p_world_seed
 	generation_seed = p_generation_seed
 	importance = p_importance

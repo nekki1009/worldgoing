@@ -267,6 +267,14 @@ func _test_delta_affects_travel_query() -> void:
 	var queried: TravelCellResult = travel_runtime.query_travel_cell(session_cell)
 	assert(queried.success and queried.terrain_type == TerrainType.WATER, "Travel query ignored Region Delta terrain")
 	assert(not queried.passable, "Water Delta terrain remained passable")
+	var site_definition: SiteData = world_data.get_site_definition_at(
+		REGION_CELL,
+		overridden_cell,
+		TEST_SEED
+	)
+	var site_snapshot: SiteRuntimeQueryResult = travel_runtime.query_site_snapshot(site_definition.site_id)
+	assert(site_snapshot.success and site_snapshot.snapshot.source_terrain_type == TerrainType.WATER,
+		"Site query ignored the resolved Region Delta terrain")
 	var center_cell: Vector2i = Vector2i(50, 50)
 	assert(region_runtime.apply_test_terrain_override(REGION_CELL, center_cell, TerrainType.WATER), "Runtime destination Delta setup failed")
 	var resolved_destination: Vector2i = travel_runtime.resolve_world_destination(REGION_CELL)

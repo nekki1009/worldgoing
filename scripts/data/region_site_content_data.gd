@@ -1,7 +1,7 @@
 class_name RegionSiteContentData
 extends RefCounted
 
-const GENERATION_VERSION: int = 2
+const GENERATION_VERSION: int = 3
 const CELL_COUNT: int = WorldCoordinates.REGION_GRID_SIZE * WorldCoordinates.REGION_GRID_SIZE
 
 var world_cell: Vector2i = Vector2i(-1, -1)

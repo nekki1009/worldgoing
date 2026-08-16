@@ -260,6 +260,11 @@ func _apply_added_facility(feature_id: String, placement_value: Dictionary) -> v
 		var target_value: Variant = placement.get("target", INVALID_CELL)
 		if target_value is Vector2i and is_valid_cell(target_value as Vector2i):
 			var target: Vector2i = target_value as Vector2i
+			# A stair only has meaning when its endpoints are on different height
+			# levels.  Reject flat-cell facilities before setting visual flags or
+			# creating a traversable transition.
+			if elevation_level_at(origin) == elevation_level_at(target):
+				return
 			var origin_index: int = origin.y * GRID_SIZE.x + origin.x
 			var target_index: int = target.y * GRID_SIZE.x + target.x
 			surface_flags[origin_index] = int(surface_flags[origin_index]) | SURFACE_STAIR

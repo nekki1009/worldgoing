@@ -6,6 +6,15 @@ const SiteTransitionDataType = preload("res://scripts/data/site_transition_data.
 const MapArtCatalogType = preload("res://scripts/data/map_art_catalog.gd")
 const MIN_ZOOM: float = 2.0
 const MAX_ZOOM: float = 32.0
+const COMPOSITE_TILE_SIZE_METERS: float = float(SiteLayoutDataType.SIZE_METERS.x)
+const COMPOSITE_ART_SIZE_PIXELS: int = 1254
+const COMPOSITE_ART_TILE_PIXELS: int = 418
+# Terrain joins are authored as a shared, hard edge. This is deliberately a
+# narrow pixel band rather than a blurred colour feather: both adjacent Sites
+# use the same deterministic boundary profile, so the edge can be drawn once
+# and still meets exactly at the Region seam. Roads, rivers and height faces
+# remain separate overlays and are never modified by this pass.
+const COMPOSITE_EDGE_BAND_PIXELS: int = 2
 
 signal debug_state_changed(state: Dictionary)
 signal move_requested(direction: Vector2i)
@@ -17,40 +26,579 @@ var height_texture: Texture2D
 var show_debug_overlay: bool = false
 var show_scale_guide: bool = false
 var camera_initialized: bool = false
+var composite_mode: bool = false
+var composite_center_region_cell: Vector2i = SiteLayoutDataType.INVALID_CELL
+var composite_center_global_region_cell: Vector2i = SiteLayoutDataType.INVALID_CELL
+var composite_tiles: Array[SiteMap] = []
+var suppress_site_frame: bool = false
+var composite_scene_river_axis: int = -1
+var composite_river_enabled: bool = true
+var composite_river_cells: Dictionary = {}
+var composite_background_texture: Texture2D
+var composite_background_kind: String = ""
+var composite_background_only: bool = false
+var composite_suppress_poi: bool = false
+var forest_clear_edge_mask: int = 0
 
 @onready var camera: Camera2D = $Camera2D
 
 func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 
-func setup(p_runtime_snapshot: SiteRuntimeSnapshot) -> void:
+func setup(p_runtime_snapshot: SiteRuntimeSnapshot, defer_art: bool = false) -> void:
+	_clear_composite_tiles()
+	composite_mode = false
+	composite_center_region_cell = SiteLayoutDataType.INVALID_CELL
+	composite_center_global_region_cell = SiteLayoutDataType.INVALID_CELL
+	composite_scene_river_axis = -1
+	composite_river_enabled = true
+	composite_river_cells.clear()
+	composite_background_texture = null
+	composite_background_kind = ""
+	composite_background_only = false
+	composite_suppress_poi = false
+	forest_clear_edge_mask = 0
 	var previous_site_id: String = runtime_snapshot.site_id if runtime_snapshot != null else ""
 	var next_site_id: String = p_runtime_snapshot.site_id if p_runtime_snapshot != null else ""
 	var reset_camera: bool = not camera_initialized or previous_site_id != next_site_id
 	runtime_snapshot = p_runtime_snapshot
-	site_texture = _build_layout_texture(runtime_snapshot.layout if runtime_snapshot != null else null)
 	var setup_layout: SiteLayoutDataType = runtime_snapshot.layout if runtime_snapshot != null else null
-	scene_texture = MapArtCatalogType.site_scene_texture(setup_layout)
+	if defer_art:
+		# Composite tiles only contribute a downsampled raster to the parent
+		# background. Do not build each tile's 800px texture before that raster is
+		# requested; doing so made a 3x3 entry needlessly expensive.
+		scene_texture = null
+		site_texture = null
+		height_texture = null
+	else:
+		scene_texture = MapArtCatalogType.site_scene_texture(setup_layout)
+		# Authored strategic scenes already provide their complete surface.  Avoid
+		# generating an additional fallback raster for every child in a 3x3 view;
+		# ordinary Sites still receive the generated texture below.
+		site_texture = _build_layout_texture(setup_layout) if scene_texture == null else null
 	# Only scenes with an authored height composition get the expensive shifted
 	# surface.  A normal terrain Site must keep its continuous painted floor;
 	# applying a 50x50 shifted tile cache to every mountain cell turns the image
 	# into a grid of translucent rectangles instead of a readable ledge.
 	var scene_template: String = str(setup_layout.details.get("scene_template", "")) \
 		if setup_layout != null else ""
-	var has_authored_height: bool = setup_layout != null and setup_layout.has_height_base() \
-		and (setup_layout.site_landform == SiteLayoutDataType.Landform.MOUNTAIN_PASS \
-		or setup_layout.transitions.size() > 0 \
-		or scene_template in ["MOUNTAIN_TERRACE", "CASTLE_COURTYARD", "RUINS_TERRACE", "CAVE_ENTRANCE", "RIVER_DOCK"])
-	height_texture = _build_height_texture(setup_layout) if has_authored_height and scene_texture == null else null
+	var has_authored_height: bool = _layout_needs_height_texture(setup_layout, scene_template)
+	if not defer_art:
+		height_texture = _build_height_texture(setup_layout) if has_authored_height and scene_texture == null else null
 	if camera != null and reset_camera and runtime_snapshot != null and runtime_snapshot.layout != null:
 		camera.position = Vector2(runtime_snapshot.layout.bounds_meters.position) \
 			+ Vector2(runtime_snapshot.layout.bounds_meters.size) * 0.5
 	# Site cells represent 2m x 2m; start close enough to read authored
 	# terrain edges and height transitions while retaining wheel zoom-out.
-	camera.zoom = Vector2(10.0, 10.0)
+	if camera != null:
+		camera.zoom = Vector2(10.0, 10.0)
 	camera_initialized = true
 	queue_redraw()
 	debug_state_changed.emit(get_debug_state())
+
+func _layout_needs_height_texture(
+		layout: SiteLayoutDataType,
+		scene_template: String = ""
+	) -> bool:
+	if layout == null or not layout.has_height_base():
+		return false
+	var template: String = scene_template
+	if template.is_empty():
+		template = str(layout.details.get("scene_template", ""))
+	return layout.site_landform == SiteLayoutDataType.Landform.MOUNTAIN_PASS \
+		or layout.transitions.size() > 0 \
+		or template in ["MOUNTAIN_TERRACE", "CASTLE_COURTYARD", "RUINS_TERRACE", "CAVE_ENTRANCE", "RIVER_DOCK"]
+
+func _apply_composite_surface_policy(layout: SiteLayoutDataType) -> void:
+	# POI art is the final presentation layer and is intentionally not part of a
+	# Region's initial 3x3 preview. Keep the POI layout/data, but rebuild this
+	# child from its native terrain and generated height base so a settlement
+	# painting cannot cover neighboring Site edges.
+	composite_suppress_poi = layout != null \
+		and layout.layout_kind == SiteLayoutDataType.LayoutKind.POI
+	if not composite_suppress_poi:
+		return
+	scene_texture = null
+	# The composite raster is built at its final 418px tile resolution. Keep POI
+	# art suppressed without rebuilding an unused 800px surface here.
+	site_texture = null
+	height_texture = null
+
+func setup_composite(
+		p_snapshots: Array[SiteRuntimeSnapshot],
+		p_center_region_cell: Vector2i
+	) -> void:
+	_clear_composite_tiles()
+	composite_mode = false
+	composite_center_region_cell = p_center_region_cell
+	composite_center_global_region_cell = SiteLayoutDataType.INVALID_CELL
+	var center_snapshot: SiteRuntimeSnapshot
+	for snapshot: SiteRuntimeSnapshot in p_snapshots:
+		if snapshot != null and snapshot.parent_region_cell == p_center_region_cell:
+			center_snapshot = snapshot
+			break
+	if center_snapshot == null:
+		for snapshot: SiteRuntimeSnapshot in p_snapshots:
+			if snapshot != null:
+				center_snapshot = snapshot
+				break
+	if center_snapshot == null:
+		return
+	composite_center_global_region_cell = _snapshot_grid_cell(center_snapshot)
+	runtime_snapshot = center_snapshot
+	composite_mode = true
+	composite_river_cells = _select_composite_river_cells(
+		p_snapshots,
+		p_center_region_cell
+	)
+	var stitched_river_axis: int = _composite_river_axis_for_cells(
+		p_snapshots,
+		composite_river_cells
+	)
+	composite_scene_river_axis = stitched_river_axis
+	composite_background_kind = _composite_background_kind_for(p_snapshots)
+	composite_background_texture = MapArtCatalogType.site_scene_texture_kind(
+		composite_background_kind
+	) if not composite_background_kind.is_empty() else null
+	# The parent draws the stitched 3x3 image; a full-size center Site texture is
+	# not needed here and would duplicate the most expensive raster build.
+	site_texture = null
+	scene_texture = null
+	height_texture = null
+	if camera != null:
+		camera.enabled = true
+		camera.position = Vector2.ZERO
+		camera.zoom = Vector2.ONE * 3.4
+		camera_initialized = true
+	for snapshot: SiteRuntimeSnapshot in p_snapshots:
+		if snapshot == null or snapshot.layout == null:
+			continue
+		# Do not load SiteMap.tscn from inside SiteMap: reloading the scene while
+		# its global script is active makes Godot re-register global classes. A
+		# lightweight child with the same presentation script keeps each tile's
+		# local draw transforms isolated without recursive scene loading.
+		var tile: SiteMap = SiteMap.new()
+		var tile_camera: Camera2D = Camera2D.new()
+		tile_camera.name = "Camera2D"
+		tile.add_child(tile_camera)
+		add_child(tile)
+		tile.position = Vector2(
+			(_snapshot_grid_cell(snapshot) - composite_center_global_region_cell)
+			* int(COMPOSITE_TILE_SIZE_METERS)
+		)
+		tile.setup(snapshot, true)
+		tile._apply_composite_surface_policy(snapshot.layout)
+		tile.suppress_site_frame = true
+		tile.composite_scene_river_axis = stitched_river_axis
+		tile.composite_river_enabled = composite_river_cells.has(_snapshot_grid_cell(snapshot))
+		tile.composite_background_only = not composite_background_kind.is_empty()
+		tile.forest_clear_edge_mask = _forest_clear_edge_mask_for(snapshot, p_snapshots)
+		tile.show_debug_overlay = false
+		tile.show_scale_guide = false
+		if tile.camera != null:
+			tile.camera.enabled = false
+		tile.process_mode = Node.PROCESS_MODE_DISABLED
+		tile.set_meta("composite_center", _snapshot_grid_cell(snapshot) == composite_center_global_region_cell)
+		composite_tiles.append(tile)
+	# A mixed footprint still needs one parent-owned surface.  Painting nine
+	# complete Site scenes as independent children makes a Sand 2x2 block look
+	# like a pasted rectangle and makes every shared edge a visible seam.  Build
+	# one bounded raster from the already resolved native Site scenes, then leave
+	# the children responsible only for mutable runtime overlays.
+	if composite_background_kind.is_empty():
+		_build_mixed_composite_background()
+		for tile: SiteMap in composite_tiles:
+			tile.composite_background_only = composite_background_texture != null
+			tile.queue_redraw()
+	queue_redraw()
+	debug_state_changed.emit(get_debug_state())
+
+func is_composite_view() -> bool:
+	return composite_mode
+
+func refresh_composite_center(p_runtime_snapshot: SiteRuntimeSnapshot) -> void:
+	if not composite_mode or p_runtime_snapshot == null:
+		return
+	runtime_snapshot = p_runtime_snapshot
+	site_texture = null
+	for tile: SiteMap in composite_tiles:
+		if bool(tile.get_meta("composite_center", false)):
+			var saved_forest_clear_edge_mask: int = tile.forest_clear_edge_mask
+			var saved_composite_river_enabled: bool = tile.composite_river_enabled
+			tile.setup(p_runtime_snapshot, true)
+			tile._apply_composite_surface_policy(p_runtime_snapshot.layout)
+			tile.suppress_site_frame = true
+			tile.composite_scene_river_axis = _composite_river_axis([p_runtime_snapshot])
+			tile.composite_river_enabled = saved_composite_river_enabled
+			tile.composite_background_only = not composite_background_kind.is_empty()
+			tile.forest_clear_edge_mask = saved_forest_clear_edge_mask
+			tile.queue_redraw()
+			tile.show_debug_overlay = false
+			tile.show_scale_guide = false
+			if tile.camera != null:
+				tile.camera.enabled = false
+			tile.process_mode = Node.PROCESS_MODE_DISABLED
+			break
+	queue_redraw()
+	debug_state_changed.emit(get_debug_state())
+
+func _forest_clear_edge_mask_for(
+		snapshot: SiteRuntimeSnapshot,
+		p_snapshots: Array[SiteRuntimeSnapshot]
+	) -> int:
+	if snapshot == null or snapshot.layout == null \
+		or snapshot.layout.terrain_type != TerrainType.FOREST:
+		return 0
+	var mask: int = 0
+	var directions: Array[Vector2i] = [Vector2i.UP, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT]
+	for index: int in range(directions.size()):
+		var neighbor_cell: Vector2i = _snapshot_grid_cell(snapshot) + directions[index]
+		for neighbor: SiteRuntimeSnapshot in p_snapshots:
+			if neighbor == null or _snapshot_grid_cell(neighbor) != neighbor_cell:
+				continue
+			if neighbor.layout == null or neighbor.layout.terrain_type != TerrainType.FOREST:
+				mask |= 1 << index
+			break
+		# An absent neighbour is not evidence of a terrain change. Leave that edge
+		# populated; only an explicitly resolved non-Forest neighbour clears it.
+	return mask
+
+func _composite_river_axis(p_snapshots: Array[SiteRuntimeSnapshot]) -> int:
+	# A river crossing a shared Site edge must keep one cardinal axis across the
+	# visible footprint.  Generated cell bases may have different fallback
+	# orientations, so the composite chooses the first river's axis and applies
+	# it to all river artwork without changing the underlying runtime layouts.
+	for snapshot: SiteRuntimeSnapshot in p_snapshots:
+		if snapshot == null or snapshot.layout == null:
+			continue
+		var layout: SiteLayoutDataType = snapshot.layout
+		if not layout.river_connection_offsets.is_empty():
+			return _river_axis(layout)
+	return -1
+
+func _composite_river_axis_for_cells(
+		p_snapshots: Array[SiteRuntimeSnapshot],
+		selected_cells: Dictionary
+	) -> int:
+	for snapshot: SiteRuntimeSnapshot in p_snapshots:
+		if snapshot == null or snapshot.layout == null \
+			or not selected_cells.has(_snapshot_grid_cell(snapshot)):
+			continue
+		if not snapshot.layout.river_connection_offsets.is_empty():
+			return _river_axis(snapshot.layout)
+	return -1
+
+func _select_composite_river_cells(
+		p_snapshots: Array[SiteRuntimeSnapshot],
+		_p_center_region_cell: Vector2i
+	) -> Dictionary:
+	# A composite footprint can contain several independent macro-river hints.
+	# Build cardinal connected components from the resolved Site edge contracts
+	# and keep the center component when it has a river; otherwise keep the
+	# largest component. Child Sites then render one channel instead of every
+	# local hint, which is what previously produced parallel rivers in 3x3 art.
+	var river_layouts: Dictionary = {}
+	for snapshot: SiteRuntimeSnapshot in p_snapshots:
+		if snapshot == null or snapshot.layout == null \
+			or snapshot.layout.river_connection_offsets.is_empty():
+			continue
+		river_layouts[_snapshot_grid_cell(snapshot)] = snapshot.layout
+	if river_layouts.is_empty():
+		return {}
+	var visited: Dictionary = {}
+	var components: Array[Array] = []
+	var directions: Array[Vector2i] = [Vector2i.UP, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT]
+	for cell_value: Variant in river_layouts.keys():
+		var start_cell: Vector2i = cell_value as Vector2i
+		if visited.has(start_cell):
+			continue
+		var queue: Array[Vector2i] = [start_cell]
+		var component: Array[Vector2i] = []
+		visited[start_cell] = true
+		while not queue.is_empty():
+			var cell: Vector2i = queue.pop_front()
+			component.append(cell)
+			var layout: SiteLayoutDataType = river_layouts[cell] as SiteLayoutDataType
+			for direction: Vector2i in directions:
+				var neighbor_cell: Vector2i = cell + direction
+				if not river_layouts.has(neighbor_cell) or visited.has(neighbor_cell):
+					continue
+				var neighbor_layout: SiteLayoutDataType = river_layouts[neighbor_cell] as SiteLayoutDataType
+				if not _river_has_offset(layout, direction) \
+					or not _river_has_offset(neighbor_layout, -direction):
+					continue
+				visited[neighbor_cell] = true
+				queue.append(neighbor_cell)
+		components.append(component)
+	var center_component: Array[Vector2i] = []
+	for component: Array[Vector2i] in components:
+		if component.has(composite_center_global_region_cell):
+			center_component = component
+			break
+	if not center_component.is_empty():
+		return _cells_to_dictionary(center_component)
+	var best_component: Array[Vector2i] = []
+	for component: Array[Vector2i] in components:
+		if component.size() > best_component.size():
+			best_component = component
+			continue
+		if component.size() != best_component.size():
+			continue
+		if _component_distance_to_center(component, composite_center_global_region_cell) \
+			< _component_distance_to_center(best_component, composite_center_global_region_cell):
+			best_component = component
+	return _cells_to_dictionary(best_component)
+
+func _cells_to_dictionary(cells: Array[Vector2i]) -> Dictionary:
+	var result: Dictionary = {}
+	for cell: Vector2i in cells:
+		result[cell] = true
+	return result
+
+func _component_distance_to_center(
+		component: Array[Vector2i],
+		center: Vector2i
+	) -> int:
+	var result: int = 1_000_000
+	for cell: Vector2i in component:
+		result = mini(result, absi(cell.x - center.x) + absi(cell.y - center.y))
+	return result
+
+func _river_has_offset(layout: SiteLayoutDataType, offset: Vector2i) -> bool:
+	if layout == null:
+		return false
+	return offset in layout.river_connection_offsets
+
+func _clear_composite_tiles() -> void:
+	for tile: SiteMap in composite_tiles:
+		if is_instance_valid(tile):
+			remove_child(tile)
+			tile.free()
+	composite_tiles.clear()
+	composite_river_cells.clear()
+	composite_background_texture = null
+	composite_background_kind = ""
+	composite_center_global_region_cell = SiteLayoutDataType.INVALID_CELL
+
+func _snapshot_grid_cell(snapshot: SiteRuntimeSnapshot) -> Vector2i:
+	if snapshot == null:
+		return SiteLayoutDataType.INVALID_CELL
+	if snapshot.global_region_cell != SiteLayoutDataType.INVALID_CELL:
+		return snapshot.global_region_cell
+	return WorldCoordinates.world_region_to_global_region_cell(
+		snapshot.parent_world_cell,
+		snapshot.parent_region_cell
+	)
+
+func _build_mixed_composite_background() -> void:
+	if composite_tiles.size() != 9 or OS.has_feature("headless"):
+		return
+	var composite: Image = Image.create(
+		COMPOSITE_ART_SIZE_PIXELS,
+		COMPOSITE_ART_SIZE_PIXELS,
+		false,
+		Image.FORMAT_RGBA8
+	)
+	composite.fill(Color("211d2b"))
+	var tile_images: Dictionary = {}
+	var tile_terrains: Dictionary = {}
+	for tile: SiteMap in composite_tiles:
+		if tile == null or tile.runtime_snapshot == null:
+			continue
+		var tile_image: Image = _composite_tile_image(tile)
+		if tile_image == null or tile_image.is_empty():
+			continue
+		var tile_key: Vector2i = _snapshot_grid_cell(tile.runtime_snapshot) - composite_center_global_region_cell
+		tile_images[tile_key] = tile_image
+		tile_terrains[tile_key] = tile.runtime_snapshot.layout.terrain_type
+		var offset: Vector2i = tile_key + Vector2i.ONE
+		composite.blit_rect(
+			tile_image,
+			Rect2i(Vector2i.ZERO, Vector2i(COMPOSITE_ART_TILE_PIXELS, COMPOSITE_ART_TILE_PIXELS)),
+			offset * COMPOSITE_ART_TILE_PIXELS
+		)
+	if tile_images.size() != 9:
+		return
+	_draw_mixed_vertical_edges(composite, tile_terrains)
+	_draw_mixed_horizontal_edges(composite, tile_terrains)
+	composite_background_texture = ImageTexture.create_from_image(composite)
+	composite_background_kind = "generated_mixed_v1"
+
+func _composite_tile_image(tile: SiteMap) -> Image:
+	# Composite ground is always the native Site surface.  A generated height
+	# layer is alpha-blended over that surface so mountain ledges remain visible
+	# without replacing the whole tile with a scene painting.  Explicit POI art
+	# is deliberately excluded from a 3x3 footprint by the surface policy.
+	var layout: SiteLayoutDataType = tile.runtime_snapshot.layout
+	if not tile.composite_river_enabled:
+		# The generated native surface already contains the local river hint. In a
+		# stitched footprint that hint may belong to a parallel channel rejected by
+		# the composite connection resolver; remove it from the raster as well as
+		# suppressing the child overlay, otherwise the hidden river remains visible
+		# as a blue strip in the parent-owned background.
+		layout = _layout_without_composite_river(layout)
+	var source: Image = MapArtCatalogType.build_layout_composite_image(
+		layout,
+		COMPOSITE_ART_TILE_PIXELS
+	)
+	var scene_kind: String = MapArtCatalogType.site_scene_kind(tile.runtime_snapshot.layout)
+	# River artwork must use the single axis selected for the whole footprint;
+	# otherwise two adjacent River Sites can each be internally correct while
+	# their water turns a false corner at the shared edge.
+	if source == null and scene_kind.begins_with("strategic_river") and composite_scene_river_axis >= 0:
+		var river_kind: String = "strategic_river_meadow_v1" \
+			if composite_scene_river_axis == 1 \
+			else "strategic_river_meadow_vertical_v1"
+		var river_texture: Texture2D = MapArtCatalogType.site_scene_texture_kind(river_kind)
+		source = river_texture.get_image() if river_texture != null else null
+	if source == null or source.is_empty():
+		return null
+	source = source.duplicate()
+	source.convert(Image.FORMAT_RGBA8)
+	if _layout_needs_height_texture(layout):
+		var height_image: Image = _build_height_image(
+			layout,
+			COMPOSITE_ART_TILE_PIXELS,
+			source
+		)
+		if height_image != null and not height_image.is_empty():
+			source.blend_rect(
+				height_image,
+				Rect2i(Vector2i.ZERO, height_image.get_size()),
+				Vector2i.ZERO
+			)
+	_apply_composite_scene_variant(
+		source,
+		scene_kind,
+		posmod(int(tile.runtime_snapshot.layout.details.get("site_visual_variant", 0)), 3)
+	)
+	return source
+
+func _layout_without_composite_river(layout: SiteLayoutDataType) -> SiteLayoutDataType:
+	var result: SiteLayoutDataType = layout.copy()
+	# Use a cache-distinct identity because MapArtCatalog caches deterministic
+	# rasters by site_id; this presentation override must not reuse the original
+	# river-bearing image.
+	result.site_id = "%s|composite_no_river" % layout.site_id
+	result.river_connection_offsets.clear()
+	var replacement_surface: int = SiteContentTypes.NativeSurface.ROCK \
+		if result.terrain_type == TerrainType.MOUNTAIN \
+		else SiteContentTypes.NativeSurface.DIRT
+	for y: int in range(SiteLayoutDataType.GRID_SIZE.y):
+		for x: int in range(SiteLayoutDataType.GRID_SIZE.x):
+			var cell := Vector2i(x, y)
+			if result.native_surface_at(cell) != SiteContentTypes.NativeSurface.RIVER_WATER:
+				continue
+			result.native_surface_cells[y * SiteLayoutDataType.GRID_SIZE.x + x] = replacement_surface
+	return result
+
+func _apply_composite_scene_variant(source: Image, scene_kind: String, variant: int) -> void:
+	if scene_kind.is_empty():
+		# Native terrain samples already use the global Region texture phase. A
+		# per-tile mirror or palette lift would break that shared edge again, so
+		# variation comes from deterministic resources/decorations instead.
+		return
+	# A mixed composite cannot show the same Sand/Mountain/Snow painting nine
+	# times. Keep river scenes on the shared axis, while preserving one authored
+	# orientation for all trees, rocks and stairs. Variant 2 may still apply a
+	# small palette lift; no horizontal or vertical flip is allowed.
+	if scene_kind.begins_with("strategic_river"):
+		return
+	if variant != 2:
+		return
+	for y: int in range(source.get_height()):
+		for x: int in range(source.get_width()):
+			var color: Color = source.get_pixel(x, y)
+			color.r = clampf(color.r * 1.045, 0.0, 1.0)
+			color.g = clampf(color.g * 1.035, 0.0, 1.0)
+			color.b = clampf(color.b * 1.015, 0.0, 1.0)
+			source.set_pixel(x, y, color)
+
+func _draw_mixed_vertical_edges(composite: Image, tile_terrains: Dictionary) -> void:
+	for row: int in range(3):
+		for column: int in range(2):
+			var left_key: Vector2i = Vector2i(column - 1, row - 1)
+			var right_key: Vector2i = Vector2i(column, row - 1)
+			if tile_terrains.get(left_key, -1) == tile_terrains.get(right_key, -2):
+				continue
+			var seam_x: int = (column + 1) * COMPOSITE_ART_TILE_PIXELS
+			var left_type: int = int(tile_terrains.get(left_key, TerrainType.PLAINS))
+			var right_type: int = int(tile_terrains.get(right_key, TerrainType.PLAINS))
+			for local_y: int in range(COMPOSITE_ART_TILE_PIXELS):
+				var boundary_offset: int = _mixed_edge_offset(local_y, row, column, false)
+				var boundary_x: int = seam_x + boundary_offset
+				for step: int in range(-COMPOSITE_EDGE_BAND_PIXELS, COMPOSITE_EDGE_BAND_PIXELS + 1):
+					var x: int = boundary_x + step
+					if x < 0 or x >= composite.get_width():
+						continue
+					composite.set_pixel(
+						x,
+						(row * COMPOSITE_ART_TILE_PIXELS) + local_y,
+						_mixed_edge_color(left_type, right_type, step)
+					)
+
+func _draw_mixed_horizontal_edges(composite: Image, tile_terrains: Dictionary) -> void:
+	for row: int in range(2):
+		for column: int in range(3):
+			var top_key: Vector2i = Vector2i(column - 1, row - 1)
+			var bottom_key: Vector2i = Vector2i(column - 1, row)
+			if tile_terrains.get(top_key, -1) == tile_terrains.get(bottom_key, -2):
+				continue
+			var seam_y: int = (row + 1) * COMPOSITE_ART_TILE_PIXELS
+			var top_type: int = int(tile_terrains.get(top_key, TerrainType.PLAINS))
+			var bottom_type: int = int(tile_terrains.get(bottom_key, TerrainType.PLAINS))
+			for local_x: int in range(COMPOSITE_ART_TILE_PIXELS):
+				var boundary_offset: int = _mixed_edge_offset(local_x, row, column, true)
+				var boundary_y: int = seam_y + boundary_offset
+				for step: int in range(-COMPOSITE_EDGE_BAND_PIXELS, COMPOSITE_EDGE_BAND_PIXELS + 1):
+					var y: int = boundary_y + step
+					if y < 0 or y >= composite.get_height():
+						continue
+					composite.set_pixel(
+						(column * COMPOSITE_ART_TILE_PIXELS) + local_x,
+						y,
+						_mixed_edge_color(top_type, bottom_type, step)
+					)
+
+func _mixed_edge_offset(along: int, row: int, column: int, horizontal: bool) -> int:
+	# One shared profile is used by both sides of each join. This produces a
+	# deliberate, drawable boundary instead of two independent blurred edges.
+	var phase: float = float(
+		composite_center_region_cell.x * (17 if horizontal else 13)
+		+ composite_center_region_cell.y * (5 if horizontal else 7)
+		+ row * (23 if horizontal else 19)
+		+ column * (13 if horizontal else 11)
+	)
+	var primary: float = sin(float(along) * (0.041 if horizontal else 0.045) + phase) * 8.0
+	var secondary: float = sin(float(along) * (0.087 if horizontal else 0.091) + phase * (0.59 if horizontal else 0.63)) * 4.0
+	return roundi(primary + secondary)
+
+func _mixed_edge_color(first_type: int, second_type: int, step: int) -> Color:
+	var first: Color = MapArtCatalogType.terrain_color(first_type)
+	var second: Color = MapArtCatalogType.terrain_color(second_type)
+	var join: Color = first.lerp(second, 0.5).darkened(0.10)
+	# A thin dark soil/stone line makes the join legible without smearing either
+	# terrain. The outer pixels are keyed to their own terrain palette, so the
+	# boundary remains stable if one side is sand, snow or mountain.
+	if step < 0:
+		return first.darkened(0.16 if step == -1 else 0.08)
+	if step > 0:
+		return second.darkened(0.16 if step == 1 else 0.08)
+	return join
+
+func _composite_background_kind_for(_p_snapshots: Array[SiteRuntimeSnapshot]) -> String:
+	# Region cells are assembled from native surfaces plus data-backed overlays.
+	# No single authored painting may own a footprint: it would reintroduce
+	# baked roads/highlands and would hide the actual terrain boundary contract.
+	# Returning an empty kind deliberately routes every 3x3 view through the
+	# shared-edge stitcher below.  The method remains for callers that inspect the
+	# old presentation policy.
+	return ""
+
+func _can_use_coherent_composite_background(p_snapshots: Array[SiteRuntimeSnapshot]) -> bool:
+	# Retain the boolean helper for older presentation checks while keeping the
+	# selected art profile in one canonical resolver.
+	return not _composite_background_kind_for(p_snapshots).is_empty()
 
 func get_debug_state() -> Dictionary:
 	if runtime_snapshot == null:
@@ -63,6 +611,9 @@ func get_debug_state() -> Dictionary:
 		]
 	return {
 		"layer": "SITE MAP",
+		"site_view": "3x3 SITE COMPOSITE" if composite_mode else "SINGLE SITE",
+		"site_composite_tiles": composite_tiles.size() if composite_mode else 1,
+		"site_composite_background": composite_background_kind if composite_mode else "",
 		"current_region": region_label,
 		"world_seed": runtime_snapshot.world_seed,
 		"world_time": _format_world_time(runtime_snapshot.world_time_seconds),
@@ -140,12 +691,42 @@ func _feature_ids() -> Array[String]:
 	return ids
 
 func _draw() -> void:
+	if composite_mode:
+		var footprint_size: float = COMPOSITE_TILE_SIZE_METERS * 3.0
+		draw_rect(
+			Rect2(Vector2.ONE * -footprint_size * 0.5, Vector2.ONE * footprint_size).grow(10.0),
+			Color("211d2b")
+		)
+		# Fill the shared-edge underlay before child Site paintings draw.  This
+		# prevents a dark gutter if an authored scene intentionally leaves a thin
+		# edge margin; the adjacent native terrain still reads continuously.
+		for tile: SiteMap in composite_tiles:
+			if tile == null or tile.runtime_snapshot == null:
+				continue
+			var tile_origin: Vector2 = tile.position - Vector2.ONE * COMPOSITE_TILE_SIZE_METERS * 0.5
+			var tile_color: Color = TerrainType.to_color(tile.runtime_snapshot.source_terrain_type).darkened(0.18)
+			draw_rect(
+				Rect2(tile_origin, Vector2.ONE * COMPOSITE_TILE_SIZE_METERS),
+				tile_color,
+				true
+			)
+		if composite_background_texture != null:
+			draw_texture_rect(
+				composite_background_texture,
+				Rect2(Vector2.ONE * -footprint_size * 0.5, Vector2.ONE * footprint_size),
+				false
+			)
+		return
 	if runtime_snapshot == null or runtime_snapshot.layout == null \
 		or not runtime_snapshot.layout.is_valid():
 		return
 	var layout: SiteLayoutDataType = runtime_snapshot.layout
 	var bounds: Rect2 = Rect2(Vector2(layout.bounds_meters.position), Vector2(layout.bounds_meters.size))
-	draw_rect(bounds.grow(8.0), Color("211d2b"))
+	if not suppress_site_frame:
+		draw_rect(bounds.grow(8.0), Color("211d2b"))
+	if composite_background_only:
+		_draw_composite_runtime_overlays(layout)
+		return
 	if scene_texture != null:
 		_draw_scene_background(layout, bounds)
 	elif site_texture != null:
@@ -159,22 +740,44 @@ func _draw() -> void:
 	if show_scale_guide:
 		_draw_scale_guide(layout)
 
+func _draw_composite_runtime_overlays(layout: SiteLayoutDataType) -> void:
+	# The stitched native surface owns the continuous ground and generated height
+	# layer. Roads and rivers are not part of that floor: they are artificial or
+	# connection facilities and are drawn only when the layout contains the
+	# corresponding data.
+	if not layout.road_connection_offsets.is_empty():
+		_draw_cell_base_corridors(layout)
+	var has_river: bool = composite_river_enabled \
+		and not layout.river_connection_offsets.is_empty()
+	if has_river and layout.terrain_type not in [TerrainType.WATER, TerrainType.OCEAN]:
+		var river_axis: int = _river_axis(layout)
+		var river_kind: String = "site_river_horizontal" if river_axis == 1 else "site_river_vertical"
+		_draw_river_band(layout, MapArtCatalogType.site_texture(river_kind), river_kind)
+	_draw_generated_resources(layout)
+	_draw_generated_facilities(layout)
+	_draw_tile_landmarks(layout)
+	if SiteLayoutDataType.is_valid_cell(runtime_snapshot.party_site_local_cell):
+		var party_cell: Vector2i = runtime_snapshot.party_site_local_cell
+		_draw_party_flag(_height_adjusted_point(layout, layout.cell_center_meters(party_cell), layout.elevation_level_at(party_cell)))
+
 func _draw_scene_background(layout: SiteLayoutDataType, bounds: Rect2) -> void:
 	var scene_kind: String = MapArtCatalogType.site_scene_kind(layout)
 	if not MapArtCatalogType.is_strategic_scene_kind(scene_kind):
 		draw_texture_rect(scene_texture, bounds, false)
 		return
-	# Keep the authored composition for all three deterministic Site variants.
-	# Only a horizontal mirror is allowed: vertical mirroring would turn trees,
-	# stairs and other directional props upside down. Navigation, height and
-	# resource positions remain in the canonical SiteLayoutData and are never
-	# transformed.
-	var variant: int = posmod(int(layout.details.get("site_visual_variant", 0)), 3)
-	var scale: Vector2 = Vector2.ONE
-	if variant == 1:
-		scale = Vector2(-1.0, 1.0)
-	draw_set_transform(bounds.get_center(), 0.0, scale)
-	draw_texture_rect(scene_texture, Rect2(-bounds.size * 0.5, bounds.size), false)
+	var background_texture: Texture2D = scene_texture
+	if composite_scene_river_axis >= 0 and scene_kind.begins_with("strategic_river"):
+		var stitched_kind: String = "strategic_river_meadow_v1" \
+			if composite_scene_river_axis == 1 \
+			else "strategic_river_meadow_vertical_v1"
+		background_texture = MapArtCatalogType.site_scene_texture_kind(stitched_kind)
+	if background_texture == null:
+		return
+	# Keep every authored composition in its canonical orientation.  Mirroring a
+	# whole Site made trees and stairs face the opposite way from their neighbours
+	# even though the underlying terrain was continuous.
+	draw_set_transform(bounds.get_center(), 0.0, Vector2.ONE)
+	draw_texture_rect(background_texture, Rect2(-bounds.size * 0.5, bounds.size), false)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 func _draw_site_art(layout: SiteLayoutDataType) -> void:
@@ -193,7 +796,8 @@ func _draw_site_art(layout: SiteLayoutDataType) -> void:
 		# Use the authored shoreline sprite for every non-curated river Site. It
 		# keeps water organic and readable without turning a nearby river into a
 		# bridge; bridge decks still come only from the crossing scene/transition.
-		if layout.terrain_type == TerrainType.WATER or layout.river_strength > 0.0:
+		if layout.terrain_type == TerrainType.WATER \
+			or not layout.river_connection_offsets.is_empty():
 			var river_kind: String = "site_river_horizontal" if _river_axis(layout) == 1 else "river_straight"
 			_draw_river_band(layout, MapArtCatalogType.site_texture(river_kind), river_kind)
 	if layout.layout_kind == SiteLayoutDataType.LayoutKind.POI \
@@ -275,6 +879,16 @@ func _draw_strategic_scene_overlays(layout: SiteLayoutDataType) -> void:
 	# The generated background supplies the painted ground, foliage and the
 	# cardinal trail composition. Keep canonical runtime data visible without
 	# stamping the old flat texture back over the scene.
+	var scene_kind: String = MapArtCatalogType.site_scene_kind(layout)
+	var has_river: bool = not layout.river_connection_offsets.is_empty()
+	# A mixed-terrain composite cannot use the green river painting for a sand or
+	# snow Site. Keep the native terrain scene and draw the connection as the
+	# shared cardinal overlay instead; bridge facilities are drawn below from the
+	# generated Site layout.
+	if has_river and not scene_kind.begins_with("strategic_river"):
+		var river_axis: int = _river_axis(layout)
+		var river_kind: String = "site_river_horizontal" if river_axis == 1 else "site_river_vertical"
+		_draw_river_band(layout, MapArtCatalogType.site_texture(river_kind), river_kind)
 	if not layout.road_connection_offsets.is_empty():
 		_draw_cell_base_corridors(layout)
 	_draw_curated_scene_overlays(layout)
@@ -287,32 +901,36 @@ func _draw_terrain_composition(layout: SiteLayoutDataType) -> void:
 	# the scene edge so the central path, stairs and POI remain playable/readable.
 	var anchors: Array[Vector2] = []
 	var kinds: Array[String] = []
-	var scale: float = 1.0
+	var terrain_scale: float = 1.0
 	match layout.terrain_type:
 		TerrainType.PLAINS:
 			anchors = [Vector2(-34.0, -28.0), Vector2(35.0, -24.0), Vector2(-36.0, 28.0), Vector2(35.0, 30.0), Vector2(-22.0, 37.0)]
-			kinds = ["tree_cluster", "tree_cluster", "rock_cluster", "tree_cluster", "dry_bush"]
-			scale = 1.18
+			# Trees are a wood-resource overlay, not part of the native floor.
+			# Keep the meadow silhouette varied with low vegetation and outcrops.
+			kinds = ["dry_bush", "dry_bush", "rock_cluster", "dry_bush", "dry_bush"]
+			terrain_scale = 1.18
 		TerrainType.FOREST:
 			anchors = [Vector2(-34.0, -30.0), Vector2(34.0, -28.0), Vector2(-36.0, 30.0)]
-			kinds = ["tree_cluster", "tree_cluster", "rock_cluster"]
-			scale = 0.90
+			# A Forest terrain is still only native ground.  Harvestable trees are
+			# drawn below by _draw_generated_resources from RESOURCE_FOREST data.
+			kinds = ["dry_bush", "dry_bush", "rock_cluster"]
+			terrain_scale = 0.90
 		TerrainType.MOUNTAIN:
 			anchors = [Vector2(-32.0, -28.0), Vector2(32.0, -26.0), Vector2(-34.0, 29.0), Vector2(31.0, 31.0), Vector2(0.0, 34.0)]
 			kinds = ["rock_cluster", "rock_cluster", "rock_cluster", "rock_cluster", "rock_cluster"]
-			scale = 1.12
+			terrain_scale = 1.12
 		TerrainType.SAND:
 			anchors = [Vector2(-33.0, -28.0), Vector2(31.0, -23.0), Vector2(-30.0, 30.0), Vector2(30.0, 31.0)]
 			kinds = ["sand_dune", "sand_dune", "dry_bush", "sand_dune"]
-			scale = 1.25
+			terrain_scale = 1.25
 		TerrainType.SNOW:
 			anchors = [Vector2(-32.0, -28.0), Vector2(33.0, -25.0), Vector2(-34.0, 29.0), Vector2(31.0, 30.0)]
 			kinds = ["snowdrift", "snowdrift", "rock_cluster", "snowdrift"]
-			scale = 1.20
+			terrain_scale = 1.20
 		TerrainType.SWAMP:
 			anchors = [Vector2(-32.0, -27.0), Vector2(31.0, -24.0), Vector2(-34.0, 29.0), Vector2(30.0, 31.0)]
 			kinds = ["swamp_reeds", "swamp_reeds", "deadwood", "swamp_reeds"]
-			scale = 1.15
+			terrain_scale = 1.15
 		_:
 			return
 	var visual_variant: int = posmod(int(layout.details.get("site_visual_variant", layout.site_seed)), 3)
@@ -336,7 +954,7 @@ func _draw_terrain_composition(layout: SiteLayoutDataType) -> void:
 			2:
 				anchor = Vector2(anchor.y, -anchor.x)
 		var point: Vector2 = Vector2(bounds.get_center()) + anchor + jitter
-		var size: Vector2 = MapArtCatalogType.site_art_size_meters(kind) * scale
+		var size: Vector2 = MapArtCatalogType.site_art_size_meters(kind) * terrain_scale
 		point.x = clampf(point.x, bounds.position.x + size.x * 0.55, bounds.end.x - size.x * 0.55)
 		point.y = clampf(point.y, bounds.position.y + size.y * 0.55, bounds.end.y - size.y * 0.55)
 		_draw_centered_texture(texture, _height_adjusted_meters(layout, point), size)
@@ -388,16 +1006,31 @@ func _draw_height_surfaces(layout: SiteLayoutDataType) -> void:
 	draw_texture_rect(height_texture, bounds, false)
 
 func _build_height_texture(layout: SiteLayoutDataType) -> Texture2D:
+	var image: Image = _build_height_image(layout)
+	if image == null or image.is_empty():
+		return null
+	return ImageTexture.create_from_image(image)
+
+func _build_height_image(
+		layout: SiteLayoutDataType,
+		output_pixel_size: int = -1,
+		base_image_override: Image = null
+	) -> Image:
 	# Headless contract tests do not have a GPU-backed CanvasItem. Keep their
 	# data/path assertions valid without creating a dummy ImageTexture; the
 	# non-headless preview gate is the authoritative visual check for this layer.
 	if OS.has_feature("headless") or layout == null or not layout.has_height_base():
 		return null
-	var pixel_size: int = MapArtCatalogType.SITE_DETAIL_SURFACE_PIXELS
+	var pixel_size: int = output_pixel_size if output_pixel_size > 0 \
+		else MapArtCatalogType.SITE_DETAIL_SURFACE_PIXELS
 	var pixels_per_meter: float = float(pixel_size) / MapArtCatalogType.SITE_SIZE_METERS
 	var tile_pixels: int = maxi(1, roundi(float(SiteLayoutDataType.CELL_SIZE_METERS) * pixels_per_meter))
 	var level_pixels: int = maxi(1, roundi(MapArtCatalogType.SITE_HEIGHT_OFFSET_METERS * pixels_per_meter))
-	var base_image: Image = site_texture.get_image() if site_texture != null else null
+	var base_image: Image = base_image_override
+	if base_image == null and site_texture != null:
+		base_image = site_texture.get_image()
+	if base_image == null and output_pixel_size > 0:
+		base_image = MapArtCatalogType.build_layout_composite_image(layout, pixel_size)
 	var image: Image = Image.create(pixel_size, pixel_size, false, Image.FORMAT_RGBA8)
 	# Draw vertical faces first, so the opaque top surfaces sit on top of them.
 	for y: int in range(SiteLayoutDataType.GRID_SIZE.y):
@@ -417,13 +1050,29 @@ func _build_height_texture(layout: SiteLayoutDataType) -> Texture2D:
 			var face_color: Color = _height_face_color(layout, cell, level)
 			if neighbor_levels[0] < level:
 				_image_fill_safe(image, Rect2i(x * tile_pixels, top_y, tile_pixels, (level - neighbor_levels[0]) * level_pixels), face_color)
-				_image_draw_segment(image, Vector2(x * tile_pixels, top_y), Vector2((x + 1) * tile_pixels, top_y), 2.0, Color("b7aa8d", 0.62))
+				_image_draw_segment(image, Vector2(x * tile_pixels, top_y), Vector2((x + 1) * tile_pixels, top_y), 1.4, Color("a69b83", 0.62))
+				_image_draw_segment(image, Vector2(x * tile_pixels, top_y + (level - neighbor_levels[0]) * level_pixels - 1.0), Vector2((x + 1) * tile_pixels, top_y + (level - neighbor_levels[0]) * level_pixels - 1.0), 1.8, Color("30383e", 0.78))
 			if neighbor_levels[1] < level:
-				_image_fill_safe(image, Rect2i((x + 1) * tile_pixels - 2, top_y, 2, tile_pixels), face_color)
+				_image_fill_safe(
+					image,
+					Rect2i((x + 1) * tile_pixels - 2, top_y, 2, (level - neighbor_levels[1]) * level_pixels),
+					face_color
+				)
+				_image_draw_segment(image, Vector2((x + 1) * tile_pixels - 1.0, top_y), Vector2((x + 1) * tile_pixels - 1.0, top_y + tile_pixels), 1.4, Color("a69b83", 0.58))
 			if neighbor_levels[2] < level:
-				_image_fill_safe(image, Rect2i(x * tile_pixels, top_y + tile_pixels - 2, tile_pixels, 2), face_color)
+				_image_fill_safe(
+					image,
+					Rect2i(x * tile_pixels, top_y + tile_pixels, tile_pixels, (level - neighbor_levels[2]) * level_pixels),
+					face_color
+				)
+				_image_draw_segment(image, Vector2(x * tile_pixels, top_y + tile_pixels - 1.0), Vector2((x + 1) * tile_pixels, top_y + tile_pixels - 1.0), 1.8, Color("30383e", 0.78))
 			if neighbor_levels[3] < level:
-				_image_fill_safe(image, Rect2i(x * tile_pixels, top_y, 2, tile_pixels), face_color)
+				_image_fill_safe(
+					image,
+					Rect2i(x * tile_pixels, top_y, 2, (level - neighbor_levels[3]) * level_pixels),
+					face_color
+				)
+				_image_draw_segment(image, Vector2(x * tile_pixels + 1.0, top_y), Vector2(x * tile_pixels + 1.0, top_y + tile_pixels), 1.4, Color("a69b83", 0.58))
 	# Then draw the raised tile tops.
 	for y: int in range(SiteLayoutDataType.GRID_SIZE.y):
 		for x: int in range(SiteLayoutDataType.GRID_SIZE.x):
@@ -444,17 +1093,28 @@ func _build_height_texture(layout: SiteLayoutDataType) -> Texture2D:
 					tile_pixels
 				)
 				if level > 0 and (surface & SiteLayoutDataType.SURFACE_PLATFORM) != 0:
-					_image_tint_tile_safe(image, Vector2i(x * tile_pixels, top_y), tile_pixels, Color("d2bf8f", 0.07))
+					var platform_tint: Color = Color("d2bf8f", 0.14) \
+						if layout.terrain_type == TerrainType.MOUNTAIN \
+						else Color("d2bf8f", 0.07)
+					_image_tint_tile_safe(image, Vector2i(x * tile_pixels, top_y), tile_pixels, platform_tint)
 			if use_flat_top:
 				_image_fill_safe(
 					image,
 					Rect2i(x * tile_pixels, top_y, tile_pixels, tile_pixels),
 					top_color
 				)
+	# Re-assert one shared contour after the shifted top tiles are copied.  The
+	# old per-face lines were drawn underneath those copies, so east/west and
+	# south edges disappeared and the raised rock read as broken fragments.  A
+	# single post-pass makes every exposed edge continuous while keeping the
+	# contour muted enough to belong to the natural rock palette.
+	_draw_height_edge_contours(image, layout, tile_pixels, level_pixels)
 	# Stairs and bridges are rendered into the same cached layer; this avoids
 	# thousands of CanvasItem draw calls while keeping each transition legible.
 	for transition: SiteTransitionDataType in layout.transitions:
 		if transition == null:
+			continue
+		if transition.from_level == transition.to_level:
 			continue
 		# The formal renderer draws the regenerated pixel-art stair sprite on top
 		# of this cached floor. Keep the procedural fallback below for headless or
@@ -480,7 +1140,67 @@ func _build_height_texture(layout: SiteLayoutDataType) -> Texture2D:
 				var point: Vector2 = from_point.lerp(to_point, float(step) / 7.0)
 				_image_draw_segment(image, point - perpendicular, point + perpendicular, 0.82 * pixels_per_meter, tread_shadow)
 				_image_draw_segment(image, point - perpendicular, point + perpendicular, 0.48 * pixels_per_meter, tread_highlight)
-	return ImageTexture.create_from_image(image)
+	return image
+
+func _draw_height_edge_contours(
+		image: Image,
+		layout: SiteLayoutDataType,
+		tile_pixels: int,
+		level_pixels: int
+	) -> void:
+	if layout == null or not layout.has_height_base():
+		return
+	var rim: Color = Color("a69b83", 0.74) if layout.terrain_type == TerrainType.MOUNTAIN \
+		else Color("b7aa8d", 0.58)
+	var shadow: Color = Color("30383e", 0.88) if layout.terrain_type == TerrainType.MOUNTAIN \
+		else Color("3d3027", 0.72)
+	for y: int in range(SiteLayoutDataType.GRID_SIZE.y):
+		for x: int in range(SiteLayoutDataType.GRID_SIZE.x):
+			var cell := Vector2i(x, y)
+			var level: int = layout.elevation_level_at(cell)
+			if level <= 0:
+				continue
+			var top_y: float = float(y * tile_pixels - level * level_pixels)
+			var depth: float = float(level * level_pixels)
+			var neighbors: Array[Array] = [
+				[Vector2i.UP, SiteLayoutDataType.EDGE_NORTH],
+				[Vector2i.RIGHT, SiteLayoutDataType.EDGE_EAST],
+				[Vector2i.DOWN, SiteLayoutDataType.EDGE_SOUTH],
+				[Vector2i.LEFT, SiteLayoutDataType.EDGE_WEST],
+			]
+			for item: Array in neighbors:
+				var neighbor := cell + (item[0] as Vector2i)
+				if not SiteLayoutDataType.is_valid_cell(neighbor) \
+					or layout.elevation_level_at(neighbor) >= level:
+					continue
+				var edge: int = int(item[1])
+				var top_start: Vector2
+				var top_end: Vector2
+				var outer_start: Vector2
+				var outer_end: Vector2
+				match edge:
+					SiteLayoutDataType.EDGE_NORTH:
+						top_start = Vector2(x * tile_pixels, top_y)
+						top_end = Vector2((x + 1) * tile_pixels, top_y)
+						outer_start = top_start + Vector2(0.0, depth)
+						outer_end = top_end + Vector2(0.0, depth)
+					SiteLayoutDataType.EDGE_EAST:
+						top_start = Vector2((x + 1) * tile_pixels, top_y)
+						top_end = Vector2((x + 1) * tile_pixels, top_y + tile_pixels)
+						outer_start = top_start + Vector2(0.0, depth)
+						outer_end = top_end + Vector2(0.0, depth)
+					SiteLayoutDataType.EDGE_SOUTH:
+						top_start = Vector2((x + 1) * tile_pixels, top_y + tile_pixels)
+						top_end = Vector2(x * tile_pixels, top_y + tile_pixels)
+						outer_start = top_start + Vector2(0.0, depth)
+						outer_end = top_end + Vector2(0.0, depth)
+					_:
+						top_start = Vector2(x * tile_pixels, top_y + tile_pixels)
+						top_end = Vector2(x * tile_pixels, top_y)
+						outer_start = top_start + Vector2(0.0, depth)
+						outer_end = top_end + Vector2(0.0, depth)
+				_image_draw_segment(image, outer_start, outer_end, 2.2, shadow)
+				_image_draw_segment(image, top_start, top_end, 1.1, rim)
 
 func _height_image_point(
 		_layout: SiteLayoutDataType,
@@ -490,8 +1210,8 @@ func _height_image_point(
 		level_pixels: int
 	) -> Vector2:
 	return Vector2(
-		float(cell.x * tile_pixels + tile_pixels / 2),
-		float(cell.y * tile_pixels + tile_pixels / 2 - level * level_pixels)
+		float(cell.x * tile_pixels) + float(tile_pixels) * 0.5,
+		float(cell.y * tile_pixels) + float(tile_pixels) * 0.5 - float(level * level_pixels)
 	)
 
 func _image_fill_safe(image: Image, rect: Rect2i, color: Color) -> void:
@@ -647,6 +1367,10 @@ func _draw_height_transitions(layout: SiteLayoutDataType) -> void:
 	for transition: SiteTransitionDataType in layout.transitions:
 		if transition == null:
 			continue
+		if transition.from_level == transition.to_level:
+			# Keep the fallback renderer consistent with the cached renderer: a flat
+			# edge is not a height transition and must not receive stair art.
+			continue
 		if transition.kind in [SiteTransitionDataType.Kind.BRIDGE, SiteTransitionDataType.Kind.DOCK]:
 			continue
 		var from_point: Vector2 = _height_adjusted_point(
@@ -695,6 +1419,10 @@ func _draw_ai_stair_overlays(layout: SiteLayoutDataType) -> void:
 	var drawn: int = 0
 	for transition: SiteTransitionDataType in layout.transitions:
 		if transition == null or transition.kind != SiteTransitionDataType.Kind.STAIR:
+			continue
+		if transition.from_level == transition.to_level:
+			# Defensive guard for older/session-authored layouts: a flat edge is
+			# not a stair and must never receive stair art.
 			continue
 		if drawn >= 2:
 			return
@@ -920,6 +1648,10 @@ func _draw_generated_resources(layout: SiteLayoutDataType) -> void:
 		var placements: Array = grouped[type_key] as Array
 		if placements.is_empty():
 			continue
+		if type_key == SiteContentTypes.RESOURCE_FOREST \
+			and layout.terrain_type == TerrainType.FOREST:
+			_draw_forest_resource_field(layout, placements)
+			continue
 		var anchor_placement: Dictionary = placements[0] as Dictionary
 		var anchor_value: Variant = anchor_placement.get("origin", SiteLayoutDataType.INVALID_CELL)
 		if not anchor_value is Vector2i:
@@ -955,6 +1687,86 @@ func _draw_generated_resources(layout: SiteLayoutDataType) -> void:
 				_draw_centered_texture(texture, anchor_center + cluster_slot + center_offset + offsets[index] * 1.8, size)
 			placement_slot += 1
 
+func _draw_forest_resource_field(layout: SiteLayoutDataType, placements: Array) -> void:
+	var total_quantity: int = 0
+	for placement: Dictionary in placements:
+		total_quantity += maxi(1, int(placement.get("quantity", 1)))
+	if total_quantity <= 0:
+		return
+	# The resource amount controls density, while the minimum keeps a valid
+	# Forest Site filled with wood resources instead of collapsing into one
+	# lonely grove. This remains a visual projection of RESOURCE_FOREST;
+	# harvesting and persistence still use the authoritative placements
+	# generated by the authoritative Site layout data pipeline.
+	var grove_count: int = clampi(ceili(float(total_quantity) / 0.55), 72, 96)
+	var columns: int = 11
+	var rows: int = 11
+	var bounds: Rect2 = Rect2(Vector2(layout.bounds_meters.position), Vector2(layout.bounds_meters.size))
+	var placed: int = 0
+	var slot_count: int = columns * rows
+	var slot_start: int = posmod(DeterministicHash.value(layout.site_seed, layout.global_region_cell, 48_219), slot_count)
+	var slot_stride: int = 47 # coprime with 121, so every row is visited before reuse
+	for placement_slot: int in range(slot_count):
+		if placed >= grove_count:
+			break
+		var slot: int = posmod(slot_start + placement_slot * slot_stride, slot_count)
+		var column: int = slot % columns
+		var row: int = floori(float(slot) / float(columns))
+		var point: Vector2 = Vector2(
+			-42.5 + float(column) * 8.5,
+			-42.5 + float(row) * 8.5
+		)
+		var slot_cell := Vector2i(column, row)
+		point.x += float(DeterministicHash.int_range(layout.site_seed, slot_cell, 48_220, -3, 3))
+		point.y += float(DeterministicHash.int_range(layout.site_seed, slot_cell, 48_221, -3, 3))
+		if not _forest_point_allowed(layout, point, bounds):
+			continue
+		var placement_hash: int = DeterministicHash.value(
+			layout.site_seed,
+			layout.global_region_cell + slot_cell,
+			48_222
+		)
+		var kind: String = "tree_cluster" if posmod(placement_hash, 7) <= 2 else "forest_resource"
+		var texture: Texture2D = MapArtCatalogType.site_texture(kind)
+		if texture == null:
+			continue
+		var size_factor: float = 0.58 + DeterministicHash.normalized(
+			layout.site_seed,
+			layout.global_region_cell + slot_cell,
+			48_223
+		) * 0.64
+		var size: Vector2 = MapArtCatalogType.site_art_size_meters(kind) * size_factor
+		var draw_point: Vector2 = _height_adjusted_meters(layout, point)
+		var flip_x: float = -1.0 if posmod(placement_hash, 2) == 0 else 1.0
+		draw_set_transform(draw_point, 0.0, Vector2(flip_x, 1.0))
+		draw_texture_rect(texture, Rect2(-size * 0.5, size), false)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		placed += 1
+
+func _forest_point_allowed(layout: SiteLayoutDataType, point: Vector2, bounds: Rect2) -> bool:
+	var clearance: float = 9.0
+	if (forest_clear_edge_mask & 1) != 0 and point.y < bounds.position.y + clearance:
+		return false
+	if (forest_clear_edge_mask & 2) != 0 and point.x > bounds.end.x - clearance:
+		return false
+	if (forest_clear_edge_mask & 4) != 0 and point.y > bounds.end.y - clearance:
+		return false
+	if (forest_clear_edge_mask & 8) != 0 and point.x < bounds.position.x + clearance:
+		return false
+	var local: Vector2 = (point - Vector2(bounds.position)) / float(SiteLayoutDataType.CELL_SIZE_METERS)
+	var cell: Vector2i = Vector2i(
+		clampi(floori(local.x), 0, SiteLayoutDataType.GRID_SIZE.x - 1),
+		clampi(floori(local.y), 0, SiteLayoutDataType.GRID_SIZE.y - 1)
+	)
+	var flags: int = layout.navigation_flags_at(cell)
+	if (flags & (SiteLayoutDataType.NAV_BLOCKED | SiteLayoutDataType.NAV_ROAD | SiteLayoutDataType.NAV_RIVER)) != 0:
+		return false
+	if SiteContentTypes.is_water_surface(layout.native_surface_at(cell)):
+		return false
+	if layout.layout_kind == SiteLayoutDataType.LayoutKind.POI and _near_primary_path(layout, point, 4.0):
+		return false
+	return true
+
 func _resource_cluster_slot(layout: SiteLayoutDataType, resource_type: int, index: int) -> Vector2:
 	# Golden-angle placement keeps a deterministic grove/vein organic while
 	# avoiding the row-and-column stamp that made the previous preview look like
@@ -980,25 +1792,33 @@ func _resource_draw_count(kind: String, quantity: int) -> int:
 	return 1
 
 func _draw_tile_landmarks(layout: SiteLayoutDataType) -> void:
-	var kind: String = _tile_landmark_kind(layout.terrain_type)
-	if kind.is_empty():
+	var default_kind: String = _tile_landmark_kind(layout.terrain_type)
+	if default_kind.is_empty():
 		return
-	var texture: Texture2D = MapArtCatalogType.site_texture(kind)
-	if texture == null:
-		return
-	var size: Vector2 = MapArtCatalogType.site_decor_size_meters(layout.terrain_type, 0)
 	var step: int = 18 if layout.terrain_type in [TerrainType.SAND, TerrainType.SNOW] else 17
 	var drawn: int = 0
+	var rock_drawn: int = 0
 	for y: int in range(5, SiteLayoutDataType.GRID_SIZE.y - 5, step):
 		for x: int in range(5, SiteLayoutDataType.GRID_SIZE.x - 5, step):
 			var cell: Vector2i = Vector2i(x, y)
-			if layout.native_surface_at(cell) != SiteContentTypes.NativeSurface.DIRT:
+			var native_surface: int = layout.native_surface_at(cell)
+			var is_rock_outcrop: bool = native_surface == SiteContentTypes.NativeSurface.ROCK \
+				and layout.terrain_type != TerrainType.MOUNTAIN
+			if is_rock_outcrop:
+				if rock_drawn >= 2:
+					continue
+			elif drawn >= 2 or native_surface != SiteContentTypes.NativeSurface.DIRT:
 				continue
+			var kind: String = "rock_cluster" if is_rock_outcrop else default_kind
+			var texture: Texture2D = MapArtCatalogType.site_texture(kind)
+			if texture == null:
+				continue
+			var size: Vector2 = MapArtCatalogType.site_art_size_meters(kind)
 			var flags: int = layout.navigation_flags_at(cell)
 			if (flags & (SiteLayoutDataType.NAV_BLOCKED | SiteLayoutDataType.NAV_ROAD | SiteLayoutDataType.NAV_RIVER)) != 0:
 				continue
-			var hash: int = DeterministicHash.value(layout.site_seed, layout.global_region_cell + cell, 47_100)
-			if posmod(hash, 19) != 0:
+			var placement_hash: int = DeterministicHash.value(layout.site_seed, layout.global_region_cell + cell, 47_100)
+			if posmod(placement_hash, 19) != 0:
 				continue
 			var jitter: Vector2 = Vector2(
 				float(DeterministicHash.int_range(layout.site_seed, cell, 47_101, -3, 3)),
@@ -1009,14 +1829,19 @@ func _draw_tile_landmarks(layout: SiteLayoutDataType) -> void:
 				_height_adjusted_point(layout, layout.cell_center_meters(cell) + jitter, layout.elevation_level_at(cell)),
 				size * 1.15
 			)
-			drawn += 1
-			if drawn >= 2:
+			if is_rock_outcrop:
+				rock_drawn += 1
+			else:
+				drawn += 1
+			if drawn >= 2 and rock_drawn >= 2:
 				return
 
 func _tile_landmark_kind(terrain_type: int) -> String:
 	match terrain_type:
 		TerrainType.FOREST:
-			return "tree_cluster"
+			# Do not bake wood-bearing trees into the native terrain.  The forest
+			# resource placement owns every tree silhouette on a Forest Site.
+			return "dry_bush"
 		TerrainType.MOUNTAIN:
 			return "rock_cluster"
 		TerrainType.SAND:
@@ -1033,6 +1858,14 @@ func _tile_landmark_kind(terrain_type: int) -> String:
 func _draw_generated_facilities(layout: SiteLayoutDataType) -> void:
 	for placement: Dictionary in layout.facility_placements:
 		var facility_type: int = int(placement.get("type", -1))
+		# A bridge is a river-crossing facility, not an independent decoration.
+		# Composite tiles may keep the authoritative crossing in their layout while
+		# suppressing that tile's rejected river component; drawing the bridge in
+		# that case leaves a bridge floating on ordinary ground.  Keep the data and
+		# navigation transition intact, but hide only this presentation layer.
+		if facility_type == SiteContentTypes.Facility.BRIDGE \
+			and composite_background_only and not composite_river_enabled:
+			continue
 		if facility_type in [SiteContentTypes.Facility.WOOD_STAIR, SiteContentTypes.Facility.STONE_STAIR]:
 			continue
 		var kind: String = MapArtCatalogType.facility_art_kind(
@@ -1053,9 +1886,9 @@ func _draw_generated_facilities(layout: SiteLayoutDataType) -> void:
 		var draw_size: Vector2 = MapArtCatalogType.site_art_size_meters(kind)
 		if facility_type == SiteContentTypes.Facility.BUILDING:
 			draw_size = Vector2(size * SiteLayoutDataType.CELL_SIZE_METERS)
-		var rotation: float = PI * 0.5 if int(placement.get("orientation", SiteContentTypes.Orientation.HORIZONTAL)) \
+		var draw_rotation: float = PI * 0.5 if int(placement.get("orientation", SiteContentTypes.Orientation.HORIZONTAL)) \
 			== SiteContentTypes.Orientation.VERTICAL else 0.0
-		draw_set_transform(center, rotation, Vector2.ONE)
+		draw_set_transform(center, draw_rotation, Vector2.ONE)
 		_draw_centered_texture(texture, Vector2.ZERO, draw_size)
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	for wall: Dictionary in layout.wall_edges:
@@ -1077,8 +1910,8 @@ func _draw_wall_edge(layout: SiteLayoutDataType, wall: Dictionary) -> void:
 	var center: Vector2 = (layout.cell_center_meters(from_cell) + layout.cell_center_meters(to_cell)) * 0.5
 	center = _height_adjusted_point(layout, center, maxi(layout.elevation_level_at(from_cell), layout.elevation_level_at(to_cell)))
 	var delta: Vector2i = to_cell - from_cell
-	var rotation: float = PI * 0.5 if delta.x != 0 else 0.0
-	draw_set_transform(center, rotation, Vector2.ONE)
+	var draw_rotation: float = PI * 0.5 if delta.x != 0 else 0.0
+	draw_set_transform(center, draw_rotation, Vector2.ONE)
 	_draw_centered_texture(texture, Vector2.ZERO, MapArtCatalogType.site_art_size_meters(kind))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 

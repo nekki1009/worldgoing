@@ -308,7 +308,10 @@ func query_site_entry(party_id: String, poi_id: String) -> SiteEntryQueryResult:
 		return result
 	result.poi = poi
 	result.site_id = poi.poi_id
-	result.site_definition = world_data.get_site_definition(poi)
+	result.site_definition = _project_site_definition(
+		world_data.get_site_definition(poi),
+		_travel_cell_info(poi.global_region_cell)
+	)
 	result.world_cell = poi.world_cell
 	result.region_cell = poi.region_cell
 	result.can_enter = true
@@ -354,6 +357,46 @@ func query_site_snapshot(site_id: String) -> SiteRuntimeQueryResult:
 		result.snapshot = _snapshot_for_definition(definition, state.to_snapshot(true))
 	result.revision = result.snapshot.revision
 	result.success = true
+	return result
+
+func query_site_snapshot_footprint(
+		world_cell: Vector2i,
+		center_region_cell: Vector2i,
+		radius: int = 1,
+		include_neighbor_layouts: bool = true
+	) -> Array[SiteRuntimeSnapshot]:
+	# Site presentation can show a 3x3 footprint without allocating runtime
+	# state for all nine cells.  The center visit remains authoritative; the
+	# neighbouring snapshots are read-only generated bases with any existing
+	# sparse deltas applied.
+	var result: Array[SiteRuntimeSnapshot] = []
+	if world_data == null or session == null or radius < 0:
+		return result
+	var center_global_cell: Vector2i = WorldCoordinates.world_region_to_global_region_cell(
+		world_cell,
+		center_region_cell
+	)
+	for offset_y: int in range(-radius, radius + 1):
+		for offset_x: int in range(-radius, radius + 1):
+			var global_cell: Vector2i = center_global_cell + Vector2i(offset_x, offset_y)
+			var converted: Dictionary = WorldCoordinates.global_region_cell_to_world_region(global_cell)
+			var neighbor_world_cell: Vector2i = converted["world_cell"] as Vector2i
+			var region_cell: Vector2i = converted["region_cell"] as Vector2i
+			if not world_data.is_valid_world_cell(neighbor_world_cell):
+				continue
+			var resolved_info: Dictionary = _travel_cell_info(global_cell)
+			var definition: SiteData = world_data.get_site_definition_at(
+				neighbor_world_cell,
+				region_cell,
+				session.world_seed
+			)
+			if definition == null:
+				continue
+			definition = _project_site_definition(definition, resolved_info)
+			var state: SiteRuntimeState = session.find_site_runtime_state(definition.site_id)
+			var state_snapshot: SiteRuntimeSnapshot = state.to_snapshot(true) if state != null else null
+			var include_layout: bool = include_neighbor_layouts or global_cell == center_global_cell
+			result.append(_snapshot_for_definition(definition, state_snapshot, include_layout))
 	return result
 
 func get_site_snapshot(site_id: String) -> SiteRuntimeSnapshot:
@@ -703,11 +746,15 @@ func query_site_entry_at(
 	if world_data == null or session == null:
 		result.failure_reason = TravelFailureReasonType.Code.SITE_NOT_FOUND
 		return result
+	var resolved_info: Dictionary = _travel_cell_info(
+		WorldCoordinates.world_region_to_global_region_cell(world_cell, region_cell)
+	)
 	var definition: SiteData = world_data.get_site_definition_at(
 		world_cell,
 		region_cell,
 		session.world_seed
 	)
+	definition = _project_site_definition(definition, resolved_info)
 	if definition == null:
 		result.failure_reason = TravelFailureReasonType.Code.SITE_NOT_FOUND
 		return result
@@ -786,8 +833,16 @@ func _travel_cell_info(global_cell: Vector2i) -> Dictionary:
 	var road_connection_offsets: Array[Vector2i] = []
 	if road:
 		road_connection_offsets = resolver.get_road_connection_offsets(region_cell)
-	var river: bool = resolver.has_river(region_cell)
-	var river_crossing: bool = resolver.has_river_crossing(region_cell)
+	var base_travel_data: Dictionary = world_data.sample_travel_data(
+			session.world_seed,
+			global_cell
+		)
+	# RegionStateResolver exposes the raw scalar river confidence for terrain
+	# inspection. Travel/Site use the shared reciprocal edge contract instead;
+	# otherwise a non-reciprocal hint would be promoted back into a random Site
+	# water strip during runtime projection.
+	var river: bool = bool(base_travel_data.get("river", false))
+	var river_crossing: bool = river and resolver.has_river_crossing(region_cell)
 	var passable: bool = TravelCostConfig.is_passable(terrain_type, river, river_crossing)
 	var site_landform: int = SiteLayoutDataType.landform_for_travel_cell(
 		terrain_type,
@@ -811,6 +866,7 @@ func _travel_cell_info(global_cell: Vector2i) -> Dictionary:
 		"road": road,
 		"road_connection_offsets": road_connection_offsets,
 		"river": river,
+		"river_connection_offsets": base_travel_data.get("river_connection_offsets", []),
 		"river_crossing": river_crossing,
 		"elevation": resolver.get_elevation(region_cell),
 		"moisture": resolver.get_moisture(region_cell),
@@ -928,7 +984,38 @@ func _find_poi_by_id(poi_id: String) -> WorldPOIData:
 func _find_site_definition(site_id: String) -> SiteData:
 	if world_data == null or site_id.is_empty():
 		return null
-	return world_data.get_site_definition_by_id(site_id, session.world_seed if session != null else 0)
+	var definition: SiteData = world_data.get_site_definition_by_id(
+		site_id,
+		session.world_seed if session != null else 0
+	)
+	return _project_site_definition(definition, _travel_cell_info(definition.global_region_cell)) \
+		if definition != null else null
+
+func _project_site_definition(
+		definition: SiteData,
+		resolved_info: Dictionary
+	) -> SiteData:
+	if definition == null or world_data == null or session == null \
+		or not bool(resolved_info.get("valid", false)):
+		return definition
+	var raw: Dictionary = world_data.sample_travel_data(
+		session.world_seed,
+		definition.global_region_cell
+	)
+	var delta_projection: Dictionary = {}
+	for key: String in [
+		"terrain_type", "site_landform", "travel_exit_mask", "road",
+		"road_connection_offsets", "river", "river_connection_offsets",
+		"river_crossing", "elevation", "moisture", "river_strength"
+	]:
+		if not resolved_info.has(key):
+			continue
+		if not raw.has(key) or resolved_info[key] != raw[key]:
+			delta_projection[key] = resolved_info[key]
+	if delta_projection.is_empty():
+		return definition
+	definition.apply_travel_projection(delta_projection)
+	return definition
 
 func _resolved_site_layout(definition: SiteData) -> SiteLayoutDataType:
 	if world_data == null or definition == null:
@@ -999,7 +1086,8 @@ func _layout_has_wall(layout: SiteLayoutDataType, feature_id: String) -> bool:
 
 func _snapshot_for_definition(
 		definition: SiteData,
-		snapshot: SiteRuntimeSnapshot = null
+		snapshot: SiteRuntimeSnapshot = null,
+		include_layout: bool = true
 	) -> SiteRuntimeSnapshot:
 	if snapshot == null:
 		snapshot = SiteRuntimeSnapshotType.new()
@@ -1022,7 +1110,7 @@ func _snapshot_for_definition(
 	snapshot.source_river_nearby = definition.source_river_nearby
 	snapshot.source_candidate_cell = definition.source_candidate_cell
 	snapshot.source_priority = definition.source_priority
-	snapshot.layout = _resolved_site_layout(definition)
+	snapshot.layout = _resolved_site_layout(definition) if include_layout else null
 	var parent_region: RegionData = world_data.get_region(definition.parent_world_cell) \
 		if world_data != null else null
 	if parent_region != null:

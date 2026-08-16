@@ -106,6 +106,16 @@ RegionCoord + seed
 
 來源素材契約固定為每格 `64×64`、`8×3` sheet（`512×192`），row 為 DOWN／UP／RIGHT；LEFT 使用 RIGHT row 並逐部件 `flip_h`。所有部件的 frame 內世界 Anchor 固定為 `(32,56)`，Composer 使用 `centered = false` 與 `offset = (-32,-56)`。11 個 render layers 與方向 Z-order 由 `PaperDollLayerVisual.RenderLayer`／`PaperDollComposer.z_index_for()` 單一實作。
 
+### Paper Doll V2 standalone 工程邊界（2026-08-16）
+
+V2 以 `PAPER_DOLL_V2_ARCHITECTURE.md` 為細部契約，已完成工程標準化、參考圖校準基線與預覽管線；目前 calibrated reference baseline 已通過，但 split-part 自由換裝仍未完成。它不覆寫上述 V1 角色生成器，也不代表 PC persistence 或 Battle variant 已完成：
+
+- `PaperDollV2BodyTemplate`、`PaperDollV2AssetManifest`、`PaperDollV2Validator`、`PaperDollV2Catalog` 是 V2 的素體／Manifest／admission 邊界；錯誤尺寸、狀態、透明格式或缺少模板的部件不得進 Catalog。
+- V2 固定步行每幀 `64×64`、騎乘每幀 `64×96`，來源 `8×3`（`512×192`／`512×288`），Anchor 分別為 `(32,56)`／`(32,88)`；LEFT 由 RIGHT mirror。V2 使用 12 layers，另有獨立 `BOOTS`。
+- `PaperDollV2Recipe` 是 detached 快照，`PaperDollV2Composer` 只重用固定 12 個 `Sprite2D`；單一 `PaperDollV2Animation` frame API 同步所有圖層，禁止 `AnimatedSprite2D` 與 per-layer timer。
+- V2 pack 與實驗室位於 `assets/paper_doll/v2/`、`scenes/ui/PaperDollV2Lab.tscn`；男女校準板位於 `assets/paper_doll/reference_match/`，原始女性三視角板位於 `assets/doll/reference/`，工程輸出位於 `.visual_captures/paper_doll_v2/`。目前為 4 templates、66 normalized PNG entries、0 pack failures；`verify_paper_doll_v2_reference.gd` 已對男性與女性參考板完成 256/256 strict GPU checks（min IoU 1.0、max BBox delta 0 px）。這只代表參考板基線通過，不代表 split-part 自由換裝素材完成。
+- V2 仍是 Presentation／QA only。`GameSession.player_appearance`、Equipment／Mount owner、Persistence v2、Battle MultiMesh variant 與 9,000 人 Soldier Node 禁止由 V2 取得或持有。
+
 Milestone 2 才允許加入 PC 權威外觀。已鎖定的資料契約為 `GameSession.player_appearance` 持有一份 `PlayerAppearanceData extends RefCounted` 深拷貝，只包含 `gender`、`body_visual_id`、`hair_visual_id`；唯一 mutation 入口為 `GameSession.apply_player_appearance()`。Persistence v2 只逐欄位保存這三項，v1 讀取遷移使用 male 預設；正式 Catalog 必須提供以下穩定 ID：
 
 ```text

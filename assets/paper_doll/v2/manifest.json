@@ -1,0 +1,1793 @@
+{
+	"contract": "paper_doll_v2",
+	"entries": [
+		{
+			"anchor": [
+				32,
+				88
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/alt_braided_hair_mounted_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				96
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				288
+			],
+			"source_rows": 3,
+			"state": "mounted",
+			"visual_id": "alt_braided_hair_mounted_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/alt_braided_hair_on_foot_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "alt_braided_hair_on_foot_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				88
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/alt_bronze_armor_mounted_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				96
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				288
+			],
+			"source_rows": 3,
+			"state": "mounted",
+			"visual_id": "alt_bronze_armor_mounted_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/alt_bronze_armor_on_foot_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "alt_bronze_armor_on_foot_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				88
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/alt_bronze_sword_mounted_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				96
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				288
+			],
+			"source_rows": 3,
+			"state": "mounted",
+			"visual_id": "alt_bronze_sword_mounted_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/alt_bronze_sword_on_foot_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "alt_bronze_sword_on_foot_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				88
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/alt_dark_barding_mounted_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				96
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				288
+			],
+			"source_rows": 3,
+			"state": "mounted",
+			"visual_id": "alt_dark_barding_mounted_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				88
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/alt_dark_bay_horse_body_mounted_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				96
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				288
+			],
+			"source_rows": 3,
+			"state": "mounted",
+			"visual_id": "alt_dark_bay_horse_body_mounted_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				88
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/alt_dark_bay_horse_head_mounted_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				96
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				288
+			],
+			"source_rows": 3,
+			"state": "mounted",
+			"visual_id": "alt_dark_bay_horse_head_mounted_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				88
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/alt_dark_bay_horse_tail_mounted_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				96
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				288
+			],
+			"source_rows": 3,
+			"state": "mounted",
+			"visual_id": "alt_dark_bay_horse_tail_mounted_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				88
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/alt_teal_cape_mounted_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				96
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				288
+			],
+			"source_rows": 3,
+			"state": "mounted",
+			"visual_id": "alt_teal_cape_mounted_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/alt_teal_cape_on_foot_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "alt_teal_cape_on_foot_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				88
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/alt_teal_shield_mounted_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				96
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				288
+			],
+			"source_rows": 3,
+			"state": "mounted",
+			"visual_id": "alt_teal_shield_mounted_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/alt_teal_shield_on_foot_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "alt_teal_shield_on_foot_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				88
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/artgate1_armor_mounted_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				96
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				288
+			],
+			"source_rows": 3,
+			"state": "mounted",
+			"visual_id": "artgate1_armor_mounted_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/artgate1_armor_on_foot_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "artgate1_armor_on_foot_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				88
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/artgate1_barding_mounted_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				96
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				288
+			],
+			"source_rows": 3,
+			"state": "mounted",
+			"visual_id": "artgate1_barding_mounted_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				88
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/artgate1_cape_mounted_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				96
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				288
+			],
+			"source_rows": 3,
+			"state": "mounted",
+			"visual_id": "artgate1_cape_mounted_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/artgate1_cape_on_foot_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "artgate1_cape_on_foot_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				88
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/artgate1_helmet_mounted_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				96
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				288
+			],
+			"source_rows": 3,
+			"state": "mounted",
+			"visual_id": "artgate1_helmet_mounted_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/artgate1_helmet_on_foot_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "artgate1_helmet_on_foot_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				88
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/artgate1_horse_body_mounted_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				96
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				288
+			],
+			"source_rows": 3,
+			"state": "mounted",
+			"visual_id": "artgate1_horse_body_mounted_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				88
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/artgate1_horse_head_mounted_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				96
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				288
+			],
+			"source_rows": 3,
+			"state": "mounted",
+			"visual_id": "artgate1_horse_head_mounted_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				88
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/artgate1_horse_tail_mounted_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				96
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				288
+			],
+			"source_rows": 3,
+			"state": "mounted",
+			"visual_id": "artgate1_horse_tail_mounted_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				88
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/artgate1_shield_mounted_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				96
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				288
+			],
+			"source_rows": 3,
+			"state": "mounted",
+			"visual_id": "artgate1_shield_mounted_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/artgate1_shield_on_foot_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "artgate1_shield_on_foot_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				88
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/artgate1_weapon_mounted_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				96
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				288
+			],
+			"source_rows": 3,
+			"state": "mounted",
+			"visual_id": "artgate1_weapon_mounted_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/artgate1_weapon_on_foot_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "artgate1_weapon_on_foot_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				88
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/body_female_default_mounted_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				96
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				288
+			],
+			"source_rows": 3,
+			"state": "mounted",
+			"visual_id": "body_female_default_mounted_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/body_female_default_on_foot_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "body_female_default_on_foot_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				88
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/body_male_default_mounted_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				96
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				288
+			],
+			"source_rows": 3,
+			"state": "mounted",
+			"visual_id": "body_male_default_mounted_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/body_male_default_on_foot_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "body_male_default_on_foot_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_bob_on_foot_female.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "hair_bob_on_foot_female"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_bob_on_foot_male.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "hair_bob_on_foot_male"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_bob_on_foot_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "hair_bob_on_foot_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_crown_braid_on_foot_female.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "hair_crown_braid_on_foot_female"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_crown_braid_on_foot_male.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "hair_crown_braid_on_foot_male"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_crown_braid_on_foot_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "hair_crown_braid_on_foot_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				88
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_female_default_mounted_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				96
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				288
+			],
+			"source_rows": 3,
+			"state": "mounted",
+			"visual_id": "hair_female_default_mounted_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_female_default_on_foot_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "hair_female_default_on_foot_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_high_ponytail_on_foot_female.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "hair_high_ponytail_on_foot_female"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_high_ponytail_on_foot_male.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "hair_high_ponytail_on_foot_male"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_high_ponytail_on_foot_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "hair_high_ponytail_on_foot_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_long_side_ponytail_on_foot_female.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "hair_long_side_ponytail_on_foot_female"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_long_side_ponytail_on_foot_male.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "hair_long_side_ponytail_on_foot_male"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_long_side_ponytail_on_foot_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "hair_long_side_ponytail_on_foot_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_low_bun_on_foot_female.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "hair_low_bun_on_foot_female"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_low_bun_on_foot_male.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "hair_low_bun_on_foot_male"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_low_bun_on_foot_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "hair_low_bun_on_foot_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				88
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_male_default_mounted_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				96
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				288
+			],
+			"source_rows": 3,
+			"state": "mounted",
+			"visual_id": "hair_male_default_mounted_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_male_default_on_foot_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "hair_male_default_on_foot_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_short_spiky_on_foot_female.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "hair_short_spiky_on_foot_female"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_short_spiky_on_foot_male.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "hair_short_spiky_on_foot_male"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_short_spiky_on_foot_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "hair_short_spiky_on_foot_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_twin_braids_on_foot_female.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "hair_twin_braids_on_foot_female"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_twin_braids_on_foot_male.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "hair_twin_braids_on_foot_male"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_twin_braids_on_foot_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "hair_twin_braids_on_foot_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_undercut_sweep_on_foot_female.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "hair_undercut_sweep_on_foot_female"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_undercut_sweep_on_foot_male.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "hair_undercut_sweep_on_foot_male"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/hair_undercut_sweep_on_foot_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "hair_undercut_sweep_on_foot_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				88
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/light_armor_helmet_mounted_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				96
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				288
+			],
+			"source_rows": 3,
+			"state": "mounted",
+			"visual_id": "light_armor_helmet_mounted_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/light_armor_helmet_on_foot_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "light_armor_helmet_on_foot_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				88
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/light_armor_mounted_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				96
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				288
+			],
+			"source_rows": 3,
+			"state": "mounted",
+			"visual_id": "light_armor_mounted_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/light_armor_on_foot_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "part",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "light_armor_on_foot_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				56
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/boots_on_foot_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				64
+			],
+			"kind": "boots",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				192
+			],
+			"source_rows": 3,
+			"state": "on_foot",
+			"visual_id": "boots_on_foot_unisex"
+		},
+		{
+			"anchor": [
+				32,
+				88
+			],
+			"directions": [
+				"DOWN",
+				"UP",
+				"RIGHT",
+				"LEFT_MIRROR"
+			],
+			"file": "res://assets/paper_doll/v2/parts/boots_mounted_unisex.png",
+			"frame_columns": 8,
+			"frame_size": [
+				64,
+				96
+			],
+			"kind": "boots",
+			"normalization_version": "v2_1",
+			"sheet_size": [
+				512,
+				288
+			],
+			"source_rows": 3,
+			"state": "mounted",
+			"visual_id": "boots_mounted_unisex"
+		}
+	],
+	"failures": [],
+	"files_written": 66,
+	"result": "PASS",
+	"skipped": [
+		"artgate1_horse_full_mounted_unisex.png"
+	]
+}

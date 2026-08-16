@@ -255,7 +255,28 @@ func enter_site_at(region_cell: Vector2i) -> void:
 	if not entry.can_enter:
 		return
 	session.selected_region_cell = region_cell
-	show_site_definition(entry.site_definition)
+	var begin_result: SiteRuntimeCommandResult = travel_runtime.begin_site_visit(
+		session.party.party_id,
+		entry.site_id
+	)
+	if not begin_result.success:
+		return
+	var footprint: Array[SiteRuntimeSnapshot] = travel_runtime.query_site_snapshot_footprint(
+			session.selected_world_cell,
+			region_cell,
+			1,
+			# Headless contract tests verify ownership and the center Site layout;
+			# visual runs retain all nine layouts. Avoid generating eight unused
+			# neighbour navigation bases when no pixels will be rendered.
+			not OS.has_feature("headless")
+		)
+	if footprint.is_empty():
+		return
+	current_layer = MapLayer.SITE
+	var site_map: SiteMap = _replace_map(SITE_MAP_SCENE) as SiteMap
+	site_map.move_requested.connect(_on_site_move_requested)
+	site_map.debug_state_changed.connect(_on_map_debug_state_changed)
+	site_map.setup_composite(footprint, region_cell)
 
 func can_enter_site_at(region_cell: Vector2i) -> bool:
 	_sync_runtime()
@@ -404,7 +425,11 @@ func _on_site_move_requested(direction: Vector2i) -> void:
 		return
 	var query: SiteRuntimeQueryResult = travel_runtime.query_site_snapshot(session.current_site_id)
 	if query.success and current_map is SiteMap:
-		(current_map as SiteMap).setup(query.snapshot)
+		var site_map: SiteMap = current_map as SiteMap
+		if site_map.is_composite_view():
+			site_map.refresh_composite_center(query.snapshot)
+		else:
+			site_map.setup(query.snapshot)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not event is InputEventKey:
