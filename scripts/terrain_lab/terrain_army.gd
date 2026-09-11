@@ -907,7 +907,18 @@ func _reachable_cells(start: Vector2i) -> Array[Vector2i]:
 	return result
 
 func _is_external_cell(cell: Vector2i) -> bool:
-	return (player != null and player.terrain_cell == cell) or (npc != null and npc.terrain_cell == cell)
+	for actor: Variant in [player, npc]:
+		if actor != null and (actor.occupies_cell(cell) if actor.has_method("occupies_cell") else actor.terrain_cell == cell):
+			return true
+	return false
+
+func reserves_terrain_cell(cell: Vector2i) -> bool:
+	return blocks_cell(cell) or (has_army() and _passage_cell_is_protected(cell))
+
+func notify_terrain_changed() -> void:
+	if has_army() and command != Command.NONE:
+		# The command queue drains existing steps and passage reservations first.
+		issue_command(command)
 
 func _replan_follow() -> bool:
 	if player == null or not data.contains(player.terrain_cell):
@@ -2032,9 +2043,9 @@ func _assign_local_formation_layout(layout: Array[Vector2i]) -> void:
 			remaining.append(index)
 	for index: int in remaining:
 		var nearest := 0
-		for position: int in range(1, available.size()):
-			if cells[index].distance_squared_to(available[position]) < cells[index].distance_squared_to(available[nearest]):
-				nearest = position
+		for available_index: int in range(1, available.size()):
+			if cells[index].distance_squared_to(available[available_index]) < cells[index].distance_squared_to(available[nearest]):
+				nearest = available_index
 		desired_cells[index] = available[nearest]
 		available.remove_at(nearest)
 	for index: int in range(SOLDIER_COUNT):
@@ -2113,9 +2124,9 @@ func _bend_formation_step(revision: int, prospective_sources: Array[Vector2i] = 
 		var ribbon := {}
 		var lateral := {}
 		var frontier: Array[Vector2i] = route.duplicate()
-		for position: int in range(route.size()):
-			ribbon[route[position]] = route.size() - position - 1
-			lateral[route[position]] = 0
+		for route_index: int in range(route.size()):
+			ribbon[route[route_index]] = route.size() - route_index - 1
+			lateral[route[route_index]] = 0
 		var head := 0
 		while head < frontier.size():
 			if not await _take_structure_expansion(revision):
@@ -2335,10 +2346,10 @@ func _bend_cell_potential(cell: Vector2i, field: Dictionary, index: int) -> int:
 	# distances for span/protection, but do not funnel every rank onto its lane.
 	if _passage_group_start >= _passage_descriptors.size():
 		var target_field: Dictionary = _formation_final_fields.get("goal_component" if index == 0 else "goal_slot_component", {})
-		var distance := int(target_field.get(cell, field[cell]))
+		var target_distance := int(target_field.get(cell, field[cell]))
 		# Fill the fixed set away from its entrance, including lateral wings.
 		# A point-front tie score pinned occupied rows beside empty side slots.
-		return distance * distance * (SOLDIER_COUNT * 2 + 1) - int(_passage_final_component.get(cell, 0))
+		return target_distance * target_distance * (SOLDIER_COUNT * 2 + 1) - int(_passage_final_component.get(cell, 0))
 	var distance := maxi(0, int(field[cell]) - int(_formation_bend_lateral.get(cell, 0)))
 	return distance * distance * (SOLDIER_COUNT * 2 + 1) + int(_formation_bend_lateral.get(cell, 0))
 
@@ -2495,8 +2506,8 @@ func _repair_bend_body(sources: Array[Vector2i], targets: Array[Vector2i], occup
 			if undo.has(index) and occupied.has(sources[index]):
 				undo[int(occupied[sources[index]])] = true
 		var removed := 0
-		for position: int in range(order.size() - 1, -1, -1):
-			var index := order[position]
+		for order_index: int in range(order.size() - 1, -1, -1):
+			var index := order[order_index]
 			if not undo.has(index) or targets[index] == sources[index]:
 				continue
 			occupied.erase(targets[index])
@@ -3006,8 +3017,8 @@ func _publish_passage_group_targets() -> void:
 	descriptor.rally_layout = layout
 	for index: int in range(SOLDIER_COUNT):
 		var ticket := int(_unit_passage_ticket[index])
-		var position := 0 if index == 0 else 1 + ticket - int(ticket > _unit_passage_ticket[0])
-		desired_cells[index] = layout[position]
+		var layout_index := 0 if index == 0 else 1 + ticket - int(ticket > _unit_passage_ticket[0])
+		desired_cells[index] = layout[layout_index]
 		_formation_slot_cells[index] = desired_cells[index]
 		_clear_follower_route(index)
 	_passage_binding_revision += 1
@@ -3075,8 +3086,8 @@ func _begin_passage_group() -> void:
 	# in the queue. Keep the declared 21..71 admission bound, not a floor
 	# derived from another rectangle on the opposite side of the passage.
 	_passage_ticket_order.insert(clampi(physical_ticket, 20, 70), 0)
-	for position: int in range(SOLDIER_COUNT):
-		_unit_passage_ticket[_passage_ticket_order[position]] = position
+	for ticket_position: int in range(SOLDIER_COUNT):
+		_unit_passage_ticket[_passage_ticket_order[ticket_position]] = ticket_position
 	_formation_march_active = false
 	_formation_has_bottleneck = true
 	_formation_width = int(_passage_descriptor(_passage_group_start).get("width", 1))
@@ -3133,8 +3144,8 @@ func _passage_order_hold(unit_index: int, passage_index: int) -> bool:
 		return false
 	var captain_ticket := int(_unit_passage_ticket[0])
 	if unit_index == 0:
-		for position: int in range(captain_ticket):
-			var guard_index := _passage_ticket_order[position]
+		for ticket_position: int in range(captain_ticket):
+			var guard_index := _passage_ticket_order[ticket_position]
 			if _unit_completed_exits[guard_index] <= passage_index \
 				and not (_unit_passage[guard_index] == passage_index and _unit_passage_crossed[guard_index] != 0):
 				return true
@@ -3253,23 +3264,23 @@ func _find_passage_route(start: Vector2i, goal: Vector2i, unit_index: int, allow
 		# field. Long ridge detours must not require every exiting unit to search
 		# the same thousand cells again. This recovery is charged to this request.
 		var reverse_route: Array[Vector2i] = [goal]
-		var cursor := goal
-		while cursor != start and field_expansions < expansion_limit:
+		var recovery_cursor := goal
+		while recovery_cursor != start and field_expansions < expansion_limit:
 			field_expansions += 1
-			var depth := int(rally_component[cursor])
+			var depth := int(rally_component[recovery_cursor])
 			if depth <= int(rally_component[start]):
 				break
 			var parent := INVALID_CELL
 			for direction: Vector2i in TerrainData.DIRECTIONS:
-				var candidate := cursor + direction
-				if rally_component.get(candidate, -2) == depth - 1 and data.can_step(candidate, cursor) and not blocked.has(candidate):
+				var candidate := recovery_cursor + direction
+				if rally_component.get(candidate, -2) == depth - 1 and data.can_step(candidate, recovery_cursor) and not blocked.has(candidate):
 					parent = candidate
 					break
 			if parent == INVALID_CELL:
 				break
 			reverse_route.append(parent)
-			cursor = parent
-		if cursor == start:
+			recovery_cursor = parent
+		if recovery_cursor == start:
 			reverse_route.reverse()
 			var usable := true
 			for offset: int in range(1, reverse_route.size()):
@@ -3364,11 +3375,11 @@ func _passage_step_to_goal(unit_index: int, goal: Vector2i, allow_occupied: bool
 		# Reuse them like inter-gate connections; local-search fairness must not
 		# leave each new arrival sitting on the exit for up to 25 service ticks.
 		var shared: Array = _active_rally_routes().get(goal, [])
-		var position := shared.find(cells[unit_index])
-		if position >= 0 and position + 1 < shared.size():
-			var next: Vector2i = shared[position + 1]
-			if _passage_step_is_free(next, unit_index) or _unit_passage_exit_clear[unit_index] == 0:
-				return next
+		var shared_index := shared.find(cells[unit_index])
+		if shared_index >= 0 and shared_index + 1 < shared.size():
+			var shared_next: Vector2i = shared[shared_index + 1]
+			if _passage_step_is_free(shared_next, unit_index) or _unit_passage_exit_clear[unit_index] == 0:
+				return shared_next
 			# Once clear of the exit, try a bounded free detour before turning
 			# a long row of settled ranks into another sequential push chain.
 	allow_occupied = allow_occupied or _local_occupied_retry.get(unit_index, INVALID_CELL) == goal
@@ -3899,12 +3910,12 @@ func _route_edge_width(from: Vector2i, to: Vector2i, scan_radius: int = PASSAGE_
 	# not a parallel lane unless both ends connect laterally to the previously
 	# accepted lane. This is the distinction the old independent scan missed.
 	var width := 1
-	for sign: int in [-1, 1]:
+	for side_sign: int in [-1, 1]:
 		var previous_from := from
 		var previous_to := to
 		for offset: int in range(1, scan_radius + 1):
-			var lane_from := from + side * sign * offset
-			var lane_to := to + side * sign * offset
+			var lane_from := from + side * side_sign * offset
+			var lane_to := to + side * side_sign * offset
 			if not data.contains(lane_from) or not data.contains(lane_to) or not data.can_step(lane_from, lane_to):
 				break
 			if not data.can_step(previous_from, lane_from) or not data.can_step(previous_to, lane_to):
@@ -3941,10 +3952,10 @@ func _flood_passage_component(start: Vector2i, blocked: Dictionary, revision: in
 		return result
 	var pending: Array[Vector2i] = [start]
 	result[start] = 0
-	for seed: Vector2i in additional_starts:
-		if not result.has(seed) and data.is_walkable(seed) and not blocked.has(seed):
-			result[seed] = 0
-			pending.append(seed)
+	for additional_start: Vector2i in additional_starts:
+		if not result.has(additional_start) and data.is_walkable(additional_start) and not blocked.has(additional_start):
+			result[additional_start] = 0
+			pending.append(additional_start)
 	var head := 0
 	while head < pending.size() and pending.size() <= data.size.x * data.size.y:
 		if not await _take_structure_expansion(revision):
@@ -4382,12 +4393,12 @@ func _build_passage_plan(revision: int) -> void:
 		# Conservative NON_SEPARATING policy: keep the selected corridor
 		# mandatory. Only final slots on the exit-nearer side of the sealed
 		# terrain graph are safe; this never grants an initial exemption.
-		var entry_distances: Dictionary = segments.back().approach_component
+		var approach_distances: Dictionary = segments.back().approach_component
 		var safe_component := {}
 		for candidate: Vector2i in component:
 			if not await _take_structure_expansion(revision):
 				return
-			if not entry_distances.has(candidate) or int(component[candidate]) < int(entry_distances[candidate]):
+			if not approach_distances.has(candidate) or int(component[candidate]) < int(approach_distances[candidate]):
 				safe_component[candidate] = component[candidate]
 		component = safe_component
 	var available_capacity := 0
@@ -5554,15 +5565,15 @@ func _release_push_transaction(pending: Dictionary, _cancel_moving: bool = false
 	var committed: Dictionary = pending.get("committed", {})
 	for path_index: int in range(units.size()):
 		if path_index + 1 < pending_path.size():
-			var owner := int(units[path_index])
-			if committed.has(owner):
+			var unit_owner := int(units[path_index])
+			if committed.has(unit_owner):
 				continue
 			var destination: Vector2i = pending_path[path_index + 1]
-			if owner < 0 or owner >= SOLDIER_COUNT:
+			if unit_owner < 0 or unit_owner >= SOLDIER_COUNT:
 				continue
-			var in_flight := movement_state[owner] == UnitState.MOVING or movement_state[owner] == UnitState.SWAPPING
-			if not in_flight or moving_to[owner] != destination:
-				_clear_reservation(destination, owner)
+			var in_flight := movement_state[unit_owner] == UnitState.MOVING or movement_state[unit_owner] == UnitState.SWAPPING
+			if not in_flight or moving_to[unit_owner] != destination:
+				_clear_reservation(destination, unit_owner)
 	for unit_value: Variant in units:
 		var unit := int(unit_value)
 		if committed.has(unit):

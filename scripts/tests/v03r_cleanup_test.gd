@@ -8,7 +8,7 @@ func _initialize() -> void:
 
 func _run() -> void:
 	assert(ProjectSettings.get_setting("application/run/main_scene") == MAIN)
-	assert(ProjectSettings.get_setting("application/config/version") == "V0.3R")
+	assert(ProjectSettings.get_setting("application/config/version") == "V0.35R")
 	for retired: String in [
 		"scenes/Main.tscn", "scenes/world/WorldMap.tscn",
 		"scenes/world/ContinuousWorldMap.tscn", "scenes/region/RegionMap.tscn",

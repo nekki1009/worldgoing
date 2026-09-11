@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="worldgoing"
-config/version="V0.3R"
+config/version="V0.35R"
 run/main_scene="res://scenes/terrain_lab/TerrainLab.tscn"
 config/features=PackedStringArray("4.7", "Forward Plus")
 config/icon="res://icon.svg"

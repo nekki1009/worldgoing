@@ -4,6 +4,10 @@ extends Node2D
 const MIN_ZOOM := 0.1
 const MAX_ZOOM := 10.0
 const ZOOM_STEP := 1.20
+const Site = preload("res://scripts/terrain_lab/site_controller.gd")
+const SiteEnv = preload("res://scripts/terrain_lab/site_environment.gd")
+var site_controller: Node
+var pause_when_unfocused := true
 
 var terrain: TerrainData
 var renderer: TerrainRenderer
@@ -38,17 +42,20 @@ var edge_army_button: Button
 var clear_army_button: Button
 
 func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	RenderingServer.set_default_clear_color(Color("1d242b"))
 	renderer = TerrainRenderer.new()
 	renderer.name = "TerrainRenderer"
 	add_child(renderer)
 	character = TerrainTestCharacter.new()
 	character.name = "MovementTestCharacter"
+	character.process_mode = Node.PROCESS_MODE_PAUSABLE
 	character.z_index = 10
 	add_child(character)
 	character.initialize_visual()
 	npc = TerrainTestNPC.new()
 	npc.name = "CommandTestNPC"
+	npc.process_mode = Node.PROCESS_MODE_PAUSABLE
 	npc.z_index = 11
 	add_child(npc)
 	npc.initialize_visual()
@@ -56,6 +63,7 @@ func _ready() -> void:
 	npc.opponent = character
 	army = TerrainArmy.new()
 	army.name = "DemoArmy"
+	army.process_mode = Node.PROCESS_MODE_PAUSABLE
 	add_child(army)
 	army.player = character
 	army.npc = npc
@@ -65,7 +73,20 @@ func _ready() -> void:
 	camera.name = "LabCamera"
 	add_child(camera)
 	_build_ui()
+	site_controller = Site.new()
+	site_controller.name = "SiteController"
+	add_child(site_controller)
+	site_controller.setup(self)
 	generate_from_ui()
+	if FileAccess.file_exists(site_controller.save_path):
+		site_controller.load_current()
+	site_controller.focus_camp()
+
+func _notification(what: int) -> void:
+	if what in [NOTIFICATION_APPLICATION_FOCUS_OUT, NOTIFICATION_APPLICATION_PAUSED] and pause_when_unfocused:
+		if site_controller != null and terrain != null and not terrain.site.is_empty() and not site_controller._exit_pending and not bool(terrain.site.paused):
+			site_controller.toggle_pause()
+			site_controller.message.text = "離開遊玩視窗，時間已暫停；按「繼續」恢復。"
 
 func _build_ui() -> void:
 	var ui := CanvasLayer.new()
@@ -208,19 +229,35 @@ func generate_from_ui() -> void:
 	if not seed_input.text.is_valid_int():
 		status.text = "Seed must be an integer. Existing terrain was not changed."
 		return
-	if army != null:
-		army.clear()
+	if site_controller != null and not site_controller.archive_before_replace():
+		return
 	var started: int = Time.get_ticks_usec()
-	terrain = TerrainGenerator.generate(preset_dropdown.selected, seed_input.text.to_int())
+	var generated := TerrainGenerator.generate(preset_dropdown.selected, seed_input.text.to_int())
+	SiteEnv.initialize(generated)
 	generation_ms = float(Time.get_ticks_usec() - started) / 1000.0
+	bind_terrain(generated)
+
+func bind_terrain(value: TerrainData) -> void:
+	army.clear()
+	_clear_movement_input()
+	_npc_target_pending = false
+	terrain = value
+	character.terrain_cell = Vector2i(-1, -1)
+	npc.terrain_cell = Vector2i(-1, -1)
 	renderer.display(terrain)
 	character.data = terrain
-	character.place(terrain.spawn_cell, true)
+	character.place(terrain.cell_from_index(int(terrain.site.get("player_cell", terrain.index(terrain.spawn_cell)))), true)
 	character.reset_combat()
 	npc.set_data(terrain)
-	npc.place(_find_npc_spawn_cell(), true)
+	var worker_cell := terrain.cell_from_index(int(terrain.site.worker.cell))
+	if not terrain.is_walkable(worker_cell) or worker_cell == character.terrain_cell:
+		worker_cell = _find_npc_spawn_cell()
+	npc.place(worker_cell, true)
 	npc.issue_command(TerrainTestNPC.Command.STOP)
 	npc.reset_combat()
+	seed_input.text = str(terrain.seed_value)
+	preset_dropdown.select(terrain.preset)
+	site_controller.bind()
 	parameters_label.text = "PARAMETERS\n%s\nMax height: %d | Micro: %.3f" % [terrain.parameters["composition"], terrain.parameters["max_height"], terrain.parameters["micro_strength"]]
 	status.text = "Ready. Click a platform to place the test character."
 	fit_map()
@@ -286,14 +323,18 @@ func fit_map() -> void:
 		return
 	var viewport_size: Vector2 = get_viewport_rect().size
 	var extent := Vector2(terrain.size) * TerrainRenderer.CELL_PIXELS
-	var fit: float = minf((viewport_size.x - 500.0) / extent.x, (viewport_size.y - 80.0) / extent.y)
+	var left := 500.0 if get_node("TerrainLabUI").visible else 0.0
+	var right := Site.PANEL_SPACE if site_controller != null else 0.0
+	var fit: float = minf((viewport_size.x - left - right) / extent.x, (viewport_size.y - 80.0) / extent.y)
 	camera.zoom = Vector2.ONE * maxf(0.1, fit)
-	camera.position = extent * 0.5 - Vector2(220.0 / camera.zoom.x, 0)
+	camera.position = extent * 0.5 - Vector2((left - right) * 0.5 / camera.zoom.x, 0)
 	camera.force_update_scroll()
 
 func issue_npc_command(command_id: int = -1, requested_target: Vector2i = Vector2i(-1, -1)) -> bool:
 	if npc == null or terrain == null:
 		return false
+	if site_controller != null:
+		site_controller.release_worker()
 	var selected_command := npc_command_dropdown.selected if command_id < 0 and npc_command_dropdown != null else command_id
 	var target := requested_target
 	if selected_command == TerrainTestNPC.Command.MOVE_TO_CELL and target == Vector2i(-1, -1):
@@ -363,6 +404,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	if (character.editor_window != null and character.editor_window.visible) or (npc.editor_window != null and npc.editor_window.visible):
 		_clear_movement_input()
 		return
+	if site_controller != null and site_controller.handle_input(event):
+		get_viewport().set_input_as_handled()
+		return
+	if get_tree().paused and event is InputEventKey:
+		return
 	if event is InputEventMouseButton:
 		var mouse := event as InputEventMouseButton
 		if mouse.button_index in [MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE]:
@@ -372,6 +418,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif mouse.pressed and mouse.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			zoom_at(mouse.position, 1.0 / ZOOM_STEP)
 		elif mouse.pressed and mouse.button_index == MOUSE_BUTTON_LEFT and movement_toggle.button_pressed:
+			if get_tree().paused:
+				return
 			get_viewport().gui_release_focus()
 			var cell := renderer.pick_cell(mouse.position)
 			if _npc_target_pending:
@@ -417,6 +465,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 
 func _process(delta: float) -> void:
+	if site_controller != null:
+		site_controller.tick(delta)
+	if get_tree().paused:
+		return
 	if npc_retaliates and movement_toggle != null and movement_toggle.button_pressed and npc.hp > 0 and character.hp > 0:
 		var offset := character.terrain_cell - npc.terrain_cell
 		if absi(offset.x) + absi(offset.y) == 1 and terrain.can_step(npc.terrain_cell, character.terrain_cell):

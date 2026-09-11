@@ -1,5 +1,27 @@
 # Terrain Generator Lab
 
+## 單圖資源與土地操作（2026-09-11）
+
+右側「聚落地圖 · 資源與土地」是新操作面板。用天然資源／農耕／牧地／淡水／建設
+檢視查看土地；WASD 移動、滾輪縮放、右／中鍵拖圖保持原樣。
+選「工人採集區」「清理區」「勘探區」後在地圖拖曳，原 NPC 會走到合法工作格，
+採集後攜帶產物回營地箱才入庫。工作區由上而下優先，可關閉暫不需要的工作。
+玩家手動作業須站在來源旁；移動、攻擊或受擊會中斷，攜帶物需回營地交貨。
+
+建設先選設施，再以「建設區」框選 1–36 格，核對材料、清理需求、入口及工時後
+按「安排施工」。完成農牧場／作坊後，選中並按「派工運作」；原料按批扣除，缺水會停工。
+整地把框選範圍降至其中最低層，範圍內高差最多一級；採礦本身不改山體。
+土地檢視的「查看」模式也可框選，顯示可耕格、牧養承載、已服務及地基適建格數。
+
+和平 1 秒＝1 遊戲分鐘；實際交戰 1 秒＝1 遊戲秒，動作不變慢。暫停及離開應用程式
+會停止時間，回來按「繼續」。離線不增加產量。
+每 30 現實秒在和平時自動保存地圖，也可手動保存／載入。開新 seed 前會按地圖 ID
+另存舊地圖，面板底部可重新開啟。損壞載入不覆蓋原檔，也會停用自動保存。
+此保存涵蓋資源、用地、存貨、工作及角色格位；不包含人物換裝、軍隊和戰鬥快照。
+
+原本的地形、換裝、騎乘、戰鬥與軍隊測試控制位於「展開原地形／人物／戰鬥測試」。
+這些測試控制的裝備與騎乘尚未消耗生產庫存。詳細規則及驗證見 `SITE_RESOURCE_IMPLEMENTATION.md`。
+
 ## LAB combat test (2026-09-08)
 
 The command NPC now inherits the player's grid movement and transparent 3D
@@ -21,7 +43,7 @@ shared map coordinates. Animation is sampled at 120 Hz; one attack can hurt once
 This is 2D collision matching the projected 3D artwork, not 3D triangle physics.
 Bow/crossbow release a visible straight projectile at 45%; the swept projectile
 must physically reach a body, with a six-cell maximum travel distance. Every
-intervening terrain edge must pass TerrainData.can_step. Heavy
+intervening terrain edge must pass TerrainData.can_attack_across (including current tall resource/building blockers). Heavy
 attacks deal 30, others 20; front guard reduces damage to 20%. Hits interrupt pending
 strikes, zero HP disables movement/attacks and plays down. The retired World battle
 formation rules were removed in V0.3R; this Site uses its existing LAB owners.
@@ -77,7 +99,7 @@ terrain extent and packed arrays grow from 4,096 to 10,000 cells. `Fit map`
 computes its camera framing from the generated `TerrainData.size`, so the whole
 map remains visible without a preset-specific camera constant.
 
-This is the current Site entry in V0.3R. It has no legacy World/Region streaming,
+This is the current Site entry in V0.35R. It has no legacy World/Region streaming,
 resource/building gameplay, save system, or AStar dependency.
 The previous world-system runtime and 2D paper doll system have been removed;
 the existing NPC/combat tests and hundred-person army remain here.
@@ -158,7 +180,7 @@ the final per-cell random byte affects brush shading, not terrain classification
 `cliff_drops[cell * 4 + direction]` retains the positive height difference in
 N/E/S/W order. A CLIFF flag means the platform has a cliff edge, **not** that its
 whole top is blocked. Rock faces are separate edge geometry and never walkable
-floor cells. The current visual face expands up to 28px toward the lower
+floor cells. The current visual face expands 64px toward the lower
 platform so it remains readable at fit-to-map zoom; it does not change the
 64px logical standing cell or the stored height difference.
 
@@ -230,6 +252,42 @@ in 20.301s (exit 0), evidence:
 This verifies loading and movement, not final art acceptance. The cliff-face
 presentation now occupies the full low-side 64px tile while ramp spans remain
 open. No new raster generation was needed for this revision.
+
+### 2026-09-11 cliff readability revision
+
+`TerrainRenderer` now draws a warm height tint, a narrow irregular high-side lip,
+directional face lighting, a top-to-bottom shade gradient and a fading 10px foot
+shadow. Multi-level drops have an internal rock-stratum mark while retaining the
+same 64px visual face. Passage openings remain 36px wide. Ramps use the existing
+soil texture and an outlined uphill arrow; both directions remain traversable.
+Water is drawn before cliff faces so it no longer hides the shore edge.
+
+These are presentation changes within the same four terrain batches. TerrainData,
+TerrainGenerator and TerrainTestCharacter SHA-256 hashes were unchanged; no model,
+collision, saved height or ramp-bit changes were made.
+
+`terrain_cliff_readability_test.gd` captures the actual Lab, including the default
+highland seed, natural coast and a controlled 16×16 plateau with four ramp directions
+and a two-level drop. It walks every fixture ramp uphill and downhill, rejects the
+two-level crossing, and checks that rendering preserves the terrain fingerprint.
+Images are in `.visual_captures/terrain_lab/cliff_readability/`, with `before_` and
+`after_` prefixes for the same map/camera pair. All seven final PNGs were inspected.
+
+Godot 4.6.2 Mono, isolated writable environment, bounded foreground verification:
+
+- Before GPU: `20260911_234050_100/result.json`, exit 0, 17.997s.
+- Final GPU: `20260911_234515_948/result.json`, exit 0, 18.310s.
+- Original eight-presets × three-seeds data/movement regression:
+  `20260911_234558_904/result.json`, exit 0, 13.818s.
+
+Records are under `.godot-temp/godot_verify/`. Run the visual test with
+`-Mode visual -TimeoutSeconds 27 -GodotArguments @('--script',
+'res://scripts/tests/terrain_cliff_readability_test.gd')`; the baseline capture used
+the old renderer and additionally passed `'--','--before'`.
+Root-certificate output is recorded as environment noise. An initial test assumption
+that the default natural seed contained all four uphill directions was false;
+that failed run is not counted as success. The fixed fixture makes coverage explicit.
+No battle-performance matrix was measured for this art revision.
 
 The 100-person army path is measured separately by
 `scripts/tests/terrain_lab_army_performance_test.gd`. Ordinary soldiers use

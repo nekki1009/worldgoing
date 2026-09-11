@@ -24,6 +24,8 @@ func _ready() -> void:
 		layer.set("kind", layers.size())
 		add_child(layer)
 		layers.append(layer)
+	# Water is a ground surface; it must not paint over shore or cliff faces.
+	move_child(layers[2], 1)
 
 func _load_texture(path: String) -> Texture2D:
 	var texture: Texture2D = ResourceLoader.load(path, "Texture2D") as Texture2D
@@ -103,10 +105,10 @@ func _draw_ground(canvas: Node2D) -> void:
 					_draw_texture_region(canvas, sand_texture, rect, cell, Color(1.0, 0.92, 0.67, 0.9))
 				TerrainData.Surface.WETLAND:
 					canvas.draw_rect(rect, Color(0.28, 0.49, 0.39, 0.34))
-			# Height tint keeps the discrete platform levels readable without a grid.
+			# Higher terraces get a warmer, lighter surface, distinct from the shaded face.
 			var height: int = data.height_levels[i]
 			if height > 0:
-				canvas.draw_rect(rect, Color(0.09, 0.12, 0.08, minf(0.16, float(height) * 0.025)), true)
+				canvas.draw_rect(rect, Color(0.96, 0.91, 0.63, minf(0.20, float(height) * 0.04)), true)
 
 func _draw_texture_region(canvas: Node2D, texture: Texture2D, rect: Rect2, cell: Vector2i, tint: Color) -> void:
 	if texture == null:
@@ -131,13 +133,9 @@ func _draw_cliffs(canvas: Node2D, cell: Vector2i, i: int, rect: Rect2) -> void:
 		var normal := Vector2(TerrainData.DIRECTIONS[d])
 		var tangent := Vector2(-normal.y, normal.x)
 		var edge: Vector2 = rect.get_center() + normal * CELL_PIXELS * 0.5
-		# Make the face legible even at the Lab's fit-to-map zoom.  It is still
-		# presentation-only geometry; the standing cell remains a 64px square.
-		# A cliff face owns the entire low-side cell.  The ground platform stays
-		# exactly one 64px cell; only its presentation face extends into the
-		# neighbouring low cell. Ramps retain their explicit opening spans.
+		# Retain the existing 64px low-side visual strip and the actual ramp opening.
+		# Relief shading never changes the standing cells or their legal crossings.
 		var depth: float = CELL_PIXELS if drop > 0 else 8.0
-		# Low-side overlap stays below half a cell, leaving its standing centre clear.
 		var cuts: Array[Vector2] = [Vector2(-32, 32)]
 		if (data.ramp_edges[i] & (1 << d)) != 0:
 			cuts = [Vector2(-32, -18), Vector2(18, 32)]
@@ -147,9 +145,24 @@ func _draw_cliffs(canvas: Node2D, cell: Vector2i, i: int, rect: Rect2) -> void:
 			var upper: Color = Color("8c8974") if drop > 0 else Color("b9b78b")
 			var lower: Color = Color("383d3c") if drop > 0 else Color("86b2b2")
 			if drop > 0:
+				var foot_a := a + normal * depth
+				var foot_b := b + normal * depth
+				# Fade a narrow contact shadow onto the lower terrace, with the ramp gap intact.
+				canvas.draw_polygon(PackedVector2Array([foot_a, foot_b, foot_b + normal * 10, foot_a + normal * 10]),
+					PackedColorArray([Color(0.04, 0.07, 0.04, 0.42), Color(0.04, 0.07, 0.04, 0.42), Color(0.04, 0.07, 0.04, 0.0), Color(0.04, 0.07, 0.04, 0.0)]))
 				_draw_cliff_texture(canvas, a, b, normal, depth)
-				# Let the source art supply grass and stone detail; only add foot shade.
-				canvas.draw_line(a + normal * depth, b + normal * depth, Color(0.035, 0.045, 0.04, 0.45), 2.0)
+				canvas.draw_polygon(PackedVector2Array([a, b, foot_b, foot_a]),
+					PackedColorArray([Color(0.95, 0.88, 0.65, 0.08), Color(0.95, 0.88, 0.65, 0.08), Color(0.025, 0.045, 0.045, 0.30), Color(0.025, 0.045, 0.045, 0.30)]))
+				# The bright high-side lip and dark underside identify which side is up.
+				canvas.draw_line(a + normal * 1.5, b + normal * 1.5, Color(0.09, 0.12, 0.06, 0.9), 5.0)
+				var lip := PackedVector2Array([a, a.lerp(b, 0.2) - normal * 1.1, a.lerp(b, 0.4) + normal * 0.3,
+					a.lerp(b, 0.6) - normal * 1.4, a.lerp(b, 0.8) - normal * 0.5, b])
+				canvas.draw_polyline(lip, Color(0.69, 0.73, 0.47, 0.78), 2.0, true)
+				# Multi-level drops carry strata inside the same face, never a false walkable shelf.
+				for level: int in range(1, drop):
+					var band := normal * depth * float(level) / float(drop)
+					canvas.draw_line(a + band, b + band, Color(0.04, 0.05, 0.04, 0.65), 3.0)
+					canvas.draw_line(a + band - normal * 2, b + band - normal * 2, Color(0.72, 0.73, 0.62, 0.4), 1.5)
 			else:
 				canvas.draw_polygon(PackedVector2Array([a + normal * depth, b + normal * depth, b, a]),
 					PackedColorArray([upper, upper, lower, lower]))
@@ -169,7 +182,7 @@ func _draw_cliff_texture(canvas: Node2D, a: Vector2, b: Vector2, normal: Vector2
 		var source_width: float = length * 4.0
 		var source_x: float = 256.0 + fposmod(a.dot(tangent) * 4.0, 256.0)
 		var source := Rect2(source_x, 120.0, source_width, 280.0)
-		var light: float = 0.9 + normal.dot(Vector2(-0.08, 0.1))
+		var light: float = 1.08 + normal.dot(Vector2(-0.14, -0.18))
 		canvas.draw_texture_rect_region(cliff_texture, Rect2(-length * 0.5, -depth * 0.5, length, depth), source, Color(light, light, light, 1.0))
 	else:
 		canvas.draw_rect(Rect2(-length * 0.5, -depth * 0.5, length, depth), Color("45413c"), true)
@@ -184,10 +197,18 @@ func _draw_ramps(canvas: Node2D, cell: Vector2i, i: int) -> void:
 			continue
 		var axis := Vector2(TerrainData.DIRECTIONS[d])
 		var side := Vector2(-axis.y, axis.x)
-		var a: Vector2 = cell_center(cell) + axis * 13.0
-		var b: Vector2 = cell_center(neighbor) - axis * 13.0
-		canvas.draw_polygon(PackedVector2Array([a - side * 17, a + side * 17, b + side * 17, b - side * 17]),
-			PackedColorArray([Color("747c58"), Color("747c58"), Color("b0bb82"), Color("b0bb82")]))
+		var a: Vector2 = cell_center(cell) - axis * 12.0
+		var b: Vector2 = cell_center(neighbor) + axis * 8.0
+		var ramp := PackedVector2Array([a - side * 16, a + side * 16, b + side * 16, b - side * 16])
+		canvas.draw_polygon(ramp, PackedColorArray([Color("806b49"), Color("806b49"), Color("c3a678"), Color("c3a678")]))
 		var midpoint: Vector2 = (a + b) * 0.5
-		canvas.draw_line(midpoint - axis * 9, midpoint + axis * 9, Color("e0e9b0"), 3.0)
-		canvas.draw_polyline(PackedVector2Array([midpoint - side * 6, midpoint + axis * 9, midpoint + side * 6]), Color("e0e9b0"), 2.0)
+		canvas.draw_set_transform(midpoint, axis.angle(), Vector2.ONE)
+		_draw_texture_region(canvas, sand_texture, Rect2(-a.distance_to(b) * 0.5, -16, a.distance_to(b), 32), cell, Color(0.78, 0.64, 0.42, 0.76))
+		canvas.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		canvas.draw_line(a - side * 16, b - side * 16, Color(0.23, 0.22, 0.13, 0.6), 2.0)
+		canvas.draw_line(a + side * 16, b + side * 16, Color(0.81, 0.72, 0.51, 0.65), 1.5)
+		var arrow := PackedVector2Array([midpoint - side * 7, midpoint + axis * 10, midpoint + side * 7])
+		canvas.draw_line(midpoint - axis * 10, midpoint + axis * 10, Color("493b24"), 5.0)
+		canvas.draw_polyline(arrow, Color("493b24"), 5.0)
+		canvas.draw_line(midpoint - axis * 10, midpoint + axis * 10, Color("fff0bc"), 2.5)
+		canvas.draw_polyline(arrow, Color("fff0bc"), 2.5)

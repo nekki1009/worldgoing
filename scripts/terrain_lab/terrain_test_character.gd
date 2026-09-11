@@ -1,6 +1,9 @@
 class_name TerrainTestCharacter
 extends Node2D
 
+signal combat_event(duration: float)
+var movement_from_cell := Vector2i(-1, -1)
+
 var data: TerrainData
 var terrain_cell := Vector2i(-1, -1)
 var editor: HumanCharacter3DEditor
@@ -187,6 +190,7 @@ func toggle_mount() -> bool:
 func place(cell: Vector2i, instant: bool = false, duration: float = MOVE_DURATION) -> bool:
 	if not can_enter_cell(cell):
 		return false
+	movement_from_cell = cell if instant else terrain_cell
 	terrain_cell = cell
 	var destination := (Vector2(terrain_cell) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
 	if _movement_tween != null and _movement_tween.is_valid():
@@ -202,6 +206,8 @@ func place(cell: Vector2i, instant: bool = false, duration: float = MOVE_DURATIO
 	return true
 
 func step(direction: Vector2i, running: bool = false) -> bool:
+	if is_inside_tree() and get_tree().paused:
+		return false
 	if hp <= 0 or action_time > 0.0 or guarding or is_moving():
 		return false
 	if is_instance_valid(opponent) and opponent.terrain_cell == terrain_cell + direction:
@@ -232,6 +238,9 @@ func can_enter_cell(cell: Vector2i) -> bool:
 func is_moving() -> bool:
 	return _movement_tween != null and _movement_tween.is_running()
 
+func occupies_cell(cell: Vector2i) -> bool:
+	return terrain_cell == cell or (is_moving() and movement_from_cell == cell)
+
 func play_pose(clip: StringName) -> void:
 	_step_time = 0.0
 	_set_attack_offset(Vector2.ZERO)
@@ -244,6 +253,8 @@ func play_pose(clip: StringName) -> void:
 		editor.select_animation_by_id(clip)
 
 func start_attack(target: TerrainTestCharacter) -> bool:
+	if is_inside_tree() and get_tree().paused:
+		return false
 	if hp <= 0 or action_time > 0.0 or guarding or is_moving() or not is_instance_valid(target) or target.hp <= 0:
 		return false
 	opponent = target
@@ -274,6 +285,8 @@ func start_attack(target: TerrainTestCharacter) -> bool:
 	_attack_range = 6 if clip in [&"attack_bow", &"attack_crossbow"] else (2 if clip in [&"attack_spear", &"ride_thrust"] else 1)
 	_attack_damage = 30 if clip in [&"attack_jump_heavy", &"attack_axe", &"attack_hammer"] else 20
 	action_time = maxf(0.35, editor._animation_length()) if editor != null else 0.8
+	if can_hit(target, _attack_range):
+		combat_event.emit(action_time + 10.0)
 	_strike_at = action_time * 0.45
 	_attack_duration = action_time
 	_attack_clip = clip
@@ -403,11 +416,11 @@ func _terrain_contact_clear(target: TerrainTestCharacter) -> bool:
 		var step_x := Vector2i(signi(goal.x - cell.x), 0)
 		var step_y := Vector2i(0, signi(goal.y - cell.y))
 		if step_x != Vector2i.ZERO:
-			if not data.can_step(cell, cell + step_x):
+			if not data.can_attack_across(cell, cell + step_x):
 				return false
 			cell += step_x
 		if step_y != Vector2i.ZERO:
-			if not data.can_step(cell, cell + step_y):
+			if not data.can_attack_across(cell, cell + step_y):
 				return false
 			cell += step_y
 	return true
@@ -425,7 +438,7 @@ func can_hit(target: TerrainTestCharacter, reach: int) -> bool:
 		return false
 	var cell := terrain_cell
 	while cell != target.terrain_cell:
-		if not data.can_step(cell, cell + direction):
+		if not data.can_attack_across(cell, cell + direction):
 			return false
 		cell += direction
 	return true
@@ -441,6 +454,7 @@ func set_guard(enabled: bool) -> void:
 func receive_hit(damage: int, attacker: TerrainTestCharacter) -> void:
 	if hp <= 0:
 		return
+	combat_event.emit(10.0)
 	var offset := attacker.terrain_cell - terrain_cell
 	var blocked := guarding and Vector2(facing).dot(Vector2(offset)) > 0.0
 	hp = maxi(0, hp - (int(damage * 0.2) if blocked else damage))

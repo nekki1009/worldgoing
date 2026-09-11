@@ -20,6 +20,23 @@ var preset: int = 0
 var seed_value: int = 0
 var parameters: Dictionary = {}
 
+# Generated environment and sparse Site changes share this map owner.
+var fertility := PackedByteArray()
+var moisture := PackedByteArray()
+var drainage := PackedByteArray()
+var foundation := PackedByteArray()
+var groundwater := PackedByteArray()
+var water_kind := PackedByteArray() # 0 none, 1 fresh, 2 sea, 3 brine.
+var water_body := PackedInt32Array()
+var resource_base: Dictionary = {}
+var resources_at: Dictionary = {}
+var site: Dictionary = {}
+# Rebuildable indexes; never serialized as a second authority.
+var static_blocked := PackedByteArray()
+var feature_at := PackedInt32Array()
+var navigation_revision := 0
+var environment_revision := 0
+
 func allocate(grid_size: Vector2i) -> void:
 	size = grid_size
 	var count: int = size.x * size.y
@@ -37,10 +54,18 @@ func index(terrain_cell: Vector2i) -> int:
 	return terrain_cell.y * size.x + terrain_cell.x
 
 func is_walkable(terrain_cell: Vector2i) -> bool:
+	return is_terrain_walkable(terrain_cell) and (static_blocked.is_empty() or static_blocked[index(terrain_cell)] == 0)
+
+func is_terrain_walkable(terrain_cell: Vector2i) -> bool:
 	return contains(terrain_cell) and (flags[index(terrain_cell)] & Flag.WALKABLE) != 0
 
 func can_step(from: Vector2i, to: Vector2i) -> bool:
 	if not is_walkable(from) or not is_walkable(to):
+		return false
+	return can_terrain_step(from, to)
+
+func can_terrain_step(from: Vector2i, to: Vector2i) -> bool:
+	if not is_terrain_walkable(from) or not is_terrain_walkable(to):
 		return false
 	var direction: int = DIRECTIONS.find(to - from)
 	if direction < 0:
@@ -52,6 +77,44 @@ func can_step(from: Vector2i, to: Vector2i) -> bool:
 		return true
 	return difference == 1 and (ramp_edges[a] & (1 << direction)) != 0 \
 		and (ramp_edges[b] & (1 << ((direction + 2) % 4))) != 0
+
+func can_attack_across(from: Vector2i, to: Vector2i) -> bool:
+	# Current tall resource/building obstacles block both travel and weapons.
+	# Low plants, underground deposits and fields do neither.
+	return can_terrain_step(from, to) and (static_blocked.is_empty() \
+		or (static_blocked[index(from)] == 0 and static_blocked[index(to)] == 0))
+
+func cell_from_index(cell_index: int) -> Vector2i:
+	return Vector2i(cell_index % size.x, floori(float(cell_index) / float(size.x)))
+
+func path_between(start: Vector2i, goal: Vector2i, blocked: Callable = Callable()) -> Array[Vector2i]:
+	var result: Array[Vector2i] = []
+	if not is_walkable(start) or not is_walkable(goal) or start == goal:
+		return result
+	var previous := {start: start}
+	var pending: Array[Vector2i] = [start]
+	var head := 0
+	while head < pending.size():
+		var current := pending[head]
+		head += 1
+		if current == goal:
+			break
+		for direction: Vector2i in DIRECTIONS:
+			var next := current + direction
+			if previous.has(next) or not can_step(current, next):
+				continue
+			if blocked.is_valid() and bool(blocked.call(next)):
+				continue
+			previous[next] = current
+			pending.append(next)
+	if not previous.has(goal):
+		return result
+	var cursor := goal
+	while cursor != start:
+		result.append(cursor)
+		cursor = previous[cursor]
+	result.reverse()
+	return result
 
 func fingerprint() -> String:
 	var bytes := PackedByteArray()

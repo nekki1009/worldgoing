@@ -30,6 +30,7 @@ func set_data(value: TerrainData) -> void:
 func place(cell: Vector2i, instant: bool = false, duration: float = MOVE_DURATION) -> bool:
 	if not can_enter_cell(cell):
 		return false
+	movement_from_cell = cell if instant else terrain_cell
 	terrain_cell = cell
 	var destination := (Vector2(cell) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
 	if _movement_tween != null and _movement_tween.is_valid():
@@ -109,43 +110,26 @@ func _process(delta: float) -> void:
 			command_status = "Arrived at %s" % terrain_cell
 			queue_redraw()
 		return
-	var next_cell: Vector2i = _path.pop_front()
+	var next_cell: Vector2i = _path[0]
 	if is_instance_valid(opponent) and next_cell == opponent.terrain_cell:
 		return
 	if not data.can_step(terrain_cell, next_cell):
 		_rebuild_path(target_cell)
 		queue_redraw()
 		return
-	step(next_cell - terrain_cell)
+	if step(next_cell - terrain_cell):
+		_path.pop_front()
+	else:
+		_rebuild_path(target_cell)
 	queue_redraw()
 
 func _rebuild_path(goal: Vector2i) -> void:
 	_path.clear()
 	if data == null or not data.contains(goal) or not data.is_walkable(goal) or goal == terrain_cell:
 		return
-	var previous := {terrain_cell: terrain_cell}
-	var pending: Array[Vector2i] = [terrain_cell]
-	var head := 0
-	while head < pending.size():
-		var cell: Vector2i = pending[head]
-		head += 1
-		if cell == goal:
-			break
-		for direction: Vector2i in TerrainData.DIRECTIONS:
-			var next := cell + direction
-			if not data.contains(next) or previous.has(next) or not data.can_step(cell, next):
-				continue
-			previous[next] = cell
-			pending.append(next)
-	if not previous.has(goal):
-		return
-	var reverse_path: Array[Vector2i] = []
-	var current: Vector2i = goal
-	while current != terrain_cell:
-		reverse_path.push_back(current)
-		current = previous[current]
-	reverse_path.reverse()
-	_path = reverse_path
+	# Following a player keeps its occupied goal; work routes avoid live occupants.
+	var blocked := Callable() if command == Command.FOLLOW_PLAYER else func(cell: Vector2i) -> bool: return not can_enter_cell(cell)
+	_path = data.path_between(terrain_cell, goal, blocked)
 
 func _draw() -> void:
 	if player_sprite != null:

@@ -16,8 +16,9 @@ func run() -> void:
 			lab.terrain.height_levels[i] = 0
 			lab.terrain.flags[i] = TerrainData.Flag.WALKABLE
 			lab.terrain.surface_types[i] = TerrainData.Surface.GRASS
-	a.place(Vector2i(12, 12), true)
-	b.place(Vector2i(13, 12), true)
+			lab.terrain.static_blocked[i] = 0
+	assert(a.place(Vector2i(12, 12), true), "Controlled combat player placement")
+	assert(b.place(Vector2i(13, 12), true), "Controlled combat NPC placement")
 	if a.editor != null:
 		assert(b.editor._body_index == 1)
 		assert(a.editor.select_part_by_id(&"weapon", &"spear_01"))
