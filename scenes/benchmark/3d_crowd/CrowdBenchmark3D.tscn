@@ -1,0 +1,14 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/benchmark/3d_crowd/crowd_benchmark_controller.gd" id="1_controller"]
+[ext_resource type="Script" path="res://scripts/benchmark/3d_crowd/crowd_renderer_3d.gd" id="2_renderer"]
+[ext_resource type="Script" path="res://scripts/benchmark/3d_crowd/crowd_benchmark_hud.gd" id="3_hud"]
+
+[node name="CrowdBenchmark3D" type="Node3D"]
+script = ExtResource("1_controller")
+
+[node name="CrowdRenderer3D" type="Node3D" parent="."]
+script = ExtResource("2_renderer")
+
+[node name="CrowdBenchmarkHUD" type="CanvasLayer" parent="."]
+script = ExtResource("3_hud")

@@ -1,0 +1,77 @@
+{
+  "asset_id": "HumanBase_v1",
+  "asset_type": "standard_3d_human_base",
+  "source": "project_owned_godot_array_mesh_generator",
+  "generator": "scripts/characters/human/human_base_v1.gd",
+  "scene": "assets/characters/human/v1/human_base_v1.tscn",
+  "material": "assets/characters/human/v1/human_base_v1_material.tres",
+  "variant": "standard_male_base",
+  "style": "stylized_3d_worldgoing_2d_continuation",
+  "pose": "neutral_a_pose",
+  "height_m": 1.78,
+  "measured_vertices": 1598,
+  "measured_triangles": 3088,
+  "unit_scale_m_per_godot_unit": 1.0,
+  "root_origin": "ground_center_between_feet",
+  "forward_axis": "-Z",
+  "equipment": "none_replaceable_clothing_layers_only",
+  "hair": false,
+  "helmet": false,
+  "equipment_meshes": false,
+  "render_contract": {
+    "skinned_meshes": 1,
+    "surfaces": 1,
+    "materials": 1,
+    "render_bundle_input": "single_skinned_mesh_plus_shared_material",
+    "body_region_strategy": "single_surface_vertex_range_metadata"
+  },
+  "human_rig": {
+    "contract": "HumanRig_v1",
+    "bone_count": 22,
+    "socket_names": [
+      "weapon_socket_r",
+      "shield_socket_l",
+      "head_socket",
+      "back_socket"
+    ]
+  },
+  "body_regions": [
+    "HEAD",
+    "TORSO",
+    "UPPER_ARM_L",
+    "UPPER_ARM_R",
+    "FOREARM_L",
+    "FOREARM_R",
+    "HAND_L",
+    "HAND_R",
+    "PELVIS",
+    "THIGH_L",
+    "THIGH_R",
+    "LOWER_LEG_L",
+    "LOWER_LEG_R",
+    "FOOT_L",
+    "FOOT_R"
+  ],
+  "animation_clips": [
+    "idle",
+    "walk",
+    "run",
+    "attack_sword_1h",
+    "block"
+  ],
+  "validation": {
+    "geometry": "headless_contract_test",
+    "transform": "headless_contract_test",
+    "rig": "headless_contract_test",
+    "skin": "headless_contract_test",
+    "appearance": "visual_capture_test",
+    "modular": "render_bundle_payload_contract"
+  },
+  "performance_budget": {
+    "triangles_min": 3000,
+    "triangles_max": 8000,
+    "production_mesh_instances": 1,
+    "production_surfaces": 1,
+    "production_materials": 1
+  }
+}

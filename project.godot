@@ -11,21 +11,27 @@ config_version=5
 [application]
 
 config/name="worldgoing"
-run/main_scene="res://scenes/Main.tscn"
-config/features=PackedStringArray("4.6", "Forward Plus")
+config/version="V0.3R"
+run/main_scene="res://scenes/terrain_lab/TerrainLab.tscn"
+config/features=PackedStringArray("4.7", "Forward Plus")
 config/icon="res://icon.svg"
 
 [display]
 
 window/size/viewport_width=2560
 window/size/viewport_height=1440
-window/size/window_width_override=2560
-window/size/window_height_override=1440
+window/size/window_width_override=1600
+window/size/window_height_override=900
 window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
 
 [dotnet]
 
 project/assembly_name="worldgoing"
+
+[filesystem]
+
+import/blender/enabled=false
 
 [physics]
 

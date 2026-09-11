@@ -1,0 +1,10 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/benchmark/3d_special/special_character_benchmark_controller.gd" id="1_controller"]
+[ext_resource type="Script" path="res://scripts/benchmark/3d_special/special_character_benchmark_hud.gd" id="2_hud"]
+
+[node name="SpecialCharacter3DTest" type="Node3D"]
+script = ExtResource("1_controller")
+
+[node name="SpecialCharacterHUD" type="CanvasLayer" parent="."]
+script = ExtResource("2_hud")

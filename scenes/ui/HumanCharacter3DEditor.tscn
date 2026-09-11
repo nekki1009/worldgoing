@@ -1,0 +1,8 @@
+[gd_scene format=3 uid="uid://d3c6drjyki2s5"]
+
+[ext_resource type="Script" uid="uid://cs2v6cvtbo585" path="res://scripts/ui/human_character_3d_editor.gd" id="1_editor"]
+
+[node name="HumanCharacter3DEditor" type="CanvasLayer" unique_id=1369803929]
+layer = 120
+visible = false
+script = ExtResource("1_editor")

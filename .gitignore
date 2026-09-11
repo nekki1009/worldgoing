@@ -3,4 +3,41 @@
 .godot-user-cache/
 .godot-user-data/
 .godot-temp*/
+.tools/
 /android/
+
+# Local runs, editor state and captured evidence are not release assets.
+.godot_tmp/
+.benchmarks/
+.visual_captures/
+.codex-remote-attachments/
+/Godot/
+/NVIDIA Corporation/
+/build/
+/export_templates/
+/feature_profiles/
+/script_templates/
+/text_editor_themes/
+/tmp/
+__pycache__/
+*.pyc
+*.blend[0-9]
+*.blend@
+/editor_scan_*.txt
+/scratch_stdout.txt
+/mat_out.txt
+/0.35
+
+# Keep approved authored .blend sources; exclude duplicate trial exports.
+/assets/characters/human/q35/audit_repair/
+/assets/characters/human/q35/joint_refinement/
+/assets/characters/human/q35/lining_armor_fit/
+/assets/characters/human/q35/**/candidate_*.glb
+/assets/characters/human/q35/**/candidate_*.glb.import
+/assets/characters/human/q35/**/candidate_*.json
+/assets/characters/human/q35/**/candidate_*.png
+/assets/characters/human/q35/**/candidate_*.png.import
+/assets/characters/human/q35/**/candidate_*.blend
+!/assets/characters/human/q35/hair_gendered/candidate_male.blend
+!/assets/characters/human/q35/hair_gendered/candidate_female.blend
+/assets/characters/human/q35/**/*_gray.blend

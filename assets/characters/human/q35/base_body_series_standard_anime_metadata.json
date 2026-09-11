@@ -1,0 +1,30 @@
+{
+  "asset_family": "Worldgoing Standard Anime Base Mesh",
+  "status": "preview_candidate",
+  "proportion_contract": "native_source_proportion",
+  "source_provider": "VRoid Studio legacy sample models",
+  "source_license_reference": "https://vroid.pixiv.help/hc/en-us/articles/4402614652569-Do-VRoid-Studio-s-sample-models-come-with-conditions-of-use",
+  "source_note": "HairSample_Male and HairSample_Female are listed by the official VRoid FAQ as CC0 legacy sample models. Re-check the current terms before redistribution.",
+  "source_mirror": "https://github.com/madjin/vrm-samples/tree/master/vroid/beta",
+  "variants": {
+    "male": {
+      "source_file": ".tools/standard_anime_base/HairSample_Male.vrm",
+      "generated_blend": "assets/characters/human/q35/base_body_series_male_standard_anime_body_only.blend",
+      "generated_glb": "assets/characters/human/q35/base_body_series_male_standard_anime_body_only.glb",
+      "skeleton_bones": 91,
+      "mesh_instances": 2
+    },
+    "female": {
+      "source_file": ".tools/standard_anime_base/HairSample_Female.vrm",
+      "generated_blend": "assets/characters/human/q35/base_body_series_female_standard_anime_body_only.blend",
+      "generated_glb": "assets/characters/human/q35/base_body_series_female_standard_anime_body_only.glb",
+      "skeleton_bones": 119,
+      "mesh_instances": 2
+    }
+  },
+  "worldgoing_integration": {
+    "human_rig_v1_mapping": "pending",
+    "production_asset": false,
+    "current_use": "art_direction_and_shape_preview"
+  }
+}

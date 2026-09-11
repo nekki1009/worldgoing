@@ -1,0 +1,18 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/benchmark/3d_crowd_promotion/crowd_promotion_benchmark_controller.gd" id="1_controller"]
+[ext_resource type="Script" path="res://scripts/benchmark/3d_crowd/crowd_renderer_3d.gd" id="2_renderer"]
+[ext_resource type="Script" path="res://scripts/benchmark/3d_crowd/crowd_special_actor_pool.gd" id="3_pool"]
+[ext_resource type="Script" path="res://scripts/benchmark/3d_crowd_promotion/crowd_promotion_benchmark_hud.gd" id="4_hud"]
+
+[node name="SpecialCharacterRenderBundleBenchmark3D" type="Node3D"]
+script = ExtResource("1_controller")
+
+[node name="CrowdRenderer3D" type="Node3D" parent="."]
+script = ExtResource("2_renderer")
+
+[node name="CrowdSpecialActorPool" type="Node3D" parent="."]
+script = ExtResource("3_pool")
+
+[node name="CrowdPromotionHUD" type="CanvasLayer" parent="."]
+script = ExtResource("4_hud")

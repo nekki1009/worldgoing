@@ -1,0 +1,78 @@
+{
+  "asset_name": "standard_horse_pack",
+  "scale_applied": 0.4,
+  "socket_rider": "Socket_Rider",
+  "actions": [
+    "horse_idle",
+    "horse_walk",
+    "horse_run"
+  ],
+  "parts": [
+    {
+      "slot": "mount_body",
+      "object": "Horse_Body_01",
+      "visual_id": "horse_bay"
+    },
+    {
+      "slot": "mount_eye",
+      "object": "Horse_Eye_01",
+      "visual_id": "eye_standard"
+    },
+    {
+      "slot": "mount_mane",
+      "object": "Horse_Mane_01",
+      "visual_id": "mane_dark"
+    },
+    {
+      "slot": "mount_tail",
+      "object": "Horse_Tail_01",
+      "visual_id": "tail_dark"
+    },
+    {
+      "slot": "reins",
+      "object": "Mount_Reins_01",
+      "visual_id": "reins_standard_01"
+    },
+    {
+      "slot": "saddle",
+      "object": "Mount_Saddle_01_Girth",
+      "visual_id": "saddle_standard_01"
+    },
+    {
+      "slot": "saddle",
+      "object": "Mount_Saddle_01_Pad",
+      "visual_id": "saddle_standard_01"
+    },
+    {
+      "slot": "saddle",
+      "object": "Mount_Saddle_01_Seat",
+      "visual_id": "saddle_standard_01"
+    },
+    {
+      "slot": "stirrups",
+      "object": "Mount_Stirrups_01_L",
+      "visual_id": "stirrups_standard_01"
+    },
+    {
+      "slot": "stirrups",
+      "object": "Mount_Stirrups_01_R",
+      "visual_id": "stirrups_standard_01"
+    },
+    {
+      "slot": "mount_hoof",
+      "object": "Horse_Hooves_01",
+      "visual_id": "hoof_standard"
+    },
+    {
+      "slot": "mount_detail",
+      "object": "Horse_Nostrils_01",
+      "visual_id": "nostrils_standard"
+    }
+  ],
+  "coat_materials": [
+    "Horse_Coat_Bay",
+    "Horse_Coat_Chestnut",
+    "Horse_Coat_Black",
+    "Horse_Coat_White"
+  ]
+}

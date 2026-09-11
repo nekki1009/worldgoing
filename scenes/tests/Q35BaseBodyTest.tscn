@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://bicsfhtnrcu35"]
+
+[ext_resource type="Script" uid="uid://b6bpu3hnokfq2" path="res://scripts/tests/q35_base_body_test.gd" id="1_test"]
+
+[node name="Q35BaseBodyTest" type="Node3D" unique_id=1091038536]
+script = ExtResource("1_test")

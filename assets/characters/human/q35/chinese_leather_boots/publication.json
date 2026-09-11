@@ -1,0 +1,32 @@
+[
+  {
+    "source": "C:\\Users\\Nekki\\Dropbox\\\u7af9\u5317\u793e\u5927\\(01)102-103\u5b78\u54e1\u8cc7\u6599\\share\\worldgoing\\assets\\characters\\human\\q35\\chinese_leather_boots\\chinese_leather_boots_male.blend",
+    "target": "C:\\Users\\Nekki\\Dropbox\\\u7af9\u5317\u793e\u5927\\(01)102-103\u5b78\u54e1\u8cc7\u6599\\share\\worldgoing\\assets\\characters\\human\\q35\\standard_anime_male_character_pack.blend",
+    "sha256": "8ed5a567751f5c6b5533b623cc28c9b16ab77880b0ac73799c23de1b0c247265"
+  },
+  {
+    "source": "C:\\Users\\Nekki\\Dropbox\\\u7af9\u5317\u793e\u5927\\(01)102-103\u5b78\u54e1\u8cc7\u6599\\share\\worldgoing\\assets\\characters\\human\\q35\\chinese_leather_boots\\candidate_male.glb",
+    "target": "C:\\Users\\Nekki\\Dropbox\\\u7af9\u5317\u793e\u5927\\(01)102-103\u5b78\u54e1\u8cc7\u6599\\share\\worldgoing\\assets\\characters\\human\\q35\\standard_anime_male_character_pack.glb",
+    "sha256": "274885e598e45709864f1230c31f17ca20332e49ad5ec597cb50a5dcadda611b"
+  },
+  {
+    "source": "C:\\Users\\Nekki\\Dropbox\\\u7af9\u5317\u793e\u5927\\(01)102-103\u5b78\u54e1\u8cc7\u6599\\share\\worldgoing\\assets\\characters\\human\\q35\\chinese_leather_boots\\candidate_male.json",
+    "target": "C:\\Users\\Nekki\\Dropbox\\\u7af9\u5317\u793e\u5927\\(01)102-103\u5b78\u54e1\u8cc7\u6599\\share\\worldgoing\\assets\\characters\\human\\q35\\standard_anime_male_character_pack.json",
+    "sha256": "ff0c9b1f8638ed9869a796bf5e3a1d1769c347e13438a6e652c546e52337805b"
+  },
+  {
+    "source": "C:\\Users\\Nekki\\Dropbox\\\u7af9\u5317\u793e\u5927\\(01)102-103\u5b78\u54e1\u8cc7\u6599\\share\\worldgoing\\assets\\characters\\human\\q35\\chinese_leather_boots\\chinese_leather_boots_female.blend",
+    "target": "C:\\Users\\Nekki\\Dropbox\\\u7af9\u5317\u793e\u5927\\(01)102-103\u5b78\u54e1\u8cc7\u6599\\share\\worldgoing\\assets\\characters\\human\\q35\\standard_anime_female_character_pack.blend",
+    "sha256": "d80de2dd79701f01c46b802451a9b1b63bcda13f90f27b356ca451e582858fc5"
+  },
+  {
+    "source": "C:\\Users\\Nekki\\Dropbox\\\u7af9\u5317\u793e\u5927\\(01)102-103\u5b78\u54e1\u8cc7\u6599\\share\\worldgoing\\assets\\characters\\human\\q35\\chinese_leather_boots\\candidate_female.glb",
+    "target": "C:\\Users\\Nekki\\Dropbox\\\u7af9\u5317\u793e\u5927\\(01)102-103\u5b78\u54e1\u8cc7\u6599\\share\\worldgoing\\assets\\characters\\human\\q35\\standard_anime_female_character_pack.glb",
+    "sha256": "bf6a9d0b58f334b8a0d1173d1fcc9047ff772db33c4973daa4a0392eb955fd7f"
+  },
+  {
+    "source": "C:\\Users\\Nekki\\Dropbox\\\u7af9\u5317\u793e\u5927\\(01)102-103\u5b78\u54e1\u8cc7\u6599\\share\\worldgoing\\assets\\characters\\human\\q35\\chinese_leather_boots\\candidate_female.json",
+    "target": "C:\\Users\\Nekki\\Dropbox\\\u7af9\u5317\u793e\u5927\\(01)102-103\u5b78\u54e1\u8cc7\u6599\\share\\worldgoing\\assets\\characters\\human\\q35\\standard_anime_female_character_pack.json",
+    "sha256": "1da826e4cbd29488497e5df5bf6d21347c6fdb298146e3856aa5ef23c884f735"
+  }
+]

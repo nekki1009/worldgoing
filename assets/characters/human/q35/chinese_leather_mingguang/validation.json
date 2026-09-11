@@ -1,0 +1,34 @@
+[
+  {
+    "sex": "male",
+    "source": "C:\\Users\\Nekki\\Dropbox\\竹北社大\\(01)102-103學員資料\\share\\worldgoing\\assets\\characters\\human\\q35\\standard_anime_male_character_pack.glb",
+    "new_parts": {
+      "Armor_Chinese_Leather_01_": {
+        "meshes": 46,
+        "triangles": 50266
+      },
+      "Helmet_Mingguang_01_": {
+        "meshes": 22,
+        "triangles": 38480
+      }
+    },
+    "raw_clips": 43,
+    "unrelated_failures": []
+  },
+  {
+    "sex": "female",
+    "source": "C:\\Users\\Nekki\\Dropbox\\竹北社大\\(01)102-103學員資料\\share\\worldgoing\\assets\\characters\\human\\q35\\standard_anime_female_character_pack.glb",
+    "new_parts": {
+      "Armor_Chinese_Leather_01_": {
+        "meshes": 46,
+        "triangles": 50266
+      },
+      "Helmet_Mingguang_01_": {
+        "meshes": 22,
+        "triangles": 38480
+      }
+    },
+    "raw_clips": 41,
+    "unrelated_failures": []
+  }
+]

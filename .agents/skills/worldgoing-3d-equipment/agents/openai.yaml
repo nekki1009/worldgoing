@@ -1,0 +1,6 @@
+interface:
+  display_name: "Worldgoing 3D 裝備建模與接入"
+  short_description: "依參考圖建模、綁定骨架、接入男女角色編輯器並逐圖驗收外觀與動畫"
+  default_prompt: "使用 $worldgoing-3d-equipment，依提供的裝備參考圖製作真實 3D 部件，接入 Worldgoing 角色編輯器並交付已檢查的預覽。"
+policy:
+  allow_implicit_invocation: true
