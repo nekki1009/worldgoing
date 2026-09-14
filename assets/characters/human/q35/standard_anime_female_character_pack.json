@@ -130,7 +130,11 @@
       "Helmet_Steel_01_Lining",
       "Helmet_Steel_01_Plume",
       "Helmet_Steel_01_SideMedallions",
-      "Helmet_Steel_01_Strap"
+      "Helmet_Steel_01_Strap",
+      "Helmet_Western_Iron_01_NeckTail",
+      "Helmet_Western_Iron_01_NeckTail_RolledEdge",
+      "Helmet_Western_Iron_01_Skull",
+      "Helmet_Western_Iron_01_Skull_RolledEdge"
     ],
     "outfit": [
       "Outfit_Chinese_Lining_01_BackCollar",
@@ -306,7 +310,55 @@
       "Armor_Mingguang_01_Skirt_Side_R",
       "Armor_Mingguang_01_UnderSleeves",
       "Armor_Mingguang_01_UnderTunic",
-      "Armor_Mingguang_01_Underlayer_Pants"
+      "Armor_Mingguang_01_Underlayer_Pants",
+      "Armor_Western_Iron_01_Couter_L",
+      "Armor_Western_Iron_01_Couter_L_RolledEdge",
+      "Armor_Western_Iron_01_Couter_R",
+      "Armor_Western_Iron_01_Couter_R_RolledEdge",
+      "Armor_Western_Iron_01_Cuirass",
+      "Armor_Western_Iron_01_Cuirass_RolledEdge",
+      "Armor_Western_Iron_01_Cuisse_L",
+      "Armor_Western_Iron_01_Cuisse_L_RolledEdge",
+      "Armor_Western_Iron_01_Cuisse_R",
+      "Armor_Western_Iron_01_Cuisse_R_RolledEdge",
+      "Armor_Western_Iron_01_Fauld_0",
+      "Armor_Western_Iron_01_Fauld_0_RolledEdge",
+      "Armor_Western_Iron_01_Fauld_1",
+      "Armor_Western_Iron_01_Fauld_1_RolledEdge",
+      "Armor_Western_Iron_01_Fauld_2",
+      "Armor_Western_Iron_01_Fauld_2_RolledEdge",
+      "Armor_Western_Iron_01_Gorget",
+      "Armor_Western_Iron_01_Gorget_RolledEdge",
+      "Armor_Western_Iron_01_Pauldron_0_L",
+      "Armor_Western_Iron_01_Pauldron_0_L_RolledEdge",
+      "Armor_Western_Iron_01_Pauldron_0_R",
+      "Armor_Western_Iron_01_Pauldron_0_R_RolledEdge",
+      "Armor_Western_Iron_01_Pauldron_1_L",
+      "Armor_Western_Iron_01_Pauldron_1_L_RolledEdge",
+      "Armor_Western_Iron_01_Pauldron_1_R",
+      "Armor_Western_Iron_01_Pauldron_1_R_RolledEdge",
+      "Armor_Western_Iron_01_Pauldron_2_L",
+      "Armor_Western_Iron_01_Pauldron_2_L_RolledEdge",
+      "Armor_Western_Iron_01_Pauldron_2_R",
+      "Armor_Western_Iron_01_Pauldron_2_R_RolledEdge",
+      "Armor_Western_Iron_01_Poleyn_L",
+      "Armor_Western_Iron_01_Poleyn_L_RolledEdge",
+      "Armor_Western_Iron_01_Poleyn_R",
+      "Armor_Western_Iron_01_Poleyn_R_RolledEdge",
+      "Armor_Western_Iron_01_Rerebrace_L",
+      "Armor_Western_Iron_01_Rerebrace_L_RolledEdge",
+      "Armor_Western_Iron_01_Rerebrace_R",
+      "Armor_Western_Iron_01_Rerebrace_R_RolledEdge",
+      "Armor_Western_Iron_01_Tasset_L",
+      "Armor_Western_Iron_01_Tasset_L_RolledEdge",
+      "Armor_Western_Iron_01_Tasset_R",
+      "Armor_Western_Iron_01_Tasset_R_RolledEdge",
+      "Armor_Western_Iron_01_UnderPants",
+      "Armor_Western_Iron_01_UnderShirt",
+      "Armor_Western_Iron_01_Vambrace_L",
+      "Armor_Western_Iron_01_Vambrace_L_RolledEdge",
+      "Armor_Western_Iron_01_Vambrace_R",
+      "Armor_Western_Iron_01_Vambrace_R_RolledEdge"
     ],
     "cape": [
       "Cape_Chinese_01_Clasp_L",
@@ -370,7 +422,13 @@
       "Weapon_Spear_01_Holstered_Shaft",
       "Weapon_Spear_01_Holstered_Tassel",
       "Weapon_Spear_01_Shaft",
-      "Weapon_Spear_01_Tassel"
+      "Weapon_Spear_01_Tassel",
+      "Weapon_WoodAxe_01_Haft",
+      "Weapon_WoodAxe_01_Grip",
+      "Weapon_WoodAxe_01_Grip_Wrap",
+      "Weapon_WoodAxe_01_Blade",
+      "Weapon_WoodAxe_01_Holstered_Haft",
+      "Weapon_WoodAxe_01_Holstered_Blade"
     ],
     "shield": [
       "Shield_Heater_01_Border",
@@ -472,7 +530,43 @@
       "Boots_Mingguang_01_Straps_L",
       "Boots_Mingguang_01_Straps_R",
       "Boots_Mingguang_01_ToeCap_L",
-      "Boots_Mingguang_01_ToeCap_R"
+      "Boots_Mingguang_01_ToeCap_R",
+      "Boots_Western_Iron_01_AnklePlate_L",
+      "Boots_Western_Iron_01_AnklePlate_L_RolledEdge",
+      "Boots_Western_Iron_01_AnklePlate_R",
+      "Boots_Western_Iron_01_AnklePlate_R_RolledEdge",
+      "Boots_Western_Iron_01_Greave_L",
+      "Boots_Western_Iron_01_Greave_L_RolledEdge",
+      "Boots_Western_Iron_01_Greave_R",
+      "Boots_Western_Iron_01_Greave_R_RolledEdge",
+      "Boots_Western_Iron_01_InnerCuff_L",
+      "Boots_Western_Iron_01_InnerCuff_R",
+      "Boots_Western_Iron_01_InnerHeel_L",
+      "Boots_Western_Iron_01_InnerHeel_R",
+      "Boots_Western_Iron_01_InnerMain_L",
+      "Boots_Western_Iron_01_InnerMain_R",
+      "Boots_Western_Iron_01_InnerSole_L",
+      "Boots_Western_Iron_01_InnerSole_R",
+      "Boots_Western_Iron_01_Sabaton_0_L",
+      "Boots_Western_Iron_01_Sabaton_0_L_RolledEdge",
+      "Boots_Western_Iron_01_Sabaton_0_R",
+      "Boots_Western_Iron_01_Sabaton_0_R_RolledEdge",
+      "Boots_Western_Iron_01_Sabaton_1_L",
+      "Boots_Western_Iron_01_Sabaton_1_L_RolledEdge",
+      "Boots_Western_Iron_01_Sabaton_1_R",
+      "Boots_Western_Iron_01_Sabaton_1_R_RolledEdge",
+      "Boots_Western_Iron_01_Sabaton_2_L",
+      "Boots_Western_Iron_01_Sabaton_2_L_RolledEdge",
+      "Boots_Western_Iron_01_Sabaton_2_R",
+      "Boots_Western_Iron_01_Sabaton_2_R_RolledEdge",
+      "Boots_Western_Iron_01_Sabaton_3_L",
+      "Boots_Western_Iron_01_Sabaton_3_L_RolledEdge",
+      "Boots_Western_Iron_01_Sabaton_3_R",
+      "Boots_Western_Iron_01_Sabaton_3_R_RolledEdge",
+      "Boots_Western_Iron_01_Sabaton_4_L",
+      "Boots_Western_Iron_01_Sabaton_4_L_RolledEdge",
+      "Boots_Western_Iron_01_Sabaton_4_R",
+      "Boots_Western_Iron_01_Sabaton_4_R_RolledEdge"
     ]
   },
   "animations": [
@@ -512,5 +606,103 @@
     "hair_female_06",
     "hair_female_07",
     "hair_female_08"
-  ]
+  ],
+  "site_combat_actions": [
+    "guard_raise",
+    "guard_lower",
+    "guard_break",
+    "unconscious",
+    "get_up",
+    "rescue",
+    "reload_bow",
+    "reload_crossbow",
+    "guard_weapon",
+    "guard_weapon_raise",
+    "guard_weapon_lower",
+    "guard_weapon_break",
+    "guard_polearm",
+    "guard_polearm_raise",
+    "guard_polearm_lower",
+    "guard_polearm_break"
+  ],
+  "mingguang_low_pose": {
+    "revision": 2,
+    "clips": [
+      "down",
+      "unconscious",
+      "get_up",
+      "rescue"
+    ],
+    "parts": [
+      "PleatedSkirt",
+      "Pteruges_Front",
+      "Pteruges_Silver",
+      "Pteruges_Studs",
+      "Skirt_Rear",
+      "Skirt_Rear_Rim",
+      "Skirt_Side_L",
+      "Skirt_Rim_L",
+      "Skirt_Side_R",
+      "Skirt_Rim_R"
+    ],
+    "fps": 24
+  },
+  "weapon_refresh": {
+    "date": "2026-09-13",
+    "stage": "final",
+    "reference": "output/weapon_refresh_20260913/reference/battle_axe_reference.png",
+    "parts": [
+      "Haft",
+      "Grip",
+      "Grip_Wrap",
+      "Blade",
+      "Holstered_Haft",
+      "Holstered_Blade"
+    ],
+    "bones": {
+      "attack_spear": [
+        "J_Bip_L_UpperArm",
+        "J_Bip_L_LowerArm",
+        "J_Bip_L_Hand",
+        "J_Bip_R_UpperArm",
+        "J_Bip_R_LowerArm",
+        "J_Bip_R_Hand"
+      ],
+      "attack_axe": [
+        "J_Bip_L_UpperArm",
+        "J_Bip_L_LowerArm",
+        "J_Bip_L_Hand"
+      ]
+    },
+    "preserved_logging_axe": {
+      "id": "wood_axe_01",
+      "label": "伐木斧",
+      "prefix": "Weapon_WoodAxe_01",
+      "source": "baseline original axe; unchanged geometry, materials and skin"
+    }
+  },
+  "western_plate": {
+    "revision": 1,
+    "material": "iron",
+    "source": "res://assets/characters/human/q35/western_plate/western_plate_female.blend",
+    "reference": "res://output/western_plate_20260913/reference/western_iron_reference.png"
+  },
+  "crossbow_idle_stance": {
+    "date": "2026-09-14",
+    "clip": "attack_crossbow",
+    "reference": "idle first authored frame",
+    "bones": [
+      "J_Bip_C_Hips",
+      "J_Bip_L_UpperLeg",
+      "J_Bip_L_LowerLeg",
+      "J_Bip_L_Foot",
+      "J_Bip_L_ToeBase",
+      "J_Bip_R_UpperLeg",
+      "J_Bip_R_LowerLeg",
+      "J_Bip_R_Foot",
+      "J_Bip_R_ToeBase",
+      "J_Bip_C_Spine"
+    ],
+    "upper_body": "Original chest/arms/weapon channels; spine compensates pelvis transform"
+  }
 }

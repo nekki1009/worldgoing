@@ -11,6 +11,7 @@ var _follow_target: TerrainTestCharacter
 var _path: Array[Vector2i] = []
 
 func initialize_visual() -> void:
+	visual_state.body_index = 1
 	super.initialize_visual()
 	if editor != null:
 		editor._on_body_selected(1)
@@ -26,24 +27,6 @@ func set_data(value: TerrainData) -> void:
 	if not data.is_walkable(terrain_cell):
 		place(data.spawn_cell, true)
 	queue_redraw()
-
-func place(cell: Vector2i, instant: bool = false, duration: float = MOVE_DURATION) -> bool:
-	if not can_enter_cell(cell):
-		return false
-	movement_from_cell = cell if instant else terrain_cell
-	terrain_cell = cell
-	var destination := (Vector2(cell) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
-	if _movement_tween != null and _movement_tween.is_valid():
-		_movement_tween.kill()
-		_movement_tween = null
-	if instant:
-		position = destination
-	else:
-		_movement_tween = create_tween()
-		_movement_tween.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-		_movement_tween.tween_property(self, "position", destination, duration)
-	queue_redraw()
-	return true
 
 func issue_command(command_id: int, requested_target: Vector2i = Vector2i(-1, -1), follow_target: TerrainTestCharacter = null) -> bool:
 	if data == null or not data.is_walkable(terrain_cell):
@@ -90,11 +73,18 @@ func issue_command(command_id: int, requested_target: Vector2i = Vector2i(-1, -1
 func _process(delta: float) -> void:
 	super._process(delta)
 	queue_redraw()
-	if hp <= 0 or action_time > 0.0 or guarding:
+	if combat_driven_by_lab:
+		return
+	advance_navigation()
+
+func advance_navigation() -> void:
+	if is_inside_tree() and get_tree().paused:
+		return
+	if not can_act() or action_time > 0.0 or guarding or _rescue_left > 0.0:
 		return
 	if data == null or not data.is_walkable(terrain_cell):
 		return
-	if _movement_tween != null and _movement_tween.is_valid():
+	if is_moving():
 		return
 	if command == Command.FOLLOW_PLAYER:
 		if _follow_target == null or not is_instance_valid(_follow_target):
@@ -111,7 +101,7 @@ func _process(delta: float) -> void:
 			queue_redraw()
 		return
 	var next_cell: Vector2i = _path[0]
-	if is_instance_valid(opponent) and next_cell == opponent.terrain_cell:
+	if is_instance_valid(opponent) and opponent.occupies_cell(next_cell):
 		return
 	if not data.can_step(terrain_cell, next_cell):
 		_rebuild_path(target_cell)
@@ -130,6 +120,25 @@ func _rebuild_path(goal: Vector2i) -> void:
 	# Following a player keeps its occupied goal; work routes avoid live occupants.
 	var blocked := Callable() if command == Command.FOLLOW_PLAYER else func(cell: Vector2i) -> bool: return not can_enter_cell(cell)
 	_path = data.path_between(terrain_cell, goal, blocked)
+
+func capture_state() -> Dictionary:
+	var state := super.capture_state()
+	var route: Array = []
+	for cell: Vector2i in _path:
+		route.append([cell.x, cell.y])
+	state["navigation"] = {"command": command, "target": [target_cell.x, target_cell.y], "path": route, "status": command_status}
+	return state
+
+func restore_state(state: Dictionary) -> void:
+	super.restore_state(state)
+	var navigation: Dictionary = state.navigation
+	command = int(navigation.command)
+	target_cell = Vector2i(int(navigation.target[0]), int(navigation.target[1]))
+	command_status = str(navigation.status)
+	_follow_target = opponent if command == Command.FOLLOW_PLAYER else null
+	_path.clear()
+	for cell: Array in navigation.path:
+		_path.append(Vector2i(int(cell[0]), int(cell[1])))
 
 func _draw() -> void:
 	if player_sprite != null:

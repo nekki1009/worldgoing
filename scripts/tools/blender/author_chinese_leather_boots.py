@@ -132,6 +132,7 @@ def loft_boot(fit,side,sign,top,leather,dark,solemat):
 def save(sex):
     temporary=ROOT/f'.godot-temp/boots_{sex}_{uuid.uuid4().hex}.blend'
     bpy.ops.wm.save_as_mainfile(filepath=str(temporary));shutil.copy2(temporary,WORK/f'chinese_leather_boots_{sex}.blend')
+    temporary.unlink()
 
 def preview(fit,parts):
     scene=bpy.context.scene;arm=fit.arm

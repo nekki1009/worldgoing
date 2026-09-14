@@ -36,6 +36,8 @@ var static_blocked := PackedByteArray()
 var feature_at := PackedInt32Array()
 var navigation_revision := 0
 var environment_revision := 0
+var ground_loot_at: Dictionary = {} # Rebuilt from site.ground_loot; never a second item owner.
+var ground_loot_dirty_rows: Dictionary = {} # Event-only presentation invalidation, never saved.
 
 func allocate(grid_size: Vector2i) -> void:
 	size = grid_size
@@ -60,9 +62,9 @@ func is_terrain_walkable(terrain_cell: Vector2i) -> bool:
 	return contains(terrain_cell) and (flags[index(terrain_cell)] & Flag.WALKABLE) != 0
 
 func can_step(from: Vector2i, to: Vector2i) -> bool:
-	if not is_walkable(from) or not is_walkable(to):
-		return false
-	return can_terrain_step(from, to)
+	# The terrain predicate already checks both cells' bounds/walkable flags.
+	return can_terrain_step(from, to) and (static_blocked.is_empty() \
+		or (static_blocked[index(from)] == 0 and static_blocked[index(to)] == 0))
 
 func can_terrain_step(from: Vector2i, to: Vector2i) -> bool:
 	if not is_terrain_walkable(from) or not is_terrain_walkable(to):

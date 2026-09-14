@@ -22,6 +22,7 @@ from make_chinese_iron_boots import make_chinese_iron_boots, make_mingguang_boot
 from load_authored_chinese_leather_boots import load_chinese_leather_boots
 from make_chinese_cape import make_chinese_cape, bind_cape_action_tracks
 from load_authored_chinese_gear import load_chinese_gear
+from load_authored_western_plate import load_western_iron
 from load_authored_chinese_leather_helmet import load_chinese_leather_helmet
 from load_authored_chinese_lining import load_chinese_lining
 
@@ -3340,6 +3341,8 @@ def prepare_attack_crossbow_action(armature: bpy.types.Object) -> bpy.types.Acti
         pose_bone(armature, "J_Bip_R_LowerArm").rotation_euler = rf
         pose_bone(armature, "J_Bip_R_Hand").rotation_euler = rh
         key_animation_frame(armature, "attack_crossbow", f)
+    from fix_crossbow_idle_stance import apply_crossbow_idle_stance
+    apply_crossbow_idle_stance(armature)
     action.use_fake_user = True
     return action
 
@@ -4010,15 +4013,16 @@ def main() -> None:
     iron_helmet_parts = make_chinese_iron_helmet(armature, is_female=True, create_rigid_fn=create_bone_rigid_component)
     steel_helmet_parts = make_chinese_steel_helmet(armature, is_female=True, create_rigid_fn=create_bone_rigid_component)
     chinese_leather_parts, mingguang_helmet_parts = load_chinese_gear(armature, is_female=True)
-    all_helmet_parts = helmet_parts + iron_helmet_parts + steel_helmet_parts + mingguang_helmet_parts + load_chinese_leather_helmet(armature, is_female=True)
+    western_armor_parts, western_helmet_parts, western_boots_parts = load_western_iron(armature, is_female=True)
+    all_helmet_parts = helmet_parts + iron_helmet_parts + steel_helmet_parts + mingguang_helmet_parts + load_chinese_leather_helmet(armature, is_female=True) + western_helmet_parts
 
     iron_armor_parts = make_chinese_iron_armor(armature, source_raw_body=body_skin, is_female=True, create_rigid_fn=create_bone_rigid_component)
     mingguang_armor_parts = make_mingguang_armor(armature, source_raw_body=body_skin, is_female=True, create_rigid_fn=create_bone_rigid_component)
-    all_armor_parts = armor_parts + iron_armor_parts + mingguang_armor_parts + chinese_leather_parts
+    all_armor_parts = armor_parts + iron_armor_parts + mingguang_armor_parts + chinese_leather_parts + western_armor_parts
 
     iron_boots_parts = make_chinese_iron_boots(armature, source_raw_body=body_skin, is_female=True, create_rigid_fn=create_bone_rigid_component)
     mingguang_boots_parts = make_mingguang_boots(armature, source_raw_body=body_skin, is_female=True, create_rigid_fn=create_bone_rigid_component)
-    all_boots_parts = boots_parts + iron_boots_parts + mingguang_boots_parts + load_chinese_leather_boots(armature,is_female=True)
+    all_boots_parts = boots_parts + iron_boots_parts + mingguang_boots_parts + load_chinese_leather_boots(armature,is_female=True) + western_boots_parts
 
     all_weapon_parts = longsword_parts + spear_parts + axe_parts + hammer_parts + dagger_parts + bow_parts + crossbow_parts
 

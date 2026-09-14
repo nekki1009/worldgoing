@@ -7,6 +7,14 @@ signal closed
 
 const MALE_MODEL_PATH: String = "res://assets/characters/human/q35/standard_anime_male_character_pack.glb"
 const FEMALE_MODEL_PATH: String = "res://assets/characters/human/q35/standard_anime_female_character_pack.glb"
+const COMBAT_PROPS_PATH := "res://assets/characters/human/q35/combat/combat_props.glb"
+const CombatTimings = preload("res://scripts/terrain_lab/character_combat_timings.gd")
+var combat_props: Node3D
+var combat_ammo_count := 3
+var combat_ammo_available := true
+var lazy_combat_visual_bones_enabled := true # A/B false keeps full-force; native getters update required bone chains.
+var _rigid_scabbards: Array[Dictionary] = []
+var _combat_cloth: Array[Dictionary] = []
 const HAIR_OPTIONS := [
 	[
 		{"id": &"hair_male_01", "label": "男 01 / 層次短髮", "prefixes": ["Hair_Short_01"]},
@@ -50,6 +58,7 @@ const PART_SLOTS := [
 		{"id": &"helmet_steel_01", "label": "Chinese Steel Helmet 01 / 中國風鋼盔", "prefixes": ["Helmet_Steel_01"]},
 		{"id": &"helmet_mingguang_01", "label": "Mingguang Helmet 01 / 明光盔", "prefixes": ["Helmet_Mingguang_01"]},
 		{"id": &"helmet_chinese_leather_01", "label": "Chinese Leather Helmet 01 / 中式皮盔", "prefixes": ["Helmet_Chinese_Leather_01"]},
+		{"id": &"helmet_western_iron_01", "label": "Western Iron Helmet 01 / 西式鐵盔", "prefixes": ["Helmet_Western_Iron_01"]},
 		{"id": &"none", "label": "None / 無", "prefixes": []},
 	]},
 	{"id": &"outfit", "label": "Outfit / 內衣", "options": [
@@ -62,6 +71,7 @@ const PART_SLOTS := [
 		{"id": &"armor_iron_01", "label": "Chinese Iron Armor 01 / 中式鐵甲", "prefixes": ["Armor_Iron_01"]},
 		{"id": &"armor_mingguang_01", "label": "Mingguang Armor 01 / 明光鎧", "prefixes": ["Armor_Mingguang_01"]},
 		{"id": &"armor_chinese_leather_01", "label": "Chinese Leather Armor 01 / 中式皮甲", "prefixes": ["Armor_Chinese_Leather_01"]},
+		{"id": &"armor_western_iron_01", "label": "Western Iron Armor 01 / 西式鐵甲", "prefixes": ["Armor_Western_Iron_01"]},
 		{"id": &"none", "label": "None / 無", "prefixes": []},
 	]},
 	{"id": &"cape", "label": "Cape / 披風", "options": [
@@ -73,6 +83,7 @@ const PART_SLOTS := [
 		{"id": &"longsword_01", "label": "Longsword 01 / 長劍", "prefixes": ["Weapon_Longsword_01"]},
 		{"id": &"spear_01", "label": "Spear 01 / 長槍", "prefixes": ["Weapon_Spear_01"]},
 		{"id": &"axe_01", "label": "Axe 01 / 戰斧", "prefixes": ["Weapon_Axe_01"]},
+		{"id": &"wood_axe_01", "label": "Wood Axe 01 / 伐木斧", "prefixes": ["Weapon_WoodAxe_01"]},
 		{"id": &"hammer_01", "label": "Hammer 01 / 戰鎚", "prefixes": ["Weapon_Hammer_01"]},
 		{"id": &"dagger_01", "label": "Dagger 01 / 匕首", "prefixes": ["Weapon_Dagger_01"]},
 		{"id": &"bow_01", "label": "Bow 01 / 長弓", "prefixes": ["Weapon_Bow_01"]},
@@ -88,6 +99,7 @@ const PART_SLOTS := [
 		{"id": &"boots_chinese_leather_01", "label": "Chinese Leather Boots 01 / 中式皮靴", "prefixes": ["Boots_Chinese_Leather_01"]},
 		{"id": &"boots_iron_01", "label": "Chinese Iron Boots 01 / 中式鐵靴", "prefixes": ["Boots_Iron_01"]},
 		{"id": &"boots_mingguang_01", "label": "Mingguang War Boots 01 / 明光鎧戰靴", "prefixes": ["Boots_Mingguang_01"]},
+		{"id": &"boots_western_iron_01", "label": "Western Iron Boots 01 / 西式鐵靴", "prefixes": ["Boots_Western_Iron_01"]},
 		{"id": &"none", "label": "None / 無", "prefixes": []},
 	]},
 ]
@@ -97,6 +109,22 @@ const ANIMATION_SLOTS := [
 	{"id": &"walk", "label": "Walk / 走路", "state": "connected"},
 	{"id": &"run", "label": "Run / 跑步", "state": "connected"},
 	{"id": &"guard", "label": "Guard / 防禦", "state": "connected"},
+	{"id": &"guard_raise", "label": "Raise Guard / 舉盾", "state": "connected"},
+	{"id": &"guard_lower", "label": "Lower Guard / 放盾", "state": "connected"},
+	{"id": &"guard_break", "label": "Guard Break / 破防", "state": "connected"},
+	{"id": &"guard_weapon", "label": "Weapon Guard / 無盾持武器防禦", "state": "connected"},
+	{"id": &"guard_weapon_raise", "label": "Weapon Guard Raise / 持武器進入防禦", "state": "connected"},
+	{"id": &"guard_weapon_lower", "label": "Weapon Guard Lower / 持武器解除防禦", "state": "connected"},
+	{"id": &"guard_weapon_break", "label": "Weapon Guard Break / 持武器破防", "state": "connected"},
+	{"id": &"guard_polearm", "label": "Polearm Guard / 無盾長槍防禦", "state": "connected"},
+	{"id": &"guard_polearm_raise", "label": "Polearm Guard Raise / 長槍進入防禦", "state": "connected"},
+	{"id": &"guard_polearm_lower", "label": "Polearm Guard Lower / 長槍解除防禦", "state": "connected"},
+	{"id": &"guard_polearm_break", "label": "Polearm Guard Break / 長槍破防", "state": "connected"},
+	{"id": &"unconscious", "label": "Unconscious / 昏迷維持", "state": "connected"},
+	{"id": &"get_up", "label": "Get Up / 起身", "state": "connected"},
+	{"id": &"rescue", "label": "Rescue / 現場救助", "state": "connected"},
+	{"id": &"reload_bow", "label": "Nock Arrow / 取箭搭弦", "state": "connected"},
+	{"id": &"reload_crossbow", "label": "Reload Crossbow / 裝填弩矢", "state": "connected"},
 	{"id": &"hit", "label": "Hit / 受擊 (正面)", "state": "connected"},
 	{"id": &"hit_back", "label": "Hit Back / 背後受擊", "state": "connected"},
 	{"id": &"knockback", "label": "Knockback / 擊退", "state": "connected"},
@@ -121,6 +149,7 @@ const WEAPON_ATTACK_MAP := {
 	&"longsword_01": &"walk_slash",
 	&"spear_01": &"attack_spear",
 	&"axe_01": &"attack_axe",
+	&"wood_axe_01": &"attack_axe",
 	&"hammer_01": &"attack_hammer",
 	&"dagger_01": &"attack_dagger",
 	&"bow_01": &"attack_bow",
@@ -136,10 +165,11 @@ const BODY_MODELS := [
 	{"id": &"female_standard_anime", "label": "Female / 標準動漫女（全套模組化裝備）", "path": FEMALE_MODEL_PATH},
 ]
 const EQUIPMENT_PREFIXES := [
+	"Armor_Western_Iron_01", "Helmet_Western_Iron_01", "Boots_Western_Iron_01",
 	"Armor_Chinese_Leather_01", "Helmet_Mingguang_01",
 	"Helmet_Chinese_Leather_01", "Outfit_Chinese_Lining_01",
 	"Outfit_Underlayer_01", "Armor_Light_Leather_01", "Armor_Iron_01", "Armor_Mingguang_01", "Cape_Travel_01", "Cape_Chinese_01", "Helmet_Leather_01", "Helmet_Iron_01", "Helmet_Steel_01",
-	"Weapon_Longsword_01", "Weapon_Spear_01", "Weapon_Axe_01", "Weapon_Hammer_01",
+	"Weapon_Longsword_01", "Weapon_Spear_01", "Weapon_Axe_01", "Weapon_WoodAxe_01", "Weapon_Hammer_01",
 	"Weapon_Dagger_01", "Weapon_Bow_01", "Weapon_Crossbow_01",
 	"Shield_Heater_01", "Boots_Leather_01", "Boots_Iron_01", "Boots_Mingguang_01", "Boots_Chinese_Leather_01",
 ]
@@ -241,6 +271,7 @@ var editor_root: Control
 var preview_viewport: SubViewport
 ## Optional host for sharing the live character with a 2D map.
 var preview_host: Node
+var use_imported_model := false # Fixed runtime query only; authoring keeps raw GLB reloads.
 var visual_state: CharacterVisualState = CharacterVisualState.new()
 var combat_ready: bool = false
 var preview_container: SubViewportContainer
@@ -276,6 +307,8 @@ var model_label: Label
 var animation_state_label: Label
 var parts_footer: Label
 var part_options: Dictionary = {}
+var part_selection_request: Callable # Optional gameplay UI authority; returns the currently permitted asset.
+var body_selection_request: Callable # Optional gameplay UI authority; returns the original body index.
 
 var mount_horse: MountHorse3D
 var mount_toggle: CheckBox
@@ -300,6 +333,7 @@ var _available_animation_ids: Dictionary = {}
 var _initialized: bool = false
 var _preview_yaw: float = 0.0
 var _preview_pitch: float = 0.0
+var exact_preview_rotation_guard_enabled := true # Exact actual pivot state; false retains every original setter.
 var _dragging_preview: bool = false
 var _panning_preview: bool = false
 var _preview_zoom: float = 1.0
@@ -311,6 +345,12 @@ const PREVIEW_ZOOM_STEP := 1.1
 var _equipment_outline_material: ShaderMaterial
 var _equipment_toon_shader: Shader
 var _hair_mask_shader: Shader
+var hair_node_lookup_cache_enabled := true # Same-editor A/B; only the current root/hair node list.
+var hair_node_lookup_profile_enabled := false
+var hair_node_lookup_profile := {"calls": 0, "hits": 0, "searches": 0, "lookup_usec": 0}
+var _hair_nodes_model_id := 0
+var _hair_nodes_id: StringName = &""
+var _hair_nodes: Array[MeshInstance3D] = []
 
 func _ready() -> void:
 	_build_ui()
@@ -353,6 +393,11 @@ func _normalize_animation_id(animation_id: StringName) -> StringName:
 		return &"attack_unarmed"
 	if animation_id == &"attack_sword":
 		return &"walk_slash"
+	if animation_id in [&"guard", &"guard_raise", &"guard_lower", &"guard_break"]:
+		var shield := part_options.get(&"shield") as OptionButton
+		var weapon := _selected_weapon_id()
+		if shield != null and shield.selected >= 0 and str(shield.get_item_metadata(shield.selected)) == "none" and weapon in [&"longsword_01", &"spear_01", &"axe_01", &"wood_axe_01", &"hammer_01", &"dagger_01"]:
+			return StringName(("guard_polearm" if weapon == &"spear_01" else "guard_weapon") + str(animation_id).trim_prefix("guard"))
 	return animation_id
 
 func _selected_weapon_id() -> StringName:
@@ -427,6 +472,68 @@ func select_part_by_id(part_id: StringName, option_id: StringName) -> bool:
 		return true
 	return false
 
+static func default_appearance(body_index: int = 0) -> Dictionary:
+	var parts := {}
+	for slot: Dictionary in PART_SLOTS:
+		var options: Array = HAIR_OPTIONS[body_index] if slot.id == &"hair" else slot.options
+		parts[str(slot.id)] = str(options[0].id)
+	return {"body": body_index, "parts": parts, "hair_mask": "auto", "hair_dye": "9b775dff", "hair_dyed": false,
+		"mounted": false, "coat": "bay", "tack": true}
+
+static func valid_appearance(value: Variant) -> bool:
+	if not value is Dictionary or not value.get("parts") is Dictionary:
+		return false
+	if not (value.get("body") is int or value.get("body") is float) or float(value.body) not in [0.0, 1.0]:
+		return false
+	if not value.get("mounted") is bool or not value.get("tack") is bool or not value.get("hair_dyed") is bool:
+		return false
+	if value.get("hair_mask") not in ["auto", "hide", "off"] or value.get("coat") not in ["bay", "black", "chestnut", "white"]:
+		return false
+	if not value.get("hair_dye") is String or str(value.hair_dye).length() != 8 or not str(value.hair_dye).is_valid_hex_number(false):
+		return false
+	if value.parts.size() != PART_SLOTS.size():
+		return false
+	for slot: Dictionary in PART_SLOTS:
+		var options: Array = HAIR_OPTIONS[int(value.body)] if slot.id == &"hair" else slot.options
+		var found := false
+		for option: Dictionary in options:
+			if value.parts.get(str(slot.id)) == str(option.id):
+				found = true
+				break
+		if not found:
+			return false
+	return true
+
+func capture_appearance() -> Dictionary:
+	var result := default_appearance(_body_index)
+	for slot: Dictionary in PART_SLOTS:
+		var option := part_options.get(slot.id) as OptionButton
+		result.parts[str(slot.id)] = str(option.get_item_metadata(option.selected))
+	result.hair_mask = str(_hair_mask_mode)
+	result.hair_dye = _hair_dye_color.to_html(true)
+	result.hair_dyed = _hair_dye_enabled
+	result.mounted = _is_mounted
+	result.coat = str(_current_mount_coat)
+	result.tack = _mount_tack_enabled
+	return result
+
+func restore_appearance(value: Dictionary) -> bool:
+	if not valid_appearance(value):
+		return false
+	if _body_index != int(value.body):
+		_on_body_selected(int(value.body))
+	for slot: Dictionary in PART_SLOTS:
+		if not select_part_by_id(slot.id, StringName(str(value.parts[str(slot.id)]))):
+			return false
+	set_hair_mask_mode(StringName(str(value.hair_mask)))
+	set_hair_dye(Color.from_string(str(value.hair_dye), Color.WHITE))
+	if not bool(value.hair_dyed):
+		reset_hair_dye()
+	set_mount_coat(StringName(str(value.coat)))
+	set_mount_tack_enabled(bool(value.tack))
+	set_mount_enabled(bool(value.mounted))
+	return true
+
 func _canonical_hair_id(hair_id: StringName) -> StringName:
 	# Old preview scripts used one ID for both genders. Keep that input alias,
 	# but expose only the explicit gendered IDs in the actual selector.
@@ -488,6 +595,70 @@ func reset_preview_view() -> void:
 	visual_state.yaw_degrees = 0.0
 	_apply_preview_rotation()
 	_update_preview_display()
+
+func _load_combat_props(path: String = COMBAT_PROPS_PATH) -> void:
+	if is_instance_valid(combat_props):
+		combat_props.free()
+	combat_props = null
+	if not FileAccess.file_exists(path):
+		return
+	var document := GLTFDocument.new()
+	var state := GLTFState.new()
+	if document.append_from_file(ProjectSettings.globalize_path(path), state) != OK:
+		return
+	combat_props = document.generate_scene(state) as Node3D
+	preview_pivot.add_child(combat_props)
+	_update_combat_props()
+
+func _update_combat_props() -> void:
+	if not is_instance_valid(combat_props) or model_root == null or animation_player == null:
+		return
+	var option := part_options.get(&"weapon") as OptionButton
+	var weapon := str(option.get_item_metadata(option.selected)) if option != null else "none"
+	var bow := weapon == "bow_01"
+	var crossbow := weapon == "crossbow_01"
+	var skeleton := model_root.find_child("Skeleton3D", true, false) as Skeleton3D
+	if skeleton == null:
+		return
+	if not lazy_combat_visual_bones_enabled:
+		skeleton.force_update_all_bone_transforms()
+	for node: Node in combat_props.get_children():
+		if node is Node3D:
+			(node as Node3D).hide()
+	if not bow and not crossbow:
+		return
+	var hips := skeleton.get_bone_global_pose(skeleton.find_bone("J_Bip_C_Hips"))
+	var quiver := combat_props.get_node("QuiverArrow" if bow else "QuiverBolt") as Node3D
+	quiver.show()
+	for index in range(quiver.get_child_count()):
+		(quiver.get_child(index) as Node3D).visible = combat_ammo_available and index < combat_ammo_count
+	quiver.global_transform = skeleton.global_transform * hips * Transform3D(Basis(Vector3.FORWARD, -.15), Vector3(-.28, -.40 if bow else -.21, -.04))
+	var clip := _selected_animation
+	var is_bow_pose := clip in [&"attack_bow", &"reload_bow"]
+	var is_crossbow_pose := clip in [&"attack_crossbow", &"reload_crossbow"]
+	if not combat_ammo_available or not (bow and is_bow_pose or crossbow and is_crossbow_pose):
+		return
+	var time := animation_player.current_animation_position
+	if clip in [&"reload_bow", &"reload_crossbow"] and time < .4:
+		return
+	var release: float = CombatTimings.events(&"attack_bow" if bow else &"attack_crossbow").release
+	if clip in [&"attack_bow", &"attack_crossbow"] and time >= release:
+		return
+	var missile := combat_props.get_node("Arrow" if bow else "Bolt") as Node3D
+	missile.show()
+	var right := skeleton.get_bone_global_pose(skeleton.find_bone("J_Bip_R_Hand"))
+	var left := skeleton.get_bone_global_pose(skeleton.find_bone("J_Bip_L_Hand"))
+	if bow or clip == &"reload_crossbow" and time < 1.1:
+		var start := skeleton.global_transform * ((right if bow else left) * Vector3(0, .035, -.01))
+		var end := skeleton.global_transform * ((left if bow else right) * Vector3(0, .04, -.01))
+		missile.global_position = start
+		if start.distance_to(end) > .01:
+			missile.look_at(end, skeleton.global_basis.y, true)
+	else:
+		var rest := skeleton.get_bone_global_rest(skeleton.find_bone("J_Bip_R_Hand"))
+		var palm := rest * Vector3(0, .045, -.015)
+		var rest_to_pose := skeleton.global_transform * right * rest.affine_inverse()
+		missile.global_transform = rest_to_pose * Transform3D(Basis.IDENTITY, palm + Vector3(0, .04, 0))
 
 func set_preview_zoom(value: float, center: Vector2 = Vector2(-1.0, -1.0)) -> void:
 	_set_preview_zoom(value, center)
@@ -552,14 +723,14 @@ func _build_ui() -> void:
 		body_option.add_item(str(body_model["label"]))
 		body_option.set_item_metadata(body_option.item_count - 1, body_model["id"])
 	body_option.select(0)
-	body_option.item_selected.connect(_on_body_selected)
+	body_option.item_selected.connect(_request_body_selected)
 	for part: Dictionary in PART_SLOTS:
 		var option := _add_option_row(parts_layout, str(part["label"]))
 		for component: Dictionary in _part_definition(part["id"])["options"]:
 			option.add_item(str(component["label"]))
 			option.set_item_metadata(option.item_count - 1, component["id"])
 		option.select(0)
-		option.item_selected.connect(_on_part_selected.bind(part["id"]))
+		option.item_selected.connect(_request_part_selected.bind(part["id"]))
 		part_options[part["id"]] = option
 		if part["id"] == &"hair":
 			var dye_row := HBoxContainer.new()
@@ -844,7 +1015,7 @@ func _initialize_preview() -> void:
 	preview_world.add_child(camera)
 	camera.look_at_from_position(camera.position, CharacterRenderContract.FOOT_PROFILE["target"], Vector3.UP)
 	camera.current = true
-	_load_body_model(0)
+	_load_body_model(visual_state.body_index)
 
 func _update_preview_framing() -> void:
 	if camera == null:
@@ -917,6 +1088,7 @@ func get_map_ground_offset_pixels() -> Vector2:
 	return camera.unproject_position(preview_pivot.global_position) - viewport_center
 
 func _load_body_model(index: int, preview_model_path: String = "") -> void:
+	clear_hair_node_lookup_cache()
 	if index < 0 or index >= BODY_MODELS.size() or preview_world == null:
 		return
 	_body_index = index
@@ -937,13 +1109,20 @@ func _load_body_model(index: int, preview_model_path: String = "") -> void:
 	if not FileAccess.file_exists(absolute_path):
 		model_label.text = "找不到素體：%s" % model_path
 		return
-	var document := GLTFDocument.new()
-	var state := GLTFState.new()
-	var parse_error: Error = document.append_from_file(absolute_path, state)
-	if parse_error != OK:
-		model_label.text = "GLB 載入失敗：%s" % parse_error
-		return
-	var generated := document.generate_scene(state) as Node3D
+	var generated: Node3D
+	if use_imported_model and preview_model_path.is_empty():
+		# Do not reuse mutable preview resources from another editor instance.
+		var packed := ResourceLoader.load(model_path, "PackedScene", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene
+		if packed != null:
+			generated = packed.instantiate() as Node3D
+	else:
+		var document := GLTFDocument.new()
+		var state := GLTFState.new()
+		var parse_error: Error = document.append_from_file(absolute_path, state)
+		if parse_error != OK:
+			model_label.text = "GLB 載入失敗：%s" % parse_error
+			return
+		generated = document.generate_scene(state) as Node3D
 	if generated == null:
 		model_label.text = "GLB 沒有產生 Node3D"
 		return
@@ -973,6 +1152,128 @@ func _load_body_model(index: int, preview_model_path: String = "") -> void:
 		_attach_rider_to_mount()
 	_update_preview_framing()
 	_update_preview_display()
+	_load_combat_props()
+	_prepare_rigid_scabbards()
+	_prepare_combat_cloth()
+
+func _prepare_combat_cloth() -> void:
+	_combat_cloth.clear()
+	var shader := load("res://assets/characters/human/q35/combat/combat_cloth_ground.gdshader") as Shader
+	for node in model_root.find_children("Cape_*", "MeshInstance3D", true, false):
+		var mesh := node as MeshInstance3D
+		var bounds := mesh.get_aabb()
+		var lowest := INF
+		for corner in range(8):
+			lowest = minf(lowest, (mesh.global_transform * bounds.get_endpoint(corner)).y - preview_pivot.global_position.y)
+		var record := {"node": mesh, "original": [], "ground": [], "outline": mesh.material_overlay, "down": {},
+			"floor": lowest, "group": "chinese" if str(mesh.name).begins_with("Cape_Chinese_") else "travel"}
+		for surface in range(mesh.mesh.get_surface_count()):
+			var original := mesh.get_surface_override_material(surface)
+			var material := mesh.get_active_material(surface)
+			var ground := ShaderMaterial.new()
+			ground.shader = shader
+			if material is BaseMaterial3D:
+				ground.set_shader_parameter("base_color", material.albedo_color)
+				ground.set_shader_parameter("base_metallic", material.metallic)
+				ground.set_shader_parameter("base_roughness", material.roughness)
+				ground.set_shader_parameter("has_texture", material.albedo_texture != null)
+				ground.set_shader_parameter("albedo_texture", material.albedo_texture)
+			elif material is ShaderMaterial:
+				for parameter in ["base_color", "base_metallic", "base_roughness"]:
+					ground.set_shader_parameter(parameter, material.get_shader_parameter(parameter))
+			record.original.append(original)
+			record.ground.append(ground)
+		if animation_player.has_animation(&"down"):
+			var down := animation_player.get_animation(&"down")
+			for track in range(down.get_track_count()):
+				var path := down.track_get_path(track)
+				if down.track_get_type(track) == Animation.TYPE_BLEND_SHAPE and path.get_concatenated_names().get_file() == str(mesh.name):
+					var shape := mesh.find_blend_shape_by_name(path.get_concatenated_subnames())
+					if shape >= 0:
+						record.down[shape] = down.blend_shape_track_interpolate(track, down.length)
+		_combat_cloth.append(record)
+	# Trim, lining and outer fabric share the same gathering transform.
+	var floors := {}
+	for record in _combat_cloth:
+		floors[record.group] = minf(float(floors.get(record.group, INF)), record.floor)
+	for record in _combat_cloth:
+		record.floor = floors[record.group]
+
+func _update_combat_cloth() -> void:
+	if model_root == null:
+		return
+	var skeleton := model_root.find_child("Skeleton3D", true, false) as Skeleton3D
+	if not lazy_combat_visual_bones_enabled:
+		skeleton.force_update_all_bone_transforms()
+	var hips := skeleton.find_bone("J_Bip_C_Hips")
+	var neck := skeleton.find_bone("J_Bip_C_Neck")
+	var hip_delta := (skeleton.global_basis * (skeleton.get_bone_global_pose(hips).origin - skeleton.get_bone_global_rest(hips).origin)).y
+	var top := (skeleton.global_transform * skeleton.get_bone_global_pose(neck).origin).y
+	var low := _selected_animation in [&"get_up", &"rescue"] and top > preview_pivot.global_position.y + .55
+	for record in _combat_cloth:
+		var mesh := record.node as MeshInstance3D
+		if not is_instance_valid(mesh):
+			continue
+		for surface in range(record.original.size()):
+			mesh.set_surface_override_material(surface, record.ground[surface] if low else record.original[surface])
+			var material := record.ground[surface] as ShaderMaterial
+			material.set_shader_parameter("ground_height", preview_pivot.global_position.y)
+			material.set_shader_parameter("source_floor", preview_pivot.global_position.y + float(record.floor) + hip_delta)
+			material.set_shader_parameter("cloth_top", top)
+		mesh.material_overlay = null if low else record.outline
+		if _selected_animation == &"unconscious" or _selected_animation == &"get_up":
+			var weight := 1.0 if _selected_animation == &"unconscious" else 1.0 - smoothstep(0.0, .65, animation_player.current_animation_position)
+			for shape in record.down:
+				mesh.set_blend_shape_value(shape, record.down[shape] * weight)
+
+func _prepare_rigid_scabbards() -> void:
+	_rigid_scabbards.clear()
+	var skeleton := model_root.find_child("Skeleton3D", true, false) as Skeleton3D
+	if skeleton == null:
+		return
+	for node: Node in model_root.find_children("Weapon_Longsword_01_*", "MeshInstance3D", true, false):
+		var mesh := node as MeshInstance3D
+		if not ("_Scabbard_" in str(mesh.name) or "_Sheathed_" in str(mesh.name)):
+			continue
+		# These existing rigid meshes are hip-weighted. The same hip transform
+		# drives them, with a belt swivel so a long scabbard can lie on the ground.
+		_rigid_scabbards.append({"node": mesh, "rest": skeleton.global_transform.affine_inverse() * mesh.global_transform})
+		mesh.skin = null
+		mesh.skeleton = NodePath()
+	_update_scabbard_pose()
+
+func _update_scabbard_pose() -> void:
+	if _rigid_scabbards.is_empty() or model_root == null:
+		return
+	var skeleton := model_root.find_child("Skeleton3D", true, false) as Skeleton3D
+	if not lazy_combat_visual_bones_enabled:
+		skeleton.force_update_all_bone_transforms()
+	var index := skeleton.find_bone("J_Bip_C_Hips")
+	var pose := skeleton.get_bone_global_pose(index)
+	var rest := skeleton.get_bone_global_rest(index)
+	var hip_transform := pose * rest.affine_inverse()
+	var swivel := Transform3D.IDENTITY
+	var angle := 0.0
+	if _selected_animation == &"get_up":
+		# Swing out from the belt while the hips roll up, not through the
+		# floor or across the bent knees. Keep the original mesh and hinge.
+		var time := animation_player.current_animation_position
+		var reach := smoothstep(0.0, .4, time) * (1.0 - smoothstep(1.55, 2.2, time))
+		var hinge := hip_transform * (rest.origin + Vector3(.15, 0, 0))
+		var original := (hip_transform.basis * Vector3.DOWN).normalized()
+		var horizontal := Vector3(original.x, 0, original.z).lerp(Vector3.RIGHT, reach).normalized()
+		var downward := maxf(original.y, -clampf((hinge.y - .10) / .78, 0.0, 1.0))
+		var target := horizontal * sqrt(maxf(0.0, 1.0 - downward * downward)) + Vector3.UP * downward
+		if not target.is_zero_approx():
+			var correction := Transform3D(Basis(Quaternion(original, target.normalized())), hinge) * Transform3D(Basis.IDENTITY, -hinge)
+			hip_transform = correction * hip_transform
+	elif _selected_animation == &"rescue" and pose.basis.y.dot(Vector3.UP) > .4:
+		angle = acos(clampf((pose.origin.y - .10) / .74, 0.0, 1.0))
+	if not is_zero_approx(angle):
+		var pivot := rest.origin + Vector3(.15, .0, .0)
+		swivel = Transform3D(Basis(Vector3.RIGHT, angle), pivot) * Transform3D(Basis.IDENTITY, -pivot)
+	for item in _rigid_scabbards:
+		(item.node as Node3D).global_transform = skeleton.global_transform * hip_transform * swivel * item.rest
 
 func _attach_rider_to_mount() -> void:
 	if model_root == null or mount_horse == null:
@@ -1394,6 +1695,15 @@ func _play_selected_animation() -> void:
 	animation_player.speed_scale = float(speed_slider.value) if speed_slider != null else 1.0
 	visual_state.speed = animation_player.speed_scale
 	if animation_player.current_animation != play_anim:
+		for node in model_root.find_children("Armor_Mingguang_01_*", "MeshInstance3D", true, false):
+			var armor := node as MeshInstance3D
+			for shape in armor.get_blend_shape_count():
+				armor.set_blend_shape_value(shape, 0.0)
+		for record in _combat_cloth:
+			var cloth := record.node as MeshInstance3D
+			if is_instance_valid(cloth):
+				for shape in cloth.get_blend_shape_count():
+					cloth.set_blend_shape_value(shape, 0.0)
 		var skeleton := model_root.find_child("Skeleton3D", true, false) as Skeleton3D if model_root != null else null
 		if skeleton != null:
 			skeleton.reset_bone_poses()
@@ -1420,6 +1730,26 @@ func _reset_animation() -> void:
 	if not _is_playing:
 		animation_player.pause()
 
+func _request_body_selected(index: int) -> void:
+	var permitted := int(body_selection_request.call(index)) if body_selection_request.is_valid() else index
+	body_option.select(permitted)
+	if permitted != _body_index:
+		_on_body_selected(permitted)
+
+func _request_part_selected(index: int, part_id: StringName) -> void:
+	var option := part_options.get(part_id) as OptionButton
+	if option == null or index < 0 or index >= option.item_count:
+		return
+	if part_selection_request.is_valid():
+		var permitted := str(part_selection_request.call(str(part_id), str(option.get_item_metadata(index))))
+		for candidate in range(option.item_count):
+			if str(option.get_item_metadata(candidate)) == permitted:
+				option.select(candidate)
+				_on_part_selected(candidate, part_id)
+				return
+		return
+	_on_part_selected(index, part_id)
+
 func _on_body_selected(index: int) -> void:
 	_load_body_model(index)
 
@@ -1428,6 +1758,12 @@ func _on_part_selected(index: int, part_id: StringName) -> void:
 	if option == null or index < 0 or index >= option.item_count or option.is_item_disabled(index):
 		return
 	_apply_part_selection(part_id, index)
+	if part_id in [&"weapon", &"shield"] and str(_selected_animation).begins_with("guard"):
+		var phase := ""
+		for suffix in ["_raise", "_lower", "_break"]:
+			if str(_selected_animation).ends_with(suffix):
+				phase = suffix
+		select_animation_by_id(StringName("guard" + phase))
 	if part_id == &"weapon":
 		var weapon_opt_id: StringName = StringName(str(option.get_item_metadata(index)))
 		if _is_mounted:
@@ -1472,10 +1808,16 @@ func _apply_attack_loop_default() -> void:
 	if loop_toggle == null:
 		return
 	var one_shot := _is_weapon_attack_animation(_selected_animation) or _selected_animation in [
-		&"ride_attack", &"ride_slash", &"ride_thrust"
+		&"ride_attack", &"ride_slash", &"ride_thrust", &"guard_raise", &"guard_lower",
+		&"guard_break", &"get_up", &"rescue", &"reload_bow", &"reload_crossbow", &"down"
 	]
+	one_shot = one_shot or (str(_selected_animation).begins_with("guard_") and (str(_selected_animation).ends_with("_raise") or str(_selected_animation).ends_with("_lower") or str(_selected_animation).ends_with("_break")))
 	if one_shot:
 		loop_toggle.set_pressed_no_signal(false)
+	elif _selected_animation in [&"idle", &"walk", &"run", &"guard", &"guard_weapon", &"guard_polearm", &"unconscious", &"ride_idle", &"ride_walk", &"ride_run"]:
+		# A completed one-shot must not freeze the next sustained pose at its
+		# last frame. Otherwise contact geometry depends on prior attack history.
+		loop_toggle.set_pressed_no_signal(true)
 
 func _on_speed_changed(value: float) -> void:
 	visual_state.speed = value
@@ -1598,6 +1940,9 @@ func _process(_delta: float) -> void:
 		return
 	var anim_time: float = animation_player.current_animation_position
 	visual_state.animation_time = anim_time
+	_update_combat_props()
+	_update_scabbard_pose()
+	_update_combat_cloth()
 	if timeline_slider != null:
 		timeline_slider.set_value_no_signal(anim_time)
 	_update_timeline_label(anim_time)
@@ -1680,7 +2025,7 @@ func _update_lining_fit() -> void:
 	var selected := outfit_id == &"outfit_chinese_lining_01"
 	var armor_id := StringName(str(armor_option.get_item_metadata(armor_option.selected)))
 	var armored := armor_id != &"none"
-	var hard_armored := armor_id in [&"armor_iron_01", &"armor_mingguang_01"]
+	var hard_armored := armor_id in [&"armor_iron_01", &"armor_mingguang_01", &"armor_western_iron_01"]
 	# The hard-shell morph keeps ease at exposed back gaps; leather retains
 	# its original compressed shape. Neither changes the underlying body.
 	var compressed := armor_id in [&"armor_light_leather_01", &"armor_chinese_leather_01"]
@@ -1696,6 +2041,7 @@ func _update_lining_fit() -> void:
 	# These armor choices carry their own cloth sleeves/tunic. The selected
 	# lining replaces that layer; restore it when the lining is removed.
 	for lining_entry in [
+		[&"armor_western_iron_01", "Armor_Western_Iron_01_UnderShirt"],
 		[&"armor_iron_01", "Armor_Iron_01_UnderTunic"],
 		[&"armor_mingguang_01", "Armor_Mingguang_01_UnderSleeves"],
 		[&"armor_mingguang_01", "Armor_Mingguang_01_UnderTunic"],
@@ -1762,6 +2108,7 @@ func _update_weapon_sheath_state() -> void:
 		return
 	var is_sheathed: bool = _selected_animation in [&"idle", &"walk", &"run", &"ride_idle", &"ride_walk", &"ride_run"]
 	is_sheathed = is_sheathed and not combat_ready
+	is_sheathed = is_sheathed or _selected_animation == &"rescue"
 
 	# 1. Weapon visibility
 	var weapon_opt := part_options.get(&"weapon") as OptionButton
@@ -1793,7 +2140,7 @@ func _update_weapon_sheath_state() -> void:
 	if shield_opt != null and shield_opt.selected >= 0:
 		shield_id = StringName(str(shield_opt.get_item_metadata(shield_opt.selected)))
 
-	var is_ranged_attack := _selected_animation in [&"attack_bow", &"attack_crossbow"]
+	var is_ranged_attack := _selected_animation in [&"attack_bow", &"attack_crossbow", &"reload_bow", &"reload_crossbow"]
 	# Mounted slash/thrust clips explicitly use the rider's off-hand. Keep the
 	# selected shield in that hand; only idle/travel and ranged attacks holster it.
 	var shield_is_holstered := is_sheathed or is_ranged_attack
@@ -1865,6 +2212,36 @@ func _update_full_body_visibility() -> void:
 			return
 	full_body.visible = true
 
+func clear_hair_node_lookup_cache() -> void:
+	_hair_nodes.clear()
+	_hair_nodes_model_id = 0
+	_hair_nodes_id = &""
+
+func _active_hair_nodes(hair_id: StringName) -> Array[MeshInstance3D]:
+	var started := Time.get_ticks_usec() if hair_node_lookup_profile_enabled else 0
+	var model_id := model_root.get_instance_id()
+	var hit := hair_node_lookup_cache_enabled and model_id == _hair_nodes_model_id and hair_id == _hair_nodes_id
+	var nodes: Array[MeshInstance3D] = []
+	if hit:
+		nodes = _hair_nodes
+	if not hit:
+		var component := _component_definition(&"hair", hair_id)
+		for node in _find_component_nodes(component.get("prefixes", [])):
+			if node is MeshInstance3D:
+				nodes.append(node as MeshInstance3D)
+		if hair_node_lookup_cache_enabled:
+			_hair_nodes = nodes
+			_hair_nodes_model_id = model_id
+			_hair_nodes_id = hair_id
+	if hair_node_lookup_profile_enabled:
+		hair_node_lookup_profile.calls += 1
+		hair_node_lookup_profile.hits += int(hit)
+		hair_node_lookup_profile.searches += int(not hit)
+		hair_node_lookup_profile.lookup_usec += Time.get_ticks_usec() - started
+	# Private iteration only. Hair hierarchy is fixed after body loading; an
+	# explicit same-root hierarchy edit must clear this list before its next use.
+	return nodes
+
 func _update_hair_mask() -> void:
 	if model_root == null:
 		return
@@ -1883,11 +2260,7 @@ func _update_hair_mask() -> void:
 			var head_world: Transform3D = skeleton.global_transform * skeleton.get_bone_global_pose(head_bone_idx)
 			inv_head = head_world.affine_inverse()
 
-	var active_hair_nodes: Array[MeshInstance3D] = []
-	var hair_comp := _component_definition(&"hair", hair_id)
-	for node in _find_component_nodes(hair_comp.get("prefixes", [])):
-		if node is MeshInstance3D:
-			active_hair_nodes.append(node as MeshInstance3D)
+	var active_hair_nodes := _active_hair_nodes(hair_id)
 
 	if not has_helmet or not has_hair:
 		for mesh_node in active_hair_nodes:
@@ -1923,6 +2296,8 @@ func _set_mesh_mask_enabled(mesh_node: MeshInstance3D, enabled: bool, inv_head: 
 	var brow_y := 0.113
 	if helmet_id in [&"helmet_iron_01", &"helmet_steel_01"]:
 		brow_y = 0.098
+	elif helmet_id == &"helmet_western_iron_01":
+		brow_y = 0.095
 	elif helmet_id == &"helmet_chinese_leather_01":
 		brow_y = 0.110
 	var node_name := str(mesh_node.name)
@@ -2085,7 +2460,9 @@ func _on_preview_gui_input(event: InputEvent) -> void:
 func _apply_preview_rotation() -> void:
 	if preview_pivot == null:
 		return
-	preview_pivot.rotation = Vector3(_preview_pitch, PI + _preview_yaw, 0.0)
+	var requested_rotation := Vector3(_preview_pitch, PI + _preview_yaw, 0.0)
+	if not exact_preview_rotation_guard_enabled or preview_pivot.rotation != requested_rotation:
+		preview_pivot.rotation = requested_rotation
 	if _hair_mask_mode == &"auto":
 		_update_hair_mask()
 

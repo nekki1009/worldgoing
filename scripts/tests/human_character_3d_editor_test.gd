@@ -312,7 +312,7 @@ func _run() -> void:
 	assert(scabbard_body.visible, "Empty scabbard should remain on hip during Jump Heavy Attack")
 
 	# Verify Jump Heavy Attack is universal across ALL weapons (never knocked out when switching weapons)
-	for weapon_id: StringName in [&"longsword_01", &"spear_01", &"axe_01", &"hammer_01", &"dagger_01", &"bow_01", &"crossbow_01", &"none"]:
+	for weapon_id: StringName in [&"longsword_01", &"spear_01", &"axe_01", &"wood_axe_01", &"hammer_01", &"dagger_01", &"bow_01", &"crossbow_01", &"none"]:
 		assert(editor.select_part_by_id(&"weapon", weapon_id), "Failed to select weapon %s" % weapon_id)
 		assert(editor.selected_animation == &"attack_jump_heavy", "Weapon change should NOT kick character out of universal jump heavy attack")
 	assert(editor.select_part_by_id(&"weapon", &"longsword_01"), "Restore longsword")
@@ -521,6 +521,7 @@ func _assert_attack_animation_contract() -> void:
 		&"longsword_01": &"walk_slash",
 		&"spear_01": &"attack_spear",
 		&"axe_01": &"attack_axe",
+		&"wood_axe_01": &"attack_axe",
 		&"hammer_01": &"attack_hammer",
 		&"dagger_01": &"attack_dagger",
 		&"bow_01": &"attack_bow",

@@ -10,6 +10,7 @@ const ITEM_NAMES := {
 	"wild_food": "採集食物", "herb": "藥材", "fish": "魚", "meat": "肉", "hide": "生皮", "tools": "工具",
 	"seeds": "種子", "grain": "糧食", "fiber": "植物纖維", "fodder": "飼料", "charcoal": "木炭",
 	"brick": "磚瓦", "iron": "鐵料", "cloth": "布料", "leather": "皮革", "wool": "羊毛", "sheep": "羊", "horse": "馬匹",
+	"arrow": "箭", "bolt": "弩矢",
 }
 const WORK_MINUTES := [5.0, 4.0, 3.0, 6.0, 2.0, 2.0, 3.0, 4.0, 6.0]
 const BATCH := [4, 3, 3, 2, 2, 3, 2, 2, 1]

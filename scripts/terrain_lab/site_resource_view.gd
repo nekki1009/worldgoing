@@ -22,6 +22,7 @@ var preview_entrance := Vector2i(-1, -1)
 var selected_resource := ""
 var resources_by_row: Dictionary = {}
 var features_by_row: Dictionary = {}
+var loot_cells_by_row: Dictionary = {}
 var rows: Array[Node2D] = []
 var heat := PackedColorArray()
 var animation_time := 0.0
@@ -56,6 +57,9 @@ func display(value: TerrainData) -> void:
 		add_child(row)
 		rows.append(row)
 	_seen_revision = -1
+	loot_cells_by_row.clear()
+	for cell: int in data.ground_loot_at:
+		data.ground_loot_dirty_rows[data.cell_from_index(cell).y] = true
 	refresh()
 
 func refresh() -> void:
@@ -76,11 +80,17 @@ func refresh() -> void:
 			resources_by_row[row].append(key)
 	for key: String in data.site.features:
 		var row := 0
+		var feature_rows: Array[int] = []
 		for i: int in data.site.features[key].cells:
 			row = maxi(row, data.cell_from_index(i).y)
-		if not features_by_row.has(row):
-			features_by_row[row] = []
-		features_by_row[row].append(key)
+			if str(data.site.features[key].kind) == "palisade" and str(data.site.features[key].stage) == "complete" and not feature_rows.has(data.cell_from_index(i).y):
+				feature_rows.append(data.cell_from_index(i).y)
+		if feature_rows.is_empty():
+			feature_rows.append(row)
+		for feature_row: int in feature_rows:
+			if not features_by_row.has(feature_row):
+				features_by_row[feature_row] = []
+			features_by_row[feature_row].append(key)
 	heat.clear()
 	if view_mode >= 2:
 		heat.resize(data.surface_types.size())
@@ -102,6 +112,15 @@ func refresh() -> void:
 func animate(delta: float) -> void:
 	if data == null:
 		return
+	for row: int in data.ground_loot_dirty_rows:
+		var cells: Array[int] = []
+		for x in range(data.size.x):
+			var cell := data.index(Vector2i(x, row))
+			if data.ground_loot_at.has(cell):
+				cells.append(cell)
+		loot_cells_by_row[row] = cells
+		rows[row].queue_redraw()
+	data.ground_loot_dirty_rows.clear()
 	if data.environment_revision != _seen_revision:
 		refresh()
 	if bool(data.site.paused):
@@ -120,13 +139,16 @@ func animate(delta: float) -> void:
 func _draw() -> void:
 	if data == null:
 		return
-	# Walkable crop beds stay on the ground, below actors on every occupied row.
+	# Walkable crop beds and low defensive positions stay below their occupants.
 	for feature: Dictionary in data.site.features.values():
-		if str(feature.stage) != "complete" or not str(feature.kind).contains("farm"):
+		if str(feature.stage) != "complete" or (not str(feature.kind).contains("farm") and str(feature.kind) != "fighting_position"):
 			continue
 		for i: int in feature.cells:
-			var plot := Rect2(Vector2(data.cell_from_index(i)) * CELL, Vector2.ONE * CELL).grow(-2)
-			draw_texture_rect_region(PROPS, plot, PROP_REGIONS.farm)
+			if str(feature.kind).contains("farm"):
+				var plot := Rect2(Vector2(data.cell_from_index(i)) * CELL, Vector2.ONE * CELL).grow(-2)
+				draw_texture_rect_region(PROPS, plot, PROP_REGIONS.farm)
+			elif str(feature.kind) == "fighting_position":
+				_draw_defense_cell(self, _center(i), false)
 	for i: int in range(heat.size()):
 		draw_rect(Rect2(Vector2(data.cell_from_index(i)) * CELL, Vector2.ONE * CELL), heat[i])
 	for zone: Dictionary in data.site.zones:
@@ -149,6 +171,13 @@ func _draw() -> void:
 func draw_row(canvas: Node2D, row_index: int) -> void:
 	if data == null:
 		return
+	for cell: int in loot_cells_by_row.get(row_index, []):
+		var point := _center(cell) + Vector2(20, 12)
+		canvas.draw_rect(Rect2(point - Vector2(8, 5), Vector2(16, 10)), Color("d2b36c"))
+		canvas.draw_line(point + Vector2(-8, -1), point + Vector2(8, -1), Color("624e31"), 2)
+		var count: int = data.ground_loot_at.get(cell, []).size()
+		if count > 1:
+			canvas.draw_string(ThemeDB.fallback_font, point + Vector2(8, 1), str(count), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color("fff0bd"))
 	for key: String in resources_by_row.get(row_index, []):
 		var r := Env.resource(data, key)
 		if bool(r.cleared):
@@ -204,7 +233,7 @@ func draw_row(canvas: Node2D, row_index: int) -> void:
 				label += " %s" % (str(int(r.remaining)) if bool(r.discovered) else "待勘探")
 			canvas.draw_string(ThemeDB.fallback_font, p + Vector2(-28, 40), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color("fff4d8"))
 	for key: String in features_by_row.get(row_index, []):
-		_draw_feature(canvas, data.site.features[key])
+		_draw_feature(canvas, data.site.features[key], row_index)
 	if data.cell_from_index(int(data.site.depot_cell)).y == row_index:
 		var depot := _center(int(data.site.depot_cell))
 		_draw_prop(canvas, "chest", depot + Vector2(0, 15), 40.0)
@@ -293,7 +322,28 @@ func _draw_exhausted(canvas: Node2D, r: Dictionary, p: Vector2) -> void:
 	elif int(r.kind) in [Env.Kind.FOOD, Env.Kind.HERB]:
 		canvas.draw_line(p, p + Vector2(-3, -9), Color("749052"), 2.0)
 
-func _draw_feature(canvas: Node2D, feature: Dictionary) -> void:
+func _draw_defense_cell(canvas: Node2D, p: Vector2, palisade: bool) -> void:
+	if palisade:
+		_oval(canvas, p + Vector2(0, 17), Vector2(28, 7), Color(0.12, 0.1, 0.07, 0.3))
+		for x: int in [-24, -12, 0, 12, 24]:
+			var base := p + Vector2(x, 16)
+			canvas.draw_colored_polygon(PackedVector2Array([base + Vector2(-5, 0), base + Vector2(-5, -32), base + Vector2(0, -41), base + Vector2(5, -32), base + Vector2(5, 0)]), Color("856344"))
+			canvas.draw_line(base + Vector2(-2, -28), base + Vector2(-2, -2), Color("c59b66"), 2.0)
+		for y: int in [-5, 9]:
+			canvas.draw_line(p + Vector2(-30, y), p + Vector2(30, y), Color("56442f"), 4.0)
+	else:
+		canvas.draw_rect(Rect2(p - Vector2(27, 25), Vector2(54, 50)), Color(0.37, 0.32, 0.23, 0.35))
+		for x: int in [-21, -7, 7, 21]:
+			var bag := Rect2(p + Vector2(x - 6, 17), Vector2(12, 8))
+			canvas.draw_rect(bag, Color("aaa18a"))
+			canvas.draw_rect(bag, Color("5b594d"), false, 1.5)
+		for x: int in [-27, 19]:
+			for y: int in [-19, -5, 9]:
+				var bag := Rect2(p + Vector2(x, y), Vector2(8, 12))
+				canvas.draw_rect(bag, Color("aaa18a"))
+				canvas.draw_rect(bag, Color("5b594d"), false, 1.5)
+
+func _draw_feature(canvas: Node2D, feature: Dictionary, row_index: int = -1) -> void:
 	var kind := str(feature.kind)
 	var complete := str(feature.stage) == "complete"
 	var min_cell := data.cell_from_index(int(feature.cells[0]))
@@ -302,6 +352,12 @@ func _draw_feature(canvas: Node2D, feature: Dictionary) -> void:
 		var cell := data.cell_from_index(i)
 		min_cell = min_cell.min(cell)
 		max_cell = max_cell.max(cell)
+		if complete and kind == "palisade":
+			if row_index < 0 or cell.y == row_index:
+				_draw_defense_cell(canvas, _center(i), true)
+			continue
+		if complete and kind == "fighting_position":
+			continue # Drawn on the ground in _draw, below the occupying actor.
 		if complete and (kind in ["house", "well"] or kind.contains("farm")):
 			continue
 		var rect := Rect2(Vector2(cell) * CELL, Vector2.ONE * CELL)
@@ -311,6 +367,8 @@ func _draw_feature(canvas: Node2D, feature: Dictionary) -> void:
 		color.a = 0.72 if complete else 0.2
 		canvas.draw_rect(rect.grow(-3), color)
 		canvas.draw_rect(rect.grow(-3), Color("d9bd80"), false, 2.0)
+	if kind == "palisade" and row_index >= 0 and row_index != max_cell.y:
+		return # One label/scaffold per feature; stakes use their actual ground row.
 	var p := Vector2(float(min_cell.x + max_cell.x + 1) * CELL * 0.5, float(max_cell.y + 1) * CELL - 12)
 	if not complete:
 		for offset: Vector2 in [Vector2(-20, 0), Vector2(20, 0)]:
@@ -327,6 +385,8 @@ func _draw_feature(canvas: Node2D, feature: Dictionary) -> void:
 		canvas.draw_line(p + Vector2(22, 0), p + Vector2(22, -47), Color("896945"), 5.0)
 		canvas.draw_line(p + Vector2(-24, -46), p + Vector2(24, -46), Color("c0a675"), 5.0)
 		canvas.draw_line(p + Vector2(0, -46), p + Vector2(0, -12), Color("cfbc87"), 2.0)
+	elif kind in ["palisade", "fighting_position"]:
+		pass # Per-cell defensive art above; never use the generic workshop house.
 	elif bool(feature.solid):
 		var width := minf(96.0, float(max_cell.x - min_cell.x + 1) * CELL - 8)
 		canvas.draw_rect(Rect2(p + Vector2(-width * 0.5, -49), Vector2(width, 49)), Color("af966f"))

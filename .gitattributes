@@ -8,3 +8,4 @@
 *.fbx filter=lfs diff=lfs merge=lfs -text
 *.res filter=lfs diff=lfs merge=lfs -text
 *.scn filter=lfs diff=lfs merge=lfs -text
+assets/characters/terrain_lab_army/standard_soldier/standard_soldier_collision.bin filter=lfs diff=lfs merge=lfs -text

@@ -23,6 +23,7 @@ from make_chinese_iron_boots import make_chinese_iron_boots, make_mingguang_boot
 from load_authored_chinese_leather_boots import load_chinese_leather_boots
 from make_chinese_cape import make_chinese_cape, bind_cape_action_tracks
 from load_authored_chinese_gear import load_chinese_gear
+from load_authored_western_plate import load_western_iron
 from load_authored_chinese_leather_helmet import load_chinese_leather_helmet
 from load_authored_chinese_lining import load_chinese_lining
 
@@ -4278,6 +4279,8 @@ def prepare_attack_crossbow_action(armature: bpy.types.Object) -> bpy.types.Acti
         pose_bone(armature, "J_Bip_R_LowerLeg").rotation_euler = (LEG_RK, 0.0, 0.0)
         pose_bone(armature, "J_Bip_R_Foot").rotation_euler = LEG_RF
         key_animation_frame(armature, "attack_crossbow", f)
+    from fix_crossbow_idle_stance import apply_crossbow_idle_stance
+    apply_crossbow_idle_stance(armature)
     action.use_fake_user = True
     return action
 
@@ -5037,7 +5040,8 @@ def main() -> None:
     iron_helmet_objects = make_chinese_iron_helmet(armature, is_female=False, create_rigid_fn=create_bone_rigid_component)
     steel_helmet_objects = make_chinese_steel_helmet(armature, is_female=False, create_rigid_fn=create_bone_rigid_component)
     chinese_leather_objects, mingguang_helmet_objects = load_chinese_gear(armature)
-    all_helmet_objects = helmet_objects + iron_helmet_objects + steel_helmet_objects + mingguang_helmet_objects + load_chinese_leather_helmet(armature)
+    western_armor_objects, western_helmet_objects, western_boots_objects = load_western_iron(armature)
+    all_helmet_objects = helmet_objects + iron_helmet_objects + steel_helmet_objects + mingguang_helmet_objects + load_chinese_leather_helmet(armature) + western_helmet_objects
     longsword_objects = make_longsword(armature, steel, grip, gold, leather)
     spear_objects = make_spear(armature, wood, steel, gold, tassel)
     axe_objects = make_axe(armature, wood, steel, gold, grip)
@@ -5064,11 +5068,11 @@ def main() -> None:
 
     iron_boots_objects = make_chinese_iron_boots(armature, source_raw_body=body_skin, is_female=False, create_rigid_fn=create_bone_rigid_component)
     mingguang_boots_objects = make_mingguang_boots(armature, source_raw_body=body_skin, is_female=False, create_rigid_fn=create_bone_rigid_component)
-    all_boots_objects = boots_objects + iron_boots_objects + mingguang_boots_objects + load_chinese_leather_boots(armature)
+    all_boots_objects = boots_objects + iron_boots_objects + mingguang_boots_objects + load_chinese_leather_boots(armature) + western_boots_objects
 
     iron_armor_objects = make_chinese_iron_armor(armature, source_raw_body=body_skin, is_female=False, create_rigid_fn=create_bone_rigid_component)
     mingguang_armor_objects = make_mingguang_armor(armature, source_raw_body=body_skin, is_female=False, create_rigid_fn=create_bone_rigid_component)
-    all_armor_objects = armor_objects + iron_armor_objects + mingguang_armor_objects + chinese_leather_objects
+    all_armor_objects = armor_objects + iron_armor_objects + mingguang_armor_objects + chinese_leather_objects + western_armor_objects
     face_one = create_baked_face_variant(face, "Face_Standard_01", "face_standard_01", {}, armature)
     face_two = create_baked_face_variant(face, "Face_Standard_02", "face_standard_02", {"Fcl_ALL_Joy": 1.0, "Fcl_MTH_Joy": 1.0}, armature)
     face_three = create_baked_face_variant(face, "Face_Standard_03", "face_standard_03", {"Fcl_ALL_Angry": 1.0, "Fcl_BRW_Angry": 1.0, "Fcl_EYE_Angry": 1.0}, armature)

@@ -21,6 +21,7 @@ def save_source(sex):
     temporary=ROOT/f'.godot-temp/lining_save_{sex}_{uuid.uuid4().hex}.blend'
     bpy.ops.wm.save_as_mainfile(filepath=str(temporary))
     shutil.copy2(temporary,WORK/f'chinese_lining_{sex}.blend')
+    temporary.unlink()
 
 
 def material(name,color):

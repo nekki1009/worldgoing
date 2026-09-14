@@ -2,18 +2,94 @@ class_name TerrainTestCharacter
 extends Node2D
 
 signal combat_event(duration: float)
+signal died(person_identity: int)
 var movement_from_cell := Vector2i(-1, -1)
 
 var data: TerrainData
 var terrain_cell := Vector2i(-1, -1)
 var editor: HumanCharacter3DEditor
+var combat_proxy: RefCounted # Test-only shared coarse profile; visual editor remains original.
 var visual_state: CharacterVisualState = CharacterVisualState.new()
 var cell_blocker: Callable
+var escort_step_guard: Callable # Only the original custody order can authorize a captive edge.
 var editor_window: Window
 var player_sprite: Sprite2D
 var _step_time: float = 0.0
-var _movement_tween: Tween
-var hp: int = 100
+var _movement_duration := 0.0
+var _movement_elapsed := 0.0
+var _movement_start := Vector2.ZERO
+var _movement_linear := false # Legacy saves retained only the remaining linear segment.
+var _saved_appearance: Dictionary = {}
+var hp := 100.0
+var stun := 0.0
+var stun_grace := 0.0
+var knockout_left := 0.0
+var guard_break_left := 0.0
+var guard_transition_left := 0.0
+var captive := false
+var faction_id := 0
+var person_id := 0
+var auto_face := false
+var combat_driven_by_lab := false
+var exchange_enabled := false:
+	set(value):
+		if exchange_enabled == value:
+			return
+		exchange_enabled = value
+		_reset_exchange_transients()
+		if value:
+			_cancel_exchange_legacy_attack()
+var combat_ability := 50.0 # Original person's martial ability; unrelated to command tactics.
+var exchange_cooldown := 0.0
+var ranged_cooldown := 0.0 # Fire cadence only; never excludes this person from melee receipt.
+var exchange_stagger := 0.0
+var exchange_skill_cooldown := 0.0
+var exchange_skill_authorized: Callable # Current controlled original person; no hard-coded player ID.
+var exchange_morale_query: Callable
+var _exchange_pending_skill := ""
+var _exchange_visual_left := 0.0
+var _exchange_visual_active := false
+var _exchange_guard_hold := false
+var _exchange_pose_dirty := false
+var _ranged_hold_left := 0.0
+var batch_cloth_updates_enabled := true # Exact A/B switch; props and the original action clock are unchanged.
+var _cloth_pose_dirty := false # Only non-colliding cape/scabbard presentation awaits the original Actor frame.
+var combat_pose_profile_enabled := false # Optional observer; no clocks in ordinary gameplay.
+var combat_pose_profile_usec := {"calls": 0, "seek": 0, "props": 0, "cloth": 0}
+var combatants: Callable
+var army_contacts: Callable
+var contact_sink: Callable
+var ammo_inventory: Dictionary = {}
+var item_state: Dictionary = {} # Absent until explicit real-equipment migration; never auto-refill.
+var loot_settled := false
+var remains_id := "" # Presentation reference only; ownership is the ground holder.
+var training := 0.0
+var fatigue := 0.0
+var fatigue_rest := 0.0
+var work_resting := false # Original person's work-only latch, not combat/forced player rest.
+var _fatigue_slowdown := 0.0 # Snapshot at action start; no mid-swing retiming.
+var training_query: Callable
+var combat_target_query: Callable
+var combat_mode_query: Callable # Read-only Site battle mode; no second combat state.
+var attack_target_id := 0
+var command_abilities: Dictionary = {} # Created only on actual appointment.
+var _attack_hits: Dictionary = {}
+var _weapon_blocked := false
+var _attack_serial := 0
+var _attack_profile: Dictionary = {}
+var _clip_duration := 0.0
+var _training_reduction := 0.0
+var _rescue_target: TerrainTestCharacter
+var _rescuer: TerrainTestCharacter
+var _army_rescuer: TerrainArmy
+var _rescue_army: TerrainArmy
+var _rescue_unit := -1
+var _rescue_left := 0.0
+var _getting_up := false
+var _reload_left := 0.0
+var _received_effective_hit := 0
+var _rescue_hit_revision := 0
+var _rescue_target_hit_revision := 0
 var action_time: float = 0.0
 var guarding: bool = false
 var facing := Vector2i.DOWN
@@ -28,12 +104,13 @@ var _attack_clip: StringName
 var _attack_duration := 0.0
 var _did_hit := false
 var _previous_weapon: Array[PackedVector2Array] = []
+var _pending_melee: Array[Dictionary] = [] # Only the current shared action step; never saved.
+var _pending_projectile_delta := 0.0
+var _pending_release := false
 var collision_debug := false
 var _collision_shapes: Array[PackedVector2Array] = []
-var _projectile_position := Vector2.ZERO
-var _projectile_velocity := Vector2.ZERO
-var _projectile_remaining := 0.0
-var _projectile_target: TerrainTestCharacter
+var projectiles: Array[Dictionary] = []
+var _projectile_textures: Dictionary = {}
 var _attack_step := 0.0
 var _attack_offset := Vector2.ZERO
 var _stance_offset := Vector2.ZERO
@@ -45,13 +122,29 @@ const ATTACK_STEP_PIXELS := {
 	&"attack_unarmed": 26.0, &"ride_slash": 31.5,
 }
 const WeaponCollision = preload("res://scripts/terrain_lab/terrain_weapon_collision.gd")
+const CombatTimings = preload("res://scripts/terrain_lab/character_combat_timings.gd")
+const ExchangeTimings = preload("res://scripts/terrain_lab/character_exchange_timings.gd")
 var _geometry := WeaponCollision.new()
-const MOVE_DURATION: float = 0.38
-const RUN_DURATION: float = 0.18
+const MOVE_DURATION: float = CombatTimings.MOVE_DURATION
+const RUN_DURATION: float = CombatTimings.RUN_DURATION
+const SAVED_FLOAT_FIELDS := {
+	"hp": 100.0, "stun": 1000000.0, "stun_grace": 3.0, "knockout_left": 30.0,
+	"guard_break_left": 0.4, "guard_transition_left": 0.15, "action_time": 60.0,
+	"training": 1000000.0, "_attack_elapsed": 60.0, "_attack_duration": 60.0,
+	"_clip_duration": 60.0, "_training_reduction": 0.15, "_attack_step": 64.0,
+	"_step_time": 60.0, "_rescue_left": 4.0,
+	"_reload_left": 1.5,
+	"fatigue": 100.0, "fatigue_rest": 30.0, "_fatigue_slowdown": 0.30,
+	"combat_ability": 100.0,
+}
+const SAVED_INT_FIELDS := ["person_id", "faction_id", "_attack_serial", "_received_effective_hit", "_rescue_hit_revision", "_rescue_target_hit_revision"]
+const SAVED_BOOL_FIELDS := ["guarding", "captive", "combat_ready", "_did_hit", "_weapon_blocked", "_getting_up", "work_resting"]
+const SAVED_VECTOR_FIELDS := ["position", "_attack_offset", "_stance_offset", "_attack_aim_point"]
 
 func initialize_visual() -> void:
 	if DisplayServer.get_name() == "headless":
 		return
+	var requested_body := visual_state.body_index
 	editor_window = Window.new()
 	editor_window.title = "Terrain Lab — Player parts and animation"
 	editor_window.size = Vector2i(1920, 1080)
@@ -65,6 +158,8 @@ func initialize_visual() -> void:
 	editor.visual_state = visual_state
 	editor_window.add_child(editor)
 	editor.open()
+	if editor._body_index != requested_body:
+		editor._load_body_model(requested_body)
 	# Long descriptions in the desktop editor must wrap in the Lab window.
 	for node: Node in editor.find_children("*", "Label", true, false):
 		var label := node as Label
@@ -90,9 +185,17 @@ func initialize_visual() -> void:
 	editor_window.close_requested.connect(_close_editor)
 	editor.closed.connect(_close_editor)
 	editor.select_animation_by_id(&"idle")
+	if exchange_enabled:
+		editor.set_process(false) # Original owner will update this same presenter on pose changes.
 
 func open_editor() -> void:
+	# Do not let the equipment preview cancel recovery or revive an invalid actor.
+	if not can_act() or action_time > 0.0 or guarding or not projectiles.is_empty():
+		combat_status = "Busy: cannot change equipment"
+		return
 	if editor_window != null:
+		_exchange_visual_active = false
+		_exchange_visual_left = 0.0
 		_set_attack_offset(Vector2.ZERO)
 		action_time = 0.0
 		_strike_at = -1.0
@@ -101,11 +204,20 @@ func open_editor() -> void:
 		_step_time = 0.0
 		editor_window.popup_centered()
 		editor.open()
+		editor.set_process(true)
+		editor.preview_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 
 func _close_editor() -> void:
 	editor_window.hide()
 	# Preserve the selected test clip after closing the controls.
 	editor.set_playing(true)
+	if exchange_enabled:
+		editor.show() # Its Window stays hidden; the map presenter still needs visual updates.
+		editor.set_process(false)
+		editor.animation_player.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
+		visual_state.animation_id = editor.selected_animation
+		visual_state.animation_time = editor.animation_player.current_animation_position
+		_exchange_pose_dirty = true
 
 func _sync_render_projection() -> void:
 	if editor == null or player_sprite == null:
@@ -121,19 +233,110 @@ func _map_anchor_offset() -> Vector2:
 func _process(delta: float) -> void:
 	z_index = 10 + int(position.y / TerrainRenderer.CELL_PIXELS)
 	if editor != null and player_sprite != null:
+		if exchange_enabled and _exchange_pose_dirty:
+			# Exchange outcomes own gameplay; the original model is presentation
+			# only and seeks once per rendered frame, never once per logic step.
+			editor.animation_player.seek(visual_state.animation_time, true)
+			_exchange_pose_dirty = false
+			_cloth_pose_dirty = true
+		_sync_ammo_visual()
+		if _cloth_pose_dirty:
+			if exchange_enabled and not editor_window.visible:
+				# Reuse the original presenter update (props, cloth, hair, mount),
+				# once per changed pose rather than also in an invisible editor.
+				editor._process(0.0)
+				editor.preview_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+			else:
+				editor._update_scabbard_pose()
+				editor._update_combat_cloth()
+			_cloth_pose_dirty = false
 		var expected_scale := editor.get_map_sprite_scale()
 		if not is_equal_approx(player_sprite.scale.x, expected_scale):
 			_sync_render_projection()
 	queue_redraw()
-	_update_projectile(delta)
+	if not combat_driven_by_lab:
+		advance_combat(delta)
+
+func advance_combat(delta: float, defer_contacts: bool = false) -> void:
+	if delta <= 0.0 or (is_inside_tree() and get_tree().paused):
+		return
+	# A committed legal step finishes even after KO/death; movement and contacts
+	# use the same action clock, including headless runs and slow rendered frames.
+	_advance_movement(delta)
+	if exchange_enabled:
+		exchange_cooldown = maxf(0.0, exchange_cooldown - delta)
+		ranged_cooldown = maxf(0.0, ranged_cooldown - delta)
+		exchange_stagger = maxf(0.0, exchange_stagger - delta)
+		exchange_skill_cooldown = maxf(0.0, exchange_skill_cooldown - delta)
+		_ranged_hold_left = maxf(0.0, _ranged_hold_left - delta)
+		_exchange_visual_left = maxf(0.0, _exchange_visual_left - delta)
+		if exchange_cooldown <= 0.000000001:
+			exchange_cooldown = 0.0
+		if ranged_cooldown <= 0.000000001:
+			ranged_cooldown = 0.0
+		if exchange_stagger <= 0.000000001:
+			exchange_stagger = 0.0
+		if exchange_skill_cooldown <= 0.000000001:
+			exchange_skill_cooldown = 0.0
+		if _ranged_hold_left <= 0.000000001:
+			_ranged_hold_left = 0.0
+	_pending_melee.clear()
+	_pending_release = false
+	_pending_projectile_delta = delta if defer_contacts and not exchange_enabled else 0.0
+	if not defer_contacts and not exchange_enabled:
+		_update_projectile(delta)
+	_advance_combat_pose(delta)
 	if hp <= 0:
 		return
+	var guard_was_broken := guard_break_left > 0.0
+	guard_break_left = maxf(0.0, guard_break_left - delta)
+	if guard_break_left <= 0.000000001:
+		guard_break_left = 0.0
+	if guard_was_broken and guard_break_left == 0.0 and can_act() and action_time <= 0.0:
+		play_pose(&"idle")
+	var guard_was_changing := guard_transition_left > 0.0
+	guard_transition_left = maxf(0.0, guard_transition_left - delta)
+	if guard_transition_left <= 0.000000001:
+		guard_transition_left = 0.0
+	if guard_was_changing and guard_transition_left == 0.0 and guard_break_left == 0.0:
+		play_pose(&"guard" if guarding else &"idle")
+	if knockout_left > 0.0:
+		knockout_left = maxf(0.0, knockout_left - delta)
+		if knockout_left == 0.0:
+			_wake_up()
+		return
+	if _getting_up:
+		action_time = maxf(0.0, action_time - delta)
+		if action_time == 0.0:
+			_getting_up = false
+			play_pose(&"idle")
+		return
+	var recovering := maxf(0.0, delta - stun_grace)
+	stun_grace = maxf(0.0, stun_grace - delta)
+	stun = maxf(0.0, stun - recovering * SiteCombatRules.STUN_RECOVERY)
+	if captive:
+		return
+	if _rescue_left > 0.0:
+		_advance_rescue(delta)
+		return
+	if exchange_enabled:
+		action_time = maxf(exchange_stagger, _ranged_hold_left) # Visual completion never extends or strands the original action lock.
+		if _exchange_guard_hold and exchange_stagger <= 0.0:
+			_exchange_guard_hold = false
+			guarding = false
+		if _step_time > 0.0:
+			_step_time = maxf(0.0, _step_time - delta)
+			if _step_time == 0.0 and not is_moving() and exchange_stagger <= 0.0:
+				play_pose(&"idle")
+		_update_combat_ready()
+		return # No legacy attack sampling, projectile release or pose IK.
 	_update_combat_ready()
 	if action_time > 0.0:
 		action_time = maxf(0.0, action_time - delta)
 		if _strike_at >= 0.0:
-			_sample_attack(delta)
+			_sample_attack(delta, defer_contacts)
 		if action_time == 0.0:
+			_getting_up = false
 			_strike_at = -1.0
 			_previous_weapon.clear()
 			_collision_shapes.clear()
@@ -148,11 +351,17 @@ func _process(delta: float) -> void:
 		play_pose(&"idle")
 
 func _update_combat_ready() -> void:
-	var distance := position.distance_to(opponent.position) / TerrainRenderer.CELL_PIXELS if is_instance_valid(opponent) and opponent.hp > 0 else INF
-	var ready_now := distance <= (4.0 if combat_ready else 3.0)
+	if _getting_up or _rescue_left > 0.0 or guard_break_left > 0.0 or guard_transition_left > 0.0:
+		return
+	if exchange_enabled and (exchange_stagger > 0.0 or _exchange_visual_active):
+		return
+	var target := _attack_target(false)
+	var distance := position.distance_to(target.position) / TerrainRenderer.CELL_PIXELS if not target.is_empty() and float(target.hp) > 0.0 else INF
+	var ready_now := (combat_mode_query.is_valid() and bool(combat_mode_query.call())) or distance <= (4.0 if combat_ready else 3.0)
 	if combat_ready == ready_now:
 		if ready_now and action_time <= 0.0 and not is_moving() and not guarding:
-			face_target(opponent)
+			if auto_face and is_instance_valid(opponent):
+				face_target(opponent)
 			_set_attack_offset(_attack_offset)
 		return
 	combat_ready = ready_now
@@ -162,12 +371,17 @@ func _update_combat_ready() -> void:
 		editor.visual_state.combat_ready = ready_now
 		editor._update_weapon_sheath_state()
 	if action_time <= 0.0 and not is_moving():
-		if ready_now:
+		if ready_now and auto_face and is_instance_valid(opponent):
 			face_target(opponent)
-		play_pose(&"idle")
+		play_pose(&"guard" if guarding else &"idle")
 
 func face_target(target: TerrainTestCharacter) -> void:
-	var offset := target.terrain_cell - terrain_cell
+	face_cell(target.terrain_cell)
+
+func face_cell(cell: Vector2i) -> void:
+	var offset := cell - terrain_cell
+	if offset == Vector2i.ZERO:
+		return
 	facing = Vector2i(signi(offset.x), 0) if absi(offset.x) > absi(offset.y) else Vector2i(0, signi(offset.y))
 	if combat_ready:
 		_stance_offset = Vector2(facing) * COMBAT_STANCE_PIXELS
@@ -178,9 +392,11 @@ func get_move_interval(running: bool = false) -> float:
 	return RUN_DURATION if running else MOVE_DURATION
 
 func toggle_mount() -> bool:
-	if editor == null or hp <= 0 or action_time > 0.0:
+	if editor == null or not can_act() or action_time > 0.0 or guarding:
 		return false
 	var mounted := not editor.is_mounted
+	_exchange_visual_active = false
+	_exchange_visual_left = 0.0
 	editor.set_mount_enabled(mounted)
 	_sync_render_projection()
 	editor.select_animation_by_id(&"ride_idle" if mounted else &"idle")
@@ -188,43 +404,50 @@ func toggle_mount() -> bool:
 	return mounted
 
 func place(cell: Vector2i, instant: bool = false, duration: float = MOVE_DURATION) -> bool:
-	if not can_enter_cell(cell):
+	if not can_enter_cell(cell) or not is_finite(duration) or duration <= 0.0:
 		return false
+	_cancel_rescue()
 	movement_from_cell = cell if instant else terrain_cell
 	terrain_cell = cell
 	var destination := (Vector2(terrain_cell) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
-	if _movement_tween != null and _movement_tween.is_valid():
-		_movement_tween.kill()
-	_movement_tween = null
-	if instant or player_sprite == null or DisplayServer.get_name() == "headless":
+	_movement_start = position
+	_movement_duration = 0.0 if instant else duration
+	_movement_elapsed = 0.0
+	_movement_linear = false
+	if instant:
 		position = destination
-	else:
-		_movement_tween = create_tween()
-		_movement_tween.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-		_movement_tween.tween_property(self, "position", destination, duration)
 	queue_redraw()
 	return true
 
-func step(direction: Vector2i, running: bool = false) -> bool:
+func step(direction: Vector2i, running: bool = false, escort_guard_id: int = 0) -> bool:
 	if is_inside_tree() and get_tree().paused:
 		return false
-	if hp <= 0 or action_time > 0.0 or guarding or is_moving():
+	var escorted := captive and escort_guard_id > 0 and escort_step_guard.is_valid() and bool(escort_step_guard.call(person_id, escort_guard_id, terrain_cell + direction))
+	if (not can_act() and not escorted) or (exchange_enabled and exchange_stagger > 0.0) or action_time > 0.0 or guarding or guard_transition_left > 0.0 or is_moving():
 		return false
-	if is_instance_valid(opponent) and opponent.terrain_cell == terrain_cell + direction:
+	if is_instance_valid(opponent) and opponent.occupies_cell(terrain_cell + direction):
 		return false
 	if data == null or not data.can_step(terrain_cell, terrain_cell + direction) or not can_enter_cell(terrain_cell + direction):
 		return false
 	var duration := get_move_interval(running)
+	_cancel_rescue()
 	_stance_offset = Vector2.ZERO
 	_set_attack_offset(Vector2.ZERO)
 	facing = direction
 	var moved: bool = place(terrain_cell + direction, false, duration)
+	if moved and exchange_enabled:
+		# Commit movement now; only the remaining initial strike core keeps the
+		# presenter's old pose/yaw. It never owns movement or actual facing.
+		if not _exchange_visual_active or not CombatTimings.ATTACKS.has(visual_state.animation_id) \
+			or ExchangeTimings.duration(visual_state.animation_id) - _exchange_visual_left >= ExchangeTimings.MOVE_CORE_SECONDS:
+			_finish_exchange_visual()
+		return moved
 	if moved and editor != null:
 		editor.set_preview_yaw_degrees({Vector2i.DOWN: 0.0, Vector2i.UP: 180.0, Vector2i.LEFT: -90.0, Vector2i.RIGHT: 90.0}.get(direction, 0.0))
 		var locomotion := &"run" if running else &"walk"
 		if editor.is_mounted:
 			locomotion = &"ride_run" if running else &"ride_walk"
-		editor.select_animation_by_id(locomotion)
+		play_pose(locomotion)
 		_step_time = duration + 0.12
 	return moved
 
@@ -236,31 +459,180 @@ func can_enter_cell(cell: Vector2i) -> bool:
 	return true
 
 func is_moving() -> bool:
-	return _movement_tween != null and _movement_tween.is_running()
+	return _movement_elapsed < _movement_duration
+
+func _advance_movement(delta: float) -> void:
+	if not is_moving():
+		return
+	_movement_elapsed = minf(_movement_duration, _movement_elapsed + delta)
+	if _movement_duration - _movement_elapsed <= 0.000000001:
+		_movement_elapsed = _movement_duration
+	var fraction := _movement_elapsed / _movement_duration
+	var weight := fraction if _movement_linear else CombatTimings.movement_weight(fraction)
+	var destination := (Vector2(terrain_cell) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
+	position = _movement_start.lerp(destination, weight)
 
 func occupies_cell(cell: Vector2i) -> bool:
+	if hp <= 0.0 or knockout_left > 0.0:
+		return false
 	return terrain_cell == cell or (is_moving() and movement_from_cell == cell)
 
 func play_pose(clip: StringName) -> void:
+	if exchange_enabled:
+		if _exchange_visual_active and clip in [&"idle", &"ride_idle"]:
+			return # Readiness/step-end maintenance cannot erase an unfinished result.
+		_exchange_visual_active = false
+		_exchange_visual_left = 0.0
+		_exchange_pose_dirty = true
 	_step_time = 0.0
 	_set_attack_offset(Vector2.ZERO)
 	if editor != null:
-		editor.animation_player.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_IDLE
 		if clip == &"idle" and editor.is_mounted:
 			clip = &"ride_idle"
-		elif clip == &"idle" and combat_ready:
-			clip = &"guard"
 		editor.select_animation_by_id(clip)
+		clip = editor.selected_animation
+		editor.animation_player.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
+		editor.animation_player.seek(0.0, true)
+	visual_state.animation_id = clip
+	visual_state.animation_time = 0.0
+
+func _exchange_authored_duration(clip: StringName) -> float:
+	if editor != null:
+		var animation := editor.animation_player.get_animation(clip)
+		if animation != null:
+			return animation.length
+	return ExchangeTimings.authored_duration(clip)
+
+func _start_exchange_visual(clip: StringName, merge_reaction: bool = false) -> void:
+	# Incoming arrows still settle HP/stun/hold individually. Only an equal or
+	# lighter visual reaction inside this existing window avoids restarting.
+	if merge_reaction and _exchange_visual_active and _exchange_visual_left > 0.0 \
+		and ExchangeTimings.reaction_priority(visual_state.animation_id) >= ExchangeTimings.reaction_priority(clip):
+		return
+	_exchange_visual_active = false
+	play_pose(clip)
+	clip = visual_state.animation_id # The original editor normalizes guard aliases.
+	_exchange_visual_left = ExchangeTimings.duration(clip)
+	_exchange_visual_active = _exchange_visual_left > 0.0
+	visual_state.animation_time = ExchangeTimings.sample_time(clip, 0.0, _exchange_authored_duration(clip))
+	_exchange_pose_dirty = true
+
+func _finish_exchange_visual() -> void:
+	_exchange_visual_active = false
+	_exchange_visual_left = 0.0
+	if not is_moving():
+		play_pose(&"guard" if guarding and not _exchange_guard_hold else &"idle")
+		return
+	var running := _movement_duration <= RUN_DURATION + 0.000000001
+	var clip := &"run" if running else &"walk"
+	if editor != null:
+		editor.set_preview_yaw_degrees({Vector2i.DOWN: 0.0, Vector2i.UP: 180.0, Vector2i.LEFT: -90.0, Vector2i.RIGHT: 90.0}.get(facing, 0.0))
+		if editor.is_mounted:
+			clip = &"ride_run" if running else &"ride_walk"
+	play_pose(clip)
+	_step_time = maxf(0.0, _movement_duration - _movement_elapsed) + 0.12
+
+func _advance_combat_pose(delta: float) -> void:
+	if _strike_at >= 0.0:
+		return
+	if exchange_enabled and _exchange_visual_active:
+		var clip := visual_state.animation_id
+		var elapsed := ExchangeTimings.duration(clip) - _exchange_visual_left
+		if _exchange_visual_left <= 0.000000001 or (is_moving() and CombatTimings.ATTACKS.has(clip) \
+			and elapsed >= ExchangeTimings.MOVE_CORE_SECONDS - 0.000000001):
+			_finish_exchange_visual()
+			return
+		visual_state.animation_time = ExchangeTimings.sample_time(clip, elapsed, _exchange_authored_duration(clip))
+		_exchange_pose_dirty = true
+		return
+	if editor == null:
+		visual_state.animation_time += delta
+		if visual_state.animation_id == &"down" and visual_state.animation_time >= float(CombatTimings.POSE_SECONDS[&"down"]) and hp > 0.0 and knockout_left > 0.0:
+			play_pose(&"unconscious")
+		return
+	if editor.animation_player.callback_mode_process != AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL:
+		return
+	var animation := editor.animation_player.get_animation(editor.selected_animation)
+	if animation == null:
+		return
+	var elapsed := visual_state.animation_time + delta
+	if visual_state.animation_id == &"down" and elapsed >= animation.length and hp > 0.0 and knockout_left > 0.0:
+		play_pose(&"unconscious")
+		return
+	visual_state.animation_time = fposmod(elapsed, animation.length) if animation.loop_mode == Animation.LOOP_LINEAR else minf(elapsed, animation.length)
+	if exchange_enabled:
+		_exchange_pose_dirty = true
+		return
+	var stage_started := Time.get_ticks_usec() if combat_pose_profile_enabled else 0
+	editor.animation_player.seek(visual_state.animation_time, true)
+	if combat_pose_profile_enabled:
+		combat_pose_profile_usec.calls += 1
+		combat_pose_profile_usec.seek += Time.get_ticks_usec() - stage_started
+	if visual_state.animation_id == &"rescue":
+		var reach := smoothstep(.2, .7, elapsed) * (1.0 - smoothstep(3.3, 4.0, elapsed))
+		_set_attack_offset(Vector2(facing) * (31.5 - _stance_offset.length()) * reach)
+	stage_started = Time.get_ticks_usec() if combat_pose_profile_enabled else 0
+	editor._update_combat_props()
+	if combat_pose_profile_enabled:
+		combat_pose_profile_usec.props += Time.get_ticks_usec() - stage_started
+		stage_started = Time.get_ticks_usec()
+	if batch_cloth_updates_enabled and combat_driven_by_lab and is_processing():
+		_cloth_pose_dirty = true
+	else:
+		# Standalone/manual stepping keeps the original immediate presentation.
+		editor._update_scabbard_pose()
+		editor._update_combat_cloth()
+		_cloth_pose_dirty = false
+	if combat_pose_profile_enabled:
+		combat_pose_profile_usec.cloth += Time.get_ticks_usec() - stage_started
 
 func start_attack(target: TerrainTestCharacter) -> bool:
+	if not is_instance_valid(target) or target.hp <= 0.0:
+		return false
+	return _start_target_attack(target.combat_identity(), target)
+
+func start_attack_unit(team: TerrainArmy, index: int) -> bool:
+	if not is_instance_valid(team) or team.member_gone(index) or index == TerrainArmy.PLAYER_MEMBER or not combat_target_query.is_valid():
+		return false
+	return _start_target_attack(team.combat_identity(index))
+
+func _attack_target(with_bodies: bool) -> Dictionary:
+	if combat_target_query.is_valid() and attack_target_id > 0:
+		return combat_target_query.call(attack_target_id, with_bodies)
+	if not is_instance_valid(opponent):
+		return {}
+	return {"position": opponent.position, "cell": opponent.terrain_cell, "hp": opponent.hp,
+		"bodies": _geometry.body_shapes(opponent) if with_bodies and opponent.editor != null else []}
+
+func _start_target_attack(identity: int, actor: TerrainTestCharacter = null) -> bool:
 	if is_inside_tree() and get_tree().paused:
 		return false
-	if hp <= 0 or action_time > 0.0 or guarding or is_moving() or not is_instance_valid(target) or target.hp <= 0:
+	if exchange_enabled:
+		if not can_act() or exchange_stagger > 0.0 or _rescue_left > 0.0:
+			combat_status = "Exchange unavailable"
+			return false
+		attack_target_id = identity
+		if actor != null:
+			opponent = actor
+		var requested := _attack_target(false) # Never request body/aim geometry.
+		if requested.is_empty() or float(requested.hp) <= 0.0:
+			return false
+		_update_combat_ready()
+		face_cell(requested.cell)
+		combat_status = "Exchange target selected"
+		return true
+	if not can_act() or action_time > 0.0 or guarding or guard_transition_left > 0.0 or guard_break_left > 0.0 or is_moving() or _rescue_left > 0.0:
 		return false
-	opponent = target
+	attack_target_id = identity
+	if actor != null:
+		opponent = actor
+	var target := _attack_target(true)
+	if target.is_empty() or float(target.hp) <= 0.0:
+		return false
 	_update_combat_ready()
-	target._update_combat_ready()
-	face_target(target)
+	if actor != null:
+		actor._update_combat_ready()
+	face_cell(target.cell)
 	var clip: StringName = &"attack_unarmed"
 	if editor != null:
 		var weapon_option := editor.part_options.get(&"weapon") as OptionButton
@@ -284,46 +656,59 @@ func start_attack(target: TerrainTestCharacter) -> bool:
 	_step_time = 0.0
 	_attack_range = 6 if clip in [&"attack_bow", &"attack_crossbow"] else (2 if clip in [&"attack_spear", &"ride_thrust"] else 1)
 	_attack_damage = 30 if clip in [&"attack_jump_heavy", &"attack_axe", &"attack_hammer"] else 20
-	action_time = maxf(0.35, editor._animation_length()) if editor != null else 0.8
-	if can_hit(target, _attack_range):
+	_clip_duration = float(CombatTimings.events(clip).duration)
+	var shared_training := float(training_query.call()) if training_query.is_valid() else training
+	_training_reduction = SiteCombatRules.diminishing(shared_training, 0.15)
+	_fatigue_slowdown = PersonFatigue.slowdown(fatigue)
+	# Shorten only anticipation/recovery; the contact-active interval is unchanged.
+	action_time = CombatTimings.action_duration(clip, _training_reduction, _fatigue_slowdown)
+	var target_offset: Vector2i = target.cell - terrain_cell
+	if absi(target_offset.x) + absi(target_offset.y) <= _attack_range and SiteCombatRules.terrain_line_clear(data, terrain_cell, target.cell):
 		combat_event.emit(action_time + 10.0)
-	_strike_at = action_time * 0.45
+	_strike_at = float(CombatTimings.events(clip).active_start) * (1.0 - _training_reduction) * (1.0 + _fatigue_slowdown)
 	_attack_duration = action_time
 	_attack_clip = clip
+	visual_state.animation_id = clip
+	visual_state.animation_time = 0.0
+	_attack_profile = SiteCombatRules.attack_profile(clip)
+	_reload_left = 0.0
+	if bool(_attack_profile.ranged):
+		var ammunition := "bolt" if clip == &"attack_crossbow" else "arrow"
+		if int(ammo_inventory.get(ammunition, 0)) <= 0:
+			action_time = 0.0
+			_strike_at = -1.0
+			combat_status = "No ammunition"
+			play_pose(&"idle")
+			return false
+		var reload_clip: StringName = &"reload_crossbow" if clip == &"attack_crossbow" else &"reload_bow"
+		_reload_left = float(CombatTimings.POSE_SECONDS[reload_clip])
+		action_time += _reload_left
+		if editor != null:
+			editor.select_animation_by_id(reload_clip)
+			editor.animation_player.seek(0.0, true)
+		visual_state.animation_id = reload_clip
+	_attack_serial += 1
+	_attack_hits.clear()
+	_weapon_blocked = false
 	_attack_aim_point = target.position
-	if target.editor != null:
-		var bodies: Array[PackedVector2Array] = _geometry.body_shapes(target)
-		if not bodies.is_empty():
-			# A rider's shorter sword reaches the upper body, not the waist.
-			var aim_body := bodies[1] if clip == &"ride_slash" and bodies.size() > 1 else bodies[0]
-			_attack_aim_point = Vector2.ZERO
-			for point: Vector2 in aim_body:
-				_attack_aim_point += point
-			_attack_aim_point /= aim_body.size()
-			if facing == Vector2i.DOWN:
-				# Screen-down targets expose their head/upper limbs first. Aim at
-				# the closest body surface, not a waist hidden below our reach.
+	if not target.bodies.is_empty():
+		var shoulder_point := Vector2.INF
+		if facing == Vector2i.DOWN and editor != null:
+			if combat_proxy != null:
+				shoulder_point = combat_proxy.actor_sample(self).shoulder + global_position + _attack_offset + _stance_offset
+			else:
 				var skeleton := editor.model_root.find_child("Skeleton3D", true, false) as Skeleton3D
 				var shoulder := skeleton.find_bone("J_Bip_R_UpperArm")
-				var origin := _geometry.project(self, skeleton.global_transform * skeleton.get_bone_global_pose(shoulder).origin)
-				var nearest := INF
-				for body: PackedVector2Array in bodies:
-					var centre := Vector2.ZERO
-					for point: Vector2 in body:
-						centre += point
-					centre /= body.size()
-					for point: Vector2 in body:
-						var inset := point.move_toward(centre, 0.5)
-						if origin.distance_squared_to(inset) < nearest:
-							nearest = origin.distance_squared_to(inset)
-							_attack_aim_point = inset
+				shoulder_point = _geometry.project(self, skeleton.global_transform * skeleton.get_bone_global_pose(shoulder).origin)
+		_attack_aim_point = WeaponCollision.attack_aim_point(target.bodies, target.position, shoulder_point, clip == &"ride_slash")
 	_attack_step = 0.0
-	if data != null and data.can_step(terrain_cell, target.terrain_cell):
+	if data != null and data.can_step(terrain_cell, target.cell):
 		_attack_step = float(ATTACK_STEP_PIXELS.get(clip, 0.0))
 	_did_hit = false
 	_previous_weapon.clear()
 	_attack_elapsed = 0.0
 	combat_status = "Attacking"
+	_sync_ammo_visual()
 	return true
 
 func _set_attack_offset(value: Vector2) -> void:
@@ -334,44 +719,207 @@ func _set_attack_offset(value: Vector2) -> void:
 func _update_attack_step(fraction: float) -> void:
 	# Imported clips lock planar root motion. Restore a visible in-cell step,
 	# shared by the sprite and its projected colliders; never enlarge hitboxes.
-	var weight := smoothstep(0.0, 0.20, fraction) * (1.0 - smoothstep(0.72, 1.0, fraction))
+	var weight := CombatTimings.attack_step_weight(fraction)
 	_set_attack_offset(Vector2(facing) * minf(_attack_step, 31.5 - _stance_offset.length()) * weight)
 
-func _sample_attack(delta: float) -> void:
-	if editor == null or not is_instance_valid(opponent) or opponent.editor == null:
+func _sample_attack(delta: float, defer_contacts: bool = false) -> void:
+	if exchange_enabled or editor == null or not can_act():
 		return
+	if _reload_left > 0.0:
+		var used := minf(delta, _reload_left)
+		_reload_left -= used
+		delta -= used
+		visual_state.animation_time += used
+		editor.animation_player.seek(visual_state.animation_time, true)
+		_sync_ammo_visual()
+		if _reload_left > 0.0:
+			return
+		editor.select_animation_by_id(_attack_clip)
+		editor.animation_player.seek(0.0, true)
+		visual_state.animation_id = _attack_clip
+		visual_state.animation_time = 0.0
 	# Sample the actual pose at 120 Hz even on a slow rendered frame. No fixed
 	# distance-to-target damage fallback; empty/unavailable geometry cannot hit.
 	var end_time := minf(_attack_elapsed + delta, _attack_duration)
 	while _attack_elapsed < end_time:
 		_attack_elapsed = minf(_attack_elapsed + 1.0 / 120.0, end_time)
-		_update_attack_step(_attack_elapsed / _attack_duration)
-		editor.animation_player.seek(_attack_elapsed, true)
+		var clip_time := _clip_time(_attack_elapsed)
+		visual_state.animation_time = clip_time
+		_update_attack_step(clip_time / _clip_duration)
+		editor.animation_player.seek(clip_time, true)
 		if _attack_clip in [&"ride_slash", &"ride_thrust"] or (facing == Vector2i.DOWN and _attack_clip not in [&"attack_unarmed", &"attack_bow", &"attack_crossbow"]):
-			var fraction := _attack_elapsed / _attack_duration
+			var fraction := clip_time / _clip_duration
 			var aim_weight := smoothstep(0.18, 0.40, fraction) * (1.0 - smoothstep(0.65, 0.90, fraction))
 			_geometry.aim_weapon_attack(self, _attack_aim_point, aim_weight)
 		if _attack_clip in [&"attack_bow", &"attack_crossbow"]:
-			if not _did_hit and _attack_elapsed >= _attack_duration * 0.45:
+			if not _did_hit and clip_time >= float(CombatTimings.events(_attack_clip).release):
 				_did_hit = true
-				_launch_projectile()
+				if defer_contacts:
+					_pending_release = true
+				else:
+					_launch_projectile()
+			_sync_ammo_visual()
 			continue
 		var shapes: Array[PackedVector2Array] = _geometry.weapon_shapes(self, _attack_clip)
-		var active := _attack_elapsed >= _attack_duration * 0.20 and _attack_elapsed <= _attack_duration * 0.80
+		var event := CombatTimings.events(_attack_clip)
+		var active := clip_time >= float(event.active_start) and clip_time <= float(event.active_end)
 		_collision_shapes = shapes
-		if active and not _did_hit and _terrain_contact_clear(opponent):
-			var hurtboxes: Array[PackedVector2Array] = _geometry.body_shapes(opponent)
-			if WeaponCollision.swept_contact(_previous_weapon, shapes, hurtboxes):
-				_did_hit = true
-				opponent.receive_hit(_attack_damage, self)
-				combat_status = "Hit"
+		if active and not _weapon_blocked:
+			if defer_contacts:
+				_pending_melee.append({"previous": _previous_weapon.duplicate(), "current": shapes})
+			else:
+				_resolve_melee_contacts(shapes, _previous_weapon)
 		if active:
 			_previous_weapon = shapes
 		else:
 			_previous_weapon.clear()
 
+func sample_combat() -> void:
+	# TerrainLab calls this only after EVERY original actor/army has advanced.
+	# Existing missiles move first; one released now starts travelling next step.
+	if is_inside_tree() and get_tree().paused:
+		return
+	if exchange_enabled:
+		_pending_melee.clear()
+		_pending_release = false
+		_pending_projectile_delta = 0.0
+		return
+	var projectile_delta := _pending_projectile_delta
+	var release := _pending_release
+	var melee := _pending_melee
+	_pending_projectile_delta = 0.0
+	_pending_release = false
+	_pending_melee = []
+	if projectile_delta > 0.0:
+		_update_projectile(projectile_delta)
+	if release and can_act():
+		_launch_projectile()
+		_sync_ammo_visual()
+	if can_act():
+		for sample: Dictionary in melee:
+			if not _weapon_blocked:
+				_resolve_melee_contacts(sample.current, sample.previous)
+
+func _clip_time(elapsed: float) -> float:
+	return CombatTimings.sample_time(_attack_clip, elapsed, _training_reduction, _fatigue_slowdown)
+
+func _sync_ammo_visual() -> void:
+	if editor == null:
+		return
+	var option := editor.part_options.get(&"weapon") as OptionButton
+	var weapon := str(option.get_item_metadata(option.selected)) if option != null else "none"
+	editor.combat_ammo_count = int(ammo_inventory.get("bolt" if weapon == "crossbow_01" else "arrow", 0))
+	editor.combat_ammo_available = editor.combat_ammo_count > 0
+	editor._update_combat_props()
+
+func targets() -> Array[TerrainTestCharacter]:
+	var result: Array[TerrainTestCharacter] = []
+	if combatants.is_valid():
+		for candidate: TerrainTestCharacter in combatants.call():
+			if is_instance_valid(candidate) and candidate != self:
+				result.append(candidate)
+	elif is_instance_valid(opponent):
+		result.append(opponent)
+	return result
+
+func incoming_geometry(ranged: bool = false) -> Dictionary:
+	var bodies := _geometry.body_shapes(self)
+	var shields := _geometry.shield_shapes(self)
+	var parry: Array[PackedVector2Array] = []
+	if shields.is_empty() and guarding and guard_break_left <= 0.0 and guard_transition_left <= 0.0 and editor != null and not ranged:
+		var weapon_option := editor.part_options.get(&"weapon") as OptionButton
+		var weapon_id := StringName(str(weapon_option.get_item_metadata(weapon_option.selected))) if weapon_option != null else &"none"
+		var weapon_clip: StringName = HumanCharacter3DEditor.WEAPON_ATTACK_MAP.get(weapon_id, &"attack_unarmed")
+		if weapon_clip not in [&"attack_unarmed", &"attack_bow", &"attack_crossbow"]:
+			parry = _geometry.weapon_shapes(self, weapon_clip, true)
+	return {"body": bodies, "shield": shields, "parry": parry}
+
+func incoming_contact(previous: Array[PackedVector2Array], shapes: Array[PackedVector2Array], ranged: bool = false, sampled_geometry: Dictionary = {}, prepared: Array = []) -> Dictionary:
+	# Only the lab's synchronous army-sampling phase supplies a snapshot.
+	# Standalone attacks/projectiles always project the current pose as before.
+	var geometry := incoming_geometry(ranged) if sampled_geometry.is_empty() else sampled_geometry
+	if prepared.is_empty():
+		prepared = WeaponCollision.prepare_sweeps(previous, shapes)
+	var hit := WeaponCollision.person_contact(previous, shapes, geometry.body, geometry.shield, prepared)
+	if not ranged and not geometry.parry.is_empty():
+		var parry := WeaponCollision.contact(previous, shapes, geometry.parry, prepared)
+		if not parry.is_empty() and (hit.is_empty() or float(parry.fraction) <= float(hit.fraction)):
+			hit = parry
+			hit["shield"] = true
+			hit["block_kind"] = "parry"
+	return hit
+
+func _contacts(previous: Array[PackedVector2Array], shapes: Array[PackedVector2Array], source_cell: Vector2i, ranged: bool = false) -> Array[Dictionary]:
+	var found: Array[Dictionary] = []
+	var prepared := WeaponCollision.prepare_sweeps(previous, shapes)
+	var exclude_hits := not ranged and WeaponCollision.strict_contact_order_enabled and WeaponCollision.melee_hit_cull_enabled
+	for target: TerrainTestCharacter in targets():
+		if exclude_hits and _attack_hits.has(target.combat_identity()):
+			continue
+		if not SiteCombatRules.terrain_line_clear(data, source_cell, target.terrain_cell):
+			continue
+		var hit := target.incoming_contact(previous, shapes, ranged, {}, prepared)
+		if hit.is_empty():
+			continue
+		hit["target"] = target
+		hit["identity"] = target.combat_identity()
+		hit["faction"] = target.faction_id
+		hit["distance"] = position.distance_squared_to(hit.point)
+		found.append(hit)
+	if army_contacts.is_valid():
+		found.append_array(army_contacts.call(previous, shapes, source_cell, position, self, -1, ranged, prepared))
+	found.sort_custom(WeaponCollision.contact_precedes)
+	return found
+
+func _resolve_melee_contacts(shapes: Array[PackedVector2Array], previous: Array[PackedVector2Array]) -> void:
+	for hit: Dictionary in _contacts(previous, shapes, terrain_cell):
+		var target: Variant = hit.target
+		if _attack_hits.has(int(hit.identity)):
+			continue
+		_attack_hits[int(hit.identity)] = true
+		if int(hit.faction) == faction_id:
+			_weapon_blocked = true
+			combat_status = "Ally obstructs melee"
+			break
+		_submit_contact(target, hit, _attack_profile)
+		_did_hit = true
+		if bool(hit.shield) or str(_attack_profile.kind) == "stab":
+			_weapon_blocked = true
+			break
+
+func contact_protection(hit: Dictionary, profile: Dictionary) -> Vector2:
+	if combat_proxy != null:
+		var body_index := (5 if str(hit.get("block_kind", "shield")) == "parry" else 3) if bool(hit.shield) else int(hit.body)
+		return combat_proxy.protection(editor.capture_appearance(), body_index, str(profile.kind))
+	var protection: Vector2 = _geometry.armor_at(self, hit.point, str(profile.kind))
+	if bool(hit.shield):
+		var bodies: Array[PackedVector2Array] = _geometry.body_shapes(self)
+		var arm_index := 5 if str(hit.get("block_kind", "shield")) == "parry" else 3
+		if bodies.size() > arm_index:
+			var arm_point := Vector2.ZERO
+			for point: Vector2 in bodies[arm_index]:
+				arm_point += point
+			protection = _geometry.armor_at(self, arm_point / bodies[arm_index].size(), str(profile.kind))
+	return protection
+
+func _submit_contact(target: Variant, hit: Dictionary, profile: Dictionary) -> void:
+	var protection: Vector2 = target.contact_protection(int(hit.target_unit), hit, profile) if target is TerrainArmy else target.contact_protection(hit, profile)
+	var result := SiteCombatRules.damage(profile, protection.x, protection.y, int(hit.body), bool(hit.shield))
+	var packet := {"target": target, "target_unit": hit.get("target_unit", -1), "attacker": self, "result": result, "shield": bool(hit.shield), "fraction": float(hit.fraction),
+		"block_kind": hit.get("block_kind", "body"), "ranged": bool(profile.get("ranged", false))}
+	if contact_sink.is_valid():
+		contact_sink.call(packet)
+	else:
+		if target is TerrainArmy:
+			target.apply_unit_contact(int(hit.target_unit), packet)
+		else:
+			target.apply_contact(packet)
+
 func _launch_projectile() -> void:
-	if not _terrain_contact_clear(opponent):
+	if exchange_enabled:
+		return # No new-mode launch and no legacy ammo consumption.
+	var target := _attack_target(true)
+	if editor == null or target.is_empty():
 		return
 	var skeleton := editor.model_root.find_child("Skeleton3D", true, false) as Skeleton3D
 	if skeleton == null:
@@ -380,50 +928,64 @@ func _launch_projectile() -> void:
 	if hand < 0:
 		return
 	skeleton.force_update_all_bone_transforms()
-	_projectile_position = _geometry.project(self, skeleton.global_transform * skeleton.get_bone_global_pose(hand).origin)
-	var bodies: Array[PackedVector2Array] = _geometry.body_shapes(opponent)
+	var origin := _geometry.project(self, skeleton.global_transform * skeleton.get_bone_global_pose(hand).origin)
+	if is_instance_valid(editor.combat_props):
+		var bolt := _attack_clip == &"attack_crossbow"
+		var missile := editor.combat_props.get_node("Bolt" if bolt else "Arrow") as Node3D
+		origin = _geometry.project(self, missile.global_transform * Vector3(0, 0, .39 if bolt else .78))
+	var bodies: Array = target.bodies
 	if bodies.is_empty():
 		return
 	var aim := Vector2.ZERO
 	for point: Vector2 in bodies[0]:
 		aim += point
 	aim /= bodies[0].size()
-	_projectile_velocity = (aim - _projectile_position).normalized() * 420.0
-	_projectile_remaining = 6.0 * TerrainRenderer.CELL_PIXELS
-	_projectile_target = opponent
+	var ammunition := "bolt" if _attack_clip == &"attack_crossbow" else "arrow"
+	if int(ammo_inventory.get(ammunition, 0)) <= 0:
+		combat_status = "No ammunition"
+		return
+	# Spawn and consume once together; a miss or a dead shooter never refunds it.
+	var distance := origin.distance_to(aim)
+	if distance <= 0.001:
+		return
+	ammo_inventory[ammunition] = int(ammo_inventory[ammunition]) - 1
+	projectiles.append({"position": origin, "velocity": (aim - origin).normalized() * 420.0, "visual": ammunition,
+		"remaining": 6.0 * TerrainRenderer.CELL_PIXELS, "profile": _attack_profile.duplicate(),
+		"ground": position, "ground_velocity": (target.position - position) / distance * 420.0,
+		"source_cell": terrain_cell, "faction": faction_id})
+	combat_event.emit(12.0)
 
 func _update_projectile(delta: float) -> void:
-	if _projectile_remaining <= 0.0 or not is_instance_valid(_projectile_target):
-		return
-	var old := _projectile_position
-	var travel := minf(_projectile_velocity.length() * delta, _projectile_remaining)
-	_projectile_position += _projectile_velocity.normalized() * travel
-	_projectile_remaining -= travel
-	var sweep: Array[PackedVector2Array] = [WeaponCollision.capsule(old, _projectile_position, 1.0)]
-	if _terrain_contact_clear(_projectile_target) and WeaponCollision.swept_contact([], sweep, _geometry.body_shapes(_projectile_target)):
-		_projectile_target.receive_hit(_attack_damage, self)
-		_projectile_remaining = 0.0
-		combat_status = "Projectile hit"
+	for index in range(projectiles.size() - 1, -1, -1):
+		var arrow: Dictionary = projectiles[index]
+		if arrow.get("mode") == "cell":
+			continue # Only the original Lab clock advances cell-flight events.
+		var remaining_time := delta
+		while remaining_time > 0.0 and float(arrow.remaining) > 0.0:
+			var step_time := minf(remaining_time, 1.0 / 120.0)
+			remaining_time -= step_time
+			var old: Vector2 = arrow.position
+			var old_cell := Vector2i((arrow.ground as Vector2) / TerrainRenderer.CELL_PIXELS)
+			arrow.position += arrow.velocity * step_time
+			arrow.ground += arrow.ground_velocity * step_time
+			arrow.remaining = maxf(0.0, float(arrow.remaining) - (arrow.velocity as Vector2).length() * step_time)
+			var next_cell := Vector2i((arrow.ground as Vector2) / TerrainRenderer.CELL_PIXELS)
+			if not SiteCombatRules.terrain_line_clear(data, old_cell, next_cell):
+				arrow.remaining = 0.0
+				break
+			var previous: Array[PackedVector2Array] = [WeaponCollision.capsule(old, old, 1.0)]
+			var shapes: Array[PackedVector2Array] = [WeaponCollision.capsule(arrow.position, arrow.position, 1.0)]
+			var contacts := _contacts(previous, shapes, old_cell, true)
+			if not contacts.is_empty():
+				var hit: Dictionary = contacts[0]
+				_submit_contact(hit.target, hit, arrow.profile)
+				arrow.remaining = 0.0
+				combat_status = "Projectile contact"
+		if float(arrow.remaining) <= 0.0:
+			projectiles.remove_at(index)
 
 func _terrain_contact_clear(target: TerrainTestCharacter) -> bool:
-	if target.hp <= 0 or data == null:
-		return false
-	# Supercover-style cardinal edge walk: diagonal screen overlap never allows
-	# a weapon through a blocked height edge or water.
-	var cell := terrain_cell
-	var goal := target.terrain_cell
-	while cell != goal:
-		var step_x := Vector2i(signi(goal.x - cell.x), 0)
-		var step_y := Vector2i(0, signi(goal.y - cell.y))
-		if step_x != Vector2i.ZERO:
-			if not data.can_attack_across(cell, cell + step_x):
-				return false
-			cell += step_x
-		if step_y != Vector2i.ZERO:
-			if not data.can_attack_across(cell, cell + step_y):
-				return false
-			cell += step_y
-	return true
+	return is_instance_valid(target) and SiteCombatRules.terrain_line_clear(data, terrain_cell, target.terrain_cell)
 
 func can_hit(target: TerrainTestCharacter, reach: int) -> bool:
 	if not is_instance_valid(target) or target.hp <= 0 or data == null:
@@ -444,34 +1006,702 @@ func can_hit(target: TerrainTestCharacter, reach: int) -> bool:
 	return true
 
 func set_guard(enabled: bool) -> void:
-	if not enabled:
-		guarding = false
-	if hp <= 0 or action_time > 0.0 or is_moving():
+	if is_inside_tree() and get_tree().paused:
+		return
+	if not can_act() or (exchange_enabled and exchange_stagger > 0.0) or action_time > 0.0 or is_moving() or guard_break_left > 0.0 or _rescue_left > 0.0:
+		return
+	if guarding == enabled:
 		return
 	guarding = enabled
-	play_pose(&"guard" if enabled else &"idle")
+	guard_transition_left = SiteCombatRules.GUARD_TRANSITION
+	play_pose(&"guard_raise" if enabled else &"guard_lower")
 
 func receive_hit(damage: int, attacker: TerrainTestCharacter) -> void:
-	if hp <= 0:
+	# Explicit direct-damage compatibility entry point; runtime weapons use geometry.
+	apply_contact({"attacker": attacker, "shield": false,
+		"result": {"hp": maxf(0.0, damage), "stun": 0.0, "guard_break": false}})
+
+func can_act() -> bool:
+	return hp > 0.0 and knockout_left <= 0.0 and not captive and not _getting_up
+
+func exchange_ready() -> bool:
+	return exchange_enabled and can_act() and not (is_inside_tree() and get_tree().paused) and not is_moving() \
+		and _rescue_left <= 0.0 and exchange_stagger <= 0.0 and exchange_cooldown <= 0.0 and action_time <= 0.0 \
+		and guard_break_left <= 0.0 and guard_transition_left <= 0.0
+
+func exchange_can_receive() -> bool:
+	return exchange_enabled and hp > 0.0 and knockout_left <= 0.0 and not captive and not _getting_up \
+		and exchange_cooldown <= 0.000000001 and not (is_inside_tree() and get_tree().paused)
+
+func _exchange_equipped_asset(slot: String) -> String:
+	if not item_state.is_empty():
+		if data == null:
+			return "none"
+		var identity := str(item_state.get("equipped", {}).get(slot, ""))
+		var record: Dictionary = data.site.get("item_records", {}).get(identity, {})
+		var definition: Dictionary = data.site.get("item_definitions", {}).get(str(record.get("definition", "")), {})
+		if identity.is_empty() or not item_state.get("item_ids", []).has(identity) or record.get("holder") != item_state.get("holder") or definition.get("slot") != slot:
+			return "none"
+		return str(definition.get("asset", "none"))
+	# Existing legacy equipment, never a generated item or a baseline refill.
+	if editor != null:
+		var option := editor.part_options.get(StringName(slot)) as OptionButton
+		return str(option.get_item_metadata(option.selected)) if option != null and option.selected >= 0 else "none"
+	return str(_saved_appearance.get("parts", {}).get(slot, "none"))
+
+func exchange_stats() -> Dictionary:
+	var armor := SiteCombatRules.armor_profile(_exchange_equipped_asset("armor"))
+	var armor_bonus := float(armor.slash) * 0.25 + (4.0 if _exchange_equipped_asset("shield") != "none" else 0.0)
+	return {"ability": combat_ability, "training": float(training_query.call()) if training_query.is_valid() else training,
+		"fatigue": fatigue, "morale": float(exchange_morale_query.call()) if exchange_morale_query.is_valid() else 100.0,
+		"armorbonus": armor_bonus, "skill": _exchange_pending_skill}
+
+func ranged_profile() -> Dictionary:
+	return SiteCombatRules.ranged_profile(_exchange_equipped_asset("weapon"))
+
+func ranged_defense() -> Dictionary:
+	return {"moving": is_moving(), "shield": _exchange_equipped_asset("shield") != "none",
+		"armor_stab": float(SiteCombatRules.armor_profile(_exchange_equipped_asset("armor")).stab), "skill": _exchange_pending_skill}
+
+func ranged_fire(target_cell: Vector2i, shot_id: int) -> bool:
+	if not exchange_ready() or ranged_cooldown > 0.0 or data == null or shot_id <= 0 or bool(data.site.get("paused", false)):
+		return false
+	var weapon := _exchange_equipped_asset("weapon")
+	var profile := SiteCombatRules.ranged_profile(weapon)
+	if profile.is_empty() or not SiteCombatRules.ranged_in_range(terrain_cell, target_cell, float(profile.range)) \
+		or not SiteCombatRules.ranged_line_clear(data, terrain_cell, target_cell):
+		return false
+	var ammo := str(profile.ammo)
+	if int(ammo_inventory.get(ammo, 0)) <= 0:
+		combat_status = "No ammunition"
+		return false
+	var shooter := exchange_stats().duplicate(true)
+	var origin := (Vector2(terrain_cell) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS - Vector2(0, 20)
+	var goal := (Vector2(target_cell) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS - Vector2(0, 20)
+	var total := Vector2(terrain_cell).distance_to(Vector2(target_cell)) / float(profile.speed)
+	# Commit once to the original cargo; no flight outcome can refund this item.
+	ammo_inventory[ammo] = int(ammo_inventory[ammo]) - 1
+	fatigue = minf(100.0, fatigue + 1.0)
+	fatigue_rest = 0.0
+	if _exchange_pending_skill == "power":
+		_exchange_pending_skill = ""
+		exchange_skill_cooldown = SiteCombatRules.EXCHANGE_SKILL_COOLDOWN
+	_cancel_exchange_legacy_attack()
+	guarding = false
+	guard_transition_left = 0.0
+	_exchange_guard_hold = false
+	ranged_cooldown = float(profile.cooldown)
+	_ranged_hold_left = float(profile.hold)
+	action_time = _ranged_hold_left
+	combat_ready = true
+	if editor != null:
+		editor.combat_ready = true
+		editor.visual_state.combat_ready = true
+		editor._update_weapon_sheath_state()
+	face_cell(target_cell)
+	var clip: StringName = &"attack_crossbow" if ammo == "bolt" else &"attack_bow"
+	_start_exchange_visual(clip) # Already airborne: the shared short tail starts at authored release.
+	projectiles.append({"mode": "cell", "source_cell": terrain_cell, "target_cell": target_cell,
+		"origin": origin, "position": origin, "goal": goal, "velocity": (goal - origin) / total,
+		"visual": ammo, "left": total, "total": total, "shooter": shooter,
+		"shooter_id": combat_identity(), "shot_id": shot_id, "faction": faction_id})
+	combat_status = "Ranged shot: " + ammo
+	combat_event.emit(total + 10.0)
+	queue_redraw()
+	return true
+
+func ranged_apply_hit(source_cell: Vector2i, packet: Dictionary) -> void:
+	if not exchange_enabled or hp <= 0.0 or (is_inside_tree() and get_tree().paused):
 		return
+	var result: Variant = packet.get("result")
+	if not result is Dictionary:
+		return
+	for field: String in ["hp", "stun", "stagger"]:
+		if not _saved_number(result.get(field, 0.0), 0.0, 1000000.0):
+			return
+	# Brace belongs to this actual target settlement, including a miss; power
+	# remains queued for the owner's next outgoing exchange/shot.
+	if _exchange_pending_skill == "brace":
+		_exchange_pending_skill = ""
+		exchange_skill_cooldown = SiteCombatRules.EXCHANGE_SKILL_COOLDOWN
+	var positive := float(result.get("hp", 0.0)) > 0.0 or float(result.get("stun", 0.0)) > 0.0
+	var hold := exchange_stagger
+	var rear_hit := Vector2(facing).dot(Vector2(source_cell - terrain_cell)) < 0.0
+	if positive:
+		var committed_left := maxf(0.0, _movement_duration - _movement_elapsed) if is_moving() else 0.0
+		hold = maxf(hold, committed_left + float(result.get("stagger", 0.0)))
+		_cancel_exchange_legacy_attack()
+		_cancel_rescue()
+		guarding = false
+		guard_transition_left = 0.0
+		guard_break_left = 0.0
+		_exchange_guard_hold = false
+	var contact := packet.duplicate()
+	contact.result = result.duplicate()
+	contact.result["guard_break"] = false
+	contact["shield"] = false
+	apply_contact(contact)
 	combat_event.emit(10.0)
-	var offset := attacker.terrain_cell - terrain_cell
-	var blocked := guarding and Vector2(facing).dot(Vector2(offset)) > 0.0
-	hp = maxi(0, hp - (int(damage * 0.2) if blocked else damage))
-	_strike_at = -1.0
-	action_time = 0.35 if hp > 0 else 0.0
-	combat_status = "Down" if hp == 0 else ("Blocked" if blocked else "Hurt")
-	play_pose(&"down" if hp == 0 else (&"guard" if blocked else &"hit"))
-	if hp == 0 and editor != null:
-		editor.loop_toggle.set_pressed_no_signal(false)
-		editor._play_selected_animation()
+	if not positive or hp <= 0.0 or knockout_left > 0.0 or _getting_up:
+		return # The original death/KO/get-up owner keeps its authored pose.
+	exchange_stagger = hold
+	action_time = hold
+	_start_exchange_visual(&"hit_back" if rear_hit else &"hit", true)
 	queue_redraw()
 
+func activate_exchange_skill(skill: String) -> bool:
+	if not exchange_enabled or not can_act() or exchange_stagger > 0.0 or (is_inside_tree() and get_tree().paused) or _rescue_left > 0.0 \
+		or exchange_skill_cooldown > 0.0 or not _exchange_pending_skill.is_empty() or skill not in ["brace", "power"]:
+		return false
+	if command_abilities.is_empty() and not (exchange_skill_authorized.is_valid() and bool(exchange_skill_authorized.call())):
+		return false
+	_exchange_pending_skill = skill
+	combat_status = "Exchange skill ready: " + skill
+	return true
+
+func apply_exchange(other_cell: Vector2i, outcome: Dictionary) -> void:
+	if not exchange_enabled or hp <= 0.0 or knockout_left > 0.0 or captive or _getting_up or (is_inside_tree() and get_tree().paused):
+		return
+	var role := str(outcome.get("role", ""))
+	if role not in ["winner", "loser", "draw"]:
+		return
+	for field: String in ["hp", "stun", "stagger", "fatigue"]:
+		if not _saved_number(outcome.get(field, 0.0), 0.0, 1000000.0):
+			return
+	var rear_hit := Vector2(facing).dot(Vector2(other_cell - terrain_cell)) < 0.0
+	var committed_left := maxf(0.0, _movement_duration - _movement_elapsed) if is_moving() else 0.0
+	_cancel_exchange_legacy_attack()
+	_cancel_rescue()
+	guarding = false
+	guard_transition_left = 0.0
+	guard_break_left = 0.0
+	_exchange_guard_hold = false
+	exchange_cooldown = SiteCombatRules.EXCHANGE_ROUND_SECONDS
+	if not _exchange_pending_skill.is_empty():
+		exchange_skill_cooldown = SiteCombatRules.EXCHANGE_SKILL_COOLDOWN
+	_exchange_pending_skill = ""
+	fatigue = clampf(fatigue + float(outcome.get("fatigue", 0.0)), 0.0, 100.0)
+	fatigue_rest = 0.0
+	combat_ready = true
+	if editor != null:
+		editor.combat_ready = true
+		editor.visual_state.combat_ready = true
+		editor._update_weapon_sheath_state()
+	var knockback := role == "loser" and bool(outcome.get("knockback", false))
+	if knockback and not is_moving():
+		var offset := terrain_cell - other_cell
+		var direction := Vector2i(signi(offset.x), 0) if absi(offset.x) > absi(offset.y) else Vector2i(0, signi(offset.y))
+		var destination := terrain_cell + direction
+		if direction in TerrainData.DIRECTIONS and data != null and data.can_step(terrain_cell, destination) and can_enter_cell(destination):
+			place(destination, false, MOVE_DURATION) # Reserve before the original KO/death transition, as for Army rows.
+	combat_event.emit(10.0)
+	apply_contact({"attacker": outcome.get("attacker"), "attacker_unit": int(outcome.get("attacker_unit", -1)),
+		"shield": false, "result": {"hp": float(outcome.get("hp", 0.0)), "stun": float(outcome.get("stun", 0.0)), "guard_break": false}})
+	if hp <= 0.0 or knockout_left > 0.0:
+		return # Original death/KO pose, signal, HP and loot entry remain authoritative.
+	if role == "draw":
+		exchange_stagger = committed_left + maxf(SiteCombatRules.EXCHANGE_DRAW_HOLD, float(outcome.get("stagger", 0.0)))
+		_exchange_guard_hold = true
+		guarding = true
+		_start_exchange_visual(&"guard")
+		combat_status = "Exchange draw"
+	elif role == "loser":
+		exchange_stagger = committed_left + float(outcome.get("stagger", 0.0))
+		_start_exchange_visual(&"knockback" if knockback else (&"hit_back" if rear_hit else &"hit"))
+		combat_status = "Exchange loss: " + str(outcome.get("kind", "small"))
+	else:
+		exchange_stagger = 0.0
+		face_cell(other_cell)
+		var clip: StringName = HumanCharacter3DEditor.WEAPON_ATTACK_MAP.get(StringName(_exchange_equipped_asset("weapon")), &"attack_unarmed")
+		if clip in [&"attack_bow", &"attack_crossbow"]:
+			clip = &"attack_unarmed" # A ranged holder is still a valid close-combat target.
+		if editor != null and editor.is_mounted:
+			clip = &"ride_thrust" if _exchange_equipped_asset("weapon") == "spear_01" else &"ride_slash"
+		_start_exchange_visual(clip)
+		combat_status = "Exchange win: " + str(outcome.get("kind", "small"))
+	action_time = exchange_stagger
+	queue_redraw()
+
+func _cancel_exchange_legacy_attack() -> void:
+	# Stop attack intent, never snap/cancel an already committed legal move.
+	if not _getting_up and _rescue_left <= 0.0:
+		action_time = 0.0
+	_strike_at = -1.0
+	_reload_left = 0.0
+	_ranged_hold_left = 0.0
+	_attack_elapsed = 0.0
+	_attack_duration = 0.0
+	_attack_hits.clear()
+	_previous_weapon.clear()
+	_collision_shapes.clear()
+	_pending_melee.clear()
+	_pending_release = false
+	_pending_projectile_delta = 0.0
+	_step_time = 0.0
+	_set_attack_offset(Vector2.ZERO)
+
+func _reset_exchange_transients() -> void:
+	exchange_cooldown = 0.0
+	ranged_cooldown = 0.0
+	exchange_stagger = 0.0
+	exchange_skill_cooldown = 0.0
+	_ranged_hold_left = 0.0
+	_exchange_pending_skill = ""
+	_exchange_visual_left = 0.0
+	_exchange_visual_active = false
+	if _exchange_guard_hold:
+		guarding = false
+	_exchange_guard_hold = false
+	_exchange_pose_dirty = false
+
+func combat_identity() -> int:
+	return person_id if person_id > 0 else get_instance_id()
+
+func apply_contact(packet: Dictionary) -> void:
+	if hp <= 0.0:
+		return
+	var result: Dictionary = packet.result
+	var hp_loss := maxf(0.0, float(result.hp))
+	var impact := maxf(0.0, float(result.stun))
+	hp = maxf(0.0, hp - hp_loss)
+	if (hp_loss > 0.0 or impact > 0.0) and not bool(packet.get("environmental", false)):
+		_received_effective_hit += 1
+		_cancel_rescue()
+		combat_event.emit(10.0)
+	if impact > 0.0:
+		stun += impact
+		stun_grace = SiteCombatRules.STUN_GRACE
+		if knockout_left > 0.0:
+			knockout_left = SiteCombatRules.KNOCKOUT_SECONDS
+	if hp <= 0.0:
+		knockout_left = 0.0
+		_stop_fighting("Dead")
+		died.emit(person_id)
+	elif knockout_left > 0.0:
+		combat_status = "Unconscious"
+	elif stun >= SiteCombatRules.STUN_LIMIT:
+		knockout_left = SiteCombatRules.KNOCKOUT_SECONDS
+		_stop_fighting("Unconscious")
+	elif bool(result.guard_break):
+		guard_break_left = SiteCombatRules.GUARD_BREAK_SECONDS
+		guard_transition_left = 0.0
+		guarding = false
+		combat_status = "Guard broken"
+		if action_time <= 0.0:
+			play_pose(&"guard_break")
+	elif bool(packet.shield):
+		combat_status = "Weapon parried" if str(packet.get("block_kind", "")) == "parry" else "Shield blocked"
+	elif hp_loss == 0.0:
+		combat_status = "Armor blocked"
+	else:
+		combat_status = "Hurt"
+	# Ordinary contact cannot cancel an attack/recovery or grant invulnerability.
+	var attacker := packet.get("attacker") as TerrainTestCharacter
+	if is_instance_valid(attacker):
+		attacker.combat_status = "Hit: " + combat_status
+	queue_redraw()
+
+func _stop_fighting(reason: String) -> void:
+	_cancel_rescue()
+	_reload_left = 0.0
+	_getting_up = false
+	guard_transition_left = 0.0
+	guard_break_left = 0.0
+	_strike_at = -1.0
+	action_time = 0.0
+	guarding = false
+	_weapon_blocked = true
+	_previous_weapon.clear()
+	combat_status = reason
+	play_pose(&"down")
+	if editor != null:
+		editor.loop_toggle.set_pressed_no_signal(false)
+		editor._play_selected_animation()
+
+func _wake_up() -> void:
+	# Never stand up inside a soldier who has stepped over the fallen body.
+	if not can_enter_cell(terrain_cell):
+		knockout_left = 0.1
+		return
+	knockout_left = 0.0
+	stun = 30.0
+	stun_grace = SiteCombatRules.STUN_GRACE
+	combat_status = "Captive" if captive else "Awake"
+	_getting_up = true
+	action_time = float(CombatTimings.POSE_SECONDS[&"get_up"])
+	play_pose(&"get_up")
+
+func start_rescue(target: TerrainTestCharacter) -> bool:
+	if is_inside_tree() and get_tree().paused:
+		return false
+	if not can_act() or (exchange_enabled and exchange_stagger > 0.0) or action_time > 0.0 or guarding or guard_transition_left > 0.0 or guard_break_left > 0.0 or is_moving() or _rescue_left > 0.0 or not is_instance_valid(target):
+		return false
+	if target.hp <= 0.0 or target.knockout_left <= 0.0 or target.faction_id != faction_id or is_instance_valid(target._rescuer) or is_instance_valid(target._army_rescuer):
+		return false
+	if not _rescue_reachable(target):
+		return false
+	_rescue_target = target
+	target._rescuer = self
+	_rescue_left = 4.0
+	_rescue_hit_revision = _received_effective_hit
+	_rescue_target_hit_revision = target._received_effective_hit
+	combat_status = "Rescuing"
+	face_target(target)
+	play_pose(&"rescue")
+	return true
+
+func start_rescue_unit(team: TerrainArmy, index: int) -> bool:
+	if is_inside_tree() and get_tree().paused:
+		return false
+	if not can_act() or (exchange_enabled and exchange_stagger > 0.0) or action_time > 0.0 or guarding or guard_transition_left > 0.0 or guard_break_left > 0.0 or is_moving() or _rescue_left > 0.0 or not is_instance_valid(team):
+		return false
+	if team.faction_id != faction_id or team.member_gone(index) or index == TerrainArmy.PLAYER_MEMBER or team.patient_has_rescuer(index):
+		return false
+	if float(team.combat_units[index].ko) <= 0.0 or team.moving_to[index] != TerrainArmy.INVALID_CELL:
+		return false
+	var offset := team.cells[index] - terrain_cell
+	if absi(offset.x) + absi(offset.y) != 1 or data == null or not data.can_step(terrain_cell, team.cells[index]):
+		return false
+	_rescue_army = team
+	_rescue_unit = index
+	team._external_rescuers[index] = self
+	_rescue_left = 4.0
+	_rescue_hit_revision = _received_effective_hit
+	combat_status = "Rescuing"
+	face_cell(team.cells[index])
+	play_pose(&"rescue")
+	return true
+
+func _rescue_reachable(target: TerrainTestCharacter) -> bool:
+	var offset := target.terrain_cell - terrain_cell
+	return not is_moving() and not target.is_moving() and absi(offset.x) + absi(offset.y) == 1 and data != null and data.can_step(terrain_cell, target.terrain_cell)
+
+func _advance_rescue(delta: float) -> void:
+	if is_instance_valid(_rescue_army):
+		var team := _rescue_army
+		if not can_act() or team.member_gone(_rescue_unit) or _received_effective_hit != _rescue_hit_revision or is_moving():
+			_cancel_rescue()
+			return
+		var offset := team.cells[_rescue_unit] - terrain_cell
+		if float(team.combat_units[_rescue_unit].ko) <= 0.0 or team.moving_to[_rescue_unit] != TerrainArmy.INVALID_CELL or absi(offset.x) + absi(offset.y) != 1 or not data.can_step(terrain_cell, team.cells[_rescue_unit]):
+			_cancel_rescue()
+			return
+		_rescue_left = maxf(0.0, _rescue_left - delta)
+		if _rescue_left <= 0.000000001:
+			_rescue_left = 0.0
+			team._wake_unit(_rescue_unit)
+			_cancel_rescue()
+			combat_status = "Rescue complete"
+		return
+	if not is_instance_valid(_rescue_target) or not can_act() or _rescue_target.hp <= 0.0 or _rescue_target.knockout_left <= 0.0 or not _rescue_reachable(_rescue_target) or _received_effective_hit != _rescue_hit_revision or _rescue_target._received_effective_hit != _rescue_target_hit_revision:
+		_cancel_rescue()
+		return
+	_rescue_left = maxf(0.0, _rescue_left - delta)
+	if _rescue_left <= 0.000000001:
+		_rescue_left = 0.0
+		_rescue_target._wake_up()
+		_cancel_rescue()
+		combat_status = "Rescue complete"
+
+func _cancel_rescue() -> void:
+	var was_rescuing := _rescue_left > 0.0 or visual_state.animation_id == &"rescue"
+	if is_instance_valid(_rescue_army) and _rescue_army._external_rescuers.get(_rescue_unit) == self:
+		_rescue_army._external_rescuers.erase(_rescue_unit)
+	_rescue_army = null
+	_rescue_unit = -1
+	if is_instance_valid(_rescue_target) and _rescue_target._rescuer == self:
+		_rescue_target._rescuer = null
+	_rescue_target = null
+	_rescue_left = 0.0
+	if was_rescuing and can_act():
+		play_pose(&"idle")
+
+func capture_state() -> Dictionary:
+	var state := {"schema": 1, "cell": [terrain_cell.x, terrain_cell.y], "facing": [facing.x, facing.y],
+		"attack_target": attack_target_id,
+		"strike_at": _strike_at, "attack_clip": str(_attack_clip), "hit_ids": _attack_hits.keys() if action_time > 0.0 else [],
+		"status": combat_status, "rescue_target": _rescue_army.combat_identity(_rescue_unit) if is_instance_valid(_rescue_army) else (_rescue_target.person_id if is_instance_valid(_rescue_target) else 0),
+		"movement_from": [movement_from_cell.x, movement_from_cell.y],
+		"movement_left": maxf(0.0, _movement_duration - _movement_elapsed),
+		"movement": {"duration": _movement_duration, "elapsed": _movement_elapsed,
+			"start": [_movement_start.x, _movement_start.y], "linear": _movement_linear},
+		"pose": str(editor.selected_animation) if editor != null else str(visual_state.animation_id),
+		"pose_time": editor.animation_player.current_animation_position if editor != null else visual_state.animation_time,
+		"previous_weapon": [], "projectiles": []}
+	for field: String in SAVED_FLOAT_FIELDS:
+		state[field] = float(get(field))
+	for field: String in SAVED_INT_FIELDS:
+		state[field] = int(get(field))
+	for field: String in SAVED_BOOL_FIELDS:
+		state[field] = bool(get(field))
+	for field: String in SAVED_VECTOR_FIELDS:
+		var point: Vector2 = get(field)
+		state[field] = [point.x, point.y]
+	for shape: PackedVector2Array in _previous_weapon:
+		var polygon: Array = []
+		for point: Vector2 in shape:
+			polygon.append([point.x, point.y])
+		state.previous_weapon.append(polygon)
+	for arrow: Dictionary in projectiles:
+		if arrow.get("mode") == "cell":
+			continue # Site save preflight is BUSY while any live flight exists.
+		var serialized := {"remaining": float(arrow.remaining), "faction": int(arrow.faction), "visual": str(arrow.get("visual", "arrow"))}
+		for field: String in ["position", "velocity", "ground", "ground_velocity", "source_cell"]:
+			var point: Vector2 = Vector2(arrow[field])
+			serialized[field] = [point.x, point.y]
+		state.projectiles.append(serialized)
+	if editor != null:
+		_saved_appearance = editor.capture_appearance()
+	elif _saved_appearance.is_empty():
+		_saved_appearance = HumanCharacter3DEditor.default_appearance(visual_state.body_index)
+	state["appearance"] = _saved_appearance.duplicate(true)
+	state["command_abilities"] = command_abilities.duplicate()
+	if not item_state.is_empty():
+		state["item_state"] = item_state.duplicate(true)
+		state["loot_settled"] = loot_settled
+		state["remains_id"] = remains_id
+	return state
+
+static func valid_state(state: Variant, map: TerrainData) -> bool:
+	if not state is Dictionary or not _saved_number(state.get("attack_target", 0), 0, 2147483647) or float(state.get("attack_target", 0)) != floorf(float(state.get("attack_target", 0))):
+		return false
+	if not state is Dictionary or state.get("schema") != 1 or not HumanCharacter3DEditor.valid_appearance(state.get("appearance")):
+		return false
+	if not valid_command_abilities(state.get("command_abilities", {})):
+		return false
+	for field: String in SAVED_FLOAT_FIELDS:
+		var float_fallback: Variant = null
+		if field == "combat_ability":
+			float_fallback = 50.0
+		elif field in ["_reload_left", "fatigue", "fatigue_rest", "_fatigue_slowdown"]:
+			float_fallback = 0.0
+		if not _saved_number(state.get(field, float_fallback), 0.0, float(SAVED_FLOAT_FIELDS[field])):
+			return false
+	for field: String in SAVED_INT_FIELDS:
+		if not _saved_number(state.get(field), 0.0, 2147483647.0) or float(state[field]) != floorf(float(state[field])):
+			return false
+	if int(state.person_id) <= 0 or int(state.person_id) == TerrainArmy.PLAYER_MEMBER:
+		return false
+	if state.has("item_state"):
+		var holder: Variant = state.item_state
+		if not holder is Dictionary or holder.get("holder") != "person:%d" % int(state.person_id) or not _saved_number(holder.get("version"), 0, 2147483647) or float(holder.version) != floorf(float(holder.version)) or not holder.get("item_ids") is Array or not holder.get("equipped") is Dictionary:
+			return false # SiteStore additionally validates definitions and unique ownership.
+	for field: String in SAVED_BOOL_FIELDS:
+		var bool_fallback: Variant = null
+		if field in ["_getting_up", "work_resting"]:
+			bool_fallback = false
+		if not state.get(field, bool_fallback) is bool:
+			return false
+	for field: String in SAVED_VECTOR_FIELDS:
+		if not _saved_vector(state.get(field)):
+			return false
+	if not _saved_cell(state.get("cell"), map) or not _saved_cell(state.get("movement_from"), map):
+		return false
+	if not _saved_vector(state.get("facing")) or Vector2i(int(state.facing[0]), int(state.facing[1])) not in TerrainData.DIRECTIONS:
+		return false
+	if float(state.facing[0]) != floorf(float(state.facing[0])) or float(state.facing[1]) != floorf(float(state.facing[1])):
+		return false
+	if not _saved_number(state.get("strike_at"), -1.0, 60.0) or not _saved_number(state.get("movement_left"), 0.0, 60.0) or not _saved_number(state.get("pose_time"), 0.0, 60.0):
+		return false
+	if not state.get("status") is String or str(state.status).length() > 128 or not _saved_number(state.get("rescue_target"), 0, 2147483647):
+		return false
+	if float(state.rescue_target) != floorf(float(state.rescue_target)):
+		return false
+	var ground := Vector2(float(state.position[0]), float(state.position[1]))
+	var destination := (Vector2(float(state.cell[0]), float(state.cell[1])) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
+	var source := (Vector2(float(state.movement_from[0]), float(state.movement_from[1])) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
+	if float(state.movement_left) <= 0.0:
+		if ground.distance_to(destination) > 0.01:
+			return false
+	elif ground.distance_to(Geometry2D.get_closest_point_to_segment(ground, source, destination)) > 0.01:
+		return false
+	if state.has("movement"):
+		var motion: Variant = state.movement
+		if not motion is Dictionary or not _saved_number(motion.get("duration"), 0.0, 60.0) or not _saved_number(motion.get("elapsed"), 0.0, float(motion.duration)) or not _saved_vector(motion.get("start")) or not motion.get("linear") is bool:
+			return false
+		if absf(float(state.movement_left) - (float(motion.duration) - float(motion.elapsed))) > 0.000001:
+			return false
+		if float(state.movement_left) > 0.0:
+			var start := Vector2(float(motion.start[0]), float(motion.start[1]))
+			if start.distance_to(Geometry2D.get_closest_point_to_segment(start, source, destination)) > 0.01:
+				return false
+			var progress := float(motion.elapsed) / float(motion.duration)
+			var expected := start.lerp(destination, progress if bool(motion.linear) else CombatTimings.movement_weight(progress))
+			if expected.distance_to(ground) > 0.01:
+				return false
+	if not state.get("attack_clip") is String or not state.get("pose") is String:
+		return false
+	var animation_ids: Array[String] = [""]
+	for slot: Dictionary in HumanCharacter3DEditor.ANIMATION_SLOTS:
+		animation_ids.append(str(slot.id))
+	if str(state.attack_clip) not in animation_ids or str(state.pose) not in animation_ids:
+		return false
+	if float(state.hp) == 0.0 and (float(state.knockout_left) > 0.0 or float(state.action_time) > 0.0 or bool(state.guarding)):
+		return false
+	if float(state.knockout_left) > 0.0 and (float(state.action_time) > 0.0 or bool(state.guarding)):
+		return false
+	if not state.get("hit_ids") is Array or state.hit_ids.size() > 10000:
+		return false
+	var seen := {}
+	for identity: Variant in state.hit_ids:
+		if not _saved_number(identity, 1, 2147483647) or float(identity) != floorf(float(identity)) or seen.has(int(identity)):
+			return false
+		seen[int(identity)] = true
+	if not state.get("previous_weapon") is Array or state.previous_weapon.size() > 64:
+		return false
+	for shape: Variant in state.previous_weapon:
+		if not shape is Array or shape.size() > 4096:
+			return false
+		for point: Variant in shape:
+			if not _saved_vector(point):
+				return false
+	if not state.get("projectiles") is Array or state.projectiles.size() > 64:
+		return false
+	for arrow: Variant in state.projectiles:
+		if not arrow is Dictionary or not _saved_number(arrow.get("remaining"), 0, 384) or not _saved_number(arrow.get("faction"), 0, 2147483647):
+			return false
+		if str(arrow.get("visual", "arrow")) not in ["arrow", "bolt"]:
+			return false
+		for field: String in ["position", "velocity", "ground", "ground_velocity", "source_cell"]:
+			if not _saved_vector(arrow.get(field)):
+				return false
+		if not _saved_cell(arrow.source_cell, map):
+			return false
+		if float(arrow.faction) != floorf(float(arrow.faction)) or absf(Vector2(float(arrow.velocity[0]), float(arrow.velocity[1])).length() - 420.0) > 0.01:
+			return false
+	return true
+
+static func valid_command_abilities(value: Variant) -> bool:
+	if not value is Dictionary or value.size() not in [0, 3]:
+		return false
+	if not value.is_empty():
+		for kind: String in ["tactics", "leadership", "coach"]:
+			if not _saved_number(value.get(kind), 0, 100) or float(value[kind]) != floorf(float(value[kind])):
+				return false
+	return true
+
+static func _saved_number(value: Variant, minimum: float, maximum: float) -> bool:
+	return (value is int or value is float) and is_finite(float(value)) and float(value) >= minimum and float(value) <= maximum
+
+static func _saved_vector(value: Variant) -> bool:
+	return value is Array and value.size() == 2 and _saved_number(value[0], -65536, 65536) and _saved_number(value[1], -65536, 65536)
+
+static func _saved_cell(value: Variant, map: TerrainData) -> bool:
+	return _saved_vector(value) and float(value[0]) == floorf(float(value[0])) and float(value[1]) == floorf(float(value[1])) and map.contains(Vector2i(int(value[0]), int(value[1])))
+
+func restore_state(state: Dictionary) -> void:
+	# SiteStore validates the complete snapshot before the live scene is replaced.
+	_reset_exchange_transients()
+	item_state = state.get("item_state", {}).duplicate(true)
+	loot_settled = bool(state.get("loot_settled", false))
+	remains_id = str(state.get("remains_id", ""))
+	attack_target_id = int(state.get("attack_target", 0))
+	command_abilities.clear()
+	for kind: String in state.get("command_abilities", {}):
+		command_abilities[kind] = int(state.command_abilities[kind])
+	_cancel_rescue()
+	_rescuer = null
+	_pending_melee.clear()
+	_pending_projectile_delta = 0.0
+	_pending_release = false
+	_saved_appearance = state.appearance.duplicate(true)
+	visual_state.body_index = int(state.appearance.body)
+	if editor != null:
+		editor.restore_appearance(_saved_appearance)
+		_sync_render_projection()
+	for field: String in SAVED_FLOAT_FIELDS:
+		set(field, float(state.get(field, 50.0 if field == "combat_ability" else 0.0)))
+	for field: String in SAVED_INT_FIELDS:
+		set(field, int(state[field]))
+	for field: String in SAVED_BOOL_FIELDS:
+		set(field, bool(state.get(field, false)))
+	terrain_cell = Vector2i(int(state.cell[0]), int(state.cell[1]))
+	facing = Vector2i(int(state.facing[0]), int(state.facing[1]))
+	movement_from_cell = Vector2i(int(state.movement_from[0]), int(state.movement_from[1]))
+	_strike_at = float(state.strike_at)
+	_attack_clip = StringName(str(state.attack_clip))
+	_attack_profile = SiteCombatRules.attack_profile(_attack_clip)
+	_attack_damage = int(_attack_profile.power)
+	_attack_range = 6 if bool(_attack_profile.ranged) else (2 if _attack_clip in [&"attack_spear", &"ride_thrust"] else 1)
+	_attack_hits.clear()
+	for identity: Variant in state.hit_ids:
+		_attack_hits[int(identity)] = true
+	_previous_weapon.clear()
+	for polygon: Array in state.previous_weapon:
+		var shape := PackedVector2Array()
+		for point: Array in polygon:
+			shape.append(Vector2(float(point[0]), float(point[1])))
+		_previous_weapon.append(shape)
+	projectiles.clear()
+	for serialized: Dictionary in state.projectiles:
+		var kind := str(serialized.get("visual", "arrow"))
+		var arrow := {"remaining": float(serialized.remaining), "faction": int(serialized.faction), "visual": kind,
+			"profile": SiteCombatRules.attack_profile(&"attack_crossbow" if kind == "bolt" else &"attack_bow")}
+		for field: String in ["position", "velocity", "ground", "ground_velocity"]:
+			arrow[field] = Vector2(float(serialized[field][0]), float(serialized[field][1]))
+		arrow["source_cell"] = Vector2i(int(serialized.source_cell[0]), int(serialized.source_cell[1]))
+		projectiles.append(arrow)
+	combat_status = str(state.status)
+	visual_state.animation_id = StringName(str(state.pose))
+	visual_state.animation_time = float(state.pose_time)
+	if editor != null:
+		editor.combat_ready = combat_ready
+		editor.visual_state.combat_ready = combat_ready
+		editor.set_preview_yaw_degrees({Vector2i.DOWN: 0.0, Vector2i.UP: 180.0, Vector2i.LEFT: -90.0, Vector2i.RIGHT: 90.0}.get(facing, 0.0))
+		editor.select_animation_by_id(StringName(str(state.pose)))
+		editor.animation_player.seek(float(state.pose_time), true)
+		editor.animation_player.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
+		_sync_ammo_visual()
+	for field: String in SAVED_VECTOR_FIELDS:
+		set(field, Vector2(float(state[field][0]), float(state[field][1])))
+	_set_attack_offset(_attack_offset)
+	var motion: Dictionary = state.get("movement", {})
+	# Old snapshots did not preserve the curve start or elapsed duration. Keep
+	# their previous linear remainder behavior once, rather than guess/restart.
+	_movement_duration = float(motion.get("duration", state.movement_left))
+	_movement_elapsed = float(motion.get("elapsed", 0.0))
+	var start: Array = motion.get("start", state.position)
+	_movement_start = Vector2(float(start[0]), float(start[1]))
+	_movement_linear = bool(motion.get("linear", true))
+	if exchange_enabled:
+		_cancel_exchange_legacy_attack()
+	queue_redraw()
+
+func restore_links(state: Dictionary, identities: Dictionary) -> void:
+	_rescue_target = identities.get(int(state.rescue_target)) as TerrainTestCharacter
+	if _rescue_left > 0.0 and is_instance_valid(_rescue_target):
+		_rescue_target._rescuer = self
+	elif _rescue_left > 0.0 and combat_target_query.is_valid():
+		var target: Dictionary = combat_target_query.call(int(state.rescue_target), false)
+		if not target.is_empty() and target.owner is TerrainArmy:
+			_rescue_army = target.owner
+			_rescue_unit = int(target.unit)
+			_rescue_army._external_rescuers[_rescue_unit] = self
+
 func reset_combat() -> void:
+	# Explicit LAB reset only. Loading a Site must restore, not call this as healing.
+	_reset_exchange_transients()
+	_pending_melee.clear()
+	_pending_projectile_delta = 0.0
+	_pending_release = false
+	attack_target_id = 0
+	_cancel_rescue()
 	hp = 100
+	loot_settled = false
+	remains_id = "" # Explicit Lab reset does not reclaim or refill the old ground items.
+	stun = 0.0
+	stun_grace = 0.0
+	knockout_left = 0.0
+	guard_break_left = 0.0
+	guard_transition_left = 0.0
+	captive = false
+	_getting_up = false
+	_reload_left = 0.0
 	action_time = 0.0
 	_strike_at = -1.0
-	_projectile_remaining = 0.0
+	projectiles.clear()
+	_attack_hits.clear()
+	_weapon_blocked = false
 	_previous_weapon.clear()
 	_collision_shapes.clear()
 	guarding = false
@@ -479,9 +1709,20 @@ func reset_combat() -> void:
 	play_pose(&"idle")
 
 func _draw() -> void:
-	if _projectile_remaining > 0.0:
-		draw_line(to_local(_projectile_position), to_local(_projectile_position - _projectile_velocity.normalized() * 12.0), Color("eee3bf"), 1.5)
-	if collision_debug:
+	for arrow: Dictionary in projectiles:
+		var kind := str(arrow.get("visual", "arrow"))
+		if not _projectile_textures.has(kind):
+			var path := "res://assets/characters/human/q35/combat/" + kind + ".res"
+			if ResourceLoader.exists(path):
+				_projectile_textures[kind] = load(path)
+		if _projectile_textures.has(kind):
+			var texture := _projectile_textures[kind] as Texture2D
+			var width := (0.39 if kind == "bolt" else 0.78) * CharacterRenderContract.MAP_PIXELS_PER_METRE
+			var height := width * texture.get_height() / texture.get_width()
+			draw_set_transform(to_local(arrow.position), (arrow.velocity as Vector2).angle())
+			draw_texture_rect(texture, Rect2(-width, -height * .5, width, height), false)
+			draw_set_transform(Vector2.ZERO)
+	if collision_debug and not exchange_enabled:
 		if editor != null:
 			for shape: PackedVector2Array in _geometry.body_shapes(self):
 				var local_body := PackedVector2Array()
@@ -499,6 +1740,7 @@ func _draw() -> void:
 				draw_polyline(local, Color(1, 0.3, 0.1, 0.9), 1.0)
 	draw_rect(Rect2(-20, -66, 40, 5), Color("51282d"))
 	draw_rect(Rect2(-20, -66, 40.0 * hp / 100.0, 5), Color("66cf86"))
+	draw_rect(Rect2(-20, -59, 40.0 * minf(stun, 100.0) / 100.0, 3), Color("e7bf63"))
 	draw_circle(Vector2(0, 3) + _attack_offset + _stance_offset, 14.0, Color(0.05, 0.07, 0.08, 0.6))
 	if player_sprite != null:
 		return

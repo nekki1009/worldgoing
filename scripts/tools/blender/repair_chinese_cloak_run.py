@@ -86,4 +86,5 @@ if __name__=='__main__':
         temporary=root/f'.godot-temp/cloak_run_save_{sex}_{uuid.uuid4().hex}.blend'
         bpy.ops.wm.save_as_mainfile(filepath=str(temporary))
         shutil.copy2(temporary,work/f'chinese_cloak_{sex}.blend')
+        temporary.unlink()
         print('CLOAK_EDITABLE_SOURCE_READY',sex,flush=True)
