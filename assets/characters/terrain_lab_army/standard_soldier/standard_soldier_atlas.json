@@ -19760,8 +19760,9 @@
 		"res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "e18888e421cba057d7c4c7317f132fb6",
 		"res://scripts/terrain_lab/character_combat_timings.gd": "9f51fd6bc484e4ac86235bd076a463fb",
 		"res://scripts/tools/bake_terrain_army_soldier.gd": "bd513687adc0d419ba2491e573c327e0",
-		"res://scripts/tools/terrain_army_recipe_bake_plan.gd": "fa040f6cccfef0996f67e3e85ae65b38",
-		"res://scripts/ui/human_character_3d_editor.gd": "236a5b4eb826e87845682646553d0414"
+		"res://scripts/tools/terrain_army_recipe_bake_plan.gd": "cb03c9314c1d14498869ff0296b6c3f3",
+		"res://scripts/ui/equipment_dye.gd": "3980103efb3dc51f896cc9486a09c41c",
+		"res://scripts/ui/human_character_3d_editor.gd": "13728c361b10306e3cf6feb34ccfc391"
 	},
 	"source_viewport": {
 		"height": 768,

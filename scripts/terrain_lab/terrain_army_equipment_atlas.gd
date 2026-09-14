@@ -2,6 +2,7 @@ extends RefCounted
 ## Shared presentation data only. No soldier, item, health or animation clock owner.
 const Plan = preload("res://scripts/tools/terrain_army_recipe_bake_plan.gd")
 const RangedAtlas = preload("res://scripts/terrain_lab/terrain_army_ranged_atlas.gd")
+const DyeAtlas = preload("res://scripts/terrain_lab/terrain_army_dye_atlas.gd")
 const BASE_MANIFEST := "res://assets/characters/terrain_lab_army/standard_soldier/standard_soldier_atlas.json"
 const CATALOG := "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/catalog.json"
 const PAGE_CACHE_BYTES := 64 * 1024 * 1024
@@ -36,12 +37,16 @@ static func set_catalog_path(path: String) -> bool:
 	return true
 
 static func supports(appearance: Dictionary) -> bool:
+	if not HumanCharacter3DEditor.valid_appearance(appearance) or not DyeAtlas.supports(appearance): return false
+	appearance = DyeAtlas.Dye.geometry_appearance(appearance)
 	if str(appearance.get("parts", {}).get("weapon", "")) in RangedAtlas.WEAPONS:
 		return not RangedAtlas.recipe(appearance).is_empty()
 	var mask := _appearance_mask(appearance)
 	return mask >= 0 and not _recipe(mask, _appearance_iron(appearance)).is_empty()
 
 static func frame(appearance: Dictionary, clip: String, direction: String, sample_time: float) -> Dictionary:
+	if not HumanCharacter3DEditor.valid_appearance(appearance) or not DyeAtlas.supports(appearance): return {}
+	appearance = DyeAtlas.Dye.geometry_appearance(appearance)
 	if not is_finite(sample_time) or sample_time < 0.0:
 		return {}
 	var recipe := {}

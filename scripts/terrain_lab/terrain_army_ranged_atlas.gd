@@ -1,6 +1,7 @@
 extends RefCounted
 ## Two exact ranged recipes; EquipmentAtlas retains ownership of texture lookup.
 const Plan = preload("res://scripts/tools/terrain_army_recipe_bake_plan.gd")
+const DyeAtlas = preload("res://scripts/terrain_lab/terrain_army_dye_atlas.gd")
 const BASE_MANIFEST := "res://assets/characters/terrain_lab_army/standard_soldier/standard_soldier_atlas.json"
 const ROOT := "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1"
 const WEAPONS := ["bow_01", "crossbow_01"]
@@ -68,6 +69,8 @@ static func plan(weapon: String, baseline: Dictionary) -> Dictionary:
 		"clips": clips, "directions": baseline.directions.duplicate(true), "recipe_total": total}
 
 static func recipe(appearance: Dictionary) -> Dictionary:
+	if not HumanCharacter3DEditor.valid_appearance(appearance) or not DyeAtlas.supports(appearance): return {}
+	appearance = DyeAtlas.Dye.geometry_appearance(appearance)
 	if not appearance.get("parts") is Dictionary:
 		return {}
 	var weapon := str(appearance.parts.get("weapon", ""))

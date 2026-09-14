@@ -2,6 +2,7 @@ class_name SiteRuntime
 extends RefCounted
 
 const Env = preload("res://scripts/terrain_lab/site_environment.gd")
+const EquipmentDye = preload("res://scripts/ui/equipment_dye.gd")
 const COMBAT_GRACE := 10.0
 const CARRY_CAPACITY := 20
 const ITEM_STORAGE_VERSION := 1
@@ -129,6 +130,9 @@ static func seed_person_equipment(data: TerrainData, holder: Dictionary, person_
 	for key: String in definitions:
 		var created := create_equipment(data, holder, key, definitions[key], person_id, str(definitions[key].slot))
 		assert(created.ok) # Complete preflight above; no callbacks/yields in commit.
+		var slot := str(definitions[key].slot)
+		if appearance.get("equipment_dyes", {}).has(slot):
+			data.site.item_records[created.item_id].dye_color = appearance.equipment_dyes[slot]
 	return ok("原有配裝已登記為實物")
 
 # Read-only projection. Body/face/hair remain the original person's appearance;
@@ -137,6 +141,7 @@ static func equipment_appearance(data: TerrainData, holder: Dictionary, original
 	if not HumanCharacter3DEditor.valid_appearance(original) or not _item_holder_shape(holder):
 		return {}
 	var appearance := original.duplicate(true)
+	appearance.erase("equipment_dyes")
 	for slot: String in EQUIPMENT_SLOTS:
 		appearance.parts[slot] = "none"
 	for slot: String in holder.equipped:
@@ -147,7 +152,39 @@ static func equipment_appearance(data: TerrainData, holder: Dictionary, original
 		if record.get("holder") != holder.holder or definition.get("slot") != slot:
 			return {}
 		appearance.parts[slot] = str(definition.asset)
+		var dye := item_dye(record, definition)
+		if not dye.is_empty():
+			if not appearance.has("equipment_dyes"): appearance.equipment_dyes = {}
+			appearance.equipment_dyes[slot] = dye
 	return appearance if HumanCharacter3DEditor.valid_appearance(appearance) else {}
+
+static func item_dye(record: Dictionary, definition: Dictionary) -> String:
+	if record.has("dye_color"):
+		return str(record.dye_color)
+	var tint: Array = definition.get("tint", [1.0, 1.0, 1.0, 1.0])
+	return "" if tint == [1.0, 1.0, 1.0, 1.0] else Color(tint[0], tint[1], tint[2], tint[3]).to_html()
+
+# Atomic cosmetic edit on the existing real holder; the scene owner checks
+# authority/readiness and renderer admission before requesting this commit.
+static func dye_equipment(data: TerrainData, holder: Dictionary, changes: Dictionary, expected_version: int, preview: bool = false) -> Dictionary:
+	if not _item_holder_shape(holder) or not EquipmentDye.valid_dyes(changes, {}, true) or changes.is_empty():
+		return fail("INVALID", "五部位染色資料")
+	if int(holder.version) != expected_version or expected_version >= 2147483646:
+		return fail("STALE_SOURCE")
+	for slot: String in changes:
+		var identity := str(holder.equipped.get(slot, ""))
+		var record: Dictionary = data.site.item_records.get(identity, {})
+		var definition: Dictionary = data.site.item_definitions.get(str(record.get("definition", "")), {})
+		if not holder.item_ids.has(identity) or record.get("holder") != holder.holder or definition.get("slot") != slot:
+			return fail("NO_TARGET", "只能染本人實際穿戴的裝備")
+	if preview:
+		return ok()
+	for slot: String in changes:
+		var record: Dictionary = data.site.item_records[holder.equipped[slot]]
+		if changes[slot] == "": record.erase("dye_color")
+		else: record.dye_color = str(changes[slot]).to_lower()
+	holder.version = expected_version + 1
+	return ok("已保存實際裝備染色；轉手後仍保留")
 
 static func carried_size(cargo: Dictionary, item_state: Dictionary) -> int:
 	return inventory_size(cargo) + item_state.item_ids.size() - item_state.equipped.size()

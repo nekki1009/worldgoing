@@ -102,6 +102,7 @@ func setup(scene: Node2D) -> void:
 	person_actions.ransom_exchange_committed = captivity_supply.ransom_exchange_committed
 	equipment_orders.init(lab, person_actions)
 	equipment_orders.equipment_apply_guard = equipment_apply_guard
+	equipment_orders.equipment_dye_guard = equipment_dye_guard
 	family_continuity.load_site_query = _load_compatible_site
 	family_continuity.archive_current = _archive_family_site
 	family_continuity.control_selected = _control_family_person
@@ -130,6 +131,8 @@ func bind() -> void:
 	person_executor_id = lab.controlled_person_id()
 	for actor: TerrainTestCharacter in [lab.character, lab.npc]:
 		var original: Dictionary = actor.editor.capture_appearance() if actor.editor != null else actor.capture_state().appearance
+		if actor.person_id != lab.controlled_person_id() and actor.item_state.is_empty() and not original.has("equipment_dyes"):
+			original = _initial_uniform(original, actor.faction_id)
 		var initialized := Runtime.seed_person_equipment(data, actor.item_state, actor.person_id, original)
 		if not initialized.ok:
 			show_result(initialized)
@@ -137,6 +140,7 @@ func bind() -> void:
 		equipment_changed(actor.person_id)
 		if actor.editor != null:
 			actor.editor.part_selection_request = _request_person_equipment.bind(actor.person_id)
+			actor.editor.equipment_dye_request = _request_person_dye.bind(actor.person_id)
 			actor.editor.body_selection_request = func(_requested: int) -> int: return actor.visual_state.body_index
 		if actor.hp <= 0.0 and not actor.loot_settled:
 			_person_died(actor.person_id)
@@ -1159,12 +1163,19 @@ func _open_equipment_inventory() -> void:
 			return
 		var choice: Array = standards.get_item_metadata(standards.selected)
 		show_result(equipment_orders.begin_issue(original_executor, str(choice[0]), str(choice[1]))))
+	_button(column, "套用所選國別配色到現有裝備", "ApplyStandardDyes", func() -> void:
+		if not current_scope.call() or standards.selected <= 0:
+			return
+		var choice: Array = standards.get_item_metadata(standards.selected)
+		show_result(equipment_orders.apply_standard_dyes(original_control, original_executor, str(choice[0]), str(choice[1]))))
 	dialog.confirmed.connect(dialog.queue_free)
 	dialog.canceled.connect(dialog.queue_free)
 	lab.get_node("SiteUI").add_child(dialog)
 	dialog.popup_centered()
 
 func _open_equipment_standards() -> void:
+	var original_control: int = lab.controlled_person_id()
+	var original_data: TerrainData = lab.terrain
 	var nation_id := ""
 	for key: String in lab.terrain.site.get("equipment_nations", {}):
 		if int(lab.terrain.site.equipment_nations[key].military_head) == lab.controlled_person_id():
@@ -1190,7 +1201,22 @@ func _open_equipment_standards() -> void:
 	column.add_child(title_input)
 	var choices := {}
 	var alternatives_by_slot := {}
-	_label(column, "配色與外觀來自選取的真實物品定義；未列出的替代品不會自動發放。", 14)
+	var dye_choices := {}
+	var dye_enabled := {}
+	_label(column, "指定原實物與五部位配色；改標準不立即染現役裝備，須另按套用。", 14)
+	_label(column, "NPC 選用 16 組；玩家首長可自由配色，預設僅供起點。", 14)
+	var palette_row := HBoxContainer.new()
+	column.add_child(palette_row)
+	var palette_choice := _options(palette_row, [], "StandardPalette")
+	palette_choice.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for palette_id: String in Runtime.EquipmentDye.PRESETS:
+		palette_choice.add_item(str(Runtime.EquipmentDye.PRESETS[palette_id].name))
+		palette_choice.set_item_metadata(palette_choice.item_count - 1, palette_id)
+	_button(palette_row, "載入預設（仍可自由改色）", "LoadStandardPalette", func() -> void:
+		var colors: Dictionary = Runtime.EquipmentDye.PRESETS[str(palette_choice.get_item_metadata(palette_choice.selected))].colors
+		for slot: String in dye_choices:
+			dye_enabled[slot].button_pressed = true
+			dye_choices[slot].color = Color.from_string(colors[slot], Color.WHITE))
 	for slot: String in Runtime.EQUIPMENT_SLOTS:
 		var row := HBoxContainer.new()
 		column.add_child(row)
@@ -1204,7 +1230,23 @@ func _open_equipment_standards() -> void:
 		choices[slot] = choice
 		alternatives_by_slot[slot] = []
 		_button(row, "替代清單…", "StandardAlternatives_" + slot, func() -> void: _open_standard_alternatives(slot, choice, alternatives_by_slot))
+		if slot in Runtime.EquipmentDye.SLOTS:
+			var enabled := CheckBox.new()
+			enabled.name = "StandardDyeEnabled_" + slot
+			enabled.text = "染色"
+			row.add_child(enabled)
+			var picker := ColorPickerButton.new()
+			picker.name = "StandardDye_" + slot
+			picker.edit_alpha = false
+			picker.custom_minimum_size = Vector2(48, 32)
+			row.add_child(picker)
+			dye_choices[slot] = picker
+			dye_enabled[slot] = enabled
 	standard_choice.item_selected.connect(func(index: int) -> void:
+		var colors: Dictionary = nation.standards[str(standard_choice.get_item_metadata(index))].get("equipment_dyes", {}) if index > 0 else {}
+		for slot: String in dye_choices:
+			dye_enabled[slot].button_pressed = colors.has(slot)
+			dye_choices[slot].color = Color.from_string(colors.get(slot, "ffffffff"), Color.WHITE)
 		if index == 0:
 			title_input.text = ""
 			for slot: String in choices:
@@ -1221,6 +1263,9 @@ func _open_equipment_standards() -> void:
 				if str(choice.get_item_metadata(row)) == str(standard.slots.get(slot, {}).get("definition", "")):
 					choice.select(row))
 	_button(column, "提交正式標準（不搬動實物）", "CommitStandard", func() -> void:
+		if lab.controlled_person_id() != original_control or lab.terrain != original_data or not is_same(lab.terrain.site.get("equipment_nations", {}).get(nation_id, {}), nation):
+			show_result(Runtime.fail("STALE_SOURCE", "原人物／地圖／國別已變更，請重開標準面板"))
+			return
 		var key := str(standard_choice.get_item_metadata(standard_choice.selected)) if standard_choice.selected > 0 else "unit_%d" % (nation.standards.size() + 1)
 		while standard_choice.selected == 0 and nation.standards.has(key):
 			key += "_"
@@ -1232,7 +1277,10 @@ func _open_equipment_standards() -> void:
 				var alternatives: Array = alternatives_by_slot[slot].duplicate()
 				alternatives.erase(definition_id)
 				slots[slot] = {"definition": definition_id, "alternatives": alternatives}
-		show_result(equipment_orders.set_standard(lab.controlled_person_id(), nation_id, key, title_input.text.strip_edges(), slots)))
+		var colors := {}
+		for slot: String in dye_choices:
+			if dye_enabled[slot].button_pressed: colors[slot] = (dye_choices[slot].color as Color).to_html()
+		show_result(equipment_orders.set_standard(lab.controlled_person_id(), nation_id, key, title_input.text.strip_edges(), slots, colors)))
 	dialog.confirmed.connect(dialog.queue_free)
 	dialog.canceled.connect(dialog.queue_free)
 	lab.get_node("SiteUI").add_child(dialog)
@@ -1454,6 +1502,17 @@ func _open_ransom(target_id: int, source_window: Window = null) -> void:
 	(source_window if is_instance_valid(source_window) else lab.get_node("SiteUI")).add_child(dialog)
 	dialog.popup_centered()
 
+static func _initial_uniform(appearance: Dictionary, faction_id: int) -> Dictionary:
+	var uniform := appearance.duplicate(true)
+	# An explicitly authored finish, including an empty one, is not a missing default.
+	if uniform.has("equipment_dyes"): return uniform
+	var palette: Dictionary = Runtime.EquipmentDye.PRESETS[EquipmentOrders.npc_palette_id(faction_id)].colors
+	var dyes := {}
+	for slot: String in palette:
+		if uniform.parts.get(slot, "none") != "none": dyes[slot] = palette[slot]
+	uniform.equipment_dyes = dyes
+	return uniform
+
 func initialize_team_items(team: TerrainArmy) -> void:
 	if not team.combat_enabled:
 		return
@@ -1464,6 +1523,11 @@ func initialize_team_items(team: TerrainArmy) -> void:
 			unit.appearance = presenter.capture_appearance() if team._uses_live_presenter(index) and presenter != null else TerrainArmy._combat_bake.manifest.appearance.duplicate(true)
 		if not unit.has("item_state"):
 			unit.item_state = {}
+			# A newly created soldier receives an explicit initial uniform finish.
+			# Existing item records and faction changes never silently repaint gear.
+			var uniform := _initial_uniform(unit.appearance, team.faction_id)
+			if team._uses_live_presenter(index) or team.supports_equipment_recipe(uniform):
+				unit.appearance = uniform
 		if not unit.has("cargo"):
 			unit.cargo = {}
 		var initialized := Runtime.seed_person_equipment(lab.terrain, unit.item_state, team.combat_identity(index), unit.appearance)
@@ -1471,6 +1535,13 @@ func initialize_team_items(team: TerrainArmy) -> void:
 			show_result(initialized)
 			continue
 		equipment_changed(team.combat_identity(index))
+		if team._uses_live_presenter(index):
+			var live: Variant = team._unit_editor(index)
+			if live != null:
+				live.equipment_dye_request = _request_person_dye.bind(team.combat_identity(index))
+				live.part_selection_request = _request_person_equipment.bind(team.combat_identity(index))
+				var original_body := int(unit.appearance.body)
+				live.body_selection_request = func(_requested: int) -> int: return original_body
 		if float(unit.hp) <= 0.0 and not bool(unit.get("loot_settled", false)):
 			_person_died(team.combat_identity(index))
 
@@ -1919,15 +1990,42 @@ func equipment_apply_guard(identity: int, equipped: Dictionary) -> Dictionary:
 	# the proposed appearance; no production holder or item record moves.
 	var original: Dictionary = person.body.appearance if int(person.unit) >= 0 else person.owner._saved_appearance
 	var appearance := original.duplicate(true)
+	appearance.erase("equipment_dyes")
 	for slot: String in Runtime.EQUIPMENT_SLOTS:
 		appearance.parts[slot] = "none"
 	for slot: String in equipped:
 		var record: Dictionary = lab.terrain.site.item_records.get(equipped[slot], {})
 		var definition: Dictionary = lab.terrain.site.item_definitions.get(str(record.get("definition", "")), {})
-		if definition.get("slot") != slot or definition.get("tint") != [1.0, 1.0, 1.0, 1.0]:
+		if definition.get("slot") != slot:
 			return Runtime.fail("UNSUPPORTED", "此實物色彩／裝備槽尚未有原呈現支援")
 		appearance.parts[slot] = str(definition.asset)
+		var dye := Runtime.item_dye(record, definition)
+		if not dye.is_empty():
+			if not appearance.has("equipment_dyes"): appearance.equipment_dyes = {}
+			appearance.equipment_dyes[slot] = dye
 	return _equipment_recipe_guard(person, appearance)
+
+func equipment_dye_guard(identity: int, changes: Dictionary) -> Dictionary:
+	var person := person_actions._person(identity)
+	if person.is_empty():
+		return Runtime.fail("NO_TARGET")
+	var appearance := person_appearance(identity).duplicate(true)
+	var dyes: Dictionary = appearance.get("equipment_dyes", {}).duplicate()
+	for slot: String in changes:
+		if changes[slot] == "":
+			var record: Dictionary = lab.terrain.site.item_records[person.holder.equipped[slot]]
+			var default_dye := Runtime.item_dye({}, lab.terrain.site.item_definitions[record.definition])
+			if default_dye.is_empty(): dyes.erase(slot)
+			else: dyes[slot] = default_dye
+		else: dyes[slot] = changes[slot]
+	if dyes.is_empty(): appearance.erase("equipment_dyes")
+	else: appearance.equipment_dyes = dyes
+	return _equipment_recipe_guard(person, appearance)
+
+func _request_person_dye(changes: Dictionary, identity: int) -> Dictionary:
+	var result := equipment_orders.dye_person(lab.controlled_person_id(), identity, changes)
+	show_result(result)
+	return result
 
 func _equipment_holder_guard(person: Dictionary, proposed: Dictionary) -> Dictionary:
 	var original: Dictionary = person.body.appearance if int(person.unit) >= 0 else person.owner._saved_appearance
@@ -1935,7 +2033,7 @@ func _equipment_holder_guard(person: Dictionary, proposed: Dictionary) -> Dictio
 	return _equipment_recipe_guard(person, appearance)
 
 func _equipment_recipe_guard(person: Dictionary, appearance: Dictionary) -> Dictionary:
-	if appearance.is_empty():
+	if appearance.is_empty() or not HumanCharacter3DEditor.valid_appearance(appearance):
 		return Runtime.fail("INVALID", "實物配裝不能對應原人物")
 	if int(person.unit) >= 0 and not person.owner._uses_live_presenter(int(person.unit)):
 		if not lab.exchange_enabled and (not TerrainArmy.load_contact_source() or not TerrainArmy._contact_source.supports_appearance(appearance)):

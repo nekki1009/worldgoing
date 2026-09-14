@@ -1,4 +1,4 @@
-# Worldgoing V0.35R — 現行 Site 架構
+# Worldgoing V0.41R — 現行 Site 架構
 
 2026-09-14 新授權優先：正式近戰改為 [相鄰能力交鋒 v1](SITE_COMBAT_EXCHANGE_V1.md)，後續已授權加入同文件的落點遠程 v1。`TerrainLab` 原共同時鐘改為保留餘量的 30 Hz、10 Hz 接敵／發射檢查，`SiteCombatRules` 純能力與格射線規則；原 Actor／Army 仍擁有人物、硬直、合法擊退、飛行事件與動畫，原 Site 仍擁有物品／供養／死亡與存檔。新模式不調武器／身體幾何，箭只在發射與到期查有限格位。下文精確碰撞與 120 Hz 條款保留作歷史／`exchange_enabled=false` 測試邊界，不再限制已授權的新玩法；舊精確箭快照不可靜默遷移。
 
@@ -92,6 +92,8 @@ SiteController 在工作／人物結算後保存，兩種暫停都凍結工作�
 
 2026-09-13 武器修正：正式男女模型的 `axe_01` 為新版戰斧，原六個斧網格完整保留為 `wood_axe_01` 伐木斧；共用既有持握／收納／斧劈及外觀資料，不新增採集擁有者。刺槍只修右臂與持盾左臂，斧劈只修左臂，保留其餘骨架／動畫／服裝資料；步戰長槍瞄準固定握點與槍長。標準圖集已重烘為 35 clip、1,080 幀、4096×6251，56 個四向姿勢與正式模型的接觸／護甲投影比對通過。舊 `recipes/v1` 與 staging 全數保留但來源版本已不同，嚴格 reader 不會准入，缺裝備圖集須另以新版重烘；不能宣稱此部分仍相容。製作、驗證與限制見 `output/weapon_refresh_20260913/README.md`。
 
+2026-09-14 五部位染色：頭盔、護甲、靴子、披風、內衣的實際顏色為既有 `item_records` 可選 `dye_color`，不改共用定義、實例 ID、原物主或 holder。`SiteEquipmentOrders` 檢查原人物行動／國別權限和呈現准入，`SiteRuntime` 原子更新，`SiteStore` 驗證保存；外觀的 `equipment_dyes` 僅為讀取投影。國別標準可保存五槽配色，但修改標準或既有陣營不自動重染裝備。`EquipmentDye` 為純部位／材質規則，3D 編輯器沿用原骨架；普通兵沿用原 2D Sprite 圖集，以 `TerrainArmyDyeAtlas` 的五槽遮罩、共用頁材質和每實例參數呈現，不整人乘陣營色、不新增每兵骨架。遮罩必須與完整原圖集、實際檔案雜湊及來源版本吻合；目前正式範圍為原標準兵與弓／弩配裝，不代表舊缺裝／西式鐵甲普通兵配方已重新准入。驗證與操作見 `output/equipment_dye_20260914/README.md`。
+
 - `assets/characters/human/q35/standard_anime_{male,female}_character_pack.glb` 與正式來源。
 - `assets/mounts/horse/standard_horse_pack.glb`。
 - `assets/characters/terrain_lab_army/standard_soldier/` 的圖集與 metadata。
@@ -102,6 +104,8 @@ SiteController 在工作／人物結算後保存，兩種暫停都凍結工作�
 
 現行 3D 製作來源與獨立 3D benchmark 不在本次舊地圖／紙娃娃刪除範圍。
 本機候選模型、備份、工具安裝及驗證截圖不等於發版資產。
+
+2026-09-14 配色使用者分流：`SiteEquipmentOrders` 以原受控人物身分及真實軍事首長職位判定自由配色權；玩家首長可指定任意有效五槽顏色（亦可局部指定），16 組只是可載入後修改的起點。NPC 首長新建標準時從 16 組選色，未指定時依國別鍵穩定選取；更新未帶顏色則保留既有標準，接任／讀檔不重抽、不抹除玩家自訂色。NPC 可套用預設或本國既有標準；原新人物／士兵以陣營鍵選用 16 組初始色，已有實物或明確外觀配色不覆蓋。不新增國籍、職位、政治 AI 或第二份配色存檔，詳見 `output/equipment_palette_policy_20260914/README.md`。
 
 ## 驗證與限制
 

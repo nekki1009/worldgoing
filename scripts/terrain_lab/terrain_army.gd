@@ -1376,7 +1376,8 @@ func equipment_appearance(index: int) -> Dictionary:
 func supports_equipment_recipe(appearance: Dictionary) -> bool:
 	# Full baseline is already published. Missing-piece recipes are admitted only
 	# after their complete original-animation atlas has passed the baker contract.
-	return not _combat_bake.is_empty() and appearance == _combat_bake.manifest.appearance or EquipmentAtlas.supports(appearance)
+	if not HumanCharacter3DEditor.valid_appearance(appearance) or not EquipmentAtlas.DyeAtlas.supports(appearance): return false
+	return not _combat_bake.is_empty() and HumanCharacter3DEditor.EquipmentDye.geometry_appearance(appearance) == _combat_bake.manifest.appearance or EquipmentAtlas.supports(appearance)
 
 func attack_clip(index: int) -> StringName:
 	var unit: Dictionary = combat_units[index]
@@ -2792,7 +2793,10 @@ func _set_soldier_frame(index: int, force: bool = false) -> void:
 		return
 	if combat_enabled:
 		var appearance := equipment_appearance(index)
-		if not appearance.is_empty() and appearance != _combat_bake.manifest.appearance:
+		if not appearance.is_empty() and not EquipmentAtlas.DyeAtlas.apply(_sprites[index], appearance):
+			_sprites[index].texture = null # No recolouring without an exact complete companion.
+			return
+		if not appearance.is_empty() and HumanCharacter3DEditor.EquipmentDye.geometry_appearance(appearance) != _combat_bake.manifest.appearance:
 			var raw := contact_sample(index)
 			var frame := EquipmentAtlas.frame(appearance, _combat_clip(index), _soldier_direction_id(Vector2i(raw[2])), float(raw[1]))
 			if frame.is_empty():
@@ -8637,7 +8641,7 @@ func _rebuild_visual_instances() -> void:
 	_soldier_sprite_anchors.resize(roster_size)
 	for index: int in range(roster_size):
 		var sprite := _sprites[index]
-		sprite.modulate = Color("ffaaaa") if faction_id != 0 else (Color("ffd780") if index == 0 else Color.WHITE)
+		sprite.modulate = Color.WHITE # Faction identity uses equipment dyes and the existing team markers.
 		if _uses_live_presenter(index):
 			var captain_source: Variant = _unit_editor(index)
 			if captain_source == null:

@@ -10,6 +10,7 @@ const SOURCE_PATHS := [
 	"res://assets/characters/human/q35/standard_anime_male_character_pack.glb",
 	"res://assets/characters/human/q35/standard_anime_female_character_pack.glb",
 	"res://scripts/ui/human_character_3d_editor.gd",
+	"res://scripts/ui/equipment_dye.gd",
 	"res://scripts/terrain_lab/character_combat_timings.gd",
 	"res://scripts/tools/bake_terrain_army_soldier.gd",
 	"res://scripts/tools/terrain_army_recipe_bake_plan.gd",

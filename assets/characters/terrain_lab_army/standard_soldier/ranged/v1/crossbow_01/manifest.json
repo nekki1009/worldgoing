@@ -11836,11 +11836,11 @@
 	"map_scale": 0.379809115843455,
 	"metrics": {
 		"decoded_rgba_bytes": 51134464.0,
-		"elapsed_seconds": 11.647091,
+		"elapsed_seconds": 12.58493,
 		"pixel_sha256": "b30dd29c3b74012c006747ddb266e3bb882bc63c95a985d7ce323e7b04a541e6",
 		"png_bytes": 4341979.0,
 		"png_decoded_sha256": "b30dd29c3b74012c006747ddb266e3bb882bc63c95a985d7ce323e7b04a541e6",
-		"resource_bytes": 6395751.0,
+		"resource_bytes": 6395749.0,
 		"resource_decoded_sha256": "b30dd29c3b74012c006747ddb266e3bb882bc63c95a985d7ce323e7b04a541e6"
 	},
 	"padding": 8.0,
@@ -11870,14 +11870,15 @@
 		"res://assets/characters/human/q35/standard_anime_female_character_pack.glb": "2228a57e286eade313330ff5b152e5df",
 		"res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "e18888e421cba057d7c4c7317f132fb6",
 		"res://scripts/terrain_lab/character_combat_timings.gd": "9f51fd6bc484e4ac86235bd076a463fb",
-		"res://scripts/terrain_lab/terrain_army_ranged_atlas.gd": "8c324c6ce09de2396ffd971e79dbda29",
+		"res://scripts/terrain_lab/terrain_army_ranged_atlas.gd": "0be43bac33fe9370b01787c98787c128",
 		"res://scripts/tools/bake_terrain_army_ranged.gd": "218517e7a1b42b1caeec2a5a3e234e2e",
 		"res://scripts/tools/bake_terrain_army_soldier.gd": "bd513687adc0d419ba2491e573c327e0",
-		"res://scripts/tools/terrain_army_recipe_bake_plan.gd": "fa040f6cccfef0996f67e3e85ae65b38",
-		"res://scripts/ui/human_character_3d_editor.gd": "236a5b4eb826e87845682646553d0414"
+		"res://scripts/tools/terrain_army_recipe_bake_plan.gd": "cb03c9314c1d14498869ff0296b6c3f3",
+		"res://scripts/ui/equipment_dye.gd": "3980103efb3dc51f896cc9486a09c41c",
+		"res://scripts/ui/human_character_3d_editor.gd": "13728c361b10306e3cf6feb34ccfc391"
 	},
 	"source_manifest": "res://assets/characters/terrain_lab_army/standard_soldier/standard_soldier_atlas.json",
-	"source_manifest_md5": "138a2a790d90bc1a7924dd66c8a51a01",
+	"source_manifest_md5": "7b423aa702fe33d84910f4508471774c",
 	"source_viewport": {
 		"height": 768.0,
 		"width": 640.0

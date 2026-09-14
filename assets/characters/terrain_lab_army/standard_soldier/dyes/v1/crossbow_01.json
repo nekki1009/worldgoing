@@ -1,0 +1,52 @@
+{
+	"appearance": {
+		"body": 0.0,
+		"coat": "bay",
+		"hair_dye": "9b775dff",
+		"hair_dyed": false,
+		"hair_mask": "auto",
+		"mounted": false,
+		"parts": {
+			"armor": "armor_light_leather_01",
+			"boots": "boots_leather_01",
+			"cape": "none",
+			"face": "face_standard_01",
+			"hair": "hair_male_01",
+			"helmet": "none",
+			"outfit": "outfit_underlayer_01",
+			"shield": "none",
+			"weapon": "crossbow_01"
+		},
+		"tack": true
+	},
+	"complete": true,
+	"decoded_bytes": 38350848.0,
+	"encoding": "RGB8: slot ID 1..5 / neutral lit shade / dominant-slot coverage; nearest, no mipmaps",
+	"frame_count": 584.0,
+	"height": 3121.0,
+	"mask_md5": "ff43feea9a594a1ecadd8186095a1028",
+	"mask_path": "res://assets/characters/terrain_lab_army/standard_soldier/dyes/v1/crossbow_01.png",
+	"schema_version": 1.0,
+	"slots": [
+		"helmet",
+		"armor",
+		"boots",
+		"cape",
+		"outfit"
+	],
+	"source_fingerprints": {
+		"res://assets/characters/human/q35/combat/combat_cloth_ground.gdshader": "62b93890f642e4c305fe9e2ca6c0c0d3",
+		"res://assets/characters/human/q35/standard_anime_female_character_pack.glb": "2228a57e286eade313330ff5b152e5df",
+		"res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "e18888e421cba057d7c4c7317f132fb6",
+		"res://scripts/terrain_lab/character_combat_timings.gd": "9f51fd6bc484e4ac86235bd076a463fb",
+		"res://scripts/terrain_lab/terrain_army_dye_atlas.gd": "a78712d6b42f4515da87f5aba2c96dac",
+		"res://scripts/tools/bake_terrain_army_dyes.gd": "78194bf27d98f98ce3263af93ec45645",
+		"res://scripts/tools/bake_terrain_army_soldier.gd": "bd513687adc0d419ba2491e573c327e0",
+		"res://scripts/tools/terrain_army_recipe_bake_plan.gd": "cb03c9314c1d14498869ff0296b6c3f3",
+		"res://scripts/ui/equipment_dye.gd": "3980103efb3dc51f896cc9486a09c41c",
+		"res://scripts/ui/human_character_3d_editor.gd": "13728c361b10306e3cf6feb34ccfc391"
+	},
+	"source_manifest": "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/crossbow_01/manifest.json",
+	"source_manifest_md5": "f5a5a8b0215bd7eda3bdd4b56ba7de9c",
+	"width": 4096.0
+}

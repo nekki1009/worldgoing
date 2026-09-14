@@ -731,10 +731,12 @@ static func _validate_items(data: TerrainData, state: Dictionary) -> Dictionary:
 			return Runtime.fail("CORRUPT_SAVE", "共用裝備定義")
 	for identity: Variant in state.item_records:
 		var record: Variant = state.item_records[identity]
-		if not _serial(identity, int(state.next_item)) or not record is Dictionary or record.size() != 3:
+		if not _serial(identity, int(state.next_item)) or not record is Dictionary or record.size() != 3 + int(record.has("dye_color")):
 			return Runtime.fail("CORRUPT_SAVE", "裝備身分")
 		if not record.get("definition") is String or not state.item_definitions.has(record.definition) or not _integer(record.get("original_owner"), 1, 2147483647) or not record.get("holder") is String:
 			return Runtime.fail("CORRUPT_SAVE", "裝備定義／物主引用")
+		if record.has("dye_color") and (not Runtime.EquipmentDye.valid_color(record.dye_color) or str(state.item_definitions[record.definition].slot) not in Runtime.EquipmentDye.SLOTS):
+			return Runtime.fail("CORRUPT_SAVE", "裝備染色格式／槽位")
 	var locations := {}
 	var result := _validate_item_holder(state.depot_items, "depot", state, locations, state.get("inventory", {}), int(state.get("capacity", 0)))
 	if not result.ok:

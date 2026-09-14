@@ -31,7 +31,7 @@ func _formal_catalog() -> Dictionary:
 	var catalog: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(Reader.CATALOG))
 	var baseline: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(Reader.BASE_MANIFEST)).appearance
 	var fingerprints := Plan.fingerprints()
-	assert(fingerprints.size() == 6 and catalog.source_fingerprints == fingerprints)
+	assert(fingerprints.size() == Plan.SOURCE_PATHS.size() and catalog.source_fingerprints == fingerprints)
 	assert(int(catalog.schema_version) == 1 and catalog.recipes.size() >= 32)
 	assert(catalog.source_manifest_md5 == FileAccess.get_md5(Reader.BASE_MANIFEST))
 	var total_keys := 0

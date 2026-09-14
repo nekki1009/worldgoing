@@ -9,6 +9,7 @@ const MALE_MODEL_PATH: String = "res://assets/characters/human/q35/standard_anim
 const FEMALE_MODEL_PATH: String = "res://assets/characters/human/q35/standard_anime_female_character_pack.glb"
 const COMBAT_PROPS_PATH := "res://assets/characters/human/q35/combat/combat_props.glb"
 const CombatTimings = preload("res://scripts/terrain_lab/character_combat_timings.gd")
+const EquipmentDye = preload("res://scripts/ui/equipment_dye.gd")
 var combat_props: Node3D
 var combat_ammo_count := 3
 var combat_ammo_available := true
@@ -309,6 +310,11 @@ var parts_footer: Label
 var part_options: Dictionary = {}
 var part_selection_request: Callable # Optional gameplay UI authority; returns the currently permitted asset.
 var body_selection_request: Callable # Optional gameplay UI authority; returns the original body index.
+var equipment_dye_request: Callable # (slot -> opaque hex or empty reset), atomic real-item command.
+var equipment_dye_buttons := {}
+var equipment_dye_locks := {}
+var _equipment_dyes := {}
+var _equipment_dye_surfaces: Array[Dictionary] = []
 
 var mount_horse: MountHorse3D
 var mount_toggle: CheckBox
@@ -493,6 +499,8 @@ static func valid_appearance(value: Variant) -> bool:
 		return false
 	if value.parts.size() != PART_SLOTS.size():
 		return false
+	if not EquipmentDye.valid_dyes(value.get("equipment_dyes", {}), value.parts):
+		return false
 	for slot: Dictionary in PART_SLOTS:
 		var options: Array = HAIR_OPTIONS[int(value.body)] if slot.id == &"hair" else slot.options
 		var found := false
@@ -515,6 +523,8 @@ func capture_appearance() -> Dictionary:
 	result.mounted = _is_mounted
 	result.coat = str(_current_mount_coat)
 	result.tack = _mount_tack_enabled
+	if not _equipment_dyes.is_empty():
+		result.equipment_dyes = _equipment_dyes.duplicate()
 	return result
 
 func restore_appearance(value: Dictionary) -> bool:
@@ -532,7 +542,110 @@ func restore_appearance(value: Dictionary) -> bool:
 	set_mount_coat(StringName(str(value.coat)))
 	set_mount_tack_enabled(bool(value.tack))
 	set_mount_enabled(bool(value.mounted))
+	set_equipment_dyes(value.get("equipment_dyes", {}))
 	return true
+
+func set_equipment_dyes(colors: Dictionary) -> bool:
+	if not EquipmentDye.valid_dyes(colors, capture_appearance().parts):
+		return false
+	_equipment_dyes = colors.duplicate()
+	_update_equipment_dyes()
+	return true
+
+func request_equipment_dyes(changes: Dictionary) -> Dictionary:
+	if not EquipmentDye.valid_dyes(changes, capture_appearance().parts, true):
+		return {"ok": false, "code": "INVALID", "message": "只能染已穿戴的五部位；顏色須不透明"}
+	if equipment_dye_request.is_valid():
+		var result: Dictionary = equipment_dye_request.call(changes)
+		_update_equipment_dyes() # Revert the picker if the actual-item command rejected.
+		if status_label != null:
+			status_label.text = str(result.get("message", ""))
+		return result
+	var proposed := _equipment_dyes.duplicate()
+	for slot: String in changes:
+		if changes[slot] == "": proposed.erase(slot)
+		else: proposed[slot] = str(changes[slot]).to_lower()
+	set_equipment_dyes(proposed)
+	return {"ok": true, "code": "OK", "message": "已更新五部位預覽染色"}
+
+func apply_equipment_palette(colors: Dictionary) -> Dictionary:
+	if not EquipmentDye.valid_dyes(colors):
+		return {"ok": false, "code": "INVALID", "message": "配色格式錯誤"}
+	var selected := capture_appearance().parts as Dictionary
+	var changes := {}
+	for slot: String in colors:
+		var locked := equipment_dye_locks.get(slot) as CheckBox
+		if selected.get(slot, "none") != "none" and (locked == null or not locked.button_pressed):
+			changes[slot] = colors[slot]
+	return request_equipment_dyes(changes)
+
+func _add_equipment_dye_row(parent: VBoxContainer, slot: String) -> void:
+	var row := HBoxContainer.new()
+	parent.add_child(row)
+	var picker := ColorPickerButton.new()
+	picker.name = "EquipmentDye_" + slot
+	picker.custom_minimum_size = Vector2(76, 36)
+	picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	picker.edit_alpha = false
+	picker.color_changed.connect(func(color: Color) -> void: request_equipment_dyes({slot: Color(color.r, color.g, color.b, 1.0).to_html()}))
+	row.add_child(picker)
+	equipment_dye_buttons[slot] = picker
+	var reset := _new_button("原色", Vector2(70, 44))
+	reset.pressed.connect(func() -> void:
+		if not picker.disabled: request_equipment_dyes({slot: ""}))
+	row.add_child(reset)
+	var locked := CheckBox.new()
+	locked.text = "保留"
+	locked.add_theme_font_size_override("font_size", _ui_font_size(20))
+	locked.tooltip_text = "套用陣營配色時不改這個部位"
+	row.add_child(locked)
+	equipment_dye_locks[slot] = locked
+
+func _prepare_equipment_dyes() -> void:
+	_equipment_dye_surfaces.clear()
+	for node in model_root.find_children("*", "MeshInstance3D", true, false):
+		var mesh := node as MeshInstance3D
+		for surface in range(mesh.mesh.get_surface_count()):
+			var reference := mesh.mesh.surface_get_material(surface) as BaseMaterial3D
+			if reference == null:
+				continue
+			var slot := EquipmentDye.surface_slot(str(mesh.name), reference.resource_name)
+			if slot.is_empty():
+				continue
+			var entry := {"node": mesh, "surface": surface, "slot": slot, "reference": reference,
+				"original": mesh.get_surface_override_material(surface), "dyed": null, "cloth": {}}
+			for cloth: Dictionary in _combat_cloth:
+				if cloth.node == mesh:
+					entry.cloth = cloth
+					entry.ground_original = cloth.ground[surface]
+					entry.ground_dyed = null
+			_equipment_dye_surfaces.append(entry)
+	_update_equipment_dyes()
+
+func _update_equipment_dyes() -> void:
+	for entry: Dictionary in _equipment_dye_surfaces:
+		if not is_instance_valid(entry.node):
+			continue
+		var enabled := _equipment_dyes.has(entry.slot)
+		if enabled and entry.dyed == null:
+			entry.dyed = EquipmentDye.material(entry.original if entry.original != null else entry.reference, entry.reference, entry.node)
+		if enabled:
+			entry.dyed.set_shader_parameter("equipment_dye_color", Color.from_string(_equipment_dyes[entry.slot], Color.WHITE))
+		var material: Material = entry.dyed if enabled else entry.original
+		entry.node.set_surface_override_material(entry.surface, material)
+		if not entry.cloth.is_empty():
+			entry.cloth.original[entry.surface] = material
+			if enabled and entry.ground_dyed == null:
+				entry.ground_dyed = EquipmentDye.material(entry.ground_original, entry.reference, entry.node)
+			if enabled:
+				entry.ground_dyed.set_shader_parameter("equipment_dye_color", Color.from_string(_equipment_dyes[entry.slot], Color.WHITE))
+			entry.cloth.ground[entry.surface] = entry.ground_dyed if enabled else entry.ground_original
+	for slot: String in equipment_dye_buttons:
+		var option := part_options.get(StringName(slot)) as OptionButton
+		var picker := equipment_dye_buttons[slot] as ColorPickerButton
+		picker.disabled = option == null or option.selected < 0 or str(option.get_item_metadata(option.selected)) == "none"
+		picker.color = Color.from_string(_equipment_dyes.get(slot, "ffffffff"), Color.WHITE)
+		picker.tooltip_text = "已染色；保留皮膚、鞋底與金屬配件" if _equipment_dyes.has(slot) else "原色（白色色票表示尚未染色）"
 
 func _canonical_hair_id(hair_id: StringName) -> StringName:
 	# Old preview scripts used one ID for both genders. Keep that input alias,
@@ -732,6 +845,8 @@ func _build_ui() -> void:
 		option.select(0)
 		option.item_selected.connect(_request_part_selected.bind(part["id"]))
 		part_options[part["id"]] = option
+		if str(part.id) in EquipmentDye.SLOTS:
+			_add_equipment_dye_row(parts_layout, str(part.id))
 		if part["id"] == &"hair":
 			var dye_row := HBoxContainer.new()
 			dye_row.custom_minimum_size = Vector2(0,48)
@@ -763,6 +878,17 @@ func _build_ui() -> void:
 			hair_mask_option.set_item_metadata(2, &"off")
 			hair_mask_option.select(0)
 			hair_mask_option.item_selected.connect(_on_hair_mask_mode_selected)
+	var palette := OptionButton.new()
+	palette.name = "EquipmentPalette"
+	palette.add_theme_font_size_override("font_size", _ui_font_size(20))
+	palette.get_popup().add_theme_font_size_override("font_size", _ui_font_size(20))
+	for key: String in EquipmentDye.PRESETS:
+		palette.add_item(EquipmentDye.PRESETS[key].name)
+		palette.set_item_metadata(palette.item_count - 1, key)
+	parts_layout.add_child(palette)
+	var apply_palette := _new_button("套用陣營配色（未鎖定部位）", Vector2(0, 44))
+	apply_palette.pressed.connect(func() -> void: apply_equipment_palette(EquipmentDye.PRESETS[palette.get_item_metadata(palette.selected)].colors))
+	parts_layout.add_child(apply_palette)
 	parts_layout.add_spacer(false)
 	parts_footer = _new_label("接入狀態  載入中…", 16, Color("d8c49e"))
 	parts_footer.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -1089,6 +1215,7 @@ func get_map_ground_offset_pixels() -> Vector2:
 
 func _load_body_model(index: int, preview_model_path: String = "") -> void:
 	clear_hair_node_lookup_cache()
+	_equipment_dye_surfaces.clear()
 	if index < 0 or index >= BODY_MODELS.size() or preview_world == null:
 		return
 	_body_index = index
@@ -1155,6 +1282,7 @@ func _load_body_model(index: int, preview_model_path: String = "") -> void:
 	_load_combat_props()
 	_prepare_rigid_scabbards()
 	_prepare_combat_cloth()
+	_prepare_equipment_dyes()
 
 func _prepare_combat_cloth() -> void:
 	_combat_cloth.clear()
@@ -2015,6 +2143,10 @@ func _apply_part_selection(part_id: StringName, index: int) -> void:
 	_update_full_body_visibility()
 	_update_hair_mask()
 	_update_lining_fit()
+	if str(part_id) in EquipmentDye.SLOTS:
+		if selected_id == &"none":
+			_equipment_dyes.erase(str(part_id))
+		_update_equipment_dyes()
 
 func _update_lining_fit() -> void:
 	var outfit_option := part_options.get(&"outfit") as OptionButton

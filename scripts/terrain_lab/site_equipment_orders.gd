@@ -12,6 +12,7 @@ var actions: Variant:
 	get: return _actions_ref.get_ref() if _actions_ref != null else null
 	set(value): _actions_ref = weakref(value) if value != null else null
 var equipment_apply_guard: Callable # (original person_id, final slot->item ID map), pure.
+var equipment_dye_guard: Callable # (person_id, requested dye changes), pure.
 
 func init(owner: Variant, person_actions: RefCounted) -> void:
 	lab = owner
@@ -19,7 +20,7 @@ func init(owner: Variant, person_actions: RefCounted) -> void:
 	actions.equipment_orders = self
 	# No nation, membership, office or gear is created as a side effect.
 
-func set_standard(requester_id: int, nation_id: String, standard_id: String, display_name: String, slots: Dictionary) -> Dictionary:
+func set_standard(requester_id: int, nation_id: String, standard_id: String, display_name: String, slots: Dictionary, dyes: Variant = null) -> Dictionary:
 	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
 	var person: Dictionary = lab._combat_target(requester_id)
 	if nation.is_empty() or int(nation.get("military_head", -1)) != requester_id or not _member(nation, requester_id) or person.is_empty() or float(person.hp) <= 0.0:
@@ -34,11 +35,89 @@ func set_standard(requester_id: int, nation_id: String, standard_id: String, dis
 	if not _valid_key(nation_id) or not _valid_key(standard_id) or display_name.is_empty() or display_name.length() > 128 or not _valid_slots(normalized, lab.terrain.site.item_definitions):
 		return Runtime.fail("INVALID", "標準名称／同槽位物品定義或替代清單不合法")
 	var previous: Dictionary = nation.standards.get(standard_id, {})
+	var palette: Variant = previous.get("equipment_dyes", {}) if dyes == null else dyes
+	var player_head: bool = bool(actions._person(requester_id, false).get("player", false))
+	# NPC choice happens once when authoring a new standard, never on load/control change.
+	if dyes == null and previous.is_empty() and not player_head:
+		palette = npc_palette_id(nation_id.hash())
+	if palette is String:
+		if not Runtime.EquipmentDye.PRESETS.has(palette):
+			return Runtime.fail("INVALID", "未知的十六組配色")
+		palette = Runtime.EquipmentDye.PRESETS[palette].colors
+	if not Runtime.EquipmentDye.valid_dyes(palette):
+		return Runtime.fail("INVALID", "國別五部位配色")
+	if dyes != null and not player_head and not _is_preset(palette):
+		return Runtime.fail("INVALID", "NPC 首長從十六組配色選用；玩家首長可自由配色")
 	var revision := int(previous.get("revision", 0)) + 1
 	if revision >= 2147483647:
 		return Runtime.fail("INVALID", "標準提交版本已達上限")
 	nation.standards[standard_id] = {"name": display_name, "revision": revision, "slots": normalized}
+	if not palette.is_empty():
+		nation.standards[standard_id].equipment_dyes = palette.duplicate()
 	return Runtime.ok("已更新未來領裝需求；現役實装未變")
+
+func dye_person(requester_id: int, identity: int, changes: Dictionary) -> Dictionary:
+	var person: Dictionary = actions._person(identity)
+	var ready := _ready(person)
+	if not ready.ok:
+		return ready
+	var requester: Dictionary = actions._person(requester_id)
+	if not _ready(requester).ok:
+		return Runtime.fail("NO_AUTHORITY", "染色操作者須可行動")
+	var authorized := requester_id == identity and bool(person.player)
+	for nation: Dictionary in lab.terrain.site.get("equipment_nations", {}).values():
+		if int(nation.military_head) == requester_id and _member(nation, requester_id) and _member(nation, identity):
+			authorized = true
+	if not authorized:
+		return Runtime.fail("NO_AUTHORITY", "限原玩家本人，或本國軍事首長套用本國人物配色")
+	if not bool(requester.player) and not _npc_dyes_allowed(requester_id, person, changes):
+		return Runtime.fail("INVALID", "NPC 須套用完整預設或本國已保存的標準配色")
+	var version := int(person.holder.version)
+	var checked := Runtime.dye_equipment(lab.terrain, person.holder, changes, version, true)
+	if not checked.ok:
+		return checked
+	if not equipment_dye_guard.is_valid() or not actions.equipment_changed.is_valid():
+		return Runtime.fail("UNSUPPORTED", "染色呈現尚未接入")
+	checked = equipment_dye_guard.call(identity, changes)
+	if not checked.ok:
+		return checked
+	var result := Runtime.dye_equipment(lab.terrain, person.holder, changes, version)
+	if result.ok:
+		actions.equipment_changed.call(identity)
+	return result
+
+func apply_standard_dyes(requester_id: int, identity: int, nation_id: String, standard_id: String) -> Dictionary:
+	var standard := _standard(identity, nation_id, standard_id)
+	if standard.is_empty() or not standard.has("equipment_dyes"):
+		return Runtime.fail("NO_TARGET", "沒有此國別配色")
+	var person: Dictionary = actions._person(identity)
+	if person.is_empty():
+		return Runtime.fail("NO_TARGET")
+	return dye_person(requester_id, identity, _equipped_dyes(person, standard.equipment_dyes))
+
+static func npc_palette_id(selection: int) -> String:
+	return str(Runtime.EquipmentDye.PRESETS.keys()[posmod(selection, Runtime.EquipmentDye.PRESETS.size())])
+
+static func _is_preset(colors: Dictionary) -> bool:
+	for preset: Dictionary in Runtime.EquipmentDye.PRESETS.values():
+		if colors == preset.colors: return true
+	return false
+
+func _npc_dyes_allowed(requester_id: int, person: Dictionary, changes: Dictionary) -> bool:
+	for preset: Dictionary in Runtime.EquipmentDye.PRESETS.values():
+		if changes == _equipped_dyes(person, preset.colors): return true
+	# Retain player-authored standards after succession; this is application, not new authorship.
+	for nation: Dictionary in lab.terrain.site.get("equipment_nations", {}).values():
+		if int(nation.military_head) == requester_id and _member(nation, int(person.person_id)):
+			for standard: Dictionary in nation.standards.values():
+				if standard.has("equipment_dyes") and changes == _equipped_dyes(person, standard.equipment_dyes): return true
+	return false
+
+static func _equipped_dyes(person: Dictionary, colors: Dictionary) -> Dictionary:
+	var changes := {}
+	for slot: String in colors:
+		if person.holder.equipped.has(slot): changes[slot] = colors[slot]
+	return changes
 
 func begin_issue(identity: int, nation_id: String, standard_id: String) -> Dictionary:
 	return actions.begin_equipment(identity, {"mode": "issue", "nation_id": nation_id, "standard_id": standard_id})
@@ -240,7 +319,7 @@ static func valid_nations(value: Variant, definitions: Dictionary, known_people:
 			assigned[int(identity)] = nation_id
 		for standard_id: Variant in nation.standards:
 			var standard: Variant = nation.standards[standard_id]
-			if not standard_id is String or not _valid_key(standard_id) or not standard is Dictionary or standard.size() != 3 or not standard.get("name") is String or standard.name.is_empty() or standard.name.length() > 128 or not _integer(standard.get("revision")) or not standard.get("slots") is Dictionary or not _valid_slots(standard.slots, definitions):
+			if not standard_id is String or not _valid_key(standard_id) or not standard is Dictionary or standard.size() != 3 + int(standard.has("equipment_dyes")) or not standard.get("name") is String or standard.name.is_empty() or standard.name.length() > 128 or not _integer(standard.get("revision")) or not standard.get("slots") is Dictionary or not _valid_slots(standard.slots, definitions) or not Runtime.EquipmentDye.valid_dyes(standard.get("equipment_dyes", {})):
 				return false
 	return true
 
