@@ -1,0 +1,64 @@
+# Test-process candidate only: compact once, restore all on the first boundary.
+func _clip_safe_resident() -> Array[StringName]:
+	var resident: Array[StringName] = [&"idle", &"guard", &"walk_slash", &"RESET"]
+	var arguments := OS.get_cmdline_user_args()
+	if "--clip-reactions" in arguments or "--clip-lifecycle" in arguments or "--clip-mobile" in arguments or "--clip-mobile-lifecycle" in arguments:
+		resident.append_array([&"hit", &"hit_back", &"knockback"])
+	if "--clip-mobile" in arguments or "--clip-mobile-lifecycle" in arguments:
+		resident.append_array([&"walk", &"run"])
+	if "--clip-lifecycle" in arguments or "--clip-mobile-lifecycle" in arguments:
+		resident.append_array([&"down", &"get_up", &"unconscious", &"rescue"])
+	return resident
+
+func _clip_safe_restore(reason: String) -> void:
+	if not bool(get_meta(&"clip_safe_enabled", false)):
+		return
+	set_meta(&"clip_safe_enabled", false)
+	set_meta(&"clip_safe_fallback", reason)
+	var full: Dictionary = get_meta(&"clip_safe_full", {})
+	var library: AnimationLibrary = get_meta(&"clip_safe_library", null)
+	for clip: StringName in full:
+		if library.get_animation(clip) != full[clip]:
+			assert(library.add_animation(clip, full[clip]) == OK)
+	if has_meta(&"clip_safe_full"): remove_meta(&"clip_safe_full")
+	if has_meta(&"clip_safe_library"): remove_meta(&"clip_safe_library")
+
+func _clip_safe_prepare(target: StringName) -> void:
+	if not bool(get_meta(&"clip_safe_enabled", false)):
+		return
+	var resident := _clip_safe_resident()
+	var player := animation_player
+	if target not in resident or _is_mounted or editor_root.visible or use_imported_model:
+		_clip_safe_restore("pose_or_public_boundary:" + str(target))
+		return
+	if player.get_animation_library_list() != [&""] or player.playback_default_blend_time != 0.0 or not player.get_queue().is_empty():
+		_clip_safe_restore("unsupported_playback")
+		return
+	# A next-clip chain may be configured AFTER activation as well.
+	for clip: StringName in player.get_animation_list():
+		if player.animation_get_next(clip) != &"":
+			_clip_safe_restore("chained_playback")
+			return
+	if has_meta(&"clip_safe_full"):
+		return # Never evict/reload a clip during ordinary combat.
+	if player.assigned_animation not in resident:
+		_clip_safe_restore("assigned_clip_not_resident")
+		return
+	var library := player.get_animation_library(&"")
+	var full := {}
+	for clip: StringName in player.get_animation_list():
+		full[clip] = library.get_animation(clip)
+	set_meta(&"clip_safe_full", full)
+	set_meta(&"clip_safe_library", library)
+	var tracks := 0
+	for clip: StringName in full:
+		var source: Animation = full[clip]
+		if clip in resident:
+			tracks += source.get_track_count()
+			continue
+		var stub := Animation.new()
+		stub.length = source.length
+		stub.step = source.step
+		stub.loop_mode = source.loop_mode
+		assert(library.add_animation(clip, stub) == OK)
+	set_meta(&"clip_safe_tracks", tracks)

@@ -64,8 +64,19 @@ var item_state: Dictionary = {} # Absent until explicit real-equipment migration
 var loot_settled := false
 var remains_id := "" # Presentation reference only; ownership is the ground holder.
 var training := 0.0
-var fatigue := 0.0
-var fatigue_rest := 0.0
+var _fatigue_pool: Dictionary = {} # Borrowed original Army state, except the player.
+var fatigue := 0.0:
+	get: return float(_fatigue_pool.fatigue) if not _fatigue_pool.is_empty() else fatigue
+	set(value):
+		if _fatigue_pool.is_empty(): fatigue = value
+		else: _fatigue_pool.fatigue = value
+var fatigue_rest := 0.0:
+	get: return float(_fatigue_pool.fatigue_rest) if not _fatigue_pool.is_empty() else fatigue_rest
+	set(value):
+		if _fatigue_pool.is_empty(): fatigue_rest = value
+		else:
+			_fatigue_pool.fatigue_rest = value
+			if value == 0.0: _fatigue_pool.active = true
 var work_resting := false # Original person's work-only latch, not combat/forced player rest.
 var _fatigue_slowdown := 0.0 # Snapshot at action start; no mid-swing retiming.
 var training_query: Callable
@@ -492,7 +503,10 @@ func play_pose(clip: StringName) -> void:
 		editor.select_animation_by_id(clip)
 		clip = editor.selected_animation
 		editor.animation_player.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
-		editor.animation_player.seek(0.0, true)
+		# The live exchange presenter already seeks the final pose in _process.
+		# Keep immediate samples for manual/legacy callers and the open editor.
+		if not (exchange_enabled and combat_driven_by_lab and is_processing() and is_inside_tree() and can_process() and not editor.is_mounted and editor_window != null and not editor_window.visible):
+			editor.animation_player.seek(0.0, true)
 	visual_state.animation_id = clip
 	visual_state.animation_time = 0.0
 
@@ -537,12 +551,12 @@ func _advance_combat_pose(delta: float) -> void:
 		return
 	if exchange_enabled and _exchange_visual_active:
 		var clip := visual_state.animation_id
-		var elapsed := ExchangeTimings.duration(clip) - _exchange_visual_left
+		var exchange_elapsed := ExchangeTimings.duration(clip) - _exchange_visual_left
 		if _exchange_visual_left <= 0.000000001 or (is_moving() and CombatTimings.ATTACKS.has(clip) \
-			and elapsed >= ExchangeTimings.MOVE_CORE_SECONDS - 0.000000001):
+			and exchange_elapsed >= ExchangeTimings.MOVE_CORE_SECONDS - 0.000000001):
 			_finish_exchange_visual()
 			return
-		visual_state.animation_time = ExchangeTimings.sample_time(clip, elapsed, _exchange_authored_duration(clip))
+		visual_state.animation_time = ExchangeTimings.sample_time(clip, exchange_elapsed, _exchange_authored_duration(clip))
 		_exchange_pose_dirty = true
 		return
 	if editor == null:
@@ -639,9 +653,9 @@ func _start_target_attack(identity: int, actor: TerrainTestCharacter = null) -> 
 		var weapon: StringName = &"none"
 		if weapon_option != null:
 			weapon = StringName(str(weapon_option.get_item_metadata(weapon_option.selected)))
-		clip = HumanCharacter3DEditor.WEAPON_ATTACK_MAP.get(weapon, &"attack_unarmed")
+		clip = HumanCharacter3DEditor.WEAPON_ATTACK_MAP.get(HumanCharacter3DEditor.WeaponMaterials.family(weapon), &"attack_unarmed")
 		if editor.is_mounted:
-			clip = &"ride_thrust" if weapon == &"spear_01" else &"ride_slash"
+			clip = &"ride_thrust" if HumanCharacter3DEditor.WeaponMaterials.is_polearm(weapon) else &"ride_slash"
 		if not editor.select_animation_by_id(clip):
 			return false
 		if clip in [&"attack_spear", &"ride_thrust"]:
@@ -808,7 +822,7 @@ func _sync_ammo_visual() -> void:
 		return
 	var option := editor.part_options.get(&"weapon") as OptionButton
 	var weapon := str(option.get_item_metadata(option.selected)) if option != null else "none"
-	editor.combat_ammo_count = int(ammo_inventory.get("bolt" if weapon == "crossbow_01" else "arrow", 0))
+	editor.combat_ammo_count = int(ammo_inventory.get("bolt" if HumanCharacter3DEditor.WeaponMaterials.family(StringName(weapon)) == &"crossbow_01" else "arrow", 0))
 	editor.combat_ammo_available = editor.combat_ammo_count > 0
 	editor._update_combat_props()
 
@@ -829,7 +843,7 @@ func incoming_geometry(ranged: bool = false) -> Dictionary:
 	if shields.is_empty() and guarding and guard_break_left <= 0.0 and guard_transition_left <= 0.0 and editor != null and not ranged:
 		var weapon_option := editor.part_options.get(&"weapon") as OptionButton
 		var weapon_id := StringName(str(weapon_option.get_item_metadata(weapon_option.selected))) if weapon_option != null else &"none"
-		var weapon_clip: StringName = HumanCharacter3DEditor.WEAPON_ATTACK_MAP.get(weapon_id, &"attack_unarmed")
+		var weapon_clip: StringName = HumanCharacter3DEditor.WEAPON_ATTACK_MAP.get(HumanCharacter3DEditor.WeaponMaterials.family(weapon_id), &"attack_unarmed")
 		if weapon_clip not in [&"attack_unarmed", &"attack_bow", &"attack_crossbow"]:
 			parry = _geometry.weapon_shapes(self, weapon_clip, true)
 	return {"body": bodies, "shield": shields, "parry": parry}
@@ -1081,8 +1095,7 @@ func ranged_fire(target_cell: Vector2i, shot_id: int) -> bool:
 	var total := Vector2(terrain_cell).distance_to(Vector2(target_cell)) / float(profile.speed)
 	# Commit once to the original cargo; no flight outcome can refund this item.
 	ammo_inventory[ammo] = int(ammo_inventory[ammo]) - 1
-	fatigue = minf(100.0, fatigue + 1.0)
-	fatigue_rest = 0.0
+	PersonFatigue.charge(self, 1.0)
 	if _exchange_pending_skill == "power":
 		_exchange_pending_skill = ""
 		exchange_skill_cooldown = SiteCombatRules.EXCHANGE_SKILL_COOLDOWN
@@ -1180,8 +1193,7 @@ func apply_exchange(other_cell: Vector2i, outcome: Dictionary) -> void:
 	if not _exchange_pending_skill.is_empty():
 		exchange_skill_cooldown = SiteCombatRules.EXCHANGE_SKILL_COOLDOWN
 	_exchange_pending_skill = ""
-	fatigue = clampf(fatigue + float(outcome.get("fatigue", 0.0)), 0.0, 100.0)
-	fatigue_rest = 0.0
+	PersonFatigue.charge(self, float(outcome.get("fatigue", 0.0)))
 	combat_ready = true
 	if editor != null:
 		editor.combat_ready = true
@@ -1212,11 +1224,11 @@ func apply_exchange(other_cell: Vector2i, outcome: Dictionary) -> void:
 	else:
 		exchange_stagger = 0.0
 		face_cell(other_cell)
-		var clip: StringName = HumanCharacter3DEditor.WEAPON_ATTACK_MAP.get(StringName(_exchange_equipped_asset("weapon")), &"attack_unarmed")
+		var clip: StringName = HumanCharacter3DEditor.WEAPON_ATTACK_MAP.get(HumanCharacter3DEditor.WeaponMaterials.family(StringName(_exchange_equipped_asset("weapon"))), &"attack_unarmed")
 		if clip in [&"attack_bow", &"attack_crossbow"]:
 			clip = &"attack_unarmed" # A ranged holder is still a valid close-combat target.
 		if editor != null and editor.is_mounted:
-			clip = &"ride_thrust" if _exchange_equipped_asset("weapon") == "spear_01" else &"ride_slash"
+			clip = &"ride_thrust" if HumanCharacter3DEditor.WeaponMaterials.is_polearm(StringName(_exchange_equipped_asset("weapon"))) else &"ride_slash"
 		_start_exchange_visual(clip)
 		combat_status = "Exchange win: " + str(outcome.get("kind", "small"))
 	action_time = exchange_stagger
@@ -1276,6 +1288,9 @@ func apply_contact(packet: Dictionary) -> void:
 	if hp <= 0.0:
 		knockout_left = 0.0
 		_stop_fighting("Dead")
+		if not _fatigue_pool.is_empty():
+			_fatigue_pool.count = maxi(0, int(_fatigue_pool.count) - 1)
+			PersonFatigue.unbind(self)
 		died.emit(person_id)
 	elif knockout_left > 0.0:
 		combat_status = "Unconscious"

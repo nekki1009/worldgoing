@@ -1,4 +1,4 @@
-<Project Sdk="Godot.NET.Sdk/4.6.2">
+<Project Sdk="Godot.NET.Sdk/4.7.2">
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <EnableDynamicLoading>true</EnableDynamicLoading>
@@ -7,7 +7,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <!-- Only the opt-in combat experiment; never compile tools/output projects. -->
+    <!-- Explicit combat kernels only; never compile tools/output projects. -->
     <Compile Include="scripts/terrain_lab/compiled_contact_*.cs" />
+    <Compile Include="scripts/terrain_lab/compiled_exchange_candidates.cs" />
   </ItemGroup>
 </Project>

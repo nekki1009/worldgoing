@@ -33,9 +33,10 @@ const EXCHANGE_SKILL_BONUS := 15.0
 const EXCHANGE_POWER_STUN := 10.0
 const EXCHANGE_SKILL_COOLDOWN := 8.0
 const RANGED_MAX_RANGE := 10.0
+const WeaponMaterials = preload("res://scripts/ui/weapon_materials.gd")
 
 static func ranged_profile(weapon: String) -> Dictionary:
-	match weapon:
+	match str(WeaponMaterials.family(StringName(weapon))):
 		"bow_01":
 			return {"ammo": "arrow", "range": 8.0, "cooldown": 2.0, "hold": 0.25, "speed": 10.0}
 		"crossbow_01":

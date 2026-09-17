@@ -43,6 +43,10 @@ func _run() -> void:
 	lab.bind_terrain(data)
 	lab.site_controller.release_worker()
 	assert(lab.character.place(Vector2i(50, 50), true) and lab.npc.place(Vector2i(52, 50), true))
+	# This test inspects individual Sprite materials. Keep that original reference
+	# path explicit; the MultiMesh path has its own exact pixel/main-scene tests.
+	for team: TerrainArmy in lab.combat_armies:
+		team.batch_render_enabled = false
 	assert(lab.start_melee_trial().ok)
 	var count := 0
 	var mask_materials := {}

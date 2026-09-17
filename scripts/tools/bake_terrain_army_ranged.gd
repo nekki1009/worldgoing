@@ -1,5 +1,5 @@
 extends "res://scripts/tools/bake_terrain_army_soldier.gd"
-## Original renderer, packer and lossless output checks, with two exact recipes.
+## Original renderer, packer and lossless checks for exact unshielded weapons.
 const RangedAtlas = preload("res://scripts/terrain_lab/terrain_army_ranged_atlas.gd")
 var _ranged_sources := {}
 var _ranged_base_md5 := ""
@@ -10,7 +10,7 @@ func _initialize() -> void:
 	for argument: String in OS.get_cmdline_user_args():
 		var pair := argument.split("=", true, 1)
 		if pair.size() != 2 or pair[0] not in ["--weapon", "--output", "--first", "--count"] or flags.has(pair[0]) or pair[1].is_empty():
-			_fail_ranged("Expected unique --weapon=bow_01|crossbow_01, optional --output, --first and --count")
+			_fail_ranged("Expected unique --weapon=<catalogue ID>, optional --output, --first and --count")
 			return
 		flags[pair[0]] = pair[1]
 	var weapon := str(flags.get("--weapon", ""))
@@ -20,7 +20,7 @@ func _initialize() -> void:
 		return
 	_recipe = RangedAtlas.plan(weapon, baseline)
 	if _recipe.is_empty():
-		_fail_ranged("Only the original male/leather baseline with bow_01 or crossbow_01 is admitted")
+		_fail_ranged("Requires the original male/leather baseline and an exact catalogue weapon ID")
 		return
 	var output := str(flags.get("--output", "res://output/site_ranged_20260914/atlas/" + weapon)).simplify_path().trim_suffix("/")
 	if not output.begins_with("res://output/") or not str(flags.get("--first", "0")).is_valid_int() or not str(flags.get("--count", str(RangedAtlas.FRAME_COUNT))).is_valid_int():

@@ -1,0 +1,7 @@
+[configuration]
+entry_symbol = "army_idle_init"
+compatibility_minimum = "4.4"
+reloadable = false
+
+[libraries]
+windows.x86_64 = "res://native/army_idle/bin/army_idle.windows.x86_64.dll"

@@ -859,15 +859,15 @@ static func _validate_remains(person: Dictionary, state: Dictionary, cargo: Vari
 	if not person.get("loot_settled", false) is bool or not person.get("remains_id", "") is String:
 		return Runtime.fail("CORRUPT_SAVE", "人物遺物結算欄位")
 	var settled: bool = person.get("loot_settled", false)
-	var reference := str(person.get("remains_id", ""))
+	var remains_reference := str(person.get("remains_id", ""))
 	if not settled:
-		return Runtime.ok() if reference.is_empty() else Runtime.fail("CORRUPT_SAVE", "未結算卻引用遺物")
+		return Runtime.ok() if remains_reference.is_empty() else Runtime.fail("CORRUPT_SAVE", "未結算卻引用遺物")
 	if not person.has("item_state") or not _number(person.get("hp"), 0, 0) or not cargo is Dictionary or Runtime.inventory_size(cargo) != 0 or not person.item_state.get("item_ids", []).is_empty():
 		return Runtime.fail("CORRUPT_SAVE", "已轉存死者仍持有物品／非死亡")
-	if not reference.is_empty():
-		if not _serial(reference, int(state.next_loot)):
+	if not remains_reference.is_empty():
+		if not _serial(remains_reference, int(state.next_loot)):
 			return Runtime.fail("CORRUPT_SAVE", "遺物引用序號")
-		var container: Dictionary = state.ground_loot.get(reference, {})
+		var container: Dictionary = state.ground_loot.get(remains_reference, {})
 		# Empty containers may have been reclaimed; IDs are never reused.
 		if not container.is_empty() and (container.kind != "remains" or int(container.original_owner) != int(person.person_id)):
 			return Runtime.fail("CORRUPT_SAVE", "遺物引用不是原死者")

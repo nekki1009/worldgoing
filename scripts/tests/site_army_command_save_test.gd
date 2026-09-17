@@ -4,6 +4,8 @@ const Store = preload("res://scripts/terrain_lab/site_store.gd")
 const SAVE := "res://.godot-temp/site_combat/army-state.json"
 
 func _initialize() -> void:
+	if "--retain-animation-cache" in OS.get_cmdline_user_args():
+		preload("res://scripts/tests/fixtures/animation_cache_lifecycle_install.gd").install()
 	call_deferred("run")
 
 func run() -> void:
@@ -25,6 +27,8 @@ func run() -> void:
 	assert(selected.size() == 100)
 	assert(team.deploy_at(data, null, null, selected))
 	assert(team.enable_combat(false))
+	if "--retain-animation-cache" in OS.get_cmdline_user_args():
+		preload("res://scripts/tests/fixtures/animation_cache_lifecycle_install.gd").assert_captain(team)
 	assert(team.formal_commander == 0 and team.command_abilities.size() == 1)
 	var original_cells := team.cells.duplicate()
 	var original_abilities: Dictionary = team.command_abilities[0].duplicate()
@@ -122,6 +126,8 @@ func run() -> void:
 	root.add_child(copy)
 	copy.set_process(false)
 	copy.restore_combat_state(loaded.data.site.armies[0], loaded.data, null, null)
+	if "--retain-animation-cache" in OS.get_cmdline_user_args():
+		preload("res://scripts/tests/fixtures/animation_cache_lifecycle_install.gd").assert_captain(copy)
 	assert(float(copy.combat_units[99].fatigue) == 78.5 and float(copy.combat_units[99].fatigue_rest) == 14.25)
 	assert(float(copy.combat_units[99].attack_reduction) == 0.1 and float(copy.combat_units[99].attack_fatigue) == 0.25)
 	assert(copy.cells == team.cells and copy.moving_to == team.moving_to)
@@ -146,6 +152,8 @@ func run() -> void:
 	assert(not Store._validate_armies(data, duplicate).ok)
 	# Restore is idempotent, including command RNG and abilities.
 	copy.restore_combat_state(snapshot, data, null, null)
+	if "--retain-animation-cache" in OS.get_cmdline_user_args():
+		preload("res://scripts/tests/fixtures/animation_cache_lifecycle_install.gd").assert_captain(copy)
 	assert(copy.command_rng.state == team.command_rng.state and copy.command_abilities.size() == 4)
 	assert(copy.command_abilities == team.command_abilities, "Repeated restore changed ability values or types")
 	copy.clear()

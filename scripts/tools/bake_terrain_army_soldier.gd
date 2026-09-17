@@ -240,7 +240,7 @@ func _run() -> void:
 				})
 				if _recipe.is_empty():
 					var weapon_id := StringName(str(clip.get("weapon", "longsword_01")))
-					_collisions.append(_geometry.pose_snapshot(_actor, HumanCharacter3DEditor.WEAPON_ATTACK_MAP.get(weapon_id, &"attack_unarmed")))
+					_collisions.append(_geometry.pose_snapshot(_actor, HumanCharacter3DEditor.WEAPON_ATTACK_MAP.get(HumanCharacter3DEditor.WeaponMaterials.family(weapon_id), &"attack_unarmed")))
 		print("COMBAT_BAKE_CLIP ", clip.id, " frames=", _frames.size())
 	# Variable rectangles avoid wasting a spear-sized cell on every idle frame.
 	var cursor := Vector2i(0, _base_atlas.get_height()) if _base_atlas != null else Vector2i.ZERO

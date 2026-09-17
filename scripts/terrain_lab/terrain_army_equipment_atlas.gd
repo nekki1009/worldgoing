@@ -39,8 +39,8 @@ static func set_catalog_path(path: String) -> bool:
 static func supports(appearance: Dictionary) -> bool:
 	if not HumanCharacter3DEditor.valid_appearance(appearance) or not DyeAtlas.supports(appearance): return false
 	appearance = DyeAtlas.Dye.geometry_appearance(appearance)
-	if str(appearance.get("parts", {}).get("weapon", "")) in RangedAtlas.WEAPONS:
-		return not RangedAtlas.recipe(appearance).is_empty()
+	if RangedAtlas.supports_weapon(str(appearance.get("parts", {}).get("weapon", ""))) and not RangedAtlas.recipe(appearance).is_empty():
+		return true
 	var mask := _appearance_mask(appearance)
 	return mask >= 0 and not _recipe(mask, _appearance_iron(appearance)).is_empty()
 
@@ -50,16 +50,16 @@ static func frame(appearance: Dictionary, clip: String, direction: String, sampl
 	if not is_finite(sample_time) or sample_time < 0.0:
 		return {}
 	var recipe := {}
-	if str(appearance.get("parts", {}).get("weapon", "")) in RangedAtlas.WEAPONS:
+	if RangedAtlas.supports_weapon(str(appearance.get("parts", {}).get("weapon", ""))):
 		recipe = RangedAtlas.recipe(appearance)
-	else:
+	if recipe.is_empty():
 		var mask := _appearance_mask(appearance)
 		if mask >= 0:
 			recipe = _recipe(mask, _appearance_iron(appearance))
 	if recipe.is_empty():
 		return {}
 	# Existing Army may already have resolved a no-shield guard's logical alias.
-	clip = "guard" if clip in ["guard_unshielded", "guard_weapon"] else clip.replace("guard_weapon_", "guard_")
+	clip = normalized_clip(clip)
 	var key := clip + "|" + direction
 	if not recipe.sequences.has(key):
 		return {}
@@ -93,6 +93,9 @@ static func frame(appearance: Dictionary, clip: String, direction: String, sampl
 	result.texture = texture
 	result.map_scale = recipe.map_scale
 	return result
+
+static func normalized_clip(clip: String) -> String:
+	return "guard" if clip in ["guard_unshielded", "guard_weapon", "guard_polearm", "guard_spear"] else clip.replace("guard_weapon_", "guard_").replace("guard_polearm_", "guard_")
 
 static func _appearance_iron(appearance: Dictionary) -> int:
 	var iron := 0

@@ -10,6 +10,7 @@ const FEMALE_MODEL_PATH: String = "res://assets/characters/human/q35/standard_an
 const COMBAT_PROPS_PATH := "res://assets/characters/human/q35/combat/combat_props.glb"
 const CombatTimings = preload("res://scripts/terrain_lab/character_combat_timings.gd")
 const EquipmentDye = preload("res://scripts/ui/equipment_dye.gd")
+const WeaponMaterials = preload("res://scripts/ui/weapon_materials.gd")
 var combat_props: Node3D
 var combat_ammo_count := 3
 var combat_ammo_available := true
@@ -73,6 +74,10 @@ const PART_SLOTS := [
 		{"id": &"armor_mingguang_01", "label": "Mingguang Armor 01 / 明光鎧", "prefixes": ["Armor_Mingguang_01"]},
 		{"id": &"armor_chinese_leather_01", "label": "Chinese Leather Armor 01 / 中式皮甲", "prefixes": ["Armor_Chinese_Leather_01"]},
 		{"id": &"armor_western_iron_01", "label": "Western Iron Armor 01 / 西式鐵甲", "prefixes": ["Armor_Western_Iron_01"]},
+		# Stable visual IDs/prefixes keep the authored meshes and animation paths.
+		{"id": &"outfit_medieval_chinese_01", "label": "布甲｜中式交領衣・男褲／女裙", "category": &"cloth", "prefixes": ["Outfit_Medieval_Chinese_01"]},
+		{"id": &"outfit_medieval_japanese_01", "label": "布甲｜日式小袖・男袴／女裙", "category": &"cloth", "prefixes": ["Outfit_Medieval_Japanese_01"]},
+		{"id": &"outfit_medieval_european_01", "label": "布甲｜歐式長衫・男褲／女裙", "category": &"cloth", "prefixes": ["Outfit_Medieval_European_01"]},
 		{"id": &"none", "label": "None / 無", "prefixes": []},
 	]},
 	{"id": &"cape", "label": "Cape / 披風", "options": [
@@ -80,17 +85,7 @@ const PART_SLOTS := [
 		{"id": &"cape_chinese_01", "label": "Chinese Cloak 01 / 中式披風", "prefixes": ["Cape_Chinese_01"]},
 		{"id": &"none", "label": "None / 無", "prefixes": []},
 	]},
-	{"id": &"weapon", "label": "Weapon / 武器", "options": [
-		{"id": &"longsword_01", "label": "Longsword 01 / 長劍", "prefixes": ["Weapon_Longsword_01"]},
-		{"id": &"spear_01", "label": "Spear 01 / 長槍", "prefixes": ["Weapon_Spear_01"]},
-		{"id": &"axe_01", "label": "Axe 01 / 戰斧", "prefixes": ["Weapon_Axe_01"]},
-		{"id": &"wood_axe_01", "label": "Wood Axe 01 / 伐木斧", "prefixes": ["Weapon_WoodAxe_01"]},
-		{"id": &"hammer_01", "label": "Hammer 01 / 戰鎚", "prefixes": ["Weapon_Hammer_01"]},
-		{"id": &"dagger_01", "label": "Dagger 01 / 匕首", "prefixes": ["Weapon_Dagger_01"]},
-		{"id": &"bow_01", "label": "Bow 01 / 長弓", "prefixes": ["Weapon_Bow_01"]},
-		{"id": &"crossbow_01", "label": "Crossbow 01 / 十字弩", "prefixes": ["Weapon_Crossbow_01"]},
-		{"id": &"none", "label": "None / 無", "prefixes": []},
-	]},
+	{"id": &"weapon", "label": "Weapon / 武器・工具", "options": WeaponMaterials.OPTIONS},
 	{"id": &"shield", "label": "Shield / 盾牌", "options": [
 		{"id": &"shield_heater_01", "label": "Shield 01 / 加熱盾", "prefixes": ["Shield_Heater_01"]},
 		{"id": &"none", "label": "None / 無", "prefixes": []},
@@ -101,6 +96,9 @@ const PART_SLOTS := [
 		{"id": &"boots_iron_01", "label": "Chinese Iron Boots 01 / 中式鐵靴", "prefixes": ["Boots_Iron_01"]},
 		{"id": &"boots_mingguang_01", "label": "Mingguang War Boots 01 / 明光鎧戰靴", "prefixes": ["Boots_Mingguang_01"]},
 		{"id": &"boots_western_iron_01", "label": "Western Iron Boots 01 / 西式鐵靴", "prefixes": ["Boots_Western_Iron_01"]},
+		{"id": &"boots_medieval_chinese_01", "label": "布甲配鞋｜中式布鞋", "tuck_trousers": false, "prefixes": ["Boots_Medieval_Chinese_01"]},
+		{"id": &"boots_medieval_japanese_01", "label": "布甲配鞋｜日式足袋草鞋", "tuck_trousers": false, "prefixes": ["Boots_Medieval_Japanese_01"]},
+		{"id": &"boots_medieval_european_01", "label": "布甲配鞋｜歐式軟皮短鞋", "tuck_trousers": false, "prefixes": ["Boots_Medieval_European_01"]},
 		{"id": &"none", "label": "None / 無", "prefixes": []},
 	]},
 ]
@@ -146,17 +144,7 @@ const ANIMATION_SLOTS := [
 	{"id": &"ride_thrust", "label": "Ride Thrust / 馬上刺長槍", "state": "connected"},
 	{"id": &"walk_slash", "label": "Walk Slash / 步行揮劍", "state": "connected"},
 ]
-const WEAPON_ATTACK_MAP := {
-	&"longsword_01": &"walk_slash",
-	&"spear_01": &"attack_spear",
-	&"axe_01": &"attack_axe",
-	&"wood_axe_01": &"attack_axe",
-	&"hammer_01": &"attack_hammer",
-	&"dagger_01": &"attack_dagger",
-	&"bow_01": &"attack_bow",
-	&"crossbow_01": &"attack_crossbow",
-	&"none": &"attack_unarmed",
-}
+const WEAPON_ATTACK_MAP := WeaponMaterials.ATTACKS
 const WEAPON_ATTACK_ANIMATIONS := [
 	&"walk_slash", &"attack_spear", &"attack_axe", &"attack_hammer",
 	&"attack_dagger", &"attack_bow", &"attack_crossbow", &"attack_unarmed",
@@ -166,6 +154,7 @@ const BODY_MODELS := [
 	{"id": &"female_standard_anime", "label": "Female / 標準動漫女（全套模組化裝備）", "path": FEMALE_MODEL_PATH},
 ]
 const EQUIPMENT_PREFIXES := [
+	"Outfit_Medieval_Chinese_01", "Outfit_Medieval_Japanese_01", "Outfit_Medieval_European_01",
 	"Armor_Western_Iron_01", "Helmet_Western_Iron_01", "Boots_Western_Iron_01",
 	"Armor_Chinese_Leather_01", "Helmet_Mingguang_01",
 	"Helmet_Chinese_Leather_01", "Outfit_Chinese_Lining_01",
@@ -332,6 +321,7 @@ const MOUNT_RIDER_HIP_BONES: Array[StringName] = [
 ]
 
 var _body_index: int = 0
+var _restoring_appearance_parts := false
 var _hair_mask_mode: StringName = &"auto"
 var _selected_animation: StringName = &"walk"
 var _is_playing: bool = true
@@ -401,9 +391,9 @@ func _normalize_animation_id(animation_id: StringName) -> StringName:
 		return &"walk_slash"
 	if animation_id in [&"guard", &"guard_raise", &"guard_lower", &"guard_break"]:
 		var shield := part_options.get(&"shield") as OptionButton
-		var weapon := _selected_weapon_id()
-		if shield != null and shield.selected >= 0 and str(shield.get_item_metadata(shield.selected)) == "none" and weapon in [&"longsword_01", &"spear_01", &"axe_01", &"wood_axe_01", &"hammer_01", &"dagger_01"]:
-			return StringName(("guard_polearm" if weapon == &"spear_01" else "guard_weapon") + str(animation_id).trim_prefix("guard"))
+		var weapon := WeaponMaterials.family(_selected_weapon_id())
+		if shield != null and shield.selected >= 0 and str(shield.get_item_metadata(shield.selected)) == "none" and weapon != &"none" and not WeaponMaterials.is_ranged(weapon):
+			return StringName(("guard_polearm" if WeaponMaterials.is_polearm(weapon) else "guard_weapon") + str(animation_id).trim_prefix("guard"))
 	return animation_id
 
 func _selected_weapon_id() -> StringName:
@@ -413,9 +403,9 @@ func _selected_weapon_id() -> StringName:
 	return StringName(str(option.get_item_metadata(option.selected)))
 
 func _resolve_weapon_attack_animation() -> StringName:
-	var weapon_id := _selected_weapon_id()
+	var weapon_id := WeaponMaterials.family(_selected_weapon_id())
 	if _is_mounted:
-		if weapon_id == &"spear_01" and bool(_available_animation_ids.get(&"ride_thrust", false)):
+		if WeaponMaterials.is_polearm(weapon_id) and bool(_available_animation_ids.get(&"ride_thrust", false)):
 			return &"ride_thrust"
 		if bool(_available_animation_ids.get(&"ride_slash", false)):
 			return &"ride_slash"
@@ -532,9 +522,19 @@ func restore_appearance(value: Dictionary) -> bool:
 		return false
 	if _body_index != int(value.body):
 		_on_body_selected(int(value.body))
+
+	# Only coalesce unrelated slot refreshes in this synchronous base-owner call.
+	# Weapon/shield changes and animation changes still refresh immediately.
+	var batch_weapons: bool = get_script() == HumanCharacter3DEditor and not _restoring_appearance_parts
+	if batch_weapons:
+		_update_weapon_sheath_state()
+		_restoring_appearance_parts = true
 	for slot: Dictionary in PART_SLOTS:
 		if not select_part_by_id(slot.id, StringName(str(value.parts[str(slot.id)]))):
+			if batch_weapons: _restoring_appearance_parts = false
 			return false
+	if batch_weapons: _restoring_appearance_parts = false
+
 	set_hair_mask_mode(StringName(str(value.hair_mask)))
 	set_hair_dye(Color.from_string(str(value.hair_dye), Color.WHITE))
 	if not bool(value.hair_dyed):
@@ -726,8 +726,9 @@ func _load_combat_props(path: String = COMBAT_PROPS_PATH) -> void:
 func _update_combat_props() -> void:
 	if not is_instance_valid(combat_props) or model_root == null or animation_player == null:
 		return
+	WeaponMaterials.apply_ammo_material(combat_props, _selected_weapon_id())
 	var option := part_options.get(&"weapon") as OptionButton
-	var weapon := str(option.get_item_metadata(option.selected)) if option != null else "none"
+	var weapon := str(WeaponMaterials.family(StringName(str(option.get_item_metadata(option.selected))))) if option != null else "none"
 	var bow := weapon == "bow_01"
 	var crossbow := weapon == "crossbow_01"
 	var skeleton := model_root.find_child("Skeleton3D", true, false) as Skeleton3D
@@ -1283,6 +1284,7 @@ func _load_body_model(index: int, preview_model_path: String = "") -> void:
 	_prepare_rigid_scabbards()
 	_prepare_combat_cloth()
 	_prepare_equipment_dyes()
+	_prepare_animation_loop_defaults()
 
 func _prepare_combat_cloth() -> void:
 	_combat_cloth.clear()
@@ -1359,7 +1361,7 @@ func _prepare_rigid_scabbards() -> void:
 	var skeleton := model_root.find_child("Skeleton3D", true, false) as Skeleton3D
 	if skeleton == null:
 		return
-	for node: Node in model_root.find_children("Weapon_Longsword_01_*", "MeshInstance3D", true, false):
+	for node: Node in model_root.find_children("Weapon_Longsword_*", "MeshInstance3D", true, false):
 		var mesh := node as MeshInstance3D
 		if not ("_Scabbard_" in str(mesh.name) or "_Sheathed_" in str(mesh.name)):
 			continue
@@ -1818,11 +1820,19 @@ func _play_selected_animation() -> void:
 	if not animation_player.has_animation(play_anim):
 		return
 	var animation := animation_player.get_animation(play_anim)
-	if animation != null:
-		animation.loop_mode = Animation.LOOP_LINEAR if loop_toggle == null or loop_toggle.button_pressed else Animation.LOOP_NONE
+	# Rewriting the same Resource value needlessly invalidates animation caches.
+	# Read the actual value, so UI changes and shared-resource edits still apply.
+	var requested_loop := Animation.LOOP_LINEAR if loop_toggle == null or loop_toggle.button_pressed else Animation.LOOP_NONE
+	if animation != null and animation.loop_mode != requested_loop:
+		animation.loop_mode = requested_loop
 	animation_player.speed_scale = float(speed_slider.value) if speed_slider != null else 1.0
 	visual_state.speed = animation_player.speed_scale
 	if animation_player.current_animation != play_anim:
+		for node in model_root.find_children("Outfit_Medieval_*", "MeshInstance3D", true, false):
+			var cloth := node as MeshInstance3D
+			for shape in cloth.get_blend_shape_count():
+				if str(cloth.mesh.get_blend_shape_name(shape)).begins_with("Cloth_"):
+					cloth.set_blend_shape_value(shape, 0.0)
 		for node in model_root.find_children("Armor_Mingguang_01_*", "MeshInstance3D", true, false):
 			var armor := node as MeshInstance3D
 			for shape in armor.get_blend_shape_count():
@@ -1893,10 +1903,10 @@ func _on_part_selected(index: int, part_id: StringName) -> void:
 				phase = suffix
 		select_animation_by_id(StringName("guard" + phase))
 	if part_id == &"weapon":
-		var weapon_opt_id: StringName = StringName(str(option.get_item_metadata(index)))
+		var weapon_opt_id := WeaponMaterials.family(StringName(str(option.get_item_metadata(index))))
 		if _is_mounted:
 			if _selected_animation in [&"ride_attack", &"ride_slash", &"ride_thrust"]:
-				var target_ride_anim: StringName = &"ride_thrust" if weapon_opt_id == &"spear_01" else &"ride_slash"
+				var target_ride_anim: StringName = &"ride_thrust" if WeaponMaterials.is_polearm(weapon_opt_id) else &"ride_slash"
 				if _selected_animation != target_ride_anim and bool(_available_animation_ids.get(target_ride_anim, false)):
 					select_animation_by_id(target_ride_anim)
 		else:
@@ -1935,17 +1945,45 @@ func _on_loop_toggled(_enabled: bool) -> void:
 func _apply_attack_loop_default() -> void:
 	if loop_toggle == null:
 		return
-	var one_shot := _is_weapon_attack_animation(_selected_animation) or _selected_animation in [
+	loop_toggle.set_pressed_no_signal(_animation_loop_default(_selected_animation, loop_toggle.button_pressed))
+
+func _animation_loop_default(animation_id: StringName, current: bool) -> bool:
+	var one_shot := _is_weapon_attack_animation(animation_id) or animation_id in [
 		&"ride_attack", &"ride_slash", &"ride_thrust", &"guard_raise", &"guard_lower",
 		&"guard_break", &"get_up", &"rescue", &"reload_bow", &"reload_crossbow", &"down"
 	]
-	one_shot = one_shot or (str(_selected_animation).begins_with("guard_") and (str(_selected_animation).ends_with("_raise") or str(_selected_animation).ends_with("_lower") or str(_selected_animation).ends_with("_break")))
+	one_shot = one_shot or (str(animation_id).begins_with("guard_") and (str(animation_id).ends_with("_raise") or str(animation_id).ends_with("_lower") or str(animation_id).ends_with("_break")))
 	if one_shot:
-		loop_toggle.set_pressed_no_signal(false)
-	elif _selected_animation in [&"idle", &"walk", &"run", &"guard", &"guard_weapon", &"guard_polearm", &"unconscious", &"ride_idle", &"ride_walk", &"ride_run"]:
+		return false
+	if animation_id in [&"idle", &"walk", &"run", &"guard", &"guard_weapon", &"guard_polearm", &"unconscious", &"ride_idle", &"ride_walk", &"ride_run"]:
 		# A completed one-shot must not freeze the next sustained pose at its
 		# last frame. Otherwise contact geometry depends on prior attack history.
-		loop_toggle.set_pressed_no_signal(true)
+		return true
+	return current
+
+func _prepare_animation_loop_defaults() -> void:
+	if animation_player == null or loop_toggle == null:
+		return
+	# Queued/chained playback can enter a clip without the editor's selection
+	# rule. Keep those libraries completely on their original path.
+	if not animation_player.get_queue().is_empty():
+		return
+	for clip: StringName in animation_player.get_animation_list():
+		if animation_player.animation_get_next(clip) != &"":
+			return
+	# Configure this freshly loaded private library before battle. Never seek,
+	# change the current UI/playback, or silence Resource change notifications.
+	var assigned := animation_player.assigned_animation
+	var current: Animation = animation_player.get_animation(assigned) if animation_player.has_animation(assigned) else null
+	for animation_id: StringName in _available_animation_ids:
+		if not animation_player.has_animation(animation_id):
+			continue
+		var animation := animation_player.get_animation(animation_id)
+		if animation == current:
+			continue # Also preserve aliases of the currently assigned Resource.
+		var requested := Animation.LOOP_LINEAR if _animation_loop_default(animation_id, loop_toggle.button_pressed) else Animation.LOOP_NONE
+		if animation.loop_mode != requested:
+			animation.loop_mode = requested
 
 func _on_speed_changed(value: float) -> void:
 	visual_state.speed = value
@@ -2139,10 +2177,13 @@ func _apply_part_selection(part_id: StringName, index: int) -> void:
 		var selected := StringName(str(component["id"])) == selected_id
 		for node in _find_component_nodes(component.get("prefixes", [])):
 			(node as Node3D).visible = selected
-	_update_weapon_sheath_state()
+	if not _restoring_appearance_parts or part_id in [&"weapon", &"shield"]:
+		_update_weapon_sheath_state()
 	_update_full_body_visibility()
 	_update_hair_mask()
-	_update_lining_fit()
+	# Face is the first restored slot; clothing/shoes retain immediate coverage.
+	if not _restoring_appearance_parts or part_id in [&"face", &"outfit", &"armor", &"boots"]:
+		_update_lining_fit()
 	if str(part_id) in EquipmentDye.SLOTS:
 		if selected_id == &"none":
 			_equipment_dyes.erase(str(part_id))
@@ -2156,20 +2197,22 @@ func _update_lining_fit() -> void:
 	var outfit_id := StringName(str(outfit_option.get_item_metadata(outfit_option.selected)))
 	var selected := outfit_id == &"outfit_chinese_lining_01"
 	var armor_id := StringName(str(armor_option.get_item_metadata(armor_option.selected)))
-	var armored := armor_id != &"none"
+	var cloth_armor: bool = _component_definition(&"armor", armor_id).get("category", &"") == &"cloth"
+	var armored: bool = armor_id != &"none" and not cloth_armor
 	var hard_armored := armor_id in [&"armor_iron_01", &"armor_mingguang_01", &"armor_western_iron_01"]
 	# The hard-shell morph keeps ease at exposed back gaps; leather retains
 	# its original compressed shape. Neither changes the underlying body.
 	var compressed := armor_id in [&"armor_light_leather_01", &"armor_chinese_leather_01"]
 	for node in model_root.find_children("Outfit_Chinese_Lining_01_*","MeshInstance3D",true,false):
 		var mesh := node as MeshInstance3D
+		mesh.visible = selected and not cloth_armor
 		for index in mesh.get_blend_shape_count():
 			if mesh.mesh.get_blend_shape_name(index) == &"UnderArmor":
 				mesh.set_blend_shape_value(index,1.0 if compressed else 0.0)
 			elif mesh.mesh.get_blend_shape_name(index) == &"UnderHardArmor":
 				mesh.set_blend_shape_value(index,1.0 if hard_armored else 0.0)
 		if str(mesh.name).contains("CrossLapel_") or str(mesh.name).ends_with("Hem") or str(mesh.name).ends_with("BackCollar"):
-			mesh.visible = selected and not armored
+			mesh.visible = selected and not armored and not cloth_armor
 	# These armor choices carry their own cloth sleeves/tunic. The selected
 	# lining replaces that layer; restore it when the lining is removed.
 	for lining_entry in [
@@ -2181,12 +2224,113 @@ func _update_lining_fit() -> void:
 		var inner := model_root.find_child(lining_entry[1], true, false) as MeshInstance3D
 		if inner != null:
 			inner.visible = armor_id == lining_entry[0] and not selected
+	# Cloth sets and other armor now share one slot; never wear both layers.
+	for pair in [[&"armor_light_leather_01", "Armor_Light_Leather_01_Pants"], [&"armor_western_iron_01", "Armor_Western_Iron_01_UnderPants"]]:
+		var pants := model_root.find_child(pair[1], true, false) as MeshInstance3D
+		if pants != null: pants.visible = armor_id == pair[0]
+	# Keep the selected underwear item, but its covered mesh stays inside the
+	# complete cloth armor. Restore it when that outer set is removed.
+	for under_node in _find_component_nodes(["Outfit_Underlayer_01"]):
+		(under_node as Node3D).visible = outfit_id == &"outfit_underlayer_01" and not cloth_armor
+	outfit_option.tooltip_text = "原內衣與甲內襯衣；中、日、歐式六套服装已歸入護甲的布甲類。"
+	armor_option.tooltip_text = "布甲、皮甲與鐵甲共用護甲槽，一次只能穿一套；布甲使用護甲染色。"
 	# The ordinary female top is entirely covered by these chest plates.
 	# Keep its original mesh, restoring it on armor/outfit changes.
 	var under_top := model_root.find_child("Outfit_Underlayer_01_Top",true,false) as MeshInstance3D
 	if under_top != null:
-		under_top.visible = outfit_id == &"outfit_underlayer_01" and not hard_armored
-	_update_lining_body_coverage(selected)
+		under_top.visible = outfit_id == &"outfit_underlayer_01" and not hard_armored and not cloth_armor
+	_update_lining_body_coverage(selected and not cloth_armor)
+	if cloth_armor:
+		_update_medieval_cloth_fit(armor_id)
+	_update_medieval_shoe_coverage()
+
+func _update_medieval_shoe_coverage() -> void:
+	# The lining owner has just restored the body (and optionally masked cloth).
+	# Omit only the foot inside a closed shoe; removing it restores that source.
+	var boots := part_options.get(&"boots") as OptionButton
+	if boots == null or boots.selected < 0 or not str(boots.get_item_metadata(boots.selected)).begins_with("boots_medieval_"):
+		return
+	var body := model_root.find_child("Body_Standard_Female" if _body_index == 1 else "Body_Standard_Male", true, false) as MeshInstance3D
+	var skeleton := model_root.find_child("Skeleton3D", true, false) as Skeleton3D
+	if body == null or skeleton == null: return
+	var original := body.mesh as ArrayMesh
+	var cache_key := "shoe_coverage_" + str(original.get_instance_id()).replace("-", "n")
+	if not body.has_meta(cache_key):
+		var covered := ArrayMesh.new()
+		var ankle := skeleton.get_bone_global_rest(skeleton.find_bone("J_Bip_L_Foot")).origin.y - .022
+		for surface in original.get_surface_count():
+			var arrays := original.surface_get_arrays(surface)
+			var points: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+			var visible_indices := PackedInt32Array()
+			for i in range(0, indices.size(), 3):
+				if points[indices[i]].y < ankle and points[indices[i+1]].y < ankle and points[indices[i+2]].y < ankle: continue
+				visible_indices.append_array(indices.slice(i, i+3))
+			if visible_indices.is_empty(): continue
+			arrays[Mesh.ARRAY_INDEX] = visible_indices
+			covered.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+			covered.surface_set_material(covered.get_surface_count()-1, original.surface_get_material(surface))
+		body.set_meta(cache_key, covered)
+	body.mesh = body.get_meta(cache_key) as ArrayMesh
+
+func _update_medieval_cloth_fit(armor_id: StringName) -> void:
+	var component := _component_definition(&"armor", armor_id)
+	var nodes := _find_component_nodes(component.get("prefixes", []))
+	var boots := part_options.get(&"boots") as OptionButton
+	var tucked := boots != null and boots.selected >= 0 and str(boots.get_item_metadata(boots.selected)) != "none"
+	if tucked:
+		tucked = bool(_component_definition(&"boots", StringName(str(boots.get_item_metadata(boots.selected)))).get("tuck_trousers", true))
+	var hem := 2.0
+	var cuff := 0.0
+	for node in nodes:
+		var mesh := node as MeshInstance3D
+		if mesh == null: continue
+		for index in mesh.get_blend_shape_count():
+			var key: StringName = mesh.mesh.get_blend_shape_name(index)
+			if key == &"UnderArmor": mesh.set_blend_shape_value(index, 0.0)
+			elif key == &"BootTuck": mesh.set_blend_shape_value(index, float(tucked))
+		mesh.visible = not str(mesh.name).ends_with("SkirtArmored")
+		if not mesh.visible: continue
+		# Mesh AABBs include pose-corrective extremes. Coverage must use the
+		# authored rest vertices, not a prone/jumping skirt's union bounds.
+		for surface in mesh.mesh.get_surface_count():
+			var points: PackedVector3Array = mesh.mesh.surface_get_arrays(surface)[Mesh.ARRAY_VERTEX]
+			for point in points:
+				hem = minf(hem, point.y)
+				if str(mesh.name).ends_with("Shirt"):
+					cuff = maxf(cuff, absf(point.x) - .018)
+	var body := model_root.find_child("Body_Standard_Female" if _body_index == 1 else "Body_Standard_Male", true, false) as MeshInstance3D
+	var skeleton := model_root.find_child("Skeleton3D", true, false) as Skeleton3D
+	if body == null or skeleton == null or cuff <= 0.0: return
+	# The lining owner has just restored the exact original body. Only faces
+	# wholly inside this garment's neckline/cuffs/hem are omitted reversibly.
+	var original := body.mesh as ArrayMesh
+	var cache_key := "cloth_armor_coverage_" + str(armor_id)
+	if not body.has_meta(cache_key):
+		var neck := skeleton.get_bone_global_rest(skeleton.find_bone("J_Bip_C_Neck")).origin
+		var covered := ArrayMesh.new()
+		for surface in original.get_surface_count():
+			var arrays := original.surface_get_arrays(surface)
+			var positions: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+			var concealed := PackedByteArray()
+			concealed.resize(positions.size())
+			for i in positions.size():
+				var point := positions[i]
+				var top := neck.y - .022
+				if point.z > neck.z:
+					top = minf(top, neck.y - .098 + absf(point.x) * 1.55)
+				concealed[i] = int(point.y > hem + .035 and point.y < top and absf(point.x) < cuff)
+			var visible_indices := PackedInt32Array()
+			for i in range(0, indices.size(), 3):
+				if concealed[indices[i]] and concealed[indices[i+1]] and concealed[indices[i+2]]: continue
+				visible_indices.append_array(indices.slice(i, i+3))
+			if visible_indices.is_empty(): continue
+			arrays[Mesh.ARRAY_INDEX] = visible_indices
+			covered.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+			covered.surface_set_material(covered.get_surface_count()-1, original.surface_get_material(surface))
+		body.set_meta(cache_key, covered)
+	body.mesh = body.get_meta(cache_key) as ArrayMesh
 
 func _update_lining_body_coverage(enabled: bool) -> void:
 	var body_name := "Body_Standard_Female" if _body_index == 1 else "Body_Standard_Male"
@@ -2248,9 +2392,12 @@ func _update_weapon_sheath_state() -> void:
 	if weapon_opt != null and weapon_opt.selected >= 0:
 		weapon_id = StringName(str(weapon_opt.get_item_metadata(weapon_opt.selected)))
 
-	for component: Dictionary in _part_definition(&"weapon").get("options", []):
+	var weapon_components: Array = _part_definition(&"weapon").get("options", [])
+	var weapon_groups := _weapon_component_groups(weapon_components)
+	for component_index in weapon_components.size():
+		var component: Dictionary = weapon_components[component_index]
 		var is_selected_weapon := StringName(str(component["id"])) == weapon_id and weapon_id != &"none"
-		for node in _find_component_nodes(component.get("prefixes", [])):
+		for node in weapon_groups[component_index]:
 			var mesh_node := node as Node3D
 			if mesh_node == null:
 				continue
@@ -2292,6 +2439,41 @@ func _update_weapon_sheath_state() -> void:
 				mesh_node.visible = shield_is_holstered
 			else:
 				mesh_node.visible = not shield_is_holstered
+
+func _weapon_component_groups(components: Array) -> Array:
+	# One native traversal for the current weapon family, not one per option.
+	# No retained hierarchy cache; private query subclasses keep their own lookup.
+	var groups: Array = []
+	var batched: bool = get_script() == HumanCharacter3DEditor and model_root != null
+	for component: Dictionary in components:
+		for prefix: Variant in component.get("prefixes", []):
+			if not str(prefix).begins_with("Weapon") or str(prefix).contains("*") or str(prefix).contains("?"):
+				batched = false
+	if not batched:
+		for component: Dictionary in components:
+			groups.append(_find_component_nodes(component.get("prefixes", [])))
+		return groups
+	# Index only this call's prefixes. Visit nodes in original traversal order;
+	# overlapping/duplicate prefixes may select a component only once per node.
+	var by_prefix := {}
+	for component_index in components.size():
+		groups.append([])
+		for prefix: Variant in components[component_index].get("prefixes", []):
+			var text := str(prefix)
+			if not by_prefix.has(text): by_prefix[text] = {}
+			by_prefix[text][component_index] = true
+	for node: Node in model_root.find_children("Weapon*", "Node3D", true, false):
+		var node_name := str(node.name)
+		var matched: Dictionary = by_prefix.get(node_name, {}).duplicate()
+		for separator: String in ["_", "."]:
+			var boundary := node_name.find(separator)
+			while boundary >= 0:
+				for component_index: int in by_prefix.get(node_name.substr(0, boundary), {}):
+					matched[component_index] = true
+				boundary = node_name.find(separator, boundary + 1)
+		for component_index: int in matched:
+			groups[component_index].append(node)
+	return groups
 
 func is_selected_shield_held() -> bool:
 	if model_root == null:
@@ -2471,6 +2653,13 @@ func _apply_equipment_style() -> void:
 	for node: Node in model_root.find_children("*", "MeshInstance3D", true, false):
 		var mesh_node := node as MeshInstance3D
 		var node_name := str(mesh_node.name)
+		if node_name.begins_with("Weapon_") and ("_Wood_01_" in node_name or "_Stone_01_" in node_name or "_Steel_01_" in node_name or "_Iron_01_" in node_name):
+			# New variants retain their packed grain/flint textures and PBR response.
+			mesh_node.material_overlay = null
+			continue
+		if node_name.begins_with("Outfit_Medieval_") or node_name.begins_with("Boots_Medieval_"):
+			mesh_node.material_overlay = null
+			continue
 		if node_name.begins_with("Cape_Chinese_01_") or node_name.begins_with("Armor_Chinese_Leather_01_") or node_name.begins_with("Helmet_Mingguang_01_") or node_name.begins_with("Helmet_Chinese_Leather_01_") or node_name.begins_with("Outfit_Chinese_Lining_01_") or node_name.begins_with("Boots_Chinese_Leather_01_"):
 			# Preserve authored texture materials and fine engraved/perforated edges.
 			mesh_node.material_overlay = null
@@ -2546,9 +2735,16 @@ func _component_has_nodes(component: Dictionary) -> bool:
 
 func _find_component_nodes(prefixes: Array) -> Array:
 	var result: Array = []
-	if model_root == null:
+	if model_root == null or prefixes.is_empty():
 		return result
-	for node: Node in model_root.find_children("*", "Node3D", true, false):
+	# Narrow the native search for the common single literal prefix. Keep the
+	# original boundary check/order; multiple or glob-like prefixes use all nodes.
+	var pattern := "*"
+	if prefixes.size() == 1:
+		var prefix_text := str(prefixes[0])
+		if not prefix_text.contains("*") and not prefix_text.contains("?"):
+			pattern = prefix_text + "*"
+	for node: Node in model_root.find_children(pattern, "Node3D", true, false):
 		var node_name := str(node.name)
 		for prefix: Variant in prefixes:
 			var prefix_text := str(prefix)

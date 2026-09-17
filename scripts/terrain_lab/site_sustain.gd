@@ -311,7 +311,7 @@ static func train(training: float, members: Dictionary, eligible_ids: Array, ela
 		if not _integer(id, 1) or seen.has(int(id)) or not members.has(int(id)):
 			return _fail("Duplicate or unknown trainee")
 		var body: Dictionary = members[int(id)]
-		if not _number(body.get("fatigue"), 0, 100) or not _number(body.get("fatigue_rest"), 0, Fatigue.REST_DELAY) or not body.get("work_resting", false) is bool:
+		if (Fatigue.pool(body).is_empty() and (not body.has("fatigue") or not body.has("fatigue_rest"))) or not _number(Fatigue.read(body), 0, 100) or not _number(Fatigue.read(body, "fatigue_rest"), 0, Fatigue.REST_DELAY) or not body.get("work_resting", false) is bool:
 			return _fail("Invalid original fatigue state")
 		seen[int(id)] = true
 	if free_living == 0 or elapsed_seconds == 0.0 or bool(context.get("paused", false)) or bool(context.get("routed", false)):
@@ -320,11 +320,15 @@ static func train(training: float, members: Dictionary, eligible_ids: Array, ela
 		if not bool(context.get(condition, false)):
 			return result
 	var productive := 0.0
+	var shared_bodies: Array[Dictionary] = []
 	for id: Variant in eligible_ids:
 		var body: Dictionary = members[int(id)]
 		if float(body.hp) <= 0 or float(body.get("ko", 0.0)) > 0 or bool(body.get("captive", false)) or not bool(body.get("present", false)):
 			continue
 		result.handled_ids.append(int(id))
+		if not Fatigue.pool(body).is_empty():
+			shared_bodies.append(body)
+			continue
 		var left := elapsed_seconds
 		var player := int(context.get("controlled_person_id", 0)) == int(id)
 		var effort := 0.0
@@ -350,6 +354,27 @@ static func train(training: float, members: Dictionary, eligible_ids: Array, ela
 				left -= work
 				effort += work
 		result.effort_seconds[int(id)] = effort
+	if not shared_bodies.is_empty():
+		# One team state and one training interval. Shared recovery belongs only
+		# to Lab, even when every trainee is resting; never N recovery clocks.
+		var shared := Fatigue.pool(shared_bodies[0])
+		var resting := false
+		for body: Dictionary in shared_bodies:
+			assert(is_same(Fatigue.pool(body), shared), "Training roster spans fatigue owners")
+			resting = resting or Fatigue.needs_work_rest(float(shared.fatigue), bool(body.get("work_resting", false)))
+		var effort := 0.0
+		if not resting:
+			var rate := Fatigue.WORK_RATE * shared_bodies.size() / maxf(1.0, float(shared.count))
+			effort = minf(elapsed_seconds, maxf(0.0, Fatigue.WORK_REST_AT - float(shared.fatigue)) / rate)
+			productive += Fatigue.work_seconds(float(shared.fatigue), effort, rate) * shared_bodies.size()
+			if effort > 0.0:
+				shared.fatigue = minf(Fatigue.WORK_REST_AT, float(shared.fatigue) + effort * rate)
+				shared.fatigue_rest = 0.0
+				shared.active = true
+			resting = float(shared.fatigue) >= Fatigue.WORK_REST_AT
+		for body: Dictionary in shared_bodies:
+			body.work_resting = resting
+			result.effort_seconds[int(body.person_id)] = effort
 	# The cap stops growth, not the existing order or its actual effort. This also
 	# keeps fatigue partition-independent when a long interval reaches the cap.
 	result.training = training if training >= 1000.0 else minf(1000.0, training + productive / HOUR / free_living * (1.0 + Rules.diminishing(float(context.get("coach", 0.0)), 0.5)))

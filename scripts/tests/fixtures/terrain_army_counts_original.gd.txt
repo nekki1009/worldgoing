@@ -1,0 +1,20 @@
+func moving_count() -> int:
+	var count := 0
+	for state: int in movement_state:
+		if state == UnitState.MOVING or state == UnitState.SWAPPING:
+			count += 1
+	return count
+
+func passage_summary() -> Dictionary:
+	var summary := {"waiting": 0, "clearing": 0, "completed": 0}
+	for index: int in range(1, _unit_passage_phase.size()):
+		var phase := int(_unit_passage_phase[index])
+		if phase == PassagePhase.APPROACH:
+			summary.waiting += 1
+		elif phase == PassagePhase.IN_PASSAGE or (phase == PassagePhase.EXIT_CLEAR and _unit_passage_exit_clear[index] == 0):
+			summary.clearing += 1
+		elif _unit_has_cleared_passages(index):
+			summary.completed += 1
+		elif phase == PassagePhase.EXIT_CLEAR:
+			summary.waiting += 1
+	return summary

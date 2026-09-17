@@ -1,0 +1,287 @@
+extends Node2D
+## Read-only presentation columns. Original Army rows own every gameplay value.
+const Atlas = preload("res://scripts/terrain_lab/terrain_army_equipment_atlas.gd")
+const DyeAtlas = preload("res://scripts/terrain_lab/terrain_army_dye_atlas.gd")
+const SHADER := """
+shader_type canvas_item;
+uniform sampler2D sequence_data : filter_nearest, repeat_disable;
+uniform sampler2D palette_data : filter_nearest, repeat_disable;
+uniform sampler2D dye_map : filter_nearest, repeat_disable;
+uniform vec2 page_size;
+varying flat int palette_row;
+varying flat vec4 frame_clip;
+varying vec4 instance_tint;
+void vertex() {
+    int sequence = int(INSTANCE_CUSTOM.x);
+    int frame = int(INSTANCE_CUSTOM.y);
+    vec4 rect = texelFetch(sequence_data, ivec2(1 + frame * 2, sequence), 0);
+    VERTEX = vec2(-0.5) * rect.zw + UV * rect.zw;
+    UV = rect.xy / page_size + UV * (rect.zw / page_size);
+    // Match Godot's original AtlasTexture clip bounds, including Canvas RD's
+    // half-float varying representation, rather than sampling adjacent frames.
+    frame_clip = vec4(unpackHalf2x16(packHalf2x16(rect.xy / page_size)), unpackHalf2x16(packHalf2x16(rect.zw / page_size)));
+    instance_tint = COLOR;
+    palette_row = int(INSTANCE_CUSTOM.z);
+}
+void fragment() {
+    vec2 sample_uv = clamp(UV, frame_clip.xy + 0.5 / page_size, frame_clip.xy + abs(frame_clip.zw) - 0.5 / page_size);
+    vec4 original = instance_tint * texture(TEXTURE, sample_uv);
+    vec3 mask = texture(dye_map, sample_uv).rgb;
+    int slot = int(round(mask.r * 255.0));
+    if (slot >= 1 && slot <= 5) {
+        vec4 dye = texelFetch(palette_data, ivec2(slot - 1, palette_row), 0);
+        original.rgb = mix(original.rgb, dye.rgb * mask.g, dye.a * mask.b);
+    }
+    COLOR = original;
+}
+"""
+
+var _army: Node2D
+var _pages: Array[Dictionary] = []
+var _page_keys := {}
+var _appearances: Array[Dictionary] = []
+var _descriptors: Array[Dictionary] = []
+var _positions := PackedVector2Array()
+var _sequence := PackedInt32Array()
+var _frames := PackedInt32Array()
+var _page := PackedInt32Array()
+var _palette := PackedInt32Array()
+var _rows := {}
+var _original_sprites := {}
+var _batches := {}
+var _palette_keys := {}
+var _palette_image: Image
+var _palette_texture: ImageTexture
+var _palette_dirty := false
+var _shader: Shader
+var _mesh: ArrayMesh
+var _sampled_frames := {}
+var rendered_count := 0
+var active_batches := 0
+
+func setup(army: Node2D, count: int) -> void:
+	_army = army
+	_appearances.resize(count)
+	_descriptors.resize(count)
+	_positions.resize(count)
+	_sequence.resize(count)
+	_frames.resize(count)
+	_page.resize(count)
+	_palette.resize(count)
+	_palette_image = Image.create(5, maxi(1, count), false, Image.FORMAT_RGBAF)
+	_palette_texture = ImageTexture.create_from_image(_palette_image)
+	_shader = Shader.new()
+	_shader.code = SHADER
+	# One shared native mesh, with the original Canvas rectangle's diagonal.
+	_mesh = ArrayMesh.new()
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = PackedVector2Array([Vector2.ZERO, Vector2.DOWN, Vector2.ONE, Vector2.RIGHT])
+	arrays[Mesh.ARRAY_TEX_UV] = arrays[Mesh.ARRAY_VERTEX]
+	arrays[Mesh.ARRAY_INDEX] = PackedInt32Array([0, 1, 2, 0, 2, 3])
+	_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+
+func begin() -> void:
+	_rows.clear()
+	_original_sprites.clear()
+	_sampled_frames.clear()
+	rendered_count = 0
+	active_batches = 0
+
+func submit(index: int, ground: Vector2, appearance: Dictionary, clip: String, direction: String, sample_time: float) -> bool:
+	if index < 0 or index >= _positions.size() or not is_finite(sample_time) or sample_time < 0.0: return false
+	if _descriptors[index].is_empty() or (not is_same(_appearances[index], appearance) and _appearances[index] != appearance):
+		# Immutable owner publications can be compared by identity. Arbitrary
+		# mutable callbacks retain a deep snapshot, detecting in-place dye edits.
+		_appearances[index] = appearance if _deep_read_only(appearance) else appearance.duplicate(true)
+		_descriptors[index] = _describe(appearance)
+	var descriptor: Dictionary = _descriptors[index]
+	if descriptor.is_empty(): return false # Original Sprite admission/failure path remains available.
+	var page: Dictionary = _pages[int(descriptor.page)]
+	clip = "guard" if clip in ["guard_unshielded", "guard_weapon"] else clip.replace("guard_weapon_", "guard_")
+	var key := clip + "|" + direction
+	if not page.sequences.has(key): return false
+	_sequence[index] = int(page.sequences[key])
+	# Keep the original double-precision clock and CPU Sprite transform order;
+	# doing those operations in shader float32 shifts nearest-filtered edge pixels.
+	var samples: Array = page.samples[int(_sequence[index])]
+	var sample_key := Vector2i(int(descriptor.page), _sequence[index])
+	if not _sampled_frames.has(sample_key): _sampled_frames[sample_key] = {}
+	var times: Dictionary = _sampled_frames[sample_key]
+	var low := int(times.get(sample_time, -1))
+	if low < 0:
+		var first: Dictionary = samples[0]
+		var elapsed := fposmod(sample_time, float(first.duration)) if float(samples.back().sample_time) < float(first.duration) - 0.000001 else minf(sample_time, float(first.duration))
+		low = 0
+		var high := samples.size()
+		while low + 1 < high:
+			var middle := low + ((high - low) >> 1)
+			if float(samples[middle].sample_time) <= elapsed + 0.000000001: low = middle
+			else: high = middle
+		times[sample_time] = low # Exact double key; no time quantization or shared animation clock.
+	_frames[index] = low
+	var frame: Dictionary = samples[low]
+	_positions[index] = ground - Vector2(float(frame.anchor_offset.x), float(frame.anchor_offset.y)) * float(page.scale)
+	_page[index] = int(descriptor.page)
+	_palette[index] = int(descriptor.palette)
+	var row := 10 + int(ground.y / TerrainRenderer.CELL_PIXELS)
+	if not _rows.has(row): _rows[row] = []
+	_rows[row].append(index)
+	rendered_count += 1
+	return true
+
+func submit_sprite(index: int, ground: Vector2, sprite: Sprite2D) -> void:
+	# Live captains and unadmitted atlas recipes stay on their original Sprite.
+	# They split same-row batches at their original index, preserving overlap.
+	_page[index] = -1
+	_original_sprites[index] = sprite
+	var row := 10 + int(ground.y / TerrainRenderer.CELL_PIXELS)
+	if not _rows.has(row): _rows[row] = []
+	_rows[row].append(index)
+	if sprite.get_parent() != self: sprite.reparent(self, false)
+
+func release_sprites() -> void:
+	for sprite: Sprite2D in _army._sprites:
+		if sprite != null and sprite.get_parent() == self: sprite.reparent(_army, false)
+
+func flush() -> void:
+	if _palette_dirty:
+		_palette_texture.update(_palette_image)
+		_palette_dirty = false
+	for batch: MultiMeshInstance2D in _batches.values(): batch.visible = false
+	# Preserve original row AND within-row insertion order. Alternating pages
+	# split into contiguous runs instead of regrouping overlapping transparent people.
+	for row: int in _rows:
+		var members: Array = _rows[row]
+		members.sort()
+		var start := 0
+		var run := 0
+		while start < members.size():
+			var page_index := _page[int(members[start])]
+			if page_index < 0:
+				move_child(_original_sprites[int(members[start])], -1)
+				start += 1
+				run += 1
+				continue
+			var stop := start + 1
+			while stop < members.size() and _page[int(members[stop])] == page_index: stop += 1
+			var key := Vector2i(row, run)
+			var batch: MultiMeshInstance2D = _batches.get(key)
+			if batch == null:
+				batch = MultiMeshInstance2D.new()
+				batch.name = "ArmyBatch_%d_%d" % [row, run]
+				batch.z_as_relative = false
+				batch.z_index = row
+				batch.texture_filter = CharacterRenderContract.TEXTURE_FILTER
+				batch.multimesh = MultiMesh.new()
+				batch.multimesh.transform_format = MultiMesh.TRANSFORM_2D
+				batch.multimesh.use_custom_data = true
+				batch.multimesh.mesh = _mesh
+				add_child(batch)
+				_batches[key] = batch
+			var page: Dictionary = _pages[page_index]
+			batch.texture = page.texture
+			batch.material = page.material
+			if batch.multimesh.instance_count != stop - start: batch.multimesh.instance_count = stop - start
+			var buffer := PackedFloat32Array()
+			buffer.resize((stop - start) * 12)
+			var bounds := Rect2(_positions[int(members[start])], Vector2.ZERO)
+			for local_index in range(stop - start):
+				var index := int(members[start + local_index])
+				var offset := local_index * 12
+				buffer[offset] = float(page.scale)
+				buffer[offset + 3] = _positions[index].x
+				buffer[offset + 5] = float(page.scale)
+				buffer[offset + 7] = _positions[index].y
+				buffer[offset + 8] = float(_sequence[index])
+				buffer[offset + 9] = float(_frames[index])
+				buffer[offset + 10] = float(_palette[index])
+				bounds = bounds.expand(_positions[index])
+			bounds = bounds.grow(float(page.margin))
+			batch.multimesh.custom_aabb = AABB(Vector3(bounds.position.x, bounds.position.y, -1.0), Vector3(bounds.size.x, bounds.size.y, 2.0))
+			batch.multimesh.buffer = buffer
+			batch.visible = true
+			move_child(batch, -1)
+			active_batches += 1
+			start = stop
+			run += 1
+
+static func _deep_read_only(value: Variant) -> bool:
+	if value is Dictionary:
+		if not value.is_read_only(): return false
+		for key: Variant in value:
+			if not _deep_read_only(key) or not _deep_read_only(value[key]): return false
+	elif value is Array:
+		if not value.is_read_only(): return false
+		for child: Variant in value:
+			if not _deep_read_only(child): return false
+	return not value is Object
+
+func _describe(appearance: Dictionary) -> Dictionary:
+	if not appearance.is_empty() and not HumanCharacter3DEditor.valid_appearance(appearance): return {}
+	var geometry := DyeAtlas.Dye.geometry_appearance(appearance)
+	var base: Dictionary = _army._combat_bake.manifest
+	if appearance.is_empty(): geometry = base.appearance
+	var record := DyeAtlas.entry(geometry)
+	if record.is_empty(): return {}
+	var key := str(record.source_manifest)
+	if not _page_keys.has(key):
+		var sequences := {}
+		var texture: Texture2D
+		if geometry == base.appearance:
+			texture = _army._soldier_atlas
+			for clip: String in _army._combat_bake.contact_clocks:
+				for direction: String in _army._combat_bake.contact_clocks[clip]:
+					sequences[clip + "|" + direction] = _army._combat_bake.contact_clocks[clip][direction][3]
+		else:
+			var recipe := Atlas.RangedAtlas.recipe(geometry)
+			if recipe.is_empty(): return {}
+			sequences = recipe.sequences
+			# A future multi-page publication stays on the original page-aware
+			# Sprite path until this batch reader explicitly supports that layout.
+			var first_page: Dictionary = sequences.values()[0][0]._page
+			for frames: Array in sequences.values():
+				for frame: Dictionary in frames:
+					if frame._page != first_page: return {}
+			texture = Atlas._page(sequences.values()[0][0]._page)
+		if texture == null or sequences.is_empty(): return {}
+		var mask := Image.load_from_file(str(record.mask_path))
+		if mask == null or mask.get_width() != int(record.width) or mask.get_height() != int(record.height) or mask.get_width() != texture.get_width() or mask.get_height() != texture.get_height(): return {}
+		mask.convert(Image.FORMAT_RGB8)
+		var metadata := Image.create(129, sequences.size(), false, Image.FORMAT_RGBAF)
+		var lookup := {}
+		var sequence_index := 0
+		var margin := 1.0
+		for sequence_key: String in sequences:
+			var frames: Array = sequences[sequence_key]
+			if frames.is_empty() or frames.size() > 64: return {}
+			var first: Dictionary = frames[0]
+			var loop := float(frames.back().sample_time) < float(first.duration) - 0.000001
+			metadata.set_pixel(0, sequence_index, Color(float(frames.size()), float(first.duration), float(loop), float(base.map_scale)))
+			for frame_index in range(frames.size()):
+				var frame: Dictionary = frames[frame_index]
+				metadata.set_pixel(1 + frame_index * 2, sequence_index, Color(float(frame.rect.x), float(frame.rect.y), float(frame.rect.w), float(frame.rect.h)))
+				metadata.set_pixel(2 + frame_index * 2, sequence_index, Color(float(frame.anchor_offset.x), float(frame.anchor_offset.y), float(frame.sample_time), 0.0))
+				margin = maxf(margin, (maxf(float(frame.rect.w), float(frame.rect.h)) + absf(float(frame.anchor_offset.x)) + absf(float(frame.anchor_offset.y))) * float(base.map_scale))
+			lookup[sequence_key] = sequence_index
+			sequence_index += 1
+		var material := ShaderMaterial.new()
+		material.shader = _shader
+		material.set_shader_parameter("sequence_data", ImageTexture.create_from_image(metadata))
+		material.set_shader_parameter("palette_data", _palette_texture)
+		material.set_shader_parameter("dye_map", ImageTexture.create_from_image(mask))
+		material.set_shader_parameter("page_size", Vector2(texture.get_width(), texture.get_height()))
+		_page_keys[key] = _pages.size()
+		_pages.append({"texture": texture, "material": material, "sequences": lookup, "samples": sequences.values(), "scale": float(base.map_scale), "margin": margin})
+	var colors: Dictionary = appearance.get("equipment_dyes", {})
+	var palette_key := str(colors)
+	if not _palette_keys.has(palette_key):
+		var palette_index := _palette_keys.size()
+		if palette_index >= _palette_image.get_height(): return {} # Safe original fallback after many live recolourings.
+		for slot_index in range(DyeAtlas.Dye.SLOTS.size()):
+			var slot: String = DyeAtlas.Dye.SLOTS[slot_index]
+			var color := DyeAtlas.canvas_color(str(colors[slot])) if colors.has(slot) else Vector4.ZERO
+			_palette_image.set_pixel(slot_index, palette_index, Color(color.x, color.y, color.z, color.w))
+		_palette_keys[palette_key] = palette_index
+		_palette_dirty = true
+	return {"page": int(_page_keys[key]), "palette": int(_palette_keys[palette_key])}

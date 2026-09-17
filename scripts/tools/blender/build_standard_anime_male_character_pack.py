@@ -21,6 +21,7 @@ from make_chinese_iron_armor import make_chinese_iron_armor
 from make_mingguang_armor import make_mingguang_armor
 from make_chinese_iron_boots import make_chinese_iron_boots, make_mingguang_boots
 from load_authored_chinese_leather_boots import load_chinese_leather_boots
+from load_authored_medieval_shoes import load_medieval_shoes
 from make_chinese_cape import make_chinese_cape, bind_cape_action_tracks
 from load_authored_chinese_gear import load_chinese_gear
 from load_authored_western_plate import load_western_iron
@@ -5068,7 +5069,7 @@ def main() -> None:
 
     iron_boots_objects = make_chinese_iron_boots(armature, source_raw_body=body_skin, is_female=False, create_rigid_fn=create_bone_rigid_component)
     mingguang_boots_objects = make_mingguang_boots(armature, source_raw_body=body_skin, is_female=False, create_rigid_fn=create_bone_rigid_component)
-    all_boots_objects = boots_objects + iron_boots_objects + mingguang_boots_objects + load_chinese_leather_boots(armature) + western_boots_objects
+    all_boots_objects = boots_objects + iron_boots_objects + mingguang_boots_objects + load_chinese_leather_boots(armature) + western_boots_objects + load_medieval_shoes(armature)
 
     iron_armor_objects = make_chinese_iron_armor(armature, source_raw_body=body_skin, is_female=False, create_rigid_fn=create_bone_rigid_component)
     mingguang_armor_objects = make_mingguang_armor(armature, source_raw_body=body_skin, is_female=False, create_rigid_fn=create_bone_rigid_component)
@@ -5126,6 +5127,12 @@ def main() -> None:
     from repair_character_audit import apply_repairs
     repaired_parts = [obj for obj in export_objects if obj != armature]
     apply_repairs(armature, repaired_parts, sys.modules[__name__], False)
+    from load_authored_weapon_materials import load_weapon_materials
+    repaired_parts.extend(load_weapon_materials(armature))
+    from load_authored_medieval_cloth import load_medieval_cloth
+    cloth_parts = load_medieval_cloth(armature)
+    repaired_parts.extend(cloth_parts)
+    armor_objects.extend(cloth_parts)
     from load_authored_gendered_hair import load_gendered_hair
     repaired_parts.extend(load_gendered_hair(armature, False))
     from refine_body_joints import refine_body_joints

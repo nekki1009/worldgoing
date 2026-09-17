@@ -13,6 +13,8 @@ const PROP_REGIONS := {
 }
 const CELL := 64.0
 const VIEW_NAMES := ["自然地圖", "天然資源", "農耕適性", "放牧條件", "淡水服務", "建設適性"]
+static var _oval_unit := _make_oval_unit()
+static var _oval_triangles := Geometry2D.triangulate_polygon(_oval_unit)
 var data: TerrainData
 var view_mode := 0
 var resource_filter := -1
@@ -28,12 +30,56 @@ var heat := PackedColorArray()
 var animation_time := 0.0
 var _animation_elapsed := 0.0
 var _seen_revision := -1
+var retain_static_rows := true # Same-owner reference switch; no resource state is cached.
+
+class ResourceRun extends Node2D:
+	var view: Node2D
+	var row := 0
+	var keys: Array[String] = []
+	var decorations := false
+	func _draw() -> void:
+		if decorations:
+			view._draw_row_features(self, row)
+		else:
+			view._draw_row_resources(self, row, keys)
 
 class ResourceRow extends Node2D:
 	var view: Node2D
 	var row := 0
+	var animated_runs: Array[Node2D] = []
 	func _draw() -> void:
-		view.draw_row(self, row)
+		if view.retain_static_rows:
+			view._draw_row_loot(self, row)
+		else:
+			view.draw_row(self, row)
+	func rebuild() -> void:
+		for child in get_children():
+			remove_child(child)
+			child.queue_free()
+		animated_runs.clear()
+		queue_redraw()
+		if not view.retain_static_rows: return
+		# Retain contiguous runs in the ORIGINAL painter order. Putting all
+		# animated props above static props would break overlapping silhouettes.
+		var run: ResourceRun
+		var was_animated := false
+		for key: String in view.resources_by_row.get(row, []):
+			var animated: bool = int(view.data.resource_base[key].kind) in [Env.Kind.WILDLIFE, Env.Kind.FISH]
+			if run == null or animated != was_animated:
+				run = ResourceRun.new()
+				run.view = view
+				run.row = row
+				run.use_parent_material = true
+				add_child(run)
+				if animated: animated_runs.append(run)
+				was_animated = animated
+			run.keys.append(key)
+		var features := ResourceRun.new()
+		features.view = view
+		features.row = row
+		features.decorations = true
+		features.use_parent_material = true
+		add_child(features)
 
 func _ready() -> void:
 	var prop_material := ShaderMaterial.new()
@@ -107,7 +153,7 @@ func refresh() -> void:
 	_seen_revision = data.environment_revision
 	queue_redraw()
 	for row: Node2D in rows:
-		row.queue_redraw()
+		row.rebuild()
 
 func animate(delta: float) -> void:
 	if data == null:
@@ -126,6 +172,16 @@ func animate(delta: float) -> void:
 	if bool(data.site.paused):
 		return
 	animation_time += delta
+	if retain_static_rows and not rows.is_empty():
+		# Same 0.12-second animation period, with row phases spread across it.
+		# A late frame redraws each due row at most once; simulation never waits.
+		var next_elapsed := _animation_elapsed + delta
+		var first := floori(_animation_elapsed / 0.12 * rows.size())
+		var stop := floori(next_elapsed / 0.12 * rows.size())
+		_animation_elapsed = fmod(next_elapsed, 0.12)
+		for cursor in range(first, mini(first + rows.size(), stop)):
+			for run: Node2D in rows[cursor % rows.size()].animated_runs: run.queue_redraw()
+		return
 	_animation_elapsed += delta
 	if _animation_elapsed < 0.12:
 		return
@@ -171,6 +227,11 @@ func _draw() -> void:
 func draw_row(canvas: Node2D, row_index: int) -> void:
 	if data == null:
 		return
+	_draw_row_loot(canvas, row_index)
+	_draw_row_resources(canvas, row_index, resources_by_row.get(row_index, []))
+	_draw_row_features(canvas, row_index)
+
+func _draw_row_loot(canvas: Node2D, row_index: int) -> void:
 	for cell: int in loot_cells_by_row.get(row_index, []):
 		var point := _center(cell) + Vector2(20, 12)
 		canvas.draw_rect(Rect2(point - Vector2(8, 5), Vector2(16, 10)), Color("d2b36c"))
@@ -178,7 +239,8 @@ func draw_row(canvas: Node2D, row_index: int) -> void:
 		var count: int = data.ground_loot_at.get(cell, []).size()
 		if count > 1:
 			canvas.draw_string(ThemeDB.fallback_font, point + Vector2(8, 1), str(count), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color("fff0bd"))
-	for key: String in resources_by_row.get(row_index, []):
+func _draw_row_resources(canvas: Node2D, row_index: int, keys: Array) -> void:
+	for key: String in keys:
 		var r := Env.resource(data, key)
 		if bool(r.cleared):
 			continue
@@ -232,6 +294,7 @@ func draw_row(canvas: Node2D, row_index: int) -> void:
 			if key == selected_resource:
 				label += " %s" % (str(int(r.remaining)) if bool(r.discovered) else "待勘探")
 			canvas.draw_string(ThemeDB.fallback_font, p + Vector2(-28, 40), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color("fff4d8"))
+func _draw_row_features(canvas: Node2D, row_index: int) -> void:
 	for key: String in features_by_row.get(row_index, []):
 		_draw_feature(canvas, data.site.features[key], row_index)
 	if data.cell_from_index(int(data.site.depot_cell)).y == row_index:
@@ -248,11 +311,25 @@ func _center(i: int) -> Vector2:
 	return (Vector2(data.cell_from_index(i)) + Vector2.ONE * 0.5) * CELL
 
 func _oval(canvas: Node2D, p: Vector2, radius: Vector2, color: Color) -> void:
+	# Same CPU float32 vertices, without repeating trigonometry for each prop.
+	var oval_transform := Transform2D(Vector2(radius.x, 0), Vector2(0, radius.y), p)
+	var points: PackedVector2Array = oval_transform * _oval_unit
+	if _oval_can_reuse_triangles(p, radius):
+		# Bound float32 conditioning: very thin/large/far ellipses keep the
+		# original triangulation, which can choose different rounded ears.
+		RenderingServer.canvas_item_add_triangle_array(canvas.get_canvas_item(), _oval_triangles, points, PackedColorArray([color]))
+	else:
+		canvas.draw_colored_polygon(points, color)
+
+static func _oval_can_reuse_triangles(p: Vector2, radius: Vector2) -> bool:
+	return radius.x >= 3.0 and radius.y >= 3.0 and radius.x <= 256.0 and radius.y <= 256.0 and absf(p.x) <= 8192.0 and absf(p.y) <= 8192.0
+
+static func _make_oval_unit() -> PackedVector2Array:
 	var points := PackedVector2Array()
 	for n: int in range(20):
 		var angle := float(n) * TAU / 20.0
-		points.append(p + Vector2(cos(angle), sin(angle)) * radius)
-	canvas.draw_colored_polygon(points, color)
+		points.append(Vector2(cos(angle), sin(angle)))
+	return points
 
 func _draw_tree(canvas: Node2D, p: Vector2, variant: int) -> void:
 	_oval(canvas, p + Vector2(7, 6), Vector2(32, 13), Color(0.06, 0.14, 0.09, 0.3))

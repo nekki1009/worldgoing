@@ -576,7 +576,7 @@ func aim_weapon_attack(actor: Variant, aim_point: Vector2, weight: float) -> voi
 			if distance > furthest:
 				furthest = distance
 				tip = vertex
-				spear = label.begins_with("Weapon_Spear_01_")
+				spear = label.begins_with("Weapon_Spear_") or label.begins_with("Weapon_Shovel_")
 	if furthest <= 0.0:
 		return
 	# Solve the hand/elbow/shoulder chain toward a fixed attack aim point.

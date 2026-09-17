@@ -2,16 +2,22 @@ extends SceneTree
 ## Exact unscaled GPU pixel isolation using the formal base/bow/crossbow assets.
 const Atlas = preload("res://scripts/terrain_lab/terrain_army_equipment_atlas.gd")
 const DyeAtlas = preload("res://scripts/terrain_lab/terrain_army_dye_atlas.gd")
-const OUT := "res://output/equipment_dye_20260914/pixels"
+var OUT := "res://output/equipment_dye_20260914/pixels"
 
 func _initialize() -> void:
 	call_deferred("_run")
 
 func _run() -> void:
 	assert(DisplayServer.get_name() != "headless")
+	var keys: Array = ["base", "bow_01", "crossbow_01"]
+	if "--weapon-materials" in OS.get_cmdline_user_args():
+		OUT = "res://output/weapon_materials_npc_20260917/dye_pixels"
+		keys = ["base"]
+		for row: Dictionary in Atlas.RangedAtlas.Materials.OPTIONS:
+			if row.id != "none": keys.append(row.id)
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUT))
 	var report := []
-	for key: String in ["base", "bow_01", "crossbow_01"]:
+	for key: String in keys:
 		var manifest: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(Atlas.BASE_MANIFEST if key == "base" else Atlas.RangedAtlas.ROOT + "/" + key + "/manifest.json"))
 		var appearance: Dictionary = manifest.appearance.duplicate(true)
 		var frame := Atlas.frame(appearance, "idle", "down", 0.0)
@@ -68,7 +74,7 @@ func _run() -> void:
 	var file := FileAccess.open(OUT + "/report.json", FileAccess.WRITE)
 	file.store_string(JSON.stringify(report, "\t"))
 	file.close()
-	print("EQUIPMENT DYE PIXELS PASS: 3 formal atlases, exact disabled output, exact protected pixels and alpha; actual dye changes verified")
+	print("EQUIPMENT DYE PIXELS PASS: ", keys.size(), " formal atlases, exact disabled output, exact protected pixels and alpha; actual dye changes verified")
 	quit()
 
 func _pixels(viewport: SubViewport) -> Image:

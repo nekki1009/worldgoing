@@ -9,6 +9,7 @@ const ACTION_TIME_EPSILON := 0.000000000001
 const Site = preload("res://scripts/terrain_lab/site_controller.gd")
 const SiteEnv = preload("res://scripts/terrain_lab/site_environment.gd")
 const FatigueGeometry = preload("res://scripts/terrain_lab/terrain_weapon_collision.gd")
+const ExchangeSnapshot = preload("res://scripts/terrain_lab/site_exchange_snapshot.gd")
 var site_controller: Node
 var pause_when_unfocused := true
 
@@ -62,12 +63,15 @@ var _fatigue_work_seconds: Dictionary = {} # This frame only; not a second perso
 var combat_profile_enabled := false # Optional counters only; never a simulation clock.
 var combat_profile_usec: Dictionary = {}
 var fatigue_two_hop_witness_enabled := true # Exact positive proof only; false keeps the original BFS entry.
-var fatigue_zero_fast_path_enabled := false # Exact zero-effort Army row shortcut; opt-in measurement first.
+var fatigue_zero_fast_path_enabled := true # Exact zero-effort shortcut, compared against V0.41R.
 var fatigue_zero_eligible_rows := 0 # Counts, not microseconds; profiling only.
 var fatigue_zero_skipped_advances := 0
 var fixed_action_steps_enabled := false # A/B: retain incomplete 120 Hz time, never clamp or discard it.
 var _action_time_remainder := 0.0 # Lab clock phase only, not a second simulation/person state.
 var exchange_enabled := true # 2026-09-14 approved rule replacement; false is historical geometry mode.
+var exchange_batch_enabled := true # Call-local query columns; false retains phase-two A/B.
+var _exchange_kernel: RefCounted
+var _exchange_kernel_checked := false
 const EXCHANGE_ACTION_STEP := 1.0 / 30.0
 const EXCHANGE_QUERY_STEP := 0.1
 var _exchange_phase := 0.0
@@ -133,8 +137,8 @@ func _ready() -> void:
 	opposing_army.faction_id = 1
 	add_child(opposing_army)
 	combat_armies.assign([army, opposing_army])
-	army.external_blocker = func(cell: Vector2i) -> bool: return opposing_army.blocks_cell(cell)
-	opposing_army.external_blocker = func(cell: Vector2i) -> bool: return army.blocks_cell(cell)
+	army.external_blocker = opposing_army.blocks_cell
+	opposing_army.external_blocker = army.blocks_cell
 	for team: TerrainArmy in combat_armies:
 		team.person_id_allocator = _allocate_army_person_ids
 		team.exchange_enabled = exchange_enabled
@@ -142,7 +146,7 @@ func _ready() -> void:
 		team.enemy_query = _nearest_unit_enemy
 		team.target_query = _army_target
 		team.combat_target_query = _combat_target
-		team.exchange_people_query = _exchange_people
+		team.exchange_people_query = _exchange_people.bind(false) # Maneuvering reads identity/cell/faction, not attack readiness.
 		team.contact_sink = func(packet: Dictionary) -> void: _combat_contacts.append(packet)
 	for actor: TerrainTestCharacter in combat_actors:
 		actor.army_contacts = _collect_army_contacts
@@ -167,6 +171,8 @@ func _ready() -> void:
 	if FileAccess.file_exists(site_controller.save_path):
 		site_controller.load_current()
 	site_controller.focus_camp()
+	if exchange_enabled and exchange_batch_enabled:
+		_prepare_exchange_kernel(true)
 
 func _notification(what: int) -> void:
 	if what in [NOTIFICATION_APPLICATION_FOCUS_OUT, NOTIFICATION_APPLICATION_PAUSED] and pause_when_unfocused:
@@ -780,8 +786,10 @@ func _advance_action_time(delta: float) -> void:
 		while _action_time_remainder + ACTION_TIME_EPSILON >= EXCHANGE_ACTION_STEP:
 			_action_time_remainder -= EXCHANGE_ACTION_STEP
 			var previous_clock := float(terrain.site.get("combat_left", 0.0)) if terrain != null else 0.0
+			var site_started := Time.get_ticks_usec() if combat_profile_enabled else 0
 			if site_controller != null:
 				site_controller.tick(EXCHANGE_ACTION_STEP)
+			_combat_profile_stage("site_tick", site_started)
 			if is_inside_tree() and get_tree().paused:
 				return
 			_advance_combat(EXCHANGE_ACTION_STEP, previous_clock)
@@ -880,14 +888,15 @@ func fatigue_work_minutes(manual: bool, minutes: float) -> float:
 	var actor: TerrainTestCharacter = character if manual else npc
 	var autonomous := actor.person_id != controlled_person_id()
 	var seconds := minutes * 60.0
+	var work_rate := PersonFatigue.effort_rate(actor)
 	if autonomous:
 		actor.work_resting = PersonFatigue.needs_work_rest(actor.fatigue, actor.work_resting)
 		if actor.work_resting:
 			return 0.0
 		# Commit only the effort before 80; unfinished progress/cargo stays put.
-		seconds = minf(seconds, maxf(0.0, PersonFatigue.WORK_REST_AT - actor.fatigue) / PersonFatigue.WORK_RATE)
-	var productive := PersonFatigue.work_seconds(actor.fatigue, seconds)
-	var state := PersonFatigue.advance(actor.fatigue, actor.fatigue_rest, seconds, PersonFatigue.WORK_RATE, false)
+		seconds = minf(seconds, maxf(0.0, PersonFatigue.WORK_REST_AT - actor.fatigue) / work_rate)
+	var productive := PersonFatigue.work_seconds(actor.fatigue, seconds, work_rate)
+	var state := PersonFatigue.advance(actor.fatigue, actor.fatigue_rest, seconds, work_rate, false)
 	actor.fatigue = state[0]
 	actor.fatigue_rest = state[1]
 	if autonomous and actor.fatigue >= PersonFatigue.WORK_REST_AT - 0.000000001:
@@ -900,6 +909,8 @@ func _advance_fatigue(seconds: float) -> void:
 	if terrain == null or seconds <= 0.0:
 		return
 	var fatigue_started := Time.get_ticks_usec() if combat_profile_enabled else 0
+	for team: TerrainArmy in combat_armies:
+		if team.combat_enabled: team.sync_shared_fatigue()
 	var training_seconds := {}
 	if site_controller != null:
 		training_seconds = site_controller.consume_crew_work()
@@ -920,7 +931,7 @@ func _advance_fatigue(seconds: float) -> void:
 	# Only this synchronous step shares the read-only threat candidates.
 	var enemies := {}
 	for actor: TerrainTestCharacter in combat_actors:
-		if not is_instance_valid(actor):
+		if not is_instance_valid(actor) or not actor._fatigue_pool.is_empty():
 			continue
 		var worked := minf(seconds, float(_fatigue_work_seconds.get(actor, 0.0)))
 		_fatigue_work_seconds[actor] = maxf(0.0, float(_fatigue_work_seconds.get(actor, 0.0)) - worked)
@@ -951,12 +962,39 @@ func _advance_fatigue(seconds: float) -> void:
 	for team: TerrainArmy in combat_armies:
 		if not team.combat_enabled:
 			continue
-		for index in range(team.combat_units.size()):
+		if not team.team_fatigue.is_empty(): _advance_team_fatigue(team, seconds, training_seconds, enemies)
+		var shared := not team.team_fatigue.is_empty()
+		var indices: Array = team.individual_fatigue_indices if shared else range(team.combat_units.size())
+		var kernel := TerrainArmy._get_idle_kernel() if not shared and team.native_idle_enabled and fatigue_zero_fast_path_enabled and exchange_enabled else null
+		var end := indices.size()
+		var next := 0
+		while next < end:
+			var index := int(indices[next])
+			# Work/supply has already settled above. Only a no-work, stationary
+			# zero prefix can bypass per-person formula/queries, in original order.
+			if kernel != null and fatigue_zero_fast_path_enabled and exchange_enabled and training_seconds.is_empty():
+				next = int(kernel.fatigue_prefix(team.combat_units, team.moving_to, index, end))
+				team.native_fatigue_rows += next - index
+				if combat_profile_enabled:
+					fatigue_zero_eligible_rows += next - index
+					fatigue_zero_skipped_advances += next - index
+				if next >= end: break
+				index = next
+			next += 1
 			var unit: Dictionary = team.combat_units[index]
-			var available := maxf(0.0, seconds - float(training_seconds.get(team.combat_identity(index), 0.0)))
+			var available := seconds if training_seconds.is_empty() else maxf(0.0, seconds - float(training_seconds.get(team.combat_identity(index), 0.0)))
 			if available <= 0.0:
 				continue
 			var moving := team.moving_to[index] != TerrainArmy.INVALID_CELL
+			# In exchange mode only running accrues continuous effort. An exact
+			# zero walking/stationary row needs no eligibility/rest/formula query.
+			if fatigue_zero_fast_path_enabled and exchange_enabled and float(unit.fatigue) == 0.0 and (not moving or team.move_duration[index] > TerrainArmy.RUN_DURATION + 0.000001):
+				unit.fatigue = float(unit.fatigue)
+				unit.fatigue_rest = 0.0
+				if combat_profile_enabled:
+					fatigue_zero_eligible_rows += 1
+					fatigue_zero_skipped_advances += 1
+				continue
 			var can_act := team.combat_can_act(index)
 			var rate := 0.0
 			if can_act:
@@ -991,9 +1029,43 @@ func _advance_fatigue(seconds: float) -> void:
 	# Inclusive of fatigue_threat; do not add that nested counter a second time.
 	_combat_profile_stage("fatigue_people_inclusive", fatigue_started)
 
+func _advance_team_fatigue(team: TerrainArmy, seconds: float, handled: Dictionary, enemies: Dictionary) -> void:
+	var shared := team.team_fatigue
+	var effort := 0.0
+	var npc_moving := false
+	# Reuse actual committed movement claims, not a second moving-person list.
+	for destination: Vector2i in team._reserved_cells:
+		var index := int(team._reserved_cells[destination])
+		var row: Dictionary = team.combat_units[index]
+		if not is_same(PersonFatigue.pool(row), shared) or team.moving_to[index] != destination: continue
+		npc_moving = true
+		if team.combat_can_act(index) and team.move_duration[index] <= TerrainArmy.RUN_DURATION + 0.000001:
+			effort += maxf(0.0, seconds - float(handled.get(team.combat_identity(index), 0.0))) * PersonFatigue.RUN_RATE
+	if is_instance_valid(team.player_member) and is_same(team.player_member._fatigue_pool, shared) and team.player_member.can_act() and team.player_member.is_moving() and team.player_member._movement_duration <= TerrainTestCharacter.RUN_DURATION + 0.000000001:
+		effort += seconds * PersonFatigue.RUN_RATE
+	var safe := not bool(shared.active) and effort == 0.0 and not npc_moving and team.combat_order == TerrainArmy.CombatOrder.HOLD and float(terrain.site.get("combat_left", 0.0)) <= 0.0
+	if safe and float(shared.fatigue) > 0.0:
+		# Recovery is a whole-team decision. Any busy/threatened NPC prevents it.
+		for index in range(team.combat_units.size()):
+			var row: Dictionary = team.combat_units[index]
+			if not is_same(PersonFatigue.pool(row), shared): continue
+			if str(row.pose) != "idle" or team._unit_rescues.has(index) or (not row.get("work_task", {}).is_empty() and str(row.work_task.get("mode", "")) != "rest" and not bool(row.get("work_resting", false))) or _fatigue_threat(team.cells[index], team.faction_id, team, index, enemies):
+				safe = false
+				break
+		if safe and is_instance_valid(team.player_member) and is_same(team.player_member._fatigue_pool, shared):
+			var actor := team.player_member
+			safe = not actor.is_moving() and actor.action_time <= 0.0 and not actor.guarding and actor._rescue_left <= 0.0 and not _fatigue_threat(actor.terrain_cell, team.faction_id, actor, -1, enemies)
+	var rate := effort / seconds / maxf(1.0, float(shared.count))
+	var state := PersonFatigue.advance(float(shared.fatigue), float(shared.fatigue_rest), seconds, rate, safe)
+	shared.fatigue = state[0]
+	shared.fatigue_rest = state[1]
+	shared.active = false
+
 func _fatigue_threat(cell: Vector2i, faction: int, rest_owner: Variant, unit_index: int, candidates: Dictionary) -> bool:
 	if not terrain.is_walkable(cell):
 		return true
+	if exchange_enabled:
+		return _exchange_rest_threat(cell, faction, candidates)
 	if not candidates.has(faction):
 		var cells := {}
 		for actor: TerrainTestCharacter in combat_actors:
@@ -1011,24 +1083,6 @@ func _fatigue_threat(cell: Vector2i, faction: int, rest_owner: Variant, unit_ind
 						cells[team.moving_to[index]] = true
 		candidates[faction] = {"cells": cells}
 	var threat: Dictionary = candidates[faction]
-	if exchange_enabled:
-		if not candidates.has("flight_cells"):
-			var flight_cells := {}
-			for source: Node2D in _ranged_owners():
-				for flight: Dictionary in source.projectiles:
-					if str(flight.get("mode", "")) == "cell":
-						for crossed: Vector2i in SiteCombatRules.ranged_cells(flight.source_cell, flight.target_cell):
-							flight_cells[crossed] = true
-			candidates["flight_cells"] = flight_cells
-		if candidates.flight_cells.has(cell):
-			return true # Incoming arrows, including friendly ones, prevent safe rest.
-		# New rest rule: an awake enemy within eight cardinal cells prevents
-		# rest even behind cover. No geometry or repeated reachability search.
-		for enemy: Vector2i in threat.cells:
-			var distance := enemy - cell
-			if absi(distance.x) + absi(distance.y) <= 8:
-				return true
-		return false
 	# Exact distance-zero/one witnesses from the same directed walk graph.
 	# Only a positive proof bypasses the original eight-step search; obstacles,
 	# distant enemies and projectiles keep their existing path below.
@@ -1097,7 +1151,47 @@ func _fatigue_threat(cell: Vector2i, faction: int, rest_owner: Variant, unit_ind
 					return true
 	return false
 
-func _exchange_people() -> Array[Dictionary]:
+func _exchange_rest_threat(cell: Vector2i, faction: int, candidates: Dictionary) -> bool:
+	# Query the existing authoritative claims lazily. This synchronous fatigue
+	# pass changes no positions/KO; only its queried cell answers are memoized.
+	if not candidates.has(faction):
+		var actor_cells := {}
+		for actor: TerrainTestCharacter in combat_actors:
+			if actor.faction_id != faction and actor.can_act():
+				actor_cells[actor.terrain_cell] = true
+				if actor.is_moving(): actor_cells[actor.movement_from_cell] = true
+		var teams: Array[TerrainArmy] = []
+		for team: TerrainArmy in combat_armies:
+			if team.combat_enabled and team.faction_id != faction: teams.append(team)
+		candidates[faction] = {"actors": actor_cells, "teams": teams, "probes": {}}
+	if not candidates.has("flight_cells"):
+		var flight_cells := {}
+		for source: Node2D in _ranged_owners():
+			for flight: Dictionary in source.projectiles:
+				if str(flight.get("mode", "")) == "cell":
+					for crossed: Vector2i in SiteCombatRules.ranged_cells(flight.source_cell, flight.target_cell):
+						flight_cells[crossed] = true
+		candidates["flight_cells"] = flight_cells
+	if candidates.flight_cells.has(cell): return true
+	var snapshot: Dictionary = candidates[faction]
+	var probes: Dictionary = snapshot.probes
+	for distance in range(9):
+		for dx in range(-distance, distance + 1):
+			var dy := distance - absi(dx)
+			for sign_y in range(1 if dy == 0 else 2):
+				var probe := cell + Vector2i(dx, dy if sign_y == 0 else -dy)
+				if not probes.has(probe):
+					var awake := bool(snapshot.actors.get(probe, false))
+					for team: TerrainArmy in snapshot.teams:
+						if awake: break
+						var at_source := int(team._cell_owners.get(probe, -1))
+						var at_destination := int(team._reserved_cells.get(probe, -1))
+						awake = team.combat_can_act(at_source) or team.combat_can_act(at_destination)
+					probes[probe] = awake
+				if bool(probes[probe]): return true
+	return false
+
+func _exchange_people(readiness: bool = true) -> Array[Dictionary]:
 	# Disposable references to original owners, never a second roster or HP store.
 	var people: Array[Dictionary] = []
 	for actor: TerrainTestCharacter in combat_actors:
@@ -1107,11 +1201,61 @@ func _exchange_people() -> Array[Dictionary]:
 	for team: TerrainArmy in combat_armies:
 		if not team.combat_enabled:
 			continue
+		if not readiness:
+			var projected := team.capture_exchange_people(true)
+			if not projected.is_empty():
+				people.append_array(projected)
+				continue
 		for index in range(team.combat_units.size()):
 			if team.combat_can_act(index):
+				var ready_value: Variant = null
+				var receive_value: Variant = null
+				if readiness:
+					ready_value = team.exchange_ready(index)
+					receive_value = team.exchange_can_receive(index)
 				people.append({"owner": team, "unit": index, "id": team.combat_identity(index),
-					"cell": team.cells[index], "faction": team.faction_id, "ready": team.exchange_ready(index), "receive": team.exchange_can_receive(index)})
+					"cell": team.cells[index], "faction": team.faction_id, "ready": ready_value, "receive": receive_value})
 	return people
+
+func _exchange_encirclement_front(team: TerrainArmy) -> Array:
+	# The same fresh snapshot as melee. Materialize no per-person dictionaries
+	# for command geometry; retain original enemy/contact order and terrain checks.
+	# Custom readers can mutate another person's faction while capturing. Keep
+	# their original full query and predicate order instead of broad-phase pruning.
+	for actor: TerrainTestCharacter in combat_actors:
+		if is_instance_valid(actor) and actor.get_script() not in [TerrainTestCharacter, TerrainTestNPC]: return []
+	for army_owner: TerrainArmy in combat_armies:
+		if army_owner.get_script() != TerrainArmy: return []
+	var snapshot := ExchangeSnapshot.new()
+	snapshot.capture(combat_actors, combat_armies)
+	var enemies := {}
+	var order := PackedInt32Array()
+	var kernel := TerrainArmy._get_idle_kernel()
+	var packet: Array = []
+	if team.native_queries_enabled and team.native_front_enabled and kernel != null and kernel.has_method("encirclement_front"):
+		packet = kernel.encirclement_front(snapshot.xs, snapshot.ys, snapshot.factions, snapshot.owner_slots, snapshot.owners.find(team), team.faction_id)
+	if packet.size() == 2:
+		enemies = packet[0]
+		order = packet[1]
+	else:
+		for ordinal in range(snapshot.units.size()):
+			if snapshot.factions[ordinal] != team.faction_id:
+				enemies[Vector2i(snapshot.xs[ordinal], snapshot.ys[ordinal])] = true
+		order = snapshot.front_order(0, _exchange_kernel)
+	var contacts: Array[Vector2i] = []
+	var pinned := {}
+	for ordinal in order:
+		var index: int = snapshot.units[ordinal]
+		if snapshot.owners[snapshot.owner_slots[ordinal]] != team or index < 0 or not team.is_member(index):
+			continue
+		var cell := Vector2i(snapshot.xs[ordinal], snapshot.ys[ordinal])
+		for direction: Vector2i in TerrainData.DIRECTIONS:
+			var next := cell + direction
+			if enemies.has(next) and team.data.can_attack_across(cell, next):
+				contacts.append(cell)
+				pinned[index] = true
+				break
+	return [enemies, contacts, pinned]
 
 func _exchange_initiates(person: Dictionary, other_id: int) -> bool:
 	if int(person.unit) >= 0:
@@ -1124,10 +1268,8 @@ func _exchange_context(person: Dictionary, occupied: Dictionary) -> Dictionary:
 	var sectors := 0
 	for direction: Vector2i in TerrainData.DIRECTIONS:
 		var next: Vector2i = person.cell + direction
-		if not terrain.can_attack_across(person.cell, next):
-			continue
 		for other: Dictionary in occupied.get(next, []):
-			if int(other.faction) != int(person.faction):
+			if int(other.faction) != int(person.faction) and terrain.can_attack_across(person.cell, next):
 				sectors += 1
 				break
 	var person_owner: Variant = person.owner
@@ -1160,35 +1302,70 @@ func _exchange_morale(identity: int) -> float:
 				return float(pool.morale)
 	return 100.0
 
+func _prepare_exchange_kernel(warm: bool = false) -> void:
+	if _exchange_kernel_checked:
+		return
+	_exchange_kernel_checked = true
+	if ClassDB.class_exists("CSharpScript"):
+		var kernel_script: Script = load("res://scripts/terrain_lab/compiled_exchange_candidates.cs")
+		if kernel_script != null and kernel_script.can_instantiate(): _exchange_kernel = kernel_script.new()
+	if warm and _exchange_kernel != null:
+		# Exercise only disposable integer geometry during scene loading, not
+		# the first hit. No actual people, terrain, RNG or combat clock is read.
+		_exchange_kernel.FrontOrder(PackedInt32Array([0, 0, 1]), PackedInt32Array([0, 0, 0]), PackedInt64Array([0, 1, 1]), 0)
+
 func _resolve_exchanges() -> void:
 	if terrain == null:
 		return
 	_exchange_round += 1
-	var people := _exchange_people()
-	if people.is_empty():
-		return
+	var profile_started := Time.get_ticks_usec() if combat_profile_enabled else 0
+	var snapshot: RefCounted
+	var people: Array[Dictionary] = []
+	var order := PackedInt32Array()
 	var occupied := {}
-	for person: Dictionary in people:
-		if not occupied.has(person.cell):
-			occupied[person.cell] = []
-		occupied[person.cell].append(person)
+	if exchange_batch_enabled:
+		if not _exchange_kernel_checked:
+			_prepare_exchange_kernel()
+		snapshot = ExchangeSnapshot.new()
+		snapshot.capture(combat_actors, combat_armies)
+		order = snapshot.front_order(_exchange_round, _exchange_kernel)
+		var natural_order := order.duplicate()
+		natural_order.sort() # Same-cell occupants retain original roster order.
+		for ordinal: int in natural_order:
+			var person: Dictionary = snapshot.person(ordinal)
+			if not occupied.has(person.cell): occupied[person.cell] = []
+			occupied[person.cell].append(person)
+	else:
+		people = _exchange_people(false)
+		for person: Dictionary in people:
+			if not occupied.has(person.cell): occupied[person.cell] = []
+			occupied[person.cell].append(person)
+		for offset in range(people.size()): order.append((offset + _exchange_round) % people.size())
+	profile_started = _combat_profile_stage("exchange_people_index", profile_started)
 	var used := {}
 	var pending: Array[Dictionary] = []
 	# Rotate priority to avoid a permanent low-ID advantage in a crowded line.
-	for offset in range(people.size()):
-		var a: Dictionary = people[(offset + _exchange_round) % people.size()]
-		if not bool(a.receive) or used.has(a.id):
+	for ordinal: int in order:
+		var a: Dictionary = snapshot.person(ordinal) if snapshot != null else people[ordinal]
+		if used.has(a.id) or a.receive == false:
 			continue
 		var matched := false
 		for direction_offset in range(4):
 			var next: Vector2i = a.cell + TerrainData.DIRECTIONS[(direction_offset + _exchange_round) % 4]
-			if not terrain.can_attack_across(a.cell, next):
-				continue
 			for b: Dictionary in occupied.get(next, []):
-				if not bool(b.receive) or used.has(b.id) or int(a.faction) == int(b.faction):
+				if used.has(b.id) or int(a.faction) == int(b.faction):
 					continue
+				if a.receive == null: a.receive = a.owner.exchange_can_receive(int(a.unit))
+				if b.receive == null: b.receive = b.owner.exchange_can_receive(int(b.unit))
+				if not bool(a.receive) or not bool(b.receive): continue
+				# Still a pre-resolution snapshot: no pair is applied until the
+				# entire matching pass ends. Distant people never need readiness.
+				if a.ready == null: a.ready = a.owner.exchange_ready(int(a.unit))
+				if b.ready == null: b.ready = b.owner.exchange_ready(int(b.unit))
 				if not (bool(a.ready) and _exchange_initiates(a, int(b.id))) and not (bool(b.ready) and _exchange_initiates(b, int(a.id))):
 					continue # Peaceful worker/player neighbours do not spontaneously duel.
+				if not terrain.can_attack_across(a.cell, next):
+					continue # Pure geometry is only needed for a viable opposing pair.
 				var stats_a := _exchange_context(a, occupied)
 				var stats_b := _exchange_context(b, occupied)
 				var low := mini(int(a.id), int(b.id))
@@ -1205,13 +1382,16 @@ func _resolve_exchanges() -> void:
 				break
 	# Every pairing sees pre-resolution abilities/positions; each original
 	# person participates once. Knockback still commits through original owners.
+	profile_started = _combat_profile_stage("exchange_pair_context", profile_started)
 	for pair: Dictionary in pending:
 		_apply_exchange_side(pair.a, pair.b, pair.result, pair.stats_a, 1)
 		_apply_exchange_side(pair.b, pair.a, pair.result, pair.stats_b, -1)
 		exchange_count += 1
 		exchange_results[str(pair.result.kind)] += 1
 		exchange_resolved.emit(int(pair.a.id), int(pair.b.id), pair.result)
-	_resolve_ranged_fire(people)
+	profile_started = _combat_profile_stage("exchange_apply", profile_started)
+	_resolve_ranged_fire(snapshot.ranged_people() if snapshot != null else people)
+	_combat_profile_stage("exchange_ranged", profile_started)
 
 func _ranged_owners() -> Array[Node2D]:
 	var owners: Array[Node2D] = []
@@ -1235,6 +1415,9 @@ func _resolve_ranged_fire(people: Array[Dictionary]) -> void:
 	for person: Dictionary in people:
 		var shooter_owner: Variant = person.owner
 		var index := int(person.unit)
+		var profile: Dictionary = shooter_owner.ranged_profile(index) if index >= 0 else shooter_owner.ranged_profile()
+		if profile.is_empty():
+			continue # Non-ranged people need no readiness, rout or ammunition query.
 		# Pair resolution may have consumed readiness since this disposable list was built.
 		if not (shooter_owner.exchange_ready(index) if index >= 0 else shooter_owner.exchange_ready()):
 			continue
@@ -1242,9 +1425,6 @@ func _resolve_ranged_fire(people: Array[Dictionary]) -> void:
 			continue
 		if index >= 0 and shooter_owner.is_member(index) and not shooter_owner.is_controlled_person(index) and shooter_owner.is_sustain_routed():
 			continue # A rout does not become a new automatic ranged attack order.
-		var profile: Dictionary = shooter_owner.ranged_profile(index) if index >= 0 else shooter_owner.ranged_profile()
-		if profile.is_empty():
-			continue
 		var ammunition: Dictionary = shooter_owner.combat_units[index].get("cargo", {}) if index >= 0 else shooter_owner.ammo_inventory
 		if int(ammunition.get(str(profile.ammo), 0)) < 1:
 			continue # Empty quivers neither scan all targets nor reserve an automatic skill.

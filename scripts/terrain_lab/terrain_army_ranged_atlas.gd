@@ -1,5 +1,7 @@
 extends RefCounted
-## Two exact ranged recipes; EquipmentAtlas retains ownership of texture lookup.
+## Exact unshielded weapon recipes; the historical ranged paths stay compatible.
+## EquipmentAtlas retains the sole bounded texture lookup/cache owner.
+const Materials = preload("res://scripts/ui/weapon_materials.gd")
 const Plan = preload("res://scripts/tools/terrain_army_recipe_bake_plan.gd")
 const DyeAtlas = preload("res://scripts/terrain_lab/terrain_army_dye_atlas.gd")
 const BASE_MANIFEST := "res://assets/characters/terrain_lab_army/standard_soldier/standard_soldier_atlas.json"
@@ -35,7 +37,7 @@ static func set_root_path(path: String) -> bool:
 	return true
 
 static func plan(weapon: String, baseline: Dictionary) -> Dictionary:
-	if weapon not in WEAPONS or not baseline.get("appearance") is Dictionary or not baseline.get("clips") is Array or not baseline.get("directions") is Array:
+	if not supports_weapon(weapon) or not baseline.get("appearance") is Dictionary or not baseline.get("clips") is Array or not baseline.get("directions") is Array:
 		return {}
 	var appearance: Dictionary = baseline.appearance.duplicate(true)
 	if appearance.get("body") != 0 or appearance.get("mounted") != false or not appearance.get("parts") is Dictionary:
@@ -47,7 +49,7 @@ static func plan(weapon: String, baseline: Dictionary) -> Dictionary:
 	appearance.parts.shield = "none"
 	var wanted: Array = Plan.COMMON_CLIPS.duplicate()
 	wanted.append("attack_unarmed")
-	wanted.append("attack_bow" if weapon == "bow_01" else "attack_crossbow")
+	wanted.append(str(Materials.ATTACKS[Materials.family(StringName(weapon))]))
 	var clips: Array[Dictionary] = []
 	var total := 0
 	for clip: Dictionary in baseline.clips:
@@ -56,6 +58,8 @@ static func plan(weapon: String, baseline: Dictionary) -> Dictionary:
 		var selected := clip.duplicate(true)
 		selected.erase("weapon")
 		selected.erase("shield")
+		if reference_clip(weapon, str(clip.id)) != str(clip.id):
+			selected.pose = guard_pose(weapon, str(clip.id))
 		clips.append(selected)
 		total += int(selected.samples) * 4
 	if clips.size() != wanted.size() or total != FRAME_COUNT or baseline.directions.size() != 4:
@@ -68,13 +72,28 @@ static func plan(weapon: String, baseline: Dictionary) -> Dictionary:
 	return {"key": "standard_soldier_ranged_v1/" + weapon, "appearance": appearance,
 		"clips": clips, "directions": baseline.directions.duplicate(true), "recipe_total": total}
 
+static func supports_weapon(weapon: String) -> bool:
+	for option: Dictionary in Materials.OPTIONS:
+		if option.id == weapon: return weapon != "none"
+	return false
+
+static func guard_pose(weapon: String, clip: String) -> String:
+	if not clip.begins_with("guard") or Materials.is_ranged(StringName(weapon)): return clip
+	return clip.replace("guard", "guard_polearm" if Materials.is_polearm(StringName(weapon)) else "guard_weapon")
+
+static func reference_clip(weapon: String, clip: String) -> String:
+	var pose := guard_pose(weapon, clip)
+	if pose == "guard_weapon": return "guard_unshielded"
+	if pose == "guard_polearm": return "guard_spear"
+	return pose
+
 static func recipe(appearance: Dictionary) -> Dictionary:
 	if not HumanCharacter3DEditor.valid_appearance(appearance) or not DyeAtlas.supports(appearance): return {}
 	appearance = DyeAtlas.Dye.geometry_appearance(appearance)
 	if not appearance.get("parts") is Dictionary:
 		return {}
 	var weapon := str(appearance.parts.get("weapon", ""))
-	if weapon not in WEAPONS or not _load_base():
+	if not supports_weapon(weapon) or not _load_base():
 		return {}
 	var expected := plan(weapon, _base)
 	if expected.is_empty() or appearance != expected.appearance:
@@ -153,7 +172,8 @@ static func validate_batches(weapon: String, batches: Array[Dictionary], directo
 			var key := "%s|%s|%d" % [str(value.get("clip", "")), str(value.get("direction", "")), int(value.frame)]
 			if not expected.has(key) or seen.has(key) or value.get("selection_index") != expected[key].index or int(value.selection_index) < int(selection.first) or int(value.selection_index) >= int(selection.first) + int(selection.count):
 				return {}
-			var reference_frame: Dictionary = references.get(key, {})
+			var reference_key := "%s|%s|%d" % [reference_clip(weapon, str(value.clip)), value.direction, int(value.frame)]
+			var reference_frame: Dictionary = references.get(reference_key, {})
 			var clip: Dictionary = expected[key].clip
 			if reference_frame.is_empty() or not _number(value.get("duration")) or not _number(value.get("sample_time")) or absf(float(value.duration) - float(reference_frame.duration)) > 0.000001 or absf(float(value.sample_time) - float(reference_frame.sample_time)) > 0.000001 or value.get("resolved_pose") != str(clip.get("pose", clip.id)):
 				return {}

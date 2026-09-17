@@ -1,8 +1,10 @@
 [CmdletBinding()]
-param([Parameter(Mandatory = $true)][string]$RecoveryPath)
+param([Parameter(Mandatory = $true)][string]$RecoveryPath, [string]$StageRelative = 'output/equipment_palette_policy_20260914')
 $ErrorActionPreference = 'Stop'
 $dyeRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
-$dyeStage = Join-Path $dyeRoot 'output/equipment_palette_policy_20260914'
+$dyeStage = [IO.Path]::GetFullPath((Join-Path $dyeRoot $StageRelative))
+$allowedStages = [IO.Path]::GetFullPath((Join-Path $dyeRoot 'output')) + [IO.Path]::DirectorySeparatorChar
+if (-not $dyeStage.StartsWith($allowedStages)) { throw 'Stage must remain inside project output' }
 $dyeAssets = Join-Path $dyeRoot 'assets/characters/terrain_lab_army/standard_soldier'
 $dyeRecoveryPath = (Resolve-Path -LiteralPath $RecoveryPath).Path
 if (-not $dyeRecoveryPath.StartsWith($dyeStage + [IO.Path]::DirectorySeparatorChar)) { throw 'Recovery must be in the approved task stage' }
@@ -18,6 +20,9 @@ function Copy-DyeAtomic([string]$source, [string]$target) {
     # Replace a directory entry rather than truncate an editor-mapped file.
     # The existing saved baseline is never moved or removed.
     $operation = [Guid]::NewGuid().ToString('N')
+    # New catalogue recipes have no formal directory yet. Targets have already
+    # passed the project/asset-root checks below; existing files stay untouched.
+    New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
     $temporary = Join-Path $dyeRoot ".godot-temp/equipment_dye_publish/$operation"
     New-Item -ItemType Directory -Path $temporary -Force | Out-Null
     $incoming = Join-Path $temporary 'incoming'

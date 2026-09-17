@@ -1,6 +1,14 @@
 # Worldgoing HumanBase_v1 3D 角色建模與模組管線交接手冊
 (3D Character Modeling & Modular Pipeline Handover Specification)
 
+> **2026-09-17 普通兵圖集續作**：44 個四材質武器／工具已接入原標準男性皮革輕甲、原內衣／皮靴、無盾的 2D 配方，每個 19 動作／四方向／584 幀與獨立染色遮罩；原鐵劍盾兵保留。延伸原 ranged reader／baker 和既有 Sprite／MultiMesh，不重匯出或改動男女 GLB，不為普通兵增加 3D 骨架。其他服裝、髮型、女普通兵、持盾與騎乘組合仍需自己的完整配方，不可借圖繞過來源守衛。製作、實際畫面、逐像素／場景驗收邊界與失敗紀錄見 `output/weapon_materials_npc_20260917/README.md`。
+
+> **2026-09-17 武器／工具材質**：七種武器與伐木斧／鎬／工具錘／鏟各有木、石、鐵、鋼，共44選項，男女原骨架。舊ID與網格保留且列鐵製；`wood_axe_01` 是伐木斧，木製版為 `wood_axe_01_wood`。單一目錄 `scripts/ui/weapon_materials.gd` 同時供 Blender 與 Godot 使用；弓弩依箭頭外觀分級。可編輯來源在 `assets/characters/human/q35/weapon_materials`，此離線目錄設 `.gdignore`；正式角色包仍在父目錄。來源重載、弓弦形變別名、實際畫面與普通兵圖集界線見 `output/weapon_materials_20260917/README.md`，不得以重新全包建置覆寫現有服裝美術調整。
+
+> **2026-09-16 布甲配鞋**：另加中式布鞋、日式足袋草鞋、歐式軟皮短鞋，男女分別貼合，歸 Boots／鞋靴，不取代原鞋。`Boots_Medieval_*` 沿用原骨架、鞋部染色與物品保存；不觸發高筒靴褲管收束。可編輯來源、接入入口與實際驗證界線見 `output/medieval_shoes_20260916/README.md`。
+
+> **2026-09-16 最新使用者規格**：新作中、日、歐式男女六套（上衣＋褲／裙）整套改列 Armor／護甲的布甲類，與皮甲、鐵甲共用槽位；不再是 Outfit 選項。原 `outfit_underlayer_01` 與 `outfit_chinese_lining_01` 留在內衣欄，不覆寫。保留原網格／動作識別與骨架，染色改走 armor；NPC 十六組與玩家自由配色政策不變。這項最新要求取代下文 Outfit 的舊限制；來源、正式畫面與普通兵圖集界線以 `output/medieval_cloth_armor_20260916/README.md` 為準。
+
 > **2026-09-10 驗證更新**：全模型修正範圍見 [ALL_MODEL_REPAIRS_2026-09-10.md](ALL_MODEL_REPAIRS_2026-09-10.md)；後續男女手肘／手腕局部修正見 [BODY_JOINT_REFINEMENT_2026-09-10.md](BODY_JOINT_REFINEMENT_2026-09-10.md)；中式襯衣 × 鐵甲／明光鎧交疊、護腕適配與可還原換裝覆蓋見 [LINING_ARMOR_OVERLAP_REPAIR_2026-09-10.md](LINING_ARMOR_OVERLAP_REPAIR_2026-09-10.md)；缺 UV 的形變網格與切線匯入修復見 [MORPH_UV_IMPORT_REPAIR_2026-09-10.md](MORPH_UV_IMPORT_REPAIR_2026-09-10.md)。以下固定尺寸、動作數與「完美」「徹底零穿模」等歷史敘述不是目前的全組合認證；請區分最新的 editor 掃描、原生匯入資源、角色功能與指定畫面驗證範圍。
 
 > **交接聲明**：本文件供後續接手的 AI（如 ChatGPT / Claude / Antigravity 等）直接閱讀與接續開發。文件中詳述了本專案 3D 角色管線的完整歷史背景、架構原則、拓撲提取規則、骨骼權重標準與自動化驗證流程。

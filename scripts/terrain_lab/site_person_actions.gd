@@ -238,6 +238,7 @@ func advance(seconds: float) -> Dictionary:
 			continue
 		var work := seconds
 		var fatigue := float(_body_get(executor, "fatigue"))
+		var work_rate := Fatigue.effort_rate(executor.body)
 		if not bool(executor.player):
 			var resting := Fatigue.needs_work_rest(fatigue, bool(_body_get(executor, "work_resting")))
 			_body_set(executor, "work_resting", resting)
@@ -248,19 +249,19 @@ func advance(seconds: float) -> Dictionary:
 			if resting:
 				job.paused = "REST"
 				continue
-			work = minf(work, maxf(0.0, Fatigue.WORK_REST_AT - fatigue) / Fatigue.WORK_RATE)
+			work = minf(work, maxf(0.0, Fatigue.WORK_REST_AT - fatigue) / work_rate)
 		job.paused = ""
 		var remaining := maxf(0.0, float(job.duration) - float(job.elapsed))
 		# Loot and handcraft share work productivity; binding retains its confirmed clock.
 		var productive_work := str(job.kind) in ["loot", "ranged_craft"]
-		var productive := Fatigue.work_seconds(fatigue, work) if productive_work else work
+		var productive := Fatigue.work_seconds(fatigue, work, work_rate) if productive_work else work
 		if productive > remaining:
 			# Monotone shared fatigue integral: find actual effort, not an entire long frame.
 			var low := 0.0
 			var high := work
 			for iteration: int in 32:
 				var middle := (low + high) * 0.5
-				var output := Fatigue.work_seconds(fatigue, middle) if productive_work else middle
+				var output := Fatigue.work_seconds(fatigue, middle, work_rate) if productive_work else middle
 				if output < remaining:
 					low = middle
 				else:
@@ -268,7 +269,7 @@ func advance(seconds: float) -> Dictionary:
 			work = high
 			productive = remaining
 		job.elapsed = minf(float(job.duration), float(job.elapsed) + productive)
-		var state := Fatigue.advance(fatigue, float(_body_get(executor, "fatigue_rest")), work, Fatigue.WORK_RATE, false)
+		var state := Fatigue.advance(fatigue, float(_body_get(executor, "fatigue_rest")), work, work_rate, false)
 		_body_set(executor, "fatigue", state[0])
 		_body_set(executor, "fatigue_rest", state[1])
 		handled[int(job.executor_id)] = work
@@ -644,11 +645,17 @@ func _threat(person: Dictionary, candidates: Dictionary) -> bool:
 	return bool(lab._fatigue_threat(person.cell, int(person.faction), person.owner, int(person.unit), candidates))
 
 func _body_get(person: Dictionary, field: String) -> Variant:
+	if field in ["fatigue", "fatigue_rest"]: return Fatigue.read(person.body, field)
 	if person.body is Dictionary:
-		return person.body.get(field, false if field == "work_resting" else 0.0)
+		if field == "work_resting":
+			return person.body.get(field, false)
+		return person.body.get(field, 0.0)
 	return person.body.get(field)
 
 func _body_set(person: Dictionary, field: String, value: Variant) -> void:
+	if field in ["fatigue", "fatigue_rest"]:
+		Fatigue.write(person.body, field, float(value))
+		return
 	if person.body is Dictionary:
 		person.body[field] = value
 	else:

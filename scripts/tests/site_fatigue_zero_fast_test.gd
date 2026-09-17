@@ -230,6 +230,9 @@ func _run() -> void:
 
 func _run_checked() -> bool:
 	_lab = ObservedLab.new()
+	# This historical fixture checks continuous attack/guard fatigue rates.
+	# The current exchange policy charges fatigue per exchange instead.
+	_lab.exchange_enabled = false
 	_lab.pause_when_unfocused = false
 	root.add_child(_lab)
 	_lab.set_process(false)
@@ -237,7 +240,8 @@ func _run_checked() -> bool:
 	_lab.npc.set_process(false)
 	_lab.npc_retaliates = false
 	_lab.site_controller._auto_save_blocked = true
-	assert(not _lab.fatigue_zero_fast_path_enabled, "Candidate must remain off by default until validation")
+	assert(_lab.fatigue_zero_fast_path_enabled, "Validated exact zero path is enabled by default")
+	_lab.fatigue_zero_fast_path_enabled = false
 	var fixture := _work_fixture()
 	var data: TerrainData = fixture.data
 	_lab.bind_terrain(data)
@@ -291,6 +295,7 @@ func _run_checked() -> bool:
 	assert(_samples.size() == _reference.size() and not _samples.is_empty())
 	assert(results[0].eligible_rows > 0 and results[0].eligible_rows == results[1].eligible_rows)
 	assert(results[0].skipped_advances == 0 and results[1].skipped_advances == results[1].eligible_rows)
+	assert(_check_exchange_native(save_path), "Exchange native provider scenarios did not complete")
 	var report := {"exact": true, "original": results[0], "candidate": results[1],
 		"people": 5, "army_rows": 3, "same_original_ids": true,
 		"scope": "common-step fatigue/rest IEEE bytes, type normalization, actual training/work/damage/rates; not collision geometry or FPS",
@@ -302,4 +307,49 @@ func _run_checked() -> bool:
 	file.store_string(JSON.stringify(report, "\t"))
 	file.close()
 	print("SITE FATIGUE ZERO FAST PASS: ", JSON.stringify(report), "; output=", output)
+	return true
+
+func _check_exchange_native(save_path: String) -> bool:
+	# Current exchange policy with the real saved food/work/controller owners.
+	# The previous continuous-rate scenarios remain unchanged above.
+	var reference: Array = []
+	for native: bool in [false, true]:
+		var restored := Store.load_site(save_path)
+		assert(restored.ok)
+		_lab.exchange_enabled = true
+		_lab.bind_terrain(restored.data)
+		_lab.set_process(false)
+		_lab.character.set_process(false)
+		_lab.npc.set_process(false)
+		_lab.army.set_process(false)
+		_lab.fatigue_zero_fast_path_enabled = true
+		_lab.combat_profile_enabled = false
+		var team: TerrainArmy = _lab.army
+		team.native_idle_enabled = native
+		team.native_fatigue_rows = 0
+		var controller: SiteController = _lab.site_controller
+		var states: Array = []
+		for row: Dictionary in team.combat_units:
+			row.fatigue = 0.0
+			row.fatigue_rest = 12.0
+		_frame("exchange native stationary zero", 1.0 / 30.0)
+		states.append(_snapshot())
+		assert((team.native_fatigue_rows > 0) == native)
+		assert(controller.order_team_training(team, team.current_commander, true).ok)
+		var consumed_before := team.native_fatigue_rows
+		_frame("exchange actual fed training excludes native prefix", 1.0 / 30.0)
+		assert(team.training > 0.0 and float(team.combat_units[1].fatigue) > 0.0)
+		assert(team.native_fatigue_rows == consumed_before)
+		states.append(_snapshot())
+		assert(controller.order_team_training(team, team.current_commander, false).ok)
+		assert(controller._control_family_person(null, team.combat_identity(team.current_commander)).ok)
+		var worker_id := team.combat_identity(1)
+		team.combat_units[1].fatigue = 0.0
+		assert(controller.work_team.assign(team, [worker_id], team.combat_identity(team.current_commander)).ok)
+		_frame("exchange original resource work keeps its fatigue charge", 1.0 / 30.0)
+		assert(float(team.combat_units[1].fatigue) > 0.0 and not team.combat_units[1].work_task.is_empty())
+		states.append(_snapshot())
+		if native: assert(var_to_bytes(states) == var_to_bytes(reference), "Native changed exchange food/training/work/person state")
+		else: reference = states.duplicate(true)
+	print("ARMY_NATIVE_EXCHANGE_PROVIDERS_PASS original stationary/food/training/resource-work exact states")
 	return true

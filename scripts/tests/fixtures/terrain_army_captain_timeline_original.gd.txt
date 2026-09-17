@@ -1,0 +1,36 @@
+func _sync_captain_combat(frame: Dictionary, index: int = 0) -> void:
+	var presenter: Variant = _unit_editor(index)
+	if presenter == null or index >= _sprites.size():
+		return
+	# Exchange sampling only reads the original row; reuse it for yaw and seek.
+	# Historical geometry keeps its original post-readiness sampling order.
+	var visual_sample: Array = contact_sample(index) if exchange_enabled else []
+	presenter.set_preview_yaw_degrees(_captain_yaw_degrees(Vector2i(visual_sample[2]) if exchange_enabled else facing[index]))
+	var readiness_changed: bool = not presenter.combat_ready
+	presenter.combat_ready = true
+	presenter.visual_state.combat_ready = true
+	if readiness_changed:
+		# An unchanged idle clip does not refresh equipped/stowed visibility.
+		# Use the original model owner on every actual peace -> combat change,
+		# including an original female presenter moved to a non-captain row.
+		presenter._update_weapon_sheath_state()
+		_combat_pose_cache.erase(combat_identity(index))
+	var descriptor: Dictionary = _combat_bake.clips[str(frame.clip)]
+	var pose := StringName(str(descriptor.get("pose", frame.clip)))
+	if presenter.selected_animation != pose:
+		presenter.select_animation_by_id(pose)
+	presenter.animation_player.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
+	var inputs := _contact_inputs(index) if not _contact_batch_inputs.is_empty() else {}
+	var sample: Array = inputs.sample if not inputs.is_empty() else (visual_sample if exchange_enabled else contact_sample(index))
+	presenter.animation_player.seek(float(sample[1]), true)
+	var origin: Vector2 = inputs.origin if not inputs.is_empty() else combat_ground(index) + combat_offset(index)
+	_sprites[index].position = origin - _unit_anchor(index)
+	if not exchange_enabled and float(sample[4]) > 0.0:
+		_combat_geometry.aim_weapon_attack({"editor": presenter, "player_sprite": _sprites[index]}, origin + sample[3], sample[4])
+	if exchange_enabled:
+		presenter._process(0.0) # Same authored props/cloth/hair update; editor auto-process is disabled.
+	else:
+		presenter._update_scabbard_pose()
+		presenter._update_combat_cloth()
+	_sprites[index].position = origin - _unit_anchor(index)
+	presenter.preview_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE if exchange_enabled else SubViewport.UPDATE_ALWAYS

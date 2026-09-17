@@ -31,20 +31,69 @@ static func advance(value: float, rested: float, seconds: float, rate: float, sa
 	var recovering := maxf(0.0, seconds - maxf(0.0, REST_DELAY - rested))
 	return [maxf(0.0, value - recovering * RECOVERY_RATE), minf(REST_DELAY, rested + seconds)]
 
-static func work_seconds(value: float, seconds: float) -> float:
+static func work_seconds(value: float, seconds: float, rate: float = WORK_RATE) -> float:
 	# Integrate productive time while fatigue rises. Splitting a long frame or
 	# crossing 30/100 must not change output. Work uses 1/(1+slowdown), not damage.
 	var remaining := seconds
 	var productive := 0.0
 	if value < THRESHOLD:
-		var fresh := minf(remaining, (THRESHOLD - value) / WORK_RATE)
+		var fresh := minf(remaining, (THRESHOLD - value) / rate)
 		productive += fresh
-		value += fresh * WORK_RATE
+		value += fresh * rate
 		remaining -= fresh
 	if remaining > 0.0 and value < LIMIT:
-		var rising := minf(remaining, (LIMIT - value) / WORK_RATE)
+		var rising := minf(remaining, (LIMIT - value) / rate)
 		var start_scale := 1.0 + slowdown(value)
-		var end_scale := 1.0 + slowdown(value + rising * WORK_RATE)
-		productive += log(end_scale / start_scale) / (MAX_SLOWDOWN / (LIMIT - THRESHOLD) * WORK_RATE)
+		var end_scale := 1.0 + slowdown(value + rising * rate)
+		productive += log(end_scale / start_scale) / (MAX_SLOWDOWN / (LIMIT - THRESHOLD) * rate)
 		remaining -= rising
 	return productive + remaining / (1.0 + MAX_SLOWDOWN)
+
+# A member borrows its original Army's single state, never a mirrored value.
+# Unaffiliated people and the currently controlled player retain their own body.
+static func pool(body: Variant) -> Dictionary:
+	return body.get("_fatigue_pool", {}) if body is Dictionary else body._fatigue_pool
+
+static func read(body: Variant, field: String = "fatigue") -> float:
+	var shared := pool(body)
+	if not shared.is_empty(): return float(shared[field])
+	return float(body.get(field, 0.0)) if body is Dictionary else float(body.get(field))
+
+static func write(body: Variant, field: String, value: float) -> void:
+	var shared := pool(body)
+	if not shared.is_empty():
+		shared[field] = value
+		if field == "fatigue_rest" and value == 0.0: shared.active = true
+	elif body is Dictionary: body[field] = value
+	else: body.set(field, value)
+
+static func effort_rate(body: Variant, rate: float = WORK_RATE) -> float:
+	return rate / maxf(1.0, float(pool(body).get("count", 1)))
+
+static func charge(body: Variant, amount: float) -> void:
+	write(body, "fatigue", clampf(read(body) + effort_rate(body, amount), 0.0, LIMIT))
+	write(body, "fatigue_rest", 0.0)
+
+static func bind(body: Variant, shared: Dictionary) -> void:
+	if body is Dictionary:
+		body["_fatigue_pool"] = shared
+		body.erase("fatigue")
+		body.erase("fatigue_rest")
+	else: body._fatigue_pool = shared
+
+static func unbind(body: Variant) -> void:
+	var shared := pool(body)
+	if shared.is_empty(): return
+	var value := read(body)
+	var rested := read(body, "fatigue_rest")
+	if body is Dictionary: body.erase("_fatigue_pool")
+	else: body._fatigue_pool = {}
+	write(body, "fatigue", value)
+	write(body, "fatigue_rest", rested)
+
+static func saved_body(body: Dictionary) -> Dictionary:
+	var saved := body.duplicate()
+	saved.erase("_fatigue_pool")
+	saved.fatigue = read(body)
+	saved.fatigue_rest = read(body, "fatigue_rest")
+	return saved.duplicate(true)

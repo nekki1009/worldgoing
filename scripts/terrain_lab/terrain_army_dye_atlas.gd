@@ -45,14 +45,15 @@ static func canvas_color(value: String) -> Vector4:
 static func fingerprints() -> Dictionary:
 	var result := Plan.fingerprints()
 	for path: String in EXTRA_SOURCES:
-		var hash := FileAccess.get_md5(path)
-		if hash.length() != 32: return {}
-		result[path] = hash
+		var source_md5 := FileAccess.get_md5(path)
+		if source_md5.length() != 32: return {}
+		result[path] = source_md5
 	return result
 
 static func _key(appearance: Dictionary) -> String:
 	var weapon := str(appearance.get("parts", {}).get("weapon", ""))
-	return weapon if weapon in ["bow_01", "crossbow_01"] else "base"
+	# Each complete no-shield recipe has its own occlusion/packing mask.
+	return weapon if weapon != "none" and appearance.get("parts", {}).get("shield") == "none" else "base"
 
 static func entry(appearance: Dictionary) -> Dictionary:
 	if not HumanCharacter3DEditor.valid_appearance(appearance): return {}

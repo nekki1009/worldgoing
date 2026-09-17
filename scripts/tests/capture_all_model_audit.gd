@@ -55,7 +55,7 @@ func _run() -> void:
 				audit_camera(str(slot.id))
 				await capture("%s_%s_%s" % [sex,option.id,view[0]])
 			var clip: StringName = &"run"
-			if slot.id == &"weapon": clip = HumanCharacter3DEditor.WEAPON_ATTACK_MAP[option.id]
+			if slot.id == &"weapon": clip = HumanCharacter3DEditor.WEAPON_ATTACK_MAP[HumanCharacter3DEditor.WeaponMaterials.family(StringName(option.id))]
 			assert(editor.select_animation_by_id(clip))
 			editor.set_playing(false)
 			var animation := editor.animation_player.get_animation(editor.selected_animation)

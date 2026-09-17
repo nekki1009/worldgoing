@@ -1,0 +1,30 @@
+# Test-process candidate only. Do not install this in the production editor.
+func _clip_set_probe_prepare(target: StringName) -> void:
+	if not has_meta(&"clip_set_probe_enabled"):
+		return
+	var player := animation_player
+	assert(player.get_animation_library_list().size() == 1)
+	assert(player.playback_default_blend_time == 0.0 and player.get_queue().is_empty())
+	var library := player.get_animation_library(&"")
+	var full: Dictionary = get_meta(&"clip_set_probe_full", {})
+	var stubs: Dictionary = get_meta(&"clip_set_probe_stubs", {})
+	if full.is_empty():
+		for clip: StringName in player.get_animation_list():
+			assert(player.animation_get_next(clip) == &"")
+			var source := library.get_animation(clip)
+			full[clip] = source
+			var stub := Animation.new()
+			stub.length = source.length
+			stub.step = source.step
+			stub.loop_mode = source.loop_mode
+			stubs[clip] = stub
+		set_meta(&"clip_set_probe_full", full)
+		set_meta(&"clip_set_probe_stubs", stubs)
+	# Never replace the assigned clip: its current playback must stay intact.
+	# Keep the incoming clip, previous clip, idle and any authored RESET.
+	for clip: StringName in full:
+		var required: bool = clip in [target, player.assigned_animation, &"idle", &"RESET"]
+		if "--clip-resident" in OS.get_cmdline_user_args() and clip in [&"walk_slash", &"guard"]: required = true
+		var source: Animation = full[clip] if required else stubs[clip]
+		if library.get_animation(clip) != source:
+			assert(library.add_animation(clip, source) == OK)

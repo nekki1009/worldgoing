@@ -1,0 +1,71 @@
+func advance_frame(delta: float) -> void:
+	if not has_army():
+		return
+	var frame_start_usec := Time.get_ticks_usec()
+	if combat_enabled:
+		var profile_started := frame_start_usec
+		var update_batch := _batch_view != null and _visual_dirty
+		if update_batch: _batch_view.begin()
+		if update_batch and native_render_enabled and _batch_render_active(): _batch_view.prepare_idle()
+		var prepared_idle: bool = update_batch and not _batch_view._native_mask.is_empty()
+		for index in range(_sprites.size()):
+			if exchange_enabled and not _visual_dirty:
+				continue
+			if prepared_idle and _batch_view.submit_prepared(index):
+				continue
+			if _uses_live_presenter(index):
+				_sync_captain_combat(combat_frame(index), index)
+			elif not exchange_enabled or _visual_dirty:
+				_set_soldier_frame(index)
+			if update_batch and _sprites[index] != null:
+				_batch_view.submit_sprite(index, combat_ground(index), _sprites[index])
+		profile_started = _profile_combat_stage("render_submit", profile_started)
+		if update_batch: _batch_view.flush()
+		profile_started = _profile_combat_stage("render_flush", profile_started)
+		_sync_visual_positions()
+		_profile_combat_stage("render_positions", profile_started)
+		last_frame_cpu_usec = Time.get_ticks_usec() - frame_start_usec
+		combat_render_usec += last_frame_cpu_usec
+		return # All combat/movement time comes from TerrainLab's action step.
+	var structure_before := structure_search_expansions
+	var local_before := local_search_expansions
+	var push_before := push_search_expansions
+	input_seconds += delta
+	_detour_searches_remaining = MAX_DETOUR_SEARCHES_PER_FRAME
+	_frame_navigation_budget_active = true
+	_structure_expansions_remaining = PATH_EXPANSIONS_PER_STEP
+	_structure_work_ready.emit()
+	_advance_command_goal()
+	# The shared search quota is per rendered/input frame, not per 10 Hz
+	# movement tick. Keep the same job alive and advance it between sim ticks.
+	_advance_path_job(_structure_expansions_remaining)
+	_sim_accumulator += delta
+	dropped_seconds += maxf(0.0, _sim_accumulator - MAX_ACCUMULATED_SIM_TIME)
+	# Cap catch-up work. Without this guard a slow frame schedules four more
+	# expensive formation updates, creating a self-reinforcing frame spiral.
+	_sim_accumulator = minf(_sim_accumulator, MAX_ACCUMULATED_SIM_TIME)
+	var iterations := 0
+	# Treat a one-tick floating-point remainder as elapsed simulation time. The
+	# public 60 Hz path must not silently drop the 1800th fixed step at a
+	# decimal boundary.
+	while _sim_accumulator + 0.000001 >= SIM_STEP and iterations < MAX_SIM_STEPS_PER_FRAME:
+		_sim_accumulator -= SIM_STEP
+		_simulate_step(SIM_STEP)
+		simulated_seconds += SIM_STEP
+		iterations += 1
+	_update_soldier_frames(delta)
+	if moving_count() > 0:
+		_set_visual_sources_active(true)
+	_sync_captain_presentation()
+	_sync_visual_positions()
+	if _visual_warmup_frames > 0:
+		_visual_warmup_frames -= 1
+		_set_visual_sources_active(true)
+	elif moving_count() == 0:
+		_set_visual_sources_active(false)
+	_frame_navigation_budget_active = false
+	_structure_expansions_remaining = 0
+	max_frame_structure_expansions = maxi(max_frame_structure_expansions, structure_search_expansions - structure_before)
+	max_frame_local_expansions = maxi(max_frame_local_expansions, local_search_expansions - local_before)
+	max_frame_push_expansions = maxi(max_frame_push_expansions, push_search_expansions - push_before)
+	last_frame_cpu_usec = Time.get_ticks_usec() - frame_start_usec

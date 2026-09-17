@@ -55,6 +55,11 @@ func draw_layer(canvas: Node2D, kind: int) -> void:
 	if kind == 0:
 		_draw_ground(canvas)
 		return
+	# Only merge consecutive brush primitives. Ramps and debug/custom renderers
+	# retain their original painter order and callbacks.
+	var batch_brushes: bool = kind == 3 and not debug_enabled and get_script() == TerrainRenderer and data.get_script() == TerrainData
+	var brush_points := PackedVector2Array()
+	var brush_indices := PackedInt32Array()
 	for y: int in range(data.size.y):
 		for x: int in range(data.size.x):
 			var cell := Vector2i(x, y)
@@ -74,11 +79,29 @@ func draw_layer(canvas: Node2D, kind: int) -> void:
 						# Brush marks are surface variation, not trees, stones or resources.
 						var shade: float = float(data.detail_variation[i]) / 255.0
 						var dot: Vector2 = rect.position + Vector2(22.0 + shade * 18.0, 24.0 + fmod(shade * 73.0, 16.0))
-						canvas.draw_line(dot, dot + Vector2(7.0, -2.0), Color(1.0, 1.0, 0.8, 0.09), 2.0)
-						_draw_ramps(canvas, cell, i)
+						if batch_brushes:
+							var end := dot + Vector2(7.0, -2.0)
+							# Match the original non-antialiased width-2 line quad.
+							var offset := (dot - end).orthogonal().normalized() * 2.0 * 0.5
+							var first := brush_points.size()
+							brush_points.append_array(PackedVector2Array([dot + offset, dot - offset, end - offset, end + offset]))
+							brush_indices.append_array(PackedInt32Array([first, first + 1, first + 2, first, first + 2, first + 3]))
+							if data.ramp_edges[i] != 0:
+								_draw_brush_batch(canvas, brush_points, brush_indices)
+								brush_points.clear()
+								brush_indices.clear()
+								_draw_ramps(canvas, cell, i)
+						else:
+							canvas.draw_line(dot, dot + Vector2(7.0, -2.0), Color(1.0, 1.0, 0.8, 0.09), 2.0)
+							_draw_ramps(canvas, cell, i)
 					if debug_enabled:
 						canvas.draw_rect(rect, Color(0.06, 0.1, 0.08, 0.3), false, 1.0)
 						canvas.draw_string(ThemeDB.fallback_font, rect.position + Vector2(5.0, 21.0), str(data.height_levels[i]), HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(1, 1, 1, 0.9))
+	_draw_brush_batch(canvas, brush_points, brush_indices)
+
+func _draw_brush_batch(canvas: Node2D, points: PackedVector2Array, indices: PackedInt32Array) -> void:
+	if not points.is_empty():
+		RenderingServer.canvas_item_add_triangle_array(canvas.get_canvas_item(), indices, points, PackedColorArray([Color(1.0, 1.0, 0.8, 0.09)]))
 
 func _draw_ground(canvas: Node2D) -> void:
 	var map_rect := Rect2(Vector2.ZERO, Vector2(data.size) * CELL_PIXELS)

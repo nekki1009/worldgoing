@@ -45,6 +45,7 @@ func run() -> void:
 				near(end - start, event.active_end - event.active_start, "active interval unchanged")
 				timing_cases += 1
 	var lab := TerrainLab.new()
+	lab.exchange_enabled = false # This historical test asserts geometry/BFS threats and continuous guard effort.
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	lab.set_process(false)

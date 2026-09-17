@@ -1,0 +1,12 @@
+func _find_component_nodes(prefixes: Array) -> Array:
+	var result: Array = []
+	if model_root == null:
+		return result
+	for node: Node in model_root.find_children("*", "Node3D", true, false):
+		var node_name := str(node.name)
+		for prefix: Variant in prefixes:
+			var prefix_text := str(prefix)
+			if node_name == prefix_text or node_name.begins_with(prefix_text + "_") or node_name.begins_with(prefix_text + "."):
+				result.append(node)
+				break
+	return result

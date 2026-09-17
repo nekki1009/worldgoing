@@ -155,7 +155,7 @@ func advance(seconds: float) -> Dictionary:
 			_release_claim(claims, prior_target, identity)
 			cancel(identity)
 			continue
-		row.work_resting = PersonFatigue.needs_work_rest(float(row.fatigue), bool(row.get("work_resting", false)))
+		row.work_resting = PersonFatigue.needs_work_rest(PersonFatigue.read(row), bool(row.get("work_resting", false)))
 		if not team.combat_can_act(index) or float(row.get("exchange_stagger", 0.0)) > 0.0:
 			_release_claim(claims, prior_target, identity)
 			_pause(task, "失能／已离场，停止作业")
@@ -231,12 +231,13 @@ func advance(seconds: float) -> Dictionary:
 		task.mode = "work"
 		var carry_limit := floori(SiteRuntime.CARRY_CAPACITY - SiteRuntime.carried_load(lab.terrain.site, {}, row.item_state))
 		var work_time := func(_manual: bool, minutes: float) -> float:
-			var effort := minutes * 60.0 if manual else minf(minutes * 60.0, maxf(0.0, (PersonFatigue.WORK_REST_AT - float(row.fatigue)) / PersonFatigue.WORK_RATE))
-			var productive := PersonFatigue.work_seconds(float(row.fatigue), effort)
-			var state := PersonFatigue.advance(float(row.fatigue), float(row.fatigue_rest), effort, PersonFatigue.WORK_RATE, false)
-			row.fatigue = state[0] if manual else minf(PersonFatigue.WORK_REST_AT, state[0])
-			row.fatigue_rest = state[1]
-			row.work_resting = PersonFatigue.needs_work_rest(float(row.fatigue), bool(row.work_resting))
+			var work_rate := PersonFatigue.effort_rate(row)
+			var effort := minutes * 60.0 if manual else minf(minutes * 60.0, maxf(0.0, (PersonFatigue.WORK_REST_AT - PersonFatigue.read(row)) / work_rate))
+			var productive := PersonFatigue.work_seconds(PersonFatigue.read(row), effort, work_rate)
+			var state := PersonFatigue.advance(PersonFatigue.read(row), PersonFatigue.read(row, "fatigue_rest"), effort, work_rate, false)
+			PersonFatigue.write(row, "fatigue", state[0] if manual else minf(PersonFatigue.WORK_REST_AT, state[0]))
+			PersonFatigue.write(row, "fatigue_rest", state[1])
+			row.work_resting = PersonFatigue.needs_work_rest(PersonFatigue.read(row), bool(row.work_resting))
 			if effort > 0.0:
 				handled[identity] = float(handled.get(identity, 0.0)) + effort
 				_working[identity] = true

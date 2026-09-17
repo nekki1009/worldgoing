@@ -47,6 +47,7 @@ var _save_elapsed := 0.0
 var _navigation_revision := -1
 var _zone_signature := ""
 var _exit_pending := false
+var _exit_dialog: ConfirmationDialog
 var _auto_save_blocked := false
 var _summary_area := Rect2i()
 var _summary_revision := -1
@@ -84,6 +85,7 @@ func setup(scene: Node2D) -> void:
 		team.died.connect(_person_died)
 		team.equipment_initializer = initialize_team_items
 		team.equipment_appearance_query = person_appearance
+		team.equipment_appearance_batch_query = person_appearance_batch
 		team.person_busy_query = _person_has_duty
 		team.controlled_person_query = lab.controlled_person_id
 		team.membership_change_hook = captivity_supply.membership_change
@@ -596,9 +598,6 @@ func finish_tick() -> void:
 	if _save_elapsed >= 30 and float(data.site.combat_left) <= 0 and not _auto_save_blocked:
 		_save_elapsed = 0.0
 		save_current()
-	if _exit_pending and float(data.site.combat_left) <= 0:
-		_exit_pending = false
-		_request_exit()
 
 func _test_army_order(order_id: int, goal: Vector2i = Vector2i(-1, -1), target_id: int = -1) -> void:
 	show_result(lab.army.issue_combat_order(lab.army.current_commander, order_id, goal, target_id))
@@ -742,18 +741,17 @@ func _refresh_saved_sites() -> void:
 			saved_sites.set_item_metadata(saved_sites.item_count - 1, path)
 
 func _request_exit() -> void:
+	if is_instance_valid(_exit_dialog):
+		_exit_dialog.popup_centered()
+		_exit_dialog.get_cancel_button().grab_focus()
+		return
 	var supply_guard := supply_save_guard()
 	if not supply_guard.ok:
 		show_result(supply_guard)
+		_confirm_unsaved_exit(str(supply_guard.message))
 		return
 	if float(lab.terrain.site.combat_left) > 0:
-		_exit_pending = true
-		lab.npc_retaliates = false
-		lab._clear_movement_input()
-		lab.npc.issue_command(TerrainTestNPC.Command.STOP)
-		lab.terrain.site.paused = false
-		get_tree().paused = false
-		message.text = "等候脫戰後保存並離開。"
+		_confirm_unsaved_exit("戰鬥尚未結束，目前不能安全保存。")
 		return
 	_capture_positions()
 	var destination := "user://sites/" + str(lab.terrain.site.id).validate_filename() + ".json" if _auto_save_blocked else save_path
@@ -762,6 +760,37 @@ func _request_exit() -> void:
 		get_tree().quit()
 	else:
 		show_result(result)
+		_confirm_unsaved_exit(str(result.message))
+
+func _confirm_unsaved_exit(reason: String) -> void:
+	# Never wait forever for two autonomous armies to disengage, or silently
+	# discard their unsaved state. Use the native modal and an explicit choice.
+	var data: TerrainData = lab.terrain
+	var site_was_paused := bool(data.site.paused)
+	var tree_was_paused := get_tree().paused
+	_exit_pending = true
+	lab._clear_movement_input()
+	data.site.paused = true
+	get_tree().paused = true
+	var dialog := ConfirmationDialog.new()
+	_exit_dialog = dialog
+	dialog.name = "ConfirmUnsavedExit"
+	dialog.process_mode = Node.PROCESS_MODE_ALWAYS
+	dialog.title = "尚未保存，確定離開？"
+	dialog.dialog_text = reason + "\n\n不保存離開會遺失上次保存後的進度，不會覆寫存檔。"
+	dialog.ok_button_text = "不保存離開"
+	dialog.cancel_button_text = "取消，返回場景"
+	lab.get_node("SiteUI").add_child(dialog)
+	dialog.confirmed.connect(func() -> void: get_tree().quit())
+	dialog.canceled.connect(func() -> void:
+		dialog.hide()
+		_exit_dialog = null
+		_exit_pending = false
+		data.site.paused = site_was_paused
+		get_tree().paused = tree_was_paused
+		dialog.queue_free())
+	dialog.popup_centered()
+	dialog.get_cancel_button().grab_focus()
 
 func update_ui() -> void:
 	if lab.terrain == null or details == null:
@@ -1011,7 +1040,7 @@ func _open_logistics() -> void:
 				continue
 			var identity := team.combat_identity(index)
 			var row: Dictionary = team.combat_units[index]
-			var item := roster.add_item("#%d · %s · HP %.0f · 疲勞 %.1f · 原行囊 %d 件" % [identity, "專職後勤（6）" if bool(row.get("logistics", false)) else "普通搬運（3）", row.hp, row.fatigue, Runtime.inventory_size(row.cargo)])
+			var item := roster.add_item("#%d · %s · HP %.0f · 疲勞 %.1f · 原行囊 %d 件" % [identity, "專職後勤（6）" if bool(row.get("logistics", false)) else "普通搬運（3）", row.hp, PersonFatigue.read(row), Runtime.inventory_size(row.cargo)])
 			roster.set_item_metadata(item, identity)
 			if kept.has(identity):
 				roster.select(item, false)
@@ -1609,6 +1638,21 @@ func before_clear_team_items() -> Dictionary:
 func person_appearance(identity: int) -> Dictionary:
 	return _equipment_appearances.get(identity, {})
 
+func person_appearance_batch(query: Callable) -> Dictionary:
+	# Borrow the same owner publication only for the exact pure query. Replaced
+	# callbacks must still run individually, including any observable effects.
+	return _equipment_appearances if query == person_appearance else {}
+
+static func _freeze_appearance(value: Variant) -> void:
+	# Published presentation snapshots are replaced on equipment_changed, never
+	# mutated. Freeze nested containers too; Godot's read-only flag is shallow.
+	if value is Dictionary:
+		for child: Variant in value.values(): _freeze_appearance(child)
+		value.make_read_only()
+	elif value is Array:
+		for child: Variant in value: _freeze_appearance(child)
+		value.make_read_only()
+
 func _person_has_duty(identity: int) -> bool:
 	return person_actions.is_busy(identity) or person_actions.is_guarding(identity) or work_team.is_assigned(identity) or _is_delivering_person(identity)
 
@@ -1635,7 +1679,7 @@ func _open_roster() -> void:
 			continue
 		var identity := team.combat_identity(index)
 		var row: Dictionary = team.combat_units[index]
-		var item := members.add_item("#%d  HP %.0f  疲勞 %.1f  貨物 %d  %s" % [identity, row.hp, row.fatigue, Runtime.inventory_size(row.cargo), "工作中" if work_team.is_assigned(identity) else "未派工"])
+		var item := members.add_item("#%d  HP %.0f  疲勞 %.1f  貨物 %d  %s" % [identity, row.hp, PersonFatigue.read(row), Runtime.inventory_size(row.cargo), "工作中" if work_team.is_assigned(identity) else "未派工"])
 		members.set_item_metadata(item, identity)
 	var selected_ids := func() -> Array[int]:
 		var identities: Array[int] = []
@@ -1746,8 +1790,8 @@ func advance_guard_work(seconds: float) -> Dictionary:
 		person_actions._body_set(person, "work_resting", resting)
 		if resting:
 			continue # Original safe-rest update handles recovery; no duplicate time.
-		var effort := minf(seconds, maxf(0.0, (PersonFatigue.WORK_REST_AT - fatigue) / PersonFatigue.WORK_RATE)) if autonomous else seconds
-		var state := PersonFatigue.advance(fatigue, float(person_actions._body_get(person, "fatigue_rest")), effort, PersonFatigue.WORK_RATE, false)
+		var effort := minf(seconds, maxf(0.0, (PersonFatigue.WORK_REST_AT - fatigue) / PersonFatigue.effort_rate(person.body))) if autonomous else seconds
+		var state := PersonFatigue.advance(fatigue, float(person_actions._body_get(person, "fatigue_rest")), effort, PersonFatigue.effort_rate(person.body), false)
 		person_actions._body_set(person, "fatigue", minf(PersonFatigue.WORK_REST_AT, state[0]) if autonomous else state[0])
 		person_actions._body_set(person, "fatigue_rest", state[1])
 		if autonomous:
@@ -1775,6 +1819,7 @@ func _control_family_person(data: Variant, identity: int) -> Dictionary:
 	if target.is_empty() or float(target.hp) <= 0.0:
 		return Runtime.fail("NO_TARGET", "原接續人物不存在或已死亡")
 	lab.terrain.site.controlled_person_id = identity
+	for team: TerrainArmy in lab.combat_armies: team.sync_shared_fatigue(true)
 	person_executor_id = identity
 	if int(target.unit) < 0 and target.owner == lab.npc:
 		lab.npc.issue_command(TerrainTestNPC.Command.STOP)
@@ -2070,6 +2115,7 @@ func equipment_changed(identity: int) -> void:
 	var appearance := Runtime.equipment_appearance(lab.terrain, _presentation_holder(person), original)
 	if appearance.is_empty():
 		return
+	_freeze_appearance(appearance)
 	_equipment_appearances[identity] = appearance
 	if int(person.unit) >= 0:
 		var team: TerrainArmy = person.owner
@@ -2155,7 +2201,7 @@ func _actor_supply_adapter(actor: TerrainTestCharacter, present: bool = false) -
 			legacy_weapon = str(choice.get_item_metadata(choice.selected))
 	# Ephemeral field adapter; it is never stored in terrain.site.
 	return {"person_id": actor.person_id, "hp": actor.hp, "ko": actor.knockout_left, "fatigue": actor.fatigue,
-		"fatigue_rest": actor.fatigue_rest, "work_resting": actor.work_resting,
+		"fatigue_rest": actor.fatigue_rest, "work_resting": actor.work_resting, "_fatigue_pool": actor._fatigue_pool,
 		"present": present, "captive": actor.captive, "is_player": actor.person_id == lab.controlled_person_id(),
 		"item_state": actor.get("item_state"), "legacy_weapon": legacy_weapon}
 
@@ -2311,11 +2357,11 @@ func _delivery_seconds(entry: Dictionary, maximum: float) -> float:
 	var bound := maximum
 	for person: Dictionary in people:
 		if int(person.person_id) != lab.controlled_person_id():
-			bound = minf(bound, maxf(0.0, PersonFatigue.WORK_REST_AT - float(person_actions._body_get(person, "fatigue"))) / PersonFatigue.WORK_RATE)
+			bound = minf(bound, maxf(0.0, PersonFatigue.WORK_REST_AT - float(person_actions._body_get(person, "fatigue"))) / PersonFatigue.effort_rate(person.body))
 	var wanted := float(entry.delivery.left)
 	var productive := INF
 	for person: Dictionary in people:
-		productive = minf(productive, PersonFatigue.work_seconds(float(person_actions._body_get(person, "fatigue")), bound))
+		productive = minf(productive, PersonFatigue.work_seconds(float(person_actions._body_get(person, "fatigue")), bound, PersonFatigue.effort_rate(person.body)))
 	if productive <= wanted:
 		return maxf(0.000000001, bound)
 	var lower := 0.0
@@ -2324,7 +2370,7 @@ func _delivery_seconds(entry: Dictionary, maximum: float) -> float:
 		var middle := (lower + upper) * 0.5
 		var effort := INF
 		for person: Dictionary in people:
-			effort = minf(effort, PersonFatigue.work_seconds(float(person_actions._body_get(person, "fatigue")), middle))
+			effort = minf(effort, PersonFatigue.work_seconds(float(person_actions._body_get(person, "fatigue")), middle, PersonFatigue.effort_rate(person.body)))
 		if effort < wanted:
 			lower = middle
 		else:
@@ -2343,8 +2389,8 @@ func _finish_delivery_step(team: TerrainArmy, entry: Dictionary, seconds: float)
 	var productive := INF
 	for person: Dictionary in _delivery_people(entry):
 		var fatigue := float(person_actions._body_get(person, "fatigue"))
-		productive = minf(productive, PersonFatigue.work_seconds(fatigue, seconds))
-		var updated := PersonFatigue.advance(fatigue, float(person_actions._body_get(person, "fatigue_rest")), seconds, PersonFatigue.WORK_RATE, false)
+		productive = minf(productive, PersonFatigue.work_seconds(fatigue, seconds, PersonFatigue.effort_rate(person.body)))
+		var updated := PersonFatigue.advance(fatigue, float(person_actions._body_get(person, "fatigue_rest")), seconds, PersonFatigue.effort_rate(person.body), false)
 		var autonomous: bool = int(person.person_id) != lab.controlled_person_id()
 		if autonomous and updated[0] >= PersonFatigue.WORK_REST_AT - 0.000000001:
 			updated[0] = PersonFatigue.WORK_REST_AT
@@ -2515,8 +2561,9 @@ func advance_team_sustain(team: TerrainArmy, elapsed_game_seconds: float) -> Dic
 		for original: TerrainTestCharacter in [lab.character, lab.npc]:
 			if members.has(original.person_id):
 				var adapter: Dictionary = members[original.person_id]
-				original.fatigue = float(adapter.fatigue)
-				original.fatigue_rest = float(adapter.fatigue_rest)
+				if original._fatigue_pool.is_empty():
+					original.fatigue = PersonFatigue.read(adapter)
+					original.fatigue_rest = PersonFatigue.read(adapter, "fatigue_rest")
 				original.work_resting = bool(adapter.work_resting)
 		if not entry.delivery.is_empty() and _delivery_active(entry) and _delivery_valid(team, entry):
 			for person: Dictionary in _delivery_people(entry):

@@ -7,7 +7,7 @@ func _initialize() -> void:
 	var directory := Reader.BASE_MANIFEST.get_base_dir() + "/"
 	var sources := Reader.fingerprints()
 	assert(not sources.is_empty())
-	assert(Reader.plan("longsword_01", baseline).is_empty())
+	assert(Reader.plan("longsword_01_gold", baseline).is_empty())
 	assert(not Reader.set_root_path("res://assets/unapproved"))
 	assert(Reader.set_root_path("res://output/site_ranged_20260914/absent"))
 	for weapon: String in Reader.WEAPONS:
@@ -62,8 +62,9 @@ func _fixture(baseline: Dictionary, plan: Dictionary, sources: Dictionary) -> Di
 	for clip: Dictionary in plan.clips:
 		for direction: Dictionary in plan.directions:
 			for index: int in int(clip.samples):
-				var value: Dictionary = references["%s|%s|%d" % [clip.id, direction.id, index]].duplicate(true)
+				var value: Dictionary = references["%s|%s|%d" % [Reader.reference_clip(str(plan.appearance.parts.weapon), str(clip.id)), direction.id, index]].duplicate(true)
 				value.erase("collision_index")
+				value.clip = str(clip.id)
 				value.page = 0
 				value.selection_index = frames.size()
 				value.resolved_pose = str(clip.get("pose", clip.id))
