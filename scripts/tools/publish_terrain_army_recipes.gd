@@ -9,9 +9,23 @@ const REFRESH_DESTINATION := "res://assets/characters/terrain_lab_army/standard_
 var work := WORK
 var destination := DESTINATION
 var include_iron := false
+var prepare_replacement := false
 
 func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
+	if args.size() == 1 and args[0].begins_with("--prepare-complete-recipes="):
+		work = args[0].trim_prefix("--prepare-complete-recipes=").simplify_path().trim_suffix("/") + "/"
+		if not work.begins_with("res://output/") or work == "res://output/":
+			_fail("Complete recipe staging must be one named directory under res://output/")
+			return
+		_prepare()
+		return
+	if args.size() == 1 and args[0].begins_with("--prepare-replacement-complete-recipes="):
+		work = args[0].trim_prefix("--prepare-replacement-complete-recipes=").simplify_path().trim_suffix("/") + "/"
+		prepare_replacement = true
+		if not work.begins_with("res://output/") or work == "res://output/":
+			_fail("Complete recipe staging must be one named directory under res://output/")
+			return
 	if args in [PackedStringArray(["--prepare-western-iron-refresh"]), PackedStringArray(["--publish-western-iron-refresh"])]:
 		work = REFRESH_WORK
 		destination = REFRESH_DESTINATION
@@ -19,19 +33,35 @@ func _initialize() -> void:
 		if args[0] == "--prepare-western-iron-refresh":
 			_prepare()
 			return
-	elif args != PackedStringArray(["--publish-complete-recipes"]):
-		_fail("Explicit --publish-complete-recipes is required; this tool never publishes partial recipes")
+	elif not prepare_replacement and args != PackedStringArray(["--publish-complete-recipes"]):
+		_fail("Explicit prepare or publish command is required; this tool never publishes partial recipes")
 		return
-	if DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(destination)):
+	if DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(destination)) and not prepare_replacement:
 		_fail("Published recipe destination already exists; refusing to overwrite it")
 		return
-	var expected := _jobs()
+	if prepare_replacement and not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(destination)):
+		_fail("Replacement requires the original published recipe destination")
+		return
+	var sources := Plan.fingerprints()
+	if sources.size() != Plan.SOURCE_PATHS.size():
+		_fail("Complete recipe source fingerprints are required")
+		return
+	var recipe_total := _recipe_total()
+	if recipe_total < 1:
+		_fail("The current baseline cannot produce a complete equipment recipe plan")
+		return
+	var expected := _jobs(recipe_total)
 	var plan: Variant = JSON.parse_string(FileAccess.get_file_as_string(work + "batch_plan.json"))
-	if not plan is Dictionary or plan.get("status") != "READY" or plan.get("source_fingerprints") != Plan.fingerprints() or plan.get("source_manifest_md5") != FileAccess.get_md5(Reader.BASE_MANIFEST) or not plan.get("batches") is Array or plan.batches != expected:
+	if not plan is Dictionary or plan.get("status") != "READY" or plan.get("source_fingerprints") != sources or plan.get("source_manifest_md5") != FileAccess.get_md5(Reader.BASE_MANIFEST) or not plan.get("batches") is Array or plan.batches.size() != expected.size():
 		_fail("The full recipe plan is incomplete or its locked original sources changed")
 		return
+	for index: int in expected.size():
+		if not _same_job(plan.batches[index], expected[index]):
+			_fail("The locked recipe batch plan differs at index %d: %s vs %s" % [index, JSON.stringify(plan.batches[index]), JSON.stringify(expected[index])])
+			return
 	var grouped := {}
 	var records: Array[Dictionary] = []
+	var source_hashes := {}
 	for index: int in expected.size():
 		var entry: Dictionary = plan.batches[index]
 		var mask := int(entry.mask)
@@ -42,7 +72,7 @@ func _initialize() -> void:
 			_fail("Batch %d has no preserved successful bounded GPU verification" % index)
 			return
 		var manifest: Variant = JSON.parse_string(FileAccess.get_file_as_string(source + "/manifest.json"))
-		if not manifest is Dictionary or not manifest.get("metrics") is Dictionary or not manifest.get("pages") is Array or manifest.pages.size() != 1:
+		if not manifest is Dictionary or not manifest.get("metrics") is Dictionary or not manifest.get("pages") is Array or manifest.pages.size() != 1 or not _lossless(manifest):
 			_fail("Batch %d has no completed page manifest" % index)
 			return
 		var metrics: Dictionary = manifest.metrics
@@ -55,12 +85,20 @@ func _initialize() -> void:
 			grouped[key] = []
 		grouped[key].append(manifest)
 		records.append({"entry": entry, "manifest": manifest})
-	for index: int in range(0, expected.size(), 5):
+		for filename: String in ["manifest.json", "page_000.png", "page_000.res"]:
+			var path := source + "/" + filename
+			var file_md5 := FileAccess.get_md5(path)
+			if file_md5.length() != 32:
+				_fail("Batch %d source hash is unavailable: %s" % [index, path])
+				return
+			source_hashes[path] = file_md5
+	var batches_per_recipe := ceili(float(recipe_total) / float(Plan.MAX_BATCH_FRAMES))
+	for index: int in range(0, expected.size(), batches_per_recipe):
 		var entry: Dictionary = expected[index]
 		var batches: Array[Dictionary] = []
 		batches.assign(grouped[Plan.recipe_key(entry.mask, entry.get("iron", 0))])
 		if Reader.validate_batches(entry.mask, batches, work + "full/", entry.get("iron", 0)).is_empty():
-			_fail("Recipe %s lacks its exact 536 original samples or has mixed sources" % entry.output)
+			_fail("Recipe %s lacks its exact %d original samples or has mixed sources" % [entry.output, recipe_total])
 			return
 	var staging := work + "publish_%d" % int(Time.get_unix_time_from_system())
 	if DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(staging)):
@@ -68,6 +106,7 @@ func _initialize() -> void:
 		return
 	var catalog := {"schema_version": 1, "source_manifest_md5": plan.source_manifest_md5,
 		"source_fingerprints": plan.source_fingerprints, "recipes": {}}
+	var candidate_hashes := {}
 	for record: Dictionary in records:
 		var entry: Dictionary = record.entry
 		var manifest: Dictionary = record.manifest.duplicate(true)
@@ -87,12 +126,27 @@ func _initialize() -> void:
 		manifest.pages[0].resource_path = published + "/page_000.res"
 		if not _json(staged + "/manifest.json", manifest):
 			return
+		for filename: String in ["manifest.json", "page_000.png", "page_000.res"]:
+			var candidate_path := staged + "/" + filename
+			var candidate_md5 := FileAccess.get_md5(candidate_path)
+			if candidate_md5.length() != 32:
+				_fail("Candidate recipe hash is unavailable: " + candidate_path)
+				return
+			candidate_hashes[candidate_path] = candidate_md5
 		var key := str(manifest.recipe_key)
 		if not catalog.recipes.has(key):
 			catalog.recipes[key] = []
 		catalog.recipes[key].append(published + "/manifest.json")
 	if not _json(staging + "/catalog.json", catalog):
 		return
+	candidate_hashes[staging + "/catalog.json"] = FileAccess.get_md5(staging + "/catalog.json")
+	if candidate_hashes.size() != expected.size() * 3 + 1 or str(candidate_hashes[staging + "/catalog.json"]).length() != 32:
+		_fail("Candidate recipe file set is incomplete")
+		return
+	for path: String in source_hashes:
+		if FileAccess.get_md5(path) != source_hashes[path]:
+			_fail("Recipe source output changed while preparing publication: " + path)
+			return
 	if Plan.fingerprints() != plan.source_fingerprints or FileAccess.get_md5(Reader.BASE_MANIFEST) != plan.source_manifest_md5:
 		_fail("Recipe sources changed while preparing publication; no catalog was enabled")
 		return
@@ -102,19 +156,33 @@ func _initialize() -> void:
 	if not staging_absolute.replace("\\", "/").begins_with(ProjectSettings.globalize_path(work).replace("\\", "/") + "publish_") or not destination_absolute.replace("\\", "/").begins_with(workspace + "assets/characters/terrain_lab_army/standard_soldier/recipes/"):
 		_fail("Resolved publication move paths escaped their exact task directories")
 		return
+	if prepare_replacement:
+		var replacement_path := work + "replacement.json"
+		if FileAccess.file_exists(replacement_path) or not _json(replacement_path, {
+			"status": "READY", "candidate": staging, "destination": destination,
+			"backup": work + "baseline/v1", "source_manifest_md5": plan.source_manifest_md5,
+			"source_fingerprints": plan.source_fingerprints, "recipes": grouped.size(),
+			"samples": grouped.size() * recipe_total, "pages": expected.size(),
+			"candidate_files": candidate_hashes,
+		}):
+			_fail("Replacement metadata already exists or could not be written; candidate is retained")
+			return
+		print("TERRAIN ARMY RECIPES REPLACEMENT PREPARATION PASS: ", grouped.size(), " complete recipes / ", grouped.size() * recipe_total, " samples / ", expected.size(), " checked pages -> ", replacement_path)
+		quit(0)
+		return
 	if DirAccess.dir_exists_absolute(destination_absolute) or DirAccess.make_dir_recursive_absolute(destination_absolute.get_base_dir()) != OK or DirAccess.rename_absolute(staging_absolute, destination_absolute) != OK:
 		_fail("Final recipe folder could not be atomically published; staging is retained")
 		return
-	print("TERRAIN ARMY RECIPES PUBLISH PASS: ", grouped.size(), " complete recipes / ", grouped.size() * 536, " samples / ", expected.size(), " checked pages -> ", destination)
+	print("TERRAIN ARMY RECIPES PUBLISH PASS: ", grouped.size(), " complete recipes / ", grouped.size() * recipe_total, " samples / ", expected.size(), " checked pages -> ", destination)
 	quit(0)
 
-func _jobs() -> Array[Dictionary]:
+func _jobs(recipe_total: int) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	for variant: int in range(39 if include_iron else 32):
 		var mask := variant if variant < 32 else 31
 		var iron := 0 if variant < 32 else variant - 31
-		for first: int in range(0, 536, 128):
-			var count := mini(128, 536 - first)
+		for first: int in range(0, recipe_total, Plan.MAX_BATCH_FRAMES):
+			var count := mini(Plan.MAX_BATCH_FRAMES, recipe_total - first)
 			var folder := ("iron%d/" % iron if iron != 0 else "") + "m%02d/%03d_%03d" % [mask, first, count]
 			var entry := {"index": result.size(), "mask": mask, "first": first, "count": count, "output": work + "full/" + folder}
 			if include_iron:
@@ -127,14 +195,76 @@ func _prepare() -> void:
 	if FileAccess.file_exists(path):
 		_fail("Locked refresh plan already exists; refusing to replace it")
 		return
+	if DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(work)) != OK:
+		_fail("Cannot create the named recipe staging directory")
+		return
 	var source: Variant = JSON.parse_string(FileAccess.get_file_as_string(Reader.BASE_MANIFEST))
 	if not source is Dictionary or source.get("source_fingerprints") != Plan.fingerprints():
 		_fail("Publish and verify the newly baked baseline before locking recipes")
 		return
-	if not _json(path, {"status": "READY", "source_manifest_md5": FileAccess.get_md5(Reader.BASE_MANIFEST), "source_fingerprints": Plan.fingerprints(), "batches": _jobs()}):
+	var recipe_total := _recipe_total()
+	if recipe_total < 1:
+		_fail("The newly baked baseline cannot produce a complete equipment recipe plan")
 		return
-	print("TERRAIN ARMY REFRESH PLAN PASS: 32 original masks + 7 iron helmet/armor/boots combinations; 195 bounded batches")
+	if not _json(path, {"status": "READY", "source_manifest_md5": FileAccess.get_md5(Reader.BASE_MANIFEST), "source_fingerprints": Plan.fingerprints(), "batches": _jobs(recipe_total)}):
+		return
+	print("TERRAIN ARMY REFRESH PLAN PASS: %d recipes; %d frames per recipe" % [39 if include_iron else 32, recipe_total])
 	quit(0)
+
+func _recipe_total() -> int:
+	var source: Variant = JSON.parse_string(FileAccess.get_file_as_string(Reader.BASE_MANIFEST))
+	if not source is Dictionary or not source.get("clips") is Array or not source.get("directions") is Array or not source.get("appearance") is Dictionary:
+		return 0
+	var clips: Array[Dictionary] = []
+	clips.assign(source.clips)
+	var directions: Array[Dictionary] = []
+	directions.assign(source.directions)
+	var plan := Plan.build(PackedStringArray(["--recipe-mask=0", "--recipe-output=res://output/validation", "--recipe-clips=all", "--recipe-directions=all", "--recipe-first=0", "--recipe-count=1"]), clips, directions, source.appearance)
+	return int(plan.get("recipe_total", 0)) if plan.get("ok", false) else 0
+
+func _same_job(actual: Variant, expected: Dictionary) -> bool:
+	if not actual is Dictionary or actual.size() != expected.size():
+		return false
+	for key: String in expected:
+		if not actual.has(key):
+			return false
+		if expected[key] is int:
+			if not (actual[key] is int or actual[key] is float) or float(actual[key]) != float(expected[key]):
+				return false
+		elif actual[key] != expected[key]:
+			return false
+	return true
+
+func _lossless(manifest: Dictionary) -> bool:
+	if not manifest.get("metrics") is Dictionary or not manifest.metrics.has_all(["decoded_rgba_bytes", "png_bytes", "resource_bytes", "pixel_sha256", "png_decoded_sha256", "resource_decoded_sha256"]):
+		return false
+	var page: Dictionary = manifest.pages[0]
+	var png := Image.load_from_file(str(page.path))
+	var texture := ResourceLoader.load(str(page.resource_path), "Texture2D", ResourceLoader.CACHE_MODE_IGNORE) as Texture2D
+	if png == null or texture == null:
+		return false
+	var restored := texture.get_image()
+	var expected := Vector2i(int(page.width), int(page.height))
+	if restored == null or png.get_size() != expected or restored.get_size() != expected or png.get_format() != Image.FORMAT_RGBA8 or restored.get_format() != Image.FORMAT_RGBA8:
+		return false
+	var png_bytes := png.get_data()
+	if png_bytes != restored.get_data() or png_bytes.size() != int(manifest.metrics.decoded_rgba_bytes):
+		return false
+	var hashing := HashingContext.new()
+	if hashing.start(HashingContext.HASH_SHA256) != OK or hashing.update(png_bytes) != OK:
+		return false
+	var digest := hashing.finish().hex_encode()
+	if digest != str(manifest.metrics.pixel_sha256) or digest != str(manifest.metrics.png_decoded_sha256) or digest != str(manifest.metrics.resource_decoded_sha256):
+		return false
+	for pair: Array in [[str(page.path), "png_bytes"], [str(page.resource_path), "resource_bytes"]]:
+		var file := FileAccess.open(pair[0], FileAccess.READ)
+		if file == null:
+			return false
+		var length := file.get_length()
+		file.close()
+		if length != int(manifest.metrics[pair[1]]):
+			return false
+	return true
 
 func _json(path: String, data: Dictionary) -> bool:
 	var file := FileAccess.open(path, FileAccess.WRITE)

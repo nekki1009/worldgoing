@@ -34,6 +34,7 @@ const CLIPS: Array[Dictionary] = [
 	{"id": "attack_hammer", "samples": 12, "rate": 24.0, "weapon": "hammer_01"},
 	{"id": "attack_dagger", "samples": 12, "rate": 24.0, "weapon": "dagger_01"},
 	{"id": "attack_unarmed", "samples": 12, "rate": 24.0, "weapon": "none"},
+	{"id": "attack_jump_heavy", "samples": 12, "rate": 24.0},
 	{"id": "attack_bow", "samples": 12, "rate": 24.0, "weapon": "bow_01"},
 	{"id": "attack_crossbow", "samples": 12, "rate": 24.0, "weapon": "crossbow_01"},
 	{"id": "guard", "samples": 4, "rate": 24.0},
@@ -67,6 +68,7 @@ var _geometry := Collision.new()
 var _appearance: Dictionary
 var _append_dir := ""
 var _append_clips: Array[String] = []
+var _baseline_output := ""
 var _base_manifest := {}
 var _base_atlas: Image
 var _recipe := {}
@@ -109,6 +111,15 @@ func _initialize() -> void:
 		elif argument.begins_with("--append-combat-movement="):
 			_append_dir = argument.trim_prefix("--append-combat-movement=").simplify_path().trim_suffix("/")
 			_append_clips.assign(["combat_walk", "combat_run"])
+		elif argument.begins_with("--baseline-output="):
+			_baseline_output = argument.trim_prefix("--baseline-output=").simplify_path().trim_suffix("/")
+	if not _baseline_output.is_empty():
+		assert(_append_clips.is_empty() and _baseline_output.begins_with("res://output/") and _baseline_output != "res://output", "Baseline staging must be one named output directory")
+		for path: String in [ATLAS_PATH, ATLAS_RESOURCE_PATH, MANIFEST_PATH, COLLISION_PATH]:
+			if FileAccess.file_exists(_destination(path)):
+				push_error("Baseline staging file already exists; choose a fresh directory: " + _destination(path))
+				quit(2)
+				return
 	if not _append_clips.is_empty():
 		assert(_append_dir.begins_with("res://output/"), "Append only to a staging output directory, never overwrite the source bundle")
 	call_deferred("_run")
@@ -288,7 +299,7 @@ func _run() -> void:
 			manifest_frames.back()["resolved_pose"] = item.resolved_pose
 			manifest_frames.back()["selection_index"] = item.selection_index
 		frame_index += 1
-	var output_dir := str(_recipe.output) if not _recipe.is_empty() else (_append_dir if not _append_dir.is_empty() else OUTPUT_DIR)
+	var output_dir := str(_recipe.output) if not _recipe.is_empty() else (_append_dir if not _append_dir.is_empty() else (_baseline_output if not _baseline_output.is_empty() else OUTPUT_DIR))
 	var absolute_dir := ProjectSettings.globalize_path(output_dir)
 	DirAccess.make_dir_recursive_absolute(absolute_dir)
 	assert(atlas.save_png(ProjectSettings.globalize_path(_destination(ATLAS_PATH))) == OK, "Failed to save soldier atlas")
@@ -351,6 +362,8 @@ func _destination(source_path: String) -> String:
 	if not _recipe.is_empty() and bool(_recipe.get("ok", false)):
 		var filename := "manifest.json" if source_path == MANIFEST_PATH else ("page_000.res" if source_path == ATLAS_RESOURCE_PATH else "page_000.png")
 		return str(_recipe.output) + "/" + filename
+	if not _baseline_output.is_empty():
+		return _baseline_output + "/" + source_path.get_file()
 	return _append_dir + "/" + source_path.get_file() if not _append_dir.is_empty() else source_path
 
 func _write_recipe_manifest(atlas: Image, frames: Array[Dictionary]) -> void:

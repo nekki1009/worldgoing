@@ -1,55 +1,75 @@
 {
-	"appearance": {
-		"body": 0.0,
-		"coat": "bay",
-		"hair_dye": "9b775dff",
-		"hair_dyed": false,
-		"hair_mask": "auto",
-		"mounted": false,
-		"parts": {
-			"armor": "armor_light_leather_01",
-			"boots": "boots_leather_01",
-			"cape": "none",
-			"face": "face_standard_01",
-			"hair": "hair_male_01",
-			"helmet": "none",
-			"outfit": "outfit_underlayer_01",
-			"shield": "none",
-			"weapon": "axe_01_steel"
-		},
-		"tack": true
-	},
-	"complete": true,
-	"decoded_bytes": 36999168.0,
-	"encoding": "RGB8: slot ID 1..5 / neutral lit shade / dominant-slot coverage; nearest, no mipmaps",
-	"frame_count": 584.0,
-	"height": 3011.0,
-	"mask_md5": "d04b981cc10c64ddd003f1c5562eea5a",
-	"mask_path": "res://assets/characters/terrain_lab_army/standard_soldier/dyes/v1/axe_01_steel.png",
-	"schema_version": 1.0,
-	"slots": [
-		"helmet",
-		"armor",
-		"boots",
-		"cape",
-		"outfit"
-	],
-	"appearance_restore_revalidation": {"previous_editor_md5": "f7a215489994c5d73b3878ae88cfebab", "rebaked": false, "evidence": "res://output/site_appearance_restore_20260917/README.md"},
-	"appearance_lining_revalidation": {"previous_editor_md5": "81a03fdc304bdbf59dc2134631fa352a", "rebaked": false, "evidence": "res://output/site_appearance_lining_20260917/README.md"},
-	"source_fingerprints": {
-		"res://assets/characters/human/q35/combat/combat_cloth_ground.gdshader": "62b93890f642e4c305fe9e2ca6c0c0d3",
-		"res://assets/characters/human/q35/standard_anime_female_character_pack.glb": "0b1d3a5d11126400321e2eb92e10c921",
-		"res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "4109638114618da5fc8c2fd653d6b638",
-		"res://scripts/terrain_lab/character_combat_timings.gd": "9f51fd6bc484e4ac86235bd076a463fb",
-		"res://scripts/terrain_lab/terrain_army_dye_atlas.gd": "8ff2818db4b4fab5c03ff6a2a72617af",
-		"res://scripts/tools/bake_terrain_army_dyes.gd": "78194bf27d98f98ce3263af93ec45645",
-		"res://scripts/tools/bake_terrain_army_soldier.gd": "8219e20cf6e901cfa857b802bc65564f",
-		"res://scripts/tools/terrain_army_recipe_bake_plan.gd": "403489117c6cd7788fa3bad49b748ca0",
-		"res://scripts/ui/equipment_dye.gd": "df61c8d2e9fd6d58e8ebe3607f4aca65",
-		"res://scripts/ui/human_character_3d_editor.gd": "17839e37b0d822fafb7cd93aa9664974",
-		"res://scripts/ui/weapon_materials.gd": "922713e657be18ae5a0f658a73b14223"
-	},
-	"source_manifest": "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/axe_01_steel/manifest.json",
-	"source_manifest_md5": "bf97e61a1c94335ac4bb371a5825e5dc",
-	"width": 4096.0
+  "appearance": {
+    "body": 0.0,
+    "coat": "bay",
+    "hair_dye": "9b775dff",
+    "hair_dyed": false,
+    "hair_mask": "auto",
+    "mounted": false,
+    "parts": {
+      "armor": "armor_light_leather_01",
+      "boots": "boots_leather_01",
+      "cape": "none",
+      "face": "face_standard_01",
+      "hair": "hair_male_01",
+      "helmet": "none",
+      "outfit": "outfit_underlayer_01",
+      "shield": "none",
+      "weapon": "axe_01_steel"
+    },
+    "tack": true
+  },
+  "complete": true,
+  "decoded_bytes": 41668608.0,
+  "encoding": "RGB8: slot ID 1..5 / neutral lit shade / dominant-slot coverage; nearest, no mipmaps",
+  "frame_count": 632.0,
+  "height": 3391.0,
+  "mask_md5": "5f8fe73352f77d0cd31565a7241e94c7",
+  "mask_path": "res://assets/characters/terrain_lab_army/standard_soldier/dyes/v1/axe_01_steel.png",
+  "schema_version": 1.0,
+  "slots": [
+    "helmet",
+    "armor",
+    "boots",
+    "cape",
+    "outfit"
+  ],
+  "source_fingerprints": {
+    "res://assets/characters/human/q35/combat/combat_cloth_ground.gdshader": "62b93890f642e4c305fe9e2ca6c0c0d3",
+    "res://assets/characters/human/q35/standard_anime_female_character_pack.glb": "d2aa7569986f1015145790b548299431",
+    "res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "6662e1c8148ade5fb64df554075ab678",
+    "res://scripts/terrain_lab/character_combat_timings.gd": "9f51fd6bc484e4ac86235bd076a463fb",
+    "res://scripts/terrain_lab/terrain_army_dye_atlas.gd": "2a0d1710f4399ecf11bf5716fdd0af79",
+    "res://scripts/tools/bake_terrain_army_dyes.gd": "78194bf27d98f98ce3263af93ec45645",
+    "res://scripts/tools/bake_terrain_army_soldier.gd": "806e0d39a1775382448734bc7898f68c",
+    "res://scripts/tools/terrain_army_recipe_bake_plan.gd": "675430f5afda26970f83b67f99cf6cda",
+    "res://scripts/ui/equipment_dye.gd": "3e7554df397f59dd11357b4d9aa27572",
+    "res://scripts/ui/human_character_3d_editor.gd": "6e8a7b663c76058bb3d49ef60d7296f6",
+    "res://scripts/ui/weapon_materials.gd": "922713e657be18ae5a0f658a73b14223"
+  },
+  "source_manifest": "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/axe_01_steel/manifest.json",
+  "source_manifest_md5": "4e7e53c0f63877b1f02a99dceac30eab",
+  "width": 4096.0,
+  "cloth_hats_additive_revalidation": {
+    "rebaked": false,
+    "evidence": "output/cloth_hats_20260918",
+    "old_manifest_md5": "b236c276b7860221c48ca8b1a556e40d",
+    "old_sources": {
+      "res://assets/characters/human/q35/standard_anime_female_character_pack.glb": "0b1d3a5d11126400321e2eb92e10c921",
+      "res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "4109638114618da5fc8c2fd653d6b638",
+      "res://scripts/ui/equipment_dye.gd": "df61c8d2e9fd6d58e8ebe3607f4aca65",
+      "res://scripts/ui/human_character_3d_editor.gd": "17839e37b0d822fafb7cd93aa9664974"
+    }
+  },
+  "neutral_faces_additive_revalidation": {
+    "rebaked": false,
+    "evidence": "output/neutral_faces_20260918",
+    "old_manifest_md5": "e62b5d2a84e1f39b1b538696c6e30a15",
+    "old_sources": {
+      "res://assets/characters/human/q35/standard_anime_female_character_pack.glb": "54a482040cfed80747208e803e5f2857",
+      "res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "745e25a4cc67f7e8e232e98ddaf592a3",
+      "res://scripts/ui/equipment_dye.gd": "3e7554df397f59dd11357b4d9aa27572",
+      "res://scripts/ui/human_character_3d_editor.gd": "3c2c37d27e5190b1da15815a7166502a"
+    }
+  }
 }

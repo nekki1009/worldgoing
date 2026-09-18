@@ -12,14 +12,16 @@ func _initialize() -> void:
 	assert(Reader.set_root_path("res://output/site_ranged_20260914/absent"))
 	for weapon: String in Reader.WEAPONS:
 		var plan := Reader.plan(weapon, baseline)
-		assert(plan.recipe_total == 584 and plan.clips.size() == 19)
+		assert(not plan.is_empty() and plan.clips.any(func(clip: Dictionary) -> bool: return clip.id == "attack_jump_heavy"))
+		var frame_count := int(plan.recipe_total)
 		assert(plan.appearance.parts.weapon == weapon and plan.appearance.parts.shield == "none")
 		assert(plan.appearance.parts.armor == baseline.appearance.parts.armor)
 		assert(Reader.recipe(plan.appearance).is_empty(), "An absent manifest cannot admit a ranged recipe")
 		var batch := _fixture(baseline, plan, sources)
 		var admitted := Reader.validate_batches(weapon, [batch], directory)
-		assert(not admitted.is_empty() and admitted.sequences.size() == 76)
+		assert(not admitted.is_empty() and admitted.sequences.size() == plan.clips.size() * plan.directions.size())
 		assert(admitted.sequences["attack_unarmed|down"][0]._page.resource_path == baseline.atlas.resource_path)
+		assert(admitted.sequences.has("attack_jump_heavy|down"))
 		assert(admitted.sequences.has(("attack_bow" if weapon == "bow_01" else "attack_crossbow") + "|up"))
 		assert(not admitted.sequences.has("walk_slash|down"), "Ranged melee never silently swaps to sword artwork")
 		Reader._recipes[weapon] = admitted
@@ -29,9 +31,9 @@ func _initialize() -> void:
 			wrong.parts[slot] = "unapproved"
 			assert(Reader.recipe(wrong).is_empty(), "Only the complete exact ranged appearance is admitted")
 		var split: Array[Dictionary] = []
-		for first in range(0, Reader.FRAME_COUNT, 128):
+		for first in range(0, frame_count, 128):
 			var part := batch.duplicate(true)
-			part.frames = batch.frames.slice(first, mini(first + 128, Reader.FRAME_COUNT))
+			part.frames = batch.frames.slice(first, mini(first + 128, frame_count))
 			part.batch.first = first
 			part.batch.count = part.frames.size()
 			split.append(part)
@@ -51,7 +53,7 @@ func _initialize() -> void:
 				9: wrong.metrics.resource_decoded_sha256 = "mismatch"
 			assert(Reader.validate_batches(weapon, [wrong], directory).is_empty(), "Reject malformed ranged batch %d" % failure)
 	assert(Reader.set_root_path(Reader.ROOT))
-	print("TERRAIN ARMY RANGED ATLAS PASS: 2 exact appearances, 584 samples each, 76 sequences, missing/mixed/duplicate/path/pixel metadata rejection; synthetic metadata only")
+	print("TERRAIN ARMY RANGED ATLAS PASS: exact appearances and dynamic samples include jump heavy; missing/mixed/duplicate/path/pixel metadata rejection; synthetic metadata only")
 	quit(0)
 
 func _fixture(baseline: Dictionary, plan: Dictionary, sources: Dictionary) -> Dictionary:
@@ -77,5 +79,5 @@ func _fixture(baseline: Dictionary, plan: Dictionary, sources: Dictionary) -> Di
 		"appearance": plan.appearance, "source_manifest_md5": FileAccess.get_md5(Reader.BASE_MANIFEST),
 		"source_fingerprints": sources, "map_scale": baseline.map_scale, "clips": plan.clips,
 		"directions": plan.directions, "pages": [page], "frames": frames,
-		"batch": {"first": 0, "count": frames.size(), "selected_total": Reader.FRAME_COUNT, "recipe_total": Reader.FRAME_COUNT},
+		"batch": {"first": 0, "count": frames.size(), "selected_total": plan.recipe_total, "recipe_total": plan.recipe_total},
 		"metrics": {"pixel_sha256": digest, "png_decoded_sha256": digest, "resource_decoded_sha256": digest}}

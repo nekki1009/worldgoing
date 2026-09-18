@@ -3,6 +3,7 @@ extends "res://scripts/tools/publish_terrain_army_ranged.gd"
 ## up first; partial generations and changed sources are never admitted.
 const DyeAtlas = preload("res://scripts/terrain_lab/terrain_army_dye_atlas.gd")
 const Plan = preload("res://scripts/tools/terrain_army_recipe_bake_plan.gd")
+const SoldierBaker = preload("res://scripts/tools/bake_terrain_army_soldier.gd")
 var stage_root := "res://output/equipment_palette_policy_20260914"
 var prepare_only := false
 const BASE := "res://assets/characters/terrain_lab_army/standard_soldier"
@@ -21,15 +22,28 @@ func _initialize() -> void:
 			assert(args[1].begins_with("--attempt=") and args[1].trim_prefix("--attempt=").is_valid_identifier())
 			phase += "_" + args[1].trim_prefix("--attempt=")
 	var sources := Plan.fingerprints()
+	assert(sources.size() == Plan.SOURCE_PATHS.size(), "Complete recipe source fingerprints are required")
 	var pairs := {}
 	if args[0] == "--base":
 		var manifest: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(stage_root + "/base/standard_soldier_atlas.json"))
 		var original: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(BASE + "/standard_soldier_atlas.json"))
-		assert(manifest.source_fingerprints == sources and manifest.clips == original.clips and manifest.appearance == original.appearance)
-		assert(manifest.frames.size() == original.frames.size() and manifest.frames.size() == 1080)
-		for index in range(original.frames.size()):
-			for field in ["clip", "direction", "frame", "duration", "sample_time", "collision_index"]:
-				assert(manifest.frames[index][field] == original.frames[index][field], "Base timing/index drift: " + field)
+		var expected_clips: Array = JSON.parse_string(JSON.stringify(SoldierBaker.CLIPS))
+		var expected_directions: Array = JSON.parse_string(JSON.stringify(SoldierBaker.DIRECTIONS))
+		assert(manifest.source_fingerprints == sources, "Base source fingerprint drift")
+		assert(manifest.clips == expected_clips and manifest.directions == expected_directions, "Base clip plan drift")
+		assert(manifest.appearance == original.appearance)
+		var expected_total := 0
+		for clip: Dictionary in SoldierBaker.CLIPS:
+			expected_total += int(clip.samples) * SoldierBaker.DIRECTIONS.size()
+		assert(manifest.frames.size() == expected_total)
+		var expected_index := 0
+		for clip: Dictionary in SoldierBaker.CLIPS:
+			for direction: Dictionary in SoldierBaker.DIRECTIONS:
+				for frame_index: int in range(int(clip.samples)):
+					var frame: Dictionary = manifest.frames[expected_index]
+					assert(frame.clip == clip.id and frame.direction == direction.id and frame.frame == frame_index and frame.collision_index == expected_index, "Base frame plan drift")
+					expected_index += 1
+		assert(expected_index == expected_total)
 		var png := Image.load_from_file(stage_root + "/base/standard_soldier_atlas.png")
 		var resource := load(stage_root + "/base/standard_soldier_atlas.res") as Texture2D
 		assert(png.get_data() == resource.get_image().get_data())
@@ -48,7 +62,9 @@ func _initialize() -> void:
 			var directory := stage_root + "/ranged/" + weapon + "/"
 			var manifest: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(directory + "manifest.json"))
 			assert(not Reader.validate_batches(weapon, [manifest], directory).is_empty() and _lossless(manifest))
-			assert(manifest.batch.recipe_complete and manifest.batch.count == Reader.FRAME_COUNT and manifest.batch.first == 0)
+			var baseline: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(Reader.BASE_MANIFEST))
+			var plan := Reader.plan(weapon, baseline)
+			assert(not plan.is_empty() and manifest.batch.recipe_complete and manifest.batch.count == plan.recipe_total and manifest.batch.first == 0)
 			for filename: String in ["page_000.png", "page_000.res"]:
 				pairs[directory + filename] = Reader.ROOT + "/" + weapon + "/" + filename
 			manifest.pages[0].path = Reader.ROOT + "/" + weapon + "/page_000.png"
@@ -74,6 +90,7 @@ func _initialize() -> void:
 			pixels.convert(Image.FORMAT_RGB8)
 			var bytes := pixels.get_data()
 			for index in range(0, bytes.size(), 3): assert(bytes[index] <= 5, "Invalid categorical dye slot")
+			manifest.source_manifest = BASE + "/standard_soldier_atlas.json" if key == "base" else Reader.ROOT + "/" + key + "/manifest.json"
 			manifest.mask_path = DyeAtlas.ROOT + "/" + key + ".png"
 			assert(_write_json(path + "_publish.json", manifest))
 			pairs[path + ".png"] = manifest.mask_path

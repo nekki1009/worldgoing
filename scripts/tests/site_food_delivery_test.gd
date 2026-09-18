@@ -143,19 +143,36 @@ func _run() -> void:
 	_near(float(source.sustain.open_rations), 0.0)
 	_near(float(destination.sustain.open_rations), 1.5, "Do not invent grain from combined open food")
 	_near(_food(lab), conserved)
-	# NPC 80/50 pauses this SAME job without transferring or charging rest as work.
-	first.combat_units[1].fatigue = 79.999
+	# The isolated work helper does not advance the earlier real hit's pose or
+	# combat timeout. Let the original common clock settle both before testing
+	# whole-team safe recovery; never erase a busy pose or combat guard by hand.
+	lab._process(maxf(float(data.site.combat_left), maxf(float(first.combat_units[1].get("exchange_stagger", 0.0)), 1.0)) + TerrainLab.EXCHANGE_ACTION_STEP)
+	assert(float(data.site.combat_left) == 0.0 and first.combat_order == TerrainArmy.CombatOrder.HOLD)
+	for index: int in [1, 2, 3]:
+		assert(str(first.combat_units[index].pose) == "idle" and first.moving_to[index] == TerrainArmy.INVALID_CELL)
+	_near(_food(lab), conserved, "Real contact recovery cannot create or lose food")
+	# Shared non-player 80/50 pauses this SAME job, without transfers or rest work.
+	var carrier: Dictionary = first.combat_units[1]
+	var shared := PersonFatigue.pool(carrier)
+	assert(is_same(shared, first.team_fatigue) and int(shared.count) == 3)
+	assert(PersonFatigue.pool(first_row).is_empty(), "The controlled captain keeps personal fatigue")
+	for index: int in [2, 3]:
+		assert(is_same(shared, PersonFatigue.pool(first.combat_units[index])))
+	_near(PersonFatigue.effort_rate(carrier), PersonFatigue.WORK_RATE / float(shared.count), "One carrier contributes work divided by actual shared membership")
+	PersonFatigue.write(carrier, "fatigue", 79.999)
+	_near(PersonFatigue.read(first.combat_units[2]), 79.999, "Boundary injection must change the real shared pool")
 	assert(controller.begin_team_food(second, 1, second_id, team_source).ok)
 	var stock_before: Dictionary = source.inventory.duplicate()
 	_work(lab, 5.0)
-	assert(not destination.delivery.is_empty() and first.combat_units[1].work_resting)
+	assert(not destination.delivery.is_empty() and carrier.work_resting)
+	_near(PersonFatigue.read(carrier), 80.0, "Shared work stops at 80")
 	assert(source.inventory == stock_before)
 	var work_left := float(destination.delivery.left)
 	_work(lab, 5430.0)
 	assert(float(destination.delivery.left) == work_left and source.inventory == stock_before)
-	assert(float(first.combat_units[1].fatigue) <= 50.0)
+	_near(PersonFatigue.read(carrier), 50.0, "Shared safe rest recovers 30 after its 30-second delay")
 	_work(lab, 5.0)
-	assert(destination.delivery.is_empty() and not first.combat_units[1].work_resting)
+	assert(destination.delivery.is_empty() and not carrier.work_resting)
 	_near(_food(lab), conserved)
 	# A real foreign person's opened food uses the same ground container. It is
 	# public at its physical cell, not routed to victor stock or rounded away.

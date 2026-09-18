@@ -48,7 +48,7 @@ func _result(role: String, big: bool = false) -> Dictionary:
 		"hp": (2.0 if big else 1.0) if role == "loser" else 0.0,
 		"stun": (18.0 if big else 8.0) if role == "loser" else 0.0,
 		"stagger": (0.65 if big else 0.35) if role == "loser" else (0.3 if role == "draw" else 0.0),
-		"fatigue": 0.5, "knockback": big and role == "loser", "other_identity": 9999}
+		"fatigue": 0.0 if role == "draw" else 0.5, "knockback": big and role == "loser", "other_identity": 9999}
 
 func _same(a: Variant, b: Variant, context: String) -> bool:
 	if a != b:

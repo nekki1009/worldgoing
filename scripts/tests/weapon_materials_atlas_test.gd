@@ -10,12 +10,13 @@ func _initialize() -> void:
 	for row: Dictionary in Reader.Materials.OPTIONS:
 		if row.id == "none": continue
 		var plan := Reader.plan(row.id, baseline)
-		assert(plan.recipe_total == 584 and plan.clips.size() == 19)
+		assert(not plan.is_empty() and plan.clips.any(func(clip: Dictionary) -> bool: return clip.id == "attack_jump_heavy"))
 		assert(plan.appearance.parts.weapon == row.id and plan.appearance.parts.shield == "none")
 		assert(Reader.recipe(plan.appearance).is_empty(), "Unbaked options must remain rejected")
 		var batch := _fixture(baseline, plan, sources)
 		var admitted := Reader.validate_batches(row.id, [batch], directory)
-		assert(not admitted.is_empty() and admitted.sequences.size() == 76, row.id)
+		assert(not admitted.is_empty() and admitted.sequences.size() == plan.clips.size() * plan.directions.size(), row.id)
+		assert(admitted.sequences.has("attack_jump_heavy|down"))
 		var attack: String = str(Reader.Materials.ATTACKS[Reader.Materials.family(StringName(row.id))])
 		assert(admitted.sequences.has(attack + "|up"))
 		assert(admitted.sequences["guard|down"][0].resolved_pose == Reader.guard_pose(row.id, "guard"))
@@ -34,5 +35,5 @@ func _initialize() -> void:
 		count += 1
 		print("WEAPON_MATERIAL_ATLAS_CONTRACT_OPTION ", row.id)
 	assert(count == 44 and not Reader.supports_weapon("none") and not Reader.supports_weapon("axe_01_gold"))
-	print("WEAPON_MATERIAL_ATLAS_CONTRACT_PASS 44 exact recipes x 584 frames; guard-family timing, incomplete/mixed/stale/unsupported rejection; metadata only")
+	print("WEAPON_MATERIAL_ATLAS_CONTRACT_PASS 44 exact recipes with dynamic frames including jump heavy; guard-family timing, incomplete/mixed/stale/unsupported rejection; metadata only")
 	quit(0)

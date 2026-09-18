@@ -137,18 +137,19 @@ static func seed_person_equipment(data: TerrainData, holder: Dictionary, person_
 
 # Read-only projection. Body/face/hair remain the original person's appearance;
 # every removable slot is reconstructed solely from its current actual holder.
-static func equipment_appearance(data: TerrainData, holder: Dictionary, original: Dictionary) -> Dictionary:
+static func equipment_appearance(data: TerrainData, holder: Dictionary, original: Dictionary, saved_state: Dictionary = {}) -> Dictionary:
 	if not HumanCharacter3DEditor.valid_appearance(original) or not _item_holder_shape(holder):
 		return {}
 	var appearance := original.duplicate(true)
+	var state := data.site if saved_state.is_empty() else saved_state
 	appearance.erase("equipment_dyes")
 	for slot: String in EQUIPMENT_SLOTS:
 		appearance.parts[slot] = "none"
 	for slot: String in holder.equipped:
 		if slot not in EQUIPMENT_SLOTS:
 			return {}
-		var record: Dictionary = data.site.get("item_records", {}).get(holder.equipped[slot], {})
-		var definition: Dictionary = data.site.get("item_definitions", {}).get(str(record.get("definition", "")), {})
+		var record: Dictionary = state.get("item_records", {}).get(holder.equipped[slot], {})
+		var definition: Dictionary = state.get("item_definitions", {}).get(str(record.get("definition", "")), {})
 		if record.get("holder") != holder.holder or definition.get("slot") != slot:
 			return {}
 		appearance.parts[slot] = str(definition.asset)
@@ -914,11 +915,11 @@ static func game_seconds(real_seconds: float, combat_left: float) -> float:
 	var combat := minf(maxf(0.0, real_seconds), maxf(0.0, combat_left))
 	return combat + maxf(0.0, real_seconds - combat) * 60.0
 
-static func advance(data: TerrainData, real_seconds: float, worker_ready: bool = false, manual_ready: bool = false, occupied: Callable = Callable(), work_time: Callable = Callable(), crew_work: Callable = Callable(), worker_limit: int = CARRY_CAPACITY, manual_limit: int = CARRY_CAPACITY) -> void:
-	if data.site.is_empty() or bool(data.site.paused) or real_seconds <= 0.0 or not is_finite(real_seconds):
+static func advance(data: TerrainData, real_seconds: float, worker_ready: bool = false, manual_ready: bool = false, occupied: Callable = Callable(), work_time: Callable = Callable(), crew_work: Callable = Callable(), worker_limit: int = CARRY_CAPACITY, manual_limit: int = CARRY_CAPACITY, time_multiplier: float = 1.0) -> void:
+	if data.site.is_empty() or bool(data.site.paused) or real_seconds <= 0.0 or not is_finite(real_seconds) or time_multiplier <= 0.0 or not is_finite(time_multiplier):
 		return
 	# Integrate the combat-to-peace boundary exactly, including long frames.
-	var minutes := game_seconds(real_seconds, float(data.site.combat_left)) / 60.0
+	var minutes := game_seconds(real_seconds, float(data.site.combat_left)) * time_multiplier / 60.0
 	var combat_seconds := minf(real_seconds, float(data.site.combat_left))
 	data.site.combat_left = maxf(0.0, float(data.site.combat_left) - combat_seconds)
 	while minutes > 0.00000001:

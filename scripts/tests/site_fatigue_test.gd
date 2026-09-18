@@ -51,6 +51,8 @@ func run() -> void:
 	lab.set_process(false)
 	lab.character.set_process(false)
 	lab.npc.set_process(false)
+	lab.npc_allied_toggle.button_pressed = false # This historical threat fixture explicitly needs an opponent.
+	assert(lab.npc.faction_id != lab.character.faction_id)
 	lab.terrain.site.worker_enabled = false
 	lab.site_controller.save_path = SAVE
 	var actor := lab.character
@@ -177,6 +179,7 @@ func run() -> void:
 	for index in range(100):
 		cells.append(Vector2i(40 + index % 10, 40 + floori(float(index) / 10)))
 	assert(team.deploy_at(data, actor, npc, cells) and team.enable_combat(false))
+	assert(not team.exchange_enabled and team.team_fatigue.is_empty(), "Historical geometry fixture retains original individual fatigue")
 	lab.combat_armies.assign([team])
 	team.set_process(false)
 	team.training = 60

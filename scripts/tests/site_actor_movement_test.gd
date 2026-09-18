@@ -86,13 +86,22 @@ func run() -> void:
 	var npc := actors[1] as TerrainTestNPC
 	var results: Array[Dictionary] = []
 	for chunks: int in [1, 120]:
+		lab._action_time_remainder = 0.0
 		assert(npc.place(Vector2i(30, 30), true))
 		assert(npc.issue_command(TerrainTestNPC.Command.MOVE_TO_CELL, Vector2i(34, 30)))
 		for part in range(chunks):
-			lab._advance_combat(1.0 / chunks)
+			# Render chunks enter the original retained action clock; calling the
+			# inner step directly would invent a different 120 Hz navigation tick.
+			lab._advance_action_time(1.0 / chunks)
 		results.append(npc.capture_state())
-	assert(results[0].cell == results[1].cell and results[0].navigation == results[1].navigation)
-	assert(Vector2(results[0].position[0], results[0].position[1]).distance_to(Vector2(results[1].position[0], results[1].position[1])) < 0.001)
+	if results[0].cell != results[1].cell or results[0].navigation != results[1].navigation:
+		push_error("Original retained-clock NPC cell/navigation differs across render chunks")
+		quit(1)
+		return
+	if Vector2(results[0].position[0], results[0].position[1]).distance_to(Vector2(results[1].position[0], results[1].position[1])) >= 0.001:
+		push_error("Original retained-clock NPC position differs across render chunks: %s versus %s" % [results[0].position, results[1].position])
+		quit(1)
+		return
 	lab.free()
 	for actor: TerrainTestCharacter in actors:
 		actor.queue_free()

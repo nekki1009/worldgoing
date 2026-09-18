@@ -33,6 +33,7 @@ func run() -> void:
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	stage("TerrainLab ready")
+	lab.npc.initialize_visual() # Army presentation test keeps an explicit original-actor fixture.
 	assert(lab.character.editor._body_index == 0 and lab.npc.editor._body_index == 1)
 	current_scene = lab
 	lab.set_process(false)

@@ -42,7 +42,7 @@ func _run() -> void:
 	assert(editor.model_root.find_child("Outfit_Underlayer_01_Trousers", true, false) == null, "The thick trousers are still in the Outfit slot")
 	assert(editor.part_options.size() == 10, "Expected Body plus 9 prepared part slots")
 	assert(editor.body_option.item_count == 2, "Male and female Body fields are missing")
-	assert(editor.part_options[&"face"].item_count == 5, "Four face options plus None are missing")
+	assert(editor.part_options[&"face"].item_count == 9, "Eight face options plus None are missing")
 	for part_id: StringName in [&"hair", &"helmet", &"outfit", &"armor", &"cape", &"weapon", &"shield", &"boots"]:
 		var part_option := editor.part_options[part_id] as OptionButton
 		var expected_count: int = editor._part_definition(part_id).options.size()
@@ -67,7 +67,7 @@ func _run() -> void:
 			assert(not part_option.is_item_disabled(2), "Third hair option is not available in the male pack")
 			assert(not part_option.is_item_disabled(3), "Fourth hair option is not available in the male pack")
 	assert(not editor.part_options[&"face"].disabled, "Face selector is not available in the male pack")
-	assert(editor.animation_option.item_count == 24, "Animation field list changed")
+	assert(editor.animation_option.item_count == HumanCharacter3DEditor.ANIMATION_SLOTS.size(), "Animation field list changed")
 	assert(editor.animation_player != null, "Body GLB did not provide AnimationPlayer")
 	assert(editor.animation_player.has_animation(&"walk"), "Walk animation is missing from the editor model")
 	assert(editor.animation_player.has_animation(&"hit_back"), "Hit back animation is missing from the editor model")
@@ -148,6 +148,14 @@ func _run() -> void:
 	assert(not face_one.visible and not face_two.visible and not face_three.visible and face_four.visible, "Face selector did not switch to Face 04")
 	assert(editor.select_part_by_id(&"face", &"none"), "Face None option could not be selected")
 	assert(not face_one.visible and not face_two.visible and not face_three.visible and not face_four.visible, "Face None option did not hide all face sets")
+	for number in range(5,9):
+		var face_id := StringName("face_standard_%02d" % number)
+		assert(editor.select_part_by_id(&"face",face_id))
+		for mesh: MeshInstance3D in editor.model_root.find_children("Face_Standard_*","MeshInstance3D",true,false):
+			assert(mesh.visible == (str(mesh.name).to_lower() == str(face_id)))
+	assert(editor.select_part_by_id(&"face",&"none"))
+	for mesh: MeshInstance3D in editor.model_root.find_children("Face_Standard_*","MeshInstance3D",true,false):
+		assert(not mesh.visible)
 	assert(editor.select_part_by_id(&"face", &"face_standard_02"), "Face option could not be restored")
 
 	assert(editor.select_part_by_id(&"hair", &"hair_short_02"), "Second hair option could not be selected")

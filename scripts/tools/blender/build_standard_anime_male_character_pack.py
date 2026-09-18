@@ -22,6 +22,7 @@ from make_mingguang_armor import make_mingguang_armor
 from make_chinese_iron_boots import make_chinese_iron_boots, make_mingguang_boots
 from load_authored_chinese_leather_boots import load_chinese_leather_boots
 from load_authored_medieval_shoes import load_medieval_shoes
+from load_authored_cloth_hats import load_cloth_hats
 from make_chinese_cape import make_chinese_cape, bind_cape_action_tracks
 from load_authored_chinese_gear import load_chinese_gear
 from load_authored_western_plate import load_western_iron
@@ -5042,7 +5043,7 @@ def main() -> None:
     steel_helmet_objects = make_chinese_steel_helmet(armature, is_female=False, create_rigid_fn=create_bone_rigid_component)
     chinese_leather_objects, mingguang_helmet_objects = load_chinese_gear(armature)
     western_armor_objects, western_helmet_objects, western_boots_objects = load_western_iron(armature)
-    all_helmet_objects = helmet_objects + iron_helmet_objects + steel_helmet_objects + mingguang_helmet_objects + load_chinese_leather_helmet(armature) + western_helmet_objects
+    all_helmet_objects = helmet_objects + iron_helmet_objects + steel_helmet_objects + mingguang_helmet_objects + load_chinese_leather_helmet(armature) + western_helmet_objects + load_cloth_hats(armature)
     longsword_objects = make_longsword(armature, steel, grip, gold, leather)
     spear_objects = make_spear(armature, wood, steel, gold, tassel)
     axe_objects = make_axe(armature, wood, steel, gold, grip)
@@ -5135,6 +5136,8 @@ def main() -> None:
     armor_objects.extend(cloth_parts)
     from load_authored_gendered_hair import load_gendered_hair
     repaired_parts.extend(load_gendered_hair(armature, False))
+    from load_authored_neutral_faces import load_neutral_faces
+    repaired_parts.extend(load_neutral_faces(armature, False))
     from refine_body_joints import refine_body_joints
     refine_body_joints(armature, repaired_parts)
     from fit_armor_bracers import fit_armor_bracers

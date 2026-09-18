@@ -21,6 +21,7 @@ from make_mingguang_armor import make_mingguang_armor
 from make_chinese_iron_boots import make_chinese_iron_boots, make_mingguang_boots
 from load_authored_chinese_leather_boots import load_chinese_leather_boots
 from load_authored_medieval_shoes import load_medieval_shoes
+from load_authored_cloth_hats import load_cloth_hats
 from make_chinese_cape import make_chinese_cape, bind_cape_action_tracks
 from load_authored_chinese_gear import load_chinese_gear
 from load_authored_western_plate import load_western_iron
@@ -4015,7 +4016,7 @@ def main() -> None:
     steel_helmet_parts = make_chinese_steel_helmet(armature, is_female=True, create_rigid_fn=create_bone_rigid_component)
     chinese_leather_parts, mingguang_helmet_parts = load_chinese_gear(armature, is_female=True)
     western_armor_parts, western_helmet_parts, western_boots_parts = load_western_iron(armature, is_female=True)
-    all_helmet_parts = helmet_parts + iron_helmet_parts + steel_helmet_parts + mingguang_helmet_parts + load_chinese_leather_helmet(armature, is_female=True) + western_helmet_parts
+    all_helmet_parts = helmet_parts + iron_helmet_parts + steel_helmet_parts + mingguang_helmet_parts + load_chinese_leather_helmet(armature, is_female=True) + western_helmet_parts + load_cloth_hats(armature, is_female=True)
 
     iron_armor_parts = make_chinese_iron_armor(armature, source_raw_body=body_skin, is_female=True, create_rigid_fn=create_bone_rigid_component)
     mingguang_armor_parts = make_mingguang_armor(armature, source_raw_body=body_skin, is_female=True, create_rigid_fn=create_bone_rigid_component)
@@ -4056,6 +4057,8 @@ def main() -> None:
     all_armor_parts.extend(cloth_parts)
     from load_authored_gendered_hair import load_gendered_hair
     repaired_parts.extend(load_gendered_hair(armature, True))
+    from load_authored_neutral_faces import load_neutral_faces
+    repaired_parts.extend(load_neutral_faces(armature, True))
     from refine_body_joints import refine_body_joints
     refine_body_joints(armature, repaired_parts)
     from fit_armor_bracers import fit_armor_bracers
@@ -4120,7 +4123,7 @@ def main() -> None:
 
     disk_log(
         "WORLDGOING_STANDARD_ANIME_FEMALE_CHARACTER_PACK_BUILD_PASS "
-        f"parts={len(export_objects) - 1} face_options=4 actions={action_names} "
+        f"parts={len(export_objects) - 1} face_options={len(metadata['parts']['face'])} actions={action_names} "
         f"blend={OUTPUT_BLEND} glb={OUTPUT_GLB}"
     )
 

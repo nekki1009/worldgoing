@@ -55,7 +55,7 @@ func _row_delivery_duty(lab: TerrainLab) -> void:
 	assert(str(receiver.pose) == "idle" and not team._unit_rescues.has(1), "Due automatic rescue must not take the original delivery worker")
 	assert(float(receiver.think) > 0.0, "The original AI actually reviewed this ordinary row")
 	assert(cargo == {"grain": 4} and is_same(sender.cargo, cargo))
-	_near(float(receiver.fatigue), 0.1 * PersonFatigue.WORK_RATE, "delivery effort once while original AI runs")
+	_near(PersonFatigue.read(receiver), 0.1 * PersonFatigue.effort_rate(receiver), "delivery effort once in the actual shared team pool while original AI runs")
 	_near(float(entry.sustain.at), Runtime.now(data) * 60.0, "delivery uses original Site clock")
 	assert(controller.cancel_team_food().ok and entry.delivery.is_empty())
 	lab._process(0.6) # Existing 0.5 s AI review, shorter than the 4 s rescue.
@@ -107,15 +107,20 @@ func _npc_delivery_duty(lab: TerrainLab) -> void:
 	assert(controller.begin_team_food(team, 2.0, lab.npc.person_id).ok)
 	var entry := controller._supply_entry(team)
 	var before_clock := Runtime.now(data) * 60.0
-	var before_fatigue := lab.npc.fatigue
+	var before_fatigue := PersonFatigue.read(lab.npc)
+	assert(lab.exchange_enabled and lab._action_time_remainder == 0.0)
 	for step in range(3):
-		lab._process(1.0 / 120.0)
+		lab._process(TerrainLab.EXCHANGE_ACTION_STEP / 4.0)
 		assert(not entry.delivery.is_empty() and worker.target == "", "Due automatic choose_task must not steal the joined Actor delivery")
 		assert(lab.npc.command == TerrainTestNPC.Command.STOP and not lab.npc.is_moving())
-	_near(Runtime.now(data) * 60.0 - before_clock, 1.5, "three original peaceful common steps")
-	_near(lab.npc.fatigue - before_fatigue, 1.5 * PersonFatigue.WORK_RATE, "joined original Actor delivery fatigue once")
+	_near(Runtime.now(data) * 60.0 - before_clock, 0.0, "three quarter-inputs do not advance the original 30Hz owner early")
+	_near(PersonFatigue.read(lab.npc), before_fatigue, "no shadow Actor fatigue update before an actual common step")
+	lab._process(TerrainLab.EXCHANGE_ACTION_STEP / 4.0)
+	assert(not entry.delivery.is_empty() and worker.target == "")
+	_near(Runtime.now(data) * 60.0 - before_clock, 2.0, "four quarter-inputs make one original peaceful common step")
+	_near(PersonFatigue.read(lab.npc) - before_fatigue, 2.0 * PersonFatigue.effort_rate(lab.npc), "joined original Actor charges its real team fatigue owner once")
 	for step in range(8):
-		lab._process(1.0 / 120.0)
+		lab._process(TerrainLab.EXCHANGE_ACTION_STEP)
 		assert(worker.target == "", "Selection stays excluded until the post-contact commit")
 		if entry.delivery.is_empty():
 			break
@@ -125,7 +130,7 @@ func _npc_delivery_duty(lab: TerrainLab) -> void:
 		credited += cohort.ids.size() * float(cohort.coverage) * (float(cohort.meal_until) - float(entry.sustain.at)) / 86400.0
 	_near(Sustain.rations(entry.sustain, entry.inventory) + credited, 2.0, "two actual donated rations become stock plus original meal credit exactly once")
 	assert(not controller._person_has_duty(lab.npc.person_id))
-	lab._process(1.0 / 120.0)
+	lab._process(TerrainLab.EXCHANGE_ACTION_STEP)
 	assert(str(worker.target) == str(choice.target) and str(worker.mode) == "work" and float(worker.progress) > 0.0, "Completion releases the same Actor to original due choose_task and work")
 	assert(lab.npc == original_npc and team.player_member == original_npc and team.combat_units.size() == 1)
 	assert(is_same(controller.person_actions._person(lab.npc.person_id).cargo, npc_cargo) and is_same(captain.cargo, sender_cargo))

@@ -50,6 +50,10 @@ const PART_SLOTS := [
 			{"id": &"face_standard_02", "label": "Face 02 / 第二套", "prefixes": ["Face_Standard_02"]},
 			{"id": &"face_standard_03", "label": "Face 03 / 銳利戰鬥 (男) · 高冷貓眼 (女)", "prefixes": ["Face_Standard_03"]},
 			{"id": &"face_standard_04", "label": "Face 04 / 開朗微笑 (男) · 溫柔元氣 (女)", "prefixes": ["Face_Standard_04"]},
+			{"id": &"face_standard_05", "label": "Face 05 / 圓杏眼・中性", "prefixes": ["Face_Standard_05"]},
+			{"id": &"face_standard_06", "label": "Face 06 / 長杏眼・中性", "prefixes": ["Face_Standard_06"]},
+			{"id": &"face_standard_07", "label": "Face 07 / 平直細眼・中性", "prefixes": ["Face_Standard_07"]},
+			{"id": &"face_standard_08", "label": "Face 08 / 寬距柔眼・中性", "prefixes": ["Face_Standard_08"]},
 			{"id": &"none", "label": "None / 無", "prefixes": []},
 		],
 	},
@@ -61,6 +65,9 @@ const PART_SLOTS := [
 		{"id": &"helmet_mingguang_01", "label": "Mingguang Helmet 01 / 明光盔", "prefixes": ["Helmet_Mingguang_01"]},
 		{"id": &"helmet_chinese_leather_01", "label": "Chinese Leather Helmet 01 / 中式皮盔", "prefixes": ["Helmet_Chinese_Leather_01"]},
 		{"id": &"helmet_western_iron_01", "label": "Western Iron Helmet 01 / 西式鐵盔", "prefixes": ["Helmet_Western_Iron_01"]},
+		{"id": &"helmet_cloth_chinese_01", "label": "Chinese Cloth Cap / 中式布帽", "material": "cloth", "prefixes": ["Helmet_Cloth_Chinese_01"]},
+		{"id": &"helmet_cloth_japanese_01", "label": "Japanese Cloth Eboshi / 日式布烏帽", "material": "cloth", "prefixes": ["Helmet_Cloth_Japanese_01"]},
+		{"id": &"helmet_cloth_western_01", "label": "Western Wool Cap / 西式軟呢帽", "material": "cloth", "prefixes": ["Helmet_Cloth_Western_01"]},
 		{"id": &"none", "label": "None / 無", "prefixes": []},
 	]},
 	{"id": &"outfit", "label": "Outfit / 內衣", "options": [
@@ -157,6 +164,7 @@ const EQUIPMENT_PREFIXES := [
 	"Outfit_Medieval_Chinese_01", "Outfit_Medieval_Japanese_01", "Outfit_Medieval_European_01",
 	"Armor_Western_Iron_01", "Helmet_Western_Iron_01", "Boots_Western_Iron_01",
 	"Armor_Chinese_Leather_01", "Helmet_Mingguang_01",
+	"Helmet_Cloth_Chinese_01", "Helmet_Cloth_Japanese_01", "Helmet_Cloth_Western_01",
 	"Helmet_Chinese_Leather_01", "Outfit_Chinese_Lining_01",
 	"Outfit_Underlayer_01", "Armor_Light_Leather_01", "Armor_Iron_01", "Armor_Mingguang_01", "Cape_Travel_01", "Cape_Chinese_01", "Helmet_Leather_01", "Helmet_Iron_01", "Helmet_Steel_01",
 	"Weapon_Longsword_01", "Weapon_Spear_01", "Weapon_Axe_01", "Weapon_WoodAxe_01", "Weapon_Hammer_01",
@@ -214,12 +222,18 @@ uniform mat4 inv_head_transform = mat4(1.0);
 uniform float brow_cut_y = 0.113;
 uniform vec2 scalp_radii = vec2(0.113, 0.130);
 uniform bool tuck_hair_piece = false;
+uniform bool cloth_hat_mask = false;
+uniform vec3 cloth_hat_up = vec3(0.0, 1.0, 0.0);
 
 void fragment() {
 	if (mask_enabled) {
-		if (tuck_hair_piece) { discard; }
+		if (tuck_hair_piece && !cloth_hat_mask) { discard; }
 		vec4 world_pos = INV_VIEW_MATRIX * vec4(VERTEX, 1.0);
 		vec4 head_local = inv_head_transform * world_pos;
+		if (cloth_hat_mask) {
+			// Open cloth caps cover the crown only. Keep all hair below the rim.
+			if (dot(head_local.xyz, cloth_hat_up) >= brow_cut_y) { discard; }
+		} else {
 		bool keep_bangs = head_local.z >= 0.045 && abs(head_local.x) <= 0.060
 			&& head_local.y <= brow_cut_y && head_local.y >= -0.060;
 		// Hair INSIDE the crown is still needed behind openings and at the nape.
@@ -234,6 +248,7 @@ void fragment() {
 			&& dot(radial, radial) <= 1.0;
 		if (!keep_bangs && !keep_scalp) {
 			discard;
+		}
 		}
 	}
 
@@ -1777,7 +1792,7 @@ func _update_model_ui() -> void:
 	if model_label == null:
 		return
 	var model_data: Dictionary = BODY_MODELS[_body_index]
-	var model_kind := "modular equipment pack · 4 face options · 8 hairstyles / 男女獨立"
+	var model_kind := "modular equipment pack · %d face options · 8 hairstyles / 男女獨立" % (PART_SLOTS[0].options.size() - 1)
 	model_label.text = "%s   ·   %s" % [str(model_data["label"]), model_kind]
 	_update_animation_ui()
 	_update_status()
@@ -2568,11 +2583,13 @@ func _update_hair_mask() -> void:
 
 	var skeleton := model_root.find_child("Skeleton3D", true, false) as Skeleton3D
 	var inv_head := Transform3D.IDENTITY
+	var hat_up := Vector3.UP
 	if skeleton != null:
 		var head_bone_idx := skeleton.find_bone("J_Bip_C_Head")
 		if head_bone_idx >= 0:
 			var head_world: Transform3D = skeleton.global_transform * skeleton.get_bone_global_pose(head_bone_idx)
 			inv_head = head_world.affine_inverse()
+			hat_up = skeleton.get_bone_global_rest(head_bone_idx).basis.transposed() * Vector3.UP
 
 	var active_hair_nodes := _active_hair_nodes(hair_id)
 
@@ -2596,9 +2613,9 @@ func _update_hair_mask() -> void:
 		&"auto":
 			for mesh_node in active_hair_nodes:
 				mesh_node.visible = true
-				_set_mesh_mask_enabled(mesh_node, true, inv_head, helmet_id)
+				_set_mesh_mask_enabled(mesh_node, true, inv_head, helmet_id, hat_up)
 
-func _set_mesh_mask_enabled(mesh_node: MeshInstance3D, enabled: bool, inv_head: Transform3D, helmet_id: StringName = &"") -> void:
+func _set_mesh_mask_enabled(mesh_node: MeshInstance3D, enabled: bool, inv_head: Transform3D, helmet_id: StringName = &"", hat_up: Vector3 = Vector3.UP) -> void:
 	if mesh_node == null or mesh_node.mesh == null:
 		return
 
@@ -2614,6 +2631,8 @@ func _set_mesh_mask_enabled(mesh_node: MeshInstance3D, enabled: bool, inv_head: 
 		brow_y = 0.095
 	elif helmet_id == &"helmet_chinese_leather_01":
 		brow_y = 0.110
+	elif str(helmet_id).begins_with("helmet_cloth_"):
+		brow_y = 0.109
 	var node_name := str(mesh_node.name)
 
 	for surface_index in range(mesh_node.mesh.get_surface_count()):
@@ -2637,6 +2656,8 @@ func _set_mesh_mask_enabled(mesh_node: MeshInstance3D, enabled: bool, inv_head: 
 		existing_override.set_shader_parameter("dye_color", _hair_dye_color)
 		existing_override.set_shader_parameter("inv_head_transform", inv_head)
 		existing_override.set_shader_parameter("brow_cut_y", brow_y)
+		existing_override.set_shader_parameter("cloth_hat_mask", str(helmet_id).begins_with("helmet_cloth_"))
+		existing_override.set_shader_parameter("cloth_hat_up", hat_up)
 		existing_override.set_shader_parameter("tuck_hair_piece", node_name.ends_with("_Buns") or node_name.ends_with("_Loose") or node_name.ends_with("_Band"))
 
 func _apply_equipment_style() -> void:
@@ -2657,7 +2678,7 @@ func _apply_equipment_style() -> void:
 			# New variants retain their packed grain/flint textures and PBR response.
 			mesh_node.material_overlay = null
 			continue
-		if node_name.begins_with("Outfit_Medieval_") or node_name.begins_with("Boots_Medieval_"):
+		if node_name.begins_with("Outfit_Medieval_") or node_name.begins_with("Boots_Medieval_") or node_name.begins_with("Helmet_Cloth_"):
 			mesh_node.material_overlay = null
 			continue
 		if node_name.begins_with("Cape_Chinese_01_") or node_name.begins_with("Armor_Chinese_Leather_01_") or node_name.begins_with("Helmet_Mingguang_01_") or node_name.begins_with("Helmet_Chinese_Leather_01_") or node_name.begins_with("Outfit_Chinese_Lining_01_") or node_name.begins_with("Boots_Chinese_Leather_01_"):

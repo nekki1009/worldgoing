@@ -3,7 +3,7 @@ extends RefCounted
 
 const SLOTS := ["weapon", "shield", "armor", "outfit", "boots"]
 const MAX_BATCH_FRAMES := 128
-const COMMON_CLIPS := ["idle", "combat_idle", "walk", "run", "combat_walk", "combat_run", "guard", "guard_raise", "guard_lower", "guard_break", "hit", "hit_back", "knockback", "down", "unconscious", "get_up", "rescue"]
+const COMMON_CLIPS := ["idle", "combat_idle", "walk", "run", "combat_walk", "combat_run", "attack_jump_heavy", "guard", "guard_raise", "guard_lower", "guard_break", "hit", "hit_back", "knockback", "down", "unconscious", "get_up", "rescue"]
 const FLAGS := ["mask", "output", "clips", "directions", "first", "count"]
 const IRON_PARTS := {"helmet": "helmet_western_iron_01", "armor": "armor_western_iron_01", "boots": "boots_western_iron_01"}
 const SOURCE_PATHS := [

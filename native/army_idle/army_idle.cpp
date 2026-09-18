@@ -75,7 +75,7 @@ GDExtensionVariantFromTypeConstructorFunc from_float, from_int, from_string, fro
 GDExtensionPtrDestructor destroy_string, destroy_name;
 GDExtensionPtrBuiltInMethod array_size, dict_has, dict_empty, dict_readonly, dict_typed;
 GDExtensionPtrOperatorEvaluator string_equal;
-TextStorage class_name, parent_name, idle_string, male_string, get_up_string, empty_name, empty_string;
+TextStorage class_name, parent_name, idle_string, male_string, female_string, get_up_string, empty_name, empty_string;
 enum Key { AGE, THINK, POSE, HP, KO, STUN, GRACE, VISUAL, DURATION, COOLDOWN, STAGGER, SKILL, RANGED, FATIGUE, REST, PERSON_ID, PAGE, PALETTE, ROLE, CAPTIVE, DEPARTED, OWNER, UNIT, IDENTITY, CELL, FACTION, READY, RECEIVE, MEMBER, CARGO, KEY_COUNT };
 VariantStorage keys[KEY_COUNT];
 VariantStorage lookup_keys[KEY_COUNT];
@@ -608,7 +608,11 @@ void call_render(void *, GDExtensionClassInstancePtr, const GDExtensionConstVari
             if (type_of(role) != STRING) continue;
             GDExtensionBool male = false;
             string_equal(internal[STRING](role), &male_string, &male);
-            if (!male) continue;
+            if (!male) {
+                GDExtensionBool female = false;
+                string_equal(internal[STRING](role), &female_string, &female);
+                if (!female) continue;
+            }
         }
         if (!pose || type_of(pose) != STRING || has(dict, &lookup_keys[VISUAL])) continue;
         GDExtensionBool idle = false;
@@ -1081,6 +1085,7 @@ void initialize(void *, GDExtensionInitializationLevel level) {
     make_string(&empty_string, "");
     make_string(&idle_string, "idle");
     make_string(&male_string, "male_atlas");
+    make_string(&female_string, "female_atlas");
     make_string(&get_up_string, "get_up");
     TextStorage pool_name, wait_name;
     make_name(&pool_name, "WorkerThreadPool", false);
@@ -1297,6 +1302,7 @@ void deinitialize(void *, GDExtensionInitializationLevel level) {
     for (auto &key : lookup_keys) destroy(&key);
     destroy_string(&idle_string);
     destroy_string(&male_string);
+    destroy_string(&female_string);
     destroy_string(&get_up_string);
     destroy_string(&empty_string);
     destroy_name(&empty_name);

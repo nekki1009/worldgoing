@@ -31,19 +31,21 @@ func _run() -> void:
 		near(PersonFatigue.read(row), 60.0)
 	PersonFatigue.charge(team.combat_units[2], 1.0)
 	near(PersonFatigue.read(team.combat_units[0]), 60.25)
+	var original_pool := team.team_fatigue
 	controlled = team.combat_identity(1)
 	team.sync_shared_fatigue()
-	assert(team.team_fatigue.count == 3 and team.individual_fatigue_indices == [1])
+	assert(is_same(team.team_fatigue, original_pool) and team.team_fatigue.count == 4 and team.individual_fatigue_indices.is_empty())
+	assert(is_same(PersonFatigue.pool(team.combat_units[1]), original_pool))
 	PersonFatigue.charge(team.combat_units[1], 10.0)
-	near(PersonFatigue.read(team.combat_units[1]), 70.25)
-	near(PersonFatigue.read(team.combat_units[0]), 60.25)
+	near(PersonFatigue.read(team.combat_units[1]), 62.75)
+	near(PersonFatigue.read(team.combat_units[0]), 62.75)
 	PersonFatigue.charge(team.combat_units[2], 3.0)
-	near(PersonFatigue.read(team.combat_units[0]), 61.25)
-	near(PersonFatigue.read(team.combat_units[1]), 70.25)
+	near(PersonFatigue.read(team.combat_units[0]), 63.5)
+	near(PersonFatigue.read(team.combat_units[1]), 63.5)
 	controlled = 1
-	team.sync_shared_fatigue()
-	near(float(team.team_fatigue.fatigue), (61.25 * 3.0 + 70.25) / 4.0)
-	assert(team.team_fatigue.count == 4)
+	team.sync_shared_fatigue(true)
+	near(float(team.team_fatigue.fatigue), 63.5)
+	assert(is_same(team.team_fatigue, original_pool) and team.team_fatigue.count == 4)
 	# One team recovery, not one recovery per member. Fresh charge blocks rest.
 	team.team_fatigue.fatigue = 60.0
 	lab._advance_fatigue(30.0)
@@ -52,21 +54,21 @@ func _run() -> void:
 	near(float(team.team_fatigue.fatigue_rest), 30.0)
 	lab._advance_fatigue(60.0)
 	near(float(team.team_fatigue.fatigue), 60.0 - 1.0 / 3.0)
-	# Only the player moves: neither effort nor rest gating belongs to the NPC pool.
+	# The controlled member still contributes effort and prevents team recovery.
 	controlled = team.combat_identity(1)
 	team.sync_shared_fatigue()
 	team.team_fatigue.fatigue = 60.0
 	team.team_fatigue.fatigue_rest = 30.0
 	team.team_fatigue.active = false
-	var personal_before := PersonFatigue.read(team.combat_units[1])
 	var destination := Vector2i(41, 41)
 	team._reserved_cells[destination] = 1
 	team.moving_to[1] = destination
 	team.move_duration[1] = TerrainArmy.RUN_DURATION
 	team.combat_units[1].pose = "run"
 	lab._advance_team_fatigue(team, 60.0, {}, {})
-	near(float(team.team_fatigue.fatigue), 60.0 - 1.0 / 3.0)
-	near(PersonFatigue.read(team.combat_units[1]), personal_before)
+	near(float(team.team_fatigue.fatigue), 61.5)
+	near(PersonFatigue.read(team.combat_units[1]), 61.5)
+	near(float(team.team_fatigue.fatigue_rest), 0.0)
 	team._reserved_cells.clear()
 	team.moving_to[1] = TerrainArmy.INVALID_CELL
 	team.combat_units[1].pose = "idle"
@@ -115,6 +117,7 @@ func _run() -> void:
 	# Original save boundary expands effective values, never serializes aliases.
 	var snapshot := team.capture_combat_state()
 	assert(TerrainArmy.valid_combat_state(snapshot, lab.terrain), "Shared fatigue snapshot rejected")
+	assert(snapshot.team_fatigue.version == 2 and not snapshot.team_fatigue.has("excluded_player_id"))
 	for row: Dictionary in snapshot.units:
 		assert(not row.has("_fatigue_pool"))
 		near(float(row.fatigue), 56.25)
@@ -124,6 +127,9 @@ func _run() -> void:
 	invalid = snapshot.duplicate(true)
 	invalid.units[0].fatigue += 1.0
 	assert(not TerrainArmy.valid_combat_state(invalid, lab.terrain))
+	invalid = snapshot.duplicate(true)
+	invalid.team_fatigue.excluded_player_id = team.combat_identity(0)
+	assert(not TerrainArmy.valid_combat_state(invalid, lab.terrain))
 	var restored := TerrainArmy.new()
 	restored.exchange_enabled = true
 	restored.controlled_person_query = team.controlled_person_query
@@ -131,29 +137,50 @@ func _run() -> void:
 	near(float(restored.team_fatigue.fatigue), 56.25)
 	assert(restored.team_fatigue.count == 4)
 	assert(not is_same(restored.team_fatigue, team.team_fatigue))
-	# Old individually tired saves migrate by living-NPC average, not zero.
+	# Version 1 preserves its old excluded-player validation, then migrates max/min.
+	var legacy := snapshot.duplicate(true)
+	legacy.team_fatigue.version = 1
+	legacy.team_fatigue.excluded_player_id = team.combat_identity(1)
+	legacy.units[1].fatigue = 94.0
+	legacy.units[1].fatigue_rest = 0.0
+	assert(TerrainArmy.valid_combat_state(legacy, lab.terrain))
+	restored.restore_combat_state(legacy, lab.terrain, null, null)
+	near(float(restored.team_fatigue.fatigue), 94.0)
+	near(float(restored.team_fatigue.fatigue_rest), 0.0)
+	# Even older individual snapshots migrate conservatively, never average down.
 	snapshot.erase("team_fatigue")
 	for i in range(4): snapshot.units[i].fatigue = float(i * 20)
 	restored.restore_combat_state(snapshot, lab.terrain, null, null)
-	near(float(restored.team_fatigue.fatigue), 30.0)
-	# A real original actor joining as NPC shares; becoming player detaches.
+	near(float(restored.team_fatigue.fatigue), 60.0)
+	# Legacy geometry retains its existing independent fatigue mode.
+	var geometry := TerrainArmy.new()
+	geometry.restore_combat_state(snapshot, lab.terrain, null, null)
+	assert(geometry.team_fatigue.is_empty())
+	for i in range(4):
+		assert(PersonFatigue.pool(geometry.combat_units[i]).is_empty())
+		near(PersonFatigue.read(geometry.combat_units[i]), float(i * 20))
+	geometry.clear()
+	geometry.free()
+	# A real original Actor stays shared when becoming controlled, with no new pool.
 	var actor := TerrainTestCharacter.new()
 	actor.person_id = 2
 	actor.fatigue = 10.0
 	restored.player_member = actor
 	restored.sync_shared_fatigue(true)
-	near(actor.fatigue, 26.0)
+	near(actor.fatigue, 50.0)
+	var actor_pool := restored.team_fatigue
 	controlled = 2
-	restored.sync_shared_fatigue()
+	restored.sync_shared_fatigue(true)
+	assert(is_same(restored.team_fatigue, actor_pool) and is_same(actor._fatigue_pool, actor_pool))
 	actor.fatigue = 90.0
-	near(float(restored.team_fatigue.fatigue), 26.0)
-	assert(actor._fatigue_pool.is_empty())
+	near(float(restored.team_fatigue.fatigue), 90.0)
+	assert(restored.team_fatigue.count == 5)
 	var casualty: Dictionary = restored.combat_units[0]
 	restored.apply_unit_contact(0, {"result": {"hp": 100.0, "stun": 0.0, "guard_break": false}, "shield": false})
-	assert(restored.team_fatigue.count == 3 and PersonFatigue.pool(casualty).is_empty())
-	near(float(restored.team_fatigue.fatigue), 26.0)
+	assert(restored.team_fatigue.count == 4 and PersonFatigue.pool(casualty).is_empty())
+	near(float(restored.team_fatigue.fatigue), 90.0)
 	PersonFatigue.charge(restored.combat_units[1], 3.0)
-	near(float(restored.team_fatigue.fatigue), 27.0)
+	near(float(restored.team_fatigue.fatigue), 90.75)
 	# Pause freezes the original common clock and team state.
 	lab.terrain.site.paused = true
 	var frozen := var_to_bytes(team.team_fatigue)

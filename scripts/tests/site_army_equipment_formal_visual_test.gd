@@ -29,32 +29,43 @@ func _formal_catalog() -> Dictionary:
 	assert(Reader.set_catalog_path(Reader.CATALOG))
 	assert(FileAccess.file_exists(Reader.CATALOG), "Formal atomic publication has not happened; staging is not acceptance")
 	var catalog: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(Reader.CATALOG))
-	var baseline: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(Reader.BASE_MANIFEST)).appearance
+	var source: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(Reader.BASE_MANIFEST))
+	var baseline: Dictionary = source.appearance
+	var clips: Array[Dictionary] = []
+	clips.assign(source.clips)
+	var directions: Array[Dictionary] = []
+	directions.assign(source.directions)
+	var current_plan := Plan.build(PackedStringArray(["--recipe-mask=0", "--recipe-output=res://output/validation", "--recipe-clips=all", "--recipe-directions=all", "--recipe-first=0", "--recipe-count=1"]), clips, directions, baseline)
+	assert(current_plan.ok)
+	var keys_per_recipe := int(current_plan.recipe_total)
+	var sequences_per_recipe: int = current_plan.clips.size() * current_plan.directions.size()
 	var fingerprints := Plan.fingerprints()
 	assert(fingerprints.size() == Plan.SOURCE_PATHS.size() and catalog.source_fingerprints == fingerprints)
 	assert(int(catalog.schema_version) == 1 and catalog.recipes.size() >= 32)
 	assert(catalog.source_manifest_md5 == FileAccess.get_md5(Reader.BASE_MANIFEST))
 	var total_keys := 0
+	var batch_total := 0
 	for mask in range(32):
 		var paths: Array = catalog.recipes[Plan.recipe_key(mask)]
-		assert(paths.size() == 5)
+		assert(paths.size() == ceili(float(keys_per_recipe) / float(Plan.MAX_BATCH_FRAMES)))
+		batch_total += paths.size()
 		for path: String in paths:
 			assert(path.begins_with(Reader.CATALOG.get_base_dir() + "/") and FileAccess.file_exists(path))
 		var appearance := Plan.appearance_for(mask, baseline)
 		assert(Reader.supports(appearance), "Every published mask must pass all timing, page, source and coverage guards")
 		var recipe := Reader._recipe(mask)
-		assert(recipe.sequences.size() == 72)
+		assert(recipe.sequences.size() == sequences_per_recipe)
 		var keys := {}
 		for sequence: Array in recipe.sequences.values():
 			for frame: Dictionary in sequence:
 				var key := "%s|%s|%d" % [frame.clip, frame.direction, int(frame.frame)]
 				assert(not keys.has(key))
 				keys[key] = true
-		assert(keys.size() == 536)
+		assert(keys.size() == keys_per_recipe)
 		total_keys += keys.size()
-	assert(total_keys == 17152)
-	measurements.merge({"catalog": Reader.CATALOG, "recipes": 32, "batches": 160,
-		"keys_per_recipe": 536, "total_keys": total_keys, "source_fingerprints": fingerprints})
+	assert(total_keys == 32 * keys_per_recipe)
+	measurements.merge({"catalog": Reader.CATALOG, "recipes": 32, "batches": batch_total,
+		"keys_per_recipe": keys_per_recipe, "total_keys": total_keys, "source_fingerprints": fingerprints})
 	return baseline
 
 func _take_cell(data: TerrainData, desired: Vector2i, used: Dictionary) -> Vector2i:

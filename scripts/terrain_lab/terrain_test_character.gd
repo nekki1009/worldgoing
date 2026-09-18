@@ -19,6 +19,11 @@ var _movement_duration := 0.0
 var _movement_elapsed := 0.0
 var _movement_start := Vector2.ZERO
 var _movement_linear := false # Legacy saves retained only the remaining linear segment.
+var _movement_ride := false
+var _movement_ride_running := false
+var _ride_start_speed := 0.0
+var _ride_end_speed := 0.0
+var ride_speed := 0.0 # Cells per action second; original Actor movement, not a horse entity.
 var _saved_appearance: Dictionary = {}
 var hp := 100.0
 var stun := 0.0
@@ -64,7 +69,7 @@ var item_state: Dictionary = {} # Absent until explicit real-equipment migration
 var loot_settled := false
 var remains_id := "" # Presentation reference only; ownership is the ground holder.
 var training := 0.0
-var _fatigue_pool: Dictionary = {} # Borrowed original Army state, except the player.
+var _fatigue_pool: Dictionary = {} # Every formal member borrows the original Army state.
 var fatigue := 0.0:
 	get: return float(_fatigue_pool.fatigue) if not _fatigue_pool.is_empty() else fatigue
 	set(value):
@@ -138,6 +143,11 @@ const ExchangeTimings = preload("res://scripts/terrain_lab/character_exchange_ti
 var _geometry := WeaponCollision.new()
 const MOVE_DURATION: float = CombatTimings.MOVE_DURATION
 const RUN_DURATION: float = CombatTimings.RUN_DURATION
+const MOUNT_CRUISE_SPEED := 7.5
+const MOUNT_RUN_SPEED := 15.0
+const MOUNT_ACCELERATION := 6.0
+const MOUNT_BRAKING := 12.0
+const MOUNT_TURN_SPEED := 3.0
 const SAVED_FLOAT_FIELDS := {
 	"hp": 100.0, "stun": 1000000.0, "stun_grace": 3.0, "knockout_left": 30.0,
 	"guard_break_left": 0.4, "guard_transition_left": 0.15, "action_time": 60.0,
@@ -370,7 +380,7 @@ func _update_combat_ready() -> void:
 	var distance := position.distance_to(target.position) / TerrainRenderer.CELL_PIXELS if not target.is_empty() and float(target.hp) > 0.0 else INF
 	var ready_now := (combat_mode_query.is_valid() and bool(combat_mode_query.call())) or distance <= (4.0 if combat_ready else 3.0)
 	if combat_ready == ready_now:
-		if ready_now and action_time <= 0.0 and not is_moving() and not guarding:
+		if ready_now and action_time <= 0.0 and not is_moving() and ride_speed == 0.0 and not guarding:
 			if auto_face and is_instance_valid(opponent):
 				face_target(opponent)
 			_set_attack_offset(_attack_offset)
@@ -381,7 +391,7 @@ func _update_combat_ready() -> void:
 		editor.combat_ready = ready_now
 		editor.visual_state.combat_ready = ready_now
 		editor._update_weapon_sheath_state()
-	if action_time <= 0.0 and not is_moving():
+	if action_time <= 0.0 and not is_moving() and ride_speed == 0.0:
 		if ready_now and auto_face and is_instance_valid(opponent):
 			face_target(opponent)
 		play_pose(&"guard" if guarding else &"idle")
@@ -400,19 +410,86 @@ func face_cell(cell: Vector2i) -> void:
 		editor.set_preview_yaw_degrees({Vector2i.DOWN: 0.0, Vector2i.UP: 180.0, Vector2i.LEFT: -90.0, Vector2i.RIGHT: 90.0}.get(facing, 0.0))
 
 func get_move_interval(running: bool = false) -> float:
+	if is_mounted():
+		var target := MOUNT_RUN_SPEED if running else MOUNT_CRUISE_SPEED
+		target /= 1.0 + PersonFatigue.slowdown(fatigue)
+		var next_speed := _mount_next_speed(ride_speed, target)
+		return 2.0 / maxf(0.001, ride_speed + next_speed)
 	return RUN_DURATION if running else MOVE_DURATION
 
+func is_mounted() -> bool:
+	return visual_state.mounted
+
+func riding_fatigue_rate() -> float:
+	# Gait is effort, not another fatigue owner or timer. Lab settles it once.
+	if not is_moving() or not _movement_ride or not is_mounted() or not can_act():
+		return 0.0
+	return PersonFatigue.RUN_RATE if _movement_ride_running else PersonFatigue.WORK_RATE
+
 func toggle_mount() -> bool:
-	if editor == null or not can_act() or action_time > 0.0 or guarding:
+	if not can_act() or action_time > 0.0 or guarding or is_moving():
 		return false
-	var mounted := not editor.is_mounted
+	var mounted := not is_mounted()
 	_exchange_visual_active = false
 	_exchange_visual_left = 0.0
-	editor.set_mount_enabled(mounted)
-	_sync_render_projection()
-	editor.select_animation_by_id(&"ride_idle" if mounted else &"idle")
+	visual_state.mounted = mounted
+	ride_speed = 0.0
+	if editor != null:
+		editor.set_mount_enabled(mounted)
+		_sync_render_projection()
+	play_pose(&"ride_idle" if mounted else &"idle")
 	_step_time = 0.0
 	return mounted
+
+func _mount_target_speed(direction: Vector2i, running: bool) -> float:
+	var target := MOUNT_RUN_SPEED if running else MOUNT_CRUISE_SPEED
+	var height_change := int(data.height_levels[data.index(terrain_cell + direction)]) - int(data.height_levels[data.index(terrain_cell)])
+	if height_change != 0:
+		target *= 0.55 if height_change > 0 else 0.8
+	# Cargo is the existing holder's shared dictionary; capacity units are not kg.
+	var load := float(SiteRuntime.inventory_size(ammo_inventory))
+	if not item_state.is_empty():
+		load = SiteRuntime.carried_load(data.site, ammo_inventory, item_state)
+	return target * (1.0 - 0.4 * clampf(load / SiteRuntime.CARRY_CAPACITY, 0.0, 1.0)) / (1.0 + PersonFatigue.slowdown(fatigue))
+
+static func _mount_next_speed(speed: float, target: float) -> float:
+	if speed <= target:
+		return minf(target, sqrt(speed * speed + 2.0 * MOUNT_ACCELERATION))
+	return maxf(target, sqrt(maxf(0.0, speed * speed - 2.0 * MOUNT_BRAKING)))
+
+static func riding_weight(progress: float, start_speed: float, end_speed: float, duration: float, distance: float) -> float:
+	var a := start_speed * duration / maxf(distance, 0.000001)
+	var b := end_speed * duration / maxf(distance, 0.000001)
+	return ((a + b - 2.0) * progress + (3.0 - 2.0 * a - b)) * progress * progress + a * progress
+
+func release_movement_intent() -> void:
+	if not is_moving():
+		ride_speed = 0.0
+		return
+	_retime_riding_edge(0.0)
+
+func steer_movement_intent(direction: Vector2i) -> void:
+	var previous_direction := terrain_cell - movement_from_cell
+	if not is_moving() or not _movement_ride or not is_mounted() or not can_act() or direction not in TerrainData.DIRECTIONS or direction == previous_direction:
+		return
+	var destination := (Vector2(terrain_cell) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
+	var distance := position.distance_to(destination) / TerrainRenderer.CELL_PIXELS
+	var turn_speed := 0.0 if direction == -previous_direction else minf(MOUNT_TURN_SPEED, sqrt(ride_speed * ride_speed + 2.0 * MOUNT_ACCELERATION * distance))
+	_retime_riding_edge(turn_speed)
+
+func _retime_riding_edge(end_speed: float) -> void:
+	if not _movement_ride or absf(_ride_end_speed - end_speed) < 0.000000001:
+		return
+	# Brake/steer inside the already reserved edge; never invent a destination.
+	var destination := (Vector2(terrain_cell) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
+	var distance := position.distance_to(destination) / TerrainRenderer.CELL_PIXELS
+	var remaining := _movement_duration - _movement_elapsed
+	_movement_start = position
+	_movement_duration = minf(remaining * 2.0, 2.0 * distance / maxf(ride_speed + end_speed, 0.000001))
+	_movement_elapsed = 0.0
+	_ride_start_speed = ride_speed
+	_ride_end_speed = end_speed
+	_step_time = _movement_duration + 0.12
 
 func place(cell: Vector2i, instant: bool = false, duration: float = MOVE_DURATION) -> bool:
 	if not can_enter_cell(cell) or not is_finite(duration) or duration <= 0.0:
@@ -425,6 +502,11 @@ func place(cell: Vector2i, instant: bool = false, duration: float = MOVE_DURATIO
 	_movement_duration = 0.0 if instant else duration
 	_movement_elapsed = 0.0
 	_movement_linear = false
+	_movement_ride = false
+	_movement_ride_running = false
+	_ride_start_speed = 0.0
+	_ride_end_speed = 0.0
+	ride_speed = 0.0
 	if instant:
 		position = destination
 	queue_redraw()
@@ -437,15 +519,31 @@ func step(direction: Vector2i, running: bool = false, escort_guard_id: int = 0) 
 	if (not can_act() and not escorted) or (exchange_enabled and exchange_stagger > 0.0) or action_time > 0.0 or guarding or guard_transition_left > 0.0 or is_moving():
 		return false
 	if is_instance_valid(opponent) and opponent.occupies_cell(terrain_cell + direction):
+		release_movement_intent()
 		return false
 	if data == null or not data.can_step(terrain_cell, terrain_cell + direction) or not can_enter_cell(terrain_cell + direction):
+		release_movement_intent()
 		return false
 	var duration := get_move_interval(running)
+	var start_speed := ride_speed
+	var end_speed := 0.0
+	if is_mounted():
+		var previous_direction := terrain_cell - movement_from_cell
+		if previous_direction != direction:
+			start_speed = 0.0 if previous_direction == -direction else minf(start_speed, MOUNT_TURN_SPEED)
+		end_speed = _mount_next_speed(start_speed, _mount_target_speed(direction, running))
+		duration = 2.0 / (start_speed + end_speed)
 	_cancel_rescue()
 	_stance_offset = Vector2.ZERO
 	_set_attack_offset(Vector2.ZERO)
 	facing = direction
 	var moved: bool = place(terrain_cell + direction, false, duration)
+	if moved and is_mounted():
+		_movement_ride = true
+		_movement_ride_running = running
+		_ride_start_speed = start_speed
+		_ride_end_speed = end_speed
+		ride_speed = start_speed
 	if moved and exchange_enabled:
 		# Commit movement now; only the remaining initial strike core keeps the
 		# presenter's old pose/yaw. It never owns movement or actual facing.
@@ -474,13 +572,24 @@ func is_moving() -> bool:
 
 func _advance_movement(delta: float) -> void:
 	if not is_moving():
+		ride_speed = 0.0
 		return
+	if _movement_ride and (not is_mounted() or not can_act()):
+		release_movement_intent()
 	_movement_elapsed = minf(_movement_duration, _movement_elapsed + delta)
 	if _movement_duration - _movement_elapsed <= 0.000000001:
 		_movement_elapsed = _movement_duration
 	var fraction := _movement_elapsed / _movement_duration
 	var weight := fraction if _movement_linear else CombatTimings.movement_weight(fraction)
 	var destination := (Vector2(terrain_cell) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
+	if _movement_ride:
+		var distance := _movement_start.distance_to(destination) / TerrainRenderer.CELL_PIXELS
+		weight = riding_weight(fraction, _ride_start_speed, _ride_end_speed, _movement_duration, distance)
+		var a := _ride_start_speed * _movement_duration / maxf(distance, 0.000001)
+		var b := _ride_end_speed * _movement_duration / maxf(distance, 0.000001)
+		ride_speed = clampf((3.0 * (a + b - 2.0) * fraction * fraction + 2.0 * (3.0 - 2.0 * a - b) * fraction + a) * distance / _movement_duration, 0.0, MOUNT_RUN_SPEED)
+		if not is_moving():
+			ride_speed = _ride_end_speed # Exact endpoint, including a genuinely stopped zero.
 	position = _movement_start.lerp(destination, weight)
 
 func occupies_cell(cell: Vector2i) -> bool:
@@ -489,6 +598,8 @@ func occupies_cell(cell: Vector2i) -> bool:
 	return terrain_cell == cell or (is_moving() and movement_from_cell == cell)
 
 func play_pose(clip: StringName) -> void:
+	if clip == &"idle" and is_mounted():
+		clip = &"ride_idle"
 	if exchange_enabled:
 		if _exchange_visual_active and clip in [&"idle", &"ride_idle"]:
 			return # Readiness/step-end maintenance cannot erase an unfinished result.
@@ -508,6 +619,7 @@ func play_pose(clip: StringName) -> void:
 		if not (exchange_enabled and combat_driven_by_lab and is_processing() and is_inside_tree() and can_process() and not editor.is_mounted and editor_window != null and not editor_window.visible):
 			editor.animation_player.seek(0.0, true)
 	visual_state.animation_id = clip
+	visual_state.mounted = str(clip).begins_with("ride_")
 	visual_state.animation_time = 0.0
 
 func _exchange_authored_duration(clip: StringName) -> float:
@@ -526,6 +638,14 @@ func _start_exchange_visual(clip: StringName, merge_reaction: bool = false) -> v
 	_exchange_visual_active = false
 	play_pose(clip)
 	clip = visual_state.animation_id # The original editor normalizes guard aliases.
+	# The universal jump is not a weapon-specific editor entry, so the editor's
+	# preview loop preference may otherwise wrap its final exchange pose to zero.
+	# This presenter owns a private animation library and resolved attacks are
+	# one-shot visuals; keep the offline atlas source and its fingerprints intact.
+	if clip == &"attack_jump_heavy" and editor != null:
+		var jump := editor.animation_player.get_animation(clip)
+		if jump != null and jump.loop_mode != Animation.LOOP_NONE:
+			jump.loop_mode = Animation.LOOP_NONE
 	_exchange_visual_left = ExchangeTimings.duration(clip)
 	_exchange_visual_active = _exchange_visual_left > 0.0
 	visual_state.animation_time = ExchangeTimings.sample_time(clip, 0.0, _exchange_authored_duration(clip))
@@ -539,11 +659,12 @@ func _finish_exchange_visual() -> void:
 		return
 	var running := _movement_duration <= RUN_DURATION + 0.000000001
 	var clip := &"run" if running else &"walk"
+	if is_mounted():
+		clip = &"ride_run" if _ride_end_speed > MOUNT_CRUISE_SPEED else &"ride_walk"
 	if editor != null:
 		editor.set_preview_yaw_degrees({Vector2i.DOWN: 0.0, Vector2i.UP: 180.0, Vector2i.LEFT: -90.0, Vector2i.RIGHT: 90.0}.get(facing, 0.0))
-		if editor.is_mounted:
-			clip = &"ride_run" if running else &"ride_walk"
-	play_pose(clip)
+	if not is_mounted() or visual_state.animation_id != clip:
+		play_pose(clip) # A fast horse must not restart the same gait on every cell.
 	_step_time = maxf(0.0, _movement_duration - _movement_elapsed) + 0.12
 
 func _advance_combat_pose(delta: float) -> void:
@@ -1064,18 +1185,21 @@ func _exchange_equipped_asset(slot: String) -> String:
 	return str(_saved_appearance.get("parts", {}).get(slot, "none"))
 
 func exchange_stats() -> Dictionary:
-	var armor := SiteCombatRules.armor_profile(_exchange_equipped_asset("armor"))
+	var weapon_asset := _exchange_equipped_asset("weapon")
+	var armor_asset := _exchange_equipped_asset("armor")
+	var armor := SiteCombatRules.armor_profile(armor_asset)
 	var armor_bonus := float(armor.slash) * 0.25 + (4.0 if _exchange_equipped_asset("shield") != "none" else 0.0)
 	return {"ability": combat_ability, "training": float(training_query.call()) if training_query.is_valid() else training,
 		"fatigue": fatigue, "morale": float(exchange_morale_query.call()) if exchange_morale_query.is_valid() else 100.0,
-		"armorbonus": armor_bonus, "skill": _exchange_pending_skill}
+		"armorbonus": armor_bonus, "weapon": weapon_asset, "armor": armor_asset, "skill": _exchange_pending_skill}
 
 func ranged_profile() -> Dictionary:
 	return SiteCombatRules.ranged_profile(_exchange_equipped_asset("weapon"))
 
 func ranged_defense() -> Dictionary:
+	var armor_asset := _exchange_equipped_asset("armor")
 	return {"moving": is_moving(), "shield": _exchange_equipped_asset("shield") != "none",
-		"armor_stab": float(SiteCombatRules.armor_profile(_exchange_equipped_asset("armor")).stab), "skill": _exchange_pending_skill}
+		"armor": armor_asset, "armor_stab": float(SiteCombatRules.armor_profile(armor_asset).stab), "skill": _exchange_pending_skill}
 
 func ranged_fire(target_cell: Vector2i, shot_id: int) -> bool:
 	if not exchange_ready() or ranged_cooldown > 0.0 or data == null or shot_id <= 0 or bool(data.site.get("paused", false)):
@@ -1224,11 +1348,12 @@ func apply_exchange(other_cell: Vector2i, outcome: Dictionary) -> void:
 	else:
 		exchange_stagger = 0.0
 		face_cell(other_cell)
-		var clip: StringName = HumanCharacter3DEditor.WEAPON_ATTACK_MAP.get(HumanCharacter3DEditor.WeaponMaterials.family(StringName(_exchange_equipped_asset("weapon"))), &"attack_unarmed")
-		if clip in [&"attack_bow", &"attack_crossbow"]:
-			clip = &"attack_unarmed" # A ranged holder is still a valid close-combat target.
-		if editor != null and editor.is_mounted:
-			clip = &"ride_thrust" if HumanCharacter3DEditor.WeaponMaterials.is_polearm(StringName(_exchange_equipped_asset("weapon"))) else &"ride_slash"
+		var clip := &"attack_jump_heavy" if str(outcome.get("kind", "")) == "big" else SiteCombatRules.exchange_attack_clip(_exchange_equipped_asset("weapon"))
+		if str(outcome.get("kind", "")) != "big":
+			if clip in [&"attack_bow", &"attack_crossbow"]:
+				clip = &"attack_unarmed" # A ranged holder is still a valid close-combat target.
+			if editor != null and editor.is_mounted:
+				clip = &"ride_thrust" if HumanCharacter3DEditor.WeaponMaterials.is_polearm(StringName(_exchange_equipped_asset("weapon"))) else &"ride_slash"
 		_start_exchange_visual(clip)
 		combat_status = "Exchange win: " + str(outcome.get("kind", "small"))
 	action_time = exchange_stagger
@@ -1317,6 +1442,7 @@ func apply_contact(packet: Dictionary) -> void:
 	queue_redraw()
 
 func _stop_fighting(reason: String) -> void:
+	release_movement_intent()
 	_cancel_rescue()
 	_reload_left = 0.0
 	_getting_up = false
@@ -1439,7 +1565,10 @@ func capture_state() -> Dictionary:
 		"movement_from": [movement_from_cell.x, movement_from_cell.y],
 		"movement_left": maxf(0.0, _movement_duration - _movement_elapsed),
 		"movement": {"duration": _movement_duration, "elapsed": _movement_elapsed,
-			"start": [_movement_start.x, _movement_start.y], "linear": _movement_linear},
+			"start": [_movement_start.x, _movement_start.y], "linear": _movement_linear,
+			"ride": _movement_ride, "ride_running": _movement_ride_running,
+			"start_speed": _ride_start_speed, "end_speed": _ride_end_speed},
+		"ride_speed": ride_speed,
 		"pose": str(editor.selected_animation) if editor != null else str(visual_state.animation_id),
 		"pose_time": editor.animation_player.current_animation_position if editor != null else visual_state.animation_time,
 		"previous_weapon": [], "projectiles": []}
@@ -1469,6 +1598,7 @@ func capture_state() -> Dictionary:
 		_saved_appearance = editor.capture_appearance()
 	elif _saved_appearance.is_empty():
 		_saved_appearance = HumanCharacter3DEditor.default_appearance(visual_state.body_index)
+	_saved_appearance.mounted = is_mounted()
 	state["appearance"] = _saved_appearance.duplicate(true)
 	state["command_abilities"] = command_abilities.duplicate()
 	if not item_state.is_empty():
@@ -1482,6 +1612,12 @@ static func valid_state(state: Variant, map: TerrainData) -> bool:
 		return false
 	if not state is Dictionary or state.get("schema") != 1 or not HumanCharacter3DEditor.valid_appearance(state.get("appearance")):
 		return false
+	if not _saved_number(state.get("ride_speed", 0.0), 0.0, MOUNT_RUN_SPEED):
+		return false
+	if state.has("ride_speed") and bool(state.appearance.mounted) != str(state.get("pose", "")).begins_with("ride_"):
+		return false
+	if not state.has("movement") and float(state.get("ride_speed", 0.0)) != 0.0:
+		return false
 	if not valid_command_abilities(state.get("command_abilities", {})):
 		return false
 	for field: String in SAVED_FLOAT_FIELDS:
@@ -1491,6 +1627,10 @@ static func valid_state(state: Variant, map: TerrainData) -> bool:
 		elif field in ["_reload_left", "fatigue", "fatigue_rest", "_fatigue_slowdown"]:
 			float_fallback = 0.0
 		if not _saved_number(state.get(field, float_fallback), 0.0, float(SAVED_FLOAT_FIELDS[field])):
+			return false
+	# Read-only admission of the withdrawn per-mount save fields for migration.
+	for legacy_field: String in ["mount_fatigue", "mount_fatigue_rest"]:
+		if state.has(legacy_field) and not _saved_number(state[legacy_field], 0.0, 100.0 if legacy_field == "mount_fatigue" else 30.0):
 			return false
 	for field: String in SAVED_INT_FIELDS:
 		if not _saved_number(state.get(field), 0.0, 2147483647.0) or float(state[field]) != floorf(float(state[field])):
@@ -1534,14 +1674,39 @@ static func valid_state(state: Variant, map: TerrainData) -> bool:
 		var motion: Variant = state.movement
 		if not motion is Dictionary or not _saved_number(motion.get("duration"), 0.0, 60.0) or not _saved_number(motion.get("elapsed"), 0.0, float(motion.duration)) or not _saved_vector(motion.get("start")) or not motion.get("linear") is bool:
 			return false
+		if not motion.get("ride", false) is bool or not _saved_number(motion.get("start_speed", 0.0), 0.0, MOUNT_RUN_SPEED) or not _saved_number(motion.get("end_speed", 0.0), 0.0, MOUNT_RUN_SPEED):
+			return false
+		if not motion.get("ride_running", false) is bool or (bool(motion.get("ride_running", false)) and not bool(motion.get("ride", false))):
+			return false
+		if bool(motion.get("ride", false)) and (bool(motion.linear) or float(motion.duration) <= 0.0):
+			return false
+		if bool(motion.get("ride", false)) and (not motion.has("start_speed") or not motion.has("end_speed") or not state.has("ride_speed")):
+			return false
+		if not bool(motion.get("ride", false)) and (float(motion.get("start_speed", 0.0)) != 0.0 or float(motion.get("end_speed", 0.0)) != 0.0 or float(state.get("ride_speed", 0.0)) != 0.0):
+			return false
 		if absf(float(state.movement_left) - (float(motion.duration) - float(motion.elapsed))) > 0.000001:
+			return false
+		if float(state.movement_left) == 0.0 and float(state.get("ride_speed", 0.0)) != 0.0 and absf(float(state.ride_speed) - float(motion.get("end_speed", 0.0))) > 0.000001:
 			return false
 		if float(state.movement_left) > 0.0:
 			var start := Vector2(float(motion.start[0]), float(motion.start[1]))
 			if start.distance_to(Geometry2D.get_closest_point_to_segment(start, source, destination)) > 0.01:
 				return false
 			var progress := float(motion.elapsed) / float(motion.duration)
-			var expected := start.lerp(destination, progress if bool(motion.linear) else CombatTimings.movement_weight(progress))
+			var weight := progress if bool(motion.linear) else CombatTimings.movement_weight(progress)
+			if bool(motion.get("ride", false)):
+				var distance := start.distance_to(destination) / TerrainRenderer.CELL_PIXELS
+				if distance <= 0.0:
+					return false
+				var a := float(motion.start_speed) * float(motion.duration) / distance
+				var b := float(motion.end_speed) * float(motion.duration) / distance
+				if a + b > 3.0 + 0.000001:
+					return false # Monotone within the original reserved segment.
+				weight = riding_weight(progress, float(motion.start_speed), float(motion.end_speed), float(motion.duration), distance)
+				var expected_speed := (3.0 * (a + b - 2.0) * progress * progress + 2.0 * (3.0 - 2.0 * a - b) * progress + a) * distance / float(motion.duration)
+				if absf(expected_speed - float(state.get("ride_speed", 0.0))) > 0.000001:
+					return false
+			var expected := start.lerp(destination, weight)
 			if expected.distance_to(ground) > 0.01:
 				return false
 	if not state.get("attack_clip") is String or not state.get("pose") is String:
@@ -1621,11 +1786,17 @@ func restore_state(state: Dictionary) -> void:
 	_pending_release = false
 	_saved_appearance = state.appearance.duplicate(true)
 	visual_state.body_index = int(state.appearance.body)
+	visual_state.mounted = bool(state.appearance.mounted)
 	if editor != null:
 		editor.restore_appearance(_saved_appearance)
 		_sync_render_projection()
 	for field: String in SAVED_FLOAT_FIELDS:
 		set(field, float(state.get(field, 50.0 if field == "combat_ability" else 0.0)))
+	# Preserve accrued exertion from the withdrawn two-value format, never sum
+	# rider + horse charges or silently clear the larger value on load.
+	if float(state.get("mount_fatigue", 0.0)) > 0.0:
+		fatigue = maxf(fatigue, float(state.mount_fatigue))
+		fatigue_rest = minf(fatigue_rest, float(state.get("mount_fatigue_rest", 0.0)))
 	for field: String in SAVED_INT_FIELDS:
 		set(field, int(state[field]))
 	for field: String in SAVED_BOOL_FIELDS:
@@ -1658,6 +1829,9 @@ func restore_state(state: Dictionary) -> void:
 		projectiles.append(arrow)
 	combat_status = str(state.status)
 	visual_state.animation_id = StringName(str(state.pose))
+	# Legacy saves allowed a mount/pose mismatch. Match the original editor's
+	# animation selection in headless too; new snapshots reject the mismatch.
+	visual_state.mounted = str(state.pose).begins_with("ride_")
 	visual_state.animation_time = float(state.pose_time)
 	if editor != null:
 		editor.combat_ready = combat_ready
@@ -1678,6 +1852,11 @@ func restore_state(state: Dictionary) -> void:
 	var start: Array = motion.get("start", state.position)
 	_movement_start = Vector2(float(start[0]), float(start[1]))
 	_movement_linear = bool(motion.get("linear", true))
+	_movement_ride = bool(motion.get("ride", false))
+	_movement_ride_running = bool(motion.get("ride_running", false))
+	_ride_start_speed = float(motion.get("start_speed", 0.0))
+	_ride_end_speed = float(motion.get("end_speed", 0.0))
+	ride_speed = float(state.get("ride_speed", 0.0))
 	if exchange_enabled:
 		_cancel_exchange_legacy_attack()
 	queue_redraw()
@@ -1695,6 +1874,7 @@ func restore_links(state: Dictionary, identities: Dictionary) -> void:
 
 func reset_combat() -> void:
 	# Explicit LAB reset only. Loading a Site must restore, not call this as healing.
+	release_movement_intent()
 	_reset_exchange_transients()
 	_pending_melee.clear()
 	_pending_projectile_delta = 0.0

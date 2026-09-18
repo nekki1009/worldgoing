@@ -15,17 +15,23 @@ func _initialize() -> void:
 func run() -> void:
 	create_timer(23.0).timeout.connect(func() -> void: quit(1))
 	var manifest: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(directory + "standard_soldier_atlas.json"))
-	assert(manifest.schema_version == 2 and manifest.frames.size() == 1080 and manifest.clips.size() == 35)
+	var expected_frames := 0
+	for clip: Dictionary in manifest.clips:
+		expected_frames += int(clip.samples) * manifest.directions.size()
+	assert(manifest.schema_version == 2 and manifest.frames.size() == expected_frames)
 	var file := FileAccess.open_compressed(directory + "standard_soldier_collision.bin", FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
 	assert(file != null)
 	var poses: Array = file.get_var(false)
 	file.close()
 	assert(poses.size() == manifest.frames.size())
 	var keys := {}
+	var jump_directions := {}
 	for frame: Dictionary in manifest.frames:
 		var key := "%s|%s|%d" % [frame.clip, frame.direction, int(frame.frame)]
 		assert(not keys.has(key))
 		keys[key] = frame
+		if frame.clip == "attack_jump_heavy":
+			jump_directions[frame.direction] = int(jump_directions.get(frame.direction, 0)) + 1
 		var pose: Dictionary = poses[int(frame.collision_index)]
 		assert(pose.body.size() == 10 and not pose.armor.is_empty())
 		assert(int(frame.rect.x) >= 0 and int(frame.rect.y) >= 0)
@@ -38,8 +44,11 @@ func run() -> void:
 					assert(point.is_finite())
 		for item: Dictionary in pose.armor:
 			assert(not item.surfaces.is_empty())
+	assert(manifest.directions.size() == 4 and jump_directions.size() == 4)
+	for direction: Dictionary in manifest.directions:
+		assert(jump_directions.get(direction.id, 0) == 12)
 	if DisplayServer.get_name() == "headless":
-		print("SITE_COMBAT_ATLAS_DATA_PASS: 1080 unique frame/collision pairs, indexed armor surfaces, finite shapes, bounded atlas rectangles")
+		print("SITE_COMBAT_ATLAS_DATA_PASS: ", manifest.frames.size(), " unique frame/collision pairs; attack_jump_heavy=48 (4x12); indexed armor surfaces, finite shapes, bounded atlas rectangles")
 		quit(0)
 		return
 	var actor := TerrainTestCharacter.new()

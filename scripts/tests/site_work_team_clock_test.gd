@@ -8,6 +8,10 @@ func _near(actual: float, expected: float, label: String) -> void:
 
 func _press(controller: SiteController, button_name: String) -> void:
 	var button := controller.panel.find_child(button_name, true, false) as Button
+	if button == null:
+		# Army commands now live in the original movable combat-test window.
+		controller._open_combat_window()
+		button = controller.combat_window.find_child(button_name, true, false) as Button
 	assert(button != null, "Actual controller button missing: " + button_name)
 	button.pressed.emit()
 
@@ -110,15 +114,21 @@ func _run() -> void:
 	_near(Runtime.now(data) * 60.0, 12.0, "normal frame common clock")
 	_near(float(first.work_task.progress), 0.2, "first original worker productive time")
 	_near(float(second.work_task.progress), 0.2, "second original worker productive time")
-	_near(float(first.fatigue), 12.0 * PersonFatigue.WORK_RATE, "one work fatigue charge")
-	var frozen := JSON.stringify([first.work_task, second.work_task, first.fatigue, second.fatigue, data.site.minute, data.site.phase, data.site.inventory])
+	var shared := PersonFatigue.pool(first)
+	assert(is_same(shared, team.team_fatigue) and is_same(shared, PersonFatigue.pool(second)))
+	assert(int(shared.count) == 2 and PersonFatigue.pool(team.combat_units[0]).is_empty(), "The controlled captain is personal; both original workers share the real team pool")
+	assert(not first.has("fatigue") and not second.has("fatigue"), "Shared members must not retain shadow fatigue fields")
+	var shared_work_rate := identities.size() * PersonFatigue.WORK_RATE / float(shared.count)
+	_near(PersonFatigue.read(first), 12.0 * shared_work_rate, "two workers charge their actual shared membership once")
+	_near(PersonFatigue.read(second), PersonFatigue.read(first), "both workers observe one fatigue value")
+	var frozen := JSON.stringify([first.work_task, second.work_task, PersonFatigue.read(first), PersonFatigue.read(second), data.site.minute, data.site.phase, data.site.inventory])
 	controller.toggle_pause()
 	lab._process(1.0)
-	assert(frozen == JSON.stringify([first.work_task, second.work_task, first.fatigue, second.fatigue, data.site.minute, data.site.phase, data.site.inventory]))
+	assert(frozen == JSON.stringify([first.work_task, second.work_task, PersonFatigue.read(first), PersonFatigue.read(second), data.site.minute, data.site.phase, data.site.inventory]))
 	controller.toggle_pause()
 	lab._process(0.5)
 	_near(float(first.work_task.progress), 0.7, "slow frame is still sliced by original Lab")
-	_near(float(first.fatigue), 42.0 * PersonFatigue.WORK_RATE, "slow frame neither rests nor double-charges work")
+	_near(PersonFatigue.read(first), 42.0 * shared_work_rate, "slow frame neither rests nor double-charges shared work")
 	controller.save_path = CLOCK_SAVE
 	controller.save_current()
 	controller._auto_save_blocked = true
@@ -137,29 +147,36 @@ func _run() -> void:
 	team = lab.army
 	first = team.combat_units[team.index_for_identity(identities[0])]
 	second = team.combat_units[team.index_for_identity(identities[1])]
+	shared = PersonFatigue.pool(first)
+	assert(is_same(shared, team.team_fatigue) and is_same(shared, PersonFatigue.pool(second)) and int(shared.count) == 2, "Load must restore the original shared fatigue owner")
 	for index in range(2):
 		var row: Dictionary = first if index == 0 else second
 		assert(controller.work_team.is_assigned(identities[index]))
 		assert(row.work_task.target == saved_work[index].target)
 		_near(float(row.work_task.progress), float(saved_work[index].progress), "saved original task progress")
 	_near(Runtime.now(data), saved_clock, "load cannot advance Site work time")
+	var phase_before := lab._action_time_remainder
 	lab._process(0.25)
-	_near(float(first.work_task.progress), 0.95, "loaded worker resumes same work")
+	var consumed := floorf((0.25 + phase_before + TerrainLab.ACTION_TIME_EPSILON) / TerrainLab.EXCHANGE_ACTION_STEP) * TerrainLab.EXCHANGE_ACTION_STEP
+	_near(lab._action_time_remainder, 0.25 + phase_before - consumed, "30 Hz retains every fractional second after load")
+	_near(float(first.work_task.progress), float(saved_work[0].progress) + consumed, "loaded worker resumes exactly the original common-clock work")
+	_near(Runtime.now(data), saved_clock + consumed, "loaded work and Site date consume the same common-clock interval")
 	# Inject only the boundary state, not 90 minutes of invented work/recovery.
-	first.fatigue = 79.999
+	PersonFatigue.write(first, "fatigue", 79.999)
 	lab._process(0.1)
 	assert(bool(first.work_resting) and first.work_task.mode == "rest")
 	var rest_progress := float(first.work_task.progress)
 	lab._process(0.1)
-	_near(float(first.fatigue), 80.0, "80 stop and initial safe-rest delay")
+	_near(PersonFatigue.read(first), 80.0, "80 stop and initial safe-rest delay")
+	_near(PersonFatigue.read(second), 80.0, "the second worker observes the same shared rest boundary")
 	_near(float(first.work_task.progress), rest_progress, "rest cannot make output progress")
-	first.fatigue = 50.01
-	first.fatigue_rest = PersonFatigue.REST_DELAY
+	PersonFatigue.write(first, "fatigue", 50.01)
+	PersonFatigue.write(first, "fatigue_rest", PersonFatigue.REST_DELAY)
 	lab._process(0.01)
 	assert(first.work_resting and first.work_task.progress == rest_progress)
 	lab._process(0.05)
 	assert(not first.work_resting and float(first.work_task.progress) > rest_progress, "Original safe recovery crosses 50 before the same order resumes")
-	first.fatigue = 0.0 # End the boundary fixture; both subsequent batches stay fresh.
+	PersonFatigue.write(first, "fatigue", 0.0) # End the shared boundary fixture; both subsequent batches stay fresh.
 	var item := str(Env.ITEMS[int(fixture.kind)])
 	var batch := int(Env.BATCH[int(fixture.kind)])
 	var depot_before := int(data.site.inventory.get(item, 0))
@@ -216,7 +233,9 @@ func _manual_original(lab: TerrainLab, identity: int, expected_cargo: Dictionary
 	for next: Vector2i in route:
 		person = controller.person_actions._person(identity)
 		lab._try_move(next - Vector2i(person.cell))
-		lab._process(TerrainArmy.MOVE_DURATION + 0.00001)
+		# A full original move must span complete 30 Hz steps, not a discarded
+		# fractional final step from the former 120 Hz clock fixture.
+		lab._process(ceilf(TerrainArmy.MOVE_DURATION / TerrainLab.EXCHANGE_ACTION_STEP) * TerrainLab.EXCHANGE_ACTION_STEP + TerrainLab.ACTION_TIME_EPSILON)
 		assert(controller.person_actions._person(identity).cell == next)
 	person = controller.person_actions._person(identity)
 	controller.person_actions._body_set(person, "fatigue", 90.0)

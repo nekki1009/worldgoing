@@ -2,6 +2,7 @@ class_name TerrainArmy
 extends Node2D
 
 const ExchangeTimings = preload("res://scripts/terrain_lab/character_exchange_timings.gd")
+const WagonRiderRecipe = preload("res://scripts/terrain_lab/site_wagon_rider_recipe.gd")
 const EXCHANGE_NATIVE_VISUAL_POSES := ["get_up", "down", "unconscious", "guard_break", "guard_raise", "guard_lower", "rescue"]
 
 ## Terrain Lab army: one grid-authoritative captain plus 99 soldiers.
@@ -17,6 +18,9 @@ enum PassagePhase { NONE, APPROACH, IN_PASSAGE, EXIT_CLEAR, RALLY, EXEMPT }
 
 const SOLDIER_COUNT := 100
 const MAX_ROSTER_SIZE := 200
+const TROOP_TYPE_ID := &"melee_infantry"
+const TROOP_TYPE_NAME := "近戰步兵"
+const TROOP_COMBAT_ABILITY := 50.0
 var roster_size := SOLDIER_COUNT
 const SIM_STEP := 0.10
 const MOVE_DURATION := CombatTimings.MOVE_DURATION
@@ -62,6 +66,7 @@ const CombatTimings = preload("res://scripts/terrain_lab/character_combat_timing
 const CombatGeometry = preload("res://scripts/terrain_lab/terrain_weapon_collision.gd")
 const ContactSource = preload("res://scripts/terrain_lab/terrain_army_contact_source.gd")
 const EquipmentAtlas = preload("res://scripts/terrain_lab/terrain_army_equipment_atlas.gd")
+const VehicleRiderAtlas = preload("res://scripts/terrain_lab/site_vehicle_rider_atlas.gd")
 const HELD_LOCOMOTION := {"idle": "combat_idle", "walk": "combat_walk", "run": "combat_run"}
 # Shared immutable bake, not one copy or one actor Node per soldier.
 static var _combat_bake: Dictionary = {}
@@ -89,10 +94,11 @@ var exchange_enabled := false # Lab selects adjacent exchanges; standalone legac
 var combat_attacking := false
 var faction_id := 0
 var team_id := 1
+var role := "combat" # Test purpose only; original rows remain the people owner.
+var vehicle_transport: RefCounted # Borrows the Site's vehicles; no second movement clock.
 var training := 0.0
 var shared_fatigue_enabled := true # Formal exchange policy; legacy geometry keeps individual fatigue.
 var team_fatigue: Dictionary = {}
-var _fatigue_controlled := -1
 var _fatigue_roster_size := -1
 var individual_fatigue_indices: Array[int] = []
 var person_id_allocator: Callable # Site owner supplies new IDs; transfers never allocate.
@@ -107,6 +113,7 @@ var escort_step_guard: Callable
 var external_blocker: Callable
 var contact_query: Callable
 var enemy_query: Callable
+var ranged_tactics_query: Callable # Fresh original enemy/friendly-cell projection per command review.
 var contact_sink: Callable
 signal combat_event(duration: float)
 signal died(person_identity: int)
@@ -176,21 +183,25 @@ func moving_member_count() -> int:
 	return count
 
 func sync_shared_fatigue(force: bool = false) -> void:
-	var controlled: int = int(controlled_person_query.call()) if controlled_person_query.is_valid() else (int(player.person_id) if is_instance_valid(player) else 1)
-	if not force and _fatigue_controlled == controlled and _fatigue_roster_size == combat_units.size(): return
-	_fatigue_controlled = controlled
+	if not force and _fatigue_roster_size == combat_units.size(): return
 	_fatigue_roster_size = combat_units.size()
 	var members: Array = []
 	var active := bool(team_fatigue.get("active", false))
 	individual_fatigue_indices.clear()
 	for index in range(combat_units.size()):
 		var row: Dictionary = combat_units[index]
-		if shared_fatigue_enabled and exchange_enabled and is_member(index) and not member_gone(index) and combat_identity(index) != controlled:
+		if shared_fatigue_enabled and exchange_enabled and is_member(index) and not member_gone(index):
 			members.append(row)
 		elif float(row.hp) > 0.0:
 			individual_fatigue_indices.append(index)
-	if shared_fatigue_enabled and exchange_enabled and is_instance_valid(player_member) and player_member.hp > 0.0 and player_member.person_id != controlled:
+	if shared_fatigue_enabled and exchange_enabled and is_instance_valid(player_member) and player_member.hp > 0.0:
 		members.append(player_member)
+	# Taking control is not joining/leaving. Preserve the exact authority object
+	# and value even when the control-switch caller requests a forced refresh.
+	var same_members := not team_fatigue.is_empty() and int(team_fatigue.get("count", 0)) == members.size()
+	for body: Variant in members:
+		same_members = same_members and is_same(PersonFatigue.pool(body), team_fatigue)
+	if same_members: return
 	var value := 0.0
 	var rested := PersonFatigue.REST_DELAY
 	for body: Variant in members:
@@ -218,6 +229,65 @@ func member_gone(index: int) -> bool:
 		return not is_instance_valid(player_member) or player_member.hp <= 0.0
 	return index < 0 or index >= combat_units.size() or float(combat_units[index].hp) <= 0.0 or bool(combat_units[index].departed)
 
+static func troop_class(appearance: Dictionary) -> StringName:
+	var parts: Variant = appearance.get("parts", {})
+	if not parts is Dictionary: return &""
+	var weapon := StringName(str(parts.get("weapon", "none")))
+	var family := HumanCharacter3DEditor.WeaponMaterials.family(weapon)
+	if family == &"none": return &""
+	if family == &"bow_01": return &"bow"
+	if family == &"crossbow_01": return &"crossbow"
+	return TROOP_TYPE_ID
+
+static func _troop_row_class(row: Dictionary, state: Dictionary) -> StringName:
+	# Real equipment is authoritative; saved appearance is the original template.
+	# An empty hand after loss/removal is neutral, not a second infantry class.
+	if row.get("item_state") is Dictionary and row.item_state.has("equipped"):
+		var held: Dictionary = row.item_state
+		var equipped: Variant = held.get("equipped", {})
+		var records: Variant = state.get("item_records", {})
+		var definitions: Variant = state.get("item_definitions", {})
+		if equipped is Dictionary and records is Dictionary and definitions is Dictionary:
+			var record: Variant = records.get(str(equipped.get("weapon", "")), {})
+			if record is Dictionary:
+				var definition: Variant = definitions.get(str(record.get("definition", "")), {})
+				if definition is Dictionary:
+					return troop_class({"parts": {"weapon": str(definition.get("asset", "none"))}})
+		return &""
+	var appearance: Variant = row.get("appearance", {"parts": {"weapon": "longsword_01"}})
+	return troop_class(appearance) if appearance is Dictionary else &""
+
+static func single_troop_class(rows: Array, map: TerrainData, exempt_ids: Array, actor: Dictionary = {}, proposed: Dictionary = {}, state: Dictionary = {}) -> StringName:
+	var kind := &""
+	var members := rows.duplicate()
+	if not actor.is_empty(): members.append(actor)
+	for row: Dictionary in members:
+		if not bool(row.get("member", true)) or float(row.get("hp", 100.0)) <= 0.0 or bool(row.get("departed", false)) or exempt_ids.has(int(row.get("person_id", -1))):
+			continue
+		var identity := int(row.get("person_id", -1))
+		var current := troop_class(proposed[identity]) if proposed.has(identity) else _troop_row_class(row, map.site if state.is_empty() else state)
+		if current == &"": continue
+		if kind != &"" and kind != current: return &"mixed"
+		kind = current
+	return kind
+
+func _troop_exempt_ids() -> Array:
+	var identities: Array = [combat_identity(formal_commander)]
+	for index: int in officer_order: identities.append(combat_identity(index))
+	return identities
+
+func _troop_actor(actor: TerrainTestCharacter) -> Dictionary:
+	if not is_instance_valid(actor): return {}
+	return {"person_id": actor.person_id, "hp": actor.hp, "appearance": actor._saved_appearance,
+		"item_state": actor.item_state}
+
+func single_troop_equipment_guard(index: int, appearance: Dictionary) -> Dictionary:
+	if not is_member(index): return SiteRuntime.ok()
+	var proposed := {combat_identity(index): appearance}
+	if single_troop_class(combat_units, data, _troop_exempt_ids(), _troop_actor(player_member), proposed) == &"mixed":
+		return SiteRuntime.fail("MIXED_TROOP", "普通隊員須維持同一兵種（近戰／弓／弩）；隊長與現任幹部除外，未扣物")
+	return SiteRuntime.ok()
+
 func leave_row(person_id: int) -> Dictionary:
 	return _change_row_membership(person_id, false)
 
@@ -235,6 +305,12 @@ func _change_row_membership(person_id: int, joining: bool) -> Dictionary:
 	var row: Dictionary = combat_units[index]
 	if (is_inside_tree() and get_tree().paused) or bool(data.site.get("paused", false)) or not combat_can_act(index) or moving_to[index] != INVALID_CELL or bool(row.attack) or str(row.pose) != "idle" or _unit_rescues.has(index) or patient_has_rescuer(index) or not row.get("work_task", {}).is_empty():
 		return SiteRuntime.fail("BUSY", "原人物須清醒自由並完成或取消移動、攻防、救助及作業")
+	if joining:
+		var proposed_rows := combat_units.duplicate()
+		proposed_rows[index] = row.duplicate()
+		proposed_rows[index].member = true
+		if single_troop_class(proposed_rows, data, _troop_exempt_ids(), _troop_actor(player_member)) == &"mixed":
+			return SiteRuntime.fail("MIXED_TROOP", "入隊裝備與普通隊員兵種不同；原人物與持物未改")
 	# No body/cargo mutation precedes this hook. A failed hook must leave its
 	# original supply owners untouched; after success only infallible state commits.
 	# The hook checks active person jobs/deliveries; a stationary captivity guard
@@ -266,6 +342,8 @@ func join_player(actor: TerrainTestCharacter) -> Dictionary:
 		return SiteRuntime.fail("NO_TARGET", "只能加入同陣營且已部署的隊伍")
 	if is_instance_valid(player_member) or not actor.can_act() or actor.is_moving():
 		return SiteRuntime.fail("BUSY", "已入隊或人物目前無法入隊")
+	if single_troop_class(combat_units, data, _troop_exempt_ids(), _troop_actor(actor)) == &"mixed":
+		return SiteRuntime.fail("MIXED_TROOP", "入隊裝備與普通隊員兵種不同；原人物與持物未改")
 	if player_supply_hook.is_valid():
 		var supplied: Dictionary = player_supply_hook.call(self, actor, true)
 		if not supplied.ok:
@@ -446,6 +524,11 @@ func record_officer_service(members: Array[int], appointed: bool) -> Dictionary:
 		if not is_member(index) or member_gone(index) or index == formal_commander or seen.has(index):
 			return SiteRuntime.fail("INVALID_MEMBER")
 		seen[index] = true
+	if not appointed:
+		var exemptions := _troop_exempt_ids()
+		for index: int in members: exemptions.erase(combat_identity(index))
+		if single_troop_class(combat_units, data, exemptions, _troop_actor(player_member)) == &"mixed":
+			return SiteRuntime.fail("MIXED_TROOP", "卸任後配裝須符合普通隊員兵種；職務與實物未改")
 	var batch := members.duplicate()
 	batch.sort_custom(func(a: int, b: int) -> bool: return combat_identity(a) < combat_identity(b))
 	_sync_officer_order()
@@ -502,6 +585,7 @@ func settle_combat_command() -> void:
 	else:
 		needs_attack_order = true
 		combat_attacking = false
+		_clear_member_attack_targets()
 		if combat_order != CombatOrder.RETREAT:
 			combat_order = CombatOrder.HOLD
 			combat_goal = INVALID_CELL
@@ -548,6 +632,7 @@ func issue_combat_order(requester: int, order_id: int, goal: Vector2i = INVALID_
 		if target.is_empty() or command_reference.distance_to(Vector2(target.cell) + Vector2.ONE * 0.5) > 20.0:
 			return SiteRuntime.fail("NO_TARGET", "追擊需指定 20 格內可行動敵人")
 	combat_order = order_id
+	_clear_member_attack_targets()
 	for index: int in _unit_rescues.keys():
 		if is_member(index):
 			_cancel_unit_rescue(index) # Explicit new orders interrupt members' help, never teleport.
@@ -577,6 +662,23 @@ func issue_combat_order(requester: int, order_id: int, goal: Vector2i = INVALID_
 		command_status = "接敵；近戰尋找側後方空位"
 	return SiteRuntime.ok(command_status)
 
+func _clear_member_attack_targets() -> void:
+	for index in range(combat_units.size()):
+		if is_member(index):
+			combat_units[index].target = -1
+	if is_instance_valid(player_member):
+		player_member.attack_target_id = -1
+
+func exchange_initiates(index: int, other_id: int) -> bool:
+	if index < 0 or index >= combat_units.size():
+		return false
+	# A controlled person's new explicit attack remains legal after a team order.
+	# A remembered opponent from an earlier exchange is never a new team order.
+	if is_controlled_person(index) or not is_member(index):
+		return int(combat_units[index].target) == other_id
+	return combat_attacking and combat_order in [CombatOrder.ATTACK, CombatOrder.PURSUE] \
+		and current_commander >= 0 and not needs_attack_order and not is_sustain_routed()
+
 func _translate_combat_slots(goal: Vector2i) -> void:
 	var displacement := goal - Vector2i(command_reference.floor())
 	for index in range(cells.size()):
@@ -587,8 +689,14 @@ func _reserve_combat_step(index: int, next: Vector2i, escort_guard_id: int = 0, 
 	if index < 0 or index >= combat_units.size():
 		return false
 	var escorted := bool(combat_units[index].captive) and escort_guard_id > 0 and escort_step_guard.is_valid() and bool(escort_step_guard.call(combat_identity(index), escort_guard_id, next))
-	if (not combat_can_act(index) and not escorted) or _combat_action_blocks_step(index) or moving_to[index] != INVALID_CELL or not data.can_step(cells[index], next) or blocks_cell(next) or _is_external_cell(next):
+	var identity := combat_identity(index)
+	var own_blocked := _cell_owners.has(next) or _reserved_cells.has(next) if vehicle_transport != null and vehicle_transport.is_operator(identity) else blocks_cell(next)
+	if (not combat_can_act(index) and not escorted) or _combat_action_blocks_step(index) or moving_to[index] != INVALID_CELL or not data.can_step(cells[index], next) or own_blocked or _is_external_cell(next, identity):
 		return false
+	if vehicle_transport != null and not vehicle_transport.before_step(self, index, next):
+		return false
+	if vehicle_transport != null:
+		vehicle_transport.commit_step_reservation(self, index, next)
 	_reserved_cells[next] = index
 	moving_to[index] = next
 	move_progress[index] = 0.0
@@ -623,6 +731,7 @@ func _update_combat_orders(delta: float) -> void:
 		if stop:
 			combat_order = CombatOrder.RETURN
 			combat_attacking = false
+			_clear_member_attack_targets()
 			pursuit_left = 0.0
 			combat_goal = Vector2i(pursuit_origin.floor())
 			_translate_combat_slots(combat_goal)
@@ -640,6 +749,7 @@ func _update_combat_orders(delta: float) -> void:
 		return
 	if exchange_enabled and combat_order in [CombatOrder.ATTACK, CombatOrder.PURSUE] and (needs_attack_order or is_sustain_routed()):
 		return # Loss of contact cannot route a broken team through the old vacancy fallback.
+	_update_ranged_orders()
 	if _try_exchange_encirclement():
 		return # Engaged front holds; free melee members use the same original step claims.
 	if combat_order == CombatOrder.ATTACK:
@@ -671,20 +781,120 @@ func _update_combat_orders(delta: float) -> void:
 		if not data.is_walkable(goal):
 			continue
 		# Reuse the existing legal local planner and original claim/commit arrays.
-		var route := _find_local_route(cells[index], goal, 256)
+		var operator_id := combat_identity(index) if vehicle_transport != null and vehicle_transport.is_operator(combat_identity(index)) else 0
+		var route := _find_local_route(cells[index], goal, 256, false, -1, operator_id)
 		if route.size() > 1 and _reserve_combat_step(index, route[1]):
 			made_progress = true
 	if arrived and combat_order in [CombatOrder.MOVE, CombatOrder.RETREAT, CombatOrder.RETURN]:
 		combat_order = CombatOrder.HOLD
+		_clear_member_attack_targets()
 		command_status = "到達；守位自衛"
 	elif combat_order == CombatOrder.PURSUE and not made_progress and not arrived:
 		pursuit_left = 0.0 # Next step closes the chase; no automatic new cycle.
 	elif combat_order in [CombatOrder.MOVE, CombatOrder.RETREAT, CombatOrder.RETURN] and not made_progress:
 		combat_order = CombatOrder.HOLD
+		_clear_member_attack_targets()
 		command_status = "未找到合法通路；就地自衛，等待新令"
 		for index in range(cells.size()):
 			if is_member(index):
 				combat_slots[index] = moving_to[index] if moving_to[index] != INVALID_CELL else cells[index]
+
+func _ranged_safe_cell(cell: Vector2i, enemies: Array, minimum_squared: float = 9.0) -> bool:
+	for enemy: Dictionary in enemies:
+		if cell.distance_squared_to(Vector2i(enemy.cell)) < minimum_squared:
+			return false
+	return combat_order != CombatOrder.PURSUE or pursuit_origin.distance_to(Vector2(cell) + Vector2.ONE * 0.5) < 20.0
+
+func _ranged_can_shoot_from(cell: Vector2i, target: Vector2i, profile: Dictionary, friendly: Dictionary) -> bool:
+	return SiteCombatRules.ranged_in_range(cell, target, float(profile.range)) \
+		and SiteCombatRules.ranged_line_clear(data, cell, target) \
+		and SiteCombatRules.ranged_friendly_clear(cell, target, friendly)
+
+func _ranged_firing_step(index: int, target: Vector2i, profile: Dictionary, enemies: Array, friendly: Dictionary) -> Vector2i:
+	var source := cells[index]
+	var destination_friends := friendly.duplicate()
+	destination_friends.erase(source) # This standing shooter leaves its old cell before firing from the candidate.
+	var candidates: Array[Vector2i] = []
+	# Local sidesteps first; fixed standoff candidates also let the original A*
+	# walk around a wall. No per-person route, firing slot or threat map is kept.
+	for distance in range(1, 4):
+		for direction: Vector2i in TerrainData.DIRECTIONS:
+			candidates.append(source + direction * distance)
+	for radius: int in [3, floori(float(profile.range)) - 1]:
+		for direction: Vector2i in TerrainData.DIRECTIONS:
+			candidates.append(target + direction * radius)
+		var diagonal := maxi(2, floori(float(radius) / sqrt(2.0)))
+		for direction: Vector2i in [Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1)]:
+			candidates.append(target + direction * diagonal)
+	candidates.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+		return absi(a.x - source.x) + absi(a.y - source.y) < absi(b.x - source.x) + absi(b.y - source.y))
+	var nearest := INF
+	for enemy: Dictionary in enemies:
+		nearest = minf(nearest, source.distance_squared_to(Vector2i(enemy.cell)))
+	var searched := 0
+	var checked := {}
+	for candidate: Vector2i in candidates:
+		if checked.has(candidate): continue
+		checked[candidate] = true
+		if candidate == source or not data.is_walkable(candidate) or blocks_cell(candidate) or _is_external_cell(candidate) \
+			or not _ranged_safe_cell(candidate, enemies) or not _ranged_can_shoot_from(candidate, target, profile, destination_friends):
+			continue
+		var route := _find_local_route(source, candidate, 256)
+		searched += 1
+		if route.size() > 1 and _ranged_safe_cell(route[1], enemies, minf(9.0, nearest + 0.5)):
+			return route[1]
+		if searched >= MAX_LOCAL_PATHS_PER_STEP: break
+	return INVALID_CELL
+
+func _update_ranged_orders() -> void:
+	if not exchange_enabled or not combat_attacking or combat_order not in [CombatOrder.ATTACK, CombatOrder.PURSUE] \
+		or needs_attack_order or is_sustain_routed() or not ranged_tactics_query.is_valid():
+		return
+	var scene := {}
+	var enemies: Array = []
+	var friendly := {}
+	var searched := 0
+	var begin := _planning_cursor % maxi(1, combat_units.size())
+	for offset in range(combat_units.size()):
+		var index := (begin + offset) % combat_units.size()
+		if not is_member(index) or not combat_can_act(index) or is_controlled_person(index): continue
+		var profile := ranged_profile(index)
+		if profile.is_empty(): continue
+		var unit: Dictionary = combat_units[index]
+		if not unit.get("work_task", {}).is_empty() or (person_busy_query.is_valid() and bool(person_busy_query.call(combat_identity(index)))): continue
+		if int(unit.get("cargo", {}).get(str(profile.ammo), 0)) < 1:
+			unit.status = "彈藥耗盡；守位自衛，等待補給"
+			continue
+		if moving_to[index] != INVALID_CELL or _combat_action_blocks_step(index) or _unit_rescues.has(index): continue
+		if scene.is_empty():
+			scene = ranged_tactics_query.call(self)
+			enemies = scene.get("enemies", [])
+			friendly = scene.get("friendly_cells", {})
+		var target := INVALID_CELL
+		var nearest := INF
+		var safe_shot := false
+		for enemy: Dictionary in enemies:
+			if combat_order == CombatOrder.PURSUE and int(enemy.id) != pursuit_target: continue
+			var cell := Vector2i(enemy.cell)
+			var distance := cells[index].distance_squared_to(cell)
+			if distance > 20.0 * 20.0: continue
+			if distance < nearest:
+				nearest = distance
+				target = cell
+			if _ranged_can_shoot_from(cells[index], cell, profile, friendly): safe_shot = true
+		if target == INVALID_CELL:
+			unit.status = "附近沒有可接近的遠程目標"
+			continue
+		if safe_shot and _ranged_safe_cell(cells[index], enemies): continue
+		var step := _ranged_firing_step(index, target, profile, enemies, friendly)
+		searched += 1
+		if step != INVALID_CELL and _reserve_combat_step(index, step):
+			combat_slots[index] = step
+			unit.status = "拉開射擊距離" if nearest < 9.0 else "前往安全射位"
+		else:
+			unit.status = "沒有合法安全射位；原地自衛"
+		_planning_cursor = (index + 1) % combat_units.size()
+		if searched >= PLANNING_BUDGET: break
 
 func _periodic_review_conflicts() -> bool:
 	# The already-updated first team has just reset its existing review clock.
@@ -754,7 +964,7 @@ func _try_exchange_encirclement() -> bool:
 	if native_front: native_front_cells += enemy_cells.size()
 	# Only the canonical readers are pure: reject own occupancy before geometry,
 	# whose can_attack_across already includes goal walkability. Keep override order.
-	var pure_seed_predicates: bool = get_script() == TerrainArmy and data.get_script() == TerrainData
+	var pure_seed_predicates: bool = get_script() == TerrainArmy and data.get_script() == TerrainData and (vehicle_transport == null or vehicle_transport.records().is_empty())
 	var external_owner: Object = external_blocker.get_object() if external_blocker.is_valid() else null
 	var pure_external: bool = pure_seed_predicates and external_owner is TerrainArmy \
 		and external_owner.get_script() == TerrainArmy and external_blocker.get_method() == &"blocks_cell" \
@@ -959,6 +1169,12 @@ static func load_combat_bake() -> bool:
 			for sample in range(int(clips[clip].samples)):
 				if not frames.has("%s|%s|%d" % [clip, direction, sample]):
 					return false
+	if not clips.has("attack_jump_heavy") or int(clips.attack_jump_heavy.get("samples", 0)) != 12:
+		return false # Big exchange wins require a real shared-atlas jump clip.
+	for direction: String in ["down", "left", "up", "right"]:
+		for sample in range(12):
+			if not frames.has("attack_jump_heavy|%s|%d" % [direction, sample]):
+				return false
 	# Immutable atlas clock metadata, not a collision/pose table. Retain each
 	# direction's actual endpoints and original alias; never quantize runtime time.
 	var contact_clocks := {}
@@ -978,7 +1194,9 @@ static func load_combat_bake() -> bool:
 	_combat_bake = {"manifest": manifest, "frames": frames, "clips": clips, "contact_clocks": contact_clocks}
 	return true
 
-func enable_combat(attacking: bool = true) -> bool:
+func enable_combat(attacking: bool = true, female_count: int = -1, troop_type: StringName = TROOP_TYPE_ID) -> bool:
+	if female_count < -1 or female_count > roster_size or troop_type not in [TROOP_TYPE_ID, &"bow", &"crossbow"]:
+		return false
 	if not has_army() or moving_count() > 0 or command != Command.NONE or not load_combat_bake() or (not exchange_enabled and not load_contact_source(player.editor if is_instance_valid(player) else null)):
 		return false
 	if combat_units.is_empty():
@@ -986,19 +1204,28 @@ func enable_combat(attacking: bool = true) -> bool:
 		if person_id_allocator.is_valid() and not valid_person_ids(allocated, roster_size):
 			return false
 		for index in range(roster_size):
+			var female := index == 0
+			if female_count >= 0:
+				female = female_count > 0 if index == 0 else floori(float(index * maxi(0, female_count - 1)) / maxi(1, roster_size - 1)) > floori(float((index - 1) * maxi(0, female_count - 1)) / maxi(1, roster_size - 1))
 			combat_units.append({"person_id": int(allocated[index]) if not allocated.is_empty() else 1000 + team_id * SOLDIER_COUNT + index,
-				"visual_role": "female_live" if index == 0 else "male_atlas", "hp": 100.0, "stun": 0.0, "grace": 0.0, "ko": 0.0,
-				"fatigue": 0.0, "fatigue_rest": 0.0, "attack_reduction": 0.0, "attack_fatigue": 0.0,
+				"visual_role": ("female_live" if female else "male_live") if index == 0 else ("female_atlas" if female else "male_atlas"), "hp": 100.0, "stun": 0.0, "grace": 0.0, "ko": 0.0,
+				"fatigue": 0.0, "fatigue_rest": 0.0, "combat_ability": TROOP_COMBAT_ABILITY,
+				"attack_reduction": 0.0, "attack_fatigue": 0.0,
 				"pose": "idle", "age": 0.0, "attack": false, "blocked": false, "hits": {},
 				"previous": [], "think": 0.0, "status": "Ready", "target": -1,
 				"captive": false, "departed": false, "present": false, "member": true, "logistics": false})
+			combat_units[index].appearance = EquipmentAtlas.female_appearance() if female else _combat_bake.manifest.appearance.duplicate(true)
+			if troop_type != TROOP_TYPE_ID:
+				combat_units[index].appearance.parts.weapon = "bow_01" if troop_type == &"bow" else "crossbow_01"
+				combat_units[index].appearance.parts.shield = "none"
 		_initialize_combat_command()
 	combat_enabled = true
 	sync_shared_fatigue(true)
 	combat_attacking = attacking
 	combat_order = CombatOrder.ATTACK if attacking else CombatOrder.HOLD
 	settle_combat_command()
-	command_status = "近戰接敵" if attacking else "守位"
+	command_status = "接敵；前排牽制、後排尋找側後方空位" if attacking else "守位"
+	_ensure_live_presenters()
 	if equipment_initializer.is_valid():
 		equipment_initializer.call(self)
 	if _batch_render_active() and _soldier_baked_ready:
@@ -1060,6 +1287,10 @@ static func normalize_roster_snapshot(original: Dictionary) -> Dictionary:
 	var snapshot := original.duplicate(true)
 	if snapshot.get("units") is Array:
 		for row: Variant in snapshot.units:
+			# Old headless saves labelled the live captain female but stored the
+			# male appearance. Preserve the actual body, not the obsolete label.
+			if not snapshot.has("visual_version") and row is Dictionary and row.get("visual_role") == "female_live" and row.get("appearance") is Dictionary and row.appearance.get("body") == 0:
+				row.visual_role = "male_live"
 			if row is Dictionary and not row.has("member"):
 				row["member"] = true # Existing original rows were all logical members.
 			if row is Dictionary and not row.has("logistics"):
@@ -1073,7 +1304,14 @@ static func normalize_roster_snapshot(original: Dictionary) -> Dictionary:
 		if not snapshot.units[index] is Dictionary:
 			return original.duplicate(true)
 		snapshot.units[index].person_id = 1000 + int(snapshot.team_id) * SOLDIER_COUNT + index
-		snapshot.units[index].visual_role = "female_live" if index == 0 else "male_atlas"
+		var appearance: Variant = snapshot.units[index].get("appearance", {})
+		if not appearance is Dictionary:
+			return original.duplicate(true)
+		var body_value: Variant = appearance.get("body", 1 if index == 0 else 0)
+		if not _combat_saved_integer(body_value, 0, 1):
+			return original.duplicate(true)
+		var body := int(body_value)
+		snapshot.units[index].visual_role = ("female_live" if body == 1 else "male_live") if index == 0 else ("female_atlas" if body == 1 else "male_atlas")
 	for field: String in ["formal_commander", "acting_commander", "current_commander"]:
 		if snapshot.get(field) == SOLDIER_COUNT:
 			snapshot[field] = PLAYER_MEMBER
@@ -1180,6 +1418,8 @@ func _install_roster(rows: Array[Dictionary], positions: Array[Vector2i], metada
 	_rebuild_visual_instances()
 
 func transfer_members_to(recipient: TerrainArmy, identities: Array[int], requester: int, recipient_requester: int = -1) -> Dictionary:
+	if vehicle_transport != null and (vehicle_transport.has_team_vehicles(self) or recipient != null and vehicle_transport.has_team_vehicles(recipient)):
+		return SiteRuntime.fail("VEHICLES_ATTACHED", "車隊首版不拆併；請先停泊並解除車輛歸隊，人物與貨物未修改")
 	if recipient == null or recipient == self or identities.is_empty() or not roster_change_ready():
 		return SiteRuntime.fail("BUSY", "須先停止、脫戰並收束人物動作")
 	if requester != current_commander or not command_eligible(requester):
@@ -1229,6 +1469,10 @@ func transfer_members_to(recipient: TerrainArmy, identities: Array[int], request
 	var target_cells := recipient.cells.duplicate()
 	target_rows.append_array(incoming)
 	target_cells.append_array(incoming_cells)
+	var exemptions: Array = target_meta.officers.duplicate()
+	exemptions.append(int(target_meta.formal))
+	if single_troop_class(target_rows, data, exemptions, recipient._troop_actor(recipient.player_member) if existing else {}) == &"mixed":
+		return SiteRuntime.fail("MIXED_TROOP", "接收後普通隊員將混合兵種；名冊、職務、供養與實物未改")
 	var target_living := recipient.living_member_count()
 	var target_training := training if not existing else (recipient.training * target_living + training * incoming_living) / maxf(1.0, target_living + incoming_living)
 	var source_training := training
@@ -1242,7 +1486,7 @@ func transfer_members_to(recipient: TerrainArmy, identities: Array[int], request
 	recipient.npc = npc
 	_install_roster(kept, kept_cells, source_meta, source_training)
 	recipient._install_roster(target_rows, target_cells, target_meta, target_training)
-	return SiteRuntime.ok("已轉移 %d 名原人物；位置、生命與持物不變；隊伍疲勞按存活 NPC 人數加權" % identities.size())
+	return SiteRuntime.ok("已轉移 %d 名原人物；位置、生命與持物不變；隊伍疲勞按全體存活成員人數加權" % identities.size())
 
 func split_members_to(recipient: TerrainArmy, identities: Array[int], requester: int) -> Dictionary:
 	if recipient == null or recipient.has_army():
@@ -1291,11 +1535,16 @@ func exchange_stats(index: int) -> Dictionary:
 	var unit: Dictionary = combat_units[index]
 	var appearance := equipment_appearance(index)
 	var parts: Dictionary = appearance.get("parts", {})
-	var armor := SiteCombatRules.armor_profile(str(parts.get("armor", "none")))
-	return {"ability": float(unit.get("combat_ability", 50.0)), "training": training if is_member(index) else 0.0,
+	var weapon_asset := str(parts.get("weapon", "none"))
+	var armor_asset := str(parts.get("armor", "none"))
+	var armor := SiteCombatRules.armor_profile(armor_asset)
+	# Army rows share one troop-type base. Keep the legacy per-row field in
+	# snapshots for compatibility/future officer traits, but it cannot silently
+	# turn ordinary soldiers into individual combat classes.
+	return {"ability": TROOP_COMBAT_ABILITY, "training": training if is_member(index) else 0.0,
 		"fatigue": PersonFatigue.read(unit), "morale": 100.0,
 		"armorbonus": float(armor.slash) * 0.25 + (4.0 if str(parts.get("shield", "none")) != "none" else 0.0),
-		"skill": str(unit.get("exchange_skill", ""))}
+		"weapon": weapon_asset, "armor": armor_asset, "skill": str(unit.get("exchange_skill", ""))}
 
 func ranged_profile(index: int) -> Dictionary:
 	if index < 0 or index >= combat_units.size():
@@ -1307,6 +1556,7 @@ func ranged_defense(index: int) -> Dictionary:
 		return {}
 	var parts: Dictionary = equipment_appearance(index).get("parts", {})
 	return {"moving": moving_to[index] != INVALID_CELL, "shield": str(parts.get("shield", "none")) != "none",
+		"armor": str(parts.get("armor", "none")),
 		"armor_stab": float(SiteCombatRules.armor_profile(str(parts.get("armor", "none"))).stab),
 		"skill": str(combat_units[index].get("exchange_skill", ""))}
 
@@ -1438,7 +1688,8 @@ func apply_exchange(index: int, other_cell: Vector2i, outcome: Dictionary) -> vo
 	if not str(unit.get("exchange_skill", "")).is_empty():
 		unit.exchange_skill_cooldown = SiteCombatRules.EXCHANGE_SKILL_COOLDOWN
 	unit.exchange_skill = ""
-	unit.target = int(outcome.get("other_identity", -1))
+	# Receiving an exchange is self-defense, not a new persistent attack order.
+	# Keep an existing explicit target; never replace it with this opponent.
 	PersonFatigue.charge(unit, float(outcome.get("fatigue", 0.0)))
 	unit.aim = []
 	unit.previous = []
@@ -1451,21 +1702,21 @@ func apply_exchange(index: int, other_cell: Vector2i, outcome: Dictionary) -> vo
 	if float(unit.hp) <= 0.0 or float(unit.ko) > 0.0:
 		unit.exchange_pose_duration = 0.0
 		return
-	var role := str(outcome.get("role", "draw"))
-	if role == "winner":
-		unit.pose = str(attack_clip(index))
+	var outcome_role := str(outcome.get("role", "draw"))
+	if outcome_role == "winner":
+		unit.pose = "attack_jump_heavy" if str(outcome.get("kind", "")) == "big" else str(attack_clip(index))
 		if unit.pose in ["attack_bow", "attack_crossbow"]:
 			unit.pose = "attack_unarmed" # Melee only; no new ranged release rule.
 		unit.attack = true
 		unit.exchange_pose_duration = SiteCombatRules.EXCHANGE_ROUND_SECONDS
-	elif role == "loser":
+	elif outcome_role == "loser":
 		unit.pose = "knockback" if bool(outcome.get("knockback", false)) else "hit"
 		unit.exchange_pose_duration = maxf(0.1, float(unit.exchange_stagger))
 	else:
 		unit.pose = "guard"
 		unit.exchange_pose_duration = maxf(SiteCombatRules.EXCHANGE_DRAW_HOLD, float(unit.exchange_stagger))
 	unit.age = 0.0
-	unit.status = "大勝" if role == "winner" and str(outcome.get("kind", "")) == "big" else ("小勝" if role == "winner" else ("平手防禦" if role == "draw" else "受擊硬直"))
+	unit.status = "大勝" if outcome_role == "winner" and str(outcome.get("kind", "")) == "big" else ("小勝" if outcome_role == "winner" else ("平手防禦" if outcome_role == "draw" else "受擊硬直"))
 	_begin_exchange_visual(index, str(unit.pose))
 	_visual_dirty = true
 
@@ -1578,7 +1829,10 @@ func equipment_appearance(index: int) -> Dictionary:
 func supports_equipment_recipe(appearance: Dictionary) -> bool:
 	# Full baseline is already published. Missing-piece recipes are admitted only
 	# after their complete original-animation atlas has passed the baker contract.
-	if not HumanCharacter3DEditor.valid_appearance(appearance) or not EquipmentAtlas.DyeAtlas.supports(appearance): return false
+	if not HumanCharacter3DEditor.valid_appearance(appearance): return false
+	if WagonRiderRecipe.matches(appearance): return EquipmentAtlas.supports(appearance)
+	if appearance.body == 1: return EquipmentAtlas.supports(appearance)
+	if not EquipmentAtlas.DyeAtlas.supports(appearance): return false
 	return not _combat_bake.is_empty() and HumanCharacter3DEditor.EquipmentDye.geometry_appearance(appearance) == _combat_bake.manifest.appearance or EquipmentAtlas.supports(appearance)
 
 func attack_clip(index: int) -> StringName:
@@ -2045,7 +2299,9 @@ func _cancel_unit_rescue(index: int) -> void:
 
 func _wake_unit(index: int) -> void:
 	var unit: Dictionary = combat_units[index]
-	if blocks_cell(cells[index]) or _is_external_cell(cells[index]):
+	var rider: bool = vehicle_transport != null and vehicle_transport.occupies_own_horse(combat_identity(index), cells[index])
+	var occupied := _cell_owners.has(cells[index]) or _reserved_cells.has(cells[index]) if rider else blocks_cell(cells[index])
+	if occupied or _is_external_cell(cells[index], combat_identity(index) if rider else 0):
 		unit.ko = 0.1
 		return
 	unit.ko = 0.0
@@ -2317,15 +2573,23 @@ func combat_summary() -> String:
 		living += 1
 		total_fatigue += player_member.fatigue
 		tired += int(player_member.fatigue > PersonFatigue.THRESHOLD)
-	var fatigue_label := "平均疲勞" if team_fatigue.is_empty() else "隊伍共享疲勞（玩家獨立）"
+	var fatigue_label := "平均疲勞" if team_fatigue.is_empty() else "隊伍共享疲勞"
 	var displayed_fatigue := total_fatigue / maxi(1, living) if team_fatigue.is_empty() else float(team_fatigue.fatigue)
-	return "可戰 %d / 昏迷 %d / 死亡 %d\n%s %.1f / 疲憊 %d 人\n正式隊長 %s / 當前指揮 %s\n%s\n%s" % [alive, knocked, dead, fatigue_label, displayed_fatigue, tired,
-		str(combat_identity(formal_commander)) if formal_commander >= 0 else "空缺", str(combat_identity(current_commander)) if current_commander >= 0 else "空缺", command_status, command_notice]
+	var captain: Dictionary = command_abilities.get(formal_commander, {})
+	var troop_name: String = {"melee_infantry": TROOP_TYPE_NAME, "bow": "弓兵", "crossbow": "弩兵", "mixed": "混合兵種（無法保存）"}.get(str(single_troop_class(combat_units, data, _troop_exempt_ids(), _troop_actor(player_member))), "未持武器")
+	return "兵種 %s（基礎武力 %.0f）\n可戰 %d / 昏迷 %d / 死亡 %d\n%s %.1f / 疲憊 %d 人\n正式隊長 %s / 當前指揮 %s\n隊長能力：戰術 %d / 領導 %d / 教練 %d\n%s\n%s" % [troop_name, TROOP_COMBAT_ABILITY, alive, knocked, dead, fatigue_label, displayed_fatigue, tired,
+		str(combat_identity(formal_commander)) if formal_commander >= 0 else "空缺", str(combat_identity(current_commander)) if current_commander >= 0 else "空缺",
+		int(captain.get("tactics", 0)), int(captain.get("leadership", 0)), int(captain.get("coach", 0)), command_status, command_notice]
 
 func _sync_captain_combat(frame: Dictionary, index: int = 0) -> void:
 	var presenter: Variant = _unit_editor(index)
 	if presenter == null or index >= _sprites.size():
 		return
+	if _set_vehicle_rider_frame(index): return
+	if _sprites[index].has_meta("vehicle_rider_frame"):
+		_clear_vehicle_rider_frame(index)
+		_sprites[index].texture = presenter.preview_viewport.get_texture()
+		_sprites[index].scale = Vector2.ONE * presenter.get_map_sprite_scale()
 	# Exchange sampling only reads the original row; reuse it for yaw and seek.
 	# Historical geometry keeps its original post-readiness sampling order.
 	var visual_sample: Array = contact_sample(index) if exchange_enabled else []
@@ -2349,6 +2613,12 @@ func _sync_captain_combat(frame: Dictionary, index: int = 0) -> void:
 		if quiet_timeline: presenter.timeline_slider.set_block_signals(true)
 		presenter.select_animation_by_id(pose)
 		if quiet_timeline: presenter.timeline_slider.set_block_signals(signals_blocked)
+	# The editor's preview loop preference must not wrap a resolved jump's
+	# endpoint to frame zero. Only this presenter's private clip is changed.
+	if exchange_enabled and pose == &"attack_jump_heavy":
+		var jump: Animation = presenter.animation_player.get_animation(pose)
+		if jump != null and jump.loop_mode != Animation.LOOP_NONE:
+			jump.loop_mode = Animation.LOOP_NONE
 	presenter.animation_player.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
 	var inputs := _contact_inputs(index) if not _contact_batch_inputs.is_empty() else {}
 	var sample: Array = inputs.sample if not inputs.is_empty() else (visual_sample if exchange_enabled else contact_sample(index))
@@ -2373,13 +2643,14 @@ const COMBAT_SAVED_BOOLS := ["combat_attacking", "needs_attack_order", "command_
 
 func capture_combat_state() -> Dictionary:
 	sync_shared_fatigue()
-	var snapshot := {"schema": 1, "roster_version": 1, "loadout": "standard_soldier_v2", "units": [], "abilities": [],
+	var snapshot := {"schema": 1, "roster_version": 1, "visual_version": 1, "loadout": "standard_soldier_v2", "units": [], "abilities": [],
 		"officers": officer_order.duplicate(), "officer_service": officer_service.duplicate(), "vacancies": [], "rng": str(command_rng.state),
 		"reference": [command_reference.x, command_reference.y], "origin": [pursuit_origin.x, pursuit_origin.y],
 		"goal": [combat_goal.x, combat_goal.y], "notice": command_notice, "status": command_status}
+	snapshot["role"] = role
 	snapshot["player_member"] = {"id": player_member.person_id, "present": player_present, "goal": [player_goal.x, player_goal.y]} if is_instance_valid(player_member) else {}
 	if not team_fatigue.is_empty():
-		snapshot["team_fatigue"] = {"version": 1, "excluded_player_id": maxi(0, _fatigue_controlled), "fatigue": team_fatigue.fatigue, "fatigue_rest": team_fatigue.fatigue_rest, "active": team_fatigue.active}
+		snapshot["team_fatigue"] = {"version": 2, "fatigue": team_fatigue.fatigue, "fatigue_rest": team_fatigue.fatigue_rest, "active": team_fatigue.active}
 	snapshot["rescues"] = []
 	for index: int in _unit_rescues:
 		snapshot.rescues.append({"unit": index, "patient": int(_unit_rescues[index].patient), "revision": int(_unit_rescues[index].revision)})
@@ -2425,10 +2696,14 @@ static func _combat_saved_eligible(snapshot: Dictionary, index: int, actor: Dict
 	var unit: Dictionary = snapshot.units[index]
 	return bool(unit.get("member", true)) and float(unit.hp) > 0.0 and float(unit.ko) <= 0.0 and not bool(unit.captive) and not bool(unit.departed) and bool(unit.present) and str(unit.pose) != "get_up"
 
-static func valid_combat_state(snapshot: Variant, map: TerrainData, actor: Dictionary = {}) -> bool:
+static func valid_combat_state(snapshot: Variant, map: TerrainData, actor: Dictionary = {}, state: Dictionary = {}) -> bool:
+	if snapshot is Dictionary and snapshot.get("role", "combat") not in ["combat", "logistics", "work"]:
+		return false
 	if not snapshot is Dictionary or not _combat_saved_integer(snapshot.get("schema"), 1, 1) or snapshot.get("loadout") != "standard_soldier_v2":
 		return false
 	snapshot = normalize_roster_snapshot(snapshot)
+	if snapshot.has("visual_version") and not _combat_saved_integer(snapshot.visual_version, 1, 1):
+		return false
 	if not snapshot.get("units") is Array or snapshot.units.is_empty() or snapshot.units.size() > MAX_ROSTER_SIZE:
 		return false
 	var saved_count: int = snapshot.units.size()
@@ -2466,11 +2741,22 @@ static func valid_combat_state(snapshot: Variant, map: TerrainData, actor: Dicti
 	for field: String in ["notice", "status"]:
 		if not snapshot.get(field) is String or str(snapshot[field]).length() > 256:
 			return false
+	var shared_version := 0
+	var excluded_player := -1
 	if snapshot.has("team_fatigue"):
 		var shared: Variant = snapshot.team_fatigue
-		if not shared is Dictionary or shared.get("version") != 1 or not shared.get("active") is bool: return false
-		if not _combat_saved_integer(shared.get("excluded_player_id"), 0, 2147483647): return false
+		if not shared is Dictionary or not _combat_saved_integer(shared.get("version"), 1, 2) or not shared.get("active") is bool: return false
+		shared_version = int(shared.version)
+		if shared_version == 1:
+			if not _combat_saved_integer(shared.get("excluded_player_id"), 0, 2147483647): return false
+			excluded_player = int(shared.excluded_player_id)
+		elif shared.has("excluded_player_id"):
+			return false # Version 2 has one authority for every living member.
 		if not TerrainTestCharacter._saved_number(shared.get("fatigue"), 0.0, 100.0) or not TerrainTestCharacter._saved_number(shared.get("fatigue_rest"), 0.0, 30.0): return false
+		if shared_version == 2 and not member.is_empty():
+			if actor.has("mount_fatigue") or actor.has("mount_fatigue_rest"): return false
+			if float(actor.hp) > 0.0 and (float(actor.get("fatigue", 0.0)) != float(shared.fatigue) or float(actor.get("fatigue_rest", 0.0)) != float(shared.fatigue_rest)):
+				return false # The original member Actor borrows this exact same pool.
 	var live_presenter_count := 0
 	for index in range(saved_count):
 		var unit: Variant = snapshot.units[index]
@@ -2480,11 +2766,15 @@ static func valid_combat_state(snapshot: Variant, map: TerrainData, actor: Dicti
 			return false
 		if not unit.get("work_resting", false) is bool:
 			return false
-		if str(unit.get("visual_role", "")) not in ["female_live", "male_atlas"]:
+		if str(unit.get("visual_role", "")) not in ["female_live", "male_live", "female_atlas", "male_atlas"]:
 			return false
-		live_presenter_count += int(unit.visual_role == "female_live")
-		if live_presenter_count > 2:
-			return false # Only the two original Site captain presenters are supported.
+		if (snapshot.has("visual_version") or unit.visual_role == "female_atlas") and not unit.has("appearance"):
+			return false # Current/female-atlas rows never used the legacy missing-template format.
+		if unit.has("appearance") and (not HumanCharacter3DEditor.valid_appearance(unit.appearance) or str(unit.visual_role).begins_with("female") != (unit.appearance.body == 1)):
+			return false
+		live_presenter_count += int(unit.visual_role in ["female_live", "male_live"])
+		if live_presenter_count > 3:
+			return false # A merged roster may retain all three original Site captains.
 		var aim: Variant = unit.get("aim", [])
 		if not aim is Array or (not aim.is_empty() and not TerrainTestCharacter._saved_vector(aim)):
 			return false
@@ -2512,15 +2802,14 @@ static func valid_combat_state(snapshot: Variant, map: TerrainData, actor: Dicti
 		if float(unit.hp) > 100.0 or float(unit.ko) > 30.0 or float(unit.progress) > 1.0 or not valid_duration:
 			return false
 		if snapshot.has("team_fatigue") and float(unit.hp) > 0.0 and bool(unit.get("member", true)) and not bool(unit.get("departed", false)):
-			var controlled := int(snapshot.team_fatigue.excluded_player_id)
-			if int(unit.get("person_id", 0)) != controlled and (float(unit.get("fatigue", 0.0)) != float(snapshot.team_fatigue.fatigue) or float(unit.get("fatigue_rest", 0.0)) != float(snapshot.team_fatigue.fatigue_rest)):
+			if (shared_version == 2 or int(unit.get("person_id", 0)) != excluded_player) and (float(unit.get("fatigue", 0.0)) != float(snapshot.team_fatigue.fatigue) or float(unit.get("fatigue_rest", 0.0)) != float(snapshot.team_fatigue.fatigue_rest)):
 				return false # Reject two contradictory saved values for one shared authority.
 		for field: String in ["attack", "blocked", "captive", "departed", "present", "member", "logistics"]:
 			if not unit.get(field) is bool:
 				return false
 		if not _combat_saved_integer(unit.get("target"), -1, 2147483647) or not unit.get("status") is String or str(unit.status).length() > 256:
 			return false
-		var saved_attack_pose: bool = str(unit.get("pose", "")) in ["walk_slash", "attack_unarmed"] or unit.has("exchange_pose_duration") and str(unit.get("pose", "")) in ["attack_spear", "attack_axe", "attack_hammer", "attack_dagger", "attack_bow", "attack_crossbow"]
+		var saved_attack_pose: bool = str(unit.get("pose", "")) in ["walk_slash", "attack_unarmed"] or unit.has("exchange_pose_duration") and str(unit.get("pose", "")) in ["attack_spear", "attack_axe", "attack_hammer", "attack_dagger", "attack_bow", "attack_crossbow", "attack_jump_heavy"]
 		if not saved_attack_pose and str(unit.get("pose", "")) not in ["idle", "walk", "run", "down", "unconscious", "get_up", "guard_break", "guard_raise", "guard", "guard_lower", "rescue"] and not (unit.has("exchange_pose_duration") and str(unit.get("pose", "")) in ["hit", "knockback"]):
 			return false
 		if bool(unit.attack) != saved_attack_pose or bool(unit.attack) and (float(unit.hp) <= 0.0 or float(unit.ko) > 0.0 or bool(unit.captive) or bool(unit.departed)):
@@ -2622,11 +2911,18 @@ static func valid_combat_state(snapshot: Variant, map: TerrainData, actor: Dicti
 		return false
 	if bool(snapshot.needs_attack_order) and int(snapshot.combat_order) in [CombatOrder.ATTACK, CombatOrder.PURSUE]:
 		return false
+	var exempt_ids: Array = []
+	for index: int in [formal] + officers.keys():
+		if index >= 0:
+			exempt_ids.append(int(actor.person_id) if index == PLAYER_MEMBER else int(snapshot.units[index].person_id))
+	if single_troop_class(snapshot.units, map, exempt_ids, actor if not member.is_empty() else {}, {}, state) == &"mixed":
+		return false
 	return true
 
 func restore_combat_state(snapshot: Dictionary, map: TerrainData, restored_player: Variant, restored_npc: Variant) -> void:
 	# Caller validates all teams and their cross-team claims before replacing Site.
 	snapshot = normalize_roster_snapshot(snapshot)
+	role = str(snapshot.get("role", "combat"))
 	for saved_row: Dictionary in snapshot.units:
 		saved_row.erase("exchange_visual") # Also clear before the temporary roster is presented by deployment.
 	clear()
@@ -2710,14 +3006,33 @@ func restore_combat_state(snapshot: Dictionary, map: TerrainData, restored_playe
 		elif float(unit.hp) > 0.0 and float(unit.ko) <= 0.0 and not bool(unit.departed):
 			_cell_owners[cells[index]] = index
 	combat_enabled = true
+	var saved_shared: Dictionary = snapshot.get("team_fatigue", {})
+	var migrate_shared := shared_fatigue_enabled and exchange_enabled and int(saved_shared.get("version", 0)) < 2
+	var migrated_fatigue := float(saved_shared.get("fatigue", 0.0))
+	var migrated_rest := float(saved_shared.get("fatigue_rest", PersonFatigue.REST_DELAY))
+	if migrate_shared:
+		# Read the old values BEFORE normal membership binding averages them.
+		# Version 1 excluded its player; older saves had individual values only.
+		# A one-time conservative merge must not refresh that player's fatigue.
+		for index in range(combat_units.size()):
+			if not is_member(index) or member_gone(index): continue
+			migrated_fatigue = maxf(migrated_fatigue, PersonFatigue.read(combat_units[index]))
+			migrated_rest = minf(migrated_rest, PersonFatigue.read(combat_units[index], "fatigue_rest"))
+		if is_instance_valid(player_member) and player_member.hp > 0.0:
+			# Actor.restore_state has already conservatively merged legacy horse data.
+			migrated_fatigue = maxf(migrated_fatigue, player_member.fatigue)
+			migrated_rest = minf(migrated_rest, player_member.fatigue_rest)
 	sync_shared_fatigue(true)
-	if snapshot.has("team_fatigue") and not team_fatigue.is_empty():
-		# Inheritance may select a new player before restoring this snapshot.
-		# Keep the rebuilt weighted pool when the excluded person has changed.
-		if _fatigue_controlled == int(snapshot.team_fatigue.excluded_player_id):
-			team_fatigue.fatigue = float(snapshot.team_fatigue.fatigue)
-			team_fatigue.fatigue_rest = float(snapshot.team_fatigue.fatigue_rest)
-		team_fatigue.active = bool(snapshot.team_fatigue.active)
+	if not team_fatigue.is_empty():
+		if migrate_shared:
+			team_fatigue.fatigue = migrated_fatigue
+			team_fatigue.fatigue_rest = migrated_rest
+		elif not saved_shared.is_empty():
+			# Version 2 was checked against every living member, including the
+			# controlled body. Restore it exactly, independent of current control.
+			team_fatigue.fatigue = float(saved_shared.fatigue)
+			team_fatigue.fatigue_rest = float(saved_shared.fatigue_rest)
+		if not saved_shared.is_empty(): team_fatigue.active = bool(saved_shared.active)
 	command_status = str(snapshot.status)
 	_command_dirty = false # No re-election or RNG draws on restore.
 	_visual_dirty = true
@@ -2939,7 +3254,7 @@ func _profile_combat_stage(stage: String, started: int) -> int:
 	return now
 
 func _uses_live_presenter(index: int) -> bool:
-	return str(combat_units[index].get("visual_role", "male_atlas")) == "female_live" if index < combat_units.size() else index == 0
+	return str(combat_units[index].get("visual_role", "male_atlas")) in ["female_live", "male_live"] if index < combat_units.size() else index == 0
 
 func _unit_editor(index: int) -> Variant:
 	if not _uses_live_presenter(index):
@@ -2973,9 +3288,15 @@ func _ensure_live_presenters() -> void:
 			old_editor.preview_viewport.queue_free()
 			old_editor.queue_free()
 	for index in range(combat_units.size()):
-		if not _uses_live_presenter(index) or _live_presenters.has(combat_identity(index)):
+		if not _uses_live_presenter(index):
 			continue
-		var editor: Variant = _captain_editor if _captain_editor != null and not _live_presenters.values().has(_captain_editor) else _create_visual_source(1, "ArmyPerson_%d" % combat_identity(index))
+		var appearance: Dictionary = combat_units[index].get("appearance", {})
+		var body := int(appearance.get("body", 0 if combat_units[index].visual_role == "male_live" else 1))
+		var editor: Variant = _live_presenters.get(combat_identity(index))
+		if editor == null:
+			editor = _captain_editor if _captain_editor != null and not _live_presenters.values().has(_captain_editor) else _create_visual_source(body, "ArmyPerson_%d" % combat_identity(index))
+		if not appearance.is_empty() and int(editor.capture_appearance().body) != body:
+			assert(editor.restore_appearance(appearance))
 		_live_presenters[combat_identity(index)] = editor
 		_visual_sources_owned = true
 
@@ -3100,6 +3421,10 @@ func _locomotion_clip(index: int) -> String:
 func _set_soldier_frame(index: int, force: bool = false) -> void:
 	if not _soldier_baked_ready or index < 0 or index >= _sprites.size() or _uses_live_presenter(index):
 		return
+	if _set_vehicle_rider_frame(index): return
+	if _sprites[index] != null and _sprites[index].has_meta("vehicle_rider_frame"):
+		_clear_vehicle_rider_frame(index)
+		_soldier_current_keys[index] = ""
 	if _batch_view != null and _batch_render_active():
 		var unit: Dictionary = combat_units[index]
 		var idle := str(unit.pose) == "idle" and not unit.has("exchange_visual")
@@ -3120,7 +3445,7 @@ func _set_soldier_frame(index: int, force: bool = false) -> void:
 		_sprites[index].scale = Vector2.ONE * _soldier_map_scale
 	if combat_enabled:
 		var appearance := equipment_appearance(index)
-		if not appearance.is_empty() and not EquipmentAtlas.DyeAtlas.apply(_sprites[index], appearance):
+		if not appearance.is_empty() and not EquipmentAtlas.apply_dye(_sprites[index], appearance):
 			_sprites[index].texture = null # No recolouring without an exact complete companion.
 			return
 		if not appearance.is_empty() and HumanCharacter3DEditor.EquipmentDye.geometry_appearance(appearance) != _combat_bake.manifest.appearance:
@@ -3129,7 +3454,7 @@ func _set_soldier_frame(index: int, force: bool = false) -> void:
 			if frame.is_empty():
 				_sprites[index].texture = null # Missing assets must not show phantom full gear.
 				return
-			var equipment_key := "equipment|%s|%s|%s|%d" % [str(appearance.parts), str(frame.clip), str(frame.direction), int(frame.frame)]
+			var equipment_key := "equipment|%s|%s|%s|%s|%d" % [str(appearance.body), str(appearance.parts), str(frame.clip), str(frame.direction), int(frame.frame)]
 			if force or _soldier_current_keys[index] != equipment_key:
 				_soldier_current_keys[index] = equipment_key
 				_sprites[index].texture = frame.texture
@@ -3158,6 +3483,36 @@ func _set_soldier_frame(index: int, force: bool = false) -> void:
 	_soldier_current_keys[index] = key
 	_sprites[index].texture = texture_variant as Texture2D
 	_soldier_sprite_anchors[index] = _soldier_frame_anchors.get(key, Vector2.ZERO)
+
+func _vehicle_rider_state(index: int) -> Dictionary:
+	return vehicle_transport.rider_state(combat_identity(index)) if vehicle_transport != null and combat_enabled and index >= 0 and index < combat_units.size() else {}
+
+func _set_vehicle_rider_frame(index: int) -> bool:
+	var state := _vehicle_rider_state(index)
+	if state.is_empty(): return false
+	if _sprites[index] == null: _sprites[index] = _new_person_sprite(index)
+	var sprite := _sprites[index]
+	var appearance := equipment_appearance(index)
+	var frame := VehicleRiderAtlas.frame(appearance, _soldier_direction_id(state.facing), bool(state.moving), float(state.progress))
+	if frame.is_empty() or not VehicleRiderAtlas.apply(sprite, appearance, frame):
+		sprite.texture = null # Missing fixed rider visual must not show a walking body.
+		return true
+	sprite.set_meta("vehicle_rider_anchor", frame.anchor)
+	sprite.set_meta("vehicle_rider_ground", Vector2(state.position) + Vector2(frame.horse_offset))
+	sprite.set_meta("vehicle_rider_sort_ground", state.position)
+	return true
+
+func _clear_vehicle_rider_frame(index: int) -> void:
+	var sprite := _sprites[index]
+	for key: String in ["vehicle_rider_frame", "vehicle_rider_anchor", "vehicle_rider_ground", "vehicle_rider_sort_ground"]:
+		sprite.remove_meta(key)
+	sprite.material = null
+	sprite.remove_meta("equipment_dye_appearance")
+	if not _uses_live_presenter(index): sprite.scale = Vector2.ONE * _soldier_map_scale
+
+func _sprite_sort_ground(index: int) -> Vector2:
+	var sprite := _sprites[index]
+	return sprite.get_meta("vehicle_rider_sort_ground") if sprite != null and sprite.has_meta("vehicle_rider_frame") else combat_ground(index)
 
 func _update_soldier_frames(delta: float) -> void:
 	if not _soldier_baked_ready or _sprites.size() != roster_size:
@@ -3296,7 +3651,6 @@ func clear() -> void:
 	if is_instance_valid(player_member): PersonFatigue.unbind(player_member)
 	team_fatigue = {}
 	_fatigue_roster_size = -1
-	_fatigue_controlled = -1
 	individual_fatigue_indices.clear()
 	encirclement_steps = 0
 	encirclement_reviews = 0
@@ -3689,7 +4043,7 @@ func _activate_command(next_command: int, next_epoch: int) -> void:
 	queue_redraw()
 
 func blocks_cell(cell: Vector2i, _requester: Node = null) -> bool:
-	return _cell_owners.has(cell) or _reserved_cells.has(cell)
+	return _cell_owners.has(cell) or _reserved_cells.has(cell) or vehicle_transport != null and vehicle_transport.team_blocks_cell(self, cell)
 
 func occupied_count() -> int:
 	return _cell_owners.size()
@@ -3786,7 +4140,9 @@ func _reachable_cells(start: Vector2i) -> Array[Vector2i]:
 			pending.append(next)
 	return result
 
-func _is_external_cell(cell: Vector2i) -> bool:
+func _is_external_cell(cell: Vector2i, ignore_operator: int = 0) -> bool:
+	if vehicle_transport != null and vehicle_transport.blocks_cell(cell, ignore_operator):
+		return true
 	if external_blocker.is_valid() and external_blocker.call(cell):
 		return true
 	for actor: Variant in [player, npc]:
@@ -5621,56 +5977,86 @@ func _frontier_pop(heap: Array[Vector4i]) -> Vector4i:
 		index = child
 	return first
 
-func _find_local_route(start: Vector2i, goal: Vector2i, expansion_limit: int = 256, allow_occupied: bool = false, moving_index: int = -1) -> Array[Vector2i]:
+func _find_local_route(start: Vector2i, goal: Vector2i, expansion_limit: int = 256, allow_occupied: bool = false, moving_index: int = -1, vehicle_operator: int = 0, anticipate_vehicles: bool = false) -> Array[Vector2i]:
 	var empty: Array[Vector2i] = []
 	if data == null or not data.contains(start) or not data.contains(goal) or start == goal:
 		return empty
 	if moving_index >= 0 and not _take_local_search(moving_index):
 		return empty
 	expansion_limit = mini(expansion_limit, LOCAL_PATH_EXPANSIONS)
-	var pending: Array[Vector4i] = [Vector4i(data.index(start), 0, absi(start.x - goal.x) + absi(start.y - goal.y), 0)]
+	var vehicle_index := index_for_identity(vehicle_operator) if vehicle_operator > 0 and vehicle_transport != null else -1
+	var initial_facing := TerrainData.DIRECTIONS.find(vehicle_transport.operator_facing(vehicle_operator)) if vehicle_index >= 0 else -1
+	if vehicle_index >= 0 and initial_facing < 0: return empty
+	# Only a real operator adds four headings to this same bounded, ephemeral A*.
+	var start_state: Variant = Vector3i(start.x, start.y, initial_facing) if vehicle_index >= 0 else start
+	var goal_state: Variant = goal
+	var start_node := data.index(start) * 4 + initial_facing if vehicle_index >= 0 else data.index(start)
+	var pending: Array[Vector4i] = [Vector4i(start_node, 0, absi(start.x - goal.x) + absi(start.y - goal.y), 0)]
 	var sequence := 1
-	var previous := {start: INVALID_CELL}
-	var costs := {start: 0}
+	var previous := {start_state: INVALID_CELL}
+	var costs := {start_state: 0}
 	var closed := {}
 	var head := 0
 	var found := false
-	while not pending.is_empty() and head < expansion_limit:
+	var search_limit := maxi(1, floori(float(expansion_limit) / 2.0)) if vehicle_index >= 0 and not anticipate_vehicles else expansion_limit
+	while not pending.is_empty() and head < search_limit:
 		var item := _frontier_pop(pending)
-		var current := Vector2i(item.x % data.size.x, floori(float(item.x) / data.size.x))
+		var cell_index := floori(float(item.x) / 4.0) if vehicle_index >= 0 else item.x
+		var current := Vector2i(cell_index % data.size.x, floori(float(cell_index) / data.size.x))
+		var current_state: Variant = Vector3i(current.x, current.y, item.x % 4) if vehicle_index >= 0 else current
 		head += 1
-		if closed.has(current) or item.y != int(costs[current]):
+		if closed.has(current_state) or item.y != int(costs[current_state]):
 			continue
-		closed[current] = true
+		closed[current_state] = true
 		if current == goal:
 			found = true
+			goal_state = current_state
 			break
 		for direction: Vector2i in TerrainData.DIRECTIONS:
 			var next := current + direction
-			var next_cost := int(costs[current]) + 1
-			if closed.has(next) or (previous.has(next) and int(costs[next]) <= next_cost) or not data.contains(next) or not data.can_step(current, next):
+			var next_cost := int(costs[current_state]) + 1
+			if vehicle_index < 0 and (closed.has(next) or (previous.has(next) and int(costs[next]) <= next_cost)):
+				continue
+			if not data.contains(next) or not data.can_step(current, next):
+				continue
+			var next_state: Variant = next
+			var next_node := data.index(next)
+			if vehicle_index >= 0:
+				var planned: Dictionary = vehicle_transport.route_step(self, vehicle_index, current, next, TerrainData.DIRECTIONS[int(current_state.z)], anticipate_vehicles)
+				if planned.is_empty() or planned.has("invalid"):
+					continue
+				var next_facing := TerrainData.DIRECTIONS.find(Vector2i(int(planned.facing[0]), int(planned.facing[1])))
+				next_state = Vector3i(next.x, next.y, next_facing)
+				next_node = data.index(next) * 4 + next_facing
+			if vehicle_index >= 0 and (closed.has(next_state) or (previous.has(next_state) and int(costs[next_state]) <= next_cost)):
 				continue
 			if moving_index > 0 and current == start and not _push_preserves_open_slots(current, next):
 				continue
-			if _is_external_cell(next) and next != goal:
+			# Only future vehicle-route nodes may anticipate an able teammate vacating.
+			# The route's first step and original reservation/commit stay strict.
+			var vacating: bool = anticipate_vehicles and vehicle_index >= 0 and current != start and vehicle_transport.route_vacating_cell(self, next)
+			if _is_external_cell(next, vehicle_operator if vehicle_operator > 0 else (combat_identity(moving_index) if combat_enabled and moving_index >= 0 else 0)) and next != goal and not vacating:
 				continue
-			if _reserved_cells.has(next) and int(_reserved_cells[next]) != moving_index:
+			if _reserved_cells.has(next) and int(_reserved_cells[next]) != moving_index and not vacating:
 				continue
-			if _cell_owners.has(next) and next != goal and not allow_occupied:
+			if _cell_owners.has(next) and next != goal and not allow_occupied and not (vehicle_index >= 0 and int(_cell_owners[next]) == vehicle_index) and not vacating:
 				continue
 			var heuristic := absi(next.x - goal.x) + absi(next.y - goal.y)
-			_frontier_push(pending, Vector4i(data.index(next), next_cost, heuristic, sequence))
+			_frontier_push(pending, Vector4i(next_node, next_cost, heuristic, sequence))
 			sequence += 1
-			previous[next] = current
-			costs[next] = next_cost
+			previous[next_state] = current_state
+			costs[next_state] = next_cost
+			if next == goal: goal_state = next_state
 	local_search_expansions += head
 	max_local_search_expansions = maxi(max_local_search_expansions, head)
-	if not found and not previous.has(goal):
+	if not found and not previous.has(goal_state):
+		if vehicle_index >= 0 and not anticipate_vehicles and head < expansion_limit:
+			return _find_local_route(start, goal, expansion_limit - head, allow_occupied, moving_index, vehicle_operator, true)
 		return empty
 	var route: Array[Vector2i] = []
-	var cursor := goal
-	while cursor != INVALID_CELL:
-		route.push_front(cursor)
+	var cursor: Variant = goal_state
+	while previous.has(cursor):
+		route.push_front(Vector2i(cursor.x, cursor.y))
 		cursor = previous.get(cursor, INVALID_CELL)
 	return route
 
@@ -8918,6 +9304,8 @@ func _complete_move(index: int) -> void:
 	if combat_enabled and (float(combat_units[index].hp) <= 0.0 or float(combat_units[index].ko) > 0.0):
 		_cell_owners.erase(next)
 	moving_to[index] = INVALID_CELL
+	if vehicle_transport != null:
+		vehicle_transport.complete_step(self, index)
 	move_progress[index] = 0.0
 	move_duration[index] = MOVE_DURATION
 	move_curve[index] = 0
@@ -9014,7 +9402,6 @@ func _rebuild_visual_instances() -> void:
 			if _soldier_baked_ready:
 				sprite.scale = Vector2.ONE * _soldier_map_scale
 				_set_soldier_frame(index, true)
-				_soldier_sprite_anchors[index] = _soldier_frame_anchors.get(_soldier_current_keys[index], Vector2.ZERO)
 			else:
 				var soldier_source: Variant = _soldier_editor
 				sprite.texture = soldier_source.preview_viewport.get_texture()
@@ -9023,7 +9410,7 @@ func _rebuild_visual_instances() -> void:
 				_soldier_anchor = soldier_source.get_map_ground_offset_pixels() * soldier_scale
 	if _batch_view != null:
 		for index in range(_sprites.size()):
-			if _sprites[index] != null: _batch_view.submit_sprite(index, combat_ground(index), _sprites[index])
+			if _sprites[index] != null: _batch_view.submit_sprite(index, _sprite_sort_ground(index), _sprites[index])
 		_batch_view.flush()
 	_sync_visual_positions()
 
@@ -9035,6 +9422,11 @@ func _sync_visual_positions() -> void:
 	for index: int in range(roster_size):
 		var sprite := _sprites[index]
 		if sprite == null: continue # This original person is drawn by the batch view.
+		if sprite.has_meta("vehicle_rider_frame"):
+			sprite.position = Vector2(sprite.get_meta("vehicle_rider_ground")) - Vector2(sprite.get_meta("vehicle_rider_anchor"))
+			sprite.z_index = 10 + int(_sprite_sort_ground(index).y / TerrainRenderer.CELL_PIXELS)
+			sprite.visible = true
+			continue
 		var progress := clampf(move_progress[index], 0.0, 1.0)
 		if movement_state[index] == UnitState.MOVING or movement_state[index] == UnitState.SWAPPING:
 			# Render the fractional remainder between fixed simulation ticks so
@@ -9084,7 +9476,7 @@ func advance_frame(delta: float) -> void:
 			elif not exchange_enabled or _visual_dirty:
 				_set_soldier_frame(index)
 			if update_batch and _sprites[index] != null:
-				_batch_view.submit_sprite(index, combat_ground(index), _sprites[index])
+				_batch_view.submit_sprite(index, _sprite_sort_ground(index), _sprites[index])
 		if grouped: _batch_view.finish_prepared_groups()
 		profile_started = _profile_combat_stage("render_submit", profile_started)
 		if update_batch: _batch_view.flush()

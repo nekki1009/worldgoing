@@ -28,6 +28,7 @@ func _run() -> void:
 		return
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUTPUT))
 	DisplayServer.window_set_size(Vector2i(1600, 1000))
+	root.gui_embed_subwindows = true # Keep the movable Window in the captured root texture.
 	var lab := TerrainLab.new()
 	lab.pause_when_unfocused = false # Capture automation does not simulate application focus.
 	root.add_child(lab)
@@ -35,6 +36,89 @@ func _run() -> void:
 	lab.set_process(false)
 	lab.npc.set_process(false)
 	var controller: Node = lab.site_controller
+	if "--top-banner" in OS.get_cmdline_user_args():
+		var top_banner := controller.top_banner as PanelContainer
+		var faster := lab.find_child("FasterSite", true, false) as Button
+		var slower := lab.find_child("SlowerSite", true, false) as Button
+		var pause := lab.find_child("PauseSite", true, false) as Button
+		assert(top_banner.get_parent() == lab.get_node("SiteUI"))
+		assert(top_banner.is_ancestor_of(controller.clock_label) and top_banner.is_ancestor_of(controller.speed_label))
+		assert(top_banner.is_ancestor_of(controller.player_status_label) and top_banner.is_ancestor_of(pause))
+		assert(not controller.panel.is_ancestor_of(controller.clock_label) and not controller.panel.is_ancestor_of(controller.player_status_label))
+		assert(faster != null and slower != null and pause != null)
+		assert(controller.clock_label.text.contains("和平：1 秒 = 遊戲 1.0 分鐘"))
+		assert(controller.speed_label.text == "1.0×")
+		assert(controller.player_status_label.text.contains("目前控制 #") and controller.player_status_label.text.contains("HP "))
+		assert(controller.player_status_label.text.contains("疲勞") and controller.player_status_label.text.contains("手動作業"))
+		faster.pressed.emit()
+		await process_frame
+		assert(controller.speed_label.text == "2.0×" and controller.clock_label.text.contains("遊戲 2.0 分鐘"))
+		assert(is_equal_approx(top_banner.position.x, 16.0) and is_equal_approx(top_banner.position.y, 16.0))
+		assert(top_banner.position.x + top_banner.size.x <= controller.panel.position.x)
+		await _capture("top_banner")
+		print("SITE TOP BANNER VISUAL PASS: date/time, 2x speed controls, pause and player HP/stun/cargo/fatigue/manual-work status; inspect PNG")
+		lab.queue_free()
+		await process_frame
+		quit(0)
+		return
+	if "--status" in OS.get_cmdline_user_args():
+		var status_panel := controller.status_panel as PanelContainer
+		assert(status_panel.get_parent() == lab.get_node("SiteUI"))
+		assert(status_panel.is_ancestor_of(controller.message) and not controller.panel.is_ancestor_of(controller.message))
+		assert(status_panel.is_ancestor_of(controller.details) and not controller.panel.is_ancestor_of(controller.details))
+		assert(status_panel.position.x == 16.0 and controller.message.modulate == Color("f0d7a0"))
+		assert(controller.details.text.begins_with("選取 "))
+		var old_details: String = controller.details.text
+		controller.message.text = "狀態與格子資訊保持獨立"
+		controller.select_cell(lab.terrain.spawn_cell + Vector2i.RIGHT)
+		assert(controller.details.text != old_details and controller.message.text == "狀態與格子資訊保持獨立")
+		assert(lab.npc.editor == null and lab.npc.player_sprite == null)
+		var screen := lab.get_viewport_rect().size
+		assert(is_equal_approx(status_panel.position.y + status_panel.size.y * controller.PANEL_SCALE, screen.y - 16.0))
+		await _capture("status_panel")
+		print("SITE STATUS PANEL VISUAL PASS: yellow status plus independent selected-cell details, bottom-left panel, neutral worker marker; inspect PNG")
+		lab.queue_free()
+		await process_frame
+		quit(0)
+		return
+	if "--combat-window" in OS.get_cmdline_user_args():
+		var open_button := lab.find_child("OpenCombatWindow", true, false) as Button
+		assert(open_button != null)
+		open_button.pressed.emit()
+		await process_frame
+		var combat_window := controller.combat_window as Window
+		assert(combat_window.visible and not combat_window.borderless and not combat_window.unresizable and not combat_window.exclusive)
+		assert(combat_window.is_ancestor_of(lab.find_child("StartMeleeTrial", true, false)))
+		assert(not controller.panel.is_ancestor_of(lab.find_child("StartMeleeTrial", true, false)))
+		controller.trial_friendly_count.value = 12
+		controller.trial_enemy_count.value = 8
+		controller.trial_friendly_training.value = 250
+		controller.trial_enemy_training.value = 500
+		controller.trial_friendly_tactics.value = 82
+		controller.trial_enemy_tactics.value = 37
+		controller.trial_friendly_leadership.value = 68
+		controller.trial_enemy_leadership.value = 44
+		controller.trial_friendly_coach.value = 91
+		controller.trial_enemy_coach.value = 23
+		controller.trial_friendly_order.select(0)
+		assert(_contains_label_text(combat_window, "單一兵種：" + TerrainArmy.TROOP_TYPE_NAME))
+		assert(_contains_label_text(combat_window, "隊長戰術") and _contains_label_text(combat_window, "隊長領導") and _contains_label_text(combat_window, "隊長教練"))
+		assert(controller.trial_friendly_tactics.value == 82 and controller.trial_enemy_tactics.value == 37)
+		assert(controller.trial_friendly_leadership.value == 68 and controller.trial_enemy_leadership.value == 44)
+		assert(controller.trial_friendly_coach.value == 91 and controller.trial_enemy_coach.value == 23)
+		var layout: Dictionary = lab.find_melee_trial_layout(12, 8)
+		assert(not layout.is_empty())
+		controller.select_cell(layout.friendly[0])
+		(lab.find_child("SetFriendlySpawn", true, false) as Button).pressed.emit()
+		controller.select_cell(layout.enemy[0])
+		(lab.find_child("SetEnemySpawn", true, false) as Button).pressed.emit()
+		assert(controller.trial_friendly_spawn == layout.friendly[0] and controller.trial_enemy_spawn == layout.enemy[0])
+		await _capture("combat_window")
+		print("SITE COMBAT WINDOW VISUAL PASS: movable native window, single troop type, editable captain abilities/team setup and selected-cell spawn controls; inspect PNG")
+		lab.queue_free()
+		await process_frame
+		quit(0)
+		return
 	if "--props" in OS.get_cmdline_user_args():
 		await _prop_views(lab)
 		lab.queue_free()
@@ -138,6 +222,12 @@ func _run() -> void:
 	lab.queue_free()
 	await process_frame
 	quit(0)
+
+func _contains_label_text(parent: Node, fragment: String) -> bool:
+	for child: Node in parent.find_children("*", "Label", true, false):
+		if (child as Label).text.contains(fragment):
+			return true
+	return false
 
 func _water_views(lab: TerrainLab) -> void:
 	var controller: Node = lab.site_controller

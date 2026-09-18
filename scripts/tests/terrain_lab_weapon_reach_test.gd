@@ -9,6 +9,7 @@ func run() -> void:
 	current_scene = lab
 	var a := lab.character
 	var b := lab.npc
+	b.initialize_visual() # This dedicated geometry test needs both 3D presenters.
 	a.set_process(false)
 	b.set_process(false)
 	lab.set_process(false)

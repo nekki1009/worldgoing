@@ -7,9 +7,14 @@ const COLLISIONS := "res://assets/characters/terrain_lab_army/standard_soldier/s
 const OUTPUT := "res://output/site_combat_proxy_20260914/profile.bin"
 const LIMIT_USEC := 55000000
 var _started_usec := 0
+var output := OUTPUT
 
 
 func _initialize() -> void:
+	for argument: String in OS.get_cmdline_user_args():
+		if argument.begins_with("--output="):
+			output = argument.trim_prefix("--output=").simplify_path()
+			assert(output.begins_with("res://output/") and output != "res://output/", "Profile staging must stay in one named output path")
 	call_deferred("run")
 
 
@@ -19,21 +24,24 @@ func run() -> void:
 		push_error("PROFILE_EXTRACT_TIMEOUT")
 		quit(1))
 	assert(DisplayServer.get_name() == "headless", "Extraction needs no renderer")
-	if FileAccess.file_exists(OUTPUT):
-		push_error("PROFILE_EXTRACT_REFUSES_OVERWRITE: " + OUTPUT)
+	if FileAccess.file_exists(output):
+		push_error("PROFILE_EXTRACT_REFUSES_OVERWRITE: " + output)
 		quit(1)
 		return
 	var sources := _source_hashes()
 	if not _within_deadline():
 		return
 	var manifest: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(MANIFEST))
-	assert(int(manifest.schema_version) == 2 and manifest.frames.size() == 1080)
-	assert(manifest.clips.size() == 35 and manifest.directions.size() == 4)
+	var expected_frames := 0
+	for clip: Dictionary in manifest.clips:
+		expected_frames += int(clip.samples) * manifest.directions.size()
+	assert(int(manifest.schema_version) == 2 and manifest.frames.size() == expected_frames)
+	assert(manifest.directions.size() == 4)
 	var file := FileAccess.open_compressed(COLLISIONS, FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
 	assert(file != null, "Could not open original collision data")
 	var poses: Array = file.get_var(false)
 	file.close()
-	assert(poses.size() == 1080)
+	assert(poses.size() == manifest.frames.size())
 	if not _within_deadline():
 		return
 	var tracks := {}
@@ -53,6 +61,7 @@ func run() -> void:
 				"times": PackedFloat64Array(), "frames": frames}
 	var seen_indices := {}
 	var seen_frames := {}
+	var jump_directions := {}
 	for descriptor: Dictionary in manifest.frames:
 		if not _within_deadline():
 			return
@@ -69,6 +78,8 @@ func run() -> void:
 		assert(float(frame_index) == float(descriptor.frame) and frame_index == track.frames.size())
 		assert(not seen_frames.has(frame_key))
 		seen_frames[frame_key] = true
+		if clip_id == "attack_jump_heavy":
+			jump_directions[descriptor.direction] = int(jump_directions.get(descriptor.direction, 0)) + 1
 		var sample_time := float(descriptor.sample_time)
 		var duration := float(descriptor.duration)
 		assert(is_finite(sample_time) and is_finite(duration) and duration > 0.0)
@@ -95,7 +106,11 @@ func run() -> void:
 		frame["hurt_bounds"] = _polygon_bounds(hurt_points)
 		track.frames.append(frame)
 		poses[collision_index] = {} # Release processed armor; preserve the original typed Dictionary array.
-	assert(seen_indices.size() == 1080 and seen_frames.size() == 1080 and tracks.size() == 140)
+	assert(seen_indices.size() == expected_frames and seen_frames.size() == expected_frames)
+	assert(tracks.size() == manifest.clips.size() * manifest.directions.size())
+	assert(jump_directions.size() == 4)
+	for direction: Dictionary in manifest.directions:
+		assert(jump_directions.get(direction.id, 0) == 12)
 	for track_key: String in tracks:
 		var track: Dictionary = tracks[track_key]
 		var times: PackedFloat64Array = track.times
@@ -110,19 +125,19 @@ func run() -> void:
 		return
 	var profile := {"schema": 1, "test_only": true, "sources": sources,
 		"appearance": manifest.appearance.duplicate(true), "tracks": tracks}
-	var directory_error := DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUTPUT.get_base_dir()))
+	var directory_error := DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(output.get_base_dir()))
 	assert(directory_error == OK)
-	if FileAccess.file_exists(OUTPUT):
-		push_error("PROFILE_EXTRACT_REFUSES_OVERWRITE: " + OUTPUT)
+	if FileAccess.file_exists(output):
+		push_error("PROFILE_EXTRACT_REFUSES_OVERWRITE: " + output)
 		quit(1)
 		return
-	var output_file := FileAccess.open_compressed(OUTPUT, FileAccess.WRITE, FileAccess.COMPRESSION_ZSTD)
+	var output_file := FileAccess.open_compressed(output, FileAccess.WRITE, FileAccess.COMPRESSION_ZSTD)
 	assert(output_file != null)
 	output_file.store_var(profile, false)
 	output_file.close()
 	if not _within_deadline():
 		return
-	var saved_file := FileAccess.open(OUTPUT, FileAccess.READ)
+	var saved_file := FileAccess.open(output, FileAccess.READ)
 	assert(saved_file != null)
 	var saved_bytes := saved_file.get_length()
 	saved_file.close()

@@ -7,11 +7,20 @@ func _run() -> void:
 	assert(DisplayServer.get_name() != "headless")
 	var baseline := _formal_catalog()
 	var catalog: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(Reader.CATALOG))
+	var source: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(Reader.BASE_MANIFEST))
+	var clips: Array[Dictionary] = []
+	clips.assign(source.clips)
+	var directions: Array[Dictionary] = []
+	directions.assign(source.directions)
+	var current_plan := Plan.build(PackedStringArray(["--recipe-mask=31", "--recipe-output=res://output/validation", "--recipe-clips=all", "--recipe-directions=all", "--recipe-first=0", "--recipe-count=1"]), clips, directions, baseline)
+	assert(current_plan.ok)
+	var sequences_per_recipe: int = current_plan.clips.size() * current_plan.directions.size()
+	var samples_per_recipe := int(current_plan.recipe_total)
 	assert(catalog.recipes.size() == 39)
 	for iron in range(1, 8):
 		var appearance := Plan.appearance_for(31, baseline, iron)
 		assert(Reader.supports(appearance) and Reader._appearance_iron(appearance) == iron)
-		assert(Reader._recipe(31, iron).sequences.size() == 72)
+		assert(Reader._recipe(31, iron).sequences.size() == sequences_per_recipe)
 	var unsupported := Plan.appearance_for(31, baseline, 7)
 	unsupported.parts.helmet = "helmet_steel_01"
 	assert(not Reader.supports(unsupported), "Steel must not silently use the iron atlas")
@@ -123,12 +132,12 @@ func _run() -> void:
 	assert(team.active_3d_source_count() == 1 and _inventory(lab) == inventory)
 	assert(Plan.fingerprints() == catalog.source_fingerprints)
 	var file := FileAccess.open(IRON_OUTPUT + "/measurements.json", FileAccess.WRITE)
-	file.store_string(JSON.stringify({"recipes": 39, "samples": 20904, "ordinary_iron_combinations": 7,
+	file.store_string(JSON.stringify({"recipes": 39, "samples": catalog.recipes.size() * samples_per_recipe, "ordinary_iron_combinations": 7,
 		"actual_equip_commands": created, "save_load": true, "sprite_states_checked": checked,
 		"live_female_presenters": 1, "iron_profile": iron_profile, "chest_protection": [protection.x, protection.y],
 		"source_fingerprints": catalog.source_fingerprints, "scope": "Actual commands, holders, save/load and static original TerrainArmy sprites; not battle/FPS"}, "\t"))
 	file.close()
-	print("WESTERN IRON ARMY ATLAS PASS: 39 recipes / 20904 samples; ", created, " actual equips; save/load; ", checked, " actual sprite states; iron != steel")
+	print("WESTERN IRON ARMY ATLAS PASS: 39 recipes / ", catalog.recipes.size() * samples_per_recipe, " samples; ", created, " actual equips; save/load; ", checked, " actual sprite states; iron != steel")
 	lab.free()
 	TerrainArmy.release_contact_source()
 	quit(0)

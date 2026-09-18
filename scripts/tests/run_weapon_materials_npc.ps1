@@ -1,21 +1,36 @@
-param([ValidateSet('Bake','Masks')][string]$Phase = 'Bake', [switch]$SkipPilot)
+param(
+    [ValidateSet('Bake','Masks')][string]$Phase = 'Bake',
+    [switch]$SkipPilot,
+    [switch]$StagedMaskSources,
+    [int]$StartAt = 1,
+    [string]$Stage = 'output/weapon_materials_npc_20260917'
+)
 $ErrorActionPreference = 'Stop'
 $taskRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
-$taskStage = 'output/weapon_materials_npc_20260917'
+$taskStage = $Stage.Replace('\', '/').Trim('/')
+if (-not $taskStage.StartsWith('output/', [StringComparison]::OrdinalIgnoreCase) -or $taskStage.Contains('..')) { throw 'Stage must be a named directory under output/' }
 $catalogText = Get-Content -LiteralPath (Join-Path $taskRoot 'scripts/ui/weapon_materials.gd') -Raw
 $catalog = [regex]::Match($catalogText, '(?s)const OPTIONS := (\[.*?\n\])').Groups[1].Value | ConvertFrom-Json
 $weapons = @($catalog | Where-Object id -ne 'none' | ForEach-Object { $_.id })
 if ($weapons.Count -ne 44) { throw 'Expected the exact 44-option catalogue' }
 $keys = if ($Phase -eq 'Masks') { @('base') + $weapons } else { $weapons }
+if ($StartAt -lt 1 -or $StartAt -gt $keys.Count) { throw "StartAt must be inside 1..$($keys.Count)" }
 $index = 0
 foreach ($key in $keys) {
     $index++
+    if ($index -lt $StartAt) { continue }
     if ($Phase -eq 'Bake' -and $SkipPilot -and $key -in @('longsword_01_wood','spear_01_stone')) { continue }
     if ($Phase -eq 'Bake') {
         $arguments = @('--script','res://scripts/tools/bake_terrain_army_ranged.gd','--',"--weapon=$key","--output=res://$taskStage/atlases/ranged/$key")
         $expected = "$taskStage/atlases/ranged/$key/manifest.json"
     } else {
-        $source = if ($key -eq 'base') { 'res://assets/characters/terrain_lab_army/standard_soldier/standard_soldier_atlas.json' } else { "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/$key/manifest.json" }
+        $source = if ($StagedMaskSources) {
+            if ($key -eq 'base') { "res://$taskStage/base/standard_soldier_atlas.json" } else { "res://$taskStage/atlases/ranged/$key/publish.json" }
+        } elseif ($key -eq 'base') {
+            'res://assets/characters/terrain_lab_army/standard_soldier/standard_soldier_atlas.json'
+        } else {
+            "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1/$key/manifest.json"
+        }
         $arguments = @('--script','res://scripts/tools/bake_terrain_army_dyes.gd','--',"--source=$source","--output=res://$taskStage/atlases/masks/$key")
         $expected = "$taskStage/atlases/masks/$key.json"
     }

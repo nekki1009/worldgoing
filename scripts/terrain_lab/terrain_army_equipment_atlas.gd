@@ -3,8 +3,15 @@ extends RefCounted
 const Plan = preload("res://scripts/tools/terrain_army_recipe_bake_plan.gd")
 const RangedAtlas = preload("res://scripts/terrain_lab/terrain_army_ranged_atlas.gd")
 const DyeAtlas = preload("res://scripts/terrain_lab/terrain_army_dye_atlas.gd")
+const WagonRecipe = preload("res://scripts/terrain_lab/site_wagon_rider_recipe.gd")
 const BASE_MANIFEST := "res://assets/characters/terrain_lab_army/standard_soldier/standard_soldier_atlas.json"
 const CATALOG := "res://assets/characters/terrain_lab_army/standard_soldier/recipes/v1/catalog.json"
+const FEMALE_ROOT := "res://assets/characters/terrain_lab_army/standard_female/v1"
+const FEMALE_BAKER := "res://scripts/tools/bake_terrain_army_female.gd"
+const FEMALE_RANGED_ROOT := "res://assets/characters/terrain_lab_army/standard_female/ranged/v1"
+const FEMALE_RANGED_BAKER := "res://scripts/tools/bake_terrain_army_female_ranged.gd"
+const WAGON_FOOT_ROOT := "res://assets/vehicles/logistics/v1/riders/foot"
+const WAGON_FOOT_BAKER := "res://scripts/tools/bake_wagon_rider_foot.gd"
 const PAGE_CACHE_BYTES := 64 * 1024 * 1024
 static var _catalog_path := CATALOG
 static var _catalog_checked := false
@@ -20,6 +27,20 @@ static var _use_serial := 0
 static var page_load_count := 0 # Diagnostics only; no texture lifetime changes.
 static var page_load_usec := 0
 static var page_evictions := 0
+static var _female := {}
+static var _female_dye := {}
+static var _female_materials := {}
+static var _female_ranged := {}
+static var _female_root := FEMALE_ROOT # Same private publication root; tests use isolated output fixtures.
+static var _wagon_foot := {}
+
+static func refresh_female_sources() -> void:
+	# Recheck disk provenance at a load boundary, never on each rendered frame.
+	_female.clear()
+	_female_dye.clear()
+	_female_ranged.clear()
+	_female_materials.clear()
+	_wagon_foot.clear()
 
 static func set_catalog_path(path: String) -> bool:
 	var clean := path.simplify_path()
@@ -37,6 +58,9 @@ static func set_catalog_path(path: String) -> bool:
 	return true
 
 static func supports(appearance: Dictionary) -> bool:
+	if not wagon_foot_recipe(appearance).is_empty(): return true
+	if appearance.get("body") == 1:
+		return not female_recipe(appearance).is_empty() and (appearance.get("equipment_dyes", {}).is_empty() or not dye_entry(appearance).is_empty())
 	if not HumanCharacter3DEditor.valid_appearance(appearance) or not DyeAtlas.supports(appearance): return false
 	appearance = DyeAtlas.Dye.geometry_appearance(appearance)
 	if RangedAtlas.supports_weapon(str(appearance.get("parts", {}).get("weapon", ""))) and not RangedAtlas.recipe(appearance).is_empty():
@@ -45,12 +69,18 @@ static func supports(appearance: Dictionary) -> bool:
 	return mask >= 0 and not _recipe(mask, _appearance_iron(appearance)).is_empty()
 
 static func frame(appearance: Dictionary, clip: String, direction: String, sample_time: float) -> Dictionary:
-	if not HumanCharacter3DEditor.valid_appearance(appearance) or not DyeAtlas.supports(appearance): return {}
+	if not HumanCharacter3DEditor.valid_appearance(appearance): return {}
+	var recipe := wagon_foot_recipe(appearance)
+	if recipe.is_empty():
+		if appearance.get("body") == 1:
+			if not supports(appearance): return {}
+		elif not DyeAtlas.supports(appearance): return {}
 	appearance = DyeAtlas.Dye.geometry_appearance(appearance)
 	if not is_finite(sample_time) or sample_time < 0.0:
 		return {}
-	var recipe := {}
-	if RangedAtlas.supports_weapon(str(appearance.get("parts", {}).get("weapon", ""))):
+	if recipe.is_empty() and appearance.get("body") == 1:
+		recipe = female_recipe(appearance)
+	if recipe.is_empty() and RangedAtlas.supports_weapon(str(appearance.get("parts", {}).get("weapon", ""))):
 		recipe = RangedAtlas.recipe(appearance)
 	if recipe.is_empty():
 		var mask := _appearance_mask(appearance)
@@ -93,6 +123,148 @@ static func frame(appearance: Dictionary, clip: String, direction: String, sampl
 	result.texture = texture
 	result.map_scale = recipe.map_scale
 	return result
+
+static func female_appearance() -> Dictionary:
+	if not _load_base(): return {}
+	var appearance: Dictionary = _base.appearance.duplicate(true)
+	appearance.body = 1.0
+	appearance.parts.hair = HumanCharacter3DEditor.default_appearance(1).parts.hair
+	return appearance
+
+static func female_recipe(appearance: Dictionary) -> Dictionary:
+	if not HumanCharacter3DEditor.valid_appearance(appearance): return {}
+	appearance = DyeAtlas.Dye.geometry_appearance(appearance)
+	if appearance != female_appearance():
+		var weapon := str(appearance.get("parts", {}).get("weapon", ""))
+		var ranged_plan := female_ranged_plan(weapon)
+		if ranged_plan.is_empty() or appearance != ranged_plan.appearance: return {}
+		if _female_ranged.has(weapon): return _female_ranged[weapon]
+		var ranged := _single_page_recipe(appearance, FEMALE_RANGED_ROOT + "/" + weapon, "terrain_army_female_ranged_recipe", female_ranged_sources(), 29, ranged_plan)
+		if not ranged.is_empty(): _female_ranged[weapon] = ranged
+		return ranged
+	if not _female.is_empty(): return _female
+	var sources := Plan.fingerprints()
+	sources[FEMALE_BAKER] = FileAccess.get_md5(FEMALE_BAKER)
+	_female = _single_page_recipe(female_appearance(), _female_root, "terrain_army_female_recipe", sources, 31)
+	return _female
+
+static func female_ranged_plan(weapon: String) -> Dictionary:
+	if weapon not in RangedAtlas.WEAPONS or not _load_base(): return {}
+	var selected := RangedAtlas.plan(weapon, _base)
+	if selected.is_empty(): return {}
+	selected.appearance.body = 1.0
+	selected.appearance.parts.hair = HumanCharacter3DEditor.default_appearance(1).parts.hair
+	selected.key = "standard_female_ranged_v1/" + weapon
+	return selected
+
+static func female_ranged_sources() -> Dictionary:
+	var sources := RangedAtlas.fingerprints()
+	if sources.is_empty(): return {}
+	for path: String in [FEMALE_RANGED_BAKER, "res://scripts/terrain_lab/terrain_army_equipment_atlas.gd"]:
+		var digest := FileAccess.get_md5(path)
+		if digest.length() != 32: return {}
+		sources[path] = digest
+	return sources
+
+static func wagon_foot_recipe(appearance: Dictionary) -> Dictionary:
+	if not WagonRecipe.matches(appearance): return {}
+	var body := int(appearance.body)
+	appearance = DyeAtlas.Dye.geometry_appearance(WagonRecipe.appearance(body))
+	if _wagon_foot.has(body): return _wagon_foot[body]
+	var sources := Plan.fingerprints()
+	if sources.is_empty(): return {}
+	for path: String in [WAGON_FOOT_BAKER, "res://scripts/terrain_lab/site_wagon_rider_recipe.gd"]:
+		var digest := FileAccess.get_md5(path)
+		if digest.length() != 32: return {}
+		sources[path] = digest
+	var recipe := _single_page_recipe(appearance, WAGON_FOOT_ROOT + ("/male" if body == 0 else "/female"), "terrain_army_wagon_rider_foot", sources, 28)
+	if not recipe.is_empty(): _wagon_foot[body] = recipe
+	return recipe
+
+static func _single_page_recipe(appearance: Dictionary, directory: String, kind: String, sources: Dictionary, mask: int, ranged_plan: Dictionary = {}) -> Dictionary:
+	if not _load_base() or sources.is_empty(): return {}
+	var path := directory + "/manifest.json"
+	if not FileAccess.file_exists(path): return {}
+	var manifest: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if not manifest is Dictionary or manifest.get("schema_version") != 1 or manifest.get("kind") != kind or manifest.get("appearance") != appearance or manifest.get("source_fingerprints") != sources or manifest.get("source_manifest_md5") != FileAccess.get_md5(BASE_MANIFEST): return {}
+	var clips: Array[Dictionary] = []
+	clips.assign(_base.clips)
+	var directions: Array[Dictionary] = []
+	directions.assign(_base.directions)
+	var plan := Plan.build(PackedStringArray(["--recipe-mask=%d" % mask, "--recipe-output=res://output/check", "--recipe-clips=all", "--recipe-directions=all", "--recipe-first=0", "--recipe-count=128"]), clips, directions, _base.appearance)
+	if not ranged_plan.is_empty():
+		plan = ranged_plan.duplicate(true)
+		plan.ok = true
+		if manifest.get("recipe_key") != plan.key: return {}
+	if not plan.ok or manifest.get("clips") != plan.clips or manifest.get("directions") != plan.directions or not manifest.get("frames") is Array or manifest.frames.size() != plan.recipe_total or not manifest.get("pages") is Array or manifest.pages.size() != 1 or not _number(manifest.get("map_scale")) or not is_equal_approx(float(manifest.map_scale), float(_base.map_scale)): return {}
+	var page: Variant = manifest.pages[0]
+	if not page is Dictionary or page.get("page") != 0 or not _integer(page.get("width"), 1, 16384) or not _integer(page.get("height"), 1, 16384): return {}
+	for field: String in ["path", "resource_path"]:
+		if not _inside(str(page.get(field, "")), directory + "/") or not FileAccess.file_exists(page[field]): return {}
+	if page.get("png_md5") != FileAccess.get_md5(page.path) or page.get("resource_md5") != FileAccess.get_md5(page.resource_path): return {}
+	var metrics: Variant = manifest.get("metrics")
+	if not metrics is Dictionary or str(metrics.get("pixel_sha256", "")).length() != 64 or metrics.get("pixel_sha256") != metrics.get("png_decoded_sha256") or metrics.get("pixel_sha256") != metrics.get("resource_decoded_sha256"): return {}
+	var sequences := {}
+	var ordinal := 0
+	for clip: Dictionary in plan.clips:
+		for direction: Dictionary in plan.directions:
+			var sequence: Array[Dictionary] = []
+			var pose := str(clip.get("pose", clip.id))
+			var looping := pose in ["idle", "walk", "run", "guard", "unconscious"]
+			for index in range(int(clip.samples)):
+				var value: Variant = manifest.frames[ordinal]
+				if not value is Dictionary or value.get("clip") != clip.id or value.get("direction") != direction.id or value.get("frame") != index or value.get("selection_index") != ordinal or value.get("page") != 0 or value.get("resolved_pose") != pose: return {}
+				if not _number(value.get("duration")) or float(value.duration) <= 0.0 or not _number(value.get("sample_time")): return {}
+				var expected := float(value.duration) * index / float(int(clip.samples) if looping else int(clip.samples) - 1)
+				if not is_equal_approx(float(value.sample_time), expected) or (not sequence.is_empty() and value.duration != sequence[0].duration): return {}
+				var rect: Variant = value.get("rect")
+				var anchor: Variant = value.get("anchor_offset")
+				if not rect is Dictionary or not anchor is Dictionary or not _integer(rect.get("x"), 0, int(page.width)) or not _integer(rect.get("y"), 0, int(page.height)) or not _integer(rect.get("w"), 1, int(page.width)) or not _integer(rect.get("h"), 1, int(page.height)) or int(rect.x) + int(rect.w) > int(page.width) or int(rect.y) + int(rect.h) > int(page.height) or not _number(anchor.get("x")) or not _number(anchor.get("y")): return {}
+				value._page = page
+				sequence.append(value)
+				ordinal += 1
+			sequences[str(clip.id) + "|" + str(direction.id)] = sequence
+	return {"sequences": sequences, "map_scale": float(manifest.map_scale), "source_manifest": path}
+
+static func dye_entry(appearance: Dictionary) -> Dictionary:
+	if appearance.get("body") != 1: return DyeAtlas.entry(appearance)
+	var recipe := female_recipe(appearance)
+	if recipe.is_empty(): return {}
+	var directory := str(recipe.source_manifest).get_base_dir()
+	if _female_dye.has(directory): return _female_dye[directory]
+	var path := directory + "/dye.json"
+	if not FileAccess.file_exists(path): return {}
+	var record: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if not record is Dictionary or record.get("schema_version") != 1 or record.get("complete") != true or record.get("slots") != DyeAtlas.Dye.SLOTS or record.get("source_fingerprints") != DyeAtlas.fingerprints() or record.get("appearance") != DyeAtlas.Dye.geometry_appearance(appearance): return {}
+	var source_path := directory + "/manifest.json"
+	var source: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(source_path))
+	if record.get("source_manifest") != source_path or record.get("source_manifest_md5") != FileAccess.get_md5(source_path) or record.get("frame_count") != source.frames.size() or record.get("mask_path") != directory + "/dye.png" or record.get("mask_md5") != FileAccess.get_md5(record.mask_path) or record.get("width") != source.pages[0].width or record.get("height") != source.pages[0].height: return {}
+	_female_dye[directory] = record
+	return record
+
+static func apply_dye(sprite: Sprite2D, appearance: Dictionary) -> bool:
+	if appearance.get("body") != 1: return DyeAtlas.apply(sprite, appearance)
+	if sprite.get_meta("equipment_dye_appearance", {}) == appearance: return true
+	var colors: Dictionary = appearance.get("equipment_dyes", {})
+	if colors.is_empty():
+		sprite.material = null
+	else:
+		var record := dye_entry(appearance)
+		if record.is_empty(): return false
+		var key := str(record.mask_path)
+		if not _female_materials.has(key):
+			var mask := Image.load_from_file(record.mask_path)
+			if mask == null: return false
+			var material := ShaderMaterial.new()
+			material.shader = Shader.new()
+			material.shader.code = DyeAtlas.SHADER
+			material.set_shader_parameter("dye_map", ImageTexture.create_from_image(mask))
+			_female_materials[key] = material
+		sprite.material = _female_materials[key]
+		for slot: String in DyeAtlas.Dye.SLOTS:
+			sprite.set_instance_shader_parameter(slot + "_dye", DyeAtlas.canvas_color(colors[slot]) if colors.has(slot) else Vector4.ZERO)
+	sprite.set_meta("equipment_dye_appearance", appearance.duplicate(true))
+	return true
 
 static func normalized_clip(clip: String) -> String:
 	return "guard" if clip in ["guard_unshielded", "guard_weapon", "guard_polearm", "guard_spear"] else clip.replace("guard_weapon_", "guard_").replace("guard_polearm_", "guard_")
@@ -227,7 +399,7 @@ static func validate_batches(mask: int, batches: Array[Dictionary], directory: S
 			var selected: Dictionary = value.duplicate(true)
 			selected._page = page
 			seen[key] = selected
-	if seen.size() != expected.size() or seen.size() != 536:
+	if seen.size() != expected.size():
 		return {}
 	for clip: Dictionary in plan.clips:
 		for direction: Dictionary in plan.directions:

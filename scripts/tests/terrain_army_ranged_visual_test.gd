@@ -30,13 +30,15 @@ func _run() -> void:
 	current_scene = scene
 	_label(scene, "弓／弩正式圖集 · 四方向與六種動作", Vector2(24, 14), 27)
 	_label(scene, "原角色、原武器、無盾；正式 EquipmentAtlas 路由。僅放大檢視，不替代戰鬥效能驗收。", Vector2(24, 52), 16)
+	var baseline: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(Reader.BASE_MANIFEST))
 	var sprites := 0
 	for weapon_index in range(2):
 		var weapon: String = Reader.WEAPONS[weapon_index]
 		var published: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(Reader.ROOT + "/" + weapon + "/manifest.json"))
 		assert(EquipmentAtlas.supports(published.appearance))
 		var recipe := Reader.recipe(published.appearance)
-		assert(recipe.sequences.size() == 76)
+		var plan := Reader.plan(weapon, baseline)
+		assert(not plan.is_empty() and recipe.sequences.size() == plan.clips.size() * plan.directions.size())
 		for direction_index in range(4):
 			var direction: String = DIRECTIONS[direction_index]
 			var x := 156.0 + float(weapon_index * 4 + direction_index) * 138.0

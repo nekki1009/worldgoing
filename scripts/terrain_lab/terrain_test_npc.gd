@@ -95,13 +95,20 @@ func advance_navigation() -> void:
 			target_cell = follow_cell
 			_rebuild_path(target_cell)
 	if _path.is_empty():
-		if command == Command.MOVE_TO_CELL:
+		if command == Command.MOVE_TO_CELL and terrain_cell == target_cell:
 			command = Command.STOP
 			command_status = "Arrived at %s" % terrain_cell
 			queue_redraw()
-		return
+			return
+		if command not in [Command.MOVE_TO_CELL, Command.FOLLOW_PLAYER]: return
+		_rebuild_path(target_cell)
+		if _path.is_empty():
+			command_status = "Blocked / 等待前往 %s 的合法路徑" % target_cell
+			return # Keep the original order; an empty route is not an arrival.
 	var next_cell: Vector2i = _path[0]
 	if is_instance_valid(opponent) and opponent.occupies_cell(next_cell):
+		if command != Command.FOLLOW_PLAYER or next_cell != target_cell:
+			_rebuild_path(target_cell)
 		return
 	if not data.can_step(terrain_cell, next_cell):
 		_rebuild_path(target_cell)
@@ -109,6 +116,7 @@ func advance_navigation() -> void:
 		return
 	if step(next_cell - terrain_cell):
 		_path.pop_front()
+		command_status = "Following player / 跟隨玩家" if command == Command.FOLLOW_PLAYER else "Moving to %s" % target_cell
 	else:
 		_rebuild_path(target_cell)
 	queue_redraw()
@@ -117,8 +125,10 @@ func _rebuild_path(goal: Vector2i) -> void:
 	_path.clear()
 	if data == null or not data.contains(goal) or not data.is_walkable(goal) or goal == terrain_cell:
 		return
-	# Following a player keeps its occupied goal; work routes avoid live occupants.
-	var blocked := Callable() if command == Command.FOLLOW_PLAYER else func(cell: Vector2i) -> bool: return not can_enter_cell(cell)
+	# Only following's actual player goal may be occupied, not its whole route.
+	# An occupied MOVE goal cannot be reached; avoid scanning the map to prove it.
+	if command != Command.FOLLOW_PLAYER and not can_enter_cell(goal): return
+	var blocked := func(cell: Vector2i) -> bool: return not (command == Command.FOLLOW_PLAYER and cell == goal) and not can_enter_cell(cell)
 	_path = data.path_between(terrain_cell, goal, blocked)
 
 func capture_state() -> Dictionary:
@@ -143,18 +153,18 @@ func restore_state(state: Dictionary) -> void:
 func _draw() -> void:
 	if player_sprite != null:
 		super._draw()
-		draw_string(ThemeDB.fallback_font, Vector2(-16, -72), "NPC", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color("f5dcff"))
+		draw_string(ThemeDB.fallback_font, Vector2(-16, -72), "工人", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color("f4dfb5"))
 		return
 	draw_circle(Vector2(0.0, 7.0), 15.0, Color(0.03, 0.05, 0.08, 0.55))
-	draw_circle(Vector2.ZERO, 12.0, Color("c18be8"))
-	draw_arc(Vector2.ZERO, 12.0, 0.0, TAU, 24, Color("f5dcff"), 2.0)
-	draw_circle(Vector2(3.0, -3.0), 2.5, Color("27253f"))
-	draw_line(Vector2(0.0, -12.0), Vector2(0.0, -23.0), Color("e9c7ff"), 2.0)
-	draw_colored_polygon(PackedVector2Array([Vector2(-5.0, -22.0), Vector2(5.0, -19.0), Vector2(-5.0, -16.0)]), Color("e9c7ff"))
+	draw_circle(Vector2.ZERO, 12.0, Color("c49a62"))
+	draw_arc(Vector2.ZERO, 12.0, 0.0, TAU, 24, Color("f4dfb5"), 2.0)
+	draw_circle(Vector2(3.0, -3.0), 2.5, Color("352b24"))
+	draw_line(Vector2(0.0, -12.0), Vector2(0.0, -23.0), Color("f4dfb5"), 2.0)
+	draw_colored_polygon(PackedVector2Array([Vector2(-5.0, -22.0), Vector2(5.0, -19.0), Vector2(-5.0, -16.0)]), Color("f4dfb5"))
 	if target_cell != Vector2i(-1, -1) and data != null:
 		var target_position := (Vector2(target_cell) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS - position
-		draw_rect(Rect2(target_position - Vector2(12.0, 12.0), Vector2.ONE * 24.0), Color(0.86, 0.63, 1.0, 0.8), false, 3.0)
+		draw_rect(Rect2(target_position - Vector2(12.0, 12.0), Vector2.ONE * 24.0), Color(0.94, 0.73, 0.35, 0.8), false, 3.0)
 	for cell: Vector2i in _path:
 		var path_position := (Vector2(cell) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS - position
-		draw_circle(path_position, 4.0, Color(0.86, 0.63, 1.0, 0.65))
-	draw_string(ThemeDB.fallback_font, Vector2(-18.0, -29.0), "NPC", HORIZONTAL_ALIGNMENT_LEFT, -1.0, 14, Color("f5dcff"))
+		draw_circle(path_position, 4.0, Color(0.94, 0.73, 0.35, 0.65))
+	draw_string(ThemeDB.fallback_font, Vector2(-18.0, -29.0), "工人", HORIZONTAL_ALIGNMENT_LEFT, -1.0, 14, Color("f4dfb5"))

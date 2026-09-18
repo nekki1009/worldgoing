@@ -44,7 +44,7 @@ func _reset(person: TerrainTestCharacter, weapon: String = "longsword_01") -> vo
 
 func _outcome(role: String, big: bool = false) -> Dictionary:
 	return {"role": role, "kind": "big" if big else "small", "hp": (2.0 if big else 1.0) if role == "loser" else 0.0,
-		"stun": (18.0 if big else 8.0) if role == "loser" else 0.0, "fatigue": 0.5,
+		"stun": (18.0 if big else 8.0) if role == "loser" else 0.0, "fatigue": 0.0 if role == "draw" else 0.5,
 		"stagger": (0.65 if big else 0.35) if role == "loser" else (0.3 if role == "draw" else 0.0),
 		"knockback": big and role == "loser"}
 

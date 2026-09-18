@@ -12,10 +12,17 @@ func _run() -> void:
 	create_timer(20.0).timeout.connect(func() -> void: quit(1))
 	var source: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(Reader.BASE_MANIFEST))
 	var appearance := Plan.appearance_for(31, source.appearance, 7)
+	var clips: Array[Dictionary] = []
+	clips.assign(source.clips)
+	var directions: Array[Dictionary] = []
+	directions.assign(source.directions)
+	var plan := Plan.build(PackedStringArray(["--recipe-mask=31", "--recipe-iron=7", "--recipe-output=res://output/validation", "--recipe-clips=all", "--recipe-directions=all", "--recipe-first=0", "--recipe-count=1"]), clips, directions, source.appearance)
+	assert(plan.ok)
+	var recipe_total := int(plan.recipe_total)
 	var catalog := {"schema_version": 1, "source_manifest_md5": FileAccess.get_md5(Reader.BASE_MANIFEST), "source_fingerprints": Plan.fingerprints(), "recipes": {}}
 	var paths: Array[String] = []
-	for first in range(0, 536, 128):
-		paths.append(WORK + "full/iron7/m31/%03d_%03d/manifest.json" % [first, mini(128, 536 - first)])
+	for first in range(0, recipe_total, Plan.MAX_BATCH_FRAMES):
+		paths.append(WORK + "full/iron7/m31/%03d_%03d/manifest.json" % [first, mini(Plan.MAX_BATCH_FRAMES, recipe_total - first)])
 	catalog.recipes[Plan.recipe_key(31, 7)] = paths
 	var file := FileAccess.open(WORK + "full/preview_catalog.json", FileAccess.WRITE)
 	file.store_string(JSON.stringify(catalog, "\t"))

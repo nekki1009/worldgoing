@@ -22,8 +22,6 @@ const EXCHANGE_FATIGUE_WEIGHT := 0.2
 const EXCHANGE_MORALE_WEIGHT := 0.1
 const EXCHANGE_SURROUND_SECTOR_PENALTY := 8.0
 const EXCHANGE_SURROUND_LIMIT := 24.0
-const EXCHANGE_SMALL_STUN := 8.0
-const EXCHANGE_BIG_STUN := 18.0
 const EXCHANGE_SMALL_STAGGER := 0.35
 const EXCHANGE_BIG_STAGGER := 0.65
 const EXCHANGE_DRAW_HOLD := 0.3
@@ -53,7 +51,9 @@ static func ranged_result(shooter: Dictionary, defender: Dictionary, distance: f
 	# callers. In particular, a friendly occupant receives the same numerical rule.
 	var result := {"kind": "miss", "hp": 0.0, "stun": 0.0, "stagger": 0.0,
 		"knockback": false, "guard_break": false, "chance": 0.0}
-	if not is_finite(distance) or distance <= 1.0 or distance > RANGED_MAX_RANGE \
+	var weapon := str(shooter.get("weapon", "none"))
+	if not WeaponMaterials.is_ranged(StringName(weapon)) \
+		or not is_finite(distance) or distance <= 1.0 or distance > RANGED_MAX_RANGE \
 		or not is_finite(roll) or roll < 0.0 or roll >= 100.0:
 		return result
 	var power := str(shooter.get("skill", "")) == "power"
@@ -72,8 +72,11 @@ static func ranged_result(shooter: Dictionary, defender: Dictionary, distance: f
 		return result
 	var hit := roll < chance * 0.6
 	result.kind = "hit" if hit else "graze"
-	result.hp = 2.0 if hit else 1.0
-	result.stun = (12.0 if hit else 6.0) + (EXCHANGE_POWER_STUN if power else 0.0)
+	# A released shot keeps its launch weapon; the actual arrival target supplies
+	# current armor. A graze halves the shared tier/weapon effects, not accuracy.
+	var contact_scale := 1.0 if hit else 0.5
+	result.hp = exchange_hp(weapon, str(defender.get("armor", "none"))) * contact_scale
+	result.stun = exchange_stun(weapon) * contact_scale + (EXCHANGE_POWER_STUN if power else 0.0)
 	result.stagger = 0.35 if hit else 0.2
 	return result
 
@@ -129,6 +132,14 @@ static func ranged_line_clear(data: TerrainData, source: Vector2i, goal: Vector2
 				return false
 	return true
 
+static func ranged_friendly_clear(source: Vector2i, goal: Vector2i, friendly_cells: Dictionary) -> bool:
+	# Launch-time fire discipline only. A friend may still enter a released arrow's
+	# original flight path; arrival remains the authoritative single impact check.
+	for cell: Vector2i in ranged_cells(source, goal):
+		if friendly_cells.has(cell):
+			return false
+	return true
+
 static func exchange_score(person: Dictionary) -> float:
 	var sectors := clampi(int(person.get("encirclement", 1)) - 1, 0, 3)
 	var surround := minf(float(sectors) * EXCHANGE_SURROUND_SECTOR_PENALTY, EXCHANGE_SURROUND_LIMIT)
@@ -140,15 +151,46 @@ static func exchange_score(person: Dictionary) -> float:
 		+ float(person.get("armorbonus", 0.0)) + float(person.get("facility", 0.0)) \
 		+ skill_bonus - surround
 
+static func weapon_level(asset: String) -> int:
+	# Equipment records keep their existing asset IDs. Combat derives this
+	# disposable balance tier without adding another saved item field.
+	return int({"": 0, "wood": 1, "stone": 2, "iron": 3, "steel": 4}.get(
+		WeaponMaterials.material(StringName(asset)), 0))
+
+static func armor_level(asset: String) -> int:
+	if "mingguang" in asset or "steel" in asset:
+		return 4
+	if "iron" in asset:
+		return 3
+	if "leather" in asset:
+		return 2
+	if asset.begins_with("outfit_medieval_"):
+		return 1
+	return 0
+
+static func exchange_attack_clip(asset: String) -> StringName:
+	return StringName(WeaponMaterials.ATTACKS.get(WeaponMaterials.family(StringName(asset)), &"attack_unarmed"))
+
+static func exchange_stun(asset: String) -> float:
+	# The actual weapon decides impact; the big-win jump is presentation only.
+	return float(attack_profile(exchange_attack_clip(asset)).impact)
+
+static func exchange_hp(weapon: String, armor: String, big: bool = false) -> float:
+	var value := pow(2.0, weapon_level(weapon) - armor_level(armor))
+	return value * (2.0 if big else 1.0)
+
 static func exchange_result(a: Dictionary, b: Dictionary, roll: float = 0.0) -> Dictionary:
 	# One bounded, caller-owned roll is added to A's margin. Swap A/B and negate
 	# that same roll to obtain the mirrored result; this helper has no RNG state.
 	var score_a := exchange_score(a)
 	var score_b := exchange_score(b)
 	var margin := score_a - score_b + clampf(roll, -EXCHANGE_ROLL_LIMIT, EXCHANGE_ROLL_LIMIT)
-	var result := {"winner": 0, "kind": "draw", "hp": 0.0, "stun": 0.0, "stagger": 0.0,
+	var result := {"winner": 0, "kind": "draw", "hp": 0.0, "stun": 0.0,
+		"hp_a": 0.0, "hp_b": 0.0,
+		"stun_a": exchange_stun(str(b.get("weapon", "none"))),
+		"stun_b": exchange_stun(str(a.get("weapon", "none"))), "stagger": 0.0,
 		"hold": EXCHANGE_DRAW_HOLD, "knockback": false, "guard_break": false,
-		"fatigue_a": EXCHANGE_FATIGUE, "fatigue_b": EXCHANGE_FATIGUE,
+		"fatigue_a": 0.0, "fatigue_b": 0.0,
 		"score_a": score_a, "score_b": score_b, "margin": margin}
 	if absf(margin) <= EXCHANGE_DRAW_MARGIN:
 		return result
@@ -158,9 +200,17 @@ static func exchange_result(a: Dictionary, b: Dictionary, roll: float = 0.0) -> 
 	var loser: Dictionary = b if a_wins else a
 	result.winner = 1 if a_wins else -1
 	result.kind = "big" if big else "small"
-	result.hp = 2.0 if big else 1.0
-	result.stun = (EXCHANGE_BIG_STUN if big else EXCHANGE_SMALL_STUN) \
+	result.fatigue_a = EXCHANGE_FATIGUE
+	result.fatigue_b = EXCHANGE_FATIGUE
+	var hp := exchange_hp(str(winner.get("weapon", "none")), str(loser.get("armor", "none")), big)
+	var stun := exchange_stun(str(winner.get("weapon", "none"))) \
 		+ (EXCHANGE_POWER_STUN if str(winner.get("skill", "")) == "power" else 0.0)
+	result.hp = hp # Compatibility summary: the losing side's HP effect.
+	result.stun = stun # Compatibility summary: the losing side's stun effect.
+	result.hp_b = hp if a_wins else 0.0
+	result.hp_a = 0.0 if a_wins else hp
+	result.stun_b = stun if a_wins else 0.0
+	result.stun_a = 0.0 if a_wins else stun
 	result.stagger = EXCHANGE_BIG_STAGGER if big else EXCHANGE_SMALL_STAGGER
 	result.hold = 0.0
 	result.knockback = big and str(loser.get("skill", "")) != "brace"

@@ -1,6 +1,5 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateRange(0, 194)]
     [int]$BatchIndex,
 
     [string]$PlanPath = 'output/terrain_army_missing_gear_20260913/batch_plan.json'
@@ -13,7 +12,9 @@ $taskPlanPath = [IO.Path]::GetFullPath($(if ([IO.Path]::IsPathRooted($PlanPath))
 $taskOutputRoot = Join-Path $taskProject 'output'
 if (-not $taskPlanPath.StartsWith($taskOutputRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($taskPlanPath) -ne 'batch_plan.json') { throw 'Recipe plan must be a named output/batch_plan.json inside this project' }
 $taskPlan = Get-Content -LiteralPath $taskPlanPath -Raw | ConvertFrom-Json
-if ($taskPlan.status -ne 'READY' -or @($taskPlan.source_fingerprints.PSObject.Properties).Count -ne 6) { throw 'Recipe sources must be explicitly locked before any full batch' }
+if ($taskPlan.status -ne 'READY' -or @($taskPlan.source_fingerprints.PSObject.Properties).Count -lt 1) { throw 'Recipe sources must be explicitly locked before any full batch' }
+$taskBatches = @($taskPlan.batches)
+if ($BatchIndex -lt 0 -or $BatchIndex -ge $taskBatches.Count) { throw "Batch index must be inside the locked plan (0..$($taskBatches.Count - 1))" }
 $taskManifestPath = Join-Path $taskProject 'assets/characters/terrain_lab_army/standard_soldier/standard_soldier_atlas.json'
 if ((Get-FileHash -LiteralPath $taskManifestPath -Algorithm MD5).Hash.ToLowerInvariant() -ne $taskPlan.source_manifest_md5) { throw 'Original soldier manifest changed after the recipe plan was locked' }
 foreach ($taskSource in $taskPlan.source_fingerprints.PSObject.Properties) {
@@ -22,7 +23,7 @@ foreach ($taskSource in $taskPlan.source_fingerprints.PSObject.Properties) {
     if (-not $taskSourcePath.StartsWith($taskProject + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Locked recipe source escapes the project' }
     if ((Get-FileHash -LiteralPath $taskSourcePath -Algorithm MD5).Hash.ToLowerInvariant() -ne $taskSource.Value) { throw "Recipe source changed after lock: $($taskSource.Name)" }
 }
-$taskBatch = $taskPlan.batches[$BatchIndex]
+$taskBatch = $taskBatches[$BatchIndex]
 if ($null -eq $taskBatch -or [int]$taskBatch.index -ne $BatchIndex) { throw 'Unknown recipe batch index' }
 $taskBakerArgs = @(
     '--script', 'res://scripts/tools/bake_terrain_army_soldier.gd', '--',

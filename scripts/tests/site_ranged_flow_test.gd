@@ -53,7 +53,7 @@ func run() -> void:
 	lab._advance_ranged(0.4)
 	assert(events.size() == 1 and events[0].target == b.person_id and not lab.has_ranged_projectiles())
 	var first_damage := 100.0 - b.hp
-	assert(first_damage in [0.0, 1.0, 2.0] and b.terrain_cell == Vector2i(9, 5))
+	assert(first_damage in [0.0, 4.0, 8.0] and b.terrain_cell == Vector2i(9, 5))
 	lab._advance_ranged(2.0)
 	assert(events.size() == 1 and b.hp == 100.0 - first_damage, "A consumed event never resolves twice")
 	# The locked target leaves before arrival. There is no homing or old body sweep.
@@ -106,9 +106,58 @@ func run() -> void:
 	lab._advance_ranged(1.0)
 	assert(events.back().target == b.person_id and events.back().result.kind != "blocked")
 	data.static_blocked[data.index(Vector2i(3, 6))] = 0
+	_tiered_arrivals(lab, a, b)
 	controller.free()
 	for actor: TerrainTestCharacter in actors:
 		actor.free()
 	lab.free()
-	print("SITE_RANGED_FLOW_PASS orders, flight timing, save/replace guard, dodge, friendly interception, walls, KO, independent hits")
+	print("SITE_RANGED_FLOW_PASS orders, flight timing, save/replace guard, dodge, friendly interception, walls, KO, independent hits; 16 real-item tiered arrivals preserve launch weapon and read arrival armor, including fractional HP")
 	quit(0)
+
+func _tiered_arrivals(lab: TerrainLab, source: TerrainTestCharacter, target: TerrainTestCharacter) -> void:
+	var data := lab.terrain
+	for actor: TerrainTestCharacter in [source, target]:
+		var appearance := HumanCharacter3DEditor.default_appearance()
+		appearance.parts.armor = "none"
+		appearance.parts.shield = "none"
+		actor._saved_appearance = appearance
+		assert(SiteRuntime.seed_person_equipment(data, actor.item_state, actor.person_id, appearance).ok)
+	var original_weapon := str(source.item_state.equipped.weapon)
+	var armor := SiteRuntime.create_equipment(data, target.item_state, "ranged_tier_arrival_armor",
+		{"slot": "armor", "asset": "armor_mingguang_01", "tint": [1.0, 1.0, 1.0, 1.0]}, target.person_id)
+	assert(armor.ok)
+	source.ammo_inventory = {"arrow": 20, "bolt": 20}
+	var suffixes := ["_wood", "_stone", "", "_steel"]
+	var shot_id := 8
+	for family: String in ["bow_01", "crossbow_01"]:
+		for material_index in range(suffixes.size()):
+			var asset := family + str(suffixes[material_index])
+			var weapon := SiteRuntime.create_equipment(data, source.item_state, "ranged_tier_" + asset,
+				{"slot": "weapon", "asset": asset, "tint": [1.0, 1.0, 1.0, 1.0]}, source.person_id)
+			assert(weapon.ok)
+			for graze: bool in [false, true]:
+				source.reset_combat()
+				target.reset_combat()
+				source.fatigue = 0.0
+				assert(source.place(Vector2i(3, 5), true) and target.place(Vector2i(9, 5), true))
+				source.item_state.equipped.weapon = str(weapon.item_id)
+				target.item_state.equipped.erase("armor")
+				# Select a deterministic hit or graze through the production event roll.
+				data.seed_value = (source.person_id * 73856093) ^ (shot_id * 83492791) ^ (target.person_id * 19349663) ^ (3000 if graze else 0)
+				assert(source.ranged_fire(target.terrain_cell, shot_id))
+				var flight: Dictionary = source.projectiles.back()
+				assert(flight.shooter.weapon == asset and target.hp == 100.0)
+				# Both changes use real fixture-owned items. Rendering/saved appearance
+				# remains stale deliberately; it cannot dictate damage or armor level.
+				source.item_state.equipped.weapon = original_weapon
+				target.item_state.equipped.armor = str(armor.item_id)
+				assert(source.exchange_stats().weapon == "longsword_01" and target.ranged_defense().armor == "armor_mingguang_01")
+				lab._advance_ranged(1.0)
+				var expected_hp := pow(2.0, material_index + 1 - 4) * (0.5 if graze else 1.0)
+				assert(events.back().target == target.person_id and events.back().result.kind == ("graze" if graze else "hit"))
+				assert(events.back().result.hp == expected_hp and target.hp == 100.0 - expected_hp)
+				assert(target.stun == (4.0 if graze else 8.0) and not lab.has_ranged_projectiles())
+				var settled_hp := target.hp
+				lab._advance_ranged(1.0)
+				assert(target.hp == settled_hp, "Fractional HP settles once, without rounding or duplicate arrival")
+				shot_id += 1

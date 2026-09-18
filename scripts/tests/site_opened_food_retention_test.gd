@@ -5,7 +5,7 @@ const ORIGINAL_SAVE := "res://.godot-temp/site_resources_contract/opened-retenti
 const LEGACY_SAVE := "res://.godot-temp/site_resources_contract/opened-retention-legacy.json"
 const MIGRATED_SAVE := "res://.godot-temp/site_resources_contract/opened-retention-migrated.json"
 
-func _deploy(lab: TerrainLab) -> TerrainArmy:
+func _deploy(lab: TerrainLab, female_count: int = 0) -> TerrainArmy:
 	var fixture := _work_fixture()
 	lab.bind_terrain(fixture.data)
 	lab.site_controller._auto_save_blocked = true
@@ -14,7 +14,7 @@ func _deploy(lab: TerrainLab) -> TerrainArmy:
 	team.roster_size = 3
 	var cells: Array[Vector2i] = []
 	cells.assign(fixture.cells)
-	assert(team.deploy_at(lab.terrain, lab.character, lab.npc, cells) and team.enable_combat(false))
+	assert(team.deploy_at(lab.terrain, lab.character, lab.npc, cells) and team.enable_combat(false, female_count))
 	team.set_process(false)
 	team.settle_combat_command()
 	lab.site_controller.initialize_team_items(team)
@@ -54,8 +54,10 @@ func _write_fixture(path: String, payload: Dictionary) -> void:
 	file.store_string(JSON.stringify({"checksum": serialized.sha256_text(), "payload": serialized}))
 	file.close()
 
-func _legacy(lab: TerrainLab) -> void:
-	var team := _deploy(lab)
+func _legacy(lab: TerrainLab, female_count: int) -> void:
+	var team := _deploy(lab, female_count)
+	for row: Dictionary in team.combat_units:
+		assert(int(row.appearance.body) == (1 if female_count == 3 else 0), "Exercise actual all-female and all-male original death rows")
 	var controller: SiteController = lab.site_controller
 	var data: TerrainData = lab.terrain
 	var first_id := team.combat_identity(1)
@@ -68,7 +70,11 @@ func _legacy(lab: TerrainLab) -> void:
 	team.apply_unit_contact(1, lethal)
 	team.apply_unit_contact(2, lethal)
 	lab.npc.apply_contact(lethal)
-	lab._process(float(TerrainArmy.CombatTimings.POSE_SECONDS[&"down"]) + 0.01)
+	# The common 30 Hz clock retains fractional time. Reach the first complete
+	# action step after the authored down pose, rather than assuming 0.01s is
+	# enough to cross the pending settlement boundary.
+	var down_seconds := float(TerrainArmy.CombatTimings.POSE_SECONDS[&"down"])
+	lab._process((ceilf(down_seconds / TerrainLab.EXCHANGE_ACTION_STEP) + 1.0) * TerrainLab.EXCHANGE_ACTION_STEP)
 	assert(controller._pending_deaths.is_empty())
 	var first_reference := str(team.combat_units[1].remains_id)
 	var second_reference := str(team.combat_units[2].remains_id)
@@ -154,8 +160,8 @@ func _legacy(lab: TerrainLab) -> void:
 	assert(controller._pending_deaths.is_empty() and lab.army.combat_identity(1) == first_id)
 	assert(lab.terrain.site.ground_loot.size() == original_count + 2)
 
-func _clear(lab: TerrainLab) -> void:
-	var team := _deploy(lab)
+func _clear(lab: TerrainLab, female_count: int) -> void:
+	var team := _deploy(lab, female_count)
 	var controller: SiteController = lab.site_controller
 	var data: TerrainData = lab.terrain
 	var ids: Array[int] = []
@@ -219,16 +225,59 @@ func _clear(lab: TerrainLab) -> void:
 	lab.clear_army()
 	assert(JSON.stringify(data.site) == after, "Repeated clear cannot duplicate any bag or food")
 
+func _female_death(lab: TerrainLab) -> void:
+	var team := _deploy(lab, 3)
+	var controller: SiteController = lab.site_controller
+	var data := lab.terrain
+	var items_before := int(data.site.item_records.size())
+	var holders: Array[Dictionary] = []
+	for index in range(3):
+		var row: Dictionary = team.combat_units[index]
+		assert(int(row.appearance.body) == 1)
+		_private(lab, team.combat_identity(index), 0.125 * (index + 1))
+		row.cargo.stone = index + 1
+		holders.append(row.item_state.duplicate(true))
+		team.apply_unit_contact(index, {"result": {"hp": 100.0, "stun": 0.0, "guard_break": false}, "shield": false, "environmental": true})
+	var down_seconds := float(TerrainArmy.CombatTimings.POSE_SECONDS[&"down"])
+	lab._process((ceilf(down_seconds / TerrainLab.EXCHANGE_ACTION_STEP) + 1.0) * TerrainLab.EXCHANGE_ACTION_STEP)
+	assert(controller._pending_deaths.is_empty() and data.site.ground_loot.size() == 3)
+	assert(int(data.site.item_records.size()) == items_before)
+	for index in range(3):
+		var row: Dictionary = team.combat_units[index]
+		var bag: Dictionary = data.site.ground_loot[str(row.remains_id)]
+		assert(row.loot_settled and row.item_state.item_ids.is_empty() and row.cargo.is_empty())
+		assert(bag.item_ids == holders[index].item_ids and bag.equipped == holders[index].equipped)
+		assert(bag.cargo == {"stone": index + 1} and float(bag.open_rations) == 0.125 * (index + 1))
+	_near(_opened_total(data.site), 0.75, "Female deaths preserve all real opened food")
+	controller._capture_positions()
+	var saved := Store.save(data, MIGRATED_SAVE)
+	assert(saved.ok, str(saved))
+	var loaded := Store.load_site(MIGRATED_SAVE)
+	assert(loaded.ok, str(loaded))
+	assert(loaded.data.site.ground_loot == data.site.ground_loot)
+	lab.bind_terrain(loaded.data)
+	controller._auto_save_blocked = true
+	assert(controller._pending_deaths.is_empty() and lab.army.combat_units.size() == 3)
+	for row: Dictionary in lab.army.combat_units:
+		assert(int(row.appearance.body) == 1 and row.hp == 0.0 and row.loot_settled)
+	_near(_opened_total(lab.terrain.site), 0.75, "Female opened food survives original save/load/bind")
+
 func _run() -> void:
-	var lab := TerrainLab.new()
-	lab.pause_when_unfocused = false
-	root.add_child(lab)
-	lab.set_process(false)
-	lab.character.set_process(false)
-	lab.npc.set_process(false)
-	lab.npc_retaliates = false
-	_legacy(lab)
-	_clear(lab)
-	lab.free()
-	print("SITE OPENED FOOD RETENTION PASS: original clear preflight and exact food/item conservation, private owner removal without deleting other people; format-3 settled food migration merges existing remains, recreates only missing bags, preserves dead meal history/source file, bounded-ID atomic failures and idempotent save/load/bind")
+	for female_count: int in [0, 3]:
+		# Independent fixtures must not reuse the intentionally dead, restored NPC
+		# from the previous gender's migration/bind verification.
+		var lab := TerrainLab.new()
+		lab.pause_when_unfocused = false
+		root.add_child(lab)
+		lab.set_process(false)
+		lab.character.set_process(false)
+		lab.npc.set_process(false)
+		lab.npc_retaliates = false
+		if female_count == 0:
+			_legacy(lab, female_count)
+		else:
+			_female_death(lab)
+		_clear(lab, female_count)
+		lab.free()
+	print("SITE OPENED FOOD RETENTION PASS: all-male legacy migration and legal all-female death/opened-food save/load/bind; both genders' clear preflight and exact food/item conservation; format-3 missing-bag migration preserves meal history/source file, bounded-ID atomic failures and idempotence")
 	quit(0)

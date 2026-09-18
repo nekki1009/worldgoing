@@ -28,7 +28,7 @@ func run() -> void:
 	army.exchange_enabled = true
 	army.roster_size = 3
 	var selected: Array[Vector2i] = [Vector2i(10, 10), Vector2i(12, 10), Vector2i(13, 10)]
-	assert(army.deploy_at(data, null, null, selected) and army.enable_combat(false))
+	assert(army.deploy_at(data, null, null, selected) and army.enable_combat(false, 0))
 	for initial_row: Dictionary in army.combat_units:
 		initial_row.cargo = {"arrow": 0, "bolt": 2}
 		initial_row.appearance = TerrainArmy._combat_bake.manifest.appearance.duplicate(true)
@@ -78,18 +78,20 @@ func run() -> void:
 	row.item_state.equipped.weapon = sword
 	assert(army.ranged_profile(0).is_empty() and not army.ranged_fire(0, selected[0] + Vector2i.RIGHT * 6, 1))
 	row.item_state.equipped.weapon = bow
-	row.fatigue = 10.0
-	row.fatigue_rest = 15.0
+	PersonFatigue.write(row, "fatigue", 10.0)
+	PersonFatigue.write(row, "fatigue_rest", 15.0)
 	assert(army.activate_exchange_skill(0, "power"))
 	var events: Array[float] = []
 	army.combat_event.connect(func(seconds: float) -> void: events.append(seconds))
 	assert(army.ranged_fire(0, selected[0] + Vector2i.RIGHT * 6, 1))
 	assert(is_same(cargo, row.cargo) and cargo.arrow == 1 and cargo.bolt == 2)
-	assert(army.projectiles.size() == 1 and row.fatigue == 11.0 and row.fatigue_rest == 0.0)
+	assert(army.projectiles.size() == 1 and is_equal_approx(PersonFatigue.read(row), 10.0 + 1.0 / 3.0)
+		and PersonFatigue.read(row, "fatigue_rest") == 0.0,
+		"One shot charges the original three-person shared fatigue pool once")
 	var shot: Dictionary = army.projectiles[0]
 	assert(shot.shot_id == 1 and shot.shooter_id == army.combat_identity(0) and shot.target_cell == selected[0] + Vector2i.RIGHT * 6)
 	assert(shot.mode == "cell" and shot.visual == "arrow" and is_equal_approx(float(shot.total), 0.6))
-	assert(shot.shooter.fatigue == 10.0 and shot.shooter.skill == "power" and row.exchange_skill == "")
+	assert(shot.shooter.fatigue == 10.0 and shot.shooter.skill == "power" and shot.shooter.weapon == "bow_01" and row.exchange_skill == "")
 	assert(row.exchange_skill_cooldown == 8.0 and row.ranged_cooldown == 2.0 and row.exchange_stagger == 0.25)
 	assert(float(row.get("exchange_cooldown", 0.0)) == 0.0 and army.exchange_can_receive(0), "Reloading must not grant melee immunity")
 	assert(army.combat_frame(0).clip == "attack_bow" and events.has(12.0))
@@ -138,7 +140,8 @@ func run() -> void:
 	army.ranged_apply_hit(2, selected[2] + Vector2i.LEFT, _packet("graze", 1.0, 6.0, 0.2))
 	assert(moving_row.hp == 98.0 and moving_row.exchange_stagger == 0.7 and moving_row.exchange_cooldown == 0.8)
 	assert(moving_row.exchange_skill == "power" and army.moving_to[2] == selected[2] + Vector2i.UP)
-	assert(army.ranged_defense(2).moving and not army.ranged_defense(2).shield)
+	assert(army.ranged_defense(2).moving and not army.ranged_defense(2).shield
+		and army.ranged_defense(2).armor == str(army.equipment_appearance(2).parts.armor))
 	var before_knockout := army.projectiles.duplicate(true)
 	army.ranged_apply_hit(0, selected[0] + Vector2i.DOWN, _packet("hit", 2.0, 110.0, 0.35))
 	assert(row.ko > 0.0 and row.pose == "down" and army.projectiles == before_knockout)

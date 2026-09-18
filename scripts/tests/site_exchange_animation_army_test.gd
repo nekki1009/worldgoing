@@ -19,7 +19,7 @@ func _outcome(role: String, big: bool = false) -> Dictionary:
 		"hp": (2.0 if big else 1.0) if role == "loser" else 0.0,
 		"stun": (18.0 if big else 8.0) if role == "loser" else 0.0,
 		"stagger": (0.65 if big else 0.35) if role == "loser" else (0.3 if role == "draw" else 0.0),
-		"knockback": role == "loser" and big, "fatigue": 0.5, "other_identity": 9999}
+		"knockback": role == "loser" and big, "fatigue": 0.0 if role == "draw" else 0.5, "other_identity": 9999}
 
 func _arrow(hp: float = 1.0, stun: float = 0.0) -> Dictionary:
 	return {"shield": false, "result": {"kind": "hit", "hp": hp, "stun": stun,
@@ -85,6 +85,15 @@ func run() -> void:
 	assert(army._exchange_visual_pose(1) == "idle", "Ending the short visual cannot restart the still-active old long attack")
 	army.prepare_combat(1.0 - STEP * 26.0)
 	assert(army.exchange_ready(1) and army.combat_units[1].exchange_cooldown == 0.0)
+	# Big winners use the authored jump on both the live captain and ordinary
+	# shared-atlas renderer; this is presentation only, never a damage profile.
+	for index in [0, 1]:
+		army.apply_exchange(index, selected[index] + Vector2i.RIGHT, _outcome("winner", true))
+		assert(army.combat_units[index].pose == "attack_jump_heavy")
+		assert(army._exchange_visual_pose(index) == "attack_jump_heavy")
+		assert(army.contact_sample(index)[0] == &"attack_jump_heavy")
+		assert(army.combat_frame(index).clip == "attack_jump_heavy")
+	army.prepare_combat(1.0)
 
 	# Original reservation/facing changes immediately. Only the first .1 seconds
 	# of the strike retain visual facing, and their age never jumps or rewinds.

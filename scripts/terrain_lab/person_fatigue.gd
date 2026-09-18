@@ -49,8 +49,8 @@ static func work_seconds(value: float, seconds: float, rate: float = WORK_RATE) 
 		remaining -= rising
 	return productive + remaining / (1.0 + MAX_SLOWDOWN)
 
-# A member borrows its original Army's single state, never a mirrored value.
-# Unaffiliated people and the currently controlled player retain their own body.
+# All members, including the controlled person and rider, borrow one Army state.
+# Only unaffiliated people retain their own value; a mount is not a second pool.
 static func pool(body: Variant) -> Dictionary:
 	return body.get("_fatigue_pool", {}) if body is Dictionary else body._fatigue_pool
 

@@ -133,6 +133,13 @@ func prepare_idle() -> void:
 	_page = packet[4]
 	_palette = packet[5]
 	_native_rows = packet[6]
+	# These original people use the rider-only companion on their own Sprite.
+	# Do not let native idle batching also draw a second standing copy.
+	if _army.vehicle_transport != null:
+		for vehicle: Dictionary in _army.vehicle_transport.records().values():
+			if str(vehicle.kind) != "wagon" or int(vehicle.team_id) != _army.team_id or int(vehicle.operator_id) <= 0: continue
+			var index: int = _army.index_for_identity(int(vehicle.operator_id))
+			if index >= 0 and not _army._vehicle_rider_state(index).is_empty(): _native_mask[index] = 0
 
 func can_group_prepared() -> bool:
 	if not native_grouping_enabled or _native_mask.is_empty() or _native_mask.size() != _page.size() or _native_rows.size() != _page.size(): return false
@@ -196,7 +203,7 @@ func submit(index: int, ground: Vector2, appearance: Dictionary, clip: String, d
 	if _last_page != page_index or _last_clip != clip or _last_direction != direction or _last_time != sample_time:
 		var page: Dictionary = _pages[page_index]
 		var normalized := Atlas.normalized_clip(clip)
-		# The original 35-clip base has its own polearm sequences. Preserve them;
+		# The standard base has its own polearm sequences. Preserve them;
 		# only the compact weapon recipes need the Army's polearm aliases mapped.
 		if (clip == "guard_spear" or clip.begins_with("guard_polearm")) and page.sequences.has(clip + "|" + direction): normalized = clip
 		var key := normalized + "|" + direction
@@ -354,9 +361,10 @@ func _describe(appearance: Dictionary) -> Dictionary:
 	var geometry := DyeAtlas.Dye.geometry_appearance(appearance)
 	var base: Dictionary = _army._combat_bake.manifest
 	if appearance.is_empty(): geometry = base.appearance
-	var record := DyeAtlas.entry(geometry)
-	if record.is_empty(): return {}
-	var key := str(record.source_manifest)
+	var wagon_foot := Atlas.wagon_foot_recipe(appearance)
+	var record := Atlas.dye_entry(geometry) if wagon_foot.is_empty() else {}
+	if record.is_empty() and wagon_foot.is_empty(): return {}
+	var key := str(record.source_manifest if wagon_foot.is_empty() else wagon_foot.source_manifest)
 	if not _page_keys.has(key):
 		var sequences := {}
 		var texture: Texture2D
@@ -366,7 +374,8 @@ func _describe(appearance: Dictionary) -> Dictionary:
 				for direction: String in _army._combat_bake.contact_clocks[clip]:
 					sequences[clip + "|" + direction] = _army._combat_bake.contact_clocks[clip][direction][3]
 		else:
-			var recipe := Atlas.RangedAtlas.recipe(geometry)
+			var recipe := wagon_foot
+			if recipe.is_empty(): recipe = Atlas.female_recipe(geometry) if geometry.body == 1 else Atlas.RangedAtlas.recipe(geometry)
 			if recipe.is_empty(): return {}
 			sequences = recipe.sequences
 			# A future multi-page publication stays on the original page-aware
@@ -377,9 +386,15 @@ func _describe(appearance: Dictionary) -> Dictionary:
 					if frame._page != first_page: return {}
 			texture = Atlas._page(sequences.values()[0][0]._page)
 		if texture == null or sequences.is_empty(): return {}
-		var mask := Image.load_from_file(str(record.mask_path))
-		if mask == null or mask.get_width() != int(record.width) or mask.get_height() != int(record.height) or mask.get_width() != texture.get_width() or mask.get_height() != texture.get_height(): return {}
-		mask.convert(Image.FORMAT_RGB8)
+		var mask: Image
+		if not wagon_foot.is_empty():
+			# The two fixed, undyed cloth recipes need no new dye publication.
+			mask = Image.create(1, 1, false, Image.FORMAT_RGB8)
+			mask.fill(Color.BLACK)
+		else:
+			mask = Image.load_from_file(str(record.mask_path))
+			if mask == null or mask.get_width() != int(record.width) or mask.get_height() != int(record.height) or mask.get_width() != texture.get_width() or mask.get_height() != texture.get_height(): return {}
+			mask.convert(Image.FORMAT_RGB8)
 		var metadata := Image.create(129, sequences.size(), false, Image.FORMAT_RGBAF)
 		var pixel_size := Vector2(1.0 / texture.get_width(), 1.0 / texture.get_height())
 		var lookup := {}

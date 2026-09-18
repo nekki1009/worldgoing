@@ -15,15 +15,17 @@ func _initialize() -> void:
 		_fail("Test catalog or unfinished publication already exists; nothing overwritten")
 		return
 	var plan: Variant = JSON.parse_string(FileAccess.get_file_as_string(work + "batch_plan.json"))
-	if not plan is Dictionary or plan.get("status") != "READY" or plan.get("test_only") != true or plan.get("source_fingerprints") != Plan.fingerprints() or plan.get("source_manifest_md5") != FileAccess.get_md5(Reader.BASE_MANIFEST) or not plan.get("batches") is Array or plan.batches.size() != 5:
-		_fail("The five-batch test plan is incomplete or its locked original sources changed")
+	var recipe_total := int(plan.get("recipe_total", 0)) if plan is Dictionary else 0
+	var batch_count := ceili(float(recipe_total) / float(Plan.MAX_BATCH_FRAMES)) if recipe_total > 0 else 0
+	if not plan is Dictionary or plan.get("status") != "READY" or plan.get("test_only") != true or plan.get("source_fingerprints") != Plan.fingerprints() or plan.get("source_manifest_md5") != FileAccess.get_md5(Reader.BASE_MANIFEST) or not plan.get("batches") is Array or plan.batches.size() != batch_count:
+		_fail("The bounded-batch test plan is incomplete or its locked original sources changed")
 		return
 	var batches: Array[Dictionary] = []
 	var paths: Array[String] = []
-	for index: int in range(5):
+	for index: int in range(batch_count):
 		var entry: Variant = plan.batches[index]
-		var first := index * 128
-		var count := mini(128, 536 - first)
+		var first := index * Plan.MAX_BATCH_FRAMES
+		var count := mini(Plan.MAX_BATCH_FRAMES, recipe_total - first)
 		var source := work + "full/m25/%03d_%03d" % [first, count]
 		if not entry is Dictionary or entry.get("index") != index or entry.get("mask") != 25 or entry.get("first") != first or entry.get("count") != count or entry.get("output") != source:
 			_fail("The explicit m25 partition changed at batch %d" % index)
@@ -49,7 +51,7 @@ func _initialize() -> void:
 		batches.append(manifest)
 		paths.append(source + "/manifest.json")
 	if Reader.validate_batches(25, batches, work).is_empty():
-		_fail("m25 lacks its exact 536 original samples or has mixed sources")
+		_fail("m25 lacks its exact %d original samples or has mixed sources" % recipe_total)
 		return
 	var catalog := {"schema_version": 1, "test_only": true,
 		"source_manifest_md5": plan.source_manifest_md5, "source_fingerprints": plan.source_fingerprints,
@@ -77,7 +79,7 @@ func _initialize() -> void:
 	if FileAccess.file_exists(catalog_path) or DirAccess.rename_absolute(ProjectSettings.globalize_path(pending_path), ProjectSettings.globalize_path(catalog_path)) != OK:
 		_fail("Cannot atomically enable the new test catalog; pending evidence retained")
 		return
-	print("TERRAIN ARMY M25 TEST CATALOG PASS: five real GPU batches / 536 keys; other 31 masks rejected; formal catalog unchanged -> ", catalog_path)
+	print("TERRAIN ARMY M25 TEST CATALOG PASS: ", batch_count, " real GPU batches / ", recipe_total, " keys; other 31 masks rejected; formal catalog unchanged -> ", catalog_path)
 	quit(0)
 
 static func work_for(arguments: PackedStringArray) -> String:

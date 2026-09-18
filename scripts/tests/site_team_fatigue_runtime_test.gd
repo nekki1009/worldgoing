@@ -1,5 +1,6 @@
 extends SceneTree
 const Store = preload("res://scripts/terrain_lab/site_store.gd")
+const OUT := "res://output/site_shared_mount_fatigue_20260918/runtime"
 
 func _initialize() -> void:
 	if "--retain-animation-cache" in OS.get_cmdline_user_args():
@@ -8,6 +9,7 @@ func _initialize() -> void:
 
 func _run() -> void:
 	create_timer(35.0).timeout.connect(func() -> void: push_error("Shared fatigue runtime deadline"); quit(1))
+	assert(DirAccess.make_dir_recursive_absolute(OUT) == OK)
 	var lab := (load("res://scenes/terrain_lab/TerrainLab.tscn") as PackedScene).instantiate() as TerrainLab
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
@@ -45,7 +47,7 @@ func _run() -> void:
 	PersonFatigue.charge(adapter, 5.0)
 	assert(is_equal_approx(lab.npc.fatigue, 36.0))
 	lab.site_controller._capture_positions()
-	var path := "res://output/site_army_scale_phase14_20260915/shared_runtime_save.json"
+	var path := OUT + "/shared_runtime_save.json"
 	if "--retain-animation-cache" in OS.get_cmdline_user_args(): path = "user://cache_shared_runtime_save.json"
 	var saved := Store.save(lab.terrain, path)
 	assert(saved.ok, str(saved))
@@ -58,7 +60,17 @@ func _run() -> void:
 	assert(is_equal_approx(lab.army.team_fatigue.fatigue, 36.0))
 	assert(lab.army.team_fatigue.count == 5 and is_same(lab.npc._fatigue_pool, lab.army.team_fatigue))
 	assert(PersonFatigue.read(lab.army.combat_units[2]) == lab.npc.fatigue)
-	assert(lab.army.combat_summary().contains("玩家獨立"))
+	assert(lab.army.combat_summary().contains("共享疲勞") and not lab.army.combat_summary().contains("玩家獨立"))
+	assert(is_same(lab.character.ammo_inventory, lab.terrain.site.manual.cargo))
+	# Full Store boundary rejects contradictory v2 aliases rather than repairing them.
+	for problem: String in ["actor_mismatch", "old_horse", "excluded_player", "row_mismatch"]:
+		var invalid := Store.load_site(path)
+		assert(invalid.ok)
+		if problem == "actor_mismatch": invalid.data.site.actors.npc.fatigue += 1.0
+		elif problem == "old_horse": invalid.data.site.actors.npc.mount_fatigue = 70.0
+		elif problem == "excluded_player": invalid.data.site.armies[0].team_fatigue.excluded_player_id = lab.npc.person_id
+		else: invalid.data.site.armies[0].units[0].fatigue += 1.0
+		assert(not Store.save(invalid.data, OUT + "/rejected_" + problem + ".json").ok, "Store accepted contradictory v2 " + problem)
 	# The supply copy-back must not manufacture activity in an idle shared actor.
 	lab.army.team_fatigue.active = false
 	lab.army.team_fatigue.fatigue_rest = 30.0
@@ -77,23 +89,48 @@ func _run() -> void:
 	var shared_before := float(lab.army.team_fatigue.fatigue)
 	var personal_before := lab.character.fatigue
 	lab.site_controller._capture_positions()
-	var inheritance_path := "res://output/site_army_scale_phase14_20260915/shared_control_shift_save.json"
+	var inheritance_path := OUT + "/shared_control_shift_save.json"
 	if "--retain-animation-cache" in OS.get_cmdline_user_args(): inheritance_path = "user://cache_shared_control_shift_save.json"
 	assert(Store.save(lab.terrain, inheritance_path).ok)
 	var inherited := Store.load_site(inheritance_path)
 	assert(inherited.ok)
 	inherited.data.site.controlled_person_id = identity
 	lab.bind_terrain(inherited.data)
-	assert(is_equal_approx(lab.army.team_fatigue.fatigue, (shared_before * 3.0 + personal_before) / 4.0), "Former player must join weighted pool during saved-site control shift")
+	assert(is_equal_approx(shared_before, personal_before))
+	assert(is_equal_approx(lab.army.team_fatigue.fatigue, shared_before), "Saved v2 control shift must retain exact pool value")
 	assert(is_same(lab.character._fatigue_pool, lab.army.team_fatigue))
-	# Switching control detaches precisely that person, not their whole team.
+	# Changing the controlled person cannot detach or rebuild their shared pool.
+	var same_pool := lab.army.team_fatigue
 	lab.terrain.site.controlled_person_id = identity
-	lab.army.sync_shared_fatigue()
-	assert(PersonFatigue.pool(lab.army.combat_units[2]).is_empty())
-	assert(lab.army.team_fatigue.count == 4)
+	lab.army.sync_shared_fatigue(true)
+	assert(is_same(PersonFatigue.pool(lab.army.combat_units[2]), same_pool) and is_same(lab.army.team_fatigue, same_pool))
+	assert(lab.army.team_fatigue.count == 5)
 	var original := PersonFatigue.read(lab.army.combat_units[2])
 	PersonFatigue.charge(lab.army.combat_units[0], 4.0)
-	assert(PersonFatigue.read(lab.army.combat_units[2]) == original)
+	assert(is_equal_approx(PersonFatigue.read(lab.army.combat_units[2]), original + 0.8))
+	assert(lab.character.fatigue == PersonFatigue.read(lab.army.combat_units[2]))
+	# A real old v1 file contains an excluded high-fatigue controlled Actor and
+	# a higher historical horse value. Migration must not wash either away.
+	var legacy := Store.load_site(path)
+	assert(legacy.ok)
+	legacy.data.site.controlled_person_id = lab.npc.person_id
+	legacy.data.site.armies[0].team_fatigue.version = 1
+	legacy.data.site.armies[0].team_fatigue.excluded_player_id = lab.npc.person_id
+	legacy.data.site.actors.npc.fatigue = 91.0
+	legacy.data.site.actors.npc.fatigue_rest = 2.0
+	legacy.data.site.actors.npc.mount_fatigue = 97.0
+	legacy.data.site.actors.npc.mount_fatigue_rest = 1.0
+	var legacy_path := OUT + "/legacy_shared_save.json"
+	assert(Store.save(legacy.data, legacy_path).ok)
+	legacy = Store.load_site(legacy_path)
+	assert(legacy.ok)
+	lab.bind_terrain(legacy.data)
+	assert(lab.npc.fatigue == 97.0 and lab.army.team_fatigue.fatigue == 97.0)
+	assert(lab.army.team_fatigue.fatigue_rest <= 1.0 and is_same(lab.npc._fatigue_pool, lab.army.team_fatigue))
+	lab.site_controller._capture_positions()
+	assert(not lab.terrain.site.actors.npc.has("mount_fatigue") and not lab.terrain.site.actors.npc.has("mount_fatigue_rest"))
+	assert(lab.terrain.site.armies[0].team_fatigue.version == 2)
+	assert(Store.save(lab.terrain, OUT + "/migrated_v2_save.json").ok)
 	lab.queue_free()
 	await process_frame
 	print("TEAM_FATIGUE_RUNTIME_PASS original main, real controller/body adapters, NPC actor membership, SiteStore save/load, shared supply copy-back, UI, player switch")

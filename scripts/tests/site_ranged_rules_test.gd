@@ -18,33 +18,55 @@ func _run() -> void:
 	assert(not Rules.ranged_in_range(Vector2i.ZERO, Vector2i(7, 8), 10.0))
 	for invalid_range: float in [0.0, 1.0, 10.01, INF, NAN]:
 		assert(not Rules.ranged_in_range(Vector2i.ZERO, Vector2i(2, 0), invalid_range))
-	var hit := Rules.ranged_result({}, {}, 2.0, 0.0)
-	assert(hit.chance == 65.0 and hit.kind == "hit" and hit.hp == 2.0 and hit.stun == 12.0 and hit.stagger == 0.35)
+	var shooter := {"weapon": "bow_01"}
+	var hit := Rules.ranged_result(shooter, {}, 2.0, 0.0)
+	assert(hit.chance == 65.0 and hit.kind == "hit" and hit.hp == 8.0 and hit.stun == 8.0 and hit.stagger == 0.35)
 	assert(not hit.knockback and not hit.guard_break)
-	assert(Rules.ranged_result({}, {}, 2.0, 38.999).kind == "hit")
-	var graze := Rules.ranged_result({}, {}, 2.0, 39.0)
-	assert(graze.kind == "graze" and graze.hp == 1.0 and graze.stun == 6.0 and graze.stagger == 0.2)
-	assert(Rules.ranged_result({}, {}, 2.0, 64.999).kind == "graze")
-	var miss := Rules.ranged_result({}, {}, 2.0, 65.0)
+	assert(Rules.ranged_result(shooter, {}, 2.0, 38.999).kind == "hit")
+	var graze := Rules.ranged_result(shooter, {}, 2.0, 39.0)
+	assert(graze.kind == "graze" and graze.hp == 4.0 and graze.stun == 4.0 and graze.stagger == 0.2)
+	assert(Rules.ranged_result(shooter, {}, 2.0, 64.999).kind == "graze")
+	var miss := Rules.ranged_result(shooter, {}, 2.0, 65.0)
 	assert(miss.kind == "miss" and miss.hp == 0.0 and miss.stun == 0.0 and miss.stagger == 0.0)
-	assert(Rules.ranged_result({}, {}, 8.0, 0.0).chance == 41.0)
-	assert(Rules.ranged_result({"ability": 100.0, "training": 100.0, "fatigue": 100.0, "skill": "power"}, {}, 8.0, 0.0).chance == 66.0)
+	assert(Rules.ranged_result(shooter, {}, 8.0, 0.0).chance == 41.0)
+	assert(Rules.ranged_result({"weapon": "bow_01", "ability": 100.0, "training": 100.0, "fatigue": 100.0, "skill": "power"}, {}, 8.0, 0.0).chance == 66.0)
 	for modifier: Dictionary in [{"moving": true}, {"facility": true}]:
-		assert(Rules.ranged_result({}, modifier, 2.0, 0.0).chance == 45.0)
+		assert(Rules.ranged_result(shooter, modifier, 2.0, 0.0).chance == 45.0)
 	for modifier: Dictionary in [{"shield": true}, {"skill": "brace"}]:
-		assert(Rules.ranged_result({}, modifier, 2.0, 0.0).chance == 50.0)
-	assert(Rules.ranged_result({}, {"armor_stab": 25.0}, 2.0, 0.0).chance == 60.0)
-	assert(Rules.ranged_result({}, {"moving": true, "shield": true, "armor_stab": 100.0, "facility": true, "skill": "brace"}, 2.0, 0.0).chance == 5.0)
-	assert(Rules.ranged_result({"ability": 100.0, "training": 100.0, "skill": "power"}, {}, 2.0, 0.0).chance == 95.0)
-	assert(Rules.ranged_result({"skill": "power"}, {}, 2.0, 0.0).stun == 22.0)
-	assert(Rules.ranged_result({"skill": "power"}, {}, 2.0, 60.0).stun == 16.0)
-	assert(Rules.ranged_result({"skill": "power"}, {}, 2.0, 99.0).stun == 0.0)
-	assert(Rules.ranged_result({"faction": 0}, {"faction": 0}, 2.0, 0.0) == hit, "Faction selection stays with the original event owner; friendly impact is not exempt")
-	assert(Rules.ranged_result({"faction": 0}, {"faction": 1}, 2.0, 0.0) == hit)
+		assert(Rules.ranged_result(shooter, modifier, 2.0, 0.0).chance == 50.0)
+	assert(Rules.ranged_result(shooter, {"armor_stab": 25.0}, 2.0, 0.0).chance == 60.0)
+	assert(Rules.ranged_result(shooter, {"moving": true, "shield": true, "armor_stab": 100.0, "facility": true, "skill": "brace"}, 2.0, 0.0).chance == 5.0)
+	assert(Rules.ranged_result({"weapon": "bow_01", "ability": 100.0, "training": 100.0, "skill": "power"}, {}, 2.0, 0.0).chance == 95.0)
+	assert(Rules.ranged_result({"weapon": "bow_01", "skill": "power"}, {}, 2.0, 0.0).stun == 18.0)
+	assert(Rules.ranged_result({"weapon": "bow_01", "skill": "power"}, {}, 2.0, 60.0).stun == 14.0)
+	assert(Rules.ranged_result({"weapon": "bow_01", "skill": "power"}, {}, 2.0, 99.0).stun == 0.0)
+	assert(Rules.ranged_result({"weapon": "bow_01", "faction": 0}, {"faction": 0}, 2.0, 0.0) == hit, "Faction selection stays with the original event owner; friendly impact is not exempt")
+	assert(Rules.ranged_result({"weapon": "bow_01", "faction": 0}, {"faction": 1}, 2.0, 0.0) == hit)
+	for invalid_weapon: Dictionary in [{}, {"weapon": "none"}, {"weapon": "longsword_01"}, {"weapon": "missing_bow"}]:
+		assert(Rules.ranged_result(invalid_weapon, {}, 2.0, 0.0).kind == "miss")
 	for roll: float in [-1.0, 100.0, INF, NAN]:
-		assert(Rules.ranged_result({}, {}, 2.0, roll).kind == "miss", "Invalid event rolls cannot manufacture a hit")
+		assert(Rules.ranged_result(shooter, {}, 2.0, roll).kind == "miss", "Invalid event rolls cannot manufacture a hit")
 	for distance: float in [-1.0, 0.0, 1.0, 10.01, INF, NAN]:
-		assert(Rules.ranged_result({}, {}, distance, 0.0).kind == "miss")
+		assert(Rules.ranged_result(shooter, {}, distance, 0.0).kind == "miss")
+	var tiers := 0
+	var armors := ["none", "outfit_medieval_chinese_01", "armor_light_leather_01", "armor_iron_01", "armor_mingguang_01"]
+	var suffixes := ["_wood", "_stone", "", "_steel"]
+	for family: String in ["bow_01", "crossbow_01"]:
+		for material_index in range(suffixes.size()):
+			for armor_index in range(armors.size()):
+				var source := {"weapon": family + str(suffixes[material_index])}
+				var target := {"armor": armors[armor_index]}
+				var exact := Rules.ranged_result(source, target, 2.0, 0.0)
+				var partial := Rules.ranged_result(source, target, 2.0, 50.0)
+				var expected_hp := pow(2.0, material_index + 1 - armor_index)
+				assert(exact.hp == expected_hp and exact.stun == 8.0 and exact.kind == "hit")
+				assert(partial.hp == expected_hp * 0.5 and partial.stun == 4.0 and partial.kind == "graze")
+				assert(not exact.knockback and not exact.guard_break and exact.stagger == 0.35)
+				assert(Rules.ranged_result(source, target, 2.0, 99.0).hp == 0.0)
+				tiers += 1
+	# Weaker weapons retain fractional HP; neither rounding nor a one-HP floor.
+	assert(Rules.ranged_result({"weapon": "bow_01_wood"}, {"armor": "armor_mingguang_01"}, 2.0, 0.0).hp == 0.125)
+	assert(Rules.ranged_result({"weapon": "crossbow_01_wood"}, {"armor": "armor_mingguang_01"}, 2.0, 50.0).hp == 0.0625)
 	var data := TerrainData.new()
 	data.allocate(Vector2i(32, 32))
 	data.flags.fill(TerrainData.Flag.WALKABLE)
@@ -94,7 +116,7 @@ func _run() -> void:
 				assert(not Rules.ranged_line_clear(data, source, goal), "Every covered blocker stops the line")
 				data.static_blocked[data.index(blocked)] = 0
 			cases += 1
-	print("SITE RANGED RULES PASS: profiles, exact 0/1/2 HP, probabilities/skills/cover, friendly numerical parity, %d supercover rays and original terrain edges" % cases)
+	print("SITE RANGED RULES PASS: profiles, %d tier pairs with exact fractional hit/graze HP and weapon stun, probabilities/skills/cover, friendly parity, %d supercover rays and original terrain edges" % [tiers, cases])
 	quit(0)
 
 func _segment_touches_cell(source: Vector2i, goal: Vector2i, cell: Vector2i) -> bool:

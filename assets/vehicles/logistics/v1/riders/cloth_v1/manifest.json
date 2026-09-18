@@ -1,0 +1,1510 @@
+{
+	"appearances": [
+		{
+			"body": 0.0,
+			"coat": "bay",
+			"hair_dye": "9b775dff",
+			"hair_dyed": false,
+			"hair_mask": "auto",
+			"mounted": false,
+			"parts": {
+				"armor": "outfit_medieval_chinese_01",
+				"boots": "boots_medieval_chinese_01",
+				"cape": "none",
+				"face": "face_standard_01",
+				"hair": "hair_male_01",
+				"helmet": "helmet_cloth_chinese_01",
+				"outfit": "outfit_underlayer_01",
+				"shield": "none",
+				"weapon": "none"
+			},
+			"tack": true
+		},
+		{
+			"body": 1.0,
+			"coat": "bay",
+			"hair_dye": "9b775dff",
+			"hair_dyed": false,
+			"hair_mask": "auto",
+			"mounted": false,
+			"parts": {
+				"armor": "outfit_medieval_chinese_01",
+				"boots": "boots_medieval_chinese_01",
+				"cape": "none",
+				"face": "face_standard_01",
+				"hair": "hair_female_01",
+				"helmet": "helmet_cloth_chinese_01",
+				"outfit": "outfit_underlayer_01",
+				"shield": "none",
+				"weapon": "none"
+			},
+			"tack": true
+		}
+	],
+	"asset_md5": {
+		"atlas.res": "1ad98019a9d8634fd0ea9b066caf819a",
+		"dye.png": "accaf70b0afcc0f451f1c08a9321256e"
+	},
+	"complete": true,
+	"frames": [
+		{
+			"anchor": [
+				0.000030517578125,
+				154.333892822266
+			],
+			"body": 0,
+			"clip": "ride_idle",
+			"direction": "down",
+			"frame": 0,
+			"horse_offset": [
+				0.0,
+				6.83360815048218
+			],
+			"rect": [
+				0,
+				0,
+				100,
+				171
+			]
+		},
+		{
+			"anchor": [
+				11.0000305175781,
+				154.333892822266
+			],
+			"body": 0,
+			"clip": "ride_idle",
+			"direction": "left",
+			"frame": 0,
+			"horse_offset": [
+				-96.5338745117188,
+				0.0
+			],
+			"rect": [
+				100,
+				0,
+				64,
+				173
+			]
+		},
+		{
+			"anchor": [
+				0.000030517578125,
+				156.333892822266
+			],
+			"body": 0,
+			"clip": "ride_idle",
+			"direction": "up",
+			"frame": 0,
+			"horse_offset": [
+				0.0,
+				-6.83360815048218
+			],
+			"rect": [
+				164,
+				0,
+				100,
+				169
+			]
+		},
+		{
+			"anchor": [
+				-9.49996948242188,
+				154.333892822266
+			],
+			"body": 0,
+			"clip": "ride_idle",
+			"direction": "right",
+			"frame": 0,
+			"horse_offset": [
+				96.5338821411133,
+				0.0
+			],
+			"rect": [
+				264,
+				0,
+				67,
+				173
+			]
+		},
+		{
+			"anchor": [
+				0.000030517578125,
+				154.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "down",
+			"frame": 0,
+			"horse_offset": [
+				0.0,
+				6.83360815048218
+			],
+			"rect": [
+				331,
+				0,
+				100,
+				171
+			]
+		},
+		{
+			"anchor": [
+				0.000030517578125,
+				153.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "down",
+			"frame": 1,
+			"horse_offset": [
+				0.0,
+				6.83360815048218
+			],
+			"rect": [
+				431,
+				0,
+				100,
+				171
+			]
+		},
+		{
+			"anchor": [
+				0.000030517578125,
+				154.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "down",
+			"frame": 2,
+			"horse_offset": [
+				0.0,
+				6.83360815048218
+			],
+			"rect": [
+				531,
+				0,
+				100,
+				171
+			]
+		},
+		{
+			"anchor": [
+				0.000030517578125,
+				155.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "down",
+			"frame": 3,
+			"horse_offset": [
+				0.0,
+				6.83360815048218
+			],
+			"rect": [
+				631,
+				0,
+				100,
+				171
+			]
+		},
+		{
+			"anchor": [
+				0.000030517578125,
+				154.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "down",
+			"frame": 4,
+			"horse_offset": [
+				0.0,
+				6.83360815048218
+			],
+			"rect": [
+				731,
+				0,
+				100,
+				171
+			]
+		},
+		{
+			"anchor": [
+				0.000030517578125,
+				153.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "down",
+			"frame": 5,
+			"horse_offset": [
+				0.0,
+				6.83360815048218
+			],
+			"rect": [
+				831,
+				0,
+				100,
+				171
+			]
+		},
+		{
+			"anchor": [
+				0.000030517578125,
+				154.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "down",
+			"frame": 6,
+			"horse_offset": [
+				0.0,
+				6.83360815048218
+			],
+			"rect": [
+				931,
+				0,
+				100,
+				171
+			]
+		},
+		{
+			"anchor": [
+				0.000030517578125,
+				155.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "down",
+			"frame": 7,
+			"horse_offset": [
+				0.0,
+				6.83360815048218
+			],
+			"rect": [
+				1031,
+				0,
+				100,
+				171
+			]
+		},
+		{
+			"anchor": [
+				11.0000305175781,
+				154.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "left",
+			"frame": 0,
+			"horse_offset": [
+				-96.5338745117188,
+				0.0
+			],
+			"rect": [
+				1131,
+				0,
+				64,
+				173
+			]
+		},
+		{
+			"anchor": [
+				11.0000305175781,
+				153.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "left",
+			"frame": 1,
+			"horse_offset": [
+				-96.5338745117188,
+				0.0
+			],
+			"rect": [
+				1195,
+				0,
+				64,
+				173
+			]
+		},
+		{
+			"anchor": [
+				9.50003051757813,
+				154.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "left",
+			"frame": 2,
+			"horse_offset": [
+				-96.5338745117188,
+				0.0
+			],
+			"rect": [
+				1259,
+				0,
+				65,
+				173
+			]
+		},
+		{
+			"anchor": [
+				9.50003051757813,
+				155.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "left",
+			"frame": 3,
+			"horse_offset": [
+				-96.5338745117188,
+				0.0
+			],
+			"rect": [
+				1324,
+				0,
+				67,
+				173
+			]
+		},
+		{
+			"anchor": [
+				10.0000305175781,
+				154.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "left",
+			"frame": 4,
+			"horse_offset": [
+				-96.5338745117188,
+				0.0
+			],
+			"rect": [
+				1391,
+				0,
+				66,
+				173
+			]
+		},
+		{
+			"anchor": [
+				10.5000305175781,
+				153.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "left",
+			"frame": 5,
+			"horse_offset": [
+				-96.5338745117188,
+				0.0
+			],
+			"rect": [
+				1457,
+				0,
+				65,
+				173
+			]
+		},
+		{
+			"anchor": [
+				9.50003051757813,
+				154.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "left",
+			"frame": 6,
+			"horse_offset": [
+				-96.5338745117188,
+				0.0
+			],
+			"rect": [
+				1522,
+				0,
+				65,
+				173
+			]
+		},
+		{
+			"anchor": [
+				10.5000305175781,
+				155.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "left",
+			"frame": 7,
+			"horse_offset": [
+				-96.5338745117188,
+				0.0
+			],
+			"rect": [
+				1587,
+				0,
+				65,
+				173
+			]
+		},
+		{
+			"anchor": [
+				0.000030517578125,
+				156.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "up",
+			"frame": 0,
+			"horse_offset": [
+				0.0,
+				-6.83360815048218
+			],
+			"rect": [
+				1652,
+				0,
+				100,
+				169
+			]
+		},
+		{
+			"anchor": [
+				0.000030517578125,
+				155.833892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "up",
+			"frame": 1,
+			"horse_offset": [
+				0.0,
+				-6.83360815048218
+			],
+			"rect": [
+				1752,
+				0,
+				100,
+				170
+			]
+		},
+		{
+			"anchor": [
+				0.000030517578125,
+				156.833892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "up",
+			"frame": 2,
+			"horse_offset": [
+				0.0,
+				-6.83360815048218
+			],
+			"rect": [
+				1852,
+				0,
+				100,
+				170
+			]
+		},
+		{
+			"anchor": [
+				0.000030517578125,
+				157.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "up",
+			"frame": 3,
+			"horse_offset": [
+				0.0,
+				-6.83360815048218
+			],
+			"rect": [
+				1952,
+				0,
+				100,
+				169
+			]
+		},
+		{
+			"anchor": [
+				0.000030517578125,
+				156.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "up",
+			"frame": 4,
+			"horse_offset": [
+				0.0,
+				-6.83360815048218
+			],
+			"rect": [
+				2052,
+				0,
+				100,
+				169
+			]
+		},
+		{
+			"anchor": [
+				0.000030517578125,
+				155.833892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "up",
+			"frame": 5,
+			"horse_offset": [
+				0.0,
+				-6.83360815048218
+			],
+			"rect": [
+				2152,
+				0,
+				100,
+				170
+			]
+		},
+		{
+			"anchor": [
+				0.000030517578125,
+				156.833892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "up",
+			"frame": 6,
+			"horse_offset": [
+				0.0,
+				-6.83360815048218
+			],
+			"rect": [
+				2252,
+				0,
+				100,
+				170
+			]
+		},
+		{
+			"anchor": [
+				0.000030517578125,
+				157.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "up",
+			"frame": 7,
+			"horse_offset": [
+				0.0,
+				-6.83360815048218
+			],
+			"rect": [
+				2352,
+				0,
+				100,
+				169
+			]
+		},
+		{
+			"anchor": [
+				-9.49996948242188,
+				154.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "right",
+			"frame": 0,
+			"horse_offset": [
+				96.5338821411133,
+				0.0
+			],
+			"rect": [
+				2452,
+				0,
+				67,
+				173
+			]
+		},
+		{
+			"anchor": [
+				-9.49996948242188,
+				153.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "right",
+			"frame": 1,
+			"horse_offset": [
+				96.5338821411133,
+				0.0
+			],
+			"rect": [
+				2519,
+				0,
+				67,
+				173
+			]
+		},
+		{
+			"anchor": [
+				-7.99996948242188,
+				154.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "right",
+			"frame": 2,
+			"horse_offset": [
+				96.5338821411133,
+				0.0
+			],
+			"rect": [
+				2586,
+				0,
+				68,
+				173
+			]
+		},
+		{
+			"anchor": [
+				-8.49996948242188,
+				155.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "right",
+			"frame": 3,
+			"horse_offset": [
+				96.5338821411133,
+				0.0
+			],
+			"rect": [
+				2654,
+				0,
+				69,
+				173
+			]
+		},
+		{
+			"anchor": [
+				-8.49996948242188,
+				154.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "right",
+			"frame": 4,
+			"horse_offset": [
+				96.5338821411133,
+				0.0
+			],
+			"rect": [
+				2723,
+				0,
+				69,
+				173
+			]
+		},
+		{
+			"anchor": [
+				-8.99996948242188,
+				153.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "right",
+			"frame": 5,
+			"horse_offset": [
+				96.5338821411133,
+				0.0
+			],
+			"rect": [
+				2792,
+				0,
+				68,
+				173
+			]
+		},
+		{
+			"anchor": [
+				-8.49996948242188,
+				154.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "right",
+			"frame": 6,
+			"horse_offset": [
+				96.5338821411133,
+				0.0
+			],
+			"rect": [
+				2860,
+				0,
+				67,
+				173
+			]
+		},
+		{
+			"anchor": [
+				-9.49996948242188,
+				155.333892822266
+			],
+			"body": 0,
+			"clip": "ride_walk",
+			"direction": "right",
+			"frame": 7,
+			"horse_offset": [
+				96.5338821411133,
+				0.0
+			],
+			"rect": [
+				2927,
+				0,
+				67,
+				173
+			]
+		},
+		{
+			"anchor": [
+				0.000030517578125,
+				156.333892822266
+			],
+			"body": 1,
+			"clip": "ride_idle",
+			"direction": "down",
+			"frame": 0,
+			"horse_offset": [
+				0.0,
+				6.83360815048218
+			],
+			"rect": [
+				2994,
+				0,
+				166,
+				157
+			]
+		},
+		{
+			"anchor": [
+				11.0000305175781,
+				156.333892822266
+			],
+			"body": 1,
+			"clip": "ride_idle",
+			"direction": "left",
+			"frame": 0,
+			"horse_offset": [
+				-96.5338745117188,
+				0.0
+			],
+			"rect": [
+				3160,
+				0,
+				76,
+				159
+			]
+		},
+		{
+			"anchor": [
+				0.000030517578125,
+				158.333892822266
+			],
+			"body": 1,
+			"clip": "ride_idle",
+			"direction": "up",
+			"frame": 0,
+			"horse_offset": [
+				0.0,
+				-6.83360815048218
+			],
+			"rect": [
+				3236,
+				0,
+				166,
+				155
+			]
+		},
+		{
+			"anchor": [
+				-12.9999694824219,
+				156.333892822266
+			],
+			"body": 1,
+			"clip": "ride_idle",
+			"direction": "right",
+			"frame": 0,
+			"horse_offset": [
+				96.5338821411133,
+				0.0
+			],
+			"rect": [
+				3402,
+				0,
+				74,
+				159
+			]
+		},
+		{
+			"anchor": [
+				0.000030517578125,
+				156.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "down",
+			"frame": 0,
+			"horse_offset": [
+				0.0,
+				6.83360815048218
+			],
+			"rect": [
+				3476,
+				0,
+				166,
+				157
+			]
+		},
+		{
+			"anchor": [
+				-0.499969482421875,
+				155.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "down",
+			"frame": 1,
+			"horse_offset": [
+				0.0,
+				6.83360815048218
+			],
+			"rect": [
+				3642,
+				0,
+				165,
+				157
+			]
+		},
+		{
+			"anchor": [
+				-0.499969482421875,
+				156.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "down",
+			"frame": 2,
+			"horse_offset": [
+				0.0,
+				6.83360815048218
+			],
+			"rect": [
+				3807,
+				0,
+				165,
+				157
+			]
+		},
+		{
+			"anchor": [
+				-0.499969482421875,
+				157.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "down",
+			"frame": 3,
+			"horse_offset": [
+				0.0,
+				6.83360815048218
+			],
+			"rect": [
+				0,
+				173,
+				165,
+				157
+			]
+		},
+		{
+			"anchor": [
+				0.000030517578125,
+				156.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "down",
+			"frame": 4,
+			"horse_offset": [
+				0.0,
+				6.83360815048218
+			],
+			"rect": [
+				165,
+				173,
+				166,
+				157
+			]
+		},
+		{
+			"anchor": [
+				0.500030517578125,
+				155.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "down",
+			"frame": 5,
+			"horse_offset": [
+				0.0,
+				6.83360815048218
+			],
+			"rect": [
+				331,
+				173,
+				165,
+				157
+			]
+		},
+		{
+			"anchor": [
+				0.500030517578125,
+				156.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "down",
+			"frame": 6,
+			"horse_offset": [
+				0.0,
+				6.83360815048218
+			],
+			"rect": [
+				496,
+				173,
+				165,
+				157
+			]
+		},
+		{
+			"anchor": [
+				0.000030517578125,
+				157.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "down",
+			"frame": 7,
+			"horse_offset": [
+				0.0,
+				6.83360815048218
+			],
+			"rect": [
+				661,
+				173,
+				164,
+				157
+			]
+		},
+		{
+			"anchor": [
+				10.5000305175781,
+				156.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "left",
+			"frame": 0,
+			"horse_offset": [
+				-96.5338745117188,
+				0.0
+			],
+			"rect": [
+				825,
+				173,
+				77,
+				159
+			]
+		},
+		{
+			"anchor": [
+				10.5000305175781,
+				155.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "left",
+			"frame": 1,
+			"horse_offset": [
+				-96.5338745117188,
+				0.0
+			],
+			"rect": [
+				902,
+				173,
+				77,
+				159
+			]
+		},
+		{
+			"anchor": [
+				10.0000305175781,
+				156.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "left",
+			"frame": 2,
+			"horse_offset": [
+				-96.5338745117188,
+				0.0
+			],
+			"rect": [
+				979,
+				173,
+				78,
+				159
+			]
+		},
+		{
+			"anchor": [
+				10.0000305175781,
+				157.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "left",
+			"frame": 3,
+			"horse_offset": [
+				-96.5338745117188,
+				0.0
+			],
+			"rect": [
+				1057,
+				173,
+				78,
+				159
+			]
+		},
+		{
+			"anchor": [
+				9.00003051757813,
+				156.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "left",
+			"frame": 4,
+			"horse_offset": [
+				-96.5338745117188,
+				0.0
+			],
+			"rect": [
+				1135,
+				173,
+				78,
+				159
+			]
+		},
+		{
+			"anchor": [
+				9.50003051757813,
+				155.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "left",
+			"frame": 5,
+			"horse_offset": [
+				-96.5338745117188,
+				0.0
+			],
+			"rect": [
+				1213,
+				173,
+				77,
+				159
+			]
+		},
+		{
+			"anchor": [
+				10.5000305175781,
+				156.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "left",
+			"frame": 6,
+			"horse_offset": [
+				-96.5338745117188,
+				0.0
+			],
+			"rect": [
+				1290,
+				173,
+				77,
+				159
+			]
+		},
+		{
+			"anchor": [
+				11.0000305175781,
+				157.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "left",
+			"frame": 7,
+			"horse_offset": [
+				-96.5338745117188,
+				0.0
+			],
+			"rect": [
+				1367,
+				173,
+				76,
+				159
+			]
+		},
+		{
+			"anchor": [
+				0.000030517578125,
+				158.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "up",
+			"frame": 0,
+			"horse_offset": [
+				0.0,
+				-6.83360815048218
+			],
+			"rect": [
+				1443,
+				173,
+				166,
+				155
+			]
+		},
+		{
+			"anchor": [
+				0.500030517578125,
+				157.833892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "up",
+			"frame": 1,
+			"horse_offset": [
+				0.0,
+				-6.83360815048218
+			],
+			"rect": [
+				1609,
+				173,
+				165,
+				156
+			]
+		},
+		{
+			"anchor": [
+				1.00003051757813,
+				158.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "up",
+			"frame": 2,
+			"horse_offset": [
+				0.0,
+				-6.83360815048218
+			],
+			"rect": [
+				1774,
+				173,
+				164,
+				155
+			]
+		},
+		{
+			"anchor": [
+				0.500030517578125,
+				158.833892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "up",
+			"frame": 3,
+			"horse_offset": [
+				0.0,
+				-6.83360815048218
+			],
+			"rect": [
+				1938,
+				173,
+				163,
+				156
+			]
+		},
+		{
+			"anchor": [
+				0.500030517578125,
+				158.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "up",
+			"frame": 4,
+			"horse_offset": [
+				0.0,
+				-6.83360815048218
+			],
+			"rect": [
+				2101,
+				173,
+				165,
+				155
+			]
+		},
+		{
+			"anchor": [
+				-0.499969482421875,
+				157.833892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "up",
+			"frame": 5,
+			"horse_offset": [
+				0.0,
+				-6.83360815048218
+			],
+			"rect": [
+				2266,
+				173,
+				165,
+				156
+			]
+		},
+		{
+			"anchor": [
+				-0.499969482421875,
+				158.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "up",
+			"frame": 6,
+			"horse_offset": [
+				0.0,
+				-6.83360815048218
+			],
+			"rect": [
+				2431,
+				173,
+				165,
+				155
+			]
+		},
+		{
+			"anchor": [
+				0.000030517578125,
+				158.833892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "up",
+			"frame": 7,
+			"horse_offset": [
+				0.0,
+				-6.83360815048218
+			],
+			"rect": [
+				2596,
+				173,
+				164,
+				156
+			]
+		},
+		{
+			"anchor": [
+				-12.9999694824219,
+				156.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "right",
+			"frame": 0,
+			"horse_offset": [
+				96.5338821411133,
+				0.0
+			],
+			"rect": [
+				2760,
+				173,
+				76,
+				159
+			]
+		},
+		{
+			"anchor": [
+				-11.9999694824219,
+				155.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "right",
+			"frame": 1,
+			"horse_offset": [
+				96.5338821411133,
+				0.0
+			],
+			"rect": [
+				2836,
+				173,
+				74,
+				159
+			]
+		},
+		{
+			"anchor": [
+				-11.9999694824219,
+				156.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "right",
+			"frame": 2,
+			"horse_offset": [
+				96.5338821411133,
+				0.0
+			],
+			"rect": [
+				2910,
+				173,
+				76,
+				159
+			]
+		},
+		{
+			"anchor": [
+				-11.9999694824219,
+				157.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "right",
+			"frame": 3,
+			"horse_offset": [
+				96.5338821411133,
+				0.0
+			],
+			"rect": [
+				2986,
+				173,
+				76,
+				159
+			]
+		},
+		{
+			"anchor": [
+				-10.9999694824219,
+				156.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "right",
+			"frame": 4,
+			"horse_offset": [
+				96.5338821411133,
+				0.0
+			],
+			"rect": [
+				3062,
+				173,
+				76,
+				159
+			]
+		},
+		{
+			"anchor": [
+				-11.9999694824219,
+				155.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "right",
+			"frame": 5,
+			"horse_offset": [
+				96.5338821411133,
+				0.0
+			],
+			"rect": [
+				3138,
+				173,
+				76,
+				159
+			]
+		},
+		{
+			"anchor": [
+				-12.9999694824219,
+				156.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "right",
+			"frame": 6,
+			"horse_offset": [
+				96.5338821411133,
+				0.0
+			],
+			"rect": [
+				3214,
+				173,
+				76,
+				159
+			]
+		},
+		{
+			"anchor": [
+				-13.4999694824219,
+				157.333892822266
+			],
+			"body": 1,
+			"clip": "ride_walk",
+			"direction": "right",
+			"frame": 7,
+			"horse_offset": [
+				96.5338821411133,
+				0.0
+			],
+			"rect": [
+				3290,
+				173,
+				75,
+				159
+			]
+		}
+	],
+	"horse_forward_metres": 2.6,
+	"map_scale": 0.379809115843455,
+	"presentation": "Existing Socket_Rider calibrated body only; original horse depth-occludes far limbs; no second horse pixels",
+	"source_fingerprints": {
+		"res://assets/characters/human/q35/standard_anime_female_character_pack.glb": "d2aa7569986f1015145790b548299431",
+		"res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "6662e1c8148ade5fb64df554075ab678",
+		"res://assets/mounts/horse/standard_horse_pack.glb": "efe01456dec422fcb06d338fecb59a9c",
+		"res://scripts/mount/mount_horse_3d.gd": "2ad45b9a689ed2259c4b83bacf1a1be3",
+		"res://scripts/terrain_lab/character_combat_timings.gd": "9f51fd6bc484e4ac86235bd076a463fb",
+		"res://scripts/terrain_lab/site_wagon_rider_recipe.gd": "d71f2459151a83906a8e2163f0fbe119",
+		"res://scripts/tools/bake_logistics_riders.gd": "5b3a88c77b9886be9fa1818a651e7108",
+		"res://scripts/tools/bake_terrain_army_soldier.gd": "806e0d39a1775382448734bc7898f68c",
+		"res://scripts/tools/bake_wagon_cloth_riders.gd": "01bc0ec44a26d3ffac155de5fb849562",
+		"res://scripts/tools/terrain_army_recipe_bake_plan.gd": "675430f5afda26970f83b67f99cf6cda",
+		"res://scripts/ui/equipment_dye.gd": "3e7554df397f59dd11357b4d9aa27572",
+		"res://scripts/ui/human_character_3d_editor.gd": "6e8a7b663c76058bb3d49ef60d7296f6",
+		"res://scripts/ui/weapon_materials.gd": "922713e657be18ae5a0f658a73b14223"
+	},
+	"version": 1
+}

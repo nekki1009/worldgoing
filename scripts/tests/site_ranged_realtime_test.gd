@@ -3,12 +3,46 @@ extends "res://scripts/tests/site_exchange_realtime_test.gd"
 ## Canonical GPU helper 150 s / internal 130 s. --short10 is diagnostic, never full acceptance.
 const RangedAtlas = preload("res://scripts/terrain_lab/terrain_army_ranged_atlas.gd")
 const AMMO_PER_SHOOTER := 20 # Original carry capacity; no new capacity rule for a fixture.
-const CAMERA_ZOOM := 0.35
-const VISIBLE_MAP := Rect2(32.0, 32.0, 756.0, 836.0) # Original left 820x900 pane, 32px ground-point margin.
+const CAMERA_ZOOM := 0.18
+const VISIBLE_MAP := Rect2(32.0, 110.0, 756.0, 354.0) # Real unobscured map between top HUD and lower-left status panel.
 var fixture := {}
 var original_rows := {}
 var asset_fingerprints := {}
 var captures := {"flight": {"count": 0}, "crafting": {}}
+
+func _node_identity(node: Node) -> Dictionary:
+	var parent := node.get_parent()
+	return {"id": node.get_instance_id(), "class": node.get_class(), "name": str(node.name),
+		"parent_id": parent.get_instance_id() if parent != null else 0,
+		"path": str(node.get_path()) if node.is_inside_tree() else ""}
+
+func _original_batch_nodes() -> Dictionary:
+	var nodes := {}
+	for team: TerrainArmy in lab.combat_armies:
+		if team._batch_view == null: continue
+		for batch: MultiMeshInstance2D in team._batch_view._batches.values():
+			if batch.get_parent() == team._batch_view:
+				nodes[batch.get_instance_id()] = _node_identity(batch)
+	return nodes
+
+func _verify_node_growth(initial_nodes: int, initial_batches: Dictionary, added: Array[Dictionary], removed: Array[Dictionary]) -> Dictionary:
+	var final_batches := _original_batch_nodes()
+	var original_batches_preserved := true
+	for identity: int in initial_batches:
+		original_batches_preserved = original_batches_preserved and final_batches.get(identity, {}) == initial_batches[identity]
+	var batch_growth := final_batches.size() - initial_batches.size()
+	var seen := {}
+	var additions_registered := added.size() == batch_growth
+	for entry: Dictionary in added:
+		var identity := int(entry.id)
+		additions_registered = additions_registered and not seen.has(identity) and not initial_batches.has(identity) \
+			and entry.get("class") == "MultiMeshInstance2D" and final_batches.get(identity, {}) == entry
+		seen[identity] = true
+	var final_nodes := int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT))
+	return {"ok": original_batches_preserved and additions_registered and removed.is_empty() and final_nodes - initial_nodes == batch_growth,
+		"initial_batch_nodes": initial_batches.size(), "final_batch_nodes": final_batches.size(), "batch_growth": batch_growth,
+		"global_node_delta": final_nodes - initial_nodes, "added": added.duplicate(true), "removed": removed.duplicate(true),
+		"scope": "Only direct MultiMeshInstance2D nodes registered in the original Army BatchView pool may grow; no other additions, removals or unaccounted nodes"}
 
 func _initialize() -> void:
 	started_us = Time.get_ticks_usec()
@@ -46,81 +80,53 @@ func _abort(reason: String) -> void:
 	quit(1)
 
 func _deploy_fixture() -> Dictionary:
-	# One original deploy_at per team initializes every mapping/reservation/slot.
-	# Eight ten-person melee ranks retain ten adjacent frontline opponents.
-	# Twenty original indices 20..39 form two flanks, with no scripted movement
-	# or invulnerability. The original ATTACK/vacancy/KO behavior stays enabled.
-	var next_team: int = lab._next_army_identity()
-	for side: int in 2:
-		var team: TerrainArmy = lab.combat_armies[side]
-		team.team_id = next_team + side
-		team.faction_id = side
-		var selected: Array[Vector2i] = []
-		var melee_index := 0
-		for index: int in 100:
-			if index >= 20 and index < 40:
-				var lane := index - 20
-				selected.append(Vector2i(26 if side == 0 else 33, 2 + lane if lane < 10 else 28 + lane - 10))
-			else:
-				var depth := floori(float(melee_index) / 10.0)
-				selected.append(Vector2i(29 - depth if side == 0 else 30 + depth, 15 + melee_index % 10))
-				melee_index += 1
-		if not team.deploy_at(lab.terrain, lab.character, lab.npc, selected) or not team.enable_combat():
-			return Runtime.fail("DEPLOY_FAILED", "Original custom200 deployment refused")
-		for index: int in 100:
-			team.facing[index] = Vector2i.RIGHT if side == 0 else Vector2i.LEFT
-			var body: Dictionary = team.combat_units[index]
-			if float(body.hp) != 100.0 or float(body.ko) != 0.0 or float(body.stun) != 0.0:
-				return Runtime.fail("INVALID", "Initial original life state")
-			original_rows[team.combat_identity(index)] = body
-		team._visual_dirty = true
-	lab.terrain.site.army_trial_active = true
-	lab.terrain.site.army_next_team = next_team + 2
-	var before := _inventory(lab)
+	# The same public trial deployment used by the UI creates two homogeneous
+	# teams and their real initial loadout. No mixed-roster fixture bypass.
+	var deployed := lab.start_melee_trial({
+		"friendly_count": 100, "enemy_count": 100,
+		"friendly_female_percent": 50, "enemy_female_percent": 50,
+		"friendly_troop_type": "bow", "enemy_troop_type": "crossbow",
+		"friendly_spawn": Vector2i(20, 20), "enemy_spawn": Vector2i(32, 20),
+		"friendly_attack": true, "enemy_attack": true})
+	if not deployed.ok: return deployed
 	var shooters: Array[Dictionary] = []
+	var female_count := 0
 	for team: TerrainArmy in lab.combat_armies:
-		for index: int in range(20, 40):
+		for index in range(team.combat_units.size()):
 			var body: Dictionary = team.combat_units[index]
 			var identity := team.combat_identity(index)
-			var appearance: Dictionary = team.equipment_appearance(index).duplicate(true)
-			var weapon := "bow_01" if index < 30 else "crossbow_01"
-			var ammo := "arrow" if index < 30 else "bolt"
-			appearance.parts.weapon = weapon
-			appearance.parts.shield = "none"
-			if not team.supports_equipment_recipe(appearance):
-				return Runtime.fail("UNSUPPORTED", "Published ranged atlas not admitted: " + weapon)
-			var removed: Array = [body.item_state.equipped.weapon, body.item_state.equipped.shield]
-			var moved := Runtime.transfer_items(lab.terrain, body.item_state, body.cargo,
-				lab.terrain.site.depot_items, lab.terrain.site.inventory, {}, removed,
-				int(body.item_state.version), int(lab.terrain.site.depot_items.version), int(lab.terrain.site.capacity))
-			if not moved.ok:
-				return moved
-			var definition := {"slot": "weapon", "asset": weapon, "tint": [1.0, 1.0, 1.0, 1.0]}
-			var created := Runtime.create_equipment(lab.terrain, body.item_state, "weapon:" + weapon, definition, identity, "weapon")
-			if not created.ok:
-				return created
-			# Explicit pre-measurement fixture material initialization, not combat
-			# refilling. All later shot debits operate on this same actual cargo.
-			body.cargo[ammo] = int(body.cargo.get(ammo, 0)) + AMMO_PER_SHOOTER
-			if Runtime.carried_size(body.cargo, body.item_state) > Runtime.CARRY_CAPACITY:
-				return Runtime.fail("CAPACITY", "Shooter setup exceeds original carrying capacity")
-			lab.site_controller.equipment_changed(identity)
-			if team.equipment_appearance(index) != appearance:
-				return Runtime.fail("INVALID", "Actual item-to-appearance projection mismatch")
+			var profile := team.ranged_profile(index)
+			var appearance := team.equipment_appearance(index)
+			if profile.is_empty() or not team.supports_equipment_recipe(appearance):
+				return Runtime.fail("UNSUPPORTED", "Public deployment must admit every original ranged body")
+			if int(body.cargo.get(str(profile.ammo), 0)) != AMMO_PER_SHOOTER \
+				or Runtime.carried_size(body.cargo, body.item_state) > Runtime.CARRY_CAPACITY:
+				return Runtime.fail("CAPACITY", "Public deployment must provide exactly 20 real matching rounds within original capacity")
+			original_rows[identity] = body
+			female_count += int(int(appearance.body) == 1)
 			shooters.append({"id": identity, "team": team.team_id, "index": index,
-				"cell": [team.cells[index].x, team.cells[index].y], "weapon": weapon,
-				"ammo": ammo, "count": AMMO_PER_SHOOTER, "created_item_id": created.item_id, "moved_item_ids": removed})
-	var after := _inventory(lab)
-	if shooters.size() != 40 or after.items.size() != before.items.size() + 40:
-		return Runtime.fail("INVALID", "Exactly 40 real weapons must be created in the initial fixture")
-	fixture = {"method": "Original deploy_at / two100-row teams; 10 adjacent melee lanes and two ranged flanks",
-		"shooters": shooters, "pre_fixture_items": before.items.size(), "post_fixture_items": after.items.size(),
-		"created_weapons": 40, "initial_ammo_added": 800, "ammo_per_shooter": AMMO_PER_SHOOTER,
-		"initial_cargo": after.cargo, "no_refill_no_heal_no_teleport_after_start": true}
+				"cell": [team.cells[index].x, team.cells[index].y], "weapon": str(appearance.parts.weapon),
+				"ammo": str(profile.ammo), "count": AMMO_PER_SHOOTER})
+	if shooters.size() != 200 or female_count != 100:
+		return Runtime.fail("INVALID", "Public mixed-gender ranged deployment lost its exact roster")
+	fixture = {"method": "Public start_melee_trial: 100 bow versus 100 crossbow, each 50 percent female, explicit flat ground and initial 12-cell front gap",
+		"shooters": shooters, "female_count": female_count, "initial_ammo_added": 4000,
+		"ammo_per_shooter": AMMO_PER_SHOOTER, "no_refill_no_heal_no_teleport_after_start": true}
 	return Runtime.ok()
-
 func _ammo(inventory: Dictionary) -> int:
 	return int(inventory.cargo.get("arrow", 0)) + int(inventory.cargo.get("bolt", 0))
+
+func _ranged_movement_count() -> int:
+	var moved := 0
+	for shooter: Dictionary in fixture.shooters:
+		for team: TerrainArmy in lab.combat_armies:
+			if team.team_id == int(shooter.team):
+				moved += int(team.cells[int(shooter.index)] != Vector2i(int(shooter.cell[0]), int(shooter.cell[1])))
+	return moved
+
+func _single_troop_integrity() -> bool:
+	return TerrainArmy.single_troop_class(lab.army.combat_units, lab.terrain, lab.army._troop_exempt_ids()) == &"bow" \
+		and TerrainArmy.single_troop_class(lab.opposing_army.combat_units, lab.terrain, lab.opposing_army._troop_exempt_ids()) == &"crossbow"
 
 func _visible_map() -> Dictionary:
 	var count := 0
@@ -247,12 +253,14 @@ func _run() -> void:
 		_abort(str(deployed))
 		return
 	for team: TerrainArmy in lab.combat_armies:
+		if not team.has_army(): continue
 		if not lab.exchange_enabled or not team.exchange_enabled or team.combat_units.size() != 100 \
 			or not team.combat_attacking or team.visual_mode() != "baked_atlas" or team.active_3d_source_count() != 1:
-			_abort("Original 200 people / two female presenters / baked ordinary soldiers required")
+			_abort("Original 200 people / two live captains / admitted male and female ranged soldiers required")
 			return
 	var original_inventory := _inventory(lab) # AFTER all explicit fixture additions.
-	lab.camera.position = Vector2(30.0, 19.5) * TerrainRenderer.CELL_PIXELS + Vector2((700.0 - 410.0) / CAMERA_ZOOM, 0.0)
+	# Leave room for real lateral firing-position movement during the full minute.
+	lab.camera.position = Vector2(26.0, 25.0) * TerrainRenderer.CELL_PIXELS + Vector2((700.0 - 410.0) / CAMERA_ZOOM, (450.0 - 285.0) / CAMERA_ZOOM)
 	lab.camera.zoom = Vector2.ONE * CAMERA_ZOOM
 	var camera_position := lab.camera.position
 	if not await _capture_crafting():
@@ -278,6 +286,13 @@ func _run() -> void:
 		return
 	var measured := lab as MeasuredLab
 	var initial_nodes := int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT))
+	var initial_batches := _original_batch_nodes()
+	var added_nodes: Array[Dictionary] = []
+	var removed_nodes: Array[Dictionary] = []
+	var record_added := func(node: Node) -> void: added_nodes.append(_node_identity(node))
+	var record_removed := func(node: Node) -> void: removed_nodes.append(_node_identity(node))
+	node_added.connect(record_added)
+	node_removed.connect(record_removed)
 	var initial_samples := _samples()
 	var initial_memory := OS.get_static_memory_usage()
 	var initial_shots := lab.ranged_shots
@@ -319,6 +334,9 @@ func _run() -> void:
 			next_checkpoint += 10.0
 	lab.set_process(false)
 	measured.recording = false
+	node_added.disconnect(record_added)
+	node_removed.disconnect(record_removed)
+	var node_growth := _verify_node_growth(initial_nodes, initial_batches, added_nodes, removed_nodes)
 	var wall := (previous_us - begin_us) / 1000000.0
 	var sorted := frame_ms.duplicate()
 	sorted.sort()
@@ -358,10 +376,10 @@ func _run() -> void:
 		non_ammo_after.erase(kind)
 	var gate := {"full_60_wall_seconds": duration == 60.0 and wall >= 60.0,
 		"fps30": frame_ms.size() / wall >= 30.0, "p95_33ms": p95 <= 33.334, "all_10s_bins30": bins.min() >= 30.0,
-		"all_200_original_people": int(life.actual_rows) == 200 and rows_same, "actual_40_shooters": fixture.shooters.size() == 40,
-		"actual_exchanges": lab.exchange_count >= 100, "actual_ranged_shots": shots >= 100, "actual_ranged_resolutions": resolutions >= 100,
-		"actual_encirclement_steps": encirclement_steps > 0,
-		"actual_arrow_debits100": arrow_delta >= 100,
+		"all_200_original_people": int(life.actual_rows) == 200 and rows_same, "actual_200_shooters": fixture.shooters.size() == 200, "actual_100_female": fixture.female_count == 100,
+		"actual_ranged_shots": shots >= 100, "actual_ranged_resolutions": resolutions >= 100,
+		"actual_ranged_movement": _ranged_movement_count() > 0, "single_troop_integrity": _single_troop_integrity(),
+		"actual_arrow_debits100": arrow_delta >= 100, "actual_bolt_debits100": bolt_delta >= 100,
 		"actual_flight_capture": int(captures.flight.count) == 1,
 		"crafting_ui_read_only": bool(captures.crafting.get("read_only", false)),
 		"actual_ranged_damage": int(lab.ranged_results.hit) + int(lab.ranged_results.graze) > 0,
@@ -373,7 +391,7 @@ func _run() -> void:
 		"camera_stable": lab.camera.position == camera_position and lab.camera.zoom == Vector2.ONE * CAMERA_ZOOM,
 		"all200_on_visible_map": all_visible,
 		"flat_fixture_render_edges": data.cliff_drops.count(0) == data.cliff_drops.size(),
-		"no_new_flight_nodes": int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)) == initial_nodes,
+		"no_new_flight_nodes": bool(node_growth.ok),
 		"source_stable": source_stable}
 	lab.site_controller._capture_positions()
 	var save_guard: Dictionary = lab.site_controller.supply_save_guard()
@@ -396,11 +414,12 @@ func _run() -> void:
 		"encirclement_steps": encirclement_steps, "encirclement_reviews": encirclement_reviews, "encirclement_checks": encirclement_checks,
 		"encirclement_scope": "Original Army diagnostic counters before/after; each team's maximum actual cardinal enemy contacts before/each10s/after using _exchange_people and can_attack_across, never _exchange_context",
 		"items": final_inventory.items.size(), "ground_containers": data.site.ground_loot.size(), "save_result": busy_save,
-		"visible_map_checks": visibility_checks, "visible_map_scope": "All original ground points before/after and each 10s checkpoint; actual canvas transform, left820x900 pane minus32px margin, unchanged zoom0.35",
+		"visible_map_checks": visibility_checks, "visible_map_scope": "All original ground points before/after and each 10s checkpoint; actual canvas transform, unobscured map between top HUD and lower-left status panel, unchanged zoom0.18",
 		"nodes": [initial_nodes, int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT))],
+		"node_growth": node_growth,
 		"memory_bytes": [initial_memory, OS.get_static_memory_usage()], "source_sha256": fingerprints, "asset_source_md5": asset_fingerprints,
 		"gpu": RenderingServer.get_video_adapter_name(), "cpu": OS.get_processor_name(),
-		"catalog": Atlas._catalog_path, "ranged_catalog_scope": "Published original baseline bow/crossbow + no shield; not arbitrary ranged equipment recipes"}
+		"catalog": Atlas._catalog_path, "ranged_catalog_scope": "Published standard male and female bow/crossbow + no shield; not arbitrary ranged equipment recipes"}
 	_write()
 	if root.get_texture().get_image().save_png(output_path + "/after.png") != OK:
 		_abort("After capture failed")

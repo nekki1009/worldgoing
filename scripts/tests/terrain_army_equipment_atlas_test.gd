@@ -1,5 +1,5 @@
 extends SceneTree
-## Synthetic metadata exercises admission/lookup, not 536 rendered poses.
+## Synthetic metadata exercises admission/lookup, not every rendered pose.
 const Reader = preload("res://scripts/terrain_lab/terrain_army_equipment_atlas.gd")
 const Plan = preload("res://scripts/tools/terrain_army_recipe_bake_plan.gd")
 const SAMPLE := "res://output/terrain_army_missing_gear_20260913/m00_down_get_up_down_000_024/manifest.json"
@@ -38,7 +38,12 @@ func _batches(mask: int, baseline: Dictionary, sample: Dictionary, iron: int = 0
 		batch.recipe_iron = iron
 		batch.appearance = plan.appearance
 		batch.frames = frames.slice(first, mini(first + 128, frames.size()))
+		batch.batch.first = first
 		batch.batch.count = batch.frames.size()
+		batch.batch.selected_total = frames.size()
+		batch.batch.recipe_total = frames.size()
+		batch.batch.selection_complete = batch.frames.size() == frames.size()
+		batch.batch.recipe_complete = batch.frames.size() == frames.size()
 		batches.append(batch)
 	return batches
 
@@ -55,7 +60,7 @@ func _initialize() -> void:
 	for mask: int in [0, 1, 31]:
 		var batches := _batches(mask, baseline, sample)
 		var admitted := Reader.validate_batches(mask, batches, DIRECTORY)
-		assert(not admitted.is_empty() and admitted.sequences.size() == 72)
+		assert(not admitted.is_empty() and admitted.sequences.size() == baseline.directions.size() * (Plan.COMMON_CLIPS.size() + 1))
 		Reader._recipes[Plan.recipe_key(mask)] = admitted
 		var appearance := Plan.appearance_for(mask, baseline.appearance)
 		assert(Reader.supports(appearance))
@@ -67,6 +72,7 @@ func _initialize() -> void:
 		if mask == 1:
 			assert(Reader.frame(appearance, "guard_unshielded", "down", 0.0).resolved_pose == "guard_weapon")
 		assert(Reader.frame(appearance, "attack_spear", "down", 0.0).is_empty())
+		assert(not Reader.frame(appearance, "attack_jump_heavy", "down", 0.0).is_empty())
 		assert(Reader.frame(appearance, "down", "unknown", 0.0).is_empty())
 		assert(Reader.frame(appearance, "down", "down", NAN).is_empty())
 		var corrupt := batches.duplicate(true)
@@ -108,5 +114,5 @@ func _initialize() -> void:
 	assert(Reader._page_bytes == 3080192 and Reader._pages.size() == 1, "Only requested page is decoded and shared, not the whole pack")
 	assert(not Reader.set_catalog_path("res://assets/unapproved/catalog.json"))
 	Reader.set_catalog_path(Reader.CATALOG)
-	print("TERRAIN ARMY EQUIPMENT ATLAS PASS: complete 536-key admission, exact samples, sparse shared texture lookup; synthetic metadata only")
+	print("TERRAIN ARMY EQUIPMENT ATLAS PASS: complete dynamic-key admission including jump heavy, exact samples, sparse shared texture lookup; synthetic metadata only")
 	quit(0)

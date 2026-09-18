@@ -128,7 +128,7 @@ func run() -> void:
 		"Exact cell-flight event uses cell centres and grid speed"):
 		return
 	if not _check(cargo.arrow == 1 and cargo.wood == 3 and actor.fatigue == 13.0 and actor.fatigue_rest == 0.0
-		and shot.shooter.fatigue == 12.0 and shot.shooter.skill == "power" and actor.exchange_stats().skill == ""
+		and shot.shooter.fatigue == 12.0 and shot.shooter.skill == "power" and shot.shooter.weapon == "bow_01" and actor.exchange_stats().skill == ""
 		and actor.exchange_skill_cooldown == 8.0 and actor.ranged_cooldown == 2.0
 		and actor.exchange_cooldown == 0.0 and actor.exchange_can_receive()
 		and actor.action_time == 0.25 and actor.visual_state.animation_id == &"attack_bow",
@@ -181,7 +181,7 @@ func run() -> void:
 		and cargo.arrow == 1, "An unequipped actual bow cannot be inferred from old appearance"):
 		return
 	var defense := actor.ranged_defense()
-	if not _check(defense.armor_stab == 25.0 and defense.shield and not defense.moving, "Defense reads actual worn armor and shield"):
+	if not _check(defense.armor == "armor_mingguang_01" and defense.armor_stab == 25.0 and defense.shield and not defense.moving, "Defense reads actual worn armor and shield"):
 		return
 	actor.exchange_cooldown = 1.25
 	actor.activate_exchange_skill("power")

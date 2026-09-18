@@ -6,6 +6,7 @@ extends RefCounted
 const RETRY_SECONDS := 30.0
 var lab: Variant
 var unavailable := Callable() # Other original action/training owners, pure query.
+var vehicle_blocked := Callable() # Optional original vehicle owner, pure occupancy query.
 var _active_ids: Dictionary = {}
 var _retry_left: Dictionary = {}
 var _working: Dictionary = {}
@@ -147,6 +148,17 @@ func advance(seconds: float) -> Dictionary:
 		var prior_target := str(task.target)
 		var manual := bool(task.get("manual", false))
 		task.cell = lab.terrain.index(team.cells[index])
+		if not manual and int(task.zone) >= 0 and (int(task.zone) >= lab.terrain.site.zones.size() or not bool(lab.terrain.site.zones[int(task.zone)].active)):
+			# The original zone toggle applies to Army workers as well as the
+			# camp worker. Keep cargo and finish any already-reserved native step.
+			_release_claim(claims, prior_target, identity)
+			task.target = ""
+			task.progress = 0.0
+			task.zone = -1
+			task.mode = "idle"
+			task.status = "工作区已停用，等待其他工作"
+			_routes.erase(identity)
+			_retry_left.erase(identity)
 		if manual and (not team.combat_can_act(index) or float(row.get("exchange_stagger", 0.0)) > 0.0 or team.moving_to[index] != TerrainArmy.INVALID_CELL or int(task.cell) != int(task.work_cell) or bool(row.attack) or str(row.pose) != "idle" or int(row.get("hit_revision", 0)) != int(_manual_hits.get(identity, row.get("hit_revision", 0)))):
 			_release_claim(claims, prior_target, identity)
 			cancel(identity)
@@ -184,9 +196,10 @@ func advance(seconds: float) -> Dictionary:
 			_pause(task, "等待原人物行动结束")
 			continue
 		if team.moving_to[index] != TerrainArmy.INVALID_CELL:
-			task.mode = "travel"
+			task.mode = "idle" if str(task.target).is_empty() else "travel"
 			continue
-		var occupied := func(cell: Vector2i) -> bool: return _occupied(cell, team, index)
+		var occupied := func(cell: Vector2i) -> bool:
+			return _occupied(cell, team, index) or bool(lab._fatigue_threat(cell, team.faction_id, team, index, threats))
 		if str(task.target).is_empty():
 			if manual:
 				cancel(identity)
@@ -280,6 +293,8 @@ func _person(identity: int) -> Dictionary:
 	return person
 
 func _occupied(cell: Vector2i, requesting_team: TerrainArmy, requesting_index: int) -> bool:
+	if vehicle_blocked.is_valid() and bool(vehicle_blocked.call(cell)):
+		return true
 	for actor: TerrainTestCharacter in lab.combat_actors:
 		if actor.occupies_cell(cell):
 			return true

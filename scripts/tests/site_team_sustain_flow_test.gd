@@ -97,14 +97,16 @@ func _run() -> void:
 	team.combat_units[1].item_state.equipped.clear()
 	team.combat_units[2].captive = true
 	team.combat_units[3].ko = 20.0
-	team.combat_units[0].fatigue = 79.9
+	PersonFatigue.write(team.combat_units[0], "fatigue", 79.9)
 	var body: Dictionary = team.combat_units[0]
 	var before_training := team.training
 	var result: Dictionary = controller.advance_team_sustain(team, 3600.0)
 	assert(is_same(body, team.combat_units[0]), "Training mutates original army dictionary")
 	assert(result.handled_ids == [team.combat_identity(0)])
-	assert(team.training > before_training and body.work_resting and body.fatigue > 50.0 and body.fatigue < 80.0)
-	assert(team.combat_units[1].fatigue == 0.0, "No weapon is not an eligible armed trainee")
+	assert(team.training > before_training and body.work_resting)
+	near(PersonFatigue.read(body), PersonFatigue.WORK_REST_AT, "Only the original shared owner receives training fatigue; recovery belongs to the Lab common clock, not this isolated supply call")
+	assert(is_same(PersonFatigue.pool(body), team.team_fatigue) and not body.has("fatigue"))
+	assert(is_same(PersonFatigue.pool(team.combat_units[1]), team.team_fatigue) and not bool(team.combat_units[1].get("work_resting", false)), "An unarmed teammate shares team fatigue but is not an eligible armed trainee or a second fatigue owner")
 	assert(controller.order_team_training(team, team.current_commander, false).ok)
 	# Nonfatal hunger uses the original life entrypoint without combat speed/hit
 	# spam. Fatal hunger reaches original dead pose and clears original attack.

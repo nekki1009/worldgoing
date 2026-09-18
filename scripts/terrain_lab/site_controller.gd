@@ -13,13 +13,20 @@ const EquipmentOrders = preload("res://scripts/terrain_lab/site_equipment_orders
 const CaptiveEscort = preload("res://scripts/terrain_lab/site_captive_escort.gd")
 const FamilyContinuity = preload("res://scripts/terrain_lab/site_family_continuity.gd")
 const WorkTeam = preload("res://scripts/terrain_lab/site_work_team.gd")
+const Vehicles = preload("res://scripts/terrain_lab/site_vehicle_transport.gd")
+const VehicleView = preload("res://scripts/terrain_lab/site_vehicle_view.gd")
 const MODES := ["查看", "手動採集", "工人採集區", "清理區", "勘探區", "建設區", "原測試：放置角色"]
 const PANEL_SCALE := 1.35
 const PANEL_SPACE := 590.0
 var lab: Node2D
 var view: Node2D
 var panel: PanelContainer
+var top_banner: PanelContainer
+var status_panel: PanelContainer
+var combat_window: Window
 var clock_label: Label
+var speed_label: Label
+var player_status_label: Label
 var details: Label
 var stock_label: Label
 var worker_label: Label
@@ -35,6 +42,44 @@ var player_army_label: Label
 var team_supply_label: Label
 var supply_team_choice: OptionButton
 var supply_quantity: SpinBox
+var combat_summary_label: Label
+var trial_friendly_count: SpinBox
+var trial_enemy_count: SpinBox
+var trial_friendly_female_percent: SpinBox
+var trial_enemy_female_percent: SpinBox
+var trial_friendly_gender_label: Label
+var trial_enemy_gender_label: Label
+var trial_friendly_training: SpinBox
+var trial_enemy_training: SpinBox
+var trial_friendly_tactics: SpinBox
+var trial_enemy_tactics: SpinBox
+var trial_friendly_leadership: SpinBox
+var trial_enemy_leadership: SpinBox
+var trial_friendly_coach: SpinBox
+var trial_enemy_coach: SpinBox
+var trial_friendly_order: OptionButton
+var trial_enemy_order: OptionButton
+var trial_friendly_spawn_label: Label
+var trial_enemy_spawn_label: Label
+var trial_friendly_spawn := Vector2i(-1, -1)
+var trial_enemy_spawn := Vector2i(-1, -1)
+var trial_third_enabled: CheckBox
+var trial_third_faction: OptionButton
+var trial_third_count: SpinBox
+var trial_third_female_percent: SpinBox
+var trial_third_gender_label: Label
+var trial_third_training: SpinBox
+var trial_third_tactics: SpinBox
+var trial_third_leadership: SpinBox
+var trial_third_coach: SpinBox
+var trial_third_order: OptionButton
+var trial_third_spawn_label: Label
+var trial_third_spawn := Vector2i(-1, -1)
+var trial_roles: Dictionary = {}
+var trial_troop_types: Dictionary = {}
+var trial_carts: Dictionary = {}
+var trial_wagons: Dictionary = {}
+var trial_command_team: OptionButton
 var selected := Vector2i(-1, -1)
 var source_key := ""
 var feature_key := ""
@@ -60,27 +105,48 @@ var captive_escort := CaptiveEscort.new()
 var family_continuity := FamilyContinuity.new()
 var work_team := WorkTeam.new()
 var food_delivery := FoodDelivery.new()
+var vehicles := Vehicles.new()
+var vehicle_view: Node2D
+var vehicle_choice: OptionButton
+var vehicle_operator_choice: OptionButton
+var vehicle_resource_choice: OptionButton
+var vehicle_resource_quantity: SpinBox
+var vehicle_status: Label
+var vehicle_depot_item: OptionButton
+var vehicle_loaded_item: OptionButton
+var _vehicle_depot_version := -1
+var _vehicle_holder_version := -1
 var _crew_handled: Dictionary = {}
 var _family_dialog: AcceptDialog
 var _family_wait := false
 var _equipment_appearances: Dictionary = {} # Derived, event-updated; never saved as inventory.
 var _pending_deaths: Dictionary = {} # Only newly dead original people; no corpse-wide tick.
 var person_executor_id := 0
+var _combat_window_opened := false
 
 func setup(scene: Node2D) -> void:
 	lab = scene
 	food_delivery.init(self)
+	vehicles.init(self)
 	view = View.new()
 	view.name = "SiteResources"
 	lab.add_child(view)
 	# Same-row props are behind the existing actors; northern actors still sort behind roofs.
 	lab.move_child(view, lab.character.get_index())
 	_build_ui()
+	_build_vehicle_controls(lab.find_child("TrialVehicleControls", true, false))
+	combat_window.visibility_changed.connect(func() -> void:
+		if combat_window.visible: _refresh_vehicle_controls())
+	vehicle_view = VehicleView.new()
+	vehicle_view.name = "SiteVehicles"
+	lab.add_child(vehicle_view)
+	vehicle_view.setup(lab)
 	lab.character.combat_event.connect(_combat_event)
 	lab.npc.combat_event.connect(_combat_event)
 	lab.character.died.connect(_person_died)
 	lab.npc.died.connect(_person_died)
 	for team: TerrainArmy in lab.combat_armies:
+		team.vehicle_transport = vehicles
 		team.combat_event.connect(_combat_event)
 		team.died.connect(_person_died)
 		team.equipment_initializer = initialize_team_items
@@ -109,6 +175,7 @@ func setup(scene: Node2D) -> void:
 	family_continuity.archive_current = _archive_family_site
 	family_continuity.control_selected = _control_family_person
 	work_team.unavailable = _work_person_unavailable
+	work_team.vehicle_blocked = vehicles.blocks_cell
 	lab.character.cell_blocker = _actor_blocked
 	lab.npc.cell_blocker = _actor_blocked
 	get_tree().root.size_changed.connect(_layout)
@@ -127,6 +194,7 @@ func bind() -> void:
 	captive_escort.init(lab, person_actions)
 	family_continuity.init(lab)
 	work_team.init(lab)
+	vehicles.init(self)
 	_crew_handled.clear()
 	_family_wait = false
 	captivity_supply.init(self)
@@ -194,6 +262,24 @@ func _options(parent: Node, values: Array, node_name: String) -> OptionButton:
 	parent.add_child(choice)
 	return choice
 
+func _compact_label(parent: Node, value: String, size: int = 16) -> Label:
+	var label := Label.new()
+	label.text = value
+	label.add_theme_font_size_override("font_size", size)
+	parent.add_child(label)
+	return label
+
+func _number_input(parent: Node, node_name: String, minimum: float, maximum: float, value: float) -> SpinBox:
+	var input := SpinBox.new()
+	input.name = node_name
+	input.min_value = minimum
+	input.max_value = maximum
+	input.step = 1
+	input.value = value
+	input.custom_minimum_size.x = 120
+	parent.add_child(input)
+	return input
+
 func _build_ui() -> void:
 	var ui := CanvasLayer.new()
 	ui.name = "SiteUI"
@@ -207,6 +293,62 @@ func _build_ui() -> void:
 	style.set_border_width_all(1)
 	panel.add_theme_stylebox_override("panel", style)
 	ui.add_child(panel)
+	top_banner = PanelContainer.new()
+	top_banner.name = "TopBanner"
+	top_banner.add_theme_stylebox_override("panel", style)
+	ui.add_child(top_banner)
+	var banner_margin := MarginContainer.new()
+	for side: String in ["left", "right", "top", "bottom"]:
+		banner_margin.add_theme_constant_override("margin_" + side, 10)
+	top_banner.add_child(banner_margin)
+	var banner_row := HBoxContainer.new()
+	banner_row.add_theme_constant_override("separation", 10)
+	banner_margin.add_child(banner_row)
+	clock_label = _compact_label(banner_row, "", 16)
+	clock_label.name = "ClockStatus"
+	clock_label.custom_minimum_size.x = 190
+	banner_row.add_child(VSeparator.new())
+	_button(banner_row, "−", "SlowerSite", func() -> void:
+		lab.change_simulation_speed(-1))
+	speed_label = _compact_label(banner_row, "1×", 16)
+	speed_label.name = "SimulationSpeed"
+	speed_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	speed_label.custom_minimum_size.x = 42
+	_button(banner_row, "+", "FasterSite", func() -> void:
+		lab.change_simulation_speed(1))
+	pause_button = _button(banner_row, "暫停", "PauseSite", toggle_pause)
+	banner_row.add_child(VSeparator.new())
+	player_status_label = _compact_label(banner_row, "", 15)
+	player_status_label.name = "PlayerStatus"
+	player_status_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	player_status_label.clip_text = true
+	player_status_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	player_status_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	status_panel = PanelContainer.new()
+	status_panel.name = "StatusPanel"
+	status_panel.scale = Vector2.ONE * PANEL_SCALE
+	status_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	status_panel.add_theme_stylebox_override("panel", style)
+	ui.add_child(status_panel)
+	var status_margin := MarginContainer.new()
+	for side: String in ["left", "right", "top", "bottom"]:
+		status_margin.add_theme_constant_override("margin_" + side, 14)
+	status_panel.add_child(status_margin)
+	var status_column := VBoxContainer.new()
+	status_column.add_theme_constant_override("separation", 5)
+	status_margin.add_child(status_column)
+	_label(status_column, "現在狀態", 18)
+	message = _label(status_column, "先框選工人採集區，工人會自行採集並回營地交貨。", 16)
+	message.modulate = Color("f0d7a0")
+	status_column.add_child(HSeparator.new())
+	_label(status_column, "所選格資訊", 17)
+	var detail_scroll := ScrollContainer.new()
+	detail_scroll.name = "SelectedCellScroll"
+	detail_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	detail_scroll.custom_minimum_size.y = 140
+	detail_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	status_column.add_child(detail_scroll)
+	details = _label(detail_scroll, "")
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	panel.add_child(scroll)
@@ -218,10 +360,8 @@ func _build_ui() -> void:
 	column.add_theme_constant_override("separation", 9)
 	margin.add_child(column)
 	_label(column, "聚落地圖  ·  資源與土地", 25)
-	clock_label = _label(column, "", 18)
 	var row := HBoxContainer.new()
 	column.add_child(row)
-	pause_button = _button(row, "暫停", "PauseSite", toggle_pause)
 	_button(row, "保存", "SaveSite", save_current)
 	_button(row, "載入", "LoadSite", load_current)
 	var views := _options(column, View.VIEW_NAMES, "LandView")
@@ -251,9 +391,6 @@ func _build_ui() -> void:
 	_label(column, "點選查看；採集／清理／勘探／建設可拖曳框選。\nWASD 移動玩家；滾輪縮放、右鍵拖圖。", 15)
 	if lab.exchange_enabled:
 		_label(column, "Q 穩守／E 強攻：下次交鋒效果，消費後冷卻 8 秒", 15)
-	message = _label(column, "先框選工人採集區，工人會自行採集並回營地交貨。", 16)
-	message.modulate = Color("f0d7a0")
-	details = _label(column, "")
 	_button(column, "手動作業（需走到來源旁）", "ManualHarvest", manual_work)
 	_button(column, "查看所選格人物／遺留物", "InspectLoot", _open_person_inventory)
 	_button(column, "本人實物配裝／正式領裝", "EquipmentInventory", _open_equipment_inventory)
@@ -304,10 +441,144 @@ func _build_ui() -> void:
 	column.add_child(row)
 	_button(row, "營地近景", "FocusCamp", focus_camp)
 	_button(row, "全圖", "FitSite", lab.fit_map)
-	_button(column, "部署兩隊近戰測試（各 100 人）", "StartMeleeTrial", func() -> void: show_result(lab.start_melee_trial()))
-	_button(column, "結束測試並清除兩隊", "ClearMeleeTrial", lab.clear_army)
-	_button(column, "查看兩隊傷亡", "MeleeTrialStatus", func() -> void:
-		message.text = "我方：%s\n敵方：%s" % [lab.army.combat_summary(), lab.opposing_army.combat_summary()])
+	_button(column, "戰鬥測試／隊伍設定…", "OpenCombatWindow", _open_combat_window)
+	_label(column, "保存地圖、玩家／工人與各隊傷亡、指揮、動作／移動。交戰中延後保存，離線期間不增加產量。", 15)
+	saved_sites = _options(column, ["已保存地圖"], "SavedSites")
+	_button(column, "開啟所選保存地圖", "OpenSavedSite", func() -> void:
+		if saved_sites.selected >= 0 and saved_sites.get_item_metadata(saved_sites.selected) != null:
+			_load_path(str(saved_sites.get_item_metadata(saved_sites.selected))))
+	_refresh_saved_sites()
+	_build_combat_window(ui, style)
+
+func _build_combat_window(ui: CanvasLayer, style: StyleBoxFlat) -> void:
+	combat_window = Window.new()
+	combat_window.name = "CombatTestWindow"
+	combat_window.title = "戰鬥測試與隊伍設定"
+	combat_window.size = Vector2i(790, 800)
+	combat_window.min_size = Vector2i(680, 420)
+	combat_window.process_mode = Node.PROCESS_MODE_ALWAYS
+	combat_window.close_requested.connect(combat_window.hide)
+	ui.add_child(combat_window)
+	var popup_panel := PanelContainer.new()
+	popup_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	popup_panel.add_theme_stylebox_override("panel", style)
+	combat_window.add_child(popup_panel)
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	popup_panel.add_child(scroll)
+	var margin := MarginContainer.new()
+	for side: String in ["left", "right", "top", "bottom"]:
+		margin.add_theme_constant_override("margin_" + side, 16)
+	scroll.add_child(margin)
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 9)
+	margin.add_child(column)
+	_label(column, "兩／三隊戰鬥、工作與後勤測試", 23)
+	_label(column, "每隊選擇近戰／弓／弩單一兵種（基礎武力 %.0f）。普通兵共用兵種基礎值、各自使用實裝；隊長與幹部才保有個別指揮能力。" % TerrainArmy.TROOP_COMBAT_ABILITY, 15)
+	_label(column, "可調整人數、訓練、隊長指揮能力與初始命令。隊伍 ID 仍由 Site 自動分配；現役隊伍不會被原地改寫。", 15)
+	trial_third_enabled = CheckBox.new()
+	trial_third_enabled.name = "EnableThirdTeam"
+	trial_third_enabled.text = "增加第三隊（一起部署時啟用）"
+	column.add_child(trial_third_enabled)
+	_label(column, "第三隊可加入我方／敵方勢力，或選第三勢力；同勢力友軍、不同勢力互相敵對。", 15)
+	var config := GridContainer.new()
+	config.columns = 4
+	config.add_theme_constant_override("h_separation", 10)
+	config.add_theme_constant_override("v_separation", 7)
+	column.add_child(config)
+	_compact_label(config, "設定")
+	_compact_label(config, "我方")
+	_compact_label(config, "敵方")
+	_compact_label(config, "第三隊")
+	_compact_label(config, "勢力")
+	_compact_label(config, "我方勢力")
+	_compact_label(config, "敵方勢力")
+	trial_third_faction = _options(config, ["我方勢力", "敵方勢力", "第三勢力"], "ThirdFaction")
+	trial_third_faction.select(2)
+	_compact_label(config, "隊伍用途")
+	for prefix: String in ["friendly", "enemy", "third"]:
+		trial_roles[prefix] = _options(config, ["戰鬥隊", "工作隊", "後勤隊"], prefix.capitalize() + "TeamRole")
+	_compact_label(config, "戰鬥兵種")
+	for prefix: String in ["friendly", "enemy", "third"]:
+		trial_troop_types[prefix] = _options(config, ["近戰步兵", "弓兵", "弩兵"], prefix.capitalize() + "TroopType")
+	_compact_label(config, "總名額（人＋車）")
+	trial_friendly_count = _number_input(config, "FriendlyCount", 1, 100, 100)
+	trial_enemy_count = _number_input(config, "EnemyCount", 1, 100, 100)
+	trial_third_count = _number_input(config, "ThirdCount", 1, 100, 100)
+	_compact_label(config, "物資車（後勤限定）")
+	for prefix: String in ["friendly", "enemy", "third"]:
+		trial_carts[prefix] = _number_input(config, prefix.capitalize() + "CartCount", 0, 99, 0)
+	_compact_label(config, "馬車（後勤限定）")
+	for prefix: String in ["friendly", "enemy", "third"]:
+		trial_wagons[prefix] = _number_input(config, prefix.capitalize() + "WagonCount", 0, 99, 0)
+	_compact_label(config, "女性比例（0–100%）")
+	trial_friendly_female_percent = _number_input(config, "FriendlyFemalePercent", 0, 100, 50)
+	trial_enemy_female_percent = _number_input(config, "EnemyFemalePercent", 0, 100, 50)
+	trial_third_female_percent = _number_input(config, "ThirdFemalePercent", 0, 100, 50)
+	_compact_label(config, "男／女人數（含隊長）")
+	trial_friendly_gender_label = _compact_label(config, "")
+	trial_enemy_gender_label = _compact_label(config, "")
+	trial_third_gender_label = _compact_label(config, "")
+	for input: SpinBox in [trial_friendly_count, trial_enemy_count, trial_third_count, trial_friendly_female_percent, trial_enemy_female_percent, trial_third_female_percent]:
+		input.value_changed.connect(func(_value: float) -> void: _update_trial_gender_counts())
+	for prefix: String in trial_roles:
+		trial_roles[prefix].item_selected.connect(func(_index: int) -> void: _trial_role_changed(prefix))
+		trial_carts[prefix].value_changed.connect(func(_value: float) -> void: _update_trial_gender_counts())
+		trial_wagons[prefix].value_changed.connect(func(_value: float) -> void: _update_trial_gender_counts())
+	_compact_label(config, "訓練（0–1000）")
+	trial_friendly_training = _number_input(config, "FriendlyTraining", 0, 1000, 0)
+	trial_enemy_training = _number_input(config, "EnemyTraining", 0, 1000, 0)
+	trial_third_training = _number_input(config, "ThirdTraining", 0, 1000, 0)
+	_compact_label(config, "隊長戰術（0–100）")
+	trial_friendly_tactics = _number_input(config, "FriendlyCaptainTactics", 0, 100, 50)
+	trial_enemy_tactics = _number_input(config, "EnemyCaptainTactics", 0, 100, 50)
+	trial_third_tactics = _number_input(config, "ThirdCaptainTactics", 0, 100, 50)
+	_compact_label(config, "隊長領導（0–100）")
+	trial_friendly_leadership = _number_input(config, "FriendlyCaptainLeadership", 0, 100, 50)
+	trial_enemy_leadership = _number_input(config, "EnemyCaptainLeadership", 0, 100, 50)
+	trial_third_leadership = _number_input(config, "ThirdCaptainLeadership", 0, 100, 50)
+	_compact_label(config, "隊長教練（0–100）")
+	trial_friendly_coach = _number_input(config, "FriendlyCaptainCoach", 0, 100, 50)
+	trial_enemy_coach = _number_input(config, "EnemyCaptainCoach", 0, 100, 50)
+	trial_third_coach = _number_input(config, "ThirdCaptainCoach", 0, 100, 50)
+	_compact_label(config, "初始命令")
+	trial_friendly_order = _options(config, ["守位", "接敵"], "FriendlyInitialOrder")
+	trial_enemy_order = _options(config, ["守位", "接敵"], "EnemyInitialOrder")
+	trial_third_order = _options(config, ["守位", "接敵"], "ThirdInitialOrder")
+	trial_friendly_order.select(1)
+	trial_enemy_order.select(1)
+	trial_third_order.select(1)
+	for prefix: String in trial_roles:
+		_trial_role_changed(prefix)
+	column.add_child(HSeparator.new())
+	_label(column, "出現位置", 18)
+	_label(column, "總名額包含每一名人員與每一輛車，至少保留一人；男女比例只計真正人員。車多於可用操作者時停泊等待，不額外生成駕駛。工作隊留下隊長，其餘人沿原工作區派工；後勤隊不自動取物。", 15)
+	_label(column, "手動指定：點地圖再按對應按鈕，該格為隊長位置。近戰隊沿相鄰前線；遠程隊預留射距。工作／後勤可各自指定合法位置，自動位置避開敵軍八格威脅區。工作與後勤預設守位。", 15)
+	_label(column, "弓／弩測試隊部署時每人持有對應武器及 20 發彈藥，無盾；只在本次建立時配置。射完須沿原營地製作、領取補給。", 15)
+	trial_friendly_spawn_label = _label(column, "我方：自動尋找", 15)
+	_button(column, "以目前所選格設定我方位置", "SetFriendlySpawn", func() -> void: _set_trial_spawn(true))
+	trial_enemy_spawn_label = _label(column, "敵方：自動尋找", 15)
+	_button(column, "以目前所選格設定敵方位置", "SetEnemySpawn", func() -> void: _set_trial_spawn(false))
+	trial_third_spawn_label = _label(column, "第三隊：自動尋找", 15)
+	_button(column, "以目前所選格設定第三隊位置", "SetThirdSpawn", _set_third_trial_spawn)
+	_button(column, "所有隊伍恢復自動尋找位置", "ResetTrialSpawns", _reset_trial_spawns)
+	var deploy_row := HBoxContainer.new()
+	column.add_child(deploy_row)
+	_button(deploy_row, "依設定部署", "StartMeleeTrial", _deploy_melee_trial)
+	_button(deploy_row, "清除測試隊伍", "ClearMeleeTrial", _clear_melee_trial)
+	_button(column, "只追加第三隊（保留已部署兩隊）", "AddThirdMeleeTrial", _add_third_melee_trial)
+	_button(column, "更新所有隊伍傷亡", "MeleeTrialStatus", _show_melee_trial_status)
+	combat_summary_label = _label(column, "尚未部署測試隊伍。", 15)
+	column.add_child(HSeparator.new())
+	_label(column, "開發調度：原 NPC 隊長下令", 18)
+	trial_command_team = _options(column, ["我方", "敵方", "第三隊"], "TrialCommandTeam")
+	_button(column, "所選隊伍移動至地圖所選格", "TrialTeamMove", func() -> void: _trial_team_order(TerrainArmy.CombatOrder.MOVE))
+	_button(column, "所選隊伍守位／恢復原派工", "TrialTeamHold", func() -> void: _trial_team_order(TerrainArmy.CombatOrder.HOLD))
+	var vehicle_section := VBoxContainer.new()
+	vehicle_section.name = "TrialVehicleControls"
+	column.add_child(vehicle_section)
+	column.add_child(HSeparator.new())
+	_label(column, "玩家與隊伍", 20)
 	player_army_label = _label(column, "尚未入隊；青色圓圈為建議站位，不會接管角色。", 15)
 	_button(column, "查看／調整接任順位", "PlayerOfficerPriority", _open_officer_priority)
 	_button(column, "加入我方隊伍（自主操作）", "JoinPlayerArmy", func() -> void: show_result(lab.join_player_army()))
@@ -316,13 +587,7 @@ func _build_ui() -> void:
 	_button(column, "正式退出隊伍", "LeavePlayerArmy", func() -> void: show_result(lab.leave_player_army()))
 	_label(column, "隊伍口糧／訓練（主動啟用）", 18)
 	supply_team_choice = _options(column, ["玩家目前隊伍", "我方測試隊伍"], "SupplyTeam")
-	supply_quantity = SpinBox.new()
-	supply_quantity.name = "SupplyRations"
-	supply_quantity.min_value = 1
-	supply_quantity.max_value = 30
-	supply_quantity.step = 1
-	supply_quantity.value = 1
-	column.add_child(supply_quantity)
+	supply_quantity = _number_input(column, "SupplyRations", 1, 30, 1)
 	team_supply_label = _label(column, "先點選相鄰隊員，再從玩家行囊交糧；不會自取營地物資。", 15)
 	_button(column, "向選取隊員交付口糧", "DeliverTeamFood", func() -> void:
 		var team := _chosen_supply_team()
@@ -334,7 +599,7 @@ func _build_ui() -> void:
 					break
 		show_result(begin_team_food(team, int(supply_quantity.value), representative)))
 	_button(column, "取消口糧交付", "CancelTeamFood", func() -> void: show_result(cancel_team_food()))
-	_button(column, "後勤調度：營地／兩隊／地面口糧", "OpenLogistics", _open_logistics)
+	_button(column, "後勤調度：營地／隊伍／地面口糧", "OpenLogistics", _open_logistics)
 	_button(column, "玩家下令：平時訓練", "TrainPlayerTeam", func() -> void:
 		show_result(order_team_training(_chosen_supply_team(), lab.controlled_member_index(_chosen_supply_team()), true)))
 	_button(column, "玩家下令：停止訓練", "StopPlayerTeamTraining", func() -> void:
@@ -344,10 +609,7 @@ func _build_ui() -> void:
 		_button(column, str(entry[0]), "PlayerArmyOrder%d" % order_id, func() -> void:
 			var identity := -1
 			if order_id == TerrainArmy.CombatOrder.PURSUE:
-				for index in range(lab.opposing_army.combat_units.size()):
-					if lab.opposing_army.cells[index] == selected:
-						identity = lab.opposing_army.combat_identity(index)
-						break
+				identity = _selected_enemy_identity(lab.player_army())
 			show_result(lab.issue_player_army_order(order_id, selected, identity)))
 	_label(column, "開發測試指揮（模擬 NPC 隊長下令，非玩家權限）", 15)
 	_button(column, "我方守位", "ArmyCombatHold", func() -> void: _test_army_order(TerrainArmy.CombatOrder.HOLD))
@@ -355,29 +617,198 @@ func _build_ui() -> void:
 	_button(column, "我方前進至所選格", "ArmyCombatMove", func() -> void: _test_army_order(TerrainArmy.CombatOrder.MOVE, selected))
 	_button(column, "我方撤退至所選格", "ArmyCombatRetreat", func() -> void: _test_army_order(TerrainArmy.CombatOrder.RETREAT, selected))
 	_button(column, "我方追擊所選格敵兵", "ArmyCombatPursue", func() -> void:
-		var identity := -1
-		for index in range(lab.opposing_army.combat_units.size()):
-			if lab.opposing_army.cells[index] == selected and lab.opposing_army.combat_can_act(index):
-				identity = lab.opposing_army.combat_identity(index)
-				break
+		var identity := _selected_enemy_identity(lab.army)
 		_test_army_order(TerrainArmy.CombatOrder.PURSUE, Vector2i(-1, -1), identity))
-	var legacy := CheckButton.new()
-	legacy.text = "展開原地形／人物／戰鬥測試"
-	column.add_child(legacy)
-	legacy.toggled.connect(func(enabled: bool) -> void:
-		lab.get_node("TerrainLabUI").visible = enabled
-		lab.fit_map())
-	_label(column, "保存地圖、玩家／NPC 與兩隊傷亡、指揮、動作／移動。交戰中延後保存，離線期間不增加產量。", 15)
-	saved_sites = _options(column, ["已保存地圖"], "SavedSites")
-	_button(column, "開啟所選保存地圖", "OpenSavedSite", func() -> void:
-		if saved_sites.selected >= 0 and saved_sites.get_item_metadata(saved_sites.selected) != null:
-			_load_path(str(saved_sites.get_item_metadata(saved_sites.selected))))
-	_refresh_saved_sites()
+	combat_window.hide()
+
+func _selected_enemy_identity(source: TerrainArmy) -> int:
+	if source == null:
+		return -1
+	for team: TerrainArmy in lab.combat_armies:
+		if not team.combat_enabled or team.faction_id == source.faction_id:
+			continue
+		for index in range(team.combat_units.size()):
+			if team.cells[index] == selected and team.combat_can_act(index):
+				return team.combat_identity(index)
+	return -1
+
+func _open_combat_window() -> void:
+	_update_combat_window()
+	if _combat_window_opened:
+		combat_window.show()
+	else:
+		_combat_window_opened = true
+		combat_window.popup_centered()
+
+func _set_trial_spawn(friendly: bool) -> void:
+	if lab.terrain == null or not lab.terrain.contains(selected):
+		show_result(Runtime.fail("NO_TARGET", "請先在地圖選一格"))
+		return
+	if friendly:
+		trial_friendly_spawn = selected
+	else:
+		trial_enemy_spawn = selected
+	_update_combat_window()
+
+func _reset_trial_spawns() -> void:
+	trial_friendly_spawn = Vector2i(-1, -1)
+	trial_enemy_spawn = Vector2i(-1, -1)
+	trial_third_spawn = Vector2i(-1, -1)
+	_update_combat_window()
+
+func _set_third_trial_spawn() -> void:
+	if lab.terrain == null or not lab.terrain.contains(selected):
+		show_result(Runtime.fail("NO_TARGET", "請先在地圖選一格"))
+		return
+	trial_third_spawn = selected
+	_update_combat_window()
+
+func _trial_setup() -> Dictionary:
+	var setup := {
+		"friendly_count": int(trial_friendly_count.value),
+		"enemy_count": int(trial_enemy_count.value),
+		"friendly_female_percent": int(trial_friendly_female_percent.value),
+		"enemy_female_percent": int(trial_enemy_female_percent.value),
+		"friendly_training": float(trial_friendly_training.value),
+		"enemy_training": float(trial_enemy_training.value),
+		"friendly_tactics": float(trial_friendly_tactics.value),
+		"enemy_tactics": float(trial_enemy_tactics.value),
+		"friendly_leadership": float(trial_friendly_leadership.value),
+		"enemy_leadership": float(trial_enemy_leadership.value),
+		"friendly_coach": float(trial_friendly_coach.value),
+		"enemy_coach": float(trial_enemy_coach.value),
+		"friendly_attack": trial_friendly_order.selected == 1,
+		"enemy_attack": trial_enemy_order.selected == 1,
+		"friendly_spawn": trial_friendly_spawn,
+		"enemy_spawn": trial_enemy_spawn,
+		"third_enabled": trial_third_enabled.button_pressed,
+		"third_faction": trial_third_faction.selected,
+		"third_count": int(trial_third_count.value),
+		"third_female_percent": int(trial_third_female_percent.value),
+		"third_training": float(trial_third_training.value),
+		"third_tactics": float(trial_third_tactics.value),
+		"third_leadership": float(trial_third_leadership.value),
+		"third_coach": float(trial_third_coach.value),
+		"third_attack": trial_third_order.selected == 1,
+		"third_spawn": trial_third_spawn,
+	}
+	for prefix: String in trial_roles:
+		setup[prefix + "_role"] = ["combat", "work", "logistics"][trial_roles[prefix].selected]
+		setup[prefix + "_troop_type"] = ["melee_infantry", "bow", "crossbow"][trial_troop_types[prefix].selected]
+		setup[prefix + "_cart_count"] = int(trial_carts[prefix].value)
+		setup[prefix + "_wagon_count"] = int(trial_wagons[prefix].value)
+	return setup
+
+func _deploy_melee_trial() -> void:
+	var result: Dictionary = lab.start_melee_trial(_trial_setup())
+	show_result(result)
+	_update_combat_window()
+	_refresh_vehicle_controls()
+
+func _add_third_melee_trial() -> void:
+	var result: Dictionary = lab.add_melee_trial_team(_trial_setup())
+	if result.ok:
+		trial_third_enabled.button_pressed = true
+	show_result(result)
+	_update_combat_window()
+	_refresh_vehicle_controls()
+
+func _trial_role_changed(prefix: String) -> void:
+	var logistics: bool = trial_roles[prefix].selected == 2
+	trial_troop_types[prefix].disabled = trial_roles[prefix].selected != 0
+	if trial_troop_types[prefix].disabled:
+		trial_troop_types[prefix].select(0)
+	for input: SpinBox in [trial_carts[prefix], trial_wagons[prefix]]:
+		input.editable = logistics
+		if not logistics:
+			input.set_value_no_signal(0)
+	var orders := {"friendly": trial_friendly_order, "enemy": trial_enemy_order, "third": trial_third_order}
+	if orders[prefix] != null:
+		orders[prefix].select(1 if trial_roles[prefix].selected == 0 else 0)
+	_update_trial_gender_counts()
+
+func _update_trial_gender_counts() -> void:
+	var counts := {"friendly": trial_friendly_count, "enemy": trial_enemy_count, "third": trial_third_count}
+	var percentages := {"friendly": trial_friendly_female_percent, "enemy": trial_enemy_female_percent, "third": trial_third_female_percent}
+	var labels := {"friendly": trial_friendly_gender_label, "enemy": trial_enemy_gender_label, "third": trial_third_gender_label}
+	for prefix: String in counts:
+		var people := int(counts[prefix].value) - int(trial_carts[prefix].value) - int(trial_wagons[prefix].value)
+		var women := roundi(maxi(0, people) * float(percentages[prefix].value) / 100.0)
+		labels[prefix].text = "至少保留一人" if people < 1 else "男 %d／女 %d" % [people - women, women]
+		if people > 0 and people < int(counts[prefix].value):
+			labels[prefix].text += " · 車 %d" % [int(counts[prefix].value) - people]
+
+func _trial_team_order(order_id: int) -> void:
+	var team: TerrainArmy = lab.combat_armies[trial_command_team.selected]
+	if not team.combat_enabled or not team.has_army():
+		show_result(Runtime.fail("NO_TARGET", "尚未部署此隊伍"))
+		return
+	var result := team.issue_combat_order(team.current_commander, order_id, selected)
+	if result.ok and order_id == TerrainArmy.CombatOrder.HOLD and team.role == "work":
+		var workers: Array[int] = []
+		for index in range(team.combat_units.size()):
+			if index != team.formal_commander and index != team.current_commander and team.is_member(index) and team.combat_can_act(index) and not work_team.is_assigned(team.combat_identity(index)):
+				workers.append(team.combat_identity(index))
+		if not workers.is_empty():
+			result = work_team.assign(team, workers, team.combat_identity(team.current_commander))
+	show_result(result)
+	_update_combat_window()
+
+func _clear_melee_trial() -> void:
+	lab.clear_army()
+	var cleared := true
+	for team: TerrainArmy in lab.combat_armies:
+		cleared = cleared and not team.has_army()
+	if cleared:
+		message.text = "測試隊伍已清除；裝備與物資留在原格，既有遺物保留。"
+	_update_combat_window()
+
+func _show_melee_trial_status() -> void:
+	_update_combat_window()
+	message.text = "各隊傷亡已更新於戰鬥測試視窗。"
+
+func _update_combat_window() -> void:
+	if combat_window == null:
+		return
+	trial_friendly_spawn_label.text = "我方：%s" % ("自動尋找" if trial_friendly_spawn.x < 0 else str(trial_friendly_spawn))
+	trial_enemy_spawn_label.text = "敵方：%s" % ("自動尋找" if trial_enemy_spawn.x < 0 else str(trial_enemy_spawn))
+	trial_third_spawn_label.text = "第三隊：%s" % ("自動尋找" if trial_third_spawn.x < 0 else str(trial_third_spawn))
+	var summaries := PackedStringArray()
+	for index in range(lab.combat_armies.size()):
+		var team: TerrainArmy = lab.combat_armies[index]
+		if team.has_army():
+			var title: String = ["我方", "敵方", "第三隊"][index]
+			var purpose: String = {"combat": "戰鬥隊", "work": "工作隊", "logistics": "後勤隊"}.get(team.role, team.role)
+			var carts := 0
+			var wagons := 0
+			var parked := 0
+			for vehicle: Dictionary in vehicles.records().values():
+				if int(vehicle.team_id) == team.team_id:
+					carts += int(vehicle.kind == "cart")
+					wagons += int(vehicle.kind == "wagon")
+					parked += int(int(vehicle.operator_id) == 0)
+			summaries.append("%s：勢力 %d · %s\n人員 %d · 物資車 %d／馬車 %d（停泊 %d）· 共 %d 名額\n%s" % [title, team.faction_id + 1, purpose, team.combat_units.size(), carts, wagons, parked, team.combat_units.size() + carts + wagons, team.combat_summary()])
+	combat_summary_label.text = "尚未部署測試隊伍。" if summaries.is_empty() else "\n\n".join(summaries)
 
 func _layout() -> void:
 	var screen := lab.get_viewport_rect().size
-	panel.position = Vector2(maxf(0, screen.x - 412 * PANEL_SCALE - 16), 16)
+	var panel_left := maxf(0, screen.x - 412 * PANEL_SCALE - 16)
+	panel.position = Vector2(panel_left, 16)
 	panel.size = Vector2(412, maxf(100, (screen.y - 32) / PANEL_SCALE))
+	top_banner.position = Vector2(16, 16)
+	top_banner.size = Vector2(maxf(1, panel_left - 32), 78)
+	status_panel.size = Vector2(460, 280)
+	var status_left := 500.0 if lab.get_node("TerrainLabUI").visible else 16.0
+	var status_top := top_banner.position.y + top_banner.size.y + 16.0
+	var status_bottom := screen.y - 16.0
+	var status_right := panel_left - 16.0
+	var status_scale := minf(PANEL_SCALE, minf(
+		(status_right - status_left) / status_panel.size.x,
+		(status_bottom - status_top) / status_panel.size.y))
+	status_panel.visible = status_scale > 0.0
+	if status_panel.visible:
+		status_panel.scale = Vector2.ONE * status_scale
+		status_panel.position = Vector2(status_left, status_bottom - status_panel.size.y * status_scale)
 
 func focus_camp() -> void:
 	if lab.terrain == null:
@@ -499,13 +930,23 @@ func release_worker() -> void:
 	lab.npc.issue_command(TerrainTestNPC.Command.STOP)
 
 func _actor_blocked(cell: Vector2i, requester: Node) -> bool:
-	return lab.army.blocks_cell(cell) or lab.opposing_army.blocks_cell(cell) or (requester != lab.character and lab.character.occupies_cell(cell)) or (requester != lab.npc and lab.npc.occupies_cell(cell))
+	if vehicles.blocks_cell(cell):
+		return true
+	for team: TerrainArmy in lab.combat_armies:
+		if team.blocks_cell(cell):
+			return true
+	return (requester != lab.character and lab.character.occupies_cell(cell)) or (requester != lab.npc and lab.npc.occupies_cell(cell))
 
 func _worker_blocked(cell: Vector2i) -> bool:
 	return _actor_blocked(cell, lab.npc)
 
 func reserves_cell(cell: Vector2i) -> bool:
-	return lab.character.occupies_cell(cell) or lab.npc.occupies_cell(cell) or lab.army.reserves_terrain_cell(cell) or lab.opposing_army.reserves_terrain_cell(cell)
+	if vehicles.blocks_cell(cell):
+		return true
+	for team: TerrainArmy in lab.combat_armies:
+		if team.reserves_terrain_cell(cell):
+			return true
+	return lab.character.occupies_cell(cell) or lab.npc.occupies_cell(cell)
 
 func _combat_event(duration: float) -> void:
 	if lab.terrain != null:
@@ -525,6 +966,7 @@ func tick(delta: float) -> void:
 	view.animate(delta)
 	_ui_elapsed += delta
 	if not bool(data.site.paused) and not get_tree().paused:
+		vehicles.settle_operators()
 		_work_elapsed += delta
 		_save_elapsed += delta
 		var worker: Dictionary = data.site.worker
@@ -568,9 +1010,10 @@ func tick(delta: float) -> void:
 		if not manual_ready:
 			manual.target = ""
 			manual.progress = 0.0
-		var work_interval := Runtime.game_seconds(delta, float(data.site.combat_left))
+		var time_multiplier := float(lab.simulation_speed)
+		var work_interval := Runtime.game_seconds(delta, float(data.site.combat_left)) * time_multiplier
 		Runtime.advance(data, delta, worker_ready, manual_ready, reserves_cell, lab.fatigue_work_minutes, _advance_crew,
-			floori(Runtime.CARRY_CAPACITY - Runtime.carried_load(lab.terrain.site, {}, lab.npc.item_state)), floori(Runtime.CARRY_CAPACITY - Runtime.carried_load(lab.terrain.site, {}, lab.character.item_state)))
+			floori(Runtime.CARRY_CAPACITY - Runtime.carried_load(lab.terrain.site, {}, lab.npc.item_state)), floori(Runtime.CARRY_CAPACITY - Runtime.carried_load(lab.terrain.site, {}, lab.character.item_state)), time_multiplier)
 		if worker_ready and not lab.npc.work_resting:
 			# Waiting on tools/inputs/output space is assigned duty, not a rest break.
 			lab._fatigue_work_seconds[lab.npc] = work_interval
@@ -578,7 +1021,8 @@ func tick(delta: float) -> void:
 	if data.navigation_revision != _navigation_revision:
 		_navigation_revision = data.navigation_revision
 		lab.renderer.redraw()
-		lab.army.notify_terrain_changed()
+		for team: TerrainArmy in lab.combat_armies:
+			team.notify_terrain_changed()
 	if not data.site.notices.is_empty():
 		message.text = str(data.site.notices.back())
 		data.site.notices.clear()
@@ -795,10 +1239,15 @@ func _confirm_unsaved_exit(reason: String) -> void:
 func update_ui() -> void:
 	if lab.terrain == null or details == null:
 		return
+	if combat_window.visible:
+		_update_vehicle_status()
 	var data: TerrainData = lab.terrain
 	legend.text = "條件 0–100：紅色低、黃色中、綠色高" if view.view_mode in [2, 3, 5] else ("藍色：取水服務可達；褐色：尚未服務" if view.view_mode == 4 else "")
 	legend.visible = not legend.text.is_empty()
-	clock_label.text = Runtime.date_text(data) + ("\n戰鬥：1 秒 = 遊戲 1 秒 · 脫戰 %.0f 秒" % float(data.site.combat_left) if float(data.site.combat_left) > 0 else "\n和平：1 秒 = 遊戲 1 分鐘")
+	var simulation_speed := float(lab.simulation_speed)
+	var speed_text := String.num(simulation_speed, 1)
+	clock_label.text = Runtime.date_text(data) + ("\n戰鬥：1 秒 = 遊戲 %s 秒 · 脫戰 %.0f 秒" % [speed_text, float(data.site.combat_left)] if float(data.site.combat_left) > 0 else "\n和平：1 秒 = 遊戲 %s 分鐘" % speed_text)
+	speed_label.text = "%s×" % speed_text
 	pause_button.text = "繼續" if bool(data.site.paused) else "暫停"
 	var condition := Env.land(data, selected)
 	details.text = "選取 %s\n農耕 %d  ·  牧地 %d  ·  淡水 %d  ·  建設 %d\n%s" % [selected, condition.farm, condition.pasture, condition.water, condition.build, "；".join(condition.reasons)]
@@ -848,10 +1297,13 @@ func update_ui() -> void:
 	var controlled := person_actions._person(lab.controlled_person_id())
 	var controlled_cargo: Dictionary = controlled.get("cargo", {})
 	var controlled_fatigue := float(person_actions._body_get(controlled, "fatigue")) if not controlled.is_empty() else 0.0
-	stock_label.text = "營地 %d / %d\n%s\n本人 #%d 攜帶：%s" % [Runtime.inventory_size(data.site.inventory), data.site.capacity, Runtime.items_text(data.site.inventory), lab.controlled_person_id(), Runtime.items_text(controlled_cargo)]
-	stock_label.text += "\n本人疲勞 %.1f／100 · 耗時 +%.1f%%" % [controlled_fatigue, PersonFatigue.slowdown(controlled_fatigue) * 100.0]
-	if not str(data.site.manual.target).is_empty():
-		stock_label.text += "\n手動作業 %.1f 分" % float(data.site.manual.progress)
+	var controlled_health := "HP -- · 暈眩 --" if controlled.is_empty() else "HP %.1f · 暈眩 %.1f" % [float(controlled.hp), float(person_actions._body_get(controlled, "stun"))]
+	var manual_status := "無" if str(data.site.manual.target).is_empty() else "%.1f 分" % float(data.site.manual.progress)
+	var fatigue_label := "隊伍疲勞" if not controlled.is_empty() and not PersonFatigue.pool(controlled.body).is_empty() else "疲勞"
+	var time_label := "騎乘耗時" if not controlled.is_empty() and int(controlled.unit) < 0 and controlled.owner.is_mounted() else "耗時"
+	player_status_label.text = "目前控制 #%d · %s\n攜帶：%s · %s %.1f／100（%s +%.1f%%） · 手動作業：%s" % [lab.controlled_person_id(), controlled_health, Runtime.items_text(controlled_cargo), fatigue_label, controlled_fatigue, time_label, PersonFatigue.slowdown(controlled_fatigue) * 100.0, manual_status]
+	player_status_label.tooltip_text = player_status_label.text
+	stock_label.text = "營地 %d / %d\n%s" % [Runtime.inventory_size(data.site.inventory), data.site.capacity, Runtime.items_text(data.site.inventory)]
 	var camp_water: Dictionary = data.site.water_status.get("camp", {})
 	stock_label.text += "\n營地供水 %.2f / %.2f 單位／分" % [float(camp_water.get("supplied", 0)), float(camp_water.get("demand", 0.02))]
 	stock_label.text += "\n施工／作坊投入由營地統一供應；採集與成品須運回。"
@@ -859,6 +1311,7 @@ func update_ui() -> void:
 	worker_label.text += "\n疲勞 %.1f／100 · 耗時 +%.1f%%\n停止工作並安全停留 30 遊戲秒後恢復" % [lab.npc.fatigue, PersonFatigue.slowdown(lab.npc.fatigue) * 100.0]
 	worker_label.text += "\n" + ("輪休中：降至 50 後續作，保留原進度與貨物" if lab.npc.work_resting else "疲勞達 80 自動輪休；玩家不強制停工")
 	_update_team_supply_ui()
+	_update_combat_window()
 	var signature := JSON.stringify(data.site.zones)
 	if signature != _zone_signature:
 		_zone_signature = signature
@@ -1549,7 +2002,7 @@ func initialize_team_items(team: TerrainArmy) -> void:
 		var unit: Dictionary = team.combat_units[index]
 		if not unit.has("appearance"):
 			var presenter: Variant = team._unit_editor(index)
-			unit.appearance = presenter.capture_appearance() if team._uses_live_presenter(index) and presenter != null else TerrainArmy._combat_bake.manifest.appearance.duplicate(true)
+			unit.appearance = presenter.capture_appearance() if team._uses_live_presenter(index) and presenter != null else (TerrainArmy.EquipmentAtlas.female_appearance() if str(unit.get("visual_role", "")).begins_with("female") else TerrainArmy._combat_bake.manifest.appearance.duplicate(true))
 		if not unit.has("item_state"):
 			unit.item_state = {}
 			# A newly created soldier receives an explicit initial uniform finish.
@@ -1580,6 +2033,9 @@ func before_clear_team_items() -> Dictionary:
 		return guard
 	var holders: Array[Dictionary] = []
 	for team: TerrainArmy in lab.combat_armies:
+		var vehicle_guard: Dictionary = vehicles.can_park_team(team)
+		if not vehicle_guard.ok:
+			return vehicle_guard
 		if team.moving_count() > 0:
 			return Runtime.fail("BUSY", "先完成原在途移動；不刪除行進中人物的物資")
 		for index in range(team.combat_units.size()):
@@ -1633,6 +2089,8 @@ func before_clear_team_items() -> Dictionary:
 	# Existing Actors, other people's meal history and all ground stock survive.
 	for identity: int in removed:
 		lab.terrain.site.get("person_supply", {}).erase(str(identity))
+	for team: TerrainArmy in lab.combat_armies:
+		vehicles.park_team(team)
 	return Runtime.ok("測試人物退場；全部實物仍留在原格，既有遺物不變")
 
 func person_appearance(identity: int) -> Dictionary:
@@ -1654,7 +2112,7 @@ static func _freeze_appearance(value: Variant) -> void:
 		value.make_read_only()
 
 func _person_has_duty(identity: int) -> bool:
-	return person_actions.is_busy(identity) or person_actions.is_guarding(identity) or work_team.is_assigned(identity) or _is_delivering_person(identity)
+	return person_actions.is_busy(identity) or person_actions.is_guarding(identity) or work_team.is_assigned(identity) or _is_delivering_person(identity) or vehicles.is_operator(identity)
 
 func _open_roster() -> void:
 	var team: TerrainArmy = lab.player_army()
@@ -1713,24 +2171,45 @@ func _open_roster() -> void:
 		for identity: int in identities:
 			work_team.cancel(identity)
 		apply_result.call(Runtime.ok("已停止後續工作；原貨物與已預約步進保留")))
+	var receiver_choice := _options(column, ["空槽拆分（自動）"], "RosterReceiverTeam")
+	receiver_choice.set_item_metadata(0, -1)
+	for receiver: TerrainArmy in lab.combat_armies:
+		if receiver != team and receiver.has_army() and receiver.faction_id == team.faction_id:
+			receiver_choice.add_item("編入隊伍 #%d（同勢力）" % receiver.team_id)
+			receiver_choice.set_item_metadata(receiver_choice.item_count - 1, receiver.team_id)
+	if receiver_choice.item_count == 2:
+		receiver_choice.select(1)
 	var confirmation := CheckButton.new()
 	confirmation.name = "ReceiverCommanderConfirmation"
 	confirmation.text = "開發調度確認：接收隊現任合格指揮者同意此次編入"
 	column.add_child(confirmation)
 	var approval := {}
-	confirmation.toggled.connect(func(enabled: bool) -> void:
+	var update_approval := func(enabled: bool) -> void:
 		approval.clear()
+		var receiver_id: int = int(receiver_choice.get_item_metadata(receiver_choice.selected))
+		if receiver_id >= 0:
+			approval["team_id"] = receiver_id
 		if not enabled or not current_scope.call():
 			return
 		for receiver: TerrainArmy in lab.combat_armies:
-			if receiver == team or not receiver.has_army():
+			if receiver.team_id != receiver_id or receiver == team or not receiver.has_army() or receiver.faction_id != team.faction_id:
 				continue
+			if not receiver.command_eligible(receiver.current_commander):
+				break
 			var member_ids: Array[int] = []
 			for index: int in team.command_members():
 				member_ids.append(team.combat_identity(index))
 			approval.merge({"team_id": receiver.team_id, "commander_id": receiver.combat_identity(receiver.current_commander),
 				"source_team_id": team.team_id, "source_commander_id": original_control_id,
-				"selected_ids": selected_ids.call(), "member_ids": member_ids}))
+				"selected_ids": selected_ids.call(), "member_ids": member_ids})
+			return
+		confirmation.set_pressed_no_signal(false)
+		apply_result.call(Runtime.fail("NO_AUTHORITY", "請先選擇仍有合格指揮者的同勢力接收隊"))
+	confirmation.toggled.connect(update_approval)
+	receiver_choice.item_selected.connect(func(_index: int) -> void:
+		confirmation.set_pressed_no_signal(false)
+		update_approval.call(false))
+	update_approval.call(false)
 	_label(column, "已有接收隊須同地圖、同陣營、雙方停止及雙方指揮者確認。\n勾選是明示模擬 NPC 指揮者確認，不是授予玩家對方職位。空槽拆分不需對方。", 14)
 	_button(column, "所選原隊員拆分／補入另一隊", "TransferRosterMembers", func() -> void:
 		if current_scope.call():
@@ -1752,7 +2231,7 @@ func _can_command_person(person: Dictionary) -> bool:
 	return int(person.unit) >= 0 and person.owner.command_eligible(person.owner.current_commander) and person.owner.combat_identity(person.owner.current_commander) == lab.controlled_person_id()
 
 func _work_person_unavailable(identity: int) -> bool:
-	if person_actions.is_busy(identity) or person_actions.is_guarding(identity) or _is_delivering_person(identity):
+	if person_actions.is_busy(identity) or person_actions.is_guarding(identity) or _is_delivering_person(identity) or vehicles.is_operator(identity):
 		return true
 	var person := person_actions._person(identity)
 	if person.is_empty() or int(person.unit) < 0:
@@ -2080,6 +2559,14 @@ func _equipment_holder_guard(person: Dictionary, proposed: Dictionary) -> Dictio
 func _equipment_recipe_guard(person: Dictionary, appearance: Dictionary) -> Dictionary:
 	if appearance.is_empty() or not HumanCharacter3DEditor.valid_appearance(appearance):
 		return Runtime.fail("INVALID", "實物配裝不能對應原人物")
+	var vehicle: Dictionary = vehicles._operated(int(person.person_id))
+	if vehicle.get("kind", "") == "wagon" and not preload("res://scripts/terrain_lab/site_vehicle_rider_atlas.gd").supports(appearance):
+		return Runtime.fail("UNSUPPORTED", "此人物的固定布裝騎姿素材未就緒；原物品與染色未改")
+	for team: TerrainArmy in lab.combat_armies:
+		var member_index := team.index_for_identity(int(person.person_id))
+		if member_index >= 0:
+			var troop_guard := team.single_troop_equipment_guard(member_index, appearance)
+			if not troop_guard.ok: return troop_guard
 	if int(person.unit) >= 0 and not person.owner._uses_live_presenter(int(person.unit)):
 		if not lab.exchange_enabled and (not TerrainArmy.load_contact_source() or not TerrainArmy._contact_source.supports_appearance(appearance)):
 			return Runtime.fail("UNSUPPORTED", "此配裝的原碰撞來源未就緒")
@@ -2277,7 +2764,7 @@ func order_team_logistics(team: TerrainArmy, identities: Array[int], requester_i
 	return Runtime.ok("已指定原人物專職後勤，每名可搬運者6日份；不另生貨物" if enabled else "已解除原人物專職後勤，恢復3日份載量")
 
 func _delivery_person_ready(person: Dictionary) -> bool:
-	if person.is_empty() or person_actions.is_busy(int(person.person_id)) or person_actions.is_guarding(int(person.person_id)) or work_team.is_assigned(int(person.person_id)):
+	if person.is_empty() or person_actions.is_busy(int(person.person_id)) or person_actions.is_guarding(int(person.person_id)) or work_team.is_assigned(int(person.person_id)) or vehicles.is_operator(int(person.person_id)):
 		return false
 	if int(person.unit) >= 0:
 		return person.owner.combat_can_act(int(person.unit)) and not bool(person.moving) and not bool(person.body.attack) and str(person.body.pose) == "idle" and person.body.get("work_task", {}).is_empty()
@@ -2697,3 +3184,160 @@ func _update_team_supply_ui() -> void:
 	for cohort: Dictionary in entry.sustain.cohorts:
 		maximum_hunger = maxf(maximum_hunger, float(cohort.hunger))
 	team_supply_label.text = "本隊餘糧 %.2f／%.0f 日份 · 士氣 %.1f\n最高等效缺糧 %.1f 小時 · 訓練 %.2f\n%s%s" % [Sustain.rations(entry.sustain, entry.inventory), team_food_capacity(team), float(entry.sustain.morale), maximum_hunger, team.training, "潰退；須安全足額整補 30 分且士氣≥50" if bool(entry.sustain.routed) else ("訓練令保留：缺糧／受威脅／缺實裝即停止增長" if bool(entry.training_order) else "未下訓練令"), "\n交糧剩餘 %.1f 有效秒；可取消，完成前不扣物" % float(entry.delivery.left) if not entry.delivery.is_empty() else ""]
+
+func _build_vehicle_controls(parent: Node) -> void:
+	assert(parent != null, "Unified test window must contain the vehicle controls section")
+	parent.add_child(HSeparator.new())
+	_label(parent, "車輛操作／真實裝卸", 20)
+	_label(parent, "測試調度由原隊長下令、原隊員操作，不額外生出駕駛。物資車容量100件、馬車300件；無人操作的車保持停泊。裝卸者須實際鄰接車輛與營地，不會遠距搬貨。", 15)
+	vehicle_choice = _options(parent, ["尚無車輛"], "TrialVehicle")
+	vehicle_choice.item_selected.connect(func(_index: int) -> void: _refresh_vehicle_details())
+	vehicle_status = _label(parent, "尚無車輛", 15)
+	vehicle_status.name = "TrialVehicleStatus"
+	_button(parent, "更新車輛／原人員名單", "RefreshTrialVehicles", _refresh_vehicle_controls)
+	_button(parent, "定位所選車輛", "FocusTrialVehicle", func() -> void:
+		var vehicle := _selected_vehicle()
+		if vehicle.is_empty(): return
+		selected = lab.terrain.cell_from_index(int(vehicle.cell))
+		lab.camera.position = (Vector2(selected) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
+		lab.camera.force_update_scroll()
+		update_ui())
+	_label(parent, "操作人：物資車站車後；馬車先走到馬旁再指派上馬。停泊友車可由另一後勤隊接手。", 15)
+	_label(parent, "馬車騎姿目前支援標準男女步兵裝備與原染色；其他配裝須先下馬。騎手與馬車分別占名額。", 15)
+	vehicle_operator_choice = _options(parent, ["尚無可選原隊員"], "TrialVehicleOperator")
+	var row := HBoxContainer.new()
+	parent.add_child(row)
+	_button(row, "指派操作／上馬", "AssignTrialVehicleOperator", _assign_trial_vehicle)
+	_button(row, "停止操作／下馬", "ParkTrialVehicle", func() -> void:
+		var vehicle := _selected_vehicle()
+		if vehicle.is_empty(): return
+		show_result(vehicles.unassign_operator(str(vehicle.id), _vehicle_requester(vehicle), true))
+		_refresh_vehicle_controls())
+	_label(parent, "原營地物資（不自動補物）", 16)
+	vehicle_resource_choice = _options(parent, [], "TrialVehicleResource")
+	for key: String in Env.ITEM_NAMES:
+		vehicle_resource_choice.add_item(str(Env.ITEM_NAMES[key]))
+		vehicle_resource_choice.set_item_metadata(vehicle_resource_choice.item_count - 1, key)
+	vehicle_resource_quantity = _number_input(parent, "TrialVehicleQuantity", 1, 300, 10)
+	row = HBoxContainer.new()
+	parent.add_child(row)
+	_button(row, "營地 → 車輛", "LoadTrialVehicleResources", func() -> void: _transfer_trial_vehicle(true))
+	_button(row, "車輛 → 營地", "UnloadTrialVehicleResources", func() -> void: _transfer_trial_vehicle(false))
+	_label(parent, "原實物裝備（依實際物品ID搬運）", 16)
+	vehicle_depot_item = _options(parent, ["營地尚無實物"], "TrialVehicleDepotItem")
+	_button(parent, "將所選營地實物裝車", "LoadTrialVehicleItem", func() -> void: _transfer_trial_vehicle(true, true))
+	vehicle_loaded_item = _options(parent, ["車內尚無實物"], "TrialVehicleLoadedItem")
+	_button(parent, "將所選車內實物卸回營地", "UnloadTrialVehicleItem", func() -> void: _transfer_trial_vehicle(false, true))
+	_label(parent, "工作隊沿原工作區尋工、採集與交庫；後勤隊由上方移動命令推車／駕車到目的地，再明確裝卸。車輛不自動往返，清除測試人員後仍原地保留車與貨物。車上袋箱是固定外觀，實際庫存以上方載量為準。", 15)
+
+func _selected_vehicle() -> Dictionary:
+	if vehicle_choice == null or vehicle_choice.selected < 0: return {}
+	return vehicles.records().get(str(vehicle_choice.get_item_metadata(vehicle_choice.selected)), {})
+
+func _refresh_vehicle_controls() -> void:
+	if vehicle_choice == null or lab.terrain == null: return
+	var selected_id := str(vehicle_choice.get_item_metadata(vehicle_choice.selected)) if vehicle_choice.selected >= 0 else ""
+	vehicle_choice.clear()
+	for identity: String in vehicles.records():
+		var vehicle: Dictionary = vehicles.records()[identity]
+		vehicle_choice.add_item("#%s %s · %s" % [identity, "物資車" if vehicle.kind == "cart" else "馬車", "停泊無所屬隊伍" if int(vehicle.team_id) == 0 else "隊伍 #%d" % int(vehicle.team_id)])
+		var index := vehicle_choice.item_count - 1
+		vehicle_choice.set_item_metadata(index, identity)
+		if identity == selected_id: vehicle_choice.select(index)
+	if vehicle_choice.item_count == 0:
+		vehicle_choice.add_item("尚無車輛")
+		vehicle_choice.set_item_metadata(0, "")
+	_refresh_vehicle_details()
+
+func _refresh_vehicle_details() -> void:
+	if vehicle_operator_choice == null: return
+	var vehicle := _selected_vehicle()
+	var prior_operator := int(vehicle_operator_choice.get_item_metadata(vehicle_operator_choice.selected)) if vehicle_operator_choice.selected >= 0 and vehicle_operator_choice.get_item_metadata(vehicle_operator_choice.selected) != null else 0
+	vehicle_operator_choice.clear()
+	vehicle_depot_item.clear()
+	vehicle_loaded_item.clear()
+	_vehicle_depot_version = int(lab.terrain.site.depot_items.version)
+	_vehicle_holder_version = -1
+	if not vehicle.is_empty():
+		_vehicle_holder_version = int(vehicle.holder.version)
+		for team: TerrainArmy in lab.combat_armies:
+			if not team.has_army(): continue
+			if team.team_id != int(vehicle.team_id) and not vehicles.can_offer_operator_team(vehicle, team): continue
+			for index in range(team.combat_units.size()):
+				if not team.is_member(index) or not team.combat_can_act(index): continue
+				var identity := team.combat_identity(index)
+				vehicle_operator_choice.add_item("人物 #%d · 隊伍 #%d · 格%s%s" % [identity, team.team_id, team.cells[index], " · 正操作車輛" if vehicles.is_operator(identity) else ""])
+				var item := vehicle_operator_choice.item_count - 1
+				vehicle_operator_choice.set_item_metadata(item, identity)
+				if identity == prior_operator or prior_operator == 0 and identity == int(vehicle.operator_id): vehicle_operator_choice.select(item)
+		_vehicle_item_choices(vehicle_loaded_item, vehicle.holder)
+	_vehicle_item_choices(vehicle_depot_item, lab.terrain.site.depot_items)
+	if vehicle_operator_choice.item_count == 0:
+		vehicle_operator_choice.add_item("尚無可選原隊員")
+		vehicle_operator_choice.set_item_metadata(0, 0)
+	if vehicle_loaded_item.item_count == 0:
+		vehicle_loaded_item.add_item("車內尚無實物")
+		vehicle_loaded_item.set_item_metadata(0, "")
+	_update_vehicle_status()
+
+func _vehicle_item_choices(choice: OptionButton, holder: Dictionary) -> void:
+	for identity: String in holder.item_ids:
+		var record: Dictionary = lab.terrain.site.item_records.get(identity, {})
+		choice.add_item("%s · %s" % [identity, str(record.get("definition", "未知"))])
+		choice.set_item_metadata(choice.item_count - 1, identity)
+	if choice.item_count == 0:
+		choice.add_item("尚無實物裝備")
+		choice.set_item_metadata(0, "")
+
+func _update_vehicle_status() -> void:
+	if vehicle_status == null: return
+	var vehicle := _selected_vehicle()
+	if vehicle.is_empty():
+		vehicle_status.text = "尚無車輛；生成後勤隊時可設定任意車數，受總名額限制。"
+		return
+	var cell: Vector2i = lab.terrain.cell_from_index(int(vehicle.cell))
+	var operator_cell: Vector2i = vehicles.operator_cell(vehicle)
+	vehicle_status.text = "%s · 格%s · %s%s\n%s · 載量%d／%d件\n%s" % ["物資車" if vehicle.kind == "cart" else "馬車", cell, "車後操作格" if vehicle.kind == "cart" else "馬匹格（在相鄰格上馬）", operator_cell,
+		"無人操作，停泊" if int(vehicle.operator_id) == 0 else "原人物 #%d 操作%s" % [int(vehicle.operator_id), "（行進中）" if not vehicle.move.is_empty() else "（停止）"],
+		Runtime.carried_load(lab.terrain.site, vehicle.cargo, vehicle.holder), int(Vehicles.CAPACITY[vehicle.kind]), Runtime.items_text(vehicle.cargo)]
+
+func _vehicle_requester(vehicle: Dictionary, loading: bool = false) -> int:
+	if loading and int(vehicle.operator_id) > 0: return int(vehicle.operator_id)
+	var operator_id := 0
+	if vehicle_operator_choice.selected >= 0: operator_id = int(vehicle_operator_choice.get_item_metadata(vehicle_operator_choice.selected))
+	for team: TerrainArmy in lab.combat_armies:
+		if team.has_army() and (team.team_id == int(vehicle.team_id) or int(vehicle.team_id) == 0 and team.index_for_identity(operator_id) >= 0) and team.command_eligible(team.current_commander):
+			return team.combat_identity(team.current_commander)
+	return lab.controlled_person_id()
+
+func _assign_trial_vehicle() -> void:
+	var vehicle := _selected_vehicle()
+	if vehicle.is_empty() or vehicle_operator_choice.selected < 0: return
+	var identity := int(vehicle_operator_choice.get_item_metadata(vehicle_operator_choice.selected))
+	var requester := 0
+	for team: TerrainArmy in lab.combat_armies:
+		if team.index_for_identity(identity) >= 0 and team.command_eligible(team.current_commander):
+			requester = team.combat_identity(team.current_commander)
+			break
+	show_result(vehicles.assign_operator(str(vehicle.id), identity, requester, true))
+	_refresh_vehicle_controls()
+
+func _transfer_trial_vehicle(loading: bool, equipment: bool = false) -> void:
+	var vehicle := _selected_vehicle()
+	if vehicle.is_empty():
+		show_result(Runtime.fail("NO_TARGET"))
+		return
+	var resources := {}
+	var items: Array = []
+	if equipment:
+		var choice := vehicle_depot_item if loading else vehicle_loaded_item
+		var identity := str(choice.get_item_metadata(choice.selected)) if choice.selected >= 0 else ""
+		if identity.is_empty():
+			show_result(Runtime.fail("EMPTY"))
+			return
+		items.append(identity)
+	else:
+		resources[str(vehicle_resource_choice.get_item_metadata(vehicle_resource_choice.selected))] = int(vehicle_resource_quantity.value)
+	show_result(vehicles.transfer("depot" if loading else str(vehicle.id), str(vehicle.id) if loading else "depot", resources, items,
+		_vehicle_depot_version if loading else _vehicle_holder_version, _vehicle_holder_version if loading else _vehicle_depot_version, _vehicle_requester(vehicle, true), true))
+	_refresh_vehicle_controls()

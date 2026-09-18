@@ -39,6 +39,14 @@ func _initialize() -> void:
 	_run.call_deferred()
 
 func _fresh(lab: ClockLab, combat_left: float = 0.4) -> void:
+	# This suite freezes the historical geometry branch at its documented
+	# 120 Hz clock.  The active exchange branch owns a separate 30 Hz clock and
+	# is covered by the exchange flow/army tests.
+	lab.exchange_enabled = false
+	for actor: TerrainTestCharacter in lab.combat_actors:
+		actor.exchange_enabled = false
+	for team: TerrainArmy in lab.combat_armies:
+		team.exchange_enabled = false
 	var data := _fixture()
 	data.site.worker_enabled = false
 	data.site.combat_left = combat_left
@@ -168,7 +176,8 @@ func _run() -> void:
 			var typed_chunks: Array[float] = []
 			typed_chunks.assign(chunks)
 			var received := _feed(lab, _partition(total, typed_chunks))
-			assert(absf(received - total) < TIME_ERROR and lab.observed_steps.size() == 120)
+			assert(absf(received - total) < TIME_ERROR and lab.observed_steps.size() == 120,
+				"Fixed-step total/count mismatch: received=%.15f total=%.15f steps=%d remainder=%.15f chunks=%s" % [received, total, lab.observed_steps.size(), lab._action_time_remainder, str(chunks)])
 			for interval: float in lab.observed_steps:
 				assert(interval == TerrainLab.ACTION_STEP, "Every actual common action step stays exactly 1/120")
 			assert(absf(lab.observed_game_seconds - 36.4) < 0.000000001)

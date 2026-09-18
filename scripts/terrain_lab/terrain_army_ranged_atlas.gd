@@ -7,7 +7,6 @@ const DyeAtlas = preload("res://scripts/terrain_lab/terrain_army_dye_atlas.gd")
 const BASE_MANIFEST := "res://assets/characters/terrain_lab_army/standard_soldier/standard_soldier_atlas.json"
 const ROOT := "res://assets/characters/terrain_lab_army/standard_soldier/ranged/v1"
 const WEAPONS := ["bow_01", "crossbow_01"]
-const FRAME_COUNT := 584
 const EXTRA_SOURCES := ["res://scripts/tools/bake_terrain_army_ranged.gd", "res://scripts/terrain_lab/terrain_army_ranged_atlas.gd"]
 static var _root_path := ROOT
 static var _base := {}
@@ -62,7 +61,7 @@ static func plan(weapon: String, baseline: Dictionary) -> Dictionary:
 			selected.pose = guard_pose(weapon, str(clip.id))
 		clips.append(selected)
 		total += int(selected.samples) * 4
-	if clips.size() != wanted.size() or total != FRAME_COUNT or baseline.directions.size() != 4:
+	if clips.size() != wanted.size() or baseline.directions.size() != 4:
 		return {}
 	var ids: Array[String] = []
 	for direction: Dictionary in baseline.directions:
@@ -135,6 +134,7 @@ static func validate_batches(weapon: String, batches: Array[Dictionary], directo
 	var expected_plan := plan(weapon, _base)
 	if expected_plan.is_empty():
 		return {}
+	var expected_total := int(expected_plan.recipe_total)
 	if _sources.is_empty():
 		_sources = fingerprints()
 	if _sources.is_empty():
@@ -154,7 +154,7 @@ static func validate_batches(weapon: String, batches: Array[Dictionary], directo
 		if batch.get("clips") != expected_plan.clips or batch.get("directions") != expected_plan.directions or not batch.get("frames") is Array or not batch.get("pages") is Array or batch.pages.size() != 1 or not batch.get("batch") is Dictionary:
 			return {}
 		var selection: Dictionary = batch.batch
-		if selection.get("recipe_total") != FRAME_COUNT or selection.get("selected_total") != FRAME_COUNT or not _integer(selection.get("first"), 0, FRAME_COUNT - 1) or not _integer(selection.get("count"), 1, FRAME_COUNT) or selection.count != batch.frames.size() or int(selection.first) + int(selection.count) > FRAME_COUNT:
+		if selection.get("recipe_total") != expected_total or selection.get("selected_total") != expected_total or not _integer(selection.get("first"), 0, expected_total - 1) or not _integer(selection.get("count"), 1, expected_total) or selection.count != batch.frames.size() or int(selection.first) + int(selection.count) > expected_total:
 			return {}
 		if not _number(batch.get("map_scale")) or not is_equal_approx(float(batch.map_scale), float(_base.map_scale)):
 			return {}
@@ -184,7 +184,7 @@ static func validate_batches(weapon: String, batches: Array[Dictionary], directo
 			var selected: Dictionary = value.duplicate(true)
 			selected._page = page
 			seen[key] = selected
-	if seen.size() != FRAME_COUNT:
+	if seen.size() != expected_total:
 		return {}
 	var sequences := {}
 	for clip: Dictionary in expected_plan.clips:

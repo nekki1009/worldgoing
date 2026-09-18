@@ -11,6 +11,8 @@ parser.add_argument('--leather-helmet',action='store_true')
 parser.add_argument('--lining',action='store_true')
 parser.add_argument('--medieval-cloth',action='store_true')
 parser.add_argument('--medieval-shoes',action='store_true')
+parser.add_argument('--cloth-hats',action='store_true')
+parser.add_argument('--neutral-faces',action='store_true')
 parser.add_argument('--weapon-materials',action='store_true')
 parser.add_argument('--leather-boots',action='store_true')
 parser.add_argument('--sex',choices=['male','female','both'],default='both')
@@ -23,6 +25,8 @@ for sex in ['male','female'] if args.sex=='both' else [args.sex]:
         author='author_chinese_leather_boots.py' if args.leather_boots else 'author_chinese_lining.py' if args.lining else 'author_chinese_leather_helmet.py' if args.leather_helmet else 'author_chinese_leather_mingguang.py'
         if args.medieval_cloth: author='author_medieval_cloth.py'
         if args.medieval_shoes: author='author_medieval_shoes.py'
+        if args.cloth_hats: author='author_cloth_hats.py'
+        if args.neutral_faces: author='author_neutral_faces.py'
         if args.weapon_materials: author='author_weapon_materials.py'
         command=[str(ROOT/'.tools/blender-4.2.22-windows-x64/blender.exe'),'--background','--python-exit-code','1','--python',str(ROOT/'scripts/tools/blender'/author),'--','--sex',sex,'--stage',stage]
         log=logs/f'{sex}_{stage}.log'

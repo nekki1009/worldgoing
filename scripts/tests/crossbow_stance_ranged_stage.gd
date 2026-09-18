@@ -7,11 +7,15 @@ func _initialize() -> void:
 	var sources := Reader.fingerprints()
 	var base_md5 := FileAccess.get_md5(Reader.BASE_MANIFEST)
 	var manifests := {}
+	var baseline: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(Reader.BASE_MANIFEST))
+	var total_frames := 0
 	for weapon: String in Reader.WEAPONS:
 		var directory := SOURCE + "/" + weapon + "/"
 		var manifest: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(directory + "manifest.json"))
 		assert(not Reader.validate_batches(weapon, [manifest], directory).is_empty())
-		assert(manifest.batch.first == 0 and manifest.batch.count == Reader.FRAME_COUNT and manifest.batch.recipe_complete)
+		var plan := Reader.plan(weapon, baseline)
+		assert(not plan.is_empty() and manifest.batch.first == 0 and manifest.batch.count == plan.recipe_total and manifest.batch.recipe_complete)
+		total_frames += int(plan.recipe_total)
 		assert(manifest.source_fingerprints == sources and manifest.source_manifest_md5 == base_md5)
 		assert(_lossless(manifest), "Decode and compare actual PNG/RES bytes before preparing publication")
 		manifests[weapon] = manifest
@@ -31,5 +35,5 @@ func _initialize() -> void:
 		manifest.pages[0].resource_path = Reader.ROOT + "/" + weapon + "/page_000.res"
 		assert(_write_json(directory + "manifest.json", manifest))
 	assert(sources == Reader.fingerprints() and base_md5 == FileAccess.get_md5(Reader.BASE_MANIFEST))
-	print("CROSSBOW STANCE RANGED STAGING PASS: 1168 frames; source, appearance, timings and lossless pixels; formal files not modified")
+	print("CROSSBOW STANCE RANGED STAGING PASS: %d frames; source, appearance, timings and lossless pixels; formal files not modified" % total_frames)
 	quit(0)

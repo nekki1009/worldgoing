@@ -11,7 +11,11 @@
       "Face_Standard_01",
       "Face_Standard_02",
       "Face_Standard_03",
-      "Face_Standard_04"
+      "Face_Standard_04",
+      "Face_Standard_05",
+      "Face_Standard_06",
+      "Face_Standard_07",
+      "Face_Standard_08"
     ],
     "hair": [
       "Hair_Short_01",
@@ -133,7 +137,44 @@
       "Helmet_Western_Iron_01_NeckTail",
       "Helmet_Western_Iron_01_NeckTail_RolledEdge",
       "Helmet_Western_Iron_01_Skull",
-      "Helmet_Western_Iron_01_Skull_RolledEdge"
+      "Helmet_Western_Iron_01_Skull_RolledEdge",
+      "Helmet_Cloth_Chinese_01_Band",
+      "Helmet_Cloth_Chinese_01_ClothButton",
+      "Helmet_Cloth_Chinese_01_Crown",
+      "Helmet_Cloth_Chinese_01_Hem_0.09",
+      "Helmet_Cloth_Chinese_01_Hem_0.9",
+      "Helmet_Cloth_Chinese_01_Knot",
+      "Helmet_Cloth_Chinese_01_PanelSeam_0",
+      "Helmet_Cloth_Chinese_01_PanelSeam_1",
+      "Helmet_Cloth_Chinese_01_PanelSeam_2",
+      "Helmet_Cloth_Chinese_01_PanelSeam_3",
+      "Helmet_Cloth_Chinese_01_PanelSeam_4",
+      "Helmet_Cloth_Chinese_01_PanelSeam_5",
+      "Helmet_Cloth_Chinese_01_Tie_-1",
+      "Helmet_Cloth_Chinese_01_Tie_1",
+      "Helmet_Cloth_Japanese_01_Band",
+      "Helmet_Cloth_Japanese_01_Crown",
+      "Helmet_Cloth_Japanese_01_Hem_0.09",
+      "Helmet_Cloth_Japanese_01_Hem_0.9",
+      "Helmet_Cloth_Japanese_01_Knot",
+      "Helmet_Cloth_Japanese_01_PanelSeam_0",
+      "Helmet_Cloth_Japanese_01_PanelSeam_1",
+      "Helmet_Cloth_Japanese_01_PanelSeam_2",
+      "Helmet_Cloth_Japanese_01_PanelSeam_3",
+      "Helmet_Cloth_Japanese_01_Tie_-1",
+      "Helmet_Cloth_Japanese_01_Tie_1",
+      "Helmet_Cloth_Western_01_Band",
+      "Helmet_Cloth_Western_01_Crown",
+      "Helmet_Cloth_Western_01_Hem_0.09",
+      "Helmet_Cloth_Western_01_Hem_0.9",
+      "Helmet_Cloth_Western_01_PanelSeam_0",
+      "Helmet_Cloth_Western_01_PanelSeam_1",
+      "Helmet_Cloth_Western_01_PanelSeam_2",
+      "Helmet_Cloth_Western_01_PanelSeam_3",
+      "Helmet_Cloth_Western_01_PanelSeam_4",
+      "Helmet_Cloth_Western_01_PanelSeam_5",
+      "Helmet_Cloth_Western_01_PanelSeam_6",
+      "Helmet_Cloth_Western_01_PanelSeam_7"
     ],
     "outfit": [
       "Outfit_Chinese_Lining_01_BackCollar",
@@ -1135,5 +1176,26 @@
     "existing_weapons": "iron",
     "reference": "output/weapon_materials_20260917/reference/material_board.png",
     "balance": "unchanged"
+  },
+  "cloth_hats": {
+    "styles": [
+      "Chinese",
+      "Japanese",
+      "Western"
+    ],
+    "slot": "helmet",
+    "material": "cloth",
+    "native_gender_fit": "male",
+    "reference": "output/cloth_hats_20260918/reference/cloth_hats_board.png"
+  },
+  "neutral_faces": {
+    "ids": [
+      "face_standard_05",
+      "face_standard_06",
+      "face_standard_07",
+      "face_standard_08"
+    ],
+    "expression": "neutral",
+    "reference": "output/neutral_faces_20260918/reference/neutral_eyes_board.png"
   }
 }

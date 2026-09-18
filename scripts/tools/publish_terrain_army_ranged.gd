@@ -7,7 +7,7 @@ const DESTINATION := Reader.ROOT
 func _initialize() -> void:
 	if OS.get_cmdline_user_args() == PackedStringArray(["--validate-published-ranged"]):
 		if _validate_published():
-			print("TERRAIN ARMY RANGED PUBLISHED VALIDATION PASS: read-only; 2 exact canonical recipes / 1168 samples; current sources, decoded PNG/RES bytes, SHA-256 and runtime admission -> ", DESTINATION)
+			print("TERRAIN ARMY RANGED PUBLISHED VALIDATION PASS: read-only; exact canonical recipes with current dynamic frame plans, decoded PNG/RES bytes, SHA-256 and runtime admission -> ", DESTINATION)
 			quit(0)
 		return
 	if OS.get_cmdline_user_args() != PackedStringArray(["--publish-complete-ranged"]):
@@ -24,7 +24,12 @@ func _initialize() -> void:
 		return
 	var manifests := {}
 	var source_hashes := {}
+	var total_samples := 0
 	for weapon: String in Reader.WEAPONS:
+		var frame_count := _frame_count(weapon)
+		if frame_count < 1:
+			_fail("Current baseline cannot produce the ranged plan: " + weapon)
+			return
 		var directory := WORK + "/" + weapon + "/"
 		var path := directory + "manifest.json"
 		if not FileAccess.file_exists(path):
@@ -34,13 +39,14 @@ func _initialize() -> void:
 		if not parsed is Dictionary or Reader.validate_batches(weapon, [parsed], directory).is_empty():
 			_fail("Source recipe is incomplete or does not match its exact appearance/timings: " + weapon)
 			return
-		if parsed.source_fingerprints != sources or parsed.source_manifest_md5 != base_md5 or parsed.batch.first != 0 or parsed.batch.count != Reader.FRAME_COUNT or parsed.batch.recipe_complete != true:
+		if parsed.source_fingerprints != sources or parsed.source_manifest_md5 != base_md5 or parsed.batch.first != 0 or parsed.batch.count != frame_count or parsed.batch.recipe_complete != true:
 			_fail("Source recipe is partial or has mixed source fingerprints: " + weapon)
 			return
 		if parsed.pages[0].path != directory + "page_000.png" or parsed.pages[0].resource_path != directory + "page_000.res" or not _lossless(parsed):
 			_fail("Source PNG/RES bytes, dimensions or recorded pixel hashes do not agree: " + weapon)
 			return
 		manifests[weapon] = parsed
+		total_samples += frame_count
 		for filename: String in ["manifest.json", "page_000.png", "page_000.res"]:
 			source_hashes[directory + filename] = FileAccess.get_md5(directory + filename)
 	# All source admission and actual decoded-pixel checks precede any copy.
@@ -96,7 +102,7 @@ func _initialize() -> void:
 		return
 	if not _validate_published():
 		return
-	print("TERRAIN ARMY RANGED PUBLISH PASS: 2 exact recipes / 1168 samples; decoded PNG/RES bytes and SHA-256 verified; source manifests unchanged -> ", DESTINATION)
+	print("TERRAIN ARMY RANGED PUBLISH PASS: ", Reader.WEAPONS.size(), " exact recipes / ", total_samples, " samples; decoded PNG/RES bytes and SHA-256 verified; source manifests unchanged -> ", DESTINATION)
 	quit(0)
 
 func _validate_published() -> bool:
@@ -109,6 +115,10 @@ func _validate_published() -> bool:
 	Reader.set_root_path(DESTINATION)
 	var hashes := {}
 	for weapon: String in Reader.WEAPONS:
+		var frame_count := _frame_count(weapon)
+		if frame_count < 1:
+			_fail("Published validation cannot build the current ranged plan: " + weapon)
+			return false
 		var directory := DESTINATION + "/" + weapon + "/"
 		for filename: String in ["manifest.json", "page_000.png", "page_000.res"]:
 			var path := directory + filename
@@ -120,14 +130,15 @@ func _validate_published() -> bool:
 		if not published is Dictionary or Reader.validate_batches(weapon, [published], directory).is_empty():
 			_fail("Published recipe failed exact appearance, all frames or source validation: " + weapon)
 			return false
-		if published.get("source_manifest") != Reader.BASE_MANIFEST or published.source_fingerprints != sources or published.source_manifest_md5 != base_md5 or published.batch.first != 0 or published.batch.count != Reader.FRAME_COUNT or published.batch.get("recipe_complete") != true:
+		if published.get("source_manifest") != Reader.BASE_MANIFEST or published.source_fingerprints != sources or published.source_manifest_md5 != base_md5 or published.batch.first != 0 or published.batch.count != frame_count or published.batch.get("recipe_complete") != true:
 			_fail("Published recipe is incomplete or does not match current canonical sources: " + weapon)
 			return false
 		if published.pages[0].path != directory + "page_000.png" or published.pages[0].resource_path != directory + "page_000.res" or not _lossless(published):
 			_fail("Published canonical paths, PNG/RES bytes, dimensions or pixel hashes disagree: " + weapon)
 			return false
 		var admitted := Reader.recipe(published.appearance)
-		if admitted.is_empty() or admitted.sequences.size() != 76:
+		var plan := _plan(weapon)
+		if admitted.is_empty() or plan.is_empty() or admitted.sequences.size() != plan.clips.size() * plan.directions.size():
 			_fail("Published recipe failed the actual runtime admission route: " + weapon)
 			return false
 	for path: String in hashes:
@@ -138,6 +149,13 @@ func _validate_published() -> bool:
 		_fail("An original source changed during read-only validation")
 		return false
 	return true
+
+func _plan(weapon: String) -> Dictionary:
+	var baseline: Variant = JSON.parse_string(FileAccess.get_file_as_string(Reader.BASE_MANIFEST))
+	return Reader.plan(weapon, baseline) if baseline is Dictionary else {}
+
+func _frame_count(weapon: String) -> int:
+	return int(_plan(weapon).get("recipe_total", 0))
 
 func _lossless(manifest: Dictionary) -> bool:
 	if not manifest.get("metrics") is Dictionary or not manifest.metrics.has_all(["decoded_rgba_bytes", "png_bytes", "resource_bytes", "pixel_sha256", "png_decoded_sha256", "resource_decoded_sha256"]):

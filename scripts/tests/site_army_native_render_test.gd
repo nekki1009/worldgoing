@@ -80,16 +80,20 @@ func _check() -> bool:
 	root.add_child(actual)
 	root.add_child(reference)
 	var COUNT := 2500 if "--large" in OS.get_cmdline_user_args() else 200
+	var all_female := "--female" in OS.get_cmdline_user_args()
+	var mixed := "--mixed" in OS.get_cmdline_user_args()
+	assert(not (all_female and mixed))
 	actual.setup(army, COUNT)
 	reference.setup(army, COUNT)
 	army._sprites.resize(COUNT)
 	for i in range(COUNT):
-		army.combat_units.append({"person_id": i + 1, "age": 0.0, "pose": "idle", "visual_role": "male_atlas"})
+		var female := all_female or (mixed and i % 2 == 1)
+		army.combat_units.append({"person_id": i + 1, "age": 0.0, "pose": "idle", "visual_role": "female_atlas" if female else "male_atlas"})
 		army.cells.append(Vector2i(i % 100, (i * 17) % 100))
 		army.moving_to.append(TerrainArmy.INVALID_CELL)
 		army.facing.append([Vector2i.UP, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT, Vector2i(4, -7)][i % 5])
-		var appearance: Dictionary = TerrainArmy._combat_bake.manifest.appearance.duplicate(true)
-		var weapon: String = ["longsword_01", "bow_01", "crossbow_01"][i % 3]
+		var appearance: Dictionary = TerrainArmy.EquipmentAtlas.female_appearance() if female else TerrainArmy._combat_bake.manifest.appearance.duplicate(true)
+		var weapon: String = "longsword_01" if female else ["longsword_01", "bow_01", "crossbow_01"][i % 3]
 		appearance.parts.weapon = weapon
 		if weapon != "longsword_01": appearance.parts.shield = "none"
 		appearance.equipment_dyes = {"armor": "114477ff" if i % 2 == 0 else "ee3366ff"}
@@ -124,7 +128,7 @@ func _check() -> bool:
 		assert(retained_positions.to_byte_array() == retained_bytes, "Native output modified retained COW data")
 		checked += COUNT
 	# One changed input at a time must reject only its row without touching it.
-	for condition in range(13):
+	for condition in range(15):
 		var before_row := army.combat_units[1].duplicate(true)
 		var before_appearance: Dictionary = site.person_appearance(2)
 		match condition:
@@ -145,6 +149,8 @@ func _check() -> bool:
 			10: army.cells[1] = Vector2i(-1, 10)
 			11: army.combat_units[1].pose = &"idle"
 			12: army._sprites[1] = Sprite2D.new()
+			13: army.combat_units[1].visual_role = "male_live"
+			14: army.combat_units[1].visual_role = "unknown_atlas"
 		var original := var_to_bytes([army.combat_units, army.cells, army.moving_to, site._equipment_appearances])
 		actual.begin()
 		actual.prepare_idle()
@@ -185,7 +191,7 @@ func _check() -> bool:
 	assert(kernel.call("render_idle", [], [], [], [], {}, [], [], [], [], 64.0).is_empty())
 	assert(kernel.call("render_idle", army.combat_units, [], army.moving_to, army.facing, site._equipment_appearances, actual._appearances, actual._descriptors, actual._idle_samples, army._sprites, 64.0).is_empty())
 	assert(kernel.call("render_idle", army.combat_units, army.cells, army.moving_to, army.facing, site._equipment_appearances, actual._appearances, actual._descriptors, actual._idle_samples, army._sprites, 32.0).is_empty())
-	print("ARMY_NATIVE_RENDER_PASS exact_columns=", checked, " rejection_cases=13 input_bytes_unchanged retained_COW callback_fallback bounds")
+	print("ARMY_NATIVE_RENDER_PASS exact_columns=", checked, " gender=", "female" if all_female else ("mixed" if mixed else "male"), " rejection_cases=15 input_bytes_unchanged retained_COW callback_fallback bounds")
 	actual.free()
 	reference.free()
 	army.free()

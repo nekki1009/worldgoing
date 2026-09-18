@@ -134,18 +134,21 @@ func _run() -> void:
 	near(Runtime.now(data), minute_before, "tree pause also freezes Site clock/work")
 	paused = false
 	lab.site_controller.update_ui()
-	assert("疲勞" in lab.site_controller.worker_label.text and "玩家疲勞" in lab.site_controller.stock_label.text)
+	assert("疲勞" in lab.site_controller.worker_label.text and "疲勞" in lab.site_controller.player_status_label.text)
 	if DisplayServer.get_name() != "headless":
 		root.size = Vector2i(1440, 900)
 		var output := "res://.visual_captures/site_work_fatigue"
 		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(output))
 		var scroll := lab.site_controller.panel.get_child(0) as ScrollContainer
-		for item: Array in [["worker", lab.site_controller.worker_label], ["player", lab.site_controller.stock_label]]:
-			await process_frame
-			scroll.ensure_control_visible(item[1])
-			await process_frame
-			await RenderingServer.frame_post_draw
-			assert(root.get_texture().get_image().save_png(output + "/" + item[0] + ".png") == OK)
+		await process_frame
+		scroll.ensure_control_visible(lab.site_controller.worker_label)
+		await process_frame
+		await RenderingServer.frame_post_draw
+		assert(root.get_texture().get_image().save_png(output + "/worker.png") == OK)
+		scroll.scroll_vertical = 0
+		await process_frame
+		await RenderingServer.frame_post_draw
+		assert(root.get_texture().get_image().save_png(output + "/player.png") == OK)
 	lab.queue_free()
 	await process_frame
 	print("SITE WORK FATIGUE PASS: real controller construction/rest, manual/NPC gathering, productive workshop time/input/output, tools/occupancy/cargo/input waits, pause and visible Site labels")

@@ -8,7 +8,9 @@ func _click(parent: Node, node_name: String) -> void:
 	button.pressed.emit()
 
 func _open(lab: TerrainLab) -> AcceptDialog:
-	_click(lab.site_controller.panel, "OpenLogistics")
+	_click(lab.site_controller.panel, "OpenCombatWindow")
+	assert(lab.site_controller.combat_window.visible)
+	_click(lab.site_controller.combat_window, "OpenLogistics")
 	var dialog := lab.get_node_or_null("SiteUI/LogisticsDialog") as AcceptDialog
 	assert(dialog != null and dialog.visible)
 	return dialog

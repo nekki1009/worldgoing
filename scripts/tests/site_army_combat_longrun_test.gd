@@ -167,7 +167,7 @@ func _life(lab: TerrainLab) -> Dictionary:
 			result.ko += int(float(body.ko) > 0.0)
 			result.settled += int(bool(body.get("loot_settled", false)))
 			result.attacking += int(bool(body.attack))
-			result.fatigue_total += float(body.fatigue)
+			result.fatigue_total += PersonFatigue.read(body)
 	return result
 
 func _natural_terminal(lab: TerrainLab) -> bool:

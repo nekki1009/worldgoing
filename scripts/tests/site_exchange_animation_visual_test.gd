@@ -11,6 +11,7 @@ const VISIBLE_GROUND := Rect2(80.0, 160.0, 1240.0, 660.0)
 const WEAPONS: Array[StringName] = [&"spear_01", &"axe_01", &"hammer_01", &"dagger_01", &"none"]
 var scene: Node2D
 var resolver: TerrainLab
+var equipment_owner: SiteController
 var teams: Array[TerrainArmy] = []
 var actors: Array[TerrainTestCharacter] = []
 var caption: Label
@@ -21,8 +22,13 @@ var cases: Array[Dictionary] = []
 var deadline_us := 0
 var done := false
 var fingerprint := {}
+var female_soldiers := false
+var male_captains := false
 
 func _initialize() -> void:
+	female_soldiers = "--female" in OS.get_cmdline_user_args()
+	male_captains = "--male-captains" in OS.get_cmdline_user_args()
+	assert(not (female_soldiers and male_captains))
 	deadline_us = Time.get_ticks_usec() + 100000000
 	output_path = OUTPUT_ROOT + "/%d_%d" % [int(Time.get_unix_time_from_system()), Time.get_ticks_usec()]
 	assert(DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(output_path)) == OK)
@@ -58,11 +64,16 @@ func _run() -> void:
 	data.ramp_edges.fill(0)
 	resolver = TerrainLab.new() # Original packet adapter, deliberately not a second active scene.
 	resolver.terrain = data
+	equipment_owner = SiteController.new()
+	scene.add_child(equipment_owner)
+	equipment_owner.set_process(false)
 	for side: int in 2:
 		var team := TerrainArmy.new()
 		team.team_id = side + 1
 		team.faction_id = side
 		team.exchange_enabled = true
+		team.equipment_appearance_query = equipment_owner.person_appearance
+		team.equipment_appearance_batch_query = equipment_owner.person_appearance_batch
 		scene.add_child(team)
 		team.set_process(false)
 		teams.append(team)
@@ -105,7 +116,7 @@ func _run() -> void:
 		heading.size = Vector2(350.0, 32.0)
 		heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		heading.add_theme_font_size_override("font_size", 22)
-		heading.text = ["男兵圖集", "原女性隊長", "原 Actor 玩家／NPC"][column]
+		heading.text = ["女兵圖集" if female_soldiers else "男兵圖集", "原男性隊長" if male_captains else "原女性隊長", "原 Actor 玩家／NPC"][column]
 		column_labels.append(heading)
 	caption = Label.new()
 	layer.add_child(caption)
@@ -128,16 +139,20 @@ func _run() -> void:
 	for path: String in fingerprint:
 		assert(FileAccess.get_sha256(path) == str(fingerprint[path]), "Sources changed during animation evidence")
 	assert(TerrainArmy._contact_source == null, "Short animation evidence must not load exact collision skeleton")
-	_write(true)
+	var passed := true
+	for entry: Dictionary in cases:
+		passed = passed and bool(entry.passed)
+	_write(passed, "" if passed else "Animation case contract failed; inspect per-case results")
 	_write_player()
-	print("SITE_EXCHANGE_ANIMATION_VISUAL_PASS ", JSON.stringify({"output": output_path, "cases": cases.size(), "scope": "Fixed-clock original-owner close-up PNG sequences; inspect playback before visual acceptance"}))
-	_finish()
+	if passed:
+		print("SITE_EXCHANGE_ANIMATION_VISUAL_PASS ", JSON.stringify({"output": output_path, "cases": cases.size(), "scope": "Fixed-clock original-owner close-up PNG sequences; inspect playback before visual acceptance"}))
+	_finish(0 if passed else 1)
 
-func _finish() -> void:
+func _finish(exit_code: int = 0) -> void:
 	done = true
 	resolver.free()
 	scene.queue_free()
-	quit(0)
+	quit(exit_code)
 
 func _source_probe() -> void:
 	# Raw authored pose candidates only. This branch makes no exchange/short-clip claim.
@@ -181,18 +196,27 @@ func _source_probe() -> void:
 
 func _reset_fixture(weapon: StringName) -> void:
 	# Explicit independent test setup, never heal or teleport a running battle.
+	equipment_owner._equipment_appearances.clear()
 	for team: TerrainArmy in teams:
 		team.clear()
 	for side: int in 2:
 		var team := teams[side]
 		team.roster_size = 2
 		var selected: Array[Vector2i] = [Vector2i(8, 9 + side), Vector2i(5, 9 + side)]
-		assert(team.deploy_at(resolver.terrain, null, null, selected) and team.enable_combat(false))
+		assert(team.deploy_at(resolver.terrain, null, null, selected) and team.enable_combat(false, 0 if male_captains else (2 if female_soldiers else 1)))
 		assert(team.visual_mode() == "baked_atlas" and team.active_3d_source_count() == 1)
 		assert(team.combat_units.size() == 2 and team._sprites.size() == 2)
 		for index: int in 2:
 			team.facing[index] = Vector2i.DOWN if side == 0 else Vector2i.UP
 			team.combat_units[index].combat_ability = 50.0
+			# Use the original read-only appearance publication; a bare Army has
+			# no Site query and would otherwise render the legacy male baseline.
+			var appearance: Dictionary = team.combat_units[index].appearance.duplicate(true)
+			SiteController._freeze_appearance(appearance)
+			equipment_owner._equipment_appearances[team.combat_identity(index)] = appearance
+			var presenter: HumanCharacter3DEditor = team._unit_editor(index)
+			if presenter != null:
+				assert(presenter.restore_appearance(appearance))
 		var actor := actors[side]
 		actor.reset_combat()
 		actor.fatigue = 0.0
@@ -202,7 +226,15 @@ func _reset_fixture(weapon: StringName) -> void:
 		actor.face_cell(Vector2i(11, 10 - side))
 		actor._update_combat_ready()
 		actor.play_pose(&"idle")
+		team._visual_dirty = true # The fixture replaced the original publication.
 	_render()
+	for team: TerrainArmy in teams:
+		assert(int(team.equipment_appearance(1).body) == int(female_soldiers))
+		assert(team._sprites[1].texture != null)
+		if female_soldiers:
+			var frame_key: String = team._soldier_current_keys[1]
+			assert(frame_key.begins_with("equipment|") and float(frame_key.get_slice("|", 1)) == 1.0, "Female fixture must actually render the female atlas: " + frame_key)
+		assert(int(team._unit_editor(0).capture_appearance().body) == int(not male_captains))
 
 func _person(column: int, side: int) -> Dictionary:
 	var owner: Variant = actors[side] if column == 2 else teams[side]
@@ -215,16 +247,14 @@ func _apply_pair(column: int, kind: String) -> Dictionary:
 	var second := _person(column, 1)
 	var a: Dictionary = first.owner.exchange_stats() if int(first.unit) < 0 else first.owner.exchange_stats(int(first.unit))
 	var b: Dictionary = second.owner.exchange_stats() if int(second.unit) < 0 else second.owner.exchange_stats(int(second.unit))
-	# Set the original person's ability to create the requested deterministic margin.
+	# This is animation evidence, while the complete result matrix is covered by
+	# site_exchange_rules_test. Use the existing caller-owned situational modifier
+	# to obtain an exact deterministic margin without changing the Army's fixed
+	# troop ability or exceeding its bounded shared-training range.
 	var desired := 0.0 if kind == "draw" else 12.0 if kind == "small" else 35.0
-	var ability := float(a.ability) + SiteCombatRules.exchange_score(b) - SiteCombatRules.exchange_score(a) + desired
-	if int(first.unit) < 0:
-		first.owner.combat_ability = ability
-	else:
-		first.owner.combat_units[int(first.unit)].combat_ability = ability
-	a = first.owner.exchange_stats() if int(first.unit) < 0 else first.owner.exchange_stats(int(first.unit))
-	a.facility = 0.0
-	b.facility = 0.0
+	b["facility"] = float(b.get("facility", 0.0))
+	a["facility"] = float(a.get("facility", 0.0)) \
+		+ SiteCombatRules.exchange_score(b) - SiteCombatRules.exchange_score(a) + desired
 	var result := SiteCombatRules.exchange_result(a, b, 0.0)
 	assert(str(result.kind) == kind)
 	resolver._apply_exchange_side(first, second, result, a, 1)
@@ -267,7 +297,7 @@ func _case(label: String, kind: String, weapon: StringName = &"longsword_01", ac
 		frames.append(path)
 		if tick in [0, 3, 12, 24]:
 			boards.append(screenshot)
-	var passed := _check_case(samples, kind, action)
+	var passed := _check_case(samples, results, kind, action)
 	cases.append({"name": label, "weapon": str(weapon), "action": action, "results": results, "duration": duration,
 		"frame_interval": 0.1, "frames": frames, "samples": samples, "passed": passed})
 	_save_board(label, boards)
@@ -313,20 +343,34 @@ func _snapshot(time: float) -> Dictionary:
 				record.merge({"pose": owner._exchange_visual_pose(index), "logical_pose": str(unit.pose), "age": float(unit.age), "source_time": float(sampled[1]),
 					"source_length": float(source_clock[1]),
 					"atlas_time": float(frame.sample_time), "atlas_frame": int(frame.frame), "hp": float(unit.hp),
-					"stun": float(unit.stun), "ko": float(unit.ko), "stagger": float(unit.get("exchange_stagger", 0.0)),
-					"moving": owner.moving_to[index] != TerrainArmy.INVALID_CELL})
+						"stun": float(unit.stun), "ko": float(unit.ko), "stagger": float(unit.get("exchange_stagger", 0.0)),
+						"moving": owner.moving_to[index] != TerrainArmy.INVALID_CELL})
+			var presenter: HumanCharacter3DEditor = owner.editor if index < 0 else owner._unit_editor(index)
+			if presenter != null:
+				var animation: Animation = presenter.animation_player.get_animation(presenter.selected_animation)
+				record.merge({"presenter_pose": str(presenter.selected_animation),
+					"presenter_time": presenter.animation_player.current_animation_position,
+					"presenter_loop": animation.loop_mode})
 			people.append(record)
 	return {"time": time, "people": people}
 
-func _check_case(samples: Array[Dictionary], kind: String, action: String) -> bool:
+func _check_case(samples: Array[Dictionary], results: Array[Dictionary], kind: String, action: String) -> bool:
 	var valid := true
 	for column: int in 3:
 		var first: Dictionary = samples[0].people[column * 2]
 		var second: Dictionary = samples[0].people[column * 2 + 1]
-		valid = valid and float(first.hp) == 100.0 and float(second.hp) == (100.0 if kind == "draw" else 98.0 if kind == "big" else 99.0)
+		var result: Dictionary = results[column]
+		valid = valid and is_equal_approx(float(first.hp), 100.0 - float(result.hp_a)) \
+			and is_equal_approx(float(second.hp), 100.0 - float(result.hp_b))
+		valid = valid and is_equal_approx(float(first.stun), float(result.stun_a)) \
+			and is_equal_approx(float(second.stun), float(result.stun_b))
 		valid = valid and is_equal_approx(float(second.stagger), 0.3 if kind == "draw" else 0.65 if kind == "big" else 0.35)
 		if kind != "draw":
 			valid = valid and float(first.stagger) == 0.0 and (str(first.pose).contains("attack") or str(first.pose) in ["walk_slash", "ride_slash", "ride_thrust"])
+		if kind == "big":
+			valid = valid and str(first.pose) == "attack_jump_heavy"
+			if first.has("presenter_pose"):
+				valid = valid and first.presenter_pose == "attack_jump_heavy" and int(first.presenter_loop) == Animation.LOOP_NONE
 		if action == "move":
 			valid = valid and bool(first.moving) and samples[1].people[column * 2].position != first.position
 			valid = valid and str(samples[4].people[column * 2].pose) in ["walk", "run", "ride_walk", "ride_run"]
@@ -342,6 +386,9 @@ func _check_case(samples: Array[Dictionary], kind: String, action: String) -> bo
 		if kind != "draw" and action != "move":
 			var final_stroke: Dictionary = samples[24].people[column * 2]
 			valid = valid and str(final_stroke.pose) == str(first.pose) and is_equal_approx(float(final_stroke.source_time), float(final_stroke.source_length))
+			if kind == "big" and final_stroke.has("presenter_time"):
+				valid = valid and is_equal_approx(float(final_stroke.presenter_time), float(final_stroke.source_length))
+				valid = valid and is_equal_approx(float(samples[25].people[column * 2].presenter_time), float(final_stroke.source_length))
 			valid = valid and str(samples[27].people[column * 2].pose) in ["idle", "ride_idle"]
 	return valid
 
@@ -358,7 +405,7 @@ func _save_board(label: String, images: Array[Image]) -> void:
 func _write(passed: bool, reason: String = "") -> void:
 	var file := FileAccess.open(output_path + "/measurements.json", FileAccess.WRITE)
 	assert(file != null)
-	file.store_string(JSON.stringify({"targets_met": passed, "reason": reason, "cases": cases, "source_sha256": fingerprint,
+	file.store_string(JSON.stringify({"targets_met": passed, "reason": reason, "cases": cases, "source_sha256": fingerprint, "female_soldiers": female_soldiers, "male_captains": male_captains,
 		"visible_ground_bounds": [VISIBLE_GROUND.position.x, VISIBLE_GROUND.position.y, VISIBLE_GROUND.size.x, VISIBLE_GROUND.size.y],
 		"visibility_scope": "All six original ground points on every 30Hz step; 80px side/bottom and 160px top margins. Equipment extent still requires PNG inspection.",
 		"scope": "Original Army/Actor state and renderers; independently initialized cases; 30Hz fixed simulation, 10Hz PNG sequence; not FPS or projectile-flight acceptance"}, "\t"))

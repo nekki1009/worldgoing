@@ -11,7 +11,7 @@ func _result(role: String, kind: String = "small") -> Dictionary:
 		"hp": (2.0 if kind == "big" else 1.0) if role == "loser" else 0.0,
 		"stun": (18.0 if kind == "big" else 8.0) if role == "loser" else 0.0,
 		"stagger": (0.65 if kind == "big" else 0.35) if role == "loser" else (0.3 if role == "draw" else 0.0),
-		"knockback": role == "loser" and kind == "big", "fatigue": 0.5,
+		"knockback": role == "loser" and kind == "big", "fatigue": 0.0 if role == "draw" else 0.5,
 		"other_identity": 9999, "skill": ""}
 
 func run() -> void:
@@ -51,12 +51,16 @@ func run() -> void:
 	army.died.connect(func(identity: int) -> void: deaths.append(identity))
 	# Inputs are already resolved by the Lab; this check exercises the original
 	# row/HP/action/grid owner, not another pair-selection implementation.
+	var shared_fatigue_before := float(army.team_fatigue.fatigue)
 	army.apply_exchange(1, army.cells[1] + Vector2i.DOWN, _result("loser"))
 	assert(army.combat_units[1].hp == 99.0 and army.cells[1] == selected[1])
 	assert(army.combat_units[1].pose == "hit" and army.combat_units[1].stun == 8.0)
 	assert(army.combat_frame(1).clip == "hit")
 	assert(army.moving_to[1] == TerrainArmy.INVALID_CELL and not army._reserve_combat_step(1, selected[1] + Vector2i.UP))
-	assert(not army.exchange_ready(1) and army.combat_units[1].fatigue == 0.5)
+	assert(not army.exchange_ready(1)
+		and is_same(PersonFatigue.pool(army.combat_units[1]), army.team_fatigue)
+		and is_equal_approx(PersonFatigue.read(army.combat_units[1]),
+			shared_fatigue_before + 0.5 / float(army.team_fatigue.count)))
 	army.prepare_combat(0.35)
 	assert(army._reserve_combat_step(1, selected[1] + Vector2i.UP), "Only the stagger, not the exchange cooldown, prevents voluntary movement")
 	army.prepare_combat(TerrainArmy.MOVE_DURATION)
@@ -152,7 +156,8 @@ func run() -> void:
 	assert(army.activate_exchange_skill(0, "power"))
 	army.combat_units[0].combat_ability = 67.0
 	army.equipment_appearance_query = func(_identity: int) -> Dictionary: return {"parts": {"armor": "armor_steel", "shield": "shield_heater_01"}}
-	assert(army.exchange_stats(0).ability == 67.0 and army.exchange_stats(0).armorbonus == 12.75)
+	assert(army.exchange_stats(0).ability == TerrainArmy.TROOP_COMBAT_ABILITY and army.combat_units[0].combat_ability == 67.0
+		and army.exchange_stats(0).armorbonus == 12.75, "Legacy row ability is retained but cannot override the single troop type")
 	army.equipment_appearance_query = Callable()
 	army.settle_combat_command()
 	var saved: Dictionary = JSON.parse_string(JSON.stringify(army.capture_combat_state()))

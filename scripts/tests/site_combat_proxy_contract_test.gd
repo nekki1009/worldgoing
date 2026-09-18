@@ -3,9 +3,15 @@ extends SceneTree
 const Proxy = preload("res://scripts/tests/helpers/site_combat_proxy.gd")
 const Geometry = preload("res://scripts/terrain_lab/terrain_weapon_collision.gd")
 const DIRECTIONS := {"down": Vector2i.DOWN, "left": Vector2i.LEFT, "up": Vector2i.UP, "right": Vector2i.RIGHT}
+const MANIFEST := "res://assets/characters/terrain_lab_army/standard_soldier/standard_soldier_atlas.json"
 var _started_usec := 0
+var profile_path := Proxy.PROFILE_PATH
 
 func _initialize() -> void:
+	for argument: String in OS.get_cmdline_user_args():
+		if argument.begins_with("--profile="):
+			profile_path = argument.trim_prefix("--profile=").simplify_path()
+			assert(profile_path.begins_with("res://output/") and profile_path != "res://output/", "Profile fixture must stay in one named output path")
 	call_deferred("run")
 
 func run() -> void:
@@ -13,8 +19,10 @@ func run() -> void:
 	create_timer(20.0).timeout.connect(func() -> void: quit(1))
 	assert(DisplayServer.get_name() == "headless")
 	var proxy := Proxy.new()
-	var loaded := proxy.load_profile()
+	var loaded := proxy.load_profile(profile_path)
 	assert(loaded, "Compact test profile must exist and match its sources")
+	var manifest: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(MANIFEST))
+	assert(manifest.directions.size() == DIRECTIONS.size())
 	var male: Dictionary = proxy.appearance.duplicate(true)
 	var female: Dictionary = male.duplicate(true)
 	female.body = 1
@@ -35,7 +43,10 @@ func run() -> void:
 		_check_shapes(one)
 		assert(var_to_bytes(one) == var_to_bytes(two), "Male/female share the same coarse combat rule")
 		checked += 1
-	assert(checked == 140)
+	assert(checked == manifest.clips.size() * manifest.directions.size())
+	for direction: Dictionary in manifest.directions:
+		var jump_key := "attack_jump_heavy|" + str(direction.id)
+		assert(proxy.tracks.has(jump_key) and proxy.tracks[jump_key].frames.size() == 12)
 	_check_interpolation(proxy, male)
 	var unshielded: Dictionary = male.duplicate(true)
 	unshielded.parts.shield = "none"

@@ -29,7 +29,7 @@ func _fixture(reference: bool, per_team: int = 100, maneuver: bool = false, army
 		team.controlled_person_query = lab.controlled_person_id
 		lab.combat_armies.append(team)
 		for i in range(per_team):
-			team.combat_units[i].combat_ability = 10.0 + float(i % 9) * 10.0
+			team.combat_units[i].combat_ability = TerrainArmy.TROOP_COMBAT_ABILITY
 			team.combat_units[i].fatigue = float(i % 3) * 20.0
 			team.combat_units[i].stun = 80.0 if i % 13 == 0 else 0.0
 			team.combat_units[i].hp = 1.0 if i % 17 == 0 else 100.0
@@ -57,6 +57,10 @@ func _dispose(lab: TerrainLab) -> void:
 func _run() -> void:
 	var original := _fixture(true)
 	var candidate := _fixture(false)
+	candidate.combat_armies[0].combat_units[0].combat_ability = 100.0
+	assert(candidate.combat_armies[0].exchange_stats(0).ability == TerrainArmy.TROOP_COMBAT_ABILITY,
+		"A legacy per-row value cannot override the single troop-type base")
+	candidate.combat_armies[0].combat_units[0].combat_ability = TerrainArmy.TROOP_COMBAT_ABILITY
 	for step in range(360):
 		original._advance_combat(1.0 / 30.0)
 		candidate._advance_combat(1.0 / 30.0)

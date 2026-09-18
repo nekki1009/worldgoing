@@ -17,6 +17,7 @@ func _run() -> void:
 	current_scene = lab
 	lab.set_process(false)
 	lab.site_controller.save_path = "user://cache-export-smoke.json"
+	lab.npc.initialize_visual() # This diagnostic explicitly opts into the removed female test presenter.
 	assert(lab.character.editor.model_root != null and lab.npc.editor.model_root != null)
 	assert(lab._exchange_kernel != null, "Export must retain the real C# exchange kernel")
 	assert(lab.start_melee_trial().ok)

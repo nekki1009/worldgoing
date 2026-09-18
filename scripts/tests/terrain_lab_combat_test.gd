@@ -9,6 +9,7 @@ func run() -> void:
 	current_scene = lab
 	var a := lab.character
 	var b := lab.npc
+	b.initialize_visual() # This dedicated presenter test opts into the removed main-map model.
 	# Controlled flat patch isolates combat from preset randomness.
 	for y in range(10, 15):
 		for x in range(10, 18):

@@ -1,0 +1,1184 @@
+{
+	"directions": [
+		{
+			"id": "down",
+			"yaw": 0.0
+		},
+		{
+			"id": "left",
+			"yaw": -90.0
+		},
+		{
+			"id": "up",
+			"yaw": 180.0
+		},
+		{
+			"id": "right",
+			"yaw": 90.0
+		}
+	],
+	"frames": [
+		{
+			"anchor": [
+				155.000061035156,
+				318.667785644531
+			],
+			"clip": "idle",
+			"direction": "down",
+			"frame": 0,
+			"kind": "cart",
+			"rect": [
+				0,
+				0,
+				310,
+				328
+			]
+		},
+		{
+			"anchor": [
+				156.000061035156,
+				318.667785644531
+			],
+			"clip": "idle",
+			"direction": "left",
+			"frame": 0,
+			"kind": "cart",
+			"rect": [
+				310,
+				0,
+				456,
+				338
+			]
+		},
+		{
+			"anchor": [
+				155.000061035156,
+				324.667785644531
+			],
+			"clip": "idle",
+			"direction": "up",
+			"frame": 0,
+			"kind": "cart",
+			"rect": [
+				766,
+				0,
+				310,
+				334
+			]
+		},
+		{
+			"anchor": [
+				300.000061035156,
+				324.667785644531
+			],
+			"clip": "idle",
+			"direction": "right",
+			"frame": 0,
+			"kind": "cart",
+			"rect": [
+				1076,
+				0,
+				456,
+				344
+			]
+		},
+		{
+			"anchor": [
+				155.000061035156,
+				318.667785644531
+			],
+			"clip": "move",
+			"direction": "down",
+			"frame": 0,
+			"kind": "cart",
+			"rect": [
+				1532,
+				0,
+				310,
+				328
+			]
+		},
+		{
+			"anchor": [
+				155.000061035156,
+				318.667785644531
+			],
+			"clip": "move",
+			"direction": "down",
+			"frame": 1,
+			"kind": "cart",
+			"rect": [
+				1842,
+				0,
+				310,
+				328
+			]
+		},
+		{
+			"anchor": [
+				155.000061035156,
+				318.667785644531
+			],
+			"clip": "move",
+			"direction": "down",
+			"frame": 2,
+			"kind": "cart",
+			"rect": [
+				2152,
+				0,
+				310,
+				328
+			]
+		},
+		{
+			"anchor": [
+				155.000061035156,
+				318.667785644531
+			],
+			"clip": "move",
+			"direction": "down",
+			"frame": 3,
+			"kind": "cart",
+			"rect": [
+				2462,
+				0,
+				310,
+				328
+			]
+		},
+		{
+			"anchor": [
+				155.000061035156,
+				318.667785644531
+			],
+			"clip": "move",
+			"direction": "down",
+			"frame": 4,
+			"kind": "cart",
+			"rect": [
+				2772,
+				0,
+				310,
+				328
+			]
+		},
+		{
+			"anchor": [
+				155.000061035156,
+				318.667785644531
+			],
+			"clip": "move",
+			"direction": "down",
+			"frame": 5,
+			"kind": "cart",
+			"rect": [
+				3082,
+				0,
+				310,
+				328
+			]
+		},
+		{
+			"anchor": [
+				155.000061035156,
+				318.667785644531
+			],
+			"clip": "move",
+			"direction": "down",
+			"frame": 6,
+			"kind": "cart",
+			"rect": [
+				3392,
+				0,
+				310,
+				328
+			]
+		},
+		{
+			"anchor": [
+				155.000061035156,
+				318.667785644531
+			],
+			"clip": "move",
+			"direction": "down",
+			"frame": 7,
+			"kind": "cart",
+			"rect": [
+				3702,
+				0,
+				310,
+				328
+			]
+		},
+		{
+			"anchor": [
+				156.000061035156,
+				318.667785644531
+			],
+			"clip": "move",
+			"direction": "left",
+			"frame": 0,
+			"kind": "cart",
+			"rect": [
+				0,
+				344,
+				456,
+				338
+			]
+		},
+		{
+			"anchor": [
+				156.000061035156,
+				318.667785644531
+			],
+			"clip": "move",
+			"direction": "left",
+			"frame": 1,
+			"kind": "cart",
+			"rect": [
+				456,
+				344,
+				456,
+				338
+			]
+		},
+		{
+			"anchor": [
+				156.000061035156,
+				318.667785644531
+			],
+			"clip": "move",
+			"direction": "left",
+			"frame": 2,
+			"kind": "cart",
+			"rect": [
+				912,
+				344,
+				456,
+				338
+			]
+		},
+		{
+			"anchor": [
+				156.000061035156,
+				318.667785644531
+			],
+			"clip": "move",
+			"direction": "left",
+			"frame": 3,
+			"kind": "cart",
+			"rect": [
+				1368,
+				344,
+				456,
+				338
+			]
+		},
+		{
+			"anchor": [
+				156.000061035156,
+				318.667785644531
+			],
+			"clip": "move",
+			"direction": "left",
+			"frame": 4,
+			"kind": "cart",
+			"rect": [
+				1824,
+				344,
+				456,
+				338
+			]
+		},
+		{
+			"anchor": [
+				156.000061035156,
+				318.667785644531
+			],
+			"clip": "move",
+			"direction": "left",
+			"frame": 5,
+			"kind": "cart",
+			"rect": [
+				2280,
+				344,
+				456,
+				338
+			]
+		},
+		{
+			"anchor": [
+				156.000061035156,
+				318.667785644531
+			],
+			"clip": "move",
+			"direction": "left",
+			"frame": 6,
+			"kind": "cart",
+			"rect": [
+				2736,
+				344,
+				456,
+				338
+			]
+		},
+		{
+			"anchor": [
+				156.000061035156,
+				318.667785644531
+			],
+			"clip": "move",
+			"direction": "left",
+			"frame": 7,
+			"kind": "cart",
+			"rect": [
+				3192,
+				344,
+				456,
+				338
+			]
+		},
+		{
+			"anchor": [
+				155.000061035156,
+				324.667785644531
+			],
+			"clip": "move",
+			"direction": "up",
+			"frame": 0,
+			"kind": "cart",
+			"rect": [
+				3648,
+				344,
+				310,
+				334
+			]
+		},
+		{
+			"anchor": [
+				155.000061035156,
+				324.667785644531
+			],
+			"clip": "move",
+			"direction": "up",
+			"frame": 1,
+			"kind": "cart",
+			"rect": [
+				0,
+				682,
+				310,
+				334
+			]
+		},
+		{
+			"anchor": [
+				155.000061035156,
+				324.667785644531
+			],
+			"clip": "move",
+			"direction": "up",
+			"frame": 2,
+			"kind": "cart",
+			"rect": [
+				310,
+				682,
+				310,
+				334
+			]
+		},
+		{
+			"anchor": [
+				155.000061035156,
+				324.667785644531
+			],
+			"clip": "move",
+			"direction": "up",
+			"frame": 3,
+			"kind": "cart",
+			"rect": [
+				620,
+				682,
+				310,
+				334
+			]
+		},
+		{
+			"anchor": [
+				155.000061035156,
+				324.667785644531
+			],
+			"clip": "move",
+			"direction": "up",
+			"frame": 4,
+			"kind": "cart",
+			"rect": [
+				930,
+				682,
+				310,
+				334
+			]
+		},
+		{
+			"anchor": [
+				155.000061035156,
+				324.667785644531
+			],
+			"clip": "move",
+			"direction": "up",
+			"frame": 5,
+			"kind": "cart",
+			"rect": [
+				1240,
+				682,
+				310,
+				334
+			]
+		},
+		{
+			"anchor": [
+				155.000061035156,
+				324.667785644531
+			],
+			"clip": "move",
+			"direction": "up",
+			"frame": 6,
+			"kind": "cart",
+			"rect": [
+				1550,
+				682,
+				310,
+				334
+			]
+		},
+		{
+			"anchor": [
+				155.000061035156,
+				324.667785644531
+			],
+			"clip": "move",
+			"direction": "up",
+			"frame": 7,
+			"kind": "cart",
+			"rect": [
+				1860,
+				682,
+				310,
+				334
+			]
+		},
+		{
+			"anchor": [
+				300.000061035156,
+				324.667785644531
+			],
+			"clip": "move",
+			"direction": "right",
+			"frame": 0,
+			"kind": "cart",
+			"rect": [
+				2170,
+				682,
+				456,
+				344
+			]
+		},
+		{
+			"anchor": [
+				300.000061035156,
+				324.667785644531
+			],
+			"clip": "move",
+			"direction": "right",
+			"frame": 1,
+			"kind": "cart",
+			"rect": [
+				2626,
+				682,
+				456,
+				344
+			]
+		},
+		{
+			"anchor": [
+				300.000061035156,
+				324.667785644531
+			],
+			"clip": "move",
+			"direction": "right",
+			"frame": 2,
+			"kind": "cart",
+			"rect": [
+				3082,
+				682,
+				456,
+				344
+			]
+		},
+		{
+			"anchor": [
+				300.000061035156,
+				324.667785644531
+			],
+			"clip": "move",
+			"direction": "right",
+			"frame": 3,
+			"kind": "cart",
+			"rect": [
+				3538,
+				682,
+				456,
+				344
+			]
+		},
+		{
+			"anchor": [
+				300.000061035156,
+				324.667785644531
+			],
+			"clip": "move",
+			"direction": "right",
+			"frame": 4,
+			"kind": "cart",
+			"rect": [
+				0,
+				1026,
+				456,
+				344
+			]
+		},
+		{
+			"anchor": [
+				300.000061035156,
+				324.667785644531
+			],
+			"clip": "move",
+			"direction": "right",
+			"frame": 5,
+			"kind": "cart",
+			"rect": [
+				456,
+				1026,
+				456,
+				344
+			]
+		},
+		{
+			"anchor": [
+				300.000061035156,
+				324.667785644531
+			],
+			"clip": "move",
+			"direction": "right",
+			"frame": 6,
+			"kind": "cart",
+			"rect": [
+				912,
+				1026,
+				456,
+				344
+			]
+		},
+		{
+			"anchor": [
+				300.000061035156,
+				324.667785644531
+			],
+			"clip": "move",
+			"direction": "right",
+			"frame": 7,
+			"kind": "cart",
+			"rect": [
+				1368,
+				1026,
+				456,
+				344
+			]
+		},
+		{
+			"anchor": [
+				194.000061035156,
+				378.667785644531
+			],
+			"clip": "idle",
+			"direction": "down",
+			"frame": 0,
+			"kind": "wagon",
+			"rect": [
+				1824,
+				1026,
+				388,
+				428
+			]
+		},
+		{
+			"anchor": [
+				795.000061035156,
+				398.667785644531
+			],
+			"clip": "idle",
+			"direction": "left",
+			"frame": 0,
+			"kind": "wagon",
+			"rect": [
+				2212,
+				1026,
+				1032,
+				420
+			]
+		},
+		{
+			"anchor": [
+				194.000061035156,
+				446.667785644531
+			],
+			"clip": "idle",
+			"direction": "up",
+			"frame": 0,
+			"kind": "wagon",
+			"rect": [
+				3244,
+				1026,
+				388,
+				466
+			]
+		},
+		{
+			"anchor": [
+				237.000061035156,
+				398.667785644531
+			],
+			"clip": "idle",
+			"direction": "right",
+			"frame": 0,
+			"kind": "wagon",
+			"rect": [
+				0,
+				1492,
+				1032,
+				420
+			]
+		},
+		{
+			"anchor": [
+				194.000061035156,
+				378.667785644531
+			],
+			"clip": "move",
+			"direction": "down",
+			"frame": 0,
+			"kind": "wagon",
+			"rect": [
+				1032,
+				1492,
+				388,
+				426
+			]
+		},
+		{
+			"anchor": [
+				194.000061035156,
+				378.667785644531
+			],
+			"clip": "move",
+			"direction": "down",
+			"frame": 1,
+			"kind": "wagon",
+			"rect": [
+				1420,
+				1492,
+				388,
+				422
+			]
+		},
+		{
+			"anchor": [
+				194.000061035156,
+				378.667785644531
+			],
+			"clip": "move",
+			"direction": "down",
+			"frame": 2,
+			"kind": "wagon",
+			"rect": [
+				1808,
+				1492,
+				388,
+				425
+			]
+		},
+		{
+			"anchor": [
+				194.000061035156,
+				378.667785644531
+			],
+			"clip": "move",
+			"direction": "down",
+			"frame": 3,
+			"kind": "wagon",
+			"rect": [
+				2196,
+				1492,
+				388,
+				434
+			]
+		},
+		{
+			"anchor": [
+				194.000061035156,
+				378.667785644531
+			],
+			"clip": "move",
+			"direction": "down",
+			"frame": 4,
+			"kind": "wagon",
+			"rect": [
+				2584,
+				1492,
+				388,
+				426
+			]
+		},
+		{
+			"anchor": [
+				194.000061035156,
+				378.667785644531
+			],
+			"clip": "move",
+			"direction": "down",
+			"frame": 5,
+			"kind": "wagon",
+			"rect": [
+				2972,
+				1492,
+				388,
+				423
+			]
+		},
+		{
+			"anchor": [
+				194.000061035156,
+				378.667785644531
+			],
+			"clip": "move",
+			"direction": "down",
+			"frame": 6,
+			"kind": "wagon",
+			"rect": [
+				3360,
+				1492,
+				388,
+				425
+			]
+		},
+		{
+			"anchor": [
+				194.000061035156,
+				378.667785644531
+			],
+			"clip": "move",
+			"direction": "down",
+			"frame": 7,
+			"kind": "wagon",
+			"rect": [
+				0,
+				1926,
+				388,
+				434
+			]
+		},
+		{
+			"anchor": [
+				796.000061035156,
+				398.667785644531
+			],
+			"clip": "move",
+			"direction": "left",
+			"frame": 0,
+			"kind": "wagon",
+			"rect": [
+				388,
+				1926,
+				1033,
+				420
+			]
+		},
+		{
+			"anchor": [
+				796.000061035156,
+				397.667785644531
+			],
+			"clip": "move",
+			"direction": "left",
+			"frame": 1,
+			"kind": "wagon",
+			"rect": [
+				1421,
+				1926,
+				1033,
+				419
+			]
+		},
+		{
+			"anchor": [
+				802.000061035156,
+				391.667785644531
+			],
+			"clip": "move",
+			"direction": "left",
+			"frame": 2,
+			"kind": "wagon",
+			"rect": [
+				2454,
+				1926,
+				1039,
+				413
+			]
+		},
+		{
+			"anchor": [
+				795.000061035156,
+				398.667785644531
+			],
+			"clip": "move",
+			"direction": "left",
+			"frame": 3,
+			"kind": "wagon",
+			"rect": [
+				0,
+				2360,
+				1032,
+				420
+			]
+		},
+		{
+			"anchor": [
+				796.000061035156,
+				404.667785644531
+			],
+			"clip": "move",
+			"direction": "left",
+			"frame": 4,
+			"kind": "wagon",
+			"rect": [
+				1032,
+				2360,
+				1033,
+				426
+			]
+		},
+		{
+			"anchor": [
+				795.000061035156,
+				397.667785644531
+			],
+			"clip": "move",
+			"direction": "left",
+			"frame": 5,
+			"kind": "wagon",
+			"rect": [
+				2065,
+				2360,
+				1032,
+				419
+			]
+		},
+		{
+			"anchor": [
+				803.000061035156,
+				391.667785644531
+			],
+			"clip": "move",
+			"direction": "left",
+			"frame": 6,
+			"kind": "wagon",
+			"rect": [
+				0,
+				2786,
+				1040,
+				413
+			]
+		},
+		{
+			"anchor": [
+				795.000061035156,
+				398.667785644531
+			],
+			"clip": "move",
+			"direction": "left",
+			"frame": 7,
+			"kind": "wagon",
+			"rect": [
+				1040,
+				2786,
+				1032,
+				420
+			]
+		},
+		{
+			"anchor": [
+				194.000061035156,
+				451.667785644531
+			],
+			"clip": "move",
+			"direction": "up",
+			"frame": 0,
+			"kind": "wagon",
+			"rect": [
+				2072,
+				2786,
+				388,
+				471
+			]
+		},
+		{
+			"anchor": [
+				194.000061035156,
+				445.667785644531
+			],
+			"clip": "move",
+			"direction": "up",
+			"frame": 1,
+			"kind": "wagon",
+			"rect": [
+				2460,
+				2786,
+				388,
+				465
+			]
+		},
+		{
+			"anchor": [
+				194.000061035156,
+				439.667785644531
+			],
+			"clip": "move",
+			"direction": "up",
+			"frame": 2,
+			"kind": "wagon",
+			"rect": [
+				2848,
+				2786,
+				388,
+				459
+			]
+		},
+		{
+			"anchor": [
+				194.000061035156,
+				446.667785644531
+			],
+			"clip": "move",
+			"direction": "up",
+			"frame": 3,
+			"kind": "wagon",
+			"rect": [
+				3236,
+				2786,
+				388,
+				466
+			]
+		},
+		{
+			"anchor": [
+				194.000061035156,
+				451.667785644531
+			],
+			"clip": "move",
+			"direction": "up",
+			"frame": 4,
+			"kind": "wagon",
+			"rect": [
+				3624,
+				2786,
+				388,
+				471
+			]
+		},
+		{
+			"anchor": [
+				194.000061035156,
+				445.667785644531
+			],
+			"clip": "move",
+			"direction": "up",
+			"frame": 5,
+			"kind": "wagon",
+			"rect": [
+				0,
+				3257,
+				388,
+				465
+			]
+		},
+		{
+			"anchor": [
+				194.000061035156,
+				439.667785644531
+			],
+			"clip": "move",
+			"direction": "up",
+			"frame": 6,
+			"kind": "wagon",
+			"rect": [
+				388,
+				3257,
+				388,
+				459
+			]
+		},
+		{
+			"anchor": [
+				194.000061035156,
+				446.667785644531
+			],
+			"clip": "move",
+			"direction": "up",
+			"frame": 7,
+			"kind": "wagon",
+			"rect": [
+				776,
+				3257,
+				388,
+				466
+			]
+		},
+		{
+			"anchor": [
+				237.000061035156,
+				404.667785644531
+			],
+			"clip": "move",
+			"direction": "right",
+			"frame": 0,
+			"kind": "wagon",
+			"rect": [
+				1164,
+				3257,
+				1033,
+				426
+			]
+		},
+		{
+			"anchor": [
+				237.000061035156,
+				397.667785644531
+			],
+			"clip": "move",
+			"direction": "right",
+			"frame": 1,
+			"kind": "wagon",
+			"rect": [
+				2197,
+				3257,
+				1033,
+				419
+			]
+		},
+		{
+			"anchor": [
+				237.000061035156,
+				391.667785644531
+			],
+			"clip": "move",
+			"direction": "right",
+			"frame": 2,
+			"kind": "wagon",
+			"rect": [
+				0,
+				3723,
+				1039,
+				413
+			]
+		},
+		{
+			"anchor": [
+				237.000061035156,
+				398.667785644531
+			],
+			"clip": "move",
+			"direction": "right",
+			"frame": 3,
+			"kind": "wagon",
+			"rect": [
+				1039,
+				3723,
+				1032,
+				420
+			]
+		},
+		{
+			"anchor": [
+				237.000061035156,
+				398.667785644531
+			],
+			"clip": "move",
+			"direction": "right",
+			"frame": 4,
+			"kind": "wagon",
+			"rect": [
+				2071,
+				3723,
+				1033,
+				420
+			]
+		},
+		{
+			"anchor": [
+				237.000061035156,
+				397.667785644531
+			],
+			"clip": "move",
+			"direction": "right",
+			"frame": 5,
+			"kind": "wagon",
+			"rect": [
+				0,
+				4143,
+				1032,
+				419
+			]
+		},
+		{
+			"anchor": [
+				237.000061035156,
+				391.667785644531
+			],
+			"clip": "move",
+			"direction": "right",
+			"frame": 6,
+			"kind": "wagon",
+			"rect": [
+				1032,
+				4143,
+				1040,
+				413
+			]
+		},
+		{
+			"anchor": [
+				237.000061035156,
+				398.667785644531
+			],
+			"clip": "move",
+			"direction": "right",
+			"frame": 7,
+			"kind": "wagon",
+			"rect": [
+				2072,
+				4143,
+				1032,
+				420
+			]
+		}
+	],
+	"ground_anchor": "chassis centre at ground origin",
+	"horse_source": "res://assets/mounts/horse/standard_horse_pack.glb",
+	"map_scale": 0.189904557921727,
+	"move_frames": 8,
+	"pixels_per_metre": 37.12841796875,
+	"source_viewport": [
+		1920,
+		1536
+	],
+	"version": 1
+}

@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "units": "metres",
+  "ground_anchor": [
+    0,
+    0,
+    0
+  ],
+  "vehicles": [
+    {
+      "kind": "cart",
+      "floor_metres": 0.5900000000000001,
+      "wheel_radius_metres": 0.39,
+      "body_width_metres": 1.05,
+      "body_length_metres": 1.35,
+      "horse_source": "",
+      "horse_offset": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "kind": "wagon",
+      "floor_metres": 0.66,
+      "wheel_radius_metres": 0.46,
+      "body_width_metres": 1.45,
+      "body_length_metres": 2.05,
+      "horse_source": "res://assets/mounts/horse/standard_horse_pack.glb",
+      "horse_offset": [
+        0,
+        0,
+        2.6
+      ]
+    }
+  ]
+}

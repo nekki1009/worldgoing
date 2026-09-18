@@ -49,7 +49,7 @@ func _run() -> void:
 	for clip: StringName in Bounds.CURVES:
 		if str(clip).begins_with("guard"):
 			assert(not bound.clips.has(clip), "Every guard/parry transition stays outside the body/all-shield contract")
-	assert(not bound.clips.has(&"attack_unknown") and not bound.clips.has(&"attack_jump_heavy"))
+	assert(not bound.clips.has(&"attack_unknown") and not bound.clips.has(&"attack_jump_heavy"), "Generated jump heavy keeps the safe 256-pixel fallback outside this native-curve proof")
 	_check_time()
 	if group == 0:
 		_geometry_cases(source, manifest.appearance, bound)

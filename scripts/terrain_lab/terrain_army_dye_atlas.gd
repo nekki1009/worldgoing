@@ -44,6 +44,8 @@ static func canvas_color(value: String) -> Vector4:
 
 static func fingerprints() -> Dictionary:
 	var result := Plan.fingerprints()
+	if result.is_empty():
+		return {}
 	for path: String in EXTRA_SOURCES:
 		var source_md5 := FileAccess.get_md5(path)
 		if source_md5.length() != 32: return {}

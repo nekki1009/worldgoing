@@ -11,8 +11,8 @@ var cache_hits := 0
 var unsupported := 0
 var _sample_cache: Dictionary = {}
 
-func load_profile() -> bool:
-	var file := FileAccess.open_compressed(PROFILE_PATH, FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
+func load_profile(profile_path: String = PROFILE_PATH) -> bool:
+	var file := FileAccess.open_compressed(profile_path, FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
 	if file == null:
 		return false
 	var data: Variant = file.get_var(false)

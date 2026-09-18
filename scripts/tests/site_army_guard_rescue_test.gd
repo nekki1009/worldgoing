@@ -13,6 +13,9 @@ func run() -> void:
 		data.static_blocked[index] = 0
 	data.ramp_edges.fill(0)
 	var army := TerrainArmy.new()
+	# Use the formal exchange owner; the legacy exact-contact 3D renderer is
+	# unrelated to guard/rescue timing and cannot validate materials headless.
+	army.exchange_enabled = true
 	root.add_child(army)
 	army.set_process(false)
 	var selected: Array[Vector2i] = []

@@ -4,8 +4,13 @@ const DyeAtlas = preload("res://scripts/terrain_lab/terrain_army_dye_atlas.gd")
 const Atlas = preload("res://scripts/terrain_lab/terrain_army_equipment_atlas.gd")
 var out := ""
 var weapon_material := ""
+var female := false
+var female_ranged := false
 
 func _initialize() -> void:
+	female = "--female" in OS.get_cmdline_user_args()
+	female_ranged = "--female-ranged" in OS.get_cmdline_user_args()
+	female = female or female_ranged
 	for argument: String in OS.get_cmdline_user_args():
 		if argument.begins_with("--weapon-material="):
 			weapon_material = argument.trim_prefix("--weapon-material=")
@@ -15,19 +20,21 @@ func _initialize() -> void:
 func _run() -> void:
 	if DisplayServer.get_name() == "headless": quit(1); return
 	create_timer(90.0 if weapon_material.is_empty() else 150.0).timeout.connect(func() -> void: push_error("Pixel test deadline"); quit(1))
-	if not weapon_material.is_empty():
+	if not weapon_material.is_empty() or female:
 		# New 1057-case matrix: retain full per-pixel comparisons at 1:1 scale,
 		# with an explicit canvas enclosing the original ground (900, 800).
 		root.size = Vector2i(1280, 1000)
 		root.content_scale_size = root.size
 	out = "res://output/site_army_scale_20260914/pixels_%d" % int(Time.get_unix_time_from_system())
 	if not weapon_material.is_empty(): out = "res://output/weapon_materials_npc_20260917/batch_pixels/" + weapon_material
+	if female: out = "res://output/terrain_army_gender_20260918/pixels"
+	if female_ranged: out = "res://output/ranged_behavior_fix_20260918/female/batch_pixels"
 	DirAccess.make_dir_recursive_absolute(out)
 	var army := TerrainArmy.new()
 	root.add_child(army)
 	army.set_process(false)
 	assert(TerrainArmy.load_combat_bake() and army._load_baked_soldier())
-	var parity_samples := _check_sample_parity(army) if weapon_material.is_empty() else 0
+	var parity_samples := _check_sample_parity(army) if weapon_material.is_empty() and not female else 0
 	var batch := Batch.new()
 	root.add_child(batch)
 	batch.setup(army, 256)
@@ -47,18 +54,27 @@ func _run() -> void:
 	var checked := 0
 	var differences := []
 	var weapons: Array = ["longsword_01", "bow_01", "crossbow_01"]
+	if female: weapons = ["longsword_01"]
+	if female_ranged: weapons = ["bow_01", "crossbow_01"]
 	if not weapon_material.is_empty():
 		weapons.clear()
 		for row: Dictionary in Atlas.RangedAtlas.Materials.OPTIONS:
 			if row.get("material") == weapon_material: weapons.append(row.id)
 	for weapon: String in weapons:
 		var appearance: Dictionary = TerrainArmy._combat_bake.manifest.appearance.duplicate(true)
+		if female: appearance = Atlas.female_appearance()
 		appearance.parts.weapon = weapon
 		if weapon != "longsword_01" or not weapon_material.is_empty(): appearance.parts.shield = "none"
 		# The published geometry has no helmet or cape: dyeing an absent slot
 		# is correctly rejected by the original appearance admission contract.
 		appearance.equipment_dyes = {"armor": "76a92dff", "boots": "8453b1ff", "outfit": "f4ca78ff"}
 		var clips: Array = ["combat_idle", "combat_walk", "hit", "down", str(HumanCharacter3DEditor.WEAPON_ATTACK_MAP[HumanCharacter3DEditor.WeaponMaterials.family(StringName(weapon))])]
+		if female:
+			clips.clear()
+			for key: String in Atlas.female_recipe(appearance).sequences:
+				var clip_id := key.get_slice("|", 0)
+				if clip_id not in clips: clips.append(clip_id)
+			assert(clips.size() == (20 if female_ranged else 19))
 		if not weapon_material.is_empty():
 			for guard: String in ["guard", "guard_raise", "guard_break"]: clips.append(Atlas.RangedAtlas.reference_clip(weapon, guard))
 		for clip: String in clips:
@@ -68,7 +84,7 @@ func _run() -> void:
 			for direction: String in ["down", "left", "up", "right"]:
 				for elapsed: float in [0.0, 0.371, 0.9]:
 					var frame: Dictionary
-					if weapon == "longsword_01" and weapon_material.is_empty():
+					if weapon == "longsword_01" and weapon_material.is_empty() and not female:
 						var clock: Array = TerrainArmy._combat_bake.contact_clocks[clip][direction]
 						var time := fposmod(elapsed, float(clock[1])) if bool(clock[2]) else minf(elapsed, float(clock[1]))
 						frame = clock[3][0]
@@ -84,7 +100,7 @@ func _run() -> void:
 						sprite.texture = frame.texture
 					sprite.scale = Vector2.ONE * army._soldier_map_scale
 					sprite.position = ground - Vector2(float(frame.anchor_offset.x), float(frame.anchor_offset.y)) * army._soldier_map_scale
-					if not DyeAtlas.apply(sprite, appearance):
+					if not Atlas.apply_dye(sprite, appearance):
 						push_error("Reference dye admission failed at case %d: %s; entry=%s" % [checked, str(appearance), DyeAtlas.entry(appearance)])
 						quit(1)
 						return
@@ -93,7 +109,7 @@ func _run() -> void:
 					neighbour.texture = sprite.texture
 					neighbour.scale = sprite.scale
 					neighbour.position = sprite.position + Vector2(12, 0)
-					assert(DyeAtlas.apply(neighbour, neighbour_appearance))
+					assert(Atlas.apply_dye(neighbour, neighbour_appearance))
 					neighbour.show()
 					sprite.show()
 					batch.hide()

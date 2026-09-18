@@ -69,7 +69,7 @@ func _outcome(result: Dictionary, first: bool) -> Dictionary:
 	var winner := int(result.winner)
 	var loses := winner != 0 and ((winner < 0) == first)
 	return {"role": "draw" if winner == 0 else ("loser" if loses else "winner"), "kind": result.kind,
-		"hp": result.hp if loses else 0.0, "stun": result.stun if loses else 0.0,
+		"hp": result.hp_a if first else result.hp_b, "stun": result.stun_a if first else result.stun_b,
 		"stagger": result.hold if winner == 0 else (result.stagger if loses else 0.0),
 		"knockback": loses and bool(result.knockback), "fatigue": result.fatigue_a if first else result.fatigue_b}
 
@@ -124,7 +124,9 @@ func run() -> void:
 		and actor.body_requests == 0 and actor._strike_at == -1.0 and actor.action_time == 0.0,
 		"Bow/crossbow holders remain close-combat participants without legacy body aiming"):
 		return
-	if not _check(actor.exchange_stats().ability == 50.0 and actor.exchange_stats().armorbonus == 12.75, "Martial default and actual armor/shield bonus"):
+	if not _check(actor.exchange_stats().ability == 50.0 and actor.exchange_stats().armorbonus == 12.75
+		and actor.exchange_stats().weapon == "bow_01" and actor.exchange_stats().armor == "armor_mingguang_01",
+		"Martial default and actual weapon/armor holder stats"):
 		return
 	for slot: String in ["armor", "shield"]:
 		var moved := Runtime.transfer_items(data, actor.item_state, actor.ammo_inventory, data.site.depot_items, data.site.inventory,
@@ -146,7 +148,7 @@ func run() -> void:
 	var big := SiteCombatRules.exchange_result(actor.exchange_stats(), npc.exchange_stats())
 	actor.apply_exchange(npc.terrain_cell, _outcome(big, true))
 	if not _check(actor.exchange_skill_cooldown == 8.0 and actor.exchange_stats().skill == ""
-		and actor.visual_state.animation_id == &"attack_unarmed" and actor.step(Vector2i.UP), "Consumption starts cooldown; bow winner can move immediately"):
+		and actor.visual_state.animation_id == &"attack_jump_heavy" and actor.step(Vector2i.UP), "Consumption starts cooldown; a big winner uses the jump attack and can move immediately"):
 		return
 	_advance(actor, 7.99)
 	if not _check(not actor.activate_exchange_skill("brace"), "Skill cannot be reused before eight consumed seconds"):
@@ -160,7 +162,7 @@ func run() -> void:
 	npc.place(Vector2i(6, 5), true)
 	npc.stun = 95.0
 	npc.apply_exchange(actor.terrain_cell, _outcome(big, false))
-	if not _check(npc.hp == 98.0 and npc.knockout_left == SiteCombatRules.KNOCKOUT_SECONDS
+	if not _check(npc.hp == 99.0 and npc.knockout_left == SiteCombatRules.KNOCKOUT_SECONDS
 		and npc.terrain_cell == Vector2i(7, 5) and npc.is_moving(), "Big loss reserves a legal retreat before original KO"):
 		return
 	_advance(npc, TerrainTestCharacter.MOVE_DURATION)
@@ -207,9 +209,11 @@ func run() -> void:
 	actor.faction_id = npc.faction_id
 	if not _check(npc.start_rescue(actor) and not npc.exchange_ready() and npc.exchange_can_receive(), "Actual rescuer remains a receivable target"):
 		return
-	npc.apply_exchange(Vector2i(7, 5), {"role": "draw", "kind": "draw", "hp": 0.0, "stun": 0.0, "stagger": 0.3, "fatigue": 0.5})
+	var fatigue_before_draw := npc.fatigue
+	npc.apply_exchange(Vector2i(7, 5), {"role": "draw", "kind": "draw", "hp": 0.0, "stun": 8.0, "stagger": 0.3, "fatigue": 0.0})
 	if not _check(npc._rescue_left == 0.0 and actor._rescuer == null and npc.guarding and npc.exchange_stagger == 0.3
-		and npc.action_time == 0.3, "Draw cancels real rescue links and holds original busy clock"):
+		and npc.action_time == 0.3 and npc.hp == 100.0 and npc.stun == 8.0 and npc.fatigue == fatigue_before_draw,
+		"Draw adds only weapon stun, cancels rescue and holds the original busy clock"):
 		return
 	_advance(npc, 0.3)
 	if not _check(not npc.guarding and npc.exchange_stagger == 0.0 and not npc.exchange_ready(), "Draw hold ends before the one-second pair cooldown"):

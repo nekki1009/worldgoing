@@ -6,12 +6,14 @@ const MAX_ZOOM := 10.0
 const ZOOM_STEP := 1.20
 const ACTION_STEP := 1.0 / 120.0
 const ACTION_TIME_EPSILON := 0.000000000001
+const SIMULATION_SPEEDS: Array[float] = [0.5, 1.0, 2.0, 4.0]
 const Site = preload("res://scripts/terrain_lab/site_controller.gd")
 const SiteEnv = preload("res://scripts/terrain_lab/site_environment.gd")
 const FatigueGeometry = preload("res://scripts/terrain_lab/terrain_weapon_collision.gd")
 const ExchangeSnapshot = preload("res://scripts/terrain_lab/site_exchange_snapshot.gd")
 var site_controller: Node
 var pause_when_unfocused := true
+var simulation_speed := 1.0
 
 var terrain: TerrainData
 var renderer: TerrainRenderer
@@ -19,6 +21,7 @@ var character: TerrainTestCharacter
 var npc: TerrainTestNPC
 var army: TerrainArmy
 var opposing_army: TerrainArmy
+var third_army: TerrainArmy
 var combat_armies: Array[TerrainArmy] = []
 var camera: Camera2D
 var preset_dropdown: OptionButton
@@ -28,6 +31,7 @@ var debug_toggle: CheckButton
 var movement_toggle: CheckButton
 var npc_command_dropdown: OptionButton
 var npc_command_button: Button
+var npc_allied_toggle: CheckButton
 var info: Label
 var parameters_label: Label
 var status: Label
@@ -36,7 +40,7 @@ var _dragging: bool = false
 var _info_time: float = 0.0
 var _held_directions: Dictionary = {}
 var _last_direction_key: int = -1
-var _move_cooldown: float = 0.0
+var _movement_input_actor: TerrainTestCharacter
 var _run_held: bool = false
 var _npc_target_pending := false
 var npc_retaliates := false
@@ -109,13 +113,17 @@ func _ready() -> void:
 	npc.name = "CommandTestNPC"
 	npc.process_mode = Node.PROCESS_MODE_PAUSABLE
 	npc.z_index = 11
+	# Preserve the existing actor/save appearance contract without constructing
+	# the female 3D presenter on the main map.
+	npc.visual_state.body_index = 1
 	add_child(npc)
-	npc.initialize_visual()
 	character.opponent = npc
 	npc.opponent = character
 	character.person_id = 1
 	npc.person_id = 2
-	npc.faction_id = 1
+	# The retained camp worker is not an invisible enemy threatening every
+	# returning work team. Explicit test allegiance and saved states still win.
+	npc.faction_id = character.faction_id
 	npc.auto_face = true
 	combat_actors.assign([character, npc])
 	for actor: TerrainTestCharacter in combat_actors:
@@ -136,9 +144,14 @@ func _ready() -> void:
 	opposing_army.team_id = 2
 	opposing_army.faction_id = 1
 	add_child(opposing_army)
-	combat_armies.assign([army, opposing_army])
-	army.external_blocker = opposing_army.blocks_cell
-	opposing_army.external_blocker = army.blocks_cell
+	third_army = TerrainArmy.new()
+	third_army.name = "ThirdArmy"
+	third_army.process_mode = Node.PROCESS_MODE_PAUSABLE
+	third_army.team_id = 3
+	third_army.faction_id = 2
+	add_child(third_army)
+	combat_armies.assign([army, opposing_army, third_army])
+	_configure_army_blockers()
 	for team: TerrainArmy in combat_armies:
 		team.person_id_allocator = _allocate_army_person_ids
 		team.exchange_enabled = exchange_enabled
@@ -147,14 +160,15 @@ func _ready() -> void:
 		team.target_query = _army_target
 		team.combat_target_query = _combat_target
 		team.exchange_people_query = _exchange_people.bind(false) # Maneuvering reads identity/cell/faction, not attack readiness.
+		team.ranged_tactics_query = _ranged_tactics
 		team.contact_sink = func(packet: Dictionary) -> void: _combat_contacts.append(packet)
 	for actor: TerrainTestCharacter in combat_actors:
 		actor.army_contacts = _collect_army_contacts
 		actor.combat_target_query = _combat_target
 		actor.combat_mode_query = has_combat_armies
 		actor.training_query = _original_actor_training.bind(actor)
-	character.cell_blocker = Callable(army, "blocks_cell")
-	npc.cell_blocker = Callable(army, "blocks_cell")
+	character.cell_blocker = _armies_block_cell
+	npc.cell_blocker = _armies_block_cell
 	camera = Camera2D.new()
 	camera.name = "LabCamera"
 	add_child(camera)
@@ -245,16 +259,15 @@ func _build_ui() -> void:
 		npc.set_process(enabled)
 		if not enabled:
 			_clear_movement_input())
-	_label(column, "NPC command test", 20)
+	_label(column, "工人命令測試", 20)
 	npc_command_dropdown = OptionButton.new()
 	npc_command_dropdown.add_theme_font_size_override("font_size", 19)
 	for command_name: String in TerrainTestNPC.COMMAND_NAMES:
 		npc_command_dropdown.add_item(command_name)
 	npc_command_dropdown.select(TerrainTestNPC.Command.MOVE_TO_CELL)
 	column.add_child(npc_command_dropdown)
-	npc_command_button = _button(column, "Issue NPC command", issue_npc_command)
+	npc_command_button = _button(column, "下達工人命令", issue_npc_command)
 	_label(column, "Move: issue command, then click a destination.", 16)
-	_button(column, "NPC female parts / animation", npc.open_editor)
 	_label(column, "COMBAT TEST | Space: attack | G: guard", 18)
 	_button(column, "Attack NPC (equipped weapon)", func() -> void: character.start_attack(npc))
 	selected_army_label = _label(column, "點選軍隊格位選中士兵；不會搬動玩家。", 16)
@@ -271,14 +284,16 @@ func _build_ui() -> void:
 		character.reset_combat()
 		npc.reset_combat())
 	_button(column, "Rescue adjacent ally (4s)", func() -> void: character.start_rescue(npc))
-	var allied := CheckButton.new()
-	allied.text = "NPC is allied (melee obstruction / rescue test)"
-	column.add_child(allied)
-	allied.toggled.connect(func(enabled: bool) -> void:
+	npc_allied_toggle = CheckButton.new()
+	npc_allied_toggle.name = "NPCAllied"
+	npc_allied_toggle.text = "NPC is allied (melee obstruction / rescue test)"
+	npc_allied_toggle.button_pressed = npc.faction_id == character.faction_id
+	column.add_child(npc_allied_toggle)
+	npc_allied_toggle.toggled.connect(func(enabled: bool) -> void:
 		if character.action_time <= 0.0 and npc.action_time <= 0.0 and character.projectiles.is_empty() and npc.projectiles.is_empty():
 			npc.faction_id = character.faction_id if enabled else 1
 		else:
-			allied.set_pressed_no_signal(npc.faction_id == character.faction_id))
+			npc_allied_toggle.set_pressed_no_signal(npc.faction_id == character.faction_id))
 	combat_info = _label(column, "", 18)
 	_label(column, "ARMY TEST | 1 captain + 99 soldiers", 18)
 	deploy_army_button = _button(column, "Deploy 100-person army", deploy_army)
@@ -365,9 +380,8 @@ func bind_terrain(value: TerrainData) -> void:
 	ranged_resolutions = 0
 	for kind: String in ranged_results:
 		ranged_results[kind] = 0
-	army.clear()
-	if opposing_army != null:
-		opposing_army.clear()
+	for team: TerrainArmy in combat_armies:
+		team.clear()
 	TerrainArmy.release_contact_source()
 	_clear_movement_input()
 	_npc_target_pending = false
@@ -400,6 +414,7 @@ func bind_terrain(value: TerrainData) -> void:
 			actor.fatigue_rest = 0.0
 			actor._fatigue_slowdown = 0.0
 	var army_states: Array = terrain.site.get("armies", [])
+	_configure_army_blockers(army_states.size() > 2)
 	for index in range(army_states.size()):
 		combat_armies[index].restore_combat_state(army_states[index], terrain, character, npc)
 	if not actor_states.is_empty():
@@ -407,6 +422,7 @@ func bind_terrain(value: TerrainData) -> void:
 		character.restore_links(actor_states.player, identities)
 		npc.restore_links(actor_states.npc, identities)
 	selected_army_target = 0
+	npc_allied_toggle.set_pressed_no_signal(npc.faction_id == character.faction_id)
 	seed_input.text = str(terrain.seed_value)
 	preset_dropdown.select(terrain.preset)
 	site_controller.bind()
@@ -426,7 +442,22 @@ func _next_army_identity() -> int:
 		next_team = maxi(next_team, int(identity) + 1)
 	return next_team
 
-func _allocate_army_person_ids(count: int) -> Array[int]:
+func _armies_block_cell(cell: Vector2i, ignored: Variant = null) -> bool:
+	for team: TerrainArmy in combat_armies:
+		if team != ignored and team.blocks_cell(cell, ignored):
+			return true
+	return false
+
+func _configure_army_blockers(with_third: bool = false) -> void:
+	# Preserve the original pair's canonical fast readers while the third slot is empty.
+	var three := with_third or third_army != null and third_army.has_army()
+	for team: TerrainArmy in combat_armies:
+		if three or team == third_army:
+			team.external_blocker = _armies_block_cell.bind(team)
+		else:
+			team.external_blocker = opposing_army.blocks_cell if team == army else army.blocks_cell
+
+func _next_army_person_id() -> int:
 	# A Site-scoped monotonic sequence also includes past owners whose ground
 	# items remain after a test team is cleared. Never derive new IDs from slots.
 	var next_person := int(terrain.site.get("next_person_id", 1))
@@ -441,6 +472,16 @@ func _allocate_army_person_ids(count: int) -> Array[int]:
 		next_person = maxi(next_person, int(container.original_owner) + 1)
 	for relation: Dictionary in terrain.site.get("captivity", {}).values():
 		next_person = maxi(next_person, maxi(int(relation.captor_id), int(relation.guard_id)) + 1)
+	return next_person
+
+func _can_allocate_army_person_ids(count: int) -> bool:
+	var next_person := _next_army_person_id()
+	if next_person <= TerrainArmy.PLAYER_MEMBER and next_person + count >= TerrainArmy.PLAYER_MEMBER:
+		next_person = TerrainArmy.PLAYER_MEMBER + 1
+	return count >= 0 and next_person + count <= 2147483647
+
+func _allocate_army_person_ids(count: int) -> Array[int]:
+	var next_person := _next_army_person_id()
 	if next_person <= TerrainArmy.PLAYER_MEMBER and next_person + count >= TerrainArmy.PLAYER_MEMBER:
 		next_person = TerrainArmy.PLAYER_MEMBER + 1
 	var result: Array[int] = []
@@ -487,9 +528,9 @@ func clear_army() -> void:
 		var target := _combat_target(actor.attack_target_id)
 		if not target.is_empty() and target.owner is TerrainArmy:
 			actor.attack_target_id = 0
-	army.clear()
-	if opposing_army != null:
-		opposing_army.clear()
+	for team: TerrainArmy in combat_armies:
+		team.clear()
+	_configure_army_blockers()
 	if terrain != null and not terrain.site.is_empty():
 		terrain.site["army_trial_active"] = false
 		terrain.site["armies"] = []
@@ -602,8 +643,41 @@ func _held_direction() -> Vector2i:
 func _clear_movement_input() -> void:
 	_held_directions.clear()
 	_last_direction_key = -1
-	_move_cooldown = 0.0
 	_run_held = false
+	_release_movement_input_actor()
+
+func _release_movement_input_actor() -> void:
+	if is_instance_valid(_movement_input_actor):
+		_movement_input_actor.release_movement_intent()
+	_movement_input_actor = null
+
+func _advance_movement_input() -> void:
+	# The original body owns its committed step. Input is sampled once per shared
+	# action tick, never once per rendered frame or with a second move cooldown.
+	if movement_toggle == null or not movement_toggle.button_pressed:
+		_clear_movement_input()
+		return
+	var direction := _held_direction()
+	var person := controlled_target()
+	if direction == Vector2i.ZERO or person.is_empty():
+		_release_movement_input_actor()
+		return
+	if int(person.unit) >= 0:
+		_release_movement_input_actor()
+		if person.owner.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL:
+			return
+	else:
+		if is_instance_valid(_movement_input_actor) and _movement_input_actor != person.owner:
+			_release_movement_input_actor()
+		_movement_input_actor = person.owner
+		if person.owner.is_moving():
+			# Facing can be changed by combat auto-face; only the committed edge
+			# describes travel. Finish that edge before reserving a new direction.
+			if direction != person.owner.terrain_cell - person.owner.movement_from_cell:
+				person.owner.steer_movement_intent(direction)
+			return
+	# A blocked attempt is bounded to this one tick and adds no full-step delay.
+	_try_move(direction)
 
 func controlled_person_id() -> int:
 	var original_id: int = character.person_id if is_instance_valid(character) else 0
@@ -661,14 +735,18 @@ func _report_move(moved: bool) -> void:
 func _try_move(direction: Vector2i) -> void:
 	var running := _run_held
 	var person := controlled_target()
-	if person.is_empty():
+	if person.is_empty() or get_tree().paused or bool(terrain.site.get("paused", false)):
 		return
 	if int(person.unit) >= 0:
 		_report_move(person.owner._reserve_combat_step(int(person.unit), Vector2i(person.cell) + direction, 0, running))
-		_move_cooldown = TerrainArmy.RUN_DURATION if running else TerrainArmy.MOVE_DURATION
 	else:
-		_report_move(person.owner.step(direction, running))
-		_move_cooldown = person.owner.get_move_interval(running)
+		if is_instance_valid(_movement_input_actor) and _movement_input_actor != person.owner:
+			_release_movement_input_actor()
+		_movement_input_actor = person.owner
+		var moved: bool = person.owner.step(direction, running)
+		if not moved:
+			person.owner.release_movement_intent()
+		_report_move(moved)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if (character.editor_window != null and character.editor_window.visible) or (npc.editor_window != null and npc.editor_window.visible):
@@ -677,7 +755,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	if site_controller != null and site_controller.handle_input(event):
 		get_viewport().set_input_as_handled()
 		return
-	if get_tree().paused and event is InputEventKey:
+	if (get_tree().paused or terrain != null and bool(terrain.site.get("paused", false))) and event is InputEventKey:
+		_clear_movement_input()
 		return
 	if event is InputEventMouseButton:
 		var mouse := event as InputEventMouseButton
@@ -714,7 +793,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			if selected_army_target > 0:
 				attack_selected_soldier()
 			else:
-				controlled_attack(npc.person_id if controlled_person_id() != npc.person_id else character.person_id)
+				status.text = "請先點選敵方軍隊人物；工人不再是預設攻擊目標。"
 			get_viewport().set_input_as_handled()
 			return
 		if key == KEY_G and not key_event.echo:
@@ -730,18 +809,21 @@ func _unhandled_input(event: InputEvent) -> void:
 			if key_event.pressed and not key_event.echo and movement_toggle.button_pressed:
 				_held_directions[key] = direction
 				_last_direction_key = key
-				if _move_cooldown <= 0.0:
-					_try_move(direction)
 			elif not key_event.pressed:
 				_held_directions.erase(key)
 				if _held_directions.is_empty():
-					_move_cooldown = 0.0
+					_release_movement_input_actor()
 			get_viewport().set_input_as_handled()
 			return
 		if key == KEY_F and key_event.pressed and not key_event.echo and movement_toggle.button_pressed:
 			var person := controlled_target()
-			var mounted: bool = not person.is_empty() and int(person.unit) < 0 and person.owner.toggle_mount()
-			status.text = "Mounted horse. Ride with WASD + Shift." if mounted else "Dismounted."
+			if person.is_empty() or int(person.unit) >= 0:
+				status.text = "目前接管人物不支援原騎乘快捷測試"
+			else:
+				var was_mounted: bool = person.owner.is_mounted()
+				person.owner.toggle_mount()
+				var mounted: bool = person.owner.is_mounted()
+				status.text = "移動或忙碌中，請停下再上下馬" if mounted == was_mounted else ("Mounted horse. Ride with WASD + Shift." if mounted else "Dismounted.")
 			get_viewport().set_input_as_handled()
 
 func _process(delta: float) -> void:
@@ -759,17 +841,20 @@ func _process(delta: float) -> void:
 		var offset := character.terrain_cell - npc.terrain_cell
 		if absi(offset.x) + absi(offset.y) == 1 and terrain.can_step(npc.terrain_cell, character.terrain_cell):
 			npc.start_attack(character)
-	if movement_toggle != null and movement_toggle.button_pressed:
-		_move_cooldown = maxf(0.0, _move_cooldown - delta)
-		var held_direction := _held_direction()
-		if held_direction != Vector2i.ZERO and _move_cooldown <= 0.0:
-			_try_move(held_direction)
-	else:
-		_clear_movement_input()
 	_info_time += delta
 	if _info_time >= 0.1:
 		_info_time = 0.0
 		_update_info()
+
+func change_simulation_speed(direction: int) -> float:
+	var index := SIMULATION_SPEEDS.find(simulation_speed)
+	if index < 0:
+		index = 1
+	index = clampi(index + signi(direction), 0, SIMULATION_SPEEDS.size() - 1)
+	simulation_speed = SIMULATION_SPEEDS[index]
+	if site_controller != null:
+		site_controller.update_ui()
+	return simulation_speed
 
 func _advance_action_time(delta: float) -> void:
 	# Site work/time and original bodies still share the same 120 Hz step. A
@@ -792,6 +877,7 @@ func _advance_action_time(delta: float) -> void:
 			_combat_profile_stage("site_tick", site_started)
 			if is_inside_tree() and get_tree().paused:
 				return
+			_advance_movement_input()
 			_advance_combat(EXCHANGE_ACTION_STEP, previous_clock)
 			_fatigue_work_seconds.clear()
 			if is_inside_tree() and get_tree().paused:
@@ -812,6 +898,7 @@ func _advance_action_time(delta: float) -> void:
 			site_controller.tick(elapsed)
 		if is_inside_tree() and get_tree().paused:
 			return
+		_advance_movement_input()
 		_advance_combat(elapsed, combat_clock)
 		_fatigue_work_seconds.clear()
 		if is_inside_tree() and get_tree().paused:
@@ -830,7 +917,7 @@ func _advance_combat(delta: float, combat_clock: float = -1.0) -> void:
 	while remaining > 0.0:
 		var elapsed := minf(remaining, EXCHANGE_ACTION_STEP if exchange_enabled else ACTION_STEP)
 		remaining -= elapsed
-		_advance_fatigue(SiteRuntime.game_seconds(elapsed, combat_clock))
+		var game_seconds := SiteRuntime.game_seconds(elapsed, combat_clock) * simulation_speed
 		var stage_started := Time.get_ticks_usec() if combat_profile_enabled else 0
 		combat_clock = maxf(0.0, combat_clock - elapsed)
 		_combat_contacts.clear()
@@ -839,6 +926,9 @@ func _advance_combat(delta: float, combat_clock: float = -1.0) -> void:
 		for actor: TerrainTestCharacter in combat_actors:
 			if actor is TerrainTestNPC and actor.combat_driven_by_lab and actor.person_id != controlled_person_id():
 				(actor as TerrainTestNPC).advance_navigation()
+		# Both held player input and autonomous NPC intent have now committed.
+		# Charge the same game-time slice before physically advancing either body.
+		_advance_fatigue(game_seconds)
 		for team: TerrainArmy in combat_armies:
 			team.prepare_combat(elapsed)
 		stage_started = _combat_profile_stage("navigation_and_team_prepare", stage_started)
@@ -946,6 +1036,8 @@ func _advance_fatigue(seconds: float) -> void:
 				rate = PersonFatigue.ATTACK_RATE
 			elif not exchange_enabled and (actor.guarding or actor.guard_transition_left > 0.0):
 				rate = PersonFatigue.GUARD_RATE
+			elif actor.riding_fatigue_rate() > 0.0:
+				rate = actor.riding_fatigue_rate()
 			elif moving and actor.combat_ready and actor._movement_duration <= TerrainTestCharacter.RUN_DURATION + 0.000001:
 				rate = PersonFatigue.RUN_RATE
 		var idle := can_act and not moving and actor.action_time <= 0.0 and not actor.guarding and actor.guard_transition_left <= 0.0 and actor.guard_break_left <= 0.0 and actor._rescue_left <= 0.0
@@ -1041,8 +1133,15 @@ func _advance_team_fatigue(team: TerrainArmy, seconds: float, handled: Dictionar
 		npc_moving = true
 		if team.combat_can_act(index) and team.move_duration[index] <= TerrainArmy.RUN_DURATION + 0.000001:
 			effort += maxf(0.0, seconds - float(handled.get(team.combat_identity(index), 0.0))) * PersonFatigue.RUN_RATE
-	if is_instance_valid(team.player_member) and is_same(team.player_member._fatigue_pool, shared) and team.player_member.can_act() and team.player_member.is_moving() and team.player_member._movement_duration <= TerrainTestCharacter.RUN_DURATION + 0.000000001:
-		effort += seconds * PersonFatigue.RUN_RATE
+	if is_instance_valid(team.player_member) and is_same(team.player_member._fatigue_pool, shared):
+		var actor := team.player_member
+		var rate := actor.riding_fatigue_rate()
+		if actor.can_act() and actor.is_moving() and not actor.is_mounted() and actor._movement_duration <= TerrainTestCharacter.RUN_DURATION + 0.000000001:
+			rate = PersonFatigue.RUN_RATE
+		var worked := minf(seconds, float(_fatigue_work_seconds.get(actor, 0.0)))
+		_fatigue_work_seconds[actor] = maxf(0.0, float(_fatigue_work_seconds.get(actor, 0.0)) - worked)
+		var available := maxf(0.0, seconds - float(handled.get(actor.person_id, 0.0)) - worked)
+		effort += available * rate
 	var safe := not bool(shared.active) and effort == 0.0 and not npc_moving and team.combat_order == TerrainArmy.CombatOrder.HOLD and float(terrain.site.get("combat_left", 0.0)) <= 0.0
 	if safe and float(shared.fatigue) > 0.0:
 		# Recovery is a whole-team decision. Any busy/threatened NPC prevents it.
@@ -1054,7 +1153,9 @@ func _advance_team_fatigue(team: TerrainArmy, seconds: float, handled: Dictionar
 				break
 		if safe and is_instance_valid(team.player_member) and is_same(team.player_member._fatigue_pool, shared):
 			var actor := team.player_member
-			safe = not actor.is_moving() and actor.action_time <= 0.0 and not actor.guarding and actor._rescue_left <= 0.0 and not _fatigue_threat(actor.terrain_cell, team.faction_id, actor, -1, enemies)
+			safe = actor.can_act() and not actor.is_moving() and actor.action_time <= 0.0 and not actor.guarding \
+				and actor.guard_transition_left <= 0.0 and actor.guard_break_left <= 0.0 and actor.exchange_stagger <= 0.0 \
+				and actor._rescue_left <= 0.0 and not _fatigue_threat(actor.terrain_cell, team.faction_id, actor, -1, enemies)
 	var rate := effort / seconds / maxf(1.0, float(shared.count))
 	var state := PersonFatigue.advance(float(shared.fatigue), float(shared.fatigue_rest), seconds, rate, safe)
 	shared.fatigue = state[0]
@@ -1260,7 +1361,7 @@ func _exchange_encirclement_front(team: TerrainArmy) -> Array:
 func _exchange_initiates(person: Dictionary, other_id: int) -> bool:
 	if int(person.unit) >= 0:
 		var team: TerrainArmy = person.owner
-		return team.combat_attacking or int(team.combat_units[int(person.unit)].target) == other_id
+		return team.exchange_initiates(int(person.unit), other_id)
 	var actor: TerrainTestCharacter = person.owner
 	return actor.attack_target_id == other_id or (npc_retaliates and actor == npc)
 
@@ -1412,6 +1513,8 @@ func has_ranged_projectiles() -> bool:
 	return false
 
 func _resolve_ranged_fire(people: Array[Dictionary]) -> void:
+	var friendly_cells := {}
+	var occupancy_read := false
 	for person: Dictionary in people:
 		var shooter_owner: Variant = person.owner
 		var index := int(person.unit)
@@ -1428,24 +1531,33 @@ func _resolve_ranged_fire(people: Array[Dictionary]) -> void:
 		var ammunition: Dictionary = shooter_owner.combat_units[index].get("cargo", {}) if index >= 0 else shooter_owner.ammo_inventory
 		if int(ammunition.get(str(profile.ammo), 0)) < 1:
 			continue # Empty quivers neither scan all targets nor reserve an automatic skill.
+		if not occupancy_read:
+			friendly_cells = _ranged_friendly_cells()
+			occupancy_read = true
+		var allies: Dictionary = friendly_cells.get(int(person.faction), {})
 		var selected := {}
 		var nearest := INF
 		var close_threat := false
 		for other: Dictionary in people:
 			if int(person.faction) == int(other.faction):
 				continue
+			var separation: Vector2i = other.cell - person.cell
+			var distance := Vector2(separation).length_squared()
+			# Geometry cannot make an out-of-range person a firing candidate.
+			# Keep every adjacent threat, even after finding a nearer legal target.
+			if distance > maxf(1.0, float(profile.range) * float(profile.range)):
+				continue
 			if not (other.owner.combat_can_act(int(other.unit)) if int(other.unit) >= 0 else other.owner.can_act()):
 				continue # A melee result in this same decision tick may have incapacitated them.
-			var separation: Vector2i = other.cell - person.cell
 			if absi(separation.x) + absi(separation.y) <= 1 and terrain.can_attack_across(person.cell, other.cell):
 				close_threat = true
 				break # A nearby opponent forces close combat even while that opponent cools down.
+			if distance <= 1.0 or distance >= nearest:
+				continue
 			if not _exchange_initiates(person, int(other.id)):
 				continue
-			var distance := Vector2(separation).length_squared()
-			if distance <= 1.0 or distance > float(profile.range) * float(profile.range) or distance >= nearest:
-				continue
-			if SiteCombatRules.ranged_line_clear(terrain, person.cell, other.cell):
+			if SiteCombatRules.ranged_friendly_clear(person.cell, other.cell, allies) \
+				and SiteCombatRules.ranged_line_clear(terrain, person.cell, other.cell):
 				selected = other
 				nearest = distance
 		if close_threat or selected.is_empty():
@@ -1459,8 +1571,26 @@ func _resolve_ranged_fire(people: Array[Dictionary]) -> void:
 		if fired:
 			ranged_shots += 1
 
+func _ranged_friendly_cells() -> Dictionary:
+	# A disposable projection of the same real ground positions used at impact.
+	# Include unconscious friends; reservations are not bodies already at the goal.
+	var factions := {}
+	for occupants: Array in _ranged_occupants().values():
+		for person: Dictionary in occupants:
+			var faction: int = person.owner.faction_id
+			if not factions.has(faction): factions[faction] = {}
+			factions[faction][person.cell] = true
+	return factions
+
+func _ranged_tactics(team: TerrainArmy) -> Dictionary:
+	var enemies: Array[Dictionary] = []
+	for person: Dictionary in _exchange_people(false):
+		if int(person.faction) != team.faction_id:
+			enemies.append({"id": int(person.id), "cell": person.cell})
+	return {"enemies": enemies, "friendly_cells": _ranged_friendly_cells().get(team.faction_id, {})}
+
 func _ranged_occupants() -> Dictionary:
-	# Arrival-only snapshot: living and unconscious original bodies, never skeletons.
+	# Living and unconscious original bodies for fire discipline and arrival, never skeletons.
 	# While a legal step is in progress, the nearest rendered ground cell is occupied.
 	var occupied := {}
 	for occupant_owner: Node2D in _ranged_owners():
@@ -1547,8 +1677,12 @@ func _apply_exchange_side(person: Dictionary, other: Dictionary, result: Diction
 	var stagger := float(result.hold) if role == "draw" else float(result.stagger) if role == "loser" else 0.0
 	if role == "loser" and str(result.kind) == "big" and float(stats.facility) > 0.0:
 		stagger = maxf(0.0, stagger - 0.15)
-	var outcome := {"role": role, "kind": str(result.kind), "hp": float(result.hp) if role == "loser" else 0.0,
-		"stun": float(result.stun) if role == "loser" else 0.0, "stagger": stagger,
+	var hp_field := "hp_a" if side == 1 else "hp_b"
+	var stun_field := "stun_a" if side == 1 else "stun_b"
+	var received_hp := float(result.get(hp_field, result.hp if role == "loser" else 0.0))
+	var received_stun := float(result.get(stun_field, result.stun if role == "loser" else 0.0))
+	var outcome := {"role": role, "kind": str(result.kind), "hp": received_hp,
+		"stun": received_stun, "stagger": stagger,
 		"knockback": role == "loser" and bool(result.knockback), "skill": str(stats.get("skill", "")),
 		"fatigue": float(result.fatigue_a if side == 1 else result.fatigue_b),
 		"other_identity": int(other.id), "attacker": other.owner, "attacker_unit": int(other.unit)}
@@ -1648,12 +1782,23 @@ func transfer_player_roster(identities: Array[int], merge_all: bool = false, rec
 		return SiteRuntime.fail("NO_AUTHORITY", "須由本隊當前合格指揮者本人提出")
 	var recipient: TerrainArmy
 	for team: TerrainArmy in combat_armies:
-		if team != source:
+		if team == source:
+			continue
+		if not receiver_confirmation.is_empty():
+			if team.team_id == int(receiver_confirmation.get("team_id", -1)):
+				recipient = team
+				break
+		elif not merge_all and not team.has_army():
+			recipient = team
+			break
+		elif team.has_army() and team.faction_id == source.faction_id:
+			if recipient != null:
+				return SiteRuntime.fail("NO_TARGET", "有多個接收隊，請明確選擇本次對象")
 			recipient = team
 	if recipient == null:
-		return SiteRuntime.fail("NO_SPACE", "首版保留兩隊保存上限；沒有空隊伍槽，不會清除另一隊")
+		return SiteRuntime.fail("NO_SPACE", "目前保留三隊保存上限；沒有可用隊伍槽，不會清除另一隊")
 	if recipient.has_army():
-		if receiver_confirmation.is_empty():
+		if not receiver_confirmation.has("commander_id"):
 			return SiteRuntime.fail("NO_AUTHORITY", "既有接收隊還須由現任合格指揮者確認；玩家不代獲對方指揮權")
 		var member_ids: Array[int] = []
 		for index: int in source.command_members():
@@ -1676,61 +1821,588 @@ func transfer_player_roster(identities: Array[int], merge_all: bool = false, rec
 	var result := source.split_members_to(recipient, identities, controlled_member_index(source))
 	if result.ok:
 		terrain.site["army_next_team"] = next_team + 1
+		_configure_army_blockers()
 	else:
 		recipient.team_id = previous_team
 		recipient.faction_id = previous_faction
 	return result
 
-func start_melee_trial() -> Dictionary:
-	if army.has_army() or opposing_army.has_army():
-		return SiteRuntime.fail("BUSY", "請先清除現有測試隊伍；不會搬動既有人物")
-	# Only deploy on existing legal ground. Never flatten terrain or delete props.
-	var origin := Vector2i(-1, -1)
-	for y in range(1, terrain.size.y - 10):
-		for x in range(1, terrain.size.x - 20):
-			var legal := true
-			for row in range(10):
-				for column in range(20):
-					var cell := Vector2i(x + column, y + row)
-					if not terrain.is_walkable(cell) or character.occupies_cell(cell) or npc.occupies_cell(cell) \
-						or (column > 0 and not terrain.can_step(cell, cell + Vector2i.LEFT)) \
-						or (row > 0 and not terrain.can_step(cell, cell + Vector2i.UP)):
-						legal = false
-						break
-				if not legal:
-					break
-			if legal:
-				origin = Vector2i(x, y)
+func _melee_trial_formation(anchor: Vector2i, count: int, friendly: bool) -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	var behind := Vector2i.LEFT if friendly else Vector2i.RIGHT
+	for depth in range(ceili(float(count) / 10.0)):
+		for row in range(10):
+			if cells.size() == count:
+				return cells
+			cells.append(anchor + behind * depth + Vector2i.DOWN * row)
+	return cells
+
+func _melee_trial_formation_legal(cells: Array[Vector2i], claimed: Dictionary) -> bool:
+	if cells.is_empty():
+		return false
+	var local := {}
+	for cell: Vector2i in cells:
+		if not terrain.is_walkable(cell) or claimed.has(cell) or local.has(cell) \
+			or character.occupies_cell(cell) or npc.occupies_cell(cell) \
+			or site_controller != null and site_controller.vehicles.blocks_cell(cell):
+			return false
+		local[cell] = true
+	var reached := {cells[0]: true}
+	var pending: Array[Vector2i] = [cells[0]]
+	while not pending.is_empty():
+		var current: Vector2i = pending.pop_front()
+		for direction: Vector2i in TerrainData.DIRECTIONS:
+			var next := current + direction
+			if local.has(next) and not reached.has(next) and terrain.can_step(current, next):
+				reached[next] = true
+				pending.append(next)
+	return reached.size() == cells.size()
+
+func _melee_trial_layout_legal(friendly: Array[Vector2i], enemy: Array[Vector2i]) -> bool:
+	if not _melee_trial_formation_legal(friendly, {}):
+		return false
+	var claimed := {}
+	for cell: Vector2i in friendly:
+		claimed[cell] = true
+	return _melee_trial_formation_legal(enemy, claimed)
+
+func _melee_trial_front_legal(friendly: Array[Vector2i], enemy: Array[Vector2i], ranged_range: float = 0.0) -> bool:
+	var shared_front := mini(10, mini(friendly.size(), enemy.size()))
+	if shared_front <= 0:
+		return false
+	for row in range(shared_front):
+		if ranged_range > 0.0:
+			if not _trial_ranged_front_reachable(friendly[row], enemy[row], ranged_range):
+				return false
+		elif not terrain.can_step(friendly[row], enemy[row]):
+			return false
+	return true
+
+func _trial_ranged_front_reachable(source: Vector2i, target: Vector2i, maximum_range: float) -> bool:
+	if SiteCombatRules.ranged_in_range(source, target, maximum_range) and SiteCombatRules.ranged_line_clear(terrain, source, target):
+		return true
+	if absi(target.x - source.x) + absi(target.y - source.y) > 20:
+		return false
+	# Deployment validation only: the original map path query checks a local
+	# approach when manually placing fronts beyond firing range or behind cover.
+	var route := terrain.path_between(source, target, func(cell: Vector2i) -> bool:
+		return (absi(cell.x - source.x) + absi(cell.y - source.y) > 20 or character.occupies_cell(cell) or npc.occupies_cell(cell)
+			or site_controller != null and site_controller.vehicles.blocks_cell(cell)))
+	return not route.is_empty() and route.size() <= 20
+
+func _third_trial_formation(anchor: Vector2i, count: int) -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	for index in range(count):
+		cells.append(anchor + Vector2i(index % 10, -floori(float(index) / 10.0)))
+	return cells
+
+func _trial_front_touches(cells: Array[Vector2i], others: Dictionary, ranged_range: float = 0.0) -> bool:
+	for cell: Vector2i in cells:
+		if ranged_range > 0.0:
+			for other: Vector2i in others:
+				if _trial_ranged_front_reachable(cell, other, ranged_range):
+					return true
+			continue
+		for direction: Vector2i in TerrainData.DIRECTIONS:
+			if others.has(cell + direction) and terrain.can_step(cell, cell + direction):
+				return true
+	return false
+
+func _third_trial_layout(cells: Array[Vector2i], friendly: Array[Vector2i], enemy: Array[Vector2i], ranged_range: float = 0.0) -> bool:
+	var claimed := {}
+	for cell: Vector2i in friendly + enemy:
+		claimed[cell] = true
+	return _melee_trial_formation_legal(cells, claimed) and _trial_front_touches(cells, claimed, ranged_range)
+
+func _trial_connected_formation(seed_cell: Vector2i, count: int, claimed: Dictionary) -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	if claimed.has(seed_cell) or not terrain.is_walkable(seed_cell) or character.occupies_cell(seed_cell) or npc.occupies_cell(seed_cell) or site_controller != null and site_controller.vehicles.blocks_cell(seed_cell):
+		return cells
+	cells.append(seed_cell)
+	var seen := {seed_cell: true}
+	var cursor := 0
+	while cursor < cells.size() and cells.size() < count:
+		var current := cells[cursor]
+		cursor += 1
+		for direction: Vector2i in TerrainData.DIRECTIONS:
+			var next := current + direction
+			if seen.has(next) or claimed.has(next) or not terrain.can_step(current, next) or character.occupies_cell(next) or npc.occupies_cell(next) or site_controller != null and site_controller.vehicles.blocks_cell(next):
+				continue
+			seen[next] = true
+			cells.append(next)
+			if cells.size() == count:
 				break
-		if origin.x >= 0:
-			break
-	if origin.x < 0:
-		return SiteRuntime.fail("NO_SPACE", "找不到兩隊所需的連通 20×10 空地；未修改地形")
+	if cells.size() != count:
+		cells.clear()
+	return cells
+
+func _auto_third_trial_formation(count: int, friendly: Array[Vector2i], enemy: Array[Vector2i], ranged_range: float = 0.0) -> Array[Vector2i]:
+	var gap := 6 if ranged_range > 0.0 else 1
+	var compact := _third_trial_formation(friendly[0] + Vector2i(-mini(4, count - 1), -gap), count)
+	if _third_trial_layout(compact, friendly, enemy, ranged_range):
+		return compact
+	var claimed := {}
+	var friendly_claims := {}
+	var enemy_claims := {}
+	for cell: Vector2i in friendly:
+		claimed[cell] = true
+		friendly_claims[cell] = true
+	for cell: Vector2i in enemy:
+		claimed[cell] = true
+		enemy_claims[cell] = true
+	var tried := {}
+	# Auto placement may follow a plateau edge rather than require a new 20x20 flat block.
+	# The original two fronts remain intact; this one deployment BFS owns no runtime paths.
+	for front: Vector2i in friendly + enemy:
+		for direction: Vector2i in TerrainData.DIRECTIONS:
+			var seed_cell := front + direction * gap
+			if claimed.has(seed_cell) or tried.has(seed_cell):
+				continue
+			tried[seed_cell] = true
+			var cells := _trial_connected_formation(seed_cell, count, claimed)
+			if cells.is_empty():
+				continue
+			if count > 1 and (not _trial_front_touches(cells, friendly_claims, ranged_range) or not _trial_front_touches(cells, enemy_claims, ranged_range)):
+				continue
+			return cells
+	return []
+
+func find_melee_trial_layout(friendly_count: int, enemy_count: int, friendly_spawn: Vector2i = TerrainArmy.INVALID_CELL, enemy_spawn: Vector2i = TerrainArmy.INVALID_CELL, third_count: int = 0, third_spawn: Vector2i = TerrainArmy.INVALID_CELL, ranged_range: float = 0.0, third_ranged_range: float = 0.0) -> Dictionary:
+	if terrain == null or friendly_count < 1 or friendly_count > 100 or enemy_count < 1 or enemy_count > 100:
+		return {}
+	if third_count < 0 or third_count > 100:
+		return {}
+	var custom := friendly_spawn != TerrainArmy.INVALID_CELL and enemy_spawn != TerrainArmy.INVALID_CELL
+	if custom:
+		var friendly_custom := _melee_trial_formation(friendly_spawn, friendly_count, true)
+		var enemy_custom := _melee_trial_formation(enemy_spawn, enemy_count, false)
+		if not _melee_trial_layout_legal(friendly_custom, enemy_custom) or not _melee_trial_front_legal(friendly_custom, enemy_custom, ranged_range):
+			return {}
+		var result := {"friendly": friendly_custom, "enemy": enemy_custom}
+		if third_count > 0:
+			if third_spawn == TerrainArmy.INVALID_CELL:
+				return {}
+			var third_custom := _third_trial_formation(third_spawn, third_count)
+			if not _third_trial_layout(third_custom, friendly_custom, enemy_custom, third_ranged_range):
+				return {}
+			result.third = third_custom
+		return result
+	if friendly_spawn != TerrainArmy.INVALID_CELL or enemy_spawn != TerrainArmy.INVALID_CELL or third_spawn != TerrainArmy.INVALID_CELL:
+		return {}
+	var friendly_depth := ceili(float(friendly_count) / 10.0)
+	var enemy_depth := ceili(float(enemy_count) / 10.0)
+	var gap := 6 if ranged_range > 0.0 else 1
+	var height := mini(10, maxi(friendly_count, enemy_count))
+	for y in range(1, terrain.size.y - height):
+		for x in range(1, terrain.size.x - friendly_depth - enemy_depth - gap + 1):
+			var origin := Vector2i(x, y)
+			var friendly_auto := _melee_trial_formation(origin + Vector2i(friendly_depth - 1, 0), friendly_count, true)
+			var enemy_auto := _melee_trial_formation(origin + Vector2i(friendly_depth + gap - 1, 0), enemy_count, false)
+			if _melee_trial_layout_legal(friendly_auto, enemy_auto) and _melee_trial_front_legal(friendly_auto, enemy_auto, ranged_range):
+				var result := {"friendly": friendly_auto, "enemy": enemy_auto}
+				if third_count > 0:
+					var third_auto := _auto_third_trial_formation(third_count, friendly_auto, enemy_auto, third_ranged_range)
+					if third_auto.is_empty():
+						continue
+					result.third = third_auto
+				return result
+	return {}
+
+func _trial_camp_access() -> Array[Vector2i]:
+	var camp := terrain.cell_from_index(int(terrain.site.depot_cell))
+	var cells: Array[Vector2i] = [camp]
+	for direction: Vector2i in TerrainData.DIRECTIONS:
+		if terrain.can_step(camp + direction, camp):
+			cells.append(camp + direction)
+	return cells
+
+func _independent_trial_formations(sides: Array[Dictionary]) -> Array:
+	# Support teams use the same original rows and terrain, but not a forced enemy front.
+	var claimed := {}
+	var placed: Array[Dictionary] = []
+	var camp_access := _trial_camp_access()
+	# Auto support spawns must leave usable depot approaches, not merely an
+	# unoccupied person spawn. Explicit positions remain the player's choice.
+	placed.append({"faction": character.faction_id, "cells": camp_access})
+	for team: TerrainArmy in combat_armies:
+		claimed.merge(team._cell_owners)
+		claimed.merge(team._reserved_cells)
+		if team.has_army():
+			placed.append({"faction": team.faction_id, "cells": team.cells})
+	for actor: TerrainTestCharacter in combat_actors:
+		if actor.can_act():
+			placed.append({"faction": actor.faction_id, "cells": [actor.terrain_cell]})
+	var formations: Array = []
+	formations.resize(sides.size())
+	# Reserve all explicit positions first so an earlier automatic team cannot steal them.
+	for index in range(sides.size()):
+		var side: Dictionary = sides[index]
+		if side.spawn == TerrainArmy.INVALID_CELL:
+			continue
+		var cells := _third_trial_formation(side.spawn, side.count) if side.prefix == "third" else _melee_trial_formation(side.spawn, side.count, side.prefix == "friendly")
+		if not _melee_trial_formation_legal(cells, claimed):
+			return []
+		formations[index] = cells
+		for cell: Vector2i in cells:
+			claimed[cell] = true
+		placed.append({"faction": side.faction, "cells": cells})
+	for index in range(sides.size()):
+		if formations[index] != null:
+			continue
+		var side: Dictionary = sides[index]
+		var unavailable := claimed.duplicate()
+		for cell: Vector2i in camp_access:
+			unavailable[cell] = true
+		for other: Dictionary in placed:
+			if int(other.faction) == int(side.faction):
+				continue
+			for cell: Vector2i in other.cells:
+				for dx in range(-8, 9):
+					for dy in range(-8 + absi(dx), 9 - absi(dx)):
+						unavailable[cell + Vector2i(dx, dy)] = true
+		var found: Array[Vector2i] = []
+		var origins: Array[Vector2i] = []
+		# Prefer the original camp area; no terrain edits and no hidden resource generation.
+		for y in range(terrain.size.y):
+			for x in range(terrain.size.x):
+				var cell := Vector2i(x, y)
+				if not unavailable.has(cell) and terrain.is_walkable(cell):
+					origins.append(cell)
+		var camp := terrain.cell_from_index(int(terrain.site.depot_cell))
+		origins.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+			var distance_a := absi(a.x - camp.x) + absi(a.y - camp.y)
+			var distance_b := absi(b.x - camp.x) + absi(b.y - camp.y)
+			return distance_a < distance_b if distance_a != distance_b else terrain.index(a) < terrain.index(b))
+		for origin: Vector2i in origins:
+			found = _trial_connected_formation(origin, side.count, unavailable)
+			if not found.is_empty():
+				break
+		if found.is_empty():
+			return []
+		formations[index] = found
+		for cell: Vector2i in found:
+			claimed[cell] = true
+		placed.append({"faction": side.faction, "cells": found})
+	return formations
+
+func start_melee_trial(setup: Dictionary = {}) -> Dictionary:
+	for team: TerrainArmy in combat_armies:
+		if team.has_army():
+			return SiteRuntime.fail("BUSY", "請先清除現有測試隊伍；不會搬動既有人物")
+	var third_enabled: Variant = setup.get("third_enabled", false)
+	if not third_enabled is bool:
+		return SiteRuntime.fail("INVALID", "第三隊選項須為開啟或關閉")
+	var sides: Array[Dictionary] = []
+	for prefix: String in (["friendly", "enemy", "third"] if third_enabled else ["friendly", "enemy"]):
+		var parsed := _trial_side_settings(setup, prefix)
+		if not parsed.ok:
+			return parsed
+		sides.append(parsed.side)
+	var has_support := false
+	for side: Dictionary in sides:
+		has_support = has_support or side.role != "combat"
+	if has_support:
+		var support_formations := _independent_trial_formations(sides)
+		if support_formations.is_empty():
+			return SiteRuntime.fail("NO_SPACE", "找不到合法的獨立隊伍位置；工作／後勤自動位置須避開敵軍八格，未改地形或既有人物")
+		return _deploy_trial_teams(sides, support_formations, 0)
+	for side: Dictionary in sides:
+		if (side.spawn == TerrainArmy.INVALID_CELL) != (sides[0].spawn == TerrainArmy.INVALID_CELL):
+			return SiteRuntime.fail("INVALID", "請同時設定所有啟用隊伍的位置，或讓所有隊伍自動尋找")
+	# Only deploy on existing legal ground. Never flatten terrain or delete props.
+	var ranged_range := maxf(_trial_ranged_range(sides[0]), _trial_ranged_range(sides[1]))
+	var layout := find_melee_trial_layout(sides[0].count, sides[1].count, sides[0].spawn, sides[1].spawn,
+		sides[2].count if third_enabled else 0, sides[2].spawn if third_enabled else TerrainArmy.INVALID_CELL,
+		ranged_range, _trial_ranged_range(sides[2]) if third_enabled else 0.0)
+	if layout.is_empty():
+		return SiteRuntime.fail("NO_SPACE", "找不到所需的連通交戰空地；隊形不得重疊、占用人物格或跨越不可通行地勢，未修改地形")
+	var formations: Array = [layout.friendly, layout.enemy]
+	if third_enabled:
+		formations.append(layout.third)
+	return _deploy_trial_teams(sides, formations, 0)
+
+func _trial_ranged_range(side: Dictionary) -> float:
+	return float(SiteCombatRules.ranged_profile(str(side.troop_type) + "_01").get("range", 0.0))
+
+func _trial_side_settings(setup: Dictionary, prefix: String) -> Dictionary:
+	var count: Variant = setup.get(prefix + "_count", TerrainArmy.SOLDIER_COUNT)
+	if not count is int or count < 1 or count > 100:
+		return SiteRuntime.fail("INVALID", "每隊總名額須為 1–100 的整數")
+	var role: Variant = setup.get(prefix + "_role", "combat")
+	if not role is String or role not in ["combat", "work", "logistics"]:
+		return SiteRuntime.fail("INVALID", "隊伍用途須為戰鬥、工作或後勤")
+	var troop_type: Variant = setup.get(prefix + "_troop_type", "melee_infantry")
+	if not troop_type is String or troop_type not in ["melee_infantry", "bow", "crossbow"] or role != "combat" and troop_type != "melee_infantry":
+		return SiteRuntime.fail("INVALID", "戰鬥隊兵種須為近戰、弓或弩；工作／後勤維持原近戰配裝")
+	var side := {"prefix": prefix, "count": count, "slot_count": count, "role": role, "troop_type": troop_type, "abilities": {}, "faction": 0 if prefix == "friendly" else 1}
+	for field: String in ["cart_count", "wagon_count"]:
+		var vehicles: Variant = setup.get(prefix + "_" + field, 0)
+		if not vehicles is int or vehicles < 0 or vehicles > 99 or role != "logistics" and vehicles > 0:
+			return SiteRuntime.fail("INVALID", "車輛數須為 0–99 的整數，只有後勤隊可配置")
+		side[field] = vehicles
+		side.count -= vehicles
+	if int(side.count) < 1:
+		return SiteRuntime.fail("INVALID", "人員與車各占一個名額，至少須保留一名真正人員")
+	for field: String in ["female_percent", "training", "tactics", "leadership", "coach"]:
+		if field in ["tactics", "leadership", "coach"] and not setup.has(prefix + "_" + field):
+			continue
+		var value: Variant = setup.get(prefix + "_" + field, 50 if field == "female_percent" else 0)
+		var maximum := 1000 if field == "training" else 100
+		if not (value is int or value is float) or not is_finite(float(value)) or float(value) != floorf(float(value)) or float(value) < 0.0 or float(value) > maximum:
+			return SiteRuntime.fail("INVALID", "%s 須為 0–%d 的整數" % [field, maximum])
+		if field in ["tactics", "leadership", "coach"]:
+			side.abilities[field] = int(value)
+		else:
+			side[field] = int(value)
+	side.female_count = roundi(float(side.count) * float(side.female_percent) / 100.0)
+	side.attack = setup.get(prefix + "_attack", role == "combat")
+	if not side.attack is bool:
+		return SiteRuntime.fail("INVALID", "初始命令須為守位或接敵")
+	side.spawn = setup.get(prefix + "_spawn", TerrainArmy.INVALID_CELL)
+	if not side.spawn is Vector2i:
+		return SiteRuntime.fail("INVALID", "出現位置須為地圖格位")
+	if prefix == "third":
+		var faction: Variant = setup.get("third_faction", 2)
+		if not faction is int or faction < 0 or faction > 2:
+			return SiteRuntime.fail("INVALID", "第三隊須選擇我方、敵方或第三勢力")
+		side.faction = faction
+	return SiteRuntime.ok("", {"side": side})
+
+func add_melee_trial_team(setup: Dictionary = {}) -> Dictionary:
+	if not army.combat_enabled or not opposing_army.combat_enabled or third_army.has_army():
+		return SiteRuntime.fail("BUSY", "須已有兩隊測試軍隊且第三隊槽為空；未移動或清除既有人物")
+	var parsed := _trial_side_settings(setup, "third")
+	if not parsed.ok:
+		return parsed
+	var side: Dictionary = parsed.side
+	if side.role != "combat" or army.role != "combat" or opposing_army.role != "combat":
+		var support_formations := _independent_trial_formations([side])
+		if support_formations.is_empty():
+			return SiteRuntime.fail("NO_SPACE", "找不到合法追加位置，原兩隊與物資未修改")
+		return _deploy_trial_teams([side], support_formations, 2)
+	var ranged_range := _trial_ranged_range(side)
+	var gap := 6 if ranged_range > 0.0 else 1
+	var claimed := {}
+	var hostile := {}
+	var hostile_fronts: Array[Dictionary] = []
+	for team: TerrainArmy in combat_armies:
+		claimed.merge(team._cell_owners)
+		claimed.merge(team._reserved_cells)
+		if team.faction_id != int(side.faction):
+			var front := {}
+			for index in range(team.combat_units.size()):
+				if team.combat_can_act(index):
+					hostile[team.cells[index]] = true
+					front[team.cells[index]] = true
+			if not front.is_empty():
+				hostile_fronts.append(front)
+	var candidates: Array[Vector2i] = []
+	if side.spawn != TerrainArmy.INVALID_CELL:
+		candidates.append(side.spawn)
+	else:
+		var seen := {}
+		# Try an upper front spanning the original divide before other legal perimeter anchors.
+		var first := army.cells[0] + Vector2i(-mini(4, int(side.count) - 1), -gap)
+		candidates.append(first)
+		seen[first] = true
+		for cell: Vector2i in hostile:
+			for direction: Vector2i in TerrainData.DIRECTIONS:
+				for column in range(mini(10, int(side.count))):
+					var anchor := cell + direction * gap - Vector2i(column, 0)
+					if not seen.has(anchor):
+						seen[anchor] = true
+						candidates.append(anchor)
+	var fallback: Array[Vector2i] = []
+	for anchor: Vector2i in candidates:
+		var formation := _third_trial_formation(anchor, side.count)
+		if _melee_trial_formation_legal(formation, claimed) and _trial_front_touches(formation, hostile, ranged_range):
+			if side.spawn != TerrainArmy.INVALID_CELL or hostile_fronts.size() < 2 or _trial_front_touches(formation, hostile_fronts[0], ranged_range) and _trial_front_touches(formation, hostile_fronts[1], ranged_range):
+				return _deploy_trial_teams([side], [formation], 2)
+			if fallback.is_empty():
+				fallback = formation
+	if side.spawn == TerrainArmy.INVALID_CELL:
+		for anchor: Vector2i in candidates:
+			var formation := _trial_connected_formation(anchor, side.count, claimed)
+			if not formation.is_empty() and _trial_front_touches(formation, hostile, ranged_range):
+				if hostile_fronts.size() < 2 or _trial_front_touches(formation, hostile_fronts[0], ranged_range) and _trial_front_touches(formation, hostile_fronts[1], ranged_range):
+					return _deploy_trial_teams([side], [formation], 2)
+				if fallback.is_empty():
+					fallback = formation
+	if not fallback.is_empty():
+		return _deploy_trial_teams([side], [fallback], 2)
+	return SiteRuntime.fail("NO_SPACE", "第三隊須置於敵軍旁，或遠程隊伍可在二十步內接近的合法連通空地；原兩隊及地形未修改")
+
+func _deploy_trial_teams(sides: Array[Dictionary], formations: Array, first_slot: int) -> Dictionary:
+	var total := 0
+	for side: Dictionary in sides:
+		total += int(side.count)
+	var existing_rows := 0
+	for team: TerrainArmy in combat_armies:
+		existing_rows += team.combat_units.size()
+	if existing_rows + total > 300:
+		return SiteRuntime.fail("NO_SPACE", "目前 Site 上限為 300 列軍隊人物；未新增人物")
+	if not _can_allocate_army_person_ids(total):
+		return SiteRuntime.fail("NO_IDS", "人物序號已用盡；未建立或修改測試隊伍")
+	var next_team := _next_army_identity()
+	if next_team + sides.size() > 999999:
+		return SiteRuntime.fail("ID_EXHAUSTED", "軍隊身分序號已用盡")
 	if not TerrainArmy.load_combat_bake():
 		return SiteRuntime.fail("MISSING_ASSET", "交戰圖集／碰撞資料不可用，未部署")
-	var next_team := _next_army_identity()
-	if next_team > 999997:
-		return SiteRuntime.fail("ID_EXHAUSTED", "軍隊身分序號已用盡")
-	army.team_id = next_team
-	opposing_army.team_id = next_team + 1
-	army.faction_id = 0
-	opposing_army.faction_id = 1
+	for side: Dictionary in sides:
+		var appearances: Array[Dictionary] = []
+		if int(side.female_count) < int(side.count):
+			appearances.append(TerrainArmy._combat_bake.manifest.appearance.duplicate(true))
+		if int(side.female_count) > 0:
+			appearances.append(TerrainArmy.EquipmentAtlas.female_appearance())
+		for appearance: Dictionary in appearances:
+			if appearance.is_empty():
+				return SiteRuntime.fail("MISSING_ASSET", "所選人物基準素材不可用，未部署")
+			if str(side.troop_type) != "melee_infantry":
+				appearance.parts.weapon = "bow_01" if str(side.troop_type) == "bow" else "crossbow_01"
+				appearance.parts.shield = "none"
+			if not combat_armies[first_slot].supports_equipment_recipe(SiteController._initial_uniform(appearance, side.faction)):
+				return SiteRuntime.fail("MISSING_ASSET", "所選男女兵種圖集／染色資料不可用，未部署")
+	var vehicle_plans: Array = []
+	var planned_claims := {}
+	for side: Dictionary in sides:
+		if side.role != "combat":
+			for cell: Vector2i in _trial_camp_access():
+				planned_claims[cell] = true
+			break
 	for team: TerrainArmy in combat_armies:
-		var selected: Array[Vector2i] = []
-		for depth in range(10):
-			for row in range(10):
-				selected.append(origin + Vector2i(9 - depth if team == army else 10 + depth, row))
-		if not team.deploy_at(terrain, character, npc, selected) or not team.enable_combat():
-			clear_army()
-			return SiteRuntime.fail("DEPLOY_FAILED", "測試部署失敗；已撤銷本次新隊伍")
-		for index in range(TerrainArmy.SOLDIER_COUNT):
-			team.facing[index] = Vector2i.RIGHT if team == army else Vector2i.LEFT
+		planned_claims.merge(team._cell_owners)
+		planned_claims.merge(team._reserved_cells)
+	for cells: Array in formations:
+		for cell: Vector2i in cells:
+			planned_claims[cell] = true
+	for index in range(sides.size()):
+		var side: Dictionary = sides[index]
+		var planned: Dictionary = site_controller.vehicles.plan_team(next_team + index, side.cart_count, side.wagon_count, formations[index], planned_claims)
+		if not planned.ok:
+			return planned
+		vehicle_plans.append(planned.plan)
+		planned_claims.merge(site_controller.vehicles.plan_claims(planned.plan))
+	var original_vehicles: Dictionary = site_controller.vehicles.checkpoint()
+	# A rejected deployment is not a clear-army command: do not create loot or consume IDs.
+	# Deployment only appends equipment and consumes the two allocators. Keep
+	# every existing Site/holder/cargo/supply alias (including live ammunition).
+	var original_site := terrain.site.duplicate()
+	var original_items := {"item_records": terrain.site.item_records.duplicate(),
+		"item_definitions": terrain.site.item_definitions.duplicate()}
+	var original_appearances: Dictionary = site_controller._equipment_appearances.duplicate()
+	var original_slots: Array[Dictionary] = []
+	for index in range(sides.size()):
+		var team: TerrainArmy = combat_armies[first_slot + index]
+		original_slots.append({"team_id": team.team_id, "faction": team.faction_id, "training": team.training, "role": team.role})
+	_configure_army_blockers(first_slot + sides.size() == 3)
+	for index in range(sides.size()):
+		var side: Dictionary = sides[index]
+		var team: TerrainArmy = combat_armies[first_slot + index]
+		team.team_id = next_team + index
+		team.faction_id = side.faction
+		team.roster_size = side.count
+		team.training = float(side.training)
+		var deployed := team.deploy_at(terrain, character, npc, formations[index])
+		team.role = side.role
+		deployed = deployed and team.enable_combat(side.attack, side.female_count, StringName(side.troop_type))
+		if deployed:
+			for unit: Dictionary in team.combat_units:
+				if unit.get("item_state", {}).is_empty():
+					deployed = false # The original equipment initializer rejected its complete recipe.
+					break
+				if str(side.troop_type) != "melee_infantry":
+					# Explicit test-deployment stock only; combat never refills this original cargo.
+					unit.cargo["arrow" if str(side.troop_type) == "bow" else "bolt"] = 20
+					if SiteRuntime.carried_size(unit.cargo, unit.item_state) > SiteRuntime.CARRY_CAPACITY:
+						deployed = false
+						break
+		if deployed:
+			var vehicle_result: Dictionary = site_controller.vehicles.deploy_plan(team, vehicle_plans[index])
+			deployed = bool(vehicle_result.ok)
+		if deployed:
+			for row: Dictionary in team.combat_units:
+				row.logistics = side.role == "logistics"
+			if side.role == "work" and not side.attack:
+				var workers: Array[int] = []
+				for unit in range(1, team.combat_units.size()):
+					workers.append(team.combat_identity(unit))
+				if not workers.is_empty():
+					deployed = bool(site_controller.work_team.assign(team, workers, team.combat_identity(team.current_commander)).ok)
+		if not deployed:
+			site_controller.vehicles.rollback(original_vehicles)
+			for rollback in range(sides.size()):
+				var reverted: TerrainArmy = combat_armies[first_slot + rollback]
+				for row: Dictionary in reverted.combat_units:
+					site_controller.work_team.cancel(int(row.person_id))
+				reverted.clear()
+				reverted.team_id = original_slots[rollback].team_id
+				reverted.faction_id = original_slots[rollback].faction
+				reverted.training = original_slots[rollback].training
+				reverted.role = original_slots[rollback].role
+			for field: String in original_items:
+				terrain.site[field].clear()
+				terrain.site[field].merge(original_items[field])
+			for field: String in ["next_item", "next_person_id"]:
+				if original_site.has(field): terrain.site[field] = original_site[field]
+				else: terrain.site.erase(field)
+			site_controller._equipment_appearances.clear()
+			site_controller._equipment_appearances.merge(original_appearances)
+			_configure_army_blockers()
+			return SiteRuntime.fail("DEPLOY_FAILED", "測試部署失敗；原人物、物品、地形及序號未修改")
+		var abilities: Dictionary = team.command_abilities.get(team.formal_commander, {}).duplicate()
+		abilities.merge(side.abilities, true)
+		team.command_abilities[team.formal_commander] = abilities
+		for unit in range(team.cells.size()):
+			team.facing[unit] = Vector2i.RIGHT if team == army else (Vector2i.LEFT if team == opposing_army else Vector2i.DOWN)
 		team._visual_dirty = true
 	terrain.site["army_trial_active"] = true
-	terrain.site["army_next_team"] = next_team + 2
-	camera.position = (Vector2(origin) + Vector2(10, 5)) * TerrainRenderer.CELL_PIXELS
+	terrain.site["army_next_team"] = next_team + sides.size()
+	var minimum: Vector2i = formations[0][0]
+	var maximum := minimum
+	for team: TerrainArmy in combat_armies:
+		for cell: Vector2i in team.cells:
+			minimum = Vector2i(mini(minimum.x, cell.x), mini(minimum.y, cell.y))
+			maximum = Vector2i(maxi(maximum.x, cell.x), maxi(maximum.y, cell.y))
+	var support_view := false
+	for side: Dictionary in sides:
+		support_view = support_view or side.role != "combat"
+	for plan: Array in vehicle_plans:
+		for cell: Vector2i in site_controller.vehicles.plan_claims(plan):
+			minimum = Vector2i(mini(minimum.x, cell.x), mini(minimum.y, cell.y))
+			maximum = Vector2i(maxi(maximum.x, cell.x), maxi(maximum.y, cell.y))
+	camera.position = (Vector2(minimum + maximum) + Vector2.ONE) * 0.5 * TerrainRenderer.CELL_PIXELS
 	camera.zoom = Vector2.ONE * 0.9
-	return SiteRuntime.ok("兩隊近戰測試已部署；玩家仍自行操作。脫戰後保存包含兩隊傷亡與指揮狀態。")
+	if third_army.has_army() or support_view:
+		# Three fronts are taller than the original pair. Frame them in the map
+		# area above the status window, without moving any existing person.
+		var screen := get_viewport_rect().size
+		var top: float = site_controller.top_banner.get_global_rect().end.y + 16.0
+		var bottom := screen.y - 16.0
+		if site_controller.status_panel.visible:
+			bottom = minf(bottom, site_controller.status_panel.position.y - 16.0)
+		var area := Rect2(Vector2(16.0, top), Vector2(maxf(64.0, site_controller.panel.position.x - 32.0), maxf(64.0, bottom - top)))
+		var extent := Vector2(maximum - minimum + Vector2i(3, 3)) * TerrainRenderer.CELL_PIXELS
+		var zoom := clampf(minf(0.9, minf(area.size.x / extent.x, area.size.y / extent.y)), MIN_ZOOM, MAX_ZOOM)
+		camera.zoom = Vector2.ONE * zoom
+		camera.position += (screen * 0.5 - area.get_center()) / zoom
+		camera.force_update_scroll()
+	var values := {"troop_type": str(sides[0].troop_type)}
+	var summaries: Array[String] = []
+	for index in range(sides.size()):
+		var side: Dictionary = sides[index]
+		values[side.prefix + "_spawn"] = formations[index][0]
+		values[side.prefix + "_count"] = side.count
+		values[side.prefix + "_slot_count"] = side.slot_count
+		values[side.prefix + "_role"] = side.role
+		values[side.prefix + "_troop_type"] = side.troop_type
+		if str(side.troop_type) != str(values.troop_type): values.troop_type = "per_team"
+		values[side.prefix + "_cart_count"] = side.cart_count
+		values[side.prefix + "_wagon_count"] = side.wagon_count
+		values[side.prefix + "_female_count"] = side.female_count
+		summaries.append("%s：%s／%s，男 %d／女 %d，物資車 %d／馬車 %d，共 %d 名額" % [{"friendly": "我方", "enemy": "敵方", "third": "第三隊"}[side.prefix], {"combat": "戰鬥隊", "work": "工作隊", "logistics": "後勤隊"}[side.role], {"melee_infantry": "近戰步兵", "bow": "弓兵", "crossbow": "弩兵"}[side.troop_type], int(side.count) - int(side.female_count), int(side.female_count), int(side.cart_count), int(side.wagon_count), int(side.slot_count)])
+	values["third_enabled"] = third_army.has_army()
+	values["third_faction"] = third_army.faction_id
+	return SiteRuntime.ok("測試隊伍已部署（含隊長）：%s；玩家仍自行操作。" % "、".join(summaries), values)
 
 func _nearest_unit_enemy(source: TerrainArmy, index: int) -> Dictionary:
 	var best := {}

@@ -22,19 +22,20 @@ func _initialize() -> void:
 	if _recipe.is_empty():
 		_fail_ranged("Requires the original male/leather baseline and an exact catalogue weapon ID")
 		return
+	var frame_count := int(_recipe.recipe_total)
 	var output := str(flags.get("--output", "res://output/site_ranged_20260914/atlas/" + weapon)).simplify_path().trim_suffix("/")
-	if not output.begins_with("res://output/") or not str(flags.get("--first", "0")).is_valid_int() or not str(flags.get("--count", str(RangedAtlas.FRAME_COUNT))).is_valid_int():
+	if not output.begins_with("res://output/") or not str(flags.get("--first", "0")).is_valid_int() or not str(flags.get("--count", str(frame_count))).is_valid_int():
 		_fail_ranged("Ranged bake output must be a named staging directory and bounds must be integers")
 		return
 	var first := int(flags.get("--first", 0))
-	var count := int(flags.get("--count", RangedAtlas.FRAME_COUNT))
-	if first < 0 or count < 1 or first + count > RangedAtlas.FRAME_COUNT:
-		_fail_ranged("Ranged batch must remain inside all 584 required samples")
+	var count := int(flags.get("--count", frame_count))
+	if first < 0 or count < 1 or first + count > frame_count:
+		_fail_ranged("Ranged batch must remain inside all %d required samples" % frame_count)
 		return
 	_recipe.merge({"ok": true, "mask": 29, "iron": 0, "output": output,
-		"first": first, "count": count, "selected_total": RangedAtlas.FRAME_COUNT,
-		"selection_complete": first == 0 and count == RangedAtlas.FRAME_COUNT,
-		"recipe_complete": first == 0 and count == RangedAtlas.FRAME_COUNT})
+		"first": first, "count": count, "selected_total": frame_count,
+		"selection_complete": first == 0 and count == frame_count,
+		"recipe_complete": first == 0 and count == frame_count})
 	_recipe.source_fingerprints = RecipePlan.fingerprints()
 	_ranged_sources = RangedAtlas.fingerprints()
 	_ranged_base_md5 = FileAccess.get_md5(MANIFEST_PATH)

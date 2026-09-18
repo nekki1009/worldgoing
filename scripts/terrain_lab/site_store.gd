@@ -8,6 +8,8 @@ const EquipmentOrders = preload("res://scripts/terrain_lab/site_equipment_orders
 const CaptiveEscort = preload("res://scripts/terrain_lab/site_captive_escort.gd")
 const FamilyContinuity = preload("res://scripts/terrain_lab/site_family_continuity.gd")
 const WorkTeam = preload("res://scripts/terrain_lab/site_work_team.gd")
+const Vehicles = preload("res://scripts/terrain_lab/site_vehicle_transport.gd")
+const RiderAtlas = preload("res://scripts/terrain_lab/site_vehicle_rider_atlas.gd")
 const FORMAT := 3
 const TERRAIN_VERSION := 1
 const DEFAULT_PATH := "user://sites/current.json"
@@ -19,7 +21,7 @@ static func save(data: TerrainData, path: String = DEFAULT_PATH) -> Dictionary:
 	if not data.site.get("armies", []) is Array:
 		return Runtime.fail("CORRUPT_SAVE", "軍隊快照格式")
 	if bool(data.site.get("army_trial_active", false)) and data.site.get("armies", []).is_empty():
-		return Runtime.fail("BUSY", "軍隊交戰快照尚未接入；請明確結束兩隊近戰測試後保存，避免默默遺失傷亡")
+		return Runtime.fail("BUSY", "軍隊交戰快照尚未接入；請明確結束近戰測試後保存，避免默默遺失傷亡")
 	if float(data.site.combat_left) > 0.0:
 		return Runtime.fail("BUSY", "地圖保存會等到脫戰；本版不保存戰鬥中的角色與投射物")
 	var state: Dictionary = data.site.duplicate(true)
@@ -36,6 +38,12 @@ static func save(data: TerrainData, path: String = DEFAULT_PATH) -> Dictionary:
 	var army_validation := _validate_armies(data, state, true)
 	if not army_validation.ok:
 		return army_validation
+	var vehicle_validation := _validate_vehicles(data, state, true)
+	if not vehicle_validation.ok:
+		return vehicle_validation
+	var army_assets := _validate_army_assets(data, state)
+	if not army_assets.ok:
+		return army_assets
 	var actor_validation := _validate_actors(data, state)
 	if not actor_validation.ok:
 		return actor_validation
@@ -135,8 +143,12 @@ static func load_site(path: String = DEFAULT_PATH) -> Dictionary:
 	var army_validation := _validate_armies(data, data.site, true)
 	if not army_validation.ok:
 		return army_validation
-	if not data.site.get("armies", []).is_empty() and not TerrainArmy.load_combat_bake():
-		return Runtime.fail("MISSING_ASSET", "軍隊圖集／碰撞資料缺失；未替換目前地圖")
+	var vehicle_validation := _validate_vehicles(data, data.site, true)
+	if not vehicle_validation.ok:
+		return vehicle_validation
+	var army_assets := _validate_army_assets(data, data.site, true)
+	if not army_assets.ok:
+		return army_assets
 	# Earlier format-3 deaths may have left real opened food at their private
 	# owner. Migrate the validated loaded copy only, never rewrite the source file
 	# or rerun the original person's death/animation/equipment initialization.
@@ -147,6 +159,31 @@ static func load_site(path: String = DEFAULT_PATH) -> Dictionary:
 	if not opened_validation.ok:
 		return opened_validation
 	return Runtime.ok("已載入地圖；接續保存時刻" + ("（舊地圖沒有角色快照，首次使用初始角色狀態）" if bool(payload.get("legacy_actor_state", false)) else ""), {"data": data})
+
+static func _validate_army_assets(data: TerrainData, state: Dictionary, fresh: bool = false) -> Dictionary:
+	if state.get("armies", []).is_empty(): return Runtime.ok()
+	if not TerrainArmy.load_combat_bake():
+		return Runtime.fail("MISSING_ASSET", "軍隊圖集／碰撞資料缺失；未替換目前地圖")
+	if fresh:
+		TerrainArmy.EquipmentAtlas.refresh_female_sources()
+	var checked := {}
+	for original: Dictionary in state.armies:
+		for unit: Dictionary in TerrainArmy.normalize_roster_snapshot(original).units:
+			if str(unit.visual_role).ends_with("live") or not unit.has("appearance"):
+				continue # Legacy rows without equipment retain the admitted baseline.
+			var appearance: Dictionary = unit.appearance
+			if unit.has("item_state"):
+				var holder: Dictionary = unit.item_state
+				if float(unit.hp) <= 0.0 and bool(unit.get("loot_settled", false)):
+					holder = state.ground_loot.get(str(unit.get("remains_id", "")), Runtime.new_item_state("empty-remains"))
+				appearance = Runtime.equipment_appearance(data, holder, appearance, state)
+			var key := JSON.stringify(appearance)
+			if checked.has(key): continue
+			var baseline: bool = not appearance.is_empty() and appearance.get("body") == 0 and HumanCharacter3DEditor.EquipmentDye.geometry_appearance(appearance) == TerrainArmy._combat_bake.manifest.appearance and TerrainArmy.EquipmentAtlas.DyeAtlas.supports(appearance)
+			if not baseline and not TerrainArmy.EquipmentAtlas.supports(appearance):
+				return Runtime.fail("MISSING_ASSET", "人物 #%d 的實際配裝缺少完整圖集／染色；未替換目前地圖或存檔" % int(unit.person_id))
+			checked[key] = true
+	return Runtime.ok()
 
 static func _normalize_state(state: Dictionary) -> void:
 	if state.has("controlled_person_id"):
@@ -175,6 +212,17 @@ static func _normalize_state(state: Dictionary) -> void:
 	for field: String in ["item_storage_version", "next_loot", "next_item"]:
 		state[field] = int(state[field])
 	var item_holders: Array = [state.depot_items]
+	if not state.has("vehicles"): state.vehicles = {}
+	state.next_vehicle = int(state.get("next_vehicle", 1))
+	for vehicle: Dictionary in state.vehicles.values():
+		for field: String in ["cell", "team_id", "operator_id"]: vehicle[field] = int(vehicle[field])
+		vehicle.facing = _int_array(vehicle.facing)
+		if not vehicle.move.is_empty():
+			for field: String in ["cell", "operator_from", "operator_to"]: vehicle.move[field] = int(vehicle.move[field])
+			vehicle.move.facing = _int_array(vehicle.move.facing)
+			vehicle.move.sweep = _int_array(vehicle.move.sweep)
+		for resource: String in vehicle.cargo: vehicle.cargo[resource] = int(vehicle.cargo[resource])
+		item_holders.append(vehicle.holder)
 	for container: Dictionary in state.ground_loot.values():
 		container.cell = int(container.cell)
 		container.original_owner = int(container.original_owner)
@@ -309,6 +357,9 @@ static func _validate_state(data: TerrainData, state: Dictionary) -> Dictionary:
 	var army_validation := _validate_armies(data, state)
 	if not army_validation.ok:
 		return army_validation
+	var vehicle_validation := _validate_vehicles(data, state)
+	if not vehicle_validation.ok:
+		return vehicle_validation
 	var actor_validation := _validate_actors(data, state)
 	if not actor_validation.ok:
 		return actor_validation
@@ -505,14 +556,14 @@ static func _validate_actors(data: TerrainData, state: Dictionary) -> Dictionary
 
 static func _validate_armies(data: TerrainData, state: Dictionary, check_terrain: bool = false) -> Dictionary:
 	var armies: Variant = state.get("armies", [])
-	if not armies is Array or armies.size() > 2:
+	if not armies is Array or armies.size() > 3:
 		return Runtime.fail("CORRUPT_SAVE", "軍隊名冊格式")
 	var identities := {}
 	var claims := {}
 	var maximum_team := 0
 	var teams_seen := {}
-	var total_rows := 0 # Current Site acceptance remains bounded to 200 actual army rows.
-	var live_presenters := 0 # Only the two original army women own live presenters.
+	var total_rows := 0 # Three test teams, bounded to 300 actual army rows.
+	var live_presenters := 0 # At most one original live captain per test team.
 	var actors: Variant = state.get("actors", {})
 	if not actors is Dictionary or not actors.get("player", {}) is Dictionary:
 		return Runtime.fail("CORRUPT_SAVE", "人物名冊格式")
@@ -532,15 +583,15 @@ static func _validate_armies(data: TerrainData, state: Dictionary, check_terrain
 			for actor: Dictionary in actors.values():
 				if int(actor.get("person_id", 0)) == int(original_team.player_member.get("id", -1)):
 					member_actor = actor
-		if not TerrainArmy.valid_combat_state(original_team, data, member_actor):
+		if not TerrainArmy.valid_combat_state(original_team, data, member_actor, state):
 			return Runtime.fail("CORRUPT_SAVE", "軍隊人物／動作／指揮關係非法")
 		var team := TerrainArmy.normalize_roster_snapshot(original_team)
 		if teams_seen.has(int(team.team_id)):
 			return Runtime.fail("CORRUPT_SAVE", "重複隊伍身分")
 		teams_seen[int(team.team_id)] = true
 		total_rows += team.units.size()
-		if total_rows > 200:
-			return Runtime.fail("CORRUPT_SAVE", "目前 Site 上限為 200 列軍隊人物")
+		if total_rows > 300:
+			return Runtime.fail("CORRUPT_SAVE", "目前 Site 上限為 300 列軍隊人物")
 		if not team.get("player_member", {}).is_empty():
 			var member_id := int(team.player_member.id)
 			if memberships.has(member_id):
@@ -562,9 +613,9 @@ static func _validate_armies(data: TerrainData, state: Dictionary, check_terrain
 				if work_claims.has(str(work.target)):
 					return Runtime.fail("CORRUPT_SAVE", "同一來源由多名原人物重複作業")
 				work_claims[str(work.target)] = true
-			live_presenters += int(str(unit.visual_role) == "female_live")
-			if live_presenters > 2:
-				return Runtime.fail("CORRUPT_SAVE", "目前 Site 只有兩個原隊長呈現者")
+			live_presenters += int(str(unit.visual_role) in ["female_live", "male_live"])
+			if live_presenters > 3:
+				return Runtime.fail("CORRUPT_SAVE", "目前 Site 只有三個原隊長呈現者")
 			var cell := Vector2i(int(unit.cell[0]), int(unit.cell[1]))
 			var destination := Vector2i(int(unit.destination[0]), int(unit.destination[1]))
 			if check_terrain and (not data.is_walkable(cell) or destination != TerrainArmy.INVALID_CELL and not data.can_step(cell, destination)):
@@ -596,6 +647,123 @@ static func _validate_armies(data: TerrainData, state: Dictionary, check_terrain
 				if not identities.has(int(identity)) or int(identity) == int(team.units[index].person_id):
 					return Runtime.fail("CORRUPT_SAVE", "軍隊命中去重指向未知人物")
 	return Runtime.ok()
+
+static func _validate_vehicles(data: TerrainData, state: Dictionary, check_terrain: bool = false) -> Dictionary:
+	var vehicles: Variant = state.get("vehicles", {})
+	if not vehicles is Dictionary or vehicles.size() > data.size.x * data.size.y or not _integer(state.get("next_vehicle", 1), 1, 2147483647):
+		return Runtime.fail("CORRUPT_SAVE", "車輛資料／序號")
+	if vehicles.is_empty(): return Runtime.ok() # Legacy no-vehicle snapshots retain their original validation.
+	var people := {}
+	var team_counts := {}
+	var claims := {}
+	var total := 0
+	for original_team: Dictionary in state.get("armies", []):
+		var team := TerrainArmy.normalize_roster_snapshot(original_team)
+		team_counts[int(team.team_id)] = team.units.size()
+		total += team.units.size()
+		for unit: Dictionary in team.units:
+			people[int(unit.person_id)] = {"team": int(team.team_id), "body": unit}
+	for actor: Dictionary in state.get("actors", {}).values(): people[int(actor.person_id)] = {"team": 0, "body": actor}
+	for identity: int in people:
+		var body: Dictionary = people[identity].body
+		var cell := Vector2i(int(body.cell[0]), int(body.cell[1]))
+		var destination: Array = body.get("destination", [-1, -1])
+		var moving := Vector2i(int(destination[0]), int(destination[1])) != TerrainArmy.INVALID_CELL
+		if body.has("movement_left") and float(body.movement_left) > 0.0:
+			destination = body.movement_from
+			moving = true
+		if float(body.hp) > 0.0 and float(body.get("ko", body.get("knockout_left", 0.0))) <= 0.0 and not bool(body.get("departed", false)) or moving:
+			claims[cell] = identity
+			if moving: claims[Vector2i(int(destination[0]), int(destination[1]))] = identity
+	var operators := {}
+	var guards := {}
+	if not state.get("captivity", {}) is Dictionary: return Runtime.fail("CORRUPT_SAVE", "原看守職務格式")
+	for relation: Variant in state.get("captivity", {}).values():
+		if not relation is Dictionary or not _integer(relation.get("guard_id"), 1, 2147483647): return Runtime.fail("CORRUPT_SAVE", "原看守職務引用")
+		guards[int(relation.guard_id)] = true
+	for identity: Variant in vehicles:
+		var vehicle: Variant = vehicles[identity]
+		if not _serial(identity, int(state.get("next_vehicle", 1))) or not vehicle is Dictionary or vehicle.size() != 10 or vehicle.get("id") != identity or not vehicle.get("kind") is String or not Vehicles.CAPACITY.has(vehicle.kind):
+			return Runtime.fail("CORRUPT_SAVE", "車輛種類／身分")
+		if not _integer(vehicle.get("team_id"), 0, 999999) or not _integer(vehicle.get("operator_id"), 0, 2147483647) or not _valid_cell(data, vehicle.get("cell")) or not vehicle.get("stop_pending") is bool or not vehicle.get("move") is Dictionary:
+			return Runtime.fail("CORRUPT_SAVE", "車輛所屬／操作人／格位")
+		if not _vehicle_facing(vehicle.get("facing")): return Runtime.fail("CORRUPT_SAVE", "車輛方向")
+		var team_id := int(vehicle.team_id)
+		var operator_id := int(vehicle.operator_id)
+		if team_id > 0:
+			if not team_counts.has(team_id): return Runtime.fail("CORRUPT_SAVE", "車輛所屬隊伍不存在")
+			team_counts[team_id] = int(team_counts[team_id]) + 1
+			total += 1
+			if int(team_counts[team_id]) > 100: return Runtime.fail("CORRUPT_SAVE", "車隊人物與車輛超過100名額")
+		elif operator_id > 0 or not vehicle.move.is_empty(): return Runtime.fail("CORRUPT_SAVE", "停泊無所屬車輛不能自行移動")
+		var occupied := {}
+		for cell: Vector2i in Vehicles.footprint(data, vehicle): occupied[cell] = true
+		var body := {}
+		if operator_id > 0:
+			if operators.has(operator_id) or guards.has(operator_id) or not people.has(operator_id) or int(people[operator_id].team) != team_id:
+				return Runtime.fail("CORRUPT_SAVE", "操作人重複或不屬於原隊")
+			operators[operator_id] = true
+			body = people[operator_id].body
+			# Runtime holder projections require boundary-normalized integer versions.
+			# This exact check runs on save and again after load normalization/terrain rebuild.
+			if check_terrain and str(vehicle.kind) == "wagon" and not RiderAtlas.supports(Runtime.equipment_appearance(data, body.get("item_state", {}), body.get("appearance", {}), state)):
+				return Runtime.fail("MISSING_ASSET", "原馬車騎手資料或固定布裝騎姿素材未就緒")
+			var cell := Vector2i(int(body.cell[0]), int(body.cell[1]))
+			var direction := Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1]))
+			if not bool(vehicle.move.get("boarding", false)) and data.cell_from_index(int(vehicle.cell)) != Vehicles.anchor_from_operator(str(vehicle.kind), cell, direction): return Runtime.fail("CORRUPT_SAVE", "人車相對格位失效")
+			var moving := Vector2i(int(body.destination[0]), int(body.destination[1])) != TerrainArmy.INVALID_CELL
+			if moving == vehicle.move.is_empty(): return Runtime.fail("CORRUPT_SAVE", "原人物與車輛必須共用同一步預約")
+			var incapable := float(body.hp) <= 0.0 or float(body.ko) > 0.0 or str(body.pose) == "get_up" or bool(body.captive) or bool(body.departed) or not bool(body.get("member", true))
+			var resting_rider: bool = str(vehicle.kind) == "wagon" and float(body.hp) > 0.0 and (float(body.ko) > 0.0 or str(body.pose) == "get_up") and not bool(body.captive) and not bool(body.departed) and bool(body.get("member", true)) and vehicle.move.is_empty() and bool(vehicle.stop_pending)
+			if incapable and (vehicle.move.is_empty() or not bool(vehicle.stop_pending)) and not resting_rider: return Runtime.fail("CORRUPT_SAVE", "失能操作人不能開始新車步")
+			if vehicle.move.is_empty() and bool(vehicle.stop_pending) and not resting_rider: return Runtime.fail("CORRUPT_SAVE", "停止旗標僅限在途步進或原馬背昏迷者")
+			if not body.get("work_task", {}).is_empty(): return Runtime.fail("CORRUPT_SAVE", "操作人不能兼任工作")
+		elif not vehicle.move.is_empty() or bool(vehicle.stop_pending): return Runtime.fail("CORRUPT_SAVE", "無真人操作卻有車步")
+		if not vehicle.move.is_empty():
+			var move: Dictionary = vehicle.move
+			var boarding := bool(move.get("boarding", false))
+			var dismount := bool(move.get("dismount", false))
+			if move.size() != 5 + int(boarding) + int(dismount) or boarding and dismount or not move.get("boarding", false) is bool or not move.get("dismount", false) is bool or not _valid_cell(data, move.get("cell")) or not _valid_cell(data, move.get("operator_from")) or not _valid_cell(data, move.get("operator_to")) or not _vehicle_facing(move.get("facing")) or not move.get("sweep") is Array:
+				return Runtime.fail("CORRUPT_SAVE", "人車預約欄位")
+			var from := data.cell_from_index(int(move.operator_from))
+			var to := data.cell_from_index(int(move.operator_to))
+			var direction := Vector2i(int(move.facing[0]), int(move.facing[1]))
+			var previous_direction := Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1]))
+			var expected_direction := previous_direction if to - from == -previous_direction else to - from
+			if from != Vector2i(int(body.cell[0]), int(body.cell[1])) or to != Vector2i(int(body.destination[0]), int(body.destination[1])) or absi(to.x - from.x) + absi(to.y - from.y) != 1:
+				return Runtime.fail("CORRUPT_SAVE", "車步未引用原人物預約")
+			if boarding or dismount:
+				var horse_cell := data.cell_from_index(int(vehicle.cell)) + previous_direction * 2
+				if str(vehicle.kind) != "wagon" or int(move.cell) != int(vehicle.cell) or direction != previous_direction or boarding and to != horse_cell or dismount and (from != horse_cell or Vehicles.footprint(data, vehicle).has(to) or not bool(vehicle.stop_pending)):
+					return Runtime.fail("CORRUPT_SAVE", "上下馬必须引用原馬格與真人一步，車體保持停止")
+			elif direction != expected_direction or data.cell_from_index(int(move.cell)) != Vehicles.anchor_from_operator(str(vehicle.kind), to, direction):
+				return Runtime.fail("CORRUPT_SAVE", "原騎乘／推車位置不符")
+			var minimum := from
+			var maximum := from
+			for cell: Vector2i in Vehicles.footprint(data, vehicle) + Vehicles.footprint(data, vehicle, true) + [to]:
+				minimum = Vector2i(mini(minimum.x, cell.x), mini(minimum.y, cell.y))
+				maximum = Vector2i(maxi(maximum.x, cell.x), maxi(maximum.y, cell.y))
+			var expected := {}
+			for y in range(minimum.y, maximum.y + 1):
+				for x in range(minimum.x, maximum.x + 1): expected[data.index(Vector2i(x, y))] = true
+			var actual := {}
+			for value: Variant in move.sweep:
+				if not _valid_cell(data, value) or actual.has(int(value)): return Runtime.fail("CORRUPT_SAVE", "車輛掃掠預約重複／越界")
+				actual[int(value)] = true
+				occupied[data.cell_from_index(int(value))] = true
+			if expected != actual: return Runtime.fail("CORRUPT_SAVE", "車輛轉彎掃掠預約不完整")
+		for cell: Vector2i in occupied:
+			if not data.contains(cell) or check_terrain and not data.is_walkable(cell) or claims.has(cell) and claims[cell] != operator_id:
+				return Runtime.fail("CORRUPT_SAVE", "車輛與人物／車輛占格預約衝突")
+			if check_terrain:
+				for direction: Vector2i in [Vector2i.RIGHT, Vector2i.DOWN]:
+					if occupied.has(cell + direction) and not data.can_step(cell, cell + direction): return Runtime.fail("CORRUPT_SAVE", "車輛跨越非法地勢")
+			claims[cell] = "vehicle:" + str(identity)
+	if total > 300: return Runtime.fail("CORRUPT_SAVE", "三隊人物與車輛合計超過300名額")
+	return Runtime.ok()
+
+static func _vehicle_facing(value: Variant) -> bool:
+	return value is Array and value.size() == 2 and _integer(value[0], -1, 1) and _integer(value[1], -1, 1) and absi(int(value[0])) + absi(int(value[1])) == 1
 
 static func _valid_cells(data: TerrainData, value: Variant, maximum: int) -> bool:
 	if not value is Array or value.is_empty() or value.size() > maximum:
@@ -741,6 +909,15 @@ static func _validate_items(data: TerrainData, state: Dictionary) -> Dictionary:
 	var result := _validate_item_holder(state.depot_items, "depot", state, locations, state.get("inventory", {}), int(state.get("capacity", 0)))
 	if not result.ok:
 		return result
+	if not state.get("vehicles", {}) is Dictionary:
+		return Runtime.fail("CORRUPT_SAVE", "車輛持物資料")
+	for identity: Variant in state.get("vehicles", {}):
+		var vehicle: Variant = state.vehicles[identity]
+		if not vehicle is Dictionary or not vehicle.get("kind") is String or not Vehicles.CAPACITY.has(vehicle.kind):
+			return Runtime.fail("CORRUPT_SAVE", "車輛種類／持物資料")
+		result = _validate_item_holder(vehicle.get("holder"), "vehicle:" + str(identity), state, locations, vehicle.get("cargo"), int(Vehicles.CAPACITY[vehicle.kind]))
+		if not result.ok: return result
+		if not vehicle.holder.equipped.is_empty(): return Runtime.fail("CORRUPT_SAVE", "車輛不能穿戴裝備，所有實物均占載量")
 	for identity: Variant in state.ground_loot:
 		var container: Variant = state.ground_loot[identity]
 		if not _serial(identity, int(state.next_loot)) or not container is Dictionary or container.size() != 8 + int(container.has("open_rations")):
@@ -802,7 +979,7 @@ static func _validate_items(data: TerrainData, state: Dictionary) -> Dictionary:
 
 static func _validate_captivity(data: TerrainData, state: Dictionary) -> Dictionary:
 	var relations: Variant = state.get("captivity", {})
-	if not relations is Dictionary or relations.size() > 202:
+	if not relations is Dictionary or relations.size() > 302:
 		return Runtime.fail("CORRUPT_SAVE", "拘押關係欄位")
 	var people := {}
 	for actor: Dictionary in state.get("actors", {}).values():

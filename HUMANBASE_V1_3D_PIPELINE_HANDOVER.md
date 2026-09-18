@@ -1,6 +1,10 @@
 # Worldgoing HumanBase_v1 3D 角色建模與模組管線交接手冊
 (3D Character Modeling & Modular Pipeline Handover Specification)
 
+> **2026-09-18 中性五官**：保留原 Face 01–04，男女各新增 Face 05–08（圓杏、長杏、平直細、寬距柔眼）。生成參考圖後只改眼周結構，眉嘴、UV、權重、原骨架與動畫保留。可編輯來源在 `assets/characters/human/q35/neutral_faces`，builder 經 `load_authored_neutral_faces.py` 載入四個新物件；`gray` 明確重建，手改後只用 `preview/export`。原編輯器、618張新臉預覽、282張舊畫面RGBA等價及8例男女存讀通過；254份舊圖集僅更新有等價證據的來源紀錄。普通兵／騎乘的新五官圖集尚未烘焙。來源、驗證及失敗紀錄見 `output/neutral_faces_20260918/README.md`。
+
+> **2026-09-18 布帽**：新增中式布帽、日式布烏帽、西式軟呢帽，男女各自量測頭皮與獨立額頭網格；放在原 Helmet 欄，原頭盔不取代。`Helmet_Cloth_{Chinese,Japanese,Western}_01_*` 綁原 Head，帽冠、帽帶與縫線沿原 helmet 染色；NPC16／玩家首長自由色不變。開口布帽只裁切帽冠內的頭髮，摘帽恢復；不套封閉鐵盔的整束收髮規則。可編輯來源在 `assets/characters/human/q35/cloth_hats`，`author_cloth_hats.py` 的 gray/detail 是顯式重建，手改後只用 export；男女 builder 透過 `load_authored_cloth_hats.py` 載入，不再另造骨架或整包覆寫。既有模型 bytes／動畫保留，舊圖集以原版／新版 240 張固定姿態 RGBA 等價及來源守衛檢查保留，不冒稱重烘；布帽普通兵／騎乘圖集仍未新增。驗收与失敗記錄見 `output/cloth_hats_20260918/README.md`。
+
 > **2026-09-17 普通兵圖集續作**：44 個四材質武器／工具已接入原標準男性皮革輕甲、原內衣／皮靴、無盾的 2D 配方，每個 19 動作／四方向／584 幀與獨立染色遮罩；原鐵劍盾兵保留。延伸原 ranged reader／baker 和既有 Sprite／MultiMesh，不重匯出或改動男女 GLB，不為普通兵增加 3D 骨架。其他服裝、髮型、女普通兵、持盾與騎乘組合仍需自己的完整配方，不可借圖繞過來源守衛。製作、實際畫面、逐像素／場景驗收邊界與失敗紀錄見 `output/weapon_materials_npc_20260917/README.md`。
 
 > **2026-09-17 武器／工具材質**：七種武器與伐木斧／鎬／工具錘／鏟各有木、石、鐵、鋼，共44選項，男女原骨架。舊ID與網格保留且列鐵製；`wood_axe_01` 是伐木斧，木製版為 `wood_axe_01_wood`。單一目錄 `scripts/ui/weapon_materials.gd` 同時供 Blender 與 Godot 使用；弓弩依箭頭外觀分級。可編輯來源在 `assets/characters/human/q35/weapon_materials`，此離線目錄設 `.gdignore`；正式角色包仍在父目錄。來源重載、弓弦形變別名、實際畫面與普通兵圖集界線見 `output/weapon_materials_20260917/README.md`，不得以重新全包建置覆寫現有服裝美術調整。
