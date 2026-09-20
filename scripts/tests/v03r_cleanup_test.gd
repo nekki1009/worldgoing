@@ -8,7 +8,7 @@ func _initialize() -> void:
 
 func _run() -> void:
 	assert(ProjectSettings.get_setting("application/run/main_scene") == MAIN)
-	assert(ProjectSettings.get_setting("application/config/version") == "V0.48R")
+	assert(ProjectSettings.get_setting("application/config/version") == "V0.49R")
 	for retired: String in [
 		"scenes/Main.tscn", "scenes/world/WorldMap.tscn",
 		"scenes/world/ContinuousWorldMap.tscn", "scenes/region/RegionMap.tscn",
@@ -37,11 +37,10 @@ func _run() -> void:
 	await _settle(8)
 	assert(lab.terrain.size == Vector2i(100, 100))
 	assert(lab.terrain.is_walkable(lab.character.terrain_cell))
-	assert(lab.terrain.is_walkable(lab.npc.terrain_cell))
-	assert(lab.character.terrain_cell != lab.npc.terrain_cell)
+	assert(lab.npc == null)
 	assert(lab.renderer.grass_texture != null and lab.renderer.cliff_texture != null)
 	if visual:
-		for actor: TerrainTestCharacter in [lab.character, lab.npc]:
+		for actor: TerrainTestCharacter in [lab.character]:
 			assert(actor.editor != null and actor.player_sprite.texture != null)
 			assert(actor.editor.animation_player.has_animation(&"run"))
 			assert(actor.editor.part_options[&"hair"].item_count == 9)
@@ -61,7 +60,7 @@ func _run() -> void:
 	assert(not lab.army.has_army())
 	lab.queue_free()
 	await _settle(5)
-	print("V03R_CLEANUP_PASS main=TerrainLab grid=100x100 actors=2 army=100 visual=", visual)
+	print("V03R_CLEANUP_PASS main=TerrainLab grid=100x100 actors=1 army=100 visual=", visual)
 	quit(0)
 
 func _settle(frames: int) -> void:

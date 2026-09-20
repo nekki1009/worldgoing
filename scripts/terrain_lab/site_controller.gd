@@ -15,7 +15,7 @@ const FamilyContinuity = preload("res://scripts/terrain_lab/site_family_continui
 const WorkTeam = preload("res://scripts/terrain_lab/site_work_team.gd")
 const Vehicles = preload("res://scripts/terrain_lab/site_vehicle_transport.gd")
 const VehicleView = preload("res://scripts/terrain_lab/site_vehicle_view.gd")
-const MODES := ["查看", "手動採集", "工人採集區", "清理區", "勘探區", "建設區", "原測試：放置角色"]
+const MODES := ["查看", "手動採集", "隊員採集區", "清理區", "勘探區", "建設區", "原測試：放置角色"]
 const PANEL_SCALE := 1.35
 const PANEL_SPACE := 590.0
 var lab: Node2D
@@ -59,6 +59,10 @@ var trial_friendly_coach: SpinBox
 var trial_enemy_coach: SpinBox
 var trial_friendly_order: OptionButton
 var trial_enemy_order: OptionButton
+var trial_entry_direction: OptionButton
+var trial_friendly_entry: OptionButton
+var trial_enemy_entry: OptionButton
+var trial_third_entry: OptionButton
 var trial_friendly_spawn_label: Label
 var trial_enemy_spawn_label: Label
 var trial_friendly_spawn := Vector2i(-1, -1)
@@ -141,10 +145,9 @@ func setup(scene: Node2D) -> void:
 	vehicle_view.name = "SiteVehicles"
 	lab.add_child(vehicle_view)
 	vehicle_view.setup(lab)
-	lab.character.combat_event.connect(_combat_event)
-	lab.npc.combat_event.connect(_combat_event)
-	lab.character.died.connect(_person_died)
-	lab.npc.died.connect(_person_died)
+	for actor: TerrainTestCharacter in lab.combat_actors:
+		actor.combat_event.connect(_combat_event)
+		actor.died.connect(_person_died)
 	for team: TerrainArmy in lab.combat_armies:
 		team.vehicle_transport = vehicles
 		team.combat_event.connect(_combat_event)
@@ -152,6 +155,8 @@ func setup(scene: Node2D) -> void:
 		team.equipment_initializer = initialize_team_items
 		team.equipment_appearance_query = person_appearance
 		team.equipment_appearance_batch_query = person_appearance_batch
+		team.cape_retirement = retire_officer_capes
+		team.cape_departure_guard = cape_departure_guard
 		team.person_busy_query = _person_has_duty
 		team.controlled_person_query = lab.controlled_person_id
 		team.membership_change_hook = captivity_supply.membership_change
@@ -176,8 +181,8 @@ func setup(scene: Node2D) -> void:
 	family_continuity.control_selected = _control_family_person
 	work_team.unavailable = _work_person_unavailable
 	work_team.vehicle_blocked = vehicles.blocks_cell
-	lab.character.cell_blocker = _actor_blocked
-	lab.npc.cell_blocker = _actor_blocked
+	for actor: TerrainTestCharacter in lab.combat_actors:
+		actor.cell_blocker = _actor_blocked
 	get_tree().root.size_changed.connect(_layout)
 	get_tree().root.close_requested.connect(_request_exit)
 	get_tree().auto_accept_quit = false
@@ -187,7 +192,8 @@ func setup(scene: Node2D) -> void:
 func bind() -> void:
 	var data: TerrainData = lab.terrain
 	lab.character.ammo_inventory = data.site.manual.cargo
-	lab.npc.ammo_inventory = data.site.worker.cargo
+	if lab.npc != null:
+		lab.npc.ammo_inventory = data.site.worker.cargo
 	_equipment_appearances.clear()
 	_pending_deaths.clear()
 	person_actions.init(lab)
@@ -199,14 +205,17 @@ func bind() -> void:
 	_family_wait = false
 	captivity_supply.init(self)
 	person_executor_id = lab.controlled_person_id()
-	for actor: TerrainTestCharacter in [lab.character, lab.npc]:
-		var original: Dictionary = actor.editor.capture_appearance() if actor.editor != null else actor.capture_state().appearance
+	for actor: TerrainTestCharacter in lab.combat_actors:
+		# Capture through the actor owner before item/legacy-cape preflight reads
+		# _saved_appearance; a live editor alone has not published that snapshot.
+		var original: Dictionary = actor.capture_state().appearance
 		if actor.person_id != lab.controlled_person_id() and actor.item_state.is_empty() and not original.has("equipment_dyes"):
 			original = _initial_uniform(original, actor.faction_id)
 		var initialized := Runtime.seed_person_equipment(data, actor.item_state, actor.person_id, original)
 		if not initialized.ok:
 			show_result(initialized)
 			continue
+		reconcile_cape_roles([actor.person_id])
 		equipment_changed(actor.person_id)
 		if actor.editor != null:
 			actor.editor.part_selection_request = _request_person_equipment.bind(actor.person_id)
@@ -216,9 +225,12 @@ func bind() -> void:
 			_person_died(actor.person_id)
 	for team: TerrainArmy in lab.combat_armies:
 		initialize_team_items(team)
-	if not data.site.has("worker_enabled"):
-		data.site.worker_enabled = true
-	data.site.worker.cell = data.index(lab.npc.terrain_cell)
+	if lab.npc == null:
+		release_worker()
+	else:
+		if not data.site.has("worker_enabled"):
+			data.site.worker_enabled = false
+		data.site.worker.cell = data.index(lab.npc.terrain_cell)
 	view.display(data)
 	Runtime.rebuild_water(data)
 	_navigation_revision = data.navigation_revision
@@ -338,7 +350,7 @@ func _build_ui() -> void:
 	status_column.add_theme_constant_override("separation", 5)
 	status_margin.add_child(status_column)
 	_label(status_column, "現在狀態", 18)
-	message = _label(status_column, "先框選工人採集區，工人會自行採集並回營地交貨。", 16)
+	message = _label(status_column, "可手動採集，或框選工作區後指派既有隊員作業。", 16)
 	message.modulate = Color("f0d7a0")
 	status_column.add_child(HSeparator.new())
 	_label(status_column, "所選格資訊", 17)
@@ -429,11 +441,12 @@ func _build_ui() -> void:
 	_button(row, "拆除／取消", "CancelFeature", func() -> void:
 		show_result(Runtime.cancel_feature(lab.terrain, feature_key)))
 	stock_label = _label(column, "")
-	worker_label = _label(column, "")
-	row = HBoxContainer.new()
-	column.add_child(row)
-	_button(row, "工人開始", "EnableWorker", enable_worker)
-	_button(row, "工人停止", "StopWorker", release_worker)
+	if lab.npc != null:
+		worker_label = _label(column, "")
+		row = HBoxContainer.new()
+		column.add_child(row)
+		_button(row, "工人開始", "EnableWorker", enable_worker)
+		_button(row, "工人停止", "StopWorker", release_worker)
 	_label(column, "工作區（由上而下優先）", 18)
 	zones = VBoxContainer.new()
 	column.add_child(zones)
@@ -442,7 +455,7 @@ func _build_ui() -> void:
 	_button(row, "營地近景", "FocusCamp", focus_camp)
 	_button(row, "全圖", "FitSite", lab.fit_map)
 	_button(column, "戰鬥測試／隊伍設定…", "OpenCombatWindow", _open_combat_window)
-	_label(column, "保存地圖、玩家／工人與各隊傷亡、指揮、動作／移動。交戰中延後保存，離線期間不增加產量。", 15)
+	_label(column, "保存地圖、玩家與各隊傷亡、指揮、動作／移動。交戰中延後保存，離線期間不增加產量。", 15)
 	saved_sites = _options(column, ["已保存地圖"], "SavedSites")
 	_button(column, "開啟所選保存地圖", "OpenSavedSite", func() -> void:
 		if saved_sites.selected >= 0 and saved_sites.get_item_metadata(saved_sites.selected) != null:
@@ -548,20 +561,27 @@ func _build_combat_window(ui: CanvasLayer, style: StyleBoxFlat) -> void:
 	trial_friendly_order.select(1)
 	trial_enemy_order.select(1)
 	trial_third_order.select(1)
+	_compact_label(config, "進場方位")
+	trial_friendly_entry = _options(config, ["東", "南", "西", "北"], "FriendlyEntryDirection")
+	trial_enemy_entry = _options(config, ["東", "南", "西", "北"], "EnemyEntryDirection")
+	trial_third_entry = _options(config, ["東", "南", "西", "北"], "ThirdEntryDirection")
+	trial_friendly_entry.select(2) # 西
+	trial_enemy_entry.select(0)    # 東
+	trial_third_entry.select(3)    # 北
+	trial_friendly_entry.item_selected.connect(func(_index: int) -> void: _update_combat_window())
+	trial_enemy_entry.item_selected.connect(func(_index: int) -> void: _update_combat_window())
+	trial_third_entry.item_selected.connect(func(_index: int) -> void: _update_combat_window())
+	trial_entry_direction = trial_enemy_entry
 	for prefix: String in trial_roles:
 		_trial_role_changed(prefix)
 	column.add_child(HSeparator.new())
-	_label(column, "出現位置", 18)
+	_label(column, "進場點與部署方位", 18)
+	_label(column, "我方、敵方與第三方隊伍可各自獨立選擇進場方位（東、南、西、北），系統自動從該方位的合法空位部署隊伍。", 15)
 	_label(column, "總名額包含每一名人員與每一輛車，至少保留一人；男女比例只計真正人員。車多於可用操作者時停泊等待，不額外生成駕駛。工作隊留下隊長，其餘人沿原工作區派工；後勤隊不自動取物。", 15)
-	_label(column, "手動指定：點地圖再按對應按鈕，該格為隊長位置。近戰隊沿相鄰前線；遠程隊預留射距。工作／後勤可各自指定合法位置，自動位置避開敵軍八格威脅區。工作與後勤預設守位。", 15)
 	_label(column, "弓／弩測試隊部署時每人持有對應武器及 20 發彈藥，無盾；只在本次建立時配置。射完須沿原營地製作、領取補給。", 15)
-	trial_friendly_spawn_label = _label(column, "我方：自動尋找", 15)
-	_button(column, "以目前所選格設定我方位置", "SetFriendlySpawn", func() -> void: _set_trial_spawn(true))
-	trial_enemy_spawn_label = _label(column, "敵方：自動尋找", 15)
-	_button(column, "以目前所選格設定敵方位置", "SetEnemySpawn", func() -> void: _set_trial_spawn(false))
-	trial_third_spawn_label = _label(column, "第三隊：自動尋找", 15)
-	_button(column, "以目前所選格設定第三隊位置", "SetThirdSpawn", _set_third_trial_spawn)
-	_button(column, "所有隊伍恢復自動尋找位置", "ResetTrialSpawns", _reset_trial_spawns)
+	trial_friendly_spawn_label = _label(column, "我方：從【西】方空位自動部署", 15)
+	trial_enemy_spawn_label = _label(column, "敵方：從【東】方空位自動部署", 15)
+	trial_third_spawn_label = _label(column, "第三隊：從【北】方空位自動部署", 15)
 	var deploy_row := HBoxContainer.new()
 	column.add_child(deploy_row)
 	_button(deploy_row, "依設定部署", "StartMeleeTrial", _deploy_melee_trial)
@@ -664,7 +684,7 @@ func _set_third_trial_spawn() -> void:
 	_update_combat_window()
 
 func _trial_setup() -> Dictionary:
-	var setup := {
+	var trial_config := {
 		"friendly_count": int(trial_friendly_count.value),
 		"enemy_count": int(trial_enemy_count.value),
 		"friendly_female_percent": int(trial_friendly_female_percent.value),
@@ -681,6 +701,10 @@ func _trial_setup() -> Dictionary:
 		"enemy_attack": trial_enemy_order.selected == 1,
 		"friendly_spawn": trial_friendly_spawn,
 		"enemy_spawn": trial_enemy_spawn,
+		"friendly_entry": ["east", "south", "west", "north"][trial_friendly_entry.selected] if trial_friendly_entry != null and trial_friendly_entry.selected >= 0 else "west",
+		"enemy_entry": ["east", "south", "west", "north"][trial_enemy_entry.selected] if trial_enemy_entry != null and trial_enemy_entry.selected >= 0 else "east",
+		"third_entry": ["east", "south", "west", "north"][trial_third_entry.selected] if trial_third_entry != null and trial_third_entry.selected >= 0 else "north",
+		"entry_direction": ["east", "south", "west", "north"][trial_enemy_entry.selected] if trial_enemy_entry != null and trial_enemy_entry.selected >= 0 else "east",
 		"third_enabled": trial_third_enabled.button_pressed,
 		"third_faction": trial_third_faction.selected,
 		"third_count": int(trial_third_count.value),
@@ -693,11 +717,11 @@ func _trial_setup() -> Dictionary:
 		"third_spawn": trial_third_spawn,
 	}
 	for prefix: String in trial_roles:
-		setup[prefix + "_role"] = ["combat", "work", "logistics"][trial_roles[prefix].selected]
-		setup[prefix + "_troop_type"] = ["melee_infantry", "bow", "crossbow"][trial_troop_types[prefix].selected]
-		setup[prefix + "_cart_count"] = int(trial_carts[prefix].value)
-		setup[prefix + "_wagon_count"] = int(trial_wagons[prefix].value)
-	return setup
+		trial_config[prefix + "_role"] = ["combat", "work", "logistics"][trial_roles[prefix].selected]
+		trial_config[prefix + "_troop_type"] = ["melee_infantry", "bow", "crossbow"][trial_troop_types[prefix].selected]
+		trial_config[prefix + "_cart_count"] = int(trial_carts[prefix].value)
+		trial_config[prefix + "_wagon_count"] = int(trial_wagons[prefix].value)
+	return trial_config
 
 func _deploy_melee_trial() -> void:
 	var result: Dictionary = lab.start_melee_trial(_trial_setup())
@@ -770,9 +794,13 @@ func _show_melee_trial_status() -> void:
 func _update_combat_window() -> void:
 	if combat_window == null:
 		return
-	trial_friendly_spawn_label.text = "我方：%s" % ("自動尋找" if trial_friendly_spawn.x < 0 else str(trial_friendly_spawn))
-	trial_enemy_spawn_label.text = "敵方：%s" % ("自動尋找" if trial_enemy_spawn.x < 0 else str(trial_enemy_spawn))
-	trial_third_spawn_label.text = "第三隊：%s" % ("自動尋找" if trial_third_spawn.x < 0 else str(trial_third_spawn))
+	var dir_names: Array[String] = ["東", "南", "西", "北"]
+	var f_name: String = dir_names[trial_friendly_entry.selected] if trial_friendly_entry != null and trial_friendly_entry.selected >= 0 else "西"
+	var e_name: String = dir_names[trial_enemy_entry.selected] if trial_enemy_entry != null and trial_enemy_entry.selected >= 0 else "東"
+	var t_name: String = dir_names[trial_third_entry.selected] if trial_third_entry != null and trial_third_entry.selected >= 0 else "北"
+	trial_friendly_spawn_label.text = "我方：%s" % (("從【%s】方空位自動部署" % f_name) if trial_friendly_spawn.x < 0 else str(trial_friendly_spawn))
+	trial_enemy_spawn_label.text = "敵方：%s" % (("從【%s】方空位自動部署" % e_name) if trial_enemy_spawn.x < 0 else str(trial_enemy_spawn))
+	trial_third_spawn_label.text = "第三隊：%s" % (("從【%s】方空位自動部署" % t_name) if trial_third_spawn.x < 0 else str(trial_third_spawn))
 	var summaries := PackedStringArray()
 	for index in range(lab.combat_armies.size()):
 		var team: TerrainArmy = lab.combat_armies[index]
@@ -918,7 +946,7 @@ func build_selected() -> void:
 	show_result(Runtime.request_build(lab.terrain, str(Runtime.FEATURES.keys()[buildings.selected]), build_cells, reserves_cell))
 
 func enable_worker() -> void:
-	lab.terrain.site.worker_enabled = true
+	lab.terrain.site.worker_enabled = lab.npc != null
 	_work_elapsed = 1.0
 
 func release_worker() -> void:
@@ -927,7 +955,8 @@ func release_worker() -> void:
 	lab.terrain.site.worker.target = ""
 	lab.terrain.site.worker.progress = 0.0
 	lab.terrain.site.worker.manual_control = false
-	lab.npc.issue_command(TerrainTestNPC.Command.STOP)
+	if lab.npc != null:
+		lab.npc.issue_command(TerrainTestNPC.Command.STOP)
 
 func _actor_blocked(cell: Vector2i, requester: Node) -> bool:
 	if vehicles.blocks_cell(cell):
@@ -935,7 +964,10 @@ func _actor_blocked(cell: Vector2i, requester: Node) -> bool:
 	for team: TerrainArmy in lab.combat_armies:
 		if team.blocks_cell(cell):
 			return true
-	return (requester != lab.character and lab.character.occupies_cell(cell)) or (requester != lab.npc and lab.npc.occupies_cell(cell))
+	for actor: TerrainTestCharacter in lab.combat_actors:
+		if actor != requester and actor.occupies_cell(cell):
+			return true
+	return false
 
 func _worker_blocked(cell: Vector2i) -> bool:
 	return _actor_blocked(cell, lab.npc)
@@ -946,7 +978,10 @@ func reserves_cell(cell: Vector2i) -> bool:
 	for team: TerrainArmy in lab.combat_armies:
 		if team.reserves_terrain_cell(cell):
 			return true
-	return lab.character.occupies_cell(cell) or lab.npc.occupies_cell(cell)
+	for actor: TerrainTestCharacter in lab.combat_actors:
+		if actor.occupies_cell(cell):
+			return true
+	return false
 
 func _combat_event(duration: float) -> void:
 	if lab.terrain != null:
@@ -969,42 +1004,45 @@ func tick(delta: float) -> void:
 		vehicles.settle_operators()
 		_work_elapsed += delta
 		_save_elapsed += delta
-		var worker: Dictionary = data.site.worker
-		worker.cell = data.index(lab.npc.terrain_cell)
-		lab.npc.work_resting = PersonFatigue.needs_work_rest(lab.npc.fatigue, lab.npc.work_resting)
-		var capable: bool = lab.npc.can_act() and lab.npc.action_time <= 0 and not lab.npc.guarding and lab.npc.guard_transition_left <= 0.0 and lab.npc.guard_break_left <= 0.0 and lab.npc._rescue_left <= 0.0 and lab.npc.visible and not _person_has_duty(lab.npc.person_id)
 		var worker_ready := false
-		if bool(data.site.worker_enabled) and lab.npc.work_resting:
-			# STOP clears future navigation, not the committed step or original task/cargo.
-			if lab.npc.command != TerrainTestNPC.Command.STOP:
-				lab.npc.issue_command(TerrainTestNPC.Command.STOP)
-			worker.status = "疲勞輪休；安全休息至 50 後續作"
-		if bool(worker.get("manual_control", false)):
-			if lab.controlled_person_id() == lab.npc.person_id and capable and not lab.npc.is_moving() and worker.cell == worker.work_cell and not str(worker.target).is_empty():
-				worker.mode = "work"
-				worker_ready = true
-			else:
-				worker.manual_control = false
-				worker.target = ""
-				worker.progress = 0.0
-		elif bool(data.site.worker_enabled) and lab.controlled_person_id() != lab.npc.person_id and capable and not lab.npc.work_resting:
-			if str(worker.target).is_empty() and lab.npc.command != TerrainTestNPC.Command.STOP:
-				lab.npc.issue_command(TerrainTestNPC.Command.STOP)
-			if str(worker.target).is_empty() and _work_elapsed >= 0.5:
-				Runtime.assign_task(data, Runtime.choose_task(data, lab.npc.terrain_cell, _worker_blocked, null, null, work_team.reserved_targets()))
-				_work_elapsed = 0.0
-			if not str(worker.target).is_empty():
-				var goal := data.cell_from_index(int(worker.work_cell))
-				if lab.npc.terrain_cell == goal and not lab.npc.is_moving():
+		var worker_limit := 0
+		if lab.npc != null:
+			var worker: Dictionary = data.site.worker
+			worker.cell = data.index(lab.npc.terrain_cell)
+			worker_limit = floori(Runtime.CARRY_CAPACITY - Runtime.carried_load(data.site, {}, lab.npc.item_state))
+			lab.npc.work_resting = PersonFatigue.needs_work_rest(lab.npc.fatigue, lab.npc.work_resting)
+			var capable: bool = lab.npc.can_act() and lab.npc.action_time <= 0 and not lab.npc.guarding and lab.npc.guard_transition_left <= 0.0 and lab.npc.guard_break_left <= 0.0 and lab.npc._rescue_left <= 0.0 and lab.npc.visible and not _person_has_duty(lab.npc.person_id)
+			if bool(data.site.worker_enabled) and lab.npc.work_resting:
+				# STOP clears future navigation, not the committed step or original task/cargo.
+				if lab.npc.command != TerrainTestNPC.Command.STOP:
+					lab.npc.issue_command(TerrainTestNPC.Command.STOP)
+				worker.status = "疲勞輪休；安全休息至 50 後續作"
+			if bool(worker.get("manual_control", false)):
+				if lab.controlled_person_id() == lab.npc.person_id and capable and not lab.npc.is_moving() and worker.cell == worker.work_cell and not str(worker.target).is_empty():
 					worker.mode = "work"
 					worker_ready = true
-				elif not lab.npc.is_moving() and _work_elapsed >= 0.5:
-					worker.mode = "travel"
-					if not lab.npc.issue_command(TerrainTestNPC.Command.MOVE_TO_CELL, goal):
-						worker.target = ""
-						worker.mode = "idle"
-						worker.status = "路線受阻；等待重試"
+				else:
+					worker.manual_control = false
+					worker.target = ""
+					worker.progress = 0.0
+			elif bool(data.site.worker_enabled) and lab.controlled_person_id() != lab.npc.person_id and capable and not lab.npc.work_resting:
+				if str(worker.target).is_empty() and lab.npc.command != TerrainTestNPC.Command.STOP:
+					lab.npc.issue_command(TerrainTestNPC.Command.STOP)
+				if str(worker.target).is_empty() and _work_elapsed >= 0.5:
+					Runtime.assign_task(data, Runtime.choose_task(data, lab.npc.terrain_cell, _worker_blocked, null, null, work_team.reserved_targets()))
 					_work_elapsed = 0.0
+				if not str(worker.target).is_empty():
+					var goal := data.cell_from_index(int(worker.work_cell))
+					if lab.npc.terrain_cell == goal and not lab.npc.is_moving():
+						worker.mode = "work"
+						worker_ready = true
+					elif not lab.npc.is_moving() and _work_elapsed >= 0.5:
+						worker.mode = "travel"
+						if not lab.npc.issue_command(TerrainTestNPC.Command.MOVE_TO_CELL, goal):
+							worker.target = ""
+							worker.mode = "idle"
+							worker.status = "路線受阻；等待重試"
+						_work_elapsed = 0.0
 		var manual: Dictionary = data.site.manual
 		var manual_ready: bool = not str(manual.target).is_empty() and lab.character.can_act() and lab.character.action_time <= 0 and not lab.character.guarding and lab.character.guard_transition_left <= 0.0 and lab.character.guard_break_left <= 0.0 and lab.character._rescue_left <= 0.0 and not lab.character.is_moving() and data.index(lab.character.terrain_cell) == int(manual.get("cell", -1))
 		if not manual_ready:
@@ -1013,7 +1051,7 @@ func tick(delta: float) -> void:
 		var time_multiplier := float(lab.simulation_speed)
 		var work_interval := Runtime.game_seconds(delta, float(data.site.combat_left)) * time_multiplier
 		Runtime.advance(data, delta, worker_ready, manual_ready, reserves_cell, lab.fatigue_work_minutes, _advance_crew,
-			floori(Runtime.CARRY_CAPACITY - Runtime.carried_load(lab.terrain.site, {}, lab.npc.item_state)), floori(Runtime.CARRY_CAPACITY - Runtime.carried_load(lab.terrain.site, {}, lab.character.item_state)), time_multiplier)
+			worker_limit, floori(Runtime.CARRY_CAPACITY - Runtime.carried_load(lab.terrain.site, {}, lab.character.item_state)), time_multiplier)
 		if worker_ready and not lab.npc.work_resting:
 			# Waiting on tools/inputs/output space is assigned duty, not a rest break.
 			lab._fatigue_work_seconds[lab.npc] = work_interval
@@ -1094,8 +1132,10 @@ func _open_officer_priority() -> void:
 
 func _capture_positions() -> void:
 	lab.terrain.site.player_cell = lab.terrain.index(lab.character.terrain_cell)
-	lab.terrain.site.worker.cell = lab.terrain.index(lab.npc.terrain_cell)
-	lab.terrain.site["actors"] = {"player": lab.character.capture_state(), "npc": lab.npc.capture_state()}
+	lab.terrain.site["actors"] = {"player": lab.character.capture_state()}
+	if lab.npc != null:
+		lab.terrain.site.worker.cell = lab.terrain.index(lab.npc.terrain_cell)
+		lab.terrain.site.actors["npc"] = lab.npc.capture_state()
 	var armies: Array = []
 	for team: TerrainArmy in lab.combat_armies:
 		if team.combat_enabled:
@@ -1103,6 +1143,8 @@ func _capture_positions() -> void:
 	lab.terrain.site["armies"] = armies
 
 func supply_save_guard() -> Dictionary:
+	var cape_guard := cape_policy_guard()
+	if not cape_guard.ok: return cape_guard
 	if lab.has_ranged_projectiles():
 		return Runtime.fail("BUSY", "箭矢仍在飛行；結算前不保存、換場或清除射手")
 	if not _pending_deaths.is_empty():
@@ -1157,6 +1199,9 @@ func _load_path(path: String) -> void:
 		show_result(Runtime.fail("BUSY", "脫戰後才能載入"))
 		return
 	var result := _load_compatible_site(path)
+	if result.ok and not is_instance_valid(lab.npc):
+		var retired := Store.retire_default_worker(result.data)
+		if not retired.ok: result = retired
 	if result.ok:
 		if path != save_path and not archive_before_replace():
 			return
@@ -1256,7 +1301,10 @@ func update_ui() -> void:
 		details.text += "\n現場有 %d 個實物容器；可查看並選擇取物。" % containers.size()
 	var job := person_actions.job_for(person_executor_id)
 	if not job.is_empty():
-		details.text += "\n人物 #%d 作業：%s %.1f／%.1f 秒 %s" % [person_executor_id, job.kind, float(job.elapsed), float(job.duration), str(job.paused)]
+		if job.kind == "equipment" and job.paused == "PREPARING_ATLAS":
+			details.text += "\n人物 #%d 作業：正在準備共用裝備外觀；完成後開始五秒換裝，可取消" % person_executor_id
+		else:
+			details.text += "\n人物 #%d 作業：%s %.1f／%.1f 秒 %s" % [person_executor_id, job.kind, float(job.elapsed), float(job.duration), str(job.paused)]
 	if view.selection.get_area() > 1:
 		if _summary_revision != data.environment_revision or _summary_area != view.selection:
 			_summary_revision = data.environment_revision
@@ -1307,9 +1355,10 @@ func update_ui() -> void:
 	var camp_water: Dictionary = data.site.water_status.get("camp", {})
 	stock_label.text += "\n營地供水 %.2f / %.2f 單位／分" % [float(camp_water.get("supplied", 0)), float(camp_water.get("demand", 0.02))]
 	stock_label.text += "\n施工／作坊投入由營地統一供應；採集與成品須運回。"
-	worker_label.text = "工人：%s\n攜帶：%s" % [str(data.site.worker.status) if bool(data.site.worker_enabled) else "已停止", Runtime.items_text(data.site.worker.cargo)]
-	worker_label.text += "\n疲勞 %.1f／100 · 耗時 +%.1f%%\n停止工作並安全停留 30 遊戲秒後恢復" % [lab.npc.fatigue, PersonFatigue.slowdown(lab.npc.fatigue) * 100.0]
-	worker_label.text += "\n" + ("輪休中：降至 50 後續作，保留原進度與貨物" if lab.npc.work_resting else "疲勞達 80 自動輪休；玩家不強制停工")
+	if worker_label != null and lab.npc != null:
+		worker_label.text = "工人：%s\n攜帶：%s" % [str(data.site.worker.status) if bool(data.site.worker_enabled) else "已停止", Runtime.items_text(data.site.worker.cargo)]
+		worker_label.text += "\n疲勞 %.1f／100 · 耗時 +%.1f%%\n停止工作並安全停留 30 遊戲秒後恢復" % [lab.npc.fatigue, PersonFatigue.slowdown(lab.npc.fatigue) * 100.0]
+		worker_label.text += "\n" + ("輪休中：降至 50 後續作，保留原進度與貨物" if lab.npc.work_resting else "疲勞達 80 自動輪休；玩家不強制停工")
 	_update_team_supply_ui()
 	_update_combat_window()
 	var signature := JSON.stringify(data.site.zones)
@@ -1328,13 +1377,14 @@ func update_ui() -> void:
 				if not enabled and int(data.site.worker.zone) == index:
 					data.site.worker.target = ""
 					data.site.worker.mode = "idle"
-					lab.npc.issue_command(TerrainTestNPC.Command.STOP)
+					if lab.npc != null:
+						lab.npc.issue_command(TerrainTestNPC.Command.STOP)
 				data.environment_revision += 1)
 			zones.add_child(toggle)
 
 func _selected_people() -> Array[int]:
 	var identities: Array[int] = []
-	for actor: TerrainTestCharacter in [lab.character, lab.npc]:
+	for actor: TerrainTestCharacter in lab.combat_actors:
 		if actor.terrain_cell == selected:
 			identities.append(actor.person_id)
 	for team: TerrainArmy in lab.combat_armies:
@@ -1669,11 +1719,20 @@ func _open_equipment_standards() -> void:
 	var dialog := AcceptDialog.new()
 	dialog.name = "EquipmentStandardsDialog"
 	dialog.title = "正式兵種配裝需求 · 只影響未來領裝"
-	dialog.min_size = Vector2i(560, 480)
+	dialog.min_size = Vector2i(760, 480)
 	var column := VBoxContainer.new()
 	dialog.add_child(column)
-	var standard_choice := _options(column, ["新增標準"], "EditStandard")
 	var nation: Dictionary = lab.terrain.site.equipment_nations[nation_id]
+	var culture_label := _label(column, "本國文化只約束未來制式領裝；材質可混搭，外國戰利品保留。\n舊國別不猜文化；先修訂跨文化舊標準，再由真實軍事首長首次固定。", 14)
+	culture_label.name = "NationCultureStatus"
+	var culture_choice := _options(column, ["尚未固定：請明確選擇本國文化"], "NationCulture")
+	culture_choice.set_item_metadata(0, "")
+	for culture: String in EquipmentOrders.CULTURES:
+		culture_choice.add_item(str(EquipmentOrders.CULTURES[culture]))
+		culture_choice.set_item_metadata(culture_choice.item_count - 1, culture)
+		if str(nation.get("culture", "")) == culture: culture_choice.select(culture_choice.item_count - 1)
+	culture_choice.disabled = nation.has("culture")
+	var standard_choice := _options(column, ["新增標準"], "EditStandard")
 	for key: String in nation.standards:
 		standard_choice.add_item(str(nation.standards[key].name))
 		standard_choice.set_item_metadata(standard_choice.item_count - 1, key)
@@ -1683,6 +1742,24 @@ func _open_equipment_standards() -> void:
 	column.add_child(title_input)
 	var choices := {}
 	var alternatives_by_slot := {}
+	var fix_culture := _button(column, "首次固定本國文化（之後不可改）", "CommitNationCulture", func() -> void:
+		if lab.controlled_person_id() != original_control or lab.terrain != original_data or not is_same(lab.terrain.site.get("equipment_nations", {}).get(nation_id, {}), nation):
+			show_result(Runtime.fail("STALE_SOURCE", "原人物／地圖／國別已變更，請重開標準面板"))
+			return
+		var result := equipment_orders.set_nation_culture(original_control, nation_id, str(culture_choice.get_item_metadata(culture_choice.selected)))
+		show_result(result)
+		culture_label.text = str(result.message)
+		if not result.ok: return
+		culture_choice.disabled = true
+		(dialog.find_child("CommitNationCulture", true, false) as Button).disabled = true
+		for slot: String in choices:
+			var choice: OptionButton = choices[slot]
+			for index: int in range(choice.item_count - 1, 0, -1):
+				var definition: Dictionary = original_data.site.item_definitions[str(choice.get_item_metadata(index))]
+				var culture := EquipmentOrders.definition_culture(definition)
+				if not culture.is_empty() and culture != str(nation.culture): choice.remove_item(index)
+		standard_choice.item_selected.emit(standard_choice.selected))
+	fix_culture.disabled = nation.has("culture")
 	var dye_choices := {}
 	var dye_enabled := {}
 	_label(column, "指定原實物與五部位配色；改標準不立即染現役裝備，須另按套用。", 14)
@@ -1706,7 +1783,8 @@ func _open_equipment_standards() -> void:
 		choice.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		for definition_id: String in lab.terrain.site.item_definitions:
 			var definition: Dictionary = lab.terrain.site.item_definitions[definition_id]
-			if str(definition.slot) == slot and EquipmentOrders.valid_definition(definition_id, definition):
+			var culture := EquipmentOrders.definition_culture(definition)
+			if str(definition.slot) == slot and EquipmentOrders.valid_definition(definition_id, definition) and (not nation.has("culture") or culture.is_empty() or culture == str(nation.culture)):
 				choice.add_item(_item_label(definition))
 				choice.set_item_metadata(choice.item_count - 1, definition_id)
 		choices[slot] = choice
@@ -2016,6 +2094,7 @@ func initialize_team_items(team: TerrainArmy) -> void:
 		if not initialized.ok:
 			show_result(initialized)
 			continue
+		reconcile_cape_roles([team.combat_identity(index)])
 		equipment_changed(team.combat_identity(index))
 		if team._uses_live_presenter(index):
 			var live: Variant = team._unit_editor(index)
@@ -2496,6 +2575,46 @@ func _presentation_holder(person: Dictionary) -> Dictionary:
 		return lab.terrain.site.ground_loot.get(str(person.body.get("remains_id")), Runtime.new_item_state("empty-remains"))
 	return person.holder
 
+func person_can_wear_cape(identity: int) -> bool:
+	return equipment_orders.cape_role_allowed(identity)
+
+func retire_officer_capes(identities: Array[int]) -> Dictionary:
+	var retiring: Array[int] = []
+	for identity: int in identities:
+		if not equipment_orders.nation_grants_cape(identity): retiring.append(identity)
+	return equipment_orders.retire_capes(retiring)
+
+func cape_departure_guard(identity: int) -> Dictionary:
+	var person := person_actions._person(identity)
+	if not person.is_empty() and person.holder.equipped.has("cape") and not equipment_orders.nation_grants_cape(identity):
+		return Runtime.fail("CAPE_REMOVE_FIRST", "離任／退隊前請先將披風卸回本人行囊；名冊、職務、物品與供養未改")
+	return Runtime.ok()
+
+func reconcile_cape_roles(identities: Array[int]) -> Dictionary:
+	var retiring: Array[int] = []
+	for identity: int in identities:
+		var person := person_actions._person(identity)
+		if person.is_empty() or float(person.hp) <= 0.0 or not person.holder.equipped.has("cape"): continue
+		if not equipment_orders.cape_role_allowed(identity): retiring.append(identity)
+	var result := equipment_orders.retire_capes(retiring)
+	if not result.ok:
+		_auto_save_blocked = true
+		show_result(result)
+	return result
+
+func cape_policy_guard() -> Dictionary:
+	var identities: Array[int] = []
+	for actor: TerrainTestCharacter in lab.combat_actors:
+		identities.append(actor.person_id)
+	for team: TerrainArmy in lab.combat_armies:
+		for index in range(team.combat_units.size()): identities.append(team.combat_identity(index))
+	for identity: int in identities:
+		var person := person_actions._person(identity)
+		if person.is_empty() or float(person.hp) <= 0.0: continue
+		var guard := equipment_orders.cape_wear_guard(identity, person.holder.equipped)
+		if not guard.ok: return Runtime.fail(guard.code, "原人物 %d 的披風須先完成卸裝；請檢查行囊容量及無披風圖集准入" % identity)
+	return Runtime.ok()
+
 func equipment_removal_guard(identity: int, item_ids: Array) -> Dictionary:
 	var person := person_actions._person(identity)
 	if person.is_empty():
@@ -2510,6 +2629,8 @@ func equipment_apply_guard(identity: int, equipped: Dictionary) -> Dictionary:
 	var person := person_actions._person(identity)
 	if person.is_empty():
 		return Runtime.fail("NO_TARGET")
+	var cape_guard := equipment_orders.cape_wear_guard(identity, equipped)
+	if not cape_guard.ok: return cape_guard
 	# Preflight may include real depot pieces not transferred yet. Derive only
 	# the proposed appearance; no production holder or item record moves.
 	var original: Dictionary = person.body.appearance if int(person.unit) >= 0 else person.owner._saved_appearance
@@ -2559,6 +2680,8 @@ func _equipment_holder_guard(person: Dictionary, proposed: Dictionary) -> Dictio
 func _equipment_recipe_guard(person: Dictionary, appearance: Dictionary) -> Dictionary:
 	if appearance.is_empty() or not HumanCharacter3DEditor.valid_appearance(appearance):
 		return Runtime.fail("INVALID", "實物配裝不能對應原人物")
+	if float(person.hp) > 0.0 and str(appearance.parts.get("cape", "none")) != "none" and not equipment_orders.cape_role_allowed(int(person.person_id)):
+		return Runtime.fail("CAPE_ROLE_RESTRICTED", "披風僅限現任軍官以上；先完成原披風卸裝")
 	var vehicle: Dictionary = vehicles._operated(int(person.person_id))
 	if vehicle.get("kind", "") == "wagon" and not preload("res://scripts/terrain_lab/site_vehicle_rider_atlas.gd").supports(appearance):
 		return Runtime.fail("UNSUPPORTED", "此人物的固定布裝騎姿素材未就緒；原物品與染色未改")
@@ -2571,13 +2694,20 @@ func _equipment_recipe_guard(person: Dictionary, appearance: Dictionary) -> Dict
 		if not lab.exchange_enabled and (not TerrainArmy.load_contact_source() or not TerrainArmy._contact_source.supports_appearance(appearance)):
 			return Runtime.fail("UNSUPPORTED", "此配裝的原碰撞來源未就緒")
 		if not person.owner.supports_equipment_recipe(appearance):
-			return Runtime.fail("UNSUPPORTED", "此缺裝組合的完整原動畫圖集未就緒；未扣物")
+			if not TerrainArmy.EquipmentAtlas.mixed_plan(appearance).is_empty():
+				var missing := Runtime.fail("ATLAS_REQUIRED", "此配裝須先準備完整共用圖集；原裝與物品保留")
+				missing.appearance = appearance.duplicate(true)
+				return missing
+			return Runtime.fail("UNSUPPORTED", "此配裝尚無完整原動畫圖集；未扣物")
 	return Runtime.ok()
 
 func _request_person_equipment(slot: String, asset: String, identity: int) -> String:
 	if slot not in Runtime.EQUIPMENT_SLOTS:
 		return asset # Body/face/hair are not loot or manufactured equipment.
 	var current := str(person_appearance(identity).get("parts", {}).get(slot, "none"))
+	if slot == "cape" and asset != "none" and not equipment_orders.cape_role_allowed(identity):
+		show_result(Runtime.fail("CAPE_ROLE_RESTRICTED", "披風僅限現任軍官以上；預覽選單不授予職位或實物"))
+		return current
 	if current == asset:
 		return current
 	var person := person_actions._person(identity)
@@ -3045,7 +3175,7 @@ func advance_team_sustain(team: TerrainArmy, elapsed_game_seconds: float) -> Dic
 			team.training = float(training.training)
 			for id: Variant in training.handled_ids:
 				handled[id] = float(handled.get(id, 0.0)) + seconds
-		for original: TerrainTestCharacter in [lab.character, lab.npc]:
+		for original: TerrainTestCharacter in lab.combat_actors:
 			if members.has(original.person_id):
 				var adapter: Dictionary = members[original.person_id]
 				if original._fatigue_pool.is_empty():

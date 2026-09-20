@@ -107,6 +107,8 @@ var sustain_routed_query: Callable
 var equipment_initializer: Callable # Explicit deployment only, never a query refill.
 var equipment_appearance_query: Callable # (actual person ID) -> current read-only recipe.
 var equipment_appearance_batch_query: Callable # Borrow the original owner's immutable publications.
+var cape_retirement: Callable # (original IDs) -> atomic real-holder retirement before demotion.
+var cape_departure_guard: Callable # Pure preflight before the existing feeding/roster transaction.
 var person_busy_query: Callable
 var controlled_person_query: Callable
 var escort_step_guard: Callable
@@ -311,6 +313,9 @@ func _change_row_membership(person_id: int, joining: bool) -> Dictionary:
 		proposed_rows[index].member = true
 		if single_troop_class(proposed_rows, data, _troop_exempt_ids(), _troop_actor(player_member)) == &"mixed":
 			return SiteRuntime.fail("MIXED_TROOP", "入隊裝備與普通隊員兵種不同；原人物與持物未改")
+	elif cape_departure_guard.is_valid():
+		var cape_guard: Dictionary = cape_departure_guard.call(person_id)
+		if not cape_guard.ok: return cape_guard
 	# No body/cargo mutation precedes this hook. A failed hook must leave its
 	# original supply owners untouched; after success only infallible state commits.
 	# The hook checks active person jobs/deliveries; a stationary captivity guard
@@ -368,6 +373,9 @@ func leave_player() -> Dictionary:
 		return SiteRuntime.fail("BUSY", "暫停時不處理退隊")
 	if not is_instance_valid(player_member):
 		return SiteRuntime.fail("NO_TARGET", "尚未加入此隊")
+	if cape_departure_guard.is_valid():
+		var cape_guard: Dictionary = cape_departure_guard.call(player_member.person_id)
+		if not cape_guard.ok: return cape_guard
 	if player_supply_hook.is_valid():
 		var supplied: Dictionary = player_supply_hook.call(self, player_member, false)
 		if not supplied.ok:
@@ -529,6 +537,12 @@ func record_officer_service(members: Array[int], appointed: bool) -> Dictionary:
 		for index: int in members: exemptions.erase(combat_identity(index))
 		if single_troop_class(combat_units, data, exemptions, _troop_actor(player_member)) == &"mixed":
 			return SiteRuntime.fail("MIXED_TROOP", "卸任後配裝須符合普通隊員兵種；職務與實物未改")
+		if cape_retirement.is_valid():
+			var retiring: Array[int] = []
+			for index: int in members:
+				retiring.append(combat_identity(index))
+			var cape_guard: Dictionary = cape_retirement.call(retiring)
+			if not cape_guard.ok: return cape_guard
 	var batch := members.duplicate()
 	batch.sort_custom(func(a: int, b: int) -> bool: return combat_identity(a) < combat_identity(b))
 	_sync_officer_order()
@@ -667,7 +681,7 @@ func _clear_member_attack_targets() -> void:
 		if is_member(index):
 			combat_units[index].target = -1
 	if is_instance_valid(player_member):
-		player_member.attack_target_id = -1
+		player_member.attack_target_id = 0
 
 func exchange_initiates(index: int, other_id: int) -> bool:
 	if index < 0 or index >= combat_units.size():
@@ -1473,6 +1487,11 @@ func transfer_members_to(recipient: TerrainArmy, identities: Array[int], request
 	exemptions.append(int(target_meta.formal))
 	if single_troop_class(target_rows, data, exemptions, recipient._troop_actor(recipient.player_member) if existing else {}) == &"mixed":
 		return SiteRuntime.fail("MIXED_TROOP", "接收後普通隊員將混合兵種；名冊、職務、供養與實物未改")
+	if cape_departure_guard.is_valid():
+		for identity: int in identities:
+			if identity in [int(target_meta.formal), int(target_meta.current)] or target_meta.officers.has(identity) or target_meta.service.has(identity): continue
+			var cape_guard: Dictionary = cape_departure_guard.call(identity)
+			if not cape_guard.ok: return cape_guard
 	var target_living := recipient.living_member_count()
 	var target_training := training if not existing else (recipient.training * target_living + training * incoming_living) / maxf(1.0, target_living + incoming_living)
 	var source_training := training
@@ -1831,6 +1850,7 @@ func supports_equipment_recipe(appearance: Dictionary) -> bool:
 	# after their complete original-animation atlas has passed the baker contract.
 	if not HumanCharacter3DEditor.valid_appearance(appearance): return false
 	if WagonRiderRecipe.matches(appearance): return EquipmentAtlas.supports(appearance)
+	if not EquipmentAtlas.mixed_recipe(appearance).is_empty(): return EquipmentAtlas.supports(appearance)
 	if appearance.body == 1: return EquipmentAtlas.supports(appearance)
 	if not EquipmentAtlas.DyeAtlas.supports(appearance): return false
 	return not _combat_bake.is_empty() and HumanCharacter3DEditor.EquipmentDye.geometry_appearance(appearance) == _combat_bake.manifest.appearance or EquipmentAtlas.supports(appearance)
@@ -3157,6 +3177,14 @@ func _new_person_sprite(index: int) -> Sprite2D:
 	return sprite
 
 var _soldier_atlas: Texture2D
+static var _static_soldier_atlas: Texture2D = null
+static var _static_soldier_frame_textures: Dictionary = {}
+static var _static_soldier_frame_anchors: Dictionary = {}
+static var _static_soldier_clip_counts: Dictionary = {}
+static var _static_soldier_clip_durations: Dictionary = {}
+static var _static_soldier_map_scale: float = 1.0
+static var _static_soldier_baked_ready: bool = false
+var visual_pool_ready := false
 var _soldier_frame_textures: Dictionary = {}
 var _soldier_frame_anchors: Dictionary = {}
 var _soldier_clip_counts: Dictionary = {}
@@ -3345,18 +3373,12 @@ func visual_mode() -> String:
 func active_3d_source_count() -> int:
 	return _all_visual_sources().size()
 
-func _load_baked_soldier() -> bool:
-	_soldier_frame_textures.clear()
-	_soldier_frame_anchors.clear()
-	_soldier_clip_counts.clear()
-	_soldier_clip_durations.clear()
-	_soldier_atlas = null
+static func prewarm_soldier_atlas() -> bool:
+	if _static_soldier_baked_ready and _static_soldier_atlas != null and not _static_soldier_frame_textures.is_empty():
+		return true
 	if not FileAccess.file_exists(ProjectSettings.globalize_path(SOLDIER_MANIFEST_PATH)):
 		push_warning("TerrainArmy soldier atlas manifest is missing; using live fallback")
 		return false
-	# Prefer the imported texture for exports. The file-backed fallback keeps
-	# editor/headless visual tests usable immediately after an offline bake,
-	# before Godot has produced the PNG's .import sidecar.
 	var atlas := ResourceLoader.load(SOLDIER_ATLAS_RESOURCE_PATH) as Texture2D
 	if atlas == null:
 		atlas = ResourceLoader.load(SOLDIER_ATLAS_PATH) as Texture2D
@@ -3369,7 +3391,7 @@ func _load_baked_soldier() -> bool:
 	if atlas == null:
 		push_warning("TerrainArmy soldier atlas texture creation failed; using live fallback")
 		return false
-	_soldier_atlas = atlas
+	_static_soldier_atlas = atlas
 	var file := FileAccess.open(ProjectSettings.globalize_path(SOLDIER_MANIFEST_PATH), FileAccess.READ)
 	if file == null:
 		push_warning("TerrainArmy soldier atlas manifest failed to open; using live fallback")
@@ -3380,27 +3402,96 @@ func _load_baked_soldier() -> bool:
 		push_warning("TerrainArmy soldier atlas manifest is invalid; using live fallback")
 		return false
 	var manifest: Dictionary = parsed
-	_soldier_map_scale = float(manifest.get("map_scale", 1.0))
+	_static_soldier_map_scale = float(manifest.get("map_scale", 1.0))
+	_static_soldier_clip_counts.clear()
+	_static_soldier_clip_durations.clear()
+	_static_soldier_frame_textures.clear()
+	_static_soldier_frame_anchors.clear()
 	for clip_variant in manifest.get("clips", []):
 		var clip: Dictionary = clip_variant
-		_soldier_clip_counts[String(clip.get("id", ""))] = int(clip.get("samples", 1))
+		_static_soldier_clip_counts[String(clip.get("id", ""))] = int(clip.get("samples", 1))
 	for frame_variant in manifest.get("frames", []):
 		var frame: Dictionary = frame_variant
 		var clip_id := String(frame.get("clip", ""))
 		var direction_id := String(frame.get("direction", "down"))
 		var frame_id := int(frame.get("frame", 0))
-		var key := _soldier_frame_key(clip_id, direction_id, frame_id)
+		var key := "%s|%s|%d" % [clip_id, direction_id, frame_id]
 		var rect_data: Dictionary = frame.get("rect", {})
 		var atlas_texture := AtlasTexture.new()
 		atlas_texture.atlas = atlas
 		atlas_texture.region = Rect2(rect_data.get("x", 0), rect_data.get("y", 0), rect_data.get("w", 1), rect_data.get("h", 1))
-		_soldier_frame_textures[key] = atlas_texture
+		_static_soldier_frame_textures[key] = atlas_texture
 		var anchor_data: Dictionary = frame.get("anchor_offset", {})
-		_soldier_frame_anchors[key] = Vector2(float(anchor_data.get("x", 0.0)), float(anchor_data.get("y", 0.0))) * _soldier_map_scale
-		_soldier_clip_durations[clip_id] = float(frame.get("duration", 1.0))
-	if _soldier_frame_textures.is_empty():
+		_static_soldier_frame_anchors[key] = Vector2(float(anchor_data.get("x", 0.0)), float(anchor_data.get("y", 0.0))) * _static_soldier_map_scale
+		_static_soldier_clip_durations[clip_id] = float(frame.get("duration", 1.0))
+	if _static_soldier_frame_textures.is_empty():
 		push_warning("TerrainArmy soldier atlas manifest has no frames; using live fallback")
 		return false
+	_static_soldier_baked_ready = true
+	return true
+
+static func reset_static_soldier_atlas() -> void:
+	_static_soldier_atlas = null
+	_static_soldier_frame_textures.clear()
+	_static_soldier_frame_anchors.clear()
+	_static_soldier_clip_counts.clear()
+	_static_soldier_clip_durations.clear()
+	_static_soldier_map_scale = 1.0
+	_static_soldier_baked_ready = false
+
+func prepare_captain_source() -> void:
+	if DisplayServer.get_name() == "headless":
+		return
+	if _captain_editor != null:
+		return
+	_captain_editor = _create_visual_source(1, "ArmyCaptainVisualSource")
+	_visual_sources_owned = true
+	_visual_sources_active = true
+
+func prepare_sprite_pool(count: int = SOLDIER_COUNT) -> void:
+	if DisplayServer.get_name() == "headless":
+		return
+	if _sprites.size() >= count:
+		return
+	for index: int in range(_sprites.size(), count):
+		var sprite := _new_person_sprite(index)
+		sprite.visible = false
+		_sprites.append(sprite)
+
+func warmup_visual_step(step: int) -> bool:
+	if DisplayServer.get_name() == "headless":
+		return true
+	match step:
+		0:
+			var ok := prewarm_soldier_atlas()
+			if ok:
+				_load_baked_soldier()
+				_soldier_baked_ready = true
+				_soldier_visual_mode = "baked_atlas"
+			return ok
+		1:
+			prepare_captain_source()
+			return _captain_editor != null
+		2:
+			prepare_sprite_pool(roster_size)
+			_set_visual_sources_active(false)
+			visual_pool_ready = true
+			return true
+	return false
+
+func is_visual_pool_ready() -> bool:
+	return visual_pool_ready and _soldier_baked_ready and _captain_editor != null and _sprites.size() >= roster_size
+
+func _load_baked_soldier() -> bool:
+	if not _static_soldier_baked_ready:
+		if not prewarm_soldier_atlas():
+			return false
+	_soldier_atlas = _static_soldier_atlas
+	_soldier_frame_textures = _static_soldier_frame_textures
+	_soldier_frame_anchors = _static_soldier_frame_anchors
+	_soldier_clip_counts = _static_soldier_clip_counts
+	_soldier_clip_durations = _static_soldier_clip_durations
+	_soldier_map_scale = _static_soldier_map_scale
 	return true
 
 func _soldier_frame_key(clip_id: String, direction_id: String, frame_id: int) -> String:
@@ -3621,7 +3712,7 @@ func _create_visual_source(body_index: int, source_name: String) -> Variant:
 	# can keep an opaque clear color; 100 projected sprites then form a black
 	# rectangle over the terrain.
 	var viewport: SubViewport = editor.preview_viewport
-	viewport.size = CharacterRenderContract.PREVIEW_VIEWPORT_SIZE
+	viewport.size = CharacterRenderContract.MAP_VIEWPORT_SIZE
 	viewport.transparent_bg = true
 	var preview_ground := editor.preview_world.get_node_or_null("PreviewGround") as Node3D
 	if preview_ground != null:
@@ -5988,7 +6079,9 @@ func _find_local_route(start: Vector2i, goal: Vector2i, expansion_limit: int = 2
 	var initial_facing := TerrainData.DIRECTIONS.find(vehicle_transport.operator_facing(vehicle_operator)) if vehicle_index >= 0 else -1
 	if vehicle_index >= 0 and initial_facing < 0: return empty
 	# Only a real operator adds four headings to this same bounded, ephemeral A*.
-	var start_state: Variant = Vector3i(start.x, start.y, initial_facing) if vehicle_index >= 0 else start
+	var start_state: Variant = start
+	if vehicle_index >= 0:
+		start_state = Vector3i(start.x, start.y, initial_facing)
 	var goal_state: Variant = goal
 	var start_node := data.index(start) * 4 + initial_facing if vehicle_index >= 0 else data.index(start)
 	var pending: Array[Vector4i] = [Vector4i(start_node, 0, absi(start.x - goal.x) + absi(start.y - goal.y), 0)]
@@ -6003,7 +6096,9 @@ func _find_local_route(start: Vector2i, goal: Vector2i, expansion_limit: int = 2
 		var item := _frontier_pop(pending)
 		var cell_index := floori(float(item.x) / 4.0) if vehicle_index >= 0 else item.x
 		var current := Vector2i(cell_index % data.size.x, floori(float(cell_index) / data.size.x))
-		var current_state: Variant = Vector3i(current.x, current.y, item.x % 4) if vehicle_index >= 0 else current
+		var current_state: Variant = current
+		if vehicle_index >= 0:
+			current_state = Vector3i(current.x, current.y, item.x % 4)
 		head += 1
 		if closed.has(current_state) or item.y != int(costs[current_state]):
 			continue
@@ -9357,7 +9452,7 @@ func _complete_move(index: int) -> void:
 			_pending_pushes[pending_index] = pending
 
 func _rebuild_visual_instances() -> void:
-	if _captain_editor == null and not _soldier_baked_ready:
+	if _captain_editor == null or not _soldier_baked_ready:
 		initialize_visual()
 	# The simulation is deliberately independent of render targets.
 	_ensure_live_presenters()

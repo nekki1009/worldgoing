@@ -43,7 +43,7 @@ func _all_members() -> Dictionary:
 			result[int(row.person_id)] = row # Independent original rows remain real people.
 		if is_instance_valid(team.player_member):
 			result[team.player_member.person_id] = controller._actor_supply_adapter(team.player_member, team.player_present)
-	for actor: TerrainTestCharacter in [controller.lab.character, controller.lab.npc]:
+	for actor: TerrainTestCharacter in controller.lab.combat_actors:
 		if not result.has(actor.person_id):
 			result[actor.person_id] = controller._actor_supply_adapter(actor)
 	return result
@@ -109,7 +109,7 @@ func _home(identity: int) -> Dictionary:
 	if not person.is_empty() and int(person.unit) >= 0:
 		var row: Dictionary = person.owner.combat_units[int(person.unit)]
 		return {"key": "person:%d" % identity, "row": row} if row.get("cargo") is Dictionary else {}
-	for actor: TerrainTestCharacter in [controller.lab.character, controller.lab.npc]:
+	for actor: TerrainTestCharacter in controller.lab.combat_actors:
 		if actor.person_id == identity:
 			var activity: Dictionary = controller.lab.terrain.site.manual if actor == controller.lab.character else controller.lab.terrain.site.worker
 			if not activity.get("cargo") is Dictionary:

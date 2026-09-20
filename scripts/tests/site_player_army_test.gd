@@ -25,9 +25,14 @@ func run() -> void:
 	lab.character.place(Vector2i(50, 50), true)
 	lab.npc.place(Vector2i(52, 50), true)
 	assert(lab.start_melee_trial().ok)
+	var deployed_teams := 0
 	for team: TerrainArmy in lab.combat_armies:
 		team.set_process(false)
+		if not team.combat_enabled:
+			continue
+		deployed_teams += 1
 		assert(team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.HOLD).ok)
+	assert(deployed_teams == 2, "The original melee fixture deploys exactly two armies; the third slot remains undeployed")
 	var army := lab.army
 	var actor := lab.character
 	var original_id := actor.get_instance_id()
@@ -94,10 +99,16 @@ func run() -> void:
 	army.prepare_combat(0.01)
 	army.settle_combat_command()
 	assert(army.current_commander == -1 and army.formal_commander == TerrainArmy.PLAYER_MEMBER and army.needs_attack_order)
+	assert(actor.attack_target_id == 0, "Clearing a member Actor uses its original no-target sentinel, not an Army-row index sentinel")
+	for unit: Dictionary in army.combat_units:
+		assert(int(unit.target) == -1, "Original NPC-row target clearing remains -1")
 	assert(lab.issue_player_army_order(TerrainArmy.CombatOrder.ATTACK).code == "NO_AUTHORITY")
 	data.site.combat_left = 0.0
 	lab.site_controller._capture_positions()
-	assert(Store._validate_armies(data, data.site, true).ok)
+	var original_validation := Store._validate_armies(data, data.site, true)
+	if not original_validation.ok and OS.get_cmdline_user_args().has("--dump-player-validation"):
+		_dump_original_validation(lab, data, original_validation)
+	assert(original_validation.ok, str(original_validation))
 	var saved := JSON.parse_string(JSON.stringify(data.site)) as Dictionary
 	assert(TerrainArmy.valid_combat_state(saved.armies[0], data, saved.actors.player))
 	assert(not TerrainArmy.valid_combat_state(saved.armies[0], data), "Missing referenced player cannot be fabricated")
@@ -121,3 +132,32 @@ func run() -> void:
 	await process_frame
 	print("SITE PLAYER ARMY PASS: one actor/state, ordinary authority, independent movement, officer priority, mandatory appointment, KO/save/restore, duplicate rejection, retained abilities")
 	quit(0)
+
+func _dump_original_validation(lab: TerrainLab, data: TerrainData, result: Dictionary) -> void:
+	# Opt-in evidence only: inspect the already captured state, never settle,
+	# repair, normalize in place or relax the original failing assertion.
+	var evidence := {"result": result, "state": data.site, "map_size": [data.size.x, data.size.y],
+		"pending_deaths": lab.site_controller._pending_deaths.duplicate(),
+		"save_guard": lab.site_controller.supply_save_guard(), "actor_valid": {}, "army_valid": []}
+	for key: String in data.site.actors:
+		evidence.actor_valid[key] = TerrainTestCharacter.valid_state(data.site.actors[key], data)
+	for snapshot: Dictionary in data.site.armies:
+		var member_actor: Dictionary = data.site.actors.player
+		if not snapshot.get("player_member", {}).is_empty():
+			member_actor = {}
+			for actor: Dictionary in data.site.actors.values():
+				if int(actor.person_id) == int(snapshot.player_member.id): member_actor = actor
+		evidence.army_valid.append({"team_id": snapshot.team_id,
+			"valid": TerrainArmy.valid_combat_state(snapshot, data, member_actor, data.site)})
+	var directory := "res://output/equipment_limits_20260919/cape_role"
+	if DirAccess.make_dir_recursive_absolute(directory) != OK:
+		push_error("PLAYER VALIDATION DUMP: cannot create evidence directory")
+		return
+	var path := directory + "/player_diagnostic_%d_%d.json" % [int(Time.get_unix_time_from_system()), Time.get_ticks_usec()]
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		push_error("PLAYER VALIDATION DUMP: cannot open evidence file")
+		return
+	file.store_string(JSON.stringify(evidence, "\t", true, true))
+	file.close()
+	print("PLAYER VALIDATION DUMP: ", path)

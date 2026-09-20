@@ -375,6 +375,7 @@ func _describe(appearance: Dictionary) -> Dictionary:
 					sequences[clip + "|" + direction] = _army._combat_bake.contact_clocks[clip][direction][3]
 		else:
 			var recipe := wagon_foot
+			if recipe.is_empty(): recipe = Atlas.mixed_recipe(geometry)
 			if recipe.is_empty(): recipe = Atlas.female_recipe(geometry) if geometry.body == 1 else Atlas.RangedAtlas.recipe(geometry)
 			if recipe.is_empty(): return {}
 			sequences = recipe.sequences
@@ -392,7 +393,15 @@ func _describe(appearance: Dictionary) -> Dictionary:
 			mask = Image.create(1, 1, false, Image.FORMAT_RGB8)
 			mask.fill(Color.BLACK)
 		else:
-			mask = Image.load_from_file(str(record.mask_path))
+			var mask_path := str(record.mask_path)
+			if ResourceLoader.exists(mask_path):
+				var res := ResourceLoader.load(mask_path)
+				if res is Texture2D:
+					mask = (res as Texture2D).get_image()
+				elif res is Image:
+					mask = res as Image
+			if mask == null:
+				mask = Image.load_from_file(mask_path)
 			if mask == null or mask.get_width() != int(record.width) or mask.get_height() != int(record.height) or mask.get_width() != texture.get_width() or mask.get_height() != texture.get_height(): return {}
 			mask.convert(Image.FORMAT_RGB8)
 		var metadata := Image.create(129, sequences.size(), false, Image.FORMAT_RGBAF)

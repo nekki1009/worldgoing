@@ -47,6 +47,8 @@ static func save(data: TerrainData, path: String = DEFAULT_PATH) -> Dictionary:
 	var actor_validation := _validate_actors(data, state)
 	if not actor_validation.ok:
 		return actor_validation
+	var cape_validation := _validate_cape_roles(state)
+	if not cape_validation.ok: return cape_validation
 	var allocator_validation := _validate_person_allocator(state)
 	if not allocator_validation.ok:
 		return allocator_validation
@@ -160,6 +162,94 @@ static func load_site(path: String = DEFAULT_PATH) -> Dictionary:
 		return opened_validation
 	return Runtime.ok("已載入地圖；接續保存時刻" + ("（舊地圖沒有角色快照，首次使用初始角色狀態）" if bool(payload.get("legacy_actor_state", false)) else ""), {"data": data})
 
+static func retire_default_worker(data: TerrainData) -> Dictionary:
+	# The removed startup fixture must not respawn from an older save. This is
+	# the same ground-stock departure contract as before_clear_team_items: retain
+	# every physical item, and refuse to erase an established person's relations.
+	# Generic snapshot reads and explicit NPC fixtures retain their original owner.
+	if not data.site.get("actors", {}).has("npc") and Runtime.inventory_size(data.site.worker.cargo) == 0:
+		return Runtime.ok()
+	var original: Dictionary = data.site
+	data.site = original.duplicate(true)
+	var result := _retire_default_worker_copy(data)
+	if not result.ok:
+		data.site = original
+		Runtime.rebuild_loot_index(data)
+	return result
+
+static func _retire_default_worker_copy(data: TerrainData) -> Dictionary:
+	var state: Dictionary = data.site
+	var actors: Dictionary = state.get("actors", {})
+	var body: Dictionary = actors.get("npc", {})
+	var identity := int(body.get("person_id", 2))
+	var cargo: Dictionary = state.worker.cargo
+	if body.is_empty():
+		# Format-1 worker cargo has no actor snapshot. Its original fixed identity
+		# may be used only when no surviving person already owns that identity.
+		for actor: Dictionary in actors.values():
+			if int(actor.person_id) == identity: return Runtime.fail("BUSY", "舊工人物資的原身分已被占用；原存檔保留")
+		for team: Dictionary in state.get("armies", []):
+			for unit: Dictionary in team.units:
+				if int(unit.person_id) == identity: return Runtime.fail("BUSY", "舊工人物資的原身分已被占用；原存檔保留")
+	if not body.is_empty():
+		if int(state.get("controlled_person_id", -1)) == identity:
+			return Runtime.fail("BUSY", "舊工人仍是受控人物；原存檔保留，不能自動刪除原人物")
+		for relative: Dictionary in state.get("family", {}).get("members", []):
+			if str(relative.site_id) == str(state.id) and int(relative.person_id) == identity:
+				return Runtime.fail("BUSY", "舊工人已列家族名單；原存檔保留，不能自動刪除家人")
+		for nation: Dictionary in state.get("equipment_nations", {}).values():
+			if nation.members.has(identity) or int(nation.military_head) == identity:
+				return Runtime.fail("BUSY", "舊工人仍有國別／職務引用；原存檔保留")
+		if bool(body.captive):
+			return Runtime.fail("BUSY", "舊工人仍受拘押；原存檔保留")
+		for key: String in state.get("captivity", {}):
+			var relation: Dictionary = state.captivity[key]
+			if int(key) == identity or int(relation.captor_id) == identity or int(relation.guard_id) == identity:
+				return Runtime.fail("BUSY", "舊工人仍有俘虜／看守關係；原存檔保留")
+		for key: String in state.get("escort_orders", {}):
+			if int(key) == identity or state.escort_orders[key].captives.has(identity):
+				return Runtime.fail("BUSY", "舊工人仍有押送關係；原存檔保留")
+		for actor: Dictionary in actors.values():
+			if float(actor._rescue_left) > 0.0 and (int(actor.person_id) == identity or int(actor.rescue_target) == identity):
+				return Runtime.fail("BUSY", "舊工人仍有救助關係；原存檔保留")
+		for team: Dictionary in state.get("armies", []):
+			if int(team.get("player_member", {}).get("id", -1)) == identity or int(team.get("pursuit_target", -1)) == identity:
+				return Runtime.fail("BUSY", "舊工人仍有隊伍／追擊關係；原存檔保留")
+		for vehicle: Dictionary in state.get("vehicles", {}).values():
+			if int(vehicle.get("operator_id", -1)) == identity:
+				return Runtime.fail("BUSY", "舊工人仍是原車輛操作人；原存檔保留")
+		for key: String in state.get("person_supply", {}):
+			for member: int in Sustain._ids(state.person_supply[key]):
+				if int(key) == identity and member != identity or int(key) != identity and member == identity:
+					return Runtime.fail("BUSY", "舊工人仍與他人共用餐份歷史；原存檔保留")
+		for supply: Dictionary in state.get("team_supply", {}).values():
+			if identity in Sustain._ids(supply.sustain):
+				return Runtime.fail("BUSY", "舊工人仍屬原隊伍供養；原存檔保留")
+	var holder: Dictionary = body.get("item_state", {})
+	if holder.is_empty():
+		if body.is_empty():
+			holder = Runtime.new_item_state("person:%d" % identity)
+		else:
+			var seeded := Runtime.seed_person_equipment(data, holder, identity, body.appearance)
+			if not seeded.ok: return seeded
+	var pool: Dictionary = state.get("person_supply", {}).get(str(identity), {})
+	var dropped := Runtime.leave_ground_loot(data, holder, cargo, identity, data.cell_from_index(int(state.worker.cell)), "cargo", cargo, holder.item_ids.duplicate(), int(holder.version), pool, float(pool.get("open_rations", 0.0)))
+	if not dropped.ok and str(dropped.code) != "EMPTY": return dropped
+	state.get("person_supply", {}).erase(str(identity))
+	actors.erase("npc")
+	for actor: Dictionary in actors.values():
+		if int(actor.get("attack_target", 0)) == identity: actor.attack_target = 0
+		actor.hit_ids.erase(identity)
+	for team: Dictionary in state.get("armies", []):
+		for unit: Dictionary in team.units:
+			if int(unit.get("target", -1)) == identity: unit.target = -1
+			unit.hits.erase(identity)
+	if state.has("next_person_id"):
+		state.next_person_id = maxi(int(state.next_person_id), identity + 1)
+	state.worker_enabled = false
+	state.worker.merge({"target": "", "action": "harvest", "progress": 0.0, "mode": "idle", "status": "開場測試工人已移除", "zone": -1, "manual_control": false}, true)
+	return _validate_state(data, state)
+
 static func _validate_army_assets(data: TerrainData, state: Dictionary, fresh: bool = false) -> Dictionary:
 	if state.get("armies", []).is_empty(): return Runtime.ok()
 	if not TerrainArmy.load_combat_bake():
@@ -183,6 +273,36 @@ static func _validate_army_assets(data: TerrainData, state: Dictionary, fresh: b
 			if not baseline and not TerrainArmy.EquipmentAtlas.supports(appearance):
 				return Runtime.fail("MISSING_ASSET", "人物 #%d 的實際配裝缺少完整圖集／染色；未替換目前地圖或存檔" % int(unit.person_id))
 			checked[key] = true
+	return Runtime.ok()
+
+static func _validate_cape_roles(state: Dictionary) -> Dictionary:
+	# Called only after existing people, roster and item validation. Read original
+	# identities/holders, including legacy appearance-only people; never mint ranks
+	# or rewrite the incoming save to make an unsupported costume appear valid.
+	var people: Dictionary = {}
+	var permitted := {}
+	for actor: Dictionary in state.get("actors", {}).values():
+		people[int(actor.person_id)] = actor
+	for nation: Dictionary in state.get("equipment_nations", {}).values():
+		var identity := int(nation.military_head)
+		if EquipmentOrders._member(nation, identity): permitted[identity] = true
+	for original: Dictionary in state.get("armies", []):
+		var team := TerrainArmy.normalize_roster_snapshot(original)
+		var service: Array = team.get("officer_service", team.officers)
+		for index in range(team.units.size()):
+			var row: Dictionary = team.units[index]
+			var identity := int(row.person_id)
+			people[identity] = row
+			if bool(row.get("member", true)) and not bool(row.get("departed", false)) and EquipmentOrders.rank_grants_cape(index, int(team.formal_commander), service, team.officers):
+				permitted[identity] = true
+		if not team.get("player_member", {}).is_empty() and EquipmentOrders.rank_grants_cape(TerrainArmy.PLAYER_MEMBER, int(team.formal_commander), service, team.officers):
+			permitted[int(team.player_member.id)] = true
+	for identity: int in people:
+		var person: Dictionary = people[identity]
+		if float(person.hp) <= 0.0 or permitted.has(identity): continue
+		var wears_cape: bool = person.item_state.equipped.has("cape") if person.has("item_state") else str(person.get("appearance", {}).get("parts", {}).get("cape", "none")) != "none"
+		if wears_cape:
+			return Runtime.fail("CAPE_ROLE_RESTRICTED", "原人物 %d 並非現任軍官以上；披風須先卸回本人行囊，未替換現場或改寫存檔" % identity)
 	return Runtime.ok()
 
 static func _normalize_state(state: Dictionary) -> void:
@@ -366,6 +486,8 @@ static func _validate_state(data: TerrainData, state: Dictionary) -> Dictionary:
 	var item_validation := _validate_items(data, state)
 	if not item_validation.ok:
 		return item_validation
+	var cape_validation := _validate_cape_roles(state)
+	if not cape_validation.ok: return cape_validation
 	var allocator_validation := _validate_person_allocator(state)
 	if not allocator_validation.ok:
 		return allocator_validation
@@ -486,12 +608,12 @@ static func _validate_actors(data: TerrainData, state: Dictionary) -> Dictionary
 		return Runtime.fail("CORRUPT_SAVE", "人物快照格式")
 	if actors.is_empty():
 		return Runtime.ok() # Generated map / format-1 migration has no actor snapshot yet.
-	if actors.size() != 2 or not actors.has("player") or not actors.has("npc"):
+	if not actors.has("player") or actors.size() > 2 or (actors.size() == 2 and not actors.has("npc")):
 		return Runtime.fail("CORRUPT_SAVE", "人物快照不完整")
 	if not state.get("worker") is Dictionary or not _valid_cell(data, state.worker.get("cell")) or not _valid_cell(data, state.get("player_cell", data.index(data.spawn_cell))):
 		return Runtime.fail("CORRUPT_SAVE", "人物地圖格位")
 	var identities := {}
-	for key: String in ["player", "npc"]:
+	for key: String in actors:
 		var actor: Variant = actors[key]
 		if not TerrainTestCharacter.valid_state(actor, data):
 			return Runtime.fail("CORRUPT_SAVE", "人物狀態／實裝非法：" + key)
@@ -542,6 +664,8 @@ static func _validate_actors(data: TerrainData, state: Dictionary) -> Dictionary
 		if float(actor.movement_left) > 0.0 or float(target.movement_left) > 0.0 or absi(offset.x) + absi(offset.y) != 1 or not data.can_step(from_cell, target_cell):
 			return Runtime.fail("CORRUPT_SAVE", "救助位置失效")
 		rescuers[target_id] = int(actor.person_id)
+	if not actors.has("npc"):
+		return Runtime.ok()
 	var navigation: Variant = actors.npc.get("navigation")
 	if not navigation is Dictionary or not _integer(navigation.get("command"), 0, 2) or not navigation.get("status") is String or str(navigation.status).length() > 256 or not navigation.get("path") is Array or navigation.path.size() > data.size.x * data.size.y:
 		return Runtime.fail("CORRUPT_SAVE", "NPC 命令快照")

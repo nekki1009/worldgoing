@@ -1,6 +1,14 @@
 # Worldgoing HumanBase_v1 3D 角色建模與模組管線交接手冊
 (3D Character Modeling & Modular Pipeline Handover Specification)
 
+> **2026-09-19 正面走路／西式遮髮修正**：男女中式鐵甲、西式鐵甲、日／西式鐵靴與鋼靴使用本轮v6局部網格修正。腿甲／靴殼按同側腿貼合；中式前甲實體分片，前／側甲分別蒙皮；未縮小身體、隱藏褲子或改骨架／動畫。西式皮鐵鋼盔保留開口內瀏海與鬢髮，布帽及關閉遮罩對照不變。正式男女六檔已換入；重建入口為 `scripts/tools/blender/integrate_equipment_walk_repair.py`，只從本輪不可變基準產生候選，不重跑舊全包builder覆蓋現有美術。男女中式甲各24幀正面walk已親看，其他已接受裝備610張RGBA不變；大幅動作仍有原版缺陷，不宣稱全動畫零穿模。最終接入、圖集、失敗紀錄及驗收界線以 [本輪紀錄](output/equipment_walk_fix_20260919/README.md) 為準。
+
+> **2026-09-19 限制續修，優先於下方前批界線**：國家固定文化、各槽材質混搭沿原配裝標準／替代品與物品保存，不另建裝備目錄。普通兵缺少完整配方時，原換裝作業先以一個共用暫時預覽角色準備原解析度四向全動作與遮罩，再重查原人原物並開始原五秒；既有Sprite／MultiMesh與NPC16色／玩家首長自由色不變。並非每名普通兵新增即時骨架，也不是用固定布裝騎手代替新品外觀。臨時代理交還不自動卸任或移除披風。原劍鞘騎乘支點只在編輯器改為向馬身外側旋出，男女正式模型六檔未改；地面與現用固定布裝舊畫面450組RGBA一致，260份現用圖集更新來源，歷史持劍騎手檔保留但不重新准入。完整實測、尚未驗證範圍及失敗保留以 [本輪紀錄](output/equipment_limits_20260919/README.md) 為準，不把計畫組合數當成全組合GPU驗收。
+
+> **2026-09-19 材質文化裝備與馬上動作**：原 Helmet／Armor／Boots 各補齊布、皮、鐵、鋼 × 中日西，明光鎧獨列特殊甲；盾牌木石鐵鋼各三式，披風三式均布，男女各新增27部件、護具盾披風合計55選項。原歐式軟皮鞋仍保留並正確列皮，另加真正西式布鞋。新增日式披風有26個動作布面修形及較寬側開口；兩個新 `ride_heavy`／`ride_guard_break` 僅馬上版本，原 Actor／時長表負責切換，座姿腿部沿原待機。獨立可編輯來源在 `assets/characters/human/q35/equipment_matrix`，由 `integrate_equipment_matrix.py` 附加到本批不可變基準；不可重跑舊全包 builder 覆蓋手改美術。新品沿原染色五槽、NPC16／玩家首長自由色，披風遊戲資格由 SiteEquipmentOrders／SiteController 讀原現任職位，SiteStore 重查。正式男女六檔已發布，原資料與306組舊RGBA等價、570张新品GPU與16張極值近看已完成；原劍鞘騎馬交疊及普通兵新品圖集尚未烘焙的界線不隱藏。最終各層驗證、重建入口及全部失敗紀錄以 `output/equipment_matrix_20260918/README.md` 為準。
+
+> 本批收尾另通過正式 import、758項正式模型功能、1,018項真男女幹部實物／模型／染色／SiteStore存讀與完整披風政策。補齊原掃描漏掉的三份既有馬車布裝來源前，獨立核對原基準並追加144組步行／騎乘RGBA，故最終是261份來源證明、450組舊畫面等價。馬車上依男女固定布裝、下馬回原實裝的既有規則不變；普通兵新品仍未烘，不以固定布裝騎姿冒稱新品實裝可見。
+
 > **2026-09-18 中性五官**：保留原 Face 01–04，男女各新增 Face 05–08（圓杏、長杏、平直細、寬距柔眼）。生成參考圖後只改眼周結構，眉嘴、UV、權重、原骨架與動畫保留。可編輯來源在 `assets/characters/human/q35/neutral_faces`，builder 經 `load_authored_neutral_faces.py` 載入四個新物件；`gray` 明確重建，手改後只用 `preview/export`。原編輯器、618張新臉預覽、282張舊畫面RGBA等價及8例男女存讀通過；254份舊圖集僅更新有等價證據的來源紀錄。普通兵／騎乘的新五官圖集尚未烘焙。來源、驗證及失敗紀錄見 `output/neutral_faces_20260918/README.md`。
 
 > **2026-09-18 布帽**：新增中式布帽、日式布烏帽、西式軟呢帽，男女各自量測頭皮與獨立額頭網格；放在原 Helmet 欄，原頭盔不取代。`Helmet_Cloth_{Chinese,Japanese,Western}_01_*` 綁原 Head，帽冠、帽帶與縫線沿原 helmet 染色；NPC16／玩家首長自由色不變。開口布帽只裁切帽冠內的頭髮，摘帽恢復；不套封閉鐵盔的整束收髮規則。可編輯來源在 `assets/characters/human/q35/cloth_hats`，`author_cloth_hats.py` 的 gray/detail 是顯式重建，手改後只用 export；男女 builder 透過 `load_authored_cloth_hats.py` 載入，不再另造骨架或整包覆寫。既有模型 bytes／動畫保留，舊圖集以原版／新版 240 張固定姿態 RGBA 等價及來源守衛檢查保留，不冒稱重烘；布帽普通兵／騎乘圖集仍未新增。驗收与失敗記錄見 `output/cloth_hats_20260918/README.md`。

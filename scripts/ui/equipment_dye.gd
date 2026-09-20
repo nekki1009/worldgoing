@@ -22,10 +22,10 @@ const PRESETS := {
 # Explicit source material allowlists, not the outline exclusion list. Hardware,
 # soles, skin and bare metal cannot become dyeable merely because of a node prefix.
 const MATERIALS := {
-	"helmet": ["Worldgoing_Helmet_Leather_Dome", "ChineseGear_LeatherHelmet_Leather", "Helmet_Iron_01_Horsehair", "Helmet_Steel_01_Horsehair", "Worldgoing_Steel_Cord_Red", "ChineseGear_Horsehair0", "ChineseGear_Horsehair1", "ChineseGear_Horsehair2", "ChineseGear_Horsehair3", "ChineseGear_Horsehair4", "ClothHats_Fabric", "ClothHats_Band", "ClothHats_Seams"],
-	"armor": ["Worldgoing_LightLeather_Body", "Worldgoing_Leather_Body", "Worldgoing_Underwear_Fabric", "Worldgoing_Armor_Cloth", "ChineseGear_Leather", "Worldgoing_Chinese_Cloth_Dark", "Worldgoing_Chinese_Cord_Red", "Worldgoing_Mingguang_Cloth", "Worldgoing_Mingguang_Brocade", "WesternPlate_Padding", "MedievalCloth_Linen"],
-	"boots": ["Audit_AdventureBoot_Leather", "ChineseBoots_Chestnut", "Worldgoing_Leather_Dark", "Worldgoing_Mingguang_Boot_Cloth", "Worldgoing_Mingguang_Boot_Leather", "WesternPlate_Leather", "MedievalShoes_Cloth", "MedievalShoes_Tabi", "MedievalShoes_Leather"],
-	"cape": ["Worldgoing_Cape_Travel", "Worldgoing_Cape_Female", "ChineseCloak_Cape_Chinese_01_Collar", "ChineseCloak_Cape_Chinese_01_Main", "ChineseCloak_Cape_Chinese_01_Mantle"],
+	"helmet": ["Worldgoing_Helmet_Leather_Dome", "ChineseGear_LeatherHelmet_Leather", "Helmet_Iron_01_Horsehair", "Helmet_Steel_01_Horsehair", "Worldgoing_Steel_Cord_Red", "ChineseGear_Horsehair0", "ChineseGear_Horsehair1", "ChineseGear_Horsehair2", "ChineseGear_Horsehair3", "ChineseGear_Horsehair4", "ClothHats_Fabric", "ClothHats_Band", "ClothHats_Seams", "CulturalArmor_Leather", "CulturalArmor_SoftLeather", "CulturalArmor_Padding", "CulturalArmor_Cord"],
+	"armor": ["Worldgoing_LightLeather_Body", "Worldgoing_Leather_Body", "Worldgoing_Underwear_Fabric", "Worldgoing_Armor_Cloth", "ChineseGear_Leather", "Worldgoing_Chinese_Cloth_Dark", "Worldgoing_Chinese_Cord_Red", "Worldgoing_Mingguang_Cloth", "Worldgoing_Mingguang_Brocade", "WesternPlate_Padding", "MedievalCloth_Linen", "CulturalArmor_Leather", "CulturalArmor_SoftLeather", "CulturalArmor_Padding", "CulturalArmor_Cord"],
+	"boots": ["Audit_AdventureBoot_Leather", "ChineseBoots_Chestnut", "Worldgoing_Leather_Dark", "Worldgoing_Mingguang_Boot_Cloth", "Worldgoing_Mingguang_Boot_Leather", "WesternPlate_Leather", "MedievalShoes_Cloth", "MedievalShoes_Tabi", "MedievalShoes_Leather", "CulturalArmor_Leather", "CulturalArmor_SoftLeather", "CulturalArmor_ClothWestern", "CulturalArmor_Cord"],
+	"cape": ["Worldgoing_Cape_Travel", "Worldgoing_Cape_Female", "ChineseCloak_Cape_Chinese_01_Collar", "ChineseCloak_Cape_Chinese_01_Main", "ChineseCloak_Cape_Chinese_01_Mantle", "JapaneseCape_Fabric"],
 	"outfit": ["Worldgoing_Underwear_Main", "Worldgoing_Underwear_Fabric", "ChineseLining_Linen", "ChineseLining_Shorts"],
 }
 const PBR_SHADER := """
@@ -147,6 +147,8 @@ static func surface_slot(node_name: String, material_name: String) -> String:
 	return ""
 
 static func painted_panel(node_name: String, material_name: String) -> bool:
+	if material_name == "CulturalArmor_RefinedSteel":
+		return node_name in ["Helmet_Western_Steel_01_Skull", "Armor_Western_Steel_01_Cuirass"]
 	return material_name == "WesternPlate_ForgedIron" and node_name in ["Helmet_Western_Iron_01_Skull", "Armor_Western_Iron_01_Cuirass"]
 
 static func material(source: Material, base_material: BaseMaterial3D, mesh: MeshInstance3D) -> ShaderMaterial:

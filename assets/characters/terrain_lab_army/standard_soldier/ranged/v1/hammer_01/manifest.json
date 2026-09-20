@@ -12836,19 +12836,19 @@
   ],
   "source_contract": "CharacterRenderContract",
   "source_fingerprints": {
-    "res://assets/characters/human/q35/standard_anime_female_character_pack.glb": "d2aa7569986f1015145790b548299431",
-    "res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "6662e1c8148ade5fb64df554075ab678",
-    "res://scripts/terrain_lab/character_combat_timings.gd": "9f51fd6bc484e4ac86235bd076a463fb",
+    "res://assets/characters/human/q35/standard_anime_female_character_pack.glb": "ddbd4fc44fd3f6d9739b53f4ab54f94d",
+    "res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "76d262bdae0449f9a86b8e56287551f2",
+    "res://scripts/terrain_lab/character_combat_timings.gd": "89b5d9d683017d08d1267b800b3fbad7",
     "res://scripts/terrain_lab/terrain_army_ranged_atlas.gd": "8bb3a109dacedfa9d4a2c52030230882",
     "res://scripts/tools/bake_terrain_army_ranged.gd": "c125e177b27fefa4965e1f9737a9a330",
     "res://scripts/tools/bake_terrain_army_soldier.gd": "806e0d39a1775382448734bc7898f68c",
     "res://scripts/tools/terrain_army_recipe_bake_plan.gd": "675430f5afda26970f83b67f99cf6cda",
-    "res://scripts/ui/equipment_dye.gd": "3e7554df397f59dd11357b4d9aa27572",
-    "res://scripts/ui/human_character_3d_editor.gd": "6e8a7b663c76058bb3d49ef60d7296f6",
+    "res://scripts/ui/equipment_dye.gd": "bca8b3f03fc03cf5254fe0743361dbfd",
+    "res://scripts/ui/human_character_3d_editor.gd": "34190c5b67f3ea8c8aec633808a4310c",
     "res://scripts/ui/weapon_materials.gd": "922713e657be18ae5a0f658a73b14223"
   },
   "source_manifest": "res://assets/characters/terrain_lab_army/standard_soldier/standard_soldier_atlas.json",
-  "source_manifest_md5": "63b1ce828004ddab885630ce620a70a4",
+  "source_manifest_md5": "cf935d4ce680af21f875b4c76bbe5198",
   "source_viewport": {
     "height": 768.0,
     "width": 640.0
@@ -12874,5 +12874,32 @@
       "res://scripts/ui/equipment_dye.gd": "3e7554df397f59dd11357b4d9aa27572",
       "res://scripts/ui/human_character_3d_editor.gd": "3c2c37d27e5190b1da15815a7166502a"
     }
+  },
+  "equipment_matrix_additive_revalidation": {
+    "rebaked": false,
+    "evidence": "output/equipment_matrix_20260918",
+    "old_manifest_md5": "894600c22e98ce1d261bb94aef3a9cf1",
+    "old_sources": {
+      "res://assets/characters/human/q35/standard_anime_female_character_pack.glb": "d2aa7569986f1015145790b548299431",
+      "res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "6662e1c8148ade5fb64df554075ab678",
+      "res://scripts/mount/mount_horse_3d.gd": "2ad45b9a689ed2259c4b83bacf1a1be3",
+      "res://scripts/terrain_lab/character_combat_timings.gd": "9f51fd6bc484e4ac86235bd076a463fb",
+      "res://scripts/ui/equipment_dye.gd": "3e7554df397f59dd11357b4d9aa27572",
+      "res://scripts/ui/human_character_3d_editor.gd": "6e8a7b663c76058bb3d49ef60d7296f6"
+    }
+  },
+  "equipment_limits_revalidation": {
+    "rebaked": false,
+    "rgba_pairs": 450,
+    "evidence": "output/equipment_limits_20260919",
+    "old_manifest_md5": "0607ccbd10f7a9b90635b5321f15af4c"
+  },
+  "equipment_walk_revalidation": {
+    "rebaked": false,
+    "representative_control_pairs": 368,
+    "full_atlas_frame_proof": false,
+    "native_unselected_data_unchanged": true,
+    "evidence": "res://output/equipment_walk_fix_20260919/atlas/gpu_comparison_20260919T045450307055Z.json",
+    "old_manifest_md5": "c9a608db958aa1758f54b5f7cff64f72"
   }
 }

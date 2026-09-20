@@ -1492,16 +1492,16 @@
   "map_scale": 0.379809115843455,
   "presentation": "Existing Socket_Rider calibrated body only; original horse depth-occludes far limbs; no second horse pixels",
   "source_fingerprints": {
-    "res://assets/characters/human/q35/standard_anime_female_character_pack.glb": "d2aa7569986f1015145790b548299431",
-    "res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "6662e1c8148ade5fb64df554075ab678",
+    "res://assets/characters/human/q35/standard_anime_female_character_pack.glb": "657cbcca77e52511ffd85f1400596d0d",
+    "res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "dcce415bab399e574090fd3ca0273bfd",
     "res://assets/mounts/horse/standard_horse_pack.glb": "efe01456dec422fcb06d338fecb59a9c",
     "res://scripts/mount/mount_horse_3d.gd": "2ad45b9a689ed2259c4b83bacf1a1be3",
-    "res://scripts/terrain_lab/character_combat_timings.gd": "9f51fd6bc484e4ac86235bd076a463fb",
+    "res://scripts/terrain_lab/character_combat_timings.gd": "89b5d9d683017d08d1267b800b3fbad7",
     "res://scripts/tools/bake_logistics_riders.gd": "5b3a88c77b9886be9fa1818a651e7108",
     "res://scripts/tools/bake_terrain_army_soldier.gd": "806e0d39a1775382448734bc7898f68c",
     "res://scripts/tools/terrain_army_recipe_bake_plan.gd": "675430f5afda26970f83b67f99cf6cda",
-    "res://scripts/ui/equipment_dye.gd": "3e7554df397f59dd11357b4d9aa27572",
-    "res://scripts/ui/human_character_3d_editor.gd": "6e8a7b663c76058bb3d49ef60d7296f6",
+    "res://scripts/ui/equipment_dye.gd": "bca8b3f03fc03cf5254fe0743361dbfd",
+    "res://scripts/ui/human_character_3d_editor.gd": "77acb59912eaebaf7b5d663f3fae1dce",
     "res://scripts/ui/weapon_materials.gd": "922713e657be18ae5a0f658a73b14223"
   },
   "version": 1,
@@ -1525,6 +1525,19 @@
       "res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "745e25a4cc67f7e8e232e98ddaf592a3",
       "res://scripts/ui/equipment_dye.gd": "3e7554df397f59dd11357b4d9aa27572",
       "res://scripts/ui/human_character_3d_editor.gd": "3c2c37d27e5190b1da15815a7166502a"
+    }
+  },
+  "equipment_matrix_additive_revalidation": {
+    "rebaked": false,
+    "evidence": "output/equipment_matrix_20260918",
+    "old_manifest_md5": "623179cdacf77288ef587ba7148e0b77",
+    "old_sources": {
+      "res://assets/characters/human/q35/standard_anime_female_character_pack.glb": "d2aa7569986f1015145790b548299431",
+      "res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "6662e1c8148ade5fb64df554075ab678",
+      "res://scripts/mount/mount_horse_3d.gd": "2ad45b9a689ed2259c4b83bacf1a1be3",
+      "res://scripts/terrain_lab/character_combat_timings.gd": "9f51fd6bc484e4ac86235bd076a463fb",
+      "res://scripts/ui/equipment_dye.gd": "3e7554df397f59dd11357b4d9aa27572",
+      "res://scripts/ui/human_character_3d_editor.gd": "6e8a7b663c76058bb3d49ef60d7296f6"
     }
   }
 }

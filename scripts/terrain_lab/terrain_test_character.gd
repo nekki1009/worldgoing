@@ -190,7 +190,7 @@ func initialize_visual() -> void:
 	# One assembled character feeds both the map sprite and the editor preview.
 	# The viewport is born under the player so its skeleton stays in one 3D world.
 	var viewport: SubViewport = editor.preview_viewport
-	viewport.size = CharacterRenderContract.PREVIEW_VIEWPORT_SIZE
+	viewport.size = CharacterRenderContract.MAP_VIEWPORT_SIZE
 	viewport.transparent_bg = true
 	(editor.preview_world.get_node("PreviewGround") as Node3D).hide()
 	for child: Node in editor.preview_world.get_children():
@@ -223,13 +223,17 @@ func open_editor() -> void:
 		_previous_weapon.clear()
 		editor.animation_player.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_IDLE
 		_step_time = 0.0
+		editor.preview_viewport.size = CharacterRenderContract.PREVIEW_VIEWPORT_SIZE
 		editor_window.popup_centered()
 		editor.open()
 		editor.set_process(true)
 		editor.preview_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+		_sync_render_projection()
 
 func _close_editor() -> void:
 	editor_window.hide()
+	editor.preview_viewport.size = CharacterRenderContract.MAP_VIEWPORT_SIZE
+	_sync_render_projection()
 	# Preserve the selected test clip after closing the controls.
 	editor.set_playing(true)
 	if exchange_enabled:
@@ -239,6 +243,10 @@ func _close_editor() -> void:
 		visual_state.animation_id = editor.selected_animation
 		visual_state.animation_time = editor.animation_player.current_animation_position
 		_exchange_pose_dirty = true
+		_cloth_pose_dirty = true
+		editor.preview_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+	else:
+		editor.preview_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 
 func _sync_render_projection() -> void:
 	if editor == null or player_sprite == null:
@@ -447,10 +455,10 @@ func _mount_target_speed(direction: Vector2i, running: bool) -> float:
 	if height_change != 0:
 		target *= 0.55 if height_change > 0 else 0.8
 	# Cargo is the existing holder's shared dictionary; capacity units are not kg.
-	var load := float(SiteRuntime.inventory_size(ammo_inventory))
+	var cargo_load := float(SiteRuntime.inventory_size(ammo_inventory))
 	if not item_state.is_empty():
-		load = SiteRuntime.carried_load(data.site, ammo_inventory, item_state)
-	return target * (1.0 - 0.4 * clampf(load / SiteRuntime.CARRY_CAPACITY, 0.0, 1.0)) / (1.0 + PersonFatigue.slowdown(fatigue))
+		cargo_load = SiteRuntime.carried_load(data.site, ammo_inventory, item_state)
+	return target * (1.0 - 0.4 * clampf(cargo_load / SiteRuntime.CARRY_CAPACITY, 0.0, 1.0)) / (1.0 + PersonFatigue.slowdown(fatigue))
 
 static func _mount_next_speed(speed: float, target: float) -> float:
 	if speed <= target:
@@ -548,7 +556,7 @@ func step(direction: Vector2i, running: bool = false, escort_guard_id: int = 0) 
 		# Commit movement now; only the remaining initial strike core keeps the
 		# presenter's old pose/yaw. It never owns movement or actual facing.
 		if not _exchange_visual_active or not CombatTimings.ATTACKS.has(visual_state.animation_id) \
-			or ExchangeTimings.duration(visual_state.animation_id) - _exchange_visual_left >= ExchangeTimings.MOVE_CORE_SECONDS:
+			or ExchangeTimings.duration(_exchange_timing_clip(visual_state.animation_id)) - _exchange_visual_left >= ExchangeTimings.MOVE_CORE_SECONDS:
 			_finish_exchange_visual()
 		return moved
 	if moved and editor != null:
@@ -598,8 +606,13 @@ func occupies_cell(cell: Vector2i) -> bool:
 	return terrain_cell == cell or (is_moving() and movement_from_cell == cell)
 
 func play_pose(clip: StringName) -> void:
-	if clip == &"idle" and is_mounted():
-		clip = &"ride_idle"
+	if is_mounted():
+		if clip == &"idle":
+			clip = &"ride_idle"
+		elif clip == &"attack_jump_heavy":
+			clip = &"ride_heavy"
+		elif clip in [&"guard_break", &"guard_weapon_break", &"guard_polearm_break"]:
+			clip = &"ride_guard_break"
 	if exchange_enabled:
 		if _exchange_visual_active and clip in [&"idle", &"ride_idle"]:
 			return # Readiness/step-end maintenance cannot erase an unfinished result.
@@ -622,6 +635,10 @@ func play_pose(clip: StringName) -> void:
 	visual_state.mounted = str(clip).begins_with("ride_")
 	visual_state.animation_time = 0.0
 
+static func _exchange_timing_clip(clip: StringName) -> StringName:
+	# Reuse the resolved heavy/recoil presentation clock, without changing rules.
+	return &"attack_jump_heavy" if clip == &"ride_heavy" else (&"knockback" if clip == &"ride_guard_break" else clip)
+
 func _exchange_authored_duration(clip: StringName) -> float:
 	if editor != null:
 		var animation := editor.animation_player.get_animation(clip)
@@ -633,7 +650,7 @@ func _start_exchange_visual(clip: StringName, merge_reaction: bool = false) -> v
 	# Incoming arrows still settle HP/stun/hold individually. Only an equal or
 	# lighter visual reaction inside this existing window avoids restarting.
 	if merge_reaction and _exchange_visual_active and _exchange_visual_left > 0.0 \
-		and ExchangeTimings.reaction_priority(visual_state.animation_id) >= ExchangeTimings.reaction_priority(clip):
+		and ExchangeTimings.reaction_priority(_exchange_timing_clip(visual_state.animation_id)) >= ExchangeTimings.reaction_priority(_exchange_timing_clip(clip)):
 		return
 	_exchange_visual_active = false
 	play_pose(clip)
@@ -642,13 +659,14 @@ func _start_exchange_visual(clip: StringName, merge_reaction: bool = false) -> v
 	# preview loop preference may otherwise wrap its final exchange pose to zero.
 	# This presenter owns a private animation library and resolved attacks are
 	# one-shot visuals; keep the offline atlas source and its fingerprints intact.
-	if clip == &"attack_jump_heavy" and editor != null:
+	if clip in [&"attack_jump_heavy", &"ride_heavy", &"ride_guard_break"] and editor != null:
 		var jump := editor.animation_player.get_animation(clip)
 		if jump != null and jump.loop_mode != Animation.LOOP_NONE:
 			jump.loop_mode = Animation.LOOP_NONE
-	_exchange_visual_left = ExchangeTimings.duration(clip)
+	var timing_clip := _exchange_timing_clip(clip)
+	_exchange_visual_left = ExchangeTimings.duration(timing_clip)
 	_exchange_visual_active = _exchange_visual_left > 0.0
-	visual_state.animation_time = ExchangeTimings.sample_time(clip, 0.0, _exchange_authored_duration(clip))
+	visual_state.animation_time = ExchangeTimings.sample_time(timing_clip, 0.0, _exchange_authored_duration(clip))
 	_exchange_pose_dirty = true
 
 func _finish_exchange_visual() -> void:
@@ -672,16 +690,19 @@ func _advance_combat_pose(delta: float) -> void:
 		return
 	if exchange_enabled and _exchange_visual_active:
 		var clip := visual_state.animation_id
-		var exchange_elapsed := ExchangeTimings.duration(clip) - _exchange_visual_left
+		var timing_clip := _exchange_timing_clip(clip)
+		var exchange_elapsed := ExchangeTimings.duration(timing_clip) - _exchange_visual_left
 		if _exchange_visual_left <= 0.000000001 or (is_moving() and CombatTimings.ATTACKS.has(clip) \
 			and exchange_elapsed >= ExchangeTimings.MOVE_CORE_SECONDS - 0.000000001):
 			_finish_exchange_visual()
 			return
-		visual_state.animation_time = ExchangeTimings.sample_time(clip, exchange_elapsed, _exchange_authored_duration(clip))
+		visual_state.animation_time = ExchangeTimings.sample_time(timing_clip, exchange_elapsed, _exchange_authored_duration(clip))
 		_exchange_pose_dirty = true
 		return
 	if editor == null:
 		visual_state.animation_time += delta
+		if visual_state.animation_id in [&"ride_heavy", &"ride_guard_break"]:
+			visual_state.animation_time = minf(visual_state.animation_time, _exchange_authored_duration(visual_state.animation_id))
 		if visual_state.animation_id == &"down" and visual_state.animation_time >= float(CombatTimings.POSE_SECONDS[&"down"]) and hp > 0.0 and knockout_left > 0.0:
 			play_pose(&"unconscious")
 		return
@@ -1343,7 +1364,10 @@ func apply_exchange(other_cell: Vector2i, outcome: Dictionary) -> void:
 		combat_status = "Exchange draw"
 	elif role == "loser":
 		exchange_stagger = committed_left + float(outcome.get("stagger", 0.0))
-		_start_exchange_visual(&"knockback" if knockback else (&"hit_back" if rear_hit else &"hit"))
+		var reaction := &"knockback" if knockback else (&"hit_back" if rear_hit else &"hit")
+		if is_mounted() and str(outcome.get("kind", "")) == "big":
+			reaction = &"ride_guard_break"
+		_start_exchange_visual(reaction)
 		combat_status = "Exchange loss: " + str(outcome.get("kind", "small"))
 	else:
 		exchange_stagger = 0.0
@@ -1352,7 +1376,7 @@ func apply_exchange(other_cell: Vector2i, outcome: Dictionary) -> void:
 		if str(outcome.get("kind", "")) != "big":
 			if clip in [&"attack_bow", &"attack_crossbow"]:
 				clip = &"attack_unarmed" # A ranged holder is still a valid close-combat target.
-			if editor != null and editor.is_mounted:
+			if is_mounted():
 				clip = &"ride_thrust" if HumanCharacter3DEditor.WeaponMaterials.is_polearm(StringName(_exchange_equipped_asset("weapon"))) else &"ride_slash"
 		_start_exchange_visual(clip)
 		combat_status = "Exchange win: " + str(outcome.get("kind", "small"))

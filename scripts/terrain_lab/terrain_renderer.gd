@@ -55,6 +55,11 @@ func draw_layer(canvas: Node2D, kind: int) -> void:
 	if kind == 0:
 		_draw_ground(canvas)
 		return
+	if kind == 1:
+		var batch_cliffs: bool = not debug_enabled and get_script() == TerrainRenderer and data.get_script() == TerrainData
+		if batch_cliffs:
+			_draw_cliffs_batched(canvas)
+			return
 	# Only merge consecutive brush primitives. Ramps and debug/custom renderers
 	# retain their original painter order and callbacks.
 	var batch_brushes: bool = kind == 3 and not debug_enabled and get_script() == TerrainRenderer and data.get_script() == TerrainData
@@ -210,6 +215,207 @@ func _draw_cliff_texture(canvas: Node2D, a: Vector2, b: Vector2, normal: Vector2
 	else:
 		canvas.draw_rect(Rect2(-length * 0.5, -depth * 0.5, length, depth), Color("45413c"), true)
 	canvas.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+func _draw_cliffs_batched(canvas: Node2D) -> void:
+	var shadow_points := PackedVector2Array()
+	var shadow_colors := PackedColorArray()
+	var shadow_indices := PackedInt32Array()
+
+	var face_points := PackedVector2Array()
+	var face_colors := PackedColorArray()
+	var face_uvs := PackedVector2Array()
+	var face_indices := PackedInt32Array()
+
+	var overlay_points := PackedVector2Array()
+	var overlay_colors := PackedColorArray()
+	var overlay_indices := PackedInt32Array()
+
+	var line_points := PackedVector2Array()
+	var line_colors := PackedColorArray()
+	var line_indices := PackedInt32Array()
+
+	var tex_size := cliff_texture.get_size() if cliff_texture != null else Vector2(1024.0, 512.0)
+	var tex_inv_w: float = 1.0 / tex_size.x
+	var tex_inv_h: float = 1.0 / tex_size.y
+
+	for y: int in range(data.size.y):
+		for x: int in range(data.size.x):
+			var cell := Vector2i(x, y)
+			var i: int = data.index(cell)
+			var rect := Rect2(Vector2(cell) * CELL_PIXELS, Vector2.ONE * CELL_PIXELS)
+			for d: int in range(4):
+				var drop: int = data.cliff_drops[i * 4 + d]
+				var shore: bool = false
+				var neighbor: Vector2i = cell + TerrainData.DIRECTIONS[d]
+				if data.contains(neighbor):
+					shore = data.surface_types[i] != TerrainData.Surface.WATER \
+						and data.surface_types[data.index(neighbor)] == TerrainData.Surface.WATER
+				if drop == 0 and not shore:
+					continue
+				var normal := Vector2(TerrainData.DIRECTIONS[d])
+				var tangent := Vector2(-normal.y, normal.x)
+				var edge: Vector2 = rect.get_center() + normal * CELL_PIXELS * 0.5
+				var depth: float = CELL_PIXELS if drop > 0 else 8.0
+				var cuts: Array[Vector2] = [Vector2(-32, 32)]
+				if (data.ramp_edges[i] & (1 << d)) != 0:
+					cuts = [Vector2(-32, -18), Vector2(18, 32)]
+				for span: Vector2 in cuts:
+					var a: Vector2 = edge + tangent * span.x
+					var b: Vector2 = edge + tangent * span.y
+					var upper: Color = Color("8c8974") if drop > 0 else Color("b9b78b")
+					var lower: Color = Color("383d3c") if drop > 0 else Color("86b2b2")
+					if drop > 0:
+						var foot_a := a + normal * depth
+						var foot_b := b + normal * depth
+						# 1. Contact shadow quad
+						var s_idx: int = shadow_points.size()
+						shadow_points.append(foot_a)
+						shadow_points.append(foot_b)
+						shadow_points.append(foot_b + normal * 10.0)
+						shadow_points.append(foot_a + normal * 10.0)
+						shadow_colors.append(Color(0.04, 0.07, 0.04, 0.42))
+						shadow_colors.append(Color(0.04, 0.07, 0.04, 0.42))
+						shadow_colors.append(Color(0.04, 0.07, 0.04, 0.0))
+						shadow_colors.append(Color(0.04, 0.07, 0.04, 0.0))
+						shadow_indices.append(s_idx)
+						shadow_indices.append(s_idx + 1)
+						shadow_indices.append(s_idx + 2)
+						shadow_indices.append(s_idx)
+						shadow_indices.append(s_idx + 2)
+						shadow_indices.append(s_idx + 3)
+
+						# 2. Textured cliff face quad
+						var length := a.distance_to(b)
+						var f_idx: int = face_points.size()
+						face_points.append(b)
+						face_points.append(a)
+						face_points.append(foot_a)
+						face_points.append(foot_b)
+						if cliff_texture != null:
+							var source_width: float = length * 4.0
+							var source_x: float = 256.0 + fposmod(a.dot(tangent) * 4.0, 256.0)
+							var light: float = 1.08 + normal.dot(Vector2(-0.14, -0.18))
+							var col := Color(light, light, light, 1.0)
+							face_colors.append(col)
+							face_colors.append(col)
+							face_colors.append(col)
+							face_colors.append(col)
+							face_uvs.append(Vector2(source_x * tex_inv_w, 120.0 * tex_inv_h))
+							face_uvs.append(Vector2((source_x + source_width) * tex_inv_w, 120.0 * tex_inv_h))
+							face_uvs.append(Vector2((source_x + source_width) * tex_inv_w, 400.0 * tex_inv_h))
+							face_uvs.append(Vector2(source_x * tex_inv_w, 400.0 * tex_inv_h))
+						else:
+							var col := Color("45413c")
+							face_colors.append(col)
+							face_colors.append(col)
+							face_colors.append(col)
+							face_colors.append(col)
+							face_uvs.append(Vector2.ZERO)
+							face_uvs.append(Vector2.ZERO)
+							face_uvs.append(Vector2.ZERO)
+							face_uvs.append(Vector2.ZERO)
+						face_indices.append(f_idx)
+						face_indices.append(f_idx + 1)
+						face_indices.append(f_idx + 2)
+						face_indices.append(f_idx)
+						face_indices.append(f_idx + 2)
+						face_indices.append(f_idx + 3)
+
+						# 3. Shading overlay quad
+						var o_idx: int = overlay_points.size()
+						overlay_points.append(a)
+						overlay_points.append(b)
+						overlay_points.append(foot_b)
+						overlay_points.append(foot_a)
+						overlay_colors.append(Color(0.95, 0.88, 0.65, 0.08))
+						overlay_colors.append(Color(0.95, 0.88, 0.65, 0.08))
+						overlay_colors.append(Color(0.025, 0.045, 0.045, 0.30))
+						overlay_colors.append(Color(0.025, 0.045, 0.045, 0.30))
+						overlay_indices.append(o_idx)
+						overlay_indices.append(o_idx + 1)
+						overlay_indices.append(o_idx + 2)
+						overlay_indices.append(o_idx)
+						overlay_indices.append(o_idx + 2)
+						overlay_indices.append(o_idx + 3)
+
+						# 4. Lines: lip line, lip polyline, strata lines
+						_append_line_quad(line_points, line_colors, line_indices, a + normal * 1.5, b + normal * 1.5, Color(0.09, 0.12, 0.06, 0.9), 5.0)
+						var lip_col := Color(0.69, 0.73, 0.47, 0.78)
+						var lip_pts := [
+							a,
+							a.lerp(b, 0.2) - normal * 1.1,
+							a.lerp(b, 0.4) + normal * 0.3,
+							a.lerp(b, 0.6) - normal * 1.4,
+							a.lerp(b, 0.8) - normal * 0.5,
+							b
+						]
+						for seg: int in range(5):
+							_append_line_quad(line_points, line_colors, line_indices, lip_pts[seg], lip_pts[seg + 1], lip_col, 2.0)
+
+						for level: int in range(1, drop):
+							var band := normal * depth * float(level) / float(drop)
+							_append_line_quad(line_points, line_colors, line_indices, a + band, b + band, Color(0.04, 0.05, 0.04, 0.65), 3.0)
+							_append_line_quad(line_points, line_colors, line_indices, a + band - normal * 2.0, b + band - normal * 2.0, Color(0.72, 0.73, 0.62, 0.4), 1.5)
+					else:
+						# Shore face quad
+						var o_idx: int = overlay_points.size()
+						overlay_points.append(a + normal * depth)
+						overlay_points.append(b + normal * depth)
+						overlay_points.append(b)
+						overlay_points.append(a)
+						overlay_colors.append(upper)
+						overlay_colors.append(upper)
+						overlay_colors.append(lower)
+						overlay_colors.append(lower)
+						overlay_indices.append(o_idx)
+						overlay_indices.append(o_idx + 1)
+						overlay_indices.append(o_idx + 2)
+						overlay_indices.append(o_idx)
+						overlay_indices.append(o_idx + 2)
+						overlay_indices.append(o_idx + 3)
+
+						_append_line_quad(line_points, line_colors, line_indices, a, b, Color(0.88, 0.82, 0.54, 0.8), 2.0)
+
+					# Foot line for all cliffs
+					_append_line_quad(line_points, line_colors, line_indices, a + normal * depth, b + normal * depth, Color(0.12, 0.18, 0.17, 0.7), 2.0)
+
+	var ci := canvas.get_canvas_item()
+	if not shadow_points.is_empty():
+		RenderingServer.canvas_item_add_triangle_array(ci, shadow_indices, shadow_points, shadow_colors)
+	if not face_points.is_empty():
+		RenderingServer.canvas_item_add_triangle_array(ci, face_indices, face_points, face_colors, face_uvs, PackedInt32Array(), PackedFloat32Array(), cliff_texture.get_rid() if cliff_texture != null else RID())
+	if not overlay_points.is_empty():
+		RenderingServer.canvas_item_add_triangle_array(ci, overlay_indices, overlay_points, overlay_colors)
+	if not line_points.is_empty():
+		RenderingServer.canvas_item_add_triangle_array(ci, line_indices, line_points, line_colors)
+
+static func _append_line_quad(
+	points: PackedVector2Array,
+	colors: PackedColorArray,
+	indices: PackedInt32Array,
+	from: Vector2,
+	to: Vector2,
+	col: Color,
+	width: float
+) -> void:
+	var delta := to - from
+	var offset := delta.orthogonal().normalized() * (width * 0.5)
+	var first: int = points.size()
+	points.append(from + offset)
+	points.append(from - offset)
+	points.append(to - offset)
+	points.append(to + offset)
+	colors.append(col)
+	colors.append(col)
+	colors.append(col)
+	colors.append(col)
+	indices.append(first)
+	indices.append(first + 1)
+	indices.append(first + 2)
+	indices.append(first)
+	indices.append(first + 2)
+	indices.append(first + 3)
+
 
 func _draw_ramps(canvas: Node2D, cell: Vector2i, i: int) -> void:
 	for d: int in range(4):

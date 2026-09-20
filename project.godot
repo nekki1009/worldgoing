@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="worldgoing"
-config/version="V0.48R"
+config/version="V0.49R"
 run/main_scene="res://scenes/terrain_lab/TerrainLab.tscn"
 config/features=PackedStringArray("4.7", "C#", "Forward Plus")
 config/icon="res://icon.svg"
@@ -32,6 +32,8 @@ project/assembly_name="worldgoing"
 [filesystem]
 
 import/blender/enabled=false
+import/blender/enabled.android=true
+import/blender/enabled.web=true
 
 [physics]
 

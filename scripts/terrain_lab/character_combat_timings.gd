@@ -28,8 +28,10 @@ const ATTACKS := {
 	&"attack_crossbow": [30, 15, 17, 15],
 	&"ride_slash": [42, 12, 29, -1],
 	&"ride_thrust": [42, 12, 29, -1],
+	&"ride_heavy": [70, 30, 44, -1], # Mounted presentation of the existing heavy outcome; no projectile.
 }
 const POSE_SECONDS := {&"guard_raise": .15, &"guard_lower": .15, &"guard_break": .4,
+	&"ride_guard_break": .4,
 	&"down": 2.875, &"unconscious": 2.4, &"get_up": 2.2, &"rescue": 4.0,
 	&"reload_bow": 1.15, &"reload_crossbow": 1.5,
 	&"guard_weapon": 1.2, &"guard_weapon_raise": .15, &"guard_weapon_lower": .15, &"guard_weapon_break": .4,

@@ -117,7 +117,7 @@ func _run_dyes() -> void:
 	print("EQUIPMENT DYE BAKE PASS: ", count, " complete=", manifest.complete)
 	quit()
 
-func _pack_mask(groups: Array[Image], neutral: Image) -> Image:
+static func _pack_mask(groups: Array[Image], neutral: Image) -> Image:
 	for pixels: Image in groups: pixels.convert(Image.FORMAT_RGBA8)
 	neutral.convert(Image.FORMAT_RGBA8)
 	var a := groups[0].get_data()

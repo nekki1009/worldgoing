@@ -129,12 +129,49 @@ func begin_equipment(identity: int, request: Dictionary) -> Dictionary:
 	if equipment_orders == null:
 		return Runtime.fail("UNSUPPORTED", "尚未接入實際領裝規則")
 	var prepared: Dictionary = equipment_orders.prepare(identity, request)
-	if not prepared.ok:
+	var preparing := str(prepared.get("code", "")) == "ATLAS_REQUIRED"
+	if not prepared.ok and not preparing:
 		return prepared
-	var job := _new_job(_person(identity), "equipment", identity)
-	job.merge({"duration": 5.0, "order": prepared.order})
+	var executor := _person(identity)
+	var job := _new_job(executor, "equipment", identity)
+	job.merge({"duration": 5.0, "order": prepared.order, "preparing": preparing,
+		"terrain": lab.terrain, "site_state": lab.terrain.site,
+		"executor_owner": executor.owner, "executor_body": executor.body,
+		"executor_holder": executor.holder, "executor_cargo": executor.cargo})
+	if str(prepared.order.mode) == "issue":
+		job.merge({"depot_holder": lab.terrain.site.depot_items, "depot_stock": lab.terrain.site.inventory})
 	_jobs[str(identity)] = job
+	if preparing:
+		job.paused = "PREPARING_ATLAS"
+		_prepare_equipment_atlas.call_deferred(job, prepared.appearance)
+		return Runtime.ok("正在準備共用裝備圖集；完成後才開始五秒換裝，原物品保留", {"seconds": 5.0, "preparing": true})
 	return Runtime.ok("開始換裝；完成前保留原實裝", {"seconds": 5.0})
+
+func _prepare_equipment_atlas(job: Dictionary, appearance: Dictionary) -> void:
+	var key := str(job.executor_id)
+	if not is_same(_jobs.get(key), job) or not bool(job.preparing): return
+	var check := _job_context(job)
+	if not check.ok and str(check.code) != "ATLAS_REQUIRED":
+		_finish(key, check)
+		return
+	var complete := false
+	if is_instance_valid(lab) and lab is Node and lab.is_inside_tree():
+		complete = await TerrainArmy.EquipmentAtlas.prepare_recipe(lab, appearance)
+	_equipment_prepared(job, complete)
+
+func _equipment_prepared(job: Dictionary, complete: bool) -> void:
+	var key := str(job.executor_id)
+	# A canceled/replaced job must never resume, including a new job for the same ID.
+	if not is_same(_jobs.get(key), job) or not bool(job.preparing): return
+	var check := _job_context(job)
+	if not check.ok and str(check.code) != "ATLAS_REQUIRED":
+		_finish(key, check)
+	elif not complete or not check.ok:
+		_finish(key, Runtime.fail("ATLAS_PREPARATION_FAILED", "共用裝備圖集準備失敗或仍未通過原驗證；本次換裝已取消，原裝與全部物品保留"))
+	else:
+		job.preparing = false
+		job.paused = ""
+		job.elapsed = 0.0 # Only the original clock/post-contact commit can equip.
 
 func begin_ranged_craft(identity: int, recipe: String) -> Dictionary:
 	if is_busy(identity) or bool(lab.terrain.site.get("paused", false)):
@@ -223,6 +260,8 @@ func advance(seconds: float) -> Dictionary:
 	for key: String in _jobs.keys():
 		var job: Dictionary = _jobs[key]
 		var check := _job_context(job)
+		if bool(job.get("preparing", false)) and (check.ok or str(check.code) == "ATLAS_REQUIRED"):
+			continue # Preparation is not work time, fatigue, or an inventory reservation.
 		if not check.ok:
 			_finish(key, check)
 			continue
@@ -289,6 +328,8 @@ func settle_after_contacts() -> Array[Dictionary]:
 	for key: String in keys:
 		var job: Dictionary = _jobs[key]
 		var check := _job_context(job)
+		if bool(job.get("preparing", false)) and (check.ok or str(check.code) == "ATLAS_REQUIRED"):
+			continue
 		if check.ok and str(job.kind) == "escape":
 			var person := _person(int(job.executor_id))
 			if int(person.hit) != int(job.executor_hit) or _escape_blocked(person, {}):
@@ -378,8 +419,12 @@ func _commit(job: Dictionary) -> Dictionary:
 	return Runtime.ok("已拘束；封存物留在原地" if capturing else "已解綁；生命與昏迷不變", {"container_id": container})
 
 func _job_context(job: Dictionary) -> Dictionary:
+	if str(job.kind) == "equipment" and not is_instance_valid(lab):
+		return Runtime.fail("STALE_SOURCE", "原 Site 已離開；換裝未扣物")
 	if str(job.kind) == "ranged_craft" and (not is_same(lab.terrain, job.terrain) or not is_same(lab.terrain.site, job.site_state)):
 		return Runtime.fail("STALE_SOURCE", "原營地／Site 已切換，手作未扣材料")
+	if str(job.kind) == "equipment" and (not is_same(lab.terrain, job.terrain) or not is_same(lab.terrain.site, job.site_state)):
+		return Runtime.fail("STALE_SOURCE", "原營地／Site 已切換，換裝未扣物")
 	var executor := _person(int(job.executor_id))
 	if str(job.kind) == "escape":
 		var check := _escape_context(executor)
@@ -402,6 +447,11 @@ func _job_context(job: Dictionary) -> Dictionary:
 			return Runtime.fail("STALE_SOURCE", "原人物或營地持物已切換，手作未扣材料")
 		return Runtime.ranged_craft(lab.terrain, str(job.recipe), int(job.executor_id), true)
 	if str(job.kind) == "equipment":
+		if not is_same(executor.owner, job.executor_owner) or not is_same(executor.body, job.executor_body) \
+			or not is_same(executor.holder, job.executor_holder) or not is_same(executor.cargo, job.executor_cargo):
+			return Runtime.fail("STALE_SOURCE", "原人物或持物已替換；換裝未扣物")
+		if str(job.order.mode) == "issue" and (not is_same(lab.terrain.site.depot_items, job.depot_holder) or not is_same(lab.terrain.site.inventory, job.depot_stock)):
+			return Runtime.fail("STALE_SOURCE", "原補給點持物已替換；換裝未扣物")
 		return equipment_orders.check(job.order) if equipment_orders != null else Runtime.fail("UNSUPPORTED")
 	if str(job.kind) == "loot":
 		var source := _source(str(job.source_kind), str(job.source_id))

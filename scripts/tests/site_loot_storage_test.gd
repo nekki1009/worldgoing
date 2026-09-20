@@ -198,6 +198,8 @@ func _check_supply_clock_save() -> void:
 	data.site.player_cell = data.index(player.terrain_cell)
 	data.site.worker.cell = data.index(worker.terrain_cell)
 	data.site["actors"] = {"player": player.capture_state(), "npc": worker.capture_state()}
+	# Clock-only bare snapshots own no equipment items or military office.
+	for actor: Dictionary in data.site.actors.values(): actor.appearance.parts.cape = "none"
 	data.site.phase = 1.0 / 60.0
 	var personal := Sustain.create(1.0)
 	assert(Sustain.add_members(personal, {1: {"hp": player.hp}}, [1]).ok)

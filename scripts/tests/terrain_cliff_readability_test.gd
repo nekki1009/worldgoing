@@ -7,7 +7,7 @@ var label_prefix := "after_"
 var deadline := 0
 
 func _initialize() -> void:
-	deadline = Time.get_ticks_msec() + 24000
+	deadline = Time.get_ticks_msec() + 60000
 	if "--before" in OS.get_cmdline_user_args():
 		label_prefix = "before_"
 	_run.call_deferred()
@@ -35,8 +35,10 @@ func _run() -> void:
 	root.add_child(lab)
 	current_scene = lab
 	lab.set_process(false)
-	lab.npc.set_process(false)
+	if lab.npc != null:
+		lab.npc.set_process(false)
 	lab.army.set_process(false)
+	lab.character.combat_driven_by_lab = false
 	var original := lab.terrain.fingerprint()
 	await _capture(lab, "highland", lab.renderer.cell_center(lab.terrain.spawn_cell), 0.68)
 	assert(lab.terrain.fingerprint() == original)

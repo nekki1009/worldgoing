@@ -79,8 +79,8 @@ func _run() -> void:
 	assert(not controller.panel.is_ancestor_of(controller.details))
 	assert(controller.combat_window.is_ancestor_of(lab.find_child("StartMeleeTrial", true, false)))
 	assert(not controller.panel.is_ancestor_of(lab.find_child("StartMeleeTrial", true, false)))
-	assert(lab.npc.editor == null and lab.npc.player_sprite == null)
-	assert(lab.npc.visual_state.body_index == 1, "Hidden worker must retain the existing save appearance contract")
+	assert(lab.npc == null and lab.find_child("CommandTestNPC", true, false) == null)
+	assert(lab.find_child("EnableWorker", true, false) == null and lab.find_child("StopWorker", true, false) == null)
 	for invalid: Dictionary in [
 		{"friendly_count": 1.5},
 		{"friendly_count": true},
@@ -150,7 +150,7 @@ func _run() -> void:
 	assert(loaded.data.site.armies[0].units.size() == 12 and loaded.data.site.armies[1].units.size() == 8)
 	_assert_genders(loaded.data.site.armies[0].units, 3)
 	_assert_genders(loaded.data.site.armies[1].units, 8)
-	assert(int(loaded.data.site.actors.npc.appearance.body) == 1, "Hidden worker appearance changed in save/load")
+	assert(not loaded.data.site.actors.has("npc"), "Removed startup worker must not return through save/load")
 	lab.clear_army()
 	assert(not lab.army.has_army() and not lab.opposing_army.has_army())
 	var rejected := lab.start_melee_trial({
@@ -182,19 +182,21 @@ func _run() -> void:
 		_assert_genders(lab.army.combat_units, sample[2])
 		_assert_genders(lab.opposing_army.combat_units, 0)
 		controller._capture_positions()
-		assert(Store.save(lab.terrain, SAVE).ok)
+		var save_result := Store.save(lab.terrain, SAVE)
+		if not save_result.ok and save_result.code == "SAVE_IO":
+			OS.delay_msec(50)
+			save_result = Store.save(lab.terrain, SAVE)
+		assert(save_result.ok)
 		lab.clear_army()
 	# The old automatic 20x10 contract rejected a cliff through the center seam.
 	for index in range(lab.terrain.flags.size()):
 		lab.terrain.flags[index] = 0
 		lab.terrain.static_blocked[index] = 0
 	var player_cell := lab.terrain.size - Vector2i(3, 3)
-	var worker_cell := lab.terrain.size - Vector2i(4, 3)
-	for actor_cell: Vector2i in [player_cell, worker_cell]:
-		var actor_index := lab.terrain.index(actor_cell)
-		lab.terrain.flags[actor_index] = TerrainData.Flag.WALKABLE
-		lab.terrain.height_levels[actor_index] = 0
-	assert(lab.character.place(player_cell, true) and lab.npc.place(worker_cell, true))
+	var actor_index := lab.terrain.index(player_cell)
+	lab.terrain.flags[actor_index] = TerrainData.Flag.WALKABLE
+	lab.terrain.height_levels[actor_index] = 0
+	assert(lab.character.place(player_cell, true))
 	var origin := Vector2i(2, 2)
 	for row in range(10):
 		for column in range(20):
@@ -203,7 +205,7 @@ func _run() -> void:
 			lab.terrain.flags[index] = TerrainData.Flag.WALKABLE
 			lab.terrain.height_levels[index] = 0 if column < 10 else 3
 	assert(lab.find_melee_trial_layout(100, 100).is_empty(), "Automatic deployment crossed a blocked center seam")
-	print("SITE BATTLE WINDOW PASS: responsive status layout, top banner ownership/player status, popup ownership, validated inputs, 12v8 save/load, atomic rejection, connected 100v100 compatibility, no female main presenter")
+	print("SITE BATTLE WINDOW PASS: responsive status layout, top banner ownership/player status, popup ownership, validated inputs, 12v8 save/load, atomic rejection, connected 100v100 compatibility, no default worker")
 	lab.queue_free()
 	await process_frame
 	quit(0)

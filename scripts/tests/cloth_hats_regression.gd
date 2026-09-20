@@ -5,6 +5,8 @@ var samples := {}
 var phase := "before"
 var editor
 var sex := "male"
+var regression_subdir := "regression"
+var baseline_editor := ""
 
 func _initialize() -> void:
 	_run.call_deferred()
@@ -14,7 +16,12 @@ func _run() -> void:
 	phase = args[0]
 	sex = args[1]
 	if "--neutral-faces" in args: OUT = "res://output/neutral_faces_20260918"
-	var folder := OUT+"/regression/"+phase+"/"+sex
+	if "--equipment-matrix" in args: OUT = "res://output/equipment_matrix_20260918"
+	if "--equipment-limits" in args: OUT = "res://output/equipment_limits_20260919"
+	baseline_editor = OUT+"/baseline/human_character_3d_editor.gd.txt"
+	if "--equipment-limits" in args: baseline_editor = OUT+"/baseline/scripts/ui/human_character_3d_editor.gd"
+	if "--wagon-only" in args: regression_subdir = "regression_wagon"
+	var folder := OUT+"/"+regression_subdir+"/"+phase+"/"+sex
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(folder))
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	Engine.max_fps = 0
@@ -22,22 +29,29 @@ func _run() -> void:
 	var old_version := phase == "before_fixed"
 	if old_version:
 		var original_script := GDScript.new()
-		original_script.source_code = FileAccess.get_file_as_string(OUT+"/baseline/human_character_3d_editor.gd.txt").replace("class_name HumanCharacter3DEditor\n", "")
+		original_script.source_code = FileAccess.get_file_as_string(baseline_editor).replace("class_name HumanCharacter3DEditor\n", "")
 		assert(original_script.reload() == OK)
 		editor.set_script(original_script)
 	root.add_child(editor)
 	editor.open()
 	await settle(3)
 	var gender := 1 if sex == "female" else 0
-	editor._load_body_model(gender,OUT+"/baseline/standard_anime_%s_character_pack.glb" % sex if old_version else "")
+	var model_path: String = OUT+"/baseline/standard_anime_%s_character_pack.glb" % sex if old_version else (editor.FEMALE_MODEL_PATH if gender == 1 else editor.MALE_MODEL_PATH)
+	if old_version and "--equipment-limits" in args: model_path = OUT+"/baseline/assets/characters/human/q35/standard_anime_%s_character_pack.glb" % sex
+	if not old_version and "--candidate" in args: model_path = "res://assets/characters/human/q35/equipment_matrix/candidate_"+sex+".glb"
+	editor._load_body_model(gender,model_path)
 	await settle(4)
 	editor.preview_viewport.size = Vector2i(256,320)
 	editor.preview_viewport.msaa_3d = Viewport.MSAA_DISABLED
 	editor.preview_viewport.use_debanding = false
 	var original := HumanCharacter3DEditor.default_appearance(gender)
 	assert(editor.restore_appearance(original))
-	if "--neutral-faces" in args:
-		for face_number in range(1,5):
+	if "--wagon-only" in args:
+		await wagon_samples(folder, gender)
+		await finish_report(folder, old_version, model_path)
+		return
+	if "--neutral-faces" in args or "--equipment-matrix" in args or "--equipment-limits" in args:
+		for face_number in range(1,9 if "--equipment-matrix" in args or "--equipment-limits" in args else 5):
 			assert(editor.select_part_by_id(&"face",StringName("face_standard_%02d" % face_number)))
 			for angle in [0.0,35.0,90.0]:
 				neutral()
@@ -90,9 +104,12 @@ func _run() -> void:
 		editor.set_preview_yaw_degrees(145)
 		frame_camera("head")
 		await sample_image(folder,str(hair.id))
-	var report := {"samples":samples,"phase":phase,"sex":sex,"count":samples.size(),"editor_md5":FileAccess.get_md5(OUT+"/baseline/human_character_3d_editor.gd.txt" if old_version else "res://scripts/ui/human_character_3d_editor.gd"),"dye_md5":FileAccess.get_md5("res://scripts/ui/equipment_dye.gd"),"glb_md5":FileAccess.get_md5(OUT+"/baseline/standard_anime_%s_character_pack.glb" % sex if old_version else (editor.FEMALE_MODEL_PATH if gender == 1 else editor.MALE_MODEL_PATH))}
+	await finish_report(folder, old_version, model_path)
+
+func finish_report(folder: String, old_version: bool, model_path: String) -> void:
+	var report := {"samples":samples,"phase":phase,"sex":sex,"count":samples.size(),"editor_md5":FileAccess.get_md5(baseline_editor if old_version else "res://scripts/ui/human_character_3d_editor.gd"),"dye_md5":FileAccess.get_md5("res://scripts/ui/equipment_dye.gd"),"glb_md5":FileAccess.get_md5(model_path)}
 	if phase == "after_fixed":
-		var before: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(OUT+"/regression/before_fixed/"+sex+"/result.json"))
+		var before: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(OUT+"/"+regression_subdir+"/before_fixed/"+sex+"/result.json"))
 		if before.samples != samples:
 			push_error("Old equipment rendered differently; do not recertify atlases")
 			quit(1)
@@ -104,6 +121,28 @@ func _run() -> void:
 	editor.queue_free()
 	await settle(3)
 	quit(0)
+
+func wagon_samples(folder: String, gender: int) -> void:
+	assert(editor.restore_appearance(preload("res://scripts/terrain_lab/site_wagon_rider_recipe.gd").appearance(gender)))
+	editor.animation_player.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
+	for mounted in [false, true]:
+		editor.set_mount_enabled(mounted)
+		if mounted:
+			editor.mount_horse.animation_player.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
+		for clip in ([&"ride_idle", &"ride_walk"] if mounted else [&"idle", &"walk", &"run"]):
+			assert(editor.select_animation_by_id(clip))
+			editor.set_playing(false)
+			var phases: Array = ([0.0] if clip == &"ride_idle" else [0.0,.125,.25,.375,.5,.625,.75,.875]) if mounted else [0.0,.4,.8]
+			for angle in [0.0,90.0,180.0,270.0]:
+				editor.set_preview_yaw_degrees(angle)
+				var center := Vector3(0,1.1 if mounted else .9,0)
+				editor.camera.size = 3.3 if mounted else 2.2
+				editor.camera.position = center+Vector3(0,.1,-5)
+				editor.camera.look_at(center)
+				for step in phases.size():
+					editor._on_timeline_changed(editor.animation_player.get_animation(clip).length*float(phases[step]))
+					await sample_image(folder,"wagon_%s_%d_%d" % [clip,int(angle),step])
+	assert(samples.size() == 72)
 
 func sample_image(folder: String,label: String) -> void:
 	await settle(3)

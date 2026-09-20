@@ -5,6 +5,8 @@ extends RefCounted
 ## The viewport can be displayed at different UI sizes, but the 3D camera and
 ## map pixels-per-metre are derived from this single source.
 const PREVIEW_VIEWPORT_SIZE := Vector2i(1280, 1536)
+const EDITOR_VIEWPORT_SIZE := Vector2i(1280, 1536)
+const MAP_VIEWPORT_SIZE := Vector2i(256, 307)
 const MAP_PIXELS_PER_METRE := 37.12841796875
 const TEXTURE_FILTER := CanvasItem.TEXTURE_FILTER_NEAREST
 

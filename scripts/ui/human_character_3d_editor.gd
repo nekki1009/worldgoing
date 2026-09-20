@@ -59,15 +59,19 @@ const PART_SLOTS := [
 	},
 	{"id": &"hair", "label": "Hair / 頭髮", "options": []},
 	{"id": &"helmet", "label": "Helmet / 頭盔", "options": [
-		{"id": &"helmet_leather_01", "label": "Leather Helmet 01 / 皮革頭盔", "prefixes": ["Helmet_Leather_01"]},
-		{"id": &"helmet_iron_01", "label": "Chinese Iron Helmet 01 / 中國風鐵盔", "prefixes": ["Helmet_Iron_01"]},
-		{"id": &"helmet_steel_01", "label": "Chinese Steel Helmet 01 / 中國風鋼盔", "prefixes": ["Helmet_Steel_01"]},
-		{"id": &"helmet_mingguang_01", "label": "Mingguang Helmet 01 / 明光盔", "prefixes": ["Helmet_Mingguang_01"]},
-		{"id": &"helmet_chinese_leather_01", "label": "Chinese Leather Helmet 01 / 中式皮盔", "prefixes": ["Helmet_Chinese_Leather_01"]},
-		{"id": &"helmet_western_iron_01", "label": "Western Iron Helmet 01 / 西式鐵盔", "prefixes": ["Helmet_Western_Iron_01"]},
-		{"id": &"helmet_cloth_chinese_01", "label": "Chinese Cloth Cap / 中式布帽", "material": "cloth", "prefixes": ["Helmet_Cloth_Chinese_01"]},
-		{"id": &"helmet_cloth_japanese_01", "label": "Japanese Cloth Eboshi / 日式布烏帽", "material": "cloth", "prefixes": ["Helmet_Cloth_Japanese_01"]},
-		{"id": &"helmet_cloth_western_01", "label": "Western Wool Cap / 西式軟呢帽", "material": "cloth", "prefixes": ["Helmet_Cloth_Western_01"]},
+		{"id": &"helmet_leather_01", "label": "皮製｜西式皮盔", "material": "leather", "culture": "western", "prefixes": ["Helmet_Leather_01"]},
+		{"id": &"helmet_iron_01", "label": "鐵製｜中式鐵盔", "material": "iron", "culture": "chinese", "prefixes": ["Helmet_Iron_01"]},
+		{"id": &"helmet_steel_01", "label": "鋼製｜中式鋼盔", "material": "steel", "culture": "chinese", "prefixes": ["Helmet_Steel_01"]},
+		{"id": &"helmet_mingguang_01", "label": "鐵製｜明光配盔", "material": "iron", "culture": "chinese", "prefixes": ["Helmet_Mingguang_01"]},
+		{"id": &"helmet_chinese_leather_01", "label": "皮製｜中式皮盔", "material": "leather", "culture": "chinese", "prefixes": ["Helmet_Chinese_Leather_01"]},
+		{"id": &"helmet_western_iron_01", "label": "鐵製｜西式鐵盔", "material": "iron", "culture": "western", "prefixes": ["Helmet_Western_Iron_01"]},
+		{"id": &"helmet_cloth_chinese_01", "label": "布製｜中式布帽", "material": "cloth", "culture": "chinese", "prefixes": ["Helmet_Cloth_Chinese_01"]},
+		{"id": &"helmet_cloth_japanese_01", "label": "布製｜日式烏帽", "material": "cloth", "culture": "japanese", "prefixes": ["Helmet_Cloth_Japanese_01"]},
+		{"id": &"helmet_cloth_western_01", "label": "布製｜西式軟呢帽", "material": "cloth", "culture": "western", "prefixes": ["Helmet_Cloth_Western_01"]},
+		{"id": &"helmet_japanese_leather_01", "label": "皮製｜日式頭盔", "material": "leather", "culture": "japanese", "prefixes": ["Helmet_Japanese_Leather_01"]},
+		{"id": &"helmet_japanese_iron_01", "label": "鐵製｜日式頭盔", "material": "iron", "culture": "japanese", "prefixes": ["Helmet_Japanese_Iron_01"]},
+		{"id": &"helmet_japanese_steel_01", "label": "鋼製｜日式頭盔", "material": "steel", "culture": "japanese", "prefixes": ["Helmet_Japanese_Steel_01"]},
+		{"id": &"helmet_western_steel_01", "label": "鋼製｜西式頭盔", "material": "steel", "culture": "western", "prefixes": ["Helmet_Western_Steel_01"]},
 		{"id": &"none", "label": "None / 無", "prefixes": []},
 	]},
 	{"id": &"outfit", "label": "Outfit / 內衣", "options": [
@@ -76,36 +80,59 @@ const PART_SLOTS := [
 		{"id": &"none", "label": "None / 無", "prefixes": []},
 	]},
 	{"id": &"armor", "label": "Armor / 護甲", "options": [
-		{"id": &"armor_light_leather_01", "label": "Light Armor 01 / 皮革輕甲", "prefixes": ["Armor_Light_Leather_01"]},
-		{"id": &"armor_iron_01", "label": "Chinese Iron Armor 01 / 中式鐵甲", "prefixes": ["Armor_Iron_01"]},
-		{"id": &"armor_mingguang_01", "label": "Mingguang Armor 01 / 明光鎧", "prefixes": ["Armor_Mingguang_01"]},
-		{"id": &"armor_chinese_leather_01", "label": "Chinese Leather Armor 01 / 中式皮甲", "prefixes": ["Armor_Chinese_Leather_01"]},
-		{"id": &"armor_western_iron_01", "label": "Western Iron Armor 01 / 西式鐵甲", "prefixes": ["Armor_Western_Iron_01"]},
+		{"id": &"armor_light_leather_01", "label": "皮製｜西式輕皮甲", "material": "leather", "culture": "western", "prefixes": ["Armor_Light_Leather_01"]},
+		{"id": &"armor_iron_01", "label": "鐵製｜中式鐵甲", "material": "iron", "culture": "chinese", "prefixes": ["Armor_Iron_01"]},
+		{"id": &"armor_mingguang_01", "label": "特殊材質｜明光鎧", "material": "special", "culture": "chinese", "prefixes": ["Armor_Mingguang_01"]},
+		{"id": &"armor_chinese_leather_01", "label": "皮製｜中式皮甲", "material": "leather", "culture": "chinese", "prefixes": ["Armor_Chinese_Leather_01"]},
+		{"id": &"armor_western_iron_01", "label": "鐵製｜西式鐵甲", "material": "iron", "culture": "western", "prefixes": ["Armor_Western_Iron_01"]},
 		# Stable visual IDs/prefixes keep the authored meshes and animation paths.
-		{"id": &"outfit_medieval_chinese_01", "label": "布甲｜中式交領衣・男褲／女裙", "category": &"cloth", "prefixes": ["Outfit_Medieval_Chinese_01"]},
-		{"id": &"outfit_medieval_japanese_01", "label": "布甲｜日式小袖・男袴／女裙", "category": &"cloth", "prefixes": ["Outfit_Medieval_Japanese_01"]},
-		{"id": &"outfit_medieval_european_01", "label": "布甲｜歐式長衫・男褲／女裙", "category": &"cloth", "prefixes": ["Outfit_Medieval_European_01"]},
+		{"id": &"outfit_medieval_chinese_01", "label": "布製｜中式交領衣・男褲／女裙", "category": &"cloth", "material": "cloth", "culture": "chinese", "prefixes": ["Outfit_Medieval_Chinese_01"]},
+		{"id": &"outfit_medieval_japanese_01", "label": "布製｜日式小袖・男袴／女裙", "category": &"cloth", "material": "cloth", "culture": "japanese", "prefixes": ["Outfit_Medieval_Japanese_01"]},
+		{"id": &"outfit_medieval_european_01", "label": "布製｜西式長衫・男褲／女裙", "category": &"cloth", "material": "cloth", "culture": "western", "prefixes": ["Outfit_Medieval_European_01"]},
+		{"id": &"armor_japanese_leather_01", "label": "皮製｜日式護甲", "material": "leather", "culture": "japanese", "prefixes": ["Armor_Japanese_Leather_01"]},
+		{"id": &"armor_japanese_iron_01", "label": "鐵製｜日式護甲", "material": "iron", "culture": "japanese", "prefixes": ["Armor_Japanese_Iron_01"]},
+		{"id": &"armor_chinese_steel_01", "label": "鋼製｜中式護甲", "material": "steel", "culture": "chinese", "prefixes": ["Armor_Chinese_Steel_01"]},
+		{"id": &"armor_japanese_steel_01", "label": "鋼製｜日式護甲", "material": "steel", "culture": "japanese", "prefixes": ["Armor_Japanese_Steel_01"]},
+		{"id": &"armor_western_steel_01", "label": "鋼製｜西式護甲", "material": "steel", "culture": "western", "prefixes": ["Armor_Western_Steel_01"]},
 		{"id": &"none", "label": "None / 無", "prefixes": []},
 	]},
 	{"id": &"cape", "label": "Cape / 披風", "options": [
-		{"id": &"cape_travel_01", "label": "Cape 01 / 旅行披風", "prefixes": ["Cape_Travel_01"]},
-		{"id": &"cape_chinese_01", "label": "Chinese Cloak 01 / 中式披風", "prefixes": ["Cape_Chinese_01"]},
+		{"id": &"cape_travel_01", "label": "布製｜西式旅行披風（幹部以上）", "material": "cloth", "culture": "western", "officer_only": true, "prefixes": ["Cape_Travel_01"]},
+		{"id": &"cape_chinese_01", "label": "布製｜中式披風（幹部以上）", "material": "cloth", "culture": "chinese", "officer_only": true, "prefixes": ["Cape_Chinese_01"]},
+		{"id": &"cape_japanese_01", "label": "布製｜日式短披風（幹部以上）", "material": "cloth", "culture": "japanese", "officer_only": true, "prefixes": ["Cape_Japanese_01"]},
 		{"id": &"none", "label": "None / 無", "prefixes": []},
 	]},
 	{"id": &"weapon", "label": "Weapon / 武器・工具", "options": WeaponMaterials.OPTIONS},
 	{"id": &"shield", "label": "Shield / 盾牌", "options": [
-		{"id": &"shield_heater_01", "label": "Shield 01 / 加熱盾", "prefixes": ["Shield_Heater_01"]},
+		{"id": &"shield_heater_01", "label": "鐵製｜西式鳶形盾", "material": "iron", "culture": "western", "prefixes": ["Shield_Heater_01"]},
+		{"id": &"shield_chinese_wood_01", "label": "木製｜中式圓盾", "material": "wood", "culture": "chinese", "prefixes": ["Shield_Chinese_Wood_01"]},
+		{"id": &"shield_japanese_wood_01", "label": "木製｜日式方盾", "material": "wood", "culture": "japanese", "prefixes": ["Shield_Japanese_Wood_01"]},
+		{"id": &"shield_western_wood_01", "label": "木製｜西式鳶形盾", "material": "wood", "culture": "western", "prefixes": ["Shield_Western_Wood_01"]},
+		{"id": &"shield_chinese_stone_01", "label": "石製｜中式圓盾", "material": "stone", "culture": "chinese", "prefixes": ["Shield_Chinese_Stone_01"]},
+		{"id": &"shield_japanese_stone_01", "label": "石製｜日式方盾", "material": "stone", "culture": "japanese", "prefixes": ["Shield_Japanese_Stone_01"]},
+		{"id": &"shield_western_stone_01", "label": "石製｜西式鳶形盾", "material": "stone", "culture": "western", "prefixes": ["Shield_Western_Stone_01"]},
+		{"id": &"shield_chinese_iron_01", "label": "鐵製｜中式圓盾", "material": "iron", "culture": "chinese", "prefixes": ["Shield_Chinese_Iron_01"]},
+		{"id": &"shield_japanese_iron_01", "label": "鐵製｜日式方盾", "material": "iron", "culture": "japanese", "prefixes": ["Shield_Japanese_Iron_01"]},
+		{"id": &"shield_chinese_steel_01", "label": "鋼製｜中式圓盾", "material": "steel", "culture": "chinese", "prefixes": ["Shield_Chinese_Steel_01"]},
+		{"id": &"shield_japanese_steel_01", "label": "鋼製｜日式方盾", "material": "steel", "culture": "japanese", "prefixes": ["Shield_Japanese_Steel_01"]},
+		{"id": &"shield_western_steel_01", "label": "鋼製｜西式鳶形盾", "material": "steel", "culture": "western", "prefixes": ["Shield_Western_Steel_01"]},
 		{"id": &"none", "label": "None / 無", "prefixes": []},
 	]},
 	{"id": &"boots", "label": "Boots / 鞋靴", "options": [
-		{"id": &"boots_leather_01", "label": "Boots 01 / 皮靴", "prefixes": ["Boots_Leather_01"]},
-		{"id": &"boots_chinese_leather_01", "label": "Chinese Leather Boots 01 / 中式皮靴", "prefixes": ["Boots_Chinese_Leather_01"]},
-		{"id": &"boots_iron_01", "label": "Chinese Iron Boots 01 / 中式鐵靴", "prefixes": ["Boots_Iron_01"]},
-		{"id": &"boots_mingguang_01", "label": "Mingguang War Boots 01 / 明光鎧戰靴", "prefixes": ["Boots_Mingguang_01"]},
-		{"id": &"boots_western_iron_01", "label": "Western Iron Boots 01 / 西式鐵靴", "prefixes": ["Boots_Western_Iron_01"]},
-		{"id": &"boots_medieval_chinese_01", "label": "布甲配鞋｜中式布鞋", "tuck_trousers": false, "prefixes": ["Boots_Medieval_Chinese_01"]},
-		{"id": &"boots_medieval_japanese_01", "label": "布甲配鞋｜日式足袋草鞋", "tuck_trousers": false, "prefixes": ["Boots_Medieval_Japanese_01"]},
-		{"id": &"boots_medieval_european_01", "label": "布甲配鞋｜歐式軟皮短鞋", "tuck_trousers": false, "prefixes": ["Boots_Medieval_European_01"]},
+		{"id": &"boots_leather_01", "label": "皮製｜西式皮靴", "material": "leather", "culture": "western", "prefixes": ["Boots_Leather_01"]},
+		{"id": &"boots_chinese_leather_01", "label": "皮製｜中式皮靴", "material": "leather", "culture": "chinese", "prefixes": ["Boots_Chinese_Leather_01"]},
+		{"id": &"boots_iron_01", "label": "鐵製｜中式鐵靴", "material": "iron", "culture": "chinese", "prefixes": ["Boots_Iron_01"]},
+		{"id": &"boots_mingguang_01", "label": "鐵製｜明光配靴", "material": "iron", "culture": "chinese", "prefixes": ["Boots_Mingguang_01"]},
+		{"id": &"boots_western_iron_01", "label": "鐵製｜西式鐵靴", "material": "iron", "culture": "western", "prefixes": ["Boots_Western_Iron_01"]},
+		{"id": &"boots_medieval_chinese_01", "label": "布製｜中式布鞋", "tuck_trousers": false, "material": "cloth", "culture": "chinese", "prefixes": ["Boots_Medieval_Chinese_01"]},
+		{"id": &"boots_medieval_japanese_01", "label": "布製｜日式足袋草鞋", "tuck_trousers": false, "material": "cloth", "culture": "japanese", "prefixes": ["Boots_Medieval_Japanese_01"]},
+		{"id": &"boots_medieval_european_01", "label": "皮製｜西式軟皮短鞋", "tuck_trousers": false, "material": "leather", "culture": "western", "prefixes": ["Boots_Medieval_European_01"]},
+		{"id": &"boots_cloth_western_01", "label": "布製｜西式布鞋", "material": "cloth", "culture": "western", "tuck_trousers": false, "prefixes": ["Boots_Cloth_Western_01"]},
+		{"id": &"boots_japanese_leather_01", "label": "皮製｜日式鞋靴", "material": "leather", "culture": "japanese", "prefixes": ["Boots_Japanese_Leather_01"]},
+		{"id": &"boots_japanese_iron_01", "label": "鐵製｜日式鞋靴", "material": "iron", "culture": "japanese", "prefixes": ["Boots_Japanese_Iron_01"]},
+		{"id": &"boots_chinese_steel_01", "label": "鋼製｜中式鞋靴", "material": "steel", "culture": "chinese", "prefixes": ["Boots_Chinese_Steel_01"]},
+		{"id": &"boots_japanese_steel_01", "label": "鋼製｜日式鞋靴", "material": "steel", "culture": "japanese", "prefixes": ["Boots_Japanese_Steel_01"]},
+		{"id": &"boots_western_steel_01", "label": "鋼製｜西式鞋靴", "material": "steel", "culture": "western", "prefixes": ["Boots_Western_Steel_01"]},
 		{"id": &"none", "label": "None / 無", "prefixes": []},
 	]},
 ]
@@ -149,9 +176,13 @@ const ANIMATION_SLOTS := [
 	{"id": &"ride_run", "label": "Ride Run / 跑馬奔馳", "state": "connected"},
 	{"id": &"ride_slash", "label": "Ride Slash / 馬上揮劍", "state": "connected"},
 	{"id": &"ride_thrust", "label": "Ride Thrust / 馬上刺長槍", "state": "connected"},
+	{"id": &"ride_heavy", "label": "Mounted Heavy / 馬上通用重攻擊", "state": "connected"},
+	{"id": &"ride_guard_break", "label": "Mounted Guard Break / 馬上受重擊破防", "state": "connected"},
 	{"id": &"walk_slash", "label": "Walk Slash / 步行揮劍", "state": "connected"},
 ]
 const WEAPON_ATTACK_MAP := WeaponMaterials.ATTACKS
+const MATERIAL_GROUPS := {"cloth": "布製", "leather": "皮製", "wood": "木製", "stone": "石製", "iron": "鐵製", "steel": "鋼製", "special": "特殊材質甲"}
+const AUTHORED_MATRIX_PREFIXES := ["Helmet_Japanese_Leather_01","Helmet_Japanese_Iron_01","Helmet_Japanese_Steel_01","Helmet_Western_Steel_01","Armor_Japanese_Leather_01","Armor_Japanese_Iron_01","Armor_Chinese_Steel_01","Armor_Japanese_Steel_01","Armor_Western_Steel_01","Boots_Cloth_Western_01","Boots_Japanese_Leather_01","Boots_Japanese_Iron_01","Boots_Chinese_Steel_01","Boots_Japanese_Steel_01","Boots_Western_Steel_01","Cape_Japanese_01","Shield_Chinese_Wood_01","Shield_Japanese_Wood_01","Shield_Western_Wood_01","Shield_Chinese_Stone_01","Shield_Japanese_Stone_01","Shield_Western_Stone_01","Shield_Chinese_Iron_01","Shield_Japanese_Iron_01","Shield_Chinese_Steel_01","Shield_Japanese_Steel_01","Shield_Western_Steel_01"]
 const WEAPON_ATTACK_ANIMATIONS := [
 	&"walk_slash", &"attack_spear", &"attack_axe", &"attack_hammer",
 	&"attack_dagger", &"attack_bow", &"attack_crossbow", &"attack_unarmed",
@@ -223,6 +254,7 @@ uniform float brow_cut_y = 0.113;
 uniform vec2 scalp_radii = vec2(0.113, 0.130);
 uniform bool tuck_hair_piece = false;
 uniform bool cloth_hat_mask = false;
+uniform bool open_western_helmet = false;
 uniform vec3 cloth_hat_up = vec3(0.0, 1.0, 0.0);
 
 void fragment() {
@@ -236,6 +268,12 @@ void fragment() {
 		} else {
 		bool keep_bangs = head_local.z >= 0.045 && abs(head_local.x) <= 0.060
 			&& head_local.y <= brow_cut_y && head_local.y >= -0.060;
+		// The western open face exposes the temples as well as the central fringe.
+		// Keep hair below its brow rim; crown and nape clipping stay unchanged.
+		if (open_western_helmet) {
+			keep_bangs = head_local.z >= -0.018 && abs(head_local.x) <= 0.106
+				&& head_local.y <= brow_cut_y && head_local.y >= -0.060;
+		}
 		// Hair INSIDE the crown is still needed behind openings and at the nape.
 		// Only trim the outer volume and long ends, not the entire rear scalp.
 		// ponytail: fitted to current closed helmets; new open hats need their own envelope.
@@ -451,7 +489,7 @@ func select_animation_by_id(animation_id: StringName) -> bool:
 	if index < 0 or not bool(_available_animation_ids.get(target_id, false)):
 		return false
 	animation_option.select(_animation_index(&"attack") if is_weapon_attack_entry else index)
-	if target_id in [&"ride_idle", &"ride_walk", &"ride_run", &"ride_attack", &"ride_slash", &"ride_thrust"]:
+	if target_id in [&"ride_idle", &"ride_walk", &"ride_run", &"ride_attack", &"ride_slash", &"ride_thrust", &"ride_heavy", &"ride_guard_break"]:
 		if not _is_mounted:
 			set_mount_enabled(true)
 	else:
@@ -855,9 +893,7 @@ func _build_ui() -> void:
 	body_option.item_selected.connect(_request_body_selected)
 	for part: Dictionary in PART_SLOTS:
 		var option := _add_option_row(parts_layout, str(part["label"]))
-		for component: Dictionary in _part_definition(part["id"])["options"]:
-			option.add_item(str(component["label"]))
-			option.set_item_metadata(option.item_count - 1, component["id"])
+		_fill_part_options(option, _part_definition(part["id"])["options"])
 		option.select(0)
 		option.item_selected.connect(_request_part_selected.bind(part["id"]))
 		part_options[part["id"]] = option
@@ -1311,7 +1347,7 @@ func _prepare_combat_cloth() -> void:
 		for corner in range(8):
 			lowest = minf(lowest, (mesh.global_transform * bounds.get_endpoint(corner)).y - preview_pivot.global_position.y)
 		var record := {"node": mesh, "original": [], "ground": [], "outline": mesh.material_overlay, "down": {},
-			"floor": lowest, "group": "chinese" if str(mesh.name).begins_with("Cape_Chinese_") else "travel"}
+			"floor": lowest, "group": "japanese" if str(mesh.name).begins_with("Cape_Japanese_") else ("chinese" if str(mesh.name).begins_with("Cape_Chinese_") else "travel")}
 		for surface in range(mesh.mesh.get_surface_count()):
 			var original := mesh.get_surface_override_material(surface)
 			var material := mesh.get_active_material(surface)
@@ -1399,7 +1435,13 @@ func _update_scabbard_pose() -> void:
 	var hip_transform := pose * rest.affine_inverse()
 	var swivel := Transform3D.IDENTITY
 	var angle := 0.0
-	if _selected_animation == &"get_up":
+	if _is_mounted:
+		# Swivel the original rigid sheath and sheathed sword together at the
+		# belt: outboard/back along the flank, not vertically into the horse.
+		var pivot := rest.origin + Vector3(.15, 0, 0)
+		var target := Vector3(.5, -.6, .4).normalized()
+		swivel = Transform3D(Basis(Quaternion(Vector3.DOWN, target)), pivot) * Transform3D(Basis.IDENTITY, -pivot)
+	elif _selected_animation == &"get_up":
 		# Swing out from the belt while the hips roll up, not through the
 		# floor or across the bent knees. Keep the original mesh and hinge.
 		var time := animation_player.current_animation_position
@@ -1938,7 +1980,7 @@ func _on_animation_selected(index: int) -> void:
 	if anim_id == &"attack":
 		select_animation_by_id(&"attack")
 		return
-	if anim_id in [&"ride_idle", &"ride_walk", &"ride_run", &"ride_attack", &"ride_slash", &"ride_thrust"]:
+	if anim_id in [&"ride_idle", &"ride_walk", &"ride_run", &"ride_attack", &"ride_slash", &"ride_thrust", &"ride_heavy", &"ride_guard_break"]:
 		if not _is_mounted:
 			set_mount_enabled(true)
 	else:
@@ -1964,7 +2006,7 @@ func _apply_attack_loop_default() -> void:
 
 func _animation_loop_default(animation_id: StringName, current: bool) -> bool:
 	var one_shot := _is_weapon_attack_animation(animation_id) or animation_id in [
-		&"ride_attack", &"ride_slash", &"ride_thrust", &"guard_raise", &"guard_lower",
+		&"ride_attack", &"ride_slash", &"ride_thrust", &"ride_heavy", &"ride_guard_break", &"guard_raise", &"guard_lower",
 		&"guard_break", &"get_up", &"rescue", &"reload_bow", &"reload_crossbow", &"down"
 	]
 	one_shot = one_shot or (str(animation_id).begins_with("guard_") and (str(animation_id).ends_with("_raise") or str(animation_id).ends_with("_lower") or str(animation_id).ends_with("_break")))
@@ -2043,7 +2085,7 @@ func set_mount_enabled(enabled: bool) -> void:
 		mount_horse.visible = enabled
 	if enabled:
 		_attach_rider_to_mount()
-		if not (_selected_animation in [&"ride_walk", &"ride_idle", &"ride_run", &"ride_attack", &"ride_slash", &"ride_thrust"]):
+		if not (_selected_animation in [&"ride_idle", &"ride_walk", &"ride_run", &"ride_attack", &"ride_slash", &"ride_thrust", &"ride_heavy", &"ride_guard_break"]):
 			var target_anim: StringName = &"ride_run" if _selected_animation == &"run" else (&"ride_walk" if _selected_animation == &"walk" else &"ride_idle")
 			select_animation_by_id(target_anim)
 	else:
@@ -2054,6 +2096,8 @@ func set_mount_enabled(enabled: bool) -> void:
 			select_animation_by_id(&"walk")
 		elif _selected_animation == &"ride_run":
 			select_animation_by_id(&"run")
+		elif _selected_animation in [&"ride_heavy", &"ride_guard_break"]:
+			select_animation_by_id(&"idle")
 		elif _selected_animation in [&"ride_attack", &"ride_slash", &"ride_thrust"]:
 			select_animation_by_id(&"attack")
 	_sync_mount_animation()
@@ -2147,6 +2191,25 @@ func _input(event: InputEvent) -> void:
 			_dragging_preview = false
 			_panning_preview = false
 
+func _fill_part_options(option: OptionButton, components: Array) -> void:
+	# Group the native menu only. Stable IDs, source order and save data stay intact.
+	if components.is_empty() or not components[0].has("material"):
+		for component: Dictionary in components:
+			option.add_item(str(component.label))
+			option.set_item_metadata(option.item_count - 1, component.id)
+		return
+	for material: String in MATERIAL_GROUPS:
+		var group_started := false
+		for component: Dictionary in components:
+			if component.get("material", "") != material: continue
+			if not group_started:
+				option.add_separator(MATERIAL_GROUPS[material])
+				group_started = true
+			option.add_item(str(component.label))
+			option.set_item_metadata(option.item_count - 1, component.id)
+	option.add_item("None / 無")
+	option.set_item_metadata(option.item_count - 1, &"none")
+
 func _refresh_part_options() -> void:
 	for part: Dictionary in PART_SLOTS:
 		var part_id: StringName = part["id"]
@@ -2169,6 +2232,11 @@ func _refresh_part_options() -> void:
 		if first_available < 0:
 			option.disabled = true
 			continue
+		var default_id: StringName = _part_definition(part_id).options[0].id
+		for index in option.item_count:
+			if option.get_item_metadata(index) == default_id and not option.is_item_disabled(index):
+				first_available = index
+				break
 		if part_id == &"hair":
 			for index in option.item_count:
 				if option.get_item_metadata(index) == _hair_selections[_body_index] and not option.is_item_disabled(index):
@@ -2214,10 +2282,11 @@ func _update_lining_fit() -> void:
 	var armor_id := StringName(str(armor_option.get_item_metadata(armor_option.selected)))
 	var cloth_armor: bool = _component_definition(&"armor", armor_id).get("category", &"") == &"cloth"
 	var armored: bool = armor_id != &"none" and not cloth_armor
-	var hard_armored := armor_id in [&"armor_iron_01", &"armor_mingguang_01", &"armor_western_iron_01"]
+	var armor_material: String = _component_definition(&"armor", armor_id).get("material", "")
+	var hard_armored := armor_material in ["iron", "steel", "special"]
 	# The hard-shell morph keeps ease at exposed back gaps; leather retains
 	# its original compressed shape. Neither changes the underlying body.
-	var compressed := armor_id in [&"armor_light_leather_01", &"armor_chinese_leather_01"]
+	var compressed := armor_material == "leather"
 	for node in model_root.find_children("Outfit_Chinese_Lining_01_*","MeshInstance3D",true,false):
 		var mesh := node as MeshInstance3D
 		mesh.visible = selected and not cloth_armor
@@ -2235,6 +2304,11 @@ func _update_lining_fit() -> void:
 		[&"armor_iron_01", "Armor_Iron_01_UnderTunic"],
 		[&"armor_mingguang_01", "Armor_Mingguang_01_UnderSleeves"],
 		[&"armor_mingguang_01", "Armor_Mingguang_01_UnderTunic"],
+		[&"armor_japanese_leather_01", "Armor_Japanese_Leather_01_UnderShirt"],
+		[&"armor_japanese_iron_01", "Armor_Japanese_Iron_01_UnderShirt"],
+		[&"armor_japanese_steel_01", "Armor_Japanese_Steel_01_UnderShirt"],
+		[&"armor_chinese_steel_01", "Armor_Chinese_Steel_01_UnderTunic"],
+		[&"armor_western_steel_01", "Armor_Western_Steel_01_UnderShirt"],
 	]:
 		var inner := model_root.find_child(lining_entry[1], true, false) as MeshInstance3D
 		if inner != null:
@@ -2248,7 +2322,7 @@ func _update_lining_fit() -> void:
 	for under_node in _find_component_nodes(["Outfit_Underlayer_01"]):
 		(under_node as Node3D).visible = outfit_id == &"outfit_underlayer_01" and not cloth_armor
 	outfit_option.tooltip_text = "原內衣與甲內襯衣；中、日、歐式六套服装已歸入護甲的布甲類。"
-	armor_option.tooltip_text = "布甲、皮甲與鐵甲共用護甲槽，一次只能穿一套；布甲使用護甲染色。"
+	armor_option.tooltip_text = "布、皮、鐵、鋼與特殊材質甲共用護甲槽；一次只能穿一套，明光鎧獨立歸類。"
 	# The ordinary female top is entirely covered by these chest plates.
 	# Keep its original mesh, restoring it on armor/outfit changes.
 	var under_top := model_root.find_child("Outfit_Underlayer_01_Top",true,false) as MeshInstance3D
@@ -2263,7 +2337,10 @@ func _update_medieval_shoe_coverage() -> void:
 	# The lining owner has just restored the body (and optionally masked cloth).
 	# Omit only the foot inside a closed shoe; removing it restores that source.
 	var boots := part_options.get(&"boots") as OptionButton
-	if boots == null or boots.selected < 0 or not str(boots.get_item_metadata(boots.selected)).begins_with("boots_medieval_"):
+	if boots == null or boots.selected < 0:
+		return
+	var boots_id := str(boots.get_item_metadata(boots.selected))
+	if not boots_id.begins_with("boots_medieval_") and boots_id != "boots_cloth_western_01":
 		return
 	var body := model_root.find_child("Body_Standard_Female" if _body_index == 1 else "Body_Standard_Male", true, false) as MeshInstance3D
 	var skeleton := model_root.find_child("Skeleton3D", true, false) as Skeleton3D
@@ -2627,7 +2704,7 @@ func _set_mesh_mask_enabled(mesh_node: MeshInstance3D, enabled: bool, inv_head: 
 	var brow_y := 0.113
 	if helmet_id in [&"helmet_iron_01", &"helmet_steel_01"]:
 		brow_y = 0.098
-	elif helmet_id == &"helmet_western_iron_01":
+	elif helmet_id in [&"helmet_western_iron_01", &"helmet_western_steel_01"]:
 		brow_y = 0.095
 	elif helmet_id == &"helmet_chinese_leather_01":
 		brow_y = 0.110
@@ -2656,7 +2733,9 @@ func _set_mesh_mask_enabled(mesh_node: MeshInstance3D, enabled: bool, inv_head: 
 		existing_override.set_shader_parameter("dye_color", _hair_dye_color)
 		existing_override.set_shader_parameter("inv_head_transform", inv_head)
 		existing_override.set_shader_parameter("brow_cut_y", brow_y)
+		existing_override.set_shader_parameter("scalp_radii", Vector2(.108,.124) if helmet_id == &"helmet_western_steel_01" else Vector2(.113,.130))
 		existing_override.set_shader_parameter("cloth_hat_mask", str(helmet_id).begins_with("helmet_cloth_"))
+		existing_override.set_shader_parameter("open_western_helmet", helmet_id in [&"helmet_leather_01", &"helmet_western_iron_01", &"helmet_western_steel_01"])
 		existing_override.set_shader_parameter("cloth_hat_up", hat_up)
 		existing_override.set_shader_parameter("tuck_hair_piece", node_name.ends_with("_Buns") or node_name.ends_with("_Loose") or node_name.ends_with("_Band"))
 
@@ -2674,6 +2753,14 @@ func _apply_equipment_style() -> void:
 	for node: Node in model_root.find_children("*", "MeshInstance3D", true, false):
 		var mesh_node := node as MeshInstance3D
 		var node_name := str(mesh_node.name)
+		var matrix_part := false
+		for prefix: String in AUTHORED_MATRIX_PREFIXES:
+			if node_name.begins_with(prefix + "_"):
+				matrix_part = true
+				break
+		if matrix_part:
+			mesh_node.material_overlay = null
+			continue
 		if node_name.begins_with("Weapon_") and ("_Wood_01_" in node_name or "_Stone_01_" in node_name or "_Steel_01_" in node_name or "_Iron_01_" in node_name):
 			# New variants retain their packed grain/flint textures and PBR response.
 			mesh_node.material_overlay = null

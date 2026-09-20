@@ -83,14 +83,18 @@ static func supports(appearance: Dictionary) -> bool:
 
 static func apply(sprite: Sprite2D, appearance: Dictionary) -> bool:
 	if sprite.get_meta("equipment_dye_appearance", {}) == appearance: return true
+	return apply_record(sprite, appearance, entry(appearance) if not appearance.get("equipment_dyes", {}).is_empty() else {})
+
+static func apply_record(sprite: Sprite2D, appearance: Dictionary, record: Dictionary) -> bool:
+	# All admitted full recipes share this same bounded mask/material cache.
+	if sprite.get_meta("equipment_dye_appearance", {}) == appearance: return true
 	var colors: Dictionary = appearance.get("equipment_dyes", {})
 	if colors.is_empty():
 		sprite.material = null
 		sprite.set_meta("equipment_dye_appearance", appearance.duplicate(true))
 		return true
-	var record := entry(appearance)
 	if record.is_empty(): return false
-	var key := _key(appearance)
+	var key := str(record.mask_path)
 	if not _materials.has(key) and _material_refs.has(key) and _material_refs[key].get_ref() != null:
 		sprite.material = _material_refs[key].get_ref()
 		for slot: String in Dye.SLOTS:

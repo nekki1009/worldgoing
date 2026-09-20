@@ -45,27 +45,21 @@ func _run() -> void:
 	assert(editor.part_options[&"face"].item_count == 9, "Eight face options plus None are missing")
 	for part_id: StringName in [&"hair", &"helmet", &"outfit", &"armor", &"cape", &"weapon", &"shield", &"boots"]:
 		var part_option := editor.part_options[part_id] as OptionButton
-		var expected_count: int = editor._part_definition(part_id).options.size()
-		assert(part_option.item_count == expected_count, "%s component option count changed" % part_id)
-		assert(not part_option.disabled and not part_option.is_item_disabled(0), "%s component is not available in the male pack" % part_id)
-		assert(not part_option.is_item_disabled(part_option.item_count - 1), "%s None option is not available" % part_id)
+		var components: Array = editor._part_definition(part_id).options
+		var actual: Array[StringName] = []
+		assert(not part_option.disabled, "%s selector is not available" % part_id)
 		for option_index in part_option.item_count:
+			# Material headings are disabled menu rows, not missing equipment.
+			if part_option.get_item_metadata(option_index) == null:
+				assert(part_option.is_item_disabled(option_index), "Material heading became selectable")
+				continue
+			var component_id := StringName(str(part_option.get_item_metadata(option_index)))
+			assert(not component_id in actual, "Duplicate component menu ID")
+			actual.append(component_id)
 			assert(not part_option.is_item_disabled(option_index), "%s/%s has no real component" % [part_id,part_option.get_item_metadata(option_index)])
-		if part_id == &"helmet":
-			assert(not part_option.is_item_disabled(1), "Chinese Iron Helmet option is not available in the male pack")
-			assert(not part_option.is_item_disabled(2), "Chinese Steel Helmet option is not available in the male pack")
-		if part_id == &"armor":
-			assert(not part_option.is_item_disabled(1), "Chinese Iron Armor option is not available in the male pack")
-			assert(not part_option.is_item_disabled(2), "Mingguang Armor option is not available in the male pack")
-		if part_id == &"cape":
-			assert(not part_option.is_item_disabled(1), "Chinese Cloak option is not available in the male pack")
-		if part_id == &"boots":
-			assert(not part_option.is_item_disabled(1), "Chinese Iron Boots option is not available in the male pack")
-			assert(not part_option.is_item_disabled(2), "Mingguang War Boots option is not available in the male pack")
-		if part_id == &"hair":
-			assert(not part_option.is_item_disabled(1), "Second hair option is not available in the male pack")
-			assert(not part_option.is_item_disabled(2), "Third hair option is not available in the male pack")
-			assert(not part_option.is_item_disabled(3), "Fourth hair option is not available in the male pack")
+		assert(actual.size() == components.size(), "%s component option count changed" % part_id)
+		for component: Dictionary in components:
+			assert(component.id in actual, "%s/%s missing from menu" % [part_id,component.id])
 	assert(not editor.part_options[&"face"].disabled, "Face selector is not available in the male pack")
 	assert(editor.animation_option.item_count == HumanCharacter3DEditor.ANIMATION_SLOTS.size(), "Animation field list changed")
 	assert(editor.animation_player != null, "Body GLB did not provide AnimationPlayer")
@@ -384,8 +378,8 @@ func _run() -> void:
 	await _settle(2)
 	await _capture(MALE_NONE_CAPTURE)
 	for part_id: StringName in [&"outfit", &"armor", &"cape", &"weapon", &"shield", &"boots"]:
-		var part_option := editor.part_options[part_id] as OptionButton
-		assert(editor.select_part_by_id(part_id, StringName(str(part_option.get_item_metadata(0)))), "%s component could not be restored" % part_id)
+		var component_id := StringName(str(editor._part_definition(part_id).options[0].id))
+		assert(editor.select_part_by_id(part_id, component_id), "%s component could not be restored" % part_id)
 	await _settle(2)
 	editor.set_preview_yaw_degrees(0.0)
 	var drag_start := InputEventMouseButton.new()

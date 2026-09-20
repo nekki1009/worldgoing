@@ -14,10 +14,14 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
 OUT=ROOT/'output/cloth_hats_20260918'
 if '--neutral-faces' in sys.argv: OUT=ROOT/'output/neutral_faces_20260918'
+if '--equipment-matrix' in sys.argv: OUT=ROOT/'output/equipment_matrix_20260918'
 BACK=OUT/'atlas_before'
 ALLOWED={f'res://assets/characters/human/q35/standard_anime_{sex}_character_pack.glb' for sex in ('male','female')}|{'res://scripts/ui/human_character_3d_editor.gd','res://scripts/ui/equipment_dye.gd'}
 STAMP='cloth_hats_additive_revalidation'
 if '--neutral-faces' in sys.argv: STAMP='neutral_faces_additive_revalidation'
+if '--equipment-matrix' in sys.argv:
+    STAMP='equipment_matrix_additive_revalidation'
+    ALLOWED |= {'res://scripts/terrain_lab/character_combat_timings.gd','res://scripts/mount/mount_horse_3d.gd'}
 
 
 def path(resource):
@@ -56,13 +60,53 @@ def main():
         print('CLOTH_HATS_ATLAS_SNAPSHOT',len(active),'active;',len(stale),'already stale')
         return
     snapshot=json.loads((OUT/'atlas_snapshot.json').read_text())
+    wagon_snapshot=OUT/'atlas_wagon_snapshot.json'
+    if '--equipment-matrix' in sys.argv and '--supplement-wagon' in sys.argv:
+        assert not wagon_snapshot.exists()
+        extra={'active':{},'sources':{},'reason':'Initial scanner omitted existing fixed-cloth rider and two foot manifests; all original fingerprints independently matched task baseline or unchanged dependencies.'}
+        for relative in ('cloth_v1/manifest.json','foot/male/manifest.json','foot/female/manifest.json'):
+            resource='res://assets/vehicles/logistics/v1/riders/'+relative
+            assert resource not in snapshot['active']
+            file=path(resource);value=json.loads(file.read_text(encoding='utf-8-sig'))
+            for src,expected in value['source_fingerprints'].items():
+                original=snapshot['sources'].get(src)
+                assert expected==(original if original is not None else md5(path(src))), 'Supplement was not valid at baseline: '+src
+                extra['sources'][src]=expected
+            target=BACK/resource[6:]
+            assert not target.exists()
+            target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(file,target)
+            extra['active'][resource]=md5(file)
+        wagon_snapshot.write_text(json.dumps(extra,indent=2))
+        print('WAGON_BASELINE_SUPPLEMENT_VALIDATED',len(extra['active']))
+        return
+    if '--equipment-matrix' in sys.argv and wagon_snapshot.exists():
+        extra=json.loads(wagon_snapshot.read_text())
+        snapshot['active'].update(extra['active'])
+        for src,expected in extra['sources'].items():
+            assert snapshot['sources'].get(src,expected)==expected
+            snapshot['sources'][src]=expected
     current={src:md5(path(src)) for src in snapshot['sources']}
     for src,before in snapshot['sources'].items():
         assert src in ALLOWED or before==current[src],'Unrelated source drift: '+src
     contract=json.loads((OUT/'formal_contract.json').read_text())
     old_dye=(OUT/'baseline/equipment_dye.gd.txt').read_text(encoding='utf-8')
     expected_dye=old_dye.replace('"ChineseGear_Horsehair4"],','"ChineseGear_Horsehair4", "ClothHats_Fabric", "ClothHats_Band", "ClothHats_Seams"],')
-    assert expected_dye==path('res://scripts/ui/equipment_dye.gd').read_text(encoding='utf-8'),'Only the three additive cloth material names may change dye policy'
+    if '--equipment-matrix' in sys.argv:
+        expected_dye=old_dye
+        for slot,extra in {
+            'helmet':['CulturalArmor_Leather','CulturalArmor_SoftLeather','CulturalArmor_Padding','CulturalArmor_Cord'],
+            'armor':['CulturalArmor_Leather','CulturalArmor_SoftLeather','CulturalArmor_Padding','CulturalArmor_Cord'],
+            'boots':['CulturalArmor_Leather','CulturalArmor_SoftLeather','CulturalArmor_ClothWestern','CulturalArmor_Cord'],
+            'cape':['JapaneseCape_Fabric'],
+        }.items():
+            line=next(line for line in old_dye.splitlines() if line.startswith('\t"'+slot+'": ['))
+            expected_dye=expected_dye.replace(line,line.replace('],',', '+', '.join(json.dumps(name) for name in extra)+'],'))
+        marker='static func painted_panel(node_name: String, material_name: String) -> bool:\n'
+        expected_dye=expected_dye.replace(marker,marker+'\tif material_name == "CulturalArmor_RefinedSteel":\n\t\treturn node_name in ["Helmet_Western_Steel_01_Skull", "Armor_Western_Steel_01_Cuirass"]\n')
+        timing=path('res://scripts/terrain_lab/character_combat_timings.gd').read_text(encoding='utf-8')
+        timing='\n'.join(line for line in timing.split('\n') if not line.startswith(('\t&"ride_heavy":','\t&"ride_guard_break":')))
+        assert timing==(OUT/'baseline/character_combat_timings.gd.txt').read_text(encoding='utf-8'),'Old combat timings changed'
+    assert expected_dye==path('res://scripts/ui/equipment_dye.gd').read_text(encoding='utf-8'),'Only explicit additive material names may change dye policy'
     for row in contract:
         sex=row['sex']
         with path(f'res://assets/characters/human/q35/standard_anime_{sex}_character_pack.glb').open('rb') as stream:
@@ -75,6 +119,12 @@ def main():
         assert after['editor_md5']==current['res://scripts/ui/human_character_3d_editor.gd']
         assert after['dye_md5']==current['res://scripts/ui/equipment_dye.gd']
         assert after['glb_md5']==current[f'res://assets/characters/human/q35/standard_anime_{sex}_character_pack.glb']
+        if '--equipment-matrix' in sys.argv and wagon_snapshot.exists():
+            wagon_before=json.loads((OUT/f'regression_wagon/before_fixed/{sex}/result.json').read_text())
+            wagon_after=json.loads((OUT/f'regression_wagon/after_fixed/{sex}/result.json').read_text())
+            assert wagon_before['samples']==wagon_after['samples'] and len(wagon_after['samples'])==72
+            for key in ('editor_md5','glb_md5'):assert wagon_before[key]==before[key] and wagon_after[key]==after[key]
+            assert wagon_after['dye_md5']==after['dye_md5']
     pending=dict(snapshot['active']);encoded={};hashes={}
     while pending:
         progress=False
@@ -114,6 +164,7 @@ def main():
             raise
     for resource,content in encoded.items():assert path(resource).read_bytes()==content,resource
     comparisons=sum(len(json.loads((OUT/f'regression/after_fixed/{sex}/result.json').read_text())['samples']) for sex in ('male','female'))
+    if '--equipment-matrix' in sys.argv and wagon_snapshot.exists(): comparisons+=144
     (OUT/'atlas_revalidation.json').write_text(json.dumps({'manifests':len(encoded),'unchanged_stale':snapshot['stale'],'current_sources':current,'published_md5':hashes,'rebaked':False,'rgba_comparisons':comparisons},indent=2))
     print('ADDITIVE_ATLAS_PROVENANCE_PASS',len(encoded),'manifests;',comparisons,'identical RGBA images; unchanged native assets; no admission relaxation')
 
