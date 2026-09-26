@@ -62,9 +62,28 @@ func is_terrain_walkable(terrain_cell: Vector2i) -> bool:
 	return contains(terrain_cell) and (flags[index(terrain_cell)] & Flag.WALKABLE) != 0
 
 func can_step(from: Vector2i, to: Vector2i) -> bool:
-	# The terrain predicate already checks both cells' bounds/walkable flags.
-	return can_terrain_step(from, to) and (static_blocked.is_empty() \
-		or (static_blocked[index(from)] == 0 and static_blocked[index(to)] == 0))
+	return can_step_static(from, to, null)
+
+func can_step_static(from: Vector2i, to: Vector2i, profile: Object = null) -> bool:
+	if not can_terrain_step(from, to):
+		return false
+	if not static_blocked.is_empty() and (static_blocked[index(from)] != 0 or static_blocked[index(to)] != 0):
+		return false
+	if profile != null and "max_step_height" in profile:
+		var max_step: int = int(profile.max_step_height)
+		var a: int = index(from)
+		var b: int = index(to)
+		if absi(int(height_levels[a]) - int(height_levels[b])) > max_step:
+			return false
+	return true
+
+func get_geometric_adjacent_cells(center: Vector2i, _profile: Object = null) -> Array[Vector2i]:
+	var result: Array[Vector2i] = []
+	for d in DIRECTIONS:
+		var next := center + d
+		if contains(next):
+			result.append(next)
+	return result
 
 func can_terrain_step(from: Vector2i, to: Vector2i) -> bool:
 	if not is_terrain_walkable(from) or not is_terrain_walkable(to):

@@ -39,16 +39,37 @@ func init(owner: Variant) -> void:
 		lab.terrain.site["captivity"] = {}
 
 func is_busy(identity: int) -> bool:
-	return _jobs.has(str(identity))
+	return not _job_key_for(identity).is_empty()
+
+func _job_key_for(identity: int) -> String:
+	var direct := str(identity)
+	if _jobs.has(direct): return direct
+	for key: String in _jobs:
+		var job: Dictionary = _jobs[key]
+		if str(job.kind) == "equipment" and str(job.order.mode) == "team_issue" and job.order.target_ids.has(identity):
+			return key
+	return ""
+
+func equipment_conflict(identity: int, order: Dictionary = {}) -> bool:
+	var key := _job_key_for(identity)
+	if key.is_empty(): return false
+	var job: Dictionary = _jobs[key]
+	return order.is_empty() or str(job.kind) != "equipment" or not is_same(job.order, order)
+
+func has_active_issue(order: Dictionary = {}) -> bool:
+	for job: Dictionary in _jobs.values():
+		if str(job.kind) == "equipment" and str(job.order.mode) in ["issue", "team_issue"] and (order.is_empty() or not is_same(job.order, order)):
+			return true
+	return false
 
 func save_guard() -> Dictionary:
 	return Runtime.ok() if _jobs.is_empty() else Runtime.fail("BUSY", "人物作業未完成；完成或取消後再保存")
 
 func job_for(identity: int) -> Dictionary:
-	return _jobs.get(str(identity), {}).duplicate(true)
+	return _jobs.get(_job_key_for(identity), {}).duplicate(true)
 
 func is_working(identity: int) -> bool:
-	var job: Dictionary = _jobs.get(str(identity), {})
+	var job: Dictionary = _jobs.get(_job_key_for(identity), {})
 	return not job.is_empty() and str(job.paused).is_empty()
 
 func is_guarding(identity: int) -> bool:
@@ -69,9 +90,10 @@ func has_effective_guard(identity: int) -> bool:
 	return capable and int(guard.faction) == int(entry.captor_faction) and _within_guard_range(guard.cell, person.cell)
 
 func cancel(identity: int) -> Dictionary:
-	if not is_busy(identity):
+	var key := _job_key_for(identity)
+	if key.is_empty():
 		return Runtime.fail("NO_TARGET", "沒有未完成的人物作業")
-	_jobs.erase(str(identity))
+	_jobs.erase(key)
 	return Runtime.ok("已取消；未完成批次沒有轉移物品")
 
 func lootable(executor_id: int, source_kind: String, source_id: String) -> Dictionary:
@@ -126,6 +148,8 @@ func begin_unbind(executor_id: int, target_id: int) -> Dictionary:
 func begin_equipment(identity: int, request: Dictionary) -> Dictionary:
 	if is_busy(identity):
 		return Runtime.fail("BUSY")
+	if str(request.get("mode", "")) == "issue" and has_active_issue():
+		return Runtime.fail("BUSY", "同一營地已有未完成領裝作業")
 	if equipment_orders == null:
 		return Runtime.fail("UNSUPPORTED", "尚未接入實際領裝規則")
 	var prepared: Dictionary = equipment_orders.prepare(identity, request)
@@ -146,6 +170,45 @@ func begin_equipment(identity: int, request: Dictionary) -> Dictionary:
 		_prepare_equipment_atlas.call_deferred(job, prepared.appearance)
 		return Runtime.ok("正在準備共用裝備圖集；完成後才開始五秒換裝，原物品保留", {"seconds": 5.0, "preparing": true})
 	return Runtime.ok("開始換裝；完成前保留原實裝", {"seconds": 5.0})
+
+func begin_team_equipment(team: TerrainArmy, requester_id: int, representative_id: int, nation_id: String, standard_id: String, include_player: bool = false, selected_ids: Array[int] = [], simulate_npc_commander: bool = false) -> Dictionary:
+	if equipment_orders == null: return Runtime.fail("UNSUPPORTED", "尚未接入整隊實際領裝規則")
+	if has_active_issue(): return Runtime.fail("BUSY", "同一營地已有未完成領裝作業")
+	var prepared: Dictionary = equipment_orders.prepare_team_issue(team, requester_id, representative_id, nation_id, standard_id, include_player, selected_ids, simulate_npc_commander)
+	var preparing := str(prepared.get("code", "")) == "ATLAS_REQUIRED"
+	if not prepared.ok and not preparing: return prepared
+	var representative := _person(representative_id)
+	var job := _new_job(representative, "equipment", representative_id)
+	job.merge({"duration": 5.0, "order": prepared.order, "preparing": preparing,
+		"terrain": lab.terrain, "site_state": lab.terrain.site,
+		"executor_owner": representative.owner, "executor_body": representative.body,
+		"executor_holder": representative.holder, "executor_cargo": representative.cargo,
+		"depot_holder": lab.terrain.site.depot_items, "depot_stock": lab.terrain.site.inventory})
+	_jobs[str(representative_id)] = job
+	if preparing:
+		job.paused = "PREPARING_ATLAS"
+		_prepare_team_equipment_atlases.call_deferred(job, prepared.appearances)
+	return Runtime.ok("正在準備共用裝備圖集；原物品保留" if preparing else "整隊開始五秒換裝；完成前保留原實裝",
+		{"seconds": 5.0, "preparing": preparing, "target_ids": prepared.target_ids,
+			"changed_ids": prepared.changed_ids, "recipe_count": int(prepared.recipe_count),
+			"take_count": int(prepared.take_count), "return_count": int(prepared.return_count)})
+
+func _prepare_team_equipment_atlases(job: Dictionary, appearances: Array) -> void:
+	var key := str(job.executor_id)
+	for appearance: Dictionary in appearances:
+		if not is_same(_jobs.get(key), job) or not bool(job.preparing): return
+		var check := _job_context(job)
+		if not check.ok and str(check.code) != "ATLAS_REQUIRED":
+			_finish(key, check)
+			return
+		var complete := false
+		if is_instance_valid(lab) and lab is Node and lab.is_inside_tree():
+			complete = await TerrainArmy.EquipmentAtlas.prepare_recipe(lab, appearance)
+		if not is_same(_jobs.get(key), job) or not bool(job.preparing): return
+		if not complete:
+			_finish(key, Runtime.fail("ATLAS_PREPARATION_FAILED", "整隊共用圖集準備失敗；原裝與全部實物保留"))
+			return
+	_equipment_prepared(job, true)
 
 func _prepare_equipment_atlas(job: Dictionary, appearance: Dictionary) -> void:
 	var key := str(job.executor_id)
@@ -275,6 +338,9 @@ func advance(seconds: float) -> Dictionary:
 				job.paused = ""
 				job.elapsed = minf(ESCAPE_SECONDS, float(job.elapsed) + seconds)
 			continue
+		if str(job.kind) == "equipment" and str(job.order.mode) == "team_issue":
+			_advance_team_equipment(job, seconds, handled, threats)
+			continue
 		var work := seconds
 		var fatigue := float(_body_get(executor, "fatigue"))
 		var work_rate := Fatigue.effort_rate(executor.body)
@@ -319,6 +385,56 @@ func advance(seconds: float) -> Dictionary:
 				job.paused = "REST"
 	return {"handled_seconds": handled}
 
+func _advance_team_equipment(job: Dictionary, seconds: float, handled: Dictionary, threats: Dictionary) -> void:
+	var identities: Array[int] = job.order.target_ids.duplicate()
+	if not identities.has(int(job.executor_id)): identities.append(int(job.executor_id))
+	var people: Array[Dictionary] = []
+	var pools: Array[Dictionary] = []
+	for identity: int in identities:
+		var person := _person(identity)
+		people.append(person)
+		if not bool(person.player):
+			var fatigue := float(_body_get(person, "fatigue"))
+			var resting := Fatigue.needs_work_rest(fatigue, bool(_body_get(person, "work_resting")))
+			_body_set(person, "work_resting", resting)
+			if _threat(person, threats):
+				job.elapsed = 0.0
+				job.paused = "THREAT"
+				return
+			if resting:
+				job.paused = "REST"
+				return
+		var pool := Fatigue.pool(person.body)
+		var group: Dictionary = {}
+		if not pool.is_empty():
+			for existing: Dictionary in pools:
+				if is_same(existing.pool, pool): group = existing
+		if group.is_empty():
+			group = {"pool": pool, "body": person.body, "count": 0, "limit": false}
+			pools.append(group)
+		group.count = int(group.count) + 1
+		group.limit = bool(group.limit) or not bool(person.player)
+	var work := minf(seconds, maxf(0.0, float(job.duration) - float(job.elapsed)))
+	for group: Dictionary in pools:
+		if bool(group.limit):
+			var group_rate := Fatigue.effort_rate(group.body) * int(group.count)
+			work = minf(work, maxf(0.0, Fatigue.WORK_REST_AT - Fatigue.read(group.body)) / group_rate)
+	if work <= 0.0:
+		job.paused = "REST"
+		return
+	job.paused = ""
+	job.elapsed = minf(float(job.duration), float(job.elapsed) + work)
+	for person: Dictionary in people:
+		var fatigue := float(_body_get(person, "fatigue"))
+		var state := Fatigue.advance(fatigue, float(_body_get(person, "fatigue_rest")), work, Fatigue.effort_rate(person.body), false)
+		_body_set(person, "fatigue", state[0])
+		_body_set(person, "fatigue_rest", state[1])
+		handled[int(person.person_id)] = work
+		if not bool(person.player) and state[0] >= Fatigue.WORK_REST_AT - 0.000000001:
+			_body_set(person, "fatigue", Fatigue.WORK_REST_AT)
+			_body_set(person, "work_resting", true)
+			if float(job.elapsed) < float(job.duration) - 0.00000001: job.paused = "REST"
+
 func settle_after_contacts() -> Array[Dictionary]:
 	if bool(lab.terrain.site.get("paused", false)):
 		return [] # A completed pending batch does not commit behind a paused scene.
@@ -336,6 +452,15 @@ func settle_after_contacts() -> Array[Dictionary]:
 				job.elapsed = 0.0
 				job.paused = "WATCHED"
 				job.executor_hit = int(person.hit)
+		elif check.ok and str(job.kind) == "equipment" and str(job.order.mode) == "team_issue":
+			var identities: Array[int] = job.order.target_ids.duplicate()
+			if not identities.has(int(job.executor_id)): identities.append(int(job.executor_id))
+			for identity: int in identities:
+				var person := _person(identity)
+				if not bool(person.player) and _threat(person, {}):
+					job.elapsed = 0.0
+					job.paused = "THREAT"
+					break
 		elif check.ok:
 			var executor := _person(int(job.executor_id))
 			if not bool(executor.player) and _threat(executor, {}):
@@ -359,7 +484,7 @@ func _commit(job: Dictionary) -> Dictionary:
 	if str(job.kind) == "ranged_craft":
 		return Runtime.ranged_craft(lab.terrain, str(job.recipe), int(job.executor_id))
 	if str(job.kind) == "equipment":
-		return equipment_orders.commit(job.order)
+		return equipment_orders.commit_team_issue(job.order) if str(job.order.mode) == "team_issue" else equipment_orders.commit(job.order)
 	if str(job.kind) == "loot":
 		var source := _source(str(job.source_kind), str(job.source_id))
 		var result := Runtime.ok()
@@ -450,9 +575,10 @@ func _job_context(job: Dictionary) -> Dictionary:
 		if not is_same(executor.owner, job.executor_owner) or not is_same(executor.body, job.executor_body) \
 			or not is_same(executor.holder, job.executor_holder) or not is_same(executor.cargo, job.executor_cargo):
 			return Runtime.fail("STALE_SOURCE", "原人物或持物已替換；換裝未扣物")
-		if str(job.order.mode) == "issue" and (not is_same(lab.terrain.site.depot_items, job.depot_holder) or not is_same(lab.terrain.site.inventory, job.depot_stock)):
+		if str(job.order.mode) in ["issue", "team_issue"] and (not is_same(lab.terrain.site.depot_items, job.depot_holder) or not is_same(lab.terrain.site.inventory, job.depot_stock)):
 			return Runtime.fail("STALE_SOURCE", "原補給點持物已替換；換裝未扣物")
-		return equipment_orders.check(job.order) if equipment_orders != null else Runtime.fail("UNSUPPORTED")
+		if equipment_orders == null: return Runtime.fail("UNSUPPORTED")
+		return equipment_orders.check_team_issue(job.order) if str(job.order.mode) == "team_issue" else equipment_orders.check(job.order)
 	if str(job.kind) == "loot":
 		var source := _source(str(job.source_kind), str(job.source_id))
 		var check := _loot_context(executor, source)
@@ -634,6 +760,8 @@ func _person(identity: int, require_items: bool = true) -> Dictionary:
 	var owner: Variant = person.owner
 	var unit := int(person.unit)
 	var body: Variant = owner.combat_units[unit] if unit >= 0 else owner
+	if unit >= 0:
+		person.hp = float(owner.combat_hot_get(unit, &"hp"))
 	var holder: Variant = body.get("item_state")
 	if require_items and (not holder is Dictionary or not Runtime._item_holder_shape(holder)):
 		return {}
@@ -651,7 +779,8 @@ func _person(identity: int, require_items: bool = true) -> Dictionary:
 	else:
 		return {} # An original owner must explicitly expose its real cargo.
 	person.merge({"body": body, "holder": holder, "cargo": cargo, "person_id": identity,
-		"ko": float(body.get("ko") if unit >= 0 else body.knockout_left), "captive": bool(body.get("captive")),
+		"ko": float(owner.combat_hot_get(unit, &"ko") if unit >= 0 else body.knockout_left),
+		"captive": bool(owner.combat_hot_get(unit, &"captive") if unit >= 0 else body.get("captive")),
 		"faction": int(owner.faction_id), "player": identity == (int(lab.controlled_person_id()) if lab.has_method("controlled_person_id") else int(lab.character.person_id)),
 		"moving": owner.moving_to[unit] != Vector2i(-1, -1) if unit >= 0 else owner.is_moving(),
 		"hit": int(body.get("hit_revision", 0)) if unit >= 0 else int(owner._received_effective_hit)})
@@ -669,7 +798,7 @@ func _ready(person: Dictionary, allow_guard: bool = false) -> bool:
 		if not delivery.is_empty() and int(person.person_id) in [int(delivery.get("player_id", -1)), int(delivery.get("representative_id", -1))]:
 			return false
 	if int(person.unit) >= 0:
-		return person.owner.combat_can_act(int(person.unit)) and not bool(person.body.attack) and str(person.body.pose) == "idle" and person.body.get("work_task", {}).is_empty()
+		return person.owner.combat_can_act(int(person.unit)) and not bool(_body_get(person, "attack")) and str(_body_get(person, "pose")) == "idle" and person.body.get("work_task", {}).is_empty()
 	var actor: Variant = person.owner
 	if not actor.can_act() or actor.action_time > 0.0 or actor.guarding or actor.guard_transition_left > 0.0 or actor.guard_break_left > 0.0 or actor._rescue_left > 0.0:
 		return false
@@ -696,6 +825,8 @@ func _threat(person: Dictionary, candidates: Dictionary) -> bool:
 
 func _body_get(person: Dictionary, field: String) -> Variant:
 	if field in ["fatigue", "fatigue_rest"]: return Fatigue.read(person.body, field)
+	if int(person.unit) >= 0:
+		return person.owner.combat_hot_get(int(person.unit), StringName(field), false if field == "work_resting" else 0.0)
 	if person.body is Dictionary:
 		if field == "work_resting":
 			return person.body.get(field, false)
@@ -705,6 +836,11 @@ func _body_get(person: Dictionary, field: String) -> Variant:
 func _body_set(person: Dictionary, field: String, value: Variant) -> void:
 	if field in ["fatigue", "fatigue_rest"]:
 		Fatigue.write(person.body, field, float(value))
+		return
+	if int(person.unit) >= 0:
+		person.owner.combat_hot_set(int(person.unit), StringName(field), value)
+		if field in ["hp", "ko", "captive"]:
+			person[field] = value
 		return
 	if person.body is Dictionary:
 		person.body[field] = value

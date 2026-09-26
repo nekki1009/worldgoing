@@ -47,7 +47,7 @@ func _authority(requester_id: int, guard: Dictionary) -> bool:
 func _awake_captive(person: Dictionary) -> bool:
 	if person.is_empty() or float(person.hp) <= 0.0 or float(person.ko) > 0.0 or not bool(person.captive) or bool(person.moving):
 		return false
-	return str(person.body.pose) == "idle" if int(person.unit) >= 0 else not person.owner._getting_up and person.owner.action_time <= 0.0
+	return str(person.owner.combat_hot_get(int(person.unit), &"pose")) == "idle" if int(person.unit) >= 0 else not person.owner._getting_up and person.owner.action_time <= 0.0
 
 func permits_step(identity: int, guard_id: int, destination: Vector2i) -> bool:
 	var order: Dictionary = lab.terrain.site.get("escort_orders", {}).get(str(guard_id), {})

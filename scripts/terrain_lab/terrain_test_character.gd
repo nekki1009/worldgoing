@@ -149,7 +149,7 @@ const MOUNT_ACCELERATION := 6.0
 const MOUNT_BRAKING := 12.0
 const MOUNT_TURN_SPEED := 3.0
 const SAVED_FLOAT_FIELDS := {
-	"hp": 100.0, "stun": 1000000.0, "stun_grace": 3.0, "knockout_left": 30.0,
+	"hp": 100.0, "stun": 1000000.0, "stun_grace": 3.0, "knockout_left": SiteCombatRules.KNOCKOUT_GAME_SECONDS,
 	"guard_break_left": 0.4, "guard_transition_left": 0.15, "action_time": 60.0,
 	"training": 1000000.0, "_attack_elapsed": 60.0, "_attack_duration": 60.0,
 	"_clip_duration": 60.0, "_training_reduction": 0.15, "_attack_step": 64.0,
@@ -284,11 +284,13 @@ func _process(delta: float) -> void:
 			_sync_render_projection()
 	queue_redraw()
 	if not combat_driven_by_lab:
-		advance_combat(delta)
+		advance_combat(delta, false, SiteRuntime.game_seconds(delta, float(data.site.get("combat_left", 0.0))) if data != null and not data.site.is_empty() else delta)
 
-func advance_combat(delta: float, defer_contacts: bool = false) -> void:
+func advance_combat(delta: float, defer_contacts: bool = false, game_seconds: float = -1.0) -> void:
 	if delta <= 0.0 or (is_inside_tree() and get_tree().paused):
 		return
+	if game_seconds < 0.0:
+		game_seconds = delta # Direct owner tests and previews use a 1:1 fallback.
 	# A committed legal step finishes even after KO/death; movement and contacts
 	# use the same action clock, including headless runs and slow rendered frames.
 	_advance_movement(delta)
@@ -330,7 +332,7 @@ func advance_combat(delta: float, defer_contacts: bool = false) -> void:
 	if guard_was_changing and guard_transition_left == 0.0 and guard_break_left == 0.0:
 		play_pose(&"guard" if guarding else &"idle")
 	if knockout_left > 0.0:
-		knockout_left = maxf(0.0, knockout_left - delta)
+		knockout_left = maxf(0.0, knockout_left - game_seconds)
 		if knockout_left == 0.0:
 			_wake_up()
 		return
@@ -701,6 +703,8 @@ func _advance_combat_pose(delta: float) -> void:
 		return
 	if editor == null:
 		visual_state.animation_time += delta
+		if visual_state.animation_id == &"unconscious":
+			visual_state.animation_time = fposmod(visual_state.animation_time, _exchange_authored_duration(&"unconscious"))
 		if visual_state.animation_id in [&"ride_heavy", &"ride_guard_break"]:
 			visual_state.animation_time = minf(visual_state.animation_time, _exchange_authored_duration(visual_state.animation_id))
 		if visual_state.animation_id == &"down" and visual_state.animation_time >= float(CombatTimings.POSE_SECONDS[&"down"]) and hp > 0.0 and knockout_left > 0.0:
@@ -1318,16 +1322,28 @@ func activate_exchange_skill(skill: String) -> bool:
 	return true
 
 func apply_exchange(other_cell: Vector2i, outcome: Dictionary) -> void:
-	if not exchange_enabled or hp <= 0.0 or knockout_left > 0.0 or captive or _getting_up or (is_inside_tree() and get_tree().paused):
+	var prepared := exchange_batch_prepare(other_cell, outcome)
+	if prepared.is_empty():
 		return
+	exchange_batch_knockback(other_cell, outcome, prepared)
+	exchange_batch_contact(outcome)
+	exchange_batch_finish(other_cell, outcome, prepared)
+
+func exchange_batch_prepare(other_cell: Vector2i, outcome: Dictionary) -> Dictionary:
+	if not exchange_enabled or hp <= 0.0 or knockout_left > 0.0 or captive or _getting_up or (is_inside_tree() and get_tree().paused):
+		return {}
 	var role := str(outcome.get("role", ""))
 	if role not in ["winner", "loser", "draw"]:
-		return
+		return {}
 	for field: String in ["hp", "stun", "stagger", "fatigue"]:
 		if not _saved_number(outcome.get(field, 0.0), 0.0, 1000000.0):
-			return
-	var rear_hit := Vector2(facing).dot(Vector2(other_cell - terrain_cell)) < 0.0
-	var committed_left := maxf(0.0, _movement_duration - _movement_elapsed) if is_moving() else 0.0
+			return {}
+	var prepared := {
+		"cell": terrain_cell,
+		"rear_hit": Vector2(facing).dot(Vector2(other_cell - terrain_cell)) < 0.0,
+		"committed_left": maxf(0.0, _movement_duration - _movement_elapsed) if is_moving() else 0.0,
+		"stagger": exchange_stagger,
+	}
 	_cancel_exchange_legacy_attack()
 	_cancel_rescue()
 	guarding = false
@@ -1344,33 +1360,64 @@ func apply_exchange(other_cell: Vector2i, outcome: Dictionary) -> void:
 		editor.combat_ready = true
 		editor.visual_state.combat_ready = true
 		editor._update_weapon_sheath_state()
-	var knockback := role == "loser" and bool(outcome.get("knockback", false))
+	return prepared
+
+func exchange_batch_knockback(other_cell: Vector2i, outcome: Dictionary, prepared: Dictionary) -> void:
+	if prepared.is_empty():
+		return
+	var knockback := str(outcome.get("role", "")) == "loser" and bool(outcome.get("knockback", false))
 	if knockback and not is_moving():
-		var offset := terrain_cell - other_cell
+		var original_cell: Vector2i = prepared.cell
+		var offset := original_cell - other_cell
 		var direction := Vector2i(signi(offset.x), 0) if absi(offset.x) > absi(offset.y) else Vector2i(0, signi(offset.y))
-		var destination := terrain_cell + direction
-		if direction in TerrainData.DIRECTIONS and data != null and data.can_step(terrain_cell, destination) and can_enter_cell(destination):
+		var destination := original_cell + direction
+		if terrain_cell == original_cell and direction in TerrainData.DIRECTIONS and data != null and data.can_step(original_cell, destination) and can_enter_cell(destination) and not _exchange_knockback_actor_occupied(destination):
 			place(destination, false, MOVE_DURATION) # Reserve before the original KO/death transition, as for Army rows.
+
+func _exchange_knockback_actor_occupied(cell: Vector2i) -> bool:
+	# The normal cell blocker covers Army rows. Knockback also reserves against
+	# original Actors, including the source of an Actor already mid-step.
+	for actor: TerrainTestCharacter in targets():
+		if actor.occupies_cell(cell):
+			return true
+	return false
+
+func exchange_batch_contact(outcome: Dictionary) -> void:
 	combat_event.emit(10.0)
 	apply_contact({"attacker": outcome.get("attacker"), "attacker_unit": int(outcome.get("attacker_unit", -1)),
 		"shield": false, "result": {"hp": float(outcome.get("hp", 0.0)), "stun": float(outcome.get("stun", 0.0)), "guard_break": false}})
-	if hp <= 0.0 or knockout_left > 0.0:
-		return # Original death/KO pose, signal, HP and loot entry remain authoritative.
+
+func exchange_batch_finish(other_cell: Vector2i, outcome: Dictionary, prepared: Dictionary) -> void:
+	if prepared.is_empty():
+		return
+	if hp <= 0.0:
+		combat_status = "Dead"
+		queue_redraw()
+		return # Original death pose, signal, HP and loot entry remain authoritative.
+	if knockout_left > 0.0:
+		combat_status = "Unconscious"
+		queue_redraw()
+		return # Original KO pose and state remain authoritative.
+	var role := str(outcome.get("role", ""))
+	var committed_left := float(prepared.committed_left)
+	var previous_stagger := float(prepared.stagger)
+	var rear_hit := bool(prepared.rear_hit)
+	var knockback := role == "loser" and bool(outcome.get("knockback", false))
 	if role == "draw":
-		exchange_stagger = committed_left + maxf(SiteCombatRules.EXCHANGE_DRAW_HOLD, float(outcome.get("stagger", 0.0)))
+		exchange_stagger = maxf(previous_stagger, committed_left + maxf(SiteCombatRules.EXCHANGE_DRAW_HOLD, float(outcome.get("stagger", 0.0))))
 		_exchange_guard_hold = true
 		guarding = true
 		_start_exchange_visual(&"guard")
 		combat_status = "Exchange draw"
 	elif role == "loser":
-		exchange_stagger = committed_left + float(outcome.get("stagger", 0.0))
+		exchange_stagger = maxf(previous_stagger, committed_left + float(outcome.get("stagger", 0.0)))
 		var reaction := &"knockback" if knockback else (&"hit_back" if rear_hit else &"hit")
 		if is_mounted() and str(outcome.get("kind", "")) == "big":
 			reaction = &"ride_guard_break"
 		_start_exchange_visual(reaction)
-		combat_status = "Exchange loss: " + str(outcome.get("kind", "small"))
+		combat_status = ("Exchange hit: " if str(outcome.get("kind", "")) == "draw" else "Exchange loss: ") + str(outcome.get("kind", "small"))
 	else:
-		exchange_stagger = 0.0
+		exchange_stagger = previous_stagger
 		face_cell(other_cell)
 		var clip := &"attack_jump_heavy" if str(outcome.get("kind", "")) == "big" else SiteCombatRules.exchange_attack_clip(_exchange_equipped_asset("weapon"))
 		if str(outcome.get("kind", "")) != "big":
@@ -1433,7 +1480,7 @@ func apply_contact(packet: Dictionary) -> void:
 		stun += impact
 		stun_grace = SiteCombatRules.STUN_GRACE
 		if knockout_left > 0.0:
-			knockout_left = SiteCombatRules.KNOCKOUT_SECONDS
+			knockout_left = SiteCombatRules.KNOCKOUT_GAME_SECONDS
 	if hp <= 0.0:
 		knockout_left = 0.0
 		_stop_fighting("Dead")
@@ -1444,7 +1491,7 @@ func apply_contact(packet: Dictionary) -> void:
 	elif knockout_left > 0.0:
 		combat_status = "Unconscious"
 	elif stun >= SiteCombatRules.STUN_LIMIT:
-		knockout_left = SiteCombatRules.KNOCKOUT_SECONDS
+		knockout_left = SiteCombatRules.KNOCKOUT_GAME_SECONDS
 		_stop_fighting("Unconscious")
 	elif bool(result.guard_break):
 		guard_break_left = SiteCombatRules.GUARD_BREAK_SECONDS
@@ -1501,7 +1548,7 @@ func start_rescue(target: TerrainTestCharacter) -> bool:
 		return false
 	if not can_act() or (exchange_enabled and exchange_stagger > 0.0) or action_time > 0.0 or guarding or guard_transition_left > 0.0 or guard_break_left > 0.0 or is_moving() or _rescue_left > 0.0 or not is_instance_valid(target):
 		return false
-	if target.hp <= 0.0 or target.knockout_left <= 0.0 or target.faction_id != faction_id or is_instance_valid(target._rescuer) or is_instance_valid(target._army_rescuer):
+	if target.hp <= 0.0 or target.knockout_left <= SiteCombatRules.RESCUED_KNOCKOUT_GAME_SECONDS or target.faction_id != faction_id or is_instance_valid(target._rescuer) or is_instance_valid(target._army_rescuer):
 		return false
 	if not _rescue_reachable(target):
 		return false
@@ -1522,7 +1569,7 @@ func start_rescue_unit(team: TerrainArmy, index: int) -> bool:
 		return false
 	if team.faction_id != faction_id or team.member_gone(index) or index == TerrainArmy.PLAYER_MEMBER or team.patient_has_rescuer(index):
 		return false
-	if float(team.combat_units[index].ko) <= 0.0 or team.moving_to[index] != TerrainArmy.INVALID_CELL:
+	if float(team.combat_hot_get(index, &"ko")) <= SiteCombatRules.RESCUED_KNOCKOUT_GAME_SECONDS or team.moving_to[index] != TerrainArmy.INVALID_CELL:
 		return false
 	var offset := team.cells[index] - terrain_cell
 	if absi(offset.x) + absi(offset.y) != 1 or data == null or not data.can_step(terrain_cell, team.cells[index]):
@@ -1548,15 +1595,15 @@ func _advance_rescue(delta: float) -> void:
 			_cancel_rescue()
 			return
 		var offset := team.cells[_rescue_unit] - terrain_cell
-		if float(team.combat_units[_rescue_unit].ko) <= 0.0 or team.moving_to[_rescue_unit] != TerrainArmy.INVALID_CELL or absi(offset.x) + absi(offset.y) != 1 or not data.can_step(terrain_cell, team.cells[_rescue_unit]):
+		if float(team.combat_hot_get(_rescue_unit, &"ko")) <= 0.0 or team.moving_to[_rescue_unit] != TerrainArmy.INVALID_CELL or absi(offset.x) + absi(offset.y) != 1 or not data.can_step(terrain_cell, team.cells[_rescue_unit]):
 			_cancel_rescue()
 			return
 		_rescue_left = maxf(0.0, _rescue_left - delta)
 		if _rescue_left <= 0.000000001:
 			_rescue_left = 0.0
-			team._wake_unit(_rescue_unit)
+			team.combat_hot_set(_rescue_unit, &"ko", minf(float(team.combat_hot_get(_rescue_unit, &"ko")), SiteCombatRules.RESCUED_KNOCKOUT_GAME_SECONDS))
 			_cancel_rescue()
-			combat_status = "Rescue complete"
+			combat_status = "Rescue complete; unconscious wait shortened"
 		return
 	if not is_instance_valid(_rescue_target) or not can_act() or _rescue_target.hp <= 0.0 or _rescue_target.knockout_left <= 0.0 or not _rescue_reachable(_rescue_target) or _received_effective_hit != _rescue_hit_revision or _rescue_target._received_effective_hit != _rescue_target_hit_revision:
 		_cancel_rescue()
@@ -1564,9 +1611,9 @@ func _advance_rescue(delta: float) -> void:
 	_rescue_left = maxf(0.0, _rescue_left - delta)
 	if _rescue_left <= 0.000000001:
 		_rescue_left = 0.0
-		_rescue_target._wake_up()
+		_rescue_target.knockout_left = minf(_rescue_target.knockout_left, SiteCombatRules.RESCUED_KNOCKOUT_GAME_SECONDS)
 		_cancel_rescue()
-		combat_status = "Rescue complete"
+		combat_status = "Rescue complete; unconscious wait shortened"
 
 func _cancel_rescue() -> void:
 	var was_rescuing := _rescue_left > 0.0 or visual_state.animation_id == &"rescue"
@@ -1582,7 +1629,7 @@ func _cancel_rescue() -> void:
 		play_pose(&"idle")
 
 func capture_state() -> Dictionary:
-	var state := {"schema": 1, "cell": [terrain_cell.x, terrain_cell.y], "facing": [facing.x, facing.y],
+	var state := {"schema": 2, "cell": [terrain_cell.x, terrain_cell.y], "facing": [facing.x, facing.y],
 		"attack_target": attack_target_id,
 		"strike_at": _strike_at, "attack_clip": str(_attack_clip), "hit_ids": _attack_hits.keys() if action_time > 0.0 else [],
 		"status": combat_status, "rescue_target": _rescue_army.combat_identity(_rescue_unit) if is_instance_valid(_rescue_army) else (_rescue_target.person_id if is_instance_valid(_rescue_target) else 0),
@@ -1631,10 +1678,17 @@ func capture_state() -> Dictionary:
 		state["remains_id"] = remains_id
 	return state
 
+static func normalize_saved_state(original: Dictionary) -> Dictionary:
+	var state := original.duplicate(true)
+	if state.get("schema") == 1:
+		state.knockout_left = float(state.knockout_left) / SiteCombatRules.LEGACY_KNOCKOUT_ACTION_SECONDS * SiteCombatRules.KNOCKOUT_GAME_SECONDS
+		state.schema = 2
+	return state
+
 static func valid_state(state: Variant, map: TerrainData) -> bool:
 	if not state is Dictionary or not _saved_number(state.get("attack_target", 0), 0, 2147483647) or float(state.get("attack_target", 0)) != floorf(float(state.get("attack_target", 0))):
 		return false
-	if not state is Dictionary or state.get("schema") != 1 or not HumanCharacter3DEditor.valid_appearance(state.get("appearance")):
+	if not state is Dictionary or not _saved_number(state.get("schema"), 1.0, 2.0) or float(state.schema) != floorf(float(state.schema)) or not HumanCharacter3DEditor.valid_appearance(state.get("appearance")):
 		return false
 	if not _saved_number(state.get("ride_speed", 0.0), 0.0, MOUNT_RUN_SPEED):
 		return false
@@ -1650,7 +1704,8 @@ static func valid_state(state: Variant, map: TerrainData) -> bool:
 			float_fallback = 50.0
 		elif field in ["_reload_left", "fatigue", "fatigue_rest", "_fatigue_slowdown"]:
 			float_fallback = 0.0
-		if not _saved_number(state.get(field, float_fallback), 0.0, float(SAVED_FLOAT_FIELDS[field])):
+		var upper: float = SiteCombatRules.LEGACY_KNOCKOUT_ACTION_SECONDS if field == "knockout_left" and int(state.schema) == 1 else float(SAVED_FLOAT_FIELDS[field])
+		if not _saved_number(state.get(field, float_fallback), 0.0, upper):
 			return false
 	# Read-only admission of the withdrawn per-mount save fields for migration.
 	for legacy_field: String in ["mount_fatigue", "mount_fatigue_rest"]:
@@ -1795,6 +1850,7 @@ static func _saved_cell(value: Variant, map: TerrainData) -> bool:
 
 func restore_state(state: Dictionary) -> void:
 	# SiteStore validates the complete snapshot before the live scene is replaced.
+	state = normalize_saved_state(state)
 	_reset_exchange_transients()
 	item_state = state.get("item_state", {}).duplicate(true)
 	loot_settled = bool(state.get("loot_settled", false))

@@ -10,6 +10,7 @@ const FamilyContinuity = preload("res://scripts/terrain_lab/site_family_continui
 const WorkTeam = preload("res://scripts/terrain_lab/site_work_team.gd")
 const Vehicles = preload("res://scripts/terrain_lab/site_vehicle_transport.gd")
 const RiderAtlas = preload("res://scripts/terrain_lab/site_vehicle_rider_atlas.gd")
+const Destination = preload("res://scripts/terrain_lab/formation_destination_planner.gd")
 const FORMAT := 3
 const TERRAIN_VERSION := 1
 const DEFAULT_PATH := "user://sites/current.json"
@@ -111,9 +112,25 @@ static func load_site(path: String = DEFAULT_PATH) -> Dictionary:
 	params["size"] = Vector2i(int(params.size[0]), int(params.size[1]))
 	var data := TerrainGenerator.generate(int(payload.preset), int(payload.seed), params)
 	Env.initialize(data, str(payload.state.id))
+	# Army paths and final slots must be checked against the terrain that was
+	# actually saved. Validate the delta before applying it to this new data.
+	var saved_terrain_changes: Variant = payload.state.get("terrain_changes", {})
+	if not saved_terrain_changes is Dictionary:
+		return Runtime.fail("CORRUPT_SAVE", "整地差異")
+	for key: Variant in saved_terrain_changes.keys():
+		if not key is String or not key.is_valid_int() or not _valid_cell(data, int(key)) or not _integer(saved_terrain_changes[key], 0, 5):
+			return Runtime.fail("CORRUPT_SAVE", "整地差異")
+		data.height_levels[int(key)] = int(saved_terrain_changes[key])
+	if not saved_terrain_changes.is_empty():
+		Runtime.rebuild_terrain_edges(data)
 	var validation := _validate_state(data, payload.state)
 	if not validation.ok:
 		return validation
+	var legacy_ko_clock := false
+	for actor: Dictionary in payload.state.get("actors", {}).values():
+		legacy_ko_clock = legacy_ko_clock or actor.get("schema") == 1
+	for team: Dictionary in payload.state.get("armies", []):
+		legacy_ko_clock = legacy_ko_clock or team.get("schema") == 1
 	data.site = payload.state.duplicate(true)
 	# JSON numbers are normalized at the boundary; generated base is not in the save.
 	_normalize_state(data.site)
@@ -128,10 +145,6 @@ static func load_site(path: String = DEFAULT_PATH) -> Dictionary:
 	data.site.water_links = {}
 	data.site.water_status = {}
 	data.site.notices = []
-	for key: String in data.site.terrain_changes:
-		data.height_levels[int(key)] = int(data.site.terrain_changes[key])
-	if not data.site.terrain_changes.is_empty():
-		Runtime.rebuild_terrain_edges(data)
 	Env.rebuild_indexes(data)
 	Runtime.rebuild_water(data)
 	Runtime.rebuild_loot_index(data)
@@ -160,7 +173,7 @@ static func load_site(path: String = DEFAULT_PATH) -> Dictionary:
 	var opened_validation := _validate_settled_opened_food(data.site)
 	if not opened_validation.ok:
 		return opened_validation
-	return Runtime.ok("已載入地圖；接續保存時刻" + ("（舊地圖沒有角色快照，首次使用初始角色狀態）" if bool(payload.get("legacy_actor_state", false)) else ""), {"data": data})
+	return Runtime.ok("已載入地圖；接續保存時刻" + ("（舊地圖沒有角色快照，首次使用初始角色狀態）" if bool(payload.get("legacy_actor_state", false)) else "") + ("（舊版昏迷剩餘秒數已按比例一次轉為遊戲秒）" if legacy_ko_clock else ""), {"data": data})
 
 static func retire_default_worker(data: TerrainData) -> Dictionary:
 	# The removed startup fixture must not respawn from an older save. This is
@@ -350,6 +363,10 @@ static func _normalize_state(state: Dictionary) -> void:
 			container.cargo[resource] = int(container.cargo[resource])
 		item_holders.append(container)
 	for actor: Dictionary in state.get("actors", {}).values():
+		if actor.get("schema") == 1:
+			var normalized_actor := TerrainTestCharacter.normalize_saved_state(actor)
+			actor.clear()
+			actor.merge(normalized_actor)
 		if actor.has("item_state"):
 			item_holders.append(actor.item_state)
 	for team_index in range(state.get("armies", []).size()):
@@ -684,6 +701,10 @@ static func _validate_armies(data: TerrainData, state: Dictionary, check_terrain
 		return Runtime.fail("CORRUPT_SAVE", "軍隊名冊格式")
 	var identities := {}
 	var claims := {}
+	var source_claims := {}
+	var destination_claims := {}
+	var batch_groups := {}
+	var deployment_claims := {}
 	var maximum_team := 0
 	var teams_seen := {}
 	var total_rows := 0 # Three test teams, bounded to 300 actual army rows.
@@ -710,6 +731,21 @@ static func _validate_armies(data: TerrainData, state: Dictionary, check_terrain
 		if not TerrainArmy.valid_combat_state(original_team, data, member_actor, state):
 			return Runtime.fail("CORRUPT_SAVE", "軍隊人物／動作／指揮關係非法")
 		var team := TerrainArmy.normalize_roster_snapshot(original_team)
+		if not _valid_combat_movement_snapshot(data, team, batch_groups):
+			return Runtime.fail("CORRUPT_SAVE", "軍隊行軍／部署／在途依賴非法")
+		var deployment: Variant = team.get("combat_deployment_plan", null)
+		if deployment is Dictionary:
+			for pair: Array in deployment.get("member_slot_map", {}).values():
+				var slot := Vector2i(int(pair[0]), int(pair[1]))
+				if deployment_claims.has(slot) and deployment_claims[slot] != int(team.team_id):
+					return Runtime.fail("CORRUPT_SAVE", "跨隊部署槽位重疊")
+				deployment_claims[slot] = int(team.team_id)
+			for key: String in deployment.get("slot_lease_timers", {}).keys():
+				var parts := key.split(",")
+				var leased_slot := Vector2i(int(parts[0]), int(parts[1]))
+				if deployment_claims.has(leased_slot) and deployment_claims[leased_slot] != int(team.team_id):
+					return Runtime.fail("CORRUPT_SAVE", "跨隊部署槽位重疊")
+				deployment_claims[leased_slot] = int(team.team_id)
 		if teams_seen.has(int(team.team_id)):
 			return Runtime.fail("CORRUPT_SAVE", "重複隊伍身分")
 		teams_seen[int(team.team_id)] = true
@@ -745,10 +781,23 @@ static func _validate_armies(data: TerrainData, state: Dictionary, check_terrain
 			if check_terrain and (not data.is_walkable(cell) or destination != TerrainArmy.INVALID_CELL and not data.can_step(cell, destination)):
 				return Runtime.fail("CORRUPT_SAVE", "軍隊格位／移動跨越非法地形")
 			var standing := float(unit.hp) > 0.0 and float(unit.ko) <= 0.0 and not bool(unit.departed)
-			for claim: Vector2i in ([cell, destination] if destination != TerrainArmy.INVALID_CELL else ([cell] if standing else [])):
-				if claims.has(claim):
-					return Runtime.fail("CORRUPT_SAVE", "軍隊占位／預約重疊")
-				claims[claim] = identity
+			if standing or destination != TerrainArmy.INVALID_CELL:
+				if source_claims.has(cell):
+					return Runtime.fail("CORRUPT_SAVE", "軍隊來源占位重疊")
+				source_claims[cell] = identity
+			if destination != TerrainArmy.INVALID_CELL:
+				if destination_claims.has(destination):
+					return Runtime.fail("CORRUPT_SAVE", "軍隊目的格預約重疊")
+				destination_claims[destination] = identity
+	for cell: Vector2i in destination_claims.keys():
+		if source_claims.has(cell):
+			var source_id: int = source_claims[cell]
+			var moving_id: int = destination_claims[cell]
+			if not batch_groups.has(source_id) or batch_groups.get(source_id) != batch_groups.get(moving_id):
+				return Runtime.fail("CORRUPT_SAVE", "未宣告的軍隊來源／目的格重疊")
+	claims = source_claims.duplicate()
+	for cell: Vector2i in destination_claims.keys():
+		claims[cell] = destination_claims[cell]
 	if state.has("army_next_team") and not _integer(state.army_next_team, maximum_team + 1, 999999):
 		return Runtime.fail("CORRUPT_SAVE", "軍隊身分序號失效")
 	for actor: Variant in actors.values():
@@ -771,6 +820,366 @@ static func _validate_armies(data: TerrainData, state: Dictionary, check_terrain
 				if not identities.has(int(identity)) or int(identity) == int(team.units[index].person_id):
 					return Runtime.fail("CORRUPT_SAVE", "軍隊命中去重指向未知人物")
 	return Runtime.ok()
+
+static func _valid_combat_movement_snapshot(data: TerrainData, team: Dictionary, batch_groups: Dictionary) -> bool:
+	var people: Dictionary = {}
+	for unit: Dictionary in team.units:
+		people[int(unit.person_id)] = unit
+	var team_preset: Variant = team.get("formation_preset_id", "auto")
+	if not team_preset is String or not Destination.is_valid_preset(team_preset): return false
+	var deployment: Variant = team.get("combat_deployment_plan", null)
+	var movement: Variant = team.get("combat_move_plan", null)
+	var absent_slots: Variant = team.get("combat_absent_slots", {})
+	if not absent_slots is Dictionary or absent_slots.size() > team.units.size() or (deployment == null or movement == null) and not absent_slots.is_empty(): return false
+	var deployment_anchor: Variant = null
+	if deployment != null:
+		if not deployment is Dictionary:
+			return false
+		var saved_version: Variant = deployment.get("shape_version", 1)
+		if not _integer(saved_version, 1, 2): return false
+		var legacy_deployment: bool = int(saved_version) == 1
+		if legacy_deployment:
+			if deployment.has("formation_preset_id") or team_preset != "auto": return false
+		else:
+			var plan_preset: Variant = deployment.get("formation_preset_id", null)
+			if not team.has("formation_preset_id") or not plan_preset is String or not Destination.is_valid_preset(plan_preset) or plan_preset != team_preset: return false
+		deployment_anchor = deployment.get("resolved_anchor")
+		if not _valid_walkable_pair(data, deployment_anchor):
+			if not legacy_deployment or not movement is Dictionary or not _valid_walkable_pair(data, movement.get("resolved_anchor")):
+				return false
+			deployment_anchor = movement.resolved_anchor
+		if not legacy_deployment and not _valid_xy_pair(data, deployment.get("final_facing")):
+			return false
+		if deployment.has("final_facing"):
+			if not _valid_xy_pair(data, deployment.final_facing):
+				return false
+			var facing := Vector2i(int(deployment.final_facing[0]), int(deployment.final_facing[1]))
+			if facing not in TerrainData.DIRECTIONS:
+				return false
+		if not _integer(deployment.get("order_serial"), 1, 2147483647):
+			return false
+		if not legacy_deployment and (not _integer(team.get("combat_order_serial"), 1, 2147483647) \
+			or int(team.combat_order_serial) != int(deployment.order_serial)):
+			return false
+		var platform: Variant = deployment.get("platform_slots", [])
+		var queue: Variant = deployment.get("approach_queue_slots", [])
+		var member_slots: Variant = deployment.get("member_slot_map", {})
+		var member_roles: Variant = deployment.get("member_role_map", {})
+		if not platform is Array or not queue is Array or not member_slots is Dictionary or not member_roles is Dictionary \
+			or platform.size() > data.size.x * data.size.y or queue.size() > data.size.x * data.size.y or member_slots.size() > team.units.size() or member_roles.size() != member_slots.size():
+			return false
+		var platform_set: Dictionary = {}
+		var queue_set: Dictionary = {}
+		for pair: Variant in platform:
+			if not _valid_walkable_pair(data, pair): return false
+			var cell := Vector2i(int(pair[0]), int(pair[1]))
+			if platform_set.has(cell): return false
+			platform_set[cell] = true
+		for pair: Variant in queue:
+			if not _valid_walkable_pair(data, pair): return false
+			var cell := Vector2i(int(pair[0]), int(pair[1]))
+			if platform_set.has(cell) or queue_set.has(cell): return false
+			queue_set[cell] = true
+		if not legacy_deployment:
+			var requested: Variant = deployment.get("requested_count")
+			if not _integer(requested, 1, 200) or int(requested) > team.units.size(): return false
+			var facing := Vector2i(int(deployment.final_facing[0]), int(deployment.final_facing[1]))
+			var side := Vector2i(-facing.y, facing.x)
+			var width: Variant = deployment.get("final_width")
+			var depth: Variant = deployment.get("final_depth")
+			var anchor := Vector2i(int(deployment_anchor[0]), int(deployment_anchor[1]))
+			if not _integer(width, 1, maxi(data.size.x, data.size.y)) or not _integer(depth, 1, maxi(data.size.x, data.size.y)): return false
+			if team_preset == "auto":
+				var columns: Dictionary = {}
+				for cell: Vector2i in platform_set.keys():
+					columns[(cell.x - anchor.x) * side.x + (cell.y - anchor.y) * side.y] = true
+				var auto_width := mini(10, maxi(1, columns.size()))
+				if int(width) != auto_width or int(depth) != ceili(float(platform.size()) / float(auto_width)): return false
+			else:
+				if platform.size() != int(requested): return false
+				var expected: Array[Vector2i] = Destination.shape_slots(team_preset, int(requested), anchor, facing)
+				if expected.size() != int(requested): return false
+				var min_side := 2147483647
+				var max_side := -2147483647
+				var min_front := 2147483647
+				var max_front := -2147483647
+				for cell: Vector2i in expected:
+					if not platform_set.has(cell): return false
+					var offset := cell - anchor
+					var lateral := offset.x * side.x + offset.y * side.y
+					var axial := offset.x * facing.x + offset.y * facing.y
+					min_side = mini(min_side, lateral)
+					max_side = maxi(max_side, lateral)
+					min_front = mini(min_front, axial)
+					max_front = maxi(max_front, axial)
+				if int(width) != max_side - min_side + 1 or int(depth) != max_front - min_front + 1: return false
+		var assigned: Dictionary = {}
+		for key: Variant in member_slots.keys():
+			if not str(key).is_valid_int() or str(int(key)) != str(key) or not people.has(int(key)) or not member_roles.has(key) or not _valid_walkable_pair(data, member_slots[key]):
+				return false
+			var cell := Vector2i(int(member_slots[key][0]), int(member_slots[key][1]))
+			var role: Variant = member_roles[key]
+			if assigned.has(cell) or not _integer(role, 0, 1) or (int(role) == 0 and not platform_set.has(cell)) or (int(role) == 1 and not queue_set.has(cell)) \
+				or (not legacy_deployment and team_preset != "auto" and int(role) != 0):
+				return false
+			assigned[cell] = true
+		var list_sets: Dictionary = {}
+		for field: String in ["queue_member_ids", "pending_platform_member_ids", "admitted_platform_member_ids", "settled_platform_member_ids", "settled_queue_member_ids"]:
+			if not legacy_deployment and not deployment.has(field): return false
+			var mids: Variant = deployment.get(field, [])
+			if not mids is Array or mids.size() > member_slots.size(): return false
+			var seen: Dictionary = {}
+			for value: Variant in mids:
+				if not _integer(value, 1, 2147483647): return false
+				var id: int = int(value)
+				var member_key := str(id)
+				if seen.has(id) or not member_slots.has(member_key): return false
+				if field == "queue_member_ids" or field == "settled_queue_member_ids":
+					if int(member_roles[member_key]) != 1: return false
+				elif int(member_roles[member_key]) != 0:
+					return false
+				seen[id] = true
+			list_sets[field] = seen
+		for key: Variant in member_roles.keys():
+			if int(member_roles[key]) == 1 and not list_sets["queue_member_ids"].has(int(key)): return false
+		for id: int in list_sets["settled_queue_member_ids"].keys():
+			if not list_sets["queue_member_ids"].has(id): return false
+		for id: int in list_sets["settled_platform_member_ids"].keys():
+			if deployment.has("admitted_platform_member_ids") and not list_sets["admitted_platform_member_ids"].has(id): return false
+		var ever_admitted: Variant = deployment.get("ever_admitted_platform_member_ids", deployment.get("admitted_platform_member_ids", []))
+		if not ever_admitted is Array or ever_admitted.size() > team.units.size(): return false
+		var ever_seen: Dictionary = {}
+		for value: Variant in ever_admitted:
+			if not _integer(value, 1, 2147483647): return false
+			var id: int = int(value)
+			if ever_seen.has(id) or not people.has(id) or (not member_slots.has(str(id)) and not absent_slots.has(str(id))): return false
+			ever_seen[id] = true
+		for id: int in list_sets["admitted_platform_member_ids"].keys():
+			if not ever_seen.has(id): return false
+		if not legacy_deployment:
+			for id: int in list_sets["pending_platform_member_ids"].keys():
+				if list_sets["admitted_platform_member_ids"].has(id): return false
+		if deployment.has("queue_released") and not deployment.queue_released is bool: return false
+		if not legacy_deployment and not deployment.has("queue_released"): return false
+		var locks: Variant = deployment.get("member_slot_locked", {})
+		if not locks is Dictionary: return false
+		for key: Variant in locks.keys():
+			if not member_slots.has(key) or not locks[key] is bool: return false
+		var tactical: Variant = deployment.get("slot_tactical_roles", {})
+		if not tactical is Dictionary: return false
+		for key: Variant in tactical.keys():
+			if not _valid_grid_key(data, key) or not _integer(tactical[key], 0, 4): return false
+		var timers: Variant = deployment.get("slot_lease_timers", {})
+		var owners: Variant = deployment.get("slot_lease_owner_map", {})
+		var lease_roles: Variant = deployment.get("slot_lease_role_map", {})
+		var queue_indexes: Variant = deployment.get("slot_lease_queue_index_map", {})
+		if not timers is Dictionary or not owners is Dictionary or not lease_roles is Dictionary or not queue_indexes is Dictionary or timers.size() != owners.size() or timers.size() != lease_roles.size(): return false
+		for key: Variant in timers.keys():
+			if not _valid_grid_key(data, key) or not owners.has(key) or not lease_roles.has(key) or not _number(timers[key], 0.0, 60.0) or not _integer(owners[key], 1, 2147483647) or not _integer(lease_roles[key], 0, 1): return false
+			var parts: PackedStringArray = str(key).split(",")
+			var lease_cell := Vector2i(int(parts[0]), int(parts[1]))
+			var owner_id: int = int(owners[key])
+			var owner_key := str(owner_id)
+			if key != "%d,%d" % [lease_cell.x, lease_cell.y] or assigned.has(lease_cell) or not people.has(owner_id) or not absent_slots.has(owner_key) or not _valid_walkable_pair(data, absent_slots[owner_key]): return false
+			if lease_cell != Vector2i(int(absent_slots[owner_key][0]), int(absent_slots[owner_key][1])): return false
+			var person: Dictionary = people[owner_id]
+			if float(person.hp) <= 0.0 or bool(person.departed) or not bool(person.get("member", true)): return false
+			var lease_role: int = int(lease_roles[key])
+			if (lease_role == 0 and (not platform_set.has(lease_cell) or queue_indexes.has(key))) or (lease_role == 1 and (not queue_set.has(lease_cell) or not queue_indexes.has(key))): return false
+		for key: Variant in lease_roles.keys():
+			if not timers.has(key) or not _integer(lease_roles[key], 0, 1): return false
+		for key: Variant in queue_indexes.keys():
+			if not timers.has(key) or not _integer(queue_indexes[key], 0, team.units.size()): return false
+		if not _integer(deployment.get("available_platform_capacity", platform.size()), platform.size(), data.size.x * data.size.y) \
+			or not _integer(deployment.get("queue_capacity", queue.size()), queue.size(), data.size.x * data.size.y): return false
+	for key: Variant in absent_slots.keys():
+		if not str(key).is_valid_int() or str(int(key)) != str(key) or not people.has(int(key)) or not _valid_walkable_pair(data, absent_slots[key]): return false
+		var person: Dictionary = people[int(key)]
+		if float(person.hp) <= 0.0 or bool(person.departed) or not bool(person.get("member", true)) or deployment.member_slot_map.has(key): return false
+		var cell := Vector2i(int(absent_slots[key][0]), int(absent_slots[key][1]))
+		var in_final_set := false
+		for pair: Variant in deployment.get("platform_slots", []) + deployment.get("approach_queue_slots", []):
+			if cell == Vector2i(int(pair[0]), int(pair[1])):
+				in_final_set = true
+				break
+		if not in_final_set: return false
+		var lease_key := "%d,%d" % [cell.x, cell.y]
+		var lease_owners: Dictionary = deployment.get("slot_lease_owner_map", {})
+		if lease_owners.has(lease_key) and int(lease_owners[lease_key]) != int(key): return false
+	if movement != null:
+		if not movement is Dictionary or deployment == null or not _integer(movement.get("order_serial"), 1, 2147483647) \
+			or int(movement.order_serial) != int(deployment.order_serial) or not _valid_walkable_pair(data, movement.get("resolved_anchor")) \
+			or movement.resolved_anchor != deployment_anchor or not _integer(movement.get("phase"), 0, 5):
+			return false
+		if movement.has("platform_settled_highwater") and not _integer(movement.platform_settled_highwater, deployment.settled_platform_member_ids.size(), team.units.size()): return false
+		if movement.has("vacancy_chain_state") and not _valid_vacancy_chain_state(data, deployment, movement.vacancy_chain_state, people): return false
+		var vacated_cells: Variant = movement.get("member_recovery_vacated_cell", {})
+		if not vacated_cells is Dictionary or vacated_cells.size() > deployment.member_slot_map.size(): return false
+		for key: Variant in vacated_cells.keys():
+			if not key is String or not key.is_valid_int() or str(int(key)) != key or not deployment.member_slot_map.has(key) \
+				or int(deployment.member_role_map.get(key, -1)) != 0 or not _valid_walkable_pair(data, vacated_cells[key]):
+				return false
+			var vacated_cell := Vector2i(int(vacated_cells[key][0]), int(vacated_cells[key][1]))
+			var is_platform_slot := false
+			for pair: Array in deployment.platform_slots:
+				if vacated_cell == Vector2i(int(pair[0]), int(pair[1])):
+					is_platform_slot = true
+					break
+			if not is_platform_slot: return false
+		var path: Variant = movement.get("macro_path", [])
+		if not path is Array or path.is_empty() or path.size() > data.size.x * data.size.y or not _integer(movement.get("macro_cursor"), 0, path.size() - 1): return false
+		var previous := Vector2i(-1, -1)
+		for pair: Variant in path:
+			if not _valid_walkable_pair(data, pair): return false
+			var cell := Vector2i(int(pair[0]), int(pair[1]))
+			if previous != Vector2i(-1, -1) and not data.can_step(previous, cell): return false
+			previous = cell
+	var batches: Variant = team.get("combat_batches", [])
+	if not batches is Array or batches.size() > team.units.size(): return false
+	var retreat_members: Variant = team.get("combat_batch_retreat_members", [])
+	if not retreat_members is Array or retreat_members.size() > team.units.size(): return false
+	var retreat_member_set: Dictionary = {}
+	for value: Variant in retreat_members:
+		if not _integer(value, 1, 2147483647) or not people.has(int(value)) or retreat_member_set.has(int(value)): return false
+		retreat_member_set[int(value)] = true
+	var move_members: Variant = team.get("combat_batch_move_members", [])
+	if not move_members is Array or move_members.size() > team.units.size(): return false
+	var move_member_set: Dictionary = {}
+	for value: Variant in move_members:
+		if not _integer(value, 1, 2147483647) or not people.has(int(value)) or move_member_set.has(int(value)) or retreat_member_set.has(int(value)): return false
+		move_member_set[int(value)] = true
+	var seen_batch_members: Dictionary = {}
+	for group_index in range(batches.size()):
+		var group: Variant = batches[group_index]
+		if not group is Array or group.is_empty() or group.size() > team.units.size(): return false
+		var sources: Dictionary = {}
+		var destinations: Dictionary = {}
+		var direction := Vector2i.ZERO
+		var same_direction := true
+		var retreat_count := 0
+		var move_count := 0
+		for value: Variant in group:
+			if not _integer(value, 1, 2147483647) or not people.has(int(value)) or seen_batch_members.has(int(value)): return false
+			var unit: Dictionary = people[int(value)]
+			var source := Vector2i(int(unit.cell[0]), int(unit.cell[1]))
+			var destination := Vector2i(int(unit.destination[0]), int(unit.destination[1]))
+			var step := destination - source
+			if destination == TerrainArmy.INVALID_CELL or step not in TerrainData.DIRECTIONS or sources.has(source) or destinations.has(destination): return false
+			if direction != Vector2i.ZERO and direction != step: same_direction = false
+			direction = step
+			sources[source] = true
+			destinations[destination] = true
+			retreat_count += int(retreat_member_set.has(int(value)))
+			move_count += int(move_member_set.has(int(value)))
+			seen_batch_members[int(value)] = true
+			batch_groups[int(value)] = "%d:%d" % [int(team.team_id), group_index]
+		var empty_tails := 0
+		for destination: Vector2i in destinations.keys():
+			if not sources.has(destination): empty_tails += 1
+		# A committed reciprocal pair keeps its starting order when a new combat
+		# order arrives before the physical completion barrier.
+		if empty_tails == 0:
+			if group.size() != 2 or (move_count != 2 and retreat_count != 2): return false
+		elif not same_direction or empty_tails != 1:
+			return false
+	for mid: int in retreat_member_set:
+		if not seen_batch_members.has(mid): return false
+	for mid: int in move_member_set:
+		if not seen_batch_members.has(mid): return false
+	return true
+
+static func _valid_vacancy_chain_state(data: TerrainData, deployment: Dictionary, value: Variant, people: Dictionary) -> bool:
+	if not value is Dictionary:
+		return false
+	for field: String in ["planning_time_sec", "last_platform_progress_time_sec", "next_platform_recovery_time_sec", "started_sec", "last_progress_sec"]:
+		if not _number(value.get(field), 0.0, 1000000000.0):
+			return false
+	var now: float = float(value.planning_time_sec)
+	if float(value.started_sec) > now or float(value.last_progress_sec) > now or float(value.last_platform_progress_time_sec) > now:
+		return false
+	var active: Variant = value.get("active")
+	var queued: Variant = value.get("queued")
+	var hold: Variant = value.get("hold")
+	var verified: Variant = value.get("verified")
+	var starts: Variant = value.get("start_cells")
+	var targets: Variant = value.get("targets")
+	if not active is Array or not queued is Array or not hold is Array or not verified is Array or not starts is Dictionary or not targets is Dictionary \
+		or active.size() > people.size() or queued.size() > people.size() or hold.size() > people.size() or verified.size() > people.size() \
+		or starts.size() != active.size() or targets.size() != active.size() or not value.get("verified_pending") is bool \
+		or not _integer(value.get("arrived_count"), 0, active.size()) or not _integer(value.get("waiting"), -1, 2147483647):
+		return false
+	var assigned: Dictionary = deployment.member_slot_map
+	var roles: Dictionary = deployment.member_role_map
+	var active_ids: Dictionary = {}
+	for member: Variant in active:
+		if not _integer(member, 1, 2147483647):
+			return false
+		var id: int = int(member)
+		var key := str(id)
+		if active_ids.has(id) or id == int(value.waiting) or not people.has(id) or not assigned.has(key) or int(roles.get(key, -1)) != 0 \
+			or not starts.has(key) or not targets.has(key) or not _valid_walkable_pair(data, starts[key]) or not _valid_walkable_pair(data, targets[key]):
+			return false
+		var start := Vector2i(int(starts[key][0]), int(starts[key][1]))
+		var target := Vector2i(int(targets[key][0]), int(targets[key][1]))
+		var physical := Vector2i(int(people[id].cell[0]), int(people[id].cell[1]))
+		if target != Vector2i(int(assigned[key][0]), int(assigned[key][1])) or physical != start and physical != target or not data.can_step(start, target):
+			return false
+		active_ids[id] = true
+	for field_map: Dictionary in [starts, targets]:
+		for key: Variant in field_map:
+			if not key is String or not key.is_valid_int() or str(int(key)) != key or not active_ids.has(int(key)):
+				return false
+	var held_ids: Dictionary = {}
+	for member: Variant in hold:
+		if not _integer(member, 1, 2147483647) or held_ids.has(int(member)) or not assigned.has(str(int(member))):
+			return false
+		held_ids[int(member)] = true
+	var verified_ids: Dictionary = {}
+	for member: Variant in verified:
+		if not _integer(member, 1, 2147483647) or verified_ids.has(int(member)) or not assigned.has(str(int(member))):
+			return false
+		verified_ids[int(member)] = true
+	var waiting: int = int(value.waiting)
+	if waiting >= 0 and (not assigned.has(str(waiting)) or int(roles.get(str(waiting), -1)) != 0 or not held_ids.has(waiting)):
+		return false
+	if not queued.is_empty() and (active.size() != 1 or waiting < 0):
+		return false
+	var expected := Vector2i(-1, -1)
+	if waiting >= 0:
+		expected = Vector2i(int(assigned[str(waiting)][0]), int(assigned[str(waiting)][1]))
+	var queued_ids: Dictionary = {}
+	for i in range(queued.size() - 1, -1, -1):
+		var step: Variant = queued[i]
+		if not step is Dictionary or step.size() != 3 or not _integer(step.get("actor"), 1, 2147483647) \
+			or not _valid_walkable_pair(data, step.get("from")) or not _valid_walkable_pair(data, step.get("to")):
+			return false
+		var id: int = int(step.actor)
+		var key := str(id)
+		var source := Vector2i(int(step["from"][0]), int(step["from"][1]))
+		var target := Vector2i(int(step["to"][0]), int(step["to"][1]))
+		if queued_ids.has(id) or active_ids.has(id) or id == waiting or not people.has(id) or not assigned.has(key) \
+			or int(roles.get(key, -1)) != 0 or source != Vector2i(int(assigned[key][0]), int(assigned[key][1])) \
+			or source != Vector2i(int(people[id].cell[0]), int(people[id].cell[1])) or target != expected or not data.can_step(source, target):
+			return false
+		queued_ids[id] = true
+		expected = source
+	if not queued.is_empty() and Vector2i(int(starts[str(int(active[0]))][0]), int(starts[str(int(active[0]))][1])) != Vector2i(int(assigned[str(waiting)][0]), int(assigned[str(waiting)][1])):
+		return false
+	if waiting < 0 and (not queued.is_empty() or not active.is_empty()):
+		return false
+	return true
+
+static func _valid_xy_pair(data: TerrainData, value: Variant) -> bool:
+	return value is Array and value.size() == 2 and _integer(value[0], -1, data.size.x - 1) and _integer(value[1], -1, data.size.y - 1)
+
+static func _valid_walkable_pair(data: TerrainData, value: Variant) -> bool:
+	return _valid_xy_pair(data, value) and data.contains(Vector2i(int(value[0]), int(value[1]))) and data.is_walkable(Vector2i(int(value[0]), int(value[1])))
+
+static func _valid_grid_key(data: TerrainData, key: Variant) -> bool:
+	if not key is String: return false
+	var parts: PackedStringArray = key.split(",")
+	if parts.size() != 2 or not parts[0].is_valid_int() or not parts[1].is_valid_int(): return false
+	return _valid_walkable_pair(data, [int(parts[0]), int(parts[1])])
 
 static func _validate_vehicles(data: TerrainData, state: Dictionary, check_terrain: bool = false) -> Dictionary:
 	var vehicles: Variant = state.get("vehicles", {})

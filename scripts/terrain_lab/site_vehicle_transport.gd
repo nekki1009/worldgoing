@@ -351,7 +351,7 @@ func complete_step(team: TerrainArmy, index: int) -> void:
 func _unconscious_rider(vehicle: Dictionary) -> bool:
 	if str(vehicle.kind) != "wagon": return false
 	var person := _operator(int(vehicle.operator_id))
-	return not person.is_empty() and person.cell == operator_cell(vehicle) and float(person.row.hp) > 0.0 and (float(person.row.ko) > 0.0 or str(person.row.pose) == "get_up") and not bool(person.row.captive) and not bool(person.row.departed) and person.owner.is_member(int(person.unit))
+	return not person.is_empty() and person.cell == operator_cell(vehicle) and float(person.owner.combat_hot_get(int(person.unit), &"hp")) > 0.0 and (float(person.owner.combat_hot_get(int(person.unit), &"ko")) > 0.0 or str(person.owner.combat_hot_get(int(person.unit), &"pose")) == "get_up") and not bool(person.owner.combat_hot_get(int(person.unit), &"captive")) and not bool(person.owner.combat_hot_get(int(person.unit), &"departed")) and person.owner.is_member(int(person.unit))
 
 func occupies_own_horse(identity: int, cell: Vector2i) -> bool:
 	var vehicle := _operated(identity)
@@ -405,7 +405,7 @@ func transfer(source_id: String, destination_id: String, resources: Dictionary, 
 	var ready: bool = not person.is_empty() and controller._delivery_person_ready(person)
 	if not operated.is_empty() and str(operated.id) in [source_id, destination_id]:
 		var original := _operator(requester_id)
-		ready = _available(original) and operated.move.is_empty() and not bool(person.moving) and str(person.body.pose) == "idle" and not bool(person.body.attack) and float(person.body.get("exchange_stagger", 0.0)) <= 0.0
+		ready = _available(original) and operated.move.is_empty() and not bool(person.moving) and str(person.owner.combat_hot_get(int(person.unit), &"pose")) == "idle" and not bool(person.owner.combat_hot_get(int(person.unit), &"attack")) and float(person.owner.combat_hot_get(int(person.unit), &"exchange_stagger", 0.0)) <= 0.0
 	if not ready: return Runtime.fail("BUSY", "本人須清醒停止且無其他職務，才可裝卸")
 	var source := _stock(source_id)
 	var destination := _stock(destination_id)

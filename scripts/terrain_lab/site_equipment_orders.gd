@@ -13,6 +13,8 @@ var actions: Variant:
 	get: return _actions_ref.get_ref() if _actions_ref != null else null
 	set(value): _actions_ref = weakref(value) if value != null else null
 var equipment_apply_guard: Callable # (original person_id, final slot->item ID map), pure.
+var equipment_team_apply_guard: Callable # (person_id, final slots) -> result with full appearance; pure.
+var equipment_team_external_duty_guard: Callable # (person_id) -> bool; original work/delivery/vehicle owners.
 var equipment_dye_guard: Callable # (person_id, requested dye changes), pure.
 
 func init(owner: Variant, person_actions: RefCounted) -> void:
@@ -76,6 +78,8 @@ func set_standard(requester_id: int, nation_id: String, standard_id: String, dis
 	return Runtime.ok("已更新未來領裝需求；現役實装未變")
 
 func dye_person(requester_id: int, identity: int, changes: Dictionary) -> Dictionary:
+	if actions.is_busy(identity) or actions.is_busy(requester_id):
+		return Runtime.fail("BUSY", "先完成或取消原人物換裝／作業")
 	var person: Dictionary = actions._person(identity)
 	var ready := _ready(person)
 	if not ready.ok:
@@ -140,6 +144,9 @@ static func _equipped_dyes(person: Dictionary, colors: Dictionary) -> Dictionary
 
 func begin_issue(identity: int, nation_id: String, standard_id: String) -> Dictionary:
 	return actions.begin_equipment(identity, {"mode": "issue", "nation_id": nation_id, "standard_id": standard_id})
+
+func begin_team_issue(team: TerrainArmy, requester_id: int, representative_id: int, nation_id: String, standard_id: String, include_player: bool = false, selected_ids: Array[int] = [], simulate_npc_commander: bool = false) -> Dictionary:
+	return actions.begin_team_equipment(team, requester_id, representative_id, nation_id, standard_id, include_player, selected_ids, simulate_npc_commander)
 
 func begin_personal(identity: int, slot: String, item_id: String) -> Dictionary:
 	return actions.begin_equipment(identity, {"mode": "personal", "slot": slot, "item_id": item_id})
@@ -275,6 +282,298 @@ func prepare(identity: int, request: Dictionary) -> Dictionary:
 	if str(checked.get("code", "")) == "ATLAS_REQUIRED":
 		checked.order = order # Same validated request; no new selection after preparation.
 	return Runtime.ok("可執行原人物換裝", {"order": order}) if checked.ok else checked
+
+func prepare_team_issue(team: TerrainArmy, requester_id: int, representative_id: int, nation_id: String, standard_id: String, include_player: bool = false, selected_ids: Array[int] = [], simulate_npc_commander: bool = false) -> Dictionary:
+	if simulate_npc_commander and not nation_id.begins_with("trial_team_"):
+		return Runtime.fail("NO_AUTHORITY", "NPC 指揮模擬僅限明示的測試國別")
+	var context := _team_issue_context(team, requester_id, representative_id, include_player, selected_ids, {}, simulate_npc_commander)
+	if not context.ok: return context
+	var target_ids: Array[int] = context.target_ids
+	var standard := _standard(target_ids[0], nation_id, standard_id)
+	if standard.is_empty(): return Runtime.fail("NO_AUTHORITY", "目標未全數屬於本國，或該國沒有正式標準")
+	var nation: Dictionary = lab.terrain.site.equipment_nations[nation_id]
+	var culture := str(nation.get("culture", ""))
+	if not _slots_match_culture(standard.slots, lab.terrain.site.item_definitions, culture):
+		return Runtime.fail("CULTURE_REQUIRED" if culture.is_empty() else "CULTURE_MISMATCH", "先由原軍事首長設定本國裝備文化")
+	var depot: Dictionary = lab.terrain.site.depot_items
+	if not Runtime._item_holder_shape(depot) or str(depot.holder) != "depot":
+		return Runtime.fail("INVALID", "原補給點持物資料不合法")
+	var representative: Dictionary = actions._person(representative_id)
+	var requester: Dictionary = actions._person(requester_id)
+	var order := {"mode": "team_issue", "terrain": lab.terrain, "site_state": lab.terrain.site,
+		"team": team, "team_id": int(team.team_id), "requester_id": requester_id,
+		"controlled_id": int(lab.controlled_person_id()),
+		"requester_owner": requester.owner, "requester_body": requester.body,
+		"requester_cell": lab.terrain.index(requester.cell), "requester_hit": int(requester.hit),
+		"representative_id": representative_id, "include_player": include_player,
+		"simulate_npc_commander": simulate_npc_commander,
+		"representative_owner": representative.owner, "representative_body": representative.body,
+		"representative_holder": representative.holder, "representative_cargo": representative.cargo,
+		"representative_cell": lab.terrain.index(representative.cell), "representative_hit": int(representative.hit),
+		"representative_version": int(representative.holder.version),
+		"roster_ids": context.roster_ids, "target_ids": target_ids.duplicate(),
+		"nation_id": nation_id, "nation_ref": nation, "standard_id": standard_id,
+		"standard_ref": standard, "standard_revision": int(standard.revision),
+		"standard_slots": standard.slots.duplicate(true), "culture": culture,
+		"depot_holder": depot, "depot_stock": lab.terrain.site.inventory,
+		"depot_stock_before": lab.terrain.site.inventory.duplicate(true),
+		"records_owner": lab.terrain.site.item_records, "definitions_owner": lab.terrain.site.item_definitions,
+		"depot_version": int(depot.version), "depot_ids": depot.item_ids.duplicate(),
+		"entries": [], "take": [], "return": [], "records": {}}
+	var assigned := {}
+	var missing: Array[Dictionary] = []
+	for identity: int in target_ids:
+		var person: Dictionary = actions._person(identity)
+		var before: Dictionary = person.holder.equipped.duplicate()
+		var entry := {"person_id": identity, "owner": person.owner, "body": person.body,
+			"holder": person.holder, "cargo": person.cargo, "holder_version": int(person.holder.version),
+			"holder_ids": person.holder.item_ids.duplicate(), "cargo_before": person.cargo.duplicate(true),
+			"cell": lab.terrain.index(person.cell), "hit": int(person.hit),
+			"before": before, "planned": before.duplicate(), "take": [], "return": []}
+		order.entries.append(entry)
+		for slot: String in standard.slots:
+			var requirement: Dictionary = standard.slots[slot]
+			var candidates: Array = [str(requirement.definition)] + requirement.alternatives
+			var current := str(before.get(slot, ""))
+			var current_definition := _held_definition(current, str(person.holder.holder)) if not current.is_empty() else {}
+			if not current_definition.is_empty() and str(current_definition.slot) == slot and candidates.has(str(lab.terrain.site.item_records[current].definition)):
+				if assigned.has(current): return Runtime.fail("INVALID", "同一原物品被兩人重複穿戴")
+				assigned[current] = true
+			else:
+				missing.append({"entry": entry, "slot": slot, "candidates": candidates})
+	# Reserve all already compliant real equipment before assigning any depot item.
+	var shortages: Array[String] = []
+	for needed: Dictionary in missing:
+		var chosen := ""
+		for definition_id: String in needed.candidates:
+			for item_id: String in depot.item_ids:
+				if assigned.has(item_id): continue
+				var definition := _held_definition(item_id, "depot")
+				if not definition.is_empty() and str(lab.terrain.site.item_records[item_id].definition) == definition_id:
+					chosen = item_id
+					break
+			if not chosen.is_empty(): break
+		if chosen.is_empty():
+			shortages.append("#%d %s" % [int(needed.entry.person_id), str(needed.slot)])
+			continue
+		assigned[chosen] = true
+		needed.entry.planned[needed.slot] = chosen
+		needed.entry.take.append(chosen)
+		order.take.append(chosen)
+		if needed.entry.before.has(needed.slot):
+			var old_id := str(needed.entry.before[needed.slot])
+			needed.entry["return"].append(old_id)
+			order["return"].append(old_id)
+	if not shortages.is_empty():
+		var missing_result := Runtime.fail("MATERIALS", "缺少原實物：%s；全隊原裝保留" % ", ".join(shortages))
+		missing_result.missing = shortages
+		return missing_result
+	var changed_ids: Array[int] = []
+	for entry: Dictionary in order.entries:
+		if entry.planned != entry.before: changed_ids.append(int(entry.person_id))
+	if changed_ids.is_empty(): return Runtime.fail("NO_CHANGE", "全隊原實裝已符合本次標準")
+	for entry: Dictionary in order.entries:
+		for item_id: String in entry.before.values() + entry.planned.values():
+			order.records[item_id] = lab.terrain.site.item_records.get(item_id, {}).duplicate(true)
+	var checked := check_team_issue(order)
+	if not checked.ok and str(checked.get("code", "")) != "ATLAS_REQUIRED": return checked
+	checked.order = order
+	checked.target_ids = target_ids.duplicate()
+	checked.changed_ids = changed_ids
+	checked.take_count = order.take.size()
+	checked.return_count = order["return"].size()
+	return checked
+
+func _team_issue_context(team: TerrainArmy, requester_id: int, representative_id: int, include_player: bool, selected_ids: Array[int], order: Dictionary = {}, simulate_npc_commander: bool = false) -> Dictionary:
+	if not is_instance_valid(lab) or team == null or not is_instance_valid(team) or not lab.combat_armies.has(team) or not team.combat_enabled or not is_same(team.data, lab.terrain):
+		return Runtime.fail("NO_TARGET", "原隊伍或 Site 已失效")
+	if bool(lab.terrain.site.get("paused", false)) or lab is Node and lab.is_inside_tree() and lab.get_tree().paused or float(lab.terrain.site.get("combat_left", 0.0)) > 0.0:
+		return Runtime.fail("BUSY", "暫停或交戰中不能整隊領裝")
+	if team.combat_order != TerrainArmy.CombatOrder.HOLD or team.moving_member_count() > 0 or lab is TerrainLab and is_instance_valid(lab.site_controller) and not lab.site_controller._team_stopped(team):
+		return Runtime.fail("BUSY", "原隊伍須 HOLD 並全員停止")
+	var requester_index := team.index_for_identity(requester_id)
+	var npc_trial: bool = simulate_npc_commander and requester_id != lab.controlled_person_id() and not actions._person(requester_id, false).is_empty()
+	if (requester_id != lab.controlled_person_id() and not npc_trial) or requester_index != team.current_commander or not team.command_eligible(requester_index):
+		return Runtime.fail("NO_AUTHORITY", "只有目前受控的原隊合格指揮者可下整隊領裝令")
+	var representative_index := team.index_for_identity(representative_id)
+	var representative: Dictionary = actions._person(representative_id)
+	if not team.is_member(representative_index) or representative.is_empty() or not _team_person_present(team, representative_index, representative) or not _ready(representative).ok or not _at_depot(representative):
+		return Runtime.fail("UNREACHABLE", "領裝代表須是原隊可行動成員，停止於營地相鄰可達格")
+	if not equipment_team_external_duty_guard.is_valid() or not equipment_team_apply_guard.is_valid():
+		return Runtime.fail("UNSUPPORTED", "整隊外部職務／實裝預檢尚未接入")
+	var requester: Dictionary = actions._person(requester_id)
+	if requester.is_empty() or not _ready(requester).ok or equipment_team_external_duty_guard.call(requester_id) or actions.equipment_conflict(requester_id, order):
+		return Runtime.fail("BUSY", "原指揮者須清醒自由、停止且無其他作業")
+	var roster_ids: Array[int] = []
+	for index: int in team.command_members(): roster_ids.append(team.combat_identity(index))
+	if not order.is_empty() and (roster_ids != order.roster_ids or int(team.team_id) != int(order.team_id)):
+		return Runtime.fail("STALE_SOURCE", "原隊名冊或隊伍已改變")
+	var target_ids: Array[int] = []
+	if selected_ids.is_empty():
+		for index: int in team.command_members():
+			var identity := team.combat_identity(index)
+			if identity != lab.controlled_person_id() or include_player:
+				target_ids.append(identity)
+	else:
+		target_ids = selected_ids.duplicate()
+	if target_ids.is_empty(): return Runtime.fail("NO_TARGET", "請選原隊伍成員")
+	var seen := {}
+	for identity: int in target_ids:
+		var index := team.index_for_identity(identity)
+		if seen.has(identity) or not roster_ids.has(identity) or not team.is_member(index) or team.member_gone(index) or identity == lab.controlled_person_id() and not include_player:
+			return Runtime.fail("INVALID_MEMBER", "重複、已離隊或未明確納入的原人物")
+		seen[identity] = true
+		var person: Dictionary = actions._person(identity)
+		if person.is_empty() or int(person.faction) != team.faction_id or not is_same(person.owner.data, lab.terrain) or not _team_person_present(team, index, person) or not _ready(person).ok:
+			return Runtime.fail("BUSY", "#%d 不在原指揮在場範圍，或已移動、失能、受擊、工作" % identity)
+		if equipment_team_external_duty_guard.call(identity) or actions.equipment_conflict(identity, order):
+			return Runtime.fail("BUSY", "#%d 已有採集、交糧、車輛或其他人物作業" % identity)
+	if equipment_team_external_duty_guard.call(representative_id) or actions.equipment_conflict(representative_id, order):
+		return Runtime.fail("BUSY", "領裝代表已有其他原人物作業")
+	return Runtime.ok("原隊伍與代表有效", {"target_ids": target_ids, "roster_ids": roster_ids})
+
+func _team_person_present(team: TerrainArmy, index: int, person: Dictionary) -> bool:
+	return team.command_reference_valid and team.command_eligible(index) and team.command_reference.distance_to(Vector2(person.cell)) <= team.command_radius + 2.0
+
+func check_team_issue(order: Dictionary) -> Dictionary:
+	if str(order.get("mode", "")) != "team_issue" or not is_instance_valid(lab) or not is_same(lab.terrain, order.get("terrain")) or not is_same(lab.terrain.site, order.get("site_state")):
+		return Runtime.fail("STALE_SOURCE", "原 Site 已離開；整隊原裝未改")
+	if bool(order.get("simulate_npc_commander", false)) and not str(order.get("nation_id", "")).begins_with("trial_team_"):
+		return Runtime.fail("NO_AUTHORITY", "NPC 指揮模擬僅限明示的測試國別")
+	if actions.has_active_issue(order): return Runtime.fail("BUSY", "同一營地已有另一份未完成領裝作業")
+	if int(order.get("controlled_id", -1)) != int(lab.controlled_person_id()):
+		return Runtime.fail("STALE_SOURCE", "控制人物已切換；整隊原裝保留")
+	var team: TerrainArmy = order.team
+	var context := _team_issue_context(team, int(order.requester_id), int(order.representative_id), bool(order.include_player), order.target_ids, order, bool(order.get("simulate_npc_commander", false)))
+	if not context.ok: return context
+	if context.target_ids.size() != order.entries.size() or context.target_ids != order.target_ids:
+		return Runtime.fail("STALE_SOURCE", "整隊原目標已變更")
+	var requester: Dictionary = actions._person(int(order.requester_id))
+	if not is_same(requester.owner, order.requester_owner) or not is_same(requester.body, order.requester_body) or lab.terrain.index(requester.cell) != int(order.requester_cell) or int(requester.hit) != int(order.requester_hit):
+		return Runtime.fail("INTERRUPTED", "原指揮者受擊、移動或已替換")
+	var representative: Dictionary = actions._person(int(order.representative_id))
+	if not is_same(representative.owner, order.representative_owner) or not is_same(representative.body, order.representative_body) or not is_same(representative.holder, order.representative_holder) or not is_same(representative.cargo, order.representative_cargo) or lab.terrain.index(representative.cell) != int(order.representative_cell) or int(representative.hit) != int(order.representative_hit) or int(representative.holder.version) != int(order.representative_version):
+		return Runtime.fail("STALE_SOURCE", "原領裝代表已改變")
+	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(str(order.nation_id), {})
+	var standard: Dictionary = _standard(int(order.target_ids[0]), str(order.nation_id), str(order.standard_id))
+	if nation.is_empty() or not is_same(nation, order.nation_ref) or standard.is_empty() or not is_same(standard, order.standard_ref) or int(standard.revision) != int(order.standard_revision) or standard.slots != order.standard_slots or str(nation.get("culture", "")) != str(order.culture):
+		return Runtime.fail("STALE_SOURCE", "原國別或標準已變更；請重新預覽")
+	if not _slots_match_culture(standard.slots, lab.terrain.site.item_definitions, str(order.culture)):
+		return Runtime.fail("CULTURE_MISMATCH", "原國別文化與標準不符")
+	var depot: Dictionary = lab.terrain.site.depot_items
+	if not Runtime._item_holder_shape(depot) or str(depot.holder) != "depot":
+		return Runtime.fail("INVALID", "原補給點持物資料不合法")
+	if not is_same(depot, order.depot_holder) or not is_same(lab.terrain.site.inventory, order.depot_stock) or lab.terrain.site.inventory != order.depot_stock_before or not is_same(lab.terrain.site.item_records, order.records_owner) or not is_same(lab.terrain.site.item_definitions, order.definitions_owner) or int(depot.version) != int(order.depot_version) or depot.item_ids != order.depot_ids or int(depot.version) >= 2147483646:
+		return Runtime.fail("STALE_SOURCE", "原補給點持物或版本已變更")
+	if not actions.equipment_changed.is_valid(): return Runtime.fail("UNSUPPORTED", "原裝備呈現刷新尚未接入")
+	var all_take: Array = []
+	var all_return: Array = []
+	var seen_equipped := {}
+	var proposed := {}
+	var recipes := {}
+	var missing_recipes := {}
+	var appearances: Array[Dictionary] = []
+	for entry: Dictionary in order.entries:
+		var identity := int(entry.person_id)
+		if not context.target_ids.has(identity) or _standard(identity, str(order.nation_id), str(order.standard_id)).is_empty():
+			return Runtime.fail("NO_AUTHORITY", "原人物國籍或名冊已變更")
+		var person: Dictionary = actions._person(identity)
+		if person.is_empty() or not is_same(person.owner, entry.owner) or not is_same(person.body, entry.body) or not is_same(person.holder, entry.holder) or not is_same(person.cargo, entry.cargo) or lab.terrain.index(person.cell) != int(entry.cell) or int(person.hit) != int(entry.hit):
+			return Runtime.fail("INTERRUPTED", "#%d 原人物受擊、移動或持物已替換" % identity)
+		if int(person.holder.version) != int(entry.holder_version) or person.holder.item_ids != entry.holder_ids or person.holder.equipped != entry.before or person.cargo != entry.cargo_before or int(person.holder.version) >= 2147483646:
+			return Runtime.fail("STALE_SOURCE", "#%d 原人物持物或貨物已變更" % identity)
+		for slot: String in standard.slots:
+			var chosen := str(entry.planned.get(slot, ""))
+			var record: Dictionary = lab.terrain.site.item_records.get(chosen, {})
+			var requirements: Dictionary = standard.slots[slot]
+			if chosen.is_empty() or str(record.get("definition", "")) not in [str(requirements.definition)] + requirements.alternatives:
+				return Runtime.fail("INVALID", "#%d 的標準槽位無合法原實物" % identity)
+		for slot: String in entry.planned:
+			var item_id := str(entry.planned[slot])
+			var owner_key := "depot" if entry.take.has(item_id) else str(person.holder.holder)
+			var definition := _held_definition(item_id, owner_key)
+			if seen_equipped.has(item_id) or definition.is_empty() or str(definition.slot) != slot:
+				return Runtime.fail("INVALID", "全隊同件重號或同槽位原物品失效")
+			if standard.slots.has(slot):
+				var actual_culture := definition_culture(definition)
+				if not actual_culture.is_empty() and actual_culture != str(order.culture):
+					return Runtime.fail("CULTURE_MISMATCH", "#%d 實物文化與國別不同" % identity)
+			elif entry.before.get(slot) != item_id:
+				return Runtime.fail("INVALID", "非標準槽位不得在領裝時更改")
+			if entry.before.get(slot) != item_id and not entry.take.has(item_id):
+				return Runtime.fail("INVALID", "新裝未列入原庫存分配")
+			seen_equipped[item_id] = true
+		for slot: String in entry.before:
+			if entry.before[slot] != entry.planned.get(slot, "") and not entry["return"].has(str(entry.before[slot])):
+				return Runtime.fail("INVALID", "舊裝未列入原退庫分配")
+		for item_id: String in entry.take:
+			if all_take.has(item_id) or not depot.item_ids.has(item_id) or _held_definition(item_id, "depot").is_empty():
+				return Runtime.fail("MATERIALS", "原庫存實物已失效或重複領取")
+			all_take.append(item_id)
+		for item_id: String in entry["return"]:
+			if all_return.has(item_id) or not person.holder.item_ids.has(item_id) or _held_definition(item_id, str(person.holder.holder)).is_empty():
+				return Runtime.fail("STALE_SOURCE", "原退庫實物已失效或重複")
+			all_return.append(item_id)
+		var held_count: int = person.holder.item_ids.size() - entry["return"].size() + entry.take.size()
+		if Runtime.inventory_size(person.cargo) + held_count - entry.planned.size() + Runtime.opened_food(lab.terrain.site, person.holder) > Runtime.CARRY_CAPACITY:
+			return Runtime.fail("STORAGE_FULL", "#%d 換裝後行囊超過容量" % identity)
+		var cape_guard := cape_wear_guard(identity, entry.planned)
+		if not cape_guard.ok: return cape_guard
+		if entry.planned != entry.before:
+			var admission: Dictionary = equipment_team_apply_guard.call(identity, entry.planned)
+			if not admission.ok and str(admission.get("code", "")) != "ATLAS_REQUIRED": return admission
+			var appearance: Dictionary = admission.get("appearance", {})
+			if appearance.is_empty(): return Runtime.fail("UNSUPPORTED", "整隊預檢未提供完整原人物外觀")
+			proposed[identity] = appearance
+			var recipe_key := TerrainArmy.EquipmentAtlas._mixed_key(appearance)
+			if recipe_key.is_empty(): return Runtime.fail("UNSUPPORTED", "整隊原人物幾何配方不可用")
+			recipes[recipe_key] = true
+			if str(admission.get("code", "")) == "ATLAS_REQUIRED":
+				var plan := TerrainArmy.EquipmentAtlas.mixed_plan(appearance)
+				if plan.is_empty(): return Runtime.fail("UNSUPPORTED", "整隊完整圖集配方不可用")
+				if not missing_recipes.has(str(plan.key)):
+					missing_recipes[str(plan.key)] = true
+					appearances.append(appearance)
+	if all_take != order.take or all_return != order["return"]:
+		return Runtime.fail("INVALID", "整隊原物品分配已改變")
+	for item_id: String in order.records:
+		if lab.terrain.site.item_records.get(item_id, {}) != order.records[item_id]:
+			return Runtime.fail("STALE_SOURCE", "原實物定義、染色或持有人已變更")
+	var after_size: int = Runtime.carried_size(lab.terrain.site.inventory, depot) + all_return.size() - all_take.size()
+	if after_size > int(lab.terrain.site.capacity):
+		return Runtime.fail("STORAGE_FULL", "原補給點無法容納整批退裝")
+	var troop_guard := team.team_troop_equipment_guard(proposed)
+	if not troop_guard.ok: return troop_guard
+	if not appearances.is_empty():
+		var pending := Runtime.fail("ATLAS_REQUIRED", "整隊須先準備共用圖集")
+		pending.merge({"appearances": appearances, "recipe_count": recipes.size()})
+		return pending
+	return Runtime.ok("整隊全部原實物與最終兵種可提交", {"appearances": [], "recipe_count": recipes.size()})
+
+func commit_team_issue(order: Dictionary) -> Dictionary:
+	var checked := check_team_issue(order)
+	if not checked.ok: return checked
+	var depot: Dictionary = lab.terrain.site.depot_items
+	var changed_ids: Array[int] = []
+	# All fallible checks precede this synchronous exchange. No callback can read a half-equipped team.
+	for entry: Dictionary in order.entries:
+		if entry.planned == entry.before: continue
+		var holder: Dictionary = entry.holder
+		for item_id: String in entry["return"]:
+			holder.item_ids.erase(item_id)
+			depot.item_ids.append(item_id)
+			lab.terrain.site.item_records[item_id].holder = "depot"
+		for item_id: String in entry.take:
+			depot.item_ids.erase(item_id)
+			holder.item_ids.append(item_id)
+			lab.terrain.site.item_records[item_id].holder = str(holder.holder)
+		holder.equipped.clear()
+		holder.equipped.merge(entry.planned)
+		holder.version = int(holder.version) + 1
+		changed_ids.append(int(entry.person_id))
+	depot.version = int(depot.version) + 1
+	for identity: int in changed_ids: actions.equipment_changed.call(identity)
+	return Runtime.ok("整隊原實物已一次換裝；未生成物品", {"target_ids": order.target_ids.duplicate(), "changed_ids": changed_ids})
 
 func check(order: Dictionary) -> Dictionary:
 	var person: Dictionary = actions._person(int(order.person_id))

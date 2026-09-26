@@ -32,7 +32,12 @@ static func _ok(values: Dictionary = {}) -> Dictionary:
 	result.merge(values)
 	return result
 
-static func validate(state: Dictionary, members: Dictionary) -> bool:
+static func _member_value(members: Dictionary, id: int, field: StringName, hot_read: Callable = Callable(), pending_hp: Dictionary = {}) -> Variant:
+	if field == &"hp" and pending_hp.has(id):
+		return pending_hp[id]
+	return hot_read.call(id, field) if hot_read.is_valid() else members[id].get(field)
+
+static func validate(state: Dictionary, members: Dictionary, hot_read: Callable = Callable(), pending_hp: Dictionary = {}) -> bool:
 	if state.get("version") != 1 or not _number(state.get("at"), 0) or not _number(state.get("open_rations"), 0, 1000000.0):
 		return false
 	# Actual transfers can combine opened meals (0.75 + 0.75 = 1.5). They stay
@@ -55,7 +60,7 @@ static func validate(state: Dictionary, members: Dictionary) -> bool:
 		for id: Variant in cohort.ids:
 			if not _integer(id, 1) or seen.has(int(id)) or not members.has(int(id)) or not members[int(id)] is Dictionary:
 				return false
-			if not _number(members[int(id)].get("hp"), 0):
+			if not _number(_member_value(members, int(id), &"hp", hot_read, pending_hp), 0):
 				return false
 			seen[int(id)] = true
 	return true
@@ -82,10 +87,10 @@ static func _ids(state: Dictionary) -> Array[int]:
 			result.append(int(id))
 	return result
 
-static func _living(ids: Array, members: Dictionary) -> int:
+static func _living(ids: Array, members: Dictionary, hot_read: Callable = Callable(), pending_hp: Dictionary = {}) -> int:
 	var count := 0
 	for id: Variant in ids:
-		if float(members[int(id)].hp) > 0.0:
+		if float(_member_value(members, int(id), &"hp", hot_read, pending_hp)) > 0.0:
 			count += 1
 	return count
 
@@ -173,10 +178,10 @@ static func _eat(state: Dictionary, inventory: Dictionary, demand: float) -> flo
 		remaining -= used
 	return consumed
 
-static func resupply(state: Dictionary, members: Dictionary, inventory: Dictionary, due_only: bool = false) -> Dictionary:
+static func resupply(state: Dictionary, members: Dictionary, inventory: Dictionary, due_only: bool = false, hot_read: Callable = Callable(), pending_hp: Dictionary = {}) -> Dictionary:
 	# Explicit supply event: fill only missing coverage for the remaining period.
 	# No reward until that fully supplied period actually finishes.
-	if not validate(state, members) or not _valid_stock(inventory):
+	if not validate(state, members, hot_read, pending_hp) or not _valid_stock(inventory):
 		return _fail("Invalid feeding state or designated food inventory")
 	var due: Array[Dictionary] = []
 	var demand := 0.0
@@ -188,7 +193,7 @@ static func resupply(state: Dictionary, members: Dictionary, inventory: Dictiona
 		elif not due_only:
 			due.append(cohort)
 	for cohort: Dictionary in due:
-		demand += _living(cohort.ids, members) * (float(cohort.meal_until) - float(state.at)) / DAY * (1.0 - float(cohort.coverage))
+		demand += _living(cohort.ids, members, hot_read, pending_hp) * (float(cohort.meal_until) - float(state.at)) / DAY * (1.0 - float(cohort.coverage))
 	var eaten := _eat(state, inventory, demand)
 	var share := minf(1.0, eaten / demand) if demand > 0.0 else 0.0
 	for cohort: Dictionary in due:
@@ -202,13 +207,15 @@ static func resupply(state: Dictionary, members: Dictionary, inventory: Dictiona
 static func advance_to(state: Dictionary, members: Dictionary, inventory: Dictionary, at_seconds: float, context: Dictionary = {}) -> Dictionary:
 	# Absolute Site time, never wall time. Pause passes paused=true without moving
 	# the clock; the caller must not later pass wall-clock catch-up time.
-	if not validate(state, members) or not _valid_stock(inventory) or not _number(at_seconds, float(state.at)):
+	var hot_read: Callable = context.get("hot_read", Callable())
+	var pending_hp: Dictionary = context.get("pending_hp", {})
+	if not validate(state, members, hot_read, pending_hp) or not _valid_stock(inventory) or not _number(at_seconds, float(state.at)):
 		return _fail("Invalid state, stock or backward Site timestamp")
 	var result := _ok({"consumed_rations": 0.0, "damage": {}, "routed_now": false, "regrouped": false})
 	if bool(context.get("paused", false)) or at_seconds == float(state.at):
 		return result
 	while float(state.at) < at_seconds:
-		var meal := resupply(state, members, inventory, true)
+		var meal := resupply(state, members, inventory, true, hot_read, pending_hp)
 		result.consumed_rations += float(meal.consumed_rations)
 		var end := at_seconds
 		for cohort: Dictionary in state.cohorts:
@@ -216,16 +223,16 @@ static func advance_to(state: Dictionary, members: Dictionary, inventory: Dictio
 			var deficit := 1.0 - float(cohort.coverage)
 			if deficit > 0.0:
 				for id: Variant in cohort.ids:
-					var hp := float(members[int(id)].hp)
+					var hp := float(_member_value(members, int(id), &"hp", hot_read, pending_hp))
 					if hp > 0.0:
 						end = minf(end, float(state.at) + (maxf(0.0, 48.0 - float(cohort.hunger)) + hp) / deficit * HOUR)
 		var seconds := end - float(state.at)
 		var hours := seconds / HOUR
-		var living := _living(_ids(state), members)
+		var living := _living(_ids(state), members, hot_read, pending_hp)
 		var shortage := 0.0
 		var fully_fed := living > 0
 		for cohort: Dictionary in state.cohorts:
-			var count := _living(cohort.ids, members)
+			var count := _living(cohort.ids, members, hot_read, pending_hp)
 			var deficit := 1.0 - float(cohort.coverage)
 			shortage += count * deficit
 			if count > 0 and deficit > 0.0:
@@ -237,10 +244,15 @@ static func advance_to(state: Dictionary, members: Dictionary, inventory: Dictio
 				if damage > 0.0:
 					for id: Variant in cohort.ids:
 						var body: Dictionary = members[int(id)]
-						var applied := minf(float(body.hp), damage)
-						body.hp = float(body.hp) - applied
-						if float(body.hp) < EPS:
-							body.hp = 0.0
+						var hp := float(_member_value(members, int(id), &"hp", hot_read, pending_hp))
+						var applied := minf(hp, damage)
+						var remaining := hp - applied
+						if remaining < EPS:
+							remaining = 0.0
+						if hot_read.is_valid():
+							pending_hp[int(id)] = remaining
+						else:
+							body.hp = remaining
 						if applied > 0.0:
 							result.damage[int(id)] = float(result.damage.get(int(id), 0.0)) + applied
 			else:
@@ -258,7 +270,7 @@ static func advance_to(state: Dictionary, members: Dictionary, inventory: Dictio
 		state.at = end
 		for cohort: Dictionary in state.cohorts:
 			if float(cohort.meal_until) == end and bool(cohort.bonus_pending):
-				state.morale = minf(100.0, float(state.morale) + (2.0 * _living(cohort.ids, members) / living if living > 0 else 0.0))
+				state.morale = minf(100.0, float(state.morale) + (2.0 * _living(cohort.ids, members, hot_read, pending_hp) / living if living > 0 else 0.0))
 				cohort.bonus_paid = true
 				cohort.bonus_pending = false
 		if float(state.morale) <= 20.0 and not bool(state.routed):
@@ -297,15 +309,17 @@ static func train(training: float, members: Dictionary, eligible_ids: Array, ela
 	if not _integer(context.get("controlled_person_id", 0), 0):
 		return _fail("Invalid controlled person identity")
 	var result := _ok({"training": training, "effort_seconds": {}, "handled_ids": []})
+	var hot_read: Callable = context.get("hot_read", Callable())
+	var pending_hp: Dictionary = context.get("pending_hp", {})
 	var seen := {}
 	var free_living := 0
 	for id: Variant in members:
 		if not _integer(id, 1) or not members[id] is Dictionary:
 			return _fail("Training roster must contain original person dictionaries")
 		var body: Dictionary = members[id]
-		if not _number(body.get("hp"), 0) or not _number(body.get("ko", 0), 0) or not body.get("captive", false) is bool or not body.get("present", false) is bool:
+		if not _number(_member_value(members, int(id), &"hp", hot_read, pending_hp), 0) or not _number(_member_value(members, int(id), &"ko", hot_read), 0) or not _member_value(members, int(id), &"captive", hot_read) is bool or not _member_value(members, int(id), &"present", hot_read) is bool:
 			return _fail("Training requires original valid HP")
-		if float(body.hp) > 0.0 and not bool(body.get("captive", false)):
+		if float(_member_value(members, int(id), &"hp", hot_read, pending_hp)) > 0.0 and not bool(_member_value(members, int(id), &"captive", hot_read)):
 			free_living += 1
 	for id: Variant in eligible_ids:
 		if not _integer(id, 1) or seen.has(int(id)) or not members.has(int(id)):
@@ -323,7 +337,7 @@ static func train(training: float, members: Dictionary, eligible_ids: Array, ela
 	var shared_bodies: Array[Dictionary] = []
 	for id: Variant in eligible_ids:
 		var body: Dictionary = members[int(id)]
-		if float(body.hp) <= 0 or float(body.get("ko", 0.0)) > 0 or bool(body.get("captive", false)) or not bool(body.get("present", false)):
+		if float(_member_value(members, int(id), &"hp", hot_read, pending_hp)) <= 0 or float(_member_value(members, int(id), &"ko", hot_read)) > 0 or bool(_member_value(members, int(id), &"captive", hot_read)) or not bool(_member_value(members, int(id), &"present", hot_read)):
 			continue
 		result.handled_ids.append(int(id))
 		if not Fatigue.pool(body).is_empty():

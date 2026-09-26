@@ -6,7 +6,9 @@ extends RefCounted
 const STUN_LIMIT := 100.0
 const STUN_GRACE := 3.0
 const STUN_RECOVERY := 10.0
-const KNOCKOUT_SECONDS := 30.0
+const LEGACY_KNOCKOUT_ACTION_SECONDS := 30.0
+const KNOCKOUT_GAME_SECONDS := 4.0 * 3600.0
+const RESCUED_KNOCKOUT_GAME_SECONDS := 3600.0
 const GUARD_TRANSITION := 0.15
 const GUARD_BREAK_SECONDS := 0.4
 const GUARD_BREAK_IMPACT := 30.0
@@ -20,8 +22,6 @@ const EXCHANGE_ROLL_LIMIT := 10.0
 const EXCHANGE_TRAINING_WEIGHT := 0.2
 const EXCHANGE_FATIGUE_WEIGHT := 0.2
 const EXCHANGE_MORALE_WEIGHT := 0.1
-const EXCHANGE_SURROUND_SECTOR_PENALTY := 8.0
-const EXCHANGE_SURROUND_LIMIT := 24.0
 const EXCHANGE_SMALL_STAGGER := 0.35
 const EXCHANGE_BIG_STAGGER := 0.65
 const EXCHANGE_DRAW_HOLD := 0.3
@@ -141,15 +141,13 @@ static func ranged_friendly_clear(source: Vector2i, goal: Vector2i, friendly_cel
 	return true
 
 static func exchange_score(person: Dictionary) -> float:
-	var sectors := clampi(int(person.get("encirclement", 1)) - 1, 0, 3)
-	var surround := minf(float(sectors) * EXCHANGE_SURROUND_SECTOR_PENALTY, EXCHANGE_SURROUND_LIMIT)
 	var skill_bonus := EXCHANGE_SKILL_BONUS if str(person.get("skill", "")) in ["brace", "power"] else 0.0
 	return clampf(float(person.get("ability", 50.0)), 0.0, 100.0) \
 		+ clampf(float(person.get("training", 0.0)), 0.0, 100.0) * EXCHANGE_TRAINING_WEIGHT \
 		+ (clampf(float(person.get("morale", 100.0)), 0.0, 100.0) - 100.0) * EXCHANGE_MORALE_WEIGHT \
 		- clampf(float(person.get("fatigue", 0.0)), 0.0, 100.0) * EXCHANGE_FATIGUE_WEIGHT \
 		+ float(person.get("armorbonus", 0.0)) + float(person.get("facility", 0.0)) \
-		+ skill_bonus - surround
+		+ skill_bonus
 
 static func weapon_level(asset: String) -> int:
 	# Equipment records keep their existing asset IDs. Combat derives this

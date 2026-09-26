@@ -21,6 +21,11 @@ var resource_filter := -1
 var selection := Rect2i()
 var selection_valid := true
 var preview_entrance := Vector2i(-1, -1)
+var combat_preview_platform_slots: Array[Vector2i] = []
+var combat_preview_queue_slots: Array[Vector2i] = []
+var combat_preview_anchor := Vector2i(-1, -1)
+var combat_preview_facing := Vector2i.ZERO
+var combat_preview_slot_facing: Dictionary = {}
 var selected_resource := ""
 var resources_by_row: Dictionary = {}
 var features_by_row: Dictionary = {}
@@ -234,6 +239,24 @@ func refresh() -> void:
 	for row: Node2D in rows:
 		row.rebuild()
 
+func show_combat_move_preview(preview: Dictionary) -> void:
+	combat_preview_platform_slots.assign(preview.get("platform_slots", []))
+	combat_preview_queue_slots.assign(preview.get("approach_queue_slots", []))
+	combat_preview_anchor = preview.get("resolved_anchor", Vector2i(-1, -1))
+	combat_preview_facing = preview.get("final_facing", Vector2i.ZERO)
+	combat_preview_slot_facing = preview.get("slot_facing", {}).duplicate()
+	queue_redraw()
+
+func clear_combat_move_preview() -> void:
+	if combat_preview_platform_slots.is_empty() and combat_preview_queue_slots.is_empty() and combat_preview_facing == Vector2i.ZERO:
+		return
+	combat_preview_platform_slots.clear()
+	combat_preview_queue_slots.clear()
+	combat_preview_anchor = Vector2i(-1, -1)
+	combat_preview_facing = Vector2i.ZERO
+	combat_preview_slot_facing.clear()
+	queue_redraw()
+
 func animate(delta: float) -> void:
 	if data == null:
 		return
@@ -304,6 +327,33 @@ func _draw() -> void:
 		var entrance := (Vector2(preview_entrance) + Vector2.ONE * 0.5) * CELL
 		draw_arc(entrance, 22, 0, TAU, 20, Color("a2eacf"), 3)
 		draw_string(ThemeDB.fallback_font, entrance + Vector2(-18, 5), "入口", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color("eefff7"))
+	for cell: Vector2i in combat_preview_platform_slots:
+		draw_rect(Rect2(Vector2(cell) * CELL, Vector2.ONE * CELL).grow(-5), Color(0.22, 0.85, 0.55, 0.28))
+		if combat_preview_slot_facing.has(cell) and combat_preview_slot_facing[cell] != combat_preview_facing:
+			var direction := Vector2(combat_preview_slot_facing[cell])
+			var center := (Vector2(cell) + Vector2.ONE * 0.5) * CELL
+			var tip := center + direction * CELL * 0.24
+			var side := Vector2(-direction.y, direction.x) * CELL * 0.08
+			draw_line(center, tip, Color("fff3a6"), 2)
+			draw_line(tip, tip - direction * CELL * 0.1 + side, Color("fff3a6"), 2)
+			draw_line(tip, tip - direction * CELL * 0.1 - side, Color("fff3a6"), 2)
+	for cell: Vector2i in combat_preview_queue_slots:
+		draw_rect(Rect2(Vector2(cell) * CELL, Vector2.ONE * CELL).grow(-5), Color(0.26, 0.62, 0.96, 0.25))
+	if data.contains(combat_preview_anchor) and combat_preview_facing in TerrainData.DIRECTIONS:
+		var center := (Vector2(combat_preview_anchor) + Vector2.ONE * 0.5) * CELL
+		var slot_count := combat_preview_platform_slots.size() + combat_preview_queue_slots.size()
+		if slot_count > 0:
+			center = Vector2.ZERO
+			for slot: Vector2i in combat_preview_platform_slots:
+				center += (Vector2(slot) + Vector2.ONE * 0.5) * CELL
+			for slot: Vector2i in combat_preview_queue_slots:
+				center += (Vector2(slot) + Vector2.ONE * 0.5) * CELL
+			center /= slot_count
+		var tip := center + Vector2(combat_preview_facing) * CELL * 0.7
+		var side := Vector2(-combat_preview_facing.y, combat_preview_facing.x) * CELL * 0.16
+		draw_line(center, tip, Color("fff3a6"), 5)
+		draw_line(tip, tip - Vector2(combat_preview_facing) * CELL * 0.22 + side, Color("fff3a6"), 5)
+		draw_line(tip, tip - Vector2(combat_preview_facing) * CELL * 0.22 - side, Color("fff3a6"), 5)
 
 func draw_row(canvas: Node2D, row_index: int) -> void:
 	if data == null:

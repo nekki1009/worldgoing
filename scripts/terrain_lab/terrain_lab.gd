@@ -11,6 +11,7 @@ const Site = preload("res://scripts/terrain_lab/site_controller.gd")
 const SiteEnv = preload("res://scripts/terrain_lab/site_environment.gd")
 const FatigueGeometry = preload("res://scripts/terrain_lab/terrain_weapon_collision.gd")
 const ExchangeSnapshot = preload("res://scripts/terrain_lab/site_exchange_snapshot.gd")
+const SiteCombatMovementCoordinator = preload("res://scripts/terrain_lab/site_combat_movement_coordinator.gd")
 var site_controller: Node
 var pause_when_unfocused := true
 var simulation_speed := 1.0
@@ -23,6 +24,7 @@ var army: TerrainArmy
 var opposing_army: TerrainArmy
 var third_army: TerrainArmy
 var combat_armies: Array[TerrainArmy] = []
+var combat_movement_coordinator: SiteCombatMovementCoordinator = null
 var camera: Camera2D
 var preset_dropdown: OptionButton
 var seed_input: LineEdit
@@ -150,8 +152,12 @@ func _ready() -> void:
 	third_army.faction_id = 2
 	add_child(third_army)
 	combat_armies.assign([army, opposing_army, third_army])
+	combat_movement_coordinator = SiteCombatMovementCoordinator.new()
+	for team: TerrainArmy in combat_armies:
+		combat_movement_coordinator.register_formation(team)
 	_configure_army_blockers()
 	for team: TerrainArmy in combat_armies:
+		team.native_hot_enabled = scene_file_path == "res://scenes/terrain_lab/TerrainLab.tscn"
 		team.person_id_allocator = _allocate_army_person_ids
 		team.exchange_enabled = exchange_enabled
 		team.contact_query = _collect_unit_contacts
@@ -285,7 +291,7 @@ func _build_ui() -> void:
 	if is_instance_valid(npc): _button(column, "Attack NPC (equipped weapon)", func() -> void: character.start_attack(npc))
 	selected_army_label = _label(column, "點選軍隊格位選中士兵；不會搬動玩家。", 16)
 	_button(column, "攻擊選中的士兵（Space）", attack_selected_soldier)
-	_button(column, "救助選中的友軍（相鄰四秒）", rescue_selected_soldier)
+	_button(column, "救助選中的友軍（相鄰施救四秒，縮短昏迷等待）", rescue_selected_soldier)
 	if is_instance_valid(npc):
 		_button(column, "NPC attacks player", func() -> void:
 			npc.issue_command(TerrainTestNPC.Command.STOP)
@@ -404,6 +410,8 @@ func bind_terrain(value: TerrainData) -> void:
 		ranged_results[kind] = 0
 	for team: TerrainArmy in combat_armies:
 		team.clear()
+	if combat_movement_coordinator != null:
+		combat_movement_coordinator.reset_for_site_replacement()
 	TerrainArmy.release_contact_source()
 	_clear_movement_input()
 	_npc_target_pending = false
@@ -775,6 +783,11 @@ func _try_move(direction: Vector2i) -> void:
 			person.owner.release_movement_intent()
 		_report_move(moved)
 
+func _input(event: InputEvent) -> void:
+	# GUI controls consume mouse releases before _unhandled_input sees them.
+	if site_controller != null:
+		site_controller.cancel_facing_move_on_gui_input(event)
+
 func _unhandled_input(event: InputEvent) -> void:
 	if (character.editor_window != null and character.editor_window.visible) or (is_instance_valid(npc) and npc.editor_window != null and npc.editor_window.visible):
 		_clear_movement_input()
@@ -956,12 +969,16 @@ func _advance_combat(delta: float, combat_clock: float = -1.0) -> void:
 		# Both held player input and autonomous NPC intent have now committed.
 		# Charge the same game-time slice before physically advancing either body.
 		_advance_fatigue(game_seconds)
+		if combat_movement_coordinator != null:
+			combat_movement_coordinator.combat_logic_tick_if_needed(elapsed)
 		for team: TerrainArmy in combat_armies:
-			team.prepare_combat(elapsed)
+			team.prepare_combat(elapsed, game_seconds)
 		stage_started = _combat_profile_stage("navigation_and_team_prepare", stage_started)
 		for actor: TerrainTestCharacter in combat_actors:
 			if is_instance_valid(actor):
-				actor.advance_combat(elapsed, true)
+				actor.advance_combat(elapsed, true, game_seconds)
+		if combat_movement_coordinator != null:
+			combat_movement_coordinator.complete_committed_moves()
 		stage_started = _combat_profile_stage("actors_advance", stage_started)
 		# All live actors have advanced. Their poses stay fixed until this batch
 		# is collected; discard projections before contacts can change a pose.
@@ -1118,9 +1135,9 @@ func _advance_fatigue(seconds: float) -> void:
 			var can_act := team.combat_can_act(index)
 			var rate := 0.0
 			if can_act:
-				if not exchange_enabled and bool(unit.attack):
+				if not exchange_enabled and bool(team.combat_hot_get(index, &"attack")):
 					rate = PersonFatigue.ATTACK_RATE
-				elif not exchange_enabled and str(unit.pose) in ["guard", "guard_raise", "guard_lower"]:
+				elif not exchange_enabled and str(team.combat_hot_get(index, &"pose")) in ["guard", "guard_raise", "guard_lower"]:
 					rate = PersonFatigue.GUARD_RATE
 				elif moving and team.move_duration[index] <= TerrainArmy.RUN_DURATION + 0.000001:
 					rate = PersonFatigue.RUN_RATE
@@ -1135,7 +1152,7 @@ func _advance_fatigue(seconds: float) -> void:
 					if combat_profile_enabled:
 						fatigue_zero_skipped_advances += 1
 					continue
-			var idle := can_act and not moving and str(unit.pose) == "idle"
+			var idle := can_act and not moving and str(team.combat_hot_get(index, &"pose")) == "idle"
 			if not unit.get("work_task", {}).is_empty() and str(unit.work_task.get("mode", "")) != "rest":
 				idle = false # Pending work/input/path waits are not a rest break.
 			var safe := false
@@ -1176,7 +1193,7 @@ func _advance_team_fatigue(team: TerrainArmy, seconds: float, handled: Dictionar
 		for index in range(team.combat_units.size()):
 			var row: Dictionary = team.combat_units[index]
 			if not is_same(PersonFatigue.pool(row), shared): continue
-			if str(row.pose) != "idle" or team._unit_rescues.has(index) or (not row.get("work_task", {}).is_empty() and str(row.work_task.get("mode", "")) != "rest" and not bool(row.get("work_resting", false))) or _fatigue_threat(team.cells[index], team.faction_id, team, index, enemies):
+			if str(team.combat_hot_get(index, &"pose")) != "idle" or team._unit_rescues.has(index) or (not row.get("work_task", {}).is_empty() and str(row.work_task.get("mode", "")) != "rest" and not bool(row.get("work_resting", false))) or _fatigue_threat(team.cells[index], team.faction_id, team, index, enemies):
 				safe = false
 				break
 		if safe and is_instance_valid(team.player_member) and is_same(team.player_member._fatigue_pool, shared):
@@ -1386,10 +1403,10 @@ func _exchange_encirclement_front(team: TerrainArmy) -> Array:
 				break
 	return [enemies, contacts, pinned]
 
-func _exchange_initiates(person: Dictionary, other_id: int) -> bool:
+func _exchange_initiates(person: Dictionary, other_id: int, melee: bool = false) -> bool:
 	if int(person.unit) >= 0:
 		var team: TerrainArmy = person.owner
-		return team.exchange_initiates(int(person.unit), other_id)
+		return team.exchange_initiates(int(person.unit), other_id, melee)
 	var actor: TerrainTestCharacter = person.owner
 	return actor.attack_target_id == other_id or (npc_retaliates and actor == npc)
 
@@ -1471,50 +1488,48 @@ func _resolve_exchanges() -> void:
 			occupied[person.cell].append(person)
 		for offset in range(people.size()): order.append((offset + _exchange_round) % people.size())
 	profile_started = _combat_profile_stage("exchange_people_index", profile_started)
-	var used := {}
+	var seen_pairs := {}
+	var contexts := {}
 	var pending: Array[Dictionary] = []
-	# Rotate priority to avoid a permanent low-ID advantage in a crowded line.
+	# All eligible adjacent enemies meet in this round; only the same unordered
+	# pair is skipped when the opposite endpoint appears later in front order.
 	for ordinal: int in order:
 		var a: Dictionary = snapshot.person(ordinal) if snapshot != null else people[ordinal]
-		if used.has(a.id) or a.receive == false:
+		if a.receive == false:
 			continue
-		var matched := false
 		for direction_offset in range(4):
 			var next: Vector2i = a.cell + TerrainData.DIRECTIONS[(direction_offset + _exchange_round) % 4]
 			for b: Dictionary in occupied.get(next, []):
-				if used.has(b.id) or int(a.faction) == int(b.faction):
+				if int(a.id) == int(b.id) or int(a.faction) == int(b.faction):
 					continue
+				var low := mini(int(a.id), int(b.id))
+				var high := maxi(int(a.id), int(b.id))
+				var pair_key := "%d:%d" % [low, high]
+				if seen_pairs.has(pair_key): continue
 				if a.receive == null: a.receive = a.owner.exchange_can_receive(int(a.unit))
 				if b.receive == null: b.receive = b.owner.exchange_can_receive(int(b.unit))
 				if not bool(a.receive) or not bool(b.receive): continue
-				# Still a pre-resolution snapshot: no pair is applied until the
-				# entire matching pass ends. Distant people never need readiness.
+				# Distant people never need readiness or numerical context.
 				if a.ready == null: a.ready = a.owner.exchange_ready(int(a.unit))
 				if b.ready == null: b.ready = b.owner.exchange_ready(int(b.unit))
-				if not (bool(a.ready) and _exchange_initiates(a, int(b.id))) and not (bool(b.ready) and _exchange_initiates(b, int(a.id))):
+				if not (bool(a.ready) and _exchange_initiates(a, int(b.id), true)) and not (bool(b.ready) and _exchange_initiates(b, int(a.id), true)):
 					continue # Peaceful worker/player neighbours do not spontaneously duel.
 				if not terrain.can_attack_across(a.cell, next):
 					continue # Pure geometry is only needed for a viable opposing pair.
-				var stats_a := _exchange_context(a, occupied)
-				var stats_b := _exchange_context(b, occupied)
-				var low := mini(int(a.id), int(b.id))
-				var high := maxi(int(a.id), int(b.id))
+				if not contexts.has(int(a.id)): contexts[int(a.id)] = _exchange_context(a, occupied)
+				if not contexts.has(int(b.id)): contexts[int(b.id)] = _exchange_context(b, occupied)
+				var stats_a: Dictionary = contexts[int(a.id)]
+				var stats_b: Dictionary = contexts[int(b.id)]
 				var noise := (low * 73856093) ^ (high * 19349663) ^ (_exchange_round * 83492791) ^ terrain.seed_value
 				var roll := float(posmod(noise, 21) - 10) * (1.0 if int(a.id) == low else -1.0)
 				pending.append({"a": a, "b": b, "stats_a": stats_a, "stats_b": stats_b,
 					"result": SiteCombatRules.exchange_result(stats_a, stats_b, roll)})
-				used[a.id] = true
-				used[b.id] = true
-				matched = true
-				break
-			if matched:
-				break
-	# Every pairing sees pre-resolution abilities/positions; each original
-	# person participates once. Knockback still commits through original owners.
+				seen_pairs[pair_key] = true
+	# Every edge sees pre-resolution abilities/positions. Each original person
+	# pays, receives and presents one merged outcome for the whole round.
 	profile_started = _combat_profile_stage("exchange_pair_context", profile_started)
+	if not _settle_exchange_batch(pending): return
 	for pair: Dictionary in pending:
-		_apply_exchange_side(pair.a, pair.b, pair.result, pair.stats_a, 1)
-		_apply_exchange_side(pair.b, pair.a, pair.result, pair.stats_b, -1)
 		exchange_count += 1
 		exchange_results[str(pair.result.kind)] += 1
 		exchange_resolved.emit(int(pair.a.id), int(pair.b.id), pair.result)
@@ -1552,7 +1567,7 @@ func _resolve_ranged_fire(people: Array[Dictionary]) -> void:
 		# Pair resolution may have consumed readiness since this disposable list was built.
 		if not (shooter_owner.exchange_ready(index) if index >= 0 else shooter_owner.exchange_ready()):
 			continue
-		if (float(shooter_owner.combat_units[index].get("ranged_cooldown", 0.0)) if index >= 0 else shooter_owner.ranged_cooldown) > 0.0:
+		if (float(shooter_owner.combat_hot_get(index, &"ranged_cooldown", 0.0)) if index >= 0 else shooter_owner.ranged_cooldown) > 0.0:
 			continue
 		if index >= 0 and shooter_owner.is_member(index) and not shooter_owner.is_controlled_person(index) and shooter_owner.is_sustain_routed():
 			continue # A rout does not become a new automatic ranged attack order.
@@ -1624,7 +1639,7 @@ func _ranged_occupants() -> Dictionary:
 	for occupant_owner: Node2D in _ranged_owners():
 		var count: int = occupant_owner.combat_units.size() if occupant_owner is TerrainArmy else 1
 		for index in range(count):
-			var hp: float = float(occupant_owner.combat_units[index].hp) if occupant_owner is TerrainArmy else occupant_owner.hp
+			var hp: float = float(occupant_owner.combat_hot_get(index, &"hp")) if occupant_owner is TerrainArmy else occupant_owner.hp
 			if hp <= 0.0:
 				continue
 			var ground: Vector2 = occupant_owner.combat_ground(index) if occupant_owner is TerrainArmy else occupant_owner.position
@@ -1700,7 +1715,7 @@ func _resolve_ranged_arrival(shooter_owner: Node2D, flight: Dictionary, occupied
 	ranged_results[str(result.kind)] += 1
 	ranged_resolved.emit(int(flight.shooter_id), int(target.get("id", 0)), result)
 
-func _apply_exchange_side(person: Dictionary, other: Dictionary, result: Dictionary, stats: Dictionary, side: int) -> void:
+func _exchange_side_outcome(other: Dictionary, result: Dictionary, stats: Dictionary, side: int) -> Dictionary:
 	var role := "draw" if int(result.winner) == 0 else "winner" if int(result.winner) == side else "loser"
 	var stagger := float(result.hold) if role == "draw" else float(result.stagger) if role == "loser" else 0.0
 	if role == "loser" and str(result.kind) == "big" and float(stats.facility) > 0.0:
@@ -1714,10 +1729,137 @@ func _apply_exchange_side(person: Dictionary, other: Dictionary, result: Diction
 		"knockback": role == "loser" and bool(result.knockback), "skill": str(stats.get("skill", "")),
 		"fatigue": float(result.fatigue_a if side == 1 else result.fatigue_b),
 		"other_identity": int(other.id), "attacker": other.owner, "attacker_unit": int(other.unit)}
+	return outcome
+
+func _apply_exchange_side(person: Dictionary, other: Dictionary, result: Dictionary, stats: Dictionary, side: int) -> void:
+	# Retain the direct one-to-one entry used by authored visual checks.
+	var outcome := _exchange_side_outcome(other, result, stats, side)
 	if int(person.unit) >= 0:
 		person.owner.apply_exchange(int(person.unit), other.cell, outcome)
 	else:
 		person.owner.apply_exchange(other.cell, outcome)
+
+func _exchange_reaction_better(candidate: Dictionary, current: Dictionary) -> bool:
+	if current.is_empty(): return true
+	if bool(candidate.knockback) != bool(current.knockback): return bool(candidate.knockback)
+	if int(candidate.rank) != int(current.rank): return int(candidate.rank) > int(current.rank)
+	if float(candidate.hp) != float(current.hp): return float(candidate.hp) > float(current.hp)
+	if float(candidate.margin) != float(current.margin): return float(candidate.margin) > float(current.margin)
+	return int(candidate.other_id) < int(current.other_id)
+
+func _collect_exchange_batch_side(batches: Dictionary, person: Dictionary, other: Dictionary,
+		result: Dictionary, stats: Dictionary, side: int) -> void:
+	var id := int(person.id)
+	var side_outcome := _exchange_side_outcome(other, result, stats, side)
+	if not batches.has(id):
+		var total := side_outcome.duplicate()
+		total.hp = 0.0
+		total.stun = 0.0
+		total.fatigue = 0.0
+		total.stagger = 0.0
+		total.knockback = false
+		batches[id] = {"person": person, "outcome": total, "count": 0,
+			"losses": 0, "draws": 0, "big_wins": 0, "big_losses": 0, "reaction": {}}
+	var entry: Dictionary = batches[id]
+	var total: Dictionary = entry.outcome
+	entry.count += 1
+	total.hp += float(side_outcome.hp)
+	total.stun += float(side_outcome.stun)
+	total.fatigue += float(side_outcome.fatigue)
+	total.stagger = maxf(float(total.stagger), float(side_outcome.stagger))
+	total.knockback = bool(total.knockback) or bool(side_outcome.knockback)
+	match str(side_outcome.role):
+		"loser":
+			entry.losses += 1
+			if str(side_outcome.kind) == "big": entry.big_losses += 1
+		"draw": entry.draws += 1
+		"winner":
+			if str(side_outcome.kind) == "big": entry.big_wins += 1
+	var candidate := {"knockback": bool(side_outcome.knockback),
+		"rank": 2 if str(side_outcome.role) == "loser" else 1 if str(side_outcome.role) == "draw" else 0,
+		"hp": float(side_outcome.hp), "margin": absf(float(result.margin)),
+		"other_id": int(other.id), "other_cell": other.cell,
+		"attacker": other.owner, "attacker_unit": int(other.unit)}
+	if _exchange_reaction_better(candidate, entry.reaction): entry.reaction = candidate
+
+func _exchange_batch_person_matches(person: Dictionary) -> bool:
+	if not is_instance_valid(person.owner): return false
+	var index := int(person.unit)
+	if index < 0:
+		return person.owner is TerrainTestCharacter and int(person.owner.person_id) == int(person.id)
+	return person.owner is TerrainArmy and index < person.owner.combat_units.size() \
+		and int(person.owner.combat_identity(index)) == int(person.id)
+
+func _exchange_batch_outcome_valid(outcome: Dictionary) -> bool:
+	if str(outcome.get("role", "")) not in ["winner", "loser", "draw"]: return false
+	for field: String in ["hp", "stun", "fatigue", "stagger"]:
+		var value: Variant = outcome.get(field)
+		if not (value is float or value is int) or not is_finite(float(value)) or float(value) < 0.0:
+			return false
+	return true
+
+func _exchange_batch_phase_current(entry: Dictionary, phase: String) -> bool:
+	if _exchange_batch_person_matches(entry.person): return true
+	push_error("Exchange batch " + phase + " lost the original person")
+	return false
+
+func _settle_exchange_batch(pending: Array[Dictionary]) -> bool:
+	if pending.is_empty(): return true
+	var batches := {}
+	for pair: Dictionary in pending:
+		_collect_exchange_batch_side(batches, pair.a, pair.b, pair.result, pair.stats_a, 1)
+		_collect_exchange_batch_side(batches, pair.b, pair.a, pair.result, pair.stats_b, -1)
+	var identities: Array = batches.keys()
+	identities.sort()
+	# Preflight the complete call-local batch before charging or moving anyone.
+	for id: Variant in identities:
+		var entry: Dictionary = batches[id]
+		var total: Dictionary = entry.outcome
+		var reaction: Dictionary = entry.reaction
+		var all_won := int(entry.losses) == 0 and int(entry.draws) == 0
+		total.role = "winner" if all_won else "draw" if int(entry.count) == 1 and int(entry.draws) == 1 else "loser"
+		total.kind = "big" if (all_won and int(entry.big_wins) > 0) or (not all_won and int(entry.big_losses) > 0) \
+			else "draw" if int(entry.losses) == 0 and int(entry.draws) > 0 else "small"
+		total.other_identity = int(reaction.other_id)
+		total.attacker = reaction.attacker
+		total.attacker_unit = int(reaction.attacker_unit)
+		entry.other_cell = reaction.other_cell
+		if not _exchange_batch_person_matches(entry.person) or not _exchange_batch_outcome_valid(total):
+			push_error("Exchange batch participant changed or aggregate effect is invalid")
+			return false
+	# Costs and skills use pre-death shared-pool membership. No contact occurs
+	# until every owner has prepared, and no final pose is chosen until all life
+	# effects are committed.
+	for id: Variant in identities:
+		var entry: Dictionary = batches[id]
+		if not _exchange_batch_phase_current(entry, "prepare"): return false
+		entry.prepared = entry.person.owner.exchange_batch_prepare(int(entry.person.unit), entry.other_cell, entry.outcome) \
+			if int(entry.person.unit) >= 0 else entry.person.owner.exchange_batch_prepare(entry.other_cell, entry.outcome)
+		if (entry.prepared as Dictionary).is_empty():
+			push_error("Exchange batch owner rejected a preflighted participant")
+			return false
+	for id: Variant in identities:
+		var entry: Dictionary = batches[id]
+		if not _exchange_batch_phase_current(entry, "knockback"): return false
+		if int(entry.person.unit) >= 0:
+			entry.person.owner.exchange_batch_knockback(int(entry.person.unit), entry.other_cell, entry.outcome, entry.prepared)
+		else:
+			entry.person.owner.exchange_batch_knockback(entry.other_cell, entry.outcome, entry.prepared)
+	for id: Variant in identities:
+		var entry: Dictionary = batches[id]
+		if not _exchange_batch_phase_current(entry, "contact"): return false
+		if int(entry.person.unit) >= 0:
+			entry.person.owner.exchange_batch_contact(int(entry.person.unit), entry.outcome)
+		else:
+			entry.person.owner.exchange_batch_contact(entry.outcome)
+	for id: Variant in identities:
+		var entry: Dictionary = batches[id]
+		if not _exchange_batch_phase_current(entry, "finish"): return false
+		if int(entry.person.unit) >= 0:
+			entry.person.owner.exchange_batch_finish(int(entry.person.unit), entry.other_cell, entry.outcome, entry.prepared)
+		else:
+			entry.person.owner.exchange_batch_finish(entry.other_cell, entry.outcome, entry.prepared)
+	return true
 
 func _resolve_combat_contacts() -> void:
 	_combat_contacts.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return float(a.fraction) < float(b.fraction))
@@ -1790,11 +1932,17 @@ func leave_player_army() -> Dictionary:
 		return SiteRuntime.fail("BUSY", "本人須清醒自由且完成原動作")
 	return team.leave_player()
 
-func issue_player_army_order(order_id: int, goal: Vector2i = Vector2i(-1, -1), target_id: int = -1) -> Dictionary:
+func issue_player_army_order(order_id: int, goal: Vector2i = Vector2i(-1, -1), target_id: int = -1, final_facing: Vector2i = Vector2i.ZERO, preset_id: String = "") -> Dictionary:
 	var team := player_army()
 	if team == null:
 		return SiteRuntime.fail("NO_AUTHORITY", "尚未加入隊伍")
-	return team.issue_combat_order(controlled_member_index(team), order_id, goal, target_id)
+	return team.issue_combat_order(controlled_member_index(team), order_id, goal, target_id, final_facing, preset_id)
+
+func issue_player_formation_change(preset_id: String) -> Dictionary:
+	var team := player_army()
+	if team == null:
+		return SiteRuntime.fail("NO_AUTHORITY", "尚未加入隊伍")
+	return team.issue_formation_change(controlled_member_index(team), preset_id)
 
 func split_selected_soldier() -> Dictionary:
 	var source := player_army()
@@ -2677,7 +2825,7 @@ func _nearest_unit_enemy(source: TerrainArmy, index: int) -> Dictionary:
 			if distance > 2 or not team.combat_can_act(target_index) or not SiteCombatRules.terrain_line_clear(terrain, source.cells[index], team.cells[target_index]):
 				continue
 			var identity := team.combat_identity(target_index)
-			var threat := bool(team.combat_units[target_index].attack) and int(team.combat_units[target_index].target) == source.combat_identity(index)
+			var threat := bool(team.combat_hot_get(target_index, &"attack")) and int(team.combat_units[target_index].target) == source.combat_identity(index)
 			var candidate := {"cell": team.cells[target_index], "identity": identity, "threat": threat}
 			if identity == retained:
 				return candidate
@@ -2727,7 +2875,7 @@ func _combat_target(identity: int, with_bodies: bool = false) -> Dictionary:
 		var index := team.index_for_identity(identity)
 		if index >= 0 and index < team.combat_units.size():
 			return {"owner": team, "unit": index, "position": team.combat_ground(index), "cell": team.cells[index],
-				"hp": float(team.combat_units[index].hp), "bodies": team.combat_shapes(index, "body") if with_bodies else []}
+				"hp": float(team.combat_hot_get(index, &"hp")), "bodies": team.combat_shapes(index, "body") if with_bodies else []}
 	return {}
 
 func select_army_target(cell: Vector2i) -> bool:

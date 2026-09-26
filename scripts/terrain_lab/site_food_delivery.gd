@@ -205,7 +205,8 @@ func commit(team: TerrainArmy, entry: Dictionary) -> Dictionary:
 	var stock: Dictionary = entry.inventory.duplicate(true)
 	Runtime.add_items(stock, job.items)
 	state.open_rations = float(state.open_rations) + float(job.open_amount)
-	var supplied := Sustain.resupply(state, controller._team_members(team), stock)
+	var members: Dictionary = controller._team_members(team)
+	var supplied := Sustain.resupply(state, members, stock, false, controller._supply_hot_reader(team, members, {}))
 	if not supplied.ok:
 		return supplied
 	# All possible failures preceded this original synchronous commit.

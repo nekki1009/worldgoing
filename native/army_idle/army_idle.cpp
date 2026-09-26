@@ -4,9 +4,12 @@
 #include "vendor/gdextension_interface.h"
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <initializer_list>
+#include <memory>
 #include <vector>
 #include <algorithm>
+#include <array>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -26,6 +29,8 @@ constexpr auto LONGS = GDEXTENSION_VARIANT_TYPE_PACKED_INT64_ARRAY;
 constexpr auto VECTORS = GDEXTENSION_VARIANT_TYPE_PACKED_VECTOR2_ARRAY;
 constexpr auto FLOATS = GDEXTENSION_VARIANT_TYPE_PACKED_FLOAT32_ARRAY;
 constexpr auto DOUBLES = GDEXTENSION_VARIANT_TYPE_PACKED_FLOAT64_ARRAY;
+constexpr auto NIL = GDEXTENSION_VARIANT_TYPE_NIL;
+constexpr auto OBJECT = GDEXTENSION_VARIANT_TYPE_OBJECT;
 // Opaque storage, not a reimplementation of Variant. The generated 4.7.2 API
 // specifies 24/40 bytes for float/double Variant and 8 for x64 String/StringName.
 struct alignas(8) VariantStorage { unsigned char bytes[40]; };
@@ -37,6 +42,9 @@ GDExtensionInterfaceVariantGetType type_of;
 GDExtensionInterfaceVariantDestroy destroy;
 GDExtensionInterfaceVariantNewCopy copy_variant;
 GDExtensionInterfaceVariantGetKeyed get_keyed;
+GDExtensionInterfaceVariantCall variant_call;
+GDExtensionInterfaceVariantHash variant_hash;
+GDExtensionInterfaceVariantGetObjectInstanceId object_instance_id;
 GDExtensionInterfaceArrayOperatorIndexConst array_at;
 GDExtensionInterfaceArrayOperatorIndex array_write;
 GDExtensionInterfaceVariantConstruct variant_construct;
@@ -73,13 +81,19 @@ GDExtensionInterfaceStringNewWithLatin1Chars make_string;
 GDExtensionVariantGetInternalPtrFunc internal[GDEXTENSION_VARIANT_TYPE_VARIANT_MAX];
 GDExtensionVariantFromTypeConstructorFunc from_float, from_int, from_string, from_name, from_v2i, from_bool;
 GDExtensionPtrDestructor destroy_string, destroy_name;
-GDExtensionPtrBuiltInMethod array_size, dict_has, dict_empty, dict_readonly, dict_typed;
-GDExtensionPtrOperatorEvaluator string_equal;
-TextStorage class_name, parent_name, idle_string, male_string, female_string, get_up_string, empty_name, empty_string;
-enum Key { AGE, THINK, POSE, HP, KO, STUN, GRACE, VISUAL, DURATION, COOLDOWN, STAGGER, SKILL, RANGED, FATIGUE, REST, PERSON_ID, PAGE, PALETTE, ROLE, CAPTIVE, DEPARTED, OWNER, UNIT, IDENTITY, CELL, FACTION, READY, RECEIVE, MEMBER, CARGO, KEY_COUNT };
+GDExtensionPtrBuiltInMethod array_size, array_readonly, array_typed, dict_size, dict_has, dict_empty, dict_readonly, dict_typed;
+GDExtensionPtrOperatorEvaluator string_equal, name_equal;
+TextStorage class_name, hot_class_name, parent_name, idle_string, unconscious_string, down_string, guard_raise_string, guard_lower_string, guard_break_string, rescue_string, male_string, female_string, get_up_string, empty_name, empty_string;
+TextStorage keys_method_name, typed_builtin_method_name, typed_class_method_name, typed_script_method_name;
+enum Key { AGE, THINK, POSE, HP, KO, STUN, GRACE, VISUAL, DURATION, COOLDOWN, STAGGER, SKILL, RANGED, FATIGUE, REST, PERSON_ID, PAGE, PALETTE, ROLE, CAPTIVE, DEPARTED, OWNER, UNIT, IDENTITY, CELL, FACTION, READY, RECEIVE, MEMBER, CARGO, PRESENT, ATTACK, LEFT, FACING, KEY_COUNT };
 VariantStorage keys[KEY_COUNT];
 VariantStorage lookup_keys[KEY_COUNT];
-const char *key_text[KEY_COUNT] = {"age", "think", "pose", "hp", "ko", "stun", "grace", "exchange_visual", "exchange_pose_duration", "exchange_cooldown", "exchange_stagger", "exchange_skill_cooldown", "ranged_cooldown", "fatigue", "fatigue_rest", "person_id", "page", "palette", "visual_role", "captive", "departed", "owner", "unit", "id", "cell", "faction", "ready", "receive", "member", "cargo"};
+const char *key_text[KEY_COUNT] = {"age", "think", "pose", "hp", "ko", "stun", "grace", "exchange_visual", "exchange_pose_duration", "exchange_cooldown", "exchange_stagger", "exchange_skill_cooldown", "ranged_cooldown", "fatigue", "fatigue_rest", "person_id", "page", "palette", "visual_role", "captive", "departed", "owner", "unit", "id", "cell", "faction", "ready", "receive", "member", "cargo", "present", "attack", "left", "facing"};
+struct HotStore;
+int64_t hot_row_count(HotStore *store);
+bool hot_owns(Key key);
+void *hot_value(HotStore *store, int64_t index, Key key);
+bool hot_render_marker, hot_capture_columns_marker, hot_capture_people_marker, hot_presence_marker, hot_presence_delta_marker;
 
 // Bounded, joined, read-only ranges. No callback or original-state write may
 // enter a task; callers allocate all output containers before dispatch.
@@ -116,11 +130,21 @@ void *field(void *dict, Key key) {
 struct ReadField {
     VariantStorage value;
     GDExtensionBool valid = false;
-    ReadField(void *row, Key key) { get_keyed(row, &lookup_keys[key], &value, &valid); }
-    ~ReadField() { destroy(&value); }
+    bool owned = false;
+    void *borrowed = nullptr;
+    ReadField(void *row, Key key, HotStore *store = nullptr, int64_t index = 0) {
+        if (store && hot_owns(key)) {
+            borrowed = hot_value(store, index, key);
+            valid = borrowed != nullptr;
+        } else {
+            get_keyed(row, &lookup_keys[key], &value, &valid);
+            owned = true;
+        }
+    }
+    ~ReadField() { if (owned) destroy(&value); }
     ReadField(const ReadField &) = delete;
     ReadField &operator=(const ReadField &) = delete;
-    void *get() { return valid ? &value : nullptr; }
+    void *get() { return borrowed ? borrowed : (valid ? &value : nullptr); }
 };
 bool number(void *value, double &result, double **storage = nullptr) {
     if (storage) *storage = nullptr;
@@ -155,6 +179,206 @@ int64_t size(void *array) {
     return count;
 }
 
+// Test-only logical snapshot comparison. Dictionary insertion order is not
+// gameplay state, but every admitted leaf type and every key type is exact.
+enum class ExactResult : int64_t { UNSUPPORTED = -1, UNEQUAL = 0, EQUAL = 1 };
+void *read_internal(GDExtensionVariantType type, const void *value) {
+    return internal[type](const_cast<void *>(value));
+}
+bool noargs(const void *value, const TextStorage &method, VariantStorage &output) {
+    GDExtensionCallError error{};
+    variant_call(const_cast<void *>(value), &method, nullptr, 0, &output, &error);
+    return error.error == GDEXTENSION_CALL_OK;
+}
+bool supported_leaf(GDExtensionVariantType type) {
+    return type == NIL || type == BOOL || type == INT || type == FLOAT || type == STRING ||
+        type == NAME || type == V2I || type == V2 || type == DOUBLES;
+}
+ExactResult leaf_equal(const void *left, const void *right) {
+    const auto type = type_of(left);
+    if (type != type_of(right)) return ExactResult::UNEQUAL;
+    switch (type) {
+        case NIL: return ExactResult::EQUAL;
+        case BOOL: return *static_cast<GDExtensionBool *>(read_internal(BOOL, left)) ==
+            *static_cast<GDExtensionBool *>(read_internal(BOOL, right)) ? ExactResult::EQUAL : ExactResult::UNEQUAL;
+        case INT: return *static_cast<int64_t *>(read_internal(INT, left)) ==
+            *static_cast<int64_t *>(read_internal(INT, right)) ? ExactResult::EQUAL : ExactResult::UNEQUAL;
+        case FLOAT: return std::memcmp(read_internal(FLOAT, left), read_internal(FLOAT, right), sizeof(double)) == 0 ?
+            ExactResult::EQUAL : ExactResult::UNEQUAL;
+        case V2I: return std::memcmp(read_internal(V2I, left), read_internal(V2I, right), sizeof(int32_t) * 2) == 0 ?
+            ExactResult::EQUAL : ExactResult::UNEQUAL;
+        case V2: return std::memcmp(read_internal(V2, left), read_internal(V2, right), sizeof(float) * 2) == 0 ?
+            ExactResult::EQUAL : ExactResult::UNEQUAL;
+        case STRING:
+        case NAME: {
+            GDExtensionBool equal = false;
+            (type == STRING ? string_equal : name_equal)(read_internal(type, left), read_internal(type, right), &equal);
+            return equal ? ExactResult::EQUAL : ExactResult::UNEQUAL;
+        }
+        case DOUBLES: {
+            void *a = read_internal(DOUBLES, left), *b = read_internal(DOUBLES, right);
+            int64_t count = 0, other = 0;
+            size_doubles(a, nullptr, &count, 0); size_doubles(b, nullptr, &other, 0);
+            if (count != other) return ExactResult::UNEQUAL;
+            for (int64_t i = 0; i < count; ++i)
+                if (std::memcmp(doubles_read(a, i), doubles_read(b, i), sizeof(double)) != 0) return ExactResult::UNEQUAL;
+            return ExactResult::EQUAL;
+        }
+        default: return ExactResult::UNSUPPORTED;
+    }
+}
+bool typed_array_builtin(const void *value, int64_t &builtin) {
+    VariantStorage result{};
+    const bool called = noargs(value, typed_builtin_method_name, result);
+    const bool valid = called && type_of(&result) == INT;
+    if (valid) builtin = *static_cast<int64_t *>(internal[INT](&result));
+    destroy(&result);
+    return valid;
+}
+bool supported_array_type(const void *value) {
+    if (!predicate(array_typed, read_internal(ARRAY, value))) return true;
+    int64_t builtin = -1;
+    if (!typed_array_builtin(value, builtin) || builtin == GDEXTENSION_VARIANT_TYPE_OBJECT ||
+            builtin == GDEXTENSION_VARIANT_TYPE_CALLABLE || builtin == GDEXTENSION_VARIANT_TYPE_SIGNAL ||
+            (!supported_leaf(static_cast<GDExtensionVariantType>(builtin)) && builtin != ARRAY && builtin != DICT)) return false;
+    VariantStorage class_name_result{}, script_result{};
+    const bool class_ok = noargs(value, typed_class_method_name, class_name_result) &&
+        type_of(&class_name_result) == NAME;
+    GDExtensionBool class_empty = false;
+    if (class_ok) name_equal(read_internal(NAME, &class_name_result), &empty_name, &class_empty);
+    const bool script_called = noargs(value, typed_script_method_name, script_result);
+    const auto script_type = type_of(&script_result);
+    const bool script_ok = script_called && (script_type == NIL ||
+        (script_type == OBJECT && object_instance_id(&script_result) == 0));
+    destroy(&class_name_result);
+    destroy(&script_result);
+    return class_ok && class_empty && script_ok;
+}
+bool get_keys(const void *value, VariantStorage &output) {
+    return noargs(value, keys_method_name, output) && type_of(&output) == ARRAY;
+}
+int64_t dictionary_size(void *value) {
+    int64_t count = 0;
+    dict_size(value, nullptr, &count, 0);
+    return count;
+}
+bool contains_unsupported(const void *value, int depth = 0) {
+    if (depth > 64) return true;
+    const auto type = type_of(value);
+    if (type == ARRAY) {
+        if (!supported_array_type(value)) return true;
+        void *array = read_internal(ARRAY, value);
+        for (int64_t i = 0, count = size(array); i < count; ++i)
+            if (contains_unsupported(array_at(array, i), depth + 1)) return true;
+        return false;
+    }
+    if (type == DICT) {
+        void *dict = read_internal(DICT, value);
+        if (predicate(dict_typed, dict)) return true;
+        VariantStorage keys_result{};
+        if (!get_keys(value, keys_result)) { destroy(&keys_result); return true; }
+        void *keys_array = internal[ARRAY](&keys_result);
+        bool unsupported = size(keys_array) != dictionary_size(dict);
+        for (int64_t i = 0, count = size(keys_array); !unsupported && i < count; ++i) {
+            void *key = array_at(keys_array, i);
+            void *child = dict_at(dict, key);
+            unsupported = !child || contains_unsupported(key, depth + 1) || contains_unsupported(child, depth + 1);
+        }
+        destroy(&keys_result);
+        return unsupported;
+    }
+    return !supported_leaf(type);
+}
+struct KeyEntry { uint64_t token; int64_t ordinal; };
+uint64_t key_token(const void *key) {
+    return (static_cast<uint64_t>(type_of(key)) << 56) ^ static_cast<uint64_t>(variant_hash(key));
+}
+ExactResult exact_value_equal(const void *left, const void *right, int depth = 0) {
+    if (depth > 64) return ExactResult::UNSUPPORTED;
+    const auto type = type_of(left);
+    if (type != type_of(right)) return ExactResult::UNEQUAL;
+    if (type == ARRAY) {
+        void *a = read_internal(ARRAY, left), *b = read_internal(ARRAY, right);
+        const int64_t count = size(a);
+        if (count != size(b)) return ExactResult::UNEQUAL;
+        const bool typed_a = predicate(array_typed, a), typed_b = predicate(array_typed, b);
+        if (typed_a != typed_b) return ExactResult::UNEQUAL;
+        if (typed_a) {
+            int64_t builtin_a = -1, builtin_b = -1;
+            if (!typed_array_builtin(left, builtin_a) || !typed_array_builtin(right, builtin_b) ||
+                    !supported_array_type(left) || !supported_array_type(right)) return ExactResult::UNSUPPORTED;
+            if (builtin_a != builtin_b) return ExactResult::UNEQUAL;
+        }
+        for (int64_t i = 0; i < count; ++i) {
+            const auto result = exact_value_equal(array_at(a, i), array_at(b, i), depth + 1);
+            if (result != ExactResult::EQUAL) return result;
+        }
+        return ExactResult::EQUAL;
+    }
+    if (type == DICT) {
+        void *a = read_internal(DICT, left), *b = read_internal(DICT, right);
+        const int64_t count = dictionary_size(a);
+        if (count != dictionary_size(b)) return ExactResult::UNEQUAL;
+        if (predicate(dict_typed, a) || predicate(dict_typed, b)) return ExactResult::UNSUPPORTED;
+        VariantStorage left_keys{}, right_keys{};
+        const bool keys_ok = get_keys(left, left_keys) && get_keys(right, right_keys);
+        if (!keys_ok) { destroy(&left_keys); destroy(&right_keys); return ExactResult::UNSUPPORTED; }
+        void *left_array = internal[ARRAY](&left_keys), *right_array = internal[ARRAY](&right_keys);
+        ExactResult result = ExactResult::EQUAL;
+        if (size(left_array) != count || size(right_array) != count) result = ExactResult::UNSUPPORTED;
+        std::array<KeyEntry, 32> local_entries{};
+        std::unique_ptr<KeyEntry[]> heap_entries;
+        if (count > static_cast<int64_t>(local_entries.size())) heap_entries = std::make_unique<KeyEntry[]>(count);
+        KeyEntry *entries = heap_entries ? heap_entries.get() : local_entries.data();
+        for (int64_t i = 0; result == ExactResult::EQUAL && i < count; ++i) {
+            void *key = array_at(right_array, i);
+            if (!supported_leaf(type_of(key))) { result = ExactResult::UNSUPPORTED; break; }
+            entries[i] = {key_token(key), i};
+        }
+        if (result == ExactResult::EQUAL) std::sort(entries, entries + count,
+            [](const KeyEntry &x, const KeyEntry &y) { return x.token < y.token; });
+        for (int64_t i = 0; result == ExactResult::EQUAL && i < count; ++i) {
+            void *key = array_at(left_array, i);
+            if (!supported_leaf(type_of(key))) { result = ExactResult::UNSUPPORTED; break; }
+            const uint64_t token = key_token(key);
+            const KeyEntry probe{token, 0};
+            auto *entry = std::lower_bound(entries, entries + count, probe,
+                [](const KeyEntry &x, const KeyEntry &y) { return x.token < y.token; });
+            void *matched = nullptr;
+            for (; entry != entries + count && entry->token == token; ++entry) {
+                void *candidate = array_at(right_array, entry->ordinal);
+                if (leaf_equal(key, candidate) == ExactResult::EQUAL) { matched = candidate; break; }
+            }
+            if (!matched) { result = ExactResult::UNEQUAL; break; }
+            void *child_a = dict_at(a, key), *child_b = dict_at(b, matched);
+            result = child_a && child_b ? exact_value_equal(child_a, child_b, depth + 1) : ExactResult::UNSUPPORTED;
+        }
+        destroy(&left_keys); destroy(&right_keys);
+        return result;
+    }
+    return leaf_equal(left, right);
+}
+int exact_oracle_modes[] = {0, 1};
+void call_exact_oracle(void *mode_ptr, GDExtensionClassInstancePtr, const GDExtensionConstVariantPtr *args,
+        GDExtensionInt argc, GDExtensionVariantPtr result, GDExtensionCallError *error) {
+    *error = {GDEXTENSION_CALL_OK, 0, 0};
+    const int mode = *static_cast<int *>(mode_ptr);
+    const int expected = mode == 0 ? 2 : 1;
+    if (argc != expected) {
+        error->error = argc < expected ? GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS : GDEXTENSION_CALL_ERROR_TOO_MANY_ARGUMENTS;
+        error->expected = expected;
+        return;
+    }
+    destroy(result);
+    if (mode == 0) {
+        int64_t answer = static_cast<int64_t>(exact_value_equal(args[0], args[1]));
+        from_int(result, &answer);
+    } else {
+        GDExtensionBool answer = contains_unsupported(args[0]);
+        from_bool(result, &answer);
+    }
+}
+
 int64_t advance(void *rows, void *moving, void *rescues, int64_t start, int64_t end, double delta, double recovery = -1.0) {
     if (!std::isfinite(delta) || delta <= 0.0 || start < 0 || end < start || end > size(rows) || end > size(moving)) return start;
     const bool no_rescues = predicate(dict_empty, rescues);
@@ -169,9 +393,12 @@ int64_t advance(void *rows, void *moving, void *rescues, int64_t start, int64_t 
         if (!pose || type_of(pose) != STRING) return i;
         GDExtensionBool idle = false;
         string_equal(internal[STRING](pose), &idle_string, &idle);
-        if (!idle) return i;
+        GDExtensionBool unconscious = false;
+        if (!idle && recovery >= 0.0) string_equal(internal[STRING](pose), &unconscious_string, &unconscious);
+        if (!idle && !unconscious) return i;
         double hp, ko, age, think;
-        if (!number(field(dict, HP), hp) || hp <= 0.0 || !number(field(dict, KO), ko) || ko > 0.0) return i;
+        if (!number(field(dict, HP), hp) || hp <= 0.0 || !number(field(dict, KO), ko) ||
+                (unconscious ? !(ko > delta) : ko > 0.0)) return i;
         const auto *xy = static_cast<int32_t *>(internal[V2I](cell));
         if (xy[0] != -1 || xy[1] != -1) return i;
         if (!no_rescues) {
@@ -180,6 +407,28 @@ int64_t advance(void *rows, void *moving, void *rescues, int64_t start, int64_t 
             const bool rescuing = has(rescues, &index);
             destroy(&index);
             if (rescuing) return i;
+        }
+        if (unconscious) {
+            // The original KO branch ages the row, normalizes four timers, then
+            // reduces KO. It does not touch grace, stun or think. An existing
+            // visual key is erased by GDScript, so leave that row to the owner.
+            if (field(dict, VISUAL)) return i;
+            void *age_slot = field(dict, AGE);
+            if (!number(age_slot, age) || !std::isfinite(age + delta) || !std::isfinite(ko - delta)) return i;
+            double timers[4]{};
+            int timer_index = 0;
+            for (Key key : {COOLDOWN, STAGGER, SKILL, RANGED}) {
+                void *slot = field(dict, key);
+                double value = 0.0;
+                if (slot && (!number(slot, value) || !std::isfinite(value))) return i;
+                const double remaining = 0.0 > value - delta ? 0.0 : value - delta;
+                timers[timer_index++] = remaining <= 0.000000001 ? 0.0 : remaining;
+            }
+            write_float(dict, AGE, age + delta);
+            timer_index = 0;
+            for (Key key : {COOLDOWN, STAGGER, SKILL, RANGED}) write_float(dict, key, timers[timer_index++]);
+            write_float(dict, KO, 0.0 > ko - delta ? 0.0 : ko - delta);
+            continue;
         }
         void *slots[KEY_COUNT]{};
         double *float_slots[KEY_COUNT]{}; // This row only; never used after key insertion.
@@ -288,6 +537,15 @@ bool integer(void *value, int64_t &out) {
     out = *static_cast<int64_t *>(internal[INT](value));
     return true;
 }
+bool person_identity_value(void *value, int64_t &identity) {
+    if (integer(value, identity)) return true;
+    // JSON restores exact small IDs as FLOAT; preserve the raw field type.
+    double parsed;
+    if (!value || type_of(value) != FLOAT || !number(value, parsed) ||
+            parsed < 1.0 || parsed > 2147483647.0 || std::trunc(parsed) != parsed) return false;
+    identity = static_cast<int64_t>(parsed);
+    return true;
+}
 int64_t packed_size(GDExtensionPtrBuiltInMethod method, void *value) {
     int64_t count = 0;
     method(value, nullptr, &count, 0);
@@ -304,54 +562,76 @@ double point_distance(Point a, Point b, bool squared) {
     return std::isfinite(value) ? value : -1.0;
 }
 
-// Read-only, one-refresh projection; the caller still owns reference/present
-// writes in original order. Movers supply the ORIGINAL GD ground calculation.
-// No cached rows, radius, hysteresis, RNG or command state is stored here.
-void call_presence(void *, GDExtensionClassInstancePtr, const GDExtensionConstVariantPtr *args, GDExtensionInt argc,
-        GDExtensionVariantPtr result, GDExtensionCallError *error) {
-    *error = {GDEXTENSION_CALL_OK, 0, 0};
-    reset_variant(result, ARRAY);
-    if (argc != 3 || type_of(args[0]) != ARRAY || type_of(args[1]) != ARRAY || type_of(args[2]) != DICT) return;
-    void *rows = internal[ARRAY](const_cast<void *>(args[0]));
-    void *cells = internal[ARRAY](const_cast<void *>(args[1]));
-    void *moving = internal[DICT](const_cast<void *>(args[2]));
+struct PresenceInputs {
+    std::vector<Point> positions;
+    std::vector<int64_t> identities;
+    std::vector<uint8_t> admitted, active, present;
+};
+
+// Public owner rows/movement can change without dirty notification. Re-read
+// them every time; only derived geometry, never person state, may be reused.
+bool collect_presence(void *rows, void *cells, void *moving, PresenceInputs &input, bool delta, HotStore *store) {
     const int64_t count = size(rows);
-    if (count > 10000 || size(cells) != count) return;
-    std::vector<Point> positions(static_cast<size_t>(count));
-    std::vector<int64_t> identities(static_cast<size_t>(count)), members;
-    std::vector<bool> active(static_cast<size_t>(count));
-    std::vector<double> horizontal, vertical;
+    if (count < 0 || count > 10000 || size(cells) != count || (store && hot_row_count(store) != count)) return false;
+    input.positions.resize(count); input.identities.resize(count);
+    input.admitted.resize(count); input.active.resize(count);
+    if (delta) input.present.resize(count);
+    std::unordered_set<const void *> present_slots;
+    if (delta) present_slots.reserve(count);
     for (int64_t i = 0; i < count; ++i) {
         void *row = array_at(rows, i), *cell = array_at(cells, i);
-        if (type_of(row) != DICT || type_of(cell) != V2I) return;
+        if (type_of(row) != DICT || type_of(cell) != V2I) return false;
         void *dict = internal[DICT](row);
+        void *identity_value = field(dict, PERSON_ID);
+        if (delta) {
+            if (predicate(dict_readonly, dict) || predicate(dict_typed, dict)) return false;
+            void *present = store ? hot_value(store, i, PRESENT) : field(dict, PRESENT);
+            if (!present || type_of(present) != BOOL) return false;
+            // Public const access returns the existing slot; no writes occur
+            // while these call-local addresses are used to detect shared rows.
+            if (!present_slots.insert(store ? identity_value : present).second) return false;
+            input.present[i] = *static_cast<GDExtensionBool *>(internal[BOOL](present));
+        }
         double hp, ko;
         int64_t identity;
-        if (!number(field(dict, HP), hp) || !number(field(dict, KO), ko) || !integer(field(dict, PERSON_ID), identity)) return;
-        void *member = field(dict, MEMBER), *departed = field(dict, DEPARTED), *captive = field(dict, CAPTIVE), *pose = field(dict, POSE);
-        if ((member && type_of(member) != BOOL) || !departed || type_of(departed) != BOOL || !captive || type_of(captive) != BOOL || !pose || type_of(pose) != STRING) return;
+        if (!number(store ? hot_value(store, i, HP) : field(dict, HP), hp) ||
+                !number(store ? hot_value(store, i, KO) : field(dict, KO), ko) || !integer(identity_value, identity)) return false;
+        void *member = store ? hot_value(store, i, MEMBER) : field(dict, MEMBER);
+        void *departed = store ? hot_value(store, i, DEPARTED) : field(dict, DEPARTED);
+        void *captive = store ? hot_value(store, i, CAPTIVE) : field(dict, CAPTIVE);
+        void *pose = store ? hot_value(store, i, POSE) : field(dict, POSE);
+        if ((member && type_of(member) != BOOL) || !departed || type_of(departed) != BOOL || !captive || type_of(captive) != BOOL || !pose || type_of(pose) != STRING) return false;
         const bool admitted = (!member || *static_cast<GDExtensionBool *>(internal[BOOL](member))) && hp > 0.0 &&
             !*static_cast<GDExtensionBool *>(internal[BOOL](departed)) && !*static_cast<GDExtensionBool *>(internal[BOOL](captive));
         GDExtensionBool getting_up = false;
         string_equal(internal[STRING](pose), &get_up_string, &getting_up);
-        active[i] = admitted && ko <= 0.0 && !getting_up;
+        input.admitted[i] = admitted;
+        input.active[i] = admitted && ko <= 0.0 && !getting_up;
         const auto *xy = static_cast<int32_t *>(internal[V2I](cell));
         // Exact half-cell centres for this bounded range; *64 /64 is exact.
-        if (xy[0] < -10000 || xy[0] > 10000 || xy[1] < -10000 || xy[1] > 10000) return;
+        if (xy[0] < -10000 || xy[0] > 10000 || xy[1] < -10000 || xy[1] > 10000) return false;
         Point point{static_cast<float>(xy[0]) + 0.5f, static_cast<float>(xy[1]) + 0.5f};
         VariantStorage ordinal;
         from_int(&ordinal, &i);
         void *override_value = has(moving, &ordinal) ? dict_at(moving, &ordinal) : nullptr;
         destroy(&ordinal);
         if (override_value) {
-            if (type_of(override_value) != V2) return;
+            if (type_of(override_value) != V2) return false;
             point = *static_cast<Point *>(internal[V2](override_value));
-            if (!std::isfinite(point.x) || !std::isfinite(point.y) || std::abs(point.x) > 10000.0f || std::abs(point.y) > 10000.0f) return;
+            if (!std::isfinite(point.x) || !std::isfinite(point.y) || std::abs(point.x) > 10000.0f || std::abs(point.y) > 10000.0f) return false;
         }
-        positions[i] = point; identities[i] = identity;
-        if (admitted) { members.push_back(i); horizontal.push_back(point.x); vertical.push_back(point.y); }
+        input.positions[i] = point; input.identities[i] = identity;
     }
-    Point reference{};
+    return true;
+}
+
+bool presence_geometry(const PresenceInputs &input, Point &reference, bool &valid, std::vector<double> &distances, bool compute_inactive) {
+    std::vector<int64_t> members;
+    std::vector<double> horizontal, vertical;
+    for (size_t i = 0; i < input.positions.size(); ++i) if (input.admitted[i]) {
+        members.push_back(i); horizontal.push_back(input.positions[i].x); vertical.push_back(input.positions[i].y);
+    }
+    valid = !members.empty();
     if (!members.empty()) {
         std::sort(horizontal.begin(), horizontal.end()); std::sort(vertical.begin(), vertical.end());
         const size_t middle = members.size() / 2, lower = (members.size() - 1) / 2;
@@ -359,27 +639,144 @@ void call_presence(void *, GDExtensionClassInstancePtr, const GDExtensionConstVa
         double best = INFINITY;
         int64_t best_identity = 2147483647;
         for (int64_t i : members) {
-            const double distance = point_distance(positions[i], median, true);
-            if (distance < 0.0) return;
-            if (distance < best || (distance == best && identities[i] < best_identity)) {
-                best = distance; best_identity = identities[i]; reference = positions[i];
+            const double distance = point_distance(input.positions[i], median, true);
+            if (distance < 0.0) return false;
+            if (distance < best || (distance == best && input.identities[i] < best_identity)) {
+                best = distance; best_identity = input.identities[i]; reference = input.positions[i];
             }
         }
     }
-    std::vector<double> distances(static_cast<size_t>(count), -1.0);
-    for (int64_t i = 0; i < count; ++i) if (active[i]) {
-        distances[i] = point_distance(reference, positions[i], false);
-        if (distances[i] < 0.0) return;
+    distances.assign(input.positions.size(), -1.0);
+    // KO/get_up changes eligibility, not the reference. Retain those distances.
+    for (size_t i = 0; i < input.positions.size(); ++i) if (compute_inactive ? input.admitted[i] : input.active[i]) {
+        distances[i] = point_distance(reference, input.positions[i], false);
+        if (distances[i] < 0.0) return false;
     }
+    return true;
+}
+
+// Original read-only projection API, including alias/typed/read-only rows.
+void call_presence(void *mode, GDExtensionClassInstancePtr instance, const GDExtensionConstVariantPtr *args, GDExtensionInt argc,
+        GDExtensionVariantPtr result, GDExtensionCallError *error) {
+    *error = {GDEXTENSION_CALL_OK, 0, 0};
+    reset_variant(result, ARRAY);
+    if (argc != 3 || type_of(args[0]) != ARRAY || type_of(args[1]) != ARRAY || type_of(args[2]) != DICT) return;
+    PresenceInputs input;
+    if (!collect_presence(internal[ARRAY](const_cast<void *>(args[0])), internal[ARRAY](const_cast<void *>(args[1])),
+            internal[DICT](const_cast<void *>(args[2])), input, false,
+            mode == &hot_presence_marker ? static_cast<HotStore *>(instance) : nullptr)) return;
+    Point reference{};
+    bool valid = false;
+    std::vector<double> distances;
+    if (!presence_geometry(input, reference, valid, distances, false)) return;
+    const int64_t count = input.positions.size();
+    for (int64_t i = 0; i < count; ++i) if (!input.active[i]) distances[i] = -1.0;
     void *output = internal[ARRAY](result);
     resize(resize_array, output, 2);
     void *ref_slot = array_write(output, 0), *dist_slot = array_write(output, 1);
     reset_variant(ref_slot, VECTORS); reset_variant(dist_slot, DOUBLES);
     void *ref_out = internal[VECTORS](ref_slot), *dist_out = internal[DOUBLES](dist_slot);
-    resize(resize_vectors, ref_out, members.empty() ? 0 : 1);
+    resize(resize_vectors, ref_out, valid ? 1 : 0);
     resize(resize_doubles, dist_out, count);
-    if (!members.empty()) *static_cast<Point *>(vectors_write(ref_out, 0)) = reference;
+    if (valid) *static_cast<Point *>(vectors_write(ref_out, 0)) = reference;
     if (count) std::copy(distances.begin(), distances.end(), doubles_write(dist_out, 0));
+}
+
+// An Army owns this read-only Array of packed geometry. Packed copies use COW;
+// no row pointers survive a call. Invalid/changed geometry is rebuilt atomically.
+bool reuse_presence_geometry(void *cache, const PresenceInputs &input, Point &reference, bool &valid,
+        std::vector<double> &distances) {
+    if (size(cache) != 5 || !predicate(array_readonly, cache)) return false;
+    const GDExtensionVariantType types[] = {VECTORS, LONGS, BYTES, VECTORS, DOUBLES};
+    void *columns[5];
+    for (int i = 0; i < 5; ++i) {
+        void *slot = array_at(cache, i);
+        if (type_of(slot) != types[i]) return false;
+        columns[i] = internal[types[i]](slot);
+    }
+    const int64_t count = input.positions.size();
+    valid = std::find(input.admitted.begin(), input.admitted.end(), uint8_t(1)) != input.admitted.end();
+    if (packed_size(size_vectors, columns[0]) != count || packed_size(size_longs, columns[1]) != count ||
+            packed_size(size_bytes, columns[2]) != count || packed_size(size_vectors, columns[3]) != (valid ? 1 : 0) ||
+            packed_size(size_doubles, columns[4]) != count) return false;
+    for (int64_t i = 0; i < count; ++i) {
+        if (std::memcmp(vectors_read(columns[0], i), &input.positions[i], sizeof(Point)) != 0 ||
+                *longs_read(columns[1], i) != input.identities[i] || *bytes_read(columns[2], i) != input.admitted[i]) return false;
+    }
+    if (valid) {
+        reference = *static_cast<const Point *>(vectors_read(columns[3], 0));
+        if (!std::isfinite(reference.x) || !std::isfinite(reference.y)) return false;
+    }
+    distances.resize(count);
+    for (int64_t i = 0; i < count; ++i) {
+        const double distance = *doubles_read(columns[4], i);
+        if (!std::isfinite(distance) || (input.admitted[i] ? distance < 0.0 : distance != -1.0)) return false;
+        distances[i] = distance;
+    }
+    return true;
+}
+
+void call_presence_delta(void *mode, GDExtensionClassInstancePtr instance, const GDExtensionConstVariantPtr *args, GDExtensionInt argc,
+        GDExtensionVariantPtr result, GDExtensionCallError *error) {
+    *error = {GDEXTENSION_CALL_OK, 0, 0};
+    reset_variant(result, ARRAY);
+    if (argc != 5 || type_of(args[0]) != ARRAY || type_of(args[1]) != ARRAY || type_of(args[2]) != DICT || type_of(args[4]) != ARRAY) return;
+    double radius;
+    if (!number(const_cast<void *>(args[3]), radius)) return;
+    PresenceInputs input;
+    if (!collect_presence(internal[ARRAY](const_cast<void *>(args[0])), internal[ARRAY](const_cast<void *>(args[1])),
+            internal[DICT](const_cast<void *>(args[2])), input, true,
+            mode == &hot_presence_delta_marker ? static_cast<HotStore *>(instance) : nullptr)) return;
+    Point reference{};
+    bool valid = false;
+    std::vector<double> distances;
+    const bool rebuilt = !reuse_presence_geometry(internal[ARRAY](const_cast<void *>(args[4])), input, reference, valid, distances);
+    if (rebuilt && !presence_geometry(input, reference, valid, distances, true)) return;
+    std::vector<int32_t> indices;
+    std::vector<uint8_t> values;
+    const int64_t count = input.positions.size();
+    for (int64_t i = 0; i < count; ++i) {
+        const uint8_t next = valid && input.active[i] && distances[i] <= radius + (input.present[i] ? 2.0 : 0.0);
+        if (next != input.present[i]) { indices.push_back(static_cast<int32_t>(i)); values.push_back(next); }
+    }
+    void *output = internal[ARRAY](result);
+    resize(resize_array, output, 5);
+    void *ref_slot = array_write(output, 0), *index_slot = array_write(output, 1), *value_slot = array_write(output, 2);
+    reset_variant(ref_slot, VECTORS); reset_variant(index_slot, INTS); reset_variant(value_slot, BYTES);
+    void *ref_out = internal[VECTORS](ref_slot), *index_out = internal[INTS](index_slot), *value_out = internal[BYTES](value_slot);
+    resize(resize_vectors, ref_out, valid ? 1 : 0);
+    resize(resize_ints, index_out, indices.size()); resize(resize_bytes, value_out, values.size());
+    if (valid) *static_cast<Point *>(vectors_write(ref_out, 0)) = reference;
+    if (!indices.empty()) {
+        std::copy(indices.begin(), indices.end(), ints_write(index_out, 0));
+        std::copy(values.begin(), values.end(), bytes_write(value_out, 0));
+    }
+    void *cache_slot = array_write(output, 3);
+    if (!rebuilt) {
+        destroy(cache_slot); copy_variant(cache_slot, args[4]);
+    } else {
+        reset_variant(cache_slot, ARRAY);
+        void *cache = internal[ARRAY](cache_slot);
+        resize(resize_array, cache, 5);
+        const GDExtensionVariantType types[] = {VECTORS, LONGS, BYTES, VECTORS, DOUBLES};
+        for (int i = 0; i < 5; ++i) reset_variant(array_write(cache, i), types[i]);
+        void *positions = internal[VECTORS](array_write(cache, 0)), *identities = internal[LONGS](array_write(cache, 1));
+        void *admitted = internal[BYTES](array_write(cache, 2)), *cached_distances = internal[DOUBLES](array_write(cache, 4));
+        resize(resize_vectors, positions, count); resize(resize_longs, identities, count);
+        resize(resize_bytes, admitted, count); resize(resize_doubles, cached_distances, count);
+        void *cached_ref = array_write(cache, 3);
+        destroy(cached_ref); copy_variant(cached_ref, ref_slot);
+        if (count) {
+            std::copy(input.positions.begin(), input.positions.end(), static_cast<Point *>(vectors_write(positions, 0)));
+            std::copy(input.identities.begin(), input.identities.end(), longs_write(identities, 0));
+            std::copy(input.admitted.begin(), input.admitted.end(), bytes_write(admitted, 0));
+            std::copy(distances.begin(), distances.end(), doubles_write(cached_distances, 0));
+        }
+    }
+    void *rebuilt_slot = array_write(output, 4);
+    destroy(rebuilt_slot);
+    GDExtensionBool rebuilt_value = rebuilt;
+    from_bool(rebuilt_slot, &rebuilt_value);
 }
 
 // Read-only presentation projection. Fresh output buffers belong to this call;
@@ -550,7 +947,7 @@ void call_pack(void *, GDExtensionClassInstancePtr, const GDExtensionConstVarian
     *static_cast<Point *>(vectors_write(bounds, 1)) = extent;
 }
 
-void call_render(void *, GDExtensionClassInstancePtr, const GDExtensionConstVariantPtr *args, GDExtensionInt argc,
+void call_render(void *mode, GDExtensionClassInstancePtr instance, const GDExtensionConstVariantPtr *args, GDExtensionInt argc,
         GDExtensionVariantPtr result, GDExtensionCallError *error) {
     *error = {GDEXTENSION_CALL_OK, 0, 0};
     reset_variant(result, ARRAY);
@@ -562,8 +959,10 @@ void call_render(void *, GDExtensionClassInstancePtr, const GDExtensionConstVari
         input[i] = internal[types[i]](const_cast<void *>(args[i]));
     }
     const int64_t count = size(input[0]);
-    // Original Site is 100x100; bound allocations and float-to-int projections.
-    if (count <= 0 || count > 10000 || *static_cast<double *>(input[9]) != 64.0) return;
+    HotStore *store = mode == &hot_render_marker ? static_cast<HotStore *>(instance) : nullptr;
+    // TerrainGenerator admits at most 128x128; bound rows and projections.
+    if (count <= 0 || count > 10000 || (store && hot_row_count(store) != count) ||
+            *static_cast<double *>(input[9]) != 64.0) return;
     for (int i : {1, 2, 3, 5, 6, 8}) if (size(input[i]) != count) return;
     void *output = internal[ARRAY](result);
     resize(resize_array, output, 7);
@@ -586,7 +985,7 @@ void call_render(void *, GDExtensionClassInstancePtr, const GDExtensionConstVari
     // Same exact atlas request as the preceding successful sample. Call-local
     // scalar results only: no person state or borrowed pointer survives a row.
     int64_t last_page = -1, last_sequence = 0, last_frame = 0;
-    int last_direction = -1;
+    int last_direction = -1, last_pose = -1;
     double last_age = -1.0;
     float last_anchor_x = 0.0f, last_anchor_y = 0.0f;
     for (int64_t i = begin; i < end; ++i) {
@@ -600,9 +999,9 @@ void call_render(void *, GDExtensionClassInstancePtr, const GDExtensionConstVari
         if (type_of(row) != DICT || type_of(cell) != V2I || type_of(moving) != V2I || type_of(facing) != V2I) continue;
         const auto *xy = static_cast<int32_t *>(internal[V2I](cell));
         const auto *destination = static_cast<int32_t *>(internal[V2I](moving));
-        if (destination[0] != -1 || destination[1] != -1 || xy[0] < 0 || xy[0] >= 100 || xy[1] < 0 || xy[1] >= 100) continue;
+        if (destination[0] != -1 || destination[1] != -1 || xy[0] < 0 || xy[0] >= 128 || xy[1] < 0 || xy[1] >= 128) continue;
         void *dict = internal[DICT](row);
-        ReadField pose_field(row, POSE), role_field(row, ROLE);
+        ReadField pose_field(row, POSE, store, i), role_field(row, ROLE, store, i);
         void *pose = pose_field.get();
         if (void *role = role_field.get()) {
             if (type_of(role) != STRING) continue;
@@ -614,18 +1013,38 @@ void call_render(void *, GDExtensionClassInstancePtr, const GDExtensionConstVari
                 if (!female) continue;
             }
         }
-        if (!pose || type_of(pose) != STRING || has(dict, &lookup_keys[VISUAL])) continue;
-        GDExtensionBool idle = false;
+        if (!pose || type_of(pose) != STRING ||
+                (store ? hot_value(store, i, VISUAL) != nullptr : has(dict, &lookup_keys[VISUAL]))) continue;
+        GDExtensionBool idle = false, unconscious = false;
         string_equal(internal[STRING](pose), &idle_string, &idle);
-        if (!idle) continue;
+        if (!idle) {
+            string_equal(internal[STRING](pose), &unconscious_string, &unconscious);
+            if (!unconscious) continue;
+            double hp, ko;
+            ReadField hp_field(row, HP, store, i), ko_field(row, KO, store, i);
+            if (!number(hp_field.get(), hp) || hp <= 0.0 ||
+                    !number(ko_field.get(), ko) || ko <= 0.0) continue;
+        }
         double age;
-        ReadField age_field(row, AGE);
-        if (!number(age_field.get(), age) || age < 0.0) continue;
+        ReadField age_field(row, AGE, store, i);
+        if (!number(age_field.get(), age) || !std::isfinite(age) || age < 0.0) continue;
         ReadField identity_field(row, PERSON_ID);
         void *identity = identity_field.get();
         int64_t person_id;
-        if (!integer(identity, person_id) || !has(input[4], identity)) continue;
-        void *appearance = dict_at(input[4], identity);
+        if (!person_identity_value(identity, person_id)) continue;
+        // Publications use integer person IDs even when JSON restored the
+        // roster's ID field as a float. Keep the owner row untouched.
+        VariantStorage integer_key;
+        void *publication_key = identity;
+        const bool restored_float_id = type_of(identity) == FLOAT;
+        if (restored_float_id) {
+            from_int(&integer_key, &person_id);
+            publication_key = &integer_key;
+        }
+        const bool published = has(input[4], publication_key);
+        void *appearance = published ? dict_at(input[4], publication_key) : nullptr;
+        if (restored_float_id) destroy(&integer_key);
+        if (!published) continue;
         void *previous = array_at(input[5], i);
         const void *same_args[] = {appearance, previous};
         GDExtensionBool same = false;
@@ -642,10 +1061,14 @@ void call_render(void *, GDExtensionClassInstancePtr, const GDExtensionConstVari
         if (direction[0] == 0 && direction[1] == -1) d = 0;
         else if (direction[0] == 1 && direction[1] == 0) d = 1;
         else if (direction[0] == -1 && direction[1] == 0) d = 3;
-        if (page != last_page || d != last_direction || age != last_age) {
+        const int pose_index = unconscious ? 1 : 0;
+        if (page != last_page || d != last_direction || age != last_age || pose_index != last_pose) {
             void *directions = array_at(input[7], page);
-            if (type_of(directions) != ARRAY || size(internal[ARRAY](directions)) != 4) continue;
-            void *record = array_at(internal[ARRAY](directions), d);
+            if (type_of(directions) != ARRAY) continue;
+            void *direction_samples = internal[ARRAY](directions);
+            if (size(direction_samples) != 4 && size(direction_samples) != 8) continue;
+            if (unconscious && size(direction_samples) != 8) continue;
+            void *record = array_at(direction_samples, d + pose_index * 4);
             if (type_of(record) != ARRAY || size(internal[ARRAY](record)) != 5) continue;
             void *sample = internal[ARRAY](record);
             int64_t sequence;
@@ -666,7 +1089,7 @@ void call_render(void *, GDExtensionClassInstancePtr, const GDExtensionConstVari
                 if (times[middle] <= elapsed + 0.000000001) low = middle;
                 else high = middle;
             }
-            last_page = page; last_direction = d; last_age = age;
+            last_page = page; last_direction = d; last_age = age; last_pose = pose_index;
             last_sequence = sequence; last_frame = low;
             last_anchor_x = anchors[low * 2]; last_anchor_y = anchors[low * 2 + 1];
         }
@@ -705,7 +1128,7 @@ void call_encirclement_field(void *, GDExtensionClassInstancePtr, const GDExtens
     const auto *dimensions = static_cast<int32_t *>(input[2]);
     const int32_t width = dimensions[0], height = dimensions[1];
     const int64_t limit = *static_cast<int64_t *>(input[8]), reach = *static_cast<int64_t *>(input[9]);
-    if (width < 1 || width > 100 || height < 1 || height > 100 || enemy_count > 10000 ||
+    if (width < 1 || width > 128 || height < 1 || height > 128 || enemy_count > 10000 ||
             packed_size(size_bytes, input[1]) != enemy_count || limit < 1 || limit > 1024 || reach < 1 || reach > 32) return;
     const int32_t count = width * height;
     for (int i : {3, 4, 5}) if (packed_size(size_bytes, input[i]) != count) return;
@@ -832,7 +1255,8 @@ void call_encirclement(void *, GDExtensionClassInstancePtr, const GDExtensionCon
     if (!candidates.empty()) std::copy(candidates.begin(), candidates.end(), ints_write(front, 0));
 }
 
-bool collect_people_range(void *rows, void *cells, int64_t begin, int64_t end, std::vector<QueryPerson> &people) {
+bool collect_people_range(void *rows, void *cells, int64_t begin, int64_t end,
+        std::vector<QueryPerson> &people, HotStore *store) {
     people.reserve(static_cast<size_t>(end - begin));
     for (int64_t i = begin; i < end; ++i) {
         void *row = array_at(rows, i);
@@ -842,23 +1266,23 @@ bool collect_people_range(void *rows, void *cells, int64_t begin, int64_t end, s
         // Unusual coercions/types reject the WHOLE capture to untouched GD.
         // Reuse the existing read-only lookup: one hash lookup per field,
         // without retaining a pointer into the original person's Dictionary.
-        ReadField hp_value(row, HP);
+        ReadField hp_value(row, HP, store, i);
         if (!number(hp_value.get(), hp)) return false;
         if (hp <= 0.0) continue;
-        ReadField ko_value(row, KO);
+        ReadField ko_value(row, KO, store, i);
         if (!number(ko_value.get(), ko)) return false;
         if (ko > 0.0) continue;
-        ReadField pose_value(row, POSE);
+        ReadField pose_value(row, POSE, store, i);
         void *pose = pose_value.get();
         if (!pose || type_of(pose) != STRING) return false;
         GDExtensionBool getting_up = false;
         string_equal(internal[STRING](pose), &get_up_string, &getting_up);
         if (getting_up) continue;
-        ReadField captive_value(row, CAPTIVE);
+        ReadField captive_value(row, CAPTIVE, store, i);
         void *captive = captive_value.get();
         if (!captive || type_of(captive) != BOOL) return false;
         if (*static_cast<GDExtensionBool *>(internal[BOOL](captive))) continue;
-        ReadField departed_value(row, DEPARTED);
+        ReadField departed_value(row, DEPARTED, store, i);
         void *departed = departed_value.get();
         if (!departed || type_of(departed) != BOOL) return false;
         if (*static_cast<GDExtensionBool *>(internal[BOOL](departed))) continue;
@@ -873,13 +1297,13 @@ bool collect_people_range(void *rows, void *cells, int64_t begin, int64_t end, s
     return true;
 }
 
-bool collect_people(void *rows, void *cells, std::vector<QueryPerson> &people) {
+bool collect_people(void *rows, void *cells, std::vector<QueryPerson> &people, HotStore *store) {
     const int64_t count = size(rows);
-    if (count < 0 || count > 10000 || size(cells) != count) return false;
+    if (count < 0 || count > 10000 || size(cells) != count || (store && hot_row_count(store) != count)) return false;
     std::vector<QueryPerson> ranges[4];
     bool valid[4] = {true, true, true, true};
     project_ranges(count, [&](int64_t begin, int64_t end, uint32_t chunk) {
-        valid[chunk] = collect_people_range(rows, cells, begin, end, ranges[chunk]);
+        valid[chunk] = collect_people_range(rows, cells, begin, end, ranges[chunk], store);
     });
     for (bool accepted : valid) if (!accepted) return false;
     people.reserve(static_cast<size_t>(count));
@@ -894,10 +1318,13 @@ void assign_copy(void *slot, const void *value) {
 
 // Call-local query references only. No readiness calls, member filtering,
 // cross-tick reuse, world changes or writes to the original person rows.
-void call_capture(void *materialize, GDExtensionClassInstancePtr, const GDExtensionConstVariantPtr *args,
+void call_capture(void *mode, GDExtensionClassInstancePtr instance, const GDExtensionConstVariantPtr *args,
         GDExtensionInt argc, GDExtensionVariantPtr result, GDExtensionCallError *error) {
     *error = {GDEXTENSION_CALL_OK, 0, 0};
     reset_variant(result, ARRAY);
+    const bool materialize = mode == &library || mode == &hot_capture_people_marker;
+    HotStore *store = mode == &hot_capture_columns_marker || mode == &hot_capture_people_marker ?
+        static_cast<HotStore *>(instance) : nullptr;
     const int expected_count = materialize ? 4 : 2;
     if (argc != expected_count) {
         error->error = argc < expected_count ? GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS : GDEXTENSION_CALL_ERROR_TOO_MANY_ARGUMENTS;
@@ -916,7 +1343,7 @@ void call_capture(void *materialize, GDExtensionClassInstancePtr, const GDExtens
     void *rows = internal[ARRAY](const_cast<void *>(args[0]));
     void *cells = internal[ARRAY](const_cast<void *>(args[1]));
     std::vector<QueryPerson> people;
-    if (!collect_people(rows, cells, people)) return;
+    if (!collect_people(rows, cells, people, store)) return;
     void *output = internal[ARRAY](result);
     const int64_t count = static_cast<int64_t>(people.size());
     if (materialize) {
@@ -1069,6 +1496,599 @@ void call_advance(void *mode, GDExtensionClassInstancePtr, const GDExtensionCons
     destroy(result); // ClassMethodCall receives an initialized Variant.
     from_int(result, &next);
 }
+
+// One instance belongs to one TerrainArmy. The old shared ArmyIdleKernel stays
+// stateless; these fields have no Dictionary lookup on their active read path.
+constexpr Key hot_keys[] = {HP, KO, AGE, THINK, STUN, GRACE, COOLDOWN, STAGGER, SKILL, RANGED, DURATION,
+    POSE, ATTACK, MEMBER, CAPTIVE, DEPARTED, PRESENT, VISUAL};
+constexpr int HOT_NUMBERS = 11;
+constexpr int HOT_COUNT = sizeof(hot_keys) / sizeof(hot_keys[0]);
+struct HotRow {
+    VariantStorage values[HOT_COUNT];
+    bool present[HOT_COUNT]{};
+    uint32_t name_keys = 0; // Dictionary key type is part of the logical row.
+    HotRow() {
+        for (auto &value : values) {
+            GDExtensionCallError error{};
+            variant_construct(NIL, &value, nullptr, 0, &error);
+        }
+    }
+    ~HotRow() { for (auto &value : values) destroy(&value); }
+    HotRow(const HotRow &) = delete;
+    HotRow &operator=(const HotRow &) = delete;
+};
+struct HotStore {
+    std::unique_ptr<HotRow[]> rows;
+    int64_t count = 0;
+};
+int64_t hot_row_count(HotStore *store) { return store->count; }
+int hot_slot(Key key) {
+    switch (key) {
+        case HP: return 0; case KO: return 1; case AGE: return 2; case THINK: return 3;
+        case STUN: return 4; case GRACE: return 5; case COOLDOWN: return 6;
+        case STAGGER: return 7; case SKILL: return 8; case RANGED: return 9;
+        case DURATION: return 10; case POSE: return 11; case ATTACK: return 12;
+        case MEMBER: return 13; case CAPTIVE: return 14; case DEPARTED: return 15;
+        case PRESENT: return 16; case VISUAL: return 17;
+        default: return -1;
+    }
+}
+bool hot_owns(Key key) { return hot_slot(key) >= 0; }
+void *hot_value(HotStore *store, int64_t index, Key key) {
+    const int slot = hot_slot(key);
+    if (slot < 0 || index < 0 || index >= store->count) return nullptr;
+    HotRow &row = store->rows[index];
+    return row.present[slot] ? &row.values[slot] : nullptr;
+}
+enum HotBarrier { HOT_END = 0, HOT_MOVE = 1, HOT_WAKE = 2, HOT_OWNER = 3 };
+// Stable diagnostic-only reason codes. The ordinary two-int advance ABI does
+// not classify rows; Army requests a three-int result only in diagnostics.
+enum HotOwnerReason { REASON_NONE = 0, REASON_INPUT_INVALID, REASON_STATE_INVALID,
+    REASON_MOVEMENT_INVALID, REASON_RESCUE, REASON_VISUAL_CLEAR, REASON_VISUAL_EXPIRY,
+    REASON_VISUAL_INVALID, REASON_NUMERIC_INVALID, REASON_ATTACK_ACTIVE,
+    REASON_POSE_OWNER, REASON_POSE_EXPIRY, REASON_THINK_NONHOLD, REASON_THINK_HOLD };
+struct HotAdvance { int64_t next; HotBarrier barrier; HotOwnerReason reason = REASON_NONE; };
+bool hot_number(HotRow &row, int field, double &out) {
+    if (!row.present[field]) { out = 0.0; return field >= 6 && field <= 10; }
+    return number(&row.values[field], out);
+}
+void hot_float(HotRow &row, int field, double value) {
+    assign_float(&row.values[field], value);
+    if (!row.present[field]) row.name_keys &= ~(uint32_t(1) << field); // Native timer writes use String keys.
+    row.present[field] = true;
+}
+HotAdvance advance_hot(HotStore *store, void *moving, void *progress, void *durations, void *rescues,
+        int64_t start, int64_t end, double delta, double game_seconds, double recovery, bool holding) {
+    if (start < 0 || end < start || end > store->count || size(moving) != store->count ||
+            packed_size(size_doubles, progress) != store->count || packed_size(size_doubles, durations) != store->count ||
+            !std::isfinite(delta) || delta <= 0.0 || !std::isfinite(game_seconds) || game_seconds <= 0.0 ||
+            !std::isfinite(recovery) || recovery < 0.0) return {start, HOT_OWNER, REASON_INPUT_INVALID};
+    for (int64_t i = start; i < end; ++i) {
+        HotRow &row = store->rows[i];
+        double hp, ko, age, think, stun, grace, pose_duration, timers[4];
+        if (!hot_number(row, 0, hp) || !hot_number(row, 1, ko) || !hot_number(row, 2, age) ||
+                !hot_number(row, 3, think) || !hot_number(row, 4, stun) || !hot_number(row, 5, grace) ||
+                !hot_number(row, 10, pose_duration)) return {i, HOT_OWNER, REASON_STATE_INVALID};
+        for (int t = 0; t < 4; ++t) if (!hot_number(row, 6 + t, timers[t])) return {i, HOT_OWNER, REASON_STATE_INVALID};
+        void *cell = array_at(moving, i);
+        if (type_of(cell) != V2I || !row.present[11] || type_of(&row.values[11]) != STRING ||
+                !row.present[12] || type_of(&row.values[12]) != BOOL) return {i, HOT_OWNER, REASON_STATE_INVALID};
+        const auto *xy = static_cast<int32_t *>(internal[V2I](cell));
+        const bool moving_now = xy[0] != -1 || xy[1] != -1;
+        double movement_next = 0.0;
+        if (moving_now) {
+            const double current = *doubles_read(progress, i), duration = *doubles_read(durations, i);
+            if (!std::isfinite(current) || !std::isfinite(duration) || duration <= 0.0) return {i, HOT_OWNER, REASON_MOVEMENT_INVALID};
+            movement_next = 1.0 < current + delta / duration ? 1.0 : current + delta / duration;
+            if ((1.0 - movement_next) * duration <= 0.000000001) movement_next = 1.0;
+            if (movement_next >= 1.0) return {i, HOT_MOVE}; // Owner advances this row once, then commits occupancy.
+        }
+        VariantStorage ordinal;
+        from_int(&ordinal, &i);
+        const bool rescue = has(rescues, &ordinal);
+        destroy(&ordinal);
+        if (rescue) return {i, HOT_OWNER, REASON_RESCUE};
+        // A live short result has a pure age/left update until expiry. Keep
+        // the expiry itself on the ordered owner path so it erases the key and
+        // marks that presentation row exactly once.
+        void *visual_dict = row.present[17] ? internal[DICT](&row.values[17]) : nullptr;
+        bool visual_active = false;
+        double visual_age = 0.0, visual_left = 0.0;
+        if (visual_dict) {
+            if (hp <= 0.0 || ko > 0.0) return {i, HOT_OWNER, REASON_VISUAL_CLEAR}; // Owner erases even an empty key.
+            if (!predicate(dict_empty, visual_dict)) {
+                if (predicate(dict_readonly, visual_dict) || predicate(dict_typed, visual_dict) ||
+                        !number(field(visual_dict, AGE), visual_age) || !number(field(visual_dict, LEFT), visual_left) ||
+                        !field(visual_dict, POSE) || type_of(field(visual_dict, POSE)) != STRING ||
+                        !field(visual_dict, FACING) || type_of(field(visual_dict, FACING)) != V2I ||
+                        !std::isfinite(visual_age + delta))
+                    return {i, HOT_OWNER, REASON_VISUAL_INVALID};
+                if (visual_left - delta <= 0.000000001) return {i, HOT_OWNER, REASON_VISUAL_EXPIRY};
+                visual_active = true;
+            }
+        }
+        GDExtensionBool idle = false, unconscious = false, down = false, getting_up = false, guard_raise = false, guard_lower = false, guard_break = false, rescue_pose = false;
+        void *pose = internal[STRING](&row.values[11]);
+        string_equal(pose, &idle_string, &idle);
+        string_equal(pose, &unconscious_string, &unconscious);
+        string_equal(pose, &get_up_string, &getting_up);
+        string_equal(pose, &down_string, &down);
+        string_equal(pose, &guard_raise_string, &guard_raise);
+        string_equal(pose, &guard_lower_string, &guard_lower);
+        string_equal(pose, &guard_break_string, &guard_break);
+        string_equal(pose, &rescue_string, &rescue_pose);
+        if (visual_dict && (unconscious || down || getting_up || guard_raise || guard_lower || guard_break || rescue_pose))
+            return {i, HOT_OWNER, REASON_VISUAL_CLEAR}; // These poses clear the visual facet before other state work.
+        const double aged = age + delta;
+        if (!std::isfinite(aged)) return {i, HOT_OWNER, REASON_NUMERIC_INVALID};
+        bool timers_zero = true;
+        for (double timer : timers) timers_zero = timers_zero && timer == 0.0;
+        for (double &timer : timers) {
+            const double left = timer - delta;
+            timer = left <= 0.000000001 ? 0.0 : (0.0 > left ? 0.0 : left);
+        }
+        if (moving_now && !std::isfinite(movement_next)) return {i, HOT_OWNER, REASON_MOVEMENT_INVALID};
+        if (hp > 0.0 && ko > 0.0) {
+            if (ko <= game_seconds) return {i, HOT_WAKE};
+            if (down && aged >= 2.875) return {i, HOT_OWNER, REASON_POSE_EXPIRY};
+            hot_float(row, 2, aged);
+            for (int t = 0; t < 4; ++t) hot_float(row, 6 + t, timers[t]);
+            if (moving_now) *doubles_write(progress, i) = movement_next;
+            hot_float(row, 1, 0.0 > ko - game_seconds ? 0.0 : ko - game_seconds);
+            continue;
+        }
+        if (hp <= 0.0) {
+            hot_float(row, 2, aged);
+            for (int t = 0; t < 4; ++t) hot_float(row, 6 + t, timers[t]);
+            if (moving_now) *doubles_write(progress, i) = movement_next;
+            continue;
+        }
+        // The original special rear-rank branch performs one think decrement.
+        bool idle_fast = !visual_active && !holding && idle && !moving_now && stun == 0.0 && grace == 0.0 && pose_duration == 0.0 && timers_zero;
+        if (idle_fast) {
+            hot_float(row, 2, aged);
+            for (int t = 0; t < 4; ++t) hot_float(row, 6 + t, 0.0);
+            hot_float(row, 5, 0.0); hot_float(row, 4, 0.0);
+            hot_float(row, 3, 0.0 > think - delta ? 0.0 : think - delta);
+            continue;
+        }
+        // Non-idle rows are admitted when pose/AI work will not cross a
+        // callback boundary on this step. They no longer exit merely by pose.
+        // In admitted exchange mode ATTACK is a state flag, not a per-tick
+        // callback. _advance_exchange_pose only changes it at pose expiry,
+        // already stopped below in ordinal order.
+        if (guard_raise || guard_lower || guard_break || down || unconscious) return {i, HOT_OWNER, REASON_POSE_OWNER};
+        if (getting_up && aged + 0.000000001 >= 2.2) return {i, HOT_OWNER, REASON_POSE_EXPIRY};
+        if (pose_duration > 0.0 && aged + 0.000000001 >= pose_duration) return {i, HOT_OWNER, REASON_POSE_EXPIRY};
+        // Exchange mode continues before the legacy second think decrement.
+        const double next_think = 0.0 > think - delta ? 0.0 : think - delta;
+        // Non-HOLD exchange prepares only decrement think and continue; the
+        // sole think-expiry callback is HOLD's automatic rescue search.
+        if (next_think <= 0.0 && holding) return {i, HOT_OWNER, REASON_THINK_HOLD};
+        const double difference = delta - grace, decay = 0.0 > difference ? 0.0 : difference;
+        const double recovered = decay * recovery;
+        const double grace_left = grace - delta, stun_left = stun - recovered;
+        if (!std::isfinite(recovered) || !std::isfinite(grace_left) || !std::isfinite(stun_left)) return {i, HOT_OWNER, REASON_NUMERIC_INVALID};
+        hot_float(row, 2, aged);
+        for (int t = 0; t < 4; ++t) hot_float(row, 6 + t, timers[t]);
+        if (moving_now) *doubles_write(progress, i) = movement_next;
+        hot_float(row, 5, 0.0 > grace_left ? 0.0 : grace_left);
+        hot_float(row, 4, 0.0 > stun_left ? 0.0 : stun_left);
+        hot_float(row, 3, next_think);
+        if (visual_active) {
+            write_float(visual_dict, AGE, visual_age + delta);
+            write_float(visual_dict, LEFT, visual_left - delta);
+        }
+    }
+    return {end, HOT_END};
+}
+int hot_field(void *name) {
+    const auto type = type_of(name);
+    if (type != STRING && type != NAME) return -1;
+    for (int field = 0; field < HOT_COUNT; ++field) {
+        GDExtensionBool equal = false;
+        (type == STRING ? string_equal : name_equal)(internal[type](name),
+            internal[type](type == STRING ? static_cast<void *>(&keys[hot_keys[field]]) :
+                static_cast<void *>(&lookup_keys[hot_keys[field]])), &equal);
+        if (equal) return field;
+    }
+    return -1;
+}
+bool hot_key_masks(void *source, uint32_t &seen, uint32_t &names) {
+    seen = names = 0;
+    VariantStorage all_keys{};
+    if (!get_keys(source, all_keys)) { destroy(&all_keys); return false; }
+    void *array = internal[ARRAY](&all_keys);
+    bool valid = true;
+    for (int64_t i = 0, count = size(array); i < count; ++i) {
+        void *key = array_at(array, i);
+        const int slot = hot_field(key);
+        if (slot < 0) continue;
+        const uint32_t bit = uint32_t(1) << slot;
+        if (seen & bit) { valid = false; break; } // String and StringName aliases are ambiguous.
+        seen |= bit;
+        if (type_of(key) == NAME) names |= bit;
+    }
+    destroy(&all_keys);
+    return valid;
+}
+const void *hot_key(const HotRow &row, int field) {
+    return (row.name_keys & (uint32_t(1) << field)) ?
+        static_cast<const void *>(&lookup_keys[hot_keys[field]]) : static_cast<const void *>(&keys[hot_keys[field]]);
+}
+bool hot_valid(int field, void *value) {
+    if (field < HOT_NUMBERS) { double parsed; return number(value, parsed); }
+    if (field == HOT_NUMBERS) return type_of(value) == STRING;
+    if (field == 17) return type_of(value) == DICT;
+    return type_of(value) == BOOL;
+}
+bool hot_optional(int field) { return field >= 6 && field <= 10 || field == 13 || field == 17; }
+bool load_hot(HotStore *store, void *input) {
+    const int64_t count = size(input);
+    if (count < 0 || count > 10000) return false;
+    std::unique_ptr<HotRow[]> next(count ? new HotRow[static_cast<size_t>(count)] : nullptr);
+    for (int64_t i = 0; i < count; ++i) {
+        void *row = array_at(input, i);
+        if (type_of(row) != DICT) return false;
+        void *dict = internal[DICT](row);
+        if (predicate(dict_readonly, dict) || predicate(dict_typed, dict)) return false;
+        uint32_t seen = 0, names = 0;
+        if (!hot_key_masks(row, seen, names)) return false;
+        for (int field = 0; field < HOT_COUNT; ++field) {
+            const uint32_t bit = uint32_t(1) << field;
+            if (!(seen & bit)) {
+                if (!hot_optional(field)) return false;
+                continue;
+            }
+            const void *key = names & bit ? static_cast<const void *>(&lookup_keys[hot_keys[field]]) :
+                static_cast<const void *>(&keys[hot_keys[field]]);
+            void *value = dict_at(dict, key);
+            if (!value || !hot_valid(field, value)) return false;
+            auto &slot = next[i].values[field];
+            destroy(&slot);
+            copy_variant(&slot, value);
+            next[i].present[field] = true;
+        }
+        next[i].name_keys = names;
+    }
+    store->rows = std::move(next);
+    store->count = count;
+    return true;
+}
+enum class HotMethod { LOAD, GET, HAS, SET, ERASE, COLUMN, CAPTURE, SIZE, ADVANCE, CAPTURE_ROW, ABSORB_ROW, CAN_ACT, RETAINED_IDLE_MASK, ADVANCE_HOLD, ADVANCE_REASON, ADVANCE_HOLD_REASON };
+HotMethod hot_methods[] = {HotMethod::LOAD, HotMethod::GET, HotMethod::HAS, HotMethod::SET,
+    HotMethod::ERASE, HotMethod::COLUMN, HotMethod::CAPTURE, HotMethod::SIZE, HotMethod::ADVANCE,
+    HotMethod::CAPTURE_ROW, HotMethod::ABSORB_ROW, HotMethod::CAN_ACT, HotMethod::RETAINED_IDLE_MASK, HotMethod::ADVANCE_HOLD,
+    HotMethod::ADVANCE_REASON, HotMethod::ADVANCE_HOLD_REASON};
+void call_hot(void *mode_ptr, GDExtensionClassInstancePtr instance, const GDExtensionConstVariantPtr *args,
+        GDExtensionInt argc, GDExtensionVariantPtr result, GDExtensionCallError *error) {
+    *error = {GDEXTENSION_CALL_OK, 0, 0};
+    auto *store = static_cast<HotStore *>(instance);
+    const auto mode = *static_cast<HotMethod *>(mode_ptr);
+    const int expected = mode == HotMethod::ADVANCE || mode == HotMethod::ADVANCE_HOLD ||
+        mode == HotMethod::ADVANCE_REASON || mode == HotMethod::ADVANCE_HOLD_REASON ? 9 :
+        mode == HotMethod::LOAD || mode == HotMethod::COLUMN || mode == HotMethod::CAPTURE_ROW || mode == HotMethod::CAN_ACT ? 1 :
+        mode == HotMethod::GET || mode == HotMethod::SET ? 3 :
+        mode == HotMethod::HAS || mode == HotMethod::ERASE || mode == HotMethod::ABSORB_ROW ? 2 : 0;
+    if (argc != expected) {
+        error->error = argc < expected ? GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS : GDEXTENSION_CALL_ERROR_TOO_MANY_ARGUMENTS;
+        error->expected = expected;
+        return;
+    }
+    const auto result_bool = [&](bool value) { destroy(result); GDExtensionBool flag = value; from_bool(result, &flag); };
+    if (mode == HotMethod::SIZE) { destroy(result); from_int(result, &store->count); return; }
+    if (mode == HotMethod::RETAINED_IDLE_MASK) {
+        reset_variant(result, BYTES);
+        void *output = internal[BYTES](result);
+        resize(resize_bytes, output, store->count);
+        if (!store->count) return;
+        auto *mask = bytes_write(output, 0);
+        for (int64_t i = 0; i < store->count; ++i) {
+            HotRow &row = store->rows[i];
+            GDExtensionBool idle = false, unconscious = false;
+            void *pose = internal[STRING](&row.values[11]);
+            string_equal(pose, &idle_string, &idle);
+            string_equal(pose, &unconscious_string, &unconscious);
+            mask[i] = (idle || unconscious) && !row.present[17];
+        }
+        return;
+    }
+    if (mode == HotMethod::CAN_ACT) {
+        bool capable = false;
+        if (type_of(args[0]) == INT) {
+            const int64_t index = *static_cast<int64_t *>(internal[INT](const_cast<void *>(args[0])));
+            if (index >= 0 && index < store->count) {
+                HotRow &row = store->rows[index];
+                double hp, ko;
+                GDExtensionBool getting_up = false;
+                string_equal(internal[STRING](&row.values[11]), &get_up_string, &getting_up);
+                capable = hot_number(row, 0, hp) && hp > 0.0 && hot_number(row, 1, ko) && ko <= 0.0 &&
+                    !getting_up && !*static_cast<GDExtensionBool *>(internal[BOOL](&row.values[14])) &&
+                    !*static_cast<GDExtensionBool *>(internal[BOOL](&row.values[15]));
+            }
+        }
+        result_bool(capable);
+        return;
+    }
+    if (mode == HotMethod::ADVANCE || mode == HotMethod::ADVANCE_HOLD ||
+            mode == HotMethod::ADVANCE_REASON || mode == HotMethod::ADVANCE_HOLD_REASON) {
+        const bool diagnostic = mode == HotMethod::ADVANCE_REASON || mode == HotMethod::ADVANCE_HOLD_REASON;
+        reset_variant(result, INTS);
+        void *output = internal[INTS](result);
+        resize(resize_ints, output, diagnostic ? 3 : 2);
+        auto *status = ints_write(output, 0);
+        status[0] = 0; status[1] = HOT_OWNER;
+        if (diagnostic) status[2] = REASON_INPUT_INVALID;
+        const GDExtensionVariantType types[] = {ARRAY, DOUBLES, DOUBLES, DICT, INT, INT, FLOAT, FLOAT, FLOAT};
+        for (int i = 0; i < 9; ++i) if (type_of(args[i]) != types[i]) return;
+        const int64_t start = *static_cast<int64_t *>(internal[INT](const_cast<void *>(args[4])));
+        const int64_t end = *static_cast<int64_t *>(internal[INT](const_cast<void *>(args[5])));
+        const HotAdvance advanced = advance_hot(store,
+            internal[ARRAY](const_cast<void *>(args[0])), internal[DOUBLES](const_cast<void *>(args[1])),
+            internal[DOUBLES](const_cast<void *>(args[2])), internal[DICT](const_cast<void *>(args[3])),
+            start, end, *static_cast<double *>(internal[FLOAT](const_cast<void *>(args[6]))),
+            *static_cast<double *>(internal[FLOAT](const_cast<void *>(args[7]))),
+            *static_cast<double *>(internal[FLOAT](const_cast<void *>(args[8]))),
+            mode == HotMethod::ADVANCE_HOLD || mode == HotMethod::ADVANCE_HOLD_REASON);
+        status[0] = static_cast<int32_t>(advanced.next);
+        status[1] = advanced.barrier;
+        if (diagnostic) status[2] = advanced.reason;
+        return;
+    }
+    if (mode == HotMethod::LOAD) {
+        result_bool(type_of(args[0]) == ARRAY && load_hot(store, internal[ARRAY](const_cast<void *>(args[0]))));
+        return;
+    }
+    if (mode == HotMethod::CAPTURE) {
+        reset_variant(result, ARRAY);
+        void *output = internal[ARRAY](result);
+        resize(resize_array, output, store->count);
+        for (int64_t i = 0; i < store->count; ++i) {
+            void *row = array_write(output, i);
+            reset_variant(row, DICT);
+            void *dict = internal[DICT](row);
+            for (int field = 0; field < HOT_COUNT; ++field) {
+                if (!store->rows[i].present[field]) continue;
+                void *slot = dict_write(dict, hot_key(store->rows[i], field));
+                destroy(slot);
+                copy_variant(slot, &store->rows[i].values[field]);
+            }
+        }
+        return;
+    }
+    if (mode == HotMethod::CAPTURE_ROW) {
+        reset_variant(result, DICT);
+        if (type_of(args[0]) != INT) return;
+        const int64_t index = *static_cast<int64_t *>(internal[INT](const_cast<void *>(args[0])));
+        if (index < 0 || index >= store->count) return;
+        void *dict = internal[DICT](result);
+        for (int field = 0; field < HOT_COUNT; ++field) {
+            if (!store->rows[index].present[field]) continue;
+            void *slot = dict_write(dict, hot_key(store->rows[index], field));
+            destroy(slot);
+            copy_variant(slot, &store->rows[index].values[field]);
+        }
+        return;
+    }
+    if (mode == HotMethod::ABSORB_ROW) {
+        if (type_of(args[0]) != INT || type_of(args[1]) != DICT) { result_bool(false); return; }
+        const int64_t index = *static_cast<int64_t *>(internal[INT](const_cast<void *>(args[0])));
+        if (index < 0 || index >= store->count) { result_bool(false); return; }
+        void *source = internal[DICT](const_cast<void *>(args[1]));
+        uint32_t seen = 0, names = 0;
+        if (!hot_key_masks(const_cast<void *>(args[1]), seen, names)) { result_bool(false); return; }
+        for (int column = 0; column < HOT_COUNT; ++column) {
+            const uint32_t bit = uint32_t(1) << column;
+            const void *key = names & bit ? static_cast<const void *>(&lookup_keys[hot_keys[column]]) :
+                static_cast<const void *>(&keys[hot_keys[column]]);
+            void *value = seen & bit ? dict_at(source, key) : nullptr;
+            if ((!value && !hot_optional(column)) || (value && !hot_valid(column, value))) { result_bool(false); return; }
+        }
+        HotRow &row = store->rows[index];
+        for (int column = 0; column < HOT_COUNT; ++column) {
+            const uint32_t bit = uint32_t(1) << column;
+            const void *key = names & bit ? static_cast<const void *>(&lookup_keys[hot_keys[column]]) :
+                static_cast<const void *>(&keys[hot_keys[column]]);
+            void *value = seen & bit ? dict_at(source, key) : nullptr;
+            destroy(&row.values[column]);
+            if (value) copy_variant(&row.values[column], value);
+            else {
+                GDExtensionCallError construct_error{};
+                variant_construct(NIL, &row.values[column], nullptr, 0, &construct_error);
+            }
+            row.present[column] = value != nullptr;
+        }
+        row.name_keys = names;
+        result_bool(true);
+        return;
+    }
+    int field = -1;
+    int64_t index = -1;
+    if (mode == HotMethod::COLUMN) field = hot_field(const_cast<void *>(args[0]));
+    else if (type_of(args[0]) == INT && (type_of(args[1]) == STRING || type_of(args[1]) == NAME)) {
+        index = *static_cast<int64_t *>(internal[INT](const_cast<void *>(args[0])));
+        field = hot_field(const_cast<void *>(args[1]));
+    }
+    if (mode == HotMethod::COLUMN) {
+        reset_variant(result, DOUBLES);
+        if (field < 0 || field == HOT_NUMBERS || field == 17) return;
+        void *output = internal[DOUBLES](result);
+        resize(resize_doubles, output, store->count);
+        if (!store->count) return;
+        auto *values = doubles_write(output, 0);
+        for (int64_t i = 0; i < store->count; ++i) {
+            double value = field == 13 ? 1.0 : 0.0;
+            if (store->rows[i].present[field]) {
+                if (field < HOT_NUMBERS) number(&store->rows[i].values[field], value);
+                else value = *static_cast<GDExtensionBool *>(internal[BOOL](&store->rows[i].values[field])) ? 1.0 : 0.0;
+            }
+            values[i] = value;
+        }
+        return;
+    }
+    if (field < 0 || index < 0 || index >= store->count) {
+        if (mode == HotMethod::GET) { destroy(result); copy_variant(result, args[2]); }
+        else result_bool(false);
+        return;
+    }
+    auto &row = store->rows[index];
+    if (mode == HotMethod::GET) {
+        destroy(result);
+        copy_variant(result, row.present[field] ? &row.values[field] : args[2]);
+    } else if (mode == HotMethod::HAS) result_bool(row.present[field]);
+    else if (mode == HotMethod::ERASE) {
+        if (!hot_optional(field)) { result_bool(false); return; }
+        destroy(&row.values[field]);
+        GDExtensionCallError construct_error{};
+        variant_construct(NIL, &row.values[field], nullptr, 0, &construct_error);
+        row.present[field] = false;
+        row.name_keys &= ~(uint32_t(1) << field);
+        result_bool(true);
+    } else {
+        if (!hot_valid(field, const_cast<void *>(args[2]))) { result_bool(false); return; }
+        if (!row.present[field]) {
+            const uint32_t bit = uint32_t(1) << field;
+            if (type_of(args[1]) == NAME) row.name_keys |= bit;
+            else row.name_keys &= ~bit;
+        }
+        destroy(&row.values[field]);
+        copy_variant(&row.values[field], args[2]);
+        row.present[field] = true;
+        result_bool(true);
+    }
+}
+GDExtensionObjectPtr create_hot(void *, GDExtensionBool) {
+    auto object = construct_object(&parent_name);
+    set_instance(object, &hot_class_name, new HotStore);
+    return object;
+}
+void free_hot(void *, GDExtensionClassInstancePtr instance) { delete static_cast<HotStore *>(instance); }
+void register_hot() {
+    make_name(&hot_class_name, "ArmyCombatHot", false);
+    GDExtensionClassCreationInfo4 info{};
+    info.is_exposed = true;
+    info.create_instance_func = create_hot;
+    info.free_instance_func = free_hot;
+    register_class(library, &hot_class_name, &parent_name, &info);
+    const char *names[] = {"load_rows", "get_field", "has_field", "set_field", "erase_field", "column", "capture_rows", "row_count"};
+    const int arities[] = {1, 3, 2, 3, 2, 1, 0, 0};
+    const GDExtensionVariantType return_types[] = {BOOL, NIL, BOOL, BOOL, BOOL, DOUBLES, ARRAY, INT};
+    const GDExtensionVariantType arg_types[][3] = {
+        {ARRAY, NIL, NIL}, {INT, STRING, NIL}, {INT, STRING, NIL}, {INT, NIL, NIL},
+        {INT, STRING, NIL}, {STRING, NIL, NIL}, {NIL, NIL, NIL}, {NIL, NIL, NIL}};
+    const char *arg_text[] = {"index", "field", "value"};
+    for (int mode = 0; mode < 8; ++mode) {
+        TextStorage name, arg_names[3];
+        GDExtensionPropertyInfo arguments[3];
+        GDExtensionClassMethodArgumentMetadata metadata[3]{};
+        make_name(&name, names[mode], false);
+        for (int i = 0; i < arities[mode]; ++i) {
+            make_name(&arg_names[i], mode == 0 ? "rows" : arg_text[i], false);
+            arguments[i] = {arg_types[mode][i], &arg_names[i], &empty_name, 0, &empty_string, 6};
+        }
+        GDExtensionPropertyInfo result_info{return_types[mode], &empty_name, &empty_name, 0, &empty_string, 6};
+        GDExtensionClassMethodInfo method{};
+        method.name = &name;
+        method.method_userdata = &hot_methods[mode];
+        method.call_func = call_hot;
+        method.method_flags = GDEXTENSION_METHOD_FLAG_NORMAL;
+        method.has_return_value = true;
+        method.return_value_info = &result_info;
+        method.argument_count = arities[mode];
+        method.arguments_info = arguments;
+        method.arguments_metadata = metadata;
+        register_method(library, &hot_class_name, &method);
+        for (int i = 0; i < arities[mode]; ++i) destroy_name(&arg_names[i]);
+        destroy_name(&name);
+    }
+    const char *arg_text_advance[] = {"moving", "progress", "durations", "rescues", "start", "end", "delta", "game_seconds", "recovery"};
+    const GDExtensionVariantType arg_types_advance[] = {ARRAY, DOUBLES, DOUBLES, DICT, INT, INT, FLOAT, FLOAT, FLOAT};
+    for (int mode : {8, 13, 14, 15}) {
+        TextStorage name, arg_names[9];
+        const char *advance_name = mode == 8 ? "advance_numeric" : mode == 13 ? "advance_numeric_hold" :
+            mode == 14 ? "advance_numeric_reason" : "advance_numeric_hold_reason";
+        make_name(&name, advance_name, false);
+        GDExtensionPropertyInfo arguments[9];
+        GDExtensionClassMethodArgumentMetadata metadata[9]{};
+        for (int i = 0; i < 9; ++i) {
+            make_name(&arg_names[i], arg_text_advance[i], false);
+            arguments[i] = {arg_types_advance[i], &arg_names[i], &empty_name, 0, &empty_string, 6};
+        }
+        GDExtensionPropertyInfo result_info{INTS, &empty_name, &empty_name, 0, &empty_string, 6};
+        GDExtensionClassMethodInfo method{};
+        method.name = &name;
+        method.method_userdata = &hot_methods[mode];
+        method.call_func = call_hot;
+        method.method_flags = GDEXTENSION_METHOD_FLAG_NORMAL;
+        method.has_return_value = true;
+        method.return_value_info = &result_info;
+        method.argument_count = 9;
+        method.arguments_info = arguments;
+        method.arguments_metadata = metadata;
+        register_method(library, &hot_class_name, &method);
+        for (auto &arg_name : arg_names) destroy_name(&arg_name);
+        destroy_name(&name);
+    }
+    for (int mode = 9; mode <= 10; ++mode) {
+        TextStorage row_name, row_arg_names[2];
+        const bool absorb = mode == 10;
+        make_name(&row_name, absorb ? "absorb_row" : "capture_row", false);
+        GDExtensionPropertyInfo row_arguments[2];
+        GDExtensionClassMethodArgumentMetadata row_metadata[2]{};
+        make_name(&row_arg_names[0], "index", false);
+        row_arguments[0] = {INT, &row_arg_names[0], &empty_name, 0, &empty_string, 6};
+        if (absorb) {
+            make_name(&row_arg_names[1], "row", false);
+            row_arguments[1] = {DICT, &row_arg_names[1], &empty_name, 0, &empty_string, 6};
+        }
+        GDExtensionPropertyInfo row_result{absorb ? BOOL : DICT, &empty_name, &empty_name, 0, &empty_string, 6};
+        GDExtensionClassMethodInfo row_method{};
+        row_method.name = &row_name;
+        row_method.method_userdata = &hot_methods[mode];
+        row_method.call_func = call_hot;
+        row_method.method_flags = GDEXTENSION_METHOD_FLAG_NORMAL;
+        row_method.has_return_value = true;
+        row_method.return_value_info = &row_result;
+        row_method.argument_count = absorb ? 2 : 1;
+        row_method.arguments_info = row_arguments;
+        row_method.arguments_metadata = row_metadata;
+        register_method(library, &hot_class_name, &row_method);
+        destroy_name(&row_arg_names[0]);
+        if (absorb) destroy_name(&row_arg_names[1]);
+        destroy_name(&row_name);
+    }
+    TextStorage can_name, index_name;
+    make_name(&can_name, "can_act", false);
+    make_name(&index_name, "index", false);
+    GDExtensionPropertyInfo can_argument{INT, &index_name, &empty_name, 0, &empty_string, 6};
+    GDExtensionClassMethodArgumentMetadata can_metadata{};
+    GDExtensionPropertyInfo can_result{BOOL, &empty_name, &empty_name, 0, &empty_string, 6};
+    GDExtensionClassMethodInfo can_method{};
+    can_method.name = &can_name;
+    can_method.method_userdata = &hot_methods[11];
+    can_method.call_func = call_hot;
+    can_method.method_flags = GDEXTENSION_METHOD_FLAG_NORMAL;
+    can_method.has_return_value = true;
+    can_method.return_value_info = &can_result;
+    can_method.argument_count = 1;
+    can_method.arguments_info = &can_argument;
+    can_method.arguments_metadata = &can_metadata;
+    register_method(library, &hot_class_name, &can_method);
+    destroy_name(&index_name);
+    destroy_name(&can_name);
+    TextStorage mask_name;
+    make_name(&mask_name, "retained_idle_mask", false);
+    GDExtensionPropertyInfo mask_result{BYTES, &empty_name, &empty_name, 0, &empty_string, 6};
+    GDExtensionClassMethodInfo mask_method{};
+    mask_method.name = &mask_name;
+    mask_method.method_userdata = &hot_methods[12];
+    mask_method.call_func = call_hot;
+    mask_method.method_flags = GDEXTENSION_METHOD_FLAG_NORMAL;
+    mask_method.has_return_value = true;
+    mask_method.return_value_info = &mask_result;
+    register_method(library, &hot_class_name, &mask_method);
+    destroy_name(&mask_name);
+}
 GDExtensionObjectPtr create(void *, GDExtensionBool) {
     auto object = construct_object(&parent_name);
     // A stateless marker only. All row references exist on the call stack.
@@ -1084,6 +2104,12 @@ void initialize(void *, GDExtensionInitializationLevel level) {
     make_name(&empty_name, "", false);
     make_string(&empty_string, "");
     make_string(&idle_string, "idle");
+    make_string(&unconscious_string, "unconscious");
+    make_string(&down_string, "down");
+    make_string(&guard_raise_string, "guard_raise");
+    make_string(&guard_lower_string, "guard_lower");
+    make_string(&guard_break_string, "guard_break");
+    make_string(&rescue_string, "rescue");
     make_string(&male_string, "male_atlas");
     make_string(&female_string, "female_atlas");
     make_string(&get_up_string, "get_up");
@@ -1107,6 +2133,36 @@ void initialize(void *, GDExtensionInitializationLevel level) {
     info.create_instance_func = create;
     info.free_instance_func = free_instance;
     register_class(library, &class_name, &parent_name, &info);
+    register_hot();
+    make_name(&keys_method_name, "keys", false);
+    make_name(&typed_builtin_method_name, "get_typed_builtin", false);
+    make_name(&typed_class_method_name, "get_typed_class_name", false);
+    make_name(&typed_script_method_name, "get_typed_script", false);
+    for (int mode = 0; mode < 2; ++mode) {
+        TextStorage method_name, argument_names[2];
+        make_name(&method_name, mode == 0 ? "exact_value_equal" : "contains_unsupported", false);
+        const int count = mode == 0 ? 2 : 1;
+        GDExtensionPropertyInfo arguments[2];
+        GDExtensionClassMethodArgumentMetadata metadata[2]{};
+        for (int i = 0; i < count; ++i) {
+            make_name(&argument_names[i], i == 0 ? "expected" : "actual", false);
+            arguments[i] = {NIL, &argument_names[i], &empty_name, 0, &empty_string, 6};
+        }
+        GDExtensionPropertyInfo return_info{mode == 0 ? INT : BOOL, &empty_name, &empty_name, 0, &empty_string, 6};
+        GDExtensionClassMethodInfo method{};
+        method.name = &method_name;
+        method.method_userdata = &exact_oracle_modes[mode];
+        method.call_func = call_exact_oracle;
+        method.method_flags = GDEXTENSION_METHOD_FLAG_NORMAL;
+        method.has_return_value = true;
+        method.return_value_info = &return_info;
+        method.argument_count = count;
+        method.arguments_info = arguments;
+        method.arguments_metadata = metadata;
+        register_method(library, &class_name, &method);
+        for (int i = 0; i < count; ++i) destroy_name(&argument_names[i]);
+        destroy_name(&method_name);
+    }
     TextStorage method_name;
     make_name(&method_name, "advance_prefix", false);
     const GDExtensionVariantType types[] = {ARRAY, ARRAY, DICT, INT, INT, FLOAT, FLOAT};
@@ -1198,6 +2254,9 @@ void initialize(void *, GDExtensionInitializationLevel level) {
     method.arguments_info = render_arguments;
     method.arguments_metadata = render_metadata;
     register_method(library, &class_name, &method);
+    method.method_userdata = &hot_render_marker;
+    register_method(library, &hot_class_name, &method);
+    method.method_userdata = nullptr;
     for (auto &name : render_arg_names) destroy_name(&name);
     destroy_name(&method_name);
     make_name(&method_name, "encirclement_field", false);
@@ -1228,6 +2287,8 @@ void initialize(void *, GDExtensionInitializationLevel level) {
         method.method_userdata = mode ? &library : nullptr;
         method.argument_count = mode ? 4 : 2;
         register_method(library, &class_name, &method);
+        method.method_userdata = mode ? &hot_capture_people_marker : &hot_capture_columns_marker;
+        register_method(library, &hot_class_name, &method);
         destroy_name(&method_name);
     }
     for (auto &name : capture_arg_names) destroy_name(&name);
@@ -1292,21 +2353,55 @@ void initialize(void *, GDExtensionInitializationLevel level) {
     return_info.type = ARRAY;
     method.call_func = call_presence;
     register_method(library, &class_name, &method);
+    method.method_userdata = &hot_presence_marker;
+    register_method(library, &hot_class_name, &method);
+    method.method_userdata = nullptr;
     for (auto &name : near_names) destroy_name(&name);
+    destroy_name(&method_name);
+    make_name(&method_name, "command_presence_delta", false);
+    const char *delta_text[] = {"rows", "cells", "moving_positions", "radius", "cache"};
+    const GDExtensionVariantType delta_types[] = {ARRAY, ARRAY, DICT, FLOAT, ARRAY};
+    TextStorage delta_names[5];
+    GDExtensionPropertyInfo delta_args[5];
+    GDExtensionClassMethodArgumentMetadata delta_meta[5]{};
+    for (int i = 0; i < 5; ++i) {
+        make_name(&delta_names[i], delta_text[i], false);
+        delta_args[i] = {delta_types[i], &delta_names[i], &empty_name, 0, &empty_string, 6};
+    }
+    method.call_func = call_presence_delta;
+    method.argument_count = 5;
+    method.arguments_info = delta_args;
+    method.arguments_metadata = delta_meta;
+    register_method(library, &class_name, &method);
+    method.method_userdata = &hot_presence_delta_marker;
+    register_method(library, &hot_class_name, &method);
+    for (auto &name : delta_names) destroy_name(&name);
     destroy_name(&method_name);
 }
 void deinitialize(void *, GDExtensionInitializationLevel level) {
     if (level != GDEXTENSION_INITIALIZATION_SCENE) return;
+    unregister_class(library, &hot_class_name);
     unregister_class(library, &class_name);
     for (auto &key : keys) destroy(&key);
     for (auto &key : lookup_keys) destroy(&key);
     destroy_string(&idle_string);
+    destroy_string(&unconscious_string);
+    destroy_string(&down_string);
+    destroy_string(&guard_raise_string);
+    destroy_string(&guard_lower_string);
+    destroy_string(&guard_break_string);
+    destroy_string(&rescue_string);
     destroy_string(&male_string);
     destroy_string(&female_string);
     destroy_string(&get_up_string);
     destroy_string(&empty_string);
+    destroy_name(&typed_builtin_method_name);
+    destroy_name(&typed_class_method_name);
+    destroy_name(&typed_script_method_name);
+    destroy_name(&keys_method_name);
     destroy_name(&empty_name);
     destroy_name(&parent_name);
+    destroy_name(&hot_class_name);
     destroy_name(&class_name);
 }
 } // namespace
@@ -1318,6 +2413,9 @@ extern "C" __declspec(dllexport) GDExtensionBool army_idle_init(GDExtensionInter
     LOAD(destroy, GDExtensionInterfaceVariantDestroy, "variant_destroy");
     LOAD(copy_variant, GDExtensionInterfaceVariantNewCopy, "variant_new_copy");
     LOAD(get_keyed, GDExtensionInterfaceVariantGetKeyed, "variant_get_keyed");
+    LOAD(variant_call, GDExtensionInterfaceVariantCall, "variant_call");
+    LOAD(variant_hash, GDExtensionInterfaceVariantHash, "variant_hash");
+    LOAD(object_instance_id, GDExtensionInterfaceVariantGetObjectInstanceId, "variant_get_object_instance_id");
     LOAD(array_at, GDExtensionInterfaceArrayOperatorIndexConst, "array_operator_index_const");
     LOAD(array_write, GDExtensionInterfaceArrayOperatorIndex, "array_operator_index");
     LOAD(variant_construct, GDExtensionInterfaceVariantConstruct, "variant_construct");
@@ -1358,7 +2456,7 @@ extern "C" __declspec(dllexport) GDExtensionBool army_idle_init(GDExtensionInter
     LOAD(get_operator, GDExtensionInterfaceVariantGetPtrOperatorEvaluator, "variant_get_ptr_operator_evaluator");
     LOAD(get_utility, GDExtensionInterfaceVariantGetPtrUtilityFunction, "variant_get_ptr_utility_function");
 #undef LOAD
-    for (auto type : {ARRAY, DICT, FLOAT, INT, STRING, V2I, V2, BOOL, BYTES, INTS, LONGS, VECTORS, DOUBLES, FLOATS}) {
+    for (auto type : {ARRAY, DICT, FLOAT, INT, STRING, NAME, V2I, V2, BOOL, BYTES, INTS, LONGS, VECTORS, DOUBLES, FLOATS}) {
         internal[type] = get_internal(type);
         if (!internal[type]) return false;
     }
@@ -1374,12 +2472,15 @@ extern "C" __declspec(dllexport) GDExtensionBool army_idle_init(GDExtensionInter
         return function;
     };
     array_size = builtin(ARRAY, "size", 3173160232);
+    array_readonly = builtin(ARRAY, "is_read_only", 3918633141);
+    array_typed = builtin(ARRAY, "is_typed", 3918633141);
     vector_distance = builtin(V2, "distance_to", 3819070308);
     vector_squared_distance = builtin(V2, "distance_squared_to", 3819070308);
     if (!vector_distance || !vector_squared_distance) return false;
     size_longs = builtin(LONGS, "size", 3173160232);
     if (!size_longs) return false;
     dict_has = builtin(DICT, "has", 3680194679);
+    dict_size = builtin(DICT, "size", 3173160232);
     dict_empty = builtin(DICT, "is_empty", 3918633141);
     dict_readonly = builtin(DICT, "is_read_only", 3918633141);
     dict_typed = builtin(DICT, "is_typed", 3918633141);
@@ -1401,7 +2502,8 @@ extern "C" __declspec(dllexport) GDExtensionBool army_idle_init(GDExtensionInter
     same_variant = get_utility(&same_name, 1409423524);
     destroy_name(&same_name);
     string_equal = get_operator(GDEXTENSION_VARIANT_OP_EQUAL, STRING, STRING);
-    if (!from_float || !from_int || !from_string || !from_name || !destroy_string || !destroy_name || !array_size || !dict_has || !dict_empty || !dict_readonly || !dict_typed || !string_equal) return false;
+    name_equal = get_operator(GDEXTENSION_VARIANT_OP_EQUAL, NAME, NAME);
+    if (!from_float || !from_int || !from_string || !from_name || !destroy_string || !destroy_name || !array_size || !array_readonly || !array_typed || !dict_size || !dict_has || !dict_empty || !dict_readonly || !dict_typed || !string_equal || !name_equal) return false;
     if (!resize_array || !resize_bytes || !resize_ints || !resize_longs || !resize_vectors || !size_vectors || !size_doubles || !same_variant) return false;
     init->minimum_initialization_level = GDEXTENSION_INITIALIZATION_SCENE;
     init->userdata = nullptr;

@@ -40,8 +40,8 @@ func _current_person(identity: int) -> Dictionary:
 	if person.is_empty():
 		return {}
 	var body: Variant = person.owner.combat_units[int(person.unit)] if int(person.unit) >= 0 else person.owner
-	return {"hp": float(person.hp), "captive": bool(body.get("captive")),
-		"ko": float(body.get("ko") if int(person.unit) >= 0 else body.knockout_left),
+	return {"hp": float(person.hp), "captive": bool(person.owner.combat_hot_get(int(person.unit), &"captive") if int(person.unit) >= 0 else body.get("captive")),
+		"ko": float(person.owner.combat_hot_get(int(person.unit), &"ko") if int(person.unit) >= 0 else body.knockout_left),
 		"kind": "army" if int(person.unit) >= 0 else "actor"}
 
 static func _saved_person(data: TerrainData, identity: int) -> Dictionary:

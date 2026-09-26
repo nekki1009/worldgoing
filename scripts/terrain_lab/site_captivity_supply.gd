@@ -17,21 +17,21 @@ func _body(identity: int) -> Dictionary:
 	if person.is_empty():
 		return {}
 	if int(person.unit) >= 0:
-		return person.owner.combat_units[int(person.unit)]
+		return person.owner.combat_hot_materialize(int(person.unit))
 	return controller._actor_supply_adapter(person.owner)
 
 func _original_team(identity: int) -> Variant:
 	for team: TerrainArmy in controller.lab.combat_armies:
 		var index := team.index_for_identity(identity)
-		if team.combat_enabled and index >= 0 and (index == TerrainArmy.PLAYER_MEMBER or bool(team.combat_units[index].get("member", true))):
+		if team.combat_enabled and index >= 0 and (index == TerrainArmy.PLAYER_MEMBER or team.is_member(index)):
 			return team
 	return null
 
 func _original_members(team: TerrainArmy) -> Dictionary:
 	var result := {}
-	for row: Dictionary in team.combat_units:
-		if bool(row.get("member", true)):
-			result[int(row.person_id)] = row
+	for index in range(team.combat_units.size()):
+		if team.is_member(index):
+			result[team.combat_identity(index)] = team.combat_hot_materialize(index)
 	if is_instance_valid(team.player_member):
 		result[team.player_member.person_id] = controller._actor_supply_adapter(team.player_member, team.player_present)
 	return result
@@ -39,8 +39,8 @@ func _original_members(team: TerrainArmy) -> Dictionary:
 func _all_members() -> Dictionary:
 	var result := {}
 	for team: TerrainArmy in controller.lab.combat_armies:
-		for row: Dictionary in team.combat_units:
-			result[int(row.person_id)] = row # Independent original rows remain real people.
+		for index in range(team.combat_units.size()):
+			result[team.combat_identity(index)] = team.combat_hot_materialize(index)
 		if is_instance_valid(team.player_member):
 			result[team.player_member.person_id] = controller._actor_supply_adapter(team.player_member, team.player_present)
 	for actor: TerrainTestCharacter in controller.lab.combat_actors:
@@ -69,10 +69,8 @@ func _feeding_owner(identity: int, states: Dictionary) -> String:
 func team_members(team: TerrainArmy, original: Dictionary) -> Dictionary:
 	# Cohorts are the saved feeding ownership. A dead captive's relationship may
 	# already be cleared, but that does not move or refund their eaten meal.
+	# The sole caller has already admitted only real members via team.is_member().
 	var result := original.duplicate()
-	for identity: int in result.keys():
-		if not bool(result[identity].get("member", true)):
-			result.erase(identity)
 	var own_key := "team:%d" % team.team_id
 	for key: String in controller.lab.terrain.site.get("team_supply", {}):
 		var state: Dictionary = controller.lab.terrain.site.team_supply[key].sustain
@@ -107,7 +105,7 @@ func _home(identity: int) -> Dictionary:
 		return {"key": "team:%d" % team.team_id, "team": team}
 	var person: Dictionary = controller.lab._combat_target(identity)
 	if not person.is_empty() and int(person.unit) >= 0:
-		var row: Dictionary = person.owner.combat_units[int(person.unit)]
+		var row: Dictionary = person.owner.combat_hot_materialize(int(person.unit))
 		return {"key": "person:%d" % identity, "row": row} if row.get("cargo") is Dictionary else {}
 	for actor: TerrainTestCharacter in controller.lab.combat_actors:
 		if actor.person_id == identity:
@@ -329,8 +327,8 @@ func membership_change(team: TerrainArmy, identity: int, joining: bool) -> Dicti
 	var index := team.index_for_identity(identity)
 	var personal := {}
 	if index >= 0 and index != TerrainArmy.PLAYER_MEMBER:
-		var row: Dictionary = team.combat_units[index]
-		if bool(row.get("member", true)) == joining or not row.get("cargo") is Dictionary:
+		var row: Dictionary = team.combat_hot_materialize(index)
+		if team.is_member(index) == joining or not row.get("cargo") is Dictionary:
 			return Runtime.fail("INVALID_MEMBERS")
 		personal = {"key": "person:%d" % identity, "row": row}
 	else:

@@ -46,7 +46,7 @@ func begin_manual(identity: int, key: String, action: String = "harvest") -> Dic
 	if person.is_empty() or bool(lab.terrain.site.paused) or is_assigned(identity):
 		return SiteRuntime.fail("BUSY")
 	var row: Dictionary = person.row
-	if not person.owner.combat_can_act(int(person.unit)) or float(row.get("exchange_stagger", 0.0)) > 0.0 or person.owner.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL or bool(row.attack) or str(row.pose) != "idle" or (unavailable.is_valid() and bool(unavailable.call(identity))):
+	if not person.owner.combat_can_act(int(person.unit)) or float(person.owner.combat_hot_get(int(person.unit), &"exchange_stagger", 0.0)) > 0.0 or person.owner.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL or bool(person.owner.combat_hot_get(int(person.unit), &"attack")) or str(person.owner.combat_hot_get(int(person.unit), &"pose")) != "idle" or (unavailable.is_valid() and bool(unavailable.call(identity))):
 		return SiteRuntime.fail("BUSY")
 	if not row.get("cargo") is Dictionary or not row.get("item_state") is Dictionary:
 		return SiteRuntime.fail("INVALID_OWNER")
@@ -81,7 +81,7 @@ func assign(team: TerrainArmy, identities: Array[int], requester_id: int) -> Dic
 			return SiteRuntime.fail("INVALID_MEMBER")
 		seen[identity] = true
 		var row: Dictionary = team.combat_units[index]
-		if identity == _controlled_id() or not team.combat_can_act(index) or float(row.get("exchange_stagger", 0.0)) > 0.0 or team.moving_to[index] != TerrainArmy.INVALID_CELL or bool(row.attack) or str(row.pose) != "idle" or (unavailable.is_valid() and bool(unavailable.call(identity))):
+		if identity == _controlled_id() or not team.combat_can_act(index) or float(team.combat_hot_get(index, &"exchange_stagger", 0.0)) > 0.0 or team.moving_to[index] != TerrainArmy.INVALID_CELL or bool(team.combat_hot_get(index, &"attack")) or str(team.combat_hot_get(index, &"pose")) != "idle" or (unavailable.is_valid() and bool(unavailable.call(identity))):
 			return SiteRuntime.fail("BUSY", "成员正移动、交战、失能或执行其他行动")
 		if not row.get("cargo") is Dictionary or not row.get("item_state") is Dictionary:
 			return SiteRuntime.fail("INVALID_OWNER", "尚未初始化原人物携带物权")
@@ -121,7 +121,7 @@ func reserved_targets(exclude_id: int = -1) -> Dictionary:
 		if person.is_empty():
 			continue
 		var task: Dictionary = person.row.get("work_task", {})
-		if str(task.get("mode", "idle")) in ["rest", "paused"] or not person.owner.combat_can_act(int(person.unit)) or float(person.row.get("exchange_stagger", 0.0)) > 0.0:
+		if str(task.get("mode", "idle")) in ["rest", "paused"] or not person.owner.combat_can_act(int(person.unit)) or float(person.owner.combat_hot_get(int(person.unit), &"exchange_stagger", 0.0)) > 0.0:
 			continue
 		var target := str(task.get("target", ""))
 		if not target.is_empty() and not targets.has(target):
@@ -159,7 +159,7 @@ func advance(seconds: float) -> Dictionary:
 			task.status = "工作区已停用，等待其他工作"
 			_routes.erase(identity)
 			_retry_left.erase(identity)
-		if manual and (not team.combat_can_act(index) or float(row.get("exchange_stagger", 0.0)) > 0.0 or team.moving_to[index] != TerrainArmy.INVALID_CELL or int(task.cell) != int(task.work_cell) or bool(row.attack) or str(row.pose) != "idle" or int(row.get("hit_revision", 0)) != int(_manual_hits.get(identity, row.get("hit_revision", 0)))):
+		if manual and (not team.combat_can_act(index) or float(team.combat_hot_get(index, &"exchange_stagger", 0.0)) > 0.0 or team.moving_to[index] != TerrainArmy.INVALID_CELL or int(task.cell) != int(task.work_cell) or bool(team.combat_hot_get(index, &"attack")) or str(team.combat_hot_get(index, &"pose")) != "idle" or int(row.get("hit_revision", 0)) != int(_manual_hits.get(identity, row.get("hit_revision", 0)))):
 			_release_claim(claims, prior_target, identity)
 			cancel(identity)
 			continue
@@ -168,7 +168,7 @@ func advance(seconds: float) -> Dictionary:
 			cancel(identity)
 			continue
 		row.work_resting = PersonFatigue.needs_work_rest(PersonFatigue.read(row), bool(row.get("work_resting", false)))
-		if not team.combat_can_act(index) or float(row.get("exchange_stagger", 0.0)) > 0.0:
+		if not team.combat_can_act(index) or float(team.combat_hot_get(index, &"exchange_stagger", 0.0)) > 0.0:
 			_release_claim(claims, prior_target, identity)
 			_pause(task, "失能／已离场，停止作业")
 			continue
@@ -191,7 +191,7 @@ func advance(seconds: float) -> Dictionary:
 			task.mode = "rest"
 			task.status = "疲劳达80休息；降至50恢复"
 			continue
-		if bool(row.attack) or str(row.pose) not in ["idle", "walk"]:
+		if bool(team.combat_hot_get(index, &"attack")) or str(team.combat_hot_get(index, &"pose")) not in ["idle", "walk"]:
 			_release_claim(claims, prior_target, identity)
 			_pause(task, "等待原人物行动结束")
 			continue
