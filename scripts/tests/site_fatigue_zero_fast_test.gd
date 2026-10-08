@@ -1,6 +1,7 @@
 extends "res://scripts/tests/site_work_team_clock_test.gd"
 ## Same original Lab/people, restored through Store for each flag. This is an
 ## exact common-step regression and scoped counter measurement, not an FPS test.
+const TrainingFixture = preload("res://scripts/tests/site_training_ground_fixture.gd")
 
 class ObservedLab extends TerrainLab:
 	var after_fatigue := Callable()
@@ -113,6 +114,7 @@ func _exercise() -> Dictionary:
 	for row: Dictionary in team.combat_units:
 		row.fatigue = 0.0
 		row.fatigue_rest = 12.0
+	var original_places := TrainingFixture.enter(_lab)
 	assert(controller.order_team_training(team, team.current_commander, true).ok)
 	var eligible_before := _lab.fatigue_zero_eligible_rows
 	var training_before := team.training
@@ -122,6 +124,7 @@ func _exercise() -> Dictionary:
 	assert(_bits(float(team.combat_units[1].fatigue)) == _bits(expected_training_fatigue), "Exactly one training charge per original half-game-second step")
 	assert(float(team.combat_units[1].fatigue_rest) == 0.0)
 	assert(controller.order_team_training(team, team.current_commander, false).ok)
+	TrainingFixture.leave(_lab, original_places)
 	# Reuse the actual generated-resource work fixture and original assignment.
 	var worker_id := team.combat_identity(1)
 	assert(controller._control_family_person(null, team.combat_identity(team.current_commander)).ok)
@@ -199,7 +202,7 @@ func _exercise() -> Dictionary:
 	var hit := {"result": {"hp": 1.0, "stun": SiteCombatRules.STUN_LIMIT, "guard_break": false}, "shield": false}
 	team.apply_unit_contact(1, hit)
 	npc.apply_contact(hit)
-	assert(not bool(worker.attack) and worker.pose == "down" and float(worker.ko) == SiteCombatRules.KNOCKOUT_SECONDS and npc.knockout_left == SiteCombatRules.KNOCKOUT_SECONDS, "The original effective hit starts KO and cancels the row attack")
+	assert(not bool(worker.attack) and worker.pose == "down" and float(worker.ko) == SiteCombatRules.KNOCKOUT_GAME_SECONDS and npc.knockout_left == SiteCombatRules.KNOCKOUT_GAME_SECONDS, "The original effective hit starts KO and cancels the row attack")
 	assert(int(worker.get("hit_revision", 0)) == worker_revision + 1 and npc._received_effective_hit == npc_revision + 1, "Exactly one real received-impact revision for each original owner")
 	worker.fatigue = negative_zero
 	worker.fatigue_rest = 12.0
@@ -230,6 +233,7 @@ func _run() -> void:
 
 func _run_checked() -> bool:
 	_lab = ObservedLab.new()
+	_lab.npc = TerrainTestNPC.new()
 	# This historical fixture checks continuous attack/guard fatigue rates.
 	# The current exchange policy charges fatigue per exchange instead.
 	_lab.exchange_enabled = false
@@ -267,6 +271,7 @@ func _run_checked() -> bool:
 	_lab._process(0.1)
 	assert(_lab.site_controller._supply_entry(team).delivery.is_empty())
 	assert(int(data.site.manual.cargo.get("grain", 0)) == 0)
+	TrainingFixture.natural(_lab)
 	var save_path := "res://.godot-temp/site_resources_contract/fatigue_zero_%d.json" % Time.get_ticks_usec()
 	_lab.site_controller._capture_positions()
 	var saved := Store.save(data, save_path)
@@ -335,6 +340,7 @@ func _check_exchange_native(save_path: String) -> bool:
 		_frame("exchange native stationary zero", 1.0 / 30.0)
 		states.append(_snapshot())
 		assert((team.native_fatigue_rows > 0) == native)
+		var original_places := TrainingFixture.enter(_lab)
 		assert(controller.order_team_training(team, team.current_commander, true).ok)
 		var consumed_before := team.native_fatigue_rows
 		_frame("exchange actual fed training excludes native prefix", 1.0 / 30.0)
@@ -342,6 +348,7 @@ func _check_exchange_native(save_path: String) -> bool:
 		assert(team.native_fatigue_rows == consumed_before)
 		states.append(_snapshot())
 		assert(controller.order_team_training(team, team.current_commander, false).ok)
+		TrainingFixture.leave(_lab, original_places)
 		assert(controller._control_family_person(null, team.combat_identity(team.current_commander)).ok)
 		var worker_id := team.combat_identity(1)
 		team.combat_units[1].fatigue = 0.0

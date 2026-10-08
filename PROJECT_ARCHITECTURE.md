@@ -1,5 +1,25 @@
 # Worldgoing V0.49R — 現行 Site 架構
 
+2026-10-03 單 Site 船艦 P0–P2：船只在原 `terrain.site.vehicles`，原 `SiteVehicleTransport` 同步預約整船 footprint／sweep／離船岸格，以原共同動作秒提交船步；`TerrainData` 在明示可航來源下提供水域查詢，陸地步行不放寬。六型船的數值與席位為無狀態 v1 定義，原 Army 人物列只加乘載引用、保留原人／隊／holder；有效位置、軍令／AI守衛、指揮、疲勞、相機及唯讀呈現沿原入口。原 `SitePersonActions._jobs` 處理登離船與實際走到駕駛席，原 Controller／Runtime 處理本船死亡／EMPTY／遺物／交易 Q；原 `team_supply` 首次涉船升為位置庫存 v3、Sustain v2，整隊仍單次分餐及士氣。原 `SiteStore` 驗版本／N／Q／引用／合法半步後才原子替換。船不占真人名額，舊陸車規則保留；Crowd／獨立 Actor 乘船尚未准入。車輛窗已接操作與明示測試部署，船目前是程式灰模，正式造船／美術、海戰與跨 Site 尚未完成。具名 PASS、FAIL 及最後相容／畫面驗證界線見 [船艦實作紀錄](output/site_ship_implementation_20261003/README.md)，不推定船艦效能或正式發布完成。
+
+2026-10-03 攻城 P0／P1 固定重弩：`SiteRuntime` 在原 Site vehicles／cargo／holder 內增加版本化 2×3 格重弩、實物重弩矢、已付施工／修理、不可逆受損旗標、條件退款及殘骸；`SiteWorkTeam` 使用原工人與工位。`SiteVehicleTransport` 借用原 Army 操作員，釋放其一般目的槽及租約但保留完整名冊，解除後依當前原軍令重新入隊；前往操作／轉向工位仍走原單格預約，未另造人物或導航。`TerrainLab` 用原共同動作秒處理裝填／瞄準／復位與集中飛行事件，接觸沿 `TerrainWeaponCollision`、原人物 HP／防具及 feature.parts，飛行不依賴來源器具存活。`SiteStore` 驗新欄位、crew／原槽位與安定狀態，全站飛行守衛亦限制保存及 Crowd 原生接管；旧 cart／wagon 名額及保存合同保留。原 Controller 正式功能窗提供重弩操作；六類生成圖已獲使用者核准並接入正式素材，原 VehicleView 用四向 PNG 顯示固定重弩、以原飛行事件顯示弩矢，另五類只做同 View 純展示。素材與射口接入界線見 [生成圖接入紀錄](output/site_siege_generated_art_20261003/integration/README.md)；2026-10-04 另五類各四張 PNG 已改為地面前後軸對齊方格的視角，原重弩保留，六類 GPU 預覽與人工定位界線見 [四向校準紀錄](output/site_siege_direction_calibration_20261004/README.md)。實作、各項 PASS／失敗修正、畫面與未驗收範圍見 [本輪紀錄](output/site_siege_p0_p1_20261003/README.md) 和 [攻城計畫](SITE_SIEGE_MECHANICS_AND_SPECIFICATION_PLAN.md)；不將第一輪重弩功能推定成衝車、投石、梯塔、原生攻城或大場景效能完成。
+
+2026-10-01 Site 正式／測試介面分離：`SiteController` 已將右側功能欄改為遊戲內嵌入式、非獨占的 `Window`，由可移動「功能」選單開啟十類功能及唯讀隊伍資訊窗，各保留唯一實例：地圖與土地、採集與工作區、建設與製作、倉儲與配裝、人物與俘虜、家族與接續、隊伍資訊、隊伍與軍令、後勤與訓練、車輛與運輸、存讀與介面。FPS 常駐頂欄右側；左下結果限三行，完整訊息可由提示查看，部署報告與各隊原摘要移至可捲動的隊伍資訊窗。關窗隱藏原實例，位置與尺寸只留本次程序，原相機可用區由 Controller 的常駐 HUD 統一計算。
+
+測試工具只有明示 `-- --site-test-ui` 才動態安裝 `scripts/terrain_lab/site_test_window.gd`，以 F12 切換同一個非獨占原生桌面窗；窗內為場景與人物、隊伍部署、軍令與 AI、裝備與物資、後勤與車輛、人物關係與接續、診斷與顯示七頁。無旗標不建立測試窗或舊 `TerrainLabUI`；模組缺失時回報工具不可用並繼續正式啟動。Movement 測試開關僅覆寫 `TerrainLab.movement_input_enabled` 並清除待執行輸入，不隱藏人物、不停用 NPC owner，也不回滾已承諾步進。
+
+此 UI 施工保留原 TerrainLab、SiteController、人物／Army、實物／車輛、Runtime 及 SiteStore 責任；角色編輯控制借用原 `editor_root`，正式 Sprite 仍引用原 SubViewport。沒有存檔 schema 變更，視窗位置／頁籤／草稿不進玩法快照。上述為已落地程式結構；OS 手動拖曳／縮放、跨視窗真實鼠鍵與多螢幕／DPI 完整驗收仍待驗證，不由 headless 或 viewport 截圖推定。施工範圍與驗收矩陣見 [Site UI 實作計畫](SITE_UI_FORMAL_AND_TEST_WINDOW_PLAN.md)。
+
+2026-09-28 MOVE 同步原生批算：既有 `native/army_idle` 接入整隊 target／field intent、完整 transit assignment、原 direct／A*、名冊與 cursor projection，以及移動中的既有 atlas 顯示欄位。資料仍由原 Army／Plan／Grid 擁有，同步唯讀計算後在原位置套用；未知回呼、車輛與不支援輸入保留 GD 路徑，原子提交、時鐘、軍令及存檔契約不變。這是 CPU 原生化，沒有宣稱 GPU 常駐模擬。相同 450 步的 CPU 對照有收益，但正式 300 人短測仍未達幀率／時鐘門檻；依 S4 停止長測，五千人回歸與整案 close 尚未成立。證據見 [本輪施工與停止判定](output/site_movement_batch_implementation_20260928/revision2/decision.md)。
+
+2026-09-28 三陣營基本戰術 AI：`TerrainLab` 沿原動作時間每半秒呼叫無常駐人物資料的 `site_army_ai.gd`，以同一輪原人物／HP／共享疲勞／士氣／彈藥摘要判斷接近、接敵、撤退、休整及有期限追擊；執行仍由原 `TerrainArmy` 軍令、Formation 規劃器、Reservation Grid 與原子步進負責。正式部署 UI 的三支戰鬥隊可各自啟用，成功人工軍令接管並關閉 AI；原 API 未提供選項與舊存檔預設關閉，工作／後勤隊不啟用。AI 開關與冷卻經原 Army／SiteStore 保存；局部安全撤退預檢失敗不破壞原令，整輪無退路才明確選 HOLD。自然 callback 將未截斷的經過時間送入原保留餘量時鐘，完整固定步後按有限 CPU 預算讓回畫面，欠時不刪除；固定幀率、錄影與手動 delta 保留原輸入。沒有新增人物、導航、戰鬥、渲染或保存權威。本次三百人功能／畫面驗收與歷史五千人 FPS 關閉分開，實測結果及限制見 [三陣營 AI 紀錄](output/three_faction_ai_20260928/README.md)。
+
+2026-09-28 行軍接敵與玩家堵路：原 `TerrainLab` 在既有 10 Hz 前線交鋒查詢發布合格 MOVE 隊員的相鄰敵人集合，`TerrainArmy` 用原 MOVE 計畫的 ENGAGING 暫停新自動步伐，保留已承諾的 0.38 秒步進、原軍令／終點槽位／租約；失去最後接觸後由下次原查詢解除並續行。剛落地者只在四鄰有可能的敵對接觸時等待該查詢，空地行軍不加等待。原 `SiteCombatMovementCoordinator` 將 Player／Actor 實際占格併入原 Reservation Grid 的當步阻擋，再做提案與原子提交；無新人物、碰撞或存檔 owner。正式 100＋100 MOVE／HOLD 畫面接戰與 100 人未改山地抵達已通過，原 5,000 人 ATTACK 效能首輪通過；正式 100＋100 MOVE／Player 堵口行為通過但 p95 37.804 ms、p99 58.527 ms 未達效能門檻。合法單隊 MOVE 仍受 200 人上限，不能把 5,000 人 ATTACK 成績當成 2,500 人 MOVE／Player 堵路證明。細節與未關閉項見 `output/player_block_encounter_fix_20260928/EXECUTION.md`。
+
+2026-09-26 昏迷與待令近戰修復：原 Actor／Army 真受擊昏迷從 4 遊戲小時（14400 遊戲秒）倒數；救助仍耗 4 動作秒，完成只把剩餘時間縮至至多 1 遊戲小時，不直接喚醒；自然醒後維持 2.2 動作秒起身。原 TerrainLab 將 Site 遊戲增量只傳給 KO，攻擊／冷卻／救助仍用動作秒；原生 recovery 只在兩個增量相等時使用，不等時保留無 KO 的原生 idle 與昏迷 GD 路徑。Actor／Army 身體快照 schema 2 保存遊戲秒；合法 schema 1 的 0–30 動作秒剩餘量載入時按比例一次換算，SiteStore 原驗證與原子載入不變。失去指揮後的待令 HOLD 不恢復舊進攻／追擊，僅合格正式隊員可對四向相鄰合法敵人近身自衛；初始 HOLD 與遠射不放寬。證據與界線見 [本次實作紀錄](output/site_knockout_recovery_20260926/README.md)。
+
+2026-09-25 包圍同輪交鋒：原 TerrainLab 每輪收集所有合格鄰接敵對 pair，每對獨立判勝負，再按原人物彙總 HP／暈眩／疲勞與單次反應；多人交鋒須逐對全勝才呈現勝利，任一敗或平手即呈現受擊，各局部勝利仍對相應敵人有效。單對平手仍沿原防禦動作。舊方向包圍能力扣分移除，多對獨立交鋒本身形成一對多劣勢；每人一秒冷卻不變。原 Actor／Army 分階段完成全體成本、擊退、生命與呈現後才發逐對事件，Site 人物、物品、死亡與保存 owner 不變。新規則與實際驗證界線見 [交鋒規則](SITE_COMBAT_EXCHANGE_V1.md)及[本輪實作紀錄](output/encirclement_simultaneous_20260925/README.md)。
+
 2026-09-19 開場工人移除：正式 TerrainLab 不再建立 CommandTestNPC，現存人物清單只含玩家及真正部署的人物；工人控制／預設採集／占格／供養入口移除，原隊員工作與後勤入口保留。SiteStore 接受 player-only，正式載入與綁定前沿原地面實物 owner 退場舊工人，保留裝備／貨物／開封口糧；特殊人物關係拒絕並保留原檔，不只隱藏圖示。開場 GPU 與核心存讀通過；角色模型更新造成圖集來源不符，完整隊伍回歸仍受阻，真實旧檔另有既存玩家披風資格錯誤。完整證據見 [工人移除紀錄](output/remove_default_worker_20260919/README.md)。
 
 2026-09-19 裝備限制續修：依最新要求，文化固定於原 `equipment_nations`，由真正軍事首長明確選定中／日／西式；國家標準與替代物同文化，各槽材質獨立混搭，原16色及玩家首長自由色不變。既有無文化存檔不猜測、外國持物不沒收。原 `SitePersonActions` 的換裝作業可先等待 `EquipmentAtlas` 準備精確完整共用圖集與遮罩，再重查原人、原物、原版本並開始原五秒提交；唯讀守衛不烘圖、不發物品，普通兵仍用原 Sprite／MultiMesh。披風依正式隊長／持續幹部任職與真正國家首長資格，不依臨時指揮權的交接自動卸任或脫披風；原失能代理及死亡接任保留。原編輯器只調整騎乘劍鞘的腰帶支點轉向，地面姿態保留。260份現用舊圖集經本輪450組RGBA等價後更新來源；歷史持劍騎手檔不冒稱等價，现行馬車男女固定布裝路徑不變。下段「新品普通兵一律未准入」及臨時指揮變動帶動披風卸裝是前批歷史狀態，當前實作、實際驗證與剩餘界線見 [本輪限制修正](output/equipment_limits_20260919/README.md)。
@@ -24,7 +44,7 @@
 
 2026-09-18 測試隊伍男女比例：原戰鬥視窗新增兩隊各自的女性比例（0–100%，預設 50%），顯示四捨五入後的男／女人數，總數包含隊長。比例只在部署時決定原 Army 人物的 `appearance.body` 與既有呈現角色，不改兵種基礎能力，也不另存一份性別名冊；人物外觀隨原 SiteStore 保存。女性普通兵使用原女性模型製作的標準長劍／盾／皮甲共用圖集（19 動作、584 幀、四向及完整隊色遮罩）；小隊沿用 Sprite，大隊沿用原 MultiMesh，仍只有最多兩位隊長使用即時骨架。女性目前只准入此標準完整配裝，其他裝備組合須通過各自圖集准入，不用男性代替。原生待機快路尚只處理男性，女性使用同一批次呈現器的 GDScript 回退，未宣稱大量混編效能收益。清除測試隊伍仍把實物留為原格物資包，死亡仍使用原遺物持有者；此次未刪箱子或其中物資。
 
-2026-09-18 戰鬥測試與主畫面資訊整理：兩隊預設各 100 人，普通兵只採一個「近戰步兵」兵種模式並共用基礎武力 50，不建立逐兵兵種 AI；舊快照的逐兵 `combat_ability` 只保留相容資料、不覆寫此兵種值，HP／暈眩／位置與實裝仍逐人所有。正式隊長沿原 `command_abilities` 保留可不同的戰術／領導／教練值，幹部依個別特性行動仍是未設計範圍。相鄰交鋒改由雙方實裝武器／護甲級差計算方向性 HP：平手只互加對方武器類型暈眩且不加疲勞，小勝同級 1、每級差按 2 的冪次縮放，大勝再乘 2；大勝勝方以正式共享圖集 `attack_jump_heavy` 呈現，不由動畫反算結果。現行圖集契約為標準兵 36 動作／1,128 幀、一般裝備配方 19 動作／584 幀、含跳躍重擊的武器材質配方 20 動作／632 幀；下方 2026-09-17 的 19 動作／584 幀是發布當時的歷史狀態。原 `SiteRuntime`、人物／Army HP 與裝備 owner 不變。主畫面日期、現在時間、0.5／1／2／4 倍速、暫停及玩家狀態移入上方橫幅；左下獨立窗持有現在狀態與所選格資訊，戰鬥測試改為可移動原生視窗。倍速只乘 Site 日曆、工作、供養與疲勞的遊戲時間；人物移動、攻擊、硬直、救助、交鋒共同步與 `combat_left` 仍使用未加速真實秒。主畫面女性 NPC 的 3D 呈現已移除，原工人邏輯與保存外觀欄位保留。
+2026-09-18 戰鬥測試與主畫面資訊整理：兩隊預設各 100 人，普通兵只採一個「近戰步兵」兵種模式並共用基礎武力 50，不建立逐兵兵種 AI；舊快照的逐兵 `combat_ability` 只保留相容資料、不覆寫此兵種值，HP／暈眩／位置與實裝仍逐人所有。正式隊長沿原 `command_abilities` 保留可不同的戰術／領導／教練值，幹部依個別特性行動仍是未設計範圍。相鄰交鋒改由雙方實裝武器／護甲級差計算方向性 HP：平手只互加對方武器類型暈眩且不加疲勞，小勝同級 1、每級差按 2 的冪次縮放，大勝再乘 2；大勝勝方以正式共享圖集 `attack_jump_heavy` 呈現，不由動畫反算結果。現行圖集契約為標準兵 36 動作／1,128 幀、一般裝備配方 19 動作／584 幀、含跳躍重擊的武器材質配方 20 動作／632 幀；下方 2026-09-17 的 19 動作／584 幀是發布當時的歷史狀態。原 `SiteRuntime`、人物／Army HP 與裝備 owner 不變。主畫面日期、現在時間、0.5／1／2／4 倍速、暫停及玩家狀態移入上方橫幅；左下獨立窗持有現在狀態與所選格資訊，戰鬥測試改為可移動原生視窗。倍速乘 Site 日曆、工作、供養、疲勞及昏迷甦醒等待的遊戲時間；人物移動、攻擊、硬直、救助、起身、交鋒共同步與 `combat_left` 仍使用未加速動作秒。主畫面女性 NPC 的 3D 呈現已移除，原工人邏輯與保存外觀欄位保留。
 
 2026-09-17 NPC 動畫快取候選撤回：原主畫面4000人各120秒診斷，NPC取樣峰值17.541→2.433ms、快取清除16→0次，但全幀>50ms為43→50次。男女各54細步／18完整RGBA與原NPC換身體、編輯器、保存生命週期通過；後續遇原Dropbox路徑開檔約1秒、腳本載入逾時。使用者重開Dropbox後，17:27起純開檔恢復約0.06–2.65ms，check-only與原主畫面4000人四輪各60秒ABBA均通過，32份來源穩定且最終人數／交鋒／疲勞／PNG一致。>50ms合計107→105次、最差63.926→65.604ms，仍不證明可靠卡頓收益，候選維持撤回。未改同步設定／搬副本；歷史秒級戰鬥停頓仍未重現，不能算解決。正式NPC已恢復起點SHA256，既有Army快取修改保留；完整證據見 [NPC快取試驗](output/site_actor_cache_retention_20260917/README.md)。
 
@@ -137,19 +157,39 @@ SiteMap、舊 Battle／Formation／Travel／Persistence 流程與專用素材、
 | TerrainData | 唯一地圖資料入口；地形、環境基底、site 稀疏狀態及共用通行／攻擊邊界查詢 |
 | TerrainRenderer／TerrainRenderLayer | 消費地形資料並繪製地表、岩壁 |
 | TerrainLab | 場景組裝、輸入、Camera2D 與控制介面 |
-| SiteEnvironment | 獨立 seed 分流生成九類來源與土地條件；唯讀查詢、可重建阻擋索引 |
+| SiteEnvironment | 原 preset 依 seed 生成九類來源與土地條件；固定地理依鎖版地類及水體配置資源；唯讀查詢、可重建阻擋索引 |
 | SiteRuntime | 同一時鐘上的採集、清地、建設、批次生產、再生與供水分配；命令回傳 ok/code/message |
+| SiteEquipmentOrders | 原國別配裝標準、個人換裝與整隊領裝的唯讀預檢及實物原子提交；沿原人物 holder／營地庫存，不保存第二份配裝名冊 |
+| SitePersonActions | 原人物作業的唯一計時、取消與接觸後結算；整隊領裝仍是一份 equipment 作業，保存守衛拒絕未完成作業 |
 | SiteStore | 校驗並原子保存 seed／版本／稀疏差異；重建同一 TerrainData，不保存 Node 或整張生成基底 |
 | SiteController | 資源／土地面板及指令轉接；沿用既有 NPC 尋路執行第一名工人，不擁有第二份地圖 |
 | SiteResourceView | 保留每地圖列排序節點，內部按原順序拆靜態／動態子批次；與角色依地面接點排序，不修改資源存量 |
 | TerrainTestCharacter／TerrainTestNPC | 角色格位、移動、戰鬥與指令狀態 |
 | PersonFatigue | 共用公式與原身體讀寫入口；正式全隊含控制者與騎乘共用 TerrainArmy 唯一疲勞，只有未入隊者保留一份個人值 |
 | SiteSustain | 純供餐／飢餓／士氣／訓練公式；供養紀錄在 TerrainData.site，HP 寫回原人物，訓練疲勞寫回原隊伍或玩家，不產生替身人物 |
+| SiteTrainingGround | 查詢原校場／西式軍營、原人物到場／原隊伍權限及容量；呼叫原 SiteSustain，native 經原 World 檢查後提交，不另存訓練、人物或時鐘 |
+| SiteGarrison | 原 Army 名冊的入營／編成／軍職交易；軍營只由原 garrison_feature_id 引用，軍官個列、士兵數量及中式恢復資格從原人物派生，不擁有第二份兵員、實物或疲勞池 |
 | TerrainWeaponCollision | 與實際投影一致的武器／身體碰撞 |
 | TerrainArmyContactSource | 固定長劍裝備的一份非渲染連續姿態查詢；無人物／地圖狀態，私有動畫，不是每兵骨架 |
-| TerrainArmy | 預設百人、可變名冊的原人物列、路徑、佔格、隊形與共用士兵圖集；逐兵交戰、指揮接替、命令與快照；本 Site 保持最多三隊、總 NPC 不超過 300 的保存界線，單隊名冊上限 200 |
+| TerrainArmy | 預設百人、可變名冊的原人物列、路徑、佔格、隊形與共用士兵圖集；逐兵交戰、指揮接替、命令與快照；本 Site 的正式保存界線為最多 50 隊、軍隊名冊合計 5,000 行，單隊名冊相容上限 200 |
 | CharacterVisualState／CharacterRenderContract | 外觀輸入與共享 3D→2D 投影規格 |
 | HumanCharacter3DEditor／MountHorse3D | 男女模組化角色、換裝、染色、動畫與馬匹 |
+
+2026-10-03 Site 建築正式整合沿上述 owner 擴充：`SiteRuntime` 的版本化 feature 布局／parts 派生牆、樓梯、城門與拘押格，`TerrainData`／`SiteEnvironment` 保留自然基底並提供每 XY 單一有效行走表面，原 Army／Reservation Grid／Actor／native terrain 共用，不新增樓層或導航權威。`SiteWorkTeam` 讓原工作者到最多 6×6 的 service patch，農牧面積、供水、批次仍沿原 Runtime；`SitePersonActions`／`SiteCaptiveEscort`／`SiteCaptivitySupply` 擴充原捕捉、押送、拘押與供養關係，不複製人物。軍官名冊與一般俘虜合計由原人物、軍事資格／任命、captivity／escort_orders 唯讀派生，共用原拘押容量，不建立另一份純數量 owner；解放仍逐一沿原人物四秒作業。`SiteStore` 檢查候選布局和派生導航後才提交，原 DLL／內容來源不相容明確拒絕且保留現場與原檔；本批軍事追加已將 native blob 升為下述 `KW06`，第 17 節 `KW05` 證據只屬前一階段。`SiteController` 沿既有建設 Window 呼叫原命令、城門沿 TerrainLab 原動作時鐘、`SiteResourceView` 沿原地面列排序投影素材。前批已驗證與尚待驗收項分列 [建築正式整合紀錄](SITE_BUILDING_REQUIREMENTS_AND_IMPLEMENTATION_PLAN.md#17-正式接入進度與驗收2026-10-03持續更新)，不由此責任清單推定追加功能或 GPU 全數通過。
+
+2026-10-03 軍事建築追加（本次 Site 範圍已實作並完成具名驗證）：`barracks`／`training_ground` 沿原 `SiteRuntime` feature 使用寬深各 10–50 格矩形及面積比例建材／工時。`military_modules` 從原 feature 派生固定尺寸長屋／住宅／訓練架，`feature_geometry`、可站格、容量和 `SiteResourceView` 使用同一組模組；屋架有真實阻擋，放大場地只增加模組與地面，不拉伸整棟圖或另建導航。原 Army／Actor 的 `military_role` 保存 `officer`／`soldier`／`civilian`，資格不因現職解除而消失；原 Army 的 `garrison_feature_id` 引用同 Site 同陣營已完工軍營，未編成人员保留原 ID、身體、裝備、能力、供養及疲勞。軍營是原註冊關係，原列 `slot` 保存合法返營格；被俘、押送與解綁不刪註冊，所有活人（含昏迷、被俘及營外）保留容量，死亡保留原列但不占容量。名冊分列在營／被俘／營外，自由營外人物沿原 Army 或 native 單格步進返回，不傳送、不建假押送命令。駐營清軍令／任命並禁止自動升兵為官，編成須明選在場原軍官，沿原空 Army 槽及原供養交易轉入原列，不搬人、不補生。舊 GD 資料按原任命一次遷移資格，已有非法值拒絕。
+
+校場訓練沿 `SiteController` 原下令入口與 `SiteSustain.train`、共同 Site 遊戲秒、原供糧及 80→50 疲勞規則；`SiteTrainingGround` 只核對場地、原人物、軍官、實装及多隊共用容量。移動、離場、場地失效或原下令軍官離任清除命令；native 對即時投影結果用原 `World.apply_training_state` 檢查再提交，以原 `charged_this_step` 阻止當步重複恢復。原 `team_supply` version 2 增 `training_feature_id`，舊 version 1 保留供養／訓練量並清掉無場地命令。軍營／軍職與營帳操作需要 GD owner 時先沿 `CrowdSite.clear`／`CrowdClearHandoff` 安全清回，重查同一原 ID 後執行；校場訓練本身保留 native 接線。
+
+營帳沿原資源 `camp_tent`、原 holder／cargo、原 `SiteVehicleTransport.transfer` 和 `SitePersonActions` 單一作業時鐘。原後勤本人實際到占地外相鄰格，30 遊戲秒完成且經接觸後複查才將原行囊 1 包轉成固定 3×3 營帳；收帳同樣 30 秒且先驗清場、原 feature 與原承載 20，成功歸還 1 包。普通建造／拆除不得繞過這條路，移動／受擊／版本／權限／Site 變更保留原實物，未完作業保存沿原守衛拒絕。`SiteStore` 驗軍事布局、資格／軍營引用、容量、原位置、駐營無軍令與 native 鏡像；native 新格式為 **`KW06`**，舊 **`KW05`** blob 明確拒絕且不覆寫原檔／現場。
+
+目前仍無正式聚落邊界／居民 owner 與完整 World 旅行接線；軍營以本 Site feature／陣營／原格位界定，營帳只表示本地實物與搭收，不推定城內城外、跨 Site 駐紮、住宿增益或自動避難。實作契約、回歸入口及本批完整結果見 [軍事建築追加](SITE_BUILDING_REQUIREMENTS_AND_IMPLEMENTATION_PLAN.md#187-本批驗證清單與結果欄)；容量值、headless 契約及有限 GPU 圖均不得外推大量人員效能。
+
+2026-10-03 密集軍營追加：全局建築版本仍為 1，原 `SiteRuntime` 軍營 feature 新建預設 `barracks_layout_version=2`，既有缺欄位保留原 v1 幾何。固定 3×2 兵舍與北側 2×2 主屋沿原 `military_modules` 共用阻擋、通道、容量與 `SiteResourceView` 列排序；10×10 為 7 棟／平地容量 60，50×50 為 193 棟／1344。原名冊仍由 Army／SiteGarrison 持有；v2 已有登記時拒絕改界，已排擴建在完工提交再守護原返營格。四向 imagegen 素材沿原 manifest／門檻定位，低欄／開放木框與三旗維持視覺投影；旗幟由原 `owner_faction` 派生既有 16 組裝備配色與 4 種紋樣，尚無正式自訂國旗 UI。密集屋列暴露的押送繞屋首步超距停滯，沿原 `SiteCaptiveEscort` 擴充跟隨俘虜備援，仍保留全體保距、原人物和單格提交，不新增旗幟保存、人物、導航或渲染權威。本輪 21 次 canonical runs 為 17 PASS／4 FAIL，完成具名 headless／Store、新舊 GD／native 押送回歸、完整匯入及 30 frames 主入口啟動；新版第二輪 15 張全數目視，舊版 26 檔／24 種影像僅抽查 7 張。兵器架／箱桶等預覽差異、北向門洞不可見與效能界線保留；歷史第 18.7 節證據不變，具名範圍與失敗鏈見 [密集軍營與陣營旗](SITE_BUILDING_REQUIREMENTS_AND_IMPLEMENTATION_PLAN.md#188-密集軍營與陣營旗2026-10-03本輪具名驗證完成)。
+
+2026-10-03–04 兩類軍營追加（第18.10具名驗收完成，保留原軍營 cutoff）：父 `kind=barracks` 以 `camp_type=standard/chinese` 區別西式訓練與中式休整，缺欄位按西式讀取但不補寫或改舊 v1/v2 布局。西式沿原 `SiteTrainingGround`／`SiteSustain.train` 只將有效訓練增量乘 1.25，原工時、餐份及努力不變；中式由 `SiteGarrison` 以原 person ID 查全部存活駐營成員的同方、清醒自由、在營可站格及停止資格，經原 caller 安全守衛後只將唯一疲勞 pool 的恢復量乘 1.25。GD 沿 `PersonFatigue.advance` 可選末參數；native 沿 `CrowdSite.step` 派生單步 `set_recovery_input`，原 fatigue phase 消耗後回 1.0。KW06 欄位及原 Store DLL/build 守衛保留，跨 DLL native 保存仍拒絕，不推定已提供 migration。原建造、幾何、名冊、供養、人物、物品及保存 authority 不變；中式只新增宿舍／總部各四向素材鍵，原 View 依父種類選圖。來源責任、相容界線及本輪具名結果見 [兩類軍營追加](SITE_BUILDING_REQUIREMENTS_AND_IMPLEMENTATION_PLAN.md#1810-西式中式軍營追加2026-10-0304已完成具名驗收)。
+
+2026-10-04 P4／P5 本輪沿原 SiteRuntime／SiteStore／SiteController、原人物／holder／共步與單一有效表面擴充；加工、有限住宅登記與返家、多倉庫／local 供料、同 ID 升級／修復、只讀摘要、受限冷補算／GD Actor 地面 caller 已按 [第19節具名結案與證據](SITE_BUILDING_REQUIREMENTS_AND_IMPLEMENTATION_PLAN.md)完成，最後來源為 `2026-10-04T18:55:40.872172+08:00` 與 [結案收據](output/site_building_close_20261004/final_handover/FINAL_CLOSURE_RECEIPT.json)。前述軍事批及第18.10的00:39歷史範圍保留；仍沒有另一份居民／倉庫／導航／保存權威，完整 World／Army／cart／wagon／Native 地面旅行、active Native stock 物流及 SHIP 全案沿各自具名結果。
 
 地圖仍由 Node2D + Camera2D 控制。特寫角色使用透明 SubViewport 呈現既有 3D 模型，
 再由 Sprite2D 顯示；刪除舊紙娃娃不代表改成 3D 世界。
@@ -157,7 +197,7 @@ SiteMap、舊 Battle／Formation／Travel／Persistence 流程與專用素材、
 地形生成、通行資料與呈現維持分離，不另加平行座標或遊戲狀態擁有者。
 
 `TerrainData.site` 是唯一資源／用地／存貨／工人狀態。`resource_base` 與環境陣列
-由 seed 重建，`changes`、`features`、`terrain_changes` 保存修改；阻擋、來源索引與
+由 seed 或固定來源與配置規則重建，`changes`、`features`、`terrain_changes` 保存修改；阻擋、來源索引與
 供水服務範圍可重建。`TerrainRenderer` 仍保留四個原有地形子層。
 NPC 的原 BFS 共用 `TerrainData.path_between`；角色與軍隊仍持有各自的實體格位及預約。
 新增障礙先檢查移動來源、目的地及軍隊通道保護，再透過軍隊既有命令佇列排空並重算路線。
@@ -173,6 +213,12 @@ format 1／2 僅遷移此 Site 舊地圖。
 軍隊同步取樣期間共用已前進完成的玩家／NPC 接觸幾何，結算前清空；不跨步快取、不入存檔，護甲仍依實際覆蓋點查詢。
 補位／追退定向測試涵蓋合法百人平移、目的格唯一指派、命令取代、無路自衛與 20 秒／距離追擊收束。接觸先以實際多邊形的保守包圍盒排除不相交者，窄相交與接觸先後不變；6,362 案例與原演算法結果相同。兩隊 GPU 部署／交戰／倒地／玩家入隊近景已通過，最新 24.313 秒、20 次接觸；這不是持續戰鬥 FPS 或全武器矩陣的證明。
 軍隊快照經 SiteStore 檢查人物、指揮及占格關係後才替換目前地圖；缺少快照或交戰中仍拒絕保存。
+
+2026-09-29 多隊容量沿原 TerrainLab `combat_armies`、SiteController 和 SiteStore 擴充，不建立第二套軍隊權威。正式 UI 可在空場批次部署最多 50 支百人隊，跨陣營共用原占格與移動協調器；新增隊伍使用和前三隊相同的裝備、供養、事件、AI 與存讀接線。SiteStore 保留唯一人物／隊伍身分、占格及毀損檢查，完整配裝的 50×100 PLAINS seed 581 存檔約 10 MB，已驗部署、選取、存讀和清場；這不代表移動／交戰或 30 FPS 驗收通過。
+
+2026-09-24 隊伍 MOVE 沿用原 Army 人物與動作欄位：`cells` 是已完成步進的實體格位，`moving_to/move_progress` 表示已承諾的原 0.38 秒步進。`SiteCombatMovementCoordinator` 與 `SiteMovementReservationGrid` 對同一步占格、空尾移動鏈和外部阻擋做原子仲裁／完成；僅同隊、同一起始軍令、相鄰互換的兩人對穿可用，跨隊對穿與三人以上封閉循環仍拒絕。`CombatMovePlan`／`FormationTransitPlanner` 管行軍物理順序、軟目標、局部路徑與恢復，`CombatDeploymentPlan`／`FormationDestinationPlanner` 管下令時固定的終點幾何、角色、面向與晚綁定槽位；`SiteDeploymentReservationRegistry` 只管跨隊終點租約。普通點地與拖曳指定面向共用預檢和正式下令，預覽不取得租約。`SiteStore` 先驗證完整 MOVE 合同與在途鏈，再恢復原人物／預約；強制撤退、取消、死亡與失效會釋放舊合同，同時讓已承諾的原步進安全結束。驗收證據與尚待涵蓋的場景見 `output/pathfinding_impl_20260924/README.md`。
+
+2026-09-26 戰鬥隊伍可在原命令視窗選自適應、方、圓、錐行、雁行、鉤行、疏陣；選單只保存候選，`TerrainArmy.issue_combat_order` 成功替換租約後才提交隊伍偏好與新序號。`FormationDestinationPlanner` 生成整數槽位，`CombatDeploymentPlan` 保存本次固定模板與圓陣槽位面向；途中仍沿原 `CombatMovePlan` 和預約格逐步移動。`SiteStore` 驗證新版陣型 ID、外框與完整槽位，舊版 auto 快照保留原幾何。工作隊、後勤隊與玩家自主移動維持原權限及行為；未完成或已取消的 deployment 不可僅憑偏好顯示為已整隊。當次驗證見 `output/team_formation_switch_impl_20260926/README.md`。
 玩家入隊引用原 TerrainTestCharacter；可變名冊的 PLAYER_MEMBER 哨兵為 1,000,000,000，不是 NPC 列、真實人物 ID、額外 sprite 或替身生命狀態。舊百人快照的角色索引 100 只在明確舊格式遷移時轉換。玩家保留自主移動／出招，青色圈只提示位置；合格時依同一規則任職與下令，三項稀疏能力由原人物保存，攻擊讀取本隊共用訓練。NPC 測試指揮與玩家權限入口分開。
 TerrainArmy 保存現任幹部任職先後與可調順位，未指定者補尾，重任視為新一段，暫時失能不重排；這是人事事件接點，不新增國家任免 UI。順位面板套用時重新查驗正式職務、在場、移動與交戰狀態。
 普通士兵可舉盾及進行四秒救助；玩家可點選原軍隊成員直接攻擊／救助，出手前瞄準讀取原擁有者當前幾何，彈體離手後固定方向。救助關係只存人物 ID 與原擁有者倒數，跨人物／軍隊去重，受擊或移動中斷，起身重查占位，不回血。新增快照欄位向後相容 format 3，恢復先校驗全部關係。
@@ -197,6 +243,10 @@ SiteController 在工作／人物結算後保存，兩種暫停都凍結工作�
 供餐由明確交糧／訓練操作啟用，`team_supply` 以實際隊伍 ID 保存指定共享糧與供養群組，`person_supply` 以原玩家 ID 保留離隊後的缺糧和已吃餐份。入退隊只移轉供養歷史，不移轉共享／私人食物。共同 Site 小步推進供養、原人物疲勞與訓練；交糧計時與原子扣物分離，當步碰撞／生命結算先於最終條件複查。交糧尚未完成時保存回傳 BUSY，來源未扣料。這不是自動徵用营地庫存、多名工作者制度或完整俘虜供養流程。
 
 物品資料層沿用 `SiteRuntime` 原子命令與 `SiteStore`：實例 ID、原物主和唯一 holder 在 `item_records`；原人物可選 `item_state`、`depot_items` 與 `ground_loot` 各自列實際持有物，`equipped` 僅引用同 holder 的物品。地面容器使用可重建格索引，不建每件物資 Node、不在 120 Hz 逐包掃描。保存先檢查最終 UTF-8 8 MiB 限制，過大時保留原存檔、不刪現場物資。資料層 1,000／9,000 單木材容器測試不代表完整裝備遺體或 GPU 負擔；死亡／昏迷搜刮行為、缺裝外觀／防護同步、俘虜及家族繼承仍未完成。
+
+2026-09-26 配裝操作與整隊領裝所有權：`SiteController` 的本人入口依 `controlled_person_id()` 選取原人物，不依搜刮執行者或固定人物 ID；視窗只讀原 holder，成功結算後更新同窗清單與版本，外部人物／持物替換仍拒絕。整隊沿 `SiteEquipmentOrders.prepare_team_issue/check_team_issue/commit_team_issue` 對原 Army 名冊一次分配唯一實物，保留已符合標準的原裝，檢查全隊最終兵種、國別／文化、披風資格及原呈現准入。`SitePersonActions.begin_team_equipment` 保有單一暫態作業；原隊指揮者下令、原隊代表到營地相鄰格，目標保持 HOLD、在場及可行動；受控人物須明確納入。同一營地未完成領裝串行處理，先準備缺少的共用圖集，再由原遊戲時鐘計五秒、接觸後全數重查並一次交換；任一目標失效即整批保留原裝。原 `SiteStore` 只保存原人物、實物及國別資料，未完成作業仍阻擋保存；沒有第二套隊伍、倉庫或圖集擁有者，亦不另存作業。
+
+本次補齊前置資料僅限原 `SiteController` 的明示測試設定：`register_trial_equipment_nation` 從已部署原隊成員明選首長與文化，寫入既有 `equipment_nations`；`stock_trial_equipment` 經容量／序號檢查後，以原 `SiteRuntime.create_equipment` 建立所選數量的實物於原營地；`revoke_trial_equipment_nation` 在清隊前撤銷該測試國別引用並保全實物。開啟面板或部署不自動授予國籍、職位或庫存；明示 NPC 指揮測試仍引用原合格隊長，不切換受控身分。這些入口不是完整建國、官職任命、裝備生產／交易或經濟系統，普通兵仍須通過原共享圖集准入，實際驗收以本輪測試紀錄為準。
 
 2026-09-13 03:10 定向驗收：`TerrainLab._process` 在每一共同小步先結當步 Site 工作／時鐘，再前進原人物並結接觸，下一小步重新讀取戰鬥緩衝；因此幀內首次受擊也會改變剩餘時間倍率。動作秒仍不加速。四方向原人物／軍隊走跑、完整供養存讀、200 人制度正常／慢幀一致性及兩位原女性拆併 GPU 均已通過。原女性戰備變更經原持握／收納擁有者同步，不能只改旗標而讓同名 idle 保留舊可見性。保存要求有人的供養時鐘與 Site 同步，空群組可保留庫存並向前對齊。這些驗收不覆蓋完整作戰矩陣、多人工作制度或全部人物制度；完整執行及失敗紀錄見實作文件最新段。
 

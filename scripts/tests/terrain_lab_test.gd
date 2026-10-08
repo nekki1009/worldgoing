@@ -120,12 +120,15 @@ func _water_spans_map(data: TerrainData) -> bool:
 	return false
 
 func _visual_lab() -> void:
+	assert(OS.get_cmdline_user_args().has("--site-test-ui"), "Seed conveniences and legacy controls require --site-test-ui")
 	DisplayServer.window_set_size(Vector2i(2560, 1440))
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	Engine.max_fps = 60
 	var scene: PackedScene = load("res://scenes/terrain_lab/TerrainLab.tscn")
 	var lab: TerrainLab = scene.instantiate() as TerrainLab
+	lab.npc = TerrainTestNPC.new() # Explicit NPC command fixture, never a formal startup worker.
 	get_root().add_child(lab)
+	assert(is_instance_valid(lab.site_test_window) and not lab.has_node("TerrainLabUI"))
 	(lab.find_child("Next", true, false) as Button).pressed.emit()
 	assert(lab.terrain.seed_value == 12346)
 	(lab.find_child("Previous", true, false) as Button).pressed.emit()
@@ -258,8 +261,12 @@ func _visual_lab() -> void:
 	key.pressed = false
 	lab._unhandled_input(key)
 	lab.movement_toggle.button_pressed = false
+	assert(not lab.movement_input_enabled and lab.character.visible)
+	key.pressed = true
 	lab._unhandled_input(key)
-	assert(lab.character.terrain_cell == ramp_cell and not lab.character.visible)
+	assert(lab.character.terrain_cell == ramp_cell and lab._held_directions.is_empty())
+	key.pressed = false
+	lab._unhandled_input(key)
 	lab.movement_toggle.button_pressed = true
 	# The editing window and map must display the same assembled model.
 	var player: TerrainTestCharacter = lab.character

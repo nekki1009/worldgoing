@@ -62,13 +62,15 @@ func run() -> void:
 	assert(Rules.exchange_score({"morale": 0.0}) == 40.0)
 	assert(Rules.exchange_score({"armorbonus": 4.0, "facility": 6.0}) == 60.0)
 	for sectors in range(5):
-		assert(Rules.exchange_score({"encirclement": sectors}) == 50.0 - float(maxi(sectors - 1, 0)) * 8.0)
-	assert(Rules.exchange_score({"encirclement": 20}) == 26.0, "Four cardinal directions cap the surrounding penalty")
+		assert(Rules.exchange_score({"encirclement": sectors}) == 50.0,
+			"Surrounding adds independent opponents rather than reducing each pair score")
+	assert(Rules.exchange_score({"encirclement": 20}) == 50.0,
+		"Even an out-of-range sector count cannot restore the old score penalty")
 	assert(Rules.exchange_score({"ability": -20.0, "training": -1.0, "fatigue": -1.0, "morale": 120.0}) == 0.0)
 	assert(Rules.exchange_score({"ability": 200.0, "training": 200.0, "fatigue": 200.0, "morale": -1.0}) == 90.0)
 	var tired := Rules.exchange_result({"fatigue": 100.0}, {})
 	assert(tired.winner == -1 and tired.kind == "small")
-	assert(Rules.exchange_result({"encirclement": 4}, {}, -1.0).kind == "big")
+	assert(Rules.exchange_result({"encirclement": 4}, {}, -1.0).kind == "draw")
 	assert(Rules.exchange_result({"facility": 6.0}, {}).winner == 1)
 	assert(Rules.exchange_result({"armorbonus": 6.0}, {}).winner == 1)
 	var power := Rules.exchange_result({"skill": "power"}, {})

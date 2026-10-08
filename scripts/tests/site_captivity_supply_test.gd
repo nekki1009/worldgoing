@@ -22,8 +22,23 @@ func _bind(helper: Variant, data: TerrainData, body: Dictionary, captor_id: int,
 	body.captive = capturing
 	helper.commit_change(int(body.person_id), captor_id, capturing)
 
+
+func _assert_original_projection(controller: SiteController, body: Dictionary, projection: Dictionary, original_holder: Dictionary, original_cargo: Dictionary) -> void:
+	# The existing TerrainArmy.combat_hot_materialize returns a deep projection.
+	# Resolve identity/ownership through the original PersonActions owner while
+	# requiring the feeding sample to match every relevant live field.
+	var identity := int(body.person_id)
+	var person: Dictionary = controller.person_actions._person(identity, false)
+	assert(not person.is_empty() and is_same(person.body, body))
+	assert(is_same(person.holder, original_holder) and is_same(person.cargo, original_cargo))
+	assert(int(projection.person_id) == identity and float(projection.hp) == float(person.hp) and float(projection.ko) == float(person.ko) and bool(projection.captive) == bool(person.captive))
+	assert(projection.item_state == original_holder and projection.cargo == original_cargo)
+
 func _run() -> void:
 	var lab := TerrainLab.new()
+	# The formal scene already omits a default worker; this ordinary feeding
+	# fixture explicitly opts in its original NPC before Lab enters the tree.
+	lab.npc = TerrainTestNPC.new()
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	lab.set_process(false)
@@ -88,6 +103,8 @@ func _run() -> void:
 	# Transfer the opposite way with an already-eaten partial meal and hunger.
 	var target: Dictionary = first.combat_units[1]
 	var target_id := int(target.person_id)
+	var target_holder: Dictionary = target.item_state
+	var target_cargo: Dictionary = target.cargo
 	var captor_id := second.combat_identity(0)
 	target.ko = 100.0
 	for cohort: Dictionary in first_entry.sustain.cohorts:
@@ -107,7 +124,7 @@ func _run() -> void:
 	assert(helper.change_guard(target_id, captor_id, true).ok and data.site == pristine)
 	_bind(helper, data, target, captor_id, second.faction_id, true)
 	assert(not helper.team_members(first, helper._original_members(first)).has(target_id))
-	assert(is_same(helper.team_members(second, helper._original_members(second))[target_id], target))
+	_assert_original_projection(controller, target, helper.team_members(second, helper._original_members(second))[target_id], target_holder, target_cargo)
 	assert(_history(second_entry.sustain, target_id) == history)
 	assert(second_entry.sustain.morale == 100.0 and not second_entry.sustain.routed,
 		"A captured routed enemy is not a personnel merger and cannot rout its captor")
@@ -151,7 +168,7 @@ func _run() -> void:
 	_bind(helper, data, target, lab.npc.person_id, lab.npc.faction_id, true)
 	var personal: Dictionary = data.site.person_supply[str(lab.npc.person_id)]
 	assert(_history(personal, target_id) == history)
-	assert(is_same(helper.personal_members(lab.npc)[target_id], target))
+	_assert_original_projection(controller, target, helper.personal_members(lab.npc)[target_id], target_holder, target_cargo)
 	assert(not helper.team_members(first, helper._original_members(first)).has(target_id))
 	assert(data.site.worker.cargo == {"grain": 3}, "Capture does not confiscate or pre-eat original cargo")
 	lab.npc.hp = 0.0

@@ -1,4 +1,5 @@
 extends SceneTree
+## Explicit pre-migration reference; new physical semantics use site_fire_projectile_pipeline_test.
 ## Original Army orders, real equipment/cargo and Lab decisions; no alternate AI.
 const STEP := 1.0 / 30.0
 var checks := 0
@@ -23,6 +24,7 @@ func _fixture(enemy_cell: Vector2i = Vector2i(16, 10), friend: bool = false) -> 
 	f.data.static_blocked.fill(0)
 	assert(SiteRuntime.initialize_item_storage(f.data.site).ok)
 	f.lab = TerrainLab.new()
+	f.lab.physical_ranged_enabled = false # Named legacy flight/roll reference only.
 	f.lab.terrain = f.data
 	f.lab.exchange_enabled = true
 	f.team = TerrainArmy.new()
@@ -67,6 +69,7 @@ func _dispose(f: Fixture) -> void:
 	f.lab.combat_actors.clear()
 	for team: TerrainArmy in [f.team, f.enemy]:
 		team.equipment_appearance_query = Callable()
+		team.equipment_appearance_batch_query = Callable()
 		team.external_blocker = Callable()
 		team.target_query = Callable()
 		team.exchange_people_query = Callable()
@@ -100,8 +103,9 @@ func _order(f: Fixture, value: int, goal: Vector2i = TerrainArmy.INVALID_CELL) -
 
 func run() -> void:
 	create_timer(35.0).timeout.connect(func() -> void: quit(1))
+	var f: Fixture
 	for order: int in [TerrainArmy.CombatOrder.ATTACK, TerrainArmy.CombatOrder.PURSUE]:
-		var f := _fixture(Vector2i(22, 10))
+		f = _fixture(Vector2i(22, 10))
 		_order(f, order)
 		_advance(f, 7.0)
 		assert(f.team.cells[0] != Vector2i(10, 10) and f.lab.ranged_shots > 0, "A real distant archer must approach and shoot: " + str(order))
@@ -146,7 +150,7 @@ func run() -> void:
 		_dispose(ordinary)
 		checks += 1
 	for obstruction: String in ["friend", "wall", "close", "back_only", "trapped", "empty"]:
-		var f := _fixture(Vector2i(12, 10) if obstruction in ["close", "back_only"] else Vector2i(16, 10), obstruction == "friend")
+		f = _fixture(Vector2i(12, 10) if obstruction in ["close", "back_only"] else Vector2i(16, 10), obstruction == "friend")
 		if obstruction == "wall": f.data.static_blocked[f.data.index(Vector2i(13, 10))] = 1
 		if obstruction == "back_only":
 			for x in range(7, 13):
@@ -169,8 +173,8 @@ func run() -> void:
 			if obstruction == "friend": assert(f.team.combat_units[1].hp == 100.0, "Stationary friend cannot be knowingly shot")
 		_dispose(f)
 		checks += 1
-	for order: int in [TerrainArmy.CombatOrder.HOLD, TerrainArmy.CombatOrder.MOVE, TerrainArmy.CombatOrder.RETREAT]:
-		var f := _fixture()
+	for order: int in [TerrainArmy.CombatOrder.HOLD, TerrainArmy.CombatOrder.MOVE]:
+		f = _fixture()
 		assert(f.team.start_unit_attack(0, f.enemy.cells[0], f.enemy.combat_identity(0)))
 		_order(f, order, Vector2i(8, 10) if order != TerrainArmy.CombatOrder.HOLD else TerrainArmy.INVALID_CELL)
 		_advance(f, 4.0)
@@ -178,16 +182,49 @@ func run() -> void:
 		if order != TerrainArmy.CombatOrder.HOLD: assert(f.team.cells[0] == Vector2i(8, 10))
 		_dispose(f)
 		checks += 1
+	# RETREAT now requires the original supply morale-collapse contract. Its
+	# original route owns the exit rather than the former arbitrary MOVE goal.
+	f = _fixture()
+	assert(f.team.start_unit_attack(0, f.enemy.cells[0], f.enemy.combat_identity(0)))
+	assert(f.team.issue_combat_order(f.team.current_commander, TerrainArmy.CombatOrder.RETREAT).code == "NOT_ROUTED")
+	assert(f.team.combat_units[0].target == f.enemy.combat_identity(0), "Rejected retreat preserves the original attack target")
+	var retreat_members := {}
+	var retreat_checkpoints := {}
+	for row: Dictionary in f.team.combat_units:
+		retreat_members[int(row.person_id)] = row
+		retreat_checkpoints[str(row.person_id)] = 0
+	var retreat_sustain := SiteSustain.create(SiteRuntime.now(f.data) * 60.0)
+	assert(SiteSustain.add_members(retreat_sustain, retreat_members, retreat_members.keys()).ok)
+	if not f.data.site.has("team_supply"): f.data.site["team_supply"] = {}
+	f.data.site.team_supply[str(f.team.team_id)] = {"version": 1, "sustain": retreat_sustain, "inventory": {}, "training_order": false, "training_requester": -1, "revision": 0, "delivery": {}, "life_checkpoint": retreat_checkpoints}
+	f.team.sustain_routed_query = func(original: TerrainArmy) -> bool: return bool(original.data.site.team_supply[str(original.team_id)].sustain.routed)
+	var retreat_outcome := SiteSustain.advance_to(retreat_sustain, retreat_members, {}, float(retreat_sustain.at) + 40.0 * SiteSustain.HOUR)
+	f.data.site.minute = int(f.data.site.minute) + 2400 # Original fixture clock alignment, not live-clock proof.
+	assert(retreat_outcome.ok and retreat_outcome.routed_now and retreat_outcome.damage.is_empty() and float(retreat_sustain.morale) <= 20.0 and f.team.is_sustain_routed())
+	var retreat_accepted_before := f.team.accepted_count
+	_order(f, TerrainArmy.CombatOrder.RETREAT)
+	assert(f.team.combat_order == TerrainArmy.CombatOrder.RETREAT and not f.team.combat_attacking and f.team.needs_attack_order and f.team.combat_units[0].target == -1)
+	_advance(f, 12.0)
+	assert(f.lab.ranged_shots == 0 and f.team.combat_units[0].target == -1, "Real morale retreat cancels stale target and never shoots")
+	assert(bool(f.team.combat_hot_get(0, &"site_exited", false)) and f.team._edge_distance(f.team.cells[0]) == 0 and f.team.moving_to[0] == TerrainArmy.INVALID_CELL)
+	assert(f.team.morale_retreat_terminal() and f.team.accepted_count > retreat_accepted_before and f.team._cell_owners.is_empty() and f.team._reserved_cells.is_empty())
+	assert(TerrainArmy.valid_combat_state(f.team.capture_combat_state(), f.data))
+	f.team.sustain_routed_query = Callable()
+	_dispose(f)
+	checks += 1
 	# Passive close defense never authors a persistent explicit attack, including
-	# the currently controlled row. Its next manual attack still works in HOLD.
-	var f := _fixture(Vector2i(11, 10))
+	# the currently controlled row.
+	f = _fixture(Vector2i(11, 10))
 	f.team.controlled_person_query = func() -> int: return f.team.combat_identity(0)
 	assert(f.enemy.issue_combat_order(f.enemy.current_commander, TerrainArmy.CombatOrder.ATTACK).ok)
 	f.lab._resolve_exchanges()
 	assert(f.lab.exchange_count == 1 and f.team.combat_units[0].target == -1)
-	assert(f.enemy.issue_combat_order(f.enemy.current_commander, TerrainArmy.CombatOrder.MOVE, Vector2i(15, 10)).ok)
+	_dispose(f)
+	# A separate distant target checks that a new manual attack still works in HOLD.
+	f = _fixture(Vector2i(15, 10))
+	f.team.controlled_person_query = func() -> int: return f.team.combat_identity(0)
 	_advance(f, 4.0)
-	assert(f.enemy.cells[0] == Vector2i(15, 10) and f.lab.ranged_shots == 0)
+	assert(f.team.combat_units[0].target == -1 and f.lab.ranged_shots == 0)
 	assert(f.team.start_unit_attack(0, f.enemy.cells[0], f.enemy.combat_identity(0)))
 	f.lab._resolve_exchanges()
 	assert(f.lab.ranged_shots == 1, "A new explicit controlled attack remains authorized in HOLD")
@@ -207,5 +244,39 @@ func run() -> void:
 	assert(f.lab.ranged_shots > 0, "A recovered commander can explicitly authorize a new attack")
 	_dispose(f)
 	checks += 1
+	# The canonical live publication may skip a review only while it contains no
+	# ranged weapon. Direct replacement and custom queries must be observed on
+	# the next review, without a stale per-army equipment cache.
+	f = _fixture(Vector2i(22, 10))
+	_order(f, TerrainArmy.CombatOrder.ATTACK)
+	f.team.combat_attacking = true
+	f.team.needs_attack_order = false
+	assert(f.team.combat_order == TerrainArmy.CombatOrder.ATTACK and not f.team.is_sustain_routed())
+	var publication_owner := SiteController.new()
+	var identity := f.team.combat_identity(0)
+	var bow_appearance: Dictionary = f.team.equipment_appearance(0)
+	var melee_appearance := bow_appearance.duplicate(true)
+	melee_appearance.parts.weapon = "longsword_01"
+	publication_owner._equipment_appearances[identity] = melee_appearance
+	f.team.equipment_appearance_query = publication_owner.person_appearance
+	f.team.equipment_appearance_batch_query = publication_owner.person_appearance_batch
+	var before_empty_review := var_to_bytes(f.team.combat_units)
+	f.team._update_ranged_orders()
+	assert(var_to_bytes(f.team.combat_units) == before_empty_review and f.team.moving_to[0] == TerrainArmy.INVALID_CELL)
+	var custom_calls := {"n": 0}
+	f.team.equipment_appearance_query = func(person_id: int) -> Dictionary:
+		custom_calls.n += 1
+		return publication_owner.person_appearance(person_id)
+	f.team._update_ranged_orders()
+	assert(custom_calls.n > 0, "Custom equipment query retains its per-person callback")
+	f.team.equipment_appearance_query = publication_owner.person_appearance
+	publication_owner._equipment_appearances[identity] = bow_appearance
+	f.team._update_ranged_orders()
+	assert(f.team.moving_to[0] != TerrainArmy.INVALID_CELL, "A directly replaced bow publication is visible next review")
+	_dispose(f)
+	publication_owner.free()
+	checks += 1
+	TerrainArmy.release_contact_source()
+	await process_frame
 	print("SITE_RANGED_ORDERS_PASS: ", checks, " cases; approach/fire, pursuit return, close spacing, friendly/wall reposition, trap, empty/replenish, order cancellation, passive defense/manual attack, command loss")
 	quit(0)

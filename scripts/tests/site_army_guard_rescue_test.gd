@@ -46,9 +46,11 @@ func run() -> void:
 	army.prepare_combat(2.9)
 	assert(army.combat_units[2].ko > 0 and army.combat_units[1].pose == "rescue")
 	army.prepare_combat(0.1)
-	assert(army.combat_units[2].ko == 0.0 and army.combat_units[2].hp == 92.5 and army.combat_units[2].pose == "get_up")
+	assert(army.combat_units[2].ko <= SiteCombatRules.RESCUED_KNOCKOUT_GAME_SECONDS and army.combat_units[2].ko > SiteCombatRules.RESCUED_KNOCKOUT_GAME_SECONDS - 0.2 and army.combat_units[2].hp == 92.5 and army.combat_units[2].pose == "unconscious")
+	assert(not army.start_unit_rescue(3, 2), "A second rescue cannot shorten the final hour")
+	army.prepare_combat(0.1, SiteCombatRules.RESCUED_KNOCKOUT_GAME_SECONDS)
 	assert(not army.combat_can_act(2), "Waking preserves the get-up lock")
-	army.prepare_combat(2.3)
+	army.prepare_combat(2.2)
 	assert(army.combat_can_act(2))
 	army.apply_unit_contact(2, down)
 	assert(army.start_unit_rescue(1, 2))
@@ -59,8 +61,8 @@ func run() -> void:
 	army.apply_unit_contact(1, {"result": {"hp": 1.0, "stun": 0.0, "guard_break": false}, "shield": false})
 	assert(army._unit_rescues.is_empty())
 	assert(army.start_unit_rescue(1, 2))
-	assert(army.issue_combat_order(army.current_commander, TerrainArmy.CombatOrder.RETREAT, Vector2i(25, 20)).ok)
-	assert(army._unit_rescues.is_empty(), "A new retreat order interrupts help without completing it")
+	assert(army.issue_combat_order(army.current_commander, TerrainArmy.CombatOrder.MOVE, Vector2i(25, 20)).ok)
+	assert(army._unit_rescues.is_empty(), "A new move order interrupts help without completing it")
 	assert(army.issue_combat_order(army.current_commander, TerrainArmy.CombatOrder.HOLD).ok)
 	assert(army.start_unit_rescue(1, 2))
 	paused = true
@@ -69,6 +71,7 @@ func run() -> void:
 	paused = false
 	army.external_blocker = func(cell: Vector2i) -> bool: return cell == army.cells[2]
 	army.prepare_combat(4.0)
+	army.prepare_combat(0.1, SiteCombatRules.RESCUED_KNOCKOUT_GAME_SECONDS)
 	assert(army.combat_units[2].ko > 0.0 and not army.blocks_cell(army.cells[2]), "Rescue cannot stand inside a new occupant")
 	army.clear()
 	army.queue_free()

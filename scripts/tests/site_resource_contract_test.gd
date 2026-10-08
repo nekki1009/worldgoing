@@ -41,6 +41,8 @@ func _run() -> void:
 			var cargo_a := {}
 			var cargo_b := {}
 			var initial := int(Env.resource(generated, key).remaining)
+			if kind in [Env.Kind.FISH, Env.Kind.WILDLIFE]:
+				assert(Runtime.ecology_set_modes(generated, [key], "general").ok, "Original all-stock conservation fixture explicitly permits general harvest")
 			if kind == Env.Kind.IRON:
 				assert(not Runtime.harvest(generated, key, work_cells[0], cargo_a).ok)
 				assert(Runtime.harvest(generated, key, work_cells[0], cargo_a, "survey").ok)

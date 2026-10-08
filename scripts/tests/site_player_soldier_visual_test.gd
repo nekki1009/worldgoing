@@ -44,7 +44,8 @@ func run() -> void:
 		assert(team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.HOLD).ok)
 		team.enemy_query = Callable()
 	lab.get_node("SiteUI").hide()
-	lab.get_node("TerrainLabUI").hide()
+	assert(not lab.has_node("TerrainLabUI"), "Legacy debug panel must not be constructed")
+	if is_instance_valid(lab.site_test_window): lab.site_test_window.hide()
 	var player := lab.character
 	var target := lab.opposing_army
 	assert(player.place(target.cells[99] + Vector2i.RIGHT, true))

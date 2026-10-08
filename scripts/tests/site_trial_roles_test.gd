@@ -16,15 +16,26 @@ func _process(_delta: float) -> bool:
 
 func _choose_role(controller: SiteController, prefix: String, index: int) -> void:
 	var option: OptionButton = controller.trial_roles[prefix]
+	assert(option.is_visible_in_tree(), "Role selection requires the deployment tab")
 	option.select(index)
 	option.item_selected.emit(index)
 
+func _show_page(controller: SiteController, page: String) -> void:
+	var window: Window = controller.lab.site_test_window
+	assert(window != null and window.force_native)
+	var pages: Dictionary = window.get("pages")
+	(window.get("tabs") as TabContainer).current_tab = pages[page].get_parent().get_index()
+	window.call("open")
+	controller.update_ui()
+
 func _press(controller: SiteController, name: String) -> void:
-	var button := controller.combat_window.find_child(name, true, false) as Button
+	var button := controller.lab.site_test_window.find_child(name, true, false) as Button
 	assert(button != null, "Actual trial control missing: " + name)
+	assert(button.is_visible_in_tree(), "Actual trial control must be on the active tab: " + name)
 	button.pressed.emit()
 
 func _run() -> void:
+	assert(OS.get_cmdline_user_args().has("--site-test-ui"), "Trial role controls require --site-test-ui")
 	assert(DisplayServer.get_name() == "headless")
 	assert(DirAccess.make_dir_recursive_absolute(OUT) == OK)
 	var lab := TerrainLab.new()
@@ -36,6 +47,7 @@ func _run() -> void:
 	controller._auto_save_blocked = true
 	for actor: TerrainTestCharacter in lab.combat_actors: actor.set_process(false)
 	for team: TerrainArmy in lab.combat_armies: team.set_process(false)
+	_show_page(controller, "deployment")
 	for invalid: Dictionary in [{"friendly_role": "ship"}, {"friendly_role": 1}, {"friendly_cart_count": 1},
 		{"friendly_role": "work", "friendly_cart_count": 1}, {"friendly_role": "logistics", "friendly_cart_count": -1},
 		{"friendly_role": "logistics", "friendly_wagon_count": 100}, {"friendly_role": "logistics", "friendly_cart_count": true},
@@ -59,7 +71,7 @@ func _run() -> void:
 	var setup := controller._trial_setup()
 	var checked_custom_camp := false
 	for cell: Vector2i in lab._trial_camp_access():
-		if lab.character.occupies_cell(cell) or lab.npc.occupies_cell(cell): continue
+		if lab.character.occupies_cell(cell) or (lab.npc != null and lab.npc.occupies_cell(cell)): continue
 		var custom := lab._trial_side_settings({"friendly_role": "work", "friendly_count": 1, "friendly_spawn": cell}, "friendly")
 		var custom_formation := lab._independent_trial_formations([custom.side])
 		assert(not custom_formation.is_empty() and custom_formation[0][0] == cell, "Explicit legal camp-near spawn must stay exactly where chosen")
@@ -120,6 +132,7 @@ func _run() -> void:
 	assert(lab.third_army.combat_units.size() == 2 and lab.third_army.role == "work", controller.message.text)
 	assert(controller.work_team.active_ids().size() == 4)
 	assert(lab.army.capture_combat_state() == first_state and lab.opposing_army.capture_combat_state() == second_state)
+	_show_page(controller, "command")
 	controller.trial_command_team.select(2)
 	controller.selected = lab.third_army.cells[0]
 	_press(controller, "TrialTeamHold")
@@ -132,7 +145,13 @@ func _run() -> void:
 	lab.bind_terrain(loaded.data)
 	assert(lab.army.role == "work" and lab.opposing_army.role == "logistics" and lab.third_army.role == "work")
 	assert(controller.vehicles.records().size() == 6 and controller.work_team.active_ids().size() == 4)
-	assert(controller.combat_summary_label.text.contains("工作隊") and controller.combat_summary_label.text.contains("後勤隊"))
+	_show_page(controller, "diagnostics")
+	for team: TerrainArmy in [lab.army, lab.opposing_army, lab.third_army]:
+		controller.trial_command_team.select(lab.combat_armies.find(team))
+		controller.update_ui()
+		var purpose := "後勤隊" if team == lab.opposing_army else "工作隊"
+		assert(controller._selected_trial_team() == team)
+		assert(controller.combat_summary_label.text.contains("所選隊伍 #%d：" % team.team_id) and controller.combat_summary_label.text.contains(purpose))
 	print("SITE TRIAL ROLES PASS: actual generator controls, slots/person/gender counts, arbitrary 0..99 vehicles, excess parked/no hidden operators, original work assignments, safe independent formations, late human/vehicle rollback with aliases, append preserves owners, three-role Store/bind roundtrip; not vehicle movement or production proof")
 	lab.queue_free()
 	await process_frame

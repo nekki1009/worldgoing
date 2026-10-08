@@ -16,6 +16,7 @@ func _initialize() -> void:
 	call_deferred("run")
 
 func run() -> void:
+	assert(OS.get_cmdline_user_args().has("--site-test-ui"), "Legacy diagnostics require --site-test-ui")
 	if "--legacy" in OS.get_cmdline_user_args():
 		await _legacy()
 		return
@@ -36,6 +37,7 @@ func run() -> void:
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	Engine.max_fps = 0
 	var lab := (load("res://scenes/terrain_lab/TerrainLab.tscn") as PackedScene).instantiate() as TerrainLab
+	lab.npc = TerrainTestNPC.new() # Explicit command-test fixture; formal startup has no worker.
 	root.add_child(lab)
 	current_scene = lab
 	lab.set_process(false)
@@ -553,6 +555,8 @@ func _capture(lab: TerrainLab, label: String, stage: String, counts: PackedInt32
 	var observed_targets := army.desired_cells.duplicate()
 	var observed_claims := army._reserved_cells.duplicate()
 	var observed_searches := Vector3i(army.structure_search_expansions, army.local_search_expansions, army.push_search_expansions)
+	lab.site_test_window.get("tabs").current_tab = 6
+	lab.site_test_window.call("open")
 	lab._update_info()
 	if army.cells != observed_cells or army.desired_cells != observed_targets or army._reserved_cells != observed_claims or observed_searches != Vector3i(army.structure_search_expansions, army.local_search_expansions, army.push_search_expansions):
 		push_error("GPU HUD observation mutated simulation/search state")
@@ -596,11 +600,10 @@ func _legacy() -> void:
 	DisplayServer.window_set_size(Vector2i(2560, 1440))
 	var scene: PackedScene = load("res://scenes/terrain_lab/TerrainLab.tscn")
 	var lab: TerrainLab = scene.instantiate() as TerrainLab
+	lab.npc = TerrainTestNPC.new() # This legacy formation fixture explicitly needs both actors.
 	root.add_child(lab)
 	current_scene = lab
-	lab.preset_dropdown.select(TerrainPreset.Kind.PLAINS)
-	lab.seed_input.text = "24680"
-	lab.generate_button.pressed.emit()
+	lab.generate_terrain(TerrainPreset.Kind.PLAINS, 24680)
 	assert(lab.army.deploy(lab.terrain, lab.character, lab.npc), lab.army.command_status)
 	assert(lab.army.has_army())
 	assert(lab.army.visual_mode() == "baked_atlas", "Ordinary soldiers did not use the baked atlas")

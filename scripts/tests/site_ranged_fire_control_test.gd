@@ -1,4 +1,5 @@
 extends SceneTree
+## Explicit pre-migration reference; new physical semantics use site_fire_projectile_pipeline_test.
 ## Fire discipline uses original owners and actual ground cells. Arrival keeps
 ## the original interception rule when a friend enters after launch.
 
@@ -14,6 +15,7 @@ func _run() -> void:
 	data.feature_at.resize(400)
 	data.site = {"paused": false, "features": {}, "combat_left": 0.0}
 	var lab := TerrainLab.new()
+	lab.physical_ranged_enabled = false # Named legacy flight/roll reference only.
 	lab.terrain = data
 	var source := TerrainTestCharacter.new()
 	var enemy := TerrainTestCharacter.new()
@@ -73,6 +75,7 @@ func _selection_checks() -> void:
 	data.feature_at.resize(900)
 	data.site = {"paused": false, "features": {}, "combat_left": 0.0}
 	var lab := TerrainLab.new()
+	lab.physical_ranged_enabled = false # Named legacy flight/roll reference only.
 	lab.terrain = data
 	var source := TerrainTestNPC.new()
 	var far := TerrainTestCharacter.new()

@@ -7,6 +7,9 @@ const OUT := "res://output/equipment_limits_20260919/cape_role/culture"
 const MIXED := {"helmet": "helmet_cloth_japanese_01", "armor": "armor_japanese_steel_01", "boots": "boots_japanese_leather_01", "shield": "shield_japanese_iron_01"}
 const CUSTOM := {"helmet": "123456ff", "armor": "234567ff", "boots": "345678ff", "cape": "456789ff", "outfit": "56789aff"}
 
+class Fixture extends CapeTest.Fixture:
+	var site_test_window: Window # Formal dialog context has no optional test window.
+
 func _initialize() -> void:
 	_run.call_deferred()
 
@@ -22,7 +25,7 @@ func _run() -> void:
 	quit(0)
 
 func _fixture() -> CapeTest.Fixture:
-	var f := CapeTest.Fixture.new()
+	var f := Fixture.new()
 	f.terrain.site.equipment_nations = {"n1": {"military_head": 1, "members": [1, 2, 3, 4], "standards": {}}}
 	for slot: String in MIXED: f.item(0, slot, MIXED[slot])
 	f.item(0, "armor", "armor_japanese_iron_01")

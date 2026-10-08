@@ -11,9 +11,19 @@ var ys := PackedInt32Array()
 var factions := PackedInt64Array()
 var _people: Dictionary = {}
 
+static func actor_body_available(actor: TerrainTestCharacter) -> bool:
+	return is_instance_valid(actor) and not actor.site_exited and (actor.can_act() or actor.surrender_pending \
+		and actor.hp > 0.0 and actor.knockout_left <= 0.0 and not actor.captive and not actor._getting_up)
+
+static func army_body_available(team: TerrainArmy, index: int) -> bool:
+	return not bool(team.combat_hot_get(index, &"site_exited", false)) and (team.combat_can_act(index) \
+		or bool(team.combat_hot_get(index, &"surrender_pending", false)) and float(team.combat_hot_get(index, &"hp")) > 0.0 \
+		and float(team.combat_hot_get(index, &"ko")) <= 0.0 and str(team.combat_hot_get(index, &"pose")) != "get_up" \
+		and not bool(team.combat_hot_get(index, &"captive")) and not bool(team.combat_hot_get(index, &"departed")))
+
 func capture(actors: Array[TerrainTestCharacter], armies: Array[TerrainArmy]) -> void:
 	for actor: TerrainTestCharacter in actors:
-		if not is_instance_valid(actor) or not actor.can_act(): continue
+		if not actor_body_available(actor): continue
 		owners.append(actor)
 		var ordinal := units.size()
 		_append(owners.size() - 1, -1, actor.person_id, actor.terrain_cell, actor.faction_id)
@@ -41,7 +51,7 @@ func capture(actors: Array[TerrainTestCharacter], armies: Array[TerrainArmy]) ->
 			factions.append_array(team_factions)
 			continue
 		for index in range(team.combat_units.size()):
-			if team.combat_can_act(index):
+			if army_body_available(team, index):
 				_append(owner_slot, index, team.combat_identity(index), team.cells[index], team.faction_id)
 
 func _append(owner_slot: int, index: int, identity: int, cell: Vector2i, faction: int) -> void:
@@ -97,7 +107,8 @@ func ranged_people() -> Array[Dictionary]:
 		i += 1
 		var ammunition: Dictionary = original.combat_units[index].get("cargo", {}) if index >= 0 else original.ammo_inventory
 		if ammunition.is_empty(): continue # No weapon can fire from an empty inventory.
-		var profile: Dictionary = original.ranged_profile(index) if index >= 0 else original.ranged_profile()
+		var ammo_mode := str(original.ranged_ammo_mode)
+		var profile: Dictionary = original.ranged_profile(index, ammo_mode) if index >= 0 else original.ranged_profile(ammo_mode)
 		if profile.is_empty() or int(ammunition.get(str(profile.ammo), 0)) < 1: continue
 		# ponytail: armed ranged battles retain the original all-target scan;
 		# spatial ranged selection needs its own ordering/occlusion parity slice.

@@ -2,6 +2,7 @@ extends RefCounted
 ## Original feeding-owner coordination only. Captivity/actions and people remain
 ## with their existing owners; prepared copies are never saved or advanced.
 
+const CrowdOwner = preload("res://scripts/terrain_lab/crowd_person_owner.gd")
 const Sustain = preload("res://scripts/terrain_lab/site_sustain.gd")
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const RANSOM_RATIONS := 100
@@ -21,13 +22,19 @@ func _body(identity: int) -> Dictionary:
 	return controller._actor_supply_adapter(person.owner)
 
 func _original_team(identity: int) -> Variant:
+	var crowd: Variant = controller.lab.get("crowd_site")
+	if crowd != null and bool(crowd.active) and crowd.contains_person(identity):
+		var owner: Variant = crowd.person_owner(identity)
+		return owner if not crowd.team_record(owner.formation_index).is_empty() else null
 	for team: TerrainArmy in controller.lab.combat_armies:
 		var index := team.index_for_identity(identity)
 		if team.combat_enabled and index >= 0 and (index == TerrainArmy.PLAYER_MEMBER or team.is_member(index)):
 			return team
 	return null
 
-func _original_members(team: TerrainArmy) -> Dictionary:
+func _original_members(team: Variant) -> Dictionary:
+	if team is CrowdOwner:
+		return team.original_members()
 	var result := {}
 	for index in range(team.combat_units.size()):
 		if team.is_member(index):
@@ -38,47 +45,149 @@ func _original_members(team: TerrainArmy) -> Dictionary:
 
 func _all_members() -> Dictionary:
 	var result := {}
-	for team: TerrainArmy in controller.lab.combat_armies:
-		for index in range(team.combat_units.size()):
-			result[team.combat_identity(index)] = team.combat_hot_materialize(index)
-		if is_instance_valid(team.player_member):
-			result[team.player_member.person_id] = controller._actor_supply_adapter(team.player_member, team.player_present)
-	for actor: TerrainTestCharacter in controller.lab.combat_actors:
-		if not result.has(actor.person_id):
-			result[actor.person_id] = controller._actor_supply_adapter(actor)
+	var crowd: Variant = controller.lab.get("crowd_site")
+	if crowd != null and bool(crowd.active):
+		for owner: Variant in crowd.person_owners():
+			result.merge(owner.original_members(), false)
+	_append_other_members(result)
 	return result
 
-func _states() -> Dictionary:
+func _event_members() -> Dictionary:
+	# This view belongs only to the synchronous native captivity batch. Its
+	# consumers validate/move meal cohorts (hp) and retain life checkpoints
+	# (person_id/hp/ko); ordinary callers still receive the full original rows.
+	var crowd: Variant = controller.lab.get("crowd_site")
+	if crowd == null or not bool(crowd.active) or crowd.crowd == null or not crowd.crowd.has_method("get_life_states"):
+		return _all_members()
+	var owners: Array = crowd.person_owners()
+	for owner: Variant in owners:
+		# A custom owner may add semantics to original_members/materialization.
+		if owner.get_script() != CrowdOwner: return _all_members()
+	var required: Variant = _event_member_ids(crowd)
+	if required == null: return _all_members()
+	var life: PackedFloat64Array = crowd.crowd.get_life_states()
+	if life.size() != int(crowd.crowd.soldier_count()) * 3: return _all_members()
+	var result := {}
+	for identity: int in required:
+		var owner: Variant = crowd.person_owner(identity)
+		if owner == null: continue # Unknown IDs remain absent for full validation.
+		var index: int = owner.index_for_identity(identity)
+		if not owner.combat_units.has(index) or owner.combat_identity(index) != identity: continue
+		var offset := index * 3
+		if offset < 0 or offset + 2 >= life.size(): return _all_members()
+		result[identity] = {"person_id": identity, "hp": life[offset], "ko": life[offset + 1], "captive": bool(life[offset + 2])}
+	_append_other_members(result, crowd)
+	return result
+
+func _event_member_ids(crowd: Variant) -> Variant:
+	var pending: Variant = crowd.get("pending_captivity")
+	if not pending is Array or pending.is_empty(): return null
+	var required := {}
+	# All existing cohorts are still validated, including unrelated owners.
+	# Deduplication here never hides duplicates in the original cohort arrays.
+	for field: String in ["team_supply", "person_supply"]:
+		var entries: Variant = controller.lab.terrain.site.get(field, {})
+		if not entries is Dictionary: return null
+		for entry: Variant in entries.values():
+			if not entry is Dictionary: return null
+			var state: Variant = entry.get("sustain") if field == "team_supply" else entry
+			if not state is Dictionary or not state.get("cohorts") is Array: return null
+			for cohort: Variant in state.cohorts:
+				if not cohort is Dictionary or not cohort.get("ids") is Array: return null
+				for identity: Variant in cohort.ids:
+					if Sustain._integer(identity, 1): required[int(identity)] = true
+	# A later event can opt in its original source/captor team. Admit those
+	# entire original rosters now, before ANY commit, using the same life sample.
+	var participants := {}
+	for event: Variant in pending:
+		if not event is Dictionary or event.get("kind") not in [4, 5]: return null
+		var identities: Array = [event.get("person", -1)]
+		if int(event.kind) == 4: identities.append(event.get("other", -1))
+		for identity: Variant in identities:
+			var owner: Variant = crowd.person_owner(int(identity))
+			if owner == null: return null
+			participants[owner] = true
+	for owner: Variant in participants:
+		for index: int in owner.combat_units:
+			required[owner.combat_identity(index)] = true
+	return required
+
+func _append_other_members(result: Dictionary, sparse_crowd: Variant = null) -> void:
+	for team: TerrainArmy in controller.lab.combat_armies:
+		for index in range(team.combat_units.size()):
+			var identity := team.combat_identity(index)
+			if not result.has(identity) and (sparse_crowd == null or sparse_crowd.person_owner(identity) == null):
+				result[identity] = team.combat_hot_materialize(index)
+		if is_instance_valid(team.player_member) and not result.has(team.player_member.person_id) and (sparse_crowd == null or sparse_crowd.person_owner(team.player_member.person_id) == null):
+			result[team.player_member.person_id] = controller._actor_supply_adapter(team.player_member, team.player_present)
+	for actor: TerrainTestCharacter in controller.lab.combat_actors:
+		if not result.has(actor.person_id) and (sparse_crowd == null or sparse_crowd.person_owner(actor.person_id) == null):
+			result[actor.person_id] = controller._actor_supply_adapter(actor)
+
+func _states(copy_state: bool = true) -> Dictionary:
 	var result := {}
 	for id: String in controller.lab.terrain.site.get("team_supply", {}):
 		var entry: Dictionary = controller.lab.terrain.site.team_supply[id]
-		result["team:" + id] = {"state": entry.sustain.duplicate(true), "original": entry.sustain,
-			"entry": entry, "created": false, "dirty": false}
+		result["team:" + id] = {"state": entry.sustain.duplicate(true) if copy_state else entry.sustain, "original": entry.sustain,
+			"entry": entry, "created": false, "dirty": false, "copied": copy_state}
 	for id: String in controller.lab.terrain.site.get("person_supply", {}):
 		var state: Dictionary = controller.lab.terrain.site.person_supply[id]
-		result["person:" + id] = {"state": state.duplicate(true), "original": state,
-			"entry": {}, "created": false, "dirty": false}
+		result["person:" + id] = {"state": state.duplicate(true) if copy_state else state, "original": state,
+			"entry": {}, "created": false, "dirty": false, "copied": copy_state}
 	return result
 
-func _feeding_owner(identity: int, states: Dictionary) -> String:
+func _feeding_owner(identity: int, states: Dictionary, feeding: Variant = null) -> String:
+	if feeding is Dictionary: return str(feeding.get(identity, ""))
 	for key: String in states:
 		if identity in Sustain._ids(states[key].state):
 			return key
 	return ""
 
-func team_members(team: TerrainArmy, original: Dictionary) -> Dictionary:
+func feeding_index() -> Dictionary:
+	# One caller-owned synchronous view, derived only from the original cohorts.
+	# Duplicate facts are retained; never overwrite an owner and conceal bad data.
+	var result := {"owners": {}, "team_ids": {}, "duplicate_ids": []}
+	for id: String in controller.lab.terrain.site.get("team_supply", {}):
+		var key := "team:" + id
+		var ids := Sustain._ids(controller.lab.terrain.site.team_supply[id].sustain)
+		result.team_ids[key] = ids
+		for identity: int in ids:
+			if result.owners.has(identity): result.duplicate_ids.append(identity)
+			else: result.owners[identity] = key
+	for id: String in controller.lab.terrain.site.get("person_supply", {}):
+		var key := "person:" + id
+		for identity: int in Sustain._ids(controller.lab.terrain.site.person_supply[id]):
+			if result.owners.has(identity): result.duplicate_ids.append(identity)
+			else: result.owners[identity] = key
+	return result
+
+func team_members(team: Variant, original: Dictionary, feeding: Dictionary = {}, known_records: Dictionary = {}) -> Dictionary:
 	# Cohorts are the saved feeding ownership. A dead captive's relationship may
 	# already be cleared, but that does not move or refund their eaten meal.
 	# The sole caller has already admitted only real members via team.is_member().
 	var result := original.duplicate()
 	var own_key := "team:%d" % team.team_id
+	if not feeding.is_empty() and feeding.duplicate_ids.is_empty():
+		# With unique feeding ownership these removals commute. Own-cohort additions
+		# retain the original cohort order and every retained original body reference.
+		for identity: int in original:
+			var key := str(feeding.owners.get(identity, ""))
+			if not key.is_empty() and key != own_key: result.erase(identity)
+		for identity: int in feeding.team_ids.get(own_key, []):
+			if not result.has(identity):
+				# Crowd sustain supplies original rows and reads life through its hot_read.
+				var body: Dictionary = known_records[identity] if known_records.has(identity) else _body(identity)
+				if not body.is_empty(): result[identity] = body
+		return result
+	# Any duplicate uses the unchanged ordered legacy path below. Full Sustain
+	# validation still rejects malformed owners; the index cannot mask conflicts.
 	for key: String in controller.lab.terrain.site.get("team_supply", {}):
 		var state: Dictionary = controller.lab.terrain.site.team_supply[key].sustain
 		for id: int in Sustain._ids(state):
 			if "team:" + key != own_key:
 				result.erase(id)
 			elif not result.has(id):
-				var body := _body(id)
+				var body: Dictionary = known_records[id] if known_records.has(id) else _body(id)
 				if not body.is_empty():
 					result[id] = body
 	for state: Dictionary in controller.lab.terrain.site.get("person_supply", {}).values():
@@ -104,6 +213,8 @@ func _home(identity: int) -> Dictionary:
 	if team != null:
 		return {"key": "team:%d" % team.team_id, "team": team}
 	var person: Dictionary = controller.lab._combat_target(identity)
+	if not person.is_empty() and person.owner is CrowdOwner and person.owner.actors.has(int(person.unit)):
+		return {"key": "person:%d" % identity, "actor": person.owner.actors[int(person.unit)]}
 	if not person.is_empty() and int(person.unit) >= 0:
 		var row: Dictionary = person.owner.combat_hot_materialize(int(person.unit))
 		return {"key": "person:%d" % identity, "row": row} if row.get("cargo") is Dictionary else {}
@@ -118,6 +229,13 @@ func _home(identity: int) -> Dictionary:
 func _align(owner: Dictionary, at_seconds: float) -> bool:
 	if not owner.entry.get("delivery", {}).is_empty():
 		return false
+	if int(owner.state.get("version", 1)) == 2 and not Sustain._valid_locations(owner.entry.get("locations", {})):
+		return false
+	# Event preflight reads every owner, but only participants need writable copies.
+	# Clone before even a clock-alignment write; a failed preflight stays atomic.
+	if not bool(owner.get("copied", true)):
+		owner.state = owner.state.duplicate(true)
+		owner.copied = true
 	return controller._align_supply_clock(owner.state, at_seconds)
 
 func _add(state: Dictionary, members: Dictionary, ids: Array) -> bool:
@@ -126,7 +244,7 @@ func _add(state: Dictionary, members: Dictionary, ids: Array) -> bool:
 	state.morale = morale # Opting into meals is not actual roster reinforcement.
 	return bool(result.ok)
 
-func _move(identity: int, source: String, target: String, states: Dictionary, members: Dictionary, moves: Array, at_seconds: float) -> bool:
+func _move(identity: int, source: String, target: String, states: Dictionary, members: Dictionary, moves: Array, at_seconds: float, feeding: Variant = null) -> bool:
 	if not _align(states[source], at_seconds) or not _align(states[target], at_seconds):
 		return false
 	if source == target:
@@ -143,9 +261,10 @@ func _move(identity: int, source: String, target: String, states: Dictionary, me
 	states[source].dirty = true
 	states[target].dirty = true
 	moves.append([identity, source, target])
+	if feeding is Dictionary: feeding[identity] = target
 	return true
 
-func _ensure(home: Dictionary, states: Dictionary, members: Dictionary, moves: Array, at_seconds: float, target_id: int) -> bool:
+func _ensure(home: Dictionary, states: Dictionary, members: Dictionary, moves: Array, at_seconds: float, target_id: int, feeding: Variant = null) -> bool:
 	var key := str(home.key)
 	if states.has(key):
 		return _align(states[key], at_seconds)
@@ -157,17 +276,20 @@ func _ensure(home: Dictionary, states: Dictionary, members: Dictionary, moves: A
 	for id: int in initial:
 		if id == target_id or bool(initial[id].get("captive", false)):
 			continue
-		var previous := _feeding_owner(id, states)
+		var previous := _feeding_owner(id, states, feeding)
 		if previous.is_empty():
 			fresh.append(id)
 		elif previous.begins_with("person:"):
-			if not _move(id, previous, key, states, members, moves, at_seconds):
+			if not _move(id, previous, key, states, members, moves, at_seconds, feeding):
 				return false
 		else:
 			return false # An unrelated team's recorded ownership is not ours to steal.
-	return fresh.is_empty() or _add(states[key].state, members, fresh)
+	if not fresh.is_empty() and not _add(states[key].state, members, fresh): return false
+	if feeding is Dictionary:
+		for identity: int in fresh: feeding[identity] = key
+	return true
 
-func enable_team(team: TerrainArmy) -> Dictionary:
+func enable_team(team: Variant, preview: bool = false) -> Dictionary:
 	# Explicit first opt-in uses the same original feeding transaction as
 	# captivity/membership. An already eaten private meal is never a fresh meal.
 	if team == null or not team.combat_enabled:
@@ -202,6 +324,11 @@ func enable_team(team: TerrainArmy) -> Dictionary:
 		values.append(owner.state)
 	if not Sustain.validate_owners(values, members):
 		return Runtime.fail("INVALID_SUSTAIN", "啟用將重複原人物供養")
+	if preview:
+		var entry := {"version": 2, "sustain": states[key].state, "inventory": {}, "training_order": false,
+			"training_requester": -1, "training_feature_id": "", "revision": 0, "delivery": {}, "life_checkpoint": {}}
+		for id: int in Sustain._ids(entry.sustain): entry.life_checkpoint[str(id)] = controller._life(members[id])
+		return Runtime.ok("", {"entry": entry})
 	_commit_states({"site": controller.lab.terrain.site, "states": states, "members": members, "moves": moves})
 	return Runtime.ok("", {"entry": controller._supply_entry(team)})
 
@@ -219,30 +346,69 @@ func change_guard(target_id: int, captor_id: int, capturing: bool) -> Dictionary
 			return Runtime.fail("NO_TARGET", "拘押者須自由存活，目標尚未被俘")
 	elif int(site.get("captivity", {}).get(str(target_id), {}).get("captor_id", -1)) != captor_id:
 		return Runtime.fail("NO_TARGET", "原拘押關係已變更")
+	return _prepare_change(target_id, captor_id, capturing)
+
+func event_change_guard(target_id: int, captor_id: int, capturing: bool, event_context: Dictionary = {}) -> Dictionary:
+	# Native has already committed this transition; life/captive rechecks would
+	# reject valid delayed events (including CAPTURED followed by DEATH).
+	_prepared.clear()
+	var site: Dictionary = controller.lab.terrain.site
+	if _body(target_id).is_empty() or target_id == captor_id:
+		return Runtime.fail("NO_TARGET", "群眾事件缺少原人物")
+	var relation: Dictionary = site.get("captivity", {}).get(str(target_id), {})
+	if capturing:
+		if not relation.is_empty() or _body(captor_id).is_empty():
+			return Runtime.fail("NO_TARGET", "群眾捕獲事件的原拘押關係不符")
+	elif int(relation.get("captor_id", -1)) != captor_id:
+		return Runtime.fail("NO_TARGET", "群眾逃脫事件的原拘押關係不符")
+	return _prepare_change(target_id, captor_id, capturing, event_context)
+
+func discard(target_id: int) -> void:
+	_prepared.erase(target_id)
+
+func _prepare_change(target_id: int, captor_id: int, capturing: bool, event_context: Dictionary = {}) -> Dictionary:
+	var site: Dictionary = controller.lab.terrain.site
 	var destination := _home(captor_id if capturing else target_id)
 	var original := _home(target_id)
 	if destination.is_empty() or original.is_empty():
 		return Runtime.fail("NO_SUPPLY_OWNER", "沒有可接續的原隊伍或個人行囊供養者")
-	var states := _states()
-	var members := _all_members()
+	var members: Dictionary
+	if event_context.is_empty():
+		members = _all_members()
+	else:
+		var active_crowd: Variant = controller.lab.get("crowd_site")
+		if bool(event_context.get("invalid", false)) or not is_same(event_context.get("site"), site) or not is_same(event_context.get("terrain"), controller.lab.terrain) or active_crowd == null or not is_same(event_context.get("native"), active_crowd.crowd) or int(event_context.get("step", -1)) != int(active_crowd._steps) or float(event_context.get("at", -1.0)) != Runtime.now(controller.lab.terrain) * 60.0:
+			event_context.erase("members")
+			event_context.invalid = true
+			return Runtime.fail("BUSY", "群眾供養批次已離開原 Site 或動作時段；未使用舊人物快照")
+		if not event_context.has("members"): event_context.members = _event_members()
+		members = event_context.members
+	# Read the latest cohorts and validate every owner for every event. Copy only
+	# actual transaction participants before mutation; other owners stay read-only.
+	var states := _states(event_context.is_empty())
 	var values: Array = []
-	for state: Dictionary in states.values():
-		values.append(state.state)
-	if not Sustain.validate_owners(values, members):
+	var keys: Array[String] = []
+	for key: String in states:
+		values.append(states[key].state)
+		keys.append(key)
+	var ownership := Sustain.validate_owner_index(values, members, keys)
+	if not ownership.ok:
 		return Runtime.fail("INVALID_SUSTAIN", "原供養名單重複或資料無效")
+	var feeding: Dictionary = ownership.owners
 	var at_seconds := Runtime.now(controller.lab.terrain) * 60.0
 	var moves: Array = []
-	var source := _feeding_owner(target_id, states)
+	var source := _feeding_owner(target_id, states, feeding)
 	if source.is_empty():
 		if not capturing:
 			return Runtime.fail("INVALID_SUSTAIN", "俘虜缺少原供养歷史，不可重設已吃餐份")
-		if not _ensure(original, states, members, moves, at_seconds, target_id):
+		if not _ensure(original, states, members, moves, at_seconds, target_id, feeding):
 			return Runtime.fail("BUSY", "原供養時段或交糧尚未收束")
 		source = str(original.key)
 		if not _add(states[source].state, members, [target_id]):
 			return Runtime.fail("INVALID_SUSTAIN")
 		states[source].dirty = true
-	if not _ensure(destination, states, members, moves, at_seconds, target_id) or not _move(target_id, source, str(destination.key), states, members, moves, at_seconds):
+		if feeding is Dictionary: feeding[target_id] = source
+	if not _ensure(destination, states, members, moves, at_seconds, target_id, feeding) or not _move(target_id, source, str(destination.key), states, members, moves, at_seconds, feeding):
 		return Runtime.fail("BUSY", "供養時段或交糧尚未收束；未移轉食物或人物")
 	# The action owner rechecks immediately before its synchronous commit. Only
 	# event-local copies are retained; failed/cancelled checks change no Site data.
@@ -269,8 +435,8 @@ func _commit_states(plan: Dictionary) -> void:
 			if not site.has("team_supply"):
 				site.team_supply = {}
 			if bool(owner.created):
-				owner.entry = {"version": 1, "sustain": owner.state, "inventory": {}, "training_order": false,
-					"training_requester": -1, "revision": 0, "delivery": {}, "life_checkpoint": {}}
+				owner.entry = {"version": 2, "sustain": owner.state, "inventory": {}, "training_order": false,
+					"training_requester": -1, "training_feature_id": "", "revision": 0, "delivery": {}, "life_checkpoint": {}}
 				site.team_supply[identity] = owner.entry
 			else:
 				owner.original.clear()
@@ -294,6 +460,7 @@ func _commit_states(plan: Dictionary) -> void:
 			if int(source.training_requester) == int(move[0]):
 				source.training_order = false
 				source.training_requester = -1
+				source.training_feature_id = ""
 		if not destination.is_empty():
 			destination.life_checkpoint[str(move[0])] = checkpoint
 	for owner: Dictionary in plan.states.values():
@@ -339,7 +506,7 @@ func membership_change(team: TerrainArmy, identity: int, joining: bool) -> Dicti
 	var destination := {"key": "team:%d" % team.team_id, "team": team} if joining else personal
 	return _change_membership_supply(team, destination, [identity])
 
-func _change_membership_supply(source: TerrainArmy, destination_home: Dictionary, ids: Array[int]) -> Dictionary:
+func _change_membership_supply(source: Variant, destination_home: Dictionary, ids: Array[int], dry_run: bool = false) -> Dictionary:
 	var site: Dictionary = controller.lab.terrain.site
 	var members := _all_members()
 	var states := _states()
@@ -449,11 +616,13 @@ func _change_membership_supply(source: TerrainArmy, destination_home: Dictionary
 		values.append(owner.state)
 	if not Sustain.validate_owners(values, members):
 		return Runtime.fail("INVALID_SUSTAIN", "供養移轉將造成重複或遺失原人歷史")
+	if dry_run: return Runtime.ok()
 	_commit_states({"site": site, "states": states, "members": members, "moves": moves, "joined": joined})
 	var source_entry: Dictionary = controller._supply_entry(source)
 	if not source_entry.is_empty() and selected.has(int(source_entry.training_requester)):
 		source_entry.training_order = false
 		source_entry.training_requester = -1
+		source_entry.training_feature_id = ""
 	return Runtime.ok()
 
 func _authorized_team(identity: int) -> Variant:
@@ -487,16 +656,26 @@ func ransom_exchange_query(payer_id: int, target_id: int, representative_id: int
 	var now := Runtime.now(controller.lab.terrain) * 60.0
 	if absf(float(first.sustain.at) - now) > 0.00001 or absf(float(second.sustain.at) - now) > 0.00001:
 		return Runtime.fail("BUSY", "原供養時段尚未同步")
-	if not Runtime._resource_stack(first.inventory) or not Runtime._resource_stack(second.inventory):
+	var source: Dictionary = controller._team_food_endpoint(payer, payer_id)
+	var destination: Dictionary = controller._team_food_endpoint(recipient, representative_id, true)
+	if source.is_empty() or destination.is_empty() or not Runtime._resource_stack(source.inventory) or not Runtime._resource_stack(destination.inventory):
 		return Runtime.fail("INVALID", "原隊伍庫存無效")
+	# The original ransom action still requires its real representatives to be
+	# adjacent. Its inventories must also be at those actual contact positions.
+	if int(first.version) == 3 and not controller._supply_locations_valid(payer, first.locations) or int(second.version) == 3 and not controller._supply_locations_valid(recipient, second.locations):
+		return Runtime.fail("INVALID_SUSTAIN")
+	if str(source.key).begins_with("vehicle:") or str(destination.key).begins_with("vehicle:"):
+		return Runtime.fail("UNREACHABLE", "首版贖回須先將指定共有糧卸到雙方實際可達岸格")
 	var stock := 0
 	for food: String in Sustain.FOODS:
-		stock += int(first.inventory.get(food, 0))
+		stock += int(source.inventory.get(food, 0))
 	if stock < RANSOM_RATIONS:
 		return Runtime.fail("MATERIALS", "原付款庫存不足一百完整實物日份")
-	if Sustain.rations(second.sustain, second.inventory) + RANSOM_RATIONS > controller.team_food_capacity(recipient):
+	if Sustain.rations(second.sustain, controller._supply_stock(second)) + RANSOM_RATIONS > controller.team_food_capacity(recipient):
 		return Runtime.fail("STORAGE_FULL", "拘押隊伍的實際攜糧容量不足，含已拆餐份")
-	return Runtime.ok("", {"source": first.inventory, "destination": second.inventory,
+	if not bool(destination.exists):
+		return Runtime.fail("NO_SUPPLY_OWNER", "須先由原交糧入口建立實際岸格庫存，再接贖回實物")
+	return Runtime.ok("", {"source": source.inventory, "destination": destination.inventory,
 		"source_owner": "team:%d" % payer.team_id, "destination_owner": "team:%d" % recipient.team_id,
 		"source_revision": int(first.revision), "destination_revision": int(second.revision),
 		"source_entry": first, "destination_entry": second})

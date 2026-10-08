@@ -111,12 +111,16 @@ func run() -> void:
 	var appearance := HumanCharacter3DEditor.default_appearance()
 	appearance.parts.weapon = "bow_01"
 	appearance.parts.armor = "armor_mingguang_01"
+	appearance.parts.cape = "none"
 	var npc_appearance := appearance.duplicate(true)
 	npc_appearance.parts.weapon = "crossbow_01"
 	actor._saved_appearance = appearance.duplicate(true)
 	npc._saved_appearance = npc_appearance.duplicate(true)
 	if not _check(Runtime.seed_person_equipment(data, actor.item_state, 1, appearance).ok
 		and Runtime.seed_person_equipment(data, npc.item_state, 2, npc_appearance).ok, "Seed explicit original equipment holders"):
+		return
+	if not _check(not actor.item_state.equipped.has("cape") and not npc.item_state.equipped.has("cape"),
+		"Neither ordinary test person wears a cape before snapshot preflight"):
 		return
 	actor.ammo_inventory = {"arrow": 5}
 	var items: int = data.site.item_records.size()
@@ -162,7 +166,7 @@ func run() -> void:
 	npc.place(Vector2i(6, 5), true)
 	npc.stun = 95.0
 	npc.apply_exchange(actor.terrain_cell, _outcome(big, false))
-	if not _check(npc.hp == 99.0 and npc.knockout_left == SiteCombatRules.KNOCKOUT_SECONDS
+	if not _check(npc.hp == 99.0 and npc.knockout_left == SiteCombatRules.KNOCKOUT_GAME_SECONDS
 		and npc.terrain_cell == Vector2i(7, 5) and npc.is_moving(), "Big loss reserves a legal retreat before original KO"):
 		return
 	_advance(npc, TerrainTestCharacter.MOVE_DURATION)
@@ -205,7 +209,7 @@ func run() -> void:
 	npc.reset_combat()
 	actor.place(Vector2i(5, 5), true)
 	npc.place(Vector2i(6, 5), true)
-	actor.knockout_left = 30.0
+	actor.knockout_left = 5000.0
 	actor.faction_id = npc.faction_id
 	if not _check(npc.start_rescue(actor) and not npc.exchange_ready() and npc.exchange_can_receive(), "Actual rescuer remains a receivable target"):
 		return
@@ -220,6 +224,26 @@ func run() -> void:
 		return
 	_advance(npc, 0.7)
 	if not _check(npc.exchange_ready(), "One-second exchange cooldown completes"):
+		return
+	actor.reset_combat()
+	npc.reset_combat()
+	actor.place(Vector2i(5, 5), true)
+	npc.place(Vector2i(6, 5), true)
+	actor.face_cell(npc.terrain_cell)
+	var surrounded := {"role": "loser", "kind": "draw", "hp": 0.0, "stun": 16.0, "stagger": 0.3,
+		"fatigue": 0.0, "attacker": npc}
+	var opposing := {"role": "winner", "kind": "small", "hp": 0.0, "stun": 0.0,
+		"stagger": 0.0, "fatigue": 0.0, "attacker": actor}
+	var surrounded_prepared := actor.exchange_batch_prepare(npc.terrain_cell, surrounded)
+	var opposing_prepared := npc.exchange_batch_prepare(actor.terrain_cell, opposing)
+	actor.exchange_batch_contact(surrounded)
+	npc.exchange_batch_contact(opposing)
+	actor.exchange_batch_finish(npc.terrain_cell, surrounded, surrounded_prepared)
+	npc.exchange_batch_finish(actor.terrain_cell, opposing, opposing_prepared)
+	if not _check(not surrounded_prepared.is_empty() and not opposing_prepared.is_empty()
+		and actor.hp == 100.0 and actor.stun == 16.0 and actor.exchange_stagger == 0.3
+		and actor.visual_state.animation_id == &"hit" and actor.combat_status == "Exchange hit: draw"
+		and npc.combat_status == "Exchange win: small", "Merged draws keep zero HP loss, summed stun and final hit presentation"):
 		return
 	actor.reset_combat()
 	actor.combat_ability = 73.0
@@ -294,7 +318,7 @@ func _snapshot_preflight(current: TerrainData, actor: TerrainTestCharacter, npc:
 		return false
 	var file_hash := FileAccess.get_sha256(path)
 	var loaded := Store.load_site(path)
-	if not _check(loaded.ok, "Legacy projectile snapshot passes original Store validation"):
+	if not _check(loaded.ok, "Legacy projectile snapshot passes original Store validation: " + str(loaded)):
 		return false
 	actor.projectiles.clear() # Explicit fixture teardown only, not production migration.
 	for person: TerrainTestCharacter in [actor, npc]:

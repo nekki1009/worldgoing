@@ -7,6 +7,7 @@ const MAIN := "res://scenes/terrain_lab/TerrainLab.tscn"
 const FIXTURE := "res://scripts/tests/site_army_scale_realtime_test.gd"
 const MECHANISM_RENDER_RESULT := MechanismGate.EVIDENCE_ROOT + "render_5k_mechanism.json"
 const ARMY := "res://scripts/terrain_lab/terrain_army.gd"
+const LAB := "res://scripts/terrain_lab/terrain_lab.gd"
 const DEPLOYMENT_GUARD := "selected.size() > MAX_ROSTER_SIZE"
 const BATCH := "res://scripts/terrain_lab/terrain_army_batch_view.gd"
 const LEGACY_BATCH := "res://scripts/tests/fixtures/terrain_army_batch_view_phase3.gd.txt"
@@ -70,6 +71,129 @@ var trace_root := "res://output/site_stall_localization_20260917/admin_capture_0
 var s1_profile := false
 var s1_anchors: Array[String] = []
 var p1_profile := false
+var tail_profile := false
+var tail_detail_profile := false
+
+func _tail_insert(source: String, method: String, anchor: String, before: String = "", after: String = "") -> String:
+	var matcher := RegEx.new()
+	assert(matcher.compile("(?ms)^func " + method + "\\([^\\n]*\\n.*?(?=^(?:static )?func |\\z)") == OK)
+	var found := matcher.search_all(source)
+	assert(found.size() == 1, "Tail probe method changed: " + method)
+	var original: String = found[0].get_string()
+	assert(original.count(anchor) == 1, "Tail probe anchor changed: " + method + " / " + anchor.left(60))
+	assert(source.count(original) == 1)
+	return source.replace(original, original.replace(anchor, before + anchor + after))
+
+func _tail_instrument_army(source: String) -> String:
+	# Insert-only measurements of the actual order review and retained presentation.
+	source = _tail_insert(source, "_update_combat_orders", "\t_update_ranged_orders()\n",
+		"\tvar tail_order_mark := Time.get_ticks_usec()\n",
+		"\ttail_order_mark = _profile_combat_stage(\"tail_orders_ranged\", tail_order_mark)\n\tcombat_profile_usec[\"tail_hits_orders_ranged\"] = int(combat_profile_usec.get(\"tail_hits_orders_ranged\", 0)) + 1\n")
+	source = _tail_insert(source, "_update_combat_orders", "\tif _try_exchange_encirclement():\n",
+		"\tcombat_profile_usec[\"tail_hits_orders_encirclement\"] = int(combat_profile_usec.get(\"tail_hits_orders_encirclement\", 0)) + 1\n")
+	source = _tail_insert(source, "_update_combat_orders", "\t\treturn # Engaged front holds; free melee members use the same original step claims.\n",
+		"\t\t_profile_combat_stage(\"tail_orders_encirclement\", tail_order_mark)\n")
+	source = _tail_insert(source, "_update_combat_orders", "\tif combat_order == CombatOrder.ATTACK:\n",
+		"\ttail_order_mark = _profile_combat_stage(\"tail_orders_encirclement\", tail_order_mark)\n",
+		"\t\tvar tail_vacancy_mark := Time.get_ticks_usec()\n")
+	source = _tail_insert(source, "_update_combat_orders", "\t\t_assign_combat_vacancy()\n", "",
+		"\t\t_profile_combat_stage(\"tail_orders_vacancy\", tail_vacancy_mark)\n\t\tcombat_profile_usec[\"tail_hits_orders_vacancy\"] = int(combat_profile_usec.get(\"tail_hits_orders_vacancy\", 0)) + 1\n")
+	source = _tail_insert(source, "_advance_retained_combat_frame",
+		"\tif ages.size() != _sprites.size() or eligible.size() != _sprites.size() or not _batch_view.begin_retained():\n\t\treturn false\n", "",
+		"\tcombat_profile_usec[\"tail_hits_retained_calls\"] = int(combat_profile_usec.get(\"tail_hits_retained_calls\", 0)) + 1\n\tcombat_profile_usec[\"tail_hits_retained_rows\"] = int(combat_profile_usec.get(\"tail_hits_retained_rows\", 0)) + _sprites.size()\n\tvar tail_sample_mark := Time.get_ticks_usec()\n")
+	source = _tail_insert(source, "_advance_retained_combat_frame",
+		"\tif _batch_view.sample_retained_animations(ages, eligible, exited) < 0:\n\t\treturn false # The full path below resets the interrupted retained frame.\n", "",
+		"\t_profile_combat_stage(\"tail_retained_sample\", tail_sample_mark)\n\tvar tail_dirty_mark := Time.get_ticks_usec()\n")
+	source = _tail_insert(source, "_advance_retained_combat_frame",
+		"\t\t\t# The live source still advances its animation, while its retained\n",
+		"\t\t\tvar tail_live_eligible_mark := Time.get_ticks_usec()\n")
+	source = _tail_insert(source, "_advance_retained_combat_frame",
+		"\t\t\tcontinue\n\t\tif eligible[index] != 0 and moving_to[index] == INVALID_CELL and _sprites[index] == null and not _visual_row_dirty.has(index):\n",
+		"\t\t\t_profile_combat_stage(\"tail_retained_live\", tail_live_eligible_mark)\n\t\t\tcombat_profile_usec[\"tail_hits_retained_live\"] = int(combat_profile_usec.get(\"tail_hits_retained_live\", 0)) + 1\n")
+	source = _tail_insert(source, "_advance_retained_combat_frame", "\t\tif _uses_live_presenter(index):\n", "",
+		"\t\t\tvar tail_live_dirty_mark := Time.get_ticks_usec()\n")
+	source = _tail_insert(source, "_advance_retained_combat_frame", "\t\telse:\n",
+		"\t\t\t_profile_combat_stage(\"tail_retained_live\", tail_live_dirty_mark)\n\t\t\tcombat_profile_usec[\"tail_hits_retained_live\"] = int(combat_profile_usec.get(\"tail_hits_retained_live\", 0)) + 1\n",
+		"\t\t\tvar tail_ordinary_mark := Time.get_ticks_usec()\n")
+	source = _tail_insert(source, "_advance_retained_combat_frame", "\t\t\t_set_soldier_frame(index)\n", "",
+		"\t\t\t_profile_combat_stage(\"tail_retained_ordinary\", tail_ordinary_mark)\n\t\t\tcombat_profile_usec[\"tail_hits_retained_ordinary\"] = int(combat_profile_usec.get(\"tail_hits_retained_ordinary\", 0)) + 1\n")
+	source = _tail_insert(source, "_advance_retained_combat_frame", "\t_batch_view.flush_retained()\n",
+		"\t_profile_combat_stage(\"tail_retained_dirty\", tail_dirty_mark)\n\tvar tail_flush_mark := Time.get_ticks_usec()\n",
+		"\t_profile_combat_stage(\"tail_retained_flush\", tail_flush_mark)\n\tcombat_profile_usec[\"tail_hits_retained_flush\"] = int(combat_profile_usec.get(\"tail_hits_retained_flush\", 0)) + 1\n")
+	return source
+
+func _tail_detail_instrument_army(source: String) -> String:
+	var ranged_indent := "\t\t\t\t" if source.contains("var publication_state := -1") else "\t\t\t"
+	source = _tail_insert(source, "_update_ranged_orders", "\t\treturn\n\t# The original publication contains every effective weapon and is updated\n", "", "\tvar tail_detail_ranged_guard_mark := Time.get_ticks_usec()\n\tvar tail_detail_ranged_guard_passed := false\n\tcombat_profile_usec[\"tail_hits_detail_ranged_reviews\"] = int(combat_profile_usec.get(\"tail_hits_detail_ranged_reviews\", 0)) + 1\n")
+	source = _tail_insert(source, "_update_ranged_orders", "\t\t\tvar publications: Dictionary = equipment_appearance_batch_query.call(equipment_appearance_query)\n", "\t\t\ttail_detail_ranged_guard_passed = true\n\t\t\t_profile_combat_stage(\"tail_detail_ranged_guard\", tail_detail_ranged_guard_mark)\n\t\t\tcombat_profile_usec[\"tail_hits_detail_ranged_guard_pass\"] = int(combat_profile_usec.get(\"tail_hits_detail_ranged_guard_pass\", 0)) + 1\n\t\t\tvar tail_detail_publication_mark := Time.get_ticks_usec()\n", "")
+	source = _tail_insert(source, "_update_ranged_orders", ranged_indent + "for published: Variant in publications.values():\n", "", ranged_indent + "\tcombat_profile_usec[\"tail_hits_detail_ranged_publication_rows\"] = int(combat_profile_usec.get(\"tail_hits_detail_ranged_publication_rows\", 0)) + 1\n")
+	source = _tail_insert(source, "_update_ranged_orders", ranged_indent + "if not any_ranged:\n", ranged_indent + "_profile_combat_stage(\"tail_detail_ranged_publication\", tail_detail_publication_mark)\n" + ranged_indent + "combat_profile_usec[\"tail_hits_detail_ranged_publication_scans\"] = int(combat_profile_usec.get(\"tail_hits_detail_ranged_publication_scans\", 0)) + 1\n", ranged_indent + "\tcombat_profile_usec[\"tail_hits_detail_ranged_all_melee_return\"] = int(combat_profile_usec.get(\"tail_hits_detail_ranged_all_melee_return\", 0)) + 1\n")
+	source = _tail_insert(source, "_update_ranged_orders", "\tvar scene := {}\n", "\tif not tail_detail_ranged_guard_passed:\n\t\t_profile_combat_stage(\"tail_detail_ranged_guard\", tail_detail_ranged_guard_mark)\n\t\tcombat_profile_usec[\"tail_hits_detail_ranged_guard_fail\"] = int(combat_profile_usec.get(\"tail_hits_detail_ranged_guard_fail\", 0)) + 1\n", "")
+	source = _tail_insert(source, "_update_ranged_orders", "\tfor offset in range(combat_units.size()):\n", "\tvar tail_detail_ranged_person_mark := Time.get_ticks_usec()\n\tcombat_profile_usec[\"tail_hits_detail_ranged_person_loop\"] = int(combat_profile_usec.get(\"tail_hits_detail_ranged_person_loop\", 0)) + 1\n", "\t\tcombat_profile_usec[\"tail_hits_detail_ranged_person_rows\"] = int(combat_profile_usec.get(\"tail_hits_detail_ranged_person_rows\", 0)) + 1\n")
+	source = _tail_insert(source, "_update_ranged_orders", "\t\tif profile.is_empty(): continue\n", "", "\t\tcombat_profile_usec[\"tail_hits_detail_ranged_profile_hits\"] = int(combat_profile_usec.get(\"tail_hits_detail_ranged_profile_hits\", 0)) + 1\n")
+	source = _tail_insert(source, "_update_ranged_orders", "\t\t\tscene = ranged_tactics_query.call(self)\n", "\t\t\tcombat_profile_usec[\"tail_hits_detail_ranged_tactics_queries\"] = int(combat_profile_usec.get(\"tail_hits_detail_ranged_tactics_queries\", 0)) + 1\n", "")
+	source = _tail_insert(source, "_update_ranged_orders", "\t\tif searched >= PLANNING_BUDGET: break\n", "", "\t_profile_combat_stage(\"tail_detail_ranged_person_loop\", tail_detail_ranged_person_mark)\n")
+	source = _tail_insert(source, "_try_exchange_encirclement", "\t\treturn false\n\tvar enemies := {}\n", "", "\tvar tail_detail_front_mark := Time.get_ticks_usec()\n\tcombat_profile_usec[\"tail_hits_detail_enc_review_entries\"] = int(combat_profile_usec.get(\"tail_hits_detail_enc_review_entries\", 0)) + 1\n")
+	source = _tail_insert(source, "_try_exchange_encirclement", "\tif contact_cells.is_empty():\n", "\t_profile_combat_stage(\"tail_detail_enc_front_snapshot\", tail_detail_front_mark)\n\tcombat_profile_usec[\"tail_hits_detail_enc_enemy_cells\"] = int(combat_profile_usec.get(\"tail_hits_detail_enc_enemy_cells\", 0)) + enemies.size()\n\tcombat_profile_usec[\"tail_hits_detail_enc_contact_cells\"] = int(combat_profile_usec.get(\"tail_hits_detail_enc_contact_cells\", 0)) + contact_cells.size()\n", "")
+	source = _tail_insert(source, "_try_exchange_encirclement", "\tvar distance := {}\n", "\tvar tail_detail_front_mask_mark := Time.get_ticks_usec()\n", "")
+	source = _tail_insert(source, "_try_exchange_encirclement", "\tvar pure_seed_predicates: bool =", "\t_profile_combat_stage(\"tail_detail_enc_front_mask\", tail_detail_front_mask_mark)\n\tcombat_profile_usec[\"tail_hits_detail_enc_native_front\"] = int(combat_profile_usec.get(\"tail_hits_detail_enc_native_front\", 0)) + int(native_front)\n\tvar tail_detail_occupancy_mark := Time.get_ticks_usec()\n", "")
+	source = _tail_insert(source, "_try_exchange_encirclement", "\tvar native_field := false\n", "\t_profile_combat_stage(\"tail_detail_enc_occupancy\", tail_detail_occupancy_mark)\n\tcombat_profile_usec[\"tail_hits_detail_enc_occupied_cells\"] = int(combat_profile_usec.get(\"tail_hits_detail_enc_occupied_cells\", 0)) + occupied.size()\n\tvar tail_detail_field_mark := Time.get_ticks_usec()\n", "\tvar tail_detail_field_attempted := false\n")
+	source = _tail_insert(source, "_try_exchange_encirclement", "\t\t\tvar packet: Array = kernel.encirclement_field", "\t\t\ttail_detail_field_attempted = true\n\t\t\tcombat_profile_usec[\"tail_hits_detail_enc_native_field_attempt\"] = int(combat_profile_usec.get(\"tail_hits_detail_enc_native_field_attempt\", 0)) + 1\n", "")
+	source = _tail_insert(source, "_try_exchange_encirclement", "\t# A necessary Manhattan bound rejects distant rows before bucket ranges.\n", "\tif native_field:\n\t\tcombat_profile_usec[\"tail_hits_detail_enc_native_field_success\"] = int(combat_profile_usec.get(\"tail_hits_detail_enc_native_field_success\", 0)) + 1\n\telif not pure_occupancy:\n\t\tcombat_profile_usec[\"tail_hits_detail_enc_field_fallback_impure_occupancy\"] = int(combat_profile_usec.get(\"tail_hits_detail_enc_field_fallback_impure_occupancy\", 0)) + 1\n\telif not native_front:\n\t\tcombat_profile_usec[\"tail_hits_detail_enc_field_fallback_front\"] = int(combat_profile_usec.get(\"tail_hits_detail_enc_field_fallback_front\", 0)) + 1\n\telif not tail_detail_field_attempted:\n\t\tcombat_profile_usec[\"tail_hits_detail_enc_field_fallback_kernel\"] = int(combat_profile_usec.get(\"tail_hits_detail_enc_field_fallback_kernel\", 0)) + 1\n\telse:\n\t\tcombat_profile_usec[\"tail_hits_detail_enc_field_fallback_packet\"] = int(combat_profile_usec.get(\"tail_hits_detail_enc_field_fallback_packet\", 0)) + 1\n", "")
+	source = _tail_insert(source, "_try_exchange_encirclement", "\tvar head := 0\n", "\t_profile_combat_stage(\"tail_detail_enc_field_seed\", tail_detail_field_mark)\n\tvar tail_detail_spread_mark := Time.get_ticks_usec()\n", "")
+	source = _tail_insert(source, "_try_exchange_encirclement", "\t# Conservative one-review origins only:", "\t_profile_combat_stage(\"tail_detail_enc_field_spread\", tail_detail_spread_mark)\n\tcombat_profile_usec[\"tail_hits_detail_enc_field_cells\"] = int(combat_profile_usec.get(\"tail_hits_detail_enc_field_cells\", 0)) + distance.size()\n\tcombat_profile_usec[\"tail_hits_detail_enc_field_pending\"] = int(combat_profile_usec.get(\"tail_hits_detail_enc_field_pending\", 0)) + pending.size()\n\tvar tail_detail_origins_mark := Time.get_ticks_usec()\n", "")
+	source = _tail_insert(source, "_try_exchange_encirclement", "\tvar candidates: Array[Dictionary] = []\n", "\t_profile_combat_stage(\"tail_detail_enc_origins\", tail_detail_origins_mark)\n\tcombat_profile_usec[\"tail_hits_detail_enc_origins_enabled\"] = int(combat_profile_usec.get(\"tail_hits_detail_enc_origins_enabled\", 0)) + int(filter_origins)\n\tcombat_profile_usec[\"tail_hits_detail_enc_origins_cells\"] = int(combat_profile_usec.get(\"tail_hits_detail_enc_origins_cells\", 0)) + origins.size()\n\tvar tail_detail_candidate_mark := Time.get_ticks_usec()\n", "")
+	source = _tail_insert(source, "_try_exchange_encirclement", "\tfor index in range(combat_units.size()):\n", "", "\t\tcombat_profile_usec[\"tail_hits_detail_enc_candidate_scanned\"] = int(combat_profile_usec.get(\"tail_hits_detail_enc_candidate_scanned\", 0)) + 1\n")
+	source = _tail_insert(source, "_try_exchange_encirclement", "\t\tif pinned.has(index) or not is_member(index)", "\t\tcombat_profile_usec[\"tail_hits_detail_enc_eligibility_rows\"] = int(combat_profile_usec.get(\"tail_hits_detail_enc_eligibility_rows\", 0)) + 1\n", "")
+	source = _tail_insert(source, "_try_exchange_encirclement", "\t\tvar best := INVALID_CELL\n", "\t\tcombat_profile_usec[\"tail_hits_detail_enc_eligibility_pass\"] = int(combat_profile_usec.get(\"tail_hits_detail_enc_eligibility_pass\", 0)) + 1\n", "")
+	source = _tail_insert(source, "_try_exchange_encirclement", "\t\t\tcandidates.append({\"unit\": index, \"id\": combat_identity(index), \"step\": best, \"cost\": cost})\n", "\t\t\tcombat_profile_usec[\"tail_hits_detail_enc_candidate_pass\"] = int(combat_profile_usec.get(\"tail_hits_detail_enc_candidate_pass\", 0)) + 1\n", "")
+	source = _tail_insert(source, "_try_exchange_encirclement", "\tcandidates.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:\n", "\t_profile_combat_stage(\"tail_detail_enc_candidate_scan\", tail_detail_candidate_mark)\n\tvar tail_detail_sort_mark := Time.get_ticks_usec()\n", "")
+	source = _tail_insert(source, "_try_exchange_encirclement", "\tvar issued := 0\n", "\t_profile_combat_stage(\"tail_detail_enc_sort\", tail_detail_sort_mark)\n\tcombat_profile_usec[\"tail_hits_detail_enc_candidates_total\"] = int(combat_profile_usec.get(\"tail_hits_detail_enc_candidates_total\", 0)) + candidates.size()\n\tvar tail_detail_commit_mark := Time.get_ticks_usec()\n", "")
+	source = _tail_insert(source, "_try_exchange_encirclement", "\t\tif _reserve_combat_step(index, candidate.step):\n", "\t\tcombat_profile_usec[\"tail_hits_detail_enc_commit_attempt\"] = int(combat_profile_usec.get(\"tail_hits_detail_enc_commit_attempt\", 0)) + 1\n", "")
+	source = _tail_insert(source, "_try_exchange_encirclement", "\t\t\tencirclement_steps += 1\n", "", "\t\t\tcombat_profile_usec[\"tail_hits_detail_enc_committed\"] = int(combat_profile_usec.get(\"tail_hits_detail_enc_committed\", 0)) + 1\n")
+	source = _tail_insert(source, "_try_exchange_encirclement", "\treturn true # A blocked flank waits;", "\t_profile_combat_stage(\"tail_detail_enc_commit\", tail_detail_commit_mark)\n", "")
+	source = _tail_insert(source, "combat_shapes", "\t\t\tcombat_geometry_profile.live_cache_misses += 1\n\t\t\tvar frame := combat_frame(index)\n", "\t\t\tset_meta(&\"tail_detail_frame_mark\", Time.get_ticks_usec())\n\t\t\tcombat_profile_usec[\"tail_hits_detail_live_caller_geometry_fresh\"] = int(combat_profile_usec.get(\"tail_hits_detail_live_caller_geometry_fresh\", 0)) + 1\n", "")
+	source = _tail_insert(source, "combat_shapes", "\t\t\t\tcombat_geometry_profile.live_partial_fills += 1\n\t\t\t\tvar frame := combat_frame(index)\n", "\t\t\t\tset_meta(&\"tail_detail_frame_mark\", Time.get_ticks_usec())\n\t\t\t\tcombat_profile_usec[\"tail_hits_detail_live_caller_geometry_fill\"] = int(combat_profile_usec.get(\"tail_hits_detail_live_caller_geometry_fill\", 0)) + 1\n", "")
+	source = _tail_insert(source, "contact_protection", "\t\t_sync_captain_combat(combat_frame(index), index)\n", "\t\tset_meta(&\"tail_detail_frame_mark\", Time.get_ticks_usec())\n\t\tcombat_profile_usec[\"tail_hits_detail_live_caller_armor\"] = int(combat_profile_usec.get(\"tail_hits_detail_live_caller_armor\", 0)) + 1\n", "")
+	source = _tail_insert(source, "start_unit_attack", "\t\t\t\t\t_sync_captain_combat(combat_frame(index), index)\n", "\t\t\t\t\tset_meta(&\"tail_detail_frame_mark\", Time.get_ticks_usec())\n\t\t\t\t\tcombat_profile_usec[\"tail_hits_detail_live_caller_aim\"] = int(combat_profile_usec.get(\"tail_hits_detail_live_caller_aim\", 0)) + 1\n", "")
+	source = _tail_insert(source, "_advance_retained_combat_frame", "\t\t\t# sprite descriptor and ground have not changed on this Army tick.\n", "", "\t\t\tset_meta(&\"tail_detail_frame_mark\", Time.get_ticks_usec())\n\t\t\tcombat_profile_usec[\"tail_hits_detail_live_caller_retained_eligible\"] = int(combat_profile_usec.get(\"tail_hits_detail_live_caller_retained_eligible\", 0)) + 1\n")
+	source = _tail_insert(source, "_advance_retained_combat_frame", "\t\tif _uses_live_presenter(index):\n", "", "\t\t\tset_meta(&\"tail_detail_frame_mark\", Time.get_ticks_usec())\n\t\t\tcombat_profile_usec[\"tail_hits_detail_live_caller_retained_dirty\"] = int(combat_profile_usec.get(\"tail_hits_detail_live_caller_retained_dirty\", 0)) + 1\n")
+	source = _tail_insert(source, "advance_frame", "\t\t\tif _uses_live_presenter(index):\n", "", "\t\t\t\tset_meta(&\"tail_detail_frame_mark\", Time.get_ticks_usec())\n\t\t\t\tcombat_profile_usec[\"tail_hits_detail_live_caller_full_render\"] = int(combat_profile_usec.get(\"tail_hits_detail_live_caller_full_render\", 0)) + 1\n")
+	source = _tail_insert(source, "_sync_captain_combat", "func _sync_captain_combat(frame: Dictionary, index: int = 0) -> void:\n", "", "\tvar tail_detail_frame_mark := int(get_meta(&\"tail_detail_frame_mark\", 0))\n\tif tail_detail_frame_mark > 0:\n\t\t_profile_combat_stage(\"tail_detail_live_frame_eval\", tail_detail_frame_mark)\n\t\tset_meta(&\"tail_detail_frame_mark\", 0)\n\tvar tail_detail_live_mark := Time.get_ticks_usec()\n\tcombat_profile_usec[\"tail_hits_detail_live_sync_calls\"] = int(combat_profile_usec.get(\"tail_hits_detail_live_sync_calls\", 0)) + 1\n")
+	source = _tail_insert(source, "_sync_captain_combat", "\tpresenter.set_preview_yaw_degrees(_captain_yaw_degrees(Vector2i(visual_sample[2]) if exchange_enabled else facing[index]))\n", "\tif not presenter.has_meta(&\"tail_detail_first_hair_usec\"):\n\t\tpresenter.set_meta(&\"tail_detail_first_hair_usec\", 0)\n\tvar tail_detail_hair_before := int(presenter.get_meta(&\"tail_detail_first_hair_usec\"))\n\tvar tail_detail_yaw_mark := Time.get_ticks_usec()\n", "\t_profile_combat_stage(\"tail_detail_live_yaw\", tail_detail_yaw_mark)\n\tcombat_profile_usec[\"tail_detail_live_first_hair\"] = int(combat_profile_usec.get(\"tail_detail_live_first_hair\", 0)) + int(presenter.get_meta(&\"tail_detail_first_hair_usec\")) - tail_detail_hair_before\n\tvar tail_detail_clip_mark := Time.get_ticks_usec()\n")
+	source = _tail_insert(source, "_sync_captain_combat", "\t# The editor's preview loop preference must not wrap a resolved jump's\n", "\t_profile_combat_stage(\"tail_detail_live_clip_select\", tail_detail_clip_mark)\n\tvar tail_detail_clip_key := \"tail_hits_detail_live_clip_\" + str(pose)\n\tcombat_profile_usec[tail_detail_clip_key] = int(combat_profile_usec.get(tail_detail_clip_key, 0)) + 1\n", "")
+	source = _tail_insert(source, "_sync_captain_combat", "\tpresenter.animation_player.seek(float(sample[1]), true)\n", "\tvar tail_detail_player: AnimationPlayer = presenter.animation_player\n\tvar tail_detail_length := tail_detail_player.current_animation_length\n\tvar tail_detail_terminal := tail_detail_length > 0.0 and float(sample[1]) >= tail_detail_length - 0.000001\n\tvar tail_detail_repeat := tail_detail_terminal and tail_detail_player.current_animation == pose and absf(tail_detail_player.current_animation_position - float(sample[1])) <= 0.000001\n\tcombat_profile_usec[\"tail_hits_detail_live_seek_playing\"] = int(combat_profile_usec.get(\"tail_hits_detail_live_seek_playing\", 0)) + int(tail_detail_player.is_playing())\n\tcombat_profile_usec[\"tail_hits_detail_live_terminal\"] = int(combat_profile_usec.get(\"tail_hits_detail_live_terminal\", 0)) + int(tail_detail_terminal)\n\tcombat_profile_usec[\"tail_hits_detail_live_repeated_terminal\"] = int(combat_profile_usec.get(\"tail_hits_detail_live_repeated_terminal\", 0)) + int(tail_detail_repeat)\n\tvar tail_detail_seek_mark := Time.get_ticks_usec()\n", "\t_profile_combat_stage(\"tail_detail_live_seek\", tail_detail_seek_mark)\n\tcombat_profile_usec[\"tail_hits_detail_live_seek_calls\"] = int(combat_profile_usec.get(\"tail_hits_detail_live_seek_calls\", 0)) + 1\n")
+	source = _tail_insert(source, "_sync_captain_combat", "\tif exchange_enabled:\n\t\tpresenter._process(0.0)", "\tvar tail_detail_editor_mark := Time.get_ticks_usec()\n", "")
+	source = _tail_insert(source, "_sync_captain_combat", "\t_sprites[index].position = origin - _unit_anchor(index)\n\tpresenter.preview_viewport.render_target_update_mode", "\t_profile_combat_stage(\"tail_detail_live_editor_update\", tail_detail_editor_mark)\n\t_profile_combat_stage(\"tail_detail_live_sync\", tail_detail_live_mark)\n", "")
+	return source
+
+func _tail_detail_instrument_editor(source: String) -> String:
+	source = _tail_insert(source, "_apply_preview_rotation", "\t\t_update_hair_mask()\n", "\t\tvar tail_detail_hair_mark := Time.get_ticks_usec() if has_meta(&\"tail_detail_first_hair_usec\") else 0\n", "\t\tif tail_detail_hair_mark > 0:\n\t\t\tset_meta(&\"tail_detail_first_hair_usec\", int(get_meta(&\"tail_detail_first_hair_usec\")) + Time.get_ticks_usec() - tail_detail_hair_mark)\n")
+	return source
+
+func _tail_instrument_lab(source: String) -> String:
+	# Preserve collect/sort, preflight, and four whole-batch commit loops in order.
+	source = _tail_insert(source, "_settle_exchange_batch", "\tif pending.is_empty(): return true\n", "",
+		"\tvar tail_apply_mark := Time.get_ticks_usec()\n\tcombat_profile_usec[\"tail_hits_apply_batches\"] = int(combat_profile_usec.get(\"tail_hits_apply_batches\", 0)) + 1\n\tcombat_profile_usec[\"tail_hits_apply_pairs\"] = int(combat_profile_usec.get(\"tail_hits_apply_pairs\", 0)) + pending.size()\n")
+	source = _tail_insert(source, "_settle_exchange_batch", "\tidentities.sort()\n", "",
+		"\ttail_apply_mark = _combat_profile_stage(\"tail_apply_collect_sort\", tail_apply_mark)\n\tcombat_profile_usec[\"tail_hits_apply_identities\"] = int(combat_profile_usec.get(\"tail_hits_apply_identities\", 0)) + identities.size()\n")
+	source = _tail_insert(source, "_settle_exchange_batch", "\t# Costs and skills use pre-death shared-pool membership. No contact occurs\n",
+		"\ttail_apply_mark = _combat_profile_stage(\"tail_apply_preflight\", tail_apply_mark)\n")
+	for step: Array in [["prepare", "knockback"], ["knockback", "contact"], ["contact", "finish"]]:
+		var phase: String = str(step[0])
+		var next_phase: String = str(step[1])
+		var anchor := "\tfor id: Variant in identities:\n\t\tvar entry: Dictionary = batches[id]\n\t\tif not _exchange_batch_phase_current(entry, \"" + next_phase + "\"): return false\n"
+		var addition := "\ttail_apply_mark = _combat_profile_stage(\"tail_apply_" + phase + "\", tail_apply_mark)\n"
+		addition += "\tcombat_profile_usec[\"tail_hits_apply_" + phase + "\"] = int(combat_profile_usec.get(\"tail_hits_apply_" + phase + "\", 0)) + identities.size()\n"
+		source = _tail_insert(source, "_settle_exchange_batch", anchor, addition)
+	source = _tail_insert(source, "_settle_exchange_batch", "\treturn true\n",
+		"\t_combat_profile_stage(\"tail_apply_finish\", tail_apply_mark)\n\tcombat_profile_usec[\"tail_hits_apply_finish\"] = int(combat_profile_usec.get(\"tail_hits_apply_finish\", 0)) + identities.size()\n")
+	source = _tail_insert(source, "_resolve_exchanges", "\tfor pair: Dictionary in pending:\n",
+		"\tvar tail_pair_mark := Time.get_ticks_usec()\n")
+	source = _tail_insert(source, "_resolve_exchanges",
+		"\tprofile_started = _combat_profile_stage(\"exchange_apply\", profile_started)\n",
+		"\t_combat_profile_stage(\"tail_apply_pair_events\", tail_pair_mark)\n\tcombat_profile_usec[\"tail_hits_apply_pair_events\"] = int(combat_profile_usec.get(\"tail_hits_apply_pair_events\", 0)) + pending.size()\n")
+	return source
 
 func _p1_instrument_army(source: String) -> String:
 	# Diagnostic-only stage boundaries. The original calls and branch order stay intact.
@@ -310,11 +434,21 @@ func _instrument_settlement() -> void:
 		"note": "Diagnostic inclusive times; nested equipment/appearance costs overlap deaths or commands. Slow-call timestamps and stacks are retained. No gameplay or file-source changes."}
 
 func _initialize() -> void:
+	if OS.has_feature("release") and not Engine.is_editor_hint():
+		push_error("Legacy two-army source-rewrite diagnostic is not a release F5K test; use formal 50-team fixture")
+		quit(1)
+		return
 	mechanism_diagnostic = "--mechanism-diagnostic" in OS.get_cmdline_user_args()
 	if mechanism_diagnostic:
 		assert(OS.get_cmdline_user_args().size() == 1, "Mechanism diagnostic uses only its dedicated flag and the original 5k settings")
 	candidate_hot = "--candidate-hot" in OS.get_cmdline_user_args() or mechanism_diagnostic
 	p1_profile = "--p1-profile" in OS.get_cmdline_user_args()
+	tail_profile = "--tail-profile" in OS.get_cmdline_user_args()
+	tail_detail_profile = "--tail-detail-profile" in OS.get_cmdline_user_args()
+	assert(not tail_detail_profile or tail_profile, "Tail detail requires --tail-profile")
+	if tail_profile:
+		for required: String in ["--profile", "--spike-profile", "--long-stall-profile"]:
+			assert(required in OS.get_cmdline_user_args(), "Tail profile needs " + required)
 	if p1_profile:
 		for required: String in ["--profile", "--spike-profile", "--stall-profile", "--long-stall-profile", "--viewport-profile"]:
 			assert(required in OS.get_cmdline_user_args(), "P1 needs " + required)
@@ -349,6 +483,10 @@ func _initialize() -> void:
 		if argument.begins_with("--trace-stop-file="):
 			trace_stop_path = argument.get_slice("=", 1)
 			assert(long_stall_profile and trace_stop_path in ["res://output/site_stall_localization_20260917/admin_capture_01/stop.request", "res://output/site_stall_localization_20260917/admin_capture_02/stop.request", "res://output/site_stall_localization_20260917/admin_capture_03/stop.request", "res://output/site_stall_localization_20260917/admin_capture_04/stop.request"])
+	if tail_profile:
+		var allowed_tail := ["--tail-profile", "--tail-detail-profile", "--tail-parse-only", "--profile", "--spike-profile", "--stall-profile", "--long-stall-profile", "--viewport-profile", "--continuous-visibility", "--verify-render"]
+		for argument: String in OS.get_cmdline_user_args():
+			assert(argument in allowed_tail or argument.begins_with("--per-team=") or argument.begins_with("--seconds=") or argument.begins_with("--resident-clock="), "Tail profile cannot stack source-changing or formal flags: " + argument)
 	if trace_late_window: assert(duration >= 360.0, "Keep the game alive through late capture and save")
 	formal_200 = (per_team == 100 and duration == 60.0 and OS.get_cmdline_user_args().size() == 2
 		and "--per-team=100" in OS.get_cmdline_user_args() and "--seconds=60" in OS.get_cmdline_user_args())
@@ -715,6 +853,10 @@ func _audit_sources(stage: String) -> bool:
 				expected = disk_text.replace(DEPLOYMENT_GUARD, "selected.size() > %d" % int(report.deployment_limit))
 		if p1_profile and path == ARMY: expected = _p1_instrument_army(expected)
 		if p1_profile and path == BATCH: expected = _p1_instrument_batch(expected)
+		if tail_profile and path == ARMY: expected = _tail_instrument_army(expected)
+		if tail_profile and path == LAB: expected = _tail_instrument_lab(expected)
+		if tail_detail_profile and path == ARMY: expected = _tail_detail_instrument_army(expected)
+		if tail_detail_profile and path == EDITOR: expected = _tail_detail_instrument_editor(expected)
 		var matches_allowlist := runtime_text == expected and (path != ARMY or not bool(report.deployment_override_applied) or guard_replacements == 1)
 		sources[path] = {"disk_sha256": disk_hash, "runtime_normalized_sha256": runtime_text.sha256_text(),
 			"expected_normalized_sha256": expected.sha256_text(), "runtime_matches_disk": matches_disk,
@@ -1062,6 +1204,23 @@ func _sample_rd_timestamps() -> void:
 
 func _run() -> void:
 	s1_profile = "--s1-profile" in OS.get_cmdline_user_args()
+	if "--tail-parse-only" in OS.get_cmdline_user_args():
+		assert(tail_profile)
+		var checked_army := load(ARMY) as GDScript
+		checked_army.source_code = _tail_instrument_army(checked_army.source_code)
+		if tail_detail_profile: checked_army.source_code = _tail_detail_instrument_army(checked_army.source_code)
+		assert(checked_army.reload(true) == OK, "Tail Army probe must compile")
+		var checked_lab := load(LAB) as GDScript
+		checked_lab.source_code = _tail_instrument_lab(checked_lab.source_code)
+		assert(checked_lab.reload(true) == OK, "Tail Lab probe must compile")
+		if tail_detail_profile:
+			var checked_editor := load(EDITOR) as GDScript
+			checked_editor.source_code = _tail_detail_instrument_editor(checked_editor.source_code)
+			assert(checked_editor.reload(true) == OK, "Tail detail Editor probe must compile")
+		print("TAIL_PROFILE_PARSE_PASS in-memory Army and Lab")
+		done = true
+		quit(0)
+		return
 	if "--p1-parse-only" in OS.get_cmdline_user_args():
 		assert(p1_profile, "P1 parse check requires --p1-profile")
 		var army_script := load(ARMY) as GDScript
@@ -1397,6 +1556,8 @@ func _run() -> void:
 	var deployment_override_applied := per_team > TerrainArmy.MAX_ROSTER_SIZE
 	var deployment_limit := maxi(2500, per_team) if deployment_override_applied else TerrainArmy.MAX_ROSTER_SIZE
 	if deployment_override_applied: original = original.replace(guard, "selected.size() > %d" % deployment_limit)
+	if tail_profile: original = _tail_instrument_army(original)
+	if tail_detail_profile: original = _tail_detail_instrument_army(original)
 	if original != army_script.source_code:
 		army_script.source_code = original
 		if army_script.reload(true) != OK:
@@ -1424,6 +1585,14 @@ func _run() -> void:
 		var batch_script := load(BATCH) as GDScript
 		batch_script.source_code = _p1_instrument_batch(batch_script.source_code)
 		assert(batch_script.reload(true) == OK, "P1 in-memory BatchView must compile")
+	if tail_profile:
+		var tail_lab_script := load(LAB) as GDScript
+		tail_lab_script.source_code = _tail_instrument_lab(tail_lab_script.source_code)
+		assert(tail_lab_script.reload(true) == OK, "Tail in-memory Lab must compile")
+	if tail_detail_profile:
+		var tail_editor_script := load(EDITOR) as GDScript
+		tail_editor_script.source_code = _tail_detail_instrument_editor(tail_editor_script.source_code)
+		assert(tail_editor_script.reload(true) == OK, "Tail detail in-memory Editor must compile")
 	report = {"status": "SETUP", "main_scene": MAIN,
 		"deployment_only_memory_override": guard + " -> selected.size() > %d" % deployment_limit if deployment_override_applied else "none",
 		"deployment_limit": deployment_limit,
@@ -1441,6 +1610,19 @@ func _run() -> void:
 		"renderer": RenderingServer.get_current_rendering_method(), "driver": RenderingServer.get_current_rendering_driver_name(),
 		"user_data": OS.get_user_data_dir(), "checkpoints": []}
 	report["project_main_scene"] = ProjectSettings.get_setting("application/run/main_scene")
+	if tail_profile:
+		report["tail_profile"] = {"diagnostic_only": true, "formal_fps_eligible": false,
+			"in_memory_army_and_lab_probe": true, "source_statements_preserved": true,
+			"timing_unit": "spike_samples tail_* fields are ms; cumulative combat_profile_usec tail_* fields are usec",
+			"hit_unit": "spike_samples tail_hits_* fields and cumulative combat_profile_usec tail_hits_* fields are raw counts",
+			"note": "Retained dirty includes nested live and ordinary presenters; phase timings are completed whole-batch loops. Timers and dictionary updates perturb frame costs."}
+	if tail_detail_profile:
+		report["tail_detail_profile"] = {"diagnostic_only": true, "formal_fps_eligible": false,
+			"timing_unit": "tail_detail_* profile values are inclusive usec; spike_samples converts them to ms",
+			"hit_unit": "tail_hits_detail_* values are raw counts",
+			"first_hair": "nested in yaw; editor _apply_preview_rotation auto-mask only",
+			"seek": "whole seek envelope, not exclusive cache rebuild",
+			"cache_events": "unavailable: per-seek signal alignment is not wired by this minimal probe"}
 	if s1_profile:
 		report["s1_profile"] = {"anchors": s1_anchors, "original_statements_preserved": true,
 			"note": "Diagnostic only. Geometry adds up to four Dictionary lookups per scanned row; review scan time includes that overhead. Nested times are not additive. Duty sizes are once-per-review snapshots, not per-person timings."}
@@ -1726,12 +1908,21 @@ func _run() -> void:
 			presenter.animation_player.call("set_clear_cache_on_stop_enabled", false)
 			report.retain_animation_cache.append(str(presenter.get_path()))
 	report["captain_cache_policy"] = []
+	if tail_detail_profile: report["tail_detail_cache_support"] = []
 	for team: TerrainArmy in lab.combat_armies:
 		team.native_presence_delta_enabled = bool(report.presence_delta_enabled)
 		team._presence_geometry_cache = []
 		var presenter: HumanCharacter3DEditor = team._unit_editor(0)
 		if presenter != null and presenter.animation_player.has_method("is_clear_cache_on_stop_enabled"):
 			report.captain_cache_policy.append({"path": str(presenter.get_path()), "clear_on_stop": presenter.animation_player.call("is_clear_cache_on_stop_enabled")})
+		if tail_detail_profile and presenter != null:
+			var cache_setter_supported := presenter.animation_player.has_method("set_clear_cache_on_stop_enabled")
+			var cache_getter_supported := presenter.animation_player.has_method("is_clear_cache_on_stop_enabled")
+			report.tail_detail_cache_support.append({"team_id": team.team_id, "setter_supported": cache_setter_supported,
+				"getter_supported": cache_getter_supported,
+				"clear_on_stop": presenter.animation_player.call("is_clear_cache_on_stop_enabled") if cache_getter_supported else null,
+				"caches_cleared_signal_supported": presenter.animation_player.has_signal("caches_cleared"),
+				"caches_cleared_events": "unavailable"})
 	var retain_npc_cache := "--retain-npc-animation-cache" in OS.get_cmdline_user_args()
 	var clear_npc_cache := "--clear-npc-animation-cache" in OS.get_cmdline_user_args()
 	assert(not (retain_npc_cache and clear_npc_cache))
@@ -1876,6 +2067,11 @@ func _run() -> void:
 		report["long_stall_profile"] = {"pid": OS.get_process_id(), "engine_main_thread_id": OS.get_main_thread_id(), "utc_start": Time.get_datetime_string_from_system(true),
 			"threshold_ms": 100.0, "checkpoint_writes_during_measurement": checkpoint_io_profile,
 			"note": "Original simulation unchanged. Scene callbacks and draw boundaries are wall time, not exclusive CPU. Root render timestamps can lag. Physics duration is nested in frame phases."}
+	if tail_detail_profile:
+		for team: TerrainArmy in lab.combat_armies:
+			team.set_meta(&"tail_detail_frame_mark", 0)
+			var presenter: HumanCharacter3DEditor = team._unit_editor(0)
+			if presenter != null: presenter.set_meta(&"tail_detail_first_hair_usec", 0)
 	var begin := Time.get_ticks_usec()
 	measurement_begin_usec = begin
 	if checkpoint_io_profile:
@@ -1987,12 +2183,13 @@ func _run() -> void:
 				for key: String in owner_costs:
 					costs["owner%d_%s" % [owner_index, key]] = int(owner_costs[key])
 			var sample := {"ms": intervals[-1], "at": frame_at[-1]}
-			if s1_profile or p1_profile: sample["frame_id"] = Engine.get_process_frames()
+			if s1_profile or p1_profile or tail_profile: sample["frame_id"] = Engine.get_process_frames()
 			var completed_clock: float = lab._exchange_round * TerrainLab.EXCHANGE_QUERY_STEP + lab._exchange_phase
 			sample["action_steps"] = roundi((completed_clock - previous_completed_clock) / TerrainLab.EXCHANGE_ACTION_STEP)
 			previous_completed_clock = completed_clock
 			for key: String in costs:
-				sample[key] = (int(costs[key]) - int(previous_costs.get(key, 0))) / 1000.0
+				var delta := int(costs[key]) - int(previous_costs.get(key, 0))
+				sample[key] = delta if key.begins_with("tail_hits_") or key.begins_with("lab_tail_hits_") else delta / 1000.0
 			if p1_profile:
 				var p1_totals := {}
 				for team: TerrainArmy in lab.combat_armies:
@@ -2070,6 +2267,15 @@ func _run() -> void:
 		reviews.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.started_usec) < int(b.started_usec))
 		assert(not reviews.is_empty(), "S1 needs at least one complete encirclement review")
 		report["s1_reviews"] = reviews
+	if tail_detail_profile:
+		report["tail_detail_live_people"] = []
+		for team: TerrainArmy in lab.combat_armies:
+			report.tail_detail_live_people.append({"team_id": team.team_id, "person_id": team.combat_identity(0)})
+		report["geometry_prefilter_counts"] = []
+		for team: TerrainArmy in lab.combat_armies:
+			report.geometry_prefilter_counts.append({"team_id": team.team_id,
+				"reviews": int(team.get("geometry_prefilter_reviews")) if team.has_method("_canonical_geometry_prefilter_safe") else 0,
+				"skipped": int(team.get("geometry_prefilter_skipped")) if team.has_method("_canonical_geometry_prefilter_safe") else 0})
 	if rd_timestamps_profile:
 		assert(not rd_timestamp_samples.is_empty(), "No resolved RD timestamps were captured")
 		report["rd_timestamp_profile"] = {"samples": rd_timestamp_samples,

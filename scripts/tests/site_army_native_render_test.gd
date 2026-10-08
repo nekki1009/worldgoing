@@ -89,7 +89,11 @@ func _check() -> bool:
 	for i in range(COUNT):
 		var female := all_female or (mixed and i % 2 == 1)
 		army.combat_units.append({"person_id": i + 1, "age": 0.0, "pose": "idle", "visual_role": "female_atlas" if female else "male_atlas"})
-		army.cells.append(Vector2i(i % 100, (i * 17) % 100))
+		var cell := Vector2i(i % 100, (i * 17) % 100)
+		if i == 0: cell = Vector2i(127, 5)
+		elif i == 1: cell = Vector2i(5, 127)
+		elif i == 2: cell = Vector2i(127, 127)
+		army.cells.append(cell)
 		army.moving_to.append(TerrainArmy.INVALID_CELL)
 		army.facing.append([Vector2i.UP, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT, Vector2i(4, -7)][i % 5])
 		var appearance: Dictionary = TerrainArmy.EquipmentAtlas.female_appearance() if female else TerrainArmy._combat_bake.manifest.appearance.duplicate(true)
@@ -127,6 +131,7 @@ func _check() -> bool:
 		for i in range(COUNT): assert(is_same(row_aliases[i], army.combat_units[i]), "Original row identity replaced")
 		assert(retained_positions.to_byte_array() == retained_bytes, "Native output modified retained COW data")
 		checked += COUNT
+	_check_unconscious(army, site, actual, reference, COUNT)
 	# One changed input at a time must reject only its row without touching it.
 	for condition in range(15):
 		var before_row := army.combat_units[1].duplicate(true)
@@ -172,7 +177,7 @@ func _check() -> bool:
 			assert(actual._native_mask[1] == 1, "Re-admitted publication did not resume native")
 		if army._sprites[1] != null: army._sprites[1].free(); army._sprites[1] = null
 		army.combat_units[1] = before_row
-		army.cells[1] = Vector2i(1, 17)
+		army.cells[1] = Vector2i(5, 127)
 		army.moving_to[1] = TerrainArmy.INVALID_CELL
 		site._equipment_appearances[2] = before_appearance
 	# Callback replacement cannot be bypassed even if an old batch provider remains.
@@ -187,6 +192,7 @@ func _check() -> bool:
 	assert(calls[0] == COUNT)
 	var kernel := TerrainArmy._get_idle_kernel()
 	_check_sample_reuse(kernel)
+	_check_restored_identity(kernel)
 	_check_read_fields(kernel)
 	assert(kernel.call("render_idle", [], [], [], [], {}, [], [], [], [], 64.0).is_empty())
 	assert(kernel.call("render_idle", army.combat_units, [], army.moving_to, army.facing, site._equipment_appearances, actual._appearances, actual._descriptors, actual._idle_samples, army._sprites, 64.0).is_empty())
@@ -197,6 +203,104 @@ func _check() -> bool:
 	army.free()
 	site.free()
 	return true
+
+func _check_restored_identity(kernel: RefCounted) -> void:
+	# JSON stores an exact person ID as FLOAT, while the equipment publisher
+	# retains its integer key. A restored roster must stay on native render.
+	var restored: Dictionary = JSON.parse_string('{"person_id":1,"age":0.25,"pose":"idle","visual_role":"male_atlas"}')
+	assert(typeof(restored.person_id) == TYPE_FLOAT)
+	var appearance := {"parts": {}}
+	SiteController._freeze_appearance(appearance)
+	var directions: Array = []
+	for direction in range(4):
+		directions.append([direction, 1.0, true, PackedFloat64Array([0.0, 0.5]),
+			PackedVector2Array([Vector2.ZERO, Vector2.ONE])])
+	var inputs: Array = [[restored], [Vector2i(5, 5)], [TerrainArmy.INVALID_CELL],
+		[Vector2i.RIGHT], {1: appearance}, [appearance], [{"page": 0, "palette": 0}],
+		[directions], [null], 64.0]
+	var original := var_to_bytes(inputs)
+	var actual: Array = kernel.callv("render_idle", inputs)
+	assert(actual.size() == 7 and actual[0][0] == 1, "JSON-restored person fell off native rendering")
+	var canonical := restored.duplicate(true)
+	canonical.person_id = 1
+	inputs[0] = [canonical]
+	var expected: Array = kernel.callv("render_idle", inputs)
+	assert(var_to_bytes(actual) == var_to_bytes(expected), "Restored native render columns differ")
+	inputs[0] = [restored]
+	assert(var_to_bytes(inputs) == original, "Restored native render modified owner rows")
+
+func _check_unconscious(army: TerrainArmy, site: SiteController, actual: Node2D, reference: Node2D, count: int) -> void:
+	var knocked := 0
+	for i in range(count):
+		if i % 4 != 0: continue
+		army.combat_units[i].pose = "unconscious"
+		army.combat_units[i].hp = 100.0
+		army.combat_units[i].ko = 20.0
+		knocked += 1
+	var boundaries: Array[float] = [0.0, 0.173, 2.4, 1000.173]
+	for page: Dictionary in actual._pages:
+		for direction: String in ["up", "right", "down", "left"]:
+			var key := "unconscious|" + direction
+			if not page.sequences.has(key): continue
+			var frames: Array = page.samples[page.sequences[key]]
+			for frame: Dictionary in [frames[0], frames[frames.size() >> 1], frames.back()]:
+				for epsilon: float in [-0.000000002, 0.0, 0.000000002]:
+					boundaries.append(maxf(0.0, float(frame.sample_time) + epsilon))
+	var compared := 0
+	for age: float in boundaries:
+		for i in range(count): army.combat_units[i].age = age
+		var inputs_before := var_to_bytes([army.combat_units, army.cells, army.moving_to, army.facing, site._equipment_appearances])
+		actual.begin()
+		actual.prepare_idle()
+		assert(actual._native_mask.size() == count and actual.prepared_exceptions().is_empty())
+		actual.finish_prepared_groups()
+		reference.begin()
+		for i in range(count):
+			var clip := "unconscious" if i % 4 == 0 else "combat_idle"
+			assert(reference.submit(i, army.combat_ground(i), site.person_appearance(i + 1), clip, army._soldier_direction_id(army.facing[i]), age))
+		assert(var_to_bytes(_columns(actual)) == var_to_bytes(_columns(reference)), "Unconscious exact columns at %.12f" % age)
+		assert(var_to_bytes([army.combat_units, army.cells, army.moving_to, army.facing, site._equipment_appearances]) == inputs_before)
+		compared += count
+	# The formal A/B switch must restore the old idle-only native admission.
+	actual.native_unconscious_enabled = false
+	actual.begin()
+	actual.prepare_idle()
+	assert(actual.prepared_exceptions().size() == knocked)
+	for i in range(0, count, 4):
+		assert(actual.submit(i, army.combat_ground(i), site.person_appearance(i + 1), "unconscious", army._soldier_direction_id(army.facing[i]), float(army.combat_units[i].age)))
+	actual.finish_prepared_groups()
+	assert(var_to_bytes(_columns(actual)) == var_to_bytes(_columns(reference)), "Legacy KO fallback differs")
+	actual.native_unconscious_enabled = true
+	var kernel := TerrainArmy._get_idle_kernel()
+	var input := [army.combat_units, army.cells, army.moving_to, army.facing,
+		site._equipment_appearances, actual._appearances, actual._descriptors,
+		actual._idle_and_unconscious_samples, army._sprites, TerrainRenderer.CELL_PIXELS]
+	for condition in range(8):
+		var previous_row: Dictionary = army.combat_units[0].duplicate(true)
+		var previous_appearance: Dictionary = site.person_appearance(1)
+		match condition:
+			0: army.combat_units[0].pose = "down"
+			1: army.combat_units[0].pose = "get_up"
+			2: army.combat_units[0].ko = 0.0
+			3: army.combat_units[0].hp = 0.0
+			4: army.combat_units[0].exchange_visual = {}
+			5: army.moving_to[0] = Vector2i(0, 1)
+			6: army._sprites[0] = Sprite2D.new()
+			7: site._equipment_appearances[1] = previous_appearance.duplicate(true)
+		var before := var_to_bytes([army.combat_units, army.cells, army.moving_to, army.facing, site._equipment_appearances])
+		var packet: Array = kernel.callv("render_idle", input)
+		assert(packet.size() == 7 and packet[0][0] == 0 and packet[0][4] == 1, "KO fallback %d" % condition)
+		assert(var_to_bytes([army.combat_units, army.cells, army.moving_to, army.facing, site._equipment_appearances]) == before)
+		if army._sprites[0] != null: army._sprites[0].free(); army._sprites[0] = null
+		army.moving_to[0] = TerrainArmy.INVALID_CELL
+		army.combat_units[0] = previous_row
+		site._equipment_appearances[1] = previous_appearance
+	for i in range(count):
+		if i % 4 != 0: continue
+		army.combat_units[i].pose = "idle"
+		army.combat_units[i].erase("hp")
+		army.combat_units[i].erase("ko")
+	print("ARMY_RENDER_UNCONSCIOUS_PASS rows=", compared, " KO/native/legacy exact columns; down/get_up/wake/death/visual/move/Sprite/appearance fallback")
 
 func _check_read_fields(kernel: RefCounted) -> void:
 	var appearance := {"parts": {}}
@@ -230,15 +334,20 @@ func _check_read_fields(kernel: RefCounted) -> void:
 					var value: Variant = row[key]
 					row.erase(key)
 					row[StringName(key)] = value
-			var before := var_to_bytes(inputs)
+			var input_bytes := var_to_bytes(inputs)
 			var actual: Array = kernel.callv("render_idle", inputs)
 			var admitted := mode == 3 or (key == "visual_role" and mode == 0)
 			for index in range(3):
 				assert(actual[0][index] == int(index != 1 or admitted), "%s mode=%d" % [key, mode])
 				for field in range(7):
-					var expected: Variant = baseline[field][index] if index != 1 or admitted else (Vector2.ZERO if field == 1 else 0)
+					var expected: Variant = baseline[field][index]
+					if index == 1 and not admitted:
+						if field == 1:
+							expected = Vector2.ZERO
+						else:
+							expected = 0
 					assert(actual[field][index] == expected)
-			assert(var_to_bytes(inputs) == before)
+			assert(var_to_bytes(inputs) == input_bytes)
 			checked += 1
 	# Typed/read-only dictionaries are legal read inputs; no raw write is allowed.
 	for column in [0, 6]:

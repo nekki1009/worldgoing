@@ -67,6 +67,115 @@ static func set_catalog_path(path: String) -> bool:
 	_page_bytes = 0
 	return true
 
+class CrowdFingerprintBatch extends RefCounted:
+	var paths: Array[String] = []
+	var digests: Array[String] = []
+
+	func _init(source_paths: Array[String]) -> void:
+		paths.assign(source_paths)
+		paths.make_read_only()
+
+	func _hash_one(index: int) -> void:
+		# The caller fixes container sizes; each worker writes its own slot only.
+		digests[index] = FileAccess.get_md5(paths[index])
+
+	func fingerprints() -> Dictionary:
+		digests.resize(paths.size())
+		digests.fill("")
+		if not paths.is_empty():
+			var workers := mini(paths.size(), clampi(OS.get_processor_count(), 1, 8))
+			var group := WorkerThreadPool.add_group_task(_hash_one, paths.size(), workers, true, "Crowd source fingerprints")
+			if group < 0:
+				for index in range(paths.size()): _hash_one(index)
+			else:
+				WorkerThreadPool.wait_for_group_task_completion(group)
+		# No partial result is published before all workers have joined.
+		var result := {}
+		for index in range(paths.size()):
+			var digest: String = digests[index]
+			if digest.length() != 32: return {}
+			result[paths[index]] = digest
+		return result
+
+static func _crowd_fingerprints() -> Dictionary:
+	var paths: Array[String] = []
+	paths.assign(Plan.SOURCE_PATHS)
+	paths.append_array(DyeAtlas.EXTRA_SOURCES)
+	var batch := CrowdFingerprintBatch.new(paths)
+	return batch.fingerprints()
+
+static func admit_crowd_appearances(required: Array, optional: Array = []) -> Dictionary:
+	# One synchronous load boundary. Callers supply appearances, never trusted hashes.
+	# Existing sprites/batches retain their textures; only admission lookups refresh.
+	_clear_crowd_admission()
+	var dye := _crowd_fingerprints()
+	DyeAtlas._sources = dye
+	var admission := {"dye": dye, "hashes": dye.duplicate(false), "sets": {}, "extra_hash_calls": 0}
+	var result := {"ok": true, "code": "", "required_failed": [], "optional_missing": [],
+		"admitted_count": 0, "unique_count": 0, "source_hash_calls": {"bundle_fingerprints": 1, "extra_sources": 0}}
+	var seen := {}
+	for group in range(2):
+		var appearances: Array = required if group == 0 else optional
+		for index in range(appearances.size()):
+			var value: Variant = appearances[index]
+			if value == null: continue # The original actor owns its presenter.
+			var key := JSON.stringify(value, "", true)
+			if not seen.has(key):
+				seen[key] = value is Dictionary and not dye.is_empty() and _crowd_appearance_ready(value, admission)
+				result.unique_count += 1
+				if seen[key]: result.admitted_count += 1
+			if not seen[key]:
+				if group == 0: result.required_failed.append(index)
+				else: result.optional_missing.append(index)
+	result.source_hash_calls.extra_sources = admission.extra_hash_calls
+	result.ok = result.required_failed.is_empty()
+	if not result.ok:
+		result.code = "MISSING_ASSET"
+		_clear_crowd_admission()
+	return result
+
+static func _clear_crowd_admission() -> void:
+	refresh_female_sources()
+	_base = {}
+	# Reuse the original cache reset. Clearing cache references never disposes a
+	# live Sprite2D/AtlasTexture or a BatchView's independently retained texture.
+	set_catalog_path(_catalog_path)
+	RangedAtlas.set_root_path(RangedAtlas._root_path)
+	RangedAtlas._base = {}
+	DyeAtlas._entries.clear()
+	DyeAtlas._sources.clear()
+
+static func _crowd_source_set(admission: Dictionary, key: String, extra_paths: Array) -> Dictionary:
+	if admission.sets.has(key): return admission.sets[key]
+	var sources := {}
+	for path: String in Plan.SOURCE_PATHS:
+		if not admission.hashes.has(path): return {}
+		sources[path] = admission.hashes[path]
+	for path: String in extra_paths:
+		if not admission.hashes.has(path):
+			admission.hashes[path] = FileAccess.get_md5(path)
+			admission.extra_hash_calls += 1
+		var digest: String = admission.hashes[path]
+		if digest.length() != 32: return {}
+		sources[path] = digest
+	admission.sets[key] = sources
+	return sources
+
+static func _crowd_appearance_ready(appearance: Dictionary, admission: Dictionary) -> bool:
+	if not HumanCharacter3DEditor.valid_appearance(appearance): return false
+	if not _wagon_foot_recipe(appearance, admission).is_empty(): return true
+	# Crowd's existing BatchView requires the exact mask even for an undyed
+	# appearance. It still performs page/decode/size/track admission afterward.
+	if _dye_entry(appearance, admission).is_empty(): return false
+	var geometry := DyeAtlas.Dye.geometry_appearance(appearance)
+	if not _load_base(): return false
+	if geometry == _base.appearance: return true
+	if not _mixed_recipe(geometry, admission).is_empty(): return true
+	if int(geometry.body) == 1: return not _female_recipe(geometry, admission).is_empty()
+	if not RangedAtlas.recipe(geometry).is_empty(): return true
+	var mask := _appearance_mask(geometry)
+	return mask >= 0 and not _recipe(mask, _appearance_iron(geometry)).is_empty()
+
 static func supports(appearance: Dictionary) -> bool:
 	if not HumanCharacter3DEditor.valid_appearance(appearance): return false
 	if not wagon_foot_recipe(appearance).is_empty(): return true
@@ -146,6 +255,9 @@ static func female_appearance() -> Dictionary:
 	return appearance
 
 static func female_recipe(appearance: Dictionary) -> Dictionary:
+	return _female_recipe(appearance, {})
+
+static func _female_recipe(appearance: Dictionary, admission: Dictionary) -> Dictionary:
 	if not HumanCharacter3DEditor.valid_appearance(appearance): return {}
 	appearance = DyeAtlas.Dye.geometry_appearance(appearance)
 	if appearance != female_appearance():
@@ -153,12 +265,12 @@ static func female_recipe(appearance: Dictionary) -> Dictionary:
 		var ranged_plan := female_ranged_plan(weapon)
 		if ranged_plan.is_empty() or appearance != ranged_plan.appearance: return {}
 		if _female_ranged.has(weapon): return _female_ranged[weapon]
-		var ranged := _single_page_recipe(appearance, FEMALE_RANGED_ROOT + "/" + weapon, "terrain_army_female_ranged_recipe", female_ranged_sources(), 29, ranged_plan)
+		var ranged := _single_page_recipe(appearance, FEMALE_RANGED_ROOT + "/" + weapon, "terrain_army_female_ranged_recipe", female_ranged_sources() if admission.is_empty() else _crowd_source_set(admission, "female_ranged", RangedAtlas.EXTRA_SOURCES + [FEMALE_RANGED_BAKER, "res://scripts/terrain_lab/terrain_army_equipment_atlas.gd"]), 29, ranged_plan)
 		if not ranged.is_empty(): _female_ranged[weapon] = ranged
 		return ranged
 	if not _female.is_empty(): return _female
-	var sources := Plan.fingerprints()
-	sources[FEMALE_BAKER] = FileAccess.get_md5(FEMALE_BAKER)
+	var sources := Plan.fingerprints() if admission.is_empty() else _crowd_source_set(admission, "female", [FEMALE_BAKER])
+	if admission.is_empty(): sources[FEMALE_BAKER] = FileAccess.get_md5(FEMALE_BAKER)
 	_female = _single_page_recipe(female_appearance(), _female_root, "terrain_army_female_recipe", sources, 31)
 	return _female
 
@@ -181,16 +293,20 @@ static func female_ranged_sources() -> Dictionary:
 	return sources
 
 static func wagon_foot_recipe(appearance: Dictionary) -> Dictionary:
+	return _wagon_foot_recipe(appearance, {})
+
+static func _wagon_foot_recipe(appearance: Dictionary, admission: Dictionary) -> Dictionary:
 	if not WagonRecipe.matches(appearance): return {}
 	var body := int(appearance.body)
 	appearance = DyeAtlas.Dye.geometry_appearance(WagonRecipe.appearance(body))
 	if _wagon_foot.has(body): return _wagon_foot[body]
-	var sources := Plan.fingerprints()
+	var sources := Plan.fingerprints() if admission.is_empty() else _crowd_source_set(admission, "wagon_foot", [WAGON_FOOT_BAKER, "res://scripts/terrain_lab/site_wagon_rider_recipe.gd"])
 	if sources.is_empty(): return {}
-	for path: String in [WAGON_FOOT_BAKER, "res://scripts/terrain_lab/site_wagon_rider_recipe.gd"]:
-		var digest := FileAccess.get_md5(path)
-		if digest.length() != 32: return {}
-		sources[path] = digest
+	if admission.is_empty():
+		for path: String in [WAGON_FOOT_BAKER, "res://scripts/terrain_lab/site_wagon_rider_recipe.gd"]:
+			var digest := FileAccess.get_md5(path)
+			if digest.length() != 32: return {}
+			sources[path] = digest
 	var recipe := _single_page_recipe(appearance, WAGON_FOOT_ROOT + ("/male" if body == 0 else "/female"), "terrain_army_wagon_rider_foot", sources, 28)
 	if not recipe.is_empty(): _wagon_foot[body] = recipe
 	return recipe
@@ -241,18 +357,24 @@ static func _single_page_recipe(appearance: Dictionary, directory: String, kind:
 	return {"sequences": sequences, "map_scale": float(manifest.map_scale), "source_manifest": path}
 
 static func dye_entry(appearance: Dictionary) -> Dictionary:
+	return _dye_entry(appearance, {})
+
+static func _dye_entry(appearance: Dictionary, admission: Dictionary) -> Dictionary:
 	if not HumanCharacter3DEditor.valid_appearance(appearance): return {}
-	var recipe := mixed_recipe(appearance)
+	var recipe := _mixed_recipe(appearance, admission)
 	var mixed := not recipe.is_empty()
 	if recipe.is_empty() and appearance.get("body") != 1: return DyeAtlas.entry(appearance)
-	if recipe.is_empty(): recipe = female_recipe(appearance)
+	if recipe.is_empty(): recipe = _female_recipe(appearance, admission)
 	if recipe.is_empty(): return {}
 	var directory := str(recipe.source_manifest).get_base_dir()
 	if _female_dye.has(directory): return _female_dye[directory]
 	var path := directory + "/dye.json"
 	if not FileAccess.file_exists(path): return {}
 	var record: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
-	if not record is Dictionary or record.get("schema_version") != 1 or record.get("complete") != true or record.get("slots") != DyeAtlas.Dye.SLOTS or record.get("source_fingerprints") != DyeAtlas.fingerprints() or record.get("appearance") != DyeAtlas.Dye.geometry_appearance(appearance): return {}
+	var geometry := DyeAtlas.Dye.geometry_appearance(appearance)
+	# Mixed recipe publication already uses the JSON body number from mixed_plan.
+	if mixed: geometry.body = float(geometry.body)
+	if not record is Dictionary or record.get("schema_version") != 1 or record.get("complete") != true or record.get("slots") != DyeAtlas.Dye.SLOTS or record.get("source_fingerprints") != (DyeAtlas.fingerprints() if admission.is_empty() else admission.dye) or record.get("appearance") != geometry: return {}
 	var source_path := directory + "/manifest.json"
 	var source: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(source_path))
 	var mask_path := str(record.get("mask_path", ""))
@@ -321,6 +443,9 @@ static func _mixed_directory(key: String) -> String:
 	return _mixed_root + "/" + _mixed_namespace + "/" + key
 
 static func mixed_recipe(appearance: Dictionary) -> Dictionary:
+	return _mixed_recipe(appearance, {})
+
+static func _mixed_recipe(appearance: Dictionary, admission: Dictionary) -> Dictionary:
 	if not HumanCharacter3DEditor.valid_appearance(appearance): return {}
 	var key := _mixed_key(appearance)
 	if key.is_empty(): return {}
@@ -328,6 +453,9 @@ static func mixed_recipe(appearance: Dictionary) -> Dictionary:
 	if _mixed_missing.has(key): return {}
 	var plan := mixed_plan(appearance)
 	if plan.is_empty(): return {}
+	if not admission.is_empty() and _mixed_sources.is_empty():
+		_mixed_sources = _crowd_source_set(admission, "mixed", [MIXED_CAPTURE, "res://scripts/terrain_lab/terrain_army_equipment_atlas.gd"])
+		if _mixed_sources.is_empty(): return {}
 	var directory := _mixed_directory(key)
 	var recipe := _single_page_recipe(plan.appearance, directory, "terrain_army_mixed_recipe", _mixed_sources, 31, plan) if not directory.is_empty() else {}
 	if recipe.is_empty(): _mixed_missing[key] = true
@@ -346,7 +474,9 @@ static func prepare_recipe(host: Node, appearance: Dictionary) -> bool:
 	while is_instance_valid(_preparation):
 		if Time.get_ticks_msec() >= deadline or not is_instance_valid(host) or not host.is_inside_tree(): return false
 		await tree.process_frame
+		if not is_instance_valid(host) or not host.is_inside_tree() or host.is_queued_for_deletion(): return false
 		if supports(appearance): return true
+	if not is_instance_valid(host) or not host.is_inside_tree() or host.is_queued_for_deletion(): return false
 	var directory := _mixed_directory(str(plan.key))
 	if directory.is_empty(): return false
 	var script := load(MIXED_CAPTURE) as Script

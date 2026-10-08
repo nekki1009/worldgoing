@@ -1,6 +1,13 @@
 extends "res://scripts/tests/site_workflow_test.gd"
 
 const Sustain = preload("res://scripts/terrain_lab/site_sustain.gd")
+const TrainingFixture = preload("res://scripts/tests/site_training_ground_fixture.gd")
+var _acceptance_completed := false
+
+func _process(delta: float) -> bool:
+	# Keep the original watchdog until this branch finishes every acceptance
+	# check; its final cleanup frame must not report an unfinished workflow.
+	return false if _acceptance_completed else super._process(delta)
 
 class ClockLab extends TerrainLab:
 	var interrupt_delivery := false
@@ -25,6 +32,11 @@ func near(actual: float, expected: float, label: String) -> void:
 
 func _run() -> void:
 	var lab := ClockLab.new()
+	# Historical 120 Hz clock/contact ordering, including an exact .05 s hit.
+	# Formal exchange 30 Hz retained phase is covered by the current training
+	# and controlled-person fixtures; this test keeps its original precision.
+	lab.exchange_enabled = false
+	lab.npc = TerrainTestNPC.new()
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	lab.set_process(false)
@@ -33,6 +45,7 @@ func _run() -> void:
 	lab.npc_retaliates = false
 	lab.site_controller._auto_save_blocked = true
 	var data := _fixture()
+	TrainingFixture.build(data, Vector2i(21, 21), Vector2i(10, 10), lab.character.faction_id)
 	data.site.worker_enabled = false
 	lab.bind_terrain(data)
 	lab.npc.faction_id = lab.character.faction_id
@@ -69,6 +82,7 @@ func _run() -> void:
 		# Bounded GPU companion: show the real delivered stock without loading
 		# the full scene twice. The complete save/rebind matrix runs headless.
 		await capture_panel(lab)
+		_acceptance_completed = true
 		lab.queue_free()
 		await process_frame
 		TerrainArmy.release_contact_source()
@@ -142,6 +156,7 @@ func _run() -> void:
 	near(float(entry.sustain.at) - before_hit, 3.05, "new hit slows the remainder of the same frame")
 	near(Runtime.now(data) * 60.0, float(entry.sustain.at), "Site work clock and team clock agree after new hit")
 	near(float(personal.at), float(entry.sustain.at), "personal clock agrees after new hit")
+	_acceptance_completed = true
 	lab.queue_free()
 	await process_frame
 	TerrainArmy.release_contact_source()

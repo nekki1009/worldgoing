@@ -97,8 +97,9 @@ func run() -> void:
 	_check_interruptions()
 	_check_fatigue_and_race()
 	_check_captivity()
+	_check_surrender_capture()
 	_check_escape_and_ransom()
-	print("SITE PERSON ACTIONS PASS: original cargo/item owners, KO/ground loot, versions, final-contact rejection, capacity, 80/50 work, capture/sealed/ally-unbind, 30s escape, 100-ration ransom; no UI or equipment rendering claim")
+	print("SITE PERSON ACTIONS PASS: original cargo/item owners, KO/ground loot, versions, final-contact rejection, capacity, 80/50 work, KO/surrender capture/sealed/ally-unbind, 30s escape, 100-ration ransom; no UI or equipment rendering claim")
 	quit(0)
 
 func _check_loot() -> void:
@@ -260,6 +261,54 @@ func _check_captivity() -> void:
 	assert(not actions.settle_after_contacts()[0].ok and not fixture.npc.captive)
 	assert(fixture.terrain.site.ground_loot.size() == 1 and fixture.supply_commits.size() == 2)
 	fixture.close()
+
+func _check_surrender_capture() -> void:
+	for outcome: String in ["success", "cancel", "move", "hit", "version", "capacity", "withdrawn", "supply"]:
+		var fixture := Fixture.new()
+		var actions := fixture.actions
+		var unit: Dictionary = fixture.army.combat_units[0]
+		fixture.army.cells[0] = Vector2i(5, 4)
+		assert(not actions.begin_capture(1, 3, 1).ok, "Missing surrender_pending is false; awake units cannot be captured")
+		unit["surrender_pending"] = true
+		var weapon := SiteRuntime.create_equipment(fixture.terrain, unit.item_state, "weapon_fixture",
+			{"slot": "weapon", "asset": "weapon_fixture", "tint": [1.0, 1.0, 1.0, 1.0]}, 3, "weapon")
+		assert(weapon.ok)
+		unit.cargo.merge({"arrow": 2, "wood": 1})
+		var holder: Dictionary = unit.item_state
+		var version := int(holder.version)
+		actions.captivity_supply_commit = func(target: int, captor: int, capturing: bool) -> void:
+			assert(bool(fixture.army.combat_hot_get(0, &"captive")) == capturing and not bool(unit.surrender_pending))
+			fixture.supply_commits.append([target, captor, capturing])
+		assert(actions.begin_capture(1, 3, 1).seconds == Actions.BIND_SECONDS)
+		actions.advance(Actions.BIND_SECONDS - 0.001)
+		assert(actions.settle_after_contacts().is_empty() and bool(unit.surrender_pending) and not bool(unit.captive))
+		assert(fixture.terrain.site.captivity.is_empty() and fixture.terrain.site.ground_loot.is_empty())
+		actions.advance(0.001)
+		match outcome:
+			"cancel": assert(actions.cancel(1).ok)
+			"move": fixture.army.moving_to[0] = Vector2i(6, 4)
+			"hit": unit.hit_revision += 1
+			"version": holder.version += 1
+			"capacity":
+				for identity: int in range(10, 14):
+					fixture.terrain.site.captivity[str(identity)] = {"guard_id": 1}
+			"withdrawn": unit.surrender_pending = false
+			"supply": fixture.captivity_allowed = false
+		var results := actions.settle_after_contacts()
+		if outcome == "success":
+			assert(results.size() == 1 and results[0].ok and bool(unit.captive) and not bool(unit.surrender_pending))
+			assert(float(unit.hp) == 100.0 and float(unit.ko) == 0.0 and fixture.supply_commits == [[3, 1, true]])
+			var bag: Dictionary = fixture.terrain.site.ground_loot[results[0].container_id]
+			assert(bag.kind == "sealed" and bag.original_owner == 3 and bag.item_ids == [weapon.item_id] and bag.cargo == {"arrow": 2})
+			assert(holder.item_ids.is_empty() and unit.cargo == {"wood": 1} and int(holder.version) > version)
+			assert(actions.settle_after_contacts().is_empty() and fixture.supply_commits.size() == 1)
+		else:
+			assert(results.is_empty() if outcome == "cancel" else results.size() == 1 and not results[0].ok, outcome)
+			assert(not bool(unit.captive) and bool(unit.surrender_pending) == (outcome != "withdrawn"), outcome)
+			assert(not fixture.terrain.site.captivity.has("3") and fixture.terrain.site.ground_loot.is_empty() and fixture.supply_commits.is_empty(), outcome)
+			assert(holder.item_ids == [weapon.item_id] and unit.cargo == {"arrow": 2, "wood": 1}, outcome)
+		assert(is_same(holder, unit.item_state), "Capture keeps the original holder")
+		fixture.close()
 
 func _check_escape_and_ransom() -> void:
 	var fixture := Fixture.new()

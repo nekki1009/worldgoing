@@ -2404,5 +2404,34 @@
       ".json": "f758a30cee8b2d3fd14332af7e3a833c0e9720fe697a07904574c321b681be0f"
     },
     "builder": "scripts/tools/blender/integrate_equipment_walk_repair.py"
+  },
+  "steel_mingguang_walk_repair_20260919": {
+    "changed_meshes": [
+      "Armor_Chinese_Steel_01_Tasset_Front",
+      "Armor_Chinese_Steel_01_Tasset_Front_Gold",
+      "Armor_Chinese_Steel_01_Tasset_Side_Gold_L",
+      "Armor_Chinese_Steel_01_Tasset_Side_Gold_R",
+      "Armor_Chinese_Steel_01_Tasset_Side_L",
+      "Armor_Chinese_Steel_01_Tasset_Side_R",
+      "Armor_Mingguang_01_PleatedSkirt",
+      "Armor_Mingguang_01_Pteruges_Front",
+      "Armor_Mingguang_01_Pteruges_Silver",
+      "Armor_Mingguang_01_Pteruges_Studs",
+      "Armor_Mingguang_01_Skirt_Rear",
+      "Armor_Mingguang_01_Skirt_Rear_Rim",
+      "Armor_Mingguang_01_Skirt_Rim_L",
+      "Armor_Mingguang_01_Skirt_Rim_R",
+      "Armor_Mingguang_01_Skirt_Side_L",
+      "Armor_Mingguang_01_Skirt_Side_R",
+      "Armor_Western_Steel_01_Cuisse_L",
+      "Armor_Western_Steel_01_Cuisse_L_RolledEdge",
+      "Armor_Western_Steel_01_Cuisse_R",
+      "Armor_Western_Steel_01_Cuisse_R_RolledEdge"
+    ],
+    "baseline_sha256": {
+      ".blend": "191abc7700e05f2a1044f4b276499c08d08db03c89a4cbfce9d2b42cea5c5676",
+      ".glb": "23fb0b7db63427abdb579499722e258825d55c41a7561d7cdb1dca0b1031243c",
+      ".json": "a07b3b1c6b9c101d246a77fdd9f89180a9af19138e464aa4bc2d42ce294f69da"
+    }
   }
 }

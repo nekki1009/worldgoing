@@ -2,6 +2,7 @@ extends "res://scripts/tests/site_army_tactics_test.gd"
 # Reuse the existing headless real-army fixture; no second simulation/reference
 # owner. Small read-only oracles cover just the three changed expressions.
 const Timings = preload("res://scripts/terrain_lab/character_combat_timings.gd")
+const LogicalOracle = preload("res://scripts/tests/fixtures/site_army_logical_state_oracle.gd")
 const STEP := 1.0 / 120.0
 
 class CountedArmy extends TerrainArmy:
@@ -43,6 +44,8 @@ func run() -> void:
 	data.site.worker_enabled = false
 	data.site.worker.target = ""
 	lab = TerrainLab.new() # Original tactics fixture: no extra UI/world or rig.
+	lab.enemy_query_owner_cells_enabled = OS.get_environment("WORLDGOING_ENEMY_INDEX") != "off"
+	print("GUARDS enemy_index=", lab.enemy_query_owner_cells_enabled)
 	lab.terrain = data
 	team = CountedArmy.new()
 	enemy = CountedArmy.new()
@@ -226,7 +229,10 @@ func _check_fatigue() -> void:
 	# (twice), exact threat query and fatigue arithmetic; no timers are simulated.
 	for index in range(2):
 		var body: TerrainTestCharacter = [actor, other][index]
-		var rate := (PersonFatigue.ATTACK_RATE if index == 0 else PersonFatigue.GUARD_RATE) if body.can_act() else 0.0
+		var can_act := body.can_act()
+		# Exchange resolves action fatigue at the exchange event; this continuous
+		# step charges attack/guard only in the historical geometry mode.
+		var rate := (PersonFatigue.ATTACK_RATE if index == 0 else PersonFatigue.GUARD_RATE) if can_act and not lab.exchange_enabled else 0.0
 		var idle := body.can_act() and not body.is_moving() and body.action_time <= 0.0 and not body.guarding and body.guard_transition_left <= 0.0
 		var safe := idle and body.fatigue > 0.0 and not lab._fatigue_threat(body.terrain_cell, body.faction_id, body, -1, candidates)
 		var value := PersonFatigue.advance(body.fatigue, body.fatigue_rest, 2.0, rate, safe)
@@ -239,7 +245,12 @@ func _check_fatigue() -> void:
 			var moving := owner.moving_to[index] != TerrainArmy.INVALID_CELL
 			var rate := 0.0
 			if owner.combat_can_act(index):
-				rate = PersonFatigue.ATTACK_RATE if bool(unit.attack) or moving else (PersonFatigue.GUARD_RATE if str(unit.pose) == "guard_raise" else 0.0)
+				if not lab.exchange_enabled and bool(unit.attack):
+					rate = PersonFatigue.ATTACK_RATE
+				elif not lab.exchange_enabled and str(unit.pose) == "guard_raise":
+					rate = PersonFatigue.GUARD_RATE
+				elif moving and owner.move_duration[index] <= TerrainArmy.RUN_DURATION + 0.000001:
+					rate = PersonFatigue.RUN_RATE
 			var idle := owner.combat_can_act(index) and not moving and str(unit.pose) == "idle"
 			var safe := idle and float(unit.fatigue) > 0.0 and not lab._fatigue_threat(owner.cells[index], owner.faction_id, owner, index, candidates)
 			var value := PersonFatigue.advance(float(unit.fatigue), float(unit.fatigue_rest), 2.0, rate, safe)
@@ -250,7 +261,12 @@ func _check_fatigue() -> void:
 	lab.combat_profile_enabled = true
 	lab._advance_fatigue(2.0)
 	var new_counts := _counts()
-	assert([actor.capture_state(), other.capture_state(), team.capture_combat_state(), enemy.capture_combat_state()] == expected,
+	var actual := [actor.capture_state(), other.capture_state(), team.capture_combat_state(), enemy.capture_combat_state()]
+	if actual != expected:
+		print("GUARDS fatigue first_difference=", LogicalOracle.first_mismatch(expected, actual),
+			" expected_actor_fatigue=", expected[0].fatigue, " actual_actor_fatigue=", actual[0].fatigue,
+			" enemy_index_hits=", lab.enemy_query_owner_cell_hits)
+	assert(actual == expected,
 		"Every saved field remains exact; only expected fatigue/rest changes")
 	for index in range(4):
 		assert(old_counts[index] - new_counts[index] == (1 if index < 2 else 100))

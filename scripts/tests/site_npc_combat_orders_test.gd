@@ -45,7 +45,8 @@ func _fresh() -> void:
 	lab.terrain.static_blocked.fill(0)
 	lab.terrain.ramp_edges.fill(0)
 	assert(lab.character.place(Vector2i(88, 88), true))
-	assert(lab.npc.place(Vector2i(88, 85), true))
+	if lab.npc != null:
+		assert(lab.npc.place(Vector2i(88, 85), true))
 	assert(lab.start_melee_trial({"third_enabled": true, "third_faction": 2,
 		"friendly_count": 6, "enemy_count": 6, "third_count": 6,
 		"friendly_attack": false, "enemy_attack": false, "third_attack": false}).ok)
@@ -105,11 +106,24 @@ func _claims() -> void:
 	var owners := {}
 	for team: TerrainArmy in lab.combat_armies:
 		for cell: Vector2i in team._cell_owners:
-			assert(not owners.has(cell), "Two real people share a standing/reserved cell")
+			assert(not owners.has(cell), "Two real people share a standing cell")
 			owners[cell] = team.team_id
 		for cell: Vector2i in team._reserved_cells:
-			assert(not owners.has(cell), "Two real people share a standing/reserved cell")
-			owners[cell] = team.team_id
+			if owners.has(cell):
+				var entering: int = int(team._reserved_cells[cell])
+				var occupant: int = int(team._cell_owners.get(cell, -1))
+				var same_batch := false
+				if occupant >= 0:
+					for batch: Array in lab.combat_movement_coordinator.get_inflight_batches_for_formation(team):
+						if batch.has(team.combat_identity(entering)) and batch.has(team.combat_identity(occupant)):
+							same_batch = true
+							break
+				assert(owners[cell] == team.team_id and occupant >= 0 and occupant != entering
+					and team.moving_to[entering] == cell and team.moving_to[occupant] != TerrainArmy.INVALID_CELL
+					and team._reserved_cells.get(team.moving_to[occupant], -1) == occupant and same_batch,
+					"Only one accepted same-team batch may reserve another member's source")
+			else:
+				owners[cell] = team.team_id
 		for index in range(team.cells.size()):
 			if team.moving_to[index] != TerrainArmy.INVALID_CELL:
 				assert(lab.terrain.can_step(team.cells[index], team.moving_to[index]))
@@ -127,17 +141,81 @@ func _arrived(team: TerrainArmy, goals: Array[Vector2i], excluded: Array[int] = 
 	for index in range(team.cells.size()):
 		if index in excluded: continue
 		assert(team.combat_can_act(index), "Unexpected ineligible member %d at %s" % [index, stage])
-		assert(team.cells[index] == goals[index], "Member %d stopped early at %s, expected %s (%s)" % [index, team.cells[index], goals[index], stage])
-	assert(team.command_status.begins_with("到達"), "A blocked HOLD is not arrival")
+		var expected: Vector2i = goals[index]
+		if team._combat_deployment_plan != null:
+			expected = team._combat_deployment_plan.get_slot_for_member(team.combat_identity(index))
+		assert(team.cells[index] == expected, "Member %d stopped early at %s, expected %s (%s)" % [index, team.cells[index], expected, stage])
+	assert(team.command_status.begins_with("到達") or team.command_status.begins_with("已抵達"), "A blocked HOLD is not arrival")
+
+func _retreat_to_boundary() -> bool:
+	# RETREAT now requires original Sustain collapse and ends at a physical Site
+	# exit, not a caller-selected nearby HOLD slot. Keep all 18 real people.
+	var originals := {}
+	for team: TerrainArmy in lab.combat_armies:
+		var enabled: Dictionary = lab.site_controller.captivity_supply.enable_team(team)
+		if not enabled.ok:
+			push_error("Original retreat supply enrollment failed: " + str(enabled))
+			return false
+		assert(is_zero_approx(SiteSustain.rations(enabled.entry.sustain, enabled.entry.inventory)),
+			"Retreat fixture starts without supply stock; never discard paid food")
+		for index in range(team.combat_units.size()):
+			var row: Dictionary = team.combat_units[index]
+			originals[team.combat_identity(index)] = {"body": row, "holder": row.item_state,
+				"cargo": row.cargo.duplicate(true), "items": row.item_state.duplicate(true),
+				"hp": float(team.combat_hot_get(index, &"hp"))}
+	assert(originals.size() == 18)
+	# Same bounded hunger fixture as site_tactical_ai_retreat_test: original
+	# Sustain crosses its own threshold before hunger can inflict casualties.
+	for team: TerrainArmy in lab.combat_armies:
+		lab.site_controller.advance_team_sustain(team, 40.0 * SiteSustain.HOUR)
+		assert(team.is_sustain_routed(), "Original Sustain must authorize RETREAT")
+		for index in range(team.combat_units.size()):
+			assert(is_equal_approx(float(team.combat_hot_get(index, &"hp")),
+				float(originals[team.combat_identity(index)].hp)), "Collapse fixture must not inflict hunger damage")
+	lab.terrain.site.minute = int(lab.terrain.site.minute) + 2400
+	for team: TerrainArmy in lab.combat_armies:
+		var issued: Dictionary = team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.RETREAT)
+		if not issued.ok:
+			push_error("Routed original commander could not issue RETREAT: " + str(issued))
+			return false
+	var exited := 0
+	for tick in range(1800):
+		_tick()
+		exited = 0
+		for team: TerrainArmy in lab.combat_armies:
+			for index in range(team.combat_units.size()):
+				if bool(team.combat_hot_get(index, &"site_exited", false)):
+					assert(team._edge_distance(team.cells[index]) == 0 and team.moving_to[index] == TerrainArmy.INVALID_CELL,
+						"Every living exit requires real legal boundary arrival")
+					exited += 1
+		if exited == 18: break
+		if tick % 150 == 0: await process_frame
+	if exited != 18:
+		push_error("Only %d / 18 original people reached a physical exit at %s" % [exited, stage])
+		return false
+	for team: TerrainArmy in lab.combat_armies:
+		assert(team.morale_retreat_terminal() and team.moving_member_count() == 0
+			and team._cell_owners.is_empty() and team._reserved_cells.is_empty(),
+			"Completed retreat must release every original standing/reservation claim")
+		for index in range(team.combat_units.size()):
+			var identity := team.combat_identity(index)
+			var row: Dictionary = team.combat_units[index]
+			assert(originals.has(identity) and is_same(row, originals[identity].body)
+				and is_same(row.item_state, originals[identity].holder)
+				and row.item_state == originals[identity].items and row.cargo == originals[identity].cargo,
+				"Exit must retain the exact original person, equipment and cargo")
+			assert(float(team.combat_hot_get(index, &"hp")) > 0.0
+				and not bool(team.combat_hot_get(index, &"captive", false)))
+	return true
 
 func _exchange(first: int, second: int, _outcome: Dictionary) -> void:
 	assert(people.has(first) and people.has(second), "Distant original player/NPC must not join fixture")
 	if exchange_round != lab._exchange_round:
 		exchange_round = lab._exchange_round
 		round_used.clear()
-	assert(not round_used.has(first) and not round_used.has(second))
-	round_used[first] = true
-	round_used[second] = true
+	var pair_key := "%d:%d" % [mini(first, second), maxi(first, second)]
+	assert(not round_used.has(pair_key), "A pair may resolve only once in its round")
+	round_used[pair_key] = true
 	var a: TerrainArmy = people[first].team
 	var b: TerrainArmy = people[second].team
 	assert(a.faction_id != b.faction_id)
@@ -201,13 +279,15 @@ func _run() -> void:
 	_advance(2.0)
 	for team: TerrainArmy in lab.combat_armies:
 		assert(team.cells == goals[team.team_id] and team.moving_count() == 0)
-		goals[team.team_id] = _issue(team, TerrainArmy.CombatOrder.RETREAT, Vector2i(-3, -2))
-	_advance(10.0)
-	for team: TerrainArmy in lab.combat_armies: _arrived(team, goals[team.team_id])
-	report.move_hold_retreat = {"teams": 3, "all_members": 18, "committed_steps_at_hold": in_flight}
-	print("NPC_AI: all 18 MOVE/RETREAT arrivals and committed HOLD")
+	if not await _retreat_to_boundary():
+		quit(1)
+		return
+	report.move_hold_retreat = {"teams": 3, "all_members": 18, "committed_steps_at_hold": in_flight,
+		"original_sustain_rout": true, "all_members_physically_exited": 18}
+	print("NPC_AI: all 18 MOVE arrivals, committed HOLD and original RETREAT boundary exits")
 	await process_frame
 
+	await _fresh()
 	stage = "fully blocked then renewed MOVE"
 	var team := lab.army
 	var blocked_cells := team.cells.duplicate()
@@ -226,16 +306,18 @@ func _run() -> void:
 			if x == left - 1 or x == right + 1 or y == top - 1 or y == bottom + 1:
 				wall.append(Vector2i(x, y))
 	for cell: Vector2i in wall: lab.terrain.static_blocked[lab.terrain.index(cell)] = 1
-	var blocked_goals := _issue(team, TerrainArmy.CombatOrder.MOVE, Vector2i(5, 0))
+	var blocked_goal := Vector2i(team.command_reference.floor()) + Vector2i(5, 0)
+	var denied: Dictionary = team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.MOVE, blocked_goal)
+	assert(not denied.ok and denied.code == "BLOCKED", "A sealed team must reject the MOVE before changing its order")
 	_advance(2.0)
 	assert(team.combat_order == TerrainArmy.CombatOrder.HOLD and team.moving_count() == 0)
-	assert(team.cells == blocked_cells and team.command_status.begins_with("未找到"))
+	assert(team.cells == blocked_cells)
 	_advance(2.0)
 	assert(team.cells == blocked_cells, "Blocked team must not oscillate")
 	for cell: Vector2i in wall: lab.terrain.static_blocked[lab.terrain.index(cell)] = 0
-	assert(_issue(team, TerrainArmy.CombatOrder.MOVE, Vector2i(5, 0)) == blocked_goals)
+	var renewed_goals := _issue(team, TerrainArmy.CombatOrder.MOVE, Vector2i(5, 0))
 	_advance(10.0)
-	_arrived(team, blocked_goals)
+	_arrived(team, renewed_goals)
 	report.blocked_recovery = {"all_members": 6, "stable_hold_seconds": 4, "new_order_arrived": true}
 	print("NPC_AI: all 6 blocked HOLD then genuine new-command recovery")
 	await process_frame
@@ -245,7 +327,7 @@ func _run() -> void:
 	_place(lab.opposing_army, _formation(Vector2i(25, 12)))
 	var origin := lab.army.command_reference
 	var before := lab.army.cells.duplicate()
-	_issue(lab.opposing_army, TerrainArmy.CombatOrder.RETREAT, Vector2i(18, 0))
+	_issue(lab.opposing_army, TerrainArmy.CombatOrder.MOVE, Vector2i(18, 0))
 	assert(lab.army.issue_combat_order(lab.army.current_commander, TerrainArmy.CombatOrder.PURSUE,
 		TerrainArmy.INVALID_CELL, lab.opposing_army.combat_identity(0)).ok)
 	var return_goals: Array[Vector2i] = []
@@ -278,7 +360,7 @@ func _run() -> void:
 	return_goals = lab.army.combat_slots.duplicate()
 	_advance(10.0)
 	_arrived(lab.army, return_goals)
-	assert(lab.opposing_army.combat_can_act(0), "Enemy's original rescue wakes it, but does not authorize a fresh pursuit")
+	assert(float(lab.opposing_army.combat_hot_get(0, &"ko")) > 0.0 and not lab.opposing_army.combat_can_act(0), "Enemy's original rescue shortens KO without authorizing fresh pursuit")
 	stopped = lab.army.cells.duplicate()
 	_advance(2.0)
 	assert(lab.army.cells == stopped and lab.army.combat_order == TerrainArmy.CombatOrder.HOLD)
@@ -287,6 +369,8 @@ func _run() -> void:
 	await _fresh()
 	stage = "KO succession and safe automatic rescue"
 	team = lab.army
+	for index in [1, 2]:
+		assert(team.set_military_role(team.combat_identity(index), "officer").ok)
 	assert(team.record_officer_service([1, 2], true).ok)
 	var identities := []
 	for index in range(6): identities.append(team.combat_identity(index))
@@ -298,7 +382,7 @@ func _run() -> void:
 	var acting_goals := _issue(team, TerrainArmy.CombatOrder.MOVE, Vector2i(2, 0))
 	_advance(6.0)
 	_arrived(team, acting_goals, [0])
-	assert(team.cells[0] == before[0] and float(team.combat_units[0].ko) > 0.0)
+	assert(team.cells[0] == before[0] and float(team.combat_hot_get(0, &"ko")) > 0.0)
 	for index in range(6): assert(team.combat_identity(index) == identities[index])
 	report.ko_command = {"acting_commander": 1, "all_eligible_arrivals": 5, "no_body_relocation_on_promotion": true}
 	# A separate untouched team provides adjacent safe HOLD helpers. Their AI,
@@ -310,11 +394,13 @@ func _run() -> void:
 	var rescuer: int = team._unit_rescues.keys()[0]
 	assert(int(team._unit_rescues[rescuer].patient) == 2)
 	_advance(4.0)
-	assert(float(team.combat_units[2].ko) == 0.0 and str(team.combat_units[2].pose) == "get_up")
-	assert(is_equal_approx(float(team.combat_units[2].hp), 92.5) and not team.combat_can_act(2))
+	assert(float(team.combat_hot_get(2, &"ko")) > 0.0 and float(team.combat_hot_get(2, &"ko")) <= SiteCombatRules.RESCUED_KNOCKOUT_GAME_SECONDS and str(team.combat_hot_get(2, &"pose")) == "unconscious")
+	assert(is_equal_approx(float(team.combat_hot_get(2, &"hp")), 92.5) and not team.combat_can_act(2))
+	team.prepare_combat(0.1, float(team.combat_hot_get(2, &"ko")))
+	assert(str(team.combat_hot_get(2, &"pose")) == "get_up" and not team.combat_can_act(2))
 	_advance(2.3)
 	assert(team.combat_can_act(2) and team._unit_rescues.is_empty())
-	report.rescue = {"patient": team.combat_identity(2), "rescuer": team.combat_identity(rescuer), "hp_after": 92.5, "natural_ko_seconds": 30, "rescued_before_natural_wake": true}
+	report.rescue = {"patient": team.combat_identity(2), "rescuer": team.combat_identity(rescuer), "hp_after": 92.5, "natural_ko_game_seconds": 14400, "rescued_cap_game_seconds": 3600}
 	print("NPC_AI: acting officer executes all eligible members; original automatic safe rescue completes")
 	await process_frame
 
@@ -332,7 +418,7 @@ func _run() -> void:
 	for army: TerrainArmy in lab.combat_armies:
 		assert(participants[army.faction_id].size() >= 2, "Must not prove ATTACK using only a captain")
 		participation[army.faction_id] = participants[army.faction_id].size()
-	report.attack = {"pairs": pairs.duplicate(), "participants_per_faction": participation, "no_same_faction_or_double_exchange": true}
+	report.attack = {"pairs": pairs.duplicate(), "participants_per_faction": participation, "no_same_faction_or_duplicate_pair": true}
 	print("NPC_AI: three actual hostile pairs and multi-member participation: ", report.attack)
 	await _fresh()
 	stage = "RETREAT breaks real three-way contact"
@@ -344,15 +430,14 @@ func _run() -> void:
 	assert(pairs.has("0:1") and pairs.has("0:2") and pairs.has("1:2"), "Retreat fixture must first really engage all three sides")
 	for army: TerrainArmy in lab.combat_armies:
 		for index in range(6): assert(army.combat_can_act(index), "Pre-retreat fixture requires all 18 living and capable")
-	goals[lab.army.team_id] = _issue(lab.army, TerrainArmy.CombatOrder.RETREAT, Vector2i.LEFT * 4)
-	goals[lab.opposing_army.team_id] = _issue(lab.opposing_army, TerrainArmy.CombatOrder.RETREAT, Vector2i.RIGHT * 4)
-	goals[lab.third_army.team_id] = _issue(lab.third_army, TerrainArmy.CombatOrder.RETREAT, Vector2i.UP * 4)
-	_advance(10.0)
-	for army: TerrainArmy in lab.combat_armies: _arrived(army, goals[army.team_id])
+	if not await _retreat_to_boundary():
+		quit(1)
+		return
 	var exchanges_at_rest := lab.exchange_count
 	_advance(2.0)
 	assert(lab.exchange_count == exchanges_at_rest)
-	report.retreat_from_contact = {"all_eligible_members_arrived": 18, "all_three_hostile_pairs_first_engaged": true, "no_further_contact_seconds": 2}
+	report.retreat_from_contact = {"all_eligible_members_arrived": 18, "all_members_physically_exited": 18,
+		"original_sustain_rout": true, "all_three_hostile_pairs_first_engaged": true, "no_further_contact_seconds": 2}
 	print("NPC_AI: all 18 retreat from real three-way contact and stop exchanging")
 	await _fresh()
 	stage = "admitted bow/crossbow captains autonomous ATTACK and empty ammunition"

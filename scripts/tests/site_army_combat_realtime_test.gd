@@ -555,10 +555,11 @@ func _run() -> void:
 	lab.character.set_process(true)
 	lab.npc.set_process(true)
 	assert(lab.character.combat_driven_by_lab and lab.npc.combat_driven_by_lab)
-	# SiteController intentionally hides the optional TerrainLab debug panel
-	# when constructing the normal Site HUD. Do not require or force debug UI.
+	# Normal Site startup does not construct the legacy debug panel.
+	# Preserve the optional test window's visibility without requiring it.
+	assert(not lab.has_node("TerrainLabUI"), "Legacy debug panel must not be constructed")
 	measurements.initial_ui_visibility = {"site_hud": lab.get_node("SiteUI").visible,
-		"optional_debug_panel": lab.get_node("TerrainLabUI").visible}
+		"optional_debug_panel": is_instance_valid(lab.site_test_window) and lab.site_test_window.visible}
 	if not lab.get_node("SiteUI").visible:
 		_setup_unavailable("HUD_HIDDEN", "The original normal Site HUD must remain visible")
 		return
@@ -830,7 +831,7 @@ func _finish_realtime(reason: String, completed: bool) -> void:
 		"original_1018_items_and_cargo_conserved": inventory_conserved and lab.terrain.site.item_records.size() == 1018 and bool(item_validation.ok),
 		"no_node_growth": nodes_after == int(measurements.nodes_before),
 		"active_battle_preserves_safe_save_BUSY": safe_busy,
-		"production_hud_still_visible": lab.get_node("SiteUI").visible and lab.get_node("TerrainLabUI").visible == bool(measurements.initial_ui_visibility.optional_debug_panel),
+		"production_hud_still_visible": lab.get_node("SiteUI").visible and (is_instance_valid(lab.site_test_window) and lab.site_test_window.visible) == bool(measurements.initial_ui_visibility.optional_debug_panel) and not lab.has_node("TerrainLabUI"),
 		"source_fingerprints_unchanged": _source_fingerprints() == measurements.source_fingerprints,
 	}
 	var passed := true

@@ -8,9 +8,10 @@ func _click(parent: Node, node_name: String) -> void:
 	button.pressed.emit()
 
 func _open(lab: TerrainLab) -> AcceptDialog:
-	_click(lab.site_controller.panel, "OpenCombatWindow")
-	assert(lab.site_controller.combat_window.visible)
-	_click(lab.site_controller.combat_window, "OpenLogistics")
+	lab.site_controller.open_window("supply")
+	var supply: Window = lab.site_controller.formal_windows.supply
+	assert(supply.visible)
+	_click(supply, "OpenLogistics")
 	var dialog := lab.get_node_or_null("SiteUI/LogisticsDialog") as AcceptDialog
 	assert(dialog != null and dialog.visible)
 	return dialog
@@ -31,6 +32,7 @@ func _quantity(dialog: AcceptDialog, text: String, all_opened: bool = false) -> 
 
 func _run() -> void:
 	var lab := TerrainLab.new()
+	lab.npc = TerrainTestNPC.new() # Explicit original ground-owner fixture; formal startup has no worker.
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	lab.set_process(false)
@@ -112,9 +114,9 @@ func _run() -> void:
 	assert(entry.delivery.is_empty() and controller.message.text.begins_with(Runtime.fail("STORAGE_FULL").message))
 	# An already-open form cannot become the newly controlled captain's order.
 	assert(controller._control_family_person(null, captain).ok)
-	_click(dialog, "AssignLogisticsMembers")
-	assert(controller.message.text.begins_with("STALE") and controller.team_food_capacity(team) == base_capacity)
-	dialog.free()
+	assert(not is_instance_valid(dialog) and not controller._ui_dialogs.has("logistics"), "Changing control must dispose the old logistics dispatch scope")
+	assert(controller.team_food_capacity(team) == base_capacity and not team.combat_units[1].logistics and not team.combat_units[2].logistics)
+	assert(entry.delivery.is_empty() and cargo.fish == 16 and float(private.open_rations) == 0.123456789123)
 	dialog = _open(lab)
 	_select(dialog, "LogisticsTargetTeam", team.team_id)
 	_select(dialog, "LogisticsReceiver", receiver)

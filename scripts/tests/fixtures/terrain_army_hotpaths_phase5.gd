@@ -1,7 +1,7 @@
 extends "res://scripts/terrain_lab/terrain_army.gd"
 ## Frozen phase-five methods for same-owner performance/state comparisons.
 
-func prepare_combat(delta: float) -> void:
+func prepare_combat(delta: float, _game_seconds: float = -1.0) -> void:
 	if not combat_enabled or delta <= 0.0 or (is_inside_tree() and get_tree().paused):
 		return
 	var profile_started := Time.get_ticks_usec() if combat_profile_enabled else 0

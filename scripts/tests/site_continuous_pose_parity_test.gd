@@ -3,23 +3,38 @@ extends SceneTree
 const Source = preload("res://scripts/terrain_lab/terrain_army_contact_source.gd")
 const OUTPUT := "res://.visual_captures/site_continuous_pose"
 var direction_index := 0
+var target_armor := ""
+var body_index := 0
 
 func _initialize() -> void:
 	for argument: String in OS.get_cmdline_user_args():
 		if argument.begins_with("--direction="):
 			direction_index = argument.trim_prefix("--direction=").to_int()
+		if argument.begins_with("--armor="):
+			target_armor = argument.trim_prefix("--armor=")
+		if argument.begins_with("--body="):
+			body_index = argument.trim_prefix("--body=").to_int()
 	call_deferred("run")
 
 func run() -> void:
 	create_timer(23.0).timeout.connect(func() -> void: quit(1))
 	assert(direction_index in [0, 1, 2, 3] and TerrainArmy.load_combat_bake())
+	var appearance: Dictionary = TerrainArmy._combat_bake.manifest.appearance.duplicate(true)
+	var output_dir := OUTPUT
+	if not target_armor.is_empty():
+		assert(target_armor in ["armor_chinese_steel_01", "armor_western_steel_01", "armor_mingguang_01"] and body_index in [0, 1])
+		appearance = HumanCharacter3DEditor.default_appearance(body_index)
+		appearance.parts.armor = target_armor
+		output_dir = "res://output/steel_mingguang_walk_20260919/imported_query/%d_%s" % [body_index, target_armor]
+		assert(not DirAccess.dir_exists_absolute(output_dir), "Never overwrite target evidence")
 	var source := Source.new()
 	var actor := TerrainTestCharacter.new()
+	actor.visual_state.body_index = int(appearance.body)
 	root.add_child(actor)
 	actor.set_process(false)
 	actor.initialize_visual()
-	assert(actor.editor != null and actor.editor.restore_appearance(TerrainArmy._combat_bake.manifest.appearance))
-	assert(source.initialize(root, TerrainArmy._combat_bake.manifest.appearance, actor.editor))
+	assert(actor.editor != null and actor.editor.restore_appearance(appearance))
+	assert(source.initialize(root, appearance, actor.editor))
 	assert(source.editor.use_imported_model, "Fixture must exercise fresh imported mesh with raw animation copies")
 	actor.editor.combat_ready = true
 	actor.editor.visual_state.combat_ready = true
@@ -74,10 +89,10 @@ func run() -> void:
 		if clip == &"walk_slash":
 			await process_frame
 			await RenderingServer.frame_post_draw
-			DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUTPUT))
-			assert(root.get_texture().get_image().save_png(OUTPUT + "/direction%d_%s.png" % [direction_index, str(time).replace(".", "_")]) == OK)
+			DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(output_dir))
+			assert(root.get_texture().get_image().save_png(output_dir + "/direction%d_%s.png" % [direction_index, str(time).replace(".", "_")]) == OK)
 	assert(actor.editor.animation_player.get_animation(&"idle").get_track_count() > 53, "Query pruning must not modify the live animation")
-	var file := FileAccess.open(OUTPUT + "/direction%d.json" % direction_index, FileAccess.WRITE)
+	var file := FileAccess.open(output_dir + "/direction%d.json" % direction_index, FileAccess.WRITE)
 	file.store_string(JSON.stringify(reports, "\t"))
 	file.close()
 	source.dispose()

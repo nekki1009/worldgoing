@@ -2,7 +2,6 @@ extends SceneTree
 
 const Timings = preload("res://scripts/terrain_lab/character_combat_timings.gd")
 const Store = preload("res://scripts/terrain_lab/site_store.gd")
-const SAVE := "res://.godot-temp/site_combat/fatigue.json"
 
 func _initialize() -> void:
 	run.call_deferred()
@@ -45,6 +44,7 @@ func run() -> void:
 				near(end - start, event.active_end - event.active_start, "active interval unchanged")
 				timing_cases += 1
 	var lab := TerrainLab.new()
+	lab.npc = TerrainTestNPC.new() # Historical command fixture supplies its original NPC before entering the tree.
 	lab.exchange_enabled = false # This historical test asserts geometry/BFS threats and continuous guard effort.
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
@@ -54,7 +54,9 @@ func run() -> void:
 	lab.npc_allied_toggle.button_pressed = false # This historical threat fixture explicitly needs an opponent.
 	assert(lab.npc.faction_id != lab.character.faction_id)
 	lab.terrain.site.worker_enabled = false
-	lab.site_controller.save_path = SAVE
+	var save_path: String = lab.site_controller.save_path
+	assert(not lab.site_controller.crowd_test_run_id.is_empty(), "A unique --crowd-test run is required for original autosave isolation")
+	assert(lab.site_controller._save_path_guard(save_path).ok, "Original Controller must admit its configured fixture save path")
 	var actor := lab.character
 	var npc := lab.npc
 	actor.fatigue = 67.25
@@ -62,8 +64,8 @@ func run() -> void:
 	npc.fatigue = 91.5
 	actor.hp = 41.0
 	lab.site_controller._capture_positions()
-	assert(Store.save(lab.terrain, SAVE).ok)
-	var loaded := Store.load_site(SAVE)
+	assert(Store.save(lab.terrain, save_path).ok)
+	var loaded := Store.load_site(save_path)
 	assert(loaded.ok)
 	lab.bind_terrain(loaded.data)
 	near(actor.fatigue, 67.25)
@@ -76,7 +78,7 @@ func run() -> void:
 	actor.fatigue_rest = 30
 	lab.site_controller._save_elapsed = 30
 	lab._process(1)
-	var automatic := Store.load_site(SAVE)
+	var automatic := Store.load_site(save_path)
 	assert(automatic.ok)
 	near(actor.fatigue, 60.0 - 1.0 / 3.0)
 	near(float(automatic.data.site.actors.player.fatigue), actor.fatigue, "autosave after frame fatigue settlement")
@@ -106,6 +108,35 @@ func run() -> void:
 	data.ramp_edges.fill(0)
 	actor.place(Vector2i(20, 20), true)
 	npc.place(Vector2i(29, 20), true)
+	# Zero-fatigue solo bodies still retain the original peaceful rest phase.
+	# Positive-fatigue recovery/threat/clock assertions below remain unchanged.
+	var original_combat_left := float(data.site.combat_left)
+	data.site.combat_left = 0.0
+	actor.fatigue = 0.0
+	actor.fatigue_rest = 0.0
+	lab._advance_fatigue(2.0)
+	near(actor.fatigue, 0.0, "zero solo idle rest cannot create fatigue")
+	near(actor.fatigue_rest, 2.0, "zero solo peaceful idle retains original rest delay")
+	npc.place(Vector2i(28, 20), true)
+	lab._advance_fatigue(1.0)
+	near(actor.fatigue, 0.0, "zero solo local enemy cannot create fatigue")
+	near(actor.fatigue_rest, 0.0, "original eight-step enemy threat also interrupts zero solo rest")
+	npc.place(Vector2i(29, 20), true)
+	lab._advance_fatigue(2.0)
+	near(actor.fatigue_rest, 2.0, "zero solo rest resumes only after the original local threat leaves")
+	data.site.combat_left = 10.0
+	lab._advance_fatigue(1.0)
+	near(actor.fatigue, 0.0, "zero solo combat cannot create fatigue")
+	near(actor.fatigue_rest, 0.0, "zero solo original Site combat clock resets rest")
+	data.site.combat_left = 0.0
+	lab._advance_fatigue(2.0)
+	near(actor.fatigue_rest, 2.0, "zero solo rest resumes on the original peaceful boundary")
+	actor.guarding = true
+	lab._advance_fatigue(1.0)
+	near(actor.fatigue, PersonFatigue.GUARD_RATE, "original active guard charges the previously zero body")
+	near(actor.fatigue_rest, 0.0, "actual original guard activity resets solo rest")
+	actor.guarding = false
+	data.site.combat_left = original_combat_left
 	actor.fatigue = 60
 	actor.fatigue_rest = 0
 	lab._advance_fatigue(30)

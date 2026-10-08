@@ -4,9 +4,46 @@ const FROZEN := "res://scripts/tests/fixtures/terrain_army_presence_phase10.gd.t
 func _presence_state(team: TerrainArmy) -> Array:
 	return [team.command_reference, team.command_reference_valid, team.combat_units]
 
+func _delta_contract(kernel: RefCounted) -> void:
+	assert(kernel.has_method("command_presence_delta"))
+	var rows: Array = []
+	var cells: Array[Vector2i] = [Vector2i.ZERO, Vector2i(1, 0), Vector2i(8, 0), Vector2i(10, 0)]
+	for index in cells.size():
+		rows.append({"hp": 100.0, "ko": 0.0, "pose": "idle", "person_id": (1 << 40) + index, "captive": false, "departed": false, "present": false})
+	var input := var_to_bytes([rows, cells])
+	var change: Array = kernel.call("command_presence_delta", rows, cells, {}, 10.0, [])
+	assert(change.size() == 5 and change[4] and change[1].size() == 4)
+	assert(input == var_to_bytes([rows, cells]), "Delta projection never mutates original rows")
+	var cache: Array = change[3]
+	cache.make_read_only()
+	var retained := var_to_bytes(cache)
+	for index in change[1].size(): rows[change[1][index]].present = change[2][index] != 0
+	change = kernel.call("command_presence_delta", rows, cells, {}, 10.0, cache)
+	assert(change.size() == 5 and not change[4] and change[1].is_empty(), "Stable geometry and presence do no owner writes")
+	rows[0].hp = 90.0
+	rows[1].ko = 1.0
+	rows[2].pose = "get_up"
+	change = kernel.call("command_presence_delta", rows, cells, {}, 10.0, cache)
+	assert(not change[4] and change[1] == PackedInt32Array([1, 2]) and change[2] == PackedByteArray([0, 0]), "Eligibility updates do not rebuild geometry")
+	rows[0].captive = true
+	change = kernel.call("command_presence_delta", rows, cells, {}, 10.0, cache)
+	assert(change[4], "Reference membership change invalidates geometry")
+	rows[0].captive = false
+	change = kernel.call("command_presence_delta", rows, cells, {0: Vector2(0.75, 0.5)}, 10.0, cache)
+	assert(change[4], "Interpolated movement invalidates geometry")
+	rows[3].ko = NAN
+	assert(kernel.call("command_presence_delta", rows, cells, {}, 10.0, cache).is_empty(), "Invalid late row rejects atomically")
+	rows[3].ko = 0.0
+	assert(kernel.call("command_presence_delta", rows, cells, {}, NAN, cache).is_empty())
+	rows[3] = rows[0]
+	assert(kernel.call("command_presence_delta", rows, cells, {}, 10.0, cache).is_empty(), "Aliases retain sequential original fallback")
+	assert(retained == var_to_bytes(cache), "Retained cache is immutable across valid and rejected calls")
+	print("ARMY_PRESENCE_DELTA_CONTRACT_PASS stable/eligibility/geometry/alias/atomic-rejection/retained-cache")
+
 func _run() -> void:
 	var kernel := TerrainArmy._get_idle_kernel()
 	assert(kernel != null and kernel.has_method("command_presence"))
+	_delta_contract(kernel)
 	# Exercise worker boundaries, shared read-only rows and atomic rejection.
 	var shared := {"hp": 100.0, "ko": 0.0, "pose": "idle", "person_id": (1 << 40), "captive": false, "departed": false}
 	shared.make_read_only()
@@ -82,8 +119,9 @@ func _run() -> void:
 			b.move_progress[i] = a.move_progress[i]
 			b.move_curve[i] = a.move_curve[i]
 		# Aliases must see earlier present writes, including hysteresis changes.
-		a.combat_units[99] = a.combat_units[0]
-		b.combat_units[99] = b.combat_units[0]
+		if trial % 4 == 0:
+			a.combat_units[99] = a.combat_units[0]
+			b.combat_units[99] = b.combat_units[0]
 		a.command_radius = rng.randf_range(-2.0, 120.0)
 		b.command_radius = a.command_radius
 		a._refresh_command_presence()
@@ -97,6 +135,7 @@ func _run() -> void:
 			b.command_radius = a.command_radius
 			a._refresh_command_presence(); b._refresh_command_presence()
 			assert(var_to_bytes(_presence_state(a)) == var_to_bytes(_presence_state(b)))
+	assert(b.native_presence_delta_calls > 0 and b.native_presence_geometry_rebuilds > 0 and b.native_presence_geometry_reuses > 0, "Randomized owner oracle must exercise both delta cache paths")
 	# Empty reference keeps the previous reference vector, but clears presence.
 	for team: TerrainArmy in [a, b]:
 		for row: Dictionary in team.combat_units: row.member = false

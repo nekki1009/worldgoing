@@ -16,6 +16,7 @@ func _process(_delta: float) -> bool:
 	return false
 
 func _run() -> void:
+	assert(OS.get_cmdline_user_args().has("--site-test-ui"), "Battle setup controls require --site-test-ui")
 	assert(DisplayServer.get_name() == "headless")
 	var lab := TerrainLab.new()
 	lab.pause_when_unfocused = false
@@ -28,26 +29,31 @@ func _run() -> void:
 	for team: TerrainArmy in lab.combat_armies:
 		team.set_process(false)
 	var controller: SiteController = lab.site_controller
+	var test_host: Window = lab.site_test_window
+	assert(test_host != null)
+	var test_tabs := test_host.find_child("TestTabs", true, false) as TabContainer
+	assert(test_tabs != null)
 	assert(controller.top_banner.get_parent() == lab.get_node("SiteUI"))
 	assert(controller.top_banner.is_ancestor_of(controller.clock_label))
 	assert(controller.top_banner.is_ancestor_of(controller.pause_button))
 	assert(controller.top_banner.is_ancestor_of(controller.player_status_label))
 	assert(not controller.panel.is_ancestor_of(controller.clock_label))
 	assert(not controller.panel.is_ancestor_of(controller.pause_button))
-	assert(controller.panel.is_ancestor_of(lab.find_child("SaveSite", true, false)))
-	assert(controller.panel.is_ancestor_of(lab.find_child("LoadSite", true, false)))
+	assert(controller.formal_windows.system.is_ancestor_of(lab.find_child("SaveSite", true, false)))
+	assert(controller.formal_windows.system.is_ancestor_of(lab.find_child("LoadSite", true, false)))
 	assert(lab.find_child("SlowerSite", true, false) != null and lab.find_child("FasterSite", true, false) != null)
 	controller._layout()
-	assert(controller.top_banner.position.x + controller.top_banner.size.x <= controller.panel.position.x - 16.0 + 0.01)
+	assert(controller.top_banner.position.x + controller.top_banner.size.x <= lab.get_viewport_rect().size.x - 16.0 + 0.01)
 	_assert_status_layout(controller, lab.get_viewport_rect().size, SiteController.PANEL_SCALE)
 	var original_size := root.size
 	var original_content_scale_size := root.content_scale_size
 	root.size = Vector2i(1280, 720)
 	root.content_scale_size = root.size
-	lab.get_node("TerrainLabUI").show()
+	assert(not lab.has_node("TerrainLabUI"), "Legacy debug panel must not be constructed")
+	lab.site_test_window.show()
 	controller._layout()
 	_assert_status_layout(controller, lab.get_viewport_rect().size, SiteController.PANEL_SCALE - 0.01)
-	lab.get_node("TerrainLabUI").hide()
+	lab.site_test_window.hide()
 	root.size = original_size
 	root.content_scale_size = original_content_scale_size
 	controller._layout()
@@ -77,7 +83,7 @@ func _run() -> void:
 	assert(controller.status_panel.is_ancestor_of(controller.details))
 	assert(controller.status_panel.is_ancestor_of(controller.message))
 	assert(not controller.panel.is_ancestor_of(controller.details))
-	assert(controller.combat_window.is_ancestor_of(lab.find_child("StartMeleeTrial", true, false)))
+	assert(test_host.is_ancestor_of(lab.find_child("StartMeleeTrial", true, false)))
 	assert(not controller.panel.is_ancestor_of(lab.find_child("StartMeleeTrial", true, false)))
 	assert(lab.npc == null and lab.find_child("CommandTestNPC", true, false) == null)
 	assert(lab.find_child("EnableWorker", true, false) == null and lab.find_child("StopWorker", true, false) == null)
@@ -123,7 +129,8 @@ func _run() -> void:
 	controller.selected = layout.enemy[0]
 	controller._set_trial_spawn(false)
 	controller._deploy_melee_trial()
-	assert(lab.army.combat_units.size() == 12 and lab.opposing_army.combat_units.size() == 8)
+	assert(lab.army.combat_units.size() == 12 and lab.opposing_army.combat_units.size() == 8,
+		"Original deployment rejected: %s; setup=%s; counts=%s/%s" % [controller.message.text, controller._trial_setup(), lab.army.combat_units.size(), lab.opposing_army.combat_units.size()])
 	_assert_genders(lab.army.combat_units, 3)
 	_assert_genders(lab.opposing_army.combat_units, 8)
 	assert(lab.army.cells[0] == layout.friendly[0] and lab.opposing_army.cells[0] == layout.enemy[0])
@@ -140,9 +147,41 @@ func _run() -> void:
 	assert(not lab.army.combat_attacking and lab.opposing_army.combat_attacking)
 	assert(lab.army.combat_order == TerrainArmy.CombatOrder.HOLD and lab.opposing_army.combat_order == TerrainArmy.CombatOrder.ATTACK)
 	assert("前排牽制" in lab.opposing_army.command_status and "後排" in lab.opposing_army.command_status)
+	test_tabs.current_tab = 6
+	test_host.call("open")
 	controller._show_melee_trial_status()
-	assert("\n" not in controller.message.text and "戰鬥測試視窗" in controller.message.text)
-	assert("我方：" in controller.combat_summary_label.text and "敵方：" in controller.combat_summary_label.text)
+	assert("\n" not in controller.message.text and "隊伍資訊" in controller.message.text)
+	assert(controller.formal_windows.team_info.visible)
+	assert(controller.team_info_label.text.contains(lab.army.combat_summary()) and controller.team_info_label.text.contains(lab.opposing_army.combat_summary()))
+	assert("現場 2 隊 · 20 人" in controller.combat_summary_label.text)
+	var summary_before := controller.combat_summary_label.text
+	test_host.call("hide_window")
+	assert(not test_host.visible)
+	lab.terrain.site.paused = true
+	controller.combat_summary_label.text = "hidden sentinel"
+	controller.clock_label.text = "stale clock"
+	controller.tick(0.26)
+	assert(controller.combat_summary_label.text == "hidden sentinel" and controller.clock_label.text != "stale clock")
+	controller.update_ui()
+	assert(controller.combat_summary_label.text == "hidden sentinel", "Hidden developer pages must not rebuild summaries")
+	controller.refresh_hidden_combat_summary_on_tick = true
+	controller.combat_summary_label.text = "legacy sentinel"
+	controller.tick(0.26)
+	assert(controller.combat_summary_label.text == "legacy sentinel", "Legacy refresh flag must not bypass hidden-page lifecycle")
+	controller.refresh_hidden_combat_summary_on_tick = false
+	controller.combat_summary_label.text = "open sentinel"
+	test_host.call("open")
+	controller.update_ui()
+	assert(test_host.visible and controller.combat_summary_label.text == summary_before)
+	controller.combat_summary_label.text = "visible sentinel"
+	controller.tick(0.26)
+	assert(controller.combat_summary_label.text == summary_before)
+	test_tabs.current_tab = 0
+	controller.combat_summary_label.text = "other page sentinel"
+	controller.tick(0.26)
+	assert(controller.combat_summary_label.text == "other page sentinel", "Unselected developer pages must not rebuild summaries")
+	test_host.call("hide_window")
+	lab.terrain.site.paused = false
 	controller._capture_positions()
 	assert(Store.save(lab.terrain, SAVE).ok, "Variable team sizes must satisfy the Site save contract")
 	var loaded := Store.load_site(SAVE)
@@ -220,9 +259,9 @@ func _assert_genders(units: Array, expected_female: int) -> void:
 	assert(female == expected_female, "Actual people and persisted appearances must match the ratio")
 
 func _assert_status_layout(controller: SiteController, screen: Vector2, maximum_scale: float) -> void:
-	assert(controller.status_panel.visible, "status hidden screen=%s panel=%s top=%s status_position=%s status_size=%s status_scale=%s debug=%s" % [screen, controller.panel.position, controller.top_banner.size, controller.status_panel.position, controller.status_panel.size, controller.status_panel.scale, controller.lab.get_node("TerrainLabUI").visible])
+	assert(controller.status_panel.visible, "status hidden screen=%s panel=%s top=%s status_position=%s status_size=%s status_scale=%s debug=%s" % [screen, controller.panel.position, controller.top_banner.size, controller.status_panel.position, controller.status_panel.size, controller.status_panel.scale, controller.lab.site_test_window.visible])
 	assert(controller.status_panel.scale.x <= maximum_scale + 0.01)
 	var status_end := controller.status_panel.position + controller.status_panel.size * controller.status_panel.scale
-	assert(status_end.x <= controller.panel.position.x - 16.0 + 0.01)
+	assert(status_end.x <= screen.x - 16.0 + 0.01)
 	assert(controller.status_panel.position.y >= controller.top_banner.position.y + controller.top_banner.size.y + 16.0 - 0.01)
 	assert(status_end.y <= screen.y - 16.0 + 0.01)

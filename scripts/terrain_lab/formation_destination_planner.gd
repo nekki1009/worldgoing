@@ -13,6 +13,37 @@ const PRESET_IDS := ["auto", "square", "wedge", "goose", "circle", "hook", "loos
 const INGRESS_BUFFER_LENGTH := 3
 const PLATFORM_RECOVERY_STALL_SEC := 1.75
 const PLATFORM_RECOVERY_COOLDOWN_SEC := 0.5
+const PLATFORM_BFS_MAX_CELLS := 128
+const PLATFORM_BFS_CACHE_STARTS := 128
+
+static var profile_enabled := false
+static var profile_usec: Dictionary = {}
+static var profile_calls: Dictionary = {}
+static var platform_bfs_cache_enabled := true # Exact, per-MOVE-plan derived result; false keeps the original search.
+
+static func _profile_stage(stage: String, started: int) -> int:
+	if not profile_enabled:
+		return 0
+	var now := Time.get_ticks_usec()
+	profile_usec[stage] = int(profile_usec.get(stage, 0)) + now - started
+	return now
+
+static func _profile_late_bind_detail(started: int, nearest_usec: int, candidate_usec: int, bfs_usec: int, side_usec: int, setup_usec: int, outer_usec: int, copy_usec: int, entry_usec: int) -> void:
+	if not profile_enabled:
+		return
+	var total: int = Time.get_ticks_usec() - started
+	profile_calls["late_bind_target_total"] = int(profile_calls.get("late_bind_target_total", 0)) + 1
+	profile_usec["late_bind_target_total"] = int(profile_usec.get("late_bind_target_total", 0)) + total
+	profile_usec["late_bind_nearest_scan"] = int(profile_usec.get("late_bind_nearest_scan", 0)) + nearest_usec
+	profile_usec["late_bind_candidate_slots"] = int(profile_usec.get("late_bind_candidate_slots", 0)) + candidate_usec - bfs_usec
+	profile_usec["late_bind_bfs"] = int(profile_usec.get("late_bind_bfs", 0)) + bfs_usec
+	profile_usec["late_bind_side_scan"] = int(profile_usec.get("late_bind_side_scan", 0)) + side_usec
+	profile_usec["late_bind_other"] = int(profile_usec.get("late_bind_other", 0)) + total - nearest_usec - candidate_usec - side_usec
+	profile_usec["late_bind_setup"] = int(profile_usec.get("late_bind_setup", 0)) + setup_usec
+	profile_usec["late_bind_outer_approach"] = int(profile_usec.get("late_bind_outer_approach", 0)) + outer_usec
+	profile_usec["late_bind_reachable_copy"] = int(profile_usec.get("late_bind_reachable_copy", 0)) + copy_usec
+	profile_usec["late_bind_entry_waypoint"] = int(profile_usec.get("late_bind_entry_waypoint", 0)) + entry_usec
+	profile_usec["late_bind_remaining"] = int(profile_usec.get("late_bind_remaining", 0)) + total - nearest_usec - candidate_usec - side_usec - setup_usec - outer_usec - copy_usec - entry_usec
 
 static func is_valid_preset(preset_id: String) -> bool:
 	return PRESET_IDS.has(preset_id)
@@ -123,6 +154,8 @@ static func preset_footprint_radius(preset_id: String, count: int) -> int:
 static func _height_of(terrain: Object, cell: Vector2i) -> int:
 	if terrain == null or not terrain.contains(cell):
 		return 0
+	if terrain.has_method("effective_height"):
+		return int(terrain.effective_height(cell))
 	if "height_levels" in terrain:
 		var idx: int = terrain.index(cell)
 		return int(terrain.height_levels[idx])
@@ -244,9 +277,12 @@ static func plan_deployment(
 	current_cells: Dictionary = {},
 	existing_facing: Vector2i = Vector2i.ZERO,
 	profile: Object = null,
-	preset_id: String = "auto"
+	preset_id: String = "auto",
+	blocked_cells: Dictionary = {}
 ) -> CombatDeploymentPlan:
 	if not is_valid_preset(preset_id) or member_ids.is_empty() or member_ids.size() > 200:
+		return null
+	if terrain == null or not terrain.contains(anchor) or not terrain.is_walkable(anchor) or macro_path.is_empty():
 		return null
 	var radius := preset_footprint_radius(preset_id, member_ids.size())
 	if radius < 0:
@@ -285,29 +321,31 @@ static func plan_deployment(
 	for b in ingress_buffer:
 		plan.ingress_buffer_cells.append(b)
 
-	# 1. Fixed presets must fit every requested cell. Auto keeps its original
-	# platform/approach split and compact-area selection.
+	# Keep the requested template; unavailable cells leave original members following.
 	var available_platform: Array[Vector2i] = []
+	var requested_slots: Array[Vector2i] = []
 	if preset_id == "auto":
 		for c in raw_platform_cells:
 			var cell: Vector2i = c
 			# Keep the entry open while any other final slot is available.
 			if cell == ingress_cell and raw_platform_cells.size() > 1:
 				continue
+			if blocked_cells.has(cell):
+				continue
 			if registry != null and registry.has_method("is_slot_reserved"):
 				if registry.is_slot_reserved(cell, formation_id):
 					continue
 			available_platform.append(cell)
-		if available_platform.is_empty() and raw_platform_cells.has(ingress_cell):
+		if available_platform.is_empty() and raw_platform_cells.has(ingress_cell) and not blocked_cells.has(ingress_cell):
 			if registry == null or not registry.has_method("is_slot_reserved") or not registry.is_slot_reserved(ingress_cell, formation_id):
 				available_platform.append(ingress_cell)
 	else:
-		available_platform = shape_slots(preset_id, member_ids.size(), anchor, plan.final_facing)
-		if available_platform.size() != member_ids.size():
+		requested_slots = shape_slots(preset_id, member_ids.size(), anchor, plan.final_facing)
+		if requested_slots.size() != member_ids.size():
 			return null
-		for cell in available_platform:
-			if not footprint_set.has(cell) or (registry != null and registry.has_method("is_slot_reserved") and registry.is_slot_reserved(cell, formation_id)):
-				return null
+		for cell in requested_slots:
+			if footprint_set.has(cell) and not blocked_cells.has(cell) and (registry == null or not registry.has_method("is_slot_reserved") or not registry.is_slot_reserved(cell, formation_id)):
+				available_platform.append(cell)
 
 	plan.structural_platform_capacity = raw_platform_cells.size()
 	plan.available_platform_capacity = available_platform.size()
@@ -360,13 +398,13 @@ static func plan_deployment(
 		lateral_columns[(cell.x - anchor.x) * side.x + (cell.y - anchor.y) * side.y] = true
 	if preset_id == "auto":
 		plan.final_width = mini(10, maxi(1, lateral_columns.size()))
-		plan.final_depth = ceili(float(final_count) / float(plan.final_width))
+		plan.final_depth = maxi(1, ceili(float(final_count) / float(plan.final_width)))
 	else:
 		var min_side := 2147483647
 		var max_side := -2147483647
 		var min_forward := 2147483647
 		var max_forward := -2147483647
-		for cell in plan.platform_slots:
+		for cell in requested_slots:
 			var offset: Vector2i = cell - anchor
 			var lateral: int = offset.x * side.x + offset.y * side.y
 			var axial: int = offset.x * plan.final_facing.x + offset.y * plan.final_facing.y
@@ -400,7 +438,7 @@ static func plan_deployment(
 	if queue_start_idx >= 0:
 		for i in range(queue_start_idx, -1, -1):
 			var qc: Vector2i = macro_path[i]
-			if not buffer_set.has(qc):
+			if not buffer_set.has(qc) and not blocked_cells.has(qc):
 				if registry == null or not registry.is_slot_reserved(qc, formation_id):
 					centerline_slots.append(qc)
 					if centerline_slots.size() >= 100:
@@ -419,7 +457,7 @@ static func plan_deployment(
 		if approach_dir == Vector2i.ZERO:
 			approach_dir = Vector2i.RIGHT
 		var hold_cell: Vector2i = macro_path[queue_start_idx] if queue_start_idx >= 0 else ingress_cell - approach_dir * (INGRESS_BUFFER_LENGTH + 1)
-		if queue_slots.is_empty() and terrain.contains(hold_cell) and terrain.is_walkable(hold_cell) and not footprint_set.has(hold_cell) and not buffer_set.has(hold_cell) and (registry == null or not registry.has_method("is_slot_reserved") or not registry.is_slot_reserved(hold_cell, formation_id)):
+		if queue_slots.is_empty() and terrain.contains(hold_cell) and terrain.is_walkable(hold_cell) and not footprint_set.has(hold_cell) and not buffer_set.has(hold_cell) and not blocked_cells.has(hold_cell) and (registry == null or not registry.has_method("is_slot_reserved") or not registry.is_slot_reserved(hold_cell, formation_id)):
 			centerline_slots.append(hold_cell)
 		var seen_queue: Dictionary = {}
 		var frontier: Array[Vector2i] = []
@@ -443,7 +481,7 @@ static func plan_deployment(
 				var offset: Vector2i = next_cell - hold_cell
 				if offset.x * approach_dir.x + offset.y * approach_dir.y > 0 or not terrain.contains(next_cell) or not terrain.is_walkable(next_cell):
 					continue
-				if buffer_set.has(next_cell) or footprint_set.has(next_cell) or not TransitPlanner._can_profile_step(terrain, source, next_cell, profile):
+				if buffer_set.has(next_cell) or footprint_set.has(next_cell) or blocked_cells.has(next_cell) or not TransitPlanner._can_profile_step(terrain, source, next_cell, profile):
 					continue
 				if registry != null and registry.has_method("is_slot_reserved") and registry.is_slot_reserved(next_cell, formation_id):
 					continue
@@ -478,10 +516,6 @@ static func plan_deployment(
 		plan.queue_hold_cross_section.append(ingress_buffer[0])
 	else:
 		plan.queue_hold_cross_section.append(ingress_cell)
-
-	# 3. Capacity verification
-	if final_count + plan.queue_capacity < member_ids.size():
-		return null # Insufficient space!
 
 	# 4. Physical arrival order fills deep cells first. Officers retain dedicated
 	# rear cells, so a commander starting behind the vanguard never has to pass it.
@@ -546,23 +580,161 @@ static func plan_deployment(
 			queue_members.append(mid)
 	for q_idx in range(queue_members.size()):
 		var mid: int = queue_members[q_idx]
-		plan.member_role_map[mid] = Types.CombatDestinationRole.APPROACH_QUEUE
-		if q_idx < plan.approach_queue_slots.size():
+		if preset_id == "auto" and q_idx < plan.approach_queue_slots.size():
+			plan.member_role_map[mid] = Types.CombatDestinationRole.APPROACH_QUEUE
 			plan.member_slot_map[mid] = plan.approach_queue_slots[q_idx]
 		else:
-			return null
+			plan.following_member_ids.append(mid)
+			continue
 		plan.slot_owner_map[plan.member_slot_map[mid]] = mid
 		plan.queue_member_ids.append(mid)
+	if not plan.following_member_ids.is_empty() or plan.platform_slots.is_empty():
+		plan.shape_version = 3
 
 	return plan
 
+## Bind only newly available real slots. Failed lease replacement changes no assignments.
+static func refresh_following_members(
+	move_plan: CombatMovePlan,
+	plan: CombatDeploymentPlan,
+	current_cells: Dictionary,
+	terrain: Object,
+	registry: Object = null,
+	blocked_cells: Dictionary = {}
+) -> int:
+	if move_plan == null or plan == null or terrain == null or plan.following_member_ids.is_empty():
+		return 0
+	var candidates: Array[Vector2i] = []
+	if plan.formation_preset_id == "auto":
+		candidates.assign(plan.platform_footprint)
+	else:
+		candidates = shape_slots(plan.formation_preset_id, plan.requested_count, plan.resolved_anchor, plan.final_facing)
+	candidates.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+		var da: int = absi(a.x - plan.resolved_anchor.x) + absi(a.y - plan.resolved_anchor.y)
+		var db: int = absi(b.x - plan.resolved_anchor.x) + absi(b.y - plan.resolved_anchor.y)
+		return da < db if da != db else (a.x < b.x if a.x != b.x else a.y < b.y)
+	)
+	var occupant_at: Dictionary = {}
+	for mid in current_cells.keys():
+		occupant_at[current_cells[mid]] = mid
+	var bindings: Dictionary = {}
+	var remaining: Array[int] = plan.following_member_ids.duplicate()
+	for slot in candidates:
+		if remaining.is_empty():
+			break
+		if not plan.platform_footprint.has(slot) or not terrain.contains(slot) or not terrain.is_walkable(slot) or blocked_cells.has(slot) or plan.slot_owner_map.has(slot) or plan.slot_lease_timers.has(slot):
+			continue
+		if slot == plan.ingress_cell and plan.formation_preset_id == "auto" and plan.platform_footprint.size() > 1:
+			continue
+		if registry != null and registry.is_slot_reserved(slot, plan.formation_id):
+			continue
+		var selected: int = int(occupant_at.get(slot, -1))
+		if selected >= 0 and (not remaining.has(selected) or move_plan.member_pending_proposal_id.has(selected)):
+			continue
+		if selected < 0:
+			var best_distance := 2147483647
+			for mid in remaining:
+				if not current_cells.has(mid) or move_plan.member_pending_proposal_id.has(mid):
+					continue
+				var cell: Vector2i = current_cells[mid]
+				var distance: int = absi(cell.x - slot.x) + absi(cell.y - slot.y)
+				if distance < best_distance:
+					selected = mid
+					best_distance = distance
+		if selected >= 0:
+			bindings[selected] = slot
+			remaining.erase(selected)
+	if bindings.is_empty():
+		return 0
+	if registry != null:
+		var slots: Array[Vector2i] = registry.get_formation_reserved_slots(plan.formation_id)
+		var roles: Dictionary = {}
+		for mid in plan.member_slot_map.keys():
+			var slot: Vector2i = plan.member_slot_map[mid]
+			if not slots.has(slot):
+				slots.append(slot)
+			roles[slot] = plan.member_role_map[mid]
+		for slot: Vector2i in plan.slot_lease_timers.keys():
+			if not slots.has(slot):
+				slots.append(slot)
+			roles[slot] = plan.slot_lease_role_map.get(slot, Types.CombatDestinationRole.PLATFORM)
+		for slot: Vector2i in bindings.values():
+			if not slots.has(slot):
+				slots.append(slot)
+			roles[slot] = Types.CombatDestinationRole.PLATFORM
+		if not bool(registry.try_replace_reservations(plan.formation_id, plan.order_serial, plan.order_serial, slots, roles).get("ok", false)):
+			return 0
+	for mid in bindings.keys():
+		var slot: Vector2i = bindings[mid]
+		if not plan.platform_slots.has(slot):
+			plan.platform_slots.append(slot)
+			plan.slot_tactical_roles[slot] = Types.TacticalSlotRole.FLEX
+		plan.assign_following_member(mid, slot)
+		move_plan.note_assignment_change(mid)
+	plan.available_platform_capacity = maxi(plan.available_platform_capacity, plan.platform_slots.size())
+	plan.centered_platform_handoff = Vector2i(-1, -1)
+	if plan.formation_preset_id == "auto":
+		var side := Vector2i(-plan.final_facing.y, plan.final_facing.x)
+		var columns: Dictionary = {}
+		for slot in plan.platform_slots:
+			columns[(slot.x - plan.resolved_anchor.x) * side.x + (slot.y - plan.resolved_anchor.y) * side.y] = true
+		plan.final_width = mini(10, maxi(1, columns.size()))
+		plan.final_depth = maxi(1, ceili(float(plan.platform_slots.size()) / float(plan.final_width)))
+	return bindings.size()
+
 ## Updates ingress admission gate progress
-static func update_ingress_gate(plan: CombatDeploymentPlan, current_cells: Dictionary) -> void:
+static func _phase_geometry(move_plan: CombatMovePlan, plan: CombatDeploymentPlan) -> Dictionary:
+	# This context lives for one phase call. Both arrays are publicly mutable,
+	# including in-place test and save/load changes, so a cross-tick cache would
+	# require a new write contract that these owners do not currently provide.
+	var footprint: Dictionary = {}
+	var nearby_min_x := 2147483647
+	var nearby_min_y := 2147483647
+	var nearby_max_x := -2147483647
+	var nearby_max_y := -2147483647
+	for cell in plan.platform_footprint:
+		footprint[cell] = true
+		nearby_min_x = mini(nearby_min_x, cell.x)
+		nearby_min_y = mini(nearby_min_y, cell.y)
+		nearby_max_x = maxi(nearby_max_x, cell.x)
+		nearby_max_y = maxi(nearby_max_y, cell.y)
+	var final_min_x := 2147483647
+	var final_max_x := -2147483647
+	var final_min_y := 2147483647
+	var final_max_y := -2147483647
+	for slot in plan.platform_slots:
+		nearby_min_x = mini(nearby_min_x, slot.x)
+		nearby_min_y = mini(nearby_min_y, slot.y)
+		nearby_max_x = maxi(nearby_max_x, slot.x)
+		nearby_max_y = maxi(nearby_max_y, slot.y)
+		final_min_x = mini(final_min_x, slot.x)
+		final_min_y = mini(final_min_y, slot.y)
+		final_max_x = maxi(final_max_x, slot.x)
+		final_max_y = maxi(final_max_y, slot.y)
+	for cell in plan.ingress_buffer_cells:
+		nearby_min_x = mini(nearby_min_x, cell.x)
+		nearby_min_y = mini(nearby_min_y, cell.y)
+		nearby_max_x = maxi(nearby_max_x, cell.x)
+		nearby_max_y = maxi(nearby_max_y, cell.y)
+	nearby_min_x = mini(nearby_min_x, plan.ingress_cell.x)
+	nearby_min_y = mini(nearby_min_y, plan.ingress_cell.y)
+	nearby_max_x = maxi(nearby_max_x, plan.ingress_cell.x)
+	nearby_max_y = maxi(nearby_max_y, plan.ingress_cell.y)
+	var entry_lane: Dictionary = {}
+	for cell in move_plan.macro_path:
+		if footprint.has(cell):
+			entry_lane[cell] = true
+	return {"footprint": footprint, "entry_lane": entry_lane,
+		"nearby_bounds": [nearby_min_x, nearby_min_y, nearby_max_x, nearby_max_y],
+		"final_bounds": [final_min_x, final_min_y, final_max_x, final_max_y]}
+
+static func update_ingress_gate(plan: CombatDeploymentPlan, current_cells: Dictionary, geometry: Dictionary = {}) -> void:
 	if plan == null:
 		return
-	var platform_set: Dictionary = {}
-	for c in plan.platform_footprint:
-		platform_set[c] = true
+	var platform_set: Dictionary = geometry.get("footprint", {})
+	if geometry.is_empty():
+		for c in plan.platform_footprint:
+			platform_set[c] = true
 	if platform_set.is_empty():
 		for c in plan.platform_slots:
 			platform_set[c] = true
@@ -594,9 +766,12 @@ static func _never_crossed_platform_count(plan: CombatDeploymentPlan, current_ce
 			count += 1
 	return count
 
-static func update_movement_phase(move_plan: CombatMovePlan, plan: CombatDeploymentPlan, current_cells: Dictionary, terrain: Object = null, delta_sec: float = 0.0, registry: Object = null, blocked_destinations: Dictionary = {}) -> void:
+static func update_movement_phase(move_plan: CombatMovePlan, plan: CombatDeploymentPlan, current_cells: Dictionary, terrain: Object = null, delta_sec: float = 0.0, registry: Object = null, blocked_destinations: Dictionary = {}, reuse_geometry: bool = true) -> void:
 	if move_plan == null or plan == null or move_plan.phase == Types.CombatMovePhase.FAILED:
 		return
+	var stage_started := Time.get_ticks_usec() if profile_enabled else 0
+	var geometry: Dictionary = _phase_geometry(move_plan, plan) if reuse_geometry else {}
+	stage_started = _profile_stage("geometry", stage_started)
 	move_plan.planning_time_sec += maxf(0.0, delta_sec)
 	if not move_plan.active_vacancy_chain_actors.is_empty():
 		var chain_complete := true
@@ -645,29 +820,33 @@ static func update_movement_phase(move_plan: CombatMovePlan, plan: CombatDeploym
 				continue
 			if not move_plan.member_pending_proposal_id.has(held_mid):
 				move_plan.member_recovery_hold.erase(held_mid)
+	stage_started = _profile_stage("chain", stage_started)
 	var admitted_before: Array[int] = plan.admitted_platform_member_ids.duplicate()
-	update_ingress_gate(plan, current_cells)
+	update_ingress_gate(plan, current_cells, geometry)
 	move_plan.member_queue_egress_waypoint.clear()
 	if exchange_front_queue_role(move_plan, plan, current_cells):
-		update_ingress_gate(plan, current_cells)
+		update_ingress_gate(plan, current_cells, geometry)
 	elif terrain != null:
 		assign_queue_egress_waypoints(move_plan, plan, current_cells, terrain, registry)
 	var new_admission := false
 	for mid in plan.admitted_platform_member_ids:
 		if not admitted_before.has(mid):
 			new_admission = true
+	stage_started = _profile_stage("ingress_egress", stage_started)
 	if terrain != null:
-		late_bind_ingress_target(move_plan, plan, current_cells, terrain, registry)
+		late_bind_ingress_target(move_plan, plan, current_cells, terrain, registry, geometry)
 	resolve_crossed_provisional_targets(move_plan, plan, current_cells)
 	if plan.queue_released:
 		bind_queue_member_on_provisional_slot(move_plan, plan, current_cells)
+	stage_started = _profile_stage("late_bind", stage_started)
 	var occupied_now: Dictionary = {}
 	for cell in current_cells.values():
 		occupied_now[cell] = true
-	var entry_lane_now: Dictionary = {}
-	for cell in move_plan.macro_path:
-		if plan.platform_footprint.has(cell):
-			entry_lane_now[cell] = true
+	var entry_lane_now: Dictionary = geometry.get("entry_lane", {})
+	if geometry.is_empty():
+		for cell in move_plan.macro_path:
+			if plan.platform_footprint.has(cell):
+				entry_lane_now[cell] = true
 	for mid in plan.member_slot_map.keys():
 		if plan.is_platform_member(mid) and current_cells.get(mid, Vector2i(-1, -1)) == plan.get_slot_for_member(mid):
 			var final_cell: Vector2i = plan.get_slot_for_member(mid)
@@ -693,11 +872,13 @@ static func update_movement_phase(move_plan: CombatMovePlan, plan: CombatDeploym
 	if plan.settled_queue_member_ids.size() > move_plan.queue_settled_highwater:
 		move_plan.queue_settled_highwater = plan.settled_queue_member_ids.size()
 		move_plan.last_queue_progress_time_sec = move_plan.planning_time_sec
+	stage_started = _profile_stage("settlement", stage_started)
 	if terrain != null and move_plan.active_vacancy_chain_actors.is_empty():
-		if not recover_stalled_platform_slots(move_plan, plan, current_cells, terrain, blocked_destinations):
-			rebalance_provisional_slots(move_plan, plan, current_cells, terrain, new_admission)
+		if not recover_stalled_platform_slots(move_plan, plan, current_cells, terrain, blocked_destinations, geometry):
+			rebalance_provisional_slots(move_plan, plan, current_cells, terrain, new_admission, geometry)
 		if plan.queue_released:
 			recover_stalled_queue_slots(move_plan, plan, current_cells, terrain)
+	stage_started = _profile_stage("recovery", stage_started)
 	if is_settled(plan, current_cells):
 		move_plan.phase = Types.CombatMovePhase.COMPLETE
 	elif plan.queue_released:
@@ -711,6 +892,7 @@ static func update_movement_phase(move_plan: CombatMovePlan, plan: CombatDeploym
 				near_ingress = true
 				break
 		move_plan.phase = Types.CombatMovePhase.INGRESS_STAGING if near_ingress else Types.CombatMovePhase.TRANSIT
+	_profile_stage("phase_status", stage_started)
 
 static func exchange_front_queue_role(move_plan: CombatMovePlan, plan: CombatDeploymentPlan, current_cells: Dictionary) -> bool:
 	if move_plan == null or plan == null or plan.pending_platform_member_ids.is_empty() or plan.ingress_buffer_cells.is_empty():
@@ -867,27 +1049,43 @@ static func assign_queue_egress_waypoints(move_plan: CombatMovePlan, plan: Comba
 				move_plan.member_queue_egress_waypoint[queue_id] = waypoint
 				break
 
-static func late_bind_ingress_target(move_plan: CombatMovePlan, plan: CombatDeploymentPlan, current_cells: Dictionary, terrain: Object, registry: Object = null) -> bool:
+static func late_bind_ingress_target(move_plan: CombatMovePlan, plan: CombatDeploymentPlan, current_cells: Dictionary, terrain: Object, registry: Object = null, geometry: Dictionary = {}) -> bool:
 	if move_plan == null or plan == null or terrain == null or plan.ingress_buffer_cells.is_empty():
 		return false
+	var detail_started := Time.get_ticks_usec() if profile_enabled else 0
+	var nearest_usec := 0
+	var candidate_usec := 0
+	var bfs_usec := 0
+	var side_usec := 0
+	var setup_usec := 0
+	var outer_usec := 0
+	var copy_usec := 0
+	var entry_usec := 0
 	move_plan.member_entry_hold.clear()
 	move_plan.member_entry_waypoint.clear()
 	# Every eligible non-broad entrant is on the ingress buffer or inside the
 	# footprint; every eligible broad entrant is at most six cells from a final.
 	# Avoid scanning every final for every soldier on a long, distant detour.
-	var nearby_cells: Array[Vector2i] = plan.platform_footprint.duplicate()
-	nearby_cells.append_array(plan.platform_slots)
-	nearby_cells.append_array(plan.ingress_buffer_cells)
-	nearby_cells.append(plan.ingress_cell)
 	var min_x := 2147483647
 	var min_y := 2147483647
 	var max_x := -2147483647
 	var max_y := -2147483647
-	for nearby_cell in nearby_cells:
-		min_x = mini(min_x, nearby_cell.x)
-		min_y = mini(min_y, nearby_cell.y)
-		max_x = maxi(max_x, nearby_cell.x)
-		max_y = maxi(max_y, nearby_cell.y)
+	if geometry.has("nearby_bounds"):
+		var nearby_bounds: Array = geometry.nearby_bounds
+		min_x = int(nearby_bounds[0])
+		min_y = int(nearby_bounds[1])
+		max_x = int(nearby_bounds[2])
+		max_y = int(nearby_bounds[3])
+	else:
+		var nearby_cells: Array[Vector2i] = plan.platform_footprint.duplicate()
+		nearby_cells.append_array(plan.platform_slots)
+		nearby_cells.append_array(plan.ingress_buffer_cells)
+		nearby_cells.append(plan.ingress_cell)
+		for nearby_cell in nearby_cells:
+			min_x = mini(min_x, nearby_cell.x)
+			min_y = mini(min_y, nearby_cell.y)
+			max_x = maxi(max_x, nearby_cell.x)
+			max_y = maxi(max_y, nearby_cell.y)
 	var anyone_near := false
 	for member_id in plan.member_slot_map.keys():
 		if not plan.is_platform_member(member_id) or not current_cells.has(member_id):
@@ -897,6 +1095,9 @@ static func late_bind_ingress_target(move_plan: CombatMovePlan, plan: CombatDepl
 			anyone_near = true
 			break
 	if not anyone_near:
+		if profile_enabled:
+			setup_usec = Time.get_ticks_usec() - detail_started
+		_profile_late_bind_detail(detail_started, nearest_usec, candidate_usec, bfs_usec, side_usec, setup_usec, outer_usec, copy_usec, entry_usec)
 		return false
 	var ramp_cell: Vector2i = plan.ingress_buffer_cells[-1]
 	var approach_cell: Vector2i = plan.ingress_buffer_cells[-2] if plan.ingress_buffer_cells.size() >= 2 else ramp_cell
@@ -908,20 +1109,32 @@ static func late_bind_ingress_target(move_plan: CombatMovePlan, plan: CombatDepl
 	for cell in plan.platform_footprint:
 		if not occupied.has(cell):
 			free_platform[cell] = true
-	var entry_lane: Dictionary = {}
-	for cell in move_plan.macro_path:
-		if plan.platform_footprint.has(cell):
-			entry_lane[cell] = true
+	var entry_lane: Dictionary = geometry.get("entry_lane", {})
+	if geometry.is_empty():
+		for cell in move_plan.macro_path:
+			if plan.platform_footprint.has(cell):
+				entry_lane[cell] = true
 	var final_min_x := 2147483647
 	var final_max_x := -2147483647
 	var final_min_y := 2147483647
 	var final_max_y := -2147483647
-	for slot in plan.platform_slots:
-		final_min_x = mini(final_min_x, slot.x)
-		final_max_x = maxi(final_max_x, slot.x)
-		final_min_y = mini(final_min_y, slot.y)
-		final_max_y = maxi(final_max_y, slot.y)
+	if geometry.has("final_bounds"):
+		var final_bounds: Array = geometry.final_bounds
+		final_min_x = int(final_bounds[0])
+		final_min_y = int(final_bounds[1])
+		final_max_x = int(final_bounds[2])
+		final_max_y = int(final_bounds[3])
+	else:
+		for slot in plan.platform_slots:
+			final_min_x = mini(final_min_x, slot.x)
+			final_max_x = maxi(final_max_x, slot.x)
+			final_min_y = mini(final_min_y, slot.y)
+			final_max_y = maxi(final_max_y, slot.y)
+	if profile_enabled:
+		setup_usec = Time.get_ticks_usec() - detail_started
 	var changed := false
+	var bfs_cache_allowed: bool = platform_bfs_cache_enabled and terrain.get_script() == TerrainData
+	var bfs_cache_checked := false
 	for a in plan.member_slot_map.keys():
 		if not plan.is_platform_member(a) or not current_cells.has(a) or move_plan.member_pending_proposal_id.has(a) or move_plan.member_vacancy_chain_target.has(a) or move_plan.member_recovery_hold.has(a):
 			continue
@@ -943,16 +1156,23 @@ static func late_bind_ingress_target(move_plan: CombatMovePlan, plan: CombatDepl
 		var outer_approach_exhausted := false
 		if broad_destination:
 			if not plan.is_slot_locked(a) and plan.platform_footprint.has(ca) and (ca.x < final_min_x or ca.x > final_max_x or ca.y < final_min_y or ca.y > final_max_y) and int(move_plan.member_route_retry_count.get(a, 0)) >= 12:
+				var outer_started := Time.get_ticks_usec() if profile_enabled else 0
 				var approach_waypoint: Vector2i = _outer_approach_waypoint(move_plan, plan, ca, own_slot, occupied, entry_lane, terrain, registry)
+				if profile_enabled:
+					outer_usec += Time.get_ticks_usec() - outer_started
+					profile_calls["late_bind_outer_approach"] = int(profile_calls.get("late_bind_outer_approach", 0)) + 1
 				if approach_waypoint != ca:
 					move_plan.member_entry_waypoint[a] = approach_waypoint
 					continue
 				outer_approach_exhausted = true
 			# On a large flat footprint, bind by actual reachability near the final
 			# slots, after the column has left the narrow approach.
+			var nearest_started := Time.get_ticks_usec() if profile_enabled else 0
 			var nearest_final := 999999
 			for slot in plan.platform_slots:
 				nearest_final = mini(nearest_final, absi(ca.x - slot.x) + absi(ca.y - slot.y))
+			if profile_enabled:
+				nearest_usec += Time.get_ticks_usec() - nearest_started
 			if nearest_final > 6:
 				continue
 		elif ca != approach_cell and ca != ramp_cell and ca != plan.ingress_cell and not entry_lane.has(ca):
@@ -962,7 +1182,10 @@ static func late_bind_ingress_target(move_plan: CombatMovePlan, plan: CombatDepl
 		# exchange and outer detour above, then use the normal final route.
 		if plan.pending_platform_member_ids.is_empty():
 			continue
+		var side_started := Time.get_ticks_usec() if profile_enabled else 0
 		var physically_free_side := _has_vacant_side_slot(plan, own_slot, entry_lane, occupied)
+		if profile_enabled:
+			side_usec += Time.get_ticks_usec() - side_started
 		if plan.is_slot_locked(a):
 			if plan.pending_platform_member_ids.is_empty() or ca != own_slot or not entry_lane.has(ca) or not physically_free_side:
 				continue
@@ -974,14 +1197,15 @@ static func late_bind_ingress_target(move_plan: CombatMovePlan, plan: CombatDepl
 				path_start = ramp_cell
 		if ca == ramp_cell and not occupied.has(plan.ingress_cell) and TransitPlanner._can_profile_step(terrain, ca, plan.ingress_cell, null):
 			path_start = plan.ingress_cell
-		var reachable_cells: Dictionary = free_platform.duplicate()
-		reachable_cells[path_start] = true
+		# The search seeds path_start before checking allowed neighbors. It never
+		# needs path_start in this read-only set of free cells.
 		var own_depth: int = (own_slot.x - plan.ingress_cell.x) * plan.final_facing.x + (own_slot.y - plan.ingress_cell.y) * plan.final_facing.y
 		var best_owner := -1
 		var best_depth := -999999
 		var best_distance := 999999
 		var reachable_distances: Dictionary = {}
 		var distances_ready := false
+		var candidate_started := Time.get_ticks_usec() if profile_enabled else 0
 		for slot in plan.platform_slots:
 			if occupied.has(slot) or (physically_free_side and entry_lane.has(slot)):
 				continue
@@ -996,7 +1220,37 @@ static func late_bind_ingress_target(move_plan: CombatMovePlan, plan: CombatDepl
 			if (plan.approach_bottlenecked != 0 and owner != a and plan.pending_platform_member_ids.has(owner) and depth < own_depth) or depth < best_depth:
 				continue
 			if not distances_ready:
-				reachable_distances = _platform_distances(path_start, terrain, reachable_cells)
+				var bfs_started := Time.get_ticks_usec() if profile_enabled else 0
+				var cache_hit: bool = false
+				if bfs_cache_allowed:
+					if not bfs_cache_checked:
+						var terrain_id: int = terrain.get_instance_id()
+						var navigation_revision: int = terrain.navigation_revision
+						if move_plan.platform_bfs_cache_terrain_id != terrain_id \
+								or move_plan.platform_bfs_cache_navigation_revision != navigation_revision \
+								or move_plan.platform_bfs_cache_max_cells != PLATFORM_BFS_MAX_CELLS \
+								or move_plan.platform_bfs_cache_free != free_platform:
+							move_plan.platform_bfs_cache_results.clear()
+							move_plan.platform_bfs_cache_free = free_platform.duplicate()
+							move_plan.platform_bfs_cache_terrain_id = terrain_id
+							move_plan.platform_bfs_cache_navigation_revision = navigation_revision
+							move_plan.platform_bfs_cache_max_cells = PLATFORM_BFS_MAX_CELLS
+						bfs_cache_checked = true
+					if move_plan.platform_bfs_cache_results.has(path_start):
+						reachable_distances = move_plan.platform_bfs_cache_results[path_start]
+						cache_hit = true
+				if not cache_hit:
+					reachable_distances = _platform_distances(path_start, terrain, free_platform, PLATFORM_BFS_MAX_CELLS)
+					if bfs_cache_allowed:
+						if move_plan.platform_bfs_cache_results.size() >= PLATFORM_BFS_CACHE_STARTS:
+							move_plan.platform_bfs_cache_results.clear()
+						move_plan.platform_bfs_cache_results[path_start] = reachable_distances
+				if profile_enabled:
+					var cache_counter: String = "late_bind_bfs_cache_hits" if cache_hit else "late_bind_bfs_searches"
+					profile_calls[cache_counter] = int(profile_calls.get(cache_counter, 0)) + 1
+				if profile_enabled:
+					bfs_usec += Time.get_ticks_usec() - bfs_started
+					profile_calls["late_bind_bfs"] = int(profile_calls.get("late_bind_bfs", 0)) + 1
 				distances_ready = true
 			var distance: int = int(reachable_distances.get(slot, -1))
 			if distance < 0 or (depth == best_depth and distance >= best_distance):
@@ -1004,6 +1258,8 @@ static func late_bind_ingress_target(move_plan: CombatMovePlan, plan: CombatDepl
 			best_owner = owner
 			best_depth = depth
 			best_distance = distance
+		if profile_enabled:
+			candidate_usec += Time.get_ticks_usec() - candidate_started
 		if best_owner >= 0 and best_owner != a and move_plan.planning_time_sec >= float(move_plan.member_swap_cooldown_until_sec.get(a, 0.0)) and plan.swap_member_slots(a, best_owner):
 			move_plan.note_assignment_change(a)
 			move_plan.note_assignment_change(best_owner)
@@ -1018,7 +1274,11 @@ static func late_bind_ingress_target(move_plan: CombatMovePlan, plan: CombatDepl
 		# Once everyone has entered, a lateral waypoint can make the last
 		# soldiers oscillate beside their own finals instead of settling.
 		if not plan.pending_platform_member_ids.is_empty() and physically_free_side and (entry_lane.has(plan.get_slot_for_member(a)) or best_owner < 0):
+			var entry_started := Time.get_ticks_usec() if profile_enabled else 0
 			var waypoint := _entry_lane_waypoint(ca, plan, entry_lane, occupied, terrain, registry)
+			if profile_enabled:
+				entry_usec += Time.get_ticks_usec() - entry_started
+				profile_calls["late_bind_entry_waypoint"] = int(profile_calls.get("late_bind_entry_waypoint", 0)) + 1
 			if waypoint != ca and outer_approach_exhausted:
 				var final_slot: Vector2i = plan.get_slot_for_member(a)
 				var step: Vector2i = waypoint - ca
@@ -1030,6 +1290,7 @@ static func late_bind_ingress_target(move_plan: CombatMovePlan, plan: CombatDepl
 			# A distant vacant side slot is not a reason to stop on the entrance
 			# when no legal local waypoint exists. The normal target/recovery path
 			# must remain live so the soldier can clear the lane.
+	_profile_late_bind_detail(detail_started, nearest_usec, candidate_usec, bfs_usec, side_usec, setup_usec, outer_usec, copy_usec, entry_usec)
 	return changed
 
 static func _outer_approach_waypoint(move_plan: CombatMovePlan, plan: CombatDeploymentPlan, current_cell: Vector2i, final_slot: Vector2i, occupied: Dictionary, entry_lane: Dictionary, terrain: Object, registry: Object = null) -> Vector2i:
@@ -1058,7 +1319,7 @@ static func _outer_approach_waypoint(move_plan: CombatMovePlan, plan: CombatDepl
 			best_distance = candidate_distance
 	return best
 
-static func _has_vacant_side_slot(plan: CombatDeploymentPlan, own_slot: Vector2i, entry_lane: Dictionary, occupied: Dictionary) -> bool:
+static func _has_vacant_side_slot(plan: CombatDeploymentPlan, _own_slot: Vector2i, entry_lane: Dictionary, occupied: Dictionary) -> bool:
 	for slot in plan.platform_slots:
 		if not entry_lane.has(slot) and not occupied.has(slot):
 			return true
@@ -1077,7 +1338,7 @@ static func _entry_lane_waypoint(current_cell: Vector2i, plan: CombatDeploymentP
 			return next_cell
 	return current_cell
 
-static func recover_stalled_platform_slots(move_plan: CombatMovePlan, plan: CombatDeploymentPlan, current_cells: Dictionary, terrain: Object, blocked_destinations: Dictionary = {}) -> bool:
+static func recover_stalled_platform_slots(move_plan: CombatMovePlan, plan: CombatDeploymentPlan, current_cells: Dictionary, terrain: Object, blocked_destinations: Dictionary = {}, geometry: Dictionary = {}) -> bool:
 	if move_plan == null or plan == null or terrain == null or plan.settled_platform_member_ids.size() >= plan.platform_slots.size():
 		return false
 	if move_plan.planning_time_sec < move_plan.next_platform_recovery_time_sec or not move_plan.active_vacancy_chain_actors.is_empty():
@@ -1085,9 +1346,10 @@ static func recover_stalled_platform_slots(move_plan: CombatMovePlan, plan: Comb
 	var occupied: Dictionary = {}
 	for cell in current_cells.values():
 		occupied[cell] = true
-	var allowed: Dictionary = {}
-	for cell in plan.platform_footprint:
-		allowed[cell] = true
+	var allowed: Dictionary = geometry.get("footprint", {})
+	if geometry.is_empty():
+		for cell in plan.platform_footprint:
+			allowed[cell] = true
 	if move_plan.planning_time_sec - move_plan.last_platform_progress_time_sec < PLATFORM_RECOVERY_STALL_SEC:
 		# Progress elsewhere must not starve one physically isolated, high-retry
 		# final owner. Keep the ordinary recovery gate for every other member.
@@ -1102,16 +1364,17 @@ static func recover_stalled_platform_slots(move_plan: CombatMovePlan, plan: Comb
 			if _prior_entrant_final_isolated(plan, waiting, current_cells, terrain, occupied):
 				return _recover_isolated_final_vacancy(move_plan, plan, current_cells, terrain, occupied, allowed, blocked_destinations, waiting)
 		return false
-	if _recover_compact_exterior_slot(move_plan, plan, current_cells, terrain, occupied):
+	if _recover_compact_exterior_slot(move_plan, plan, current_cells, terrain, occupied, geometry):
 		return true
 	if _recover_isolated_final_vacancy(move_plan, plan, current_cells, terrain, occupied, allowed, blocked_destinations):
 		return true
 	if _recover_broad_final_vacancy(move_plan, plan, current_cells, terrain, occupied, blocked_destinations):
 		return true
-	var entry_lane: Dictionary = {}
-	for cell in move_plan.macro_path:
-		if allowed.has(cell):
-			entry_lane[cell] = true
+	var entry_lane: Dictionary = geometry.get("entry_lane", {})
+	if geometry.is_empty():
+		for cell in move_plan.macro_path:
+			if allowed.has(cell):
+				entry_lane[cell] = true
 	var directions: Array[Vector2i] = [Vector2i.UP, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT]
 	# First free an admitted ingress blocker by giving it a presently reachable
 	# side target. The pending owner receives the old provisional target.
@@ -1204,8 +1467,8 @@ static func recover_stalled_platform_slots(move_plan: CombatMovePlan, plan: Comb
 		var db: int = absi(cb.x - plan.ingress_cell.x) + absi(cb.y - plan.ingress_cell.y)
 		return da < db if da != db else a < b
 	)
-	for seed in seeds:
-		var seed_cell: Vector2i = current_cells[seed]
+	for seed_id in seeds:
+		var seed_cell: Vector2i = current_cells[seed_id]
 		var chain_frontier: Array[Vector2i] = [seed_cell]
 		var predecessor: Dictionary = {seed_cell: seed_cell}
 		while not chain_frontier.is_empty():
@@ -1251,13 +1514,14 @@ static func recover_stalled_platform_slots(move_plan: CombatMovePlan, plan: Comb
 ## settled edge while still owning a deep, vacant final. Exchange two compatible
 ## provisional targets only when both resulting physical routes are free and
 ## their combined distance strictly improves. Grid performs every later step.
-static func _recover_compact_exterior_slot(move_plan: CombatMovePlan, plan: CombatDeploymentPlan, current_cells: Dictionary, terrain: Object, occupied: Dictionary) -> bool:
+static func _recover_compact_exterior_slot(move_plan: CombatMovePlan, plan: CombatDeploymentPlan, current_cells: Dictionary, terrain: Object, occupied: Dictionary, geometry: Dictionary = {}) -> bool:
 	if plan.platform_slots.size() < 20 or plan.settled_platform_member_ids.size() * 5 < plan.platform_slots.size() * 3 or _never_crossed_platform_count(plan, current_cells) > 1:
 		return false
-	var entry_lane: Dictionary = {}
-	for cell in move_plan.macro_path:
-		if plan.platform_footprint.has(cell):
-			entry_lane[cell] = true
+	var entry_lane: Dictionary = geometry.get("entry_lane", {})
+	if geometry.is_empty():
+		for cell in move_plan.macro_path:
+			if plan.platform_footprint.has(cell):
+				entry_lane[cell] = true
 	var min_x := 2147483647
 	var max_x := -2147483647
 	var min_y := 2147483647
@@ -1428,7 +1692,7 @@ static func _advance_queued_vacancy_step(move_plan: CombatMovePlan, plan: Combat
 ## At the very end, an empty final can be enclosed by settled soldiers.
 ## Move one adjacent settled owner into it, giving the stranded soldier the
 ## newly exposed edge slot. This exchanges targets only; Grid moves both later.
-static func _recover_isolated_final_vacancy(move_plan: CombatMovePlan, plan: CombatDeploymentPlan, current_cells: Dictionary, terrain: Object, occupied: Dictionary, allowed: Dictionary, blocked_destinations: Dictionary = {}, preferred_waiting: int = -1) -> bool:
+static func _recover_isolated_final_vacancy(move_plan: CombatMovePlan, plan: CombatDeploymentPlan, current_cells: Dictionary, terrain: Object, occupied: Dictionary, _allowed: Dictionary, blocked_destinations: Dictionary = {}, preferred_waiting: int = -1) -> bool:
 	# Once the last entrant is approaching a mostly occupied final block, a
 	# vacant interior slot can already be sealed behind settled FLEX soldiers.
 	# Waiting for all but three to settle leaves those earlier stranded owners
@@ -1661,10 +1925,10 @@ static func _recover_broad_final_vacancy(move_plan: CombatMovePlan, plan: Combat
 			var near: Vector2i = blocked_cell + direction
 			if movable_at.has(near) and TransitPlanner._can_profile_step(terrain, blocked_cell, near, null):
 				seeds.append(near)
-		for seed in seeds:
-			var frontier: Array[Vector2i] = [seed]
+		for seed_cell in seeds:
+			var frontier: Array[Vector2i] = [seed_cell]
 			var predecessor: Dictionary = {}
-			predecessor[seed] = seed
+			predecessor[seed_cell] = seed_cell
 			var chosen: Array[Vector2i] = []
 			while not frontier.is_empty() and predecessor.size() <= 128:
 				var cell: Vector2i = frontier.pop_front()
@@ -1681,10 +1945,10 @@ static func _recover_broad_final_vacancy(move_plan: CombatMovePlan, plan: Combat
 						continue
 					var candidate: Array[Vector2i] = [next_cell]
 					var back: Vector2i = cell
-					while back != seed:
+					while back != seed_cell:
 						candidate.push_front(back)
 						back = predecessor[back]
-					candidate.push_front(seed)
+					candidate.push_front(seed_cell)
 					if next_cell == desired:
 						chosen = candidate
 						break
@@ -1745,7 +2009,7 @@ static func recover_stalled_queue_slots(move_plan: CombatMovePlan, plan: CombatD
 	move_plan.next_queue_recovery_time_sec = move_plan.planning_time_sec + PLATFORM_RECOVERY_COOLDOWN_SEC
 	return false
 
-static func rebalance_provisional_slots(move_plan: CombatMovePlan, plan: CombatDeploymentPlan, current_cells: Dictionary, terrain: Object, admission_changed: bool = false) -> bool:
+static func rebalance_provisional_slots(move_plan: CombatMovePlan, plan: CombatDeploymentPlan, current_cells: Dictionary, terrain: Object, admission_changed: bool = false, geometry: Dictionary = {}) -> bool:
 	if move_plan == null or plan == null or terrain == null:
 		return false
 	if not admission_changed and move_plan.planning_time_sec < move_plan.next_late_swap_time_sec:
@@ -1760,14 +2024,17 @@ static func rebalance_provisional_slots(move_plan: CombatMovePlan, plan: CombatD
 		var rb: int = int(move_plan.member_sequence_rank.get(b, 9999))
 		return ra < rb if ra != rb else a < b
 	)
-	var allowed: Dictionary = {}
-	for cell in plan.platform_footprint:
-		allowed[cell] = true
+	var allowed: Dictionary = geometry.get("footprint", {})
+	if geometry.is_empty():
+		for cell in plan.platform_footprint:
+			allowed[cell] = true
 	var entry_lane: Dictionary = {}
 	if not plan.pending_platform_member_ids.is_empty():
-		for cell in move_plan.macro_path:
-			if allowed.has(cell):
-				entry_lane[cell] = true
+		entry_lane = geometry.get("entry_lane", {})
+		if geometry.is_empty():
+			for cell in move_plan.macro_path:
+				if allowed.has(cell):
+					entry_lane[cell] = true
 	for i in range(maxi(0, mini(mids.size() - 1, 16))):
 		var a: int = mids[i]
 		var b: int = mids[i + 1]
@@ -1859,8 +2126,10 @@ static func _platform_distances(start: Vector2i, terrain: Object, allowed: Dicti
 	var frontier: Array[Vector2i] = [start]
 	var distances: Dictionary = {start: 0}
 	var directions: Array[Vector2i] = [Vector2i.UP, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT]
-	while not frontier.is_empty() and distances.size() <= max_cells:
-		var cell: Vector2i = frontier.pop_front()
+	var cursor := 0
+	while cursor < frontier.size() and distances.size() <= max_cells:
+		var cell: Vector2i = frontier[cursor]
+		cursor += 1
 		for direction in directions:
 			var next_cell := cell + direction
 			if distances.has(next_cell) or not allowed.has(next_cell) or not terrain.can_step(cell, next_cell):
@@ -1872,11 +2141,31 @@ static func _platform_distances(start: Vector2i, terrain: Object, allowed: Dicti
 static func _platform_handoff_cell(plan: CombatDeploymentPlan) -> Vector2i:
 	return plan.get_platform_handoff_cell()
 
-static func resolve_member_target(move_plan: CombatMovePlan, plan: CombatDeploymentPlan, member_id: int, current_cell: Vector2i) -> Dictionary:
+static func resolve_member_target(move_plan: CombatMovePlan, plan: CombatDeploymentPlan, member_id: int, current_cell: Vector2i, context: Dictionary = {}) -> Dictionary:
+	# Optional caller-local lookup. The caller ends its lifetime before any
+	# assignment/phase/terrain update; ordinary four-argument calls stay live.
+	if context.is_empty() or (plan != null and plan.is_following_member(member_id)):
+		return _resolve_member_target(move_plan, plan, member_id, current_cell)
+	var targets: Dictionary = context.targets
+	if not targets.has(member_id):
+		targets[member_id] = {}
+	var cells: Dictionary = targets[member_id]
+	if not cells.has(current_cell):
+		cells[current_cell] = _resolve_member_target(move_plan, plan, member_id, current_cell, context.footprint)
+	return cells[current_cell]
+
+static func _resolve_member_target(move_plan: CombatMovePlan, plan: CombatDeploymentPlan, member_id: int, current_cell: Vector2i, footprint: Dictionary = {}) -> Dictionary:
 	var invalid := {"target": current_cell, "kind": "invalid", "wait_reason": "NO_ACTIVE_PLAN", "assignment_epoch": 0}
-	if move_plan == null or plan == null or not plan.member_slot_map.has(member_id):
+	if move_plan == null or plan == null:
 		return invalid
 	var epoch: int = int(move_plan.member_assignment_epoch.get(member_id, 0)) + int(move_plan.member_soft_assignment_epoch.get(member_id, 0)) + plan.assignment_epoch
+	if plan.is_following_member(member_id):
+		var following_slot: Vector2i = move_plan.member_transit_slots.get(member_id, current_cell)
+		if float(move_plan.member_path_s.get(member_id, -INF)) < float(move_plan.member_observed_path_s.get(member_id, -INF)) - 0.5 and current_cell in move_plan.macro_path:
+			following_slot = current_cell
+		return {"target": following_slot, "kind": "transit", "wait_reason": "WAIT_SPACE" if following_slot == current_cell else "", "assignment_epoch": epoch}
+	if not plan.member_slot_map.has(member_id):
+		return invalid
 	var final_slot: Vector2i = plan.get_slot_for_member(member_id)
 	if move_plan.member_crossed_swap_hold.has(member_id):
 		return {"target": current_cell, "kind": "crossed_swap_hold", "wait_reason": "TARGET_EXCHANGE_WAIT", "assignment_epoch": epoch}
@@ -1884,9 +2173,11 @@ static func resolve_member_target(move_plan: CombatMovePlan, plan: CombatDeploym
 		return {"target": final_slot, "kind": "vacancy_chain", "wait_reason": "", "assignment_epoch": epoch}
 	if move_plan.member_recovery_hold.has(member_id):
 		return {"target": current_cell, "kind": "recovery_hold", "wait_reason": "VACANCY_CHAIN_WAIT", "assignment_epoch": epoch}
+	var is_platform := plan.is_platform_member(member_id)
+	var in_footprint := footprint.has(current_cell) if not footprint.is_empty() else plan.platform_footprint.has(current_cell)
 	# A former entrant that detoured outside the footprint still owns its final.
 	# This must win over any stale entry waypoint from before the detour.
-	if plan.is_platform_member(member_id) and plan.ever_admitted_platform_member_ids.has(member_id) and not plan.platform_footprint.has(current_cell):
+	if is_platform and plan.ever_admitted_platform_member_ids.has(member_id) and not in_footprint:
 		return {"target": final_slot, "kind": "platform_return", "wait_reason": "", "assignment_epoch": epoch}
 	if move_plan.member_entry_waypoint.has(member_id):
 		return {"target": move_plan.member_entry_waypoint[member_id], "kind": "entry_waypoint", "wait_reason": "KEEP_INGRESS_OPEN", "assignment_epoch": epoch}
@@ -1895,13 +2186,13 @@ static func resolve_member_target(move_plan: CombatMovePlan, plan: CombatDeploym
 	# Admission is the handoff from shared transit to individual deployment.
 	# A soldier already inside the footprint must not keep chasing a stale
 	# macro-route soft target while the rest of the platform is filling.
-	if plan.is_platform_member(member_id) and plan.admitted_platform_member_ids.has(member_id) and plan.platform_footprint.has(current_cell):
+	if is_platform and plan.admitted_platform_member_ids.has(member_id) and in_footprint:
 		return {"target": final_slot, "kind": "platform", "wait_reason": "", "assignment_epoch": epoch}
 	# The broad-footprint staging waypoint is only an approach aid. Once a
 	# soldier is beside its own final cell, do not send it back to the handoff.
-	if plan.is_platform_member(member_id) and plan.platform_footprint.has(current_cell) and absi(current_cell.x - final_slot.x) + absi(current_cell.y - final_slot.y) <= 2:
+	if is_platform and in_footprint and absi(current_cell.x - final_slot.x) + absi(current_cell.y - final_slot.y) <= 2:
 		return {"target": final_slot, "kind": "platform", "wait_reason": "", "assignment_epoch": epoch}
-	if plan.is_platform_member(member_id) and not move_plan.macro_path.is_empty():
+	if is_platform and not move_plan.macro_path.is_empty():
 		var far_final: bool = absi(final_slot.x - plan.ingress_cell.x) + absi(final_slot.y - plan.ingress_cell.y) > 8
 		var broad_destination: bool = plan.platform_footprint.size() >= plan.platform_slots.size() * 2
 		if far_final and (not broad_destination or _platform_handoff_cell(plan) == plan.resolved_anchor):
@@ -1910,12 +2201,12 @@ static func resolve_member_target(move_plan: CombatMovePlan, plan: CombatDeploym
 			var stage: Vector2i = handoff + plan.final_facing * 2
 			var progress: int = (current_cell.x - handoff.x) * approach.x + (current_cell.y - handoff.y) * approach.y
 			var stage_progress: int = (stage.x - handoff.x) * approach.x + (stage.y - handoff.y) * approach.y
-			if current_cell in plan.platform_footprint and progress < stage_progress and plan.platform_footprint.has(stage):
+			if in_footprint and progress < stage_progress and (footprint.has(stage) if not footprint.is_empty() else plan.platform_footprint.has(stage)):
 				return {"target": stage, "kind": "platform_stage", "wait_reason": "", "assignment_epoch": epoch}
 	if move_plan.member_entry_hold.has(member_id):
 		return {"target": current_cell, "kind": "ingress_wait", "wait_reason": "SIDE_SLOT_WAIT", "assignment_epoch": epoch}
 	var observed_s: float = float(move_plan.member_observed_path_s.get(member_id, -INF))
-	var on_ingress_route := current_cell in plan.queue_hold_cross_section or current_cell in plan.ingress_buffer_cells or current_cell in plan.platform_footprint
+	var on_ingress_route := current_cell in plan.queue_hold_cross_section or current_cell in plan.ingress_buffer_cells or in_footprint
 	# A broad, flat footprint may begin well before its actual final slots. Sending a
 	# soldier at a one-cell choke directly to a distant slot makes the bounded local
 	# search fail and leaves the entire column motionless. Keep transit waypoints
@@ -1926,8 +2217,8 @@ static func resolve_member_target(move_plan: CombatMovePlan, plan: CombatDeploym
 			var handoff: Vector2i = plan.get_platform_handoff_cell()
 			var approach: Vector2i = handoff - plan.ingress_cell
 			var passed_handoff: bool = (current_cell.x - handoff.x) * approach.x + (current_cell.y - handoff.y) * approach.y >= 0
-			on_ingress_route = current_cell in plan.platform_footprint and passed_handoff and not plan.needs_transit_soft_target(member_id, current_cell)
-	if plan.is_platform_member(member_id) and on_ingress_route:
+			on_ingress_route = in_footprint and passed_handoff and not plan.needs_transit_soft_target(member_id, current_cell)
+	if is_platform and on_ingress_route:
 		return {"target": final_slot, "kind": "platform", "wait_reason": "", "assignment_epoch": epoch}
 	if plan.is_queue_member(member_id):
 		if move_plan.member_queue_egress_waypoint.has(member_id):
@@ -1954,7 +2245,7 @@ static func get_member_current_target(plan: CombatDeploymentPlan, member_id: int
 
 ## Checks if all members have reached their final assigned deployment slots
 static func is_settled(plan: CombatDeploymentPlan, current_cells: Dictionary) -> bool:
-	if plan == null:
+	if plan == null or not plan.following_member_ids.is_empty():
 		return false
 	for mid in plan.member_slot_map.keys():
 		var assigned: Vector2i = plan.member_slot_map[mid]
@@ -1962,3 +2253,59 @@ static func is_settled(plan: CombatDeploymentPlan, current_cells: Dictionary) ->
 		if curr != assigned:
 			return false
 	return true
+
+# Read-only capacity filtering on original destination candidates; no new BFS.
+static func fire_capacity(plan: CombatDeploymentPlan, terrain: Object, registry: Object, safe_cell: Callable) -> Dictionary:
+	var available: Array[Vector2i] = []
+	var safe: Array[Vector2i] = []
+	var queue: Array[Vector2i] = []
+	var seen := {}
+	for cell: Vector2i in plan.platform_footprint:
+		if seen.has(cell) or cell == plan.ingress_cell and plan.platform_footprint.size() > 1: continue
+		seen[cell] = true
+		if not terrain.is_walkable(cell) or registry.is_slot_reserved(cell, plan.formation_id): continue
+		available.append(cell)
+		if bool(safe_cell.call(cell)): safe.append(cell)
+	for cell: Vector2i in plan.approach_queue_slots:
+		if not queue.has(cell) and terrain.is_walkable(cell) and not registry.is_slot_reserved(cell, plan.formation_id) \
+			and not plan.ingress_buffer_cells.has(cell) and bool(safe_cell.call(cell)): queue.append(cell)
+	var facing: Vector2i = plan.final_facing
+	var ingress: Vector2i = plan.ingress_cell
+	safe.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+		var da: int = (a.x - ingress.x) * facing.x + (a.y - ingress.y) * facing.y
+		var db: int = (b.x - ingress.x) * facing.x + (b.y - ingress.y) * facing.y
+		return da > db if da != db else (a.y < b.y if a.y != b.y else a.x < b.x))
+	return {"terrain_capacity": plan.structural_platform_capacity, "available_capacity": available.size(),
+		"safe_capacity": safe.size(), "platform": safe, "queue": queue}
+
+static func fire_replacements(plan: CombatDeploymentPlan, terrain: Object, registry: Object,
+		current_cells: Dictionary, safe_cell: Callable, protected_path: Array[Vector2i]) -> Dictionary:
+	var capacity := fire_capacity(plan, terrain, registry, safe_cell)
+	var result: Array[Dictionary] = []
+	var claimed := plan.slot_owner_map.duplicate()
+	var ids: Array = plan.fire_suspended_members.keys()
+	ids.sort()
+	for raw: Variant in ids:
+		var member := int(raw)
+		if not current_cells.has(member) or plan.member_slot_map.has(member): continue
+		var chosen := Vector2i(-1, -1)
+		var role := Types.CombatDestinationRole.APPROACH_QUEUE
+		for cell: Vector2i in capacity.platform:
+			if not claimed.has(cell) and not plan.fire_suspended_slots.has(cell) and registry.owner_of(cell) == null:
+				chosen = cell
+				role = Types.CombatDestinationRole.PLATFORM
+				break
+		if chosen == Vector2i(-1, -1):
+			for cell: Vector2i in capacity.queue:
+				if not claimed.has(cell) and registry.owner_of(cell) == null: chosen = cell; break
+		if chosen == Vector2i(-1, -1):
+			var current: Vector2i = current_cells[member]
+			# A held member keeps a real safe cell beside the existing entry route.
+			if terrain.is_walkable(current) and bool(safe_cell.call(current)) and not claimed.has(current) \
+				and not plan.platform_footprint.has(current) and not plan.ingress_buffer_cells.has(current) \
+				and current != plan.ingress_cell and not protected_path.has(current) and registry.owner_of(current) == null:
+				chosen = current
+		if chosen == Vector2i(-1, -1): continue
+		claimed[chosen] = member
+		result.append({"member_id": member, "cell": chosen, "role": role})
+	return {"capacity": capacity, "assignments": result}

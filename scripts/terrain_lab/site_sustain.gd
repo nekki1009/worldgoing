@@ -1,27 +1,36 @@
 class_name SiteSustain
 extends RefCounted
-## V1 numerical transitions only. The Site/army owns this dictionary and the
+## Numerical transitions only. The Site/army owns this dictionary and the
 ## supplied inventory; members maps stable IDs to ORIGINAL person dictionaries.
 ## Meal credits are already eaten food, not inventory or refundable cargo.
 ## Call advance_to before membership, food, activity or life-state changes.
 
 const Fatigue = preload("res://scripts/terrain_lab/person_fatigue.gd")
 const Rules = preload("res://scripts/terrain_lab/site_combat_rules.gd")
+const Env = preload("res://scripts/terrain_lab/site_environment.gd")
 const HOUR := 3600.0
 const MEAL := 6.0 * HOUR
 const DAY := 24.0 * HOUR
 const FOODS := ["fish", "meat", "wild_food", "grain"]
 const EPS := 0.000000001
 
-static func create(at_seconds: float = 0.0) -> Dictionary:
-	return {"version": 1, "at": at_seconds, "open_rations": 0.0, "cohorts": [],
+static func create(at_seconds: float = 0.0, version: int = 1) -> Dictionary:
+	var state := {"version": version, "at": at_seconds, "cohorts": [],
 		"morale": 100.0, "routed": false, "regroup_seconds": 0.0,
 		"commander_present": true, "last_combat_event": -1}
+	if version == 1:
+		state.open_rations = 0.0
+	return state
 
 static func _number(value: Variant, lower: float, upper: float = INF) -> bool:
-	return (value is int or value is float) and is_finite(float(value)) and float(value) >= lower and float(value) <= upper
+	if not (value is int or value is float): return false
+	var number := float(value)
+	return is_finite(number) and number >= lower and number <= upper
 
 static func _integer(value: Variant, lower: int = 0) -> bool:
+	if value is int:
+		var number := float(value)
+		return number >= float(lower) and number <= 2147483647.0
 	return _number(value, lower, 2147483647) and float(value) == floorf(float(value))
 
 static func _fail(message: String) -> Dictionary:
@@ -38,7 +47,14 @@ static func _member_value(members: Dictionary, id: int, field: StringName, hot_r
 	return hot_read.call(id, field) if hot_read.is_valid() else members[id].get(field)
 
 static func validate(state: Dictionary, members: Dictionary, hot_read: Callable = Callable(), pending_hp: Dictionary = {}) -> bool:
-	if state.get("version") != 1 or not _number(state.get("at"), 0) or not _number(state.get("open_rations"), 0, 1000000.0):
+	return _validate_sample(state, members, hot_read, pending_hp, {})
+
+static func _validate_sample(state: Dictionary, members: Dictionary, hot_read: Callable, pending_hp: Dictionary, sample: Dictionary, owner_seen: Variant = null, owner_key: String = "") -> bool:
+	# Optional summaries live only inside one synchronous resupply/advance call.
+	# The same validation still checks every original member and duplicate ID.
+	if not _integer(state.get("version"), 1) or int(state.version) > 2 or not _number(state.get("at"), 0):
+		return false
+	if (state.version == 1 and not _number(state.get("open_rations"), 0, 1000000.0)) or (state.version == 2 and state.has("open_rations")):
 		return false
 	# Actual transfers can combine opened meals (0.75 + 0.75 = 1.5). They stay
 	# opened food, not newly minted integer grain; physical capacity is separate.
@@ -46,7 +62,7 @@ static func validate(state: Dictionary, members: Dictionary, hot_read: Callable 
 		return false
 	if not state.get("routed") is bool or not state.get("commander_present") is bool or not _integer(state.get("last_combat_event"), -1) or not state.get("cohorts") is Array:
 		return false
-	var seen := {}
+	var seen: Dictionary = {} if owner_seen == null else owner_seen
 	for value: Variant in state.cohorts:
 		if not value is Dictionary:
 			return false
@@ -57,28 +73,49 @@ static func validate(state: Dictionary, members: Dictionary, hot_read: Callable 
 			return false
 		if not cohort.get("bonus_paid") is bool or not cohort.get("bonus_pending") is bool:
 			return false
+		var living := 0
+		var minimum := INF
 		for id: Variant in cohort.ids:
 			if not _integer(id, 1) or seen.has(int(id)) or not members.has(int(id)) or not members[int(id)] is Dictionary:
 				return false
-			if not _number(_member_value(members, int(id), &"hp", hot_read, pending_hp), 0):
+			var hp: Variant = _member_value(members, int(id), &"hp", hot_read, pending_hp)
+			if not _number(hp, 0):
 				return false
-			seen[int(id)] = true
+			if not sample.is_empty() and float(hp) > 0.0:
+				living += 1
+				minimum = minf(minimum, float(hp))
+			seen[int(id)] = owner_key
+		if not sample.is_empty():
+			sample.counts.append(living)
+			sample.minimums.append(minimum)
+			sample.living = int(sample.living) + living
 	return true
 
 static func _next_meal(at_seconds: float) -> float:
 	return (floorf(at_seconds / MEAL) + 1.0) * MEAL
 
 static func validate_owners(states: Array, members: Dictionary) -> bool:
-	# SiteStore calls this across every feeding owner, not once per army.
+	return bool(validate_owner_index(states, members).ok)
+
+static func validate_owner_index(states: Array, members: Dictionary, keys: Array[String] = []) -> Dictionary:
+	# One synchronous validation visits every original person exactly once. The
+	# shared seen map rejects duplicates within a cohort, owner or entire Site.
+	# Only a wholly valid pass exposes its local index; no owner state is changed.
+	if not keys.is_empty() and keys.size() != states.size():
+		return _fail("Feeding owner keys do not match states")
+	var all_v1 := states.all(func(state: Variant) -> bool: return state is Dictionary and state.get("version") == 1)
+	var kernel: RefCounted = TerrainArmy._get_idle_kernel() if all_v1 else null
+	if kernel != null and kernel.has_method("sustain_owner_index"):
+		var packet: Array = kernel.sustain_owner_index(states, members, keys)
+		if packet.size() == 1:
+			if packet[0] is Dictionary: return _ok({"owners": packet[0]})
+			if packet[0] is bool and not packet[0]: return _fail("Invalid or duplicate original feeding ownership")
 	var seen := {}
-	for state: Variant in states:
-		if not state is Dictionary or not validate(state, members):
-			return false
-		for id: int in _ids(state):
-			if seen.has(id):
-				return false
-			seen[id] = true
-	return true
+	for index in range(states.size()):
+		var state: Variant = states[index]
+		if not state is Dictionary or not _validate_sample(state, members, Callable(), {}, {}, seen, keys[index] if not keys.is_empty() else ""):
+			return _fail("Invalid or duplicate original feeding ownership")
+	return _ok({"owners": seen})
 
 static func _ids(state: Dictionary) -> Array[int]:
 	var result: Array[int] = []
@@ -156,7 +193,72 @@ static func _valid_stock(inventory: Dictionary) -> bool:
 			return false
 	return true
 
+static func _valid_location_key(value: Variant) -> bool:
+	if not value is String:
+		return false
+	var parts := str(value).split(":")
+	if parts.size() != 2 or parts[0] not in ["shore", "vehicle"] or not parts[1].is_valid_int():
+		return false
+	var identity := int(parts[1])
+	return _integer(identity, 0 if parts[0] == "shore" else 1) and str(identity) == parts[1]
+
+static func _valid_locations(locations: Dictionary) -> bool:
+	var stocks: Array[Dictionary] = []
+	for key: Variant in locations:
+		if not _valid_location_key(key) or not locations[key] is Dictionary:
+			return false
+		var location: Dictionary = locations[key]
+		if location.size() != 2 or not location.get("inventory") is Dictionary or not _number(location.get("open_rations"), 0, 1000000.0):
+			return false
+		var stock: Dictionary = location.inventory
+		for resource: Variant in stock:
+			if not (resource is String or resource is StringName) or not Env.ITEM_NAMES.has(str(resource)) or not stock[resource] is int or not _number(stock[resource], 0, 1000000):
+				return false
+		# Each physical location owns a distinct stock, never two aliases of one.
+		for prior: Dictionary in stocks:
+			if is_same(prior, stock):
+				return false
+		stocks.append(stock)
+	return true
+
+static func _valid_food_input(state: Dictionary, members: Dictionary, inventory: Dictionary, context: Dictionary) -> bool:
+	if state.version == 1:
+		return _valid_stock(inventory)
+	if not _valid_locations(inventory) or not context.get("food_locations") is Dictionary:
+		return false
+	var food_locations: Dictionary = context.food_locations
+	for id: Variant in food_locations:
+		if not id is int or not _integer(id, 1) or not members.has(id) or not food_locations[id] is String:
+			return false
+		var key: String = food_locations[id]
+		if not key.is_empty() and not inventory.has(key):
+			return false
+	for id: int in _ids(state):
+		if not food_locations.has(id):
+			return false
+	return true
+
+static func _position_cohorts(state: Dictionary, food_locations: Dictionary) -> Array[Dictionary]:
+	# Location is a call-local access projection, not another person/history field.
+	var result: Array[Dictionary] = []
+	for cohort: Dictionary in state.cohorts:
+		var groups := {}
+		for id: Variant in cohort.ids:
+			var key: String = food_locations[int(id)]
+			if not groups.has(key):
+				var copy := cohort.duplicate(true)
+				copy.ids = []
+				groups[key] = copy
+				result.append(copy)
+			groups[key].ids.append(int(id))
+	return result
+
 static func rations(state: Dictionary, inventory: Dictionary) -> float:
+	if state.get("version", 1) == 2:
+		var total := 0.0
+		for location: Dictionary in inventory.values():
+			total += rations(location, location.inventory)
+		return total
 	var result := float(state.open_rations)
 	for food: String in FOODS:
 		result += int(inventory.get(food, 0))
@@ -178,61 +280,104 @@ static func _eat(state: Dictionary, inventory: Dictionary, demand: float) -> flo
 		remaining -= used
 	return consumed
 
-static func resupply(state: Dictionary, members: Dictionary, inventory: Dictionary, due_only: bool = false, hot_read: Callable = Callable(), pending_hp: Dictionary = {}) -> Dictionary:
+static func resupply(state: Dictionary, members: Dictionary, inventory: Dictionary, due_only: bool = false, hot_read: Callable = Callable(), pending_hp: Dictionary = {}, context: Dictionary = {}) -> Dictionary:
 	# Explicit supply event: fill only missing coverage for the remaining period.
 	# No reward until that fully supplied period actually finishes.
-	if not validate(state, members, hot_read, pending_hp) or not _valid_stock(inventory):
+	var sample := {"counts": [], "minimums": [], "living": 0}
+	if not _validate_sample(state, members, hot_read, pending_hp, sample) or not _valid_food_input(state, members, inventory, context):
 		return _fail("Invalid feeding state or designated food inventory")
-	var due: Array[Dictionary] = []
-	var demand := 0.0
-	for cohort: Dictionary in state.cohorts:
+	var food_locations: Dictionary = context.get("food_locations", {}) if state.version == 2 else {}
+	if state.version == 2:
+		var positioned := state.duplicate()
+		positioned.cohorts = _position_cohorts(state, food_locations)
+		sample = {"counts": [], "minimums": [], "living": 0}
+		if not _validate_sample(positioned, members, hot_read, pending_hp, sample):
+			return _fail("Invalid original life state during location preflight")
+		state.cohorts = positioned.cohorts
+	return _resupply_validated(state, inventory, due_only, sample.counts, food_locations)
+
+static func _resupply_validated(state: Dictionary, inventory: Dictionary, due_only: bool, counts: Array, food_locations: Dictionary = {}) -> Dictionary:
+	# Only the two validated public entry points above/below call this helper.
+	var due: Array[int] = []
+	var demands := {}
+	for index in range(state.cohorts.size()):
+		var cohort: Dictionary = state.cohorts[index]
 		if float(cohort.meal_until) <= float(state.at):
 			cohort.coverage = 0.0
 			cohort.meal_until = _next_meal(float(state.at))
-			due.append(cohort)
+			due.append(index)
 		elif not due_only:
-			due.append(cohort)
-	for cohort: Dictionary in due:
-		demand += _living(cohort.ids, members, hot_read, pending_hp) * (float(cohort.meal_until) - float(state.at)) / DAY * (1.0 - float(cohort.coverage))
-	var eaten := _eat(state, inventory, demand)
-	var share := minf(1.0, eaten / demand) if demand > 0.0 else 0.0
-	for cohort: Dictionary in due:
-		cohort.coverage = float(cohort.coverage) + (1.0 - float(cohort.coverage)) * share
+			due.append(index)
+	for index: int in due:
+		var cohort: Dictionary = state.cohorts[index]
+		var key: String = food_locations[int(cohort.ids[0])] if state.version == 2 else ""
+		demands[key] = float(demands.get(key, 0.0)) + int(counts[index]) * (float(cohort.meal_until) - float(state.at)) / DAY * (1.0 - float(cohort.coverage))
+	var consumed := 0.0
+	var shares := {}
+	var keys := demands.keys()
+	keys.sort()
+	for key: String in keys:
+		var demand := float(demands[key])
+		var eaten := 0.0
+		if state.version == 1:
+			eaten = _eat(state, inventory, demand)
+		elif not key.is_empty():
+			var location: Dictionary = inventory[key]
+			eaten = _eat(location, location.inventory, demand)
+		consumed += eaten
+		shares[key] = minf(1.0, eaten / demand) if demand > 0.0 else 0.0
+	for index: int in due:
+		var cohort: Dictionary = state.cohorts[index]
+		var key: String = food_locations[int(cohort.ids[0])] if state.version == 2 else ""
+		cohort.coverage = float(cohort.coverage) + (1.0 - float(cohort.coverage)) * float(shares[key])
 		if float(cohort.coverage) >= 1.0 - EPS:
 			cohort.coverage = 1.0
 			if float(cohort.hunger) >= 6.0 and not bool(cohort.bonus_paid):
 				cohort.bonus_pending = true
-	return _ok({"consumed_rations": eaten})
+	return _ok({"consumed_rations": consumed})
 
 static func advance_to(state: Dictionary, members: Dictionary, inventory: Dictionary, at_seconds: float, context: Dictionary = {}) -> Dictionary:
+	# Generic callers and their custom readers never accept an externally supplied
+	# life summary, including similarly named extra fields in context.
+	return _advance_with_life_sample(state, members, inventory, at_seconds, context, {})
+
+static func _advance_with_life_sample(state: Dictionary, members: Dictionary, inventory: Dictionary, at_seconds: float, context: Dictionary, native_life: Dictionary) -> Dictionary:
 	# Absolute Site time, never wall time. Pause passes paused=true without moving
 	# the clock; the caller must not later pass wall-clock catch-up time.
 	var hot_read: Callable = context.get("hot_read", Callable())
 	var pending_hp: Dictionary = context.get("pending_hp", {})
-	if not validate(state, members, hot_read, pending_hp) or not _valid_stock(inventory) or not _number(at_seconds, float(state.at)):
+	var sample := {"counts": [], "minimums": [], "living": 0}
+	if not _advance_sample(state, members, hot_read, pending_hp, sample, native_life) or not _valid_food_input(state, members, inventory, context) or not _number(at_seconds, float(state.at)):
 		return _fail("Invalid state, stock or backward Site timestamp")
-	var result := _ok({"consumed_rations": 0.0, "damage": {}, "routed_now": false, "regrouped": false})
+	var result := _ok({"consumed_rations": 0.0, "damage": {}, "routed_now": false, "regrouped": false, "fully_fed": true})
 	if bool(context.get("paused", false)) or at_seconds == float(state.at):
 		return result
+	var food_locations: Dictionary = context.get("food_locations", {}) if state.version == 2 else {}
+	if state.version == 2:
+		var positioned := state.duplicate()
+		positioned.cohorts = _position_cohorts(state, food_locations)
+		sample = {"counts": [], "minimums": [], "living": 0}
+		if not _validate_sample(positioned, members, hot_read, pending_hp, sample):
+			return _fail("Invalid original life state during location preflight")
+		state.cohorts = positioned.cohorts
 	while float(state.at) < at_seconds:
-		var meal := resupply(state, members, inventory, true, hot_read, pending_hp)
+		var meal := _resupply_validated(state, inventory, true, sample.counts, food_locations)
 		result.consumed_rations += float(meal.consumed_rations)
 		var end := at_seconds
-		for cohort: Dictionary in state.cohorts:
+		for index in range(state.cohorts.size()):
+			var cohort: Dictionary = state.cohorts[index]
 			end = minf(end, float(cohort.meal_until))
 			var deficit := 1.0 - float(cohort.coverage)
-			if deficit > 0.0:
-				for id: Variant in cohort.ids:
-					var hp := float(_member_value(members, int(id), &"hp", hot_read, pending_hp))
-					if hp > 0.0:
-						end = minf(end, float(state.at) + (maxf(0.0, 48.0 - float(cohort.hunger)) + hp) / deficit * HOUR)
+			if deficit > 0.0 and int(sample.counts[index]) > 0:
+				end = minf(end, float(state.at) + (maxf(0.0, 48.0 - float(cohort.hunger)) + float(sample.minimums[index])) / deficit * HOUR)
 		var seconds := end - float(state.at)
 		var hours := seconds / HOUR
-		var living := _living(_ids(state), members, hot_read, pending_hp)
+		var living := int(sample.living)
 		var shortage := 0.0
 		var fully_fed := living > 0
-		for cohort: Dictionary in state.cohorts:
-			var count := _living(cohort.ids, members, hot_read, pending_hp)
+		for index in range(state.cohorts.size()):
+			var cohort: Dictionary = state.cohorts[index]
+			var count := int(sample.counts[index])
 			var deficit := 1.0 - float(cohort.coverage)
 			shortage += count * deficit
 			if count > 0 and deficit > 0.0:
@@ -242,6 +387,8 @@ static func advance_to(state: Dictionary, members: Dictionary, inventory: Dictio
 				cohort.hunger = prior + hours * deficit
 				var damage := maxf(0.0, float(cohort.hunger) - 48.0) - maxf(0.0, prior - 48.0)
 				if damage > 0.0:
+					var remaining_living := 0
+					var minimum := INF
 					for id: Variant in cohort.ids:
 						var body: Dictionary = members[int(id)]
 						var hp := float(_member_value(members, int(id), &"hp", hot_read, pending_hp))
@@ -255,11 +402,19 @@ static func advance_to(state: Dictionary, members: Dictionary, inventory: Dictio
 							body.hp = remaining
 						if applied > 0.0:
 							result.damage[int(id)] = float(result.damage.get(int(id), 0.0)) + applied
+						if remaining > 0.0:
+							remaining_living += 1
+							minimum = minf(minimum, remaining)
+					sample.counts[index] = remaining_living
+					sample.minimums[index] = minimum
+					sample.living = int(sample.living) + remaining_living - count
 			else:
 				cohort.hunger = maxf(0.0, prior - hours * 0.5)
 			if float(cohort.hunger) == 0.0:
 				cohort.bonus_paid = false
 				cohort.bonus_pending = false
+		# AND across the actual post-resupply segments; an empty interval is neutral.
+		result.fully_fed = bool(result.fully_fed) and fully_fed
 		state.morale = maxf(0.0, float(state.morale) - (2.0 * hours * shortage / living if living > 0 else 0.0))
 		var safe := fully_fed and bool(context.get("safe", false)) and bool(context.get("stopped", false)) and not bool(context.get("committed_action", false))
 		if safe:
@@ -268,9 +423,10 @@ static func advance_to(state: Dictionary, members: Dictionary, inventory: Dictio
 		else:
 			state.regroup_seconds = 0.0
 		state.at = end
-		for cohort: Dictionary in state.cohorts:
+		for index in range(state.cohorts.size()):
+			var cohort: Dictionary = state.cohorts[index]
 			if float(cohort.meal_until) == end and bool(cohort.bonus_pending):
-				state.morale = minf(100.0, float(state.morale) + (2.0 * _living(cohort.ids, members, hot_read, pending_hp) / living if living > 0 else 0.0))
+				state.morale = minf(100.0, float(state.morale) + (2.0 * int(sample.counts[index]) / living if living > 0 else 0.0))
 				cohort.bonus_paid = true
 				cohort.bonus_pending = false
 		if float(state.morale) <= 20.0 and not bool(state.routed):
@@ -281,6 +437,23 @@ static func advance_to(state: Dictionary, members: Dictionary, inventory: Dictio
 			result.regrouped = true # Owner switches to HOLD, never reissues attack.
 	_compact(state)
 	return result
+
+static func _advance_sample(state: Dictionary, members: Dictionary, hot_read: Callable, pending_hp: Dictionary, sample: Dictionary, native_life: Dictionary) -> bool:
+	# Only the original controller supplies this synchronous, unobserved projection.
+	# It expires before any damage callback; custom readers retain the GD validator.
+	native_life.erase("checkpoints")
+	if state.get("version") == 1 and not native_life.is_empty() and pending_hp.is_empty():
+		var kernel: RefCounted = TerrainArmy._get_idle_kernel()
+		if kernel != null and kernel.has_method("sustain_life_sample"):
+			var packet: Array = kernel.sustain_life_sample(state, members, native_life.life, native_life.indices)
+			if packet.size() == 4:
+				sample.counts = packet[0]
+				sample.minimums = packet[1]
+				sample.living = packet[2]
+				native_life.checkpoints = packet[3]
+				return true
+			if packet.size() == 1 and packet[0] is bool and not packet[0]: return false
+	return _validate_sample(state, members, hot_read, pending_hp, sample)
 
 static func combat_event(state: Dictionary, sequence: int, living_before: int, deaths: int, knockouts: int, commander_present: bool, leadership: float) -> Dictionary:
 	if not _number(state.get("morale"), 0, 100) or not state.get("commander_present") is bool or not state.get("routed") is bool or not _integer(state.get("last_combat_event"), -1):
@@ -308,6 +481,8 @@ static func train(training: float, members: Dictionary, eligible_ids: Array, ela
 		return _fail("Invalid training interval or verified coach ability")
 	if not _integer(context.get("controlled_person_id", 0), 0):
 		return _fail("Invalid controlled person identity")
+	if not _number(context.get("training_multiplier", 1.0), 1.0, 1.25):
+		return _fail("Invalid verified facility training multiplier")
 	var result := _ok({"training": training, "effort_seconds": {}, "handled_ids": []})
 	var hot_read: Callable = context.get("hot_read", Callable())
 	var pending_hp: Dictionary = context.get("pending_hp", {})
@@ -316,7 +491,6 @@ static func train(training: float, members: Dictionary, eligible_ids: Array, ela
 	for id: Variant in members:
 		if not _integer(id, 1) or not members[id] is Dictionary:
 			return _fail("Training roster must contain original person dictionaries")
-		var body: Dictionary = members[id]
 		if not _number(_member_value(members, int(id), &"hp", hot_read, pending_hp), 0) or not _number(_member_value(members, int(id), &"ko", hot_read), 0) or not _member_value(members, int(id), &"captive", hot_read) is bool or not _member_value(members, int(id), &"present", hot_read) is bool:
 			return _fail("Training requires original valid HP")
 		if float(_member_value(members, int(id), &"hp", hot_read, pending_hp)) > 0.0 and not bool(_member_value(members, int(id), &"captive", hot_read)):
@@ -333,6 +507,33 @@ static func train(training: float, members: Dictionary, eligible_ids: Array, ela
 	for condition: String in ["ordered", "commander", "safe", "stopped", "fed"]:
 		if not bool(context.get(condition, false)):
 			return result
+	if context.has("work_plan"):
+		var work_plan: Variant = context.work_plan
+		if not work_plan is Dictionary or work_plan.get("ok") != true or not work_plan.get("jobs") is Dictionary:
+			return _fail("Invalid original complete-pool training plan")
+		var planned := 0.0
+		var entries: Variant = work_plan.jobs.get("training", {})
+		if not entries is Dictionary: return _fail("Invalid original training plan provider")
+		# Revalidate every original roster member before publishing training. Lab
+		# owns the sole pool write; this branch never charges or recovers fatigue.
+		for id: Variant in eligible_ids:
+			var identity := int(id)
+			if float(_member_value(members, identity, &"hp", hot_read, pending_hp)) <= 0.0 or float(_member_value(members, identity, &"ko", hot_read)) > 0.0 \
+				or bool(_member_value(members, identity, &"captive", hot_read)) or not bool(_member_value(members, identity, &"present", hot_read)): continue
+			var key := str(identity)
+			var entry: Variant = entries.get(key, {})
+			if not entry is Dictionary or entry.is_empty(): continue
+			if not entry.get("participant_seconds") is Dictionary or not entry.participant_seconds.has(identity): return _fail("Training plan lacks its original participant")
+			var actual: Variant = entry.participant_seconds[identity]
+			var by_person: Variant = entry.get("participant_effective_seconds", {})
+			if not by_person is Dictionary: return _fail("Invalid original training productive interval")
+			var effective: Variant = by_person.get(identity, entry.get("effective_seconds", -1.0))
+			if not _number(actual, 0.0, elapsed_seconds) or not _number(effective, 0.0, float(actual) + EPS): return _fail("Training plan exceeds the original legal interval")
+			planned += float(effective)
+			result.effort_seconds[identity] = float(actual)
+			result.handled_ids.append(identity)
+		result.training = training if training >= 1000.0 else minf(1000.0, training + planned / HOUR / free_living * (1.0 + Rules.diminishing(float(context.get("coach", 0.0)), 0.5)) * float(context.get("training_multiplier", 1.0)))
+		return result
 	var productive := 0.0
 	var shared_bodies: Array[Dictionary] = []
 	for id: Variant in eligible_ids:
@@ -391,7 +592,7 @@ static func train(training: float, members: Dictionary, eligible_ids: Array, ela
 			result.effort_seconds[int(body.person_id)] = effort
 	# The cap stops growth, not the existing order or its actual effort. This also
 	# keeps fatigue partition-independent when a long interval reaches the cap.
-	result.training = training if training >= 1000.0 else minf(1000.0, training + productive / HOUR / free_living * (1.0 + Rules.diminishing(float(context.get("coach", 0.0)), 0.5)))
+	result.training = training if training >= 1000.0 else minf(1000.0, training + productive / HOUR / free_living * (1.0 + Rules.diminishing(float(context.get("coach", 0.0)), 0.5)) * float(context.get("training_multiplier", 1.0)))
 	return result
 
 static func _compact(state: Dictionary) -> void:

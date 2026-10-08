@@ -6,7 +6,6 @@ const BattleCrowdSimulationType = preload("res://scripts/benchmark/3d_crowd/batt
 const MAX_NEAR_ACTORS: int = 128
 const PROMOTE_DISTANCE: float = 45.0
 const DEMOTE_DISTANCE: float = 52.0
-const TIE_EPSILON: float = 0.000001
 
 var max_near_actors: int = MAX_NEAR_ACTORS
 var promote_distance: float = PROMOTE_DISTANCE
@@ -186,11 +185,9 @@ func resolve(
 				continue
 			var retained_distance_squared: float = _candidate_distance_squared[retained_id]
 			if (
-				retained_distance_squared > farthest_distance_squared + TIE_EPSILON
-				or (
-					is_equal_approx(retained_distance_squared, farthest_distance_squared)
-					and retained_id > farthest_id
-				)
+				farthest_slot < 0
+				or retained_distance_squared > farthest_distance_squared
+				or (retained_distance_squared == farthest_distance_squared and retained_id > farthest_id)
 			):
 				farthest_slot = slot
 				farthest_distance_squared = retained_distance_squared
@@ -253,9 +250,9 @@ func _is_better_candidate(
 ) -> bool:
 	if best_id < 0:
 		return true
-	if distance_squared < best_distance_squared - TIE_EPSILON:
+	if distance_squared < best_distance_squared:
 		return true
-	return is_equal_approx(distance_squared, best_distance_squared) and soldier_index < best_id
+	return distance_squared == best_distance_squared and soldier_index < best_id
 
 func _formation_radius(formation: CrowdFormationState) -> float:
 	var half_width: float = maxf(formation.formation_width, formation.spacing) * 0.5

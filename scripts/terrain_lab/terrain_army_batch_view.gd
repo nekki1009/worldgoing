@@ -3,12 +3,14 @@ extends Node2D
 const Atlas = preload("res://scripts/terrain_lab/terrain_army_equipment_atlas.gd")
 const DyeAtlas = preload("res://scripts/terrain_lab/terrain_army_dye_atlas.gd")
 const GpuBufferWriter = preload("res://scripts/terrain_lab/terrain_army_gpu_buffer_writer.gd")
+static var _dye_map_cache: Dictionary = {} # Weak refs only; page materials own live textures.
 const SHADER := """
 shader_type canvas_item;
 uniform sampler2D sequence_data : filter_nearest, repeat_disable;
 uniform sampler2D palette_data : filter_nearest, repeat_disable;
 uniform sampler2D dye_map : filter_nearest, repeat_disable;
 varying flat int palette_row;
+varying flat int fire_visual;
 varying flat vec4 frame_clip;
 varying vec4 instance_tint;
 void vertex() {
@@ -23,6 +25,7 @@ void vertex() {
     frame_clip = vec4(unpackHalf2x16(packHalf2x16(source_rect.xy)), unpackHalf2x16(packHalf2x16(source_rect.zw)));
     instance_tint = COLOR;
     palette_row = int(INSTANCE_CUSTOM.z);
+    fire_visual = int(INSTANCE_CUSTOM.w);
 }
 void fragment() {
     vec2 half_pixel = TEXTURE_PIXEL_SIZE * 0.5;
@@ -34,6 +37,8 @@ void fragment() {
         vec4 dye = texelFetch(palette_data, ivec2(slot - 1, palette_row), 0);
         original.rgb = mix(original.rgb, dye.rgb * mask.g, dye.a * mask.b);
     }
+    if (fire_visual == 1) original.rgb *= vec3(1.0, 0.75, 0.42);
+    if (fire_visual == 2) original.rgb *= vec3(1.0, 0.35, 0.12);
     COLOR = original;
 }
 """
@@ -71,10 +76,15 @@ var rendered_count := 0
 var active_batches := 0
 var _idle_samples: Array = [] # Immutable atlas projection, never person state.
 var _idle_and_unconscious_samples: Array = []
+var _crowd_samples: Array = []
 var _native_mask := PackedByteArray()
 var _native_rows := PackedInt32Array()
 var native_prepared_count := 0
 var native_unconscious_enabled := true # A/B switch; false retains the original idle-only native packet.
+var native_crowd_render_enabled := true
+var native_moving_count := 0
+var native_crowd_frames := 0
+var native_moving_total := 0
 var native_buffer_enabled := true
 var native_buffer_instances := 0
 var native_grouping_enabled := true
@@ -126,6 +136,8 @@ func setup(army: Node2D, count: int) -> void:
 	_frames.resize(count)
 	_page.resize(count)
 	_palette.resize(count)
+	_fire_visual.resize(count)
+	_fire_visual.fill(0)
 	_grounds.resize(count)
 	_ground_ready.resize(count)
 	_authored_durations.resize(count)
@@ -166,6 +178,7 @@ func begin() -> void:
 	rendered_count = 0
 	active_batches = 0
 	native_prepared_count = 0
+	native_moving_count = 0
 	native_buffer_instances = 0
 	native_grouped_count = 0
 	_group_spans = PackedInt32Array()
@@ -194,6 +207,17 @@ func _on_gpu_writer_failed(_message: String) -> void:
 	gpu_fallback_count += 1
 	flush() # Repack the retained rows even if the battle is paused and no new visual tick arrives.
 
+func use_native_crowd() -> bool:
+	# Every canonical combat step owns a destination reservation. This existing
+	# owner map is a conservative O(1) moving check; idle keeps its retained path.
+	# Sparse movement benefits from the existing changed-row renderer. A dense
+	# moving cohort amortizes this full native projection and row grouping.
+	if not native_crowd_render_enabled or _army.get_script() != TerrainArmy \
+		or _army._reserved_cells.size() < maxi(8, ceili(float(_army.cells.size()) / 4.0)):
+		return false
+	var kernel: RefCounted = _army._combat_hot_store if _army.combat_hot_active() else TerrainArmy._get_idle_kernel()
+	return kernel != null and kernel.has_method("render_crowd")
+
 func prepare_idle() -> void:
 	if not _army._soldier_baked_ready or not _army.equipment_appearance_batch_query.is_valid(): return
 	# The shipped library's Vector2 storage is float32. Keep other builds on GD.
@@ -206,18 +230,36 @@ func prepare_idle() -> void:
 		_mechanism.static_observations += _army.combat_units.size()
 		_mechanism.ground_projections += _army.combat_units.size()
 		_mechanism.animation_samples += _army.combat_units.size()
-	var packet: Array = kernel.call("render_idle", _army.combat_units, _army.cells, _army.moving_to,
-		_army.facing, publications, _appearances, _descriptors,
-		_idle_and_unconscious_samples if native_unconscious_enabled else _idle_samples,
-		_army._sprites, TerrainRenderer.CELL_PIXELS)
+	var packet: Array
+	if use_native_crowd():
+		var native_started := Time.get_ticks_usec() if _army.combat_profile_enabled else 0
+		packet = kernel.call("render_crowd", _army.combat_units, _army.cells, _army.moving_to,
+			_army.facing, publications, _appearances, _descriptors, _crowd_samples,
+			_army._sprites, TerrainRenderer.CELL_PIXELS,
+			[_army.move_progress, _army.move_duration, _army.move_curve, _army._cell_owners, TerrainArmy.RUN_DURATION])
+		_army._profile_combat_stage("render_crowd_native", native_started)
+		if packet.size() == 8:
+			native_moving_count = int(packet[7])
+			native_crowd_frames += 1
+			native_moving_total += native_moving_count
+	else:
+		packet = kernel.call("render_idle", _army.combat_units, _army.cells, _army.moving_to,
+			_army.facing, publications, _appearances, _descriptors,
+			_idle_and_unconscious_samples if native_unconscious_enabled else _idle_samples,
+			_army._sprites, TerrainRenderer.CELL_PIXELS)
 	if packet.is_empty(): return
 	_native_mask = packet[0]
 	_positions = packet[1]
+	if _army.data.has_raised_surfaces:
+		for index in range(_native_mask.size()):
+			if _native_mask[index] != 0:
+				_positions[index] += _army.data.surface_visual_offset_at(_army.combat_visual_ground(index))
 	_sequence = packet[2]
 	_frames = packet[3]
 	_page = packet[4]
 	_palette = packet[5]
 	_native_rows = packet[6]
+	for index in range(_native_mask.size()): _refresh_fire_visual(index)
 	# These original people use the rider-only companion on their own Sprite.
 	# Do not let native idle batching also draw a second standing copy.
 	if _army.vehicle_transport != null:
@@ -225,6 +267,11 @@ func prepare_idle() -> void:
 			if str(vehicle.kind) != "wagon" or int(vehicle.team_id) != _army.team_id or int(vehicle.operator_id) <= 0: continue
 			var index: int = _army.index_for_identity(int(vehicle.operator_id))
 			if index >= 0 and not _army._vehicle_rider_state(index).is_empty(): _native_mask[index] = 0
+		for vehicle: Dictionary in _army.vehicle_transport.records().values():
+			if int(vehicle.get("team_id", -1)) != _army.team_id or not _army.vehicle_transport.is_siege(vehicle): continue
+			for identity: int in vehicle.get("crew_slots", {}).values():
+				var index: int = _army.index_for_identity(identity)
+				if index >= 0 and not _army.siege_work_state(index).is_empty(): _native_mask[index] = 0
 
 func can_group_prepared() -> bool:
 	if _retained_mode or not native_grouping_enabled or _native_mask.is_empty() or _native_mask.size() != _page.size() or _native_rows.size() != _page.size(): return false
@@ -266,6 +313,9 @@ func finish_prepared_groups() -> void:
 			_rows[row].append(index)
 
 func submit_prepared(index: int) -> bool:
+	if _site_exited(index):
+		remove(index)
+		return true
 	if _retained_mode or _native_mask.is_empty() or _native_mask[index] == 0: return false
 	_groups_ready = false
 	var row := _native_rows[index]
@@ -297,6 +347,9 @@ func _retain_assign(index: int, row: int, previous_page: int, next_page: int, ou
 
 func submit(index: int, ground: Vector2, appearance: Dictionary, clip: String, direction: String, sample_time: float, authored_duration: float = -1.0) -> bool:
 	if index < 0 or index >= _positions.size() or not is_finite(sample_time) or sample_time < 0.0: return false
+	if _site_exited(index):
+		remove(index)
+		return true
 	if mechanism_enabled:
 		_mechanism.static_observations += 1
 		_mechanism.ground_projections += 1
@@ -343,6 +396,7 @@ func submit(index: int, ground: Vector2, appearance: Dictionary, clip: String, d
 		_last_clip = clip
 		_last_direction = direction
 		_last_time = sample_time
+	_refresh_fire_visual(index)
 	var previous_row := _index_row[index]
 	var previous_page := _page[index]
 	var previous_position := _positions[index]
@@ -352,7 +406,7 @@ func submit(index: int, ground: Vector2, appearance: Dictionary, clip: String, d
 	_groups_ready = false
 	_sequence[index] = _last_sequence
 	_frames[index] = _last_frame
-	_positions[index] = ground - _last_anchor
+	_positions[index] = ground - _last_anchor + _army.data.surface_visual_offset_at(ground)
 	_page[index] = int(descriptor.page)
 	_palette[index] = int(descriptor.palette)
 	if retained_enabled:
@@ -372,9 +426,38 @@ func submit(index: int, ground: Vector2, appearance: Dictionary, clip: String, d
 		if mechanism_enabled: _mechanism.changed_outputs += 1
 	return true
 
+func _site_exited(index: int) -> bool:
+	return _army is TerrainArmy and index >= 0 and index < _army.combat_units.size() and bool(_army.combat_hot_get(index, &"site_exited", false))
+
+func remove(index: int) -> void:
+	if index < 0 or index >= _page.size(): return
+	if index < _native_mask.size(): _native_mask[index] = 0
+	var sprite: Sprite2D = _original_sprites.get(index)
+	if sprite != null: sprite.visible = false
+	_original_sprites.erase(index)
+	if _page[index] < 0 and _index_row[index] < 0 and sprite == null: return
+	var removed := false
+	for row: int in _rows.keys():
+		if not _rows[row].has(index): continue
+		_rows[row].erase(index)
+		if _rows[row].is_empty(): _rows.erase(row)
+		_changed_rows[row] = true
+		removed = true
+	if removed and _page[index] >= 0: rendered_count -= 1
+	_page[index] = -1
+	_index_row[index] = -1
+	_index_run[index] = -1
+	_ground_ready[index] = 0
+	_authored_durations[index] = -1.0
+	_groups_ready = false
+
 func submit_sprite(index: int, ground: Vector2, sprite: Sprite2D) -> void:
 	# Live captains and unadmitted atlas recipes stay on their original Sprite.
 	# They split same-row batches at their original index, preserving overlap.
+	if _site_exited(index):
+		sprite.visible = false
+		remove(index)
+		return
 	var row := 10 + int(ground.y / TerrainRenderer.CELL_PIXELS)
 	if _retained_mode and _page[index] < 0 and _index_row[index] == row \
 			and _original_sprites.get(index) == sprite and sprite.get_parent() == self:
@@ -399,12 +482,22 @@ func submit_sprite(index: int, ground: Vector2, sprite: Sprite2D) -> void:
 	if mechanism_enabled: _mechanism.ground_projections += 1
 	if sprite.get_parent() != self: sprite.reparent(self, false)
 
-func sample_retained_animations(times: PackedFloat64Array, eligible: PackedByteArray = PackedByteArray()) -> int:
-	if not _retained_mode or times.size() != _page.size() or (not eligible.is_empty() and eligible.size() != times.size()): return -1
+func sample_retained_animations(times: PackedFloat64Array, eligible: PackedByteArray = PackedByteArray(), exited: PackedFloat64Array = PackedFloat64Array()) -> int:
+	if not _retained_mode or times.size() != _page.size() or (not eligible.is_empty() and eligible.size() != times.size()) \
+			or (not exited.is_empty() and exited.size() != times.size()): return -1
 	var changed := 0
+	var has_exit_column: bool = not exited.is_empty() and _army is TerrainArmy and _army.get_script() == TerrainArmy \
+		and _army.combat_units.size() == times.size() and _army._combat_hot_borrowed_index < 0 and _army.combat_hot_active() \
+		and _army._combat_hot_store.get_class() == "ArmyCombatHot" and _army._combat_hot_store.get_script() == null
 	for index in range(times.size()):
+		# The original Army may pass its column for this synchronous submission.
+		# Other callers retain the live per-row query; no column survives the call.
+		if (exited[index] != 0.0 if has_exit_column else _site_exited(index)):
+			remove(index)
+			continue
 		if not eligible.is_empty() and eligible[index] == 0: continue
 		if _index_row[index] < 0 or _page[index] < 0: continue
+		_refresh_fire_visual(index)
 		var sample_time := times[index]
 		if not is_finite(sample_time) or sample_time < 0.0 or _ground_ready[index] == 0:
 			_retained_ready = false
@@ -434,9 +527,9 @@ func sample_retained_animations(times: PackedFloat64Array, eligible: PackedByteA
 		if low == _frames[index]: continue
 		var frame: Dictionary = samples[low]
 		var anchor := Vector2(float(frame.anchor_offset.x), float(frame.anchor_offset.y)) * float(page.scale)
-		var position := _grounds[index] - anchor
+		var sprite_position: Vector2 = _grounds[index] - anchor + _army.data.surface_visual_offset_at(_grounds[index])
 		_frames[index] = low
-		_positions[index] = position
+		_positions[index] = sprite_position
 		_changed_runs[Vector2i(_index_row[index], _index_run[index])] = true
 		if mechanism_enabled: _mechanism.changed_outputs += 1
 		changed += 1
@@ -509,6 +602,9 @@ func _record_span(row: int, run: int, members: Array, start: int, stop: int, pag
 func _finish_full_retained() -> void:
 	_retained_ready = false
 	if not retained_enabled: return
+	# Moving native rows contain interpolated grounds. Rebuild once after the
+	# original last step completes before resuming the stationary retained path.
+	if native_moving_count > 0: return
 	for index in range(_page.size()):
 		if _index_row[index] < 0 or _page[index] < 0 or _ground_ready[index] != 0: continue
 		if index >= _army.cells.size() or index >= _native_mask.size() or _native_mask[index] == 0: return
@@ -641,7 +737,8 @@ func _flush_run(row: int, run: int, members: Array, start: int, stop: int, page_
 		_gpu_writer = GpuBufferWriter.new()
 		_gpu_writer.start(_on_gpu_writer_failed)
 	var primed: bool = _gpu_primed.get(key, -1) == count
-	var use_gpu: bool = gpu_ready and primed and _gpu_writer.ready()
+	# ponytail: fire flags use the existing CPU writer only for affected runs; extend the compact GPU schema if that path is later admitted.
+	var use_gpu: bool = gpu_ready and primed and _gpu_writer.ready() and not _fire_run_active(members, start, stop)
 	var bounds: Rect2
 	if use_gpu:
 		if not _gpu_active_keys.has(key): _gpu_active_keys.append(key)
@@ -695,6 +792,7 @@ func _pack_run(members: Array, start: int, stop: int, map_scale: float) -> Array
 		if kernel != null and kernel.has_method("pack_instances"):
 			var packet: Array = kernel.call("pack_instances", members, start, stop, _positions, _sequence, _frames, _palette, map_scale)
 			if packet.size() == 2:
+				packet[0] = _fire_apply_flags(packet[0], members, start, stop)
 				native_buffer_instances += stop - start
 				if mechanism_enabled:
 					_mechanism.packed_instances += stop - start
@@ -722,6 +820,7 @@ func _pack_run_gd(members: Array, start: int, stop: int, map_scale: float) -> Ar
 		buffer[offset + 8] = float(_sequence[index])
 		buffer[offset + 9] = float(_frames[index])
 		buffer[offset + 10] = float(_palette[index])
+		buffer[offset + 11] = float(_fire_visual[index])
 		bounds = bounds.expand(_positions[index])
 	return [buffer, bounds]
 
@@ -736,6 +835,156 @@ static func _deep_read_only(value: Variant) -> bool:
 			if not _deep_read_only(child): return false
 	return not value is Object
 
+# Only the detached Crowd register path calls this after complete atlas admission.
+# The returned strong refs keep the existing weak cache alive until pages own them.
+func prewarm_dye_maps(appearances: Array) -> Array[ImageTexture]:
+	var records: Array = []
+	var seen := {}
+	var total_bytes := 0.0
+	for appearance: Dictionary in appearances:
+		if not appearance.is_empty() and not HumanCharacter3DEditor.valid_appearance(appearance): return []
+		var geometry := DyeAtlas.Dye.geometry_appearance(appearance)
+		if appearance.is_empty(): geometry = _army._combat_bake.manifest.appearance
+		if not Atlas.wagon_foot_recipe(appearance).is_empty(): continue
+		var record := Atlas.dye_entry(geometry)
+		if record.is_empty(): continue
+		if not record.get("mask_path") is String or not record.get("mask_md5") is String: return []
+		if typeof(record.get("width")) not in [TYPE_INT, TYPE_FLOAT] or typeof(record.get("height")) not in [TYPE_INT, TYPE_FLOAT]: return []
+		var key: String = record.mask_path + "|" + record.mask_md5
+		if seen.has(key): continue
+		var bytes := float(record.width) * float(record.height) * 4.0
+		if not is_finite(bytes) or bytes <= 0.0: return []
+		seen[key] = true
+		total_bytes += bytes
+		if seen.size() > 16 or total_bytes > 512.0 * 1024.0 * 1024.0: return []
+		records.append(record)
+	return _prewarm_dye_records(records)
+
+class DyeDecodeBatch extends RefCounted:
+	var payloads: Array[PackedByteArray] = []
+	var sizes: Array[Vector2i] = []
+	var images: Array[Image] = []
+
+	func _decode_one(index: int) -> void:
+		# Each worker owns its Image; no cache, Node, ResourceLoader or GPU access.
+		var decoded := Image.new()
+		if decoded.load_png_from_buffer(payloads[index]) != OK: return
+		if decoded.get_width() != sizes[index].x or decoded.get_height() != sizes[index].y: return
+		decoded.convert(Image.FORMAT_RGB8)
+		images[index] = decoded
+
+	func decode() -> void:
+		payloads.make_read_only()
+		sizes.make_read_only()
+		images.resize(payloads.size())
+		var workers := mini(payloads.size(), clampi(OS.get_processor_count(), 1, 4))
+		var group := WorkerThreadPool.add_group_task(_decode_one, payloads.size(), workers, true, "Crowd dye masks")
+		if group < 0:
+			for index in range(payloads.size()): _decode_one(index)
+		else:
+			WorkerThreadPool.wait_for_group_task_completion(group)
+
+static func _serial_dye_records(records: Array) -> Array[ImageTexture]:
+	var textures: Array[ImageTexture] = []
+	for record: Dictionary in records: textures.append(_shared_dye_map(record))
+	return textures
+
+static func _prewarm_dye_records(records: Array) -> Array[ImageTexture]:
+	# Preserve callback/coercion order for anything outside admitted primitive records.
+	if not Thread.is_main_thread(): return []
+	if records.size() < 2 or OS.get_processor_count() < 2:
+		return _serial_dye_records(records)
+	var keys: Array[String] = []
+	var unique: Array[Dictionary] = []
+	var sizes: Array[Vector2i] = []
+	var index_by_key := {}
+	for record: Dictionary in records:
+		if not record.get("mask_path") is String or not record.get("mask_md5") is String:
+			return _serial_dye_records(records)
+		if typeof(record.get("width")) not in [TYPE_INT, TYPE_FLOAT] or typeof(record.get("height")) not in [TYPE_INT, TYPE_FLOAT]:
+			return _serial_dye_records(records)
+		if not is_finite(float(record.width)) or not is_finite(float(record.height)) or float(record.width) < 1.0 or float(record.height) < 1.0 or float(record.width) > 32768.0 or float(record.height) > 32768.0:
+			return _serial_dye_records(records)
+		var size := Vector2i(int(record.width), int(record.height))
+		var key := str(record.mask_path) + "|" + str(record.mask_md5)
+		keys.append(key)
+		if index_by_key.has(key):
+			if sizes[int(index_by_key[key])] != size: return _serial_dye_records(records)
+			continue
+		index_by_key[key] = unique.size()
+		unique.append(record)
+		sizes.append(size)
+	var ready_now: Array[ImageTexture] = []
+	ready_now.resize(unique.size())
+	var pending: Array[int] = []
+	var encoded: Array[PackedByteArray] = []
+	encoded.resize(unique.size())
+	for index in range(unique.size()):
+		var record: Dictionary = unique[index]
+		var key := str(record.mask_path) + "|" + str(record.mask_md5)
+		var cached: WeakRef = _dye_map_cache.get(key) as WeakRef
+		var texture: ImageTexture = cached.get_ref() as ImageTexture if cached != null else null
+		if texture != null and texture.get_width() == sizes[index].x and texture.get_height() == sizes[index].y:
+			ready_now[index] = texture
+			continue
+		var bytes := FileAccess.get_file_as_bytes(str(record.mask_path))
+		# Read a fixed PNG IHDR before allocation. Other formats retain the original path.
+		if bytes.size() < 33 or bytes.slice(0, 16) != PackedByteArray([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82]) or bytes[24] != 8 or bytes[25] != 2:
+			return _serial_dye_records(records)
+		var width := (int(bytes[16]) << 24) | (int(bytes[17]) << 16) | (int(bytes[18]) << 8) | int(bytes[19])
+		var height := (int(bytes[20]) << 24) | (int(bytes[21]) << 16) | (int(bytes[22]) << 8) | int(bytes[23])
+		if Vector2i(width, height) != sizes[index] or width * height * 4 > 256 * 1024 * 1024:
+			return _serial_dye_records(records)
+		encoded[index] = bytes
+		pending.append(index)
+	var cursor := 0
+	while cursor < pending.size():
+		var batch := DyeDecodeBatch.new()
+		var selected: Array[int] = []
+		var decoded_bytes := 0
+		while cursor < pending.size() and selected.size() < 4:
+			var index: int = pending[cursor]
+			var estimate := sizes[index].x * sizes[index].y * 4
+			if decoded_bytes + estimate > 256 * 1024 * 1024: break
+			selected.append(index)
+			batch.payloads.append(encoded[index])
+			batch.sizes.append(sizes[index])
+			decoded_bytes += estimate
+			cursor += 1
+		batch.decode()
+		# Join precedes all Texture creation and publication to the original weak cache.
+		for local_index in range(selected.size()):
+			var index: int = selected[local_index]
+			var decoded: Image = batch.images[local_index]
+			if decoded == null: continue
+			var texture := ImageTexture.create_from_image(decoded)
+			if texture != null:
+				var record: Dictionary = unique[index]
+				_dye_map_cache[str(record.mask_path) + "|" + str(record.mask_md5)] = weakref(texture)
+			ready_now[index] = texture
+	var result: Array[ImageTexture] = []
+	for key: String in keys: result.append(ready_now[int(index_by_key[key])])
+	return result
+
+
+static func _shared_dye_map(record: Dictionary) -> ImageTexture:
+	# Atlas.dye_entry already validates this path and checksum against its source.
+	var key := str(record.mask_path) + "|" + str(record.mask_md5)
+	var cached: WeakRef = _dye_map_cache.get(key) as WeakRef
+	var texture: ImageTexture
+	if cached != null: texture = cached.get_ref() as ImageTexture
+	if texture != null and texture.get_width() == int(record.width) and texture.get_height() == int(record.height):
+		return texture
+	var mask_bytes := FileAccess.get_file_as_bytes(str(record.mask_path))
+	if mask_bytes.is_empty(): return null
+	var mask := Image.new()
+	if mask.load_png_from_buffer(mask_bytes) != OK or mask.get_width() != int(record.width) or mask.get_height() != int(record.height):
+		return null
+	mask.convert(Image.FORMAT_RGB8)
+	texture = ImageTexture.create_from_image(mask)
+	if texture != null: _dye_map_cache[key] = weakref(texture)
+	return texture
+
 func _describe(appearance: Dictionary) -> Dictionary:
 	if not appearance.is_empty() and not HumanCharacter3DEditor.valid_appearance(appearance): return {}
 	var geometry := DyeAtlas.Dye.geometry_appearance(appearance)
@@ -748,7 +997,7 @@ func _describe(appearance: Dictionary) -> Dictionary:
 	if not _page_keys.has(key):
 		var sequences := {}
 		var texture: Texture2D
-		if geometry == base.appearance:
+		if geometry == base.appearance and str(record.get("source_manifest", "")) == Atlas.BASE_MANIFEST:
 			texture = _army._soldier_atlas
 			for clip: String in _army._combat_bake.contact_clocks:
 				for direction: String in _army._combat_bake.contact_clocks[clip]:
@@ -757,6 +1006,9 @@ func _describe(appearance: Dictionary) -> Dictionary:
 			var recipe := wagon_foot
 			if recipe.is_empty(): recipe = Atlas.mixed_recipe(geometry)
 			if recipe.is_empty(): recipe = Atlas.female_recipe(geometry) if geometry.body == 1 else Atlas.RangedAtlas.recipe(geometry)
+			if recipe.is_empty():
+				var mask := Atlas._appearance_mask(geometry)
+				if mask >= 0: recipe = Atlas._recipe(mask, Atlas._appearance_iron(geometry))
 			if recipe.is_empty(): return {}
 			sequences = recipe.sequences
 			# A future multi-page publication stays on the original page-aware
@@ -767,23 +1019,16 @@ func _describe(appearance: Dictionary) -> Dictionary:
 					if frame._page != first_page: return {}
 			texture = Atlas._page(sequences.values()[0][0]._page)
 		if texture == null or sequences.is_empty(): return {}
-		var mask: Image
+		var mask_texture: ImageTexture
 		if not wagon_foot.is_empty():
 			# The two fixed, undyed cloth recipes need no new dye publication.
-			mask = Image.create(1, 1, false, Image.FORMAT_RGB8)
+			var mask := Image.create(1, 1, false, Image.FORMAT_RGB8)
 			mask.fill(Color.BLACK)
+			mask_texture = ImageTexture.create_from_image(mask)
 		else:
-			var mask_path := str(record.mask_path)
-			if ResourceLoader.exists(mask_path):
-				var res := ResourceLoader.load(mask_path)
-				if res is Texture2D:
-					mask = (res as Texture2D).get_image()
-				elif res is Image:
-					mask = res as Image
-			if mask == null:
-				mask = Image.load_from_file(mask_path)
-			if mask == null or mask.get_width() != int(record.width) or mask.get_height() != int(record.height) or mask.get_width() != texture.get_width() or mask.get_height() != texture.get_height(): return {}
-			mask.convert(Image.FORMAT_RGB8)
+			if int(record.width) != texture.get_width() or int(record.height) != texture.get_height(): return {}
+			mask_texture = _shared_dye_map(record)
+		if mask_texture == null: return {}
 		var metadata := Image.create(129, sequences.size(), false, Image.FORMAT_RGBAF)
 		var pixel_size := Vector2(1.0 / texture.get_width(), 1.0 / texture.get_height())
 		var lookup := {}
@@ -811,11 +1056,12 @@ func _describe(appearance: Dictionary) -> Dictionary:
 		page_material.shader = _shader
 		page_material.set_shader_parameter("sequence_data", ImageTexture.create_from_image(metadata))
 		page_material.set_shader_parameter("palette_data", _palette_texture)
-		page_material.set_shader_parameter("dye_map", ImageTexture.create_from_image(mask))
+		page_material.set_shader_parameter("dye_map", mask_texture)
 		_page_keys[key] = _pages.size()
-		_pages.append({"texture": texture, "material": page_material, "sequences": lookup, "samples": sequences.values(), "scale": float(base.map_scale), "margin": margin})
+		_pages.append({"texture": texture, "material": page_material, "mask_texture": mask_texture,
+			"sequences": lookup, "samples": sequences.values(), "scale": float(base.map_scale), "margin": margin})
 		var native_samples: Array = []
-		for clip: String in ["combat_idle", "unconscious"]:
+		for clip: String in ["combat_idle", "unconscious", "combat_walk", "combat_run"]:
 			for direction: String in ["up", "right", "down", "left"]:
 				var sample_key := clip + "|" + direction
 				if not lookup.has(sample_key):
@@ -830,7 +1076,8 @@ func _describe(appearance: Dictionary) -> Dictionary:
 				native_samples.append([int(lookup[sample_key]), float(frames[0].duration),
 					float(frames.back().sample_time) < float(frames[0].duration) - 0.000001, times, anchors])
 		_idle_samples.append(native_samples.slice(0, 4))
-		_idle_and_unconscious_samples.append(native_samples)
+		_idle_and_unconscious_samples.append(native_samples.slice(0, 8))
+		_crowd_samples.append(native_samples)
 	var colors: Dictionary = appearance.get("equipment_dyes", {})
 	var palette_key := str(colors)
 	if not _palette_keys.has(palette_key):
@@ -843,3 +1090,24 @@ func _describe(appearance: Dictionary) -> Dictionary:
 		_palette_keys[palette_key] = palette_index
 		_palette_dirty = true
 	return {"page": int(_page_keys[key]), "palette": int(_palette_keys[palette_key])}
+
+
+# Read-only render projection from original Army rows. No new person, Near role,
+# material instance, world position, clock or GPU readback is introduced.
+var _fire_visual := PackedByteArray()
+
+func _refresh_fire_visual(index: int) -> void:
+	var code: int = _army.fire_body_visual_code(index) if _army is TerrainArmy else 0
+	if _fire_visual[index] == code: return
+	_fire_visual[index] = code
+	if _retained_mode and _index_row[index] >= 0:
+		_changed_runs[Vector2i(_index_row[index], _index_run[index])] = true
+
+func _fire_run_active(members: Array, start: int, stop: int) -> bool:
+	for offset in range(start, stop):
+		if _fire_visual[int(members[offset])] != 0: return true
+	return false
+
+func _fire_apply_flags(buffer: PackedFloat32Array, members: Array, start: int, stop: int) -> PackedFloat32Array:
+	for offset in range(stop - start): buffer[offset * 12 + 11] = float(_fire_visual[int(members[start + offset])])
+	return buffer

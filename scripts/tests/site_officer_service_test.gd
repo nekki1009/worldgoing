@@ -19,6 +19,15 @@ func run() -> void:
 	for index in range(100):
 		selected.append(Vector2i(10 + index % 10, 10 + floori(float(index) / 10)))
 	assert(team.deploy_at(data, null, null, selected) and team.enable_combat(false))
+	for index in range(1, 7):
+		assert(team.set_military_role(team.combat_identity(index), "officer").ok)
+	# R1b (user decision 2026-10-07): promotion auto-appoints officers into 武官 posts
+	# and the cadre list follows posts. Start this cadre-order contract from no posts.
+	var vacate_ops: Array = []
+	for seat: Dictionary in team.team_offices().positions:
+		if not bool(seat.head) and int(seat.holder) > 0: vacate_ops.append({"op": "dismiss", "position_id": str(seat.id)})
+	assert(team.apply_office_plan(team.combat_identity(team.formal_commander), int(team.offices.revision), vacate_ops).ok)
+	assert(team.officer_service.is_empty() and team.officer_order.is_empty())
 	assert(team.record_officer_service([3, 1], true).ok)
 	assert(team.officer_service == [1, 3] and team.officer_order == [1, 3], "Simultaneous appointments use stable IDs")
 	assert(team.record_officer_service([2], true).ok)

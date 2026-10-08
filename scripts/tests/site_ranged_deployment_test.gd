@@ -38,6 +38,8 @@ func _run() -> void:
 	assert(DirAccess.make_dir_recursive_absolute(OUT) == OK)
 	var lab := TerrainLab.new()
 	lab.pause_when_unfocused = false
+	# Explicit legacy/reference owner and render regression; new physical admission has separate tests.
+	lab.physical_ranged_enabled = false
 	root.add_child(lab)
 	lab.set_process(false)
 	lab.site_controller.set_process(false)
@@ -82,11 +84,26 @@ func _run() -> void:
 	controller.trial_enemy_order.select(0)
 	controller.trial_third_order.select(0)
 	controller.trial_third_enabled.button_pressed = true
+	# Directional UI defaults deploy from map edges. This shot/save regression
+	# requests a legal six-cell fixture through the existing custom-spawn UI.
+	var layout := lab.find_melee_trial_layout(6, 4, TerrainArmy.INVALID_CELL, TerrainArmy.INVALID_CELL, 3, TerrainArmy.INVALID_CELL, 8.0, 8.0)
+	assert(not layout.is_empty(), "Original planner supplies three legal ranged formations")
+	var custom := lab.find_melee_trial_layout(6, 4, layout.friendly[0], layout.enemy[0], 3, layout.third[0], 8.0, 8.0)
+	assert(not custom.is_empty(), "All three anchors must pass the original custom-shape contract")
+	assert(Vector2i(custom.friendly[0]).distance_to(custom.enemy[0]) == 6.0)
+	assert(SiteCombatRules.ranged_line_clear(lab.terrain, custom.friendly[0], custom.enemy[0]), "The original first bow has a clear firing lane")
+	controller.selected = custom.friendly[0]
+	controller._set_trial_spawn(true)
+	controller.selected = custom.enemy[0]
+	controller._set_trial_spawn(false)
+	controller.selected = custom.third[0]
+	controller._set_third_trial_spawn()
 	var setup := controller._trial_setup()
+	assert(setup.friendly_spawn == custom.friendly[0] and setup.enemy_spawn == custom.enemy[0] and setup.third_spawn == custom.third[0])
 	assert(setup.friendly_troop_type == "bow" and setup.enemy_troop_type == "crossbow" and setup.third_troop_type == "bow")
 	controller._deploy_melee_trial()
 	assert(lab.army.combat_units.size() == 6 and lab.opposing_army.combat_units.size() == 4 and lab.third_army.combat_units.size() == 3, controller.message.text)
-	assert(lab.army.cells[0].distance_to(lab.opposing_army.cells[0]) == 6.0, "Automatic ranged deployment leaves six cells between fronts")
+	assert(lab.army.cells[0].distance_to(lab.opposing_army.cells[0]) == 6.0, "Explicit legal UI spawns leave six cells between fronts")
 	_assert_team(lab.army, "bow_01", 3)
 	_assert_team(lab.opposing_army, "crossbow_01", 2)
 	_assert_team(lab.third_army, "bow_01", 3)

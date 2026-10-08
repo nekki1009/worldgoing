@@ -2,6 +2,7 @@ class_name SiteEnvironment
 extends RefCounted
 
 const VERSION := 1
+const FIXED_RESOURCE_RULE := "osm_landcover_resources_v1"
 enum Kind { TIMBER, STONE, CLAY, IRON, SALT, FOOD, HERB, FISH, WILDLIFE }
 const NAMES := ["林木", "石料", "黏土", "鐵礦", "鹽源", "野生食物", "藥用植物", "漁業資源", "野生動物"]
 const ITEMS := ["wood", "stone", "clay", "iron_ore", "brine", "wild_food", "herb", "fish", "meat"]
@@ -9,48 +10,95 @@ const ITEM_NAMES := {
 	"wood": "木材", "stone": "石材", "clay": "黏土", "iron_ore": "鐵礦石", "brine": "鹵水", "salt": "食鹽",
 	"wild_food": "採集食物", "herb": "藥材", "fish": "魚", "meat": "肉", "hide": "生皮", "tools": "工具",
 	"seeds": "種子", "grain": "糧食", "fiber": "植物纖維", "fodder": "飼料", "charcoal": "木炭",
+	"pottery": "陶器", "steel": "鋼料", "rope": "繩索",
 	"brick": "磚瓦", "iron": "鐵料", "cloth": "布料", "leather": "皮革", "wool": "羊毛", "sheep": "羊", "horse": "馬匹",
-	"arrow": "箭", "bolt": "弩矢",
+	"arrow": "箭", "fire_arrow": "火箭", "bolt": "弩矢", "siege_bolt": "重弩矢", "siege_stone": "石彈", "camp_tent": "營帳包",
 }
 const WORK_MINUTES := [5.0, 4.0, 3.0, 6.0, 2.0, 2.0, 3.0, 4.0, 6.0]
 const BATCH := [4, 3, 3, 2, 2, 3, 2, 2, 1]
 # Deliberately compressed gameplay cycles, expressed in game minutes.
 const RECOVERY := [10080, 0, 0, 0, 0, 720, 1440, 120, 1440]
+const ECOLOGY_VERSION := 1
+const ECOLOGY_MODES := ["sustainable", "protected", "general"]
+const ECOLOGY_KINDS := [Kind.TIMBER, Kind.FOOD, Kind.HERB, Kind.FISH, Kind.WILDLIFE]
+const RESTORABLE_KINDS := [Kind.TIMBER, Kind.FOOD, Kind.HERB]
+const POPULATION_KINDS := [Kind.FISH, Kind.WILDLIFE]
 const COLORS := [Color("386440"), Color("969b9b"), Color("cb7957"), Color("934b38"), Color("e7e7c8"), Color("d8b444"), Color("ba8cd9"), Color("57bed1"), Color("b78b62")]
+
+const WILDLIFE_SPECIES := [["stag", "horse"], ["boar", "boar"], ["doe", "sheep"]]
+const WILDLIFE_NAMES := {"stag": "有角鹿", "boar": "野豬", "doe": "無角鹿", "horse": "野馬", "sheep": "羊"}
+
+static func wildlife_species(variant: int, source_cell: int) -> String:
+	# Source identity is immutable; stock, animation and refresh never change species.
+	return WILDLIFE_SPECIES[posmod(variant, 3)][posmod(source_cell, 2)]
 
 static func initialize(data: TerrainData, site_id: String = "") -> void:
 	var count := data.size.x * data.size.y
+	var fixed_geography: bool = data.parameters.get("composition") == "fixed_geography" \
+		and data.parameters.get("fixed_base") is Dictionary
+	if fixed_geography and (data.water_kind.size() != count or data.water_body.size() != count):
+		push_error("Fixed geography must supply its own water classification")
+		return
 	data.fertility.resize(count)
 	data.moisture.resize(count)
 	data.drainage.resize(count)
 	data.foundation.resize(count)
 	data.groundwater.resize(count)
-	data.water_kind.resize(count)
-	data.water_kind.fill(0)
-	data.water_body.resize(count)
-	data.water_body.fill(-1)
+	if not fixed_geography:
+		data.water_kind.resize(count)
+		data.water_kind.fill(0)
+		data.water_body.resize(count)
+		data.water_body.fill(-1)
 	data.static_blocked.resize(count)
 	data.static_blocked.fill(0)
 	data.feature_at.resize(count)
 	data.feature_at.fill(0)
-	data.resource_base.clear()
+	if not fixed_geography:
+		data.resource_base.clear()
 	data.resources_at.clear()
-	_generate_water(data)
-	_generate_soil(data)
-	_generate_resources(data)
+	if fixed_geography:
+		# Keep resource_base supplied by the verified fixed-base loader. The
+		# geography-only atlas leaves it empty; never generate deposits here.
+		data.fertility.fill(0)
+		data.moisture.fill(0)
+		data.drainage.fill(0)
+		data.foundation.fill(0)
+		data.groundwater.fill(0)
+	else:
+		_generate_water(data)
+		_generate_soil(data)
+		_generate_resources(data)
 	data.site = {
 		"id": site_id if not site_id.is_empty() else "site-%d-%d" % [Time.get_ticks_usec(), randi()],
-		"minute": 0, "phase": 0.0, "paused": false, "combat_left": 0.0,
+		"minute": 0, "phase": 0.0, "paused": false, "combat_left": 0.0, "ecology_version": ECOLOGY_VERSION,
 		"changes": {}, "features": {}, "terrain_changes": {}, "zones": [], "next_feature": 1,
-		"inventory": {"wood": 40, "stone": 30, "clay": 20, "tools": 4, "seeds": 12, "grain": 30, "fodder": 20, "sheep": 2, "horse": 2},
+		"inventory": {} if fixed_geography else {"wood": 40, "stone": 30, "clay": 20, "tools": 4, "seeds": 12, "grain": 30, "fodder": 20, "sheep": 2, "horse": 2},
 		"capacity": 800, "depot_cell": data.index(data.spawn_cell),
 		"worker": {"zone": -1, "target": "", "mode": "idle", "progress": 0.0, "cargo": {}, "status": "待命", "cell": data.index(data.spawn_cell)},
 		"manual": {"target": "", "progress": 0.0, "action": "harvest", "cargo": {}},
 		"water_status": {}, "water_links": {}, "total_produced": 0, "notices": [],
 	}
 	rebuild_indexes(data)
-	_preserve_connectivity(data)
-	rebuild_indexes(data)
+	if not fixed_geography:
+		_preserve_connectivity(data)
+		rebuild_indexes(data)
+
+static func initialize_marine(data: TerrainData, site_id: String) -> Dictionary:
+	if data == null or data.spawn_cell != Vector2i(-1, -1) or data.parameters.get("composition") != "fixed_geography" or not data.parameters.get("fixed_base") is Dictionary:
+		return {"ok": false, "code": "NO_TARGET", "message": "海域候選須來自固定地理且沒有陸地落腳點"}
+	var navigable := false
+	for index in range(data.size.x * data.size.y):
+		if data.can_navigate_water(data.cell_from_index(index)): navigable = true; break
+	if not navigable: return {"ok": false, "code": "WATER", "message": "海域沒有明示可航許可"}
+	initialize(data, site_id)
+	data.site.marine = {"version": 1}
+	data.site.actor_presence_version = 1
+	data.site.actors = {}
+	data.site.player_cell = -1
+	data.site.depot_cell = -1
+	data.site.worker.cell = -1
+	data.site.worker_enabled = false
+	return {"ok": true, "code": "OK", "message": "原固定海域 Site 已建立，沒有假陸地人物"}
 
 static func _generate_water(data: TerrainData) -> void:
 	var sea := data.preset in [TerrainPreset.Kind.COASTAL_CLIFF, TerrainPreset.Kind.ISLAND]
@@ -72,6 +120,16 @@ static func _generate_water(data: TerrainData) -> void:
 				if data.surface_types[j] == TerrainData.Surface.WATER and data.water_body[j] < 0:
 					data.water_body[j] = i
 					pending.append(j)
+	# Explicit game permission for this generated water rule, not inferred depth.
+	# Callers may supply a narrower known rule; never broaden it on reinitialization.
+	if not data.parameters.has("navigable_water_version"):
+		var bodies: Array[int] = []
+		for value: int in data.water_body:
+			if value >= 0 and not bodies.has(value): bodies.append(value)
+		bodies.sort()
+		data.parameters.navigable_water_version = 1
+		data.parameters.navigable_water_bodies = bodies
+		data.parameters.navigable_water_source = "preset-water-rule-v1"
 
 static func _generate_soil(data: TerrainData) -> void:
 	var noise := FastNoiseLite.new()
@@ -199,6 +257,72 @@ static func _add_resource(data: TerrainData, kind: int, cell_index: int, capacit
 	data.resource_base[key] = {"kind": kind, "cell": cell_index, "cells": cells, "capacity": capacity, "variant": variant,
 		"water": int(data.water_body[cell_index]), "blocks": kind in [Kind.TIMBER, Kind.STONE], "recover": int(RECOVERY[kind])}
 
+static func populate_fixed_resources(data: TerrainData, cover: PackedByteArray, site_coord: Vector2i, absolute_height: PackedFloat32Array) -> void:
+	# Mapped habitat controls eligibility; positions and stock are game rules,
+	# not surveyed trees, wildlife counts, mineral reserves or starter supplies.
+	assert(data.size == Vector2i(100, 100) and cover.size() == 100 and data.site.is_empty())
+	assert(absolute_height.size() == 10000)
+	data.resource_base.clear()
+	data.static_blocked.resize(10000)
+	data.feature_at.resize(10000)
+	for y: int in range(100):
+		for x: int in range(100):
+			var cell := Vector2i(x, y)
+			var i := data.index(cell)
+			var habitat := int(cover[floori(float(y) / 10.0) * 10 + floori(float(x) / 10.0)])
+			var global_cell := Vector2i(site_coord.x * 100 + x, site_coord.y * 100 + 99 - y)
+			var chances: Dictionary = {}
+			if data.water_kind[i] in [1, 2] and _shore_work_cell(data, cell) != -1:
+				chances[Kind.FISH] = 180
+				if data.water_kind[i] == 2:
+					chances[Kind.SALT] = 60
+			elif data.is_terrain_walkable(cell):
+				match habitat:
+					1: # Forest.
+						chances = {Kind.TIMBER: 450, Kind.FOOD: 40, Kind.HERB: 45, Kind.WILDLIFE: 4}
+					2: # Grass / meadow.
+						chances = {Kind.FOOD: 60, Kind.HERB: 35, Kind.WILDLIFE: 2}
+					3: # Scrub / heath.
+						chances = {Kind.FOOD: 50, Kind.HERB: 50, Kind.WILDLIFE: 3}
+					5: # Orchard: source indicates cultivated trees, no crop species.
+						chances = {Kind.TIMBER: 180, Kind.FOOD: 80}
+				# Taiwan alpine vegetation bands; see resource-manifest rule evidence.
+				# Broad OSM forest polygons must not put timber trees on Yushan's summit.
+				if habitat in [1, 2, 3, 5] and is_finite(absolute_height[i]):
+					if absolute_height[i] >= 3850.0:
+						chances = {Kind.FOOD: 10, Kind.HERB: 15}
+					elif absolute_height[i] >= 3600.0:
+						chances = {Kind.FOOD: 25, Kind.HERB: 35, Kind.WILDLIFE: 1}
+			# Unknown, built-up, ordinary farmland and untyped quarries have no
+			# invented wild deposits. A quarry label alone is not mineral evidence.
+			for kind: int in chances:
+				var roll := _fixed_resource_hash(global_cell, kind)
+				if roll % 10000 >= int(chances[kind]):
+					continue
+				if kind == Kind.TIMBER and _protected_cell(data, cell):
+					continue
+				var stock_roll := floori(float(roll) / 10000.0)
+				var capacity := 20 + stock_roll % 29
+				if kind == Kind.WILDLIFE:
+					capacity = 2 + stock_roll % 4
+				elif kind == Kind.FISH:
+					capacity = 10 + stock_roll % 15
+				elif kind == Kind.SALT:
+					capacity = 3
+				_add_resource(data, kind, i, capacity, roll % 3)
+	# Reuse the existing connectivity repair before publishing the immutable base.
+	# No mutable Site, inventory or persons are created for a map preview.
+	rebuild_indexes(data)
+	if data.static_blocked.has(1):
+		var generated_count := data.resource_base.size()
+		_preserve_connectivity(data)
+		if data.resource_base.size() != generated_count:
+			rebuild_indexes(data)
+
+static func _fixed_resource_hash(cell: Vector2i, kind: int) -> int:
+	var value := ((cell.x * 73856093) ^ (cell.y * 19349663) ^ ((kind + 1) * 83492791)) & 0x7fffffff
+	return ((value ^ (value >> 13)) * 1274126177) & 0x7fffffff
+
 static func _protected_cell(data: TerrainData, cell: Vector2i) -> bool:
 	if Vector2(cell - data.spawn_cell).length() < 6.0:
 		return true
@@ -227,12 +351,73 @@ static func resource(data: TerrainData, key: String) -> Dictionary:
 	result["id"] = key
 	return result
 
+static func ecology_active(data: TerrainData) -> bool:
+	return data != null and data.site.get("ecology_version", 0) == ECOLOGY_VERSION
+
+static func ecology_resting(remaining: int, capacity: int, previous: Variant = null) -> bool:
+	if capacity <= 1: return true
+	var reserve := maxi(1, ceili(float(capacity) * 0.2))
+	var resume := mini(capacity, maxi(reserve + 1, ceili(float(capacity) * 0.5)))
+	if remaining <= reserve: return true
+	if remaining >= resume: return false
+	return bool(previous) if previous is bool else true
+
+static func ecology_cell_usable(data: TerrainData, resource_value: Dictionary, index: int) -> bool:
+	if index < 0 or index >= data.feature_at.size() or data.feature_at[index] != 0: return false
+	if int(resource_value.kind) == Kind.FISH:
+		return data.water_kind[index] in [1, 2] and data.water_body[index] == int(resource_value.water)
+	return data.is_terrain_walkable(data.cell_from_index(index))
+
+static func ecology_info(data: TerrainData, key: String) -> Dictionary:
+	if data == null: return {}
+	var r := resource(data, key)
+	if r.is_empty(): return {}
+	var kind := int(r.kind)
+	var admitted := ecology_active(data)
+	var renewable := kind in ECOLOGY_KINDS
+	var population := kind in POPULATION_KINDS
+	var potential_capacity := habitat_capacity(data, key)
+	var capacity := 0 if bool(r.cleared) and kind in RESTORABLE_KINDS else potential_capacity
+	var remaining := int(r.remaining)
+	var mode := str(r.get("eco_mode", "sustainable")) if admitted and renewable else "general"
+	var reserve := maxi(1, ceili(float(capacity) * 0.2)) if population else 0
+	var resume := mini(capacity, maxi(reserve + 1, ceili(float(capacity) * 0.5))) if population else capacity
+	var resting := bool(r.eco_resting) if r.get("eco_resting") is bool else ecology_resting(remaining, capacity)
+	var reason := ""
+	if bool(r.cleared): reason = "CLEARED"
+	elif not renewable: reason = "FINITE" if kind != Kind.SALT else "SUPPLY"
+	elif capacity <= 0: reason = "NO_HABITAT"
+	elif (not admitted or not population) and data.feature_at[int(r.cell)] != 0: reason = "OCCUPIED"
+	elif admitted and population and work_cells(data, key).is_empty(): reason = "NO_WORK_CELL"
+	elif kind == Kind.TIMBER and SiteRuntime._fire_regeneration_blocked(data, key): reason = "FIRE_HOT"
+	var takeable := remaining
+	if bool(r.cleared) or (renewable and reason in ["NO_HABITAT", "OCCUPIED", "NO_WORK_CELL"]): takeable = 0
+	if admitted and renewable:
+		if mode == "protected": takeable = 0
+		elif population and mode == "sustainable": takeable = 0 if resting or capacity <= 1 else maxi(0, takeable - reserve)
+	var at := float(data.site.get("minute", 0)) + float(data.site.get("phase", 0.0))
+	var deadline := int(r.next_recovery)
+	return {"key": key, "kind": kind, "admitted": admitted, "renewable": renewable, "population": population,
+		"mode": mode, "resting": resting if admitted and population else false, "remaining": remaining,
+		"capacity": capacity, "base_capacity": int(r.capacity), "potential_capacity": potential_capacity, "reserve": reserve, "resume": resume,
+		"takeable": takeable, "batch_takeable": mini(int(BATCH[kind]), takeable), "cleared": bool(r.cleared),
+		"recoverable": renewable and reason.is_empty(), "recovery_blocked": reason,
+		"recovery_minutes": int(r.recover), "next_recovery": deadline,
+		"wait_minutes": maxf(0.0, float(deadline) - at) if deadline >= 0 else -1.0,
+		"recovery_amount": (1 if population else maxi(0, capacity - remaining)) if renewable else 0,
+		"restorable": admitted and kind in RESTORABLE_KINDS and bool(r.cleared) and remaining == 0 and ecology_cell_usable(data, r, int(r.cell))
+			and SiteRuntime._fire_resource_restored(data, key, true).ok}
+
 static func change(data: TerrainData, key: String, fields: Dictionary) -> void:
-	if not data.resource_base.has(key):
-		return
-	if not data.site.changes.has(key):
-		data.site.changes[key] = {}
-	data.site.changes[key].merge(fields, true)
+	if not data.resource_base.has(key): return
+	var committed := fields.duplicate()
+	if ecology_active(data) and int(data.resource_base[key].kind) in POPULATION_KINDS and (fields.has("remaining") or fields.has("eco_mode") or fields.has("next_recovery") or fields.has("cleared")):
+		var before := resource(data, key)
+		var capacity := habitat_capacity(data, key)
+		var previous: Variant = before.get("eco_resting", ecology_resting(int(before.remaining), capacity))
+		committed["eco_resting"] = ecology_resting(int(fields.get("remaining", before.remaining)), capacity, previous)
+	if not data.site.changes.has(key): data.site.changes[key] = {}
+	data.site.changes[key].merge(committed, true)
 	data.environment_revision += 1
 
 static func resources_in(data: TerrainData, area: Rect2i, kind: int = -1) -> Array[String]:
@@ -248,8 +433,24 @@ static func resources_in(data: TerrainData, area: Rect2i, kind: int = -1) -> Arr
 
 static func rebuild_indexes(data: TerrainData) -> void:
 	var before := data.static_blocked.duplicate()
+	var before_heights := data.walk_height_levels.duplicate()
+	var before_ramps := data.walk_ramp_edges.duplicate()
+	var before_facilities := data.facility_cells.duplicate()
+	var before_bridge := data.bridge_walkable.duplicate()
+	var count := data.size.x * data.size.y
+	data.static_blocked.resize(count)
 	data.static_blocked.fill(0)
+	data.feature_at.resize(count)
 	data.feature_at.fill(0)
+	data.bridge_walkable.resize(count)
+	data.bridge_walkable.fill(0)
+	data.bridge_navigation_flags = PackedByteArray()
+	data.walk_height_levels = data.height_levels.duplicate()
+	data.walk_ramp_edges = data.ramp_edges.duplicate()
+	data.has_raised_surfaces = false
+	data.has_navigation_overrides = false
+	data.facility_cells.resize(count)
+	data.facility_cells.fill(0)
 	data.resources_at.clear()
 	for key: String in data.resource_base:
 		var r := resource(data, key)
@@ -259,15 +460,91 @@ static func rebuild_indexes(data: TerrainData) -> void:
 			data.resources_at[i].append(key)
 		if bool(r.blocks) and int(r.remaining) > 0 and not bool(r.cleared):
 			data.static_blocked[int(r.cell)] = 1
+	var geometries: Array[Dictionary] = []
 	for key: String in data.site.get("features", {}):
 		var feature: Dictionary = data.site.features[key]
 		for i: int in feature.cells:
 			data.feature_at[i] = int(key)
-			if bool(feature.get("solid", false)) and str(feature.stage) == "complete":
+			if int(feature.get("layout_version", 0)) == 0 and bool(feature.get("solid", false)) and str(feature.stage) == "complete":
 				data.static_blocked[i] = 1
-	if before != data.static_blocked:
+		for i: int in feature.get("pending_build", {}).get("added_cells", []):
+			data.feature_at[i] = int(key)
+		if str(feature.stage) != "complete": continue
+		if str(feature.kind) == "fighting_position":
+			for i: int in feature.cells: data.facility_cells[i] = 1
+		if int(feature.get("layout_version", 0)) == 0: continue
+		var geometry: Dictionary = SiteRuntime.feature_geometry(data, feature)
+		geometries.append(geometry)
+		for i: int in geometry.get("bridge_walkable", []): data.bridge_walkable[i] = 1
+		for i: int in geometry.get("blocked", []): data.static_blocked[i] = 1
+		for key_index: Variant in geometry.get("heights", {}):
+			var i := int(key_index)
+			data.walk_height_levels[i] = int(geometry.heights[key_index])
+			data.has_raised_surfaces = data.has_raised_surfaces or data.walk_height_levels[i] != data.height_levels[i]
+			data.walk_ramp_edges[i] = 0
+	# The same original vehicle owns tower durability and deployed pose. Append
+	# its rebuildable surfaces after all feature heights, before any connections.
+	for vehicle: Dictionary in data.site.get("vehicles", {}).values():
+		if str(vehicle.get("kind", "")) != "siege_tower": continue
+		var geometry := SiteRuntime.siege_tower_geometry(data, vehicle)
+		if not bool(geometry.active): continue
+		geometries.append(geometry)
+		for key_index: Variant in geometry.heights:
+			var index := int(key_index)
+			data.walk_height_levels[index] = int(geometry.heights[key_index])
+			data.walk_ramp_edges[index] = 0
+			data.has_raised_surfaces = true
+	# Apply every surface before its connections; feature dictionary order cannot
+	# decide whether a stair reaches a neighbouring wall or natural plateau.
+	for geometry: Dictionary in geometries:
+		for key_index: Variant in geometry.get("ramps", {}):
+			var i := int(key_index)
+			var mask := int(geometry.ramps[key_index]) & 15
+			for direction in range(4):
+				if (mask & (1 << direction)) == 0: continue
+				var neighbour := data.cell_from_index(i) + TerrainData.DIRECTIONS[direction]
+				if not data.contains(neighbour):
+					# Only the local half-edge; RegionSaveSlot checks the other Site.
+					data.walk_ramp_edges[i] |= 1 << direction
+					continue
+				var j := data.index(neighbour)
+				if absi(int(data.walk_height_levels[i]) - int(data.walk_height_levels[j])) > 1: continue
+				data.walk_ramp_edges[i] |= 1 << direction
+				data.walk_ramp_edges[j] |= 1 << ((direction + 2) % 4)
+		for key_index: Variant in geometry.get("edge_blocks", {}):
+			var i := int(key_index)
+			var mask := int(geometry.edge_blocks[key_index]) & 15
+			data.walk_ramp_edges[i] |= mask << 4
+			for direction in range(4):
+				if (mask & (1 << direction)) == 0: continue
+				var neighbour := data.cell_from_index(i) + TerrainData.DIRECTIONS[direction]
+				if data.contains(neighbour): data.walk_ramp_edges[data.index(neighbour)] |= 1 << (((direction + 2) % 4) + 4)
+	if data.bridge_walkable.has(1):
+		data.bridge_navigation_flags = data.flags.duplicate()
+		for i: int in range(count):
+			if data.bridge_walkable[i] != 0:
+				data.bridge_navigation_flags[i] = (data.bridge_navigation_flags[i] | TerrainData.Flag.WALKABLE) & ~TerrainData.Flag.BLOCKED
+	data.has_navigation_overrides = data.has_raised_surfaces or data.walk_ramp_edges != data.ramp_edges or not data.bridge_navigation_flags.is_empty()
+	if before != data.static_blocked or before_heights != data.walk_height_levels or before_ramps != data.walk_ramp_edges or before_facilities != data.facility_cells or before_bridge != data.bridge_walkable:
 		data.navigation_revision += 1
 	data.environment_revision += 1
+
+static func preview_navigation(data: TerrainData, key: String, candidate_feature: Dictionary) -> TerrainData:
+	var state := data.site.duplicate()
+	state.features = data.site.features.duplicate()
+	if candidate_feature.is_empty(): state.features.erase(key)
+	else: state.features[key] = candidate_feature
+	return navigation_for_state(data, state)
+
+static func navigation_for_state(data: TerrainData, state: Dictionary) -> TerrainData:
+	# Detached derived indexes only. Natural ground, people and items stay with
+	# their original owners, and rebuilding this candidate does not modify them.
+	var candidate := TerrainData.new()
+	for field: String in ["size", "height_levels", "surface_types", "flags", "cliff_drops", "ramp_edges", "detail_variation", "spawn_cell", "preset", "seed_value", "parameters", "fertility", "moisture", "drainage", "foundation", "groundwater", "water_kind", "water_body", "resource_base"]:
+		candidate.set(field, data.get(field))
+	candidate.site = state
+	rebuild_indexes(candidate)
+	return candidate
 
 static func _preserve_connectivity(data: TerrainData) -> void:
 	# Remove only blocking generated objects that split an originally connected platform.
@@ -283,9 +560,10 @@ static func _preserve_connectivity(data: TerrainData) -> void:
 		while head < component.size():
 			var current := component[head]
 			head += 1
+			var component_cell := data.cell_from_index(current)
 			for direction: Vector2i in TerrainData.DIRECTIONS:
-				var next := data.cell_from_index(current) + direction
-				if data.can_terrain_step(data.cell_from_index(current), next) and labels[data.index(next)] < 0:
+				var next := component_cell + direction
+				if data.contains(next) and labels[data.index(next)] < 0 and data.can_terrain_step(component_cell, next):
 					labels[data.index(next)] = start
 					component.append(data.index(next))
 		var origin := -1
@@ -303,12 +581,13 @@ static func _preserve_connectivity(data: TerrainData) -> void:
 			while head < queue.size():
 				var current := queue[head]
 				head += 1
+				var reachable_cell := data.cell_from_index(current)
 				for direction: Vector2i in TerrainData.DIRECTIONS:
-					var next := data.cell_from_index(current) + direction
-					if not data.can_terrain_step(data.cell_from_index(current), next):
+					var next := reachable_cell + direction
+					if not data.contains(next):
 						continue
 					var j := data.index(next)
-					if reached.has(j):
+					if reached.has(j) or not data.can_terrain_step(reachable_cell, next):
 						continue
 					if data.static_blocked[j] != 0:
 						if not barriers.has(j):
@@ -337,6 +616,7 @@ static func work_cells(data: TerrainData, key: String) -> Array[Vector2i]:
 	if r.is_empty():
 		return result
 	for i: int in r.cells:
+		if ecology_active(data) and int(r.kind) in POPULATION_KINDS and not ecology_cell_usable(data, r, i): continue
 		var target := data.cell_from_index(i)
 		for direction: Vector2i in [Vector2i.ZERO, Vector2i.UP, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT]:
 			var cell := target + direction
@@ -350,7 +630,7 @@ static func work_cells(data: TerrainData, key: String) -> Array[Vector2i]:
 				result.append(cell)
 	return result
 
-static func land(data: TerrainData, cell: Vector2i) -> Dictionary:
+static func land(data: TerrainData, cell: Vector2i, ignored_feature: int = 0) -> Dictionary:
 	if not data.contains(cell) or data.fertility.is_empty():
 		return {"farm": 0, "pasture": 0, "water": 0, "build": 0, "reasons": ["地圖外"], "potential_farm": 0}
 	var i := data.index(cell)
@@ -372,7 +652,7 @@ static func land(data: TerrainData, cell: Vector2i) -> Dictionary:
 	if data.ramp_edges[i] != 0:
 		build = 0
 		reasons.append("保留坡口；僅接受道路／整地")
-	if data.feature_at[i] != 0 or i == int(data.site.depot_cell):
+	if (data.feature_at[i] != 0 and data.feature_at[i] != ignored_feature) or i == int(data.site.depot_cell):
 		farm = 0
 		pasture = 0
 		build = 0
@@ -395,13 +675,16 @@ static func land(data: TerrainData, cell: Vector2i) -> Dictionary:
 
 static func habitat_capacity(data: TerrainData, key: String) -> int:
 	var r := resource(data, key)
-	if r.is_empty():
-		return 0
+	if r.is_empty(): return 0
 	var usable := 0
+	var admitted := ecology_active(data)
 	for i: int in r.cells:
-		if data.feature_at[i] == 0:
+		if (ecology_cell_usable(data, r, i) if admitted else data.feature_at[i] == 0):
 			usable += 1
-	return floori(float(r.capacity) * float(usable) / float(r.cells.size()))
+	var capacity := floori(float(r.capacity) * float(usable) / float(r.cells.size()))
+	if admitted and int(r.kind) == Kind.WILDLIFE and int(r.capacity) >= 2 and ecology_cell_usable(data, r, int(r.cell)):
+		capacity = mini(int(r.capacity), maxi(2, capacity))
+	return capacity
 
 static func land_summary(data: TerrainData, area: Rect2i) -> Dictionary:
 	var bounded := area.intersection(Rect2i(Vector2i.ZERO, data.size))

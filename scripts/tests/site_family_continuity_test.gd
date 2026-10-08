@@ -35,7 +35,12 @@ func _remote_fixture() -> TerrainData:
 		actor.data = data
 		assert(actor.place(cells[actor.person_id - 1], true))
 		var appearance := HumanCharacter3DEditor.default_appearance(actor.visual_state.body_index)
+		# These remote civilians have no office; unlike a bound Lab, this direct
+		# Store fixture never runs Controller.reconcile_cape_roles().
+		appearance.parts.cape = "none"
+		actor._saved_appearance = appearance.duplicate(true)
 		assert(Runtime.seed_person_equipment(data, actor.item_state, actor.person_id, appearance).ok)
+		assert(not actor.item_state.equipped.has("cape") and actor.capture_state().appearance.parts.cape == "none")
 	person.hp = 67.0
 	person.fatigue = 21.5
 	person.captive = true
@@ -76,6 +81,7 @@ func _kill_and_settle(controller: SiteController, identity: int) -> void:
 
 func _run() -> void:
 	var lab := TerrainLab.new()
+	lab.npc = TerrainTestNPC.new() # Explicit family successor fixture; formal startup has no worker.
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	lab.set_process(false)
@@ -107,7 +113,7 @@ func _run() -> void:
 	helper.control_selected = controller._control_family_person
 	assert(str(helper.inspect().status) == "UNREGISTERED")
 	assert(not data.site.has("family"), "Inspection must not manufacture a family")
-	assert(not Family.validate_family({"version": true, "complete": true, "members": []}))
+	assert(not Family.validate_family({"version": true, "complete": true, "members": []}, ""))
 	var members := [_reference(str(data.site.id), lab.npc.person_id, ARCHIVE, 14),
 		_reference(str(data.site.id), soldier_id, ARCHIVE)]
 	assert(helper.register_members(members, false).ok)

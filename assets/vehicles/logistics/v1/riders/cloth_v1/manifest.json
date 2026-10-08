@@ -1492,8 +1492,8 @@
   "map_scale": 0.379809115843455,
   "presentation": "Existing Socket_Rider calibrated body only; original horse depth-occludes far limbs; no second horse pixels",
   "source_fingerprints": {
-    "res://assets/characters/human/q35/standard_anime_female_character_pack.glb": "ddbd4fc44fd3f6d9739b53f4ab54f94d",
-    "res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "76d262bdae0449f9a86b8e56287551f2",
+    "res://assets/characters/human/q35/standard_anime_female_character_pack.glb": "0e76c65be9a51b6827aeb29aa7bf8cda",
+    "res://assets/characters/human/q35/standard_anime_male_character_pack.glb": "5806668721ef33b75054310f4caa8e92",
     "res://assets/mounts/horse/standard_horse_pack.glb": "efe01456dec422fcb06d338fecb59a9c",
     "res://scripts/mount/mount_horse_3d.gd": "2ad45b9a689ed2259c4b83bacf1a1be3",
     "res://scripts/terrain_lab/character_combat_timings.gd": "89b5d9d683017d08d1267b800b3fbad7",
@@ -1533,5 +1533,13 @@
     "native_unselected_data_unchanged": true,
     "evidence": "res://output/equipment_walk_fix_20260919/atlas/gpu_comparison_20260919T045450307055Z.json",
     "old_manifest_md5": "19e9c9b34fae5acc86f17cbc36f8948f"
+  },
+  "steel_mingguang_walk_revalidation": {
+    "rebaked": false,
+    "representative_control_pairs": 450,
+    "full_atlas_frame_proof": false,
+    "native_unselected_data_unchanged": true,
+    "evidence": "res://output/steel_mingguang_walk_20260919/atlas/gpu_comparison_20260924T031002433540Z.json",
+    "old_manifest_md5": "829186dfbfb229264489d9c8ccdcdf12"
   }
 }

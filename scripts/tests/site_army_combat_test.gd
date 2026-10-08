@@ -102,8 +102,8 @@ func run() -> void:
 	assert(not b.combat_can_act(1) and not b.blocks_cell(b.cells[1]))
 	assert(float(b.combat_units[1].hp) == enemy_hp - 7.5 and b.combat_units[1].pose == "down")
 	b.external_blocker = func(cell: Vector2i) -> bool: return cell == b.cells[1]
-	b.prepare_combat(31.0)
-	assert(float(b.combat_units[1].ko) > 0.0, "Cannot stand inside an occupant")
+	b.prepare_combat(31.0, SiteCombatRules.KNOCKOUT_GAME_SECONDS)
+	assert(float(b.combat_units[1].ko) == 0.1, "Cannot stand inside an occupant; retry keeps only a short game-second remainder")
 	b.external_blocker = a.blocks_cell
 	b.prepare_combat(0.2)
 	assert(b.combat_units[1].pose == "get_up" and not b.combat_can_act(1) and b.blocks_cell(b.cells[1]))

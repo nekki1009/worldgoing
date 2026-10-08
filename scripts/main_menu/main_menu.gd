@@ -1,0 +1,520 @@
+extends Control
+## Formal game entry: Continue, New Game (map → start Site → character →
+## confirm), Load World and Quit. The start Site is picked on RegionLab in
+## "pick_start" mode; RegionEntry carries the draft across the scene change.
+
+const RegionEntry = preload("res://scripts/region_lab/region_entry.gd")
+const TechnologyArtisans = preload("res://scripts/terrain_lab/site_technology_artisans.gd")
+const RegionLabScript = preload("res://scripts/region_lab/region_lab.gd")
+const PersonPersonality = preload("res://scripts/terrain_lab/person_personality.gd")
+const ABILITIES := [["combat_ability", "武力"], ["tactics", "戰術"], ["leadership", "統御"], ["coach", "教練"]]
+const DEFAULT_HAIR_DYE := "9b775dff"
+## The project renders at 2560×1440 and scales to the window; size UI for that.
+const UI := 1.6
+
+var _pages: Dictionary = {}
+var _message: Label
+var _continue_button: Button
+var _continue_note: Label
+var _world_list: ItemList
+var _worlds: Array[Dictionary] = []
+var _load_button: Button
+# Character page controls.
+var _name_input: LineEdit
+var _body_select: OptionButton
+var _hair_select: OptionButton
+var _face_select: OptionButton
+var _dye_toggle: CheckBox
+var _dye_picker: ColorPickerButton
+var _ability_inputs: Dictionary = {}
+var _personality_sliders: Dictionary = {}
+var _character_error: Label
+var _preview_host: Node
+var _preview_editor: HumanCharacter3DEditor
+var _preview_window: Window
+var _preview_rect: TextureRect
+# Confirm page controls.
+var _world_name: LineEdit
+var _initial_scenario: OptionButton
+var _summary: Label
+
+func _ready() -> void:
+	get_tree().paused = false
+	get_tree().auto_accept_quit = true
+	theme = Theme.new()
+	theme.default_font_size = roundi(17 * UI)
+	_build_background()
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(center)
+	var panel := PanelContainer.new()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.07, 0.11, 0.13, 0.9)
+	style.border_color = Color("526b5d")
+	style.set_border_width_all(1)
+	style.set_content_margin_all(24 * UI)
+	panel.add_theme_stylebox_override("panel", style)
+	center.add_child(panel)
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 12)
+	panel.add_child(column)
+	var title := Label.new()
+	title.text = "Worldgoing"
+	title.add_theme_font_size_override("font_size", roundi(40 * UI))
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	column.add_child(title)
+	_message = Label.new()
+	_message.name = "MenuMessage"
+	_message.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_message.custom_minimum_size.x = 420 * UI
+	_message.modulate = Color("f0d7a0")
+	_message.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_message.text = RegionEntry.menu_message
+	_message.visible = not _message.text.is_empty()
+	RegionEntry.menu_message = ""
+	column.add_child(_message)
+	_build_main_page(column)
+	_build_load_page(column)
+	_build_map_page(column)
+	_build_character_page(column)
+	_build_confirm_page(column)
+	var step := str(RegionEntry.draft.get("step", ""))
+	if step == "character" and RegionEntry.draft.get("site") is Vector2i: show_page("character")
+	else:
+		RegionEntry.draft = {}
+		show_page("main")
+
+func show_page(page: String) -> void:
+	for id: String in _pages:
+		_pages[id].visible = id == page
+	if page == "main": _refresh_continue()
+	elif page == "load": _refresh_worlds()
+	elif page == "character": _restore_character_draft()
+	elif page == "confirm": _refresh_summary()
+	_set_preview_active(page == "character")
+
+func _page(parent: Node, id: String) -> VBoxContainer:
+	var page := VBoxContainer.new()
+	page.name = "Page_" + id
+	page.add_theme_constant_override("separation", 10)
+	page.visible = false
+	parent.add_child(page)
+	_pages[id] = page
+	return page
+
+func _button(parent: Node, text: String, node_name: String, action: Callable) -> Button:
+	var button := Button.new()
+	button.name = node_name
+	button.text = text
+	button.add_theme_font_size_override("font_size", roundi(20 * UI))
+	button.custom_minimum_size = Vector2(280, 44) * UI
+	button.pressed.connect(action)
+	parent.add_child(button)
+	return button
+
+func _label(parent: Node, text: String, text_size: int = 16) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_font_size_override("font_size", roundi(text_size * UI))
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	parent.add_child(label)
+	return label
+
+func _row(parent: Node) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	parent.add_child(row)
+	return row
+
+# --- Background: the fixed Taiwan overview with the RegionLab palette.
+
+func _build_background() -> void:
+	var base := ColorRect.new()
+	base.color = Color("101b24")
+	base.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	base.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(base)
+	var source := RegionData.new()
+	if not bool(source.load_manifest().get("ok", false)): return
+	var overview: Dictionary = source.get_overview()
+	var classes: PackedByteArray = overview.get("classes", PackedByteArray())
+	var scopes: PackedByteArray = overview.get("content_scope", PackedByteArray())
+	var width := int(overview.get("width", 0))
+	var height := int(overview.get("height", 0))
+	if width <= 0 or height <= 0 or classes.size() != width * height: return
+	var pixels := PackedByteArray()
+	pixels.resize(classes.size() * 2)
+	for i: int in range(classes.size()):
+		pixels[i * 2] = classes[i]
+		pixels[i * 2 + 1] = scopes[i] if scopes.size() == classes.size() else 1
+	var map := TextureRect.new()
+	map.name = "TaiwanBackground"
+	map.texture = ImageTexture.create_from_image(Image.create_from_data(width, height, false, Image.FORMAT_RG8, pixels))
+	map.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	map.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	map.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	map.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	map.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	map.modulate = Color(1, 1, 1, 0.55)
+	var shader := Shader.new()
+	shader.code = RegionLabScript.PALETTE_SHADER
+	var mat := ShaderMaterial.new()
+	mat.shader = shader
+	map.material = mat
+	add_child(map)
+
+# --- Main page.
+
+func _build_main_page(parent: Node) -> void:
+	var page := _page(parent, "main")
+	_continue_button = _button(page, "繼續遊戲", "ContinueGame", _continue_game)
+	_continue_note = _label(page, "", 14)
+	_continue_note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_button(page, "新遊戲", "NewGame", func() -> void:
+		RegionEntry.draft = {"step": "map", "map": "taiwan"}
+		show_page("map"))
+	_button(page, "載入世界", "LoadWorld", func() -> void: show_page("load"))
+	_button(page, "離開", "QuitGame", func() -> void: get_tree().quit())
+
+func _refresh_continue() -> void:
+	var last := RegionEntry.last_world()
+	var meta := RegionEntry.read_world(str(last.get("world_id", "")))
+	_continue_button.disabled = meta.is_empty()
+	_continue_note.text = "尚無世界" if meta.is_empty() else _world_line(meta)
+
+func _continue_game() -> void:
+	if RegionEntry.request_resume(): get_tree().change_scene_to_file(RegionEntry.SITE_SCENE)
+
+func _world_line(meta: Dictionary) -> String:
+	var site: Array = meta.get("active_site", [])
+	var at := "(%d, %d)" % [int(site[0]), int(site[1])] if site.size() == 2 else "—"
+	return "%s · 地點 %s · 第 %d 日 · 最後保存 %s" % [str(meta.get("name", meta.world_id)), at, int(meta.get("day", 1)),
+		Time.get_datetime_string_from_unix_time(int(meta.get("saved_unix", 0)) + _timezone_seconds(), true)]
+
+static func _timezone_seconds() -> int:
+	return int(Time.get_time_zone_from_system().get("bias", 0)) * 60
+
+# --- Load World page.
+
+func _build_load_page(parent: Node) -> void:
+	var page := _page(parent, "load")
+	_label(page, "載入世界", 24)
+	_world_list = ItemList.new()
+	_world_list.name = "WorldList"
+	_world_list.custom_minimum_size = Vector2(620, 280) * UI
+	_world_list.item_selected.connect(func(_index: int) -> void: _load_button.disabled = false)
+	_world_list.item_activated.connect(func(_index: int) -> void: _load_selected())
+	page.add_child(_world_list)
+	var row := _row(page)
+	_load_button = _button(row, "載入", "LoadSelectedWorld", _load_selected)
+	_button(row, "返回", "LoadBack", func() -> void: show_page("main"))
+
+func _refresh_worlds() -> void:
+	_worlds = RegionEntry.list_worlds()
+	_world_list.clear()
+	for meta: Dictionary in _worlds:
+		_world_list.add_item(_world_line(meta))
+	if _worlds.is_empty(): _world_list.add_item("尚無已保存的世界", null, false)
+	_load_button.disabled = true
+
+func _load_selected() -> void:
+	var selected := _world_list.get_selected_items()
+	if selected.is_empty() or selected[0] >= _worlds.size(): return
+	if RegionEntry.request_world(str(_worlds[selected[0]].world_id)):
+		get_tree().change_scene_to_file(RegionEntry.SITE_SCENE)
+
+# --- New Game: map choice.
+
+func _build_map_page(parent: Node) -> void:
+	var page := _page(parent, "map")
+	_label(page, "新遊戲：選擇地圖", 24)
+	var taiwan := Button.new()
+	taiwan.name = "MapTaiwan"
+	taiwan.toggle_mode = true
+	taiwan.button_pressed = true
+	taiwan.text = "台灣\n內政部 20 公尺數值地形・Site 200 × 200 公尺"
+	taiwan.add_theme_font_size_override("font_size", roundi(18 * UI))
+	taiwan.custom_minimum_size = Vector2(420, 72) * UI
+	page.add_child(taiwan)
+	_label(page, "隨機地圖與其他地圖之後加入。", 14)
+	var row := _row(page)
+	_button(row, "返回", "MapBack", func() -> void: show_page("main"))
+	_button(row, "下一步：選擇起點", "PickStart", _pick_start)
+
+func _pick_start() -> void:
+	RegionEntry.draft["step"] = "pick"
+	RegionEntry.region_mode = "pick_start"
+	get_tree().change_scene_to_file(RegionEntry.REGION_SCENE)
+
+# --- New Game: character.
+
+func _build_character_page(parent: Node) -> void:
+	var page := _page(parent, "character")
+	_label(page, "建立人物", 24)
+	var body := _row(page)
+	_preview_host = Node.new()
+	_preview_host.name = "CharacterPreviewHost"
+	add_child(_preview_host)
+	_preview_rect = TextureRect.new()
+	_preview_rect.name = "CharacterPreview"
+	_preview_rect.custom_minimum_size = Vector2(320, 420) * UI
+	_preview_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_preview_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	body.add_child(_preview_rect)
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(560, 520) * UI
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	body.add_child(scroll)
+	var form := VBoxContainer.new()
+	form.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	form.add_theme_constant_override("separation", 8)
+	scroll.add_child(form)
+	_label(form, "外觀", 20)
+	var row := _row(form)
+	_label(row, "名字", 16).custom_minimum_size.x = 72 * UI
+	_name_input = LineEdit.new()
+	_name_input.name = "CharacterName"
+	_name_input.max_length = TerrainTestCharacter.MAX_NAME_LENGTH
+	_name_input.placeholder_text = "必填"
+	_name_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(_name_input)
+	_body_select = _option_row(form, "性別", "CharacterBody")
+	_body_select.add_item("男")
+	_body_select.add_item("女")
+	_body_select.item_selected.connect(func(_index: int) -> void:
+		_fill_hair(0)
+		_update_preview())
+	_hair_select = _option_row(form, "髮型", "CharacterHair")
+	_hair_select.item_selected.connect(func(_index: int) -> void: _update_preview())
+	_face_select = _option_row(form, "臉", "CharacterFace")
+	for option: Dictionary in HumanCharacter3DEditor.PART_SLOTS[0].options:
+		if str(option.id) == "none": continue
+		_face_select.add_item(str(option.label))
+		_face_select.set_item_metadata(_face_select.item_count - 1, str(option.id))
+	_face_select.item_selected.connect(func(_index: int) -> void: _update_preview())
+	row = _row(form)
+	_label(row, "髮色", 16).custom_minimum_size.x = 72 * UI
+	_dye_toggle = CheckBox.new()
+	_dye_toggle.name = "CharacterHairDyed"
+	_dye_toggle.text = "染色"
+	_dye_toggle.toggled.connect(func(_on: bool) -> void: _update_preview())
+	row.add_child(_dye_toggle)
+	_dye_picker = ColorPickerButton.new()
+	_dye_picker.name = "CharacterHairDye"
+	_dye_picker.color = Color(DEFAULT_HAIR_DYE)
+	_dye_picker.edit_alpha = false
+	_dye_picker.custom_minimum_size = Vector2(80, 32) * UI
+	_dye_picker.color_changed.connect(func(_color: Color) -> void:
+		_dye_toggle.button_pressed = true
+		_update_preview())
+	row.add_child(_dye_picker)
+	form.add_child(HSeparator.new())
+	_label(form, "能力（0–100）", 20)
+	for ability: Array in ABILITIES:
+		_ability_inputs[ability[0]] = _slider_row(form, str(ability[1]), "", "Ability_" + str(ability[0]))
+	form.add_child(HSeparator.new())
+	_label(form, "性格（50 為中性）", 20)
+	for group: Array in PersonPersonality.GROUPS:
+		_label(form, str(group[0]), 17)
+		for axis: String in group[1]:
+			var names: Array = PersonPersonality.LABELS[axis]
+			_personality_sliders[axis] = _slider_row(form, str(names[1]), str(names[0]), "Personality_" + axis)
+	_character_error = _label(page, "", 15)
+	_character_error.modulate = Color("f0a0a0")
+	var buttons := _row(page)
+	_button(buttons, "上一步：重選起點", "CharacterBack", _pick_start)
+	_button(buttons, "下一步", "CharacterNext", _character_next)
+	_fill_hair(0)
+
+func _option_row(parent: Node, text: String, node_name: String) -> OptionButton:
+	var row := _row(parent)
+	_label(row, text, 16).custom_minimum_size.x = 72 * UI
+	var select := OptionButton.new()
+	select.name = node_name
+	select.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(select)
+	return select
+
+## Slider 0..100 with value readout. A left label reads 0, a right label 100.
+func _slider_row(parent: Node, left: String, right: String, node_name: String) -> HSlider:
+	var row := _row(parent)
+	_label(row, left, 15).custom_minimum_size.x = 72 * UI
+	var slider := HSlider.new()
+	slider.name = node_name
+	slider.min_value = 0
+	slider.max_value = 100
+	slider.step = 1
+	slider.value = 50
+	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	slider.custom_minimum_size.x = 220 * UI
+	row.add_child(slider)
+	if not right.is_empty(): _label(row, right, 15).custom_minimum_size.x = 72 * UI
+	var value := _label(row, "50", 15)
+	value.custom_minimum_size.x = 32 * UI
+	slider.value_changed.connect(func(v: float) -> void: value.text = str(int(v)))
+	return slider
+
+func _fill_hair(selected: int) -> void:
+	_hair_select.clear()
+	for option: Dictionary in HumanCharacter3DEditor.HAIR_OPTIONS[_body_select.selected]:
+		if str(option.id) == "none": continue
+		_hair_select.add_item(str(option.label))
+		_hair_select.set_item_metadata(_hair_select.item_count - 1, str(option.id))
+	_hair_select.select(clampi(selected, 0, _hair_select.item_count - 1))
+
+func character_data() -> Dictionary:
+	var personality := PersonPersonality.neutral()
+	for axis: String in PersonPersonality.AXES:
+		personality[axis] = int(_personality_sliders[axis].value)
+	return {"name": _name_input.text.strip_edges(), "body": _body_select.selected,
+		"face": str(_face_select.get_item_metadata(_face_select.selected)),
+		"hair": str(_hair_select.get_item_metadata(_hair_select.selected)),
+		"hair_dye": _dye_picker.color.to_html(true), "hair_dyed": _dye_toggle.button_pressed,
+		"combat_ability": int(_ability_inputs.combat_ability.value),
+		"command_abilities": {"tactics": int(_ability_inputs.tactics.value), "leadership": int(_ability_inputs.leadership.value), "coach": int(_ability_inputs.coach.value)},
+		"personality": personality}
+
+func _restore_character_draft() -> void:
+	var data: Dictionary = RegionEntry.draft.get("character", {})
+	if data.is_empty():
+		_update_preview()
+		return
+	_name_input.text = str(data.name)
+	_body_select.select(int(data.body))
+	_fill_hair(0)
+	_select_metadata(_hair_select, str(data.hair))
+	_select_metadata(_face_select, str(data.face))
+	_dye_picker.color = Color(str(data.hair_dye))
+	_dye_toggle.button_pressed = bool(data.hair_dyed)
+	_ability_inputs.combat_ability.value = int(data.combat_ability)
+	for kind: String in ["tactics", "leadership", "coach"]:
+		_ability_inputs[kind].value = int(data.command_abilities[kind])
+	for axis: String in PersonPersonality.AXES:
+		_personality_sliders[axis].value = int(data.personality[axis])
+	_update_preview()
+
+static func _select_metadata(select: OptionButton, id: String) -> void:
+	for index: int in range(select.item_count):
+		if str(select.get_item_metadata(index)) == id:
+			select.select(index)
+			return
+
+func _character_next() -> void:
+	var data := character_data()
+	if str(data.name).is_empty():
+		_character_error.text = "請輸入名字。"
+		return
+	_character_error.text = ""
+	RegionEntry.draft["character"] = data
+	RegionEntry.draft["step"] = "confirm"
+	show_page("confirm")
+
+# Preview: one hidden HumanCharacter3DEditor; only its viewport texture is shown.
+func _set_preview_active(active: bool) -> void:
+	if DisplayServer.get_name() == "headless": return
+	if active and _preview_editor == null:
+		_preview_window = Window.new()
+		_preview_window.visible = false
+		add_child(_preview_window)
+		_preview_editor = HumanCharacter3DEditor.new()
+		_preview_editor.preview_host = _preview_host
+		_preview_window.add_child(_preview_editor)
+		_preview_editor.open()
+		_preview_editor.preview_viewport.size = Vector2i(640, 840)
+		_preview_rect.texture = _preview_editor.preview_viewport.get_texture()
+		_update_preview()
+	if _preview_editor != null:
+		_preview_editor.preview_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS if active else SubViewport.UPDATE_DISABLED
+
+func _update_preview() -> void:
+	if _preview_editor == null or _hair_select.item_count == 0: return
+	var data := character_data()
+	var appearance := HumanCharacter3DEditor.default_appearance(int(data.body))
+	# Plain clothes and no helmet or gear, so face and hair stay visible.
+	for slot: String in ["helmet", "cape", "weapon", "shield"]:
+		appearance.parts[slot] = "none"
+	appearance.parts.armor = "outfit_medieval_chinese_01"
+	appearance.parts.face = str(data.face)
+	appearance.parts.hair = str(data.hair)
+	appearance.hair_dye = str(data.hair_dye)
+	appearance.hair_dyed = bool(data.hair_dyed)
+	if not _preview_editor.restore_appearance(appearance):
+		appearance = HumanCharacter3DEditor.default_appearance(int(data.body))
+		appearance.parts.face = str(data.face)
+		appearance.parts.hair = str(data.hair)
+		_preview_editor.restore_appearance(appearance)
+	# Portrait framing instead of the map-sprite profile: whole body, larger.
+	var camera: Camera3D = _preview_editor.camera
+	if camera != null:
+		camera.size = 2.1
+		camera.position = Vector3(0.0, 1.0, -4.0) # The model faces -Z.
+		camera.look_at_from_position(camera.position, Vector3(0.0, 0.85, 0.0), Vector3.UP)
+
+# --- New Game: confirm.
+
+func _build_confirm_page(parent: Node) -> void:
+	var page := _page(parent, "confirm")
+	_label(page, "確認新遊戲", 24)
+	var row := _row(page)
+	_label(row, "世界名稱", 16).custom_minimum_size.x = 96 * UI
+	_world_name = LineEdit.new()
+	_world_name.name = "WorldName"
+	_world_name.max_length = RegionEntry.MAX_WORLD_NAME
+	_world_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_world_name.custom_minimum_size.x = 360 * UI
+	row.add_child(_world_name)
+	_build_initial_scenario_choice(page)
+	_summary = _label(page, "", 16)
+	_summary.name = "NewGameSummary"
+	_summary.custom_minimum_size.x = 560 * UI
+	var buttons := _row(page)
+	_button(buttons, "上一步", "ConfirmBack", func() -> void: show_page("character"))
+	_button(buttons, "開始", "StartGame", start_new_game)
+
+func _refresh_summary() -> void:
+	var data: Dictionary = RegionEntry.draft.get("character", {})
+	var site: Vector2i = RegionEntry.draft.get("site", Vector2i(-1, -1))
+	if _world_name.text.is_empty():
+		_world_name.text = "台灣 %s" % Time.get_date_string_from_system()
+	var traits: Array[String] = []
+	for axis: String in PersonPersonality.AXES:
+		var value := int(data.personality[axis])
+		if value != PersonPersonality.NEUTRAL:
+			traits.append("%s %d" % [str(PersonPersonality.LABELS[axis][0 if value > 50 else 1]), value])
+	_summary.text = "地圖：台灣\n起點 Site：(%d, %d)\n人物：%s（%s）\n能力：武力 %d・戰術 %d・統御 %d・教練 %d\n性格：%s" % [
+		site.x, site.y, str(data.name), "男" if int(data.body) == 0 else "女", int(data.combat_ability),
+		int(data.command_abilities.tactics), int(data.command_abilities.leadership), int(data.command_abilities.coach),
+		"中性" if traits.is_empty() else "、".join(traits)]
+
+func start_new_game() -> void:
+	var data: Dictionary = RegionEntry.draft.get("character", {})
+	var site: Variant = RegionEntry.draft.get("site")
+	if data.is_empty() or not site is Vector2i:
+		show_page("main")
+		return
+	var scenario_id := str(_initial_scenario.get_item_metadata(_initial_scenario.selected))
+	if not RegionEntry.request_new_world(site, data, _world_name.text, scenario_id):
+		_message.text = RegionEntry.menu_message
+		_message.visible = true
+		return
+	RegionEntry.draft = {}
+	get_tree().change_scene_to_file(RegionEntry.SITE_SCENE)
+
+func _build_initial_scenario_choice(parent: Node) -> void:
+	_label(parent, "開局情境", 16)
+	_initial_scenario = OptionButton.new()
+	_initial_scenario.name = "InitialArtisanScenario"
+	_initial_scenario.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_initial_scenario.add_item("原營地與有限工匠隊（5人）")
+	_initial_scenario.set_item_metadata(0, TechnologyArtisans.PRIMARY)
+	_initial_scenario.add_item("三方有限工匠隊（各5人）")
+	_initial_scenario.set_item_metadata(1, TechnologyArtisans.THREE_FACTIONS)
+	_initial_scenario.add_item("原開局；不配置起始工匠")
+	_initial_scenario.set_item_metadata(2, "")
+	parent.add_child(_initial_scenario)
+	var draft_id := str(RegionEntry.draft.get("initial_scenario_id", TechnologyArtisans.PRIMARY))
+	for index: int in _initial_scenario.item_count:
+		if str(_initial_scenario.get_item_metadata(index)) == draft_id: _initial_scenario.select(index)
+	_initial_scenario.item_selected.connect(func(index: int) -> void:
+		RegionEntry.draft["initial_scenario_id"] = str(_initial_scenario.get_item_metadata(index)))
+	_label(parent, "工匠僅在本世界已開放類別配置技藝；其他成員不自動學會。起點須能合法安置各隊。", 14)

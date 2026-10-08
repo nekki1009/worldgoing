@@ -10,7 +10,8 @@ func _click(parent: Node, name: String) -> void:
 func _ransom_dialog(lab: TerrainLab, target_id: int, representative_id: int) -> AcceptDialog:
 	var controller: SiteController = lab.site_controller
 	controller.select_cell(lab._combat_target(target_id).cell)
-	_click(controller.panel, "InspectLoot")
+	controller.open_window("people")
+	_click(controller.formal_windows.people, "InspectLoot")
 	var parent := lab.get_node("SiteUI/PersonInventoryDialog") as AcceptDialog
 	var targets := parent.find_child("LootSource", true, false) as OptionButton
 	var selected := false
@@ -39,6 +40,7 @@ func _close_dialog(child: AcceptDialog) -> void:
 
 func _run() -> void:
 	var lab := TerrainLab.new()
+	lab.npc = TerrainTestNPC.new() # Explicit custody fixture; formal startup has no default worker.
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	lab.set_process(false)
@@ -122,7 +124,8 @@ func _run() -> void:
 	assert(job.resources == {"grain": 100} and int(job.target_id) == target_id and int(job.representative_id) == representative_id)
 	assert(source == source_before and destination == destination_before and captive == captive_before and relation == relation_before)
 	_close_dialog(valid)
-	_click(controller.panel, "CancelPersonAction")
+	controller.open_window("people")
+	_click(controller.formal_windows.people, "CancelPersonAction")
 	assert(controller.person_actions.save_guard().ok and controller.person_actions._jobs.is_empty())
 	assert(source == source_before and destination == destination_before and captive == captive_before and relation == relation_before)
 	assert(Runtime.now(data) == 0.0 and data.site.manual.cargo.is_empty() and data.site.worker.cargo.is_empty())

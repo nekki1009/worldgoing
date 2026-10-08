@@ -4,6 +4,7 @@ var data: TerrainData
 var lab: TerrainLab
 var team: TerrainArmy
 var enemy: TerrainArmy
+var coordinator: SiteCombatMovementCoordinator
 
 func _initialize() -> void:
 	call_deferred("run")
@@ -36,10 +37,19 @@ func run() -> void:
 	enemy.external_blocker = team.blocks_cell
 	team.target_query = lab._army_target
 	reset_team()
+	coordinator = SiteCombatMovementCoordinator.new()
+	coordinator.register_formation(team)
+	coordinator.register_formation(enemy)
 	var original := team.cells.duplicate()
 	var goal := Vector2i(team.command_reference.floor()) + Vector2i.RIGHT
 	assert(team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.MOVE, goal).ok)
-	advance(8.0)
+	var one_step_plan: CombatMovePlan = team.get_active_move_plan()
+	assert(one_step_plan != null and one_step_plan.short_translation, "One-cell MOVE must retain member slots")
+	for index in range(100):
+		assert(team.get_active_deployment_plan().get_slot_for_member(team.combat_identity(index)) == original[index] + Vector2i.RIGHT)
+	advance(0.6)
+	assert(team.cells == original and team.moving_count() > 0, "One-cell MOVE must wait for the shared 0.38-second physical batch")
+	advance(7.4)
 	assert(team.combat_order == TerrainArmy.CombatOrder.HOLD, team.command_status)
 	for index in range(100):
 		assert(team.cells[index] == original[index] + Vector2i.RIGHT, "Dense formation failed to move without passing through allies: %d" % index)
@@ -151,6 +161,8 @@ func run() -> void:
 	advance(0.1)
 	assert(team.combat_order != TerrainArmy.CombatOrder.PURSUE)
 	print("TACTICS: pause, distance leash, retreat priority, invalid target")
+	coordinator.unregister_formation(team)
+	coordinator.unregister_formation(enemy)
 	team.clear()
 	enemy.clear()
 	team.queue_free()
@@ -178,8 +190,14 @@ func knockout(index: int) -> void:
 
 func advance(seconds: float) -> void:
 	for tick in range(ceili(seconds * 120.0)):
-		team.prepare_combat(1.0 / 120.0)
-		team.settle_combat_command()
+		if not paused and not bool(data.site.get("paused", false)):
+			# Match TerrainLab's action step: resolve claims, advance bodies, then finish batches.
+			coordinator.combat_logic_tick_if_needed(1.0 / 120.0)
+			team.prepare_combat(1.0 / 120.0)
+			enemy.prepare_combat(1.0 / 120.0)
+			coordinator.complete_committed_moves()
+			team.settle_combat_command()
+			enemy.settle_combat_command()
 		var occupied := {}
 		for index in range(100):
 			if team.combat_can_act(index) or team.moving_to[index] != TerrainArmy.INVALID_CELL:
@@ -187,5 +205,15 @@ func advance(seconds: float) -> void:
 				occupied[team.cells[index]] = index
 		for cell: Vector2i in team._reserved_cells:
 			var owner := int(team._reserved_cells[cell])
-			assert(not occupied.has(cell) and team.moving_to[owner] == cell)
+			if occupied.has(cell):
+				var source_owner: int = int(occupied[cell])
+				assert(source_owner != owner
+					and team._combat_batch_members.has(team.combat_identity(owner))
+					and team._combat_batch_members.has(team.combat_identity(source_owner))
+					and team.moving_to[source_owner] != TerrainArmy.INVALID_CELL
+					and team._reserved_cells.get(team.moving_to[source_owner], -1) == source_owner,
+					"Only a committed same-team batch may claim another source cell")
+			else:
+				occupied[cell] = owner
+			assert(team.moving_to[owner] == cell)
 			assert(data.can_step(team.cells[owner], cell) and not enemy.blocks_cell(cell))

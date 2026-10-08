@@ -20,8 +20,8 @@ func _fixture() -> TerrainData:
 	var data := TerrainGenerator.generate(TerrainPreset.Kind.PLAINS, 12345)
 	Env.initialize(data, "workflow")
 	# A controlled accessible plot isolates building/production from distribution.
-	for y: int in range(15, 31):
-		for x: int in range(15, 31):
+	for y: int in range(15, 55):
+		for x: int in range(15, 55):
 			var i := data.index(Vector2i(x, y))
 			data.height_levels[i] = 0
 			data.flags[i] = TerrainData.Flag.WALKABLE
@@ -44,7 +44,7 @@ func _fixture() -> TerrainData:
 	return data
 
 func _build(data: TerrainData, kind: String, cell: Vector2i) -> String:
-	var cells: Array[int] = [data.index(cell)]
+	var cells := _footprint(data, kind, cell)
 	var result := Runtime.request_build(data, kind, cells)
 	assert(result.ok, str(result))
 	var key := str(result.feature)
@@ -56,9 +56,22 @@ func _build(data: TerrainData, kind: String, cell: Vector2i) -> String:
 	assert(str(feature.stage) == "complete", str(data.site.worker))
 	return key
 
+func _footprint(data: TerrainData, kind: String, cell: Vector2i) -> Array[int]:
+	var spec := Runtime.building_spec(kind)
+	var layout := Runtime.building_cells(data, kind, cell, spec.min_size)
+	var cells: Array[int] = []
+	if layout.ok:
+		cells.assign(layout.cells)
+	return cells
+
+func _operate_task(data: TerrainData, key: String) -> Dictionary:
+	var feature: Dictionary = data.site.features[key]
+	var slot: Dictionary = Runtime.feature_work_slots(data, feature)[0]
+	return {"ok": true, "target": "feature:" + key, "action": "operate", "cell": int(slot.cell), "work_slot": int(slot.slot), "message": ""}
+
 func _run() -> void:
 	var data := _fixture()
-	var cells: Array[int] = [data.index(Vector2i(22, 20))]
+	var cells := _footprint(data, "house", Vector2i(22, 20))
 	var before := JSON.stringify(data.site.inventory)
 	assert(not Runtime.request_build(data, "house", cells, func(_cell: Vector2i) -> bool: return true).ok)
 	assert(before == JSON.stringify(data.site.inventory), "Rejected placement spent material")
@@ -78,7 +91,7 @@ func _run() -> void:
 	Env.initialize(natural, "workflow-save")
 	var safe: Array[int] = []
 	for i: int in range(natural.surface_types.size()):
-		var plot: Array[int] = [i]
+		var plot := _footprint(natural, "house", natural.cell_from_index(i))
 		if Runtime.preview_build(natural, "house", plot).ok:
 			safe = plot
 			break
@@ -108,19 +121,27 @@ func _run() -> void:
 	var well := _build(data, "well", Vector2i(22, 21))
 	var second_well := _build(data, "well", Vector2i(23, 21))
 	var farm := _build(data, "farm", Vector2i(22, 22))
+	var farm_task := _operate_task(data, farm)
+	Runtime.set_operating_slots(data, [{"task": farm_task}])
 	assert(data.site.water_status[farm].supplied > 0)
 	# Many consumers in the same served plot exceed one shared aquifer budget.
+	var water_jobs: Array[Dictionary] = [{"task": farm_task}]
 	for n: int in range(60):
 		var consumer: Dictionary = data.site.features[farm].duplicate(true)
 		consumer.kind = "horse_ranch"
+		consumer.cells = _footprint(data, "horse_ranch", Vector2i(22, 22))
+		consumer["species"] = "horse"
+		consumer["residents"] = 2
 		data.site.features["test-water-%d" % n] = consumer
-	Runtime.allocate_water(data)
+		water_jobs.append({"task": _operate_task(data, "test-water-%d" % n)})
+	Runtime.set_operating_slots(data, water_jobs)
 	var supplied := 0.0
 	for status: Dictionary in data.site.water_status.values():
 		supplied += float(status.supplied)
 	assert(supplied <= 2.000001, "Overlapping wells duplicated the aquifer")
 	for n: int in range(60):
 		data.site.features.erase("test-water-%d" % n)
+	Runtime.set_operating_slots(data, [{"task": farm_task}])
 	Runtime.rebuild_water(data)
 	assert(not well.is_empty() and not second_well.is_empty())
 	var kiln := _build(data, "kiln", Vector2i(25, 22))
@@ -141,13 +162,16 @@ func _run() -> void:
 	assert(Runtime.deposit(data, data.site.worker.cargo, data.cell_from_index(int(data.site.depot_cell))).ok)
 	assert(int(data.site.inventory.brick) == brick_before + 3)
 	var sheep_before := int(data.site.inventory.sheep)
-	var pasture := _build(data, "pasture", Vector2i(23, 23))
+	var pasture := _build(data, "pasture", Vector2i(29, 22))
 	assert(int(data.site.features[pasture].residents) == 1 and int(data.site.inventory.sheep) == sheep_before - 1)
 	assert(not Runtime.FEATURES.horse_ranch.output.has("hide"))
 	assert(Runtime.cancel_feature(data, pasture).ok and int(data.site.inventory.sheep) == sheep_before, "Demolition destroyed breeding stock")
 	var production_kinds: Array[String] = ["farm", "fiber_farm", "fodder_farm", "pasture", "horse_ranch", "charcoal", "smelter", "smithy", "tannery", "weaver"]
 	for n: int in range(production_kinds.size()):
-		var production_key := _build(data, production_kinds[n], Vector2i(22 + (n % 4) * 2, 24 + floori(float(n) / 4.0) * 2))
+		var anchor := Vector2i(22 + (n % 4) * 7, 30 + floori(float(n) / 4.0) * 7)
+		if float(Runtime.FEATURES[production_kinds[n]].water) > 0.0:
+			_build(data, "well", anchor + Vector2i(-2, 0))
+		var production_key := _build(data, production_kinds[n], anchor)
 		_production_batch(data, production_key)
 	var large_cells: Array[int] = [data.index(Vector2i(18, 22)), data.index(Vector2i(19, 22)), data.index(Vector2i(18, 23)), data.index(Vector2i(19, 23))]
 	var large_farm := Runtime.request_build(data, "farm", large_cells)
@@ -158,18 +182,19 @@ func _run() -> void:
 	data.site.worker.cell = large_feature.entrance
 	data.site.worker.mode = "work"
 	Runtime.advance(data, float(large_feature.work), true)
+	Runtime.set_operating_slots(data, [{"task": _operate_task(data, str(large_farm.feature))}])
 	assert(is_equal_approx(float(data.site.water_status[str(large_farm.feature)].demand), 0.16))
 	_production_batch(data, str(large_farm.feature))
 	assert(int(Env.land_summary(data, Rect2i(18, 22, 2, 2)).farm_cells) == 0, "Occupied farming plots counted as free land")
-	var sea_cell := data.index(Vector2i(29, 29))
+	var sea_cell := data.index(Vector2i(52, 25))
 	data.surface_types[sea_cell] = TerrainData.Surface.WATER
 	data.water_kind[sea_cell] = 2
 	data.water_body[sea_cell] = sea_cell
 	data.flags[sea_cell] = TerrainData.Flag.BLOCKED
-	data.foundation[data.index(Vector2i(28, 29))] = 32
-	var saltworks := _build(data, "saltworks", Vector2i(28, 29))
+	data.foundation[data.index(Vector2i(51, 25))] = 32
+	var saltworks := _build(data, "saltworks", Vector2i(48, 24))
 	_production_batch(data, saltworks)
-	var salt_footprint: Array[int] = [data.index(Vector2i(29, 28))]
+	var salt_footprint := _footprint(data, "intake", Vector2i(52, 24))
 	assert(not Runtime.preview_build(data, "intake", salt_footprint).ok, "Seawater became freshwater")
 	var road := _build(data, "road", Vector2i(27, 27))
 	assert(not bool(data.site.features[road].solid) and data.is_walkable(Vector2i(27, 27)))
@@ -207,8 +232,9 @@ func _production_batch(data: TerrainData, key: String) -> void:
 	var feature: Dictionary = data.site.features[key]
 	var definition: Dictionary = Runtime.FEATURES[str(feature.kind)]
 	var before: Dictionary = data.site.inventory.duplicate()
-	Runtime.assign_task(data, {"ok": true, "target": "feature:" + key, "action": "operate", "cell": feature.entrance, "message": ""})
-	data.site.worker.cell = feature.entrance
+	var task := _operate_task(data, key)
+	Runtime.assign_task(data, task)
+	data.site.worker.cell = int(task.cell)
 	data.site.worker.mode = "work"
 	Runtime.advance(data, float(definition.cycle) / (feature.cells.size() if str(feature.kind).contains("farm") else 1), true)
 	for item: String in definition.input:
@@ -227,7 +253,7 @@ func _clearing_and_load() -> void:
 	for key: String in keys:
 		if int(data.resource_base[key].kind) != Env.Kind.TIMBER:
 			continue
-		var footprint: Array[int] = [int(data.resource_base[key].cell)]
+		var footprint := _footprint(data, "house", data.cell_from_index(int(data.resource_base[key].cell)))
 		var preview := Runtime.preview_build(data, "house", footprint)
 		if not preview.ok or not preview.clearing.has(key):
 			continue

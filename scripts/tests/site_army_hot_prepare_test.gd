@@ -1,6 +1,6 @@
 extends SceneTree
 
-const OUTPUT := "res://output/site_army_5k_hot_close_20260926/hot_prepare_smoke.json"
+const OUTPUT := "res://output/site_army_5k_tail_close_20260927/main_delivery_oracle/hot_prepare_smoke.json"
 
 func _initialize() -> void:
 	_run.call_deferred()

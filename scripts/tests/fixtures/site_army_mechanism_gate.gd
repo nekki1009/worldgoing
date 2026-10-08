@@ -1,7 +1,7 @@
 extends RefCounted
 ## Shared source fingerprint and fail-closed admission for the formal 5k B run.
 
-const EVIDENCE_ROOT := "res://output/site_army_5k_hot_close_20260926/"
+const EVIDENCE_ROOT := "res://output/site_army_5k_tail_close_20260927/main_delivery_oracle/"
 const GENERATOR := "res://scripts/tests/site_army_mechanism_test.gd"
 const EVIDENCE_FILES := [
 	"hot_store_smoke.json", "hot_prepare_smoke.json", "hot_lifecycle_smoke.json", "hot_projection_smoke.json",

@@ -6,6 +6,22 @@ param(
     [string]$PreviousPublication = '',
     [switch]$SteelMingguang
 )
+function Assert-SteelMingguangCaptureBinding($Run, $Capture, [string]$Sex, [string]$Revision, [string]$ProjectPath, [string]$CandidateSha256) {
+    # Pure evidence check: this function never reads or publishes an asset.
+    if ($Run.mode -cne 'visual') { throw 'Steel capture must use canonical visual mode' }
+    $candidateResource = "res://output/steel_mingguang_walk_20260919/combined/$Revision/$Sex/standard_anime_${Sex}_character_pack.glb"
+    $expectedArgs = @('--path', $ProjectPath, '--script', 'res://scripts/tests/equipment_walk_fit_capture.gd',
+        '--', "candidate_$Revision", $Sex, '--steel-mingguang', '--no-hair', "--candidate=$candidateResource")
+    $actualArgs = @($Run.arguments)
+    if ($actualArgs.Count -ne $expectedArgs.Count) { throw 'Steel canonical argument count differs' }
+    for ($index = 0; $index -lt $expectedArgs.Count; $index++) {
+        if ($actualArgs[$index] -cne $expectedArgs[$index]) { throw "Steel canonical argument mismatch at index $index" }
+    }
+    if ($Capture.sex -cne $Sex -or $Capture.candidate_path -cne $candidateResource) { throw 'Steel capture sex/candidate path differs' }
+    if ($CandidateSha256 -notmatch '^[0-9a-fA-F]{64}$' -or $Capture.candidate_sha256 -notmatch '^[0-9a-fA-F]{64}$' -or
+        $Capture.candidate_sha256 -ne $CandidateSha256) { throw 'Steel capture candidate SHA256 differs from build' }
+}
+
 $ErrorActionPreference = 'Stop'
 $projectDir = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../..')).Path
 $taskDir = Join-Path $projectDir 'output/equipment_walk_fix_20260919'
@@ -34,6 +50,7 @@ foreach ($sex in @('male','female')) {
     if ($capture.images.Count -ne $expectedImages -or $capture.status -ne 'CAPTURE_COMPLETE') { throw "Incomplete capture $sex" }
     if ($capture.editor_md5 -ne (Get-FileHash -LiteralPath (Join-Path $projectDir 'scripts/ui/human_character_3d_editor.gd') -Algorithm MD5).Hash) { throw 'Editor changed after review' }
     if ($SteelMingguang) {
+        Assert-SteelMingguangCaptureBinding $run $capture $sex $Revision $projectDir $report.candidate_sha256['.glb']
         if ($report.glb_steel.replaced_meshes.Count -ne 10 -or $report.glb_morph.appended_walk_channels -ne 10 -or -not $report.glb_morph.old_morphs_and_base_accessors_preserved) { throw 'Steel/Mingguang scope changed' }
         $proof = Get-Content -LiteralPath (Join-Path $taskDir "combined/$Revision/native_preservation.json") -Raw | ConvertFrom-Json -AsHashtable
         if ($proof[$sex].after.sha256 -ne $report.candidate_sha256['.glb']) { throw 'Independent native proof differs' }

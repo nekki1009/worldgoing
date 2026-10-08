@@ -11,8 +11,11 @@ var editor: HumanCharacter3DEditor
 var combat_proxy: RefCounted # Test-only shared coarse profile; visual editor remains original.
 var visual_state: CharacterVisualState = CharacterVisualState.new()
 var cell_blocker: Callable
+var step_blocker: Callable
 var escort_step_guard: Callable # Only the original custody order can authorize a captive edge.
 var editor_window: Window
+var _editor_control_host: Control
+var _editor_control_minimum := Vector2.ZERO
 var player_sprite: Sprite2D
 var _step_time: float = 0.0
 var _movement_duration := 0.0
@@ -32,8 +35,11 @@ var knockout_left := 0.0
 var guard_break_left := 0.0
 var guard_transition_left := 0.0
 var captive := false
+var surrender_pending := false
+var site_exited := false
 var faction_id := 0
 var person_id := 0
+var military_role := "civilian" # Qualification persists independently of a current appointment.
 var auto_face := false
 var combat_driven_by_lab := false
 var exchange_enabled := false:
@@ -47,6 +53,14 @@ var exchange_enabled := false:
 var combat_ability := 50.0 # Original person's martial ability; unrelated to command tactics.
 var exchange_cooldown := 0.0
 var ranged_cooldown := 0.0 # Fire cadence only; never excludes this person from melee receipt.
+var ranged_ammo_mode := "NORMAL"
+var ranged_target: Dictionary = {}
+var ranged_order_serial := 0
+var ranged_order_issuer_id := 0
+var ranged_enabled := false
+var ranged_fire_policy: Dictionary = {} # Original command progress; estimates remain derived.
+var ranged_target_validate: Callable # Pure original Lab query: (owner, typed target, ammo mode) -> {ok, cell}.
+var _ranged_last_release_id := 0 # One successful physical release watermark, never a growing shot set.
 var exchange_stagger := 0.0
 var exchange_skill_cooldown := 0.0
 var exchange_skill_authorized: Callable # Current controlled original person; no hard-coded player ID.
@@ -89,6 +103,14 @@ var combat_target_query: Callable
 var combat_mode_query: Callable # Read-only Site battle mode; no second combat state.
 var attack_target_id := 0
 var command_abilities: Dictionary = {} # Created only on actual appointment.
+var display_name := "" # Set by main-menu character creation; empty shows the person number.
+var personality: Dictionary = {} # PersonPersonality packet; empty is neutral.
+var social_state: Dictionary = {} # PersonSocial packet (v2 plan 4.2); empty = never captured.
+const PersonPersonality = preload("res://scripts/terrain_lab/person_personality.gd")
+var technology: Dictionary = {} # Original person's learned skills; empty is a legacy/unlearned person.
+const Technology = preload("res://scripts/terrain_lab/site_technology.gd")
+const PersonSocial = preload("res://scripts/terrain_lab/person_social.gd")
+const MAX_NAME_LENGTH := 24
 var _attack_hits: Dictionary = {}
 var _weapon_blocked := false
 var _attack_serial := 0
@@ -154,16 +176,19 @@ const SAVED_FLOAT_FIELDS := {
 	"training": 1000000.0, "_attack_elapsed": 60.0, "_attack_duration": 60.0,
 	"_clip_duration": 60.0, "_training_reduction": 0.15, "_attack_step": 64.0,
 	"_step_time": 60.0, "_rescue_left": 4.0,
-	"_reload_left": 1.5,
+	"_reload_left": 1.5, "ranged_cooldown": 3.0,
 	"fatigue": 100.0, "fatigue_rest": 30.0, "_fatigue_slowdown": 0.30,
 	"combat_ability": 100.0,
 }
 const SAVED_INT_FIELDS := ["person_id", "faction_id", "_attack_serial", "_received_effective_hit", "_rescue_hit_revision", "_rescue_target_hit_revision"]
-const SAVED_BOOL_FIELDS := ["guarding", "captive", "combat_ready", "_did_hit", "_weapon_blocked", "_getting_up", "work_resting"]
+const SAVED_BOOL_FIELDS := ["guarding", "captive", "surrender_pending", "site_exited", "combat_ready", "_did_hit", "_weapon_blocked", "_getting_up", "work_resting"]
 const SAVED_VECTOR_FIELDS := ["position", "_attack_offset", "_stance_offset", "_attack_aim_point"]
 
 func initialize_visual() -> void:
-	if DisplayServer.get_name() == "headless":
+	_initialize_visual_resources(false)
+
+func _initialize_visual_resources(contact_cpu_only: bool) -> void:
+	if DisplayServer.get_name() == "headless" and not contact_cpu_only:
 		return
 	var requested_body := visual_state.body_index
 	editor_window = Window.new()
@@ -209,12 +234,56 @@ func initialize_visual() -> void:
 	if exchange_enabled:
 		editor.set_process(false) # Original owner will update this same presenter on pose changes.
 
-func open_editor() -> void:
+func prepare_contact_visual(appearance: Dictionary) -> bool:
+	# Explicit resource preparation on an unregistered original Actor node.
+	# Native load candidates use this node without touching the live Actor.
+	if not HumanCharacter3DEditor.valid_appearance(appearance): return false
+	visual_state.body_index = int(appearance.body)
+	if editor == null: _initialize_visual_resources(true)
+	if editor == null or not TerrainArmy.SiegeWorkClips.install(editor) or not editor.restore_appearance(appearance): return false
+	if editor.model_root == null or editor.animation_player == null or player_sprite == null: return false
+	editor.set_playing(false)
+	editor.set_process(false)
+	editor.animation_player.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
+	editor.preview_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	set_process(false)
+	return true
+
+func adopt_contact_visual(prepared: TerrainTestCharacter) -> void:
+	# Called only after the original Native candidate has been committed.
+	# Existing visible Editors have already followed the original restore path.
+	if editor != null: return
+	editor_window = prepared.editor_window
+	editor = prepared.editor
+	player_sprite = prepared.player_sprite
+	editor_window.close_requested.disconnect(prepared._close_editor)
+	editor.closed.disconnect(prepared._close_editor)
+	editor_window.reparent(self)
+	editor.preview_viewport.reparent(self) # Original viewport/world/rig belongs to the prepared Actor.
+	player_sprite.reparent(self)
+	editor.preview_host = self
+	editor.visual_state = visual_state
+	editor_window.close_requested.connect(_close_editor)
+	editor.closed.connect(_close_editor)
+	prepared.editor_window = null
+	prepared.editor = null
+	prepared.player_sprite = null
+	_sync_render_projection()
+
+func is_editor_open() -> bool:
+	return is_instance_valid(_editor_control_host) or (editor_window != null and editor_window.visible)
+
+func open_editor(host: Control = null) -> void:
+	if is_instance_valid(_editor_control_host) and _editor_control_host == host:
+		host.show()
+		return
 	# Do not let the equipment preview cancel recovery or revive an invalid actor.
 	if not can_act() or action_time > 0.0 or guarding or not projectiles.is_empty():
 		combat_status = "Busy: cannot change equipment"
 		return
 	if editor_window != null:
+		if is_instance_valid(_editor_control_host) or (host != null and editor_window.visible):
+			_close_editor()
 		_exchange_visual_active = false
 		_exchange_visual_left = 0.0
 		_set_attack_offset(Vector2.ZERO)
@@ -224,13 +293,30 @@ func open_editor() -> void:
 		editor.animation_player.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_IDLE
 		_step_time = 0.0
 		editor.preview_viewport.size = CharacterRenderContract.PREVIEW_VIEWPORT_SIZE
-		editor_window.popup_centered()
+		if host != null:
+			_editor_control_host = host
+			_editor_control_minimum = editor.editor_root.custom_minimum_size
+			editor.editor_root.reparent(host, false)
+			editor.editor_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			host.show()
+		else:
+			editor_window.popup_centered()
 		editor.open()
 		editor.set_process(true)
 		editor.preview_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 		_sync_render_projection()
 
 func _close_editor() -> void:
+	if editor == null or editor_window == null:
+		return
+	editor._dragging_preview = false
+	editor._panning_preview = false
+	if is_instance_valid(_editor_control_host):
+		editor.editor_root.reparent(editor, false)
+		editor.editor_root.custom_minimum_size = _editor_control_minimum
+		editor.editor_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		_editor_control_host.hide()
+	_editor_control_host = null
 	editor_window.hide()
 	editor.preview_viewport.size = CharacterRenderContract.MAP_VIEWPORT_SIZE
 	_sync_render_projection()
@@ -254,14 +340,23 @@ func _sync_render_projection() -> void:
 	player_sprite.scale = Vector2.ONE * editor.get_map_sprite_scale()
 	_set_attack_offset(_attack_offset)
 
+func _exit_tree() -> void:
+	if is_instance_valid(_editor_control_host):
+		# The presenter is being destroyed; do not leave its borrowed controls behind.
+		editor.editor_root.queue_free()
+		_editor_control_host.hide()
+		_editor_control_host = null
+
 func _map_anchor_offset() -> Vector2:
 	if editor == null or player_sprite == null:
 		return Vector2.ZERO
 	return editor.get_map_ground_offset_pixels() * player_sprite.scale.x
 
 func _process(delta: float) -> void:
+	var render_started := Time.get_ticks_usec() if combat_pose_profile_enabled else 0
 	z_index = 10 + int(position.y / TerrainRenderer.CELL_PIXELS)
 	if editor != null and player_sprite != null:
+		_set_attack_offset(_attack_offset)
 		if exchange_enabled and _exchange_pose_dirty:
 			# Exchange outcomes own gameplay; the original model is presentation
 			# only and seeks once per rendered frame, never once per logic step.
@@ -270,7 +365,7 @@ func _process(delta: float) -> void:
 			_cloth_pose_dirty = true
 		_sync_ammo_visual()
 		if _cloth_pose_dirty:
-			if exchange_enabled and not editor_window.visible:
+			if exchange_enabled and not is_editor_open():
 				# Reuse the original presenter update (props, cloth, hair, mount),
 				# once per changed pose rather than also in an invisible editor.
 				editor._process(0.0)
@@ -285,6 +380,8 @@ func _process(delta: float) -> void:
 	queue_redraw()
 	if not combat_driven_by_lab:
 		advance_combat(delta, false, SiteRuntime.game_seconds(delta, float(data.site.get("combat_left", 0.0))) if data != null and not data.site.is_empty() else delta)
+	if combat_pose_profile_enabled:
+		combat_pose_profile_usec["render_process"] = int(combat_pose_profile_usec.get("render_process", 0)) + Time.get_ticks_usec() - render_started
 
 func advance_combat(delta: float, defer_contacts: bool = false, game_seconds: float = -1.0) -> void:
 	if delta <= 0.0 or (is_inside_tree() and get_tree().paused):
@@ -453,7 +550,7 @@ func toggle_mount() -> bool:
 
 func _mount_target_speed(direction: Vector2i, running: bool) -> float:
 	var target := MOUNT_RUN_SPEED if running else MOUNT_CRUISE_SPEED
-	var height_change := int(data.height_levels[data.index(terrain_cell + direction)]) - int(data.height_levels[data.index(terrain_cell)])
+	var height_change := data.effective_height(terrain_cell + direction) - data.effective_height(terrain_cell)
 	if height_change != 0:
 		target *= 0.55 if height_change > 0 else 0.8
 	# Cargo is the existing holder's shared dictionary; capacity units are not kg.
@@ -501,8 +598,9 @@ func _retime_riding_edge(end_speed: float) -> void:
 	_ride_end_speed = end_speed
 	_step_time = _movement_duration + 0.12
 
-func place(cell: Vector2i, instant: bool = false, duration: float = MOVE_DURATION) -> bool:
-	if not can_enter_cell(cell) or not is_finite(duration) or duration <= 0.0:
+func place(cell: Vector2i, instant: bool = false, duration: float = MOVE_DURATION, original_goal: Vector2i = Vector2i(-1, -1)) -> bool:
+	var allowed := can_enter_cell(cell) if instant or cell == terrain_cell else can_enter_cell(cell, original_goal, terrain_cell, terrain_cell)
+	if not allowed or not is_finite(duration) or duration <= 0.0:
 		return false
 	_cancel_rescue()
 	movement_from_cell = cell if instant else terrain_cell
@@ -531,7 +629,7 @@ func step(direction: Vector2i, running: bool = false, escort_guard_id: int = 0) 
 	if is_instance_valid(opponent) and opponent.occupies_cell(terrain_cell + direction):
 		release_movement_intent()
 		return false
-	if data == null or not data.can_step(terrain_cell, terrain_cell + direction) or not can_enter_cell(terrain_cell + direction):
+	if data == null or not data.can_step(terrain_cell, terrain_cell + direction) or not can_enter_cell(terrain_cell + direction, navigation_goal(), terrain_cell, terrain_cell):
 		release_movement_intent()
 		return false
 	var duration := get_move_interval(running)
@@ -547,7 +645,8 @@ func step(direction: Vector2i, running: bool = false, escort_guard_id: int = 0) 
 	_stance_offset = Vector2.ZERO
 	_set_attack_offset(Vector2.ZERO)
 	facing = direction
-	var moved: bool = place(terrain_cell + direction, false, duration)
+	var moved: bool = place(terrain_cell + direction, false, duration, navigation_goal())
+	if moved: _invalidate_ranged_order()
 	if moved and is_mounted():
 		_movement_ride = true
 		_movement_ride_running = running
@@ -570,15 +669,32 @@ func step(direction: Vector2i, running: bool = false, escort_guard_id: int = 0) 
 		_step_time = duration + 0.12
 	return moved
 
-func can_enter_cell(cell: Vector2i) -> bool:
-	if data == null or not data.is_walkable(cell):
-		return false
-	if cell_blocker.is_valid() and bool(cell_blocker.call(cell, self)):
-		return false
-	return true
+func navigation_goal() -> Vector2i:
+	return Vector2i(-1, -1) # The Controller derives a keyboard exit goal from original terrain.
+
+func can_enter_cell(cell: Vector2i, original_goal: Vector2i = Vector2i(-1, -1), path_from: Vector2i = Vector2i(-1, -1), original_source: Vector2i = Vector2i(-1, -1)) -> bool:
+	if data == null or not data.is_walkable(cell): return false
+	if path_from != Vector2i(-1, -1) and step_blocker.is_valid():
+		return not bool(step_blocker.call(original_source, path_from, cell, original_goal, self))
+	return not (cell_blocker.is_valid() and bool(cell_blocker.call(cell, self)))
 
 func is_moving() -> bool:
 	return _movement_elapsed < _movement_duration
+
+func cancel_invalid_structure_step(lost_surfaces: Dictionary = {}) -> void:
+	if not is_moving(): return
+	if not lost_surfaces.has(data.index(movement_from_cell)) and not lost_surfaces.has(data.index(terrain_cell)) and data.can_step(movement_from_cell, terrain_cell): return
+	terrain_cell = movement_from_cell
+	position = (Vector2(terrain_cell) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
+	_movement_start = position
+	_movement_duration = 0.0
+	_movement_elapsed = 0.0
+	_movement_ride = false
+	_movement_ride_running = false
+	_ride_start_speed = 0.0
+	_ride_end_speed = 0.0
+	ride_speed = 0.0
+	queue_redraw()
 
 func _advance_movement(delta: float) -> void:
 	if not is_moving():
@@ -603,7 +719,7 @@ func _advance_movement(delta: float) -> void:
 	position = _movement_start.lerp(destination, weight)
 
 func occupies_cell(cell: Vector2i) -> bool:
-	if hp <= 0.0 or knockout_left > 0.0:
+	if hp <= 0.0 or knockout_left > 0.0 or site_exited:
 		return false
 	return terrain_cell == cell or (is_moving() and movement_from_cell == cell)
 
@@ -631,7 +747,7 @@ func play_pose(clip: StringName) -> void:
 		editor.animation_player.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
 		# The live exchange presenter already seeks the final pose in _process.
 		# Keep immediate samples for manual/legacy callers and the open editor.
-		if not (exchange_enabled and combat_driven_by_lab and is_processing() and is_inside_tree() and can_process() and not editor.is_mounted and editor_window != null and not editor_window.visible):
+		if not (exchange_enabled and combat_driven_by_lab and is_processing() and is_inside_tree() and can_process() and not editor.is_mounted and editor_window != null and not is_editor_open()):
 			editor.animation_player.seek(0.0, true)
 	visual_state.animation_id = clip
 	visual_state.mounted = str(clip).begins_with("ride_")
@@ -703,8 +819,8 @@ func _advance_combat_pose(delta: float) -> void:
 		return
 	if editor == null:
 		visual_state.animation_time += delta
-		if visual_state.animation_id == &"unconscious":
-			visual_state.animation_time = fposmod(visual_state.animation_time, _exchange_authored_duration(&"unconscious"))
+		if visual_state.animation_id in [&"idle", &"ride_idle", &"unconscious"]:
+			visual_state.animation_time = fposmod(visual_state.animation_time, _exchange_authored_duration(visual_state.animation_id))
 		if visual_state.animation_id in [&"ride_heavy", &"ride_guard_break"]:
 			visual_state.animation_time = minf(visual_state.animation_time, _exchange_authored_duration(visual_state.animation_id))
 		if visual_state.animation_id == &"down" and visual_state.animation_time >= float(CombatTimings.POSE_SECONDS[&"down"]) and hp > 0.0 and knockout_left > 0.0:
@@ -777,6 +893,7 @@ func _start_target_attack(identity: int, actor: TerrainTestCharacter = null) -> 
 		var requested := _attack_target(false) # Never request body/aim geometry.
 		if requested.is_empty() or float(requested.hp) <= 0.0:
 			return false
+		_invalidate_ranged_order()
 		_update_combat_ready()
 		face_cell(requested.cell)
 		combat_status = "Exchange target selected"
@@ -874,7 +991,7 @@ func _start_target_attack(identity: int, actor: TerrainTestCharacter = null) -> 
 func _set_attack_offset(value: Vector2) -> void:
 	_attack_offset = value
 	if player_sprite != null:
-		player_sprite.position = -_map_anchor_offset() + value + _stance_offset
+		player_sprite.position = -_map_anchor_offset() + value + _stance_offset + (data.surface_visual_offset_at(position) if data != null else Vector2.ZERO)
 
 func _update_attack_step(fraction: float) -> void:
 	# Imported clips lock planar root motion. Restore a visible in-cell step,
@@ -1172,6 +1289,7 @@ func set_guard(enabled: bool) -> void:
 		return
 	if guarding == enabled:
 		return
+	_invalidate_ranged_order()
 	guarding = enabled
 	guard_transition_left = SiteCombatRules.GUARD_TRANSITION
 	play_pose(&"guard_raise" if enabled else &"guard_lower")
@@ -1182,7 +1300,7 @@ func receive_hit(damage: int, attacker: TerrainTestCharacter) -> void:
 		"result": {"hp": maxf(0.0, damage), "stun": 0.0, "guard_break": false}})
 
 func can_act() -> bool:
-	return hp > 0.0 and knockout_left <= 0.0 and not captive and not _getting_up
+	return hp > 0.0 and knockout_left <= 0.0 and not captive and not surrender_pending and not site_exited and not _getting_up
 
 func exchange_ready() -> bool:
 	return exchange_enabled and can_act() and not (is_inside_tree() and get_tree().paused) and not is_moving() \
@@ -1190,7 +1308,7 @@ func exchange_ready() -> bool:
 		and guard_break_left <= 0.0 and guard_transition_left <= 0.0
 
 func exchange_can_receive() -> bool:
-	return exchange_enabled and hp > 0.0 and knockout_left <= 0.0 and not captive and not _getting_up \
+	return exchange_enabled and hp > 0.0 and knockout_left <= 0.0 and not captive and not site_exited and not _getting_up \
 		and exchange_cooldown <= 0.000000001 and not (is_inside_tree() and get_tree().paused)
 
 func _exchange_equipped_asset(slot: String) -> String:
@@ -1218,8 +1336,53 @@ func exchange_stats() -> Dictionary:
 		"fatigue": fatigue, "morale": float(exchange_morale_query.call()) if exchange_morale_query.is_valid() else 100.0,
 		"armorbonus": armor_bonus, "weapon": weapon_asset, "armor": armor_asset, "skill": _exchange_pending_skill}
 
-func ranged_profile() -> Dictionary:
-	return SiteCombatRules.ranged_profile(_exchange_equipped_asset("weapon"))
+func ranged_profile(ammo_mode: String = "NORMAL") -> Dictionary:
+	return SiteCombatRules.fire_ranged_profile(_exchange_equipped_asset("weapon"), ammo_mode)
+
+func _ranged_order_guard() -> Dictionary:
+	if data == null or not exchange_enabled or not can_act(): return SiteRuntime.fail("NO_TARGET")
+	if (is_inside_tree() and get_tree().paused) or bool(data.site.get("paused", false)):
+		return SiteRuntime.fail("BUSY", "暫停時不接受射擊命令")
+	if not exchange_skill_authorized.is_valid() or not bool(exchange_skill_authorized.call()):
+		return SiteRuntime.fail("NO_AUTHORITY", "只能指揮目前控制的原人物")
+	return SiteRuntime.ok()
+
+func issue_ranged_order(target: Dictionary, ammo_mode: String = "NORMAL") -> Dictionary:
+	var guard := _ranged_order_guard()
+	if not guard.ok: return guard
+	if ammo_mode not in ["NORMAL", "FIRE_ARROW"]: return SiteRuntime.fail("UNSUPPORTED_AMMO", "未支援的彈藥模式")
+	if ranged_profile(ammo_mode).is_empty(): return SiteRuntime.fail("UNSUPPORTED_AMMO", "原實裝不支援此彈藥模式")
+	if not ranged_target_validate.is_valid(): return SiteRuntime.fail("NO_TARGET", "原 Site 目標查詢尚未接入")
+	var checked: Variant = ranged_target_validate.call(self, target, ammo_mode)
+	if not checked is Dictionary or not checked.has("ok"): return SiteRuntime.fail("NO_TARGET")
+	if not bool(checked.ok): return checked
+	if not checked.get("cell") is Vector2i or not data.contains(checked.cell): return SiteRuntime.fail("NO_TARGET")
+	ranged_order_serial += 1
+	ranged_order_issuer_id = person_id
+	ranged_ammo_mode = ammo_mode
+	ranged_target = target.duplicate(true)
+	ranged_fire_policy = {}
+	ranged_enabled = true
+	return SiteRuntime.ok("已設定原人物射擊目標", {"order_serial": ranged_order_serial})
+
+func stop_ranged_order() -> Dictionary:
+	var guard := _ranged_order_guard()
+	if not guard.ok: return guard
+	_invalidate_ranged_order()
+	return SiteRuntime.ok("已停止原人物射擊", {"order_serial": ranged_order_serial})
+
+func _invalidate_ranged_order() -> void:
+	ranged_order_serial += 1
+	ranged_order_issuer_id = 0
+	ranged_target = {}
+	ranged_fire_policy.clear()
+	ranged_enabled = false
+
+func ranged_order_authorized(ignore_pause: bool = false) -> bool:
+	if data == null or not exchange_enabled or not ranged_enabled: return false
+	if not ignore_pause and ((is_inside_tree() and get_tree().paused) or bool(data.site.get("paused", false))): return false
+	return person_id == ranged_order_issuer_id and can_act() \
+		and exchange_skill_authorized.is_valid() and bool(exchange_skill_authorized.call())
 
 func ranged_defense() -> Dictionary:
 	var armor_asset := _exchange_equipped_asset("armor")
@@ -1227,21 +1390,45 @@ func ranged_defense() -> Dictionary:
 		"armor": armor_asset, "armor_stab": float(SiteCombatRules.armor_profile(armor_asset).stab), "skill": _exchange_pending_skill}
 
 func ranged_fire(target_cell: Vector2i, shot_id: int) -> bool:
+	var flight := _ranged_release(target_cell, shot_id, "NORMAL", true)
+	if flight.is_empty(): return false
+	projectiles.append(flight)
+	combat_event.emit(float(flight.total) + 10.0)
+	queue_redraw()
+	return true
+
+func ranged_release(target_cell: Vector2i, shot_id: int, ammo_mode: String = "NORMAL", auto_power: bool = false) -> Dictionary:
+	# The original Lab reserves capacity/duty before this synchronous commit.
+	# Only that Lab publishes the returned physical flight; this owner never does.
+	var flight := _ranged_release(target_cell, shot_id, ammo_mode, false, auto_power)
+	if not flight.is_empty():
+		combat_event.emit(float(flight.total) + 10.0)
+		queue_redraw()
+	return flight
+
+func _ranged_release(target_cell: Vector2i, shot_id: int, ammo_mode: String, legacy: bool, auto_power: bool = false) -> Dictionary:
 	if not exchange_ready() or ranged_cooldown > 0.0 or data == null or shot_id <= 0 or bool(data.site.get("paused", false)):
-		return false
+		return {}
+	if not legacy and (shot_id <= _ranged_last_release_id or not data.is_walkable(terrain_cell) or not data.contains(target_cell)):
+		return {}
 	var weapon := _exchange_equipped_asset("weapon")
-	var profile := SiteCombatRules.ranged_profile(weapon)
+	var profile := SiteCombatRules.ranged_profile(weapon) if legacy else SiteCombatRules.fire_ranged_profile(weapon, ammo_mode)
 	if profile.is_empty() or not SiteCombatRules.ranged_in_range(terrain_cell, target_cell, float(profile.range)) \
-		or not SiteCombatRules.ranged_line_clear(data, terrain_cell, target_cell):
-		return false
+		or legacy and not SiteCombatRules.ranged_line_clear(data, terrain_cell, target_cell):
+		return {}
 	var ammo := str(profile.ammo)
 	if int(ammo_inventory.get(ammo, 0)) <= 0:
-		combat_status = "No ammunition"
-		return false
+		if legacy: combat_status = "No ammunition"
+		return {}
+	# All release refusals precede original skill activation. Skill refusal still
+	# permits the paid shot; no subsequent branch can reject this committed path.
+	if not legacy and auto_power: activate_exchange_skill("power")
 	var shooter := exchange_stats().duplicate(true)
-	var origin := (Vector2(terrain_cell) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS - Vector2(0, 20)
-	var goal := (Vector2(target_cell) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS - Vector2(0, 20)
+	var origin := (Vector2(terrain_cell) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS - Vector2(0, 20) + data.surface_visual_offset(terrain_cell)
+	var goal := (Vector2(target_cell) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS - Vector2(0, 20) + data.surface_visual_offset(target_cell)
 	var total := Vector2(terrain_cell).distance_to(Vector2(target_cell)) / float(profile.speed)
+	# Publish the successful per-person watermark before synchronous signals.
+	if not legacy: _ranged_last_release_id = shot_id
 	# Commit once to the original cargo; no flight outcome can refund this item.
 	ammo_inventory[ammo] = int(ammo_inventory[ammo]) - 1
 	PersonFatigue.charge(self, 1.0)
@@ -1263,16 +1450,18 @@ func ranged_fire(target_cell: Vector2i, shot_id: int) -> bool:
 	face_cell(target_cell)
 	var clip: StringName = &"attack_crossbow" if ammo == "bolt" else &"attack_bow"
 	_start_exchange_visual(clip) # Already airborne: the shared short tail starts at authored release.
-	projectiles.append({"mode": "cell", "source_cell": terrain_cell, "target_cell": target_cell,
+	var flight := {"mode": "cell", "source_cell": terrain_cell, "target_cell": target_cell,
+		"source_eye": data.effective_height(terrain_cell) + 1.0, "goal_eye": data.effective_height(target_cell) + 1.0,
 		"origin": origin, "position": origin, "goal": goal, "velocity": (goal - origin) / total,
 		"visual": ammo, "left": total, "total": total, "shooter": shooter,
-		"shooter_id": combat_identity(), "shot_id": shot_id, "faction": faction_id})
+		"shooter_id": combat_identity(), "shot_id": shot_id, "faction": faction_id}
+	if not legacy: flight["ammo_mode"] = ammo_mode
 	combat_status = "Ranged shot: " + ammo
-	combat_event.emit(total + 10.0)
-	queue_redraw()
-	return true
+	return flight
 
 func ranged_apply_hit(source_cell: Vector2i, packet: Dictionary) -> void:
+	var region_sink: Variant = get_meta(&"region_effect_sink", Callable())
+	if region_sink is Callable and region_sink.is_valid() and region_sink.call(combat_identity(), "ranged", {"source_cell": source_cell, "packet": packet}) == true: return
 	if not exchange_enabled or hp <= 0.0 or (is_inside_tree() and get_tree().paused):
 		return
 	var result: Variant = packet.get("result")
@@ -1283,7 +1472,7 @@ func ranged_apply_hit(source_cell: Vector2i, packet: Dictionary) -> void:
 			return
 	# Brace belongs to this actual target settlement, including a miss; power
 	# remains queued for the owner's next outgoing exchange/shot.
-	if _exchange_pending_skill == "brace":
+	if _exchange_pending_skill == "brace" and not bool(packet.get("siege", false)):
 		_exchange_pending_skill = ""
 		exchange_skill_cooldown = SiteCombatRules.EXCHANGE_SKILL_COOLDOWN
 	var positive := float(result.get("hp", 0.0)) > 0.0 or float(result.get("stun", 0.0)) > 0.0
@@ -1322,6 +1511,8 @@ func activate_exchange_skill(skill: String) -> bool:
 	return true
 
 func apply_exchange(other_cell: Vector2i, outcome: Dictionary) -> void:
+	var region_sink: Variant = get_meta(&"region_effect_sink", Callable())
+	if region_sink is Callable and region_sink.is_valid() and region_sink.call(combat_identity(), "exchange", {"other_cell": other_cell, "outcome": outcome}) == true: return
 	var prepared := exchange_batch_prepare(other_cell, outcome)
 	if prepared.is_empty():
 		return
@@ -1371,7 +1562,7 @@ func exchange_batch_knockback(other_cell: Vector2i, outcome: Dictionary, prepare
 		var offset := original_cell - other_cell
 		var direction := Vector2i(signi(offset.x), 0) if absi(offset.x) > absi(offset.y) else Vector2i(0, signi(offset.y))
 		var destination := original_cell + direction
-		if terrain_cell == original_cell and direction in TerrainData.DIRECTIONS and data != null and data.can_step(original_cell, destination) and can_enter_cell(destination) and not _exchange_knockback_actor_occupied(destination):
+		if terrain_cell == original_cell and direction in TerrainData.DIRECTIONS and data != null and data.can_step(original_cell, destination) and can_enter_cell(destination, Vector2i(-1, -1), original_cell, original_cell) and not _exchange_knockback_actor_occupied(destination):
 			place(destination, false, MOVE_DURATION) # Reserve before the original KO/death transition, as for Army rows.
 
 func _exchange_knockback_actor_occupied(cell: Vector2i) -> bool:
@@ -1449,6 +1640,8 @@ func _cancel_exchange_legacy_attack() -> void:
 	_set_attack_offset(Vector2.ZERO)
 
 func _reset_exchange_transients() -> void:
+	_invalidate_ranged_order()
+	ranged_ammo_mode = "NORMAL"
 	exchange_cooldown = 0.0
 	ranged_cooldown = 0.0
 	exchange_stagger = 0.0
@@ -1466,12 +1659,15 @@ func combat_identity() -> int:
 	return person_id if person_id > 0 else get_instance_id()
 
 func apply_contact(packet: Dictionary) -> void:
+	var region_sink: Variant = get_meta(&"region_contact_sink", Callable())
+	if region_sink is Callable and region_sink.is_valid() and region_sink.call(combat_identity(), packet) == true: return
 	if hp <= 0.0:
 		return
 	var result: Dictionary = packet.result
 	var hp_loss := maxf(0.0, float(result.hp))
 	var impact := maxf(0.0, float(result.stun))
 	hp = maxf(0.0, hp - hp_loss)
+	if hp <= 0.0: _refresh_fire_body_visual()
 	if (hp_loss > 0.0 or impact > 0.0) and not bool(packet.get("environmental", false)):
 		_received_effective_hit += 1
 		_cancel_rescue()
@@ -1513,6 +1709,7 @@ func apply_contact(packet: Dictionary) -> void:
 	queue_redraw()
 
 func _stop_fighting(reason: String) -> void:
+	_invalidate_ranged_order()
 	release_movement_intent()
 	_cancel_rescue()
 	_reload_left = 0.0
@@ -1531,6 +1728,9 @@ func _stop_fighting(reason: String) -> void:
 		editor._play_selected_animation()
 
 func _wake_up() -> void:
+	if hp <= 0.0: return # A same-time death cannot be undone by a queued wake.
+	var region_sink: Variant = get_meta(&"region_wake_sink", Callable())
+	if region_sink is Callable and region_sink.is_valid() and region_sink.call(combat_identity()) == true: return
 	# Never stand up inside a soldier who has stepped over the fallen body.
 	if not can_enter_cell(terrain_cell):
 		knockout_left = 0.1
@@ -1552,6 +1752,7 @@ func start_rescue(target: TerrainTestCharacter) -> bool:
 		return false
 	if not _rescue_reachable(target):
 		return false
+	_invalidate_ranged_order()
 	_rescue_target = target
 	target._rescuer = self
 	_rescue_left = 4.0
@@ -1574,6 +1775,7 @@ func start_rescue_unit(team: TerrainArmy, index: int) -> bool:
 	var offset := team.cells[index] - terrain_cell
 	if absi(offset.x) + absi(offset.y) != 1 or data == null or not data.can_step(terrain_cell, team.cells[index]):
 		return false
+	_invalidate_ranged_order()
 	_rescue_army = team
 	_rescue_unit = index
 	team._external_rescuers[index] = self
@@ -1630,6 +1832,7 @@ func _cancel_rescue() -> void:
 
 func capture_state() -> Dictionary:
 	var state := {"schema": 2, "cell": [terrain_cell.x, terrain_cell.y], "facing": [facing.x, facing.y],
+		"military_role": military_role,
 		"attack_target": attack_target_id,
 		"strike_at": _strike_at, "attack_clip": str(_attack_clip), "hit_ids": _attack_hits.keys() if action_time > 0.0 else [],
 		"status": combat_status, "rescue_target": _rescue_army.combat_identity(_rescue_unit) if is_instance_valid(_rescue_army) else (_rescue_target.person_id if is_instance_valid(_rescue_target) else 0),
@@ -1672,6 +1875,12 @@ func capture_state() -> Dictionary:
 	_saved_appearance.mounted = is_mounted()
 	state["appearance"] = _saved_appearance.duplicate(true)
 	state["command_abilities"] = command_abilities.duplicate()
+	if not display_name.is_empty(): state["name"] = display_name
+	var saved_personality := PersonPersonality.saved(personality)
+	if not saved_personality.is_empty(): state["personality"] = saved_personality
+	if not technology.is_empty(): state["technology"] = technology.duplicate(true)
+	if not social_state.is_empty(): state["social_state"] = social_state.duplicate(true)
+	if not fire_body.is_empty(): state["fire_body"] = SiteCombatRules.fire_body_capture(fire_body)
 	if not item_state.is_empty():
 		state["item_state"] = item_state.duplicate(true)
 		state["loot_settled"] = loot_settled
@@ -1686,6 +1895,8 @@ static func normalize_saved_state(original: Dictionary) -> Dictionary:
 	return state
 
 static func valid_state(state: Variant, map: TerrainData) -> bool:
+	if state is Dictionary and state.has("fire_body") and not SiteCombatRules.fire_body_saved_valid(state.fire_body): return false
+	if state is Dictionary and state.get("military_role", "civilian") not in ["officer", "soldier", "civilian"]: return false
 	if not state is Dictionary or not _saved_number(state.get("attack_target", 0), 0, 2147483647) or float(state.get("attack_target", 0)) != floorf(float(state.get("attack_target", 0))):
 		return false
 	if not state is Dictionary or not _saved_number(state.get("schema"), 1.0, 2.0) or float(state.schema) != floorf(float(state.schema)) or not HumanCharacter3DEditor.valid_appearance(state.get("appearance")):
@@ -1697,6 +1908,14 @@ static func valid_state(state: Variant, map: TerrainData) -> bool:
 	if not state.has("movement") and float(state.get("ride_speed", 0.0)) != 0.0:
 		return false
 	if not valid_command_abilities(state.get("command_abilities", {})):
+		return false
+	if state.has("name") and (not state.name is String or str(state.name).strip_edges().is_empty() or str(state.name).length() > MAX_NAME_LENGTH):
+		return false
+	if state.has("personality") and not PersonPersonality.valid(state.personality):
+		return false
+	if state.has("technology") and not Technology.valid_person(state.technology):
+		return false
+	if state.has("social_state") and not PersonSocial.valid(state.social_state):
 		return false
 	for field: String in SAVED_FLOAT_FIELDS:
 		var float_fallback: Variant = null
@@ -1722,7 +1941,7 @@ static func valid_state(state: Variant, map: TerrainData) -> bool:
 			return false # SiteStore additionally validates definitions and unique ownership.
 	for field: String in SAVED_BOOL_FIELDS:
 		var bool_fallback: Variant = null
-		if field in ["_getting_up", "work_resting"]:
+		if field in ["_getting_up", "work_resting", "surrender_pending", "site_exited"]:
 			bool_fallback = false
 		if not state.get(field, bool_fallback) is bool:
 			return false
@@ -1731,6 +1950,14 @@ static func valid_state(state: Variant, map: TerrainData) -> bool:
 			return false
 	if not _saved_cell(state.get("cell"), map) or not _saved_cell(state.get("movement_from"), map):
 		return false
+	if bool(state.get("surrender_pending", false)) and (bool(state.captive) or bool(state.get("site_exited", false))):
+		return false
+	if bool(state.get("site_exited", false)):
+		var exit_cell := Vector2i(int(state.cell[0]), int(state.cell[1]))
+		if exit_cell.x not in [0, map.size.x - 1] and exit_cell.y not in [0, map.size.y - 1]:
+			return false
+		if float(state.get("movement_left", 0.0)) > 0.0 or float(state.get("action_time", 0.0)) > 0.0:
+			return false
 	if not _saved_vector(state.get("facing")) or Vector2i(int(state.facing[0]), int(state.facing[1])) not in TerrainData.DIRECTIONS:
 		return false
 	if float(state.facing[0]) != floorf(float(state.facing[0])) or float(state.facing[1]) != floorf(float(state.facing[1])):
@@ -1851,6 +2078,8 @@ static func _saved_cell(value: Variant, map: TerrainData) -> bool:
 func restore_state(state: Dictionary) -> void:
 	# SiteStore validates the complete snapshot before the live scene is replaced.
 	state = normalize_saved_state(state)
+	military_role = str(state.get("military_role", "civilian"))
+	fire_body = SiteCombatRules.fire_body_restore(state.get("fire_body", {}))
 	_reset_exchange_transients()
 	item_state = state.get("item_state", {}).duplicate(true)
 	loot_settled = bool(state.get("loot_settled", false))
@@ -1859,6 +2088,10 @@ func restore_state(state: Dictionary) -> void:
 	command_abilities.clear()
 	for kind: String in state.get("command_abilities", {}):
 		command_abilities[kind] = int(state.command_abilities[kind])
+	display_name = str(state.get("name", ""))
+	personality = PersonPersonality.normalized(state.personality) if state.has("personality") else {}
+	technology = Technology.normalize_person(state.technology) if state.has("technology") else {}
+	social_state = PersonSocial.normalized(state.social_state) if state.has("social_state") else {}
 	_cancel_rescue()
 	_rescuer = null
 	_pending_melee.clear()
@@ -1881,6 +2114,7 @@ func restore_state(state: Dictionary) -> void:
 		set(field, int(state[field]))
 	for field: String in SAVED_BOOL_FIELDS:
 		set(field, bool(state.get(field, false)))
+	visible = not site_exited
 	terrain_cell = Vector2i(int(state.cell[0]), int(state.cell[1]))
 	facing = Vector2i(int(state.facing[0]), int(state.facing[1]))
 	movement_from_cell = Vector2i(int(state.movement_from[0]), int(state.movement_from[1]))
@@ -1937,6 +2171,7 @@ func restore_state(state: Dictionary) -> void:
 	_ride_start_speed = float(motion.get("start_speed", 0.0))
 	_ride_end_speed = float(motion.get("end_speed", 0.0))
 	ride_speed = float(state.get("ride_speed", 0.0))
+	_refresh_fire_body_visual()
 	if exchange_enabled:
 		_cancel_exchange_legacy_attack()
 	queue_redraw()
@@ -1953,9 +2188,12 @@ func restore_links(state: Dictionary, identities: Dictionary) -> void:
 			_rescue_army._external_rescuers[_rescue_unit] = self
 
 func reset_combat() -> void:
+	fire_body.clear() # Existing explicit Lab reset only.
+	_refresh_fire_body_visual()
 	# Explicit LAB reset only. Loading a Site must restore, not call this as healing.
 	release_movement_intent()
 	_reset_exchange_transients()
+	_ranged_last_release_id = 0
 	_pending_melee.clear()
 	_pending_projectile_delta = 0.0
 	_pending_release = false
@@ -1970,6 +2208,8 @@ func reset_combat() -> void:
 	guard_break_left = 0.0
 	guard_transition_left = 0.0
 	captive = false
+	surrender_pending = false
+	site_exited = false
 	_getting_up = false
 	_reload_left = 0.0
 	action_time = 0.0
@@ -2013,12 +2253,43 @@ func _draw() -> void:
 			if local.size() > 2:
 				local.append(local[0])
 				draw_polyline(local, Color(1, 0.3, 0.1, 0.9), 1.0)
+	# The original body's overlays stand on the same derived surface as its sprite.
+	draw_set_transform(data.surface_visual_offset_at(position) if data != null else Vector2.ZERO)
 	draw_rect(Rect2(-20, -66, 40, 5), Color("51282d"))
 	draw_rect(Rect2(-20, -66, 40.0 * hp / 100.0, 5), Color("66cf86"))
 	draw_rect(Rect2(-20, -59, 40.0 * minf(stun, 100.0) / 100.0, 3), Color("e7bf63"))
 	draw_circle(Vector2(0, 3) + _attack_offset + _stance_offset, 14.0, Color(0.05, 0.07, 0.08, 0.6))
 	if player_sprite != null:
 		return
-	draw_circle(Vector2.ZERO, 11.0, Color("fff3ca"))
+	draw_circle(Vector2.ZERO, 11.0, Color("fff3ca") * SiteCombatRules.fire_body_tint(fire_body_visual_code()))
 	draw_arc(Vector2.ZERO, 11, 0, TAU, 24, Color("303b47"), 2.0)
 	draw_circle(Vector2(3, -3), 2.5, Color("303b47"))
+
+
+# Original Actor owns its own finite dose/status; there is no copied HP owner.
+var fire_body: Dictionary = {}
+
+func fire_body_receive_contact(payload: Dictionary) -> bool:
+	return hp > 0.0 and SiteCombatRules.fire_body_receive_contact(fire_body, payload)
+
+func advance_fire_exposure(sequence: int, action_begin: float, action_end: float, segments: Array[Dictionary]) -> Dictionary:
+	if hp <= 0.0: return {"ok": true, "active": false}
+	var visual_before := fire_body_visual_code()
+	var hp_before := hp
+	var protection := 1.0 / (1.0 + SiteCombatRules.armor_level(str(ranged_defense().armor)))
+	var result := SiteCombatRules.fire_body_advance(fire_body, sequence, action_begin, action_end, segments, protection)
+	if bool(result.ok) and not bool(result.get("duplicate", false)):
+		if float(result.get("hp", 0.0)) > 0.0: apply_contact(SiteCombatRules.fire_environment_packet(float(result.hp)))
+		fire_body["last_interval_fire_hp"] = hp_before - hp
+		fire_body["last_interval_fire_death"] = hp_before > 0.0 and hp <= 0.0
+		result["applied_hp"] = float(fire_body.last_interval_fire_hp)
+		result["fire_death"] = bool(fire_body.last_interval_fire_death)
+		if fire_body_visual_code() != visual_before: _refresh_fire_body_visual()
+	return result
+
+func fire_body_visual_code() -> int:
+	return SiteCombatRules.fire_body_visual_code(fire_body) if hp > 0.0 else 0
+
+func _refresh_fire_body_visual() -> void:
+	if player_sprite != null: player_sprite.self_modulate = SiteCombatRules.fire_body_tint(fire_body_visual_code())
+	queue_redraw()

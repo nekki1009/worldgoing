@@ -9,6 +9,7 @@ func _initialize() -> void:
 func run() -> void:
 	create_timer(12.0).timeout.connect(func() -> void: quit(1))
 	var lab := TerrainLab.new()
+	lab.npc = TerrainTestNPC.new() # Explicit legacy command-test fixture; formal TerrainLab remains player-only.
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	current_scene = lab
@@ -16,6 +17,9 @@ func run() -> void:
 	lab.character.set_process(false)
 	lab.npc.set_process(false)
 	lab.site_controller.save_path = SAVE
+	var data := TerrainGenerator.generate(0, 581)
+	SiteEnvironment.initialize(data, "combat-save-fixture")
+	lab.bind_terrain(data)
 	var a := lab.character
 	var b := lab.npc
 	a.hp = 37.25
@@ -44,6 +48,8 @@ func run() -> void:
 	lab.terrain.site.combat_left = 0.0
 	a.reset_combat()
 	b.reset_combat()
+	a.exchange_enabled = false
+	b.exchange_enabled = false
 	assert(a.start_attack(b))
 	a._attack_elapsed = 0.31
 	a.action_time = a._attack_duration - 0.31
@@ -83,15 +89,36 @@ func run() -> void:
 	assert(not Store._validate_actors(lab.terrain, bad_state).ok, "Malformed parent state must fail cleanly")
 	var original := Store._read(SAVE)
 	assert(original.ok)
+	var old_ko_payload: Dictionary = original.payload.duplicate(true)
+	old_ko_payload.state.actors.player.schema = 1
+	old_ko_payload.state.actors.player.knockout_left = 17.0
+	var old_ko_body := JSON.stringify(old_ko_payload, "", true, true)
+	var old_ko_file := FileAccess.open(SAVE + ".old_ko", FileAccess.WRITE)
+	old_ko_file.store_string(JSON.stringify({"checksum": old_ko_body.sha256_text(), "payload": old_ko_body}))
+	old_ko_file.close()
+	var old_ko_loaded := Store.load_site(SAVE + ".old_ko")
+	assert(old_ko_loaded.ok and old_ko_loaded.data.site.actors.player.schema == 2 and old_ko_loaded.data.site.actors.player.knockout_left == 8160.0, str(old_ko_loaded))
+	assert("舊版昏迷" in str(old_ko_loaded.message))
+	assert(Store.save(old_ko_loaded.data, SAVE + ".new_ko").ok)
+	var new_ko_loaded := Store.load_site(SAVE + ".new_ko")
+	assert(new_ko_loaded.ok and new_ko_loaded.data.site.actors.player.knockout_left == 8160.0, "KO migration repeated on second load")
+	old_ko_payload.state.actors.player.schema = 3
+	old_ko_body = JSON.stringify(old_ko_payload, "", true, true)
+	old_ko_file = FileAccess.open(SAVE + ".invalid_ko", FileAccess.WRITE)
+	old_ko_file.store_string(JSON.stringify({"checksum": old_ko_body.sha256_text(), "payload": old_ko_body}))
+	old_ko_file.close()
+	assert(not Store.load_site(SAVE + ".invalid_ko").ok and FileAccess.get_sha256(SAVE) == checksum, "Invalid KO schema changed the valid save")
 	var old_payload: Dictionary = original.payload.duplicate(true)
 	old_payload.format = 1
 	old_payload.state.erase("actors")
+	# The old map-only format has no person holders for this fixture's seeded gear.
+	old_payload.state.item_records.clear()
 	var body := JSON.stringify(old_payload, "", true, true)
 	var old_file := FileAccess.open(SAVE + ".legacy", FileAccess.WRITE)
 	old_file.store_string(JSON.stringify({"checksum": body.sha256_text(), "payload": body}))
 	old_file.close()
 	var migrated := Store.load_site(SAVE + ".legacy")
-	assert(migrated.ok and migrated.data.site.actors.is_empty())
+	assert(migrated.ok and migrated.data.site.actors.is_empty(), str(migrated))
 	assert("舊地圖" in str(migrated.message), "Legacy actor defaults must be explicit")
 	a.fatigue = 90
 	b.fatigue = 75

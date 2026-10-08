@@ -33,9 +33,7 @@ func run() -> void:
 	var lab: TerrainLab = scene.instantiate() as TerrainLab
 	root.add_child(lab)
 	current_scene = lab
-	lab.preset_dropdown.select(TerrainPreset.Kind.PLAINS)
-	lab.seed_input.text = "24680"
-	lab.generate_button.pressed.emit()
+	lab.generate_terrain(TerrainPreset.Kind.PLAINS, 24680)
 	for _frame: int in range(WARMUP_FRAMES):
 		await process_frame
 	var baseline_samples: Array[float] = await _collect_frame_samples(SAMPLE_FRAMES)

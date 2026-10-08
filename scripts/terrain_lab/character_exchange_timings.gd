@@ -8,6 +8,8 @@ const KNOCKBACK_SECONDS := 0.75
 const DRAW_SECONDS := 0.3
 const MOVE_CORE_SECONDS := 0.1
 const END_HOLD_SECONDS := 2.0 / 30.0
+# Formal male/female GLB idle samplers share these presentation-only lengths.
+const IDLE_LENGTHS := {&"idle": 110.0 / Authored.FPS, &"ride_idle": 60.0 / Authored.FPS}
 
 # Source-frame presentation markers, not collision/hit tests. Start near the
 # stroke instead of replaying seconds of preparation after a resolved result.
@@ -36,6 +38,8 @@ static func duration(clip: StringName) -> float:
 	return 0.0
 
 static func authored_duration(clip: StringName) -> float:
+	if IDLE_LENGTHS.has(clip):
+		return float(IDLE_LENGTHS[clip])
 	if Authored.ATTACKS.has(clip):
 		return float(Authored.ATTACKS[clip][0]) / Authored.FPS
 	return float(REACTION_LENGTHS.get(clip, Authored.POSE_SECONDS.get(clip, 0.0)))

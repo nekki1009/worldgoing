@@ -63,14 +63,14 @@ func run() -> void:
 	b.advance_combat(0.5)
 	assert(b.stun == 20.0)
 	b.apply_contact({"attacker": a, "shield": false, "result": {"hp": 7.5, "stun": 90.0, "guard_break": false}})
-	assert(b.hp == 92.5 and b.knockout_left == 30.0 and not b.can_act())
+	assert(b.hp == 92.5 and b.knockout_left == Rules.KNOCKOUT_GAME_SECONDS and not b.can_act())
 	assert(not b.start_attack(a) and not b.step(Vector2i.DOWN) and not b.occupies_cell(b.terrain_cell))
 	b.advance_combat(10.0)
 	b.apply_contact({"attacker": a, "shield": false, "result": weak})
-	assert(b.knockout_left == 20.0, "Zero-impact contact does not extend unconsciousness")
+	assert(b.knockout_left == Rules.KNOCKOUT_GAME_SECONDS - 10.0, "Zero-impact contact does not extend unconsciousness")
 	b.apply_contact({"attacker": a, "shield": false, "result": blocked})
-	assert(b.knockout_left == 30.0, "Positive new impact resets, not stacks, the KO timer")
-	b.advance_combat(30.0)
+	assert(b.knockout_left == Rules.KNOCKOUT_GAME_SECONDS, "Positive new impact resets, not stacks, the KO timer")
+	b.advance_combat(0.1, false, Rules.KNOCKOUT_GAME_SECONDS)
 	assert(not b.can_act() and b._getting_up and b.hp == 92.5 and b.stun == 30.0, "Waking never refills HP or snaps to idle")
 	b.advance_combat(2.2)
 	assert(b.can_act())
@@ -80,16 +80,18 @@ func run() -> void:
 	assert(not b.can_act() and not a.start_rescue(b), "Death is not temporary unconsciousness")
 	b.reset_combat()
 	b.faction_id = a.faction_id
-	b.knockout_left = 30.0
+	b.knockout_left = 5000.0
 	b.stun = 100.0
 	assert(a.start_rescue(b))
 	a.advance_combat(3.9)
-	assert(b.knockout_left == 30.0)
+	assert(b.knockout_left == 5000.0)
 	a.advance_combat(0.2)
+	assert(b.knockout_left == Rules.RESCUED_KNOCKOUT_GAME_SECONDS and not b._getting_up and not b.can_act())
+	b.advance_combat(0.1, false, Rules.RESCUED_KNOCKOUT_GAME_SECONDS)
 	assert(b._getting_up and not b.can_act() and b.stun == 30.0)
 	b.advance_combat(2.2)
 	assert(b.can_act())
-	b.knockout_left = 30.0
+	b.knockout_left = 5000.0
 	assert(a.start_rescue(b))
 	a.apply_contact({"attacker": b, "shield": false, "result": blocked})
 	assert(a._rescue_left == 0.0 and b._rescuer == null)

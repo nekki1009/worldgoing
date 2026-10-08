@@ -39,7 +39,7 @@ func _process(_delta: float) -> bool:
 
 func _run() -> void:
 	assert(DisplayServer.get_name() != "headless", "This dedicated comparison requires the real GPU viewport")
-	assert(is_equal_approx(SiteCombatRules.KNOCKOUT_SECONDS, 30.0))
+	assert(is_equal_approx(SiteCombatRules.KNOCKOUT_GAME_SECONDS, 14400.0))
 	assert(is_equal_approx(float(TerrainArmy.CombatTimings.POSE_SECONDS[&"get_up"]), 2.2))
 	assert(TOTAL_STEPS <= 7200)
 	var lab := TerrainLab.new()
@@ -115,7 +115,7 @@ func _run() -> void:
 		for index in range(100):
 			team.apply_unit_contact(index, {"result": {"hp": 0.0, "stun": 100.0, "guard_break": false}, "shield": false})
 			assert(float(team.combat_units[index].hp) == 100.0)
-			assert(float(team.combat_units[index].ko) == SiteCombatRules.KNOCKOUT_SECONDS)
+			assert(float(team.combat_units[index].ko) == SiteCombatRules.KNOCKOUT_GAME_SECONDS)
 	measurements.ko_dispatch_cpu_ms = (Time.get_ticks_usec() - dispatch) / 1000.0
 	var initial_game_seconds := Runtime.now(data) * 60.0
 	var initial_combat_left := float(data.site.combat_left)
@@ -160,7 +160,7 @@ func _run() -> void:
 		"worn_items_taken": 2 if taking else 0, "slots": ["armor", "shield"], "target_ids": targets,
 		"selected_original_item_ids": selected_items, "unchanged_other_army_people": 198 if taking else 200,
 		"simulation_steps": steps, "simulation_step_seconds": STEP, "simulation_seconds": float(steps) * STEP,
-		"original_ko_seconds": SiteCombatRules.KNOCKOUT_SECONDS, "first_wake_step": first_wake_step,
+		"original_ko_seconds": SiteCombatRules.KNOCKOUT_GAME_SECONDS, "first_wake_step": first_wake_step,
 		"original_get_up_seconds": float(TerrainArmy.CombatTimings.POSE_SECONDS[&"get_up"]),
 		"elapsed_site_game_seconds": elapsed_game_seconds, "item_records": data.site.item_records.size(),
 		"ground_containers": data.site.ground_loot.size(), "active_frame_intervals": _stats(all_intervals),

@@ -34,7 +34,8 @@ func _fresh(row: bool, clock_hz: int = 30) -> void:
 	lab.terrain.static_blocked.fill(0)
 	lab.terrain.ramp_edges.fill(0)
 	assert(lab.character.place(Vector2i(20, 20), true))
-	assert(lab.npc.place(Vector2i(85, 85), true))
+	if is_instance_valid(lab.npc):
+		assert(lab.npc.place(Vector2i(85, 85), true))
 	if row:
 		assert(lab.character.place(Vector2i(80, 80), true))
 		lab.army.roster_size = 2

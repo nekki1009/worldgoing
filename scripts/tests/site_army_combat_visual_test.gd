@@ -66,7 +66,8 @@ func run() -> void:
 	assert(result.ok, str(result))
 	assert(TerrainArmy._contact_source.editor.preview_viewport.render_target_update_mode == SubViewport.UPDATE_DISABLED)
 	lab.get_node("SiteUI").hide()
-	lab.get_node("TerrainLabUI").hide()
+	assert(not lab.has_node("TerrainLabUI"), "Legacy debug panel must not be constructed")
+	if is_instance_valid(lab.site_test_window): lab.site_test_window.hide()
 	lab.camera.zoom = Vector2.ONE * 0.85
 	for team: TerrainArmy in lab.combat_armies:
 		team.set_process(false)

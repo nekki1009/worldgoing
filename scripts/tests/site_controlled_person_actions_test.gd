@@ -2,7 +2,26 @@ extends "res://scripts/tests/site_work_team_clock_test.gd"
 
 const CONTROL_SAVE := "res://.godot-temp/site_resources_contract/controlled_person_actions.json"
 const Sustain = preload("res://scripts/terrain_lab/site_sustain.gd")
+const TrainingFixture = preload("res://scripts/tests/site_training_ground_fixture.gd")
 const CLOCK_STEP := TerrainLab.EXCHANGE_ACTION_STEP
+
+func _press(controller: SiteController, button_name: String) -> void:
+	var button: Button
+	for window: Window in controller.formal_windows.values():
+		button = window.find_child(button_name, true, false) as Button
+		if button != null: break
+	if button == null and button_name == "JoinPlayerArmy":
+		# Joining the fixture's deployed trial team is an optional test-window
+		# action; ordinary work/people commands live in the formal tool windows.
+		var lab: TerrainLab = controller.lab
+		if not is_instance_valid(lab.site_test_window):
+			lab.site_test_window = load("res://scripts/terrain_lab/site_test_window.gd").new()
+			lab.add_child(lab.site_test_window)
+			lab.site_test_window.call("setup", lab)
+		controller._open_combat_window()
+		button = controller.combat_window.find_child(button_name, true, false) as Button
+	assert(button != null, "Actual controller button missing: " + button_name)
+	button.pressed.emit()
 
 func _independent_supply_roundtrip(lab: TerrainLab, identity: int, teammate_id: int) -> void:
 	var controller: SiteController = lab.site_controller
@@ -14,7 +33,7 @@ func _independent_supply_roundtrip(lab: TerrainLab, identity: int, teammate_id: 
 	var holder: Dictionary = row.item_state
 	var original_cell := team.cells[index]
 	var original_hp := float(row.hp)
-	var original_fatigue := float(row.fatigue)
+	var original_fatigue := PersonFatigue.read(row)
 	var original_count := team.combat_units.size()
 	# Fresh feeding is initialized at the actual current Site instant. add_members
 	# makes the first meal due now; no populated owner is jumped through six hours.
@@ -25,7 +44,7 @@ func _independent_supply_roundtrip(lab: TerrainLab, identity: int, teammate_id: 
 	assert(not team.is_member(index) and lab.player_army() == null, controller.message.text)
 	assert(team.player_member == lab.npc, "The row's exit cannot remove the separately joined original NPC")
 	assert(is_same(team.combat_units[index], row) and is_same(row.cargo, cargo) and is_same(row.item_state, holder))
-	assert(team.cells[index] == original_cell and float(row.hp) == original_hp and float(row.fatigue) == original_fatigue)
+	assert(team.cells[index] == original_cell and float(row.hp) == original_hp and PersonFatigue.read(row) == original_fatigue)
 	var personal: Dictionary = data.site.person_supply[str(identity)]
 	assert(Sustain._ids(personal) == [identity] and float(personal.cohorts[0].meal_until) == Runtime.now(data) * 60.0)
 	var entry := controller._supply_entry(team)
@@ -49,7 +68,7 @@ func _independent_supply_roundtrip(lab: TerrainLab, identity: int, teammate_id: 
 	holder = row.item_state
 	assert(lab.controlled_person_id() == identity and not team.is_member(index) and lab.player_army() == null)
 	assert(lab.controlled_target().owner == team and int(lab.controlled_target().unit) == index and team.combat_units.size() == original_count)
-	assert(team.cells[index] == original_cell and float(row.hp) == original_hp and float(row.fatigue) == original_fatigue)
+	assert(team.cells[index] == original_cell and float(row.hp) == original_hp and PersonFatigue.read(row) == original_fatigue)
 	assert(holder == saved_gear and cargo == {"clay": 2, "fish": 1})
 	assert(is_same(controller.person_actions._person(identity).cargo, cargo))
 	entry = controller._supply_entry(team)
@@ -76,7 +95,7 @@ func _independent_supply_roundtrip(lab: TerrainLab, identity: int, teammate_id: 
 	assert(int(holder.version) == before_version + 1 and is_same(row.cargo, cargo) and is_same(row.item_state, holder))
 	assert(entry.inventory == team_stock and float(entry.sustain.open_rations) == team_open, "The independent person's meal cannot debit the old team's stock")
 	assert(data.site.manual.cargo == other_cargo[0] and data.site.worker.cargo == other_cargo[1])
-	assert(float(row.fatigue) == original_fatigue, "The independent row is not trained by the former team's order")
+	assert(PersonFatigue.read(row) == original_fatigue, "The independent row is not trained by the former team's order")
 	lab._process(CLOCK_STEP)
 	_near(Runtime.now(data) * 60.0, 4.0, "next full step advances the same Site clock")
 	_near(float(personal.at), 4.0, "private feeding keeps the shared clock")
@@ -117,6 +136,7 @@ func _adjacent_destination(lab: TerrainLab, target: Vector2i) -> Vector2i:
 
 func _run() -> void:
 	var lab := TerrainLab.new()
+	lab.npc = TerrainTestNPC.new()
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	lab.set_process(false)
@@ -139,6 +159,7 @@ func _run() -> void:
 	team.settle_combat_command()
 	controller.initialize_team_items(team)
 	data.site.army_next_team = team.team_id + 1
+	TrainingFixture.natural(lab)
 	var identity := team.combat_identity(1)
 	var other_id := team.combat_identity(2)
 	var original_npc_id := lab.npc.person_id
@@ -181,7 +202,9 @@ func _run() -> void:
 	assert(team.player_member == lab.npc)
 	assert(controller._control_family_person(null, identity).ok)
 	assert(float(lab.npc.training_query.call()) == team.training and float(lab.character.training_query.call()) == 17.0, "Control identity cannot swap two original actors' training owners")
+	var original_places := TrainingFixture.enter(lab)
 	_independent_supply_roundtrip(lab, identity, other_id)
+	TrainingFixture.leave(lab, original_places)
 	data = lab.terrain
 	team = lab.army
 	var index := team.index_for_identity(identity)

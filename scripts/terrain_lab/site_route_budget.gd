@@ -70,7 +70,7 @@ func begin_tick(active_formations: Array) -> void:
 	if served_count == count and site_remaining > 0:
 		var extra_per_formation: int = mini(
 			MAX_LOCAL_EXPANSIONS_PER_FORMATION_TICK - BASE_FORMATION_QUANTUM_EXPANSIONS,
-			int(site_remaining / count)
+			floori(float(site_remaining) / float(count))
 		)
 		if extra_per_formation > 0:
 			for fid in _formation_allocations.keys():
@@ -144,3 +144,14 @@ func request_route_budget(formation_id: int) -> int:
 
 func record_route_result(formation_id: int, _calls: int, expansions: int) -> void:
 	record_search(formation_id, expansions)
+
+# A partition of this owner's CURRENT allocation, not another route budget.
+func fire_aging_partition(formation_id: int, aging_demand: bool) -> Dictionary:
+	var allocation := get_allocation(formation_id)
+	var calls := maxi(0, int(allocation.remaining_calls)) if can_search(formation_id) else 0
+	var expansions := mini(maxi(0, int(allocation.remaining_expansions)), maxi(0, SITE_MAX_EXPANSIONS_PER_TICK - site_expansions_used)) if calls > 0 else 0
+	var aging_calls := ceili(float(calls) * 0.5) if aging_demand else 0
+	var aging_expansions := ceili(float(expansions) * 0.5) if aging_demand else 0
+	return {"calls": calls, "expansions": expansions, "aging_calls": aging_calls,
+		"aging_expansions": aging_expansions, "other_calls": calls - aging_calls,
+		"other_expansions": expansions - aging_expansions}

@@ -132,7 +132,7 @@ func run() -> void:
 	assert(army.blocks_cell(selected[8]))
 	army.combat_units[9].stun = 92.0
 	army.apply_exchange(9, selected[9] + Vector2i.DOWN, _result("loser", "big"))
-	assert(army.combat_units[9].hp == 98.0 and army.combat_units[9].ko == SiteCombatRules.KNOCKOUT_SECONDS)
+	assert(army.combat_units[9].hp == 98.0 and army.combat_units[9].ko == SiteCombatRules.KNOCKOUT_GAME_SECONDS)
 	army.prepare_combat(TerrainArmy.MOVE_DURATION)
 	assert(not army.blocks_cell(army.cells[8]) and not army.blocks_cell(army.cells[9]))
 	assert(army.combat_identity(8) == death_identity and army.combat_units.size() == 100 and not combat_events.is_empty())
@@ -181,10 +181,50 @@ func run() -> void:
 	assert(restored.cells == army.cells and restored.combat_identity(8) == death_identity)
 	restored.prepare_combat(0.1)
 	assert(contact_calls == 0 and aim_calls == 0)
+	# Both original Army rows pay against the pre-death shared pool. A merged
+	# two-opponent result still reaches the original HP/stun owner only once.
+	var batch_count := int(army.team_fatigue.count)
+	var batch_fatigue := float(army.team_fatigue.fatigue)
+	assert(batch_count > 1 and is_same(PersonFatigue.pool(army.combat_units[30]), army.team_fatigue)
+		and is_same(PersonFatigue.pool(army.combat_units[31]), army.team_fatigue))
+	var second_death_id := army.combat_identity(30)
+	army.combat_units[30].hp = 1.0
+	var batch_loss := _result("loser")
+	batch_loss.hp = 2.0
+	batch_loss.stun = 16.0
+	batch_loss.fatigue = 1.0
+	batch_loss.opponent_count = 2
+	var batch_win := _result("winner")
+	batch_win.fatigue = 1.0
+	var loss_prepared := army.exchange_batch_prepare(30, selected[30] + Vector2i.RIGHT, batch_loss)
+	var win_prepared := army.exchange_batch_prepare(31, selected[31] + Vector2i.LEFT, batch_win)
+	assert(not loss_prepared.is_empty() and not win_prepared.is_empty() and int(army.team_fatigue.count) == batch_count)
+	army.exchange_batch_knockback(30, selected[30] + Vector2i.RIGHT, batch_loss, loss_prepared)
+	army.exchange_batch_knockback(31, selected[31] + Vector2i.LEFT, batch_win, win_prepared)
+	army.exchange_batch_contact(30, batch_loss)
+	army.exchange_batch_contact(31, batch_win)
+	army.exchange_batch_finish(30, selected[30] + Vector2i.RIGHT, batch_loss, loss_prepared)
+	army.exchange_batch_finish(31, selected[31] + Vector2i.LEFT, batch_win, win_prepared)
+	assert(army.combat_units[30].hp == 0.0 and army.combat_units[30].stun == 16.0
+		and army.combat_units[30].pose == "down" and deaths.count(second_death_id) == 1)
+	assert(int(army.team_fatigue.count) == batch_count - 1
+		and is_equal_approx(PersonFatigue.read(army.combat_units[31]), batch_fatigue + 2.0 / float(batch_count)),
+		"Batch fatigue must be paid before any death changes the shared divisor")
+	assert(army.combat_units[31].attack and army.combat_units[31].status == "小勝")
+	var mixed_result := _result("loser")
+	mixed_result.kind = "draw"
+	mixed_result.hp = 0.0
+	mixed_result.stun = 12.0
+	mixed_result.stagger = SiteCombatRules.EXCHANGE_DRAW_HOLD
+	mixed_result.opponent_count = 2
+	army.apply_exchange(32, selected[32] + Vector2i.RIGHT, mixed_result)
+	assert(army.combat_units[32].hp == 100.0 and army.combat_units[32].stun == 12.0
+		and army.combat_units[32].pose == "hit" and army.combat_units[32].status == "受擊硬直",
+		"A win plus a draw shows one hit reaction without inventing HP damage")
 	restored.clear()
 	army.clear()
 	restored.queue_free()
 	army.queue_free()
 	await process_frame
-	print("SITE_EXCHANGE_ARMY_PASS: exact 1/2 HP, draw/hit/knockback locks, legal reservations, winner movement, original KO/death, consumed skill cooldown, JSON optional fields, no geometry queries")
+	print("SITE_EXCHANGE_ARMY_PASS: exact 1/2 HP, draw/hit/knockback locks, legal reservations, winner movement, original KO/death, shared batch fatigue before death, merged hit reaction, consumed skill cooldown, JSON optional fields, no geometry queries")
 	quit(0)

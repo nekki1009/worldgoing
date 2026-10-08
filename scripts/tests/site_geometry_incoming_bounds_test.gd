@@ -99,15 +99,18 @@ func _run() -> void:
 	var requests: Array = [[&"idle", 0.137], [&"walk", 0.317], [&"down", 1.137], [&"get_up", 0.437], [&"walk_slash", 1.173]]
 	var tested_clips: Array = []
 	if centered:
-		if not _check(proof.clips.size() == 20 and proof.centered_clips.size() == 18
-			and not proof.centered_clips.has(&"attack_crossbow") and not proof.centered_clips.has(&"reload_crossbow"),
-			"Current native data has18 centered clips; two crossbow clips lack enabled Hips position and must retain84"):
+		if not _check(proof.clips.size() == 20 and proof.centered_clips.size() == 19
+			and proof.centered_clips.has(&"attack_crossbow") and not proof.centered_clips.has(&"reload_crossbow"),
+			"Current native data has19 centered clips; only reload_crossbow lacks enabled Hips position and retains84"):
 			return
+		for clip: StringName in proof.clips:
+			if not _check(proof.centered_clips.has(clip) == _has_enabled_hips_position(source, clip), "Centered admission must match the actual enabled native Hips position track"):
+				return
 		requests.clear()
 		for clip_index: int in range(group * 10, group * 10 + 10):
 			var clip: StringName = proof.clips[clip_index]
 			var animation: Animation = source.editor.animation_player.get_animation(clip)
-			if not _check(animation != null, "Original native clip required, including two intentional84 fallbacks"):
+			if not _check(animation != null, "Original native clip required, including the intentional reload_crossbow84 fallback"):
 				return
 			tested_clips.append(clip)
 			for sample_time: float in [0.0, animation.length * 0.5, animation.length]:
@@ -172,11 +175,26 @@ func _run() -> void:
 		return
 	report.merge({"status": "PASS", "centered": centered, "group": group, "tested_clips": tested_clips, "elapsed_usec": Time.get_ticks_usec() - began, "source_hashes": fingerprint,
 		"internal_deadline_seconds": 23, "helper_timeout_seconds": 25, "proof": proof, "query_profile": source.query_profile.duplicate(),
-		"scope": "Origin84:20poses; centered:10 actual native clips x 0/mid/length x four directions per group,18 centered clips plus two crossbow clips retaining84 across both groups. Actual equipment, all body-shield vertices, exact first-fit/bones/armor/full values, warm hidden-face A while Source remains B, cold/unsupported fallback. Sampling is regression, NOT proof by sampled extrema. Timings are local work, not FPS or rendered appearance acceptance."})
+		"scope": "Origin84:20poses; centered:10 actual native clips x 0/mid/length x four directions per group,19 centered clips plus reload_crossbow retaining84 across both groups. Baseline shield and valid None body subset retain warm no-seek; different/unknown shields retain exact queries. Actual equipment, all body-shield vertices, exact first-fit/bones/armor/full values, warm hidden-face A while Source remains B, cold/unsupported fallback. Sampling is regression, NOT proof by sampled extrema. Timings are local work, not FPS or rendered appearance acceptance."})
 	_write()
 	source.dispose()
 	print("SITE_GEOMETRY_INCOMING_BOUNDS_PASS ", JSON.stringify(report))
 	quit(0)
+
+func _has_enabled_hips_position(source: Variant, clip: StringName) -> bool:
+	var player: AnimationPlayer = source.editor.animation_player
+	var animation: Animation = player.get_animation(clip)
+	var animation_root: Node = player.get_node_or_null(player.root_node)
+	if animation == null or animation_root == null:
+		return false
+	var hips: int = source.skeleton.find_bone("J_Bip_C_Hips")
+	for track: int in range(animation.get_track_count()):
+		if animation.track_get_type(track) != Animation.TYPE_POSITION_3D or not animation.track_is_enabled(track) or animation.track_get_key_count(track) < 1:
+			continue
+		var path: NodePath = animation.track_get_path(track)
+		if animation_root.get_node_or_null(NodePath(path.get_concatenated_names())) == source.skeleton and path.get_subname_count() == 1 and source.skeleton.find_bone(path.get_subname(0)) == hips:
+			return true
+	return false
 
 func _proven_rect(proof: Dictionary, clip: StringName) -> Rect2:
 	# Consume the original continuous proof; never derive an enclosure from the
@@ -220,6 +238,17 @@ func _guards(source: Variant, baseline: Dictionary) -> bool:
 			return false
 	if not _fallback(source, &"guard", 0.173, Vector2.ZERO, 0.0, baseline) or not _fallback(source, &"walk_slash", 1.173, Vector2(40.0, -20.0), 0.4, baseline):
 		return false
+	# None is the admitted body subset. A real different shield or invalid ID
+	# must still use the original exact full-query fallback, not borrow its bound.
+	var other_shield := baseline.duplicate(true)
+	other_shield.parts.shield = "shield_western_wood_01"
+	if not _check(source.supports_appearance(other_shield), "Actual different shield must exist in the original model"):
+		return false
+	var unknown_shield := baseline.duplicate(true)
+	unknown_shield.parts.shield = "unknown_shield_fixture"
+	for recipe: Dictionary in [other_shield, unknown_shield]:
+		if not _check(source.conservative_nonattack_radius(&"idle", recipe) == 256.0, "Different or unknown shield must retain the original256 radius") or not _fallback(source, &"idle", 0.237, Vector2.ZERO, 0.0, recipe):
+			return false
 	# Framing mutations are explicit diagnostic full-clear/rebuild operations,
 	# not an expectation of arbitrary unannounced external model mutation.
 	var camera: Camera3D = source.editor.camera

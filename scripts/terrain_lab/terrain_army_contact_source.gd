@@ -1,4 +1,5 @@
 extends RefCounted
+const SiegeWorkClips = preload("res://scripts/terrain_lab/site_siege_work_clips.gd")
 ## One non-rendering pose query source for actual soldier equipment, not a person.
 ## Original AnimationPlayer, mesh skinning, armor and aiming remain authoritative.
 
@@ -458,6 +459,9 @@ func initialize(parent: Node, appearance: Dictionary, reference_source: HumanCha
 	editor.visual_state.combat_ready = true
 	editor.set_playing(false)
 	_copy_private_animations(raw_animation)
+	if not SiegeWorkClips.install(editor):
+		dispose()
+		return false
 	_baseline = appearance.duplicate(true)
 	_appearance = appearance.duplicate(true)
 	_baseline_key = _appearance_key(_baseline)
@@ -611,11 +615,14 @@ func clear_samples() -> void:
 	_nonattack_bound.clear()
 	_clear_compiled_geometry_views()
 
-func conservative_nonattack_radius(clip: StringName) -> float:
-	if not conservative_nonattack_bounds_enabled:
+func conservative_nonattack_radius(clip: StringName, appearance: Dictionary = {}) -> float:
+	if not conservative_nonattack_bounds_enabled or not supports_appearance(appearance):
 		return 256.0
 	if _nonattack_bound.is_empty():
 		_nonattack_bound = SourceBounds.build(self)
+	var recipe := _baseline if appearance.is_empty() else appearance
+	if str(recipe.parts.shield) != "none" and str(_nonattack_bound.get("shield_id", "")) != str(recipe.parts.shield):
+		return 256.0 # Other shields retain exact queries; none is the proven body subset.
 	return float(_nonattack_bound.radius) if _nonattack_bound.clips.has(clip) else 256.0
 
 func begin_contact_step() -> void:
@@ -722,10 +729,10 @@ func query_bounds(clip: StringName, time: float, direction: Vector2i, aim: Vecto
 			_nonattack_bound = SourceBounds.build(self)
 		# This proof is independent of the optional 128px anchor gate. Guard,
 		# custom aim, unknown curves and out-of-curve times retain exact queries.
-		if float(_nonattack_bound.radius) < 256.0 and _nonattack_bound.clips.has(clip):
+		var recipe := _baseline if appearance.is_empty() else appearance
+		if float(_nonattack_bound.radius) < 256.0 and _nonattack_bound.clips.has(clip) and (str(recipe.parts.shield) == "none" or str(_nonattack_bound.get("shield_id", "")) == str(recipe.parts.shield)):
 			var animation := editor.animation_player.get_animation(clip)
 			if animation != null and time <= animation.length:
-				var recipe := _baseline if appearance.is_empty() else appearance
 				var component: Dictionary = editor._component_definition(&"face", StringName(str(recipe.parts.face)))
 				var nodes: Array = editor._find_component_nodes(component.get("prefixes", []))
 				# Resolve the requested face, not the live visibility of another
@@ -1051,6 +1058,11 @@ func _pose(key: Array, appearance: Dictionary) -> bool:
 	query_profile.apply_appearance_usec += Time.get_ticks_usec() - pose_stage_started
 	pose_stage_started = Time.get_ticks_usec()
 	var pose: StringName = editor._normalize_animation_id(key[0])
+	var combat_ready := not SiegeWorkClips.DURATIONS.has(str(pose))
+	if editor.combat_ready != combat_ready:
+		editor.combat_ready = combat_ready
+		editor.visual_state.combat_ready = combat_ready
+		editor._update_weapon_sheath_state()
 	if pose == &"attack":
 		pose = editor._resolve_weapon_attack_animation()
 	if not editor.animation_player.has_animation(pose) or str(pose).begins_with("ride_"):
