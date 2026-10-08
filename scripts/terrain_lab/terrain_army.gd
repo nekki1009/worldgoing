@@ -3427,7 +3427,8 @@ func set_military_role(person_id: int, next_role: String) -> Dictionary:
 	if index == PLAYER_MEMBER: player_member.military_role = next_role
 	else: combat_units[index].military_role = next_role
 	if next_role == "officer": _ensure_command_abilities(index)
-	if next_role == "officer" and index != formal_commander: _auto_seat_officers([index])
+	# A garrisoned container has no command or posts in use: no auto-appointment there.
+	if next_role == "officer" and index != formal_commander and garrison_feature_id.is_empty(): _auto_seat_officers([index])
 	_sync_officer_order() # rank decides succession-order membership of post holders
 	_mark_serving_dirty()
 	_command_dirty = true

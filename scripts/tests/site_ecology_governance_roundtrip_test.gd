@@ -3,9 +3,16 @@ extends "res://scripts/tests/site_ecology_policy_border_test.gd"
 
 const GOVERNANCE_SAVE := "res://.godot-temp/site_ecology_governance/"
 
+var _governance_completed := false
+
 func _initialize() -> void:
 	deadline = Time.get_ticks_msec() + 90000
 	_run.call_deferred()
+
+func _process(delta: float) -> bool:
+	if _governance_completed:
+		return false
+	return super._process(delta)
 
 func _governance_source(data: TerrainData) -> String:
 	for key: String in data.resource_base:
@@ -131,5 +138,6 @@ func _run() -> void:
 	lab.free()
 	TerrainArmy.release_contact_source()
 	assert(Time.get_ticks_msec() <= deadline)
+	_governance_completed = true
 	print("SITE_ECOLOGY_GOVERNANCE_ROUNDTRIP_PASS legacy_vacant_catalog_query_read_only=true appointed_and_fallen_file_roundtrip=true original_capture_timer=true stale_revision_and_foreign_requests_unchanged=true current_provisional_head_acts=true; no GPU, performance or all16ECO claim")
 	quit(0)

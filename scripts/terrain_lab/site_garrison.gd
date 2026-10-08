@@ -1,6 +1,7 @@
 extends RefCounted
 ## Transactions over original Army rows; this helper owns no people or stock.
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
+const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
 const Store = preload("res://scripts/terrain_lab/site_store.gd")
 
 static func recovery_multiplier(lab: TerrainLab, feature_id: String, faction_id: int, rows: Array) -> float:
@@ -106,8 +107,16 @@ static func query(lab: TerrainLab, feature_id: String) -> Dictionary:
 static func _authority(lab: TerrainLab, layout: Dictionary) -> Dictionary:
 	if bool(lab.terrain.site.get("paused", false)) or lab.get_tree().paused or float(lab.terrain.site.get("combat_left", 0.0)) > 0.0:
 		return Runtime.fail("BUSY", "須在停止、脫戰時辦理軍營名冊")
-	var person: Dictionary = lab.site_controller.person_actions._person(int(lab.controlled_person_id()))
-	if person.is_empty() or int(person.faction) != int(layout.owner_faction): return Runtime.fail("NO_AUTHORITY", "只能管理同陣營軍營")
+	var controlled := int(lab.controlled_person_id())
+	var person: Dictionary = lab.site_controller.person_actions._person(controlled)
+	if person.is_empty(): return Runtime.fail("NO_AUTHORITY", "只能管理同陣營軍營")
+	# User decision 2026-10-08: a barracks the settlement governs answers to its
+	# 營務官 (head acting while vacant), not to whoever is controlled. A barracks no
+	# settlement governs keeps the original same-faction rule.
+	if Settlement.garrison_governed(lab, str(layout.get("id", ""))):
+		var refused: Dictionary = Settlement.garrison_authority(lab, str(layout.id), controlled)
+		if not refused.is_empty(): return refused
+	elif int(person.faction) != int(layout.owner_faction): return Runtime.fail("NO_AUTHORITY", "只能管理同陣營軍營")
 	if not lab.site_controller.person_actions._ready(person): return Runtime.fail("BUSY", "原管理人物須清醒自由並收束動作")
 	return Runtime.ok()
 
@@ -347,6 +356,89 @@ static func _transfer(lab: TerrainLab, groups: Dictionary, identities: Array, ta
 	lab.terrain.site["army_next_team"] = new_team_id + 1
 	lab._configure_army_blockers()
 	return Runtime.ok("已編排原人員；位置、生命、持物與餐份均保留", {"team_id": target.team_id, "person_ids": identities})
+
+## v2 plan 3.4 募兵, fourth source: garrisoned original soldiers join an existing
+## team. Needs the barracks authority (營務官, or the original rule for an
+## ungoverned barracks), the receiving team's team.recruit decider (both checked
+## against the controlled requester) and each soldier's consent (NPC: conscious,
+## idle; the controlled person joins through their own entry). Original rows,
+## presenters and feeding cohorts move together; nothing is created.
+static func recruit(lab: TerrainLab, feature_id: String, person_ids: Array, target_team_id: int) -> Dictionary:
+	var layout := _layout(lab, feature_id)
+	if not layout.ok: return layout
+	var authority := _authority(lab, layout)
+	if not authority.ok: return authority
+	var target := _team(lab, target_team_id)
+	var requester := int(lab.controlled_person_id())
+	if target == null or not target.has_army() or not target.combat_enabled or not target.garrison_feature_id.is_empty() or int(target.faction_id) != int(layout.owner_faction):
+		return Runtime.fail("INVALID_TEAM", "接收須是同陣營、未駐營的既有隊伍")
+	var refused := target.duty_authority("team.recruit", requester)
+	if not refused.is_empty(): return refused
+	if person_ids.has(requester): return Runtime.fail("NEEDS_CONSENT", "受控人物須由本人入隊")
+	var ready := _idle_team(target)
+	if not ready.ok: return ready
+	var selected := _selected(lab, layout, _armies(lab), person_ids, true)
+	if not selected.ok: return selected
+	for chosen: Dictionary in selected.people.values():
+		if bool(chosen.source.get("native", false)): return Runtime.fail("CROWD_UNSUPPORTED", "群眾模擬中的駐營兵員請先切回一般模擬")
+	if target.combat_units.size() + person_ids.size() > TerrainArmy.MAX_ROSTER_SIZE: return Runtime.fail("NO_SPACE", "接收隊伍名冊已滿")
+	return _transfer_into(lab, selected.groups, person_ids, target)
+
+## Garrison → existing team: one checked commit (troop class, supply cohorts,
+## rows, presenters). The receiving team keeps its own offices and cadre; the
+## newcomers arrive as ordinary members (plan 3.5).
+static func _transfer_into(lab: TerrainLab, groups: Dictionary, identities: Array, target: TerrainArmy) -> Dictionary:
+	var originals: Array[Dictionary] = []
+	var incoming: Array[Dictionary] = []
+	var positions: Array[Vector2i] = []
+	var weighted := 0.0
+	var living := 0
+	var target_meta := target._roster_metadata()
+	for source_id: int in groups:
+		var source := _team(lab, source_id)
+		var source_ready := _idle_team(source)
+		if not source_ready.ok: return source_ready
+		var source_meta := source._roster_metadata()
+		for key: String in ["abilities", "facing", "slots"]: target_meta[key].merge(source_meta[key], false)
+		var kept: Array[Dictionary] = []
+		var kept_cells: Array[Vector2i] = []
+		for index in range(source.combat_units.size()):
+			if int(source.combat_identity(index)) in groups[source_id]:
+				incoming.append(source.combat_units[index])
+				positions.append(source.cells[index])
+				if not source.member_gone(index):
+					weighted += source.training
+					living += 1
+			else:
+				kept.append(source.combat_units[index])
+				kept_cells.append(source.cells[index])
+		originals.append({"team": source, "meta": source_meta, "kept": kept, "positions": kept_cells, "training": source.training})
+	if incoming.size() != identities.size(): return Runtime.fail("STALE", "原名冊已變更")
+	var proposed := target.materialized_combat_rows()
+	proposed.append_array(incoming)
+	if TerrainArmy.single_troop_class(proposed, lab.terrain, target._troop_exempt_ids(), target._troop_actor(target.player_member)) == &"mixed":
+		return Runtime.fail("MIXED_TROOP", "入隊後普通隊員兵種不一致；原人員與裝備未改")
+	var typed_ids: Array[int] = []
+	for identity: Variant in identities: typed_ids.append(int(identity))
+	var supplied: Dictionary = lab.site_controller.captivity_supply._change_membership_supply(originals[0].team,
+		{"key": "team:%d" % target.team_id, "team": target}, typed_ids)
+	if not supplied.ok: return supplied
+	var target_living := target.living_member_count()
+	var training := (target.training * target_living + weighted) / maxf(1.0, target_living + living)
+	target._release_combat_hot_store(true)
+	var target_rows := target.combat_units.duplicate()
+	var target_cells := target.cells.duplicate()
+	for original: Dictionary in originals:
+		var source: TerrainArmy = original.team
+		source._release_combat_hot_store(true)
+		source._transfer_presenters(target, typed_ids)
+		source._install_roster(original.kept, original.positions, original.meta, float(original.training))
+		if not source.has_army(): lab._forget_corps_team(source.team_id)
+	target_rows.append_array(incoming)
+	target_cells.append_array(positions)
+	target._install_roster(target_rows, target_cells, target_meta, training)
+	lab._configure_army_blockers()
+	return Runtime.ok("已自軍營募入 %d 名原兵員；位置、生命、持物與餐份均保留" % identities.size(), {"team_id": target.team_id, "person_ids": identities})
 
 static func set_military_role(lab: TerrainLab, person_id: int, role: String) -> Dictionary:
 	if role not in ["officer", "soldier", "civilian"]: return Runtime.fail("INVALID_ROLE")

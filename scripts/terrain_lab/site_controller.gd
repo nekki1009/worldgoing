@@ -8336,8 +8336,12 @@ func _recruit_candidates(team: TerrainArmy) -> Array[int]:
 	if not is_instance_valid(team): return [] as Array[int]
 	var result := team.recruit_candidates()
 	for other: TerrainArmy in lab.combat_armies:
-		if is_instance_valid(other) and other != team and other.combat_enabled and other.faction_id == team.faction_id and other.garrison_feature_id.is_empty():
-			result.append_array(other.recruit_candidates())
+		if is_instance_valid(other) and other != team and other.combat_enabled and other.faction_id == team.faction_id:
+			if other.garrison_feature_id.is_empty(): result.append_array(other.recruit_candidates())
+			else: # Garrisoned soldiers (fourth source; SiteGarrison.recruit checks the barracks authority).
+				for index: int in other.combat_units.size():
+					if other.is_member(index) and other.combat_can_act(index) and other.combat_identity(index) != lab.controlled_person_id():
+						result.append(other.combat_identity(index))
 	if not is_instance_valid(team.player_member):
 		for actor: TerrainTestCharacter in lab.combat_actors:
 			if is_instance_valid(actor) and actor in [team.player, team.npc] and actor.faction_id == team.faction_id and actor.person_id != lab.controlled_person_id() 				and actor.can_act() and not lab.combat_armies.any(func(other: TerrainArmy) -> bool: return is_instance_valid(other) and other.player_member == actor):
@@ -8368,6 +8372,7 @@ func _recruit(team: TerrainArmy, person_id: int) -> Dictionary:
 		if is_instance_valid(actor) and actor.person_id == person_id: return team.recruit_actor(lab.controlled_person_id(), actor)
 	for other: TerrainArmy in lab.combat_armies:
 		if is_instance_valid(other) and other != team and other.index_for_identity(person_id) >= 0:
+			if not other.garrison_feature_id.is_empty(): return Garrison.recruit(lab, other.garrison_feature_id, [person_id], team.team_id)
 			return team.recruit_from_team(other, lab.controlled_person_id(), person_id)
 	return team.recruit_row(lab.controlled_person_id(), person_id)
 

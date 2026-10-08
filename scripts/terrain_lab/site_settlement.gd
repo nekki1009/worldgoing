@@ -496,6 +496,21 @@ static func prison_governed(lab: Variant, prison_id: String) -> bool:
 	return not settlement.is_empty() and str(feature.get("kind", "")) == "prison" \
 		and int(feature.get("owner_faction", -1)) == int(settlement.owner_faction) and feature_in_jurisdiction(lab.terrain, feature)
 
+## User decision 2026-10-08: a completed barracks of the settlement's faction
+## inside its jurisdiction is governed by 營務官 (head acts while vacant).
+static func garrison_governed(lab: Variant, feature_id: String) -> bool:
+	var settlement := record(lab.terrain)
+	var feature: Dictionary = lab.terrain.site.get("features", {}).get(feature_id, {})
+	return not settlement.is_empty() and str(feature.get("kind", "")) == "barracks" \
+		and int(feature.get("owner_faction", -1)) == int(settlement.owner_faction) and feature_in_jurisdiction(lab.terrain, feature)
+
+## {} when `requester_id` may decide for this barracks' roster; a refusal otherwise.
+static func garrison_authority(lab: Variant, feature_id: String, requester_id: int) -> Dictionary:
+	if not garrison_governed(lab, feature_id): return {}
+	var resolved := duty_resolve(lab, "settlement.garrison")
+	if bool(resolved.ok) and int(resolved.decider) == requester_id: return {}
+	return SiteOffices.refusal(resolved, requester_id, offices(lab))
+
 ## {} when `requester_id` may decide for this camp; a refusal otherwise.
 static func prison_authority(lab: Variant, prison_id: String, requester_id: int) -> Dictionary:
 	if not prison_governed(lab, prison_id): return {}

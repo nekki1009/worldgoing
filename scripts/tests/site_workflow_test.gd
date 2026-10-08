@@ -19,6 +19,7 @@ func _process(_delta: float) -> bool:
 func _fixture() -> TerrainData:
 	var data := TerrainGenerator.generate(TerrainPreset.Kind.PLAINS, 12345)
 	Env.initialize(data, "workflow")
+	assert(Runtime.initialize_item_storage(data.site).ok)
 	# A controlled accessible plot isolates building/production from distribution.
 	for y: int in range(15, 55):
 		for x: int in range(15, 55):
@@ -89,6 +90,7 @@ func _run() -> void:
 	# Save the sparse state against the unchanged generated base.
 	var natural := TerrainGenerator.generate(TerrainPreset.Kind.PLAINS, 12345)
 	Env.initialize(natural, "workflow-save")
+	assert(Runtime.initialize_item_storage(natural.site).ok)
 	var safe: Array[int] = []
 	for i: int in range(natural.surface_types.size()):
 		var plot := _footprint(natural, "house", natural.cell_from_index(i))
@@ -246,6 +248,7 @@ func _production_batch(data: TerrainData, key: String) -> void:
 func _clearing_and_load() -> void:
 	var data := TerrainGenerator.generate(TerrainPreset.Kind.TERRACED_HIGHLAND, 12345)
 	Env.initialize(data, "clear-and-build")
+	assert(Runtime.initialize_item_storage(data.site).ok)
 	var keys: Array = data.resource_base.keys()
 	keys.sort_custom(func(a: String, b: String) -> bool: return data.cell_from_index(int(data.resource_base[a].cell)).distance_squared_to(data.spawn_cell) < data.cell_from_index(int(data.resource_base[b].cell)).distance_squared_to(data.spawn_cell))
 	var tree := ""
