@@ -61,4 +61,5 @@ func run() -> void:
 	team.queue_free()
 	await process_frame
 	print("SITE OFFICER SERVICE PASS: stable event order, append missing ranks, preserve edits/KO, revoke/reappoint, retained abilities, save/legacy/corruption")
+	TerrainArmy.release_contact_source() # Free the shared combat rig before exit (headless dummy-renderer teardown noise).
 	quit(0)

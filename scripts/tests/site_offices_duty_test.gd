@@ -168,4 +168,5 @@ func run() -> void:
 	team.queue_free()
 	await process_frame
 	print("SITE OFFICES PASS: default layout, head fallback, plan rules, KO acting, save/corrupt/legacy, auto vacancy, AI head refill, nation legacy migration")
+	TerrainArmy.release_contact_source() # Free the shared combat rig before exit (headless dummy-renderer teardown noise).
 	quit(0)

@@ -87,4 +87,5 @@ func run() -> void:
 		team.queue_free()
 	await process_frame
 	print("SITE OFFICE ROSTER FIX PASS: split keeps remaining holders and duty_ai, leaver vacates, new team inherits nothing, reinforcement keeps both teams' offices")
+	TerrainArmy.release_contact_source() # Free the shared combat rig before exit (headless dummy-renderer teardown noise).
 	quit(0)

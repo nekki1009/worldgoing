@@ -68,4 +68,5 @@ func run() -> void:
 		army.queue_free()
 	await process_frame
 	print("SITE OFFICE RECRUIT CROSS PASS: recruit decider only, controlled person consents themselves, retired rows only, original row moves and joins, saves validate")
+	TerrainArmy.release_contact_source() # Free the shared combat rig before exit (headless dummy-renderer teardown noise).
 	quit(0)

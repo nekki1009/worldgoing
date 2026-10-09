@@ -150,4 +150,5 @@ func run() -> void:
 	team.queue_free()
 	await process_frame
 	print("SITE DUTY AXES PASS: D.6 table values, neutral = previous constants, cadence, 野心 delay, 守法 cancel, captive holder replaced at once (round %d; 仁厚 moved to prison duty), 野心/重家族 candidate choice" % replaced)
+	TerrainArmy.release_contact_source() # Free the shared combat rig before exit (headless dummy-renderer teardown noise).
 	quit(0)

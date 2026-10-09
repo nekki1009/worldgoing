@@ -116,4 +116,5 @@ func run() -> void:
 		army.queue_free()
 	await process_frame
 	print("SITE OFFICE CADRE PASS: cadre follow posts, 文官 exempt without cape, two-phase promote+appoint, atomic refused demotion, officer on 文官 post leads with cape, 文官 demotion keeps post without command, NO_POSITION, old save posts seated / rest pending without command rights, release")
+	TerrainArmy.release_contact_source() # Free the shared combat rig before exit (headless dummy-renderer teardown noise).
 	quit(0)

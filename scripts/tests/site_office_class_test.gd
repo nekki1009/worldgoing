@@ -124,4 +124,5 @@ func run() -> void:
 		army.queue_free()
 	await process_frame
 	print("SITE OFFICE CLASS PASS: v1 upgrade, class table, 訓練 needs an officer on any seat class, 文官 officer leads, 文官 soldiers without command rights, reclassify recheck, 文官 roster split, vacancy, v2 save, nation/family classes")
+	TerrainArmy.release_contact_source() # Free the shared combat rig before exit (headless dummy-renderer teardown noise).
 	quit(0)

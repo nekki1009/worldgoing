@@ -138,4 +138,5 @@ func run() -> void:
 		army.queue_free()
 	await process_frame
 	print("SITE OFFICE R1B PASS: tactics cap %.1f, all officers seated %.4f (= old rule); posts emptied: captain only %.4f, +1 seated 武官 %.4f, +1 officer on 文官 seat %.4f; leadership old %.4f vs captain+1 %.4f; auto-appointment keeps KO deputy and succession; no 在任武官 → no acting/succession; old save appointed once; dismissed post not refilled" % [CAP, before, after_none, after_one, after_civil, leadership_before, leadership_after])
+	TerrainArmy.release_contact_source() # Free the shared combat rig before exit (headless dummy-renderer teardown noise).
 	quit(0)

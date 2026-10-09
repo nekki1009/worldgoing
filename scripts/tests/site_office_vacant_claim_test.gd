@@ -65,4 +65,5 @@ func run() -> void:
 	team.queue_free()
 	await process_frame
 	print("SITE OFFICE VACANT CLAIM PASS: vacancy only after death with no post holder, controlled member only, officer candidate only, one commit sets captain and lists, save validates")
+	TerrainArmy.release_contact_source() # Free the shared combat rig before exit (headless dummy-renderer teardown noise).
 	quit(0)

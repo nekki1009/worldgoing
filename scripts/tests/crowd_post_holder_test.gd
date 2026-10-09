@@ -99,4 +99,5 @@ func run() -> void:
 	team.queue_free()
 	await process_frame
 	print("CROWD POST HOLDER PASS: host projection = team holders, native rule = TerrainArmy command_eligible for captain/unposted officer/武官/文官 officer/soldier holder, native succession skips unposted officer then takes 文官 officer, flag 0/1, save/load")
+	TerrainArmy.release_contact_source() # Free the shared combat rig before exit (headless dummy-renderer teardown noise).
 	quit(0)

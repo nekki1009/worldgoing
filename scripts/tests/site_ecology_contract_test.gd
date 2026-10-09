@@ -69,6 +69,7 @@ func _run() -> void:
 	assert(_legacy_recovery_restart())
 	assert(_groups == 7, "A focused ecology group did not finish")
 	print("SITE_ECOLOGY_CONTRACT_PASS groups=7 threshold_K=0,1,2,5,20 histories_N9=2 previews_read_only=true restore_manual_worker_army=true army_resume=7,59 invalid_state_rejected=true legacy_deadline_restart=true; no GPU, Region replay or performance claim")
+	TerrainArmy.release_contact_source()
 	quit(0)
 
 func _synthetic(kind: int, capacity: int) -> TerrainData:

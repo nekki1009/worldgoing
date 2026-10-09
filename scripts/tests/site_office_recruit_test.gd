@@ -60,4 +60,5 @@ func run() -> void:
 	team.queue_free()
 	await process_frame
 	print("SITE OFFICE RECRUIT PASS: team.recruit 武官 seat, retired-row source only, decider-only, controlled person consents themselves, no new row, already-member refused, save validates")
+	TerrainArmy.release_contact_source() # Free the shared combat rig before exit (headless dummy-renderer teardown noise).
 	quit(0)
