@@ -9360,10 +9360,19 @@ func ship_journey_status() -> Dictionary:
 	return status
 
 func _initialize_ship_destination(data: TerrainData) -> Dictionary:
-	if not data.is_walkable(data.spawn_cell): return Env.initialize_marine(data, str(data.parameters.fixed_base.site_id))
-	Env.initialize(data, str(data.parameters.fixed_base.site_id))
-	data.site.actor_presence_version = 1
-	data.site.actors = {}
+	if not data.is_walkable(data.spawn_cell):
+		var marine: Dictionary = Env.initialize_marine(data, str(data.parameters.fixed_base.site_id))
+		if not marine.ok: return marine
+	else:
+		Env.initialize(data, str(data.parameters.fixed_base.site_id))
+		data.site.actor_presence_version = 1
+		data.site.actors = {}
+	# Same fresh-Site contract as RegionSaveSlot.open_site: item storage exists
+	# before any first save, and the Site carries this slot's world policy pin.
+	var storage := Runtime.initialize_item_storage(data.site)
+	if not storage.ok: return storage
+	if region_slot != null and not region_slot.pin.is_empty() and not data.site.has("world_pin"):
+		data.site.world_pin = region_slot.pin.duplicate(true)
 	return Runtime.ok("", {"data": data})
 
 func open_fixed_world(manifest_path: String, world_id: String, slot_id: String, starting_site: Vector2i, create_new: bool = false, initial_scenario_id: String = "") -> Dictionary:

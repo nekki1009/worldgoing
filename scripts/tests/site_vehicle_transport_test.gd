@@ -180,7 +180,8 @@ func _run() -> void:
 	assert(bool(wagon.move.boarding) and team.cells[0] == boarding_cell and team.moving_to[0] == horse_cell and transport.rider_state(commander).is_empty())
 	lab.terrain.site.combat_left = 0.0
 	lab.site_controller._capture_positions()
-	assert(Store.save(lab.terrain, OUT + "/boarding.json").ok)
+	var boarding_saved: Dictionary = Store.save(lab.terrain, OUT + "/boarding.json")
+	assert(boarding_saved.ok, "Boarding snapshot save: " + str(boarding_saved))
 	loaded = Store.load_site(OUT + "/boarding.json")
 	assert(loaded.ok, str(loaded))
 	lab.bind_terrain(loaded.data)

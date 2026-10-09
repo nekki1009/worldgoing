@@ -109,7 +109,7 @@ func _full_hull_unknown_route() -> bool:
 	var initialized: Dictionary = controller._initialize_ship_destination(built.data)
 	if not _must(initialized.ok, "Original private destination initialization rejected"): return false
 	var boats: Array[String] = [boat_id]
-	var pair: Dictionary = controller.region_slot._transfer_pair(lab.terrain, built.data, boats, Vector2i(99, 19), Vector2i.LEFT, EDGE_OUT.path_join("private_geometry_candidate.json"))
+	var pair: Dictionary = controller.region_slot._transfer_pair(lab.terrain, built.data, boats, Vector2i(99, 19), Vector2i.LEFT, EDGE_OUT.path_join("private_geometry_candidate.json"), "edge_private_geometry")
 	if not _must(pair.ok, "Original ownership geometry candidate rejected: " + str(pair)): return false
 	var legal: Dictionary = controller.region_slot._adjacent_ship_route(lab.terrain, pair.destination_data, FROM, TO, boats)
 	if not _must(legal.ok and float(legal.distance) == 7.0, "Actual river seam was not seven original2m cells: " + str(legal)): return false

@@ -165,7 +165,45 @@ static func state_hash(state: Dictionary) -> String:
 	body.erase("water_links")
 	body.erase("water_status")
 	body.erase("notices")
+	return JSON.stringify(_hash_canonical(body), "", true, true).sha256_text()
+
+## Pre-2026-10-09 formula. Only used to admit region_snapshot hashes already
+## written by older builds; every new hash uses state_hash().
+static func _snapshot_hash_matches(state: Dictionary, stored: String) -> bool:
+	return stored == state_hash(state) or stored == legacy_state_hash(state)
+
+static func legacy_state_hash(state: Dictionary) -> String:
+	var body := state.duplicate(true)
+	body.erase("region_snapshot")
+	body.erase("water_links")
+	body.erase("water_status")
+	body.erase("notices")
 	return JSON.stringify(_hash_numbers(body), "", true, true).sha256_text()
+
+## Godot's JSON parser does not return the identical double for every
+## 17-digit value it wrote (e.g. 0.10999999999999999 reloads as 0.11), so a
+## saved body can never re-hash equal at full precision. Integral values below
+## 1e15 hash exactly; other finite numbers hash at 12 significant digits, far
+## coarser than the round-trip error and far finer than any game rule.
+static func _hash_number(value: float) -> String:
+	if is_nan(value): return "nan"
+	if is_inf(value): return "inf" if value > 0.0 else "-inf"
+	if value == floorf(value) and absf(value) < 1e15: return "i%d" % int(value)
+	var exponent := floori(log(absf(value)) / log(10.0))
+	var mantissa := roundf(value / pow(10.0, float(exponent - 11)))
+	return "f%de%d" % [int(mantissa), exponent - 11]
+
+static func _hash_canonical(value: Variant) -> Variant:
+	if value is int or value is float: return _hash_number(float(value))
+	if value is Dictionary:
+		var normalized := {}
+		for key: Variant in value: normalized[str(key)] = _hash_canonical(value[key])
+		return normalized
+	if value is Array or value is PackedInt32Array or value is PackedInt64Array or value is PackedFloat32Array or value is PackedFloat64Array or value is PackedStringArray or value is PackedByteArray:
+		var normalized: Array = []
+		for entry: Variant in value: normalized.append(_hash_canonical(entry))
+		return normalized
+	return value
 
 static func make(state: Dictionary, context: Dictionary, owners: Dictionary) -> Dictionary:
 	var checked := validate_context(context)
@@ -174,7 +212,7 @@ static func make(state: Dictionary, context: Dictionary, owners: Dictionary) -> 
 	return Runtime.ok("", {"snapshot": {"version": 1, "context": checked.context, "owners": wire(owners), "state_hash": state_hash(state)}})
 
 static func validate(state: Dictionary, snapshot: Variant, expected: Dictionary = {}) -> Dictionary:
-	if not snapshot is Dictionary or snapshot.size() != 4 or not integer(snapshot.get("version"), 1) or int(snapshot.version) != 1 or not snapshot.get("state_hash") is String or str(snapshot.state_hash) != state_hash(state):
+	if not snapshot is Dictionary or snapshot.size() != 4 or not integer(snapshot.get("version"), 1) or int(snapshot.version) != 1 or not snapshot.get("state_hash") is String or not _snapshot_hash_matches(state, str(snapshot.state_hash)):
 		return _snapshot_failure(state, snapshot)
 	var checked := validate_context(snapshot.get("context"), expected)
 	if not checked.ok: return checked
