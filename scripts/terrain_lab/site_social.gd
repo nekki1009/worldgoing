@@ -184,12 +184,15 @@ static func status(body: Variant, ref: Dictionary) -> Dictionary:
 		"days_left": maxi(0, OMEN_DAYS - floori(float(entry.obs) / DAY_SECONDS)) if int(entry.G) >= threshold and not bool(entry.intent) else -1,
 		"settled_day": int(packet.settled_day)}
 
-# Last fully settled Site day (process-wide like the duty AI cadence; reset on
-# every successful Site bind through SiteDutyAI.reset_site_state).
-static var _last_full_day := -1
+# Last fully settled Site day, per live lab (instance id → day). One process
+# can hold several labs (Region cold replay, tests); a shared latch made the
+# second lab skip its own first full pass that day. Cleared on every successful
+# Site bind through SiteDutyAI.reset_site_state; a full pass is idempotent, so a
+# clear only costs one extra pass.
+static var _last_full_day := {}
 
 static func reset_site_state() -> void:
-	_last_full_day = -1
+	_last_full_day.clear()
 
 ## Called from the duty-AI tick (every 60 game seconds). A full pass runs once
 ## per new game day; captives' complete custody days are checked every tick.
@@ -199,7 +202,8 @@ static func settle_site(lab: Variant) -> void:
 	var site: Dictionary = lab.terrain.site
 	var minute := int(site.get("minute", 0))
 	var today := floori(float(minute) / DAY_MINUTES)
-	var full := today != _last_full_day
+	var lab_key: int = lab.get_instance_id()
+	var full := today != int(_last_full_day.get(lab_key, -1))
 	var site_id := str(site.get("id", ""))
 	var controlled := int(lab.controlled_person_id())
 	var captivity: Dictionary = site.get("captivity", {})
@@ -238,7 +242,7 @@ static func settle_site(lab: Variant) -> void:
 		_add_nation_refs(site, actor.person_id, site_id, affiliations)
 		settle_person(actor, {"minute": minute, "controlled": actor.person_id == controlled, "affiliations": affiliations,
 			"captive_relation": relation_value, "team_ref": team_r, "holds_post": false, "eligible_for_post": false})
-	if full: _last_full_day = today
+	if full: _last_full_day[lab_key] = today
 
 ## §8.1 battle casualties: the cohort is who was alive at the day's start (or
 ## at the team's formation that day). Battle deaths are rows of this team killed
