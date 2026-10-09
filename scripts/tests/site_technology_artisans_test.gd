@@ -77,7 +77,7 @@ func _check_no_birth_and_strict_input() -> void:
 	var selection := _selection(f, config)
 	var state_before := var_to_bytes(state)
 	var config_before := var_to_bytes(config)
-	var sources_before := selection.sources.duplicate()
+	var sources_before: Variant = selection.sources.duplicate()
 	var result := Artisans.prepare(state, config, ["F04"], selection)
 	_check(result.ok and result.changed and result.grants.size() == 1, "Only admitted F04 has one selected artisan")
 	_check(var_to_bytes(state) == state_before and var_to_bytes(config) == config_before and selection.sources == sources_before, "State/config/selection unchanged")
@@ -132,7 +132,7 @@ func _check_partial_and_finite_three_factions() -> void:
 		_check(rerun.ok and not rerun.changed and rerun.code == "ALREADY_APPLIED" and rerun.state == result.state, "Later all-class release cannot expand old frozen policy/receipt")
 		# Historical receipt survives subsequent skill loss/control/death. Reading
 		# it cannot reinstate skills on this original person or appoint replacements.
-		var later := result.state.duplicate(true)
+		var later: Dictionary = result.state.duplicate(true)
 		later.armies[0].units[1].erase("technology")
 		later.armies[0].units[1].hp = 0.0
 		later.controlled_person_id = int(later.armies[0].units[1].person_id)

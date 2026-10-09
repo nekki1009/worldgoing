@@ -3565,11 +3565,24 @@ func _technology_scope_person(scope: String, owner: Dictionary, identity: int, b
 func _technology_matching_original_task(person: Dictionary, token: Dictionary) -> bool:
 	if person.is_empty() or token.is_empty() or not Technology.valid_ref(token.get("person")) \
 		or token.person.site_id != _technology_site_id() or int(token.person.person_id) != int(person.person_id): return false
+	var original_job: Dictionary = _jobs.get(_job_key_for(int(person.person_id)), {})
+	if original_job.get("kind") == "food_order":
+		return settlement_food_own_job(person, original_job.get("food_order", {})) and is_same(original_job.get("nation_token"), token) \
+			and Runtime._settlement_food_token(lab.terrain, token, original_job.food_order)
+	if original_job.get("kind") == "water_schedule":
+		return is_same(original_job.get("executor_body"), person.body) \
+			and is_same(original_job.get("terrain"), lab.terrain) and is_same(original_job.get("site_state"), lab.terrain.site) \
+			and original_job.get("nation_token") == token and token.get("binding") == "water_priority" \
+			and token.get("target_id") == "feature:" + str(Settlement.record(lab.terrain).get("center_id", ""))
 	var target := str(token.get("target_id", ""))
 	var task: Dictionary = {}
 	if person.body is Dictionary: task = person.body.get("work_task", {})
 	else: task = lab.terrain.site.manual if person.owner == lab.character else lab.terrain.site.worker
-	if task.is_empty() or str(task.get("mode", "")) not in ["work", "rest"]: return false
+	var job: Dictionary = _jobs.get(_job_key_for(int(person.person_id)), {})
+	if job.get("kind") in ["technology_feature", "technology_vehicle"] and is_same(job.get("technology_executor_body"), person.body) \
+		and is_same(job.get("site_state"), lab.terrain.site): task = job.work_task
+	var named_transit: bool = Technology.integer(task.get("version"), 3, 3) and task.get("named") == true and str(task.get("mode", "")) in ["idle", "travel"] and SiteWorkTeam.valid_task(lab.terrain, lab.terrain.site, task)
+	if task.is_empty() or str(task.get("mode", "")) not in ["work", "rest"] and not named_transit: return false
 	if target.begins_with("feature:"):
 		var key := target.trim_prefix("feature:")
 		var feature: Dictionary = lab.terrain.site.get("features", {}).get(key, {})
