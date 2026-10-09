@@ -54,6 +54,7 @@ func _run() -> void:
 		return
 	RegionRoute.clear_memory_cache()
 	var built_sites := 0
+	var compared: Array[Vector2i] = []
 	var first_body: TerrainData = null
 	var first_site := Vector2i.ZERO
 	for site: Vector2i in _pick_sites(source):
@@ -79,9 +80,14 @@ func _run() -> void:
 			first_body = a.data
 			first_site = site
 		built_sites += 1
+		compared.append(site)
 	_check(built_sites >= 2, "At least two real fixed Sites were compared (built %d)" % built_sites)
 	if first_body != null:
-		_content_key_checks(source, first_site)
+		# The scan above starts at the atlas corner (coastal Sites); the pinned
+		# inland Taiwan pair is the known source with open boundary passages.
+		var candidates: Array[Vector2i] = [Vector2i(1170, 13252), Vector2i(1171, 13252)]
+		candidates.append_array(compared)
+		_content_key_checks(source, candidates)
 		var other := RegionData.new()
 		other.load_manifest(RegionData.DEFAULT_MANIFEST)
 		other.manifest_hash = other.manifest_hash + "_other_manifest"
@@ -92,12 +98,23 @@ func _run() -> void:
 		_check(rebuilt.ok and not is_same(rebuilt.data, first_body) and _same_layers(rebuilt.data, first_body), "clear_memory_cache() invalidates the memo and rebuilds the same geography")
 	_finish()
 
-func _content_key_checks(source: RegionData, site: Vector2i) -> void:
-	var cover := RegionRoute._cover(source, site)
-	var built: Dictionary = source.make_terrain_data(site.x, site.y)
-	if not _check_ok(built.ok, "Fresh body for content-key checks"): return
-	var expected: Dictionary = RegionRoute._table_from_terrain_uncached(built.data, cover, true)
-	_check(expected.ok and int(expected.table[400]) > 0, "Content-key site has at least one open boundary component")
+func _content_key_checks(source: RegionData, sites: Array[Vector2i]) -> void:
+	# The blocked/selector probes need a real Site whose table has an open
+	# boundary component; take the first compared Site that has one.
+	var site := Vector2i(-1, -1)
+	var cover := PackedByteArray()
+	var expected := {}
+	for candidate: Vector2i in sites:
+		var probe: Dictionary = source.make_terrain_data(candidate.x, candidate.y)
+		if not probe.ok: continue
+		var candidate_cover := RegionRoute._cover(source, candidate)
+		var table: Dictionary = RegionRoute._table_from_terrain_uncached(probe.data, candidate_cover, true)
+		if table.ok and int(table.table[400]) > 0:
+			site = candidate
+			cover = candidate_cover
+			expected = table
+			break
+	if not _check_ok(site != Vector2i(-1, -1), "A compared Site has at least one open boundary component"): return
 	var twin: Dictionary = source.make_terrain_data(site.x, site.y)
 	twin.data.site = {"content_key_probe": true} # Site state is not table input.
 	twin.data.navigation_revision += 7

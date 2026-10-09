@@ -165,6 +165,8 @@ func _phase_dispatch_original_infantry() -> bool:
 	for index: int in source.combat_units.size(): phase_source_people.append(source.combat_identity(index))
 	var captain := source.combat_identity(source.current_commander)
 	var nation_id := "phase_nation_%d" % OS.get_process_id()
+	# Same on-demand container as the original trial-nation and arrival owners.
+	if not lab.terrain.site.has("equipment_nations"): lab.terrain.site.equipment_nations = {}
 	lab.terrain.site.equipment_nations[nation_id] = {"members": phase_source_people.duplicate(), "standards": {}, "offices": SiteOffices.default_offices("nation", captain, true)}
 	var source_checkpoint: Dictionary = controller.checkpoint_region_internal("region_checkpoint", true)
 	if not _check(source_checkpoint.ok, "actual original full checkpoint validates source nation and two body/item owners", source_checkpoint): return false

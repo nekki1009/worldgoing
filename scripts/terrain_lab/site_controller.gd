@@ -2884,9 +2884,12 @@ func load_current() -> void:
 
 func _load_compatible_site(path: String) -> Dictionary:
 	var slot_path := region_slot.folder.replace("\\", "/").trim_suffix("/") + "/" if region_slot != null else ""
-	var result: Dictionary = region_slot.load_compatible_site(path) if not slot_path.is_empty() and path.replace("\\", "/").begins_with(slot_path) else Store.load_site(path, Callable(), clampi(OS.get_processor_count(), 1, 8))
+	var selected_slot_path := not slot_path.is_empty() and path.replace("\\", "/").begins_with(slot_path)
+	var result: Dictionary = region_slot.load_compatible_site(path) if selected_slot_path else Store.load_site(path, Callable(), clampi(OS.get_processor_count(), 1, 8))
 	if result.ok:
-		var guard: Dictionary = lab.exchange_snapshot_guard(result.data)
+		var selected_restore: bool = result.data.site.has("region_snapshot")
+		if selected_restore and not selected_slot_path: return Runtime.fail("INVALID_SELECTED_REGION_RESTORE", "原完整快照只由目前存檔槽選定檔恢復")
+		var guard: Dictionary = Store.validate_region_snapshot(result.data, {}) if selected_restore else lab.exchange_snapshot_guard(result.data)
 		if not guard.ok: return guard
 	return result
 
@@ -2906,32 +2909,45 @@ func load_from(path: String) -> Dictionary:
 	if lab.terrain != null and float(lab.terrain.site.combat_left) > 0:
 		return _load_failure(Runtime.fail("BUSY", "脫戰後才能載入"))
 	var result := _load_compatible_site(path)
-	if result.ok and not is_instance_valid(lab.npc):
+	var selected_restore: bool = result.ok and result.data.site.has("region_snapshot")
+	if result.ok and not selected_restore and not is_instance_valid(lab.npc):
 		var retired := Store.retire_default_worker(result.data)
 		if not retired.ok: result = retired
 	if not result.ok: return _load_failure(result)
 	var work_guard := _siege_work_saved_guard(result.data)
 	if not work_guard.ok: return _load_failure(work_guard)
-	var prepared: Dictionary = lab.prepare_crowd_load(result.data, result.get("crowd_native"))
+	var prepared: Dictionary = lab.prepare_selected_region_owner_restore(result.data, region_slot) if selected_restore else lab.prepare_crowd_load(result.data, result.get("crowd_native"))
 	# Only the staged CrowdSite keeps the accepted candidate. Do not expose a
 	# second native owner through the public load result after this transaction.
 	result.erase("crowd_native")
 	if not prepared.ok: return _load_failure(prepared)
+	var selected_generation := int(region_slot._marker.generation) if selected_restore else -1
+	if selected_restore: result["data"] = prepared.data # Canonical readback and its private ticket stay together.
 	var transport_guard: Dictionary = lab.fire_transport_bind_guard(result.data,
 		is_instance_valid(prepared.get("crowd_site")) or lab.crowd_startup_requested)
 	if not transport_guard.ok:
 		if is_instance_valid(prepared.get("crowd_site")): prepared.crowd_site.free()
+		if selected_restore: lab._region_owner_bind_tickets.erase(str(prepared.region_bind_token))
 		return _load_failure(transport_guard)
-	if path != save_path and lab.terrain != null and not lab.terrain.site.is_empty():
+	# A selected reload keeps this exact published generation; ordinary replacement still archives.
+	if not selected_restore and path != save_path and lab.terrain != null and not lab.terrain.site.is_empty():
 		var archive := save_to(_archive_path())
 		if not archive.ok:
 			if is_instance_valid(prepared.get("crowd_site")): prepared.crowd_site.free()
 			return _load_failure(archive)
+	if selected_restore:
+		var admission: Dictionary = lab._region_bind_ticket_admission(result.data, prepared)
+		if not admission.ok:
+			lab._region_owner_bind_tickets.erase(str(prepared.region_bind_token))
+			return _load_failure(admission)
 	_cancel_facing_move()
 	_clear_formation_candidate()
 	lab.bind_terrain(result.data, prepared)
-	if not lab.region_bind_receipt(result.data).get("complete", false):
+	var bound: Dictionary = lab.region_bind_receipt(result.data)
+	if not bound.get("complete", false) or selected_restore and (int(bound.get("generation", -1)) != selected_generation
+			or str(bound.get("owner", "")) != str(region_slot.control.active_site_id) or str(bound.get("mode", "")) != "live"):
 		if is_instance_valid(prepared.get("crowd_site")): prepared.crowd_site.free()
+		if selected_restore: lab._region_owner_bind_tickets.erase(str(prepared.region_bind_token))
 		return _load_failure(Runtime.fail("INVALID_CROWD", "載入未提交；保留目前場景"))
 	_auto_save_blocked = false
 	return result
@@ -9125,7 +9141,7 @@ func region_replacement_guard() -> Dictionary:
 
 
 func ship_journey_active() -> bool:
-	return not _ship_journey.is_empty() or region_operation_pending()
+	return not _ship_journey.is_empty() or region_operation_pending() or vehicles != null and lab != null and lab.terrain != null and not vehicles._region_original_ship_drive(lab.terrain) and not vehicles._region_ship_frames(lab.terrain).is_empty()
 
 func region_operation_pending() -> bool:
 	return not _region_pending.is_empty()
@@ -9162,10 +9178,10 @@ func resume_region_operation() -> Dictionary:
 
 
 func ship_vehicle_in_journey(identity: String) -> bool:
-	return not _ship_journey.is_empty() and _ship_journey.get("boat_ids", []).has(identity)
+	return vehicles != null and vehicles.has_region_ship_projection(identity) or not _ship_journey.is_empty() and _ship_journey.get("boat_ids", []).has(identity)
 
 func ship_person_in_journey(identity: int) -> bool:
-	if _ship_journey.is_empty(): return false
+	if _ship_journey.is_empty() and vehicles._region_ship_frames(lab.terrain).is_empty(): return false
 	for original: TerrainArmy in lab.combat_armies:
 		var index := original.index_for_identity(identity)
 		if index >= 0 and index < original.combat_units.size():

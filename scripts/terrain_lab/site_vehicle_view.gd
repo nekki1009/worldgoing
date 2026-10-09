@@ -171,7 +171,7 @@ func _refresh_ship_loot() -> void:
 			if _ship_loot_nodes.has(identity): _ship_loot_nodes[identity].visible = false
 			continue
 		var point: Vector2 = lab.site_controller.vehicles.ship_loot_ground(container)
-		if point.x < 0.0:
+		if point.x < 0.0 and not lab.site_controller.vehicles.has_region_ship_projection(str(boat.get("id", ""))):
 			if _ship_loot_nodes.has(identity): _ship_loot_nodes[identity].visible = false
 			continue
 		var node: Node2D = _ship_loot_nodes.get(identity)
@@ -687,7 +687,7 @@ func ship_art_frame(kind: String, facing: Vector2i) -> Dictionary:
 	return result
 
 func _ship_in_journey(identity: String) -> bool:
-	return lab != null and lab.site_controller != null and lab.site_controller.has_method("ship_vehicle_in_journey") and bool(lab.site_controller.call("ship_vehicle_in_journey", identity))
+	return lab != null and lab.site_controller != null and lab.site_controller.has_method("ship_vehicle_in_journey") and bool(lab.site_controller.call("ship_vehicle_in_journey", identity)) and not lab.site_controller.vehicles.has_region_ship_projection(identity)
 
 func _ship_pose_rectangle(kind: String, pose: Dictionary) -> Rect2:
 	var spec: Dictionary = Ship.definition(kind)

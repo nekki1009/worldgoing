@@ -695,7 +695,7 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 	for kind: String in ranged_results:
 		ranged_results[kind] = 0
 	for team: TerrainArmy in combat_armies:
-		team.clear()
+		team.clear(str(region_admission.get("token", "")) if trusted_region else "")
 	if combat_movement_coordinator != null:
 		combat_movement_coordinator.reset_for_site_replacement()
 	_trim_empty_army_slots()
@@ -822,7 +822,7 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 		"session": str(OS.get_process_id()) + ":" + str(get_instance_id()),
 		"parts": ["actors", "armies", "movement", "items", "supply", "controller", "fire_transport", "fire_owners", "region_owners"]}
 	terrain.set_meta(&"region_bind_receipt", Callable(self, "region_bind_receipt"))
-	if not restore_only and site_controller.region_slot != null:
+	if not restore_only and site_controller.region_slot != null and not terrain.has_meta(&"region_party_owner"):
 		var activated: Dictionary = site_controller.region_slot.acknowledge_region_bind(terrain, region_bind_receipt(terrain))
 		if not activated.ok:
 			_region_bind_receipt_value = activated

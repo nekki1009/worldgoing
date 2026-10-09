@@ -538,6 +538,7 @@ func has_ship_journey() -> bool:
 
 func _hide_journey_person(index: int) -> bool:
 	if not _ship_in_journey(index): return false
+	if vehicle_transport != null and vehicle_transport.has_region_ship_projection(_ship_vehicle_id(index)): return false
 	if _batch_view != null: _batch_view.remove(index)
 	if index >= 0 and index < _sprites.size() and _sprites[index] != null: _sprites[index].visible = false
 	return true

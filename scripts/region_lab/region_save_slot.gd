@@ -54,7 +54,7 @@ func open_map(map_data: RegionData, world_instance_id: String, slot_id: String, 
 	if prepare_new and not _initial_context_ok(initial_context): return fail("INVALID_INITIAL_SCENARIO")
 	if map_data == null or map_data.manifest.is_empty(): return fail("MISSING_BASE", "尚未載入固定地圖")
 	if not _safe_part(world_instance_id) or not _safe_part(slot_id): return fail("INVALID_SLOT")
-	var empty_policy := TechnologyPolicy.new_policy([])
+	var empty_policy := TechnologyPolicy.new_policy(_initial_technology_categories())
 	if not empty_policy.ok: return empty_policy
 	var expected := {"format": 2, "world_instance_id": world_instance_id, "slot_id": slot_id,
 		"technology_policy": empty_policy.policy, "atlas_id": str(map_data.manifest.atlas_id),
@@ -96,13 +96,13 @@ func open_map(map_data: RegionData, world_instance_id: String, slot_id: String, 
 		if not pending_read.ok: return pending_read
 		if not _initial_pending_ok(pending_read.payload, expected): return fail("INITIAL_PIN_CONFLICT")
 		pending_record = pending_read.payload
-		if prepare_new and (pending_record.starting_site != initial_context.starting_site or pending_record.initial_scenario_id != initial_context.initial_scenario_id): return fail("INITIAL_SCENARIO_CONFLICT", "待提交的原開局選擇不可重選")
+		if prepare_new and (not _initial_site_same(pending_record.starting_site, initial_context.starting_site) or pending_record.initial_scenario_id != initial_context.initial_scenario_id): return fail("INITIAL_SCENARIO_CONFLICT", "待提交的原開局選擇不可重選")
 	elif not manifest_exists:
 		# A valid same-pin pending write can be completed after a rename crash.
 		if FileAccess.file_exists(pending_path + ".tmp"):
 			var pending_read := _read_document(pending_path + ".tmp", 16384)
 			if pending_read.ok and _initial_pending_ok(pending_read.get("payload"), expected):
-				if prepare_new and (pending_read.payload.starting_site != initial_context.starting_site or pending_read.payload.initial_scenario_id != initial_context.initial_scenario_id): return fail("INITIAL_SCENARIO_CONFLICT")
+				if prepare_new and (not _initial_site_same(pending_read.payload.starting_site, initial_context.starting_site) or pending_read.payload.initial_scenario_id != initial_context.initial_scenario_id): return fail("INITIAL_SCENARIO_CONFLICT")
 				if DirAccess.rename_absolute(ProjectSettings.globalize_path(pending_path + ".tmp"), ProjectSettings.globalize_path(pending_path)) != OK: return fail("SAVE_IO")
 				pending_record = pending_read.payload
 			elif folder == location and _initial_pending_ok(_initialization, expected):
@@ -134,7 +134,7 @@ func open_map(map_data: RegionData, world_instance_id: String, slot_id: String, 
 			pending_record = _initialization.duplicate(true)
 		if pending_record.is_empty() and prepare_new and not recover_first_marker:
 			pending_record = {"version": 1, "pin": expected.duplicate(true), "starting_site": initial_context.starting_site.duplicate(), "initial_scenario_id": str(initial_context.initial_scenario_id)}
-	if prepare_new and not pending_record.is_empty() and (pending_record.starting_site != initial_context.starting_site or pending_record.initial_scenario_id != initial_context.initial_scenario_id): return fail("INITIAL_SCENARIO_CONFLICT")
+	if prepare_new and not pending_record.is_empty() and (not _initial_site_same(pending_record.starting_site, initial_context.starting_site) or pending_record.initial_scenario_id != initial_context.initial_scenario_id): return fail("INITIAL_SCENARIO_CONFLICT")
 	source = map_data
 	pin = expected
 	folder = location
@@ -147,7 +147,7 @@ func open_map(map_data: RegionData, world_instance_id: String, slot_id: String, 
 		var derived := _derive_initial_context()
 		if not derived.ok: return derived
 		_initialization = derived.context
-		if prepare_new and (_initialization.starting_site != initial_context.starting_site or _initialization.initial_scenario_id != initial_context.initial_scenario_id): return fail("INITIAL_SCENARIO_CONFLICT")
+		if prepare_new and (not _initial_site_same(_initialization.starting_site, initial_context.starting_site) or _initialization.initial_scenario_id != initial_context.initial_scenario_id): return fail("INITIAL_SCENARIO_CONFLICT")
 	if not _initialization.is_empty():
 		if not FileAccess.file_exists(pending_path):
 			var pending_written := _write_new_document(pending_path, _initialization)
@@ -418,12 +418,17 @@ func _generation_path(generation: int, site: Vector2i) -> String:
 func _read_document(path: String, maximum: int = 1048576) -> Dictionary:
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null or file.get_length() > maximum: return fail("SAVE_IO", "存檔槽記錄無法讀取")
-	var envelope: Variant = JSON.parse_string(file.get_as_text())
+	var envelope_parser := JSON.new()
+	var envelope_error := envelope_parser.parse(file.get_as_text())
 	file.close()
+	if envelope_error != OK: return fail("CORRUPT_SAVE", "存檔槽記錄格式損毀，原代保留")
+	var envelope: Variant = envelope_parser.data
 	if not envelope is Dictionary or envelope.size() != 2 or not envelope.get("payload") is String \
 			or not envelope.get("checksum") is String or str(envelope.payload).sha256_text() != str(envelope.checksum):
 		return fail("CORRUPT_SAVE", "存檔槽記錄校驗失敗，原代保留")
-	var payload: Variant = JSON.parse_string(envelope.payload)
+	var payload_parser := JSON.new()
+	if payload_parser.parse(envelope.payload) != OK: return fail("CORRUPT_SAVE", "存檔槽記錄格式")
+	var payload: Variant = payload_parser.data
 	return {"ok": true, "payload": payload} if payload is Dictionary else fail("CORRUPT_SAVE", "存檔槽記錄格式")
 
 func _write_new_document(path: String, payload: Dictionary) -> Dictionary:
@@ -5101,6 +5106,13 @@ var _initialization: Dictionary = {}
 
 var _initial_candidate: Dictionary = {}
 
+static func _initial_site_same(left: Variant, right: Variant) -> bool:
+	if not left is Array or not right is Array or left.size() != 2 or right.size() != 2: return false
+	for index: int in 2:
+		if not _whole(left[index], -10000000, 10000000) or not _whole(right[index], -10000000, 10000000) or int(left[index]) != int(right[index]): return false
+	return true
+
+
 static func _initial_context_ok(context: Variant) -> bool:
 	return context is Dictionary and context.size() == 2 and context.get("starting_site") is Array and context.starting_site.size() == 2 and _whole(context.starting_site[0], -10000000, 10000000) and _whole(context.starting_site[1], -10000000, 10000000) and context.get("initial_scenario_id") is String and str(context.initial_scenario_id) in ["", InitialArtisans.PRIMARY, InitialArtisans.THREE_FACTIONS]
 
@@ -5110,7 +5122,7 @@ func _initial_pending_ok(record: Variant, expected: Dictionary) -> bool:
 
 
 func _initial_complete_ok(record: Variant) -> bool:
-	return record is Dictionary and record.size() == 5 and _whole(record.get("version"), 1, 1) and _whole(record.get("first_generation"), 1, 1) and _same_pin(record.get("pin"), pin) and record.get("starting_site") == _initialization.get("starting_site") and record.get("initial_scenario_id") == _initialization.get("initial_scenario_id")
+	return record is Dictionary and record.size() == 5 and _whole(record.get("version"), 1, 1) and _whole(record.get("first_generation"), 1, 1) and _same_pin(record.get("pin"), pin) and _initial_site_same(record.get("starting_site"), _initialization.get("starting_site")) and record.get("initial_scenario_id") == _initialization.get("initial_scenario_id")
 
 
 func initialization_pending() -> bool:
@@ -5153,7 +5165,8 @@ func _check_initial_record(record: Dictionary) -> Dictionary:
 	if scenario.is_empty():
 		if state.has("initial_scenario") or not state.get("armies", []).is_empty() or state.has("technology_artisans"): return fail("INVALID_INITIAL_POPULATION")
 	else:
-		if state.get("initial_scenario", {}) != {"version": 1, "scenario_id": scenario, "world_id": str(pin.world_instance_id)}: return fail("INVALID_INITIAL_SCENARIO")
+		var receipt: Variant = state.get("initial_scenario")
+		if not receipt is Dictionary or receipt.size() != 3 or not _whole(receipt.get("version"), 1, 1) or receipt.get("scenario_id") != scenario or receipt.get("world_id") != str(pin.world_instance_id): return fail("INVALID_INITIAL_SCENARIO")
 		var teams := 1 if scenario == InitialArtisans.PRIMARY else 3
 		if state.get("armies", []).size() != teams: return fail("INVALID_INITIAL_POPULATION")
 		for roster: Dictionary in state.armies:
@@ -5198,7 +5211,7 @@ func prepare_initial_site(data: TerrainData) -> Dictionary:
 	if not initialization_pending() or not _marker.is_empty() or not _initial_candidate.is_empty(): return fail("INITIAL_ALREADY_PREPARED")
 	var coordinate := _coordinate(data)
 	if not coordinate.ok: return coordinate
-	if [coordinate.site.x, coordinate.site.y] != _initialization.starting_site or str(data.site.get("world_pin", {}).get("world_instance_id", "")) != str(pin.world_instance_id): return fail("INITIAL_PIN_CONFLICT")
+	if not _initial_site_same([coordinate.site.x, coordinate.site.y], _initialization.starting_site) or str(data.site.get("world_pin", {}).get("world_instance_id", "")) != str(pin.world_instance_id): return fail("INITIAL_PIN_CONFLICT")
 	var scenario := str(_initialization.initial_scenario_id)
 	if not scenario.is_empty(): data.site.initial_scenario = {"version": 1, "scenario_id": scenario, "world_id": str(pin.world_instance_id)}
 	elif data.site.has("initial_scenario"): return fail("INVALID_INITIAL_SCENARIO")

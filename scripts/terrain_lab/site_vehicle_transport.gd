@@ -874,6 +874,7 @@ func reserves_cell(cell: Vector2i) -> bool:
 	return blocks_cell(cell)
 
 func _claims(vehicle: Dictionary) -> Dictionary:
+	if is_ship(vehicle) and has_region_ship_projection(str(vehicle.get("id", ""))): return region_ship_claims(vehicle)
 	var result := {}
 	if is_ship(vehicle) and _ship_in_journey(str(vehicle.id)): return controller.ship_journey_claims(vehicle)
 	for cell: Vector2i in footprint(lab.terrain, vehicle): result[cell] = true
@@ -1685,7 +1686,7 @@ func ship_local_ground(vehicle: Dictionary, local: Vector2) -> Vector2:
 
 func ship_person_ground(identity: int) -> Vector2:
 	var vehicle := ship_for_person(identity)
-	if vehicle.is_empty() or _ship_in_journey(str(vehicle.id)): return Vector2(-1.0, -1.0)
+	if vehicle.is_empty() or _ship_in_journey(str(vehicle.id)) and not has_region_ship_projection(str(vehicle.id)): return Vector2(-1.0, -1.0)
 	var job: Dictionary = controller.person_actions.job_for(identity)
 	if str(job.get("kind", "")) in ["ship_cross", "ship_evac"]:
 		return (_ship_job_point(job) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
@@ -1693,13 +1694,14 @@ func ship_person_ground(identity: int) -> Vector2:
 
 func ship_person_cell(identity: int) -> Vector2i:
 	var point := ship_person_ground(identity)
-	if point.x < 0.0 or point.y < 0.0: return TerrainArmy.INVALID_CELL
+	var boat := ship_for_person(identity)
+	if (point.x < 0.0 or point.y < 0.0) and not has_region_ship_projection(str(boat.get("id", ""))): return TerrainArmy.INVALID_CELL
 	return Vector2i((point / TerrainRenderer.CELL_PIXELS).floor())
 
 func ship_loot_ground(container: Dictionary) -> Vector2:
 	var vehicle: Dictionary = records().get(str(container.get("vehicle_id", "")), {})
 	var local: Array = container.get("local_position", [])
-	if not is_ship(vehicle) or _ship_in_journey(str(vehicle.id)) or local.size() != 2: return Vector2(-1.0, -1.0)
+	if not is_ship(vehicle) or _ship_in_journey(str(vehicle.id)) and not has_region_ship_projection(str(vehicle.id)) or local.size() != 2: return Vector2(-1.0, -1.0)
 	return ship_local_ground(vehicle, Vector2(float(local[0]), float(local[1])))
 
 func ship_load(vehicle_id: String) -> float:
