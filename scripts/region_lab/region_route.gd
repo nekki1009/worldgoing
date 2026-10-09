@@ -121,18 +121,47 @@ static func cost_factor(table: PackedByteArray) -> float:
 static func table_from_terrain(data: TerrainData, resource_cover: PackedByteArray = PackedByteArray(), effective: bool = false) -> Dictionary:
 	if data == null or data.size != Vector2i(Adapter.SIDE, Adapter.SIDE):
 		return {"ok": false, "code": "INVALID_SITE", "message": "路線表只接受 100×100 固定地形"}
+	# P1'': the table is a pure function of the body's packed navigation layers,
+	# size, parameters, the resource cover and `effective`; never of `site`. Key
+	# the memo on that content, so equal navigation reuses one table whichever
+	# body (fresh, cached, live-derived) carries it.
+	var table_key := "c|%d|%d|%s" % [_navigation_content_hash(data), hash(resource_cover), str(effective)]
 	_mutex.lock()
-	var owner_key: String = str(_terrain_memo_owner.get(data.get_instance_id(), ""))
-	var table_key := "%s#%d#%s" % [owner_key, hash(resource_cover), str(effective)] if not owner_key.is_empty() else ""
-	var cached: Variant = _table_memo.get(table_key) if not table_key.is_empty() else null
+	var cached: Variant = _table_memo.get(table_key)
 	_mutex.unlock()
 	if cached != null: return cached.duplicate(true)
 	var computed := _table_from_terrain_uncached(data, resource_cover, effective)
-	if not table_key.is_empty() and bool(computed.get("ok", false)):
+	if bool(computed.get("ok", false)):
 		_mutex.lock()
-		if _terrain_memo_owner.get(data.get_instance_id(), "") == owner_key: _table_memo[table_key] = computed.duplicate(true)
+		if not _table_memo.has(table_key):
+			_table_memo[table_key] = computed.duplicate(true)
+			_table_memo_order.append(table_key)
+			while _table_memo_order.size() > TABLE_MEMO_LIMIT: _table_memo.erase(_table_memo_order.pop_front())
 		_mutex.unlock()
 	return computed
+
+const TABLE_MEMO_LIMIT := 96
+static var _table_memo_order: Array[String] = []
+static var _navigation_layer_names: Array[String] = []
+
+## Every packed-array layer and Boolean selector TerrainData declares (a
+## superset of what the table reads: has_raised_surfaces/has_navigation_overrides
+## choose the walk layers), plus size and parameters. Collected once from the
+## script's own property list so a new layer is included automatically.
+static func _navigation_content_hash(data: TerrainData) -> int:
+	if _navigation_layer_names.is_empty():
+		var names: Array[String] = []
+		for property: Dictionary in data.get_property_list():
+			if int(property.get("usage", 0)) & PROPERTY_USAGE_SCRIPT_VARIABLE == 0: continue
+			if int(property.type) in [TYPE_BOOL, TYPE_PACKED_BYTE_ARRAY, TYPE_PACKED_INT32_ARRAY, TYPE_PACKED_INT64_ARRAY, TYPE_PACKED_FLOAT32_ARRAY, TYPE_PACKED_FLOAT64_ARRAY]:
+				names.append(str(property.name))
+		names.sort()
+		_mutex.lock()
+		if _navigation_layer_names.is_empty(): _navigation_layer_names = names
+		_mutex.unlock()
+	var values: Array = [data.size, data.parameters]
+	for name: String in _navigation_layer_names: values.append(data.get(name))
+	return hash(values)
 
 static func _table_from_terrain_uncached(data: TerrainData, resource_cover: PackedByteArray, effective: bool) -> Dictionary:
 	var policy := travel_policy(data, resource_cover)
@@ -465,6 +494,7 @@ static func clear_memory_cache() -> void:
 	_terrain_memo_order.clear()
 	_terrain_memo_owner.clear()
 	_table_memo.clear()
+	_table_memo_order.clear()
 	_mutex.unlock()
 
 static func _node_key(site: Vector2i, component: int) -> int:

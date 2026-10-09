@@ -5304,11 +5304,20 @@ func record_completed_region_travel_step(token: String, prepared: Dictionary, ou
 		return fail("INCOMPLETE_PARTY_PROGRESS")
 	if not region_original_travel_interval.is_valid(): return fail("MISSING_TRAVEL_HOST")
 	var host: Object = region_original_travel_interval.get_object()
-	if not host is TerrainLab or host.site_controller == null or host.site_controller.region_slot != self or not host.restore_only or _region_original_labs.get(str(host.terrain.site.id)) != host:
+	var party_host: bool = host is TerrainLab and host.terrain != null and host.terrain.has_meta(&"region_party_owner")
+	if not host is TerrainLab or host.site_controller == null or host.site_controller.region_slot != self or prepared.get("travel_host") != host or not party_host and (not host.restore_only or _region_original_labs.get(str(host.terrain.site.id)) != host):
 		return fail("INVALID_TRAVEL_HOST")
 	var originals: Dictionary = prepared.get("cold_labs", {}).duplicate()
 	for battle: Dictionary in prepared.battles.values(): originals[str(battle.lab.terrain.site.id)] = battle.lab
-	if originals.get(str(host.terrain.site.id)) != host: return fail("INVALID_TRAVEL_HOST")
+	if not party_host and originals.get(str(host.terrain.site.id)) != host: return fail("INVALID_TRAVEL_HOST")
+	var party_original: TerrainLab = prepared.get("travel_party")
+	var fingerprint := Marshalls.raw_to_base64(var_to_bytes(outcome.party)).sha256_text()
+	if not is_instance_valid(party_original) or party_original.terrain == null or party_original._region_bound_data != party_original.terrain \
+			or get_meta(&"region_party_owner_labs", {}).get(token) != party_original or party_original._region_party_token != token \
+			or _travel_party_runtime_token != token or str(party_original.terrain.site.id) != "travel:" + token \
+			or party_original._region_party_input_hash != fingerprint \
+			or party_original.terrain.get_meta(&"region_party_owner", {}).get("party_hash") != fingerprint: return fail("INCOMPLETE_PARTY_PROGRESS")
+	if party_host and (party_original != host or not host._region_point_pending.get("interval_complete", false)): return fail("INCOMPLETE_PARTY_PROGRESS")
 	for owner: String in prepared.permits:
 		var checked := GameplayClock.check_permit(region_registry(), prepared.permits[owner], int(_marker.get("generation", 0)), float(interval.game_begin), float(interval.action_begin))
 		if not checked.ok: return checked
@@ -5516,13 +5525,23 @@ func _region_arrival_battle_candidate(before: Dictionary, after: Dictionary, par
 ## actual original live body's remaining down timer. Nothing sets this proof.
 func _region_player_down_settlement() -> Dictionary:
 	var owner := str(control.get("active_site_id", ""))
-	if owner.is_empty(): return {}
+	var party_owner := owner.is_empty()
+	if party_owner:
+		var token := str(region_travel_journey().get("token", ""))
+		if not _safe_part(token): return {}
+		owner = "travel:" + token
 	var mode: Dictionary = region_registry().modes.get(owner, {})
 	if mode.get("mode") != "live" or mode.get("backend") != "gd" or mode.get("activation", {}).get("complete") != true or int(mode.get("generation", -1)) != int(_marker.get("generation", 0)):
 		return {}
-	if not GameplayClock.validate_mode(mode, owner, float(control.logical_game_seconds)).ok or float(mode.game_seconds) != float(control.logical_game_seconds) or float(mode.action_seconds) != float(control.fire_clock.action_seconds) or int(mode.activation.get("generation", -1)) != int(_marker.get("generation", 0)) or str(mode.consumer) != "original_site": return {}
+	if not GameplayClock.validate_mode(mode, owner, float(control.logical_game_seconds)).ok or float(mode.game_seconds) != float(control.logical_game_seconds) or float(mode.action_seconds) != float(control.fire_clock.action_seconds) or int(mode.activation.get("generation", -1)) != int(_marker.get("generation", 0)) or str(mode.consumer) != ("original_party" if party_owner else "original_site"): return {}
 	var original: TerrainLab
-	if region_owner_lab.is_valid():
+	var party: Dictionary = {}
+	if party_owner:
+		var selected := _region_life_current_party(owner.trim_prefix("travel:"))
+		if not selected.ok: return {}
+		original = selected.lab
+		party = selected.party
+	elif region_owner_lab.is_valid():
 		var candidate: Object = region_owner_lab.get_object()
 		if candidate is TerrainLab: original = candidate
 	if not is_instance_valid(original) or original.restore_only or original.site_controller == null or original.site_controller.region_slot != self or original.terrain == null or str(original.terrain.site.id) != owner or original._region_bound_data != original.terrain or original._region_bind_receipt_value.get("complete") != true or original._region_bind_receipt_value.get("owners_restored") != true or original.crowd_site != null and original.crowd_site.active:
@@ -5537,16 +5556,21 @@ func _region_player_down_settlement() -> Dictionary:
 	if not original.site_controller._pending_deaths.has(identity): return {}
 	var remaining := float(original.site_controller._pending_deaths[identity])
 	if hp > 0.0 or not is_finite(remaining) or remaining < 0.0 or remaining > float(TerrainArmy.CombatTimings.POSE_SECONDS[&"down"]) + TerrainLab.ACTION_TIME_EPSILON: return {}
+	var point_pending := not original._region_point_pending.is_empty()
 	if remaining <= TerrainLab.ACTION_TIME_EPSILON:
 		# An already committed land step may outlast down. Only its actual
 		# original movement state supplies that future close, never a new order.
 		remaining = _region_player_committed_close_action(person)
-		if remaining <= TerrainLab.ACTION_TIME_EPSILON: return {}
-	var settlement := validate_settlement(original.terrain.site, float(control.logical_game_seconds))
-	if not settlement.ok or settlement.legacy or float(settlement.pending) > 0.00000001: return {}
-	var fire: Dictionary = original.terrain.site.get("fire_settlement", {})
-	if not validate_fire_settlement(original.terrain.site, control.fire_clock).ok or int(fire.get("sequence", -1)) != int(control.fire_clock.sequence) or float(fire.get("action_seconds", -1.0)) != float(control.fire_clock.action_seconds) or float(fire.get("game_seconds", -1.0)) != float(control.logical_game_seconds): return {}
-	var point_pending := not original._region_point_pending.is_empty()
+		if remaining <= TerrainLab.ACTION_TIME_EPSILON and not point_pending: return {}
+	if party_owner:
+		if absf(float(party.upkeep.get("at", -1.0)) - float(control.logical_game_seconds)) > TerrainLab.ACTION_TIME_EPSILON \
+				or absf(float(party.upkeep.get("owner_action_seconds", -1.0)) - float(control.fire_clock.action_seconds)) > TerrainLab.ACTION_TIME_EPSILON:
+			return {}
+	else:
+		var settlement := validate_settlement(original.terrain.site, float(control.logical_game_seconds))
+		if not settlement.ok or settlement.legacy or float(settlement.pending) > 0.00000001: return {}
+		var fire: Dictionary = original.terrain.site.get("fire_settlement", {})
+		if not validate_fire_settlement(original.terrain.site, control.fire_clock).ok or int(fire.get("sequence", -1)) != int(control.fire_clock.sequence) or float(fire.get("action_seconds", -1.0)) != float(control.fire_clock.action_seconds) or float(fire.get("game_seconds", -1.0)) != float(control.logical_game_seconds): return {}
 	if point_pending:
 		# The owner's running zero-time point may drain its own accepted queue
 		# after the real death effect. Positive admissions never enter this arm.
@@ -5560,7 +5584,11 @@ func _region_player_down_settlement() -> Dictionary:
 	for event: Dictionary in GameplayClock.pending_at(region_registry(), float(control.logical_game_seconds)):
 		if not bool(event.player) or str(event.kind) not in ["player_death", "life"]: continue
 		var payload: Dictionary = event.payload
-		if payload.get("controlled") != true or payload.get("death") != true or int(payload.get("person_id", -1)) != identity or payload.get("destination_site") != owner: continue
+		if payload.get("controlled") != true or payload.get("death") != true or payload.has("family_control_transition"): continue
+		if party_owner:
+			var target := _region_life_original_owner(event)
+			if not target.ok or target.lab != original or int(target.person_id) != identity: continue
+		elif int(payload.get("person_id", -1)) != identity or payload.get("destination_site") != owner: continue
 		if not _region_player_death_effect_receipt(event): continue
 		var token := str(event.owner).trim_prefix("travel:")
 		if token.is_empty() or not _region_player_death_mapping(event, original.terrain): continue

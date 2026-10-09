@@ -29,6 +29,10 @@ static func build(source: RefCounted, site: Vector2i) -> Dictionary:
 	data.parameters["max_height"] = 5
 	data.parameters["micro_strength"] = 0.0
 	data.parameters["composition"] = "fixed_geography"
+	if source.manifest.has("land_condition_rule"):
+		# RegionData already checked the exact named rule before publishing manifest.
+		if not source.manifest.land_condition_rule is String or source.manifest.land_condition_rule != "terrain_mapped_potential_v1": return {"ok": false, "code": "INVALID_LAND_CONDITION_RULE"}
+		data.parameters["fixed_land_condition_rule"] = str(source.manifest.land_condition_rule)
 	# A named ocean-mask gameplay licence. Inland/unknown water stays unlicensed;
 	# this does not claim measured seabed depth or alter the infantry walk mask.
 	data.parameters["navigable_water_version"] = 1
@@ -115,6 +119,8 @@ static func build(source: RefCounted, site: Vector2i) -> Dictionary:
 		"grid_contract_version": Grid.CONTRACT_VERSION, "base_revision": str(source.manifest.base_revision),
 		"manifest_sha256": str(source.manifest_hash), "site_id": identity, "site": [site.x, site.y],
 		"terrain_fingerprint": data.fingerprint(), "ramp_rule_revision": RAMP_RULE_REVISION}
+	if data.parameters.has("fixed_land_condition_rule"):
+		base["land_condition_rule"] = data.parameters.fixed_land_condition_rule
 	if resources_enabled:
 		base["resource_layer_sha256"] = source.resource_manifest_hash
 		base["resource_rule_revision"] = source.resource_rule_revision

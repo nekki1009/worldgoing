@@ -8116,7 +8116,9 @@ func _region_capture_original_owner_state(context: Dictionary) -> Dictionary:
 	var original_boundary: Dictionary = terrain.get_meta(&"fire_boundary", {})
 	var pending_fire := not bool(context.effects_complete) and not original_boundary.is_empty() and absf(float(original_boundary.get("action_end", -1.0)) - float(context.action_seconds)) <= SiteRuntime.FIRE_EPS and float(context.action_seconds) >= fire_action_cursor
 	var slot: RegionSaveSlot = site_controller.region_slot
-	if slot != null:
+	var party_clock := _region_party_capture_clock(context)
+	if not party_clock.ok: return party_clock
+	if slot != null and not party_clock.party:
 		var registry: Dictionary = slot.region_registry()
 		var mode: Dictionary = registry.modes.get(str(terrain.site.id), {})
 		var expected := {"source_generation": int(slot._marker.get("generation", 0)), "runtime_revision": int(registry.revision),
@@ -8125,9 +8127,10 @@ func _region_capture_original_owner_state(context: Dictionary) -> Dictionary:
 			"mode_revision": int(mode.get("revision", 0))}
 		var clock_checked := RegionCheckpoint.validate_context(context, expected)
 		if not clock_checked.ok: return clock_checked
-	var settled := RegionSaveSlot.validate_settlement(terrain.site, context.game_seconds)
-	if not settled.ok or not bool(settled.legacy) and float(settled.pending) > 0.00000001:
-		return SiteRuntime.fail("STALE_REGION_OWNER", "Original Site has an incomplete global interval")
+	if not party_clock.party:
+		var settled := RegionSaveSlot.validate_settlement(terrain.site, context.game_seconds)
+		if not settled.ok or not bool(settled.legacy) and float(settled.pending) > 0.00000001:
+			return SiteRuntime.fail("STALE_REGION_OWNER", "Original Site has an incomplete global interval")
 	if absf(float(context.action_seconds) - fire_action_cursor) > 0.00000001 and not pending_fire:
 		return SiteRuntime.fail("STALE_REGION_OWNER", "Original action cursor does not match this complete interval")
 	var roots := {"version": 1, "site_id": str(terrain.site.id), "lab": _region_fields(self, REGION_LAB_FIELDS),
@@ -8167,6 +8170,8 @@ func _region_capture_original_owner_state(context: Dictionary) -> Dictionary:
 			roots.registry.leases.append([cell, [] if lease == null else registry._lease_values(lease)])
 	var references := _region_owner_references()
 	roots["reference_objects"] = _region_reference_objects(references)
+	var legacy := _region_validate_legacy_roots(terrain, roots, terrain.get_meta(&"region_party_runtime_mapping", {}))
+	if not legacy.ok: return legacy
 	var captured := RegionOwnerSnapshot.capture(roots, references, context)
 	if not captured.ok: return captured
 	var result := context.duplicate(true)
@@ -8673,7 +8678,15 @@ static func _region_validate_bind_reference(data: TerrainData, key: String, kind
 
 func _prepare_region_main_interval(maximum: float, local_tactical: float, travelling: bool = false) -> Dictionary:
 	var slot: RegionSaveSlot = site_controller.region_slot
-	if travelling and (not restore_only or not str(slot.control.active_site_id).is_empty() or slot._region_original_labs.get(str(terrain.site.id)) != self): return SiteRuntime.fail("INVALID_TRAVEL_HOST")
+	var party_host := terrain.has_meta(&"region_party_owner")
+	if travelling:
+		if not str(slot.control.active_site_id).is_empty(): return SiteRuntime.fail("INVALID_TRAVEL_HOST")
+		if party_host:
+			var selected: Dictionary = slot.region_travel_party()
+			if not selected.ok: return selected
+			var current: Dictionary = slot.region_original_party_runtime_proof(_region_party_token, selected.party)
+			if not current.ok or current.get("lab") != self: return current if not current.ok else SiteRuntime.fail("INVALID_TRAVEL_HOST")
+		elif not restore_only or slot._region_original_labs.get(str(terrain.site.id)) != self: return SiteRuntime.fail("INVALID_TRAVEL_HOST")
 	if not slot.region_owner_lab.is_valid():
 		var wired := _wire_region_gameplay_adapters(slot)
 		if not wired.ok: return wired
@@ -9248,7 +9261,10 @@ func _region_bind_ticket_admission(data: TerrainData, prepared: Dictionary) -> D
 		return SiteRuntime.fail("REGION_BIND_TICKET_REQUIRED") if data != null and data.site.has("region_snapshot") else SiteRuntime.ok("", {"trusted": false})
 	var ticket: Dictionary = _region_owner_bind_tickets.get(token, {})
 	if ticket.is_empty() or ticket.get("data") != data or ticket.body_hash != RegionCheckpoint.state_hash(data.site): return SiteRuntime.fail("STALE_REGION_BIND_TICKET")
-	if ticket.kind in ["bootstrap", "projection"]:
+	if ticket.kind in ["party-bootstrap", "party-candidate", "party-published"]:
+		var party_admission := _region_party_bind_admission(ticket, data)
+		if not party_admission.ok: return party_admission
+	elif ticket.kind in ["bootstrap", "projection"]:
 		if not restore_only: return SiteRuntime.fail("INVALID_REGION_BIND_TICKET")
 	elif ticket.kind == "published":
 		var selected := _region_committed_bind_ticket(ticket, data)

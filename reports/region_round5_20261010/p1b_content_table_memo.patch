@@ -1,0 +1,120 @@
+--- a/scripts/region_lab/region_route.gd
++++ b/scripts/region_lab/region_route.gd
+@@ -121,18 +121,47 @@
+ static func table_from_terrain(data: TerrainData, resource_cover: PackedByteArray = PackedByteArray(), effective: bool = false) -> Dictionary:
+ 	if data == null or data.size != Vector2i(Adapter.SIDE, Adapter.SIDE):
+ 		return {"ok": false, "code": "INVALID_SITE", "message": "路線表只接受 100×100 固定地形"}
++	# P1'': the table is a pure function of the body's packed navigation layers,
++	# size, parameters, the resource cover and `effective`; never of `site`. Key
++	# the memo on that content, so equal navigation reuses one table whichever
++	# body (fresh, cached, live-derived) carries it.
++	var table_key := "c|%d|%d|%s" % [_navigation_content_hash(data), hash(resource_cover), str(effective)]
+ 	_mutex.lock()
+-	var owner_key: String = str(_terrain_memo_owner.get(data.get_instance_id(), ""))
+-	var table_key := "%s#%d#%s" % [owner_key, hash(resource_cover), str(effective)] if not owner_key.is_empty() else ""
+-	var cached: Variant = _table_memo.get(table_key) if not table_key.is_empty() else null
++	var cached: Variant = _table_memo.get(table_key)
+ 	_mutex.unlock()
+ 	if cached != null: return cached.duplicate(true)
+ 	var computed := _table_from_terrain_uncached(data, resource_cover, effective)
+-	if not table_key.is_empty() and bool(computed.get("ok", false)):
++	if bool(computed.get("ok", false)):
+ 		_mutex.lock()
+-		if _terrain_memo_owner.get(data.get_instance_id(), "") == owner_key: _table_memo[table_key] = computed.duplicate(true)
++		if not _table_memo.has(table_key):
++			_table_memo[table_key] = computed.duplicate(true)
++			_table_memo_order.append(table_key)
++			while _table_memo_order.size() > TABLE_MEMO_LIMIT: _table_memo.erase(_table_memo_order.pop_front())
+ 		_mutex.unlock()
+ 	return computed
++
++const TABLE_MEMO_LIMIT := 96
++static var _table_memo_order: Array[String] = []
++static var _navigation_layer_names: Array[String] = []
++
++## Every packed-array layer and Boolean selector TerrainData declares (a
++## superset of what the table reads: has_raised_surfaces/has_navigation_overrides
++## choose the walk layers), plus size and parameters. Collected once from the
++## script's own property list so a new layer is included automatically.
++static func _navigation_content_hash(data: TerrainData) -> int:
++	if _navigation_layer_names.is_empty():
++		var names: Array[String] = []
++		for property: Dictionary in data.get_property_list():
++			if int(property.get("usage", 0)) & PROPERTY_USAGE_SCRIPT_VARIABLE == 0: continue
++			if int(property.type) in [TYPE_BOOL, TYPE_PACKED_BYTE_ARRAY, TYPE_PACKED_INT32_ARRAY, TYPE_PACKED_INT64_ARRAY, TYPE_PACKED_FLOAT32_ARRAY, TYPE_PACKED_FLOAT64_ARRAY]:
++				names.append(str(property.name))
++		names.sort()
++		_mutex.lock()
++		if _navigation_layer_names.is_empty(): _navigation_layer_names = names
++		_mutex.unlock()
++	var values: Array = [data.size, data.parameters]
++	for name: String in _navigation_layer_names: values.append(data.get(name))
++	return hash(values)
+ 
+ static func _table_from_terrain_uncached(data: TerrainData, resource_cover: PackedByteArray, effective: bool) -> Dictionary:
+ 	var policy := travel_policy(data, resource_cover)
+@@ -465,6 +494,7 @@
+ 	_terrain_memo_order.clear()
+ 	_terrain_memo_owner.clear()
+ 	_table_memo.clear()
++	_table_memo_order.clear()
+ 	_mutex.unlock()
+ 
+ static func _node_key(site: Vector2i, component: int) -> int:
+--- a/scripts/tests/region_route_terrain_memo_test.gd
++++ b/scripts/tests/region_route_terrain_memo_test.gd
+@@ -4,6 +4,8 @@
+ ## identical to a fresh, uncached build, share one read-only body per manifest
+ ## content + site, hand out independent table copies, and invalidate on
+ ## clear_memory_cache() and on a different manifest identity.
++## P1'': the table memo is keyed on navigation content, so a content-equal
++## body reuses it, while a changed layer or walk-layer selector never does.
+ 
+ const LAYERS := ["height_levels", "surface_types", "flags", "ramp_edges", "detail_variation", "water_kind", "water_body",
+ 	"foundation", "fertility", "moisture", "drainage", "groundwater"]
+@@ -79,6 +81,7 @@
+ 		built_sites += 1
+ 	_check(built_sites >= 2, "At least two real fixed Sites were compared (built %d)" % built_sites)
+ 	if first_body != null:
++		_content_key_checks(source, first_site)
+ 		var other := RegionData.new()
+ 		other.load_manifest(RegionData.DEFAULT_MANIFEST)
+ 		other.manifest_hash = other.manifest_hash + "_other_manifest"
+@@ -89,6 +92,37 @@
+ 		_check(rebuilt.ok and not is_same(rebuilt.data, first_body) and _same_layers(rebuilt.data, first_body), "clear_memory_cache() invalidates the memo and rebuilds the same geography")
+ 	_finish()
+ 
++func _content_key_checks(source: RegionData, site: Vector2i) -> void:
++	var cover := RegionRoute._cover(source, site)
++	var built: Dictionary = source.make_terrain_data(site.x, site.y)
++	if not _check_ok(built.ok, "Fresh body for content-key checks"): return
++	var expected: Dictionary = RegionRoute._table_from_terrain_uncached(built.data, cover, true)
++	_check(expected.ok and int(expected.table[400]) > 0, "Content-key site has at least one open boundary component")
++	var twin: Dictionary = source.make_terrain_data(site.x, site.y)
++	twin.data.site = {"content_key_probe": true} # Site state is not table input.
++	twin.data.navigation_revision += 7
++	_check(var_to_bytes(RegionRoute.table_from_terrain(twin.data, cover, true)) == var_to_bytes(expected), "A content-equal body (other site/revision) reuses the equal table")
++	var blocked: Dictionary = source.make_terrain_data(site.x, site.y)
++	blocked.data.static_blocked = PackedByteArray()
++	blocked.data.static_blocked.resize(blocked.data.size.x * blocked.data.size.y)
++	blocked.data.static_blocked.fill(1)
++	var blocked_table: Dictionary = RegionRoute.table_from_terrain(blocked.data, cover, true)
++	_check(var_to_bytes(blocked_table) == var_to_bytes(RegionRoute._table_from_terrain_uncached(blocked.data, cover, true)) and int(blocked_table.table[400]) == 0, "A changed navigation layer misses the memo and computes its own table")
++	var selector: Dictionary = source.make_terrain_data(site.x, site.y)
++	var closed := selector.data.ramp_edges.duplicate()
++	closed.fill(0xF0)
++	selector.data.walk_ramp_edges = closed
++	selector.data.has_navigation_overrides = false
++	_check(var_to_bytes(RegionRoute.table_from_terrain(selector.data, cover, true)) == var_to_bytes(RegionRoute._table_from_terrain_uncached(selector.data, cover, true)), "Unselected walk layer: memo equals the uncached table")
++	selector.data.has_navigation_overrides = true
++	var selected: Dictionary = RegionRoute.table_from_terrain(selector.data, cover, true)
++	_check(var_to_bytes(selected) == var_to_bytes(RegionRoute._table_from_terrain_uncached(selector.data, cover, true)) and int(selected.table[400]) == 0, "The walk-layer selector is part of the memo key")
++	_check(RegionRoute._table_memo.size() <= RegionRoute.TABLE_MEMO_LIMIT and RegionRoute._table_memo_order.size() == RegionRoute._table_memo.size(), "The content-keyed table memo stays bounded")
++
++func _check_ok(condition: bool, message: String) -> bool:
++	_check(condition, message)
++	return condition
++
+ func _finish() -> void:
+ 	RegionRoute.clear_memory_cache()
+ 	print("REGION_ROUTE_TERRAIN_MEMO_REPORT: " + JSON.stringify({"checks": checks, "failures": failures}))

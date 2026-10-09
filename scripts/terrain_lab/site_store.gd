@@ -625,6 +625,10 @@ static func load_site(path: String = DEFAULT_PATH, fixed_base_loader: Callable =
 				or not loaded_base.get("data") is TerrainData or not _same_fixed_base(loaded_base.get("base"), fixed_base):
 			return Runtime.fail("SAVE_VERSION", "固定地圖基底不相容，原存檔保留")
 		data = loaded_base.data
+		# The true source loader supplies the rule. Saved parameters cannot invent,
+		# erase, change type or downgrade a declared source rule.
+		if params.has("fixed_land_condition_rule") != data.parameters.has("fixed_land_condition_rule") or params.get("fixed_land_condition_rule") != data.parameters.get("fixed_land_condition_rule") or params.has("fixed_land_condition_rule") and (not params.fixed_land_condition_rule is String or params.fixed_land_condition_rule != "terrain_mapped_potential_v1"):
+			return Runtime.fail("SAVE_VERSION", "Fixed land-condition source differs; original archive retained")
 		if data.size != params.size or data.preset != int(payload.preset) \
 				or data.seed_value != int(payload.seed) or not _same_fixed_base(data.parameters.get("fixed_base"), fixed_base) \
 				or data.fingerprint() != str(fixed_base.terrain_fingerprint) \
@@ -752,6 +756,8 @@ static func _same_fixed_base(left: Variant, right: Variant) -> bool:
 	for key: String in ["base_kind", "atlas_id", "base_revision", "manifest_sha256", "site_id", "terrain_fingerprint"]:
 		if not left.get(key) is String or left.get(key) != right.get(key):
 			return false
+	if left.has("land_condition_rule") or right.has("land_condition_rule"):
+		if not left.get("land_condition_rule") is String or not right.get("land_condition_rule") is String or left.get("land_condition_rule") != "terrain_mapped_potential_v1" or right.get("land_condition_rule") != left.land_condition_rule: return false
 	if left.get("ramp_rule_revision", "") != right.get("ramp_rule_revision", ""):
 		return false
 	if not _same_resource_pin(left, right, true):

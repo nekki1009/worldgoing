@@ -1,4 +1,4 @@
-﻿diff --git a/scripts/terrain_lab/site_controller.gd b/scripts/terrain_lab/site_controller.gd
+diff --git a/scripts/terrain_lab/site_controller.gd b/scripts/terrain_lab/site_controller.gd
 index f39b5bd..b3020ec 100644
 --- a/scripts/terrain_lab/site_controller.gd
 +++ b/scripts/terrain_lab/site_controller.gd

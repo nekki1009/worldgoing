@@ -88,6 +88,10 @@ func load_manifest(path: String = DEFAULT_MANIFEST) -> Dictionary:
 	var resource_layer := _read_resource_manifest(text.sha256_text())
 	if not resource_layer.ok:
 		return resource_layer
+	# A declared official land rule may not silently lose its resource layer.
+	# Explicit synthetic owner fixtures retain their original geography-only contract.
+	if parsed.has("land_condition_rule") and parsed.get("synthetic_fixture") != true and resource_layer.get("manifest", {}).is_empty():
+		return fail("MISSING_RESOURCE_PAIR", "Declared fixed land source has no released geography/resource pair")
 	# Validate a candidate completely before replacing the currently viewed atlas.
 	manifest = parsed
 	manifest_hash = text.sha256_text()
@@ -127,12 +131,15 @@ func load_manifest(path: String = DEFAULT_MANIFEST) -> Dictionary:
 	return {"ok": true, "code": "OK", "message": "固定地理資料已載入"}
 
 func _read_resource_manifest(geography_hash: String) -> Dictionary:
-	if geography_hash != RESOURCE_GEOGRAPHY_SHA:
+	var pair: Dictionary = RESOURCE_SOURCE_PAIRS.get(geography_hash, {})
+	if pair.is_empty():
 		return {"ok": true} # Older and synthetic geography keeps its original resource contract.
-	var file := FileAccess.open(RESOURCE_MANIFEST, FileAccess.READ)
+	var file := FileAccess.open(str(pair.path), FileAccess.READ)
 	if file == null or file.get_length() > 2 * 1024 * 1024:
 		return fail("MISSING_RESOURCE_LAYER", "固定地圖資源來源清冊無法讀取")
 	var text := file.get_as_text()
+	if text.sha256_text() != str(pair.sha256):
+		return fail("HASH_MISMATCH", "Paired resource manifest checksum differs; original source retained")
 	var parsed: Variant = JSON.parse_string(text)
 	if not parsed is Dictionary or parsed.get("format") != 1 \
 			or parsed.get("geography_manifest_sha256") != geography_hash \
@@ -201,6 +208,9 @@ func _validate_manifest(value: Dictionary) -> Dictionary:
 		return fail("INCOMPATIBLE_MANIFEST", "地理分區或格網版本不相容")
 	if not value.get("base_revision") is String or str(value.base_revision).is_empty() or not value.get("sources") is Array:
 		return fail("INVALID_MANIFEST", "來源清冊缺少固定版次／来源")
+	# Optional explicit game rule is part of this already checksum-pinned source.
+	if value.has("land_condition_rule") and (not value.land_condition_rule is String or value.land_condition_rule != "terrain_mapped_potential_v1"):
+		return fail("INVALID_LAND_CONDITION_RULE", "Unknown fixed source land-condition rule")
 	var grid: Variant = value.get("grid")
 	if not grid is Dictionary or not _pair(grid.get("origin"), 0, 0) or grid.get("cell_m") != 2 or grid.get("site_cells") != 100 or grid.get("region_sites") != 100:
 		return fail("INCOMPATIBLE_GRID", "格網必須固定於原點，每格2m、每Site100格、每Region100個Site")
