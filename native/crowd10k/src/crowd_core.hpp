@@ -411,6 +411,14 @@ public:
 	double work_fatigue_rest_limit(int formation, double target, double maximum, double combat_left_now) const;
 	bool validate_step_clock_work_plan(float dt, double game_seconds, double combat_left_now,
 		uint32_t expected_tick, const std::vector<WorkFatigueState> &plan) const;
+	// Pure original BEGIN pulse + its same future body scalar gate. No pending
+	// state, cost, clock, person or formation mutation is created by this read.
+	bool validate_step_clock_work_plan_after_host_ranged(float dt, double game_seconds,
+		double combat_left_now, uint32_t expected_tick, const std::vector<WorkFatigueState> &plan,
+		const std::vector<int64_t> &releases, const std::vector<double> &preview) const;
+	bool validate_step_clock_work_plan_source(float dt, double game_seconds, double combat_left_now,
+		uint32_t expected_tick, const std::vector<WorkFatigueState> &plan,
+		const std::vector<double> *ranged_preview) const;
 	bool step_clock_work_plan(float dt, double game_seconds, double combat_left_now,
 		uint32_t expected_tick, const std::vector<WorkFatigueState> &plan);
 
@@ -448,6 +456,10 @@ public:
 	bool set_soldier_equip(int i, const rules::Equip &equipment);
 	bool apply_environment_damage(int i, double amount);
 	bool set_host_ranged_delegate(bool enabled);
+	// Pure current-BEGIN facts only. Six int64 values per original release:
+	// [unit, expected_ammo, mode, release_id, target_x, target_y].
+	// No reservations, input projection, skill, charge, event or clock writes.
+	std::vector<double> preview_host_ranged_batch(const std::vector<int64_t> &releases) const;
 	bool commit_host_ranged(int i,int expected_ammo,int mode,int64_t release_id,int target_x,int target_y,bool auto_power,rules::RangedShooter &receipt);
 	bool apply_host_projectile_contact(int i,double hp_loss,double stun_add,double stagger_seconds);
 	bool apply_fire_exposure_damage(int i,double hp_loss);
@@ -525,6 +537,7 @@ public:
 	bool can_act(int i) const { return hp[i] > 0.0 && ko[i] <= 0.0 && getup[i] <= 0.0 && !captive[i]; }
 	bool can_receive(int i) const { return can_act(i) && exch_cd[i] <= 0.000000001; }
 	bool exchange_ready(int i) const;
+	bool host_ranged_ready(int i,int expected_ammo,int mode,int64_t release_id,int target_x,int target_y) const;
 	bool initiates(int i, bool melee) const;
 	bool command_eligible(int i) const { return i >= 0 && can_act(i) && present[i] && military_role[i] == 1 && (post_holder[i] || formations[form[i]].formal_cmd == i) && !formations[form[i]].garrisoned; }
 	double command_effect(int f, int kind, double cap) const; // 0 tactics, 1 leadership, 2 coach

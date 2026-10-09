@@ -1497,6 +1497,24 @@ std::vector<int64_t> World::work_fatigue_runners(int fi) const {
 
 bool World::validate_step_clock_work_plan(float dt, double seconds, double combat_now,
 	uint32_t expected_tick, const std::vector<WorkFatigueState> &plan) const {
+	return validate_step_clock_work_plan_source(dt,seconds,combat_now,expected_tick,plan,nullptr);
+}
+
+bool World::validate_step_clock_work_plan_after_host_ranged(float dt, double seconds, double combat_now,
+	uint32_t expected_tick, const std::vector<WorkFatigueState> &plan,
+	const std::vector<int64_t> &releases, const std::vector<double> &preview) const {
+	if(releases.empty()) return preview.empty() && validate_step_clock_work_plan_source(dt,seconds,combat_now,expected_tick,plan,nullptr);
+	const auto current=preview_host_ranged_batch(releases);
+	if(current.empty() || current!=preview) return false;
+	// Preserve the true original BEGIN combat mark in the same body clock.
+	for(size_t k=0;k<preview.size();k+=10)
+		if(combat_now+1e-8<std::max(0.0,preview[k+9]-double(dt))) return false;
+	return validate_step_clock_work_plan_source(dt,seconds,combat_now,expected_tick,plan,&preview);
+}
+
+bool World::validate_step_clock_work_plan_source(float dt, double seconds, double combat_now,
+	uint32_t expected_tick, const std::vector<WorkFatigueState> &plan,
+	const std::vector<double> *ranged_preview) const {
 	// Validate ALL pools before any clock, sustain, work fatigue or movement is
 	// published. A rejected packet leaves the actual World byte-for-byte intact.
 	if (work_point_active_ || !valid_action_dt(dt) || !std::isfinite(seconds) || seconds < 0 ||
@@ -1507,10 +1525,17 @@ bool World::validate_step_clock_work_plan(float dt, double seconds, double comba
 		if (p.formation <= previous || p.formation < 0 || p.formation >= (int)formations.size()) return false;
 		previous = p.formation; // Stable original formation order also refuses duplicates.
 		const Formation &f = formations[p.formation];
+		double source_fatigue=f.fatigue,source_rest=f.fatigue_rest;
+		// This exact preview has already been regenerated from original World
+		// ammo/count/tick/cooldown/mode/order/position/profile/watermark facts.
+		// Read only the last ordered pulse for this original formation; every
+		// other guard below is the original shared-plan validator, unchanged.
+		if(ranged_preview) for(size_t k=0;k<ranged_preview->size();k+=10)
+			if(int((*ranged_preview)[k+1])==p.formation){source_fatigue=(*ranged_preview)[k+6];source_rest=(*ranged_preview)[k+7];}
 		for (double v : {p.before_fatigue,p.before_rest,p.work_seconds,p.run_seconds,p.fatigue,p.rest})
 			if (!std::isfinite(v)) return false;
 		if (p.before_count != f.fatigue_count || p.before_count <= 0 ||
-			p.before_fatigue != f.fatigue || p.before_rest != f.fatigue_rest ||
+			p.before_fatigue != source_fatigue || p.before_rest != source_rest ||
 			p.before_fatigue < 0 || p.before_fatigue > rules::FATIGUE_LIMIT ||
 			p.before_rest < 0 || p.before_rest > rules::FATIGUE_REST_DELAY ||
 			p.work_seconds < 0 || p.run_seconds < 0 || seconds <= 0 ||

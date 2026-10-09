@@ -863,8 +863,8 @@ bool World::set_host_ranged_delegate(bool enabled) {
 	return true;
 }
 
-bool World::commit_host_ranged(int i, int expected_ammo, int mode, int64_t release_id,
-		int target_x, int target_y, bool auto_power, rules::RangedShooter &receipt) {
+bool World::host_ranged_ready(int i, int expected_ammo, int mode, int64_t release_id,
+		int target_x, int target_y) const {
 	// The caller owns its current mode/order/holder stamp and admission capacity.
 	// The selected original cargo item is projected into the existing ammo scalar.
 	if (work_point_finish_ready_ || !host_ranged_delegate || i < 0 || i >= soldier_count() || !projectiles.empty()
@@ -881,6 +881,56 @@ bool World::commit_host_ranged(int i, int expected_ammo, int mode, int64_t relea
 	const int dx = target_x-sx, dy = target_y-sy;
 	const double distance = std::hypot(double(dx),double(dy));
 	if (distance <= 1.0 || distance > profile.range) return false;
+	return true;
+}
+
+std::vector<double> World::preview_host_ranged_batch(const std::vector<int64_t> &releases) const {
+	// The Lab's original bounded selector supplies the exact ordered releases.
+	// This is not a second selector or a promised commit. Revalidate source refs
+	// and these same scalar facts BEFORE the first real original BEGIN release.
+	if (work_point_active_ || releases.empty() || releases.size() % 6 != 0 ||
+		releases.size() / 6 > size_t(soldier_count())) return {};
+	std::vector<uint8_t> selected(size_t(soldier_count()), 0);
+	std::vector<double> projected_fatigue(formations.size()), projected_rest(formations.size());
+	for (size_t fi=0; fi<formations.size(); ++fi) {
+		const auto &f=formations[fi];
+		projected_fatigue[fi]=f.fatigue; projected_rest[fi]=f.fatigue_rest;
+	}
+	std::vector<double> out;
+	out.reserve(releases.size() / 6 * 10);
+	int64_t previous_release=host_last_release_id;
+	for (size_t k=0; k<releases.size(); k+=6) {
+		const auto i=releases[k], expected_ammo=releases[k+1], mode=releases[k+2];
+		const auto release_id=releases[k+3], x=releases[k+4], y=releases[k+5];
+		if (i<0 || i>=soldier_count() || expected_ammo<1 || expected_ammo>65535 ||
+			mode<0 || mode>1 || release_id<=previous_release || release_id>INT32_MAX ||
+			x<0 || x>=terrain.w || y<0 || y>=terrain.h || selected[size_t(i)] ||
+			!host_ranged_ready(int(i),int(expected_ammo),int(mode),release_id,int(x),int(y))) return {};
+		const int fi=form[size_t(i)]; const auto &f=formations[size_t(fi)];
+		const double start=projected_fatigue[size_t(fi)], rested=projected_rest[size_t(fi)];
+		if (f.fatigue_count<=0 || !std::isfinite(start) || !std::isfinite(rested) ||
+			start<0 || start>rules::FATIGUE_LIMIT || rested<0 || rested>rules::FATIGUE_REST_DELAY ||
+			!std::isfinite(cfg.shot_grace) || cfg.shot_grace<0) return {};
+		// EXACT original charge(1.0): original current living-pool denominator,
+		// clamped fatigue and rest reset. Auto power activates no extra charge.
+		const double finish=clampd(start+1.0/std::max(1,f.fatigue_count),0.0,rules::FATIGUE_LIMIT);
+		out.insert(out.end(),{double(i),double(fi),double(tick),double(f.fatigue_count),
+			start,rested,finish,0.0,double(expected_ammo-1),cfg.shot_grace});
+		projected_fatigue[size_t(fi)]=finish; projected_rest[size_t(fi)]=0.0;
+		selected[size_t(i)]=1; previous_release=release_id;
+	}
+	return out; // Call-local projection only. Original World remains byte-for-byte unchanged.
+}
+
+bool World::commit_host_ranged(int i, int expected_ammo, int mode, int64_t release_id,
+		int target_x, int target_y, bool auto_power, rules::RangedShooter &receipt) {
+	if (!host_ranged_ready(i,expected_ammo,mode,release_id,target_x,target_y)) return false;
+	const Formation &f=formations[form[i]];
+	const auto profile = rules::ranged_profile(equip[i]);
+	// Preserve the original post-admission facing calculation. Read-only readiness
+	// extracted the same source coordinates into its own local scope.
+	const int sx = int(std::floor(px[i])), sy = int(std::floor(py[i]));
+	const int dx = target_x-sx, dy = target_y-sy;
 	// Every rejection precedes original skill/fatigue/cooldown/ammo mutation.
 	if (auto_power && ability[i].has()) activate_skill(i,rules::SK_POWER);
 	receipt.ability = rules::TROOP_COMBAT_ABILITY;
