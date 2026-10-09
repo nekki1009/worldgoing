@@ -12806,10 +12806,13 @@ func _gd_mesh_work_needed() -> bool:
 func _prepare_native_begin_shared_window(maximum: float, combat_begin: float) -> Dictionary:
 	_wire_fire_ranged()
 	var input_batches: Array[Dictionary] = []
-	for owner_ref: CrowdPersonOwner in crowd_site.owners:
-		var inputs: Dictionary = owner_ref.prepare_host_ranged_ammo_inputs()
-		if not inputs.ok: return inputs
-		input_batches.append({"owner": owner_ref, "rows": inputs.rows})
+	# Host ammo inputs exist only for Native shooting on a fire host. A host-less
+	# Crowd site has no Native releases (empty preview), so it publishes none.
+	if crowd_site.fire_host_active():
+		for owner_ref: CrowdPersonOwner in crowd_site.owners:
+			var inputs: Dictionary = owner_ref.prepare_host_ranged_ammo_inputs()
+			if not inputs.ok: return inputs
+			input_batches.append({"owner": owner_ref, "rows": inputs.rows})
 	for inputs: Dictionary in input_batches: inputs.owner.publish_host_ranged_ammo_inputs(inputs.rows)
 	var game_maximum: float = SiteRuntime.game_seconds(maximum, combat_begin) * simulation_speed
 	var held: Dictionary = _collect_original_shared_work_requests(maximum, game_maximum, minf(maximum, combat_begin), combat_begin)
@@ -13208,7 +13211,9 @@ func prepare_native_begin_ranged(action_seconds: float, register_candidate: bool
 		"projectile_values": fire_projectiles.duplicate(true), "capacity": fire_projectile_capacity,
 		"policies": {}, "releases": [], "scheduler_result": {}, "error": {}, "published": false}
 	if query_override >= 0: draft.query_due = query_override == 1
-	if bool(draft.query_due):
+	# Without a fire host _resolve_physical_ranged_fire refuses every query
+	# (UNSUPPORTED_AMMO); a host-less Crowd site has no ranged query to make.
+	if bool(draft.query_due) and crowd_site.fire_host_active():
 		var selected: Dictionary = _resolve_physical_ranged_fire(people, draft)
 		if not selected.ok: return selected
 	# Original prior reservations are examined even if no new query is due.
