@@ -1083,6 +1083,7 @@ func _release_movement_input_actor() -> void:
 func _advance_movement_input() -> void:
 	# The original body owns its committed step. Input is sampled once per shared
 	# action tick, never once per rendered frame or with a second move cooldown.
+	if site_controller != null and site_controller._region_departure_defers_person(controlled_person_id()): return
 	if not movement_input_enabled:
 		_clear_movement_input()
 		if crowd_site != null and crowd_site.active:
@@ -1139,6 +1140,7 @@ func controlled_member_index(team: TerrainArmy) -> int:
 	return -1
 
 func controlled_attack(target_id: int) -> bool:
+	if site_controller != null and site_controller._region_departure_defers_person(controlled_person_id()): return false
 	if _region_operation_pending(): return false
 	if _ship_person_in_journey(controlled_person_id()): return false
 	if site_controller != null and site_controller.person_actions.intercept_housing_input(controlled_person_id()): return false
@@ -1197,6 +1199,7 @@ func _report_move(moved: bool) -> void:
 		show_status("Blocked: water, cliff edge or map boundary. Use a marked ramp.")
 
 func _try_move(direction: Vector2i) -> void:
+	if site_controller != null and site_controller._region_departure_defers_person(controlled_person_id()): return
 	if _region_operation_pending(): return
 	if _ship_person_in_journey(controlled_person_id()): return
 	if site_controller != null and (site_controller.ground_crossing_blocks_input() or site_controller.region_operation_pending()): return
