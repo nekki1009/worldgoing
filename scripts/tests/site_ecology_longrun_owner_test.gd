@@ -6,6 +6,12 @@ const E3Entry = preload("res://scripts/region_lab/region_entry.gd")
 const E3_IDLE_SECONDS := 900.0
 const E3_LIMIT := 20000
 const E3_EPS := 0.00001
+# A fixed-geography load rebuilds resource_base from the pinned base and the
+# synthetic travel manifest has no resource layer, so a source only survives
+# checkpoints if the pinned base supplies it. Use the pinned Taiwan pair: the
+# original legal start site and its all-forest east neighbour.
+const START_SITE := Vector2i(1170, 13252)
+const DEST_SITE := Vector2i(1171, 13252)
 var e3_reference: TerrainLab
 var e3_key := ""
 var e3_cell := Vector2i.ZERO
@@ -58,17 +64,11 @@ func _run() -> void:
 	lab.restore_only = false
 	controller.save_root = e3_out.path_join("archive")
 	world_id = "ecology_e3_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
-	var opened := controller.open_fixed_world(manifest_path, world_id, SLOT, Vector2i.ZERO, true)
+	var opened := controller.open_fixed_world(manifest_path, world_id, SLOT, START_SITE, true)
 	if not _must(opened.ok and Env.ecology_active(lab.terrain), "Original world admission supplies modern ecology: " + str(opened)): _finish_e3(false); return
 	_freeze()
 	lab.simulation_speed = 4.0
 	lab.exchange_enabled = true
-	# The synthetic pinned manifest has no resource layer, so fixed generation
-	# supplies no herb. Author one near the controlled body before the first batch.
-	var has_herb := false
-	for key: String in lab.terrain.resource_base:
-		if int(lab.terrain.resource_base[key].kind) == Env.Kind.HERB: has_herb = true
-	if not has_herb and not _must(not _author_fixture_source(lab.terrain, Env.Kind.HERB, 20, lab.character.terrain_cell).is_empty(), "Fixture herb authored on the actual site"): _finish_e3(false); return
 	# A fixed-geography Site starts with an empty inventory; harvest requires one
 	# tool to be present (it is not consumed). Stock it before the first batch.
 	if int(lab.terrain.site.inventory.get("tools", 0)) < 1: lab.terrain.site.inventory["tools"] = 1
@@ -87,7 +87,7 @@ func _run() -> void:
 	if not _must(first.ok and int(first.produced) > 0, "Initial original paid manual batch: " + str(first)): _finish_e3(false); return
 	var saved := controller.checkpoint_region_internal("region_checkpoint", true)
 	if not _must(saved.ok, "Actual original source checkpoint: " + str(saved)): _finish_e3(false); return
-	var loaded := controller.region_slot._load_checked(controller.region_slot.site_path(Vector2i.ZERO), Vector2i.ZERO)
+	var loaded := controller.region_slot._load_checked(controller.region_slot.site_path(START_SITE), START_SITE)
 	if not _must(loaded.ok, "Original selected source readback: " + str(loaded)): _finish_e3(false); return
 	e3_source = loaded.data
 	e3_source_bytes = var_to_bytes([e3_source.site, e3_source.resource_base, e3_source.parameters])
@@ -96,7 +96,7 @@ func _run() -> void:
 	e3_reference = child.child
 	var restored := e3_reference.restore_original_site(e3_source)
 	if not _must(restored.ok and restored.get("owners_restored", false), "Reference restores actual full owners: " + str(restored)): _finish_e3(false); return
-	if not _journey_to(Vector2i(1, 0)): _finish_e3(false); return
+	if not _journey_to(DEST_SITE): _finish_e3(false); return
 	var until := float(controller.region_slot.control.logical_game_seconds) + E3_IDLE_SECONDS
 	for _step: int in range(E3_LIMIT):
 		if float(controller.region_slot.control.logical_game_seconds) + E3_EPS >= until: break
@@ -108,23 +108,10 @@ func _run() -> void:
 	if not _return_to_visited(): _finish_e3(false); return
 	_finish_e3(true)
 
-# Author one fixture source through the original resource writer and index.
-func _author_fixture_source(data: TerrainData, kind: int, capacity: int, near: Vector2i) -> String:
-	for radius: int in range(3, 30):
-		for dy: int in range(-radius, radius + 1):
-			for dx: int in range(-radius, radius + 1):
-				if maxi(absi(dx), absi(dy)) != radius: continue
-				var cell := near + Vector2i(dx, dy)
-				if not data.contains(cell) or not data.is_terrain_walkable(cell): continue
-				var index := data.index(cell)
-				if data.feature_at[index] != 0 or not data.resources_at.get(index, []).is_empty(): continue
-				Env._add_resource(data, kind, index, capacity, 0)
-				Env.rebuild_indexes(data)
-				var key := "%d:%d" % [kind, index]
-				if not Env.work_cells(data, key).is_empty(): return key
-				data.resource_base.erase(key)
-				Env.rebuild_indexes(data)
-	return ""
+func _write_manifest() -> bool:
+	manifest_path = RegionData.DEFAULT_MANIFEST
+	var source := RegionData.new()
+	return _must(source.load_manifest(manifest_path).ok and not source.resource_manifest_hash.is_empty(), "Pinned geography/resource pair loads")
 
 func _alive() -> bool:
 	return _must(Time.get_ticks_msec() <= deadline and not e3_finished, "Bounded E3 pump")
@@ -138,9 +125,9 @@ func _journey_to(destination: Vector2i) -> bool:
 	if not _must(departed.ok, "Actual departure: " + str(departed)): return false
 	var departure := slot.region_travel_status()
 	if not _must(departure.ok and departure.get("pending", false) and str(slot.control.active_site_id).is_empty() and int(slot._marker.generation) > begin_generation and float(slot.control.logical_game_seconds) == begin_game, "Departure receipt publishes one selected party without added game time"): return false
-	var selected_origin := slot._load_checked(slot.site_path(Vector2i.ZERO), Vector2i.ZERO)
+	var selected_origin := slot._load_checked(slot.site_path(START_SITE), START_SITE)
 	if not _must(selected_origin.ok and int(selected_origin.data.site.total_produced) == int(e3_source.site.total_produced), "The actually selected origin source retains the paid production total while away"): return false
-	var selected_origin_hash := FileAccess.get_sha256(slot.site_path(Vector2i.ZERO))
+	var selected_origin_hash := FileAccess.get_sha256(slot.site_path(START_SITE))
 	var selected_origin_at := Runtime.now(selected_origin.data) * 60.0
 	var published := 0.0
 	var router := RegionData.new()
@@ -184,7 +171,7 @@ func _journey_to(destination: Vector2i) -> bool:
 
 func _return_to_visited() -> bool:
 	e3_saw_cold = false
-	if not _journey_to(Vector2i.ZERO): return false
+	if not _journey_to(START_SITE): return false
 	# A legitimate original cold_exact checkpoint may already have settled the
 	# origin. Retained replay is observed, never artificially required or induced.
 	var target := float(controller.region_slot.control.logical_game_seconds)
