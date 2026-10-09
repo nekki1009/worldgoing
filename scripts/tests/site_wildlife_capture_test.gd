@@ -31,6 +31,9 @@ func _run() -> void:
 func _map() -> TerrainData:
 	var data := TerrainGenerator.generate(TerrainPreset.Kind.TERRACED_HIGHLAND, 12345)
 	Env.initialize(data, "wildlife-capture")
+	# Bound/loaded Sites always carry item storage; Core building payment reads its depot.
+	var storage := Runtime.initialize_item_storage(data.site)
+	assert(storage.ok, "wildlife fixture item storage")
 	return data
 
 func _source(data: TerrainData, species: String, uncapturable_zone: bool = false) -> String:

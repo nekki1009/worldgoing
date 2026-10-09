@@ -256,6 +256,10 @@ func open_site(site: Vector2i) -> Dictionary:
 	if not data.is_walkable(data.spawn_cell):
 		return {"ok": true, "data": data, "interactive": false, "message": "此地點僅能檢視地形"}
 	Env.initialize(data, str(fresh.base.site_id))
+	# Same as the ground-crossing visit: a fresh interactive Site carries item
+	# storage, which Core construction payment reads before any first save.
+	var storage := Runtime.initialize_item_storage(data.site)
+	if not storage.ok: return storage
 	data.site.world_pin = pin.duplicate(true)
 	var genesis := _settle_cold_candidate(data, float(control.logical_game_seconds))
 	if not genesis.ok: return genesis
