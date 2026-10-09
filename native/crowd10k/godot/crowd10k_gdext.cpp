@@ -881,6 +881,19 @@ void m_validate_step_clock_work_plan(CALL_ARGS) {
 		!arg_int(a[3],tick) || tick<0 || tick>0xffffffffLL || !read_work_fatigue_plan(w,a[4],plan)) { ret_bool(r,false); return; }
 	ret_bool(r,w.validate_step_clock_work_plan((float)dt,gs,cl,(uint32_t)tick,plan));
 }
+void m_validate_step_clock_work_plan_after_host_ranged(CALL_ARGS) {
+	SELF; NEED(7); WORLD; double dt,gs,cl; int64_t tick;
+	std::vector<wg::World::WorkFatigueState> plan;
+	void *input=arg_packed(a[5],LONGS),*projection=arg_packed(a[6],DOUBLES);
+	if(!arg_num(a[0],dt)||!(dt>0&&dt<1)||!arg_num(a[1],gs)||!arg_num(a[2],cl)||
+		!arg_int(a[3],tick)||tick<0||tick>0xffffffffLL||!read_work_fatigue_plan(w,a[4],plan)||!input||!projection){ret_bool(r,false);return;}
+	const int64_t release_size=packed_size(size_longs,input),p=packed_size(size_doubles,projection);
+	if(release_size<0||release_size%6!=0||release_size/6>w.soldier_count()||p!=release_size/6*10){ret_bool(r,false);return;}
+	std::vector<int64_t> releases; std::vector<double> preview;
+	if(release_size) releases.assign(longs_read(input,0),longs_read(input,0)+release_size);
+	if(p) preview.assign(doubles_read(projection,0),doubles_read(projection,0)+p);
+	ret_bool(r,w.validate_step_clock_work_plan_after_host_ranged((float)dt,gs,cl,(uint32_t)tick,plan,releases,preview));
+}
 void m_step_clock_work_plan(CALL_ARGS) {
 	SELF; NEED(5); WORLD; double dt,gs,cl; int64_t tick;
 	std::vector<wg::World::WorkFatigueState> plan;
@@ -1042,6 +1055,15 @@ void m_set_host_ranged_delegate(CALL_ARGS) {
 	SELF; NEED(1); WORLD; int64_t enabled;
 	ret_bool(r,arg_int(a[0],enabled) && (enabled==0 || enabled==1) && w.set_host_ranged_delegate(enabled!=0));
 }
+void m_preview_host_ranged_batch(CALL_ARGS) {
+	SELF; NEED(1); WORLD; reset(r,DOUBLES);
+	void *input=arg_packed(a[0],LONGS);
+	if (!input) return;
+	const int64_t count=packed_size(size_longs,input);
+	if (count<=0 || count%6!=0 || count/6>w.soldier_count()) return;
+	std::vector<int64_t> releases(longs_read(input,0),longs_read(input,0)+count);
+	return_doubles(r,w.preview_host_ranged_batch(releases));
+}
 void m_commit_host_ranged(CALL_ARGS) {
 	SELF; NEED(7); WORLD; reset(r,DOUBLES);
 	int64_t i,ammo,mode,id,x,y,power;
@@ -1188,6 +1210,7 @@ void initialize(void *, GDExtensionInitializationLevel level) {
 	add_method("work_fatigue_rest_limit", m_work_fatigue_rest_limit, {{INT,"formation"},{FLOAT,"target"},{FLOAT,"maximum"},{FLOAT,"combat_left"}}, FLOAT);
 	add_method("step_clock_work_plan", m_step_clock_work_plan, {{FLOAT,"dt"},{FLOAT,"game_seconds"},{FLOAT,"combat_left"},{INT,"expected_tick"},{DOUBLES,"pools"}}, BOOL);
 	add_method("validate_step_clock_work_plan", m_validate_step_clock_work_plan, {{FLOAT,"dt"},{FLOAT,"game_seconds"},{FLOAT,"combat_left"},{INT,"expected_tick"},{DOUBLES,"pools"}}, BOOL);
+	add_method("validate_step_clock_work_plan_after_host_ranged",m_validate_step_clock_work_plan_after_host_ranged,{{FLOAT,"dt"},{FLOAT,"game_seconds"},{FLOAT,"combat_left"},{INT,"expected_tick"},{DOUBLES,"pools"},{LONGS,"releases"},{DOUBLES,"preview"}},BOOL);
 	add_method("pack_render", m_pack, {{FLOAT, "cell_pixels"}, {INT, "capacity"}}, FLOATS);
 	add_method("peek_events", m_peek_events, {}, LONGS);
 	add_method("event_fatigue", m_event_fatigue, {}, DOUBLES);
@@ -1252,6 +1275,7 @@ void initialize(void *, GDExtensionInitializationLevel level) {
 	add_method("order_owner", m_order_owner, {{INT,"formation"}}, BOOL);
 	add_method("fire_host_protocol",m_fire_host_protocol,{},INT);
 	add_method("set_host_ranged_delegate",m_set_host_ranged_delegate,{{BOOL,"enabled"}},BOOL);
+	add_method("preview_host_ranged_batch",m_preview_host_ranged_batch,{{LONGS,"releases"}},DOUBLES);
 	add_method("commit_host_ranged",m_commit_host_ranged,{{INT,"soldier"},{INT,"expected_ammo"},{INT,"mode"},{INT,"release_id"},{INT,"target_x"},{INT,"target_y"},{BOOL,"auto_power"}},DOUBLES);
 	add_method("apply_host_projectile_contact",m_apply_host_projectile_contact,{{INT,"soldier"},{FLOAT,"hp"},{FLOAT,"stun"},{FLOAT,"stagger"}},BOOL);
 	add_method("apply_fire_exposure_damage",m_apply_fire_exposure_damage,{{INT,"soldier"},{FLOAT,"hp"}},BOOL);
