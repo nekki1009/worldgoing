@@ -10096,6 +10096,9 @@ func _region_gameplay_party_progress(token: String, before: Dictionary, after: D
 		captured = original.publish_region_party_map_motion(after, original._region_map_motion_proposal, float(interval.game_end), float(interval.action_end))
 	else: captured = _region_capture_original_party(original, after, slot, float(interval.game_end), float(interval.action_end))
 	if not captured.ok: return captured
+	# All original body timers and accepted upkeep have consumed this interval.
+	# This records their completed ACTION point, without publishing world time.
+	original.fire_action_cursor = float(interval.action_end)
 	var result := after.duplicate(true)
 	result.content = captured.party.content
 	result.upkeep.original_deaths = captured.party.upkeep.original_deaths
@@ -10559,9 +10562,13 @@ func _region_gameplay_player_materialize(event: Dictionary) -> Dictionary:
 	for original: Dictionary in slot.region_registry().events:
 		if str(original.id) == str(event.id): queued = original
 	if queued.is_empty() or queued.status != "pending": return SiteRuntime.fail("STALE_REGION_EVENT")
+	if queued.payload.has("family_control_transition"): return slot._region_gameplay_family_life_complete(queued)
 	var npc_token := str(queued.payload.get("token", ""))
 	var status := slot.region_travel_status()
 	if not status.ok: return status
+	var continuous := slot.region_live_party_required(queued, status)
+	if not continuous.ok: return continuous
+	if continuous.required: return _region_gameplay_live_party_materialize(queued)
 	var activated: TerrainLab = null
 	if bool(status.get("pending", false)):
 		var raw: Variant = queued.payload.get("site", [status.site.x, status.site.y])
@@ -10694,6 +10701,15 @@ func _region_gameplay_party_life(token: String, life: Dictionary, party: Diction
 		if str(event.status) == "pending" and str(event.kind) == "life" and str(event.payload.get("token", "")) == token \
 				and int(event.payload.get("event", {}).get("sequence", -1)) == int(life.get("sequence", -2)): queued = event
 	if queued.is_empty(): return SiteRuntime.fail("STALE_REGION_LIFE_OWNER")
+	if queued.payload.has("entered_party"):
+		var target := slot._region_life_original_owner(queued)
+		if not target.ok or target.get("family_complete", false): return target if not target.ok else SiteRuntime.fail("INVALID_REGION_LIFE_OWNER")
+		var active: TerrainLab = target.lab
+		var applied := active._region_gameplay_site_life_effect(queued)
+		if not applied.ok: return applied
+		var saved := slot.checkpoint_region_travel()
+		if not saved.ok: return saved
+		return {"ok": true, "party": party, "receipt": {"complete": true, "effects_complete": true}}
 	if queued.payload.has("entered_site"):
 		var identity := str(queued.payload.entered_site)
 		var original: Dictionary = slot.region_owner_lab.call(identity, "live" if identity == str(slot.control.active_site_id) else "cold_exact")

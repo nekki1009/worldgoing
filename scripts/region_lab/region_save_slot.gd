@@ -5586,6 +5586,12 @@ func _region_mapped_player_death(event: Dictionary) -> bool:
 	var payload: Dictionary = event.get("payload", {})
 	if event.get("player") != true or str(event.get("kind", "")) not in ["player_death", "life"] or payload.get("controlled") != true or payload.get("death") != true or not str(event.get("owner", "")).begins_with("travel:") or not GameplayClock.seconds(event.get("at")) or float(event.at) > float(control.logical_game_seconds) + 0.00000001: return false
 	if not _region_player_death_effect_receipt(event): return false
+	if payload.has("family_control_transition"):
+		var family := _region_family_life_source(event)
+		return family.ok and family.get("family_complete", false)
+	if payload.has("entered_party") or str(control.active_site_id).is_empty() and str(event.owner).trim_prefix("travel:") == str(region_travel_journey().get("token", "")):
+		var target := _region_life_original_owner(event)
+		return target.ok and not target.get("family_complete", false) and float(target.person.hp) <= 0.0
 	var token := str(event.owner).trim_prefix("travel:")
 	var destination := str(payload.get("destination_site", ""))
 	if destination.is_empty(): return false
@@ -5610,6 +5616,9 @@ func _region_player_death_effect_receipt(event: Dictionary) -> bool:
 
 func _region_player_death_mapping(event: Dictionary, data: TerrainData) -> bool:
 	if data == null or data.site.is_empty(): return false
+	if data.has_meta(&"region_party_owner"):
+		var target := _region_life_original_owner(event)
+		return target.ok and not target.get("family_complete", false) and target.lab.terrain == data
 	var payload: Dictionary = event.get("payload", {})
 	var mapping: Variant = payload.get("arrival_mapping")
 	if not RegionTravel.validate_arrival_mapping(mapping) or not str(event.get("owner", "")).begins_with("travel:"): return false

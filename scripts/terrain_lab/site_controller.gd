@@ -9193,6 +9193,10 @@ func _release_disabled_journey_operators() -> void:
 		if SiteVehicleTransport.is_ship(boat) and boat.move.is_empty() and not vehicles.ship_driver_ready(boat): boat.operator_id = 0
 
 func ship_journey_waiting_for_crew(identity: String) -> bool:
+	if vehicles.has_region_ship_projection(identity):
+		var boat: Dictionary = vehicles.records().get(identity, {})
+		var pose: Dictionary = vehicles.region_ship_projection(boat)
+		return not bool(pose.moving) or not vehicles.ship_driver_ready(boat) or vehicles.ship_crew_count(boat) < int(Vehicles.Ship.definition(str(boat.ship_type)).min_crew)
 	return ship_vehicle_in_journey(identity) and not _journey_can_advance()
 
 func _journey_stranded() -> bool:
@@ -9202,6 +9206,7 @@ func _journey_stranded() -> bool:
 	return false
 
 func ship_journey_claims(vehicle: Dictionary) -> Dictionary:
+	if vehicles.has_region_ship_projection(str(vehicle.get("id", ""))): return vehicles.region_ship_claims(vehicle)
 	var claims := {}
 	if not ship_vehicle_in_journey(str(vehicle.get("id", ""))): return claims
 	var first: Dictionary = vehicles.records().get(str(_ship_journey.boat_ids[0]), {})
