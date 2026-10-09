@@ -10,6 +10,8 @@ class Fixture extends RefCounted:
 	var actions := Actions.new()
 	var threatened := false
 	var controlled_id := 1
+	# Core SitePersonActions._person checks lab.site_controller (ship positions); none here.
+	var site_controller: Variant = null
 	var removal_allowed := true
 	var captivity_allowed := true
 	var changed: Array[int] = []
@@ -66,6 +68,11 @@ class Fixture extends RefCounted:
 		if identity == 3:
 			return {"owner": army, "unit": 0, "cell": army.cells[0], "hp": army.combat_units[0].hp}
 		return {}
+	# Core SitePersonActions._person reads TerrainLab._original_person_target.
+	func _original_person_target(identity: int, with_bodies: bool = false) -> Dictionary:
+		var person: Dictionary = _combat_target(identity)
+		if not person.is_empty() and with_bodies: person.bodies = []
+		return person
 	func controlled_person_id() -> int:
 		return controlled_id
 	func _fatigue_threat(_cell: Vector2i, _faction: int, _owner: Variant, _unit: int, _candidates: Dictionary) -> bool:

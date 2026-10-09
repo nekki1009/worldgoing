@@ -20,6 +20,8 @@ class Fixture extends Node2D:
 	var combat_armies: Array[TerrainArmy] = [army]
 	var exchange_enabled := true
 	var controller := Controller.new()
+	# Core SitePersonActions._person checks lab.site_controller (ship positions); none here.
+	var site_controller: Variant = null
 	func _init() -> void:
 		terrain.site.inventory = {}
 		terrain.site.capacity = 100
@@ -53,6 +55,11 @@ class Fixture extends Node2D:
 	func _combat_target(identity: int) -> Dictionary:
 		if identity == 4: return {"owner": army, "unit": 1, "cell": army.cells[1], "hp": army.combat_units[1].hp}
 		return source._combat_target(identity)
+	# Core SitePersonActions._person reads TerrainLab._original_person_target.
+	func _original_person_target(identity: int, with_bodies: bool = false) -> Dictionary:
+		var person: Dictionary = _combat_target(identity)
+		if not person.is_empty() and with_bodies: person.bodies = []
+		return person
 	func controlled_person_id() -> int:
 		return source.controlled_id
 	func _fatigue_threat(_cell: Vector2i, _faction: int, _owner: Variant, _unit: int, _candidates: Dictionary) -> bool:

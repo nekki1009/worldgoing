@@ -260,7 +260,7 @@ func _actual_research(lab: TerrainLab, team: TerrainArmy, captain: int, actions:
 	_check(str(Duty.review_family_research(lab, controlled).code) == "PLAYER_HOLDER", "Research AI never acts for current human duty holder")
 	var offices: Dictionary = data.site.family.offices
 	var seat := str(offices.duties["family.research"])
-	var appointed := lab.site_controller.family_continuity.apply_office_plan(controlled, int(offices.revision),
+	var appointed: Dictionary = lab.site_controller.family_continuity.apply_office_plan(controlled, int(offices.revision),
 		[{"op": "appoint", "position_id": seat, "person_id": captain}])
 	_check(bool(appointed.ok), "Actual family head appoints original NPC research holder")
 	var project: Dictionary = Technology.active_project(data.site.family.technology)
