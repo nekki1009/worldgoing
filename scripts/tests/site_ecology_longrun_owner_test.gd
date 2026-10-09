@@ -125,6 +125,8 @@ func _journey_to(destination: Vector2i) -> bool:
 	if not _must(departed.ok, "Actual departure: " + str(departed)): return false
 	var departure := slot.region_travel_status()
 	if not _must(departure.ok and departure.get("pending", false) and str(slot.control.active_site_id).is_empty() and int(slot._marker.generation) > begin_generation and float(slot.control.logical_game_seconds) == begin_game, "Departure receipt publishes one selected party without added game time"): return false
+	# R1: travel advances only through the bound original shared-step host.
+	if not _bind_original_travel_host(slot): return false
 	var selected_origin := slot._load_checked(slot.site_path(START_SITE), START_SITE)
 	if not _must(selected_origin.ok and int(selected_origin.data.site.total_produced) == int(e3_source.site.total_produced), "The actually selected origin source retains the paid production total while away"): return false
 	var selected_origin_hash := FileAccess.get_sha256(slot.site_path(START_SITE))
@@ -273,6 +275,7 @@ func _finish_e3(ok: bool, message: String = "") -> void:
 	e3_finished = true
 	e3_failed = e3_failed or not ok
 	if not message.is_empty(): push_error(message)
+	if is_instance_valid(original_travel_panel): original_travel_panel.free()
 	if is_instance_valid(lab): lab.free()
 	var current: Variant = JSON.parse_string(FileAccess.get_file_as_string(E3Entry.LAST_WORLD)) if FileAccess.file_exists(E3Entry.LAST_WORLD) else null
 	if current is Dictionary and current.get("world_id") == world_id:
