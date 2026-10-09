@@ -28,10 +28,9 @@
 | Region | region_route `table_from_terrain`、`clear_memory_cache`、`_navigation_content_hash`（D 缺） | 第 4 輪 P1' 已用另一寫法落地，判斷是否仍需要 |
 | Region | site_equipment_orders `_normalize_public_order`、`_valid_public_order`、`_public_receipt_matches_order` | N08 公共路線工單的跨 Site 操作者引用與 transfer_token（與 region_n08 測試一起） |
 | Region（測試） | region_captivity_payload_admission_test | 測試寫的是 epoch 舊版 v3 拘押關係（10 欄、episode 字串）；D 已是 AI 職位社會計畫 4.2／6.1 的 v3（13 欄、loyal_org、rank_snapshot），測試要改成 D 格式，程式不回退 |
-| 科技樹 | site_person_actions `_technology_matching_original_task` | 糧令／水排程工作與具名移動任務的科技工作比對（epoch 超集，指揮中心下一輪套用） |
 | 音效 | site_audio_view 4 個 A＋5 個 missing、terrain_lab 多個 `_audio_*`、terrain_army `_audio_begin_step`；site_runtime `publish_feature_output`、`harvest`；site_controller `deposit_owned_equipment`；site_vehicle_transport `transfer`、`_transfer_ship`；site_person_actions `_commit` 的音效段 | AUDIO-02（`_commit` 只取音效行，拘押段保留 D） |
 
-**已由指揮中心補上（第 7 輪）**：site_technology `prepare_holder_control_transition`（stage 1 只帶了呼叫端，region_save_slot 以 `has_method` 動態呼叫，D 上家族遠端移交一律回 MISSING_TECHNOLOGY_CONTROL_TRANSFER）、site_runtime `cancel_feature` 的攻城場／船塢撤回守衛、site_training_ground `inspect` 的群眾工作疲勞守衛。
+**已由指揮中心補上（第 7 輪）**：site_technology `prepare_holder_control_transition`（stage 1 只帶了呼叫端，region_save_slot 以 `has_method` 動態呼叫，D 上家族遠端移交一律回 MISSING_TECHNOLOGY_CONTROL_TRANSFER）、site_runtime `cancel_feature` 的攻城場／船塢撤回守衛、site_training_ground `inspect` 的群眾工作疲勞守衛；第 8 輪 site_person_actions `_technology_matching_original_task`（糧令、水排程與具名移動任務的科技工作比對）。
 
 **複查後確定 D 較新、不合入**：拘押期（crowd_site `_commit_captivity`、site_person_actions `new_capture_fields`／`publish_gd_custody_terminal`、site_store `_normalize_state`／`_validate_captivity`）；AI 職位（site_controller `_office_orgs`、site_duty_ai `review`、terrain_army `apply_office_plan`／`_install_roster`／`transfer_members_to`、site_garrison `_authority`）；social schema（site_store `save`／`_validate_state`／`_validate_unadmitted_social_state`）；科技 teach 改名（`begin_technology_lesson` 等四個）；crowd_person_owner 射擊彈藥（D 已把 assert 內的副作用移出）；site_store `_validate_site_values` 的水排程檢查（D 已移到 `_validate_fs_targets`）。
 
