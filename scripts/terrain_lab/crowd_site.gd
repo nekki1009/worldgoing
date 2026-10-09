@@ -401,6 +401,7 @@ func apply_environment_damage(identity: int, amount: float) -> float:
 			return before
 		return maxf(0.0, before - amount)
 	var index := int(_index_by_id[identity])
+	_audio_native_prepare()
 	crowd.apply_environment_damage(index, amount)
 	_consume_events()
 	return float(soldier_state(index).hp)
@@ -742,6 +743,7 @@ func _append_actor(actor: TerrainTestCharacter, runtime: bool = true) -> Diction
 		_kit_ids_dirty = false # The append installed all pending indices as well.
 		_kit_appearances.append(null)
 		_adopt_mounted_contact_visuals()
+	_audio_mount_update(index, bool(projected.get("mounted", false)))
 	return SiteRuntime.ok()
 
 
@@ -762,6 +764,7 @@ func _append_actor_failed(before: Dictionary, failure: Dictionary) -> Dictionary
 	var kits_restored := bool(crowd.render_set_kits(_kit_ids))
 	_kit_ids_dirty = not kits_restored
 	assert(kits_restored, "Original native kit indices must match the restored snapshot")
+	if kits_restored: _audio_mount_install(_audio_mounted_rows)
 	return failure if kits_restored else SiteRuntime.fail("INVALID", "原群眾外觀索引無法回復")
 
 
@@ -997,6 +1000,7 @@ func _sample_prepared_actor_contact(actor: TerrainTestCharacter, appearance: Dic
 		clip = editor.selected_animation
 		# Retain the existing original selector's ride/nonride dismount policy.
 		actor._saved_appearance.mounted = actor.is_mounted()
+		_audio_mount_update(int(_index_by_id.get(actor.person_id, -1)), actor.is_mounted())
 		var animation: Animation = editor.animation_player.get_animation(clip)
 		if animation == null or animation.length <= 0.0: return {}
 		var angle := float(values[16])
@@ -1020,11 +1024,13 @@ func _sample_prepared_actor_contact(actor: TerrainTestCharacter, appearance: Dic
 
 func _refresh_kits() -> bool:
 	var appearances: Array = []
+	var audio_mounts := PackedByteArray()
 	for identity in crowd.person_ids():
 		var appearance: Dictionary = _appearance(int(identity))
 		appearances.append(null if _actors.has(int(identity)) else appearance)
+		audio_mounts.append(1 if bool(appearance.get("mounted", false)) else 0)
 	_kit_appearances = appearances
-	return _register_kits(appearances)
+	return _register_kits(appearances, audio_mounts)
 
 
 func clear(reserved_empty: TerrainArmy = null, validate_candidate: Callable = Callable()) -> Dictionary:
@@ -1059,6 +1065,7 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_PREDELETE: _clear_mounted_contact_visuals()
 
 func _dispose() -> void:
+	_audio_mounted_rows.clear()
 	_clear_mounted_contact_visuals()
 	_live_contact_actor_ids.clear()
 	_clear_siege_work_sprites()
@@ -1157,6 +1164,7 @@ func step(elapsed: float, game_seconds: float, combat_left: float) -> bool:
 		if not _work_fatigue_ready or absf(elapsed - _work_fatigue_action_seconds) > PersonFatigue.WORK_PLAN_EPS or absf(game_seconds - _work_fatigue_game_seconds) > PersonFatigue.WORK_PLAN_EPS:
 			last_event_error = SiteRuntime.fail("CLOCK_NOT_READY", "原 World 同區間全池預檢尚未完成")
 			return false
+		_audio_native_prepare()
 		var accepted: bool = bool(crowd.step_clock_work_point(elapsed, game_seconds, combat_left, _work_fatigue_tick, _work_fatigue_packet)) if _work_fatigue_point_armed \
 			else bool(crowd.step_clock_work_plan(elapsed, game_seconds, combat_left, _work_fatigue_tick, _work_fatigue_packet))
 		if not accepted:
@@ -1164,6 +1172,7 @@ func step(elapsed: float, game_seconds: float, combat_left: float) -> bool:
 			return false
 		if not _work_fatigue_point_armed: clear_work_fatigue_interval()
 	else:
+		_audio_native_prepare()
 		if not bool(crowd.step_clock(elapsed, game_seconds, combat_left)): return false
 	for owner_ref: CrowdPersonOwner in owners: owner_ref.settle_fire_navigation_steps()
 	# Advance previously committed corpses only; new deaths retain this slice's event values.
@@ -1532,7 +1541,7 @@ func _register_reuse_allowed(kit_keys: Array) -> bool:
 	return kernel != null and kernel.has_method("contains_unsupported") and not bool(kernel.contains_unsupported(kit_keys))
 
 
-func _register_kits(kit_keys: Array) -> bool:
+func _register_kits(kit_keys: Array, audio_mounts: PackedByteArray = PackedByteArray()) -> bool:
 	var reuse := _register_reuse_allowed(kit_keys)
 	var registered_keys: Array[String] = []
 	var required: Array = []
@@ -1611,6 +1620,7 @@ func _register_kits(kit_keys: Array) -> bool:
 	_prewarm_captivity_atlases(required if reuse else kit_keys, false)
 	var installed := bool(crowd.render_set_kits(kit_ids))
 	_kit_ids_dirty = not installed
+	if installed: _audio_mount_install(audio_mounts)
 	return installed
 
 
@@ -1834,6 +1844,7 @@ func equipment_changed(identity: int) -> void:
 		var actor: TerrainTestCharacter = _actors[identity]
 		actor._saved_appearance = appearance
 		if actor.editor != null: actor.editor.restore_appearance(appearance)
+		_audio_mount_update(int(_index_by_id[identity]), bool(appearance.get("mounted", false)))
 	elif not _building:
 		_update_kit(int(_index_by_id[identity]), appearance)
 
@@ -1859,7 +1870,9 @@ func _sync_ammo(identity: int, state: Dictionary = {}) -> void:
 
 func _consume_events() -> bool:
 	if work_fatigue_point_active(): return _consume_events_original()
+	var audio_snapshot := _audio_native_snapshot()
 	var succeeded := _consume_events_original()
+	if succeeded: _audio_native_deliver(audio_snapshot)
 	return succeeded
 
 
@@ -2337,6 +2350,7 @@ func prepare_load(data: TerrainData, native_candidate: Variant = null) -> Dictio
 	rosters.clear()
 	_records.clear()
 	var appearances: Array = []
+	var audio_mounts := PackedByteArray()
 	var actor_ids := {}
 	for actor: Dictionary in data.site.actors.values(): actor_ids[int(actor.person_id)] = actor
 	for roster: Dictionary in data.site.armies:
@@ -2349,11 +2363,13 @@ func prepare_load(data: TerrainData, native_candidate: Variant = null) -> Dictio
 			var appearance := SiteRuntime.equipment_appearance(data, saved.item_state, saved.appearance)
 			if not _prepare_contact_appearance(appearance, int(identity), true): return SiteRuntime.fail("MISSING_ASSET", "存檔原 actor 同 body 接觸資源未備妥")
 			appearances.append(null)
+			audio_mounts.append(1 if bool(appearance.get("mounted", false)) else 0)
 		else:
 			var appearance := _appearance(int(identity))
 			if not _prepare_contact_appearance(appearance, int(identity)): return SiteRuntime.fail("MISSING_ASSET", "存檔原士兵同 body 接觸資源未備妥")
 			appearances.append(appearance)
-	if not _register_kits(appearances): return SiteRuntime.fail("MISSING_ASSET", "存檔士兵外觀不被圖集接受")
+			audio_mounts.append(1 if bool(appearance.get("mounted", false)) else 0)
+	if not _register_kits(appearances, audio_mounts): return SiteRuntime.fail("MISSING_ASSET", "存檔士兵外觀不被圖集接受")
 	_host_fire_active = candidate_host_fire
 	return SiteRuntime.ok()
 
@@ -2419,6 +2435,7 @@ func _update_kit(index: int, appearance: Dictionary) -> void:
 	if kit < 0:
 		last_event_error = SiteRuntime.fail("MISSING_ASSET", "士兵實物外觀不被圖集接受")
 		return
+	_audio_mount_update(index, bool(appearance.get("mounted", false)))
 	if _kit_ids[index] == kit: return
 	_kit_ids[index] = kit
 	_kit_ids_dirty = true
@@ -3086,6 +3103,7 @@ func work_training_start_ready(owner_ref: CrowdPersonOwner, combat_left: float) 
 var _work_fatigue_point_armed := false
 
 var _work_fatigue_point_plan: Dictionary = {}
+var _audio_mounted_rows := PackedByteArray() # Derived admitted appearance; never saved.
 
 func prepare_native_begin_work_point(planned: Dictionary, requests: Array, action_seconds: float, game_seconds: float,
 		combat_left: float, releases: PackedInt64Array, preview: PackedFloat64Array, projection: Dictionary) -> Dictionary:
@@ -3401,3 +3419,71 @@ func _consume_events_original() -> bool:
 		elif kind == 10 and identity > 0 and not has_pending_capture(identity): _sync_ammo(identity)
 	if not events.is_empty(): events_received.emit(events)
 	return true
+
+func _audio_native_prepare() -> void:
+	if not active or crowd == null or not crowd.has_method("configure_audio_projection"): return
+	var view: SiteAudioView = lab.audio_view
+	if view == null: return
+	var stats := view.stats_snapshot()
+	var enabled: bool = bool(stats.active) and bool(stats.batch_open) and not bool(stats.muted) and float(stats.volume) > 0.0 and not lab.restore_only
+	var bases := PackedInt32Array()
+	for kind: StringName in [&"step_grass_walk", &"contact", &"shield", &"hurt", &"bow", &"crossbow", &"impact_ground", &"down", &"hoof_walk"]:
+		bases.append(int(view.call("_priority", kind, -1))) # Exact base catalog ranking, including before first player gate.
+	crowd.configure_audio_projection(enabled, Engine.get_process_frames(), int(stats.epoch), player_index,
+		int(lab.controlled_person_id()), bases, view.native_step_watch_ids())
+
+func _audio_native_snapshot() -> Dictionary:
+	if not active or crowd == null or not crowd.has_method("audio_metadata") or not crowd.has_method("audio_geometry") or not crowd.has_method("audio_step_invalidations"): return {}
+	var view: SiteAudioView = lab.audio_view
+	if view == null: return {}
+	var stats := view.stats_snapshot()
+	if not bool(stats.batch_open): return {} # capture_save/cold candidate remains silent.
+	# Pure bounded reads BEFORE original drain. Only deliver AFTER its success.
+	var meta: PackedInt64Array = crowd.audio_metadata()
+	var geometry: PackedFloat64Array = crowd.audio_geometry()
+	var invalidations: PackedInt64Array = crowd.audio_step_invalidations()
+	if meta.size() % 8 != 0 or meta.size() > 64 * 8 or geometry.size() != (meta.size() >> 1) or invalidations.size() % 3 != 0 or invalidations.size() > 64 * 3: return {}
+	for value: float in geometry:
+		if not is_finite(value): return {}
+	for at in range(0, meta.size(), 8):
+		if meta[at] < 0 or meta[at] >= 8 or meta[at + 4] < 0 or meta[at + 5] <= 0: return {}
+		if meta[at] != 1 and meta[at + 1] <= 0: return {}
+		if meta[at] == 0 and (meta[at + 6] not in [1, 3, 5, 7] or geometry[(at >> 1) + 3] <= 0.0): return {}
+	for at in range(0, invalidations.size(), 3):
+		if invalidations[at] <= 0 or invalidations[at + 1] < 0 or invalidations[at + 2] <= 0: return {}
+	return {"meta": meta, "geometry": geometry, "invalidations": invalidations,
+		"frame": Engine.get_process_frames(), "epoch": int(stats.epoch), "native": crowd, "view": view}
+
+func _audio_native_deliver(snapshot: Dictionary) -> void:
+	if snapshot.is_empty() or not active or crowd == null or not is_same(snapshot.native, crowd) or lab.audio_view == null or not is_same(snapshot.view, lab.audio_view): return
+	var view: SiteAudioView = lab.audio_view
+	var stats := view.stats_snapshot()
+	if int(snapshot.frame) != Engine.get_process_frames() or int(snapshot.epoch) != int(stats.epoch) or not bool(stats.batch_open): return
+	var invalidations: PackedInt64Array = snapshot.invalidations
+	for at in range(0, invalidations.size(), 3): view.invalidate_step_candidate(int(invalidations[at]))
+	var meta: PackedInt64Array = snapshot.meta
+	var geometry: PackedFloat64Array = snapshot.geometry
+	var kinds: Array[StringName] = [&"step_grass_walk", &"contact", &"shield", &"hurt", &"bow", &"crossbow", &"impact_ground", &"down"]
+	for at in range(0, meta.size(), 8):
+		var kind := int(meta[at])
+		var identity := int(meta[at + 1])
+		var ground := Vector2(geometry[at >> 1], geometry[(at >> 1) + 1]) * TerrainRenderer.CELL_PIXELS
+		var key := "native:%d:%d:%d:%d:%d" % [int(snapshot.frame), int(meta[at + 4]), kind, int(meta[at + 3]), int(meta[at + 5])]
+		if kind == 0:
+			# Historical mounted bit came from the original admitted appearance input.
+			lab._audio_step_completed(identity, ground, geometry[(at >> 1) + 3], bool(int(meta[at + 6]) & 2), bool(int(meta[at + 6]) & 4), true)
+		else:
+			view.offer(kinds[kind], ground, key, identity)
+	# offer only forms batch candidates. Original outer sameTerrain/active/
+	# completed/noPENDING/noFault/noPause guard alone commits them.
+
+func _audio_mount_install(rows: PackedByteArray) -> void:
+	if crowd == null or rows.size() != int(crowd.soldier_count()): return
+	if crowd.has_method("set_audio_mounted_rows") and not bool(crowd.set_audio_mounted_rows(rows)): return
+	_audio_mounted_rows = rows.duplicate()
+
+func _audio_mount_update(index: int, mounted: bool) -> void:
+	if crowd == null or index < 0 or index >= int(crowd.soldier_count()): return
+	if crowd.has_method("set_audio_mounted") and not bool(crowd.set_audio_mounted(index, mounted)): return
+	_audio_mounted_rows.resize(int(crowd.soldier_count()))
+	_audio_mounted_rows[index] = 1 if mounted else 0

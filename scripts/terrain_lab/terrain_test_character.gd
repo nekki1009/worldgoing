@@ -8,6 +8,7 @@ var movement_from_cell := Vector2i(-1, -1)
 # Presentation only. The original owner/outer transaction decides playback.
 var audio_step_sink: Callable
 var _audio_step_source: Dictionary = {}
+var audio_down_sink: Callable
 
 func clear_audio_step_sources() -> void:
 	_audio_step_source.clear()
@@ -1693,6 +1694,12 @@ func apply_contact(packet: Dictionary) -> void:
 	if hp <= 0.0:
 		return
 	# Capture the original standing body before life callbacks can hand it off.
+	var audio_old_hp := hp
+	var audio_old_ko := knockout_left
+	var audio_source_data: TerrainData = data
+	var audio_identity := combat_identity()
+	var audio_ground := position
+	var audio_sink := audio_down_sink
 	var result: Dictionary = packet.result
 	var hp_loss := maxf(0.0, float(result.hp))
 	var impact := maxf(0.0, float(result.stun))
@@ -1737,6 +1744,10 @@ func apply_contact(packet: Dictionary) -> void:
 	if is_instance_valid(attacker):
 		attacker.combat_status = "Hit: " + combat_status
 	queue_redraw()
+	# Read the owner's actual committed life result, never forecast packet damage.
+	if audio_old_hp > 0.0 and audio_old_ko <= 0.0 and (hp <= 0.0 or knockout_left > 0.0) \
+			and audio_sink.is_valid():
+		audio_sink.call(audio_source_data, audio_identity, audio_ground)
 
 func _stop_fighting(reason: String) -> void:
 	_invalidate_ranged_order()

@@ -164,9 +164,11 @@ func _combat_profile_stage(stage: String, started: int) -> int:
 	var now := Time.get_ticks_usec()
 	combat_profile_usec[stage] = int(combat_profile_usec.get(stage, 0)) + now - started
 	return now
+var _audio_p3_serial: int = 0
 
 func _enter_tree() -> void:
 	add_to_group(&"terrain_lab_contact_source_users")
+var _audio_vehicle_pending: Array[Dictionary] = []
 
 func _ready() -> void:
 	var duty_scope := _region_duty_enter()
@@ -220,6 +222,7 @@ func _region_original_ready() -> void:
 		actor.combatants = func() -> Array[TerrainTestCharacter]: return combat_actors
 		actor.contact_sink = func(packet: Dictionary) -> void: _combat_contacts.append(packet)
 		actor.audio_step_sink = _audio_step_completed
+		actor.audio_down_sink = _audio_down_completed
 	army = TerrainArmy.new()
 	army.name = "DemoArmy"
 	army.process_mode = Node.PROCESS_MODE_PAUSABLE
@@ -303,6 +306,7 @@ func _configure_combat_army(team: TerrainArmy) -> void:
 	team.native_hot_enabled = scene_file_path == "res://scenes/terrain_lab/TerrainLab.tscn"
 	team.person_id_allocator = _allocate_army_person_ids
 	team.audio_step_sink = _audio_step_completed
+	team.audio_down_sink = _audio_down_completed
 	team.exchange_enabled = exchange_enabled
 	team.contact_query = _collect_unit_contacts
 	team.enemy_query = _nearest_unit_enemy
@@ -12860,6 +12864,8 @@ var _shared_native_combat_begin: float = -1.0
 var _native_begin_shared_window_prepared: Dictionary = {}
 
 var _gd_mesh_work_point: Dictionary = {}
+var _audio_down_pending: Array[Dictionary] = []
+var _audio_down_serial: int = 0
 
 func _gd_mesh_work_needed() -> bool:
 	if exchange_enabled or _region_formula_active or crowd_site != null and crowd_site.active or _shared_work_plan.is_empty(): return false
@@ -13060,6 +13066,9 @@ func _finish_native_checked_body_prefixes(action_begin: float, action_end: float
 	_advance_fatigue(seconds, true)
 	site_controller.finish_shared_runtime_clock()
 	_region_point_pending.native_checked = {"checked": checked, "fire": point.fire, "finished": false}
+	# Presentation runs after every actual publisher, inside original Audio batch.
+	for row: Dictionary in _native_begin_shared_window_prepared.ranged.releases:
+		_audio_offer(&"crossbow" if str(row.geometry.profile.ammo) == "bolt" else &"bow", row.geometry.ground, "shot:%d" % int(row.release.shot_id))
 	return true
 
 func discard_native_begin_ranged() -> void:
@@ -13657,6 +13666,318 @@ func native_checked_forecast_hp(identity: int) -> float:
 		hp = maxf(0.0, hp - float(row.input.damage.get(identity, 0.0)))
 	return hp
 
+func _audio_down_reset() -> void:
+	_audio_down_pending.clear()
+
+func _audio_down_completed(source_data: TerrainData, identity: int, ground: Vector2) -> void:
+	if restore_only or source_data == null or not is_same(source_data, terrain) or identity <= 0:
+		return
+	if not is_instance_valid(audio_view) or not bool(audio_view.get("_active")) \
+			or not bool(audio_view.get("_batch_open")):
+		return
+	var frame := Engine.get_process_frames()
+	var epoch := int(audio_view.get("_epoch"))
+	if int(audio_view.get("_batch_frame")) != frame or int(audio_view.get("_batch_epoch")) != epoch:
+		return
+	if not ground.is_finite() or not terrain.contains(Vector2i((ground / TerrainRenderer.CELL_PIXELS).floor())):
+		return
+	# Remnant GD bodies cannot duplicate an original Native owner.
+	if crowd_site != null and crowd_site.active and crowd_site.contains_person(identity):
+		return
+	if not _audio_down_pending.is_empty() and (int(_audio_down_pending[0].frame) != frame \
+			or int(_audio_down_pending[0].epoch) != epoch):
+		_audio_down_reset()
+	_audio_exchange_prune()
+	var listener_id := controlled_person_id()
+	var listener: Dictionary = _combat_target_in_site(listener_id)
+	if listener.is_empty() or not listener.get("position") is Vector2 or not listener.position.is_finite():
+		return
+	_audio_down_serial += 1
+	# This callback is after a true standing->KO/dead result, so no life forecast.
+	# Original occurrence position and identity are retained in the bounded row.
+	_audio_exchange_add(_audio_down_pending, &"down", ground,
+		"down:%d:%d:%d" % [frame, identity, _audio_down_serial],
+		identity, listener.position, listener_id)
+
+func _audio_down_flush() -> void:
+	var rows: Array[Dictionary] = _audio_down_pending.duplicate()
+	_audio_down_reset() # Clear before offer can invalidate the current epoch.
+	if not is_instance_valid(audio_view) or not bool(audio_view.get("_batch_open")):
+		return
+	var frame := Engine.get_process_frames()
+	var epoch := int(audio_view.get("_epoch"))
+	for row: Dictionary in rows:
+		if int(row.frame) != frame or int(row.epoch) != epoch:
+			continue
+		_audio_offer(&"down", row.ground, str(row.key), int(row.identity))
+
+# Exact integrations in the current staged Lab:
+# 1) actor loop after actor.audio_step_sink = _audio_step_completed:
+#      actor.audio_down_sink = _audio_down_completed
+# 2) _configure_combat_army after team.audio_step_sink = _audio_step_completed:
+#      team.audio_down_sink = _audio_down_completed
+# 3) _audio_clear_sources and _audio_begin_site_replace: _audio_down_reset().
+# 4) Original shared-step wrapper: reset before begin; success flush AFTER
+#    every original finish/World publisher succeeded, directly before commit;
+#    otherwise reset directly before discard. replay_target>=0 stays silent.
+# 5) Both presenter _priority and _audio_exchange_add controlled-kind lists:
+#    [&"hurt", &"contact", &"shield", &"down"].
+#    Catalog down may remain body-fall foley group=combat (quota8); human vocal
+#    admission is separate. It is NOT promoted to a real human voice here.
+
+# OUTPUT-ONLY P3 resource/gate Lab fragment. P0/P1 shared hooks prerequisite.
+# Add var _audio_p3_serial: int = 0 to Lab presentation fields only.
+# Borrow original Runtime harvest/gate commits. No authority/RNG/save fields.
+
+func _audio_p3_owner(source_data: TerrainData, require_batch: bool = true) -> bool:
+	if source_data == null or not is_same(source_data, terrain) or restore_only:
+		return false
+	if not is_instance_valid(audio_view) or not _audio_live_requested or not is_inside_tree():
+		return false
+	if get_tree().current_scene != self or get_tree().paused or bool(terrain.site.get("paused", false)):
+		return false
+	var state := audio_view.stats_snapshot()
+	if not bool(state.get("active", false)) or bool(state.get("muted", false)) or float(state.get("volume", 0.0)) <= 0.0:
+		return false
+	if require_batch and (not bool(state.get("batch_open", false)) \
+			or int(audio_view.get("_batch_frame")) != Engine.get_process_frames() \
+			or int(audio_view.get("_batch_epoch")) != int(state.get("epoch", -1))):
+		return false
+	if site_controller != null:
+		if not bool(site_controller.original_step_fault_guard().get("ok", false)):
+			return false
+		if site_controller.region_operation_pending() or site_controller.ground_crossing_blocks_clock():
+			return false
+	return true
+
+func _audio_p3_listener_ground() -> Vector2:
+	var identity := controlled_person_id()
+	if identity <= 0:
+		return Vector2(-1, -1)
+	var listener: Dictionary = _combat_target_in_site(identity)
+	var point: Variant = listener.get("position")
+	if listener.is_empty() or float(listener.get("hp", 0.0)) <= 0.0 \
+			or not point is Vector2 or not point.is_finite():
+		return Vector2(-1, -1)
+	return point
+
+func _audio_p3_resource_completed(source_data: TerrainData, source_before: Dictionary,
+		actor_cell: Vector2i, result: Dictionary, action: String = "harvest") -> void:
+	if not _audio_p3_owner(source_data) or not bool(result.get("ok", false)):
+		return
+	var items: Variant = result.get("items")
+	var taken: Variant = result.get("taken")
+	if not items is Dictionary or items.is_empty() or not taken is int or int(taken) <= 0:
+		return
+	if not source_data.contains(actor_cell):
+		return
+	var listener := _audio_p3_listener_ground()
+	var ground := (Vector2(actor_cell) + Vector2(0.5, 0.5)) * TerrainRenderer.CELL_PIXELS
+	if listener == Vector2(-1, -1) or ground.distance_squared_to(listener) >= 640.0 * 640.0:
+		return
+	var kind: StringName = &""
+	match int(source_before.get("kind", -1)):
+		SiteEnv.Kind.TIMBER: kind = &"harvest_wood"
+		SiteEnv.Kind.STONE: kind = &"harvest_stone"
+		SiteEnv.Kind.CLAY: kind = &"harvest_clay"
+		SiteEnv.Kind.IRON: kind = &"harvest_iron"
+		SiteEnv.Kind.SALT, SiteEnv.Kind.FOOD, SiteEnv.Kind.HERB: kind = &"gather_soft"
+		SiteEnv.Kind.FISH: kind = &"fish_catch"
+		SiteEnv.Kind.WILDLIFE: kind = &"wildlife_capture" if action == "capture" else &"wildlife_harvest"
+	if kind.is_empty():
+		return
+	_audio_p3_serial += 1
+	_audio_offer(kind, ground, "p3:resource:%d:%d:%s" % [
+		Engine.get_process_frames(), _audio_p3_serial, str(source_before.get("id", ""))])
+
+func _audio_p3_gate_completed(source_data: TerrainData, key: String,
+		feature: Dictionary, before_open: bool) -> void:
+	if not _audio_p3_owner(source_data) or str(feature.get("kind", "")) != "gate" \
+			or str(feature.get("stage", "")) != "complete" \
+			or not is_same(source_data.site.get("features", {}).get(key), feature):
+		return
+	var gate: Dictionary = feature.get("gate", {})
+	if gate.is_empty() or before_open == bool(gate.get("open", false)):
+		return
+	var listener := _audio_p3_listener_ground()
+	if listener == Vector2(-1, -1):
+		return
+	var geometry := SiteRuntime.feature_geometry(source_data, feature)
+	var nearest := Vector2(-1, -1)
+	var distance := 640.0 * 640.0
+	# Fixed maximum: the original two gate leaf parts, not all features/cells.
+	for part_id: String in ["leaf:left", "leaf:right"]:
+		for index: int in geometry.get("parts", {}).get(part_id, {}).get("cells", []):
+			var cell := source_data.cell_from_index(index)
+			if not source_data.contains(cell):
+				continue
+			var ground := (Vector2(cell) + Vector2(0.5, 0.5)) * TerrainRenderer.CELL_PIXELS
+			var candidate_distance := ground.distance_squared_to(listener)
+			if candidate_distance < distance:
+				distance = candidate_distance
+				nearest = ground
+	if nearest == Vector2(-1, -1):
+		return
+	_audio_p3_serial += 1
+	_audio_offer(&"gate_open" if bool(gate.open) else &"gate_close", nearest,
+		"p3:gate:%d:%d:%s" % [Engine.get_process_frames(), _audio_p3_serial, key])
+
+# OUTPUT-ONLY work/transaction presentation helpers; depends on P3 resource/gate v1.
+# Effective work uses bounded native short voices; no permanent work loop/index.
+
+func _audio_p3_success_short(source_data: TerrainData, kind: StringName, ground: Vector2,
+		key: String, identity: int = 0) -> void:
+	if not _audio_p3_owner(source_data) or not ground.is_finite():
+		return
+	var cell := Vector2i(floori(ground.x / TerrainRenderer.CELL_PIXELS), floori(ground.y / TerrainRenderer.CELL_PIXELS))
+	if not source_data.contains(cell):
+		return
+	var listener := _audio_p3_listener_ground()
+	if listener == Vector2(-1, -1) or ground.distance_squared_to(listener) >= 640.0 * 640.0:
+		return
+	_audio_offer(kind, ground, key, identity)
+
+func _audio_p3_work_kind(feature: Dictionary, phase: String, part_id: String) -> StringName:
+	if phase == "operate":
+		# Process identity comes from the original recipe, never the workshop's walls.
+		var recipe := str(feature.get("recipe_id", ""))
+		var kind := str(feature.get("kind", ""))
+		if kind == "weaver":
+			return &"work_textile"
+		if kind == "smithy" and recipe in ["", "steel_tools"]:
+			return &"work_metal"
+		return StringName("work_recipe_" + recipe if not recipe.is_empty() else "work_" + kind)
+	var physical_kind := str(feature.get("kind", ""))
+	if physical_kind in ["level", "road"]:
+		return &"work_earth"
+	# Original physical structures expose material; generic placement options alone
+	# do not prove a cultivation/camp/workshop construction process.
+	if physical_kind not in SiteRuntime.STRUCTURE_KINDS + SiteRuntime.BODY_KINDS + ["bridge"]:
+		return &""
+	var material := str(feature.get("material", "stone" if physical_kind == "stone_wall" else "wood"))
+	if phase == "repair" and part_id.begins_with("leaf:"):
+		material = "wood" # Actual original gate leaf role, including stone frames.
+	return &"work_wood" if material == "wood" else (&"work_stone" if material == "stone" else &"")
+
+func _audio_p3_work_progress(source_data: TerrainData, key: String, worker: Dictionary,
+		feature: Dictionary, phase: String, before: float, after: float,
+		identity: int = 0, part_id: String = "") -> void:
+	if not is_finite(before) or not is_finite(after) or after <= before or not _audio_p3_owner(source_data):
+		return
+	var index := int(worker.get("cell", -1))
+	var cell := source_data.cell_from_index(index)
+	if not source_data.contains(cell):
+		return
+	var kind := _audio_p3_work_kind(feature, phase, part_id)
+	if kind.is_empty():
+		return
+	# One presentation cadence key per real source/workstation; bounded View dedup
+	# owns history. Failed batches never record a played key. No gameplay RNG/time.
+	var bucket := int(Time.get_ticks_msec() / 650)
+	var event_key := "p3:work:%s:%s:%s:%d:%d:%d" % [key, phase, part_id, identity, index, bucket]
+	_audio_p3_success_short(source_data, kind,
+		(Vector2(cell) + Vector2(0.5, 0.5)) * TerrainRenderer.CELL_PIXELS, event_key, identity)
+
+func _audio_p3_work_finished(source_data: TerrainData, key: String, worker: Dictionary,
+		feature_before: Dictionary, phase: String, identity: int = 0,
+		output: Dictionary = {}, product_ids: Array = []) -> void:
+	if not _audio_p3_owner(source_data):
+		return
+	if phase == "produce" and SiteRuntime.inventory_size(output) <= 0 and product_ids.is_empty():
+		return
+	var cell := source_data.cell_from_index(int(worker.get("cell", -1)))
+	if not source_data.contains(cell):
+		return
+	_audio_p3_serial += 1
+	var token := "p3:complete:%d:%d:%s:%s:%s" % [Engine.get_process_frames(), _audio_p3_serial,
+		key, phase, str(feature_before.get("recipe_id", feature_before.get("kind", "")))]
+	_audio_p3_success_short(source_data, &"work_complete",
+		(Vector2(cell) + Vector2(0.5, 0.5)) * TerrainRenderer.CELL_PIXELS, token, identity)
+
+func _audio_p3_person_ground(identity: int, fallback: Vector2) -> Vector2:
+	if site_controller != null and site_controller.vehicles != null \
+			and site_controller.vehicles.is_embarked(identity):
+		return site_controller.vehicles.ship_person_ground(identity)
+	return fallback
+
+func _audio_p3_operation_completed(source_data: TerrainData, kind: StringName,
+		ground: Vector2, identity: int) -> void:
+	if not _audio_p3_owner(source_data):
+		return
+	_audio_p3_serial += 1
+	_audio_p3_success_short(source_data, kind, ground,
+		"p3:operation:%d:%d:%d" % [Engine.get_process_frames(), _audio_p3_serial, identity], identity)
+
+func _audio_p3_transfer(original_call: Callable, identity: int, ground: Vector2,
+		resources: Dictionary, item_ids: Array) -> Dictionary:
+	# Thin presentation batch at an already validated original caller tail.
+	# Original operation always runs, including quiet cold/no-view/far paths.
+	var source_data := terrain
+	var view: SiteAudioView = audio_view
+	var capture := is_instance_valid(view) and _audio_p3_owner(source_data, false)
+	var owned := capture and not bool(view.get("_batch_open"))
+	if owned:
+		view.begin_batch()
+	var frame := Engine.get_process_frames()
+	var epoch := int(view.get("_epoch")) if is_instance_valid(view) else -1
+	var result: Dictionary = original_call.call()
+	var committed := bool(result.get("ok", false)) and result.has("source_version") and result.has("destination_version") \
+		and (SiteRuntime.inventory_size(resources) > 0 or not item_ids.is_empty())
+	var valid := capture and is_instance_valid(view) and is_same(view, audio_view) \
+		and is_same(source_data, terrain) and frame == Engine.get_process_frames() \
+		and epoch == int(view.get("_epoch")) and _audio_p3_owner(source_data)
+	if committed and valid:
+		_audio_p3_operation_completed(source_data, &"material_transfer", ground, identity)
+	if owned and is_instance_valid(view):
+		if committed and valid:
+			view.commit_batch()
+		else:
+			view.discard_batch()
+	return result
+
+
+# Requires the original P3 _audio_p3_owner/_audio_p3_listener_ground admission.
+# One bounded scratch list belongs to the accepted outer shared presentation batch.
+
+func _audio_vehicle_observed(source_data: TerrainData, vehicle: Dictionary) -> void:
+	if not _audio_p3_owner(source_data) or vehicle.get("move", {}).is_empty():
+		return
+	var identity := str(vehicle.get("id", ""))
+	if identity.is_empty():
+		return
+	# The newest observation replaces an earlier near row before hard clipping.
+	for index in range(_audio_vehicle_pending.size() - 1, -1, -1):
+		if str(_audio_vehicle_pending[index].vehicle_id) == identity:
+			_audio_vehicle_pending.remove_at(index)
+	var kind: StringName = &"ship_sail" if str(vehicle.get("kind", "")) == "ship" else &"cart_roll"
+	if kind == &"cart_roll" and str(vehicle.get("kind", "")) != "cart":
+		return
+	var pose: Dictionary = site_controller.vehicles.render_state(vehicle)
+	var ground: Variant = pose.get("position")
+	var listener := _audio_p3_listener_ground()
+	if not ground is Vector2 or not ground.is_finite() or listener.x < 0.0 or listener.y < 0.0:
+		return
+	var distance_squared: float = ground.distance_squared_to(listener)
+	if distance_squared >= 640.0 * 640.0:
+		return
+	var row := {"key": "vehicle:" + identity, "kind": kind, "position": ground,
+		"person_id": 0, "vehicle_id": identity, "vehicle_record": vehicle,
+		"source_data": source_data, "distance_squared": distance_squared,
+		"priority": audio_view._priority(kind, 0), "order": 0}
+	if _audio_vehicle_pending.size() < 64:
+		_audio_vehicle_pending.append(row)
+	else:
+		var worst := audio_view._worst_index(_audio_vehicle_pending)
+		if audio_view._better(row, _audio_vehicle_pending[worst]):
+			_audio_vehicle_pending[worst] = row
+
+func _audio_ship_person_completed(source_data: TerrainData, kind: StringName, identity: int, ground: Vector2) -> void:
+	if kind not in [&"ship_board", &"ship_disembark"] or identity <= 0 \
+			or not ground.is_finite() or ground.x < 0.0 or ground.y < 0.0 or not _audio_p3_owner(source_data):
+		return
+	_audio_p3_serial += 1
+	_audio_offer(kind, ground, "ship-person:%d:%d:%d" % [Engine.get_process_frames(), identity, _audio_p3_serial], identity)
+
 var _region_map_motion_proposal: Dictionary = {}
 
 func publish_region_party_map_motion(candidate: Dictionary, motion: Dictionary,
@@ -13884,12 +14205,16 @@ func _audio_boot_complete() -> void:
 
 
 func _audio_begin_site_replace() -> void:
+	_audio_vehicle_pending.clear()
+	_audio_down_reset()
 	_audio_exchange_reset()
 	if audio_view == null: return
 	audio_view.set_active(false)
 
 
 func _audio_clear_sources() -> void:
+	_audio_vehicle_pending.clear()
+	_audio_down_reset()
 	_audio_exchange_reset()
 	for actor: TerrainTestCharacter in combat_actors:
 		actor.clear_audio_step_sources()
@@ -13897,11 +14222,12 @@ func _audio_clear_sources() -> void:
 		team.clear_audio_step_sources()
 
 
-func _audio_step_completed(identity: int, ground: Vector2, duration: float, running: bool, mounted: bool) -> void:
+func _audio_step_completed(identity: int, ground: Vector2, duration: float, running: bool, mounted: bool, native_source: bool = false) -> void:
 	if identity <= 0 or not ground.is_finite() or not is_finite(duration) or duration <= 0.0: return
 	if audio_view == null or terrain == null or not terrain.contains(Vector2i(floori(ground.x / TerrainRenderer.CELL_PIXELS), floori(ground.y / TerrainRenderer.CELL_PIXELS))): return
 	# GD visual remnants must not duplicate a body already owned by Native.
-	if crowd_site != null and crowd_site.active and crowd_site.contains_person(identity): return
+	var native_owned: bool = crowd_site != null and crowd_site.active and crowd_site.contains_person(identity)
+	if native_owned != native_source: return
 	_audio_step_serial += 1
 	var event_key := "step:%d:%d:%d" % [_audio_batch_serial, identity, _audio_step_serial]
 	var kind := "hoof_run" if running else "hoof_walk"
@@ -13984,7 +14310,7 @@ func _audio_exchange_add(rows: Array[Dictionary], kind: StringName, ground: Vect
 	var priority := int(audio_view.call("_priority", kind, identity))
 	# _priority normally has the same player. Before the presenter's first gate,
 	# retain its existing +100 controlled-contact policy using the original id.
-	if identity == listener_id and identity > 0 and kind in [&"hurt", &"contact", &"shield"] \
+	if identity == listener_id and identity > 0 and kind in [&"hurt", &"contact", &"shield", &"down"] \
 			and int(audio_view.get("_controlled_id")) != listener_id:
 		priority += 100
 	_audio_exchange_keep(rows, {"kind": kind, "ground": ground, "key": key,
@@ -14079,15 +14405,24 @@ func _advance_original_shared_step(elapsed: float, replay_target: float = -1.0,
 	var original := terrain
 	var view: SiteAudioView = audio_view
 	if view != null:
+		_audio_down_reset()
+		_audio_vehicle_pending.clear()
 		_audio_batch_serial += 1
 		view.begin_batch()
+		if crowd_site != null and crowd_site.active: crowd_site._audio_native_prepare()
 	var result := _audio_original_shared_step(elapsed, replay_target, fire_replay_interval, formula_interval)
 	_audio_shared_step_active = false
 	if is_instance_valid(view):
 		if replay_target < 0.0 and terrain == original and result.get("ok", false) and result.get("completed", false) \
 				and str(result.get("status", "")) != "REGION_EVENT_PENDING" and _region_point_pending.is_empty() \
 				and not restore_only and not get_tree().paused and not bool(terrain.site.get("paused", false)):
+			_audio_down_flush()
+			view.set_loops(_audio_vehicle_pending)
 			view.commit_batch()
+			_audio_vehicle_pending.clear()
 		else:
+			_audio_down_reset()
+			_audio_vehicle_pending.clear()
+			view.set_loops([])
 			view.discard_batch()
 	return result

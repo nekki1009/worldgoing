@@ -16,6 +16,7 @@ const EXCHANGE_NATIVE_VISUAL_POSES := ["get_up", "down", "unconscious", "guard_b
 # Presentation only; never added to original rows/save/hash.
 var audio_step_sink: Callable
 var _audio_step_sources: Dictionary = {}
+var audio_down_sink: Callable
 
 func clear_audio_step_sources() -> void:
 	_audio_step_sources.clear()
@@ -8392,6 +8393,12 @@ func apply_unit_contact(index: int, packet: Dictionary) -> void:
 		return
 	var ko := float(combat_hot_get(index, &"ko"))
 	# Region deferral and hp admission above remain the original authority.
+	var audio_old_hp := hp
+	var audio_old_ko := ko
+	var audio_source_data: TerrainData = data
+	var audio_identity := combat_identity(index)
+	var audio_ground := combat_ground(index)
+	var audio_sink := audio_down_sink
 	var stun := float(combat_hot_get(index, &"stun"))
 	var result: Dictionary = packet.result
 	var effective_hit := not bool(packet.get("environmental", false)) and (float(result.hp) > 0.0 or float(result.stun) > 0.0)
@@ -8448,6 +8455,9 @@ func apply_unit_contact(index: int, packet: Dictionary) -> void:
 	elif ko <= 0.0:
 		unit.status = "Shield blocked" if bool(packet.shield) else ("Armor blocked" if float(result.hp) <= 0.0 else "Hurt")
 	_mark_visual_row(index)
+	if audio_old_hp > 0.0 and audio_old_ko <= 0.0 and (hp <= 0.0 or ko > 0.0) \
+			and audio_sink.is_valid():
+		audio_sink.call(audio_source_data, audio_identity, audio_ground)
 
 class _CombatSummaryBatch:
 	extends RefCounted

@@ -1242,8 +1242,20 @@ func _commit(job: Dictionary) -> Dictionary:
 		if job.has("technology_project"): return _commit_technology_trial(job)
 		return Runtime.ranged_craft(lab.terrain, str(job.recipe), int(job.executor_id))
 	if str(job.kind) == "equipment":
-		return equipment_orders.commit_team_issue(job.order) if str(job.order.mode) == "team_issue" else equipment_orders.commit(job.order)
+		var audio_data: TerrainData = lab.terrain
+		var audio_ground: Vector2 = executor.get("position", Vector2(-1, -1))
+		if lab.has_method("_audio_p3_person_ground"):
+			audio_ground = lab.call("_audio_p3_person_ground", int(job.executor_id), audio_ground)
+		var result: Dictionary = equipment_orders.commit_team_issue(job.order) if str(job.order.mode) == "team_issue" else equipment_orders.commit(job.order)
+		var changed: bool = not result.get("changed_ids", []).is_empty() if str(job.order.mode) == "team_issue" else job.order.planned != job.order.before
+		if result.ok and changed and lab.has_method("_audio_p3_operation_completed"):
+			lab.call("_audio_p3_operation_completed", audio_data, &"equipment_handle", audio_ground, int(job.executor_id))
+		return result
 	if str(job.kind) == "loot":
+		var audio_data: TerrainData = lab.terrain
+		var audio_ground: Vector2 = executor.get("position", Vector2(-1, -1))
+		if lab.has_method("_audio_p3_person_ground"):
+			audio_ground = lab.call("_audio_p3_person_ground", int(job.executor_id), audio_ground)
 		var source := _source(str(job.source_kind), str(job.source_id))
 		var result := Runtime.ok()
 		if not job.resources.is_empty() or not job.item_ids.is_empty():
@@ -1263,6 +1275,9 @@ func _commit(job: Dictionary) -> Dictionary:
 				equipment_changed.call(original_owner)
 			if equipment_changed.is_valid():
 				equipment_changed.call(int(executor.person_id))
+			if (not job.resources.is_empty() or not job.item_ids.is_empty() or float(job.open_amount) > 0.0) \
+					and lab.has_method("_audio_p3_operation_completed"):
+				lab.call("_audio_p3_operation_completed", audio_data, &"material_transfer", audio_ground, int(job.executor_id))
 		return result
 	var target := _person(int(job.target_id))
 	if str(job.kind) == "ransom":

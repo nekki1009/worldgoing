@@ -3456,8 +3456,14 @@ func deposit_owned_equipment(identity: int, item_ids: Array, expected_version: i
 	for item_id: Variant in item_ids:
 		if person.holder.equipped.values().has(item_id):
 			return Runtime.fail("INVALID", "穿戴物品須先完成本人卸裝，不會交貨時自動卸下")
-	return Runtime.transfer_items(lab.terrain, person.holder, person.cargo, depot,
-		lab.terrain.site.inventory, {}, item_ids, expected_version, int(depot.version), int(lab.terrain.site.capacity))
+	var audio_data: TerrainData = lab.terrain
+	var audio_ground: Vector2 = vehicles.ship_person_ground(identity) if vehicles.is_embarked(identity) else person.get("position", Vector2(-1, -1))
+	var original_transfer := func() -> Dictionary:
+		return Runtime.transfer_items(audio_data, person.holder, person.cargo, depot,
+			audio_data.site.inventory, {}, item_ids, expected_version, int(depot.version), int(audio_data.site.capacity))
+	if lab.has_method("_audio_p3_transfer"):
+		return lab.call("_audio_p3_transfer", original_transfer, identity, audio_ground, {}, item_ids)
+	return original_transfer.call()
 
 func _open_equipment_inventory(identity: int = -1, host: Window = null) -> void:
 	var ui_context := str(identity if identity >= 0 else lab.controlled_person_id())

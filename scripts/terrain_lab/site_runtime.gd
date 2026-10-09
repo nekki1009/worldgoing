@@ -669,7 +669,13 @@ static func harvest(data: TerrainData, key: String, actor_cell: Vector2i, cargo:
 	data.site.total_produced = int(data.site.total_produced) + inventory_size(output)
 	Env.rebuild_indexes(data)
 	rebuild_water(data)
-	return ok("取得 " + items_text(output), {"items": output, "taken": taken})
+	var result := ok("取得 " + items_text(output), {"items": output, "taken": taken})
+	# Both original resource/cargo commits and index/water publication are complete.
+	# Preview/survey/exhausted-clear paths returned before this presentation tail.
+	var audio_lab: Object = _audio_p3_lab(data)
+	if audio_lab != null and audio_lab.has_method("_audio_p3_resource_completed"):
+		audio_lab.call("_audio_p3_resource_completed", data, r, actor_cell, result, action)
+	return result
 
 static func capturable_species(resource: Dictionary) -> String:
 	if int(resource.get("kind", -1)) != Env.Kind.WILDLIFE:
@@ -3496,6 +3502,8 @@ static func advance_gate_operations(data: TerrainData, seconds: float, person_qu
 			continue
 		var point_guard: Variant = data.get_meta(&"region_point_deferring", Callable())
 		if point_guard is Callable and point_guard.is_valid() and bool(point_guard.call()): continue
+		var audio_before_open := bool(feature.gate.open)
+		var audio_completed := false
 		var candidate := feature.duplicate(true)
 		candidate.gate.open = str(feature.gate.pending) == "open"
 		_clear_gate_operation(candidate)
@@ -3506,8 +3514,13 @@ static func advance_gate_operations(data: TerrainData, seconds: float, person_qu
 		else:
 			feature.gate = candidate.gate
 			feature.status = "已開門" if bool(feature.gate.open) else "已關門"
+			audio_completed = true
 		Env.rebuild_indexes(data)
 		rebuild_water(data)
+		if audio_completed:
+			var audio_lab: Object = _audio_p3_lab(data)
+			if audio_lab != null and audio_lab.has_method("_audio_p3_gate_completed"):
+				audio_lab.call("_audio_p3_gate_completed", data, key, feature, audio_before_open)
 
 # Combat owns legality, timing and hit identity. This only commits the original
 # feature's HP and returns lost surfaces for the caller's same-step body response.
@@ -4080,8 +4093,10 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 			return
 		if work_time.is_valid():
 			minutes = float(work_time.call(false, minutes))
+		var audio_before_progress := float(job.progress)
 		job.progress = minf(float(job.work), float(job.progress) + minutes)
 		worker.status = "修理 %.1f / %.1f 分" % [float(job.progress), float(job.work)]
+		_audio_p3_work_progress_notice(data, key, worker, feature, "repair", audio_before_progress, float(job.progress), original_identity, str(job.part))
 		if float(job.progress) + 0.00000001 < float(job.work):
 			return
 		if _fire_defer_feature_completion(data, worker, cargo, key, job, occupied, carry_limit, worker_faction): return
@@ -4110,6 +4125,7 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 		Env.rebuild_indexes(data)
 		if Env.ecology_active(data): ecology_reconcile(data)
 		rebuild_water(data)
+		_audio_p3_work_finished_notice(data, key, worker, feature, "repair", original_identity)
 		return
 	if str(feature.stage) != "complete" or action == "construct" and feature.has("pending_build"):
 		if feature.has("pending_build") and _fire_feature_hot(data, key):
@@ -4135,8 +4151,10 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 		if work_time.is_valid():
 			minutes = float(work_time.call(false, minutes))
 		technology_record_work(feature, minutes, int(trial_guard.get("operator_id", 0)))
+		var audio_before_progress := float(job.progress)
 		job.progress = minf(float(job.work), float(job.progress) + minutes)
 		worker.status = "施工 %.1f / %.1f 分" % [float(job.progress), float(job.work)]
+		_audio_p3_work_progress_notice(data, key, worker, feature, "construct", audio_before_progress, float(job.progress), original_identity)
 		if float(job.progress) + 0.00000001 < float(job.work):
 			return
 		if _fire_defer_feature_completion(data, worker, cargo, key, job, occupied, carry_limit, worker_faction): return
@@ -4205,6 +4223,7 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 		if Env.ecology_active(data): ecology_reconcile(data)
 		rebuild_water(data)
 		data.site.notices.append(str(definition.name) + "已完成")
+		_audio_p3_work_finished_notice(data, key, worker, feature, "construct", original_identity)
 		return
 	if not definition.has("cycle"):
 		worker.mode = "idle"
@@ -4262,8 +4281,10 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 	if work_time.is_valid() and float(feature.production) < float(definition.cycle):
 		minutes = float(work_time.call(false, minutes))
 	technology_record_work(feature, minutes, int(technology_guard.get("operator_id", 0)))
+	var audio_before_production := float(feature.production)
 	feature.production = minf(float(definition.cycle), float(feature.production) + minutes * water_ratio * productivity)
 	feature.status = "生產 %.1f / %.1f 分" % [float(feature.production), float(definition.cycle)]
+	_audio_p3_work_progress_notice(data, key, worker, feature, "operate", audio_before_production, float(feature.production), original_identity)
 	worker.status = feature.status
 	if float(feature.production) + 0.00000001 >= float(definition.cycle):
 		_deliver_feature_batch(data, feature, worker, cargo, carry_limit, original_identity)
@@ -7270,6 +7291,9 @@ static func publish_feature_output(data: TerrainData, prepared: Dictionary) -> v
 	prepared.feature_ref.erase("technology_order")
 	_technology_finish_named_feature(data, str(prepared.receipt.get("feature_id", "")))
 	data.environment_revision += 1
+	_audio_p3_work_finished_notice(data, str(prepared.receipt.get("feature_id", "")), prepared.worker_ref,
+		prepared.feature_before, "produce", int(prepared.receipt.get("operator_id", 0)), prepared.output,
+		prepared.products.get("item_ids", []))
 
 static func valid_technology_batch(raw: Variant, data: TerrainData, key: String, target_kind: String = "feature") -> bool:
 	if not Technology.keys(raw, TECHNOLOGY_BATCH_FIELDS) or not Technology.integer(raw.version, 1, 1) or not Technology.integer(raw.id, 1) \
@@ -13625,6 +13649,29 @@ static func resume_settlement_defense_step(data: TerrainData, requester_id: int,
 	if not prepared.ok: return prepared
 	if not preview: _technology_publish_named_feature(prepared)
 	return ok("同一原已付步驟恢復；不再扣材料", {"already_working": false})
+
+static func _audio_p3_lab(data: TerrainData) -> Object:
+	if data == null:
+		return null
+	# get_meta with a null default still pushes an error when the key is absent.
+	var source_ref: Variant = data.get_meta(&"site_garrison_lab") if data.has_meta(&"site_garrison_lab") else null
+	if not source_ref is WeakRef:
+		return null
+	var original_lab: Object = source_ref.get_ref() as Object
+	return original_lab if is_instance_valid(original_lab) else null
+
+static func _audio_p3_work_progress_notice(data: TerrainData, key: String, worker: Dictionary,
+		feature: Dictionary, phase: String, before: float, after: float, identity: int = 0, part_id: String = "") -> void:
+	if not is_finite(before) or not is_finite(after) or after <= before: return
+	var original_lab: Object = _audio_p3_lab(data)
+	if original_lab != null and original_lab.has_method("_audio_p3_work_progress"):
+		original_lab.call("_audio_p3_work_progress", data, key, worker, feature, phase, before, after, identity, part_id)
+
+static func _audio_p3_work_finished_notice(data: TerrainData, key: String, worker: Dictionary,
+		feature: Dictionary, phase: String, identity: int = 0, output: Dictionary = {}, product_ids: Array = []) -> void:
+	var original_lab: Object = _audio_p3_lab(data)
+	if original_lab != null and original_lab.has_method("_audio_p3_work_finished"):
+		original_lab.call("_audio_p3_work_finished", data, key, worker, feature, phase, identity, output, product_ids)
 
 static func validate_fire_suppression(data: TerrainData, prepared: Dictionary) -> Dictionary:
 	if not prepared.get("ok", false) or not prepared.has("state_owner") or int(prepared.get("paid_q", 0)) <= 0: return fail("INVALID_WORK")

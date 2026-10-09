@@ -23,10 +23,10 @@ func _appearance(identity: int) -> Dictionary:
 	_record("appearance_projection", started)
 	return appearance
 
-func _register_kits(kit_keys: Array) -> bool:
+func _register_kits(kit_keys: Array, audio_mounts: PackedByteArray = PackedByteArray()) -> bool:
 	load_profile["input_appearance_rows"] = kit_keys.size()
 	var started := Time.get_ticks_usec()
-	var installed := super._register_kits(kit_keys)
+	var installed := super._register_kits(kit_keys, audio_mounts)
 	_record("register_kits_inclusive", started)
 	load_profile["admitted_unique_full_kits"] = _kit_cache.size()
 	load_profile["renderer_pages"] = view._pages.size() if view != null else 0

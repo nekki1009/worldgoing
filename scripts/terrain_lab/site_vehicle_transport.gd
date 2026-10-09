@@ -1254,6 +1254,7 @@ func occupies_own_horse(identity: int, cell: Vector2i) -> bool:
 func settle_operators() -> void:
 	for vehicle: Dictionary in records().values():
 		if is_siege(vehicle) or is_ship(vehicle): continue # update_siege owns safe crew/turn settlement.
+		lab._audio_vehicle_observed(lab.terrain, vehicle)
 		if int(vehicle.operator_id) <= 0: continue
 		var person := _operator(int(vehicle.operator_id))
 		# A relocation by the original person owner cannot leave remote vehicle control.
@@ -1320,7 +1321,16 @@ func transfer(source_id: String, destination_id: String, resources: Dictionary, 
 	if involves_ship: return _transfer_ship(source_id, destination_id, resources, item_ids, source_version, destination_version, requester_id, test_dispatch)
 	var prepared := prepare_transfer(source_id, destination_id, resources, item_ids, source_version, destination_version, requester_id, test_dispatch)
 	if not prepared.ok: return prepared
-	return Runtime.publish_item_transfer(prepared)
+	if not lab.has_method("_audio_p3_transfer"): return Runtime.publish_item_transfer(prepared)
+	# Pure metadata from the endpoints already accepted by prepare_transfer.
+	var audio_identity := requester_id
+	for audio_endpoint: String in [source_id, destination_id]:
+		if audio_endpoint.begins_with("person:"): audio_identity = int(audio_endpoint.trim_prefix("person:"))
+	var audio_person: Dictionary = controller.person_actions._person(audio_identity)
+	var audio_ground: Vector2 = audio_person.get("position", Vector2(-1, -1))
+	var original_transfer := func() -> Dictionary:
+		return Runtime.publish_item_transfer(prepared)
+	return lab.call("_audio_p3_transfer", original_transfer, audio_identity, audio_ground, resources, item_ids)
 
 func render_state(vehicle: Dictionary) -> Dictionary:
 	if is_ship(vehicle):
@@ -1866,6 +1876,9 @@ func commit_ship_person(job: Dictionary) -> Dictionary:
 	var vehicle: Dictionary = check.vehicle
 	var team: TerrainArmy = person.owner
 	var index := int(person.unit)
+	var audio_source_data: TerrainData = lab.terrain
+	var audio_identity := int(person.id)
+	var audio_kind := StringName(str(job.kind))
 	if str(job.kind) == "ship_board":
 		var prepared: Dictionary = controller.prepare_ship_supply(team, person.cell, false, job)
 		if not prepared.ok: return prepared
@@ -1881,6 +1894,7 @@ func commit_ship_person(job: Dictionary) -> Dictionary:
 		team.ship_disembarked(index, job.shore)
 	else: return Runtime.fail("INVALID")
 	vehicle.revision = int(vehicle.revision) + 1
+	lab._audio_ship_person_completed(audio_source_data, audio_kind, audio_identity, team.combat_ground(index))
 	return Runtime.ok("已沿原人物完成登離船；人物及物品未複製", {"person_id": int(person.id)})
 
 func commit_ship_helm(job: Dictionary) -> Dictionary:
@@ -1956,6 +1970,7 @@ func update_ships(delta: float) -> void:
 	if delta <= 0.0 or bool(lab.terrain.site.get("paused", false)): return
 	for vehicle: Dictionary in records().values():
 		if not is_ship(vehicle) or _ship_in_journey(str(vehicle.id)): continue
+		lab._audio_vehicle_observed(lab.terrain, vehicle)
 		if not ship_afloat(vehicle) and vehicle.move.is_empty():
 			_settle_ship_wreck(vehicle)
 			continue
@@ -2104,7 +2119,13 @@ func _transfer_ship(source_id: String, destination_id: String, resources: Dictio
 			if absi(stock.cell.x - person.cell.x) + absi(stock.cell.y - person.cell.y) != 1 or not lab.terrain.can_step(person.cell, stock.cell): return Runtime.fail("UNREACHABLE")
 	var guard := ship_transfer_guard(source.holder, target.holder, resources, item_ids)
 	if not guard.ok: return guard
-	return Runtime.transfer_items(lab.terrain, source.holder, source.cargo, target.holder, target.cargo, resources, item_ids, source_version, destination_version, int(target.capacity))
+	var audio_data: TerrainData = lab.terrain
+	var audio_ground: Vector2 = ship_person_ground(executor_id)
+	var original_transfer := func() -> Dictionary:
+		return Runtime.transfer_items(audio_data, source.holder, source.cargo, target.holder, target.cargo, resources, item_ids, source_version, destination_version, int(target.capacity))
+	if lab.has_method("_audio_p3_transfer"):
+		return lab.call("_audio_p3_transfer", original_transfer, executor_id, audio_ground, resources, item_ids)
+	return original_transfer.call()
 
 func _native_siege() -> bool:
 	return lab.crowd_site != null and lab.crowd_site.active

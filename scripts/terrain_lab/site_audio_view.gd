@@ -28,6 +28,10 @@ var _loop_rows: Array[Dictionary] = []
 var _candidates: Array[Dictionary] = []
 var _loop_requests: Array[Dictionary] = []
 var _fire_loop_requests: Array[Dictionary] = []
+var _environment_loop_requests: Array[Dictionary] = []
+var _last_animal_call_msec: int = -1
+const AUDIO_ENV_RESOURCE_READS := 512
+const AUDIO_ANIMAL_CALL_MSEC := 15000
 var _catalog: Dictionary = {}
 var _streams: Dictionary = {}
 var _seen: Dictionary = {}
@@ -218,6 +222,10 @@ func set_loops(rows: Array[Dictionary]) -> void:
 			"person_id": int(source.get("person_id", 0)), "epoch": _epoch,
 			"radius": radius, "distance_squared": distance_squared,
 			"priority": _priority(kind, int(source.get("person_id", 0))), "order": 0}
+		if source.has("vehicle_id"):
+			row.vehicle_id = str(source.vehicle_id)
+			row.vehicle_record = source.get("vehicle_record")
+			row.source_data = source.get("source_data")
 		var duplicate := -1
 		for index in _loop_requests.size():
 			if str(_loop_requests[index].key) == key:
@@ -276,6 +284,11 @@ func _process(_delta: float) -> void:
 		_clear_sound()
 		return
 	_prune_seen()
+	var environment_now := Time.get_ticks_msec()
+	if _last_fire_refresh_msec < 0 or environment_now - _last_fire_refresh_msec >= 100:
+		var environment_data: Variant = _lab.get("terrain")
+		if environment_data is TerrainData:
+			_audio_environment_refresh(environment_data, environment_now)
 	_recheck_short()
 	var ready: Array[Dictionary] = []
 	if _candidate_frame == Engine.get_process_frames():
@@ -402,6 +415,8 @@ func _clear_sound() -> void:
 	_candidates.clear()
 	_loop_requests.clear()
 	_fire_loop_requests.clear()
+	_environment_loop_requests.clear()
+	_last_animal_call_msec = -1
 	_batch_open = false
 	for index in _short_players.size():
 		_short_players[index].stop()
@@ -444,7 +459,7 @@ func _priority(kind: StringName, person_id: int) -> int:
 	var base := 10
 	if _finite_number(definition.get("priority")):
 		base = clampi(int(definition.priority), 0, 100)
-	if person_id == _controlled_id and kind in [&"hurt", &"contact", &"shield"]:
+	if person_id == _controlled_id and kind in [&"hurt", &"contact", &"shield", &"down"]:
 		base += 100
 	return base
 
@@ -537,10 +552,16 @@ func _refresh_loops() -> void:
 	var ready: Array[Dictionary] = []
 	var requests: Array[Dictionary] = _loop_requests.duplicate()
 	requests.append_array(_fire_loop_requests)
+	requests.append_array(_environment_loop_requests)
 	for request: Dictionary in requests:
 		var row := request.duplicate()
 		if int(row.epoch) != _epoch:
 			continue
+		if row.has("vehicle_id"):
+			var vehicle_ground := _audio_vehicle_loop_ground(row)
+			if not vehicle_ground.is_finite():
+				continue
+			row.position = vehicle_ground
 		if int(row.person_id) > 0:
 			if not _step_source_alive(int(row.person_id)):
 				continue
@@ -902,3 +923,164 @@ func _audio_fire_live_burning_part(data: TerrainData, unit: Dictionary) -> bool:
 	var feature: Dictionary = data.site.get("features", {}).get(str(unit.get("feature", "")), {})
 	var part: Dictionary = feature.get("parts", {}).get(str(unit.get("part", "")), {})
 	return str(feature.get("stage", "")) == "complete" and float(part.get("hp", 0.0)) > 0.0
+
+func native_step_watch_ids() -> PackedInt64Array:
+	var ids := PackedInt64Array()
+	if not _batch_open or _batch_cancelled or _batch_epoch != _epoch or _batch_frame != Engine.get_process_frames(): return ids
+	for row: Dictionary in _candidates:
+		if bool(row.step) and int(row.person_id) > 0: ids.append(int(row.person_id))
+	return ids # _candidates already has the single 64-row ceiling.
+
+func invalidate_step_candidate(identity: int) -> void:
+	if identity <= 0 or not _batch_open or _batch_cancelled or _batch_epoch != _epoch or _batch_frame != Engine.get_process_frames(): return
+	for index in range(_candidates.size() - 1, -1, -1):
+		if bool(_candidates[index].step) and int(_candidates[index].person_id) == identity:
+			_candidates.remove_at(index)
+			_counts.dropped += 1
+
+# OUTPUT ONLY: original local water/resource projection, no world state writes.
+# ponytail: 441 local cells and 512 index entries per 100 ms; unknown animal
+# coverage stays silent. Reuse a bounded owner query if its contract is added.
+
+func _audio_environment_sources(data: TerrainData, listener_ground: Vector2) -> Dictionary:
+	var water: Array[Dictionary] = []
+	var animals: Array[Dictionary] = []
+	var result := {"water": water, "animals": animals, "cells": 0,
+		"resource_reads": 0, "animal_complete": true}
+	if data == null or not listener_ground.is_finite():
+		return result
+	var count := data.size.x * data.size.y
+	var has_water := data.surface_types.size() == count and data.water_kind.size() == count
+	var center := Vector2i((listener_ground / CELL_PIXELS).floor())
+	var area := Rect2i(center - Vector2i(10, 10), Vector2i(21, 21)).intersection(Rect2i(Vector2i.ZERO, data.size))
+	var seen: Dictionary = {}
+	var nearest_water: Dictionary = {}
+	for y: int in range(area.position.y, area.end.y):
+		for x: int in range(area.position.x, area.end.x):
+			var cell := Vector2i(x, y)
+			var index := data.index(cell)
+			result.cells += 1
+			var ground := (Vector2(cell) + Vector2.ONE * 0.5) * CELL_PIXELS
+			var distance_squared := ground.distance_squared_to(listener_ground)
+			if distance_squared >= GENERAL_RADIUS * GENERAL_RADIUS:
+				continue
+			if has_water and int(data.surface_types[index]) == TerrainData.Surface.WATER:
+				var kind: StringName = &""
+				if int(data.water_kind[index]) == 1:
+					kind = &"water_fresh" # Water ambience; no invented current/weather.
+				elif int(data.water_kind[index]) == 2:
+					for direction: Vector2i in TerrainData.DIRECTIONS:
+						var adjacent := cell + direction
+						if data.contains(adjacent) and int(data.surface_types[data.index(adjacent)]) != TerrainData.Surface.WATER:
+							kind = &"water_shore" # Real sea/dry boundary, not open ocean.
+							break
+				if not kind.is_empty():
+					var row := {"key": "environment:" + str(kind), "kind": kind,
+						"position": ground, "person_id": 0, "distance_squared": distance_squared,
+						"priority": _priority(kind, 0), "order": -index}
+					if nearest_water.is_empty() or _better(row, nearest_water):
+						nearest_water = row
+			if not bool(result.animal_complete):
+				continue
+			var keys: Variant = data.resources_at.get(index, [])
+			if not keys is Array:
+				continue
+			for raw_key: Variant in keys:
+				if int(result.resource_reads) >= AUDIO_ENV_RESOURCE_READS:
+					result.animal_complete = false
+					animals.clear()
+					break
+				result.resource_reads += 1
+				var key := str(raw_key)
+				if seen.has(key):
+					continue
+				seen[key] = true
+				var base: Variant = data.resource_base.get(key)
+				if not base is Dictionary or int(base.get("kind", -1)) != SiteEnvironment.Kind.WILDLIFE:
+					continue
+				var source := SiteEnvironment.resource(data, key)
+				if bool(source.get("cleared", false)) or int(source.get("remaining", 0)) <= 0:
+					continue
+				var source_index := int(source.get("cell", -1))
+				if source_index < 0 or source_index >= count:
+					continue
+				var source_ground := (Vector2(data.cell_from_index(source_index)) + Vector2.ONE * 0.5) * CELL_PIXELS
+				var source_distance := source_ground.distance_squared_to(listener_ground)
+				if source_distance >= GENERAL_RADIUS * GENERAL_RADIUS:
+					continue
+				var species := SiteEnvironment.wildlife_species(int(source.get("variant", 0)), source_index)
+				var kind := StringName("animal_" + ("deer" if species in ["stag", "doe"] else species))
+				var row := {"key": "wildlife:" + key, "kind": kind,
+					"position": source_ground, "person_id": 0, "distance_squared": source_distance,
+					"priority": _priority(kind, 0), "order": -source_index}
+				if animals.size() < CANDIDATE_LIMIT:
+					animals.append(row)
+				else:
+					var worst := _worst_index(animals)
+					if _better(row, animals[worst]):
+						animals[worst] = row
+	if not nearest_water.is_empty():
+		water.append(nearest_water)
+	animals.sort_custom(_better)
+	return result
+
+func _audio_environment_refresh(data: TerrainData, now: int) -> void:
+	var projection := _audio_environment_sources(data, _listener_ground)
+	_environment_loop_requests = projection.water
+	for row: Dictionary in _environment_loop_requests:
+		row.epoch = _epoch
+		row.radius = _radius(row.kind)
+	# A separate presentation batch must never take an original open batch.
+	if _batch_open:
+		return
+	if _last_animal_call_msec < 0:
+		_last_animal_call_msec = now
+		return
+	if now - _last_animal_call_msec < AUDIO_ANIMAL_CALL_MSEC:
+		return
+	_last_animal_call_msec = now # No catch-up calls after pause/mute/scene replace.
+	var animals: Array[Dictionary] = projection.animals
+	if animals.is_empty() or not bool(projection.animal_complete):
+		return
+	for animal: Dictionary in animals:
+		var definition: Dictionary = _catalog.get(str(animal.kind), {})
+		var variants: Variant = definition.get("variants", [])
+		if not variants is Array or variants.is_empty():
+			continue # A missing boar bank must not mask an available nearby horse.
+		begin_batch()
+		offer(animal.kind, animal.position, "%s:%d" % [str(animal.key), now])
+		commit_batch()
+		break
+
+# Borrow the original vehicle record and current committed ground every frame.
+# An ID reused by removal/restore cannot retain the old loop's record identity.
+
+# Borrow the original vehicle record and current committed ground every frame.
+# An ID reused by removal/restore cannot retain the old loop's record identity.
+func _audio_vehicle_loop_ground(request: Dictionary) -> Vector2:
+	var invalid := Vector2(INF, INF)
+	var data: Variant = _lab.get("terrain")
+	if not data is TerrainData or not is_same(request.get("source_data"), data):
+		return invalid
+	var controller: Variant = _lab.get("site_controller")
+	if controller == null:
+		return invalid
+	var transport: Variant = controller.get("vehicles")
+	if not transport is SiteVehicleTransport:
+		return invalid
+	var vehicle: Dictionary = transport.records().get(str(request.get("vehicle_id", "")), {})
+	if vehicle.is_empty() or not is_same(vehicle, request.get("vehicle_record")) or vehicle.get("move", {}).is_empty():
+		return invalid
+	var kind := str(vehicle.get("kind", ""))
+	if kind == "ship":
+		if not transport.ship_afloat(vehicle) or float(vehicle.get("naval", {}).get("hp", 0.0)) <= 0.0 \
+				or transport._ship_in_journey(str(vehicle.id)):
+			return invalid
+	elif kind != "cart":
+		return invalid # Existing wagon is riding a horse; hoof steps own its sound.
+	var pose: Dictionary = transport.render_state(vehicle)
+	var ground: Variant = pose.get("position")
+	if not bool(pose.get("moving", false)) or float(pose.get("progress", 0.0)) <= 0.0 \
+			or not ground is Vector2 or not ground.is_finite():
+		return invalid
+	return ground
