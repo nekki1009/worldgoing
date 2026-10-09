@@ -163,6 +163,12 @@ func _ensure_original_adapter_host(party: Dictionary) -> Dictionary:
 	if not wired.get("ok", false):
 		_release_original_adapter_host()
 		return wired
+	var requested_mode := str(slot.region_registry().modes.get(identity, {}).get("mode", "cold_exact"))
+	if requested_mode not in ["cold_exact", "formula_active"]: requested_mode = "cold_exact"
+	var admitted: Dictionary = original._region_gameplay_owner_lab(identity, requested_mode)
+	if not admitted.get("ok", false):
+		_release_original_adapter_host()
+		return admitted
 	return {"ok": true, "receipt": original.region_bind_receipt(original.terrain)}
 
 func _release_original_adapter_host() -> void:
@@ -518,6 +524,8 @@ func draw_on(canvas: Control) -> void:
 	canvas.draw_line(party_point + Vector2(0, -8), party_point + Vector2(0, -22), Color("1d3b4a"), 2.0)
 	canvas.draw_colored_polygon(PackedVector2Array([party_point + Vector2(0, -22), party_point + Vector2(12, -18), party_point + Vector2(0, -14)]), Color("e0533d"))
 
+## The existing map mode control returns input to the original full body.
+## Its next visible Lab binds the selected graph through the existing API.
 
 func _return_original_body_mode(party: Dictionary) -> void:
 	var hosted := _ensure_original_adapter_host(party)

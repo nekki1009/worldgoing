@@ -35,6 +35,15 @@ static var _memory: Dictionary = {} # cache key -> {site: PackedByteArray}
 static var _loaded_regions: Dictionary = {} # cache key -> {region: true}
 static var _dirty_regions: Dictionary = {} # cache key -> {region: true}
 static var _volatile: Dictionary = {} # revision-keyed original-owner terrain projections.
+## Read-only memo of UNVISITED fixed geography (performance proposal A).
+## Key: manifest content identity + site, so another manifest never hits.
+## Values are shared and must not be mutated; visited/provider bodies are
+## never memoized. clear_memory_cache() drops both memos.
+const TERRAIN_MEMO_LIMIT := 48
+static var _terrain_memo: Dictionary = {} # key -> TerrainData (shared, read-only)
+static var _terrain_memo_order: Array[String] = []
+static var _terrain_memo_owner: Dictionary = {} # TerrainData instance id -> key
+static var _table_memo: Dictionary = {} # key|cover|effective -> table Dictionary
 
 ## Shared new-entry policy. Fine water never derives from coarse `mixed`.
 ## Missing mandatory source files are rejected by RegionData before this call.
@@ -112,6 +121,20 @@ static func cost_factor(table: PackedByteArray) -> float:
 static func table_from_terrain(data: TerrainData, resource_cover: PackedByteArray = PackedByteArray(), effective: bool = false) -> Dictionary:
 	if data == null or data.size != Vector2i(Adapter.SIDE, Adapter.SIDE):
 		return {"ok": false, "code": "INVALID_SITE", "message": "路線表只接受 100×100 固定地形"}
+	_mutex.lock()
+	var owner_key: String = str(_terrain_memo_owner.get(data.get_instance_id(), ""))
+	var table_key := "%s#%d#%s" % [owner_key, hash(resource_cover), str(effective)] if not owner_key.is_empty() else ""
+	var cached: Variant = _table_memo.get(table_key) if not table_key.is_empty() else null
+	_mutex.unlock()
+	if cached != null: return cached.duplicate(true)
+	var computed := _table_from_terrain_uncached(data, resource_cover, effective)
+	if not table_key.is_empty() and bool(computed.get("ok", false)):
+		_mutex.lock()
+		if _terrain_memo_owner.get(data.get_instance_id(), "") == owner_key: _table_memo[table_key] = computed.duplicate(true)
+		_mutex.unlock()
+	return computed
+
+static func _table_from_terrain_uncached(data: TerrainData, resource_cover: PackedByteArray, effective: bool) -> Dictionary:
 	var policy := travel_policy(data, resource_cover)
 	if not policy.ok: return policy
 	var count := data.size.x * data.size.y
@@ -219,9 +242,35 @@ static func effective_terrain(source: RegionData, site: Vector2i, context: Dicti
 		if supplied.get("data") != null:
 			if not supplied.data is TerrainData or str(supplied.get("revision", "")).is_empty(): return {"ok": false, "code": "INVALID_PROVIDER"}
 			return supplied
+	var memo := memo_terrain(source, site)
+	if not bool(memo.get("ok", false)): return memo
+	return {"ok": true, "data": memo.data, "revision": "", "visited": false}
+
+## Unvisited fixed geography is a pure function of the pinned manifest content
+## and the site, so one built body is shared read-only between route callers.
+static func memo_terrain(source: RegionData, site: Vector2i) -> Dictionary:
+	var key := "%s|%s|%s|%d,%d" % [source.manifest_hash, source.resource_manifest_hash, source.resource_rule_revision, site.x, site.y]
+	_mutex.lock()
+	var cached: Variant = _terrain_memo.get(key)
+	_mutex.unlock()
+	if cached != null: return {"ok": true, "data": cached, "memo": true}
 	var built: Dictionary = source.make_terrain_data(site.x, site.y)
-	if not bool(built.get("ok", false)): return built
-	return {"ok": true, "data": built.data, "revision": "", "visited": false}
+	if not bool(built.get("ok", false)) or source.manifest_hash.is_empty(): return built
+	_mutex.lock()
+	if not _terrain_memo.has(key):
+		_terrain_memo[key] = built.data
+		_terrain_memo_owner[built.data.get_instance_id()] = key
+		_terrain_memo_order.append(key)
+		while _terrain_memo_order.size() > TERRAIN_MEMO_LIMIT:
+			var oldest: String = _terrain_memo_order.pop_front()
+			var dropped: Variant = _terrain_memo.get(oldest)
+			if dropped != null: _terrain_memo_owner.erase(dropped.get_instance_id())
+			_terrain_memo.erase(oldest)
+			for table_key: String in _table_memo.keys():
+				if table_key.begins_with(oldest + "#"): _table_memo.erase(table_key)
+	var shared: TerrainData = _terrain_memo[key]
+	_mutex.unlock()
+	return {"ok": true, "data": shared, "memo": false}
 
 static func _cover(source: RegionData, site: Vector2i) -> PackedByteArray:
 	var result: Dictionary = source.site_resource_cover(site)
@@ -393,6 +442,10 @@ static func clear_memory_cache() -> void:
 	_loaded_regions.clear()
 	_dirty_regions.clear()
 	_volatile.clear()
+	_terrain_memo.clear()
+	_terrain_memo_order.clear()
+	_terrain_memo_owner.clear()
+	_table_memo.clear()
 	_mutex.unlock()
 
 static func _node_key(site: Vector2i, component: int) -> int:

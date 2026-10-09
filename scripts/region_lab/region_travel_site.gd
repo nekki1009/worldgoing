@@ -112,6 +112,10 @@ static func world_opened(controller: Node, candidate: RegionSaveSlot, manifest_p
 	var status := candidate.region_travel_status()
 	if not status.ok: return status
 	if not bool(status.get("pending", false)): return {}
+	var selected := candidate.region_travel_party()
+	if not selected.ok: return selected
+	if not selected.party.get("upkeep", {}).get("live", {}).is_empty():
+		return _open_selected_live_party(controller, candidate, manifest_path)
 	if not bool(status.arrived):
 		open_travel_map(controller, str(candidate.pin.world_instance_id), str(candidate.pin.slot_id), manifest_path)
 		return Runtime.ok("旅隊仍在途中；開啟台灣地圖", {"travel_handoff": true})
@@ -149,6 +153,22 @@ static func world_opened(controller: Node, candidate: RegionSaveSlot, manifest_p
 	controller.save_path = candidate.site_path(destination)
 	return Runtime.ok("旅隊已抵達目的地", {"site": [destination.x, destination.y], "arrived": true})
 
+static func _open_selected_live_party(controller: Node, candidate: RegionSaveSlot, manifest_path: String) -> Dictionary:
+	var token := str(candidate.region_travel_journey().get("token", ""))
+	var selected := candidate.region_live_party_proof(token)
+	if not selected.ok: return selected
+	var lab: Node = controller.lab
+	if not lab.has_method("bind_selected_region_party"): return Runtime.fail("MISSING_ORIGINAL_PARTY_BIND")
+	controller.region_slot = candidate
+	var bound: Dictionary = lab.call("bind_selected_region_party", token, selected.party, candidate, selected.proof)
+	if not bound.get("ok", false) or bound.get("complete") != true or bound.get("owner") != "travel:" + token \
+			or int(bound.get("generation", -1)) != int(candidate._marker.generation):
+		return bound if not bound.get("ok", false) else Runtime.fail("COMMITTED_UNBOUND", "真選定party完整graph仍待同世代綁定")
+	controller._region_manifest_path = manifest_path
+	controller._auto_save_blocked = true # Sole party JSON+graph checkpoint owns saves.
+	controller._ship_journey.clear()
+	controller.save_path = ""
+	return Runtime.ok("已接回原旅隊即時場景", {"party_live": true, "token": token, "generation": int(candidate._marker.generation)})
 
 static func request_departure(controller: Node) -> Dictionary:
 	if not controller._region_departure_intent.is_empty():
@@ -157,12 +177,10 @@ static func request_departure(controller: Node) -> Dictionary:
 		return depart(controller)
 	return controller._request_region_departure()
 
-
 static func cancel_departure(controller: Node, nonce: String) -> Dictionary:
 	return controller._cancel_region_departure(nonce)
 
 ## Read selection through the same original person/team/cape/near-enemy owners.
-
 
 static func selected_departure(controller: Node) -> Dictionary:
 	var lab: TerrainLab = controller.lab
