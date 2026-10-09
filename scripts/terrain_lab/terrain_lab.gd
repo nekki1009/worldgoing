@@ -1694,6 +1694,10 @@ func _next_fire_replay_interval() -> Dictionary:
 func replay_site_to(target_game_seconds: float, budget_usec: int = 0, max_steps: int = 0) -> Dictionary:
 	if not restore_only or terrain == null or not is_inside_tree():
 		return SiteRuntime.fail("INVALID_MODE", "補算只接受已還原的原 TerrainLab")
+	# A latched original step fault outranks the point it left pending.
+	if site_controller != null:
+		var step_fault: Dictionary = site_controller.original_step_fault_guard()
+		if not step_fault.ok: return step_fault
 	if not _region_point_pending.is_empty() or _region_point_consuming: return SiteRuntime.fail("REGION_EFFECTS_PENDING")
 	var fire_guard := SiteRuntime.ok() if terrain.site.has("region_snapshot") else SiteStore.fire_event_guard(terrain)
 	if not fire_guard.ok: return fire_guard
@@ -1708,7 +1712,7 @@ func replay_site_to(target_game_seconds: float, budget_usec: int = 0, max_steps:
 	_replay_target = target_game_seconds
 	var deadline := Time.get_ticks_usec() + budget_usec if budget_usec > 0 else 0
 	var completed_steps := 0
-	var pending := float(window.pending)
+	var pending := _replay_pending_residue(float(window.pending))
 	while pending > 0.0:
 		var fire_interval := _next_fire_replay_interval() if _fire_replay_tracking else {}
 		if _fire_replay_tracking and fire_interval.is_empty():
@@ -1745,9 +1749,11 @@ func replay_site_to(target_game_seconds: float, budget_usec: int = 0, max_steps:
 			return SiteRuntime.fail("INVALID_TIME", "原補算時間不可表示")
 		var result := _advance_original_shared_step(action_step, _replay_target, fire_interval)
 		if not bool(result.get("ok", false)): return result
+		if not result.has("pending"):
+			return SiteRuntime.fail("CLOCK_CONTRACT", "補算步進未完成且無欠秒：" + str(result.get("status", "")))
 		if _fire_replay_tracking: _fire_replay_segment_offset += 1
 		completed_steps += 1
-		pending = float(result.pending)
+		pending = _replay_pending_residue(float(result.pending))
 		if pending > 0.0 and ((max_steps > 0 and completed_steps >= max_steps) or (deadline > 0 and Time.get_ticks_usec() >= deadline)):
 			return SiteRuntime.ok("原地點仍有補算欠秒", {"status": "PENDING", "target": _replay_target,
 				"pending": pending, "steps": completed_steps, "data": terrain})
@@ -1782,6 +1788,12 @@ func replay_site_to(target_game_seconds: float, budget_usec: int = 0, max_steps:
 	_replay_target = -1.0
 	return SiteRuntime.ok("原地點補算完成", {"status": "COMPLETE", "target": target_game_seconds,
 		"pending": 0.0, "steps": completed_steps, "data": terrain})
+
+func _replay_pending_residue(pending: float) -> float:
+	# Clipped fixed steps can leave a float residue below one ACTION_TIME_EPSILON
+	# of action time; it cannot be stepped, so it counts as complete.
+	var tolerance: float = SiteRuntime.game_seconds(ACTION_TIME_EPSILON, float(terrain.site.get("combat_left", 0.0))) * simulation_speed
+	return 0.0 if pending <= tolerance else pending
 
 func _advance_combat(delta: float, combat_clock: float = -1.0) -> void:
 	# Shared action-time steps, independent of peaceful game-minute acceleration.
@@ -12896,11 +12908,13 @@ func validate_native_begin_shared_window(prepared: Dictionary) -> Dictionary:
 	var prefixes: Dictionary = _check_original_shared_prefixes(prepared.captured, prepared.projected_plan, prepared.requests, priors, true)
 	if not prefixes.ok:
 		priors.clear()
+		_discard_pure_prefix_registrations()
 		return prefixes
 	var supplies: Dictionary = site_controller.validate_native_sustain_point(prepared.sustain, priors)
 	# Pure candidates are not accepted consumption. Break the same-array prior
 	# reference after checking; final actual allocations are prepared afresh.
 	priors.clear()
+	_discard_pure_prefix_registrations()
 	if not supplies.ok: return supplies
 	var body: Dictionary = prepared.body
 	if not crowd_site.crowd.validate_step_clock_work_plan_after_host_ranged(float(body.action_seconds), float(body.game_seconds),
@@ -12922,6 +12936,16 @@ func _region_mark_native_work_combat(mark: float) -> void:
 			and is_same(event.packet.get("manual"), manual): return
 	_region_point_contacts.append({"kind": "native_manual_combat", "person_id": 0,
 		"packet": {"site": terrain.site, "manual": manual, "target": str(manual.target), "action": str(manual.action)}})
+
+func _discard_pure_prefix_registrations() -> void:
+	# The before-body preflight registers Runtime/WT/PA prefix allocations for a
+	# projected plan only. Drop those registrations (never the captures or shared
+	# vehicle facts) so the post-body finish registers afresh for the real point.
+	site_controller._checked_runtime_work_preparing = {}
+	site_controller._checked_runtime_work_admission = {}
+	site_controller.work_team._preparing_shared_prefix = {}
+	site_controller.work_team._checked_work_prefix_admission = {}
+	site_controller.person_actions._checked_controlled_prefixes = {}
 
 func _finish_native_checked_body_prefixes(action_begin: float, action_end: float, seconds: float) -> bool:
 	if crowd_site == null or not crowd_site.work_fatigue_point_active() \
@@ -13165,8 +13189,7 @@ func _native_begin_transition_witness(requests: Array, without: Dictionary, with
 	return {}
 
 func prepare_native_begin_ranged(action_seconds: float, register_candidate: bool = true, query_override: int = -1) -> Dictionary:
-	if crowd_site == null or not crowd_site.active or not crowd_site.fire_host_active() \
-		or crowd_site.crowd == null or not crowd_site.crowd.has_method("preview_host_ranged_batch"): return SiteRuntime.fail("CLOCK_NOT_READY")
+	if crowd_site == null or not crowd_site.active or crowd_site.crowd == null: return SiteRuntime.fail("CLOCK_NOT_READY")
 	if _fire_committing or _fire_advancing or terrain == null or not physical_ranged_enabled \
 		or not exchange_enabled or not is_finite(action_seconds) or action_seconds <= 0.0 \
 		or action_seconds > EXCHANGE_ACTION_STEP + ACTION_TIME_EPSILON: return SiteRuntime.fail("INVALID_NATIVE_BEGIN_WINDOW")
@@ -13198,6 +13221,9 @@ func prepare_native_begin_ranged(action_seconds: float, register_candidate: bool
 			1 if str(release.mode) == "FIRE_ARROW" else 0, int(release.shot_id), release.target.x, release.target.y]))
 	var preview: PackedFloat64Array = PackedFloat64Array()
 	if not native_inputs.is_empty():
+		# D gated only Native shooting on a fire host. A host-less Crowd site with
+		# no releases keeps an empty preview instead of stalling the shared step.
+		if not crowd_site.fire_host_active() or not crowd_site.crowd.has_method("preview_host_ranged_batch"): return SiteRuntime.fail("CLOCK_NOT_READY")
 		preview = crowd_site.crowd.preview_host_ranged_batch(native_inputs)
 		if preview.size() != draft.releases.size() * 10: return SiteRuntime.fail("STALE_NATIVE_BEGIN")
 		for index: int in draft.releases.size():

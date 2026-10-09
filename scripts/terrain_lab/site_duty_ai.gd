@@ -799,7 +799,8 @@ static func _cadence_state(lab: Variant, ledger: Dictionary = {}) -> Dictionary:
 	var registry := ledger
 	if registry.is_empty():
 		if lab.site_controller == null or lab.site_controller.region_slot == null: return {}
-		registry = lab.site_controller.region_slot.region_registry()
+		registry = lab.site_controller.region_slot.region_registry_view()
+		if registry.is_empty(): return {}
 	return RegionPolicy.duty_state(registry, str(lab.terrain.site.get("id", "")))
 
 static func capture_cadence(lab: Variant, elapsed: float) -> void:

@@ -112,16 +112,21 @@ func _run() -> void:
 		var lab: TerrainLab = fixture.lab
 		var slot: ObservedSlot = fixture.slot
 		var probe: RefusingCrowd = RefusingCrowd.new()
-		probe.lab = lab
-		probe.active = true
+		# Core native BEGIN fails closed on a crowd without the ArmyCrowd work API
+		# or without owners, so a real one-person CrowdSite is deployed. Only the
+		# original body step() is overridden to refuse.
+		lab.add_child(probe)
+		probe.setup(lab)
+		lab.crowd_site = probe
+		var deployed: Dictionary = probe.deploy([{"faction": 1, "count": 1, "role": "combat", "troop_type": "melee_infantry",
+			"entry": "west", "attack": false, "ai_enabled": false}], [[Vector2i(40, 40)]])
+		assert(deployed.ok and probe.active, str(deployed))
 		probe.replace_error = not bool(scenario.stale)
 		if scenario.stale: probe.last_event_error = SiteRuntime.fail("OLDER_EVENT_ERROR", "Prior owner event; not this body refusal")
-		# Only this save-guard query is used; no ArmyCrowd instance is created.
-		probe.crowd = EmptyCrowdApi.new()
-		lab.add_child(probe)
-		lab.crowd_site = probe
 		lab.site_controller._navigation_revision = lab.terrain.navigation_revision
 		lab.restore_only = replaying
+		var fatigue_before: Array = [lab.character.fatigue, lab.character.fatigue_rest]
+		var supply_before: Dictionary = lab.terrain.site.person_supply.get(str(lab.character.person_id), {}).duplicate(true)
 		var result: Dictionary = lab.replay_site_to(4.0, 0, 1) if replaying else lab._advance_original_shared_step(TerrainLab.EXCHANGE_ACTION_STEP)
 		var cause: String = "ORIGINAL_CROWD_STEP_FAILED" if scenario.stale else "INJECTED_CROWD_STEP_FAILURE"
 		assert(not result.ok and result.code == cause and not bool(result.get("completed", false)), str(result))
@@ -132,8 +137,11 @@ func _run() -> void:
 		assert(lab.site_controller._original_step_fault == result)
 		assert(probe.refusal_calls == 1 and probe.observed_step == [TerrainLab.EXCHANGE_ACTION_STEP, 2.0, 0.0])
 		assert(SiteRuntime.now(lab.terrain) > 0.0 and lab.site_controller._work_elapsed > 0.0, "Actual original Site.tick must already have advanced")
-		assert(lab.character.fatigue_rest > 0.0, "Actual original fatigue phase must already have charged the slice")
-		assert(float(lab.terrain.site.person_supply[str(lab.character.person_id)].at) == 2.0, "Actual original person_supply must have advanced before body refusal")
+		# Core charges native fatigue/supply only in the accepted point finish.
+		assert([lab.character.fatigue, lab.character.fatigue_rest] == fatigue_before, "Refused native body must not charge fatigue")
+		# Zero-time Sustain resupply (a meal from carried rations) is settled before
+		# BEGIN by design; the time-based person_supply charge must not advance.
+		assert(float(lab.terrain.site.person_supply.get(str(lab.character.person_id), {}).get("at", -1.0)) == float(supply_before.get("at", -2.0)), "Refused native body must not charge person_supply time")
 		assert(slot.publish_calls == 0 and float(slot.control.logical_game_seconds) == 0.0 and slot._marker.is_empty())
 		assert(float(lab.terrain.site.simulation_settlement.last_settled_game_seconds) == 0.0)
 		assert(slot.permit_calls == (0 if replaying else 1))

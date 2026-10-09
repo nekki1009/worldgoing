@@ -2344,7 +2344,11 @@ func _ecology_person_signature() -> String:
 	# progress depends on its current task.
 	var person := person_actions._person(lab.controlled_person_id(), false)
 	if person.is_empty(): return ""
-	var task: Variant = person.body.get("work_task", {}) if int(person.unit) >= 0 else (lab.terrain.site.worker if person.owner == lab.npc else lab.terrain.site.manual)
+	var task: Variant = lab.terrain.site.worker if person.owner == lab.npc else lab.terrain.site.manual
+	if int(person.unit) >= 0:
+		# Crowd actors are Nodes: Object.get takes one argument and returns null when unset.
+		task = person.body.get("work_task", {}) if person.body is Dictionary else person.body.get("work_task")
+		if task == null: task = {}
 	return JSON.stringify([float(person.get("hp", 0.0)), person.get("cell", Vector2i(-1, -1)), person_actions._ready(person), person_actions.is_busy(int(person.person_id)), task])
 
 func _update_ecology_ui() -> void:
@@ -2394,7 +2398,11 @@ func _update_ecology_ui() -> void:
 	if not source_key.is_empty(): details.text += "\n" + _ecology_description(source_key)
 	var person := person_actions._person(lab.controlled_person_id(), false)
 	var task: Dictionary = {}
-	if not person.is_empty(): task = person.body.get("work_task", {}) if int(person.unit) >= 0 else (lab.terrain.site.worker if person.owner == lab.npc else lab.terrain.site.manual)
+	if not person.is_empty():
+		var held: Variant = lab.terrain.site.worker if person.owner == lab.npc else lab.terrain.site.manual
+		if int(person.unit) >= 0:
+			held = person.body.get("work_task", {}) if person.body is Dictionary else person.body.get("work_task")
+		if held is Dictionary: task = held
 	if str(task.get("action", "")) == "restore": ecology_status.text += "\n本人復育進度 %.1f / %.0f 遊戲分" % [float(task.get("progress", 0.0)), Runtime.resource_work_minutes(Env.Kind.TIMBER, "restore")]
 	_ecology_ui_cache_key = cache_key
 	_ecology_ui_cache_text = ecology_status.text
@@ -11694,7 +11702,7 @@ func prepare_shared_native_training_requests(seconds: float, combat_left: float)
 	if not _crowd_active(): return Runtime.ok("", {"requests": []})
 	var requests: Array[Dictionary] = []
 	for owner: RefCounted in lab.crowd_site.person_owners():
-		var entry: Dictionary = lab.terrain.site.team_supply.get(str(owner.team_id), {})
+		var entry: Dictionary = lab.terrain.site.get("team_supply", {}).get(str(owner.team_id), {})
 		if entry.is_empty() or not bool(entry.get("training_order", false)): continue
 		# Existing Sustain zero-time resupply is already settled and its true
 		# coverage interval clipped. Refresh ORIGINAL World input before start

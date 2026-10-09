@@ -244,7 +244,9 @@ func _run() -> void:
 	# This synthetic slot has no fixed geography or formal Fire journal.
 	live.terrain.site.erase("fire_settlement")
 	var target := float(slot.control.logical_game_seconds)
-	_near(target, float(initial.at) + 1200.0)
+	# Core clips fixed steps at work boundaries; the unconsumed fixed remainder
+	# is carried to the next frame, so the 20 s are conserved, not all published.
+	_near(target + live._action_time_remainder * 60.0 * live.simulation_speed, float(initial.at) + 1200.0)
 	var expected := _capture(live)
 	assert(float(expected.features[initial.farm].production) != float(source.site.features[initial.farm].production))
 	assert(expected.inventory != source.site.inventory or expected.armies[0].units[1].cargo != source.site.armies[0].units[1].cargo)
@@ -330,7 +332,7 @@ func _run() -> void:
 		mixed_live.movement_input_enabled = false
 		mixed_live._advance_action_time(0.2)
 		var mixed_target := float(mixed_slot.control.logical_game_seconds)
-		_near(mixed_target, float(initial.at) + 0.04 + 0.16 * 60.0)
+		_near(mixed_target + mixed_live._action_time_remainder * 60.0 * mixed_live.simulation_speed, float(initial.at) + 0.04 + 0.16 * 60.0)
 		var mixed_result := mixed_cold.replay_site_to(mixed_target)
 		assert(mixed_result.ok and mixed_result.status == "COMPLETE", str(mixed_result))
 		mixed_live.terrain.site.erase("fire_settlement")

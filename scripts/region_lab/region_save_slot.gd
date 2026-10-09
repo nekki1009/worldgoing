@@ -1415,6 +1415,12 @@ func region_registry() -> Dictionary:
 	if not control.has("region_gameplay"): control.region_gameplay = GameplayClock.empty_registry()
 	return control.region_gameplay
 
+## Read-only view for optional callers. A source-less slot without an admitted
+## region_gameplay schema must not acquire one as a side effect (item 20).
+func region_registry_view() -> Dictionary:
+	if source == null and not control.has("region_gameplay"): return {}
+	return region_registry()
+
 func queue_region_event(identity: String, kind: String, at: float, owner: String, payload: Dictionary = {}, player: bool = false) -> Dictionary:
 	if at < float(control.logical_game_seconds) - 0.00000001: return fail("REGION_EVENT", "新事件不能倒填已完成區間")
 	return GameplayClock.queue_event(region_registry(), identity, kind, at, owner, payload, player)

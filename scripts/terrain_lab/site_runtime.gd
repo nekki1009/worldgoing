@@ -7808,7 +7808,7 @@ static func validate_technology_target_storage(data: TerrainData, key: String, t
 			or not event.target_id.trim_prefix(target_kind + ":").is_valid_int() \
 			or str(int(event.target_id.trim_prefix(target_kind + ":"))) != event.target_id.trim_prefix(target_kind + ":") \
 			or not Technology.integer(int(event.target_id.trim_prefix(target_kind + ":")), 1, 2147483646) or not Technology.integer(event.operator_id, 1) \
-			or not event.binding is String or not Technology.finite_number(event.work_seconds, 0.000000001) or not event.item_ids is Array \
+			or not event.binding is String or not Technology.finite_number(event.work_seconds, 0.000000001) or float(event.work_seconds) > 1.0e12 or not event.item_ids is Array \
 			or not Technology.material_stack(event.outputs) or not Technology.material_stack(event.materials): return fail("CORRUPT_SAVE", "原完成事件格式")
 		# Only completed original vehicles can retain immutable source-site and
 		# source-local vehicle/person IDs through legal Region arrival mapping.

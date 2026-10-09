@@ -3324,10 +3324,15 @@ func military_work_preflight(nation_id: String, order_id: String) -> Dictionary:
 	if int(operations.version) == 1 and order.work_consent.get("purpose") == "N05:" + order_id: purpose = "N05:" + order_id
 	var team: Variant = actions._technology_military_team(person)
 	if team == null and not consents.is_empty() or not actions._technology_consent_valid(int(order.operator_id), consents, purpose, {}, true, order): return Runtime.fail("NO_CONSENT")
-	if team is TerrainArmy and not consents.is_empty():
-		var work_consent: Dictionary = consents[0]
-		if int(work_consent.get("decider_id", -1)) != int(team.duty_resolve_readonly("team.work").get("decider", -1)) \
-			or int(work_consent.get("revision", -1)) != int(team.team_offices(true).get("revision", -2)): return Runtime.fail("NO_CONSENT")
+	if team != null:
+		var authority_team: Variant = team
+		if team is CrowdOwner:
+			authority_team = team._command_owner(int(person.unit))
+			if authority_team is TerrainTestCharacter: authority_team = actions._technology_team(person)
+		if not authority_team is TerrainArmy: return Runtime.fail("NO_CONSENT")
+		var current_duty: Dictionary = authority_team.duty_resolve_readonly("team.work", team)
+		if int(order.work_consent.get("decider_id", -1)) != int(current_duty.get("decider", -1)) \
+			or int(order.work_consent.get("revision", -1)) != int(current_duty.get("revision", -1)): return Runtime.fail("NO_CONSENT")
 	return Runtime.ok("", {"nation": nation, "operations": operations, "order": order, "certificate": certificate.certificate,
 		"feature": feature, "person": person, "team": team, "groups": [{"team": team, "person_ids": [int(order.operator_id)]}],
 		"person_ids": [int(order.operator_id)], "requester_id": int(order.authorizer_id), "operation_ref": {"nation_id": nation_id, "order_id": order_id},
