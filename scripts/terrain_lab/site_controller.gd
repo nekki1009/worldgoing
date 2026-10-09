@@ -9453,7 +9453,11 @@ func open_fixed_world(manifest_path: String, world_id: String, slot_id: String, 
 	var preflight: Dictionary = lab.prepare_selected_region_owner_restore(site.data, candidate) if selected_restore else _journey_arrival_preflight(site.data)
 	if not preflight.ok: return preflight
 	if selected_restore: site["data"] = preflight.data # Exact selected readback/private nonce pair.
-	var archived := Runtime.ok() if not _boot_request.is_empty() else save_to(_archive_path())
+	# Reopening the slot that is already active resumes its last commit (the
+	# commit is the truth). Archiving the live Site there would publish a newer
+	# generation into the same slot and stale the selected ticket prepared above.
+	var same_slot := region_slot != null and region_slot.folder.simplify_path() == candidate.folder.simplify_path()
+	var archived := Runtime.ok() if not _boot_request.is_empty() or same_slot else save_to(_archive_path())
 	if not archived.ok: return archived
 	if not selected_restore:
 		var attached: Dictionary = candidate.attach_active_site(site.data)

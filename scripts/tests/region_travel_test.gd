@@ -433,7 +433,7 @@ func _bind_original_travel_host(slot: RegionSaveSlot) -> bool:
 	if not _must(selected.ok, "Original panel reads the exact committed party"): return false
 	var hosted: Dictionary = original_travel_panel._ensure_original_adapter_host(selected.party)
 	var origin_mode: Dictionary = slot.region_registry().modes.get(str(selected.party.origin_site_id), {})
-	if not _must(hosted.ok and origin_mode.get("mode") in ["cold_exact", "formula_active"] and origin_mode.get("activation", {}).get("complete") == true, "Original departed Site is admitted by its actual complete owner: " + str(hosted)): return false
+	if not _must(hosted.ok and origin_mode.get("mode") in ["cold_exact", "formula_active"] and origin_mode.get("activation", {}).get("complete") == true, "Original departed Site is admitted by its actual complete owner: " + str(hosted) + " origin_mode=" + str(origin_mode)): return false
 	return _must(hosted.ok and slot.region_original_travel_interval.is_valid() and slot.region_original_party_progress.is_valid(),
 		"Actual original panel binds its complete selected shared-step host: " + str(hosted))
 

@@ -337,10 +337,21 @@ func _bad_live_generation_recovery() -> bool:
 		and float(slot.control.logical_game_seconds) == float(original_control.logical_game_seconds) and var_to_bytes(lab.terrain.site) == source_bytes,
 		"Exact-file restoration could not resume the same token without replaying GAME/food"): return false
 	var continued: Dictionary = slot.checkpoint_ship_transfer(token, lab.terrain, float(status.elapsed_action_seconds), str(status.phase), float(status.return_elapsed_action_seconds))
-	return _must(continued.ok and _same_json(slot.control, original_control)
+	# Region R1: a checkpoint publishes a new generation, and the active mode and
+	# its activation receipt record that generation. Everything else in control
+	# (clock, fire journal, journey, registry) must stay exactly the same.
+	return _must(continued.ok and _same_json(_without_activation_generation(slot.control), _without_activation_generation(original_control))
 		and float(slot.control.logical_game_seconds) == float(original_control.logical_game_seconds) and var_to_bytes(lab.terrain.site) == source_bytes
 		and var_to_bytes(controller._ship_journey) == journey_bytes,
 		"Recovered original token could not checkpoint without replaying original food/history/ACTION")
+
+func _without_activation_generation(control: Dictionary) -> Dictionary:
+	var copy: Dictionary = control.duplicate(true)
+	for mode: Variant in copy.get("region_gameplay", {}).get("modes", {}).values():
+		if not mode is Dictionary: continue
+		mode.erase("generation")
+		if mode.get("activation") is Dictionary: mode.activation.erase("generation")
+	return copy
 
 func _sweep_and_return() -> bool:
 	if not _capture_journey(): return false

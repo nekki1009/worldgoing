@@ -741,6 +741,11 @@ func _transfer_pair(source_data: TerrainData, destination_data: TerrainData, boa
 		float(control.logical_game_seconds), float(control.logical_game_seconds),
 		{"generation": int(_marker.get("generation", 0)) + 1, "family_transfer_guard": region_family_transfer_guard, "vehicle_poses": poses})
 	if not inserted.ok: return inserted
+	# Both candidates are NEW bodies. A region_snapshot inherited from the live or
+	# visited Site authenticated the old body only; keep it out of the candidates,
+	# as the private bind candidates do.
+	extracted.origin.erase("region_snapshot")
+	inserted.state.erase("region_snapshot")
 	var source_candidate := Env.navigation_for_state(source_data, extracted.origin)
 	var destination_candidate := Env.navigation_for_state(destination_data, inserted.state)
 	source_candidate.set_meta(&"region_bind_source", source_data)
@@ -2118,6 +2123,11 @@ func _ground_transfer_pair(source_data: TerrainData, destination_data: TerrainDa
 		{"generation": int(_marker.get("generation", 0)) + 1, "family_transfer_guard": region_family_transfer_guard})
 	if not inserted.ok: return inserted
 	if inserted.leader_cell != request.to_cell: return fail("OCCUPIED", "原細格reservation不允改落其他格")
+	# Both candidates are NEW bodies. A region_snapshot inherited from the live or
+	# visited Site authenticated the old body only; keep it out of the candidates,
+	# as the private bind candidates do.
+	extracted.origin.erase("region_snapshot")
+	inserted.state.erase("region_snapshot")
 	var source_candidate := Env.navigation_for_state(source_data, extracted.origin)
 	var destination_candidate := Env.navigation_for_state(destination_data, inserted.state)
 	source_candidate.set_meta(&"region_bind_source", live_source if live_source != null else source_data)
@@ -6740,7 +6750,7 @@ func _region_family_remote_candidates(source: Dictionary, target: Dictionary, de
 	if not technology.ok: return technology
 	source_state.family = technology.source_family
 	destination_state.family = technology.destination_family
-	destination_state.travel_identity.refs.family.controlled = family_reference.duplicate(true)
+	destination_state.travel_identity.refs.family["controlled"] = family_reference.duplicate(true)
 	var family_index: Dictionary = source_state.travel_identity.get("family_members", {}).duplicate(true)
 	for member: Dictionary in destination_state.family.members:
 		if str(member.site_id) != target_owner: continue

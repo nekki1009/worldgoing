@@ -260,6 +260,12 @@ static func prepare_arrival(destination_state: Dictionary, party: Dictionary, ge
 	var prepared := prepare_identity(destination_state)
 	if not prepared.ok: return prepared
 	var destination: Dictionary = prepared.state
+	# A fresh/marine destination may not hold item storage yet. Create it before
+	# any ID counter (next_item/next_loot) is reserved on the arrival candidate;
+	# otherwise the counters exist without item_storage_version and the first
+	# save refuses the Site as CORRUPT_SAVE. Same non-failing call as insert():
+	# a legacy body that already has item fields is left exactly as before.
+	Runtime.initialize_item_storage(destination)
 	var incoming: Dictionary = party.get("content", {})
 	if not validate_identity(incoming.get("travel_identity")): return fail("INVALID_IDENTITY", "旅隊缺少原資產穩定引用")
 	var maps := {}
@@ -1596,7 +1602,7 @@ static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dicti
 	party.upkeep = {"version": 1, "at": at, "resting": false, "carriers": {}, "events": [], "sequence": 0}
 	_retain_identity(content)
 	# The registry is a stable reference, including for an NPC's partial member list.
-	if content.has("family_refs"): content.travel_identity.refs.family.controlled = content.family_refs.reference.duplicate(true)
+	if content.has("family_refs"): content.travel_identity.refs.family["controlled"] = content.family_refs.reference.duplicate(true)
 	_retain_identity(origin)
 	return {"ok": true, "origin": origin, "party": party, "vacated_housing": vacated}
 
@@ -1752,7 +1758,7 @@ static func insert(destination_state: Dictionary, party: Dictionary, nav: Terrai
 			return fail("INVALID_FAMILY_TRANSFER", "原族科技移交缺少 destination 同代候選")
 		if str(party.get("controller", "player")) == "player":
 			destination.family = admitted.destination_family.duplicate(true)
-			destination.travel_identity.refs.family.controlled = original_party.content.travel_identity.refs.family.controlled.duplicate(true)
+			destination.travel_identity.refs.family["controlled"] = original_party.content.travel_identity.refs.family.controlled.duplicate(true)
 		elif admitted.destination_family != destination_state.get("family", {}):
 			return fail("NPC_FAMILY_AUTHORITY", "NPC 科技引用到站不能改寫原受控家族 holder")
 	if destination.has("crowd"): return fail("UNSUPPORTED", "目的地群眾容器不接收 R1 旅隊")
@@ -1981,7 +1987,7 @@ static func sync_family(destination: Dictionary, party: Dictionary, mapping: Dic
 	if not same:
 		for seat: Dictionary in family.get("offices", {}).get("positions", []):
 			if int(seat.get("holder", -1)) in party.person_ids: seat.holder = int(_mapped(seat.holder, "person", mapping.maps))
-		destination.travel_identity.refs.family.controlled = incoming_ref.duplicate(true)
+		destination.travel_identity.refs.family["controlled"] = incoming_ref.duplicate(true)
 	destination.family = family
 	return {"ok": true}
 

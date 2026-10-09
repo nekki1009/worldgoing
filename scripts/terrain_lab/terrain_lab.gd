@@ -11039,9 +11039,12 @@ func advance_region_cold_actual_fixed(source_data: TerrainData, target: float,
 		_region_cold_formal = {"slot": slot, "parent": parent, "source_data": source_data,
 			"source_sha256": str(identity.source_sha256), "selected_proof": selected.proof.duplicate(true),
 			"generation": int(slot._marker.get("generation", -1)), "target": target}
-	elif _region_cold_formal.get("source_data") != source_data or _region_cold_formal.get("slot") != slot \
-		or str(_region_cold_formal.source_sha256) != str(identity.source_sha256):
+	elif _region_cold_formal.get("slot") != slot or str(_region_cold_formal.source_sha256) != str(identity.source_sha256):
 		return SiteRuntime.fail("STALE_COLD_TRANSACTION")
+	# Each pending retry receives a fresh detached copy of the same durable source
+	# (same Slot, site and source SHA-256); keep the proof on the current copy.
+	elif _region_cold_formal.get("source_data") != source_data:
+		_region_cold_formal.source_data = source_data
 	return _region_advance_original_cold_budget(target, budget_usec, max_steps, tail_seconds)
 
 func _region_cold_formal_admission() -> Dictionary:
