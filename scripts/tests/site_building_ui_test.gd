@@ -47,8 +47,10 @@ func _building_lab(data: TerrainData) -> TerrainLab:
 
 func _complete_key(data: TerrainData, key: String) -> void:
 	var feature: Dictionary = data.site.features[key]
-	Runtime.assign_task(data, Runtime.ok("", {"target": "feature:" + key, "action": "construct", "cell": feature.entrance}))
-	data.site.worker.cell = feature.entrance
+	# Original construct work runs at the job's own entrance; a resize moves it.
+	var entrance: int = int(feature.get("pending_build", feature).get("entrance", feature.entrance))
+	Runtime.assign_task(data, Runtime.ok("", {"target": "feature:" + key, "action": "construct", "cell": entrance}))
+	data.site.worker.cell = entrance
 	data.site.worker.mode = "work"
 	Runtime.advance(data, float(feature.get("pending_build", feature).work) + 1.0, true, false, Callable(), Callable(), Callable(), Runtime.CARRY_CAPACITY, Runtime.CARRY_CAPACITY, 1.0, 1)
 	assert(str(feature.stage) == "complete" and not feature.has("pending_build"), str(feature))

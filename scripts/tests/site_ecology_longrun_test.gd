@@ -69,6 +69,13 @@ func _same(a: Variant, b: Variant) -> bool:
 	else: assert(a == b, str([a, b]))
 	return true
 
+# SiteStore never persists the transient UI notice queue (site_store.gd save/load
+# reset it); the controller consumes it each tick. Only the save lane drops it.
+func _persisted(site: Dictionary) -> Dictionary:
+	var copy := site.duplicate(true)
+	copy.erase("notices")
+	return copy
+
 func _roundtrip(data: TerrainData, name: String) -> TerrainData:
 	var path := out.path_join(name + ".json")
 	var saved := Store.save(data, path)
@@ -241,11 +248,13 @@ func _timeline(selected: Dictionary, regime: String) -> bool:
 			assert(float(current.site.phase) > 0.0 and float(current.site.phase) < 1.0)
 			var before_save: Dictionary = lanes[1].data.site.duplicate(true)
 			lanes[1].data = _roundtrip(lanes[1].data, name + "_partial")
-			assert(_same(lanes[1].data.site, before_save))
+			assert(_same(_persisted(lanes[1].data.site), _persisted(before_save)))
 			saved_partial = true
 		if absf(end - checkpoint) < EPS:
 			for lane: Dictionary in lanes:
-				assert(_same(lane.data.site, current.site) and _same(lane.metrics, lanes[0].metrics))
+				var lane_site: Dictionary = _persisted(lane.data.site) if str(lane.name) == "save_load" else lane.data.site
+				var oracle_site: Dictionary = _persisted(current.site) if str(lane.name) == "save_load" else current.site
+				assert(_same(lane_site, oracle_site) and _same(lane.metrics, lanes[0].metrics))
 				assert(JSON.stringify(lane.data.resource_base, "", true, true).sha256_text() == base_hash)
 				assert(int(Env.resource(lane.data, key).remaining) == initial_n + int(lane.metrics.natural_increase) - int(lane.metrics.source_units_removed))
 				var stock := _stock(lane.data)

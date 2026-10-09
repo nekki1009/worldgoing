@@ -63,6 +63,12 @@ func _run() -> void:
 	_freeze()
 	lab.simulation_speed = 4.0
 	lab.exchange_enabled = true
+	# The synthetic pinned manifest has no resource layer, so fixed generation
+	# supplies no herb. Author one near the controlled body before the first batch.
+	var has_herb := false
+	for key: String in lab.terrain.resource_base:
+		if int(lab.terrain.resource_base[key].kind) == Env.Kind.HERB: has_herb = true
+	if not has_herb and not _must(not _author_fixture_source(lab.terrain, Env.Kind.HERB, 20, lab.character.terrain_cell).is_empty(), "Fixture herb authored on the actual site"): _finish_e3(false); return
 	var keys := lab.terrain.resource_base.keys()
 	keys.sort()
 	for key: String in keys:
@@ -98,6 +104,24 @@ func _run() -> void:
 	if not _must(absf(float(controller.region_slot.control.logical_game_seconds) - until) <= E3_EPS, "Fixed 900-second idle interval completes"): _finish_e3(false); return
 	if not _return_to_visited(): _finish_e3(false); return
 	_finish_e3(true)
+
+# Author one fixture source through the original resource writer and index.
+func _author_fixture_source(data: TerrainData, kind: int, capacity: int, near: Vector2i) -> String:
+	for radius: int in range(3, 30):
+		for dy: int in range(-radius, radius + 1):
+			for dx: int in range(-radius, radius + 1):
+				if maxi(absi(dx), absi(dy)) != radius: continue
+				var cell := near + Vector2i(dx, dy)
+				if not data.contains(cell) or not data.is_terrain_walkable(cell): continue
+				var index := data.index(cell)
+				if data.feature_at[index] != 0 or not data.resources_at.get(index, []).is_empty(): continue
+				Env._add_resource(data, kind, index, capacity, 0)
+				Env.rebuild_indexes(data)
+				var key := "%d:%d" % [kind, index]
+				if not Env.work_cells(data, key).is_empty(): return key
+				data.resource_base.erase(key)
+				Env.rebuild_indexes(data)
+	return ""
 
 func _alive() -> bool:
 	return _must(Time.get_ticks_msec() <= deadline and not e3_finished, "Bounded E3 pump")
