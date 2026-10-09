@@ -69,14 +69,24 @@ func _nation_person_ok(nation: Dictionary, person_id: int) -> bool:
 ## Nation offices (OFFICE_POSITIONS_AND_DUTIES_PLAN 6.3). A record without
 ## `offices` is a legacy record: its military_head keeps all three equipment
 ## duties and the head seat is vacant; it is migrated on its first head appointment.
+## A versioned record made before a later duty existed gains that duty's vacant
+## seat (head acting, plan 3.2) here, on every path, as the Region paths already
+## do: stored with one revision step, or on a copy when read_only.
 static func nation_offices(nation: Dictionary, read_only: bool = false) -> Dictionary:
 	if nation.has("offices"):
 		if not nation.offices is Dictionary or read_only and not SiteOffices.validate(nation.offices, "nation"): return {}
 		var current: Dictionary = nation.offices
-		if read_only and int(current.get("version", SiteOffices.VERSION)) < SiteOffices.VERSION: current = current.duplicate(true)
+		if read_only and (int(current.get("version", SiteOffices.VERSION)) < SiteOffices.VERSION or not _catalog_complete(current)): current = current.duplicate(true)
 		SiteOffices.upgrade(current)
+		if SiteOffices.ensure_catalog(current, "nation") and not read_only:
+			current.revision = mini(SiteOffices.MAX_SEQ, int(current.revision) + 1)
 		return current
 	return SiteOffices.legacy_nation_offices(int(nation.get("military_head", -1)))
+
+static func _catalog_complete(offices: Dictionary) -> bool:
+	for duty_id: String in SiteOffices.duty_ids("nation"):
+		if not offices.duties.has(duty_id): return false
+	return true
 
 ## Read-only derivation for existing callers; never stored beside offices.
 static func military_head(nation: Dictionary) -> int:
@@ -116,6 +126,7 @@ func appoint_nation_head(nation_id: String, person_id: int) -> Dictionary:
 	if nation.is_empty() or person_id <= 0 or not _member(nation, person_id):
 		return Runtime.fail("NO_TARGET", "元首須是本國真實國民")
 	var offices := nation_offices(nation).duplicate(true)
+	SiteOffices.ensure_catalog(offices, "nation") # A migrated legacy record is stored complete (same single revision step).
 	var seat := SiteOffices.position_of(offices, person_id)
 	if not seat.is_empty() and not bool(seat.head):
 		return Runtime.fail("DUPLICATE_HOLDER", "同一人在同一組織最多擔任一個職位；請先由人事方案卸任")

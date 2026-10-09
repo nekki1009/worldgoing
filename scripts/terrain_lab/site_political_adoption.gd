@@ -56,7 +56,7 @@ static func prepare(lab: Variant, target_id: int, offer: Dictionary, jail_reques
 	if nation.is_empty() or not nation.has("offices") or orders.nation_head_executor(nation) <= 0:
 		return Runtime.fail("NO_NATION", "目標國尚未正式建制或元首不在；保留拘押")
 	if nation.get("members", []).has(target_id): return Runtime.fail("NO_CHANGE", "此人已是目標國國民")
-	var admission := _admission(orders, nation)
+	var admission: Dictionary = orders.nation_duty_resolve(nation, "nation.admission")
 	if not bool(admission.ok) or int(admission.decider) != admission_requester:
 		return SiteOffices.refusal(admission, admission_requester, nation.offices)
 	# Destination owner (§6.3): explicit team of the nation's faction (proved by
@@ -111,14 +111,6 @@ static func commit(lab: Variant, prepared: Dictionary) -> Dictionary:
 	return Runtime.ok("#%d 已歸降入國 %s（未編入隊、不自動授官）" % [target_id, str(prepared.nation_id)],
 		{"person_id": target_id, "team_id": prepared.destination.team_id, "nation_id": prepared.nation_id})
 
-## nation.admission is a LATER duty: a nation record made before R3 gains its
-## vacant 戶籍官 seat on first use (plan 3.2), exactly like the Region nation
-## paths do, so the head acts for it instead of the duty being orphaned.
-static func _admission(orders: Variant, nation: Dictionary) -> Dictionary:
-	if nation.get("offices") is Dictionary and SiteOffices.ensure_catalog(nation.offices, "nation"):
-		nation.offices.revision = mini(SiteOffices.MAX_SEQ, int(nation.offices.revision) + 1)
-	return orders.nation_duty_resolve(nation, "nation.admission")
-
 static func adopt(lab: Variant, target_id: int, offer: Dictionary, jail_requester: int, admission_requester: int) -> Dictionary:
 	var prepared := prepare(lab, target_id, offer, jail_requester, admission_requester)
 	return commit(lab, prepared) if prepared.ok else prepared
@@ -138,7 +130,7 @@ static func standing_offer(lab: Variant, relation: Dictionary) -> Dictionary:
 		if not nation.has("offices") or orders.nation_head_executor(nation) <= 0: continue
 		var head: Dictionary = actions._person(orders.nation_head_executor(nation))
 		if head.is_empty() or int(head.faction) != faction: continue
-		var admission := _admission(orders, nation)
+		var admission: Dictionary = orders.nation_duty_resolve(nation, "nation.admission")
 		if not bool(admission.ok): continue
 		var best: TerrainArmy = null
 		for team: TerrainArmy in lab.combat_armies:

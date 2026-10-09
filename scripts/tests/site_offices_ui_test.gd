@@ -127,7 +127,9 @@ func _run() -> void:
 	dialog = _open_page(lab)
 	_choose_index(dialog, 1)
 	seats = dialog.find_child("OfficePositions", true, false) as ItemList
-	assert(seats.item_count == 2, "Migrated legacy nation keeps its two seats")
+	# Its two seats keep their holders and duties; every other catalog duty gains
+	# its own vacant seat on migration (the head acts for it, plan 3.2).
+	assert(seats.item_count == 2 + SiteOffices.duty_ids("nation").size() - 1 - SiteOffices.LEGACY_NATION_DUTIES.size(), "Migrated legacy nation keeps its two seats plus vacant later-duty seats")
 	_pick(seats, "元首")
 	(dialog.find_child("OfficeName", true, false) as LineEdit).text = "國王"
 	_click(dialog, "OfficeRename")

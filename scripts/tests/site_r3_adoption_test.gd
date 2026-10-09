@@ -68,8 +68,8 @@ func _run() -> void:
 	# Loyal at the 60 baseline: not willing; nothing changes.
 	var loyal := PoliticalAdoption.adopt(lab, target, offer, player_id, head)
 	assert(str(loyal.code) == "NOT_WILLING", str(loyal))
-	# A nation made before R3 has no 戶籍官 seat yet; prepare stops at
-	# willingness, so the seat appears on the first admission check below.
+	# The migrated legacy nation gains its vacant 戶籍官 seat in
+	# SiteEquipmentOrders.nation_offices (checked after the refusals below).
 	var packet := SiteSocial.state_of(enemy.combat_units[0])
 	SiteSocial.relation(packet, relation.loyal_org).L = 2500
 	# Willing, but each authority must be the right one.
@@ -81,7 +81,7 @@ func _run() -> void:
 	var clerk_seat: Dictionary = {}
 	for entry: Dictionary in seats.positions:
 		if seats.duties.has("nation.admission") and str(entry.id) == str(seats.duties["nation.admission"]): clerk_seat = entry
-	assert(not clerk_seat.is_empty() and not bool(clerk_seat.head) and int(clerk_seat.holder) <= 0 and str(clerk_seat.office_class) == "civil", "Vacant civil 戶籍官 seat added on first use: %s" % str(seats))
+	assert(not clerk_seat.is_empty() and not bool(clerk_seat.head) and int(clerk_seat.holder) <= 0 and str(clerk_seat.office_class) == "civil", "Vacant civil 戶籍官 seat (head acting): %s" % str(seats))
 	assert(data.site.captivity.has(str(target)) and enemy.index_for_identity(target) == 0, "Refusals change nothing")
 	var adopted := PoliticalAdoption.adopt(lab, target, offer, player_id, head)
 	assert(adopted.ok, str(adopted))

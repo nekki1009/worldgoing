@@ -5576,6 +5576,12 @@ func fire_save_guard(allow_dirty_fire_save: bool = false) -> Dictionary:
 	_fire_save_guard_active = false
 	return result
 
+static func _fire_deployment_has_intent(deployment: Dictionary) -> bool:
+	# Any live combat deployment plan snapshots its fire fields. Only fire-suspended
+	# slots/members or a fire safe-platform capacity are pending fire intent; an
+	# ordinary plan (e.g. a boarding move) is restored by its original owner.
+	return not deployment.get("slots", []).is_empty() or not deployment.get("members", []).is_empty() or int(deployment.get("safe_capacity", 0)) != 0
+
 func _fire_save_guard_impl(allow_dirty_fire_save: bool) -> Dictionary:
 	var history := SiteRuntime.fire_save_guard(terrain)
 	if not history.ok: return history
@@ -5599,7 +5605,7 @@ func _fire_save_guard_impl(allow_dirty_fire_save: bool) -> Dictionary:
 		var intent: Dictionary = team.fire_navigation_snapshot()
 		if not allow_dirty_fire_save and not checkpointed_fire_owners and team.has_pending_fire_navigation(): return SiteRuntime.fail("BUSY", "原 Army 火場導航尚未具備保存恢復")
 		if not allow_dirty_fire_save and not checkpointed_fire_owners \
-			and (not intent.get("work", []).is_empty() or not intent.get("hazard", {}).is_empty() or not intent.get("deployment", {}).is_empty()):
+			and (not intent.get("work", []).is_empty() or not intent.get("hazard", {}).is_empty() or _fire_deployment_has_intent(intent.get("deployment", {}))):
 			return SiteRuntime.fail("BUSY", "原 Army 火場意圖尚未具備保存恢復")
 		if not allow_dirty_fire_save and not checkpointed_fire_owners:
 			for batch: Dictionary in intent.get("batches", []):
