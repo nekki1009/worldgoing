@@ -319,6 +319,8 @@ func _run() -> void:
 	# discharged member (people[3]) do not block departure; they travel inert
 	# with the container and stay in it, unchanged, at the destination.
 	var inert_before: Array = [data.site.armies[0].units[2].duplicate(true), data.site.armies[0].units[3].duplicate(true)]
+	var dead_id := int(inert_before[0].person_id)
+	var dead_supply_before: Dictionary = data.site.get("person_supply", {}).get(str(dead_id), {}).duplicate(true)
 	if not _must(float(inert_before[0].hp) <= 0.0 and bool(inert_before[0].get("loot_settled", false)) and not bool(inert_before[1].get("member", true)),
 		"Fixture lacks the settled dead and discharged rows"): return
 	# S1: on a sea leg an inert row rides no ship. A stale embarked_vehicle_id
@@ -416,6 +418,9 @@ func _run() -> void:
 	if not _travel_closure(expected, from.data.site, arrived): return
 	if not _must(_same_json(arrived.armies[0].units[2], expected.armies[0].units[2]) and _same_json(arrived.armies[0].units[3], expected.armies[0].units[3])
 		and float(arrived.armies[0].units[2].hp) <= 0.0 and not bool(arrived.armies[0].units[3].get("member", true)), "Inert dead/discharged rows changed on arrival"): return
+	# A settled dead member consumes nothing in transit (team pools and Sustain
+	# count only living members); its own ration record, if any, is unchanged.
+	if not _must(_same_json(arrived.get("person_supply", {}).get(str(dead_id), {}), dead_supply_before), "Settled dead member consumed rations in transit"): return
 	for identity: Variant in original_ids:
 		var moving: bool = expected.item_records[identity].holder != "person:" + str(lab.character.person_id) and expected.item_records[identity].holder != "person:" + str(lab.npc.person_id) and expected.item_records[identity].holder != "depot"
 		var record: Dictionary = arrived.item_records.get(identity, {}) if moving else from.data.site.item_records.get(identity, {})

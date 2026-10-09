@@ -1877,8 +1877,12 @@ static func insert(destination_state: Dictionary, party: Dictionary, nav: Terrai
 			used[cells[cursor]] = true
 			if int(actor.person_id) == int(party.leader_person_id): leader_cell = cells[cursor]
 			cursor += 1
+		var inert := _inert_people(content, int(party.leader_person_id))
 		for army: Dictionary in content.armies:
 			for row: Dictionary in army.units:
+				# A settled dead row has no body: like on a sea leg it gets no position.
+				# Discharged (alive) inert rows still walk in with their team.
+				if inert.has(int(row.person_id)) and float(row.get("hp", 0.0)) <= 0.0: continue
 				var cell := cells[cursor]
 				cursor += 1
 				used[cell] = true
