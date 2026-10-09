@@ -75,6 +75,11 @@ class Fixture extends Node2D:
 	func stock() -> String:
 		return JSON.stringify([terrain.site.item_records, terrain.site.depot_items, character.item_state, npc.item_state,
 			army.combat_units[0].item_state, army.combat_units[1].item_state, army.officer_order, army.officer_service])
+	## Real items only (stock() without the cadre lists), for steps where a
+	## cadre change is the legitimate R1b effect being checked separately.
+	func items() -> String:
+		return JSON.stringify([terrain.site.item_records, terrain.site.depot_items, character.item_state, npc.item_state,
+			army.combat_units[0].item_state, army.combat_units[1].item_state])
 	func close() -> void:
 		controller.equipment_orders.lab = null
 		controller.person_actions.lab = null
@@ -314,7 +319,9 @@ func _command_recovery_keeps_office() -> void:
 	var record: Dictionary = f.terrain.site.item_records[officer_cape].duplicate(true)
 	var qualified_holder: Dictionary = f.army.combat_units[1].item_state.duplicate(true)
 	assert(f.army.record_officer_service([1], false).ok)
-	assert(f.army.current_commander == 1 and f.controller.person_can_wear_cape(4))
+	# R1b (2026-10-07): command needs a post. Leaving the last post ends the
+	# acting command; the explicit officer rank and the cape stay.
+	assert(f.army.current_commander == -1 and f.controller.person_can_wear_cape(4), "Without a post the officer keeps rank and cape but cannot act as commander")
 	assert(f.army.officer_service.is_empty() and f.army.officer_order.is_empty())
 	assert(f.army.combat_units[1].item_state == qualified_holder and f.terrain.site.item_records[officer_cape] == record)
 	assert(f.controller.cape_departure_guard(4).ok and f.controller.cape_policy_guard().ok)
@@ -350,19 +357,40 @@ func _acting_is_not_appointment() -> void:
 	f.army.settle_combat_command()
 	assert(f.army.current_commander == 0 and not f.army.officer_order.has(1))
 	assert(f.stock() == before and not f.controller.person_can_wear_cape(4))
+	var goods := f.items()
 	assert(f.army.set_military_role(4, "officer").ok)
+	# R1b: promotion seats the officer in a free 武官 post (so officer_service
+	# and officer_order gain [1]); that post is what lets them act. Acting
+	# itself creates no further appointment and moves no item.
+	var seated: Array = f.army.officer_service.duplicate()
+	var posts: Dictionary = f.army.offices.duplicate(true)
+	assert(seated == [1] and f.army.officer_order == [1], "Promotion seats the new officer in a free 武官 post: service %s order %s" % [str(f.army.officer_service), str(f.army.officer_order)])
+	assert(f.items() == goods, "Promotion moves no item:
+before %s
+after  %s" % [goods, f.items()])
+	before = f.stock()
 	f.army.combat_units[0].ko = 10.0
 	f.army._command_dirty = true
 	f.army.settle_combat_command()
 	assert(f.army.formal_commander == 0 and f.army.current_commander == 1 and f.army.acting_commander == 1)
-	assert(f.controller.person_can_wear_cape(4) and f.army.officer_service.is_empty() and f.stock() == before,
-		"Qualified acting command retains its original qualification without creating an officer appointment")
+	assert(f.controller.person_can_wear_cape(4), "Qualified acting command keeps the original qualification")
+	assert(f.army.officer_service == seated, "Acting creates no appointment: officer_service before %s after %s" % [str(seated), str(f.army.officer_service)])
+	assert(f.army.offices == posts, "Acting leaves the posts unchanged:
+before %s
+after  %s" % [JSON.stringify(posts), JSON.stringify(f.army.offices)])
+	assert(f.stock() == before, "Acting moves no item or cadre place:
+before %s
+after  %s" % [before, f.stock()])
 	# Permanent succession also requires the original person's explicit qualification.
+	# The new captain is the head, so they leave the cadre lists (R1b); items stay.
 	f.army.combat_units[0].hp = 0.0
 	f.army._command_dirty = true
 	f.army.settle_combat_command()
 	assert(f.army.formal_commander == 1 and f.army.current_commander == 1 and f.army.acting_commander == -1)
-	assert(f.controller.person_can_wear_cape(4) and f.stock() == before)
+	assert(not f.army.officer_service.has(1) and not f.army.officer_order.has(1), "The captain is not cadre: service %s order %s" % [str(f.army.officer_service), str(f.army.officer_order)])
+	assert(f.controller.person_can_wear_cape(4) and f.items() == goods, "Succession moves no item:
+before %s
+after  %s" % [goods, f.items()])
 	var prepared := f.controller.equipment_orders.prepare(4, {"mode": "personal", "slot": "cape", "item_id": cape})
 	assert(prepared.ok and f.controller.equipment_orders.commit(prepared.order).ok)
 	f.close()
