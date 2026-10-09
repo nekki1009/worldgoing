@@ -14,7 +14,7 @@ func run() -> void:
 	assert(first.ok and later.ok and first.policy.categories == ["F04"])
 	assert(later.policy.categories == ["F04", "F06"])
 	assert(not is_same(first.policy.categories, later.policy.categories))
-	var original := later.policy.duplicate(true)
+	var original: Dictionary = later.policy.duplicate(true)
 	var parsed := Policy.validate(later.policy)
 	parsed.policy.categories.clear()
 	assert(later.policy == original, "Query results cannot mutate the original frozen policy")

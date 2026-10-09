@@ -3144,6 +3144,7 @@ static func cancel_feature(data: TerrainData, key: String, occupied: Callable = 
 	if not data.site.features.has(key):
 		return fail("NO_TARGET")
 	var feature: Dictionary = data.site.features[key]
+	if feature.has("technology_siege_yard") or feature.has("technology_shipyard_work"): return fail("BUSY", "請先由原首長合法撤回指定場地／船塢配置")
 	if int(feature.get("owner_faction", -1)) >= 0 and requester_faction != int(feature.owner_faction):
 		return fail("NO_AUTHORITY", "只有建築管理方可取消／拆除")
 	if str(feature.kind) == "siege_ladder" and not str(feature.get("ladder", {}).get("pending", "")).is_empty(): return fail("BUSY", "先收束兩人架梯／收梯")

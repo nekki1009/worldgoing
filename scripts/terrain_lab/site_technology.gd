@@ -806,6 +806,45 @@ static func prepare_holder_arrival(source_family_ref: Dictionary, incoming_famil
 	moving.technology = _holder_reference(candidate)
 	return {"ok": true, "destination_family": destination, "moving_family": moving}
 
+# Append to ORIGINAL SiteTechnology. Control moves; no original body moves.
+# Slot must separately guard the real accepted Scene technology jobs first.
+static func prepare_holder_control_transition(source_family_ref: Dictionary,
+		source_family: Dictionary, destination_family: Dictionary,
+		source_owner: String, destination_owner: String) -> Dictionary:
+	if source_owner.is_empty() or destination_owner.is_empty() or source_owner == destination_owner:
+		return {"ok": false, "code": "INVALID_TRANSFER"}
+	if not source_family.has("technology"):
+		return {"ok": true, "source_family": source_family.duplicate(true), "destination_family": destination_family.duplicate(true)}
+	var family_id := str(source_family.get("family_id", ""))
+	if not valid_family_id(family_id) or not _family_reference(source_family_ref, family_id) \
+			or not valid_family_tech(source_family.technology): return {"ok": false, "code": "INVALID_TECHNOLOGY"}
+	var original: Dictionary = source_family.technology
+	if destination_family.get("family_id") != family_id or not valid_family_tech(destination_family.get("technology")):
+		return {"ok": false, "code": "DIFFERENT_FAMILY"}
+	var destination: Dictionary = destination_family.technology
+	if is_holder_reference(original):
+		# A family controller is allowed to be away from its one true technology
+		# holder. Selecting another original body does not create an archive.
+		if int(destination.epoch) != int(original.epoch) or destination.holder_site_id != original.holder_site_id:
+			return {"ok": false, "code": "HOLDER_CONFLICT"}
+		if not is_holder_reference(destination) and not local_holder(destination, destination_owner):
+			return {"ok": false, "code": "STALE_HOLDER"}
+		return {"ok": true, "source_family": source_family.duplicate(true), "destination_family": destination_family.duplicate(true)}
+	if not local_holder(original, source_owner): return {"ok": false, "code": "STALE_HOLDER"}
+	if not is_holder_reference(destination) or int(destination.epoch) != int(original.epoch) \
+			or destination.holder_site_id != source_owner:
+		return {"ok": false, "code": "DUPLICATE_HOLDER"}
+	# Exact person_links describe historical body movement. A control selection
+	# does not append fictitious links from the dead person's travel body.
+	var candidate := _move_holder_candidate(original, destination_owner, original.get("person_links", []))
+	if candidate.is_empty(): return {"ok": false, "code": "INVALID_TRANSFER"}
+	var source_result := source_family.duplicate(true)
+	var destination_result := destination_family.duplicate(true)
+	source_result.technology = _holder_reference(candidate)
+	destination_result.technology = candidate
+	return {"ok": true, "source_family": source_result, "destination_family": destination_result,
+		"source_epoch": int(original.epoch), "destination_epoch": int(candidate.epoch)}
+
 const F15_COLD_CONFIG := "site_technology_jobs_v2_F15"
 
 const F15_COLD_FIELDS := ["executor_id", "executor_cell", "executor_hit", "executor_version", "elapsed", "paused", "recipe", "duration", "technology_scope_token"]

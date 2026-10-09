@@ -26,15 +26,14 @@
 | Region | region_save_slot `_read_document`、`_save_checked` | 存檔信封解析與讀回 |
 | Region | region_save_slot `_region_player_down_settlement`（已併入 Region 第 5 輪 party_host_epoch）、terrain_lab `_region_bind_original_terrain`、`_region_bind_ticket_admission` 的 party 分支 | 需 Region 判斷 |
 | Region | region_route `table_from_terrain`、`clear_memory_cache`、`_navigation_content_hash`（D 缺） | 第 4 輪 P1' 已用另一寫法落地，判斷是否仍需要 |
-| 群眾／拘押 | crowd_site `_commit_captivity`、site_person_actions `new_capture_fields`（D 缺）、`publish_gd_custody_terminal`；site_store `_normalize_state`、`_validate_captivity` | 拘押期序號（Plan 6.1／F02） |
-| 科技樹 | site_equipment_orders `_normalize_public_order`、`_valid_public_order`、`_public_receipt_matches_order`；site_technology `prepare_holder_control_transition`（D 缺）；site_runtime `cancel_feature`、`publish_feature_output`、`harvest` | N08 公共工單、holder 移交、場地撤回 |
-| 科技樹 | site_person_actions `begin_technology_lesson`、`_technology_lesson_context`、`technology_query`、`scope_technology_query`、`_technology_matching_original_task` | **注意**：D 已做 teach 改名，epoch 的 `family.teaching` 可能是舊名，需確認方向 |
-| AI 職位 | site_controller `_office_orgs`（募兵）、`_open_offices`（epoch 新增 2 行，其餘 129 行 D 歷史有）；site_duty_ai `review`；terrain_army `apply_office_plan`、`_install_roster` | 多數 D 較新，只剩少數行 |
-| AI 職位 | site_store `save`、`_validate_state` 的 social schema 檢查；`_validate_unadmitted_social_state` | D 已准入合法 social_state，epoch 版本會全拒，**不可整段套** |
-| 群眾 | site_training_ground `inspect`、crowd_person_owner `publish_host_ranged_ammo_inputs` | 工作疲勞起始、射擊彈藥 |
-| 音效 | site_audio_view 4 個 A＋5 個 missing、terrain_lab 多個 `_audio_*`、terrain_army `_audio_begin_step` | AUDIO-02 |
+| Region | site_equipment_orders `_normalize_public_order`、`_valid_public_order`、`_public_receipt_matches_order` | N08 公共路線工單的跨 Site 操作者引用與 transfer_token（與 region_n08 測試一起） |
+| Region（測試） | region_captivity_payload_admission_test | 測試寫的是 epoch 舊版 v3 拘押關係（10 欄、episode 字串）；D 已是 AI 職位社會計畫 4.2／6.1 的 v3（13 欄、loyal_org、rank_snapshot），測試要改成 D 格式，程式不回退 |
+| 科技樹 | site_person_actions `_technology_matching_original_task` | 糧令／水排程工作與具名移動任務的科技工作比對（epoch 超集，指揮中心下一輪套用） |
+| 音效 | site_audio_view 4 個 A＋5 個 missing、terrain_lab 多個 `_audio_*`、terrain_army `_audio_begin_step`；site_runtime `publish_feature_output`、`harvest`；site_controller `deposit_owned_equipment`；site_vehicle_transport `transfer`、`_transfer_ship`；site_person_actions `_commit` 的音效段 | AUDIO-02（`_commit` 只取音效行，拘押段保留 D） |
 
-不處理：site_store `_validate_site_values` 的水排程檢查（D 已移到 `_validate_fs_targets`）、C 類與「D 已移除」為主的函式。
+**已由指揮中心補上（第 7 輪）**：site_technology `prepare_holder_control_transition`（stage 1 只帶了呼叫端，region_save_slot 以 `has_method` 動態呼叫，D 上家族遠端移交一律回 MISSING_TECHNOLOGY_CONTROL_TRANSFER）、site_runtime `cancel_feature` 的攻城場／船塢撤回守衛、site_training_ground `inspect` 的群眾工作疲勞守衛。
+
+**複查後確定 D 較新、不合入**：拘押期（crowd_site `_commit_captivity`、site_person_actions `new_capture_fields`／`publish_gd_custody_terminal`、site_store `_normalize_state`／`_validate_captivity`）；AI 職位（site_controller `_office_orgs`、site_duty_ai `review`、terrain_army `apply_office_plan`／`_install_roster`／`transfer_members_to`、site_garrison `_authority`）；social schema（site_store `save`／`_validate_state`／`_validate_unadmitted_social_state`）；科技 teach 改名（`begin_technology_lesson` 等四個）；crowd_person_owner 射擊彈藥（D 已把 assert 內的副作用移出）；site_store `_validate_site_values` 的水排程檢查（D 已移到 `_validate_fs_targets`）。
 
 ## 4. 測試
 
