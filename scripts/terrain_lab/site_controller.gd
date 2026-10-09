@@ -251,6 +251,9 @@ var _ship_journey: Dictionary = {} # Original Slot job projection, never a secon
 var _region_pending: Dictionary = {} # Uncommitted fixed-target original cold replay request only.
 var _region_form: Dictionary = {}
 
+var _audio_volume_slider: HSlider
+var _audio_mute_toggle: CheckButton
+
 func get_region_slot() -> RegionSaveSlot:
 	return region_slot
 
@@ -744,6 +747,7 @@ func _build_ui() -> void:
 	_build_vehicle_controls(_formal_columns.transport)
 	_build_tent_controls(_formal_columns.transport)
 	column = _formal_columns.system
+	_audio_build_controls(column)
 	_button(column, "保存", "SaveSite", save_current)
 	_button(column, "載入", "LoadSite", load_current)
 	_label(column, "保存地圖、玩家與各隊傷亡、指揮、動作／移動。交戰中延後保存，離線期間不增加產量。", 15)
@@ -2989,6 +2993,9 @@ func _request_exit(next_scene: String = "") -> void:
 # Quit, or hand the window to another scene with the tree unpaused and the
 # ordinary close-to-quit behaviour that this controller disabled restored.
 func _leave_site(next_scene: String) -> void:
+	if lab.audio_view != null:
+		lab._audio_live_requested = false
+		lab.audio_view.set_active(false)
 	if _boot_request.is_empty(): _record_world()
 	if next_scene.is_empty():
 		get_tree().quit()
@@ -9481,6 +9488,7 @@ func _settle_boot_request(result: Dictionary) -> void:
 		var applied := apply_created_character(appearance) if bool(request.get("create_new", false)) else Runtime.fail("INVALID_INITIAL_SCENARIO")
 		if not applied.ok: result = applied
 	if result.ok:
+		lab._audio_boot_complete()
 		_record_world(str(request.get("world_name", "")))
 		show_result(result)
 		return
@@ -12782,3 +12790,33 @@ func _observe_original_food_result(kind: String, identity: String, at_game_secon
 	# Read-only per-call exposure after the original owner published this result.
 	if region_slot == null or _crowd_active(): return
 	region_slot._observe_original_food_result(lab, kind, identity, at_game_seconds, result)
+
+func _audio_build_controls(column: VBoxContainer) -> void:
+	_label(column, "音效音量（0–100%）", 18)
+	_audio_volume_slider = HSlider.new()
+	_audio_volume_slider.name = "SFXVolume"
+	_audio_volume_slider.min_value = 0.0
+	_audio_volume_slider.max_value = 100.0
+	_audio_volume_slider.step = 1.0
+	_audio_volume_slider.tooltip_text = "玩家周圍的音效音量"
+	column.add_child(_audio_volume_slider)
+	_audio_mute_toggle = CheckButton.new()
+	_audio_mute_toggle.name = "SFXMute"
+	_audio_mute_toggle.text = "靜音"
+	column.add_child(_audio_mute_toggle)
+	_audio_volume_slider.value_changed.connect(func(value: float) -> void:
+		if lab.audio_view != null: lab.audio_view.set_volume(value / 100.0))
+	_audio_mute_toggle.toggled.connect(func(value: bool) -> void:
+		if lab.audio_view != null: lab.audio_view.set_muted(value))
+	if lab.audio_view != null:
+		lab.audio_view.settings_changed.connect(_audio_settings_changed)
+		var state: Dictionary = lab.audio_view.stats_snapshot()
+		_audio_settings_changed(float(state.volume), bool(state.muted))
+	else:
+		_audio_volume_slider.editable = false
+		_audio_mute_toggle.disabled = true
+
+
+func _audio_settings_changed(volume: float, muted: bool) -> void:
+	if is_instance_valid(_audio_volume_slider): _audio_volume_slider.set_value_no_signal(volume * 100.0)
+	if is_instance_valid(_audio_mute_toggle): _audio_mute_toggle.set_pressed_no_signal(muted)

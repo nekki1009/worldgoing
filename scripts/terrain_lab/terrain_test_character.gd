@@ -5,6 +5,26 @@ signal combat_event(duration: float)
 signal died(person_identity: int)
 var movement_from_cell := Vector2i(-1, -1)
 
+# Presentation only. The original owner/outer transaction decides playback.
+var audio_step_sink: Callable
+var _audio_step_source: Dictionary = {}
+
+func clear_audio_step_sources() -> void:
+	_audio_step_source.clear()
+
+func _audio_finish_step() -> void:
+	var source := _audio_step_source
+	_audio_step_source = {}
+	if source.is_empty() or not audio_step_sink.is_valid() or hp <= 0.0 or knockout_left > 0.0 or site_exited:
+		return
+	if source.from != movement_from_cell or source.to != terrain_cell:
+		return
+	var duration := float(source.elapsed_prefix) + _movement_duration
+	if not is_finite(duration) or duration <= 0.0 or not position.is_finite():
+		return
+	audio_step_sink.call(person_id, position, duration, bool(source.running), bool(source.mounted))
+
+
 var data: TerrainData
 var terrain_cell := Vector2i(-1, -1)
 var editor: HumanCharacter3DEditor
@@ -591,6 +611,8 @@ func _retime_riding_edge(end_speed: float) -> void:
 	var destination := (Vector2(terrain_cell) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
 	var distance := position.distance_to(destination) / TerrainRenderer.CELL_PIXELS
 	var remaining := _movement_duration - _movement_elapsed
+	if not _audio_step_source.is_empty():
+		_audio_step_source.elapsed_prefix += _movement_elapsed
 	_movement_start = position
 	_movement_duration = minf(remaining * 2.0, 2.0 * distance / maxf(ride_speed + end_speed, 0.000001))
 	_movement_elapsed = 0.0
@@ -602,6 +624,7 @@ func place(cell: Vector2i, instant: bool = false, duration: float = MOVE_DURATIO
 	var allowed := can_enter_cell(cell) if instant or cell == terrain_cell else can_enter_cell(cell, original_goal, terrain_cell, terrain_cell)
 	if not allowed or not is_finite(duration) or duration <= 0.0:
 		return false
+	_audio_step_source.clear()
 	_cancel_rescue()
 	movement_from_cell = cell if instant else terrain_cell
 	terrain_cell = cell
@@ -653,6 +676,9 @@ func step(direction: Vector2i, running: bool = false, escort_guard_id: int = 0) 
 		_ride_start_speed = start_speed
 		_ride_end_speed = end_speed
 		ride_speed = start_speed
+	if moved and audio_step_sink.is_valid():
+		_audio_step_source = {"from": movement_from_cell, "to": terrain_cell, "running": running,
+			"mounted": is_mounted(), "elapsed_prefix": 0.0}
 	if moved and exchange_enabled:
 		# Commit movement now; only the remaining initial strike core keeps the
 		# presenter's old pose/yaw. It never owns movement or actual facing.
@@ -684,6 +710,7 @@ func is_moving() -> bool:
 func cancel_invalid_structure_step(lost_surfaces: Dictionary = {}) -> void:
 	if not is_moving(): return
 	if not lost_surfaces.has(data.index(movement_from_cell)) and not lost_surfaces.has(data.index(terrain_cell)) and data.can_step(movement_from_cell, terrain_cell): return
+	_audio_step_source.clear()
 	terrain_cell = movement_from_cell
 	position = (Vector2(terrain_cell) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
 	_movement_start = position
@@ -717,6 +744,8 @@ func _advance_movement(delta: float) -> void:
 		if not is_moving():
 			ride_speed = _ride_end_speed # Exact endpoint, including a genuinely stopped zero.
 	position = _movement_start.lerp(destination, weight)
+	if not is_moving():
+		_audio_finish_step()
 
 func occupies_cell(cell: Vector2i) -> bool:
 	if hp <= 0.0 or knockout_left > 0.0 or site_exited:
@@ -2077,6 +2106,7 @@ static func _saved_cell(value: Variant, map: TerrainData) -> bool:
 	return _saved_vector(value) and float(value[0]) == floorf(float(value[0])) and float(value[1]) == floorf(float(value[1])) and map.contains(Vector2i(int(value[0]), int(value[1])))
 
 func restore_state(state: Dictionary) -> void:
+	_audio_step_source.clear()
 	# SiteStore validates the complete snapshot before the live scene is replaced.
 	state = normalize_saved_state(state)
 	military_role = str(state.get("military_role", "civilian"))
@@ -2189,6 +2219,7 @@ func restore_links(state: Dictionary, identities: Dictionary) -> void:
 			_rescue_army._external_rescuers[_rescue_unit] = self
 
 func reset_combat() -> void:
+	_audio_step_source.clear()
 	fire_body.clear() # Existing explicit Lab reset only.
 	_refresh_fire_body_visual()
 	# Explicit LAB reset only. Loading a Site must restore, not call this as healing.

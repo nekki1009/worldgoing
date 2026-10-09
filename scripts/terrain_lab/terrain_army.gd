@@ -13,6 +13,40 @@ const EXCHANGE_NATIVE_VISUAL_POSES := ["get_up", "down", "unconscious", "guard_b
 ## Ordinary soldiers use a shared baked atlas; simulation remains usable in
 ## headless contract tests and the captain keeps the live 3D presenter.
 
+# Presentation only; never added to original rows/save/hash.
+var audio_step_sink: Callable
+var _audio_step_sources: Dictionary = {}
+
+func clear_audio_step_sources() -> void:
+	_audio_step_sources.clear()
+
+func _audio_begin_step(index: int, source: Vector2i, destination: Vector2i, running: bool) -> void:
+	_audio_step_sources.erase(index)
+	if not audio_step_sink.is_valid():
+		return
+	var identity := combat_identity(index)
+	if identity <= 0:
+		return
+	var mounted: bool = vehicle_transport != null and vehicle_transport.occupies_own_horse(identity, source)
+	_audio_step_sources[index] = {"identity": identity, "from": source, "to": destination, "running": running, "mounted": mounted}
+
+func _audio_take_step(index: int, source: Vector2i, destination: Vector2i, duration: float) -> Dictionary:
+	var marked: Dictionary = _audio_step_sources.get(index, {})
+	_audio_step_sources.erase(index)
+	if marked.is_empty() or not audio_step_sink.is_valid() or not is_finite(duration) or duration <= 0.0:
+		return {}
+	if int(marked.identity) != combat_identity(index) or marked.from != source or marked.to != destination:
+		return {}
+	if combat_enabled and (float(combat_hot_get(index, &"hp", 0.0)) <= 0.0 or float(combat_hot_get(index, &"ko", 0.0)) > 0.0 		or bool(combat_hot_get(index, &"departed", false)) or bool(combat_hot_get(index, &"site_exited", false))):
+		return {}
+	marked["duration"] = duration
+	marked["ground"] = (Vector2(destination) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
+	return marked
+
+func _audio_emit_step(candidate: Dictionary) -> void:
+	if not candidate.is_empty() and audio_step_sink.is_valid():
+		audio_step_sink.call(int(candidate.identity), Vector2(candidate.ground), float(candidate.duration), bool(candidate.running), bool(candidate.mounted))
+
 enum Command { NONE, FOLLOW_PLAYER, MOVE_TO_EDGE }
 enum UnitState { IDLE, MOVING, SWAPPING, WAITING, ARRIVED }
 enum PathStatus { NONE, PENDING, FOUND, UNREACHABLE }
@@ -2708,6 +2742,7 @@ func begin_committed_move(member_id: int, from_cell: Vector2i, to_cell: Vector2i
 		combat_hot_set(index, &"exchange_pose_duration", 0.0)
 	_mark_visual_row(index)
 	accepted_count += 1
+	_audio_begin_step(index, from_cell, to_cell, false)
 
 func _committed_move_terrain_legal(member_id: int, from_cell: Vector2i, to_cell: Vector2i) -> bool:
 	if vehicle_transport != null and vehicle_transport.is_siege_committed_member(member_id):
@@ -2739,6 +2774,7 @@ func cancel_committed_move_to_source(member_id: int) -> void:
 	var index := index_for_identity(member_id)
 	if index < 0:
 		return
+	_audio_step_sources.erase(index)
 	var destination: Vector2i = moving_to[index]
 	if _reserved_cells.get(destination, -1) == index:
 		_reserved_cells.erase(destination)
@@ -5105,6 +5141,7 @@ func _reserve_combat_step(index: int, next: Vector2i, escort_guard_id: int = 0, 
 					combat_hot_set(index, &"exchange_visual", visual)
 	_mark_visual_row(index)
 	accepted_count += 1
+	_audio_begin_step(index, cells[index], next, locomotion_mode[index] == Locomotion.RUN)
 	return true
 
 func _retreat_pair_member_ready(index: int) -> bool:
@@ -6916,7 +6953,8 @@ func exchange_batch_knockback(index: int, _other_cell: Vector2i, outcome: Dictio
 		combat_hot_set(index, &"pose", "idle") # A guard visual cannot veto an already resolved big loss.
 		combat_hot_set(index, &"attack", false)
 		combat_hot_set(index, &"exchange_stagger", 0.0) # Previous recovery cannot veto this newly resolved forced push.
-		_reserve_combat_step(index, Vector2i(prepared.source_cell) - Vector2i(prepared.toward))
+		if _reserve_combat_step(index, Vector2i(prepared.source_cell) - Vector2i(prepared.toward)):
+			_audio_step_sources.erase(index)
 		facing[index] = Vector2i(prepared.toward)
 	var stagger := maxf(0.0, float(outcome.get("stagger", 0.0)))
 	combat_hot_set(index, &"exchange_stagger", maxf(float(prepared.previous_stagger), float(prepared.committed_left) + stagger if stagger > 0.0 else 0.0))
@@ -9376,6 +9414,7 @@ static func valid_combat_state(snapshot: Variant, map: TerrainData, actor: Dicti
 	return true
 
 func restore_crowd_command_source(snapshot: Dictionary, map: TerrainData, actors: Array[TerrainTestCharacter]) -> void:
+	_audio_step_sources.clear()
 	# CrowdSite owns simulation after load; this dormant source keeps only the
 	# original team's command state and identity-to-row mapping.
 	clear()
@@ -9414,6 +9453,7 @@ func restore_crowd_command_source(snapshot: Dictionary, map: TerrainData, actors
 	hide()
 
 func restore_combat_state(snapshot: Dictionary, map: TerrainData, restored_player: Variant, restored_npc: Variant) -> void:
+	_audio_step_sources.clear()
 	# Caller validates all teams and their cross-team claims before replacing Site.
 	snapshot = normalize_roster_snapshot(snapshot)
 	role = str(snapshot.get("role", "combat"))
@@ -10552,6 +10592,7 @@ func clear(region_bind_token: String = "") -> void:
 	if has_ship_journey() and not _region_trusted_bind_clear(region_bind_token):
 		command_status = "BUSY | 船隊仍在跨區旅程中，不能清除原人物"
 		return
+	_audio_step_sources.clear()
 	_invalidate_ranged_order()
 	ranged_ammo_mode = "NORMAL"
 	_ranged_last_release_ids.clear()
@@ -12126,6 +12167,7 @@ func _start_formation_batch(direction: Vector2i, participants: Array[int], appen
 		locomotion_mode[index] = Locomotion.WALK
 		blocked_time[index] = 0.0
 		facing[index] = direction
+		_audio_begin_step(index, cells[index], destination, false)
 	_visual_dirty = true
 	return true
 
@@ -12148,6 +12190,7 @@ func _complete_formation_batch(batch: Dictionary) -> bool:
 	for index: int in units:
 		var source := cells[index]
 		var destination := moving_to[index]
+		var audio_candidate := _audio_take_step(index, source, destination, move_duration[index])
 		cells[index] = destination
 		_cell_owners[destination] = index
 		_clear_reservation(destination, index)
@@ -12158,6 +12201,7 @@ func _complete_formation_batch(batch: Dictionary) -> bool:
 		_record_passage_commit(index, source, destination)
 		_consume_follower_route_step(index, destination)
 		_completed_steps += 1
+		_audio_emit_step(audio_candidate)
 	return true
 
 func _complete_formation_step() -> void:
@@ -15502,6 +15546,8 @@ func _begin_captain_swap(partner_index: int) -> bool:
 	_swap_cooldown = SWAP_COOLDOWN
 	_mark_visual_row(0)
 	_mark_visual_row(partner_index)
+	_audio_begin_step(0, captain_cell, partner_cell, false)
+	_audio_begin_step(partner_index, partner_cell, captain_cell, false)
 	return true
 
 func _clear_reservation(cell: Vector2i, reservation_owner: int) -> void:
@@ -15600,6 +15646,8 @@ func _begin_follower_swap(first: int, second: int) -> bool:
 	_swap_cooldown = SWAP_COOLDOWN
 	_mark_visual_row(first)
 	_mark_visual_row(second)
+	_audio_begin_step(first, first_cell, second_cell, false)
+	_audio_begin_step(second, second_cell, first_cell, false)
 	return true
 
 func _complete_follower_swap() -> void:
@@ -15615,6 +15663,8 @@ func _complete_follower_swap() -> void:
 	if _cell_owners.get(first_cell, -1) != first or _cell_owners.get(second_cell, -1) != second:
 		_movement_contract_error("follower swap", first, first_cell, second_cell)
 		return
+	var audio_first := _audio_take_step(first, first_cell, second_cell, maxf(MOVE_DURATION, move_duration[first]))
+	var audio_second := _audio_take_step(second, second_cell, first_cell, maxf(MOVE_DURATION, move_duration[first]))
 	cells[first] = second_cell
 	cells[second] = first_cell
 	_cell_owners[first_cell] = second
@@ -15638,6 +15688,8 @@ func _complete_follower_swap() -> void:
 	_completed_steps += 2
 	_mark_visual_row(first)
 	_mark_visual_row(second)
+	_audio_emit_step(audio_first)
+	_audio_emit_step(audio_second)
 
 func _complete_swap() -> void:
 	if not has_active_swap():
@@ -15654,6 +15706,9 @@ func _complete_swap() -> void:
 	# Commit both owner changes together. There is no intermediate frame in
 	# which the captain occupies the partner's cell while the partner still
 	# owns it, so uniqueness remains true for every simulation observation.
+	var audio_duration := maxf(MOVE_DURATION, move_duration[0])
+	var audio_captain := _audio_take_step(0, captain_cell, partner_cell, audio_duration)
+	var audio_partner := _audio_take_step(partner_index, partner_cell, captain_cell, audio_duration)
 	cells[0] = partner_cell
 	cells[partner_index] = captain_cell
 	_record_passage_commit(0, captain_cell, partner_cell)
@@ -15681,6 +15736,8 @@ func _complete_swap() -> void:
 	_completed_steps += 2
 	_mark_visual_row(0)
 	_mark_visual_row(partner_index)
+	_audio_emit_step(audio_captain)
+	_audio_emit_step(audio_partner)
 
 func _unit_should_run(index: int, next: Vector2i = INVALID_CELL) -> bool:
 	if index < 0 or index >= roster_size or desired_cells.size() != roster_size:
@@ -16028,6 +16085,7 @@ func _schedule_push_unit(index: int, destination: Vector2i, requester: int = -1)
 	movement_state[index] = UnitState.MOVING
 	facing[index] = destination - source
 	_mark_visual_row(index)
+	_audio_begin_step(index, source, destination, false)
 	return true
 
 func _has_pending_push(requester: int) -> bool:
@@ -16554,6 +16612,7 @@ func _simulate_step(delta: float) -> void:
 		movement_state[index] = UnitState.MOVING
 		facing[index] = next - cells[index]
 		_mark_visual_row(index)
+		_audio_begin_step(index, cells[index], next, should_run)
 	_service_push_search()
 	_planning_cursor = (_planning_cursor + 1) % maxi(1, roster_size - 1)
 	_update_formation_status()
@@ -16619,6 +16678,7 @@ func _complete_move(index: int) -> void:
 	_finish_move_state(index, old_cell, next)
 
 func _finish_move_state(index: int, old_cell: Vector2i, next: Vector2i, consume_routes: bool = true) -> void:
+	var audio_candidate := _audio_take_step(index, old_cell, next, move_duration[index])
 	if combat_enabled and (float(combat_hot_get(index, &"hp")) <= 0.0 or float(combat_hot_get(index, &"ko")) > 0.0):
 		_cell_owners.erase(next)
 	moving_to[index] = INVALID_CELL
@@ -16674,6 +16734,7 @@ func _finish_move_state(index: int, old_cell: Vector2i, next: Vector2i, consume_
 		elif index == pending_requester and not path.is_empty() and next == path[0]:
 			pending["age"] = 0.0
 			_pending_pushes[pending_index] = pending
+	_audio_emit_step(audio_candidate)
 
 func _rebuild_visual_instances() -> void:
 	if (_captain_editor == null and not defer_captain_presenter) or not _soldier_baked_ready:

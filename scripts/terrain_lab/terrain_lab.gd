@@ -147,6 +147,17 @@ var _siege_collect_contacts := false
 var siege_shots := 0
 var siege_contacts := 0
 
+const AudioViewScript = preload("res://scripts/terrain_lab/site_audio_view.gd")
+var audio_view: SiteAudioView
+var _audio_live_requested := false
+var _audio_batch_serial := 0
+var _audio_step_serial := 0
+var _audio_exchange_queued: Array[Dictionary] = []
+var _audio_exchange_frame := -1
+var _audio_exchange_epoch := -1
+var _audio_exchange_order := 0
+var _audio_shared_step_active := false
+
 func _combat_profile_stage(stage: String, started: int) -> int:
 	if not combat_profile_enabled:
 		return 0
@@ -208,6 +219,7 @@ func _region_original_ready() -> void:
 		actor.exchange_skill_authorized = func() -> bool: return actor.person_id == controlled_person_id()
 		actor.combatants = func() -> Array[TerrainTestCharacter]: return combat_actors
 		actor.contact_sink = func(packet: Dictionary) -> void: _combat_contacts.append(packet)
+		actor.audio_step_sink = _audio_step_completed
 	army = TerrainArmy.new()
 	army.name = "DemoArmy"
 	army.process_mode = Node.PROCESS_MODE_PAUSABLE
@@ -243,6 +255,7 @@ func _region_original_ready() -> void:
 	camera = Camera2D.new()
 	camera.name = "LabCamera"
 	add_child(camera)
+	_audio_setup()
 	site_controller = Site.new()
 	site_controller.name = "SiteController"
 	add_child(site_controller)
@@ -284,10 +297,12 @@ func _region_original_ready() -> void:
 	if exchange_enabled and exchange_batch_enabled:
 		_prepare_exchange_kernel(true)
 	call_deferred("_start_army_visual_warmup")
+	if world_request.is_empty(): _audio_boot_complete()
 
 func _configure_combat_army(team: TerrainArmy) -> void:
 	team.native_hot_enabled = scene_file_path == "res://scenes/terrain_lab/TerrainLab.tscn"
 	team.person_id_allocator = _allocate_army_person_ids
+	team.audio_step_sink = _audio_step_completed
 	team.exchange_enabled = exchange_enabled
 	team.contact_query = _collect_unit_contacts
 	team.enemy_query = _nearest_unit_enemy
@@ -658,6 +673,7 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 		if site_controller != null: site_controller.show_result(transport_guard)
 		return
 	# All guards and native staging have succeeded; only now retire the old world.
+	_audio_begin_site_replace()
 	if crowd_site != null:
 		crowd_site.discard_on_replace()
 		crowd_site.queue_free()
@@ -815,6 +831,7 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 	get_viewport().gui_release_focus()
 	_update_info()
 	_update_army_controls()
+	if _audio_live_requested: call_deferred("_audio_activate_live")
 
 func region_bind_receipt(data: TerrainData) -> Dictionary:
 	if terrain != data or _region_bound_data != data or _region_bind_receipt_value.get("complete") != true:
@@ -1352,6 +1369,7 @@ func _action_elapsed_input(delta: float) -> float:
 	return elapsed
 
 func _process(delta: float) -> void:
+	_audio_exchange_prune()
 	if restore_only: return
 	var process_started := Time.get_ticks_usec() if combat_profile_enabled else 0
 	delta = _action_elapsed_input(delta)
@@ -1453,7 +1471,7 @@ func _advance_action_time(delta: float, budget_usec: int = 0) -> void:
 		if (is_inside_tree() and get_tree().paused) or bool(terrain.site.get("paused", false)):
 			return
 
-func _advance_original_shared_step(elapsed: float, replay_target: float = -1.0,
+func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 		fire_replay_interval: Dictionary = {}, formula_interval: bool = false) -> Dictionary:
 	if terrain == null or terrain.site.is_empty() or site_controller == null:
 		return SiteRuntime.fail("NO_SITE", "原 Site 尚未還原")
@@ -3584,9 +3602,11 @@ func _resolve_ranged_fire(people: Array[Dictionary]) -> void:
 				shooter_owner.activate_exchange_skill(index, "power")
 			elif index < 0 and not shooter_owner.command_abilities.is_empty():
 				shooter_owner.activate_exchange_skill("power")
+		var audio_source: Vector2 = shooter_owner.combat_ground(index) if index >= 0 else shooter_owner.position
 		var fired: bool = shooter_owner.ranged_fire(index, selected.cell, ranged_shots + 1) if index >= 0 else shooter_owner.ranged_fire(selected.cell, ranged_shots + 1)
 		if fired:
 			ranged_shots += 1
+			_audio_offer(&"crossbow" if str(profile.ammo) == "bolt" else &"bow", audio_source, "legacy-shot:%d" % ranged_shots)
 
 func _ranged_friendly_cells() -> Dictionary:
 	# A disposable projection of the same real ground positions used at impact.
@@ -3675,7 +3695,9 @@ func _resolve_ranged_arrival(shooter_owner: Node2D, flight: Dictionary, occupied
 				target = person
 				break
 		if not target.is_empty(): break
+	var audio_target_ground := Vector2.ZERO
 	if not target.is_empty():
+		audio_target_ground = target.owner.combat_ground(int(target.unit)) if int(target.unit) >= 0 else target.owner.position
 		var target_owner: Variant = target.owner
 		var index := int(target.unit)
 		var defense: Dictionary = target_owner.ranged_defense(index) if index >= 0 else target_owner.ranged_defense()
@@ -3688,6 +3710,7 @@ func _resolve_ranged_arrival(shooter_owner: Node2D, flight: Dictionary, occupied
 			target_owner.ranged_apply_hit(index, flight.source_cell, packet)
 		else:
 			target_owner.ranged_apply_hit(flight.source_cell, packet)
+	if not target.is_empty(): _audio_ranged_contact(audio_target_ground, "legacy-impact:%d" % int(flight.shot_id), result, int(target.id))
 	ranged_resolutions += 1
 	ranged_results[str(result.kind)] += 1
 	ranged_resolved.emit(int(flight.shooter_id), int(target.get("id", 0)), result)
@@ -3782,7 +3805,10 @@ func _exchange_batch_phase_current(entry: Dictionary, phase: String) -> bool:
 
 func _settle_exchange_batch(pending: Array[Dictionary]) -> bool:
 	if pending.is_empty(): return true
-	if _region_queue_original_endpoint("exchange_batch", {"batch": pending.duplicate(true)}): return true
+	var audio_rows: Array[Dictionary] = _audio_exchange_take(pending) if _region_point_consuming else _audio_exchange_snapshot(pending, _exchange_round)
+	if _region_queue_original_endpoint("exchange_batch", {"batch": pending.duplicate(true)}):
+		_audio_exchange_queue(audio_rows)
+		return true
 	var batches := {}
 	for pair: Dictionary in pending:
 		_collect_exchange_batch_side(batches, pair.a, pair.b, pair.result, pair.stats_a, 1)
@@ -3837,6 +3863,7 @@ func _settle_exchange_batch(pending: Array[Dictionary]) -> bool:
 			entry.person.owner.exchange_batch_finish(int(entry.person.unit), entry.other_cell, entry.outcome, entry.prepared)
 		else:
 			entry.person.owner.exchange_batch_finish(entry.other_cell, entry.outcome, entry.prepared)
+	_audio_exchange_offer(audio_rows)
 	return true
 
 func _resolve_combat_contacts() -> void:
@@ -6148,6 +6175,7 @@ func _commit_fire_releases(draft: Dictionary = {}) -> void:
 			"shooter": released.shooter, "profile": profile, "elapsed": 0.0, "ember": float(profile.ember), "resolved": false,
 			"aim_key": str(aim.key), "position": origin, "config_version": str(profile.config_version)})
 		fire_projectiles.append(flight)
+		_audio_offer(&"crossbow" if str(profile.ammo) == "bolt" else &"bow", ground, "shot:%d" % int(flight.projectile_id))
 		_fire_unsaved = true
 		ranged_shots += 1
 	if draft.is_empty():
@@ -6427,6 +6455,8 @@ func _settle_fire_impact(flight: Dictionary, event: Dictionary) -> void:
 	# Every original terminal event closes its receipt, including zero heat.
 	# The optional P1 ignition observer remains a heat-only observer.
 	var received := SiteRuntime.fire_receive_impact(terrain, payload)
+	if received.ok and not bool(received.get("duplicate", false)) and str(event.type) != "boundary":
+		_audio_ranged_contact(Vector2(flight.position.x, flight.position.y) * TerrainRenderer.CELL_PIXELS, "impact:%d" % int(flight.projectile_id), result, target_id, bool(event.get("shield", false)), str(event.get("material", "")))
 	if not received.ok: _latch_fire_boundary_error(received)
 	elif target_id > 0 and not bool(received.get("duplicate", false)):
 		_receive_fire_body_contact(event.person, payload)
@@ -13786,3 +13816,233 @@ static func _region_map_geometry_values(data: TerrainData) -> Dictionary:
 
 static func _region_map_publish_geometry(data: TerrainData, values: Dictionary) -> void:
 	for field: String in values: data.set(field, values[field])
+
+func _audio_setup() -> void:
+	if restore_only or audio_view != null: return
+	audio_view = AudioViewScript.new()
+	audio_view.name = "SiteAudioView"
+	add_child(audio_view)
+	audio_view.setup(self)
+
+
+func _audio_activate_live() -> void:
+	if audio_view == null or restore_only or not _audio_live_requested: return
+	if not is_inside_tree() or get_tree().current_scene != self: return
+	if terrain == null or terrain.site.is_empty(): return
+	if site_controller != null and not site_controller._boot_request.is_empty(): return
+	audio_view.set_active(true)
+
+
+func _audio_boot_complete() -> void:
+	_audio_live_requested = true
+	call_deferred("_audio_activate_live")
+
+
+func _audio_begin_site_replace() -> void:
+	_audio_exchange_reset()
+	if audio_view == null: return
+	audio_view.set_active(false)
+
+
+func _audio_clear_sources() -> void:
+	_audio_exchange_reset()
+	for actor: TerrainTestCharacter in combat_actors:
+		actor.clear_audio_step_sources()
+	for team: TerrainArmy in combat_armies:
+		team.clear_audio_step_sources()
+
+
+func _audio_step_completed(identity: int, ground: Vector2, duration: float, running: bool, mounted: bool) -> void:
+	if identity <= 0 or not ground.is_finite() or not is_finite(duration) or duration <= 0.0: return
+	if audio_view == null or terrain == null or not terrain.contains(Vector2i(floori(ground.x / TerrainRenderer.CELL_PIXELS), floori(ground.y / TerrainRenderer.CELL_PIXELS))): return
+	# GD visual remnants must not duplicate a body already owned by Native.
+	if crowd_site != null and crowd_site.active and crowd_site.contains_person(identity): return
+	_audio_step_serial += 1
+	var event_key := "step:%d:%d:%d" % [_audio_batch_serial, identity, _audio_step_serial]
+	var kind := "hoof_run" if running else "hoof_walk"
+	var listener: Dictionary = _combat_target_in_site(controlled_person_id())
+	if listener.is_empty() or ground.distance_squared_to(listener.position) >= 640.0 * 640.0:
+		# Still replace an older candidate for this person before hard clipping.
+		_audio_offer(kind if mounted else (&"step_grass_run" if running else &"step_grass_walk"), ground, event_key, identity, duration, mounted)
+		return
+	if not mounted:
+		var cell := Vector2i(floori(ground.x / TerrainRenderer.CELL_PIXELS), floori(ground.y / TerrainRenderer.CELL_PIXELS))
+		var index := terrain.index(cell)
+		var surface := "grass"
+		var feature: Dictionary = terrain.site.get("features", {}).get(str(terrain.feature_at[index]), {}) if terrain.feature_at.size() == terrain.flags.size() else {}
+		var geometry: Dictionary = SiteRuntime.feature_geometry(terrain, feature) if not feature.is_empty() else {}
+		if geometry.get("heights", {}).has(index) or index in geometry.get("bridge_walkable", []):
+			surface = "wood" if str(feature.get("material", "wood")) == "wood" else "hard"
+		elif terrain.water_kind.size() == terrain.flags.size() and terrain.water_kind[index] != 0:
+			surface = "water"
+		elif terrain.surface_types[index] == TerrainData.Surface.ROCK:
+			surface = "hard"
+		kind = "step_%s_%s" % [surface, "run" if running else "walk"]
+	_audio_offer(kind, ground, event_key, identity, duration, mounted)
+
+
+func _audio_offer(kind: StringName, ground: Vector2, event_key: String, identity: int = 0, duration: float = 0.0, mounted: bool = false) -> void:
+	if audio_view != null: audio_view.offer(kind, ground, event_key, identity, duration, mounted)
+
+
+func _audio_exchange_reset() -> void:
+	_audio_exchange_queued.clear()
+	_audio_exchange_frame = -1
+	_audio_exchange_epoch = -1
+
+
+func _audio_exchange_prune() -> void:
+	var frame := Engine.get_process_frames()
+	# Explicit staged dependency on the presenter's integer _epoch property;
+	# read-only access avoids reconstructing its bounded stats pool per offer.
+	var epoch := int(audio_view.get("_epoch")) if is_instance_valid(audio_view) else -1
+	if frame != _audio_exchange_frame or epoch != _audio_exchange_epoch:
+		_audio_exchange_queued.clear()
+		_audio_exchange_frame = frame
+		_audio_exchange_epoch = epoch
+
+
+func _audio_exchange_snapshot(pending: Array[Dictionary], source_round: int) -> Array[Dictionary]:
+	var rows: Array[Dictionary] = []
+	if not is_instance_valid(audio_view): return rows
+	_audio_exchange_prune()
+	var listener_id := controlled_person_id()
+	var listener: Dictionary = _combat_target_in_site(listener_id)
+	if listener.is_empty() or not listener.get("position") is Vector2 or not listener.position.is_finite(): return rows
+	# Read actual ground before any original prepare/knockback; never reconstruct it later.
+	# Only traverse the original admitted GD batch; no extra person/terrain query.
+	# Full batches replace weaker rows instead of letting distant first rows win.
+	for pair: Dictionary in pending:
+		if not _exchange_batch_person_matches(pair.a) or not _exchange_batch_person_matches(pair.b): continue
+		var a: Vector2 = pair.a.owner.combat_ground(int(pair.a.unit)) if int(pair.a.unit) >= 0 else pair.a.owner.position
+		var b: Vector2 = pair.b.owner.combat_ground(int(pair.b.unit)) if int(pair.b.unit) >= 0 else pair.b.owner.position
+		if not a.is_finite() or not b.is_finite(): continue
+		var point := (a + b) * 0.5
+		var low := mini(int(pair.a.id), int(pair.b.id))
+		var high := maxi(int(pair.a.id), int(pair.b.id))
+		if low <= 0: continue
+		var key := "pair:%d:%d:%d" % [source_round, low, high]
+		_audio_exchange_add(rows, &"contact", point, key, 0, listener.position, listener_id)
+		for side: String in ["a", "b"]:
+			if float(pair.result.get("hp_" + side, 0.0)) <= 0.0: continue
+			var person: Dictionary = pair[side]
+			_audio_exchange_add(rows, &"hurt", a if side == "a" else b,
+				key + ":hurt:" + side, int(person.id), listener.position, listener_id)
+	return rows
+
+
+func _audio_exchange_add(rows: Array[Dictionary], kind: StringName, ground: Vector2,
+		key: String, identity: int, listener_ground: Vector2, listener_id: int) -> void:
+	var distance_squared := ground.distance_squared_to(listener_ground)
+	if distance_squared >= 640.0 * 640.0: return
+	_audio_exchange_order += 1
+	var priority := int(audio_view.call("_priority", kind, identity))
+	# _priority normally has the same player. Before the presenter's first gate,
+	# retain its existing +100 controlled-contact policy using the original id.
+	if identity == listener_id and identity > 0 and kind in [&"hurt", &"contact", &"shield"] \
+			and int(audio_view.get("_controlled_id")) != listener_id:
+		priority += 100
+	_audio_exchange_keep(rows, {"kind": kind, "ground": ground, "key": key,
+		"identity": identity, "frame": _audio_exchange_frame, "epoch": _audio_exchange_epoch,
+		"priority": priority, "distance_squared": distance_squared, "order": _audio_exchange_order})
+
+
+func _audio_exchange_keep(rows: Array[Dictionary], row: Dictionary) -> void:
+	# Borrow the single presenter's ranking; these helpers have no playback effect.
+	if rows.size() < 64:
+		rows.append(row)
+		return
+	var worst := int(audio_view.call("_worst_index", rows))
+	if bool(audio_view.call("_better", row, rows[worst])): rows[worst] = row
+
+
+func _audio_exchange_best(rows: Array[Dictionary]) -> Dictionary:
+	var best: Dictionary = rows[0]
+	for row: Dictionary in rows:
+		if bool(audio_view.call("_better", row, best)): best = row
+	return best
+
+
+func _audio_exchange_queue(rows: Array[Dictionary]) -> void:
+	_audio_exchange_prune()
+	if rows.is_empty() or _region_point_contacts.is_empty(): return
+	var event: Dictionary = _region_point_contacts.back()
+	if str(event.kind) != "exchange_batch": return
+	# The original queue duplicated the Array. Borrow that exact queued reference;
+	# the source round remains in row keys, outside the gameplay packet.
+	var selected: Array[Dictionary] = []
+	for entry: Dictionary in _audio_exchange_queued:
+		for row: Dictionary in entry.rows: _audio_exchange_keep(selected, row)
+	for row: Dictionary in rows:
+		row.queue_batch = event.packet.batch
+		_audio_exchange_keep(selected, row)
+	var groups: Array[Dictionary] = []
+	for row: Dictionary in selected:
+		var matched := false
+		for entry: Dictionary in groups:
+			if is_same(entry.batch, row.queue_batch):
+				entry.rows.append(row)
+				matched = true
+				break
+		if not matched:
+			var grouped_rows: Array[Dictionary] = [row]
+			groups.append({"batch": row.queue_batch, "rows": grouped_rows})
+	# At most nine groups can exist here (old eight + new one). The metadata
+	# ceiling conservatively drops the group whose best row is least important.
+	if groups.size() > 8:
+		var worst := 0
+		for index: int in range(1, groups.size()):
+			if bool(audio_view.call("_better", _audio_exchange_best(groups[worst].rows), _audio_exchange_best(groups[index].rows))): worst = index
+		groups.remove_at(worst)
+	_audio_exchange_queued = groups
+
+
+func _audio_exchange_take(pending: Array[Dictionary]) -> Array[Dictionary]:
+	_audio_exchange_prune()
+	for index: int in range(_audio_exchange_queued.size()):
+		var entry: Dictionary = _audio_exchange_queued[index]
+		if is_same(entry.batch, pending):
+			var rows: Array[Dictionary] = entry.rows
+			_audio_exchange_queued.remove_at(index)
+			return rows
+	return []
+
+
+func _audio_exchange_offer(rows: Array[Dictionary]) -> void:
+	# Only called after every original finish; playback still awaits outer commit.
+	for row: Dictionary in rows:
+		if not is_instance_valid(audio_view) or int(row.frame) != Engine.get_process_frames() \
+				or int(row.epoch) != int(audio_view.get("_epoch")): return
+		_audio_offer(row.kind, row.ground, row.key, int(row.identity))
+
+
+func _audio_ranged_contact(ground: Vector2, key: String, result: Dictionary, target_id: int = 0, shield: bool = false, material: String = "") -> void:
+	if str(result.get("kind", "")) == "miss": return
+	var kind: StringName = &"shield" if shield else &"impact_wood" if material == "wood" else &"impact_metal" if material == "metal" else &"impact_ground"
+	_audio_offer(kind, ground, key)
+	if target_id > 0 and float(result.get("hp", 0.0)) > 0.0:
+		_audio_offer(&"hurt", ground, key + ":hurt", target_id)
+
+
+func _advance_original_shared_step(elapsed: float, replay_target: float = -1.0,
+		fire_replay_interval: Dictionary = {}, formula_interval: bool = false) -> Dictionary:
+	# Live Party delegates into this same original Lab synchronously.
+	# Only the outer World-accepted interval owns the presentation batch.
+	if _audio_shared_step_active:
+		return _audio_original_shared_step(elapsed, replay_target, fire_replay_interval, formula_interval)
+	_audio_shared_step_active = true
+	var original := terrain
+	var view: SiteAudioView = audio_view
+	if view != null:
+		_audio_batch_serial += 1
+		view.begin_batch()
+	var result := _audio_original_shared_step(elapsed, replay_target, fire_replay_interval, formula_interval)
+	_audio_shared_step_active = false
+	if is_instance_valid(view):
+		if replay_target < 0.0 and terrain == original and result.get("ok", false) and result.get("completed", false) \
+				and str(result.get("status", "")) != "REGION_EVENT_PENDING" and _region_point_pending.is_empty() \
+				and not restore_only and not get_tree().paused and not bool(terrain.site.get("paused", false)):
+			view.commit_batch()
+		else:
+			view.discard_batch()
+	return result
