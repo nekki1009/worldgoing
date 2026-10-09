@@ -10883,7 +10883,8 @@ func _region_advance_original_quiet_minute(target: float, game_seconds: float) -
 	for actor: TerrainTestCharacter in combat_actors:
 		if actor_present(actor): actor.advance_combat(action_seconds, true, game_seconds)
 	if exchange_enabled:
-		_advance_ranged(action_seconds)
+		# The actual quiet admission proved no paid flight or enabled Fire order.
+		# Its original Fire boundary below completes this same idle action interval.
 		_exchange_phase += action_seconds
 		while _exchange_phase + ACTION_TIME_EPSILON >= EXCHANGE_QUERY_STEP:
 			_exchange_phase -= EXCHANGE_QUERY_STEP

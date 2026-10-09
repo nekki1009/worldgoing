@@ -1525,6 +1525,7 @@ static func _live_route_key(original: TerrainData) -> String:
 	return "live|%d|%d|%d|%d|%d" % [original.get_instance_id(), original.navigation_revision, hash(original.site), hash(original.parameters), hash(original.resource_base)]
 
 func clear_route_context_cache() -> void:
+	for cached: TerrainData in _route_context_cache.values(): RegionRoute.unregister_readonly_body(cached)
 	_route_context_cache.clear()
 	_route_context_cache_order.clear()
 	_route_context_file_navigation.clear()
@@ -1537,9 +1538,11 @@ func _route_context_detached(original: TerrainData, cache_key: String, use_cache
 	for meta: StringName in detached.get_meta_list(): detached.remove_meta(meta)
 	if use_cache:
 		_route_context_cache[cache_key] = detached
+		RegionRoute.register_readonly_body(detached, "%d|%s" % [get_instance_id(), cache_key])
 		_route_context_cache_order.append(cache_key)
 		while _route_context_cache_order.size() > ROUTE_CONTEXT_CACHE_LIMIT:
 			var evicted: String = _route_context_cache_order.pop_front()
+			RegionRoute.unregister_readonly_body(_route_context_cache.get(evicted))
 			_route_context_cache.erase(evicted)
 			_route_context_file_navigation.erase(evicted)
 	return detached
@@ -2759,11 +2762,31 @@ func set_region_travel_plan(steps: Array) -> Dictionary:
 	journey.plan_sha256 = FileAccess.get_sha256(folder.path_join(relative))
 	journey.plan_started_game_seconds = float(control.logical_game_seconds)
 	journey.plans = number
-	var published := _publish(_marker.get("sites", {}), control, str(_marker.get("transfer_token", "")), journey)
+	var planned_party: Dictionary = party.party.duplicate(true)
+	planned_party.upkeep["plan_id"] = relative
+	planned_party.upkeep.route_distance_version = 1
+	planned_party.upkeep["distance"] = 0.0
+	var capture := _region_capture_party_graph(str(journey.token), planned_party)
+	if not capture.ok: return capture
+	var actual: Dictionary = capture.get("party", planned_party)
+	var document := _region_party_document(str(journey.token), actual, capture.original_live_graph)
+	if not document.ok: return document
+	var generation := int(_marker.get("generation", 0)) + 1
+	var party_relative := "travel/%s/party_plan_%09d_%s.json" % [str(journey.token), generation, Crypto.new().generate_random_bytes(8).hex_encode()]
+	var party_written := _write_new_document(folder.path_join(party_relative), document.payload)
+	if not party_written.ok: return party_written
+	journey.party_path = party_relative
+	journey.party_sha256 = FileAccess.get_sha256(folder.path_join(party_relative))
+	var next_control := control.duplicate(true)
+	var sites: Dictionary = _marker.get("sites", {}).duplicate(true)
+	var cold := _collect_cold_checkpoint(generation, sites, next_control)
+	if not cold.ok: return cold
+	var parties := collect_region_party_checkpoint(generation, next_control)
+	if not parties.ok: return parties
+	var published := _publish(sites, next_control, str(_marker.get("transfer_token", "")), journey)
 	if not published.ok: return published
-	party.party.upkeep["plan_id"] = relative
-	party.party.upkeep.route_distance_version = 1
-	party.party.upkeep["distance"] = 0.0
+	_travel_party_runtime = actual
+	_travel_party_runtime_token = str(journey.token)
 	return {"ok": true, "plan": plan, "game_seconds": total}
 
 ## Drop the route at the party's current node (manual stop/reroute).

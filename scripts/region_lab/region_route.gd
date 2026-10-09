@@ -248,6 +248,25 @@ static func effective_terrain(source: RegionData, site: Vector2i, context: Dicti
 
 ## Unvisited fixed geography is a pure function of the pinned manifest content
 ## and the site, so one built body is shared read-only between route callers.
+## P1': a caller that owns an immutable, shared read-only body (the route
+## context snapshot cache) registers it so table_from_terrain may reuse its
+## derived tables. The key must change whenever the body could differ.
+static func register_readonly_body(data: TerrainData, key: String) -> void:
+	if data == null or key.is_empty(): return
+	_mutex.lock()
+	_terrain_memo_owner[data.get_instance_id()] = "body|" + key
+	_mutex.unlock()
+
+static func unregister_readonly_body(data: TerrainData) -> void:
+	if data == null: return
+	_mutex.lock()
+	var owner_key: String = str(_terrain_memo_owner.get(data.get_instance_id(), ""))
+	if owner_key.begins_with("body|"):
+		_terrain_memo_owner.erase(data.get_instance_id())
+		for table_key: String in _table_memo.keys():
+			if table_key.begins_with(owner_key + "#"): _table_memo.erase(table_key)
+	_mutex.unlock()
+
 static func memo_terrain(source: RegionData, site: Vector2i) -> Dictionary:
 	var key := "%s|%s|%s|%d,%d" % [source.manifest_hash, source.resource_manifest_hash, source.resource_rule_revision, site.x, site.y]
 	_mutex.lock()

@@ -63,6 +63,19 @@ func _run() -> void:
 	var a_fresh := _snapshot(slot, lab.terrain, false)
 	_cache_check(_same(a1, a_fresh) and _same(a2, a_fresh), "Cached active context equals the uncached twin")
 	_cache_check(_shares(a1, a2) and not _shares(a1, a_fresh), "Unchanged active source reuses one detached snapshot; the twin is always fresh")
+	# P1': tables of a cached (registered read-only) snapshot are memoized and
+	# equal both the uncached computation and the fresh twin's table.
+	var site := Vector2i(0, 0)
+	if a1.sites.has(site):
+		var cover := RegionRoute._cover(slot.source, site)
+		var cached_body: TerrainData = a1.sites[site]
+		var expected_table: Dictionary = RegionRoute._table_from_terrain_uncached(cached_body, cover, true)
+		var memo_1: Dictionary = RegionRoute.table_from_terrain(cached_body, cover, true)
+		var memo_2: Dictionary = RegionRoute.table_from_terrain(cached_body, cover, true)
+		var fresh_table: Dictionary = RegionRoute.table_from_terrain(a_fresh.sites[site], cover, true)
+		_cache_check(var_to_bytes(memo_1) == var_to_bytes(expected_table) and var_to_bytes(memo_2) == var_to_bytes(expected_table) and var_to_bytes(fresh_table) == var_to_bytes(expected_table),
+			"Cached snapshot tables equal the uncached computation and the fresh twin")
+		_cache_check(not is_same(memo_1, memo_2), "Each caller receives its own table copy")
 	# File-backed source (no active body).
 	var f1 := _snapshot(slot, null, true)
 	var f2 := _snapshot(slot, null, true)
