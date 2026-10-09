@@ -7,6 +7,8 @@ class Fixture extends RefCounted:
 	var character := TerrainTestCharacter.new()
 	var npc := TerrainTestNPC.new()
 	var army := TerrainArmy.new()
+	# Capture fields look up an actor's loyal team through TerrainLab.combat_armies.
+	var combat_armies: Array[TerrainArmy] = [army]
 	var actions := Actions.new()
 	var threatened := false
 	var controlled_id := 1
@@ -20,11 +22,15 @@ class Fixture extends RefCounted:
 	var ransom_destination: Dictionary = {}
 	var ransom_revisions := [0, 0]
 	var ransom_alias := false
+	# Original team supply entries: the query hands them out and the commit bumps their revisions.
+	var ransom_source_entry := {"revision": 0}
+	var ransom_destination_entry := {"revision": 0}
 	func _init() -> void:
 		terrain.allocate(Vector2i(12, 12))
 		terrain.flags.fill(TerrainData.Flag.WALKABLE)
 		terrain.site = {"minute": 0, "phase": 0.0, "paused": false, "manual": {"target": "", "cargo": {}}, "worker": {"target": "", "cargo": {}}}
 		assert(SiteRuntime.initialize_item_storage(terrain.site).ok)
+		terrain.site.team_supply = {"1": ransom_source_entry, "2": ransom_destination_entry}
 		character.person_id = 1
 		npc.person_id = 2
 		character.data = terrain
@@ -57,8 +63,11 @@ class Fixture extends RefCounted:
 			return SiteRuntime.ok("原隊伍食物庫存", {"source": ransom_source,
 				"destination": ransom_source if ransom_alias else ransom_destination,
 				"source_owner": "team:1", "destination_owner": "team:2",
-				"source_revision": ransom_revisions[0], "destination_revision": ransom_revisions[1]})
-		actions.ransom_exchange_committed = func(_query: Dictionary) -> void:
+				"source_revision": int(ransom_source_entry.revision), "destination_revision": int(ransom_destination_entry.revision),
+				"source_entry": ransom_source_entry, "destination_entry": ransom_destination_entry})
+		actions.ransom_exchange_committed = func(query: Dictionary) -> void:
+			query.source_entry.revision = int(query.source_entry.revision) + 1
+			query.destination_entry.revision = int(query.destination_entry.revision) + 1
 			ransom_revisions[0] += 1
 			ransom_revisions[1] += 1
 	func _combat_target(identity: int) -> Dictionary:

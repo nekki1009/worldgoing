@@ -9,6 +9,10 @@ const CUSTOM := {"helmet": "123456ff", "armor": "234567ff", "boots": "345678ff",
 
 class Fixture extends CapeTest.Fixture:
 	var site_test_window: Window # Formal dialog context has no optional test window.
+	# Formal dialogs stop the controlled body's movement input and map drag; this fixture has neither.
+	var _dragging := false
+	func _clear_movement_input() -> void:
+		pass
 
 func _initialize() -> void:
 	_run.call_deferred()

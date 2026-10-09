@@ -1421,9 +1421,9 @@ func _loot_context(executor: Dictionary, source: Dictionary) -> Dictionary:
 		return Runtime.fail("NO_TARGET", "來源不存在或尚未初始化實際持物")
 	var contact: bool = false
 	if not executor.is_empty():
-		var vehicles: Variant = lab.site_controller.vehicles
 		var ship_context: bool = source.holder.has("vehicle_id") or source.get("body") is Dictionary and source.body.has("embarked_vehicle_id") or executor.body is Dictionary and executor.body.has("embarked_vehicle_id")
-		contact = _ship_loot_contact(executor, source) if ship_context else (vehicles.touches_vehicle(executor.cell, source.vehicle) if source.has("vehicle") else _adjacent(executor.cell, source.cell))
+		# Only a vehicle source needs the controller's vehicle owner.
+		contact = _ship_loot_contact(executor, source) if ship_context else (lab.site_controller.vehicles.touches_vehicle(executor.cell, source.vehicle) if source.has("vehicle") else _adjacent(executor.cell, source.cell))
 	if not _ready(executor) or not contact:
 		return Runtime.fail("BUSY", "須清醒自由、停止於相鄰可達格且沒有其他作業")
 	if source.has("person_id"):
