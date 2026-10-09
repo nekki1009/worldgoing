@@ -6393,6 +6393,52 @@ func transfer_members_to(recipient: TerrainArmy, identities: Array[int], request
 	recipient._install_roster(target_rows, target_cells, target_meta, target_training)
 	return SiteRuntime.ok("已轉移 %d 名原人物；位置、生命與持物不變；隊伍疲勞按全體存活成員人數加權" % identities.size())
 
+## R3 §6.3: political adoption moves ONE original row into a destination team
+## of the adopting faction as a non-member (member=false: recruitment is a
+## separate entry). SitePoliticalAdoption authorizes and preflights the whole
+## transaction; this only checks containers. Ordinary same-faction transfer
+## rules are untouched; no other row or team faction changes.
+func adoption_row_check(recipient: TerrainArmy, person_id: int) -> Dictionary:
+	var index := index_for_identity(person_id)
+	if index < 0 or index == PLAYER_MEMBER: return SiteRuntime.fail("NO_TARGET", "須為原名冊中的 NPC 原人物")
+	if recipient == null or recipient == self or not recipient.has_army() or not recipient.combat_enabled \
+		or not recipient.garrison_feature_id.is_empty() or recipient.data != data or recipient.has_ship_journey():
+		return SiteRuntime.fail("INVALID_TEAM", "須有同地圖、未駐營、可用的原接收隊伍")
+	if recipient.index_for_identity(person_id) >= 0 or recipient.combat_units.size() + 1 > MAX_ROSTER_SIZE:
+		return SiteRuntime.fail("NO_SPACE", "接收隊伍名冊已滿或已有此人")
+	if not recipient.roster_change_ready(): return SiteRuntime.fail("BUSY", "接收隊伍須停止、HOLD 並脫戰")
+	return SiteRuntime.ok("", {"index": index})
+
+## Commit half (no fallible step): rows, presenter and metadata move; the row
+## arrives free (captive=false) and outside the roster (member=false).
+func adopt_row_into(recipient: TerrainArmy, person_id: int) -> void:
+	var source_meta := _roster_metadata()
+	var target_meta := recipient._roster_metadata()
+	var kept: Array[Dictionary] = []
+	var kept_cells: Array[Vector2i] = []
+	_release_combat_hot_store(true)
+	recipient._release_combat_hot_store(true)
+	var moving: Dictionary = {}
+	var moving_cell := INVALID_CELL
+	for index in range(combat_units.size()):
+		if combat_identity(index) == person_id:
+			moving = combat_units[index]
+			moving_cell = cells[index]
+		else:
+			kept.append(combat_units[index])
+			kept_cells.append(cells[index])
+	moving.member = false
+	moving.captive = false
+	moving.present = false
+	var target_rows := recipient.combat_units.duplicate()
+	var target_cells := recipient.cells.duplicate()
+	target_rows.append(moving)
+	target_cells.append(moving_cell)
+	var ids: Array[int] = [person_id]
+	_transfer_presenters(recipient, ids)
+	_install_roster(kept, kept_cells, source_meta, training)
+	recipient._install_roster(target_rows, target_cells, target_meta, recipient.training)
+
 func split_members_to(recipient: TerrainArmy, identities: Array[int], requester: int, new_captain_id: int = -1) -> Dictionary:
 	if recipient == null or recipient.has_army():
 		return SiteRuntime.fail("INVALID_TEAM", "拆分須使用空的接收隊伍")

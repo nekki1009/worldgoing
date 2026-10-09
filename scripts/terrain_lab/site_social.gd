@@ -154,6 +154,22 @@ static func _settle_captivity_days(packet: Dictionary, context: Dictionary) -> v
 	entry.L = clampi(int(entry.L) - 100 * delta, 0, 10000)
 	relation_value.settled_days = complete
 
+## R3 §6.2: is this captive willing to surrender? Pure: the candidate loyalty
+## includes the complete custody days not yet settled (settled only on commit).
+## No loyal organization ("無原效忠組織") never auto-qualifies.
+static func surrender_willingness(body: Variant, relation_value: Dictionary, minute: int) -> Dictionary:
+	if relation_value.is_empty() or int(relation_value.get("version", 0)) < 3: return {"willing": false, "reason": "NO_RELATION"}
+	if not relation_value.get("loyal_org") is Dictionary: return {"willing": false, "reason": "NO_LOYAL_ORG"}
+	var packet := PersonSocial.read(body)
+	var key := org_key(relation_value.loyal_org)
+	var loyalty := BASE_LOYALTY
+	if int(packet.get("version", 0)) >= 2 and packet.orgs.has(key): loyalty = int(packet.orgs[key].L)
+	var elapsed := float(minute) * 60.0 - float(relation_value.captured_at_game_seconds)
+	var unsettled := maxi(0, floori(maxf(0.0, elapsed) / DAY_SECONDS) - int(relation_value.settled_days))
+	var candidate := clampi(loyalty - 100 * unsettled, 0, 10000)
+	var threshold := surrender_threshold(body)
+	return {"willing": candidate <= threshold, "L": candidate, "T": threshold, "reason": "" if candidate <= threshold else "LOYAL"}
+
 ## Visible status for UI (§8.4): grievance labels and remaining observation.
 static func status(body: Variant, ref: Dictionary) -> Dictionary:
 	var packet := PersonSocial.read(body)

@@ -366,9 +366,22 @@ func event_change_guard(target_id: int, captor_id: int, capturing: bool, event_c
 func discard(target_id: int) -> void:
 	_prepared.erase(target_id)
 
-func _prepare_change(target_id: int, captor_id: int, capturing: bool, event_context: Dictionary = {}) -> Dictionary:
+## R3 §6.3: political adoption's final-home preflight. The captive's feeding
+## moves once from the captor side straight to their own personal owner (the
+## row becomes a non-member of the destination team), never via the original
+## team. Same latest-plan slot as change_guard: commit_change(target, captor,
+## false) publishes it.
+func adoption_guard(target_id: int, captor_id: int, row: Dictionary) -> Dictionary:
+	_prepared.clear()
 	var site: Dictionary = controller.lab.terrain.site
-	var destination := _home(captor_id if capturing else target_id)
+	if _body(target_id).is_empty() or int(site.get("captivity", {}).get(str(target_id), {}).get("captor_id", -1)) != captor_id:
+		return Runtime.fail("NO_TARGET", "原拘押關係已變更")
+	if not row.get("cargo") is Dictionary: return Runtime.fail("NO_SUPPLY_OWNER", "原人物沒有個人行囊供養者")
+	return _prepare_change(target_id, captor_id, false, {}, {"key": "person:%d" % target_id, "row": row})
+
+func _prepare_change(target_id: int, captor_id: int, capturing: bool, event_context: Dictionary = {}, destination_override: Dictionary = {}) -> Dictionary:
+	var site: Dictionary = controller.lab.terrain.site
+	var destination := destination_override if not destination_override.is_empty() else _home(captor_id if capturing else target_id)
 	var original := _home(target_id)
 	if destination.is_empty() or original.is_empty():
 		return Runtime.fail("NO_SUPPLY_OWNER", "沒有可接續的原隊伍或個人行囊供養者")

@@ -17,6 +17,7 @@ const REVIEW_GAME_SECONDS := 60.0
 const FamilyContinuity = preload("res://scripts/terrain_lab/site_family_continuity.gd")
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
 const SiteSocial = preload("res://scripts/terrain_lab/site_social.gd")
+const PoliticalAdoption = preload("res://scripts/terrain_lab/site_political_adoption.gd")
 const PRISON_HOLD_BASE_DAYS := 30.0 # Neutral hold before the 典獄 releases (appendix D.7).
 const GAME_MINUTES_PER_DAY := 1440
 # Nation equipment templates (NPC plan 7.8), lightest first.
@@ -517,7 +518,23 @@ static func review_prison(lab: Variant, controlled: int) -> Dictionary:
 				_record_settlement(resolved, mind, {"mercy_order": "officers" if mercy < 0 else ("wounded" if mercy > 0 else "id")},
 					{"guard": guard_id, "officers": int(groups[guard_id].officers), "min_hp": float(groups[guard_id].min_hp)}, "admit via %d into %s" % [guard_id, prison_id], result)
 				return result
-	# (2) Release timing.
+	# (2) R3 §6.3 first package: an inmate who is willing to surrender is
+	# accepted when a legal standing offer exists (the jail keeper's faction
+	# nation, its admission decider an NPC, a free destination team). The
+	# controlled person and a player admission decider only ever get a choice.
+	var controlled_now := int(lab.controlled_person_id())
+	var inmate_keys: Array = lab.terrain.site.get("captivity", {}).keys()
+	inmate_keys.sort()
+	for key: String in inmate_keys:
+		var relation: Dictionary = lab.terrain.site.captivity[key]
+		if int(key) == controlled_now or not prisons.has(str(relation.get("prison_id", ""))): continue
+		var offer := PoliticalAdoption.standing_offer(lab, relation)
+		if offer.is_empty() or int(offer.admission_decider) == controlled_now: continue
+		var adopted := PoliticalAdoption.adopt(lab, int(key), offer, decider, int(offer.admission_decider))
+		if bool(adopted.get("ok", false)):
+			_record_settlement(resolved, mind, {}, {"inmate": int(key), "nation": str(offer.nation_id)}, "adopt %s into %s" % [key, str(offer.nation_id)], adopted)
+			return adopted
+	# (3) Release timing.
 	var now := int(lab.terrain.site.get("minute", 0))
 	var hold := prison_hold_minutes(mind)
 	var seen := {}
