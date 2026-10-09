@@ -1149,6 +1149,21 @@ static func _row_inert(row: Dictionary) -> bool:
 	if float(row.get("hp", 0.0)) <= 0.0: return bool(row.get("loot_settled", false))
 	return not bool(row.get("member", true))
 
+## Inert rows of a travelling content: _row_inert rows that are not the
+## leader and whose container still holds at least one departing row (a solo
+## container's own detached row is never inert).
+static func _inert_people(content: Dictionary, leader_id: int) -> Dictionary:
+	var inert := {}
+	for army: Dictionary in content.get("armies", []):
+		var candidates: Array[int] = []
+		var departing := false
+		for row: Dictionary in army.get("units", []):
+			if _row_inert(row) and int(row.person_id) != leader_id: candidates.append(int(row.person_id))
+			else: departing = true
+		if departing:
+			for person: int in candidates: inert[person] = true
+	return inert
+
 static func _row_ready(row: Dictionary, independent: bool = false, sea: bool = false) -> String:
 	if float(row.get("hp", 0.0)) <= 0.0 or bool(row.get("departed", false)) or bool(row.get("site_exited", false)):
 		return "隊內有陣亡或已離場者；R1 只帶全員在世的隊伍出發"
@@ -1349,6 +1364,7 @@ static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dicti
 		"controlled_person_id": int(spec.get("person_id", -1)) if str(spec.get("controller", "player")) == "player" else -1, "army_trial_active": false, "counters": {}}
 	for field: String in CONTENT_DICTS: content[field] = {}
 	var movers := {}
+	var inert_movers := {} # Decision A2: non-departing rows travelling inert with their container.
 	var team_id := int(spec.get("team_id", 0))
 	var sea := str(spec.get("mode", "land")) == "sea"
 	var selected_teams := {}
@@ -1371,6 +1387,7 @@ static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dicti
 				var independent := int(spec.get("solo_row", -1)) == int(row.person_id)
 				if not independent and _row_inert(row):
 					movers[int(row.person_id)] = true # Inert: travels with its container, unchanged.
+					inert_movers[int(row.person_id)] = true
 					continue
 				var reason := _row_ready(row, independent, sea)
 				if not reason.is_empty(): return fail("NOT_READY", reason)
@@ -1453,6 +1470,7 @@ static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dicti
 		var bodies := _body_records(origin)
 		bodies.merge(_body_records(content))
 		for person: int in movers:
+			if inert_movers.has(person): continue # S1: inert rows go with the container but onto no ship.
 			if not bodies.has(person) or not moving_vehicles.has(str(bodies[person].get("embarked_vehicle_id", ""))): return fail("NOT_EMBARKED", "海路須先沿原登船 owner 讓旅隊全員上船")
 	# Meal ledgers.
 	for key: String in origin.person_supply.keys():
@@ -1744,9 +1762,11 @@ static func _sea_arrival(content: Dictionary, destination: Dictionary, nav: Terr
 		vehicle.stop_pending = false
 		vehicle.command = {}
 		for loot: Dictionary in content.get("ground_loot", {}).values():
-			if str(loot.get("vehicle_id", "")) == identity: loot.cell = int(vehicle.cell)
+			if str(loot.get("vehicle_id", "")) == identity and loot.has("cell") and not loot.has("local_position"): loot.cell = int(vehicle.cell)
 	var leader_cell := Vector2i(-1, -1)
+	var inert := _inert_people(content, leader_id)
 	for body: Dictionary in _body_records(content).values():
+		if inert.has(int(body.person_id)): continue # S1: no ship, no position, fields unchanged.
 		var boat: Dictionary = content.vehicles.get(str(body.get("embarked_vehicle_id", "")), {})
 		if boat.is_empty(): return fail("NOT_EMBARKED", "原海路人物沒有原船引用")
 		var berth := int(body.get("berth_id", -1))

@@ -90,6 +90,20 @@ func _capture() -> void:
 	team.settle_combat_command()
 	lab.site_controller._capture_positions()
 
+func _without_berth_pose(units: Array) -> Array:
+	var copy: Array = units.duplicate(true)
+	for row: Dictionary in copy:
+		if row.has("embarked_vehicle_id") and float(row.get("hp", 0.0)) > 0.0 and bool(row.get("member", true)):
+			row.erase("cell")
+			row.erase("slot")
+	return copy
+
+func _berth_seated(units: Array) -> bool:
+	for row: Dictionary in units:
+		if row.has("embarked_vehicle_id") and float(row.get("hp", 0.0)) > 0.0 and bool(row.get("member", true)):
+			if not row.get("cell") is Array or not _same_json(row.get("slot"), row.get("cell")): return false
+	return true
+
 func _same_json(left: Variant, right: Variant) -> bool:
 	# JSON has a single number type. Preserve every key/value and full float
 	# precision, while comparing captured ints/typed arrays with parsed numbers.
@@ -253,16 +267,26 @@ func _run() -> void:
 	boat_id = str(deployed.vehicle_id)
 	for index in range(3):
 		if not _board(index): return
-	_capture()
-	var boats: Array[String] = [boat_id]
-	var before := var_to_bytes(data.site)
-	var partial: Dictionary = slot.prepare_ship_transfer(data, TO, boats, dock.anchor, dock.facing)
-	if not _must(not partial.ok and partial.code == "PARTIAL_TEAM" and var_to_bytes(data.site) == before, "Half-team travel was not rejected atomically"): return
-	if not _board(3): return
+	# Region R1: the three people aboard form a sailable crew (helm + minimum
+	# crew) and the controlled body is aboard, so the only reason left to refuse
+	# is the fourth member still ashore. The commander loads the food before
+	# taking the helm (helm duty is busy).
 	var loaded_food: Dictionary = controller.transfer_ship_supply(team, "shore:%d" % data.index(dock.shore), "vehicle:" + boat_id, {"grain": 4}, 0.0, people[0], true)
 	if not _must(loaded_food.ok, "Original physical common food loading failed: " + str(loaded_food)): return
 	var helm: Dictionary = controller.person_actions.begin_ship_helm(people[0], boat_id, people[0], true)
 	if not _must(helm.ok, "Original travel helm job failed") or not _finish(people[0]): return
+	var had_control: bool = data.site.has("controlled_person_id")
+	var ashore_control: int = int(data.site.get("controlled_person_id", -1))
+	data.site["controlled_person_id"] = people[0]
+	_capture()
+	var boats: Array[String] = [boat_id]
+	var before := var_to_bytes(data.site)
+	var partial: Dictionary = slot.prepare_ship_transfer(data, TO, boats, dock.anchor, dock.facing)
+	if not _must(not partial.ok and partial.code == "NOT_EMBARKED" and var_to_bytes(data.site) == before, "Half-team travel was not rejected atomically: " + str(partial)): return
+	if not _must(slot._prepared.is_empty() and slot._marker.get("journey", {}).is_empty(), "Half-team refusal left a prepared journey"): return
+	if had_control: data.site["controlled_person_id"] = ashore_control
+	else: data.site.erase("controlled_person_id")
+	if not _board(3): return
 	var nation: Dictionary = controller.register_trial_equipment_nation(team, "trial_team_travel", people[0], people.duplicate(), "chinese")
 	if not _must(nation.ok, "Original closed military nation registration failed: " + str(nation)): return
 	data.site.controlled_person_id = people[3] # Explicit selection of an existing original row.
@@ -280,6 +304,34 @@ func _run() -> void:
 	_capture()
 	if not _must(bool(team.combat_units[2].ship_death_settled) and not data.site.ground_loot.is_empty() and float(team.combat_hot_get(1, &"ko", 0.0)) > 0.0, "Travel fixture omitted the real KO/dead/boat-loot closure"): return
 	if not _must(slot.attach_active_site(data).ok and controller.supply_save_guard().ok, "Original source clock/save preflight failed"): return
+	# Region R1: a downed but alive member blocks departure (rescue or bandage
+	# first). The refusal is atomic: no live-source change, no prepared journey.
+	var downed_before := var_to_bytes(data.site)
+	var downed: Dictionary = slot.prepare_ship_transfer(data, TO, boats, dock.anchor, dock.facing)
+	if not _must(not downed.ok and downed.code == "NOT_READY" and str(downed.message).contains("倒地") and var_to_bytes(data.site) == downed_before \
+		and slot._prepared.is_empty() and slot._marker.get("journey", {}).is_empty(), "Downed-member departure was not refused atomically: " + str(downed)): return
+	team.combat_hot_set(1, &"ko", 0.0)
+	team.combat_hot_set(1, &"stun", 0.0)
+	team.combat_hot_set(1, &"pose", "idle")
+	team.combat_hot_set(1, &"age", 0.0)
+	_capture()
+	# Decision A2 (Nekki, 2026-10-10): the settled dead member (unit 2) and the
+	# discharged member (people[3]) do not block departure; they travel inert
+	# with the container and stay in it, unchanged, at the destination.
+	var inert_before: Array = [data.site.armies[0].units[2].duplicate(true), data.site.armies[0].units[3].duplicate(true)]
+	if not _must(float(inert_before[0].hp) <= 0.0 and bool(inert_before[0].get("loot_settled", false)) and not bool(inert_before[1].get("member", true)),
+		"Fixture lacks the settled dead and discharged rows"): return
+	# S1: on a sea leg an inert row rides no ship. A stale embarked_vehicle_id
+	# (with an impossible berth) must not put it aboard on arrival: the same
+	# original sea placement runs on a detached copy of this real content.
+	var probe_site: Dictionary = data.site.duplicate(true)
+	var probe := {"armies": probe_site.armies, "actors": {}, "vehicles": {boat_id: probe_site.vehicles[boat_id]}, "ground_loot": {}}
+	probe.armies[0].units[3]["embarked_vehicle_id"] = boat_id
+	probe.armies[0].units[3]["berth_id"] = 999
+	var stale_before := var_to_bytes(probe.armies[0].units[3])
+	var dead_before := var_to_bytes(probe.armies[0].units[2])
+	var placed: Dictionary = RegionTravel._sea_arrival(probe, {}, data, {}, people[0])
+	if not _must(placed.ok and var_to_bytes(probe.armies[0].units[3]) == stale_before and var_to_bytes(probe.armies[0].units[2]) == dead_before 		and placed.leader_cell != Vector2i(-1, -1), "Inert row with a stale embarked_vehicle_id leaked onto the arrival ship: " + str(placed)): return
 	if not _must(slot.save_site(data).ok, "Original travel departure baseline failed"): return
 	var source_path := slot.site_path(FROM)
 	var source_bytes := FileAccess.get_file_as_bytes(source_path)
@@ -309,23 +361,35 @@ func _run() -> void:
 	if not _must(prepared.ok and var_to_bytes(data.site) == before, "Restarted original journey after cancel failed"): return
 	token = str(prepared.token)
 	if not _must(slot.checkpoint_ship_transfer(token, data, 0.0).ok, "Restarted journey departure checkpoint failed"): return
-	# Use the original complete shared-step caller. This RAW Slot test records
-	# its measured game delta once; formal Controller phase publication is separate.
+	# Region R1 single clock: the original shared step publishes each completed
+	# step itself (GAME and fire watermark) through the controller's slot. The
+	# test never records a second time; it only checks the one clock.
+	controller.region_slot = slot
+	# Same formal activation bind_terrain performs when the slot is present: the
+	# active original owner acknowledges its complete bind, admitting its mode.
+	var activated: Dictionary = slot.acknowledge_region_bind(data, lab.region_bind_receipt(data))
+	if not _must(activated.ok, "Original active Site was not admitted by its complete bind: " + str(activated)): return
+	var clock_start := float(slot.control.logical_game_seconds)
+	var completed_game_total := 0.0
 	var elapsed := 0.0
 	var completed_action_total := 0.0
 	while elapsed + 0.000001 < float(prepared.seconds):
 		var previous_seconds := Slot._site_seconds(data)
 		var remainder := lab._action_time_remainder
-		lab._advance_action_time(minf(0.25, float(prepared.seconds) - elapsed + TerrainLab.EXCHANGE_ACTION_STEP))
+		# The shared step carries a sub-step remainder; request only what, with that
+		# remainder, completes the leg within one more original fixed step.
+		var request := minf(0.25, float(prepared.seconds) - elapsed + TerrainLab.EXCHANGE_ACTION_STEP - remainder)
+		lab._advance_action_time(request)
 		var completed_game := Slot._site_seconds(data) - previous_seconds
-		var completed_action := minf(0.25, float(prepared.seconds) - elapsed + TerrainLab.EXCHANGE_ACTION_STEP) + remainder - lab._action_time_remainder
+		var completed_action := request + remainder - lab._action_time_remainder
 		if not _must(completed_action > 0.0 and completed_game > 0.0, "Original shared travel fixture step made no progress"): return
-		if not _must(slot.record_active_step(data.site, completed_game).ok, "One original shared-game publisher failed"): return
+		completed_game_total += completed_game
 		completed_action_total += completed_action
 		# The original fixed step completes in full. Only its journey distance is
 		# capped at the leg end; body/food/GAME time retain the whole actual step.
 		elapsed = minf(float(prepared.seconds), elapsed + completed_action)
 	if not _must(completed_action_total + 0.000001 >= elapsed and completed_action_total - elapsed <= TerrainLab.EXCHANGE_ACTION_STEP + 0.000001, "Original completed ACTION and capped leg distance diverged"): return
+	if not _must(is_equal_approx(float(slot.control.logical_game_seconds) - clock_start, completed_game_total), "The shared step did not publish exactly one GAME clock"): return
 	print("SITE_SHIP_TRAVEL_PROGRESS:completed_action=%.8f:journey_action=%.8f:whole_step_delta=%.8f" % [completed_action_total, elapsed, completed_action_total - elapsed])
 	_capture()
 	if not _must(controller.supply_save_guard().ok and slot.checkpoint_ship_transfer(token, data, elapsed).ok, "Original completed travel checkpoint failed"): return
@@ -345,8 +409,13 @@ func _run() -> void:
 	var to: Dictionary = cold.open_site(TO)
 	if not _must(from.ok and to.ok and from.data.site.armies.is_empty() and _same_json(from.data.site.actors, actors) and not from.data.site.vehicles.has(boat_id), "Source generation retained travelers or lost original resident Actors: " + str({"from": from.get("code", "OK"), "to": to.get("code", "OK"), "actors_equal": _same_json(from.data.site.actors, actors) if from.ok else false})): return
 	var arrived: Dictionary = to.data.site
-	if not _must(arrived.armies.size() == 1 and _same_json(arrived.armies[0].units, expected.armies[0].units) and _same_json(arrived.armies[0].team_fatigue, expected.armies[0].team_fatigue), "Travel changed original roster, retirement/life or shared fatigue history"): return
+	# Region R1 sea arrival seats each aboard member at its berth: cell and slot
+	# become that berth cell. Every other field, and every inert row in full,
+	# must be unchanged.
+	if not _must(arrived.armies.size() == 1 and _same_json(_without_berth_pose(arrived.armies[0].units), _without_berth_pose(expected.armies[0].units)) and _berth_seated(arrived.armies[0].units) and _same_json(arrived.armies[0].team_fatigue, expected.armies[0].team_fatigue), "Travel changed original roster, retirement/life or shared fatigue history"): return
 	if not _travel_closure(expected, from.data.site, arrived): return
+	if not _must(_same_json(arrived.armies[0].units[2], expected.armies[0].units[2]) and _same_json(arrived.armies[0].units[3], expected.armies[0].units[3])
+		and float(arrived.armies[0].units[2].hp) <= 0.0 and not bool(arrived.armies[0].units[3].get("member", true)), "Inert dead/discharged rows changed on arrival"): return
 	for identity: Variant in original_ids:
 		var moving: bool = expected.item_records[identity].holder != "person:" + str(lab.character.person_id) and expected.item_records[identity].holder != "person:" + str(lab.npc.person_id) and expected.item_records[identity].holder != "depot"
 		var record: Dictionary = arrived.item_records.get(identity, {}) if moving else from.data.site.item_records.get(identity, {})
@@ -354,7 +423,12 @@ func _run() -> void:
 	var load_after: Dictionary = Store._ship_saved_load(arrived, arrived.vehicles[boat_id], Slot._saved_people(arrived))
 	if not _must(load_after.ok and is_equal_approx(float(load_after.load), float(load_before.load)) and arrived.actors.is_empty() and int(arrived.controlled_person_id) == people[0], "Travel changed N/Q/control or created destination Actors"): return
 	if not _must(cold.commit_ship_transfer(token, data).code == "ALREADY_COMMITTED", "Committed journal replayed original travelers"): return
-	var resident_reference: Dictionary = arrived.family.members.back()
+	# The resident Actor's own registry entry (by its label, not list order:
+	# travelling members' entries now follow them to the destination).
+	var resident_reference: Dictionary = {}
+	for family_member: Dictionary in arrived.family.members:
+		if str(family_member.get("label", "")) == "resident_actor": resident_reference = family_member
+	if not _must(not resident_reference.is_empty(), "Resident Actor family entry missing after travel"): return
 	var family_files: Dictionary = _family_slot_files(cold.folder)
 	var family_control: PackedByteArray = var_to_bytes(cold.control)
 	var family_marker: PackedByteArray = var_to_bytes(cold._marker)
@@ -367,5 +441,5 @@ func _run() -> void:
 	_freeze()
 	if not _must(lab.combat_actors.is_empty() and team.combat_units.size() == 4 and team.combat_identity(3) == people[3] and not team.is_member(3), "Original destination bind respawned residents or retired traveler"): return
 	_finished = true
-	print("SITE_SHIP_TRAVEL_PASS:scope=raw_original_slot_transaction_and_shared_steps:real_board=4:one_action_progress:one_game_clock:prepared_crash_old:checkpoint_resume:full_closed_roster_food_items_family_military_KO_dead_loot:pair_commit_no_replay:actors_stay_source;formal_Controller_phase_caller_separate")
+	print("SITE_SHIP_TRAVEL_PASS:scope=raw_original_slot_transaction_and_shared_steps:real_board=4:one_action_progress:one_game_clock:prepared_crash_old:checkpoint_resume:full_closed_roster_food_items_family_military_downed_refused_dead_discharged_inert:pair_commit_no_replay:actors_stay_source;formal_Controller_phase_caller_separate")
 	quit(0)
