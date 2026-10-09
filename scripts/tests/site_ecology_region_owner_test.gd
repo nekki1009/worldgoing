@@ -2,6 +2,17 @@ extends "res://scripts/tests/region_controlled_death_restriction_test.gd"
 ## Bounded E1 migration checks on actual original PackedScene / Slot / Store.
 ## Reuses the pinned manifest and cleanup fixture, not its death acceptance.
 const EcologyCheckpoint = preload("res://scripts/terrain_lab/site_region_checkpoint.gd")
+# A fixed-geography load rebuilds resource_base from the pinned base, and the
+# synthetic travel manifest has no resource layer. Use the pinned Taiwan pair:
+# the original legal start site and its all-forest east neighbour as cold owner.
+const START_SITE := Vector2i(1170, 13252)
+const COLD_SITE := Vector2i(1171, 13252)
+
+func _write_manifest() -> bool:
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(out))
+	manifest_path = RegionData.DEFAULT_MANIFEST
+	var source := RegionData.new()
+	return _check(source.load_manifest(manifest_path).ok and not source.resource_manifest_hash.is_empty(), "Pinned geography/resource pair loads")
 
 func _initialize() -> void:
 	deadline = Time.get_ticks_msec() + 180000
@@ -30,13 +41,13 @@ func _run() -> void:
 	lab.restore_only = false
 	controller.save_root = out.path_join("archive")
 	world_id = "ecology_owner_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
-	var opened := controller.open_fixed_world(manifest_path, world_id, "main", Vector2i.ZERO, true)
+	var opened := controller.open_fixed_world(manifest_path, world_id, "main", START_SITE, true)
 	if not _check(opened.ok, "Original fixed-world publication", opened): _finish(false); return
 	_freeze(lab)
 	slot = controller.region_slot
 	var wired := lab._wire_region_gameplay_adapters(slot)
 	if not _check(wired.ok, "Actual Slot adapters", wired): _finish(false); return
-	cold_id = Grid.site_id(str(slot.pin.atlas_id), Vector2i(1, 0))
+	cold_id = Grid.site_id(str(slot.pin.atlas_id), COLD_SITE)
 	var owner := lab._region_gameplay_owner_lab(cold_id, "cold_exact")
 	if not _check(owner.ok and owner.lab is TerrainLab, "Actual original cold owner", owner): _finish(false); return
 	cold = owner.lab
@@ -49,8 +60,8 @@ func _run() -> void:
 		fields.erase("eco_resting")
 	var committed := controller.checkpoint_region_internal("region_checkpoint", true)
 	if not _check(committed.ok, "Actual owner captures a legacy selected source", committed): _finish(false); return
-	var source_path := slot.site_path(Vector2i(1, 0))
-	var loaded := slot._load_checked(source_path, Vector2i(1, 0))
+	var source_path := slot.site_path(COLD_SITE)
+	var loaded := slot._load_checked(source_path, COLD_SITE)
 	if not _check(loaded.ok, "Selected legacy source readback", loaded): _finish(false); return
 	var source: TerrainData = loaded.data
 	if not _check(not source.site.has("ecology_version") and source.site.has("region_snapshot"), "Region readback retains original unmarked source"): _finish(false); return
@@ -72,7 +83,7 @@ func _run() -> void:
 	var saved: Dictionary = prepared.save_candidate.call(prepared.data, candidate_path)
 	if not _check(saved.ok, "Original candidate save plus exact Slot readback", saved):
 		prepared.discard.call(); _finish(false); return
-	var roundtrip := slot._load_checked(candidate_path, Vector2i(1, 0))
+	var roundtrip := slot._load_checked(candidate_path, COLD_SITE)
 	if not _check(roundtrip.ok and int(roundtrip.data.site.ecology_version) == 1, "E1 owner snapshot survives real file roundtrip", roundtrip):
 		prepared.discard.call(); _finish(false); return
 	# The selected source proof does not certify arbitrary target ecology.
@@ -139,7 +150,7 @@ func _run() -> void:
 	var cold_saved := SiteStore.save_region_snapshot(replay.terrain, cold_path, context, owners.owner_states)
 	if not _check(cold_saved.ok, "Original cold owner writes real Store file", cold_saved):
 		replay.free(); _finish(false); return
-	var cold_loaded := slot._load_checked(cold_path, Vector2i(1, 0))
+	var cold_loaded := slot._load_checked(cold_path, COLD_SITE)
 	if not _check(cold_loaded.ok and cold_loaded.data.site.changes[biological].eco_mode == "protected", "Cold E1 mode and actual owner snapshot survive load", cold_loaded):
 		replay.free(); _finish(false); return
 	# A correct checksum cannot hide invalid E1 schema in a bare snapshot.

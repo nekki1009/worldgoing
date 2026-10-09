@@ -69,6 +69,9 @@ func _run() -> void:
 	for key: String in lab.terrain.resource_base:
 		if int(lab.terrain.resource_base[key].kind) == Env.Kind.HERB: has_herb = true
 	if not has_herb and not _must(not _author_fixture_source(lab.terrain, Env.Kind.HERB, 20, lab.character.terrain_cell).is_empty(), "Fixture herb authored on the actual site"): _finish_e3(false); return
+	# A fixed-geography Site starts with an empty inventory; harvest requires one
+	# tool to be present (it is not consumed). Stock it before the first batch.
+	if int(lab.terrain.site.inventory.get("tools", 0)) < 1: lab.terrain.site.inventory["tools"] = 1
 	var keys := lab.terrain.resource_base.keys()
 	keys.sort()
 	for key: String in keys:
