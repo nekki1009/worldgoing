@@ -1021,8 +1021,8 @@ func _sample_prepared_actor_contact(actor: TerrainTestCharacter, appearance: Dic
 func _refresh_kits() -> bool:
 	var appearances: Array = []
 	for identity in crowd.person_ids():
-		if _actors.has(int(identity)): appearances.append(null)
-		else: appearances.append(_appearance(int(identity)))
+		var appearance: Dictionary = _appearance(int(identity))
+		appearances.append(null if _actors.has(int(identity)) else appearance)
 	_kit_appearances = appearances
 	return _register_kits(appearances)
 
@@ -1157,11 +1157,14 @@ func step(elapsed: float, game_seconds: float, combat_left: float) -> bool:
 		if not _work_fatigue_ready or absf(elapsed - _work_fatigue_action_seconds) > PersonFatigue.WORK_PLAN_EPS or absf(game_seconds - _work_fatigue_game_seconds) > PersonFatigue.WORK_PLAN_EPS:
 			last_event_error = SiteRuntime.fail("CLOCK_NOT_READY", "原 World 同區間全池預檢尚未完成")
 			return false
-		if not bool(crowd.step_clock_work_plan(elapsed, game_seconds, combat_left, _work_fatigue_tick, _work_fatigue_packet)):
+		var accepted: bool = bool(crowd.step_clock_work_point(elapsed, game_seconds, combat_left, _work_fatigue_tick, _work_fatigue_packet)) if _work_fatigue_point_armed \
+			else bool(crowd.step_clock_work_plan(elapsed, game_seconds, combat_left, _work_fatigue_tick, _work_fatigue_packet))
+		if not accepted:
 			last_event_error = SiteRuntime.fail("STALE_NATIVE_WORK_PLAN", "原 World 起點／RUN／分母已變更")
 			return false
-		clear_work_fatigue_interval()
-	elif not bool(crowd.step_clock(elapsed, game_seconds, combat_left)): return false
+		if not _work_fatigue_point_armed: clear_work_fatigue_interval()
+	else:
+		if not bool(crowd.step_clock(elapsed, game_seconds, combat_left)): return false
 	for owner_ref: CrowdPersonOwner in owners: owner_ref.settle_fire_navigation_steps()
 	# Advance previously committed corpses only; new deaths retain this slice's event values.
 	_advance_dead_person_fatigue(game_seconds)
@@ -1174,9 +1177,10 @@ func step(elapsed: float, game_seconds: float, combat_left: float) -> bool:
 	var events_started := Time.get_ticks_usec()
 	var mark: float = crowd.combat_mark()
 	if mark > 0.0 and lab.terrain != null:
-		SiteRuntime.mark_combat(lab.terrain, mark)
-	if not _consume_events(): return false
-	settle_events()
+		lab._region_mark_native_work_combat(mark)
+	if not work_fatigue_point_active():
+		if not _consume_events(): return false
+		settle_events()
 	event_cost_last_us = Time.get_ticks_usec() - events_started
 	event_cost_count += 1
 	event_cost_total_us += event_cost_last_us
@@ -1184,7 +1188,6 @@ func step(elapsed: float, game_seconds: float, combat_left: float) -> bool:
 	_step_ms += (Time.get_ticks_usec() - started) / 1000.0
 	_steps += 1
 	return true
-
 
 func _advance_garrison_returns(elapsed: float) -> void:
 	# Existing native step clock only; original rows retain the registration/home.
@@ -1855,59 +1858,9 @@ func _sync_ammo(identity: int, state: Dictionary = {}) -> void:
 
 
 func _consume_events() -> bool:
-	# Both getters inspect the same queue synchronously. Validate every event
-	# before draining it or writing any original body, counter or captivity task.
-	var events: PackedInt64Array = crowd.peek_events()
-	var fatigue: PackedFloat64Array = crowd.event_fatigue()
-	var valid_packet: bool = events.size() % 4 == 0 and fatigue.size() == (events.size() >> 1)
-	var deaths := {}
-	if valid_packet:
-		for offset in range(0, events.size(), 4):
-			var kind := int(events[offset])
-			var identity := int(events[offset + 1])
-			var at: int = offset >> 1
-			var value: float = fatigue[at]
-			var rested: float = fatigue[at + 1]
-			if (kind < 0 or kind > 10 or not is_finite(value) or value < 0.0 or value > 100.0
-					or not is_finite(rested) or rested < 0.0 or rested > 30.0):
-				valid_packet = false
-				break
-			if kind != 0:
-				if value != 0.0 or rested != 0.0:
-					valid_packet = false
-					break
-				continue
-			var source: Variant = person_owner(identity)
-			if (identity <= 0 or deaths.has(identity) or source == null
-					or not _index_by_id.has(identity) or (not _actors.has(identity) and not _records.has(identity))
-					or int(events[offset + 3]) != int(source.formation_index)):
-				valid_packet = false
-				break
-			var state: Dictionary = soldier_state(int(_index_by_id[identity]))
-			if float(state.hp) > 0.0:
-				valid_packet = false
-				break
-			deaths[identity] = true
-	if (not valid_packet or crowd.peek_events() != events or crowd.event_fatigue() != fatigue):
-		last_event_error = SiteRuntime.fail("INVALID_CROWD", "原生死亡事件與原人物疲勞交接封包不符")
-		return false
-	# No await, step, callback or native writer occurred between the reads and drain.
-	crowd.drain_events()
-	for offset in range(0, events.size(), 4):
-		var kind := int(events[offset])
-		var identity := int(events[offset + 1])
-		var other := int(events[offset + 2])
-		event_counts[kind] = int(event_counts.get(kind, 0)) + 1
-		if kind in [4, 5]:
-			pending_captivity.append({"kind": kind, "person": identity, "other": other, "ammo_synced": false})
-		elif kind == 0:
-			_freeze_dead_person_fatigue(identity, fatigue[offset >> 1], fatigue[(offset >> 1) + 1])
-			if not _death_notified.has(identity):
-				_death_notified[identity] = true
-				lab.site_controller._person_died(identity)
-		elif kind == 10 and identity > 0 and not has_pending_capture(identity): _sync_ammo(identity)
-	if not events.is_empty(): events_received.emit(events)
-	return true
+	if work_fatigue_point_active(): return _consume_events_original()
+	var succeeded := _consume_events_original()
+	return succeeded
 
 
 func _freeze_dead_person_fatigue(identity: int, value: float, rested: float) -> void:
@@ -2941,11 +2894,11 @@ func settle_external_contacts() -> void:
 	# Same native slice, after the original siege/person contact batch and before save/death settlement.
 	if not active or crowd == null: return
 	var mark: float = crowd.combat_mark()
-	if mark > 0.0 and lab.terrain != null: SiteRuntime.mark_combat(lab.terrain, mark)
+	if mark > 0.0 and lab.terrain != null: lab._region_mark_native_work_combat(mark)
 	_occupancy_cache.clear()
-	if not _consume_events(): return
-	settle_events()
-
+	if not work_fatigue_point_active():
+		if not _consume_events(): return
+		settle_events()
 
 # Borrowed views for ONE original shared interval. Never saved or bound to rows.
 var _work_fatigue_snapshots: Dictionary = {}
@@ -2956,6 +2909,9 @@ var _work_fatigue_game_seconds := 0.0
 var _work_fatigue_ready := false
 
 func clear_work_fatigue_interval() -> void:
+	if work_fatigue_point_active(): return
+	_work_fatigue_point_armed = false
+	_work_fatigue_point_plan = {}
 	_work_fatigue_snapshots.clear()
 	_work_fatigue_tick = -1
 	_work_fatigue_packet.clear()
@@ -2964,6 +2920,7 @@ func clear_work_fatigue_interval() -> void:
 	_work_fatigue_ready = false
 
 func begin_work_fatigue_interval() -> Dictionary:
+	if work_fatigue_point_active(): return SiteRuntime.fail("CLOCK_NOT_READY")
 	if not active or crowd == null: return SiteRuntime.fail("NO_NATIVE_OWNER")
 	if _work_fatigue_tick >= 0: return SiteRuntime.fail("SHARED_WORK_PENDING")
 	if not crowd.has_method("validate_step_clock_work_plan"): return SiteRuntime.fail("CLOCK_NOT_READY")
@@ -3026,6 +2983,7 @@ func work_fatigue_run_requests(seconds: float, held_requests: Array) -> Dictiona
 	return SiteRuntime.ok("", {"requests": requests})
 
 func prepare_work_fatigue_plan(planned: Dictionary, requests: Array, action_seconds: float, game_seconds: float, combat_left: float) -> Dictionary:
+	if work_fatigue_point_active(): return SiteRuntime.fail("CLOCK_NOT_READY")
 	_work_fatigue_ready = false
 	_work_fatigue_packet.clear()
 	if _work_fatigue_tick < 0 or planned.get("ok") != true: return SiteRuntime.fail("CLOCK_NOT_READY")
@@ -3072,6 +3030,8 @@ func work_fatigue_forecast_hp(identity: int) -> float:
 	return before
 
 func validate_prepared_work_fatigue_plan(action_seconds: float, game_seconds: float, combat_left: float) -> Dictionary:
+	if work_fatigue_point_active():
+		return SiteRuntime.ok("原同點已接受起點／prefix") if work_fatigue_point_prefix_ready(action_seconds, game_seconds) else SiteRuntime.fail("CLOCK_NOT_READY")
 	if not _work_fatigue_ready or _work_fatigue_tick < 0 or absf(action_seconds - _work_fatigue_action_seconds) > PersonFatigue.WORK_PLAN_EPS or absf(game_seconds - _work_fatigue_game_seconds) > PersonFatigue.WORK_PLAN_EPS:
 		return SiteRuntime.fail("CLOCK_NOT_READY")
 	if not bool(crowd.validate_step_clock_work_plan(action_seconds, game_seconds, combat_left, _work_fatigue_tick, _work_fatigue_packet)):
@@ -3113,3 +3073,331 @@ func work_fatigue_idle_limit(maximum: float, planned: Dictionary, combat_left: f
 		if not is_finite(endpoint) or endpoint <= 0.0: return NAN
 		limit = minf(limit, endpoint)
 	return limit
+
+
+func work_fatigue_point_active() -> bool:
+	if crowd == null or not crowd.has_method("work_point_state"): return false
+	var state: PackedFloat64Array = crowd.work_point_state()
+	return state.size() == 5 and state[0] == 1.0
+
+func work_training_start_ready(owner_ref: CrowdPersonOwner, combat_left: float) -> bool:
+	return active and crowd != null and crowd.has_method("work_training_start_ready") and owner_ref != null and owners.has(owner_ref) and crowd.work_training_start_ready(int(owner_ref.formation_index), combat_left)
+
+var _work_fatigue_point_armed := false
+
+var _work_fatigue_point_plan: Dictionary = {}
+
+func prepare_native_begin_work_point(planned: Dictionary, requests: Array, action_seconds: float, game_seconds: float,
+		combat_left: float, releases: PackedInt64Array, preview: PackedFloat64Array, projection: Dictionary) -> Dictionary:
+	# Pure gate over the actual original snapshot plus its exact regenerated
+	# BEGIN wire. Projection pools supply numbers only, never native identities.
+	if not active or crowd == null or _work_fatigue_tick < 0 or _work_fatigue_ready or _work_fatigue_point_armed \
+		or work_fatigue_point_active() or planned.get("ok") != true or preview.size() % 10 != 0:
+		return SiteRuntime.fail("CLOCK_NOT_READY")
+	for method: String in ["validate_step_clock_work_plan_after_host_ranged", "step_clock_work_point", "validate_work_point_finish",
+		"prepare_work_point_finish", "publish_work_point_finish", "work_point_state", "work_fatigue_run_upper", "work_point_runners"]:
+		if not crowd.has_method(method): return SiteRuntime.fail("CLOCK_NOT_READY")
+	var after_begin: Dictionary = {}
+	for offset: int in range(0, preview.size(), 10):
+		after_begin[int(preview[offset + 1])] = [float(preview[offset + 6]), float(preview[offset + 7])]
+	var totals: Dictionary = {}
+	var projected_pools: Dictionary = {}
+	for request: Dictionary in requests:
+		var allocation: Dictionary = planned.jobs.get(str(request.provider), {}).get(str(request.key), {})
+		for participant: Dictionary in request.participants:
+			if not participant.has("native_snapshot"): continue
+			var snapshot: Dictionary = participant.native_snapshot
+			var formation: int = int(snapshot.formation)
+			if not is_same(_work_fatigue_snapshots.get(formation, {}), snapshot): return SiteRuntime.fail("STALE_NATIVE_WORK_PLAN")
+			var identity: int = int(participant.person_id)
+			var actual: float = float(allocation.get("participant_seconds", {}).get(identity, 0.0))
+			var kind: String = str(participant.native_effort_kind)
+			if kind not in ["work", "run"] or not is_finite(actual) or actual < 0.0 or actual > game_seconds + PersonFatigue.WORK_PLAN_EPS:
+				return SiteRuntime.fail("INVALID_NATIVE_EFFORT")
+			if not totals.has(formation): totals[formation] = {"work": 0.0, "run": 0.0}
+			totals[formation][kind] += actual
+			var scalar: Dictionary = projection.get(identity, participant)
+			projected_pools[formation] = scalar.body._fatigue_pool
+	var packet := PackedFloat64Array()
+	var formations: Array = totals.keys()
+	formations.sort()
+	for formation: int in formations:
+		var total: Dictionary = totals[formation]
+		if float(total.work) <= 0.0: continue # original NO WORK RUN/recovery stays in World.
+		var snapshot: Dictionary = _work_fatigue_snapshots[formation]
+		var result: Dictionary = {}
+		for pool: Dictionary in planned.pools:
+			if is_same(pool.original_pool, projected_pools[formation]): result = pool; break
+		if result.is_empty(): return SiteRuntime.fail("MISSING_NATIVE_POOL")
+		var source: Array = after_begin.get(formation, [float(snapshot.pool.fatigue), float(snapshot.pool.fatigue_rest)])
+		packet.append_array(PackedFloat64Array([formation, source[0], source[1], int(snapshot.pool.count),
+			float(total.work), float(total.run), float(result.fatigue), float(result.fatigue_rest)]))
+	if not bool(crowd.validate_step_clock_work_plan_after_host_ranged(action_seconds, game_seconds, combat_left,
+		_work_fatigue_tick, packet, releases, preview)):
+		return SiteRuntime.fail("STALE_NATIVE_BEGIN_WORK_PLAN", "原BEGIN與整段body預檢拒絕；未扣彈／工作物資")
+	return SiteRuntime.ok("原World同BEGIN/body全源只讀預檢", {"owner": self, "tick": _work_fatigue_tick,
+		"packet": packet, "planned": planned, "requests": requests, "projection": projection,
+		"action_seconds": action_seconds, "game_seconds": game_seconds, "combat_left": combat_left})
+
+func publish_native_begin_work_point(prepared: Dictionary) -> void:
+	# Called immediately after the already checked synchronous original pulse
+	# tail. Every method/source/body guard was checked before the first debit.
+	# These are fresh actual World reads, not preview pool writes or a second CAS.
+	for snapshot: Dictionary in _work_fatigue_snapshots.values():
+		var actual: Dictionary = snapshot.owner.work_fatigue_snapshot()
+		snapshot.pool.clear()
+		snapshot.pool.merge(actual.pool)
+		snapshot.runners = actual.runners
+	for pool: Dictionary in prepared.planned.pools:
+		for request: Dictionary in prepared.requests:
+			for participant: Dictionary in request.participants:
+				if not participant.has("native_snapshot"): continue
+				var scalar: Dictionary = prepared.projection.get(int(participant.person_id), participant)
+				if is_same(pool.original_pool, scalar.body._fatigue_pool):
+					pool.original_pool = participant.native_snapshot.pool
+					pool.body = participant.body
+	_work_fatigue_packet = prepared.packet
+	_work_fatigue_action_seconds = float(prepared.action_seconds)
+	_work_fatigue_game_seconds = float(prepared.game_seconds)
+	_work_fatigue_ready = true
+	_work_fatigue_point_armed = true
+
+func prepare_work_fatigue_point_finish(planned: Dictionary, requests: Array, action_seconds: float, game_seconds: float) -> Dictionary:
+	# Call ONLY after every real materials, pending-fire and held-consumer final
+	# validation; all copying/allocation and possible failure precedes real costs.
+	if not work_fatigue_point_active() or not _work_fatigue_point_plan.is_empty() or _work_fatigue_tick < 0 \
+		or absf(action_seconds - _work_fatigue_action_seconds) > PersonFatigue.WORK_PLAN_EPS \
+		or absf(game_seconds - _work_fatigue_game_seconds) > PersonFatigue.WORK_PLAN_EPS: return SiteRuntime.fail("STALE_NATIVE_WORK_POINT")
+	var packed: Dictionary = _work_fatigue_point_packet(planned, requests, game_seconds)
+	if not packed.ok: return packed
+	if not bool(crowd.validate_work_point_finish(_work_fatigue_tick, packed.packet)): return SiteRuntime.fail("STALE_NATIVE_WORK_POINT")
+	if not bool(crowd.prepare_work_point_finish(_work_fatigue_tick, packed.packet)): return SiteRuntime.fail("STALE_NATIVE_WORK_POINT")
+	_work_fatigue_packet = packed.packet
+	_work_fatigue_point_plan = planned # SAME admitted result; no source/proxy writes.
+	return SiteRuntime.ok()
+
+func publish_work_fatigue_point() -> void:
+	# Original no-failure point tail: no new packet, CAS, sources, allocation,
+	# clock, lifecycle/contact callbacks or charge/recovery calls in this tail.
+	crowd.publish_work_point_finish()
+	_work_fatigue_point_plan = {}
+	_work_fatigue_point_armed = false
+	clear_work_fatigue_interval()
+
+func work_fatigue_run_bound_requests(seconds: float, held_requests: Array) -> Dictionary:
+	if crowd == null or not crowd.has_method("work_fatigue_run_upper") or work_fatigue_point_active(): return SiteRuntime.fail("CLOCK_NOT_READY")
+	return _work_fatigue_point_run_ref_requests(crowd.work_fatigue_run_upper(), seconds, held_requests, true)
+
+func finish_work_fatigue_point_events() -> bool:
+	# AFTER all real prefix/cost/fatigue publication. True hot HP/captive state
+	# was already available to post-contact P5 classification. ORIGINAL events
+	# now carry the final accepted prefix and each death's own preceding pulses.
+	if work_fatigue_point_active():
+		last_event_error = SiteRuntime.fail("CLOCK_NOT_READY")
+		return false
+	if not _consume_events(): return false
+	settle_events()
+	return true
+
+# EXACT insertions to existing methods, do not replace unrelated methods:
+#
+# 1) In step(), replace the existing shared-plan Native invocation + clear:
+#
+#     var accepted: bool = bool(crowd.step_clock_work_point(elapsed, game_seconds,
+#         combat_left, _work_fatigue_tick, _work_fatigue_packet)) if _work_fatigue_point_armed \
+#         else bool(crowd.step_clock_work_plan(elapsed, game_seconds,
+#             combat_left, _work_fatigue_tick, _work_fatigue_packet))
+#     if not accepted:
+#         last_event_error = SiteRuntime.fail("STALE_NATIVE_WORK_PLAN")
+#         return false
+#     if not _work_fatigue_point_armed: clear_work_fatigue_interval()
+#
+# Keep the rest of ORIGINAL step() contacts/events/presenters. Never recapture
+# the start snapshot after contacts or rebuild its pool from ending count.
+#
+# 2) At START of validate_prepared_work_fatigue_plan():
+#
+#     if work_fatigue_point_active():
+#         return SiteRuntime.ok("原同點已接受起點／prefix") if work_fatigue_point_prefix_ready(action_seconds, game_seconds) \
+#             else SiteRuntime.fail("CLOCK_NOT_READY")
+#
+# 3) At START of clear_work_fatigue_interval():
+#
+#     if work_fatigue_point_active(): return # unfinished original World cannot be discarded/saved
+#     _work_fatigue_point_armed = false
+#     _work_fatigue_point_plan = {}
+#
+# 4) prepare_work_fatigue_plan()/begin_work_fatigue_interval() must reject an
+#    active point BEFORE resetting readiness/packet/snapshot. Final point API
+#    above is the only allowed second plan for that already completed World.
+#
+# 5) Original training uses its true Native apply_training_only(...worked=0)
+#    under admitted point; no native charge when allocation missing. Original
+#    ranged release/round pulse occurs after publish, before next snapshot.
+#
+# 6) At original step() event block, replace ONLY the consume/settle pair:
+#
+#     if not work_fatigue_point_active():
+#         if not _consume_events(): return false
+#         settle_events()
+#
+#    In settle_external_contacts(), defer its original consume/settle while
+#    work_fatigue_point_active() as well. It must still apply true Native HP
+#    contacts at their original point; only event drain/handoff is deferred.
+#    Guard _consume_events() itself BEFORE queue reads:
+#        if work_fatigue_point_active(): return true
+#    This leaves Native event queue untouched; GDExt drain also refuses early.
+#    After publish_work_fatigue_point call finish_work_fatigue_point_events().
+#    Only then original _person_died/family/captivity/presenter callbacks run.
+#    Preserve _advance_dead_person_fatigue's PREVIOUS deaths pass once before
+#    new _death_notified handoffs; do not grant newly killed people idle time.
+
+# APPEND to ORIGINAL CrowdSite (P5 point package already merged first).
+
+func prepare_work_training_point(checked: Array) -> Dictionary:
+	# BEFORE prepare_work_fatigue_point_finish; both are original World point
+	# candidates, no real fatigue/training/material/progress publish here.
+	if not work_fatigue_point_active() or crowd == null or not crowd.has_method("prepare_work_point_training_plan"): return SiteRuntime.fail("CLOCK_NOT_READY")
+	var packet := PackedFloat64Array()
+	var ordered: Array[Dictionary] = []
+	for item: Dictionary in checked:
+		if item.get("ok") != true or not item.get("packet") is PackedFloat64Array: return SiteRuntime.fail("INVALID_TRAINING")
+		if item.packet.is_empty(): continue
+		if item.packet.size() != 5: return SiteRuntime.fail("INVALID_TRAINING")
+		ordered.append(item)
+	ordered.sort_custom(func(left: Dictionary, right: Dictionary) -> bool: return int(left.packet[0]) < int(right.packet[0]))
+	var previous := -1
+	for item: Dictionary in ordered:
+		var formation: int = int(item.packet[0])
+		if formation <= previous or not _work_fatigue_snapshots.has(formation) or not is_same(item.held.snapshot, _work_fatigue_snapshots[formation]): return SiteRuntime.fail("STALE_NATIVE_WORK_PLAN")
+		previous = formation
+		packet.append_array(item.packet)
+	if not crowd.validate_work_point_training_plan(_work_fatigue_tick, packet) or not crowd.prepare_work_point_training_plan(_work_fatigue_tick, packet): return SiteRuntime.fail("STALE_NATIVE_TRAINING_PLAN")
+	return SiteRuntime.ok("原World训练候选已与疲劳共同点绑定")
+
+func work_fatigue_point_run_requests(seconds: float, held_requests: Array) -> Dictionary:
+	if not work_fatigue_point_active() or not crowd.has_method("work_point_runners"): return SiteRuntime.fail("CLOCK_NOT_READY")
+	return _work_fatigue_point_run_ref_requests(crowd.work_point_runners(), seconds, held_requests, false)
+
+func _work_fatigue_point_packet(planned: Dictionary, requests: Array, game_seconds: float) -> Dictionary:
+	if planned.get("ok") != true or not is_finite(game_seconds) or game_seconds <= 0.0: return SiteRuntime.fail("INVALID_WORK")
+	var totals := {}
+	for request: Dictionary in requests:
+		var allocation: Dictionary = planned.jobs.get(str(request.provider), {}).get(str(request.key), {})
+		for participant: Dictionary in request.participants:
+			if not participant.has("native_snapshot"): continue
+			var snapshot: Dictionary = participant.native_snapshot
+			var formation: int = int(snapshot.formation)
+			if not is_same(_work_fatigue_snapshots.get(formation, {}), snapshot): return SiteRuntime.fail("STALE_NATIVE_WORK_PLAN")
+			var actual: float = float(allocation.get("participant_seconds", {}).get(int(participant.person_id), 0.0))
+			if not is_finite(actual) or actual < 0.0 or actual > game_seconds + PersonFatigue.WORK_PLAN_EPS: return SiteRuntime.fail("INVALID_NATIVE_EFFORT")
+			var kind: String = str(participant.native_effort_kind)
+			if kind not in ["work", "run"]: return SiteRuntime.fail("INVALID_NATIVE_EFFORT")
+			if not totals.has(formation): totals[formation] = {"work": 0.0, "run": 0.0}
+			totals[formation][kind] = float(totals[formation][kind]) + actual
+	var packet := PackedFloat64Array()
+	var formations: Array = totals.keys()
+	formations.sort()
+	for formation: int in formations:
+		var total: Dictionary = totals[formation]
+		if float(total.work) <= 0.0: continue # NO WORK: original World owns RUN/recovery without manual replacement.
+		var snapshot: Dictionary = _work_fatigue_snapshots[formation]
+		var result: Dictionary = {}
+		for group: Dictionary in planned.pools:
+			if is_same(group.original_pool, snapshot.pool): result = group; break
+		if result.is_empty(): return SiteRuntime.fail("MISSING_NATIVE_POOL")
+		var local: PackedFloat64Array = snapshot.owner.work_fatigue_packet(snapshot, result, float(total.work), float(total.run))
+		if local.size() != 8: return SiteRuntime.fail("STALE_NATIVE_WORK_PLAN")
+		packet.append_array(local)
+	return SiteRuntime.ok("原同點真起點全池packet", {"packet": packet})
+
+func work_fatigue_point_prefix_ready(action_seconds: float, game_seconds: float) -> bool:
+	if _work_fatigue_point_plan.is_empty() or not work_fatigue_point_active() \
+		or absf(action_seconds - _work_fatigue_action_seconds) > PersonFatigue.WORK_PLAN_EPS \
+		or absf(game_seconds - _work_fatigue_game_seconds) > PersonFatigue.WORK_PLAN_EPS: return false
+	var state: PackedFloat64Array = crowd.work_point_state()
+	return state[1] == 1.0 and int(state[2]) == _work_fatigue_tick and int(state[3]) == _work_fatigue_tick + 1 \
+		and absf(state[4] - game_seconds) <= PersonFatigue.WORK_PLAN_EPS
+
+func _work_fatigue_point_run_ref_requests(refs: PackedInt64Array, seconds: float, held_requests: Array, upper: bool) -> Dictionary:
+	if refs.size() % 3 != 0 or not is_finite(seconds) or seconds <= 0.0: return SiteRuntime.fail("STALE_NATIVE_WORK_PLAN")
+	var assigned := {}
+	for request: Dictionary in held_requests:
+		for participant: Dictionary in request.participants: assigned[int(participant.person_id)] = true
+	var seen := {}
+	var requests: Array[Dictionary] = []
+	for offset: int in range(0, refs.size(), 3):
+		var formation: int = int(refs[offset])
+		var unit: int = int(refs[offset + 1])
+		var identity: int = int(refs[offset + 2])
+		if seen.has(identity): return SiteRuntime.fail("DUPLICATE_NATIVE_ACTIVITY")
+		seen[identity] = true
+		if assigned.has(identity):
+			if upper: continue # Bound excludes existing held activity; never new permission.
+			return SiteRuntime.fail("DUPLICATE_NATIVE_ACTIVITY", "同原人不能既RUN又本段工作")
+		var owner_ref: Variant = person_owner(identity)
+		if not owner_ref is CrowdPersonOwner or owner_ref.formation_index != formation or owner_ref.index_for_identity(identity) != unit:
+			return SiteRuntime.fail("STALE_NATIVE_WORK_PLAN")
+		# A runner that dies at this endpoint keeps its true accepted prefix.
+		# The snapshot factory checks original refs, not fabricated living HP.
+		var participant: Dictionary = work_fatigue_participant(identity, false, PersonFatigue.RUN_RATE)
+		if participant.is_empty(): return SiteRuntime.fail("STALE_NATIVE_WORK_PLAN")
+		requests.append({"provider": "native_run_bound" if upper else "native_run", "key": str(identity),
+			"participants": [participant], "remaining": seconds, "productive_kind": "raw", "progress_multiplier": 1.0, "max_game_seconds": seconds})
+	return SiteRuntime.ok("原Native具名RUN refs", {"requests": requests})
+
+func _consume_events_original() -> bool:
+	if work_fatigue_point_active(): return true
+	# Both getters inspect the same queue synchronously. Validate every event
+	# before draining it or writing any original body, counter or captivity task.
+	var events: PackedInt64Array = crowd.peek_events()
+	var fatigue: PackedFloat64Array = crowd.event_fatigue()
+	var valid_packet: bool = events.size() % 4 == 0 and fatigue.size() == (events.size() >> 1)
+	var deaths := {}
+	if valid_packet:
+		for offset in range(0, events.size(), 4):
+			var kind := int(events[offset])
+			var identity := int(events[offset + 1])
+			var at: int = offset >> 1
+			var value: float = fatigue[at]
+			var rested: float = fatigue[at + 1]
+			if (kind < 0 or kind > 10 or not is_finite(value) or value < 0.0 or value > 100.0
+					or not is_finite(rested) or rested < 0.0 or rested > 30.0):
+				valid_packet = false
+				break
+			if kind != 0:
+				if value != 0.0 or rested != 0.0:
+					valid_packet = false
+					break
+				continue
+			var source: Variant = person_owner(identity)
+			if (identity <= 0 or deaths.has(identity) or source == null
+					or not _index_by_id.has(identity) or (not _actors.has(identity) and not _records.has(identity))
+					or int(events[offset + 3]) != int(source.formation_index)):
+				valid_packet = false
+				break
+			var state: Dictionary = soldier_state(int(_index_by_id[identity]))
+			if float(state.hp) > 0.0:
+				valid_packet = false
+				break
+			deaths[identity] = true
+	if (not valid_packet or crowd.peek_events() != events or crowd.event_fatigue() != fatigue):
+		last_event_error = SiteRuntime.fail("INVALID_CROWD", "原生死亡事件與原人物疲勞交接封包不符")
+		return false
+	# No await, step, callback or native writer occurred between the reads and drain.
+	crowd.drain_events()
+	for offset in range(0, events.size(), 4):
+		var kind := int(events[offset])
+		var identity := int(events[offset + 1])
+		var other := int(events[offset + 2])
+		event_counts[kind] = int(event_counts.get(kind, 0)) + 1
+		if kind in [4, 5]:
+			pending_captivity.append({"kind": kind, "person": identity, "other": other, "ammo_synced": false})
+		elif kind == 0:
+			_freeze_dead_person_fatigue(identity, fatigue[offset >> 1], fatigue[(offset >> 1) + 1])
+			if not _death_notified.has(identity):
+				_death_notified[identity] = true
+				lab.site_controller._person_died(identity)
+		elif kind == 10 and identity > 0 and not has_pending_capture(identity): _sync_ammo(identity)
+	if not events.is_empty(): events_received.emit(events)
+	return true

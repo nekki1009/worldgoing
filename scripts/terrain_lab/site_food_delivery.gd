@@ -247,59 +247,10 @@ func valid(team: TerrainArmy, entry: Dictionary) -> bool:
 	return int(entry.revision) < 2147483646 and Runtime.can_pay(resolved.stock, job.items) and _capacity(team, entry, endpoint, resolved, float(job.quantity))
 
 func commit(team: TerrainArmy, entry: Dictionary) -> Dictionary:
-	if not valid(team, entry):
-		return Runtime.fail("STALE_SOURCE", "原人物、來源或容量變更，當批未扣物")
-	var job: Dictionary = entry.delivery
-	var resolved := source(job.source_spec, _person(int(job.representative_id)))
-	var state: Dictionary = entry.sustain.duplicate(true)
-	var stock: Dictionary = controller._supply_stock(entry).duplicate(true)
-	var internal := int(entry.version) == 3 and is_same(resolved.version_owner, entry)
-	var destination := stock
-	var opened := state
-	if int(entry.version) == 3:
-		var target_key := str(job.target_location)
-		if not stock.has(target_key): stock[target_key] = {"inventory": {}, "open_rations": 0.0}
-		destination = stock[target_key].inventory
-		opened = stock[target_key]
-		if internal:
-			for key: String in entry.locations:
-				if is_same(entry.locations[key].inventory, resolved.stock):
-					Runtime.add_items(stock[key].inventory, job.items, -1)
-					stock[key].open_rations = maxf(0.0, float(stock[key].open_rations) - float(job.open_amount))
-					break
-	Runtime.add_items(destination, job.items)
-	opened.open_rations = float(opened.open_rations) + float(job.open_amount)
-	var members: Dictionary = controller._team_members(team)
-	var context := {}
-	if int(entry.version) == 3:
-		if not controller._supply_locations_valid(team, stock): return Runtime.fail("INVALID_SUSTAIN")
-		context.food_locations = controller.ship_food_locations(team, members, stock)
-	var supplied := Sustain.resupply(state, members, stock, false, controller._supply_hot_reader(team, members, {}), {}, context)
-	if not supplied.ok:
-		return supplied
-	# All possible failures preceded this original synchronous commit.
-	if not internal:
-		Runtime.add_items(resolved.stock, job.items, -1)
-		if float(job.open_amount) > 0.0:
-			resolved.opened.open_rations = maxf(0.0, float(resolved.opened.open_rations) - float(job.open_amount))
-		resolved.version_owner[resolved.version_field] = int(resolved.version_owner[resolved.version_field]) + 1
-	if int(entry.version) == 3:
-		for key: String in stock:
-			if entry.locations.has(key):
-				entry.locations[key].inventory.clear()
-				entry.locations[key].inventory.merge(stock[key].inventory)
-				entry.locations[key].open_rations = stock[key].open_rations
-			else: entry.locations[key] = stock[key]
-	else:
-		entry.inventory.clear()
-		entry.inventory.merge(stock)
-	entry.sustain.clear()
-	entry.sustain.merge(state)
-	entry.revision = int(entry.revision) + 1
-	entry.delivery = {}
-	if str(resolved.kind) == "ground":
-		Runtime.clear_empty_ground_loot(controller.lab.terrain, str(job.source_spec.container_id))
-	return Runtime.ok("已實際交付；原餐份與缺餐信用守恆", {"consumed_rations": supplied.consumed_rations})
+	var prepared: Dictionary = prepare_completion(team, entry)
+	if not prepared.ok: return prepared
+	if not validate_prepared_completion(prepared): return Runtime.fail("STALE_SOURCE", "原人物、來源或容量變更，當批未扣物")
+	return publish_prepared_completion(prepared)
 
 func drop_excess(team: TerrainArmy) -> Dictionary:
 	var entry: Dictionary = controller._supply_entry(team)
@@ -419,3 +370,99 @@ func _drop_location_excess(team: TerrainArmy, entry: Dictionary) -> Dictionary:
 		assert(result.ok, "Preflighted location supply drop must commit synchronously")
 	entry.revision = int(entry.revision) + 1
 	return result
+
+
+func prepare_completion(team: TerrainArmy, entry: Dictionary, require_endpoint: bool = false) -> Dictionary:
+	if require_endpoint and (entry.get("delivery", {}).is_empty() or not bool(entry.delivery.get("pending", false)) or float(entry.delivery.get("left", -1.0)) != 0.0): return Runtime.fail("INCOMPLETE")
+	if not valid(team, entry):
+		return Runtime.fail("STALE_SOURCE", "原人物、來源或容量變更，當批未扣物")
+	var job: Dictionary = entry.delivery
+	var resolved := source(job.source_spec, _person(int(job.representative_id)))
+	var state: Dictionary = entry.sustain.duplicate(true)
+	var stock: Dictionary = controller._supply_stock(entry).duplicate(true)
+	var internal := int(entry.version) == 3 and is_same(resolved.version_owner, entry)
+	var destination := stock
+	var opened := state
+	if int(entry.version) == 3:
+		var target_key := str(job.target_location)
+		if not stock.has(target_key): stock[target_key] = {"inventory": {}, "open_rations": 0.0}
+		destination = stock[target_key].inventory
+		opened = stock[target_key]
+		if internal:
+			for key: String in entry.locations:
+				if is_same(entry.locations[key].inventory, resolved.stock):
+					Runtime.add_items(stock[key].inventory, job.items, -1)
+					stock[key].open_rations = maxf(0.0, float(stock[key].open_rations) - float(job.open_amount))
+					break
+	Runtime.add_items(destination, job.items)
+	opened.open_rations = float(opened.open_rations) + float(job.open_amount)
+	var members: Dictionary = controller._team_members(team)
+	var context := {}
+	if int(entry.version) == 3:
+		if not controller._supply_locations_valid(team, stock): return Runtime.fail("INVALID_SUSTAIN")
+		context.food_locations = controller.ship_food_locations(team, members, stock)
+	var supplied := Sustain.resupply(state, members, stock, false, controller._supply_hot_reader(team, members, {}), {}, context)
+	if not supplied.ok:
+		return supplied
+	return Runtime.ok("原交糧完成候選已核；尚未扣物", {"owner": self, "data": controller.lab.terrain, "team": team, "entry": entry, "job": job,
+		"resolved": resolved, "state": state, "stock": stock, "internal": internal, "members": members, "supplied": supplied,
+		"entry_revision": int(entry.revision), "entry_state": entry.sustain.duplicate(true), "entry_stock": controller._supply_stock(entry).duplicate(true),
+		"job_values": job.duplicate(true), "source_version": int(resolved.version_owner[resolved.version_field]), "source_stock": resolved.stock.duplicate(true),
+		"source_open": resolved.opened.duplicate(true), "require_endpoint": require_endpoint, "published": false})
+
+func validate_prepared_completion(prepared: Dictionary) -> bool:
+	if prepared.get("owner") != self or prepared.get("published", true) or not is_same(prepared.get("data"), controller.lab.terrain) or not prepared.get("team") is TerrainArmy 		or not is_same(prepared.get("entry"), controller._supply_entry(prepared.team)) or not is_same(prepared.entry.get("delivery"), prepared.get("job")) 		or not prepared.get("require_endpoint") is bool: return false
+	var expected: Dictionary = prepare_completion(prepared.team, prepared.entry, bool(prepared.require_endpoint))
+	if not expected.ok or prepared.size() != expected.size(): return false
+	for key: String in expected:
+		if not prepared.has(key): return false
+	for key: String in ["entry", "job", "data"]:
+		if not is_same(prepared[key], expected[key]): return false
+	for key: String in ["owner", "team", "state", "stock", "internal", "members", "supplied", "entry_revision", "entry_state", "entry_stock", "job_values", "source_version", "source_stock", "source_open", "require_endpoint", "published"]:
+		if prepared[key] != expected[key]: return false
+	for key: String in ["stock", "opened", "version_owner"]:
+		# Empty optional opened pools are original values, not stored owners.
+		if key == "opened" and expected.resolved[key].is_empty():
+			if not prepared.resolved[key].is_empty(): return false
+		elif not is_same(prepared.resolved[key], expected.resolved[key]): return false
+	for key: String in ["kind", "version_field", "origin", "owner", "source_ship"]:
+		if prepared.resolved[key] != expected.resolved[key]: return false
+	for key: String in ["body", "cargo", "holder"]:
+		if not is_same(prepared.resolved.sender[key], expected.resolved.sender[key]): return false
+	return true
+
+func publish_prepared_completion(prepared: Dictionary) -> Dictionary:
+	# Caller validates all original source/state/stock effects immediately before
+	# the first food cost. This tail contains no new guard, resupply, or callback.
+	assert(prepared.owner == self and not prepared.published)
+	var team: TerrainArmy = prepared.team
+	var entry: Dictionary = prepared.entry
+	var job: Dictionary = prepared.job
+	var resolved: Dictionary = prepared.resolved
+	var state: Dictionary = prepared.state
+	var stock: Dictionary = prepared.stock
+	var internal: bool = bool(prepared.internal)
+	var supplied: Dictionary = prepared.supplied
+	if not internal:
+		Runtime.add_items(resolved.stock, job.items, -1)
+		if float(job.open_amount) > 0.0:
+			resolved.opened.open_rations = maxf(0.0, float(resolved.opened.open_rations) - float(job.open_amount))
+		resolved.version_owner[resolved.version_field] = int(resolved.version_owner[resolved.version_field]) + 1
+	if int(entry.version) == 3:
+		for key: String in stock:
+			if entry.locations.has(key):
+				entry.locations[key].inventory.clear()
+				entry.locations[key].inventory.merge(stock[key].inventory)
+				entry.locations[key].open_rations = stock[key].open_rations
+			else: entry.locations[key] = stock[key]
+	else:
+		entry.inventory.clear()
+		entry.inventory.merge(stock)
+	entry.sustain.clear()
+	entry.sustain.merge(state)
+	entry.revision = int(entry.revision) + 1
+	entry.delivery = {}
+	if str(resolved.kind) == "ground":
+		Runtime.clear_empty_ground_loot(controller.lab.terrain, str(job.source_spec.container_id))
+	prepared.published = true
+	return Runtime.ok("已實際交付；原餐份與缺餐信用守恆", {"consumed_rations": supplied.consumed_rations})

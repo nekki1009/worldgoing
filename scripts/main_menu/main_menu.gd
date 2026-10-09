@@ -236,10 +236,24 @@ func _build_map_page(parent: Node) -> void:
 	taiwan.add_theme_font_size_override("font_size", roundi(18 * UI))
 	taiwan.custom_minimum_size = Vector2(420, 72) * UI
 	page.add_child(taiwan)
+	var sources := OptionButton.new()
+	sources.name = "TaiwanSourceRule"
+	var choices: Array[Dictionary] = RegionEntry.new_world_source_choices()
+	var selected_path := str(RegionEntry.draft.get("manifest", RegionData.DEFAULT_MANIFEST))
+	for choice: Dictionary in choices:
+		sources.add_item(str(choice.label))
+		sources.set_item_metadata(sources.item_count - 1, str(choice.path))
+		if str(choice.path) == selected_path: sources.select(sources.item_count - 1)
+	page.add_child(sources)
+	sources.item_selected.connect(func(index: int) -> void:
+		RegionEntry.draft["manifest"] = str(sources.get_item_metadata(index))
+		RegionEntry.draft.erase("site")) # A source change requires a fresh original start pick.
+	_label(page, "地形、水源與資源保持所選來源；舊世界沿原保存來源繼續。", 14)
 	_label(page, "隨機地圖與其他地圖之後加入。", 14)
 	var row := _row(page)
 	_button(row, "返回", "MapBack", func() -> void: show_page("main"))
 	_button(row, "下一步：選擇起點", "PickStart", _pick_start)
+
 
 func _pick_start() -> void:
 	RegionEntry.draft["step"] = "pick"
@@ -493,12 +507,13 @@ func start_new_game() -> void:
 		show_page("main")
 		return
 	var scenario_id := str(_initial_scenario.get_item_metadata(_initial_scenario.selected))
-	if not RegionEntry.request_new_world(site, data, _world_name.text, scenario_id):
+	if not RegionEntry.request_new_world(site, data, _world_name.text, scenario_id, str(RegionEntry.draft.get("manifest", RegionData.DEFAULT_MANIFEST))):
 		_message.text = RegionEntry.menu_message
 		_message.visible = true
 		return
 	RegionEntry.draft = {}
 	get_tree().change_scene_to_file(RegionEntry.SITE_SCENE)
+
 
 func _build_initial_scenario_choice(parent: Node) -> void:
 	_label(parent, "開局情境", 16)

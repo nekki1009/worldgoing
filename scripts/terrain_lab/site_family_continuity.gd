@@ -56,11 +56,24 @@ static func member_ids(family: Dictionary, site_id: String) -> Array[int]:
 func local_member_ids(family: Dictionary) -> Array[int]:
 	return member_ids(family, str(lab.terrain.site.id))
 
-static func family_offices(family: Variant) -> Dictionary:
+static func family_offices(family: Variant, read_only: bool = false) -> Dictionary:
 	if not family is Dictionary or not family.has("offices"): return {}
+	if read_only:
+		if not SiteOffices.validate(family.offices, "family"): return {}
+		var current: Dictionary = family.offices
+		var migration := int(current.version) < SiteOffices.VERSION
+		for duty: String in SiteOffices.duty_ids("family"):
+			migration = migration or not current.duties.has(duty)
+		if migration:
+			current = current.duplicate(true)
+			SiteOffices.upgrade(current)
+			SiteOffices.ensure_catalog(current, "family")
+		return current
 	SiteOffices.upgrade(family.offices)
 	if SiteOffices.ensure_catalog(family.offices, "family"): family.offices.revision = mini(SiteOffices.MAX_SEQ, int(family.offices.revision) + 1)
 	return family.offices
+
+## Exercising a family duty needs the person here, alive, conscious and free.
 
 ## Exercising a family duty needs the person here, alive, conscious and free.
 func office_person_ok(family: Dictionary, identity: int) -> bool:
@@ -68,16 +81,22 @@ func office_person_ok(family: Dictionary, identity: int) -> bool:
 	var person := _current_person(identity)
 	return not person.is_empty() and float(person.hp) > 0.0 and float(person.ko) <= 0.0 and not bool(person.captive)
 
-func head_executor(family: Dictionary) -> int:
-	var head := int(SiteOffices.head_position(family_offices(family)).get("holder", -1))
+func head_executor(family: Dictionary, read_only: bool = false) -> int:
+	var head := int(SiteOffices.head_position(family_offices(family, read_only)).get("holder", -1))
 	return head if head > 0 and office_person_ok(family, head) else -1
 
 ## Unestablished families have no offices: every caller keeps today's behavior.
-func duty_resolve(duty_id: String) -> Dictionary:
+
+## Unestablished families have no offices: every caller keeps today's behavior.
+func duty_resolve(duty_id: String, read_only: bool = false) -> Dictionary:
 	var family: Variant = lab.terrain.site.get("family", {})
-	var offices := family_offices(family)
+	var offices := family_offices(family, read_only)
 	if offices.is_empty(): return {"ok": false, "code": "UNESTABLISHED", "message": "家族尚未建制", "duty_id": duty_id}
-	return SiteOffices.resolve(offices, duty_id, head_executor(family), func(identity: int) -> bool: return office_person_ok(family, identity))
+	return SiteOffices.resolve(offices, duty_id, head_executor(family, read_only), func(identity: int) -> bool: return office_person_ok(family, identity))
+
+## The head is named by the controlled family member while the seat is vacant
+## or its holder cannot act (D7); a fit head hands over through the same entry.
+## The first call founds the family's offices with the one-seat default.
 
 ## The head is named by the controlled family member while the seat is vacant
 ## or its holder cannot act (D7); a fit head hands over through the same entry.

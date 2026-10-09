@@ -805,3 +805,7 @@ static func prepare_holder_arrival(source_family_ref: Dictionary, incoming_famil
 	var moving := incoming_family.duplicate(true)
 	moving.technology = _holder_reference(candidate)
 	return {"ok": true, "destination_family": destination, "moving_family": moving}
+
+const F15_COLD_CONFIG := "site_technology_jobs_v2_F15"
+
+const F15_COLD_FIELDS := ["executor_id", "executor_cell", "executor_hit", "executor_version", "elapsed", "paused", "recipe", "duration", "technology_scope_token"]

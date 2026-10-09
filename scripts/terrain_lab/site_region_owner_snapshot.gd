@@ -239,3 +239,51 @@ static func _valid_bind_value(value: Variant, nodes: Array, validator: Callable,
 	if not admitted is bool or not admitted: return false
 	reference_types[key] = kind
 	return true
+
+static func _encode_bind_roots(value: Variant, graph: Dictionary, depth: int) -> Dictionary:
+	if depth > 48:
+		graph.error = "REGION_OWNER_DEPTH"
+		return {}
+	if value is Dictionary and value.size() == 2 and value.get("@region_reference") is String and Checkpoint.integer(value.get("type")):
+		var kind := int(value.type)
+		if kind not in [TYPE_OBJECT, TYPE_CALLABLE, TYPE_DICTIONARY, TYPE_ARRAY] or str(value["@region_reference"]).is_empty():
+			graph.error = "INVALID_REGION_REFERENCE"
+			return {}
+		return {"kind": "reference", "key": str(value["@region_reference"]), "type": kind}
+	if value is float and (value == INF or value == -INF): return {"kind": "infinity", "sign": 1 if value == INF else -1}
+	if value is Callable and value.is_null(): return {"kind": "empty_callable"}
+	if value is Object or value is Callable or value is Signal:
+		graph.error = "UNBOUND_REGION_REFERENCE"
+		return {}
+	if value is Dictionary or value is Array:
+		for index: int in graph.seen.size():
+			if is_same(graph.seen[index], value): return {"kind": "node", "index": index}
+		if graph.nodes.size() >= LIMIT or value.size() > LIMIT:
+			graph.error = "REGION_OWNER_LIMIT"
+			return {}
+		var index: int = graph.nodes.size()
+		graph.seen.append(value)
+		var node := {"kind": "dictionary" if value is Dictionary else "array", "entries": []}
+		graph.nodes.append(node)
+		if value is Dictionary:
+			for key: Variant in value:
+				if key == null or key is Object or key is Dictionary or key is Array or key is Callable or key is Signal or not Checkpoint.supported(key):
+					graph.error = "INVALID_REGION_OWNER_KEY"
+					return {}
+				node.entries.append([_encode_bind_roots(key, graph, depth + 1), _encode_bind_roots(value[key], graph, depth + 1)])
+		else:
+			for entry: Variant in value: node.entries.append(_encode_bind_roots(entry, graph, depth + 1))
+		return {"kind": "node", "index": index}
+	if not Checkpoint.supported(value):
+		graph.error = "UNSUPPORTED_REGION_OWNER_VALUE"
+		return {}
+	return {"kind": "value", "wire": Checkpoint.wire(value)}
+
+static func capture_bind_roots(roots: Dictionary, context: Dictionary) -> Dictionary:
+	var checked := Checkpoint.validate_context(context)
+	if not checked.ok: return checked
+	var graph := {"nodes": [], "seen": [], "error": ""}
+	var encoded := _encode_bind_roots(roots, graph, 0)
+	if not str(graph.error).is_empty(): return Runtime.fail(str(graph.error))
+	var snapshot := {"version": 1, "context": context.duplicate(true), "root": encoded, "nodes": graph.nodes}
+	return Runtime.ok("", {"state": snapshot})

@@ -52,9 +52,12 @@ static func validate(data: TerrainData, state: Dictionary, people: Dictionary) -
 	var settlement: Variant = state.settlement
 	if not settlement is Dictionary or not _int(settlement.get("version"), 1, 2): return Runtime.fail("CORRUPT_SAVE", "聚落紀錄版本")
 	var expected_fields: Array = FIELDS.duplicate()
-	if int(settlement.version) == 2: expected_fields.append("technology")
+	if int(settlement.version) == 2:
+		expected_fields.append("technology")
+		if settlement.has("technology_operations"): expected_fields.append("technology_operations")
 	if not Technology.keys(settlement, expected_fields): return Runtime.fail("CORRUPT_SAVE", "聚落紀錄欄位")
 	if int(settlement.version) == 2 and (not Technology.valid_scope_record(settlement.technology, "settlement") or str(settlement.technology.holder_site_id) != str(state.get("id", ""))): return Runtime.fail("CORRUPT_SAVE", "聚落科技版本／本原Site歸屬")
+	if settlement.has("technology_operations") and not valid_technology_operations(data, settlement.technology_operations, state): return Runtime.fail("CORRUPT_SAVE", "聚落有限用途格式")
 	if not settlement.settlement_id is String or str(settlement.settlement_id).is_empty() or str(settlement.settlement_id).length() > 96: return Runtime.fail("CORRUPT_SAVE", "聚落身分")
 	if centers.size() != 1: return Runtime.fail("CORRUPT_SAVE", "每個 Site 必須恰有一座聚落中心")
 	if not settlement.center_id is String or str(settlement.center_id) != centers[0]: return Runtime.fail("CORRUPT_SAVE", "聚落中心 ID 不存在")
@@ -84,6 +87,8 @@ static func validate(data: TerrainData, state: Dictionary, people: Dictionary) -
 	return Runtime.ok()
 
 ## JSON numbers load as floats; restore exact integer types after validation.
+
+## JSON numbers load as floats; restore exact integer types after validation.
 static func normalize(state: Dictionary) -> void:
 	var settlement: Variant = state.get("settlement")
 	if not settlement is Dictionary: return
@@ -99,6 +104,10 @@ static func normalize(state: Dictionary) -> void:
 			for field: String in fall.last_fall: fall.last_fall[field] = int(fall.last_fall[field])
 	if int(settlement.get("version", 0)) == 2 and settlement.get("technology") is Dictionary:
 		settlement.technology = Technology.normalize_scope_record(settlement.technology, "settlement")
+	if settlement.get("technology_operations") is Dictionary: normalize_technology_operations(settlement.technology_operations)
+
+# --- Derived projections -----------------------------------------------------
+
 
 # --- Derived projections -----------------------------------------------------
 
@@ -459,8 +468,8 @@ static func office_person_ok(lab: Variant, person_id: int) -> bool:
 	var person: Dictionary = lab.site_controller.person_actions._person(person_id, false)
 	return _fit(person) and int(person.faction) == int(settlement.owner_faction)
 
-static func head_executor(lab: Variant) -> int:
-	var head := int(SiteOffices.head_position(offices(lab)).get("holder", -1))
+static func head_executor(lab: Variant, read_only: bool = false) -> int:
+	var head := int(SiteOffices.head_position(offices(lab, read_only)).get("holder", -1))
 	return head if office_person_ok(lab, head) else -1
 
 static func duty_resolve(lab: Variant, duty_id: String, read_only: bool = false) -> Dictionary:
@@ -572,4 +581,199 @@ static func restore_ecology_zone(lab: Variant, requester_id: int, area: Rect2i, 
 		if bool(resource.cleared): found = true
 	if not found: return Runtime.fail("NO_TARGET", "框選內沒有已清除的原生植被來源")
 	return Runtime.add_zone(data, area, kind, "restore")
+
+static func valid_technology_operations(data: TerrainData, raw: Variant, state: Dictionary = {}) -> bool:
+	var site: Dictionary = data.site if state.is_empty() else state
+	if not Technology.keys(raw, ["version", "next_plan", "plans", "next_order", "orders"]) \
+		or not _int(raw.version, 1, 1) or not _int(raw.next_plan, 1, MAX_PERSON) or not _int(raw.next_order, 1, MAX_PERSON) \
+		or not raw.plans is Dictionary or raw.plans.size() > ENGINEERING_PLAN_LIMIT or not raw.orders is Dictionary or raw.orders.size() > ENGINEERING_ORDER_LIMIT: return false
+	for key: Variant in raw.plans:
+		if not key is String or not key.begins_with("plan_") or not key.trim_prefix("plan_").is_valid_int() \
+			or str(int(key.trim_prefix("plan_"))) != key.trim_prefix("plan_") or not _int(int(key.trim_prefix("plan_")), 1, int(raw.next_plan) - 1) \
+			or not valid_engineering_plan(data, raw.plans[key]) or raw.plans[key].id != key: return false
+	var defense_count := 0
+	for key: Variant in raw.orders:
+		var order: Variant = raw.orders[key]
+		if not key is String or not valid_technology_order_header(order, int(raw.next_order)) or order.id != key: return false
+		if order.kind != "defense":
+			if not _valid_other_technology_order(data, site, order): return false
+			continue
+		defense_count += 1
+		if defense_count > DEFENSE_ORDER_LIMIT: return false
+		if not Technology.keys(order, ["id", "kind", "revision", "authorizer_id", "owner_faction", "person_ids", "consents", "steps", "next_step", "status", "cap", "spent", "receipts", "purpose", "paid"]) \
+			or order.id != key or not _int(order.authorizer_id, 1, MAX_PERSON) or not _int(order.owner_faction, 0, MAX_FACTION) \
+			or not order.person_ids is Array or order.person_ids.is_empty() or order.person_ids.size() > ENGINEERING_STEP_LIMIT \
+			or not order.consents is Array or order.consents.size() != order.person_ids.size() or not order.steps is Array or order.steps.is_empty() or order.steps.size() > ENGINEERING_STEP_LIMIT \
+			or not _int(order.next_step, 0, order.steps.size()) or order.status not in ["prepared", "active", "completed", "cancelled"] \
+			or not order.purpose is String or order.purpose != "S10:work:" + JSON.stringify([str(site.get("id", "")), str(site.get("settlement", {}).get("settlement_id", "")), key]) \
+			or not Technology.material_stack(order.cap) or not Technology.material_stack(order.spent) or not order.receipts is Array \
+			or order.receipts.size() != int(order.next_step) or not order.paid is Dictionary: return false
+		if (order.status == "completed") != (int(order.next_step) == order.steps.size()) and order.status != "cancelled": return false
+		var people := {}
+		for identity: Variant in order.person_ids:
+			if not _int(identity, 1, MAX_PERSON) or people.has(int(identity)): return false
+			people[int(identity)] = true
+		for index: int in order.steps.size():
+			var step: Variant = order.steps[index]
+			if not Technology.keys(step, ["action", "plan_id", "anchor", "feature_id", "part", "operator_id"]) or step.action not in ["construct", "repair"] \
+				or not step.plan_id is String or not step.anchor is Array or not step.feature_id is String or not step.part is String \
+				or not _int(step.operator_id, 1, MAX_PERSON) or not people.has(int(step.operator_id)): return false
+			if step.action == "construct":
+				if not raw.plans.has(step.plan_id) or raw.plans[step.plan_id].kind not in DEFENSE_ENGINEERING_KINDS or step.anchor.size() != 2 \
+					or not _int(step.anchor[0], 0, data.size.x - 1) or not _int(step.anchor[1], 0, data.size.y - 1) or not step.part.is_empty(): return false
+			elif not step.plan_id.is_empty() or not step.anchor.is_empty() or step.feature_id.is_empty() or step.part.is_empty() or step.part.length() > 128: return false
+			if not step.feature_id.is_empty() and (not step.feature_id.is_valid_int() or str(int(step.feature_id)) != step.feature_id or int(step.feature_id) <= 0): return false
+			if index < int(order.next_step) and step.feature_id.is_empty(): return false
+		for index: int in order.person_ids.size():
+			var consent: Variant = order.consents[index]
+			if not Technology.keys(consent, ["site_id", "team_id", "person_id", "purpose", "decider_id", "revision", "status"]) \
+				or consent.site_id != str(site.get("id", "")) or not _int(consent.team_id, 1, MAX_PERSON) or consent.person_id != order.person_ids[index] \
+				or not _int(consent.decider_id, 1, MAX_PERSON) or not _int(consent.revision, 0, MAX_PERSON) or consent.purpose != order.purpose or consent.status != "accepted": return false
+		for resource: String in order.spent:
+			if int(order.spent[resource]) > int(order.cap.get(resource, 0)): return false
+		var spent := {}
+		for index: int in order.receipts.size():
+			var receipt: Variant = order.receipts[index]
+			if not Technology.keys(receipt, ["step", "feature_id", "operator_id", "action", "materials", "work_seconds"]) or not _int(receipt.step, index, index) \
+				or receipt.feature_id != order.steps[index].feature_id or receipt.operator_id != order.steps[index].operator_id or receipt.action != order.steps[index].action \
+				or not Technology.material_stack(receipt.materials) or not Technology.finite_number(receipt.work_seconds, 0.000000001): return false
+			Runtime.add_items(spent, receipt.materials)
+		if not order.paid.is_empty():
+			if int(order.next_step) >= order.steps.size() or not Technology.keys(order.paid, ["feature_id", "materials", "work_seconds", "operator_id"]) \
+				or order.paid.feature_id != order.steps[int(order.next_step)].feature_id or not Technology.material_stack(order.paid.materials) \
+				or not Technology.finite_number(order.paid.work_seconds, 0.000000001) or order.paid.operator_id != order.steps[int(order.next_step)].operator_id: return false
+			Runtime.add_items(spent, order.paid.materials)
+		if not Technology.material_equal(spent, order.spent) or order.status == "active" and order.paid.is_empty() \
+			or order.status in ["prepared", "completed"] and not order.paid.is_empty(): return false
+	return true
+
+
+static func normalize_technology_operations(raw: Dictionary) -> void:
+	# Called only after strict admission. Historical receipts never need a live
+	# host, body or inventory to normalize their already accepted finite truth.
+	for field: String in ["version", "next_plan", "next_order"]: raw[field] = int(raw[field])
+	for plan: Dictionary in raw.plans.values():
+		for index: int in plan.cells.size(): plan.cells[index] = int(plan.cells[index])
+		plan.options = engineering_options(plan.options)
+	for order: Dictionary in raw.orders.values():
+		order.authorizer_id = int(order.authorizer_id)
+		order.revision = int(order.revision)
+		if order.kind != "defense": _normalize_other_technology_order(order); continue
+		for field: String in ["owner_faction", "next_step"]: order[field] = int(order[field])
+		for index: int in order.person_ids.size(): order.person_ids[index] = int(order.person_ids[index])
+		for consent: Dictionary in order.consents:
+			for field: String in ["team_id", "person_id", "decider_id", "revision"]: consent[field] = int(consent[field])
+		for step: Dictionary in order.steps:
+			step.operator_id = int(step.operator_id)
+			for index: int in step.anchor.size(): step.anchor[index] = int(step.anchor[index])
+		for receipt: Dictionary in order.receipts:
+			receipt.step = int(receipt.step)
+			receipt.operator_id = int(receipt.operator_id)
+			receipt.work_seconds = float(receipt.work_seconds)
+			for resource: String in receipt.materials: receipt.materials[resource] = int(receipt.materials[resource])
+		for materials: Dictionary in [order.cap, order.spent]:
+			for resource: String in materials: materials[resource] = int(materials[resource])
+		if not order.paid.is_empty():
+			order.paid.operator_id = int(order.paid.operator_id)
+			order.paid.work_seconds = float(order.paid.work_seconds)
+			for resource: String in order.paid.materials: order.paid.materials[resource] = int(order.paid.materials[resource])
+
+
+static func _valid_other_technology_order(data: TerrainData, state: Dictionary, raw: Dictionary) -> bool:
+	if not Technology.keys(raw, ["id", "kind", "authorizer_id", "status", "payload", "receipts", "revision"]) or not raw.payload is Dictionary: return false
+	var runtime: Variant = Runtime
+	var method := "valid_settlement_processing_order" if raw.kind in ["charcoal_batch", "textile_batch"] else "valid_settlement_ship_order" if raw.kind == "ship_cooperation" else "valid_settlement_metal_order" if raw.kind == "metal_chain" else "valid_settlement_food_order" if raw.kind == "food_order" else ""
+	var normalizer := "normalize_settlement_processing_order" if raw.kind in ["charcoal_batch", "textile_batch"] else "normalize_settlement_ship_order" if raw.kind == "ship_cooperation" else "normalize_settlement_metal_order" if raw.kind == "metal_chain" else "normalize_settlement_food_order" if raw.kind == "food_order" else ""
+	return not method.is_empty() and runtime.has_method(method) and runtime.has_method(normalizer) and runtime.call(method, data, state, raw) == true
+
+
+static func valid_engineering_plan(data: TerrainData, raw: Variant) -> bool:
+	if not Technology.keys(raw, ["id", "name", "kind", "cells", "options", "source_feature"]) or not raw.id is String \
+		or not raw.id.begins_with("plan_") or not raw.name is String or raw.name.strip_edges().is_empty() or raw.name.length() > 48 \
+		or not raw.kind is String or raw.kind not in ENGINEERING_KINDS or not raw.cells is Array or raw.cells.is_empty() or raw.cells.size() > 36 \
+		or not raw.source_feature is String or not raw.source_feature.is_valid_int() or int(raw.source_feature) <= 0: return false
+	var options := engineering_options(raw.options)
+	if options.is_empty(): return false
+	var seen := {}
+	for index: Variant in raw.cells:
+		if not _int(index, 0, data.size.x * data.size.y - 1) or seen.has(int(index)): return false
+		seen[int(index)] = true
+	return Runtime.validate_building_layout(data, str(raw.kind), raw.cells, options).ok
+
+
+static func valid_technology_order_header(raw: Variant, next_order: int) -> bool:
+	# Shared primitive only. Exact typed payloads below remain mandatory; an
+	# unknown kind never becomes valid merely by carrying this header.
+	if not raw is Dictionary: return false
+	for field: String in ["id", "kind", "authorizer_id", "status", "receipts", "revision"]:
+		if not raw.has(field): return false
+	if not raw.id is String or not raw.kind is String or raw.kind.is_empty() or raw.kind.length() > 32 \
+		or not _int(raw.authorizer_id, 1, MAX_PERSON) or not raw.status is String or raw.status.is_empty() or raw.status.length() > 24 \
+		or not raw.receipts is Array or raw.receipts.size() > 32 or not _int(raw.revision, 0, MAX_PERSON): return false
+	for index: int in raw.kind.length():
+		if "abcdefghijklmnopqrstuvwxyz0123456789_".find(raw.kind.substr(index, 1)) < 0: return false
+	var prefix := str(raw.kind) + "_"
+	var serial := str(raw.id).trim_prefix(prefix)
+	return str(raw.id).begins_with(prefix) and serial.is_valid_int() and serial == str(int(serial)) and _int(int(serial), 1, next_order - 1)
+
+
+static func _normalize_other_technology_order(raw: Dictionary) -> void:
+	# Paired with the strict typed branches. Unknown fields cannot reach restore.
+	var runtime: Variant = Runtime
+	var method := "normalize_settlement_processing_order" if raw.kind in ["charcoal_batch", "textile_batch"] else "normalize_settlement_ship_order" if raw.kind == "ship_cooperation" else "normalize_settlement_metal_order" if raw.kind == "metal_chain" else "normalize_settlement_food_order" if raw.kind == "food_order" else ""
+	assert(not method.is_empty() and runtime.has_method(method), "UNSUPPORTED Settlement operation normalization")
+	runtime.call(method, raw)
+
+
+static func engineering_options(raw: Variant) -> Dictionary:
+	if not raw is Dictionary or raw.size() != 5: return {}
+	if not Technology.keys(raw, ["layout_version", "quarter", "owner_faction", "material", "variant"]) \
+		or not _int(raw.layout_version, 1, 1) or not _int(raw.quarter, 0, 3) or not _int(raw.owner_faction, 0, MAX_FACTION) \
+		or not raw.material is String or raw.material not in ["wood", "stone"] or not raw.variant is String: return {}
+	var result: Dictionary = raw.duplicate()
+	for field: String in ["layout_version", "quarter", "owner_faction"]: result[field] = int(result[field])
+	return result
+
+
+static func empty_technology_operations() -> Dictionary:
+	return {"version": 1, "next_plan": 1, "plans": {}, "next_order": 1, "orders": {}}
+
+
+static func publish_technology_operations(settlement: Dictionary, candidate: Dictionary) -> void:
+	# Original synchronous checked owner tail keeps accepted SAME refs alive.
+	if not settlement.has("technology_operations"):
+		settlement.technology_operations = candidate
+		return
+	var original: Dictionary = settlement.technology_operations
+	for collection: String in ["plans", "orders"]:
+		var kept: Dictionary = original[collection]
+		for key: String in kept.keys():
+			if not candidate[collection].has(key): kept.erase(key)
+		for key: String in candidate[collection]:
+			if kept.has(key):
+				var value: Dictionary = kept[key]
+				value.clear()
+				value.merge(candidate[collection][key], true)
+			else: kept[key] = candidate[collection][key]
+	original.version = int(candidate.version)
+	original.next_plan = int(candidate.next_plan)
+	original.next_order = int(candidate.next_order)
+
+
+const ENGINEERING_PLAN_LIMIT := 8
+
+
+const ENGINEERING_ORDER_LIMIT := 16
+
+
+const DEFENSE_ORDER_LIMIT := 4
+
+
+const ENGINEERING_STEP_LIMIT := 4
+
+
+const ENGINEERING_KINDS := ["house", "warehouse", "stone_wall", "gate", "wall_stairs", "siege_ladder"]
+
+
+const DEFENSE_ENGINEERING_KINDS := ["stone_wall", "gate", "wall_stairs", "siege_ladder"]
 

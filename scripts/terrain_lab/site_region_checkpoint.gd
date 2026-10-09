@@ -40,7 +40,10 @@ static func validate_context(value: Variant, expected: Dictionary = {}) -> Dicti
 	if bool(value.effects_complete) and not pending.is_empty(): return Runtime.fail("REGION_EFFECTS_PENDING")
 	if not bool(value.effects_complete) and (value.purpose == "region_checkpoint" or pending.is_empty() and value.endpoint_payload.is_empty()): return Runtime.fail("INVALID_REGION_BARRIER")
 	for field: String in expected:
-		if not value.has(field) or value[field] != expected[field]: return Runtime.fail("STALE_REGION_CONTEXT", field)
+		# Context is JSON metadata; its owner graph retains typed numbers. Compare
+		# complete canonical values so an unchanged persisted event is accepted.
+		if not value.has(field) or not supported(expected[field]) or JSON.stringify(_hash_numbers(value[field]), "", true, true) != JSON.stringify(_hash_numbers(expected[field]), "", true, true):
+			return Runtime.fail("STALE_REGION_CONTEXT", field)
 	if not supported(value): return Runtime.fail("INVALID_REGION_CONTEXT", "unsupported value")
 	return Runtime.ok("", {"context": value.duplicate(true), "effects_pending": not bool(value.effects_complete), "pending_events": pending})
 
@@ -172,7 +175,7 @@ static func make(state: Dictionary, context: Dictionary, owners: Dictionary) -> 
 
 static func validate(state: Dictionary, snapshot: Variant, expected: Dictionary = {}) -> Dictionary:
 	if not snapshot is Dictionary or snapshot.size() != 4 or not integer(snapshot.get("version"), 1) or int(snapshot.version) != 1 or not snapshot.get("state_hash") is String or str(snapshot.state_hash) != state_hash(state):
-		return Runtime.fail("CORRUPT_REGION_SNAPSHOT")
+		return _snapshot_failure(state, snapshot)
 	var checked := validate_context(snapshot.get("context"), expected)
 	if not checked.ok: return checked
 	if not valid_wire(snapshot.get("owners")): return Runtime.fail("INVALID_REGION_OWNERS")
@@ -193,3 +196,14 @@ static func _hash_numbers(value: Variant) -> Variant:
 		return normalized
 	return value
 
+static func _snapshot_failure(state: Dictionary, snapshot: Variant) -> Dictionary:
+	var result := Runtime.fail("CORRUPT_REGION_SNAPSHOT")
+	var computed := state_hash(state)
+	if not snapshot is Dictionary: result["check"] = "type"
+	elif snapshot.size() != 4: result["check"] = "size"
+	elif not integer(snapshot.get("version"), 1) or int(snapshot.version) != 1: result["check"] = "version"
+	else: result["check"] = "hash"
+	result["stored_hash"] = str(snapshot.get("state_hash", "")) if snapshot is Dictionary else ""
+	result["computed_hash"] = computed
+	if snapshot is Dictionary: result["snapshot_size"] = snapshot.size()
+	return result

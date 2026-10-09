@@ -144,6 +144,7 @@ static func plan_work_interval(requests: Array, seconds: float) -> Dictionary:
 		for person: Variant in raw.participants:
 			if not person is Dictionary or not person.get("person_id") is int or int(person.person_id) <= 0 or not person.get("rest_limited") is bool or not _work_plan_number(person.get("effort_rate")): return _invalid_work_plan("Invalid original participant")
 			if str(raw.productive_kind) == "sum" and (not _work_plan_number(person.get("progress_multiplier", 1.0)) or float(person.get("progress_multiplier", 1.0)) <= 0.0): return _invalid_work_plan("Invalid original participant productivity")
+			if not _work_plan_number(person.get("active_until_game_seconds", raw.max_game_seconds)): return _invalid_work_plan("Invalid original activity boundary")
 			var identity := int(person.person_id)
 			if identities.has(identity): return _invalid_work_plan("Original person has multiple activities")
 			var snapshot := _work_plan_body(person.get("body"))
@@ -160,7 +161,7 @@ static func plan_work_interval(requests: Array, seconds: float) -> Dictionary:
 			if pool_index < 0:
 				pool_index = pools.size()
 				pools.append(snapshot)
-			participants.append({"person_id": identity, "pool_index": pool_index, "effort_rate": float(person.effort_rate), "rest_limited": bool(person.rest_limited), "work_resting": bool(snapshot.work_resting), "progress_multiplier": float(person.get("progress_multiplier", 1.0)) if str(raw.productive_kind) == "sum" else 1.0})
+			participants.append({"person_id": identity, "pool_index": pool_index, "effort_rate": float(person.effort_rate), "rest_limited": bool(person.rest_limited), "work_resting": bool(snapshot.work_resting), "progress_multiplier": float(person.get("progress_multiplier", 1.0)) if str(raw.productive_kind) == "sum" else 1.0, "active_until_game_seconds": float(person.get("active_until_game_seconds", raw.max_game_seconds))})
 		participants.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.person_id) < int(b.person_id))
 		var required: Array[int] = []
 		if raw.has("required_any_ids"):
@@ -173,12 +174,27 @@ static func plan_work_interval(requests: Array, seconds: float) -> Dictionary:
 				if not present: return _invalid_work_plan("Original master is not a participant")
 				required.append(int(identity))
 			required.sort()
+		var master_groups: Array = []
+		if not required.is_empty(): master_groups.append(required)
+		if raw.has("required_all_any_ids"):
+			if str(raw.productive_kind) != "sum" or not raw.required_all_any_ids is Array: return _invalid_work_plan("Invalid original master groups")
+			for raw_group: Variant in raw.required_all_any_ids:
+				if not raw_group is Array or raw_group.is_empty(): return _invalid_work_plan("Empty original master group")
+				var group: Array[int] = []
+				for identity: Variant in raw_group:
+					if not identity is int or group.has(int(identity)): return _invalid_work_plan("Invalid original grouped master identity")
+					var present := false
+					for person: Dictionary in participants: present = present or int(person.person_id) == int(identity)
+					if not present: return _invalid_work_plan("Original grouped master is not a participant")
+					group.append(int(identity))
+				group.sort()
+				master_groups.append(group)
 		jobs[provider][key] = {"actual_seconds": 0.0, "effective_seconds": 0.0, "participant_seconds": {}, "participant_effective_seconds": {}, "participant_paused": {}, "paused": str(raw.get("paused", ""))}
 		for person: Dictionary in participants:
 			jobs[provider][key].participant_seconds[int(person.person_id)] = 0.0
 			jobs[provider][key].participant_effective_seconds[int(person.person_id)] = 0.0
 			jobs[provider][key].participant_paused[int(person.person_id)] = ""
-		work.append({"provider": provider, "key": key, "participants": participants, "remaining": float(raw.remaining), "productive_kind": str(raw.productive_kind), "progress_multiplier": float(raw.progress_multiplier), "max_game_seconds": float(raw.max_game_seconds), "required_any_ids": required})
+		work.append({"provider": provider, "key": key, "participants": participants, "remaining": float(raw.remaining), "productive_kind": str(raw.productive_kind), "progress_multiplier": float(raw.progress_multiplier), "max_game_seconds": float(raw.max_game_seconds), "required_any_ids": required, "master_groups": master_groups})
 	var elapsed := 0.0
 	while elapsed < seconds:
 		var active: Array[Dictionary] = []
@@ -194,8 +210,13 @@ static func plan_work_interval(requests: Array, seconds: float) -> Dictionary:
 			var job: Dictionary = jobs[request.provider][request.key]
 			if not str(job.paused).is_empty() or float(request.remaining) <= 0.0 or elapsed >= float(request.max_game_seconds): continue
 			var resting := false
+			var interrupted := false
 			var available: Array[Dictionary] = []
 			for person: Dictionary in request.participants:
+				if elapsed >= float(person.active_until_game_seconds):
+					job.participant_paused[int(person.person_id)] = "CONTACT"
+					interrupted = true
+					continue
 				var fatigue := float(pools[int(person.pool_index)].fatigue)
 				var resting_now := false
 				if bool(person.rest_limited):
@@ -204,15 +225,17 @@ static func plan_work_interval(requests: Array, seconds: float) -> Dictionary:
 					resting = resting or resting_now
 				if resting_now: job.participant_paused[int(person.person_id)] = "REST"
 				else: available.append(person)
-			if resting and str(request.productive_kind) != "sum" or available.is_empty():
-				job.paused = "REST"
+			if (resting or interrupted) and str(request.productive_kind) != "sum" or available.is_empty():
+				job.paused = "CONTACT" if interrupted else "REST"
 				continue
-			if not request.required_any_ids.is_empty():
-				var master_working := false
-				for person: Dictionary in available: master_working = master_working or request.required_any_ids.has(int(person.person_id))
-				if not master_working:
-					job.paused = "REST"
-					continue # Helpers cannot work after the last original master rests.
+			var masters_working := true
+			for group: Array in request.master_groups:
+				var group_working := false
+				for person: Dictionary in available: group_working = group_working or group.has(int(person.person_id))
+				masters_working = masters_working and group_working
+			if not masters_working:
+				job.paused = "CONTACT" if interrupted else "REST"
+				continue # Every original requirement needs a working member; unrelated pool activities remain active.
 			# Independent shared-batch workers stop individually; a joint lesson
 			# still requires both original participants for its whole interval.
 			var segment := request.duplicate(false)
@@ -220,7 +243,9 @@ static func plan_work_interval(requests: Array, seconds: float) -> Dictionary:
 			segment["source"] = request
 			active.append(segment)
 			duration = minf(duration, float(request.max_game_seconds) - elapsed)
-			for person: Dictionary in available: active_people.append(person)
+			for person: Dictionary in available:
+				duration = minf(duration, float(person.active_until_game_seconds) - elapsed)
+				active_people.append(person)
 		active_people.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.person_id) < int(b.person_id))
 		for person: Dictionary in active_people:
 			var index := int(person.pool_index)
@@ -271,13 +296,23 @@ static func plan_work_interval(requests: Array, seconds: float) -> Dictionary:
 		var job: Dictionary = jobs[request.provider][request.key]
 		if not str(job.paused).is_empty(): continue
 		var resting_count := 0
-		var master_available: bool = request.required_any_ids.is_empty()
+		var interrupted_count := 0
+		var master_available := true
+		var available_ids: Array[int] = []
 		for person: Dictionary in request.participants:
+			if seconds >= float(person.active_until_game_seconds) and float(person.active_until_game_seconds) < float(request.max_game_seconds):
+				job.participant_paused[int(person.person_id)] = "CONTACT"
+				interrupted_count += 1
+				continue
 			if bool(person.rest_limited) and needs_work_rest(float(pools[int(person.pool_index)].fatigue), bool(person.work_resting)):
 				job.participant_paused[int(person.person_id)] = "REST"
 				resting_count += 1
-			elif request.required_any_ids.has(int(person.person_id)): master_available = true
-		if float(request.remaining) > 0.0 and (not master_available or resting_count > 0 and (str(request.productive_kind) != "sum" or resting_count == request.participants.size())): job.paused = "REST"
+			else: available_ids.append(int(person.person_id))
+		for group: Array in request.master_groups:
+			var group_available := false
+			for identity: int in available_ids: group_available = group_available or group.has(identity)
+			master_available = master_available and group_available
+		if float(request.remaining) > 0.0 and (not master_available or resting_count + interrupted_count > 0 and (str(request.productive_kind) != "sum" or resting_count + interrupted_count == request.participants.size())): job.paused = "CONTACT" if interrupted_count > 0 else "REST"
 	for group: Dictionary in pools: group.erase("work_resting")
 	return {"ok": true, "seconds": seconds, "jobs": jobs, "pools": pools}
 

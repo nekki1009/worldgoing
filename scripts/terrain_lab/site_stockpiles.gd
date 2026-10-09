@@ -7,12 +7,18 @@ const Runtime := preload("res://scripts/terrain_lab/site_runtime.gd")
 
 static func eligible(feature: Dictionary) -> bool:
 	var kind := str(feature.get("kind", ""))
-	return kind == "warehouse" or Runtime.FEATURES.has(kind) and Runtime.FEATURES[kind].has("input")
+	return kind == "shipyard" and Runtime.valid_technology_shipyard_work(feature) or kind == "warehouse" or Runtime.FEATURES.has(kind) and Runtime.FEATURES[kind].has("input")
 
 static func capacity(feature: Dictionary) -> int:
 	if not eligible(feature): return 0
 	var grade := int(feature.get("building_grade", 1))
 	if grade < 1 or grade > 3: return 0
+	if str(feature.kind) == "shipyard":
+		# A finite original local holder can accept one complete existing hull
+		# recipe. Capacity grants no manufacture permission or order allowance.
+		var largest := 0
+		for kind: String in Runtime.Ships.KINDS: largest = maxi(largest, Runtime.inventory_size(Runtime.Ships.build_cost(kind)))
+		return largest
 	return (60 if str(feature.kind) == "warehouse" else 20) * (grade + 1)
 
 static func identity(key: String) -> String:

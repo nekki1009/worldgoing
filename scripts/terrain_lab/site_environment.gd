@@ -13,6 +13,7 @@ const ITEM_NAMES := {
 	"pottery": "陶器", "steel": "鋼料", "rope": "繩索",
 	"brick": "磚瓦", "iron": "鐵料", "cloth": "布料", "leather": "皮革", "wool": "羊毛", "sheep": "羊", "horse": "馬匹",
 	"arrow": "箭", "fire_arrow": "火箭", "bolt": "弩矢", "siege_bolt": "重弩矢", "siege_stone": "石彈", "camp_tent": "營帳包",
+	"fire_pot": "火罐", "ballista_spares": "弩砲備件",
 }
 const WORK_MINUTES := [5.0, 4.0, 3.0, 6.0, 2.0, 2.0, 3.0, 4.0, 6.0]
 const BATCH := [4, 3, 3, 2, 2, 3, 2, 2, 1]
@@ -36,6 +37,11 @@ static func initialize(data: TerrainData, site_id: String = "") -> void:
 	var count := data.size.x * data.size.y
 	var fixed_geography: bool = data.parameters.get("composition") == "fixed_geography" \
 		and data.parameters.get("fixed_base") is Dictionary
+	if fixed_geography:
+		var base: Dictionary = data.parameters.fixed_base
+		if base.has("land_condition_rule") != data.parameters.has("fixed_land_condition_rule") or base.get("land_condition_rule") != data.parameters.get("fixed_land_condition_rule") or base.has("land_condition_rule") and (not base.land_condition_rule is String or not data.parameters.fixed_land_condition_rule is String or base.land_condition_rule != "terrain_mapped_potential_v1"):
+			push_error("Fixed source land-condition rule is invalid; original data retained")
+			return
 	if fixed_geography and (data.water_kind.size() != count or data.water_body.size() != count):
 		push_error("Fixed geography must supply its own water classification")
 		return
@@ -59,11 +65,14 @@ static func initialize(data: TerrainData, site_id: String = "") -> void:
 	if fixed_geography:
 		# Keep resource_base supplied by the verified fixed-base loader. The
 		# geography-only atlas leaves it empty; never generate deposits here.
-		data.fertility.fill(0)
-		data.moisture.fill(0)
-		data.drainage.fill(0)
-		data.foundation.fill(0)
-		data.groundwater.fill(0)
+		if data.parameters.get("fixed_land_condition_rule", "") == "terrain_mapped_potential_v1":
+			_populate_soil_conditions(data, false) # Pinned game potential, never surveyed soil.
+		else:
+			data.fertility.fill(0)
+			data.moisture.fill(0)
+			data.drainage.fill(0)
+			data.foundation.fill(0)
+			data.groundwater.fill(0)
 	else:
 		_generate_water(data)
 		_generate_soil(data)
@@ -132,53 +141,7 @@ static func _generate_water(data: TerrainData) -> void:
 		data.parameters.navigable_water_source = "preset-water-rule-v1"
 
 static func _generate_soil(data: TerrainData) -> void:
-	var noise := FastNoiseLite.new()
-	noise.seed = int((data.seed_value + 19391) & 0x7fffffff)
-	noise.frequency = 0.07
-	var wet_distance := PackedInt32Array()
-	wet_distance.resize(data.surface_types.size())
-	wet_distance.fill(20)
-	var pending: Array[int] = []
-	for i: int in range(wet_distance.size()):
-		if data.water_kind[i] != 0:
-			wet_distance[i] = 0
-			pending.append(i)
-	var head := 0
-	while head < pending.size():
-		var current := pending[head]
-		head += 1
-		for direction: Vector2i in TerrainData.DIRECTIONS:
-			var next := data.cell_from_index(current) + direction
-			if not data.contains(next):
-				continue
-			var j := data.index(next)
-			if wet_distance[j] > wet_distance[current] + 1:
-				wet_distance[j] = wet_distance[current] + 1
-				pending.append(j)
-	for i: int in range(data.surface_types.size()):
-		var cell := data.cell_from_index(i)
-		var variation := int(noise.get_noise_2d(cell.x, cell.y) * 35.0)
-		var surface := int(data.surface_types[i])
-		data.fertility[i] = clampi(62 + variation, 15, 95)
-		data.moisture[i] = clampi(75 - wet_distance[i] * 2 + variation, 10, 95)
-		data.drainage[i] = clampi(68 + variation, 25, 90)
-		data.foundation[i] = clampi(75 + variation, 40, 95)
-		data.groundwater[i] = clampi(65 - int(data.height_levels[i]) * 7 + variation, 10, 90)
-		if surface == TerrainData.Surface.ROCK:
-			data.fertility[i] = 10
-			data.foundation[i] = 90
-		elif surface == TerrainData.Surface.SAND:
-			data.fertility[i] = 18
-			data.foundation[i] = 32
-			data.groundwater[i] = 15
-		elif surface == TerrainData.Surface.WETLAND:
-			data.moisture[i] = 95
-			data.drainage[i] = 15
-			data.foundation[i] = 15
-		if surface == TerrainData.Surface.WATER:
-			data.fertility[i] = 0
-			data.foundation[i] = 0
-			data.groundwater[i] = 0
+	_populate_soil_conditions(data, true)
 
 static func _generate_resources(data: TerrainData) -> void:
 	for kind: int in range(NAMES.size()):
@@ -697,3 +660,55 @@ static func land_summary(data: TerrainData, area: Rect2i) -> Dictionary:
 			result.water_cells += int(int(condition.water) > 0)
 			result.build_cells += int(int(condition.build) >= 35)
 	return result
+
+
+
+static func _populate_soil_conditions(data: TerrainData, generated_variation: bool) -> void:
+	var noise := FastNoiseLite.new()
+	noise.seed = int((data.seed_value + 19391) & 0x7fffffff)
+	noise.frequency = 0.07
+	var wet_distance := PackedInt32Array()
+	wet_distance.resize(data.surface_types.size())
+	wet_distance.fill(20)
+	var pending: Array[int] = []
+	for i: int in range(wet_distance.size()):
+		if data.water_kind[i] != 0:
+			wet_distance[i] = 0
+			pending.append(i)
+	var head := 0
+	while head < pending.size():
+		var current := pending[head]
+		head += 1
+		for direction: Vector2i in TerrainData.DIRECTIONS:
+			var next := data.cell_from_index(current) + direction
+			if not data.contains(next):
+				continue
+			var j := data.index(next)
+			if wet_distance[j] > wet_distance[current] + 1:
+				wet_distance[j] = wet_distance[current] + 1
+				pending.append(j)
+	for i: int in range(data.surface_types.size()):
+		var cell := data.cell_from_index(i)
+		var variation := int(noise.get_noise_2d(cell.x, cell.y) * 35.0) if generated_variation else 0
+		var surface := int(data.surface_types[i])
+		data.fertility[i] = clampi(62 + variation, 15, 95)
+		data.moisture[i] = clampi(75 - wet_distance[i] * 2 + variation, 10, 95)
+		data.drainage[i] = clampi(68 + variation, 25, 90)
+		data.foundation[i] = clampi(75 + variation, 40, 95)
+		data.groundwater[i] = clampi(65 - int(data.height_levels[i]) * 7 + variation, 10, 90)
+		if surface == TerrainData.Surface.ROCK:
+			data.fertility[i] = 10
+			data.foundation[i] = 90
+		elif surface == TerrainData.Surface.SAND:
+			data.fertility[i] = 18
+			data.foundation[i] = 32
+			data.groundwater[i] = 15
+		elif surface == TerrainData.Surface.WETLAND:
+			data.moisture[i] = 95
+			data.drainage[i] = 15
+			data.foundation[i] = 15
+		if surface == TerrainData.Surface.WATER:
+			data.fertility[i] = 0
+			data.foundation[i] = 0
+			data.groundwater[i] = 0
+

@@ -14,15 +14,18 @@ const EQUIPMENT_SLOTS := ["helmet", "outfit", "armor", "cape", "weapon", "shield
 const ITEM_FIELDS := ["item_storage_version", "item_definitions", "item_records", "ground_loot", "next_loot", "next_item", "depot_items"]
 const EXCHANGE_FIGHTING_POSITION_BONUS := 10.0
 const RANGED_RECIPES := {
+	"ballista_spares": {"name": "重弩備件包", "cost": {"wood": 3, "iron": 1, "fiber": 1}, "duration": 120.0, "output": {"ballista_spares": 1}},
 	"siege_bolt": {"name": "重弩矢", "cost": {"wood": 2, "iron": 1}, "duration": 60.0, "output": {"siege_bolt": 1}},
 	"siege_stone": {"name": "石彈", "cost": {"stone": 2}, "duration": 30.0, "output": {"siege_stone": 1}},
 	"bow": {"name": "弓", "cost": {"wood": 4, "fiber": 2}, "duration": 120.0, "asset": "bow_01"},
 	"crossbow": {"name": "弩", "cost": {"wood": 4, "iron": 2, "fiber": 1}, "duration": 180.0, "asset": "crossbow_01"},
 	"arrow": {"name": "箭 ×10", "cost": {"wood": 1, "iron": 1}, "duration": 60.0, "output": {"arrow": 10}},
 	"fire_arrow": {"name": "火箭 ×5", "cost": {"arrow": 5, "cloth": 1, "charcoal": 1}, "duration": 60.0, "output": {"fire_arrow": 5}},
+	"fire_pot": {"name": "火罐", "cost": {"pottery": 1, "cloth": 1, "charcoal": 1}, "duration": 90.0, "output": {"fire_pot": 1}},
 	"bolt": {"name": "弩矢 ×10", "cost": {"wood": 1, "iron": 1}, "duration": 60.0, "output": {"bolt": 10}},
 	"camp_tent": {"name": "營帳包", "cost": {"cloth": 4, "wood": 2, "fiber": 2}, "duration": 120.0, "output": {"camp_tent": 1}},
 }
+
 const SIEGE_DEFINITIONS := {
 	"ballista": {"name": "固定重弩", "size": Vector2i(2, 3), "max_hp": 140.0, "capacity": 20,
 		"min_crew": 1, "standard_crew": 2, "ammo": "siege_bolt", "move_speed": 0.0, "turn_seconds": 3.0, "turn_radius": 3,
@@ -66,6 +69,7 @@ const FEATURES := {
 	"smithy": {"placement": "fixed", "size": Vector2i(3, 3), "name": "鐵匠鋪", "cost": {"wood": 8, "stone": 6}, "work": 18.0, "solid": true, "water": 0.0, "input": {"iron": 2, "charcoal": 1, "wood": 1}, "output": {"tools": 1}, "cycle": 12.0},
 	"tannery": {"placement": "fixed", "size": Vector2i(4, 3), "name": "製革作坊", "cost": {"wood": 6, "stone": 2}, "work": 10.0, "solid": true, "water": 0.02, "input": {"hide": 2}, "output": {"leather": 2}, "cycle": 15.0},
 	"weaver": {"placement": "fixed", "size": Vector2i(3, 3), "name": "織布作坊", "cost": {"wood": 6, "stone": 2}, "work": 10.0, "solid": true, "water": 0.0, "input": {"fiber": 3}, "output": {"cloth": 2}, "cycle": 12.0},
+	"irrigation_channel": {"name": "灌排渠道", "placement": "cells", "cost": {"wood": 1, "stone": 2}, "work": 5.0, "solid": false, "water": 0.0},
 	"road": {"placement": "cells", "name": "土路", "cost": {"stone": 1}, "work": 3.0, "solid": false, "water": 0.0},
 	"level": {"placement": "cells", "name": "整平一級地面", "cost": {}, "work": 10.0, "solid": false, "water": 0.0},
 	"palisade": {"placement": "cells", "name": "木柵障礙", "cost": {"wood": 4}, "work": 6.0, "solid": true, "water": 0.0},
@@ -85,21 +89,35 @@ const FEATURES := {
 	"settlement_center": {"placement": "fixed", "size": Vector2i(5, 5), "name": "聚落中心", "cost": {"wood": 30, "stone": 20}, "work": 60.0, "solid": true, "water": 0.0},
 }
 # Alternate recipes share the original feature, paid batch and worker pipeline.
+
 const FEATURE_RECIPES := {
+	"farm": {"retain_seed": {"name": "適地留種", "input": {"seeds": 1}, "output": {"grain": 6, "seeds": 2}, "cycle": 480.0, "technology": "F02"}},
+	"charcoal": {"controlled_fire": {"name": "控火炭化", "input": {"wood": 4}, "output": {"charcoal": 2}, "cycle": 9.0, "technology": "F03"}},
 	"kiln": {"pottery": {"name": "陶器", "input": {"clay": 2, "wood": 1}, "output": {"pottery": 2}, "cycle": 10.0, "water": 0.02}},
 	"smelter": {"steel": {"name": "煉鋼", "input": {"iron": 2, "charcoal": 2}, "output": {"steel": 1}, "cycle": 20.0, "water": 0.02}},
 	"weaver": {
 		"rope": {"name": "繩索", "input": {"fiber": 2}, "output": {"rope": 2}, "cycle": 8.0, "water": 0.0},
 		"wool_cloth": {"name": "羊毛織布", "input": {"wool": 3}, "output": {"cloth": 2}, "cycle": 15.0, "water": 0.01},
+		"prepared_rope": {"name": "預處理纖維繩", "input": {"fiber": 2}, "output": {"rope": 2}, "cycle": 6.4, "water": 0.0, "technology": "F05"},
 	},
-	"smithy": {"steel_tools": {"name": "鋼製工具", "input": {"steel": 1, "charcoal": 1, "wood": 1}, "output": {"tools": 2}, "cycle": 12.0, "water": 0.0}},
+	"smithy": {
+		"steel_tools": {"name": "鋼製工具", "input": {"steel": 1, "charcoal": 1, "wood": 1}, "output": {"tools": 2}, "cycle": 12.0, "water": 0.0},
+		"bow": {"name": "具名作坊製弓", "input": {"wood": 4, "fiber": 2}, "output": {}, "output_items": ["weapon:bow_01"], "cycle": 1.8, "water": 0.0, "technology": "S07", "operator_skill": "F07"},
+		"iron_armor": {"name": "原作坊鐵甲", "input": {"iron": 4, "leather": 2, "charcoal": 2}, "output": {}, "output_items": ["armor:armor_iron_01"], "cycle": 15.0, "water": 0.0, "technology": "S13", "operator_skill": "F04"},
+	},
+	"tannery": {
+		"careful_tan": {"name": "改良鞣革", "input": {"hide": 2}, "output": {"leather": 2}, "cycle": 13.5, "water": 0.02, "technology": "F14"},
+		"leather_armor": {"name": "原作坊皮甲", "input": {"leather": 4, "fiber": 2}, "output": {}, "output_items": ["armor:armor_light_leather_01"], "cycle": 10.0, "water": 0.0, "technology": "S13", "operator_skill": "F14"},
+	},
 }
+
 const CIVIL_KINDS := ["house", "well", "intake", "saltworks", "kiln", "charcoal", "smelter", "smithy", "tannery", "weaver", "warehouse", "dock", "shipyard"]
 const CIVIL_VERSION := 1
 const CIVIL_MAX_GRADE := 3
 # The settlement center shares the civil body/repair contract but is never a
 # grade-upgradable civil building; its levels belong to site.settlement.
-const BODY_KINDS := CIVIL_KINDS + ["settlement_center"]
+const BODY_KINDS := CIVIL_KINDS + ["settlement_center", "irrigation_channel"]
+
 const SETTLEMENT_MAX_LEVEL := 3
 const SETTLEMENT_LEVEL_TERMS := {
 	2: {"cost": {"wood": 20, "stone": 12, "pottery": 4, "rope": 4}, "work": 40.0},
@@ -446,173 +464,25 @@ static func create_equipment(data: TerrainData, destination: Dictionary, definit
 	_publish_equipment_creation(data, prepared)
 	return ok("已建立實際物品", {"item_id": str(prepared.item_ids[0])})
 
-static func ranged_craft(data: TerrainData, recipe_id: String, original_owner: int, preview: bool = false) -> Dictionary:
-	if data == null or not RANGED_RECIPES.has(recipe_id) or original_owner <= 0 or original_owner > 2147483647:
-		return fail("INVALID", "遠程手作配方／原人物")
-	var state: Dictionary = data.site
-	if int(state.get("item_storage_version", -1)) != ITEM_STORAGE_VERSION or not state.get("inventory") is Dictionary \
-		or not state.get("depot_items") is Dictionary or not _item_holder_shape(state.depot_items) \
-		or str(state.depot_items.holder) != "depot" or not _resource_stack(state.inventory):
-		return fail("INVALID", "原營地實物資料未就緒")
-	var stock: Dictionary = state.inventory
-	var depot: Dictionary = state.depot_items
-	var recipe: Dictionary = RANGED_RECIPES[recipe_id]
-	if int(stock.get("tools", 0)) < 1 or not can_pay(stock, recipe.cost):
-		return fail("MATERIALS", "營地須保有工具 1（不消耗）及 " + items_text(recipe.cost))
-	var output: Dictionary = recipe.get("output", {})
-	var equipment := recipe.has("asset")
-	var final_load := carried_load(state, stock, depot) - inventory_size(recipe.cost) + (1 if equipment else inventory_size(output))
-	if final_load > float(state.get("capacity", 0)):
-		return fail("STORAGE_FULL", "材料消耗後仍須容納完整製品")
-	if int(depot.version) >= 2147483646:
-		return fail("STALE_SOURCE", "營地提交版本已用盡")
-	var definition := {}
-	var definition_id := ""
-	if equipment:
-		definition_id = "weapon:" + str(recipe.asset)
-		definition = {"slot": "weapon", "asset": str(recipe.asset), "tint": [1.0, 1.0, 1.0, 1.0]}
-		if not state.get("item_definitions") is Dictionary or not state.get("item_records") is Dictionary:
-			return fail("INVALID", "原裝備登記未就緒")
-		if state.item_definitions.has(definition_id) and state.item_definitions[definition_id] != definition:
-			return fail("INVALID", "不能覆寫既有共用物品定義")
-		if int(state.get("next_item", 0)) <= 0 or int(state.next_item) >= 2147483647 or state.item_records.has(str(int(state.next_item))):
-			return fail("INVALID", "物品序號無效或重複")
-	else:
-		for resource: String in output:
-			if int(stock.get(resource, 0)) + int(output[resource]) > 1000000:
-				return fail("STORAGE_FULL", "原資源堆疊已達上限")
-	if preview:
-		return ok("可開始營地手作", {"seconds": float(recipe.duration)})
-	# No callback/yield in this commit. Original creation can reject before any
-	# mutation; after successful allocation all remaining dictionary updates are infallible.
-	var result := create_equipment(data, depot, definition_id, definition, original_owner) if equipment else ok()
-	if not result.ok:
-		return result
-	add_items(stock, recipe.cost, -1)
-	for resource: String in recipe.cost:
-		if int(stock[resource]) == 0:
-			stock.erase(resource)
-	if not equipment:
-		add_items(stock, output)
-		depot.version = int(depot.version) + 1
-	data.environment_revision += 1
-	result.message = "已手作並存入原營地：" + str(recipe.name)
-	return result
+static func ranged_craft(data: TerrainData, recipe_id: String, original_owner: int, preview: bool = false, technology_token: Dictionary = {}) -> Dictionary:
+	var prepared := prepare_ranged_craft(data, recipe_id, original_owner, technology_token, preview)
+	if not prepared.ok or preview: return prepared
+	return publish_prepared_ranged_craft(prepared)
 
 # The caller owns action/KO/distance/authority checks and supplies the ORIGINAL
 # holder and cargo dictionaries. Preserve their identity: ammo uses the same cargo.
 static func transfer_items(data: TerrainData, source: Dictionary, source_cargo: Dictionary, destination: Dictionary, destination_cargo: Dictionary, resources: Dictionary, item_ids: Array, expected_source_version: int, expected_destination_version: int, capacity: int = CARRY_CAPACITY, preserve_slots: bool = false, preview: bool = false) -> Dictionary:
-	resources = resources.duplicate() # "Take all" may pass the source cargo itself.
-	if not _item_holder_shape(source) or not _item_holder_shape(destination) or str(source.holder) == str(destination.holder) or is_same(source_cargo, destination_cargo):
-		return fail("INVALID", "物品持有人")
-	if int(source.version) != expected_source_version or int(destination.version) != expected_destination_version:
-		return fail("STALE_SOURCE", "物品來源或接收方已改變，請重新選擇")
-	if int(source.version) >= 2147483646 or int(destination.version) >= 2147483646:
-		return fail("STALE_SOURCE", "物品提交版本已用盡，未轉移")
-	if not _resource_stack(resources, false) or not _resource_stack(source_cargo) or not _resource_stack(destination_cargo):
-		return fail("INVALID", "資源數量")
-	if resources.is_empty() and item_ids.is_empty():
-		return fail("EMPTY")
-	if not can_pay(source_cargo, resources):
-		return fail("EMPTY", "來源數量已不足")
-	var selected := {}
-	var retained_slots := {}
-	for identity: Variant in item_ids:
-		if not identity is String or selected.has(identity) or not source.item_ids.has(identity) or destination.item_ids.has(identity):
-			return fail("INVALID", "物品不存在或重複")
-		var record: Dictionary = data.site.get("item_records", {}).get(identity, {})
-		if str(record.get("holder", "")) != str(source.holder) or not data.site.item_definitions.has(str(record.get("definition", ""))):
-			return fail("STALE_SOURCE", "物品已不在原持有人處")
-		selected[identity] = true
-	for slot: String in source.equipped:
-		if selected.has(source.equipped[slot]):
-			retained_slots[slot] = source.equipped[slot]
-	if preserve_slots:
-		for slot: String in retained_slots:
-			if destination.equipped.has(slot):
-				return fail("OCCUPIED", "接收裝備槽")
-	var added_size := inventory_size(resources) + item_ids.size() - (retained_slots.size() if preserve_slots else 0)
-	if capacity < 0 or carried_load(data.site, destination_cargo, destination) + added_size > capacity:
-		return fail("STORAGE_FULL")
-	if data.item_transfer_guard.is_valid():
-		var guard: Dictionary = data.item_transfer_guard.call(source, destination, resources, item_ids)
-		if not guard.ok: return guard
-	if preview:
-		return ok()
-	# No callbacks/yields after this point: both resource and equipment ownership commit once.
-	add_items(source_cargo, resources, -1)
-	for resource: String in source_cargo.keys():
-		if int(source_cargo[resource]) == 0:
-			source_cargo.erase(resource)
-	add_items(destination_cargo, resources)
-	for identity: String in selected:
-		source.item_ids.erase(identity)
-		destination.item_ids.append(identity)
-		data.site.item_records[identity].holder = str(destination.holder)
-	for slot: String in retained_slots:
-		source.equipped.erase(slot)
-		if preserve_slots:
-			destination.equipped[slot] = retained_slots[slot]
-	source.version = int(source.version) + 1
-	destination.version = int(destination.version) + 1
-	# Item ownership does not rebuild terrain/resource heatmaps on every loot step.
-	return ok("物品已轉移", {"source_version": source.version, "destination_version": destination.version})
+	var prepared := prepare_item_transfer(data, source, source_cargo, destination, destination_cargo, resources, item_ids, expected_source_version, expected_destination_version, capacity, preserve_slots)
+	if not prepared.ok: return prepared
+	if preview: return ok()
+	return publish_item_transfer(prepared)
 
 # One corpse/bag is one sparse container. Empty sources never create another drop.
 static func leave_ground_loot(data: TerrainData, source: Dictionary, source_cargo: Dictionary, original_owner: int, cell: Vector2i, kind: String, resources: Dictionary, item_ids: Array, expected_version: int, source_open: Dictionary = {}, open_amount: float = 0.0, preview: bool = false, ship_location: Dictionary = {}) -> Dictionary:
-	resources = resources.duplicate()
-	for resource: Variant in resources.keys():
-		if resources[resource] is int and int(resources[resource]) == 0:
-			resources.erase(resource) # Spent ammo may leave a zero stack on the original person.
-	if (not data.is_walkable(cell) if ship_location.is_empty() else not valid_ship_loot_location(data, ship_location)) or original_owner <= 0 or original_owner > 2147483647 or kind not in ["remains", "sealed", "cargo"]:
-		return fail("INVALID", "遺留物位置／物主")
-	if not data.site.has("ground_loot"):
-		return fail("INVALID", "請先初始化物品資料")
-	if not is_finite(open_amount) or open_amount < 0.0 or open_amount > 1000000.0:
-		return fail("INVALID", "開封口糧數量")
-	if open_amount > 0.0:
-		var available: Variant = source_open.get("open_rations")
-		if not (available is int or available is float) or not is_finite(float(available)) or float(available) < open_amount or float(available) > 1000000.0:
-			return fail("EMPTY", "原開封口糧不足或無效")
-		if not _item_holder_shape(source) or not _resource_stack(source_cargo) or int(source.version) != expected_version:
-			return fail("STALE_SOURCE", "原搬運者或共有口糧已變更")
-		if int(source.version) >= 2147483646:
-			return fail("STALE_SOURCE", "物品提交版本已用盡，未轉移")
-		if not _resource_stack(resources, false) or float(inventory_size(resources) + item_ids.size()) + open_amount > 1000000.0:
-			return fail("STORAGE_FULL", "現場口糧容器超量")
-	var identity := str(int(data.site.next_loot))
-	if int(data.site.next_loot) >= 2147483647 or data.site.ground_loot.has(identity):
-		return fail("INVALID", "遺留物序號重複")
-	var container := new_item_state("ground:" + identity)
-	container.merge({"kind": kind, "original_owner": original_owner, "cargo": {}})
-	if ship_location.is_empty(): container.cell = data.index(cell)
-	else: container.merge(ship_location.duplicate(true))
-	if open_amount > 0.0 and data.item_transfer_guard.is_valid():
-		var guard: Dictionary = data.item_transfer_guard.call(source, container, resources, item_ids, open_amount)
-		if not guard.ok: return guard
-	if resources.is_empty() and item_ids.is_empty() and open_amount > 0.0:
-		# Pure opened food still has the original supply pool; do not manufacture
-		# an integer grain item or silently round a fraction out of existence.
-		if not preview:
-			source.version = int(source.version) + 1
-			container.version = 1
-	else:
-		var result := transfer_items(data, source, source_cargo, container, container.cargo, resources, item_ids, expected_version, 0, 1000000, kind == "remains", preview)
-		if not result.ok:
-			return result
-	if preview:
-		return ok()
-	if open_amount > 0.0:
-		source_open.open_rations = float(source_open.open_rations) - open_amount
-		container["open_rations"] = open_amount
-	data.site.next_loot = int(data.site.next_loot) + 1
-	data.site.ground_loot[identity] = container
-	if ship_location.is_empty():
-		if not data.ground_loot_at.has(int(container.cell)):
-			data.ground_loot_at[int(container.cell)] = []
-		data.ground_loot_at[int(container.cell)].append(identity)
-		data.ground_loot_dirty_rows[cell.y] = true
-	return ok("物品留在現場", {"container_id": identity})
+	var prepared := prepare_leave_ground_loot(data, source, source_cargo, original_owner, cell, kind, resources, item_ids, expected_version, source_open, open_amount, ship_location)
+	if not prepared.ok: return prepared
+	if preview: return ok()
+	return publish_prepared_leave_ground_loot(prepared)
 
 # Format-3 compatibility after Store has validated and normalized the original
 # snapshots. Earlier settled deaths could leave opened food in their private
@@ -668,25 +538,11 @@ static func migrate_settled_opened_food(data: TerrainData) -> Dictionary:
 	return ok("原死者餘糧已併回實際遺物", {"migrated": plans.size()})
 
 static func clear_empty_ground_loot(data: TerrainData, identity: String) -> Dictionary:
-	var container: Dictionary = data.site.get("ground_loot", {}).get(identity, {})
-	if container.is_empty():
-		return fail("NO_TARGET")
-	if inventory_size(container.cargo) > 0 or not container.item_ids.is_empty() or float(container.get("open_rations", 0.0)) > 0.0:
-		return fail("BUSY", "不能刪除尚有物品的遺留物")
-	data.site.ground_loot.erase(identity)
-	if container.has("cell"):
-		var cell := int(container.cell)
-		if data.ground_loot_at.has(cell):
-			data.ground_loot_at[cell].erase(identity)
-			if data.ground_loot_at[cell].is_empty(): data.ground_loot_at.erase(cell)
-		data.ground_loot_dirty_rows[data.cell_from_index(cell).y] = true
-	for team: Dictionary in data.site.get("armies", []):
-		for person: Dictionary in team.get("units", []):
-			if str(person.get("remains_id", "")) == identity: person.remains_id = ""
-	for person: Dictionary in data.site.get("actors", {}).values():
-		if str(person.get("remains_id", "")) == identity: person.remains_id = ""
-	if data.ground_loot_removed.is_valid(): data.ground_loot_removed.call(identity)
-	return ok()
+	var prepared := prepare_clear_empty_ground_loot(data, identity)
+	if not prepared.ok: return prepared
+	var result := publish_prepared_clear_empty_ground_loot(prepared)
+	notify_cleared_ground_loot(prepared)
+	return result
 
 static func rebuild_loot_index(data: TerrainData) -> void:
 	data.ground_loot_at.clear()
@@ -927,18 +783,11 @@ static func siege_turn_contacts(data: TerrainData, vehicle: Dictionary) -> Array
 	return result
 
 static func siege_work_slots(data: TerrainData, vehicle: Dictionary) -> Array[Dictionary]:
-	var result: Array[Dictionary] = []
-	if siege_cells(data, vehicle).is_empty(): return result
-	var anchor := data.cell_from_index(int(vehicle.cell))
-	var facing := Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1]))
-	var side := Vector2i(-facing.y, facing.x)
-	var definition: Dictionary = SIEGE_DEFINITIONS[str(vehicle.kind)]
-	var size: Vector2i = definition.size
-	# Four original construction stations; operators cannot work concurrently.
-	for offset: Vector2i in [Vector2i(-1, 0), Vector2i(size.x, 0), Vector2i(-1, size.y - 1), Vector2i(size.x, size.y - 1)]:
-		var cell := anchor + side * offset.x + facing * offset.y
-		if data.contains(cell): result.append({"slot": result.size(), "cell": data.index(cell)})
-	return result
+	# S11 expands construction only. Existing/obtained equipment, crew and
+	# basic repair retain their original four construction/repair contacts.
+	if vehicle.has("id") and (vehicle.get("phase") != "building" or not vehicle.get("repair", {}).is_empty()): return _technology_original_siege_stations(data, vehicle, false)
+	var yard := technology_siege_ground_geometry(data, vehicle)
+	return yard.slots if yard.ok else _technology_original_siege_stations(data, vehicle, false)
 
 static func _siege_vehicle_claims(data: TerrainData, cell: Vector2i, excluded: String = "") -> bool:
 	for key: String in data.site.get("vehicles", {}):
@@ -974,17 +823,23 @@ static func _refresh_siege_work_refs(data: TerrainData) -> void:
 		if workers != null: workers.refresh_vehicle_tasks()
 
 static func begin_siege_build(data: TerrainData, kind: String, anchor: Vector2i, facing: Vector2i,
-		team_id: int, requester_id: int, occupied: Callable = Callable(), preview: bool = false) -> Dictionary:
+		team_id: int, requester_id: int, occupied: Callable = Callable(), preview: bool = false, original_source: Dictionary = {}, operation_selector: Dictionary = {}, actual_operator_id: int = 0, work_method: String = "basic") -> Dictionary:
 	if not _siege_depot_ready(data) or not SIEGE_DEFINITIONS.has(kind) or team_id <= 0 or requester_id <= 0 \
 		or not data.contains(anchor) or not TerrainData.DIRECTIONS.has(facing): return fail("INVALID")
 	if bool(data.site.get("paused", false)): return fail("BUSY")
 	var next := int(data.site.get("next_vehicle", 1))
 	if next <= 0 or next >= 2147483647 or data.site.get("vehicles", {}).has(str(next)): return fail("STALE_SOURCE")
 	var definition: Dictionary = SIEGE_DEFINITIONS[kind]
-	var candidate := {"kind": kind, "cell": data.index(anchor), "facing": [facing.x, facing.y]}
+	var method_guard := technology_siege_method_begin_guard(data, kind, team_id, actual_operator_id, work_method)
+	if not method_guard.ok: return method_guard
+	var candidate := {"kind": kind, "cell": data.index(anchor), "facing": [facing.x, facing.y], "team_id": team_id}
+	if operation_selector.has("token"): candidate.tech_trial = operation_selector.token
+	if work_method == "joinery": candidate.technology_siege_method = {"version": 1}
+	var selected_ground := technology_siege_ground_geometry(data, candidate)
+	if selected_ground.ok: candidate.technology_yard_id = str(selected_ground.key)
 	var cells := siege_cells(data, candidate)
 	var stations := siege_work_slots(data, candidate)
-	if stations.size() != 4: return fail("TERRAIN", "施工四個工位必須留在本 Site")
+	if stations.size() not in [4, 6]: return fail("TERRAIN", "施工所有原工位必須留在本 Site")
 	var checked := cells.duplicate()
 	for station: Dictionary in stations: checked.append(data.cell_from_index(int(station.cell)))
 	for slot in range(int(definition.standard_crew)): checked.append(siege_crew_cell(data, candidate, slot))
@@ -993,10 +848,34 @@ static func begin_siege_build(data: TerrainData, kind: String, anchor: Vector2i,
 		if not data.contains(cell) or not data.is_walkable(cell) or data.effective_height(cell) != base \
 			or data.effective_height(cell) != int(data.height_levels[data.index(cell)]) \
 			or int(data.surface_types[data.index(cell)]) in [TerrainData.Surface.WATER, TerrainData.Surface.WETLAND] \
-			or int(data.feature_at[data.index(cell)]) != 0: return fail("TERRAIN", "器具及工位需要平整乾燥且無建築的原地面")
-		if _siege_vehicle_claims(data, cell) or occupied.is_valid() and bool(occupied.call(cell)): return fail("OCCUPIED")
-	if not can_pay(data.site.inventory, definition.cost) or not can_pay(data.site.inventory, {"tools": 1}): return fail("MATERIALS")
-	if preview: return ok("可建造" + str(definition.name), {"cells": cells, "work_slots": stations, "cost": definition.cost.duplicate(), "work_seconds": definition.work_seconds})
+			or not technology_siege_ground_cell_allowed(data, candidate, cell): return fail("TERRAIN", "器具及工位需要原平整乾燥地面或具名原校場")
+		if _siege_vehicle_claims(data, cell): return fail("OCCUPIED")
+		if occupied.is_valid() and bool(occupied.call(cell)) and not _technology_siege_station_self(data, candidate, cell, cells, operation_selector, actual_operator_id, occupied): return fail("OCCUPIED")
+	var yard_guard := _technology_siege_new_ground_guard(data, candidate, team_id, actual_operator_id)
+	if not yard_guard.ok: return yard_guard
+	if not can_pay(data.site.inventory, {"tools": 1}): return fail("MATERIALS")
+	var selector := operation_selector.duplicate(true)
+	var binding := ""
+	for value: String in TECHNOLOGY_SIEGE_BINDINGS:
+		if TECHNOLOGY_SIEGE_BINDINGS[value] == kind: binding = value; break
+	if selector.has("token"):
+		if selector.token.target_id != "vehicle:" + str(next) or selector.token.binding != binding: return fail("STALE_SOURCE")
+		selector.token.materials = definition.cost.duplicate(true)
+	var source := _technology_material_source(data, selector, binding, definition.cost, original_source)
+	if not source.ok: return source
+	var admission := _technology_named_admission(data, selector)
+	if not admission.ok: return admission
+	var operation_ref: Dictionary = admission.admission.get("operation_ref", source.operation_ref)
+	if not source.operation_ref.is_empty() and operation_ref != source.operation_ref: return fail("STALE_SOURCE")
+	var nation := _technology_prepare_public_begin(data, operation_ref, binding, "vehicle:" + str(next))
+	if not nation.ok: return nation
+	var scope := {}
+	var credit := {}
+	if selector.has("token"):
+		scope = _technology_geometry_payment(data, selector.token, definition.cost, true, source.source)
+		if not scope.ok: return scope
+		credit = prepare_technology_work_credit(data, scope.token)
+		if not credit.ok: return credit
 	var identity := str(next)
 	candidate.merge({"id": identity, "vehicle_version": 3, "technology_capture": {}, "definition_version": 1, "team_id": team_id,
 		"operator_id": 0, "holder": new_item_state("vehicle:" + identity), "cargo": {}, "move": {}, "stop_pending": false,
@@ -1004,11 +883,42 @@ static func begin_siege_build(data: TerrainData, kind: String, anchor: Vector2i,
 		"build": {"paid_cost": definition.cost.duplicate(), "total_work": float(definition.work_seconds), "progress": 0.0},
 		"repair": {}, "command": {}, "action": {}, "next_attack_seq": 1, "rng_state": maxi(1, (int(data.seed_value) + next * 104729) & 0x7fffffff)})
 	if kind == "siege_tower": candidate.deployed_pose = {}
-	add_items(data.site.inventory, definition.cost, -1)
-	data.site.depot_items.version = int(data.site.depot_items.version) + 1
-	if not data.site.has("vehicles"): data.site.vehicles = {}
+	if not scope.is_empty():
+		candidate.tech_trial = scope.token
+		candidate.tech_batch = _technology_geometry_ledger(data, scope.token, scope.payment, "construct:" + kind, source.source)
+	if not operation_ref.is_empty():
+		candidate.technology_order = operation_ref.duplicate()
+		if scope.is_empty():
+			var ledger := _technology_public_ledger(data, identity, "construct:" + kind, source, admission.admission)
+			if ledger.is_empty(): return fail("NO_WORK_SLOTS")
+			ledger.payment_id = str(data.site.id) + "|vehicle:" + identity + "|1"
+			candidate.tech_batch = ledger
+	if candidate.has("technology_yard_id") and scope.is_empty() and operation_ref.is_empty():
+		# One original finite ordinary paid batch, with shared effort rather than
+		# an invented named research executor. No Scope/Nation credit is admitted.
+		candidate.tech_batch = {"version": 1, "id": 1, "site_id": str(data.site.id), "feature_id": identity,
+			"operator_id": 0, "recipe_id": "construct:" + kind, "materials": definition.cost.duplicate(true),
+			"source_holder": str(source.holder.holder), "source_version": int(source.version), "work_seconds": 0.0,
+			"token": {}, "payment_id": str(data.site.id) + "|vehicle:" + identity + "|1"}
+	if not scope.is_empty(): selector.token = candidate.tech_trial
+	var had_vehicles := data.site.has("vehicles")
+	var original_vehicles: Dictionary = data.site.get("vehicles", {})
+	var named := _technology_prepare_named_vehicle(data, identity, candidate, selector, original_vehicles, actual_operator_id)
+	if not named.ok: return named
+	var policy_guard := _technology_siege_begin_policy(data, kind, selector, named)
+	if not policy_guard.ok: return policy_guard
+	var current := _technology_material_source(data, selector, binding, definition.cost, source.source)
+	if not current.ok or not is_same(current.get("holder"), source.holder) or not is_same(current.get("cargo"), source.cargo) or current.get("version") != source.version: return fail("STALE_SOURCE")
+	if int(data.site.get("next_vehicle", 1)) != next or had_vehicles != data.site.has("vehicles") or had_vehicles and not is_same(data.site.vehicles, original_vehicles): return fail("STALE_SOURCE")
+	if preview: return ok("可建造" + str(definition.name), {"cells": cells, "work_slots": stations, "cost": definition.cost.duplicate(), "work_seconds": definition.work_seconds, "work_method": work_method})
+	_technology_publish_material_payment(source)
+	if not had_vehicles: data.site.vehicles = original_vehicles
 	data.site.vehicles[identity] = candidate
 	data.site.next_vehicle = next + 1
+	if not scope.is_empty(): _technology_actions(data).publish_phase_payment(scope.payment)
+	if not credit.is_empty(): publish_technology_work_credit(candidate, credit)
+	_technology_publish_public_begin(nation)
+	_technology_publish_named_vehicle(named)
 	data.environment_revision += 1
 	return ok("已備料，原工作者可到工位施工", {"vehicle": identity})
 
@@ -1081,7 +991,7 @@ static func ship_repair_work_slots(data: TerrainData, vehicle: Dictionary, state
 		result.append({"slot": station, "cell": index})
 	return result
 
-static func validate_ship_repair(data: TerrainData, vehicle: Dictionary, state: Dictionary = {}, allow_nonafloat: bool = false) -> Dictionary:
+static func validate_ship_repair(data: TerrainData, vehicle: Dictionary, state: Dictionary = {}, allow_nonafloat: bool = false, allow_completed: bool = false) -> Dictionary:
 	var naval: Variant = vehicle.get("naval", {})
 	if not naval is Dictionary: return fail("CORRUPT_SAVE", "船體修理耐久 owner 格式非法")
 	var job: Variant = naval.get("repair", {})
@@ -1107,7 +1017,7 @@ static func validate_ship_repair(data: TerrainData, vehicle: Dictionary, state: 
 	for resource: String in terms.paid_cost:
 		if not _building_integer(job.paid_cost.get(resource), int(terms.paid_cost[resource]), int(terms.paid_cost[resource])): return fail("CORRUPT_SAVE", "船體修理成本與原配方不符")
 	if absf(float(job.applied) - float(job.amount) * float(job.progress) / float(job.total_work)) > 0.000001: return fail("CORRUPT_SAVE", "船體修理已施作額度不符")
-	if float(job.progress) >= float(job.total_work): return fail("CORRUPT_SAVE", "完成的船體修理必须清除原收據")
+	if not allow_completed and float(job.progress) >= float(job.total_work): return fail("CORRUPT_SAVE", "完成的船體修理必须清除原收據")
 	if float(naval.hp) > full_hp - float(job.amount) + float(job.applied) + 0.000001: return fail("CORRUPT_SAVE", "船體耐久超過原已付修理額度")
 	if not vehicle.get("cargo") is Dictionary: return fail("CORRUPT_SAVE", "本船艙缺少原修理預留材料")
 	var checked_cargo: Dictionary = {}
@@ -1171,8 +1081,8 @@ static func advance_ship_repair_work(data: TerrainData, identity: String, second
 	if str(vehicle.get("kind", "")) != "ship" or int(vehicle.get("team_id", 0)) != team_id or team_id <= 0: return fail("NO_AUTHORITY")
 	var naval: Dictionary = vehicle.get("naval", {})
 	if str(naval.get("state", "")) != "afloat" or float(naval.get("hp", 0.0)) <= 0.0 or naval.get("repair", {}).is_empty(): return fail("NO_TARGET")
-	if bool(data.site.get("paused", false)) or not is_finite(seconds) or seconds <= 0.0 or not vehicle.move.is_empty() or not vehicle.command.is_empty() or int(vehicle.holder.version) >= 2147483646: return fail("BUSY")
-	var checked: Dictionary = validate_ship_repair(data, vehicle)
+	if bool(data.site.get("paused", false)) or not is_finite(seconds) or seconds < 0.0 or not vehicle.move.is_empty() or not vehicle.command.is_empty(): return fail("BUSY")
+	var checked: Dictionary = validate_ship_repair(data, vehicle, {}, false, true)
 	if not checked.ok: return checked
 	var stations: Array[Dictionary] = ship_repair_work_slots(data, vehicle)
 	var actual_station: bool = false
@@ -1180,7 +1090,20 @@ static func advance_ship_repair_work(data: TerrainData, identity: String, second
 		if int(station.slot) == slot and data.cell_from_index(int(station.cell)) == worker_cell: actual_station = true; break
 	if not actual_station: return fail("UNREACHABLE")
 	if not can_pay(data.site.inventory, {"tools": 1}): return fail("MATERIALS")
+	if not _building_integer(vehicle.get("revision"), 1, 2147483646): return fail("STALE_SOURCE", "原船提交版本已用盡；尚未扣料／清端點")
 	var job: Dictionary = naval.repair
+	# The original prefix publisher may leave a genuinely completed paid
+	# receipt until current life/station/tool authority accepts this endpoint.
+	# Preview remains pure; zero settlement never debits cargo/holder again.
+	if float(job.progress) >= float(job.total_work):
+		if preview: return ok("原已付修理零端點可驗收", {"consumed": {}, "progress": float(job.progress), "applied": float(job.applied)})
+		naval.repair = {}
+		vehicle.revision = int(vehicle.revision) + 1
+		data.environment_revision += 1
+		_refresh_siege_work_refs(data)
+		return ok("船體修理完成", {"vehicle": identity, "complete": true, "consumed": {}})
+	if int(vehicle.holder.version) >= 2147483646: return fail("BUSY")
+	if seconds <= 0.0 and float(job.progress) + 0.000000001 < float(job.total_work): return fail("BUSY")
 	var progress: float = minf(float(job.total_work), float(job.progress) + seconds)
 	var ratio: float = progress / float(job.total_work)
 	var prior_ratio: float = float(job.progress) / float(job.total_work)
@@ -1295,22 +1218,49 @@ static func advance_siege_work(data: TerrainData, identity: String, action: Stri
 	if slot < 0 or slot >= slots.size() or worker_cell != data.cell_from_index(int(slots[slot].cell)) or not data.is_walkable(worker_cell): return fail("UNREACHABLE")
 	if not can_pay(data.site.inventory, {"tools": 1}): return fail("MATERIALS")
 	var job: Dictionary = vehicle[field]
+	var spare := field == "repair" and vehicle.has("technology_spare_repair")
+	if spare:
+		var spare_guard := settlement_spare_work_guard(data, vehicle, original_task, original_identity)
+		if not spare_guard.ok: return spare_guard
+	var spare_complete := spare and float(job.progress) + seconds + 0.000000001 >= float(job.total_work)
+	var spare_prepared := prepare_settlement_spare_completion(data, vehicle, original_task, original_identity, seconds) if spare_complete else ok("", {"phase": {}, "actions": null})
+	if not spare_prepared.ok: return spare_prepared
 	if seconds <= 0.0 and float(job.progress) + 0.000000001 < float(job.total_work): return fail("BUSY")
 	var technology_guard := technology_geometry_operator_guard(data, vehicle, original_task, original_identity) if field == "build" else ok()
 	if not technology_guard.ok: return technology_guard
-	if field == "build": technology_record_work(vehicle, seconds / 60.0, int(technology_guard.get("operator_id", 0)))
-	job.progress = minf(float(job.total_work), float(job.progress) + seconds)
+	var credit_facts := technology_work_credit_facts(data, vehicle) if field == "build" else ok("", {"factor": 1.0})
+	if not credit_facts.ok: return credit_facts
+	var method_facts := technology_siege_method_work_facts(data, vehicle, original_task, original_identity) if field == "build" else ok("原基本修理", {"factor": 1.0})
+	if not method_facts.ok: return method_facts
+	if field == "build" and vehicle.has("technology_yard_id"):
+		var current_actions: Variant = _technology_actions(data)
+		var original_person: Dictionary = current_actions._technology_operator_for_task(original_task, original_identity) if current_actions != null else {}
+		if original_person.is_empty() or original_person.cell != worker_cell: return fail("WAITING", "六工位原端點只能由此真人物的SAME原工單提出")
+		var yard_facts := _technology_siege_yard_work_facts(data, vehicle, original_identity, {}, original_task)
+		if not yard_facts.ok: return yard_facts
+		if not yard_facts.required_skills.is_empty() and not yard_facts.eligible_skills.has("F11"): return fail("WAITING", "原直接六工位端點須真F11師傅；助手進度只走原已核共同前綴")
+	if field == "build":
+		if vehicle.has("technology_yard_id") and vehicle.has("tech_batch") and int(vehicle.tech_batch.operator_id) == 0 and vehicle.tech_batch.token.is_empty():
+			vehicle.tech_batch.work_seconds = float(vehicle.tech_batch.work_seconds) + seconds
+		else: technology_record_work(vehicle, seconds / 60.0, int(technology_guard.get("operator_id", 0)))
+	job.progress = minf(float(job.total_work), float(job.progress) + seconds * float(credit_facts.factor) * float(method_facts.factor))
+	if spare and vehicle.has("tech_batch"): vehicle.tech_batch.work_seconds = minf(300.0, float(vehicle.tech_batch.work_seconds) + seconds)
 	if field == "repair":
 		var applied := float(job.amount) * float(job.progress) / float(job.total_work)
 		vehicle.hp = minf(float(SIEGE_DEFINITIONS[str(vehicle.kind)].max_hp), float(vehicle.hp) + maxf(0.0, applied - float(job.applied)))
 		job.applied = applied
 	var complete := float(job.progress) + 0.000000001 >= float(job.total_work)
 	if complete:
-		var technology_completed := prepare_technology_geometry_completion(data, vehicle, "vehicle:" + identity) if field == "build" else ok("", {"phase": {}, "event": {}})
+		var technology_completed := prepare_technology_geometry_completion(data, vehicle, "vehicle:" + identity, "", original_identity) if field == "build" else ok("", {"phase": {}, "event": {}})
 		if not technology_completed.ok: return technology_completed
+		var history := prepare_technology_siege_history(data, identity, vehicle, original_task, original_identity, technology_completed.phase) if field == "build" else ok("", {"history": {}})
+		if not history.ok: return history
+		if spare: publish_settlement_spare_completion(vehicle, spare_prepared)
 		vehicle[field] = {}
 		vehicle.phase = "idle"
 		publish_technology_geometry_completion(technology_completed)
+		publish_technology_siege_history(history)
+		_technology_finish_named_vehicle(data, identity)
 		_refresh_siege_work_refs(data)
 	data.environment_revision += 1
 	return ok("器具施工完成" if complete else "原工作者施工中", {"complete": complete, "vehicle": identity})
@@ -1326,6 +1276,10 @@ static func damage_siege_vehicle(data: TerrainData, identity: String, damage: fl
 		vehicle.command = {}
 		vehicle.build = {}
 		vehicle.repair = {}
+		vehicle.erase("technology_spare_repair")
+		if vehicle.get("tech_trial", {}).get("binding") == "spare_repair":
+			vehicle.erase("tech_trial")
+			vehicle.erase("tech_batch")
 		# Transport retains committed turn participants until their original step
 		# settles; cargo, holder and already released projectiles remain intact.
 		_refresh_siege_work_refs(data)
@@ -1357,11 +1311,18 @@ static func damage_ship_vehicle(data: TerrainData, identity: String, damage: flo
 	data.environment_revision += 1
 	return ok("船體正在沉沒，原船步完成後撤離" if float(naval.hp) <= 0.0 else "船體受損", {"vehicle": identity, "old_hp": old_hp, "new_hp": float(naval.hp)})
 
-static func release_siege_ammo(data: TerrainData, identity: String, expected_version: int, expected_rng: int = -1) -> Dictionary:
+static func release_siege_ammo(data: TerrainData, identity: String, expected_version: int, expected_rng: int = -1, selected_ammo: String = "") -> Dictionary:
 	if data == null: return fail("NO_TARGET")
 	var vehicle: Dictionary = data.site.get("vehicles", {}).get(identity, {})
 	var definition: Dictionary = SIEGE_DEFINITIONS.get(str(vehicle.get("kind", "")), {})
-	var ammo := str(definition.get("ammo", ""))
+	var ammo := str(definition.get("ammo", "")) if selected_ammo.is_empty() else selected_ammo
+	if not siege_ammo_valid(str(vehicle.get("kind", "")), ammo): return fail("INVALID", "原器具不接受此彈種")
+	if ammo == "fire_pot":
+		var actions: Variant = _technology_actions(data)
+		var command: Dictionary = vehicle.get("command", {})
+		if actions == null or not actions.has_method("fire_pot_ammo_guard") or command.get("ammo") != ammo: return fail("NO_AUTHORITY")
+		var admission: Dictionary = actions.fire_pot_ammo_guard(vehicle, int(command.get("operator_id", 0)), command.get("tech_trial", {}))
+		if not admission.ok: return admission
 	if ammo.is_empty() or float(vehicle.get("hp", 0.0)) <= 0.0 \
 		or not vehicle.get("build", {}).is_empty() or not vehicle.get("repair", {}).is_empty(): return fail("NO_TARGET")
 	var holder: Dictionary = vehicle.get("holder", {})
@@ -1372,9 +1333,15 @@ static func release_siege_ammo(data: TerrainData, identity: String, expected_ver
 		or not _building_integer(sequence, 1, 2147483646) or not _building_integer(rng, 0, 2147483647) \
 		or expected_rng >= 0 and int(rng) != expected_rng: return fail("STALE_SOURCE")
 	if bool(data.site.get("paused", false)) or int(vehicle.cargo.get(ammo, 0)) < 1: return fail("MATERIALS", "原器具沒有可發射的實物彈藥")
+	var payment := {}
+	if ammo == "fire_pot":
+		var actions: Variant = _technology_actions(data)
+		var prepared: Dictionary = actions.prepare_fire_pot_release_payment(vehicle, vehicle.command.get("tech_trial", {}))
+		if not prepared.ok: return prepared
+		payment = prepared.payment
 	var scatter := Vector2.ZERO
 	var next_rng := int(rng)
-	if ammo == "siege_stone":
+	if ammo in ["siege_stone", "fire_pot"]:
 		next_rng = (next_rng * 1103515245 + 12345) & 0x7fffffff
 		var radius := sqrt(float(next_rng) / 2147483648.0)
 		next_rng = (next_rng * 1103515245 + 12345) & 0x7fffffff
@@ -1385,7 +1352,8 @@ static func release_siege_ammo(data: TerrainData, identity: String, expected_ver
 	holder.version = expected_version + 1
 	vehicle.next_attack_seq = int(sequence) + 1
 	vehicle.rng_state = next_rng
-	return ok("已發射原實物彈藥", {"attack_id": attack_id, "seq": int(sequence), "scatter_unit": scatter, "rng_state": next_rng})
+	if not payment.is_empty(): _technology_actions(data).publish_phase_payment(payment)
+	return ok("已發射原實物彈藥", {"attack_id": attack_id, "seq": int(sequence), "scatter_unit": scatter, "rng_state": next_rng, "ammo": ammo, "technology_payment_id": str(payment.get("payment_id", ""))})
 
 static func release_siege_bolt(data: TerrainData, identity: String, expected_version: int) -> Dictionary:
 	if data == null or str(data.site.get("vehicles", {}).get(identity, {}).get("kind", "")) != "ballista": return fail("NO_TARGET")
@@ -1731,6 +1699,7 @@ static func barracks_type_description(feature: Dictionary) -> String:
 	return str(BARRACKS_TYPES.get(barracks_type(feature), {}).get("description", "軍營型式無效"))
 
 static func is_training_facility(feature: Dictionary) -> bool:
+	if feature.has("technology_siege_yard"): return false
 	var kind := str(feature.get("kind", ""))
 	return (kind == "training_ground" and not feature.has("camp_type")) or (kind == "barracks" and barracks_type(feature) == "standard")
 
@@ -1743,6 +1712,7 @@ static func feature_input_inventory(data: TerrainData, feature: Dictionary, key:
 	return data.site.inventory
 
 static func pay_feature_inputs(data: TerrainData, feature: Dictionary, key: String, inputs: Dictionary, task: Dictionary = {}, original_identity: int = 0) -> Dictionary:
+	if feature.has("technology_settlement_order"): return fail("NAMED_BEGIN_REQUIRED", "有限聚落工單須逐批原具名開始；不自動追加材料")
 	var source := _technology_payment_source(data, feature, key)
 	if source.is_empty() or int(source.holder.version) >= 2147483646 or not Technology.material_stack(inputs) or not can_pay(source.cargo, inputs): return fail("NO_MATERIAL", "原完整投入／原來源版本不足；保留批次")
 	if feature.has("tech_batch"): return fail("DUPLICATE", "同原批次已付款")
@@ -1788,13 +1758,16 @@ static func building_spec(kind: String, options: Dictionary = {}) -> Dictionary:
 		return fail("INVALID", "非橋梁含橋面欄位")
 	if kind == "bridge" and (not _building_integer(options.get("bridge_version", 1), 1, 1) or not _building_integer(options.get("bridge_clearance", 0), 0, 0)):
 		return fail("INVALID", "首版橋梁只允許單一橋面，橋下淨空為零")
+	if options.has("irrigation") and kind != "irrigation_channel": return fail("INVALID", "非渠道含渠道來源")
+	if kind == "irrigation_channel" and (not Technology.keys(options.get("irrigation"), IRRIGATION_FIELDS) or not Technology.integer(options.irrigation.version, 1, 1)):
+		return fail("INVALID", "渠道必須明示原水站及上游")
 	var quarter := int(options.get("quarter", 0))
 	if quarter < 0 or quarter > 3:
 		return fail("INVALID", "建築方向")
 	var variant := str(options.get("variant", "standard")) if kind == "house" else ""
 	if kind == "house" and not HOUSE_VARIANTS.has(variant):
 		return fail("INVALID", "住宅版型")
-	var material := str(options.get("material", "wood")) if kind in ["wall_stairs", "gate", "bridge", "warehouse"] else ("stone" if kind == "stone_wall" else "wood")
+	var material := str(options.get("material", "wood")) if kind in ["wall_stairs", "gate", "bridge", "warehouse"] else ("stone" if kind in ["stone_wall", "irrigation_channel"] else "wood")
 	if material not in ["wood", "stone"]:
 		return fail("INVALID", "建築材質")
 	var result: Dictionary = FEATURES[kind].duplicate(true)
@@ -1835,6 +1808,7 @@ static func building_spec(kind: String, options: Dictionary = {}) -> Dictionary:
 	if kind == "barracks":
 		result.options["barracks_layout_version"] = options.get("barracks_layout_version", BARRACKS_LAYOUT_VERSION)
 		result.options["camp_type"] = options.get("camp_type", "standard")
+	if kind == "irrigation_channel": result.options["irrigation"] = options.irrigation.duplicate(true)
 	result["ok"] = true
 	return result
 
@@ -1854,6 +1828,7 @@ static func _feature_options(feature: Dictionary) -> Dictionary:
 	if str(feature.get("kind", "")) in WATERFRONT_KINDS:
 		options["waterfront_version"] = feature.get("waterfront_version", 0)
 		options["launch_cell"] = feature.get("launch_cell", -1)
+	if feature.has("irrigation"): options["irrigation"] = feature.irrigation.duplicate(true)
 	return options
 
 static func _cell_bounds(data: TerrainData, cells: Array) -> Rect2i:
@@ -1895,6 +1870,7 @@ static func validate_building_layout(data: TerrainData, kind: String, cells: Arr
 		if not (value is int or value is float) or float(value) != float(int(value)) or int(value) < 0 or int(value) >= data.size.x * data.size.y or seen.has(int(value)):
 			return fail("INVALID", "占地含重複或非法格")
 		seen[int(value)] = true
+	if kind == "irrigation_channel" and not _irrigation_path(data, cells): return fail("INVALID", "渠道須為有序、不分叉的單格連續路徑")
 	var bounds := _cell_bounds(data, cells)
 	if str(spec.placement) != "cells":
 		if bounds.get_area() != cells.size():
@@ -1936,6 +1912,10 @@ static func _building_number(value: Variant, low: float, high: float) -> bool:
 # Store calls this after its general feature type checks. No materials, live
 # actor or current feature_at query participates in validating a saved layout.
 static func validate_feature_layout(data: TerrainData, feature: Dictionary, check_navigation: bool = true) -> Dictionary:
+	if not valid_technology_shipyard_work(feature): return fail("CORRUPT_SAVE", "原船塢兩席位配置非法")
+	if not valid_technology_siege_yard(feature): return fail("CORRUPT_SAVE", "原校場器械場配置非法")
+	if feature.get("kind") == "irrigation_channel" and (not _irrigation_shape(feature.get("irrigation")) or feature.has("pending_build")): return fail("CORRUPT_SAVE", "渠道來源／版本／不支援改界")
+	if feature.has("irrigation") and feature.get("kind") != "irrigation_channel": return fail("CORRUPT_SAVE", "非渠道含渠道欄位")
 	var ladder_validation := validate_siege_ladder(feature)
 	if not ladder_validation.ok: return ladder_validation
 	if feature.has("camp_type") and (str(feature.get("kind", "")) != "barracks" or not feature.camp_type is String or not BARRACKS_TYPES.has(feature.camp_type)):
@@ -2468,13 +2448,21 @@ static func prison_layout(data: TerrainData, key: String) -> Dictionary:
 	return ok("拘押布局", {"id": key, "complete": str(feature.stage) == "complete", "entry": result.entry,
 		"gate_cell": result.gate_cell, "slots": result.slots, "corridor": result.corridor, "capacity": result.slots.size()})
 
-static func preview_build(data: TerrainData, kind: String, cells: Array[int], occupied: Callable = Callable(), options: Dictionary = {}) -> Dictionary:
-	if kind == "tent":
-		return fail("INVALID", "營帳須由後勤人物攜帶營帳包搭設")
-	if kind == "settlement_center" and (data.site.has("settlement") or _settlement_center_count(data) > 0):
-		return fail("INVALID", "每個 Site 最多一座聚落中心")
-	return _preview_build(data, kind, cells, occupied, options)
-
+static func preview_build(data: TerrainData, kind: String, cells: Array[int], occupied: Callable = Callable(), options: Dictionary = {}, original_source: Dictionary = {}, operation_selector: Dictionary = {}) -> Dictionary:
+	if kind == "tent": return fail("INVALID", "營帳須由後勤人物攜帶營帳包搭設")
+	if kind == "settlement_center" and (data.site.has("settlement") or _settlement_center_count(data) > 0): return fail("INVALID", "每個 Site 最多一座聚落中心")
+	var checked := _preview_build(data, kind, cells, occupied, options, "", false)
+	if not checked.ok: return checked
+	if not can_pay(data.site.inventory, {"tools": 1}): return fail("MATERIALS", "原營地工作工具不足")
+	var binding := ""
+	for candidate: String in TECHNOLOGY_BUILD_BINDINGS:
+		if TECHNOLOGY_BUILD_BINDINGS[candidate] == kind: binding = candidate; break
+	var selector := operation_selector.duplicate(true)
+	if selector.has("token"):
+		selector.token.materials = checked.cost.duplicate(true)
+	var paid := _technology_material_source(data, selector, binding, checked.cost, original_source)
+	if not paid.ok: return paid
+	return checked
 static func ecology_build_guard(data: TerrainData, cells: Array, existing_key: String = "") -> Dictionary:
 	if not Env.ecology_active(data): return ok()
 	var existing: Array = data.site.get("features", {}).get(existing_key, {}).get("cells", []) if not existing_key.is_empty() else []
@@ -2577,32 +2565,9 @@ static func preview_deploy_tent(data: TerrainData, cells: Array[int], actor_cell
 	return preview
 
 static func deploy_tent(data: TerrainData, cells: Array[int], cargo: Dictionary, holder: Dictionary, expected_version: int, actor_cell: Vector2i, owner_faction: int, occupied: Callable = Callable(), quarter: int = 0) -> Dictionary:
-	var preview := preview_deploy_tent(data, cells, actor_cell, owner_faction, occupied, quarter)
-	if not preview.ok:
-		return preview
-	if not _item_holder_shape(holder) or not str(holder.holder).begins_with("person:") or not _resource_stack(cargo):
-		return fail("INVALID", "須使用原後勤人物的行囊")
-	if int(holder.version) != expected_version or expected_version >= 2147483646:
-		return fail("STALE_SOURCE")
-	if not can_pay(cargo, {"camp_tent": 1}):
-		return fail("EMPTY", "原行囊沒有營帳包")
-	if not _building_integer(data.site.get("next_feature"), 1, 2147483646) or data.site.features.has(str(int(data.site.next_feature))):
-		return fail("INVALID", "營帳建築身分序號失效，未扣物")
-	# All callbacks finished. Cargo and the completed original feature commit once.
-	var key := str(data.site.next_feature)
-	var feature := {"kind": "tent", "cells": cells.duplicate(), "entrance": int(preview.entrance), "source": "",
-		"stage": "complete", "progress": 2.0, "solid": false, "cost": {"camp_tent": 1}, "work": 2.0,
-		"clearing": [], "level": int(preview.level), "production": 0.0, "batch_paid": false, "status": "已搭設"}
-	feature.merge(preview.options, true)
-	add_items(cargo, {"camp_tent": 1}, -1)
-	if int(cargo.camp_tent) == 0:
-		cargo.erase("camp_tent")
-	holder.version = expected_version + 1
-	data.site.next_feature = int(data.site.next_feature) + 1
-	data.site.features[key] = feature
-	Env.rebuild_indexes(data)
-	if Env.ecology_active(data): ecology_reconcile(data)
-	return ok("已由原行囊搭設營帳", {"feature": key})
+	var prepared := prepare_deploy_tent(data, cells, cargo, holder, expected_version, actor_cell, owner_faction, occupied, quarter)
+	if not prepared.ok: return prepared
+	return publish_prepared_deploy_tent(prepared)
 
 static func preview_pack_tent(data: TerrainData, key: String, cargo: Dictionary, holder: Dictionary, actor_cell: Vector2i, owner_faction: int, occupied: Callable = Callable(), capacity: int = CARRY_CAPACITY) -> Dictionary:
 	if _ship_runtime_pending(data): return fail("BUSY", "原固定目標仍待補算或交接；暫不能接受新設施操作")
@@ -2624,19 +2589,9 @@ static func preview_pack_tent(data: TerrainData, key: String, cargo: Dictionary,
 	return structure_change_guard(data, key, {}, occupied, "pack")
 
 static func pack_tent(data: TerrainData, key: String, cargo: Dictionary, holder: Dictionary, expected_version: int, actor_cell: Vector2i, owner_faction: int, occupied: Callable = Callable(), capacity: int = CARRY_CAPACITY) -> Dictionary:
-	var preview := preview_pack_tent(data, key, cargo, holder, actor_cell, owner_faction, occupied, capacity)
-	if not preview.ok:
-		return preview
-	if not _item_holder_shape(holder) or not _resource_stack(cargo) or int(holder.version) != expected_version or expected_version >= 2147483646:
-		return fail("STALE_SOURCE")
-	if carried_load(data.site, cargo, holder) + 1 > capacity:
-		return fail("STORAGE_FULL")
-	data.site.features.erase(key)
-	add_items(cargo, {"camp_tent": 1})
-	holder.version = expected_version + 1
-	Env.rebuild_indexes(data)
-	if Env.ecology_active(data): ecology_reconcile(data)
-	return ok("營帳已收回原行囊", {"feature": key})
+	var prepared := prepare_pack_tent(data, key, cargo, holder, expected_version, actor_cell, owner_faction, occupied, capacity)
+	if not prepared.ok: return prepared
+	return publish_prepared_pack_tent(prepared)
 
 static func _tent_contact(data: TerrainData, cells: Array[int], actor_cell: Vector2i) -> bool:
 	if not data.is_walkable(actor_cell) or cells.has(data.index(actor_cell)):
@@ -2727,6 +2682,10 @@ static func _preview_build(data: TerrainData, kind: String, cells: Array[int], o
 	if kind in ["pasture", "horse_ranch"] and grazing_capacity(data, cells) < (2 if kind == "horse_ranch" else 1):
 		return fail("TERRAIN", "草地承載不足；擴大牧區或另選土地")
 	var source := ""
+	if kind == "irrigation_channel":
+		var connection := technology_irrigation_connection(data, cells, spec.options.irrigation)
+		if not connection.ok: return connection
+		source = str(spec.options.irrigation.source_feature_id)
 	if kind == "intake":
 		source = adjacent_water(data, cells, 1)
 		if source.is_empty():
@@ -2909,7 +2868,7 @@ static func _perimeter(data: TerrainData, cells: Array) -> int:
 static func _building_cost(data: TerrainData, kind: String, cells: Array, options: Dictionary) -> Dictionary:
 	var spec := building_spec(kind, options)
 	var cost: Dictionary = spec.cost.duplicate()
-	if kind in MILITARY_KINDS + ["road", "palisade", "stone_wall", "fighting_position", "bridge"]:
+	if kind in MILITARY_KINDS + ["irrigation_channel", "road", "palisade", "stone_wall", "fighting_position", "bridge"]:
 		for item: String in cost:
 			cost[item] = int(cost[item]) * cells.size()
 	elif kind in PASTURE_KINDS:
@@ -2920,7 +2879,7 @@ static func _building_cost(data: TerrainData, kind: String, cells: Array, option
 
 static func _building_work(data: TerrainData, kind: String, cells: Array, options: Dictionary) -> float:
 	var work := float(building_spec(kind, options).work)
-	if kind in FARM_KINDS + MILITARY_KINDS or kind in ["road", "level", "palisade", "stone_wall", "fighting_position", "bridge"]:
+	if kind in FARM_KINDS + MILITARY_KINDS or kind in ["irrigation_channel", "road", "level", "palisade", "stone_wall", "fighting_position", "bridge"]:
 		return work * cells.size()
 	if kind in PASTURE_KINDS:
 		return work + maxi(0, _perimeter(data, cells) - (16 if kind == "horse_ranch" else 12)) * 0.5
@@ -2928,44 +2887,10 @@ static func _building_work(data: TerrainData, kind: String, cells: Array, option
 		return 2.0 + _perimeter(data, cells) * 2.0
 	return work
 
-static func request_build(data: TerrainData, kind: String, cells: Array[int], occupied: Callable = Callable(), options: Dictionary = {}) -> Dictionary:
-	var preview := preview_build(data, kind, cells, occupied, options)
-	if not preview.ok:
-		return preview
-	# Founding writes site.settlement in the same transaction (SiteSettlement.found).
-	if kind == "settlement_center" and options.get("settlement_found") != true:
-		return fail("NO_AUTHORITY", "聚落中心須由首長在場經「建立聚落」安排")
-	var key := str(data.site.next_feature)
-	data.site.next_feature = int(data.site.next_feature) + 1
-	var definition: Dictionary = FEATURES[kind]
-	add_items(data.site.inventory, preview.cost, -1)
-	data.site.features[key] = {"kind": kind, "cells": cells.duplicate(), "entrance": int(preview.entrance), "source": str(preview.source),
-		"stage": "planned", "progress": 0.0, "solid": bool(definition.solid), "cost": preview.cost,
-		"work": float(preview.work),
-		"clearing": preview.clearing, "level": int(preview.level), "production": 0.0, "batch_paid": false, "status": "待施工"}
-	data.site.features[key].merge(preview.options, true)
-	if kind in BODY_KINDS:
-		data.site.features[key]["civil_version"] = CIVIL_VERSION
-		data.site.features[key]["building_grade"] = 1
-		data.site.features[key]["parts"] = {"body": {"hp": civil_max_hp(data.site.features[key])}}
-	_fire_layout_initialize(data.site.features[key])
-	if kind in STRUCTURE_KINDS:
-		data.site.features[key]["parts"] = {}
-		for part: String in preview.geometry.parts:
-			data.site.features[key].parts[part] = {"hp": float(preview.geometry.parts[part].max_hp)}
-	if kind == "siege_ladder":
-		data.site.features[key]["ladder"] = {"version": 1, "phase": "folded", "pending": "", "progress": 0.0, "workers": []}
-	if kind == "gate":
-		data.site.features[key]["gate"] = {"open": false, "pending": "", "progress": 0.0, "operator_id": -1}
-	if kind in ["pasture", "horse_ranch"]:
-		data.site.features[key].species = "horse" if kind == "horse_ranch" else "sheep"
-		data.site.features[key].residents = 2 if kind == "horse_ranch" else 1
-	data.site.zones.append({"cells": cells.duplicate(), "kind": -1, "action": "construct", "feature": key, "active": true})
-	Env.rebuild_indexes(data)
-	if Env.ecology_active(data): ecology_reconcile(data)
-	return ok("已預留材料並排入施工：" + str(definition.name), {"feature": key})
-
-# Shore facilities retain one original paid production batch until launching.
+static func request_build(data: TerrainData, kind: String, cells: Array[int], occupied: Callable = Callable(), options: Dictionary = {}, original_source: Dictionary = {}, operation_selector: Dictionary = {}) -> Dictionary:
+	var prepared := prepare_build_request(data, kind, cells, occupied, options, original_source, operation_selector)
+	if not prepared.ok: return prepared
+	return publish_build_request(data, prepared)
 static func waterfront_facing(feature: Dictionary) -> Vector2i:
 	var quarter := int(feature.get("quarter", -1))
 	return TerrainData.DIRECTIONS[quarter] if quarter >= 0 and quarter < 4 else Vector2i.ZERO
@@ -2992,6 +2917,7 @@ static func validate_waterfront(data: TerrainData, feature: Dictionary, check_na
 	return ok("合法水岸")
 
 static func validate_ship_build(_data: TerrainData, feature: Dictionary) -> Dictionary:
+	if feature.has("technology_ship_method") and (feature.get("kind") != "shipyard" or not feature.has("ship_build") or feature.technology_ship_method != {"version": 1}): return fail("CORRUPT_SAVE", "原單次 F13 方法標記")
 	if not feature.has("ship_build"):
 		if str(feature.get("kind", "")) in WATERFRONT_KINDS and (bool(feature.get("batch_paid", false)) or float(feature.get("production", 0.0)) != 0.0):
 			return fail("CORRUPT_SAVE", "水岸設施沒有原造船投入批次")
@@ -3035,7 +2961,7 @@ static func _ship_launch_query(data: TerrainData, feature: Dictionary, ship_type
 		return fail("INVALID", "載具序號不可用")
 	return ok("可下水", {"identity": str(int(next)), "cell": int(feature.launch_cell), "facing": facing})
 
-static func begin_ship_build(data: TerrainData, key: String, ship_type: String, team_id: int, requester_faction: int = -1, occupied: Callable = Callable(), preview: bool = false) -> Dictionary:
+static func begin_ship_build(data: TerrainData, key: String, ship_type: String, team_id: int, requester_faction: int = -1, occupied: Callable = Callable(), preview: bool = false, original_source: Dictionary = {}, operation_selector: Dictionary = {}) -> Dictionary:
 	if _ship_runtime_pending(data): return fail("BUSY", "原固定目標仍待補算或交接；暫不能接受新設施操作")
 	if not _siege_depot_ready(data) or not Ships.is_kind(ship_type) or team_id <= 0: return fail("INVALID")
 	var feature: Dictionary = data.site.get("features", {}).get(key, {})
@@ -3045,17 +2971,51 @@ static func begin_ship_build(data: TerrainData, key: String, ship_type: String, 
 	var cost: Dictionary = Ships.build_cost(ship_type)
 	var work := Ships.build_work_seconds(ship_type)
 	if cost.is_empty() or not is_finite(work) or work <= 0.0: return fail("INVALID")
-	if not can_pay(data.site.inventory, cost) or not can_pay(data.site.inventory, {"tools": 1}): return fail("MATERIALS", items_text(cost))
+	if not can_pay(data.site.inventory, {"tools": 1}): return fail("MATERIALS", "原工作工具不足")
+	var selector := operation_selector.duplicate(true)
+	if selector.has("token"):
+		if selector.token.binding != "ferry_build" or selector.token.target_id != "feature:" + key or ship_type != "ferry": return fail("STALE_SOURCE")
+		selector.token.materials = cost.duplicate(true)
+	var shipyard_guard := _technology_shipyard_new_guard(data, key, selector.get("token", {}))
+	if not shipyard_guard.ok: return shipyard_guard
+	var source := _technology_material_source(data, selector, "ferry_build", cost, original_source)
+	if not source.ok: return source
+	# No public ship-manufacturing source exists in the current N12 owner. Reject
+	# such a source rather than allow its cancellation to refund private stock to camp.
+	if not source.source.is_empty() or not selector.is_empty() and not selector.has("token"): return fail("NO_AUTHORITY")
+	var scope := {}
+	if selector.has("token"):
+		scope = _technology_geometry_payment(data, selector.token, cost, true)
+		if not scope.ok: return scope
 	var launch := _ship_launch_query(data, feature, ship_type, occupied)
 	if not launch.ok: return launch
+	var zone_context := {}
+	var named := {}
+	if selector.has("token"):
+		zone_context = _settlement_ship_zone(data, key, feature)
+		named = _technology_prepare_named_feature(data, key, feature, zone_context.zone, "operate", selector)
+		if not named.ok: return named
+		# Source is re-read after ALL original task/clock/authority candidates.
+		# No caller boolean, new source grant or cost change reaches this tail.
+		var same_source := _technology_material_source(data, selector, "ferry_build", cost, source.source)
+		if not same_source.ok: return same_source
 	if preview: return ok("可投入造船", {"cost": cost.duplicate(), "work_seconds": work})
-	add_items(data.site.inventory, cost, -1)
-	data.site.depot_items.version = int(data.site.depot_items.version) + 1
+	var ledger := {} if scope.is_empty() else _technology_geometry_ledger(data, scope.token, scope.payment, "ship:" + ship_type)
+	_technology_publish_material_payment(source)
 	feature.ship_build = {"version": 1, "recipe_version": 1, "ship_type": ship_type, "team_id": team_id, "paid_cost": cost.duplicate(), "total_work": work}
+	if TechnologyCatalog.get_node("F13").get("enabled") == true: feature.technology_ship_method = {"version": 1}
 	feature.production = 0.0
 	feature.batch_paid = true
 	feature.status = "已付原料，等待原工人造船"
-	_enable_ship_zone(data, key)
+	if selector.has("token"):
+		if zone_context.existing: zone_context.zone.active = true
+		else: data.site.zones.append(zone_context.zone)
+	else: _enable_ship_zone(data, key)
+	if not scope.is_empty():
+		feature.tech_trial = scope.token
+		feature.tech_batch = ledger
+		_technology_actions(data).publish_phase_payment(scope.payment)
+	if selector.has("token"): _technology_publish_named_feature(named)
 	return ok("已投入原料並排入造船", {"feature": key})
 
 static func _enable_ship_zone(data: TerrainData, key: String) -> void:
@@ -3087,6 +3047,9 @@ static func cancel_ship_build(data: TerrainData, key: String, requester_faction:
 
 static func _finish_ship_build(data: TerrainData, key: String, feature: Dictionary, status: String) -> void:
 	feature.erase("ship_build")
+	feature.erase("technology_ship_method")
+	feature.erase("technology_settlement_order")
+	_technology_finish_named_feature(data, key)
 	feature.production = 0.0
 	feature.batch_paid = false
 	feature.status = status
@@ -3149,14 +3112,18 @@ static func _ship_feature_work(data: TerrainData, key: String, feature: Dictiona
 	if not technology_guard.ok:
 		worker.status = str(technology_guard.message)
 		return
-	minutes = minf(minutes, total_minutes - float(feature.production))
+	var shipyard_facts := _technology_shipyard_work_facts(data, key, worker, original_identity)
+	if not shipyard_facts.ok or not str(shipyard_facts.get("required_skill", "")).is_empty() and not bool(shipyard_facts.get("eligible_master", false)):
+		worker.status = str(shipyard_facts.get("message", "須真F13師傅；助手只走原共同已核前綴"))
+		return
+	var factor := float(shipyard_facts.get("factor", 1.0))
+	minutes = minf(minutes, (total_minutes - float(feature.production)) / factor)
 	if work_time.is_valid(): minutes = float(work_time.call(false, minutes))
 	technology_record_work(feature, minutes, int(technology_guard.get("operator_id", 0)))
-	feature.production = minf(total_minutes, float(feature.production) + minutes)
+	feature.production = minf(total_minutes, float(feature.production) + minutes * factor)
 	feature.status = "造船 %.1f / %.1f 分" % [float(feature.production), total_minutes]
 	worker.status = str(feature.status)
 	if float(feature.production) + 0.00000001 >= total_minutes: _launch_ship_build(data, key, feature, occupied)
-
 
 static func build_work(kind: String, cell_count: int) -> float:
 	return float(FEATURES[kind].work) * (cell_count if kind.contains("farm") or kind in MILITARY_KINDS + ["road", "level", "palisade", "stone_wall", "fighting_position"] else 1)
@@ -3290,6 +3257,10 @@ static func _feature_has_work(data: TerrainData, key: String) -> bool:
 		var team: Variant = ref_value.get_ref()
 		if team != null and team.feature_in_use(key):
 			return true
+	var actions: Variant = _technology_actions(data)
+	if actions != null:
+		for job: Dictionary in actions._jobs.values():
+			if job.get("feature_id") == key and job.get("features_ref") is Dictionary and is_same(job.features_ref, data.site.features): return true
 	return false
 
 static func _barracks_in_use(data: TerrainData, key: String) -> bool:
@@ -3315,6 +3286,7 @@ static func _barracks_in_use(data: TerrainData, key: String) -> bool:
 static func preview_resize(data: TerrainData, key: String, new_cells: Array[int], occupied: Callable = Callable()) -> Dictionary:
 	if _ship_runtime_pending(data): return fail("BUSY", "原固定目標仍待補算或交接；暫不能接受新設施操作")
 	var feature: Dictionary = data.site.get("features", {}).get(key, {})
+	if feature.has("technology_siege_yard"): return fail("BUSY", "請先由原首長撤回器械場配置")
 	if feature.is_empty() or int(feature.get("layout_version", 0)) != BUILDING_LAYOUT_VERSION:
 		return fail("NO_TARGET", "舊布局保留原樣；僅新版設施可改界")
 	var kind := str(feature.kind)
@@ -3418,52 +3390,8 @@ static func request_resize(data: TerrainData, key: String, new_cells: Array[int]
 	return ok(str(feature.status), {"feature": key, "added_cells": preview.added_cells, "removed_cells": preview.removed_cells})
 
 static func request_repair(data: TerrainData, key: String, part_id: String, requester_faction: int, occupied: Callable = Callable()) -> Dictionary:
-	if _ship_runtime_pending(data): return fail("BUSY", "原固定目標仍待補算或交接；暫不能接受新設施操作")
-	var feature: Dictionary = data.site.get("features", {}).get(key, {})
-	if str(feature.get("stage", "")) != "complete" or int(feature.get("layout_version", 0)) != BUILDING_LAYOUT_VERSION or not feature.get("parts", {}).has(part_id):
-		return fail("NO_TARGET", "可修理的原部件不存在")
-	if int(feature.get("owner_faction", -1)) < 0 or requester_faction != int(feature.owner_faction):
-		return fail("NO_AUTHORITY")
-	if feature.has("repair") or feature.has("pending_build") or _feature_has_work(data, key) or not str(feature.get("gate", {}).get("pending", "")).is_empty():
-		return fail("BUSY")
-	var geometry := feature_geometry(data, feature)
-	var part: Dictionary = geometry.parts[part_id]
-	var fire_guard := _fire_repair_guard(data, key, part_id)
-	if not fire_guard.ok: return fire_guard
-	var amount := float(part.max_hp) - float(part.hp)
-	if amount <= 0.0:
-		return fail("INVALID", "部件耐久完整")
-	if str(part.role) == "roof" and float(feature.parts.body.hp) <= 0.0: return fail("BUSY", "先修復支撐屋頂的原本體")
-	if str(part.role) == "leaf" and float(part.hp) <= 0.0 and not bool(feature.gate.open):
-		return fail("BUSY", "請原操作者先開門，再安裝新門扇；修復後仍須正常關門")
-	if str(part.role) == "leaf" and float(feature.parts[part_id.replace("leaf:", "frame:")].hp) <= 0.0:
-		return fail("BUSY", "先修复承托這片門扇的原門框")
-	var work_cell := -1
-	for index: int in part.cells:
-		for direction: Vector2i in TerrainData.DIRECTIONS:
-			var cell := data.cell_from_index(index) + direction
-			if _repair_contact(data, feature, part, cell) and (not occupied.is_valid() or not bool(occupied.call(cell))):
-				work_cell = data.index(cell)
-				break
-		if work_cell >= 0:
-			break
-	if work_cell < 0:
-		return fail("UNREACHABLE", "部件旁沒有安全修理位置")
-	var candidate: Dictionary = feature.duplicate(true)
-	candidate.parts[part_id].hp = float(part.max_hp)
-	var water_guard: Dictionary = _ship_water_geometry_guard(data, key, candidate)
-	if not water_guard.ok: return water_guard
-	var terms := _repair_terms(feature, part, amount)
-	var cost: Dictionary = terms.cost
-	if not can_pay(data.site.inventory, cost) or not can_pay(data.site.inventory, {"tools": 1}):
-		return fail("MATERIALS", items_text(cost))
-	add_items(data.site.inventory, cost, -1)
-	feature["repair"] = {"part": part_id, "amount": amount, "cost": cost,
-		"work": float(terms.work), "progress": 0.0, "work_cell": work_cell}
-	_fire_repair_started(data, key, part_id)
-	data.site.zones.append({"cells": feature.cells.duplicate(), "kind": -1, "action": "repair", "feature": key, "active": true})
-	feature.status = "已備料，等待原工作者修理"
-	return ok(str(feature.status), {"feature": key, "part": part_id})
+	var prepared := prepare_feature_repair_request(data, key, part_id, requester_faction, occupied)
+	return prepared if not prepared.ok else publish_feature_repair_request(data, prepared)
 
 static func _repair_terms(feature: Dictionary, part: Dictionary, amount: float) -> Dictionary:
 	if int(feature.get("fire_layout_version", 0)) == FIRE_LAYOUT_VERSION:
@@ -3727,6 +3655,7 @@ static func _near_cells(data: TerrainData, cells: Array[int], target: int, dista
 	return false
 
 static func feature_work_slots(data: TerrainData, feature: Dictionary) -> Array[Dictionary]:
+	if feature.has("technology_shipyard_work"): return technology_shipyard_work_slots(data, feature)
 	var result: Array[Dictionary] = []
 	if int(feature.get("layout_version", 0)) != BUILDING_LAYOUT_VERSION or str(feature.kind) not in FARM_KINDS + PASTURE_KINDS:
 		result.append({"slot": -1, "cell": int(feature.entrance), "service_cells": feature.cells.duplicate()})
@@ -3985,27 +3914,42 @@ static func game_seconds(real_seconds: float, combat_left: float) -> float:
 	var combat := minf(maxf(0.0, real_seconds), maxf(0.0, combat_left))
 	return combat + maxf(0.0, real_seconds - combat) * 60.0
 
-static func advance(data: TerrainData, real_seconds: float, worker_ready: bool = false, manual_ready: bool = false, occupied: Callable = Callable(), work_time: Callable = Callable(), crew_work: Callable = Callable(), worker_limit: int = CARRY_CAPACITY, manual_limit: int = CARRY_CAPACITY, time_multiplier: float = 1.0, worker_faction: int = -1, accepted_game_seconds: float = -1.0, shared_operating_projection: bool = false) -> void:
+static func advance(data: TerrainData, real_seconds: float, worker_ready: bool = false, manual_ready: bool = false, occupied: Callable = Callable(), work_time: Callable = Callable(), crew_work: Callable = Callable(), worker_limit: int = CARRY_CAPACITY, manual_limit: int = CARRY_CAPACITY, time_multiplier: float = 1.0, worker_faction: int = -1, accepted_game_seconds: float = -1.0, shared_operating_projection: bool = false, checked_clock: Dictionary = {}) -> void:
 	if data.site.is_empty() or bool(data.site.paused) or real_seconds <= 0.0 or not is_finite(real_seconds) or time_multiplier <= 0.0 or not is_finite(time_multiplier):
 		return
 	# Integrate the combat-to-peace boundary exactly, including long frames.
 	if not is_finite(accepted_game_seconds) or accepted_game_seconds < -1.0: return
 	var minutes := (accepted_game_seconds if accepted_game_seconds >= 0.0 else game_seconds(real_seconds, float(data.site.combat_left)) * time_multiplier) / 60.0
+	var checked_point: bool = not checked_clock.is_empty()
+	if checked_point:
+		var ref: Variant = data.get_meta(&"site_controller", null) if data.has_meta(&"site_controller") else null
+		var original: Variant = ref.get_ref() if ref is WeakRef else null
+		if original == null or checked_clock.get("owner") != original or not original.has_method("valid_checked_runtime_clock") or bool(checked_clock.get("advanced", false)) or not original.valid_checked_runtime_clock(checked_clock, minutes * 60.0): return
+		checked_clock.advanced = true
 	var combat_seconds := minf(real_seconds, float(data.site.combat_left))
 	data.site.combat_left = maxf(0.0, float(data.site.combat_left) - combat_seconds)
 	while minutes > 0.00000001:
 		var slice := minf(minutes, 1.0 - float(data.site.phase))
 		data.site.phase = float(data.site.phase) + slice
-		_work(data, slice, worker_ready, manual_ready, occupied, work_time, null, null, worker_limit, manual_limit, worker_faction, shared_operating_projection)
-		if crew_work.is_valid():
-			crew_work.call(slice * 60.0) # Same phase/resource budget, before minute rollover.
-		advance_ship_builds(data, occupied)
+		if checked_point:
+			checked_clock.ship_build_due = true
+		else:
+			_work(data, slice, worker_ready, manual_ready, occupied, work_time, null, null, worker_limit, manual_limit, worker_faction, shared_operating_projection)
+			if crew_work.is_valid():
+				crew_work.call(slice * 60.0) # Same original legacy phase.
+			advance_ship_builds(data, occupied)
 		minutes -= slice
 		if float(data.site.phase) >= 0.99999999:
 			data.site.phase = 0.0
 			data.site.minute = int(data.site.minute) + 1
-			_regenerate(data, occupied)
-			allocate_water(data)
+			if checked_point: checked_clock.minute_due = true
+			else:
+				_regenerate(data, occupied)
+				allocate_water(data)
+	if checked_point:
+		checked_clock.minute_after = int(data.site.minute)
+		checked_clock.phase_after = float(data.site.phase)
+		checked_clock.combat_after = float(data.site.combat_left)
 
 static func _work(data: TerrainData, minutes: float, worker_ready: bool, manual_ready: bool, occupied: Callable, work_time: Callable = Callable(), worker_override: Variant = null, cargo_override: Variant = null, carry_limit: int = CARRY_CAPACITY, manual_limit: int = CARRY_CAPACITY, worker_faction: int = -1, shared_operating_projection: bool = false, original_identity: int = 0) -> void:
 	var worker: Dictionary = data.site.worker if worker_override == null else worker_override
@@ -4085,6 +4029,9 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 		worker.mode = "idle"
 		return
 	var action := str(worker.get("action", "construct" if str(feature.stage) != "complete" else "operate"))
+	if feature.has("settlement_work"):
+		var defense_guard := settlement_defense_operator_guard(data, key, feature, worker, original_identity)
+		if not defense_guard.ok: worker.status = str(defense_guard.message); return
 	var ecology_guard := ecology_feature_work_guard(data, feature, action)
 	if not ecology_guard.ok:
 		worker.status = str(ecology_guard.message)
@@ -4095,7 +4042,7 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 	var expected_cell := int(job.work_cell) if action == "repair" and job.has("work_cell") else int(job.get("entrance", feature.entrance))
 	var service: Array[int] = []
 	var slot_id := int(worker.get("work_slot", -1))
-	if action == "operate" and int(feature.get("layout_version", 0)) == BUILDING_LAYOUT_VERSION and kind in FARM_KINDS + PASTURE_KINDS:
+	if action == "operate" and int(feature.get("layout_version", 0)) == BUILDING_LAYOUT_VERSION and (kind in FARM_KINDS + PASTURE_KINDS or feature.has("technology_shipyard_work")):
 		var slots := feature_work_slots(data, feature)
 		if slot_id < 0 or slot_id >= slots.size():
 			worker.target = ""
@@ -4145,17 +4092,22 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 		if not guard.ok:
 			worker.status = str(guard.message)
 			return
+		var defense_completion := prepare_settlement_defense_completion(data, key, feature, worker, original_identity)
+		if not defense_completion.ok: worker.status = str(defense_completion.message); return
 		# Only the existing successful structure transaction restores material.
 		var fire_old_hp := float(feature.parts[str(job.part)].hp)
 		var fire_full_cost: Dictionary = _repair_terms(feature, feature_geometry(data, feature).parts[str(job.part)], maximum).cost
 		feature.parts[str(job.part)].hp = float(candidate.parts[str(job.part)].hp)
 		_fire_repair_finished(data, key, str(job.part), fire_old_hp, float(feature.parts[str(job.part)].hp), maximum, job.cost, fire_full_cost)
 		feature.erase("repair")
+		publish_settlement_defense_completion(defense_completion)
 		feature.status = "修理完成"
+		_technology_finish_named_feature(data, key)
 		_stop_feature_zones(data, key, "repair")
 		worker.target = ""
 		worker.mode = "idle"
 		Env.rebuild_indexes(data)
+		if Env.ecology_active(data): ecology_reconcile(data)
 		rebuild_water(data)
 		return
 	if str(feature.stage) != "complete" or action == "construct" and feature.has("pending_build"):
@@ -4208,6 +4160,8 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 		if not technology_completed.ok:
 			worker.status = str(technology_completed.message)
 			return
+		var defense_completion := prepare_settlement_defense_completion(data, key, feature, worker, original_identity)
+		if not defense_completion.ok: worker.status = str(defense_completion.message); return
 		if feature.has("pending_build"):
 			if job.has("target_grade"):
 				feature["civil_version"] = CIVIL_VERSION
@@ -4232,6 +4186,7 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 					zone.cells = feature.cells.duplicate()
 		feature.stage = "complete"
 		_fire_feature_completed(data, key, fire_previous, fire_paid)
+		publish_settlement_defense_completion(defense_completion)
 		publish_technology_geometry_completion(technology_completed)
 		feature.status = "已完成"
 		if kind == "settlement_center": _settlement_center_completed(data, key, int(job.get("target_level", 1)))
@@ -4244,6 +4199,7 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 		worker.mode = "idle"
 		worker.target = ""
 		_stop_feature_zones(data, key, "construct")
+		_technology_finish_named_feature(data, key)
 		Env.rebuild_indexes(data)
 		if Env.ecology_active(data): ecology_reconcile(data)
 		rebuild_water(data)
@@ -4398,71 +4354,17 @@ static func rebuild_water(data: TerrainData) -> void:
 					visited[data.index(next)] = int(visited[current]) + 1
 					pending.append(data.index(next))
 		data.site.water_links[key] = pending
+	# The existing pump remains the sole source key and finite allocation owner.
+	for channel_key: String in data.site.features:
+		var flow := irrigation_channel_flow(data, channel_key)
+		if not flow.ok or not data.site.water_links.has(flow.source_feature_id): continue
+		var reached: Array = data.site.water_links[flow.source_feature_id]
+		for index: int in flow.cells:
+			if not reached.has(index): reached.append(index)
 	allocate_water(data)
 
 static func allocate_water(data: TerrainData) -> void:
-	var budgets := {}
-	var pump_sources := {}
-	var keys: Array = data.site.features.keys()
-	keys.sort()
-	for key: String in data.site.water_links:
-		if not data.site.features.has(key):
-			continue
-		var feature: Dictionary = data.site.features[key]
-		var source := str(feature.source)
-		if str(feature.kind) == "well":
-			var cell := data.cell_from_index(int(feature.cells[0]))
-			source = "ground:%d:%d" % [floori(float(cell.x) / 16.0), floori(float(cell.y) / 16.0)]
-		pump_sources[key] = source
-		budgets[source] = 2.0 if str(feature.kind) == "well" else 6.0
-	var consumers: Array[String] = ["camp"]
-	for key: String in keys:
-		if str(data.site.features[key].kind) == "house":
-			consumers.append(key)
-	for key: String in keys:
-		if str(data.site.features[key].kind) != "house":
-			consumers.append(key)
-	data.site.water_status = {}
-	for key: String in consumers:
-		var requests: Array[Dictionary] = []
-		if key == "camp":
-			requests.append({"slot": -1, "target": int(data.site.depot_cell), "demand": 0.02})
-		else:
-			var feature: Dictionary = data.site.features[key]
-			if str(feature.stage) != "complete":
-				continue
-			var kind := str(feature.kind)
-			if int(feature.get("layout_version", 0)) == BUILDING_LAYOUT_VERSION and kind in FARM_KINDS + PASTURE_KINDS:
-				var slots := _operating_slots(data, key, feature)
-				var served := 0
-				for slot: Dictionary in slots:
-					served += slot.service_cells.size()
-				var scale := float(served) if kind in FARM_KINDS else _pasture_scale(data, feature, served)
-				for slot: Dictionary in slots:
-					var portion := float(slot.service_cells.size()) / maxf(1.0, served)
-					requests.append({"slot": int(slot.slot), "target": int(slot.cell), "demand": float(FEATURES[kind].water) * scale * portion})
-			else:
-				requests.append({"slot": -1, "target": int(feature.entrance), "demand": water_demand(feature)})
-		var status := {"demand": 0.0, "supplied": 0.0, "slots": {}}
-		for request: Dictionary in requests:
-			var demand := float(request.demand)
-			var supplied := 0.0
-			for pump_key: String in pump_sources:
-				# A remote field worker needs a real water route to that work
-				# position; a wet entrance does not irrigate an entire hectare.
-				if not data.site.water_links[pump_key].has(int(request.target)):
-					continue
-				var source := str(pump_sources[pump_key])
-				var portion := minf(demand - supplied, float(budgets[source]))
-				supplied += portion
-				budgets[source] = float(budgets[source]) - portion
-				if supplied >= demand:
-					break
-			status.demand = float(status.demand) + demand
-			status.supplied = float(status.supplied) + supplied
-			if int(request.slot) >= 0:
-				status.slots[str(request.slot)] = {"demand": demand, "supplied": supplied}
-		data.site.water_status[key] = status
+	data.site.water_status = _water_allocation_candidate(data, _water_schedule_categories(data))
 
 static func date_text(data: TerrainData) -> String:
 	var minute := int(data.site.get("minute", 0))
@@ -5618,41 +5520,9 @@ static func fire_prepare_suppression(data: TerrainData, key: String, generation:
 		"moisture_per_q": float(profile.moisture_per_second) / int(profile.supply_q_per_second)})
 
 static func fire_commit_suppression(data: TerrainData, prepared: Dictionary) -> Dictionary:
-	if not prepared.get("ok", false) or not prepared.has("state_owner") or int(prepared.get("paid_q", 0)) <= 0: return fail("INVALID_WORK")
-	if data == null or not is_same(data.site, prepared.site_owner): return fail("STALE_SITE")
-	var current: Dictionary = data.site.get("fire", {})
-	if int(prepared.sequence) <= int(current.get("suppression_sequence", 0)): return ok("重送工作未再扣補給", {"duplicate": true, "paid_q": 0})
-	if not is_same(data.site.get("fire"), prepared.state_owner): return fail("STALE_SITE")
-	var holder: Dictionary = prepared.holder_owner
-	var mode := str(prepared.mode)
-	var check := fire_prepare_suppression(data, str(prepared.key), int(prepared.generation), float(prepared.action_begin),
-		float(prepared.action_end), int(prepared.requested_q), holder, int(prepared.expected_holder_version), mode)
+	var check := validate_fire_suppression(data, prepared)
 	if not check.ok: return check
-	var same_unit: bool = check.get("unit_owner", {}).is_empty() and prepared.unit_owner.is_empty() \
-		or is_same(check.get("unit_owner"), prepared.unit_owner)
-	if int(check.get("paid_q", 0)) != int(prepared.paid_q) or not check.has("unit_owner") or not same_unit \
-		or check.descriptor != prepared.descriptor or str(check.supply_field) != str(prepared.supply_field) \
-		or int(check.sequence) != int(prepared.sequence) or int(check.expected_step) != int(prepared.expected_step) \
-		or int(holder[check.supply_field]) != int(prepared.expected_supply_q) \
-		or float(prepared.cooling_per_q) != float(check.cooling_per_q) or float(prepared.heating_per_q) != float(check.heating_per_q) \
-		or float(prepared.moisture_per_q) != float(check.moisture_per_q): return fail("STALE_WORK")
-	# No callbacks, yields or fallible work below. The first IGNITE input creates
-	# only the existing original fire state/unit, after actual holder admission.
-	var state := _fire_state(data, float(prepared.action_begin))
-	var unit := _fire_unit(data, state, check.descriptor)
-	holder[check.supply_field] = int(holder[check.supply_field]) - int(prepared.paid_q)
-	holder.version = int(holder.version) + 1
-	if not state.has("suppression_pending"): state.suppression_pending = []
-	state.suppression_pending.append({"sequence": int(prepared.sequence), "key": str(prepared.key), "generation": int(unit.generation), "mode": mode,
-		"begin": float(prepared.action_begin), "end": float(prepared.action_end), "total_q": int(prepared.paid_q),
-		"remaining_q": float(prepared.paid_q), "cooling_per_q": float(check.cooling_per_q), "heating_per_q": float(check.heating_per_q),
-		"moisture_per_q": float(check.moisture_per_q)})
-	state.active[str(prepared.key)] = true
-	state.suppression_sequence = int(prepared.sequence)
-	state.dirty = true
-	return ok("原人物有限工作已原子提交", {"paid_q": int(prepared.paid_q), "sequence": int(prepared.sequence),
-		"remaining_q": int(holder[check.supply_field]), "holder_version": int(holder.version)})
-
+	return publish_validated_fire_suppression(data, prepared, check)
 static func _fire_suppression_inputs(data: TerrainData, state: Dictionary, begin: float, end: float) -> Dictionary:
 	var pending: Array = state.get("suppression_pending", []).duplicate(true)
 	var kept: Array[Dictionary] = []
@@ -6040,7 +5910,7 @@ static func fire_path_hazard_at(snapshot: Dictionary, cell: Vector2i, height: fl
 # item per action second at full old-snapshot intensity. It creates no new fuel.
 const FIRE_INVENTORY_VERSION := 1
 const FIRE_INVENTORY_LOSS_RATE := 1.0
-const FIRE_COMBUSTIBLE_STACKS := ["wood", "wild_food", "herb", "fish", "meat", "hide", "seeds", "grain", "fiber", "fodder", "charcoal", "rope", "cloth", "leather", "wool", "arrow", "fire_arrow", "bolt", "siege_bolt", "camp_tent"]
+const FIRE_COMBUSTIBLE_STACKS := ["wood", "wild_food", "herb", "fish", "meat", "hide", "seeds", "grain", "fiber", "fodder", "charcoal", "rope", "cloth", "leather", "wool", "arrow", "fire_arrow", "bolt", "siege_bolt", "fire_pot", "camp_tent"]
 
 static func _fire_item_combustible(definition: Dictionary) -> bool:
 	var slot := str(definition.get("slot", ""))
@@ -6805,14 +6675,21 @@ static func _technology_policy(data: TerrainData) -> Dictionary:
 	if not pin is Dictionary or not Technology.integer(pin.get("format"), 1, 2): return fail("INVALID_TECH_POLICY", "原固定世界政策容器失效")
 	return TechnologyPolicy.candidate(pin, int(pin.format) == 1)
 
-static func work_preflight(data: TerrainData, task: Dictionary, cargo: Dictionary, carry_limit: int, worker_faction: int, original_identity: int = 0, occupied: Callable = Callable()) -> Dictionary:
+static func work_preflight(data: TerrainData, task: Dictionary, cargo: Dictionary, carry_limit: int, worker_faction: int, original_identity: int = 0, occupied: Callable = Callable(), checked_prefix: Dictionary = {}) -> Dictionary:
 	if data == null or data.site.is_empty() or bool(data.site.get("paused", false)) or task.is_empty() or _fire_work_pending(data, task): return fail("BUSY")
-	if str(task.get("mode", "")) != "work" or str(task.get("target", "")).is_empty() or int(task.get("cell", -1)) != int(task.get("work_cell", task.get("cell", -1))): return fail("WAITING", "原人尚未到原工位")
+	var original_manual := is_same(task, data.site.get("manual", {}))
+	# The original manual owner never saves mode/work_cell. Only its SAME
+	# dictionary may use this original shape; copied worker candidates cannot.
+	if str(task.get("target", "")).is_empty() or (not original_manual and str(task.get("mode", "")) != "work") \
+		or not Technology.integer(task.get("cell"), 0, data.size.x * data.size.y - 1) \
+		or int(task.cell) != int(task.get("work_cell", task.cell)): return fail("WAITING", "原人尚未到原工位")
 	var target := str(task.target)
 	var action := str(task.get("action", "harvest"))
 	var cell := data.cell_from_index(int(task.cell))
+	if not _technology_policy(data).ok: return fail("INVALID_TECH_POLICY")
 	var actions: Variant = _technology_actions(data)
-	var person: Dictionary = actions._technology_operator_for_task(task, original_identity) if actions != null else {}
+	if not checked_prefix.is_empty() and _checked_work_prefix_owner(data, task, original_identity, checked_prefix) == null: return fail("STALE_WORK_PREFIX")
+	var person: Dictionary = actions._technology_operator_for_task(task, original_identity) if actions != null and checked_prefix.is_empty() else {}
 	var base := {"remaining": 0.0, "productivity": 1.0, "payment": {}, "payment_source": {}, "payment_key": "", "required_skill": "", "eligible_master": false}
 	if target == "depot":
 		var depot := data.cell_from_index(int(data.site.depot_cell))
@@ -6826,9 +6703,17 @@ static func work_preflight(data: TerrainData, task: Dictionary, cargo: Dictionar
 		var ship := str(vehicle.get("kind", "")) == "ship"
 		var field := "build" if action == "construct" else "repair"
 		var job: Dictionary = vehicle.get("naval", {}).get("repair", {}) if ship else vehicle.get(field, {})
-		if vehicle.is_empty() or job.is_empty() or action not in ["construct", "repair"] or float(vehicle.get("hp", 0.0)) <= 0.0: return fail("NO_TARGET")
+		if vehicle.is_empty() or job.is_empty() or action not in ["construct", "repair"] or float(vehicle.get("naval", {}).get("hp", 0.0) if ship else vehicle.get("hp", 0.0)) <= 0.0: return fail("NO_TARGET")
 		if not can_pay(data.site.inventory, {"tools": 1}): return fail("MATERIALS")
-		if not person.is_empty() and int(vehicle.get("team_id", -1)) != int(person.owner.team_id): return fail("NO_AUTHORITY")
+		if not person.is_empty():
+			var original_team: Variant = actions._technology_team(person)
+			if original_team == null and person.owner is CrowdPersonOwner: original_team = person.owner._command_owner(int(person.unit))
+			if not original_team is TerrainArmy or int(vehicle.get("team_id", -1)) != int(original_team.team_id): return fail("NO_AUTHORITY")
+		if not checked_prefix.is_empty():
+			var start_owner: Variant = checked_prefix.start.owner
+			var start_team: Variant = actions._technology_team({"owner": start_owner, "person_id": original_identity})
+			if start_team == null and start_owner is CrowdPersonOwner: start_team = start_owner._command_owner(int(checked_prefix.start.unit))
+			if not start_team is TerrainArmy or int(vehicle.get("team_id", -1)) != int(start_team.team_id): return fail("NO_AUTHORITY")
 		var slot := int(task.get("work_slot", -1))
 		if ship:
 			var checked := advance_ship_repair_work(data, key, 0.00000001, cell, slot, int(vehicle.team_id), true)
@@ -6840,9 +6725,9 @@ static func work_preflight(data: TerrainData, task: Dictionary, cargo: Dictionar
 			var policy := _technology_policy(data)
 			if not policy.ok: return policy
 			var category := TechnologyPolicy.siege_category(str(vehicle.kind), action)
-			var trial_facts := technology_trial_work_facts(data, vehicle, task, original_identity) if action == "construct" else ok("", {"required_skill": "", "eligible_master": false})
+			var trial_facts := (technology_trial_work_facts(data, vehicle, task, original_identity) if checked_prefix.is_empty() else _checked_trial_start_facts(checked_prefix)) if action == "construct" else ok("", {"required_skill": "", "eligible_master": false})
 			if not trial_facts.ok: return trial_facts
-			if not category.is_empty() and policy.policy.categories.has(category) and str(trial_facts.get("policy_exception", "")) != category:
+			if checked_prefix.is_empty() and not category.is_empty() and policy.policy.categories.has(category) and str(trial_facts.get("policy_exception", "")) != category:
 				base.required_skill = category
 				base.eligible_master = not person.is_empty() and Technology.learned(actions._body_get(person, "technology"), category)
 			if not str(trial_facts.required_skill).is_empty():
@@ -6851,6 +6736,30 @@ static func work_preflight(data: TerrainData, task: Dictionary, cargo: Dictionar
 					if original_master.is_empty() or not Technology.learned(actions._body_get(original_master, "technology"), category): return fail("NO_TECHNOLOGY")
 				base.required_skill = str(trial_facts.required_skill)
 				base.eligible_master = bool(trial_facts.eligible_master)
+		if action == "construct":
+			var yard_facts := _technology_siege_yard_work_facts(data, vehicle, original_identity, checked_prefix, task)
+			if not yard_facts.ok: return yard_facts
+			base.required_skills = yard_facts.required_skills.duplicate()
+			base.eligible_skills = yard_facts.eligible_skills.duplicate()
+			if not str(base.required_skill).is_empty() and not str(base.required_skill).begins_with("trial:"):
+				if not base.required_skills.has(str(base.required_skill)): base.required_skills.append(str(base.required_skill))
+				if base.eligible_master and not base.eligible_skills.has(str(base.required_skill)): base.eligible_skills.append(str(base.required_skill))
+			if str(base.required_skill).is_empty() and not base.required_skills.is_empty():
+				base.required_skill = str(base.required_skills[0])
+				base.eligible_master = base.eligible_skills.has(base.required_skill)
+		# A true held prefix keeps its qualified start. Current life/authority is
+		# checked again only by the original zero completion endpoint.
+		if action == "repair" and vehicle.has("technology_spare_repair") and checked_prefix.is_empty():
+			var spare_guard := settlement_spare_work_guard(data, vehicle, task, original_identity)
+			if not spare_guard.ok: return spare_guard
+		var credit_facts := technology_work_credit_facts(data, vehicle) if action == "construct" else ok("", {"factor": 1.0})
+		if not credit_facts.ok: return credit_facts
+		base.progress_multiplier = float(credit_facts.factor) * technology_cold_work_multiplier(data, vehicle, task)
+		if action == "construct":
+			var method_facts := technology_siege_method_work_facts(data, vehicle, task, original_identity, checked_prefix)
+			if not method_facts.ok: return method_facts
+			base.productivity = float(method_facts.factor)
+			if float(method_facts.factor) > 1.0 and not base.eligible_skills.has("F11"): base.eligible_skills.append("F11")
 		base.remaining = maxf(0.0, float(job.total_work) - float(job.progress))
 		return ok("原器具共同工單預檢", base)
 	if not target.begins_with("feature:"):
@@ -6863,6 +6772,13 @@ static func work_preflight(data: TerrainData, task: Dictionary, cargo: Dictionar
 	var key := target.trim_prefix("feature:")
 	var feature: Dictionary = data.site.get("features", {}).get(key, {})
 	if feature.is_empty(): return fail("NO_TARGET")
+	base.progress_multiplier = technology_cold_work_multiplier(data, feature, task)
+	if feature.get("kind") == "irrigation_channel" and action == "construct" and checked_prefix.is_empty():
+		var channel := technology_geometry_operator_guard(data, feature, task, original_identity)
+		if not channel.ok: return channel
+	if feature.has("settlement_work") and checked_prefix.is_empty():
+		var defense_guard := settlement_defense_operator_guard(data, key, feature, task, original_identity)
+		if not defense_guard.ok: return defense_guard
 	if int(feature.get("owner_faction", -1)) >= 0 and int(feature.owner_faction) != worker_faction: return fail("NO_AUTHORITY")
 	var ecology_ready := ecology_feature_work_guard(data, feature, action)
 	if not ecology_ready.ok: return ecology_ready
@@ -6872,7 +6788,7 @@ static func work_preflight(data: TerrainData, task: Dictionary, cargo: Dictionar
 	var expected := int(job.get("work_cell", job.get("entrance", feature.entrance))) if action == "repair" else int(job.get("entrance", feature.entrance))
 	var service: Array = []
 	var slot := int(task.get("work_slot", -1))
-	if action == "operate" and int(feature.get("layout_version", 0)) == BUILDING_LAYOUT_VERSION and kind in FARM_KINDS + PASTURE_KINDS:
+	if action == "operate" and int(feature.get("layout_version", 0)) == BUILDING_LAYOUT_VERSION and (kind in FARM_KINDS + PASTURE_KINDS or feature.has("technology_shipyard_work")):
 		var slots := feature_work_slots(data, feature)
 		if slot < 0 or slot >= slots.size(): return fail("UNREACHABLE")
 		expected = int(slots[slot].cell)
@@ -6881,6 +6797,7 @@ static func work_preflight(data: TerrainData, task: Dictionary, cargo: Dictionar
 	if action == "operate" and str(feature.stage) == "complete" and definition.has("cycle") and bool(feature.get("batch_paid", false)) and float(feature.production) + 0.00000001 >= float(definition.cycle):
 		# Paid completed goods are an original zero-work endpoint. Skills/tools
 		# and new source costs apply only to future batches, never to pickup.
+		if not checked_prefix.is_empty(): return ok("原已付完成进度只候选；端点仍验当前资格", base)
 		var output_candidate := prepare_feature_output(data, feature, task, cargo, carry_limit, original_identity)
 		if not output_candidate.ok: return output_candidate
 		return ok("原已付完成品端點", base)
@@ -6888,11 +6805,19 @@ static func work_preflight(data: TerrainData, task: Dictionary, cargo: Dictionar
 		var checked := validate_ship_build(data, feature)
 		if not checked.ok or not feature.has("ship_build"): return fail("NO_TARGET")
 		base.remaining = maxf(0.0, float(feature.ship_build.total_work) - float(feature.production) * 60.0)
+		var shipyard_facts := _technology_shipyard_work_facts(data, key, task, original_identity, checked_prefix) if float(base.remaining) > 0.0 else ok("", {"required_skill": "", "eligible_master": false})
+		if not shipyard_facts.ok: return shipyard_facts
 		if float(base.remaining) > 0.0 and not can_pay(data.site.inventory, {"tools": 1}): return fail("MATERIALS")
-		var trial_facts := technology_trial_work_facts(data, feature, task, original_identity)
+		var trial_facts := (technology_trial_work_facts(data, feature, task, original_identity) if checked_prefix.is_empty() else _checked_trial_start_facts(checked_prefix))
 		if not trial_facts.ok: return trial_facts
 		base.required_skill = str(trial_facts.required_skill)
 		base.eligible_master = bool(trial_facts.eligible_master)
+		if not str(shipyard_facts.required_skill).is_empty() and str(base.required_skill).is_empty():
+			base.required_skill = str(shipyard_facts.required_skill)
+			base.eligible_master = bool(shipyard_facts.eligible_master)
+		base.required_skills = shipyard_facts.get("required_skills", []).duplicate()
+		base.eligible_skills = shipyard_facts.get("eligible_skills", []).duplicate()
+		base.productivity = float(shipyard_facts.get("factor", 1.0))
 		return ok("原造船共同工作預檢", base)
 	if action != "repair" and str(feature.stage) == "complete" and not feature_usable(feature): return fail("DESTROYED")
 	if not can_pay(data.site.inventory, {"tools": 1}): return fail("MATERIALS")
@@ -6910,7 +6835,7 @@ static func work_preflight(data: TerrainData, task: Dictionary, cargo: Dictionar
 		for index: int in job.get("added_cells", feature.cells):
 			if occupied.is_valid() and bool(occupied.call(data.cell_from_index(index))): return fail("OCCUPIED")
 		base.remaining = maxf(0.0, float(job.work) - float(job.progress)) * 60.0
-		var trial_facts := technology_trial_work_facts(data, feature, task, original_identity)
+		var trial_facts := (technology_trial_work_facts(data, feature, task, original_identity) if checked_prefix.is_empty() else _checked_trial_start_facts(checked_prefix))
 		if not trial_facts.ok: return trial_facts
 		base.required_skill = str(trial_facts.required_skill)
 		base.eligible_master = bool(trial_facts.eligible_master)
@@ -6918,7 +6843,7 @@ static func work_preflight(data: TerrainData, task: Dictionary, cargo: Dictionar
 	if action != "operate" or feature.has("pending_build") or feature.has("repair"): return fail("BUSY")
 	if not definition.has("cycle"): return fail("NO_TARGET")
 	if feature.has("species") and (int(feature.residents) > grazing_capacity(data, feature.cells) or int(feature.residents) < (2 if str(feature.species) == "horse" else 1)): return fail("NO_RESIDENTS")
-	var recipe_guard := technology_batch_operator_guard(data, key, feature, task, original_identity)
+	var recipe_guard := technology_batch_operator_guard(data, key, feature, task, original_identity) if checked_prefix.is_empty() else ok("原真实起点资格只准此held前缀", {"operator_id": original_identity})
 	if not recipe_guard.ok: return recipe_guard
 	var water: Dictionary = data.site.get("water_status", {}).get(key, {})
 	if not service.is_empty(): water = water.get("slots", {}).get(str(slot), {})
@@ -6952,7 +6877,6 @@ static func work_preflight(data: TerrainData, task: Dictionary, cargo: Dictionar
 	var shared := slot >= 0 and kind in FARM_KINDS + PASTURE_KINDS
 	base.remaining = maxf(0.0, float(definition.cycle) - float(feature.production)) * 60.0 / (1.0 if shared else productivity)
 	return ok("原現場生產預檢", base)
-
 
 static func technology_capture_valid(raw: Variant, allow_empty: bool = true) -> bool:
 	if not raw is Dictionary: return false
@@ -7084,43 +7008,42 @@ static func begin_technology_operation(data: TerrainData, token: Dictionary, pre
 	if data == null or not _technology_trial_shape(token, data): return fail("INVALID_TECHNOLOGY")
 	var actions: Variant = _technology_actions(data)
 	if actions == null or not actions.has_method("technology_phase_binding_candidate") or not actions.has_method("publish_phase_binding"): return fail("UNSUPPORTED", "原研習作業接線尚未發布")
-	var resumed := _resume_technology_operation(data, token)
+	if token.get("binding") == "water_priority":
+		if not Technology.keys(work_target, ["categories"]) or not work_target.categories is Array: return fail("INVALID")
+		return actions.begin_water_schedule_trial(token, work_target.categories, preview)
+	if token.tech_id == "S08":
+		if token.binding == "spares" and token.target_id == "depot" and work_target.is_empty():
+			if not actions.has_method("begin_scope_ranged_craft"): return fail("UNSUPPORTED")
+			return actions.begin_scope_ranged_craft(token, "ballista_spares", preview)
+		if token.binding == "spare_repair" and str(token.target_id).begins_with("vehicle:") and work_target.is_empty():
+			return request_settlement_spare_repair(data, str(token.target_id).trim_prefix("vehicle:"), int(token.person.person_id), preview, token)
+	if token.tech_id == "S06" and token.binding == "food_order":
+		if not work_target.is_empty() and (not Technology.keys(work_target, ["order_id"]) or not work_target.order_id is String): return fail("INVALID_WORK")
+		return actions.begin_scope_food_order(token, preview)
+	if token.tech_id == "F08" and token.binding == "crossbow":
+		if not work_target.is_empty(): return fail("INVALID_WORK")
+		return actions.begin_scope_ranged_craft(token, "crossbow", preview)
+	if token.tech_id == "F15" and token.binding in ["fire_arrow", "fire_pot"]:
+		return actions.begin_scope_ranged_craft(token, str(token.binding), preview)
+	if token.tech_id == "F15" and token.binding == "fire_pot_shot":
+		return actions.begin_fire_pot_shot_phase(token, work_target, preview)
+	if token.tech_id == "S12": return begin_settlement_ship_phase(data, token, preview, work_target)
+	var resumed := _resume_technology_operation(data, token, preview)
 	if resumed.code != "NO_TARGET": return resumed
+	if token.tech_id == "S04" and token.binding == "transfer":
+		var runtime_script: Script = load("res://scripts/terrain_lab/site_runtime.gd")
+		if not runtime_script.has_method("begin_settlement_metal_phase"): return fail("UNSUPPORTED")
+		return runtime_script.call("begin_settlement_metal_phase", data, token, preview, work_target)
+	if token.tech_id in ["S03", "S04", "S05"]:
+		if not Technology.keys(work_target, ["order_id"]) or not work_target.order_id is String: return fail("NO_ADOPTED_ORDER", "本研究須明示唯一原採用批次工單")
+		var adopted := _settlement_processing_ref_for_operation(data, {"token": token}, str(token.target_id).trim_prefix("feature:"))
+		if not adopted.ok or adopted.get("ref", {}).get("order_id") != work_target.order_id: return fail("STALE_SOURCE")
+		return _technology_begin_feature_operation(data, {"token": token}, str(token.target_id).trim_prefix("feature:"), str(token.binding), preview)
 	if not work_target.is_empty(): return _begin_technology_geometry(data, token, work_target, preview)
 	if not TECHNOLOGY_FEATURE_BINDINGS.has(str(token.binding)) or not str(token.target_id).begins_with("feature:"): return fail("NO_TARGET", "此操作須明示原幾何或原手作工作目標")
-	var key := str(token.target_id).trim_prefix("feature:")
-	var feature: Dictionary = data.site.get("features", {}).get(key, {})
-	var binding: Array = TECHNOLOGY_FEATURE_BINDINGS[str(token.binding)]
-	if feature.is_empty() or str(feature.get("kind", "")) != str(binding[0]) or str(feature.get("stage", "")) != "complete" or int(feature.get("layout_version", 0)) != BUILDING_LAYOUT_VERSION: return fail("NO_TARGET")
-	var person: Dictionary = actions._person(int(token.person.person_id))
-	if person.is_empty() or int(feature.get("owner_faction", -1)) >= 0 and int(feature.owner_faction) != int(person.faction): return fail("NO_AUTHORITY")
-	if feature.has("tech_trial") or feature.has("tech_batch") or feature.has("pending_build") or feature.has("repair") or bool(feature.get("batch_paid", false)) \
-		or float(feature.get("production", 0.0)) > 0.0 or _feature_has_work(data, key) or _feature_operation_active(data, key): return fail("BUSY", "先停止原工區並領完既已付款批次")
-	var candidate: Dictionary = feature.duplicate(true)
-	if str(binding[1]).is_empty(): candidate.erase("recipe_id")
-	else: candidate.recipe_id = str(binding[1])
-	var definition := feature_recipe(candidate)
-	if definition.is_empty() or not definition.has("cycle"): return fail("INVALID_MATERIALS", "原操作完整單批材料與本階段不符")
-	token = token.duplicate(true)
-	token.materials = definition.get("input", {}).duplicate(true)
-	var authority: Dictionary = actions.technology_phase_binding_candidate(token)
-	if not authority.ok: return authority
-	var checked := technology_recipe_guard(data, key, candidate, int(token.person.person_id), token)
-	if not checked.ok: return checked
-	if preview: return ok("原項目可綁定此設施批次", {"target_id": str(token.target_id), "materials": definition.input.duplicate(true), "work_seconds": float(definition.cycle) * 60.0})
-	# All candidates are ready. Original feature + original scope attempt publish
-	# synchronously; neither publication invokes a fallible transaction.
-	if str(binding[1]).is_empty(): feature.erase("recipe_id")
-	else: feature.recipe_id = str(binding[1])
-	feature.tech_trial = token.duplicate(true)
-	feature.status = "已綁本次原項目；等待具名人物到原工位"
-	actions.publish_phase_binding(authority)
-	data.environment_revision += 1
-	rebuild_water(data)
-	return ok(str(feature.status), {"target_id": str(token.target_id), "token": token.duplicate(true), "resumed": false})
+	return _technology_begin_feature_operation(data, {"token": token}, str(token.target_id).trim_prefix("feature:"), str(token.binding), preview)
 
-
-static func _resume_technology_operation(data: TerrainData, proposed: Dictionary) -> Dictionary:
+static func _resume_technology_operation(data: TerrainData, proposed: Dictionary, preview: bool = false) -> Dictionary:
 	var target: Dictionary = {}
 	var key := str(proposed.target_id).get_slice(":", 1)
 	if str(proposed.target_id).begins_with("feature:"): target = data.site.get("features", {}).get(key, {})
@@ -7134,9 +7057,19 @@ static func _resume_technology_operation(data: TerrainData, proposed: Dictionary
 	if actions == null or not actions.has_method("technology_phase_active_guard"): return fail("UNSUPPORTED")
 	var valid: Dictionary = actions.technology_phase_active_guard(original)
 	if not valid.ok: return valid
-	# Read-only resume: original token/attempt/payment/work/cycle all survive.
-	# PA rebinds the original person to its existing original physical task.
-	return ok("恢復同一原付費試作", {"target_id": str(original.target_id), "token": original.duplicate(true), "resumed": true})
+	if str(original.target_id).begins_with("feature:"):
+		var work := _technology_feature_resume_work(data, key, target, {"token": original})
+		if not work.ok: return work
+		if not preview: _technology_publish_feature_resume(data, work)
+		return ok("恢復同一原付費試作", {"target_id": str(original.target_id), "token": original.duplicate(true), "resumed": true, "already_working": bool(work.already_working)})
+	var work := _technology_vehicle_resume_work(data, key, target, {"token": original})
+	if not work.ok: return work
+	var credit := prepare_technology_work_credit(data, original, target)
+	if not credit.ok: return credit
+	if not preview:
+		publish_technology_work_credit(target, credit)
+		if not work.already_working: _technology_publish_named_vehicle(work.named)
+	return ok("恢復同一原付費器械", {"target_id": str(original.target_id), "token": original.duplicate(true), "resumed": true, "already_working": bool(work.already_working)})
 
 
 static func release_technology_operation(data: TerrainData, token: Dictionary) -> Dictionary:
@@ -7161,6 +7094,7 @@ static func technology_recipe_guard(data: TerrainData, key: String, feature: Dic
 	var category := TechnologyPolicy.recipe_category(kind, recipe)
 	var exception := ""
 	if not token.is_empty():
+		if actions == null or not actions.has_method("_technology_scope_owner"): return fail("UNSUPPORTED")
 		var owner: Dictionary = actions._technology_scope_owner(str(token.scope), str(token.scope_id))
 		var record: Dictionary = owner.get("technology", {})
 		var phase := Technology.scope_next_phase(Technology.active_project(record), token.person, record.get("person_links", []))
@@ -7169,13 +7103,24 @@ static func technology_recipe_guard(data: TerrainData, key: String, feature: Dic
 	if not category.is_empty() and policy.policy.categories.has(category) and exception != category \
 		and (person.is_empty() or not Technology.learned(actions._body_get(person, "technology"), category)): return fail("NO_TECHNOLOGY", "原實際操作者須學會本世界固定准入技藝")
 	var required := str(definition.get("technology", ""))
-	if not required.is_empty() and (token.is_empty() or str(token.tech_id) != required):
+	if not required.is_empty() and not technology_existing_paid_finish(data, key, feature):
 		if actions == null or not actions.has_method("_technology_scope_owner"): return fail("NO_TECHNOLOGY")
 		var scope := str(TechnologyCatalog.get_node(required).get("scope", ""))
-		var scope_id := str(data.site.get("family", {}).get("family_id", "")) if scope == "family" else str(data.site.get("settlement", {}).get("settlement_id", ""))
-		var owner: Dictionary = actions._technology_scope_owner(scope, scope_id)
-		if not Technology.scope_known(owner.get("technology", {}), required): return fail("NO_TECHNOLOGY", "當前原持有人尚未掌握此新工序")
-		if scope == "family" and (person.is_empty() or not Technology.learned(actions._body_get(person, "technology"), required)): return fail("NO_TECHNOLOGY", "改良工序須由真正學會的原人物實際操作")
+		var trial_exception: bool = not token.is_empty() and str(token.tech_id) == required
+		if scope == "family":
+			# D03: the original learned person retains a usable skill on departure.
+			# The family archive still controls research/teaching, not ordinary work.
+			if not trial_exception and (person.is_empty() or not Technology.learned(actions._body_get(person, "technology"), required)): return fail("NO_TECHNOLOGY", "改良工序須由真正學會的原人物實際操作")
+		elif scope == "settlement":
+			var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+			if settlement_script == null: return fail("UNSUPPORTED")
+			var scope_id: String = str(data.site.get("settlement", {}).get("settlement_id", ""))
+			var owner: Dictionary = actions._technology_scope_owner(scope, scope_id)
+			var status: Dictionary = settlement_script.call("status", actions.lab)
+			if owner.is_empty() or status.get("effective") != true or int(feature.get("owner_faction", -1)) != int(owner.get("owner_faction", -2)) \
+				or not bool(settlement_script.call("feature_in_jurisdiction", data, feature)): return fail("NO_TECHNOLOGY", "原聚落停效、管轄或設施管理方不符")
+			if not trial_exception and not Technology.scope_known(owner.get("technology", {}), required): return fail("NO_TECHNOLOGY", "當前原聚落尚未掌握此新工序")
+		else: return fail("INVALID_TECHNOLOGY")
 	var skill := str(definition.get("operator_skill", ""))
 	if not skill.is_empty() and (person.is_empty() or not Technology.learned(actions._body_get(person, "technology"), skill)): return fail("NO_TECHNOLOGY", "須由學會該技藝的原人物實際操作")
 	return ok()
@@ -7201,6 +7146,13 @@ static func technology_batch_operator_guard(data: TerrainData, key: String, feat
 		if actions == null or not actions.has_method("technology_phase_active_guard"): return fail("UNSUPPORTED")
 		var active: Dictionary = actions.technology_phase_active_guard(token)
 		if not active.ok: return active
+	if feature.has("technology_order") and (token.is_empty() or str(feature.technology_order.get("order_id", "")).begins_with("production_")):
+		var public_guard := _technology_public_operator_guard(data, feature, task, int(person.get("person_id", 0)))
+		if not public_guard.ok: return public_guard
+	var processing := settlement_processing_work_context(data, feature, task, int(person.get("person_id", 0)))
+	if not processing.ok: return processing
+	var physical := _technology_armor_new_work_guard(data, key, feature)
+	if not physical.ok: return physical
 	var checked := technology_recipe_guard(data, key, feature, int(person.get("person_id", 0)), token)
 	if checked.ok: checked.operator_id = int(person.get("person_id", 0))
 	return checked
@@ -7210,9 +7162,12 @@ static func technology_batch_operator_guard(data: TerrainData, key: String, feat
 
 
 static func technology_record_work(feature: Dictionary, actual_minutes: float, actual_identity: int) -> void:
-	if feature.has("tech_batch") and int(feature.tech_batch.operator_id) == actual_identity and is_finite(actual_minutes) and actual_minutes > 0.0:
+	if feature.has("tech_batch") and actual_identity > 0 and is_finite(actual_minutes) and actual_minutes > 0.0 and _technology_unbound_ordinary_feature_ledger(feature, feature.tech_batch):
+		feature.tech_batch.operator_id = actual_identity
 		feature.tech_batch.work_seconds = float(feature.tech_batch.work_seconds) + actual_minutes * 60.0
-
+		return
+	if feature.has("tech_batch") and (int(feature.tech_batch.operator_id) == actual_identity or int(feature.tech_batch.operator_id) == 0 and feature.has("technology_settlement_order")) and is_finite(actual_minutes) and actual_minutes > 0.0:
+		feature.tech_batch.work_seconds = float(feature.tech_batch.work_seconds) + actual_minutes * 60.0
 
 static func _technology_output_products(definition: Dictionary) -> Array:
 	var products: Array = []
@@ -7267,10 +7222,20 @@ static func prepare_feature_output(data: TerrainData, feature: Dictionary, worke
 		if not phase_prepared.ok: return phase_prepared
 		nation_prepared = actions.lab.site_controller.prepare_nation_technology_output(token, event)
 		if not nation_prepared.ok: return nation_prepared
+	var public_prepared := ok("", {"orders": null, "prepared": {}})
+	if feature.has("technology_order") and token.is_empty() and not str(feature.technology_order.get("order_id", "")).begins_with("production_"):
+		if ledger.is_empty() or receipt.is_empty() or person.is_empty() or int(person.person_id) != int(ledger.operator_id): return fail("STALE_SOURCE")
+		var event := {"id": str(ledger.payment_id), "site_id": str(data.site.id), "target_id": "feature:" + key, "operator_id": int(ledger.operator_id),
+			"binding": "iron_armor", "work_seconds": float(ledger.work_seconds), "item_ids": ids.duplicate(), "outputs": output.duplicate(true), "materials": ledger.materials.duplicate(true)}
+		public_prepared = _technology_prepare_public_output(data, feature, event)
+		if not public_prepared.ok: return public_prepared
+	var processing_prepared := prepare_settlement_processing_output(data, feature, receipt)
+	if not processing_prepared.ok: return processing_prepared
+	var military_prepared := _technology_prepare_military_output(data, feature, receipt)
+	if not military_prepared.ok: return military_prepared
 	return ok("", {"state_ref": data.site, "feature_ref": feature, "feature_before": feature.duplicate(true), "worker_ref": worker,
 		"cargo_ref": cargo, "cargo_before": cargo.duplicate(true), "output": output.duplicate(true), "products": item_prepared,
-		"holder_ref": holder, "holder_before": holder.duplicate(true), "receipt": receipt, "phase": phase_prepared, "actions": actions, "nation": nation_prepared})
-
+		"holder_ref": holder, "holder_before": holder.duplicate(true), "receipt": receipt, "phase": phase_prepared, "actions": actions, "nation": nation_prepared, "public_operation": public_prepared, "military_operation": military_prepared, "settlement_operation": processing_prepared})
 
 static func publish_feature_output(data: TerrainData, prepared: Dictionary) -> void:
 	assert(prepared.ok and is_same(data.site, prepared.state_ref) and prepared.feature_ref == prepared.feature_before and prepared.cargo_ref == prepared.cargo_before)
@@ -7282,6 +7247,7 @@ static func publish_feature_output(data: TerrainData, prepared: Dictionary) -> v
 	prepared.feature_ref.batch_paid = false
 	prepared.feature_ref.erase("tech_batch")
 	prepared.feature_ref.erase("tech_trial")
+	prepared.feature_ref.erase("tech_work_credit")
 	if not prepared.receipt.is_empty():
 		# One current immutable output, with a finite monotonic original sequence.
 		# Accepted Scope/Nation receipts retain their own strict historical evidence.
@@ -7291,8 +7257,18 @@ static func publish_feature_output(data: TerrainData, prepared: Dictionary) -> v
 	data.site.total_produced = int(data.site.total_produced) + inventory_size(prepared.output) + prepared.products.get("item_ids", []).size()
 	if not prepared.phase.is_empty(): prepared.actions.publish_phase_receipt(prepared.phase)
 	if not prepared.nation.is_empty(): prepared.actions.lab.site_controller.publish_nation_technology_output(prepared.nation)
+	_technology_publish_public_output(prepared.public_operation)
+	_technology_publish_military_output(prepared.military_operation)
+	publish_settlement_processing_order(prepared.settlement_operation)
+	if prepared.feature_before.has("technology_settlement_order"):
+		var key := str(prepared.feature_before.technology_settlement_order.order_id)
+		var settlement: Dictionary = data.site.get("settlement", {})
+		var order: Dictionary = settlement.get("technology_operations", {}).get("orders", {}).get(key, {})
+		_stop_feature_zones(data, str(prepared.receipt.get("feature_id", order.get("payload", {}).get("feature_id", ""))), "operate")
+		if order.get("status") in ["completed", "cancelled"]: prepared.feature_ref.erase("technology_settlement_order")
+	prepared.feature_ref.erase("technology_order")
+	_technology_finish_named_feature(data, str(prepared.receipt.get("feature_id", "")))
 	data.environment_revision += 1
-
 
 static func valid_technology_batch(raw: Variant, data: TerrainData, key: String, target_kind: String = "feature") -> bool:
 	if not Technology.keys(raw, TECHNOLOGY_BATCH_FIELDS) or not Technology.integer(raw.version, 1, 1) or not Technology.integer(raw.id, 1) \
@@ -7332,8 +7308,12 @@ static func technology_output_candidate(data: TerrainData, token: Dictionary, ev
 		or not Technology.material_equal(event.materials, token.materials): return fail("INVALID_RECEIPT")
 	var actions: Variant = _technology_actions(data)
 	if actions == null: return fail("NO_AUTHORITY")
+	if token.binding == "water_priority":
+		if not actions.has_method("water_schedule_receipt_query"): return fail("UNSUPPORTED")
+		return actions.water_schedule_receipt_query(token, event)
 	var person: Dictionary = actions._person(int(token.person.person_id))
 	if person.is_empty() or float(person.hp) <= 0.0 or float(person.ko) > 0.0 or bool(person.captive): return fail("NO_AUTHORITY")
+	if token.tech_id == "S06" and token.binding == "food_order": return settlement_food_output_candidate(data, token, event)
 	var source_kind := "features" if str(token.target_id).begins_with("feature:") else "vehicles" if str(token.target_id).begins_with("vehicle:") else ""
 	if source_kind.is_empty(): return fail("NO_TARGET")
 	var key := str(token.target_id).get_slice(":", 1)
@@ -7370,9 +7350,8 @@ static func technology_output_candidate(data: TerrainData, token: Dictionary, ev
 		var identity := str(int(data.site.get("next_item", 0)) + index)
 		if event.item_ids[index] != identity or data.site.get("item_records", {}).has(identity): return fail("STALE_SOURCE")
 	var binding: Array = TECHNOLOGY_FEATURE_BINDINGS.get(str(token.binding), [])
-	if binding.size() != 2 or str(binding[0]) != str(target.kind) or str(binding[1]) != str(target.get("recipe_id", "")): return fail("INVALID_RECEIPT")
+	if binding.size() != 2 or str(binding[0]) != str(target.kind) or str(_settlement_bound_feature_recipe(data, target, token)) != str(target.get("recipe_id", "")): return fail("INVALID_RECEIPT")
 	return ok("原已付完整周期／具名本人工作／原序號的真產出候選")
-
 
 const TECHNOLOGY_BUILD_BINDINGS := {"house_build": "house", "wall_build": "stone_wall", "stairs_build": "wall_stairs", "road_build": "road", "survey": "survey_stakes", "irrigation": "irrigation_channel"}
 
@@ -7380,21 +7359,24 @@ const TECHNOLOGY_BUILD_BINDINGS := {"house_build": "house", "wall_build": "stone
 const TECHNOLOGY_SIEGE_BINDINGS := {"ballista_build": "ballista", "ram_build": "ram", "traction_build": "traction_trebuchet", "counterweight_build": "counterweight_trebuchet", "tower_build": "siege_tower"}
 
 
-static func _technology_geometry_payment(data: TerrainData, token: Dictionary, cost: Dictionary, preview: bool) -> Dictionary:
+static func _technology_geometry_payment(data: TerrainData, token: Dictionary, cost: Dictionary, preview: bool, original_source: Dictionary = {}) -> Dictionary:
 	var actions: Variant = _technology_actions(data)
+	if actions == null or not actions.has_method("technology_phase_binding_candidate") or not actions.has_method("technology_phase_payment_candidate"): return fail("UNSUPPORTED")
 	var candidate: Dictionary = token.duplicate(true)
 	candidate.materials = cost.duplicate(true)
-	var binding: Dictionary = actions.technology_phase_binding_candidate(candidate)
+	var binding: Dictionary = actions.technology_phase_binding_candidate(candidate, original_source)
 	if not binding.ok: return binding
-	var payment: Dictionary = actions.technology_phase_payment_candidate(candidate, cost, binding)
+	var payment: Dictionary = actions.technology_phase_payment_candidate(candidate, cost, binding, original_source)
 	if not payment.ok: return payment
 	return ok("", {"token": candidate, "binding": binding, "payment": payment, "preview": preview})
 
 
-static func _technology_geometry_ledger(data: TerrainData, token: Dictionary, payment: Dictionary, recipe: String) -> Dictionary:
+static func _technology_geometry_ledger(data: TerrainData, token: Dictionary, payment: Dictionary, recipe: String, original_source: Dictionary = {}) -> Dictionary:
+	var holder: Dictionary = data.site.depot_items if original_source.is_empty() else original_source.physical_holder
+	var version := int(holder.version) if original_source.is_empty() else int(original_source.holder_version)
 	return {"version": 1, "id": 1, "site_id": str(data.site.id), "feature_id": str(token.target_id).get_slice(":", 1),
 		"operator_id": int(token.person.person_id), "recipe_id": recipe, "materials": token.materials.duplicate(true),
-		"source_holder": "depot", "source_version": int(data.site.depot_items.version) - 1, "work_seconds": 0.0,
+		"source_holder": str(holder.holder), "source_version": version, "work_seconds": 0.0,
 		"token": token.duplicate(true), "payment_id": str(payment.payment_id)}
 
 
@@ -7404,7 +7386,7 @@ static func _begin_technology_geometry(data: TerrainData, token: Dictionary, wor
 	if person.is_empty() or not _siege_depot_ready(data) or bool(data.site.get("paused", false)): return fail("BUSY")
 	var binding := str(token.binding)
 	if TECHNOLOGY_BUILD_BINDINGS.has(binding):
-		if not Technology.keys(work_target, ["cells", "options"]) or not work_target.cells is Array or not work_target.options is Dictionary: return fail("INVALID")
+		if not (Technology.keys(work_target, ["cells", "options"]) or Technology.keys(work_target, ["cells", "options", "order_id"])) or not work_target.cells is Array or not work_target.options is Dictionary: return fail("INVALID")
 		var cells: Array[int] = []
 		for value: Variant in work_target.cells:
 			if not Technology.integer(value, 0, data.size.x * data.size.y - 1) or cells.has(int(value)): return fail("INVALID")
@@ -7413,7 +7395,8 @@ static func _begin_technology_geometry(data: TerrainData, token: Dictionary, wor
 		options.owner_faction = int(person.faction)
 		options.layout_version = BUILDING_LAYOUT_VERSION
 		var kind := str(TECHNOLOGY_BUILD_BINDINGS[binding])
-		var checked := preview_build(data, kind, cells, actions.lab.site_controller.reserves_cell, options)
+		var selected := {"token": token.duplicate(true)}
+		var checked := preview_build(data, kind, cells, actions.lab.site_controller.reserves_cell, options, {}, selected)
 		if not checked.ok: return checked
 		if str(token.target_id) != "feature:" + str(int(data.site.next_feature)): return fail("STALE_SOURCE")
 		if kind == "survey_stakes":
@@ -7427,86 +7410,85 @@ static func _begin_technology_geometry(data: TerrainData, token: Dictionary, wor
 			var geometry := preview_build(data, str(plan.kind), plan_cells, actions.lab.site_controller.reserves_cell, plan.options)
 			if not geometry.ok: return geometry
 		if kind == "irrigation_channel":
-			var connection := technology_irrigation_connection(data, cells)
+			var connection := technology_irrigation_connection(data, cells, options.get("irrigation", {}))
+			if cells.size() != 4 or token.get("tech_id") != "S02" or token.get("scope") != "settlement" or token.get("scope_id") != options.irrigation.settlement_id: return fail("INVALID_TECHNOLOGY", "S02原試作固定四格渠道")
 			if not connection.ok: return connection
-		var prepared := _technology_geometry_payment(data, token, checked.cost, preview)
+		var prepared := prepare_build_request(data, kind, cells, actions.lab.site_controller.reserves_cell, options, {}, selected)
 		if not prepared.ok: return prepared
+		if work_target.has("order_id") and str(work_target.order_id) != str(prepared.feature.get("technology_order", {}).get("order_id", "")): return fail("STALE_SOURCE")
 		if preview: return ok("可開始原幾何試作", {"target_id": token.target_id, "cost": checked.cost, "work_seconds": float(checked.work) * 60.0})
-		# request_build uses the same original full preflight, cells, resources,
-		# next_feature, clearing, navigation, structure and water guards again.
-		var result := request_build(data, kind, cells, actions.lab.site_controller.reserves_cell, options)
-		if not result.ok: return result
-		data.site.depot_items.version = int(data.site.depot_items.version) + 1
-		var feature: Dictionary = data.site.features[str(result.feature)]
-		feature.tech_trial = prepared.token
-		feature.tech_batch = _technology_geometry_ledger(data, prepared.token, prepared.payment, "construct:" + kind)
-		actions.publish_phase_payment(prepared.payment)
-		return ok("原材料與具名項目已綁同一施工", {"target_id": str(token.target_id), "token": prepared.token.duplicate(true), "resumed": false})
+		var result := publish_build_request(data, prepared)
+		return ok(str(result.message), {"target_id": str(token.target_id), "token": prepared.scope.token.duplicate(true), "resumed": false})
 	if TECHNOLOGY_SIEGE_BINDINGS.has(binding):
-		if not Technology.keys(work_target, ["anchor", "facing", "team_id"]) or not work_target.anchor is Vector2i or not work_target.facing is Vector2i or not Technology.integer(work_target.team_id, 1): return fail("INVALID")
+		if not (Technology.keys(work_target, ["anchor", "facing", "team_id"]) or Technology.keys(work_target, ["anchor", "facing", "team_id", "order_id"])) or not work_target.anchor is Vector2i or not work_target.facing is Vector2i or not Technology.integer(work_target.team_id, 1): return fail("INVALID")
 		var team: Variant = actions._technology_team(person)
 		if team == null or int(team.team_id) != int(work_target.team_id): return fail("NO_AUTHORITY", "試作者須屬本原施工隊")
 		if str(token.target_id) != "vehicle:" + str(int(data.site.get("next_vehicle", 1))): return fail("STALE_SOURCE")
 		var kind := str(TECHNOLOGY_SIEGE_BINDINGS[binding])
-		var checked := begin_siege_build(data, kind, work_target.anchor, work_target.facing, int(team.team_id), int(token.person.person_id), actions.lab.site_controller.reserves_cell, true)
+		var selected := {"token": token.duplicate(true)}
+		var checked := begin_siege_build(data, kind, work_target.anchor, work_target.facing, int(team.team_id), int(token.person.person_id), actions.lab.site_controller.reserves_cell, true, {}, selected)
 		if not checked.ok: return checked
-		var prepared := _technology_geometry_payment(data, token, checked.cost, preview)
-		if not prepared.ok: return prepared
+		if work_target.has("order_id"):
+			var local := token.duplicate(true)
+			local.materials = checked.cost.duplicate(true)
+			var source := _technology_material_source(data, {"token": local}, binding, local.materials)
+			if not source.ok: return source
+			if str(work_target.order_id) != str(source.operation_ref.get("order_id", "")): return fail("STALE_SOURCE")
 		if preview: return ok("可開始原器械試作", {"target_id": token.target_id, "cost": checked.cost, "work_seconds": checked.work_seconds})
-		var result := begin_siege_build(data, kind, work_target.anchor, work_target.facing, int(team.team_id), int(token.person.person_id), actions.lab.site_controller.reserves_cell)
+		var result := begin_siege_build(data, kind, work_target.anchor, work_target.facing, int(team.team_id), int(token.person.person_id), actions.lab.site_controller.reserves_cell, false, {}, selected)
 		if not result.ok: return result
 		var vehicle: Dictionary = data.site.vehicles[str(result.vehicle)]
-		vehicle.tech_trial = prepared.token
-		vehicle.tech_batch = _technology_geometry_ledger(data, prepared.token, prepared.payment, "construct:" + kind)
-		actions.publish_phase_payment(prepared.payment)
-		return ok("原器械材料與本具名項目已綁同一次交易", {"target_id": str(token.target_id), "token": prepared.token.duplicate(true), "resumed": false})
+		return ok(str(result.message), {"target_id": str(token.target_id), "token": vehicle.tech_trial.duplicate(true), "resumed": false})
 	if binding == "ferry_build":
 		if not Technology.keys(work_target, ["team_id"]) or not Technology.integer(work_target.team_id, 1) or not str(token.target_id).begins_with("feature:"): return fail("INVALID")
 		var team: Variant = actions._technology_team(person)
 		if team == null or int(team.team_id) != int(work_target.team_id): return fail("NO_AUTHORITY")
 		var key := str(token.target_id).trim_prefix("feature:")
-		var checked := begin_ship_build(data, key, "ferry", int(team.team_id), int(person.faction), actions.lab.site_controller.reserves_cell, true)
-		if not checked.ok: return checked
-		var prepared := _technology_geometry_payment(data, token, checked.cost, preview)
-		if not prepared.ok: return prepared
-		if preview: return ok("可開始原船塢試作", {"target_id": token.target_id, "cost": checked.cost, "work_seconds": checked.work_seconds})
-		var result := begin_ship_build(data, key, "ferry", int(team.team_id), int(person.faction), actions.lab.site_controller.reserves_cell)
+		var selected := {"token": token.duplicate(true)}
+		var result := begin_ship_build(data, key, "ferry", int(team.team_id), int(person.faction), actions.lab.site_controller.reserves_cell, preview, {}, selected)
 		if not result.ok: return result
-		var feature: Dictionary = data.site.features[key]
-		feature.tech_trial = prepared.token
-		feature.tech_batch = _technology_geometry_ledger(data, prepared.token, prepared.payment, "ship:ferry")
-		actions.publish_phase_payment(prepared.payment)
-		return ok("原船塢材料與本具名項目已綁同一造船", {"target_id": str(token.target_id), "token": prepared.token.duplicate(true), "resumed": false})
+		if preview: return ok("可開始原船塢試作", {"target_id": token.target_id, "cost": result.cost, "work_seconds": result.work_seconds})
+		return ok(str(result.message), {"target_id": str(token.target_id), "token": data.site.features[key].tech_trial.duplicate(true), "resumed": false})
 	return fail("INVALID", "此原幾何入口不匹配本階段binding")
 
 # A real channel follows the original terrain, connected original pump route
 # and bounded cells. It never creates water or a new terrain/navigation owner.
 
 
-static func technology_irrigation_connection(data: TerrainData, cells: Array[int]) -> Dictionary:
-	if cells.is_empty() or cells.size() > 36: return fail("INVALID")
-	var members := {}
+static func technology_irrigation_connection(data: TerrainData, cells: Array[int], config: Dictionary = {}) -> Dictionary:
+	if data == null or not _irrigation_config(config, data.site) or not _irrigation_path(data, cells): return fail("INVALID", "渠道需1至36格有序單格路徑及原水站引用")
+	var owner: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	var settlement: Dictionary = owner.call("record", data)
+	var actions: Variant = _technology_actions(data)
+	if actions == null or settlement.get("settlement_id") != config.settlement_id or not owner.call("status", actions.lab).get("effective", false) \
+		or not Technology.scope_known(settlement.get("technology", {}), "S01"): return fail("NO_AUTHORITY", "需原有效聚落與原供水章程")
+	var pump: Dictionary = data.site.features.get(config.source_feature_id, {})
+	if pump.get("kind") not in ["well", "intake"] or pump.get("stage") != "complete" or not feature_usable(pump) \
+		or int(pump.get("owner_faction", -1)) != int(settlement.get("owner_faction", -2)) or not owner.call("feature_in_jurisdiction", data, pump): return fail("WATER", "原管轄水站須完整可用")
+	var total := cells.size()
+	var visited := {}
+	var first: int = cells[0]
+	var next: String = str(config.upstream_feature_id)
+	while not next.is_empty():
+		if visited.has(next): return fail("INVALID", "渠道上游成環")
+		visited[next] = true
+		var upstream: Dictionary = data.site.features.get(next, {})
+		if upstream.get("kind") != "irrigation_channel" or upstream.get("stage") != "complete" or not feature_usable(upstream) \
+			or not _irrigation_config(upstream.get("irrigation"), data.site) or not _irrigation_path(data, upstream.get("cells")) \
+			or upstream.irrigation.source_feature_id != config.source_feature_id or upstream.irrigation.settlement_id != config.settlement_id \
+			or not owner.call("feature_in_jurisdiction", data, upstream) or not _irrigation_adjacent(data, int(upstream.cells[-1]), first): return fail("WATER", "延伸須接同源完整上段真尾端")
+		if not data.can_step(data.cell_from_index(int(upstream.cells[-1])), data.cell_from_index(first)): return fail("WATER", "原上游接觸邊已被地形／建物阻斷")
+		total += upstream.cells.size()
+		if total > IRRIGATION_MAX_CELLS: return fail("INVALID", "本期同一上游鏈最多36格")
+		first = int(upstream.cells[0])
+		next = str(upstream.irrigation.upstream_feature_id)
+	var joined := false
+	for index: Variant in pump.cells:
+		joined = joined or _irrigation_adjacent(data, int(index), first) and data.can_step(data.cell_from_index(int(index)), data.cell_from_index(first))
+	if not joined: return fail("WATER", "首段須逐格真接水站；原14格服務區不是水管")
 	for index: int in cells:
-		if not Technology.integer(index, 0, data.size.x * data.size.y - 1) or members.has(index) or not data.is_terrain_walkable(data.cell_from_index(index)): return fail("TERRAIN")
-		members[index] = true
-	var seen := {cells[0]: true}
-	var pending: Array[int] = [cells[0]]
-	var head := 0
-	var connected := false
-	while head < pending.size():
-		var index := pending[head]
-		head += 1
-		for pump_key: String in data.site.get("water_links", {}):
-			var pump: Dictionary = data.site.features.get(pump_key, {})
-			if str(pump.get("kind", "")) in ["well", "intake"] and str(pump.get("stage", "")) == "complete" and feature_usable(pump) and data.site.water_links[pump_key].has(index): connected = true
-		for direction: Vector2i in TerrainData.DIRECTIONS:
-			var current := data.cell_from_index(index)
-			var next := current + direction
-			if data.contains(next) and members.has(data.index(next)) and not seen.has(data.index(next)) and data.can_step(current, next):
-				seen[data.index(next)] = true
-				pending.append(data.index(next))
-	if seen.size() != cells.size() or not connected: return fail("WATER", "原渠道必須逐格連通並接原合法水源服務路線")
-	return ok()
+		if not owner.call("cell_in_jurisdiction", data, data.cell_from_index(index)): return fail("NO_AUTHORITY", "渠道占地超出原聚落管轄")
+	return ok("真水站與連續上游渠道已核", {"pump": pump, "settlement": settlement, "chain_cells": total})
 
 # Call before ANY interval progress for a bound feature/vehicle construction.
 # The actual original WorkTeam/PA supplies task identity, not a learned witness.
@@ -7516,16 +7498,31 @@ static func technology_geometry_operator_guard(data: TerrainData, target: Dictio
 	var token: Dictionary = target.get("tech_trial", {})
 	var actions: Variant = _technology_actions(data)
 	var person: Dictionary = actions._technology_operator_for_task(task, identity) if actions != null else {}
-	if token.is_empty(): return ok("", {"operator_id": int(person.get("person_id", 0))})
+	if target.get("kind") == "irrigation_channel":
+		var cells: Array[int] = []
+		cells.assign(target.cells)
+		var connection := technology_irrigation_connection(data, cells, target.get("irrigation", {}))
+		if not connection.ok: return connection
+		if token.is_empty():
+			if person.is_empty(): return fail("WAITING")
+			var job: Dictionary = actions._jobs.get(actions._job_key_for(int(person.person_id)), {})
+			if job.get("kind") != "technology_feature" or not is_same(job.get("work_task"), task) or not is_same(job.get("feature_ref"), target): return fail("NO_CONSENT", "普通渠道須由已明示的原本人作業")
+			var admitted := technology_irrigation_work_preflight(data, job.operation_selector, false)
+			return admitted if not admitted.ok else ok("", {"operator_id": int(person.person_id)})
+	if token.is_empty():
+		var ref: Variant = target.get("technology_settlement_order")
+		if Technology.keys(ref, ["settlement_id", "order_id"]):
+			var refs := _settlement_order_state(data, str(ref.settlement_id), str(ref.order_id))
+			if not refs.is_empty() and refs.order.get("kind") == "ship_cooperation":
+				var ship_work := settlement_ship_work_context(data, target, task, int(person.get("person_id", 0)))
+				if not ship_work.ok: return ship_work
+				return ok("", {"operator_id": int(person.get("person_id", 0))})
+		return _technology_public_operator_guard(data, target, task, int(person.get("person_id", 0)))
 	if person.is_empty() or target.get("tech_batch", {}).get("token", {}) != token: return fail("WAITING", "本具名原試作者未在原工位；試作整批停止")
 	var active: Dictionary = actions.technology_phase_active_guard(token)
 	if not active.ok: return active
 	if int(person.person_id) != int(token.person.person_id):
-		if not data.has_meta(&"site_work_team"): return fail("WAITING", "原共同工作段尚未接線")
-		var ref_value: Variant = data.get_meta(&"site_work_team", null)
-		var workers: Variant = ref_value.get_ref() if ref_value is WeakRef else null
-		if workers == null or not workers.has_method("accepted_interval_participant"): return fail("WAITING", "原共同工作段尚無實際參與的具名試作者")
-		var accepted: Dictionary = workers.accepted_interval_participant(task, int(token.person.person_id))
+		var accepted := _technology_accepted_named_interval(data, task, int(token.person.person_id))
 		if accepted.is_empty() or float(accepted.get("actual_seconds", 0.0)) <= 0.0 or float(accepted.get("productive", 0.0)) <= 0.0: return fail("WAITING", "原具名試作者本工作段未實際作業；助手整批停止")
 	return ok("", {"operator_id": int(person.person_id), "named_operator": int(token.person.person_id)})
 
@@ -7554,9 +7551,31 @@ static func technology_trial_work_facts(data: TerrainData, target: Dictionary, t
 # original completion/collision/fire/launch guards, before committing the target.
 
 
-static func prepare_technology_geometry_completion(data: TerrainData, target: Dictionary, target_id: String, actual_product_id: String = "") -> Dictionary:
+static func prepare_technology_geometry_completion(data: TerrainData, target: Dictionary, target_id: String, actual_product_id: String = "", actual_operator_id: int = 0) -> Dictionary:
 	var token: Dictionary = target.get("tech_trial", {})
-	if token.is_empty(): return ok("", {"phase": {}, "event": {}})
+	var settlement_ship := {}
+	if target.has("ship_build") and target.has("technology_settlement_order"):
+		var paid: Dictionary = target.get("tech_batch", {})
+		var actual_event := {"id": str(paid.get("payment_id", "")), "site_id": str(data.site.id), "target_id": target_id, "operator_id": int(paid.get("operator_id", 0)),
+			"binding": "ferry_build", "work_seconds": float(paid.get("work_seconds", 0.0)), "item_ids": [], "outputs": {}, "materials": paid.get("materials", {}).duplicate(true)}
+		settlement_ship = prepare_settlement_ship_output(data, target, actual_event)
+		if not settlement_ship.ok: return settlement_ship
+		if not settlement_ship.get("empty", false) and settlement_ship.product_id != actual_product_id: return fail("STALE_SOURCE")
+	if token.is_empty():
+		if not settlement_ship.is_empty(): return ok("", {"phase": {}, "event": {}, "target_ref": target, "settlement_ship": settlement_ship})
+		if target_id.begins_with("vehicle:") and target.has("technology_yard_id") and not target.has("technology_order"):
+			return _technology_siege_yard_ordinary_completion(data, target, actual_operator_id)
+		if not target.has("technology_order"): return ok("", {"phase": {}, "event": {}, "target_ref": target})
+		var public_ledger: Dictionary = target.get("tech_batch", {})
+		if public_ledger.is_empty(): return fail("STALE_SOURCE")
+		var ref: Dictionary = target.technology_order
+		var order: Dictionary = data.site.get("equipment_nations", {}).get(ref.nation_id, {}).get("technology_operations", {}).get("public_orders", {}).get(ref.order_id, {})
+		var binding := "ballista_build" if target_id.begins_with("vehicle:") else ("house_build" if order.get("tech_id") == "N06" else "road_build")
+		var event := {"id": str(public_ledger.payment_id), "site_id": str(data.site.id), "target_id": target_id, "operator_id": int(public_ledger.operator_id),
+			"binding": binding, "work_seconds": float(public_ledger.work_seconds), "item_ids": [], "outputs": {}, "materials": public_ledger.materials.duplicate(true)}
+		var public_prepared := _technology_prepare_public_output(data, target, event)
+		if not public_prepared.ok: return public_prepared
+		return ok("", {"phase": {}, "event": event, "target_ref": target, "public_operation": public_prepared})
 	var ledger: Dictionary = target.get("tech_batch", {})
 	if ledger.is_empty() or ledger.get("token", {}) != token or str(token.target_id) != target_id or float(ledger.get("work_seconds", 0.0)) <= 0.0: return fail("STALE_PROJECT")
 	var actions: Variant = _technology_actions(data)
@@ -7567,19 +7586,32 @@ static func prepare_technology_geometry_completion(data: TerrainData, target: Di
 	if not prepared.ok: return prepared
 	var nation: Dictionary = actions.lab.site_controller.prepare_nation_technology_output(token, event)
 	if not nation.ok: return nation
-	return ok("", {"phase": prepared, "event": event, "actions": actions, "target_ref": target, "actual_product_id": actual_product_id, "nation": nation})
-
+	return ok("", {"phase": prepared, "event": event, "actions": actions, "target_ref": target, "actual_product_id": actual_product_id, "nation": nation, "settlement_ship": settlement_ship})
 
 static func publish_technology_geometry_completion(prepared: Dictionary) -> void:
 	assert(prepared.ok)
-	if prepared.phase.is_empty(): return
+	if not prepared.get("settlement_ship", {}).is_empty(): publish_settlement_ship_order(prepared.settlement_ship)
+	if prepared.phase.is_empty():
+		if prepared.get("ordinary_yard") == true: prepared.target_ref.technology_construction = prepared.event.duplicate(true)
+		if prepared.has("public_operation"):
+			prepared.target_ref.technology_construction = prepared.event.duplicate(true)
+			_technology_publish_public_output(prepared.public_operation)
+			prepared.target_ref.erase("technology_order")
+		# The formerly bound paid target may finish by its ordinary owner after
+		# permanent abandon. It earns no research; discard only its spent current
+		# ledger once original physical completion succeeded.
+		if prepared.has("target_ref") and prepared.target_ref.get("tech_trial", {}).is_empty():
+			prepared.target_ref.erase("tech_batch")
+		return
 	prepared.target_ref.technology_construction = prepared.event.duplicate(true)
 	# Actual feature or vehicle ID stays an original product reference; no copy.
 	if not str(prepared.actual_product_id).is_empty(): prepared.target_ref.technology_product_id = str(prepared.actual_product_id)
 	prepared.target_ref.erase("tech_trial")
 	prepared.target_ref.erase("tech_batch")
+	prepared.target_ref.erase("tech_work_credit")
 	prepared.actions.publish_phase_receipt(prepared.phase)
 	prepared.actions.lab.site_controller.publish_nation_technology_output(prepared.nation)
+	prepared.target_ref.erase("technology_order")
 
 # T6 reads true current target ratios. It never creates a receipt, changes a
 # worker, credits another person, or writes progress. Baselines stay Catalog.
@@ -7629,3 +7661,6077 @@ static func technology_remaining_work(data: TerrainData, project: Dictionary, re
 			reduction = float(outstanding[pending_phase].seconds) * clampf(fraction, 0.0, 1.0)
 	return ok("", {"remaining_baseline": maxf(0.0, remaining - reduction)})
 
+static func cancel_farm_trial_protocol(data: TerrainData, key: String, requester_id: int, preview: bool = false) -> Dictionary:
+	var actions: Variant = _technology_actions(data)
+	if actions == null or requester_id != int(actions.lab.controlled_person_id()): return fail("NO_AUTHORITY")
+	var requester: Dictionary = actions._person(requester_id)
+	var feature: Dictionary = data.site.get("features", {}).get(key, {})
+	if requester.is_empty() or feature.is_empty() or not feature.has("farm_trial_protocol") or int(feature.get("owner_faction", -1)) != int(requester.faction): return fail("NO_AUTHORITY")
+	var checked := validate_farm_trial_protocol_storage(data, key, feature)
+	if not checked.ok: return checked
+	if not actions._ready(requester) or actions.is_busy(requester_id) or _feature_has_work(data, key): return fail("BUSY", "先沿原入口停止本田工作；已付材料與進度不退款或清零")
+	if preview: return ok("可解除本田試驗選擇；已付原批次仍留原田")
+	feature.erase("farm_trial_protocol")
+	data.environment_revision += 1
+	return ok("本田試驗選擇已解除；原已付批次可沿原普通工序領取")
+
+static func prepare_farm_trial_protocol_output(data: TerrainData, key: String, feature: Dictionary, worker: Dictionary, person: Dictionary, receipt: Dictionary) -> Dictionary:
+	if not feature.has("farm_trial_protocol"): return ok("", {"packet": {}})
+	var guard := farm_trial_protocol_operator_guard(data, key, feature, worker, person)
+	if not guard.ok: return guard
+	var packet: Dictionary = feature.farm_trial_protocol.duplicate(true)
+	packet.state = "complete"
+	packet.result = receipt.duplicate(true)
+	if not valid_farm_trial_protocol(packet, data, key, feature): return fail("STALE_SOURCE", "須真原paid/output完成收據；不以預期收穫代驗")
+	return ok("", {"packet": packet})
+
+static func request_farm_trial_protocol(data: TerrainData, requester_id: int, operator_id: int, selections: Array, preview: bool = false) -> Dictionary:
+	var actions: Variant = _technology_actions(data)
+	if actions == null or requester_id != int(actions.lab.controlled_person_id()): return fail("NO_AUTHORITY")
+	var requester: Dictionary = actions._person(requester_id)
+	var person: Dictionary = actions._person(operator_id)
+	if requester.is_empty() or person.is_empty() or not actions._ready(requester) or not actions._ready(person) \
+		or actions.is_busy(requester_id) or actions.is_busy(operator_id) or bool(data.site.get("paused", false)) or float(data.site.get("combat_left", 0.0)) > 0.0: return fail("BUSY")
+	if not Technology.learned(actions._body_get(person, "technology"), "F01"): return fail("NO_TECHNOLOGY", "須明選真正學會F01的原試作者")
+	if selections.size() != 2: return fail("INVALID", "恰選兩個不同的原農田與服務格")
+	var candidates: Array[Dictionary] = []
+	var seen := {}
+	for selection: Variant in selections:
+		if not Technology.keys(selection, ["feature_id", "work_slot", "recipe_id"]) or not selection.feature_id is String \
+			or not selection.recipe_id is String or not Technology.integer(selection.work_slot, 0) or seen.has(selection.feature_id): return fail("INVALID")
+		var key: String = selection.feature_id
+		var feature: Dictionary = data.site.get("features", {}).get(key, {})
+		if str(feature.get("kind", "")) not in FARM_KINDS or feature.get("stage") != "complete" or int(feature.get("layout_version", 0)) != BUILDING_LAYOUT_VERSION \
+			or int(feature.get("owner_faction", -1)) != int(requester.faction) or int(feature.get("owner_faction", -1)) != int(person.faction): return fail("NO_AUTHORITY")
+		var layout := validate_feature_layout(data, feature, false)
+		if not layout.ok: return layout
+		if feature.has("farm_trial_protocol") or feature.has("tech_trial") or feature.has("technology_order") or feature.has("repair") or feature.has("pending_build") \
+			or bool(feature.get("batch_paid", false)) or float(feature.get("production", 0.0)) != 0.0 or _feature_has_work(data, key): return fail("BUSY", "先停止原派工並領出原已付批次；不借舊進度作新試驗")
+		var slots := feature_work_slots(data, feature)
+		if int(selection.work_slot) >= slots.size() or selection.recipe_id != str(feature.get("recipe_id", "")): return fail("STALE_SOURCE")
+		var definition := feature_recipe(feature)
+		if not definition.has("cycle") or not definition.get("output_items", []).is_empty() or not can_pay(feature_input_inventory(data, feature, key), definition.input) or not can_pay(data.site.inventory, {"tools": 1}): return fail("MATERIALS")
+		var packet := {"version": 1, "operator": {"site_id": str(data.site.id), "person_id": operator_id}, "peer_feature": "", "work_slot": int(selection.work_slot),
+			"recipe_id": str(selection.recipe_id), "state": "pending", "conditions": _farm_trial_protocol_conditions(data, key, feature, int(selection.work_slot)), "result": {}}
+		candidates.append({"key": key, "feature": feature, "packet": packet})
+		seen[key] = true
+	for index: int in range(2):
+		candidates[index].packet.peer_feature = candidates[1 - index].key
+		if not valid_farm_trial_protocol(candidates[index].packet, data, candidates[index].key, candidates[index].feature): return fail("INVALID")
+	if preview: return ok("每塊明選服務格只做一個真原作物批次；未扣種子或派人", {"plots": selections.duplicate(true)})
+	for candidate: Dictionary in candidates:
+		candidate.feature.farm_trial_protocol = candidate.packet
+		candidate.feature.status = "原農事對照：明選服務格，最多一個已付真批次"
+	data.environment_revision += 1
+	return ok("兩個原單批試驗已登記；沿原派工入口安排所選真人")
+
+static func validate_technology_target_storage(data: TerrainData, key: String, target: Dictionary, target_kind: String = "feature") -> Dictionary:
+	if data == null or target_kind not in ["feature", "vehicle"]: return fail("CORRUPT_SAVE")
+	if target_kind == "vehicle":
+		var yard_validation := validate_technology_yard_vehicle(data, target)
+		if not yard_validation.ok: return yard_validation
+	if target_kind == "feature" and not valid_settlement_processing_target(data, key, target): return fail("CORRUPT_SAVE", "原聚落有限工單目標綁定")
+	if target.has("technology_siege_method") and (target_kind != "vehicle" or not valid_technology_siege_method(target.technology_siege_method, str(target.get("kind", "")))): return fail("CORRUPT_SAVE", "原器械單批木接方法格式")
+	if target.has("technology_siege_yard"):
+		if target_kind != "feature": return fail("CORRUPT_SAVE", "原器械場配置目標")
+		var yard := technology_siege_yard_context(data, key, false)
+		if not yard.ok: return yard
+	if target.has("technology_shipyard_work"):
+		if target_kind != "feature": return fail("CORRUPT_SAVE", "原船塢配置目標")
+		var yard := technology_shipyard_work_context(data, key, false)
+		if not yard.ok: return yard
+	if target.has("technology_ship_method"):
+		if target_kind != "feature": return fail("CORRUPT_SAVE", "原單次造船方法目標")
+		var ship := validate_ship_build(data, target)
+		if not ship.ok: return ship
+	var id := target_kind + ":" + key
+	if target.has("settlement_work") and (target_kind != "feature" or not valid_settlement_work_storage(data, key, target)): return fail("CORRUPT_SAVE", "原防禦清單目標引用")
+	if target.has("technology_spare_repair") and (target_kind != "vehicle" or not valid_settlement_spare_repair_storage(data, target)): return fail("CORRUPT_SAVE", "原備件修理格式")
+	if target.has("technology_order"):
+		var checked_order := validate_technology_order_storage(data, key, target, target_kind)
+		if not checked_order.ok: return checked_order
+	var token: Dictionary = {}
+	if target.has("tech_trial"):
+		if not target.tech_trial is Dictionary or not _technology_trial_shape(target.tech_trial, data): return fail("CORRUPT_SAVE", "原研究綁定格式")
+		token = target.tech_trial
+		if str(token.target_id) != id: return fail("CORRUPT_SAVE", "原研究目標不符")
+		var phase := {}
+		for candidate: Dictionary in Technology.scope_route(str(token.tech_id)).get("phases", []):
+			if candidate.id == token.phase_id and candidate.binding == token.binding: phase = candidate; break
+		# Current alternate routes are checked individually; a token does not own
+		# the chosen route, so infer only a matching real Catalog phase shape.
+		if phase.is_empty():
+			for route: Dictionary in TechnologyCatalog.get_node(str(token.tech_id)).research.routes:
+				for candidate: Dictionary in route.phases:
+					if candidate.id == token.phase_id and candidate.binding == token.binding: phase = candidate; break
+		if phase.is_empty() or not Technology.scope_phase_materials(token.materials, phase.materials): return fail("CORRUPT_SAVE", "原研究階段／全材料")
+		if target_kind == "vehicle":
+			if token.binding == "spare_repair":
+				if token.scope != "settlement" or token.tech_id != "S08" or not target.has("technology_spare_repair") or target.technology_spare_repair.released: return fail("CORRUPT_SAVE")
+			elif not TECHNOLOGY_SIEGE_BINDINGS.has(str(token.binding)) or str(TECHNOLOGY_SIEGE_BINDINGS[str(token.binding)]) != str(target.get("kind", "")): return fail("CORRUPT_SAVE", "器械研究binding")
+		elif TECHNOLOGY_BUILD_BINDINGS.has(str(token.binding)):
+			if str(TECHNOLOGY_BUILD_BINDINGS[str(token.binding)]) != str(target.get("kind", "")): return fail("CORRUPT_SAVE", "原施工研究binding")
+		elif token.binding == "ferry_build":
+			if target.get("kind") != "shipyard" or not target.get("ship_build") is Dictionary: return fail("CORRUPT_SAVE", "原船塢研究binding")
+		elif not TECHNOLOGY_FEATURE_BINDINGS.has(str(token.binding)) or str(TECHNOLOGY_FEATURE_BINDINGS[str(token.binding)][0]) != str(target.get("kind", "")) \
+			or str(_settlement_bound_feature_recipe(data, target, token)) != str(target.get("recipe_id", "")):
+			return fail("CORRUPT_SAVE", "原配方研究binding")
+	var ledger: Dictionary = {}
+	if target.has("tech_batch"):
+		if not valid_technology_batch(target.tech_batch, data, key, target_kind): return fail("CORRUPT_SAVE", "原付費批次格式")
+		ledger = target.tech_batch
+		if not validate_technology_ledger_source(data, target, ledger): return fail("CORRUPT_SAVE", "原付款實體來源／原版本不符")
+		if ledger.token != token: return fail("CORRUPT_SAVE", "付款與原綁定不符")
+		if target_kind == "vehicle":
+			if target.has("technology_spare_repair"):
+				if target.get("phase") not in ["idle", "disabled"] or not Technology.material_equal(ledger.materials, {"ballista_spares": 1}) or ledger.recipe_id != "repair:ballista_spares": return fail("CORRUPT_SAVE", "原備件付款／工序不符")
+			elif not _technology_original_wreck_payment(data, target, ledger) and (target.get("phase") != "building" or not Technology.material_equal(ledger.materials, target.get("build", {}).get("paid_cost", {})) \
+				or ledger.recipe_id != "construct:" + str(target.get("kind", ""))): return fail("CORRUPT_SAVE", "原器械付款／工序不符")
+		elif target.has("ship_build"):
+			if not Technology.material_equal(ledger.materials, target.ship_build.get("paid_cost", {})) or ledger.recipe_id != "ship:" + str(target.ship_build.get("ship_type", "")): return fail("CORRUPT_SAVE", "原造船付款／工序不符")
+		elif target.get("stage") != "complete":
+			if not Technology.material_equal(ledger.materials, target.get("cost", {})) or ledger.recipe_id != "construct:" + str(target.get("kind", "")): return fail("CORRUPT_SAVE", "原建物付款／工序不符")
+		elif not bool(target.get("batch_paid", false)) or ledger.recipe_id != str(target.get("recipe_id", "")) or not Technology.material_equal(ledger.materials, feature_recipe(target).get("input", {})):
+			return fail("CORRUPT_SAVE", "原單批投入／配方不符")
+	if target_kind == "vehicle" and not token.is_empty() and ledger.is_empty(): return fail("CORRUPT_SAVE", "具名器械缺原付款")
+	if target.has("tech_work_credit"):
+		if target_kind != "vehicle" or token.is_empty() or ledger.is_empty() or token.scope != "family" or token.tech_id not in ["F11", "F12"] \
+			or not valid_technology_work_credit(target.tech_work_credit) or float(target.tech_work_credit.remaining_work) > (float(SIEGE_DEFINITIONS.get(str(target.get("kind", "")), {}).get("work_seconds", -1.0)) if _technology_original_wreck_payment(data, target, ledger) else float(target.get("build", {}).get("total_work", -1.0))):
+			return fail("CORRUPT_SAVE", "分析信用須綁原器械／基準工時／付費項目")
+	if target.has("technology_output"):
+		if target_kind != "feature" or not valid_technology_output_state(target.technology_output, data, key): return fail("CORRUPT_SAVE", "原最新產出收據")
+	if target.has("technology_construction"):
+		var event: Variant = target.technology_construction
+		if not Technology.keys(event, ["id", "site_id", "target_id", "operator_id", "binding", "work_seconds", "item_ids", "outputs", "materials"]) \
+			or not event.id is String or event.id.is_empty() or not event.site_id is String or event.site_id.is_empty() \
+			or not event.target_id is String or not event.target_id.begins_with(target_kind + ":") \
+			or not event.target_id.trim_prefix(target_kind + ":").is_valid_int() \
+			or str(int(event.target_id.trim_prefix(target_kind + ":"))) != event.target_id.trim_prefix(target_kind + ":") \
+			or not Technology.integer(int(event.target_id.trim_prefix(target_kind + ":")), 1, 2147483646) or not Technology.integer(event.operator_id, 1) \
+			or not event.binding is String or not Technology.finite_number(event.work_seconds, 0.000000001) or not event.item_ids is Array \
+			or not Technology.material_stack(event.outputs) or not Technology.material_stack(event.materials): return fail("CORRUPT_SAVE", "原完成事件格式")
+		# Only completed original vehicles can retain immutable source-site and
+		# source-local vehicle/person IDs through legal Region arrival mapping.
+		# Active tokens/paid batches above remain bound to this current Site.
+		if target_kind == "feature" and (event.site_id != str(data.site.id) or event.target_id != id): return fail("CORRUPT_SAVE", "原設施完成事件須綁當前設施")
+		if target_kind == "vehicle":
+			if target.get("phase") == "building" or not target.get("build", {}).is_empty(): return fail("CORRUPT_SAVE", "原器械完成事件不能附未完工工程")
+			if not token.is_empty() or not ledger.is_empty(): return fail("CORRUPT_SAVE", "已完成器械不能帶未完成綁定")
+			if not TECHNOLOGY_SIEGE_BINDINGS.has(str(event.binding)) or str(TECHNOLOGY_SIEGE_BINDINGS[str(event.binding)]) != str(target.get("kind", "")) \
+				or not event.item_ids.is_empty() or not event.outputs.is_empty() or not Technology.material_equal(event.materials, SIEGE_DEFINITIONS[str(target.kind)].cost): return fail("CORRUPT_SAVE", "原器械完成事件")
+		elif target.get("stage") != "complete": return fail("CORRUPT_SAVE", "原設施完成事件不能附未完成設施")
+		elif event.binding == "ferry_build":
+			if target.get("kind") != "shipyard" or event.item_ids.size() != 1 or not target.has("technology_product_id") or event.item_ids[0] != target.technology_product_id or not event.outputs.is_empty(): return fail("CORRUPT_SAVE", "原船塢完成事件")
+		elif not TECHNOLOGY_BUILD_BINDINGS.has(str(event.binding)) or str(TECHNOLOGY_BUILD_BINDINGS[str(event.binding)]) != str(target.get("kind", "")) \
+			or not event.item_ids.is_empty() or not event.outputs.is_empty(): return fail("CORRUPT_SAVE", "原建物完成事件")
+	if target.has("technology_product_id"):
+		var product: Variant = target.technology_product_id
+		if target_kind != "feature" or target.get("kind") != "shipyard" or not target.has("technology_construction") \
+			or not product is String or not product.begins_with("vehicle:") or not product.trim_prefix("vehicle:").is_valid_int() \
+			or str(int(product.trim_prefix("vehicle:"))) != product.trim_prefix("vehicle:") or not Technology.integer(int(product.trim_prefix("vehicle:")), 1, int(data.site.get("next_vehicle", 1)) - 1): return fail("CORRUPT_SAVE", "原造船產品身分")
+	return ok()
+
+# Run only after the original Store accepts the raw shape. No schema fallback,
+# no source lookup, no reseeding and no changes to original gameplay authority.
+
+static func normalize_technology_target_storage(target: Dictionary) -> void:
+	for field: String in ["technology_siege_yard", "technology_siege_method", "technology_shipyard_work", "technology_ship_method", "irrigation"]:
+		if target.has(field): target[field].version = int(target[field].version)
+	if target.has("settlement_work"): target.settlement_work.step = int(target.settlement_work.step)
+	if target.has("technology_spare_repair"):
+		var spare: Dictionary = target.technology_spare_repair
+		spare.version = int(spare.version)
+		spare.operator.person_id = int(spare.operator.person_id)
+		spare.initial_hp = float(spare.initial_hp)
+	if target.has("tech_trial"):
+		for field: String in ["project_id", "epoch", "attempt"]: target.tech_trial[field] = int(target.tech_trial[field])
+		target.tech_trial.person.person_id = int(target.tech_trial.person.person_id)
+		for resource: String in target.tech_trial.materials: target.tech_trial.materials[resource] = int(target.tech_trial.materials[resource])
+	if target.has("tech_batch"):
+		for field: String in ["version", "id", "operator_id", "source_version"]: target.tech_batch[field] = int(target.tech_batch[field])
+		target.tech_batch.work_seconds = float(target.tech_batch.work_seconds)
+		for resource: String in target.tech_batch.materials: target.tech_batch.materials[resource] = int(target.tech_batch.materials[resource])
+		if not target.tech_batch.token.is_empty(): target.tech_batch.token = target.tech_trial.duplicate(true)
+	if target.has("tech_work_credit"):
+		target.tech_work_credit.remaining_work = float(target.tech_work_credit.remaining_work)
+		target.tech_work_credit.credit = float(target.tech_work_credit.credit)
+	if target.has("technology_output"):
+		target.technology_output.version = int(target.technology_output.version)
+		target.technology_output.next_seq = int(target.technology_output.next_seq)
+		for receipt: Dictionary in target.technology_output.receipts:
+			for field: String in ["id", "operator_id"]: receipt[field] = int(receipt[field])
+			receipt.work_seconds = float(receipt.work_seconds)
+			for resource: String in receipt.resources: receipt.resources[resource] = int(receipt.resources[resource])
+	if target.has("technology_construction"):
+		target.technology_construction.operator_id = int(target.technology_construction.operator_id)
+		target.technology_construction.work_seconds = float(target.technology_construction.work_seconds)
+		for field: String in ["outputs", "materials"]:
+			for resource: String in target.technology_construction[field]: target.technology_construction[field][resource] = int(target.technology_construction[field][resource])
+
+# Append to the ORIGINAL Runtime. All preparations retain actual original
+# holder/cargo refs. A source-shaped Dictionary never grants permission.
+
+static func request_build_from_survey(data: TerrainData, key: String, requester_id: int, occupied: Callable = Callable(), preview: bool = false) -> Dictionary:
+	var checked := survey_plan_preview(data, key, requester_id, occupied)
+	if not checked.ok or preview: return checked
+	var actions: Variant = _technology_actions(data)
+	var person: Dictionary = actions._person(requester_id)
+	if not actions._ready(person) or actions.is_busy(requester_id): return fail("BUSY")
+	var cells: Array[int] = []
+	for value: Variant in checked.plan.cells: cells.append(int(value))
+	return request_build(data, str(checked.plan.kind), cells, occupied, checked.plan.options)
+
+static func request_survey_plan(data: TerrainData, requester_id: int, operator_id: int, marks: Array[int], original_plan: Dictionary, occupied: Callable = Callable(), preview: bool = false) -> Dictionary:
+	var actions: Variant = _technology_actions(data)
+	if actions == null or requester_id != int(actions.lab.controlled_person_id()): return fail("NO_AUTHORITY")
+	var requester: Dictionary = actions._person(requester_id)
+	var person: Dictionary = actions._person(operator_id)
+	if requester.is_empty() or person.is_empty() or not actions._ready(requester) or not actions._ready(person) or actions.is_busy(requester_id) or actions.is_busy(operator_id) \
+		or int(requester.faction) != int(person.faction): return fail("BUSY")
+	if not Technology.learned(actions._body_get(person, "technology"), "F09"): return fail("NO_TECHNOLOGY")
+	if not valid_survey_plan(data, original_plan): return fail("INVALID", "需完整真原建設方案")
+	var plan: Dictionary = normalized_survey_plan(data, original_plan)
+	plan.options.owner_faction = int(person.faction)
+	var cells: Array[int] = []
+	for value: Variant in plan.cells: cells.append(int(value))
+	# Recheck the real original preview now. A later build rechecks it again.
+	var geometry := _preview_build(data, str(plan.kind), cells, occupied, plan.options, "", false)
+	if not geometry.ok: return geometry
+	if marks.size() != 2: return fail("INVALID")
+	for value: int in marks:
+		if value < 0 or value >= data.size.x * data.size.y: return fail("INVALID")
+	var quarter := 0 if data.cell_from_index(marks[0]).y == data.cell_from_index(marks[1]).y else 1
+	var options := {"layout_version": BUILDING_LAYOUT_VERSION, "quarter": quarter, "owner_faction": int(person.faction),
+		"survey_plan": plan, "survey_operator": {"site_id": str(data.site.id), "person_id": operator_id}}
+	var checked := preview_build(data, "survey_stakes", marks, occupied, options)
+	if not checked.ok: return checked
+	if preview: return ok("真双樁木材2、原120秒施工；未付款／未派工", {"marks": marks.duplicate(), "plan": plan, "cost": checked.cost, "work_seconds": 120.0})
+	return request_build(data, "survey_stakes", marks, occupied, options)
+
+static func family_construction_method_facts(data: TerrainData, feature: Dictionary, task: Dictionary, identity: int) -> Dictionary:
+	var job: Dictionary = feature.get("pending_build", feature)
+	if not job.has("construction_method") or task.get("action") != "construct": return ok("", {"factor": 1.0})
+	if not valid_family_construction_method(job.construction_method, data, feature, job): return fail("CORRUPT_STATE")
+	var actions: Variant = _technology_actions(data)
+	var person: Dictionary = actions._technology_operator_for_task(task, identity) if actions != null else {}
+	var method: Dictionary = job.construction_method
+	# Other legally assigned workers retain the original baseline. Only this real
+	# selected learned person's effort receives the method; team effort is summed
+	# by the original collector once, never copied to every participant.
+	var selected := not person.is_empty() and int(person.person_id) == int(method.operator.person_id) \
+		and Technology.learned(actions._body_get(person, "technology"), "F10")
+	return ok("", {"factor": 1.0 / 0.9 if selected else 1.0})
+
+static func request_family_construction_method(data: TerrainData, key: String, requester_id: int, operator_id: int, improved: bool = true, preview: bool = false) -> Dictionary:
+	var actions: Variant = _technology_actions(data)
+	if actions == null: return fail("NO_AUTHORITY")
+	if requester_id != int(actions.lab.controlled_person_id()): return fail("NO_AUTHORITY")
+	var requester: Dictionary = actions._person(requester_id)
+	var person: Dictionary = actions._person(operator_id)
+	var feature: Dictionary = data.site.get("features", {}).get(key, {})
+	if requester.is_empty() or person.is_empty() or feature.is_empty() or str(feature.kind) not in FAMILY_CONSTRUCTION_METHOD_KINDS: return fail("NO_TARGET")
+	var valid := validate_family_construction_method_storage(data, feature)
+	if not valid.ok: return valid
+	var job: Dictionary = feature.get("pending_build", feature)
+	if bool(data.site.get("paused", false)) or float(data.site.get("combat_left", 0.0)) > 0.0 \
+		or feature.get("stage") == "complete" and not feature.has("pending_build") or feature.has("repair") \
+		or feature.has("tech_trial") or feature.has("technology_order") or float(job.get("progress", 0.0)) != 0.0 or _feature_has_work(data, key): return fail("BUSY", "只選尚未開始的新施工；既有進度與修理不重定工時")
+	if not actions._ready(requester) or not actions._ready(person) or actions.is_busy(requester_id) or actions.is_busy(operator_id) \
+		or int(feature.get("owner_faction", -1)) >= 0 and (int(feature.owner_faction) != int(requester.faction) or int(feature.owner_faction) != int(person.faction)): return fail("NO_AUTHORITY")
+	if improved and not Technology.learned(actions._body_get(person, "technology"), "F10"): return fail("NO_TECHNOLOGY", "須明選真正學會F10的原人")
+	var layout := validate_feature_layout(data, feature, false)
+	if not layout.ok: return layout
+	var candidate := {"version": 1, "method": "F10", "operator": {"site_id": str(data.site.id), "person_id": operator_id}, "baseline_work": float(job.work)}
+	if improved and not valid_family_construction_method(candidate, data, feature, job): return fail("INVALID_WORK")
+	if preview: return ok("原新施工工法可選；未占人或改成本", {"feature": key, "operator_id": operator_id, "time_multiplier": 0.9 if improved else 1.0})
+	if improved: job.construction_method = candidate
+	else: job.erase("construction_method")
+	job.status = "已明選丈量接榫；只改所選合格原人的新施工工作段" if improved else "已選原普通施工"
+	data.environment_revision += 1
+	return ok(str(job.status))
+
+static func technology_siege_method_begin_guard(data: TerrainData, kind: String, team_id: int, operator_id: int, method: String) -> Dictionary:
+	if method == "basic": return ok()
+	if method != "joinery" or kind not in ["ballista", "ram", "traction_trebuchet"]: return fail("INVALID_WORK_METHOD", "木接工法只用於新弩炮／攻城槌／牽引投石機")
+	if not bool(TechnologyCatalog.get_node("F11").get("enabled", false)): return fail("NO_TECHNOLOGY", "F11新工法尚未開放")
+	var actions: Variant = _technology_actions(data)
+	if actions == null or operator_id <= 0: return fail("NO_OPERATOR", "改良新工單須明示原F11工作者")
+	var person: Dictionary = actions._person(operator_id)
+	var team: Variant = actions._technology_team(person)
+	if person.is_empty() or not team is TerrainArmy or int(team.team_id) != team_id or not actions._ready(person) \
+		or not Technology.learned(actions._body_get(person, "technology"), "F11"): return fail("NO_TECHNOLOGY", "本次具名原人尚未學會F11；未扣材料")
+	return ok("新工單明選木接；實際本人工作倍率仍由原工位重查")
+
+static func technology_siege_method_work_facts(data: TerrainData, vehicle: Dictionary, original_task: Dictionary, identity: int, prefix: Dictionary = {}) -> Dictionary:
+	if not vehicle.has("technology_siege_method"): return ok("原基本工時", {"factor": 1.0})
+	if not valid_technology_siege_method(vehicle.technology_siege_method, str(vehicle.get("kind", ""))): return fail("INVALID_WORK_METHOD")
+	var learned := false
+	if prefix.is_empty():
+		var actions: Variant = _technology_actions(data)
+		var person: Dictionary = actions._technology_operator_for_task(original_task, identity) if actions != null else {}
+		learned = not person.is_empty() and Technology.learned(actions._body_get(person, "technology"), "F11")
+	else:
+		# Caller supplies only the original provider's SAME registry-held prefix.
+		# Native endpoint death may not erase a previously admitted legal effort.
+		if _checked_work_prefix_owner(data, original_task, identity, prefix) == null: return fail("STALE_WORK_PREFIX")
+		learned = prefix.get("eligible_skills", []).has("F11")
+	return ok("本人木接倍率；助手仍基本工時", {"factor": 10.0 / 9.0 if learned else 1.0})
+
+static func valid_technology_siege_method(raw: Variant, kind: String) -> bool:
+	return kind in ["ballista", "ram", "traction_trebuchet"] and Technology.keys(raw, ["version"]) and Technology.integer(raw.version, 1, 1)
+
+static func technology_siege_history_source_candidate(data: TerrainData, vehicle_id: String, operator_id: int, original_task: Dictionary) -> Dictionary:
+	if data == null or not vehicle_id.is_valid_int() or str(int(vehicle_id)) != vehicle_id or operator_id <= 0: return fail("NO_TARGET")
+	var target: Dictionary = data.site.get("vehicles", {}).get(vehicle_id, {})
+	var kind := str(target.get("kind", ""))
+	var definition: Dictionary = SIEGE_DEFINITIONS.get(kind, {})
+	var job: Dictionary = target.get("build", {})
+	if definition.is_empty() or job.is_empty() or str(target.get("phase", "")) != "building" or float(target.get("hp", 0.0)) <= 0.0 \
+		or not is_equal_approx(float(job.get("total_work", -1.0)), float(definition.work_seconds)) \
+		or float(job.get("progress", -1.0)) + 0.000000001 < float(job.total_work) \
+		or not Technology.material_equal(job.get("paid_cost", {}), definition.cost) \
+		or not target.get("action", {}).is_empty() or not target.get("move", {}).is_empty() or not target.get("crew_slots", {}).is_empty(): return fail("WAITING")
+	var actions: Variant = _technology_actions(data)
+	var person: Dictionary = actions._technology_operator_for_task(original_task, operator_id) if actions != null else {}
+	var original_team: Variant = actions._technology_team(person) if actions != null and not person.is_empty() else null
+	if original_team == null and not person.is_empty() and person.owner is CrowdPersonOwner: original_team = person.owner._command_owner(int(person.unit))
+	if person.is_empty() or not original_team is TerrainArmy or int(original_team.team_id) != int(target.get("team_id", -1)) \
+		or original_task.get("target") != "vehicle:" + vehicle_id or original_task.get("action") != "construct": return fail("NO_AUTHORITY")
+	var slots := siege_work_slots(data, target)
+	var slot := int(original_task.get("work_slot", -1))
+	if slot < 0 or slot >= slots.size() or int(original_task.get("work_cell", -1)) != int(slots[slot].cell) \
+		or person.cell != data.cell_from_index(int(slots[slot].cell)): return fail("UNREACHABLE")
+	var binding := ""
+	for candidate: String in TECHNOLOGY_SIEGE_BINDINGS:
+		if str(TECHNOLOGY_SIEGE_BINDINGS[candidate]) == kind: binding = candidate; break
+	return ok("原付費器械完整施工與本原操作者真接觸端點", {"binding": binding,
+		"event_id": JSON.stringify([str(data.site.id), vehicle_id, "siege_complete"]), "site_id": str(data.site.id),
+		"vehicle_id": vehicle_id, "person_id": operator_id})
+
+static func _technology_shipyard_work_facts(data: TerrainData, key: String, task: Dictionary, identity: int, prefix: Dictionary = {}) -> Dictionary:
+	var feature: Dictionary = data.site.get("features", {}).get(key, {})
+	var configured := feature.has("technology_shipyard_work")
+	var learned := false
+	if not prefix.is_empty():
+		if _checked_work_prefix_owner(data, task, identity, prefix) == null: return fail("STALE_WORK_PREFIX")
+		learned = prefix.get("eligible_skills", []).has("F13") or prefix.get("required_skill") == "F13" and prefix.get("eligible_master") == true
+	else:
+		if configured:
+			var current := settlement_ship_work_context(data, feature, task, identity) if feature.has("technology_settlement_order") else technology_shipyard_work_context(data, key)
+			if not current.ok: return current
+		var actions: Variant = _technology_actions(data)
+		var person: Dictionary = actions._technology_operator_for_task(task, identity) if actions != null else {}
+		learned = not person.is_empty() and Technology.learned(actions._body_get(person, "technology"), "F13")
+	# A new original batch opts into this individual method exactly once. A
+	# configured shared group may apply its REAL admitted F13 master's method
+	# to helpers; ordinary unconfigured people only improve their own effort.
+	var factor := 10.0 / 9.0 if feature.get("technology_ship_method") == {"version": 1} and (configured or learned) else 1.0
+	return ok("", {"required_skill": "F13" if configured else "", "eligible_master": learned, "required_skills": ["F13"] if configured else [], "eligible_skills": ["F13"] if learned else [], "factor": factor})
+
+static func prepare_water_schedule(data: TerrainData, requester_id: int, categories: Array, token: Dictionary = {}) -> Dictionary:
+	if data == null or not categories is Array: return fail("INVALID")
+	var actions: Variant = _technology_actions(data)
+	if actions == null: return fail("NO_AUTHORITY")
+	var settlement: Dictionary = data.site.get("settlement", {})
+	var center: Dictionary = data.site.get("features", {}).get(str(settlement.get("center_id", "")), {})
+	var record: Dictionary = settlement.get("technology", {})
+	var schedule := {"version": 1, "settlement_id": str(settlement.get("settlement_id", "")), "categories": categories.duplicate(),
+		"project_id": int(token.get("project_id", 0)), "epoch": int(record.get("epoch", 1))}
+	if center.is_empty() or int(center.get("owner_faction", -1)) != int(settlement.get("owner_faction", -2)) \
+		or not valid_water_schedule(schedule, data.site): return fail("INVALID")
+	var check: Dictionary = actions._technology_scope_command(requester_id, "settlement", settlement)
+	if not check.ok: return check
+	var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	if settlement_script.call("status", actions.lab).get("effective") != true: return fail("NO_AUTHORITY", "原聚落停效")
+	var has_source := false
+	for key: String in data.site.get("water_links", {}):
+		var source: Dictionary = data.site.features.get(key, {})
+		if source.get("kind") in ["well", "intake"] and source.get("stage") == "complete" and feature_usable(source) \
+			and int(source.get("owner_faction", -1)) == int(settlement.get("owner_faction", -2)) \
+			and bool(settlement_script.call("feature_in_jurisdiction", data, source)): has_source = true
+	if not has_source: return fail("WATER", "須有本管轄內原供水來源")
+	if token.is_empty():
+		if TechnologyCatalog.get_node("S01").get("enabled") != true: return fail("UNIMPLEMENTED")
+		if not Technology.scope_known(record, "S01"): return fail("NO_TECHNOLOGY")
+	else:
+		if token.get("scope") != "settlement" or token.get("scope_id") != settlement.settlement_id or token.get("tech_id") != "S01" \
+			or token.get("binding") != "water_priority" or token.get("target_id") != "feature:" + str(settlement.center_id) \
+			or not token.get("materials", {}).is_empty(): return fail("INVALID_TECHNOLOGY")
+		var admitted: Dictionary = actions.technology_phase_work_preflight(token, true)
+		if not admitted.ok: return admitted
+	return ok("", {"settlement": settlement, "center": center, "schedule": schedule, "site_state": data.site})
+
+static func set_water_use_priority(data: TerrainData, requester_id: int, categories: Array) -> Dictionary:
+	var prepared := prepare_water_schedule(data, requester_id, categories)
+	if not prepared.ok: return prepared
+	prepared.center.technology_water_schedule = prepared.schedule
+	allocate_water(data)
+	data.environment_revision += 1
+	return ok("原水源容量不變；已依本聚落明示用途次序分配", {"categories": categories.duplicate()})
+
+static func begin_irrigation_channel(data: TerrainData, requester_id: int, source_feature_id: String, upstream_feature_id: String, cells: Array[int], options: Dictionary = {}, preview: bool = false, occupied: Callable = Callable()) -> Dictionary:
+	if data == null: return fail("INVALID")
+	var actions: Variant = _technology_actions(data)
+	if actions == null or requester_id != int(actions._technology_controlled()): return fail("NO_AUTHORITY")
+	var projected := options.duplicate(true)
+	projected.irrigation = {"version": 1, "settlement_id": str(data.site.get("settlement", {}).get("settlement_id", "")), "source_feature_id": source_feature_id, "upstream_feature_id": upstream_feature_id}
+	projected.owner_faction = int(data.site.get("settlement", {}).get("owner_faction", -1))
+	var prepared := prepare_build_request(data, "irrigation_channel", cells, occupied, projected)
+	return prepared if not prepared.ok or preview else publish_build_request(data, prepared)
+
+static func irrigation_channel_flow(data: TerrainData, key: String) -> Dictionary:
+	if data == null: return fail("INVALID")
+	var feature: Dictionary = data.site.get("features", {}).get(key, {})
+	if feature.get("kind") != "irrigation_channel" or feature.get("stage") != "complete" or not feature_usable(feature): return fail("WATER")
+	var cells: Array[int] = []
+	cells.assign(feature.cells)
+	var connection := technology_irrigation_connection(data, cells, feature.get("irrigation", {}))
+	if not connection.ok: return connection
+	if not Technology.scope_known(connection.settlement.get("technology", {}), "S02"): return fail("NO_TECHNOLOGY")
+	# Service travels from each actual channel cell through original can_step.
+	# No percentages, moisture writes or independently invented water amount.
+	var seen := {}
+	var pending: Array[int] = []
+	for index: int in cells: seen[index] = 0; pending.append(index)
+	var head := 0
+	while head < pending.size():
+		var current := pending[head]
+		head += 1
+		if int(seen[current]) >= IRRIGATION_SERVICE_RADIUS: continue
+		for direction: Vector2i in TerrainData.DIRECTIONS:
+			var next := data.cell_from_index(current) + direction
+			if data.can_step(data.cell_from_index(current), next) and not seen.has(data.index(next)):
+				seen[data.index(next)] = int(seen[current]) + 1
+				pending.append(data.index(next))
+	return ok("原連續渠道有限服務範圍", {"source_feature_id": str(feature.irrigation.source_feature_id), "cells": pending})
+
+static func begin_settlement_processing_operation(data: TerrainData, settlement_id: String, order_id: String, preview: bool = false) -> Dictionary:
+	var ready := settlement_processing_preflight(data, settlement_id, order_id)
+	if not ready.ok: return ready
+	if int(ready.order.payload.project_id) != 0: return fail("NO_AUTHORITY", "研究批次須沿原Scope phase入口綁本次真token")
+	var selector := {"settlement_id": settlement_id, "order_id": order_id}
+	if ready.feature.has("tech_batch"):
+		if ready.feature.get("technology_settlement_order", {}) != selector: return fail("STALE_SOURCE")
+		var resume := _technology_feature_resume_work(data, str(ready.order.payload.feature_id), ready.feature, selector)
+		if not resume.ok: return resume
+		if not preview: _technology_publish_feature_resume(data, resume)
+		return ok("原已付批次恢復同一真工位；不重扣、不退已用工时", {"resumed": true})
+	return _technology_begin_feature_operation(data, selector, str(ready.order.payload.feature_id), str(_settlement_processing_spec(str(ready.order.kind)).binding), preview)
+
+static func grant_settlement_operation_source(data: TerrainData, settlement_id: String, order_id: String, requester_id: int,
+	source_feature_id: String = "", revoke: bool = false, preview: bool = false) -> Dictionary:
+	var refs := _settlement_order_state(data, settlement_id, order_id)
+	var actions: Variant = _technology_actions(data)
+	var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	if refs.is_empty() or actions == null or not bool(settlement_script.call("valid_technology_operations", data, refs.operations, data.site)): return fail("NO_TARGET")
+	if requester_id != int(actions._technology_controlled()) or requester_id != int(settlement_script.call("head_executor", actions.lab)): return fail("NO_AUTHORITY")
+	if refs.order.status not in ["prepared", "active", "suspended"] or not Technology.keys(refs.order.payload.get("source"), ["site_id", "holder", "grantor_id", "status"]): return fail("COMPLETE")
+	if int(refs.order.revision) >= 2147483646: return fail("LIMIT")
+	var candidate: Dictionary = refs.order.duplicate(true)
+	if revoke: candidate.payload.source.status = "revoked"
+	else:
+		var person: Dictionary = actions._person(requester_id)
+		if person.is_empty() or not actions._ready(person): return fail("BUSY")
+		if source_feature_id.is_empty():
+			var camp: Dictionary = actions._ranged_craft_context(person)
+			if not camp.ok: return camp
+		else:
+			var endpoint := SiteStockpiles.stock_endpoint(data, source_feature_id)
+			if endpoint.is_empty() or endpoint.get("withdraw_only", true) or int(endpoint.get("faction", -1)) != int(person.faction) \
+				or absi(person.cell.x - endpoint.cell.x) + absi(person.cell.y - endpoint.cell.y) > 1 \
+				or not data.is_walkable(person.cell) or person.cell != endpoint.cell and not data.can_step(person.cell, endpoint.cell) \
+				or not actions.lab.site_controller._delivery_person_ready(person): return fail("NO_AUTHORITY")
+		var holder := "depot" if source_feature_id.is_empty() else "feature:" + source_feature_id
+		var feature: Dictionary = data.site.get("features", {}).get(str(refs.order.payload.get("feature_id", "")), {})
+		if not feature.get("tech_batch", {}).is_empty() and holder != refs.order.payload.source.holder: return fail("BUSY", "已付批次保留原來源史；完成後才可更換下一批來源")
+		candidate.payload.source = {"site_id": str(data.site.id), "holder": holder, "grantor_id": requester_id, "status": "granted"}
+		if candidate.payload.has("source_feature_id"): candidate.payload.source_feature_id = source_feature_id
+	candidate.revision = int(candidate.revision) + 1
+	if not valid_settlement_processing_order(data, data.site, candidate): return fail("CORRUPT_STATE")
+	if preview: return ok("原真接觸來源可明示調整；額度與已花費不重置")
+	# No charge, reserve, cap increase or replacement of accepted source refs.
+	refs.order.payload.source.clear()
+	refs.order.payload.source.merge(candidate.payload.source)
+	if candidate.payload.has("source_feature_id"): refs.order.payload.source_feature_id = candidate.payload.source_feature_id
+	refs.order.revision = int(candidate.revision)
+	return ok("已明示調整本原工單來源；保留同一有限額度及實扣歷史")
+
+static func prepare_settlement_processing_output(data: TerrainData, feature: Dictionary, receipt: Dictionary) -> Dictionary:
+	if not feature.has("technology_settlement_order"): return ok("", {"order_ref": {}, "candidate": {}})
+	var ref: Variant = feature.technology_settlement_order
+	if not Technology.keys(ref, ["settlement_id", "order_id"]): return fail("STALE_SOURCE")
+	var refs := _settlement_order_state(data, str(ref.settlement_id), str(ref.order_id))
+	if not refs.is_empty() and not SETTLEMENT_PROCESSING_KINDS.has(str(refs.order.get("kind", ""))):
+		return _settlement_typed_prepare(str(refs.order.get("kind", "")), "output", [data, feature, receipt])
+	if refs.is_empty() or not valid_settlement_processing_order(data, data.site, refs.order): return fail("STALE_SOURCE")
+	var order: Dictionary = refs.order
+	if int(order.revision) >= 2147483646: return fail("LIMIT")
+	if order.status == "cancelled": return ok("", {"order_ref": {}, "candidate": {}})
+	var spec := _settlement_processing_spec(str(order.kind))
+	var ledger: Dictionary = feature.get("tech_batch", {})
+	if not is_same(data.site.features.get(str(order.payload.feature_id)), feature) or receipt.is_empty() \
+		or receipt.operator_id != order.payload.operator_id or receipt.recipe_id != spec.recipe or receipt.id != ledger.get("id") \
+		or receipt.site_id != str(data.site.id) or receipt.feature_id != order.payload.feature_id \
+		or not Technology.material_equal(receipt.resources, spec.outputs) or not receipt.item_ids.is_empty() \
+		or not Technology.finite_number(receipt.work_seconds, 0.000000001) or not is_equal_approx(float(receipt.work_seconds), float(ledger.get("work_seconds", -1.0))) \
+		or not bool(feature.get("batch_paid", false)) or float(feature.get("production", 0.0)) + 0.000000001 < float(feature_recipe(feature).cycle): return fail("INVALID_RECEIPT")
+	var candidate: Dictionary = order.duplicate(true)
+	candidate.receipts.append(receipt.duplicate(true))
+	candidate.payload.completed = int(candidate.payload.completed) + 1
+	candidate.status = "completed" if int(candidate.payload.completed) == int(candidate.payload.max_batches) else "prepared"
+	if order.status == "cancelled": candidate.status = "cancelled"
+	candidate.revision = int(candidate.revision) + 1
+	return ok("", {"state_ref": data.site, "operations_ref": refs.operations, "order_ref": order, "order_before": order.duplicate(true), "candidate": candidate})
+
+static func request_settlement_processing_order(data: TerrainData, kind: String, feature_id: String, operator_id: int, max_batches: int,
+	requester_id: int, source_feature_id: String = "", project_id: int = 0, preview: bool = false) -> Dictionary:
+	var spec := _settlement_processing_spec(kind)
+	var actions: Variant = _technology_actions(data)
+	if spec.is_empty() or actions == null or bool(data.site.get("paused", false)) or not Technology.integer(max_batches, 1, int(spec.max_batches)): return fail("INVALID")
+	if TechnologyCatalog.get_node(str(spec.tech_id)).get("enabled") != true: return fail("NO_TECHNOLOGY")
+	var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	if requester_id != int(actions._technology_controlled()) or requester_id != int(settlement_script.call("head_executor", actions.lab)): return fail("NO_AUTHORITY")
+	var authorizer: Dictionary = actions._person(requester_id)
+	if authorizer.is_empty() or not actions._ready(authorizer): return fail("BUSY")
+	var settlement: Dictionary = data.site.get("settlement", {})
+	var operations: Dictionary = settlement.get("technology_operations", {})
+	var candidate: Dictionary = operations.duplicate(true) if not operations.is_empty() else settlement_script.call("empty_technology_operations")
+	if candidate.get("orders", {}).size() >= 16 or not Technology.integer(candidate.get("next_order"), 1, 2147483645): return fail("LIMIT")
+	var id := kind + "_" + str(int(candidate.next_order))
+	var purpose := _settlement_processing_purpose(data.site, id, kind, project_id)
+	if purpose.is_empty(): return fail("STALE_PROJECT")
+	if project_id == 0:
+		if TechnologyCatalog.get_node(str(spec.tech_id)).get("enabled") != true or not Technology.scope_known(settlement.get("technology", {}), str(spec.tech_id)): return fail("NO_TECHNOLOGY")
+	else:
+		var project := Technology.active_project(settlement.get("technology", {}))
+		if project.get("executor", {}).get("person_id") != operator_id or int(max_batches) != int(spec.max_batches): return fail("STALE_PROJECT")
+		for old: Dictionary in candidate.orders.values():
+			if old.get("kind") in SETTLEMENT_PROCESSING_KINDS and int(old.get("payload", {}).get("project_id", 0)) == project_id: return fail("DUPLICATE", "同原研究項目已有唯一有限工單；沿原單續作")
+	var cap := {}
+	for item: String in spec.cost: cap[item] = int(spec.cost[item]) * max_batches
+	var holder := "depot" if source_feature_id.is_empty() else "feature:" + source_feature_id
+	var order := {"id": id, "kind": kind, "authorizer_id": requester_id, "status": "prepared", "revision": 0, "receipts": [],
+		"payload": {"settlement_id": str(settlement.get("settlement_id", "")), "feature_id": feature_id, "operator_id": operator_id,
+			"source_feature_id": source_feature_id, "max_batches": max_batches, "cap": cap, "spent": {}, "completed": 0, "consents": [], "purpose": purpose,
+			"source": {"site_id": str(data.site.id), "holder": holder, "grantor_id": requester_id, "status": "granted"}, "project_id": project_id}}
+	var physical := _settlement_processing_physical(data, order)
+	if not physical.ok: return physical
+	if physical.feature.has("tech_trial") or physical.feature.has("technology_settlement_order") or physical.feature.has("technology_order") \
+		or physical.feature.has("tech_batch") or physical.feature.has("pending_build") or physical.feature.has("repair") \
+		or bool(physical.feature.get("batch_paid", false)) or float(physical.feature.get("production", 0.0)) > 0.0 or _feature_has_work(data, feature_id): return fail("BUSY")
+	var person: Dictionary = actions._person(operator_id)
+	if person.is_empty() or not actions._ready(person) or int(person.faction) != int(settlement.get("owner_faction", -1)) \
+		or not bool(settlement_script.call("office_person_ok", actions.lab, operator_id)) \
+		or not Technology.learned(actions._body_get(person, "technology"), str(spec.skill)): return fail("NO_SKILL")
+	# The head names finite source/cap at the original source contact. This uses
+	# existing camp access or the real same-owner usable Stockpiles endpoint.
+	if source_feature_id.is_empty():
+		var camp: Dictionary = actions._ranged_craft_context(authorizer)
+		if not camp.ok: return camp
+	else:
+		var endpoint := SiteStockpiles.stock_endpoint(data, source_feature_id)
+		if endpoint.is_empty() or endpoint.get("withdraw_only", true) or int(endpoint.get("faction", -1)) != int(authorizer.faction) \
+			or absi(authorizer.cell.x - endpoint.cell.x) + absi(authorizer.cell.y - endpoint.cell.y) > 1 \
+			or not data.is_walkable(authorizer.cell) or authorizer.cell != endpoint.cell and not data.can_step(authorizer.cell, endpoint.cell) \
+			or not actions.lab.site_controller._delivery_person_ready(authorizer): return fail("NO_AUTHORITY", "具名核額人須在本原管理方來源真接觸格")
+	var consent: Dictionary = actions._technology_military_consent_candidate(operator_id, purpose)
+	if not consent.ok: return consent
+	if not consent.get("consent", {}).is_empty(): order.payload.consents.append(consent.consent.duplicate(true))
+	candidate.orders[id] = order
+	candidate.next_order = int(candidate.next_order) + 1
+	if not valid_settlement_processing_order(data, data.site, order) or not bool(settlement_script.call("valid_technology_operations", data, candidate, data.site)): return fail("CORRUPT_STATE")
+	if preview: return ok("原具名工單／有限來源與用途可登記；不預扣或保留物資", {"order_id": id, "cap": cap.duplicate(true)})
+	settlement_script.call("publish_technology_operations", settlement, candidate)
+	data.environment_revision += 1
+	return ok("已採用本原工坊有限批次；每批沿原真付款、工作及輸出", {"order_id": id, "cap": cap.duplicate(true)})
+
+static func stop_settlement_processing_order(data: TerrainData, settlement_id: String, order_id: String, requester_id: int,
+	permanent: bool = false, revoke_source: bool = false, preview: bool = false) -> Dictionary:
+	var refs := _settlement_order_state(data, settlement_id, order_id)
+	var actions: Variant = _technology_actions(data)
+	var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	if refs.is_empty() or not valid_settlement_processing_order(data, data.site, refs.order) or actions == null: return fail("NO_TARGET")
+	if requester_id != int(actions._technology_controlled()) or requester_id != int(settlement_script.call("head_executor", actions.lab)): return fail("NO_AUTHORITY")
+	if int(refs.order.revision) >= 2147483646 or refs.order.status in ["completed", "cancelled"]: return fail("COMPLETE")
+	var feature: Dictionary = data.site.get("features", {}).get(str(refs.order.payload.feature_id), {})
+	if not feature.get("tech_trial", {}).is_empty(): return fail("NO_AUTHORITY", "請先沿原Scope取消／暫停完成真token釋放；本入口不改研究權限")
+	if preview: return ok("可停止本單；已付材料、實作進度與既有知識保留")
+	# Stop only this feature's original held named jobs. No foreign job, combat
+	# order, control, source resources, scope receipt or learned field is changed.
+	_technology_finish_named_feature(data, str(refs.order.payload.feature_id))
+	_stop_feature_zones(data, str(refs.order.payload.feature_id), "operate")
+	refs.order.status = "cancelled" if permanent else "suspended"
+	refs.order.revision = int(refs.order.revision) + 1
+	if revoke_source: refs.order.payload.source.status = "revoked"
+	if permanent and feature.has("tech_batch"):
+		feature.tech_batch.operator_id = 0 # Ordinary shared paid history; no personal or Scope output credit.
+	return ok("已停止本有限工單；原已付材料與進度保留")
+
+static func begin_settlement_metal_operation(data: TerrainData, settlement_id: String, order_id: String, preview: bool = false) -> Dictionary:
+	var actions: Variant = _technology_actions(data)
+	var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	if actions == null or int(actions._technology_controlled()) != int(settlement_script.call("head_executor", actions.lab)): return fail("NO_AUTHORITY")
+	var ready := settlement_metal_work_preflight(data, settlement_id, order_id)
+	if not ready.ok: return ready
+	if int(ready.order.payload.project_id) != 0: return fail("NO_AUTHORITY", "研究須沿原Scope phase明示入口")
+	var spec := settlement_metal_spec(ready.order)
+	if spec.is_empty(): return begin_settlement_metal_transfer(data, settlement_id, order_id, int(ready.requester_id), {}, preview)
+	var selector := {"settlement_id": settlement_id, "order_id": order_id}
+	if ready.feature.has("tech_batch"):
+		if ready.feature.get("technology_settlement_order", {}) != selector: return fail("STALE_SOURCE")
+		var resume := _technology_feature_resume_work(data, str(spec.feature_id), ready.feature, selector)
+		if not resume.ok: return resume
+		if not preview: _technology_publish_feature_resume(data, resume)
+		return ok("原已付本段恢复；不再扣料", {"resumed": true})
+	return _technology_begin_feature_operation(data, selector, str(spec.feature_id), str(spec.binding), preview)
+
+static func begin_settlement_metal_phase(data: TerrainData, token: Dictionary, preview: bool = false, work_target: Dictionary = {}) -> Dictionary:
+	if data == null or not _technology_trial_shape(token, data) or token.scope != "settlement" or token.tech_id != "S04" or token.binding != "transfer" \
+		or not Technology.keys(work_target, ["order_id"]) or not work_target.order_id is String: return fail("INVALID")
+	var actions: Variant = _technology_actions(data)
+	if actions == null: return fail("UNSUPPORTED")
+	return begin_settlement_metal_transfer(data, str(token.scope_id), str(work_target.order_id), int(actions._technology_controlled()), token, preview)
+
+static func begin_settlement_metal_transfer(data: TerrainData, settlement_id: String, order_id: String, requester_id: int, token: Dictionary = {}, preview: bool = false) -> Dictionary:
+	if TechnologyCatalog.get_node("S04").get("enabled") != true: return fail("UNIMPLEMENTED")
+	var refs := _settlement_order_state(data, settlement_id, order_id)
+	if refs.is_empty(): return fail("NO_TARGET")
+	var effective_token: Dictionary = token
+	if refs.order.payload.carry_receipts.size() == 1 and int(refs.order.payload.project_id) > 0:
+		var previous: Dictionary = refs.order.payload.carry_receipts[0].token
+		# A reissued generic begin request uses next_attempt. The second contact
+		# resumes the accepted first physical withdrawal; it never repays/rebinds.
+		var requested := token.duplicate(true)
+		requested.attempt = int(previous.get("attempt", -1))
+		if requested != previous or not Technology.integer(token.get("attempt"), int(previous.attempt), int(previous.attempt) + 1): return fail("STALE_PROJECT")
+		effective_token = previous
+	var prepared := prepare_settlement_metal_transfer(data, settlement_id, order_id, requester_id, effective_token)
+	if not prepared.ok: return prepared
+	var actions: Variant = _technology_actions(data)
+	var scope_payment := {}
+	var scope_receipt := {}
+	if int(prepared.leg) == 0:
+		var source := settlement_metal_material_source_candidate(data, settlement_id, order_id, "transfer")
+		if not source.ok: return source
+		if not is_same(source.physical_holder, prepared.transfer.source) or not is_same(source.physical_cargo, prepared.transfer.source_cargo): return fail("STALE_SOURCE")
+		for item: String in prepared.fact.resources:
+			if int(source.spent.get(item, 0)) + int(prepared.fact.resources[item]) > int(source.cap.get(item, -1)): return fail("NO_BUDGET")
+		if not effective_token.is_empty():
+			var binding: Dictionary = actions.technology_phase_binding_candidate(effective_token, source)
+			if not binding.ok: return binding
+			scope_payment = actions.technology_phase_payment_candidate(effective_token, {"iron": 2}, binding, source)
+			if not scope_payment.ok: return scope_payment
+	elif not effective_token.is_empty():
+		if not actions.has_method("prepare_settlement_metal_transfer_receipt"): return fail("UNSUPPORTED")
+		scope_receipt = actions.prepare_settlement_metal_transfer_receipt(effective_token, prepared)
+		if not scope_receipt.ok: return scope_receipt
+	var stable := validate_settlement_metal_transfer(prepared)
+	if not stable.ok: return stable
+	if not valid_settlement_metal_order(data, data.site, prepared.candidate): return fail("CORRUPT_STATE")
+	if preview: return ok("本原兩實際端點/容量/版本/權限及一次階段付款已全預檢", {"leg": prepared.fact.leg, "resources": {"iron": 2}})
+	# Every candidate and physical contact was checked above. No callback or yield
+	# enters this original no-failure publication tail; mass transfers exactly once.
+	publish_item_transfer(prepared.transfer)
+	if not scope_payment.is_empty(): actions.publish_phase_payment(scope_payment)
+	publish_settlement_metal_order(prepared)
+	if not scope_receipt.is_empty(): actions.publish_phase_receipt(scope_receipt)
+	return ok("原鐵已搬至本人；請移至鍛坊實際接觸再交料" if int(prepared.leg) == 0 else "原本人鐵已交入鍛坊；請當前首長在鍛坊明示續用來源", {"leg": prepared.fact.leg})
+
+static func request_settlement_metal_order(data: TerrainData, smelter_id: String, smithy_id: String, operator_id: int, requester_id: int, project_id: int = 0, preview: bool = false) -> Dictionary:
+	if TechnologyCatalog.get_node("S04").get("enabled") != true: return fail("UNIMPLEMENTED", "本新有限鏈尚未具名驗收；不登單／收費")
+	var actions: Variant = _technology_actions(data)
+	if actions == null or bool(data.site.get("paused", false)): return fail("BUSY")
+	var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	if requester_id != int(actions._technology_controlled()) or requester_id != int(settlement_script.call("head_executor", actions.lab)): return fail("NO_AUTHORITY")
+	var authorizer: Dictionary = actions._person(requester_id)
+	var person: Dictionary = actions._person(operator_id)
+	if authorizer.is_empty() or person.is_empty() or not actions._ready(authorizer) or not actions._ready(person): return fail("BUSY")
+	var settlement: Dictionary = data.site.get("settlement", {})
+	if not bool(settlement_script.call("office_person_ok", actions.lab, operator_id)) or int(person.faction) != int(settlement.get("owner_faction", -1)) \
+		or not Technology.learned(actions._body_get(person, "technology"), "F04"): return fail("NO_SKILL")
+	var operations: Dictionary = settlement.get("technology_operations", {})
+	var candidate: Dictionary = operations.duplicate(true) if not operations.is_empty() else settlement_script.call("empty_technology_operations")
+	if candidate.get("orders", {}).size() >= 16 or not Technology.integer(candidate.get("next_order"), 1, 2147483645): return fail("LIMIT")
+	var id := "metal_chain_" + str(int(candidate.next_order))
+	var purpose := _settlement_metal_purpose(data.site, id, project_id)
+	if purpose.is_empty(): return fail("STALE_PROJECT")
+	if project_id == 0:
+		if TechnologyCatalog.get_node("S04").get("enabled") != true or not Technology.scope_known(settlement.get("technology", {}), "S04"): return fail("NO_TECHNOLOGY")
+	else:
+		var project := Technology.active_project(settlement.get("technology", {}))
+		if project.get("executor", {}).get("person_id") != operator_id: return fail("STALE_PROJECT")
+		for old: Dictionary in candidate.orders.values():
+			if old.get("kind") == "metal_chain" and old.get("payload", {}).get("project_id") == project_id: return fail("DUPLICATE")
+	var order := {"id": id, "kind": "metal_chain", "authorizer_id": requester_id, "status": "prepared", "revision": 0, "receipts": [],
+		"payload": {"settlement_id": str(settlement.get("settlement_id", "")), "smelter_id": smelter_id, "smithy_id": smithy_id, "carrier_id": operator_id, "operator_id": operator_id,
+			"feature_id": smelter_id, "completed": 0, "cap": SETTLEMENT_METAL_CAP.duplicate(true), "spent": {}, "consents": [], "purpose": purpose,
+			"source": {"site_id": str(data.site.id), "holder": "feature:" + smelter_id, "grantor_id": requester_id, "status": "granted"}, "project_id": project_id, "carry_receipts": []}}
+	var physical := _settlement_metal_physical(data, order)
+	if not physical.ok: return physical
+	for feature: Dictionary in [physical.smelter, physical.smithy]:
+		if feature.has("tech_trial") or feature.has("technology_settlement_order") or feature.has("technology_order") or feature.has("tech_batch") or feature.has("pending_build") \
+			or feature.has("repair") or bool(feature.get("batch_paid", false)) or float(feature.get("production", 0.0)) > 0.0: return fail("BUSY")
+	if _feature_has_work(data, smelter_id) or _feature_has_work(data, smithy_id): return fail("BUSY")
+	var endpoint := SiteStockpiles.stock_endpoint(data, smelter_id)
+	if endpoint.is_empty() or endpoint.get("withdraw_only", true) or int(endpoint.get("faction", -1)) != int(authorizer.faction) \
+		or absi(authorizer.cell.x - endpoint.cell.x) + absi(authorizer.cell.y - endpoint.cell.y) > 1 \
+		or (authorizer.cell == endpoint.cell and not data.is_walkable(authorizer.cell)) or (authorizer.cell != endpoint.cell and not data.can_step(authorizer.cell, endpoint.cell)) \
+		or not actions.lab.site_controller._delivery_person_ready(authorizer): return fail("NO_AUTHORITY", "核額人須原冶爐實際接觸；不以營地代私有原存料")
+	var consent: Dictionary = actions._technology_military_consent_candidate(operator_id, purpose)
+	if not consent.ok: return consent
+	if not consent.get("consent", {}).is_empty(): order.payload.consents.append(consent.consent.duplicate(true))
+	candidate.orders[id] = order
+	candidate.next_order = int(candidate.next_order) + 1
+	if not valid_settlement_metal_order(data, data.site, order) or not bool(settlement_script.call("valid_technology_operations", data, candidate, data.site)): return fail("CORRUPT_STATE")
+	if preview: return ok("原同人冶鐵/搬運/製具有限鏈可登記；不預扣/保留材料", {"order_id": id, "cap": SETTLEMENT_METAL_CAP.duplicate(true)})
+	settlement_script.call("publish_technology_operations", settlement, candidate)
+	return ok("已採用原三段有限鏈；搬到鍛坊後須明示重新核定真來源", {"order_id": id})
+
+static func prepare_settlement_food_transfer(data: TerrainData, settlement_id: String, order_id: String, leg: String, requester_id: int, token: Dictionary = {}) -> Dictionary:
+	var checked := settlement_food_work_preflight(data, settlement_id, order_id, "food_order")
+	if not checked.ok: return checked
+	var order: Dictionary = checked.order
+	var p: Dictionary = order.payload
+	var actions: Variant = _technology_actions(data)
+	var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	if requester_id != int(actions._technology_controlled()) or requester_id != int(settlement_script.call("head_executor", actions.lab)) \
+		or not leg in ["load", "arrive"] or p.stage != ("prepared" if leg == "load" else "carrier") \
+		or actions.is_busy(int(p.operator_id)): return fail("BUSY")
+	if leg == "load" and p.source.status != "granted": return fail("NO_BUDGET")
+	if leg == "load" and p.source.holder == "depot":
+		var camp: Dictionary = actions._ranged_craft_context(checked.person)
+		if not camp.ok: return camp
+	if leg == "load" and int(p.project_id) == 0 and int(checked.stock.cargo.get("grain", 0)) != int(p.initial_stock): return fail("STALE_SOURCE")
+	var scope_payment := {}
+	if int(p.project_id) > 0:
+		if leg == "load":
+			if not _settlement_food_token(data, token, order): return fail("INVALID_TECHNOLOGY")
+			var source := settlement_food_material_source_candidate(data, settlement_id, order_id, "food_order")
+			if not source.ok: return source
+			var binding: Dictionary = actions.technology_phase_binding_candidate(token, source)
+			if not binding.ok: return binding
+			scope_payment = actions.technology_phase_payment_candidate(token, {"grain": 8}, binding, source)
+			if not scope_payment.ok: return scope_payment
+		elif not is_same(p.token, token) or not actions._technology_paid_phase_context(token).ok: return fail("STALE_PROJECT")
+	elif not token.is_empty(): return fail("INVALID_TECHNOLOGY")
+	var carrier := "person:" + str(int(p.operator_id))
+	var source_id: String = str(p.source.holder) if leg == "load" else carrier
+	var destination_id: String = carrier if leg == "load" else "feature:" + str(p.warehouse_id)
+	var transport: Variant = actions.lab.site_controller.vehicles
+	var independent: bool = source_id.begins_with("feature:") or destination_id.begins_with("feature:")
+	var from: Dictionary = transport._stock(source_id, independent)
+	var to: Dictionary = transport._stock(destination_id, independent)
+	if from.is_empty() or to.is_empty(): return fail("NO_TARGET")
+	# This is the original physical/contact/logistics authority, not remote math.
+	var transfer: Dictionary = transport.prepare_transfer(source_id, destination_id, {"grain": int(p.quantity)}, [], int(from.holder.version), int(to.holder.version), requester_id)
+	if not transfer.ok: return transfer
+	var work := {}
+	if leg == "arrive":
+		work = actions.prepare_settlement_food_work(checked, transfer)
+		if not work.ok: return work
+	return ok("原兩腿糧食轉移候選", {"data": data, "site": data.site, "settlement": checked.settlement, "operations": checked.operations,
+		"order": order, "payload": p, "order_revision": int(order.revision), "leg": leg, "transfer": transfer, "work": work,
+		"scope_payment": scope_payment, "token": token, "actions": actions, "requester_id": requester_id, "published": false})
+
+static func request_warehouse_food_order(data: TerrainData, warehouse_id: String, operator_id: int, requester_id: int,
+	source_holder: String, project_id: int = 0, preview: bool = false) -> Dictionary:
+	var actions: Variant = _technology_actions(data)
+	var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	if actions == null or bool(data.site.get("paused", false)) or requester_id != int(actions._technology_controlled()) \
+		or requester_id != int(settlement_script.call("head_executor", actions.lab)) \
+		or settlement_script.call("status", actions.lab).get("effective") != true: return fail("NO_AUTHORITY")
+	var authorizer: Dictionary = actions._person(requester_id)
+	var person: Dictionary = actions._person(operator_id)
+	if not actions._ready(authorizer) or not actions._ready(person) or actions.is_busy(operator_id): return fail("BUSY")
+	var settlement: Dictionary = data.site.settlement
+	var original: Dictionary = settlement.get("technology_operations", {})
+	var candidate: Dictionary = original.duplicate(true) if not original.is_empty() else settlement_script.call("empty_technology_operations")
+	if candidate.get("orders", {}).size() >= 16 or not Technology.integer(candidate.get("next_order"), 1, 2147483645): return fail("LIMIT")
+	var id := "food_order_" + str(int(candidate.next_order))
+	var purpose := JSON.stringify([str(data.site.id), str(settlement.settlement_id), id, "food_order"])
+	if project_id > 0:
+		var project: Dictionary = Technology.active_project(settlement.get("technology", {}))
+		if project.get("id") != project_id or project.get("tech_id") != "S06" or project.get("executor", {}).get("person_id") != operator_id: return fail("STALE_PROJECT")
+		purpose = str(project.purpose)
+		for previous: Dictionary in candidate.orders.values():
+			if previous.get("kind") == "food_order" and previous.get("payload", {}).get("project_id") == project_id: return fail("DUPLICATE")
+	elif TechnologyCatalog.get_node("S06").get("enabled") != true or not Technology.scope_known(settlement.get("technology", {}), "S06"): return fail("NO_TECHNOLOGY")
+	var stock: Dictionary = SiteStockpiles.stock_endpoint(data, warehouse_id)
+	if stock.is_empty(): return fail("NO_TARGET")
+	var initial := int(stock.cargo.get("grain", 0))
+	if project_id == 0 and initial >= 4: return fail("COMPLETE", "原倉庫未低於4糧；不自動補貨")
+	var order := {"id": id, "kind": "food_order", "authorizer_id": requester_id, "status": "prepared", "receipts": [], "revision": 0,
+		"payload": {"settlement_id": str(settlement.settlement_id), "warehouse_id": warehouse_id, "operator_id": operator_id,
+			"project_id": project_id, "purpose": purpose, "consents": [], "source": {"site_id": str(data.site.id), "holder": source_holder, "grantor_id": requester_id, "status": "granted"},
+			"cap": {"grain": 8}, "spent": {}, "quantity": 8 if project_id > 0 else 8 - initial, "initial_stock": initial, "stage": "prepared", "token": {}, "paid": {}, "work_seconds": 0.0}}
+	var refs := {"settlement": settlement, "operations": candidate, "order": order}
+	var warehouse := _settlement_food_warehouse(data, refs)
+	if not warehouse.ok: return warehouse
+	var source: Dictionary = actions.lab.site_controller.vehicles._stock(source_holder, source_holder.begins_with("feature:"))
+	if source.is_empty() or source.get("withdraw_only", false) or source_holder == "feature:" + warehouse_id \
+		or int(source.get("faction", int(settlement.owner_faction))) != int(settlement.owner_faction) \
+		or not actions.lab.site_controller._delivery_person_ready(authorizer) \
+		or absi(authorizer.cell.x - source.cell.x) + absi(authorizer.cell.y - source.cell.y) > 1: return fail("NO_AUTHORITY")
+	if not can_pay(source.cargo, {"grain": int(order.payload.quantity)}): return fail("MATERIALS")
+	if source_holder == "depot":
+		var camp: Dictionary = actions._ranged_craft_context(authorizer)
+		if not camp.ok: return camp # Original camp jurisdiction/access remains authoritative.
+	var consent: Dictionary = actions._technology_military_consent_candidate(operator_id, purpose)
+	if not consent.ok: return consent
+	if not consent.get("consent", {}).is_empty(): order.payload.consents.append(consent.consent.duplicate(true))
+	if not valid_settlement_food_order(data, data.site, order): return fail("CORRUPT_STATE")
+	candidate.orders[id] = order
+	candidate.next_order = int(candidate.next_order) + 1
+	if not bool(settlement_script.call("valid_technology_operations", data, candidate, data.site)): return fail("CORRUPT_STATE")
+	if preview: return ok("原有限實物糧食單可登記", {"order_id": id, "quantity": int(order.payload.quantity)})
+	settlement_script.call("publish_technology_operations", settlement, candidate)
+	data.environment_revision += 1
+	return ok("指定原人須真正走完來源→持糧→倉庫兩腿", {"order_id": id, "quantity": int(order.payload.quantity)})
+
+static func request_settlement_spare_repair(data: TerrainData, vehicle_id: String, operator_id: int, preview: bool = false, token: Dictionary = {}) -> Dictionary:
+	if not _siege_depot_ready(data): return fail("INVALID")
+	var vehicle: Dictionary = data.site.get("vehicles", {}).get(vehicle_id, {})
+	if vehicle.get("kind") != "ballista" or float(vehicle.get("hp", 0.0)) <= 0.0: return fail("NO_TARGET")
+	if vehicle.has("technology_spare_repair"): return resume_settlement_spare_repair(data, vehicle_id, operator_id, preview, token)
+	if vehicle.get("phase") not in ["idle", "ready", "disabled"] or not vehicle.get("build", {}).is_empty() or not vehicle.get("repair", {}).is_empty() \
+		or vehicle.has("technology_spare_repair") or vehicle.has("tech_trial") or vehicle.has("tech_batch") \
+		or not vehicle.get("move", {}).is_empty() or not vehicle.get("action", {}).is_empty() or not vehicle.get("crew_slots", {}).is_empty() \
+		or vehicle.get("command", {}).get("type", "") not in ["", "stop"]: return fail("BUSY")
+	var admission := settlement_spare_admission(data, operator_id, int(vehicle.team_id), token)
+	if not admission.ok: return admission
+	var context := settlement_spares_context(data, operator_id, token)
+	if token.is_empty():
+		var source: Dictionary = context.actions._ranged_craft_context(context.actions._person(int(context.actions._technology_controlled())))
+		if not source.ok: return source
+	var settlement_script: Variant = load("res://scripts/terrain_lab/site_settlement.gd")
+	for cell: Vector2i in siege_cells(data, vehicle):
+		if not settlement_script.call("cell_in_jurisdiction", data, cell): return fail("NO_AUTHORITY")
+	var terms := settlement_spare_repair_terms(minf(20.0, float(SIEGE_DEFINITIONS.ballista.max_hp) - float(vehicle.hp)))
+	if terms.is_empty(): return fail("INVALID", "完整器具無須備件修理")
+	if not can_pay(data.site.inventory, terms.paid_cost) or not can_pay(data.site.inventory, {"tools": 1}): return fail("MATERIALS")
+	var projected := {"repair": terms, "technology_spare_repair": {"version": 1, "settlement_id": str(context.settlement.settlement_id),
+		"operator": {"site_id": str(data.site.id), "person_id": operator_id}, "initial_hp": float(vehicle.hp), "released": false}}
+	var scope := {}
+	if not token.is_empty():
+		if token.binding != "spare_repair" or token.target_id != "vehicle:" + vehicle_id or not Technology.material_equal(token.materials, terms.paid_cost): return fail("STALE_PHASE")
+		scope = _technology_geometry_payment(data, token, terms.paid_cost, preview)
+		if not scope.ok: return scope
+		projected.tech_trial = scope.token
+		projected.tech_batch = _technology_geometry_ledger(data, scope.token, scope.payment, "repair:ballista_spares")
+	var named := _prepare_settlement_spare_workers(data, vehicle_id, vehicle, admission, projected)
+	if not named.ok: return named
+	if preview: return ok("可用一包實物備件修復至多20HP", {"amount": float(terms.amount), "seconds": 300.0})
+	# All original person/slot/source/scope candidates are ready before payment.
+	add_items(data.site.inventory, terms.paid_cost, -1)
+	data.site.depot_items.version = int(data.site.depot_items.version) + 1
+	vehicle.repair = terms
+	vehicle.technology_spare_repair = projected.technology_spare_repair
+	vehicle.phase = "idle"
+	vehicle.command = {}
+	if not scope.is_empty():
+		vehicle.tech_trial = projected.tech_trial
+		vehicle.tech_batch = projected.tech_batch
+		context.actions.publish_phase_payment(scope.payment)
+	_technology_publish_named_vehicle(named)
+	data.environment_revision += 1
+	return ok("已耗一包原備件；具名原工人沿原修理進度工作", {"vehicle": vehicle_id, "amount": float(terms.amount)})
+
+static func reuse_settlement_blueprint(data: TerrainData, requester_id: int, plan_id: String, anchor: Vector2i, preview: bool = false) -> Dictionary:
+	var context := _settlement_engineering_context(data, "S09", requester_id)
+	if not context.ok: return context
+	var target := settlement_blueprint_target(data, plan_id, anchor)
+	if not target.ok: return target
+	var controller: Variant = context.actions.lab.site_controller
+	var occupied: Callable = controller.reserves_cell
+	# Original geometry, nav, complete finite cost, fire and height are rechecked.
+	var prepared := prepare_build_request(data, target.kind, target.cells, occupied, target.options)
+	if not prepared.ok: return prepared
+	if preview: return ok("原方案可按當前原材料與占地重新施工", {"cost": prepared.feature.cost.duplicate(), "work_seconds": float(prepared.feature.work) * 60.0})
+	return publish_build_request(data, prepared)
+
+static func save_settlement_blueprint(data: TerrainData, requester_id: int, source_feature_id: String, name: String, preview: bool = false) -> Dictionary:
+	var context := _settlement_engineering_context(data, "S09", requester_id)
+	if not context.ok: return context
+	var feature: Dictionary = data.site.get("features", {}).get(source_feature_id, {})
+	if feature.get("kind") not in context.owner.ENGINEERING_KINDS or feature.get("stage") != "complete" or feature.has("repair") or feature.has("pending_build") \
+		or feature.has("tech_trial") or not feature_usable(feature) or not context.owner.call("feature_in_jurisdiction", data, feature) \
+		or int(feature.get("owner_faction", -1)) != int(context.settlement.owner_faction): return fail("NO_TARGET")
+	if name.strip_edges().is_empty() or name.length() > 48 or feature.cells.size() > 36: return fail("INVALID")
+	var candidate: Dictionary = context.operations.duplicate(true)
+	if candidate.plans.size() >= int(context.owner.ENGINEERING_PLAN_LIMIT) or int(candidate.next_plan) >= 2147483647: return fail("LIMIT")
+	var key := "plan_" + str(int(candidate.next_plan))
+	var options := _feature_options(feature)
+	var plan := {"id": key, "name": name.strip_edges(), "kind": str(feature.kind), "cells": feature.cells.duplicate(),
+		"options": options, "source_feature": source_feature_id}
+	if not context.owner.call("valid_engineering_plan", data, plan): return fail("INVALID")
+	candidate.plans[key] = plan
+	candidate.next_plan = int(candidate.next_plan) + 1
+	if not context.owner.call("valid_technology_operations", data, candidate): return fail("INVALID")
+	if not preview: context.owner.call("publish_technology_operations", context.settlement, candidate)
+	return ok("已保存原合法施工幾何；沒有材料、進度或工人副本", {"plan_id": key})
+
+static func settlement_blueprint_target(data: TerrainData, plan_id: String, anchor: Vector2i) -> Dictionary:
+	var context := _settlement_engineering_context(data, "S09", 0, false)
+	if not context.ok: return context
+	var plan: Dictionary = context.operations.plans.get(plan_id, {})
+	if plan.is_empty(): return fail("NO_TARGET")
+	var bounds := _cell_bounds(data, plan.cells)
+	var cells: Array[int] = []
+	for index: Variant in plan.cells:
+		var cell := anchor + data.cell_from_index(int(index)) - bounds.position
+		if not data.contains(cell) or not context.owner.call("cell_in_jurisdiction", data, cell): return fail("UNREACHABLE")
+		cells.append(data.index(cell))
+	var options: Dictionary = context.owner.call("engineering_options", plan.options)
+	options.owner_faction = int(context.settlement.owner_faction)
+	return ok("", {"kind": str(plan.kind), "cells": cells, "options": options, "plan": plan})
+
+static func begin_settlement_defense_step(data: TerrainData, requester_id: int, order_id: String, preview: bool = false) -> Dictionary:
+	var context := _settlement_engineering_context(data, "S10", requester_id)
+	if not context.ok: return context
+	var selector := {"settlement_id": str(context.settlement.settlement_id), "order_id": order_id}
+	var order: Dictionary = context.operations.orders.get(order_id, {})
+	if order.is_empty() or order.get("kind") != "defense" or order.status != "prepared": return fail("BUSY", "只能明示開始尚未付費的下一步；已付步驟另沿原工作繼續")
+	var step: Dictionary = order.steps[int(order.next_step)]
+	var admission := settlement_defense_work_preflight(data, selector, {}, str(step.action))
+	if not admission.ok: return admission
+	var occupied := func(cell: Vector2i) -> bool: return _settlement_defense_occupied(data, int(step.operator_id), cell)
+	var prepared := {}
+	var feature: Dictionary
+	var key := str(step.feature_id)
+	var zone: Dictionary
+	var cost: Dictionary
+	var seconds: float
+	if step.action == "construct":
+		var target := settlement_blueprint_target(data, step.plan_id, Vector2i(int(step.anchor[0]), int(step.anchor[1])))
+		if not target.ok: return target
+		var person: Dictionary = context.actions._person(int(step.operator_id))
+		if target.cells.has(data.index(person.cell)): return fail("OCCUPIED")
+		prepared = prepare_build_request(data, target.kind, target.cells, occupied, target.options)
+		if not prepared.ok: return prepared
+		feature = prepared.feature
+		key = str(prepared.key)
+		zone = prepared.zone
+		cost = feature.cost
+		seconds = float(feature.work) * 60.0
+	else:
+		prepared = prepare_feature_repair_request(data, key, str(step.part), int(context.settlement.owner_faction), occupied)
+		if not prepared.ok: return prepared
+		feature = prepared.feature
+		zone = prepared.zone
+		cost = prepared.repair.cost
+		seconds = float(prepared.repair.work) * 60.0
+	for resource: String in cost:
+		if int(order.spent.get(resource, 0)) + int(cost[resource]) > int(order.cap.get(resource, 0)): return fail("BUDGET_EXCEEDED")
+	var source := settlement_defense_material_source(data, selector, feature, key, str(step.action), prepared.get("repair", {}))
+	if not source.ok: return source
+	var named := _prepare_settlement_defense_workers(data, selector, feature, zone, str(step.action), prepared.get("repair", {}))
+	if not named.ok: return named
+	var candidate: Dictionary = context.operations.duplicate(true)
+	var next: Dictionary = candidate.orders[order_id]
+	next.steps[int(next.next_step)].feature_id = key
+	next.paid = {"feature_id": key, "materials": cost.duplicate(), "work_seconds": seconds, "operator_id": int(step.operator_id)}
+	add_items(next.spent, cost)
+	next.status = "active"
+	next.revision = int(next.revision) + 1
+	if not context.owner.call("valid_technology_operations", data, candidate): return fail("INVALID")
+	if not is_same(context.settlement.get("technology_operations"), context.operations) or not is_same(context.operations.orders.get(order_id), order): return fail("STALE_SOURCE")
+	if preview: return ok("具名原工位與本單有限材料可開始", {"cost": cost.duplicate(), "target_id": "feature:" + key})
+	var link := {"settlement_id": str(context.settlement.settlement_id), "order_id": order_id, "step": int(order.next_step)}
+	if step.action == "construct":
+		feature.settlement_work = link
+		prepared.named = named
+		prepared.settlement_publish = {"owner": context.owner, "settlement": context.settlement, "candidate": candidate}
+		return publish_build_request(data, prepared)
+	# This is the original repair commit tail, after its pure original guards.
+	prepared.named = named
+	prepared.settlement_link = link
+	prepared.settlement_publish = {"owner": context.owner, "settlement": context.settlement, "candidate": candidate}
+	return publish_feature_repair_request(data, prepared)
+
+static func cancel_settlement_defense_order(data: TerrainData, requester_id: int, order_id: String) -> Dictionary:
+	# Stop remains possible after effect suspension. It grants no new work/source.
+	var actions: Variant = _technology_actions(data)
+	var owner: Variant = load("res://scripts/terrain_lab/site_settlement.gd")
+	var settlement: Dictionary = owner.call("record", data)
+	var duty: Dictionary = actions._technology_scope_duty("settlement", settlement, true) if actions != null else {}
+	if actions == null or not duty.get("ok", false) or int(duty.get("decider", -1)) != requester_id or int(actions._technology_controlled()) != requester_id: return fail("NO_AUTHORITY")
+	var raw: Variant = settlement.get("technology_operations")
+	if not owner.call("valid_technology_operations", data, raw): return fail("CORRUPT_STATE")
+	var order: Dictionary = raw.orders.get(order_id, {})
+	if order.is_empty() or order.kind != "defense" or order.status in ["completed", "cancelled"]: return fail("NO_CHANGE")
+	var candidate: Dictionary = raw.duplicate(true)
+	candidate.orders[order_id].status = "cancelled"
+	candidate.orders[order_id].revision = int(candidate.orders[order_id].revision) + 1
+	if not owner.call("valid_technology_operations", data, candidate): return fail("INVALID")
+	if not order.paid.is_empty():
+		var key := str(order.paid.feature_id)
+		var feature: Dictionary = data.site.features.get(key, {})
+		if feature.get("settlement_work", {}).get("order_id") == order_id:
+			feature.erase("settlement_work")
+			_stop_feature_zones(data, key, str(order.steps[int(order.next_step)].action))
+			_technology_finish_named_feature(data, key)
+	owner.call("publish_technology_operations", settlement, candidate)
+	return ok("已停止本單；原已付工地／修理進度及累計支出保留，不退料或自選下一工作")
+
+static func request_settlement_defense_order(data: TerrainData, requester_id: int, steps: Array, identities: Array, cap: Dictionary, preview: bool = false) -> Dictionary:
+	var context := _settlement_engineering_context(data, "S10", requester_id)
+	if not context.ok: return context
+	if steps.is_empty() or steps.size() > 4 or not Technology.material_stack(cap): return fail("INVALID")
+	var source: Dictionary = context.actions._person(requester_id)
+	var camp: Dictionary = context.actions._ranged_craft_context(source)
+	if not camp.ok: return camp # Original camp source permission, no public treasury.
+	var candidate: Dictionary = context.operations.duplicate(true)
+	var defense_count := 0
+	for existing: Dictionary in candidate.orders.values(): defense_count += int(existing.kind == "defense")
+	if candidate.orders.size() >= 16 or defense_count >= 4 or int(candidate.next_order) >= 2147483647: return fail("LIMIT")
+	var key := "defense_" + str(int(candidate.next_order))
+	var purpose := "S10:work:" + JSON.stringify([str(data.site.id), str(context.settlement.settlement_id), key])
+	var people := _settlement_defense_people(data, requester_id, identities, purpose)
+	if not people.ok: return people
+	var order := {"id": key, "kind": "defense", "revision": 0, "authorizer_id": requester_id, "owner_faction": int(context.settlement.owner_faction), "person_ids": identities.duplicate(),
+		"consents": people.consents, "steps": steps.duplicate(true), "next_step": 0, "status": "prepared", "cap": cap.duplicate(), "spent": {}, "receipts": [], "purpose": purpose, "paid": {}}
+	candidate.orders[key] = order
+	candidate.next_order = int(candidate.next_order) + 1
+	if not context.owner.call("valid_technology_operations", data, candidate): return fail("INVALID")
+	# Every concrete new step is planning-checked; current source and slots are
+	# independently checked again by its later explicit dispatch.
+	var required := {}
+	var footprints := {}
+	var repair_parts := {}
+	for step: Dictionary in order.steps:
+		if step.action == "construct":
+			var target := settlement_blueprint_target(data, step.plan_id, Vector2i(int(step.anchor[0]), int(step.anchor[1])))
+			if not target.ok: return target
+			var checked := _preview_build(data, target.kind, target.cells, context.actions.lab.site_controller.reserves_cell, target.options, "", false)
+			if not checked.ok: return checked
+			for cell: int in target.cells:
+				if footprints.has(cell): return fail("OCCUPIED")
+				footprints[cell] = true
+			add_items(required, checked.cost)
+		else:
+			var part_key := str(step.feature_id) + ":" + str(step.part)
+			if repair_parts.has(part_key): return fail("INVALID", "本清單不能重複修同一原部件")
+			repair_parts[part_key] = true
+			var checked := prepare_feature_repair_request(data, step.feature_id, step.part, int(order.owner_faction), context.actions.lab.site_controller.reserves_cell)
+			if not checked.ok: return checked
+			add_items(required, checked.repair.cost)
+	for resource: String in required:
+		if int(required[resource]) > int(cap.get(resource, 0)): return fail("BUDGET_EXCEEDED")
+	if not preview: context.owner.call("publish_technology_operations", context.settlement, candidate)
+	return ok("已保存有限防禦工單與原人真同意；每步須另下令，未扣材料", {"order_id": key, "cost": required})
+
+static func _technology_siege_yard_work_facts(data: TerrainData, vehicle: Dictionary, identity: int, prefix: Dictionary = {}, task: Dictionary = {}) -> Dictionary:
+	var ground := technology_siege_ground_geometry(data, vehicle)
+	if not ground.ok: return ok("", {"required_skills": [], "eligible_skills": []})
+	if not ground.configured:
+		if prefix.is_empty():
+			var physical := _technology_siege_ground_context(data, str(ground.key))
+			if not physical.ok: return physical
+		return ok("", {"required_skills": [], "eligible_skills": []})
+	var current := technology_siege_yard_context(data, str(ground.key))
+	var eligible: Array[String] = []
+	if prefix.is_empty():
+		if not current.ok: return current
+		var actions: Variant = _technology_actions(data)
+		var person: Dictionary = actions._technology_operator_for_task(task, identity) if actions != null else {}
+		if not person.is_empty() and Technology.learned(actions._body_get(person, "technology"), "F11"): eligible.append("F11")
+	else:
+		# Original provider-held initial facts, not a caller-supplied bool.
+		if _checked_work_prefix_owner(data, prefix.get("task", {}), identity, prefix) == null: return fail("STALE_WORK_PREFIX")
+		if prefix.get("eligible_skills", []).has("F11") or prefix.get("required_skill") == "F11" and prefix.get("eligible_master") == true: eligible.append("F11")
+	return ok("", {"required_skills": ["F11"], "eligible_skills": eligible})
+
+static func configure_siege_yard(data: TerrainData, key: String, requester_id: int, master_id: int = 0, adopt: bool = true, preview: bool = false) -> Dictionary:
+	if data == null or data.site.is_empty() or bool(data.site.get("paused", false)): return fail("BUSY")
+	var actions: Variant = _technology_actions(data)
+	if actions == null: return fail("UNSUPPORTED")
+	var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	if requester_id != int(actions._technology_controlled()) or requester_id != int(settlement_script.call("head_executor", actions.lab)): return fail("NO_AUTHORITY", "只有當前真受控聚落首長可指定或撤回原校場")
+	var feature: Dictionary = data.site.get("features", {}).get(key, {})
+	if feature.get("kind") != "training_ground" or not valid_technology_siege_yard(feature): return fail("NO_TARGET")
+	if _technology_siege_ground_busy(data, key, feature): return fail("BUSY", "原校場尚有訓練、人物工單或器具占用；先沿原操作收束")
+	if adopt:
+		var node: Dictionary = TechnologyCatalog.get_node("S11")
+		if node.get("enabled") != true or not Technology.scope_known(data.site.get("settlement", {}).get("technology", {}), "S11"): return fail("NO_TECHNOLOGY")
+		var physical := _technology_siege_ground_context(data, key)
+		if not physical.ok: return physical
+		var master: Dictionary = actions._person(master_id)
+		if master.is_empty() or not bool(settlement_script.call("office_person_ok", actions.lab, master_id)) or not actions._ready(master) \
+			or not Technology.learned(actions._body_get(master, "technology"), "F11") \
+			or not feature.cells.has(data.index(master.cell)): return fail("NO_TECHNOLOGY", "指定器械場當刻須具名真F11師傅在此原校場且無其他工單")
+		if feature.has("technology_siege_yard"): return ok("本校場已指定器械場", {"feature": key, "geometry_slots": 6})
+	else:
+		if not feature.has("technology_siege_yard"): return fail("NO_TARGET")
+		# Revocation requires the current original head and a clear original
+		# plot, but does not require knowledge/effectiveness to recover a plot.
+	if preview: return ok("可指定器械場" if adopt else "可撤回器械場；原校場恢復", {"feature": key, "geometry_slots": 6 if adopt else 4})
+	if adopt: feature.technology_siege_yard = {"version": 1, "settlement_id": str(data.site.settlement.settlement_id)}
+	else: feature.erase("technology_siege_yard")
+	data.environment_revision += 1
+	return ok("原校場已指定器械場" if adopt else "器械場已撤回；原校場恢復", {"feature": key, "geometry_slots": 6 if adopt else 4})
+
+static func technology_siege_yard_context(data: TerrainData, key: String, require_work: bool = true) -> Dictionary:
+	var feature: Dictionary = data.site.get("features", {}).get(key, {}) if data != null else {}
+	if feature.is_empty() or not feature.has("technology_siege_yard"): return fail("NO_TARGET", "本原校場尚未指定器械場")
+	if not valid_technology_siege_yard(feature): return fail("CORRUPT_SAVE", "器械場原校場配置欄位非法")
+	var settlement: Dictionary = data.site.get("settlement", {})
+	if feature.technology_siege_yard.settlement_id != str(settlement.get("settlement_id", "")): return fail("STALE_SOURCE", "器械場須指向同 Site 的原聚落")
+	# Geometry never shrinks to four when an existing yard loses effectiveness.
+	# Store and original reservations can retain slots 4/5 and paid progress.
+	if not require_work: return ok("原校場器械場幾何保留六工位", {"feature": feature, "settlement": settlement, "geometry_slots": 6})
+	var node: Dictionary = TechnologyCatalog.get_node("S11")
+	if node.get("enabled") != true or not Technology.scope_known(settlement.get("technology", {}), "S11"): return fail("NO_TECHNOLOGY", "原S11尚未實作開放或本聚落尚未知悉")
+	var physical := _technology_siege_ground_context(data, key)
+	if not physical.ok: return physical
+	return ok("原3級聚落器械場可用；實際共同工單仍需F11師傅", {"feature": feature, "settlement": settlement, "geometry_slots": 6, "work_eligible": true})
+
+static func begin_settlement_ship_operation(data: TerrainData, settlement_id: String, order_id: String, preview: bool = false) -> Dictionary:
+	return _settlement_ship_begin(data, settlement_id, order_id, {}, preview)
+
+static func configure_shipyard_work(data: TerrainData, key: String, requester_id: int, master_id: int = 0, adopt: bool = true, preview: bool = false) -> Dictionary:
+	if data == null or bool(data.site.get("paused", false)): return fail("BUSY")
+	var actions: Variant = _technology_actions(data)
+	if actions == null: return fail("UNSUPPORTED")
+	var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	if requester_id != int(actions._technology_controlled()) or requester_id != int(settlement_script.call("head_executor", actions.lab)): return fail("NO_AUTHORITY", "須當前真受控聚落首長")
+	var feature: Dictionary = data.site.get("features", {}).get(key, {})
+	if feature.get("kind") != "shipyard" or not valid_technology_shipyard_work(feature): return fail("NO_TARGET")
+	if feature.has("ship_build") or bool(feature.get("batch_paid", false)) or float(feature.get("production", 0.0)) > 0.0 \
+		or _feature_has_work(data, key): return fail("BUSY", "先沿原入口收束造船、人物工單與已付款批次")
+	if adopt:
+		if TechnologyCatalog.get_node("S12").get("enabled") != true or not Technology.scope_known(data.site.get("settlement", {}).get("technology", {}), "S12"): return fail("NO_TECHNOLOGY")
+		var physical := _technology_shipyard_physical_context(data, key)
+		if not physical.ok: return physical
+		var master: Dictionary = actions._person(master_id)
+		if master.is_empty() or not actions._ready(master) or not bool(settlement_script.call("office_person_ok", actions.lab, master_id)) \
+			or not Technology.learned(actions._body_get(master, "technology"), "F13") or not feature.cells.has(data.index(master.cell)): return fail("NO_TECHNOLOGY", "採用當刻須具名真F13師傅在本原船塢")
+	else:
+		if not feature.has("technology_shipyard_work"): return fail("NO_TARGET")
+	if preview: return ok("可採用／撤回原船塢兩岸上席位", {"feature": key})
+	if adopt: feature.technology_shipyard_work = {"version": 1, "settlement_id": str(data.site.settlement.settlement_id)}
+	else: feature.erase("technology_shipyard_work")
+	data.environment_revision += 1
+	return ok("原船塢已採用兩造船席位" if adopt else "原船塢恢復既有一入口工位", {"feature": key})
+
+static func prepare_settlement_ship_delivery(data: TerrainData, settlement_id: String, order_id: String, requester_id: int) -> Dictionary:
+	var refs := _settlement_order_state(data, settlement_id, order_id)
+	var actions: Variant = _technology_actions(data)
+	if refs.is_empty() or actions == null or not valid_settlement_ship_order(data, data.site, refs.order): return fail("NO_TARGET")
+	var p: Dictionary = refs.order.payload
+	if refs.order.status != "prepared" or not p.spent.is_empty() or p.delivery_receipts.size() >= 2: return fail("COMPLETE")
+	if requester_id != int(actions._technology_controlled()) or requester_id != int(refs.order.authorizer_id): return fail("NO_AUTHORITY")
+	var carrier: Dictionary = actions._person(int(p.carrier_id))
+	if carrier.is_empty() or not actions._technology_military_person_ready(carrier, refs.order) \
+		or not actions._technology_consent_valid(int(p.carrier_id), p.consents, str(p.purpose), {}, true, refs.order): return fail("NO_CONSENT")
+	var leg: int = p.delivery_receipts.size()
+	var source := str(p.donor_id) if leg == 0 else "person:" + str(p.carrier_id)
+	var destination := "person:" + str(p.carrier_id) if leg == 0 else "feature:" + str(p.feature_id)
+	var vehicles: Variant = actions.lab.site_controller.vehicles
+	var a: Dictionary = vehicles._stock(source, true)
+	var b: Dictionary = vehicles._stock(destination, true)
+	if a.is_empty() or b.is_empty(): return fail("NO_TARGET")
+	var transfer: Dictionary = vehicles.prepare_transfer(source, destination, p.cap, [], int(a.holder.version), int(b.holder.version), requester_id)
+	if not transfer.ok: return transfer
+	var receipt := {"id": "ship-delivery:" + JSON.stringify([str(data.site.id), order_id, leg, source, destination, int(a.holder.version), int(b.holder.version)]),
+		"site_id": str(data.site.id), "carrier_id": int(p.carrier_id), "source_holder": source, "destination_holder": destination,
+		"source_version": int(a.holder.version), "destination_version": int(b.holder.version), "resources": p.cap.duplicate(true)}
+	var candidate: Dictionary = refs.order.duplicate(true)
+	candidate.payload.delivery_receipts.append(receipt)
+	candidate.revision = int(candidate.revision) + 1
+	if not valid_settlement_ship_order(data, data.site, candidate): return fail("CORRUPT_STATE")
+	return ok("原現場 transfer 與本單有限交付收據純候選", {"data": data, "site": data.site, "settlement": refs.settlement, "operations": refs.operations,
+		"order": refs.order, "candidate": candidate, "transfer": transfer, "revision": int(refs.order.revision), "published": false,
+		"vehicles": vehicles, "source_id": source, "destination_id": destination, "requester_id": requester_id})
+
+static func prepare_settlement_ship_output(data: TerrainData, feature: Dictionary, event: Dictionary) -> Dictionary:
+	if not feature.has("technology_settlement_order"): return ok("", {"empty": true})
+	var ref: Dictionary = feature.technology_settlement_order
+	var refs := _settlement_order_state(data, str(ref.settlement_id), str(ref.order_id))
+	if refs.is_empty() or refs.order.get("kind") != "ship_cooperation": return fail("STALE_SOURCE")
+	if refs.order.status == "cancelled": return ok("", {"empty": true})
+	var current := settlement_ship_work_preflight(data, str(ref.settlement_id), str(ref.order_id), "ferry_build")
+	if not current.ok: return current
+	if int(current.order.revision) >= 2147483646: return fail("LIMIT")
+	var paid: Dictionary = feature.get("tech_batch", {})
+	if not is_same(current.feature, feature) or current.order.status != "active" or not feature.has("ship_build") \
+		or float(feature.production) * 60.0 + 0.000000001 < float(feature.ship_build.total_work) \
+		or paid.get("operator_id") != current.order.payload.operator_id or paid.get("work_seconds", 0.0) <= 0.0 \
+		or not Technology.material_equal(paid.materials, current.order.payload.cap) or event.get("id") != paid.payment_id: return fail("WAITING")
+	var launch := _ship_launch_query(data, feature, "ferry", _technology_actions(data).lab.site_controller.reserves_cell)
+	if not launch.ok: return launch
+	var candidate: Dictionary = current.order.duplicate(true)
+	candidate.status = "completed"
+	candidate.payload.completed = 1
+	candidate.revision = int(candidate.revision) + 1
+	candidate.receipts = [{"id": "ship-output:" + JSON.stringify([str(data.site.id), str(current.order.id), str(launch.identity)]), "site_id": str(data.site.id),
+		"shipyard_id": str(candidate.payload.feature_id), "ship_id": str(launch.identity), "operator_id": int(candidate.payload.operator_id), "materials": paid.materials.duplicate(true), "work_seconds": float(paid.work_seconds)}]
+	return ok("真完整船體／原 next_vehicle 的有限輸出候選", {"settlement": current.settlement, "operations": current.operations, "order": current.order,
+		"candidate": candidate, "finished_feature": feature, "product_id": "vehicle:" + str(launch.identity)})
+
+static func publish_settlement_ship_delivery(prepared: Dictionary) -> Dictionary:
+	# This original synchronous wrapper validates ALL candidates before the
+	# first material mutation, then publishes the original transfer exactly once.
+	if prepared.get("ok") != true or prepared.get("published") == true: return fail("STALE_SOURCE")
+	if not is_same(prepared.data.site, prepared.site) or not is_same(prepared.site.get("settlement"), prepared.settlement) \
+		or not is_same(prepared.operations.get("orders", {}).get(str(prepared.order.id)), prepared.order) or int(prepared.order.revision) != int(prepared.revision): return fail("STALE_SOURCE")
+	# Re-query original current contact/life/permission before the first debit;
+	# a held pure transfer is not a continuing permission or a caller boolean.
+	var fresh: Dictionary = prepared.vehicles.prepare_transfer(str(prepared.source_id), str(prepared.destination_id), prepared.transfer.resources, [],
+		int(prepared.transfer.source_version), int(prepared.transfer.destination_version), int(prepared.requester_id))
+	if not fresh.ok: return fresh
+	if not is_same(fresh.source, prepared.transfer.source) or not is_same(fresh.source_cargo, prepared.transfer.source_cargo) \
+		or not is_same(fresh.destination, prepared.transfer.destination) or not is_same(fresh.destination_cargo, prepared.transfer.destination_cargo): return fail("STALE_SOURCE")
+	var stable := validate_prepared_item_transfer(prepared.transfer)
+	if not stable.ok: return stable
+	publish_item_transfer(prepared.transfer)
+	publish_settlement_ship_order(prepared)
+	prepared.published = true
+	return ok("真搬料及唯一有限交付已同次提交")
+
+static func request_settlement_ship_order(data: TerrainData, shipyard_id: String, operator_id: int, helper_id: int, carrier_id: int,
+	donor_id: String, requester_id: int, project_id: int = 0, preview: bool = false) -> Dictionary:
+	var actions: Variant = _technology_actions(data)
+	if actions == null or TechnologyCatalog.get_node("S12").get("enabled") != true or bool(data.site.get("paused", false)): return fail("NO_TECHNOLOGY")
+	var script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	if requester_id != int(actions._technology_controlled()) or requester_id != int(script.call("head_executor", actions.lab)): return fail("NO_AUTHORITY")
+	var authorizer: Dictionary = actions._person(requester_id)
+	if authorizer.is_empty() or not actions._ready(authorizer): return fail("BUSY")
+	var physical := _technology_shipyard_physical_context(data, shipyard_id)
+	if not physical.ok: return physical
+	var f: Dictionary = physical.feature
+	if f.has("ship_build") or f.has("tech_batch") or f.has("tech_trial") or f.has("technology_settlement_order") or bool(f.batch_paid) or float(f.production) != 0.0 or _feature_has_work(data, shipyard_id): return fail("BUSY")
+	var settlement: Dictionary = physical.settlement
+	var ops: Dictionary = settlement.get("technology_operations", {})
+	var candidate: Dictionary = ops.duplicate(true) if not ops.is_empty() else script.call("empty_technology_operations")
+	if candidate.orders.size() >= 16 or not Technology.integer(candidate.next_order, 1, 2147483645): return fail("LIMIT")
+	var id := "ship_cooperation_" + str(int(candidate.next_order))
+	var purpose := "settlement-ship:" + JSON.stringify([str(data.site.id), str(settlement.settlement_id), id])
+	if project_id > 0:
+		var project := Technology.active_project(settlement.get("technology", {}))
+		if project.get("id") != project_id or project.get("tech_id") != "S12" or project.get("executor", {}).get("person_id") != operator_id: return fail("STALE_PROJECT")
+		purpose = str(project.purpose)
+		for old: Dictionary in candidate.orders.values():
+			if old.get("kind") == "ship_cooperation" and old.payload.project_id == project_id: return fail("DUPLICATE")
+	elif not Technology.scope_known(settlement.get("technology", {}), "S12"): return fail("NO_TECHNOLOGY")
+	var team: Variant = null
+	var consents: Array = []
+	for identity: int in [operator_id, helper_id, carrier_id]:
+		var person: Dictionary = actions._person(identity)
+		if person.is_empty() or not actions._ready(person) or int(person.faction) != int(settlement.get("owner_faction", -1)) \
+			or not bool(script.call("office_person_ok", actions.lab, identity)): return fail("NO_WORKER")
+		if identity in [operator_id, helper_id]:
+			var original: Variant = actions._technology_team(person)
+			if original == null or identity == int(actions._technology_controlled()) or team != null and not is_same(team, original): return fail("NO_WORKER")
+			team = original
+		if identity == operator_id and not Technology.learned(actions._body_get(person, "technology"), "F13"): return fail("NO_SKILL")
+		var consent: Dictionary = actions._technology_military_consent_candidate(identity, purpose)
+		if not consent.ok: return consent
+		if not consent.get("consent", {}).is_empty(): consents.append(consent.consent.duplicate(true))
+	var donor: Dictionary = actions.lab.site_controller.vehicles._stock(donor_id, true)
+	if donor.is_empty() or donor_id == "feature:" + shipyard_id or donor_id.begins_with("person:") or not (donor_id == "depot" or donor_id.begins_with("feature:")) \
+		or donor.has("feature_id") and int(donor.faction) != int(authorizer.faction) \
+		or absi(authorizer.cell.x - donor.cell.x) + absi(authorizer.cell.y - donor.cell.y) > 1 \
+		or not data.is_walkable(authorizer.cell) or authorizer.cell != donor.cell and not data.can_step(authorizer.cell, donor.cell): return fail("NO_AUTHORITY")
+	var order := {"id": id, "kind": "ship_cooperation", "authorizer_id": requester_id, "status": "prepared", "receipts": [], "revision": 0,
+		"payload": {"settlement_id": str(settlement.settlement_id), "feature_id": shipyard_id, "operator_id": operator_id, "helper_id": helper_id, "carrier_id": carrier_id,
+			"source_feature_id": shipyard_id, "donor_id": donor_id, "ship_type": "ferry", "team_id": int(team.team_id), "cap": Ships.build_cost("ferry"), "spent": {}, "consents": consents,
+			"purpose": purpose, "source": {"site_id": str(data.site.id), "holder": "feature:" + shipyard_id, "grantor_id": requester_id, "status": "revoked"}, "project_id": project_id, "delivery_receipts": [], "completed": 0}}
+	candidate.orders[id] = order
+	candidate.next_order = int(candidate.next_order) + 1
+	if not valid_settlement_ship_order(data, data.site, order) or not bool(script.call("valid_technology_operations", data, candidate, data.site)): return fail("CORRUPT_STATE")
+	if preview: return ok("原有限一艘、兩工人、一搬料者可採用；不造船、不預扣", {"order_id": id})
+	f.technology_shipyard_work = {"version": 1, "settlement_id": str(settlement.settlement_id)}
+	script.call("publish_technology_operations", settlement, candidate)
+	return ok("原單已登記；沿兩端真搬料後在船塢明示製造來源", {"order_id": id})
+
+static func technology_armor_workshop_context(data: TerrainData, key: String, recipe_id: String) -> Dictionary:
+	if recipe_id not in ["leather_armor", "iron_armor"]: return ok()
+	var feature: Dictionary = data.site.get("features", {}).get(key, {}) if data != null else {}
+	var expected_kind := "tannery" if recipe_id == "leather_armor" else "smithy"
+	if feature.is_empty() or feature.get("kind") != expected_kind or feature.get("stage") != "complete" or not feature_usable(feature): return fail("NO_TARGET", "需本次配方的真完工作坊")
+	var actions: Variant = _technology_actions(data)
+	if actions == null: return fail("UNSUPPORTED", "原聚落人物接線尚未發布")
+	var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	if settlement_script == null: return fail("UNSUPPORTED")
+	var status: Dictionary = settlement_script.call("status", actions.lab)
+	var settlement: Dictionary = data.site.get("settlement", {})
+	if status.get("effective") != true or int(status.get("level", 0)) < 3: return fail("REQUIREMENTS", "甲冑新工單需當前有效的原3級聚落與真居民")
+	var owner_faction := int(settlement.get("owner_faction", -1))
+	if owner_faction < 0 or int(feature.get("owner_faction", -2)) != owner_faction or not bool(settlement_script.call("feature_in_jurisdiction", data, feature)): return fail("NO_AUTHORITY", "甲冑作坊須在原聚落管轄內並屬同管理方")
+	var found := {"tannery": false, "smithy": false}
+	for workshop: Dictionary in data.site.get("features", {}).values():
+		var kind := str(workshop.get("kind", ""))
+		if found.has(kind) and workshop.get("stage") == "complete" and feature_usable(workshop) and int(workshop.get("owner_faction", -2)) == owner_faction and bool(settlement_script.call("feature_in_jurisdiction", data, workshop)): found[kind] = true
+	if not found.tannery or not found.smithy: return fail("REQUIREMENTS", "甲冑新工單需同原聚落的真可用製革與鐵匠作坊")
+	return ok("原3級聚落、真人居民與兩種真作坊成立", {"level": int(status.level), "owner_faction": owner_faction, "feature": feature})
+
+static func technology_military_output_candidate(data: TerrainData, target: Dictionary, event: Dictionary, prospective: bool = true) -> Dictionary:
+	if data == null or not Technology.keys(event, ["id", "site_id", "target_id", "operator_id", "binding", "work_seconds", "item_ids", "outputs", "materials"]) \
+		or not Technology.keys(target.get("technology_order"), ["nation_id", "order_id"]): return fail("INVALID_RECEIPT")
+	var ref: Dictionary = target.technology_order
+	var order := _technology_order_record(data, ref)
+	var key := str(order.get("feature_id", ""))
+	if not str(ref.order_id).begins_with("production_") or order.is_empty() or not is_same(data.site.get("features", {}).get(key), target) \
+		or event.site_id != str(data.site.id) or event.target_id != "feature:" + key or event.binding != "workshop_bow": return fail("INVALID_RECEIPT")
+	var ledger: Dictionary = target.get("tech_batch", {})
+	var definition := feature_recipe(target)
+	if not validate_technology_order_storage(data, key, target, "feature").ok or ledger.is_empty() or not valid_technology_batch(ledger, data, key) \
+		or event.id != ledger.payment_id or int(event.operator_id) != int(order.operator_id) or int(event.operator_id) != int(ledger.operator_id) \
+		or not Technology.finite_number(event.work_seconds, 0.000000001) or not is_equal_approx(float(event.work_seconds), float(ledger.work_seconds)) \
+		or not Technology.material_equal(event.materials, ledger.materials) or not Technology.material_equal(event.materials, RANGED_RECIPES.bow.cost) \
+		or not Technology.material_equal(event.outputs, definition.get("output", {})) or not event.item_ids is Array or event.item_ids.size() != 1 \
+		or target.get("recipe_id") != "bow" or target.get("supply_mode") != "local" or not bool(target.get("batch_paid", false)) \
+		or float(target.get("production", 0.0)) + 0.00000001 < float(definition.get("cycle", 1.0)): return fail("WAITING")
+	if not prospective or event.item_ids[0] != str(int(data.site.get("next_item", 0))) or data.site.get("item_records", {}).has(event.item_ids[0]): return fail("STALE_SOURCE")
+	return ok("同原有限军工单本次真实付款／工作／下一实物序号候选")
+
+static func begin_nation_military_operation(data: TerrainData, nation_id: String, order_id: String, preview: bool = false) -> Dictionary:
+	var selector := {"nation_id": nation_id, "order_id": order_id}
+	var context := _technology_military_context(data, selector)
+	if not context.ok: return context
+	var key := str(context.order.feature_id)
+	var feature: Dictionary = context.feature
+	if feature.get("technology_order", {}) == selector and feature.has("tech_batch"):
+		var ledger: Dictionary = feature.tech_batch
+		if not ledger.get("token", {}).is_empty(): return fail("STALE_PROJECT", "已有研究用途应由原研究入口恢复")
+		if not validate_technology_target_storage(data, key, feature).ok: return fail("STALE_SOURCE")
+		var work := _technology_feature_resume_work(data, key, feature, selector)
+		if not work.ok: return work
+		if not preview: _technology_publish_feature_resume(data, work)
+		return ok("恢复同原有限军工单已付工序", {"target_id": "feature:" + key, "resumed": true, "already_working": bool(work.already_working)})
+	return _technology_begin_feature_operation(data, selector, key, "workshop_bow", preview)
+
+static func begin_nation_technology_operation(data: TerrainData, nation_id: String, order_id: String, preview: bool = false, work_target: Dictionary = {}) -> Dictionary:
+	var selector := {"nation_id": nation_id, "order_id": order_id}
+	var admission := _technology_named_admission(data, selector)
+	if not admission.ok: return admission
+	var nation: Dictionary = data.site.get("equipment_nations", {}).get(nation_id, {})
+	var order: Dictionary = nation.get("technology_operations", {}).get("public_orders", {}).get(order_id, {})
+	if order.is_empty() or int(order.get("project_id", -1)) != 0 or not Technology.scope_known(nation.get("technology", {}), str(order.get("tech_id", ""))): return fail("STALE_PROJECT")
+	var actions: Variant = _technology_actions(data)
+	if actions == null: return fail("UNSUPPORTED")
+	var resumed := _resume_nation_vehicle_operation(data, selector, order, preview)
+	if resumed.code != "NO_TARGET": return resumed
+	resumed = _resume_nation_feature_operation(data, selector, order, preview)
+	if resumed.code != "NO_TARGET": return resumed
+	if order.tech_id in ["N02", "N06", "N10"]:
+		if not Technology.keys(work_target, ["cells", "options"]) or not work_target.cells is Array or not work_target.options is Dictionary: return fail("INVALID")
+		var cells: Array[int] = []
+		for raw: Variant in work_target.cells:
+			if not Technology.integer(raw, 0, data.size.x * data.size.y - 1) or cells.has(int(raw)): return fail("INVALID")
+			cells.append(int(raw))
+		var kind := "house" if order.tech_id == "N06" else "road"
+		var prepared := prepare_build_request(data, kind, cells, actions.lab.site_controller.reserves_cell, work_target.options, {}, selector)
+		if not prepared.ok: return prepared
+		if preview: return ok("原公共單／完整私料／原具名工位可開始", {"feature": prepared.key, "cost": prepared.source.cost.duplicate(true)})
+		return publish_build_request(data, prepared)
+	if order.tech_id == "N11":
+		if order.payload.route == "armor":
+			if not work_target.is_empty(): return fail("INVALID")
+			return _technology_begin_feature_operation(data, selector, str(order.payload.host_id), "iron_armor", preview)
+		if order.payload.route == "siege":
+			if not Technology.keys(work_target, ["anchor", "facing", "team_id"]) or not work_target.anchor is Vector2i or not work_target.facing is Vector2i \
+				or not Technology.integer(work_target.team_id, 1) or admission.admission.team == null or int(admission.admission.team.team_id) != int(work_target.team_id): return fail("INVALID")
+			return begin_siege_build(data, "ballista", work_target.anchor, work_target.facing, int(work_target.team_id), int(admission.admission.requester_id), actions.lab.site_controller.reserves_cell, preview, {}, selector)
+	return fail("INVALID")
+
+static func settlement_operation_material_source_candidate(data: TerrainData, settlement_id: String, order_id: String, binding: String = "") -> Dictionary:
+	var refs := _settlement_order_state(data, settlement_id, order_id)
+	if not refs.is_empty() and not SETTLEMENT_PROCESSING_KINDS.has(str(refs.order.get("kind", ""))):
+		return _settlement_typed_call(str(refs.order.get("kind", "")), "source", [data, settlement_id, order_id, binding])
+	var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	if refs.is_empty() or not bool(settlement_script.call("valid_technology_operations", data, refs.operations, data.site)): return fail("NO_TARGET")
+	var payload: Dictionary = refs.order.payload
+	if payload.source.status != "granted" or refs.order.status not in ["prepared", "active", "suspended"] \
+		or not binding.is_empty() and not settlement_operation_binding_valid(refs.order, binding): return fail("NO_BUDGET")
+	if not Technology.keys(payload.source, ["site_id", "holder", "grantor_id", "status"]) or payload.source.site_id != str(data.site.id) \
+		or not Technology.material_stack(payload.cap) or not Technology.material_stack(payload.spent): return fail("STALE_SOURCE")
+	var source_key := str(payload.source.holder).trim_prefix("feature:") if str(payload.source.holder).begins_with("feature:") else ""
+	var endpoint := {"holder": data.site.get("depot_items", {}), "cargo": data.site.get("inventory", {}), "faction": int(refs.settlement.get("owner_faction", -1)), "withdraw_only": false} \
+		if payload.source.holder == "depot" else SiteStockpiles.stock_endpoint(data, source_key)
+	if endpoint.is_empty() or endpoint.get("withdraw_only", true) or not _item_holder_shape(endpoint.get("holder", {})) \
+		or endpoint.holder.holder != payload.source.holder or not endpoint.get("cargo") is Dictionary \
+		or int(endpoint.get("faction", -1)) != int(refs.settlement.get("owner_faction", -2)) or not Technology.integer(endpoint.holder.version, 0, 2147483645): return fail("STALE_SOURCE")
+	return ok("", {"kind": "settlement_order", "holder": "settlement-order:" + JSON.stringify([str(data.site.id), settlement_id, order_id]),
+		"source_site_id": str(data.site.id), "grantor": {"site_id": str(data.site.id), "person_id": int(payload.source.grantor_id)}, "cap": payload.cap.duplicate(true), "spent": payload.spent.duplicate(true),
+		"physical_holder": endpoint.holder, "physical_cargo": endpoint.cargo, "holder_version": int(endpoint.holder.version),
+		"expected_refs": {"terrain": data, "site": data.site, "nation": refs.settlement, "operations": refs.operations, "order": refs.order, "holder": endpoint.holder, "cargo": endpoint.cargo}})
+
+static func settlement_operation_paid_source_candidate(data: TerrainData, token: Dictionary, order_id: String) -> Dictionary:
+	if data == null or not token is Dictionary or token.get("scope") != "settlement": return fail("INVALID")
+	var refs := _settlement_order_state(data, str(token.scope_id), order_id)
+	if not refs.is_empty() and not SETTLEMENT_PROCESSING_KINDS.has(str(refs.order.get("kind", ""))):
+		return _settlement_typed_call(str(refs.order.get("kind", "")), "paid", [data, token, order_id])
+	if not _technology_trial_shape(token, data): return fail("INVALID")
+	if refs.is_empty() or not valid_settlement_processing_order(data, data.site, refs.order): return fail("STALE_SOURCE")
+	var order: Dictionary = refs.order
+	var key := str(token.target_id).trim_prefix("feature:")
+	var target: Dictionary = data.site.get("features", {}).get(key, {})
+	var paid: Dictionary = target.get("tech_batch", {})
+	if token.target_id != "feature:" + key or order.payload.project_id != token.project_id or order.payload.purpose != token.purpose \
+		or order.payload.operator_id != token.person.person_id or order.payload.feature_id != key \
+		or target.get("technology_settlement_order", {}) != {"settlement_id": str(token.scope_id), "order_id": order_id} \
+		or not is_same(target.get("tech_trial"), token) or paid.get("token", {}) != token or not valid_technology_batch(paid, data, key) \
+		or paid.source_holder != order.payload.source.holder or not Technology.material_equal(paid.materials, token.materials): return fail("STALE_SOURCE")
+	return ok("原已付歷史只由真target及唯一原工單證明；不讀活庫存", {"kind": "settlement_order",
+		"holder": "settlement-order:" + JSON.stringify([str(data.site.id), str(token.scope_id), order_id]), "source_site_id": str(data.site.id),
+		"grantor": {"site_id": str(data.site.id), "person_id": int(order.payload.source.grantor_id)}, "cap": order.payload.cap.duplicate(true), "spent": order.payload.spent.duplicate(true),
+		"settlement": refs.settlement, "operations": refs.operations, "order": order, "target": target, "paid": paid, "source_holder": str(paid.source_holder)})
+
+static func technology_existing_paid_phase_source(data: TerrainData, token: Dictionary) -> Dictionary:
+	if data == null or not _technology_trial_shape(token, data): return fail("INVALID_TECHNOLOGY")
+	if token.tech_id == "S06" and token.binding == "food_order": return settlement_food_existing_paid_source(data, token)
+	var target_id := str(token.target_id)
+	var key := target_id.get_slice(":", 1)
+	var kind := "vehicle" if target_id.begins_with("vehicle:") else "feature"
+	if target_id != kind + ":" + key: return fail("INVALID_WORK")
+	var target: Dictionary = data.site.get("vehicles" if kind == "vehicle" else "features", {}).get(key, {})
+	if target.is_empty() or not target.has("tech_trial") or not is_same(target.tech_trial, token): return fail("STALE_SOURCE")
+	var ledger: Dictionary = target.get("tech_batch", {})
+	if not valid_technology_batch(ledger, data, key, kind) or ledger.token != token \
+		or not Technology.material_equal(ledger.materials, token.materials) or not validate_technology_ledger_source(data, target, ledger): return fail("STALE_SOURCE")
+	if kind == "vehicle" and token.binding == "spare_repair":
+		if token.scope != "settlement" or token.tech_id != "S08" or not target.has("technology_spare_repair") or target.technology_spare_repair.released \
+			or not valid_settlement_spare_repair_storage(data, target) or ledger.recipe_id != "repair:ballista_spares" or not Technology.material_equal(ledger.materials, {"ballista_spares": 1}): return fail("STALE_SOURCE")
+		return ok("原備件已付", {"target": target, "ledger": ledger, "payment_id": str(ledger.payment_id), "materials": ledger.materials.duplicate(true), "source_holder": str(ledger.source_holder), "source_version": int(ledger.source_version)})
+	if kind == "vehicle":
+		if not TECHNOLOGY_SIEGE_BINDINGS.has(str(token.binding)) or target.get("kind") != TECHNOLOGY_SIEGE_BINDINGS[str(token.binding)] \
+			or target.get("phase") != "building": return fail("STALE_SOURCE")
+		var definition: Dictionary = SIEGE_DEFINITIONS.get(str(target.kind), {})
+		var job: Dictionary = target.get("build", {})
+		if definition.is_empty() or job.is_empty() or not Technology.material_equal(ledger.materials, definition.cost) \
+			or not Technology.material_equal(job.get("paid_cost", {}), ledger.materials) \
+			or not is_equal_approx(float(job.get("total_work", -1.0)), float(definition.work_seconds)) \
+			or not Technology.finite_number(job.get("progress")) or float(job.progress) > float(job.total_work): return fail("STALE_SOURCE")
+	elif target.has("ship_build"):
+		var ship: Dictionary = target.ship_build
+		if token.binding != "ferry_build" or target.get("kind") != "shipyard" or ship.get("ship_type") != "ferry" \
+			or not bool(target.get("batch_paid", false)) or not Technology.material_equal(ship.get("paid_cost", {}), ledger.materials) \
+			or not Technology.finite_number(ship.get("total_work"), 0.000000001) \
+			or not Technology.finite_number(target.get("production")) or float(target.production) > float(ship.total_work) / 60.0: return fail("STALE_SOURCE")
+	elif str(target.get("stage", "")) != "complete":
+		if not TECHNOLOGY_BUILD_BINDINGS.has(str(token.binding)) or target.get("kind") != TECHNOLOGY_BUILD_BINDINGS[str(token.binding)] \
+			or not Technology.material_equal(target.get("cost", {}), ledger.materials) \
+			or not Technology.finite_number(target.get("work"), 0.000000001) \
+			or not Technology.finite_number(target.get("progress")) or float(target.progress) > float(target.work): return fail("STALE_SOURCE")
+	else:
+		if not TECHNOLOGY_FEATURE_BINDINGS.has(str(token.binding)): return fail("STALE_SOURCE")
+		var binding: Array = TECHNOLOGY_FEATURE_BINDINGS[str(token.binding)]
+		var definition := feature_recipe(target)
+		if target.get("kind") != binding[0] or str(target.get("recipe_id", "")) != str(_settlement_bound_feature_recipe(data, target, token)) or definition.is_empty() \
+			or not bool(target.get("batch_paid", false)) or ledger.recipe_id != str(target.get("recipe_id", "")) \
+			or not Technology.material_equal(definition.get("input", {}), ledger.materials) \
+			or not Technology.finite_number(definition.get("cycle"), 0.000000001) \
+			or not Technology.finite_number(target.get("production")) or float(target.production) > float(definition.cycle): return fail("STALE_SOURCE")
+	return ok("原目標本批真材料已付；來源保留為歷史", {"target": target, "ledger": ledger, "payment_id": str(ledger.payment_id),
+		"materials": ledger.materials.duplicate(true), "source_holder": str(ledger.source_holder), "source_version": int(ledger.source_version)})
+
+static func prepare_gd_contact_work_envelope(prepared: Dictionary) -> Dictionary:
+	var data: TerrainData = prepared.get("data")
+	var prefix: Dictionary = prepared.get("prefix_ref", {})
+	if not prepared.get("ok", false) or prepared.get("published") != false or data == null \
+		or _checked_work_prefix_owner(data, prepared.get("task", {}), int(prepared.get("identity", 0)), prefix) == null: return fail("STALE_WORK_PREFIX")
+	var unit: Dictionary = prepared.unit
+	var target: Dictionary = prepared.target
+	var endpoint: String = str(prepared.endpoint)
+	var action: String = str(prepared.task.action)
+	var threshold := 0.0
+	var scale := 1.0 / 60.0
+	if endpoint == "siege":
+		threshold = float(unit.get("total_work", -1.0))
+		scale = 1.0
+		if unit.get("paid_cost", {}).is_empty() or not is_same(target.get("build" if action == "construct" else "repair"), unit): return fail("STALE_SOURCE")
+	elif endpoint == "ship_repair":
+		threshold = float(unit.get("total_work", -1.0))
+		scale = 1.0
+		# The SAME original prepared preflight already passed advance's full
+		# current receipt/station/tool predicates, including its zero endpoint.
+		if action != "repair" or unit.get("paid_cost", {}).is_empty() or not is_same(target.get("naval", {}).get("repair"), unit): return fail("STALE_SOURCE")
+	elif endpoint == "feature":
+		if action == "operate": threshold = float(target.ship_build.total_work) / 60.0 if target.has("ship_build") else float(feature_recipe(target).get("cycle", -1.0))
+		else: threshold = float(unit.get("work", -1.0))
+	elif endpoint == "resource":
+		# Immutable original resource-base reference, never Env.resource clone.
+		threshold = resource_work_minutes(int(target.kind), action)
+	elif endpoint == "depot": threshold = float(unit.get("progress", 0.0))
+	else: return fail("CONTACT_PREFIX_SOURCE_NOT_PREPARED")
+	if not is_finite(threshold) or threshold < 0.0: return fail("INVALID_WORK")
+	var payment_template: Dictionary = prepared.get("payment", {})
+	var ledger_template: Dictionary = prepared.ledger
+	# The first full-window worker may be interrupted at fraction zero. The
+	# actual first working helper then uses the SAME prechecked batch/source.
+	for prior: Dictionary in prefix.runtime_priors:
+		if is_same(prior.get("target"), target) and not prior.get("payment", {}).is_empty():
+			payment_template = prior.payment
+			ledger_template = prior.ledger
+			break
+	var holder_begin := -1
+	if not payment_template.is_empty():
+		holder_begin = int(payment_template.holder.version)
+		if holder_begin < 0 or holder_begin >= 2147483646: return fail("STALE_SOURCE")
+	var repair_maximum := 0.0
+	if endpoint == "siege" and action == "repair": repair_maximum = float(SIEGE_DEFINITIONS[str(target.kind)].max_hp)
+	if endpoint == "ship_repair": repair_maximum = Ships.hull_hp(str(target.ship_type))
+	return ok("原工作有限scalar/source上界候选已核", {"prepared": prepared, "owner": prepared.owner, "data": data,
+		"target": target, "unit": unit, "threshold": threshold, "scale": scale, "progress_begin": float(unit.get(prepared.field, 0.0)),
+		"ledger": ledger_template, "ledger_begin": float(target.get("tech_batch", {}).get("work_seconds", 0.0)),
+		"ledger_operator_id": int(prepared.get("ledger_operator_id", 0)), "field": prepared.field,
+		"payment_template": payment_template, "holder_begin": holder_begin, "repair_maximum": repair_maximum,
+		"repair_hp_begin": float(target.naval.hp) if endpoint == "ship_repair" else float(target.get("hp", 0.0)), "repair_applied_begin": float(unit.get("applied", 0.0)),
+		"ship_holder": target.get("holder", {}) if endpoint == "ship_repair" else {},
+		"ship_cargo": target.get("cargo", {}) if endpoint == "ship_repair" else {},
+		"ship_holder_begin": int(target.holder.version) if endpoint == "ship_repair" else -1,
+		"ship_revision_begin": int(target.revision) if endpoint == "ship_repair" else -1,
+		"ship_paid_cost": unit.get("paid_cost", {}).duplicate(true) if endpoint == "ship_repair" else {}})
+
+static func restrict_gd_contact_work_prefix(envelope: Dictionary, prefix: Dictionary, priors: Array) -> Dictionary:
+	var owner: Variant = envelope.get("owner")
+	if owner == null or not owner.has_method("valid_gd_contact_work_prefix") \
+		or not owner.valid_gd_contact_work_prefix(envelope, prefix, priors): return fail("STALE_WORK_PREFIX")
+	var actual: float = float(prefix.actual_seconds)
+	var productive: float = float(prefix.productive_seconds)
+	var applied: float = float(prefix.applied_productive_seconds)
+	if not is_finite(actual) or not is_finite(productive) or not is_finite(applied) or actual < 0.0 \
+		or productive < 0.0 or productive > actual + PersonFatigue.WORK_PLAN_EPS or applied < 0.0: return fail("INVALID_WORK")
+	var previous: float = float(envelope.progress_begin)
+	var ledger: Dictionary = envelope.ledger
+	var ledger_seconds: float = float(envelope.ledger_begin)
+	var ledger_operator_id: int = int(envelope.ledger_operator_id)
+	var paid := false
+	var hp: float = float(envelope.repair_hp_begin)
+	var prior_applied: float = float(envelope.repair_applied_begin)
+	for prior: Dictionary in priors:
+		if is_same(prior.get("unit"), envelope.unit):
+			previous = float(prior.progress)
+			if not prior.get("repair", {}).is_empty(): hp = float(prior.repair.hp); prior_applied = float(prior.repair.applied)
+		if is_same(prior.get("target"), envelope.target):
+			ledger = prior.ledger
+			ledger_seconds = float(prior.ledger_seconds)
+			ledger_operator_id = int(prior.ledger_operator_id)
+			paid = paid or not prior.get("payment", {}).is_empty()
+	var payment := {}
+	if applied > 0.0 and not envelope.payment_template.is_empty() and not paid:
+		var original: Dictionary = envelope.payment_template
+		var version: int = int(envelope.holder_begin)
+		var usage: Dictionary = _checked_prefix_source_usage(priors, original.holder, original.cargo)
+		if not usage.ok: return usage
+		version += int(usage.commits)
+		# Costs were jointly bounded before body. Removing a zero effort debit
+		# can only free resources/version space, never create a new allocation.
+		payment = {"holder": original.holder, "cargo": original.cargo, "version": version, "cost": original.cost}
+		ledger = envelope.ledger.duplicate(false)
+		ledger.source_version = version
+		ledger_operator_id = int(prefix.person_id)
+		ledger.operator_id = ledger_operator_id
+		ledger_seconds = 0.0
+	var endpoint: String = str(envelope.prepared.endpoint)
+	var action: String = str(prefix.task.action)
+	if not ledger.is_empty() and (action in ["construct", "operate"] or envelope.target.has("technology_spare_repair")):
+		if endpoint == "feature" and action == "operate" and _technology_unbound_ordinary_feature_ledger(envelope.target, ledger):
+			ledger_operator_id = int(prefix.person_id)
+			ledger_seconds += productive
+		elif ledger_operator_id == int(prefix.person_id): ledger_seconds += productive
+	var result: Dictionary = envelope.prepared.duplicate(false)
+	result.prefix_ref = prefix
+	result.prior_progress = previous
+	result.progress = minf(float(envelope.threshold), previous + applied * float(envelope.scale))
+	result.ledger = ledger
+	result.ledger_seconds = ledger_seconds
+	result.ledger_operator_id = ledger_operator_id
+	result.payment = payment
+	result.repair = {}
+	if endpoint in ["siege", "ship_repair"] and action == "repair" and applied > 0.0:
+		var repaired: float = float(envelope.unit.amount) * float(result.progress) / float(envelope.threshold)
+		result.repair = {"hp": minf(float(envelope.repair_maximum), hp + maxf(0.0, repaired - prior_applied)), "applied": repaired}
+		if endpoint == "ship_repair":
+			var consumed: Dictionary = {}
+			for resource: String in envelope.ship_paid_cost:
+				consumed[resource] = floori(float(envelope.ship_paid_cost[resource]) * float(result.progress) / float(envelope.threshold)) - floori(float(envelope.ship_paid_cost[resource]) * previous / float(envelope.threshold))
+			var usage: Dictionary = _checked_prefix_source_usage(priors, envelope.ship_holder, envelope.ship_cargo)
+			if not usage.ok: return usage
+			var revision: int = int(envelope.ship_revision_begin)
+			for prior: Dictionary in priors:
+				if is_same(prior.get("target"), envelope.target) and prior.get("endpoint") == "ship_repair" and not prior.get("repair", {}).is_empty(): revision += 1
+			result.repair.consumed = consumed
+			result.repair.holder_version = int(envelope.ship_holder_begin) + int(usage.commits)
+			result.repair.revision = revision
+	result.deferred_endpoint = float(result.progress) + 0.000000001 >= float(envelope.threshold)
+	result.published = false
+	return result
+
+static func shared_physical_work_unit(data: TerrainData, task: Dictionary) -> Dictionary:
+	if data == null or data.site.is_empty() or task.is_empty(): return {}
+	var target_id: String = str(task.get("target", ""))
+	var action: String = str(task.get("action", ""))
+	var target: Dictionary = {}
+	var unit: Dictionary = {}
+	var field := "progress"
+	var threshold := 0.0
+	var scale := 60.0
+	if target_id.begins_with("feature:") and action in ["construct", "repair", "operate"]:
+		target = data.site.get("features", {}).get(target_id.trim_prefix("feature:"), {})
+		if target.is_empty(): return {}
+		unit = target.get("repair", {}) if action == "repair" else target.get("pending_build", target) if action == "construct" else target
+		if action == "operate":
+			field = "production"
+			threshold = float(target.ship_build.total_work) / 60.0 if target.has("ship_build") else float(feature_recipe(target).get("cycle", NAN))
+		else: threshold = float(unit.get("work", NAN))
+	elif target_id.begins_with("vehicle:") and action in ["construct", "repair"]:
+		target = data.site.get("vehicles", {}).get(target_id.trim_prefix("vehicle:"), {})
+		if target.is_empty(): return {}
+		unit = target.get("naval", {}).get("repair", {}) if action == "repair" and target.get("kind") == "ship" else target.get("build" if action == "construct" else "repair", {})
+		threshold = float(unit.get("total_work", NAN))
+		scale = 1.0
+	else: return {} # Resource/depot work units remain each original person's task.
+	var progress: float = float(unit.get(field, NAN))
+	if unit.is_empty() or not is_finite(threshold) or threshold < 0.0 or not is_finite(progress) or progress < 0.0 or progress > threshold + 0.00000001: return {}
+	return {"target_id": target_id, "target_ref": target, "work_unit": unit, "action": action, "field": field,
+		"physical_remaining": maxf(0.0, threshold - progress) * scale,
+		"unit_key": target_id + ":" + action + ":" + field + ":part:" + str(unit.get("part", ""))}
+
+static func technology_cold_work_multiplier(data: TerrainData, target: Dictionary, task: Dictionary) -> float:
+	# Only the SAME original unloaded TerrainLab changes effective research work.
+	# Existing preflight proves current task, consent, master and paid source.
+	# Actual effort/fatigue, ordinary operations and the Site clock stay unchanged.
+	var actions: Variant = _technology_actions(data)
+	if actions == null or not is_instance_valid(actions.lab) or actions.lab.terrain != data or actions.lab.restore_only != true: return 1.0
+	var token: Dictionary = target.get("tech_trial", {})
+	if token.is_empty() or not _technology_trial_shape(token, data): return 1.0
+	var collection := "vehicles" if str(token.target_id).begins_with("vehicle:") else "features"
+	var key := str(token.target_id).trim_prefix("vehicle:" if collection == "vehicles" else "feature:")
+	if not is_same(target, data.site.get(collection, {}).get(key)): return 1.0
+	var action := "construct" if str(token.target_id).begins_with("vehicle:") or TECHNOLOGY_BUILD_BINDINGS.has(str(token.binding)) else "operate"
+	if token.binding == "spare_repair": action = "repair"
+	if str(task.get("target", "")) != str(token.target_id) or str(task.get("action", "")) != action: return 1.0
+	var executor: Dictionary = actions._person(int(token.person.person_id))
+	return 0.5 if not executor.is_empty() and not bool(executor.get("player", true)) else 1.0
+
+static func validate_technology_trial_project_storage(data: TerrainData, target: Dictionary) -> Dictionary:
+	if not target.has("tech_trial"): return ok()
+	if data == null or not target.tech_trial is Dictionary: return fail("CORRUPT_TECHNOLOGY")
+	var token: Dictionary = target.tech_trial
+	if not _technology_trial_shape(token, data): return fail("CORRUPT_TECHNOLOGY", "原冷研究 token 格式")
+	var owner: Dictionary = {}
+	if token.scope == "family":
+		owner = data.site.get("family", {})
+		if owner.get("family_id") != token.scope_id: return fail("CORRUPT_TECHNOLOGY", "原家族身分")
+	elif token.scope == "settlement":
+		owner = data.site.get("settlement", {})
+		if owner.get("settlement_id") != token.scope_id: return fail("CORRUPT_TECHNOLOGY", "原聚落身分")
+	else:
+		owner = data.site.get("equipment_nations", {}).get(str(token.scope_id), {})
+	var record: Dictionary = owner.get("technology", {})
+	if not Technology.valid_scope_record(record, str(token.scope)) or record.holder_site_id != str(data.site.id) or int(record.epoch) != int(token.epoch):
+		return fail("CORRUPT_TECHNOLOGY", "原冷研究單一 holder／epoch")
+	var project: Dictionary = {}
+	for retained: Dictionary in record.projects:
+		if int(retained.id) == int(token.project_id): project = retained; break
+	# Retained paid work may legally be stopped or lose current authority. Its
+	# immutable history stays saveable; original live guards decide continuation.
+	if project.is_empty() or int(project.rules_version) != 2 or project.tech_id != token.tech_id or project.purpose != token.purpose \
+		or int(token.attempt) >= int(project.next_attempt) or project.budget.is_empty(): return fail("CORRUPT_TECHNOLOGY", "原冷研究項目／嘗試")
+	var ledger: Dictionary = target.get("tech_batch", {})
+	if ledger.is_empty() or ledger.get("token") != token or int(ledger.get("operator_id", -1)) != int(token.person.person_id):
+		return fail("CORRUPT_TECHNOLOGY", "原冷研究完整付款持有人")
+	var matches := 0
+	for payment: Dictionary in project.budget.payments:
+		if payment.payment_id != ledger.payment_id: continue
+		if int(payment.attempt) != int(token.attempt) or payment.phase_id != token.phase_id or payment.target_id != token.target_id \
+			or not Technology.same_person_ref(payment.person, token.person, record.get("person_links", [])) \
+			or not Technology.material_equal(payment.materials, token.materials) or not Technology.material_equal(ledger.materials, token.materials):
+			return fail("CORRUPT_TECHNOLOGY", "原冷研究付款本體")
+		matches += 1
+	if matches != 1: return fail("CORRUPT_TECHNOLOGY", "原冷研究缺唯一原付款")
+	for receipt: Dictionary in project.receipts:
+		if int(receipt.attempt) == int(token.attempt): return fail("CORRUPT_TECHNOLOGY", "原已完成研究不可重放未完批次")
+	return ok()
+
+static func prepare_ranged_craft(data: TerrainData, recipe_id: String, original_owner: int, technology_token: Dictionary = {}, preview: bool = false, source_only: bool = false) -> Dictionary:
+	if data == null or not RANGED_RECIPES.has(recipe_id) or original_owner <= 0 or original_owner > 2147483647:
+		return fail("INVALID", "遠程手作配方／原人物")
+	if technology_token.get("tech_id") == "F08":
+		var scope_actions: Variant = _technology_actions(data)
+		if scope_actions == null or not scope_actions.has_method("scope_ranged_craft_guard"): return fail("UNSUPPORTED")
+		var scope_guard: Dictionary = scope_actions.scope_ranged_craft_guard(original_owner, recipe_id, technology_token, preview or source_only)
+		if not scope_guard.ok: return scope_guard
+	if recipe_id == "ballista_spares":
+		var guard := settlement_spares_recipe_guard(data, original_owner, technology_token, preview or source_only)
+		if not guard.ok: return guard
+	if recipe_id == "fire_pot":
+		var actions: Variant = _technology_actions(data)
+		if actions == null or not actions.has_method("fire_pot_craft_guard"): return fail("UNSUPPORTED")
+		var admission: Dictionary = actions.fire_pot_craft_guard(original_owner, technology_token, preview or source_only)
+		if not admission.ok: return admission
+	var state: Dictionary = data.site
+	if int(state.get("item_storage_version", -1)) != ITEM_STORAGE_VERSION or not state.get("inventory") is Dictionary \
+		or not state.get("depot_items") is Dictionary or not _item_holder_shape(state.depot_items) \
+		or str(state.depot_items.holder) != "depot" or not _resource_stack(state.inventory):
+		return fail("INVALID", "原營地實物資料未就緒")
+	var stock: Dictionary = state.inventory
+	var depot: Dictionary = state.depot_items
+	var recipe: Dictionary = RANGED_RECIPES[recipe_id]
+	if int(stock.get("tools", 0)) < 1 or not can_pay(stock, recipe.cost):
+		return fail("MATERIALS", "營地須保有工具 1（不消耗）及 " + items_text(recipe.cost))
+	var output: Dictionary = recipe.get("output", {})
+	var equipment: bool = recipe.has("asset")
+	var final_load: float = carried_load(state, stock, depot) - inventory_size(recipe.cost) + (1 if equipment else inventory_size(output))
+	if final_load > float(state.get("capacity", 0)):
+		return fail("STORAGE_FULL", "材料消耗後仍須容納完整製品")
+	if int(depot.version) >= 2147483646:
+		return fail("STALE_SOURCE", "營地提交版本已用盡")
+	var definition: Dictionary = {}
+	var definition_id := ""
+	if equipment:
+		definition_id = "weapon:" + str(recipe.asset)
+		definition = {"slot": "weapon", "asset": str(recipe.asset), "tint": [1.0, 1.0, 1.0, 1.0]}
+		if not state.get("item_definitions") is Dictionary or not state.get("item_records") is Dictionary:
+			return fail("INVALID", "原裝備登記未就緒")
+		if state.item_definitions.has(definition_id) and state.item_definitions[definition_id] != definition:
+			return fail("INVALID", "不能覆寫既有共用物品定義")
+		if int(state.get("next_item", 0)) <= 0 or int(state.next_item) >= 2147483647 or state.item_records.has(str(int(state.next_item))):
+			return fail("INVALID", "物品序號無效或重複")
+	else:
+		for resource: String in output:
+			if int(stock.get(resource, 0)) + int(output[resource]) > 1000000:
+				return fail("STORAGE_FULL", "原資源堆疊已達上限")
+	# The original preview checks do not allocate equipment or call its transfer
+	# guard. Preserve that behavior; a real prepared commit checks the factory.
+	if preview: return ok("可開始營地手作", {"seconds": float(recipe.duration)})
+	var stock_before: Dictionary = stock.duplicate(true)
+	var depot_before: Dictionary = depot.duplicate(true)
+	var capacity_before: float = float(state.get("capacity", 0.0))
+	var creation: Dictionary = {}
+	if equipment and not source_only:
+		creation = prepare_equipment_creation(data, depot, [{"definition_id": definition_id, "definition": definition, "slot": ""}], original_owner)
+		if not creation.ok: return creation
+	if not is_same(state, data.site) or not is_same(stock, state.get("inventory")) or not is_same(depot, state.get("depot_items")) \
+		or stock != stock_before or depot != depot_before or float(state.get("capacity", 0.0)) != capacity_before:
+		return fail("STALE_SOURCE")
+	return ok("原營地手作材料／製品候選已純核", {"data": data, "site": state, "stock": stock, "depot": depot,
+		"stock_before": stock_before, "depot_before": depot_before, "capacity_before": capacity_before,
+		"recipe_id": recipe_id, "recipe": recipe, "owner_id": original_owner, "cost": recipe.cost.duplicate(true),
+		"output": output.duplicate(true), "creation": creation, "source_only": source_only, "published": false})
+
+static func validate_prepared_ranged_craft(prepared: Dictionary) -> bool:
+	var data: TerrainData = prepared.get("data")
+	if prepared.get("ok") != true or prepared.get("published") != false or prepared.get("source_only") != false or data == null \
+		or not is_same(prepared.get("site"), data.site) or not is_same(prepared.get("stock"), data.site.get("inventory")) \
+		or not is_same(prepared.get("depot"), data.site.get("depot_items")) \
+		or prepared.stock != prepared.get("stock_before") or prepared.depot != prepared.get("depot_before") \
+		or float(data.site.get("capacity", 0.0)) != float(prepared.get("capacity_before", -1.0)): return false
+	var recipe_id: String = str(prepared.get("recipe_id", ""))
+	if not Technology.integer(prepared.get("owner_id"), 1, 2147483647) or not RANGED_RECIPES.has(recipe_id) or not is_same(prepared.get("recipe"), RANGED_RECIPES[recipe_id]) \
+		or prepared.get("cost") != RANGED_RECIPES[recipe_id].cost or prepared.get("output") != RANGED_RECIPES[recipe_id].get("output", {}): return false
+	var creation: Dictionary = prepared.get("creation", {})
+	if RANGED_RECIPES[recipe_id].has("asset"):
+		if not (creation.get("ok") == true and is_same(creation.get("state_ref"), data.site) \
+			and is_same(creation.get("destination_ref"), prepared.depot) and creation.get("destination_before") == prepared.depot \
+			and int(data.site.get("next_item", -1)) == int(creation.get("expected_next_item", -2))): return false
+		for definition_id: String in creation.get("definitions", {}):
+			if data.site.item_definitions.has(definition_id) and data.site.item_definitions[definition_id] != creation.definitions[definition_id]: return false
+		for identity: String in creation.get("item_ids", []):
+			if data.site.item_records.has(identity): return false
+		return true
+	return creation.is_empty()
+
+static func publish_prepared_ranged_craft(prepared: Dictionary) -> Dictionary:
+	# Same synchronous call after ORIGINAL owner/caller validation, before any
+	# terminal debit. The common-point caller must validate every actual batch
+	# first; this tail does not call authority, material or product callbacks.
+	assert(validate_prepared_ranged_craft(prepared))
+	var data: TerrainData = prepared.data
+	var result: Dictionary = ok()
+	if not prepared.creation.is_empty():
+		_publish_equipment_creation(data, prepared.creation)
+		result.item_id = str(prepared.creation.item_ids[0])
+	add_items(prepared.stock, prepared.cost, -1)
+	for resource: String in prepared.cost:
+		if int(prepared.stock[resource]) == 0: prepared.stock.erase(resource)
+	if prepared.creation.is_empty():
+		add_items(prepared.stock, prepared.output)
+		prepared.depot.version = int(prepared.depot.version) + 1
+	data.environment_revision += 1
+	prepared.published = true
+	result.message = "已手作並存入原營地：" + str(prepared.recipe.name)
+	return result
+
+# Original public signature; preview and synchronous commit retain their
+# original behavior. This wrapper alone is not the contact-point integration.
+
+static func prepare_ranged_craft_batch(data: TerrainData, originals: Array) -> Dictionary:
+	if data == null or originals.is_empty(): return fail("INVALID")
+	var site: Dictionary = data.site
+	var stock: Dictionary = site.get("inventory", {})
+	var depot: Dictionary = site.get("depot_items", {})
+	var stock_before: Dictionary = stock.duplicate(true)
+	var depot_before: Dictionary = depot.duplicate(true)
+	var stock_after: Dictionary = stock.duplicate(true)
+	var original_ids := {}
+	var results: Array[Dictionary] = []
+	var accepted: Array[Dictionary] = []
+	var products: Array = []
+	var product_owners: Array[int] = []
+	var product_result_indices: Array[int] = []
+	var version: int = int(depot.get("version", -1))
+	for original: Variant in originals:
+		if not original is Dictionary or not validate_prepared_ranged_craft(original) or not is_same(original.get("data"), data) \
+			or original_ids.has(int(original.get("owner_id", -1))): return fail("STALE_SOURCE")
+		original_ids[int(original.owner_id)] = true
+		var recipe: Dictionary = original.recipe
+		var equipment: bool = recipe.has("asset")
+		var next_stock: Dictionary = stock_after.duplicate(true)
+		var result: Dictionary = ok()
+		if int(next_stock.get("tools", 0)) < 1 or not can_pay(next_stock, original.cost): result = fail("MATERIALS")
+		if result.ok:
+			add_items(next_stock, original.cost, -1)
+			for resource: String in original.cost:
+				if int(next_stock[resource]) == 0: next_stock.erase(resource)
+			if not equipment: add_items(next_stock, original.output)
+			if carried_load(site, next_stock, depot) + products.size() + (1 if equipment else 0) > float(site.get("capacity", 0.0)):
+				result = fail("STORAGE_FULL")
+			if not equipment:
+				for resource: String in original.output:
+					if int(next_stock.get(resource, 0)) > 1000000: result = fail("STORAGE_FULL")
+			if version >= 2147483646: result = fail("STALE_SOURCE")
+		if result.ok:
+			stock_after = next_stock
+			version += 1
+			accepted.append(original)
+			result.message = "已手作並存入原營地：" + str(recipe.name)
+			if equipment:
+				products.append({"definition_id": "weapon:" + str(recipe.asset), "definition": {"slot": "weapon", "asset": str(recipe.asset), "tint": [1.0, 1.0, 1.0, 1.0]}, "slot": ""})
+				product_owners.append(int(original.owner_id))
+				product_result_indices.append(results.size())
+		results.append(result)
+	var creation: Dictionary = {}
+	if not products.is_empty():
+		creation = prepare_equipment_creation(data, depot, products, product_owners[0])
+		if not creation.ok: return creation
+		# Product allocation and IDs come from the original factory. Each record
+		# retains its genuinely checked original craftsman, as separate original
+		# ranged_craft calls would; no guessed actor/body or second item allocator.
+		for index: int in creation.item_ids.size():
+			var identity: String = str(creation.item_ids[index])
+			creation.records[identity].original_owner = product_owners[index]
+			results[product_result_indices[index]].item_id = identity
+	if not is_same(data.site, site) or stock != stock_before or depot != depot_before: return fail("STALE_SOURCE")
+	for original: Dictionary in originals:
+		if not validate_prepared_ranged_craft(original): return fail("STALE_SOURCE")
+	return ok("原手作同庫有序候選已全部純核", {"data": data, "site": site, "stock": stock, "depot": depot,
+		"stock_before": stock_before, "depot_before": depot_before, "stock_after": stock_after, "capacity_before": float(site.get("capacity", 0.0)),
+		"originals": originals, "accepted": accepted, "creation": creation, "depot_version": version, "results": results, "published": false})
+
+static func validate_prepared_ranged_craft_batch(batch: Dictionary) -> bool:
+	var data: TerrainData = batch.get("data")
+	if batch.get("ok") != true or batch.get("published") != false or data == null \
+		or not is_same(batch.get("site"), data.site) or not is_same(batch.get("stock"), data.site.get("inventory")) \
+		or not is_same(batch.get("depot"), data.site.get("depot_items")) or batch.stock != batch.get("stock_before") \
+		or batch.depot != batch.get("depot_before") or float(data.site.get("capacity", 0.0)) != float(batch.get("capacity_before", -1.0)): return false
+	for original: Dictionary in batch.get("originals", []):
+		if not validate_prepared_ranged_craft(original) or not is_same(original.get("data"), data): return false
+	# Bind all publisher scalars to the original finite recipes and ordered
+	# prepared inputs. A caller-supplied stock/output/version projection is not
+	# proof and cannot smuggle additional resources or ownership into the tail.
+	var stock_after: Dictionary = batch.stock.duplicate(true)
+	var accepted: Array[Dictionary] = []
+	var results: Array[Dictionary] = []
+	var definitions := {}
+	var records := {}
+	var ids: Array[String] = []
+	var original_ids := {}
+	var version: int = int(batch.depot.version)
+	var next_item: int = int(data.site.get("next_item", -1))
+	for original: Dictionary in batch.originals:
+		if original_ids.has(int(original.owner_id)): return false
+		original_ids[int(original.owner_id)] = true
+		var equipment: bool = original.recipe.has("asset")
+		var next_stock: Dictionary = stock_after.duplicate(true)
+		var result: Dictionary = ok()
+		if int(next_stock.get("tools", 0)) < 1 or not can_pay(next_stock, original.cost): result = fail("MATERIALS")
+		if result.ok:
+			add_items(next_stock, original.cost, -1)
+			for resource: String in original.cost:
+				if int(next_stock[resource]) == 0: next_stock.erase(resource)
+			if not equipment: add_items(next_stock, original.output)
+			if carried_load(data.site, next_stock, batch.depot) + ids.size() + (1 if equipment else 0) > float(batch.capacity_before): result = fail("STORAGE_FULL")
+			if not equipment:
+				for resource: String in original.output:
+					if int(next_stock.get(resource, 0)) > 1000000: result = fail("STORAGE_FULL")
+			if version >= 2147483646: result = fail("STALE_SOURCE")
+		if result.ok:
+			stock_after = next_stock
+			version += 1
+			accepted.append(original)
+			result.message = "已手作並存入原營地：" + str(original.recipe.name)
+			if equipment:
+				var identity: String = str(next_item + ids.size())
+				var definition_id: String = "weapon:" + str(original.recipe.asset)
+				ids.append(identity)
+				definitions[definition_id] = {"slot": "weapon", "asset": str(original.recipe.asset), "tint": [1.0, 1.0, 1.0, 1.0]}
+				records[identity] = {"definition": definition_id, "original_owner": int(original.owner_id), "holder": str(batch.depot.holder)}
+				result.item_id = identity
+		results.append(result)
+	if stock_after != batch.get("stock_after") or version != int(batch.get("depot_version", -1)) or results != batch.get("results") \
+		or not batch.get("accepted") is Array or accepted.size() != batch.accepted.size(): return false
+	for index: int in accepted.size():
+		if not is_same(accepted[index], batch.accepted[index]): return false
+	var creation: Dictionary = batch.get("creation", {})
+	if ids.is_empty(): return creation.is_empty()
+	if not creation.is_empty():
+		if creation.get("ok") != true or not is_same(creation.get("state_ref"), data.site) \
+			or not is_same(creation.get("destination_ref"), batch.depot) or creation.get("destination_before") != batch.depot \
+			or int(data.site.get("next_item", -1)) != int(creation.get("expected_next_item", -2)): return false
+		if creation.get("item_ids") != ids or creation.get("definitions") != definitions or creation.get("records") != records \
+			or int(creation.get("next_item", -1)) != next_item + ids.size(): return false
+		var destination: Dictionary = batch.depot.duplicate(true)
+		destination.item_ids.append_array(ids)
+		destination.version = int(batch.depot.version) + 1
+		if creation.get("destination_candidate") != destination: return false
+		for definition_id: String in creation.get("definitions", {}):
+			if data.site.item_definitions.has(definition_id) and data.site.item_definitions[definition_id] != creation.definitions[definition_id]: return false
+		for identity: String in creation.get("item_ids", []):
+			if data.site.item_records.has(identity): return false
+		return true
+	return false
+
+static func publish_prepared_ranged_craft_batch(batch: Dictionary) -> Array[Dictionary]:
+	# The original PA must first validate its SAME job/endpoint registries and
+	# this complete source batch. Nothing in this publisher can reject/yield.
+	assert(validate_prepared_ranged_craft_batch(batch))
+	var data: TerrainData = batch.data
+	if not batch.creation.is_empty(): _publish_equipment_creation(data, batch.creation)
+	if not batch.accepted.is_empty():
+		batch.stock.clear()
+		batch.stock.merge(batch.stock_after, true)
+		batch.depot.version = int(batch.depot_version)
+		data.environment_revision += batch.accepted.size()
+	for original: Dictionary in batch.accepted: original.published = true
+	batch.published = true
+	return batch.results
+
+static func validate_prepared_ranged_source(prepared: Dictionary) -> bool:
+	# A source-only preview is not a completion, product allocation or publisher.
+	var data: TerrainData = prepared.get("data")
+	if data == null or prepared.get("ok") != true or prepared.get("source_only") != true or prepared.get("published") != false \
+		or not is_same(prepared.get("site"), data.site) or not is_same(prepared.get("stock"), data.site.get("inventory")) \
+		or not is_same(prepared.get("depot"), data.site.get("depot_items")) or prepared.stock != prepared.get("stock_before") \
+		or prepared.depot != prepared.get("depot_before") or float(data.site.get("capacity", 0.0)) != float(prepared.get("capacity_before", -1.0)) \
+		or not prepared.get("creation", {}).is_empty() or not Technology.integer(prepared.get("owner_id"), 1, 2147483647): return false
+	var recipe: String = str(prepared.get("recipe_id", ""))
+	return RANGED_RECIPES.has(recipe) and is_same(prepared.get("recipe"), RANGED_RECIPES[recipe]) \
+		and prepared.get("cost") == RANGED_RECIPES[recipe].cost and prepared.get("output") == RANGED_RECIPES[recipe].get("output", {})
+
+static func prepare_checked_work_prefix(data: TerrainData, task: Dictionary, productive_seconds: float, actual_seconds: float, prefix_ref: Dictionary) -> Dictionary:
+	var identity := int(prefix_ref.get("person_id", 0))
+	var owner: Variant = _checked_work_prefix_owner(data, task, identity, prefix_ref)
+	if owner == null or not is_finite(productive_seconds) or productive_seconds < 0.0 or not is_finite(actual_seconds) or actual_seconds < 0.0 \
+		or not is_equal_approx(productive_seconds, float(prefix_ref.get("applied_productive_seconds", -1.0))) \
+		or not is_equal_approx(actual_seconds, float(prefix_ref.get("actual_seconds", -1.0))): return fail("STALE_WORK_PREFIX")
+	var start: Dictionary = prefix_ref.get("start", {})
+	if not start.get("cargo") is Dictionary or not start.get("item_state") is Dictionary or not start.get("occupied") is Callable \
+		or not start.get("cell") is Vector2i or not prefix_ref.get("runtime_priors") is Array: return fail("INVALID_WORK_PREFIX")
+	var checked := work_preflight(data, task, start.cargo, int(start.carry_limit), int(start.faction), identity, start.occupied, prefix_ref)
+	if not checked.ok: return checked
+	var target_id := str(task.target)
+	var target: Dictionary = {}
+	var unit: Dictionary = {}
+	var field := "progress"
+	var scale := 1.0 / 60.0
+	var threshold := 0.0
+	var action := str(task.action)
+	var endpoint := "resource"
+	if target_id == "depot":
+		target = data.site
+		unit = task
+		threshold = float(task.get("progress", 0.0))
+		endpoint = "depot"
+	elif target_id.begins_with("vehicle:"):
+		target = data.site.get("vehicles", {}).get(target_id.trim_prefix("vehicle:"), {})
+		unit = target.get("naval", {}).get("repair", {}) if target.get("kind") == "ship" else target.get("build" if action == "construct" else "repair", {})
+		threshold = float(unit.get("total_work", 0.0))
+		scale = 1.0
+		endpoint = "ship_repair" if target.get("kind") == "ship" else "siege"
+		if endpoint == "siege" and action == "construct" and productive_seconds > 0.0:
+			var yard_prefix := _technology_siege_yard_prefix_guard(data, target, prefix_ref)
+			if not yard_prefix.ok: return yard_prefix
+	else:
+		if target_id.begins_with("feature:"):
+			target = data.site.get("features", {}).get(target_id.trim_prefix("feature:"), {})
+			unit = target.get("repair", {}) if action == "repair" else target.get("pending_build", target) if action == "construct" else target
+			if action == "operate":
+				field = "production"
+				threshold = float(target.ship_build.total_work) / 60.0 if target.has("ship_build") else float(feature_recipe(target).get("cycle", 0.0))
+			else: threshold = float(unit.get("work", 0.0))
+			endpoint = "feature"
+		else:
+			var resource := Env.resource(data, target_id)
+			target = data.resource_base.get(target_id, {})
+			unit = task
+			if resource.is_empty(): return fail("NO_TARGET")
+			threshold = resource_work_minutes(int(resource.kind), action)
+	if target.is_empty() or unit.is_empty() or not is_same(prefix_ref.get("target_ref"), target) \
+		or not is_same(prefix_ref.get("work_unit"), unit) or not is_finite(threshold) or threshold < 0.0: return fail("STALE_SOURCE")
+	var previous := float(unit.get(field, 0.0))
+	var ledger: Dictionary = target.get("tech_batch", {})
+	var ledger_seconds := float(ledger.get("work_seconds", 0.0))
+	var ledger_operator_id := int(ledger.get("operator_id", 0))
+	var payment := {}
+	var priors: Array = prefix_ref.runtime_priors
+	for prior: Dictionary in priors:
+		if not prior.get("ok", false) or _checked_work_prefix_owner(data, prior.get("task", {}), int(prior.get("identity", 0)), prior.get("prefix_ref", {})) == null: return fail("STALE_WORK_PREFIX")
+		if is_same(prior.get("unit"), unit) and prior.get("field") == field:
+			previous = float(prior.progress)
+		if is_same(prior.get("target"), target):
+			ledger = prior.ledger
+			ledger_seconds = float(prior.ledger_seconds)
+			ledger_operator_id = int(prior.get("ledger_operator_id", ledger.get("operator_id", 0)))
+	if endpoint == "feature" and action == "operate" and not target.has("ship_build") and not bool(target.get("batch_paid", false)):
+		var already_reserved := false
+		for prior: Dictionary in priors:
+			if is_same(prior.get("target"), target) and not prior.get("payment", {}).is_empty(): already_reserved = true; break
+		if not already_reserved:
+			# Scope/public batches enter this point already genuinely paid by their
+			# original command. This original ordinary batch source is re-queried.
+			if target.has("tech_trial") or target.has("technology_order") or target.has("technology_settlement_order"): return fail("STALE_SOURCE")
+			var key := target_id.trim_prefix("feature:")
+			var source := _technology_payment_source(data, target, key)
+			var inputs: Dictionary = feature_recipe(target).get("input", {})
+			if source.is_empty() or target.has("tech_batch"): return fail("STALE_SOURCE")
+			var expected_version := int(source.holder.version)
+			var available: Dictionary = source.cargo.duplicate()
+			var usage: Dictionary = _checked_prefix_source_usage(priors, source.holder, source.cargo)
+			if not usage.ok: return usage
+			add_items(available, usage.cost, -1)
+			expected_version += int(usage.commits)
+			if expected_version >= 2147483646 or not can_pay(available, inputs): return fail("MATERIALS")
+			var output: Dictionary = target.get("technology_output", {"version": 1, "next_seq": 1, "receipts": []})
+			if not valid_technology_output_state(output, data, key) or int(output.next_seq) >= 2147483647: return fail("STALE_SOURCE")
+			ledger = {"version": 1, "id": int(output.next_seq), "site_id": str(data.site.id), "feature_id": key, "operator_id": identity,
+				"recipe_id": str(target.get("recipe_id", "")), "materials": inputs.duplicate(true), "source_holder": str(source.holder.holder),
+				"source_version": expected_version, "work_seconds": 0.0, "token": {}, "payment_id": str(data.site.id) + "|feature:" + key + "|" + str(int(output.next_seq))}
+			payment = {"holder": source.holder, "cargo": source.cargo, "version": expected_version, "cost": inputs.duplicate(true)}
+			ledger_seconds = 0.0
+			ledger_operator_id = identity
+	# Only the actual paid S08 repair owns a repair work ledger. Ordinary
+	# repair does not borrow a previous manufacture operator or ledger.
+	var named_repair: bool = endpoint == "siege" and action == "repair" and target.has("technology_spare_repair") \
+		and not ledger.is_empty() and not ledger.get("token", {}).is_empty()
+	if named_repair and (not valid_settlement_spare_repair_storage(data, target) or not is_same(target.get("tech_trial"), ledger.get("token")) \
+		or ledger.get("recipe_id") != "repair:ballista_spares" or int(ledger.get("operator_id", -1)) != int(target.technology_spare_repair.operator.person_id)):
+		return fail("STALE_SOURCE")
+	var named := _checked_prefix_named_effort(data, task, target, prefix_ref) if productive_seconds > 0.0 and (action in ["construct", "operate"] or named_repair) else ok("修理或零端点不增加研究贡献", {"seconds": 0.0})
+	if not named.ok: return named
+	if not ledger.is_empty() and (action in ["construct", "operate"] or named_repair):
+		if endpoint == "feature" and action == "operate" and productive_seconds > 0.0 and _technology_unbound_ordinary_feature_ledger(target, ledger):
+			# Temporary scalars only: preserve SAME paid ledger/id/material/source.
+			ledger_operator_id = identity
+			ledger_seconds += float(prefix_ref.productive_seconds)
+		elif int(ledger.operator_id) == identity: ledger_seconds += float(prefix_ref.productive_seconds)
+	var progress := minf(threshold, previous + productive_seconds * scale)
+	if previous > threshold + 0.000000001 or progress < previous: return fail("INVALID_WORK")
+	var repair := {}
+	if target_id.begins_with("vehicle:") and action == "repair" and productive_seconds > 0.0:
+		var maximum := Ships.hull_hp(str(target.ship_type)) if endpoint == "ship_repair" else float(SIEGE_DEFINITIONS[str(target.kind)].max_hp)
+		var original_hp := float(target.naval.hp) if endpoint == "ship_repair" else float(target.hp)
+		var applied := float(unit.amount) * progress / threshold
+		var prior_applied := float(unit.applied)
+		for prior: Dictionary in priors:
+			if is_same(prior.get("unit"), unit) and not prior.get("repair", {}).is_empty():
+				original_hp = float(prior.repair.hp)
+				prior_applied = float(prior.repair.applied)
+		var consumed := {}
+		if endpoint == "ship_repair":
+			if not validate_ship_repair(data, target).ok: return fail("STALE_SOURCE")
+			for resource: String in unit.paid_cost: consumed[resource] = floori(float(unit.paid_cost[resource]) * progress / threshold) - floori(float(unit.paid_cost[resource]) * previous / threshold)
+			var available: Dictionary = target.cargo.duplicate()
+			var usage: Dictionary = _checked_prefix_source_usage(priors, target.holder, target.cargo)
+			if not usage.ok: return usage
+			add_items(available, usage.cost, -1)
+			var version: int = int(target.holder.version) + int(usage.commits)
+			var revision: int = int(target.revision)
+			for prior: Dictionary in priors:
+				if is_same(prior.get("target"), target) and prior.get("endpoint") == "ship_repair" and not prior.get("repair", {}).is_empty(): revision += 1
+			if version >= 2147483646 or not can_pay(available, consumed): return fail("MATERIALS")
+			if revision + 1 + (1 if progress >= threshold else 0) > 2147483647: return fail("STALE_SOURCE", "原船合法前綴與完成清理版本額度不足")
+			repair = {"hp": minf(maximum, original_hp + maxf(0.0, applied - prior_applied)), "applied": applied,
+				"consumed": consumed, "holder_version": version, "revision": revision}
+		else: repair = {"hp": minf(maximum, original_hp + maxf(0.0, applied - prior_applied)), "applied": applied}
+	return ok("原合法工作前缀全部纯预验，完成端点留到Native发布后", {"prefix_ref": prefix_ref, "owner": owner, "identity": identity,
+		"data": data, "site": data.site, "task": task, "target_id": target_id, "target": target, "unit": unit, "field": field,
+		"prior_progress": previous, "progress": progress, "ledger": ledger, "ledger_seconds": ledger_seconds, "ledger_operator_id": ledger_operator_id, "payment": payment, "repair": repair,
+		"start": start, "endpoint": endpoint, "deferred_endpoint": progress + 0.000000001 >= threshold, "published": false})
+
+static func _checked_prefix_source_usage(priors: Array, holder: Dictionary, cargo: Dictionary) -> Dictionary:
+	# Callers have already proved SAME original upper/segment registry. Both
+	# existing cost types share this one cargo/version projection, no mutation.
+	var cost: Dictionary = {}
+	var commits: int = 0
+	for prior: Dictionary in priors:
+		var payment: Dictionary = prior.get("payment", {})
+		if not payment.is_empty() and is_same(payment.holder, holder):
+			if not is_same(payment.cargo, cargo): return fail("STALE_SOURCE")
+			add_items(cost, payment.cost)
+			commits += 1
+		var repair: Dictionary = prior.get("repair", {})
+		if prior.get("endpoint") == "ship_repair" and not repair.is_empty() and is_same(prior.target.get("holder"), holder):
+			if not is_same(prior.target.get("cargo"), cargo): return fail("STALE_SOURCE")
+			add_items(cost, repair.consumed)
+			commits += 1
+	return ok("原共同來源有限扣料／版本投影", {"cost": cost, "commits": commits})
+
+static func prepare_loot_transfer(data: TerrainData, source: Dictionary, source_cargo: Dictionary, destination: Dictionary, destination_cargo: Dictionary, resources: Dictionary, item_ids: Array, expected_source_version: int, expected_destination_version: int, open_amount: float = 0.0, capacity: int = CARRY_CAPACITY) -> Dictionary:
+	if data == null or data.site.is_empty() or not _item_holder_shape(source) or not _item_holder_shape(destination) \
+		or not _resource_stack(source_cargo) or not _resource_stack(destination_cargo) or source.holder == destination.holder or is_same(source_cargo, destination_cargo): return fail("INVALID")
+	if not is_finite(open_amount) or open_amount < 0.0 or open_amount > capacity: return fail("INVALID", "開封口糧數量")
+	if int(source.version) != expected_source_version or int(destination.version) != expected_destination_version \
+		or expected_source_version >= 2147483646 or expected_destination_version >= 2147483646: return fail("STALE_SOURCE")
+	var container_id := str(source.holder).trim_prefix("ground:")
+	if str(source.holder).begins_with("ground:") and (not is_same(data.site.get("ground_loot", {}).get(container_id), source) \
+		or not is_same(source.get("cargo"), source_cargo)): return fail("STALE_SOURCE")
+	if open_amount > 0.0 and (not str(source.holder).begins_with("ground:") \
+		or not is_same(data.site.get("ground_loot", {}).get(container_id), source) \
+		or not is_same(source.get("cargo"), source_cargo) or not is_finite(float(source.get("open_rations", 0.0))) \
+		or float(source.get("open_rations", 0.0)) < open_amount): return fail("EMPTY", "原地面容器的開封口糧不足")
+	if not _resource_stack(resources, false) or resources.is_empty() and item_ids.is_empty() and open_amount <= 0.0: return fail("EMPTY")
+	var prepared := ok("原搜刮來源純候選", {"terrain": data, "site_state": data.site, "source": source, "source_cargo": source_cargo,
+		"destination": destination, "destination_cargo": destination_cargo, "source_before": source.duplicate(true), "source_cargo_before": source_cargo.duplicate(true),
+		"destination_before": destination.duplicate(true), "destination_cargo_before": destination_cargo.duplicate(true), "resources": resources.duplicate(),
+		"item_ids": item_ids.duplicate(), "source_version": expected_source_version, "destination_version": expected_destination_version,
+		"open_amount": open_amount, "capacity": capacity, "container_id": container_id, "transfer": {}, "cleanup": {}, "published": false})
+	if not resources.is_empty() or not item_ids.is_empty():
+		prepared.transfer = prepare_item_transfer(data, source, source_cargo, destination, destination_cargo, resources, item_ids, expected_source_version, expected_destination_version, capacity)
+		if not prepared.transfer.ok: return prepared.transfer
+	if open_amount > 0.0 and data.item_transfer_guard.is_valid():
+		var checked: Dictionary = data.item_transfer_guard.call(source, destination, resources, item_ids, open_amount)
+		if not checked.ok: return checked
+	prepared.cleanup = _loot_ground_cleanup_candidate(prepared)
+	var stable := validate_prepared_loot_transfer(prepared)
+	return prepared if stable.ok else stable
+
+static func validate_prepared_loot_transfer(prepared: Dictionary) -> Dictionary:
+	if prepared.get("ok") != true or prepared.get("published") != false or not prepared.get("terrain") is TerrainData: return fail("INVALID")
+	var data: TerrainData = prepared.terrain
+	if not is_same(data.site, prepared.site_state) or prepared.source != prepared.source_before or prepared.source_cargo != prepared.source_cargo_before \
+		or prepared.destination != prepared.destination_before or prepared.destination_cargo != prepared.destination_cargo_before \
+		or int(prepared.source.version) != int(prepared.source_version) or int(prepared.destination.version) != int(prepared.destination_version): return fail("STALE_SOURCE")
+	if str(prepared.source.holder).begins_with("ground:") and (not is_same(data.site.get("ground_loot", {}).get(str(prepared.container_id)), prepared.source) \
+		or not is_same(prepared.source.get("cargo"), prepared.source_cargo)): return fail("STALE_SOURCE")
+	var transfer: Dictionary = prepared.transfer
+	if not transfer.is_empty():
+		if not is_same(transfer.source, prepared.source) or not is_same(transfer.source_cargo, prepared.source_cargo) \
+			or not is_same(transfer.destination, prepared.destination) or not is_same(transfer.destination_cargo, prepared.destination_cargo) \
+			or transfer.resources != prepared.resources or transfer.selected.keys() != prepared.item_ids or bool(transfer.preserve_slots) \
+			or int(transfer.capacity) != int(prepared.capacity): return fail("INVALID")
+		var slots := {}
+		for slot: String in prepared.source.equipped:
+			if transfer.selected.has(prepared.source.equipped[slot]): slots[slot] = prepared.source.equipped[slot]
+		if transfer.retained_slots != slots: return fail("INVALID")
+		var checked := validate_prepared_item_transfer(transfer)
+		if not checked.ok: return checked
+	elif not prepared.resources.is_empty() or not prepared.item_ids.is_empty() or float(prepared.open_amount) <= 0.0: return fail("INVALID")
+	if not is_finite(float(prepared.open_amount)) or float(prepared.open_amount) < 0.0 or float(prepared.open_amount) > int(prepared.capacity): return fail("INVALID")
+	if float(prepared.open_amount) > 0.0 and (not is_same(data.site.get("ground_loot", {}).get(str(prepared.container_id)), prepared.source) \
+		or not is_same(prepared.source.get("cargo"), prepared.source_cargo) or float(prepared.source.get("open_rations", 0.0)) < float(prepared.open_amount)): return fail("STALE_SOURCE")
+	if float(carried_load(data.site, prepared.destination_cargo, prepared.destination) + inventory_size(prepared.resources) + prepared.item_ids.size()) + float(prepared.open_amount) > int(prepared.capacity): return fail("STORAGE_FULL")
+	var expected_cleanup := _loot_ground_cleanup_candidate(prepared)
+	if prepared.cleanup.is_empty() != expected_cleanup.is_empty(): return fail("INVALID")
+	if not expected_cleanup.is_empty() and (prepared.cleanup != expected_cleanup or not is_same(prepared.cleanup.container, expected_cleanup.container) \
+		or not is_same(prepared.cleanup.ground, expected_cleanup.ground) or not is_same(prepared.cleanup.site_state, expected_cleanup.site_state)): return fail("INVALID")
+	return ok()
+
+static func _loot_ground_cleanup_candidate(prepared: Dictionary) -> Dictionary:
+	var data: TerrainData = prepared.terrain
+	if not is_same(data.site.get("ground_loot", {}).get(str(prepared.container_id)), prepared.source) \
+		or not is_same(prepared.source.get("cargo"), prepared.source_cargo): return {}
+	var after: Dictionary = prepared.source.duplicate(true)
+	add_items(after.cargo, prepared.resources, -1)
+	for resource: String in after.cargo.keys():
+		if int(after.cargo[resource]) == 0: after.cargo.erase(resource)
+	for identity: String in prepared.item_ids: after.item_ids.erase(identity)
+	for slot: String in after.equipped.keys():
+		if prepared.item_ids.has(after.equipped[slot]): after.equipped.erase(slot)
+	after.version = int(prepared.source_version) + 1
+	if float(prepared.open_amount) > 0.0: after.open_rations = float(after.open_rations) - float(prepared.open_amount)
+	if inventory_size(after.cargo) > 0 or not after.item_ids.is_empty() or float(after.get("open_rations", 0.0)) > 0.0: return {}
+	return ok("本次真搜刮之後的原空容器候選", {"terrain": data, "site_state": data.site, "ground": data.site.ground_loot,
+		"identity": str(prepared.container_id), "container": prepared.source, "before": after, "published": false, "notified": false})
+
+static func publish_prepared_loot_transfer(prepared: Dictionary) -> Dictionary:
+	assert(prepared.ok and not prepared.published)
+	var result := ok()
+	if not prepared.transfer.is_empty(): result = publish_item_transfer(prepared.transfer)
+	else:
+		prepared.source.version = int(prepared.source_version) + 1
+		prepared.destination.version = int(prepared.destination_version) + 1
+	if float(prepared.open_amount) > 0.0:
+		prepared.source.open_rations = float(prepared.source.open_rations) - float(prepared.open_amount)
+	prepared.published = true
+	# Destination private food-pool publication stays with original PA/Controller.
+	return result
+
+static func _prepared_ground_container(data: TerrainData, identity: String, original_owner: int, cell: Vector2i, kind: String, ship_location: Dictionary) -> Dictionary:
+	var container := new_item_state("ground:" + identity)
+	container.merge({"kind": kind, "original_owner": original_owner, "cargo": {}})
+	if ship_location.is_empty(): container.cell = data.index(cell)
+	else: container.merge(ship_location.duplicate(true))
+	return container
+
+static func prepare_leave_ground_loot(data: TerrainData, source: Dictionary, source_cargo: Dictionary, original_owner: int, cell: Vector2i, kind: String, resources: Dictionary, item_ids: Array, expected_version: int, source_open: Dictionary = {}, open_amount: float = 0.0, ship_location: Dictionary = {}) -> Dictionary:
+	if data == null or data.site.is_empty(): return fail("INVALID")
+	resources = resources.duplicate()
+	for resource: Variant in resources.keys():
+		if resources[resource] is int and int(resources[resource]) == 0: resources.erase(resource)
+	if (not data.is_walkable(cell) if ship_location.is_empty() else not valid_ship_loot_location(data, ship_location)) or original_owner <= 0 or original_owner > 2147483647 or kind not in ["remains", "sealed", "cargo"]: return fail("INVALID", "遺留物位置／物主")
+	if not data.site.has("ground_loot"): return fail("INVALID", "請先初始化物品資料")
+	if not is_finite(open_amount) or open_amount < 0.0 or open_amount > 1000000.0: return fail("INVALID", "開封口糧數量")
+	if open_amount > 0.0:
+		var available: Variant = source_open.get("open_rations")
+		if not (available is int or available is float) or not is_finite(float(available)) or float(available) < open_amount or float(available) > 1000000.0: return fail("EMPTY", "原開封口糧不足或無效")
+		if not _item_holder_shape(source) or not _resource_stack(source_cargo) or int(source.version) != expected_version: return fail("STALE_SOURCE", "原搬運者或共有口糧已變更")
+		if int(source.version) >= 2147483646: return fail("STALE_SOURCE", "物品提交版本已用盡，未轉移")
+		if not _resource_stack(resources, false) or float(inventory_size(resources) + item_ids.size()) + open_amount > 1000000.0: return fail("STORAGE_FULL", "現場口糧容器超量")
+	var identity := str(int(data.site.next_loot))
+	if int(data.site.next_loot) >= 2147483647 or data.site.ground_loot.has(identity): return fail("INVALID", "遺留物序號重複")
+	var container := _prepared_ground_container(data, identity, original_owner, cell, kind, ship_location)
+	var prepared := ok("原遺留物來源純候選", {"terrain": data, "site_state": data.site, "ground": data.site.ground_loot,
+		"identity": identity, "next_loot": int(data.site.next_loot), "container": container, "source": source, "source_cargo": source_cargo,
+		"source_before": source.duplicate(true), "source_cargo_before": source_cargo.duplicate(true), "expected_version": expected_version,
+		"source_open": source_open, "source_open_before": source_open.duplicate(true), "open_amount": open_amount,
+		"original_owner": original_owner, "cell": cell, "kind": kind, "resources": resources, "item_ids": item_ids.duplicate(),
+		"ship_location": ship_location.duplicate(true), "transfer": {}, "published": false})
+	if open_amount > 0.0 and data.item_transfer_guard.is_valid():
+		var checked: Dictionary = data.item_transfer_guard.call(source, container, resources, item_ids, open_amount)
+		if not checked.ok: return checked
+	if not resources.is_empty() or not item_ids.is_empty():
+		prepared.transfer = prepare_item_transfer(data, source, source_cargo, container, container.cargo, resources, item_ids, expected_version, 0, 1000000, kind == "remains")
+		if not prepared.transfer.ok: return prepared.transfer
+	elif open_amount <= 0.0: return fail("EMPTY")
+	var stable := validate_prepared_leave_ground_loot(prepared)
+	return prepared if stable.ok else stable
+
+static func validate_prepared_leave_ground_loot(prepared: Dictionary) -> Dictionary:
+	if prepared.get("ok") != true or prepared.get("published") != false or not prepared.get("terrain") is TerrainData: return fail("INVALID")
+	var data: TerrainData = prepared.terrain
+	if not is_same(data.site, prepared.site_state) or not is_same(data.site.get("ground_loot"), prepared.ground) \
+		or int(data.site.next_loot) != int(prepared.next_loot) or prepared.identity != str(int(data.site.next_loot)) or prepared.ground.has(prepared.identity) \
+		or prepared.source != prepared.source_before or prepared.source_cargo != prepared.source_cargo_before \
+		or int(prepared.source.get("version", -1)) != int(prepared.expected_version) or prepared.source_open != prepared.source_open_before: return fail("STALE_SOURCE")
+	if int(prepared.next_loot) < 1 or int(prepared.next_loot) >= 2147483647 or int(prepared.original_owner) <= 0 \
+		or int(prepared.original_owner) > 2147483647 or prepared.kind not in ["remains", "sealed", "cargo"] \
+		or not _item_holder_shape(prepared.source) or not _resource_stack(prepared.source_cargo) or not _resource_stack(prepared.resources, false): return fail("INVALID")
+	if (not data.is_walkable(prepared.cell) if prepared.ship_location.is_empty() else not valid_ship_loot_location(data, prepared.ship_location)): return fail("INVALID")
+	if prepared.container != _prepared_ground_container(data, str(prepared.identity), int(prepared.original_owner), prepared.cell, str(prepared.kind), prepared.ship_location): return fail("INVALID")
+	var transfer: Dictionary = prepared.transfer
+	if not transfer.is_empty():
+		if not is_same(transfer.source, prepared.source) or not is_same(transfer.source_cargo, prepared.source_cargo) \
+			or not is_same(transfer.destination, prepared.container) or not is_same(transfer.destination_cargo, prepared.container.cargo) \
+			or transfer.resources != prepared.resources or transfer.selected.keys() != prepared.item_ids \
+			or int(transfer.capacity) != 1000000 or bool(transfer.preserve_slots) != (prepared.kind == "remains"): return fail("INVALID")
+		var slots := {}
+		for slot: String in prepared.source.equipped:
+			if transfer.selected.has(prepared.source.equipped[slot]): slots[slot] = prepared.source.equipped[slot]
+		if transfer.retained_slots != slots: return fail("INVALID")
+		var checked := validate_prepared_item_transfer(transfer)
+		if not checked.ok: return checked
+	elif not prepared.resources.is_empty() or not prepared.item_ids.is_empty() or float(prepared.open_amount) <= 0.0: return fail("INVALID")
+	if not is_finite(float(prepared.open_amount)) or float(prepared.open_amount) < 0.0 or float(prepared.open_amount) > 1000000.0: return fail("INVALID")
+	if float(prepared.open_amount) > 0.0 and float(prepared.source_open.get("open_rations", 0.0)) < float(prepared.open_amount): return fail("STALE_SOURCE")
+	if float(inventory_size(prepared.resources) + prepared.item_ids.size()) + float(prepared.open_amount) > 1000000.0: return fail("STORAGE_FULL")
+	return ok()
+
+static func publish_prepared_leave_ground_loot(prepared: Dictionary) -> Dictionary:
+	assert(prepared.ok and not prepared.published)
+	var data: TerrainData = prepared.terrain
+	var container: Dictionary = prepared.container
+	if not prepared.transfer.is_empty(): publish_item_transfer(prepared.transfer)
+	else:
+		prepared.source.version = int(prepared.expected_version) + 1
+		container.version = 1
+	if float(prepared.open_amount) > 0.0:
+		prepared.source_open.open_rations = float(prepared.source_open.open_rations) - float(prepared.open_amount)
+		container["open_rations"] = float(prepared.open_amount)
+	data.site.next_loot = int(prepared.next_loot) + 1
+	prepared.ground[str(prepared.identity)] = container
+	if prepared.ship_location.is_empty():
+		if not data.ground_loot_at.has(int(container.cell)): data.ground_loot_at[int(container.cell)] = []
+		data.ground_loot_at[int(container.cell)].append(str(prepared.identity))
+		data.ground_loot_dirty_rows[prepared.cell.y] = true
+	prepared.published = true
+	return ok("物品留在現場", {"container_id": str(prepared.identity)})
+
+static func prepare_clear_empty_ground_loot(data: TerrainData, identity: String) -> Dictionary:
+	if data == null: return fail("NO_TARGET")
+	var container: Dictionary = data.site.get("ground_loot", {}).get(identity, {})
+	if container.is_empty(): return fail("NO_TARGET")
+	if inventory_size(container.cargo) > 0 or not container.item_ids.is_empty() or float(container.get("open_rations", 0.0)) > 0.0: return fail("BUSY", "不能刪除尚有物品的遺留物")
+	return ok("原空容器清理純候選", {"terrain": data, "site_state": data.site, "ground": data.site.ground_loot,
+		"identity": identity, "container": container, "before": container.duplicate(true), "published": false, "notified": false})
+
+static func validate_prepared_clear_empty_ground_loot(prepared: Dictionary) -> Dictionary:
+	if prepared.get("ok") != true or prepared.get("published") != false or not prepared.get("terrain") is TerrainData: return fail("INVALID")
+	var data: TerrainData = prepared.terrain
+	if not is_same(data.site, prepared.site_state) or not is_same(data.site.get("ground_loot"), prepared.ground) \
+		or not is_same(prepared.ground.get(str(prepared.identity)), prepared.container) or prepared.container != prepared.before: return fail("STALE_SOURCE")
+	if inventory_size(prepared.container.cargo) > 0 or not prepared.container.item_ids.is_empty() or float(prepared.container.get("open_rations", 0.0)) > 0.0: return fail("BUSY")
+	return ok()
+
+static func publish_prepared_clear_empty_ground_loot(prepared: Dictionary) -> Dictionary:
+	assert(prepared.ok and not prepared.published)
+	var data: TerrainData = prepared.terrain
+	var identity := str(prepared.identity)
+	prepared.ground.erase(identity)
+	if prepared.container.has("cell"):
+		var cell := int(prepared.container.cell)
+		if data.ground_loot_at.has(cell):
+			data.ground_loot_at[cell].erase(identity)
+			if data.ground_loot_at[cell].is_empty(): data.ground_loot_at.erase(cell)
+		data.ground_loot_dirty_rows[data.cell_from_index(cell).y] = true
+	for team: Dictionary in data.site.get("armies", []):
+		for person: Dictionary in team.get("units", []):
+			if str(person.get("remains_id", "")) == identity: person.remains_id = ""
+	for person: Dictionary in data.site.get("actors", {}).values():
+		if str(person.get("remains_id", "")) == identity: person.remains_id = ""
+	prepared.published = true
+	return ok()
+
+static func notify_cleared_ground_loot(prepared: Dictionary) -> void:
+	assert(prepared.published and not prepared.notified)
+	prepared.notified = true
+	# Original Vehicles owns live ship/Army/Actor remains references. This is a
+	# post-transaction observation, not a pre-cost approval or Runtime authority.
+	var data: TerrainData = prepared.terrain
+	if data.ground_loot_removed.is_valid(): data.ground_loot_removed.call(str(prepared.identity))
+
+static func _completed_tent_candidate(cells: Array[int], preview: Dictionary) -> Dictionary:
+	var feature := {"kind": "tent", "cells": cells.duplicate(), "entrance": int(preview.entrance), "source": "",
+		"stage": "complete", "progress": 2.0, "solid": false, "cost": {"camp_tent": 1}, "work": 2.0,
+		"clearing": [], "level": int(preview.level), "production": 0.0, "batch_paid": false, "status": "已搭設"}
+	feature.merge(preview.options, true)
+	return feature
+
+static func prepare_deploy_tent(data: TerrainData, cells: Array[int], cargo: Dictionary, holder: Dictionary, expected_version: int, actor_cell: Vector2i, owner_faction: int, occupied: Callable = Callable(), quarter: int = 0) -> Dictionary:
+	var preview := preview_deploy_tent(data, cells, actor_cell, owner_faction, occupied, quarter)
+	if not preview.ok: return preview
+	if not _item_holder_shape(holder) or not str(holder.holder).begins_with("person:") or not _resource_stack(cargo): return fail("INVALID", "須使用原後勤人物的行囊")
+	if int(holder.version) != expected_version or expected_version >= 2147483646: return fail("STALE_SOURCE")
+	if not can_pay(cargo, {"camp_tent": 1}): return fail("EMPTY", "原行囊沒有營帳包")
+	if not _building_integer(data.site.get("next_feature"), 1, 2147483646) or data.site.features.has(str(int(data.site.next_feature))): return fail("INVALID", "營帳建築身分序號失效，未扣物")
+	var prepared := ok("原營帳與行囊純候選", {"terrain": data, "site_state": data.site, "features": data.site.features,
+		"holder": holder, "cargo": cargo, "holder_before": holder.duplicate(true), "cargo_before": cargo.duplicate(true), "expected_version": expected_version,
+		"cells": cells.duplicate(), "actor_cell": actor_cell, "owner_faction": owner_faction, "occupied": occupied, "quarter": quarter,
+		"feature_id": str(int(data.site.next_feature)), "next_feature": int(data.site.next_feature), "feature": _completed_tent_candidate(cells, preview), "published": false})
+	return prepared
+
+static func validate_prepared_deploy_tent(prepared: Dictionary) -> Dictionary:
+	if prepared.get("ok") != true or prepared.get("published") != false or not prepared.get("terrain") is TerrainData: return fail("INVALID")
+	var data: TerrainData = prepared.terrain
+	if not is_same(data.site, prepared.site_state) or not is_same(data.site.get("features"), prepared.features) \
+		or int(data.site.next_feature) != int(prepared.next_feature) or prepared.feature_id != str(int(data.site.next_feature)) or prepared.features.has(prepared.feature_id) \
+		or prepared.holder != prepared.holder_before or prepared.cargo != prepared.cargo_before or int(prepared.holder.version) != int(prepared.expected_version): return fail("STALE_SOURCE")
+	var preview := preview_deploy_tent(data, prepared.cells, prepared.actor_cell, int(prepared.owner_faction), prepared.occupied, int(prepared.quarter))
+	if not preview.ok: return preview
+	if prepared.feature != _completed_tent_candidate(prepared.cells, preview): return fail("INVALID")
+	# Original occupied/geometry readers may be callbacks; source CAS is LAST.
+	if not is_same(data.site, prepared.site_state) or not is_same(data.site.get("features"), prepared.features) \
+		or int(data.site.next_feature) != int(prepared.next_feature) or prepared.features.has(prepared.feature_id) \
+		or prepared.holder != prepared.holder_before or prepared.cargo != prepared.cargo_before \
+		or not can_pay(prepared.cargo, {"camp_tent": 1}): return fail("STALE_SOURCE")
+	return ok()
+
+static func publish_prepared_deploy_tent(prepared: Dictionary) -> Dictionary:
+	assert(prepared.ok and not prepared.published)
+	add_items(prepared.cargo, {"camp_tent": 1}, -1)
+	if int(prepared.cargo.camp_tent) == 0: prepared.cargo.erase("camp_tent")
+	prepared.holder.version = int(prepared.expected_version) + 1
+	prepared.site_state.next_feature = int(prepared.next_feature) + 1
+	prepared.features[str(prepared.feature_id)] = prepared.feature
+	prepared.published = true
+	Env.rebuild_indexes(prepared.terrain)
+	if Env.ecology_active(prepared.terrain): ecology_reconcile(prepared.terrain)
+	return ok("已由原行囊搭設營帳", {"feature": str(prepared.feature_id)})
+
+static func prepare_pack_tent(data: TerrainData, key: String, cargo: Dictionary, holder: Dictionary, expected_version: int, actor_cell: Vector2i, owner_faction: int, occupied: Callable = Callable(), capacity: int = CARRY_CAPACITY) -> Dictionary:
+	var preview := preview_pack_tent(data, key, cargo, holder, actor_cell, owner_faction, occupied, capacity)
+	if not preview.ok: return preview
+	if not _item_holder_shape(holder) or not _resource_stack(cargo) or int(holder.version) != expected_version or expected_version >= 2147483646: return fail("STALE_SOURCE")
+	if carried_load(data.site, cargo, holder) + 1 > capacity: return fail("STORAGE_FULL")
+	var feature: Dictionary = data.site.features[key]
+	var prepared := ok("原營帳收回純候選", {"terrain": data, "site_state": data.site, "features": data.site.features,
+		"key": key, "feature": feature, "feature_before": feature.duplicate(true), "holder": holder, "cargo": cargo,
+		"holder_before": holder.duplicate(true), "cargo_before": cargo.duplicate(true), "expected_version": expected_version,
+		"actor_cell": actor_cell, "owner_faction": owner_faction, "occupied": occupied, "capacity": capacity, "published": false})
+	return prepared
+
+static func validate_prepared_pack_tent(prepared: Dictionary) -> Dictionary:
+	if prepared.get("ok") != true or prepared.get("published") != false or not prepared.get("terrain") is TerrainData: return fail("INVALID")
+	var data: TerrainData = prepared.terrain
+	if not is_same(data.site, prepared.site_state) or not is_same(data.site.get("features"), prepared.features) \
+		or not is_same(prepared.features.get(str(prepared.key)), prepared.feature) or prepared.feature != prepared.feature_before \
+		or prepared.holder != prepared.holder_before or prepared.cargo != prepared.cargo_before or int(prepared.holder.version) != int(prepared.expected_version): return fail("STALE_SOURCE")
+	var preview := preview_pack_tent(data, str(prepared.key), prepared.cargo, prepared.holder, prepared.actor_cell, int(prepared.owner_faction), prepared.occupied, int(prepared.capacity))
+	if not preview.ok: return preview
+	if not is_same(data.site, prepared.site_state) or not is_same(data.site.get("features"), prepared.features) \
+		or not is_same(prepared.features.get(str(prepared.key)), prepared.feature) or prepared.feature != prepared.feature_before \
+		or prepared.holder != prepared.holder_before or prepared.cargo != prepared.cargo_before: return fail("STALE_SOURCE")
+	return ok()
+
+static func publish_prepared_pack_tent(prepared: Dictionary) -> Dictionary:
+	assert(prepared.ok and not prepared.published)
+	prepared.features.erase(str(prepared.key))
+	add_items(prepared.cargo, {"camp_tent": 1})
+	prepared.holder.version = int(prepared.expected_version) + 1
+	prepared.published = true
+	Env.rebuild_indexes(prepared.terrain)
+	if Env.ecology_active(prepared.terrain): ecology_reconcile(prepared.terrain)
+	return ok("營帳已收回原行囊", {"feature": str(prepared.key)})
+
+static func validate_farm_trial_protocol_storage(data: TerrainData, key: String, feature: Dictionary) -> Dictionary:
+	return ok() if not feature.has("farm_trial_protocol") or valid_farm_trial_protocol(feature.farm_trial_protocol, data, key, feature) else fail("CORRUPT_SAVE", "原農事單批試驗欄位非法")
+
+static func farm_trial_protocol_operator_guard(data: TerrainData, key: String, feature: Dictionary, task: Dictionary, person: Dictionary) -> Dictionary:
+	if not feature.has("farm_trial_protocol"): return ok()
+	var raw: Variant = feature.farm_trial_protocol
+	if not valid_farm_trial_protocol(raw, data, key, feature): return fail("CORRUPT_STATE")
+	if raw.state != "pending": return fail("BUSY", "原試驗已达一批上限；須明示解除再做普通生產")
+	var actions: Variant = _technology_actions(data)
+	if actions == null or person.is_empty() or int(person.person_id) != int(raw.operator.person_id) or int(task.get("work_slot", -1)) != int(raw.work_slot) \
+		or not Technology.learned(actions._body_get(person, "technology"), "F01"): return fail("NO_AUTHORITY", "須由所選學會者在指定原服務格完成此批")
+	return ok()
+
+static func valid_farm_trial_protocol(raw: Variant, data: TerrainData, key: String, feature: Dictionary) -> bool:
+	if not Technology.keys(raw, ["version", "operator", "peer_feature", "work_slot", "recipe_id", "state", "conditions", "result"]) \
+		or not Technology.integer(raw.version, 1, 1) or not Technology.valid_ref(raw.operator) or raw.operator.site_id != str(data.site.get("id", "")) \
+		or not raw.peer_feature is String or raw.peer_feature.is_empty() or raw.peer_feature == key or not raw.recipe_id is String \
+		or raw.state not in ["pending", "complete"] or str(feature.get("kind", "")) not in FARM_KINDS \
+		or str(feature.get("stage", "")) != "complete" or int(feature.get("layout_version", 0)) != BUILDING_LAYOUT_VERSION \
+		or raw.recipe_id != str(feature.get("recipe_id", "")) or not Technology.integer(raw.work_slot, 0) or not feature.get("cells") is Array or feature.cells.is_empty(): return false
+	for cell: Variant in feature.cells:
+		if not Technology.integer(cell, 0, data.size.x * data.size.y - 1): return false
+	var slots := feature_work_slots(data, feature)
+	if int(raw.work_slot) >= slots.size() or not Technology.keys(raw.conditions, ["soil", "water_ratio", "inputs"]) \
+		or not raw.conditions.soil is Array or not Technology.finite_number(raw.conditions.water_ratio) or float(raw.conditions.water_ratio) > 1.0 \
+		or not Technology.material_equal(raw.conditions.inputs, feature_recipe(feature).get("input", {})) or not raw.result is Dictionary: return false
+	var cells: Array = slots[int(raw.work_slot)].service_cells
+	if raw.conditions.soil.size() != cells.size(): return false
+	for index: int in range(cells.size()):
+		var soil: Variant = raw.conditions.soil[index]
+		if not Technology.keys(soil, ["cell", "fertility"]) or not Technology.integer(soil.cell, 0, data.size.x * data.size.y - 1) \
+			or int(soil.cell) != int(cells[index]) or not Technology.finite_number(soil.fertility) or float(soil.fertility) > 100.0: return false
+	if raw.state == "pending": return raw.result.is_empty()
+	return valid_technology_output(raw.result, data, key) and int(raw.result.operator_id) == int(raw.operator.person_id) \
+		and raw.result.recipe_id == raw.recipe_id and Technology.material_equal(raw.result.resources, feature_recipe(feature).get("output", {})) and raw.result.item_ids.is_empty()
+
+static func _farm_trial_protocol_conditions(data: TerrainData, key: String, feature: Dictionary, slot: int) -> Dictionary:
+	var water: Dictionary = data.site.get("water_status", {}).get(key, {}).get("slots", {}).get(str(slot), {})
+	var demand: float = float(water.get("demand", water_demand(feature)))
+	var ratio: float = clampf(float(water.get("supplied", 0.0)) / demand, 0.0, 1.0) if demand > 0.0 else 1.0
+	var soil: Array[Dictionary] = []
+	for cell: int in feature_work_slots(data, feature)[slot].service_cells: soil.append({"cell": cell, "fertility": float(data.fertility[cell])})
+	return {"soil": soil, "water_ratio": ratio, "inputs": feature_recipe(feature).input.duplicate(true)}
+
+static func _settlement_bound_feature_recipe(data: TerrainData, target: Dictionary, token: Dictionary) -> String:
+	var binding: String = str(token.get("binding", ""))
+	if not TECHNOLOGY_FEATURE_BINDINGS.has(binding): return "!invalid"
+	if token.get("scope") != "settlement" or token.get("tech_id") not in ["S03", "S04", "S05"]: return str(TECHNOLOGY_FEATURE_BINDINGS[binding][1])
+	var ref: Variant = target.get("technology_settlement_order", {})
+	if not Technology.keys(ref, ["settlement_id", "order_id"]) or ref.settlement_id != token.scope_id: return "!invalid"
+	var refs := _settlement_order_state(data, str(ref.settlement_id), str(ref.order_id))
+	if refs.is_empty() or refs.order.payload.get("project_id") != token.project_id or refs.order.payload.get("purpose") != token.purpose \
+		or refs.order.payload.get("operator_id") != token.person.person_id: return "!invalid"
+	var spec := _settlement_order_feature_spec(refs.order, binding)
+	return str(spec.get("recipe", "!invalid"))
+
+static func _technology_original_wreck_payment(data: TerrainData, vehicle: Dictionary, batch: Dictionary) -> bool:
+	# Original damage clears the BUILD job. This retained original paid batch is
+	# spent history only, never a completion witness or renewed work permission.
+	return vehicle.get("phase") == "wrecked" and Technology.finite_number(vehicle.get("hp"), 0.0) and float(vehicle.hp) == 0.0 \
+		and vehicle.get("ever_hp_damaged") == true and vehicle.get("build", {}).is_empty() and vehicle.get("repair", {}).is_empty() \
+		and SIEGE_DEFINITIONS.has(str(vehicle.get("kind", ""))) \
+		and valid_technology_batch(batch, data, str(vehicle.get("id", "")), "vehicle") \
+		and batch.recipe_id == "construct:" + str(vehicle.kind) \
+		and Technology.material_equal(batch.materials, SIEGE_DEFINITIONS[str(vehicle.kind)].cost)
+
+static func technology_shipyard_work_context(data: TerrainData, key: String, require_work: bool = true) -> Dictionary:
+	var feature: Dictionary = data.site.get("features", {}).get(key, {}) if data != null else {}
+	if not feature.has("technology_shipyard_work") or not valid_technology_shipyard_work(feature): return fail("NO_TARGET")
+	var settlement: Dictionary = data.site.get("settlement", {})
+	if feature.technology_shipyard_work.settlement_id != str(settlement.get("settlement_id", "")): return fail("STALE_SOURCE")
+	var slots := technology_shipyard_work_slots(data, feature)
+	if slots.size() != 2: return fail("TERRAIN")
+	if not require_work: return ok("兩原岸上工位保留", {"feature": feature, "settlement": settlement, "slots": slots})
+	if TechnologyCatalog.get_node("S12").get("enabled") != true or not Technology.scope_known(settlement.get("technology", {}), "S12"): return fail("NO_TECHNOLOGY", "本原聚落尚未開放或掌握船塢工序")
+	var physical := _technology_shipyard_physical_context(data, key)
+	if not physical.ok: return physical
+	return ok("兩造船席位仍須原F13師傅實際參與；供料走原人物兩次現場交付", {"feature": feature, "settlement": settlement, "slots": slots, "work_eligible": true})
+
+static func valid_settlement_processing_target(data: TerrainData, key: String, feature: Dictionary) -> bool:
+	if not feature.has("technology_settlement_order"): return true
+	var ref: Variant = feature.technology_settlement_order
+	if not Technology.keys(ref, ["settlement_id", "order_id"]) or not ref.settlement_id is String or not ref.order_id is String: return false
+	var refs := _settlement_order_state(data, str(ref.settlement_id), str(ref.order_id))
+	if refs.is_empty() or not valid_settlement_processing_order(data, data.site, refs.order): return false
+	if refs.order.kind == "ship_cooperation": return valid_settlement_ship_target(data, key, feature)
+	var spec := _settlement_order_feature_spec(refs.order)
+	if spec.is_empty() or str(spec.feature_id) != key or str(spec.feature) != str(feature.get("kind", "")) \
+		or refs.order.status == "completed" or str(feature.get("recipe_id", "")) != str(spec.recipe): return false
+	var token: Dictionary = feature.get("tech_trial", {})
+	if not token.is_empty() and (token.scope != "settlement" or token.scope_id != ref.settlement_id or token.project_id != refs.order.payload.project_id \
+		or token.purpose != refs.order.payload.purpose or token.person.person_id != refs.order.payload.operator_id): return false
+	return true
+
+static func valid_settlement_spare_repair_storage(data: TerrainData, vehicle: Dictionary, projected: Dictionary = {}, state: Dictionary = {}) -> bool:
+	var site: Dictionary = data.site if state.is_empty() else state
+	var raw: Variant = projected.get("technology_spare_repair", vehicle.get("technology_spare_repair"))
+	var job: Variant = projected.get("repair", vehicle.get("repair"))
+	if not projected.is_empty():
+		var fields := ["repair", "technology_spare_repair"]
+		if projected.has("tech_trial"): fields.append_array(["tech_trial", "tech_batch"])
+		if not Technology.keys(projected, fields): return false
+	if not Technology.keys(raw, ["version", "settlement_id", "operator", "initial_hp", "released"]) \
+		or not Technology.integer(raw.version, 1, 1) or not raw.settlement_id is String or raw.settlement_id.is_empty() \
+		or not Technology.valid_ref(raw.operator) or raw.operator.site_id != str(site.get("id", "")) or not raw.released is bool \
+		or vehicle.get("kind") != "ballista" or not _building_number(raw.initial_hp, 0.000000001, float(SIEGE_DEFINITIONS.ballista.max_hp) - 0.000000001) \
+		or not Technology.keys(job, ["paid_cost", "total_work", "progress", "amount", "applied"]): return false
+	if projected.is_empty() and raw.released and vehicle.has("tech_trial"): return false
+	var amount := minf(20.0, float(SIEGE_DEFINITIONS.ballista.max_hp) - float(raw.initial_hp))
+	return Technology.material_equal(job.paid_cost, {"ballista_spares": 1}) and _building_number(job.get("total_work"), 300.0, 300.0) \
+		and _building_number(job.progress, 0.0, 300.0) and _building_number(job.get("amount"), amount, amount) \
+		and _building_number(job.applied, 0.0, amount) and is_equal_approx(float(job.applied), amount * float(job.progress) / 300.0)
+
+static func valid_settlement_work_storage(data: TerrainData, key: String, feature: Dictionary) -> bool:
+	var link: Variant = feature.get("settlement_work")
+	if not Technology.keys(link, ["settlement_id", "order_id", "step"]) or not link.settlement_id is String or not link.order_id is String or not Technology.integer(link.step, 0, 3): return false
+	var owner: Variant = load("res://scripts/terrain_lab/site_settlement.gd")
+	var settlement: Dictionary = owner.call("record", data)
+	var raw: Variant = settlement.get("technology_operations")
+	if settlement.get("settlement_id") != link.settlement_id or not owner.call("valid_technology_operations", data, raw): return false
+	var order: Dictionary = raw.orders.get(link.order_id, {})
+	if order.is_empty() or order.kind != "defense" or order.status != "active" or int(order.next_step) != int(link.step) or order.paid.feature_id != key: return false
+	var step: Dictionary = order.steps[int(link.step)]
+	var job: Dictionary = feature.get("repair", {}) if step.action == "repair" else feature
+	return step.feature_id == key and feature.get("kind") in owner.DEFENSE_ENGINEERING_KINDS \
+		and (feature.has("repair") if step.action == "repair" else feature.get("stage") != "complete" and not feature.has("pending_build")) \
+		and Technology.material_equal(job.get("cost", {}), order.paid.materials) and is_equal_approx(float(job.get("work", -1.0)) * 60.0, float(order.paid.work_seconds))
+
+static func valid_technology_work_credit(raw: Variant) -> bool:
+	return Technology.keys(raw, ["remaining_work", "credit"]) and Technology.finite_number(raw.remaining_work, 0.000000001) \
+		and Technology.finite_number(raw.credit, 0.000000001) and float(raw.credit) <= float(raw.remaining_work) * 0.5
+
+# Allocation is calculated from the TRUE original siege job, not a UI number.
+# Existing targets keep their original allocation. A zero allowance creates no
+# receipt/field, so a later genuine analysis may aid the remaining same target.
+
+static func validate_technology_ledger_source(data: TerrainData, target: Dictionary, ledger: Dictionary) -> bool:
+	var name := str(ledger.source_holder)
+	# Consumed source identity/version is payment history. No current Warehouse
+	# existence, cargo availability or later version is required to preserve it.
+	if target.has("technology_settlement_order"):
+		var ref: Variant = target.technology_settlement_order
+		if not Technology.keys(ref, ["settlement_id", "order_id"]): return false
+		var refs := _settlement_order_state(data, str(ref.settlement_id), str(ref.order_id))
+		if refs.is_empty() or not valid_settlement_processing_order(data, data.site, refs.order): return false
+		return name == str(refs.order.payload.source.holder)
+	if name == "depot": return true
+	if name.begins_with("nation-order:"): return false
+	if not name.begins_with("feature:"): return false
+	var key := name.trim_prefix("feature:")
+	if not key.is_valid_int() or str(int(key)) != key or not Technology.integer(int(key), 1, int(data.site.get("next_feature", 1)) - 1): return false
+	if not target.has("technology_order"): return true
+	var ref: Dictionary = target.technology_order
+	var order: Dictionary = _technology_order_record(data, ref)
+	return str(order.get("feature_id", "")) == key if str(ref.order_id).begins_with("production_") else str(order.get("payload", {}).get("reserve_feature_id", "")) == key
+
+static func validate_technology_order_storage(data: TerrainData, key: String, target: Dictionary, target_kind: String) -> Dictionary:
+	var ref: Variant = target.technology_order
+	if not Technology.keys(ref, ["nation_id", "order_id"]) or not ref.nation_id is String or not ref.order_id is String or ref.nation_id.is_empty() or ref.order_id.is_empty(): return fail("CORRUPT_SAVE")
+	var nation: Dictionary = data.site.get("equipment_nations", {}).get(ref.nation_id, {})
+	var order: Dictionary = _technology_order_record(data, ref)
+	if order.is_empty(): return fail("CORRUPT_SAVE", "公共生產來源單據不存在")
+	if str(ref.order_id).begins_with("production_"):
+		if target_kind != "feature" or target.get("kind") != "smithy" or order.get("feature_id") != key or order.get("recipe_id") != "bow" \
+			or order.get("status") != "active" or not order.get("receipt_ids") is Array or not order.receipt_ids.is_empty() \
+			or target.get("recipe_id") != "bow" or target.get("supply_mode") != "local" or not target.has("tech_batch") \
+			or int(target.tech_batch.get("operator_id", -1)) != int(order.get("operator_id", -2)) \
+			or not Technology.material_equal(target.tech_batch.get("materials", {}), RANGED_RECIPES.bow.cost) \
+			or target.tech_batch.get("source_holder") != "feature:" + key: return fail("CORRUPT_SAVE", "原军工付款来源／工人／作坊／单据失配")
+		var military_token: Dictionary = target.get("tech_trial", {})
+		if not military_token.is_empty() and (military_token.scope != "nation" or military_token.scope_id != ref.nation_id or military_token.tech_id != "N05" \
+			or military_token.binding != "workshop_bow" or int(military_token.person.person_id) != int(order.operator_id)): return fail("CORRUPT_SAVE")
+		return ok()
+	var payload: Dictionary = order.get("payload", {})
+	var target_id := target_kind + ":" + key
+	if order.tech_id in ["N02", "N06", "N10"]:
+		if target_kind != "feature" or str(payload.get("feature_id", "")) != key or str(target.kind) != ("house" if order.tech_id == "N06" else "road"): return fail("CORRUPT_SAVE")
+	elif order.tech_id == "N11":
+		if str(payload.get("target_id", "")) != target_id or target_kind == "vehicle" and (payload.get("route") != "siege" or target.get("kind") != "ballista") 			or target_kind == "feature" and (payload.get("route") != "armor" or str(payload.get("host_id", "")) != key or target.get("kind") != "smithy"): return fail("CORRUPT_SAVE")
+	else: return fail("CORRUPT_SAVE")
+	var token: Dictionary = target.get("tech_trial", {})
+	if not token.is_empty() and (token.scope != "nation" or token.scope_id != ref.nation_id or int(token.project_id) != int(order.project_id) or token.tech_id != order.tech_id): return fail("CORRUPT_SAVE")
+	return ok()
+
+static func validate_technology_yard_vehicle(data: TerrainData, vehicle: Dictionary) -> Dictionary:
+	if not vehicle.has("technology_yard_id"): return ok()
+	var key: Variant = vehicle.technology_yard_id
+	if not key is String or not key.is_valid_int() or str(int(key)) != key or not Technology.integer(int(key), 1, 2147483646) \
+		or not SIEGE_DEFINITIONS.has(str(vehicle.get("kind", ""))): return fail("CORRUPT_SAVE", "原器械場地塊來源引用非法")
+	var ground: Dictionary = data.site.get("features", {}).get(key, {})
+	if ground.get("kind") != "training_ground" or not valid_technology_siege_yard(ground): return fail("CORRUPT_SAVE", "原器械場地塊不存在")
+	var batch: Dictionary = vehicle.get("tech_batch", {})
+	if vehicle.get("phase") == "building" or _technology_original_wreck_payment(data, vehicle, batch):
+		if not valid_technology_batch(batch, data, str(vehicle.get("id", "")), "vehicle") \
+			or not Technology.material_equal(batch.materials, SIEGE_DEFINITIONS[str(vehicle.kind)].cost): return fail("CORRUPT_SAVE", "器械場施工／殘骸須原完整已付批次")
+		if vehicle.get("phase") == "building" and not Technology.material_equal(batch.materials, vehicle.get("build", {}).get("paid_cost", {})): return fail("CORRUPT_SAVE", "器械場施工須同原付款")
+		if not ground.has("technology_siege_yard"):
+			var token: Dictionary = vehicle.get("tech_trial", {})
+			if not _technology_trial_shape(token, data) or token.tech_id != "S11" or token.scope != "settlement" \
+				or token.scope_id != str(data.site.get("settlement", {}).get("settlement_id", "")): return fail("CORRUPT_SAVE", "未指定校場只接受原S11有限試作來源")
+	else:
+		var receipt: Variant = vehicle.get("technology_construction")
+		if not Technology.keys(receipt, ["id", "site_id", "target_id", "operator_id", "binding", "work_seconds", "item_ids", "outputs", "materials"]) \
+			or receipt.site_id != str(data.site.id) or receipt.target_id != "vehicle:" + str(vehicle.get("id", "")) \
+			or TECHNOLOGY_SIEGE_BINDINGS.get(str(receipt.binding), "") != str(vehicle.kind) \
+			or not Technology.integer(receipt.operator_id, 1) or not Technology.finite_number(receipt.work_seconds, 0.000000001) \
+			or not Technology.material_equal(receipt.materials, SIEGE_DEFINITIONS[str(vehicle.kind)].cost): return fail("CORRUPT_SAVE", "原器械場完成來源須同一器械的真付款成果")
+	return ok()
+
+static func validate_irrigation_storage(data: TerrainData, state: Dictionary) -> Dictionary:
+	if data == null or not state.get("features") is Dictionary or not Technology.integer(state.get("next_feature"), 1, 2147483646): return fail("CORRUPT_SAVE", "原渠道來源容器")
+	for raw: Variant in state.features.values():
+		if not raw is Dictionary: return fail("CORRUPT_SAVE", "原設施欄位")
+	for key: String in state.get("features", {}):
+		var feature: Dictionary = state.features[key]
+		if feature.get("kind") != "irrigation_channel":
+			if feature.has("irrigation"): return fail("CORRUPT_SAVE", "非渠道含渠道欄位")
+			continue
+		if not _irrigation_config(feature.get("irrigation"), state) or not _irrigation_path(data, feature.get("cells")) \
+			or not Technology.integer(feature.get("layout_version"), BUILDING_LAYOUT_VERSION, BUILDING_LAYOUT_VERSION) or not Technology.integer(feature.get("civil_version"), CIVIL_VERSION, CIVIL_VERSION) \
+			or not Technology.integer(feature.get("building_grade"), 1, 1) or feature.get("material") != "stone" \
+			or feature.get("source") != feature.irrigation.source_feature_id or feature.has("pending_build") \
+			or not Technology.material_equal(feature.get("cost", {}), {"wood": feature.cells.size(), "stone": 2 * feature.cells.size()}) \
+			or not _building_number(feature.get("work"), 5.0 * feature.cells.size(), 5.0 * feature.cells.size()) \
+			or feature.get("batch_paid") != false or not _building_number(feature.get("production"), 0.0, 0.0): return fail("CORRUPT_SAVE", "原渠道版本／路徑／完整付費規格")
+		if feature.has("tech_trial") and (not feature.tech_trial is Dictionary or feature.tech_trial.get("tech_id") != "S02" or feature.tech_trial.get("scope") != "settlement" \
+			or feature.tech_trial.get("scope_id") != feature.irrigation.settlement_id or feature.tech_trial.get("binding") != "irrigation"): return fail("CORRUPT_SAVE", "原渠道試作引用")
+		var config: Dictionary = feature.irrigation
+		var pump: Dictionary = state.features.get(config.source_feature_id, {})
+		# Historical refs survive legal demolition. If the old ID still exists,
+		# however, it must retain the original physical type and managing faction.
+		if not pump.is_empty() and (pump.get("kind") not in ["well", "intake"] or not pump.get("cells") is Array or pump.cells.is_empty() or int(pump.get("owner_faction", -1)) != int(feature.get("owner_faction", -2))): return fail("CORRUPT_SAVE", "原渠道水源引用")
+		for index: Variant in pump.get("cells", []):
+			if not Technology.integer(index, 0, data.size.x * data.size.y - 1): return fail("CORRUPT_SAVE", "原水站格引用")
+		var total: int = feature.cells.size()
+		var visited := {}
+		visited[key] = true
+		var downstream: Dictionary = feature
+		var next: String = str(config.upstream_feature_id)
+		while not next.is_empty():
+			if visited.has(next): return fail("CORRUPT_SAVE", "原渠道上游成環")
+			visited[next] = true
+			var upstream: Dictionary = state.features.get(next, {})
+			if upstream.is_empty(): break
+			if upstream.get("kind") != "irrigation_channel" or not _irrigation_config(upstream.get("irrigation"), state) or not _irrigation_path(data, upstream.get("cells")) \
+				or upstream.irrigation.source_feature_id != config.source_feature_id or upstream.irrigation.settlement_id != config.settlement_id \
+				or int(upstream.get("owner_faction", -1)) != int(feature.get("owner_faction", -2)) \
+				or not _irrigation_adjacent(data, int(upstream.cells[-1]), int(downstream.cells[0])): return fail("CORRUPT_SAVE", "原渠道須接同源上段真尾端")
+			total += upstream.cells.size()
+			if total > IRRIGATION_MAX_CELLS: return fail("CORRUPT_SAVE", "原渠道全鏈超過36格")
+			downstream = upstream
+			next = str(upstream.irrigation.upstream_feature_id)
+		if next.is_empty() and not pump.is_empty():
+			var joined := false
+			for index: Variant in pump.cells: joined = joined or _irrigation_adjacent(data, int(index), int(downstream.cells[0]))
+			if not joined: return fail("CORRUPT_SAVE", "原渠道首段未接原水站")
+	return ok()
+
+static func _technology_finish_named_feature(data: TerrainData, key: String) -> void:
+	if data == null: return
+	var actions: Variant = _technology_actions(data)
+	if actions != null and actions.has_method("finish_controlled_feature_work"): actions.finish_controlled_feature_work(key)
+	if not data.has_meta(&"site_work_team"): return
+	var ref: Variant = data.get_meta(&"site_work_team")
+	var workers: Variant = ref.get_ref() if ref is WeakRef else null
+	if workers != null and workers.has_method("finish_named_feature_work"): workers.finish_named_feature_work(key)
+
+static func prepare_settlement_defense_completion(data: TerrainData, key: String, feature: Dictionary, task: Dictionary, identity: int) -> Dictionary:
+	if not feature.has("settlement_work"): return ok("", {"candidate": {}})
+	var guard := settlement_defense_operator_guard(data, key, feature, task, identity)
+	if not guard.ok: return guard
+	var admission: Dictionary = guard.admission
+	var job: Dictionary = feature.repair if task.action == "repair" else feature
+	if float(job.get("progress", -1.0)) + 0.000000001 < float(job.get("work", 1.0)): return fail("WAITING")
+	var candidate: Dictionary = admission.operations.duplicate(true)
+	var next: Dictionary = candidate.orders[str(feature.settlement_work.order_id)]
+	next.receipts.append({"step": int(next.next_step), "feature_id": key, "operator_id": identity, "action": str(task.action),
+		"materials": next.paid.materials.duplicate(), "work_seconds": float(next.paid.work_seconds)})
+	next.next_step = int(next.next_step) + 1
+	next.paid = {}
+	next.status = "completed" if int(next.next_step) == next.steps.size() else "prepared"
+	next.revision = int(next.revision) + 1
+	var owner: Variant = load("res://scripts/terrain_lab/site_settlement.gd")
+	if not owner.call("valid_technology_operations", data, candidate): return fail("INVALID")
+	return ok("", {"owner": owner, "settlement": admission.settlement, "candidate": candidate, "feature": feature})
+
+static func publish_settlement_defense_completion(prepared: Dictionary) -> void:
+	if prepared.get("candidate", {}).is_empty(): return
+	prepared.owner.call("publish_technology_operations", prepared.settlement, prepared.candidate)
+	prepared.feature.erase("settlement_work")
+
+static func settlement_defense_operator_guard(data: TerrainData, key: String, feature: Dictionary, task: Dictionary, identity: int) -> Dictionary:
+	if not feature.has("settlement_work"): return ok()
+	if not valid_settlement_work_storage(data, key, feature): return fail("CORRUPT_STATE")
+	var link: Dictionary = feature.settlement_work
+	var admission := settlement_defense_work_preflight(data, {"settlement_id": str(link.settlement_id), "order_id": str(link.order_id)}, feature, str(task.get("action", "")))
+	if not admission.ok: return admission
+	var actions: Variant = _technology_actions(data)
+	var person: Dictionary = actions._technology_operator_for_task(task, identity)
+	if person.is_empty() or admission.person_ids != [identity] or task.get("target") != "feature:" + key: return fail("NO_WORKER")
+	return ok("", {"person": person, "admission": admission})
+
+static func technology_existing_paid_finish(data: TerrainData, key: String, feature: Dictionary) -> bool:
+	var ledger: Dictionary = feature.get("tech_batch", {})
+	return bool(feature.get("batch_paid", false)) and feature.get("tech_trial", {}).is_empty() \
+		and valid_technology_batch(ledger, data, key) and ledger.token.is_empty() \
+		and ledger.recipe_id == str(feature.get("recipe_id", "")) \
+		and Technology.material_equal(ledger.materials, feature_recipe(feature).get("input", {}))
+
+# Source proof is evaluated while the original complete BUILD job still exists,
+# before its owner clears it. Ready/captured/repaired vehicles are not witnesses.
+
+static func _settlement_processing_ref_for_operation(data: TerrainData, selector: Dictionary, key: String) -> Dictionary:
+	if data == null: return fail("INVALID")
+	var selected := {}
+	var token: Dictionary = selector.get("token", {})
+	if Technology.keys(selector, ["settlement_id", "order_id"]): selected = selector.duplicate()
+	elif not token.is_empty() and token.get("scope") == "settlement" and token.get("tech_id") in ["S03", "S04", "S05"]:
+		if TechnologyCatalog.get_node(str(token.tech_id)).get("enabled") != true: return fail("NO_TECHNOLOGY", "此原具體owner新付款入口尚未啟用")
+		var settlement: Dictionary = data.site.get("settlement", {})
+		if settlement.get("settlement_id") != token.get("scope_id"): return fail("STALE_PROJECT")
+		for id: String in settlement.get("technology_operations", {}).get("orders", {}):
+			var order: Dictionary = settlement.technology_operations.orders[id]
+			var payload: Dictionary = order.get("payload", {})
+			if order.get("kind") not in ["charcoal_batch", "textile_batch", "metal_chain"] or payload.get("project_id") != token.get("project_id") \
+				or payload.get("purpose") != token.get("purpose") or payload.get("operator_id") != token.get("person", {}).get("person_id") \
+				or order.get("status") not in ["prepared", "active", "suspended"]: continue
+			if not selected.is_empty(): return fail("AMBIGUOUS_SOURCE")
+			selected = {"settlement_id": str(token.scope_id), "order_id": id}
+		if selected.is_empty(): return fail("NO_ADOPTED_ORDER", "本原研究须先具名采用有限工单")
+	else: return ok("", {"ref": {}, "spec": {}})
+	var refs := _settlement_order_state(data, str(selected.settlement_id), str(selected.order_id))
+	if refs.is_empty() or not valid_settlement_processing_order(data, data.site, refs.order): return fail("STALE_SOURCE")
+	var spec := _settlement_order_feature_spec(refs.order, str(token.get("binding", "")))
+	if spec.is_empty() or spec.feature_id != key: return fail("NO_TARGET")
+	if token.is_empty() and int(refs.order.payload.get("project_id", -1)) != 0: return fail("NO_AUTHORITY")
+	return ok("", {"ref": selected, "spec": spec, "order": refs.order})
+
+static func _technology_begin_feature_operation(data: TerrainData, selector: Dictionary, key: String, binding_id: String, preview: bool = false) -> Dictionary:
+	if data == null or not _technology_selector_shape(data, selector) or selector.is_empty() or not TECHNOLOGY_FEATURE_BINDINGS.has(binding_id): return fail("INVALID")
+	var actions: Variant = _technology_actions(data)
+	var binding: Array = TECHNOLOGY_FEATURE_BINDINGS[binding_id]
+	var settlement_ref := _settlement_processing_ref_for_operation(data, selector, key)
+	if not settlement_ref.ok: return settlement_ref
+	if not settlement_ref.get("ref", {}).is_empty(): binding = [str(settlement_ref.spec.feature), str(settlement_ref.spec.recipe)]
+	var feature: Dictionary = data.site.get("features", {}).get(key, {})
+	if actions == null or feature.is_empty() or str(feature.kind) != str(binding[0]) or str(feature.get("stage", "")) != "complete" \
+		or int(feature.get("layout_version", 0)) != BUILDING_LAYOUT_VERSION or not feature_usable(feature): return fail("NO_TARGET")
+	if bool(data.site.get("paused", false)) or feature.has("tech_trial") or feature.has("tech_batch") or feature.has("technology_order") \
+		or feature.has("pending_build") or feature.has("repair") or feature.has("technology_settlement_order") and feature.technology_settlement_order != settlement_ref.get("ref", {}) or bool(feature.get("batch_paid", false)) \
+		or float(feature.get("production", 0.0)) != 0.0 or _feature_has_work(data, key) or _feature_operation_active(data, key): return fail("BUSY", "先停止本原工區並領完原已付款批次")
+	var candidate := feature.duplicate(true)
+	if str(binding[1]).is_empty(): candidate.erase("recipe_id")
+	else: candidate.recipe_id = str(binding[1])
+	var definition := feature_recipe(candidate)
+	if definition.is_empty() or not definition.has("cycle"): return fail("INVALID")
+	if not can_pay(data.site.inventory, {"tools": 1}): return fail("MATERIALS", "原工作工具不足")
+	var selected := selector.duplicate(true)
+	if selected.has("token"):
+		if selected.token.target_id != "feature:" + key or selected.token.binding != binding_id: return fail("STALE_PROJECT")
+		selected.token.materials = definition.get("input", {}).duplicate(true)
+	var source := _technology_material_source(data, selected, binding_id, definition.get("input", {}))
+	if not source.ok: return source
+	var admission := _technology_named_admission(data, selected)
+	if not admission.ok: return admission
+	if admission.admission.person_ids.size() != 1: return fail("NO_WORK_SLOTS")
+	var operator_id := int(admission.admission.person_ids[0])
+	var person: Dictionary = actions._person(operator_id)
+	if person.is_empty() or int(feature.get("owner_faction", -1)) >= 0 and int(feature.owner_faction) != int(person.faction): return fail("NO_AUTHORITY")
+	var token: Dictionary = selected.get("token", {})
+	var physical := _technology_armor_new_work_guard(data, key, candidate)
+	if not physical.ok: return physical
+	var recipe_guard := technology_recipe_guard(data, key, candidate, operator_id, token)
+	if not recipe_guard.ok: return recipe_guard
+	var scope := {}
+	if not token.is_empty():
+		scope = _technology_geometry_payment(data, token, definition.get("input", {}), true, source.source)
+		if not scope.ok: return scope
+		token = scope.token
+		selected.token = token
+	var zone := {}
+	var existing_zone := false
+	for current: Dictionary in data.site.zones:
+		if str(current.get("feature", "")) == key and current.get("action") == "operate":
+			zone = current
+			existing_zone = true
+			break
+	if zone.is_empty(): zone = {"cells": feature.cells.duplicate(), "kind": -1, "action": "operate", "feature": key, "active": true}
+	# The true host remains unchanged through WT preparation. WT checks original
+	# layout/slots; only Runtime owns the prospective recipe/material validation.
+	var named := _technology_prepare_named_feature(data, key, feature, zone, "operate", selected)
+	if not named.ok: return named
+	var operation_ref: Dictionary = named.admission.get("operation_ref", source.operation_ref)
+	if operation_ref.is_empty() and selected.has("token") and not source.operation_ref.is_empty(): operation_ref = source.operation_ref
+	if not source.operation_ref.is_empty() and operation_ref != source.operation_ref: return fail("STALE_SOURCE")
+	var nation := _technology_prepare_public_begin(data, operation_ref, binding_id, "feature:" + key)
+	if not nation.ok: return nation
+	var output: Dictionary = feature.get("technology_output", {"version": 1, "next_seq": 1, "receipts": []})
+	if not valid_technology_output_state(output, data, key) or int(output.next_seq) >= 2147483647: return fail("STALE_SOURCE")
+	var ledger := {"version": 1, "id": int(output.next_seq), "site_id": str(data.site.id), "feature_id": key,
+		"operator_id": operator_id, "recipe_id": str(candidate.get("recipe_id", "")), "materials": source.cost.duplicate(true),
+		"source_holder": str(source.holder.holder), "source_version": int(source.version), "work_seconds": 0.0,
+		"token": token.duplicate(true), "payment_id": str(scope.payment.payment_id) if not scope.is_empty() else str(data.site.id) + "|feature:" + key + "|" + str(int(output.next_seq))}
+	var current := _technology_material_source(data, selected, binding_id, source.cost, source.source)
+	if not current.ok or not is_same(current.get("holder"), source.holder) or not is_same(current.get("cargo"), source.cargo) or current.get("version") != source.version: return fail("STALE_SOURCE")
+	if preview: return ok("原設施完整材料與具名工位可同筆開始", {"target_id": "feature:" + key, "materials": source.cost.duplicate(true), "work_seconds": float(definition.cycle) * 60.0})
+	# No admission can fail below: these SAME original refs form one paid batch.
+	_technology_publish_material_payment(source)
+	if str(binding[1]).is_empty(): feature.erase("recipe_id")
+	else: feature.recipe_id = str(binding[1])
+	if not token.is_empty(): feature.tech_trial = token
+	if not operation_ref.is_empty():
+		if operation_ref.has("settlement_id"): feature.technology_settlement_order = operation_ref.duplicate()
+		else: feature.technology_order = operation_ref.duplicate()
+	feature.tech_batch = ledger
+	feature.batch_paid = true
+	feature.production = 0.0
+	feature.status = "原完整材料已付；具名原人前往本工位"
+	if existing_zone: zone.active = true
+	else: data.site.zones.append(zone)
+	if not scope.is_empty(): actions.publish_phase_payment(scope.payment)
+	_technology_publish_public_begin(nation)
+	_technology_publish_named_feature(named)
+	data.environment_revision += 1
+	rebuild_water(data)
+	return ok(str(feature.status), {"target_id": "feature:" + key, "token": token.duplicate(true), "resumed": false})
+
+static func begin_settlement_ship_phase(data: TerrainData, token: Dictionary, preview: bool = false, work_target: Dictionary = {}) -> Dictionary:
+	if not _technology_trial_shape(token, data) or not Technology.keys(work_target, ["order_id"]) or not work_target.order_id is String: return fail("INVALID")
+	return _settlement_ship_begin(data, str(token.scope_id), str(work_target.order_id), token, preview)
+
+static func survey_plan_preview(data: TerrainData, key: String, requester_id: int, occupied: Callable = Callable()) -> Dictionary:
+	var actions: Variant = _technology_actions(data)
+	if actions == null or requester_id != int(actions.lab.controlled_person_id()): return fail("NO_AUTHORITY")
+	var person: Dictionary = actions._person(requester_id)
+	var feature: Dictionary = data.site.get("features", {}).get(key, {})
+	if person.is_empty() or feature.get("kind") != "survey_stakes" or feature.get("stage") != "complete" \
+		or int(feature.get("owner_faction", -1)) != int(person.faction): return fail("NO_AUTHORITY")
+	var storage := validate_survey_stakes_storage(data, feature)
+	if not storage.ok: return storage
+	var plan: Dictionary = normalized_survey_plan(data, feature.survey_plan)
+	plan.options.owner_faction = int(person.faction)
+	var cells: Array[int] = []
+	for value: Variant in plan.cells: cells.append(int(value))
+	var checked := preview_build(data, str(plan.kind), cells, occupied, plan.options)
+	if not checked.ok: return checked
+	return ok("原方案已依當前原地形／人車／材料重驗；未扣料", {"plan": plan, "preview": checked, "feature": feature})
+
+static func normalized_survey_plan(data: TerrainData, raw: Dictionary) -> Dictionary:
+	if not valid_survey_plan(data, raw): return {}
+	var result: Dictionary = raw.duplicate(true)
+	for index: int in range(result.cells.size()): result.cells[index] = int(result.cells[index])
+	for field: String in result.options:
+		if field not in ["variant", "material", "camp_type"]: result.options[field] = int(result.options[field])
+	return result
+
+static func valid_survey_plan(data: TerrainData, raw: Variant) -> bool:
+	if not Technology.keys(raw, ["kind", "cells", "options"]) or not raw.kind is String or not FEATURES.has(raw.kind) \
+		or raw.kind in ["survey_stakes", "tent", "settlement_center"] or not raw.cells is Array or raw.cells.is_empty() or not raw.options is Dictionary: return false
+	const OPTIONS := ["layout_version", "variant", "quarter", "material", "owner_faction", "barracks_layout_version", "camp_type", "waterfront_version", "launch_cell", "bridge_version", "bridge_clearance"]
+	for field: Variant in raw.options:
+		if not field is String or field not in OPTIONS: return false
+		if field in ["variant", "material", "camp_type"]:
+			if not raw.options[field] is String: return false
+		elif not Technology.integer(raw.options[field], -1 if field in ["owner_faction", "launch_cell"] else 0, data.size.x * data.size.y - 1 if field == "launch_cell" else 100000000): return false
+	var cells: Array[int] = []
+	for value: Variant in raw.cells:
+		if not Technology.integer(value, 0, data.size.x * data.size.y - 1) or cells.has(int(value)): return false
+		cells.append(int(value))
+	var options: Dictionary = raw.options.duplicate(true)
+	for field: String in options:
+		if field not in ["variant", "material", "camp_type"]: options[field] = int(options[field])
+	return validate_building_layout(data, str(raw.kind), cells, options).ok
+
+static func valid_family_construction_method(raw: Variant, data: TerrainData, feature: Dictionary, job: Dictionary) -> bool:
+	return Technology.keys(raw, ["version", "method", "operator", "baseline_work"]) and Technology.integer(raw.version, 1, 1) \
+		and raw.method == "F10" and str(feature.get("kind", "")) in FAMILY_CONSTRUCTION_METHOD_KINDS \
+		and Technology.valid_ref(raw.operator) and raw.operator.site_id == str(data.site.get("id", "")) \
+		and Technology.finite_number(raw.baseline_work, 0.000000001) and Technology.finite_number(job.get("work"), 0.000000001) \
+		and is_equal_approx(float(raw.baseline_work), float(job.work))
+
+static func validate_family_construction_method_storage(data: TerrainData, feature: Dictionary) -> Dictionary:
+	if feature.has("construction_method") and (feature.get("stage") == "complete" or not valid_family_construction_method(feature.construction_method, data, feature, feature)): return fail("CORRUPT_SAVE", "原施工工法欄位非法")
+	var pending: Variant = feature.get("pending_build", {})
+	if pending is Dictionary and pending.has("construction_method") and not valid_family_construction_method(pending.construction_method, data, feature, pending): return fail("CORRUPT_SAVE", "原擴建工法欄位非法")
+	return ok()
+
+static func _technology_finish_named_vehicle(data: TerrainData, key: String) -> void:
+	var actions: Variant = _technology_actions(data)
+	if actions != null and actions.has_method("finish_controlled_vehicle_work"): actions.finish_controlled_vehicle_work(key)
+	if not data.has_meta(&"site_work_team"): return
+	var ref: Variant = data.get_meta(&"site_work_team")
+	var workers: Variant = ref.get_ref() if ref is WeakRef else null
+	if workers != null and workers.has_method("finish_named_vehicle_work"): workers.finish_named_vehicle_work(key)
+
+static func prepare_settlement_spare_completion(data: TerrainData, vehicle: Dictionary, task: Dictionary, identity: int, seconds: float) -> Dictionary:
+	var guard := settlement_spare_work_guard(data, vehicle, task, identity)
+	if not guard.ok: return guard
+	var token: Dictionary = vehicle.get("tech_trial", {})
+	if token.is_empty(): return ok("", {"phase": {}, "actions": null})
+	var ledger: Dictionary = vehicle.get("tech_batch", {})
+	if not is_same(vehicle.get("tech_trial"), token) or not valid_technology_batch(ledger, data, str(vehicle.id), "vehicle") \
+		or ledger.token != token or ledger.recipe_id != "repair:ballista_spares" or not Technology.material_equal(ledger.materials, {"ballista_spares": 1}) \
+		or float(vehicle.repair.progress) + seconds + 0.000000001 < 300.0: return fail("WAITING")
+	var accepted := _technology_accepted_named_interval(data, task, identity)
+	if seconds > 0.0 and (accepted.is_empty() or float(accepted.get("actual_seconds", 0.0)) + 0.000000001 < seconds): return fail("CLOCK_NOT_READY")
+	var actions: Variant = _technology_actions(data)
+	var checked: Dictionary = actions._technology_paid_phase_context(token)
+	if not checked.ok: return checked
+	var receipt := {"site_id": str(data.site.id), "person_id": identity, "attempt": int(token.attempt), "phase_id": str(token.phase_id),
+		"event_id": str(ledger.payment_id), "work_seconds": minf(300.0, float(ledger.work_seconds) + seconds), "payment_id": str(ledger.payment_id)}
+	var prepared := Technology.scope_receipt_candidate(checked.record, "settlement", receipt)
+	if not prepared.ok: return prepared
+	return ok("", {"phase": {"owner": checked.owner, "record": checked.record, "state": prepared.state, "person": checked.person,
+		"person_candidate": {}, "complete": prepared.complete, "site_state": data.site}, "actions": actions})
+
+static func prepare_technology_siege_history(data: TerrainData, vehicle_id: String, target: Dictionary, original_task: Dictionary, identity: int, research_prepared: Dictionary = {}) -> Dictionary:
+	if data == null or not is_same(data.site.get("vehicles", {}).get(vehicle_id), target): return fail("STALE_SOURCE")
+	var actions: Variant = _technology_actions(data)
+	if actions == null or not actions.has_method("technology_family_siege_history_candidate"): return ok("", {"history": {}})
+	var person: Dictionary = actions._technology_operator_for_task(original_task, identity)
+	if person.is_empty() or not actions._technology_member(int(person.person_id)): return ok("", {"history": {}})
+	var source := technology_siege_history_source_candidate(data, vehicle_id, int(person.person_id), original_task)
+	if not source.ok: return source
+	var family: Dictionary = actions._technology_family()
+	var phase: Dictionary = research_prepared if is_same(research_prepared.get("owner"), family) else {}
+	var history: Dictionary = actions.technology_family_siege_history_candidate(int(person.person_id), vehicle_id, str(source.binding), phase)
+	if not history.ok: return history
+	return ok("", {"history": history, "actions": actions})
+
+static func publish_settlement_spare_completion(vehicle: Dictionary, prepared: Dictionary) -> void:
+	assert(prepared.ok)
+	if not prepared.phase.is_empty(): prepared.actions.publish_phase_receipt(prepared.phase)
+	vehicle.erase("technology_spare_repair")
+	vehicle.erase("tech_trial")
+	vehicle.erase("tech_batch")
+
+static func publish_technology_siege_history(prepared: Dictionary) -> void:
+	assert(prepared.ok)
+	if not prepared.history.is_empty(): prepared.actions.publish_family_siege_history(prepared.history)
+
+static func settlement_spare_work_guard(data: TerrainData, vehicle: Dictionary, task: Dictionary, identity: int) -> Dictionary:
+	if not vehicle.has("technology_spare_repair"): return ok()
+	if not valid_settlement_spare_repair_storage(data, vehicle): return fail("CORRUPT_STATE")
+	if vehicle.technology_spare_repair.released: return ok()
+	var actions: Variant = _technology_actions(data)
+	var person: Dictionary = actions._technology_operator_for_task(task, identity) if actions != null else {}
+	if person.is_empty() or int(person.person_id) != int(vehicle.technology_spare_repair.operator.person_id) or task.get("action") != "repair" \
+		or task.get("target") != "vehicle:" + str(vehicle.id): return fail("NO_WORKER")
+	var token: Dictionary = vehicle.get("tech_trial", {})
+	var checked := settlement_spares_context(data, int(person.person_id), token, task)
+	if not checked.ok or checked.settlement.settlement_id != vehicle.technology_spare_repair.settlement_id: return checked if not checked.ok else fail("NO_AUTHORITY")
+	var physical: Variant = person.owner
+	var original: Variant = actions._technology_team(person)
+	if physical is CrowdPersonOwner:
+		var source: Variant = physical._command_owner(int(person.unit))
+		if source is TerrainArmy: original = source
+	if not original is TerrainArmy or int(original.team_id) != int(vehicle.team_id) \
+		or physical is CrowdPersonOwner and physical.combat_order != TerrainArmy.CombatOrder.HOLD \
+		or not physical is CrowdPersonOwner and original.combat_order != TerrainArmy.CombatOrder.HOLD \
+		or not original.duty_resolve_readonly("team.work", physical if physical is CrowdPersonOwner else original).get("ok", false): return fail("NO_AUTHORITY")
+	if not token.is_empty():
+		var active: Dictionary = actions.technology_phase_active_guard(token)
+		if not active.ok: return active
+	return ok("", {"person": person})
+
+static func technology_work_credit_facts(data: TerrainData, target: Dictionary) -> Dictionary:
+	if not target.has("tech_work_credit"): return ok("", {"factor": 1.0})
+	var token: Dictionary = target.get("tech_trial", {})
+	if not _technology_trial_shape(token, data) or token.scope != "family" or token.tech_id not in ["F11", "F12"] \
+		or not valid_technology_work_credit(target.tech_work_credit): return fail("CORRUPT_STATE")
+	var raw: Dictionary = target.tech_work_credit
+	var factor := float(raw.remaining_work) / (float(raw.remaining_work) - float(raw.credit))
+	return ok("", {"factor": factor}) if is_finite(factor) and factor > 1.0 and factor <= 2.000000001 else fail("CORRUPT_STATE")
+
+# REPLACE first package release method, preserving its original two arguments.
+# Root PA alone validates the explicit permanent cancellation beforehand. Plain
+# task stop parks true token/paid work; permanent abandonment earns no research.
+
+static func _technology_material_source(data: TerrainData, selector: Dictionary, binding: String, cost: Dictionary, original_source: Dictionary = {}) -> Dictionary:
+	if data == null or not _siege_depot_ready(data) or not _technology_selector_shape(data, selector) or not Technology.material_stack(cost): return fail("INVALID")
+	var source := {}
+	var operation_ref := {}
+	if not selector.is_empty():
+		var actions: Variant = _technology_actions(data)
+		if actions == null: return fail("UNSUPPORTED", "原付款來源查詢尚未接線")
+		var query := {}
+		if selector.has("token"):
+			if str(selector.token.binding) != binding or not Technology.material_equal(selector.token.materials, cost): return fail("INVALID_MATERIALS")
+			if not actions.has_method("technology_phase_material_source_candidate"): return fail("UNSUPPORTED")
+			query = actions.technology_phase_material_source_candidate(selector.token)
+		elif selector.has("settlement_id"):
+			operation_ref = selector.duplicate()
+			if not actions.has_method("settlement_operation_material_source_candidate"): return fail("UNSUPPORTED")
+			query = actions.settlement_operation_material_source_candidate(str(selector.settlement_id), str(selector.order_id), binding)
+		else:
+			operation_ref = selector.duplicate()
+			if not actions.has_method("nation_operation_material_source_candidate"): return fail("UNSUPPORTED")
+			query = actions.nation_operation_material_source_candidate(str(selector.nation_id), str(selector.order_id), binding)
+		if not query.get("ok", false): return query
+		if not query.get("source") is Dictionary: return fail("STALE_SOURCE")
+		source = query.source
+	if not original_source.is_empty() and not _technology_source_equal(original_source, source): return fail("STALE_SOURCE", "原來源／用途／版本已變；未扣料")
+	if source.is_empty():
+		if not original_source.is_empty(): return fail("STALE_SOURCE")
+		var holder: Dictionary = data.site.depot_items
+		if not _item_holder_shape(holder) or int(holder.version) >= 2147483646 or not can_pay(data.site.inventory, cost): return fail("MATERIALS", items_text(cost))
+		return ok("", {"source": {}, "holder": holder, "cargo": data.site.inventory, "version": int(holder.version),
+			"cost": cost.duplicate(true), "operation_ref": operation_ref})
+	if source.get("kind") == "settlement_order": return _settlement_verified_material_source(data, selector, binding, cost, source)
+	if not Technology.keys(source, TECHNOLOGY_SOURCE_FIELDS) or source.ok != true or not source.code is String or not source.message is String \
+		or source.kind != "nation_order" or source.source_site_id != str(data.site.id) or not source.holder is String \
+		or not source.holder.begins_with("nation-order:") or not Technology.valid_ref(source.grantor) or source.grantor.site_id != str(data.site.id) \
+		or not Technology.material_stack(source.cap) or not Technology.material_stack(source.spent) \
+		or not source.physical_holder is Dictionary or not source.physical_cargo is Dictionary \
+		or not Technology.integer(source.holder_version, 0, 2147483645) or not Technology.keys(source.expected_refs, TECHNOLOGY_SOURCE_REFS): return fail("STALE_SOURCE")
+	var technology_source_namespace: Variant = JSON.parse_string(str(source.holder).trim_prefix("nation-order:"))
+	if not technology_source_namespace is Array or technology_source_namespace.size() != 3 or technology_source_namespace[0] != str(data.site.id) or not technology_source_namespace[1] is String or not technology_source_namespace[2] is String \
+		or technology_source_namespace[1].is_empty() or technology_source_namespace[2].is_empty() or source.holder != "nation-order:" + JSON.stringify(technology_source_namespace): return fail("STALE_SOURCE")
+	var ref := {"nation_id": str(technology_source_namespace[1]), "order_id": str(technology_source_namespace[2])}
+	if not operation_ref.is_empty() and operation_ref != ref: return fail("STALE_SOURCE")
+	if selector.has("token") and (selector.token.scope != "nation" or selector.token.scope_id != ref.nation_id): return fail("NO_AUTHORITY")
+	var nation: Dictionary = data.site.get("equipment_nations", {}).get(ref.nation_id, {})
+	var operations: Dictionary = nation.get("technology_operations", {})
+	var order: Dictionary = _technology_order_record(data, ref)
+	var refs: Dictionary = source.expected_refs
+	if nation.is_empty() or operations.is_empty() or order.is_empty() or not is_same(refs.terrain, data) or not is_same(refs.site, data.site) \
+		or not is_same(refs.nation, nation) or not is_same(refs.operations, operations) or not is_same(refs.order, order) \
+		or not is_same(refs.holder, source.physical_holder) or not is_same(refs.cargo, source.physical_cargo): return fail("STALE_SOURCE")
+	var reserve_key := str(order.get("feature_id", "")) if str(ref.order_id).begins_with("production_") else str(order.get("payload", {}).get("reserve_feature_id", ""))
+	if str(ref.order_id).begins_with("production_") and (binding != "workshop_bow" or not Technology.material_equal(cost, RANGED_RECIPES.bow.cost)): return fail("SPEC_MISMATCH")
+	var endpoint: Dictionary = SiteStockpiles.stock_endpoint(data, reserve_key)
+	if endpoint.is_empty() or not is_same(endpoint.holder, source.physical_holder) or not is_same(endpoint.cargo, source.physical_cargo) \
+		or not _item_holder_shape(source.physical_holder) or str(source.physical_holder.holder) != str(endpoint.holder.holder) \
+		or int(source.physical_holder.version) != int(source.holder_version): return fail("STALE_SOURCE")
+	for resource: String in cost:
+		if int(cost[resource]) > int(source.cap.get(resource, -1)) - int(source.spent.get(resource, 0)): return fail("NO_MATERIAL", "原有限用途額度不足")
+	if not can_pay(source.physical_cargo, cost): return fail("MATERIALS", "原私庫完整投入不足；營地不代付")
+	return ok("", {"source": source, "holder": source.physical_holder, "cargo": source.physical_cargo,
+		"version": int(source.holder_version), "cost": cost.duplicate(true), "operation_ref": ref})
+
+static func _technology_named_admission(data: TerrainData, selector: Dictionary) -> Dictionary:
+	if selector.is_empty(): return ok("", {"admission": {}})
+	if not _technology_selector_shape(data, selector): return fail("INVALID")
+	var actions: Variant = _technology_actions(data)
+	if actions == null or not actions.has_method("technology_build_admission"): return fail("UNSUPPORTED", "原具名用途預檢尚未接線")
+	var admitted: Dictionary = actions.technology_build_admission(selector)
+	if not admitted.get("ok", false): return admitted
+	if not admitted.get("person_ids") is Array or admitted.person_ids.is_empty() \
+		or not Technology.integer(admitted.get("requester_id"), 1) or not admitted.get("operation_ref") is Dictionary: return fail("INVALID_OWNER")
+	# This is a projection from the actual original current control; a caller
+	# cannot select the controlled branch by supplying its own boolean.
+	admitted.controlled_worker = admitted.person_ids.size() == 1 and int(admitted.person_ids[0]) == int(actions._technology_controlled())
+	if admitted.get("team") == null and not bool(admitted.get("controlled_worker", false)): return fail("NO_WORKER", "原具名工人須有真工作隊，或由當前受控本人站在原工位操作")
+	if not admitted.operation_ref.is_empty() and not Technology.keys(admitted.operation_ref, ["nation_id", "order_id"]) and not Technology.keys(admitted.operation_ref, ["settlement_id", "order_id"]): return fail("INVALID_OWNER")
+	return ok("", {"admission": admitted})
+
+static func _technology_prepare_named_vehicle(data: TerrainData, key: String, vehicle: Dictionary, selector: Dictionary, vehicles_candidate: Dictionary = {}, actual_operator_id: int = 0) -> Dictionary:
+	var actions: Variant = _technology_actions(data)
+	var admission := _technology_named_admission(data, selector)
+	if selector.is_empty() and actual_operator_id > 0:
+		if actions == null or not actions.has_method("technology_vehicle_work_admission"): return fail("UNSUPPORTED")
+		var direct: Dictionary = actions.technology_vehicle_work_admission(actual_operator_id, int(vehicle.get("team_id", -1)))
+		if not direct.ok: return direct
+		admission = ok("", {"admission": direct})
+	if not admission.ok: return admission
+	if admission.admission.is_empty(): return ok("", {"assignment": {}, "controlled": {}, "admission": {}})
+	var selected: Dictionary = admission.admission
+	if selected.person_ids.size() != 1 or selected.team == null or int(selected.team.team_id) != int(vehicle.get("team_id", -1)): return fail("NO_AUTHORITY")
+	if bool(selected.get("controlled_worker", false)):
+		if actions == null or not actions.has_method("prepare_controlled_vehicle_work") or not actions.has_method("publish_controlled_vehicle_work"): return fail("UNSUPPORTED")
+		var controlled: Dictionary = actions.prepare_controlled_vehicle_work(selector, vehicle, vehicles_candidate, actual_operator_id)
+		if not controlled.ok: return controlled
+		return ok("", {"assignment": {}, "controlled": controlled, "admission": selected, "actions": actions})
+	if not data.has_meta(&"site_work_team"): return fail("UNSUPPORTED")
+	var ref: Variant = data.get_meta(&"site_work_team")
+	var workers: Variant = ref.get_ref() if ref is WeakRef else null
+	if workers == null or not workers.has_method("prepare_assign_vehicle") or not workers.has_method("publish_assign_vehicle"): return fail("UNSUPPORTED")
+	var assignment: Dictionary = workers.prepare_assign_vehicle(selected.team, selected.person_ids, int(selected.requester_id), key, vehicle,
+		selected.operation_ref, vehicle.get("tech_trial", selector.get("token", {})), vehicles_candidate)
+	if not assignment.ok: return assignment
+	return ok("", {"assignment": assignment, "controlled": {}, "admission": selected, "workers": workers})
+
+static func _technology_prepare_public_begin(data: TerrainData, operation_ref: Dictionary, binding: String, target: String) -> Dictionary:
+	if operation_ref.is_empty(): return ok("", {"orders": null, "prepared": {}})
+	if Technology.keys(operation_ref, ["settlement_id", "order_id"]):
+		var refs := _settlement_order_state(data, str(operation_ref.settlement_id), str(operation_ref.order_id))
+		if refs.is_empty() or target != "feature:" + str(refs.order.payload.get("feature_id", "")) or not settlement_operation_binding_valid(refs.order, binding): return fail("STALE_SOURCE")
+		var spec := _settlement_order_feature_spec(refs.order, binding)
+		if spec.is_empty(): return fail("SPEC_MISMATCH")
+		var prepared := prepare_settlement_processing_payment(data, operation_ref, spec.get("cost", {}))
+		if not prepared.ok: return prepared
+		return ok("", {"orders": null, "prepared": {}, "settlement_payment": prepared})
+	if not Technology.keys(operation_ref, ["nation_id", "order_id"]): return fail("INVALID")
+	if str(operation_ref.order_id).begins_with("production_"):
+		var military := _technology_military_context(data, operation_ref)
+		if not military.ok: return military
+		if binding != "workshop_bow" or target != "feature:" + str(military.order.feature_id): return fail("SPEC_MISMATCH")
+		# The original stored order is already active. No parallel start record.
+		return ok("", {"orders": null, "prepared": {}})
+	var actions: Variant = _technology_actions(data)
+	if actions == null: return fail("UNSUPPORTED")
+	var orders: Variant = actions.lab.site_controller.equipment_orders
+	if orders == null or not orders.has_method("prepare_public_owner_begin") or not orders.has_method("publish_public_owner_begin"): return fail("UNSUPPORTED", "原公共單據同筆開始提交尚未接線")
+	var candidate: Dictionary = orders.prepare_public_owner_begin(str(operation_ref.nation_id), str(operation_ref.order_id), binding, target)
+	if not candidate.get("ok", false): return candidate
+	return ok("", {"orders": orders, "prepared": candidate})
+
+static func _technology_public_ledger(data: TerrainData, key: String, recipe: String, source: Dictionary, admission: Dictionary) -> Dictionary:
+	if admission.person_ids.size() != 1: return {}
+	return {"version": 1, "id": 1, "site_id": str(data.site.id), "feature_id": key,
+		"operator_id": int(admission.person_ids[0]), "recipe_id": recipe, "materials": source.cost.duplicate(true),
+		"source_holder": str(source.holder.holder), "source_version": int(source.version), "work_seconds": 0.0,
+		"token": {}, "payment_id": str(data.site.id) + "|feature:" + key + "|1"}
+
+static func _technology_publish_material_payment(prepared: Dictionary) -> void:
+	# Runtime re-queries the same owner after all candidates, before entering
+	# this synchronous tail. Only actual cargo/holder changes; tools are catalytic.
+	assert(prepared.ok and int(prepared.holder.version) == int(prepared.version))
+	add_items(prepared.cargo, prepared.cost, -1)
+	prepared.holder.version = int(prepared.version) + 1
+
+static func _technology_publish_named_vehicle(prepared: Dictionary) -> void:
+	if not prepared.controlled.is_empty(): prepared.actions.publish_controlled_vehicle_work(prepared.controlled)
+	elif not prepared.assignment.is_empty(): prepared.workers.publish_assign_vehicle(prepared.assignment)
+
+static func _technology_publish_public_begin(prepared: Dictionary) -> void:
+	if prepared.has("settlement_payment"): publish_settlement_processing_order(prepared.settlement_payment)
+	if not prepared.prepared.is_empty(): prepared.orders.publish_public_owner_begin(prepared.prepared)
+
+static func _technology_siege_begin_policy(data: TerrainData, kind: String, selector: Dictionary, named: Dictionary) -> Dictionary:
+	var policy := _technology_policy(data)
+	if not policy.ok: return policy
+	var category := TechnologyPolicy.siege_category(kind, "construct")
+	if category.is_empty() or not policy.policy.categories.has(category): return ok()
+	var selected: Dictionary = named.admission
+	if selected.get("person_ids", []).size() != 1: return fail("NO_OPERATOR", "本世界新建此類器械須明示真合格師傅，先驗再備料")
+	var actions: Variant = _technology_actions(data)
+	var person: Dictionary = actions._person(int(selected.person_ids[0])) if actions != null else {}
+	if person.is_empty(): return fail("NO_OPERATOR")
+	var token: Dictionary = selector.get("token", {})
+	if not token.is_empty():
+		var owner: Dictionary = actions._technology_scope_owner(str(token.scope), str(token.scope_id))
+		var record: Dictionary = owner.get("technology", {})
+		var phase := Technology.scope_next_phase(Technology.active_project(record), token.person, record.get("person_links", []))
+		if phase.is_empty() or phase.id != token.phase_id or phase.binding != token.binding or int(token.person.person_id) != int(person.person_id): return fail("STALE_PHASE")
+		if phase.get("policy_exception", "") == category: return ok()
+	return ok() if Technology.learned(actions._body_get(person, "technology"), category) else fail("NO_TECHNOLOGY", "原實際師傅須學會本世界固定准入技藝")
+
+# Narrow exclusion from the original Controller occupancy query, only at a
+# construction station. Footprint/crew cells, another person and all original
+# leases retain the original blocking semantics; arbitrary Callables do too.
+
+static func _technology_siege_new_ground_guard(data: TerrainData, vehicle: Dictionary, team_id: int, _operator_id: int) -> Dictionary:
+	var ground := technology_siege_ground_geometry(data, vehicle)
+	if not ground.ok: return ground if not siege_cells(data, vehicle).is_empty() and int(data.feature_at[data.index(siege_cells(data, vehicle)[0])]) != 0 else ok()
+	var physical := _technology_siege_ground_context(data, str(ground.key))
+	if not physical.ok: return physical
+	if ground.configured:
+		var current := technology_siege_yard_context(data, str(ground.key))
+		if not current.ok: return current
+	else:
+		var token: Dictionary = vehicle.get("tech_trial", {})
+		if not _technology_trial_shape(token, data) or token.scope != "settlement" or token.tech_id != "S11" \
+			or token.scope_id != str(data.site.settlement.settlement_id): return fail("NO_TECHNOLOGY", "未指定原校場只接受本原S11有限具名研究試作")
+	var actions: Variant = _technology_actions(data)
+	var original_team: Variant = null
+	for team: TerrainArmy in actions.lab.combat_armies:
+		if int(team.team_id) == team_id: original_team = team; break
+	if original_team == null or int(original_team.faction_id) != int(physical.settlement.owner_faction): return fail("NO_AUTHORITY")
+	# F11 and a separately named D10 F12 operator may be different true people.
+	# Availability at the original new command is not a substitute for actual
+	# participating masters during the original collector work interval.
+	for row: Dictionary in original_team.combat_units:
+		var identity := int(row.get("person_id", 0))
+		var person: Dictionary = actions._person(identity)
+		if not person.is_empty() and actions._ready(person) and Technology.learned(actions._body_get(person, "technology"), "F11"): return ok()
+	return fail("NO_TECHNOLOGY", "原器械場新施工需本隊具名真F11師傅")
+
+static func _technology_siege_station_self(data: TerrainData, candidate: Dictionary, cell: Vector2i, cells: Array, selector: Dictionary, actual_operator_id: int, occupied: Callable) -> bool:
+	if cells.has(cell) or not occupied.is_valid(): return false
+	var actions: Variant = _technology_actions(data)
+	if actions == null or not actions.has_method("technology_vehicle_station_clear"): return false
+	var controller: Variant = actions.lab.site_controller
+	if occupied.get_object() != controller or occupied.get_method() not in [&"reserves_cell", &"_siege_people_occupied"]: return false
+	var selected: Dictionary = actions.technology_vehicle_station_clear(selector, candidate, cell, actual_operator_id)
+	return bool(selected.get("ok", false))
+
+# Original Runtime call-local checked work candidates. No new mutable owner.
+
+static func prepare_technology_work_credit(data: TerrainData, token: Dictionary, original_target: Dictionary = {}) -> Dictionary:
+	if data == null or not _technology_trial_shape(token, data): return fail("INVALID_TECHNOLOGY")
+	if token.scope != "family" or token.tech_id not in ["F11", "F12"]: return ok("", {"credit": 0.0})
+	if not str(token.target_id).begins_with("vehicle:") or not TECHNOLOGY_SIEGE_BINDINGS.has(str(token.binding)): return fail("INVALID_WORK")
+	var kind := str(TECHNOLOGY_SIEGE_BINDINGS[str(token.binding)])
+	var definition: Dictionary = SIEGE_DEFINITIONS.get(kind, {})
+	if definition.is_empty() or not Technology.material_equal(token.materials, definition.cost): return fail("INVALID_WORK")
+	var key := str(token.target_id).trim_prefix("vehicle:")
+	var remaining := float(definition.work_seconds)
+	if not original_target.is_empty():
+		if not is_same(data.site.get("vehicles", {}).get(key), original_target) or original_target.get("tech_trial", {}) != token \
+			or str(original_target.get("kind", "")) != kind: return fail("STALE_SOURCE")
+		if original_target.has("tech_work_credit"):
+			return ok("", {"credit": 0.0, "retained": true}) if valid_technology_work_credit(original_target.tech_work_credit) else fail("CORRUPT_STATE")
+		var job: Dictionary = original_target.get("build", {})
+		if job.is_empty() or not is_equal_approx(float(job.get("total_work", -1.0)), float(definition.work_seconds)) \
+			or not Technology.material_equal(job.get("paid_cost", {}), token.materials): return fail("STALE_SOURCE")
+		remaining = maxf(0.0, float(job.total_work) - float(job.get("progress", 0.0)))
+	elif key != str(int(data.site.get("next_vehicle", 1))) or data.site.get("vehicles", {}).has(key): return fail("STALE_SOURCE")
+	if remaining <= 0.000000001: return ok("", {"credit": 0.0})
+	var actions: Variant = _technology_actions(data)
+	if actions == null or not actions.has_method("technology_phase_work_credit_candidate") \
+		or not actions.has_method("can_publish_phase_work_credit") or not actions.has_method("publish_phase_work_credit"): return fail("UNSUPPORTED")
+	var prepared: Dictionary = actions.technology_phase_work_credit_candidate(token, remaining)
+	if not prepared.ok: return prepared
+	var amount := float(prepared.get("credit", 0.0))
+	if amount <= 0.0: return ok("", {"credit": 0.0})
+	var assistance := {"remaining_work": remaining, "credit": amount}
+	if not valid_technology_work_credit(assistance) or not is_equal_approx(float(prepared.get("remaining_work", -1.0)), remaining) \
+		or not actions.can_publish_phase_work_credit(prepared): return fail("STALE_SOURCE")
+	return ok("", {"credit": amount, "assistance": assistance, "token": token, "person_prepared": prepared, "actions": actions})
+
+static func publish_technology_work_credit(original_target: Dictionary, prepared: Dictionary) -> void:
+	assert(prepared.ok)
+	if float(prepared.get("credit", 0.0)) <= 0.0: return
+	assert(not original_target.has("tech_work_credit") and original_target.get("tech_trial", {}) == prepared.token \
+		and prepared.actions.can_publish_phase_work_credit(prepared.person_prepared))
+	original_target.tech_work_credit = prepared.assistance.duplicate(true)
+	prepared.actions.publish_phase_work_credit(prepared.person_prepared)
+
+# Keeps original total_work/work/production units, refund and repair baselines.
+# Only progress receives this one finite allocation; effort/work receipt do not.
+
+static func technology_siege_ground_cell_allowed(data: TerrainData, vehicle: Dictionary, cell: Vector2i) -> bool:
+	if not data.contains(cell): return false
+	if int(data.feature_at[data.index(cell)]) == 0: return true
+	var key := str(vehicle.get("technology_yard_id", ""))
+	var ground: Dictionary = data.site.get("features", {}).get(key, {})
+	# Actual movement may straddle the SAME original yard and free ground. New
+	# manufacture separately requires its entire footprint/all slots inside.
+	return ground.get("kind") == "training_ground" and valid_technology_siege_yard(ground) \
+		and key.is_valid_int() and int(data.feature_at[data.index(cell)]) == int(key) and ground.get("cells", []).has(data.index(cell))
+
+static func technology_siege_ground_geometry(data: TerrainData, vehicle: Dictionary) -> Dictionary:
+	if data == null or not SIEGE_DEFINITIONS.has(str(vehicle.get("kind", ""))): return fail("NO_TARGET")
+	var footprint := siege_cells(data, vehicle)
+	var four := _technology_original_siege_stations(data, vehicle, false)
+	if footprint.is_empty() or four.size() != 4: return fail("TERRAIN")
+	var ground_key := ""
+	for cell: Vector2i in footprint:
+		var key := str(int(data.feature_at[data.index(cell)]))
+		if key == "0": return fail("NO_TARGET")
+		if ground_key.is_empty(): ground_key = key
+		elif key != ground_key: return fail("NO_TARGET")
+	var ground: Dictionary = data.site.get("features", {}).get(ground_key, {})
+	if ground.get("kind") != "training_ground" or not valid_technology_siege_yard(ground): return fail("NO_TARGET")
+	if vehicle.has("id") and vehicle.get("technology_yard_id") != ground_key: return fail("NO_TARGET")
+	var configured := ground.has("technology_siege_yard")
+	if configured:
+		var geometry := technology_siege_yard_context(data, ground_key, false)
+		if not geometry.ok: return geometry
+	var slots := _technology_original_siege_stations(data, vehicle, configured)
+	var all_cells: Array[Vector2i] = footprint.duplicate()
+	for station: Dictionary in slots: all_cells.append(data.cell_from_index(int(station.cell)))
+	for index: int in range(int(SIEGE_DEFINITIONS[str(vehicle.kind)].standard_crew)): all_cells.append(siege_crew_cell(data, vehicle, index))
+	for cell: Vector2i in all_cells:
+		if not data.contains(cell) or not ground.get("cells", []).has(data.index(cell)) or int(data.feature_at[data.index(cell)]) != int(ground_key): return fail("TERRAIN", "整具器械及所有原工位須留在同一校場地塊")
+	return ok("", {"key": ground_key, "feature": ground, "configured": configured, "slots": slots})
+
+static func _checked_work_prefix_owner(data: TerrainData, task: Dictionary, identity: int, prefix: Dictionary) -> Variant:
+	if data == null or task.is_empty() or identity <= 0 or prefix.get("person_id") != identity or not is_same(prefix.get("task"), task): return null
+	var owner: Variant = prefix.get("owner")
+	var actions: Variant = _technology_actions(data)
+	var workers: Variant = null
+	if data.has_meta(&"site_work_team"):
+		var ref: Variant = data.get_meta(&"site_work_team")
+		workers = ref.get_ref() if ref is WeakRef else null
+	var controller: Variant = null
+	if data.has_meta(&"site_controller"):
+		var ref: Variant = data.get_meta(&"site_controller")
+		controller = ref.get_ref() if ref is WeakRef else null
+	if controller != null and (not controller is SiteController or controller.lab == null or not is_same(controller.lab.terrain, data)): controller = null
+	if owner == null or owner != actions and owner != workers and owner != controller or not owner.has_method("valid_checked_work_prefix") \
+		or not bool(owner.valid_checked_work_prefix(task, identity, prefix)): return null
+	return owner
+
+static func _checked_trial_start_facts(prefix: Dictionary) -> Dictionary:
+	# These are immutable facts of the actual initial Runtime preflight, held
+	# by the original provider registry. They do not grant endpoint permission.
+	return ok("", {"required_skill": str(prefix.get("required_skill", "")), "eligible_master": bool(prefix.get("eligible_master", false)),
+		"policy_exception": str(prefix.get("policy_exception", ""))})
+
+static func settlement_ship_work_context(data: TerrainData, feature: Dictionary, task: Dictionary, identity: int) -> Dictionary:
+	if not feature.has("technology_settlement_order"): return ok()
+	var ref: Dictionary = feature.technology_settlement_order
+	var refs := _settlement_order_state(data, str(ref.get("settlement_id", "")), str(ref.get("order_id", "")))
+	if refs.is_empty() or refs.order.get("kind") != "ship_cooperation": return fail("STALE_SOURCE")
+	if refs.order.status == "cancelled":
+		var actions: Variant = _technology_actions(data)
+		var person: Dictionary = actions._technology_operator_for_task(task, identity) if actions != null else {}
+		return ok() if not person.is_empty() and Technology.learned(actions._body_get(person, "technology"), "F13") else fail("NO_SKILL")
+	var current := settlement_ship_work_preflight(data, str(ref.settlement_id), str(ref.order_id), "ferry_build")
+	if not current.ok: return current
+	if not is_same(current.feature, feature) or not current.person_ids.has(identity) or task.get("operation_ref") != ref or task.get("action") != "operate": return fail("NO_AUTHORITY")
+	return ok("原船塢單當前同意與真參與者", current)
+
+static func _settlement_ship_zone(data: TerrainData, key: String, feature: Dictionary) -> Dictionary:
+	for zone: Dictionary in data.site.zones:
+		if zone.get("feature") == key and zone.get("action") == "operate": return {"zone": zone, "existing": true}
+	return {"zone": {"cells": feature.cells.duplicate(), "kind": -1, "action": "operate", "feature": key, "active": true}, "existing": false}
+
+static func _technology_prepare_named_feature(data: TerrainData, key: String, feature: Dictionary, zone: Dictionary, action: String, selector: Dictionary) -> Dictionary:
+	var admission := _technology_named_admission(data, selector)
+	if not admission.ok: return admission
+	if admission.admission.is_empty(): return ok("", {"workers": null, "assignment": {}, "admission": {}, "controlled": {}})
+	var selected: Dictionary = admission.admission
+	if bool(selected.get("controlled_worker", false)):
+		var actions: Variant = _technology_actions(data)
+		if actions == null or not actions.has_method("prepare_controlled_feature_work") or not actions.has_method("publish_controlled_feature_work"): return fail("UNSUPPORTED", "原受控本人工作候選尚未接線")
+		var controlled: Dictionary = actions.prepare_controlled_feature_work(selector, feature, zone, action)
+		if not controlled.get("ok", false): return controlled
+		return ok("", {"workers": null, "assignment": {}, "admission": selected, "controlled": controlled, "actions": actions})
+	if not data.has_meta(&"site_work_team"): return fail("UNSUPPORTED")
+	var ref: Variant = data.get_meta(&"site_work_team")
+	var workers: Variant = ref.get_ref() if ref is WeakRef else null
+	if workers == null or not workers.has_method("prepare_assign_feature") or not workers.has_method("publish_assign_feature"): return fail("UNSUPPORTED")
+	var assigned: Dictionary = workers.prepare_assign_feature(selected.team, selected.person_ids, int(selected.requester_id), key,
+		action, feature, selected.operation_ref, zone, feature.get("tech_trial", selector.get("token", {})))
+	if not assigned.get("ok", false): return assigned
+	return ok("", {"workers": workers, "assignment": assigned, "admission": selected, "controlled": {}})
+
+static func _technology_publish_named_feature(prepared: Dictionary) -> void:
+	if not prepared.controlled.is_empty(): prepared.actions.publish_controlled_feature_work(prepared.controlled)
+	elif not prepared.assignment.is_empty(): prepared.workers.publish_assign_feature(prepared.assignment)
+
+static func _technology_shipyard_new_guard(data: TerrainData, key: String, token: Dictionary = {}) -> Dictionary:
+	var feature: Dictionary = data.site.get("features", {}).get(key, {})
+	if not token.is_empty() and token.get("tech_id") == "S12": return _technology_shipyard_physical_context(data, key)
+	if feature.has("technology_shipyard_work"): return technology_shipyard_work_context(data, key)
+	if not token.is_empty() and token.get("tech_id") == "S12": return _technology_shipyard_physical_context(data, key)
+	return ok() # Existing six ship rights and ordinary old worlds are unchanged.
+
+static func siege_ammo_valid(kind: String, ammo: String) -> bool:
+	var original := str(SIEGE_DEFINITIONS.get(kind, {}).get("ammo", ""))
+	return not original.is_empty() and (ammo == original or ammo == "fire_pot" and kind in ["traction_trebuchet", "counterweight_trebuchet"])
+
+static func _water_allocation_candidate(data: TerrainData, priority: Array) -> Dictionary:
+	var budgets := {}
+	var pump_sources := {}
+	var keys: Array = data.site.features.keys()
+	keys.sort()
+	for key: String in data.site.water_links:
+		if not data.site.features.has(key):
+			continue
+		var feature: Dictionary = data.site.features[key]
+		var source := str(feature.source)
+		if str(feature.kind) == "well":
+			var cell := data.cell_from_index(int(feature.cells[0]))
+			source = "ground:%d:%d" % [floori(float(cell.x) / 16.0), floori(float(cell.y) / 16.0)]
+		pump_sources[key] = source
+		budgets[source] = 2.0 if str(feature.kind) == "well" else 6.0
+	var consumers: Array[String] = _water_consumer_order(data, keys, priority)
+	var water_status := {}
+	for key: String in consumers:
+		var requests: Array[Dictionary] = []
+		if key == "camp":
+			requests.append({"slot": -1, "target": int(data.site.depot_cell), "demand": 0.02})
+		else:
+			var feature: Dictionary = data.site.features[key]
+			if str(feature.stage) != "complete":
+				continue
+			var kind := str(feature.kind)
+			if int(feature.get("layout_version", 0)) == BUILDING_LAYOUT_VERSION and kind in FARM_KINDS + PASTURE_KINDS:
+				var slots := _operating_slots(data, key, feature)
+				var served := 0
+				for slot: Dictionary in slots:
+					served += slot.service_cells.size()
+				var scale := float(served) if kind in FARM_KINDS else _pasture_scale(data, feature, served)
+				for slot: Dictionary in slots:
+					var portion := float(slot.service_cells.size()) / maxf(1.0, served)
+					requests.append({"slot": int(slot.slot), "target": int(slot.cell), "demand": float(FEATURES[kind].water) * scale * portion})
+			else:
+				requests.append({"slot": -1, "target": int(feature.entrance), "demand": water_demand(feature)})
+		var status := {"demand": 0.0, "supplied": 0.0, "slots": {}}
+		for request: Dictionary in requests:
+			var demand := float(request.demand)
+			var supplied := 0.0
+			for pump_key: String in pump_sources:
+				# A remote field worker needs a real water route to that work
+				# position; a wet entrance does not irrigate an entire hectare.
+				if not data.site.water_links[pump_key].has(int(request.target)):
+					continue
+				var source := str(pump_sources[pump_key])
+				var portion := minf(demand - supplied, float(budgets[source]))
+				supplied += portion
+				budgets[source] = float(budgets[source]) - portion
+				if supplied >= demand:
+					break
+			status.demand = float(status.demand) + demand
+			status.supplied = float(status.supplied) + supplied
+			if int(request.slot) >= 0:
+				status.slots[str(request.slot)] = {"demand": demand, "supplied": supplied}
+		water_status[key] = status
+	return water_status
+
+static func _water_schedule_categories(data: TerrainData) -> Array:
+	var settlement: Dictionary = data.site.get("settlement", {})
+	var center: Dictionary = data.site.get("features", {}).get(str(settlement.get("center_id", "")), {})
+	var schedule: Variant = center.get("technology_water_schedule", {})
+	if not valid_water_schedule(schedule, data.site): return []
+	if int(center.get("owner_faction", -1)) != int(settlement.get("owner_faction", -2)): return []
+	var actions: Variant = _technology_actions(data)
+	if actions == null: return []
+	var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	var status: Dictionary = settlement_script.call("status", actions.lab)
+	if status.get("effective") != true: return []
+	if Technology.scope_known(settlement.get("technology", {}), "S01"): return schedule.categories.duplicate()
+	if actions.has_method("water_schedule_active") and actions.water_schedule_active(schedule): return schedule.categories.duplicate()
+	return []
+
+static func valid_water_schedule(raw: Variant, state: Dictionary) -> bool:
+	var settlement: Variant = state.get("settlement", {})
+	if not settlement is Dictionary: return false
+	if not Technology.keys(raw, ["version", "settlement_id", "categories", "project_id", "epoch"]) \
+		or not Technology.integer(raw.version, 1, 1) or not raw.settlement_id is String \
+		or raw.settlement_id != settlement.get("settlement_id") \
+		or not raw.categories is Array or raw.categories.size() != 3 \
+		or not Technology.integer(raw.project_id) or not Technology.integer(raw.epoch, 1): return false
+	var record: Variant = settlement.get("technology", {})
+	if not Technology.valid_scope_record(record, "settlement") or int(raw.epoch) != int(record.epoch): return false
+	if int(raw.project_id) > 0:
+		var project_found := false
+		for project: Dictionary in record.projects:
+			if int(project.id) == int(raw.project_id) and project.tech_id == "S01": project_found = true
+		if not project_found: return false
+	elif not Technology.scope_known(record, "S01"): return false
+	var seen := {}
+	for category: Variant in raw.categories:
+		if not category is String or category not in ["house", "farm", "workshop"] or seen.has(category): return false
+		seen[category] = true
+	return true
+
+static func prepare_build_request(data: TerrainData, kind: String, cells: Array[int], occupied: Callable = Callable(), options: Dictionary = {}, original_source: Dictionary = {}, operation_selector: Dictionary = {}) -> Dictionary:
+	if kind == "irrigation_channel" and not operation_selector.is_empty():
+		if not Technology.keys(operation_selector, ["token"]) or not operation_selector.token is Dictionary \
+			or operation_selector.token.get("scope") != "settlement" or operation_selector.token.get("tech_id") != "S02" \
+			or operation_selector.token.get("binding") != "irrigation" or cells.size() != 4 \
+			or operation_selector.token.get("scope_id") != options.get("irrigation", {}).get("settlement_id"): return fail("INVALID_TECHNOLOGY")
+	if kind == "irrigation_channel" and operation_selector.is_empty():
+		var request: Dictionary = options.get("irrigation", {}).duplicate()
+		var actions: Variant = _technology_actions(data)
+		request.operator_id = int(actions._technology_controlled()) if actions != null else 0
+		var authority := technology_irrigation_work_preflight(data, {"irrigation": request})
+		if not authority.ok: return authority
+	var preview := preview_build(data, kind, cells, occupied, options, original_source, operation_selector)
+	if not preview.ok: return preview
+	if kind == "settlement_center" and options.get("settlement_found") != true: return fail("NO_AUTHORITY", "聚落中心須由原建立聚落入口安排")
+	if not Technology.integer(data.site.get("next_feature"), 1, 2147483646): return fail("STALE_SOURCE")
+	var key := str(int(data.site.next_feature))
+	if data.site.features.has(key): return fail("STALE_SOURCE")
+	var definition: Dictionary = FEATURES[kind]
+	var feature := {"kind": kind, "cells": cells.duplicate(), "entrance": int(preview.entrance), "source": str(preview.source),
+		"stage": "planned", "progress": 0.0, "solid": bool(definition.solid), "cost": preview.cost,
+		"work": float(preview.work),
+		"clearing": preview.clearing, "level": int(preview.level), "production": 0.0, "batch_paid": false, "status": "待施工"}
+	feature.merge(preview.options, true)
+	if kind in BODY_KINDS:
+		feature["civil_version"] = CIVIL_VERSION
+		feature["building_grade"] = 1
+		feature["parts"] = {"body": {"hp": civil_max_hp(feature)}}
+	_fire_layout_initialize(feature)
+	if kind in STRUCTURE_KINDS:
+		feature["parts"] = {}
+		for part: String in preview.geometry.parts:
+			feature.parts[part] = {"hp": float(preview.geometry.parts[part].max_hp)}
+	if kind == "siege_ladder":
+		feature["ladder"] = {"version": 1, "phase": "folded", "pending": "", "progress": 0.0, "workers": []}
+	if kind == "gate":
+		feature["gate"] = {"open": false, "pending": "", "progress": 0.0, "operator_id": -1}
+	if kind in ["pasture", "horse_ranch"]:
+		feature.species = "horse" if kind == "horse_ranch" else "sheep"
+		feature.residents = 2 if kind == "horse_ranch" else 1
+	var zone := {"cells": cells.duplicate(), "kind": -1, "action": "construct", "feature": key, "active": true}
+	var binding := ""
+	for candidate: String in TECHNOLOGY_BUILD_BINDINGS:
+		if TECHNOLOGY_BUILD_BINDINGS[candidate] == kind: binding = candidate; break
+	var selector := operation_selector.duplicate(true)
+	if selector.has("token"):
+		if str(selector.token.target_id) != "feature:" + key or selector.token.binding != binding: return fail("STALE_SOURCE")
+		selector.token.materials = preview.cost.duplicate(true)
+	var source := _technology_material_source(data, selector, binding, preview.cost, original_source)
+	if not source.ok: return source
+	var scope := {}
+	if selector.has("token"):
+		scope = _technology_geometry_payment(data, selector.token, preview.cost, true, source.source)
+		if not scope.ok: return scope
+		feature.tech_trial = scope.token
+		feature.tech_batch = _technology_geometry_ledger(data, scope.token, scope.payment, "construct:" + kind, source.source)
+	var named := _technology_prepare_named_feature(data, key, feature, zone, "construct", selector)
+	if kind == "irrigation_channel" and operation_selector.is_empty(): named = _irrigation_prepare_controlled(data, feature, zone)
+	if not named.ok: return named
+	var operation_ref: Dictionary = named.admission.get("operation_ref", source.operation_ref)
+	if not source.operation_ref.is_empty() and operation_ref != source.operation_ref: return fail("STALE_SOURCE")
+	if not operation_ref.is_empty():
+		feature.technology_order = operation_ref.duplicate()
+		if not selector.has("token"):
+			var ledger := _technology_public_ledger(data, key, "construct:" + kind, source, named.admission)
+			if ledger.is_empty(): return fail("NO_WORK_SLOTS")
+			feature.tech_batch = ledger
+	var nation := _technology_prepare_public_begin(data, operation_ref, binding, "feature:" + key)
+	if not nation.ok: return nation
+	# Final source CAS is still before the first mutation, after all callbacks.
+	var current := _technology_material_source(data, selector, binding, preview.cost, source.source)
+	if not current.ok or not is_same(current.get("holder"), source.holder) or not is_same(current.get("cargo"), source.cargo) or current.get("version") != source.version: return fail("STALE_SOURCE")
+	return ok("原完整建造／具名／來源候選已預驗", {"terrain": data, "site": data.site, "features": data.site.features, "zones": data.site.zones,
+		"next_feature": int(data.site.next_feature), "key": key, "feature": feature, "zone": zone,
+		"source": source, "scope": scope, "named": named, "nation": nation, "definition": definition})
+
+static func publish_build_request(data: TerrainData, prepared: Dictionary) -> Dictionary:
+	assert(prepared.ok and is_same(data, prepared.terrain) and is_same(data.site, prepared.site))
+	assert(is_same(data.site.features, prepared.features) and is_same(data.site.zones, prepared.zones) and int(data.site.next_feature) == int(prepared.next_feature))
+	_technology_publish_material_payment(prepared.source)
+	data.site.features[prepared.key] = prepared.feature
+	data.site.zones.append(prepared.zone)
+	data.site.next_feature = int(prepared.next_feature) + 1
+	if not prepared.scope.is_empty(): _technology_actions(data).publish_phase_payment(prepared.scope.payment)
+	_technology_publish_public_begin(prepared.nation)
+	if prepared.has("settlement_publish"):
+		var engineering: Dictionary = prepared.settlement_publish
+		engineering.owner.call("publish_technology_operations", engineering.settlement, engineering.candidate)
+	_technology_publish_named_feature(prepared.named)
+	Env.rebuild_indexes(data)
+	if Env.ecology_active(data): ecology_reconcile(data)
+	return ok("已從原來源備料並交給具名原工位：" + str(prepared.definition.name), {"feature": str(prepared.key)})
+
+static func _irrigation_adjacent(data: TerrainData, first: int, second: int) -> bool:
+	var a := data.cell_from_index(first)
+	var b := data.cell_from_index(second)
+	return absi(a.x - b.x) + absi(a.y - b.y) == 1 and data.can_terrain_step(a, b)
+
+static func _irrigation_config(raw: Variant, state: Dictionary) -> bool:
+	return Technology.integer(state.get("next_feature"), 1, 2147483646) and _irrigation_shape(raw) \
+		and _irrigation_ref(raw.source_feature_id, int(state.get("next_feature", 0))) \
+		and _irrigation_ref(raw.upstream_feature_id, int(state.get("next_feature", 0)), true)
+
+static func _irrigation_path(data: TerrainData, raw: Variant) -> bool:
+	if data == null or not raw is Array or raw.is_empty() or raw.size() > IRRIGATION_MAX_CELLS: return false
+	var seen := {}
+	for value: Variant in raw:
+		if not Technology.integer(value, 0, data.size.x * data.size.y - 1) or seen.has(int(value)): return false
+		seen[int(value)] = true
+	for index: int in raw.size():
+		var cell := data.cell_from_index(int(raw[index]))
+		if not data.is_terrain_walkable(cell): return false
+		if index > 0:
+			var prior := data.cell_from_index(int(raw[index - 1]))
+			if absi(cell.x - prior.x) + absi(cell.y - prior.y) != 1 or not data.can_terrain_step(prior, cell): return false
+		var neighbors := 0
+		for direction: Vector2i in TerrainData.DIRECTIONS:
+			var next := cell + direction
+			if data.contains(next) and seen.has(data.index(next)):
+				var identity := data.index(next)
+				if not (index > 0 and identity == int(raw[index - 1]) or index + 1 < raw.size() and identity == int(raw[index + 1])): return false
+				neighbors += 1
+		if neighbors > 2: return false # No branch/chord can bypass an ordered segment.
+	return true
+
+static func resume_irrigation_channel(data: TerrainData, requester_id: int, key: String, preview: bool = false) -> Dictionary:
+	if data == null: return fail("INVALID")
+	var actions: Variant = _technology_actions(data)
+	var feature: Dictionary = data.site.get("features", {}).get(key, {})
+	if actions == null or requester_id != int(actions._technology_controlled()) or feature.get("kind") != "irrigation_channel" \
+		or feature.get("stage") == "complete" or feature.has("tech_trial") or feature.has("repair"): return fail("NO_TARGET")
+	var cells: Array[int] = []
+	cells.assign(feature.cells)
+	var connection := technology_irrigation_connection(data, cells, feature.irrigation)
+	if not connection.ok: return connection
+	var zone := {}
+	for current: Dictionary in data.site.zones:
+		if current.get("feature") == key and current.get("action") == "construct":
+			if not zone.is_empty(): return fail("NO_ZONE")
+			zone = current
+	if zone.is_empty() or zone.get("active") != true: return fail("NO_ZONE", "先沿原工作區啟用入口；不代開或改原命令")
+	var named := _irrigation_prepare_controlled(data, feature, zone)
+	if not named.ok: return named
+	if not preview: _technology_publish_named_feature(named)
+	return ok("原已付渠道沿同一進度接續，未重扣料", {"feature": key})
+
+static func irrigation_channel_draft(data: TerrainData, cells: Array[int], options: Dictionary, occupied: Callable = Callable()) -> Dictionary:
+	# Geometry/stock preview only: no knowledge, source grant, work or payment.
+	return _preview_build(data, "irrigation_channel", cells, occupied, options, "", false)
+
+static func _settlement_processing_spec(kind: String) -> Dictionary:
+	return SETTLEMENT_PROCESSING_KINDS.get(kind, {}).duplicate(true)
+
+static func _technology_feature_resume_work(data: TerrainData, key: String, feature: Dictionary, selector: Dictionary) -> Dictionary:
+	if not is_same(data.site.get("features", {}).get(key), feature): return fail("STALE_SOURCE")
+	var action := "construct" if feature.get("stage") != "complete" or feature.has("pending_build") else "operate"
+	var physical := _technology_armor_new_work_guard(data, key, feature)
+	if not physical.ok: return physical
+	var selected := _technology_named_admission(data, selector)
+	if not selected.ok: return selected
+	var admitted: Dictionary = selected.admission
+	if admitted.get("person_ids", []).size() != 1: return fail("NO_WORK_SLOTS")
+	var actions: Variant = _technology_actions(data)
+	var person: Dictionary = actions._person(int(admitted.person_ids[0]))
+	if person.is_empty(): return fail("INVALID_MEMBER")
+	var task: Dictionary = {}
+	var controlled_job: Dictionary = actions._jobs.get(actions._job_key_for(int(person.person_id)), {})
+	if controlled_job.get("kind") == "technology_feature":
+		if not is_same(controlled_job.get("technology_executor_body"), person.body) or not is_same(controlled_job.get("site_state"), data.site) \
+			or not is_same(controlled_job.get("feature_ref"), feature): return fail("BUSY")
+		task = controlled_job.get("work_task", {})
+	elif person.body is Dictionary: task = person.body.get("work_task", {})
+	var zone := {}
+	var existing_zone := false
+	if not task.is_empty():
+		# A live ORIGINAL named task may still be approaching the station. Do not
+		# call another assignment or restart its path/rest state just to resume.
+		if not SiteWorkTeam.valid_task(data, data.site, task) or task.get("version") != 3 or task.get("named") != true \
+			or task.get("target") != "feature:" + key or task.get("action") != action \
+			or task.get("operation_ref") != admitted.operation_ref: return fail("BUSY", "本人仍有另一項原工作")
+		var zone_index := int(task.get("zone", -1))
+		if zone_index < 0 or zone_index >= data.site.zones.size(): return fail("NO_ZONE")
+		zone = data.site.zones[zone_index]
+		if not bool(zone.get("active", false)) or zone.get("feature") != key or zone.get("action") != action \
+			or zone.get("cells") != feature.cells: return fail("NO_ZONE")
+		if controlled_job.get("kind") == "technology_feature":
+			if not bool(admitted.get("controlled_worker", false)) or not is_same(controlled_job.get("zone_ref"), zone): return fail("BUSY")
+			if selector.has("token") and not is_same(controlled_job.get("operation_selector", {}).get("token"), selector.token): return fail("STALE_PROJECT")
+		elif not actions.lab.site_controller.work_team.is_assigned(int(person.person_id)) \
+			or not is_same(person.owner, admitted.team): return fail("BUSY")
+		return ok("原具名工單已存在", {"already_working": true, "zone": zone, "existing_zone": true, "named": {}})
+	for current: Dictionary in data.site.zones:
+		if current.get("feature") != key or current.get("action") != action: continue
+		if zone.is_empty() or bool(current.get("active", false)):
+			zone = current
+			existing_zone = true
+		if bool(current.get("active", false)): break
+	if zone.is_empty(): zone = {"cells": feature.cells.duplicate(), "kind": -1, "action": action, "feature": key, "active": true}
+	# Both branches preflight original authority, consent, physical readiness and
+	# original slots before zone/job mutation. Controlled persons must be at slot.
+	var named := _technology_prepare_named_feature(data, key, feature, zone, action, selector)
+	if not named.ok: return named
+	return ok("原已付工序可重新派回本人", {"already_working": false, "zone": zone, "existing_zone": existing_zone, "named": named})
+
+static func _technology_publish_feature_resume(data: TerrainData, prepared: Dictionary) -> void:
+	assert(prepared.ok)
+	if prepared.already_working: return
+	if prepared.existing_zone: prepared.zone.active = true
+	else: data.site.zones.append(prepared.zone)
+	_technology_publish_named_feature(prepared.named)
+
+static func settlement_processing_preflight(data: TerrainData, settlement_id: String, order_id: String, binding: String = "") -> Dictionary:
+	var refs := _settlement_order_state(data, settlement_id, order_id)
+	if not refs.is_empty() and not SETTLEMENT_PROCESSING_KINDS.has(str(refs.order.get("kind", ""))):
+		return _settlement_typed_call(str(refs.order.get("kind", "")), "preflight", [data, settlement_id, order_id, binding])
+	if refs.is_empty() or not valid_settlement_processing_order(data, data.site, refs.order): return fail("NO_TARGET")
+	var order: Dictionary = refs.order
+	var spec := _settlement_processing_spec(str(order.kind))
+	if not binding.is_empty() and binding != spec.binding or order.status not in ["prepared", "active", "suspended"] \
+		or int(order.payload.completed) >= int(order.payload.max_batches): return fail("COMPLETE")
+	var physical := _settlement_processing_physical(data, order)
+	if not physical.ok: return physical
+	var actions: Variant = _technology_actions(data)
+	if actions == null or not actions.has_method("technology_settlement_order_person_ready"): return fail("UNSUPPORTED", "原具名聚落工單人物資格接線待發布")
+	var person: Dictionary = actions._person(int(order.payload.operator_id))
+	var ready: Dictionary = actions.technology_settlement_order_person_ready(person, order)
+	if not ready.ok: return ready
+	var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	if int(person.faction) != int(refs.settlement.get("owner_faction", -1)) or not bool(settlement_script.call("office_person_ok", actions.lab, int(person.person_id))): return fail("NO_AUTHORITY")
+	if not Technology.learned(actions._body_get(person, "technology"), str(spec.skill)): return fail("NO_SKILL")
+	if not actions._technology_consent_valid(int(person.person_id), order.payload.consents, str(order.payload.purpose), physical.feature.get("tech_trial", {}), true, order): return fail("NO_CONSENT")
+	if int(order.payload.project_id) == 0:
+		if TechnologyCatalog.get_node(str(spec.tech_id)).get("enabled") != true or not Technology.scope_known(refs.settlement.get("technology", {}), str(spec.tech_id)): return fail("NO_TECHNOLOGY")
+	else:
+		var project := Technology.active_project(refs.settlement.get("technology", {}))
+		if project.get("id") != order.payload.project_id or project.get("purpose") != order.payload.purpose or project.get("tech_id") != spec.tech_id \
+			or not Technology.same_person_ref(project.get("executor", {}), {"site_id": str(data.site.id), "person_id": int(person.person_id)}, refs.settlement.technology.get("person_links", [])): return fail("STALE_PROJECT")
+	var candidate: Dictionary = physical.feature.duplicate(true)
+	candidate.recipe_id = str(spec.recipe)
+	var recipe := feature_recipe(candidate)
+	if not Technology.material_equal(recipe.get("input", {}), spec.cost) or not Technology.material_equal(recipe.get("output", {}), spec.outputs) \
+		or not is_equal_approx(float(recipe.get("cycle", 0.0)) * 60.0, float(spec.seconds)): return fail("SPEC_MISMATCH", "原真配方、成本與一次個人改良工時尚未對齊")
+	return ok("", {"settlement": refs.settlement, "operations": refs.operations, "order": order, "feature": physical.feature, "person": person,
+		"team": actions._technology_team(person), "person_ids": [int(person.person_id)], "requester_id": int(order.authorizer_id), "controlled_worker": int(person.person_id) == int(actions._technology_controlled()),
+		"operation_ref": {"settlement_id": settlement_id, "order_id": order_id}, "recipe": str(spec.recipe), "cost": spec.cost.duplicate(true)})
+
+static func _settlement_order_state(data: TerrainData, settlement_id: String, order_id: String) -> Dictionary:
+	if data == null: return {}
+	var settlement: Dictionary = data.site.get("settlement", {})
+	if settlement_id.is_empty() or settlement.get("settlement_id") != settlement_id: return {}
+	var operations: Dictionary = settlement.get("technology_operations", {})
+	var order: Dictionary = operations.get("orders", {}).get(order_id, {})
+	if order.is_empty(): return {}
+	return {"settlement": settlement, "operations": operations, "order": order}
+
+static func valid_settlement_processing_order(data: TerrainData, site: Dictionary, raw: Variant) -> bool:
+	if raw is Dictionary and not SETTLEMENT_PROCESSING_KINDS.has(str(raw.get("kind", ""))):
+		var runtime_script: Script = load("res://scripts/terrain_lab/site_runtime.gd")
+		var method := _settlement_typed_method(str(raw.get("kind", "")), "valid")
+		var normalizer := _settlement_typed_method(str(raw.get("kind", "")), "normalize")
+		return not method.is_empty() and runtime_script.has_method(method) and runtime_script.has_method(normalizer) and bool(runtime_script.call(method, data, site, raw))
+	if data == null or not Technology.keys(raw, ["id", "kind", "authorizer_id", "status", "payload", "receipts", "revision"]) \
+		or not raw.kind is String or not SETTLEMENT_PROCESSING_KINDS.has(raw.kind) or not Technology.integer(raw.authorizer_id, 1) \
+		or not Technology.integer(raw.revision, 0) or raw.status not in ["prepared", "active", "suspended", "completed", "cancelled"] \
+		or not raw.id is String or not raw.id.begins_with(str(raw.kind) + "_") or not raw.payload is Dictionary: return false
+	var serial: String = str(raw.id).trim_prefix(str(raw.kind) + "_")
+	if not serial.is_valid_int() or str(int(serial)) != serial or not Technology.integer(int(serial), 1, 2147483645): return false
+	var spec := _settlement_processing_spec(str(raw.kind))
+	var payload: Dictionary = raw.payload
+	if not Technology.keys(payload, ["settlement_id", "feature_id", "operator_id", "source_feature_id", "max_batches", "cap", "spent", "completed", "consents", "purpose", "source", "project_id"]) \
+		or payload.settlement_id != str(site.get("settlement", {}).get("settlement_id", "")) or not payload.feature_id is String \
+		or not payload.feature_id.is_valid_int() or str(int(payload.feature_id)) != payload.feature_id or not Technology.integer(int(payload.feature_id), 1, int(site.get("next_feature", 1)) - 1) \
+		or not Technology.integer(payload.operator_id, 1) or not payload.source_feature_id is String \
+		or not Technology.integer(payload.max_batches, 1, int(spec.max_batches)) or not Technology.integer(payload.completed, 0, int(payload.max_batches)) \
+		or not Technology.integer(payload.project_id, 0) or not payload.purpose is String or payload.purpose.is_empty() or payload.purpose.length() > 2048 \
+		or not Technology.material_stack(payload.cap) or not Technology.material_stack(payload.spent) \
+		or not payload.consents is Array or payload.consents.size() > 1 or not raw.receipts is Array or raw.receipts.size() != int(payload.completed): return false
+	var expected_cap := {}
+	for item: String in spec.cost: expected_cap[item] = int(spec.cost[item]) * int(payload.max_batches)
+	if not Technology.material_equal(expected_cap, payload.cap) or not Technology.keys(payload.source, ["site_id", "holder", "grantor_id", "status"]) \
+		or payload.source.site_id != str(site.get("id", "")) or not Technology.integer(payload.source.grantor_id, 1) \
+		or payload.source.status not in ["granted", "revoked"] or not payload.source.holder is String: return false
+	if payload.source_feature_id.is_empty():
+		if payload.source.holder != "depot": return false
+	elif not payload.source_feature_id.is_valid_int() or str(int(payload.source_feature_id)) != payload.source_feature_id \
+		or not Technology.integer(int(payload.source_feature_id), 1, int(site.get("next_feature", 1)) - 1) \
+		or payload.source.holder != "feature:" + str(payload.source_feature_id): return false
+	if int(payload.project_id) == 0 and payload.purpose != _settlement_processing_purpose(site, str(raw.id), str(raw.kind), 0): return false
+	var receipt_ids := {}
+	var completed_materials := {}
+	for receipt: Variant in raw.receipts:
+		if not Technology.keys(receipt, TECHNOLOGY_OUTPUT_FIELDS) or not Technology.integer(receipt.id, 1) or receipt.site_id != str(site.get("id", "")) \
+			or receipt.feature_id != payload.feature_id or receipt.operator_id != payload.operator_id or receipt.recipe_id != spec.recipe \
+			or not Technology.material_equal(receipt.resources, spec.outputs) or not receipt.item_ids is Array or not receipt.item_ids.is_empty() \
+			or not Technology.finite_number(receipt.work_seconds, 0.000000001) or receipt_ids.has(int(receipt.id)): return false
+		receipt_ids[int(receipt.id)] = true
+		add_items(completed_materials, spec.cost)
+	var feature: Dictionary = site.get("features", {}).get(str(payload.feature_id), {})
+	var paid: Dictionary = feature.get("tech_batch", {})
+	var ref: Dictionary = feature.get("technology_settlement_order", {})
+	var has_original_paid := not paid.is_empty() and ref == {"settlement_id": str(payload.settlement_id), "order_id": str(raw.id)}
+	if has_original_paid:
+		if not valid_technology_batch(paid, Env.navigation_for_state(data, site), str(payload.feature_id)) \
+			or paid.operator_id != payload.operator_id and (raw.status != "cancelled" or int(paid.operator_id) != 0) \
+			or paid.recipe_id != spec.recipe or paid.source_holder != payload.source.holder or not Technology.material_equal(paid.materials, spec.cost) \
+			or feature.get("batch_paid") != true or int(payload.completed) >= int(payload.max_batches): return false
+		add_items(completed_materials, spec.cost)
+	if raw.status == "cancelled" and not has_original_paid:
+		# A cancelled unpaid/one-previously-paid batch retains finite spent history
+		# without creating future work, scope evidence or a live-source requirement.
+		var one_paid := completed_materials.duplicate(true)
+		add_items(one_paid, spec.cost)
+		if not Technology.material_equal(payload.spent, completed_materials) and (int(payload.completed) >= int(payload.max_batches) or not Technology.material_equal(payload.spent, one_paid)): return false
+	elif not Technology.material_equal(payload.spent, completed_materials): return false
+	if raw.status == "active" and not has_original_paid or raw.status in ["prepared", "completed"] and has_original_paid: return false
+	if (raw.status == "completed") != (int(payload.completed) == int(payload.max_batches)) and raw.status != "cancelled": return false
+	for consent: Variant in payload.consents:
+		if not Technology.keys(consent, ["site_id", "team_id", "person_id", "purpose", "decider_id", "revision", "status"]) \
+			or consent.site_id != str(site.get("id", "")) or not Technology.integer(consent.team_id, 1) or consent.person_id != payload.operator_id \
+			or not Technology.integer(consent.decider_id, 1) or not Technology.integer(consent.revision, 0) or consent.purpose != payload.purpose or consent.status != "accepted": return false
+	return true
+
+static func _settlement_typed_prepare(kind: String, operation: String, arguments: Array) -> Dictionary:
+	var runtime_script: Script = load("res://scripts/terrain_lab/site_runtime.gd")
+	var publisher := _settlement_typed_method(kind, "publish")
+	if publisher.is_empty() or not runtime_script.has_method(publisher): return fail("UNSUPPORTED")
+	var result: Variant = _settlement_typed_call(kind, operation, arguments)
+	if not result is Dictionary or not result.get("ok", false): return result if result is Dictionary else fail("INVALID_OWNER")
+	result.typed_kind = kind
+	result.typed_publisher = Callable(runtime_script, publisher)
+	return result
+
+static func _settlement_processing_physical(data: TerrainData, order: Dictionary) -> Dictionary:
+	var actions: Variant = _technology_actions(data)
+	if actions == null: return fail("UNSUPPORTED")
+	var spec := _settlement_processing_spec(str(order.kind))
+	var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	var settlement: Dictionary = data.site.get("settlement", {})
+	var status: Dictionary = settlement_script.call("status", actions.lab)
+	var feature: Dictionary = data.site.get("features", {}).get(str(order.payload.feature_id), {})
+	if status.get("effective") != true or not bool(settlement_script.call("feature_in_jurisdiction", data, feature)) \
+		or feature.get("kind") != spec.feature or feature.get("stage") != "complete" or not feature_usable(feature) \
+		or int(feature.get("owner_faction", -1)) != int(settlement.get("owner_faction", -2)): return fail("REQUIREMENTS", "本原工坊或聚落當前停效；知識、已付材料與進度保留")
+	return ok("", {"feature": feature, "settlement": settlement, "spec": spec})
+
+static func _settlement_processing_purpose(site: Dictionary, order_id: String, kind: String, project_id: int) -> String:
+	if project_id > 0:
+		var project := Technology.active_project(site.get("settlement", {}).get("technology", {}))
+		return str(project.get("purpose", "")) if int(project.get("id", -1)) == project_id and project.get("tech_id") == _settlement_processing_spec(kind).get("tech_id") else ""
+	return kind + ":work:" + JSON.stringify([str(site.get("id", "")), str(site.get("settlement", {}).get("settlement_id", "")), order_id])
+
+static func settlement_metal_spec(order: Dictionary, binding: String = "") -> Dictionary:
+	var p: Dictionary = order.get("payload", {})
+	var current := "iron" if int(p.get("completed", -1)) == 0 else "tools" if int(p.get("completed", -1)) == 1 and p.get("carry_receipts", []).size() == 2 else ""
+	if current.is_empty() or not binding.is_empty() and current != binding: return {}
+	return {"feature_id": str(p.get("smelter_id" if current == "iron" else "smithy_id", "")), "feature_kind": "smelter" if current == "iron" else "smithy", "recipe": "", "binding": current,
+		"cost": {"iron_ore": 3, "charcoal": 2} if current == "iron" else {"iron": 2, "charcoal": 1, "wood": 1}, "outputs": {"iron": 2} if current == "iron" else {"tools": 1}, "seconds": 900.0 if current == "iron" else 720.0}
+
+static func settlement_metal_work_preflight(data: TerrainData, settlement_id: String, order_id: String, binding: String = "") -> Dictionary:
+	var refs := _settlement_order_state(data, settlement_id, order_id)
+	if refs.is_empty() or not valid_settlement_metal_order(data, data.site, refs.order): return fail("NO_TARGET")
+	var order: Dictionary = refs.order
+	if order.status not in ["prepared", "active", "suspended"] or not binding.is_empty() and not settlement_metal_binding_valid(order, binding): return fail("STALE_PHASE")
+	var physical := _settlement_metal_physical(data, order)
+	if not physical.ok: return physical
+	var actions: Variant = _technology_actions(data)
+	var person: Dictionary = actions._person(int(order.payload.operator_id))
+	if person.is_empty(): return fail("NO_WORKER")
+	var ready: Dictionary = actions.technology_settlement_order_person_ready(person, order)
+	if not ready.ok: return ready
+	if not Technology.learned(actions._body_get(person, "technology"), "F04"): return fail("NO_SKILL")
+	var feature: Dictionary = physical.smithy if order.payload.carry_receipts.size() > 0 else physical.smelter
+	if not actions._technology_consent_valid(int(person.person_id), order.payload.consents, str(order.payload.purpose), feature.get("tech_trial", {}), true, order): return fail("NO_CONSENT")
+	if int(order.payload.project_id) == 0:
+		if TechnologyCatalog.get_node("S04").get("enabled") != true or not Technology.scope_known(refs.settlement.get("technology", {}), "S04"): return fail("NO_TECHNOLOGY")
+	else:
+		var project := Technology.active_project(refs.settlement.get("technology", {}))
+		if project.get("id") != order.payload.project_id or project.get("purpose") != order.payload.purpose or project.get("tech_id") != "S04" \
+			or not Technology.same_person_ref(project.get("executor", {}), {"site_id": str(data.site.id), "person_id": int(person.person_id)}, refs.settlement.technology.get("person_links", [])): return fail("STALE_PROJECT")
+	var spec := settlement_metal_spec(order, binding)
+	if not spec.is_empty():
+		var candidate := feature.duplicate(true)
+		candidate.erase("recipe_id")
+		var recipe := feature_recipe(candidate)
+		if not Technology.material_equal(recipe.get("input", {}), spec.cost) or not Technology.material_equal(recipe.get("output", {}), spec.outputs) \
+			or not is_equal_approx(float(recipe.get("cycle", 0.0)) * 60.0, float(spec.seconds)): return fail("SPEC_MISMATCH")
+	elif int(order.payload.completed) != 1 or order.payload.carry_receipts.size() >= 2: return fail("STALE_PHASE")
+	return ok("", {"settlement": refs.settlement, "operations": refs.operations, "order": order, "feature": feature, "person": person, "team": actions._technology_team(person),
+		"person_ids": [int(person.person_id)], "requester_id": int(actions._technology_controlled()), "operation_ref": {"settlement_id": settlement_id, "order_id": order_id},
+		"controlled_worker": int(person.person_id) == int(actions._technology_controlled()), "recipe": "", "cost": spec.get("cost", {"iron": 2}).duplicate(true)})
+
+static func prepare_settlement_metal_transfer(data: TerrainData, settlement_id: String, order_id: String, requester_id: int, token: Dictionary = {}) -> Dictionary:
+	var ready := settlement_metal_work_preflight(data, settlement_id, order_id, "transfer")
+	if not ready.ok: return ready
+	var actions: Variant = _technology_actions(data)
+	var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	if requester_id != int(actions._technology_controlled()) or requester_id != int(settlement_script.call("head_executor", actions.lab)) or bool(data.site.get("paused", false)): return fail("NO_AUTHORITY")
+	var order: Dictionary = ready.order
+	var p: Dictionary = order.payload
+	var legs: int = p.carry_receipts.size()
+	if legs >= 2 or int(p.completed) != 1 or order.status == "active" and legs == 0: return fail("STALE_PHASE")
+	if int(p.project_id) == 0:
+		if not token.is_empty(): return fail("NO_AUTHORITY")
+	else:
+		if not _technology_trial_shape(token, data) or token.scope != "settlement" or token.scope_id != settlement_id or token.project_id != p.project_id \
+			or token.purpose != p.purpose or token.tech_id != "S04" or token.binding != "transfer" or token.target_id != "feature:" + p.smelter_id \
+			or token.person != {"site_id": str(data.site.id), "person_id": int(p.carrier_id)} or not Technology.material_equal(token.materials, {"iron": 2}): return fail("STALE_PROJECT")
+		if legs == 1 and token != p.carry_receipts[0].token: return fail("NO_PAYMENT")
+	var vehicle: Variant = actions.lab.site_controller.vehicles
+	if vehicle == null or not vehicle.has_method("prepare_transfer"): return fail("UNSUPPORTED")
+	var source_id := "feature:" + str(p.smelter_id) if legs == 0 else "person:" + str(int(p.carrier_id))
+	var destination_id := "person:" + str(int(p.carrier_id)) if legs == 0 else "feature:" + str(p.smithy_id)
+	var source: Dictionary = vehicle._stock(source_id, true)
+	var destination: Dictionary = vehicle._stock(destination_id, true)
+	if source.is_empty() or destination.is_empty(): return fail("NO_TARGET")
+	var transfer: Dictionary = vehicle.prepare_transfer(source_id, destination_id, {"iron": 2}, [], int(source.holder.version), int(destination.holder.version), requester_id)
+	if not transfer.ok: return transfer
+	var candidate: Dictionary = order.duplicate(true)
+	var payment_id := "" if token.is_empty() else JSON.stringify([str(data.site.id), "settlement", settlement_id, int(token.project_id), str(token.purpose), int(token.attempt), str(token.target_id)])
+	var fact := {"leg": "withdraw" if legs == 0 else "deposit", "source_holder": source_id, "destination_holder": destination_id,
+		"source_version": int(transfer.source_version), "destination_version": int(transfer.destination_version), "source_cell": [int(source.cell.x), int(source.cell.y)],
+		"destination_cell": [int(destination.cell.x), int(destination.cell.y)], "person_cell": [int(ready.person.cell.x), int(ready.person.cell.y)],
+		"person_id": int(p.carrier_id), "resources": {"iron": 2}, "payment_id": payment_id, "token": token.duplicate(true)}
+	candidate.payload.carry_receipts.append(fact)
+	if legs == 0:
+		add_items(candidate.payload.spent, {"iron": 2})
+		candidate.status = "active"
+	else:
+		candidate.payload.feature_id = str(p.smithy_id)
+		candidate.status = "prepared"
+	var prepared := _settlement_metal_prepared(data, ready, candidate)
+	if not prepared.ok: return prepared
+	prepared.terrain = data
+	prepared.settlement = ready.settlement
+	prepared.order_id = order_id
+	prepared.settlement_id = settlement_id
+	prepared.requester_id = requester_id
+	prepared.person = ready.person
+	prepared.transfer = transfer
+	prepared.vehicle = vehicle
+	prepared.token = token
+	prepared.leg = legs
+	prepared.fact = fact
+	return prepared
+
+static func publish_item_transfer(prepared: Dictionary) -> Dictionary:
+	assert(prepared.ok)
+	var data: TerrainData = prepared.terrain
+	var source: Dictionary = prepared.source
+	var source_cargo: Dictionary = prepared.source_cargo
+	var destination: Dictionary = prepared.destination
+	var destination_cargo: Dictionary = prepared.destination_cargo
+	var resources: Dictionary = prepared.resources
+	var selected: Dictionary = prepared.selected
+	var retained_slots: Dictionary = prepared.retained_slots
+	var preserve_slots := bool(prepared.preserve_slots)
+	# No callbacks/yields after this point: both resource and equipment ownership commit once.
+	add_items(source_cargo, resources, -1)
+	for resource: String in source_cargo.keys():
+		if int(source_cargo[resource]) == 0:
+			source_cargo.erase(resource)
+	add_items(destination_cargo, resources)
+	for identity: String in selected:
+		source.item_ids.erase(identity)
+		destination.item_ids.append(identity)
+		data.site.item_records[identity].holder = str(destination.holder)
+	for slot: String in retained_slots:
+		source.equipped.erase(slot)
+		if preserve_slots:
+			destination.equipped[slot] = retained_slots[slot]
+	source.version = int(source.version) + 1
+	destination.version = int(destination.version) + 1
+	# Item ownership does not rebuild terrain/resource heatmaps on every loot step.
+	return ok("物品已轉移", {"source_version": source.version, "destination_version": destination.version})
+
+static func publish_settlement_metal_order(prepared: Dictionary) -> void:
+	if prepared.order_ref.is_empty(): return
+	assert(prepared.ok and prepared.order_ref == prepared.order_before)
+	var order: Dictionary = prepared.order_ref
+	var candidate: Dictionary = prepared.candidate
+	for field: String in ["status", "revision"]: order[field] = candidate[field]
+	for field: String in ["feature_id", "completed"]: order.payload[field] = candidate.payload[field]
+	for field: String in ["spent", "carry_receipts"]: order.payload[field] = candidate.payload[field].duplicate(true)
+	order.receipts = candidate.receipts.duplicate(true)
+	if prepared.has("finished_feature"):
+		var finished: Dictionary = prepared.finished_feature
+		assert(finished.get("technology_settlement_order", {}) == {"settlement_id": str(order.payload.settlement_id), "order_id": str(order.id)})
+		finished.erase("technology_settlement_order") # Completion releases this original host for the next explicit phase.
+
+static func settlement_metal_material_source_candidate(data: TerrainData, settlement_id: String, order_id: String, binding: String = "") -> Dictionary:
+	var ready := settlement_metal_work_preflight(data, settlement_id, order_id, binding)
+	if not ready.ok: return ready
+	var p: Dictionary = ready.order.payload
+	var expected := "feature:" + (str(p.smithy_id) if str(binding) == "tools" or p.carry_receipts.size() == 2 else str(p.smelter_id))
+	if p.source.status != "granted" or p.source.holder != expected: return fail("NO_BUDGET", "搬入鍛坊後須在原鍛坊重新明示來源；累計上限與支出保留")
+	var endpoint := SiteStockpiles.stock_endpoint(data, str(p.source.holder).trim_prefix("feature:"))
+	if endpoint.is_empty() or endpoint.get("withdraw_only", true) or endpoint.holder.get("holder") != p.source.holder or not _item_holder_shape(endpoint.holder) \
+		or not endpoint.get("cargo") is Dictionary or int(endpoint.get("faction", -1)) != int(ready.settlement.get("owner_faction", -2)) \
+		or not Technology.integer(endpoint.holder.version, 0, 2147483645): return fail("STALE_SOURCE")
+	return ok("", {"kind": "settlement_order", "holder": "settlement-order:" + JSON.stringify([str(data.site.id), settlement_id, order_id]), "source_site_id": str(data.site.id),
+		"grantor": {"site_id": str(data.site.id), "person_id": int(p.source.grantor_id)}, "cap": p.cap.duplicate(true), "spent": p.spent.duplicate(true),
+		"physical_holder": endpoint.holder, "physical_cargo": endpoint.cargo, "holder_version": int(endpoint.holder.version),
+		"expected_refs": {"terrain": data, "site": data.site, "nation": ready.settlement, "operations": ready.operations, "order": ready.order, "holder": endpoint.holder, "cargo": endpoint.cargo}})
+
+static func valid_settlement_metal_order(data: TerrainData, site: Dictionary, raw: Variant) -> bool:
+	if data == null or not Technology.keys(raw, ["id", "kind", "authorizer_id", "status", "payload", "receipts", "revision"]) \
+		or raw.kind != "metal_chain" or not raw.id is String or not raw.id.begins_with("metal_chain_") or not Technology.integer(raw.authorizer_id, 1) \
+		or not Technology.integer(raw.revision, 0, 2147483646) or raw.status not in ["prepared", "active", "suspended", "completed", "cancelled"]: return false
+	var serial: String = raw.id.trim_prefix("metal_chain_")
+	if not serial.is_valid_int() or str(int(serial)) != serial or not Technology.integer(int(serial), 1, 2147483645): return false
+	var p: Variant = raw.payload
+	if not Technology.keys(p, ["settlement_id", "smelter_id", "smithy_id", "carrier_id", "operator_id", "feature_id", "completed", "cap", "spent", "consents", "purpose", "source", "project_id", "carry_receipts"]) \
+		or p.settlement_id != str(site.get("settlement", {}).get("settlement_id", "")) or not _settlement_metal_feature_id(site, p.smelter_id) \
+		or not _settlement_metal_feature_id(site, p.smithy_id) or p.smelter_id == p.smithy_id or not Technology.integer(p.operator_id, 1) or not Technology.integer(p.carrier_id, 1) or p.carrier_id != p.operator_id \
+		or not Technology.integer(p.completed, 0, 2) or not Technology.integer(p.project_id, 0) or not p.purpose is String or p.purpose.is_empty() or p.purpose.length() > 2048 \
+		or not Technology.material_equal(p.cap, SETTLEMENT_METAL_CAP) or not Technology.material_stack(p.spent) or not p.consents is Array or p.consents.size() > 1 \
+		or not raw.receipts is Array or raw.receipts.size() != int(p.completed) or not p.carry_receipts is Array or p.carry_receipts.size() > 2: return false
+	if not Technology.keys(p.source, ["site_id", "holder", "grantor_id", "status"]) or p.source.site_id != str(site.get("id", "")) \
+		or not Technology.integer(p.source.grantor_id, 1) or p.source.status not in ["granted", "revoked"] \
+		or p.source.holder not in ["feature:" + p.smelter_id, "feature:" + p.smithy_id]: return false
+	if int(p.project_id) == 0 and p.purpose != _settlement_metal_purpose(site, str(raw.id), 0): return false
+	if int(p.project_id) > 0:
+		var scope_record: Variant = site.get("settlement", {}).get("technology", {})
+		if not scope_record is Dictionary or not Technology.valid_scope_record(scope_record, "settlement"): return false
+		var saved_project := {}
+		for project: Dictionary in scope_record.projects:
+			if int(project.id) == int(p.project_id): saved_project = project
+		if saved_project.is_empty() or saved_project.tech_id != "S04" or saved_project.purpose != p.purpose \
+			or not Technology.same_person_ref(saved_project.executor, {"site_id": str(site.get("id", "")), "person_id": int(p.operator_id)}, scope_record.get("person_links", [])): return false
+	var legs: int = p.carry_receipts.size()
+	if int(p.completed) == 0 and legs != 0 or int(p.completed) == 2 and legs != 2: return false
+	if p.feature_id != (p.smithy_id if legs == 2 else p.smelter_id): return false
+	if legs < 2 and p.source.holder != "feature:" + p.smelter_id: return false
+	var spent := {}
+	if int(p.completed) >= 1:
+		if not _settlement_metal_receipt(site, raw.receipts[0], p.smelter_id, int(p.operator_id), {"iron": 2}, 900.0): return false
+		add_items(spent, {"iron_ore": 3, "charcoal": 2})
+	if int(p.completed) == 2:
+		if not _settlement_metal_receipt(site, raw.receipts[1], p.smithy_id, int(p.operator_id), {"tools": 1}, 720.0): return false
+		add_items(spent, {"iron": 2, "charcoal": 1, "wood": 1})
+	for index: int in legs:
+		var receipt: Variant = p.carry_receipts[index]
+		if not Technology.keys(receipt, SETTLEMENT_METAL_CARRY_FIELDS) or receipt.leg != ("withdraw" if index == 0 else "deposit") \
+			or receipt.source_holder != ("feature:" + p.smelter_id if index == 0 else "person:" + str(int(p.carrier_id))) \
+			or receipt.destination_holder != ("person:" + str(int(p.carrier_id)) if index == 0 else "feature:" + p.smithy_id) \
+			or not Technology.integer(receipt.source_version, 0, 2147483645) or not Technology.integer(receipt.destination_version, 0, 2147483645) \
+			or receipt.person_id != p.carrier_id or not Technology.material_equal(receipt.resources, {"iron": 2}) \
+			or not _settlement_metal_cell(receipt.source_cell) or not _settlement_metal_cell(receipt.destination_cell) or not _settlement_metal_cell(receipt.person_cell) \
+			or not receipt.payment_id is String or not receipt.token is Dictionary: return false
+		var person_cell := Vector2i(int(receipt.person_cell[0]), int(receipt.person_cell[1]))
+		var host_cell: Array = receipt.source_cell if index == 0 else receipt.destination_cell
+		for field: String in ["source_cell", "destination_cell", "person_cell"]:
+			if not data.contains(Vector2i(int(receipt[field][0]), int(receipt[field][1]))): return false
+		if (receipt.destination_cell if index == 0 else receipt.source_cell) != receipt.person_cell: return false
+		if absi(person_cell.x - int(host_cell[0])) + absi(person_cell.y - int(host_cell[1])) > 1: return false
+		if int(p.project_id) == 0:
+			if not receipt.token.is_empty() or not receipt.payment_id.is_empty(): return false
+		else:
+			var token: Dictionary = receipt.token
+			if not _technology_trial_shape(token, Env.navigation_for_state(data, site)) or token.scope != "settlement" or token.scope_id != p.settlement_id \
+				or token.project_id != p.project_id or token.purpose != p.purpose or token.tech_id != "S04" or token.binding != "transfer" or token.phase_id != "physical_iron_handoff" \
+				or token.target_id != "feature:" + p.smelter_id or token.person != {"site_id": str(site.get("id", "")), "person_id": int(p.carrier_id)} \
+				or not Technology.material_equal(token.materials, {"iron": 2}) \
+				or receipt.payment_id != JSON.stringify([str(site.get("id", "")), "settlement", str(p.settlement_id), int(p.project_id), str(p.purpose), int(token.attempt), str(token.target_id)]): return false
+			if index == 1 and (receipt.token != p.carry_receipts[0].token or receipt.payment_id != p.carry_receipts[0].payment_id): return false
+	if legs > 0: add_items(spent, {"iron": 2}) # Transfer volume; the same iron remains original physical cargo.
+	var target: Dictionary = site.get("features", {}).get(str(p.feature_id), {})
+	var ledger: Dictionary = target.get("tech_batch", {})
+	var paid: bool = not ledger.is_empty() and target.get("technology_settlement_order", {}) == {"settlement_id": str(p.settlement_id), "order_id": str(raw.id)}
+	if paid:
+		var spec := settlement_metal_spec(raw)
+		if spec.is_empty() or not valid_technology_batch(ledger, Env.navigation_for_state(data, site), str(p.feature_id)) \
+			or ledger.operator_id != p.operator_id and (raw.status != "cancelled" or int(ledger.operator_id) != 0) \
+			or ledger.recipe_id != "" or ledger.source_holder != p.source.holder or not Technology.material_equal(ledger.materials, spec.cost) or target.get("batch_paid") != true: return false
+		add_items(spent, spec.cost)
+	if raw.status == "cancelled" and not paid:
+		var abandoned := spent.duplicate(true)
+		var spec := settlement_metal_spec(raw)
+		if not spec.is_empty(): add_items(abandoned, spec.cost)
+		if not Technology.material_equal(p.spent, spent) and not Technology.material_equal(p.spent, abandoned): return false
+	elif not Technology.material_equal(p.spent, spent): return false
+	if raw.status == "active" and not paid and legs != 1 or raw.status in ["prepared", "completed"] and paid: return false
+	if (raw.status == "completed") != (int(p.completed) == 2) and raw.status != "cancelled": return false
+	for consent: Variant in p.consents:
+		if not Technology.keys(consent, ["site_id", "team_id", "person_id", "purpose", "decider_id", "revision", "status"]) \
+			or consent.site_id != str(site.get("id", "")) or not Technology.integer(consent.team_id, 1) or consent.person_id != p.operator_id \
+			or consent.purpose != p.purpose or not Technology.integer(consent.decider_id, 1) or not Technology.integer(consent.revision, 0) or consent.status != "accepted": return false
+	return true
+
+static func validate_settlement_metal_transfer(prepared: Dictionary) -> Dictionary:
+	if prepared.get("ok") != true or not prepared.get("terrain") is TerrainData or not prepared.get("order_ref") is Dictionary \
+		or not prepared.get("transfer") is Dictionary: return fail("INVALID")
+	var data: TerrainData = prepared.terrain
+	var refs := _settlement_order_state(data, str(prepared.settlement_id), str(prepared.order_id))
+	var actions: Variant = _technology_actions(data)
+	if refs.is_empty() or actions == null or not is_same(data.site, prepared.state_ref) or not is_same(refs.settlement, prepared.settlement) \
+		or not is_same(refs.operations, prepared.operations_ref) or not is_same(refs.order, prepared.order_ref) or refs.order != prepared.order_before \
+		or not is_same(actions.lab.site_controller.vehicles, prepared.vehicle): return fail("STALE_SOURCE")
+	var ready := settlement_metal_work_preflight(data, str(prepared.settlement_id), str(prepared.order_id), "transfer")
+	if not ready.ok: return ready
+	if not is_same(ready.person.body, prepared.person.body) or ready.person.cell != Vector2i(int(prepared.fact.person_cell[0]), int(prepared.fact.person_cell[1])): return fail("STALE_SOURCE")
+	var current: Dictionary = prepared.vehicle.prepare_transfer(str(prepared.fact.source_holder), str(prepared.fact.destination_holder), {"iron": 2}, [],
+		int(prepared.transfer.source_version), int(prepared.transfer.destination_version), int(prepared.requester_id))
+	if not current.ok: return current
+	for field: String in ["terrain", "site_state", "source", "source_cargo", "destination", "destination_cargo", "item_records"]:
+		if not is_same(current.get(field), prepared.transfer.get(field)): return fail("STALE_SOURCE")
+	for field: String in ["source_version", "destination_version", "resources", "selected", "retained_slots", "capacity", "preserve_slots"]:
+		if current.get(field) != prepared.transfer.get(field): return fail("STALE_SOURCE")
+	return validate_prepared_item_transfer(prepared.transfer)
+
+static func _settlement_metal_physical(data: TerrainData, order: Dictionary) -> Dictionary:
+	var actions: Variant = _technology_actions(data)
+	if actions == null: return fail("UNSUPPORTED")
+	var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	var settlement: Dictionary = data.site.get("settlement", {})
+	if settlement_script.call("status", actions.lab).get("effective") != true: return fail("REQUIREMENTS")
+	var hosts := {}
+	for field: String in ["smelter_id", "smithy_id"]:
+		var feature: Dictionary = data.site.get("features", {}).get(str(order.payload[field]), {})
+		# Once the true iron has left this source, its accepted history survives
+		# demolition. The second physical contact and tools still need the smithy.
+		if field == "smelter_id" and order.payload.carry_receipts.size() > 0:
+			hosts[field] = feature
+			continue
+		if feature.get("kind") != ("smelter" if field == "smelter_id" else "smithy") or feature.get("stage") != "complete" or not feature_usable(feature) \
+			or not bool(settlement_script.call("feature_in_jurisdiction", data, feature)) or int(feature.get("owner_faction", -1)) != int(settlement.get("owner_faction", -2)): return fail("REQUIREMENTS", "原冶爐或鍛坊停效；已付材料、搬運實物與真歷史保留")
+		hosts[field] = feature
+	return ok("", {"settlement": settlement, "smelter": hosts.smelter_id, "smithy": hosts.smithy_id})
+
+static func _settlement_metal_purpose(site: Dictionary, order_id: String, project_id: int) -> String:
+	if project_id > 0:
+		var project := Technology.active_project(site.get("settlement", {}).get("technology", {}))
+		return str(project.get("purpose", "")) if project.get("id") == project_id and project.get("tech_id") == "S04" else ""
+	return "metal_chain:work:" + JSON.stringify([str(site.get("id", "")), str(site.get("settlement", {}).get("settlement_id", "")), order_id])
+
+static func settlement_metal_order_view(data: TerrainData, settlement_id: String, order_id: String) -> Dictionary:
+	var refs := _settlement_order_state(data, settlement_id, order_id)
+	if refs.is_empty() or not valid_settlement_metal_order(data, data.site, refs.order): return fail("NO_TARGET")
+	var p: Dictionary = refs.order.payload
+	var binding := "iron" if int(p.completed) == 0 else "transfer" if int(p.completed) == 1 and p.carry_receipts.size() < 2 else "tools" if int(p.completed) == 1 else ""
+	return ok("", {"id": order_id, "status": str(refs.order.status), "binding": binding, "target_id": "feature:" + str(p.feature_id), "operator_id": int(p.operator_id),
+		"project_id": int(p.project_id), "completed": int(p.completed), "carry_legs": p.carry_receipts.size(), "source": p.source.duplicate(true), "cap": p.cap.duplicate(true), "spent": p.spent.duplicate(true)})
+
+static func settlement_food_work_preflight(data: TerrainData, settlement_id: String, order_id: String, binding: String = "") -> Dictionary:
+	var refs := _settlement_food_refs(data, settlement_id, order_id)
+	if refs.is_empty() or not binding.is_empty() and binding != "food_order": return fail("NO_TARGET")
+	var order: Dictionary = refs.order
+	if order.status not in ["prepared", "active"]: return fail("COMPLETE")
+	var actions: Variant = _technology_actions(data)
+	var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	if actions == null or settlement_script.call("status", actions.lab).get("effective") != true \
+		or int(settlement_script.call("head_executor", actions.lab)) <= 0: return fail("NO_AUTHORITY")
+	var person: Dictionary = actions._person(int(order.payload.operator_id))
+	if person.is_empty() or not actions._ready(person) or int(person.faction) != int(refs.settlement.owner_faction) \
+		or not bool(settlement_script.call("office_person_ok", actions.lab, int(person.person_id))): return fail("BUSY")
+	if actions.is_busy(int(person.person_id)) and not actions.settlement_food_own_job(person, order): return fail("BUSY")
+	if not actions._technology_consent_valid(int(person.person_id), order.payload.consents, str(order.payload.purpose), order.payload.token, true, order): return fail("NO_CONSENT")
+	if int(order.payload.project_id) > 0:
+		var project := Technology.active_project(refs.settlement.get("technology", {}))
+		if project.get("id") != order.payload.project_id or project.get("tech_id") != "S06" or project.get("purpose") != order.payload.purpose \
+			or not Technology.same_person_ref(project.get("executor", {}), {"site_id": str(data.site.id), "person_id": int(person.person_id)}, refs.settlement.technology.get("person_links", [])): return fail("STALE_PROJECT")
+	elif TechnologyCatalog.get_node("S06").get("enabled") != true or not Technology.scope_known(refs.settlement.get("technology", {}), "S06"): return fail("NO_TECHNOLOGY")
+	var warehouse := _settlement_food_warehouse(data, refs)
+	if not warehouse.ok: return warehouse
+	return ok("", {"settlement": refs.settlement, "operations": refs.operations, "order": order, "feature": warehouse.feature, "stock": warehouse.stock, "person": person,
+		"team": actions._technology_team(person), "person_ids": [int(person.person_id)], "requester_id": int(order.authorizer_id),
+		"operation_ref": {"settlement_id": settlement_id, "order_id": order_id}, "controlled_worker": int(person.person_id) == int(actions._technology_controlled())})
+
+static func _settlement_food_token(data: TerrainData, token: Variant, order: Dictionary) -> bool:
+	return _technology_trial_shape(token, data) and token.scope == "settlement" and token.scope_id == order.payload.settlement_id \
+		and token.tech_id == "S06" and token.binding == "food_order" and token.project_id == order.payload.project_id \
+		and token.purpose == order.payload.purpose and token.person.person_id == order.payload.operator_id \
+		and token.target_id == settlement_food_target(str(data.site.id), str(token.scope_id), str(order.id)) \
+		and Technology.material_equal(token.materials, {"grain": 8}) and int(order.payload.quantity) == 8
+
+static func settlement_food_material_source_candidate(data: TerrainData, settlement_id: String, order_id: String, binding: String = "") -> Dictionary:
+	var checked := settlement_food_work_preflight(data, settlement_id, order_id, binding)
+	if not checked.ok: return checked
+	var p: Dictionary = checked.order.payload
+	if p.stage != "prepared" or p.source.status != "granted" or not p.spent.is_empty(): return fail("NO_BUDGET")
+	var actions: Variant = _technology_actions(data)
+	var endpoint: Dictionary = actions.lab.site_controller.vehicles._stock(str(p.source.holder), str(p.source.holder).begins_with("feature:"))
+	if endpoint.is_empty() or endpoint.get("withdraw_only", false) or not _item_holder_shape(endpoint.get("holder", {})) \
+		or endpoint.holder.holder != p.source.holder or not Technology.integer(endpoint.holder.version, 0, 2147483645) \
+		or int(endpoint.get("faction", int(checked.settlement.owner_faction))) != int(checked.settlement.owner_faction): return fail("STALE_SOURCE")
+	return ok("", {"kind": "settlement_order", "holder": "settlement-order:" + JSON.stringify([str(data.site.id), settlement_id, order_id]),
+		"source_site_id": str(data.site.id), "grantor": {"site_id": str(data.site.id), "person_id": int(p.source.grantor_id)}, "cap": p.cap.duplicate(true), "spent": p.spent.duplicate(true),
+		"physical_holder": endpoint.holder, "physical_cargo": endpoint.cargo, "holder_version": int(endpoint.holder.version),
+		"expected_refs": {"terrain": data, "site": data.site, "nation": checked.settlement, "operations": checked.operations, "order": checked.order, "holder": endpoint.holder, "cargo": endpoint.cargo}})
+
+static func _settlement_food_warehouse(data: TerrainData, refs: Dictionary) -> Dictionary:
+	var feature: Dictionary = data.site.features.get(str(refs.order.payload.warehouse_id), {})
+	var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	var stock: Dictionary = SiteStockpiles.stock_endpoint(data, str(refs.order.payload.warehouse_id))
+	if feature.get("kind") != "warehouse" or stock.is_empty() or stock.get("withdraw_only", true) \
+		or int(stock.get("faction", -1)) != int(refs.settlement.get("owner_faction", -2)) \
+		or not bool(settlement_script.call("feature_in_jurisdiction", data, feature)): return fail("NO_TARGET")
+	return ok("", {"feature": feature, "stock": stock})
+
+static func valid_settlement_food_order(data: TerrainData, site: Dictionary, raw: Variant) -> bool:
+	if data == null or not Technology.keys(raw, ["id", "kind", "authorizer_id", "status", "payload", "receipts", "revision"]) \
+		or raw.kind != "food_order" or not raw.id is String or not raw.id.begins_with("food_order_") \
+		or not Technology.integer(raw.authorizer_id, 1, 2147483647) or not Technology.integer(raw.revision, 0, 2147483645) \
+		or raw.status not in ["prepared", "active", "completed", "cancelled"] or not raw.receipts is Array: return false
+	var serial: String = raw.id.trim_prefix("food_order_")
+	if not serial.is_valid_int() or str(int(serial)) != serial or not Technology.integer(int(serial), 1, 2147483645): return false
+	var p: Variant = raw.payload
+	if not Technology.keys(p, ["settlement_id", "warehouse_id", "operator_id", "project_id", "purpose", "consents", "source", "cap", "spent", "quantity", "initial_stock", "stage", "token", "paid", "work_seconds"]) \
+		or p.settlement_id != site.get("settlement", {}).get("settlement_id") or not p.warehouse_id is String \
+		or not p.warehouse_id.is_valid_int() or str(int(p.warehouse_id)) != p.warehouse_id \
+		or not Technology.integer(int(p.warehouse_id), 1, int(site.get("next_feature", 1)) - 1) \
+		or not Technology.integer(p.operator_id, 1, 2147483647) or not Technology.integer(p.project_id, 0, 2147483645) \
+		or not p.purpose is String or p.purpose.is_empty() or p.purpose.length() > 2048 \
+		or not Technology.integer(p.quantity, 1, 8) or not Technology.integer(p.initial_stock, 0, 2147483645) \
+		or p.stage not in ["prepared", "carrier", "arrived", "completed"] or not p.consents is Array or p.consents.size() > 1 \
+		or not Technology.material_equal(p.cap, {"grain": 8}) or not Technology.material_stack(p.spent) \
+		or not p.token is Dictionary or not p.paid is Dictionary or not Technology.finite_number(p.work_seconds) or float(p.work_seconds) > 300.0 \
+		or not Technology.keys(p.source, ["site_id", "holder", "grantor_id", "status"]) \
+		or p.source.site_id != str(site.get("id", "")) or not p.source.holder is String \
+		or not Technology.integer(p.source.grantor_id, 1, 2147483647) or p.source.grantor_id != raw.authorizer_id or p.source.status not in ["granted", "revoked"]: return false
+	var source_holder: String = p.source.holder
+	if source_holder != "depot":
+		var key := source_holder.trim_prefix("feature:")
+		if source_holder != "feature:" + key or not key.is_valid_int() or str(int(key)) != key \
+			or not Technology.integer(int(key), 1, int(site.get("next_feature", 1)) - 1): return false
+	if source_holder == "feature:" + str(p.warehouse_id): return false
+	if int(p.project_id) == 0:
+		if not p.token.is_empty() or p.purpose != JSON.stringify([str(site.id), str(p.settlement_id), str(raw.id), "food_order"]) \
+			or int(p.initial_stock) >= 4 or int(p.quantity) != 8 - int(p.initial_stock): return false
+	elif int(p.quantity) != 8: return false
+	for consent: Variant in p.consents:
+		if not Technology.keys(consent, ["site_id", "team_id", "person_id", "purpose", "decider_id", "revision", "status"]) \
+			or consent.site_id != str(site.id) or not Technology.integer(consent.team_id, 1) \
+			or consent.person_id != p.operator_id or consent.purpose != p.purpose or consent.status != "accepted" \
+			or not Technology.integer(consent.decider_id, 1) or not Technology.integer(consent.revision, 0): return false
+	var stage_index: int = ["prepared", "carrier", "arrived", "completed"].find(p.stage)
+	if stage_index < 2 and float(p.work_seconds) != 0.0 or stage_index == 3 and float(p.work_seconds) != 300.0: return false
+	if raw.receipts.size() != stage_index or (raw.status == "completed") != (p.stage == "completed") \
+		or raw.status == "prepared" and p.stage != "prepared" or raw.status == "active" and p.stage not in ["carrier", "arrived"]: return false
+	if stage_index == 0:
+		if not p.paid.is_empty() or not p.spent.is_empty() or not p.token.is_empty(): return false
+	else:
+		if not Technology.material_equal(p.spent, {"grain": int(p.quantity)}) \
+			or not Technology.keys(p.paid, ["token", "payment_id", "operator_id", "materials", "source_holder", "source_version", "carrier_version"]) \
+			or p.paid.operator_id != p.operator_id or p.paid.source_holder != source_holder \
+			or not Technology.material_equal(p.paid.materials, p.spent) or not p.paid.payment_id is String or p.paid.payment_id.is_empty() \
+			or not Technology.integer(p.paid.source_version, 1, 2147483646) or not Technology.integer(p.paid.carrier_version, 1, 2147483646) \
+			or p.paid.token != p.token: return false
+		if int(p.project_id) > 0 and not _settlement_food_token(Env.navigation_for_state(data, site), p.token, raw): return false
+		var expected_payment: String = JSON.stringify([str(site.id), "settlement", str(p.settlement_id), int(p.project_id), str(p.purpose), int(p.token.attempt), str(p.token.target_id)]) \
+			if int(p.project_id) > 0 else JSON.stringify([str(site.id), str(p.settlement_id), str(raw.id), "load"])
+		if p.paid.payment_id != expected_payment: return false
+	var seen := {}
+	for index: int in raw.receipts.size():
+		var r: Variant = raw.receipts[index]
+		var kind: String = ["load", "arrive", "work"][index]
+		var from_holder: String = source_holder if index == 0 else "person:" + str(int(p.operator_id)) if index == 1 else "feature:" + str(p.warehouse_id)
+		var to_holder: String = "person:" + str(int(p.operator_id)) if index == 0 else "feature:" + str(p.warehouse_id)
+		if not Technology.keys(r, ["id", "kind", "operator_id", "from", "to", "quantity", "source_version", "destination_version", "work_seconds"]) \
+			or r.id != JSON.stringify([str(site.id), str(p.settlement_id), str(raw.id), kind]) or seen.has(r.id) \
+			or r.kind != kind or r.operator_id != p.operator_id or r.from != from_holder or r.to != to_holder or r.quantity != p.quantity \
+			or not Technology.integer(r.source_version, 1, 2147483646) or not Technology.integer(r.destination_version, 1, 2147483646) \
+			or not Technology.finite_number(r.work_seconds) or float(r.work_seconds) != (300.0 if index == 2 else 0.0): return false
+		if index == 0 and (r.source_version != p.paid.source_version or r.destination_version != p.paid.carrier_version): return false
+		seen[r.id] = true
+	return true
+
+static func _technology_prepare_military_output(data: TerrainData, feature: Dictionary, receipt: Dictionary) -> Dictionary:
+	if not feature.has("technology_order") or not str(feature.technology_order.get("order_id", "")).begins_with("production_"): return ok("", {"orders": null, "prepared": {}})
+	var key := str(receipt.get("feature_id", ""))
+	var ledger: Dictionary = feature.get("tech_batch", {})
+	var event := {"id": str(ledger.get("payment_id", "")), "site_id": str(data.site.id), "target_id": "feature:" + key,
+		"operator_id": int(receipt.get("operator_id", 0)), "binding": "workshop_bow", "work_seconds": float(receipt.get("work_seconds", 0.0)),
+		"item_ids": receipt.get("item_ids", []), "outputs": receipt.get("resources", {}), "materials": ledger.get("materials", {})}
+	var proof := technology_military_output_candidate(data, feature, event)
+	if not proof.ok: return proof
+	var actions: Variant = _technology_actions(data)
+	if actions == null: return fail("UNSUPPORTED")
+	var orders: Variant = actions.lab.site_controller.equipment_orders
+	if orders == null or not orders.has_method("prepare_military_output") or not orders.has_method("publish_military_output"): return fail("UNSUPPORTED")
+	var ref: Dictionary = feature.technology_order
+	var prepared: Dictionary = orders.prepare_military_output(str(ref.nation_id), str(ref.order_id), receipt)
+	if not prepared.ok: return prepared
+	return ok("", {"orders": orders, "prepared": prepared})
+
+static func _technology_prepare_public_output(data: TerrainData, target: Dictionary, event: Dictionary) -> Dictionary:
+	if not target.has("technology_order") or not target.get("tech_trial", {}).is_empty(): return ok("", {"orders": null, "prepared": {}})
+	var proof := technology_public_output_candidate(data, target, event)
+	if not proof.ok: return proof
+	var actions: Variant = _technology_actions(data)
+	if actions == null: return fail("UNSUPPORTED")
+	var orders: Variant = actions.lab.site_controller.equipment_orders
+	if orders == null or not orders.has_method("prepare_public_owner_receipt"): return fail("UNSUPPORTED")
+	var ref: Dictionary = target.technology_order
+	var candidate: Dictionary = orders.prepare_public_owner_receipt(str(ref.nation_id), str(ref.order_id), str(event.binding), str(event.target_id), str(event.id))
+	if not candidate.get("ok", false): return candidate
+	return ok("", {"orders": orders, "prepared": candidate})
+
+static func _prepare_settlement_spare_workers(data: TerrainData, key: String, vehicle: Dictionary, admission: Dictionary, projected: Dictionary) -> Dictionary:
+	var actions: Variant = _technology_actions(data)
+	var selector := {"token": projected.tech_trial} if projected.has("tech_trial") else {}
+	if bool(admission.get("controlled_worker", false)):
+		var prepared: Dictionary = actions.prepare_controlled_vehicle_work(selector, vehicle, {}, int(admission.person_ids[0]), projected)
+		return prepared if not prepared.ok else ok("", {"controlled": prepared, "assignment": {}, "actions": actions})
+	var weak: Variant = data.get_meta(&"site_work_team")
+	var workers: Variant = weak.get_ref() if weak is WeakRef else null
+	if workers == null: return fail("UNSUPPORTED")
+	var prepared: Dictionary = workers.prepare_assign_vehicle(admission.team, admission.person_ids, int(admission.requester_id), key, vehicle, {},
+		projected.get("tech_trial", {}), {}, projected)
+	return prepared if not prepared.ok else ok("", {"controlled": {}, "assignment": prepared, "workers": workers})
+
+static func resume_settlement_spare_repair(data: TerrainData, vehicle_id: String, operator_id: int, preview: bool = false, token: Dictionary = {}) -> Dictionary:
+	var vehicle: Dictionary = data.site.get("vehicles", {}).get(vehicle_id, {})
+	if not valid_settlement_spare_repair_storage(data, vehicle) or vehicle.technology_spare_repair.released \
+		or int(vehicle.technology_spare_repair.operator.person_id) != operator_id: return fail("NO_TARGET")
+	var original: Dictionary = vehicle.get("tech_trial", {})
+	if original.is_empty() != token.is_empty(): return fail("STALE_PROJECT")
+	if not original.is_empty():
+		for field: String in ["scope", "scope_id", "project_id", "epoch", "purpose", "tech_id", "phase_id", "person", "binding", "target_id"]:
+			if original.get(field) != token.get(field): return fail("STALE_PROJECT")
+		var active: Dictionary = _technology_actions(data).technology_phase_active_guard(original)
+		if not active.ok: return active
+	var actions: Variant = _technology_actions(data)
+	var person: Dictionary = actions._person(operator_id)
+	if person.is_empty(): return fail("NO_WORKER")
+	var job: Dictionary = actions._jobs.get(actions._job_key_for(operator_id), {})
+	var task: Dictionary = job.get("work_task", person.body.get("work_task", {}) if person.body is Dictionary else {})
+	if not task.is_empty() and task.get("target") == "vehicle:" + vehicle_id and task.get("action") == "repair":
+		var guard := settlement_spare_work_guard(data, vehicle, task, operator_id)
+		return guard if not guard.ok else ok("同一原備件工作已受理", {"resumed": true, "already_working": true})
+	var admission := settlement_spare_admission(data, operator_id, int(vehicle.team_id), original, vehicle)
+	if not admission.ok: return admission
+	var projected := {"repair": vehicle.repair, "technology_spare_repair": vehicle.technology_spare_repair}
+	if not original.is_empty(): projected.merge({"tech_trial": original, "tech_batch": vehicle.tech_batch})
+	var named := _prepare_settlement_spare_workers(data, vehicle_id, vehicle, admission, projected)
+	if not named.ok: return named
+	if not preview: _technology_publish_named_vehicle(named)
+	return ok("恢復同一原已付备件修理；不再扣料", {"resumed": true, "already_working": false})
+
+static func settlement_spare_admission(data: TerrainData, identity: int, team_id: int, token: Dictionary = {}, paid_target: Dictionary = {}) -> Dictionary:
+	var checked := settlement_spares_context(data, identity, token)
+	if not checked.ok: return checked
+	var actions: Variant = checked.actions
+	if not token.is_empty():
+		var paid: bool = not paid_target.is_empty() and is_same(data.site.get("vehicles", {}).get(str(paid_target.get("id", ""))), paid_target) \
+			and is_same(paid_target.get("tech_trial"), token) and technology_existing_paid_phase_source(data, token).ok
+		return actions.technology_phase_work_preflight(token, not paid)
+	var person: Dictionary = checked.person
+	var team: Variant = actions._technology_team(person)
+	var original: Variant = team
+	if person.owner is CrowdPersonOwner:
+		var source: Variant = person.owner._command_owner(int(person.unit))
+		if source is TerrainArmy: original = source; team = person.owner
+		elif source is TerrainTestCharacter and original is TerrainArmy and is_same(original.player_member, source): team = person.owner
+		else: return fail("INVALID_OWNER")
+	if not original is TerrainArmy or team == null or not is_same(original.data, data) or int(original.team_id) != team_id \
+		or int(team.team_id) != team_id or team.combat_order != TerrainArmy.CombatOrder.HOLD: return fail("NO_AUTHORITY")
+	var duty: Dictionary = original.duty_resolve_readonly("team.work", team)
+	if not duty.ok or int(duty.get("decider", -1)) != int(actions._technology_controlled()) or actions.is_busy(identity): return fail("NO_AUTHORITY")
+	return ok("", {"team": team, "original_team": original, "person_ids": [identity], "requester_id": int(actions._technology_controlled()),
+		"operation_ref": {}, "controlled_worker": identity == int(actions._technology_controlled())})
+
+static func settlement_spare_repair_terms(amount: float) -> Dictionary:
+	if not is_finite(amount) or amount <= 0.0 or amount > 20.0: return {}
+	return {"paid_cost": {"ballista_spares": 1}, "total_work": 300.0, "progress": 0.0, "amount": amount, "applied": 0.0}
+
+static func settlement_spares_context(data: TerrainData, identity: int, token: Dictionary = {}, bound_task: Dictionary = {}) -> Dictionary:
+	var actions: Variant = _technology_actions(data)
+	if actions == null or identity <= 0: return fail("NO_WORKER")
+	if bool(data.site.get("paused", false)) or float(data.site.get("combat_left", 0.0)) > 0.0: return fail("BUSY")
+	var person: Dictionary = actions._person(identity)
+	if person.is_empty(): return fail("NO_WORKER")
+	var ready: bool = actions._ready(person)
+	if not ready and bound_task.get("action") == "repair" and str(bound_task.get("target", "")).begins_with("vehicle:"):
+		var key: String = str(bound_task.target).trim_prefix("vehicle:")
+		var vehicle: Dictionary = data.site.get("vehicles", {}).get(key, {})
+		# A real held original task is the only busy exception. This is neither a
+		# caller approval nor a fake alive snapshot; current owner checks remain.
+		if valid_settlement_spare_repair_storage(data, vehicle) and int(vehicle.technology_spare_repair.operator.person_id) == identity \
+			and (is_same(vehicle.get("tech_trial"), token) if not token.is_empty() else vehicle.get("tech_trial", {}).is_empty()):
+			ready = not actions._technology_operator_for_task(bound_task, identity).is_empty()
+	if not ready or actions._threat(person, {}): return fail("BUSY")
+	var settlement_script: Variant = load("res://scripts/terrain_lab/site_settlement.gd")
+	var settlement: Dictionary = settlement_script.call("record", data)
+	var state: Dictionary = settlement_script.call("status", actions.lab)
+	if settlement.is_empty() or state.get("effective") != true or int(person.faction) != int(settlement.owner_faction) \
+		or not settlement_script.call("cell_in_jurisdiction", data, data.cell_from_index(int(data.site.depot_cell))): return fail("NO_AUTHORITY")
+	if token.is_empty():
+		if TechnologyCatalog.get_node("S08").get("enabled") != true or not Technology.scope_known(settlement.get("technology", {}), "S08"): return fail("NO_TECHNOLOGY")
+	elif token.get("scope") != "settlement" or token.get("scope_id") != settlement.settlement_id or token.get("tech_id") != "S08" \
+		or int(token.get("person", {}).get("person_id", -1)) != identity: return fail("STALE_PROJECT")
+	return ok("", {"actions": actions, "person": person, "settlement": settlement})
+
+static func _settlement_engineering_context(data: TerrainData, tech_id: String, requester_id: int = 0, command: bool = true) -> Dictionary:
+	var actions: Variant = _technology_actions(data)
+	if actions == null or bool(data.site.get("paused", false)) or _ship_runtime_pending(data): return fail("BUSY")
+	var owner: Variant = load("res://scripts/terrain_lab/site_settlement.gd")
+	var settlement: Dictionary = owner.call("record", data)
+	var status: Dictionary = owner.call("status", actions.lab)
+	if settlement.is_empty() or int(settlement.get("version", 0)) != 2 or TechnologyCatalog.get_node(tech_id).get("enabled") != true or not Technology.scope_known(settlement.get("technology", {}), tech_id) \
+		or not status.get("effective", false): return fail("NO_TECHNOLOGY")
+	var duty: Dictionary = actions._technology_scope_duty("settlement", settlement, true)
+	if not duty.ok: return fail("NO_AUTHORITY")
+	if command and (requester_id != int(actions._technology_controlled()) or requester_id != int(duty.get("decider", -1))): return fail("NO_AUTHORITY")
+	if command:
+		var decider: Dictionary = actions._person(requester_id)
+		if decider.is_empty() or not actions._ready(decider) or actions._threat(decider, {}): return fail("BUSY")
+	var current: Variant = settlement.get("technology_operations")
+	if current != null and not owner.call("valid_technology_operations", data, current): return fail("CORRUPT_STATE")
+	return ok("", {"actions": actions, "owner": owner, "settlement": settlement,
+		"operations": owner.call("empty_technology_operations") if current == null else current})
+
+static func _prepare_settlement_defense_workers(data: TerrainData, selector: Dictionary, feature: Dictionary, zone: Dictionary, action: String, repair: Dictionary = {}) -> Dictionary:
+	var admission := settlement_defense_work_preflight(data, selector, feature, action)
+	if not admission.ok: return admission
+	var actions: Variant = _technology_actions(data)
+	if admission.controlled_worker:
+		var controlled: Dictionary = actions.prepare_controlled_feature_work(selector, feature, zone, action, repair)
+		return controlled if not controlled.ok else ok("", {"controlled": controlled, "assignment": {}, "actions": actions})
+	var weak: Variant = data.get_meta(&"site_work_team")
+	var workers: Variant = weak.get_ref() if weak is WeakRef else null
+	if workers == null: return fail("UNSUPPORTED")
+	var key := str(admission.step.feature_id) if not str(admission.step.feature_id).is_empty() else str(int(data.site.next_feature))
+	var assigned: Dictionary = workers.prepare_assign_feature(admission.team, admission.person_ids, int(admission.requester_id), key,
+		action, feature, selector, zone, {}, repair)
+	return assigned if not assigned.ok else ok("", {"controlled": {}, "assignment": assigned, "workers": workers})
+
+static func _settlement_defense_occupied(data: TerrainData, identity: int, cell: Vector2i) -> bool:
+	var actions: Variant = _technology_actions(data)
+	var person: Dictionary = actions._person(identity) if actions != null else {}
+	if person.is_empty(): return true
+	if actions.lab.site_controller.vehicles.blocks(cell, data): return true
+	if person.owner is TerrainTestCharacter: return actions.lab.site_controller._actor_people_blocked(cell, person.owner)
+	return actions.lab.site_controller.work_team._occupied(cell, person.owner, int(person.unit))
+
+static func prepare_feature_repair_request(data: TerrainData, key: String, part_id: String, requester_faction: int, occupied: Callable = Callable()) -> Dictionary:
+	if _ship_runtime_pending(data): return fail("BUSY", "原固定目標仍待補算或交接；暫不能接受新設施操作")
+	var feature: Dictionary = data.site.get("features", {}).get(key, {})
+	if str(feature.get("stage", "")) != "complete" or int(feature.get("layout_version", 0)) != BUILDING_LAYOUT_VERSION or not feature.get("parts", {}).has(part_id):
+		return fail("NO_TARGET", "可修理的原部件不存在")
+	if int(feature.get("owner_faction", -1)) < 0 or requester_faction != int(feature.owner_faction):
+		return fail("NO_AUTHORITY")
+	if feature.has("repair") or feature.has("pending_build") or _feature_has_work(data, key) or not str(feature.get("gate", {}).get("pending", "")).is_empty():
+		return fail("BUSY")
+	var geometry := feature_geometry(data, feature)
+	var part: Dictionary = geometry.parts[part_id]
+	var fire_guard := _fire_repair_guard(data, key, part_id)
+	if not fire_guard.ok: return fire_guard
+	var amount := float(part.max_hp) - float(part.hp)
+	if amount <= 0.0:
+		return fail("INVALID", "部件耐久完整")
+	if str(part.role) == "roof" and float(feature.parts.body.hp) <= 0.0: return fail("BUSY", "先修復支撐屋頂的原本體")
+	if str(part.role) == "leaf" and float(part.hp) <= 0.0 and not bool(feature.gate.open):
+		return fail("BUSY", "請原操作者先開門，再安裝新門扇；修復後仍須正常關門")
+	if str(part.role) == "leaf" and float(feature.parts[part_id.replace("leaf:", "frame:")].hp) <= 0.0:
+		return fail("BUSY", "先修复承托這片門扇的原門框")
+	var work_cell := -1
+	for index: int in part.cells:
+		for direction: Vector2i in TerrainData.DIRECTIONS:
+			var cell := data.cell_from_index(index) + direction
+			if _repair_contact(data, feature, part, cell) and (not occupied.is_valid() or not bool(occupied.call(cell))):
+				work_cell = data.index(cell)
+				break
+		if work_cell >= 0:
+			break
+	if work_cell < 0:
+		return fail("UNREACHABLE", "部件旁沒有安全修理位置")
+	var candidate: Dictionary = feature.duplicate(true)
+	candidate.parts[part_id].hp = float(part.max_hp)
+	var water_guard: Dictionary = _ship_water_geometry_guard(data, key, candidate)
+	if not water_guard.ok: return water_guard
+	var terms := _repair_terms(feature, part, amount)
+	var cost: Dictionary = terms.cost
+	if not can_pay(data.site.inventory, cost) or not can_pay(data.site.inventory, {"tools": 1}):
+		return fail("MATERIALS", items_text(cost))
+	var repair := {"part": part_id, "amount": amount, "cost": cost,
+		"work": float(terms.work), "progress": 0.0, "work_cell": work_cell}
+	var zone := {"cells": feature.cells.duplicate(), "kind": -1, "action": "repair", "feature": key, "active": true}
+	return ok("原修理條件預檢完成", {"key": key, "feature": feature, "repair": repair, "zone": zone,
+		"site": data.site, "features": data.site.features, "zones": data.site.zones, "stock": data.site.inventory,
+		"depot": data.site.depot_items, "version": int(data.site.depot_items.version)})
+
+static func publish_feature_repair_request(data: TerrainData, prepared: Dictionary) -> Dictionary:
+	assert(prepared.ok and is_same(prepared.site, data.site) and is_same(prepared.features, data.site.features)
+		and is_same(prepared.features.get(prepared.key), prepared.feature) and is_same(prepared.zones, data.site.zones)
+		and is_same(prepared.stock, data.site.inventory) and is_same(prepared.depot, data.site.depot_items) and int(prepared.depot.version) == int(prepared.version))
+	add_items(prepared.stock, prepared.repair.cost, -1)
+	prepared.feature.repair = prepared.repair
+	if prepared.has("settlement_publish"):
+		prepared.depot.version = int(prepared.depot.version) + 1
+		prepared.feature.settlement_work = prepared.settlement_link
+	_fire_repair_started(data, str(prepared.key), str(prepared.repair.part))
+	prepared.zones.append(prepared.zone)
+	prepared.feature.status = "已備料，等待原工作者修理"
+	if prepared.has("settlement_publish"):
+		var owner: Dictionary = prepared.settlement_publish
+		owner.owner.call("publish_technology_operations", owner.settlement, owner.candidate)
+	if prepared.has("named"): _technology_publish_named_feature(prepared.named)
+	return ok(str(prepared.feature.status), {"feature": str(prepared.key), "part": str(prepared.repair.part)})
+
+static func settlement_defense_material_source(data: TerrainData, selector: Dictionary, feature: Dictionary, key: String, action: String, repair: Dictionary = {}) -> Dictionary:
+	var admission := settlement_defense_work_preflight(data, selector, feature, action)
+	if not admission.ok: return admission
+	var order: Dictionary = admission.order
+	var job: Dictionary = repair if action == "repair" and not repair.is_empty() else feature.get("repair", {}) if action == "repair" else feature
+	var cost: Dictionary = job.get("cost", {})
+	if order.status == "active":
+		if not is_same(data.site.features.get(key), feature) or not valid_settlement_work_storage(data, key, feature) \
+			or action == "repair" and not repair.is_empty() and not is_same(feature.get("repair"), repair): return fail("STALE_SOURCE")
+		return ok("同一原清單步驟已付", {"already_paid": true, "order": order, "job": job})
+	if not _siege_depot_ready(data) or not can_pay(data.site.inventory, cost) or not can_pay(data.site.inventory, {"tools": 1}): return fail("MATERIALS")
+	var actions: Variant = _technology_actions(data)
+	var source: Dictionary = actions._ranged_craft_context(actions._person(int(actions._technology_controlled())))
+	if not source.ok: return source
+	for resource: String in cost:
+		if int(order.spent.get(resource, 0)) + int(cost[resource]) > int(order.cap.get(resource, 0)): return fail("BUDGET_EXCEEDED")
+	return ok("本原清單有限營地材料", {"already_paid": false, "holder": data.site.depot_items, "cargo": data.site.inventory})
+
+static func settlement_defense_work_preflight(data: TerrainData, selector: Dictionary, feature: Dictionary = {}, action: String = "construct") -> Dictionary:
+	if not Technology.keys(selector, ["settlement_id", "order_id"]) or not selector.settlement_id is String or not selector.order_id is String: return fail("INVALID")
+	var context := _settlement_engineering_context(data, "S10", 0, false)
+	if not context.ok: return context
+	if selector.settlement_id != context.settlement.settlement_id: return fail("NO_AUTHORITY")
+	var order: Dictionary = context.operations.orders.get(selector.order_id, {})
+	if order.is_empty() or order.kind != "defense" or order.status not in ["prepared", "active"] or int(order.next_step) >= order.steps.size() \
+		or int(order.owner_faction) != int(context.settlement.owner_faction): return fail("NO_TARGET")
+	var authority: Dictionary = context.actions._technology_scope_duty("settlement", context.settlement, true)
+	if not authority.get("ok", false) or int(authority.get("decider", -1)) != int(order.authorizer_id): return fail("NO_AUTHORITY")
+	var step: Dictionary = order.steps[int(order.next_step)]
+	if step.action != action: return fail("NO_TARGET")
+	var person: Dictionary = context.actions._person(int(step.operator_id))
+	var team: Variant = context.actions._technology_team(person)
+	var original: Variant = team
+	if person.get("owner") is CrowdPersonOwner:
+		var source: Variant = person.owner._command_owner(int(person.unit))
+		if source is TerrainArmy: original = source; team = person.owner
+		elif source is TerrainTestCharacter and original is TerrainArmy and is_same(original.player_member, source): team = person.owner
+		else: return fail("INVALID_OWNER")
+	var ready: bool = context.actions._ready(person)
+	if not ready and context.actions._technology_matching_settlement_task(person, str(order.purpose)):
+		# Only the SAME accepted original work may bypass the ordinary "has task"
+		# busy condition. Current original physical fitness remains mandatory.
+		ready = not person.is_empty() and float(person.hp) > 0.0 and float(person.ko) <= 0.0 and not bool(person.captive) and not bool(person.moving) \
+			and float(context.actions._body_get(person, "exchange_stagger")) <= 0.0 and not bool(context.actions._body_get(person, "attack")) \
+			and str(context.actions._body_get(person, "pose")) == "idle" and not context.actions.is_guarding(int(person.person_id)) \
+			and (person.owner.combat_can_act(int(person.unit)) if int(person.unit) >= 0 else person.owner.can_act())
+	if not original is TerrainArmy or team == null or team.combat_order != TerrainArmy.CombatOrder.HOLD or not ready \
+		or context.actions._threat(person, {}) or int(person.faction) != int(order.owner_faction): return fail("BUSY")
+	if person.get("owner") is CrowdPersonOwner and not person.owner.crowd_site.work_fatigue_work_start_ready(int(person.person_id)): return fail("BUSY")
+	if not context.actions._technology_consent_valid(int(step.operator_id), order.consents, order.purpose, {}, true): return fail("NO_CONSENT")
+	if not feature.is_empty():
+		if feature.kind not in context.owner.DEFENSE_ENGINEERING_KINDS or int(feature.get("owner_faction", -1)) != int(order.owner_faction) \
+			or not context.owner.call("feature_in_jurisdiction", data, feature): return fail("NO_AUTHORITY")
+		if not step.feature_id.is_empty() and not is_same(data.site.features.get(step.feature_id), feature): return fail("STALE_SOURCE")
+		if step.action == "construct":
+			var target := settlement_blueprint_target(data, step.plan_id, Vector2i(int(step.anchor[0]), int(step.anchor[1])))
+			if not target.ok or feature.kind != target.kind or feature.cells != target.cells or _feature_options(feature) != target.options: return fail("STALE_SOURCE")
+	var controlled := int(step.operator_id) == int(context.actions._technology_controlled())
+	return ok("", {"team": team, "original_team": original, "person_ids": [int(step.operator_id)], "requester_id": int(context.actions._technology_controlled()),
+		"operation_ref": selector.duplicate(), "controlled_worker": controlled, "order": order, "operations": context.operations, "settlement": context.settlement, "step": step})
+
+static func _settlement_defense_people(data: TerrainData, requester_id: int, identities: Array, purpose: String) -> Dictionary:
+	var actions: Variant = _technology_actions(data)
+	if identities.is_empty() or identities.size() > 4: return fail("NO_WORKER")
+	var first: Dictionary = actions._person(int(identities[0]))
+	var original: Variant = actions._technology_team(first)
+	var team: Variant = original
+	if first.get("owner") is CrowdPersonOwner:
+		var source: Variant = first.owner._command_owner(int(first.unit))
+		if source is TerrainArmy: original = source; team = first.owner
+		elif source is TerrainTestCharacter and original is TerrainArmy and is_same(original.player_member, source): team = first.owner
+		else: return fail("INVALID_OWNER")
+	if not original is TerrainArmy or team == null or team.combat_order != TerrainArmy.CombatOrder.HOLD: return fail("NO_AUTHORITY")
+	var duty: Dictionary = original.duty_resolve_readonly("team.work", team)
+	# This bounded manual command is the controlled original decider's actual
+	# response for each named member; there is no NPC checkbox or control switch.
+	if not duty.ok or int(duty.get("decider", -1)) != requester_id or requester_id != int(actions._technology_controlled()): return fail("NO_CONSENT")
+	var seen := {}
+	var consents: Array = []
+	for raw: Variant in identities:
+		if not Technology.integer(raw, 1) or seen.has(int(raw)): return fail("INVALID_MEMBER")
+		var identity := int(raw)
+		var person: Dictionary = actions._person(identity)
+		var physical: Variant = person.get("owner")
+		var member := int(original.index_for_identity(identity))
+		if person.is_empty() or (member < 0 and member != TerrainArmy.PLAYER_MEMBER) or not original.is_member(member) or not actions._ready(person) or actions._threat(person, {}) \
+			or actions.is_busy(identity) or int(person.faction) != int(data.site.settlement.owner_faction): return fail("BUSY")
+		if team is CrowdPersonOwner:
+			if not is_same(physical, team) or not team.crowd_site.owns_original_team(original): return fail("INVALID_MEMBER")
+			if not team.crowd_site.work_fatigue_work_start_ready(identity): return fail("BUSY")
+			var source: Variant = team._command_owner(int(person.unit))
+			if not is_same(source, original) and not (member == TerrainArmy.PLAYER_MEMBER and is_same(source, original.player_member)): return fail("INVALID_MEMBER")
+		elif not is_same(actions._technology_team(person), original): return fail("INVALID_MEMBER")
+		seen[identity] = true
+		consents.append({"site_id": str(data.site.id), "team_id": int(original.team_id), "person_id": identity, "purpose": purpose,
+			"decider_id": requester_id, "revision": int(duty.revision), "status": "accepted"})
+	return ok("", {"team": team, "original_team": original, "consents": consents})
+
+static func _technology_siege_ground_context(data: TerrainData, key: String) -> Dictionary:
+	var feature: Dictionary = data.site.get("features", {}).get(key, {}) if data != null else {}
+	if feature.get("kind") != "training_ground" or feature.get("stage") != "complete" \
+		or feature.has("pending_build") or feature.has("repair") or not feature_usable(feature): return fail("NO_TARGET", "須原已完工且可用的校場地塊")
+	var actions: Variant = _technology_actions(data)
+	if actions == null: return fail("UNSUPPORTED", "原聚落人物接線未發布")
+	var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	var settlement: Dictionary = data.site.get("settlement", {})
+	var status: Dictionary = settlement_script.call("status", actions.lab)
+	if status.get("effective") != true or int(status.get("level", 0)) < 3: return fail("REQUIREMENTS", "器械場新施工需當前有效的原3級聚落與真居民")
+	if int(settlement.get("owner_faction", -1)) < 0 or int(feature.get("owner_faction", -2)) != int(settlement.owner_faction) \
+		or not bool(settlement_script.call("feature_in_jurisdiction", data, feature)): return fail("NO_AUTHORITY", "器械場須同管理方且在原聚落管轄內")
+	var base := -1
+	for index: int in feature.get("cells", []):
+		if not Technology.integer(index, 0, data.size.x * data.size.y - 1): return fail("TERRAIN")
+		var cell := data.cell_from_index(index)
+		if not data.is_walkable(cell) or int(data.feature_at[index]) != int(key) or data.effective_height(cell) != int(data.height_levels[index]) \
+			or int(data.surface_types[index]) in [TerrainData.Surface.WATER, TerrainData.Surface.WETLAND]: return fail("TERRAIN", "原校場地塊須平整乾燥可通行")
+		if base < 0: base = data.effective_height(cell)
+		elif base != data.effective_height(cell): return fail("TERRAIN", "原校場地塊須同高")
+	if base < 0: return fail("TERRAIN")
+	return ok("", {"feature": feature, "settlement": settlement})
+
+static func _technology_siege_ground_busy(data: TerrainData, key: String, feature: Dictionary) -> bool:
+	if _feature_has_work(data, key): return true
+	for entry: Dictionary in data.site.get("team_supply", {}).values():
+		if entry.get("training_order") == true and entry.get("training_feature_id") == key: return true
+	var actions: Variant = _technology_actions(data)
+	if actions != null:
+		for job: Dictionary in actions._jobs.values():
+			if job.get("feature_id") == key or job.get("target") == "feature:" + key \
+				or job.get("technology", {}).get("target_id") == "feature:" + key \
+				or job.get("task", {}).get("target") == "feature:" + key: return true
+	var cells: Array = feature.get("cells", [])
+	for vehicle: Dictionary in data.site.get("vehicles", {}).values():
+		var occupied_cells: Array[Vector2i] = []
+		if SIEGE_DEFINITIONS.has(str(vehicle.get("kind", ""))):
+			occupied_cells = siege_tower_physical_cells(data, vehicle) if vehicle.kind == "siege_tower" else siege_cells(data, vehicle)
+			for station: Dictionary in _technology_original_siege_stations(data, vehicle, false): occupied_cells.append(data.cell_from_index(int(station.cell)))
+		elif data.contains(data.cell_from_index(int(vehicle.get("cell", -1)))): occupied_cells.append(data.cell_from_index(int(vehicle.cell)))
+		for cell: Vector2i in occupied_cells:
+			if data.contains(cell) and cells.has(data.index(cell)): return true
+	return false
+
+static func valid_technology_siege_yard(feature: Dictionary) -> bool:
+	if not feature.has("technology_siege_yard"): return true
+	var config: Variant = feature.technology_siege_yard
+	return Technology.keys(config, ["version", "settlement_id"]) and Technology.integer(config.version, 1, 1) \
+		and config.settlement_id is String and not config.settlement_id.is_empty() and config.settlement_id.length() <= 128 \
+		and feature.get("kind") == "training_ground" and not feature.has("camp_type") \
+		and Technology.integer(feature.get("layout_version"), BUILDING_LAYOUT_VERSION, BUILDING_LAYOUT_VERSION)
+
+static func _technology_original_siege_stations(data: TerrainData, vehicle: Dictionary, six: bool) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	if siege_cells(data, vehicle).is_empty(): return result
+	var anchor := data.cell_from_index(int(vehicle.cell))
+	var facing := Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1]))
+	var side := Vector2i(-facing.y, facing.x)
+	var size: Vector2i = SIEGE_DEFINITIONS[str(vehicle.kind)].size
+	var offsets: Array[Vector2i] = [Vector2i(-1, 0), Vector2i(size.x, 0), Vector2i(-1, size.y - 1), Vector2i(size.x, size.y - 1)]
+	if six:
+		if size.y < 3: return result
+		var middle := floori(float(size.y - 1) / 2.0)
+		offsets.append(Vector2i(-1, middle))
+		offsets.append(Vector2i(size.x, middle))
+	for offset: Vector2i in offsets:
+		var cell := anchor + side * offset.x + facing * offset.y
+		if not data.contains(cell):
+			if six: return []
+			continue
+		result.append({"slot": result.size(), "cell": data.index(cell)})
+	return result
+
+static func _settlement_ship_begin(data: TerrainData, settlement_id: String, order_id: String, token: Dictionary, preview: bool) -> Dictionary:
+	# The public Scope caller proposes next_attempt; paid resume keeps the SAME
+	# original reserved token and its already consumed material/attempt history.
+	var refs := _settlement_order_state(data, settlement_id, order_id)
+	var retained: Dictionary = data.site.features.get(str(refs.get("order", {}).get("payload", {}).get("feature_id", "")), {}).get("tech_trial", {})
+	if not retained.is_empty() and not token.is_empty():
+		for field: String in ["scope", "scope_id", "project_id", "epoch", "purpose", "tech_id", "phase_id", "person", "binding", "target_id"]:
+			if retained.get(field) != token.get(field): return fail("STALE_PROJECT")
+		token = retained
+	var current := settlement_ship_work_preflight(data, settlement_id, order_id, "ferry_build")
+	if not current.ok: return current
+	var feature: Dictionary = current.feature
+	var p: Dictionary = current.order.payload
+	var key := str(p.feature_id)
+	var selector := {"settlement_id": settlement_id, "order_id": order_id} if token.is_empty() else {"token": token}
+	var original_paid: bool = feature.get("technology_settlement_order") == current.operation_ref and feature.has("ship_build") and feature.has("tech_batch")
+	if original_paid:
+		if feature.get("tech_trial", {}) != token or not Technology.material_equal(feature.tech_batch.materials, p.cap) \
+			or not Technology.material_equal(p.spent, p.cap): return fail("STALE_SOURCE")
+		var resumed := _settlement_ship_resume_candidate(data, current, token)
+		if not resumed.ok: return resumed
+		if preview: return ok("原全款船體可真正復工；不再扣料、attempt 或效率")
+		_settlement_ship_publish_resume(data, resumed)
+		current.order.status = "active"
+		return ok("原兩工人已回原工位任務", {"token": token, "feature": key})
+	if TechnologyCatalog.get_node("S12").get("enabled") != true or TechnologyCatalog.get_node("F13").get("enabled") != true: return fail("NO_TECHNOLOGY")
+	if feature.has("ship_build") or feature.has("tech_batch") or feature.has("tech_trial") or feature.has("technology_settlement_order") \
+		or bool(feature.batch_paid) or float(feature.production) != 0.0 or _feature_has_work(data, key): return fail("BUSY")
+	if not token.is_empty() and (token.scope != "settlement" or token.scope_id != settlement_id or token.tech_id != "S12" or token.binding != "ferry_build" \
+		or token.target_id != "feature:" + key or token.project_id != p.project_id or token.purpose != p.purpose or token.person.person_id != p.operator_id): return fail("STALE_PROJECT")
+	if token.is_empty() and p.project_id != 0: return fail("NO_AUTHORITY")
+	if not can_pay(data.site.inventory, {"tools": 1}): return fail("MATERIALS")
+	var local_token := token.duplicate(true)
+	if not local_token.is_empty(): local_token.materials = p.cap.duplicate(true)
+	var source := _technology_material_source(data, {"token": local_token} if not token.is_empty() else selector, "ferry_build", p.cap)
+	if not source.ok: return source
+	var payment := prepare_settlement_ship_payment(data, current.operation_ref, p.cap)
+	if not payment.ok: return payment
+	var scope := {} if token.is_empty() else _technology_geometry_payment(data, local_token, p.cap, true, source.source)
+	if not scope.is_empty() and not scope.ok: return scope
+	var launch := _ship_launch_query(data, feature, "ferry", _technology_actions(data).lab.site_controller.reserves_cell)
+	if not launch.ok: return launch
+	var zone_context := _settlement_ship_zone(data, key, feature)
+	var named := _settlement_ship_named_candidate(data, current, scope.get("token", {}), zone_context.zone)
+	if not named.ok: return named
+	var recheck := _technology_material_source(data, {"token": local_token} if not token.is_empty() else selector, "ferry_build", p.cap, source.source)
+	if not recheck.ok: return recheck
+	if preview: return ok("原一船／兩真任務／一次付款候選全部有效", {"cost": p.cap.duplicate(true), "baseline_work": 600.0, "effective_work": 540.0})
+	var paid := _technology_geometry_ledger(data, scope.token, scope.payment, "ship:ferry", source.source) if not scope.is_empty() else \
+		{"version": 1, "id": 1, "site_id": str(data.site.id), "feature_id": key, "operator_id": int(p.operator_id), "recipe_id": "ship:ferry", "materials": p.cap.duplicate(true),
+			"source_holder": str(source.holder.holder), "source_version": int(source.version), "work_seconds": 0.0, "token": {}, "payment_id": "settlement-ship-payment:" + JSON.stringify([str(data.site.id), settlement_id, order_id])}
+	# Every potential failure has completed. SAME original feature/zone/tasks,
+	# original material holder, Scope candidate and finite order publish once.
+	_technology_publish_material_payment(source)
+	feature.ship_build = {"version": 1, "recipe_version": 1, "ship_type": "ferry", "team_id": int(p.team_id), "paid_cost": p.cap.duplicate(true), "total_work": Ships.build_work_seconds("ferry")}
+	feature.technology_shipyard_work = {"version": 1, "settlement_id": settlement_id}
+	feature.technology_ship_method = {"version": 1}
+	feature.technology_settlement_order = current.operation_ref.duplicate()
+	feature.tech_batch = paid
+	feature.production = 0.0
+	feature.batch_paid = true
+	feature.status = "原有限 ferry 已付全料；兩工位、真 F13 一次效率"
+	if not scope.is_empty():
+		feature.tech_trial = scope.token
+		_technology_actions(data).publish_phase_binding(scope.binding)
+		_technology_actions(data).publish_phase_payment(scope.payment)
+	publish_settlement_ship_order(payment)
+	if zone_context.existing: zone_context.zone.active = true
+	else: data.site.zones.append(zone_context.zone)
+	named.workers.publish_assign_feature(named.assignment)
+	return ok("本原有限船體已開始", {"feature": key, "token": scope.get("token", {})})
+
+static func _technology_shipyard_physical_context(data: TerrainData, key: String) -> Dictionary:
+	var feature: Dictionary = data.site.get("features", {}).get(key, {}) if data != null else {}
+	if feature.get("kind") != "shipyard" or feature.get("stage") != "complete" or feature.has("pending_build") or feature.has("repair") \
+		or not feature_usable(feature) or not valid_technology_shipyard_work(feature): return fail("NO_TARGET", "須真已完工可用的原船塢")
+	var waterfront := validate_waterfront(data, feature)
+	if not waterfront.ok: return waterfront
+	var actions: Variant = _technology_actions(data)
+	if actions == null: return fail("UNSUPPORTED", "原聚落人物接線尚未發布")
+	var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	var settlement: Dictionary = data.site.get("settlement", {})
+	var status: Dictionary = settlement_script.call("status", actions.lab)
+	if status.get("effective") != true or int(status.get("level", 0)) < 2: return fail("REQUIREMENTS", "船塢協作需當前有效的原2級聚落")
+	if int(feature.get("owner_faction", -1)) < 0 or int(feature.owner_faction) != int(settlement.get("owner_faction", -2)) \
+		or not bool(settlement_script.call("feature_in_jurisdiction", data, feature)): return fail("NO_AUTHORITY", "原船塢須同管理方且在本聚落管轄內")
+	if technology_shipyard_work_slots(data, feature).size() != 2: return fail("TERRAIN", "原船塢須兩個不同的合法岸上實際工位")
+	return ok("", {"feature": feature, "settlement": settlement})
+
+static func valid_technology_shipyard_work(feature: Dictionary) -> bool:
+	if not feature.has("technology_shipyard_work"): return true
+	var config: Variant = feature.technology_shipyard_work
+	return Technology.keys(config, ["version", "settlement_id"]) and Technology.integer(config.version, 1, 1) \
+		and config.settlement_id is String and not config.settlement_id.is_empty() and config.settlement_id.length() <= 128 \
+		and feature.get("kind") == "shipyard" and Technology.integer(feature.get("layout_version"), BUILDING_LAYOUT_VERSION, BUILDING_LAYOUT_VERSION)
+
+static func valid_settlement_ship_order(data: TerrainData, site: Dictionary, raw: Variant) -> bool:
+	if data == null or not Technology.keys(raw, ["id", "kind", "authorizer_id", "status", "payload", "receipts", "revision"]) \
+		or raw.kind != "ship_cooperation" or not raw.id is String or not raw.id.begins_with("ship_cooperation_") \
+		or not Technology.integer(raw.authorizer_id, 1) or not Technology.integer(raw.revision, 0) \
+		or raw.status not in ["prepared", "active", "suspended", "completed", "cancelled"]: return false
+	var serial := str(raw.id).trim_prefix("ship_cooperation_")
+	if not serial.is_valid_int() or str(int(serial)) != serial or not Technology.integer(int(serial), 1, 2147483645): return false
+	var p: Variant = raw.payload
+	if not Technology.keys(p, ["settlement_id", "feature_id", "operator_id", "helper_id", "carrier_id", "source_feature_id", "donor_id", "ship_type", "team_id", "cap", "spent", "consents", "purpose", "source", "project_id", "delivery_receipts", "completed"]) \
+		or p.settlement_id != site.get("settlement", {}).get("settlement_id") or not p.feature_id is String \
+		or not p.feature_id.is_valid_int() or str(int(p.feature_id)) != p.feature_id or not Technology.integer(int(p.feature_id), 1, int(site.get("next_feature", 1)) - 1) \
+		or p.source_feature_id != p.feature_id or p.ship_type != "ferry" or not Technology.integer(p.team_id, 1) \
+		or not Technology.integer(p.operator_id, 1) or not Technology.integer(p.helper_id, 1) or not Technology.integer(p.carrier_id, 1) \
+		or p.operator_id == p.helper_id or p.carrier_id in [p.operator_id, p.helper_id] \
+		or not Technology.integer(p.project_id, 0) or not Technology.integer(p.completed, 0, 1) \
+		or not p.purpose is String or p.purpose.is_empty() or p.purpose.length() > 2048 \
+		or not p.donor_id is String or not (p.donor_id == "depot" or p.donor_id.begins_with("feature:")) \
+		or not Technology.material_equal(p.cap, Ships.build_cost("ferry")) or not Technology.material_stack(p.spent) \
+		or not p.delivery_receipts is Array or p.delivery_receipts.size() > 2 or not p.consents is Array or p.consents.size() > 3 \
+		or not raw.receipts is Array or raw.receipts.size() != int(p.completed): return false
+	if p.donor_id.begins_with("feature:"):
+		var donor := str(p.donor_id).trim_prefix("feature:")
+		if not donor.is_valid_int() or str(int(donor)) != donor or not Technology.integer(int(donor), 1, int(site.get("next_feature", 1)) - 1) or donor == p.feature_id: return false
+	if not Technology.keys(p.source, ["site_id", "holder", "grantor_id", "status"]) or p.source.site_id != str(site.get("id", "")) \
+		or p.source.holder != "feature:" + str(p.feature_id) or not Technology.integer(p.source.grantor_id, 1) or p.source.status not in ["granted", "revoked"]: return false
+	if p.project_id == 0 and p.purpose != "settlement-ship:" + JSON.stringify([str(site.get("id", "")), str(p.settlement_id), str(raw.id)]): return false
+	var seen := {}
+	for index: int in p.delivery_receipts.size():
+		var r: Variant = p.delivery_receipts[index]
+		var source := str(p.donor_id) if index == 0 else "person:" + str(p.carrier_id)
+		var destination := "person:" + str(p.carrier_id) if index == 0 else "feature:" + str(p.feature_id)
+		if not Technology.keys(r, ["id", "site_id", "carrier_id", "source_holder", "destination_holder", "source_version", "destination_version", "resources"]) \
+			or r.site_id != str(site.get("id", "")) or r.carrier_id != p.carrier_id or r.source_holder != source or r.destination_holder != destination \
+			or not Technology.integer(r.source_version, 0, 2147483645) or not Technology.integer(r.destination_version, 0, 2147483645) \
+			or not Technology.material_equal(r.resources, p.cap) \
+			or r.id != "ship-delivery:" + JSON.stringify([r.site_id, str(raw.id), index, source, destination, int(r.source_version), int(r.destination_version)]) \
+			or seen.has(r.id): return false
+		seen[r.id] = true
+	if p.delivery_receipts.size() == 2 and int(p.delivery_receipts[1].source_version) < int(p.delivery_receipts[0].destination_version) + 1: return false
+	seen.clear()
+	for c: Variant in p.consents:
+		if not Technology.keys(c, ["site_id", "team_id", "person_id", "purpose", "decider_id", "revision", "status"]) \
+			or c.site_id != str(site.get("id", "")) or not Technology.integer(c.team_id, 1) or c.person_id not in [p.operator_id, p.helper_id, p.carrier_id] \
+			or seen.has(c.person_id) or not Technology.integer(c.decider_id, 1) or not Technology.integer(c.revision, 0) or c.status != "accepted" or c.purpose != p.purpose: return false
+		seen[c.person_id] = true
+	var f: Dictionary = site.get("features", {}).get(str(p.feature_id), {})
+	var paid: Dictionary = f.get("tech_batch", {})
+	var bound: bool = f.get("technology_settlement_order", {}) == {"settlement_id": str(p.settlement_id), "order_id": str(raw.id)}
+	if not paid.is_empty() and bound:
+		if not valid_technology_batch(paid, Env.navigation_for_state(data, site), str(p.feature_id)) or paid.recipe_id != "ship:ferry" \
+			or paid.source_holder != p.source.holder or not Technology.material_equal(paid.materials, p.cap) \
+			or paid.operator_id != p.operator_id and (raw.status != "cancelled" or paid.operator_id != 0) \
+			or not f.has("ship_build") or f.get("batch_paid") != true: return false
+		if not Technology.material_equal(p.spent, p.cap) or p.delivery_receipts.size() != 2 or p.completed != 0: return false
+	elif raw.status == "active" or bound and raw.status == "prepared": return false
+	if raw.status == "prepared" and not p.spent.is_empty() or raw.status in ["active", "completed"] and not Technology.material_equal(p.spent, p.cap): return false
+	if raw.status in ["suspended", "cancelled"] and not p.spent.is_empty() and not Technology.material_equal(p.spent, p.cap): return false
+	if (raw.status == "completed") != (p.completed == 1) and raw.status != "cancelled": return false
+	for r: Variant in raw.receipts:
+		if not Technology.keys(r, ["id", "site_id", "shipyard_id", "ship_id", "operator_id", "materials", "work_seconds"]) \
+			or r.site_id != str(site.get("id", "")) or r.shipyard_id != p.feature_id or r.operator_id != p.operator_id \
+			or not r.ship_id is String or not r.ship_id.is_valid_int() or str(int(r.ship_id)) != r.ship_id or not Technology.integer(int(r.ship_id), 1, int(site.get("next_vehicle", 1)) - 1) \
+			or r.id != "ship-output:" + JSON.stringify([r.site_id, str(raw.id), r.ship_id]) \
+			or not Technology.material_equal(r.materials, p.cap) or not Technology.finite_number(r.work_seconds, 0.000000001): return false
+		for other: Variant in site.get("settlement", {}).get("technology_operations", {}).get("orders", {}).values():
+			if not other is Dictionary or other.get("id") == raw.id or other.get("kind") != "ship_cooperation": continue
+			for accepted: Variant in other.get("receipts", []):
+				if accepted is Dictionary and accepted.get("site_id") == r.site_id and accepted.get("ship_id") == r.ship_id: return false
+	return true
+
+static func settlement_ship_work_preflight(data: TerrainData, settlement_id: String, order_id: String, binding: String = "") -> Dictionary:
+	var refs := _settlement_order_state(data, settlement_id, order_id)
+	if refs.is_empty() or not valid_settlement_ship_order(data, data.site, refs.order): return fail("NO_TARGET")
+	var order: Dictionary = refs.order
+	if order.status not in ["prepared", "active", "suspended"] or not binding.is_empty() and binding != "ferry_build": return fail("COMPLETE")
+	var physical := _technology_shipyard_physical_context(data, str(order.payload.feature_id))
+	if not physical.ok: return physical
+	var actions: Variant = _technology_actions(data)
+	var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	var p: Dictionary = order.payload
+	var original_team: Variant = null
+	for identity: int in [int(p.operator_id), int(p.helper_id)]:
+		var person: Dictionary = actions._person(identity)
+		if person.is_empty() or not actions.has_method("technology_settlement_order_person_ready"): return fail("NO_WORKER")
+		var ready: Dictionary = actions.technology_settlement_order_person_ready(person, order)
+		if not ready.ok: return ready
+		if int(person.faction) != int(refs.settlement.get("owner_faction", -1)) or not bool(settlement_script.call("office_person_ok", actions.lab, identity)): return fail("NO_AUTHORITY")
+		var team: Variant = actions._technology_team(person)
+		if team == null or identity == int(actions._technology_controlled()) or original_team != null and not is_same(team, original_team): return fail("NO_WORKER", "本有限船塢單須兩個同原隊 NPC；受控搬料者仍沿原 transfer")
+		original_team = team
+		if not actions._technology_consent_valid(identity, p.consents, str(p.purpose), physical.feature.get("tech_trial", {}), true, order): return fail("NO_CONSENT")
+		if identity == int(p.operator_id) and not Technology.learned(actions._body_get(person, "technology"), "F13"): return fail("NO_SKILL")
+	if not original_team is TerrainArmy and not original_team is CrowdPersonOwner or int(original_team.team_id) != int(p.team_id): return fail("NO_AUTHORITY")
+	if int(p.project_id) == 0:
+		if TechnologyCatalog.get_node("S12").get("enabled") != true or not Technology.scope_known(refs.settlement.get("technology", {}), "S12"): return fail("NO_TECHNOLOGY")
+	else:
+		var project := Technology.active_project(refs.settlement.get("technology", {}))
+		if project.get("id") != p.project_id or project.get("purpose") != p.purpose or project.get("tech_id") != "S12" \
+			or not Technology.same_person_ref(project.get("executor", {}), {"site_id": str(data.site.id), "person_id": int(p.operator_id)}, refs.settlement.technology.get("person_links", [])): return fail("STALE_PROJECT")
+	return ok("原兩人船塢用途資格有效；材料另查原 source", {"settlement": refs.settlement, "operations": refs.operations, "order": order, "feature": physical.feature,
+		"person": actions._person(int(p.operator_id)), "team": original_team, "person_ids": [int(p.operator_id), int(p.helper_id)],
+		"requester_id": int(order.authorizer_id), "controlled_worker": false, "operation_ref": {"settlement_id": settlement_id, "order_id": order_id}, "recipe": "", "cost": p.cap.duplicate(true)})
+
+static func publish_settlement_ship_order(prepared: Dictionary) -> void:
+	if prepared.get("empty") == true: return
+	assert(prepared.ok)
+	var order: Dictionary = prepared.order
+	var candidate: Dictionary = prepared.candidate
+	# Preserve the actual immutable owner/map/order/source refs used by PA CAS.
+	order.payload.source.clear()
+	order.payload.source.merge(candidate.payload.source)
+	var source: Dictionary = order.payload.source
+	order.payload.clear()
+	order.payload.merge(candidate.payload)
+	order.payload.source = source
+	order.status = candidate.status
+	order.revision = int(candidate.revision)
+	order.receipts = candidate.receipts.duplicate(true)
+	if prepared.has("finished_feature"):
+		prepared.finished_feature.erase("technology_settlement_order")
+		prepared.finished_feature.erase("technology_ship_method")
+
+static func validate_prepared_item_transfer(prepared: Dictionary) -> Dictionary:
+	if prepared.get("ok") != true or not prepared.get("terrain") is TerrainData: return fail("INVALID")
+	var data: TerrainData = prepared.terrain
+	if not is_same(data.site, prepared.get("site_state")) or not is_same(data.site.get("item_records"), prepared.get("item_records")) \
+		or not _item_holder_shape(prepared.get("source", {})) or not _item_holder_shape(prepared.get("destination", {})) \
+		or int(prepared.source.version) != int(prepared.source_version) or int(prepared.destination.version) != int(prepared.destination_version) \
+		or not _resource_stack(prepared.resources, false) or not _resource_stack(prepared.source_cargo) or not _resource_stack(prepared.destination_cargo) \
+		or not can_pay(prepared.source_cargo, prepared.resources): return fail("STALE_SOURCE")
+	var size: int = inventory_size(prepared.resources) + prepared.selected.size() - (prepared.retained_slots.size() if prepared.preserve_slots else 0)
+	if carried_load(data.site, prepared.destination_cargo, prepared.destination) + size > int(prepared.capacity): return fail("STORAGE_FULL")
+	for identity: String in prepared.selected:
+		if not prepared.source.item_ids.has(identity) or prepared.destination.item_ids.has(identity) \
+			or data.site.item_records.get(identity, {}).get("holder") != prepared.source.holder: return fail("STALE_SOURCE")
+	for slot: String in prepared.retained_slots:
+		if prepared.source.equipped.get(slot) != prepared.retained_slots[slot] \
+			or prepared.preserve_slots and prepared.destination.equipped.has(slot): return fail("STALE_SOURCE")
+	return ok()
+
+static func _technology_order_record(data: TerrainData, ref: Dictionary) -> Dictionary:
+	if data == null or not Technology.keys(ref, ["nation_id", "order_id"]): return {}
+	var operations: Dictionary = data.site.get("equipment_nations", {}).get(ref.nation_id, {}).get("technology_operations", {})
+	return operations.get("orders", {}).get(ref.order_id, {}) if str(ref.order_id).begins_with("production_") else operations.get("public_orders", {}).get(ref.order_id, {})
+
+static func _technology_military_context(data: TerrainData, ref: Dictionary) -> Dictionary:
+	if not Technology.keys(ref, ["nation_id", "order_id"]) or not ref.nation_id is String or not ref.order_id is String or not ref.order_id.begins_with("production_"): return fail("INVALID")
+	var actions: Variant = _technology_actions(data)
+	if actions == null: return fail("UNSUPPORTED")
+	var orders: Variant = actions.lab.site_controller.equipment_orders
+	if orders == null or not orders.has_method("military_work_preflight"): return fail("UNSUPPORTED", "原有限军工单具名预检尚未接线")
+	var context: Dictionary = orders.military_work_preflight(str(ref.nation_id), str(ref.order_id))
+	if not context.ok: return context
+	var order := _technology_order_record(data, ref)
+	if order.is_empty() or not is_same(context.get("order"), order) or context.get("operation_ref") != ref \
+		or not context.get("person_ids") is Array or context.person_ids.size() != 1 or int(context.person_ids[0]) != int(order.get("operator_id", -1)) \
+		or not is_same(context.get("feature"), data.site.get("features", {}).get(str(order.get("feature_id", "")))): return fail("STALE_ORDER")
+	return context
+
+static func _resume_nation_feature_operation(data: TerrainData, selector: Dictionary, order: Dictionary, preview: bool = false) -> Dictionary:
+	var target_id := str(order.get("payload", {}).get("target_id", order.get("payload", {}).get("feature_id", "")))
+	if not target_id.begins_with("feature:") and target_id.is_valid_int(): target_id = "feature:" + target_id
+	if not target_id.begins_with("feature:"): return fail("NO_TARGET")
+	var key := target_id.trim_prefix("feature:")
+	var feature: Dictionary = data.site.get("features", {}).get(key, {})
+	if feature.is_empty() or feature.get("technology_order", {}) != selector: return fail("NO_TARGET")
+	var ledger: Dictionary = feature.get("tech_batch", {})
+	if ledger.is_empty() or not ledger.get("token", {}).is_empty() \
+		or not validate_technology_target_storage(data, key, feature).ok: return fail("STALE_SOURCE")
+	var work := _technology_feature_resume_work(data, key, feature, selector)
+	if not work.ok: return work
+	if not preview: _technology_publish_feature_resume(data, work)
+	return ok("恢復同一原公共單已付工序", {"target_id": target_id, "resumed": true, "already_working": bool(work.already_working)})
+
+static func _resume_nation_vehicle_operation(data: TerrainData, selector: Dictionary, order: Dictionary, preview: bool = false) -> Dictionary:
+	var target_id := str(order.get("payload", {}).get("target_id", ""))
+	if not target_id.begins_with("vehicle:"): return fail("NO_TARGET")
+	var key := target_id.trim_prefix("vehicle:")
+	var vehicle: Dictionary = data.site.get("vehicles", {}).get(key, {})
+	if vehicle.is_empty() or vehicle.get("technology_order", {}) != selector: return fail("NO_TARGET")
+	var ledger: Dictionary = vehicle.get("tech_batch", {})
+	if ledger.is_empty() or not ledger.get("token", {}).is_empty() or not validate_technology_target_storage(data, key, vehicle, "vehicle").ok: return fail("STALE_SOURCE")
+	var work := _technology_vehicle_resume_work(data, key, vehicle, selector)
+	if not work.ok: return work
+	if not preview and not work.already_working: _technology_publish_named_vehicle(work.named)
+	return ok("恢復同一公共單已付器械", {"target_id": target_id, "resumed": true, "already_working": bool(work.already_working)})
+
+static func _settlement_typed_call(kind: String, operation: String, arguments: Array) -> Variant:
+	var method := _settlement_typed_method(kind, operation)
+	var runtime_script: Script = load("res://scripts/terrain_lab/site_runtime.gd")
+	if method.is_empty() or not runtime_script.has_method(method): return fail("UNSUPPORTED", "此原聚落工單的具體owner操作尚未接線")
+	return runtime_script.callv(method, arguments)
+
+static func settlement_operation_binding_valid(order: Dictionary, binding: String) -> bool:
+	# Root extends this SAME pure typed branch for its metal/reserve operations.
+	# Unknown bindings are rejected, never inferred from a header/source grant.
+	var spec := _settlement_processing_spec(str(order.get("kind", "")))
+	if spec.is_empty():
+		var result: Variant = _settlement_typed_call(str(order.get("kind", "")), "binding", [order, binding])
+		return result is bool and result
+	return not spec.is_empty() and binding == spec.binding
+
+static func settlement_food_existing_paid_source(data: TerrainData, token: Dictionary) -> Dictionary:
+	if data == null or not token.get("target_id") is String or not str(token.target_id).begins_with("settlement-food:"): return fail("NO_TARGET")
+	var parts: Variant = JSON.parse_string(str(token.target_id).trim_prefix("settlement-food:"))
+	if not parts is Array or parts.size() != 3 or parts[0] != str(data.site.id) or parts[1] != token.get("scope_id") \
+		or token.target_id != settlement_food_target(str(parts[0]), str(parts[1]), str(parts[2])): return fail("INVALID_WORK")
+	var paid := settlement_food_paid_source_candidate(data, token, str(parts[2]))
+	if not paid.ok: return paid
+	return ok("真糧食單已付來源", {"target": paid.order, "ledger": paid.paid, "payment_id": str(paid.paid.payment_id),
+		"materials": paid.paid.materials.duplicate(true), "source_holder": str(paid.source_holder), "source_version": int(paid.paid.source_version)})
+
+static func _technology_unbound_ordinary_feature_ledger(feature: Dictionary, ledger: Dictionary) -> bool:
+	# Only the original ordinary cyclic FEATURE batch, never a vehicle, Scope,
+	# Nation/Settlement order or ship. This is a pure target classification;
+	# real person/station/skill/authority/held prefix still come from work_preflight.
+	var kind := str(feature.get("kind", ""))
+	if not FEATURES.has(kind) or not FEATURES[kind].has("cycle") or feature.get("stage") != "complete": return false
+	for marker: String in ["tech_trial", "technology_order", "technology_settlement_order", "settlement_work", "ship_build"]:
+		if feature.has(marker): return false # Malformed present markers are not legacy absence.
+	return Technology.keys(ledger, TECHNOLOGY_BATCH_FIELDS) and Technology.integer(ledger.get("version"), 1, 1) 		and Technology.integer(ledger.get("operator_id"), 1) and ledger.get("token") is Dictionary and ledger.token.is_empty()
+
+static func settlement_spares_recipe_guard(data: TerrainData, identity: int, token: Dictionary = {}, preview: bool = false) -> Dictionary:
+	var checked := settlement_spares_context(data, identity, token)
+	if not checked.ok: return checked
+	var actions: Variant = checked.actions
+	if not token.is_empty():
+		if not actions.has_method("scope_ranged_craft_guard"): return fail("UNSUPPORTED")
+		return actions.scope_ranged_craft_guard(identity, "ballista_spares", token, preview)
+	var current: Dictionary = actions._jobs.get(actions._job_key_for(identity), {})
+	if current.is_empty():
+		if identity != int(actions._technology_controlled()) or actions.is_busy(identity): return fail("NO_AUTHORITY")
+	elif current.get("kind") != "ranged_craft" or current.get("recipe") != "ballista_spares" \
+		or int(current.get("executor_id", -1)) != identity or not is_same(current.get("executor_holder"), checked.person.holder) \
+		or not is_same(current.get("executor_cargo"), checked.person.cargo) or not is_same(current.get("site_state"), data.site): return fail("BUSY")
+	return actions._ranged_craft_context(checked.person)
+
+static func _checked_prefix_named_effort(data: TerrainData, task: Dictionary, target: Dictionary, prefix: Dictionary) -> Dictionary:
+	var ledger: Dictionary = target.get("tech_batch", {})
+	if ledger.is_empty(): return ok("", {"seconds": 0.0})
+	if _technology_unbound_ordinary_feature_ledger(target, ledger) and task.get("action") == "operate" and str(task.get("target", "")).begins_with("feature:"):
+		return ok("原普通批次沿真正目前工位的合法人員續作", {"seconds": float(prefix.productive_seconds)})
+	var identity := int(ledger.get("operator_id", 0))
+	if identity <= 0:
+		if target.has("technology_yard_id") and ledger.token.is_empty() and not target.has("technology_order"):
+			return ok("原普通器械只記本人的真共同實作", {"seconds": float(prefix.productive_seconds)})
+		return ok("", {"seconds": 0.0})
+	var named: Dictionary = prefix
+	if identity != int(prefix.person_id):
+		var owner: Variant = prefix.owner
+		if not owner.has_method("checked_work_prefix_for_task"): return fail("WAITING")
+		named = owner.checked_work_prefix_for_task(task, identity)
+		if _checked_work_prefix_owner(data, named.get("task", {}), identity, named) == null \
+			or not is_same(named.get("plan"), prefix.get("plan")) or named.get("plan_key") != prefix.get("plan_key") \
+			or not is_same(named.get("target_ref"), target): return fail("WAITING", "原具名操作者未覆盖本合法共同前缀")
+	if float(named.get("actual_seconds", 0.0)) + 0.000000001 < float(prefix.get("group_actual_seconds", prefix.actual_seconds)) \
+		or float(named.get("productive_seconds", 0.0)) <= 0.0: return fail("WAITING")
+	# Every original entry publishes only its own unweighted effort. Helpers
+	# may contribute physical work but cannot duplicate the named man's ledger.
+	return ok("", {"seconds": float(prefix.productive_seconds) if identity == int(prefix.person_id) else 0.0})
+
+static func _technology_siege_yard_prefix_guard(data: TerrainData, vehicle: Dictionary, prefix: Dictionary) -> Dictionary:
+	var ground := technology_siege_ground_geometry(data, vehicle)
+	if not ground.ok or not ground.configured: return ok()
+	var owner: Variant = _checked_work_prefix_owner(data, prefix.get("task", {}), int(prefix.get("person_id", 0)), prefix)
+	if owner == null: return fail("STALE_WORK_PREFIX")
+	for raw_id: Variant in prefix.get("allocation", {}).get("participant_effective_seconds", {}):
+		var original: Dictionary = owner.checked_work_prefix_for_task(prefix.task, int(raw_id))
+		if original.is_empty() or _checked_work_prefix_owner(data, original.get("task", {}), int(raw_id), original) == null \
+			or not is_same(original.get("plan"), prefix.get("plan")) or original.get("plan_key") != prefix.get("plan_key") \
+			or not is_same(original.get("target_ref"), vehicle): continue
+		if float(original.get("actual_seconds", 0.0)) + 0.000000001 < float(prefix.get("group_actual_seconds", prefix.actual_seconds)) \
+			or float(original.get("productive_seconds", 0.0)) <= 0.0: continue
+		var facts := _technology_siege_yard_work_facts(data, vehicle, int(raw_id), original)
+		if facts.ok and facts.eligible_skills.has("F11"): return ok()
+	return fail("WAITING", "原六工位共同前綴缺少實際完整作業的F11師傅")
+
+static func prepare_item_transfer(data: TerrainData, source: Dictionary, source_cargo: Dictionary, destination: Dictionary, destination_cargo: Dictionary, resources: Dictionary, item_ids: Array, expected_source_version: int, expected_destination_version: int, capacity: int = CARRY_CAPACITY, preserve_slots: bool = false) -> Dictionary:
+	resources = resources.duplicate() # "Take all" may pass the source cargo itself.
+	if not _item_holder_shape(source) or not _item_holder_shape(destination) or str(source.holder) == str(destination.holder) or is_same(source_cargo, destination_cargo):
+		return fail("INVALID", "物品持有人")
+	if int(source.version) != expected_source_version or int(destination.version) != expected_destination_version:
+		return fail("STALE_SOURCE", "物品來源或接收方已改變，請重新選擇")
+	if int(source.version) >= 2147483646 or int(destination.version) >= 2147483646:
+		return fail("STALE_SOURCE", "物品提交版本已用盡，未轉移")
+	if not _resource_stack(resources, false) or not _resource_stack(source_cargo) or not _resource_stack(destination_cargo):
+		return fail("INVALID", "資源數量")
+	if resources.is_empty() and item_ids.is_empty():
+		return fail("EMPTY")
+	if not can_pay(source_cargo, resources):
+		return fail("EMPTY", "來源數量已不足")
+	var selected := {}
+	var retained_slots := {}
+	for identity: Variant in item_ids:
+		if not identity is String or selected.has(identity) or not source.item_ids.has(identity) or destination.item_ids.has(identity):
+			return fail("INVALID", "物品不存在或重複")
+		var record: Dictionary = data.site.get("item_records", {}).get(identity, {})
+		if str(record.get("holder", "")) != str(source.holder) or not data.site.item_definitions.has(str(record.get("definition", ""))):
+			return fail("STALE_SOURCE", "物品已不在原持有人處")
+		selected[identity] = true
+	for slot: String in source.equipped:
+		if selected.has(source.equipped[slot]):
+			retained_slots[slot] = source.equipped[slot]
+	if preserve_slots:
+		for slot: String in retained_slots:
+			if destination.equipped.has(slot):
+				return fail("OCCUPIED", "接收裝備槽")
+	var added_size := inventory_size(resources) + item_ids.size() - (retained_slots.size() if preserve_slots else 0)
+	if capacity < 0 or carried_load(data.site, destination_cargo, destination) + added_size > capacity:
+		return fail("STORAGE_FULL")
+	if data.item_transfer_guard.is_valid():
+		var guard: Dictionary = data.item_transfer_guard.call(source, destination, resources, item_ids)
+		if not guard.ok: return guard
+	var prepared := ok("原持物转移已完成全部现行预检", {"terrain": data, "site_state": data.site,
+		"source": source, "source_cargo": source_cargo, "destination": destination, "destination_cargo": destination_cargo,
+		"source_version": expected_source_version, "destination_version": expected_destination_version,
+		"resources": resources, "selected": selected, "retained_slots": retained_slots,
+		"preserve_slots": preserve_slots, "capacity": capacity, "item_records": data.site.item_records})
+	var stable := validate_prepared_item_transfer(prepared)
+	return prepared if stable.ok else stable
+
+static func _settlement_order_feature_spec(order: Dictionary, binding: String = "") -> Dictionary:
+	var spec := _settlement_processing_spec(str(order.get("kind", "")))
+	if not spec.is_empty():
+		if not binding.is_empty() and binding != spec.binding: return {}
+		spec.feature_id = str(order.payload.feature_id)
+		return spec
+	if order.get("kind") == "metal_chain":
+		var runtime_script: Script = load("res://scripts/terrain_lab/site_runtime.gd")
+		if not runtime_script.has_method("settlement_metal_spec"): return {}
+		var raw: Variant = runtime_script.call("settlement_metal_spec", order, binding)
+		if not raw is Dictionary or not Technology.keys(raw, ["feature_id", "feature_kind", "recipe", "binding", "cost", "outputs", "seconds"]): return {}
+		var result: Dictionary = raw.duplicate(true)
+		result.feature = str(raw.feature_kind)
+		return result
+	return {}
+
+static func technology_shipyard_work_slots(data: TerrainData, feature: Dictionary) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	if data == null or feature.get("kind") != "shipyard" or not valid_technology_shipyard_work(feature): return result
+	var entrance := int(feature.get("entrance", -1))
+	if not Technology.integer(entrance, 0, data.size.x * data.size.y - 1): return result
+	var first := data.cell_from_index(entrance)
+	var base := data.effective_height(first)
+	if not data.is_walkable(first) or base != int(data.height_levels[entrance]) or int(data.surface_types[entrance]) in [TerrainData.Surface.WATER, TerrainData.Surface.WETLAND]: return result
+	var cells: Array = feature.get("cells", []).duplicate()
+	cells.sort()
+	for index: int in cells:
+		if not Technology.integer(index, 0, data.size.x * data.size.y - 1) or index == entrance: continue
+		var second := data.cell_from_index(index)
+		if absi(second.x - first.x) + absi(second.y - first.y) != 1 or not data.can_step(first, second) \
+			or not data.is_walkable(second) or data.effective_height(second) != base or int(data.height_levels[index]) != base \
+			or int(data.surface_types[index]) in [TerrainData.Surface.WATER, TerrainData.Surface.WETLAND]: continue
+		result.append({"slot": 0, "cell": entrance, "service_cells": feature.cells.duplicate()})
+		result.append({"slot": 1, "cell": index, "service_cells": feature.cells.duplicate()})
+		return result
+	return result
+
+static func valid_settlement_ship_target(data: TerrainData, key: String, feature: Dictionary) -> bool:
+	var ref: Variant = feature.get("technology_settlement_order")
+	if not Technology.keys(ref, ["settlement_id", "order_id"]): return false
+	var refs := _settlement_order_state(data, str(ref.settlement_id), str(ref.order_id))
+	if refs.is_empty() or not valid_settlement_ship_order(data, data.site, refs.order) or refs.order.status in ["prepared", "completed"] \
+		or refs.order.payload.feature_id != key or feature.get("kind") != "shipyard" or not feature.has("ship_build") \
+		or not feature.has("technology_shipyard_work") or not valid_technology_shipyard_work(feature) or feature.get("technology_ship_method") != {"version": 1}: return false
+	var token: Dictionary = feature.get("tech_trial", {})
+	return token.is_empty() and refs.order.payload.project_id == 0 or token.is_empty() and refs.order.status == "cancelled" \
+		or not token.is_empty() and token.get("scope") == "settlement" and token.get("scope_id") == ref.settlement_id and token.get("tech_id") == "S12" \
+		and token.get("project_id") == refs.order.payload.project_id and token.get("purpose") == refs.order.payload.purpose and token.get("person", {}).get("person_id") == refs.order.payload.operator_id
+
+static func normalize_settlement_food_order(raw: Dictionary) -> void:
+	for key: String in ["authorizer_id", "revision"]: raw[key] = int(raw[key])
+	var p: Dictionary = raw.payload
+	for key: String in ["operator_id", "project_id", "quantity", "initial_stock"]: p[key] = int(p[key])
+	p.work_seconds = float(p.work_seconds)
+	p.source.grantor_id = int(p.source.grantor_id)
+	for stack: Dictionary in [p.cap, p.spent]:
+		for key: String in stack: stack[key] = int(stack[key])
+	for consent: Dictionary in p.consents:
+		for key: String in ["team_id", "person_id", "decider_id", "revision"]: consent[key] = int(consent[key])
+	if not p.token.is_empty():
+		for key: String in ["project_id", "epoch", "attempt"]: p.token[key] = int(p.token[key])
+		p.token.person.person_id = int(p.token.person.person_id)
+		for key: String in p.token.materials: p.token.materials[key] = int(p.token.materials[key])
+	if not p.paid.is_empty():
+		for key: String in ["operator_id", "source_version", "carrier_version"]: p.paid[key] = int(p.paid[key])
+		for key: String in p.paid.materials: p.paid.materials[key] = int(p.paid.materials[key])
+		p.paid.token = p.token # Restore ONE original token reference after JSON decode.
+	for receipt: Dictionary in raw.receipts:
+		for key: String in ["operator_id", "quantity", "source_version", "destination_version"]: receipt[key] = int(receipt[key])
+		receipt.work_seconds = float(receipt.work_seconds)
+
+static func normalize_settlement_metal_order(raw: Dictionary) -> void:
+	for field: String in ["authorizer_id", "revision"]: raw[field] = int(raw[field])
+	for field: String in ["operator_id", "carrier_id", "completed", "project_id"]: raw.payload[field] = int(raw.payload[field])
+	raw.payload.source.grantor_id = int(raw.payload.source.grantor_id)
+	for stack: Dictionary in [raw.payload.cap, raw.payload.spent]:
+		for item: String in stack: stack[item] = int(stack[item])
+	for receipt: Dictionary in raw.receipts:
+		for field: String in ["id", "operator_id"]: receipt[field] = int(receipt[field])
+		receipt.work_seconds = float(receipt.work_seconds)
+		for item: String in receipt.resources: receipt.resources[item] = int(receipt.resources[item])
+	for consent: Dictionary in raw.payload.consents:
+		for field: String in ["team_id", "person_id", "decider_id", "revision"]: consent[field] = int(consent[field])
+	for receipt: Dictionary in raw.payload.carry_receipts:
+		for field: String in ["source_version", "destination_version", "person_id"]: receipt[field] = int(receipt[field])
+		for field: String in ["source_cell", "destination_cell", "person_cell"]: receipt[field] = [int(receipt[field][0]), int(receipt[field][1])]
+		receipt.resources.iron = int(receipt.resources.iron)
+		if not receipt.token.is_empty():
+			for field: String in ["project_id", "epoch", "attempt"]: receipt.token[field] = int(receipt.token[field])
+			receipt.token.person.person_id = int(receipt.token.person.person_id)
+			for item: String in receipt.token.materials: receipt.token.materials[item] = int(receipt.token.materials[item])
+
+static func normalize_settlement_processing_order(raw: Dictionary) -> void:
+	if not SETTLEMENT_PROCESSING_KINDS.has(str(raw.get("kind", ""))):
+		_settlement_typed_call(str(raw.get("kind", "")), "normalize", [raw])
+		return
+	for field: String in ["authorizer_id", "revision"]: raw[field] = int(raw[field])
+	for field: String in ["operator_id", "max_batches", "completed", "project_id"]: raw.payload[field] = int(raw.payload[field])
+	raw.payload.source.grantor_id = int(raw.payload.source.grantor_id)
+	for stack: Dictionary in [raw.payload.cap, raw.payload.spent]:
+		for item: String in stack: stack[item] = int(stack[item])
+	for consent: Dictionary in raw.payload.consents:
+		for field: String in ["team_id", "person_id", "decider_id", "revision"]: consent[field] = int(consent[field])
+	for receipt: Dictionary in raw.receipts:
+		for field: String in ["id", "operator_id"]: receipt[field] = int(receipt[field])
+		receipt.work_seconds = float(receipt.work_seconds)
+		for item: String in receipt.resources: receipt.resources[item] = int(receipt.resources[item])
+
+static func normalize_settlement_ship_order(raw: Dictionary) -> void:
+	# Called only after original strict admission; restore the SAME order refs.
+	for field: String in ["authorizer_id", "revision"]: raw[field] = int(raw[field])
+	var p: Dictionary = raw.payload
+	for field: String in ["operator_id", "helper_id", "carrier_id", "team_id", "project_id", "completed"]: p[field] = int(p[field])
+	p.source.grantor_id = int(p.source.grantor_id)
+	for stack: Dictionary in [p.cap, p.spent]:
+		for key: String in stack: stack[key] = int(stack[key])
+	for c: Dictionary in p.consents:
+		for field: String in ["team_id", "person_id", "decider_id", "revision"]: c[field] = int(c[field])
+	for r: Dictionary in p.delivery_receipts:
+		for field: String in ["carrier_id", "source_version", "destination_version"]: r[field] = int(r[field])
+		for key: String in r.resources: r.resources[key] = int(r.resources[key])
+	for r: Dictionary in raw.receipts:
+		r.operator_id = int(r.operator_id)
+		r.work_seconds = float(r.work_seconds)
+		for key: String in r.materials: r.materials[key] = int(r.materials[key])
+
+static func _technology_armor_new_work_guard(data: TerrainData, key: String, feature: Dictionary) -> Dictionary:
+	var recipe := str(feature.get("recipe_id", ""))
+	if recipe not in ["leather_armor", "iron_armor"] or technology_existing_paid_finish(data, key, feature): return ok()
+	return technology_armor_workshop_context(data, key, recipe)
+
+static func _technology_selector_shape(data: TerrainData, selector: Dictionary) -> bool:
+	if selector.is_empty(): return true
+	if Technology.keys(selector, ["token"]): return selector.token is Dictionary and _technology_trial_shape(selector.token, data)
+	if Technology.keys(selector, ["settlement_id", "order_id"]): return selector.settlement_id is String and not selector.settlement_id.is_empty() and selector.order_id is String and not selector.order_id.is_empty()
+	return Technology.keys(selector, ["nation_id", "order_id"]) and selector.nation_id is String and not selector.nation_id.is_empty() \
+		and selector.order_id is String and not selector.order_id.is_empty()
+
+static func _settlement_food_refs(data: TerrainData, settlement_id: String, order_id: String) -> Dictionary:
+	if data == null: return {}
+	var settlement: Dictionary = data.site.get("settlement", {})
+	var operations: Dictionary = settlement.get("technology_operations", {})
+	var order: Dictionary = operations.get("orders", {}).get(order_id, {})
+	if settlement.get("settlement_id") != settlement_id or order.get("kind") != "food_order" \
+		or not valid_settlement_food_order(data, data.site, order): return {}
+	return {"settlement": settlement, "operations": operations, "order": order}
+
+static func settlement_food_target(site_id: String, settlement_id: String, order_id: String) -> String:
+	return "settlement-food:" + JSON.stringify([site_id, settlement_id, order_id])
+
+static func valid_water_allocation_sample(raw: Variant) -> bool:
+	return Technology.keys(raw, ["categories", "allocation", "source_capacity", "total_demand", "total_supply"]) \
+		and raw.categories is Array and raw.allocation is Dictionary and Technology.finite_number(raw.source_capacity) \
+		and Technology.finite_number(raw.total_demand) and Technology.finite_number(raw.total_supply) \
+		and float(raw.total_supply) <= float(raw.source_capacity) + 0.00000001 \
+		and float(raw.total_supply) <= float(raw.total_demand) + 0.00000001
+
+static func water_allocation_sample(data: TerrainData, priority: Array) -> Dictionary:
+	var allocation := _water_allocation_candidate(data, priority)
+	var total_supply := 0.0
+	var total_demand := 0.0
+	for row: Dictionary in allocation.values():
+		total_supply += float(row.supplied)
+		total_demand += float(row.demand)
+	var sources := {}
+	for key: String in data.site.get("water_links", {}):
+		var feature: Dictionary = data.site.features.get(key, {})
+		if feature.is_empty(): continue
+		var source := str(feature.source)
+		if feature.kind == "well":
+			var cell := data.cell_from_index(int(feature.cells[0]))
+			source = "ground:%d:%d" % [floori(float(cell.x) / 16.0), floori(float(cell.y) / 16.0)]
+		sources[source] = 2.0 if feature.kind == "well" else 6.0
+	var capacity := 0.0
+	for amount: float in sources.values(): capacity += amount
+	return {"categories": priority.duplicate(), "allocation": allocation, "source_capacity": capacity,
+		"total_demand": total_demand, "total_supply": total_supply}
+
+static func validate_survey_stakes_storage(data: TerrainData, feature: Dictionary) -> Dictionary:
+	if str(feature.get("kind", "")) != "survey_stakes":
+		return fail("CORRUPT_SAVE", "非原放樣設施含測量欄位") if feature.has("survey_plan") or feature.has("survey_operator") else ok()
+	if not valid_survey_plan(data, feature.get("survey_plan")) or not Technology.valid_ref(feature.get("survey_operator")) \
+		or feature.survey_operator.site_id != str(data.site.get("id", "")) or not feature.get("cells") is Array or feature.cells.size() != 2 \
+		or bool(feature.get("solid", true)) or feature.has("pending_build") or feature.has("repair") \
+		or not Technology.material_equal(feature.get("cost"), {"wood": 2}) or not Technology.finite_number(feature.get("work"), 2.0) or float(feature.work) != 2.0: return fail("CORRUPT_SAVE", "原双樁／完整原幾何方案非法")
+	var cells: Array[int] = []
+	for value: Variant in feature.cells:
+		if not Technology.integer(value, 0, data.size.x * data.size.y - 1) or feature.survey_plan.cells.has(value): return fail("CORRUPT_SAVE", "真樁須在原方案占地外")
+		cells.append(int(value))
+	if absi(data.cell_from_index(cells[0]).x - data.cell_from_index(cells[1]).x) + absi(data.cell_from_index(cells[0]).y - data.cell_from_index(cells[1]).y) != 1: return fail("CORRUPT_SAVE", "原雙樁須相邻")
+	for cell: int in cells:
+		var adjacent := false
+		for direction: Vector2i in TerrainData.DIRECTIONS:
+			var next: Vector2i = data.cell_from_index(cell) + direction
+			if data.contains(next) and feature.survey_plan.cells.has(data.index(next)): adjacent = true
+		if not adjacent: return fail("CORRUPT_SAVE", "真樁須在原方案邊界旁")
+	return ok()
+
+static func _technology_accepted_named_interval(data: TerrainData, task: Dictionary, named_id: int) -> Dictionary:
+	if data == null: return {}
+	if data.has_meta(&"site_work_team"):
+		var ref: Variant = data.get_meta(&"site_work_team")
+		var workers: Variant = ref.get_ref() if ref is WeakRef else null
+		if workers != null and workers.has_method("accepted_interval_participant"):
+			var accepted: Dictionary = workers.accepted_interval_participant(task, named_id)
+			if not accepted.is_empty(): return accepted
+	var actions: Variant = _technology_actions(data)
+	if actions != null and actions.has_method("accepted_controlled_feature_interval"):
+		return actions.accepted_controlled_feature_interval(task, named_id)
+	return {}
+
+static func _settlement_verified_material_source(data: TerrainData, selector: Dictionary, binding: String, cost: Dictionary, source: Dictionary) -> Dictionary:
+	if not Technology.keys(source, TECHNOLOGY_SOURCE_FIELDS) or source.kind != "settlement_order" or not source.holder is String: return fail("STALE_SOURCE")
+	var serial: Variant = JSON.parse_string(str(source.holder).trim_prefix("settlement-order:"))
+	if not serial is Array or serial.size() != 3 or serial[0] != str(data.site.id) or not serial[1] is String or not serial[2] is String \
+		or source.holder != "settlement-order:" + JSON.stringify(serial): return fail("STALE_SOURCE")
+	var ref := {"settlement_id": str(serial[1]), "order_id": str(serial[2])}
+	var actual := settlement_operation_material_source_candidate(data, ref.settlement_id, ref.order_id, binding)
+	if not actual.ok or not _technology_source_equal(actual, source): return fail("STALE_SOURCE")
+	var order: Dictionary = actual.expected_refs.order
+	if selector.has("token"):
+		if selector.token.scope != "settlement" or selector.token.scope_id != ref.settlement_id or selector.token.project_id != order.payload.project_id \
+			or selector.token.purpose != order.payload.purpose or selector.token.person.person_id != order.payload.operator_id: return fail("STALE_PROJECT")
+	elif selector != ref or int(order.payload.project_id) != 0: return fail("NO_AUTHORITY")
+	for item: String in cost:
+		if int(cost[item]) + int(source.spent.get(item, 0)) > int(source.cap.get(item, -1)): return fail("NO_BUDGET")
+	if not can_pay(source.physical_cargo, cost): return fail("MATERIALS", "本具名來源實物不足；營地不代付")
+	return ok("", {"source": source, "holder": source.physical_holder, "cargo": source.physical_cargo, "version": int(source.holder_version), "cost": cost.duplicate(true), "operation_ref": ref})
+
+static func _technology_source_equal(first: Dictionary, second: Dictionary) -> bool:
+	if first.is_empty() or second.is_empty(): return first.is_empty() and second.is_empty()
+	if not Technology.keys(first, TECHNOLOGY_SOURCE_FIELDS) or not Technology.keys(second, TECHNOLOGY_SOURCE_FIELDS): return false
+	for field: String in ["ok", "code", "message", "kind", "holder", "source_site_id", "grantor", "cap", "spent", "holder_version"]:
+		if first[field] != second[field]: return false
+	if not is_same(first.physical_holder, second.physical_holder) or not is_same(first.physical_cargo, second.physical_cargo): return false
+	if not Technology.keys(first.expected_refs, TECHNOLOGY_SOURCE_REFS) or not Technology.keys(second.expected_refs, TECHNOLOGY_SOURCE_REFS): return false
+	for field: String in TECHNOLOGY_SOURCE_REFS:
+		if not is_same(first.expected_refs[field], second.expected_refs[field]): return false
+	return true
+
+static func prepare_settlement_processing_payment(data: TerrainData, selector: Dictionary, cost: Dictionary) -> Dictionary:
+	if selector.is_empty(): return ok("", {"order_ref": {}, "candidate": {}})
+	if not Technology.keys(selector, ["settlement_id", "order_id"]): return fail("INVALID")
+	var refs := _settlement_order_state(data, str(selector.settlement_id), str(selector.order_id))
+	if not refs.is_empty() and not SETTLEMENT_PROCESSING_KINDS.has(str(refs.order.get("kind", ""))):
+		return _settlement_typed_prepare(str(refs.order.get("kind", "")), "payment", [data, selector, cost])
+	var ready := settlement_processing_preflight(data, str(selector.settlement_id), str(selector.order_id))
+	if not ready.ok: return ready
+	if int(ready.order.revision) >= 2147483646: return fail("LIMIT")
+	if not Technology.material_equal(cost, ready.cost) or ready.feature.has("tech_batch") or ready.order.status == "active": return fail("DUPLICATE")
+	var source := settlement_operation_material_source_candidate(data, str(selector.settlement_id), str(selector.order_id))
+	if not source.ok: return source
+	for item: String in cost:
+		if int(source.spent.get(item, 0)) + int(cost[item]) > int(source.cap.get(item, -1)): return fail("NO_BUDGET")
+	var candidate: Dictionary = ready.order.duplicate(true)
+	add_items(candidate.payload.spent, cost)
+	candidate.status = "active"
+	candidate.revision = int(candidate.revision) + 1
+	return ok("", {"state_ref": data.site, "operations_ref": ready.operations, "order_ref": ready.order, "order_before": ready.order.duplicate(true), "candidate": candidate, "source": source})
+
+static func publish_settlement_processing_order(prepared: Dictionary) -> void:
+	if prepared.has("typed_kind"):
+		assert(prepared.ok and prepared.get("typed_publisher") is Callable and prepared.typed_publisher.is_valid())
+		prepared.typed_publisher.call(prepared)
+		return
+	if prepared.order_ref.is_empty(): return
+	assert(prepared.ok and prepared.order_ref == prepared.order_before)
+	# Keep the true map/order/payload/source refs used by accepted jobs and source
+	# callbacks; normalization never invents a second mutable order owner.
+	var original: Dictionary = prepared.order_ref
+	var candidate: Dictionary = prepared.candidate
+	for field: String in ["status", "revision"]: original[field] = candidate[field]
+	for field: String in ["completed", "spent"]: original.payload[field] = candidate.payload[field].duplicate(true) if candidate.payload[field] is Dictionary else candidate.payload[field]
+	original.receipts = candidate.receipts.duplicate(true)
+
+static func _water_consumer_order(data: TerrainData, keys: Array, priority: Array) -> Array[String]:
+	var consumers: Array[String] = ["camp"]
+	for key: String in keys:
+		if str(data.site.features[key].kind) == "house": consumers.append(key)
+	for key: String in keys:
+		if str(data.site.features[key].kind) != "house": consumers.append(key)
+	if priority.is_empty(): return consumers
+	var settlement_script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	var local: Array[String] = []
+	var positions: Array[int] = []
+	for key: String in keys:
+		if int(data.site.features[key].get("owner_faction", -1)) == int(data.site.get("settlement", {}).get("owner_faction", -2)) \
+			and bool(settlement_script.call("feature_in_jurisdiction", data, data.site.features[key])):
+			local.append(key)
+			positions.append(consumers.find(key))
+	# Only the original settlement's consumers receive its chosen order.
+	# Other consumers retain their original positions and relative order.
+	positions.sort()
+	var ordered: Array[String] = []
+	for category: String in priority:
+		for key: String in local:
+			if _water_consumer_category(data.site.features[key]) == category: ordered.append(key)
+	for index: int in positions.size(): consumers[positions[index]] = ordered[index]
+	return consumers
+
+static func _irrigation_prepare_controlled(data: TerrainData, feature: Dictionary, zone: Dictionary) -> Dictionary:
+	var actions: Variant = _technology_actions(data)
+	if actions == null or not actions.has_method("prepare_controlled_feature_work"): return fail("UNSUPPORTED")
+	var request: Dictionary = feature.irrigation.duplicate()
+	request.operator_id = int(actions._technology_controlled())
+	var selector := {"irrigation": request}
+	var admission := technology_irrigation_work_preflight(data, selector)
+	if not admission.ok: return admission
+	var prepared: Dictionary = actions.prepare_controlled_feature_work(selector, feature, zone, "construct")
+	if not prepared.ok: return prepared
+	return ok("", {"workers": null, "assignment": {}, "admission": admission, "controlled": prepared, "actions": actions})
+
+static func technology_irrigation_work_preflight(data: TerrainData, selector: Dictionary, command: bool = true) -> Dictionary:
+	if data == null or bool(data.site.get("paused", false)) or float(data.site.get("combat_left", 0.0)) > 0.0 or _ship_runtime_pending(data): return fail("BUSY")
+	if not Technology.keys(selector, ["irrigation"]) or not Technology.keys(selector.irrigation, IRRIGATION_FIELDS + ["operator_id"]): return fail("INVALID")
+	var request: Dictionary = selector.irrigation
+	var config := request.duplicate()
+	config.erase("operator_id")
+	var actions: Variant = _technology_actions(data)
+	if actions == null or not _irrigation_config(config, data.site) or not Technology.integer(request.operator_id, 1) \
+		or TechnologyCatalog.get_node("S02").get("enabled") != true: return fail("UNIMPLEMENTED")
+	var owner: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	var settlement: Dictionary = owner.call("record", data)
+	if settlement.get("settlement_id") != config.settlement_id or not Technology.scope_known(settlement.get("technology", {}), "S02") \
+		or not owner.call("status", actions.lab).get("effective", false): return fail("NO_TECHNOLOGY")
+	var duty: Dictionary = actions._technology_scope_duty("settlement", settlement, true)
+	if not duty.ok or int(duty.get("decider", -1)) != int(request.operator_id) \
+		or command and int(actions._technology_controlled()) != int(request.operator_id): return fail("NO_AUTHORITY")
+	var person: Dictionary = actions._person(int(request.operator_id))
+	if person.is_empty() or actions._threat(person, {}): return fail("BUSY")
+	var job: Dictionary = actions._jobs.get(actions._job_key_for(int(request.operator_id)), {})
+	var own: bool = not command and job.get("kind") == "technology_feature" and job.get("operation_selector") == selector \
+		and is_same(job.get("technology_executor_body"), person.body) and is_same(job.get("site_state"), data.site)
+	if own:
+		if actions._technology_operator_for_task(job.get("work_task", {}), int(person.person_id)).is_empty(): return fail("BUSY")
+		var original: Dictionary = data.site.features.get(str(job.get("feature_id", "")), {})
+		if not is_same(original, job.get("feature_ref")) or original.get("irrigation") != config: return fail("STALE_SOURCE")
+		var cells: Array[int] = []
+		cells.assign(original.cells)
+		var connection := technology_irrigation_connection(data, cells, config)
+		if not connection.ok: return connection
+	elif not actions._ready(person): return fail("BUSY")
+	if person.get("owner") is CrowdPersonOwner and not person.owner.crowd_site.work_fatigue_work_start_ready(int(person.person_id)): return fail("BUSY")
+	# The ordinary manual route only borrows the actual decision maker himself.
+	# If he is a team member, he must already be that team's real work decider;
+	# this explicit command records his own decision, never an NPC fake approval.
+	var team: Variant = actions._technology_team(person)
+	var physical: Variant = person.get("owner") if person.get("owner") is CrowdPersonOwner else team
+	if person.get("owner") is CrowdPersonOwner:
+		var original: Variant = person.owner._command_owner(int(person.unit))
+		if original is TerrainArmy: team = original
+		elif original is TerrainTestCharacter:
+			if not is_same(original, person.body) or not physical.actors.has(int(person.unit)) or not is_same(physical.actors[int(person.unit)], original): return fail("NO_AUTHORITY")
+			if team != null and (team.index_for_identity(int(person.person_id)) != TerrainArmy.PLAYER_MEMBER or not is_same(team.player_member, original)): return fail("NO_AUTHORITY")
+		else: return fail("NO_AUTHORITY")
+		if team != null and (not team is TerrainArmy or not is_same(team.data, data) or int(team.team_id) != int(physical.team_id) or not physical.crowd_site.owns_original_team(team)): return fail("NO_AUTHORITY")
+	if team != null:
+		if not team is TerrainArmy or not is_same(team.data, data) or int(physical.combat_order if physical is CrowdPersonOwner else team.combat_order) != TerrainArmy.CombatOrder.HOLD: return fail("NO_AUTHORITY")
+		var work_duty: Dictionary = team.duty_resolve_readonly("team.work", physical)
+		if not work_duty.ok or int(work_duty.get("decider", -1)) != int(person.person_id): return fail("NO_CONSENT")
+	return ok("原聚落決策者本人明示渠道作業", {"team": team, "person_ids": [int(person.person_id)], "requester_id": int(person.person_id), "operation_ref": {}, "person": person, "config": config})
+
+static func _irrigation_ref(value: Variant, next_feature: int, empty: bool = false) -> bool:
+	return value is String and (empty and value.is_empty() or value.is_valid_int() and str(int(value)) == value and int(value) >= 1 and int(value) < next_feature)
+
+static func _irrigation_shape(raw: Variant) -> bool:
+	return Technology.keys(raw, IRRIGATION_FIELDS) and Technology.integer(raw.version, 1, 1) \
+		and raw.settlement_id is String and not raw.settlement_id.is_empty() and raw.settlement_id.length() <= 128 \
+		and _irrigation_ref(raw.source_feature_id, 2147483646) and _irrigation_ref(raw.upstream_feature_id, 2147483646, true)
+
+static func _settlement_typed_method(kind: String, operation: String) -> String:
+	# Only explicitly implemented typed owners may supply a delegate. Unknown
+	# headers, kinds and absent hooks do not obtain permission from this map.
+	var prefix: String = str({"metal_chain": "metal", "food_order": "food", "ship_cooperation": "ship"}.get(kind, ""))
+	if str(prefix).is_empty(): return ""
+	var names := {"valid": "valid_settlement_" + str(prefix) + "_order", "normalize": "normalize_settlement_" + str(prefix) + "_order",
+		"preflight": "settlement_" + str(prefix) + "_work_preflight", "source": "settlement_" + str(prefix) + "_material_source_candidate",
+		"paid": "settlement_" + str(prefix) + "_paid_source_candidate", "payment": "prepare_settlement_" + str(prefix) + "_payment",
+		"output": "prepare_settlement_" + str(prefix) + "_output", "publish": "publish_settlement_" + str(prefix) + "_order",
+		"work": "settlement_" + str(prefix) + "_work_context", "binding": "settlement_" + str(prefix) + "_binding_valid"}
+	return str(names.get(operation, ""))
+
+static func settlement_metal_binding_valid(order: Dictionary, binding: String) -> bool:
+	var p: Dictionary = order.get("payload", {})
+	if int(p.get("completed", -1)) == 1 and p.get("carry_receipts", []).size() < 2: return binding == "transfer"
+	return not settlement_metal_spec(order, binding).is_empty()
+
+static func _settlement_metal_prepared(data: TerrainData, refs: Dictionary, candidate: Dictionary) -> Dictionary:
+	if int(refs.order.revision) >= 2147483646: return fail("LIMIT")
+	candidate.revision = int(refs.order.revision) + 1
+	return ok("", {"state_ref": data.site, "operations_ref": refs.operations, "order_ref": refs.order, "order_before": refs.order.duplicate(true), "candidate": candidate})
+
+static func settlement_metal_paid_source_candidate(data: TerrainData, token: Dictionary, order_id: String) -> Dictionary:
+	if data == null or not _technology_trial_shape(token, data) or token.scope != "settlement" or token.tech_id != "S04": return fail("INVALID")
+	var refs := _settlement_order_state(data, str(token.scope_id), order_id)
+	if refs.is_empty() or not valid_settlement_metal_order(data, data.site, refs.order): return fail("STALE_SOURCE")
+	var p: Dictionary = refs.order.payload
+	if p.project_id != token.project_id or p.purpose != token.purpose or p.operator_id != token.person.person_id: return fail("STALE_PROJECT")
+	if token.binding == "transfer":
+		if p.carry_receipts.size() != 1 or p.carry_receipts[0].token != token: return fail("NO_PAYMENT")
+		return ok("原已搬出鐵仍由本單唯一實際轉運歷史證明", {"kind": "settlement_order", "holder": "settlement-order:" + JSON.stringify([str(data.site.id), str(token.scope_id), order_id]),
+			"source_site_id": str(data.site.id), "grantor": {"site_id": str(data.site.id), "person_id": int(p.source.grantor_id)}, "cap": p.cap.duplicate(true), "spent": p.spent.duplicate(true),
+			"settlement": refs.settlement, "operations": refs.operations, "order": refs.order, "target": data.site.get("features", {}).get(str(p.smelter_id), {}), "paid": p.carry_receipts[0], "source_holder": "feature:" + p.smelter_id})
+	var target: Dictionary = data.site.get("features", {}).get(str(p.feature_id), {})
+	var paid: Dictionary = target.get("tech_batch", {})
+	var spec := settlement_metal_spec(refs.order, str(token.binding))
+	if spec.is_empty() or token.target_id != "feature:" + p.feature_id or target.get("technology_settlement_order", {}) != {"settlement_id": str(token.scope_id), "order_id": order_id} \
+		or not is_same(target.get("tech_trial"), token) or paid.get("token", {}) != token or not valid_technology_batch(paid, data, str(p.feature_id)) \
+		or not Technology.material_equal(paid.materials, spec.cost) or paid.source_holder != p.source.holder: return fail("STALE_SOURCE")
+	return ok("原已付批次只核真目標/工單/原ledger，不再讀活料", {"kind": "settlement_order", "holder": "settlement-order:" + JSON.stringify([str(data.site.id), str(token.scope_id), order_id]),
+		"source_site_id": str(data.site.id), "grantor": {"site_id": str(data.site.id), "person_id": int(p.source.grantor_id)}, "cap": p.cap.duplicate(true), "spent": p.spent.duplicate(true),
+		"settlement": refs.settlement, "operations": refs.operations, "order": refs.order, "target": target, "paid": paid, "source_holder": str(paid.source_holder)})
+
+static func _settlement_metal_cell(raw: Variant) -> bool:
+	return raw is Array and raw.size() == 2 and Technology.integer(raw[0], 0) and Technology.integer(raw[1], 0)
+
+static func _settlement_metal_feature_id(site: Dictionary, raw: Variant) -> bool:
+	return raw is String and raw.is_valid_int() and str(int(raw)) == raw and Technology.integer(int(raw), 1, int(site.get("next_feature", 1)) - 1)
+
+static func _settlement_metal_receipt(site: Dictionary, receipt: Variant, key: String, person: int, output: Dictionary, seconds: float) -> bool:
+	return Technology.keys(receipt, TECHNOLOGY_OUTPUT_FIELDS) and Technology.integer(receipt.id, 1) and receipt.site_id == str(site.get("id", "")) \
+		and receipt.feature_id == key and receipt.operator_id == person and receipt.recipe_id == "" and Technology.material_equal(receipt.resources, output) \
+		and receipt.item_ids is Array and receipt.item_ids.is_empty() and Technology.finite_number(receipt.work_seconds, seconds)
+
+static func publish_settlement_food_transfer(prepared: Dictionary) -> Dictionary:
+	# Only a just-validated synchronous owner candidate enters this tail.
+	# Real transfer FIRST; no callback, guard, phase reprepare or timer advance after.
+	if bool(prepared.get("published", false)): return ok("同原糧食腿已發布", {"duplicate": true})
+	prepared.published = true
+	var transfer_result := publish_item_transfer(prepared.transfer)
+	var order: Dictionary = prepared.order
+	var p: Dictionary = prepared.payload
+	var leg: String = prepared.leg
+	var receipt := {"id": JSON.stringify([str(prepared.site.id), str(p.settlement_id), str(order.id), leg]), "kind": leg,
+		"operator_id": int(p.operator_id), "from": str(p.source.holder) if leg == "load" else "person:" + str(int(p.operator_id)),
+		"to": "person:" + str(int(p.operator_id)) if leg == "load" else "feature:" + str(p.warehouse_id), "quantity": int(p.quantity),
+		"source_version": int(transfer_result.source_version), "destination_version": int(transfer_result.destination_version), "work_seconds": 0.0}
+	order.receipts.append(receipt)
+	order.status = "active"
+	order.revision = int(order.revision) + 1
+	if leg == "load":
+		p.stage = "carrier"
+		p.spent = {"grain": int(p.quantity)}
+		p.token = prepared.token
+		p.paid = {"token": p.token, "payment_id": str(prepared.scope_payment.payment_id) if not prepared.scope_payment.is_empty() else receipt.id,
+			"operator_id": int(p.operator_id), "materials": p.spent.duplicate(true), "source_holder": str(p.source.holder),
+			"source_version": int(transfer_result.source_version), "carrier_version": int(transfer_result.destination_version)}
+		if not prepared.scope_payment.is_empty(): prepared.actions.publish_phase_payment(prepared.scope_payment)
+	else:
+		p.stage = "arrived"
+		prepared.actions.publish_settlement_food_work(prepared.work)
+	prepared.data.environment_revision += 1
+	return ok("真實物已由原持有人完成這一腿；不再扣來源", {"leg": leg, "quantity": int(p.quantity)})
+
+static func validate_settlement_food_transfer(prepared: Dictionary) -> Dictionary:
+	if not prepared.get("ok", false) or prepared.get("published", true) or not is_same(prepared.data.site, prepared.site): return fail("STALE_SOURCE")
+	var refs := _settlement_food_refs(prepared.data, str(prepared.payload.settlement_id), str(prepared.order.id))
+	if refs.is_empty() or not is_same(refs.settlement, prepared.settlement) or not is_same(refs.operations, prepared.operations) \
+		or not is_same(refs.order, prepared.order) or not is_same(refs.order.payload, prepared.payload) \
+		or int(refs.order.revision) != int(prepared.order_revision): return fail("STALE_SOURCE")
+	var repeated := prepare_settlement_food_transfer(prepared.data, str(prepared.payload.settlement_id), str(prepared.order.id), str(prepared.leg), int(prepared.requester_id), prepared.token)
+	if not repeated.ok: return repeated
+	for key: String in ["source", "source_cargo", "destination", "destination_cargo"]:
+		if not is_same(repeated.transfer[key], prepared.transfer[key]): return fail("STALE_SOURCE")
+	if repeated.transfer.source_version != prepared.transfer.source_version or repeated.transfer.destination_version != prepared.transfer.destination_version \
+		or repeated.transfer.resources != prepared.transfer.resources: return fail("STALE_SOURCE")
+	if prepared.leg == "arrive":
+		for key: String in ["executor_body", "terrain", "site_state", "food_settlement", "food_operations", "food_order", "food_warehouse", "food_holder", "food_cargo", "nation_token"]:
+			if not is_same(prepared.work.job[key], repeated.work.job[key]): return fail("STALE_SOURCE")
+		if prepared.work.job.executor_hit != repeated.work.job.executor_hit or prepared.work.job.executor_cell != repeated.work.job.executor_cell \
+			or prepared.work.job.elapsed != repeated.work.job.elapsed or not is_same(prepared.work.jobs, repeated.work.jobs): return fail("STALE_SOURCE")
+	if not prepared.scope_payment.is_empty() and (not is_same(prepared.scope_payment.record, repeated.scope_payment.record) or prepared.scope_payment.state != repeated.scope_payment.state): return fail("STALE_PROJECT")
+	return validate_prepared_item_transfer(prepared.transfer)
+
+static func technology_public_output_candidate(data: TerrainData, target: Dictionary, event: Dictionary, prospective: bool = true) -> Dictionary:
+	if data == null or not target.has("technology_order") or not target.get("tech_trial", {}).is_empty() \
+		or not Technology.keys(event, ["id", "site_id", "target_id", "operator_id", "binding", "work_seconds", "item_ids", "outputs", "materials"]): return fail("INVALID_RECEIPT")
+	var ref: Dictionary = target.technology_order
+	var nation: Dictionary = data.site.get("equipment_nations", {}).get(ref.nation_id, {})
+	var order: Dictionary = nation.get("technology_operations", {}).get("public_orders", {}).get(ref.order_id, {})
+	if order.is_empty() or int(order.get("project_id", -1)) != 0 or not Technology.scope_known(nation.get("technology", {}), str(order.tech_id)): return fail("STALE_PROJECT")
+	var key := str(event.target_id).get_slice(":", 1)
+	var kind := "vehicle" if str(event.target_id).begins_with("vehicle:") else "feature"
+	if not is_same(data.site.get("vehicles" if kind == "vehicle" else "features", {}).get(key), target): return fail("STALE_SOURCE")
+	var ledger: Dictionary = target.get("tech_batch", {})
+	if ledger.is_empty() or not valid_technology_batch(ledger, data, key, kind) or not ledger.token.is_empty() \
+		or event.site_id != str(data.site.id) or event.id != ledger.payment_id or int(event.operator_id) != int(ledger.operator_id) \
+		or not Technology.finite_number(event.work_seconds, 0.000000001) or not is_equal_approx(float(event.work_seconds), float(ledger.work_seconds)) \
+		or not Technology.material_equal(event.materials, ledger.materials) or not event.item_ids is Array or not Technology.material_stack(event.outputs): return fail("INVALID_RECEIPT")
+	var checked := validate_technology_order_storage(data, key, target, kind)
+	if not checked.ok: return checked
+	var binding := "house_build" if order.tech_id == "N06" else "road_build"
+	if order.tech_id == "N11": binding = "ballista_build" if order.payload.route == "siege" else "iron_armor"
+	if event.binding != binding: return fail("INVALID_RECEIPT")
+	if kind == "vehicle":
+		if target.kind != "ballista" or target.get("phase") != "building" or target.get("build", {}).is_empty() \
+			or float(target.build.progress) + 0.00000001 < float(target.build.total_work) or not event.item_ids.is_empty() or not event.outputs.is_empty(): return fail("WAITING")
+	elif TECHNOLOGY_BUILD_BINDINGS.has(binding):
+		if float(target.get("progress", 0.0)) + 0.00000001 < float(target.get("work", 1.0)) or not event.item_ids.is_empty() or not event.outputs.is_empty(): return fail("WAITING")
+	else:
+		var definition := feature_recipe(target)
+		if definition.is_empty() or not definition.has("cycle") or not bool(target.get("batch_paid", false)) \
+			or float(target.get("production", 0.0)) + 0.00000001 < float(definition.cycle) \
+			or not Technology.material_equal(event.materials, definition.get("input", {})) or not Technology.material_equal(event.outputs, definition.get("output", {})): return fail("WAITING")
+		var products := _technology_output_products(definition)
+		if products.size() != event.item_ids.size(): return fail("INVALID_RECEIPT")
+		for index: int in products.size():
+			var item_id := str(int(data.site.get("next_item", 0)) + index)
+			if not prospective or event.item_ids[index] != item_id or data.site.get("item_records", {}).has(item_id): return fail("STALE_SOURCE")
+	return ok("原公共單本次完整實際付費／具名工作／真序號產出候選")
+
+static func _settlement_ship_named_candidate(data: TerrainData, current: Dictionary, token: Dictionary, zone: Dictionary) -> Dictionary:
+	var actions: Variant = _technology_actions(data)
+	var workers: Variant = actions.lab.site_controller.work_team
+	var result: Dictionary = workers.prepare_assign_feature(current.team, current.person_ids, int(current.requester_id), str(current.order.payload.feature_id), "operate", current.feature, current.operation_ref, zone, token)
+	return ok("", {"workers": workers, "assignment": result}) if result.get("ok") == true else result
+
+static func _settlement_ship_publish_resume(data: TerrainData, prepared: Dictionary) -> void:
+	assert(prepared.ok)
+	if prepared.already: return
+	if prepared.existing: prepared.zone.active = true
+	else: data.site.zones.append(prepared.zone)
+	prepared.named.workers.publish_assign_feature(prepared.named.assignment)
+
+static func _settlement_ship_resume_candidate(data: TerrainData, current: Dictionary, token: Dictionary) -> Dictionary:
+	var feature: Dictionary = current.feature
+	var key := str(current.order.payload.feature_id)
+	var context := _settlement_ship_zone(data, key, feature)
+	var actions: Variant = _technology_actions(data)
+	var matching := 0
+	for identity: int in current.person_ids:
+		var person: Dictionary = actions._person(identity)
+		var task: Dictionary = person.body.get("work_task", {}) if person.body is Dictionary else {}
+		if task.is_empty(): continue
+		if not SiteWorkTeam.valid_task(data, data.site, task) or task.get("version") != 3 or task.get("operation_ref") != current.operation_ref \
+			or task.get("target") != "feature:" + key or task.get("action") != "operate" \
+			or not actions.lab.site_controller.work_team.is_assigned(identity): return fail("BUSY")
+		matching += 1
+	if matching == 2 and context.existing and context.zone.active: return ok("原兩個真任務已在", {"already": true})
+	if matching > 0: return fail("BUSY", "須先停止本單殘留派工，再同次重派兩工位")
+	var named := _settlement_ship_named_candidate(data, current, token, context.zone)
+	if not named.ok: return named
+	return ok("原已付船體兩工位可真重派", {"already": false, "zone": context.zone, "existing": context.existing, "named": named})
+
+static func prepare_settlement_ship_payment(data: TerrainData, selector: Dictionary, cost: Dictionary) -> Dictionary:
+	var current := settlement_ship_work_preflight(data, str(selector.get("settlement_id", "")), str(selector.get("order_id", "")), "ferry_build")
+	if not current.ok: return current
+	if not Technology.material_equal(cost, current.order.payload.cap) or not current.order.payload.spent.is_empty(): return fail("NO_BUDGET")
+	var candidate: Dictionary = current.order.duplicate(true)
+	candidate.payload.spent = cost.duplicate(true)
+	candidate.status = "active"
+	candidate.revision = int(candidate.revision) + 1
+	if not Technology.integer(candidate.revision, 1): return fail("LIMIT")
+	return ok("原有限單付款候選；原 Runtime 同尾採用 paid ship_build", {"settlement": current.settlement, "operations": current.operations, "order": current.order, "candidate": candidate})
+
+static func _technology_vehicle_resume_work(data: TerrainData, key: String, vehicle: Dictionary, selector: Dictionary) -> Dictionary:
+	if not is_same(data.site.get("vehicles", {}).get(key), vehicle): return fail("STALE_SOURCE")
+	if vehicle.has("technology_yard_id"):
+		var actual_ground := technology_siege_ground_geometry(data, vehicle)
+		if not actual_ground.ok: return actual_ground
+		var current_ground := technology_siege_yard_context(data, str(actual_ground.key)) if actual_ground.configured else _technology_siege_ground_context(data, str(actual_ground.key))
+		if not current_ground.ok: return current_ground
+	var selected := _technology_named_admission(data, selector)
+	if not selected.ok: return selected
+	var admitted: Dictionary = selected.admission
+	if admitted.get("person_ids", []).size() != 1: return fail("NO_WORK_SLOTS")
+	var actions: Variant = _technology_actions(data)
+	var person: Dictionary = actions._person(int(admitted.person_ids[0]))
+	if person.is_empty(): return fail("INVALID_MEMBER")
+	var job: Dictionary = actions._jobs.get(actions._job_key_for(int(person.person_id)), {})
+	var task: Dictionary = job.get("work_task", {}) if job.get("kind") == "technology_vehicle" else person.body.get("work_task", {}) if person.body is Dictionary else {}
+	if not task.is_empty():
+		if not SiteWorkTeam.valid_task(data, data.site, task) or task.get("version") != 3 or task.get("named") != true \
+			or task.get("target") != "vehicle:" + key or task.get("action") != "construct" or task.get("zone") != -1 \
+			or task.get("operation_ref") != admitted.operation_ref: return fail("BUSY")
+		if job.get("kind") == "technology_vehicle":
+			if not is_same(job.get("technology_executor_body"), person.body) or not is_same(job.get("site_state"), data.site) \
+				or not is_same(job.get("vehicle_ref"), vehicle) or not is_same(job.get("build_ref"), vehicle.get("build")): return fail("STALE_SOURCE")
+			if selector.has("token") and not is_same(job.get("operation_selector", {}).get("token"), selector.token): return fail("STALE_PROJECT")
+		elif not actions.lab.site_controller.work_team.is_assigned(int(person.person_id)) or not is_same(person.owner, admitted.team): return fail("BUSY")
+		return ok("原具名器械工作已存在", {"already_working": true, "named": {}})
+	var named := _technology_prepare_named_vehicle(data, key, vehicle, selector)
+	if not named.ok: return named
+	return ok("原已付器械可重新派回本人", {"already_working": false, "named": named})
+
+static func settlement_food_paid_source_candidate(data: TerrainData, token: Dictionary, order_id: String) -> Dictionary:
+	var refs := _settlement_food_refs(data, str(token.get("scope_id", "")), order_id)
+	if refs.is_empty() or not _settlement_food_token(data, token, refs.order): return fail("STALE_SOURCE")
+	var p: Dictionary = refs.order.payload
+	if p.stage == "prepared" or not is_same(p.token, token) or not is_same(p.paid.token, token): return fail("STALE_SOURCE")
+	return ok("原糧食單實付歷史；不讀已消耗或已失效來源庫存", {"kind": "settlement_order",
+		"holder": "settlement-order:" + JSON.stringify([str(data.site.id), str(token.scope_id), order_id]), "source_site_id": str(data.site.id),
+		"grantor": {"site_id": str(data.site.id), "person_id": int(p.source.grantor_id)}, "cap": p.cap.duplicate(true), "spent": p.spent.duplicate(true),
+		"settlement": refs.settlement, "operations": refs.operations, "order": refs.order, "target": refs.order, "paid": p.paid, "source_holder": str(p.paid.source_holder)})
+
+static func publish_checked_work_prefix(prepared: Dictionary) -> void:
+	assert(prepared.ok and not prepared.published and is_same(prepared.data.site, prepared.site))
+	assert(is_equal_approx(float(prepared.unit.get(prepared.field, 0.0)), float(prepared.prior_progress)))
+	if not prepared.payment.is_empty():
+		assert(int(prepared.payment.holder.version) == int(prepared.payment.version))
+		add_items(prepared.payment.cargo, prepared.payment.cost, -1)
+		prepared.payment.holder.version = int(prepared.payment.version) + 1
+		prepared.target.tech_batch = prepared.ledger
+		prepared.target.batch_paid = true
+	prepared.unit[prepared.field] = float(prepared.progress)
+	if not prepared.ledger.is_empty():
+		prepared.ledger.work_seconds = float(prepared.ledger_seconds)
+		prepared.ledger.operator_id = int(prepared.ledger_operator_id)
+	if prepared.endpoint == "feature" and prepared.task.action == "construct" and not prepared.target.has("pending_build"): prepared.target.stage = "building"
+	if not prepared.repair.is_empty():
+		prepared.unit.applied = float(prepared.repair.applied)
+		if prepared.endpoint == "ship_repair":
+			assert(int(prepared.target.holder.version) == int(prepared.repair.holder_version) and int(prepared.target.revision) == int(prepared.repair.revision))
+			add_items(prepared.target.cargo, prepared.repair.consumed, -1)
+			prepared.target.naval.hp = float(prepared.repair.hp)
+			prepared.target.holder.version = int(prepared.repair.holder_version) + 1
+			prepared.target.revision = int(prepared.repair.revision) + 1
+		else: prepared.target.hp = float(prepared.repair.hp)
+	# Preserve the original manual shape; it reports through site.notices.
+	if not is_same(prepared.task, prepared.site.get("manual", {})):
+		prepared.task.status = "原已核定工作前缀已提交；完成端点待原当前资格验收" if prepared.deferred_endpoint else "原工作者施工中"
+	prepared.data.environment_revision += 1
+	prepared.published = true
+
+# Called AFTER Native publication, with current original life/authority checks.
+# Rejection retains the already paid completed progress for a real zero retry.
+
+static func settle_checked_work_prefix(prepared: Dictionary) -> Dictionary:
+	if not prepared.get("published", false) or not prepared.get("deferred_endpoint", false): return ok("尚未完成")
+	var data: TerrainData = prepared.data
+	var actions: Variant = _technology_actions(data)
+	var person: Dictionary = actions._technology_operator_for_task(prepared.task, int(prepared.identity)) if actions != null else {}
+	if person.is_empty(): return fail("WAITING", "已付完成进度保留，等待原当前合法工人验收")
+	if prepared.endpoint == "siege":
+		return advance_siege_work(data, str(prepared.target.id), str(prepared.task.action), 0.0, person.cell, int(prepared.task.work_slot), int(prepared.target.team_id), prepared.task, int(prepared.identity))
+	if prepared.endpoint == "ship_repair":
+		return advance_ship_repair_work(data, str(prepared.target.id), 0.0, person.cell, int(prepared.task.work_slot), int(prepared.target.team_id))
+	if is_same(prepared.task, data.site.get("manual", {})):
+		# Use the existing manual harvest endpoint, never the worker.mode path.
+		_work(data, 0.0, false, true, prepared.start.occupied, Callable(), null, null, CARRY_CAPACITY, int(prepared.start.carry_limit), int(prepared.start.faction), true, int(prepared.identity))
+	else:
+		_work(data, 0.0, true, false, prepared.start.occupied, Callable(), prepared.task, prepared.start.cargo, int(prepared.start.carry_limit), CARRY_CAPACITY, int(prepared.start.faction), true, int(prepared.identity))
+	return ok("原当前完成端点已重验", {"complete": str(prepared.task.get("target", "")).is_empty()})
+
+# Original finite N05 order / local-stock manufacture. No new order owner.
+
+static func finish_checked_work_clock(data: TerrainData, checked_clock: Dictionary, occupied: Callable = Callable()) -> void:
+	if checked_clock.is_empty() or bool(checked_clock.get("consumed", false)): return
+	var ref: Variant = data.get_meta(&"site_controller", null) if data.has_meta(&"site_controller") else null
+	var original: Variant = ref.get_ref() if ref is WeakRef else null
+	assert(original != null and checked_clock.get("owner") == original and bool(checked_clock.get("advanced", false)) and original.valid_checked_runtime_clock(checked_clock, float(checked_clock.seconds)))
+	checked_clock.consumed = true
+	# ORIGINAL point is clipped at its next minute. Work endpoints have already
+	# settled with current people; these are original discrete clock endpoints.
+	if bool(checked_clock.ship_build_due): advance_ship_builds(data, occupied)
+	if bool(checked_clock.minute_due):
+		_regenerate(data, occupied)
+		allocate_water(data)
+
+static func valid_feature_repair_candidate(data: TerrainData, feature: Dictionary, repair: Variant) -> bool:
+	if not Technology.keys(repair, ["part", "amount", "cost", "work", "progress", "work_cell"]) or not repair.part is String \
+		or not feature.get("parts", {}).has(repair.part) or feature.get("stage") != "complete" or feature.has("pending_build") \
+		or not Technology.material_stack(repair.cost) or not Technology.integer(repair.work_cell, 0, data.size.x * data.size.y - 1): return false
+	var part: Dictionary = feature_geometry(data, feature).parts[str(repair.part)]
+	if not _building_number(repair.amount, 0.000000001, float(part.max_hp)) or not _building_number(repair.work, 0.000000001, 1000000000.0) \
+		or not _building_number(repair.progress, 0.0, float(repair.work)) or not _repair_contact(data, feature, part, data.cell_from_index(int(repair.work_cell))): return false
+	var terms := _repair_terms(feature, part, float(repair.amount))
+	return Technology.material_equal(terms.cost, repair.cost) and is_equal_approx(float(terms.work), float(repair.work))
+
+static func _water_consumer_category(feature: Dictionary) -> String:
+	var kind := str(feature.get("kind", ""))
+	if kind == "house": return "house"
+	if kind in FARM_KINDS + PASTURE_KINDS: return "farm"
+	return "workshop"
+
+static func stop_settlement_ship_order(data: TerrainData, settlement_id: String, order_id: String, requester_id: int, permanent: bool = false, preview: bool = false) -> Dictionary:
+	var refs := _settlement_order_state(data, settlement_id, order_id)
+	var actions: Variant = _technology_actions(data)
+	var script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	if refs.is_empty() or actions == null or not valid_settlement_ship_order(data, data.site, refs.order): return fail("NO_TARGET")
+	if requester_id != int(actions._technology_controlled()) or requester_id != int(script.call("head_executor", actions.lab)): return fail("NO_AUTHORITY")
+	if refs.order.status not in ["prepared", "active", "suspended"]: return fail("COMPLETE")
+	var f: Dictionary = data.site.features.get(str(refs.order.payload.feature_id), {})
+	if f.has("tech_trial"): return fail("SCOPE_STOP_REQUIRED", "先沿原 Scope stop/release；不代撤原研究權限")
+	if int(refs.order.revision) >= 2147483646: return fail("LIMIT")
+	if preview: return ok("只停本原兩工位／有限單；已付料與真進度保留，不退至營地")
+	var workers: Variant = actions.lab.site_controller.work_team
+	for identity: int in [int(refs.order.payload.operator_id), int(refs.order.payload.helper_id)]:
+		var person: Dictionary = actions._person(identity)
+		var task: Dictionary = person.body.get("work_task", {}) if person.get("body") is Dictionary else {}
+		if task.get("operation_ref") == {"settlement_id": settlement_id, "order_id": order_id} and task.get("target") == "feature:" + str(refs.order.payload.feature_id): workers.cancel(identity)
+	_stop_feature_zones(data, str(refs.order.payload.feature_id), "operate")
+	refs.order.status = "cancelled" if permanent else "suspended"
+	refs.order.revision = int(refs.order.revision) + 1
+	if permanent:
+		refs.order.payload.source.status = "revoked"
+		if not f.get("tech_batch", {}).is_empty(): f.tech_batch.operator_id = 0
+	return ok("原船塢有限單已停止；原實物付款與進度保留")
+
+const IRRIGATION_FIELDS := ["version", "settlement_id", "source_feature_id", "upstream_feature_id"]
+
+const IRRIGATION_SERVICE_RADIUS := 2
+
+const IRRIGATION_MAX_CELLS := 36
+
+const SETTLEMENT_PROCESSING_KINDS := {
+	"charcoal_batch": {"tech_id": "S03", "feature": "charcoal", "recipe": "controlled_fire", "binding": "charcoal", "skill": "F03", "max_batches": 3, "cost": {"wood": 4}, "outputs": {"charcoal": 2}, "seconds": 540.0},
+	"textile_batch": {"tech_id": "S05", "feature": "weaver", "recipe": "wool_cloth", "binding": "wool_cloth", "skill": "F06", "max_batches": 2, "cost": {"wool": 3}, "outputs": {"cloth": 2}, "seconds": 900.0},
+}
+
+const SETTLEMENT_METAL_CAP := {"iron_ore": 3, "charcoal": 3, "wood": 1, "iron": 4}
+
+const SETTLEMENT_METAL_CARRY_FIELDS := ["leg", "source_holder", "destination_holder", "source_version", "destination_version", "source_cell", "destination_cell", "person_cell", "person_id", "resources", "payment_id", "token"]
+
+const FAMILY_CONSTRUCTION_METHOD_KINDS := ["house", "stone_wall", "gate", "wall_stairs", "siege_ladder", "bridge"]
+
+const TECHNOLOGY_SOURCE_FIELDS := ["ok", "code", "message", "kind", "holder", "source_site_id", "grantor", "cap", "spent", "physical_holder", "physical_cargo", "holder_version", "expected_refs"]
+
+const TECHNOLOGY_SOURCE_REFS := ["terrain", "site", "nation", "operations", "order", "holder", "cargo"]
+
+static func _technology_siege_yard_ordinary_completion(data: TerrainData, vehicle: Dictionary, identity: int) -> Dictionary:
+	var ledger: Dictionary = vehicle.get("tech_batch", {})
+	if not vehicle.has("technology_yard_id") or not vehicle.get("tech_trial", {}).is_empty() or vehicle.has("technology_order"): return ok("", {"phase": {}, "event": {}})
+	var actions: Variant = _technology_actions(data)
+	var person: Dictionary = actions._person(identity) if actions != null else {}
+	if person.is_empty() or float(person.hp) <= 0.0 or float(person.ko) > 0.0 or bool(person.captive) \
+		or not Technology.learned(actions._body_get(person, "technology"), "F11") \
+		or not valid_technology_batch(ledger, data, str(vehicle.id), "vehicle") or not ledger.token.is_empty() \
+		or int(ledger.operator_id) != 0 or float(ledger.work_seconds) <= 0.0: return fail("WAITING", "普通器械原完成端點需在工位的真F11師傅與已付共同實作")
+	var binding := ""
+	for key: String in TECHNOLOGY_SIEGE_BINDINGS:
+		if TECHNOLOGY_SIEGE_BINDINGS[key] == vehicle.kind: binding = key; break
+	if binding.is_empty(): return fail("NO_TARGET")
+	var event := {"id": str(ledger.payment_id), "site_id": str(data.site.id), "target_id": "vehicle:" + str(vehicle.id), "operator_id": identity,
+		"binding": binding, "work_seconds": float(ledger.work_seconds), "item_ids": [], "outputs": {}, "materials": ledger.materials.duplicate(true)}
+	return ok("普通器械完成只保存原物理成果；不授研究", {"phase": {}, "event": event, "ordinary_yard": true, "target_ref": vehicle})
+
+static func _technology_publish_public_output(prepared: Dictionary) -> void:
+	if not prepared.prepared.is_empty(): prepared.orders.publish_public_owner_receipt(prepared.prepared)
+
+static func _technology_public_operator_guard(data: TerrainData, target: Dictionary, task: Dictionary, identity: int) -> Dictionary:
+	if not target.has("technology_order"): return ok("", {"operator_id": identity})
+	var ref: Dictionary = target.technology_order
+	var admission := _technology_named_admission(data, ref)
+	if not admission.ok: return admission
+	if admission.admission.person_ids.size() != 1 or int(admission.admission.person_ids[0]) != identity: return fail("WAITING", "本公共單具名真操作者未在本工位；已付材料保留")
+	var actions: Variant = _technology_actions(data)
+	var person: Dictionary = actions._technology_operator_for_task(task, identity)
+	var ledger: Dictionary = target.get("tech_batch", {})
+	if person.is_empty() or ledger.is_empty() or int(ledger.operator_id) != identity: return fail("WAITING")
+	if str(ref.order_id).begins_with("production_"):
+		var orders: Variant = actions.lab.site_controller.equipment_orders
+		if orders == null or not orders.has_method("military_order_admission"): return fail("UNSUPPORTED")
+		var military: Dictionary = orders.military_order_admission(str(ref.nation_id), str(ref.order_id), str(ledger.feature_id), identity, ledger.materials)
+		if not military.ok: return military
+	return ok("", {"operator_id": identity})
+
+# A paid witness is read ONLY from the current original target. Historical
+# material consumption does not require the source Warehouse to survive. The
+# PA still checks the actual current project/person/authority/consent and its
+# matching immutable budget payment before accepting this witness.
+
+static func settlement_processing_work_context(data: TerrainData, feature: Dictionary, task: Dictionary, identity: int) -> Dictionary:
+	if not feature.has("technology_settlement_order"): return ok()
+	var ref: Variant = feature.technology_settlement_order
+	if not Technology.keys(ref, ["settlement_id", "order_id"]): return fail("STALE_SOURCE")
+	var existing := _settlement_order_state(data, str(ref.settlement_id), str(ref.order_id))
+	if not existing.is_empty() and not SETTLEMENT_PROCESSING_KINDS.has(str(existing.order.get("kind", ""))):
+		return _settlement_typed_call(str(existing.order.get("kind", "")), "work", [data, feature, task, identity])
+	if not existing.is_empty() and existing.order.status == "cancelled": return ok() # Only ordinary already-paid output; original current skill guards remain.
+	var ready := settlement_processing_preflight(data, str(ref.settlement_id), str(ref.order_id))
+	if not ready.ok: return ready
+	if not is_same(ready.feature, feature) or int(ready.person.person_id) != identity or not feature.has("tech_batch") \
+		or feature.tech_batch.operator_id != identity or task.get("target") != "feature:" + str(ready.order.payload.feature_id): return fail("WAITING", "本批具名真操作人未在原工位；保留原已付材料")
+	return ok("", {"order": ready.order})
+
+static func _technology_publish_military_output(prepared: Dictionary) -> void:
+	if not prepared.prepared.is_empty(): prepared.orders.publish_military_output(prepared.prepared)
+
+static func settlement_food_output_candidate(data: TerrainData, token: Dictionary, event: Dictionary) -> Dictionary:
+	var paid := settlement_food_existing_paid_source(data, token)
+	if not paid.ok: return paid
+	var actions: Variant = _technology_actions(data)
+	if actions == null: return fail("NO_AUTHORITY")
+	return actions.settlement_food_receipt_query(token, event)
+
+static func validate_water_schedule_storage(_data: TerrainData, state: Dictionary) -> Dictionary:
+	var features: Variant = state.get("features", {})
+	var settlement: Variant = state.get("settlement", {})
+	if not features is Dictionary or not settlement is Dictionary: return fail("CORRUPT_SAVE")
+	for key: Variant in features:
+		var feature: Variant = features[key]
+		if not key is String or not feature is Dictionary: return fail("CORRUPT_SAVE")
+		if not feature.has("technology_water_schedule"): continue
+		if str(feature.get("kind", "")) != "settlement_center" or key != str(settlement.get("center_id", "")) \
+			or int(feature.get("owner_faction", -1)) != int(settlement.get("owner_faction", -2)) \
+			or not valid_water_schedule(feature.technology_water_schedule, state):
+			return fail("CORRUPT_SAVE", "供水排程必須屬本聚落原中心及合法已知／試驗項目")
+	return ok()
+
+static func clear_technology_yard_reference_after_move(data: TerrainData, vehicle: Dictionary) -> void:
+	if not vehicle.has("technology_yard_id") or not vehicle.get("build", {}).is_empty() or not vehicle.get("repair", {}).is_empty(): return
+	var ground: Dictionary = data.site.get("features", {}).get(str(vehicle.technology_yard_id), {})
+	var cells: Array = ground.get("cells", [])
+	for cell: Vector2i in siege_cells(data, vehicle):
+		if data.contains(cell) and cells.has(data.index(cell)): return
+	for slot: int in range(int(SIEGE_DEFINITIONS[str(vehicle.kind)].standard_crew)):
+		var cell := siege_crew_cell(data, vehicle, slot)
+		if data.contains(cell) and cells.has(data.index(cell)): return
+	vehicle.erase("technology_yard_id")
+
+static func publish_checked_ladder_action_prefix(prepared: Dictionary) -> void:
+	# No current-life/placement predicate, callback, cost or second timer here.
+	# Lab has already admitted every provider and Native's no-failure tail.
+	if bool(prepared.published): return
+	if not bool(prepared.cancelled): prepared.ladder.progress = float(prepared.progress)
+	prepared.published = true
+
+static func prepare_checked_ladder_action_prefix(data: TerrainData, key: String, raw_seconds: float, prefix: Dictionary) -> Dictionary:
+	if not data.has_meta(&"site_work_team") or not is_finite(raw_seconds) or raw_seconds <= 0.0: return fail("STALE_WORK_PREFIX")
+	var ref: Variant = data.get_meta(&"site_work_team")
+	var owner: Variant = ref.get_ref() if ref is WeakRef else null
+	if owner == null or owner != prefix.get("owner") or not owner.has_method("valid_checked_ladder_prefix") \
+		or not owner.valid_checked_ladder_prefix(prefix): return fail("STALE_WORK_PREFIX")
+	var capture: Dictionary = prefix.capture
+	var held: Dictionary = prefix.held
+	if not is_same(capture.terrain, data) or not is_same(capture.site, data.site) or str(prefix.key) != key \
+		or float(prefix.raw_seconds) != raw_seconds or not is_same(prefix.target_ref, held.feature) \
+		or not is_same(prefix.ladder_ref, held.ladder): return fail("STALE_WORK_PREFIX")
+	var source: Dictionary = held.ladder_values
+	if str(held.feature.get("kind", "")) != "siege_ladder" or str(source.get("pending", "")) not in ["deploy", "retract"] \
+		or held.people.size() != 2 or held.workers.size() != 2 or source.get("workers", []).size() != 2:
+		return fail("STALE_WORK_PREFIX")
+	var duration: float = 12.0 if str(source.pending) == "deploy" else 8.0
+	var before: float = float(source.progress)
+	if not is_finite(before) or before < 0.0 or before > duration or raw_seconds > duration - before + 0.00000001:
+		return fail("INVALID_WORK")
+	for slot: int in range(2):
+		if int(source.workers[slot]) != int(held.people[slot].person_id) \
+			or int(held.workers[slot].person_id) != int(source.workers[slot]) \
+			or held.workers[slot].cell != held.people[slot].cell: return fail("STALE_WORK_PREFIX")
+	var live: Dictionary = data.site.get("features", {}).get(key, {})
+	if not is_same(live, held.feature) or not is_same(live.get("ladder"), held.ladder): return fail("STALE_SOURCE")
+	var cancelled: bool = false
+	if held.ladder != source:
+		# The ORIGINAL structure-damage owner cancels a broken pending ladder at
+		# this very contact endpoint. Retain genuine effort, write no orphan timer.
+		var broken: bool = false
+		for part: Dictionary in live.get("parts", {}).values(): broken = broken or float(part.get("hp", 0.0)) <= 0.0
+		cancelled = broken and str(held.ladder.get("pending", "")).is_empty() and held.ladder.get("workers", []).is_empty()
+		if not cancelled: return fail("STALE_SOURCE")
+	return ok("Original ladder positive raw-prefix candidate; structure endpoint deferred", {
+		"owner": owner, "prefix": prefix, "feature": live, "ladder": held.ladder,
+		"progress": minf(duration, before + raw_seconds), "cancelled": cancelled, "published": false})
+
+static func delete_settlement_blueprint(data: TerrainData, requester_id: int, plan_id: String) -> Dictionary:
+	var context := _settlement_engineering_context(data, "S09", requester_id)
+	if not context.ok: return context
+	if not context.operations.plans.has(plan_id): return fail("NO_TARGET")
+	for order: Dictionary in context.operations.orders.values():
+		if order.kind != "defense": continue
+		for step: Dictionary in order.steps:
+			if step.plan_id == plan_id: return fail("BUSY", "原有限工單仍引用此方案")
+	var candidate: Dictionary = context.operations.duplicate(true)
+	candidate.plans.erase(plan_id)
+	context.owner.call("publish_technology_operations", context.settlement, candidate)
+	return ok("已移除施工方案")
+
+static func remove_finished_settlement_defense_order(data: TerrainData, requester_id: int, order_id: String) -> Dictionary:
+	var actions: Variant = _technology_actions(data)
+	var owner: Variant = load("res://scripts/terrain_lab/site_settlement.gd")
+	var settlement: Dictionary = owner.call("record", data)
+	var duty: Dictionary = actions._technology_scope_duty("settlement", settlement, true) if actions != null else {}
+	if not duty.get("ok", false) or requester_id != int(actions._technology_controlled()) or requester_id != int(duty.decider): return fail("NO_AUTHORITY")
+	var raw: Variant = settlement.get("technology_operations")
+	if not owner.call("valid_technology_operations", data, raw): return fail("CORRUPT_STATE")
+	var order: Dictionary = raw.orders.get(order_id, {})
+	if order.get("kind") != "defense" or order.get("status") not in ["completed", "cancelled"]: return fail("BUSY")
+	for feature: Dictionary in data.site.features.values():
+		if feature.get("settlement_work", {}).get("order_id") == order_id: return fail("BUSY")
+	var candidate: Dictionary = raw.duplicate(true)
+	candidate.orders.erase(order_id)
+	owner.call("publish_technology_operations", settlement, candidate)
+	return ok("已移除完成／取消的有限清單；原工地、支出與Scope歷史不變，序號不重用")
+
+static func resume_settlement_defense_step(data: TerrainData, requester_id: int, order_id: String, preview: bool = false) -> Dictionary:
+	var context := _settlement_engineering_context(data, "S10", requester_id)
+	if not context.ok: return context
+	var order: Dictionary = context.operations.orders.get(order_id, {})
+	if order.get("kind") != "defense" or order.get("status") != "active" or order.get("paid", {}).is_empty(): return fail("NO_TARGET")
+	var step: Dictionary = order.steps[int(order.next_step)]
+	var key := str(order.paid.feature_id)
+	var feature: Dictionary = data.site.features.get(key, {})
+	if not valid_settlement_work_storage(data, key, feature): return fail("STALE_SOURCE")
+	var selector := {"settlement_id": str(context.settlement.settlement_id), "order_id": order_id}
+	var person: Dictionary = context.actions._person(int(step.operator_id))
+	var job: Dictionary = context.actions._jobs.get(context.actions._job_key_for(int(step.operator_id)), {})
+	var task: Dictionary = job.get("work_task", person.get("body", {}).get("work_task", {}) if person.get("body") is Dictionary else {})
+	if task.get("operation_ref") == selector and task.get("target") == "feature:" + key:
+		var guard := settlement_defense_operator_guard(data, key, feature, task, int(step.operator_id))
+		return guard if not guard.ok else ok("同一原工作已受理", {"already_working": true})
+	var zone := {}
+	for original: Dictionary in data.site.zones:
+		if original.get("feature") == key and original.get("action") == step.action and original.get("active") == true: zone = original; break
+	if zone.is_empty(): return fail("NO_ZONE")
+	var prepared := _prepare_settlement_defense_workers(data, selector, feature, zone, str(step.action), feature.get("repair", {}))
+	if not prepared.ok: return prepared
+	if not preview: _technology_publish_named_feature(prepared)
+	return ok("同一原已付步驟恢復；不再扣材料", {"already_working": false})
+
+static func validate_fire_suppression(data: TerrainData, prepared: Dictionary) -> Dictionary:
+	if not prepared.get("ok", false) or not prepared.has("state_owner") or int(prepared.get("paid_q", 0)) <= 0: return fail("INVALID_WORK")
+	if data == null or not is_same(data.site, prepared.site_owner): return fail("STALE_SITE")
+	var current: Dictionary = data.site.get("fire", {})
+	if int(prepared.sequence) <= int(current.get("suppression_sequence", 0)): return ok("重送工作未再扣補給", {"duplicate": true, "paid_q": 0})
+	if not is_same(data.site.get("fire"), prepared.state_owner): return fail("STALE_SITE")
+	var holder: Dictionary = prepared.holder_owner
+	var mode := str(prepared.mode)
+	var check := fire_prepare_suppression(data, str(prepared.key), int(prepared.generation), float(prepared.action_begin),
+		float(prepared.action_end), int(prepared.requested_q), holder, int(prepared.expected_holder_version), mode)
+	if not check.ok: return check
+	var same_unit: bool = check.get("unit_owner", {}).is_empty() and prepared.unit_owner.is_empty() \
+		or is_same(check.get("unit_owner"), prepared.unit_owner)
+	if int(check.get("paid_q", 0)) != int(prepared.paid_q) or not check.has("unit_owner") or not same_unit \
+		or check.descriptor != prepared.descriptor or str(check.supply_field) != str(prepared.supply_field) \
+		or int(check.sequence) != int(prepared.sequence) or int(check.expected_step) != int(prepared.expected_step) \
+		or int(holder[check.supply_field]) != int(prepared.expected_supply_q) \
+		or float(prepared.cooling_per_q) != float(check.cooling_per_q) or float(prepared.heating_per_q) != float(check.heating_per_q) \
+		or float(prepared.moisture_per_q) != float(check.moisture_per_q): return fail("STALE_WORK")
+	return check
+
+static func publish_validated_fire_suppression(data: TerrainData, prepared: Dictionary, check: Dictionary) -> Dictionary:
+	# ALL candidates (including shared holder/sequence/heat reservations) must
+	# have passed original owner validation before the first joint debit.
+	# Existing replay remains a true no-op, not a fresh accepted input.
+	if check.get("duplicate", false): return check
+	assert(check.ok and int(prepared.paid_q) > 0)
+	var holder: Dictionary = prepared.holder_owner
+	var mode := str(prepared.mode)
+	# No callbacks, yields or fallible work below. The first IGNITE input creates
+	# only the existing original fire state/unit, after actual holder admission.
+	var state := _fire_state(data, float(prepared.action_begin))
+	var unit := _fire_unit(data, state, check.descriptor)
+	holder[check.supply_field] = int(holder[check.supply_field]) - int(prepared.paid_q)
+	holder.version = int(holder.version) + 1
+	if not state.has("suppression_pending"): state.suppression_pending = []
+	state.suppression_pending.append({"sequence": int(prepared.sequence), "key": str(prepared.key), "generation": int(unit.generation), "mode": mode,
+		"begin": float(prepared.action_begin), "end": float(prepared.action_end), "total_q": int(prepared.paid_q),
+		"remaining_q": float(prepared.paid_q), "cooling_per_q": float(check.cooling_per_q), "heating_per_q": float(check.heating_per_q),
+		"moisture_per_q": float(check.moisture_per_q)})
+	state.active[str(prepared.key)] = true
+	state.suppression_sequence = int(prepared.sequence)
+	state.dirty = true
+	return ok("原人物有限工作已原子提交", {"paid_q": int(prepared.paid_q), "sequence": int(prepared.sequence),
+		"remaining_q": int(holder[check.supply_field]), "holder_version": int(holder.version)})
+
+static func prepare_fire_suppression_batch(data: TerrainData, rows: Array) -> Dictionary:
+	if data == null or bool(data.site.get("paused", false)): return fail("PAUSED_SITE")
+	var state: Dictionary = data.site.get("fire", {})
+	var sequence: int = int(state.get("suppression_sequence", 0))
+	var slots: int = state.get("suppression_pending", []).size()
+	var sources: Array[Dictionary] = []
+	var heat := {}
+	var jobs := {}
+	var limits := {}
+	var seen := {}
+	var offset := 0
+	for row: Dictionary in rows:
+		var key: String = str(row.get("key", ""))
+		if key.is_empty() or seen.has(key) or not row.get("prepared") is Dictionary: return fail("INVALID_WORK")
+		var fraction: float = float(row.get("fraction", 0.0))
+		var ratio: float = float(row.get("ratio", 0.0))
+		var q_per_second: int = int(row.get("supply_per_second", 0))
+		if not is_finite(fraction) or fraction < 0.0 or fraction >= 1.0 + FIRE_EPS \
+			or not is_finite(ratio) or ratio <= 0.0 or q_per_second <= 0: return fail("INVALID_WORK")
+		seen[key] = true
+		var source: Dictionary = row.prepared
+		var checked: Dictionary = validate_fire_suppression(data, source)
+		if not checked.ok or bool(checked.get("duplicate", false)): return fail("STALE_WORK")
+		var profile: Dictionary = SiteCombatRules.fire_work_profile(str(source.mode))
+		if q_per_second != int(profile.supply_q_per_second): return fail("INVALID_WORK")
+		var holder: Dictionary = source.holder_owner
+		var field: String = str(source.supply_field)
+		var reserved: Dictionary = {}
+		for original: Dictionary in sources:
+			if is_same(original.holder, holder): reserved = original; break
+		if reserved.is_empty():
+			reserved = {"holder": holder, "quantities": {}, "debits": 0}
+			sources.append(reserved)
+		var already: int = int(reserved.quantities.get(field, 0))
+		var available: int = maxi(0, int(holder[field]) - already)
+		var target: Dictionary = fire_work_target(data, str(source.key), str(source.mode), int(source.generation))
+		if not target.ok: return target
+		# Original query resolves generation=-1 to the actual original generation.
+		# Auto and explicit tickets for SAME unit share ONE finite heat allowance.
+		var heat_key: String = str(source.mode) + ":" + str(target.key) + ":" + str(target.generation)
+		var per_q: float = float(source.heating_per_q) if str(source.mode) == "IGNITE" else float(source.cooling_per_q)
+		if not is_finite(per_q) or per_q <= 0.0: return fail("INVALID_WORK")
+		var heat_left: float = maxf(0.0, float(target.available_heat) - float(heat.get(heat_key, 0.0)))
+		var heat_q: int = ceili(heat_left / per_q)
+		var paid: int = mini(int(source.paid_q), mini(available, heat_q))
+		if slots + offset >= int(profile.pending_cap) or sequence + offset >= 2147483646 \
+			or int(holder.version) + int(reserved.debits) >= 2147483646: paid = 0
+		if paid != int(source.paid_q):
+			limits[key] = maxf(0.0, float(paid) - fraction) / q_per_second * ratio
+			# Zero admission is actual waiting, not permission to invent unpaid
+			# fraction effort after a genuine capacity/heat/supply rejection.
+			continue
+		var prepared: Dictionary = source.duplicate(false)
+		var check: Dictionary = checked.duplicate(false)
+		prepared.sequence = sequence + offset + 1
+		check.sequence = prepared.sequence
+		prepared.expected_holder_version = int(holder.version) + int(reserved.debits)
+		prepared.expected_supply_q = int(holder[field]) - already
+		reserved.quantities[field] = already + paid
+		reserved.debits = int(reserved.debits) + 1
+		heat[heat_key] = float(heat.get(heat_key, 0.0)) + paid * per_q
+		offset += 1
+		jobs[key] = {"prepared": prepared, "check": check}
+	return ok("原同點有限火工候選已配額", {"jobs": jobs, "limits": limits, "needs_replan": not limits.is_empty()})

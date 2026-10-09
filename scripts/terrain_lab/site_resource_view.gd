@@ -703,7 +703,8 @@ func _draw_defense_cell(canvas: Node2D, p: Vector2, palisade: bool) -> void:
 
 func _building_uses_art(feature: Dictionary) -> bool:
 	if int(feature.get("fire_layout_version", 0)) == Runtime.FIRE_LAYOUT_VERSION and str(feature.get("kind", "")) == "warehouse": return true
-	return int(feature.get("layout_version", 0)) == 1 and str(feature.get("kind", "")) not in ["level", "warehouse"] and not (str(feature.get("kind", "")) == "well" and int(feature.get("quarter", 0)) == 0)
+	return int(feature.get("layout_version", 0)) == 1 and str(feature.get("kind", "")) not in ["level", "warehouse", "irrigation_channel"] and not (str(feature.get("kind", "")) == "well" and int(feature.get("quarter", 0)) == 0)
+
 
 func building_art_key(feature: Dictionary) -> String:
 	var kind := str(feature.get("kind", ""))
@@ -724,9 +725,11 @@ func building_art_key(feature: Dictionary) -> String:
 # Formal buildings never fall back to placeholder geometry; callers refuse
 # placement explicitly while an approved asset is absent from the manifest.
 func building_art_available(feature: Dictionary) -> bool:
+	if feature.get("kind") == "irrigation_channel": return data != null and Runtime._irrigation_path(data, feature.get("cells")) and Runtime._irrigation_config(feature.get("irrigation"), data.site)
 	if _building_art_manifest.is_empty():
 		_building_art_manifest = JSON.parse_string(FileAccess.get_file_as_string(BUILDING_ART_ROOT + "art_manifest.json"))
 	return _building_art_manifest.assets.has(building_art_key(feature))
+
 
 func _building_asset(key: String, component: String = "") -> Dictionary:
 	if _building_art_manifest.is_empty():
@@ -1111,6 +1114,9 @@ func _draw_buildings(canvas: Node2D, row: int, foreground: bool) -> void:
 		if row != bounds.end.y - 1: continue
 		var p := Vector2(float(bounds.position.x) + float(bounds.size.x) * 0.5, bounds.end.y) * CELL
 		var label := str(Runtime.FEATURES[str(feature.kind)].name)
+		if feature.has("technology_siege_yard"):
+			var yard_work := Runtime.technology_siege_yard_context(data, key)
+			label += "·器械場·六施工位" + ("·停效：" + str(yard_work.get("message", "")) if not yard_work.ok else "")
 		if str(feature.get("kind", "")) == "settlement_center": label += "·%s%s" % [("%d級%s" % [int(data.site.get("settlement", {}).get("level", 0)), str(Runtime.SETTLEMENT_LEVEL_NAMES.get(int(data.site.get("settlement", {}).get("level", 0)), ""))]) if int(data.site.get("settlement", {}).get("level", 0)) > 0 else "籌建", "·毀損停效" if not Runtime.feature_usable(feature) else ""]
 		elif int(feature.get("civil_version", 0)) == Runtime.CIVIL_VERSION: label += "·%d級%s" % [Runtime.building_grade(feature), "·毀損" if not Runtime.feature_usable(feature) else ""]
 		if str(feature.stage) != "complete": label += "·施工"
@@ -1122,6 +1128,7 @@ func _draw_buildings(canvas: Node2D, row: int, foreground: bool) -> void:
 			for n: int in range(int(feature.get("residents", 0))):
 				var animal := p + Vector2(float(n % 6) * 20.0 - 50.0, -16.0 - floorf(float(n) / 6.0) * 18.0)
 				_draw_wildlife(canvas, animal, 0.0, int(_resource_art._wildlife_indices[str(feature.species)]), 38.0 if str(feature.kind) == "pasture" else 46.0)
+
 
 func _building_fence_draws(feature: Dictionary) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []

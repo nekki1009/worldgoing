@@ -3726,7 +3726,22 @@ func reorder_officers(requester: int, proposed: Array[int]) -> Dictionary:
 ## the one-position-per-duty default; old saves get theirs from restore with
 ## duty AI off. Every vacant position is exercised by the head, so the default
 ## grants exactly the commander's original authority.
-func team_offices() -> Dictionary:
+func team_offices(read_only: bool = false) -> Dictionary:
+	if read_only:
+		if offices.is_empty():
+			var controlled := int(controlled_person_query.call()) if controlled_person_query.is_valid() else -1
+			var head := combat_identity(formal_commander) if formal_commander >= 0 else -1
+			return SiteOffices.default_offices("team", -1, head > 0 and head != controlled)
+		if not SiteOffices.validate(offices, "team", false): return {}
+		var current: Dictionary = offices
+		var migration := int(current.version) < SiteOffices.VERSION
+		for duty: String in SiteOffices.duty_ids("team"):
+			migration = migration or not current.duties.has(duty)
+		if migration:
+			current = current.duplicate(true)
+			SiteOffices.ensure_catalog(current, "team")
+			SiteOffices.upgrade(current)
+		return current
 	if offices.is_empty():
 		var controlled := int(controlled_person_query.call()) if controlled_person_query.is_valid() else -1
 		var head := combat_identity(formal_commander) if formal_commander >= 0 else -1
@@ -3769,10 +3784,27 @@ func _vacate_unqualified_holders() -> void:
 		return not member_gone(index) and (index == PLAYER_MEMBER or is_member(index)))
 
 ## Who exercises `duty_id` for this team now: {ok, decider, position_id, acting, ...}.
-func duty_resolve(duty_id: String) -> Dictionary:
-	team_offices()
-	var head := combat_identity(current_commander) if current_commander >= 0 and command_eligible(current_commander) else -1
-	return SiteOffices.resolve(offices, duty_id, head, office_holder_ok, acting_commander >= 0)
+func duty_resolve(duty_id: String, read_only: bool = false) -> Dictionary:
+	if not read_only:
+		team_offices()
+		var head := combat_identity(current_commander) if current_commander >= 0 and command_eligible(current_commander) else -1
+		return SiteOffices.resolve(offices, duty_id, head, office_holder_ok, acting_commander >= 0)
+	var current := team_offices(true)
+	if current.is_empty():
+		return {"ok": false, "code": "INVALID_OFFICES", "duty_id": duty_id, "decider": -1,
+			"message": "原隊伍職位資料不符合契約"}
+	var head := -1
+	if current_commander >= 0 and base_command_eligible(current_commander):
+		var identity := combat_identity(current_commander)
+		var seat := SiteOffices.position_of(current, identity)
+		if current_commander == formal_commander or not seat.is_empty() and not bool(seat.head):
+			head = identity
+	return SiteOffices.resolve(current, duty_id, head, func(person_id: int) -> bool:
+		var index := index_for_identity(person_id)
+		if index < 0: return false
+		var seat := SiteOffices.position_of(current, person_id)
+		if not seat.is_empty() and SiteOffices.needs_officer(current, seat): return base_command_eligible(index)
+		return _member_can_serve(index), acting_commander >= 0)
 
 func duty_decider(duty_id: String) -> int:
 	var resolved := duty_resolve(duty_id)
@@ -5012,9 +5044,14 @@ func exchange_initiates(index: int, other_id: int, melee: bool = false) -> bool:
 		return int(combat_units[index].target) == other_id
 	if melee and move_encounter_eligible(index):
 		return (_move_encounters.get(index, {}) as Dictionary).has(other_id)
-	if melee and combat_order == CombatOrder.HOLD and needs_attack_order and not is_sustain_routed() and combat_units[index].get("work_task", {}).is_empty() \
+	if melee and combat_order == CombatOrder.HOLD and not is_sustain_routed() and combat_units[index].get("work_task", {}).is_empty() \
 		and not (person_busy_query.is_valid() and bool(person_busy_query.call(combat_identity(index)))):
-		return true
+		if needs_attack_order: return true
+		# Original nonhelm boat defense uses the current physical contact only.
+		if _ship_embarked(index) and current_commander >= 0 and command_eligible(current_commander) and _combat_ship_contact(index, other_id):
+			var other: Dictionary = vehicle_transport.ship_person(other_id)
+			return not other.is_empty() and vehicle_transport.is_embarked(other_id) and int(other.faction) != faction_id \
+				and not bool(other.captive) and other.owner.combat_can_act(int(other.unit))
 	return combat_attacking and combat_order in [CombatOrder.ATTACK, CombatOrder.PURSUE] \
 		and current_commander >= 0 and not needs_attack_order and not is_sustain_routed()
 
@@ -8270,6 +8307,7 @@ func apply_unit_contact(index: int, packet: Dictionary) -> void:
 	if hp <= 0.0:
 		return
 	var ko := float(combat_hot_get(index, &"ko"))
+	# Region deferral and hp admission above remain the original authority.
 	var stun := float(combat_hot_get(index, &"stun"))
 	var result: Dictionary = packet.result
 	var effective_hit := not bool(packet.get("environmental", false)) and (float(result.hp) > 0.0 or float(result.stun) > 0.0)
@@ -10463,9 +10501,9 @@ static func _retain_visual_animation_cache(model: Node, editor: HumanCharacter3D
 		# still explicitly clear caches, as required by AnimationMixer itself.
 		players[0].call("set_clear_cache_on_stop_enabled", false)
 
-func clear() -> void:
+func clear(region_bind_token: String = "") -> void:
 	social_cohort = {}
-	if has_ship_journey():
+	if has_ship_journey() and not _region_trusted_bind_clear(region_bind_token):
 		command_status = "BUSY | 船隊仍在跨區旅程中，不能清除原人物"
 		return
 	_invalidate_ranged_order()
@@ -17965,7 +18003,50 @@ func publish_fire_navigation_restore(prepared: Dictionary, registry: SiteDeploym
 		_combat_deployment_plan.fire_safe_platform_capacity=int(prepared.deployment.capacity)
 	return {"ok":true}
 
-func technology_work_consent(person_id: int, purpose: String, controlled_id: int) -> Dictionary:
+func technology_work_consent(person_id: int, purpose: String, controlled_id: int, physical_context: Variant = null) -> Dictionary:
 	# Runtime load avoids the existing Army / DutyAI preload dependency cycle.
 	var policy: Script = load("res://scripts/terrain_lab/site_duty_ai.gd")
-	return policy.technology_work_consent(self, person_id, purpose, controlled_id)
+	return policy.technology_work_consent(self, person_id, purpose, controlled_id, physical_context)
+
+func _region_trusted_bind_clear(token: String) -> bool:
+	if token.is_empty() or vehicle_transport == null or vehicle_transport.lab == null: return false
+	var original: Variant = vehicle_transport.lab
+	if not original is TerrainLab or not original.combat_armies.has(self): return false
+	var ticket: Dictionary = original._region_owner_bind_tickets.get(token, {})
+	if ticket.is_empty() or not ticket.get("data") is TerrainData: return false
+	var checked: Dictionary = original._region_bind_ticket_admission(ticket.data, {"region_bind_token": token})
+	return checked.get("ok", false) and checked.get("trusted", false)
+
+
+func duty_resolve_readonly(duty_id: String, physical_owner: Variant = null) -> Dictionary:
+	var physical: Variant = self if physical_owner == null else physical_owner
+	if physical == self: return duty_resolve(duty_id, true)
+	if physical != self and (not physical is CrowdPersonOwner or physical.data != data or int(physical.team_id) != team_id \
+		or not physical.crowd_site.owns_original_team(self) or not physical.has_army()): return SiteRuntime.fail("INVALID_OWNER")
+	var current: Dictionary = offices
+	if current.is_empty():
+		current = SiteOffices.default_offices("team", -1, false)
+	else:
+		if not SiteOffices.validate(current, "team", false): return SiteRuntime.fail("INVALID_OWNER")
+		var migration := int(current.version) < SiteOffices.VERSION
+		for duty: String in SiteOffices.duty_ids("team"):
+			migration = migration or not current.duties.has(duty)
+		if migration:
+			current = current.duplicate(true)
+			if SiteOffices.ensure_catalog(current, "team"): current.revision = int(current.revision) + 1
+			SiteOffices.upgrade(current)
+	var head: int = physical.combat_identity(physical.current_commander) if physical.current_commander >= 0 and physical.command_eligible(physical.current_commander) else -1
+	var holder_ok := func(identity: int) -> bool:
+		var index: int = physical.index_for_identity(identity)
+		var seat := SiteOffices.position_of(current, identity)
+		if physical == self:
+			return base_command_eligible(index) if SiteOffices.needs_officer(current, seat) else _member_can_serve(index)
+		if index < 0 or not physical.is_member(index) or physical.member_gone(index) or not physical.combat_can_act(index): return false
+		var source_index: int = index_for_identity(identity)
+		if source_index == PLAYER_MEMBER:
+			if not physical.actors.has(index) or not is_same(physical.actors[index], player_member): return false
+		elif source_index < 0 or not is_member(source_index) or combat_identity(source_index) != identity \
+			or not is_same(physical._command_owner(index), self): return false
+		return not SiteOffices.needs_officer(current, seat) or garrison_feature_id.is_empty() and str(physical.combat_hot_get(index, &"military_role", "soldier")) == "officer"
+	var acting: bool = acting_commander >= 0 if physical == self else head > 0 and (formal_commander < 0 or head != combat_identity(formal_commander))
+	return SiteOffices.resolve(current, duty_id, head, holder_ok, acting)

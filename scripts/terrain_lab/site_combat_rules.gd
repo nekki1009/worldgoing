@@ -179,9 +179,9 @@ static func fire_position(flight: Dictionary, t: float) -> Vector3:
 		return Vector3.INF
 	return origin + velocity * t + Vector3(0, 0, -1) * (0.5 * gravity * t * t)
 
-static func fire_contact_result(shooter: Dictionary, defender: Dictionary, incidence: float, shield: bool, kinetic_multiplier: float = 1.0) -> Dictionary:
+static func fire_contact_result(shooter: Dictionary, defender: Dictionary, incidence: float, shield: bool, kinetic_multiplier: float = 1.0, siege_fire_pot: bool = false) -> Dictionary:
 	var weapon := str(shooter.get("weapon", "none"))
-	if ranged_profile(weapon).is_empty() or not is_finite(incidence) or absf(incidence) > 1.000001 \
+	if not siege_fire_pot and ranged_profile(weapon).is_empty() or not is_finite(incidence) or absf(incidence) > 1.000001 \
 		or not is_finite(kinetic_multiplier) or kinetic_multiplier < 0.0:
 		return {}
 	# incidence is the actual relative-velocity/contact-normal cosine. No roll or
@@ -192,8 +192,8 @@ static func fire_contact_result(shooter: Dictionary, defender: Dictionary, incid
 	var armor := str(defender.get("armor", "none"))
 	return {"kind": "shield" if shield else ("graze" if graze else "hit"),
 		"contact_kind": "SHIELD_CONTACT" if shield else ("BODY_GRAZE" if graze else "BODY_HIT"),
-		"hp": 0.0 if shield else exchange_hp(weapon, armor) * scale * kinetic_multiplier * brace,
-		"stun": 0.0 if shield else (exchange_stun(weapon) * scale + (EXCHANGE_POWER_STUN if str(shooter.get("skill", "")) == "power" else 0.0)) * brace,
+		"hp": 0.0 if shield or siege_fire_pot else exchange_hp(weapon, armor) * scale * kinetic_multiplier * brace,
+		"stun": 0.0 if shield or siege_fire_pot else (exchange_stun(weapon) * scale + (EXCHANGE_POWER_STUN if str(shooter.get("skill", "")) == "power" else 0.0)) * brace,
 		"stagger": 0.0 if shield else (0.2 if graze else 0.35), "knockback": false, "guard_break": false,
 		"contact_scale": scale, "heat_transfer": 0.10 if shield else 1.0 / (1.0 + armor_level(armor))}
 
@@ -683,3 +683,12 @@ static func fire_body_restore(saved: Dictionary) -> Dictionary:
 	for contact: Dictionary in result.contacts.values():
 		for field: String in ["start", "end", "rate"]: contact[field] = float(contact[field])
 	return result
+
+
+static func fire_pot_profile() -> Dictionary:
+	# First F15 payload reuses the existing finite thermal configuration. The
+	# real trebuchet remains the kinetic/arc owner; no invented blast or heat.
+	var original := fire_ranged_profile("bow_01", "FIRE_ARROW")
+	return {"id": "fire_pot_v1", "ember": float(original.ember), "air_decay": float(original.air_decay),
+		"rain_decay": float(original.rain_decay), "contact_rate": float(original.contact_rate),
+		"contact_seconds": float(original.contact_seconds), "config_version": str(original.config_version)}

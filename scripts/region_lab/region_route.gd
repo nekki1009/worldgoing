@@ -754,6 +754,12 @@ class Search:
 		if not context.get("capabilities", {}).get("vehicle_kinds", []).is_empty() and _vehicles().is_empty():
 			return {"ok": false, "code": "MISSING_VEHICLE_POSE", "message": "帶車規劃須讀取原車姿向"}
 		var start_table := _table(start_site)
+		var retained_start: Variant = context.get("capabilities", {}).get("start_cell")
+		if retained_start is Vector2i:
+			var actual_start := _terrain(start_site)
+			var original_start := RegionRoute.table_from_terrain(actual_start, RegionRoute._cover(source, start_site), true)
+			if not original_start.ok: return original_start
+			start_component = RegionRoute.component_of(original_start, retained_start)
 		if start_table.size() != RegionRoute.TABLE_BYTES or start_component < 0 or start_component >= int(start_table[400]):
 			return {"ok": false, "code": "NO_ROUTE", "message": "出發位置沒有可走出此 Site 的通道"}
 		var goal_table := _table(goal_site)
@@ -841,14 +847,18 @@ class Search:
 		var output: Array = []
 		var previous := 0.0
 		for row: Dictionary in steps:
+			var land := str(context.get("capabilities", {}).get("mode", "land")) == "land"
+			var physical := RegionRoute.SITE_METRES * (0.5 if output.is_empty() else 1.0)
 			output.append({"site": [row.site.x, row.site.y], "component": int(row.component),
-				"edge": int(row.edge), "offset": int(row.offset), "metres": float(row.g) - previous,
+				"edge": int(row.edge), "offset": int(row.offset), "metres": physical if land else float(row.g) - previous,
+				"travel_factor": physical / maxf(0.000001, float(row.g) - previous) if land else 1.0,
 				"mode": str(context.get("capabilities", {}).get("mode", "land")), "vehicle_poses": row.get("poses", {}), "vehicle_paths": row.get("paths", {})})
 			previous = float(row.g)
 		# The party stops at the destination's entry pass; it does not cross that Site.
-		var total := previous - float(output.back().metres)
 		output.back().metres = 0.0
-		var result := {"ok": true, "steps": output, "metres": total, "site_builds": builds, "expanded": expanded}
+		var total := 0.0
+		for step: Dictionary in output: total += float(step.metres)
+		var result := {"ok": true, "steps": output, "metres": total, "site_builds": builds, "expanded": expanded, "ranking_cost": float(steps[-2].g)}
 		if str(context.get("capabilities", {}).get("mode", "land")) == "sea":
 			var actions: Array = []
 			var action_at := 0.0
@@ -1001,6 +1011,12 @@ static func verify_vehicle_paths(first: TerrainData, second: TerrainData, vehicl
 		var last: Array = path.back()
 		var ending: Array = finish.anchor if sea else finish.operator
 		if Vector2i(int(last[0]), int(last[1])) - shift != Vector2i(int(ending[0]), int(ending[1])) or finish.facing != [int(last[2]), int(last[3])]: return {"ok": false, "code": "CORRUPT_VEHICLE_ENDPOINT"}
+		if not sea:
+			if not finish.get("anchor") is Array or finish.anchor.size() != 2: return {"ok": false, "code": "CORRUPT_VEHICLE_ENDPOINT"}
+			var operator_cell := Vector2i(int(ending[0]), int(ending[1]))
+			var direction := Vector2i(int(last[2]), int(last[3]))
+			var original_anchor := operator_cell - direction * 2 if str(vehicle.kind) == "wagon" else operator_cell + direction
+			if finish.anchor != [original_anchor.x, original_anchor.y]: return {"ok": false, "code": "CORRUPT_VEHICLE_ENDPOINT"}
 	return {"ok": true}
 
 ## Local landing cell for a route's final step.
@@ -1061,3 +1077,54 @@ static func route_contact_candidates(first: Array, second: Array, begin: float, 
 					"first_before": old[0].duplicate(true), "second_before": old[1].duplicate(true),
 					"edge": int(sa.edge), "offset": int(sa.offset)})
 	return {"ok": true, "candidates": candidates}
+
+static func current_land_leg(source: RegionData, step: Dictionary, context: Dictionary) -> Dictionary:
+	var site := Vector2i(int(step.site[0]), int(step.site[1]))
+	var effective := effective_terrain(source, site, context)
+	if not effective.ok: return effective
+	var derived := table_from_terrain(effective.data, _cover(source, site), true)
+	if not derived.ok: return derived
+	var speed := float(derived.policy.speed_multiplier) / maxf(1.0, float(derived.policy.slope_factor))
+	return {"ok": true, "speed_multiplier": speed, "data": effective.data, "derived": derived}
+
+static func revalidate_land_entry(source: RegionData, steps: Array, index: int, context: Dictionary) -> Dictionary:
+	if index < 0 or index + 1 >= steps.size(): return {"ok": false, "code": "CORRUPT_ROUTE"}
+	var previous: Dictionary = steps[index]
+	var following: Dictionary = steps[index + 1]
+	var from := Vector2i(int(previous.site[0]), int(previous.site[1]))
+	var to := Vector2i(int(following.site[0]), int(following.site[1]))
+	var edge := int(following.get("edge", -1))
+	var offset := int(following.get("offset", -1))
+	if edge < 0 or edge > 3 or offset < 0 or offset > 99 or neighbour(from, opposite(edge)) != to:
+		return {"ok": false, "code": "CORRUPT_ROUTE"}
+	var first := effective_terrain(source, from, context)
+	var second := effective_terrain(source, to, context)
+	if not first.ok: return first
+	if not second.ok: return second
+	var a := table_from_terrain(first.data, _cover(source, from), true)
+	var b := table_from_terrain(second.data, _cover(source, to), true)
+	if not a.ok: return a
+	if not b.ok: return b
+	var start: Vector2i = context.get("capabilities", {}).get("start_cell", entry_cell(previous))
+	if start.x < 0:
+		var party: Dictionary = context.get("party", {})
+		var body: Dictionary = RegionTravel._body_records(party.get("content", {})).get(int(party.get("leader_person_id", -1)), {})
+		if not body.get("cell") is Array or body.cell.size() != 2: return {"ok": false, "code": "MISSING_ROUTE_NODE"}
+		start = Vector2i(int(body.cell[0]), int(body.cell[1]))
+	var exit := Adapter.boundary_cell(opposite(edge), offset)
+	var entrance := Adapter.boundary_cell(edge, offset)
+	var from_component := component_of(a, start)
+	var to_component := component_of(b, entrance)
+	if from_component < 0 or to_component < 0 or component_of(a, exit) != from_component \
+			or not seam_step(first.data, second.data, opposite(edge), offset):
+		return {"ok": false, "code": "WALL_EDGE", "message": "原路線下一 Site 的入口已不可通行"}
+	var vehicles: Array = context.get("capabilities", {}).get("vehicles", [])
+	for vehicle: Dictionary in vehicles:
+		var admission := vehicle_entry_policy(b.policy, str(vehicle.get("kind", "")))
+		if not admission.ok: return admission
+	if not vehicles.is_empty():
+		var poses: Dictionary = context.get("capabilities", {}).get("vehicle_poses", previous.get("vehicle_poses", {}))
+		var proved := verify_vehicle_paths(first.data, second.data, vehicles, poses, following, opposite(edge))
+		if not proved.ok: return proved
+	return {"ok": true, "component": to_component, "source_component": from_component,
+		"entry": entrance, "vehicle_poses": following.get("vehicle_poses", {}).duplicate(true)}

@@ -114,7 +114,7 @@ func start(view: Dictionary) -> Dictionary:
 func _ensure_original_adapter_host(party: Dictionary) -> Dictionary:
 	# A live Callable is insufficient proof after a scene handoff. The host
 	# itself must hold the complete original marker-selected graph for this Slot.
-	var handle: Variant = slot.get_meta(&"region_original_adapter_host", null)
+	var handle: Variant = slot.get_meta(&"region_original_adapter_host") if slot.has_meta(&"region_original_adapter_host") else null
 	var existing: Node = handle.get_ref() if handle is WeakRef else null
 	if is_instance_valid(existing) and existing.is_inside_tree() and existing.site_controller.region_slot == slot:
 		var receipt: Dictionary = existing.region_bind_receipt(existing.terrain)
@@ -179,7 +179,7 @@ func _release_original_adapter_host() -> void:
 				for key: Variant in value.keys():
 					var owner: Variant = value[key]
 					if owner is Node and is_instance_valid(owner) and (owner == original or original.is_ancestor_of(owner)): value.erase(key)
-		var handle: Variant = slot.get_meta(&"region_original_adapter_host", null)
+		var handle: Variant = slot.get_meta(&"region_original_adapter_host") if slot.has_meta(&"region_original_adapter_host") else null
 		if handle is WeakRef and handle.get_ref() == original: slot.remove_meta(&"region_original_adapter_host")
 		var parties: Dictionary = slot.get_meta(&"region_party_owner_labs", {})
 		for token: Variant in parties.keys():
@@ -312,6 +312,11 @@ func mode_stop() -> void:
 	running = false
 	_accumulated = 0.0
 	preview = []
+	var selected: Dictionary = slot.region_travel_party()
+	if not selected.ok: _fail(selected); return
+	if str(selected.party.upkeep.get("live", {}).get("upkeep", "")) == "mapBody":
+		_return_original_body_mode(selected.party)
+		return
 	var ready: Dictionary = slot.call("prepare_region_mode_stop")
 	if not ready.ok:
 		_status.text = "尚未停靠：" + str(ready.get("message", ready.get("code", "")))
@@ -464,6 +469,14 @@ func _refresh() -> void:
 		else: lines.append("剩餘：%s" % _duration(float(current.remaining_game_seconds)))
 	if not preview.is_empty():
 		lines.append("預覽路線：%d 個地點" % preview.size())
+	var known := slot.region_player_known_intel()
+	if known.is_empty(): lines.append("情報：尚無有效回報")
+	else:
+		var keys: Array = known.keys()
+		keys.sort()
+		for object: String in keys:
+			var receipt: Dictionary = known[object]
+			lines.append("回報：%s（觀察於 %s；收到於 %s）" % [slot.region_known_intel_label(receipt), _duration(float(receipt.game_time)), _duration(float(receipt.get("received_at", receipt.game_time)))])
 	_info.text = "\n".join(lines)
 	for index: int in range(_speed_buttons.size()):
 		_speed_buttons[index].disabled = SPEEDS[index] == speed
@@ -473,6 +486,7 @@ func _refresh() -> void:
 	_pause_button.disabled = not running
 	_retry_button.disabled = not bool(current.get("arrived", false)) or _arriving or not slot.has_method("retry_region_arrival")
 	_mode_button.disabled = _arriving or _route_thread != null or not slot.has_method("prepare_region_mode_stop")
+	_mode_button.text = "回到原旅隊實體操作" if party.ok and str(party.party.upkeep.get("live", {}).get("upkeep", "")) == "mapBody" else "在此停靠／上下船"
 
 func _site_center(site: Variant) -> Vector2:
 	var coordinate := Vector2i(int(site[0]), int(site[1])) if site is Array else Vector2i(site)
@@ -503,3 +517,27 @@ func draw_on(canvas: Control) -> void:
 	canvas.draw_circle(party_point, 8.0, Color("ffd36b"))
 	canvas.draw_line(party_point + Vector2(0, -8), party_point + Vector2(0, -22), Color("1d3b4a"), 2.0)
 	canvas.draw_colored_polygon(PackedVector2Array([party_point + Vector2(0, -22), party_point + Vector2(12, -18), party_point + Vector2(0, -14)]), Color("e0533d"))
+
+
+func _return_original_body_mode(party: Dictionary) -> void:
+	var hosted := _ensure_original_adapter_host(party)
+	if not hosted.ok: _fail(hosted); return
+	var original: Dictionary = _original_adapter_host.prepare_region_party_original_owner(str(party.party_id), party, slot)
+	if not original.ok: _fail(original); return
+	var guarded: Dictionary = slot.prepare_region_party_map_resume(original.lab)
+	if not guarded.ok: _fail(guarded); return
+	var returned: Dictionary = slot.return_original_mode(original.lab)
+	if not returned.ok: _fail(returned); return
+	_arriving = true
+	running = false
+	_mode_after_leg = false
+	_accumulated = 0.0
+	RegionEntry.pending = {"manifest": manifest, "world_id": world_id, "slot_id": slot_id,
+		"site": guarded.site, "create_new": false}
+	RegionEntry.view = {}
+	var changed := get_tree().change_scene_to_file(SITE_SCENE)
+	if changed != OK:
+		_arriving = false
+		_status.text = "原旅隊操作模式已保存；場景待同一選定原 graph 綁定，可重試。"
+		_refresh()
+

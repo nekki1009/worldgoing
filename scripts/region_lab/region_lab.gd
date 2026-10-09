@@ -86,7 +86,18 @@ var _overview_view: Dictionary = {}
 
 func _ready() -> void:
 	_build_ui()
-	var result: Dictionary = source.load_manifest()
+	var manifest_path: String = RegionDataScript.DEFAULT_MANIFEST
+	if _mode == "pick_start":
+		manifest_path = str(RegionEntry.draft.get("manifest", manifest_path))
+		var accepted := false
+		for choice: Dictionary in RegionEntry.new_world_source_choices(): accepted = accepted or str(choice.path) == manifest_path
+		if not accepted:
+			_status.text = "所選固定來源尚未發布或配對不完整。"
+			return
+	elif _mode in ["view", "travel"]:
+		var meta: Dictionary = RegionEntry.read_world(str(RegionEntry.view.get("world_id", "")))
+		if not meta.is_empty(): manifest_path = str(meta.get("manifest", manifest_path))
+	var result: Dictionary = source.load_manifest(manifest_path)
 	if not bool(result.get("ok", false)):
 		_status.text = "地圖尚未就緒：%s" % str(result.get("message", result.get("code", "缺少固定資料")))
 		_details.text = "沒有可用的固定底圖。\n缺資料不會轉成海洋或隨機地形。"
@@ -143,6 +154,7 @@ func _ready() -> void:
 		focus_selected_area.call_deferred()
 	elif not _sample_sites.is_empty():
 		_select_sample(0)
+
 
 func _build_ui() -> void:
 	var background := ColorRect.new()

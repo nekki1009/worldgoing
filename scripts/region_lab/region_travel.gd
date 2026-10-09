@@ -333,8 +333,12 @@ static func join_party(destination_party: Dictionary, incoming_party: Dictionary
 	var destination_token := str(destination_party.get("party_id", ""))
 	var incoming_token := str(incoming_party.get("party_id", ""))
 	if destination_token.is_empty() or incoming_token.is_empty() or destination_token == incoming_token \
-			or destination_party.get("controller") != "player" or incoming_party.get("controller") != "npc":
-		return fail("INVALID_PARTY_JOIN", "只接受原 NPC 閉包交入原玩家旅隊")
+			or destination_party.get("controller") not in ["player", "npc"] or incoming_party.get("controller") != "npc":
+		return fail("INVALID_PARTY_JOIN", "須是兩個不同的原完整旅隊")
+	if destination_party.get("controller") == "npc":
+		for original: Dictionary in [destination_party, incoming_party]:
+			if original.get("mode") != "sea" or int(original.get("content", {}).get("controlled_person_id", -1)) != -1 or not original.get("content", {}).get("actors", {}).is_empty():
+				return fail("NPC_PARTY_AUTHORITY", "原 NPC 海上交接不能攜帶玩家或 Actor 控制")
 	for original: Dictionary in [destination_party, incoming_party]:
 		if not original.get("content") is Dictionary or not validate_identity(original.content.get("travel_identity")) \
 				or not original.get("upkeep") is Dictionary or not is_finite(float(original.upkeep.get("at", NAN))):
@@ -543,7 +547,7 @@ static func _frame_walk(value: Variant, offset: Vector2i, projection: Dictionary
 			else: value[index] = _frame_walk(value[index], offset, projection, "", seen, offsets, error, pixel_motion)
 		return value
 	var entries: Dictionary = value.duplicate(false)
-	if field in FRAME_GRID_KEYS: value.clear()
+	if field in FRAME_GRID_KEYS or field == "reference_objects": value.clear()
 	for key: Variant in entries:
 		var local := offset
 		if field in ["army_hot", "plans"]: local = _frame_offset(projection, "teams", key, offset)
@@ -555,7 +559,10 @@ static func _frame_walk(value: Variant, offset: Vector2i, projection: Dictionary
 		if field == "formation_slots": local = _frame_offset(projection, "runtime_offsets", key, local)
 		if field == "values" and entries.get("member_id") is int: local = _frame_offset(projection, "people", entries.member_id, local)
 		var next: Variant = entries[key]
-		if field in FRAME_GRID_VALUES:
+		if field == "navigation" and str(key) == "target":
+			# Only the original NPC navigation goal; STOP sentinel is preserved.
+			next = _frame_point(next, local)
+		elif field in FRAME_GRID_VALUES:
 			if next is Array and not _frame_pair(next):
 				for index: int in next.size(): next[index] = _frame_point(next[index], local)
 			else: next = _frame_point(next, local)
@@ -565,6 +572,15 @@ static func _frame_walk(value: Variant, offset: Vector2i, projection: Dictionary
 		if field in FRAME_GRID_KEYS and translated_key is String:
 			var parts := str(translated_key).split(",")
 			if parts.size() == 2 and parts[0].is_valid_int() and parts[1].is_valid_int(): translated_key = "%d,%d" % [int(parts[0]) + local.x, int(parts[1]) + local.y]
+		if field == "reference_objects" and str(key).begins_with("lease:"):
+			var lease_cell: Variant = next.get("values", {}).get("cell") if next is Dictionary else null
+			if not (lease_cell is Vector2i or _frame_pair(lease_cell)):
+				error.code = "INVALID_PARTY_LEASE_REFERENCE"
+				return value
+			translated_key = "lease:%d:%d" % [int(lease_cell.x) if lease_cell is Vector2i else int(lease_cell[0]), int(lease_cell.y) if lease_cell is Vector2i else int(lease_cell[1])]
+		if field == "reference_objects" and value.has(translated_key):
+			error.code = "DUPLICATE_PARTY_FRAME_REFERENCE"
+			return value
 		value[translated_key] = next
 	return value
 
@@ -887,7 +903,10 @@ static func _feeding(content: Dictionary, people: Dictionary) -> Array[Dictionar
 		for person: int in Sustain._ids(sustain):
 			var body: Dictionary = people.get(person, {})
 			var boat := str(body.get("embarked_vehicle_id", ""))
-			locations[person] = "vehicle:" + boat if not boat.is_empty() and stock.has("vehicle:" + boat) else (str(keys[0]) if not keys.is_empty() else "")
+			if not boat.is_empty():
+				locations[person] = "vehicle:" + boat if stock.has("vehicle:" + boat) else ""
+			else:
+				locations[person] = str(keys[0]) if not keys.is_empty() else ""
 		owners.append({"sustain": sustain, "stock": stock, "owner": supply, "context": {"food_locations": locations} if int(sustain.get("version", 1)) == 2 else {}})
 	for key: String in content.get("person_supply", {}):
 		var body: Dictionary = people.get(int(key), {})
@@ -896,6 +915,7 @@ static func _feeding(content: Dictionary, people: Dictionary) -> Array[Dictionar
 			if int(content.actors[actor_key].person_id) == int(key): cargo = content.get("manual_cargo", {})
 		owners.append({"sustain": content.person_supply[key], "stock": cargo, "owner": body, "context": {}})
 	return owners
+
 
 static func _pools(content: Dictionary) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
@@ -1007,6 +1027,9 @@ static func next_upkeep_event(party: Dictionary, options: Dictionary = {}) -> Di
 
 ## Caller commits this detached party and distance with the same Slot receipt.
 static func advance_upkeep(party: Dictionary, to_game_seconds: float, options: Dictionary = {}) -> Dictionary:
+	var speed_multiplier: Variant = options.get("speed_multiplier", 1.0)
+	if not (speed_multiplier is float or speed_multiplier is int) or not is_finite(float(speed_multiplier)) or float(speed_multiplier) <= 0.0 or float(speed_multiplier) > 1.0:
+		return fail("INVALID_ROUTE_SPEED", "原路線地類／坡度速度須是有效倍率")
 	var candidate := party.duplicate(true)
 	var content: Dictionary = candidate.get("content", {})
 	var upkeep: Dictionary = candidate.get("upkeep", {"version": 1, "at": float(options.get("from_game_seconds", to_game_seconds)), "resting": false, "carriers": {}, "events": [], "sequence": 0})
@@ -1048,7 +1071,7 @@ static func advance_upkeep(party: Dictionary, to_game_seconds: float, options: D
 		for pool: Dictionary in pools: rates.append(_pool_rate(pool, people, moving, crew_roles))
 		# Sea displacement is measured by original completed ACTION steps. The
 		# Slot supplies the same journal interval; game upkeep never invents it.
-		if moving and str(options.get("distance_mode", "land")) != "sea_action": metres += _distance(content, pools, people, seconds, float(transport.get("carry_factor", 1.0)), crew_roles)
+		if moving and str(options.get("distance_mode", "land")) != "sea_action": metres += _distance(content, pools, people, seconds, float(transport.get("carry_factor", 1.0)), crew_roles) * float(speed_multiplier)
 		members = {}
 		for person: int in people: members[person] = {"hp": float(people[person].hp), "ko": _ko(people[person]), "captive": bool(people[person].get("captive", false)), "present": true}
 		for owner: Dictionary in owners:
@@ -1107,7 +1130,7 @@ static func advance_upkeep(party: Dictionary, to_game_seconds: float, options: D
 	var transport := prepare_transport(candidate, bool(options.get("patient_schema", true)))
 	if not transport.ok: return transport
 	var can_move := bool(transport.can_move) and not bool(upkeep.resting) and events.is_empty()
-	candidate.speed_mps = float(candidate.speed_mps) * float(transport.get("carry_factor", 1.0)) if can_move else 0.0
+	candidate.speed_mps = float(candidate.speed_mps) * float(transport.get("carry_factor", 1.0)) * float(speed_multiplier) if can_move else 0.0
 	return {"ok": true, "party": candidate, "at": float(upkeep.at), "metres": metres, "consumed_rations": consumed, "events": events,
 		"can_move": can_move, "resting": bool(upkeep.resting), "reason": str(transport.get("reason", "")), "speed_mps": float(candidate.speed_mps)}
 
@@ -1763,7 +1786,17 @@ static func insert(destination_state: Dictionary, party: Dictionary, nav: Terrai
 		var admitted := RegionRoute.vehicle_entry_policy(policy, str(vehicle.get("kind", "")))
 		if not admitted.ok: return admitted
 	var leader_cell := Vector2i(-1, -1)
-	if str(party.get("mode", "land")) == "sea":
+	if options.has("contact_frame"):
+		if str(party.get("controller", "")) != "npc" or str(party.get("mode", "land")) != "land" or not options.get("contact_source") is Dictionary or not options.get("contact_frame") is Dictionary: return fail("CONTACT_FOOT_UNSUPPORTED", "Original NPC foot contact closure required")
+		var frame: Dictionary = options.contact_frame
+		if frame.get("game_seconds") != arrival_seconds or frame.get("size") != [100, 100] or not frame.get("action_seconds") is float or not is_finite(float(frame.action_seconds)) or float(frame.action_seconds) < 0.0: return fail("CONTACT_FOOT_UNPLACED", "Original contact frame clock or bounds changed")
+		var projected := project_party_frame(options.contact_source, frame)
+		if not projected.ok: return projected
+		if var_to_bytes(projected.party) != var_to_bytes(original_party): return fail("CONTACT_FOOT_UNPLACED", "Contact must preserve the complete original projection")
+		var exact := _region_contact_land_placement(content, destination, nav, entry, int(party.leader_person_id))
+		if not exact.ok: return exact
+		leader_cell = exact.leader_cell
+	elif str(party.get("mode", "land")) == "sea":
 		var poses := {}
 		for old: String in options.get("vehicle_poses", {}): poses[str(_mapped(old, "vehicle", remapped.mapping.maps))] = options.vehicle_poses[old]
 		var sea := _sea_arrival(content, destination, nav, poses, int(party.leader_person_id))
@@ -1904,6 +1937,7 @@ static func insert(destination_state: Dictionary, party: Dictionary, nav: Terrai
 	_retain_identity(destination)
 	return {"ok": true, "state": destination, "leader_cell": leader_cell, "leader_person_id": int(party.leader_person_id), "mapping": remapped.mapping}
 
+
 static func sync_family(destination: Dictionary, party: Dictionary, mapping: Dictionary, destination_path: String) -> Dictionary:
 	var content: Dictionary = party.content
 	var incoming_ref: Dictionary = content.get("travel_identity", {}).get("refs", {}).get("family", {}).get("controlled", {})
@@ -1950,3 +1984,22 @@ static func sync_family(destination: Dictionary, party: Dictionary, mapping: Dic
 		destination.travel_identity.refs.family.controlled = incoming_ref.duplicate(true)
 	destination.family = family
 	return {"ok": true}
+
+
+static func _region_contact_land_placement(content: Dictionary, destination: Dictionary, nav: TerrainData, entry: Vector2i, leader_id: int) -> Dictionary:
+	if not content.get("actors", {}).is_empty() or not content.get("vehicles", {}).is_empty(): return fail("CONTACT_FOOT_UNSUPPORTED", "Vehicles and actors retain their original complete frame lane")
+	if nav == null or not nav.contains(entry) or not nav.is_walkable(entry): return fail("CONTACT_FOOT_UNPLACED", "Accepted entry is currently blocked")
+	var free := _free_cells(nav, destination, entry)
+	var occupied: Dictionary = free.occupied
+	var used := {}
+	var leader_cell := Vector2i(-1, -1)
+	for army: Dictionary in content.get("armies", []):
+		for row: Dictionary in army.get("units", []):
+			if row.has("embarked_vehicle_id") or not _frame_pair(row.get("cell")) or not _frame_pair(row.get("slot")): return fail("CONTACT_FOOT_UNSUPPORTED", "Original complete foot row required")
+			var cell := Vector2i(int(row.cell[0]), int(row.cell[1]))
+			var slot := Vector2i(int(row.slot[0]), int(row.slot[1]))
+			if not nav.contains(cell) or not nav.is_walkable(cell) or not nav.contains(slot) or not nav.is_walkable(slot) or occupied.has(cell) or used.has(cell): return fail("CONTACT_FOOT_UNPLACED", "Original formation cannot be relocated to force contact")
+			used[cell] = true
+			if int(row.person_id) == leader_id: leader_cell = cell
+	if leader_cell != entry or used.is_empty(): return fail("CONTACT_FOOT_UNPLACED", "Actual leader must retain the exact accepted entry")
+	return {"ok": true, "leader_cell": leader_cell}

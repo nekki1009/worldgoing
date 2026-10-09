@@ -31,6 +31,9 @@ static func validate_registry(raw: Variant, world: float) -> Dictionary:
 		if not raw[field] is Dictionary or raw[field].size() > 65536: return fail("REGION_SCHEMA", "Region 原 owner 索引非法")
 	if not raw.events is Array or raw.events.size() > 65536 or not raw.reports is Array or raw.reports.size() > 65536:
 		return fail("REGION_SCHEMA", "Region 事件／情報佇列非法")
+	var report_owner: Script = load("res://scripts/region_lab/region_gameplay_ai.gd")
+	var report_schema: Dictionary = report_owner.call("validate_reports", raw, world)
+	if not report_schema.get("ok", false): return report_schema
 	var ids := {}
 	var sequences := {}
 	for event: Variant in raw.events:
@@ -50,6 +53,14 @@ static func validate_registry(raw: Variant, world: float) -> Dictionary:
 		for identity: Variant in raw[field]:
 			if not identity is String or identity.is_empty() or not raw[field][identity] is Dictionary:
 				return fail("REGION_SCHEMA", "Region owner 引用非法")
+	for battle: Dictionary in raw.battles.values():
+		if str(battle.get("kind", "")) != "siege": continue
+		var rules: Script = load("res://scripts/region_lab/region_gameplay_battle.gd") as Script
+		var raw_admission: Variant = rules.call("validate_siege_metadata", battle.get("siege"))
+		if not raw_admission is Dictionary: return fail("INVALID_SIEGE_SOURCE", "原攻城快照准入未回傳合法結果")
+		var admitted: Dictionary = raw_admission
+		if not admitted.ok or str(battle.get("phase", "")) != str(battle.siege.phase) or str(battle.get("site_id", "")) != str(battle.siege.source.owner) or float(battle.siege.source.game_seconds) > world + 0.00000001 or str(battle.get("mode", "")) not in ["cold_exact", "materializing", "live", "dematerializing", "committed-unbound"]:
+			return fail("INVALID_SIEGE_SOURCE", "原四階段 siege source／version／phase 未准入")
 	return {"ok": true}
 
 static func validate_event(event: Variant) -> Dictionary:

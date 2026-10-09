@@ -77,12 +77,22 @@ func _initialize() -> void:
 	var consumed := Clock.empty_registry()
 	Clock.queue_event(consumed, "arrival:1", "player_arrival", 120.0, "player", {}, true)
 	check(Clock.complete_event(consumed, "arrival:1", 120.0).ok and Clock.complete_event(consumed, "arrival:1", 120.0).duplicate, "Original endpoint receipt is consumed exactly once")
-	var tampered := encoded.duplicate(true)
+	var tampered: Dictionary = encoded.duplicate(true)
 	tampered.root.index = 999999
 	check(not Codec.prepare_restore(tampered, references).ok, "Invalid graph references reject atomically")
 	var typed := references.duplicate()
 	typed["person:17:owner"] = {}
 	check(not Codec.prepare_restore(encoded, typed).ok, "Changed original reference type rejects")
+	var original_pending := context(true)
+	var json_pending: Dictionary = JSON.parse_string(JSON.stringify(original_pending))
+	check(Checkpoint.validate_context(json_pending, original_pending).ok and Checkpoint.validate_context(original_pending, json_pending).ok,
+		"Complete pending event context survives JSON integer-to-float normalization in both directions")
+	var changed_pending := json_pending.duplicate(true)
+	changed_pending.events[0].sequence = 2.0
+	check(not Checkpoint.validate_context(original_pending, changed_pending).ok, "Changed persisted event sequence still rejects before owner preparation")
+	changed_pending = json_pending.duplicate(true)
+	changed_pending.events[0].id = "arrival:foreign"
+	check(not Checkpoint.validate_context(original_pending, changed_pending).ok, "Changed persisted event identity remains stale")
 	var metadata := Checkpoint.make({"id": "site:A", "minute": 2}, context(true), pending.state)
 	check(metadata.ok and Checkpoint.validate({"id": "site:A", "minute": 2.0}, metadata.snapshot).ok, "Owner graph composes with original Site payload metadata")
 	var life := {"kind": "supply_damage", "person_id": 17, "at": 120.0, "sequence": 1, "status": "pending", "controlled": true, "death": false, "old_hp": 85.0, "ending_hp": 84.5, "loss": 0.5}

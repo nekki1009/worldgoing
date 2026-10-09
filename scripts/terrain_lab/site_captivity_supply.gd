@@ -412,6 +412,12 @@ func _prepare_change(target_id: int, captor_id: int, capturing: bool, event_cont
 		return Runtime.fail("BUSY", "供養時段或交糧尚未收束；未移轉食物或人物")
 	# The action owner rechecks immediately before its synchronous commit. Only
 	# event-local copies are retained; failed/cancelled checks change no Site data.
+	# The original team revision is saved with a strict signed-int bound.
+	# Refuse before any real membership/stock publication at its ceiling.
+	for key: String in states:
+		var owner: Dictionary = states[key]
+		if key.begins_with("team:") and bool(owner.dirty) and not bool(owner.created) \
+			and not Runtime._building_integer(owner.entry.get("revision"), 0, 2147483646): return Runtime.fail("BUSY", "原隊伍提交版本已用盡，未改供養名單")
 	_prepared[target_id] = {"site": site, "at": at_seconds, "captor_id": captor_id, "capturing": capturing,
 		"states": states, "members": members, "moves": moves}
 	return Runtime.ok()

@@ -148,3 +148,96 @@ static func world_opened(controller: Node, candidate: RegionSaveSlot, manifest_p
 	controller._auto_save_blocked = false
 	controller.save_path = candidate.site_path(destination)
 	return Runtime.ok("旅隊已抵達目的地", {"site": [destination.x, destination.y], "arrived": true})
+
+
+static func request_departure(controller: Node) -> Dictionary:
+	if not controller._region_departure_intent.is_empty():
+		return cancel_departure(controller, str(controller._region_departure_intent.nonce))
+	if controller.lab.terrain != null and float(controller.lab.terrain.site.get("combat_left", 0.0)) <= 0.0:
+		return depart(controller)
+	return controller._request_region_departure()
+
+
+static func cancel_departure(controller: Node, nonce: String) -> Dictionary:
+	return controller._cancel_region_departure(nonce)
+
+## Read selection through the same original person/team/cape/near-enemy owners.
+
+
+static func selected_departure(controller: Node) -> Dictionary:
+	var lab: TerrainLab = controller.lab
+	var slot: RegionSaveSlot = controller.region_slot
+	if slot == null or lab.restore_only or lab.terrain == null: return Runtime.fail("NO_REGION_SLOT")
+	var fault: Dictionary = controller.original_step_fault_guard()
+	if not fault.ok: return fault
+	if controller._crowd_active(): return Runtime.fail("REGION_BACKEND_UNADMITTED")
+	if controller.ship_journey_active() or controller.ground_crossing_blocks_input() or controller.region_operation_pending() or is_instance_valid(lab._cold_replay_lab): return Runtime.fail("BUSY")
+	if controller.get_tree().paused or bool(lab.terrain.site.get("paused", false)): return Runtime.fail("PAUSED")
+	var scope := RegionSaveSlot.RegionBattle.scoped_controlled_person(lab)
+	if not scope.ok or str(scope.get("scope", "")) != "active_original": return Runtime.fail("COMMITTED_UNBOUND")
+	var identity := lab.controlled_person_id()
+	var person := lab.controlled_target()
+	if person.is_empty() or float(person.get("hp", 0.0)) <= 0.0: return Runtime.fail("NO_TARGET")
+	var team: TerrainArmy = lab.player_army()
+	if team == null and int(person.unit) >= 0: team = person.owner
+	var index := lab.controlled_member_index(team)
+	var captain := team != null and index != -1 and team.formal_commander == index
+	var spec := {"person_id": identity, "actor_key": "", "team_id": 0, "controller": "player", "family_transfer_guard": slot.region_family_transfer_guard}
+	var faction := -1
+	var cells: Array[Vector2i] = [Vector2i(person.cell)]
+	var people: Array[int] = [identity]
+	var orders: Array = []
+	var waiting := false
+	if int(person.unit) >= 0:
+		if not captain: spec.solo_row = identity
+		faction = team.faction_id
+	else:
+		var actor: TerrainTestCharacter = person.owner
+		spec.actor_key = "player" if actor == lab.character else "npc"
+		faction = actor.faction_id
+		if not actor.can_act(): return Runtime.fail("NOT_READY")
+		if actor.attack_target_id != 0 or actor._rescue_left > 0.0 or actor.guarding or actor.guard_transition_left > 0.0 or actor.guard_break_left > 0.0: return Runtime.fail("IN_COMBAT")
+		waiting = actor.is_moving() or actor.action_time > 0.0 or not actor.projectiles.is_empty()
+		orders = [actor.ranged_order_serial, actor.ranged_enabled, actor.ranged_target.duplicate(true)]
+	if captain:
+		spec.team_id = team.team_id
+		for row: int in range(team.combat_units.size()):
+			cells.append(team.cells[row])
+			var member := team.combat_identity(row)
+			if not people.has(member): people.append(member)
+			if float(team.combat_hot_get(row, &"ko", 0.0)) > 0.0 or str(team.combat_hot_get(row, &"pose", "")) in ["unconscious", "get_up"]: return Runtime.fail("NOT_READY")
+	elif team != null and int(person.unit) < 0:
+		spec.solo_actor = identity
+	if team != null and (captain or int(person.unit) >= 0):
+		for row: int in range(team.combat_units.size()):
+			if not people.has(team.combat_identity(row)): continue
+			if not team.combat_can_act(row): return Runtime.fail("NOT_READY")
+			if bool(team.combat_hot_get(row, &"attack", false)): return Runtime.fail("IN_COMBAT")
+			waiting = waiting or team.moving_to[row] != TerrainArmy.INVALID_CELL or float(team.combat_hot_get(row, &"action_time", 0.0)) > 0.0
+		waiting = waiting or not team.projectiles.is_empty()
+		orders = [team.combat_order, team.combat_goal, team.formal_commander, team.ranged_order_serial, team.ranged_target.duplicate(true)]
+	if not captain and team != null:
+		var cape_guard: Dictionary = controller.cape_departure_guard(identity)
+		if not cape_guard.ok: return cape_guard
+	if _hostile_near(lab, faction, cells): return Runtime.fail("IN_COMBAT")
+	var cape_policy: Dictionary = controller.cape_policy_guard()
+	if not cape_policy.ok: return cape_policy
+	for mover: int in people:
+		if controller._pending_deaths.has(mover) or controller.person_actions.is_busy(mover): return Runtime.fail("REGION_ACTIVE_DEPENDENCY", "本人原作業尚未准入冷交接；保留原進度")
+	if person.owner == lab.character:
+		waiting = waiting or not str(lab.terrain.site.manual.target).is_empty() or float(lab.terrain.site.manual.progress) > 0.0
+	if person.owner == lab.npc:
+		waiting = waiting or not str(lab.terrain.site.worker.target).is_empty() or float(lab.terrain.site.worker.progress) > 0.0
+	for mover: int in people:
+		waiting = waiting or lab.fire_reservations.has(mover)
+	for flight: Dictionary in lab.fire_projectiles:
+		if people.has(int(flight.get("shooter_id", 0))): waiting = true
+	var mode := "sea" if controller.vehicles.is_embarked(identity) else "land"
+	spec.mode = mode
+	var site: Vector2i = controller._current_region_site()
+	var component := 0 if mode == "sea" else start_component(slot, site, Vector2i(person.cell), lab.terrain)
+	if component < 0 or component > 253: return Runtime.fail("NO_ROUTE")
+	people.sort()
+	return {"ok": true, "spec": spec, "people": people, "component": component, "waiting": waiting,
+		"selection": var_to_bytes([identity, spec.actor_key, spec.team_id, spec.get("solo_row", 0), spec.get("solo_actor", 0), people, orders])}
+

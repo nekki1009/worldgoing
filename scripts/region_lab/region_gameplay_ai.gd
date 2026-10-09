@@ -67,7 +67,7 @@ static func view(ledger: Dictionary, receiver: int, game_time: float, receiver_s
 		var receipt: Dictionary = ledger.observations[key]
 		if not receiver_matches(receipt, receiver, receiver_scope, receiver_ref) or maxf(float(receipt.get("game_time", INF)), float(receipt.get("received_at", -INF))) > game_time or float(receipt.get("expires_at", -INF)) < game_time:
 			continue
-		var object_id := str(receipt.get("object", ""))
+		var object_id := observation_object_key(receipt)
 		if result.has(object_id) and float(result[object_id].game_time) > float(receipt.game_time): continue
 		result[object_id] = receipt.duplicate(true)
 	return result
@@ -93,14 +93,15 @@ static func queue_report(ledger: Dictionary, report: Dictionary) -> Dictionary:
 		return _fail("INVALID_REPORT")
 	var receipt: Dictionary = report.receipt
 	if not bool(observe({"observations": {}, "reports": [], "evaluation": {}}, receipt).ok): return _fail("INVALID_REPORT")
-	if str(receipt.get("source", "")) != "report" or not is_finite(float(report.get("due", INF))) or float(report.due) < float(receipt.get("game_time", INF)) or float(receipt.get("expires_at", -INF)) < float(report.due):
-		return _fail("INVALID_REPORT")
+	if str(receipt.get("source", "")) != "report" or not _time(report.get("due")) or float(report.due) < float(receipt.game_time): return _fail("INVALID_REPORT")
+	if report.has("delivery"):
+		var carried := validate_carried_report(report)
+		if not carried.ok: return carried
+	elif float(receipt.expires_at) < float(report.due): return _fail("INVALID_REPORT")
 	for prior: Dictionary in ledger.reports:
 		if str(prior.id) == str(report.id):
-			var original_intent := prior.duplicate(true)
-			original_intent.erase("delivered")
-			var repeated := report.duplicate(true)
-			repeated.erase("delivered")
+			var original_intent := carried_report_intent(prior)
+			var repeated := carried_report_intent(report)
 			return {"ok": original_intent == repeated, "code": "ALREADY_QUEUED" if original_intent == repeated else "REPORT_CONFLICT"}
 	if ledger.reports.size() >= 65536: return _fail("REPORT_CAPACITY")
 	ledger.reports.append(report.duplicate(true))
@@ -110,7 +111,8 @@ static func reports_due(ledger: Dictionary, game_time: float) -> Array[Dictionar
 	ensure(ledger)
 	var delivered: Array[Dictionary] = []
 	for report: Dictionary in ledger.reports:
-		if bool(report.get("delivered", false)) or float(report.due) > game_time: continue
+		# Physical carriers are delivered only by their original entered-token consumer.
+		if report.has("delivery") or bool(report.get("delivered", false)) or float(report.due) > game_time: continue
 		var receipt: Dictionary = report.receipt.duplicate(true)
 		receipt.received_at = float(report.due) # Preserve the actual source observation time.
 		var outcome := observe(ledger, receipt)
@@ -261,30 +263,15 @@ static func dispatch_candidates(lab: TerrainLab, scoped_intel: Dictionary, game_
 		if not resolved.get("ok", false) or int(resolved.decider) == actual_player: continue
 		var decider := int(resolved.decider)
 		var thresholds := military_thresholds(duty.personality(decider, null, lab))
-		var targets: Array[Dictionary] = []
-		for receipt: Dictionary in scoped_intel.values():
-			if not observe({"observations": {}, "evaluation": {}, "reports": []}, receipt).get("ok", false): continue
-			if not receiver_matches(receipt, decider, str(lab.terrain.site.id), person_ref(lab.terrain.site, decider)): continue
-			if not _time(receipt.get("game_time")) or not _time(receipt.get("expires_at")) or maxf(float(receipt.game_time), float(receipt.get("received_at", 0.0))) > game_time or float(receipt.expires_at) < game_time: continue
-			if str(receipt.get("source", "")) not in ["site_observation", "contact", "report"]: continue
-			var site_id := str(receipt.get("object", ""))
-			var prefix := str(lab.site_controller.region_slot.pin.atlas_id) + ":" if lab.site_controller.region_slot != null else ""
-			if prefix.is_empty() or not site_id.begins_with(prefix) or site_id == str(lab.terrain.site.id): continue
-			var position := site_id.trim_prefix(prefix).split(":")
-			if position.size() != 2 or not position[0].is_valid_int() or not position[1].is_valid_int(): continue
-			var known_power: Variant = receipt.get("value", {}).get("power")
-			if not (known_power is float or known_power is int) or not is_finite(float(known_power)) or float(known_power) < 0.0: continue
-			targets.append({"site_id": site_id, "coordinate": [position[0].to_int(), position[1].to_int()],
-				"power": float(known_power), "receipt": str(receipt.id)})
-		targets.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return str(a.site_id) < str(b.site_id) or a.site_id == b.site_id and str(a.receipt) < str(b.receipt))
+		var targets := dispatch_known_targets(lab, scoped_intel, decider, game_time)
 		for team: TerrainArmy in lab.combat_armies:
 			if used_teams.has(team.team_id) or not team.combat_enabled or team.index_for_identity(actual_player) >= 0: continue
 			team.settle_combat_command()
 			if not team.command_eligible(team.current_commander) or team.is_sustain_routed(): continue
 			var commander := team.combat_identity(team.current_commander)
 			if not equipment._member(nation, commander): continue
-			var own: Dictionary = military._team_summary(team, own_morale, {})
-			if int(own.ready) <= 0 or float(own.health) < float(thresholds.health) or float(own.ready_fraction) < float(thresholds.ready) or float(own.morale) < float(thresholds.morale) or float(own.fatigue) >= float(thresholds.fatigue): continue
+			var own := dispatch_ready_summary(team, lab, thresholds, own_morale)
+			if own.is_empty(): continue
 			for target: Dictionary in targets:
 				var ratio := float(own.power) / maxf(0.1, float(target.power))
 				if ratio < float(thresholds.pursuit) + float(thresholds.hold) - 0.65: continue
@@ -294,3 +281,282 @@ static func dispatch_candidates(lab: TerrainLab, scoped_intel: Dictionary, game_
 				used_teams[team.team_id] = true
 				break
 	return {"ok": true, "intents": intents}
+
+const DELIVERY_VERSION := 1
+
+const DELIVERY_PHASES := ["in_transit", "ready", "delivered", "failed"]
+
+const DeliveryCheckpoint = preload("res://scripts/terrain_lab/site_region_checkpoint.gd")
+
+
+
+static func observation_object_key(receipt: Dictionary) -> String:
+	var object := str(receipt.get("object", ""))
+	if object.begins_with("team:") or object.begins_with("person:") or object.begins_with("feature:"):
+		return str(receipt.get("object_scope", "")) + "/" + object
+	return object
+
+
+static func known_intel_label(receipt: Dictionary) -> String:
+	var value: Dictionary = receipt.get("value", {})
+	var label := observation_object_key(receipt)
+	if value.get("people") is Array: label += "：%d 名當時可見人物" % value.people.size()
+	elif receipt.get("observation_kind") == "officer_visible_feature":
+		label += "：%s，當時陣營 %d" % [str(value.get("kind", "")), int(value.get("owner_faction", 0))]
+	return label
+
+
+static func delivery_hash(value: Variant) -> String:
+	return JSON.stringify(DeliveryCheckpoint._hash_numbers(DeliveryCheckpoint.wire(value)), "", true, true).sha256_text()
+
+
+static func delivery_reference(value: Variant, kind: String) -> bool:
+	return value is Dictionary and value.size() == 3 and value.get("type") == kind \
+		and value.get("namespace") is String and not str(value.namespace).is_empty() \
+		and RegionTravel._identity_integer(value.get("lineage"), 1, RegionTravel.MAX_IDENTITY_SEQUENCE)
+
+
+static func delivery_office(value: Variant, holder: Dictionary) -> bool:
+	if not value is Dictionary or value.get("holder_ref") != holder: return false
+	if value.get("kind") == "team": return value.size() == 3 and delivery_reference(value.get("team_ref"), "team")
+	return value.get("kind") == "nation" and value.size() == 4 and delivery_reference(value.get("nation_ref"), "nation") \
+		and value.get("position") is String and not value.position.is_empty()
+
+
+static func carried_report_intent(report: Dictionary) -> Dictionary:
+	var result := report.duplicate(true)
+	result.erase("delivered")
+	if result.get("delivery") is Dictionary:
+		result.erase("delivered_receipt")
+		for field: String in ["result_at", "result", "ready_at", "arrival_mapping_sha256", "last_navigation_result"]: result.delivery.erase(field)
+		result.delivery.phase = "in_transit"
+	return result
+
+
+static func validate_carried_report(report: Variant) -> Dictionary:
+	if not report is Dictionary or not report.get("id") is String or report.id.is_empty() or not report.get("delivery") is Dictionary or not json_data(report): return _fail("INVALID_CARRIED_REPORT")
+	var carried: Dictionary = report.delivery
+	if carried.get("version") != DELIVERY_VERSION or carried.get("kind") not in ["report", "army_command", "nation_dispatch"] or carried.get("phase") not in DELIVERY_PHASES \
+		or not carried.get("courier_token") is String or carried.courier_token.is_empty() \
+		or not delivery_reference(carried.get("courier_ref"), "person") or not delivery_reference(carried.get("issuer_ref"), "person") \
+		or not delivery_reference(carried.get("team_ref"), "team") or not delivery_reference(carried.get("receiver_ref"), "person") \
+		or not carried.get("source_scope") is String or carried.source_scope.is_empty() or not carried.get("receiver_scope") is String or carried.receiver_scope.is_empty() \
+		or not delivery_office(carried.get("receiver_office"), carried.receiver_ref) \
+		or not carried.get("plan_path") is String or carried.plan_path != "travel/%s/plan_000001.json" % str(carried.courier_token) \
+		or not report.get("source_receipt") is Dictionary or not report.get("receipt") is Dictionary or not _time(report.get("due")):
+		return _fail("INVALID_CARRIED_REPORT")
+	var original: Dictionary = report.source_receipt
+	var receipt: Dictionary = report.receipt
+	if not observe({"observations": {}, "reports": [], "evaluation": {}}, original).ok or not observe({"observations": {}, "reports": [], "evaluation": {}}, receipt).ok \
+		or receipt.id != report.id \
+		or str(receipt.get("source", "")) != "report" or float(receipt.get("game_time", -1.0)) != float(original.game_time) \
+		or float(receipt.get("expires_at", -1.0)) != float(original.expires_at) or receipt.get("value") != original.value \
+		or receipt.get("observer_ref") != original.get("observer_ref") or receipt.get("receiver_ref") != carried.receiver_ref \
+		or str(receipt.get("receiver_scope", "")) != str(carried.receiver_scope) \
+		or str(carried.get("source_receipt_sha256", "")) != delivery_hash(original) \
+		or not _time(carried.get("source_game_seconds")) or not _time(carried.get("source_action_seconds")) \
+		or float(carried.source_game_seconds) < float(original.game_time) or float(report.due) < float(carried.source_game_seconds):
+		return _fail("INVALID_CARRIED_REPORT")
+	var expected := original.duplicate(true)
+	expected.merge({"id": report.id, "source": "report", "receiver": receipt.receiver, "receiver_scope": carried.receiver_scope, "receiver_ref": carried.receiver_ref.duplicate(true)}, true)
+	expected.erase("received_at")
+	if expected != receipt: return _fail("MUTATED_REPORT_SOURCE")
+	if str(carried.phase) != "in_transit" and (not _time(carried.get("result_at")) or float(carried.result_at) < float(carried.source_game_seconds)): return _fail("INVALID_CARRIED_REPORT")
+	if carried.has("plan_sha256") and (not carried.plan_sha256 is String or carried.plan_sha256.length() != 64 or not carried.plan_sha256.is_valid_hex_number()): return _fail("INVALID_CARRIED_REPORT")
+	if str(carried.phase) in ["ready", "delivered"] and (not _time(carried.get("ready_at")) or float(carried.ready_at) < float(carried.source_game_seconds) \
+		or not carried.get("arrival_mapping_sha256") is String or carried.arrival_mapping_sha256.length() != 64 or not carried.arrival_mapping_sha256.is_valid_hex_number()): return _fail("INVALID_CARRIED_REPORT")
+	if str(carried.phase) in ["delivered", "failed"] and (not carried.get("result") is Dictionary or not carried.result.get("code") is String \
+		or carried.result.code.is_empty() or carried.result.get("complete") != true or carried.result.get("effects_complete") != true): return _fail("INVALID_CARRIED_REPORT")
+	if str(carried.phase) == "delivered":
+		if report.get("delivered") != true or not report.get("delivered_receipt") is Dictionary or not observe({"observations": {}, "reports": [], "evaluation": {}}, report.delivered_receipt).ok \
+			or float(report.delivered_receipt.get("received_at", -1.0)) != float(carried.result_at): return _fail("INVALID_CARRIED_REPORT")
+		var saved: Dictionary = report.delivered_receipt.duplicate(true)
+		saved.erase("received_at")
+		saved.receiver = receipt.receiver
+		if saved != receipt: return _fail("MUTATED_REPORT_SOURCE")
+	if carried.kind == "army_command":
+		var command: Variant = carried.get("command")
+		if not command is Dictionary or command.get("version") != DELIVERY_VERSION or not DeliveryCheckpoint.integer(command.get("order")) \
+			or int(command.order) not in [TerrainArmy.CombatOrder.HOLD, TerrainArmy.CombatOrder.MOVE] \
+			or not command.get("goal") is Array or command.goal.size() != 2 or not delivery_reference(command.get("commander_ref"), "person") \
+			or command.commander_ref != carried.issuer_ref or command.commander_ref != carried.receiver_ref \
+			or not DeliveryCheckpoint.integer(command.get("source_order_serial"), 0):
+			return _fail("INVALID_CARRIED_COMMAND")
+		for axis: int in 2:
+			if not DeliveryCheckpoint.integer(command.goal[axis], -1): return _fail("INVALID_CARRIED_COMMAND")
+	if carried.kind == "nation_dispatch": return validate_carried_nation_command(report)
+	return {"ok": true}
+
+
+static func validate_reports(ledger: Dictionary, world: float) -> Dictionary:
+	var ids := {}
+	for value: Variant in ledger.get("reports", []):
+		if not value is Dictionary: continue # Preserve the original legacy ledger admission.
+		var id := str(value.get("id", ""))
+		if ids.has(id) and (bool(ids[id]) or value.has("delivery")): return _fail("INVALID_CARRIED_REPORT")
+		ids[id] = value.has("delivery")
+		if not value.has("delivery"): continue
+		var valid := validate_carried_report(value)
+		if not valid.ok: return valid
+		var execution := validate_carried_nation_execution(ledger, value, world)
+		if not execution.ok: return execution
+		if not value.delivery.has("plan_sha256") or float(value.delivery.source_game_seconds) > world + 0.00000001 \
+			or value.delivery.has("result_at") and float(value.delivery.result_at) > world + 0.00000001: return _fail("INVALID_CARRIED_REPORT")
+		var carrier: Dictionary = ledger.get("parties", {}).get(str(value.delivery.courier_token), {})
+		if carrier.get("controller") != "npc" or str(carrier.get("token", "")) != str(value.delivery.courier_token) \
+			or str(carrier.get("plan_path", "")) != str(value.delivery.plan_path) or str(carrier.get("plan_sha256", "")) != str(value.delivery.plan_sha256) \
+			or float(carrier.get("departure_game_seconds", -1.0)) != float(value.delivery.source_game_seconds): return _fail("INVALID_CARRIED_REPORT")
+		if str(value.delivery.phase) in ["ready", "delivered"]:
+			if carrier.get("phase") != "entered" or str(carrier.get("destination_site", "")) != str(value.delivery.receiver_scope) \
+				or float(carrier.get("arrival_game_seconds", -1.0)) != float(value.delivery.ready_at) \
+				or delivery_hash(carrier.get("arrival_mapping", {})) != str(value.delivery.arrival_mapping_sha256): return _fail("INVALID_CARRIED_REPORT")
+	return {"ok": true}
+
+
+static func carried_report_terminal(report: Dictionary) -> bool:
+	return str(report.get("delivery", {}).get("phase", "")) in ["delivered", "failed"]
+
+
+static func carried_report_result(report: Dictionary, at: float, action: float, result: Dictionary) -> Dictionary:
+	var valid := validate_carried_report(report)
+	if not valid.ok or not _time(at) or not _time(action) or at < float(report.delivery.source_game_seconds) or not json_data(result): return _fail("INVALID_DELIVERY_RESULT")
+	if carried_report_terminal(report): return {"ok": true, "duplicate": true, "receipt": report.delivery.get("result", {}).duplicate(true)}
+	if not result.get("code") is String or result.code.is_empty(): return _fail("INVALID_DELIVERY_RESULT")
+	report.delivery.phase = "failed"
+	report.delivery.result_at = at
+	report.delivery.result = result.duplicate(true)
+	report.delivery.result.game_seconds = at
+	report.delivery.result.action_seconds = action
+	return {"ok": true, "complete": true, "receipt": report.delivery.result.duplicate(true)}
+
+## Slot supplies the true completed original-owner guard and effect caller.
+## Accepted source observation time is never replaced with receipt time.
+
+
+static func deliver_carried_report(ledger: Dictionary, id: String, at: float, action: float, original_consumer: Callable) -> Dictionary:
+	var report: Dictionary = {}
+	for candidate: Dictionary in ledger.get("reports", []):
+		if str(candidate.get("id", "")) == id: report = candidate
+	if report.is_empty(): return _fail("NO_REPORT")
+	var valid := validate_carried_report(report)
+	if not valid.ok: return valid
+	if carried_report_terminal(report): return {"ok": true, "complete": true, "duplicate": true, "receipt": report.delivery.result.duplicate(true)}
+	if float(report.receipt.expires_at) < at or str(report.delivery.phase) == "in_transit" and at >= float(report.receipt.expires_at):
+		return carried_report_result(report, at, action, {"code": "REPORT_EXPIRED", "source_receipt": str(report.source_receipt.id), "effects_complete": true, "complete": true})
+	if str(report.delivery.phase) != "ready" or float(report.delivery.ready_at) != at: return _fail("UNREADY_DELIVERY")
+	if not original_consumer.is_valid(): return _fail("MISSING_ORIGINAL_DELIVERY_OWNER")
+	var outcome: Variant = original_consumer.call(report)
+	if not outcome is Dictionary or not outcome.get("ok", false): return outcome if outcome is Dictionary else _fail("INVALID_ORIGINAL_DELIVERY_RESULT")
+	if not outcome.get("delivered", false):
+		return carried_report_result(report, at, action, outcome.get("receipt", {"code": "DELIVERY_FAILED", "effects_complete": true, "complete": true}))
+	var receipt: Dictionary = report.receipt.duplicate(true)
+	receipt.receiver = int(outcome.receiver)
+	receipt.received_at = at
+	var observed := observe(ledger, receipt)
+	if not observed.ok: return observed
+	report.delivered = true
+	report.delivered_receipt = receipt
+	report.delivery.phase = "delivered"
+	report.delivery.result_at = at
+	report.delivery.result = outcome.receipt.duplicate(true)
+	report.delivery.result.merge({"code": "DELIVERED", "effects_complete": true, "complete": true, "game_seconds": at, "action_seconds": action}, true)
+	return {"ok": true, "complete": true, "receipt": report.delivery.result.duplicate(true)}
+
+
+
+## Schema for a signed original Nation strategic dispatch, carried in the
+## existing report. It never grants Nation tactical control over a remote Army.
+
+
+static func validate_carried_nation_command(report: Dictionary) -> Dictionary:
+	var carried: Dictionary = report.delivery
+	var command: Variant = carried.get("command")
+	var fields := ["version", "duty", "source_scope", "nation_id", "nation_ref", "issuer_ref", "offices_revision", "receiver_team_ref", "target_site", "target_coordinate", "receiver_order_serial", "receiver_ranged_order_serial"]
+	if not command is Dictionary or command.size() != fields.size(): return _fail("INVALID_NATION_COMMAND")
+	for field: String in fields:
+		if not command.has(field): return _fail("INVALID_NATION_COMMAND")
+	if command.version != DELIVERY_VERSION or command.duty != "nation.dispatch" \
+		or not command.source_scope is String or command.source_scope != carried.source_scope \
+		or not command.nation_id is String or command.nation_id.is_empty() \
+		or not delivery_reference(command.nation_ref, "nation") or not delivery_reference(command.issuer_ref, "person") \
+		or command.issuer_ref != carried.issuer_ref or report.source_receipt.get("receiver_ref") != carried.issuer_ref \
+		or not DeliveryCheckpoint.integer(command.offices_revision, 0) \
+		or not delivery_reference(command.receiver_team_ref, "team") or carried.receiver_office.kind != "team" \
+		or carried.receiver_office.team_ref != command.receiver_team_ref \
+		or not command.target_site is String or command.target_site.is_empty() or command.target_site != str(report.source_receipt.object) \
+		or not command.target_coordinate is Array or command.target_coordinate.size() != 2 \
+		or not DeliveryCheckpoint.integer(command.receiver_order_serial, 0) or not DeliveryCheckpoint.integer(command.receiver_ranged_order_serial, 0): return _fail("INVALID_NATION_COMMAND")
+	for axis: int in 2:
+		if not DeliveryCheckpoint.integer(command.target_coordinate[axis], -2147483647): return _fail("INVALID_NATION_COMMAND")
+	if carried.phase == "delivered":
+		var effect: Variant = carried.get("result", {}).get("effect")
+		if not effect is Dictionary or effect.get("kind") != "original_nation_dispatch" or effect.get("execution") not in ["pending", "dispatched", "failed"] \
+			or effect.get("nation_ref") != command.nation_ref or effect.get("receiver_team_ref") != command.receiver_team_ref or effect.get("receiver_ref") != carried.receiver_ref \
+			or not _time(effect.get("received_action_seconds")) or not _time(effect.get("received_game_seconds")) \
+			or float(effect.received_game_seconds) != float(carried.result_at) or float(effect.received_action_seconds) != float(carried.result.action_seconds) \
+			or not _time(effect.get("original_order_delay")): return _fail("INVALID_NATION_COMMAND_RESULT")
+		if not effect.get("prior_tactical_ai_enabled") is bool: return _fail("INVALID_NATION_COMMAND_RESULT")
+		for serial: String in ["before_order_serial", "accepted_order_serial", "before_ranged_order_serial", "accepted_ranged_order_serial"]:
+			if not DeliveryCheckpoint.integer(effect.get(serial), 0): return _fail("INVALID_NATION_COMMAND_RESULT")
+		if effect.execution != "pending":
+			var execution: Variant = effect.get("execution_receipt")
+			if not execution is Dictionary or not execution.get("code") is String or execution.code.is_empty() \
+				or execution.get("complete") != true or execution.get("effects_complete") != true \
+				or not DeliveryCheckpoint.integer(execution.get("source_generation"), 1) \
+				or not _time(execution.get("game_seconds")) or not _time(execution.get("action_seconds")) \
+				or float(execution.game_seconds) < float(effect.received_game_seconds) or float(execution.action_seconds) < float(effect.received_action_seconds): return _fail("INVALID_NATION_COMMAND_RESULT")
+	return {"ok": true}
+
+
+static func validate_carried_nation_execution(ledger: Dictionary, report: Dictionary, world: float) -> Dictionary:
+	if report.delivery.kind != "nation_dispatch" or report.delivery.phase != "delivered": return {"ok": true}
+	var effect: Dictionary = report.delivery.result.effect
+	if effect.execution == "pending": return {"ok": true}
+	var execution: Dictionary = effect.execution_receipt
+	if float(execution.game_seconds) > world + 0.00000001: return _fail("INVALID_NATION_COMMAND_RESULT")
+	if effect.execution != "dispatched": return {"ok": true}
+	var token := str(execution.get("transfer_token", ""))
+	var party: Dictionary = ledger.get("parties", {}).get(token, {})
+	var request: Dictionary = party.get("transfer_receipt", {})
+	if token != "npc_command_" + str(report.id).sha256_text().substr(0, 32) or party.get("controller") != "npc" \
+		or request.get("carried_nation_command") != report.id or request.get("known_receipt") != report.id \
+		or request.get("nation_ref") != report.delivery.command.nation_ref or request.get("nation_scope") != report.delivery.command.source_scope \
+		or request.get("target_site") != report.delivery.command.target_site \
+		or not _time(execution.get("paid_original_delay_action")) \
+		or float(execution.paid_original_delay_action) + 0.00000001 < float(effect.original_order_delay) \
+		or absf(float(execution.paid_original_delay_action) - (float(execution.action_seconds) - float(effect.received_action_seconds))) > 0.00000001 \
+		or float(party.get("departure_game_seconds", -1.0)) != float(execution.game_seconds): return _fail("INVALID_NATION_COMMAND_RESULT")
+	return {"ok": true}
+
+## Both local and remote strategy use the existing personality thresholds
+## and current original own-cohort readiness. This reads no enemy army facts.
+
+
+static func dispatch_ready_summary(team: TerrainArmy, original: TerrainLab, thresholds: Dictionary, morale: Dictionary = {}) -> Dictionary:
+	var military: Script = load("res://scripts/terrain_lab/site_army_ai.gd")
+	var own: Dictionary = military._team_summary(team, morale if not morale.is_empty() else military._morale_by_person(original.terrain), {})
+	if int(own.ready) <= 0 or float(own.health) < float(thresholds.health) or float(own.ready_fraction) < float(thresholds.ready) \
+		or float(own.morale) < float(thresholds.morale) or float(own.fatigue) >= float(thresholds.fatigue): return {}
+	return own
+
+
+static func dispatch_known_targets(lab: TerrainLab, scoped_intel: Dictionary, decider: int, game_time: float) -> Array[Dictionary]:
+	var targets: Array[Dictionary] = []
+	for receipt: Dictionary in scoped_intel.values():
+		if not observe({"observations": {}, "evaluation": {}, "reports": []}, receipt).get("ok", false): continue
+		if not receiver_matches(receipt, decider, str(lab.terrain.site.id), person_ref(lab.terrain.site, decider)): continue
+		if not _time(receipt.get("game_time")) or not _time(receipt.get("expires_at")) \
+			or maxf(float(receipt.game_time), float(receipt.get("received_at", 0.0))) > game_time or float(receipt.expires_at) < game_time: continue
+		if str(receipt.get("source", "")) not in ["site_observation", "contact", "report"]: continue
+		var site_id := str(receipt.get("object", ""))
+		var prefix := str(lab.site_controller.region_slot.pin.atlas_id) + ":" if lab.site_controller.region_slot != null else ""
+		if prefix.is_empty() or not site_id.begins_with(prefix) or site_id == str(lab.terrain.site.id): continue
+		var position := site_id.trim_prefix(prefix).split(":")
+		if position.size() != 2 or not position[0].is_valid_int() or not position[1].is_valid_int(): continue
+		var known_power: Variant = receipt.get("value", {}).get("power")
+		if not (known_power is float or known_power is int) or not is_finite(float(known_power)) or float(known_power) < 0.0: continue
+		targets.append({"site_id": site_id, "coordinate": [position[0].to_int(), position[1].to_int()],
+			"power": float(known_power), "receipt": str(receipt.id)})
+	targets.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return str(a.site_id) < str(b.site_id) or a.site_id == b.site_id and str(a.receipt) < str(b.receipt))
+	return targets
+

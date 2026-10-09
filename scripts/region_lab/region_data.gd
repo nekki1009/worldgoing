@@ -722,3 +722,9 @@ func clear_cache() -> void:
 	_fine_lru.clear()
 	_cache_bytes = 0
 	peak_cache_bytes = 0
+
+const RESOURCE_SOURCE_PAIRS := {
+	"e3108aad1cbfd5118af08fd699ac03bf64d19b5bc9d186154dc9a5fea279f7b8": {"path": RESOURCE_MANIFEST, "sha256": "a6b9c68722c9755f4b99a0704eebd5368b6dd2fe431a7eca78a48e8fd6ee49cf"},
+	"cdf59e3247c9db3eb1e5399f7346014f8dec5c2f90bb977fd41ea35bc3444446": {"path": "res://assets/region_lab/earth_tw_resources_v1/manifest.terrain_mapped_potential_v1.json", "sha256": "9acfdc50025eac0c296880102af57cc9d1faef34cc24486eef1594fcc07bd5ef"}
+}
+

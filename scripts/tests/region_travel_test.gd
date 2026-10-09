@@ -17,6 +17,8 @@ const Grid = preload("res://scripts/region_lab/region_grid.gd")
 const Adapter = preload("res://scripts/region_lab/region_terrain_adapter.gd")
 const OUT := "res://.godot-temp/region_travel_test"
 const SLOT := "main"
+const OriginalTravelPanel = preload("res://scripts/region_lab/region_travel_panel.gd")
+var original_travel_panel: OriginalTravelPanel
 
 var deadline := 0
 var lab: TerrainLab
@@ -103,7 +105,9 @@ func _run() -> void:
 	RegionTravelSite.scene_handoff = false
 	RegionRoute.clear_memory_cache()
 	if not _write_manifest(): return
-	lab = TerrainLab.new()
+	var packed := load("res://scenes/terrain_lab/TerrainLab.tscn") as PackedScene
+	if not _must(packed != null, "Original formal travel scene is available"): return
+	lab = packed.instantiate() as TerrainLab
 	lab.npc = TerrainTestNPC.new()
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
@@ -119,6 +123,7 @@ func _run() -> void:
 	if not _solo_trip(): return
 	if not _return_to_visited(): return
 	if not _yushan_routes(): return
+	if is_instance_valid(original_travel_panel): original_travel_panel.free()
 	TerrainArmy.release_contact_source()
 	print("REGION_TRAVEL_REPORT: " + JSON.stringify(report))
 	print("REGION_TRAVEL_TEST_PASS: captain whole-team and non-captain solo trips, people/items/vehicles conserved, combat/downed/enemy departure refused, sea-channel detour and Yushan crossings re-proved by the original Site rule, mid-journey reopen, clock monotonic and equal to travel time, visited-Site exact cold replay")
@@ -337,6 +342,7 @@ func _captain_trip() -> bool:
 	var from: Vector2i = controller._current_region_site()
 	var departed := RegionTravelSite.depart(controller)
 	if not _must(departed.ok, "Captain departure failed: " + str(departed)): return false
+	if not _bind_original_travel_host(slot): return false
 	var status := slot.region_travel_status()
 	if not _must(status.ok and status.pending and not status.moving and str(slot.control.active_site_id).is_empty(), "Departure did not leave a stopped party and no active Site"): return false
 	var party: Dictionary = slot.region_travel_party().party
@@ -360,14 +366,26 @@ func _captain_trip() -> bool:
 	report["synthetic_route"] = {"sites": route.steps.size(), "metres": route.metres, "site_builds": route.site_builds, "wall_ms": route.wall_ms}
 	var planned := slot.set_region_travel_plan(route.steps)
 	if not _must(planned.ok, "Plan rejected: " + str(planned)): return false
+	var selected_party: Dictionary = slot.region_live_party_proof(str(status.token))
+	if not _must(selected_party.ok and slot.validate_region_live_party_proof(str(status.token), slot.region_travel_party().party, selected_party.proof).ok, "Committed plan and exact original party are one source epoch"): return false
+	var stale_party: Dictionary = slot.region_travel_party().party.duplicate(true)
+	stale_party.upkeep.distance = float(stale_party.upkeep.distance) + 1.0
+	if not _must(not slot.validate_region_live_party_proof(str(status.token), stale_party, selected_party.proof).ok, "Changed party body remains rejected by the durable source proof"): return false
+	var original_host: TerrainLab = slot.region_original_party_progress.get_object()
+	var prepared_party: Dictionary = original_host.prepare_region_party_original_owner(str(status.token), slot.region_travel_party().party, slot)
+	if not _must(prepared_party.ok and slot.region_registry().modes.get("travel:" + str(status.token), {}).get("activation", {}).get("complete") == true, "Original selected party receives an actual complete mode activation: " + str(prepared_party)): return false
+	if not _must(not slot.acknowledge_region_original_party_bind(str(status.token), slot.region_travel_party().party, prepared_party.lab, {"ok": true, "complete": true}).ok, "Invented bind receipt cannot activate the original party"): return false
 	var total_seconds := float(planned.game_seconds)
 	# Travel: clock monotonic, equal to departure + published steps.
 	var published := 0.0
 	var last := float(slot.control.logical_game_seconds)
 	var halfway := false
 	while true:
+		if not _must(Time.get_ticks_msec() <= deadline, "Original 540-second captain travel deadline"): return false
 		var advanced := slot.advance_region_travel(37)
-		if not _must(advanced.ok, "Travel step failed: " + str(advanced)): return false
+		var actual_host: TerrainLab = slot.region_original_travel_interval.get_object()
+		var host_state := {"active_site_id": str(slot.control.active_site_id), "host_id": str(actual_host.terrain.site.id), "restore_only": actual_host.restore_only, "index_self": slot._region_original_labs.get(str(actual_host.terrain.site.id)) == actual_host, "party_host": actual_host.terrain.has_meta(&"region_party_owner"), "published_game_seconds": published, "world_game_seconds": float(slot.control.logical_game_seconds), "journey_pending": not slot.region_travel_journey().is_empty()}
+		if not _must(advanced.ok, "Travel step failed: " + str(advanced) + " actual_host=" + str(host_state)): return false
 		var now := float(slot.control.logical_game_seconds)
 		if not _must(now >= last, "World clock went backwards"): return false
 		published += float(advanced.advanced)
@@ -403,6 +421,28 @@ func _captain_trip() -> bool:
 	if not _must(not replay.ok, "A committed arrival could be replayed"): return false
 	report["captain_landing"] = {"entry": [entry.x, entry.y], "leader": [leader.x, leader.y]}
 	return true
+
+func _bind_original_travel_host(slot: RegionSaveSlot) -> bool:
+	if is_instance_valid(original_travel_panel): original_travel_panel.free()
+	original_travel_panel = OriginalTravelPanel.new()
+	original_travel_panel.process_mode = Node.PROCESS_MODE_DISABLED
+	original_travel_panel.visible = false
+	root.add_child(original_travel_panel)
+	original_travel_panel.slot = slot
+	var selected := slot.region_travel_party()
+	if not _must(selected.ok, "Original panel reads the exact committed party"): return false
+	var hosted: Dictionary = original_travel_panel._ensure_original_adapter_host(selected.party)
+	var origin_mode: Dictionary = slot.region_registry().modes.get(str(selected.party.origin_site_id), {})
+	if not _must(hosted.ok and origin_mode.get("mode") in ["cold_exact", "formula_active"] and origin_mode.get("activation", {}).get("complete") == true, "Original departed Site is admitted by its actual complete owner: " + str(hosted)): return false
+	return _must(hosted.ok and slot.region_original_travel_interval.is_valid() and slot.region_original_party_progress.is_valid(),
+		"Actual original panel binds its complete selected shared-step host: " + str(hosted))
+
+func _complete_original_travel(slot: RegionSaveSlot) -> bool:
+	while Time.get_ticks_msec() <= deadline:
+		var advanced: Dictionary = slot.advance_region_travel(1000)
+		if not _must(advanced.ok, "Actual original travel consumer: " + str(advanced)): return false
+		if bool(advanced.arrived): return true
+	return _must(false, "Original travel deadline")
 
 func _reopen_mid_journey(slot: RegionSaveSlot, people: Array) -> bool:
 	var saved := slot.checkpoint_region_travel()
@@ -440,6 +480,7 @@ func _solo_trip() -> bool:
 	var slot: RegionSaveSlot = controller.region_slot
 	var departed := RegionTravelSite.depart(controller)
 	if not _must(departed.ok, "Solo departure failed: " + str(departed)): return false
+	if not _bind_original_travel_host(slot): return false
 	var party: Dictionary = slot.region_travel_party().party
 	var census := RegionTravel.census(party)
 	if not _must(census.people == [me] and census.vehicles.is_empty() and party.team_ids.is_empty(), "Solo party carried the team: " + str(census)): return false
@@ -453,7 +494,7 @@ func _solo_trip() -> bool:
 	var route := _original_party_route(slot, router, from, int(slot.region_travel_status().component), to)
 	if not _must(route.ok and _prove_route(router, route.steps, "Solo"), "Solo route failed: " + str(route)): return false
 	if not _must(slot.set_region_travel_plan(route.steps).ok, "Solo plan rejected"): return false
-	while not bool(slot.advance_region_travel(1000).arrived): pass
+	if not _complete_original_travel(slot): return false
 	slot.checkpoint_region_travel()
 	var arrived := controller.open_fixed_world(manifest_path, world_id, SLOT, Vector2i(-1, -1), false)
 	if not _must(arrived.ok, "Solo arrival failed: " + str(arrived)): return false
@@ -469,6 +510,7 @@ func _return_to_visited() -> bool:
 	var slot: RegionSaveSlot = controller.region_slot
 	var departed := RegionTravelSite.depart(controller)
 	if not _must(departed.ok, "Return departure failed: " + str(departed)): return false
+	if not _bind_original_travel_host(slot): return false
 	var router := RegionData.new()
 	router.load_manifest(manifest_path)
 	var to := Vector2i(0, 0)
@@ -476,7 +518,7 @@ func _return_to_visited() -> bool:
 	if not _must(route.ok and slot.set_region_travel_plan(route.steps).ok, "Return route failed"): return false
 	var origin_state := _saved_state(slot, to)
 	var behind := float(slot.control.logical_game_seconds) - float(origin_state.get(RegionSaveSlot.SETTLEMENT_FIELD, {}).get("last_settled_game_seconds", 0.0))
-	while not bool(slot.advance_region_travel(1000).arrived): pass
+	if not _complete_original_travel(slot): return false
 	slot.checkpoint_region_travel()
 	behind = float(slot.control.logical_game_seconds) - float(origin_state.get(RegionSaveSlot.SETTLEMENT_FIELD, {}).get("last_settled_game_seconds", 0.0))
 	var started := Time.get_ticks_msec()

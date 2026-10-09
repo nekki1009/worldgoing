@@ -392,7 +392,11 @@ func _save_checked(data: TerrainData, site: Vector2i, path: String) -> Dictionar
 		saved = Store.save_region_snapshot(data, path, capture.context, capture.owners)
 	elif data.site.has("region_snapshot"):
 		var captured := Store.validate_region_snapshot(data, {})
-		if not captured.ok: return captured
+		if not captured.ok:
+			if str(captured.get("code", "")) == "CORRUPT_REGION_SNAPSHOT": # Diagnostic tags only.
+				captured["source"] = "save_checked"
+				captured["site_id"] = str(data.site.get("id", ""))
+			return captured
 		saved = Store.save_region_snapshot(data, path, captured.context, captured.owners)
 	else:
 		saved = Store.save(data, path)
@@ -482,6 +486,19 @@ func _recover_control_from_files() -> Dictionary:
 			or not recorded.get("journey") is Dictionary or not recorded.get("control") is Dictionary:
 		return fail("CORRUPT_SAVE", "存檔槽提交版本／來源／欄位")
 	var clock: Dictionary = recorded.control
+	# bytes_to_var() is the original no-object Variant decoder.
+	# Legacy bare JSON clocks still pass the same validators below.
+	if clock.has("encoding") or clock.has("value"):
+		if clock.size() != 2 or clock.get("encoding") != "godot_var_v1" or not clock.get("value") is String:
+			return fail("CORRUPT_SAVE", "存檔槽 control 原 Variant 編碼欄位")
+		var raw := Marshalls.base64_to_raw(str(clock.value))
+		if raw.is_empty() or Marshalls.raw_to_base64(raw) != str(clock.value):
+			return fail("CORRUPT_SAVE", "存檔槽 control 原 Variant Base64 非唯一格式")
+		var decoded: Variant = bytes_to_var(raw)
+		if not decoded is Dictionary or var_to_bytes(decoded) != raw:
+			return fail("CORRUPT_SAVE", "存檔槽 control 原 Variant 字節非法")
+		clock = decoded
+		recorded.control = clock
 	if clock.size() not in [2, 3, 4] or clock.size() == 4 and not clock.has("region_gameplay") or not clock.get("active_site_id") is String \
 			or not clock.get("logical_game_seconds") is float and not clock.get("logical_game_seconds") is int \
 			or not is_finite(float(clock.logical_game_seconds)) or float(clock.logical_game_seconds) < 0.0:
@@ -577,7 +594,10 @@ func _publish(sites: Dictionary, clock: Dictionary, transfer_token: String = "",
 	if initialization_pending() and expected == 0:
 		var initial_guard := _check_initial_record(record)
 		if not initial_guard.ok: return initial_guard
-	var committed := _write_new_document(folder.path_join("commits/%020d.json" % generation), record)
+	# Keep the logical record in RAM; encode only its persisted control clock.
+	var wire_record := record.duplicate(true)
+	wire_record.control = {"encoding": "godot_var_v1", "value": Marshalls.raw_to_base64(var_to_bytes(next_clock))}
+	var committed := _write_new_document(folder.path_join("commits/%020d.json" % generation), wire_record)
 	if not committed.ok: return committed
 	_marker = record
 	control = next_clock
@@ -612,7 +632,9 @@ func _settle_cold_candidate(data: TerrainData, target_seconds: float) -> Diction
 		if not completed_original.ok: return completed_original
 		if not completed_original.legacy and float(completed_original.pending) <= 0.00001:
 			return {"ok": true, "data": data}
-	var copy := Env.navigation_for_state(data, data.site.duplicate(true))
+	var detached := _detached_cold_copy(data, original)
+	if not detached.ok: return detached
+	var copy: TerrainData = detached.data
 	var empty: bool = copy.site.get("actors", {}).is_empty() and copy.site.get("armies", []).is_empty() \
 		and copy.site.get("features", {}).is_empty() and copy.site.get("person_supply", {}).is_empty() \
 		and copy.site.get("team_supply", {}).is_empty() and str(copy.site.get("worker", {}).get("target", "")).is_empty()
@@ -1398,12 +1420,14 @@ func queue_region_event(identity: String, kind: String, at: float, owner: String
 	return GameplayClock.queue_event(region_registry(), identity, kind, at, owner, payload, player)
 
 func pending_region_events() -> Array[Dictionary]:
+	if source == null and not control.has("region_gameplay"): return []
 	return GameplayClock.pending_at(region_registry(), float(control.logical_game_seconds))
 
 func complete_region_event(identity: String) -> Dictionary:
 	return GameplayClock.complete_event(region_registry(), identity, float(control.logical_game_seconds))
 
 func region_player_barrier() -> Dictionary:
+	if source == null and not control.has("region_gameplay"): return {}
 	return GameplayClock.player_barrier(region_registry(), float(control.logical_game_seconds))
 
 func activate_region_mode(owner: String, mode: String, consumer: String, receipt: Dictionary, backend: String = "gd") -> Dictionary:
@@ -1464,7 +1488,7 @@ func _prune_recoverable_fire_journal() -> int:
 var _region_route_snapshot: Dictionary = {}
 var _region_route_snapshot_revision := ""
 
-func prepare_region_route_context(active_data: TerrainData = null, party: Dictionary = {}) -> Dictionary:
+func prepare_region_route_context(active_data: TerrainData = null, party: Dictionary = {}, route_sites: Array[Vector2i] = []) -> Dictionary:
 	if source == null or pin.is_empty(): return fail("INVALID_SLOT", "原路線來源尚未開啟")
 	if not Thread.is_main_thread(): return fail("REGION_ROUTE_THREAD", "原導航快照須在主執行緒準備")
 	var snapshots := {}
@@ -1473,12 +1497,20 @@ func prepare_region_route_context(active_data: TerrainData = null, party: Dictio
 		var pair := key.split(":")
 		if pair.size() != 2: return fail("SAVE_VERSION", "原 Site 索引非法")
 		var coordinate := Vector2i(int(pair[0]), int(pair[1]))
+		if not route_sites.is_empty() and coordinate not in route_sites: continue
 		var original: TerrainData
 		if active_data != null and _coordinate(active_data).get("site") == coordinate:
 			original = active_data
 		else:
 			var identity := Grid.site_id(str(pin.atlas_id), coordinate)
-			if _fire_cold_candidates.has(identity):
+			var actual: TerrainLab = _region_original_labs.get(identity)
+			if is_instance_valid(actual):
+				if actual.site_controller == null or actual.site_controller.region_slot != self \
+						or actual.terrain == null or actual._region_bound_data != actual.terrain \
+						or str(actual.terrain.site.id) != identity or not actual.region_bind_receipt(actual.terrain).get("complete", false):
+					return fail("COMMITTED_UNBOUND", "原路線的當前 cold Lab 尚未完整綁定")
+				original = actual.terrain
+			elif _fire_cold_candidates.has(identity):
 				original = _fire_cold_candidates[identity].data
 			else:
 				var loaded := _load_checked(site_path(coordinate), coordinate)
@@ -1520,8 +1552,12 @@ func region_route_context(party: Dictionary = {}) -> Dictionary:
 		var kind := str(vehicle.get("kind", ""))
 		if not kinds.has(kind): kinds.append(kind)
 		vehicles.append(vehicle.duplicate(true))
+	var node: Dictionary = party.get("upkeep", {}).get("route_node", {})
+	if str(party.get("upkeep", {}).get("live", {}).get("upkeep", "")) == "mapBody": node = _region_map_route_reference(party)
+	var poses: Dictionary = node.get("vehicle_poses", {})
+	var start: Variant = Vector2i(int(node.cell[0]), int(node.cell[1])) if node.get("cell") is Array and node.cell.size() == 2 else null
 	return {"effective_terrain": provider, "capabilities": {"mode": "sea" if kinds.has("ship") else "land",
-		"vehicle_kinds": kinds, "vehicles": vehicles}, "party": party.duplicate(true), "revision": revision}
+		"vehicle_kinds": kinds, "vehicles": vehicles, "vehicle_poses": poses.duplicate(true), "start_cell": start}, "party": party.duplicate(true), "revision": revision}
 
 func effective_site_path(site: Vector2i) -> Dictionary:
 	var recovered := _recover_control()
@@ -2479,10 +2515,13 @@ func region_travel_status() -> Dictionary:
 		"barrier": not pending_life.is_empty(), "life_events": pending_life, "resting": bool(upkeep.get("resting", false)),
 		"blocked_reason": str(upkeep.get("blocked_reason", "")), "remaining_metres": 0.0}
 	if plan.is_empty():
+		var idle_node: Dictionary = upkeep.get("route_node", {})
+		status.vehicle_poses = idle_node.get("vehicle_poses", {}).duplicate(true)
+		if idle_node.get("cell") is Array and idle_node.cell.size() == 2: status.route_node_cell = Vector2i(int(idle_node.cell[0]), int(idle_node.cell[1]))
 		if status.barrier:
 			status.destination = status.site
 			status.arrived = true
-		return region_mode_stop_status(party, status)
+		return _region_map_status_position(party, region_mode_stop_status(party, status))
 	if str(plan.get("mode", "land")) == "sea":
 		status.destination = Vector2i(int(plan.steps.back().site[0]), int(plan.steps.back().site[1]))
 		var sea := region_sea_travel_status(plan, party, status)
@@ -2492,8 +2531,15 @@ func region_travel_status() -> Dictionary:
 			sea.arrived = true
 			sea.moving = false
 		return region_mode_stop_status(party, sea)
-	var distance := float(upkeep.get("distance", 0.0)) if str(upkeep.get("plan_id", "")) == str(journey.plan_path) else 0.0
+	plan = _region_land_physical_plan(plan)
+	status.plan = plan
+	var distance := _region_land_physical_distance(plan, upkeep, str(journey.plan_path))
 	if upkeep.is_empty(): distance = minf(float(plan.metres), maxf(0.0, now - float(journey.plan_started_game_seconds)) * float(plan.speed_mps))
+	var route_blocked: Dictionary = upkeep.get("route_blocked", {})
+	var node: Dictionary = upkeep.get("route_node", {})
+	if str(node.get("plan_id", "")) == str(journey.plan_path):
+		status.vehicle_poses = node.get("vehicle_poses", {}).duplicate(true)
+		status.route_node_cell = Vector2i(int(node.cell[0]), int(node.cell[1]))
 	status.remaining_metres = maxf(0.0, float(plan.metres) - distance)
 	status.remaining_game_seconds = status.remaining_metres / maxf(0.000001, float(party.get("speed_mps", RegionTravel.WALK_MPS)))
 	status.destination = Vector2i(int(plan.steps.back().site[0]), int(plan.steps.back().site[1]))
@@ -2516,10 +2562,21 @@ func region_travel_status() -> Dictionary:
 		# Accepted life effects go to the original bodies in this actual Site.
 		status.destination = status.site
 		status.arrived = true
-		return region_mode_stop_status(party, status)
+		return _region_map_status_position(party, region_mode_stop_status(party, status))
 	status.arrived = status.remaining_metres <= 0.0000001
+	if str(route_blocked.get("plan_id", "")) == str(journey.plan_path) and not route_blocked.is_empty():
+		status.site = Vector2i(int(node.site[0]), int(node.site[1]))
+		status.component = int(node.component)
+		status.step_index = int(node.index)
+		status.fraction = 1.0
+		status.arrived = false
+		status.route_blocked = route_blocked.duplicate(true)
+	if not status.has("vehicle_poses"):
+		status.vehicle_poses = plan.steps[int(status.step_index)].get("vehicle_poses", {}).duplicate(true)
+	if str(node.get("plan_id", "")) == str(journey.plan_path) and node.get("site") == [status.site.x, status.site.y]:
+		status.component = int(node.component)
 	status.moving = not status.arrived
-	return region_mode_stop_status(party, status)
+	return _region_map_status_position(party, region_mode_stop_status(party, status))
 
 func begin_region_travel(source_data: TerrainData, spec: Dictionary, start_component: int) -> Dictionary:
 	var recovered := _recover_control()
@@ -2590,15 +2647,25 @@ func set_region_travel_plan(steps: Array) -> Dictionary:
 	if bool(status.moving): return fail("BUSY", "旅隊行進中；先停下再改目的地")
 	if steps.size() < 2: return fail("INVALID", "路線至少要有出發與目的地")
 	var first: Dictionary = steps[0]
-	if Vector2i(int(first.site[0]), int(first.site[1])) != status.site or int(first.component) != int(status.component) or int(first.edge) != -1:
+	if Vector2i(int(first.site[0]), int(first.site[1])) != status.site or int(first.edge) != -1:
 		return fail("INVALID", "路線必須從旅隊目前位置開始")
 	var route_context := prepare_region_route_context(null, region_travel_party().get("party", {}))
 	if not route_context.ok: return route_context
+	var current_leg := RegionRoute.current_land_leg(source, first, route_context.context)
+	if not current_leg.ok: return current_leg
+	var start_cell: Variant = route_context.context.capabilities.get("start_cell")
+	if not start_cell is Vector2i:
+		var leader: Dictionary = RegionTravel._body_records(region_travel_party().party.content).get(int(region_travel_party().party.leader_person_id), {})
+		if not leader.get("cell") is Array or leader.cell.size() != 2: return fail("MISSING_ROUTE_NODE")
+		start_cell = Vector2i(int(leader.cell[0]), int(leader.cell[1]))
+	if int(first.component) != RegionRoute.component_of(current_leg.derived, start_cell): return fail("INVALID", "路線須從原旅隊的當前實際入口開始")
 	var verified := RegionRoute.verify_steps(source, steps, route_context.context)
 	if not verified.ok: return verified
 	var party := region_travel_party()
 	if not party.ok: return party
-	var speed := float(party.party.get("speed_mps", RegionTravel.WALK_MPS))
+	var transport := RegionTravel.prepare_transport(party.party.duplicate(true))
+	if not transport.ok: return transport
+	var speed := RegionTravel.party_speed(party.party.content) * float(transport.get("carry_factor", 1.0))
 	if not is_finite(speed) or speed <= 0.0: return fail("CORRUPT_SAVE", "旅隊速度")
 	var seconds: Array = []
 	var total := 0.0
@@ -2606,17 +2673,17 @@ func set_region_travel_plan(steps: Array) -> Dictionary:
 	for step: Dictionary in steps:
 		if not _seconds(step.get("metres")): return fail("INVALID", "路線距離")
 		metres += float(step.metres)
-		total += float(step.metres) / speed
+		total += float(step.metres) / (speed * maxf(0.000001, float(step.get("travel_factor", 1.0))))
 		seconds.append(total)
 	var journey := region_travel_journey()
 	var number := int(journey.plans) + 1
 	var relative := "travel/%s/plan_%06d.json" % [str(journey.token), number]
 	var last: Dictionary = steps.back()
 	var plan := {"version": 1, "token": str(journey.token), "steps": steps.duplicate(true), "seconds": seconds,
-		"metres": metres, "speed_mps": speed, "destination": [int(last.site[0]), int(last.site[1])]}
+		"metres": metres, "physical_metres_version": 1, "speed_mps": speed, "destination": [int(last.site[0]), int(last.site[1])]}
 	var written := _write_new_document(folder.path_join(relative), plan)
 	if not written.ok: return written
-	journey.position = {"site": [status.site.x, status.site.y], "component": int(status.component)}
+	journey.position = {"site": [status.site.x, status.site.y], "component": int(first.component)}
 	journey.plan_path = relative
 	journey.plan_sha256 = FileAccess.get_sha256(folder.path_join(relative))
 	journey.plan_started_game_seconds = float(control.logical_game_seconds)
@@ -2624,6 +2691,7 @@ func set_region_travel_plan(steps: Array) -> Dictionary:
 	var published := _publish(_marker.get("sites", {}), control, str(_marker.get("transfer_token", "")), journey)
 	if not published.ok: return published
 	party.party.upkeep["plan_id"] = relative
+	party.party.upkeep.route_distance_version = 1
 	party.party.upkeep["distance"] = 0.0
 	return {"ok": true, "plan": plan, "game_seconds": total}
 
@@ -2631,6 +2699,9 @@ func set_region_travel_plan(steps: Array) -> Dictionary:
 func stop_region_travel() -> Dictionary:
 	var status := region_travel_status()
 	if not status.ok or not bool(status.get("pending", false)): return status if not status.ok else fail("NO_TARGET", "沒有旅隊")
+	var current: Dictionary = region_travel_party()
+	if not current.ok: return current
+	if str(current.party.upkeep.get("live", {}).get("upkeep", "")) == "mapBody": return _region_stop_original_map_party(current.party)
 	if bool(status.arrived): return {"ok": true, "arrived": true}
 	var journey := region_travel_journey()
 	journey.position = {"site": [status.site.x, status.site.y], "component": int(status.component)}
@@ -2642,6 +2713,9 @@ func stop_region_travel() -> Dictionary:
 ## The only clock publisher while travelling: whole peace-time steps of the
 ## fire journal (8 game seconds each), never past the route's arrival.
 func advance_region_travel(max_steps: int) -> Dictionary:
+	var entry := _region_retry_blocked_land_entry()
+	if not entry.ok: return entry
+	if entry.get("complete", true) == false: return {"ok": true, "pending": true, "source": entry}
 	var initial := region_travel_status()
 	if not initial.ok: return initial
 	if not initial.get("pending", false): return fail("NO_TARGET")
@@ -2651,6 +2725,9 @@ func advance_region_travel(max_steps: int) -> Dictionary:
 	var before := float(control.logical_game_seconds)
 	var count := 0
 	for _index: int in range(clampi(max_steps, 0, 100000)):
+		entry = _region_retry_blocked_land_entry()
+		if not entry.ok: return entry
+		if entry.get("complete", true) == false: break
 		var status := region_travel_status()
 		if not status.ok: return status
 		if bool(status.arrived) or not bool(status.moving) or not region_player_barrier().is_empty(): break
@@ -2674,28 +2751,48 @@ func advance_region_travel(max_steps: int) -> Dictionary:
 		"arrived": bool(after.get("arrived", false)), "barrier": bool(after.get("barrier", false)),
 		"now": float(control.logical_game_seconds)}
 
-func checkpoint_region_travel() -> Dictionary:
+func checkpoint_region_travel(journey_override: Dictionary = {}) -> Dictionary:
 	var journey := region_travel_journey()
-	if journey.is_empty(): return fail("NO_TARGET", "沒有旅隊")
+	if not journey_override.is_empty():
+		if journey_override.size() != journey.size(): return fail("STALE_REGION_MAP_RESUME")
+		for field: String in journey:
+			if not journey_override.has(field) or field not in ["position", "plan_path", "plan_sha256"] and journey[field] != journey_override[field]: return fail("STALE_REGION_MAP_RESUME")
+		if journey_override.get("position", {}).keys().size() != 2 or not journey_override.position.get("site") is Array \
+				or journey_override.position.site.size() != 2 or not journey_override.position.get("component") is int:
+			return fail("INVALID_JOURNEY")
+		journey = journey_override.duplicate(true)
+	if journey.is_empty(): return fail("NO_TARGET", "沒有原玩家旅隊")
 	var loaded := region_travel_party()
 	if not loaded.ok: return loaded
-	var relative := "travel/%s/party_g%09d_r%09d.json" % [str(journey.token), int(_marker.get("generation", 0)) + 1, int(region_registry().revision)]
-	var written := _write_new_document(folder.path_join(relative), {"version": 1, "token": str(journey.token), "pin": pin.duplicate(true),
-		"encoding": "godot_var_v1", "party": Marshalls.raw_to_base64(var_to_bytes(loaded.party))})
+	var capture := _region_capture_party_graph(str(journey.token), loaded.party)
+	if not capture.ok: return capture
+	var actual: Dictionary = capture.get("party", loaded.party)
+	var document := _region_party_document(str(journey.token), actual, capture.original_live_graph)
+	if not document.ok: return document
+	var generation := int(_marker.get("generation", 0)) + 1
+	var relative := "travel/%s/party_checkpoint_%09d_%s.json" % [str(journey.token), generation, Crypto.new().generate_random_bytes(8).hex_encode()]
+	var written := _write_new_document(folder.path_join(relative), document.payload)
 	if not written.ok: return written
 	journey.party_path = relative
 	journey.party_sha256 = FileAccess.get_sha256(folder.path_join(relative))
 	var next_control := control.duplicate(true)
 	var sites: Dictionary = _marker.get("sites", {}).duplicate(true)
-	var cold := _collect_cold_checkpoint(int(_marker.get("generation", 0)) + 1, sites, next_control)
+	var cold := _collect_cold_checkpoint(generation, sites, next_control)
 	if not cold.ok: return cold
-	return _publish(sites, next_control, str(_marker.get("transfer_token", "")), journey)
+	var parties := collect_region_party_checkpoint(generation, next_control)
+	if not parties.ok: return parties
+	var published := _publish(sites, next_control, str(_marker.get("transfer_token", "")), journey)
+	if published.ok:
+		_travel_party_runtime = actual
+		_travel_party_runtime_token = str(journey.token)
+	return published
 
 func commit_region_arrival(destination_data: TerrainData, bind_guard: Callable = Callable(), endpoint: Dictionary = {}) -> Dictionary:
 	var recovered := _recover_control()
 	if not recovered.ok: return recovered
 	var status := region_travel_status()
 	if not status.ok: return status
+	var own_final_arrival := bool(status.get("arrived", false))
 	if not endpoint.is_empty():
 		if not endpoint.get("event") is Dictionary or absf(float(endpoint.event.get("at", -1.0)) - float(control.logical_game_seconds)) > 0.00000001 \
 				or not endpoint.get("site") is Vector2i or not endpoint.get("player_location") is Dictionary:
@@ -2713,6 +2810,14 @@ func commit_region_arrival(destination_data: TerrainData, bind_guard: Callable =
 	var loaded := region_travel_party()
 	if not loaded.ok: return loaded
 	var party: Dictionary = loaded.party
+	if own_final_arrival and str(party.get("mode", "land")) == "land" and str(party.get("upkeep", {}).get("live", {}).get("upkeep", "")) != "liveBody":
+		var planned := region_travel_plan()
+		if not planned.ok: return planned
+		var guarded := _region_guard_current_land_arrival(str(status.token), party, planned.plan, str(region_travel_journey().plan_path))
+		if not guarded.ok: return guarded
+		party = guarded.party
+		status = region_travel_status()
+		if not status.ok: return status
 	var location: Dictionary = endpoint.get("player_location", {}) if not endpoint.is_empty() else _region_arrival_location(status, party)
 	if not location.ok: return location
 	var generation := int(_marker.get("generation", 0)) + 1
@@ -2772,6 +2877,8 @@ func commit_region_arrival(destination_data: TerrainData, bind_guard: Callable =
 	next_clock.active_site_id = identity
 	var mapped := _region_arrival_queue_mapping(next_clock, str(status.token), inserted.mapping, identity)
 	if not mapped.ok: return mapped
+	var mapped_civil := _region_n08_map_player_arrival(next_clock, str(status.token), checked.data.site)
+	if not mapped_civil.ok: return mapped_civil
 	if not npc_token.is_empty():
 		var transferred := _region_joint_npc_reference(next_clock, npc_token, npc_mapping, identity)
 		if not transferred.ok: return transferred
@@ -2965,7 +3072,7 @@ func _region_route_position(plan: Dictionary, distance: float) -> Dictionary:
 # Source may be a bound cold original or live original. Human control stays put.
 
 func prepare_npc_region_dispatch(lab: TerrainLab, nation_id: String, team_id: int,
-		target_coordinate: Vector2i, start_component: int, steps: Array, transfer_token: String = "") -> Dictionary:
+		target_coordinate: Vector2i, start_component: int, steps: Array, transfer_token: String = "", carried_nation_report: String = "") -> Dictionary:
 	if lab == null or lab.site_controller == null or not region_bind_candidate.is_valid(): return fail("MISSING_REGION_ADAPTER", "缺原完整 bind 預檢")
 	if not region_player_barrier().is_empty(): return fail("PLAYER_BARRIER", "先處理同刻玩家事件")
 	if not _safe_part(transfer_token) and not transfer_token.is_empty(): return fail("INVALID", "移交號非法")
@@ -2996,11 +3103,22 @@ func prepare_npc_region_dispatch(lab: TerrainLab, nation_id: String, team_id: in
 		extracted.merge(result, true)
 		return result
 	var target_id := Grid.site_id(str(pin.atlas_id), target_coordinate)
-	var context := RegionAI.dispatch_context(lab, nation_id, team_id, target_id, token, preflight)
-	if not context.ok: return context
-	var authorized := RegionAI.prepare_dispatch(context.context)
+	var authorized: Dictionary
+	if carried_nation_report.is_empty():
+		var context := RegionAI.dispatch_context(lab, nation_id, team_id, target_id, token, preflight)
+		if not context.ok: return context
+		authorized = RegionAI.prepare_dispatch(context.context)
+	else:
+		authorized = _region_authorize_received_nation_dispatch(lab, team_id, target_id, token, carried_nation_report, preflight)
 	if not authorized.ok: return authorized
 	if not extracted.get("ok", false): return fail("DISPATCH_UNAVAILABLE", "原旅行尚未准入")
+	# Original departure records the already accepted shared ACTION point.
+	extracted.party.upkeep.owner_action_seconds = float(control.fire_clock.action_seconds)
+	# Internal dispatch retains only actual timers of the transferred people.
+	extracted.party.upkeep.original_deaths = {}
+	for identity: int in lab.site_controller._pending_deaths:
+		if extracted.party.person_ids.has(identity):
+			extracted.party.upkeep.original_deaths[str(identity)] = float(lab.site_controller._pending_deaths[identity])
 	# Detached Travel closure proves the exact movers. Never detach an active
 	# original research, lesson or work participant; unrelated jobs stay owned.
 	for identity: Variant in extracted.party.person_ids:
@@ -3056,7 +3174,9 @@ func commit_npc_region_dispatch(prepared: Dictionary) -> Dictionary:
 	var checked: Dictionary = prepared.binding.save_candidate.call(prepared.candidate, source_path)
 	if not checked.ok: return checked
 	var party_path := "travel/%s/party_g%09d.json" % [token, generation]
-	var plan_path := "travel/%s/plan_000001.json" % token
+	var plan_path := str(prepared.get("plan_path", "travel/%s/plan_000001.json" % token))
+	if not plan_path.begins_with("travel/" + token + "/") or plan_path.contains("..") or not plan_path.ends_with(".json"):
+		return fail("INVALID_REGION_PLAN")
 	prepared.party.upkeep.plan_id = plan_path
 	if str(prepared.party.get("mode", "land")) == "sea": prepared.party.upkeep.sea_cursor.plan_id = plan_path
 	var written := _write_new_document(folder.path_join(party_path), {"version": 1, "token": token, "pin": pin.duplicate(true),
@@ -3074,6 +3194,15 @@ func commit_npc_region_dispatch(prepared: Dictionary) -> Dictionary:
 		"position": {"site": prepared.plan.steps[0].site.duplicate(), "component": int(prepared.plan.steps[0].component)},
 		"transfer_receipt": prepared.request.duplicate(true)}
 	var reference: Dictionary = registry.parties[token]
+	# Route document, physical courier and knowledge ledger share one marker.
+	for original_report: Dictionary in prepared.get("carried_reports", []):
+		var report: Dictionary = original_report.duplicate(true)
+		if str(report.delivery.get("courier_token", "")) != token or str(report.delivery.get("plan_path", "")) != plan_path: return fail("WRONG_DELIVERY_ROUTE")
+		report.delivery.plan_sha256 = str(reference.plan_sha256)
+		var carried := RegionAI.queue_report(registry, report)
+		if not carried.ok: return carried
+	var nation_execution := _region_commit_received_nation_execution(registry, prepared, token)
+	if not nation_execution.ok: return nation_execution
 	var activation := {"ok": true, "complete": true, "owner": owner, "mode": "cold_exact", "generation": generation,
 		"backend": "gd", "consumer": "original_region_travel", "party_path": party_path, "party_sha256": reference.party_sha256, "token": token}
 	var activated := GameplayClock.activate_mode(registry, owner, "cold_exact", generation, "gd", "original_region_travel",
@@ -3104,7 +3233,10 @@ func prepare_npc_region_arrival(event: Dictionary) -> Dictionary:
 	var reference: Dictionary = region_registry().parties.get(token, {})
 	if str(reference.get("controller", "")) != "npc": return fail("NO_TARGET", "沒有此原 NPC 到站引用")
 	if str(reference.get("phase", "")) == "entered":
-		return {"ok": true, "duplicate": true, "token": token, "reference": reference}
+		var duplicate_source := _region_validate_npc_arrival_duplicate_event(token, str(event.get("id", "")), event)
+		if not duplicate_source.ok: return duplicate_source
+		return {"ok": true, "duplicate": true, "token": token, "event_id": str(event.id),
+			"reference": duplicate_source.reference.duplicate(true), "event": duplicate_source.event.duplicate(true)}
 	if not region_owner_lab.is_valid() or not region_bind_candidate.is_valid(): return fail("MISSING_REGION_ADAPTER", "缺原到站 Site 與完整 bind 預檢")
 	var loaded := _region_npc_party(token)
 	if not loaded.ok: return loaded
@@ -3125,12 +3257,36 @@ func prepare_npc_region_arrival(event: Dictionary) -> Dictionary:
 	var party: Dictionary = loaded.party
 	if absf(float(party.get("upkeep", {}).get("at", -1.0)) - float(control.logical_game_seconds)) > 0.00000001:
 		return fail("UNSETTLED_PARTY", "原到站 party 與世界端點不同")
-	var position: Dictionary = _region_npc_sea_position(planned.plan, party) if str(planned.plan.get("mode", "land")) == "sea" else _region_route_position(planned.plan, float(party.upkeep.get("distance", 0.0)))
+	var contact_entry := str(event.get("payload", {}).get("contact_receipt", {}).get("kind", "")) == "npc_siege_channel"
+	if contact_entry:
+		var channel := _region_validate_npc_siege_contact(event)
+		if not channel.ok: return channel
+		if not bool(channel.valid): return fail("STALE_NPC_CONTACT")
+	if str(planned.plan.get("mode", "land")) == "land" and not contact_entry:
+		var guarded := _region_guard_current_land_arrival(token, party, planned.plan, str(reference.plan_path))
+		if not guarded.ok: return guarded
+		party = guarded.party
+	var position: Dictionary = _region_npc_sea_position(planned.plan, party) if str(planned.plan.get("mode", "land")) == "sea" else _region_current_land_position(party, planned.plan, str(region_registry().parties[token].plan_path))
 	if str(planned.plan.get("mode", "land")) == "sea" and not bool(position.get("arrived", false)):
 		return fail("INCOMPLETE_JOURNEY", "原船尚有未完成ACTION，不能用靜態距離冒充到站")
-	if position.site != coordinate_raw or int(position.component) != int(event.payload.get("component", -1)):
+	if position.site != coordinate_raw or (str(planned.plan.get("mode", "land")) == "sea" and int(position.component) != int(event.payload.get("component", -1))):
 		return fail("STALE_ARRIVAL", "原路線位置與事件不同")
 	var entry_step: Dictionary = planned.plan.steps[int(position.step_index)]
+	var entry: Vector2i = RegionRoute.entry_cell(entry_step)
+	var insertion_options := {"generation": int(_marker.get("generation", 0)) + 1, "family_transfer_guard": region_family_transfer_guard, "vehicle_poses": entry_step.get("vehicle_poses", {})}
+	if contact_entry:
+		var accepted := _region_npc_endpoint_location(token, to, event)
+		if not accepted.ok: return accepted
+		entry = accepted.entry
+		var world := _region_live_party_world(token, party, planned.plan, event, "first")
+		if not world.ok: return world
+		var frame := {"version": 1, "world_origin": [to.x * 100, -to.y * 100], "size": [100, 100],
+			"game_seconds": float(control.logical_game_seconds), "action_seconds": float(control.fire_clock.action_seconds), "people": world.people, "vehicles": world.vehicles}
+		var projected := RegionTravel.project_party_frame(party, frame)
+		if not projected.ok: return projected
+		insertion_options.contact_source = party
+		insertion_options.contact_frame = frame
+		party = projected.party
 	var generation := int(_marker.get("generation", 0)) + 1
 	var to_path := _generation_path(generation, to)
 	var captured: Dictionary = lab.site_controller.capture_region_checkpoint("region_barrier", false,
@@ -3140,9 +3296,9 @@ func prepare_npc_region_arrival(event: Dictionary) -> Dictionary:
 	var fire_capture := _capture_transfer_fire_snapshots(lab.terrain, destination)
 	if not fire_capture.ok: return fire_capture
 	var nav := Env.navigation_for_state(lab.terrain, destination)
-	var inserted := RegionTravel.insert(destination, party, nav, RegionRoute.entry_cell(entry_step), to_path,
+	var inserted := RegionTravel.insert(destination, party, nav, entry, to_path,
 		float(reference.departure_game_seconds), float(control.logical_game_seconds),
-		{"generation": generation, "family_transfer_guard": region_family_transfer_guard, "vehicle_poses": entry_step.get("vehicle_poses", {})})
+		insertion_options)
 	if not inserted.ok: return inserted
 	var candidate := Env.navigation_for_state(lab.terrain, inserted.state)
 	candidate.set_meta(&"region_bind_source", lab.terrain)
@@ -3151,6 +3307,8 @@ func prepare_npc_region_arrival(event: Dictionary) -> Dictionary:
 		return fail("MISSING_REGION_ADAPTER", "原到站完整 bind 未准入")
 	var battle := _region_arrival_battle_candidate(destination, inserted.state, party, inserted.mapping, token, binding, requested_mode == "live")
 	if not battle.ok: return battle
+	if contact_entry and str(battle.get("battle", {}).get("kind", "")) == "siege":
+		battle.battle.mode = "live" if requested_mode == "live" else "cold_exact"
 	# Hot P0 candidate uses Root's actual RegionCheckpoint context/owner states.
 	# The same bind adapter may provide that ORIGINAL Slot save entry.
 	var saved: Dictionary
@@ -3166,7 +3324,13 @@ func prepare_npc_region_arrival(event: Dictionary) -> Dictionary:
 
 func commit_npc_region_arrival(prepared: Dictionary) -> Dictionary:
 	if not prepared.get("ok", false): return fail("INVALID", "原到站候選非法")
-	if prepared.get("duplicate", false): return prepared
+	if prepared.get("duplicate", false):
+		if not prepared.get("event") is Dictionary or not prepared.get("reference") is Dictionary: return fail("STALE_NPC_ARRIVAL", "原重複到站缺真事件／NPC引用快照")
+		var duplicate_source := _region_validate_npc_arrival_duplicate_event(str(prepared.get("token", "")), str(prepared.get("event_id", "")), prepared.event)
+		if not duplicate_source.ok: return duplicate_source
+		if var_to_bytes(prepared.reference) != var_to_bytes(duplicate_source.reference): return fail("STALE_NPC_ARRIVAL", "原已到站NPC引用已變")
+		var duplicate_event := complete_region_event(str(duplicate_source.event.id))
+		return prepared if duplicate_event.ok else duplicate_event
 	if int(prepared.generation) != int(_marker.get("generation", 0)) or int(prepared.revision) != int(region_registry().revision) or float(prepared.world) != float(control.logical_game_seconds):
 		return fail("STALE_REGION_PERMIT", "原到站來源世代已變")
 	if not bool(prepared.binding.can_publish.call()): return fail("STALE_BIND", "原到站完整 bind 已過期")
@@ -3178,6 +3342,8 @@ func commit_npc_region_arrival(prepared: Dictionary) -> Dictionary:
 	reference.destination_site = str(prepared.destination_site)
 	reference.arrival_game_seconds = float(control.logical_game_seconds)
 	reference.arrival_mapping = prepared.mapping.duplicate(true)
+	var deliveries := _region_accept_carried_arrival(next_control, token, str(prepared.destination_site), prepared.mapping)
+	if not deliveries.ok: return deliveries
 	registry.modes.erase("travel:" + token)
 	if not prepared.get("battle", {}).is_empty(): registry.battles[str(prepared.battle.id)] = prepared.battle.duplicate(true)
 	if not str(prepared.get("reinforcement", "")).is_empty(): reference.battle_id = str(prepared.reinforcement)
@@ -3216,6 +3382,10 @@ func commit_npc_region_arrival(prepared: Dictionary) -> Dictionary:
 # Shared-step preview only. No party clock publishes world time. All deltas go
 # through original RegionTravel.advance_upkeep, including fatigue-integrated metres.
 
+
+# Shared-step preview only. No party clock publishes world time. All deltas go
+# through original RegionTravel.advance_upkeep, including fatigue-integrated metres.
+
 func _preview_npc_party_to(token: String, end: float, interval: Dictionary = {}) -> Dictionary:
 	var loaded := _region_npc_party(token)
 	if not loaded.ok: return loaded
@@ -3225,63 +3395,31 @@ func _preview_npc_party_to(token: String, end: float, interval: Dictionary = {})
 	var plan: Dictionary = planned.plan
 	var world := float(control.logical_game_seconds)
 	if absf(float(party.get("upkeep", {}).get("at", -1.0)) - world) > 0.0000001: return fail("UNSETTLED_PARTY", "原 NPC 水印不同")
+	if str(party.upkeep.get("live", {}).get("upkeep", "")) == "liveBody":
+		if interval.is_empty(): return {"ok": true, "at": end, "party": party, "source_party": party, "events": [],
+			"position": region_registry().parties[token].position.duplicate(true), "arrived": false}
+		var live: Dictionary = _region_live_party_candidate(interval, party)
+		live.position = region_registry().parties[token].position.duplicate(true)
+		return live
 	if plan.get("mode") == "sea":
 		var sea := _preview_npc_sea_party_to(token, party, plan, end, interval)
 		if sea.ok: sea.source_party = party
 		return sea
-	var advanced := RegionTravel.advance_upkeep(party, end, {"moving": true, "safe_rest": true})
-	if not advanced.ok: return advanced
-	var distance := float(party.upkeep.get("distance", 0.0))
-	var remaining := maxf(0.0, float(plan.metres) - distance)
-	if float(advanced.metres) > remaining + 0.0000001:
-		var low := world
-		var high := float(advanced.at)
-		for iteration: int in range(40):
-			var middle := (low + high) * 0.5
-			var probe := RegionTravel.advance_upkeep(party, middle, {"moving": true, "safe_rest": true})
-			if not probe.ok: return probe
-			if float(probe.metres) < remaining: low = middle
-			else: high = middle
-		advanced = RegionTravel.advance_upkeep(party, high, {"moving": true, "safe_rest": true})
-		if not advanced.ok: return advanced
-	var candidate: Dictionary = advanced.party
-	candidate.upkeep.distance = minf(float(plan.metres), distance + float(advanced.metres))
-	candidate.upkeep.plan_id = str(region_registry().parties[token].plan_path)
-	return {"ok": true, "at": float(advanced.at), "party": candidate, "source_party": party, "events": advanced.events,
-		"position": _region_route_position(plan, float(candidate.upkeep.distance)),
-		"arrived": float(candidate.upkeep.distance) >= float(plan.metres) - 0.0000001}
+	return _region_land_route_preview(party, plan, str(region_registry().parties[token].plan_path), end)
 
 # Route boundaries use the original fatigue-integrated distance. These previews
 # are navigation/contact truth only; no strategy observation is created.
 
 func _region_route_breaks(party: Dictionary, plan: Dictionary, to: float, moving: bool) -> Dictionary:
 	var begin := float(control.logical_game_seconds)
-	var advanced := RegionTravel.advance_upkeep(party, to, {"moving": moving, "safe_rest": true})
-	if not advanced.ok: return advanced
-	var end := float(advanced.at)
-	var initial := float(party.get("upkeep", {}).get("distance", 0.0))
-	var final := initial + float(advanced.metres)
-	var times: Array[float] = [begin, end]
-	var distance := 0.0
-	for step: Dictionary in plan.get("steps", []):
-		distance += float(step.metres)
-		if distance <= initial + 0.0000001 or distance > final + 0.0000001: continue
-		var low := begin
-		var high := end
-		for iteration: int in range(40):
-			var middle := (low + high) * 0.5
-			var probe := RegionTravel.advance_upkeep(party, middle, {"moving": moving, "safe_rest": true})
-			if not probe.ok: return probe
-			if initial + float(probe.metres) < distance: low = middle
-			else: high = middle
-		times.append(high)
-	return {"ok": true, "times": times, "until": end}
+	var preview := _region_land_route_preview(party, plan, str(party.get("upkeep", {}).get("plan_id", "")), to, moving)
+	if not preview.ok: return preview
+	return {"ok": true, "times": [begin, float(preview.at)], "until": float(preview.at)}
 
 func _region_route_position_at(party: Dictionary, plan: Dictionary, at: float, moving: bool) -> Dictionary:
-	var advanced := RegionTravel.advance_upkeep(party, at, {"moving": moving, "safe_rest": true})
-	if not advanced.ok: return advanced
-	return {"ok": true, "at": float(advanced.at), "position": _region_route_position(plan,
-		float(party.get("upkeep", {}).get("distance", 0.0)) + float(advanced.metres))}
+	var preview := _region_land_route_preview(party, plan, str(party.get("upkeep", {}).get("plan_id", "")), at, moving)
+	if not preview.ok: return preview
+	return {"ok": true, "at": float(preview.at), "position": preview.position}
 
 func _region_first_player_route_contact(token: String, to: float, interval: Dictionary = {}) -> Dictionary:
 	var npc := _region_npc_party(token)
@@ -3351,6 +3489,8 @@ func _region_first_player_route_contact(token: String, to: float, interval: Dict
 		# arrival cells or overwrite either party's historical route position.
 		var site: Array = b.site.duplicate() if candidate.kind == "reverse_seam" else a.site.duplicate()
 		var component := int(b.route_component) if candidate.kind == "reverse_seam" else int(a.route_component)
+		var site_id := Grid.site_id(str(pin.atlas_id), Vector2i(int(site[0]), int(site[1])))
+		if _region_n08_completed_contact(token, site_id, component): continue
 		return {"ok": true, "contact": true, "at": float(candidate.at), "site": site, "component": component,
 			"site_id": Grid.site_id(str(pin.atlas_id), Vector2i(int(site[0]), int(site[1]))), "contact_receipt": candidate}
 	return {"ok": true, "contact": false}
@@ -3364,6 +3504,8 @@ func _region_first_player_route_contact(token: String, to: float, interval: Dict
 # and restores that exact partial original action/pose/reservation before bind.
 
 func queue_region_gameplay_endpoints(unclipped_game_end: float, interval: Dictionary = {}) -> Dictionary:
+	var retried := _region_retry_blocked_npc_land_entries()
+	if not retried.ok: return retried
 	var registry := region_registry()
 	var tokens: Array = registry.parties.keys()
 	tokens.sort()
@@ -3371,6 +3513,15 @@ func queue_region_gameplay_endpoints(unclipped_game_end: float, interval: Dictio
 		if str(registry.parties[token].get("phase", "")) != "travelling": continue
 		var forecast := _preview_npc_party_to(token, unclipped_game_end, interval)
 		if not forecast.ok: return forecast
+		var siege := _region_first_npc_siege_contact(token, unclipped_game_end, interval)
+		if not siege.ok: return siege
+		if bool(siege.get("contact", false)):
+			var contact_id := "npc-siege:" + Marshalls.raw_to_base64(var_to_bytes([token, str(siege.battle_id), float(siege.at)])).sha256_text()
+			if not registry.events.any(func(existing_event: Dictionary) -> bool: return str(existing_event.id) == contact_id):
+				var queued_siege := queue_region_event(contact_id, "reinforcement", float(siege.at), str(siege.site_id),
+					{"token": token, "battle_id": str(siege.battle_id), "site": siege.site.duplicate(),
+					"component": int(siege.component), "contact_receipt": siege.contact_receipt.duplicate(true)})
+				if not queued_siege.ok: return queued_siege
 		var contact := _region_first_player_route_contact(token, unclipped_game_end, interval)
 		if not contact.ok: return contact
 		if bool(contact.get("contact", false)):
@@ -3384,13 +3535,32 @@ func queue_region_gameplay_endpoints(unclipped_game_end: float, interval: Dictio
 		if bool(forecast.arrived):
 			var owner := Grid.site_id(str(pin.atlas_id), Vector2i(int(forecast.position.site[0]), int(forecast.position.site[1])))
 			var player_present := owner == str(control.active_site_id)
-			var queued := queue_region_event("npc:%s:arrival" % token, "player_arrival" if player_present else "arrival", float(forecast.at), owner,
+			var queued := queue_region_event(_region_arrival_attempt_id(token, forecast.party, false), "player_arrival" if player_present else "arrival", float(forecast.at), owner,
 				{"token": token, "site": forecast.position.site.duplicate(), "component": int(forecast.position.component)}, player_present)
 			if not queued.ok: return queued
+	for first_index: int in tokens.size():
+		for second_index: int in range(first_index + 1, tokens.size()):
+			var first_token := str(tokens[first_index])
+			var second_token := str(tokens[second_index])
+			var pair := _region_npc_sea_pair_boundary(first_token, second_token)
+			if not pair.ok: return pair
+			if not pair.get("contact", false): continue
+			var receipt: Dictionary = pair.receipt
+			var contact_id := "npc-sea:" + Marshalls.raw_to_base64(var_to_bytes(receipt)).sha256_text()
+			if registry.events.any(func(old: Dictionary) -> bool: return str(old.id) == contact_id): continue
+			var queued_pair := queue_region_event(contact_id, "reinforcement", float(control.logical_game_seconds), "travel:" + second_token,
+				{"token": first_token, "contact_receipt": receipt})
+			if not queued_pair.ok: return queued_pair
+	var siege_contact: Dictionary = _region_first_player_siege_contact(unclipped_game_end, interval)
+	if not siege_contact.ok: return siege_contact
+	if siege_contact.get("contact", false):
+		var contact_event: Dictionary = queue_region_event("siege:%s:player:%s:%.9f" % [str(siege_contact.battle_id), str(region_travel_journey().token), float(siege_contact.at)], "player_encounter", float(siege_contact.at), str(siege_contact.site_id), {"player_token": str(region_travel_journey().token), "battle_id": str(siege_contact.battle_id), "site": siege_contact.site.duplicate(), "component": int(siege_contact.component), "contact_receipt": siege_contact.contact_receipt.duplicate(true)}, true)
+		if not contact_event.ok: return contact_event
 	for id: String in registry.battles:
 		var battle: Dictionary = registry.battles[id]
 		if str(battle.get("phase", "")) == "finished": continue
 		if str(battle.get("site_id", "")) == str(control.active_site_id):
+			if str(battle.get("mode", "")) == "live": continue
 			var queued := queue_region_event("battle:%s:player:%.9f" % [id, float(control.logical_game_seconds)], "player_encounter", float(control.logical_game_seconds), str(battle.site_id), {"battle_id": id}, true)
 			if not queued.ok: return queued
 			continue
@@ -3399,6 +3569,15 @@ func queue_region_gameplay_endpoints(unclipped_game_end: float, interval: Dictio
 			var queued := queue_region_event("battle:%s:%d" % [id, int(battle.revision)], "battle", endpoint, str(battle.site_id), {"battle_id": id})
 			if not queued.ok: return queued
 	for report: Dictionary in registry.reports:
+		if report.has("delivery"):
+			var valid := RegionAI.validate_carried_report(report)
+			if not valid.ok: return valid
+			if RegionAI.carried_report_terminal(report) or str(report.delivery.phase) == "ready": continue
+			var expires := float(report.receipt.expires_at)
+			if expires <= unclipped_game_end:
+				var expiry := queue_region_event("report:" + str(report.id) + ":expires", "intel", expires, str(report.delivery.receiver_scope), {"report_id": str(report.id), "carried": true})
+				if not expiry.ok: return expiry
+			continue
 		if bool(report.get("delivered", false)) or float(report.due) > unclipped_game_end: continue
 		var queued := queue_region_event("report:" + str(report.id), "intel", float(report.due), str(report.receipt.get("receiver_scope", "unscoped")), {"report_id": str(report.id)})
 		if not queued.ok: return queued
@@ -3415,6 +3594,11 @@ func _formula_interval(interval: Dictionary, owner: String) -> Dictionary:
 # one synchronous accepted-interval tail, before incrementing registry.revision.
 
 func prepare_region_gameplay_interval(interval: Dictionary) -> Dictionary:
+	# A fresh original prepare starts a new observation call, even at a reused point.
+	# Keep already published local zero outcomes; never carry positive provisional rows.
+	if _original_food_result_readout:
+		for index: int in range(_original_food_results.size() - 1, -1, -1):
+			if not _original_food_results[index].interval.is_empty(): _original_food_results.remove_at(index)
 	var held: Array[String] = _region_positive_player_death_ids()
 	if not GameplayClock.player_barrier(region_registry(), float(control.logical_game_seconds), held).is_empty(): return fail("PLAYER_BARRIER", "同刻玩家先處理")
 	if absf(float(interval.game_begin) - float(control.logical_game_seconds)) > 0.0000001: return fail("CLOCK_CONTRACT", "不是原共同區間")
@@ -3429,8 +3613,10 @@ func prepare_region_gameplay_interval(interval: Dictionary) -> Dictionary:
 		if not preview.ok: return preview
 		if absf(float(preview.at) - float(interval.game_end)) > 0.0000001: return {"ok": false, "code": "EVENT_CLIP_REQUIRED", "next_event": preview.at}
 		var owner := "travel:" + token
-		var permit := GameplayClock.begin_permit(registry, owner, "cold_exact", int(_marker.get("generation", 0)),
-			float(control.logical_game_seconds), float(control.fire_clock.action_seconds), "original_region_travel", held)
+		var mode: Dictionary = registry.modes.get(owner, {})
+		if str(mode.get("consumer", "")) not in ["original_region_travel", "original_party"] or str(mode.get("backend", "")) != "gd": return fail("REGION_PARTY_MODE")
+		var permit := GameplayClock.begin_permit(registry, owner, str(mode.get("mode", "")), int(_marker.get("generation", 0)),
+			float(control.logical_game_seconds), float(control.fire_clock.action_seconds), str(mode.consumer), held)
 		if not permit.ok: return permit
 		permits[owner] = permit
 		if not region_original_party_progress.is_valid(): return fail("MISSING_REGION_PARTY_PROGRESS")
@@ -3443,7 +3629,7 @@ func prepare_region_gameplay_interval(interval: Dictionary) -> Dictionary:
 		parties[token] = preview
 	for id: String in registry.battles:
 		var battle: Dictionary = registry.battles[id]
-		if str(battle.get("phase", "")) == "finished": continue
+		if str(battle.get("phase", "")) == "finished" or str(battle.get("mode", "")) != "formula_active": continue
 		var owner := str(battle.site_id)
 		if owner == str(control.active_site_id):
 			# This whole Site belongs to the original main live step. Battle life
@@ -3558,9 +3744,23 @@ func commit_region_gameplay_progress(prepared: Dictionary) -> Dictionary:
 			"target": float(interval.game_end), "sequence": int(interval.sequence), "epoch": str(interval.epoch)}
 	for token: String in prepared.parties:
 		var candidate: Dictionary = prepared.parties[token]
+		var planned := _region_npc_plan(token)
+		if not planned.ok: return planned
+		var validated := _region_revalidate_completed_land_outcome(token, candidate, planned.plan, str(registry.parties[token].plan_path))
+		if not validated.ok: return validated
+		candidate = validated.outcome
+		prepared.parties[token] = candidate
 		_region_npc_party_runtime[token] = candidate.party
 		registry.parties[token].position = {"site": candidate.position.site.duplicate(), "component": int(candidate.position.component)}
 		registry.parties[token].phase = "pending_life" if not candidate.events.is_empty() else "travelling"
+		if bool(candidate.get("arrived", false)) and candidate.events.is_empty():
+			var event_id := _region_arrival_attempt_id(token, candidate.party, false)
+			if not registry.events.any(func(event: Dictionary) -> bool: return str(event.id) == event_id):
+				var owner := Grid.site_id(str(pin.atlas_id), Vector2i(int(candidate.position.site[0]), int(candidate.position.site[1])))
+				var player_present := owner == str(control.active_site_id)
+				var queued := queue_region_event(event_id, "player_arrival" if player_present else "arrival", float(interval.game_end), owner,
+					{"token": token, "site": candidate.position.site.duplicate(), "component": int(candidate.position.component)}, player_present)
+				if not queued.ok: return queued
 	for id: String in prepared.battles:
 		registry.battles[id].prepared_endpoint = prepared.battles[id].prepared.duplicate(true)
 		var queued := queue_region_event("battle:%s:interval:%d" % [id, int(interval.sequence)], "battle", float(interval.game_end), str(registry.battles[id].site_id), {"battle_id": id})
@@ -3568,6 +3768,14 @@ func commit_region_gameplay_progress(prepared: Dictionary) -> Dictionary:
 	for owner: String in prepared.permits:
 		registry.modes[owner].game_seconds = float(interval.game_end)
 		registry.modes[owner].action_seconds = float(interval.action_end)
+	# Only this successful original commit accepts its actual per-call results.
+	for token: String in prepared.parties:
+		var candidate: Dictionary = prepared.parties[token]
+		_observe_original_food_result(candidate.original_lab, "party", token, float(candidate.at), candidate, interval)
+	var food_interval := {}
+	for field: String in ["epoch", "sequence", "game_begin", "game_end", "action_begin", "action_end"]: food_interval[field] = interval[field]
+	for food: Dictionary in _original_food_results:
+		if food.interval == food_interval: food.accepted = true
 	return {"ok": true, "complete": true}
 
 # Zero-time dispatcher before Root's positive elapsed guard and once after its
@@ -3588,9 +3796,20 @@ func consume_due_region_events() -> Dictionary:
 		if pending.is_empty():
 			var finished := _finish_original_cold_region_points()
 			if not finished.ok: return finished
+			var civil := _region_n08_consume_entered()
+			if not civil.ok: return civil
 			return {"ok": true, "complete": held.is_empty(), "consumed": consumed,
 				"player_barrier": not held.is_empty(), "restricted_settlement": not held.is_empty()}
 		var event: Dictionary = pending[0].duplicate(true)
+		var navigation := _region_consume_blocked_land_event(event)
+		if not navigation.ok: return navigation
+		if bool(navigation.get("handled", false)):
+			for original: Dictionary in region_registry().events:
+				if str(original.id) == str(event.id): original.payload.navigation_result = navigation.receipt.duplicate(true)
+			var completed := complete_region_event(str(event.id))
+			if not completed.ok: return completed
+			consumed += 1
+			continue
 		if bool(event.player):
 			if not region_player_event_consumer.is_valid():
 				return fail("MISSING_PLAYER_EVENT_CONSUMER", "缺原 P0 完整 materialize/bind consumer")
@@ -3610,9 +3829,26 @@ func consume_due_region_events() -> Dictionary:
 		var finished := _finish_original_cold_region_points()
 		if not finished.ok: return finished
 		var registry := region_registry()
+		if str(event.kind) == "reinforcement" and str(event.payload.get("contact_receipt", {}).get("kind", "")) == "npc_sea_sweep_boundary":
+			if not region_original_party_progress.is_valid(): return fail("MISSING_REGION_PARTY_PROGRESS")
+			var host: Object = region_original_party_progress.get_object()
+			if not host is TerrainLab or host.site_controller.region_slot != self: return fail("INVALID_REGION_PARTY_PROGRESS")
+			var joined: Dictionary = host._region_gameplay_npc_sea_materialize(event)
+			if not joined.ok: return joined
+			for original: Dictionary in region_registry().events:
+				if str(original.id) == str(event.id): original.payload.contact_result = joined.get("receipt", {}).duplicate(true)
+			var complete := complete_region_event(str(event.id))
+			if not complete.ok: return complete
+			var checkpoint := _region_checkpoint_carried_delivery(str(event.id))
+			if not checkpoint.ok: return checkpoint
+			consumed += 1
+			continue
 		match str(event.kind):
 			"intel":
-				RegionAI.reports_due(registry, float(event.at))
+				if bool(event.payload.get("carried", false)):
+					var delivery := RegionAI.deliver_carried_report(registry, str(event.payload.get("report_id", "")), float(event.at), float(control.fire_clock.action_seconds), Callable(self, "_region_consume_carried_report"))
+					if not delivery.ok: return delivery
+				else: RegionAI.reports_due(registry, float(event.at))
 			"battle":
 				var id := str(event.payload.get("battle_id", ""))
 				var battle: Dictionary = registry.battles.get(id, {})
@@ -3639,19 +3875,21 @@ func consume_due_region_events() -> Dictionary:
 				if not region_party_life_consumer.is_valid(): return fail("MISSING_REGION_ADAPTER", "缺原 NPC 生命 materialize consumer")
 				var token := str(event.payload.token)
 				var party := {"ok": true, "party": {"party_id": token, "controller": "npc", "entered": registry.parties.get(token, {}).duplicate(true)}}
-				if not event.payload.has("entered_site"):
+				if not event.payload.has("entered_site") and not event.payload.has("entered_party"):
 					party = _region_npc_party(token)
 					if not party.ok: return party
 				var result: Dictionary = region_party_life_consumer.call(token, event.payload.event, party.party)
 				if not result.get("ok", false) or not result.get("party") is Dictionary or not bool(result.get("receipt", {}).get("complete", false)):
 					return fail("COMMITTED_UNBOUND", "原生命出口尚未提供真收據")
-				if not event.payload.has("entered_site"):
+				if not event.payload.has("entered_site") and not event.payload.has("entered_party"):
 					_region_npc_party_runtime[token] = result.party
 					registry.parties[token].phase = "travelling"
 			"evaluation":
 				var original: Dictionary = region_owner_lab.call(str(event.owner), "live" if str(event.owner) == str(control.active_site_id) else "cold_exact")
 				if not original.get("ok", false): return original
 				var lab: TerrainLab = original.lab
+				var observed_features := record_region_officer_feature_observations(lab)
+				if not observed_features.ok: return observed_features
 				lab.review_region_duty(float(event.at), registry)
 				var proposed := {"ok": true, "intents": []}
 				if region_dispatch_intents.is_valid():
@@ -3662,16 +3900,42 @@ func consume_due_region_events() -> Dictionary:
 				if not completed_evaluation.ok: return completed_evaluation
 				var queued := queue_region_event("evaluation:%s:%.6f" % [str(event.owner), float(event.at) + REGION_EVALUATION_SECONDS], "evaluation", float(event.at) + REGION_EVALUATION_SECONDS, str(event.owner))
 				if not queued.ok: return queued
+				var remote_nation := _region_produce_remote_nation_dispatch(lab)
+				if not remote_nation.ok: return remote_nation
+				if bool(remote_nation.get("published", false)):
+					consumed += 1
+					continue
 				for intent: Dictionary in proposed.get("intents", []):
 					var candidate := prepare_npc_region_dispatch(lab, str(intent.nation_id), int(intent.team_id), Vector2i(int(intent.target_coordinate[0]), int(intent.target_coordinate[1])), int(intent.start_component), intent.steps)
 					if not candidate.ok: continue
+					# The actual selected known receipt travels with the original captain.
+					var standing := prepare_region_carried_command(candidate, str(intent.known_receipt))
+					if not standing.ok: return standing
 					var dispatched := commit_npc_region_dispatch(candidate)
 					if not dispatched.ok: return dispatched
 				consumed += 1
 				continue
 			"arrival", "reinforcement":
+				var npc_contact := str(event.payload.get("contact_receipt", {}).get("kind", "")) == "npc_siege_channel"
+				if npc_contact:
+					var channel := _region_validate_npc_siege_contact(event)
+					if not channel.ok: return channel
+					if not bool(channel.valid):
+						for original_event: Dictionary in registry.events:
+							if str(original_event.id) == str(event.id): original_event.payload.contact_result = {"complete": true, "no_effect": true, "reason": str(channel.get("reason", "STALE_NPC_CONTACT"))}
+						var no_effect := complete_region_event(str(event.id))
+						if not no_effect.ok: return no_effect
+						consumed += 1
+						continue
 				var prepared_arrival := prepare_npc_region_arrival(event)
-				if not prepared_arrival.ok: return prepared_arrival
+				if not prepared_arrival.ok:
+					if not npc_contact or str(prepared_arrival.get("code", "")) not in ["PARTY_FRAME_BOUNDS", "CONTACT_FOOT_UNPLACED", "CONTACT_FOOT_UNSUPPORTED"]: return prepared_arrival
+					for original_event: Dictionary in registry.events:
+						if str(original_event.id) == str(event.id): original_event.payload.contact_result = {"complete": true, "no_effect": true, "reason": str(prepared_arrival.code)}
+					var no_placement := complete_region_event(str(event.id))
+					if not no_placement.ok: return no_placement
+					consumed += 1
+					continue
 				var arrived := commit_npc_region_arrival(prepared_arrival)
 				if not arrived.ok: return arrived
 				consumed += 1
@@ -3680,6 +3944,9 @@ func consume_due_region_events() -> Dictionary:
 				return {"ok": true, "complete": false, "event": event, "consumed": consumed}
 		var completed := complete_region_event(str(event.id))
 		if not completed.ok: return completed
+		if str(event.kind) == "intel" and bool(event.payload.get("carried", false)):
+			var saved_delivery := _region_checkpoint_carried_delivery(str(event.id))
+			if not saved_delivery.ok: return saved_delivery
 		consumed += 1
 	return fail("REGION_EVENT_LIMIT", "同刻原事件超過容量，不推新時間")
 
@@ -3710,16 +3977,24 @@ func scoped_region_intel(lab: TerrainLab, at: float) -> Dictionary:
 # Files without the common marker remain unreferenced; a BUSY active checkpoint
 # must not publish these bodies by itself. No body is embedded in control JSON.
 
-func collect_region_party_checkpoint(generation: int, next_control: Dictionary) -> Dictionary:
+func collect_region_party_checkpoint(generation: int, next_control: Dictionary, composed_token: String = "") -> Dictionary:
 	for token: String in _region_npc_party_runtime:
+		# Its new complete composed graph is already written by the same commit.
+		if token == composed_token: continue
 		var reference: Dictionary = next_control.region_gameplay.parties.get(token, {})
 		if str(reference.get("phase", "")) not in ["travelling", "pending_life", "materializing"]: continue
-		var relative := "travel/%s/party_g%09d_r%09d.json" % [token, generation, int(next_control.region_gameplay.revision)]
-		var written := _write_new_document(folder.path_join(relative), {"version": 1, "token": token, "pin": pin.duplicate(true),
-			"encoding": "godot_var_v1", "party": Marshalls.raw_to_base64(var_to_bytes(_region_npc_party_runtime[token]))})
+		var party: Dictionary = _region_npc_party_runtime[token]
+		var capture := _region_capture_party_graph(token, party)
+		if not capture.ok: return capture
+		var actual: Dictionary = capture.get("party", party)
+		var document := _region_party_document(token, actual, capture.original_live_graph)
+		if not document.ok: return document
+		var relative := "travel/%s/party_checkpoint_%09d_%s.json" % [token, generation, Crypto.new().generate_random_bytes(8).hex_encode()]
+		var written := _write_new_document(folder.path_join(relative), document.payload)
 		if not written.ok: return written
 		reference.party_path = relative
 		reference.party_sha256 = FileAccess.get_sha256(folder.path_join(relative))
+		_region_npc_party_runtime[token] = actual
 	return {"ok": true}
 
 func _finish_original_cold_region_points() -> Dictionary:
@@ -3735,6 +4010,30 @@ func _finish_original_cold_region_points() -> Dictionary:
 		if not region_original_party_zero.is_valid(): return fail("MISSING_REGION_PARTY_ENDPOINT")
 		var settled: Variant = region_original_party_zero.call()
 		if not settled is Dictionary or not settled.get("ok", false) or not settled.get("complete", false): return settled if settled is Dictionary else fail("INCOMPLETE_PARTY_ENDPOINT")
+	var deliveries := _region_check_carried_deliveries()
+	if not deliveries.ok: return deliveries
+	if bool(deliveries.get("changed", false)):
+		var saved_delivery := _region_checkpoint_carried_delivery("original_party_endpoint")
+		if not saved_delivery.ok: return saved_delivery
+	var nation_commands := _region_finalize_received_nation_commands()
+	if not nation_commands.ok: return nation_commands
+	if bool(nation_commands.get("changed", false)) and not bool(nation_commands.get("published", false)):
+		var saved_nation := _region_checkpoint_carried_delivery("original_nation_command_endpoint")
+		if not saved_nation.ok: return saved_nation
+	# New metadata is admitted only after ALL actual original cold/party points.
+	for owner: String in _region_original_labs:
+		var cold_siege: Dictionary = refresh_original_region_siege_battle(_region_original_labs[owner])
+		if not cold_siege.ok: return cold_siege
+		if str(region_registry().modes.get(owner, {}).get("mode", "")) != "cold_exact": continue
+		var admitted := admit_original_region_contact_battle(_region_original_labs[owner])
+		if not admitted.ok: return admitted
+	if region_contact_active_data.is_valid() and not str(control.active_site_id).is_empty():
+		var active: Variant = region_contact_active_data.call()
+		if active is Dictionary and active.get("ok", false) and active.get("data") is TerrainData:
+			var active_original: TerrainLab = _region_bound_original_lab(active.data)
+			if active_original != null:
+				var active_siege: Dictionary = refresh_original_region_siege_battle(active_original)
+				if not active_siege.ok: return active_siege
 	return {"ok": true, "complete": true}
 
 const RegionAI = preload("res://scripts/region_lab/region_gameplay_ai.gd")
@@ -4335,6 +4634,10 @@ func consume_region_player_event(event: Dictionary) -> Dictionary:
 		return fail("STALE_REGION_EVENT")
 	if str(event.get("kind", "")) not in ["player_death", "life", "player_arrival", "player_encounter"]:
 		return fail("INVALID_REGION_EVENT")
+	var siege_contact: Dictionary = _region_validate_player_siege_contact(event)
+	if not siege_contact.ok: return siege_contact
+	if not siege_contact.valid:
+		return {"ok": true, "receipt": {"effects_complete": true, "complete": true, "skipped_contact": true, "reason": str(siege_contact.get("reason", "")), "game_seconds": float(control.logical_game_seconds), "action_seconds": float(control.fire_clock.action_seconds)}}
 	if not region_original_player_materialize.is_valid(): return fail("MISSING_REGION_ADAPTER", "缺真joint livebind及原身體／Family消費者")
 	var consumed: Variant = region_original_player_materialize.call(event)
 	if not consumed is Dictionary or not consumed.get("ok", false): return consumed if consumed is Dictionary else fail("INVALID_REGION_RECEIPT")
@@ -4527,35 +4830,12 @@ var region_original_travel_interval: Callable
 var region_original_party_progress: Callable
 
 func _region_player_land_candidate(party: Dictionary, status: Dictionary, interval: Dictionary) -> Dictionary:
-	var world := float(interval.game_begin)
-	if absf(float(party.upkeep.at) - world) > 0.00000001: return fail("UNSETTLED_PARTY")
-	var options := {"moving": true, "safe_rest": true}
-	var endpoint := RegionTravel.next_upkeep_event(party, options.merged({"until": float(interval.game_end)}, true))
-	if not endpoint.ok: return endpoint
-	var end := minf(float(interval.game_end), float(endpoint.at))
-	var outcome := RegionTravel.advance_upkeep(party, end, options)
+	if str(party.get("upkeep", {}).get("live", {}).get("upkeep", "")) == "liveBody": return _region_live_party_candidate(interval, party)
+	var outcome := _region_land_route_preview(party, status.plan, str(status.journey.plan_path), float(interval.game_end))
 	if not outcome.ok: return outcome
-	if float(outcome.metres) > float(status.remaining_metres) + 0.0000001:
-		var low := world
-		var high := float(outcome.at)
-		for _iteration: int in range(45):
-			var middle := (low + high) * 0.5
-			var probe := RegionTravel.advance_upkeep(party, middle, options)
-			if not probe.ok: return probe
-			if float(probe.metres) < float(status.remaining_metres): low = middle
-			else: high = middle
-		outcome = RegionTravel.advance_upkeep(party, high, options)
-		if not outcome.ok: return outcome
-	var candidate: Dictionary = outcome.party
-	if str(candidate.upkeep.get("plan_id", "")) != str(status.journey.plan_path):
-		candidate.upkeep.plan_id = str(status.journey.plan_path)
-		candidate.upkeep.distance = 0.0
-	candidate.upkeep.distance = minf(float(status.plan.metres), float(candidate.upkeep.distance) + float(outcome.metres))
-	candidate.upkeep.blocked_reason = str(outcome.get("reason", ""))
-	outcome.action_seconds = GameplayClock.action_for_game(float(outcome.at) - world,
+	outcome.action_seconds = GameplayClock.action_for_game(float(outcome.at) - float(interval.game_begin),
 		float(interval.scale), float(interval.tactical_seconds))
-	outcome.arrived = float(candidate.upkeep.distance) >= float(status.plan.metres) - 0.0000001
-	return outcome
+	return _region_prepare_map_motion_outcome(party, status, outcome)
 
 
 func _region_queue_player_travel_outcome(token: String, outcome: Dictionary, interval: Dictionary) -> Dictionary:
@@ -4569,7 +4849,7 @@ func _region_queue_player_travel_outcome(token: String, outcome: Dictionary, int
 		var status := region_travel_status()
 		if not status.ok: return status
 		var to: Vector2i = status.destination
-		var queued := queue_region_event("travel:%s:arrival:%s" % [token, str(status.journey.plan_path)], "player_arrival",
+		var queued := queue_region_event(_region_arrival_attempt_id(token, region_travel_party().party, true, str(status.journey.plan_path)), "player_arrival",
 			float(interval.game_end), Grid.site_id(str(pin.atlas_id), to),
 			{"player_token": token, "site": [to.x, to.y], "component": int(status.component)}, true)
 		if not queued.ok: return queued
@@ -4588,6 +4868,12 @@ func _region_accept_player_travel_interval(token: String, accepted: Dictionary) 
 			or absf(float(control.logical_game_seconds) - float(interval.game_end)) > 0.00000001 \
 			or absf(float(control.fire_clock.action_seconds) - float(interval.action_end)) > 0.00000001:
 		return fail("CLOCK_CONTRACT", "所有真原owner與原旅隊須完成同一世界截段")
+	var planned := region_travel_plan()
+	if not planned.ok: return planned
+	var validated := _region_revalidate_completed_land_outcome(token, outcome, planned.plan, str(region_travel_journey().plan_path))
+	if not validated.ok: return validated
+	outcome = validated.outcome
+	accepted.outcome = outcome
 	_travel_party_runtime = outcome.party
 	_travel_party_runtime_token = token
 	var queued := _region_queue_player_travel_outcome(token, outcome, interval)
@@ -4665,7 +4951,9 @@ func _region_npc_route_plan(token: String, steps: Array, party: Dictionary) -> D
 func _region_npc_sea_position(plan: Dictionary, party: Dictionary) -> Dictionary:
 	var index := int(party.upkeep.sea_cursor.action_index)
 	var leg: int = plan.steps.size() - 1 if index == plan.action_steps.size() else int(plan.action_steps[index].leg_index)
-	return {"site": plan.steps[leg].site.duplicate(), "component": 0, "step_index": leg, "fraction": 0.0}
+	return {"site": plan.steps[leg].site.duplicate(), "component": 0, "step_index": leg, "fraction": 0.0, "arrived": index == plan.action_steps.size()}
+
+
 
 
 func _preview_npc_sea_party_to(token: String, party: Dictionary, plan: Dictionary, end: float, interval: Dictionary) -> Dictionary:
@@ -4951,6 +5239,8 @@ func _region_joint_npc_reference(clock: Dictionary, token: String, mapping: Dict
 	reference.destination_site = destination
 	reference.arrival_game_seconds = float(clock.logical_game_seconds)
 	reference.arrival_mapping = mapping.duplicate(true)
+	var deliveries := _region_accept_carried_arrival(clock, token, destination, mapping)
+	if not deliveries.ok: return deliveries
 	registry.modes.erase("travel:" + token)
 	for queued: Dictionary in registry.events:
 		if str(queued.status) != "pending" or str(queued.payload.get("token", "")) != token: continue
@@ -4999,7 +5289,7 @@ func _region_npc_endpoint_location(token: String, coordinate: Vector2i, event: D
 	var party: Dictionary = loaded.party
 	if absf(float(party.upkeep.at) - float(control.logical_game_seconds)) > 0.00000001: return fail("UNSETTLED_PARTY")
 	if str(party.get("mode", "land")) == "sea": return _region_endpoint_sea_location(planned.plan, party, coordinate)
-	var position := _region_route_position(planned.plan, float(party.upkeep.get("distance", 0.0)))
+	var position := _region_current_land_position(party, planned.plan, str(region_registry().parties[token].plan_path))
 	var contact: Dictionary = event.get("payload", {}).get("contact_receipt", {})
 	if position.site != [coordinate.x, coordinate.y]:
 		return _region_original_boundary_location("npc", token, party, coordinate, event)
@@ -5235,3 +5525,4845 @@ func _region_positive_player_death_ids() -> Array[String]:
 	var result: Array[String] = []
 	if not proof.is_empty() and not bool(proof.point_pending): result.assign(proof.event_ids)
 	return result
+
+func _region_capture_party_graph(token: String, party: Dictionary, endpoint_payload: Dictionary = {}) -> Dictionary:
+	var originals: Dictionary = get_meta(&"region_party_owner_labs", {})
+	var original: TerrainLab = originals.get(token)
+	if not is_instance_valid(original):
+		return fail("COMMITTED_UNBOUND", "live party 原完整 Lab 不在，不能丟棄已接受 graph") if party.upkeep.has("live") else {"ok": true, "original_live_graph": {}}
+	if not original.has_method("capture_region_party_owner_graph"): return fail("MISSING_ORIGINAL_PARTY_GRAPH")
+	var complete: bool = pending_region_events().is_empty() and original._region_point_pending.is_empty() and original.site_controller._pending_deaths.is_empty()
+	var context := region_party_checkpoint_context(token, "region_checkpoint" if complete else "region_barrier", complete,
+		endpoint_payload if not endpoint_payload.is_empty() else {"party_checkpoint": token})
+	if not context.ok: return context
+	return original.capture_region_party_owner_graph(token, party, self, context.context)
+
+func _region_join_npc_party_reference(clock: Dictionary, token: String, destination_token: String,
+		mapping: Dictionary, source_proof: Dictionary) -> Dictionary:
+	var registry: Dictionary = clock.region_gameplay
+	var reference: Dictionary = registry.parties.get(token, {})
+	if reference.get("controller") != "npc" or reference.get("phase") != "travelling" \
+			or reference.get("party_path") != source_proof.get("path") or reference.get("party_sha256") != source_proof.get("sha256"):
+		return fail("STALE_REGION_PARTY")
+	reference.phase = "joined"
+	reference.entered_party = destination_token
+	reference.arrival_mapping = mapping.duplicate(true)
+	reference.arrival_game_seconds = float(clock.logical_game_seconds)
+	registry.modes.erase("travel:" + token)
+	for queued: Dictionary in registry.events:
+		if queued.status != "pending" or queued.payload.get("token", "") != token: continue
+		if str(queued.kind) == "life":
+			var key := str(int(queued.payload.get("event", {}).get("person_id", -1)))
+			if not mapping.maps.person.has(key): return fail("INVALID_LIFE_MAPPING")
+			var source_file := _region_life_party_document(token, str(source_proof.path), str(source_proof.sha256))
+			if not source_file.ok: return source_file
+			var person_ref: Dictionary = source_file.party.content.travel_identity.refs.person.get(key, {})
+			if person_ref.is_empty(): return fail("INVALID_LIFE_MAPPING")
+			queued.payload.person_reference = person_ref.duplicate(true)
+			queued.payload.party_source_proof = source_proof.duplicate(true)
+			queued.payload.arrival_mapping = mapping.duplicate(true)
+		queued.payload.entered_party = destination_token
+	# The original event owner, accepted time, ID and sequence are preserved.
+	return {"ok": true}
+
+func _region_life_canonical(event: Dictionary) -> Dictionary:
+	for current: Dictionary in region_registry().events:
+		if current.id != event.get("id"): continue
+		if current.status != "pending" or var_to_bytes(current) != var_to_bytes(event):
+			return fail("STALE_REGION_EVENT")
+		if current.kind not in ["life", "player_death"] or not current.payload is Dictionary:
+			return fail("INVALID_REGION_LIFE_EVENTS")
+		return {"ok": true, "event": current}
+	return fail("STALE_REGION_EVENT")
+
+func _region_life_current_party(token: String) -> Dictionary:
+	var selected := region_travel_party() if str(region_travel_journey().get("token", "")) == token else _region_npc_party(token)
+	if not selected.ok: return selected
+	return region_original_party_runtime_proof(token, selected.party)
+
+func _region_life_effect_receipt(event: Dictionary) -> bool:
+	var payload: Dictionary = event.get("payload", {})
+	var record: Dictionary = payload.get("event", payload)
+	var receipt: Variant = payload.get("effect_receipt")
+	if not receipt is Dictionary or receipt.size() != 5: return false
+	for field: String in ["event_id", "person_id", "effects_complete", "game_seconds", "action_seconds"]:
+		if not receipt.has(field): return false
+	return receipt.event_id == event.get("id") and receipt.person_id == record.get("person_id") \
+		and receipt.effects_complete == true and GameplayClock.seconds(receipt.game_seconds) \
+		and float(receipt.game_seconds) == float(event.get("at", -1.0)) and GameplayClock.seconds(receipt.action_seconds) \
+		and float(receipt.action_seconds) <= float(control.fire_clock.action_seconds) + TerrainLab.ACTION_TIME_EPSILON
+
+func _region_life_original_owner(event: Dictionary) -> Dictionary:
+	var canonical := _region_life_canonical(event)
+	if not canonical.ok: return canonical
+	var payload: Dictionary = canonical.event.payload
+	if payload.has("family_control_transition"): return _region_family_life_source(canonical.event)
+	var record: Variant = payload.get("event", payload)
+	if not record is Dictionary or not GameplayClock.whole(record.get("person_id"), 1):
+		return fail("INVALID_REGION_LIFE_EVENTS")
+	var token := str(payload.get("entered_party", str(event.owner).trim_prefix("travel:")))
+	if not str(event.owner).begins_with("travel:") or not _safe_part(token):
+		return fail("INVALID_REGION_LIFE_OWNER")
+	var current := _region_life_current_party(token)
+	if not current.ok: return current
+	var source_ref: Dictionary = {}
+	if payload.has("party_source_proof"):
+		if not payload.party_source_proof is Dictionary: return fail("INVALID_REGION_LIFE_SOURCE")
+		var source_party := _region_life_source_proof(event, payload.party_source_proof)
+		if not source_party.ok: return source_party
+		source_ref = source_party.party.content.travel_identity.refs.person.get(str(int(record.person_id)), {})
+	else:
+		if str(event.owner) != "travel:" + token or payload.has("entered_party") and str(payload.entered_party) != token:
+			return fail("MISSING_REGION_LIFE_SOURCE")
+		source_ref = current.party.content.travel_identity.refs.person.get(str(int(record.person_id)), {})
+	var reference: Variant = payload.get("person_reference", source_ref)
+	if not reference is Dictionary or reference != source_ref:
+		var diagnostic_proof: Dictionary = payload.get("party_source_proof", {})
+		var refused := fail("INVALID_REGION_LIFE_REFERENCE")
+		refused.diagnostic = {"actual_reference": reference.duplicate(true) if reference is Dictionary else reference,
+			"expected_reference": source_ref.duplicate(true), "reference_type": typeof(reference),
+			"actual_lineage_type": typeof(reference.get("lineage")) if reference is Dictionary else TYPE_NIL,
+			"expected_lineage_type": typeof(source_ref.get("lineage")), "person_id": record.person_id,
+			"person_id_type": typeof(record.person_id), "source_ref_keys": source_ref.keys(),
+			"event_id": str(canonical.event.id), "token": token,
+			"source_path": str(diagnostic_proof.get("path", "")), "source_sha256": str(diagnostic_proof.get("sha256", ""))}
+		return refused
+	var identity := _region_life_reference_id(current.party.content.travel_identity, reference)
+	if identity <= 0: return fail("STALE_REGION_LIFE_OWNER")
+	var original: TerrainLab = current.lab
+	var person := original._original_person_target(identity)
+	if person.is_empty(): return fail("STALE_REGION_LIFE_OWNER")
+	return {"ok": true, "lab": original, "party": current.party, "proof": current.proof, "person_id": identity,
+		"person_reference": reference, "person": person, "event": canonical.event, "family_complete": false}
+
+func _region_life_party_context(document: Dictionary) -> Dictionary:
+	var raw: Variant = document.get("payload", {}).get("original_live_graph")
+	if not raw is Dictionary or raw.size() != 2 or raw.get("encoding") != "godot_var_v1" or not raw.get("value") is String:
+		return fail("INVALID_FAMILY_TRANSITION")
+	var graph: Variant = bytes_to_var(Marshalls.base64_to_raw(str(raw.value)))
+	if not graph is Dictionary or graph.size() != 5 or graph.get("version") != 1 \
+			or graph.get("token") != document.party.get("party_id") \
+			or graph.get("party_hash") != Marshalls.raw_to_base64(var_to_bytes(document.party)).sha256_text() \
+			or not graph.get("owners") is Dictionary or not graph.owners.get("scene") is Dictionary:
+		return fail("INVALID_FAMILY_TRANSITION")
+	var checked := RegionCheckpoint.validate_context(graph.get("context"))
+	if not checked.ok or graph.owners.scene.get("context") != graph.context:
+		return fail("INVALID_FAMILY_TRANSITION")
+	if absf(float(document.party.upkeep.get("at", -1.0)) - float(graph.context.game_seconds)) > TerrainLab.ACTION_TIME_EPSILON \
+			or absf(float(document.party.upkeep.get("owner_action_seconds", -1.0)) - float(graph.context.action_seconds)) > TerrainLab.ACTION_TIME_EPSILON:
+		return fail("INVALID_FAMILY_TRANSITION")
+	return {"ok": true, "context": checked.context}
+
+func _region_life_party_document(token: String, relative: String, sha: String) -> Dictionary:
+	if not _safe_part(token) or not _travel_relative(relative, token) or relative.is_empty() or sha.length() != 64:
+		return fail("INVALID_REGION_LIFE_SOURCE")
+	var document := _travel_document(relative, sha, {})
+	if not document.ok: return document
+	var payload: Dictionary = document.payload
+	if payload.get("version") != 1 or payload.get("token") != token or not _same_pin(payload.get("pin"), pin) \
+			or payload.get("encoding") != "godot_var_v1" or not payload.get("party") is String:
+		return fail("INVALID_REGION_LIFE_SOURCE")
+	var body: Variant = bytes_to_var(Marshalls.base64_to_raw(str(payload.party)))
+	if not body is Dictionary or body.get("party_id") != token \
+			or not RegionTravel.validate_identity(body.get("content", {}).get("travel_identity")):
+		return fail("INVALID_REGION_LIFE_SOURCE")
+	return {"ok": true, "party": body, "payload": payload}
+
+static func _region_life_reference_id(identity: Dictionary, reference: Dictionary) -> int:
+	if not RegionTravel.validate_identity(identity) or reference.size() != 3 \
+			or reference.get("type") != "person" or not reference.get("namespace") is String \
+			or str(reference.namespace).is_empty() or not GameplayClock.whole(reference.get("lineage"), 1):
+		return -1
+	var found := -1
+	for key: String in identity.refs.person:
+		if identity.refs.person[key] != reference: continue
+		if found != -1: return -1
+		found = int(key)
+	return found
+
+func _region_life_source_proof(event: Dictionary, proof: Dictionary) -> Dictionary:
+	const FIELDS := ["version", "token", "owner", "generation", "revision", "path", "sha256", "party_hash",
+		"game_seconds", "action_seconds", "controller", "phase"]
+	if proof.size() != FIELDS.size(): return fail("INVALID_REGION_LIFE_SOURCE")
+	for field: String in FIELDS:
+		if not proof.has(field): return fail("INVALID_REGION_LIFE_SOURCE")
+	if proof.version != 1 or proof.owner != event.owner or proof.owner != "travel:" + str(proof.token) \
+			or not GameplayClock.whole(proof.generation, 0) or int(proof.generation) > int(_marker.get("generation", 0)) \
+			or not GameplayClock.whole(proof.revision, 0) or int(proof.revision) > int(region_registry().revision) \
+			or proof.controller not in ["player", "npc"] \
+			or not GameplayClock.seconds(proof.game_seconds) or not GameplayClock.seconds(proof.action_seconds) \
+			or float(proof.game_seconds) < float(event.at) - TerrainLab.ACTION_TIME_EPSILON \
+			or float(proof.game_seconds) > float(control.logical_game_seconds) + TerrainLab.ACTION_TIME_EPSILON \
+			or float(proof.action_seconds) > float(control.fire_clock.action_seconds) + TerrainLab.ACTION_TIME_EPSILON:
+		return fail("INVALID_REGION_LIFE_SOURCE")
+	var document := _region_life_party_document(str(proof.token), str(proof.path), str(proof.sha256))
+	if not document.ok: return document
+	var party: Dictionary = document.party
+	if party.controller != proof.controller or Marshalls.raw_to_base64(var_to_bytes(party)).sha256_text() != proof.party_hash \
+			or absf(float(party.upkeep.get("at", -1.0)) - float(proof.game_seconds)) > TerrainLab.ACTION_TIME_EPSILON \
+			or absf(float(party.upkeep.get("owner_action_seconds", -1.0)) - float(proof.action_seconds)) > TerrainLab.ACTION_TIME_EPSILON:
+		return fail("INVALID_REGION_LIFE_SOURCE")
+	return document
+
+func _region_live_party_candidate(interval: Dictionary, party: Dictionary) -> Dictionary:
+	if absf(float(party.get("upkeep", {}).get("at", -1.0)) - float(interval.get("game_begin", -2.0))) > 0.00000001:
+		return fail("UNSETTLED_PARTY")
+	var candidate: Dictionary = party.duplicate(true)
+	candidate.upkeep.at = float(interval.game_end)
+	candidate.upkeep.owner_action_seconds = float(interval.action_end)
+	return {"ok": true, "party": candidate, "source_party": party, "at": float(interval.game_end),
+		"action_seconds": float(interval.action_end) - float(interval.action_begin), "metres": 0.0,
+		"consumed_rations": 0.0, "events": [], "arrived": false, "reroute_ready": false}
+
+func _region_live_party_world(token: String, party: Dictionary, plan: Dictionary, event: Dictionary, contact_role: String) -> Dictionary:
+	var people := RegionTravel._body_records(party.content)
+	var refs: Dictionary = party.content.travel_identity.refs
+	var world_people := {}
+	var world_vehicles := {}
+	var previous: Dictionary = party.get("upkeep", {}).get("live", {}).get("frame", {})
+	if not previous.is_empty():
+		if not RegionTravel._frame_pair(previous.get("world_origin")) or not RegionTravel._frame_pair(previous.get("size")): return fail("INVALID_PARTY_FRAME")
+		var origin := Vector2i(int(previous.world_origin[0]), int(previous.world_origin[1]))
+		for identity: Variant in people:
+			var raw: Variant = people[identity].get("cell")
+			if not RegionTravel._frame_pair(raw): return fail("MISSING_ORIGINAL_POSITION")
+			var at := origin + Vector2i(int(raw[0]), int(raw[1]))
+			world_people[str(identity)] = {"reference": refs.person[str(identity)].duplicate(), "world_cell": [at.x, at.y]}
+		for identity: String in party.content.get("vehicles", {}):
+			var vehicle: Dictionary = party.content.vehicles[identity]
+			var cell := int(vehicle.cell)
+			var at := origin + Vector2i(cell % int(previous.size[0]), cell / int(previous.size[0]))
+			world_vehicles[identity] = {"reference": refs.vehicle[identity].duplicate(), "world_cell": [at.x, at.y],
+				"pose": previous.vehicles.get(identity, {}).get("pose", {}).duplicate(true)}
+		return {"ok": true, "people": world_people, "vehicles": world_vehicles}
+	if str(party.get("mode", "land")) == "sea":
+		var current := region_sea_pose_projection(plan, party)
+		if not current.ok: return current
+		for identity: String in party.content.vehicles:
+			var vehicle: Dictionary = party.content.vehicles[identity]
+			var pose: Dictionary = current.poses.get(identity, {}).duplicate(true)
+			if str(vehicle.get("kind", "")) != "ship" or not pose.get("world_anchor") is Array or pose.world_anchor.size() != 2: return fail("CORRUPT_SEA_CURSOR")
+			# Original Vector2 pose query returns floats. Only validated integral
+			# grid endpoints become typed cells; the interpolated anchor stays exact.
+			for field: String in ["from", "to"]:
+				if not pose.has(field): continue
+				var endpoint: Variant = pose[field]
+				if not endpoint is Array or endpoint.size() != 2 or not Store._integer(endpoint[0], -2147483648, 2147483647) or not Store._integer(endpoint[1], -2147483648, 2147483647): return fail("CORRUPT_SEA_CURSOR")
+				pose[field] = [int(endpoint[0]), int(endpoint[1])]
+			var accepted: Array = pose.get("from", pose.world_anchor) if float(pose.get("duration_action_seconds", 0.0)) > 0.0 else pose.world_anchor
+			if accepted.size() != 2 or not Store._integer(accepted[0], -2147483648, 2147483647) or not Store._integer(accepted[1], -2147483648, 2147483647): return fail("CORRUPT_SEA_CURSOR")
+			var at := Vector2i(int(accepted[0]), int(accepted[1]))
+			world_vehicles[identity] = {"reference": refs.vehicle[identity].duplicate(), "world_cell": [at.x, at.y], "pose": pose.duplicate(true)}
+		for identity: Variant in people:
+			var body: Dictionary = people[identity]
+			var boat_id := str(body.get("embarked_vehicle_id", ""))
+			var boat: Dictionary = party.content.vehicles.get(boat_id, {})
+			var vehicle: Dictionary = world_vehicles.get(boat_id, {})
+			if boat.is_empty() or vehicle.is_empty(): return fail("NOT_EMBARKED")
+			var pose: Dictionary = vehicle.pose
+			var anchor := Vector2(float(pose.world_anchor[0]), float(pose.world_anchor[1]))
+			var facing := Vector2(float(pose.facing[0]), float(pose.facing[1]))
+			if pose.has("action"):
+				var next := Vector2(float(pose.to_facing[0]), float(pose.to_facing[1]))
+				facing = facing.rotated(facing.angle_to(next) * float(pose.get("weight", 0.0)))
+			var local := RegionTravel.Ship.local_position(str(boat.ship_type), int(body.get("berth_id", -1)))
+			var saved: Variant = body.get("ship_deck_position")
+			if saved is Array and saved.size() == 2: local = Vector2(float(saved[0]), float(saved[1]))
+			if not local.is_finite(): return fail("NOT_EMBARKED")
+			var at := Vector2i((anchor + Vector2(-facing.y, facing.x) * local.x + facing * local.y + Vector2.ONE * 0.5).floor())
+			world_people[str(identity)] = {"reference": refs.person[str(identity)].duplicate(), "world_cell": [at.x, at.y]}
+		return {"ok": true, "people": world_people, "vehicles": world_vehicles}
+	var position: Dictionary = event.get("payload", {}).get("contact_receipt", {}).get(contact_role, {}).get("position", {})
+	var context := _region_party_frame_context(party)
+	if not context.ok: return context
+	if position.is_empty():
+		var idle: Dictionary = region_travel_journey().get("position", {}) if str(region_travel_journey().get("token", "")) == token \
+			else region_registry().parties.get(token, {}).get("position", {})
+		var route: Dictionary = _region_current_land_position(party, plan, str(party.upkeep.get("plan_id", ""))) if not plan.is_empty() else idle
+		var located := _region_contact_position(party, plan, route, context.context, {})
+		if not located.ok: return located
+		position = located.position
+	# Selected route/contact documents use JSON numbers; validate exact
+	# integers at this wire boundary before constructing the typed frame.
+	var position_site: Variant = position.get("site")
+	var position_cell: Variant = position.get("cell")
+	if not position_site is Array or position_site.size() != 2 or not position_cell is Array or position_cell.size() != 2:
+		return fail("MISSING_ORIGINAL_POSITION")
+	for axis: int in range(2):
+		if not Store._integer(position_site[axis], -2147483648, 2147483647) or not Store._integer(position_cell[axis], 0, 99):
+			return fail("MISSING_ORIGINAL_POSITION")
+	var raw_leader: Variant = people.get(int(party.leader_person_id), {}).get("cell")
+	if not RegionTravel._frame_pair(raw_leader): return fail("MISSING_ORIGINAL_POSITION")
+	var origin := Vector2i(int(position.site[0]) * 100, -int(position.site[1]) * 100)
+	var leader := origin + Vector2i(int(position.cell[0]), int(position.cell[1]))
+	var translation := leader - Vector2i(int(raw_leader[0]), int(raw_leader[1]))
+	for identity: Variant in people:
+		var raw: Variant = people[identity].get("cell")
+		if not RegionTravel._frame_pair(raw): return fail("MISSING_ORIGINAL_POSITION")
+		var at := translation + Vector2i(int(raw[0]), int(raw[1]))
+		world_people[str(identity)] = {"reference": refs.person[str(identity)].duplicate(), "world_cell": [at.x, at.y]}
+	var step: Dictionary = plan.get("steps", [])[int(position.step_index)] if not plan.is_empty() else {}
+	for identity: String in party.content.get("vehicles", {}):
+		var vehicle: Dictionary = party.content.vehicles[identity]
+		var pose: Dictionary = step.get("vehicle_poses", {}).get(identity, {})
+		var at := translation + Vector2i(int(vehicle.cell) % 100, int(vehicle.cell) / 100)
+		if RegionTravel._frame_pair(pose.get("anchor")): at = origin + Vector2i(int(pose.anchor[0]), int(pose.anchor[1]))
+		world_vehicles[identity] = {"reference": refs.vehicle[identity].duplicate(), "world_cell": [at.x, at.y], "pose": pose.duplicate(true)}
+	return {"ok": true, "people": world_people, "vehicles": world_vehicles}
+
+func _region_party_base_proof(proof: Dictionary) -> Dictionary:
+	const FIELDS := ["version", "token", "owner", "generation", "revision", "path", "sha256", "party_hash",
+		"game_seconds", "action_seconds", "controller", "phase"]
+	var base := {}
+	for field: String in FIELDS:
+		if not proof.has(field): return {}
+		base[field] = proof[field]
+	return base
+
+func _region_party_document(token: String, party: Dictionary, graph: Dictionary = {}) -> Dictionary:
+	var payload := {"version": 1, "token": token, "pin": pin.duplicate(true), "encoding": "godot_var_v1",
+		"party": Marshalls.raw_to_base64(var_to_bytes(party))}
+	if not graph.is_empty():
+		if graph.get("token") != token or graph.get("party_hash") != Marshalls.raw_to_base64(var_to_bytes(party)).sha256_text() \
+				or not RegionCheckpoint.validate_context(graph.get("context")).ok:
+			return fail("INVALID_REGION_GRAPH", "原 graph 未指向即將共同提交的唯一 party body")
+		payload.original_live_graph = {"encoding": "godot_var_v1", "value": Marshalls.raw_to_base64(var_to_bytes(graph))}
+	return {"ok": true, "payload": payload}
+
+func _region_party_frame_context(party: Dictionary) -> Dictionary:
+	var prepared := prepare_region_route_context(null, party)
+	if not prepared.ok: return prepared
+	var source_context: Dictionary = prepared.context
+	var selected_generation := int(_marker.get("generation", 0))
+	var selected_revision := int(region_registry().revision)
+	var selected_sites: Dictionary = _marker.get("sites", {}).duplicate(true)
+	var provider := func(site: Vector2i) -> Dictionary:
+		if selected_generation != int(_marker.get("generation", 0)) or selected_revision != int(region_registry().revision): return fail("STALE_PARTY_GEOMETRY")
+		var value: Variant = source_context.effective_terrain.call(site)
+		if not value is Dictionary or not value.get("ok", false): return value if value is Dictionary else fail("INVALID_PROVIDER")
+		var selected: Dictionary = selected_sites.get(_site_key(site), {})
+		if selected.is_empty():
+			if value.get("data") != null: return fail("UNSELECTED_PARTY_GEOMETRY", "原 visited geometry 未被共同 marker 選定")
+			return {"ok": true, "data": null, "visited": false}
+		if value.get("data") == null or FileAccess.get_sha256(folder.path_join(str(selected.path))) != str(selected.sha256): return fail("CORRUPT_SAVE")
+		return {"ok": true, "data": value.data, "revision": str(value.revision), "visited": true,
+			"proof": {"generation": selected_generation, "revision": selected_revision, "site": [site.x, site.y],
+				"path": str(selected.path), "sha256": str(selected.sha256)}}
+	return {"ok": true, "context": {"effective_terrain": provider}}
+
+func _region_selected_party_document(token: String, require_current: bool = true) -> Dictionary:
+	var recovered := _recover_control()
+	if not recovered.ok: return recovered
+	var reference: Dictionary
+	var controller := ""
+	var journey := region_travel_journey()
+	if not journey.is_empty() and str(journey.token) == token:
+		reference = journey
+		controller = "player"
+	else:
+		reference = region_registry().parties.get(token, {})
+		controller = str(reference.get("controller", ""))
+	if controller not in ["player", "npc"] or not _travel_relative(reference.get("party_path"), token) \
+			or str(reference.get("party_path", "")).is_empty() or str(reference.get("party_sha256", "")).length() != 64:
+		return fail("STALE_REGION_PARTY", "真 marker 未選定原 party 文件")
+	var document := _travel_document(str(reference.party_path), str(reference.party_sha256), {})
+	if not document.ok: return document
+	var payload: Dictionary = document.payload
+	if payload.get("version") != 1 or payload.get("token") != token or not _same_pin(payload.get("pin"), pin) \
+			or payload.get("encoding") != "godot_var_v1" or not payload.get("party") is String:
+		return fail("CORRUPT_SAVE", "真 party 文件不是此世界原 selected owner")
+	var party: Variant = bytes_to_var(Marshalls.base64_to_raw(str(payload.party)))
+	if not party is Dictionary or party.get("party_id") != token or party.get("controller") != controller \
+			or not RegionTravel.validate_identity(party.get("content", {}).get("travel_identity")):
+		return fail("CORRUPT_SAVE", "真 party 閉包非法")
+	if require_current and (absf(float(party.get("upkeep", {}).get("at", -1.0)) - float(control.logical_game_seconds)) > 0.00000001 \
+			or absf(float(party.upkeep.get("owner_action_seconds", control.fire_clock.action_seconds)) - float(control.fire_clock.action_seconds)) > 0.00000001):
+		return fail("UNSETTLED_PARTY", "真 selected party 尚未完成同一共同雙時間端點")
+	var fingerprint := Marshalls.raw_to_base64(var_to_bytes(party)).sha256_text()
+	var graph := {}
+	if payload.has("original_live_graph"):
+		var encoded: Variant = payload.original_live_graph
+		if not encoded is Dictionary or encoded.size() != 2 or encoded.get("encoding") != "godot_var_v1" or not encoded.get("value") is String:
+			return fail("CORRUPT_REGION_GRAPH")
+		var decoded: Variant = bytes_to_var(Marshalls.base64_to_raw(str(encoded.value)))
+		if not decoded is Dictionary or decoded.size() != 5 or decoded.get("version") != 1 or decoded.get("token") != token \
+				or decoded.get("party_hash") != fingerprint or not decoded.get("context") is Dictionary or not decoded.get("owners") is Dictionary \
+				or not RegionCheckpoint.validate_context(decoded.context).ok:
+			return fail("CORRUPT_REGION_GRAPH", "party body 與完整原 graph 不是同一份提交")
+		graph = decoded
+	var phase := str(party.upkeep.get("live", {}).get("phase", reference.get("phase", "travelling")))
+	var proof := {"version": 1, "token": token, "owner": "travel:" + token, "generation": int(_marker.get("generation", 0)),
+		"revision": int(region_registry().revision), "path": str(reference.party_path), "sha256": str(reference.party_sha256),
+		"party_hash": fingerprint, "game_seconds": float(party.upkeep.at), "action_seconds": float(party.upkeep.get("owner_action_seconds", control.fire_clock.action_seconds)),
+		"controller": controller, "phase": phase}
+	return {"ok": true, "proof": proof, "party": party, "original_live_graph": graph}
+
+func commit_region_live_party(token: String, party: Dictionary, source_proof: Dictionary,
+		binding: Dictionary, incoming: Dictionary = {}) -> Dictionary:
+	# The raw candidate is proved before original runtime IDs are composed. Both
+	# transformations are pure and repeatable from these exact selected sources.
+	var selected := region_live_party_candidate_proof(token, party, source_proof)
+	if not selected.ok: return selected
+	if not binding.get("ok", false) or not binding.get("original_live_graph") is Dictionary \
+			or not binding.get("party") is Dictionary or not binding.get("runtime_mapping") is Dictionary:
+		return fail("MISSING_ORIGINAL_PARTY_GRAPH")
+	for hook: String in ["can_publish", "publish", "discard"]:
+		if not binding.get(hook) is Callable or not binding[hook].is_valid(): return fail("MISSING_ORIGINAL_PARTY_BIND")
+	if binding.can_publish.call() != true: return fail("STALE_REGION_BIND_TICKET")
+	var runtime_owner: GDScript = load("res://scripts/terrain_lab/site_region_party_runtime_mapping.gd")
+	if runtime_owner == null: return fail("MISSING_ORIGINAL_PARTY_RUNTIME_MAPPING")
+	var runtime_sources: Array = []
+	for original: Dictionary in selected.sources:
+		runtime_sources.append({"party": original.party, "projected": original.projected_party, "maps": original.maps})
+	var composed: Dictionary = runtime_owner.compose_candidate(party, runtime_sources, binding.runtime_mapping)
+	if not composed.ok: return composed
+	if var_to_bytes(composed.party) != var_to_bytes(binding.party):
+		return fail("PARTY_RUNTIME_CLOSURE", "原完整 runtime mapping 必須精確重建同一真 body 候選")
+	var actual: Dictionary = binding.party
+	var document := _region_party_document(token, actual, binding.original_live_graph)
+	if not document.ok: return document
+	var player_source: Dictionary = selected.sources[0]
+	var npc_primary: bool = player_source.party.get("controller") == "npc"
+	var generation := int(player_source.proof.generation) + 1
+	var npc_token := str(selected.sources[1].party.party_id) if selected.sources.size() == 2 else ""
+	var relative := "travel/%s/party_live_%09d_%s.json" % [token, generation, Crypto.new().generate_random_bytes(8).hex_encode()]
+	var written := _write_new_document(folder.path_join(relative), document.payload)
+	if not written.ok: return written
+	var next_control := control.duplicate(true)
+	for queued: Dictionary in next_control.region_gameplay.events:
+		if queued.status != "pending" or queued.owner != "travel:" + token or str(queued.kind) not in ["life", "player_death"]: continue
+		var person := str(int(queued.payload.get("event", queued.payload).get("person_id", -1)))
+		var reference: Dictionary = player_source.party.content.travel_identity.refs.person.get(person, {})
+		if reference.is_empty() or actual.content.travel_identity.refs.person.get(person) != reference:
+			return fail("INVALID_LIFE_MAPPING", "原玩家生命端點必須仍引用同一真 typed body")
+		queued.payload.entered_party = token
+		queued.payload.person_reference = reference.duplicate(true)
+		queued.payload.party_source_proof = player_source.proof.duplicate(true)
+	if not npc_token.is_empty():
+		var retired := _region_join_npc_party_reference(next_control, npc_token, token, selected.mapping, selected.sources[1].proof)
+		if not retired.ok: return retired
+	if not npc_primary: next_control.active_site_id = ""
+	next_control.region_gameplay.revision = int(next_control.region_gameplay.revision) + 1
+	var mode := GameplayClock.activate_mode(next_control.region_gameplay, "travel:" + token, "committed-unbound", generation,
+		"gd", "original_party", float(next_control.logical_game_seconds), float(next_control.fire_clock.action_seconds), {})
+	if not mode.ok: return mode
+	var sites: Dictionary = _marker.get("sites", {}).duplicate(true)
+	var cold := _collect_cold_checkpoint(generation, sites, next_control)
+	if not cold.ok: return cold
+	var parties := collect_region_party_checkpoint(generation, next_control, token if npc_primary else "")
+	if not parties.ok: return parties
+	var checked := region_live_party_candidate_proof(token, party, source_proof)
+	if not checked.ok: return checked
+	if binding.can_publish.call() != true: return fail("STALE_REGION_BIND_TICKET")
+	var journey := region_travel_journey()
+	if npc_primary:
+		next_control.region_gameplay.parties[token].party_path = relative
+		next_control.region_gameplay.parties[token].party_sha256 = FileAccess.get_sha256(folder.path_join(relative))
+	else:
+		journey.party_path = relative
+		journey.party_sha256 = FileAccess.get_sha256(folder.path_join(relative))
+	var published := _publish(sites, next_control, str(_marker.get("transfer_token", "")), journey)
+	if not published.ok: return published
+	if npc_primary: _region_npc_party_runtime[token] = actual
+	else:
+		_travel_party_runtime = actual
+		_travel_party_runtime_token = token
+	if not npc_token.is_empty():
+		_region_npc_party_runtime.erase(npc_token)
+		_region_npc_plan_runtime.erase(npc_token)
+	var proof := region_live_party_proof(token)
+	if not proof.ok: return _region_committed_unbound("真 party 與完整 graph 已提交，待重讀原 selected 文件", {"generation": generation, "token": token, "bind_result": proof})
+	var bound: Variant = binding.publish.call(proof.proof)
+	if not bound is Dictionary or not bound.get("ok", false) or bound.get("complete") != true \
+			or bound.get("owner") != "travel:" + token or int(bound.get("generation", -1)) != generation:
+		return _region_committed_unbound("真 party 與完整 graph 已共同提交；只允重試原 bind", {"generation": generation, "token": token, "bind_result": bound})
+	var enabled := activate_region_mode("travel:" + token, "live", "original_party", bound, "gd")
+	if not enabled.ok: return enabled
+	return {"ok": true, "complete": true, "generation": generation, "token": token,
+		"party": actual, "receipt": bound, "proof": proof.proof, "incoming": incoming}
+
+func prepare_region_live_party(event: Dictionary) -> Dictionary:
+	var npc_pair := str(event.get("payload", {}).get("contact_receipt", {}).get("kind", "")) == "npc_sea_sweep_boundary"
+	if npc_pair:
+		var guarded := _region_validate_npc_sea_pair_event(event)
+		if not guarded.ok or not guarded.get("valid", false): return guarded if not guarded.ok else fail("STALE_REGION_CONTACT")
+	var checkpoint := _region_checkpoint_carried_delivery(str(event.id)) if npc_pair else checkpoint_region_travel()
+	if not checkpoint.ok: return checkpoint
+	var journey := region_travel_journey()
+	var token := str(event.payload.contact_receipt.primary_token) if npc_pair else str(journey.get("token", ""))
+	var player := region_live_party_proof(token)
+	if not player.ok: return player
+	var planned := _region_npc_plan(token) if npc_pair else region_travel_plan()
+	if not planned.ok: return planned
+	var player_world := _region_live_party_world(token, player.party, planned.plan, event, "second")
+	if not player_world.ok: return player_world
+	var npc_token := str(event.get("payload", {}).get("token", ""))
+	var npc := {}
+	var npc_world := {}
+	if not npc_token.is_empty() and npc_token != token and str(region_registry().parties.get(npc_token, {}).get("phase", "")) == "travelling":
+		npc = region_live_party_proof(npc_token)
+		if not npc.ok: return npc
+		var npc_plan := _region_npc_plan(npc_token)
+		if not npc_plan.ok: return npc_plan
+		npc_world = _region_live_party_world(npc_token, npc.party, npc_plan.plan, event, "first")
+		if not npc_world.ok: return npc_world
+	var minimum := Vector2i(2147483647, 2147483647)
+	var maximum := Vector2i(-2147483647, -2147483647)
+	for group: Dictionary in [player_world] + ([npc_world] if not npc.is_empty() else []):
+		for record: Dictionary in group.people.values() + group.vehicles.values():
+			var at := Vector2i(int(record.world_cell[0]), int(record.world_cell[1]))
+			minimum = Vector2i(mini(minimum.x, at.x), mini(minimum.y, at.y))
+			maximum = Vector2i(maxi(maximum.x, at.x), maxi(maximum.y, at.y))
+		for identity: String in group.vehicles:
+			var original: Dictionary = player.party.content.vehicles.get(identity, {}) if group == player_world else npc.party.content.vehicles.get(identity, {})
+			if str(original.get("kind", "")) != "ship": continue
+			var record: Dictionary = group.vehicles[identity]
+			var pose: Dictionary = record.pose
+			var heading := Vector2i(int(pose.facing[0]), int(pose.facing[1]))
+			var swept := RegionTravel.Ship.footprint(str(original.ship_type), Vector2i(int(record.world_cell[0]), int(record.world_cell[1])), heading)
+			if float(pose.get("duration_action_seconds", 0.0)) > 0.0:
+				swept = Ship.swept_footprint(str(original.ship_type), Vector2i(int(pose.from[0]), int(pose.from[1])),
+					Vector2i(int(pose.from_facing[0]), int(pose.from_facing[1])), Vector2i(int(pose.to[0]), int(pose.to[1])),
+					Vector2i(int(pose.to_facing[0]), int(pose.to_facing[1])))
+			for cell: Vector2i in swept:
+				minimum = Vector2i(mini(minimum.x, cell.x), mini(minimum.y, cell.y))
+				maximum = Vector2i(maxi(maximum.x, cell.x), maxi(maximum.y, cell.y))
+	var origin := Vector2i(Grid.floor_div(minimum.x, 100), Grid.floor_div(minimum.y, 100)) * 100
+	var size := (Vector2i(Grid.floor_div(maximum.x, 100), Grid.floor_div(maximum.y, 100)) + Vector2i.ONE) * 100 - origin
+	if size.x not in [100, 200] or size.y not in [100, 200]: return fail("PARTY_FRAME_TOO_WIDE", "原 shared body closure 超過本次連續 frame 範圍")
+	var frame := {"version": 1, "world_origin": [origin.x, origin.y], "size": [size.x, size.y],
+		"game_seconds": float(control.logical_game_seconds), "action_seconds": float(control.fire_clock.action_seconds),
+		"people": player_world.people, "vehicles": player_world.vehicles}
+	var projected := RegionTravel.project_party_frame(player.party, frame)
+	if not projected.ok: return projected
+	var original_ship := _region_install_live_ship_moves(projected.party, player_world, frame)
+	if not original_ship.ok: return original_ship
+	projected.party = original_ship.party
+	var incoming := {}
+	var candidate: Dictionary = projected.party
+	var proof: Dictionary = player.proof.duplicate(true)
+	proof.coordinate_projection = projected.projection
+	proof.sources = [player.proof.duplicate(true)]
+	proof.sources[0].coordinate_projection = projected.projection.duplicate(true)
+	if not npc.is_empty():
+		var npc_frame := frame.duplicate(true)
+		npc_frame.people = npc_world.people
+		npc_frame.vehicles = npc_world.vehicles
+		var npc_projected := RegionTravel.project_party_frame(npc.party, npc_frame)
+		if not npc_projected.ok: return npc_projected
+		original_ship = _region_install_live_ship_moves(npc_projected.party, npc_world, npc_frame)
+		if not original_ship.ok: return original_ship
+		npc_projected.party = original_ship.party
+		var joined := RegionTravel.join_party(candidate, npc_projected.party, int(player.proof.generation) + 1)
+		if not joined.ok: return joined
+		candidate = joined.party
+		incoming = {"token": npc_token, "source_party": npc.party, "proof": npc.proof, "mapping": joined.mapping,
+			"coordinate_projection": npc_projected.projection, "incoming_events": joined.incoming_events, "player_source": player.party}
+		proof.mapping = joined.mapping
+		proof.sources.append(npc.proof.duplicate(true))
+		proof.sources[1].coordinate_projection = npc_projected.projection.duplicate(true)
+		for old: String in npc_world.people: frame.people[str(joined.mapping.maps.person[old])] = npc_world.people[old]
+		for old: String in npc_world.vehicles: frame.vehicles[str(joined.mapping.maps.vehicle[old])] = npc_world.vehicles[old]
+	candidate.upkeep.live = {"version": 1, "phase": "live", "upkeep": "liveBody", "event_id": str(event.id), "frame": frame}
+	var geometry := region_live_party_geometry(candidate)
+	if not geometry.ok: return geometry
+	candidate.upkeep.live.geometry_proof = geometry.geometry_proof
+	proof.candidate_hash = Marshalls.raw_to_base64(var_to_bytes(candidate)).sha256_text()
+	return {"ok": true, "token": token, "party": candidate, "source_party": player.party, "source_proof": player.proof,
+		"proof": proof, "incoming": incoming, "coordinate_projection": projected.projection, "geometry": geometry}
+
+func region_live_party_candidate_proof(token: String, candidate: Dictionary, proof: Dictionary) -> Dictionary:
+	if not proof.get("sources") is Array or proof.sources.size() not in [1, 2] or proof.get("candidate_hash") != Marshalls.raw_to_base64(var_to_bytes(candidate)).sha256_text():
+		return fail("INVALID_PARTY_SOURCE_PROOF")
+	var frame: Dictionary = candidate.get("upkeep", {}).get("live", {}).get("frame", {})
+	var event_id := str(candidate.get("upkeep", {}).get("live", {}).get("event_id", ""))
+	var event := {}
+	for queued: Dictionary in region_registry().events:
+		if str(queued.id) == event_id and str(queued.status) == "pending": event = queued
+	if event.is_empty() or float(event.at) > float(control.logical_game_seconds) + 0.00000001:
+		return fail("STALE_REGION_EVENT", "live materialize 須真同刻待點事件")
+	var sources := []
+	var expected := {}
+	var mapping := {}
+	for index: int in proof.sources.size():
+		var raw: Variant = proof.sources[index]
+		if not raw is Dictionary or not raw.get("coordinate_projection") is Dictionary: return fail("INVALID_PARTY_SOURCE_PROOF")
+		var base := _region_party_base_proof(raw)
+		var selected := region_live_party_proof(str(base.get("token", "")))
+		if not selected.ok or base != selected.get("proof"): return selected if not selected.ok else fail("STALE_REGION_PARTY_PROOF")
+		var npc_pair := str(event.payload.get("contact_receipt", {}).get("kind", "")) == "npc_sea_sweep_boundary"
+		if npc_pair:
+			var guarded := _region_validate_npc_sea_pair_event(event)
+			if not guarded.ok or not guarded.get("valid", false) or proof.sources.size() != 2: return guarded if not guarded.ok else fail("STALE_REGION_CONTACT")
+		if index == 0 and (str(base.token) != token or base.controller != ("npc" if npc_pair else "player")) or index == 1 and (base.controller != "npc" or str(base.token) == token):
+			return fail("INVALID_PARTY_SOURCE_PROOF")
+		if npc_pair and str(base.token) != str(event.payload.contact_receipt.primary_token if index == 0 else event.payload.token): return fail("INVALID_PARTY_SOURCE_PROOF")
+		var planned: Dictionary = region_travel_plan() if index == 0 and base.controller == "player" else _region_npc_plan(str(base.token))
+		if not planned.ok: return planned
+		var world := _region_live_party_world(str(base.token), selected.party, planned.plan, event, "second" if index == 0 else "first")
+		if not world.ok: return world
+		var projection: Dictionary = raw.coordinate_projection
+		if projection.get("world_origin") != frame.get("world_origin") or projection.get("size") != frame.get("size"): return fail("PARTY_FRAME_COORDINATE")
+		var projected := RegionTravel.project_party_coordinates(selected.party, projection)
+		if not projected.ok: return projected
+		var ship_candidate := _region_install_live_ship_moves(projected.party, world, frame)
+		if not ship_candidate.ok: return ship_candidate
+		projected.party = ship_candidate.party
+		for kind: String in ["people", "vehicles"]:
+			if projection[kind].size() != world[kind].size(): return fail("PARTY_FRAME_CLOSURE")
+			for key: String in world[kind]:
+				var record: Dictionary = projection[kind].get(key, {})
+				var at := [int(record.to[0]) + int(frame.world_origin[0]), int(record.to[1]) + int(frame.world_origin[1])]
+				if record.get("reference") != world[kind][key].reference or at != world[kind][key].world_cell:
+					return fail("PARTY_FRAME_COORDINATE", "投影位置必須是原 contact／cursor 的真 World cell")
+				var body_key := str(proof.get("mapping", {}).get("maps", {}).get("person" if kind == "people" else "vehicle", {}).get(key, key)) if index == 1 else key
+				var frame_record: Dictionary = frame.get(kind, {}).get(body_key, {})
+				if frame_record.get("reference") != world[kind][key].reference or frame_record.get("world_cell") != world[kind][key].world_cell \
+						or kind == "vehicles" and frame_record.get("pose", {}) != world[kind][key].get("pose", {}):
+					return fail("PARTY_FRAME_COORDINATE", "唯一frame不得變造原真body／paid Ship pose")
+		if index == 0:
+			expected = projected.party
+		else:
+			var joined := RegionTravel.join_party(expected, projected.party, int(base.generation) + 1)
+			if not joined.ok: return joined
+			mapping = joined.mapping
+			if mapping != proof.get("mapping"): return fail("INVALID_PARTY_JOIN_MAPPING")
+			expected = joined.party
+		sources.append({"party": selected.party, "proof": base, "original_live_graph": selected.original_live_graph,
+			"coordinate_projection": projection, "projected_party": projected.party, "maps": {} if index == 0 else mapping.maps})
+	for field: String in ["person_ids", "team_ids", "vehicle_ids", "leader_person_id", "controller", "content"]:
+		if var_to_bytes(expected.get(field)) != var_to_bytes(candidate.get(field)): return fail("PARTY_BODY_CLOSURE", "候選必須由真 selected sources 原 projection／typed closure 精確重建")
+	var upkeep: Dictionary = candidate.upkeep.duplicate(true)
+	upkeep.erase("live")
+	var expected_upkeep: Dictionary = expected.upkeep.duplicate(true)
+	expected_upkeep.erase("live")
+	if var_to_bytes(upkeep) != var_to_bytes(expected_upkeep): return fail("PARTY_CLOCK_CLOSURE", "候選不可變造原 upkeep／life／距離／雙時間")
+	var geometry := region_live_party_geometry(candidate, candidate.upkeep.live.get("geometry_proof", {}))
+	if not geometry.ok: return geometry
+	return {"ok": true, "sources": sources, "mapping": mapping, "party": candidate, "geometry": geometry}
+
+func region_live_party_geometry(party: Dictionary, expected_geometry: Dictionary = {}) -> Dictionary:
+	var frame: Dictionary = party.get("upkeep", {}).get("live", {}).get("frame", {})
+	if frame.get("game_seconds") != control.logical_game_seconds or frame.get("action_seconds") != control.fire_clock.action_seconds:
+		return fail("STALE_PARTY_FRAME", "原 body frame 不在共同双時間端點")
+	var context := _region_party_frame_context(party)
+	if not context.ok: return context
+	var geometry := RegionRoute.party_frame_geometry(source, frame, context.context)
+	if not geometry.ok: return geometry
+	if not expected_geometry.is_empty():
+		if expected_geometry.get("version") != 1 or expected_geometry.get("world_origin") != geometry.geometry_proof.world_origin \
+				or expected_geometry.get("size") != geometry.geometry_proof.size or not expected_geometry.get("sources") is Array \
+				or expected_geometry.sources.size() != geometry.geometry_proof.sources.size(): return fail("STALE_PARTY_GEOMETRY")
+		for index: int in expected_geometry.sources.size():
+			var before: Dictionary = expected_geometry.sources[index]
+			var current: Dictionary = geometry.geometry_proof.sources[index]
+			for field: String in ["site", "offset", "visited", "navigation_hash"]:
+				if before.get(field) != current.get(field): return fail("STALE_PARTY_GEOMETRY", "真 selected geometry 已變，須原 graph 重驗")
+			# A common checkpoint may renew the selected generation while keeping
+			# exactly the same derived geometry. Its new proof is always re-read.
+	return geometry
+
+func region_live_party_proof(token: String) -> Dictionary:
+	return _region_selected_party_document(token, true)
+
+func region_live_party_required(event: Dictionary, status: Dictionary) -> Dictionary:
+	if not bool(status.get("pending", false)): return {"ok": true, "required": false}
+	var player := region_travel_party()
+	if not player.ok: return player
+	if not player.party.get("upkeep", {}).get("live", {}).is_empty(): return {"ok": true, "required": true}
+	var raw: Variant = event.get("payload", {}).get("site", [status.site.x, status.site.y])
+	if not RegionTravel._frame_pair(raw): return fail("INVALID_JOINT_ENDPOINT")
+	var coordinate := Vector2i(int(raw[0]), int(raw[1]))
+	var player_location := _region_player_endpoint_location(status, player.party, coordinate, event)
+	if not player_location.ok:
+		return {"ok": true, "required": true} if player_location.get("code") == "MISSING_ORIGINAL_BOUNDARY_VIEW" else player_location
+	var npc_token := str(event.get("payload", {}).get("token", ""))
+	if not npc_token.is_empty() and npc_token != str(player.party.party_id) \
+			and str(region_registry().parties.get(npc_token, {}).get("phase", "")) == "travelling":
+		var npc_location := _region_npc_endpoint_location(npc_token, coordinate, event)
+		if not npc_location.ok:
+			return {"ok": true, "required": true} if npc_location.get("code") == "MISSING_ORIGINAL_BOUNDARY_VIEW" else npc_location
+	return {"ok": true, "required": false}
+
+func region_original_party_runtime_proof(token: String, party: Dictionary) -> Dictionary:
+	var actual: Dictionary = {}
+	var journey: Dictionary = region_travel_journey()
+	if not journey.is_empty() and str(journey.get("token", "")) == token:
+		if _travel_party_runtime_token != token or not is_same(_travel_party_runtime, party): return fail("STALE_REGION_PARTY_OWNER")
+		actual = _travel_party_runtime
+	else:
+		if not _region_npc_party_runtime.has(token) or not is_same(_region_npc_party_runtime[token], party): return fail("STALE_REGION_PARTY_OWNER")
+		actual = _region_npc_party_runtime[token]
+	var originals: Dictionary = get_meta(&"region_party_owner_labs", {})
+	var original: TerrainLab = originals.get(token)
+	var fingerprint := Marshalls.raw_to_base64(var_to_bytes(actual)).sha256_text()
+	if not is_instance_valid(original) or original.site_controller == null or original.site_controller.region_slot != self \
+			or original.terrain == null or original._region_bound_data != original.terrain \
+			or original._region_party_token != token or original._region_party_input_hash != fingerprint \
+			or str(original.terrain.site.get("id", "")) != "travel:" + token \
+			or original.terrain.get_meta(&"region_party_owner", {}).get("party_hash") != fingerprint:
+		return fail("COMMITTED_UNBOUND", "原 runtime party 必須指向同一完整原 Lab")
+	var receipt: Dictionary = original.region_bind_receipt(original.terrain)
+	if not receipt.get("complete", false) or not receipt.get("owners_restored", false): return fail("COMMITTED_UNBOUND")
+	if actual.get("party_id") != token or not RegionTravel.validate_identity(actual.get("content", {}).get("travel_identity")) \
+			or absf(float(actual.get("upkeep", {}).get("at", -1.0)) - float(control.logical_game_seconds)) > 0.00000001 \
+			or absf(float(actual.upkeep.get("owner_action_seconds", -1.0)) - float(control.fire_clock.action_seconds)) > 0.00000001:
+		return fail("UNSETTLED_PARTY")
+	var mode: Dictionary = region_registry().modes.get("travel:" + token, {})
+	if not GameplayClock.validate_mode(mode, "travel:" + token, float(control.logical_game_seconds)).ok \
+			or str(mode.get("consumer", "")) not in ["original_region_travel", "original_party"] \
+			or str(mode.get("backend", "")) != "gd" \
+			or int(mode.get("generation", -1)) != int(_marker.get("generation", 0)) \
+			or absf(float(mode.get("game_seconds", -1.0)) - float(control.logical_game_seconds)) > 0.00000001 \
+			or absf(float(mode.get("action_seconds", -1.0)) - float(control.fire_clock.action_seconds)) > 0.00000001:
+		return fail("STALE_REGION_PARTY_MODE")
+	var durable: Dictionary = _region_selected_party_document(token, false)
+	if not durable.ok: return durable
+	if int(durable.proof.generation) != int(mode.generation) or int(durable.proof.revision) != int(region_registry().revision):
+		return fail("STALE_REGION_PARTY_MODE")
+	if durable.party.get("controller") != actual.get("controller") \
+			or durable.party.content.travel_identity.namespace != actual.content.travel_identity.namespace:
+		return fail("STALE_REGION_PARTY_PROOF")
+	var proof: Dictionary = durable.proof.duplicate(true)
+	proof.party_hash = fingerprint
+	proof.game_seconds = float(control.logical_game_seconds)
+	proof.action_seconds = float(control.fire_clock.action_seconds)
+	proof.phase = str(actual.upkeep.get("live", {}).get("phase", proof.phase))
+	return {"ok": true, "party": actual, "lab": original, "proof": proof,
+		"selected_party": durable.party, "original_live_graph": durable.original_live_graph}
+
+func region_party_checkpoint_context(token: String, purpose: String, effects_complete: bool,
+		endpoint_payload: Dictionary = {}) -> Dictionary:
+	if not _safe_part(token): return fail("INVALID_PARTY_OWNER")
+	var registry := region_registry()
+	var mode: Dictionary = registry.modes.get("travel:" + token, {})
+	var context := {"purpose": purpose, "mode": "live", "source_generation": int(_marker.get("generation", 0)),
+		"runtime_revision": int(registry.revision), "token": "party_capture_" + Crypto.new().generate_random_bytes(16).hex_encode(),
+		"game_seconds": float(control.logical_game_seconds), "action_seconds": float(control.fire_clock.action_seconds),
+		"fire_epoch": str(control.fire_clock.epoch), "fire_sequence": int(control.fire_clock.sequence),
+		"interval_complete": true, "effects_complete": effects_complete, "mode_revision": int(mode.get("revision", 0)),
+		"backend": "gd", "events": pending_region_events().duplicate(true), "endpoint_payload": endpoint_payload.duplicate(true)}
+	var checked := RegionCheckpoint.validate_context(context)
+	return {"ok": true, "context": context} if checked.ok else checked
+
+func validate_region_live_party_proof(token: String, party: Dictionary, proof: Dictionary) -> Dictionary:
+	var selected := region_live_party_proof(token)
+	if not selected.ok: return selected
+	if selected.proof != proof or party.get("party_id") != token \
+			or Marshalls.raw_to_base64(var_to_bytes(party)).sha256_text() != str(proof.get("party_hash", "")):
+		return fail("STALE_REGION_PARTY_PROOF", "原 party 文件／G／revision／雙時間已變")
+	return selected
+
+func _region_checkpoint_carried_delivery(event_id: String) -> Dictionary:
+	if not region_original_endpoint_checkpoint.is_valid(): return fail("MISSING_REGION_CHECKPOINT_CONSUMER")
+	var result: Variant = region_original_endpoint_checkpoint.call({"carried_delivery": event_id, "effects_complete": true})
+	if not result is Dictionary or not result.get("ok", false): return result if result is Dictionary else fail("INVALID_REGION_CHECKPOINT_CONSUMER")
+	return {"ok": true}
+
+func _commit_region_party_family_remote(token: String, reference: Dictionary, observed: Dictionary,
+		family: Dictionary) -> Dictionary:
+	# Settle/persist original bodies before deriving either candidate. The final
+	# source and target remain jointly selected by just one subsequent marker.
+	var authority := _region_family_player_authority()
+	if not authority.ok or authority.token != token: return authority if not authority.ok else fail("WRONG_FAMILY_OWNER")
+	if var_to_bytes(authority.family) != var_to_bytes(family): return fail("STALE_FAMILY")
+	var checkpoint := checkpoint_region_travel()
+	if not checkpoint.ok: return checkpoint
+	var selected := region_live_party_proof(token)
+	if not selected.ok: return selected
+	var target := resolve_region_family_owner(reference)
+	if not target.ok: return target
+	if target.owner == "travel:" + token or target.person_reference != observed.person_reference: return fail("STALE_FAMILY_PERSON")
+	var target_ready := _region_family_target_ready(target)
+	if not target_ready.ok: return target_ready
+	var candidate := _region_family_remote_candidates(selected.party, target, target_ready.state, reference)
+	if not candidate.ok: return candidate
+	var transition := {"version": 1, "source_person_id": int(selected.party.content.get("controlled_person_id", selected.party.leader_person_id)),
+		"target": reference.duplicate(true), "person_reference": target.person_reference.duplicate(true),
+		"source_party_hash": str(selected.proof.party_hash), "destination_owner": str(target.owner),
+		"destination_source_hash": str(target_ready.hash)}
+	var authorized := validate_region_family_departure_transition(token, candidate.party, selected.proof, transition)
+	if not authorized.ok: return authorized
+	var host: TerrainLab = authority.lab
+	if not is_instance_valid(host) or not host.has_method("prepare_region_party_family_depart_bind"):
+		return fail("MISSING_ORIGINAL_PARTY_BIND")
+	var source_binding: Dictionary = host.prepare_region_party_family_depart_bind(token, candidate.party, self, selected.proof, transition)
+	if not source_binding.ok: return source_binding
+	var bindings: Array = [source_binding]
+	var target_binding := {}
+	var target_candidate: Dictionary = {}
+	var target_token := ""
+	var target_site := Vector2i.ZERO
+	var target_data: TerrainData
+	if str(target.owner).begins_with("travel:"):
+		target_token = str(target.owner).trim_prefix("travel:")
+		var target_selected: Dictionary = target_ready.selected
+		target_candidate = target_selected.party.duplicate(true)
+		target_candidate.controller = "player"
+		target_candidate.leader_person_id = int(target.person_id)
+		target_candidate.content = candidate.destination_state.duplicate(true)
+		if not host.has_method("prepare_region_party_family_takeover_bind"):
+			return _region_family_discard_bindings(bindings, fail("MISSING_ORIGINAL_PARTY_BIND"))
+		target_binding = host.prepare_region_party_family_takeover_bind(target_token, target_candidate, self, target_selected.proof, transition)
+	else:
+		var coordinate := _coordinate(target.data)
+		if not coordinate.ok: return _region_family_discard_bindings(bindings, coordinate)
+		target_site = coordinate.site
+		target_data = Env.navigation_for_state(target.data, candidate.destination_state)
+		target_data.set_meta(&"region_bind_source", target.data)
+		target_binding = host.prepare_region_owner_bind(target_data, "live", self)
+	if not target_binding.get("ok", false): return _region_family_discard_bindings(bindings, target_binding)
+	bindings.append(target_binding)
+	for binding: Dictionary in bindings:
+		for hook: String in ["can_publish", "publish", "discard"]:
+			if not binding.get(hook) is Callable or not binding[hook].is_valid():
+				return _region_family_discard_bindings(bindings, fail("MISSING_ORIGINAL_PARTY_BIND"))
+		if binding.can_publish.call() != true: return _region_family_discard_bindings(bindings, fail("STALE_REGION_BIND_TICKET"))
+	if not source_binding.get("party") is Dictionary or var_to_bytes(source_binding.party) != var_to_bytes(candidate.party):
+		return _region_family_discard_bindings(bindings, fail("FAMILY_BODY_CLOSURE"))
+	var generation := int(_marker.get("generation", 0)) + 1
+	var source_relative := "travel/%s/party_family_source_%09d_%s.json" % [token, generation, Crypto.new().generate_random_bytes(8).hex_encode()]
+	var source_document := _region_party_document(token, source_binding.party, source_binding.original_live_graph)
+	if not source_document.ok: return _region_family_discard_bindings(bindings, source_document)
+	var written := _write_new_document(folder.path_join(source_relative), source_document.payload)
+	if not written.ok: return _region_family_discard_bindings(bindings, written)
+	var source_sha := FileAccess.get_sha256(folder.path_join(source_relative))
+	var next_control := control.duplicate(true)
+	var next_journey := {}
+	var target_relative := ""
+	var target_sha := ""
+	var sites: Dictionary = _marker.get("sites", {}).duplicate(true)
+	var target_original_reference: Dictionary = {}
+	if not target_token.is_empty():
+		target_original_reference = region_registry().parties[target_token].duplicate(true)
+		next_control.region_gameplay.parties[target_token].phase = "controlled"
+		next_control.active_site_id = ""
+	else:
+		next_control.active_site_id = str(target.owner)
+	next_control.region_gameplay.revision = int(next_control.region_gameplay.revision) + 1
+	var cold := _collect_cold_checkpoint(generation, sites, next_control)
+	if not cold.ok: return _region_family_discard_bindings(bindings, cold)
+	var parties := collect_region_party_checkpoint(generation, next_control)
+	if not parties.ok: return _region_family_discard_bindings(bindings, parties)
+	if not target_token.is_empty():
+		if not target_binding.get("party") is Dictionary or var_to_bytes(target_binding.party) != var_to_bytes(target_candidate):
+			return _region_family_discard_bindings(bindings, fail("FAMILY_BODY_CLOSURE"))
+		target_relative = "travel/%s/party_family_target_%09d_%s.json" % [target_token, generation, Crypto.new().generate_random_bytes(8).hex_encode()]
+		var document := _region_party_document(target_token, target_binding.party, target_binding.original_live_graph)
+		if not document.ok: return _region_family_discard_bindings(bindings, document)
+		written = _write_new_document(folder.path_join(target_relative), document.payload)
+		if not written.ok: return _region_family_discard_bindings(bindings, written)
+		target_sha = FileAccess.get_sha256(folder.path_join(target_relative))
+		var journey := _region_family_target_journey(target_token, target_original_reference, target_candidate, target_relative, target_sha)
+		if not journey.ok: return _region_family_discard_bindings(bindings, journey)
+		next_journey = journey.journey
+		next_control.region_gameplay.parties[target_token].party_path = target_relative
+		next_control.region_gameplay.parties[target_token].party_sha256 = target_sha
+	else:
+		if not target_binding.get("data") is TerrainData or not target_binding.get("save_candidate") is Callable:
+			return _region_family_discard_bindings(bindings, fail("MISSING_REGION_BIND_PREFLIGHT"))
+		var path := _generation_path(generation, target_site)
+		var saved: Dictionary = target_binding.save_candidate.call(target_binding.data, path)
+		if not saved.ok: return _region_family_discard_bindings(bindings, saved)
+		var readback := _load_checked(path, target_site)
+		if not readback.ok: return _region_family_discard_bindings(bindings, readback)
+		target_data = readback.data
+		sites[_site_key(target_site)] = _file_entry(path)
+		target_relative = str(sites[_site_key(target_site)].path)
+		target_sha = str(sites[_site_key(target_site)].sha256)
+		for owner: String in next_control.fire_clock.index: next_control.fire_clock.index[owner].active = false
+		var fire: Dictionary = target_data.site.get("fire_settlement", {})
+		if not fire.is_empty():
+			next_control.fire_clock.index[str(target.owner)] = {"coordinate": [target_site.x, target_site.y], "active": true,
+				"fire_active": Runtime.fire_active(target_data), "sequence": int(fire.sequence),
+				"action_seconds": float(fire.action_seconds), "game_seconds": float(fire.game_seconds)}
+	var old_journey := region_travel_journey()
+	next_control.region_gameplay.parties[token] = _region_family_source_npc_reference(candidate.party,
+		old_journey, source_relative, source_sha, transition)
+	var source_mode := GameplayClock.activate_mode(next_control.region_gameplay, "travel:" + token, "committed-unbound", generation,
+		"gd", "original_party", float(next_control.logical_game_seconds), float(next_control.fire_clock.action_seconds), {})
+	if not source_mode.ok: return _region_family_discard_bindings(bindings, source_mode)
+	var target_mode := GameplayClock.activate_mode(next_control.region_gameplay, str(target.owner), "committed-unbound", generation,
+		"gd", "original_party" if not target_token.is_empty() else "original_site",
+		float(next_control.logical_game_seconds), float(next_control.fire_clock.action_seconds), {})
+	if not target_mode.ok: return _region_family_discard_bindings(bindings, target_mode)
+	var queued := _region_family_transfer_queue(next_control, selected.party, transition, generation,
+		source_relative, source_sha, target_relative, target_sha, int(target.person_id))
+	if not queued.ok: return _region_family_discard_bindings(bindings, queued)
+	# Revalidate selected originals and BOTH prepared graph tickets last. A
+	# failure above leaves the old marker/body/control solely authoritative.
+	authorized = validate_region_family_departure_transition(token, candidate.party, selected.proof, transition)
+	if not authorized.ok: return _region_family_discard_bindings(bindings, authorized)
+	for binding: Dictionary in bindings:
+		if binding.can_publish.call() != true: return _region_family_discard_bindings(bindings, fail("STALE_REGION_BIND_TICKET"))
+	var committed := _publish(sites, next_control, str(_marker.get("transfer_token", "")), next_journey)
+	if not committed.ok: return _region_family_discard_bindings(bindings, committed)
+	_travel_party_runtime.clear()
+	_travel_party_runtime_token = ""
+	_travel_party_cache.clear()
+	_travel_plan_cache.clear()
+	_region_npc_party_runtime[token] = candidate.party
+	var source_selected := region_live_party_proof(token)
+	if not source_selected.ok: return _region_committed_unbound("原source NPC完整graph已提交，待真private bind", {"generation": generation, "token": token})
+	var source_bound: Dictionary = source_binding.publish.call(source_selected.proof)
+	if not source_bound.get("ok", false) or source_bound.get("complete") != true:
+		return _region_committed_unbound("原source NPC唯一body已提交，完整graph待private bind", {"generation": generation, "token": token, "bind_result": source_bound})
+	var activation := source_bound.duplicate(true)
+	activation.mode = "cold_exact"
+	activation.consumer = "original_party"
+	var source_enabled := activate_region_mode("travel:" + token, "cold_exact", "original_party", activation, "gd")
+	if not source_enabled.ok: return source_enabled
+	var target_bound := {}
+	if not target_token.is_empty():
+		_region_npc_party_runtime.erase(target_token)
+		_region_npc_plan_runtime.erase(target_token)
+		_travel_party_runtime = target_candidate
+		_travel_party_runtime_token = target_token
+		var target_selected := region_live_party_proof(target_token)
+		if not target_selected.ok: return _region_committed_unbound("真heir原party完整graph待綁定", {"generation": generation, "token": target_token})
+		target_bound = target_binding.publish.call(target_selected.proof)
+	else:
+		target_bound = target_binding.publish.call(target_data)
+	if not target_bound.get("ok", false) or target_bound.get("complete") != true \
+			or target_bound.get("owner") != str(target.owner) or int(target_bound.get("generation", -1)) != generation:
+		return _region_committed_unbound("真heir控制已共同提交，完整graph待綁定", {"generation": generation, "owner": str(target.owner), "bind_result": target_bound})
+	var actual: TerrainLab = host
+	if not target_token.is_empty():
+		actual = get_meta(&"region_party_owner_labs", {}).get(target_token)
+	else:
+		_region_original_labs[str(target.owner)] = host
+	if not is_instance_valid(actual): return _region_committed_unbound("真heir bind缺原Lab", {"generation": generation, "owner": str(target.owner)})
+	var controlled: Dictionary = actual.site_controller._control_family_person(null, int(target.person_id))
+	if not controlled.ok: return _region_committed_unbound("真heir graph已提交，原Controller待接續", {"generation": generation, "owner": str(target.owner), "control_result": controlled})
+	var enabled := activate_region_mode(str(target.owner), "live", "original_party" if not target_token.is_empty() else "original_site", target_bound, "gd")
+	if not enabled.ok: return enabled
+	if target_token.is_empty():
+		var wired := actual._wire_region_gameplay_adapters(self)
+		if not wired.ok: return wired
+	return {"ok": true, "complete": true, "person_id": int(target.person_id), "person_reference": target.person_reference.duplicate(true),
+		"owner": str(target.owner), "generation": generation, "receipt": target_bound,
+		"source_receipt": source_bound, "family_control_transition": queued.receipt}
+
+func _region_family_control_ready(original: TerrainLab, person_id: int) -> Dictionary:
+	if not is_instance_valid(original) or original.site_controller == null or original.terrain == null \
+			or original.site_controller.region_slot != self or original._region_point_consuming \
+			or not original.site_controller._pending_deaths.is_empty(): return fail("BUSY", "先完成原死亡結算")
+	var body := original._original_person_target(person_id)
+	if body.is_empty() or float(body.hp) > 0.0: return fail("NOT_DEAD")
+	if _region_player_committed_close_action(body) > TerrainLab.ACTION_TIME_EPSILON:
+		return fail("BUSY", "原死者已接受的移動尚未收束")
+	# The original technology archive can move only after its real Scene jobs
+	# have settled. A hot graph is not permission to bypass original P1 BUSY.
+	for job: Dictionary in original.site_controller.person_actions._jobs.values():
+		if job.has("technology_project") or str(job.get("kind", "")).begins_with("technology_"):
+			return fail("BUSY", "先沿原科技 owner 收束已接受的研究／教學")
+	return {"ok": true}
+
+func _region_family_current_party_owner(reference: Dictionary) -> Dictionary:
+	if reference.is_empty(): return {"ok": true, "owner": ""}
+	var sources := {}
+	var journey := region_travel_journey()
+	if not journey.is_empty():
+		var player := region_travel_party()
+		if not player.ok: return player
+		sources[str(journey.token)] = player.party
+	for token: String in region_registry().parties:
+		var registered: Dictionary = region_registry().parties[token]
+		if str(registered.get("phase", "")) not in ["travelling", "pending_life", "materializing"]: continue
+		var npc := _region_npc_party(token)
+		if not npc.ok: return npc
+		if sources.has(token): return fail("DUPLICATE_OWNER", "同一token不能有兩個原party控制者")
+		sources[token] = npc.party
+	var selected := {"ok": true, "owner": ""}
+	var originals: Dictionary = get_meta(&"region_party_owner_labs", {})
+	for token: String in sources:
+		var party: Dictionary = sources[token]
+		var original: TerrainLab = originals.get(token)
+		var content: Dictionary = party.content
+		if is_instance_valid(original):
+			var current: Dictionary = region_original_party_runtime_proof(token, party)
+			if not current.ok: return current
+			content = current.lab.terrain.site
+		var identity: Dictionary = content.get("travel_identity", {})
+		if not RegionTravel.validate_identity(identity): return fail("INVALID_IDENTITY")
+		var people := RegionTravel._body_records(content)
+		for local: String in identity.refs.person:
+			if not people.has(int(local)) or RegionTravel.stable_key(identity.refs.person[local]) != RegionTravel.stable_key(reference): continue
+			if not str(selected.owner).is_empty(): return fail("DUPLICATE_OWNER", "已登錄PersonRef有兩個真party body擁有者")
+			selected = {"ok": true, "owner": "travel:" + token, "person_id": int(local)}
+	return selected
+
+func _region_family_discard_bindings(bindings: Array, result: Dictionary) -> Dictionary:
+	for binding: Dictionary in bindings:
+		if binding.get("discard") is Callable and binding.discard.is_valid(): binding.discard.call()
+	return result
+
+func _region_family_life_source(event: Dictionary) -> Dictionary:
+	const FIELDS := ["version", "generation", "source_owner", "source_person_id", "source_person_reference",
+		"source_party_path", "source_party_sha256", "target_owner", "target_person_id", "target_person_reference",
+		"target_path", "target_sha256"]
+	var receipt: Variant = event.payload.get("family_control_transition")
+	if not receipt is Dictionary or receipt.size() != FIELDS.size() or not _region_player_death_effect_receipt(event):
+		return fail("INVALID_FAMILY_TRANSITION")
+	for field: String in FIELDS:
+		if not receipt.has(field): return fail("INVALID_FAMILY_TRANSITION")
+	if receipt.version != 1 or not GameplayClock.whole(receipt.generation, 1) \
+			or int(receipt.generation) > int(_marker.get("generation", 0)) or receipt.source_owner != event.owner \
+			or int(receipt.source_person_id) != int(event.payload.get("person_id", -1)) \
+			or not receipt.source_person_reference is Dictionary or not receipt.target_person_reference is Dictionary \
+			or not GameplayClock.whole(receipt.target_person_id, 1) \
+			or event.player != true or event.payload.get("controlled") != true or event.payload.get("death") != true:
+		return fail("INVALID_FAMILY_TRANSITION")
+	var source_token := str(receipt.source_owner).trim_prefix("travel:")
+	var source := _region_life_party_document(source_token, str(receipt.source_party_path), str(receipt.source_party_sha256))
+	if not source.ok: return source
+	var local := str(receipt.source_owner) == str(receipt.target_owner)
+	var source_context := _region_life_party_context(source)
+	if not source_context.ok: return source_context
+	if int(source_context.context.source_generation) >= int(receipt.generation) \
+			or source.party.controller != ("player" if local else "npc") \
+			or int(source.party.content.get("controlled_person_id", source.party.leader_person_id)) != (int(receipt.source_person_id) if local else -1):
+		return fail("INVALID_FAMILY_TRANSITION")
+	if not local and (not str(receipt.source_party_path).begins_with("travel/%s/party_family_source_%09d_" % [source_token, int(receipt.generation)]) \
+			or not _region_family_new_generation(source_context.context, int(receipt.generation))):
+		return fail("INVALID_FAMILY_TRANSITION")
+	var source_id := _region_life_reference_id(source.party.content.travel_identity, receipt.source_person_reference)
+	var source_bodies := RegionTravel._body_records(source.party.content)
+	if source_id != int(receipt.source_person_id) or not source_bodies.has(source_id) \
+			or float(source_bodies[source_id].get("hp", 1.0)) > 0.0:
+		return fail("INVALID_FAMILY_TRANSITION")
+	var actual_source := _region_life_current_party(source_token)
+	if not actual_source.ok: return actual_source
+	var actual_source_id := _region_life_reference_id(actual_source.party.content.travel_identity, receipt.source_person_reference)
+	var source_lab: TerrainLab = actual_source.lab
+	var dead := source_lab._original_person_target(actual_source_id)
+	if dead.is_empty() or float(dead.hp) > 0.0 or source_lab.site_controller._pending_deaths.has(actual_source_id) \
+			or _region_player_committed_close_action(dead) > TerrainLab.ACTION_TIME_EPSILON:
+		return fail("INVALID_FAMILY_TRANSITION")
+	var target_owner := str(receipt.target_owner)
+	var target_lab: TerrainLab
+	var target_state: Dictionary
+	var historical_target: Dictionary
+	var target_context: Dictionary = {}
+	if target_owner.begins_with("travel:"):
+		var target_token := target_owner.trim_prefix("travel:")
+		var target_file := _region_life_party_document(target_token, str(receipt.target_path), str(receipt.target_sha256))
+		if not target_file.ok: return target_file
+		var target_graph := _region_life_party_context(target_file)
+		if not target_graph.ok: return target_graph
+		target_context = target_graph.context
+		var prefix := "travel/%s/party_family_%09d_" if local else "travel/%s/party_family_target_%09d_"
+		if not str(receipt.target_path).begins_with(prefix % [target_token, int(receipt.generation)]) \
+				or target_file.party.controller != "player" \
+				or int(target_file.party.content.get("controlled_person_id", target_file.party.leader_person_id)) != int(receipt.target_person_id):
+			return fail("INVALID_FAMILY_TRANSITION")
+		historical_target = target_file.party.content
+		var actual_target := _region_life_current_party(target_token)
+		if not actual_target.ok: return actual_target
+		target_lab = actual_target.lab
+		target_state = actual_target.party.content
+	else:
+		var prefix := str(pin.atlas_id) + ":"
+		if not target_owner.begins_with(prefix) or not str(receipt.target_path).begins_with("generations/%020d_" % int(receipt.generation)) \
+				or str(receipt.target_path).contains("..") or str(receipt.target_path).contains("\\") \
+				or str(receipt.target_sha256).length() != 64 \
+				or FileAccess.get_sha256(folder.path_join(str(receipt.target_path))) != str(receipt.target_sha256):
+			return fail("INVALID_FAMILY_TRANSITION")
+		var parts := target_owner.trim_prefix(prefix).split(":")
+		if parts.size() != 2 or not parts[0].is_valid_int() or not parts[1].is_valid_int(): return fail("INVALID_FAMILY_TRANSITION")
+		var historical := _load_checked(folder.path_join(str(receipt.target_path)), Vector2i(int(parts[0]), int(parts[1])))
+		if not historical.ok or str(historical.data.site.id) != target_owner: return historical if not historical.ok else fail("WRONG_SITE")
+		historical_target = historical.data.site
+		var snapshot := Store.validate_region_snapshot(historical.data, {})
+		if not snapshot.ok: return snapshot
+		target_context = snapshot.context
+		if int(historical_target.get("controlled_person_id", -1)) != int(receipt.target_person_id):
+			return fail("INVALID_FAMILY_TRANSITION")
+		target_lab = _region_original_labs.get(target_owner)
+		if target_owner == str(control.active_site_id) and region_owner_lab.is_valid():
+			var main: Object = region_owner_lab.get_object()
+			if main is TerrainLab and main.terrain != null and str(main.terrain.site.id) == target_owner: target_lab = main
+		if not is_instance_valid(target_lab): return fail("COMMITTED_UNBOUND")
+		target_state = target_lab.terrain.site
+	# Both existing producers save a newly captured target before the ONE
+	# transfer marker. Only the local source is an older selected file.
+	if not _region_family_new_generation(target_context, int(receipt.generation)) \
+			or absf(float(target_context.game_seconds) - float(source_context.context.game_seconds)) > TerrainLab.ACTION_TIME_EPSILON \
+			or absf(float(target_context.action_seconds) - float(source_context.context.action_seconds)) > TerrainLab.ACTION_TIME_EPSILON \
+			or target_context.fire_epoch != source_context.context.fire_epoch \
+			or int(target_context.fire_sequence) != int(source_context.context.fire_sequence):
+		return fail("INVALID_FAMILY_TRANSITION")
+	var old_target_id := _region_life_reference_id(historical_target.get("travel_identity", {}), receipt.target_person_reference)
+	var old_targets := RegionTravel._body_records(historical_target)
+	if old_target_id != int(receipt.target_person_id) or not old_targets.has(old_target_id) \
+			or float(old_targets[old_target_id].get("hp", 0.0)) <= 0.0:
+		return fail("INVALID_FAMILY_TRANSITION")
+	var target_id := _region_life_reference_id(target_state.get("travel_identity", {}), receipt.target_person_reference)
+	if not is_instance_valid(target_lab) or target_lab.terrain == null or target_lab._region_bound_data != target_lab.terrain \
+			or target_lab.site_controller.region_slot != self or str(target_lab.terrain.site.id) != target_owner \
+			or target_lab.controlled_person_id() != target_id:
+		return fail("INVALID_FAMILY_TRANSITION")
+	var bound := target_lab.region_bind_receipt(target_lab.terrain)
+	var living := target_lab._original_person_target(target_id)
+	if bound.get("complete") != true or bound.get("owners_restored") != true or bound.get("owner") != target_owner \
+			or int(bound.get("generation", -1)) != int(_marker.get("generation", 0)) or living.is_empty() or float(living.hp) <= 0.0:
+		return fail("INVALID_FAMILY_TRANSITION")
+	return {"ok": true, "family_complete": true, "lab": target_lab, "source_lab": source_lab,
+		"person_id": actual_source_id, "person_reference": receipt.source_person_reference, "person": dead,
+		"target_person_id": target_id, "event": event, "receipt": bound}
+
+func _region_family_local_candidate(source: Dictionary, reference: Dictionary, target_id: int,
+		person_reference: Dictionary) -> Dictionary:
+	var result := source.duplicate(true)
+	if result.content.travel_identity.refs.person.get(str(target_id)) != person_reference:
+		return fail("STALE_FAMILY_PERSON")
+	var owner := "travel:" + str(result.party_id)
+	var old_key := JSON.stringify([str(reference.site_id), int(reference.person_id)])
+	var new_key := JSON.stringify([owner, target_id])
+	var found := false
+	for member: Dictionary in result.content.family.members:
+		if var_to_bytes(member) != var_to_bytes(reference): continue
+		found = true
+		member.site_id = owner
+		member.person_id = target_id
+		member.path = ""
+	if not found: return fail("NO_HEIR")
+	if old_key != new_key and result.content.travel_identity.get("family_members", {}).has(new_key):
+		return fail("DUPLICATE_FAMILY_PERSON")
+	if not result.content.travel_identity.has("family_members"): result.content.travel_identity.family_members = {}
+	result.content.travel_identity.family_members.erase(old_key)
+	result.content.travel_identity.family_members[new_key] = person_reference.duplicate(true)
+	result.content.controlled_person_id = target_id
+	result.leader_person_id = target_id
+	if not RegionTravel.Family.validate_family(result.content.family, owner) or not RegionTravel.validate_identity(result.content.travel_identity):
+		return fail("INVALID_FAMILY")
+	return {"ok": true, "party": result}
+
+static func _region_family_new_generation(context: Dictionary, generation: int) -> bool:
+	return generation > 0 and RegionCheckpoint.validate_context(context).ok \
+		and int(context.source_generation) == generation - 1
+
+func _region_family_player_authority() -> Dictionary:
+	var journey := region_travel_journey()
+	if journey.is_empty(): return fail("NO_TARGET", "沒有原玩家party family owner")
+	var token := str(journey.token)
+	var selected := region_travel_party()
+	if not selected.ok: return selected
+	var original: TerrainLab = get_meta(&"region_party_owner_labs", {}).get(token)
+	var content: Dictionary = original.terrain.site if is_instance_valid(original) and original.terrain != null else selected.party.content
+	var family: Variant = content.get("family")
+	var identity: Variant = content.get("travel_identity")
+	if not RegionTravel.Family.validate_family(family, "travel:" + token) or not RegionTravel.validate_identity(identity):
+		return fail("INVALID_FAMILY")
+	return {"ok": true, "token": token, "party": selected.party, "family": family, "identity": identity, "lab": original}
+
+func _region_family_reference_guard(reference: Dictionary) -> Dictionary:
+	var authority := _region_family_player_authority()
+	if not authority.ok: return authority
+	var registered := false
+	for member: Dictionary in authority.family.members:
+		if var_to_bytes(member) == var_to_bytes(reference): registered = true
+	if not registered: return fail("NO_HEIR", "須是原family已明確登錄的完整引用")
+	var key := JSON.stringify([str(reference.site_id), int(reference.person_id)])
+	return {"ok": true, "authority": authority, "person_reference": authority.identity.get("family_members", {}).get(key, {}).duplicate(true)}
+
+func _region_family_relocate_reference(state: Dictionary, reference: Dictionary, owner: String,
+		person_id: int, person_reference: Dictionary) -> Dictionary:
+	var candidate := state.duplicate(true)
+	if not candidate.get("family") is Dictionary or not RegionTravel.validate_identity(candidate.get("travel_identity")):
+		return fail("INVALID_FAMILY")
+	var old_key := JSON.stringify([str(reference.site_id), int(reference.person_id)])
+	var new_key := JSON.stringify([owner, person_id])
+	var found := false
+	for member: Dictionary in candidate.family.members:
+		if var_to_bytes(member) != var_to_bytes(reference): continue
+		found = true
+		member.site_id = owner
+		member.person_id = person_id
+		member.path = "" # Only the Slot's current selected owner resolves this body.
+	if not found: return fail("NO_HEIR")
+	var index: Dictionary = candidate.travel_identity.get("family_members", {})
+	if old_key != new_key and index.has(new_key): return fail("DUPLICATE_FAMILY_PERSON")
+	index.erase(old_key)
+	index[new_key] = person_reference.duplicate(true)
+	candidate.travel_identity.family_members = index
+	return {"ok": true, "state": candidate}
+
+func _region_family_remote_candidates(source: Dictionary, target: Dictionary, destination: Dictionary,
+		reference: Dictionary) -> Dictionary:
+	var source_owner := "travel:" + str(source.party_id)
+	var target_owner := str(target.owner)
+	var moved := _region_family_relocate_reference(source.content, reference, target_owner,
+		int(target.person_id), target.person_reference)
+	if not moved.ok: return moved
+	var source_state: Dictionary = moved.state
+	var source_family: Dictionary = source_state.family
+	var family_reference: Dictionary = source_state.travel_identity.refs.family.get("controlled", {})
+	if family_reference.is_empty() or not RegionTravel.Family.validate_family(source_family, source_owner): return fail("INVALID_FAMILY")
+	var destination_state := destination.duplicate(true)
+	if not RegionTravel.validate_identity(destination_state.get("travel_identity")) \
+			or destination_state.travel_identity.refs.person.get(str(int(target.person_id))) != target.person_reference:
+		return fail("STALE_FAMILY_PERSON")
+	var destination_family: Dictionary = destination_state.get("family", {})
+	var portable_family: Dictionary = destination_state.get("family_refs", {})
+	if not portable_family.is_empty() and portable_family.get("reference") != family_reference: return fail("DIFFERENT_FAMILY")
+	if not destination_family.is_empty():
+		if destination_state.travel_identity.refs.family.get("controlled") != family_reference \
+				or not RegionTravel.Family.validate_family(destination_family, target_owner): return fail("DIFFERENT_FAMILY")
+		# The explicit player registry follows control. Existing destination
+		# offices remain exactly theirs; conflicting old memberships are refused.
+		var retained := destination_family.duplicate(true)
+		retained.members = source_family.members.duplicate(true)
+		retained.complete = source_family.complete
+		destination_family = retained
+	else:
+		destination_family = source_family.duplicate(true)
+		if int(destination_family.version) >= 2:
+			SiteOffices.vacate_unless(destination_family.offices, func(_id: int) -> bool: return false)
+		if destination_family.has("technology"):
+			destination_family.technology = RegionTravel.Technology._holder_reference(source_family.technology)
+	if not RegionTravel.Family.validate_family(destination_family, target_owner): return fail("FAMILY_REGISTRY_CONFLICT")
+	var technology_script: Variant = RegionTravel.Technology
+	if not technology_script.has_method("prepare_holder_control_transition"): return fail("MISSING_TECHNOLOGY_CONTROL_TRANSFER")
+	var technology: Dictionary = technology_script.call("prepare_holder_control_transition", family_reference,
+		source_family, destination_family, source_owner, target_owner)
+	if not technology.ok: return technology
+	source_state.family = technology.source_family
+	destination_state.family = technology.destination_family
+	destination_state.travel_identity.refs.family.controlled = family_reference.duplicate(true)
+	var family_index: Dictionary = source_state.travel_identity.get("family_members", {}).duplicate(true)
+	for member: Dictionary in destination_state.family.members:
+		if str(member.site_id) != target_owner: continue
+		var local := str(int(member.person_id))
+		var typed: Dictionary = destination_state.travel_identity.refs.person.get(local, {})
+		if typed.is_empty(): return fail("UNKNOWN_FAMILY_PERSON")
+		var key := JSON.stringify([target_owner, int(member.person_id)])
+		if family_index.has(key) and family_index[key] != typed: return fail("STALE_FAMILY_PERSON")
+		family_index[key] = typed.duplicate(true)
+	destination_state.travel_identity.family_members = family_index
+	destination_state.controlled_person_id = int(target.person_id)
+	var source_candidate := source.duplicate(true)
+	source_candidate.controller = "npc"
+	source_state.controlled_person_id = -1
+	source_candidate.content = source_state
+	if not RegionTravel.Family.validate_family(source_candidate.content.family, source_owner) \
+			or not RegionTravel.validate_identity(source_candidate.content.travel_identity) \
+			or not RegionTravel.Family.validate_family(destination_state.family, target_owner) \
+			or not RegionTravel.validate_identity(destination_state.travel_identity): return fail("INVALID_FAMILY_TRANSITION")
+	return {"ok": true, "party": source_candidate, "destination_state": destination_state}
+
+func _region_family_source_npc_reference(source: Dictionary, journey: Dictionary, relative: String,
+		sha256: String, transition: Dictionary) -> Dictionary:
+	return {"version": 1, "controller": "npc", "token": str(source.party_id), "phase": "travelling",
+		"party_path": relative, "party_sha256": sha256, "plan_path": str(journey.plan_path),
+		"plan_sha256": str(journey.plan_sha256), "departure_game_seconds": float(journey.departure_game_seconds),
+		"origin": journey.origin.duplicate(), "position": journey.position.duplicate(true),
+		"transfer_receipt": {"version": 1, "kind": "family_control", "transition": transition.duplicate(true)}}
+
+func _region_family_target_journey(token: String, reference: Dictionary, candidate: Dictionary,
+		relative: String, sha256: String) -> Dictionary:
+	var journey := {"version": 1, "kind": RegionTravel.KIND, "token": token, "party_path": relative,
+		"party_sha256": sha256, "departure_game_seconds": float(reference.departure_game_seconds),
+		"origin": reference.origin.duplicate(), "position": reference.position.duplicate(true),
+		"plan_path": str(reference.plan_path), "plan_sha256": str(reference.plan_sha256),
+		"plan_started_game_seconds": float(reference.departure_game_seconds), "plans": 1 if not str(reference.plan_path).is_empty() else 0}
+	var body: Dictionary = candidate.get("upkeep", {}).get("live", {}).get("frame", {}).get("people", {}).get(str(int(candidate.leader_person_id)), {})
+	if RegionTravel._frame_pair(body.get("world_cell")):
+		journey.position = {"site": [Grid.floor_div(int(body.world_cell[0]), 100), -Grid.floor_div(int(body.world_cell[1]), 100)], "component": 0}
+	return _normalize_travel_journey(journey)
+
+func _region_family_target_ready(target: Dictionary) -> Dictionary:
+	var original: TerrainLab = target.get("lab")
+	if not is_instance_valid(original) or original.site_controller == null or original.terrain == null \
+			or original.site_controller.region_slot != self or original._region_point_consuming \
+			or not original.site_controller._pending_deaths.is_empty(): return fail("BUSY", "真接續 owner 尚未完成原端點")
+	var body := original._original_person_target(int(target.person_id))
+	if body.is_empty() or float(body.hp) <= 0.0: return fail("NO_HEIR")
+	for job: Dictionary in original.site_controller.person_actions._jobs.values():
+		if job.has("technology_project") or str(job.get("kind", "")).begins_with("technology_"):
+			return fail("BUSY", "原接續科技 owner 有已接受工作")
+	if str(target.owner).begins_with("travel:"):
+		var token := str(target.owner).trim_prefix("travel:")
+		var selected := region_live_party_proof(token)
+		if not selected.ok: return selected
+		if selected.party.controller != "npc" or selected.original_live_graph.is_empty(): return fail("MISSING_ORIGINAL_PARTY_GRAPH")
+		return {"ok": true, "state": selected.party.content, "hash": str(selected.proof.party_hash), "selected": selected}
+	var window := validate_settlement(original.terrain.site, float(control.logical_game_seconds))
+	var fire: Dictionary = original.terrain.site.get("fire_settlement", {})
+	if not window.ok or window.legacy or float(window.pending) > 0.00000001 \
+			or fire.get("epoch") != control.fire_clock.epoch or int(fire.get("sequence", -1)) != int(control.fire_clock.sequence) \
+			or float(fire.get("action_seconds", -1.0)) != float(control.fire_clock.action_seconds): return fail("UNSETTLED_SITE")
+	var proof := region_bind_proof(original.terrain)
+	if proof.is_empty() or FileAccess.get_sha256(folder.path_join(str(proof.path))) != str(proof.sha256): return fail("STALE_REGION_BIND_SOURCE")
+	return {"ok": true, "state": original.terrain.site, "hash": RegionCheckpoint.state_hash(original.terrain.site), "selected": {"proof": proof}}
+
+func _region_family_transfer_queue(next_control: Dictionary, source: Dictionary, transition: Dictionary,
+		generation: int, source_relative: String, source_sha: String, target_relative: String, target_sha: String,
+		target_person_id: int) -> Dictionary:
+	var source_owner := "travel:" + str(source.party_id)
+	var old_id := int(source.content.get("controlled_person_id", source.leader_person_id))
+	var reference: Dictionary = source.content.travel_identity.refs.person.get(str(old_id), {})
+	if reference.is_empty(): return fail("INVALID_FAMILY_TRANSITION")
+	var receipt := {"version": 1, "generation": generation, "source_owner": source_owner,
+		"source_person_id": old_id, "source_person_reference": reference.duplicate(true),
+		"source_party_path": source_relative, "source_party_sha256": source_sha,
+		"target_owner": str(transition.destination_owner), "target_person_id": target_person_id,
+		"target_person_reference": transition.person_reference.duplicate(true),
+		"target_path": target_relative, "target_sha256": target_sha}
+	for event: Dictionary in next_control.region_gameplay.events:
+		if event.status != "pending" or event.owner != source_owner or event.player != true: continue
+		if event.kind not in ["life", "player_death"] or event.payload.get("controlled") != true or event.payload.get("death") != true: continue
+		if int(event.payload.get("person_id", -1)) != old_id or not _region_player_death_effect_receipt(event):
+			return fail("INVALID_REGION_RECEIPT", "接續不能修改原死亡事件／已付效果回執")
+		event.payload.family_control_transition = receipt.duplicate(true)
+	return {"ok": true, "receipt": receipt}
+
+func _region_gameplay_family_life_complete(event: Dictionary) -> Dictionary:
+	var canonical := _region_life_canonical(event)
+	if not canonical.ok: return canonical
+	var source := _region_family_life_source(canonical.event)
+	if not source.ok: return source
+	return {"ok": true, "receipt": {"complete": true, "effects_complete": true, "continuity_complete": true,
+		"owner": str(source.lab.terrain.site.id), "generation": int(_marker.get("generation", 0)),
+		"game_seconds": float(control.logical_game_seconds), "action_seconds": float(control.fire_clock.action_seconds)}}
+
+func commit_region_party_family_control(token: String, reference: Dictionary, source_owner: Dictionary,
+		family: Dictionary) -> Dictionary:
+	var authority := _region_family_player_authority()
+	if not authority.ok or authority.token != token: return authority if not authority.ok else fail("WRONG_FAMILY_OWNER")
+	if var_to_bytes(authority.family) != var_to_bytes(family): return fail("STALE_FAMILY")
+	var refreshed := resolve_region_family_owner(reference)
+	if not refreshed.ok: return refreshed
+	if refreshed.person_reference != source_owner.get("person_reference", refreshed.person_reference): return fail("STALE_FAMILY_PERSON")
+	if refreshed.owner != "travel:" + token:
+		return _commit_region_party_family_remote(token, reference, refreshed, family)
+	var checkpoint := checkpoint_region_travel()
+	if not checkpoint.ok: return checkpoint
+	var selected := region_live_party_proof(token)
+	if not selected.ok: return selected
+	var local_candidate := _region_family_local_candidate(selected.party, reference, int(refreshed.person_id), refreshed.person_reference)
+	if not local_candidate.ok: return local_candidate
+	var candidate: Dictionary = local_candidate.party
+	var transition := {"version": 1, "source_person_id": int(selected.party.content.get("controlled_person_id", selected.party.leader_person_id)),
+		"target": reference.duplicate(true), "person_reference": refreshed.person_reference.duplicate(true), "source_party_hash": str(selected.proof.party_hash)}
+	var checked := validate_region_family_party_transition(token, candidate, selected.proof, transition)
+	if not checked.ok: return checked
+	var original: TerrainLab = get_meta(&"region_party_owner_labs", {}).get(token)
+	var binding: Dictionary = original.prepare_region_party_family_bind(token, candidate, self, selected.proof, transition)
+	if not binding.ok: return binding
+	for hook: String in ["can_publish", "publish", "discard"]:
+		if not binding.get(hook) is Callable or not binding[hook].is_valid(): return fail("MISSING_ORIGINAL_PARTY_BIND")
+	if not binding.get("party") is Dictionary or var_to_bytes(binding.party) != var_to_bytes(candidate) or binding.can_publish.call() != true:
+		return fail("FAMILY_BODY_CLOSURE")
+	var document := _region_party_document(token, candidate, binding.original_live_graph)
+	if not document.ok: return document
+	var generation := int(selected.proof.generation) + 1
+	var relative := "travel/%s/party_family_%09d_%s.json" % [token, generation, Crypto.new().generate_random_bytes(8).hex_encode()]
+	var written := _write_new_document(folder.path_join(relative), document.payload)
+	if not written.ok: return written
+	var next_control := control.duplicate(true)
+	next_control.region_gameplay.revision = int(next_control.region_gameplay.revision) + 1
+	var mode := GameplayClock.activate_mode(next_control.region_gameplay, "travel:" + token, "committed-unbound", generation,
+		"gd", "original_party", float(next_control.logical_game_seconds), float(next_control.fire_clock.action_seconds), {})
+	if not mode.ok: return mode
+	var sites: Dictionary = _marker.get("sites", {}).duplicate(true)
+	var cold := _collect_cold_checkpoint(generation, sites, next_control)
+	if not cold.ok: return cold
+	var parties := collect_region_party_checkpoint(generation, next_control)
+	if not parties.ok: return parties
+	checked = validate_region_family_party_transition(token, candidate, selected.proof, transition)
+	if not checked.ok or binding.can_publish.call() != true: return checked if not checked.ok else fail("STALE_REGION_BIND_TICKET")
+	var family_event_transition := {"destination_owner": "travel:" + token, "person_reference": refreshed.person_reference}
+	var family_queue := _region_family_transfer_queue(next_control, selected.party, family_event_transition, generation,
+		str(selected.proof.path), str(selected.proof.sha256), relative, FileAccess.get_sha256(folder.path_join(relative)), int(refreshed.person_id))
+	if not family_queue.ok: return family_queue
+	var journey := region_travel_journey()
+	journey.party_path = relative
+	journey.party_sha256 = FileAccess.get_sha256(folder.path_join(relative))
+	var committed := _publish(sites, next_control, str(_marker.get("transfer_token", "")), journey)
+	if not committed.ok: return committed
+	_travel_party_runtime = candidate
+	_travel_party_runtime_token = token
+	var proof := region_live_party_proof(token)
+	if not proof.ok: return _region_committed_unbound("原family控制候選已提交；完整graph待重綁", {"generation": generation, "token": token})
+	var bound: Variant = binding.publish.call(proof.proof)
+	if not bound is Dictionary or not bound.get("ok", false) or bound.get("complete") != true:
+		return _region_committed_unbound("原family控制已提交；完整graph待重綁", {"generation": generation, "token": token, "bind_result": bound})
+	var actual: TerrainLab = get_meta(&"region_party_owner_labs", {}).get(token)
+	if not is_instance_valid(actual): return _region_committed_unbound("原family身體綁定收據缺真Lab", {"generation": generation, "token": token})
+	var controlled: Dictionary = actual.site_controller._control_family_person(null, int(refreshed.person_id))
+	if not controlled.ok: return _region_committed_unbound("原family完整graph已提交；原Controller待接續", {"generation": generation, "token": token, "control_result": controlled})
+	var enabled := activate_region_mode("travel:" + token, "live", "original_party", bound, "gd")
+	if not enabled.ok: return enabled
+	return {"ok": true, "complete": true, "person_id": int(refreshed.person_id), "owner": "travel:" + token,
+		"generation": generation, "person_reference": refreshed.person_reference.duplicate(true), "receipt": bound}
+
+func resolve_region_family_owner(reference: Dictionary) -> Dictionary:
+	var guarded := _region_family_reference_guard(reference)
+	if not guarded.ok: return guarded
+	var expected: Dictionary = guarded.person_reference
+	var owner := str(reference.site_id)
+	var target_id := int(reference.person_id)
+	# Historical registered locators can precede a legal departure/join. Only
+	# their already-authenticated stable PersonRef resolves a current party.
+	var current := _region_family_current_party_owner(expected)
+	if not current.ok: return current
+	if not str(current.get("owner", "")).is_empty():
+		owner = str(current.owner)
+		target_id = int(current.person_id)
+	var original: TerrainLab
+	var selected := {}
+	if owner.begins_with("travel:"):
+		var token := owner.trim_prefix("travel:")
+		var record: Dictionary = region_registry().parties.get(token, {})
+		if record.get("phase") == "joined":
+			if expected.is_empty(): return fail("UNKNOWN_FAMILY_PERSON", "歷史NPC引用缺原typed PersonRef，不能用同號重生")
+			token = str(record.get("entered_party", ""))
+			owner = "travel:" + token
+		elif record.get("phase") == "entered":
+			if expected.is_empty(): return fail("UNKNOWN_FAMILY_PERSON")
+			owner = str(record.get("destination_site", ""))
+		if owner.begins_with("travel:"):
+			selected = region_live_party_proof(token)
+			if not selected.ok: return selected
+			original = get_meta(&"region_party_owner_labs", {}).get(token)
+			if not is_instance_valid(original):
+				if not region_original_party_progress.is_valid(): return fail("MISSING_ORIGINAL_PARTY_OWNER")
+				var host: Object = region_original_party_progress.get_object()
+				if not host is TerrainLab: return fail("MISSING_ORIGINAL_PARTY_OWNER")
+				var restored: Dictionary = host.prepare_region_party_original_owner(token, selected.party, self)
+				if not restored.ok: return restored
+				original = restored.lab
+	if not owner.begins_with("travel:"):
+		if not region_owner_lab.is_valid(): return fail("MISSING_FAMILY_OWNER")
+		selected = region_owner_lab.call(owner, "live" if owner == str(control.active_site_id) else "cold_exact")
+		if not selected.get("ok", false) or not selected.get("lab") is TerrainLab: return selected
+		original = selected.lab
+	if not is_instance_valid(original) or original.terrain == null or original.site_controller.region_slot != self:
+		return fail("COMMITTED_UNBOUND")
+	var identity: Dictionary = original.terrain.site.get("travel_identity", {})
+	if not RegionTravel.validate_identity(identity): return fail("INVALID_IDENTITY")
+	if not expected.is_empty():
+		target_id = -1
+		for local: String in identity.refs.person:
+			if identity.refs.person[local] == expected:
+				if target_id > 0: return fail("DUPLICATE_OWNER")
+				target_id = int(local)
+		if target_id <= 0: return fail("STALE_FAMILY_PERSON", "原typed PersonRef不在目前真擁有者")
+	else:
+		expected = identity.refs.person.get(str(target_id), {}).duplicate(true)
+		if expected.is_empty(): return fail("NO_PERSON")
+	var person := original._original_person_target(target_id)
+	if person.is_empty(): return fail("NO_PERSON")
+	var observed: Dictionary = original.site_controller.family_continuity._current_person(target_id)
+	if observed.is_empty(): return fail("NO_PERSON")
+	return {"ok": true, "local": owner == "travel:" + str(guarded.authority.token), "person": observed,
+		"lab": original, "data": original.terrain, "owner": owner, "person_id": target_id,
+		"person_reference": expected, "selected": selected, "reference": reference.duplicate(true)}
+
+func validate_region_family_departure_transition(token: String, candidate: Dictionary,
+		source_proof: Dictionary, transition: Dictionary) -> Dictionary:
+	const FIELDS := ["version", "source_person_id", "target", "person_reference", "source_party_hash", "destination_owner", "destination_source_hash"]
+	if transition.size() != FIELDS.size() or transition.get("version") != 1: return fail("INVALID_FAMILY_TRANSITION")
+	for field: String in FIELDS:
+		if not transition.has(field): return fail("INVALID_FAMILY_TRANSITION")
+	if not transition.get("target") is Dictionary or not transition.get("person_reference") is Dictionary \
+			or not GameplayClock.whole(transition.get("source_person_id"), 1) \
+			or not transition.get("destination_owner") is String or not transition.get("destination_source_hash") is String:
+		return fail("INVALID_FAMILY_TRANSITION")
+	var selected := region_live_party_proof(token)
+	if not selected.ok: return selected
+	if selected.proof != source_proof or transition.source_party_hash != selected.proof.party_hash:
+		return fail("STALE_REGION_PARTY_PROOF")
+	var source: Dictionary = selected.party
+	var old_id := int(source.content.get("controlled_person_id", source.leader_person_id))
+	if old_id != int(transition.source_person_id) or source.controller != "player" \
+			or token != str(region_travel_journey().get("token", "")): return fail("INVALID_FAMILY_TRANSITION")
+	var bodies := RegionTravel._body_records(source.content)
+	if not bodies.has(old_id) or float(bodies[old_id].get("hp", 0.0)) > 0.0: return fail("NOT_DEAD")
+	var target := resolve_region_family_owner(transition.target)
+	if not target.ok: return target
+	if target.owner == "travel:" + token or target.owner != transition.destination_owner \
+			or target.person_reference != transition.person_reference: return fail("WRONG_FAMILY_OWNER")
+	var originals: Dictionary = get_meta(&"region_party_owner_labs", {})
+	var ready := _region_family_control_ready(originals.get(token), old_id)
+	if not ready.ok: return ready
+	var destination := _region_family_target_ready(target)
+	if not destination.ok: return destination
+	if destination.hash != transition.destination_source_hash: return fail("STALE_REGION_BIND_SOURCE")
+	var expected := _region_family_remote_candidates(source, target, destination.state, transition.target)
+	if not expected.ok: return expected
+	if var_to_bytes(candidate) != var_to_bytes(expected.party):
+		return fail("FAMILY_BODY_CLOSURE", "只准原party卸除玩家控制／原科技holder移交，原body及完整graph保留")
+	return {"ok": true, "source_party": source, "source_proof": selected.proof, "party": expected.party,
+		"original_live_graph": selected.original_live_graph, "person_id": int(target.person_id),
+		"person_reference": target.person_reference, "destination_owner": str(target.owner),
+		"destination_state": expected.destination_state, "destination_source_hash": destination.hash,
+		"destination_selected": destination.selected, "target": target}
+
+func validate_region_family_party_transition(token: String, candidate: Dictionary,
+		source_proof: Dictionary, transition: Dictionary) -> Dictionary:
+	const FIELDS := ["version", "source_person_id", "target", "person_reference", "source_party_hash"]
+	if transition.size() != FIELDS.size() or transition.get("version") != 1:
+		return fail("INVALID_FAMILY_TRANSITION")
+	for field: String in FIELDS:
+		if not transition.has(field): return fail("INVALID_FAMILY_TRANSITION")
+	if not transition.get("target") is Dictionary or not transition.get("person_reference") is Dictionary \
+			or not GameplayClock.whole(transition.get("source_person_id"), 1): return fail("INVALID_FAMILY_TRANSITION")
+	var selected := region_live_party_proof(token)
+	if not selected.ok: return selected
+	if selected.proof != source_proof or transition.source_party_hash != selected.proof.party_hash:
+		return fail("STALE_REGION_PARTY_PROOF")
+	var source: Dictionary = selected.party
+	var old_id := int(source.content.get("controlled_person_id", source.leader_person_id))
+	if old_id != int(transition.source_person_id) or source.controller != "player" or token != str(region_travel_journey().get("token", "")):
+		return fail("INVALID_FAMILY_TRANSITION")
+	var target := resolve_region_family_owner(transition.target)
+	if not target.ok: return target
+	if target.owner != "travel:" + token or target.person_reference != transition.person_reference:
+		return fail("WRONG_FAMILY_OWNER")
+	var target_id := int(target.person_id)
+	var bodies := RegionTravel._body_records(source.content)
+	if target_id == old_id or not bodies.has(old_id) or not bodies.has(target_id) \
+			or float(bodies[old_id].get("hp", 0.0)) > 0.0 or float(bodies[target_id].get("hp", 0.0)) <= 0.0:
+		return fail("NO_HEIR")
+	var original: TerrainLab = get_meta(&"region_party_owner_labs", {}).get(token)
+	if not is_instance_valid(original) or not original.site_controller._pending_deaths.is_empty() or original._region_point_consuming:
+		return fail("BUSY", "先完成原死亡結算")
+	var old_body := original._original_person_target(old_id)
+	if old_body.is_empty() or float(old_body.hp) > 0.0 or _region_player_committed_close_action(old_body) > TerrainLab.ACTION_TIME_EPSILON:
+		return fail("BUSY", "原死者已接受的移動尚未收束")
+	var expected := _region_family_local_candidate(source, transition.target, target_id, target.person_reference)
+	if not expected.ok: return expected
+	if var_to_bytes(candidate) != var_to_bytes(expected.party):
+		return fail("FAMILY_BODY_CLOSURE", "接續候選只能選擇同一原family真body，不改生命／職位／財物／graph／時間")
+	return {"ok": true, "source_party": source, "source_proof": selected.proof, "party": candidate,
+		"original_live_graph": selected.original_live_graph, "person_id": target_id, "person_reference": target.person_reference}
+
+func validate_region_family_takeover_transition(token: String, candidate: Dictionary,
+		source_proof: Dictionary, transition: Dictionary) -> Dictionary:
+	var player_token := str(region_travel_journey().get("token", ""))
+	if player_token.is_empty() or token == player_token or transition.get("destination_owner") != "travel:" + token:
+		return fail("WRONG_FAMILY_OWNER")
+	var player := region_live_party_proof(player_token)
+	if not player.ok: return player
+	var target := resolve_region_family_owner(transition.get("target", {}))
+	if not target.ok: return target
+	var prepared := _region_family_target_ready(target)
+	if not prepared.ok: return prepared
+	var remote := _region_family_remote_candidates(player.party, target, prepared.state, transition.target)
+	if not remote.ok: return remote
+	var authorized := validate_region_family_departure_transition(player_token, remote.party, player.proof, transition)
+	if not authorized.ok: return authorized
+	var selected := region_live_party_proof(token)
+	if not selected.ok: return selected
+	if selected.proof != source_proof or selected.party.controller != "npc" \
+			or selected.proof.party_hash != transition.destination_source_hash: return fail("STALE_REGION_PARTY_PROOF")
+	var expected: Dictionary = selected.party.duplicate(true)
+	expected.controller = "player"
+	expected.leader_person_id = int(target.person_id)
+	expected.content = authorized.destination_state.duplicate(true)
+	if var_to_bytes(candidate) != var_to_bytes(expected): return fail("FAMILY_BODY_CLOSURE")
+	return {"ok": true, "source_party": selected.party, "source_proof": selected.proof, "party": expected,
+		"original_live_graph": selected.original_live_graph, "person_id": int(target.person_id),
+		"person_reference": target.person_reference}
+
+func _region_install_live_ship_moves(party: Dictionary, world: Dictionary, frame: Dictionary) -> Dictionary:
+	var result := party.duplicate(true)
+	var origin := Vector2i(int(frame.world_origin[0]), int(frame.world_origin[1]))
+	var width := int(frame.size[0])
+	var height := int(frame.size[1])
+	for identity: String in result.content.get("vehicles", {}):
+		var vehicle: Dictionary = result.content.vehicles[identity]
+		if str(vehicle.get("kind", "")) != "ship": continue
+		var pose: Dictionary = world.vehicles.get(identity, {}).get("pose", {})
+		if pose.is_empty(): return fail("MISSING_ORIGINAL_SHIP_POSE")
+		# An already-live original Ship owns this accepted move. Only its frame
+		# coordinates are projected; its elapsed/duration/command are unchanged.
+		if not party.get("upkeep", {}).get("live", {}).is_empty(): continue
+		if not RegionTravel._frame_pair(pose.get("facing")): return fail("CORRUPT_SEA_CURSOR")
+		vehicle.facing = pose.facing.duplicate()
+		var duration := float(pose.get("duration_action_seconds", 0.0))
+		if duration <= 0.0:
+			if not vehicle.get("move", {}).is_empty(): return fail("DUPLICATE_SHIP_MOVEMENT")
+			continue
+		if not RegionTravel._frame_pair(pose.get("from")) or not RegionTravel._frame_pair(pose.get("to")) \
+				or not RegionTravel._frame_pair(pose.get("from_facing")) or not RegionTravel._frame_pair(pose.get("to_facing")) \
+				or not is_finite(duration) or duration > 1000000.0 or pose.get("action") not in ["forward", "reverse", "dock", "turn"]:
+			return fail("CORRUPT_SEA_CURSOR")
+		var elapsed := float(pose.get("elapsed_action_seconds", -1.0))
+		if not is_finite(elapsed) or elapsed < 0.0 or elapsed >= duration: return fail("CORRUPT_SEA_CURSOR")
+		var from := Vector2i(int(pose.from[0]), int(pose.from[1])) - origin
+		var to := Vector2i(int(pose.to[0]), int(pose.to[1])) - origin
+		var before := Vector2i(int(pose.from_facing[0]), int(pose.from_facing[1]))
+		var after := Vector2i(int(pose.to_facing[0]), int(pose.to_facing[1]))
+		if int(vehicle.cell) != from.y * width + from.x or not vehicle.get("move", {}).is_empty(): return fail("DUPLICATE_SHIP_MOVEMENT")
+		var cells := Ship.swept_footprint(str(vehicle.ship_type), from, before, to, after)
+		if cells.is_empty(): return fail("CORRUPT_SHIP_SWEEP")
+		var sweep: Array[int] = []
+		for cell: Vector2i in cells:
+			if cell.x < 0 or cell.y < 0 or cell.x >= width or cell.y >= height: return fail("PARTY_FRAME_TOO_NARROW")
+			sweep.append(cell.y * width + cell.x)
+		vehicle.facing = pose.from_facing.duplicate()
+		vehicle.move = {"from_cell": int(vehicle.cell), "from_facing": vehicle.facing.duplicate(),
+			"cell": to.y * width + to.x, "facing": pose.to_facing.duplicate(), "elapsed": elapsed,
+			"duration": duration, "sweep": sweep, "action": str(pose.action)}
+		vehicle.stop_pending = true # Finish this paid step; next movement needs its original command.
+		vehicle.command = {}
+	return {"ok": true, "party": result}
+
+func _region_current_land_position(party: Dictionary, plan: Dictionary, path: String) -> Dictionary:
+	var view := _region_land_physical_plan(plan)
+	var position := _region_route_position(view, _region_land_physical_distance(view, party.upkeep, path))
+	var node: Dictionary = party.upkeep.get("route_node", {})
+	var blocked: Dictionary = party.upkeep.get("route_blocked", {})
+	if str(node.get("plan_id", "")) == path:
+		if str(blocked.get("plan_id", "")) == path and not blocked.is_empty():
+			position = {"site": node.site.duplicate(), "component": int(node.component), "step_index": int(node.index), "fraction": 1.0}
+		elif int(node.get("index", -1)) == int(position.step_index) and node.get("site") == position.site:
+			position.component = int(node.component)
+	return position
+
+func _region_land_physical_distance(plan: Dictionary, upkeep: Dictionary, path: String) -> float:
+	if str(upkeep.get("plan_id", "")) != path: return 0.0
+	var distance := float(upkeep.get("distance", 0.0))
+	if int(upkeep.get("route_distance_version", 0)) == 1 or not plan.has("legacy_metres"): return distance
+	var old_begin := 0.0
+	var physical_begin := 0.0
+	for index: int in range(plan.steps.size()):
+		var old := float(plan.legacy_metres[index])
+		var physical := float(plan.steps[index].metres)
+		if old > 0.0 and distance < old_begin + old - 0.00000001:
+			return physical_begin + physical * clampf((distance - old_begin) / old, 0.0, 1.0)
+		old_begin += old
+		physical_begin += physical
+	return minf(float(plan.metres), physical_begin)
+
+func _region_land_physical_plan(plan: Dictionary) -> Dictionary:
+	if plan.is_empty() or str(plan.get("mode", "land")) == "sea": return plan
+	if int(plan.get("physical_metres_version", 0)) == 1: return plan
+	var view := plan.duplicate(true)
+	var legacy: Array[float] = []
+	var current: bool = plan.steps.all(func(step: Dictionary) -> bool: return step.has("travel_factor"))
+	var total := 0.0
+	for index: int in range(view.steps.size()):
+		var step: Dictionary = view.steps[index]
+		var old := float(step.metres)
+		var physical := 0.0 if index == view.steps.size() - 1 else RegionRoute.SITE_METRES * (0.5 if index == 0 else 1.0)
+		legacy.append(old)
+		step.metres = physical
+		if not current: step.travel_factor = physical / maxf(0.000001, old) if physical > 0.0 else 1.0
+		total += physical
+	view.metres = total
+	view.physical_metres_version = 1
+	if not current: view.legacy_metres = legacy
+	return view
+
+func _region_npc_sea_boundary_body(token: String) -> Dictionary:
+	# Derived admission query. It advances no original body, time or sea cursor.
+	var reference: Dictionary = region_registry().parties.get(token, {})
+	if reference.get("controller") != "npc" or reference.get("phase") != "travelling": return {"ok": true, "eligible": false}
+	var selected := _region_npc_party(token)
+	if not selected.ok: return selected
+	var party: Dictionary = selected.party
+	if party.get("mode") != "sea" or not party.upkeep.get("live", {}).is_empty(): return {"ok": true, "eligible": false}
+	if not party.content.get("actors", {}).is_empty() or int(party.content.get("controlled_person_id", -1)) != -1: return fail("NPC_PARTY_AUTHORITY")
+	if not region_original_party_progress.is_valid(): return fail("MISSING_REGION_PARTY_PROGRESS")
+	var host: Object = region_original_party_progress.get_object()
+	if not host is TerrainLab or host.site_controller.region_slot != self: return fail("INVALID_REGION_PARTY_PROGRESS")
+	var restored: Dictionary = host.prepare_region_party_original_owner(token, party, self)
+	if not restored.ok: return restored
+	var proved := region_original_party_runtime_proof(token, party)
+	if not proved.ok: return proved
+	var planned := _region_npc_plan(token)
+	if not planned.ok: return planned
+	if planned.plan.get("mode") != "sea": return fail("CORRUPT_ROUTE")
+	var projection := region_sea_pose_projection(planned.plan, party)
+	if not projection.ok: return projection
+	var cursor: Dictionary = party.upkeep.sea_cursor
+	var moving := false
+	var next_action: Dictionary = {}
+	if int(cursor.action_index) < planned.plan.action_steps.size():
+		var transport := RegionTravel.prepare_transport(party.duplicate(true))
+		if not transport.ok: return transport
+		moving = bool(transport.can_move) and not bool(party.upkeep.resting)
+		next_action = planned.plan.action_steps[int(cursor.action_index)]
+	var boats := {}
+	for identity: String in party.content.vehicles:
+		var boat: Dictionary = party.content.vehicles[identity]
+		if str(boat.get("kind", "")) != "ship": return fail("PARTY_BODY_CLOSURE")
+		var pose: Dictionary = projection.poses.get(identity, {})
+		var anchor: Array = pose.get("from", pose.get("world_anchor", [])) if float(pose.get("duration_action_seconds", 0.0)) > 0.0 else pose.get("world_anchor", [])
+		if anchor.size() != 2 or not _whole(anchor[0], -2147483648, 2147483647) or not _whole(anchor[1], -2147483648, 2147483647): return fail("CORRUPT_SEA_CURSOR")
+		var at := Vector2i(int(anchor[0]), int(anchor[1]))
+		var facing := Vector2i(int(pose.facing[0]), int(pose.facing[1]))
+		var occupied := Ship.footprint(str(boat.ship_type), at, facing)
+		var claims: Array[Vector2i] = occupied.duplicate()
+		var proposed: Array[Vector2i] = []
+		if float(pose.get("duration_action_seconds", 0.0)) > 0.0:
+			claims = Ship.swept_footprint(str(boat.ship_type), at, Vector2i(int(pose.from_facing[0]), int(pose.from_facing[1])),
+				Vector2i(int(pose.to[0]), int(pose.to[1])), Vector2i(int(pose.to_facing[0]), int(pose.to_facing[1])))
+		elif moving and not next_action.is_empty() and str(next_action.vehicle_id) == identity:
+			var origin := Vector2i(int(next_action.from_site[0]) * 100, -int(next_action.from_site[1]) * 100)
+			var start := origin + Vector2i(int(next_action.from[0]), int(next_action.from[1]))
+			if start != at or next_action.from_facing != pose.facing: return fail("SEA_ACTION_CONTRACT")
+			var measured := _region_sea_action_duration(party, next_action)
+			if not measured.ok: return measured
+			proposed = Ship.swept_footprint(str(boat.ship_type), start, facing, origin + Vector2i(int(next_action.anchor[0]), int(next_action.anchor[1])), Vector2i(int(next_action.facing[0]), int(next_action.facing[1])))
+		if occupied.is_empty() or claims.is_empty(): return fail("CORRUPT_SHIP_SWEEP")
+		boats[identity] = {"reference": party.content.travel_identity.refs.vehicle[identity].duplicate(true), "occupied": occupied, "claims": claims, "proposed": proposed}
+	var crew := {}
+	for person_id: int in party.person_ids:
+		var person: Dictionary = proved.lab.site_controller.vehicles.ship_person(person_id)
+		if person.is_empty() or not person.owner.combat_can_act(int(person.unit)) or bool(person.captive): continue
+		var boat_id := str(person.row.get("embarked_vehicle_id", ""))
+		var boat: Dictionary = party.content.vehicles.get(boat_id, {})
+		if boat.is_empty() or not SiteVehicleTransport.ship_afloat(boat): continue
+		var pose: Dictionary = projection.poses.get(boat_id, {})
+		var local: Vector2 = proved.lab.site_controller.vehicles.ship_local_position(person_id)
+		if not local.is_finite(): return fail("NOT_EMBARKED")
+		var direction := Vector2(float(pose.facing[0]), float(pose.facing[1]))
+		if pose.has("action"):
+			var ending := Vector2(float(pose.to_facing[0]), float(pose.to_facing[1]))
+			direction = direction.rotated(direction.angle_to(ending) * float(pose.get("weight", 0.0)))
+		var ground := Vector2(float(pose.world_anchor[0]), float(pose.world_anchor[1])) + Vector2(-direction.y, direction.x) * local.x + direction * local.y + Vector2.ONE * 0.5
+		crew[str(person_id)] = {"reference": party.content.travel_identity.refs.person[str(person_id)].duplicate(true),
+			"world_ground": [ground.x, ground.y], "faction": int(person.owner.faction_id), "boat": boat_id}
+	return {"ok": true, "eligible": true, "party": party, "proof": proved.proof, "boats": boats, "crew": crew}
+
+func _region_npc_sea_pair_boundary(incoming_token: String, primary_token: String) -> Dictionary:
+	if incoming_token.is_empty() or primary_token.is_empty() or incoming_token == primary_token: return fail("INVALID_PARTY_JOIN")
+	var first := _region_npc_sea_boundary_body(incoming_token)
+	if not first.ok or not first.get("eligible", false): return first if not first.ok else {"ok": true, "contact": false}
+	var second := _region_npc_sea_boundary_body(primary_token)
+	if not second.ok or not second.get("eligible", false): return second if not second.ok else {"ok": true, "contact": false}
+	for a: String in first.boats:
+		for b: String in second.boats:
+			var left: Dictionary = first.boats[a]
+			var right: Dictionary = second.boats[b]
+			if left.occupied.any(func(cell: Vector2i) -> bool: return right.occupied.has(cell)): return fail("NPC_SEA_ACCEPTED_HULL_OVERLAP", "保留已接受反例；不能強制完成或倒退修船體")
+			var conflict: bool = left.proposed.any(func(cell: Vector2i) -> bool: return right.claims.has(cell)) or right.proposed.any(func(cell: Vector2i) -> bool: return left.claims.has(cell)) \
+				or left.proposed.any(func(cell: Vector2i) -> bool: return right.proposed.has(cell))
+			var near := {}
+			for first_id: String in first.crew:
+				var first_person: Dictionary = first.crew[first_id]
+				if first_person.boat != a: continue
+				for second_id: String in second.crew:
+					var second_person: Dictionary = second.crew[second_id]
+					if second_person.boat != b or int(first_person.faction) == int(second_person.faction): continue
+					var first_ground := Vector2(float(first_person.world_ground[0]), float(first_person.world_ground[1]))
+					var second_ground := Vector2(float(second_person.world_ground[0]), float(second_person.world_ground[1]))
+					if first_ground.distance_to(second_ground) <= 1.05:
+						near = {"first": first_person.duplicate(true), "second": second_person.duplicate(true)}
+						break
+				if not near.is_empty(): break
+			if not conflict and near.is_empty(): continue
+			return {"ok": true, "contact": true, "receipt": {"kind": "npc_sea_sweep_boundary", "incoming_token": incoming_token, "primary_token": primary_token,
+				"at": float(control.logical_game_seconds), "action_seconds": float(control.fire_clock.action_seconds),
+				"first_vehicle": a, "second_vehicle": b, "first": left.duplicate(true), "second": right.duplicate(true),
+				"motion_admission_conflict": conflict, "current_original_crew_contact": near}}
+	return {"ok": true, "contact": false}
+
+func _region_validate_npc_sea_pair_event(event: Dictionary) -> Dictionary:
+	var queued := {}
+	for original: Dictionary in region_registry().events:
+		if str(original.id) == str(event.get("id", "")): queued = original
+	if queued.is_empty() or queued.status != "pending" or var_to_bytes(queued) != var_to_bytes(event): return fail("STALE_REGION_EVENT")
+	if queued.kind != "reinforcement" or bool(queued.player) or float(queued.at) != float(control.logical_game_seconds): return fail("STALE_REGION_CONTACT")
+	var receipt: Dictionary = queued.payload.get("contact_receipt", {})
+	if receipt.get("kind") != "npc_sea_sweep_boundary" or str(queued.payload.get("token", "")) != str(receipt.get("incoming_token", "")): return fail("INVALID_REGION_CONTACT")
+	var current := _region_npc_sea_pair_boundary(str(receipt.incoming_token), str(receipt.get("primary_token", "")))
+	if not current.ok: return current
+	return {"ok": true, "valid": current.get("contact", false) and var_to_bytes(current.get("receipt", {})) == var_to_bytes(receipt)}
+
+func _region_land_route_node(party: Dictionary, plan: Dictionary, path: String, index: int, component: int = -1) -> Dictionary:
+	var step: Dictionary = plan.steps[index]
+	var cell := RegionRoute.entry_cell(step)
+	if cell.x < 0:
+		var retained: Dictionary = party.get("upkeep", {}).get("route_node", {})
+		if retained.get("site") == step.site and retained.get("cell") is Array and retained.cell.size() == 2:
+			cell = Vector2i(int(retained.cell[0]), int(retained.cell[1]))
+		else:
+			var body: Dictionary = RegionTravel._body_records(party.content).get(int(party.leader_person_id), {})
+			if body.get("cell") is Array and body.cell.size() == 2: cell = Vector2i(int(body.cell[0]), int(body.cell[1]))
+	return {"version": 1, "plan_id": path, "index": index, "site": step.site.duplicate(),
+		"component": int(step.component) if component < 0 else component, "cell": [cell.x, cell.y],
+		"vehicle_poses": step.get("vehicle_poses", {}).duplicate(true)}
+
+func _region_land_route_preview(party: Dictionary, plan: Dictionary, path: String, to: float, moving: bool = true) -> Dictionary:
+	var world := float(control.logical_game_seconds)
+	if absf(float(party.get("upkeep", {}).get("at", -1.0)) - world) > 0.00000001: return fail("UNSETTLED_PARTY")
+	if not plan.get("steps") is Array or plan.steps.size() < 2 or not _seconds(to) or to < world: return fail("CORRUPT_ROUTE")
+	plan = _region_land_physical_plan(plan)
+	var input: Dictionary = party.duplicate(true)
+	var distance := _region_land_physical_distance(plan, input.upkeep, path)
+	input.upkeep.plan_id = path
+	input.upkeep.distance = distance
+	input.upkeep.route_distance_version = 1
+	input.upkeep.erase("pending_route_entry")
+	var position := _region_route_position(plan, distance)
+	var index := int(position.step_index)
+	var blocked: Dictionary = input.upkeep.get("route_blocked", {})
+	if str(blocked.get("plan_id", "")) == path:
+		index = int(blocked.get("from_index", -1))
+	else:
+		blocked = {}
+		input.upkeep.erase("route_blocked")
+	if index < 0 or index >= plan.steps.size(): return fail("CORRUPT_ROUTE")
+	var node: Dictionary = input.upkeep.get("route_node", {})
+	if str(node.get("plan_id", "")) != path or int(node.get("index", -1)) != index:
+		node = _region_land_route_node(input, plan, path, index)
+	input.upkeep.route_node = node
+	if index == plan.steps.size() - 1:
+		return {"ok": true, "party": input, "source_party": party, "at": world, "metres": 0.0,
+			"events": [], "consumed_rations": 0.0, "arrived": true,
+			"position": {"site": node.site.duplicate(), "component": int(node.component), "step_index": index, "fraction": 1.0}}
+	var coordinates: Array[Vector2i] = [Vector2i(int(plan.steps[index].site[0]), int(plan.steps[index].site[1]))]
+	if index + 1 < plan.steps.size(): coordinates.append(Vector2i(int(plan.steps[index + 1].site[0]), int(plan.steps[index + 1].site[1])))
+	var prepared := prepare_region_route_context(null, input, coordinates)
+	if not prepared.ok: return prepared
+	var context: Dictionary = prepared.context
+	context.capabilities.start_cell = Vector2i(int(node.cell[0]), int(node.cell[1]))
+	context.capabilities.vehicle_poses = node.vehicle_poses.duplicate(true)
+	var entry := {"ok": true}
+	if index + 1 < plan.steps.size(): entry = RegionRoute.revalidate_land_entry(source, plan.steps, index, context)
+	if not blocked.is_empty() and str(blocked.get("plan_id", "")) == path and entry.ok:
+		input.upkeep.pending_route_entry = {"version": 1, "plan_id": path, "from_index": index, "to_index": index + 1,
+			"source_node": node.duplicate(true), "distance": distance, "at": world}
+		index += 1
+		node = _region_land_route_node(input, plan, path, index, int(entry.component))
+		input.upkeep.route_node = node
+		input.upkeep.erase("route_blocked")
+		input.upkeep.blocked_reason = ""
+		blocked = {}
+		if index == plan.steps.size() - 1:
+			return {"ok": true, "party": input, "source_party": party, "at": world, "metres": 0.0,
+				"events": [], "consumed_rations": 0.0, "arrived": true, "entry_ready": true,
+				"position": {"site": node.site.duplicate(), "component": int(node.component), "step_index": index, "fraction": 1.0}}
+		coordinates = [Vector2i(int(plan.steps[index].site[0]), int(plan.steps[index].site[1])),
+			Vector2i(int(plan.steps[index + 1].site[0]), int(plan.steps[index + 1].site[1]))]
+		prepared = prepare_region_route_context(null, input, coordinates)
+		if not prepared.ok: return prepared
+		context = prepared.context
+		context.capabilities.start_cell = Vector2i(int(node.cell[0]), int(node.cell[1]))
+		context.capabilities.vehicle_poses = node.vehicle_poses.duplicate(true)
+		entry = RegionRoute.revalidate_land_entry(source, plan.steps, index, context)
+	var leg := RegionRoute.current_land_leg(source, plan.steps[index], context)
+	if not leg.ok: return leg
+	var source_component := RegionRoute.component_of(leg.derived, Vector2i(int(node.cell[0]), int(node.cell[1])))
+	if source_component >= 0: node.component = source_component
+	input.upkeep.route_node = node
+	var options := {"moving": moving and blocked.is_empty() and source_component >= 0, "safe_rest": true, "speed_multiplier": float(leg.speed_multiplier)}
+	var endpoint := RegionTravel.next_upkeep_event(input, options.merged({"until": to}, true))
+	if not endpoint.ok: return endpoint
+	var end := minf(to, float(endpoint.at))
+	var outcome := RegionTravel.advance_upkeep(input, end, options)
+	if not outcome.ok: return outcome
+	var boundary := 0.0
+	for step_index: int in range(index + 1): boundary += float(plan.steps[step_index].metres)
+	var remaining := maxf(0.0, boundary - distance)
+	if bool(options.moving) and float(outcome.metres) > remaining + 0.00000001:
+		var low := world
+		var high := float(outcome.at)
+		for _iteration: int in 45:
+			var middle := (low + high) * 0.5
+			var probe := RegionTravel.advance_upkeep(input, middle, options)
+			if not probe.ok: return probe
+			if float(probe.metres) < remaining: low = middle
+			else: high = middle
+		outcome = RegionTravel.advance_upkeep(input, high, options)
+		if not outcome.ok: return outcome
+	var candidate: Dictionary = outcome.party
+	candidate.upkeep.distance = minf(float(plan.metres), distance + float(outcome.metres))
+	candidate.upkeep.plan_id = path
+	var crossing: bool = bool(options.moving) and candidate.upkeep.distance >= boundary - 0.00000001 and index + 1 < plan.steps.size()
+	if crossing:
+		candidate.upkeep.distance = boundary
+		candidate.upkeep.pending_route_entry = {"version": 1, "plan_id": path, "from_index": index, "to_index": index + 1,
+			"source_node": node.duplicate(true), "distance": boundary, "at": float(candidate.upkeep.at)}
+		if entry.ok:
+			candidate.upkeep.route_node = _region_land_route_node(candidate, plan, path, index + 1, int(entry.component))
+			candidate.upkeep.erase("route_blocked")
+			candidate.upkeep.blocked_reason = str(outcome.get("reason", ""))
+		else:
+			candidate.upkeep.route_node = node.duplicate(true)
+			candidate.upkeep.route_blocked = {"version": 1, "plan_id": path, "from_index": index,
+				"to_index": index + 1, "code": str(entry.get("code", "WALL_EDGE")),
+				"message": str(entry.get("message", "原路線下一 Site 入口已受阻"))}
+			candidate.upkeep.blocked_reason = candidate.upkeep.route_blocked.message
+	elif not blocked.is_empty(): candidate.upkeep.blocked_reason = str(entry.get("message", blocked.get("message", "原路線入口受阻")))
+	else: candidate.upkeep.blocked_reason = "原旅隊目前 node 已無可達出口" if source_component < 0 else str(outcome.get("reason", ""))
+	var actual: Dictionary = candidate.upkeep.route_node
+	var before_node := 0.0
+	for step_index: int in range(int(actual.index)): before_node += float(plan.steps[step_index].metres)
+	outcome.source_party = party
+	outcome.position = {"site": actual.site.duplicate(), "component": int(actual.component),
+		"step_index": int(actual.index), "fraction": clampf((float(candidate.upkeep.distance) - before_node) / maxf(0.000001, float(plan.steps[int(actual.index)].metres)), 0.0, 1.0)}
+	outcome.arrived = candidate.upkeep.distance >= float(plan.metres) - 0.00000001 and not candidate.upkeep.has("route_blocked")
+	return outcome
+
+func _region_map_actual_world_target(party: Dictionary) -> Dictionary:
+	var frame: Dictionary = party.upkeep.live.frame
+	var leader: Dictionary = frame.people.get(str(int(party.leader_person_id)), {})
+	if not RegionTravel._frame_pair(leader.get("world_cell")): return fail("MISSING_ORIGINAL_POSITION")
+	var poses := {}
+	for identity: String in party.content.get("vehicles", {}):
+		if not RegionTravel._frame_pair(frame.vehicles.get(identity, {}).get("world_cell")):
+			return fail("MISSING_ORIGINAL_POSITION")
+		poses[identity] = {"world_anchor": frame.vehicles[identity].world_cell.duplicate(), "facing": party.content.vehicles[identity].facing.duplicate()}
+	return {"ok": true, "world_cell": leader.world_cell.duplicate(), "vehicle_poses": poses}
+
+func _region_map_motion_target(before: Dictionary, plan: Dictionary, outcome: Dictionary) -> Dictionary:
+	if plan.is_empty(): return _region_map_actual_world_target(before)
+	if not outcome.get("position") is Dictionary: return fail("MISSING_ORIGINAL_POSITION")
+	var position: Dictionary = outcome.position
+	var index := int(position.get("step_index", -1))
+	if index < 0 or index >= plan.steps.size(): return fail("CORRUPT_ROUTE")
+	var step: Dictionary = plan.steps[index]
+	var site := Vector2i(int(step.site[0]), int(step.site[1]))
+	var base := Vector2i(site.x * 100, -site.y * 100)
+	var start := RegionRoute.entry_cell(step)
+	if index == 0:
+		var node: Dictionary = before.upkeep.get("route_node", {})
+		if node.get("site") != step.site or not RegionTravel._frame_pair(node.get("cell")): return fail("MISSING_ROUTE_NODE")
+		start = Vector2i(int(node.cell[0]), int(node.cell[1]))
+	if start.x < 0: return fail("MISSING_ORIGINAL_POSITION")
+	var finish := start
+	if index + 1 < plan.steps.size():
+		var next: Dictionary = plan.steps[index + 1]
+		finish = RegionRoute.Adapter.boundary_cell(RegionRoute.opposite(int(next.edge)), int(next.offset))
+		if not outcome.party.upkeep.has("route_blocked"):
+			finish += TerrainData.DIRECTIONS[RegionRoute.opposite(int(next.edge))]
+	var world := base + Vector2i((Vector2(start).lerp(Vector2(finish), clampf(float(position.get("fraction", 0.0)), 0.0, 1.0))).floor())
+	var poses := {}
+	for identity: String in before.content.get("vehicles", {}):
+		var vehicle: Dictionary = before.content.vehicles[identity]
+		var pose: Dictionary = step.get("vehicle_poses", {}).get(identity, {})
+		var at := Vector2i(-1, -1)
+		var facing := Vector2i.ZERO
+		if index + 1 < plan.steps.size():
+			var path: Variant = plan.steps[index + 1].get("vehicle_paths", {}).get(identity)
+			if not path is Array or path.is_empty(): return fail("MISSING_ORIGINAL_VEHICLE_PATH")
+			var point: Variant = path[clampi(floori(float(position.get("fraction", 0.0)) * float(path.size() - 1)), 0, path.size() - 1)]
+			if not point is Array or point.size() != 4: return fail("CORRUPT_VEHICLE_PATH")
+			facing = Vector2i(int(point[2]), int(point[3]))
+			var operator := Vector2i(int(point[0]), int(point[1]))
+			at = base + (operator - facing * 2 if str(vehicle.kind) == "wagon" else operator + facing)
+		elif RegionTravel._frame_pair(pose.get("anchor")) and RegionTravel._frame_pair(pose.get("facing")):
+			at = base + Vector2i(int(pose.anchor[0]), int(pose.anchor[1]))
+			facing = Vector2i(int(pose.facing[0]), int(pose.facing[1]))
+		else: return fail("MISSING_ORIGINAL_VEHICLE_PATH")
+		poses[identity] = {"world_anchor": [at.x, at.y], "facing": [facing.x, facing.y]}
+	return {"ok": true, "world_cell": [world.x, world.y], "vehicle_poses": poses}
+
+func _region_map_route_reference(party: Dictionary) -> Dictionary:
+	if str(party.get("upkeep", {}).get("live", {}).get("upkeep", "")) != "mapBody": return {}
+	var actual := _region_map_actual_world_target(party)
+	if not actual.ok: return {}
+	var world := Vector2i(int(actual.world_cell[0]), int(actual.world_cell[1]))
+	var site := Vector2i(Grid.floor_div(world.x, 100), -Grid.floor_div(world.y, 100))
+	var base := Vector2i(site.x * 100, -site.y * 100)
+	var local := world - base
+	var poses := {}
+	for identity: String in party.content.get("vehicles", {}):
+		var vehicle: Dictionary = party.content.vehicles[identity]
+		var operator: Dictionary = party.upkeep.live.frame.people.get(str(int(vehicle.operator_id)), {})
+		if not RegionTravel._frame_pair(operator.get("world_cell")): return {}
+		var at: Array = actual.vehicle_poses[identity].world_anchor
+		var anchor := Vector2i(int(at[0]), int(at[1])) - base
+		var person := Vector2i(int(operator.world_cell[0]), int(operator.world_cell[1])) - base
+		poses[identity] = {"anchor": [anchor.x, anchor.y], "operator": [person.x, person.y], "facing": vehicle.facing.duplicate()}
+	return {"site": [site.x, site.y], "cell": [local.x, local.y], "vehicle_poses": poses}
+
+func _region_map_status_position(party: Dictionary, status: Dictionary) -> Dictionary:
+	var actual := _region_map_route_reference(party)
+	if actual.is_empty() or not status.get("ok", false): return status
+	status.site = Vector2i(int(actual.site[0]), int(actual.site[1]))
+	status.route_node_cell = Vector2i(int(actual.cell[0]), int(actual.cell[1]))
+	status.vehicle_poses = actual.vehicle_poses.duplicate(true)
+	return status
+
+func _region_prepare_map_motion_outcome(before: Dictionary, status: Dictionary, outcome: Dictionary) -> Dictionary:
+	if str(before.upkeep.get("live", {}).get("upkeep", "")) != "mapBody": return outcome
+	var original := region_original_party_runtime_proof(str(before.party_id), before)
+	if not original.ok: return original
+	var target := _region_map_motion_target(before, status.plan, outcome)
+	if not target.ok: return target
+	var motion: Dictionary = original.lab.prepare_region_party_map_motion(before, outcome.party, target)
+	if not motion.ok:
+		if str(motion.get("code", "")) not in ["WALL_EDGE", "NONRIGID_ORIGINAL_FORMATION", "ORIGINAL_VEHICLE_MOTION_REQUIRED"]: return motion
+		# The same original clock/food/life owner still accepts an incapable or
+		# geometrically blocked group. The failed physical proposal spends no
+		# distance, and the native body remains at its accepted physical pose.
+		var resting: Dictionary = RegionTravel.advance_upkeep(before, float(outcome.at), {"moving": false, "safe_rest": true})
+		if not resting.ok: return resting
+		resting.party.upkeep.distance = float(before.upkeep.get("distance", 0.0))
+		resting.party.upkeep.blocked_reason = str(motion.get("code", "WALL_EDGE"))
+		resting.arrived = false
+		resting.action_seconds = float(outcome.action_seconds)
+		resting.position = _region_route_position(status.plan, float(resting.party.upkeep.distance))
+		var frame: Dictionary = before.upkeep.live.frame
+		var leader: Dictionary = frame.people[str(int(before.leader_person_id))]
+		var hold_poses := {}
+		for identity: String in before.content.get("vehicles", {}):
+			hold_poses[identity] = {"world_anchor": frame.vehicles[identity].world_cell.duplicate(),
+				"facing": before.content.vehicles[identity].facing.duplicate()}
+		var hold: Dictionary = original.lab.prepare_region_party_map_motion(before, resting.party,
+			{"world_cell": leader.world_cell.duplicate(), "vehicle_poses": hold_poses})
+		if not hold.ok: return hold
+		return resting
+	return outcome
+
+func _region_publish_land_candidate(token: String, candidate: Dictionary, expected_hash: String) -> Dictionary:
+	if not region_original_party_progress.is_valid(): return fail("MISSING_REGION_PARTY_PROGRESS")
+	var host: Object = region_original_party_progress.get_object()
+	var original: TerrainLab = get_meta(&"region_party_owner_labs", {}).get(token)
+	if not host is TerrainLab or host.site_controller == null or host.site_controller.region_slot != self \
+			or not is_instance_valid(original) or original.site_controller == null or original.site_controller.region_slot != self \
+			or original._region_party_token != token or original.terrain == null or original._region_bound_data != original.terrain \
+			or not original.region_bind_receipt(original.terrain).get("complete", false): return fail("COMMITTED_UNBOUND")
+	if expected_hash.is_empty() or original._region_party_input_hash != expected_hash \
+			or original.terrain.get_meta(&"region_party_owner", {}).get("party_hash") != expected_hash \
+			or absf(float(candidate.upkeep.at) - float(control.logical_game_seconds)) > 0.00000001 \
+			or absf(float(candidate.upkeep.owner_action_seconds) - float(control.fire_clock.action_seconds)) > 0.00000001:
+		return fail("STALE_REGION_PARTY_OWNER")
+	var old_hash := str(original._region_party_input_hash)
+	var old_owner: Dictionary = original.terrain.get_meta(&"region_party_owner", {}).duplicate(true)
+	var captured: Dictionary = host._region_capture_original_party(original, candidate, self,
+		float(candidate.upkeep.at), float(candidate.upkeep.owner_action_seconds))
+	if not captured.ok: return captured
+	if var_to_bytes(captured.party.content) != var_to_bytes(candidate.content):
+		original._region_party_input_hash = old_hash
+		original.terrain.set_meta(&"region_party_owner", old_owner)
+		return fail("ROUTE_BODY_CHANGED", "原路線後驗只能發布同一已完成原身體")
+	return {"ok": true, "party": captured.party, "lab": original}
+
+func _region_revalidate_completed_land_outcome(token: String, outcome: Dictionary,
+		plan: Dictionary, path: String) -> Dictionary:
+	var party: Dictionary = outcome.get("party", {})
+	if str(party.get("mode", "land")) != "land" or str(party.get("upkeep", {}).get("live", {}).get("upkeep", "")) == "liveBody": return {"ok": true, "outcome": outcome}
+	var expected_hash := Marshalls.raw_to_base64(var_to_bytes(party)).sha256_text()
+	var proof: Dictionary = party.get("upkeep", {}).get("pending_route_entry", {})
+	if proof.is_empty() and party.upkeep.has("route_blocked"):
+		var blocked: Dictionary = party.upkeep.route_blocked
+		proof = {"version": 1, "plan_id": path, "from_index": int(blocked.get("from_index", -1)),
+			"to_index": int(blocked.get("to_index", -1)), "source_node": party.upkeep.get("route_node", {}).duplicate(true),
+			"distance": float(party.upkeep.get("distance", 0.0)), "at": float(party.upkeep.at)}
+	elif proof.is_empty() and plan.get("steps") is Array and plan.steps.size() >= 2:
+		var view := _region_land_physical_plan(plan)
+		var distance := _region_land_physical_distance(view, party.upkeep, path)
+		if distance >= float(view.metres) - 0.00000001:
+			var from_index: int = plan.steps.size() - 2
+			proof = {"version": 1, "plan_id": path, "from_index": from_index, "to_index": from_index + 1,
+				"source_node": _region_land_route_node(party, plan, path, from_index), "distance": distance, "at": float(party.upkeep.at)}
+			party = party.duplicate(true)
+			party.upkeep.distance = distance
+			party.upkeep.route_distance_version = 1
+			party.upkeep.pending_route_entry = proof
+	if proof.is_empty(): return {"ok": true, "outcome": outcome}
+	var index := int(proof.get("from_index", -1))
+	var node: Dictionary = proof.get("source_node", {})
+	if proof.get("version") != 1 or str(proof.get("plan_id", "")) != path or index < 0 or index + 1 >= plan.steps.size() \
+			or int(proof.get("to_index", -1)) != index + 1 or node.get("version") != 1 \
+			or str(node.get("plan_id", "")) != path or int(node.get("index", -1)) != index \
+			or node.get("site") != plan.steps[index].site or not RegionTravel._frame_pair(node.get("cell")) \
+			or not node.get("vehicle_poses") is Dictionary or not _seconds(proof.get("at")) \
+			or absf(float(proof.at) - float(party.upkeep.at)) > 0.00000001 \
+			or not _seconds(proof.get("distance")) or absf(float(proof.distance) - float(party.upkeep.distance)) > 0.00000001:
+		return fail("CORRUPT_ROUTE_ENTRY", "已付原入口缺同一 source node／端點 proof")
+	var coordinates: Array[Vector2i] = [Vector2i(int(plan.steps[index].site[0]), int(plan.steps[index].site[1])),
+		Vector2i(int(plan.steps[index + 1].site[0]), int(plan.steps[index + 1].site[1]))]
+	var prepared := prepare_region_route_context(null, party, coordinates)
+	if not prepared.ok: return prepared
+	var context: Dictionary = prepared.context
+	context.capabilities.start_cell = Vector2i(int(node.cell[0]), int(node.cell[1]))
+	context.capabilities.vehicle_poses = node.vehicle_poses.duplicate(true)
+	var entry := RegionRoute.revalidate_land_entry(source, plan.steps, index, context)
+	if not entry.ok and str(entry.get("code", "")) not in ["WALL_EDGE", "VEHICLE_BLOCKED", "VEHICLE_POLICY"]: return entry
+	var result := outcome.duplicate(true)
+	result.party = party.duplicate(true)
+	var accepted: Dictionary = result.party
+	if entry.ok:
+		accepted.upkeep.route_node = _region_land_route_node(accepted, plan, path, index + 1, int(entry.component))
+		accepted.upkeep.erase("route_blocked")
+		accepted.upkeep.blocked_reason = str(result.get("reason", ""))
+		result.arrived = float(accepted.upkeep.distance) >= float(_region_land_physical_plan(plan).metres) - 0.00000001
+	else:
+		var retained := node.duplicate(true)
+		var current_leg := RegionRoute.current_land_leg(source, plan.steps[index], context)
+		if not current_leg.ok: return current_leg
+		var current_component := RegionRoute.component_of(current_leg.derived, Vector2i(int(node.cell[0]), int(node.cell[1])))
+		if current_component >= 0: retained.component = current_component
+		accepted.upkeep.route_node = retained
+		accepted.upkeep.route_blocked = {"version": 1, "plan_id": path, "from_index": index, "to_index": index + 1,
+			"code": str(entry.code), "message": str(entry.get("message", "原已付入口目前受阻"))}
+		accepted.upkeep.blocked_reason = accepted.upkeep.route_blocked.message
+		result.arrived = false
+	var captured := _region_publish_land_candidate(token, accepted, expected_hash)
+	if not captured.ok: return captured
+	result.party = captured.party
+	if outcome.has("source_party"): result.source_party = outcome.source_party
+	result.position = _region_current_land_position(captured.party, plan, path)
+	return {"ok": true, "outcome": result, "blocked": not entry.ok, "entry": entry}
+
+func acknowledge_region_original_party_bind(token: String, party: Dictionary, original: TerrainLab, receipt: Dictionary) -> Dictionary:
+	var selected := region_live_party_proof(token)
+	if not selected.ok: return selected
+	var checked := validate_region_live_party_proof(token, party, selected.proof)
+	if not checked.ok: return checked
+	if not selected.original_live_graph.is_empty() or party.upkeep.has("live"):
+		return fail("REGION_PARTY_MODE", "專用 party graph 須走原 selected bind")
+	var fingerprint := str(selected.proof.party_hash)
+	var owner := "travel:" + token
+	if not is_instance_valid(original) or not original.is_inside_tree() or original.site_controller == null \
+			or original.site_controller.region_slot != self or original.terrain == null \
+			or original._region_bound_data != original.terrain or str(original.terrain.site.id) != owner \
+			or original._region_party_token != token or original._region_party_input_hash != fingerprint \
+			or original.terrain.get_meta(&"region_party_owner", {}).get("party_hash") != fingerprint \
+			or original.region_bind_receipt(original.terrain) != receipt or receipt.get("ok") != true \
+			or receipt.get("complete") != true or receipt.get("owners_restored") != true:
+		return fail("REGION_BIND", "原 party 完整 body／綁定收據不同")
+	var prior: Dictionary = region_registry().modes.get(owner, {})
+	if not prior.is_empty():
+		var valid := GameplayClock.validate_mode(prior, owner, float(control.logical_game_seconds))
+		if not valid.ok: return valid
+		if prior.mode != "cold_exact" or prior.backend != "gd" or prior.consumer != "original_region_travel" \
+				or int(prior.generation) != int(_marker.generation): return fail("REGION_PARTY_MODE")
+		if prior.activation.get("complete") == true: return {"ok": true, "mode": prior}
+	var activation := receipt.duplicate(true)
+	activation.owner = owner
+	activation.mode = "cold_exact"
+	activation.generation = int(_marker.generation)
+	activation.backend = "gd"
+	activation.consumer = "original_region_travel"
+	return activate_region_mode(owner, "cold_exact", "original_region_travel", activation, "gd")
+
+func _detached_cold_copy(data: TerrainData, original: TerrainLab) -> Dictionary:
+	if original == null or not data.site.has("region_snapshot"):
+		if data.site.has("region_snapshot"):
+			var stored := Store.validate_region_snapshot(data, {})
+			if not stored.ok:
+				if str(stored.get("code", "")) == "CORRUPT_REGION_SNAPSHOT":
+					stored["source"] = "cold_detach_unbound"
+					stored["site_id"] = str(data.site.get("id", ""))
+				return stored
+		return {"ok": true, "data": Env.navigation_for_state(data, data.site.duplicate(true))}
+	var before_hash := RegionCheckpoint.state_hash(data.site)
+	var stored_snapshot: Variant = data.site.get("region_snapshot")
+	if stored_snapshot is Dictionary: stored_snapshot = stored_snapshot.duplicate(true)
+	var effects_complete: bool = original._region_point_pending.is_empty() and not original._region_point_consuming and pending_region_events().is_empty()
+	var capture: Dictionary = original.site_controller.capture_region_checkpoint("region_checkpoint" if effects_complete else "region_barrier",
+		effects_complete, original._region_point_pending)
+	var after_hash := RegionCheckpoint.state_hash(data.site)
+	if before_hash != after_hash or data.site.get("region_snapshot") != stored_snapshot:
+		return {"ok": false, "code": "REGION_DETACH_MUTATED_ORIGINAL", "message": "原 owner 擷取改變了原 Lab 狀態；拒絕分離副本",
+			"source": "cold_detach", "site_id": str(data.site.get("id", "")), "before_hash": before_hash, "after_hash": after_hash}
+	if not capture.ok: return capture
+	if not capture.get("state") is Dictionary or not capture.state.has("region_snapshot"):
+		return fail("MISSING_FRESH_REGION_SNAPSHOT", "原 owner 未產生新的 region snapshot；拒絕用舊快照分離")
+	var state: Dictionary = capture.state.duplicate(true)
+	# Hash-excluded transient fields return to the copy exactly as the original held them.
+	for field: String in ["water_links", "water_status", "notices"]:
+		if data.site.has(field): state[field] = data.site[field].duplicate(true) if data.site[field] is Dictionary or data.site[field] is Array else data.site[field]
+		else: state.erase(field)
+	var copy := Env.navigation_for_state(data, state)
+	var fresh := Store.validate_region_snapshot(copy, {})
+	if not fresh.ok:
+		if str(fresh.get("code", "")) == "CORRUPT_REGION_SNAPSHOT":
+			fresh["source"] = "cold_detach_fresh"
+			fresh["site_id"] = str(data.site.get("id", ""))
+		return fresh
+	return {"ok": true, "data": copy, "before_hash": before_hash, "after_hash": after_hash}
+
+
+func _initial_technology_categories() -> Array:
+	# POSITIVE-ONLY RELEASE CANDIDATE: Root may publish this method only AFTER
+	# the named four-category birth/pin/first-earned/manufacture/master-loss/
+	# cold/UI/contact/source + Eco/Region release gates have actually passed.
+	# Default existing method [] is retained until that explicit publication.
+	var catalog: Script = load("res://scripts/terrain_lab/site_technology_catalog.gd")
+	var result: Array = []
+	for identity: String in ["F04", "F06", "F11", "F12"]:
+		var node: Dictionary = catalog.call("get_node", identity) if catalog != null else {}
+		if node.get("id") != identity or node.get("scope") != "family" or node.get("enabled") != true or node.get("status") != "implemented" or node.get("tuning_confirmed") != true: return []
+		result.append(identity)
+	return result # Original new_policy validates and freezes this original pin.
+
+
+func _region_guard_current_land_arrival(token: String, party: Dictionary, plan: Dictionary, path: String) -> Dictionary:
+	if str(party.get("mode", "land")) != "land" or str(party.get("upkeep", {}).get("live", {}).get("upkeep", "")) == "liveBody":
+		return {"ok": true, "party": party}
+	if not region_original_party_progress.is_valid(): return fail("MISSING_REGION_PARTY_PROGRESS")
+	var host: Object = region_original_party_progress.get_object()
+	if not host is TerrainLab or host.site_controller == null or host.site_controller.region_slot != self: return fail("INVALID_REGION_PARTY_PROGRESS")
+	var restored: Dictionary = host.prepare_region_party_original_owner(token, party, self)
+	if not restored.ok: return restored
+	var runtime := region_original_party_runtime_proof(token, party)
+	if not runtime.ok: return runtime
+	var validated := _region_revalidate_completed_land_outcome(token, {"ok": true, "party": party, "arrived": true}, plan, path)
+	if not validated.ok: return validated
+	var accepted: Dictionary = validated.outcome.party
+	var player := str(region_travel_journey().get("token", "")) == token
+	if player:
+		_travel_party_runtime = accepted
+		_travel_party_runtime_token = token
+	else:
+		_region_npc_party_runtime[token] = accepted
+		if validated.outcome.has("position"):
+			region_registry().parties[token].position = {"site": validated.outcome.position.site.duplicate(), "component": int(validated.outcome.position.component)}
+	if bool(validated.get("blocked", false)) or accepted.upkeep.has("route_blocked"):
+		return fail("REGION_ENTRY_BLOCKED", "已付原到站入口目前受阻，保留同一 source node")
+	var position := _region_current_land_position(accepted, plan, path)
+	if int(position.step_index) != plan.steps.size() - 1 or not bool(validated.outcome.get("arrived", false)):
+		return fail("INCOMPLETE_JOURNEY", "原旅隊尚未完成同一實際路線")
+	return {"ok": true, "party": accepted, "position": position}
+
+## A navigation-only forecast can legitimately fail at its paid point. The
+## ORIGINAL event completes once with a genuine current-owner no-effect
+## receipt. Its ID/time/sequence stay immutable; retry uses a new attempt ID.
+
+
+func _region_land_event_committed_endpoint(event: Dictionary) -> Dictionary:
+	var payload: Dictionary = event.get("payload", {})
+	var owner := str(event.get("owner", ""))
+	if owner.is_empty() or owner != str(control.active_site_id) or not region_travel_journey().is_empty():
+		return {"ok": true, "committed": false}
+	var player_token := str(payload.get("player_token", ""))
+	var npc_token := str(payload.get("token", ""))
+	var player_published := not player_token.is_empty() and str(_marker.get("transfer_token", "")) == player_token
+	var npc_published := false
+	if not npc_token.is_empty():
+		var reference: Dictionary = region_registry().parties.get(npc_token, {})
+		npc_published = str(reference.get("controller", "")) == "npc" and str(reference.get("phase", "")) == "entered" \
+			and str(reference.get("destination_site", "")) == owner \
+			and absf(float(reference.get("arrival_game_seconds", -1.0)) - float(event.at)) < 0.00000001 \
+			and str(payload.get("entered_site", owner)) == owner
+	if not player_published and not npc_published: return {"ok": true, "committed": false}
+	if not player_token.is_empty() and not player_published or not npc_token.is_empty() and not npc_published:
+		return fail("STALE_REGION_ENDPOINT", "原已提交 joint 端點引用不同")
+	var mode: Dictionary = region_registry().modes.get(owner, {})
+	if not GameplayClock.validate_mode(mode, owner, float(control.logical_game_seconds)).ok \
+			or int(mode.get("generation", -1)) != int(_marker.generation): return fail("COMMITTED_UNBOUND")
+	if not region_owner_lab.is_valid(): return fail("MISSING_REGION_ADAPTER")
+	var selected: Dictionary = region_owner_lab.call(owner, "live")
+	if not selected.get("ok", false) or not selected.get("lab") is TerrainLab: return selected
+	var actual: TerrainLab = selected.lab
+	if actual.site_controller == null or actual.site_controller.region_slot != self or actual.terrain == null \
+			or actual._region_bound_data != actual.terrain or str(actual.terrain.site.id) != owner: return fail("COMMITTED_UNBOUND")
+	var coordinate := _coordinate(actual.terrain)
+	if not coordinate.ok or not _marker.sites.has(_site_key(coordinate.site)): return fail("COMMITTED_UNBOUND")
+	var receipt := actual.region_bind_receipt(actual.terrain)
+	if not receipt.get("complete", false) or not receipt.get("owners_restored", false) \
+			or str(receipt.get("owner", "")) != owner or int(receipt.get("generation", -1)) != int(_marker.generation):
+		return fail("COMMITTED_UNBOUND")
+	return {"ok": true, "committed": true, "receipt": receipt}
+
+
+func _region_consume_blocked_land_event(event: Dictionary) -> Dictionary:
+	if str(event.get("kind", "")) not in ["arrival", "reinforcement", "player_arrival", "player_encounter"]: return {"ok": true, "handled": false}
+	var payload: Dictionary = event.get("payload", {})
+	if str(event.kind) == "reinforcement":
+		if str(payload.get("contact_receipt", {}).get("kind", "")) != "npc_siege_channel" or str(region_registry().parties.get(str(payload.get("token", "")), {}).get("phase", "")) != "travelling": return {"ok": true, "handled": false}
+	if str(event.kind) == "player_encounter" and (not payload.has("contact_receipt") or payload.has("battle_id")):
+		return {"ok": true, "handled": false}
+	var published := _region_land_event_committed_endpoint(event)
+	if not published.ok: return published
+	if bool(published.get("committed", false)): return {"ok": true, "handled": false}
+	var tokens: Array[String] = []
+	var npc_token := str(payload.get("token", ""))
+	if not npc_token.is_empty(): tokens.append(npc_token)
+	var player_token := str(payload.get("player_token", ""))
+	if str(event.kind) == "player_encounter": player_token = str(region_travel_journey().get("token", ""))
+	if not player_token.is_empty() and player_token not in tokens: tokens.append(player_token)
+	var blocked := false
+	var receipts: Array = []
+	for token: String in tokens:
+		var player := str(region_travel_journey().get("token", "")) == token
+		var loaded := region_travel_party() if player else _region_npc_party(token)
+		if not loaded.ok: return loaded
+		var party: Dictionary = loaded.party
+		if str(party.get("mode", "land")) != "land" or str(party.get("upkeep", {}).get("live", {}).get("upkeep", "")) == "liveBody": continue
+		if not region_original_party_progress.is_valid(): return fail("MISSING_REGION_PARTY_PROGRESS")
+		var host: Object = region_original_party_progress.get_object()
+		if not host is TerrainLab or host.site_controller == null or host.site_controller.region_slot != self: return fail("INVALID_REGION_PARTY_PROGRESS")
+		var restored: Dictionary = host.prepare_region_party_original_owner(token, party, self)
+		if not restored.ok: return restored
+		var runtime := region_original_party_runtime_proof(token, party)
+		if not runtime.ok: return runtime
+		var planned := region_travel_plan() if player else _region_npc_plan(token)
+		if not planned.ok: return planned
+		var path := str(region_travel_journey().plan_path) if player else str(region_registry().parties[token].plan_path)
+		var outcome := {"ok": true, "party": party, "arrived": true}
+		var validated := _region_revalidate_completed_land_outcome(token, outcome, planned.plan, path)
+		if not validated.ok: return validated
+		party = validated.outcome.party
+		if player:
+			_travel_party_runtime = party
+			_travel_party_runtime_token = token
+		else:
+			_region_npc_party_runtime[token] = party
+			region_registry().parties[token].position = {"site": validated.outcome.position.site.duplicate(), "component": int(validated.outcome.position.component)} if validated.outcome.has("position") else region_registry().parties[token].position
+		if not bool(validated.get("blocked", false)) and not party.upkeep.has("route_blocked"): continue
+		blocked = true
+		var changed := party.duplicate(true)
+		changed.upkeep.route_entry_attempt = int(changed.upkeep.get("route_entry_attempt", 0)) + 1
+		var captured := _region_publish_land_candidate(token, changed, Marshalls.raw_to_base64(var_to_bytes(party)).sha256_text())
+		if not captured.ok: return captured
+		if player: _travel_party_runtime = captured.party
+		else: _region_npc_party_runtime[token] = captured.party
+		var completed_owner := region_original_party_runtime_proof(token, captured.party)
+		if not completed_owner.ok: return completed_owner
+		var receipt: Dictionary = runtime.lab.region_bind_receipt(runtime.lab.terrain).duplicate(true)
+		receipt.merge({"complete": true, "effects_complete": true, "no_effect": true, "navigation_blocked": true,
+			"event_id": str(event.id), "event_at": float(event.at), "event_sequence": int(event.sequence),
+			"owner": "travel:" + token, "generation": int(_marker.generation), "game_seconds": float(control.logical_game_seconds),
+			"action_seconds": float(control.fire_clock.action_seconds), "source_epoch": completed_owner.proof.duplicate(true),
+			"source_node": captured.party.upkeep.route_node.duplicate(true)}, true)
+		receipts.append(receipt)
+	return {"ok": true, "handled": blocked, "receipt": {"complete": blocked, "effects_complete": blocked,
+		"no_effect": blocked, "navigation_blocked": blocked, "owners": receipts}}
+
+
+func _region_arrival_attempt_id(token: String, party: Dictionary, player: bool, path: String = "") -> String:
+	var original := "travel:%s:arrival:%s" % [token, path] if player else "npc:%s:arrival" % token
+	var attempt := int(party.get("upkeep", {}).get("route_entry_attempt", 0))
+	return original if attempt == 0 else original + ":retry:%d" % attempt
+
+## The original route owns this derived node/pose reference. It never creates
+## another body, relocates a person row, or rewrites an original vehicle pose.
+
+
+func _region_retry_blocked_npc_land_entries() -> Dictionary:
+	var tokens: Array = region_registry().parties.keys()
+	tokens.sort()
+	for token: String in tokens:
+		var reference: Dictionary = region_registry().parties[token]
+		if str(reference.get("controller", "")) != "npc" or str(reference.get("phase", "")) != "travelling": continue
+		var loaded := _region_npc_party(token)
+		if not loaded.ok: return loaded
+		var party: Dictionary = loaded.party
+		if str(party.get("mode", "land")) != "land" or not party.get("upkeep", {}).has("route_blocked"): continue
+		var planned := _region_npc_plan(token)
+		if not planned.ok: return planned
+		var resumed := _region_land_route_preview(party, planned.plan, str(reference.plan_path), float(control.logical_game_seconds))
+		if not resumed.ok: return resumed
+		if not bool(resumed.get("entry_ready", false)): continue
+		if not region_original_party_progress.is_valid(): return fail("MISSING_REGION_PARTY_PROGRESS")
+		var host: Object = region_original_party_progress.get_object()
+		if not host is TerrainLab or host.site_controller == null or host.site_controller.region_slot != self: return fail("INVALID_REGION_PARTY_PROGRESS")
+		var original: Dictionary = host.prepare_region_party_original_owner(token, party, self)
+		if not original.ok: return original
+		var runtime := region_original_party_runtime_proof(token, party)
+		if not runtime.ok: return runtime
+		if var_to_bytes(resumed.party.content) != var_to_bytes(party.content): return fail("ROUTE_BODY_CHANGED")
+		var captured := _region_publish_land_candidate(token, resumed.party, Marshalls.raw_to_base64(var_to_bytes(party)).sha256_text())
+		if not captured.ok: return captured
+		_region_npc_party_runtime[token] = captured.party
+		reference.position = {"site": resumed.position.site.duplicate(), "component": int(resumed.position.component)}
+		var owner := Grid.site_id(str(pin.atlas_id), Vector2i(int(resumed.position.site[0]), int(resumed.position.site[1])))
+		var player_present := owner == str(control.active_site_id)
+		var queued := queue_region_event(_region_arrival_attempt_id(token, captured.party, false), "player_arrival" if player_present else "arrival",
+			float(control.logical_game_seconds), owner, {"token": token, "site": resumed.position.site.duplicate(), "component": int(resumed.position.component)}, player_present)
+		if not queued.ok: return queued
+	return {"ok": true}
+
+
+## A restored entry at the final node is a zero-time P0 admission. Capture the
+## SAME actual original body through its existing capture hook, then let the
+## existing queued-arrival consumer own the Site handoff. No extra world step.
+
+
+func _region_retry_blocked_land_entry() -> Dictionary:
+	if not region_player_barrier().is_empty(): return {"ok": true}
+	var loaded := region_travel_party()
+	if not loaded.ok: return loaded
+	var party: Dictionary = loaded.party
+	if str(party.get("mode", "land")) != "land" or not party.get("upkeep", {}).has("route_blocked"): return {"ok": true}
+	var planned := region_travel_plan()
+	if not planned.ok: return planned
+	var journey := region_travel_journey()
+	var resumed := _region_land_route_preview(party, planned.plan, str(journey.plan_path), float(control.logical_game_seconds))
+	if not resumed.ok: return resumed
+	if not bool(resumed.get("entry_ready", false)): return {"ok": true}
+	if not region_original_party_progress.is_valid(): return fail("MISSING_REGION_PARTY_PROGRESS")
+	var host: Object = region_original_party_progress.get_object()
+	if not host is TerrainLab or host.site_controller == null or host.site_controller.region_slot != self: return fail("INVALID_REGION_PARTY_PROGRESS")
+	if var_to_bytes(resumed.party.content) != var_to_bytes(party.content): return fail("ROUTE_BODY_CHANGED")
+	var original: Dictionary = host.prepare_region_party_original_owner(str(journey.token), party, self)
+	if not original.ok: return original
+	var captured := _region_publish_land_candidate(str(journey.token), resumed.party, Marshalls.raw_to_base64(var_to_bytes(party)).sha256_text())
+	if not captured.ok: return captured
+	_travel_party_runtime = captured.party
+	_travel_party_runtime_token = str(journey.token)
+	var interval := {"game_end": float(control.logical_game_seconds)}
+	var queued := _region_queue_player_travel_outcome(str(journey.token), resumed, interval)
+	if not queued.ok: return queued
+	return consume_due_region_events()
+
+
+func prepare_region_party_map_resume(original: TerrainLab) -> Dictionary:
+	if original == null or not str(control.active_site_id).is_empty() or not _prepared.is_empty():
+		return fail("INVALID_TRAVEL_HOST")
+	var selected := region_travel_party()
+	if not selected.ok: return selected
+	var party: Dictionary = selected.party
+	var token := str(party.party_id)
+	if str(party.get("controller", "")) != "player" or str(party.get("mode", "")) != "land" \
+			or party.upkeep.get("live", {}).is_empty(): return fail("NO_TARGET")
+	var source := region_original_party_runtime_proof(token, party)
+	if not source.ok or source.get("lab") != original: return source if not source.ok else fail("INVALID_TRAVEL_HOST")
+	var guarded: Dictionary = original.region_party_map_resume_guard(party)
+	if not guarded.ok: return guarded
+	var leader: Dictionary = party.upkeep.live.frame.people.get(str(int(party.leader_person_id)), {})
+	if not RegionTravel._frame_pair(leader.get("world_cell")): return fail("MISSING_ORIGINAL_POSITION")
+	var world := Vector2i(int(leader.world_cell[0]), int(leader.world_cell[1]))
+	var site := Vector2i(Grid.floor_div(world.x, 100), -Grid.floor_div(world.y, 100))
+	var local := world - Vector2i(site.x * 100, -site.y * 100)
+	var prepared := prepare_region_route_context(null, party)
+	if not prepared.ok: return prepared
+	var navigation := RegionRoute.effective_terrain(self.source, site, prepared.context)
+	if not navigation.ok: return navigation
+	var cover: Dictionary = self.source.site_resource_cover(site)
+	var derived := RegionRoute.table_from_terrain(navigation.data, cover.get("cover", PackedByteArray()), true)
+	if not derived.ok: return derived
+	var component := RegionRoute.component_of(derived, local)
+	if component < 0: return fail("WALL_EDGE")
+	var poses := {}
+	for identity: String in party.content.get("vehicles", {}):
+		var vehicle: Dictionary = party.content.vehicles[identity]
+		if str(vehicle.kind) not in ["cart", "wagon"] or not vehicle.get("move", {}).is_empty():
+			return fail("ORIGINAL_VEHICLE_MOTION_REQUIRED")
+		var at: Dictionary = party.upkeep.live.frame.vehicles.get(identity, {})
+		var operator: Dictionary = party.upkeep.live.frame.people.get(str(int(vehicle.operator_id)), {})
+		if not RegionTravel._frame_pair(at.get("world_cell")) or not RegionTravel._frame_pair(operator.get("world_cell")):
+			return fail("MISSING_ORIGINAL_POSITION")
+		var base := Vector2i(site.x * 100, -site.y * 100)
+		var anchor := Vector2i(int(at.world_cell[0]), int(at.world_cell[1])) - base
+		var person := Vector2i(int(operator.world_cell[0]), int(operator.world_cell[1])) - base
+		if not navigation.data.contains(anchor) or not navigation.data.contains(person):
+			return fail("STRADDLED_ORIGINAL_VEHICLE", "原載體仍跨界；保留同一原實體與已付點，不能改到中心")
+		poses[identity] = {"anchor": [anchor.x, anchor.y], "operator": [person.x, person.y], "facing": vehicle.facing.duplicate()}
+	return {"ok": true, "token": token, "original": original, "source_party": party,
+		"source_proof": source.proof.duplicate(true), "source_graph": source.original_live_graph,
+		"native_references": guarded.native_references, "bind_token": guarded.bind_token,
+		"game_seconds": float(control.logical_game_seconds), "action_seconds": float(control.fire_clock.action_seconds),
+		"journey": region_travel_journey().duplicate(true), "site": site, "cell": local, "component": component,
+		"vehicle_poses": poses, "world_cell": world, "already_map": str(party.upkeep.live.get("upkeep", "")) == "mapBody"}
+
+
+func resume_region_party_map(original: TerrainLab, prepared: Dictionary = {}) -> Dictionary:
+	if prepared.is_empty(): prepared = prepare_region_party_map_resume(original)
+	if not prepared.get("ok", false): return prepared
+	var current := prepare_region_party_map_resume(original)
+	if not current.ok: return current
+	if prepared.get("original") != original or prepared.get("source_proof") != current.source_proof \
+			or prepared.get("bind_token") != current.bind_token or not is_same(prepared.get("source_party"), current.source_party) \
+			or prepared.get("game_seconds") != current.game_seconds or prepared.get("action_seconds") != current.action_seconds:
+		return fail("STALE_REGION_MAP_RESUME")
+	if current.already_map: return {"ok": true, "token": current.token, "complete": true, "same_original_body": true, "idempotent": true}
+	var prior: Dictionary = current.source_party
+	var candidate: Dictionary = prior.duplicate(true)
+	candidate.upkeep.live.upkeep = "mapBody"
+	candidate.upkeep.map_resume = {"version": 1, "game_seconds": current.game_seconds, "action_seconds": current.action_seconds,
+		"source_generation": int(current.source_proof.generation), "source_revision": int(current.source_proof.revision),
+		"accepted_world_cell": [current.world_cell.x, current.world_cell.y], "source_party_sha256": str(current.source_proof.sha256)}
+	# Retain the historical paid distance/cursor. A new plan gets its own distance
+	# domain through the existing set_region_travel_plan consumer.
+	candidate.upkeep.route_node = {"version": 1, "plan_id": "", "index": 0, "site": [current.site.x, current.site.y],
+		"component": current.component, "cell": [current.cell.x, current.cell.y], "vehicle_poses": current.vehicle_poses.duplicate(true)}
+	candidate.upkeep.erase("route_blocked")
+	var journey: Dictionary = current.journey.duplicate(true)
+	journey.position = {"site": [current.site.x, current.site.y], "component": current.component}
+	journey.plan_path = ""; journey.plan_sha256 = ""
+	var old_hash := original._region_party_input_hash
+	var old_meta: Dictionary = original.terrain.get_meta(&"region_party_owner").duplicate(true)
+	_travel_party_runtime = candidate; _travel_party_runtime_token = current.token
+	original._region_party_input_hash = TerrainLab._region_party_hash(candidate)
+	var owner: Dictionary = old_meta.duplicate(true)
+	owner.party_hash = original._region_party_input_hash
+	original.terrain.set_meta(&"region_party_owner", owner)
+	var generation := int(_marker.generation)
+	var saved := checkpoint_region_travel(journey)
+	if not saved.ok:
+		if int(_marker.generation) == generation:
+			_travel_party_runtime = prior
+			original._region_party_input_hash = old_hash; original.terrain.set_meta(&"region_party_owner", old_meta)
+		return saved
+	var proof := region_original_party_runtime_proof(current.token, _travel_party_runtime)
+	if not proof.ok: return fail("COMMITTED_UNBOUND", "已提交同一原 graph；依共同 marker 重開，不重付已接受点")
+	return {"ok": true, "token": current.token, "complete": true, "same_original_body": true,
+		"generation": int(_marker.generation), "site": current.site, "body_hash": original._region_party_input_hash}
+
+
+## Returning the input to the original visible action mode retains the same
+## party/native aliases and every accepted point. It creates no P0 event.
+
+
+func return_original_mode(original: TerrainLab) -> Dictionary:
+	var current := prepare_region_party_map_resume(original)
+	if not current.ok: return current
+	if not current.already_map: return {"ok": true, "complete": true, "same_original_body": true, "idempotent": true}
+	var prior: Dictionary = current.source_party
+	var candidate: Dictionary = prior.duplicate(true)
+	candidate.upkeep.live.upkeep = "liveBody"
+	var old_hash := original._region_party_input_hash
+	var old_meta: Dictionary = original.terrain.get_meta(&"region_party_owner").duplicate(true)
+	var generation := int(_marker.generation)
+	_travel_party_runtime = candidate
+	original._region_party_input_hash = TerrainLab._region_party_hash(candidate)
+	var owner: Dictionary = old_meta.duplicate(true); owner.party_hash = original._region_party_input_hash
+	original.terrain.set_meta(&"region_party_owner", owner)
+	var saved := checkpoint_region_travel()
+	if not saved.ok:
+		if int(_marker.generation) == generation:
+			_travel_party_runtime = prior; original._region_party_input_hash = old_hash
+			original.terrain.set_meta(&"region_party_owner", old_meta)
+		return saved
+	original._region_map_motion_proposal = {}
+	return {"ok": true, "complete": true, "token": current.token, "same_original_body": true, "generation": int(_marker.generation)}
+
+
+## The retained plan supplies the true entry/exit. The initial accepted native
+## position supplies the start; the map never moves the body back to a center.
+
+
+func _region_stop_original_map_party(party: Dictionary) -> Dictionary:
+	var source := region_original_party_runtime_proof(str(party.party_id), party)
+	if not source.ok: return source
+	var current := prepare_region_party_map_resume(source.lab)
+	if not current.ok: return current
+	var candidate: Dictionary = party.duplicate(true)
+	var node: Dictionary = _region_map_route_reference(party)
+	if node.is_empty(): return fail("MISSING_ORIGINAL_POSITION")
+	node.merge({"version": 1, "plan_id": "", "index": 0, "component": int(current.component)})
+	candidate.upkeep.route_node = node
+	candidate.upkeep.erase("route_blocked")
+	candidate.upkeep.erase("pending_route_entry")
+	var journey: Dictionary = current.journey.duplicate(true)
+	journey.position = {"site": node.site.duplicate(), "component": int(current.component)}
+	journey.plan_path = ""; journey.plan_sha256 = ""
+	var original: TerrainLab = source.lab
+	var old_hash := original._region_party_input_hash
+	var old_meta: Dictionary = original.terrain.get_meta(&"region_party_owner").duplicate(true)
+	var generation := int(_marker.generation)
+	_travel_party_runtime = candidate
+	original._region_party_input_hash = TerrainLab._region_party_hash(candidate)
+	var owner: Dictionary = old_meta.duplicate(true); owner.party_hash = original._region_party_input_hash
+	original.terrain.set_meta(&"region_party_owner", owner)
+	var saved := checkpoint_region_travel(journey)
+	if not saved.ok:
+		if int(_marker.generation) == generation:
+			_travel_party_runtime = party; original._region_party_input_hash = old_hash
+			original.terrain.set_meta(&"region_party_owner", old_meta)
+		return saved
+	original._region_map_motion_proposal = {}
+	return {"ok": true, "complete": true, "same_original_body": true, "token": str(party.party_id)}
+
+
+const OFFICER_FEATURE_INTEL_GAME_SECONDS := 3600.0
+
+const DeliverySight = preload("res://scripts/terrain_lab/site_army_ai.gd")
+
+
+func record_region_officer_feature_observation(original: TerrainLab, observer_id: int, feature_id: String) -> Dictionary:
+	if not is_instance_valid(original) or original.site_controller == null or original.site_controller.region_slot != self \
+		or _region_bound_original_lab(original.terrain) != original or original.crowd_site != null and original.crowd_site.active: return fail("MISSING_ORIGINAL_OBSERVER")
+	var bind := original.region_bind_receipt(original.terrain)
+	var settled := validate_settlement(original.terrain.site, float(control.logical_game_seconds))
+	var fire: Dictionary = original.terrain.site.get("fire_settlement", {})
+	if not bind.get("complete", false) or int(bind.get("generation", -1)) != int(_marker.generation) \
+		or not settled.ok or settled.legacy or float(settled.pending) > 0.00000001 \
+		or not validate_fire_settlement(original.terrain.site, control.fire_clock).ok \
+		or int(fire.get("sequence", -1)) != int(control.fire_clock.sequence) \
+		or float(fire.get("action_seconds", -1.0)) != float(control.fire_clock.action_seconds): return fail("STALE_ORIGINAL_OBSERVER")
+	var reference := RegionAI.person_ref(original.terrain.site, observer_id)
+	var person := _region_delivery_person(original, reference)
+	if person.is_empty() or not SiteSettlement._fit(person) or _region_delivery_office(original, observer_id).is_empty(): return fail("NO_OBSERVER_OFFICE")
+	var feature: Dictionary = original.terrain.site.get("features", {}).get(feature_id, {})
+	if feature.is_empty() or not feature.get("cells") is Array: return fail("NO_VISIBLE_FEATURE")
+	var visible := TerrainArmy.INVALID_CELL
+	var observers: Array = [{"cell": person.cell}]
+	for index: Variant in feature.cells:
+		var cell := original.terrain.cell_from_index(int(index))
+		if DeliverySight._observed_cell(original, observers, cell, DeliverySight.THREAT_DISTANCE):
+			visible = cell
+			break
+	if visible == TerrainArmy.INVALID_CELL: return fail("NO_VISIBLE_FEATURE")
+	var scope := str(original.terrain.site.id)
+	var now := float(control.logical_game_seconds)
+	var value := {"kind": str(feature.get("kind", "")), "owner_faction": int(feature.get("owner_faction", 0)), "cell": [visible.x, visible.y]}
+	var object := "feature:" + feature_id
+	var key := scope + "/" + object
+	var known := RegionAI.view(region_registry(), observer_id, now, scope, reference)
+	var prior: Dictionary = known.get(key, {})
+	if prior.get("observation_kind") == "officer_visible_feature" and prior.get("source") == "site_observation" \
+		and prior.get("observer_ref") == reference and prior.get("value") == value:
+		# The same last-known fact retains its original age and expiry. There
+		# is no every-evaluation timestamp refresh or unbounded duplicate stream.
+		return {"ok": true, "duplicate": true, "receipt": prior.duplicate(true)}
+	var receipt := {"id": "officer-feature:%s:%s:%s:%.6f" % [scope, RegionTravel.stable_key(reference), feature_id, now],
+		"source": "site_observation", "observation_kind": "officer_visible_feature", "observer": observer_id, "receiver": observer_id,
+		"observer_scope": scope, "receiver_scope": scope, "object_scope": scope,
+		"observer_ref": reference.duplicate(true), "receiver_ref": reference.duplicate(true), "object": object, "value": value,
+		"game_time": now, "expires_at": now + OFFICER_FEATURE_INTEL_GAME_SECONDS, "confidence": 1.0}
+	var recorded := RegionAI.observe(region_registry(), receipt)
+	if not recorded.ok: return recorded
+	return {"ok": true, "receipt": receipt.duplicate(true)}
+
+## The existing Region evaluation caller supplies a fully settled local owner.
+## Only its current officers perceive their own visible structures. Nothing
+## is shared to another same-faction person without a physical carried report.
+
+
+func record_region_officer_feature_observations(original: TerrainLab) -> Dictionary:
+	var officers: Array[int] = []
+	for team: TerrainArmy in original.combat_armies:
+		if team.combat_enabled and team.current_commander >= 0:
+			var identity := team.combat_identity(team.current_commander)
+			if identity > 0 and not officers.has(identity): officers.append(identity)
+	for nation: Dictionary in original.terrain.site.get("equipment_nations", {}).values():
+		if not SiteOffices.validate(nation.get("offices", {}), "nation"): continue
+		for position: Dictionary in nation.offices.positions:
+			var holder := int(position.holder)
+			if holder > 0 and not officers.has(holder): officers.append(holder)
+	var count := 0
+	for officer: int in officers:
+		for feature_id: String in original.terrain.site.get("features", {}):
+			var observed := record_region_officer_feature_observation(original, officer, feature_id)
+			if not observed.ok:
+				if str(observed.get("code", "")) in ["NO_OBSERVER_OFFICE", "NO_VISIBLE_FEATURE"]: continue
+				return observed
+			if not observed.get("duplicate", false): count += 1
+	return {"ok": true, "observed": count}
+
+## One original NPC dispatch carries the immutable report/standing command.
+## This prepares the same original dispatch candidate; its single marker owns
+## departure, party document and reports ledger together.
+
+
+func prepare_region_carried_report(dispatch: Dictionary, source_receipt_id: String,
+		receiver_scope: String, receiver_id: int, command: Dictionary = {}, courier_id: int = 0) -> Dictionary:
+	if not dispatch.get("ok", false) or dispatch.get("duplicate", false) or not dispatch.get("lab") is TerrainLab \
+		or int(dispatch.get("generation", -1)) != int(_marker.generation) or int(dispatch.get("runtime_revision", -1)) != int(region_registry().revision) \
+		or float(dispatch.get("world", -1.0)) != float(control.logical_game_seconds): return fail("STALE_REGION_PERMIT")
+	var source_lab: TerrainLab = dispatch.lab
+	if source_lab.site_controller.region_slot != self or _region_bound_original_lab(source_lab.terrain) != source_lab: return fail("STALE_DELIVERY_SOURCE")
+	var source_receipt: Dictionary = region_registry().get("observations", {}).get(source_receipt_id, {})
+	var commander := int(dispatch.request.decider)
+	var source_scope := str(source_lab.terrain.site.id)
+	var issuer_ref := RegionAI.person_ref(source_lab.terrain.site, commander)
+	if source_receipt.is_empty() or issuer_ref.is_empty() or not RegionAI.receiver_matches(source_receipt, commander, source_scope, issuer_ref) \
+		or maxf(float(source_receipt.get("game_time", INF)), float(source_receipt.get("received_at", -INF))) > float(control.logical_game_seconds) \
+		or float(source_receipt.get("expires_at", -INF)) < float(control.logical_game_seconds): return fail("UNKNOWN_REPORT_SOURCE")
+	if not RegionAI.valid_person_ref(source_receipt.get("observer_ref")): return fail("UNTYPED_REPORT_SOURCE")
+	if not region_owner_lab.is_valid(): return fail("MISSING_REGION_ADAPTER")
+	var current_mode := "live" if receiver_scope == str(control.active_site_id) else str(region_registry().modes.get(receiver_scope, {}).get("mode", "cold_exact"))
+	var receiver_owner: Dictionary = region_owner_lab.call(receiver_scope, current_mode)
+	if not receiver_owner.get("ok", false) or not receiver_owner.get("lab") is TerrainLab: return receiver_owner
+	var receiver_lab: TerrainLab = receiver_owner.lab
+	var receiver_ref := RegionAI.person_ref(receiver_lab.terrain.site, receiver_id)
+	var receiver_person := _region_delivery_person(receiver_lab, receiver_ref)
+	var issuer := _region_delivery_person(source_lab, issuer_ref)
+	var courier := int(dispatch.request.commander) if courier_id <= 0 else courier_id
+	var courier_ref: Dictionary = dispatch.party.content.travel_identity.refs.person.get(str(courier), {})
+	var team_ref: Dictionary = dispatch.party.content.travel_identity.refs.team.get(str(int(dispatch.request.team_id)), {})
+	if issuer.is_empty() or receiver_person.is_empty() or not SiteSettlement._fit(issuer) or float(receiver_person.hp) <= 0.0 \
+		or int(receiver_person.faction) != int(issuer.faction) or receiver_ref.is_empty() \
+		or not RegionAI.delivery_reference(courier_ref, "person") or not RegionAI.delivery_reference(team_ref, "team"): return fail("INVALID_DELIVERY_PERSON")
+	var office := _region_delivery_office(receiver_lab, receiver_id)
+	if office.is_empty(): return fail("NO_RECEIVER_OFFICE")
+	var destination: Array = dispatch.plan.steps.back().site
+	if receiver_scope != Grid.site_id(str(pin.atlas_id), Vector2i(int(destination[0]), int(destination[1]))): return fail("WRONG_DELIVERY_ROUTE")
+	var id := "carried:%s:%s:%s" % [str(dispatch.token), source_receipt_id, "command" if not command.is_empty() else "report"]
+	var receipt: Dictionary = source_receipt.duplicate(true)
+	receipt.id = id
+	receipt.source = "report"
+	receipt.receiver = receiver_id
+	receipt.receiver_scope = receiver_scope
+	receipt.receiver_ref = receiver_ref.duplicate(true)
+	receipt.erase("received_at")
+	var forecast := float(control.logical_game_seconds)
+	for seconds: Variant in dispatch.plan.seconds: forecast += float(seconds)
+	var delivery := {"version": RegionAI.DELIVERY_VERSION, "kind": "report", "phase": "in_transit", "source_scope": source_scope,
+		"source_game_seconds": float(control.logical_game_seconds), "source_action_seconds": float(control.fire_clock.action_seconds),
+		"source_receipt_sha256": RegionAI.delivery_hash(source_receipt), "issuer_ref": issuer_ref.duplicate(true), "team_ref": team_ref.duplicate(true),
+		"courier_token": str(dispatch.token), "courier_ref": courier_ref.duplicate(true), "receiver_scope": receiver_scope,
+		"receiver_ref": receiver_ref.duplicate(true), "receiver_office": office.duplicate(true), "plan_path": "travel/%s/plan_000001.json" % str(dispatch.token)}
+	if not command.is_empty():
+		return fail("WRONG_STANDING_COMMAND_RECEIVER", "跨 Site 隊長原 standing command 沿 prepare_region_carried_command，收件者是同一原到站隊長")
+	var report := {"id": id, "due": forecast, "receipt": receipt, "source_receipt": source_receipt.duplicate(true), "delivery": delivery}
+	var checked := RegionAI.validate_carried_report(report)
+	if not checked.ok: return checked
+	var preview := RegionAI.queue_report({"observations": {}, "reports": [], "evaluation": {}}, report)
+	if not preview.ok: return preview
+	if not dispatch.has("carried_reports"): dispatch.carried_reports = []
+	dispatch.carried_reports.append(report)
+	return {"ok": true, "dispatch": dispatch, "report": report.duplicate(true)}
+
+## A standing command belongs to the SAME original captain/team during their
+## real travel. Its target is the actual destination entry, not a guessed enemy.
+## It reaches the receiving scope only through that original arrival marker.
+
+
+func prepare_region_carried_command(dispatch: Dictionary, source_receipt_id: String,
+		order: int = TerrainArmy.CombatOrder.HOLD, goal: Vector2i = TerrainArmy.INVALID_CELL) -> Dictionary:
+	if not dispatch.get("ok", false) or not dispatch.get("lab") is TerrainLab or order not in [TerrainArmy.CombatOrder.HOLD, TerrainArmy.CombatOrder.MOVE]: return fail("INVALID_CARRIED_COMMAND")
+	var source_lab: TerrainLab = dispatch.lab
+	var commander := int(dispatch.request.commander)
+	var source_scope := str(source_lab.terrain.site.id)
+	var original: Dictionary = region_registry().get("observations", {}).get(source_receipt_id, {})
+	var issuer_ref: Dictionary = dispatch.party.content.travel_identity.refs.person.get(str(commander), {})
+	var team_ref: Dictionary = dispatch.party.content.travel_identity.refs.team.get(str(int(dispatch.request.team_id)), {})
+	if int(dispatch.get("generation", -1)) != int(_marker.generation) or int(dispatch.get("runtime_revision", -1)) != int(region_registry().revision) \
+		or source_lab.site_controller.region_slot != self or _region_bound_original_lab(source_lab.terrain) != source_lab \
+		or not RegionAI.delivery_reference(issuer_ref, "person") or not RegionAI.delivery_reference(team_ref, "team") \
+		or str(dispatch.request.get("known_receipt", "")) != source_receipt_id or not RegionAI.valid_person_ref(original.get("observer_ref")): return fail("UNKNOWN_COMMAND_SOURCE")
+	var decider := int(dispatch.request.decider)
+	var decision_ref := RegionAI.person_ref(source_lab.terrain.site, decider)
+	if not RegionAI.receiver_matches(original, decider, source_scope, decision_ref) \
+		or not RegionAI.view(region_registry(), decider, float(control.logical_game_seconds), source_scope, decision_ref).has(RegionAI.observation_object_key(original)): return fail("UNKNOWN_COMMAND_SOURCE")
+	var team: TerrainArmy = _region_delivery_team(source_lab, team_ref)
+	if team == null or team.combat_identity(team.current_commander) != commander or not team.command_eligible(team.current_commander): return fail("NO_COMMANDER")
+	var last: Dictionary = dispatch.plan.steps.back()
+	var destination := Grid.site_id(str(pin.atlas_id), Vector2i(int(last.site[0]), int(last.site[1])))
+	var entry := RegionRoute.entry_cell(last)
+	if order == TerrainArmy.CombatOrder.MOVE and goal != entry: return fail("UNKNOWN_COMMAND_GOAL", "首版原 standing MOVE 只到此真 route 入界格")
+	var id := "carried:%s:%s:command" % [str(dispatch.token), source_receipt_id]
+	var receipt := original.duplicate(true)
+	receipt.id = id
+	receipt.source = "report"
+	receipt.receiver = commander
+	receipt.receiver_scope = destination
+	receipt.receiver_ref = issuer_ref.duplicate(true)
+	receipt.erase("received_at")
+	var forecast := float(control.logical_game_seconds)
+	for seconds: Variant in dispatch.plan.seconds: forecast += float(seconds)
+	var delivery := {"version": RegionAI.DELIVERY_VERSION, "kind": "army_command", "phase": "in_transit", "source_scope": source_scope,
+		"source_game_seconds": float(control.logical_game_seconds), "source_action_seconds": float(control.fire_clock.action_seconds),
+		"source_receipt_sha256": RegionAI.delivery_hash(original), "issuer_ref": issuer_ref.duplicate(true), "team_ref": team_ref.duplicate(true),
+		"courier_token": str(dispatch.token), "courier_ref": issuer_ref.duplicate(true), "receiver_scope": destination,
+		"receiver_ref": issuer_ref.duplicate(true), "receiver_office": {"kind": "team", "team_ref": team_ref.duplicate(true), "holder_ref": issuer_ref.duplicate(true)},
+		"plan_path": "travel/%s/plan_000001.json" % str(dispatch.token),
+		"command": {"version": RegionAI.DELIVERY_VERSION, "order": order, "goal": [goal.x, goal.y], "commander_ref": issuer_ref.duplicate(true), "source_order_serial": int(team.get_order_serial())}}
+	var report := {"id": id, "due": forecast, "receipt": receipt, "source_receipt": original.duplicate(true), "delivery": delivery}
+	var valid := RegionAI.validate_carried_report(report)
+	if not valid.ok: return valid
+	if not dispatch.has("carried_reports"): dispatch.carried_reports = []
+	dispatch.carried_reports.append(report)
+	return {"ok": true, "dispatch": dispatch, "report": report.duplicate(true)}
+
+
+func _region_delivery_team(original: TerrainLab, reference: Dictionary) -> TerrainArmy:
+	for team: TerrainArmy in original.combat_armies:
+		if original.terrain.site.get("travel_identity", {}).get("refs", {}).get("team", {}).get(str(team.team_id), {}) == reference: return team
+	return null
+
+
+func _region_delivery_person(original: TerrainLab, reference: Dictionary) -> Dictionary:
+	for key: String in original.terrain.site.get("travel_identity", {}).get("refs", {}).get("person", {}):
+		if RegionAI.person_ref(original.terrain.site, int(key)) != reference: continue
+		var person: Dictionary = original.site_controller.person_actions._person(int(key), false)
+		if person.is_empty(): continue
+		if person.owner is TerrainArmy:
+			if bool(person.owner.combat_hot_get(int(person.unit), &"departed", false)) or bool(person.owner.combat_hot_get(int(person.unit), &"site_exited", false)): continue
+		elif not original.actor_present(person.owner) or bool(person.owner.site_exited): continue
+		return person
+	return {}
+
+
+func _region_delivery_office(original: TerrainLab, person: int) -> Dictionary:
+	for team: TerrainArmy in original.combat_armies:
+		if not team.combat_enabled or team.current_commander < 0 or team.combat_identity(team.current_commander) != person: continue
+		var reference: Dictionary = original.terrain.site.get("travel_identity", {}).get("refs", {}).get("team", {}).get(str(team.team_id), {})
+		if not RegionAI.delivery_reference(reference, "team"): return {}
+		return {"kind": "team", "team_ref": reference.duplicate(true), "holder_ref": RegionAI.person_ref(original.terrain.site, person)}
+	for nation_id: String in original.terrain.site.get("equipment_nations", {}):
+		var nation: Dictionary = original.terrain.site.equipment_nations[nation_id]
+		var office := SiteOffices.position_of(nation.get("offices", {}), person)
+		if office.is_empty(): continue
+		var reference: Dictionary = original.terrain.site.get("travel_identity", {}).get("refs", {}).get("nation", {}).get(nation_id, {})
+		if not RegionAI.delivery_reference(reference, "nation"): return {}
+		return {"kind": "nation", "nation_ref": reference.duplicate(true), "position": str(office.id), "holder_ref": RegionAI.person_ref(original.terrain.site, person)}
+	return {}
+
+## Called while the ORIGINAL arrival candidate still owns next_control. The
+## original nominal due/observation time remain immutable; ready_at is the true
+## accepted physical boundary. Queue and mapping share the same single marker.
+
+
+func _region_accept_carried_arrival(next_clock: Dictionary, token: String, destination: String, mapping: Dictionary) -> Dictionary:
+	var registry: Dictionary = next_clock.region_gameplay
+	for report: Dictionary in registry.get("reports", []):
+		if not report.has("delivery") or str(report.delivery.get("courier_token", "")) != token or RegionAI.carried_report_terminal(report): continue
+		var valid := RegionAI.validate_carried_report(report)
+		if not valid.ok: return valid
+		if destination != str(report.delivery.receiver_scope):
+			var rejected := RegionAI.carried_report_result(report, float(next_clock.logical_game_seconds), float(next_clock.fire_clock.action_seconds), {"code": "WRONG_DELIVERY_DESTINATION", "effects_complete": true, "complete": true})
+			if not rejected.ok: return rejected
+			continue
+		report.delivery.phase = "ready"
+		report.delivery.ready_at = float(next_clock.logical_game_seconds)
+		report.delivery.result_at = float(next_clock.logical_game_seconds)
+		report.delivery.arrival_mapping_sha256 = RegionAI.delivery_hash(mapping)
+		var queued := GameplayClock.queue_event(registry, "report:" + str(report.id) + ":received", "intel", float(next_clock.logical_game_seconds), destination, {"report_id": str(report.id), "carried": true})
+		if not queued.ok: return queued
+	return {"ok": true}
+
+
+func _region_consume_carried_report(report: Dictionary) -> Dictionary:
+	var transfer: Dictionary = report.delivery
+	var reference: Dictionary = region_registry().parties.get(str(transfer.courier_token), {})
+	if str(reference.get("phase", "")) != "entered" or str(reference.get("destination_site", "")) != str(transfer.receiver_scope) \
+		or str(reference.get("plan_path", "")) != str(transfer.plan_path) or str(reference.get("plan_sha256", "")) != str(transfer.get("plan_sha256", "")) \
+		or float(reference.get("arrival_game_seconds", -1.0)) != float(transfer.ready_at) \
+		or RegionAI.delivery_hash(reference.get("arrival_mapping", {})) != str(transfer.get("arrival_mapping_sha256", "")): return fail("STALE_DELIVERY_ARRIVAL")
+	var mode := "live" if str(transfer.receiver_scope) == str(control.active_site_id) else str(region_registry().modes.get(str(transfer.receiver_scope), {}).get("mode", "cold_exact"))
+	var owner: Dictionary = region_owner_lab.call(str(transfer.receiver_scope), mode)
+	if not owner.get("ok", false) or not owner.get("lab") is TerrainLab: return owner
+	var original: TerrainLab = owner.lab
+	var bind := original.region_bind_receipt(original.terrain)
+	if original.site_controller.region_slot != self or _region_bound_original_lab(original.terrain) != original or not bind.get("complete", false) \
+		or int(bind.get("generation", -1)) != int(_marker.generation): return fail("COMMITTED_UNBOUND")
+	var courier := _region_delivery_person(original, transfer.courier_ref)
+	var receiver := _region_delivery_person(original, transfer.receiver_ref)
+	var code := ""
+	if courier.is_empty(): code = "COURIER_MISSING"
+	elif float(courier.hp) <= 0.0: code = "COURIER_DEAD"
+	elif bool(courier.captive): code = "COURIER_CAPTIVE"
+	elif not SiteSettlement._fit(courier): code = "COURIER_UNAVAILABLE"
+	elif receiver.is_empty(): code = "RECEIVER_MISSING"
+	elif float(receiver.hp) <= 0.0: code = "RECEIVER_DEAD"
+	elif bool(receiver.captive): code = "RECEIVER_CAPTIVE"
+	elif not SiteSettlement._fit(receiver): code = "RECEIVER_UNAVAILABLE"
+	elif _region_delivery_office(original, int(receiver.person_id)) != transfer.receiver_office: code = "RECEIVER_AUTHORITY_CHANGED"
+	if not code.is_empty(): return {"ok": true, "delivered": false, "receipt": {"code": code, "complete": true, "effects_complete": true, "courier_token": str(transfer.courier_token), "source_generation": int(_marker.generation)}}
+	var observation_preview: Dictionary = report.receipt.duplicate(true)
+	observation_preview.receiver = int(receiver.person_id)
+	observation_preview.received_at = float(control.logical_game_seconds)
+	var observation_guard := RegionAI.observe(region_registry().duplicate(true), observation_preview)
+	if not observation_guard.ok: return observation_guard
+	var actual_effect := {}
+	if str(transfer.kind) == "nation_dispatch":
+		var received_nation := _region_receive_nation_command(report, original, receiver)
+		if not received_nation.ok or not received_nation.get("delivered", false): return received_nation
+		actual_effect = received_nation.effect
+	if str(transfer.kind) == "army_command":
+		var team := _region_delivery_team(original, transfer.team_ref)
+		if team == null or team.current_commander < 0 or team.combat_identity(team.current_commander) != int(receiver.person_id) \
+			or not team.command_eligible(team.current_commander): return {"ok": true, "delivered": false, "receipt": {"code": "COMMAND_AUTHORITY_CHANGED", "complete": true, "effects_complete": true}}
+		var command: Dictionary = transfer.command
+		var before_serial := int(team.get_order_serial())
+		var before_ranged_serial := int(team.ranged_order_serial)
+		var ordered := team.issue_combat_order(team.current_commander, int(command.order), Vector2i(int(command.goal[0]), int(command.goal[1])))
+		if not ordered.ok: return {"ok": true, "delivered": false, "receipt": {"code": "ORIGINAL_COMMAND_REJECTED", "complete": true, "effects_complete": true}}
+		actual_effect = {"kind": "original_army_order", "team_ref": transfer.team_ref.duplicate(true), "commander_ref": transfer.receiver_ref.duplicate(true),
+			"source_order_serial": int(command.source_order_serial), "before_order_serial": before_serial, "accepted_order_serial": int(team.get_order_serial()),
+			"before_ranged_order_serial": before_ranged_serial, "accepted_ranged_order_serial": int(team.ranged_order_serial), "original_order_delay": float(team._order_delay)}
+	return {"ok": true, "delivered": true, "receiver": int(receiver.person_id), "receipt": {"code": "DELIVERED", "courier_token": str(transfer.courier_token),
+		"source_generation": int(_marker.generation), "arrival_mapping_sha256": str(transfer.arrival_mapping_sha256), "receiver_ref": transfer.receiver_ref.duplicate(true), "effect": actual_effect}}
+
+## Called after original party life/contact endpoints. A report never claims a
+## disappearance/KO/capture from a preview or rewrites its signed source time.
+
+
+func _region_check_carried_deliveries() -> Dictionary:
+	var changed := false
+	for report: Dictionary in region_registry().get("reports", []):
+		if not report.has("delivery") or str(report.delivery.get("phase", "")) != "in_transit": continue
+		var valid := RegionAI.validate_carried_report(report)
+		if not valid.ok: return valid
+		var token := str(report.delivery.courier_token)
+		var reference: Dictionary = region_registry().parties.get(token, {})
+		if str(reference.get("phase", "")) == "entered": continue
+		var loaded := _region_npc_party(token)
+		if not loaded.ok: return loaded
+		var host: Object = region_original_party_progress.get_object() if region_original_party_progress.is_valid() else null
+		if not host is TerrainLab or host.site_controller == null or host.site_controller.region_slot != self: return fail("MISSING_ORIGINAL_PARTY_PROGRESS")
+		var hydrated: Dictionary = host.prepare_region_party_original_owner(token, loaded.party, self)
+		if not hydrated.ok: return hydrated
+		var actual := region_original_party_runtime_proof(token, loaded.party)
+		if not actual.ok: return actual
+		var courier := _region_delivery_person(actual.lab, report.delivery.courier_ref)
+		var code := ""
+		if courier.is_empty(): code = "COURIER_MISSING"
+		elif float(courier.hp) <= 0.0: code = "COURIER_DEAD"
+		elif bool(courier.captive): code = "COURIER_CAPTIVE"
+		elif str(report.delivery.kind) == "army_command":
+			var team := _region_delivery_team(actual.lab, report.delivery.team_ref)
+			if team == null or team.current_commander < 0 or team.combat_identity(team.current_commander) != int(courier.person_id): code = "COMMAND_AUTHORITY_CHANGED"
+		if not code.is_empty():
+			var rejected := RegionAI.carried_report_result(report, float(control.logical_game_seconds), float(control.fire_clock.action_seconds), {"code": code, "complete": true, "effects_complete": true, "courier_token": token, "source_epoch": actual.proof.duplicate(true)})
+			if not rejected.ok: return rejected
+			changed = true
+		elif loaded.party.upkeep.has("route_blocked"):
+			var navigation := {"code": "DELIVERY_ROUTE_BLOCKED", "courier_token": token, "game_seconds": float(control.logical_game_seconds),
+				"action_seconds": float(control.fire_clock.action_seconds), "source_node": loaded.party.upkeep.get("route_node", {}).duplicate(true)}
+			var prior: Dictionary = report.delivery.get("last_navigation_result", {})
+			if prior.get("code") != navigation.code or prior.get("source_node") != navigation.source_node:
+				report.delivery.last_navigation_result = navigation
+				changed = true
+	return {"ok": true, "changed": changed}
+
+
+func region_known_intel_label(receipt: Dictionary) -> String:
+	return RegionAI.known_intel_label(receipt)
+
+
+func region_player_known_intel() -> Dictionary:
+	var current := _region_player_intel_identity()
+	if current.is_empty(): return {}
+	return RegionAI.view(region_registry(), int(current.identity), float(control.logical_game_seconds), str(current.scope), current.reference)
+
+
+
+## Read the same current original owner as ordinary control/family continuity.
+## A travelling leader is a route role and does not own another member's intel.
+
+
+func _region_player_intel_identity() -> Dictionary:
+	var selected := region_travel_party()
+	if selected.ok and not region_travel_journey().is_empty():
+		var token := str(region_travel_journey().token)
+		var current := region_original_party_runtime_proof(token, selected.party)
+		if not current.ok or not current.get("lab") is TerrainLab: return {}
+		var original: TerrainLab = current.lab
+		var identity := int(original.controlled_person_id())
+		var reference := RegionAI.person_ref(original.terrain.site, identity)
+		if not RegionAI.valid_person_ref(reference) or not selected.party.person_ids.has(identity) \
+			or int(selected.party.content.get("controlled_person_id", -1)) != identity: return {}
+		return {"identity": identity, "reference": reference, "scope": str(selected.party.get("origin_site_id", ""))}
+	var owner: TerrainLab = _region_original_labs.get(str(control.active_site_id))
+	if region_owner_lab.is_valid():
+		var candidate: Object = region_owner_lab.get_object()
+		if candidate is TerrainLab and candidate.terrain != null and str(candidate.terrain.site.id) == str(control.active_site_id): owner = candidate
+	if not is_instance_valid(owner) or _region_bound_original_lab(owner.terrain) != owner: return {}
+	var active_identity := int(owner.controlled_person_id())
+	var active_reference := RegionAI.person_ref(owner.terrain.site, active_identity)
+	if not RegionAI.valid_person_ref(active_reference): return {}
+	return {"identity": active_identity, "reference": active_reference, "scope": str(owner.terrain.site.id)}
+
+
+
+## A registered Atlas is public geography. This original officer producer
+## records no Site save, hidden army, weapon, garrison, HP or battle registry.
+## A source fact is stamped once by the already settled original World.
+
+
+const OFFICER_GEOGRAPHY_GAME_SECONDS := 86400.0
+
+
+func record_region_officer_geography_observation(original: TerrainLab, observer_id: int, coordinate: Vector2i) -> Dictionary:
+	if not is_instance_valid(original) or original.site_controller == null or original.site_controller.region_slot != self \
+		or _region_bound_original_lab(original.terrain) != original: return fail("MISSING_ORIGINAL_OBSERVER")
+	var bind := original.region_bind_receipt(original.terrain)
+	var settled := validate_settlement(original.terrain.site, float(control.logical_game_seconds))
+	if not bind.get("complete", false) or int(bind.get("generation", -1)) != int(_marker.generation) \
+		or not settled.ok or settled.legacy or float(settled.pending) > 0.00000001: return fail("STALE_ORIGINAL_OBSERVER")
+	var reference := RegionAI.person_ref(original.terrain.site, observer_id)
+	var person := _region_delivery_person(original, reference)
+	if person.is_empty() or not SiteSettlement._fit(person) or _region_delivery_office(original, observer_id).is_empty(): return fail("NO_OBSERVER_OFFICE")
+	var geography := source.get_site_summary(coordinate.x, coordinate.y)
+	if not geography.ok or not geography.get("has_terrain", false): return fail("UNKNOWN_GEOGRAPHY")
+	var scope := str(original.terrain.site.id)
+	var object := str(geography.site_id)
+	var now := float(control.logical_game_seconds)
+	var value := {"geography_status": str(geography.geography_status), "has_terrain": bool(geography.has_terrain), "atlas_manifest_sha256": str(source.manifest_hash)}
+	var known := RegionAI.view(region_registry(), observer_id, now, scope, reference)
+	var prior: Dictionary = known.get(object, {})
+	if prior.get("observation_kind") == "officer_public_geography" and prior.get("source") == "site_observation" and prior.get("value") == value:
+		return {"ok": true, "duplicate": true, "receipt": prior.duplicate(true)}
+	var receipt := {"id": "officer-geography:%s:%s:%s:%.6f" % [scope, RegionTravel.stable_key(reference), object, now],
+		"source": "site_observation", "observation_kind": "officer_public_geography", "observer": observer_id, "receiver": observer_id,
+		"observer_scope": scope, "receiver_scope": scope, "object_scope": object,
+		"observer_ref": reference.duplicate(true), "receiver_ref": reference.duplicate(true), "object": object, "value": value,
+		"game_time": now, "expires_at": now + OFFICER_GEOGRAPHY_GAME_SECONDS, "confidence": 1.0}
+	var recorded := RegionAI.observe(region_registry(), receipt)
+	if not recorded.ok: return recorded
+	return {"ok": true, "receipt": receipt.duplicate(true)}
+
+## Existing control/journey and stable refs supply P0 scope. A cold local ID
+## with the same number never acquires the selected player's authority.
+
+
+func _region_carried_ref_is_player(reference: Dictionary) -> bool:
+	var current := _region_player_intel_identity()
+	return not current.is_empty() and current.reference == reference
+
+
+func _region_remote_nation_source(command: Dictionary) -> Dictionary:
+	if not region_owner_lab.is_valid(): return fail("MISSING_REGION_ADAPTER")
+	var scope := str(command.source_scope)
+	var mode := "live" if scope == str(control.active_site_id) else str(region_registry().modes.get(scope, {}).get("mode", "cold_exact"))
+	var owner: Dictionary = region_owner_lab.call(scope, mode)
+	if not owner.get("ok", false) or not owner.get("lab") is TerrainLab: return owner
+	var original: TerrainLab = owner.lab
+	var bind := original.region_bind_receipt(original.terrain)
+	if _region_bound_original_lab(original.terrain) != original or original.site_controller.region_slot != self \
+		or not bind.get("complete", false) or int(bind.get("generation", -1)) != int(_marker.generation): return fail("COMMITTED_UNBOUND")
+	if original.crowd_site != null and original.crowd_site.active: return fail("UNSUPPORTED_BACKEND")
+	var issuer := _region_delivery_person(original, command.issuer_ref)
+	if issuer.is_empty(): return fail("SOURCE_COMMANDER_MISSING")
+	if float(issuer.hp) <= 0.0: return fail("SOURCE_COMMANDER_DEAD")
+	if bool(issuer.captive): return fail("SOURCE_COMMANDER_CAPTIVE")
+	var nation: Dictionary = original.terrain.site.get("equipment_nations", {}).get(str(command.nation_id), {})
+	var reference: Dictionary = original.terrain.site.get("travel_identity", {}).get("refs", {}).get("nation", {}).get(str(command.nation_id), {})
+	if nation.is_empty() or reference != command.nation_ref or not SiteOffices.validate(nation.get("offices", {}), "nation") \
+		or int(nation.offices.revision) != int(command.offices_revision): return fail("SOURCE_AUTHORITY_CHANGED")
+	var resolved: Dictionary = original.site_controller.equipment_orders.nation_duty_resolve(nation, "nation.dispatch")
+	if not resolved.get("ok", false): return fail("SOURCE_COMMANDER_UNAVAILABLE")
+	if RegionAI.person_ref(original.terrain.site, int(resolved.decider)) != command.issuer_ref or int(resolved.revision) != int(command.offices_revision): return fail("SOURCE_AUTHORITY_CHANGED")
+	if _region_carried_ref_is_player(command.issuer_ref): return fail("PLAYER_HOLDER")
+	return {"ok": true, "lab": original, "nation": nation, "nation_ref": reference, "issuer": issuer, "resolved": resolved}
+
+## The original foreign membership references identify this exact remote
+## cohort. Nation authority remains in its sole original source record.
+
+
+func _region_remote_team_membership(source_owner: Dictionary, original: TerrainLab, team: TerrainArmy, nation_ref: Dictionary) -> Dictionary:
+	if team == null or original.crowd_site != null and original.crowd_site.active or not SiteEquipmentOrders.valid_organization_refs(original.terrain.site): return fail("INVALID_REMOTE_MEMBERSHIP")
+	if not team.combat_enabled or team.current_commander < 0 or not team.command_eligible(team.current_commander): return fail("NO_COMMANDER")
+	var source_refs: Dictionary = source_owner.lab.terrain.site.get("travel_identity", {}).get("refs", {}).get("person", {})
+	var commander_ref := RegionAI.person_ref(original.terrain.site, team.combat_identity(team.current_commander))
+	for index: int in team.combat_units.size():
+		if not team.is_member(index): continue
+		var person_ref := RegionAI.person_ref(original.terrain.site, team.combat_identity(index))
+		if not RegionAI.valid_person_ref(person_ref) or _region_carried_ref_is_player(person_ref): return fail("PLAYER_PARTY")
+		var actual_source_member := false
+		for member: Variant in source_owner.nation.get("members", []):
+			if source_refs.get(str(int(member)), {}) == person_ref: actual_source_member = true; break
+		var actual_portable_member := false
+		for membership: Dictionary in original.terrain.site.get("organization_refs", {}).get("nation_memberships", []):
+			if membership.person == person_ref and membership.nation == nation_ref \
+				and str(membership.source_site_id) == str(source_owner.lab.terrain.site.id): actual_portable_member = true; break
+		if not actual_source_member or not actual_portable_member: return fail("REMOTE_MEMBERSHIP_CHANGED")
+	return {"ok": true, "commander_ref": commander_ref}
+
+## A true local courier dispatch carries a signed strategic instruction for
+## another original team. It grants no tactical command power to the Nation.
+
+
+func prepare_region_carried_nation_command(courier_dispatch: Dictionary, source_receipt_id: String,
+		receiver_scope: String, receiver_team_ref: Dictionary, target_coordinate: Vector2i) -> Dictionary:
+	if not courier_dispatch.get("ok", false) or not courier_dispatch.get("lab") is TerrainLab or not RegionAI.delivery_reference(receiver_team_ref, "team"): return fail("INVALID_NATION_COMMAND")
+	var source_lab: TerrainLab = courier_dispatch.lab
+	var nation_id := str(courier_dispatch.request.nation_id)
+	var nation: Dictionary = source_lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
+	var nation_ref: Dictionary = source_lab.terrain.site.get("travel_identity", {}).get("refs", {}).get("nation", {}).get(nation_id, {})
+	var issuer_ref := RegionAI.person_ref(source_lab.terrain.site, int(courier_dispatch.request.decider))
+	var source_command := {"source_scope": str(source_lab.terrain.site.id), "nation_id": nation_id, "nation_ref": nation_ref.duplicate(true),
+		"issuer_ref": issuer_ref.duplicate(true), "offices_revision": int(courier_dispatch.request.offices_revision)}
+	var authority := _region_remote_nation_source(source_command)
+	if not authority.ok or not bool(nation.get("offices", {}).get("duty_ai", false)): return authority if not authority.ok else fail("DUTY_AI_DISABLED")
+	var known: Dictionary = region_registry().observations.get(source_receipt_id, {})
+	var target_id := Grid.site_id(str(pin.atlas_id), target_coordinate)
+	if str(known.get("object", "")) != target_id or not RegionAI.receiver_matches(known, int(authority.issuer.person_id), str(source_lab.terrain.site.id), issuer_ref) \
+		or not RegionAI.view(region_registry(), int(authority.issuer.person_id), float(control.logical_game_seconds), str(source_lab.terrain.site.id), issuer_ref).has(target_id): return fail("UNKNOWN_COMMAND_TARGET")
+	var requested_mode := "live" if receiver_scope == str(control.active_site_id) else str(region_registry().modes.get(receiver_scope, {}).get("mode", "cold_exact"))
+	var actual_receiver: Dictionary = region_owner_lab.call(receiver_scope, requested_mode)
+	if not actual_receiver.get("ok", false) or not actual_receiver.get("lab") is TerrainLab: return actual_receiver
+	var receiver_lab: TerrainLab = actual_receiver.lab
+	var receiver_team := _region_delivery_team(receiver_lab, receiver_team_ref)
+	var membership := _region_remote_team_membership(authority, receiver_lab, receiver_team, nation_ref)
+	if not membership.ok: return membership
+	var receiver_id := receiver_team.combat_identity(receiver_team.current_commander)
+	var prepared := prepare_region_carried_report(courier_dispatch, source_receipt_id, receiver_scope, receiver_id)
+	if not prepared.ok: return prepared
+	var report: Dictionary = courier_dispatch.carried_reports.pop_back()
+	var id := "carried:%s:%s:nation:%s" % [str(courier_dispatch.token), source_receipt_id, RegionTravel.stable_key(receiver_team_ref).sha256_text().substr(0, 16)]
+	report.id = id
+	report.receipt.id = id
+	report.delivery.kind = "nation_dispatch"
+	source_command.merge({"version": RegionAI.DELIVERY_VERSION, "duty": "nation.dispatch", "receiver_team_ref": receiver_team_ref.duplicate(true),
+		"target_site": target_id, "target_coordinate": [target_coordinate.x, target_coordinate.y],
+		"receiver_order_serial": int(receiver_team.get_order_serial()), "receiver_ranged_order_serial": int(receiver_team.ranged_order_serial)}, true)
+	report.delivery.command = source_command
+	var valid := RegionAI.validate_carried_report(report)
+	if not valid.ok: return valid
+	courier_dispatch.carried_reports.append(report)
+	return {"ok": true, "report": report.duplicate(true), "dispatch": courier_dispatch}
+
+
+func _region_receive_nation_command(report: Dictionary, original: TerrainLab, receiver: Dictionary) -> Dictionary:
+	var command: Dictionary = report.delivery.command
+	var authority := _region_remote_nation_source(command)
+	if not authority.ok:
+		if str(authority.get("code", "")) in ["COMMITTED_UNBOUND", "MISSING_REGION_ADAPTER", "UNSUPPORTED_BACKEND"]: return authority
+		return {"ok": true, "delivered": false, "receipt": {"code": str(authority.get("code", "SOURCE_AUTHORITY_CHANGED")), "complete": true, "effects_complete": true}}
+	var team := _region_delivery_team(original, command.receiver_team_ref)
+	var membership := _region_remote_team_membership(authority, original, team, command.nation_ref)
+	if not membership.ok or membership.get("commander_ref") != report.delivery.receiver_ref: return {"ok": true, "delivered": false, "receipt": {"code": "REMOTE_MEMBERSHIP_CHANGED", "complete": true, "effects_complete": true}}
+	if int(team.get_order_serial()) != int(command.receiver_order_serial) or int(team.ranged_order_serial) != int(command.receiver_ranged_order_serial):
+		return {"ok": true, "delivered": false, "receipt": {"code": "COMMAND_SUPERSEDED", "complete": true, "effects_complete": true}}
+	var before_serial := int(team.get_order_serial())
+	var before_ranged := int(team.ranged_order_serial)
+	var prior_tactical_policy := bool(team.tactical_ai_enabled)
+	var accepted := team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.HOLD)
+	if not accepted.ok: return {"ok": true, "delivered": false, "receipt": {"code": "ORIGINAL_COMMAND_REJECTED", "complete": true, "effects_complete": true}}
+	var effect := {"kind": "original_nation_dispatch", "execution": "pending", "nation_ref": command.nation_ref.duplicate(true),
+		"receiver_team_ref": command.receiver_team_ref.duplicate(true), "receiver_ref": report.delivery.receiver_ref.duplicate(true),
+		"before_order_serial": before_serial, "accepted_order_serial": int(team.get_order_serial()),
+		"before_ranged_order_serial": before_ranged, "accepted_ranged_order_serial": int(team.ranged_order_serial),
+		"prior_tactical_ai_enabled": prior_tactical_policy,
+		"original_order_delay": float(team._order_delay), "received_action_seconds": float(control.fire_clock.action_seconds),
+		"received_game_seconds": float(control.logical_game_seconds)}
+	return {"ok": true, "delivered": true, "effect": effect}
+
+
+func _region_authorize_received_nation_dispatch(original: TerrainLab, team_id: int, target_site: String, token: String, report_id: String, preflight: Callable) -> Dictionary:
+	var report: Dictionary = {}
+	for candidate: Dictionary in region_registry().reports:
+		if str(candidate.get("id", "")) == report_id: report = candidate
+	if report.is_empty() or report.get("delivery", {}).get("kind") != "nation_dispatch" or report.delivery.phase != "delivered" \
+		or report.delivery.get("result", {}).get("effect", {}).get("execution") != "pending" \
+		or str(report.delivery.receiver_scope) != str(original.terrain.site.id) or str(report.delivery.command.target_site) != target_site: return fail("INVALID_NATION_COMMAND")
+	var command: Dictionary = report.delivery.command
+	var authority := _region_remote_nation_source(command)
+	if not authority.ok: return authority
+	var team := _region_delivery_team(original, command.receiver_team_ref)
+	var membership := _region_remote_team_membership(authority, original, team, command.nation_ref)
+	if not membership.ok: return membership
+	var effect: Dictionary = report.delivery.result.effect
+	if team.team_id != team_id or membership.commander_ref != report.delivery.receiver_ref \
+		or int(team.get_order_serial()) != int(effect.accepted_order_serial) or int(team.ranged_order_serial) != int(effect.accepted_ranged_order_serial): return fail("COMMAND_SUPERSEDED")
+	if float(team._order_delay) > TerrainLab.ACTION_TIME_EPSILON: return fail("ORIGINAL_COMMAND_DELAY")
+	if float(report.receipt.expires_at) <= float(control.logical_game_seconds): return fail("SOURCE_COMMAND_EXPIRED")
+	if not RegionAI.receiver_matches(report.delivered_receipt, team.combat_identity(team.current_commander), str(original.terrain.site.id), membership.commander_ref) \
+		or not RegionAI.view(region_registry(), team.combat_identity(team.current_commander), float(control.logical_game_seconds), str(original.terrain.site.id), membership.commander_ref).has(target_site): return fail("UNKNOWN_COMMAND_TARGET")
+	var request := {"nation_id": str(command.nation_id), "nation_ref": command.nation_ref.duplicate(true), "nation_scope": str(command.source_scope),
+		"decider": int(authority.issuer.person_id), "decider_ref": command.issuer_ref.duplicate(true), "commander": team.combat_identity(team.current_commander),
+		"team_id": team_id, "target_site": target_site, "transfer_token": token, "offices_revision": int(command.offices_revision), "known_receipt": report_id,
+		"carried_nation_command": report_id}
+	var checked: Dictionary = preflight.call(request)
+	if not checked.get("ok", false): return checked
+	return {"ok": true, "request": request, "owner_preview": checked}
+
+
+func _region_nation_execution_failed(report: Dictionary, code: String) -> void:
+	report.delivery.result.effect.execution = "failed"
+	report.delivery.result.effect.execution_receipt = {"code": code, "complete": true, "effects_complete": true,
+		"game_seconds": float(control.logical_game_seconds), "action_seconds": float(control.fire_clock.action_seconds), "source_generation": int(_marker.generation)}
+
+## Original commit calls this only on its detached next registry, after the
+## real new party/route files exist. No live ledger is marked dispatched while
+## that party is absent; a pre-publication failure leaves the old command pending.
+
+
+func _region_commit_received_nation_execution(registry: Dictionary, prepared: Dictionary, token: String) -> Dictionary:
+	var id := str(prepared.request.get("carried_nation_command", ""))
+	if id.is_empty(): return {"ok": true}
+	if token != "npc_command_" + id.sha256_text().substr(0, 32): return fail("INVALID_NATION_COMMAND")
+	var report: Dictionary = {}
+	for candidate: Dictionary in registry.reports:
+		if str(candidate.get("id", "")) == id: report = candidate
+	if report.is_empty() or report.delivery.kind != "nation_dispatch" or report.delivery.phase != "delivered" \
+		or report.delivery.result.effect.execution != "pending": return fail("INVALID_NATION_COMMAND")
+	var command: Dictionary = report.delivery.command
+	if prepared.request.get("nation_ref") != command.nation_ref or prepared.request.get("nation_scope") != command.source_scope \
+		or prepared.request.get("target_site") != command.target_site or str(prepared.lab.terrain.site.id) != str(report.delivery.receiver_scope) \
+		or prepared.party.content.get("travel_identity", {}).get("refs", {}).get("team", {}).get(str(int(prepared.request.team_id)), {}) != command.receiver_team_ref: return fail("INVALID_NATION_COMMAND")
+	var original: TerrainLab = prepared.lab
+	var authority := _region_remote_nation_source(command)
+	if not authority.ok: return authority
+	var team := _region_delivery_team(original, command.receiver_team_ref)
+	var membership := _region_remote_team_membership(authority, original, team, command.nation_ref)
+	if not membership.ok or membership.get("commander_ref") != report.delivery.receiver_ref: return fail("REMOTE_MEMBERSHIP_CHANGED")
+	var effect: Dictionary = report.delivery.result.effect
+	if float(team._order_delay) > TerrainLab.ACTION_TIME_EPSILON or int(team.get_order_serial()) != int(effect.accepted_order_serial) \
+		or int(team.ranged_order_serial) != int(effect.accepted_ranged_order_serial): return fail("COMMAND_SUPERSEDED")
+	effect.execution = "dispatched"
+	effect.execution_receipt = {"code": "DISPATCHED", "complete": true, "effects_complete": true, "transfer_token": token,
+		"source_generation": int(_marker.generation), "game_seconds": float(control.logical_game_seconds), "action_seconds": float(control.fire_clock.action_seconds),
+		"paid_original_delay_action": float(control.fire_clock.action_seconds) - float(effect.received_action_seconds)}
+	return {"ok": true}
+
+## Called only after the actual original party/Site endpoints. Original Army
+## _order_delay is the waiting authority; no second timer or dispatch queue.
+
+
+func _region_finalize_received_nation_commands() -> Dictionary:
+	var changed := false
+	for report: Dictionary in region_registry().reports:
+		if report.get("delivery", {}).get("kind") != "nation_dispatch": continue
+		var command: Dictionary = report.delivery.command
+		if report.delivery.phase == "in_transit":
+			var source_authority := _region_remote_nation_source(command)
+			if not source_authority.ok:
+				var source_code := str(source_authority.get("code", ""))
+				# A temporary KO does not forge permanent withdrawal. Recheck
+				# fit at actual receipt/execution; death/capture/revision is final.
+				if source_code == "SOURCE_COMMANDER_UNAVAILABLE": continue
+				if source_code in ["COMMITTED_UNBOUND", "MISSING_REGION_ADAPTER", "UNSUPPORTED_BACKEND"]: return source_authority
+				var failed_source := RegionAI.carried_report_result(report, float(control.logical_game_seconds), float(control.fire_clock.action_seconds), {"code": source_code, "complete": true, "effects_complete": true})
+				if not failed_source.ok: return failed_source
+				changed = true
+			continue
+		if report.delivery.phase != "delivered" or report.delivery.result.get("effect", {}).get("execution") != "pending": continue
+		if float(report.receipt.expires_at) <= float(control.logical_game_seconds):
+			_region_nation_execution_failed(report, "SOURCE_COMMAND_EXPIRED")
+			changed = true
+			continue
+		var scope := str(report.delivery.receiver_scope)
+		var mode := "live" if scope == str(control.active_site_id) else str(region_registry().modes.get(scope, {}).get("mode", "cold_exact"))
+		var owner: Dictionary = region_owner_lab.call(scope, mode)
+		if not owner.get("ok", false) or not owner.get("lab") is TerrainLab: return owner
+		var original: TerrainLab = owner.lab
+		var team := _region_delivery_team(original, command.receiver_team_ref)
+		if team == null:
+			_region_nation_execution_failed(report, "RECEIVER_TEAM_MISSING")
+			changed = true
+			continue
+		if float(team._order_delay) > TerrainLab.ACTION_TIME_EPSILON: continue
+		var authority := _region_remote_nation_source(command)
+		if not authority.ok:
+			if str(authority.get("code", "")) in ["COMMITTED_UNBOUND", "MISSING_REGION_ADAPTER", "UNSUPPORTED_BACKEND"]: return authority
+			_region_nation_execution_failed(report, str(authority.get("code", "SOURCE_AUTHORITY_CHANGED")))
+			changed = true
+			continue
+		var membership := _region_remote_team_membership(authority, original, team, command.nation_ref)
+		var accepted_effect: Dictionary = report.delivery.result.effect
+		if not membership.ok or membership.get("commander_ref") != report.delivery.receiver_ref \
+			or int(team.get_order_serial()) != int(accepted_effect.accepted_order_serial) \
+			or int(team.ranged_order_serial) != int(accepted_effect.accepted_ranged_order_serial):
+			_region_nation_execution_failed(report, "COMMAND_SUPERSEDED")
+			changed = true
+			continue
+		# The captain accepts the strategic departure through its own original
+		# order API. That API pauses tactical policy; restore the pre-existing
+		# policy through its original public caller after the paid delay.
+		if bool(report.delivery.result.effect.prior_tactical_ai_enabled) and not team.tactical_ai_enabled:
+			var restored_policy := team.set_tactical_ai_enabled(team.current_commander, true)
+			if not restored_policy.ok:
+				_region_nation_execution_failed(report, "ORIGINAL_POLICY_REJECTED")
+				changed = true
+				continue
+			changed = true
+		var transfer_token := "npc_command_" + str(report.id).sha256_text().substr(0, 32)
+		var commander := _region_delivery_person(original, report.delivery.receiver_ref)
+		if commander.is_empty():
+			_region_nation_execution_failed(report, "RECEIVER_MISSING")
+			changed = true
+			continue
+		var component := RegionTravelSite.start_component(self, _coordinate(original.terrain).site, commander.cell, original.terrain)
+		var prepared := prepare_npc_region_dispatch(original, str(command.nation_id), team.team_id,
+			Vector2i(int(command.target_coordinate[0]), int(command.target_coordinate[1])), component, [], transfer_token, str(report.id))
+		if not prepared.ok:
+			if str(prepared.get("code", "")) in ["BUSY", "NOT_READY", "PLAYER_BARRIER", "ORIGINAL_COMMAND_DELAY", "RELATION_OPEN"]: continue
+			if str(prepared.get("code", "")) in ["COMMITTED_UNBOUND", "UNSETTLED_SITE", "MISSING_REGION_ADAPTER"]: return prepared
+			_region_nation_execution_failed(report, str(prepared.get("code", "NATION_DISPATCH_REJECTED")))
+			changed = true
+			continue
+		var dispatched := commit_npc_region_dispatch(prepared)
+		if not dispatched.ok: return dispatched
+		# The existing common publication already persisted the command result,
+		# exact new party and source closure together. Restart with fresh aliases.
+		return {"ok": true, "changed": true, "published": true}
+	return {"ok": true, "changed": changed, "published": false}
+
+## The existing evaluation event remains the only strategy cadence. It may
+## send a local original NPC cohort to carry a strategic MOVE-to-known-Site
+## instruction. Geography supplies no enemy strength or tactical attack order.
+## Targets and own-cohort readiness reuse the existing dispatch policy helpers.
+
+
+func _region_produce_remote_nation_dispatch(source_lab: TerrainLab) -> Dictionary:
+	var source_scope := str(source_lab.terrain.site.id)
+	var now := float(control.logical_game_seconds)
+	var nations: Array = source_lab.terrain.site.get("equipment_nations", {}).keys()
+	nations.sort()
+	for nation_id: String in nations:
+		var nation: Dictionary = source_lab.terrain.site.equipment_nations[nation_id]
+		if not nation.get("offices") is Dictionary or not nation.offices.get("duty_ai", false): continue
+		var resolved: Dictionary = source_lab.site_controller.equipment_orders.nation_duty_resolve(nation, "nation.dispatch")
+		if not resolved.get("ok", false): continue
+		var issuer_ref := RegionAI.person_ref(source_lab.terrain.site, int(resolved.decider))
+		var nation_ref: Dictionary = source_lab.terrain.site.get("travel_identity", {}).get("refs", {}).get("nation", {}).get(nation_id, {})
+		var authority := _region_remote_nation_source({"source_scope": source_scope, "nation_id": nation_id,
+			"nation_ref": nation_ref, "issuer_ref": issuer_ref, "offices_revision": int(resolved.revision)})
+		if not authority.ok: continue
+		var known := RegionAI.view(region_registry(), int(resolved.decider), now, source_scope, issuer_ref)
+		var targets := RegionAI.dispatch_known_targets(source_lab, known, int(resolved.decider), now)
+		# Public officer geography also authorizes a movement goal. It never
+		# invents zero enemy power to pass an attack-strength comparison.
+		for receipt: Dictionary in known.values():
+			if receipt.get("observation_kind") != "officer_public_geography" or receipt.get("value", {}).get("has_terrain") != true: continue
+			var prefix := str(pin.atlas_id) + ":"
+			var site_id := str(receipt.get("object", ""))
+			if not site_id.begins_with(prefix) or site_id == source_scope: continue
+			var coordinate := site_id.trim_prefix(prefix).split(":")
+			if coordinate.size() != 2 or not coordinate[0].is_valid_int() or not coordinate[1].is_valid_int(): continue
+			targets.append({"site_id": site_id, "coordinate": [coordinate[0].to_int(), coordinate[1].to_int()], "receipt": str(receipt.id), "geography_only": true})
+		targets.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return str(a.site_id) < str(b.site_id) or a.site_id == b.site_id and str(a.receipt) < str(b.receipt))
+		var thresholds := RegionAI.military_thresholds(RegionDuties.personality(int(resolved.decider), null, source_lab))
+		var tokens: Array = region_registry().parties.keys()
+		tokens.sort()
+		for remote_token: String in tokens:
+			var reference: Dictionary = region_registry().parties[remote_token]
+			if reference.get("phase") != "entered" or reference.get("controller") != "npc": continue
+			var request: Dictionary = reference.get("transfer_receipt", {})
+			if request.get("nation_id") != nation_id or str(request.get("nation_scope", Grid.site_id(str(pin.atlas_id), Vector2i(int(reference.origin[0]), int(reference.origin[1]))))) != source_scope: continue
+			var receiver_scope := str(reference.get("destination_site", ""))
+			if receiver_scope.is_empty() or receiver_scope == source_scope: continue
+			var mode := "live" if receiver_scope == str(control.active_site_id) else str(region_registry().modes.get(receiver_scope, {}).get("mode", "cold_exact"))
+			var receiver_owner: Dictionary = region_owner_lab.call(receiver_scope, mode)
+			if not receiver_owner.get("ok", false) or not receiver_owner.get("lab") is TerrainLab: return receiver_owner
+			var original: TerrainLab = receiver_owner.lab
+			var party := _region_npc_party(remote_token)
+			if not party.ok: return party
+			var remote_ref: Dictionary = party.party.content.get("travel_identity", {}).get("refs", {}).get("team", {}).get(str(int(request.team_id)), {})
+			var remote_team := _region_delivery_team(original, remote_ref)
+			var membership := _region_remote_team_membership(authority, original, remote_team, nation_ref)
+			if not membership.ok: continue
+			var own := RegionAI.dispatch_ready_summary(remote_team, original, thresholds)
+			if own.is_empty(): continue
+			var pending := false
+			for report: Dictionary in region_registry().reports:
+				if report.get("delivery", {}).get("kind") == "nation_dispatch" and report.delivery.command.nation_ref == nation_ref \
+					and report.delivery.command.receiver_team_ref == remote_ref \
+					and (report.delivery.phase in ["in_transit", "ready"] or report.delivery.phase == "delivered" and report.delivery.result.effect.execution == "pending"): pending = true; break
+			if pending: continue
+			for target: Dictionary in targets:
+				if str(target.site_id) == receiver_scope: continue
+				if not target.get("geography_only", false) and float(own.power) / maxf(0.1, float(target.power)) < float(thresholds.pursuit) + float(thresholds.hold) - 0.65: continue
+				var receiver_coordinate := _coordinate(original.terrain)
+				if not receiver_coordinate.ok: return receiver_coordinate
+				var receiver_known := record_region_officer_geography_observation(source_lab, int(resolved.decider), receiver_coordinate.site)
+				if not receiver_known.ok: return receiver_known
+				for courier: TerrainArmy in source_lab.combat_armies:
+					if not courier.combat_enabled or courier.index_for_identity(int(resolved.decider)) >= 0 \
+						or not courier.command_eligible(courier.current_commander) or not source_lab.site_controller.equipment_orders._member(nation, courier.combat_identity(courier.current_commander)): continue
+					var person: Dictionary = source_lab.site_controller.person_actions._person(courier.combat_identity(courier.current_commander), false)
+					if person.is_empty(): continue
+					var component := RegionTravelSite.start_component(self, _coordinate(source_lab.terrain).site, person.cell, source_lab.terrain)
+					var token := "npc_courier_" + Crypto.new().generate_random_bytes(16).hex_encode()
+					var candidate := prepare_npc_region_dispatch(source_lab, nation_id, courier.team_id, receiver_coordinate.site, component, [], token)
+					if not candidate.ok: continue
+					var signed := prepare_region_carried_nation_command(candidate, str(target.receipt), receiver_scope, remote_ref, Vector2i(int(target.coordinate[0]), int(target.coordinate[1])))
+					if not signed.ok: return signed
+					var committed := commit_npc_region_dispatch(candidate)
+					if not committed.ok: return committed
+					return {"ok": true, "published": true, "token": token, "report_id": str(signed.report.id)}
+	return {"ok": true, "published": false}
+
+
+## Append to ORIGINAL RegionSaveSlot. These opaque tickets are disposable
+## preflights, never a second route, freight, person, item or research ledger.
+
+
+var _region_n08_transfer_permits: Dictionary = {}
+
+
+func nation_n08_driver_consent_context(lab: TerrainLab, nation_id: String, identity: int, purpose: String) -> Dictionary:
+	if lab == null or lab.site_controller == null or lab.site_controller.region_slot != self: return fail("WRONG_SLOT")
+	var technology: GDScript = load("res://scripts/terrain_lab/site_technology.gd")
+	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
+	var record: Dictionary = nation.get("technology", {})
+	if not technology.valid_scope_record(record, "nation") or record.holder_site_id != str(lab.terrain.site.id): return fail("STALE_SCOPE")
+	var project: Dictionary = technology.active_project(record)
+	var phase: Dictionary = technology.scope_next_phase(project, project.get("executor", {}))
+	if project.get("tech_id") != "N08" or project.get("purpose") != purpose or phase.get("binding") != "public_route" \
+		or project.get("executor") != {"site_id": str(lab.terrain.site.id), "person_id": identity}: return fail("STALE_PROJECT")
+	var orders: Variant = lab.site_controller.equipment_orders
+	var operations: Dictionary = nation.get("technology_operations", {})
+	if not orders.valid_nation_operation_record(operations, lab.terrain.site.item_definitions, {}): return fail("CORRUPT_STATE")
+	for order: Dictionary in operations.public_orders.values():
+		if order.tech_id != "N08" or int(order.project_id) != int(project.id) or int(order.payload.driver_id) != identity \
+			or order.status in ["complete", "revoked"] or order.scope_site_id != str(lab.terrain.site.id) \
+			or order.scope_nation_id != nation_id or not order.payload.travel_token.is_empty(): continue
+		if not orders._nation_duty_ok(int(order.authorizer_id), nation, "nation.transport", true): return fail("NO_AUTHORITY")
+		var route := _region_n08_route(lab, str(order.payload.destination_site_id), str(order.payload.vehicle_id),
+			identity, str(order.payload.destination_holder), str(order.payload.route_id))
+		if not route.ok or route.get("route_ref") != order.payload.route_ref: return route if not route.ok else fail("STALE_ROUTE")
+		return {"ok": true, "team": route.carrier.team, "order": order}
+	return fail("NO_TARGET")
+
+
+func _region_n08_actor_state(lab: TerrainLab) -> Dictionary:
+	var state := lab.terrain.site.duplicate(true)
+	state.armies = []
+	for army: TerrainArmy in lab.combat_armies:
+		if army.combat_enabled: state.armies.append(army.capture_combat_state())
+	for actor: TerrainTestCharacter in lab.combat_actors:
+		var key := ""
+		for identity: String in state.get("actors", {}):
+			if int(state.actors[identity].person_id) == actor.person_id: key = identity; break
+		if not key.is_empty(): state.actors[key] = actor.capture_state()
+	return state
+
+
+func _region_n08_wagon(lab: TerrainLab, vehicle_id: String, driver_id: int) -> Dictionary:
+	if lab == null or lab.terrain == null or lab.site_controller == null or lab.site_controller.region_slot != self:
+		return fail("WRONG_SLOT")
+	if lab.site_controller._crowd_active(): return fail("REGION_BACKEND_UNADMITTED")
+	var transport: Variant = lab.site_controller.vehicles
+	var vehicle: Dictionary = transport.records().get(vehicle_id, {})
+	if vehicle.is_empty() or str(vehicle.kind) != "wagon" or int(vehicle.operator_id) != driver_id:
+		return fail("NO_DRIVER", "本原入口僅接目前真 NPC 馬車及其操作人")
+	var driver: Dictionary = transport._operator(driver_id)
+	if driver.is_empty() or not driver.owner is TerrainArmy or not transport._available(driver): return fail("NO_DRIVER")
+	var team: TerrainArmy = driver.owner
+	if not team.combat_enabled or not lab.combat_armies.has(team) or not team.is_member(team.current_commander) \
+		or team.combat_identity(team.current_commander) != driver_id or is_instance_valid(team.player_member) \
+		or driver_id == int(lab.controlled_person_id()): return fail("NO_CIVIL_COHORT", "須保留原 NPC 指揮／車輛整閉包及當前玩家人物")
+	if not vehicle.move.is_empty() or team.combat_order != TerrainArmy.CombatOrder.HOLD or team.moving_member_count() != 0:
+		return fail("BUSY")
+	for index: int in team.combat_units.size():
+		var person := team.combat_identity(index)
+		if person == int(lab.controlled_person_id()) or lab.site_controller.person_actions.is_busy(person) \
+			or lab.site_controller.person_actions.is_guarding(person) or lab.site_controller.work_team.is_assigned(person) \
+			or lab.site_controller._is_delivering_person(person): return fail("BUSY")
+	return {"ok": true, "transport": transport, "vehicle": vehicle, "driver": driver, "team": team}
+
+
+func _region_n08_known_destination(destination_site_id: String) -> Dictionary:
+	var known := known_saved_sites()
+	if not known.ok: return known
+	for coordinate: Vector2i in known.sites:
+		if Grid.site_id(str(pin.atlas_id), coordinate) != destination_site_id: continue
+		var original: TerrainLab = _region_original_labs.get(destination_site_id)
+		if is_instance_valid(original) and original.terrain != null:
+			return {"ok": true, "coordinate": coordinate, "data": original.terrain}
+		var loaded := _load_checked(site_path(coordinate), coordinate)
+		if not loaded.ok: return loaded
+		return {"ok": true, "coordinate": coordinate, "data": loaded.data}
+	return fail("UNKNOWN_DESTINATION", "公共路線只接同原世界／存檔槽的真已保存目的地")
+
+
+func _region_n08_route(lab: TerrainLab, destination_site_id: String, vehicle_id: String,
+		driver_id: int, destination_holder: String, route_id: String = "") -> Dictionary:
+	var carrier := _region_n08_wagon(lab, vehicle_id, driver_id)
+	if not carrier.ok: return carrier
+	var coordinate := _coordinate(lab.terrain)
+	if not coordinate.ok: return coordinate
+	if not destination_holder.begins_with("feature:"): return fail("NO_WAREHOUSE")
+	var destination := _region_n08_known_destination(destination_site_id)
+	if not destination.ok: return destination
+	if destination.coordinate == coordinate.site: return fail("SAME_SITE")
+	var feature_id := destination_holder.trim_prefix("feature:")
+	var feature: Dictionary = destination.data.site.get("features", {}).get(feature_id, {})
+	var stocks: GDScript = load("res://scripts/terrain_lab/site_stockpiles.gd")
+	var stock: Dictionary = stocks.stock_endpoint(destination.data, feature_id)
+	if feature.get("kind") != "warehouse" or stock.is_empty() or bool(stock.get("withdraw_only", true)) \
+		or int(stock.faction) != int(carrier.driver.faction) \
+		or Runtime.carried_load(destination.data.site, stock.cargo, stock.holder) + 4 > int(stock.capacity):
+		return fail("NO_WAREHOUSE", "目的須是同管理方可進料且有真容量的原倉庫")
+	var state := _region_n08_actor_state(lab)
+	var spec := {"person_id": driver_id, "actor_key": "", "team_id": int(carrier.team.team_id), "mode": "land",
+		"controller": "npc", "game_seconds": float(control.logical_game_seconds),
+		"namespace": str(pin.world_instance_id) + ":" + str(lab.terrain.site.id), "family_transfer_guard": region_family_transfer_guard}
+	var preview_token := "civil_query_" + str(driver_id)
+	var extracted := RegionTravel.extract(state, spec, preview_token)
+	if not extracted.ok: return extracted
+	# A partial original Nation remains at its original Source holder. A public
+	# logistics query cannot move that institution or duplicate its research.
+	var route_context := prepare_region_route_context(lab.terrain, extracted.party)
+	if not route_context.ok: return route_context
+	var table := RegionRoute.table_from_terrain(lab.terrain, PackedByteArray(), true)
+	if not table.ok: return table
+	var start_component := RegionRoute.component_of(table, carrier.driver.cell)
+	if start_component < 0: return fail("NO_ROUTE")
+	var search := RegionRoute.Search.new()
+	search.source = source; search.start_site = coordinate.site
+	search.start_component = start_component; search.goal_site = destination.coordinate
+	search.context = route_context.context
+	var found := search.run()
+	if not found.ok: return found
+	var verified := RegionRoute.verify_steps(source, found.steps, route_context.context)
+	if not verified.ok: return verified
+	var identity := "civil_" + JSON.stringify([str(pin.world_instance_id), str(pin.slot_id), str(lab.terrain.site.id),
+		destination_site_id, vehicle_id, driver_id, destination_holder, found.steps], "", true, true).sha256_text().substr(0, 40)
+	if not route_id.is_empty() and route_id != identity: return fail("STALE_ROUTE")
+	var route_ref := {"world_instance_id": str(pin.world_instance_id), "slot_id": str(pin.slot_id),
+		"source_site_id": str(lab.terrain.site.id), "destination_site_id": destination_site_id, "route_id": identity}
+	return {"ok": true, "route_ref": route_ref, "route_id": identity, "destination": destination.coordinate,
+		"destination_data": destination.data, "destination_holder": destination_holder, "vehicle_id": vehicle_id,
+		"driver_id": driver_id, "carrier": carrier, "steps": found.steps, "start_component": start_component}
+
+
+func nation_route_options(lab: TerrainLab) -> Dictionary:
+	if lab == null or lab.site_controller == null or lab.site_controller.region_slot != self: return fail("WRONG_SLOT")
+	var known := known_saved_sites()
+	if not known.ok: return known
+	var routes: Array[Dictionary] = []
+	var vehicle_ids: Array = lab.site_controller.vehicles.records().keys()
+	vehicle_ids.sort()
+	for coordinate: Vector2i in known.sites:
+		var identity := Grid.site_id(str(pin.atlas_id), coordinate)
+		if identity == str(lab.terrain.site.id): continue
+		var destination := _region_n08_known_destination(identity)
+		if not destination.ok: continue
+		var feature_ids: Array = destination.data.site.get("stockpiles", {}).keys()
+		feature_ids.sort()
+		for feature: String in feature_ids:
+			if destination.data.site.features.get(feature, {}).get("kind") != "warehouse": continue
+			for vehicle: String in vehicle_ids:
+				var record: Dictionary = lab.site_controller.vehicles.records()[vehicle]
+				if record.get("kind") != "wagon": continue
+				var checked := _region_n08_route(lab, identity, vehicle, int(record.operator_id), "feature:" + feature)
+				if not checked.ok: continue
+				routes.append({"route_id": checked.route_id, "destination_site_id": identity, "destination_holder": "feature:" + feature,
+					"vehicle_id": vehicle, "driver_id": int(record.operator_id),
+					"label": "%s → %s／%s · 馬車 %s · 操作人 #%d" % [str(lab.terrain.site.id), identity, feature, vehicle, int(record.operator_id)]})
+				if routes.size() >= 32: return {"ok": true, "routes": routes, "bounded": true}
+	return {"ok": true, "routes": routes, "bounded": false}
+
+
+func nation_route_query(lab: TerrainLab, route_id: String, destination_site_id: String, vehicle_id: String,
+		driver_id: int, destination_holder: String) -> Dictionary:
+	return _region_n08_route(lab, destination_site_id, vehicle_id, driver_id, destination_holder, route_id)
+
+
+func _region_n08_order(lab: TerrainLab, nation_id: String, order_id: String, expected: Dictionary) -> Dictionary:
+	if lab == null or lab.site_controller == null or lab.site_controller.region_slot != self: return fail("WRONG_SLOT")
+	var orders: Variant = lab.site_controller.equipment_orders
+	var checked: Dictionary = orders._public_context(nation_id, order_id, "public_route", true)
+	if not checked.ok: return checked
+	var order: Dictionary = checked.order
+	if order.tech_id != "N08" or order != expected or int(order.authorizer_id) != int(lab.controlled_person_id()) \
+		or order.scope_site_id != str(lab.terrain.site.id) or order.scope_nation_id != nation_id:
+		return fail("STALE_ORDER")
+	if not orders._public_source_paid(order): return fail("NO_BUDGET")
+	return {"ok": true, "orders": orders, "nation": checked.nation, "order": order, "nation_id": nation_id, "order_id": order_id}
+
+
+func _region_n08_transfer_permit(source_lab: TerrainLab, context: Dictionary, carrier_lab: TerrainLab,
+		vehicle_id: String, driver_id: int, source_holder: String, destination_holder: String) -> Dictionary:
+	var carrier := _region_n08_wagon(carrier_lab, vehicle_id, driver_id)
+	if not carrier.ok: return carrier
+	var permit := {"nonce": Crypto.new().generate_random_bytes(16).hex_encode(), "source_lab": source_lab, "carrier_lab": carrier_lab,
+		"source_site_state": source_lab.terrain.site, "carrier_site_state": carrier_lab.terrain.site,
+		"nation_ref": context.nation, "order_ref": context.order, "order_snapshot": context.order.duplicate(true),
+		"nation_id": str(context.nation_id), "order_id": str(context.order_id),
+		"team_ref": carrier.team, "team_id": int(carrier.team.team_id), "driver_id": driver_id,
+		"driver_body": carrier.driver.row, "vehicle_ref": carrier.vehicle, "vehicle_id": vehicle_id,
+		"source_holder": source_holder, "destination_holder": destination_holder,
+		"generation": int(_marker.get("generation", 0)), "revision": int(region_registry().revision),
+		"world": float(control.logical_game_seconds)}
+	_region_n08_transfer_permits[str(permit.nonce)] = permit
+	return {"ok": true, "permit": permit}
+
+
+func discard_nation_route_transfer_permit(permit: Dictionary) -> void:
+	var nonce := str(permit.get("nonce", ""))
+	if is_same(_region_n08_transfer_permits.get(nonce), permit): _region_n08_transfer_permits.erase(nonce)
+
+
+func validate_nation_route_transfer_permit(transport: Variant, permit: Dictionary, source_holder: String,
+		destination_holder: String, resources: Dictionary, item_ids: Array, driver_id: int) -> Dictionary:
+	if not is_same(_region_n08_transfer_permits.get(str(permit.get("nonce", ""))), permit) \
+		or transport == null or not is_same(transport.lab, permit.get("carrier_lab")) \
+		or transport.controller.region_slot != self or resources != {"grain": 4} or not item_ids.is_empty() \
+		or source_holder != permit.get("source_holder") or destination_holder != permit.get("destination_holder") \
+		or driver_id != int(permit.get("driver_id", -1)): return fail("NO_AUTHORITY", "須為同原 Slot 的真具名四糧移交票據")
+	if int(permit.generation) != int(_marker.get("generation", 0)) or int(permit.revision) != int(region_registry().revision) \
+		or float(permit.world) != float(control.logical_game_seconds): return fail("STALE_REGION_PERMIT")
+	var source_lab: TerrainLab = permit.source_lab
+	var carrier_lab: TerrainLab = permit.carrier_lab
+	if not is_instance_valid(source_lab) or not is_instance_valid(carrier_lab) \
+		or not is_same(source_lab.terrain.site, permit.source_site_state) or not is_same(carrier_lab.terrain.site, permit.carrier_site_state): return fail("STALE_SOURCE")
+	var nation: Dictionary = source_lab.terrain.site.get("equipment_nations", {}).get(str(permit.nation_id), {})
+	var order: Dictionary = nation.get("technology_operations", {}).get("public_orders", {}).get(str(permit.order_id), {})
+	if not is_same(nation, permit.nation_ref) or not is_same(order, permit.order_ref) or order != permit.order_snapshot \
+		or order.tech_id != "N08" or order.status in ["complete", "revoked"]: return fail("STALE_ORDER")
+	var authority := _region_n08_current_authority(source_lab, nation, int(order.authorizer_id))
+	if not authority.ok: return authority
+	var vehicle: Dictionary = transport.records().get(str(permit.vehicle_id), {})
+	var driver: Dictionary = transport._operator(driver_id)
+	if not is_same(vehicle, permit.vehicle_ref) or int(vehicle.get("operator_id", -1)) != driver_id \
+		or driver.is_empty() or not is_same(driver.row, permit.driver_body) or not is_same(driver.owner, permit.team_ref): return fail("STALE_SOURCE")
+	return {"ok": true}
+
+
+func prepare_nation_route_load(lab: TerrainLab, nation_id: String, order_id: String, expected: Dictionary) -> Dictionary:
+	var context := _region_n08_order(lab, nation_id, order_id, expected)
+	if not context.ok: return context
+	var order: Dictionary = context.order
+	if order.payload.loaded or not order.payload.travel_token.is_empty(): return fail("NO_CHANGE")
+	var route := _region_n08_route(lab, str(order.payload.destination_site_id), str(order.payload.vehicle_id),
+		int(order.payload.driver_id), str(order.payload.destination_holder), str(order.payload.route_id))
+	if not route.ok or route.route_ref != order.payload.route_ref: return route if not route.ok else fail("STALE_ROUTE")
+	var phase: Dictionary = lab.site_controller.person_actions.prepare_nation_route_load_phase(nation_id, order_id, order)
+	if not phase.ok: return phase
+	var ticket := _region_n08_transfer_permit(lab, context, lab, str(order.payload.vehicle_id), int(order.payload.driver_id),
+		"feature:" + str(order.payload.reserve_feature_id), str(order.payload.vehicle_id))
+	if not ticket.ok: return ticket
+	var transfer: Dictionary = route.carrier.transport.prepare_nation_route_transfer(ticket.permit)
+	if not transfer.ok: discard_nation_route_transfer_permit(ticket.permit); return transfer
+	return {"ok": true, "transfer": transfer, "phase": phase, "permit": ticket.permit}
+
+
+func _region_n08_paid_token(lab: TerrainLab, nation_id: String, order_id: String, order: Dictionary) -> Dictionary:
+	var technology: GDScript = load("res://scripts/terrain_lab/site_technology.gd")
+	var nation: Dictionary = lab.terrain.site.equipment_nations[nation_id]
+	if technology.scope_known(nation.get("technology", {}), "N08"): return {"ok": true, "token": {}}
+	var record: Dictionary = nation.technology
+	var project: Dictionary = technology.active_project(record)
+	var phase: Dictionary = technology.scope_next_phase(project, project.get("executor", {}), record.get("person_links", []))
+	if project.is_empty() or project.tech_id != "N08" or int(project.id) != int(order.project_id) \
+		or phase.get("binding") != "public_route" or int(project.executor.get("person_id", -1)) != int(order.payload.driver_id): return fail("STALE_PROJECT")
+	var paid: Array[Dictionary] = []
+	for payment: Dictionary in project.budget.get("payments", []):
+		if payment.phase_id == phase.id and payment.target_id == order.payload.destination_holder \
+			and technology.same_person_ref(payment.person, project.executor, record.get("person_links", [])) \
+			and technology.material_equal(payment.materials, {"grain": 4}): paid.append(payment)
+	if paid.size() != 1: return fail("NO_PAYMENT")
+	return {"ok": true, "payment_id": str(paid[0].payment_id), "token": {"scope": "nation", "scope_id": nation_id,
+		"project_id": int(project.id), "epoch": int(record.epoch), "purpose": str(project.purpose), "tech_id": "N08",
+		"phase_id": str(phase.id), "attempt": int(paid[0].attempt), "person": project.executor.duplicate(),
+		"binding": "public_route", "target_id": str(order.payload.destination_holder), "materials": {"grain": 4}}}
+
+
+func begin_nation_transport_route(lab: TerrainLab, nation_id: String, order_id: String, expected: Dictionary) -> Dictionary:
+	var context := _region_n08_order(lab, nation_id, order_id, expected)
+	if not context.ok: return context
+	var order: Dictionary = context.order
+	if not order.payload.loaded or not order.payload.travel_token.is_empty(): return fail("NO_CHANGE")
+	if not region_player_barrier().is_empty(): return fail("PLAYER_BARRIER")
+	var route := _region_n08_route(lab, str(order.payload.destination_site_id), str(order.payload.vehicle_id),
+		int(order.payload.driver_id), str(order.payload.destination_holder), str(order.payload.route_id))
+	if not route.ok or route.route_ref != order.payload.route_ref: return route if not route.ok else fail("STALE_ROUTE")
+	var paid := _region_n08_paid_token(lab, nation_id, order_id, order)
+	if not paid.ok: return paid
+	var prepared := _region_n08_prepare_departure(lab, context, route, paid)
+	if not prepared.ok: return prepared
+	return commit_npc_region_dispatch(prepared)
+
+
+func _region_n08_current_authority(lab: TerrainLab, nation: Dictionary, authorizer_id: int) -> Dictionary:
+	if lab == null or lab.site_controller == null or lab.site_controller.region_slot != self: return fail("WRONG_SLOT")
+	var orders: Variant = lab.site_controller.equipment_orders
+	if orders._nation_duty_ok(authorizer_id, nation, "nation.transport", true): return {"ok": true}
+	# An already accepted civil order survives an original holder's Region move.
+	# Re-resolve the SAME original office and true typed body; the source office
+	# remains its sole authority and a changed/KO/dead holder does not qualify.
+	var offices: Dictionary = orders.nation_offices(nation, true)
+	var office_owner: GDScript = load("res://scripts/terrain_lab/site_offices.gd")
+	if not office_owner.validate(offices, "nation"): return fail("NO_AUTHORITY")
+	var eligible := func(person_id: int) -> bool:
+		if not orders._member(nation, person_id): return false
+		var reference: Dictionary = lab.terrain.site.get("travel_identity", {}).get("refs", {}).get("person", {}).get(str(person_id), {})
+		return _region_n08_original_person_can_act(lab, person_id, reference)
+	var head := int(office_owner.head_position(offices).get("holder", -1))
+	var resolved: Dictionary = office_owner.resolve(offices, "nation.transport", head if eligible.call(head) else -1, eligible)
+	return {"ok": true} if resolved.ok and int(resolved.decider) == authorizer_id else fail("NO_AUTHORITY", "本具名公共運輸仍須原國家現任 civil transport 職責有效")
+
+
+func _region_n08_original_person_can_act(source_lab: TerrainLab, source_person_id: int, reference: Dictionary) -> bool:
+	var local: Dictionary = source_lab.site_controller.person_actions._person(source_person_id)
+	if not local.is_empty() and not source_lab.site_controller.equipment_orders.is_remote_organization_person(source_lab.terrain.site, source_person_id):
+		return float(local.hp) > 0.0 and (local.owner.combat_can_act(int(local.unit)) if int(local.unit) >= 0 else local.owner.can_act())
+	if reference.get("type") != "person": return false
+	var wanted := RegionTravel.stable_key(reference)
+	for original: TerrainLab in _region_original_labs.values():
+		if not is_instance_valid(original) or original.terrain == null or original.site_controller == null or original.site_controller.region_slot != self: continue
+		for identity: String in original.terrain.site.get("travel_identity", {}).get("refs", {}).get("person", {}):
+			if RegionTravel.stable_key(original.terrain.site.travel_identity.refs.person[identity]) != wanted: continue
+			var person: Dictionary = original.site_controller.person_actions._person(int(identity))
+			if person.is_empty(): continue # The original source's remote alias owns no body.
+			return float(person.hp) > 0.0 and (person.owner.combat_can_act(int(person.unit)) if int(person.unit) >= 0 else person.owner.can_act())
+	var selected := region_travel_party()
+	if selected.get("ok", false):
+		var party: Dictionary = selected.party
+		for identity: String in party.content.travel_identity.refs.get("person", {}):
+			if RegionTravel.stable_key(party.content.travel_identity.refs.person[identity]) != wanted: continue
+			var proof := region_original_party_runtime_proof(str(party.party_id), party)
+			if not proof.ok or not proof.get("lab") is TerrainLab: return false
+			var person: Dictionary = proof.lab.site_controller.person_actions._person(int(identity))
+			return not person.is_empty() and float(person.hp) > 0.0 and (person.owner.combat_can_act(int(person.unit)) if int(person.unit) >= 0 else person.owner.can_act())
+	# The original abstract NPC party is itself the accepted body/clock owner.
+	# Read its published, current body rather than replaying or inventing one.
+	for token: String in region_registry().parties:
+		if region_registry().parties[token].get("phase") != "travelling": continue
+		var selected_npc := _region_npc_party(token)
+		if not selected_npc.ok or absf(float(selected_npc.party.upkeep.at) - float(control.logical_game_seconds)) > 0.00000001: continue
+		for identity: String in selected_npc.party.content.travel_identity.refs.get("person", {}):
+			if RegionTravel.stable_key(selected_npc.party.content.travel_identity.refs.person[identity]) != wanted: continue
+			var bodies := RegionTravel._body_records(selected_npc.party.content)
+			var body: Dictionary = bodies.get(int(identity), {})
+			return not body.is_empty() and float(body.get("hp", 0.0)) > 0.0 and float(body.get("ko", 0.0)) <= 0.0 \
+				and not bool(body.get("captive", false)) and str(body.get("pose", "idle")) == "idle"
+	return false
+
+
+func _region_n08_prepare_departure(lab: TerrainLab, context: Dictionary, route: Dictionary, paid: Dictionary) -> Dictionary:
+	if not region_bind_candidate.is_valid(): return fail("MISSING_REGION_ADAPTER")
+	var window := validate_settlement(lab.terrain.site, control.logical_game_seconds)
+	if not window.ok or bool(window.get("legacy", true)) or float(window.get("pending", INF)) > 0.00000001:
+		return fail("UNSETTLED_SITE")
+	var token := "civil_" + Crypto.new().generate_random_bytes(16).hex_encode()
+	var captured: Dictionary = lab.site_controller.capture_region_checkpoint("region_barrier", false,
+		{"civil_transport": true, "token": token, "nation_id": context.nation_id, "order_id": context.order_id}, token)
+	if not captured.ok: return captured
+	var original: Dictionary = lab.terrain.site.duplicate(true)
+	var fire_capture := _capture_transfer_fire_snapshots(lab.terrain, original)
+	if not fire_capture.ok: return fire_capture
+	var spec := {"person_id": int(context.order.payload.driver_id), "team_id": int(route.carrier.team.team_id),
+		"actor_key": "", "mode": "land", "controller": "npc", "game_seconds": float(control.logical_game_seconds),
+		"namespace": str(pin.world_instance_id) + ":" + Crypto.new().generate_random_bytes(16).hex_encode(),
+		"family_transfer_guard": region_family_transfer_guard}
+	var extracted := RegionTravel.extract(original, spec, token)
+	if not extracted.ok: return extracted
+	var nation_id := str(context.nation_id)
+	var order_id := str(context.order_id)
+	if not extracted.origin.get("equipment_nations", {}).has(nation_id) \
+		or extracted.party.content.get("equipment_nations", {}).has(nation_id):
+		return fail("WHOLE_NATION", "公共車隊只帶原 NPC／人貨；本原國家及其科技須留原 Source holder")
+	var source_nation: Dictionary = extracted.origin.equipment_nations[nation_id]
+	var order: Dictionary = source_nation.get("technology_operations", {}).get("public_orders", {}).get(order_id, {})
+	if order != context.order or int(order.payload.driver_id) != int(route.driver_id): return fail("STALE_ORDER")
+	var vehicle_id := str(order.payload.vehicle_id)
+	var vehicle: Dictionary = extracted.party.content.vehicles.get(vehicle_id, {})
+	if vehicle.is_empty() or int(vehicle.operator_id) != int(order.payload.driver_id) or int(vehicle.cargo.get("grain", 0)) < 4:
+		return fail("NO_CARGO")
+	order.payload.travel_token = token
+	order.status = "active"
+	order.revision = int(order.revision) + 1
+	if not context.orders.valid_nation_operation_record(source_nation.technology_operations, extracted.origin.item_definitions, {}): return fail("INVALID")
+	var identity: Dictionary = extracted.party.content.travel_identity
+	var driver_ref: Dictionary = identity.refs.person.get(str(int(order.payload.driver_id)), {})
+	var vehicle_ref: Dictionary = identity.refs.vehicle.get(vehicle_id, {})
+	if driver_ref.is_empty() or vehicle_ref.is_empty(): return fail("CORRUPT_TRAVEL_IDENTITY")
+	extracted.party.upkeep.owner_action_seconds = float(control.fire_clock.action_seconds)
+	extracted.party.upkeep.original_deaths = {}
+	for person: int in lab.site_controller._pending_deaths:
+		if extracted.party.person_ids.has(person): extracted.party.upkeep.original_deaths[str(person)] = float(lab.site_controller._pending_deaths[person])
+	var route_context := prepare_region_route_context(lab.terrain, extracted.party)
+	if not route_context.ok: return route_context
+	var verified := RegionRoute.verify_steps(source, route.steps, route_context.context)
+	if not verified.ok: return verified
+	var compiled := _region_npc_route_plan(token, route.steps, extracted.party)
+	if not compiled.ok: return compiled
+	var candidate := Env.navigation_for_state(lab.terrain, extracted.origin)
+	candidate.set_meta(&"region_bind_source", lab.terrain)
+	var binding: Dictionary = region_bind_candidate.call(lab, candidate, "live" if str(control.active_site_id) == str(candidate.site.id) else "cold_exact")
+	for hook: String in ["can_publish", "publish", "save_candidate"]:
+		if not binding.get("ok", false) or not binding.get(hook) is Callable or not binding[hook].is_valid(): return fail("MISSING_REGION_ADAPTER")
+	var coordinate := _coordinate(lab.terrain)
+	if not coordinate.ok: return coordinate
+	var receipt := {"kind": "nation_public_route", "source_site_id": str(lab.terrain.site.id), "scope_nation_id": nation_id,
+		"order_id": order_id, "order_revision": int(order.revision), "route_ref": order.payload.route_ref.duplicate(true),
+		"driver_id": int(order.payload.driver_id), "vehicle_id": vehicle_id,
+		"person_reference": driver_ref.duplicate(true), "vehicle_reference": vehicle_ref.duplicate(true),
+		"phase_token": paid.token.duplicate(true), "payment_id": str(paid.get("payment_id", ""))}
+	return {"ok": true, "token": token, "generation": int(_marker.get("generation", 0)),
+		"runtime_revision": int(region_registry().revision), "world": float(control.logical_game_seconds),
+		"coordinate": coordinate.site, "lab": lab, "candidate": candidate, "party": extracted.party,
+		"plan": compiled.plan, "binding": binding, "request": receipt, "vacated_housing": extracted.vacated_housing}
+
+
+func _region_n08_local_reference(state: Dictionary, kind: String, reference: Dictionary) -> Dictionary:
+	if reference.get("type") != kind: return fail("INVALID_IDENTITY")
+	var wanted := RegionTravel.stable_key(reference)
+	var local := ""
+	for identity: String in state.get("travel_identity", {}).get("refs", {}).get(kind, {}):
+		if RegionTravel.stable_key(state.travel_identity.refs[kind][identity]) != wanted: continue
+		if not local.is_empty(): return fail("DUPLICATE_IDENTITY")
+		local = identity
+	return {"ok": true, "identity": local} if not local.is_empty() else fail("NO_ORIGINAL_BODY")
+
+
+func _region_n08_map_player_arrival(next_control: Dictionary, party_token: String, destination: Dictionary) -> Dictionary:
+	# P0 joins retain the SAME Source NPC token/order/typed body metadata in
+	# registry.parties. A later real player arrival maps those original carriers.
+	for token: String in next_control.region_gameplay.parties:
+		var reference: Dictionary = next_control.region_gameplay.parties[token]
+		var receipt: Dictionary = reference.get("transfer_receipt", {})
+		if receipt.get("kind") != "nation_public_route" or reference.get("phase") != "joined" \
+			or reference.get("entered_party") != party_token: continue
+		var person := _region_n08_local_reference(destination, "person", receipt.get("person_reference", {}))
+		var vehicle := _region_n08_local_reference(destination, "vehicle", receipt.get("vehicle_reference", {}))
+		if not person.ok or not vehicle.ok: return fail("N08_BODY_CLOSURE", "原遇合馬車／操作人須一起真到站")
+		reference.phase = "entered"
+		reference.destination_site = str(destination.id)
+		reference.arrival_game_seconds = float(next_control.logical_game_seconds)
+		reference.nation_route_arrival = {"site_id": str(destination.id), "operator_id": int(person.identity),
+			"vehicle_id": str(vehicle.identity), "person_reference": receipt.person_reference.duplicate(true),
+			"vehicle_reference": receipt.vehicle_reference.duplicate(true), "party_token": party_token}
+	return {"ok": true}
+
+
+func _region_n08_entered_context(token: String) -> Dictionary:
+	var reference: Dictionary = region_registry().parties.get(token, {})
+	var receipt: Dictionary = reference.get("transfer_receipt", {})
+	if receipt.get("kind") != "nation_public_route" or reference.get("phase") != "entered": return fail("NO_TARGET")
+	if receipt.get("route_ref", {}).get("world_instance_id") != str(pin.world_instance_id) \
+		or receipt.route_ref.get("slot_id") != str(pin.slot_id) or receipt.route_ref.get("source_site_id") != receipt.get("source_site_id"):
+		return fail("WRONG_SLOT")
+	if not region_owner_lab.is_valid(): return fail("MISSING_REGION_ADAPTER")
+	var source_id := str(receipt.source_site_id)
+	var source_owner: Dictionary = region_owner_lab.call(source_id, "live" if source_id == str(control.active_site_id) else "cold_exact")
+	if not source_owner.get("ok", false) or not source_owner.get("lab") is TerrainLab: return fail("COMMITTED_UNBOUND")
+	var source_lab: TerrainLab = source_owner.lab
+	var nation: Dictionary = source_lab.terrain.site.get("equipment_nations", {}).get(str(receipt.scope_nation_id), {})
+	var order: Dictionary = nation.get("technology_operations", {}).get("public_orders", {}).get(str(receipt.order_id), {})
+	if order.is_empty() or order.get("tech_id") != "N08" or order.get("status") in ["complete", "revoked"] \
+		or order.scope_site_id != source_id or order.scope_nation_id != receipt.scope_nation_id \
+		or order.payload.travel_token != token or not order.payload.loaded or order.payload.route_ref != receipt.route_ref \
+		or int(order.payload.driver_id) != int(receipt.driver_id) or str(order.payload.vehicle_id) != str(receipt.vehicle_id): return fail("STALE_ORDER")
+	var original_ref: Dictionary = source_lab.terrain.site.get("travel_identity", {}).get("refs", {}).get("person", {}).get(str(int(receipt.driver_id)), {})
+	if original_ref != receipt.person_reference: return fail("N08_BODY_CLOSURE")
+	var authority := _region_n08_current_authority(source_lab, nation, int(order.authorizer_id))
+	if not authority.ok: return authority
+	var destination_id := str(reference.get("destination_site", ""))
+	var destination_owner: Dictionary = region_owner_lab.call(destination_id, "live" if destination_id == str(control.active_site_id) else "cold_exact")
+	if not destination_owner.get("ok", false) or not destination_owner.get("lab") is TerrainLab: return fail("COMMITTED_UNBOUND")
+	var destination_lab: TerrainLab = destination_owner.lab
+	var driver := _region_n08_local_reference(destination_lab.terrain.site, "person", receipt.person_reference)
+	var vehicle := _region_n08_local_reference(destination_lab.terrain.site, "vehicle", receipt.vehicle_reference)
+	if not driver.ok or not vehicle.ok: return fail("N08_BODY_CLOSURE")
+	return {"ok": true, "token": token, "reference": reference, "transfer_receipt": receipt,
+		"source_lab": source_lab, "destination_lab": destination_lab, "nation": nation, "order": order,
+		"nation_id": str(receipt.scope_nation_id), "order_id": str(receipt.order_id),
+		"driver_id": int(driver.identity), "vehicle_id": str(vehicle.identity)}
+
+
+func _region_n08_completed_contact(token: String, site_id: String, component: int) -> bool:
+	var reference: Dictionary = region_registry().parties.get(token, {})
+	if reference.get("transfer_receipt", {}).get("kind") != "nation_public_route": return false
+	var identity := "npc:%s:player-contact:%s:%d" % [token, site_id, component]
+	for event: Dictionary in region_registry().events:
+		if event.id == identity and event.kind == "player_encounter" and event.status == "complete" and event.player == true \
+			and event.owner == site_id and event.payload.get("token") == token and int(event.payload.get("component", -1)) == component:
+			return true
+	return false
+
+
+func _region_n08_resume_carrier(context: Dictionary) -> Dictionary:
+	# The first real P0 materializes through the original player handler. Resume
+	# only its already accepted original carrier, at its actual current position.
+	var lab: TerrainLab = context.destination_lab
+	var carrier := _region_n08_wagon(lab, str(context.vehicle_id), int(context.driver_id))
+	if not carrier.ok: return carrier
+	if not region_player_barrier().is_empty(): return fail("PLAYER_BARRIER")
+	var captured: Dictionary = lab.site_controller.capture_region_checkpoint("region_barrier", false,
+		{"civil_transport_resume": str(context.token)}, str(context.token))
+	if not captured.ok: return captured
+	var coordinate := _coordinate(lab.terrain)
+	if not coordinate.ok: return coordinate
+	var destination := _region_n08_known_destination(str(context.order.payload.destination_site_id))
+	if not destination.ok: return destination
+	var state: Dictionary = lab.terrain.site.duplicate(true)
+	var fire := _capture_transfer_fire_snapshots(lab.terrain, state)
+	if not fire.ok: return fire
+	var spec := {"person_id": int(context.driver_id), "team_id": int(carrier.team.team_id), "actor_key": "",
+		"mode": "land", "controller": "npc", "game_seconds": float(control.logical_game_seconds),
+		"namespace": str(pin.world_instance_id) + ":" + Crypto.new().generate_random_bytes(16).hex_encode(),
+		"family_transfer_guard": region_family_transfer_guard}
+	var extracted := RegionTravel.extract(state, spec, str(context.token))
+	if not extracted.ok: return extracted
+	var driver_ref: Dictionary = extracted.party.content.travel_identity.refs.person.get(str(int(context.driver_id)), {})
+	var vehicle_ref: Dictionary = extracted.party.content.travel_identity.refs.vehicle.get(str(context.vehicle_id), {})
+	if driver_ref != context.transfer_receipt.person_reference or vehicle_ref != context.transfer_receipt.vehicle_reference:
+		return fail("N08_BODY_CLOSURE")
+	if extracted.party.content.get("equipment_nations", {}).has(str(context.nation_id)): return fail("WHOLE_NATION")
+	extracted.party.upkeep.owner_action_seconds = float(control.fire_clock.action_seconds)
+	extracted.party.upkeep.original_deaths = {}
+	for identity: int in lab.site_controller._pending_deaths:
+		if extracted.party.person_ids.has(identity): extracted.party.upkeep.original_deaths[str(identity)] = float(lab.site_controller._pending_deaths[identity])
+	var route_context := prepare_region_route_context(lab.terrain, extracted.party)
+	if not route_context.ok: return route_context
+	var table := RegionRoute.table_from_terrain(lab.terrain, PackedByteArray(), true)
+	if not table.get("ok", false): return table
+	var component := RegionRoute.component_of(table, carrier.driver.cell)
+	if component < 0: return fail("UNREACHABLE")
+	var search := RegionRoute.Search.new()
+	search.source = source; search.start_site = coordinate.site
+	search.start_component = component; search.goal_site = destination.coordinate
+	search.context = route_context.context
+	var found: Dictionary = search.run()
+	if not found.get("ok", false): return found
+	var verified := RegionRoute.verify_steps(source, found.steps, route_context.context)
+	if not verified.ok: return verified
+	var compiled := _region_npc_route_plan(str(context.token), found.steps, extracted.party)
+	if not compiled.ok: return compiled
+	var candidate := Env.navigation_for_state(lab.terrain, extracted.origin)
+	candidate.set_meta(&"region_bind_source", lab.terrain)
+	var binding: Dictionary = region_bind_candidate.call(lab, candidate, "live" if str(control.active_site_id) == str(candidate.site.id) else "cold_exact")
+	for hook: String in ["can_publish", "publish", "save_candidate"]:
+		if not binding.get("ok", false) or not binding.get(hook) is Callable or not binding[hook].is_valid(): return fail("MISSING_REGION_ADAPTER")
+	return commit_npc_region_dispatch({"ok": true, "token": str(context.token), "generation": int(_marker.get("generation", 0)),
+		"runtime_revision": int(region_registry().revision), "world": float(control.logical_game_seconds),
+		"coordinate": coordinate.site, "lab": lab, "candidate": candidate, "party": extracted.party,
+		"plan": compiled.plan, "plan_path": "travel/%s/plan_resume_%09d_%s.json" % [str(context.token), int(_marker.get("generation", 0)) + 1, Crypto.new().generate_random_bytes(8).hex_encode()],
+		"binding": binding, "request": context.transfer_receipt.duplicate(true), "vacated_housing": extracted.vacated_housing})
+
+
+func _region_n08_last_mile(context: Dictionary) -> Dictionary:
+	var lab: TerrainLab = context.destination_lab
+	var carrier := _region_n08_wagon(lab, str(context.vehicle_id), int(context.driver_id))
+	if not carrier.ok: return carrier
+	var holder := str(context.order.payload.destination_holder)
+	var stock: Dictionary = carrier.transport._stock(holder, true)
+	if stock.is_empty() or lab.terrain.site.features.get(str(stock.get("feature_id", "")), {}).get("kind") != "warehouse": return fail("NO_WAREHOUSE")
+	if bool(stock.get("withdraw_only", true)) or int(stock.faction) != int(carrier.driver.faction): return fail("NO_AUTHORITY")
+	if Runtime.carried_load(lab.terrain.site, stock.cargo, stock.holder) + 4 > int(stock.capacity): return fail("STORAGE_FULL")
+	var ticket := _region_n08_transfer_permit(context.source_lab, context, lab, str(context.vehicle_id), int(context.driver_id), str(context.vehicle_id), holder)
+	if not ticket.ok: return ticket
+	var transfer: Dictionary = carrier.transport.prepare_nation_route_transfer(ticket.permit)
+	discard_nation_route_transfer_permit(ticket.permit)
+	if transfer.ok: return {"ok": true, "at_holder": true}
+	if transfer.get("code") != "UNREACHABLE": return transfer
+	# The true original commander/formation/reservation/vehicle step consumes
+	# this movement. No distance counter, timer or direct cell write can finish it.
+	var moved: Dictionary = carrier.team.issue_combat_order(carrier.team.current_commander,
+		TerrainArmy.CombatOrder.MOVE, stock.cell)
+	if not moved.ok: return moved
+	return {"ok": true, "at_holder": false, "moving": true}
+
+
+func _region_n08_research_candidate(context: Dictionary, candidate_nation: Dictionary, event_id: String) -> Dictionary:
+	var technology: GDScript = load("res://scripts/terrain_lab/site_technology.gd")
+	var token: Dictionary = context.transfer_receipt.get("phase_token", {})
+	if token.is_empty():
+		return {"ok": true} if technology.scope_known(candidate_nation.get("technology", {}), "N08") else fail("STALE_PROJECT")
+	var paid := _region_n08_paid_token(context.source_lab, str(context.nation_id), str(context.order_id), context.order)
+	if not paid.ok or paid.token != token or str(paid.get("payment_id", "")) != str(context.transfer_receipt.get("payment_id", "")):
+		return paid if not paid.ok else fail("STALE_PROJECT")
+	var source_ref: Dictionary = context.source_lab.terrain.site.get("travel_identity", {}).get("refs", {}).get("person", {}).get(str(int(token.person.person_id)), {})
+	if str(token.person.site_id) != str(context.order.scope_site_id) or int(token.person.person_id) != int(context.order.payload.driver_id) \
+		or source_ref != context.transfer_receipt.person_reference: return fail("N08_BODY_CLOSURE")
+	# Research keeps its Source historical Scope PersonRef. The immutable real
+	# Region work event separately records the Destination body, resolved above
+	# by the injective original typed PersonRef; the two numeric ids are not equated.
+	var receipt := {"site_id": str(token.person.site_id), "person_id": int(token.person.person_id),
+		"attempt": int(token.attempt), "phase_id": str(token.phase_id), "event_id": event_id,
+		"work_seconds": 0.0, "payment_id": str(paid.payment_id)}
+	var researched: Dictionary = technology.scope_receipt_candidate(candidate_nation.technology, "nation", receipt)
+	if not researched.ok or not researched.get("complete", false): return researched if not researched.ok else fail("INCOMPLETE")
+	candidate_nation.technology = researched.state
+	return {"ok": true}
+
+
+func _region_n08_publish_delivery(token: String) -> Dictionary:
+	var generation := int(_marker.get("generation", 0)) + 1
+	var next_control := control.duplicate(true)
+	var sites: Dictionary = _marker.get("sites", {}).duplicate(true)
+	# Preserve every other original cold owner in this same generation. Capture
+	# first, before preparing graph tickets or retaining a physical transfer.
+	var cold := _collect_cold_checkpoint(generation, sites, next_control)
+	if not cold.ok: return cold
+	var context := _region_n08_entered_context(token)
+	if not context.ok: return context
+	var source_lab: TerrainLab = context.source_lab
+	var destination_lab: TerrainLab = context.destination_lab
+	if str(destination_lab.terrain.site.id) != str(context.order.payload.destination_site_id): return fail("WRONG_SITE")
+	var ticket := _region_n08_transfer_permit(source_lab, context, destination_lab,
+		str(context.vehicle_id), int(context.driver_id), str(context.vehicle_id), str(context.order.payload.destination_holder))
+	if not ticket.ok: return ticket
+	var actual: Dictionary = destination_lab.site_controller.vehicles.prepare_nation_route_transfer(ticket.permit)
+	if not actual.ok: discard_nation_route_transfer_permit(ticket.permit); return actual
+	# The collector already captures every cold original, including the true
+	# last-mile destination. Active Source also captures its current full graph
+	# through the same Controller before cloning; its head may have moved.
+	var source_capture: Dictionary = source_lab.site_controller.capture_region_checkpoint("region_checkpoint", true)
+	if not source_capture.ok: discard_nation_route_transfer_permit(ticket.permit); return source_capture
+	var source_state: Dictionary = source_lab.terrain.site.duplicate(true)
+	var destination_state: Dictionary = destination_lab.terrain.site.duplicate(true)
+	var source_fire := _capture_transfer_fire_snapshots(source_lab.terrain, source_state)
+	var destination_fire := _capture_transfer_fire_snapshots(destination_lab.terrain, destination_state)
+	if not source_fire.ok or not destination_fire.ok:
+		discard_nation_route_transfer_permit(ticket.permit)
+		return source_fire if not source_fire.ok else destination_fire
+	var destination_candidate := Env.navigation_for_state(destination_lab.terrain, destination_state)
+	var wagon: Dictionary = destination_state.vehicles.get(str(context.vehicle_id), {})
+	var stocks: GDScript = load("res://scripts/terrain_lab/site_stockpiles.gd")
+	var warehouse: Dictionary = stocks.stock_endpoint(destination_candidate, str(context.order.payload.destination_holder).trim_prefix("feature:"))
+	if wagon.is_empty() or warehouse.is_empty(): discard_nation_route_transfer_permit(ticket.permit); return fail("NO_TARGET")
+	var transfer := Runtime.prepare_item_transfer(destination_candidate, wagon.holder, wagon.cargo, warehouse.holder, warehouse.cargo,
+		{"grain": 4}, [], int(actual.source_version), int(actual.destination_version), int(warehouse.capacity))
+	if not transfer.ok: discard_nation_route_transfer_permit(ticket.permit); return transfer
+	# Publication below affects only the detached ORIGINAL candidate. Live cargo
+	# remains unchanged until BOTH full Site payloads and the sole marker commit.
+	var moved := Runtime.publish_item_transfer(transfer)
+	var source_nation: Dictionary = source_state.equipment_nations[str(context.nation_id)]
+	var operations: Dictionary = source_nation.technology_operations
+	var order: Dictionary = operations.public_orders[str(context.order_id)]
+	var event_id: String = context.source_lab.site_controller.equipment_orders._public_event_id(context.order, str(context.order_id), "public_route", token)
+	if not order.receipts.is_empty(): discard_nation_route_transfer_permit(ticket.permit); return fail("REPLAY")
+	order.receipts.append({"id": event_id, "site_id": str(destination_state.id), "binding": "public_route",
+		"operator_id": int(context.driver_id), "source_operator_id": int(context.order.payload.driver_id),
+		"operator_reference": context.transfer_receipt.person_reference.duplicate(true), "transfer_token": token,
+		"target_id": str(order.payload.destination_holder), "work_seconds": 0.0, "item_ids": []})
+	order.status = "complete"
+	order.revision = int(order.revision) + 1
+	var researched := _region_n08_research_candidate(context, source_nation, event_id)
+	if not researched.ok: discard_nation_route_transfer_permit(ticket.permit); return researched
+	var source_candidate := Env.navigation_for_state(source_lab.terrain, source_state)
+	source_candidate.set_meta(&"region_bind_source", source_lab.terrain)
+	destination_candidate.set_meta(&"region_bind_source", destination_lab.terrain)
+	var bindings: Array[Dictionary] = []
+	for pair: Array in [[source_lab, source_candidate], [destination_lab, destination_candidate]]:
+		var lab: TerrainLab = pair[0]
+		var candidate: TerrainData = pair[1]
+		var binding: Dictionary = region_bind_candidate.call(lab, candidate, "live" if str(candidate.site.id) == str(control.active_site_id) else "cold_exact")
+		if not binding.get("ok", false): discard_nation_route_transfer_permit(ticket.permit); return _region_family_discard_bindings(bindings, binding)
+		bindings.append(binding)
+		for hook: String in ["data", "can_publish", "save_candidate", "publish", "discard"]:
+			if not binding.has(hook): discard_nation_route_transfer_permit(ticket.permit); return _region_family_discard_bindings(bindings, fail("MISSING_REGION_ADAPTER"))
+	var data_candidates: Array[TerrainData] = []
+	for binding: Dictionary in bindings:
+		var coordinate := _coordinate(binding.data)
+		if not coordinate.ok: discard_nation_route_transfer_permit(ticket.permit); return _region_family_discard_bindings(bindings, coordinate)
+		var path := _generation_path(generation, coordinate.site)
+		var saved: Dictionary = binding.save_candidate.call(binding.data, path)
+		if not saved.ok: discard_nation_route_transfer_permit(ticket.permit); return _region_family_discard_bindings(bindings, saved)
+		var checked := _load_checked(path, coordinate.site)
+		if not checked.ok: discard_nation_route_transfer_permit(ticket.permit); return _region_family_discard_bindings(bindings, checked)
+		data_candidates.append(checked.data)
+		sites[_site_key(coordinate.site)] = _file_entry(path)
+	var payload := {"kind": "nation_public_route_delivery", "token": token, "world_instance_id": str(pin.world_instance_id), "slot_id": str(pin.slot_id),
+		"source_site_id": str(source_state.id), "destination_site_id": str(destination_state.id), "nation_id": str(context.nation_id), "order_id": str(context.order_id),
+		"route_ref": context.order.payload.route_ref.duplicate(true), "source_driver_id": int(context.order.payload.driver_id), "operator_id": int(context.driver_id),
+		"person_reference": context.transfer_receipt.person_reference.duplicate(true), "vehicle_reference": context.transfer_receipt.vehicle_reference.duplicate(true),
+		"vehicle_id": str(context.vehicle_id), "destination_holder": str(context.order.payload.destination_holder), "resources": {"grain": 4},
+		"source_version": int(actual.source_version), "destination_version": int(actual.destination_version),
+		"published_source_version": int(moved.source_version), "published_destination_version": int(moved.destination_version),
+		"phase_token": context.transfer_receipt.phase_token.duplicate(true), "payment_id": str(context.transfer_receipt.payment_id), "generation": generation}
+	var queued := GameplayClock.queue_event(next_control.region_gameplay, event_id, "work", float(control.logical_game_seconds), str(destination_state.id), payload)
+	if not queued.ok or queued.get("duplicate", false): discard_nation_route_transfer_permit(ticket.permit); return _region_family_discard_bindings(bindings, queued if not queued.ok else fail("REPLAY"))
+	var completed := GameplayClock.complete_event(next_control.region_gameplay, event_id, float(control.logical_game_seconds))
+	if not completed.ok: discard_nation_route_transfer_permit(ticket.permit); return _region_family_discard_bindings(bindings, completed)
+	var reference: Dictionary = next_control.region_gameplay.parties[token]
+	reference.nation_delivery_event = event_id
+	next_control.region_gameplay.revision = int(next_control.region_gameplay.revision) + 1
+	for lab: TerrainLab in [source_lab, destination_lab]:
+		var owner := str(lab.terrain.site.id)
+		var activation := GameplayClock.activate_mode(next_control.region_gameplay, owner, "committed-unbound", generation,
+			"gd", "original_site", float(control.logical_game_seconds), float(control.fire_clock.action_seconds), {})
+		if not activation.ok: discard_nation_route_transfer_permit(ticket.permit); return _region_family_discard_bindings(bindings, activation)
+	var parties := collect_region_party_checkpoint(generation, next_control)
+	if not parties.ok: discard_nation_route_transfer_permit(ticket.permit); return _region_family_discard_bindings(bindings, parties)
+	var admitted := validate_nation_route_transfer_permit(destination_lab.site_controller.vehicles, ticket.permit,
+		str(context.vehicle_id), str(context.order.payload.destination_holder), {"grain": 4}, [], int(context.driver_id))
+	var stable := Runtime.validate_prepared_item_transfer(actual)
+	if not admitted.ok or not stable.ok:
+		discard_nation_route_transfer_permit(ticket.permit)
+		return _region_family_discard_bindings(bindings, admitted if not admitted.ok else stable)
+	for binding: Dictionary in bindings:
+		if binding.can_publish.call() != true: discard_nation_route_transfer_permit(ticket.permit); return _region_family_discard_bindings(bindings, fail("STALE_REGION_BIND_TICKET"))
+	var published := _publish(sites, next_control, str(_marker.get("transfer_token", "")), _marker.get("journey", {}))
+	discard_nation_route_transfer_permit(ticket.permit)
+	if not published.ok: return _region_family_discard_bindings(bindings, published)
+	# Marker owns all material, body, research and receipt effects once. Bind
+	# faults can only restore selected complete payloads; they never rerun unload.
+	for index: int in bindings.size():
+		var binding: Dictionary = bindings[index]
+		var bound: Dictionary = binding.publish.call(data_candidates[index])
+		if not bound.get("ok", false) or bound.get("complete") != true:
+			var fault := fail("COMMITTED_UNBOUND", "本四糧與Scope同marker已提交；只允原完整bind恢復")
+			source_lab.site_controller.latch_original_step_fault(fault)
+			destination_lab.site_controller.latch_original_step_fault(fault)
+			return fault
+		var mode := "live" if str(data_candidates[index].site.id) == str(control.active_site_id) else "cold_exact"
+		var activated := activate_region_mode(str(data_candidates[index].site.id), mode, "original_site" if mode == "live" else "original_replay", bound)
+		if not activated.ok: return activated
+	return {"ok": true, "complete": true, "event_id": event_id, "token": token, "generation": int(published.generation)}
+
+
+func region_nation_route_receipt(lab: TerrainLab, target_id: String, event_id: String) -> Dictionary:
+	if lab == null or lab.site_controller == null or lab.site_controller.region_slot != self: return fail("WRONG_SLOT")
+	for event: Dictionary in region_registry().events:
+		if event.id != event_id or event.kind != "work" or event.status != "complete": continue
+		var payload: Dictionary = event.payload
+		if payload.get("kind") != "nation_public_route_delivery" or payload.get("source_site_id") != str(lab.terrain.site.id) \
+			or payload.get("world_instance_id") != str(pin.world_instance_id) or payload.get("slot_id") != str(pin.slot_id) \
+			or payload.get("destination_holder") != target_id or payload.get("resources") != {"grain": 4}: return fail("INVALID_RECEIPT")
+		var order: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(str(payload.nation_id), {}).get("technology_operations", {}).get("public_orders", {}).get(str(payload.order_id), {})
+		var reference: Dictionary = region_registry().parties.get(str(payload.token), {})
+		if order.get("status") != "complete" or reference.get("nation_delivery_event") != event_id \
+			or order.get("payload", {}).get("travel_token") != payload.token or order.payload.route_ref != payload.route_ref \
+			or int(order.payload.driver_id) != int(payload.source_driver_id) or order.payload.destination_site_id != payload.destination_site_id \
+			or lab.terrain.site.get("travel_identity", {}).get("refs", {}).get("person", {}).get(str(int(payload.source_driver_id)), {}) != payload.person_reference:
+			return fail("INVALID_RECEIPT")
+		for receipt: Dictionary in order.receipts:
+			if receipt.id != event_id: continue
+			if receipt.site_id != payload.destination_site_id or int(receipt.operator_id) != int(payload.operator_id) \
+				or receipt.operator_reference != payload.person_reference or receipt.transfer_token != payload.token: return fail("INVALID_RECEIPT")
+			return {"ok": true, "receipt": receipt.duplicate(true), "token": payload.phase_token.duplicate(true),
+				"physical_event": event.duplicate(true), "source_person": {"site_id": str(payload.source_site_id), "person_id": int(payload.source_driver_id)}}
+	return fail("NO_TARGET")
+
+
+func _region_n08_consume_entered() -> Dictionary:
+	var held: Array[Dictionary] = []
+	var tokens: Array = region_registry().parties.keys()
+	tokens.sort()
+	for token: String in tokens:
+		var reference: Dictionary = region_registry().parties.get(token, {})
+		if reference.get("transfer_receipt", {}).get("kind") != "nation_public_route" or reference.get("phase") != "entered" \
+			or not str(reference.get("nation_delivery_event", "")).is_empty(): continue
+		var context := _region_n08_entered_context(token)
+		if not context.ok:
+			if context.get("code") == "COMMITTED_UNBOUND": return context
+			held.append({"token": token, "code": str(context.get("code", "INVALID"))})
+			continue
+		if str(context.destination_lab.terrain.site.id) != str(context.order.payload.destination_site_id):
+			var resumed := _region_n08_resume_carrier(context)
+			if not resumed.ok:
+				if resumed.get("code") == "COMMITTED_UNBOUND": return resumed
+				held.append({"token": token, "code": str(resumed.get("code", "INVALID"))})
+			continue
+		var contact := _region_n08_last_mile(context)
+		if not contact.ok:
+			held.append({"token": token, "code": str(contact.get("code", "INVALID"))})
+			continue
+		if not contact.get("at_holder", false): continue
+		var delivered := _region_n08_publish_delivery(token)
+		if not delivered.ok:
+			if delivered.get("code") == "COMMITTED_UNBOUND": return delivered
+			held.append({"token": token, "code": str(delivered.get("code", "INVALID"))})
+	return {"ok": true, "complete": true, "held": held}
+
+
+## Called only after original point consumers. One existing Battle registry
+## entry references the whole original siege; every body/work/action stays in
+## the same complete Site graph and common checkpoint publication.
+
+
+func admit_original_region_contact_battle(original: TerrainLab) -> Dictionary:
+	if not is_instance_valid(original) or original.terrain == null or original.site_controller == null or original.site_controller.region_slot != self:
+		return fail("MISSING_ORIGINAL_BATTLE_OWNER")
+	var owner := str(original.terrain.site.get("id", ""))
+	if owner.is_empty() or _region_original_labs.get(owner) != original or original._region_bound_data != original.terrain or not original.restore_only:
+		return fail("STALE_ORIGINAL_BATTLE_OWNER")
+	if owner == str(control.active_site_id) or not region_player_barrier().is_empty():
+		return {"ok": true, "admitted": false, "reason": "PLAYER_BARRIER"}
+	var mode: Dictionary = region_registry().modes.get(owner, {})
+	if str(mode.get("mode", "")) != "cold_exact": return {"ok": true, "admitted": false, "reason": "OTHER_ORIGINAL_CONSUMER"}
+	if str(mode.get("backend", "")) != "gd":
+		return {"ok": true, "admitted": false, "reason": "EXACT_BACKEND_UNADMITTED"}
+	if original.crowd_site != null and original.crowd_site.active:
+		return fail("REGION_BACKEND_UNADMITTED", "原 GD mode 與 Native body 不一致")
+	if original.get_tree().paused or bool(original.terrain.site.get("paused", false)):
+		return {"ok": true, "admitted": false, "reason": "PAUSED_ORIGINAL"}
+	if not original._region_point_pending.is_empty() or not original._region_point_contacts.is_empty() or not original._region_point_wakes.is_empty() or original._region_point_consuming or original._region_point_dispatching or not original._combat_contacts.is_empty() or not original.terrain.get_meta(&"fire_boundary", {}).is_empty():
+		return {"ok": true, "admitted": false, "reason": "ORIGINAL_EFFECTS_PENDING"}
+	# Siege and Fire continue through their original exact owners until their
+	# own calibrated admission exists. An ordinary label cannot open that gate.
+	if original._siege_tactical_active() or original._fire_activity():
+		return {"ok": true, "admitted": false, "reason": "EXACT_SIEGE_FIRE_OWNER"}
+	var bind: Dictionary = original.region_bind_receipt(original.terrain)
+	if bind.get("ok") != true or bind.get("complete") != true or bind.get("owners_restored") != true or str(bind.get("backend", "")) != "gd" or int(bind.get("generation", -1)) != int(_marker.get("generation", 0)):
+		return fail("COMMITTED_UNBOUND")
+	var world := float(control.logical_game_seconds)
+	var action := float(control.fire_clock.action_seconds)
+	var settled := validate_settlement(original.terrain.site, world)
+	var fire: Dictionary = original.terrain.site.get("fire_settlement", {})
+	if not settled.ok or settled.legacy or float(settled.pending) > 0.00000001 or fire.get("epoch") != control.fire_clock.epoch or int(fire.get("sequence", -1)) != int(control.fire_clock.sequence) or absf(float(fire.get("game_seconds", -1.0)) - world) > 0.00000001 or absf(float(fire.get("action_seconds", -1.0)) - action) > 0.00000001 or absf(original.fire_action_cursor - action) > 0.00000001 or int(mode.get("generation", -1)) != int(_marker.generation) or absf(float(mode.get("game_seconds", -1.0)) - world) > 0.00000001 or absf(float(mode.get("action_seconds", -1.0)) - action) > 0.00000001:
+		return fail("INCOMPLETE_ORIGINAL_BATTLE_POINT")
+	for existing: Dictionary in region_registry().battles.values():
+		if str(existing.get("site_id", "")) == owner and str(existing.get("phase", "")) != "finished":
+			return {"ok": true, "admitted": false, "reason": "EXISTING_ORIGINAL_BATTLE", "battle_id": str(existing.id)}
+	var factions: Dictionary = {}
+	var participants: Dictionary = {}
+	var control_scope := RegionBattle.scoped_controlled_person(original)
+	if not control_scope.get("ok", false): return control_scope
+	var controlled := int(control_scope.person_id)
+	for actor: TerrainTestCharacter in original.combat_actors:
+		if not is_instance_valid(actor) or not original.actor_present(actor) or actor.person_id == controlled or actor.site_exited: continue
+		if actor.person_id <= 0 or participants.has(actor.person_id): return fail("INVALID_ORIGINAL_BATTLE_ROSTER")
+		participants[actor.person_id] = actor.faction_id
+	for team: TerrainArmy in original.combat_armies:
+		if not team.combat_enabled: continue
+		for index: int in team.combat_units.size():
+			var identity := team.combat_identity(index)
+			if identity == controlled or bool(team.combat_hot_get(index, &"departed")) or bool(team.combat_hot_get(index, &"site_exited", false)): continue
+			if identity <= 0 or participants.has(identity) or original._original_person_target(identity).is_empty(): return fail("INVALID_ORIGINAL_BATTLE_ROSTER")
+			participants[identity] = team.faction_id
+	for identity: int in participants:
+		var faction := int(participants[identity])
+		if faction < 0: return {"ok": true, "admitted": false, "reason": "EXACT_UNKNOWN_FACTION"}
+		if not factions.has(faction): factions[faction] = []
+		factions[faction].append(identity)
+	if factions.size() != 2:
+		return {"ok": true, "admitted": false, "reason": "EXACT_FACTION_TOPOLOGY", "faction_count": factions.size()}
+	var faction_ids: Array = factions.keys()
+	faction_ids.sort()
+	for ids: Array in factions.values(): ids.sort()
+	var identifier := "contact:%s:%d" % [owner, int(control.fire_clock.sequence)]
+	if region_registry().battles.has(identifier): return fail("ORIGINAL_BATTLE_ID_CONFLICT")
+	var made := RegionBattle.create({"id": identifier, "site_id": owner, "attackers": factions[faction_ids[0]],
+		"defenders": factions[faction_ids[1]], "game_time": world,
+		"rng_state": int(hash(str(pin.world_instance_id) + ":" + identifier))})
+	if not made.ok: return made
+	var resolved := RegionBattle.resolve_people(original, made.battle)
+	if not resolved.ok: return resolved
+	var actual_contacts: Array[Dictionary] = []
+	for identity: int in resolved.people:
+		var person: Dictionary = resolved.people[identity]
+		for target: int in person.get("legal_targets", []):
+			if not participants.has(target) or int(participants[target]) == int(participants[identity]): return fail("INVALID_ORIGINAL_BATTLE_CONTACT")
+			actual_contacts.append({"source": identity, "target": target, "source_cell": person.contact_cell.duplicate(), "target_cell": resolved.people[target].contact_cell.duplicate()})
+	if actual_contacts.is_empty(): return {"ok": true, "admitted": false, "reason": "NO_ORIGINAL_CONTACT"}
+	var candidate: Dictionary = region_registry().duplicate(true)
+	candidate.battles[identifier] = made.battle
+	var activation: Dictionary = bind.duplicate(true)
+	activation.mode = "formula_active"
+	activation.consumer = "original_formula_site"
+	var activated := GameplayClock.activate_mode(candidate, owner, "formula_active", int(_marker.generation), "gd", "original_formula_site", world, action, activation)
+	if not activated.ok: return activated
+	candidate.revision = int(candidate.revision) + 1
+	var valid := GameplayClock.validate_registry(candidate, world)
+	if not valid.ok: return valid
+	# Retain this original registry object, including a consumer's live alias.
+	# Its next common checkpoint publishes the exact body and metadata together.
+	var registry: Dictionary = region_registry()
+	registry.clear()
+	registry.merge(candidate, true)
+	return {"ok": true, "admitted": true, "battle_id": identifier, "battle": registry.battles[identifier],
+		"original_participants": participants, "actual_contacts": actual_contacts,
+		"game_seconds": world, "action_seconds": action, "generation": int(_marker.generation)}
+
+
+func _region_first_player_siege_contact(to: float, interval: Dictionary = {}) -> Dictionary:
+	var battle_ids: Array = []
+	for id: String in region_registry().battles:
+		var battle: Dictionary = region_registry().battles[id]
+		if str(battle.get("kind", "")) == "siege" and str(battle.get("phase", "")) != "finished": battle_ids.append(id)
+	if battle_ids.is_empty(): return {"ok": true, "contact": false}
+	battle_ids.sort()
+	var status: Dictionary = region_travel_status()
+	if not status.ok: return status
+	if not status.get("pending", false) or not status.get("moving", false) or str(status.get("mode", "land")) != "land": return {"ok": true, "contact": false}
+	var selected: Dictionary = region_travel_party()
+	if not selected.ok: return selected
+	var party: Dictionary = selected.party
+	if not has_method("region_original_party_runtime_proof"): return fail("MISSING_ORIGINAL_PARTY_PROOF")
+	var raw_proof: Variant = call("region_original_party_runtime_proof", str(status.token), party)
+	if not raw_proof is Dictionary or not raw_proof.get("ok", false) or not raw_proof.get("lab") is TerrainLab:
+		return raw_proof if raw_proof is Dictionary else fail("INVALID_ORIGINAL_PARTY_PROOF")
+	var party_lab: TerrainLab = raw_proof.lab
+	var traveller: Dictionary = party_lab._original_person_target(int(party.leader_person_id))
+	if traveller.is_empty(): return fail("INVALID_ORIGINAL_SIEGE_TRAVELLER")
+	var prepared: Dictionary = prepare_region_route_context(null, party)
+	if not prepared.ok: return prepared
+	var cache := {}
+	var idle := {"site": [status.site.x, status.site.y], "component": int(status.component), "step_index": 0}
+	var points: Dictionary = _region_contact_land_points(party, status.plan, to, true, idle, prepared.context, cache)
+	if not points.ok: return points
+	for point: Dictionary in points.points:
+		var location: Dictionary = point.position
+		var site := Vector2i(int(location.site[0]), int(location.site[1]))
+		var owner := Grid.site_id(str(pin.atlas_id), site)
+		var entry := Vector2i(int(location.cell[0]), int(location.cell[1]))
+		if entry.x < 0 or entry.y < 0: continue
+		for id: String in battle_ids:
+			var battle: Dictionary = region_registry().battles[id]
+			if str(battle.get("kind", "")) != "siege" or str(battle.get("site_id", "")) != owner or str(battle.get("phase", "")) == "finished": continue
+			var original: TerrainLab = _region_original_labs.get(owner)
+			if not is_instance_valid(original) or _region_bound_original_lab(original.terrain) != original: return fail("COMMITTED_UNBOUND")
+			if not original.terrain.contains(entry): continue
+			for identity: Variant in battle.attackers + battle.defenders:
+				var person: Dictionary = original.site_controller.person_actions._person(int(identity), false)
+				if person.is_empty() or int(person.faction) == int(traveller.faction) or not SiteSettlement._fit(person) or bool(person.moving) \
+					or SiteSettlement._role(person) == "civilian" or original.site_controller.vehicles.is_siege_crew(int(identity)): continue
+				var body_owner: Variant = person.owner
+				var unit := int(person.unit)
+				var ready: bool = body_owner.exchange_ready(unit) if body_owner is TerrainArmy else body_owner.exchange_ready()
+				var gap: Vector2i = entry - Vector2i(person.cell)
+				if not ready or absi(gap.x) + absi(gap.y) != 1 or not original.terrain.can_attack_across(person.cell, entry): continue
+				if original.site_controller.vehicles.blocks_person_step(int(identity), person.cell, person.cell, entry, entry): continue
+				var cell: Vector2i = person.cell
+				var witness := {"battle_id": id, "source_generation": int(_marker.generation), "runtime_revision": int(region_registry().revision),
+					"navigation_revision": int(original.terrain.navigation_revision), "person_id": int(identity), "person_cell": [cell.x, cell.y],
+					"entry": [entry.x, entry.y], "party_token": str(status.token), "party_source": raw_proof.get("proof", {}).duplicate(true),
+					"game_seconds": float(control.logical_game_seconds), "action_seconds": float(control.fire_clock.action_seconds), "legal_ground_melee": true}
+				var contact := {"kind": "siege_channel", "at": float(point.at),
+					"first": {"at": float(point.at), "position": {"site": location.site.duplicate(), "component": int(location.component), "cell": [cell.x, cell.y], "mode": "land"}},
+					"second": point.duplicate(true), "witness": witness}
+				return {"ok": true, "contact": true, "at": float(point.at), "site": location.site.duplicate(),
+					"component": int(location.route_component), "site_id": owner, "battle_id": id, "contact_receipt": contact}
+	return {"ok": true, "contact": false}
+
+## Re-read the accepted ORIGINAL point before the existing materializer. The
+## preview witness never overrides a body that moved, died, or lost its legal
+## channel while the common interval was paid. A stale contact is an original
+## no-effect event; any true arrival still follows its own existing queue.
+
+
+func _region_validate_player_siege_contact(event: Dictionary) -> Dictionary:
+	var contact: Dictionary = event.get("payload", {}).get("contact_receipt", {})
+	if str(contact.get("kind", "")) != "siege_channel": return {"ok": true, "valid": true}
+	var witness: Variant = contact.get("witness")
+	if not witness is Dictionary or not witness.get("person_cell") is Array or witness.person_cell.size() != 2 \
+		or not witness.get("entry") is Array or witness.entry.size() != 2 or str(witness.get("battle_id", "")) != str(event.get("payload", {}).get("battle_id", "")):
+		return fail("INVALID_SIEGE_CONTACT")
+	var battle: Dictionary = region_registry().battles.get(str(witness.battle_id), {})
+	if battle.is_empty() or str(battle.get("kind", "")) != "siege" or str(battle.get("phase", "")) == "finished": return {"ok": true, "valid": false, "reason": "SIEGE_CHANNEL_ENDED"}
+	var owner := str(battle.site_id)
+	var original: TerrainLab = _region_original_labs.get(owner)
+	if not is_instance_valid(original) or _region_bound_original_lab(original.terrain) != original: return fail("COMMITTED_UNBOUND")
+	var bind: Dictionary = original.region_bind_receipt(original.terrain)
+	if bind.get("complete") != true or bind.get("owners_restored") != true: return fail("COMMITTED_UNBOUND")
+	# A retry after the actual joint publication belongs to its genuine live
+	# owner; the existing materializer owns its immutable idempotent receipt.
+	if str(control.active_site_id) == owner and str(battle.get("mode", "")) == "live": return {"ok": true, "valid": true}
+	var status: Dictionary = region_travel_status()
+	if not status.ok: return status
+	if not status.get("pending", false) or str(status.get("token", "")) != str(witness.get("party_token", "")): return {"ok": true, "valid": false, "reason": "PLAYER_ROUTE_CHANGED"}
+	var selected: Dictionary = region_travel_party()
+	if not selected.ok: return selected
+	var party: Dictionary = selected.party
+	if not has_method("region_original_party_runtime_proof"): return fail("MISSING_ORIGINAL_PARTY_PROOF")
+	var raw_proof: Variant = call("region_original_party_runtime_proof", str(status.token), party)
+	if not raw_proof is Dictionary or not raw_proof.get("ok", false) or not raw_proof.get("lab") is TerrainLab: return raw_proof if raw_proof is Dictionary else fail("INVALID_ORIGINAL_PARTY_PROOF")
+	var party_lab: TerrainLab = raw_proof.lab
+	var traveller: Dictionary = party_lab._original_person_target(int(party.leader_person_id))
+	var identity := int(witness.get("person_id", -1))
+	if not (battle.attackers + battle.defenders).has(identity): return {"ok": true, "valid": false, "reason": "SIEGE_ROSTER_CHANGED"}
+	var person: Dictionary = original.site_controller.person_actions._person(identity, false)
+	if traveller.is_empty() or person.is_empty() or int(person.faction) == int(traveller.faction) or not SiteSettlement._fit(person) or bool(person.moving) \
+		or SiteSettlement._role(person) == "civilian" or original.site_controller.vehicles.is_siege_crew(identity): return {"ok": true, "valid": false, "reason": "SIEGE_BODY_CHANGED"}
+	var location: Dictionary = _coordinate(original.terrain)
+	if not location.ok: return location
+	var accepted: Dictionary = _region_player_endpoint_location(status, party, location.site, event)
+	if not accepted.ok: return accepted
+	var entry: Vector2i = accepted.entry
+	var cell: Vector2i = person.cell
+	var body_owner: Variant = person.owner
+	var unit := int(person.unit)
+	var ready: bool = body_owner.exchange_ready(unit) if body_owner is TerrainArmy else body_owner.exchange_ready()
+	var gap: Vector2i = entry - cell
+	if [cell.x, cell.y] != witness.person_cell or [entry.x, entry.y] != witness.entry or not ready or absi(gap.x) + absi(gap.y) != 1 \
+		or not original.terrain.can_attack_across(cell, entry) or original.site_controller.vehicles.blocks_person_step(identity, cell, cell, entry, entry):
+		return {"ok": true, "valid": false, "reason": "SIEGE_CHANNEL_CHANGED"}
+	return {"ok": true, "valid": true}
+
+
+func prepare_region_player_departure(controller: SiteController, nonce: String) -> Dictionary:
+	if controller == null or controller.region_slot != self or controller.lab == null: return fail("REGION_SOURCE")
+	var lab: TerrainLab = controller.lab
+	var selected := controller._region_departure_capability(nonce)
+	if not selected.ok: return selected
+	if bool(selected.waiting): return fail("NOT_READY")
+	if _region_bound_original_lab(lab.terrain) != lab or str(control.active_site_id) != str(lab.terrain.site.id): return fail("REGION_SOURCE")
+	if not _marker.get("journey", {}).is_empty() or not _prepared.is_empty(): return fail("BUSY")
+	var mode: Dictionary = region_registry().modes.get(str(lab.terrain.site.id), {})
+	var bind := lab.region_bind_receipt(lab.terrain)
+	if str(mode.get("mode", "")) != "live" or str(mode.get("backend", "")) != "gd" or bind.get("complete") != true or bind.get("owners_restored") != true or str(bind.get("mode", "")) != "live": return fail("COMMITTED_UNBOUND")
+	var siege := RegionBattle.prepare_original_siege(lab)
+	if not siege.ok or not siege.get("present", false): return fail("IN_COMBAT")
+	# Keep the original fire/transport admission; no generic combat or BUSY waiver.
+	for row: Dictionary in control.get("fire_clock", {}).get("index", {}).values():
+		if bool(row.get("fire_active", false)): return fail("BUSY")
+	if Runtime.fire_active(lab.terrain) or not lab.terrain.site.get("fire", {}).is_empty(): return fail("BUSY")
+	var coordinate := _coordinate(lab.terrain)
+	if not coordinate.ok: return coordinate
+	var settled := validate_settlement(lab.terrain.site, control.logical_game_seconds)
+	if not settled.ok or bool(settled.get("legacy", true)) or float(settled.get("pending", INF)) > 0.00000001: return fail("UNSETTLED_SITE")
+	# Canonical selected source authentication uses the existing SAME-point checkpoint.
+	var checkpoint: Dictionary = controller.checkpoint_region_internal("region_barrier", true, {}, nonce)
+	if not checkpoint.ok: return checkpoint
+	selected = controller._region_departure_capability(nonce)
+	if not selected.ok or bool(selected.get("waiting", true)): return fail("STALE_REGION_INTENT")
+	var original: Dictionary = lab.terrain.site.duplicate(true)
+	var fire_capture := _capture_transfer_fire_snapshots(lab.terrain, original)
+	if not fire_capture.ok: return fire_capture
+	var spec: Dictionary = selected.spec.duplicate(true)
+	spec.game_seconds = float(control.logical_game_seconds)
+	var token := "travel_" + Crypto.new().generate_random_bytes(16).hex_encode()
+	var extracted := RegionTravel.extract(original, spec, token)
+	if not extracted.ok: return extracted
+	var actual_people: Array = extracted.party.person_ids.duplicate()
+	actual_people.sort()
+	if actual_people != selected.people: return fail("REGION_ACTIVE_DEPENDENCY", "原完整 closure 與受控選擇不一致")
+	extracted.party.upkeep.owner_action_seconds = float(control.fire_clock.action_seconds)
+	extracted.party.upkeep.original_deaths = {}
+	var candidate := Env.navigation_for_state(lab.terrain, extracted.origin)
+	candidate.set_meta(&"region_bind_source", lab.terrain)
+	if not region_bind_candidate.is_valid(): return fail("MISSING_REGION_ADAPTER")
+	var binding: Dictionary = region_bind_candidate.call(lab, candidate, "cold_exact")
+	if not binding.get("ok", false): return binding
+	if not binding.get("data") is TerrainData or not binding.get("can_publish") is Callable or not binding.get("save_candidate") is Callable or not binding.get("publish") is Callable or not binding.get("discard") is Callable: return fail("MISSING_REGION_ADAPTER")
+	return {"ok": true, "nonce": nonce, "controller": controller, "lab": lab, "source": lab.terrain,
+		"generation": int(_marker.generation), "runtime_revision": int(region_registry().revision),
+		"world": float(control.logical_game_seconds), "action": float(control.fire_clock.action_seconds), "fire_sequence": int(control.fire_clock.sequence),
+		"coordinate": coordinate.site, "component": int(selected.component), "token": token,
+		"candidate": binding.data, "binding": binding, "party": extracted.party, "vacated_housing": extracted.vacated_housing}
+
+
+func commit_region_player_departure(prepared: Dictionary) -> Dictionary:
+	if not prepared.get("ok", false) or not prepared.get("controller") is SiteController: return fail("INVALID")
+	var controller: SiteController = prepared.controller
+	if controller.region_slot != self or controller.lab != prepared.lab or controller.lab.terrain != prepared.source: return fail("STALE_REGION_INTENT")
+	var selected := controller._region_departure_capability(str(prepared.nonce))
+	if not selected.ok or bool(selected.get("waiting", true)): return fail("STALE_REGION_INTENT")
+	if int(prepared.generation) != int(_marker.generation) or int(prepared.runtime_revision) != int(region_registry().revision) \
+		or float(prepared.world) != float(control.logical_game_seconds) or float(prepared.action) != float(control.fire_clock.action_seconds) \
+		or int(prepared.fire_sequence) != int(control.fire_clock.sequence) or not bool(prepared.binding.can_publish.call()): return fail("STALE_BIND")
+	if not _marker.get("journey", {}).is_empty() or not _prepared.is_empty(): return fail("BUSY")
+	var generation := int(_marker.generation) + 1
+	var source_path := _generation_path(generation, prepared.coordinate)
+	var checked: Dictionary = prepared.binding.save_candidate.call(prepared.candidate, source_path)
+	if not checked.ok: return checked
+	var token := str(prepared.token)
+	var party_path := "travel/%s/party.json" % token
+	var written := _write_new_document(folder.path_join(party_path), {"version": 1, "token": token, "pin": pin.duplicate(true),
+		"encoding": "godot_var_v1", "party": Marshalls.raw_to_base64(var_to_bytes(prepared.party))})
+	if not written.ok: return written
+	var next_control := control.duplicate(true)
+	var owner := str(prepared.source.site.id)
+	next_control.active_site_id = ""
+	var registry: Dictionary = next_control.region_gameplay
+	# The selected marker is resumable even when the actual postcommit bind fails.
+	var pending_mode := GameplayClock.activate_mode(registry, owner, "committed-unbound", generation, "gd", "original_replay",
+		float(control.logical_game_seconds), float(control.fire_clock.action_seconds), {})
+	if not pending_mode.ok: return pending_mode
+	for battle: Dictionary in registry.battles.values():
+		if str(battle.get("site_id", "")) == owner and str(battle.get("phase", "")) != "finished": battle.mode = "committed-unbound"
+	registry.revision = int(registry.revision) + 1
+	var sites: Dictionary = _marker.get("sites", {}).duplicate(true)
+	var cold := _collect_cold_checkpoint(generation, sites, next_control)
+	if not cold.ok: return cold
+	var parties := collect_region_party_checkpoint(generation, next_control)
+	if not parties.ok: return parties
+	sites[_site_key(prepared.coordinate)] = _file_entry(source_path)
+	var now := float(control.logical_game_seconds)
+	var journey := {"version": 1, "kind": RegionTravel.KIND, "token": token, "party_path": party_path,
+		"party_sha256": FileAccess.get_sha256(folder.path_join(party_path)), "departure_game_seconds": now,
+		"origin": [prepared.coordinate.x, prepared.coordinate.y], "position": {"site": [prepared.coordinate.x, prepared.coordinate.y], "component": int(prepared.component)},
+		"plan_path": "", "plan_sha256": "", "plan_started_game_seconds": now, "plans": 0}
+	var published := _publish(sites, next_control, str(_marker.get("transfer_token", "")), journey)
+	if not published.ok: return published
+	_travel_party_runtime = prepared.party
+	_travel_party_runtime_token = token
+	var lab: TerrainLab = prepared.lab
+	lab.restore_only = true # Only the committed selected generation may retire live input.
+	_region_original_labs[owner] = lab
+	var bound: Dictionary = prepared.binding.publish.call(checked.data)
+	if not bound.get("ok", false) or bound.get("complete") != true or bound.get("owners_restored") != true \
+		or str(bound.get("mode", "")) != "cold_exact" or str(bound.get("consumer", "")) != "original_replay":
+		var fault := fail("COMMITTED_UNBOUND", "已提交完整 marker；須由最高完整世代重開原 owner")
+		fault.committed = true
+		controller.latch_original_step_fault(fault)
+		return fault
+	var activated := activate_region_mode(owner, "cold_exact", "original_replay", lab.region_bind_receipt(lab.terrain))
+	if not activated.ok:
+		activated.committed = true
+		controller.latch_original_step_fault(activated)
+		return activated
+	# Metadata follows only the real producer activation, never a forged receipt.
+	for battle: Dictionary in region_registry().battles.values():
+		if str(battle.get("site_id", "")) == owner and str(battle.get("phase", "")) != "finished": battle.mode = "cold_exact"
+	var refreshed := refresh_original_region_siege_battle(lab)
+	if not refreshed.ok:
+		refreshed.committed = true
+		controller.latch_original_step_fault(refreshed)
+		return refreshed
+	var cold_checkpoint := checkpoint_region_travel()
+	if not cold_checkpoint.ok:
+		cold_checkpoint.committed = true
+		controller.latch_original_step_fault(cold_checkpoint)
+		return cold_checkpoint
+	controller._auto_save_blocked = true
+	lab.set_process(false)
+	for actor: TerrainTestCharacter in lab.combat_actors: actor.set_process(false)
+	for team: TerrainArmy in lab.combat_armies: team.set_process(false)
+	return {"ok": true, "token": token, "generation": int(_marker.generation), "ownership_generation": published.generation, "binding": bound, "source_data": checked.data,
+		"party": prepared.party, "vacated_housing": prepared.vacated_housing}
+
+
+func refresh_original_region_siege_battle(original: TerrainLab) -> Dictionary:
+	if not is_instance_valid(original) or original.terrain == null or original.site_controller == null or original.site_controller.region_slot != self:
+		return fail("MISSING_ORIGINAL_SIEGE_OWNER")
+	var owner := str(original.terrain.site.id)
+	if _region_bound_original_lab(original.terrain) != original: return fail("STALE_ORIGINAL_SIEGE_OWNER")
+	var mode: Dictionary = region_registry().modes.get(owner, {})
+	if str(mode.get("mode", "")) not in ["live", "cold_exact", "formula_active"]: return {"ok": true, "changed": false, "reason": "ORIGINAL_MODE_PENDING"}
+	if str(mode.get("backend", "")) != "gd": return fail("REGION_BACKEND_UNADMITTED")
+	var world := float(control.logical_game_seconds)
+	var action := float(control.fire_clock.action_seconds)
+	var settled: Dictionary = validate_settlement(original.terrain.site, world)
+	var fire: Dictionary = original.terrain.site.get("fire_settlement", {})
+	if not settled.ok or settled.get("legacy", true) or float(settled.get("pending", INF)) > 0.00000001 \
+		or str(fire.get("epoch", "")) != str(control.fire_clock.epoch) or int(fire.get("sequence", -1)) != int(control.fire_clock.sequence) \
+		or absf(float(fire.get("game_seconds", -1.0)) - world) > 0.00000001 or absf(float(fire.get("action_seconds", -1.0)) - action) > 0.00000001 \
+		or absf(original.fire_action_cursor - action) > 0.00000001 or int(mode.get("generation", -1)) != int(_marker.generation) \
+		or absf(float(mode.get("game_seconds", -1.0)) - world) > 0.00000001 or absf(float(mode.get("action_seconds", -1.0)) - action) > 0.00000001:
+		return fail("INCOMPLETE_ORIGINAL_SIEGE_POINT")
+	if not region_player_barrier().is_empty() or not original._region_point_pending.is_empty() or original._region_point_consuming or original._region_point_dispatching \
+		or not original._region_point_contacts.is_empty() or not original._region_point_wakes.is_empty() or not original._combat_contacts.is_empty() \
+		or not original.terrain.get_meta(&"fire_boundary", {}).is_empty(): return {"ok": true, "changed": false, "reason": "ORIGINAL_EFFECTS_PENDING"}
+	var existing := {}
+	for battle: Dictionary in region_registry().battles.values():
+		if str(battle.get("site_id", "")) != owner or str(battle.get("phase", "")) == "finished": continue
+		if not existing.is_empty(): return fail("BATTLE_OWNER_CONFLICT")
+		existing = battle
+	if not existing.get("pending", []).is_empty() or existing.has("prepared_endpoint"): return {"ok": true, "changed": false, "reason": "BATTLE_EFFECTS_PENDING"}
+	var result := RegionBattle.prepare_original_siege(original, existing)
+	if not result.ok: return result
+	if not result.get("present", false): return {"ok": true, "changed": false, "reason": str(result.get("reason", "NO_ORIGINAL_SIEGE"))}
+	var bind := original.region_bind_receipt(original.terrain)
+	if bind.get("complete") != true or bind.get("owners_restored") != true or str(bind.get("backend", "")) != "gd": return fail("COMMITTED_UNBOUND")
+	var siege: Dictionary = result.siege
+	var identifier := str(existing.get("id", "siege:%s:%s:%d" % [owner, str(siege.center_id), int(control.fire_clock.sequence)]))
+	var battle := existing.duplicate(true)
+	if battle.is_empty():
+		var made := RegionBattle.create({"id": identifier, "site_id": owner, "attackers": result.attackers, "defenders": result.defenders,
+			"game_time": float(control.logical_game_seconds), "rng_state": int(hash(str(pin.world_instance_id) + ":" + identifier))})
+		if not made.ok: return made
+		battle = made.battle
+	# Raw owner signatures change only at actual points; never replay a phase
+	# transition or reset already accepted damage/fatigue/contact receipts.
+	var same_point: bool = not battle.get("siege", {}).is_empty()
+	if same_point:
+		var previous: Dictionary = battle.siege
+		same_point = float(previous.source.game_seconds) == float(siege.source.game_seconds) and float(previous.source.action_seconds) == float(siege.source.action_seconds) \
+			and str(previous.source.fire_epoch) == str(siege.source.fire_epoch) and int(previous.source.fire_sequence) == int(siege.source.fire_sequence)
+		for field: String in RegionBattle.SIEGE_FIELDS:
+			if field not in ["source", "source_sha256"] and previous[field] != siege[field]: same_point = false
+	if same_point: return {"ok": true, "changed": false, "battle_id": identifier}
+	battle.kind = "siege"
+	battle.phase = str(siege.phase)
+	battle.siege = siege
+	battle.attackers = result.attackers
+	battle.defenders = result.defenders
+	battle.mode = "live" if owner == str(control.active_site_id) else "cold_exact"
+	battle.completed_game_time = float(control.logical_game_seconds)
+	battle.round_inputs = {}
+	battle.revision = int(battle.revision) + 1
+	var candidate: Dictionary = region_registry().duplicate(true)
+	candidate.battles[identifier] = battle
+	var activation := bind.duplicate(true)
+	activation.mode = str(battle.mode)
+	activation.consumer = "original_site" if battle.mode == "live" else "original_replay"
+	var activated := GameplayClock.activate_mode(candidate, owner, str(battle.mode), int(_marker.generation), "gd", str(activation.consumer),
+		float(control.logical_game_seconds), float(control.fire_clock.action_seconds), activation)
+	if not activated.ok: return activated
+	candidate.revision = int(candidate.revision) + 1
+	var valid := GameplayClock.validate_registry(candidate, float(control.logical_game_seconds))
+	if not valid.ok: return valid
+	var registry := region_registry()
+	registry.clear()
+	registry.merge(candidate, true)
+	return {"ok": true, "changed": true, "battle_id": identifier, "phase": str(battle.phase), "mode": str(battle.mode), "source": siege.source}
+
+
+func _region_first_npc_siege_contact(token: String, to: float, interval: Dictionary = {}) -> Dictionary:
+	var battle_ids: Array = []
+	for id: String in region_registry().battles:
+		var battle: Dictionary = region_registry().battles[id]
+		if str(battle.get("kind", "")) == "siege" and str(battle.get("phase", "")) != "finished": battle_ids.append(id)
+	if battle_ids.is_empty(): return {"ok": true, "contact": false}
+	battle_ids.sort()
+	var reference: Dictionary = region_registry().parties.get(token, {})
+	if str(reference.get("controller", "")) != "npc" or str(reference.get("phase", "")) != "travelling": return {"ok": true, "contact": false}
+	var selected := _region_npc_party(token)
+	if not selected.ok: return selected
+	var planned := _region_npc_plan(token)
+	if not planned.ok: return planned
+	var party: Dictionary = selected.party
+	if str(party.get("mode", "land")) != "land" or not party.content.get("vehicles", {}).is_empty() or not party.content.get("actors", {}).is_empty() or not party.upkeep.get("live", {}).is_empty(): return {"ok": true, "contact": false}
+	if not region_original_party_progress.is_valid(): return fail("MISSING_REGION_PARTY_PROGRESS")
+	var host: Object = region_original_party_progress.get_object()
+	if not host is TerrainLab or host.site_controller == null or host.site_controller.region_slot != self: return fail("INVALID_REGION_PARTY_PROGRESS")
+	var restored: Dictionary = host.prepare_region_party_original_owner(token, party, self)
+	if not restored.ok: return restored
+	if not has_method("region_original_party_runtime_proof"): return fail("MISSING_ORIGINAL_PARTY_PROOF")
+	var raw_proof: Variant = call("region_original_party_runtime_proof", token, party)
+	if not raw_proof is Dictionary or not raw_proof.get("ok", false) or not raw_proof.get("lab") is TerrainLab:
+		return raw_proof if raw_proof is Dictionary else fail("INVALID_ORIGINAL_PARTY_PROOF")
+	var party_lab: TerrainLab = raw_proof.lab
+	var traveller: Dictionary = party_lab._original_person_target(int(party.leader_person_id))
+	if traveller.is_empty() or not SiteSettlement._fit(traveller): return {"ok": true, "contact": false}
+	var prepared: Dictionary = prepare_region_route_context(null, party)
+	if not prepared.ok: return prepared
+	var cache := {}
+	var points: Dictionary = _region_contact_land_points(party, planned.plan, to, true, reference.position, prepared.context, cache)
+	if not points.ok: return points
+	for point: Dictionary in points.points:
+		var location: Dictionary = point.position
+		var site := Vector2i(int(location.site[0]), int(location.site[1]))
+		var owner := Grid.site_id(str(pin.atlas_id), site)
+		var entry := Vector2i(int(location.cell[0]), int(location.cell[1]))
+		if entry.x < 0 or entry.y < 0: continue
+		for id: String in battle_ids:
+			var battle: Dictionary = region_registry().battles[id]
+			if str(battle.get("kind", "")) != "siege" or str(battle.get("site_id", "")) != owner or str(battle.get("phase", "")) == "finished": continue
+			var original: TerrainLab = _region_original_labs.get(owner)
+			if not is_instance_valid(original) or _region_bound_original_lab(original.terrain) != original: return fail("COMMITTED_UNBOUND")
+			if not original.terrain.contains(entry): continue
+			for identity: Variant in battle.attackers + battle.defenders:
+				var person: Dictionary = original.site_controller.person_actions._person(int(identity), false)
+				if person.is_empty() or int(person.faction) == int(traveller.faction) or not SiteSettlement._fit(person) or bool(person.moving) \
+					or SiteSettlement._role(person) == "civilian" or original.site_controller.vehicles.is_siege_crew(int(identity)): continue
+				var body_owner: Variant = person.owner
+				var unit := int(person.unit)
+				var ready: bool = body_owner.exchange_ready(unit) if body_owner is TerrainArmy or body_owner is CrowdPersonOwner else body_owner.exchange_ready()
+				var gap: Vector2i = entry - Vector2i(person.cell)
+				if not ready or absi(gap.x) + absi(gap.y) != 1 or not original.terrain.can_attack_across(person.cell, entry): continue
+				if original.site_controller.vehicles.blocks_person_step(int(identity), person.cell, person.cell, entry, entry): continue
+				var cell: Vector2i = person.cell
+				var witness := {"battle_id": id, "source_generation": int(_marker.generation), "runtime_revision": int(region_registry().revision),
+					"navigation_revision": int(original.terrain.navigation_revision), "person_id": int(identity), "person_cell": [cell.x, cell.y],
+					"entry": [entry.x, entry.y], "party_token": token, "party_source": raw_proof.get("proof", {}).duplicate(true),
+					"party_reference": party.content.travel_identity.refs.person[str(int(party.leader_person_id))].duplicate(),
+					"static_reference": original.terrain.site.travel_identity.refs.person[str(int(identity))].duplicate(),
+					"game_seconds": float(control.logical_game_seconds), "action_seconds": float(control.fire_clock.action_seconds), "legal_ground_melee": true}
+				var contact := {"kind": "npc_siege_channel", "at": float(point.at),
+					"first": point.duplicate(true),
+					"second": {"at": float(point.at), "position": {"site": location.site.duplicate(), "component": int(location.component), "cell": [cell.x, cell.y], "mode": "land"}}, "witness": witness}
+				return {"ok": true, "contact": true, "at": float(point.at), "site": location.site.duplicate(),
+					"component": int(location.route_component), "site_id": owner, "battle_id": id, "contact_receipt": contact}
+	return {"ok": true, "contact": false}
+
+
+
+func _region_validate_npc_siege_contact(event: Dictionary) -> Dictionary:
+	var contact: Dictionary = event.get("payload", {}).get("contact_receipt", {})
+	if str(contact.get("kind", "")) != "npc_siege_channel" or str(event.get("kind", "")) != "reinforcement": return fail("INVALID_NPC_CONTACT")
+	var queued := false
+	for original_event: Dictionary in region_registry().events:
+		if str(original_event.get("id", "")) == str(event.get("id", "")) and str(original_event.get("status", "")) == "pending" and var_to_bytes(original_event) == var_to_bytes(event): queued = true
+	if not queued: return fail("INVALID_NPC_CONTACT")
+	var witness: Variant = contact.get("witness")
+	if not witness is Dictionary or not RegionTravel._frame_pair(witness.get("person_cell")) or not RegionTravel._frame_pair(witness.get("entry")) or not witness.get("party_reference") is Dictionary or not witness.get("static_reference") is Dictionary or str(witness.get("battle_id", "")) != str(event.get("payload", {}).get("battle_id", "")) or str(witness.get("party_token", "")) != str(event.get("payload", {}).get("token", "")):
+		return fail("INVALID_NPC_CONTACT")
+	if float(contact.get("at", -1.0)) != float(event.get("at", -2.0)) or float(event.at) != float(control.logical_game_seconds): return fail("STALE_NPC_CONTACT")
+	var token := str(witness.party_token)
+	var reference: Dictionary = region_registry().parties.get(token, {})
+	if str(reference.get("controller", "")) != "npc" or str(reference.get("phase", "")) != "travelling": return {"ok": true, "valid": false, "reason": "NPC_ROUTE_CHANGED"}
+	var battle: Dictionary = region_registry().battles.get(str(witness.battle_id), {})
+	if battle.is_empty() or str(battle.get("kind", "")) != "siege" or str(battle.get("phase", "")) == "finished": return {"ok": true, "valid": false, "reason": "SIEGE_CHANNEL_ENDED"}
+	var owner := str(battle.site_id)
+	if owner != str(event.get("owner", "")): return fail("INVALID_NPC_CONTACT")
+	var original: TerrainLab = _region_original_labs.get(owner)
+	if not is_instance_valid(original) or _region_bound_original_lab(original.terrain) != original: return fail("COMMITTED_UNBOUND")
+	var bind: Dictionary = original.region_bind_receipt(original.terrain)
+	if bind.get("complete") != true or bind.get("owners_restored") != true: return fail("COMMITTED_UNBOUND")
+	var selected := _region_npc_party(token)
+	if not selected.ok: return selected
+	var party: Dictionary = selected.party
+	if str(party.get("mode", "land")) != "land" or not party.content.get("actors", {}).is_empty() or not party.content.get("vehicles", {}).is_empty() or not party.upkeep.get("live", {}).is_empty(): return {"ok": true, "valid": false, "reason": "NPC_CLOSURE_CHANGED"}
+	if party.content.travel_identity.refs.person.get(str(int(party.leader_person_id))) != witness.party_reference: return {"ok": true, "valid": false, "reason": "NPC_REFERENCE_CHANGED"}
+	var runtime := region_original_party_runtime_proof(token, party)
+	if not runtime.ok: return runtime
+	var traveller: Dictionary = runtime.lab._original_person_target(int(party.leader_person_id))
+	var identity := int(witness.get("person_id", -1))
+	if not (battle.attackers + battle.defenders).has(identity): return {"ok": true, "valid": false, "reason": "SIEGE_ROSTER_CHANGED"}
+	if original.terrain.site.get("travel_identity", {}).get("refs", {}).get("person", {}).get(str(identity)) != witness.static_reference: return {"ok": true, "valid": false, "reason": "SIEGE_REFERENCE_CHANGED"}
+	var person: Dictionary = original.site_controller.person_actions._person(identity, false)
+	if traveller.is_empty() or not SiteSettlement._fit(traveller) or person.is_empty() or int(person.faction) == int(traveller.faction) or not SiteSettlement._fit(person) or bool(person.moving) or SiteSettlement._role(person) == "civilian" or original.site_controller.vehicles.is_siege_crew(identity): return {"ok": true, "valid": false, "reason": "SIEGE_BODY_CHANGED"}
+	var coordinate := _coordinate(original.terrain)
+	if not coordinate.ok: return coordinate
+	var planned := _region_npc_plan(token)
+	if not planned.ok: return planned
+	var position := _region_current_land_position(party, planned.plan, str(reference.plan_path))
+	if position.site != [coordinate.site.x, coordinate.site.y] or event.payload.get("site") != position.site: return {"ok": true, "valid": false, "reason": "NPC_ROUTE_CHANGED"}
+	var entry := RegionRoute.entry_cell(planned.plan.steps[int(position.step_index)])
+	var cell: Vector2i = person.cell
+	var body_owner: Variant = person.owner
+	var unit := int(person.unit)
+	var ready: bool = body_owner.exchange_ready(unit) if body_owner is TerrainArmy or body_owner is CrowdPersonOwner else body_owner.exchange_ready()
+	var gap: Vector2i = entry - cell
+	var first: Dictionary = contact.get("first", {}).get("position", {})
+	if first.get("site") != position.site or first.get("cell") != [entry.x, entry.y] or [entry.x, entry.y] != witness.entry or [cell.x, cell.y] != witness.person_cell or not original.terrain.contains(entry) or not ready or absi(gap.x) + absi(gap.y) != 1 or not original.terrain.can_attack_across(cell, entry) or original.site_controller.vehicles.blocks_person_step(identity, cell, cell, entry, entry): return {"ok": true, "valid": false, "reason": "SIEGE_CHANNEL_CHANGED"}
+	return {"ok": true, "valid": true}
+
+
+
+func _region_validate_npc_arrival_duplicate_event(token: String, event_id: String, event: Dictionary) -> Dictionary:
+	# Reread the original registry; a duplicate flag is not an event authority.
+	var reference: Dictionary = region_registry().parties.get(token, {})
+	if token.is_empty() or reference.get("controller") != "npc" or reference.get("phase") != "entered": return fail("STALE_NPC_ARRIVAL", "原NPC尚未實際到站")
+	var actual := {}
+	for queued: Dictionary in region_registry().events:
+		if str(queued.id) == event_id: actual = queued
+	if actual.is_empty() or not GameplayClock.validate_event(actual).ok or actual.kind not in ["arrival", "player_arrival", "reinforcement"] \
+			or str(actual.payload.get("token", "")) != token or float(actual.at) > float(control.logical_game_seconds) + 0.00000001 \
+			or var_to_bytes(actual) != var_to_bytes(event): return fail("STALE_NPC_ARRIVAL", "原重複到站不是同一NPC的當前真事件")
+	return {"ok": true, "reference": reference, "event": actual}
+
+
+var _original_food_results: Array[Dictionary] = []
+var _original_food_result_readout := false
+
+func _observe_original_food_result(original: TerrainLab, kind: String, identity: String, at_game_seconds: float, result: Dictionary, interval: Dictionary = {}) -> void:
+	# Ephemeral readout; never part of control, Site, Party or saved food state.
+	if not _original_food_result_readout: return
+	if source == null or pin.is_empty() or not is_instance_valid(original) or original.site_controller == null or original.site_controller.region_slot != self: return
+	if original.crowd_site != null and original.crowd_site.active: return
+	var consumed: Variant = result.get("consumed_rations", 0.0)
+	if not result.get("ok", false) or not (consumed is float or consumed is int) or not is_finite(float(consumed)) or float(consumed) <= 0.0: return
+	var point: Dictionary = interval if not interval.is_empty() else original._region_point_pending
+	var identity_interval := {}
+	if point.has("epoch") and point.has("sequence"):
+		for field: String in ["epoch", "sequence", "game_begin", "game_end", "action_begin", "action_end"]: identity_interval[field] = point[field]
+	var accepted := identity_interval.is_empty()
+	if not accepted and bool(original._region_point_pending.get("interval_complete", false)):
+		accepted = str(control.fire_clock.epoch) == str(point.epoch) and int(control.fire_clock.sequence) == int(point.sequence) and float(control.logical_game_seconds) == float(point.game_end) and float(control.fire_clock.action_seconds) == float(point.action_end)
+	_original_food_results.append({"site_id": str(original.terrain.site.id), "owner_kind": kind, "owner_id": identity, "at_game_seconds": at_game_seconds, "consumed_rations": float(consumed), "interval": identity_interval, "accepted": accepted})
+
+func take_original_food_results() -> Array[Dictionary]:
+	# The reader opts into subsequent original results; ordinary play queues none.
+	_original_food_result_readout = true
+	var results: Array[Dictionary] = []
+	for food: Dictionary in _original_food_results:
+		if not bool(food.accepted): continue
+		var result := food.duplicate(true)
+		result.erase("accepted")
+		results.append(result)
+	_original_food_results.clear()
+	return results
+
+
+func _region_npc_live_ship_action(original: TerrainLab, vehicle: Dictionary) -> Dictionary:
+	# Query the committed Nation route only inside this real positive body slice.
+	# Original Vehicle remains the sole reservation, speed and movement producer.
+	if original == null or original.site_controller == null or original.site_controller.region_slot != self \
+			or not original._region_owner_interval_active or original.terrain == null:
+		return {"ok": true, "eligible": false}
+	var token := str(original._region_party_token)
+	if region_registry().parties.get(token, {}).get("controller") != "npc": return {"ok": true, "eligible": false}
+	var selected := _region_npc_party(token)
+	if not selected.ok: return selected
+	var party: Dictionary = selected.party
+	if party.get("controller") != "npc" or party.get("mode") != "sea" \
+			or str(party.upkeep.get("live", {}).get("upkeep", "")) != "liveBody" \
+			or not party.content.actors.is_empty() or int(party.content.controlled_person_id) != -1:
+		return {"ok": true, "eligible": false}
+	var proved := region_original_party_runtime_proof(token, party)
+	if not proved.ok or proved.get("lab") != original: return proved if not proved.ok else fail("STALE_REGION_PARTY_OWNER")
+	var identity := str(vehicle.get("id", ""))
+	if not is_same(original.site_controller.vehicles.records().get(identity), vehicle): return fail("STALE_SHIP")
+	var actual_ref: Dictionary = original.terrain.site.travel_identity.refs.vehicle.get(identity, {})
+	if actual_ref.is_empty() or party.content.travel_identity.refs.vehicle.get(identity) != actual_ref: return fail("PARTY_BODY_CLOSURE")
+	var team: Variant = original.site_controller.vehicles._siege_team(vehicle)
+	if not team is TerrainArmy or not team.command_eligible(team.current_commander) or team.is_sustain_routed(): return {"ok": true, "eligible": false}
+	# A true current hostile crew contact retains the original defensive stop.
+	for own: Dictionary in original.site_controller.vehicles.ship_people(vehicle):
+		var own_id := int(own.id)
+		if not original.site_controller.vehicles.ship_can_attack(own_id): continue
+		for other_id: int in party.person_ids:
+			var other: Dictionary = original.site_controller.vehicles.ship_person(other_id)
+			if not other.is_empty() and int(other.faction) != int(team.faction_id) and not bool(other.captive) \
+					and other.owner.combat_can_act(int(other.unit)) and original.site_controller.vehicles.ship_combat_contact(own_id, other_id):
+				return {"ok": true, "eligible": false}
+	var tokens: Array = region_registry().parties.keys()
+	tokens.sort()
+	for source_token: String in tokens:
+		var reference: Dictionary = region_registry().parties[source_token]
+		if reference.get("controller") != "npc" or not (source_token == token and reference.get("phase") == "travelling" \
+				or reference.get("phase") == "joined" and reference.get("entered_party") == token): continue
+		var request: Dictionary = reference.get("transfer_receipt", {})
+		if request.get("transfer_token") != source_token or str(request.get("nation_id", "")).is_empty(): continue
+		var source_party: Dictionary = proved.selected_party
+		if source_token != token:
+			var document := _region_life_party_document(source_token, str(reference.party_path), str(reference.party_sha256))
+			if not document.ok: return document
+			source_party = document.party
+		var source_team := str(int(request.get("team_id", -1)))
+		if source_party.content.travel_identity.refs.team.get(source_team, {}) != original.terrain.site.travel_identity.refs.team.get(str(int(vehicle.team_id)), {}) \
+				or source_party.content.travel_identity.refs.team.get(source_team, {}).is_empty(): continue
+		var source_boats: Array[String] = []
+		for source_id: String in source_party.content.vehicles:
+			if int(source_party.content.vehicles[source_id].get("team_id", -1)) == int(request.team_id): source_boats.append(source_id)
+		# The first physical lane has one committed hull per Nation fleet. A
+		# Multi-hull LIVE resumption is not admitted by this bounded producer.
+		if source_boats.size() != 1: continue
+		var source_id := source_boats[0]
+		if source_party.content.travel_identity.refs.vehicle.get(source_id) != actual_ref: continue
+		var planned := _travel_document(str(reference.plan_path), str(reference.plan_sha256), _travel_plan_cache)
+		if not planned.ok: return planned
+		var plan: Dictionary = planned.payload
+		if plan.get("token") != source_token or plan.get("mode") != "sea" or not plan.get("action_steps") is Array: return fail("CORRUPT_ROUTE")
+		var frame: Dictionary = party.upkeep.live.frame
+		var origin := Vector2i(int(frame.world_origin[0]), int(frame.world_origin[1]))
+		var at: Vector2i = original.terrain.cell_from_index(int(vehicle.cell)) + origin
+		var chosen := {}
+		var lower := int(source_party.upkeep.get("sea_cursor", {}).get("action_index", -1))
+		if lower < 0 or lower > plan.action_steps.size(): return fail("CORRUPT_SEA_CURSOR")
+		for index: int in range(lower, plan.action_steps.size()):
+			var action: Dictionary = plan.action_steps[index]
+			if str(action.get("vehicle_id", "")) != source_id: continue
+			for field: String in ["from_site", "from", "anchor", "from_facing", "facing"]:
+				if not action.get(field) is Array or action[field].size() != 2 \
+						or not _whole(action[field][0], -2147483648, 2147483647) or not _whole(action[field][1], -2147483648, 2147483647): return fail("CORRUPT_ROUTE")
+			var base := Vector2i(int(action.from_site[0]) * 100, -int(action.from_site[1]) * 100)
+			var from := base + Vector2i(int(action.from[0]), int(action.from[1]))
+			if from != at or Vector2i(int(action.from_facing[0]), int(action.from_facing[1])) != Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1])): continue
+			var facing := Vector2i(int(action.facing[0]), int(action.facing[1]))
+			var destination := base + Vector2i(int(action.anchor[0]), int(action.anchor[1])) - origin
+			var kind := str(action.get("action", ""))
+			var old_facing := Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1]))
+			var delta := destination - original.terrain.cell_from_index(int(vehicle.cell))
+			if kind not in ["forward", "reverse", "dock", "turn"] or not Ship.valid_facing(facing) \
+					or kind == "turn" and (delta != Vector2i.ZERO or old_facing.x * facing.x + old_facing.y * facing.y != 0) \
+					or kind != "turn" and (facing != old_facing or delta != (-old_facing if kind == "reverse" else old_facing)): return fail("CORRUPT_ROUTE")
+			var next := {"ok": true, "eligible": true, "destination": destination, "facing": facing, "action": kind, "docking": kind == "dock", "source_token": source_token, "plan_sha256": str(reference.plan_sha256), "action_index": index}
+			if not chosen.is_empty() and (chosen.destination != destination or chosen.facing != facing or chosen.action != kind): return fail("AMBIGUOUS_REGION_SHIP_STEP")
+			chosen = next
+		return chosen if not chosen.is_empty() else {"ok": true, "eligible": false}
+	return {"ok": true, "eligible": false}
+
+
+func _region_entered_npc_ship_unload_authorized(original: TerrainLab, team: TerrainArmy, requester_id: int, vehicle: Dictionary, existing_job: Dictionary = {}) -> bool:
+	# Read current original arrival/command owners; this query issues no permit.
+	if not is_instance_valid(original) or original.terrain == null or original.site_controller == null \
+			or original.site_controller.region_slot != self or _region_bound_original_lab(original.terrain) != original \
+			or original.crowd_site != null and original.crowd_site.active: return false
+	var bound: Dictionary = original._region_bind_receipt_value
+	if bound.get("complete") != true or bound.get("owners_restored") != true or str(bound.get("backend", "")) != "gd" \
+			or team == null or not original.combat_armies.has(team) or team.current_commander < 0 \
+			or not team.command_eligible(team.current_commander) or team.combat_identity(team.current_commander) != requester_id \
+			or requester_id == original.controlled_person_id() or team.is_sustain_routed(): return false
+	var vehicles: SiteVehicleTransport = original.site_controller.vehicles
+	var person: Dictionary = vehicles.ship_person(requester_id)
+	var own_job: bool = not existing_job.is_empty() and int(existing_job.get("executor_id", 0)) == requester_id \
+			and is_same(original.site_controller.person_actions._jobs.get(str(requester_id), {}), existing_job)
+	if person.is_empty() or person.owner != team or not vehicles._ship_capable(person, own_job) \
+			or not SiteVehicleTransport.is_ship(vehicle) or not is_same(vehicles.records().get(str(vehicle.get("id", ""))), vehicle) \
+			or int(vehicle.team_id) != team.team_id or not vehicles.ship_afloat(vehicle) or not vehicle.move.is_empty() \
+			or vehicles._ship_in_journey(str(vehicle.id)) or not vehicle.get("naval", {}).get("repair", {}).is_empty(): return false
+	var state: Dictionary = original.terrain.site
+	var refs: Dictionary = state.get("travel_identity", {}).get("refs", {})
+	var team_ref: Dictionary = refs.get("team", {}).get(str(team.team_id), {})
+	var person_ref: Dictionary = refs.get("person", {}).get(str(requester_id), {})
+	var vehicle_ref: Dictionary = refs.get("vehicle", {}).get(str(vehicle.id), {})
+	if team_ref.is_empty() or person_ref.is_empty() or vehicle_ref.is_empty(): return false
+	var matched := false
+	for token: String in region_registry().parties:
+		var reference: Dictionary = region_registry().parties[token]
+		var request: Dictionary = reference.get("transfer_receipt", {})
+		var mapping: Dictionary = reference.get("arrival_mapping", {})
+		if reference.get("controller") != "npc" or reference.get("phase") != "entered" \
+				or reference.get("destination_site") != str(state.id) or request.get("transfer_token") != token \
+				or str(request.get("nation_id", "")).is_empty() or str(request.get("known_receipt", "")).is_empty() \
+				or int(request.get("decider", 0)) <= 0 or request.get("target_site") != str(state.id) \
+				or not RegionTravel.validate_arrival_mapping(mapping) or mapping.token != token \
+				or int(mapping.generation) > int(_marker.generation): continue
+		var source_team := str(int(request.get("team_id", -1)))
+		var source_person := str(int(request.get("commander", -1)))
+		if mapping.maps.team.get(source_team) != str(team.team_id) or mapping.maps.person.get(source_person) != str(requester_id): continue
+		var source_vehicle := ""
+		for identity: String in mapping.maps.vehicle:
+			if mapping.maps.vehicle[identity] == str(vehicle.id): source_vehicle = identity
+		if source_vehicle.is_empty(): continue
+		var selected: Dictionary = _region_life_party_document(token, str(reference.get("party_path", "")), str(reference.get("party_sha256", "")))
+		var planned: Dictionary = _travel_document(str(reference.get("plan_path", "")), str(reference.get("plan_sha256", "")), {})
+		if not selected.ok or not planned.ok: return false
+		var party: Dictionary = selected.party
+		var plan: Dictionary = planned.payload
+		if party.get("controller") != "npc" or party.get("mode") != "sea" \
+				or not party.content.actors.is_empty() or int(party.content.controlled_person_id) != -1 \
+				or plan.get("token") != token or plan.get("mode") != "sea" or not plan.get("action_steps") is Array \
+				or not plan.get("steps") is Array or plan.steps.size() < 2: return false
+		var source_refs: Dictionary = party.content.travel_identity.refs
+		if source_refs.team.get(source_team) != team_ref or source_refs.person.get(source_person) != person_ref \
+				or source_refs.vehicle.get(source_vehicle) != vehicle_ref \
+				or int(party.content.vehicles.get(source_vehicle, {}).get("team_id", -1)) != int(request.team_id): return false
+		var cursor: Dictionary = party.upkeep.get("sea_cursor", {})
+		if cursor.get("plan_id") != reference.plan_path or not _whole(cursor.get("action_index"), 0, plan.action_steps.size()) \
+				or int(cursor.action_index) != plan.action_steps.size() or not _seconds(cursor.get("elapsed")) \
+				or not _seconds(cursor.get("duration")) or float(cursor.elapsed) != 0.0 or float(cursor.duration) != 0.0 \
+				or not _region_npc_sea_position(plan, party).arrived: return false
+		var arrival: Variant = reference.get("arrival_game_seconds")
+		if not _seconds(arrival) or float(arrival) > float(control.logical_game_seconds): return false
+		var completed := false
+		for event: Dictionary in region_registry().events:
+			if event.get("status") == "complete" and event.get("kind") in ["arrival", "player_arrival", "reinforcement"] \
+					and event.get("owner") == str(state.id) and event.get("payload", {}).get("token") == token \
+					and float(event.get("at", -1.0)) == float(arrival) and GameplayClock.validate_event(event).ok:
+				completed = true
+		if not completed or matched: return false
+		matched = true
+	return matched

@@ -961,3 +961,87 @@ func work_fatigue_rest(identity: int) -> Dictionary:
 		task.mode = "rest"
 		task.status = "原同區間休息；保留原目標／進度，恢復後沿原派工重驗"
 	return SiteRuntime.ok("原工作工位已交回既有停止／休息規則")
+
+
+func prepare_host_ranged_ammo_inputs() -> Dictionary:
+	if crowd_site == null or crowd_site.crowd == null or not crowd_site.fire_host_active(): return Runtime.fail("CLOCK_NOT_READY")
+	var rows: Array[Dictionary] = []
+	if not ranged_enabled or not ranged_order_authorized(): return Runtime.ok("", {"rows": rows})
+	for index: int in combat_units:
+		var profile: Dictionary = ranged_profile(index, ranged_ammo_mode)
+		if profile.is_empty(): continue
+		var holder: Dictionary = _cold_get(index, "item_state", {})
+		var cargo: Dictionary = _cold_get(index, "cargo", {})
+		if not Runtime._item_holder_shape(holder): return Runtime.fail("STALE_RANGED_SOURCE")
+		var raw: Variant = cargo.get(str(profile.ammo), 0)
+		if not raw is int or int(raw) < 0 or int(raw) > 65535: return Runtime.fail("INVALID_AMMO")
+		rows.append({"owner": self, "unit": index, "person_id": combat_identity(index),
+			"body": combat_units[index], "cargo": cargo, "holder": holder, "amount": int(raw),
+			"mode": ranged_ammo_mode, "serial": ranged_order_serial})
+	return Runtime.ok("", {"rows": rows})
+
+func publish_host_ranged_ammo_inputs(rows: Array) -> void:
+	# All holders/quantities were checked by original Lab before any setter.
+	# No cost, clock, fatigue or command authorization is published here.
+	for row: Dictionary in rows:
+		assert(row.owner == self and is_same(row.body, combat_units[int(row.unit)]))
+		var ammo_published: bool = crowd_site.set_soldier_fields(int(row.unit), {"ammo": int(row.amount)})
+		assert(ammo_published)
+
+func prepare_host_ranged_release(index: int, target_cell: Vector2i, shot_id: int,
+        ammo_mode: String = "NORMAL", auto_power: bool = false) -> Dictionary:
+	if not crowd_site.fire_host_active() or not ranged_order_authorized() or not exchange_ready(index) \
+		or shot_id <= 0 or ammo_mode != ranged_ammo_mode or not data.contains(target_cell): return Runtime.fail("STALE_RANGED_SOURCE")
+	var profile: Dictionary = ranged_profile(index, ammo_mode)
+	if profile.is_empty() or not SiteCombatRules.ranged_in_range(_combat_attack_cell(index), target_cell, float(profile.range)): return Runtime.fail("OUT_OF_RANGE")
+	var holder: Dictionary = _cold_get(index, "item_state", {})
+	var cargo: Dictionary = _cold_get(index, "cargo", {})
+	if not Runtime._item_holder_shape(holder) or cargo.is_empty(): return Runtime.fail("STALE_RANGED_SOURCE")
+	var ammo_key: String = str(profile.ammo)
+	var amount: int = int(cargo.get(ammo_key, 0))
+	if amount <= 0 or amount > 65535: return Runtime.fail("NO_AMMO")
+	# This is a pure read. The mutable legacy ammo setter is never called here.
+	if int(combat_hot_get(index, &"ammo", -1)) != amount: return Runtime.fail("NATIVE_RANGED_AMMO_INPUT_REQUIRED")
+	return Runtime.ok("原本人／庫存參照候選", {"owner": self, "site": crowd_site, "world": crowd_site.crowd,
+		"data": data, "unit": index, "person_id": combat_identity(index), "body": combat_units[index],
+		"command_owner": _command_owner(index), "holder": holder, "holder_values": holder.duplicate(true),
+		"cargo": cargo, "cargo_values": cargo.duplicate(true), "source": _combat_attack_cell(index),
+		"target": target_cell, "shot_id": shot_id, "mode": ammo_mode, "serial": ranged_order_serial,
+		"ammo_key": ammo_key, "amount": amount, "auto_power": auto_power and command_abilities.has(index)})
+
+func valid_prepared_host_ranged_release(prepared: Dictionary) -> bool:
+	if prepared.get("owner") != self or prepared.get("site") != crowd_site or prepared.get("world") != crowd_site.crowd \
+		or prepared.get("data") != data: return false
+	var index: int = int(prepared.get("unit", -1))
+	if not is_member(index) or combat_identity(index) != int(prepared.get("person_id", 0)) \
+		or not is_same(combat_units[index], prepared.get("body")) \
+		or not is_same(_command_owner(index), prepared.get("command_owner")) \
+		or not is_same(_cold_get(index, "item_state", {}), prepared.get("holder")) \
+		or not is_same(_cold_get(index, "cargo", {}), prepared.get("cargo")): return false
+	if prepared.holder != prepared.holder_values or prepared.cargo != prepared.cargo_values \
+		or int(prepared.serial) != ranged_order_serial or str(prepared.mode) != ranged_ammo_mode \
+		or _combat_attack_cell(index) != prepared.source: return false
+	var current: Dictionary = prepare_host_ranged_release(index, prepared.target, int(prepared.shot_id), str(prepared.mode), bool(prepared.auto_power))
+	return current.ok and current == prepared
+
+func publish_validated_host_ranged_release(prepared: Dictionary, receipt: PackedFloat64Array) -> Dictionary:
+	# Called only by original Lab's SAME validated batch, with no intervening
+	# callback/yield. Native already performed its original atomic cost once.
+	assert(prepared.owner == self and receipt.size() == 5 and int(receipt[4]) == int(prepared.amount) - 1)
+	var index: int = int(prepared.unit)
+	var cargo: Dictionary = prepared.cargo
+	var amount: int = int(prepared.amount)
+	if amount == 1: cargo.erase(str(prepared.ammo_key))
+	else: cargo[str(prepared.ammo_key)] = amount - 1
+	var source: Variant = prepared.command_owner
+	var identity: int = int(prepared.person_id)
+	if source is TerrainArmy: source._ranged_last_release_ids[identity] = int(prepared.shot_id)
+	elif source is TerrainTestCharacter: source._ranged_last_release_id = int(prepared.shot_id)
+	if int(receipt[3]) == 2 and str(_cold_get(index, "exchange_skill", "")) == "power":
+		_cold_set(index, "exchange_skill", "")
+		combat_hot_set(index, &"exchange_skill_cooldown", SiteCombatRules.EXCHANGE_SKILL_COOLDOWN)
+	var shooter: Dictionary = exchange_stats(index)
+	shooter.ability = receipt[0]
+	shooter.training = receipt[1]
+	shooter.fatigue = receipt[2]
+	return {"shooter": shooter}

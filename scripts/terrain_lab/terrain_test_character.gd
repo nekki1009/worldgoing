@@ -1663,6 +1663,7 @@ func apply_contact(packet: Dictionary) -> void:
 	if region_sink is Callable and region_sink.is_valid() and region_sink.call(combat_identity(), packet) == true: return
 	if hp <= 0.0:
 		return
+	# Capture the original standing body before life callbacks can hand it off.
 	var result: Dictionary = packet.result
 	var hp_loss := maxf(0.0, float(result.hp))
 	var impact := maxf(0.0, float(result.stun))

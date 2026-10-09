@@ -41,9 +41,17 @@ var _jobs: Dictionary = {} # Active commands are transient; save_guard refuses t
 var _technology_source_refs: Dictionary = {} # Derived original-object references, never budgets or saved authority.
 
 func init(owner: Variant) -> void:
+	discard_checked_controlled_prefixes()
+	_gd_contact_job_capture = {}
+	_gd_contact_job_segment = {}
 	lab = owner
 	lab.terrain.set_meta(&"site_person_actions", weakref(self))
 	_jobs.clear()
+	end_shared_work_prefix_consumption()
+	_prepared_controlled_features.clear()
+	_controlled_feature_consumed.clear()
+	_controlled_feature_allocation = {}
+	_controlled_feature_seconds = 0.0
 	_results.clear()
 	_technology_source_refs.clear()
 	_rebind_technology_sources()
@@ -383,6 +391,7 @@ func _prison_release_context(executor_id: int, target_id: int, job: Dictionary =
 	return original
 
 func _commit_prison_release(job: Dictionary) -> Dictionary:
+	if not _gd_custody_native(job): return _commit_gd_custody_terminal(job)
 	var check := _prison_release_context(int(job.executor_id), int(job.target_id), job)
 	if not check.ok: return check
 	var target: Dictionary = check.person
@@ -698,6 +707,10 @@ func begin_equipment(identity: int, request: Dictionary) -> Dictionary:
 		"executor_holder": executor.holder, "executor_cargo": executor.cargo})
 	if str(prepared.order.mode) == "issue":
 		job.merge({"depot_holder": lab.terrain.site.depot_items, "depot_stock": lab.terrain.site.inventory})
+	var military: Dictionary = prepare_nation_military_issue_binding(prepared.order)
+	if not military.ok: return military
+	job.merge(military.metadata)
+	if not military.payment.is_empty(): publish_phase_payment(military.payment)
 	_jobs[str(identity)] = job
 	if preparing:
 		job.paused = "PREPARING_ATLAS"
@@ -779,7 +792,7 @@ func _equipment_prepared(job: Dictionary, complete: bool) -> void:
 		job.paused = ""
 		job.elapsed = 0.0 # Only the original clock/post-contact commit can equip.
 
-func begin_ranged_craft(identity: int, recipe: String) -> Dictionary:
+func begin_ranged_craft(identity: int, recipe: String, technology_token: Dictionary = {}) -> Dictionary:
 	var crowd_guard := crowd_action_guard([identity])
 	if not crowd_guard.ok:
 		return crowd_guard
@@ -789,7 +802,7 @@ func begin_ranged_craft(identity: int, recipe: String) -> Dictionary:
 	var check := _ranged_craft_context(executor)
 	if not check.ok:
 		return check
-	check = Runtime.ranged_craft(lab.terrain, recipe, identity, true)
+	check = Runtime.ranged_craft(lab.terrain, recipe, identity, true, technology_token)
 	if not check.ok:
 		return check
 	var job := _new_job(executor, "ranged_craft", identity)
@@ -797,7 +810,7 @@ func begin_ranged_craft(identity: int, recipe: String) -> Dictionary:
 		"terrain": lab.terrain, "site_state": lab.terrain.site,
 		"executor_holder": executor.holder, "executor_cargo": executor.cargo, "executor_version": int(executor.holder.version),
 		"depot_holder": lab.terrain.site.depot_items, "depot_stock": lab.terrain.site.inventory})
-	if recipe == "bow" and Technology.learned(_body_get(executor, "technology")): job.duration *= 0.9
+	job.duration = ranged_craft_seconds(identity, recipe)
 	_jobs[str(identity)] = job
 	return Runtime.ok("開始營地手作；完成才扣原材料並入庫", {"seconds": job.duration})
 
@@ -943,13 +956,18 @@ func advance(seconds: float, work_plan: Dictionary = {}) -> Dictionary:
 	var threats := {}
 	for key: String in _jobs.keys():
 		var job: Dictionary = _jobs[key]
+		if str(job.kind) in ["technology_feature", "technology_vehicle"]:
+			_advance_controlled_feature_work(key, job, seconds, work_plan, handled)
+			continue
 		if str(job.kind) == "fire_suppress":
 			if job.executor_owner is CrowdPersonOwner and not bool(job.cancelled):
 				job.executor_owner.advance_suppress_approach(int(job.executor_id), int(job.job_token))
 			handled[int(job.executor_id)] = _fire_work_handled_seconds(job, seconds)
 			continue
 		if str(job.kind) in ["housing_return", "ground_boundary"] or str(job.kind).begins_with("ship_"): continue # Original ACTION boundary owns finite movement.
-		var check := _job_context(job)
+		var accepted: Dictionary = _consume_shared_job_advance_prefix(key, job, seconds, work_plan)
+		if bool(accepted.get("duplicate", false)): continue
+		var check: Dictionary = Runtime.ok() if not accepted.is_empty() else _job_context(job)
 		if bool(job.get("preparing", false)) and (check.ok or str(check.code) == "ATLAS_REQUIRED"):
 			continue # Preparation is not work time, fatigue, or an inventory reservation.
 		if not check.ok:
@@ -973,6 +991,7 @@ func advance(seconds: float, work_plan: Dictionary = {}) -> Dictionary:
 			job.paused = str(interval.get("paused", ""))
 			if job.paused == "THREAT": job.elapsed = 0.0
 			else: job.elapsed = minf(float(job.duration), float(job.elapsed) + float(interval.get("effective_seconds", 0.0)))
+			settlement_food_prefix_progress(job)
 			for participant: Variant in interval.get("participant_seconds", {}):
 				handled[int(participant)] = float(interval.participant_seconds[participant])
 				if handled[int(participant)] > 0.0:
@@ -983,13 +1002,13 @@ func advance(seconds: float, work_plan: Dictionary = {}) -> Dictionary:
 					var person := _person(int(participant))
 					if not person.is_empty() and not bool(person.player):
 						_body_set(person, "work_resting", true)
-						if person.owner is CrowdOwner: person.owner.work_fatigue_rest(int(participant))
+						if person.owner is CrowdOwner and _shared_work_prefix_consumption.is_empty(): person.owner.work_fatigue_rest(int(participant))
 				if float(job.elapsed) >= float(job.duration) - 0.00000001: job.paused = "" # Legal completion at the REST boundary.
 			continue # The original shared collector charged each original pool once.
 		if not work_plan.is_empty():
 			job.paused = "CLOCK_NOT_READY"
 			continue # A planned interval never bills a missing original provider again.
-		if str(job.kind) in ["technology_lesson", "captive_craft"]:
+		if str(job.kind) in ["technology_lesson", "captive_craft", "water_schedule", "food_order"]:
 			job.paused = "CLOCK_NOT_READY"
 			continue # A joint course requires the complete original-pool work plan.
 		if str(job.kind) == "equipment" and str(job.order.mode) == "team_issue":
@@ -1115,9 +1134,16 @@ func settle_after_contacts() -> Array[Dictionary]:
 	# Stable original IDs are the sole tie-break; every later submission rechecks.
 	var keys: Array = _jobs.keys()
 	keys.sort_custom(func(a: String, b: String) -> bool: return int(a) < int(b))
+	var ranged_settled := {}
 	for key: String in keys:
+		if ranged_settled.has(key): continue
 		var job: Dictionary = _jobs[key]
+		if str(job.kind) in ["technology_feature", "technology_vehicle"]:
+			var current := _controlled_feature_job_context(job)
+			if not current.ok: _finish(key, current)
+			continue
 		if str(job.kind) == "fire_suppress":
+			if lab.crowd_site != null and lab.crowd_site.active and job.executor_owner is CrowdOwner and lab.crowd_site.work_fatigue_point_active(): continue
 			_settle_fire_suppress(key, job)
 			continue
 		if str(job.kind) == "housing_return":
@@ -1164,7 +1190,17 @@ func settle_after_contacts() -> Array[Dictionary]:
 		if not check.ok:
 			_finish(key, check)
 		elif str(job.paused).is_empty() and float(job.elapsed) >= float(job.duration) - 0.00000001:
-			_finish(key, _commit(job))
+			if str(job.kind) in ["ranged_craft", "captive_craft"]:
+				var batch: Dictionary = _settle_ranged_terminal_chunk(keys, key)
+				if not batch.ok: _finish(key, batch)
+				else:
+					for completed_key: String in batch.keys: ranged_settled[completed_key] = true
+			elif _gd_typed_terminal_kind(str(job.kind)) and not _gd_typed_terminal_native(job):
+				# Current numeric endpoint: prepare EVERY owner before its first debit,
+				# then publish that one original no-fail transaction. A later job is
+				# re-queried after this genuine earlier tail, never from fake versions.
+				_finish(key, _commit_gd_typed_terminal(job))
+			else: _finish(key, _commit(job))
 	var results := _results
 	_results = []
 	return results
@@ -1176,10 +1212,14 @@ func _finish(key: String, result: Dictionary) -> void:
 	_results.append(result)
 
 func _commit(job: Dictionary) -> Dictionary:
+	if str(job.kind) in ["capture", "unbind", "ransom", "prison_release"] and not _gd_custody_native(job): return _commit_gd_custody_terminal(job)
+	if str(job.kind) == "water_schedule": return _commit_water_schedule(job)
 	if str(job.kind) == "nation_administration": return _commit_nation_administration(job)
 	if str(job.kind) == "technology_analysis": return _commit_technology_analysis(job)
 	if str(job.kind) == "captive_craft": return _commit_captive_craft(job)
+	if str(job.kind) == "food_order": return _commit_settlement_food_work(job)
 	var executor := _person(int(job.executor_id))
+	if str(job.kind) in ["equipment", "loot", "tent_deploy", "tent_pack"] and not _gd_typed_terminal_native(job): return _commit_gd_typed_terminal(job)
 	if str(job.kind) == "technology_lesson": return _commit_technology_lesson(job)
 	if str(job.kind) == "siege_takeover":
 		return Runtime.takeover_siege(lab.terrain, str(job.vehicle_id), job.expected, int(job.new_team))
@@ -1198,6 +1238,7 @@ func _commit(job: Dictionary) -> Dictionary:
 	if str(job.kind) == "prison_release":
 		return _commit_prison_release(job)
 	if str(job.kind) == "ranged_craft":
+		if job.has("technology_scope_token"): return _commit_scope_ranged_craft(job)
 		if job.has("technology_project"): return _commit_technology_trial(job)
 		return Runtime.ranged_craft(lab.terrain, str(job.recipe), int(job.executor_id))
 	if str(job.kind) == "equipment":
@@ -1266,6 +1307,9 @@ func _commit(job: Dictionary) -> Dictionary:
 	return Runtime.ok("已拘束；封存物留在原地" if capturing else "已解綁；生命與昏迷不變", {"container_id": container})
 
 func _job_context(job: Dictionary) -> Dictionary:
+	if str(job.kind) == "food_order": return _settlement_food_job_context(job)
+	if str(job.kind) == "water_schedule": return _water_schedule_context(job)
+	if str(job.kind) in ["technology_feature", "technology_vehicle"]: return _controlled_feature_job_context(job)
 	if str(job.kind) == "nation_administration": return _nation_administration_context(job)
 	if str(job.kind) == "technology_analysis": return _technology_analysis_job_context(job)
 	if str(job.kind) == "captive_craft": return _captive_craft_job_context(job)
@@ -1313,7 +1357,8 @@ func _job_context(job: Dictionary) -> Dictionary:
 			or int(executor.holder.version) != int(job.executor_version) \
 			or not is_same(lab.terrain.site.depot_items, job.depot_holder) or not is_same(lab.terrain.site.inventory, job.depot_stock):
 			return Runtime.fail("STALE_SOURCE", "原人物或營地持物已切換，手作未扣材料")
-		check = Runtime.ranged_craft(lab.terrain, str(job.recipe), int(job.executor_id), true)
+		check = Runtime.ranged_craft(lab.terrain, str(job.recipe), int(job.executor_id), true, job.get("technology_scope_token", {}))
+		if check.ok and job.has("technology_scope_token"): return _scope_ranged_job_context(job)
 		if check.ok and job.has("technology_project"): return _technology_trial_context(job)
 		return check
 	if str(job.kind) == "equipment":
@@ -1323,6 +1368,9 @@ func _job_context(job: Dictionary) -> Dictionary:
 		if str(job.order.mode) in ["issue", "team_issue"] and (not is_same(lab.terrain.site.depot_items, job.depot_holder) or not is_same(lab.terrain.site.inventory, job.depot_stock)):
 			return Runtime.fail("STALE_SOURCE", "原補給點持物已替換；換裝未扣物")
 		if equipment_orders == null: return Runtime.fail("UNSUPPORTED")
+		if job.has("nation_issue_token"):
+			var issue_context := _nation_military_issue_job_context(job)
+			if not issue_context.ok: return issue_context
 		return equipment_orders.check_team_issue(job.order) if str(job.order.mode) == "team_issue" else equipment_orders.check(job.order)
 	if str(job.kind) == "loot":
 		var source := _source(str(job.source_kind), str(job.source_id))
@@ -1579,6 +1627,7 @@ func _ready(person: Dictionary, allow_guard: bool = false) -> bool:
 		if not delivery.is_empty() and int(person.person_id) in [int(delivery.get("player_id", -1)), int(delivery.get("representative_id", -1))]:
 			return false
 	if person.owner is CrowdOwner:
+		if not person.owner.crowd_site.work_fatigue_work_start_ready(int(person.person_id)): return false
 		return person.owner.combat_can_act(int(person.unit)) and not bool(_body_get(person, "attack")) and str(_body_get(person, "pose")) == "idle"
 	if int(person.unit) >= 0:
 		return person.owner.combat_can_act(int(person.unit)) and not bool(_body_get(person, "attack")) and str(_body_get(person, "pose")) == "idle" and person.body.get("work_task", {}).is_empty()
@@ -2405,9 +2454,16 @@ func _technology_operator_for_task(task: Dictionary, identity: int = 0) -> Dicti
 		elif is_same(task, lab.terrain.site.get("worker", {})) and lab.npc != null: identity = int(lab.npc.person_id)
 	var person := _person(identity)
 	if person.is_empty() or float(person.hp) <= 0.0 or float(person.ko) > 0.0 or bool(person.captive) or bool(person.moving): return {}
+	if person.owner is CrowdOwner and not person.owner.crowd_site.work_fatigue_work_start_ready(identity): return {}
 	if lab.terrain.index(person.cell) != int(task.get("cell", -1)) or int(task.get("cell", -1)) != int(task.get("work_cell", task.get("cell", -1))): return {}
 	var genuine := false
-	if person.body is Dictionary and int(person.unit) >= 0:
+	if person.owner is CrowdOwner and person.body is TerrainTestCharacter:
+		# SAME original Actor body, actual Native owner/hot qualification.
+		genuine = is_same(person.body, lab.character) and identity == _technology_controlled() and is_same(task, lab.terrain.site.get("manual", {})) \
+			or is_same(person.body, lab.npc) and is_same(task, lab.terrain.site.get("worker", {}))
+		if not person.owner.combat_can_act(int(person.unit)) or bool(person.owner.combat_hot_get(int(person.unit), &"attack")) or str(person.owner.combat_hot_get(int(person.unit), &"pose")) != "idle" \
+			or float(person.owner.combat_hot_get(int(person.unit), &"exchange_stagger", 0.0)) > 0.0: return {}
+	elif person.body is Dictionary and int(person.unit) >= 0:
 		genuine = is_same(person.body.get("work_task", {}), task) and lab.site_controller != null and lab.site_controller.work_team.is_assigned(identity)
 		if not person.owner.combat_can_act(int(person.unit)) or bool(_body_get(person, "attack")) or str(_body_get(person, "pose")) != "idle" \
 			or float(_body_get(person, "exchange_stagger")) > 0.0: return {}
@@ -2416,8 +2472,8 @@ func _technology_operator_for_task(task: Dictionary, identity: int = 0) -> Dicti
 			or person.owner == lab.npc and is_same(task, lab.terrain.site.get("worker", {}))
 		if not person.owner.can_act() or person.owner.action_time > 0.0 or person.owner.guarding or person.owner.guard_transition_left > 0.0 \
 			or person.owner.guard_break_left > 0.0 or person.owner._rescue_left > 0.0: return {}
-	var job := job_for(identity)
-	if str(job.get("kind", "")) == "technology_feature" and is_same(job.get("work_task", {}), task):
+	var job: Dictionary = _jobs.get(_job_key_for(identity), {})
+	if str(job.get("kind", "")) in ["technology_feature", "technology_vehicle"] and is_same(job.get("work_task", {}), task):
 		genuine = is_same(job.get("technology_executor_body"), person.body) and is_same(job.get("site_state"), lab.terrain.site)
 	if not genuine or _threat(person, {}): return {}
 	return person
@@ -2470,16 +2526,27 @@ func _technology_team(person: Dictionary) -> Variant:
 func _technology_consent_candidate(identity: int, project_purpose: String) -> Dictionary:
 	var check := _technology_person_context(identity)
 	if not check.ok: return check
+	var native_person := _person(identity)
+	if native_person.get("owner") is CrowdOwner: return _technology_scope_consent_candidate(native_person, project_purpose, _technology_controlled())
 	var team: Variant = _technology_team(_person(identity))
 	if team == null: return Runtime.ok("原人不受隊伍派工管轄", {"consent": {}})
 	if not team.has_method("technology_work_consent"): return Runtime.fail("UNSUPPORTED", "原隊具名派工請求入口尚未接線")
 	return team.technology_work_consent(identity, project_purpose, _technology_controlled())
 
-func _technology_consent_valid(identity: int, consents: Array, project_purpose: String, bound_token: Dictionary = {}) -> bool:
+func _technology_consent_valid(identity: int, consents: Array, project_purpose: String, bound_token: Dictionary = {}, read_only: bool = false, bound_order: Dictionary = {}) -> bool:
+	if not bound_order.is_empty():
+		var military_selector := _technology_military_selector_for_order(bound_order)
+		if not military_selector.is_empty():
+			if int(bound_order.operator_id) != identity or consents.size() != (0 if bound_order.work_consent.is_empty() else 1) \
+				or not consents.is_empty() and not is_same(consents[0], bound_order.work_consent): return false
+		else:
+			if not is_same(consents, bound_order.get("payload", {}).get("consents", [])): return false
 	var person := _person(identity)
 	if person.is_empty(): return false
+	if read_only and person.owner is CrowdOwner: return _technology_native_consent_readonly(person, consents, project_purpose, bound_token, bound_order)
 	var team: Variant = _technology_team(person)
 	if team == null: return true
+	var n08_driver: bool = _nation_n08_driver_context(identity, project_purpose).get("ok", false) == true
 	if team.combat_order != TerrainArmy.CombatOrder.HOLD or team.moving_member_count() > 0 or team.get_active_move_plan() != null or team.is_sustain_routed() \
 		or float(team.data.site.get("combat_left", 0.0)) > 0.0 or team.has_ship_journey() or team._team_ship_activity(): return false
 	var index: int = team.index_for_identity(identity)
@@ -2487,15 +2554,17 @@ func _technology_consent_valid(identity: int, consents: Array, project_purpose: 
 	var supply: Dictionary = team.data.site.get("team_supply", {}).get(str(team.team_id), {})
 	if bool(supply.get("training_order", false)): return false
 	if index != TerrainArmy.PLAYER_MEMBER:
-		if bool(team.combat_units[index].get("logistics", false)) or not team.combat_units[index].get("work_task", {}).is_empty() and not _technology_matching_original_task(person, bound_token) \
+		if bool(team.combat_units[index].get("logistics", false)) and not n08_driver or not team.combat_units[index].get("work_task", {}).is_empty() and not _technology_matching_original_task(person, bound_token) and not _technology_matching_public_task(person, bound_order) and not _technology_matching_settlement_task(person, project_purpose) \
 			or team.moving_to[index] != TerrainArmy.INVALID_CELL or team._combat_action_blocks_step(index) \
 			or team._ship_embarked(index) or team._siege_crew(index) or team._unit_rescues.has(index) or team.patient_has_rescuer(index): return false
-	if team.vehicle_transport != null and team.vehicle_transport.is_operator(identity): return false
-	if team.duty_decider("team.work") <= 0: return false
+	if team.vehicle_transport != null and team.vehicle_transport.is_operator(identity) and not n08_driver: return false
+	if (int(team.duty_resolve_readonly("team.work").get("decider", -1)) if read_only else team.duty_decider("team.work")) <= 0: return false
 	for consent: Dictionary in consents:
 		if int(consent.person_id) == identity and int(consent.team_id) == int(team.team_id) and str(consent.site_id) == _technology_site_id() \
 			and str(consent.purpose) == project_purpose and str(consent.status) == "accepted": return true
 	return false
+
+# REPLACE _technology_scope_duty
 
 func _technology_candidate() -> Dictionary:
 	var result := _technology_family().duplicate(true)
@@ -2703,6 +2772,7 @@ func _commit_technology_trial(job: Dictionary) -> Dictionary:
 	return result
 
 func begin_technology_lesson(requester_id: int, teacher_id: int, student_id: int, tech_id: String = "F07") -> Dictionary:
+	if tech_id != "F07" and TechnologyCatalog.get_node(tech_id).get("enabled") != true: return Runtime.fail("UNIMPLEMENTED")
 	var check := _technology_authority(requester_id, "family.teach")
 	if not check.ok: return check
 	if not Technology.FAMILY_IDS.has(tech_id): return Runtime.fail("INVALID_TECHNOLOGY")
@@ -2750,29 +2820,12 @@ func _technology_lesson_context(job: Dictionary) -> Dictionary:
 	return Runtime.ok()
 
 func _commit_technology_lesson(job: Dictionary) -> Dictionary:
-	var check := _technology_lesson_context(job)
-	if not check.ok: return check
-	var family := _technology_family()
-	var tech_id := str(job.get("technology_id", "F07"))
-	var candidate: Dictionary = family.technology.duplicate(true)
-	var student := _person(int(job.target_id))
-	var learned := Technology.learned_candidate(_body_get(student, "technology"), tech_id)
-	if learned.is_empty(): return Runtime.fail("INVALID_TECHNOLOGY")
-	var wanted := tech_id + ":relearn:" + JSON.stringify([_technology_site_id(), int(job.target_id)])
-	for project: Dictionary in candidate.projects:
-		if project.tech_id == tech_id and (str(project.purpose) == wanted or Technology.project_purpose_matches(project, _technology_ref(int(job.target_id)), candidate.get("person_links", []))) and not bool(project.closed):
-			project.closed = true
-			if int(candidate.active) == int(project.id): candidate.active = 0
-	if not Technology.valid_family_tech(candidate): return Runtime.fail("INVALID_TECHNOLOGY")
-	var funding := prepare_nation_funded_lesson(job, learned)
-	if not funding.ok: return funding
-	if not funding.payment.is_empty():
-		var paid: Dictionary = equipment_orders.commit_funded_course_payment(funding.payment)
-		if not paid.ok: return paid
-	family.technology = candidate
-	_body_set(student, "technology", learned)
-	if not funding.phase.is_empty(): publish_phase_receipt(funding.phase)
-	return Runtime.ok("原學生已學會 " + tech_id + "；已付重學歷史保留，不追加成品")
+	var prepared: Dictionary = _prepare_technology_lesson_completion(job)
+	if not prepared.ok: return prepared
+	var checked: Dictionary = _validate_technology_lesson_completion(prepared)
+	if not checked.ok: return checked
+	_publish_technology_lesson_completion(prepared)
+	return Runtime.ok("原學生已學會 " + str(job.get("technology_id", "F07")) + "；已付重學歷史保留，不追加成品")
 
 func stop_technology(requester_id: int, participant_id: int = 0) -> Dictionary:
 	var participant_job := job_for(participant_id) if participant_id > 0 else {}
@@ -2801,6 +2854,7 @@ func technology_query() -> Dictionary:
 	if family.has("technology") and not Technology.local_holder(family.technology, _technology_site_id()): return Runtime.fail("REMOTE_HOLDER", "原家族科技目前由另一處 holder 持有；此處引用不代表未知或可重開研究")
 	var tech: Dictionary = family.get("technology", {})
 	var project := Technology.active_project(tech)
+	if not project.is_empty() and (project.tech_id != "F07" or int(project.rules_version) != 1): project = {}
 	var people: Array = []
 	for member: Dictionary in family.members:
 		if str(member.site_id) != _technology_site_id(): continue
@@ -2820,7 +2874,7 @@ func technology_query() -> Dictionary:
 		for consent: Dictionary in project.consents:
 			projection.consents.append({"person_id": int(consent.person_id), "team_id": int(consent.team_id), "decider_id": int(consent.decider_id), "status": str(consent.status)})
 		if budget.is_empty() or budget.status != "granted": projection.block_reasons.append("尚無本次有效材料核額")
-		if not _technology_consent_valid(int(project.executor.person_id), project.consents, str(project.purpose)): projection.block_reasons.append("尚無原隊本次具名同意")
+		if not _technology_consent_valid(int(project.executor.person_id), project.consents, str(project.purpose), {}, true): projection.block_reasons.append("尚無原隊本次具名同意")
 	return Runtime.ok("", {"registered": true, "family_id": str(family.get("family_id", "")), "known": tech.get("known", []).has("F07"),
 		"research_decider": int(_technology_duty("family.research").get("decider", -1)), "teaching_decider": int(_technology_duty("family.teach").get("decider", -1)),
 		"current_person_id": _technology_controlled(), "people": people, "project": projection})
@@ -2828,14 +2882,25 @@ func technology_query() -> Dictionary:
 # This read-only demand joins the Lab's original complete-pool collector.
 func work_requests(seconds: float) -> Array[Dictionary]:
 	var requests: Array[Dictionary] = []
+	_prepared_controlled_features.clear()
+	_controlled_feature_consumed.clear()
+	_controlled_feature_allocation = {}
+	_controlled_feature_seconds = seconds
 	if not is_finite(seconds) or seconds <= 0.0 or bool(lab.terrain.site.get("paused", false)): return requests
-	for key: String in _jobs:
+	var keys: Array = _jobs.keys()
+	keys.sort_custom(func(a: String, b: String) -> bool: return int(a) < int(b))
+	for key: String in keys:
 		var job: Dictionary = _jobs[key]
+		if bool(job.get("preparing", false)): continue
+		if str(job.kind) in ["technology_feature", "technology_vehicle"]:
+			var request := _controlled_feature_work_request(key, job, seconds)
+			if not request.is_empty(): requests.append(request)
+			continue
 		if str(job.kind) == "captive_craft":
 			var captive_request := _captive_craft_request(job, seconds)
 			if not captive_request.is_empty(): requests.append(captive_request)
 			continue
-		if str(job.kind) not in ["loot", "ranged_craft", "tent_deploy", "tent_pack", "technology_lesson", "technology_analysis", "nation_administration", "capture", "unbind", "ransom", "equipment", "prison_release"]: continue
+		if str(job.kind) not in ["loot", "ranged_craft", "tent_deploy", "tent_pack", "technology_lesson", "technology_analysis", "nation_administration", "water_schedule", "food_order", "capture", "unbind", "ransom", "equipment", "prison_release"]: continue
 		if not _job_context(job).ok: continue
 		var ids := [int(job.executor_id)]
 		if str(job.kind) == "technology_lesson": ids.append(int(job.target_id))
@@ -2855,9 +2920,22 @@ func work_requests(seconds: float) -> Array[Dictionary]:
 				if _threat(person, {}): paused = "THREAT"
 				elif paused.is_empty() and Fatigue.needs_work_rest(float(_body_get(person, "fatigue")), bool(_body_get(person, "work_resting"))): paused = "REST"
 		if participants.is_empty(): continue
-		var kind := "joint" if str(job.kind) == "technology_lesson" else ("single" if str(job.kind) in ["loot", "ranged_craft", "tent_deploy", "tent_pack", "technology_analysis", "nation_administration"] else "raw")
-		requests.append({"provider": "person_actions", "key": key, "participants": participants, "remaining": maxf(0.0, float(job.duration) - float(job.elapsed)),
-			"productive_kind": kind, "progress_multiplier": _technology_work_multiplier(job), "max_game_seconds": seconds, "paused": paused})
+		var kind := "joint" if str(job.kind) == "technology_lesson" else ("single" if str(job.kind) in ["loot", "ranged_craft", "tent_deploy", "tent_pack", "technology_analysis", "nation_administration", "water_schedule", "food_order"] else "raw")
+		var request: Dictionary = {"provider": "person_actions", "key": key, "participants": participants, "remaining": maxf(0.0, float(job.duration) - float(job.elapsed)),
+			"productive_kind": kind, "progress_multiplier": _technology_work_multiplier(job), "max_game_seconds": seconds, "paused": paused}
+		if str(job.kind) == "ranged_craft" and paused.is_empty() and float(request.remaining) <= seconds * float(request.progress_multiplier) + Fatigue.WORK_PLAN_EPS:
+			request.payment_source = lab.terrain.site.inventory
+			request.payment = Runtime.RANGED_RECIPES[str(job.recipe)].cost.duplicate(true)
+			request.payment_key = "person_actions:" + key
+		if str(job.kind) == "technology_lesson" and job.has("nation_course_id") and paused.is_empty() \
+			and float(request.remaining) <= seconds * float(request.progress_multiplier) + Fatigue.WORK_PLAN_EPS:
+			var source: Dictionary = equipment_orders.prepare_funded_course_source(str(job.nation_course_nation), str(job.nation_course_id), job)
+			if source.ok:
+				request.payment_source = source.source_cargo
+				request.payment = {"grain": 2}
+				request.payment_key = "person_actions:" + key
+			else: request.paused = str(source.get("code", "MATERIALS"))
+		requests.append(request)
 	return requests
 
 func _shared_work_participant(person: Dictionary) -> Dictionary:
@@ -2875,7 +2953,8 @@ func ranged_craft_seconds(identity: int, recipe: String) -> float:
 	if not Runtime.RANGED_RECIPES.has(recipe): return NAN
 	var duration := float(Runtime.RANGED_RECIPES[recipe].duration)
 	var person := _person(identity)
-	return duration * 0.9 if recipe == "bow" and not person.is_empty() and Technology.learned(_body_get(person, "technology")) else duration
+	var skill := "F07" if recipe == "bow" else "F08" if recipe == "crossbow" else ""
+	return duration * 0.9 if not skill.is_empty() and not person.is_empty() and Technology.learned(_body_get(person, "technology"), skill) else duration
 
 # This later entry does not grant sources or personnel consent. The original
 # SiteDutyAI owns selection/cadence and resolves its real NPC before calling.
@@ -2918,7 +2997,8 @@ func begin_npc_technology_trial(requester_id: int, executor_id: int = -1) -> Dic
 	return _begin_technology_trial(requester_id, selected)
 
 func _technology_work_multiplier(job: Dictionary) -> float:
-	return 0.5 if job.has("technology_project") and lab.get("restore_only") == true and not bool(_person(int(job.executor_id)).get("player", true)) else 1.0
+	if job.get("kind") == "food_order" and not job.get("nation_token", {}).is_empty() and lab.get("restore_only") == true and not bool(_person(int(job.executor_id)).get("player", true)): return 0.5
+	return 0.5 if (job.has("technology_project") or job.has("technology_scope_token")) and lab.get("restore_only") == true and not bool(_person(int(job.executor_id)).get("player", true)) else 1.0
 
 # T2: only admitted original NPC trial jobs may checkpoint mid-work in cold
 # replay. Ordinary/manual saves still use save_guard() and remain BUSY.
@@ -3106,11 +3186,20 @@ func _captive_craft_job_context(job: Dictionary) -> Dictionary:
 	return _captive_craft_context(int(job.requester_id), int(job.executor_id), int(job.guard_id), str(job.recipe), job)
 
 func _commit_captive_craft(job: Dictionary) -> Dictionary:
-	var check := _captive_craft_job_context(job)
+	if not is_same(_jobs.get(str(int(job.get("executor_id", -1))), {}), job) or not str(job.get("paused", "")).is_empty() \
+		or not Technology.finite_number(job.get("elapsed")) or float(job.elapsed) + Fatigue.WORK_PLAN_EPS < float(job.duration): return Runtime.fail("STALE_SOURCE")
+	var check: Dictionary = _captive_craft_job_context(job)
 	if not check.ok: return check
-	# Same original atomic real-item transaction. No research purpose, receipts,
-	# family knowledge, person skill, analysis or teaching write is made here.
-	return Runtime.ranged_craft(lab.terrain, str(job.recipe), int(job.executor_id))
+	var prepared: Dictionary = Runtime.prepare_ranged_craft(lab.terrain, str(job.recipe), int(job.executor_id))
+	if not prepared.ok: return prepared
+	# The original equipment allocation callback may change a real endpoint;
+	# recheck BOTH same original people/guard relation and the actual source.
+	check = _captive_craft_job_context(job)
+	if not check.ok: return check
+	if not is_same(_jobs.get(str(int(job.executor_id)), {}), job) or not str(job.paused).is_empty() \
+		or not Runtime.validate_prepared_ranged_craft(prepared): return Runtime.fail("STALE_SOURCE")
+	# Original atomic item tail only: no research purpose/receipt/skill write.
+	return Runtime.publish_prepared_ranged_craft(prepared)
 
 func stop_captive_craft(requester_id: int, participant_id: int) -> Dictionary:
 	if requester_id != _technology_controlled(): return Runtime.fail("NO_AUTHORITY")
@@ -3133,9 +3222,14 @@ func _captive_craft_request(job: Dictionary, seconds: float) -> Dictionary:
 		if participant.is_empty(): return {}
 		people.append(participant)
 		if not bool(person.player) and Fatigue.needs_work_rest(float(_body_get(person, "fatigue")), bool(_body_get(person, "work_resting"))): paused = "REST"
-	return {"provider": "person_actions", "key": str(job.executor_id), "participants": people,
+	var request: Dictionary = {"provider": "person_actions", "key": str(job.executor_id), "participants": people,
 		"remaining": maxf(0.0, float(job.duration) - float(job.elapsed)), "productive_kind": "joint",
 		"progress_multiplier": 1.0, "max_game_seconds": seconds, "paused": paused}
+	if paused.is_empty() and float(request.remaining) <= seconds + Fatigue.WORK_PLAN_EPS:
+		request.payment_source = lab.terrain.site.inventory
+		request.payment = Runtime.RANGED_RECIPES[str(job.recipe)].cost.duplicate(true)
+		request.payment_key = "person_actions:" + str(job.executor_id)
+	return request
 
 func captive_work_rest_allowed(identity: int) -> bool:
 	# Only original FATIGUE IDLE admission uses this; never combat/move/can_act.
@@ -3189,6 +3283,8 @@ func technology_capture_for_submit(vehicle_id: String, expected: Dictionary, new
 
 func begin_technology_analysis(requester_id: int, executor_id: int, vehicle_id: String) -> Dictionary:
 	if requester_id != _technology_controlled(): return Runtime.fail("NO_AUTHORITY")
+	var selected_project := Technology.active_project(_technology_family().get("technology", {}))
+	if not selected_project.is_empty() and not bool(TechnologyCatalog.get_node(str(selected_project.tech_id)).get("enabled", false)): return Runtime.fail("NOT_DELIVERED", "本技藝新分析操作尚未交付")
 	if is_busy(executor_id): return Runtime.fail("BUSY")
 	var check := _technology_analysis_context(requester_id, executor_id, vehicle_id)
 	if not check.ok: return check
@@ -3296,7 +3392,8 @@ func technology_phase_work_credit_candidate(token: Dictionary, remaining_work: f
 	if not is_finite(remaining_work) or remaining_work <= 0.0: return Runtime.fail("INVALID_WORK")
 	var owner := _technology_scope_owner(str(token.get("scope", "")), str(token.get("scope_id", "")))
 	var project := Technology.active_project(owner.get("technology", {}))
-	var checked := _technology_phase_context(token, not project.is_empty() and int(token.get("attempt", -1)) == int(project.next_attempt))
+	var initial := not project.is_empty() and int(token.get("attempt", -1)) == int(project.next_attempt)
+	var checked := _technology_phase_context(token, true) if initial else _technology_paid_phase_context(token)
 	if not checked.ok: return checked
 	if token.scope != "family" or token.tech_id not in ["F11", "F12"]: return Runtime.ok("", {"credit": 0.0})
 	var original: Dictionary = _body_get(checked.person, "technology")
@@ -3327,6 +3424,16 @@ func technology_family_siege_history_candidate(person_id: int, vehicle_id: Strin
 	if not runtime_script.has_method("technology_siege_history_source_candidate"): return Runtime.fail("UNIMPLEMENTED")
 	var person := _person(person_id)
 	var task: Dictionary = person.body.get("work_task", {}) if person.body is Dictionary else (lab.terrain.site.manual if person.owner == lab.character else lab.terrain.site.worker)
+	# Controlled original vehicle work lives in this original PA job, not the
+	# camp manual dictionary. Preserve Army/camp fallback for their true tasks.
+	var job: Dictionary = _jobs.get(_job_key_for(person_id), {})
+	var original_vehicle: Dictionary = lab.terrain.site.get("vehicles", {}).get(vehicle_id, {})
+	if str(job.get("kind", "")) == "technology_vehicle" and int(job.get("executor_id", -1)) == person_id \
+		and job.get("vehicle_id") == vehicle_id and is_same(job.get("terrain"), lab.terrain) \
+		and is_same(job.get("site_state"), lab.terrain.site) and is_same(job.get("vehicle_ref"), original_vehicle) \
+		and is_same(job.get("build_ref"), original_vehicle.get("build")) and is_same(job.get("technology_executor_body"), person.body) \
+		and job.get("work_task") is Dictionary and job.work_task.get("target") == "vehicle:" + vehicle_id and job.work_task.get("action") == "construct":
+		task = job.work_task
 	var source: Dictionary = runtime_script.call("technology_siege_history_source_candidate", lab.terrain, vehicle_id, person_id, task)
 	if not source.ok or source.get("binding") != binding: return source if not source.ok else Runtime.fail("INVALID_RECEIPT")
 	var candidate := _technology_candidate()
@@ -3376,6 +3483,9 @@ func _rebind_scope_technology_sources() -> void:
 			var source_key := JSON.stringify([str(item.scope), identity, int(project.id)])
 			if project.budget.holder == "depot":
 				_technology_source_refs[source_key] = {"terrain": lab.terrain, "site": lab.terrain.site, "depot": lab.terrain.site.depot_items, "stock": lab.terrain.site.inventory}
+			elif item.scope == "family" and project.tech_id == "F15" and str(project.budget.holder).begins_with("vehicle:"):
+				var vehicle: Dictionary = lab.terrain.site.get("vehicles", {}).get(str(project.budget.holder).trim_prefix("vehicle:"), {})
+				if not vehicle.is_empty(): _technology_source_refs[source_key] = {"terrain": lab.terrain, "site": lab.terrain.site, "vehicle": vehicle, "holder": vehicle.holder, "cargo": vehicle.cargo}
 			elif item.scope == "nation" and str(project.budget.holder).begins_with("nation-order:"):
 				var source := _rebind_nation_order_source(owner, identity, project)
 				if not source.is_empty(): _technology_source_refs[source_key] = source
@@ -3388,6 +3498,23 @@ func _rebind_nation_order_source(nation: Dictionary, nation_id: String, project:
 	if not source_namespace is Array or source_namespace.size() != 3 or source_namespace[0] != _technology_site_id() \
 		or source_namespace[1] != nation_id or not source_namespace[2] is String or holder != "nation-order:" + JSON.stringify(source_namespace): return {}
 	var operations: Dictionary = nation.technology_operations
+	if str(source_namespace[2]).begins_with("production_"):
+		var order: Dictionary = operations.get("orders", {}).get(str(source_namespace[2]), {})
+		if order.is_empty() or order.status not in ["active", "complete"] or order.source.is_empty() or order.source.status != "granted" \
+			or order.source.site_id != _technology_site_id() or project.tech_id != "N05" or int(project.rules_version) != 2 \
+			or not Technology.valid_ref(project.executor) or project.executor.site_id != _technology_site_id() or int(order.operator_id) != int(project.executor.person_id): return {}
+		var grantor := {"site_id": _technology_site_id(), "person_id": int(order.source.person_id)}
+		if project.budget.grantor != grantor: return {}
+		for resource: String in project.budget.cap:
+			if int(project.budget.cap[resource]) > int(order.source.cap.get(resource, 0)): return {}
+		for resource: String in project.budget.spent:
+			if int(project.budget.spent[resource]) > int(order.source.spent.get(resource, 0)): return {}
+		var stock := SiteStockpiles.stock_endpoint(lab.terrain, str(order.feature_id))
+		if stock.is_empty(): return {}
+		return Runtime.ok("", {"kind": "nation_order", "holder": holder, "source_site_id": _technology_site_id(), "grantor": grantor,
+			"cap": order.source.cap.duplicate(), "spent": {}, "physical_holder": stock.holder, "physical_cargo": stock.cargo,
+			"holder_version": int(stock.holder.version), "expected_refs": {"terrain": lab.terrain, "site": lab.terrain.site, "nation": nation,
+				"operations": operations, "order": order, "holder": stock.holder, "cargo": stock.cargo}})
 	var order: Dictionary = operations.get("public_orders", {}).get(str(source_namespace[2]), {})
 	if order.is_empty() or order.status == "revoked" or order.scope_site_id != _technology_site_id() or order.scope_nation_id != nation_id \
 		or order.tech_id != project.tech_id or int(order.project_id) != int(project.id) or not equipment_orders._public_source_paid(order): return {}
@@ -3406,16 +3533,19 @@ func _rebind_nation_order_source(nation: Dictionary, nation_id: String, project:
 func _technology_scope_id(scope: String, owner: Dictionary, nation_id: String = "") -> String:
 	return str(owner.get("family_id", "")) if scope == "family" else (str(owner.get("settlement_id", "")) if scope == "settlement" else nation_id)
 
-func _technology_scope_duty(scope: String, owner: Dictionary) -> Dictionary:
+func _technology_scope_duty(scope: String, owner: Dictionary, read_only: bool = false) -> Dictionary:
 	if scope == "family": return _technology_duty("family.research")
-	if scope == "settlement": return Settlement.duty_resolve(lab, "settlement.head")
-	if scope == "nation" and equipment_orders != null: return equipment_orders.nation_duty_resolve(owner, "nation.institutions")
+	if scope == "settlement": return Settlement.duty_resolve(lab, "settlement.head", read_only)
+	if scope == "nation" and equipment_orders != null: return equipment_orders.nation_duty_resolve(owner, "nation.institutions", read_only)
 	return Runtime.fail("NO_AUTHORITY")
+
+# REPLACE _technology_phase_context
 
 func _technology_scope_person(scope: String, owner: Dictionary, identity: int, busy_allowed: bool = false, bound_token: Dictionary = {}) -> Dictionary:
 	var guarded := crowd_action_guard([identity])
 	if not guarded.ok: return guarded
 	var person := _person(identity)
+	if person.is_empty(): return Runtime.fail("BUSY")
 	var ready := _ready(person)
 	if not ready and _technology_matching_original_task(person, bound_token):
 		# The exact original research task is allowed here, not cleared or hidden.
@@ -3424,6 +3554,7 @@ func _technology_scope_person(scope: String, owner: Dictionary, identity: int, b
 			and float(_body_get(person, "exchange_stagger")) <= 0.0 and not bool(_body_get(person, "attack")) and str(_body_get(person, "pose")) == "idle" \
 			and not is_guarding(identity) and not lab.site_controller.region_operation_pending() \
 			and (person.owner.combat_can_act(int(person.unit)) if int(person.unit) >= 0 else person.owner.can_act())
+	if person.owner is CrowdOwner and not person.owner.crowd_site.work_fatigue_work_start_ready(identity): ready = false
 	if not ready or not busy_allowed and is_busy(identity) or bool(lab.terrain.site.get("paused", false)) \
 		or float(lab.terrain.site.get("combat_left", 0.0)) > 0.0: return Runtime.fail("BUSY")
 	if scope == "family" and not _technology_member(identity): return Runtime.fail("NO_AUTHORITY")
@@ -3466,6 +3597,7 @@ func _technology_known_for(nation_id: String = "") -> Array:
 
 func prepare_scope_technology(requester_id: int, executor_id: int, tech_id: String, scope_id: String = "", route_id: String = "default", mode: String = "first") -> Dictionary:
 	var node := TechnologyCatalog.get_node(tech_id)
+	if node.get("enabled") != true: return Runtime.fail("UNIMPLEMENTED", "此節點的原用途及驗收尚未開放")
 	var scope := str(node.get("scope", ""))
 	if scope not in ["family", "settlement", "nation"] or tech_id == "F07": return Runtime.fail("INVALID_TECHNOLOGY")
 	var owner := _technology_scope_owner(scope, scope_id)
@@ -3493,11 +3625,27 @@ func prepare_scope_technology(requester_id: int, executor_id: int, tech_id: Stri
 	if not current.is_empty() and not current.executor.is_empty() and is_busy(int(current.executor.person_id)): return Runtime.fail("BUSY")
 	var prepared := Technology.scope_prepare_candidate(raw, scope, tech_id, _technology_ref(executor_id), route_id, mode)
 	if not prepared.ok: return prepared
+	if scope == "settlement":
+		if not Technology.integer(candidate.get("version"), 1, 2): return Runtime.fail("CORRUPT_STATE", "原聚落版本不符")
+		var original_fields: Array = SiteSettlement.FIELDS.duplicate()
+		if int(candidate.version) == 2:
+			original_fields.append("technology")
+			if candidate.has("technology_operations"): original_fields.append("technology_operations")
+		if candidate.has("technology_operations") and not SiteSettlement.valid_technology_operations(lab.terrain, candidate.technology_operations): return Runtime.fail("CORRUPT_STATE")
+		if not Technology.keys(candidate, original_fields): return Runtime.fail("CORRUPT_STATE", "原聚落欄位不符")
 	candidate.technology = prepared.state
+	if scope == "settlement":
+		candidate.version = 2
+		var fields: Array = SiteSettlement.FIELDS.duplicate()
+		fields.append("technology")
+		if candidate.has("technology_operations"): fields.append("technology_operations")
+		if not Technology.keys(candidate, fields) or not Technology.valid_scope_record(candidate.technology, "settlement"):
+			return Runtime.fail("CORRUPT_STATE", "原聚落科技候選欄位不符")
 	if scope == "family":
 		if not Family.validate_family(candidate, _technology_site_id()): return Runtime.fail("INVALID_TECHNOLOGY")
 		lab.terrain.site.family = candidate
 	else:
+		if scope == "settlement": owner.version = int(candidate.version)
 		owner["technology"] = prepared.state
 	return Runtime.ok("已準備原範疇研究；實際工位、材料及成果由原作業入口核對", {"phase": prepared.phase, "scope": scope, "scope_id": _technology_scope_id(scope, candidate, scope_id)})
 
@@ -3508,6 +3656,7 @@ func grant_scope_technology_budget(requester_id: int, scope: String, scope_id: S
 	check = _ranged_craft_context(check.person)
 	if not check.ok: return check
 	var raw: Dictionary = owner.get("technology", {})
+	if operation != "revoke" and not _scope_project_activation(raw): return Runtime.fail("UNIMPLEMENTED")
 	var prepared := Technology.scope_budget_candidate(raw, scope, _technology_ref(requester_id), "depot", cap, operation)
 	if not prepared.ok: return prepared
 	owner.technology = prepared.state
@@ -3515,7 +3664,8 @@ func grant_scope_technology_budget(requester_id: int, scope: String, scope_id: S
 	_technology_source_refs[JSON.stringify([scope, scope_id, int(project.id)])] = {"terrain": lab.terrain, "site": lab.terrain.site, "depot": lab.terrain.site.depot_items, "stock": lab.terrain.site.inventory}
 	return Runtime.ok("原營地已核定有限累計材料，實際交易仍由原作業付款")
 
-func _technology_phase_context(token: Dictionary, binding: bool = false, require_material_source: bool = true) -> Dictionary:
+func _technology_phase_context(token: Dictionary, binding: bool = false, require_material_source: bool = true, read_only: bool = true) -> Dictionary:
+	if token.get("tech_id") == "F15" and token.get("binding") == "fire_pot_shot": return _fire_pot_shot_phase_context(token, binding, require_material_source)
 	var owner := _technology_scope_owner(str(token.get("scope", "")), str(token.get("scope_id", "")))
 	var raw: Dictionary = owner.get("technology", {})
 	var scope := str(token.get("scope", ""))
@@ -3531,13 +3681,13 @@ func _technology_phase_context(token: Dictionary, binding: bool = false, require
 		or not Technology.scope_phase_materials(token.get("materials"), phase.materials): return Runtime.fail("STALE_PHASE")
 	var person_check := _technology_scope_person(scope, owner, int(reference.get("person_id", -1)), true, token if not binding else {})
 	if not person_check.ok: return person_check
-	if not _technology_scope_duty(scope, owner).ok or not _technology_consent_valid(int(reference.person_id), project.consents, str(project.purpose), token if not binding else {}): return Runtime.fail("NO_AUTHORITY")
+	if not _technology_scope_duty(scope, owner, read_only).ok or not _technology_consent_valid(int(reference.person_id), project.consents, str(project.purpose), token if not binding else {}, read_only): return Runtime.fail("NO_AUTHORITY")
 	var context := Runtime.ok("", {"owner": owner, "record": raw, "project": project, "phase": phase, "person": person_check.person})
 	if not require_material_source: return context # Candidate caller must separately prove its true original source.
 	if phase.materials.is_empty(): return context # No zero-cost financial approval is invented.
 	if project.budget.is_empty() or project.budget.status != "granted" or project.budget.source_site_id != _technology_site_id(): return Runtime.fail("NO_BUDGET")
 	var source: Dictionary = _technology_source_refs.get(JSON.stringify([scope, str(token.scope_id), int(project.id)]), {})
-	if str(project.budget.holder).begins_with("nation-order:"):
+	if str(project.budget.holder).begins_with("nation-order:") or str(project.budget.holder).begins_with("settlement-order:"):
 		if not source.get("physical_holder") is Dictionary or not Technology.integer(source.physical_holder.get("version")): return Runtime.fail("STALE_SOURCE")
 		# An accepted grant is not a reservation on the whole Warehouse version.
 		# Candidate/prepayment queries below still compare their held version;
@@ -3554,8 +3704,23 @@ func _technology_phase_context(token: Dictionary, binding: bool = false, require
 		or not is_same(source.get("stock"), lab.terrain.site.inventory): return Runtime.fail("STALE_SOURCE")
 	return context
 
+# REPLACE _nation_original_order_context
+
 func technology_phase_active_guard(token: Dictionary) -> Dictionary:
-	return _technology_phase_context(token)
+	return _technology_paid_phase_context(token)
+
+# EXACT additional call sites to change in their original methods:
+# technology_phase_receipt_candidate: first _technology_phase_context(token)
+#     becomes _technology_paid_phase_context(token).
+# technology_phase_work_credit_candidate: preserve its computed initial-binding
+#     predicate. initial=true uses _technology_phase_context(token,true), while
+#     initial=false uses _technology_paid_phase_context(token). A NEW vehicle
+#     still needs its original full source guard, not the old-attempt fallback.
+#     Initial binding/payment APIs retain their original material-source query.
+# Original technology_phase_work_preflight: initial=true keeps source-free true
+#     owner admission plus Runtime's separately held source candidate; existing
+#     initial=false takes technology_phase_active_guard(token) after the true
+#     Runtime paid target proof. Never generally flip require_material_source.
 
 func request_scope_technology_consent(requester_id: int, scope: String, scope_id: String, person_id: int) -> Dictionary:
 	var owner := _technology_scope_owner(scope, scope_id)
@@ -3564,12 +3729,12 @@ func request_scope_technology_consent(requester_id: int, scope: String, scope_id
 	checked = _technology_scope_person(scope, owner, person_id)
 	if not checked.ok: return checked
 	var raw: Dictionary = owner.get("technology", {})
+	if not _scope_project_activation(raw): return Runtime.fail("UNIMPLEMENTED")
 	var project := Technology.active_project(raw)
 	if project.is_empty() or int(project.executor.get("person_id", -1)) != person_id: return Runtime.fail("NO_TARGET")
-	var team: Variant = _technology_team(checked.person)
-	if team == null: return Runtime.ok("原人不受原隊派工管轄")
-	checked = team.technology_work_consent(person_id, str(project.purpose), requester_id)
+	checked = _technology_scope_consent_candidate(checked.person, str(project.purpose), requester_id)
 	if not checked.ok: return checked
+	if checked.consent.is_empty(): return checked
 	for index: int in project.consents.size():
 		if project.consents[index].site_id == _technology_site_id() and int(project.consents[index].person_id) == person_id:
 			project.consents[index] = checked.consent
@@ -3620,6 +3785,7 @@ func begin_scope_technology_phase(requester_id: int, scope: String, scope_id: St
 	var checked := _technology_scope_command(requester_id, scope, owner)
 	if not checked.ok: return checked
 	var raw: Dictionary = owner.get("technology", {})
+	if not _scope_project_activation(raw): return Runtime.fail("UNIMPLEMENTED")
 	if not Technology.valid_scope_record(raw, scope): return Runtime.fail("INVALID_TECHNOLOGY")
 	var project := Technology.active_project(raw)
 	if project.is_empty() or int(project.rules_version) != 2: return Runtime.fail("NO_TARGET")
@@ -3713,7 +3879,7 @@ func publish_phase_payment(prepared: Dictionary) -> void:
 		_technology_source_refs[str(prepared.source_key)] = source
 
 func technology_phase_receipt_candidate(token: Dictionary, original: Dictionary) -> Dictionary:
-	var checked := _technology_phase_context(token)
+	var checked := _technology_paid_phase_context(token)
 	if not checked.ok: return checked
 	if original.get("site_id") != _technology_site_id() or original.get("target_id") != token.target_id \
 		or original.get("binding") != token.binding or int(original.get("operator_id", -1)) != int(token.person.person_id) \
@@ -3748,6 +3914,7 @@ func _technology_original_source_valid(token: Dictionary, source: Dictionary) ->
 	return _technology_original_source_query(token, source).ok
 
 func _technology_original_source_query(token: Dictionary, source: Dictionary) -> Dictionary:
+	if source.get("kind") == "settlement_order": return _technology_settlement_source_query(token, source)
 	var fields := ["ok", "code", "message", "kind", "holder", "source_site_id", "grantor", "cap", "spent", "physical_holder", "physical_cargo", "holder_version", "expected_refs"]
 	if source.has("paid_witness"): fields.append("paid_witness")
 	if not Technology.keys(source, fields) or not source.ok is bool or source.ok != true \
@@ -3810,20 +3977,37 @@ func _nation_original_order_context(nation_id: String, order_id: String, binding
 	if order.is_empty() or order.scope_site_id != _technology_site_id() or order.scope_nation_id != nation_id \
 		or order.status == "revoked" or not completed and order.status == "complete": return Runtime.fail("STALE_ORDER")
 	var checked: Dictionary = equipment_orders._nation_operation_context(int(order.authorizer_id), nation_id,
-		str(equipment_orders.PUBLIC_DUTIES[str(order.tech_id)]), str(order.tech_id), binding)
+		str(equipment_orders.PUBLIC_DUTIES[str(order.tech_id)]), str(order.tech_id), binding, true)
 	if not checked.ok: return checked
 	if order.status != "complete":
-		checked = equipment_orders._public_context(nation_id, order_id, binding)
+		checked = equipment_orders._public_context(nation_id, order_id, binding, true)
 		if not checked.ok: return checked
 	return Runtime.ok("", {"nation": nation, "operations": nation.technology_operations, "order": order})
 
 # This is a pure projection of the original finite authorization and original
 # Warehouse endpoint. Funding is not manufacture payment: physical_cargo is
 # still consumed by the original material owner when that real job pays.
+
+# APPEND; Runtime separately prepares the true source before a new binding.
 func nation_research_source_candidate(token: Dictionary, order_id: String) -> Dictionary:
 	if not Technology.keys(token, ["scope", "scope_id", "project_id", "epoch", "purpose", "tech_id", "phase_id", "attempt", "person", "binding", "target_id", "materials"]) \
 		or token.scope != "nation" or not Technology.valid_ref(token.person) or not Technology.material_stack(token.materials) \
 		or not Technology.integer(token.project_id, 1) or not Technology.integer(token.epoch, 1) or not Technology.integer(token.attempt, 1): return Runtime.fail("INVALID_TECHNOLOGY")
+	if token.tech_id == "N01" and order_id.begins_with("procurement:"):
+		return _nation_procurement_material_source(token, order_id.trim_prefix("procurement:"))
+	if token.tech_id == "N05" and order_id.begins_with("production_"):
+		var source := _nation_military_material_source(str(token.scope_id), order_id)
+		if not source.ok: return source
+		var nation: Dictionary = source.expected_refs.nation
+		var order: Dictionary = source.expected_refs.order
+		var project := Technology.active_project(nation.get("technology", {}))
+		var phase := Technology.scope_next_phase(project, token.person)
+		if project.is_empty() or int(nation.technology.epoch) != int(token.epoch) or int(project.id) != int(token.project_id) \
+			or project.purpose != token.purpose or project.tech_id != "N05" or phase.get("id") != token.phase_id \
+			or phase.get("binding") != "workshop_bow" or token.binding != "workshop_bow" \
+			or not Technology.same_person_ref(project.executor, token.person) or int(order.operator_id) != int(token.person.person_id) \
+			or token.target_id != "feature:" + str(order.feature_id) or not Technology.material_equal(token.materials, Runtime.RANGED_RECIPES.bow.cost): return Runtime.fail("STALE_PROJECT")
+		return source
 	var checked := _nation_original_order_context(str(token.get("scope_id", "")), order_id, str(token.get("binding", "")), true)
 	if not checked.ok: return checked
 	var order: Dictionary = checked.order
@@ -3913,6 +4097,7 @@ func _nation_phase_token(nation_id: String, order_id: String, binding: String, t
 
 func begin_nation_administration(requester_id: int, nation_id: String, order_id: String, binding: String) -> Dictionary:
 	if requester_id != _technology_controlled(): return Runtime.fail("NO_AUTHORITY")
+	if binding in ["procurement", "workshop_certificate"]: return begin_nation_original_administration(requester_id, nation_id, order_id, binding)
 	var checked := _nation_original_order_context(nation_id, order_id, binding, true)
 	if not checked.ok: return checked
 	if checked.order.tech_id in ["N03", "N09", "N12"] and Technology.scope_known(checked.nation.technology, str(checked.order.tech_id)):
@@ -3949,6 +4134,7 @@ func begin_nation_administration(requester_id: int, nation_id: String, order_id:
 	return Runtime.ok("原行政作業開始；真移交／船步已完成才可記制度工作", {"seconds": 300.0})
 
 func _nation_administration_context(job: Dictionary) -> Dictionary:
+	if job.has("nation_original_kind"): return _nation_original_administration_context(job)
 	if not is_same(_jobs.get(str(int(job.executor_id)), {}), job) or not is_same(lab.terrain, job.terrain) \
 		or not is_same(lab.terrain.site, job.site_state): return Runtime.fail("STALE_SOURCE")
 	var checked := _nation_original_order_context(str(job.nation_id), str(job.nation_order_id), str(job.nation_binding), true)
@@ -3972,6 +4158,7 @@ func _nation_administration_event(job: Dictionary) -> Dictionary:
 		"item_ids": job.nation_items.duplicate(), "outputs": {}, "materials": job.nation_token.get("materials", {}).duplicate()}
 
 func _commit_nation_administration(job: Dictionary) -> Dictionary:
+	if job.has("nation_original_kind"): return _commit_nation_original_administration(job)
 	var checked := _nation_administration_context(job)
 	if not checked.ok: return checked
 	if float(job.elapsed) + 0.00000001 < float(job.duration): return Runtime.fail("INCOMPLETE")
@@ -4023,7 +4210,12 @@ func _nation_receipt_projection(event: Dictionary) -> Dictionary:
 # Pure current/prospective true-owner lookup. Finished jobs are cleared normally;
 # accepted original Nops retains bounded history, not a second job/event ledger.
 func nation_original_receipt_query(binding: String, target: String, event_id: String) -> Dictionary:
+	if binding == "public_route" and lab.site_controller != null and lab.site_controller.region_slot != null:
+		return lab.site_controller.region_slot.region_nation_route_receipt(lab, target, event_id)
 	for job: Dictionary in _jobs.values():
+		if job.get("kind") == "equipment" and job.has("nation_issue_token") and binding == "issue_bow" \
+			and job.nation_issue_token.target_id == target and job.nation_issue_event_id == event_id:
+			return nation_military_issue_receipt_query(job.nation_issue_token, _nation_military_issue_event(job))
 		if job.get("kind") == "technology_lesson" and job.has("nation_course_id"):
 			var checked := _technology_lesson_context(job)
 			if not checked.ok: continue
@@ -4046,10 +4238,17 @@ func nation_original_receipt_query(binding: String, target: String, event_id: St
 	var record: Dictionary = {}
 	if target.begins_with("feature:"): record = lab.terrain.site.get("features", {}).get(target.trim_prefix("feature:"), {})
 	elif target.begins_with("vehicle:"): record = lab.terrain.site.get("vehicles", {}).get(target.trim_prefix("vehicle:"), {})
-	var token: Dictionary = record.get("tech_trial", {})
-	var ledger: Dictionary = record.get("tech_batch", {})
-	if token.is_empty() or ledger.is_empty() or token.get("binding") != binding or token.get("target_id") != target \
-		or ledger.get("payment_id") != event_id or ledger.get("token") != token: return Runtime.fail("NO_RECEIPT")
+	var raw_token: Variant = record.get("tech_trial", {})
+	var raw_ledger: Variant = record.get("tech_batch", {})
+	if not raw_token is Dictionary or not raw_ledger is Dictionary: return Runtime.fail("NO_RECEIPT")
+	var token: Dictionary = raw_token
+	var ledger: Dictionary = raw_ledger
+	if ledger.is_empty() or ledger.get("payment_id") != event_id or ledger.get("token") != token \
+		or not Technology.integer(ledger.get("operator_id"), 1) or not Technology.finite_number(ledger.get("work_seconds")) \
+		or not Technology.material_stack(ledger.get("materials")): return Runtime.fail("NO_RECEIPT")
+	if token.is_empty():
+		if not Technology.keys(record.get("technology_order"), ["nation_id", "order_id"]): return Runtime.fail("NO_RECEIPT")
+	elif token.get("binding") != binding or token.get("target_id") != target: return Runtime.fail("NO_RECEIPT")
 	var items: Array = []
 	var outputs: Dictionary = {}
 	if target.begins_with("feature:") and str(record.get("stage", "")) == "complete":
@@ -4058,10 +4257,10 @@ func nation_original_receipt_query(binding: String, target: String, event_id: St
 		for index: int in range(definition.get("output_items", []).size()): items.append(str(int(lab.terrain.site.next_item) + index))
 	var event := {"id": event_id, "site_id": _technology_site_id(), "target_id": target, "operator_id": int(ledger.operator_id), "binding": binding,
 		"work_seconds": float(ledger.work_seconds), "item_ids": items, "outputs": outputs, "materials": ledger.materials.duplicate()}
-	var checked: Dictionary = Runtime.technology_output_candidate(lab.terrain, token, event)
+	var checked: Dictionary = Runtime.technology_public_output_candidate(lab.terrain, record, event) if token.is_empty() \
+		else Runtime.technology_output_candidate(lab.terrain, token, event)
 	return Runtime.ok("", {"receipt": _nation_receipt_projection(event), "token": token}) if checked.ok else checked
 
-# Calls the ORIGINAL one-teacher/one-student entry, then tags its SAME live job.
 func begin_nation_funded_course(nation_id: String, order_id: String, teacher_id: int, student_id: int, skill_id: String) -> Dictionary:
 	var checked := _nation_original_order_context(nation_id, order_id, "funded_course")
 	if not checked.ok: return checked
@@ -4107,3 +4306,3709 @@ func prepare_nation_funded_lesson(job: Dictionary, learned_person_candidate: Dic
 		phase = nation_scope_receipt_candidate(token, event, payment)
 		if not phase.ok: return phase
 	return Runtime.ok("", {"payment": funding, "phase": phase})
+
+
+func _commit_scope_ranged_craft(job: Dictionary) -> Dictionary:
+	var token: Dictionary = job.technology_scope_token
+	var checked := _scope_ranged_craft_guard(int(job.executor_id), token)
+	if not checked.ok: return checked
+	var payment := technology_phase_payment_candidate(token, token.materials)
+	if not payment.ok: return payment
+	var event_id := str(token.tech_id) + ":ranged:" + JSON.stringify([_technology_site_id(), int(token.project_id), int(token.attempt), str(token.binding)])
+	var completed := _prepare_scope_phase_completion(token, payment, event_id, float(job.duration))
+	if not completed.ok: return completed
+	# All current owner/phase/person/material/output candidates precede the
+	# original synchronous real stack debit+output. No later rejecting callback.
+	var real := Runtime.ranged_craft(lab.terrain, str(job.recipe), int(job.executor_id), false, token)
+	if not real.ok: return real
+	publish_phase_receipt(completed)
+	return real
+
+func _scope_ranged_job_context(job: Dictionary) -> Dictionary:
+	var token: Dictionary = job.get("technology_scope_token", {})
+	var context := _technology_phase_context(token, false)
+	if not context.ok: return context
+	var recipe := _scope_ranged_recipe(token)
+	if token.get("tech_id") == "F08" and (context.phase.get("items") != ["weapon:crossbow_01"] or context.phase.get("outputs") != {} or float(context.phase.get("seconds", -1.0)) != 180.0): return Runtime.fail("STALE_PHASE")
+	if job.kind != "ranged_craft" or recipe.is_empty() \
+		or int(job.executor_id) != int(token.person.person_id) or job.recipe != recipe or not is_same(job.get("technology_executor_body"), context.person.body) \
+		or not is_same(job.get("technology_executor_owner"), context.person.owner) or not is_same(job.get("executor_holder"), context.person.holder) \
+		or not is_same(job.get("executor_cargo"), context.person.cargo) or not is_same(job.get("depot_holder"), lab.terrain.site.depot_items) \
+		or not is_same(job.get("depot_stock"), lab.terrain.site.inventory) or not Technology.finite_number(job.elapsed) \
+		or float(job.elapsed) > float(job.duration) or float(job.duration) != float(Runtime.RANGED_RECIPES[str(job.recipe)].duration) \
+		or not Technology.material_equal(token.materials, Runtime.RANGED_RECIPES[str(job.recipe)].cost): return Runtime.fail("STALE_SOURCE")
+	return context
+
+func _scope_ranged_recipe(token: Dictionary) -> String:
+	if not Runtime._technology_trial_shape(token, lab.terrain) or TechnologyCatalog.get_node(str(token.get("tech_id", ""))).get("enabled") != true: return ""
+	var recipe := ""
+	if token.scope == "family" and token.tech_id == "F08" and token.binding == "crossbow" and token.target_id == "ranged:" + str(int(token.person.person_id)):
+		recipe = "crossbow"
+	elif token.scope == "family" and token.tech_id == "F15" and token.binding in ["fire_arrow", "fire_pot"] and token.target_id == "ranged:" + str(int(token.person.person_id)):
+		recipe = str(token.binding)
+	elif token.scope == "settlement" and token.tech_id == "S08" and token.binding == "spares" and token.target_id == "depot": recipe = "ballista_spares"
+	if recipe.is_empty() or not Runtime.RANGED_RECIPES.has(recipe) or not Technology.material_equal(token.materials, Runtime.RANGED_RECIPES[recipe].cost): return ""
+	return recipe
+
+func begin_scope_ranged_craft(token: Dictionary, recipe: String, preview: bool = false) -> Dictionary:
+	var identity := int(token.get("person", {}).get("person_id", 0))
+	if recipe != _scope_ranged_recipe(token) or recipe.is_empty(): return Runtime.fail("INVALID_TECHNOLOGY")
+	var held := technology_phase_binding_candidate(token)
+	if not held.ok: return held
+	if is_busy(identity): return Runtime.fail("BUSY")
+	var person := _person(identity)
+	var checked := _ranged_craft_context(person)
+	if not checked.ok: return checked
+	checked = Runtime.ranged_craft(lab.terrain, recipe, identity, true, token)
+	if not checked.ok or preview: return checked
+	var begun := begin_ranged_craft(identity, recipe, token)
+	if not begun.ok: return begun
+	var job: Dictionary = _jobs[_job_key_for(identity)]
+	job.merge({"technology_scope_token": token, "technology_executor_body": person.body, "technology_executor_owner": person.owner})
+	publish_phase_binding(held)
+	return begun
+
+func begin_fire_pot_shot_phase(token: Dictionary, target: Dictionary, preview: bool = false) -> Dictionary:
+	var checked := _fire_pot_shot_phase_context(token, true)
+	if not checked.ok: return checked
+	if int(checked.project.budget.spent.get("fire_pot", 0)) + 1 > int(checked.project.budget.cap.get("fire_pot", 0)): return Runtime.fail("BUDGET_EXCEEDED")
+	var held := technology_phase_binding_candidate(token)
+	if not held.ok: return held
+	var vehicle: Dictionary = checked.vehicle
+	if not vehicle.action.is_empty() or not vehicle.move.is_empty() or int(vehicle.cargo.get("fire_pot", 0)) < 1: return Runtime.fail("BUSY")
+	var aim: Dictionary = lab.siege_fire_preview(vehicle, target, true)
+	if not aim.ok: return aim
+	if preview: return Runtime.ok("", {"token": token, "target_id": token.target_id})
+	# Actual source captain authorization remains mandatory at the original
+	# public order entry; the research decider alone cannot borrow another crew.
+	var order: Dictionary = lab.site_controller.vehicles.order_siege(str(vehicle.id), "attack", target, _technology_controlled(), false, "fire_pot", int(token.person.person_id), token)
+	if not order.ok: return order
+	publish_phase_binding(held)
+	return order
+
+func begin_settlement_food_work(requester_id: int, settlement_id: String, order_id: String, preview: bool = false) -> Dictionary:
+	var checked := Runtime.settlement_food_work_preflight(lab.terrain, settlement_id, order_id, "food_order")
+	if not checked.ok: return checked
+	if requester_id != _technology_controlled() or requester_id != Settlement.head_executor(lab): return Runtime.fail("NO_AUTHORITY")
+	if checked.order.payload.stage != "arrived": return Runtime.fail("WAITING", "真持糧人尚未交到原倉庫")
+	if settlement_food_own_job(checked.person, checked.order): return Runtime.ok("原到貨驗證作業已存在", {"duplicate": true})
+	if not checked.order.payload.token.is_empty():
+		var phase := _technology_paid_phase_context(checked.order.payload.token)
+		if not phase.ok: return phase
+	var prepared := prepare_settlement_food_work(checked)
+	if not prepared.ok: return prepared
+	if preview: return Runtime.ok("真已到貨作業可續作", {"remaining": 300.0 - float(prepared.job.elapsed)})
+	publish_settlement_food_work(prepared)
+	return Runtime.ok("沿原已付到貨進度續作；不重扣來源", {"remaining": 300.0 - float(prepared.job.elapsed)})
+
+func _nation_procurement_material_source(token: Dictionary, spec_id: String) -> Dictionary:
+	if token.get("tech_id") != "N01" or token.get("scope") != "nation" or token.get("binding") != "procurement" \
+		or not Technology.valid_ref(token.get("person")) or not Technology.material_equal(token.get("materials", {}), {"wood": 2, "grain": 2}): return Runtime.fail("INVALID_TECHNOLOGY")
+	var nation: Dictionary = _technology_scope_owner("nation", str(token.scope_id))
+	var operations: Dictionary = nation.get("technology_operations", {})
+	var spec: Dictionary = operations.get("specs", {}).get(spec_id, {})
+	if spec.is_empty() or token.target_id != "nation-procurement:" + JSON.stringify([_technology_site_id(), str(token.scope_id), spec_id]) \
+		or not equipment_orders.valid_nation_operation_record(operations, lab.terrain.site.item_definitions, {}): return Runtime.fail("STALE_SOURCE")
+	var duty: Dictionary = equipment_orders._nation_operation_context(int(spec.authorizer_id), str(token.scope_id), "nation.procurement", "N01", "procurement", true)
+	if not duty.ok: return duty
+	var context := _technology_phase_context(token, not spec.has("tech_trial"), false)
+	if not context.ok: return context
+	if spec.has("tech_trial") and spec.tech_trial != token or not spec.has("tech_trial") and not spec.receipts.is_empty(): return Runtime.fail("BOUND_SOURCE")
+	if int(token.person.person_id) != _technology_controlled() or int(spec.authorizer_id) != int(token.person.person_id) \
+		or not spec.items.is_empty() or spec.resources.keys().size() != 2: return Runtime.fail("NO_AUTHORITY")
+	for resource: String in ["wood", "grain"]:
+		if not spec.resources.has(resource) or int(spec.resources[resource].total) != 2 or int(spec.resources[resource].batch) > 2: return Runtime.fail("NO_BUDGET")
+	var person := _person(int(token.person.person_id))
+	if person.is_empty() or str(person.holder.holder) != "person:" + str(int(token.person.person_id)): return Runtime.fail("STALE_SOURCE")
+	return Runtime.ok("", {"kind": "nation_order", "holder": "nation-order:" + JSON.stringify([_technology_site_id(), str(token.scope_id), "procurement:" + spec_id]),
+		"source_site_id": _technology_site_id(), "grantor": token.person.duplicate(), "cap": {"wood": 2, "grain": 2}, "spent": {},
+		"physical_holder": person.holder, "physical_cargo": person.cargo, "holder_version": int(person.holder.version),
+		"expected_refs": {"terrain": lab.terrain, "site": lab.terrain.site, "nation": nation, "operations": operations, "order": spec, "holder": person.holder, "cargo": person.cargo}})
+
+func prepare_nation_procurement_delivery(nation_id: String, spec_id: String, next_spec: Dictionary, transfer: Dictionary) -> Dictionary:
+	var nation: Dictionary = _technology_scope_owner("nation", nation_id)
+	if Technology.scope_known(nation.get("technology", {}), "N01"): return Runtime.ok("", {"binding": {}, "payment": {}, "job": {}})
+	var spec: Dictionary = nation.get("technology_operations", {}).get("specs", {}).get(spec_id, {})
+	if spec.is_empty() or not Runtime.validate_prepared_item_transfer(transfer).ok: return Runtime.fail("STALE_SOURCE")
+	var target := "nation-procurement:" + JSON.stringify([_technology_site_id(), nation_id, spec_id])
+	var selection := _nation_original_research_token(nation_id, spec_id, "N01", "procurement", target, spec.get("tech_trial", {}))
+	if not selection.ok or selection.token.is_empty(): return selection if not selection.ok else Runtime.fail("STALE_PROJECT")
+	var token: Dictionary = selection.token
+	var ready := _technology_scope_person("nation", nation, int(token.person.person_id))
+	if not ready.ok: return ready
+	var source := _nation_procurement_material_source(token, spec_id)
+	if not source.ok: return source
+	if not is_same(transfer.get("source"), source.physical_holder) or not is_same(transfer.get("source_cargo"), source.physical_cargo) \
+		or not transfer.get("selected", {}).is_empty() or not Technology.material_equal(transfer.get("resources", {}), {"wood": 1, "grain": 1}) \
+		or next_spec.receipts.size() != spec.receipts.size() + 1 \
+		or next_spec.receipts.size() > 2 or next_spec.receipts[-1].source_person_id != token.person.person_id \
+		or not Technology.material_equal(next_spec.receipts[-1].resources, {"wood": 1, "grain": 1}): return Runtime.fail("INVALID_DELIVERY", "首次研究須兩次本原人各交真木1／糧1")
+	var destination: Dictionary = SiteStockpiles.stock_endpoint(lab.terrain, str(spec.destination_feature_id))
+	if destination.is_empty() or not is_same(transfer.get("destination"), destination.holder) or not is_same(transfer.get("destination_cargo"), destination.cargo): return Runtime.fail("STALE_SOURCE")
+	var binding := {}
+	if not spec.has("tech_trial"):
+		binding = technology_phase_binding_candidate(token, source)
+		if not binding.ok: return binding
+		next_spec.tech_trial = token
+	var payment := {}
+	var job := {}
+	if next_spec.receipts.size() == 2:
+		for receipt: Dictionary in next_spec.receipts:
+			if int(receipt.source_person_id) != int(token.person.person_id) or not Technology.material_equal(receipt.resources, {"wood": 1, "grain": 1}) or not receipt.items.is_empty(): return Runtime.fail("INVALID_RECEIPT")
+		payment = technology_phase_payment_candidate(token, token.materials, binding, source)
+		if not payment.ok: return payment
+		job = _nation_original_administration_job(ready.person, nation, spec, "procurement", spec_id, token, next_spec)
+	return Runtime.ok("", {"binding": binding, "payment": payment, "job": job})
+
+func prepare_nation_workshop_administration(nation_id: String, certificate_id: String, certificate: Dictionary) -> Dictionary:
+	var nation: Dictionary = _technology_scope_owner("nation", nation_id)
+	if Technology.scope_known(nation.get("technology", {}), "N04"): return Runtime.ok("", {"binding": {}, "payment": {}, "job": {}})
+	var target := "nation-certificate:" + JSON.stringify([_technology_site_id(), nation_id, certificate_id, int(certificate.revision)])
+	var selection := _nation_original_research_token(nation_id, certificate_id, "N04", "workshop_certificate", target)
+	if not selection.ok or selection.token.is_empty(): return selection if not selection.ok else Runtime.fail("STALE_PROJECT")
+	var token: Dictionary = selection.token
+	var routes := {"metal": "S04", "textile": "S05", "bow": "S07"}
+	if not routes.has(str(selection.context.project.route_id)) or str(certificate.industry_id) != str(routes[str(selection.context.project.route_id)]): return Runtime.fail("SPEC_MISMATCH", "原檢驗須對應本次明選產業")
+	var output: Dictionary = equipment_orders._output_receipt(str(certificate.feature_id), int(certificate.receipt_id))
+	if output.is_empty() or output != certificate.get("accepted_receipt", {}) or int(certificate.operator_id) != int(token.person.person_id) \
+		or not equipment_orders._workshop_context(str(certificate.feature_id), str(certificate.industry_id), int(certificate.operator_id)).ok: return Runtime.fail("NO_RECEIPT")
+	var ready := _technology_scope_person("nation", nation, int(token.person.person_id))
+	if not ready.ok: return ready
+	var binding := technology_phase_binding_candidate(token)
+	if not binding.ok: return binding
+	var payment := technology_phase_payment_candidate(token, {}, binding)
+	if not payment.ok: return payment
+	var original: Dictionary = nation.get("technology_operations", {}).get("certificates", {}).get(certificate_id, certificate)
+	var job := _nation_original_administration_job(ready.person, nation, original, "certificate", certificate_id, token, certificate)
+	return Runtime.ok("", {"binding": {}, "payment": payment, "job": job})
+
+func nation_military_issue_receipt_query(token: Dictionary, event: Dictionary) -> Dictionary:
+	if not Technology.keys(token, ["scope", "scope_id", "project_id", "epoch", "purpose", "tech_id", "phase_id", "attempt", "person", "binding", "target_id", "materials"]) \
+		or not Technology.valid_ref(token.get("person")) \
+		or not Technology.keys(event, ["id", "site_id", "target_id", "operator_id", "binding", "work_seconds", "item_ids", "outputs", "materials"]): return Runtime.fail("INVALID_RECEIPT")
+	var job: Dictionary = _jobs.get(str(int(token.get("person", {}).get("person_id", -1))), {})
+	if job.is_empty() or job.get("nation_issue_token", {}) != token or event != _nation_military_issue_event(job): return Runtime.fail("NO_RECEIPT")
+	var current := _nation_military_issue_job_context(job)
+	if not current.ok: return current
+	if bool(job.get("preparing", false)) or not str(job.get("paused", "")).is_empty() or float(job.elapsed) + 0.00000001 < 5.0: return Runtime.fail("INCOMPLETE")
+	var equipment: Dictionary = equipment_orders.check(job.order)
+	if not equipment.ok: return equipment
+	var actual: Dictionary = equipment_orders._military_issue_check(job.order)
+	if not actual.ok or not is_same(actual.get("production"), job.nation_issue_order_ref) or str(actual.get("product", "")) != str(job.nation_issue_product): return actual if not actual.ok else Runtime.fail("STALE_PRODUCT")
+	return Runtime.ok("", {"receipt": _nation_receipt_projection(event), "token": token})
+
+func prepare_nation_military_issue_binding(order: Dictionary) -> Dictionary:
+	if not order.has("military_production_id"): return Runtime.ok("", {"payment": {}, "metadata": {}})
+	if not order.get("military_production_id") is String or not order.get("nation_id") is String \
+		or not Technology.integer(order.get("person_id"), 1) or not order.get("standard_id") is String \
+		or not Technology.integer(order.get("standard_revision"), 1) or not order.get("take") is Array \
+		or not order.get("planned") is Dictionary: return Runtime.fail("INVALID")
+	var military: Dictionary = equipment_orders._military_issue_check(order)
+	if not military.ok: return military
+	var nation: Dictionary = military.nation
+	if Technology.scope_known(nation.get("technology", {}), "N05"): return Runtime.ok("", {"payment": {}, "metadata": {}})
+	if TechnologyCatalog.get_node("N05").get("enabled") != true: return Runtime.fail("UNIMPLEMENTED")
+	if not equipment_orders._nation_duty_ok(_technology_controlled(), nation, "nation.production"): return Runtime.fail("NO_AUTHORITY", "本次原軍需領裝須由當前受控真職責行使者明示")
+	var project := Technology.active_project(nation.get("technology", {}))
+	var phase := Technology.scope_next_phase(project, project.get("executor", {}))
+	if project.get("tech_id") != "N05" or phase.get("binding") != "issue_bow" \
+		or not Technology.valid_ref(project.get("executor")) or project.executor.site_id != _technology_site_id() \
+		or int(project.executor.person_id) != int(order.person_id) or int(military.production.operator_id) != int(order.person_id): return Runtime.fail("NO_AUTHORITY", "首次軍需研究由同一本原人實際造弓再領裝")
+	var expected_holder := "nation-order:" + JSON.stringify([_technology_site_id(), str(order.nation_id), str(order.military_production_id)])
+	if project.budget.get("holder") != expected_holder or not _nation_military_first_payment(project, order): return Runtime.fail("BOUND_SOURCE", "只驗本次原項目真正付款生產的有限訂單")
+	var ready := _technology_scope_person("nation", nation, int(order.person_id))
+	if not ready.ok: return ready
+	var token := {"scope": "nation", "scope_id": str(order.nation_id), "project_id": int(project.id), "epoch": int(nation.technology.epoch),
+		"purpose": str(project.purpose), "tech_id": "N05", "phase_id": str(phase.id), "attempt": int(project.next_attempt),
+		"person": project.executor.duplicate(), "binding": "issue_bow", "target_id": "person:" + str(int(order.person_id)), "materials": {}}
+	var binding := technology_phase_binding_candidate(token)
+	if not binding.ok: return binding
+	var payment := technology_phase_payment_candidate(token, {}, binding)
+	if not payment.ok: return payment
+	return Runtime.ok("", {"payment": payment, "metadata": {"nation_issue_token": token, "nation_issue_nation_ref": nation,
+		"nation_issue_order_ref": military.production, "nation_issue_product": str(military.product),
+		"nation_issue_event_id": JSON.stringify([_technology_site_id(), str(order.nation_id), int(project.id), str(project.purpose), int(token.attempt), str(order.military_production_id), str(military.product), "issue"])}})
+
+func prepare_nation_military_issue_receipt(order: Dictionary, military: Dictionary) -> Dictionary:
+	if not military.has("production") or Technology.scope_known(military.nation.get("technology", {}), "N05"): return Runtime.ok("", {"phase": {}})
+	var job: Dictionary = _jobs.get(str(int(order.person_id)), {})
+	if job.is_empty() or not is_same(job.get("order"), order) or not is_same(job.get("nation_issue_order_ref"), military.production) \
+		or not job.get("nation_issue_token") is Dictionary: return Runtime.fail("NO_RECEIPT")
+	var token: Dictionary = job.nation_issue_token
+	var event := _nation_military_issue_event(job)
+	var actual := nation_military_issue_receipt_query(token, event)
+	if not actual.ok: return actual
+	var phase := nation_scope_receipt_candidate(token, event)
+	return Runtime.ok("", {"phase": phase}) if phase.ok else phase
+
+func _technology_paid_phase_context(token: Dictionary) -> Dictionary:
+	var runtime_script: Variant = Runtime
+	if not runtime_script.has_method("technology_existing_paid_phase_source"): return _technology_phase_context(token)
+	var paid: Dictionary = runtime_script.call("technology_existing_paid_phase_source", lab.terrain, token)
+	if not paid.ok: return _technology_phase_context(token)
+	var context := _technology_phase_context(token, false, false)
+	if not context.ok: return context
+	var budget: Dictionary = context.project.budget
+	if budget.is_empty() or budget.status != "granted" or budget.source_site_id != _technology_site_id() \
+		or not Technology.material_equal(paid.materials, token.materials): return Runtime.fail("NO_BUDGET")
+	var matched := 0
+	for payment: Dictionary in budget.payments:
+		if payment.payment_id != paid.payment_id: continue
+		if int(payment.attempt) != int(token.attempt) or payment.phase_id != token.phase_id or payment.target_id != token.target_id \
+			or not Technology.same_person_ref(payment.person, token.person, context.record.get("person_links", [])) \
+			or not Technology.material_equal(payment.materials, paid.materials): return Runtime.fail("STALE_SOURCE")
+		matched += 1
+	if matched != 1: return Runtime.fail("STALE_SOURCE", "原付費工單缺唯一完整付款歷史")
+	if str(budget.holder).begins_with("nation-order:"):
+		var technology_paid_namespace: Variant = JSON.parse_string(str(budget.holder).trim_prefix("nation-order:"))
+		if not technology_paid_namespace is Array or technology_paid_namespace.size() != 3 or budget.holder != "nation-order:" + JSON.stringify(technology_paid_namespace) \
+			or technology_paid_namespace[0] != _technology_site_id() or token.scope != "nation" or technology_paid_namespace[1] != token.scope_id \
+			or not technology_paid_namespace[2] is String: return Runtime.fail("STALE_SOURCE")
+		if str(technology_paid_namespace[2]).begins_with("production_"):
+			var military: Dictionary = equipment_orders.call("military_work_preflight", str(token.scope_id), str(technology_paid_namespace[2]))
+			if not military.ok: return military
+			var order: Dictionary = military.order
+			if token.tech_id != "N05" or token.binding != "workshop_bow" or int(order.operator_id) != int(token.person.person_id) \
+				or token.target_id != "feature:" + str(order.feature_id) or int(order.source.person_id) != int(budget.grantor.person_id) \
+				or paid.source_holder != "feature:" + str(order.feature_id): return Runtime.fail("STALE_SOURCE")
+			for resource: String in budget.cap:
+				if int(budget.cap[resource]) > int(order.source.cap.get(resource, 0)): return Runtime.fail("NO_BUDGET")
+			return context # SAME target/full paid ledger already proven above; no new stock query.
+		var order_context := _nation_original_order_context(str(token.scope_id), str(technology_paid_namespace[2]), str(token.binding), true)
+		if not order_context.ok: return order_context
+		var order: Dictionary = order_context.order
+		var source: Dictionary = order.get("payload", {}).get("source", {})
+		if order.tech_id != token.tech_id or int(order.project_id) != int(token.project_id) or order.status in ["complete", "revoked"] \
+			or source.is_empty() or int(source.get("person_id", -1)) != int(budget.grantor.person_id) \
+			or paid.source_holder != "feature:" + str(order.payload.get("reserve_feature_id", "")) \
+			or not equipment_orders._public_source_paid(order): return Runtime.fail("STALE_SOURCE")
+		for resource: String in budget.cap:
+			if int(budget.cap[resource]) > int(source.cap.get(resource, 0)): return Runtime.fail("NO_BUDGET")
+	elif str(budget.holder).begins_with("settlement-order:"):
+		var paid_parts: Variant = JSON.parse_string(str(budget.holder).trim_prefix("settlement-order:"))
+		if not paid_parts is Array or paid_parts.size() != 3 or budget.holder != "settlement-order:" + JSON.stringify(paid_parts) \
+			or paid_parts[0] != _technology_site_id() or token.scope != "settlement" or paid_parts[1] != token.scope_id or not paid_parts[2] is String: return Runtime.fail("STALE_SOURCE")
+		var paid_runtime: Variant = Runtime
+		if not paid_runtime.has_method("settlement_operation_paid_source_candidate"): return Runtime.fail("UNIMPLEMENTED")
+		var original_paid: Dictionary = paid_runtime.call("settlement_operation_paid_source_candidate", lab.terrain, token, str(paid_parts[2]))
+		if not original_paid.ok: return original_paid
+		if original_paid.get("kind") != "settlement_order" or original_paid.get("holder") != budget.holder \
+			or original_paid.get("source_site_id") != _technology_site_id() or original_paid.get("grantor") != budget.grantor \
+			or not is_same(original_paid.get("settlement"), context.owner) \
+			or not is_same(original_paid.get("operations"), context.owner.get("technology_operations")) \
+			or not is_same(original_paid.get("order"), original_paid.operations.get("orders", {}).get(str(paid_parts[2]))) \
+			or original_paid.get("source_holder") != paid.source_holder: return Runtime.fail("STALE_SOURCE")
+		for resource: String in budget.cap:
+			if int(budget.cap[resource]) > int(original_paid.get("cap", {}).get(resource, -1)): return Runtime.fail("NO_BUDGET")
+	elif budget.holder != "depot" and (budget.holder != "no_materials" or not paid.materials.is_empty()):
+		return Runtime.fail("STALE_SOURCE")
+	return context
+
+# REPLACE this existing wrapper; all authority/physical/consent guards remain.
+
+# Append to ORIGINAL SitePersonActions. The original _jobs holds the transient
+# command; Runtime still owns all feature progress, payment and actual output.
+
+func scope_technology_query(tech_id: String, scope_id: String = "") -> Dictionary:
+	if lab == null or lab.terrain == null: return Runtime.fail("NO_SITE")
+	var node := TechnologyCatalog.get_node(tech_id)
+	var scope := str(node.get("scope", ""))
+	if scope not in ["family", "settlement", "nation"]: return Runtime.fail("INVALID_TECHNOLOGY")
+	var owner := _technology_scope_owner(scope, scope_id)
+	if owner.is_empty(): return Runtime.fail("UNREGISTERED", "原家族／聚落／國家尚未正式建立；此窗不建立組織")
+	var raw: Variant = owner.get("technology", {})
+	if not raw is Dictionary or owner.has("technology") and not (Technology.valid_family_tech(raw) if scope == "family" else Technology.valid_scope_record(raw, scope)): return Runtime.fail("INVALID_TECHNOLOGY")
+	if owner.has("technology") and (not Technology.local_holder(raw, _technology_site_id()) if scope == "family" else raw.holder_site_id != _technology_site_id()): return Runtime.fail("REMOTE_HOLDER", "科技原 holder 在另一處；此窗不重建知識或另開項目")
+	var identities: Array[int] = Family.member_ids(owner, _technology_site_id()) if scope == "family" else Settlement.residents(lab)
+	if scope == "nation":
+		identities.clear()
+		if equipment_orders == null: return Runtime.fail("NO_OWNER_HOOK")
+		for value: Variant in owner.get("members", []):
+			if Technology.integer(value, 1) and equipment_orders._member(owner, int(value)): identities.append(int(value))
+	var people: Array[Dictionary] = []
+	for identity: int in identities:
+		var person := _person(identity, false)
+		if person.is_empty(): continue
+		var label := "原居民"
+		if scope == "family":
+			for member: Dictionary in owner.members:
+				if member.site_id == _technology_site_id() and int(member.person_id) == identity: label = str(member.label)
+		var team: Variant = person.owner if person.owner is CrowdOwner else _technology_team(person)
+		people.append({"site_id": _technology_site_id(), "person_id": identity, "label": label,
+			"team_id": int(team.team_id) if team != null else -1, "owner_ref": person.owner, "body_ref": person.body,
+			"learned": Technology.learned(_body_get(person, "technology"), tech_id), "ready": _ready(person),
+			"busy": is_busy(identity), "job": job_for(identity)})
+	var project := Technology.active_project(raw)
+	var phase := {}
+	if not project.is_empty() and int(project.rules_version) == 2: phase = Technology.scope_next_phase(project, project.executor, raw.get("person_links", []))
+	var duty := _technology_scope_duty(scope, owner, true)
+	var teaching := _technology_duty("family.teach") if scope == "family" else Runtime.fail("NO_FAMILY_LESSON")
+	return Runtime.ok("", {"scope": scope, "scope_id": _technology_scope_id(scope, owner, scope_id), "tech_id": tech_id,
+		"terrain_ref": lab.terrain, "site_ref": lab.terrain.site, "owner_ref": owner, "site_id": _technology_site_id(),
+		"current_person_id": _technology_controlled(), "research_decider": int(duty.get("decider", -1)),
+		"teaching_decider": int(teaching.get("decider", -1)), "duty_result": duty.duplicate(true),
+		"known": Technology.scope_known(raw, tech_id), "known_ids": _technology_known_for(scope_id if scope == "nation" else ""), "people": people,
+		"project": project.duplicate(true), "phase": phase, "routes": node.research.routes.duplicate(true)})
+
+# Narrow original technology_query replacement: immediately after reading
+# Technology.active_project(tech), discard only the *presentation* of another
+# node's active project. The owner and active project remain untouched.
+# BEFORE:
+#   var project := Technology.active_project(tech)
+# AFTER:
+#   var project := Technology.active_project(tech)
+#   if not project.is_empty() and (project.tech_id != "F07" or int(project.rules_version) != 1): project = {}
+# This preserves F07's original 3-bow UI/costs while the new section shows the
+# actual generic node. Existing F07 command guards still recheck the true owner.
+
+func technology_supervision_query(captive_id: int = 0, supervisor_id: int = 0, executor_id: int = 0, vehicle_id: String = "") -> Dictionary:
+	if not is_instance_valid(lab) or lab.terrain == null or lab.site_controller == null: return Runtime.fail("STALE_SOURCE")
+	var site: Dictionary = lab.terrain.site
+	var requester_id := _technology_controlled()
+	var captives: Array = []
+	var supervisors: Array = []
+	var seen_guards := {}
+	for key: String in site.get("captivity", {}):
+		if not key.is_valid_int(): continue
+		var relation: Dictionary = site.captivity[key]
+		var captive := _technology_supervision_person(int(key))
+		if captive.is_empty(): continue
+		captive.merge({"guard_id": int(relation.get("guard_id", 0)), "relation_ref": relation, "relation_state": relation.duplicate(true)})
+		captives.append(captive)
+		var guard_id := int(relation.get("guard_id", 0))
+		if not seen_guards.has(guard_id):
+			var supervisor := _technology_supervision_person(guard_id)
+			if not supervisor.is_empty(): supervisors.append(supervisor)
+			seen_guards[guard_id] = true
+	var analysts: Array = []
+	var project := {}
+	var family := _technology_family()
+	if not family.is_empty():
+		var raw: Dictionary = family.get("technology", {})
+		var active := Technology.active_project(raw)
+		if not active.is_empty() and int(active.get("rules_version", 0)) == 2 and active.get("tech_id") in ["F11", "F12"]:
+			project = {"id": int(active.id), "purpose": str(active.purpose), "tech_id": str(active.tech_id), "family_id": str(family.family_id)}
+			var analyst := _technology_supervision_person(int(active.executor.person_id))
+			if not analyst.is_empty():
+				analyst.merge({"project_ref": active, "project_id": int(active.id), "purpose": str(active.purpose), "family_ref": family})
+				analysts.append(analyst)
+	var vehicles: Array = []
+	for key: String in site.get("vehicles", {}):
+		var vehicle: Dictionary = site.vehicles[key]
+		if not lab.site_controller.vehicles.is_siege(vehicle): continue
+		var capture: Variant = vehicle.get("technology_capture", {})
+		vehicles.append({"vehicle_id": key, "label": "原%s #%s · %s" % [str(vehicle.get("kind", "")), key, "來源資料不合法" if not capture is Dictionary else "真繳獲來源" if not capture.is_empty() else "無可分析來源"],
+			"vehicle_ref": vehicle, "capture_ref": capture if capture is Dictionary else null, "capture_state": capture.duplicate(true) if capture is Dictionary else capture})
+	var captive_begin := Runtime.fail("SELECT_TARGET", "請明選原俘虜及其當前真看守。")
+	var captive_stop := Runtime.fail("NO_TARGET", "請明選本次受監管工單的原俘虜及真看守。")
+	if captive_id > 0 and supervisor_id > 0:
+		captive_begin = Runtime.fail("BUSY") if is_busy(captive_id) or is_busy(supervisor_id) else _captive_craft_context(requester_id, captive_id, supervisor_id, "bow")
+		var job := job_for(captive_id)
+		if job.get("kind") == "captive_craft" and int(job.get("guard_id", 0)) == supervisor_id \
+			and is_same(job.get("terrain"), lab.terrain) and is_same(job.get("site_state"), site):
+			var supervisor := _person(supervisor_id)
+			if _ready(supervisor, true): captive_stop = _captive_craft_authority(requester_id, supervisor, str(job.captivity.get("prison_id", "")), false)
+	var analysis_begin := Runtime.fail("NO_TARGET", "先於本族 F11／F12 明示準備項目、取得同意，再選同一原研究者及真繳獲器械。")
+	if executor_id > 0 and not vehicle_id.is_empty():
+		analysis_begin = Runtime.fail("NOT_DELIVERED", "本技藝操作尚未交付。") if not project.is_empty() and not bool(TechnologyCatalog.get_node(str(project.tech_id)).get("enabled", false)) else Runtime.fail("BUSY") if is_busy(executor_id) else _technology_analysis_context(requester_id, executor_id, vehicle_id)
+	return Runtime.ok("只讀原人物／監管／研究／器械", {"terrain_ref": lab.terrain, "site_ref": site, "site_id": _technology_site_id(), "current_person_id": requester_id,
+		"captives": captives, "supervisors": supervisors, "analysts": analysts, "vehicles": vehicles, "project": project,
+		"captive_begin": {"ok": bool(captive_begin.ok), "code": str(captive_begin.get("code", "")), "message": str(captive_begin.get("message", ""))},
+		"captive_stop": {"ok": bool(captive_stop.ok), "code": str(captive_stop.get("code", "")), "message": str(captive_stop.get("message", ""))},
+		"analysis_begin": {"ok": bool(analysis_begin.ok), "code": str(analysis_begin.get("code", "")), "message": str(analysis_begin.get("message", ""))}})
+
+func _controlled_feature_work_request(key: String, job: Dictionary, seconds: float) -> Dictionary:
+	if job.get("kind") == "technology_vehicle": return _controlled_vehicle_work_request(key, job, seconds)
+	var context := _controlled_feature_job_context(job)
+	if not context.ok: return {}
+	var person: Dictionary = context.person
+	var limit := floori(Runtime.CARRY_CAPACITY - Runtime.carried_load(lab.terrain.site, {}, person.holder))
+	var checked := Runtime.work_preflight(lab.terrain, job.work_task, person.cargo, limit, int(person.faction), int(person.person_id), _tent_occupied)
+	if not checked.ok: return {}
+	var remaining := float(checked.get("remaining", NAN))
+	var productivity := float(checked.get("productivity", NAN))
+	var factor := float(checked.get("progress_multiplier", 1.0))
+	var expected_factor := Runtime.technology_cold_work_multiplier(lab.terrain, job.feature_ref, job.work_task)
+	if not is_finite(remaining) or remaining < 0.0 or not is_finite(productivity) or productivity <= 0.0 or not is_finite(factor) or factor != expected_factor \
+		or not str(checked.get("required_skill", "")).is_empty() and not bool(checked.get("eligible_master", false)): return {}
+	var skills: Dictionary = lab.site_controller.work_team._work_skill_facts(checked)
+	if skills.is_empty(): return {}
+	var participant := _shared_work_participant(person)
+	if participant.is_empty(): return {}
+	participant["progress_multiplier"] = productivity * factor
+	var paused := "REST" if not bool(person.player) and Fatigue.needs_work_rest(float(_body_get(person, "fatigue")), bool(_body_get(person, "work_resting"))) else ""
+	_prepared_controlled_features[key] = {"job": job, "task": job.work_task, "person": person, "cargo": person.cargo,
+		"holder": person.holder, "holder_version": int(person.holder.version), "carry_limit": limit, "remaining": remaining,
+		"productivity": productivity, "factor": factor, "required_skills": skills.required, "eligible_skills": skills.eligible, "required_skill": str(checked.get("required_skill", "")), "eligible_master": bool(checked.get("eligible_master", false))}
+	var request := {"provider": "person_actions", "key": key, "participants": [participant], "remaining": remaining, "productive_kind": "sum",
+		"progress_multiplier": 1.0, "max_game_seconds": seconds, "paused": paused, "task": job.work_task}
+	_prepared_controlled_features[key]["request"] = request
+	return request
+
+func refresh_controlled_feature_work_request(request: Dictionary) -> Dictionary:
+	if request.get("provider") != "person_actions" or not request.get("key") is String or not request.get("task") is Dictionary: return {}
+	var key: String = request.key
+	var held: Dictionary = _prepared_controlled_features.get(key, {})
+	if held.is_empty() or not is_same(held.task, request.task) or not is_same(_jobs.get(key), held.job): return {}
+	if held.job.get("kind") == "technology_vehicle" and not is_same(held.get("request"), request): return {}
+	var updated := _controlled_feature_work_request(key, held.job, _controlled_feature_seconds)
+	if not updated.is_empty(): _prepared_controlled_features[key]["request"] = request
+	return updated
+
+func valid_checked_work_prefix(task: Dictionary, identity: int, prefix_ref: Dictionary) -> bool:
+	var prefix: Dictionary = checked_work_prefix_for_task(task, identity)
+	if not _gd_contact_job_segment.is_empty(): return not prefix.is_empty() and is_same(prefix, prefix_ref) and _valid_gd_checked_controlled_prefix(prefix)
+	if prefix.is_empty() or prefix.get("owner") != self or not is_same(prefix, prefix_ref) or not is_same(prefix.plan, _checked_controlled_prefixes.plan) or not is_same(prefix.runtime_priors, _checked_controlled_prefixes.runtime_priors): return false
+	var held: Dictionary = prefix.shared_item.held
+	var job: Dictionary = _jobs.get(str(prefix.key), {})
+	if not is_same(job, held.job) or not is_same(job.get("work_task"), task) or task != held.task_start: return false
+	var person: Dictionary = _person(identity)
+	var start: Dictionary = prefix.start
+	if person.is_empty() or person.owner != start.owner or int(person.unit) != int(start.unit) or not is_same(person.body, start.body) or not is_same(person.holder, start.holder) or not is_same(person.cargo, start.cargo) or int(person.holder.version) != int(start.holder_version): return false
+	if held.kind == "technology_feature": return is_same(job.get("feature_ref"), prefix.target_ref) and is_same(lab.terrain.site.features.get(job.feature_id), prefix.target_ref)
+	if held.kind == "technology_vehicle": return is_same(job.get("vehicle_ref"), prefix.target_ref) and is_same(lab.terrain.site.vehicles.get(job.vehicle_id), prefix.target_ref) and is_same(prefix.target_ref.get("repair" if str(task.get("action", "")) == "repair" else "build"), held.build)
+	return false
+
+func shared_vehicle_work_request_facts(request: Dictionary) -> Dictionary:
+	if request.get("provider") != "person_actions" or request.get("productive_kind") != "sum" or str(request.get("paused", "")) not in ["", "REST", "SHARED_MASTER"]: return {}
+	var key: String = str(request.get("key", ""))
+	var held: Dictionary = _prepared_controlled_features.get(key, {})
+	var job: Dictionary = _jobs.get(key, {})
+	if held.is_empty() or not is_same(held.get("request"), request) or job.get("kind") not in ["technology_feature", "technology_vehicle"] or not is_same(held.job, job) or not is_same(request.get("task"), held.task) or not is_same(job.get("work_task"), held.task) or request.get("participants", []).size() != 1: return {}
+	if not is_equal_approx(float(request.get("remaining", -1.0)), float(held.remaining)) or float(request.get("max_game_seconds", -1.0)) < 0.0 or float(request.max_game_seconds) > _controlled_feature_seconds + Fatigue.WORK_PLAN_EPS: return {}
+	var participant: Dictionary = request.participants[0]
+	var identity: int = int(job.executor_id)
+	if int(participant.person_id) != identity or not is_same(participant.get("original_body", participant.get("body")), held.person.body) or not is_equal_approx(float(participant.get("progress_multiplier", 1.0)), float(held.productivity) * float(held.factor)) or not is_equal_approx(float(request.progress_multiplier), 1.0): return {}
+	var physical: Dictionary = Runtime.shared_physical_work_unit(lab.terrain, held.task)
+	if physical.is_empty() or not is_same(physical.target_ref, job.get("vehicle_ref") if job.kind == "technology_vehicle" else job.get("feature_ref")): return {}
+	var facts: Dictionary = physical.duplicate(false)
+	facts.merge({"owner": self, "request": request, "site": lab.terrain.site, "held": held, "job": job, "task": held.task, "person_ids": [identity],
+		"required_skills": held.required_skills.duplicate(), "eligible_by_id": {identity: held.eligible_skills.duplicate()},
+		"remaining": float(physical.physical_remaining), "participants": request.participants, "values": request.duplicate(false),
+		"participant_values": lab.site_controller.work_team._shared_vehicle_participant_values(request)})
+	_shared_vehicle_request_facts[key] = facts
+	return facts
+
+func valid_shared_vehicle_work_request_facts(request: Dictionary, facts: Dictionary) -> bool:
+	var held: Dictionary = _prepared_controlled_features.get(str(request.get("key", "")), {})
+	if facts.get("owner") != self or not is_same(facts.get("request"), request) or not is_same(facts.get("site"), lab.terrain.site) or not is_same(facts.get("participants"), request.get("participants")) or request != facts.get("values") or lab.site_controller.work_team._shared_vehicle_participant_values(request) != facts.get("participant_values") or not is_same(_shared_vehicle_request_facts.get(str(request.key)), facts) or not is_same(held, facts.get("held")) or not is_same(_jobs.get(str(request.key)), facts.get("job")) or not is_same(facts.job.get("work_task"), facts.get("task")): return false
+	var physical: Dictionary = Runtime.shared_physical_work_unit(lab.terrain, facts.task)
+	return not physical.is_empty() and is_same(physical.target_ref, facts.target_ref) and is_same(physical.work_unit, facts.work_unit) and physical.action == facts.action and physical.field == facts.field
+
+func prepare_gd_contact_job_segment(planned: Dictionary, seconds: float, defer_runtime: bool = false) -> Dictionary:
+	if _gd_contact_job_capture.is_empty() or not _gd_contact_job_segment.is_empty() or planned.get("ok") != true \
+		or not is_same(planned, lab.gd_mesh_work_segment_plan()) or not is_finite(seconds) or seconds <= 0.0 \
+		or not is_equal_approx(float(planned.get("seconds", -1.0)), seconds) \
+		or float(_gd_contact_job_capture.elapsed) + seconds > float(_gd_contact_job_capture.seconds) + Fatigue.WORK_PLAN_EPS:
+		return Runtime.fail("STALE_WORK_PREFIX")
+	var candidates: Array[Dictionary] = []
+	var allocations: Dictionary = planned.get("jobs", {}).get("person_actions", {})
+	for key: String in _gd_contact_job_capture.prepared.held:
+		var held: Dictionary = _gd_contact_job_capture.prepared.held[key]
+		if held.kind in ["technology_feature", "technology_vehicle"]: continue # Real physical unit, never a PA parallel elapsed timer.
+		var allocation: Dictionary = allocations.get(key, {})
+		if allocation.is_empty(): continue
+		# Only SAME captured jobs can be advanced. A true original cancellation
+		# stops later intervals; it is never replaced with a projected alive job.
+		if not is_same(_jobs.get(key), held.job): continue
+		if float(held.job.elapsed) != float(held.committed_elapsed) or float(held.job.duration) != float(held.duration): return Runtime.fail("STALE_SOURCE")
+		var actual: float = float(allocation.get("actual_seconds", 0.0))
+		var productive: float = float(allocation.get("effective_seconds", 0.0))
+		if not is_finite(actual) or not is_finite(productive) or actual < 0.0 or actual > seconds + Fatigue.WORK_PLAN_EPS \
+			or productive < 0.0 or productive > seconds * float(held.request.get("progress_multiplier", 1.0)) + Fatigue.WORK_PLAN_EPS:
+			return Runtime.fail("INVALID_WORK")
+		for identity: int in held.people:
+			var effort: float = float(allocation.get("participant_seconds", {}).get(identity, 0.0))
+			if not is_finite(effort) or effort < 0.0 or effort > seconds + Fatigue.WORK_PLAN_EPS: return Runtime.fail("INVALID_WORK")
+		candidates.append({"held": held, "allocation": allocation,
+			"elapsed": minf(float(held.duration), float(held.committed_elapsed) + productive)})
+	_gd_contact_job_segment = {"owner": self, "plan": planned, "seconds": seconds, "candidates": candidates, "published": false,
+		"prefixes": [], "runtime": [], "priors": lab.gd_mesh_work_segment_priors()}
+	for envelope: Dictionary in _gd_contact_job_capture.controlled_envelopes:
+		var original: Dictionary = envelope.prepared.prefix_ref
+		var held: Dictionary = original.shared_item.held
+		var allocation: Dictionary = allocations.get(str(held.key), {})
+		var identity: int = int(original.person_id)
+		var actual: float = float(allocation.get("participant_seconds", {}).get(identity, 0.0))
+		var productive: float = float(allocation.get("participant_effective_seconds", {}).get(identity, 0.0))
+		if actual <= 0.0 or productive <= 0.0:
+			if float(original.entry.remaining) > Fatigue.WORK_PLAN_EPS: continue
+			var already := false
+			for prior: Dictionary in _gd_contact_job_capture.runtime_priors: already = already or is_same(prior.task, original.task)
+			if already: continue
+		var prefix: Dictionary = original.duplicate(false)
+		prefix.plan = planned
+		prefix.allocation = allocation
+		prefix.runtime_priors = _gd_contact_job_segment.priors
+		prefix.actual_seconds = actual
+		prefix.productive_seconds = productive
+		prefix.applied_productive_seconds = productive * float(original.entry.get("productivity", 1.0)) * float(original.entry.get("factor", 1.0))
+		prefix.group_actual_seconds = float(allocation.get("actual_seconds", 0.0))
+		_gd_contact_job_segment.prefixes.append(prefix)
+	if defer_runtime: return Runtime.ok("同段真PA分配已登記", {"segment": _gd_contact_job_segment})
+	return validate_gd_contact_job_runtime_segment(_gd_contact_job_segment)
+
+func validate_gd_contact_job_runtime_segment(segment: Dictionary) -> Dictionary:
+	if not is_same(segment, _gd_contact_job_segment) or bool(segment.get("published", true)) or not segment.get("runtime", []).is_empty() or not is_same(segment.get("plan"), lab.gd_mesh_work_segment_plan()) or not is_same(segment.get("priors"), lab.gd_mesh_work_segment_priors()): return Runtime.fail("STALE_WORK_PREFIX")
+	for envelope: Dictionary in _gd_contact_job_capture.controlled_envelopes:
+		for prefix: Dictionary in segment.prefixes:
+			if not is_same(prefix.entry, envelope.prepared.prefix_ref.entry): continue
+			var restricted: Dictionary = Runtime.restrict_gd_contact_work_prefix(envelope, prefix, segment.priors)
+			if not restricted.ok: return restricted
+			segment.runtime.append(restricted)
+			segment.priors.append(restricted)
+	return Runtime.ok("原人物真段工時已派生；未寫timer/成本/學習", {"segment": _gd_contact_job_segment})
+
+func cold_technology_checkpoint_guard() -> Dictionary:
+	# Original Region graph only; a physical PA envelope owns no timer work.
+	# Its SAME selector/target/paid task must pass the original physical owners.
+	if not is_instance_valid(lab) or lab.restore_only != true: return Runtime.fail("INVALID_MODE")
+	for key: String in _jobs:
+		var job: Dictionary = _jobs[key]
+		var physical: bool = str(job.get("kind", "")) in ["technology_feature", "technology_vehicle"]
+		var selector: Variant = job.get("operation_selector", {})
+		if physical and not selector is Dictionary: return Runtime.fail("CORRUPT_TECHNOLOGY")
+		var physical_research: bool = physical and selector.has("token")
+		if physical_research and (not Technology.keys(selector, ["token"]) or not selector.token is Dictionary or selector.token.is_empty()):
+			return Runtime.fail("CORRUPT_TECHNOLOGY")
+		var research: bool = physical_research or job.has("technology_project") or not job.get("technology_scope_token", {}).is_empty() \
+			or not job.get("nation_token", {}).is_empty() or str(job.get("kind", "")) == "technology_lesson"
+		if not research: continue # Existing nonresearch Region admission stays unchanged.
+		var person := _person(int(job.executor_id))
+		if person.is_empty() or bool(person.get("player", true)): return Runtime.fail("BUSY", "人工在途科研不屬 NPC 冷保存")
+		var pending: Variant = job.get("pending", {})
+		if not pending is Dictionary or not pending.is_empty(): return Runtime.fail("BUSY", "原人物接觸後提交尚未結束")
+		if str(job.kind) == "technology_lesson" and bool(_person(int(job.target_id)).get("player", true)): return Runtime.fail("BUSY", "人工授課參與者仍沿原保存守衛")
+		var checked := _job_context(job)
+		if not checked.ok: return checked
+		if not is_same(job.get("terrain"), lab.terrain) or not is_same(job.get("site_state"), lab.terrain.site): return Runtime.fail("STALE_SOURCE")
+		if not is_finite(float(job.get("elapsed", -1.0))) or float(job.get("elapsed", -1.0)) < 0.0 \
+			or not is_finite(float(job.get("duration", -1.0))) or float(job.duration) < 0.0: return Runtime.fail("CORRUPT_TECHNOLOGY")
+		if physical_research:
+			if not job.get("work_task") is Dictionary or float(job.duration) != 0.0: return Runtime.fail("CORRUPT_TECHNOLOGY")
+			var target: Dictionary = job.vehicle_ref if str(job.kind) == "technology_vehicle" else job.feature_ref
+			if not is_same(target.get("tech_trial"), selector.token) or selector.token.target_id != job.work_task.target \
+				or int(selector.token.person.person_id) != int(job.executor_id): return Runtime.fail("STALE_PROJECT")
+			var paid := Runtime.validate_technology_trial_project_storage(lab.terrain, target)
+			if not paid.ok: return paid
+			var limit := floori(Runtime.CARRY_CAPACITY - Runtime.carried_load(lab.terrain.site, {}, person.holder))
+			var work := Runtime.work_preflight(lab.terrain, job.work_task, person.cargo, limit, int(person.faction), int(person.person_id), _tent_occupied)
+			if not work.ok: return work
+			if not is_finite(float(work.get("remaining", -1.0))) or float(work.remaining) <= 0.00000001:
+				return Runtime.fail("BUSY", "原已完成物理工序必先沿同點交貨")
+			continue # Zero duration is this original physical envelope, never a completed timer.
+		if float(job.elapsed) >= float(job.duration) - 0.00000001:
+			return Runtime.fail("BUSY", "原已完成試作必先沿同點提交")
+	return Runtime.ok()
+
+func _controlled_vehicle_work_request(key: String, job: Dictionary, seconds: float) -> Dictionary:
+	var context := _controlled_vehicle_job_context(job)
+	if not context.ok: return {}
+	var person: Dictionary = context.person
+	var limit := floori(Runtime.CARRY_CAPACITY - Runtime.carried_load(lab.terrain.site, {}, person.holder))
+	var checked := Runtime.work_preflight(lab.terrain, job.work_task, person.cargo, limit, int(person.faction), int(person.person_id), _tent_occupied)
+	if not checked.ok: return {}
+	var remaining := float(checked.get("remaining", NAN))
+	var factor := float(checked.get("progress_multiplier", NAN))
+	var productivity := float(checked.get("productivity", 1.0))
+	var original_credit: Dictionary = Runtime.technology_work_credit_facts(lab.terrain, job.vehicle_ref) if job.work_task.action == "construct" else Runtime.ok("", {"factor": 1.0})
+	if not original_credit.ok: return {}
+	var expected_factor := float(original_credit.factor) * Runtime.technology_cold_work_multiplier(lab.terrain, job.vehicle_ref, job.work_task)
+	if not is_finite(remaining) or remaining < 0.0 or not is_finite(factor) or factor != expected_factor or float(original_credit.factor) < 1.0 or float(original_credit.factor) > 2.0 or not is_finite(productivity) or not (is_equal_approx(productivity, 1.0) or is_equal_approx(productivity, 10.0 / 9.0)): return {}
+	var skills: Dictionary = lab.site_controller.work_team._work_skill_facts(checked)
+	if skills.is_empty(): return {}
+	var participant := _shared_work_participant(person)
+	if participant.is_empty(): return {}
+	participant["progress_multiplier"] = productivity * factor
+	var paused := "REST" if not bool(person.player) and Fatigue.needs_work_rest(float(_body_get(person, "fatigue")), bool(_body_get(person, "work_resting"))) else ""
+	# A valid helper can wait for another original provider's actual master.
+	# Raw standalone planning remains zero effort; only the true same-target
+	# union can resolve this derived wait using actual participant skills.
+	if paused.is_empty():
+		for skill: String in skills.required:
+			if not skills.eligible.has(skill): paused = "SHARED_MASTER"
+	_prepared_controlled_features[key] = {"job": job, "task": job.work_task, "person": person, "cargo": person.cargo, "holder": person.holder,
+		"holder_version": int(person.holder.version), "carry_limit": limit, "remaining": remaining, "productivity": productivity, "factor": factor,
+		"required_skill": str(checked.get("required_skill", "")), "eligible_master": bool(checked.get("eligible_master", false)),
+		"required_skills": skills.required, "eligible_skills": skills.eligible}
+	var request := {"provider": "person_actions", "key": key, "participants": [participant], "remaining": remaining, "productive_kind": "sum",
+		"progress_multiplier": 1.0, "max_game_seconds": seconds, "paused": paused, "task": job.work_task}
+	_prepared_controlled_features[key]["request"] = request
+	return request
+
+func prepare_checked_controlled_prefix_allocations(admitted: Dictionary, runtime_priors: Array = []) -> Dictionary:
+	if admitted.get("ok") != true or admitted.get("owner") != self or not _checked_controlled_prefixes.is_empty(): return Runtime.fail("CLOCK_NOT_READY")
+	_checked_controlled_prefixes = {"owner": self, "admitted": admitted, "plan": admitted.plan, "prefixes": [], "runtime": [], "runtime_priors": runtime_priors}
+	for key: String in admitted.admitted:
+		var item: Dictionary = admitted.admitted[key]
+		var held: Dictionary = item.held
+		if held.kind not in ["technology_feature", "technology_vehicle"]: continue
+		var job: Dictionary = held.job
+		var entry: Dictionary = _prepared_controlled_features.get(key, {})
+		var identity: int = int(job.executor_id)
+		if entry.is_empty() or not is_same(entry.job, job) or not is_same(entry.task, held.task) or not held.people.has(identity): return Runtime.fail("STALE_SOURCE")
+		var start: Dictionary = held.people[identity].duplicate(false)
+		start.item_state = start.holder
+		start.cell = start.start_cell
+		start.occupied = _tent_occupied
+		start.carry_limit = int(entry.carry_limit)
+		start.row = start.body
+		var target_ref: Dictionary = held.feature if held.kind == "technology_feature" else held.vehicle
+		var action: String = str(held.task.get("action", ""))
+		start.work_unit = target_ref.get("repair", {}) if action == "repair" else target_ref.get("pending_build", target_ref) if action == "construct" and held.kind == "technology_feature" else held.build if held.kind == "technology_vehicle" else target_ref
+		var actual: float = float(item.allocation.get("participant_seconds", {}).get(identity, 0.0))
+		var productive: float = float(item.allocation.get("participant_effective_seconds", {}).get(identity, 0.0))
+		var multiplier: float = float(entry.get("productivity", 1.0)) * float(entry.get("factor", 1.0))
+		var applied: float = productive * multiplier
+		if not is_finite(actual) or not is_finite(productive) or not is_finite(applied) or actual < 0.0 or productive < 0.0 or productive > actual + Fatigue.WORK_PLAN_EPS or applied < 0.0: return Runtime.fail("INVALID_WORK")
+		if (actual <= 0.0 or productive <= 0.0) and float(entry.remaining) > Fatigue.WORK_PLAN_EPS: continue
+		var prefix := {"owner": self, "plan": admitted.plan, "entry": entry, "person_id": identity, "task": held.task,
+			"start": start, "target_ref": target_ref, "target": str(held.task.target), "plan_key": str(item.allocation.get("shared_vehicle_group", {}).get("key", "person_actions:" + key)), "shared_vehicle_group": item.allocation.get("shared_vehicle_group", {}),
+			"actual_seconds": actual, "productive_seconds": productive, "applied_productive_seconds": applied,
+			"group_actual_seconds": float(item.allocation.get("actual_seconds", 0.0)), "allocation": item.allocation,
+			"required_skill": str(entry.get("required_skill", "")), "eligible_master": bool(entry.get("eligible_master", false)),
+			"required_skills": entry.get("required_skills", []).duplicate(), "eligible_skills": entry.get("eligible_skills", []).duplicate(),
+			"runtime_priors": runtime_priors, "shared_item": item, "key": key,
+			"work_unit": start.work_unit, "policy_exception": str(held.get("trial_facts", {}).get("policy_exception", ""))}
+		_checked_controlled_prefixes.prefixes.append(prefix)
+	return Runtime.ok("原PA真实分配已登记，尚未材料预验", {"owner": self, "registered": _checked_controlled_prefixes})
+
+func valid_gd_contact_work_prefix(envelope: Dictionary, prefix: Dictionary, priors: Array) -> bool:
+	if _gd_contact_job_capture.is_empty() or _gd_contact_job_segment.is_empty() or bool(_gd_contact_job_capture.finished) \
+		or not is_same(priors, _gd_contact_job_segment.priors): return false
+	for prior: Dictionary in priors:
+		if not lab.gd_mesh_work_prior_candidate(prior, priors): return false
+	var found := false
+	for original: Dictionary in _gd_contact_job_capture.controlled_envelopes: found = found or is_same(original, envelope)
+	if not found or envelope.owner != self or prefix.get("owner") != self: return false
+	for actual: Dictionary in _gd_contact_job_segment.prefixes:
+		if not is_same(actual, prefix): continue
+		var held: Dictionary = envelope.prepared.prefix_ref.shared_item.held
+		var allocation: Dictionary = _gd_contact_job_segment.plan.jobs.get("person_actions", {}).get(str(held.key), {})
+		var identity: int = int(prefix.person_id)
+		var seconds: float = float(allocation.get("participant_seconds", {}).get(identity, 0.0))
+		var productive: float = float(allocation.get("participant_effective_seconds", {}).get(identity, 0.0))
+		var multiplier: float = float(prefix.entry.get("productivity", 1.0)) * float(prefix.entry.get("factor", 1.0))
+		return seconds >= 0.0 and seconds <= float(_gd_contact_job_segment.seconds) + Fatigue.WORK_PLAN_EPS \
+			and productive >= 0.0 and productive <= seconds + Fatigue.WORK_PLAN_EPS \
+			and is_equal_approx(float(prefix.actual_seconds), seconds) and is_equal_approx(float(prefix.productive_seconds), productive) \
+			and is_equal_approx(float(prefix.applied_productive_seconds), productive * multiplier) \
+			and is_same(prefix.entry, envelope.prepared.prefix_ref.entry) and is_same(prefix.shared_item.held, held) \
+			and is_same(prefix.plan, _gd_contact_job_segment.plan) and is_same(prefix.task, envelope.prepared.task) \
+			and is_same(prefix.target_ref, envelope.target) and is_same(prefix.work_unit, envelope.unit) \
+			and identity == int(envelope.prepared.identity)
+	return false
+
+func prepare_gd_contact_job_prefix(requests: Array, seconds: float) -> Dictionary:
+	if not _gd_contact_job_capture.is_empty() or not _gd_contact_job_segment.is_empty(): return Runtime.fail("CLOCK_NOT_READY")
+	var captured: Dictionary = prepare_shared_work_prefix(requests, seconds)
+	if not captured.ok: return captured
+	var people := {}
+	for key: String in captured.held:
+		var held: Dictionary = captured.held[key]
+		var job: Dictionary = held.job
+		var controlled: bool = held.kind in ["technology_feature", "technology_vehicle"]
+		var multiplier: float = float(held.request.get("progress_multiplier", 1.0))
+		var remaining: float = maxf(0.0, float(held.duration) - float(held.elapsed))
+		var already_due: bool = remaining <= Fatigue.WORK_PLAN_EPS
+		var can_finish: bool = already_due or (str(held.request.get("paused", "")).is_empty() and remaining <= seconds * multiplier + Fatigue.WORK_PLAN_EPS)
+		if held.kind in ["ranged_craft", "captive_craft"] and can_finish:
+			var source: Dictionary = Runtime.prepare_ranged_craft(lab.terrain, str(job.recipe), int(job.executor_id), job.get("technology_scope_token", {}), false, true)
+			if not source.ok: return source
+			held["ranged_source"] = source
+		if held.kind == "technology_lesson" and job.has("nation_course_id") and can_finish:
+			var source: Dictionary = equipment_orders.prepare_funded_course_source(str(job.nation_course_nation), str(job.nation_course_id), job)
+			if not source.ok: return source
+			held["funded_source"] = source
+		if _gd_typed_terminal_kind(str(held.kind)) and can_finish:
+			var source: Dictionary = prepare_gd_typed_terminal(job, true)
+			if not source.ok: return source
+			held["typed_source"] = source
+		# Nonterminal ordinary timers cannot reach an inventory tail. The pure
+		# terminal source/publisher seam remains explicit only where it is due.
+		if not controlled and can_finish and (held.kind not in ["ranged_craft", "captive_craft", "technology_lesson", "technology_analysis", "nation_administration", "water_schedule", "food_order"] and not _gd_typed_terminal_kind(str(held.kind))):
+			return Runtime.fail("CONTACT_JOB_ENDPOINT_SOURCE_NOT_PREPARED", held.kind)
+		for identity: int in held.people:
+			if people.has(identity): return Runtime.fail("DUPLICATE_ACTIVITY")
+			var original: Dictionary = held.people[identity]
+			var person: Dictionary = _person(identity)
+			people[identity] = {"held": held, "owner": original.owner, "body": original.body,
+				"unit": int(original.unit), "hit": int(person.hit), "cell": person.cell}
+		held["committed_elapsed"] = float(held.elapsed)
+	_gd_contact_job_capture = Runtime.ok("原PA合法起點/有限endpoint已純核", {"owner": self, "prepared": captured,
+		"seconds": seconds, "elapsed": 0.0, "people": people, "published": [], "controlled_envelopes": [], "runtime_priors": [], "finished": false})
+	return _gd_contact_job_capture
+
+func _prepare_ranged_technology_completion(job: Dictionary) -> Dictionary:
+	# CURRENT original completion only. Upper source previews never enter here.
+	if job.get("kind") == "captive_craft":
+		var supervised: Dictionary = _captive_craft_job_context(job)
+		return Runtime.ok("", {"kind": "", "owner": {}, "record": {}}) if supervised.ok else supervised
+		# Captive manufacture NEVER creates Scope/Family/learning evidence.
+	if job.has("technology_scope_token"):
+		var token: Dictionary = job.technology_scope_token
+		var checked: Dictionary = _scope_ranged_craft_guard(int(job.executor_id), token)
+		if not checked.ok: return checked
+		var payment: Dictionary = technology_phase_payment_candidate(token, token.materials)
+		if not payment.ok: return payment
+		var event_id: String = str(token.tech_id) + ":ranged:" + JSON.stringify([_technology_site_id(), int(token.project_id), int(token.attempt), str(token.binding)])
+		var completed: Dictionary = _prepare_scope_phase_completion(token, payment, event_id, float(job.duration))
+		if not completed.ok: return completed
+		return Runtime.ok("", {"kind": "scope", "owner": completed.owner, "record": completed.record,
+			"record_before": completed.record.duplicate(true), "receipt": completed})
+	if not job.has("technology_project"): return Runtime.ok("", {"kind": "", "owner": {}, "record": {}})
+	var check: Dictionary = _technology_trial_context(job)
+	if not check.ok: return check
+	var family: Dictionary = _technology_family()
+	var record: Dictionary = family.technology
+	var candidate: Dictionary = record.duplicate(true)
+	var project: Dictionary = Technology.active_project(candidate)
+	project.receipts.append({"site_id": _technology_site_id(), "person_id": int(job.executor_id), "attempt": int(job.technology_attempt)})
+	for resource: String in Technology.TRIAL_COST: project.budget.spent[resource] = int(project.budget.spent[resource]) + int(Technology.TRIAL_COST[resource])
+	var complete: bool = Technology.stages(project, _technology_ref(int(job.executor_id)), record.get("person_links", [])) == 3
+	var executor: Dictionary = _person(int(job.executor_id))
+	var person_candidate: Dictionary = Technology.learned_candidate(_body_get(executor, "technology")) if complete else {}
+	if complete:
+		if person_candidate.is_empty(): return Runtime.fail("INVALID_TECHNOLOGY")
+		if not candidate.known.has("F07"): candidate.known.append("F07")
+		project.closed = true
+		candidate.active = 0
+	if not Technology.valid_family_tech(candidate): return Runtime.fail("INVALID_TECHNOLOGY")
+	return Runtime.ok("", {"kind": "family", "owner": family, "record": record, "record_before": record.duplicate(true),
+		"state": candidate, "person": executor, "person_candidate": person_candidate, "complete": complete,
+		"message": "真弓已入原庫；本人試作 %d/3%s" % [Technology.stages(project, _technology_ref(int(job.executor_id)), candidate.get("person_links", [])), "，已學會 F07" if complete else ""]})
+
+func _publish_ranged_technology_completion(prepared: Dictionary, result: Dictionary) -> void:
+	# All current authority/source/phase/person candidates were checked BEFORE
+	# the original Runtime batch's first inventory cost. No callback or guard.
+	if prepared.kind == "scope": publish_phase_receipt(prepared.receipt)
+	elif prepared.kind == "family":
+		prepared.owner.technology = prepared.state
+		if bool(prepared.complete): _body_set(prepared.person, "technology", prepared.person_candidate)
+		result.message = str(prepared.message)
+
+func _settle_ranged_terminal_chunk(keys: Array, first_key: String) -> Dictionary:
+	# Keep the ORIGINAL ascending person-ID order and stop at every other job
+	# kind/current interruption. No later cost crosses another original tail.
+	var first: int = keys.find(first_key)
+	if first < 0: return Runtime.fail("STALE_SOURCE")
+	var jobs: Array[Dictionary] = []
+	var originals: Array[Dictionary] = []
+	var completions: Array[Dictionary] = []
+	var selected: Array[String] = []
+	var scope_owners: Array = []
+	for index: int in range(first, keys.size()):
+		var key: String = str(keys[index])
+		var job: Dictionary = _jobs.get(key, {})
+		if job.get("kind") not in ["ranged_craft", "captive_craft"] or bool(job.get("preparing", false)) or not str(job.get("paused", "")).is_empty() \
+			or float(job.get("elapsed", 0.0)) < float(job.get("duration", 0.0)) - Fatigue.WORK_PLAN_EPS: break
+		var checked: Dictionary = _job_context(job)
+		var executor: Dictionary = _person(int(job.executor_id))
+		if checked.ok and job.kind != "captive_craft" and not bool(executor.player) and _threat(executor, {}): break
+		var completion: Dictionary = _prepare_ranged_technology_completion(job) if checked.ok else checked
+		if not completion.ok:
+			if jobs.is_empty():
+				_finish(key, completion)
+				return Runtime.ok("", {"keys": [key]})
+			break
+		# One actual active project may have only one completion candidate per
+		# transaction. Its next true job is re-queried after this publication.
+		var conflict: bool = false
+		if not str(completion.kind).is_empty():
+			for owner: Dictionary in scope_owners: conflict = conflict or is_same(owner, completion.owner)
+		if conflict: break
+		var original: Dictionary = Runtime.prepare_ranged_craft(lab.terrain, str(job.recipe), int(job.executor_id), job.get("technology_scope_token", {}))
+		if not original.ok:
+			if jobs.is_empty():
+				_finish(key, original)
+				return Runtime.ok("", {"keys": [key]})
+			break
+		selected.append(key)
+		jobs.append(job)
+		originals.append(original)
+		completions.append(completion)
+		if not str(completion.kind).is_empty(): scope_owners.append(completion.owner)
+	if jobs.is_empty(): return Runtime.ok("", {"keys": []})
+	var batch: Dictionary = Runtime.prepare_ranged_craft_batch(lab.terrain, originals)
+	if not batch.ok:
+		# Pure failure before any terminal cost. Preserve original failure order:
+		# the first job reports it, later original jobs remain for re-query.
+		_finish(selected[0], batch)
+		return Runtime.ok("", {"keys": [selected[0]]})
+	# The original equipment factory may call its original transfer guard.
+	# Recheck every SAME current endpoint after that callback, still BEFORE cost.
+	for index: int in jobs.size():
+		var job: Dictionary = jobs[index]
+		var completion: Dictionary = completions[index]
+		var executor: Dictionary = _person(int(job.executor_id))
+		var checked: Dictionary = _job_context(job)
+		if not is_same(_jobs.get(selected[index]), job) or not checked.ok or executor.is_empty() \
+			or not str(job.paused).is_empty() or float(job.elapsed) < float(job.duration) - Fatigue.WORK_PLAN_EPS \
+			or job.kind != "captive_craft" and not bool(executor.player) and _threat(executor, {}):
+			return Runtime.fail("STALE_SOURCE")
+		if not str(completion.kind).is_empty() and (not is_same(completion.owner.get("technology"), completion.record) \
+			or completion.record != completion.record_before): return Runtime.fail("STALE_PROJECT")
+	if not Runtime.validate_prepared_ranged_craft_batch(batch): return Runtime.fail("STALE_SOURCE")
+	var results: Array[Dictionary] = Runtime.publish_prepared_ranged_craft_batch(batch)
+	for index: int in jobs.size():
+		if bool(results[index].ok): _publish_ranged_technology_completion(completions[index], results[index])
+		_finish(selected[index], results[index])
+	return Runtime.ok("", {"keys": selected})
+
+func prepare_gd_ranged_terminal_upper(runtime_priors: Array) -> Dictionary:
+	# Only the original Lab's SAME admitted upper source array can be used.
+	# These are source reservations, NEVER fabricated completed jobs/receipts.
+	if _gd_contact_job_capture.is_empty() or not is_same(runtime_priors, lab.gd_mesh_work_upper_priors()): return Runtime.fail("STALE_SOURCE")
+	var typed: Dictionary = _prepare_gd_typed_terminal_upper(runtime_priors)
+	if not typed.ok: return typed
+	var funded: Dictionary = _prepare_gd_funded_lesson_upper(runtime_priors)
+	if not funded.ok: return funded
+	var stock: Dictionary = lab.terrain.site.inventory
+	var depot: Dictionary = lab.terrain.site.depot_items
+	var available: Dictionary = stock.duplicate(true)
+	var version: int = int(depot.version)
+	var item_count: int = 0
+	var upper: Array[Dictionary] = []
+	var source_keys := {}
+	var decisions: Array[Dictionary] = []
+	for key: String in _gd_contact_job_capture.prepared.held:
+		var held: Dictionary = _gd_contact_job_capture.prepared.held[key]
+		if held.kind not in ["ranged_craft", "captive_craft"]: continue
+		if float(held.duration) - float(held.elapsed) > Fatigue.WORK_PLAN_EPS and not str(held.request.get("paused", "")).is_empty():
+			decisions.append({"held": held, "status": str(held.request.paused), "source": {}})
+			continue # Original finite source ledger already refused this request before the planner.
+		var source: Dictionary = held.get("ranged_source", {})
+		if source.is_empty(): continue
+		if not is_same(_jobs.get(key), held.job) or not Runtime.validate_prepared_ranged_source(source): return Runtime.fail("STALE_SOURCE")
+		if float(held.duration) - float(held.elapsed) > Fatigue.WORK_PLAN_EPS:
+			upper.append(source)
+			source_keys[int(source.owner_id)] = key
+	_gd_contact_job_capture["ranged_upper_decisions"] = decisions
+	if upper.is_empty(): return Runtime.ok("本段沒有可能新增努力的製作終點；既有零工時提交另驗當前來源")
+	for prior: Dictionary in runtime_priors:
+		if not lab.gd_mesh_work_upper_candidate(prior): return Runtime.fail("STALE_SOURCE")
+		var payment: Dictionary = prior.get("payment", {})
+		if not payment.is_empty() and is_same(payment.get("cargo"), stock):
+			if not Runtime.can_pay(available, payment.cost): return Runtime.fail("MATERIALS")
+			Runtime.add_items(available, payment.cost, -1)
+			version += 1
+		# A genuinely due foreign inventory/output endpoint needs its own common
+		# typed transaction. Maps or merely active ordinary work never imply it.
+		if bool(prior.get("deferred_endpoint", false)):
+			var collision: bool = prior.get("endpoint") == "depot"
+			if prior.get("endpoint") == "feature" and prior.task.action == "operate":
+				var recipe: Dictionary = Runtime.feature_recipe(prior.target)
+				collision = recipe.has("asset") or is_same(prior.start.cargo, stock)
+			elif prior.get("endpoint") == "resource": collision = is_same(prior.start.cargo, stock)
+			if collision: return Runtime.fail("CONTACT_RANGED_RUNTIME_ENDPOINT_COLLISION")
+	for source: Dictionary in upper:
+		var key: String = str(source_keys[int(source.owner_id)])
+		var held: Dictionary = _gd_contact_job_capture.prepared.held[key]
+		if not Runtime.can_pay(available, source.cost):
+			decisions.append({"held": held, "status": "MATERIALS", "source": source})
+			# A genuine refused allocation has zero WORK. A positive allocation
+			# here would violate the SAME original shared payment ledger, so reject
+			# that stale source contract before ANY body/clock/material mutation.
+			var allocation: Dictionary = lab._shared_work_plan.get("jobs", {}).get("person_actions", {}).get(key, {})
+			if float(allocation.get("actual_seconds", 0.0)) > 0.0: return Runtime.fail("WORK_PAYMENT_SOURCE")
+			continue
+		Runtime.add_items(available, source.cost, -1)
+		for resource: String in source.cost:
+			if int(available[resource]) == 0: available.erase(resource)
+		if source.recipe.has("asset"): item_count += 1
+		else: Runtime.add_items(available, source.output)
+		version += 1
+		if version > 2147483646 or Runtime.carried_load(lab.terrain.site, available, depot) + item_count > float(lab.terrain.site.capacity): return Runtime.fail("CONTACT_RANGED_BATCH_CAPACITY")
+		for resource: String in source.output:
+			if int(available.get(resource, 0)) > 1000000: return Runtime.fail("CONTACT_RANGED_BATCH_CAPACITY")
+		decisions.append({"held": held, "status": "", "source": source})
+	if item_count > 0:
+		var next_item: int = int(lab.terrain.site.get("next_item", 0))
+		if next_item <= 0 or next_item + item_count > 2147483647: return Runtime.fail("STALE_SOURCE")
+		for index: int in item_count:
+			if lab.terrain.site.item_records.has(str(next_item + index)): return Runtime.fail("STALE_SOURCE")
+	_gd_contact_job_capture["ranged_upper"] = upper
+	return Runtime.ok("原真held營地製作有限來源上界已純核")
+
+func gd_contact_job_person_ready(identity: int) -> bool:
+	if _gd_contact_job_capture.is_empty() or not _gd_contact_job_capture.people.has(identity): return false
+	var start: Dictionary = _gd_contact_job_capture.people[identity]
+	var held: Dictionary = start.held
+	var person: Dictionary = _person(identity)
+	if not person.is_empty() and held.kind in ["technology_feature", "technology_vehicle"]:
+		var team: Variant = _technology_team(person)
+		if held.kind == "technology_vehicle" and (not team is TerrainArmy or not is_same(held.job.get("team_ref"), team)): return false
+		if team is TerrainArmy and (team.is_sustain_routed() or team.combat_order != TerrainArmy.CombatOrder.HOLD): return false
+	if not is_same(_jobs.get(str(held.key)), held.job) or person.is_empty() \
+		or person.owner != start.owner or int(person.unit) != int(start.unit) or not is_same(person.body, start.body) \
+		or int(person.hit) != int(start.hit) or person.cell != start.cell or bool(person.moving): return false
+	if held.kind == "captive_craft":
+		var supervised: Dictionary = _captive_craft_job_context(held.job)
+		if not supervised.ok: return false
+		if identity == int(held.job.executor_id):
+			return is_same(supervised.person.body, person.body) and _captive_craft_body_ready(person)
+		if identity != int(held.job.guard_id) or not is_same(supervised.supervisor.body, person.body): return false
+	if held.kind not in ["technology_feature", "technology_vehicle", "captive_craft"]:
+		# Re-read the SAME original job source after EACH true contact and BEFORE
+		# the next planner segment. Preserve earlier accepted effort; never borrow
+		# an old alive body, source version, permission or peaceful camp context.
+		var current: Dictionary = _job_context(held.job)
+		if not current.ok or not bool(person.player) and _threat(person, {}): return false
+	return not bool(person.captive) and (person.owner.combat_can_act(int(person.unit)) if int(person.unit) >= 0 else person.owner.can_act())
+
+func _gd_typed_terminal_kind(kind: String) -> bool:
+	return kind in ["equipment", "loot", "tent_deploy", "tent_pack", "capture", "unbind", "ransom", "prison_release"]
+
+func _gd_typed_terminal_people_ids(job: Dictionary) -> Array[int]:
+	var result: Array[int] = []
+	var identities: Array = []
+	for field: String in ["executor_id", "target_id", "guard_id", "representative_id"]:
+		if int(job.get(field, -1)) > 0: identities.append(int(job[field]))
+	if job.get("order") is Dictionary:
+		for identity: int in job.order.get("target_ids", []): identities.append(identity)
+	if job.get("source_kind") == "person" and str(job.get("source_id", "")).is_valid_int(): identities.append(int(job.source_id))
+	for identity: int in identities:
+		if not result.has(identity): result.append(identity)
+	return result
+
+func _gd_typed_terminal_native(job: Dictionary) -> bool:
+	for identity: int in _gd_typed_terminal_people_ids(job):
+		var person: Dictionary = _person(identity, false)
+		if not person.is_empty() and person.owner is CrowdOwner: return true
+	return false
+
+func _prepare_gd_typed_terminal_upper(runtime_priors: Array) -> Dictionary:
+	if _gd_contact_job_capture.is_empty() or not is_same(runtime_priors, lab.gd_mesh_work_upper_priors()): return Runtime.fail("STALE_SOURCE")
+	var keys: Array = _gd_contact_job_capture.prepared.held.keys()
+	keys.sort_custom(func(a: String, b: String) -> bool: return int(a) < int(b))
+	for key: String in keys:
+		var held: Dictionary = _gd_contact_job_capture.prepared.held[key]
+		var source: Dictionary = held.get("typed_source", {})
+		if source.is_empty(): continue
+		if not is_same(source.get("job"), held.job) or source.get("source_only") != true: return Runtime.fail("STALE_SOURCE")
+		var checked: Dictionary = validate_gd_typed_terminal(source, false)
+		if not checked.ok: return checked
+	# This upper reader certifies real current source facts only. It does not
+	# publish, reserve a fabricated future holder version, or promise a receipt.
+	# Every original numeric endpoint obtains a fresh complete transaction after
+	# actual prior endpoints/contact before its own first debit. Refusal leaves
+	# no material mutation and does not undo the already accepted work prefix.
+	return Runtime.ok("原真typed作業來源已在首成本前核；當前端點另作真交易")
+
+func prepare_gd_typed_terminal(job: Dictionary, source_only: bool = false) -> Dictionary:
+	# This source reader always starts with the SAME original job. A source
+	# preview is not an elapsed timer, completed receipt or permission grant.
+	var key: String = str(int(job.get("executor_id", -1)))
+	var kind: String = str(job.get("kind", ""))
+	if not _gd_typed_terminal_kind(kind) or not is_same(_jobs.get(key), job) or bool(job.get("preparing", false)) or _gd_typed_terminal_native(job):
+		return Runtime.fail("STALE_SOURCE")
+	if not source_only and (not str(job.get("paused", "")).is_empty() or not Technology.finite_number(job.get("elapsed")) \
+		or not Technology.finite_number(job.get("duration")) or float(job.elapsed) + Fatigue.WORK_PLAN_EPS < float(job.duration)):
+		return Runtime.fail("NOT_COMPLETED")
+	var context: Dictionary = _job_context(job)
+	if not context.ok: return context
+	var executor: Dictionary = _person(int(job.executor_id))
+	if executor.is_empty() or executor.owner is CrowdOwner: return Runtime.fail("UNSUPPORTED", "原GD完成交易不替代Native人物owner")
+	var people: Array[Dictionary] = []
+	for identity: int in _gd_typed_terminal_people_ids(job):
+		var person: Dictionary = _person(identity)
+		if person.is_empty() or person.owner is CrowdOwner: return Runtime.fail("STALE_SOURCE")
+		people.append(_gd_custody_person_snapshot(person))
+	var prepared: Dictionary = Runtime.ok("原真作業來源候選；尚未付款或發物", {"owner": self, "job": job,
+		"job_before": job.duplicate(true), "kind": kind, "people": people, "source_only": source_only, "runtime": {}, "equipment": {}, "food": {}, "custody": {}, "original_owner": 0, "published": false})
+	match kind:
+		"equipment":
+			prepared.equipment = equipment_orders.prepare_team_equipment_change(job.order, source_only) if job.order.mode == "team_issue" else equipment_orders.prepare_equipment_change(job.order, source_only)
+			if not prepared.equipment.ok: return prepared.equipment
+		"loot":
+			var source: Dictionary = _source(str(job.source_kind), str(job.source_id))
+			prepared.original_owner = int(source.get("person_id", source.holder.get("original_owner", 0)))
+			prepared.runtime = Runtime.prepare_loot_transfer(lab.terrain, source.holder, source.cargo, executor.holder, executor.cargo,
+				job.resources, job.item_ids, int(job.source_version), int(job.destination_version), float(job.open_amount))
+			if not prepared.runtime.ok: return prepared.runtime
+			if float(job.open_amount) > 0.0:
+				# A custom callback is not evidence that the original Supply owner
+				# has accepted a pure, failure-free destination transaction.
+				if opened_food_pool != Callable(lab.site_controller, "_personal_opened_food") \
+					or opened_food_commit != Callable(lab.site_controller, "_receive_opened_food"): return Runtime.fail("UNSUPPORTED", "原開封餐份owner未接純提交")
+				prepared.food = lab.site_controller.prepare_received_opened_food(int(job.executor_id), float(job.open_amount), job.destination_pool, source_only)
+				if not prepared.food.ok: return prepared.food
+		"tent_deploy":
+			prepared.runtime = Runtime.prepare_deploy_tent(lab.terrain, job.cells, executor.cargo, executor.holder, int(job.executor_version), executor.cell, int(executor.faction), _tent_occupied, int(job.quarter))
+			if not prepared.runtime.ok: return prepared.runtime
+		"tent_pack":
+			prepared.runtime = Runtime.prepare_pack_tent(lab.terrain, str(job.feature), executor.cargo, executor.holder, int(job.executor_version), executor.cell, int(executor.faction), _tent_occupied)
+			if not prepared.runtime.ok: return prepared.runtime
+		_:
+			prepared.custody = prepare_gd_custody_terminal(job, source_only)
+			if not prepared.custody.ok: return prepared.custody
+	var checked: Dictionary = validate_gd_typed_terminal(prepared, not source_only)
+	return prepared if checked.ok else checked
+
+func validate_gd_typed_terminal(prepared: Dictionary, require_completion: bool = true) -> Dictionary:
+	if prepared.get("ok") != true or prepared.get("owner") != self or prepared.get("published") != false \
+		or not prepared.get("source_only") is bool or require_completion and bool(prepared.get("source_only", true)) \
+		or not prepared.get("job") is Dictionary or not prepared.get("job_before") is Dictionary \
+		or not prepared.get("people") is Array \
+		or not prepared.get("runtime") is Dictionary or not prepared.get("equipment") is Dictionary \
+		or not prepared.get("food") is Dictionary or not prepared.get("custody") is Dictionary: return Runtime.fail("STALE_SOURCE")
+	var job: Dictionary = prepared.get("job", {})
+	var key: String = str(int(job.get("executor_id", -1)))
+	var kind: String = str(job.get("kind", ""))
+	if not _gd_typed_terminal_kind(kind) or kind != prepared.get("kind") or not is_same(_jobs.get(key), job) or job != prepared.get("job_before"):
+		return Runtime.fail("STALE_SOURCE")
+	if require_completion and (not str(job.get("paused", "")).is_empty() or not Technology.finite_number(job.get("elapsed")) \
+		or not Technology.finite_number(job.get("duration")) or float(job.elapsed) + Fatigue.WORK_PLAN_EPS < float(job.duration)):
+		return Runtime.fail("NOT_COMPLETED")
+	var identities: Array[int] = _gd_typed_terminal_people_ids(job)
+	if prepared.people.size() != identities.size(): return Runtime.fail("STALE_SOURCE")
+	for index: int in identities.size():
+		var snapshot: Variant = prepared.people[index]
+		if not snapshot is Dictionary or int(snapshot.get("person", {}).get("person_id", -1)) != identities[index] \
+			or not _gd_custody_person_matches(snapshot): return Runtime.fail("STALE_SOURCE")
+	var checked: Dictionary = _job_context(job)
+	if not checked.ok: return checked
+	var executor: Dictionary = _person(int(job.executor_id))
+	if executor.is_empty() or executor.owner is CrowdOwner: return Runtime.fail("UNSUPPORTED")
+	if require_completion and not bool(executor.player) and _threat(executor, {}): return Runtime.fail("THREAT")
+	match kind:
+		"equipment":
+			if not is_same(prepared.get("equipment", {}).get("order"), job.get("order")) or prepared.equipment.get("source_only") != prepared.source_only \
+				or not prepared.runtime.is_empty() or not prepared.food.is_empty() or not prepared.custody.is_empty(): return Runtime.fail("INVALID")
+			checked = equipment_orders.validate_team_equipment_change(prepared.equipment, require_completion) if job.order.mode == "team_issue" else equipment_orders.validate_equipment_change(prepared.equipment, require_completion)
+		"loot":
+			var source: Dictionary = _source(str(job.source_kind), str(job.source_id))
+			var original: Dictionary = prepared.get("runtime", {})
+			if source.is_empty() or not is_same(original.get("source"), source.get("holder")) or not is_same(original.get("source_cargo"), source.get("cargo")) \
+				or not is_same(original.get("destination"), executor.holder) or not is_same(original.get("destination_cargo"), executor.cargo) \
+				or not is_same(original.get("terrain"), lab.terrain) or not is_same(original.get("site_state"), lab.terrain.site) \
+				or original.get("resources") != job.resources or original.get("item_ids") != job.item_ids or original.get("open_amount") != job.open_amount \
+				or int(original.get("source_version", -1)) != int(job.source_version) or int(original.get("destination_version", -1)) != int(job.destination_version) \
+				or int(original.get("capacity", -1)) != Runtime.CARRY_CAPACITY or int(prepared.get("original_owner", -1)) != int(source.get("person_id", source.holder.get("original_owner", 0))) \
+				or not prepared.equipment.is_empty() or not prepared.custody.is_empty(): return Runtime.fail("INVALID")
+			if float(job.open_amount) > 0.0:
+				if prepared.food.get("owner") != lab.site_controller or int(prepared.food.get("identity", -1)) != int(job.executor_id) \
+					or prepared.food.get("amount") != job.open_amount or prepared.food.get("source_only") != prepared.source_only \
+					or (not job.destination_pool.is_empty() or not prepared.food.get("original", {}).is_empty()) and not is_same(prepared.food.get("original"), job.destination_pool): return Runtime.fail("INVALID")
+			elif not prepared.food.is_empty(): return Runtime.fail("INVALID")
+			checked = Runtime.validate_prepared_loot_transfer(original)
+			if not checked.ok: return checked
+			# The original item transfer guard can be a callback. Its source CAS
+			# completes before the destination food owner's final pure recheck.
+			if not prepared.food.is_empty(): checked = lab.site_controller.validate_received_opened_food(prepared.food, require_completion)
+		"tent_deploy":
+			var original: Dictionary = prepared.get("runtime", {})
+			if not is_same(original.get("cargo"), executor.cargo) or not is_same(original.get("holder"), executor.holder) \
+				or not is_same(original.get("terrain"), lab.terrain) or not is_same(original.get("site_state"), lab.terrain.site) \
+				or original.get("cells") != job.cells or int(original.get("expected_version", -1)) != int(job.executor_version) \
+				or original.get("actor_cell") != executor.cell or int(original.get("quarter", -1)) != int(job.quarter) \
+				or int(original.get("owner_faction", -1)) != int(executor.faction) or original.get("occupied") != Callable(self, "_tent_occupied") \
+				or not prepared.equipment.is_empty() or not prepared.food.is_empty() or not prepared.custody.is_empty(): return Runtime.fail("INVALID")
+			checked = Runtime.validate_prepared_deploy_tent(original)
+		"tent_pack":
+			var original: Dictionary = prepared.get("runtime", {})
+			if not is_same(original.get("cargo"), executor.cargo) or not is_same(original.get("holder"), executor.holder) \
+				or not is_same(original.get("terrain"), lab.terrain) or not is_same(original.get("site_state"), lab.terrain.site) \
+				or original.get("key") != job.feature or int(original.get("expected_version", -1)) != int(job.executor_version) \
+				or original.get("actor_cell") != executor.cell or not is_same(original.get("feature"), job.feature_owner) \
+				or int(original.get("owner_faction", -1)) != int(executor.faction) or int(original.get("capacity", -1)) != Runtime.CARRY_CAPACITY \
+				or original.get("occupied") != Callable(self, "_tent_occupied") \
+				or not prepared.equipment.is_empty() or not prepared.food.is_empty() or not prepared.custody.is_empty(): return Runtime.fail("INVALID")
+			checked = Runtime.validate_prepared_pack_tent(original)
+		_:
+			if not is_same(prepared.get("custody", {}).get("job"), job) or prepared.custody.get("source_only") != prepared.source_only \
+				or not prepared.equipment.is_empty() or not prepared.food.is_empty() or not prepared.runtime.is_empty(): return Runtime.fail("INVALID")
+			# Root's original Supply change guard cache is refreshed LAST here;
+			# no later owner callback or old cached plan may cross its publication.
+			checked = validate_gd_custody_terminal(prepared.custody)
+	if not checked.ok: return checked
+	# The original owner validators above may invoke genuine admission
+	# callbacks. Only direct SAME-job scalar/ref comparison follows them.
+	if not is_same(_jobs.get(key), job) or job != prepared.job_before: return Runtime.fail("STALE_SOURCE")
+	for snapshot: Dictionary in prepared.people:
+		if not _gd_custody_person_matches(snapshot): return Runtime.fail("STALE_SOURCE")
+	return Runtime.ok()
+
+func publish_gd_typed_terminal(prepared: Dictionary) -> Dictionary:
+	assert(prepared.ok and prepared.owner == self and not prepared.source_only and not prepared.published)
+	var job: Dictionary = prepared.job
+	var result: Dictionary = Runtime.ok()
+	match str(prepared.kind):
+		"equipment":
+			if job.order.mode == "team_issue": equipment_orders.publish_team_equipment_change(prepared.equipment)
+			else: equipment_orders.publish_equipment_change(prepared.equipment)
+			result = prepared.equipment.result
+		"loot":
+			result = Runtime.publish_prepared_loot_transfer(prepared.runtime)
+			if not prepared.food.is_empty(): lab.site_controller.publish_received_opened_food(prepared.food)
+			if not prepared.runtime.cleanup.is_empty():
+				Runtime.publish_prepared_clear_empty_ground_loot(prepared.runtime.cleanup)
+				Runtime.notify_cleared_ground_loot(prepared.runtime.cleanup)
+			var original_owner: int = int(prepared.original_owner)
+			if original_owner > 0 and equipment_changed.is_valid(): equipment_changed.call(original_owner)
+			if equipment_changed.is_valid(): equipment_changed.call(int(job.executor_id))
+		"tent_deploy": result = Runtime.publish_prepared_deploy_tent(prepared.runtime)
+		"tent_pack": result = Runtime.publish_prepared_pack_tent(prepared.runtime)
+		_: result = publish_gd_custody_terminal(prepared.custody)
+	prepared.published = true
+	return result
+
+func _commit_gd_typed_terminal(job: Dictionary) -> Dictionary:
+	var prepared: Dictionary = prepare_gd_typed_terminal(job)
+	if not prepared.ok: return prepared
+	var checked: Dictionary = validate_gd_typed_terminal(prepared)
+	return publish_gd_typed_terminal(prepared) if checked.ok else checked
+
+func _gd_custody_native(job: Dictionary) -> bool:
+	for field: String in ["executor_id", "target_id", "guard_id", "representative_id"]:
+		var identity: int = int(job.get(field, -1))
+		if identity < 0: continue
+		var person: Dictionary = _person(identity, false)
+		if not person.is_empty() and person.owner is CrowdOwner: return true
+	return false
+
+func _gd_custody_job_signature(job: Dictionary) -> Dictionary:
+	var result: Dictionary = {}
+	for field: String in ["kind", "executor_id", "target_id", "guard_id", "representative_id", "executor_hit", "executor_cell", "target_hit", "source_cell", "executor_hp", "target_hp", "source_version", "duration", "elapsed", "paused", "preparing", "captivity", "resources", "representative_hit", "representative_cell", "source_owner", "destination_owner", "source_revision", "destination_revision", "source_stock"]:
+		if job.has(field): result[field] = job[field]
+	return result.duplicate(true)
+
+func _gd_custody_person_snapshot(person: Dictionary) -> Dictionary:
+	return {"person": person, "holder_before": person.holder.duplicate(true), "cargo_before": person.cargo.duplicate(true),
+		"physical": {"person_id": int(person.person_id), "unit": int(person.unit), "cell": person.cell, "hit": int(person.hit),
+			"hp": float(person.hp), "ko": float(person.ko), "moving": bool(person.moving), "captive": bool(person.captive),
+			"surrender_pending": bool(person.surrender_pending), "faction": int(person.faction)}}
+
+func _gd_custody_person_matches(snapshot: Dictionary) -> bool:
+	var original: Dictionary = snapshot.get("person", {})
+	if original.is_empty(): return false
+	var person: Dictionary = _person(int(original.person_id))
+	if person.is_empty() or person.owner is CrowdOwner or not is_same(person.owner, original.owner) \
+		or not is_same(person.body, original.body) or not is_same(person.holder, original.holder) or not is_same(person.cargo, original.cargo) \
+		or person.holder != snapshot.holder_before or person.cargo != snapshot.cargo_before: return false
+	return _gd_custody_person_snapshot(person).physical == snapshot.physical
+
+func _gd_custody_capture_fields(sequence: int) -> Dictionary:
+	# Projection of new_capture_fields at the CURRENT clock only. No sequence
+	# is drawn until this actual endpoint publishes; an upper source is not
+	# a completed capture or an admission/research witness.
+	return {"captured_at_game_seconds": Runtime.now(lab.terrain) * 60.0, "admitted_at_game_seconds": -1.0,
+		"episode": "%s:%d" % [str(lab.terrain.site.get("id", "")), sequence], "legacy_observed": false}
+
+func _gd_custody_ransom_resources(stock: Dictionary) -> Dictionary:
+	var selected: Dictionary = {}
+	var left: int = RANSOM_RATIONS
+	for food: String in FOODS:
+		var quantity: int = mini(left, int(stock.get(food, 0)))
+		if quantity > 0: selected[food] = quantity
+		left -= quantity
+	return selected if left == 0 else {}
+
+func prepare_gd_custody_terminal(job: Dictionary, source_only: bool = false) -> Dictionary:
+	if job.get("kind") not in ["capture", "unbind", "ransom", "prison_release"] or _gd_custody_native(job): return Runtime.fail("UNSUPPORTED")
+	if not is_same(_jobs.get(str(int(job.get("executor_id", -1))), {}), job) \
+		or bool(lab.terrain.site.get("paused", false)) or not str(job.get("paused", "")).is_empty() and (not source_only or str(job.paused) != "REST") \
+		or bool(job.get("preparing", false)) or not Technology.finite_number(job.get("elapsed")) \
+		or not Technology.finite_number(job.get("duration")) \
+		or not source_only and float(job.elapsed) + Fatigue.WORK_PLAN_EPS < float(job.duration): return Runtime.fail("STALE_SOURCE")
+	var check: Dictionary = _job_context(job)
+	if not check.ok: return check
+	var executor: Dictionary = _person(int(job.executor_id))
+	var target: Dictionary = _person(int(job.target_id))
+	if executor.is_empty() or target.is_empty() or int(target.holder.version) >= 2147483646: return Runtime.fail("STALE_SOURCE")
+	var site: Dictionary = lab.terrain.site
+	var people: Array[Dictionary] = []
+	var seen: Dictionary = {}
+	for field: String in ["executor_id", "target_id", "guard_id", "representative_id"]:
+		var identity: int = int(job.get(field, -1))
+		if identity < 0 or seen.has(identity): continue
+		var person: Dictionary = _person(identity)
+		if person.is_empty() or person.owner is CrowdOwner: return Runtime.fail("STALE_SOURCE")
+		seen[identity] = true
+		people.append(_gd_custody_person_snapshot(person))
+	var capturing: bool = job.kind == "capture"
+	var relation: Dictionary = site.captivity.get(str(job.target_id), {})
+	var captor_id: int = int(job.executor_id) if capturing else int(relation.get("captor_id", -1))
+	var prepared: Dictionary = Runtime.ok("原GD拘押完成來源已純核", {"job": job, "job_signature": _gd_custody_job_signature(job),
+		"terrain": lab.terrain, "site_state": site, "captivity": site.captivity, "relation": relation,
+		"relation_before": relation.duplicate(true), "executor": executor, "target": target, "people": people,
+		"capturing": capturing, "captor_id": captor_id, "sealed": {}, "loot": {}, "container_id": "",
+		"query": {}, "source_before": {}, "destination_before": {}, "sequence": -1,
+		"next_relation": {}, "source_only": source_only, "published": false})
+	if capturing:
+		var sequence: Variant = site.get("capture_episode_next", 1)
+		if not sequence is int or int(sequence) < 1 or int(sequence) >= 2147483647: return Runtime.fail("STALE_SOURCE")
+		prepared.sequence = int(sequence)
+		prepared.sealed = _sealed_selection(target)
+		if not prepared.sealed.resources.is_empty() or not prepared.sealed.item_ids.is_empty():
+			prepared.loot = Runtime.prepare_leave_ground_loot(lab.terrain, target.holder, target.cargo, int(job.target_id), target.cell,
+				"sealed", prepared.sealed.resources, prepared.sealed.item_ids, int(job.source_version))
+			if not prepared.loot.ok: return prepared.loot
+			prepared.container_id = str(prepared.loot.identity)
+		prepared.next_relation = {"version": 3, "captor_id": captor_id, "guard_id": int(job.guard_id),
+			"captor_faction": int(executor.faction), "sealed_container": prepared.container_id, "prison_id": ""}
+		prepared.next_relation.merge(_gd_custody_capture_fields(int(prepared.sequence)))
+	elif job.kind == "ransom":
+		prepared.query = _ransom_context(executor, target, _person(int(job.representative_id)))
+		if not prepared.query.ok: return prepared.query
+		prepared.source_before = prepared.query.source.duplicate(true)
+		prepared.destination_before = prepared.query.destination.duplicate(true)
+	var stable: Dictionary = validate_gd_custody_terminal(prepared)
+	return prepared if stable.ok else stable
+
+func validate_gd_custody_terminal(prepared: Dictionary) -> Dictionary:
+	if prepared.get("ok") != true or prepared.get("published") != false or not prepared.get("source_only") is bool \
+		or not is_same(prepared.get("terrain"), lab.terrain) or not is_same(prepared.get("site_state"), lab.terrain.site): return Runtime.fail("STALE_SOURCE")
+	var job: Dictionary = prepared.get("job", {})
+	if job.get("kind") not in ["capture", "unbind", "ransom", "prison_release"] or _gd_custody_native(job) \
+		or not is_same(_jobs.get(str(int(job.get("executor_id", -1))), {}), job) \
+		or bool(lab.terrain.site.get("paused", false)) or _gd_custody_job_signature(job) != prepared.get("job_signature") \
+		or not str(job.get("paused", "")).is_empty() and (not bool(prepared.source_only) or str(job.paused) != "REST") or bool(job.get("preparing", false)) \
+		or not Technology.finite_number(job.get("elapsed")) or not Technology.finite_number(job.get("duration")) \
+		or not bool(prepared.source_only) and float(job.elapsed) + Fatigue.WORK_PLAN_EPS < float(job.duration): return Runtime.fail("STALE_SOURCE")
+	var site: Dictionary = lab.terrain.site
+	var executor: Dictionary = _person(int(job.executor_id))
+	var target: Dictionary = _person(int(job.target_id))
+	var capturing: bool = job.kind == "capture"
+	var relation: Dictionary = site.captivity.get(str(job.target_id), {})
+	if not is_same(site.captivity, prepared.captivity) or executor.is_empty() or target.is_empty() \
+		or not is_same(executor.body, prepared.executor.body) or not is_same(target.body, prepared.target.body) \
+		or not is_same(executor.owner, prepared.executor.owner) or not is_same(target.owner, prepared.target.owner) \
+		or not is_same(executor.holder, prepared.executor.holder) or not is_same(target.holder, prepared.target.holder) \
+		or not is_same(executor.cargo, prepared.executor.cargo) or not is_same(target.cargo, prepared.target.cargo) \
+		or _gd_custody_person_snapshot(executor).physical != _gd_custody_person_snapshot(prepared.executor).physical \
+		or _gd_custody_person_snapshot(target).physical != _gd_custody_person_snapshot(prepared.target).physical \
+		or capturing != bool(prepared.capturing) or int(target.holder.version) >= 2147483646 \
+		or relation != prepared.relation_before or not capturing and not is_same(relation, prepared.relation): return Runtime.fail("STALE_SOURCE")
+	var captor_id: int = int(job.executor_id) if capturing else int(relation.get("captor_id", -1))
+	if captor_id != int(prepared.captor_id): return Runtime.fail("STALE_SOURCE")
+	var expected_ids: Array[int] = []
+	for field: String in ["executor_id", "target_id", "guard_id", "representative_id"]:
+		var identity: int = int(job.get(field, -1))
+		if identity >= 0 and not expected_ids.has(identity): expected_ids.append(identity)
+	if not prepared.get("people") is Array or prepared.people.size() != expected_ids.size(): return Runtime.fail("INVALID")
+	for index: int in range(expected_ids.size()):
+		if not prepared.people[index] is Dictionary or int(prepared.people[index].get("person", {}).get("person_id", -1)) != expected_ids[index]: return Runtime.fail("INVALID")
+	if capturing:
+		if int(site.get("capture_episode_next", 1)) != int(prepared.sequence) or prepared.sealed != _sealed_selection(target): return Runtime.fail("STALE_SOURCE")
+		var loot: Dictionary = prepared.loot
+		if prepared.sealed.resources.is_empty() and prepared.sealed.item_ids.is_empty():
+			if not loot.is_empty() or not str(prepared.container_id).is_empty(): return Runtime.fail("INVALID")
+		else:
+			if not is_same(loot.get("terrain"), lab.terrain) or not is_same(loot.get("site_state"), site) \
+				or not is_same(loot.get("source"), target.holder) or not is_same(loot.get("source_cargo"), target.cargo) \
+				or str(loot.get("identity", "")) != str(prepared.container_id) \
+				or loot.get("kind") != "sealed" or int(loot.get("original_owner", -1)) != int(job.target_id) \
+				or loot.get("cell") != target.cell or loot.get("resources") != prepared.sealed.resources \
+				or loot.get("item_ids") != prepared.sealed.item_ids: return Runtime.fail("INVALID")
+			var checked_loot: Dictionary = Runtime.validate_prepared_leave_ground_loot(loot)
+			if not checked_loot.ok: return checked_loot
+		var expected: Dictionary = {"version": 3, "captor_id": captor_id, "guard_id": int(job.guard_id),
+			"captor_faction": int(executor.faction), "sealed_container": str(prepared.container_id), "prison_id": ""}
+		expected.merge(_gd_custody_capture_fields(int(prepared.sequence)))
+		if prepared.next_relation != expected: return Runtime.fail("INVALID")
+	elif job.kind == "ransom":
+		var query: Dictionary = _ransom_context(executor, target, _person(int(job.representative_id)))
+		if not query.ok: return query
+		var held: Dictionary = prepared.query
+		if not is_same(query.source, held.get("source")) or not is_same(query.destination, held.get("destination")) \
+			or not is_same(query.source_entry, held.get("source_entry")) or not is_same(query.destination_entry, held.get("destination_entry")) \
+			or query.source != prepared.source_before or query.destination != prepared.destination_before \
+			or query.source_owner != held.source_owner or query.destination_owner != held.destination_owner \
+			or int(query.source_revision) != int(held.source_revision) or int(query.destination_revision) != int(held.destination_revision) \
+			or int(query.source_revision) >= 2147483646 or int(query.destination_revision) >= 2147483646 \
+			or job.resources != _gd_custody_ransom_resources(query.source) or not Runtime.can_pay(query.source, job.resources): return Runtime.fail("STALE_SOURCE")
+		var after: Dictionary = query.destination.duplicate(true)
+		Runtime.add_items(after, job.resources)
+		if not Runtime._resource_stack(after): return Runtime.fail("STORAGE_FULL")
+	# Original source guards can call original owners. The final successful
+	# guard must be the SAME current supply plan: that owner intentionally
+	# retains only its latest prepared change. No other candidate or callback
+	# may run between this validation and its synchronous publication.
+	var current: Dictionary = _job_context(job)
+	if not current.ok: return current
+	var supply: Dictionary = captivity_change_guard.call(int(job.target_id), captor_id, capturing)
+	if not supply.ok: return supply
+	if not is_same(_jobs.get(str(int(job.executor_id)), {}), job) or _gd_custody_job_signature(job) != prepared.job_signature \
+		or not is_same(lab.terrain, prepared.terrain) or not is_same(lab.terrain.site, prepared.site_state) \
+		or not is_same(site.captivity, prepared.captivity) or site.captivity.get(str(job.target_id), {}) != prepared.relation_before: return Runtime.fail("STALE_SOURCE")
+	if capturing and (int(site.get("capture_episode_next", 1)) != int(prepared.sequence) \
+		or prepared.sealed != _sealed_selection(_person(int(job.target_id))) \
+		or prepared.next_relation.get("captured_at_game_seconds") != Runtime.now(lab.terrain) * 60.0): return Runtime.fail("STALE_SOURCE")
+	for person: Dictionary in prepared.people:
+		if not _gd_custody_person_matches(person): return Runtime.fail("STALE_SOURCE")
+	if capturing and not prepared.loot.is_empty():
+		var final_loot: Dictionary = Runtime.validate_prepared_leave_ground_loot(prepared.loot)
+		if not final_loot.ok: return final_loot
+	if job.kind == "ransom" and (prepared.query.source != prepared.source_before or prepared.query.destination != prepared.destination_before \
+		or int(prepared.query.source_entry.revision) != int(prepared.query.source_revision) \
+		or int(prepared.query.destination_entry.revision) != int(prepared.query.destination_revision) \
+		or not is_same(site.get("team_supply", {}).get(str(prepared.query.source_owner).get_slice(":", 1)), prepared.query.source_entry) \
+		or not is_same(site.get("team_supply", {}).get(str(prepared.query.destination_owner).get_slice(":", 1)), prepared.query.destination_entry)): return Runtime.fail("STALE_SOURCE")
+	return Runtime.ok()
+
+func publish_gd_custody_terminal(prepared: Dictionary) -> Dictionary:
+	assert(prepared.ok and not prepared.source_only and not prepared.published)
+	var job: Dictionary = prepared.job
+	var target: Dictionary = prepared.target
+	if job.kind == "ransom":
+		Runtime.add_items(prepared.query.source, job.resources, -1)
+		for resource: String in prepared.query.source.keys():
+			if int(prepared.query.source[resource]) == 0: prepared.query.source.erase(resource)
+		Runtime.add_items(prepared.query.destination, job.resources)
+		ransom_exchange_committed.call(prepared.query)
+	if prepared.capturing:
+		if not prepared.loot.is_empty(): Runtime.publish_prepared_leave_ground_loot(prepared.loot)
+		prepared.site_state.capture_episode_next = int(prepared.sequence) + 1
+		prepared.next_relation.merge(capture_fields(int(job.target_id), target), true)
+		prepared.captivity[str(job.target_id)] = prepared.next_relation
+	else:
+		_social_before_release(int(job.target_id), target, str(job.kind) == "ransom")
+		prepared.captivity.erase(str(job.target_id))
+	_body_set(target, "captive", bool(prepared.capturing))
+	if prepared.capturing and bool(target.surrender_pending): _body_set(target, "surrender_pending", false)
+	target.holder.version = int(target.holder.version) + 1
+	captivity_supply_commit.call(int(job.target_id), int(prepared.captor_id), bool(prepared.capturing))
+	prepared.published = true
+	if equipment_changed.is_valid(): equipment_changed.call(int(job.target_id))
+	captivity_changed.call(int(job.target_id), int(prepared.captor_id), bool(prepared.capturing))
+	return Runtime.ok("已出監解綁；生命、昏迷、位置與實物維持原值" if job.kind == "prison_release" else ("已拘束；封存物留在原地" if prepared.capturing else "已解綁；生命與昏迷不變"), {"container_id": str(prepared.container_id)})
+
+func _commit_gd_custody_terminal(job: Dictionary) -> Dictionary:
+	var prepared: Dictionary = prepare_gd_custody_terminal(job)
+	if not prepared.ok: return prepared
+	var current: Dictionary = validate_gd_custody_terminal(prepared)
+	if not current.ok: return current
+	return publish_gd_custody_terminal(prepared)
+
+func _prepare_technology_lesson_completion(job: Dictionary) -> Dictionary:
+	if not is_same(_jobs.get(str(int(job.get("executor_id", -1))), {}), job) or job.get("kind") != "technology_lesson" \
+		or not str(job.get("paused", "")).is_empty() or not Technology.finite_number(job.get("duration"), 300.0) \
+		or not Technology.finite_number(job.get("elapsed")) or float(job.elapsed) + Fatigue.WORK_PLAN_EPS < float(job.duration): return Runtime.fail("STALE_COURSE")
+	var check: Dictionary = _technology_lesson_context(job)
+	if not check.ok: return check
+	var family: Dictionary = _technology_family()
+	var record: Dictionary = family.technology
+	var candidate: Dictionary = record.duplicate(true)
+	var tech_id: String = str(job.get("technology_id", "F07"))
+	var student: Dictionary = _person(int(job.target_id))
+	var previous: Dictionary = _body_get(student, "technology")
+	var learned: Dictionary = Technology.learned_candidate(previous, tech_id)
+	if learned.is_empty(): return Runtime.fail("INVALID_TECHNOLOGY")
+	candidate = _technology_lesson_family_candidate(record, job)
+	if candidate.is_empty(): return Runtime.fail("INVALID_TECHNOLOGY")
+	var prepared: Dictionary = Runtime.ok("", {"job": job, "family": family, "record": record, "record_before": record.duplicate(true),
+		"state": candidate, "student": student, "previous": previous.duplicate(true), "learned": learned, "funding": {}, "phase_before": {}, "published": false})
+	prepared.funding = prepare_nation_funded_lesson(job, learned)
+	if not prepared.funding.ok: return prepared.funding
+	if not prepared.funding.phase.is_empty(): prepared.phase_before = prepared.funding.phase.record.duplicate(true)
+	var stable: Dictionary = _validate_technology_lesson_completion(prepared)
+	return prepared if stable.ok else stable
+
+func _validate_technology_lesson_completion(prepared: Dictionary) -> Dictionary:
+	if prepared.get("ok") != true or prepared.get("published") != false: return Runtime.fail("STALE_COURSE")
+	var job: Dictionary = prepared.get("job", {})
+	if not is_same(_jobs.get(str(int(job.get("executor_id", -1))), {}), job) or not str(job.get("paused", "")).is_empty() \
+		or not Technology.finite_number(job.get("elapsed")) or float(job.elapsed) + Fatigue.WORK_PLAN_EPS < float(job.duration): return Runtime.fail("STALE_COURSE")
+	var check: Dictionary = _technology_lesson_context(job)
+	if not check.ok: return check
+	var family: Dictionary = _technology_family()
+	var student: Dictionary = _person(int(job.target_id))
+	if not is_same(family, prepared.family) or not is_same(family.get("technology"), prepared.record) or prepared.record != prepared.record_before \
+		or student.is_empty() or not is_same(student.body, prepared.student.body) or _body_get(student, "technology") != prepared.previous \
+		or prepared.state != _technology_lesson_family_candidate(prepared.record, job) or prepared.learned != Technology.learned_candidate(prepared.previous, str(job.get("technology_id", "F07"))): return Runtime.fail("STALE_PROJECT")
+	var funding: Dictionary = prepared.funding
+	if not funding.payment.is_empty():
+		var paid: Dictionary = equipment_orders.validate_funded_course_payment(funding.payment)
+		if not paid.ok: return paid
+	# A schema-valid packet is not proof of THIS actual completed lesson. Requery
+	# the true named course/payment/event and compare its exact derived Scope
+	# payload; a caller cannot substitute other legal knowledge/history.
+	var expected: Dictionary = prepare_nation_funded_lesson(job, prepared.learned)
+	if not expected.ok: return expected
+	if funding.phase.is_empty() != expected.phase.is_empty() or funding.payment.is_empty() != expected.payment.is_empty(): return Runtime.fail("INVALID_RECEIPT")
+	if not funding.phase.is_empty():
+		var phase: Dictionary = funding.phase
+		var actual: Dictionary = expected.phase
+		if not is_same(phase.site_state, lab.terrain.site) or not is_same(phase.owner.get("technology"), phase.record) \
+			or phase.record != prepared.phase_before or not is_same(phase.owner, actual.owner) or not is_same(phase.record, actual.record) \
+			or not is_same(phase.person.body, actual.person.body) or phase.state != actual.state \
+			or phase.person_candidate != actual.person_candidate or phase.complete != actual.complete: return Runtime.fail("INVALID_RECEIPT")
+	# The original transfer guard inside the requery can call original owners;
+	# after it, recheck all old held endpoints before the first material cost.
+	check = _technology_lesson_context(job)
+	if not check.ok: return check
+	family = _technology_family()
+	student = _person(int(job.target_id))
+	if not is_same(_jobs.get(str(int(job.executor_id)), {}), job) or not is_same(family, prepared.family) \
+		or not is_same(family.get("technology"), prepared.record) or prepared.record != prepared.record_before \
+		or student.is_empty() or not is_same(student.body, prepared.student.body) or _body_get(student, "technology") != prepared.previous \
+		or not str(job.get("paused", "")).is_empty() or float(job.elapsed) + Fatigue.WORK_PLAN_EPS < float(job.duration): return Runtime.fail("STALE_PROJECT")
+	if not funding.payment.is_empty():
+		var paid: Dictionary = equipment_orders.validate_funded_course_payment(funding.payment)
+		if not paid.ok: return paid
+	return Runtime.ok()
+
+func _publish_technology_lesson_completion(prepared: Dictionary) -> void:
+	assert(prepared.ok and not prepared.published)
+	var funding: Dictionary = prepared.funding
+	if not funding.payment.is_empty(): equipment_orders.publish_funded_course_payment(funding.payment)
+	prepared.family.technology = prepared.state
+	_body_set(prepared.student, "technology", prepared.learned)
+	if not funding.phase.is_empty(): publish_phase_receipt(funding.phase)
+	prepared.published = true
+
+func _prepare_gd_funded_lesson_upper(runtime_priors: Array) -> Dictionary:
+	if _gd_contact_job_capture.is_empty() or not is_same(runtime_priors, lab.gd_mesh_work_upper_priors()): return Runtime.fail("STALE_SOURCE")
+	var sources: Array[Dictionary] = []
+	var available: Array[Dictionary] = []
+	for key: String in _gd_contact_job_capture.prepared.held:
+		var held: Dictionary = _gd_contact_job_capture.prepared.held[key]
+		var source: Dictionary = held.get("funded_source", {})
+		if source.is_empty(): continue
+		var valid: Dictionary = equipment_orders.validate_funded_course_source(source)
+		if not is_same(_jobs.get(key), held.job) or not valid.ok: return valid if not valid.ok else Runtime.fail("STALE_COURSE")
+		var found: int = -1
+		for index: int in sources.size():
+			if is_same(sources[index].source_cargo, source.source_cargo): found = index
+		if found < 0:
+			found = sources.size()
+			sources.append(source)
+			available.append(source.source_cargo.duplicate(true))
+			for prior: Dictionary in runtime_priors:
+				if not lab.gd_mesh_work_upper_candidate(prior): return Runtime.fail("STALE_SOURCE")
+				var payment: Dictionary = prior.get("payment", {})
+				if not payment.is_empty() and is_same(payment.get("cargo"), source.source_cargo):
+					if not Runtime.can_pay(available[found], payment.cost): return Runtime.fail("MATERIALS")
+					Runtime.add_items(available[found], payment.cost, -1)
+		for prior: Dictionary in runtime_priors:
+			if bool(prior.get("deferred_endpoint", false)) and (is_same(prior.start.get("cargo"), source.source_cargo) \
+				or is_same(prior.start.get("cargo"), source.destination_cargo)): return Runtime.fail("CONTACT_FUNDED_RUNTIME_ENDPOINT_COLLISION")
+		if not Runtime.can_pay(available[found], {"grain": 2}):
+			var allocation: Dictionary = lab._shared_work_plan.get("jobs", {}).get("person_actions", {}).get(key, {})
+			if float(allocation.get("actual_seconds", 0.0)) > 0.0: return Runtime.fail("WORK_PAYMENT_SOURCE")
+			continue # Original numeric zero-effort failure rechecks after earlier true payment.
+		Runtime.add_items(available[found], {"grain": 2}, -1)
+	return Runtime.ok("原有限授課庫量／當前原師徒容量已純核；不建立完成證據")
+
+func _technology_lesson_family_candidate(record: Dictionary, job: Dictionary) -> Dictionary:
+	# Pure projection of the SAME current original Family record. Only the
+	# student's previously paid matching relearn history closes; archives and
+	# every other actor/project remain exact, and no knowledge is added here.
+	if not Technology.valid_family_tech(record): return {}
+	var candidate: Dictionary = record.duplicate(true)
+	var tech_id: String = str(job.get("technology_id", "F07"))
+	var wanted: String = tech_id + ":relearn:" + JSON.stringify([_technology_site_id(), int(job.target_id)])
+	for project: Dictionary in candidate.projects:
+		if project.tech_id == tech_id and (str(project.purpose) == wanted or Technology.project_purpose_matches(project, _technology_ref(int(job.target_id)), candidate.get("person_links", []))) and not bool(project.closed):
+			project.closed = true
+			if int(candidate.active) == int(project.id): candidate.active = 0
+	return candidate if Technology.valid_family_tech(candidate) else {}
+
+func _prepare_scope_phase_completion(token: Dictionary, payment: Dictionary, event_id: String, productive: float) -> Dictionary:
+	var context := _technology_phase_context(token, false, false)
+	if not context.ok: return context
+	if not payment.get("ok", false) or not is_same(payment.get("owner"), context.owner) \
+		or not is_same(payment.get("record"), context.record) or not is_same(payment.get("site_state"), lab.terrain.site): return Runtime.fail("STALE_SOURCE")
+	var receipt := {"site_id": _technology_site_id(), "person_id": int(token.person.person_id), "attempt": int(token.attempt),
+		"phase_id": str(token.phase_id), "event_id": event_id, "work_seconds": productive, "payment_id": str(payment.payment_id)}
+	var candidate := Technology.scope_receipt_candidate(payment.state, str(token.scope), receipt)
+	if not candidate.ok: return candidate
+	var learned: Dictionary = {}
+	if candidate.complete and token.scope == "family":
+		learned = Technology.learned_candidate(_body_get(context.person, "technology"), str(token.tech_id))
+		if learned.is_empty(): return Runtime.fail("INVALID_TECHNOLOGY")
+	return Runtime.ok("", {"owner": context.owner, "record": context.record, "state": candidate.state,
+		"person": context.person, "person_candidate": learned, "complete": candidate.complete, "site_state": lab.terrain.site})
+
+func _scope_ranged_craft_guard(identity: int, token: Dictionary, preview: bool = false) -> Dictionary:
+	var recipe := _scope_ranged_recipe(token)
+	if recipe.is_empty() or int(token.person.person_id) != identity: return Runtime.fail("INVALID_TECHNOLOGY")
+	var context := _technology_phase_context(token, false)
+	var job: Dictionary = _jobs.get(_job_key_for(identity), {})
+	if preview and job.is_empty(): return context if context.ok else _technology_phase_context(token, true)
+	if not context.ok: return context
+	if job.get("kind") != "ranged_craft" or not is_same(job.get("technology_scope_token"), token) \
+		or not is_same(job.get("terrain"), lab.terrain) or not is_same(job.get("site_state"), lab.terrain.site) \
+		or not is_same(job.get("technology_executor_body"), context.person.body) \
+		or not is_same(job.get("depot_holder"), lab.terrain.site.depot_items) or not is_same(job.get("depot_stock"), lab.terrain.site.inventory) \
+		or job.get("recipe") != recipe or float(job.duration) != float(Runtime.RANGED_RECIPES[recipe].duration) \
+		or not Technology.material_equal(token.materials, Runtime.RANGED_RECIPES[recipe].cost): return Runtime.fail("STALE_SOURCE")
+	if not preview and float(job.elapsed) + 0.00000001 < float(job.duration): return Runtime.fail("WAITING")
+	return context
+
+func begin_scope_food_order(proposed: Dictionary, preview: bool = false) -> Dictionary:
+	var parts: Variant = JSON.parse_string(str(proposed.get("target_id", "")).trim_prefix("settlement-food:"))
+	if not parts is Array or parts.size() != 3 or parts[0] != _technology_site_id() \
+		or proposed.get("target_id") != Runtime.settlement_food_target(str(parts[0]), str(parts[1]), str(parts[2])): return Runtime.fail("NO_TARGET")
+	var refs := Runtime._settlement_food_refs(lab.terrain, str(parts[1]), str(parts[2]))
+	if refs.is_empty() or not Runtime._settlement_food_token(lab.terrain, proposed, refs.order): return Runtime.fail("STALE_PROJECT")
+	var p: Dictionary = refs.order.payload
+	var token: Dictionary = proposed if p.stage == "prepared" else p.token
+	if p.stage != "prepared":
+		var current := _technology_paid_phase_context(token)
+		if not current.ok: return current
+	if p.stage in ["prepared", "carrier"]:
+		return transfer_settlement_food_order(_technology_controlled(), str(parts[1]), str(parts[2]), "load" if p.stage == "prepared" else "arrive", token, preview)
+	if p.stage == "arrived": return begin_settlement_food_work(_technology_controlled(), str(parts[1]), str(parts[2]), preview)
+	return Runtime.fail("COMPLETE")
+
+func begin_water_schedule_trial(token: Dictionary, categories: Array, preview: bool = false) -> Dictionary:
+	if token.get("scope") != "settlement" or token.get("tech_id") != "S01" or token.get("binding") != "water_priority": return Runtime.fail("INVALID_TECHNOLOGY")
+	var context := _technology_phase_context(token, true)
+	if not context.ok: return context
+	var duty := _technology_scope_duty("settlement", context.owner, true)
+	if not duty.ok: return duty
+	var prepared: Dictionary = Runtime.prepare_water_schedule(lab.terrain, int(duty.decider), categories, token)
+	if not prepared.ok: return prepared
+	var binding := technology_phase_binding_candidate(token)
+	if not binding.ok: return binding
+	var payment := technology_phase_payment_candidate(token, {}, binding)
+	if not payment.ok: return payment
+	var sample: Dictionary = Runtime.water_allocation_sample(lab.terrain, categories)
+	if not Runtime.valid_water_allocation_sample(sample) or float(sample.source_capacity) <= 0.0: return Runtime.fail("WATER")
+	if preview: return Runtime.ok("原供水排程試驗可開始", {"seconds": 300.0, "allocation": sample.duplicate(true)})
+	var executor: Dictionary = context.person
+	var job := _new_job(executor, "water_schedule", 0)
+	job.merge({"duration": 300.0, "terrain": lab.terrain, "site_state": lab.terrain.site,
+		"executor_body": executor.body, "water_center": prepared.center, "water_settlement": prepared.settlement,
+		"water_schedule": prepared.schedule, "water_first_sample": sample.duplicate(true), "nation_token": token.duplicate(true),
+		"water_event_id": str(payment.payment_id)})
+	# All candidates, the source capacity, real worker and same owner were checked.
+	publish_phase_payment(payment)
+	_jobs[str(int(executor.person_id))] = job
+	prepared.center.technology_water_schedule = prepared.schedule
+	lab.terrain.site.water_status = sample.allocation
+	lab.terrain.environment_revision += 1
+	return Runtime.ok("原供水優先序已實施；具名原人沿共同工時驗證300秒", {"seconds": 300.0})
+
+func _fire_pot_shot_phase_context(token: Dictionary, binding: bool = false, require_source: bool = true) -> Dictionary:
+	if TechnologyCatalog.get_node("F15").get("enabled") != true: return Runtime.fail("UNIMPLEMENTED")
+	if not Runtime._technology_trial_shape(token, lab.terrain) or token.scope != "family" or token.tech_id != "F15" \
+		or token.binding != "fire_pot_shot" or not Technology.material_equal(token.materials, {"fire_pot": 1}): return Runtime.fail("INVALID_TECHNOLOGY")
+	var owner := _technology_family()
+	var raw: Dictionary = owner.get("technology", {})
+	if not Technology.valid_scope_record(raw, "family") or int(raw.epoch) != int(token.epoch) or raw.holder_site_id != _technology_site_id() \
+		or token.scope_id != str(owner.get("family_id", "")): return Runtime.fail("STALE_PROJECT")
+	var project := Technology.active_project(raw)
+	if project.is_empty() or int(project.rules_version) != 2 or project.tech_id != "F15" or int(project.id) != int(token.project_id) \
+		or project.purpose != token.purpose or not Technology.same_person_ref(project.executor, token.person, raw.get("person_links", [])) \
+		or (int(token.attempt) != int(project.next_attempt) if binding else int(token.attempt) != int(project.next_attempt) - 1): return Runtime.fail("STALE_PROJECT")
+	var phase := Technology.scope_next_phase(project, token.person, raw.get("person_links", []))
+	if phase.is_empty() or phase.id != token.phase_id or phase.binding != token.binding: return Runtime.fail("STALE_PHASE")
+	var person := _person(int(token.person.person_id))
+	var key := str(token.target_id).trim_prefix("vehicle:")
+	var vehicle: Dictionary = lab.terrain.site.get("vehicles", {}).get(key, {})
+	if token.target_id != "vehicle:" + key or not Runtime.siege_ammo_valid(str(vehicle.get("kind", "")), "fire_pot") \
+		or person.is_empty() or not _technology_member(int(person.person_id)) or float(person.hp) <= 0.0 or float(person.ko) > 0.0 \
+		or bool(person.captive) or bool(person.moving) or bool(_body_get(person, "attack")) or str(_body_get(person, "pose")) != "idle" \
+		or float(_body_get(person, "exchange_stagger")) > 0.0 or bool(lab.terrain.site.get("paused", false)) \
+		or float(lab.terrain.site.get("combat_left", 0.0)) > 0.0 or not _technology_duty("family.research").ok \
+		or not _fire_pot_crew_consent(person, project): return Runtime.fail("BUSY")
+	if person.owner is CrowdOwner and not person.owner.crowd_site.work_fatigue_work_start_ready(int(person.person_id)): return Runtime.fail("BUSY")
+	if binding and (not vehicle.crew_slots.values().has(int(person.person_id)) or not lab.site_controller.vehicles.crew_ready(vehicle)): return Runtime.fail("BUSY")
+	var financial: Dictionary = project.budget
+	if financial.is_empty() or financial.status != "granted" or financial.source_site_id != _technology_site_id() or financial.holder != "vehicle:" + key: return Runtime.fail("NO_BUDGET")
+	if not require_source: return Runtime.ok("", {"owner": owner, "record": raw, "project": project, "phase": phase, "person": person, "vehicle": vehicle})
+	var budget: Dictionary = project.budget
+	if budget.is_empty() or budget.status != "granted" or budget.holder != "vehicle:" + key or budget.source_site_id != _technology_site_id(): return Runtime.fail("NO_BUDGET")
+	var held: Dictionary = _technology_source_refs.get(JSON.stringify(["family", str(token.scope_id), int(project.id)]), {})
+	if not is_same(held.get("terrain"), lab.terrain) or not is_same(held.get("site"), lab.terrain.site) or not is_same(held.get("vehicle"), vehicle) \
+		or not is_same(held.get("holder"), vehicle.get("holder")) or not is_same(held.get("cargo"), vehicle.get("cargo")): return Runtime.fail("STALE_SOURCE")
+	return Runtime.ok("", {"owner": owner, "record": raw, "project": project, "phase": phase, "person": person, "vehicle": vehicle})
+
+func fire_pot_ammo_guard(vehicle: Dictionary, identity: int, token: Dictionary = {}) -> Dictionary:
+	if TechnologyCatalog.get_node("F15").get("enabled") != true: return Runtime.fail("UNIMPLEMENTED")
+	if lab.crowd_site != null and lab.crowd_site.active and not lab.crowd_site.fire_host_active(): return Runtime.fail("UNSUPPORTED_BACKEND")
+	if lab.site_controller == null or not is_same(lab.terrain.site.get("vehicles", {}).get(str(vehicle.get("id", ""))), vehicle) \
+		or str(vehicle.get("kind", "")) not in ["traction_trebuchet", "counterweight_trebuchet"] \
+		or not vehicle.get("crew_slots", {}).values().has(identity): return Runtime.fail("NO_AUTHORITY")
+	var person := _person(identity)
+	if person.is_empty() or float(person.hp) <= 0.0 or float(person.ko) > 0.0 or bool(person.captive) or bool(person.moving) \
+		or not lab.site_controller.vehicles.crew_ready(vehicle) \
+		or bool(_body_get(person, "attack")) or str(_body_get(person, "pose")) != "idle" \
+		or float(_body_get(person, "exchange_stagger")) > 0.0: return Runtime.fail("BUSY")
+	if person.owner is CrowdOwner and not person.owner.crowd_site.work_fatigue_work_start_ready(identity): return Runtime.fail("BUSY")
+	if not token.is_empty():
+		if not _technology_member(identity): return Runtime.fail("NO_AUTHORITY")
+		return _fire_pot_shot_trial_guard(vehicle, identity, token)
+	if not Technology.learned(_body_get(person, "technology"), "F15"): return Runtime.fail("NO_TECHNOLOGY", "火罐須由在位且本人已學會 F15 的原操作班成員發射")
+	return Runtime.ok()
+
+func prepare_fire_pot_release_payment(vehicle: Dictionary, token: Dictionary) -> Dictionary:
+	if token.is_empty(): return Runtime.ok("", {"payment": {}})
+	var checked := _fire_pot_shot_trial_guard(vehicle, int(token.get("person", {}).get("person_id", 0)), token)
+	if not checked.ok: return checked
+	var payment := technology_phase_payment_candidate(token, {"fire_pot": 1})
+	return Runtime.ok("", {"payment": payment}) if payment.ok else payment
+
+func grant_fire_pot_vehicle_budget(requester_id: int, vehicle_id: String, fire_pot_cap: int, operation: String = "grant") -> Dictionary:
+	var owner := _technology_family()
+	var raw: Dictionary = owner.get("technology", {})
+	var project := Technology.active_project(raw)
+	var vehicle: Dictionary = lab.terrain.site.get("vehicles", {}).get(vehicle_id, {})
+	var team: Variant = lab.site_controller.vehicles._siege_team(vehicle)
+	if requester_id != _technology_controlled() or not (team is TerrainArmy or team is CrowdOwner) or not lab.site_controller.vehicles._authorized(team, requester_id, 0, false) \
+		or not Runtime.siege_ammo_valid(str(vehicle.get("kind", "")), "fire_pot") or project.is_empty() or project.tech_id != "F15" \
+		or int(project.rules_version) != 2 or not Technology.valid_scope_record(raw, "family") \
+		or not Technology.integer(fire_pot_cap, 0, 1000000) or not _technology_duty("family.research").ok: return Runtime.fail("NO_AUTHORITY")
+	var phase := Technology.scope_next_phase(project, project.executor, raw.get("person_links", []))
+	if phase.is_empty() or phase.binding != "fire_pot_shot": return Runtime.fail("STALE_PHASE")
+	var holder: Dictionary = vehicle.get("holder", {})
+	var cargo: Dictionary = vehicle.get("cargo", {})
+	if not Runtime._item_holder_shape(holder) or holder.holder != "vehicle:" + vehicle_id or not Runtime._resource_stack(cargo): return Runtime.fail("STALE_SOURCE")
+	var original: Variant = team._order_owner() if team is CrowdOwner else team
+	if team is CrowdOwner:
+		for plan: Dictionary in team.crowd_site._original_team_plans:
+			if int(plan.team_id) == int(vehicle.team_id) and plan.source is TerrainArmy: original = plan.source; break
+	if not original is TerrainArmy or int(original.duty_resolve_readonly("team.work", team if team is CrowdOwner else null).get("decider", -1)) != requester_id \
+		or team.combat_order != TerrainArmy.CombatOrder.HOLD or team.is_sustain_routed() or bool(lab.terrain.site.get("paused", false)) \
+		or float(lab.terrain.site.get("combat_left", 0.0)) > 0.0: return Runtime.fail("NO_AUTHORITY")
+	var spent: Dictionary = project.budget.get("spent", {})
+	if operation != "revoke" and (fire_pot_cap < int(spent.get("fire_pot", 0)) \
+		or fire_pot_cap > int(spent.get("fire_pot", 0)) + int(cargo.get("fire_pot", 0))): return Runtime.fail("NO_BUDGET")
+	# Preserve every previous lifetime cap, spend and payment. The only remaining
+	# F15 phase is the shot, so this entry grants no new former craft material.
+	var cap: Dictionary = project.budget.get("cap", {}).duplicate()
+	cap.fire_pot = fire_pot_cap
+	var candidate := Technology.scope_budget_candidate(raw, "family", _technology_ref(requester_id), "vehicle:" + vehicle_id, cap, operation)
+	if not candidate.ok: return candidate
+	owner.technology = candidate.state
+	_technology_source_refs[JSON.stringify(["family", str(owner.family_id), int(project.id)])] = {"terrain": lab.terrain,
+		"site": lab.terrain.site, "vehicle": vehicle, "holder": holder, "cargo": cargo}
+	return Runtime.ok("原投石機有限火罐核額已更新；先前支出與付款不清零")
+
+func technology_phase_work_preflight(token: Dictionary, binding: bool = false) -> Dictionary:
+	if not Technology.keys(token, ["scope", "scope_id", "project_id", "epoch", "purpose", "tech_id", "phase_id", "attempt", "person", "binding", "target_id", "materials"]) \
+		or not Technology.valid_ref(token.person) or not token.scope is String or not token.scope_id is String \
+		or not token.target_id is String or token.target_id.is_empty(): return Runtime.fail("INVALID_TECHNOLOGY")
+	var owner := _technology_scope_owner(str(token.scope), str(token.scope_id))
+	var record: Dictionary = owner.get("technology", {})
+	if not Technology.valid_scope_record(record, str(token.scope)): return Runtime.fail("STALE_PROJECT")
+	var project := Technology.active_project(record)
+	var preparing := binding or Technology.integer(token.attempt, int(project.get("next_attempt", -1)), int(project.get("next_attempt", -1)))
+	var checked := _technology_phase_context(token, true, false, true) if preparing else technology_phase_active_guard(token)
+	if not checked.ok: return checked
+	var person: Dictionary = checked.person
+	var team: Variant = person.owner if person.owner is CrowdOwner else _technology_team(person)
+	checked.merge({"team": team, "person_ids": [int(token.person.person_id)], "groups": [{"team": team, "person_ids": [int(token.person.person_id)]}],
+		"requester_id": _technology_controlled(), "operation_ref": {}, "controlled_worker": int(token.person.person_id) == _technology_controlled()})
+	return checked
+
+# APPEND; a genuine accepted ordinary N order may continue its OWN named task.
+# No copied order/consent, matching target alone or boolean caller bypass works.
+
+func set_water_use_priority(requester_id: int, categories: Array) -> Dictionary:
+	return Runtime.set_water_use_priority(lab.terrain, requester_id, categories)
+
+func _technology_military_consent_candidate(identity: int, purpose: String) -> Dictionary:
+	var person := _person(identity)
+	if person.is_empty() or not _technology_military_person_ready(person, {}): return Runtime.fail("BUSY")
+	var team: Variant = _technology_team(person)
+	if person.owner is CrowdOwner:
+		var source: Variant = person.owner._command_owner(int(person.unit))
+		if source is TerrainArmy: team = source
+		if team != null and (team.data != lab.terrain or int(team.team_id) != int(person.owner.team_id) or not person.owner.crowd_site.owns_original_team(team)): return Runtime.fail("STALE_SOURCE")
+	if team == null: return Runtime.ok("原人不受隊伍派工管轄", {"consent": {}})
+	# The original Army/DutyAI command still makes this named decision, including
+	# current decider/control and duty_ai. Native physical guards recheck its result.
+	var response: Dictionary = team.technology_work_consent(identity, purpose, _technology_controlled(), person.owner if person.owner is CrowdOwner else null)
+	if not response.ok: return response
+	if not _technology_consent_valid(identity, [response.consent], purpose, {}, true): return Runtime.fail("BUSY")
+	return response
+
+func request_settlement_processing_order(requester_id: int, kind: String, feature_id: String, operator_id: int, max_batches: int, source_feature_id: String = "", project_id: int = 0) -> Dictionary:
+	var runtime_script: Variant = Runtime
+	if not runtime_script.has_method("request_settlement_processing_order"): return Runtime.fail("UNIMPLEMENTED")
+	return runtime_script.call("request_settlement_processing_order", lab.terrain, kind, feature_id, operator_id, max_batches, requester_id, source_feature_id, project_id)
+
+func begin_settlement_processing_operation(requester_id: int, settlement_id: String, order_id: String) -> Dictionary:
+	var settlement: Dictionary = _technology_scope_owner("settlement", settlement_id)
+	var authorized: Dictionary = _technology_scope_command(requester_id, "settlement", settlement)
+	if not authorized.ok: return authorized
+	var runtime_script: Variant = Runtime
+	if not runtime_script.has_method("begin_settlement_processing_operation"): return Runtime.fail("UNIMPLEMENTED")
+	return runtime_script.call("begin_settlement_processing_operation", lab.terrain, settlement_id, order_id)
+
+func prepare_settlement_metal_transfer_receipt(token: Dictionary, original_prepared: Dictionary) -> Dictionary:
+	var runtime_script: Variant = Runtime
+	if not runtime_script.has_method("validate_settlement_metal_transfer") or not runtime_script.has_method("settlement_metal_paid_source_candidate"): return Runtime.fail("UNIMPLEMENTED")
+	var original: Dictionary = runtime_script.call("validate_settlement_metal_transfer", original_prepared)
+	if not original.ok: return original
+	if not is_same(original_prepared.terrain, lab.terrain) or original_prepared.get("leg") != 1 or original_prepared.token != token \
+		or original_prepared.order_ref.payload.carry_receipts.size() != 1 or original_prepared.order_ref.payload.carry_receipts[0].token != token \
+		or original_prepared.candidate.payload.carry_receipts.size() != 2 or original_prepared.fact.leg != "deposit": return Runtime.fail("INVALID_RECEIPT")
+	var paid: Dictionary = runtime_script.call("settlement_metal_paid_source_candidate", lab.terrain, token, str(original_prepared.order_id))
+	if not paid.ok: return paid
+	var checked := _technology_phase_context(token, false, false)
+	if not checked.ok: return checked
+	if not is_same(checked.owner, paid.settlement) or not is_same(paid.operations, original_prepared.operations_ref) or not is_same(paid.order, original_prepared.order_ref) \
+		or not is_same(paid.paid, original_prepared.order_ref.payload.carry_receipts[0]) \
+		or checked.project.budget.is_empty() or checked.project.budget.status != "granted" or checked.project.budget.holder != paid.holder: return Runtime.fail("STALE_SOURCE")
+	var payment := {}
+	for row: Dictionary in checked.project.budget.payments:
+		if row.payment_id == original_prepared.order_ref.payload.carry_receipts[0].payment_id:
+			if not payment.is_empty(): return Runtime.fail("CORRUPT_STATE")
+			payment = row
+	if payment.is_empty() or payment.attempt != token.attempt or payment.phase_id != token.phase_id or payment.target_id != token.target_id \
+		or not Technology.same_person_ref(payment.person, token.person, checked.record.get("person_links", [])) \
+		or not Technology.material_equal(payment.materials, {"iron": 2}): return Runtime.fail("NO_PAYMENT")
+	# The original accepted first withdrawal + prospective second real contact are
+	# the only producer. Neither caller flags nor a fabricated feature ledger can
+	# create this zero-work transfer phase evidence.
+	var event_id := JSON.stringify([_technology_site_id(), "metal_chain", str(original_prepared.settlement_id), str(original_prepared.order_id), "deposit", int(original_prepared.order_ref.revision)])
+	var receipt := {"site_id": _technology_site_id(), "person_id": int(token.person.person_id), "attempt": int(token.attempt), "phase_id": str(token.phase_id),
+		"event_id": event_id, "work_seconds": 0.0, "payment_id": str(payment.payment_id)}
+	var prepared := Technology.scope_receipt_candidate(checked.record, "settlement", receipt)
+	if not prepared.ok: return prepared
+	return Runtime.ok("", {"owner": checked.owner, "record": checked.record, "state": prepared.state, "person": checked.person, "person_candidate": {}, "complete": prepared.complete, "site_state": lab.terrain.site})
+
+func begin_settlement_metal_operation(requester_id: int, settlement_id: String, order_id: String) -> Dictionary:
+	var settlement := _technology_scope_owner("settlement", settlement_id)
+	var admitted := _technology_scope_command(requester_id, "settlement", settlement)
+	if not admitted.ok: return admitted
+	var runtime_script: Variant = Runtime
+	if not runtime_script.has_method("begin_settlement_metal_operation"): return Runtime.fail("UNIMPLEMENTED")
+	return runtime_script.call("begin_settlement_metal_operation", lab.terrain, settlement_id, order_id)
+
+func settlement_metal_order_view(settlement_id: String, order_id: String) -> Dictionary:
+	var runtime_script: Variant = Runtime
+	if not runtime_script.has_method("settlement_metal_order_view"): return Runtime.fail("UNIMPLEMENTED")
+	return runtime_script.call("settlement_metal_order_view", lab.terrain, settlement_id, order_id)
+
+func request_settlement_metal_order(requester_id: int, smelter_id: String, smithy_id: String, operator_id: int, project_id: int = 0) -> Dictionary:
+	var settlement: Dictionary = lab.terrain.site.get("settlement", {})
+	var admitted := _technology_scope_command(requester_id, "settlement", settlement)
+	if not admitted.ok: return admitted
+	var runtime_script: Variant = Runtime
+	if not runtime_script.has_method("request_settlement_metal_order"): return Runtime.fail("UNIMPLEMENTED")
+	return runtime_script.call("request_settlement_metal_order", lab.terrain, smelter_id, smithy_id, operator_id, requester_id, project_id)
+
+func prepare_settlement_food_work(checked: Dictionary, transfer: Dictionary = {}) -> Dictionary:
+	if not checked.get("ok", false) or not is_same(checked.settlement, Settlement.record(lab.terrain)): return Runtime.fail("STALE_SOURCE")
+	var order: Dictionary = checked.order
+	var person: Dictionary = checked.person
+	if order.payload.stage != ("arrived" if transfer.is_empty() else "carrier") or is_busy(int(person.person_id)) \
+		or not _ready(person) or not lab.site_controller._delivery_person_ready(person): return Runtime.fail("BUSY")
+	if transfer.is_empty():
+		var entrance: Vector2i = checked.stock.cell
+		if absi(person.cell.x - entrance.x) + absi(person.cell.y - entrance.y) > 1 \
+			or not lab.terrain.contains(person.cell) or not lab.terrain.contains(entrance) \
+			or person.cell != entrance and not lab.terrain.can_step(person.cell, entrance): return Runtime.fail("POSITION")
+	else:
+		if not is_same(transfer.destination, checked.stock.holder) or not is_same(transfer.destination_cargo, checked.stock.cargo) \
+			or not is_same(transfer.source, person.holder) or not is_same(transfer.source_cargo, person.cargo) \
+			or transfer.resources != {"grain": int(order.payload.quantity)}: return Runtime.fail("STALE_SOURCE")
+	var job := _new_job(person, "food_order", 0)
+	job.merge({"duration": 300.0, "elapsed": float(order.payload.work_seconds), "terrain": lab.terrain, "site_state": lab.terrain.site,
+		"executor_body": person.body, "food_settlement": checked.settlement, "food_operations": checked.operations, "food_order": order,
+		"food_warehouse": checked.feature, "food_holder": checked.stock.holder, "food_cargo": checked.stock.cargo, "nation_token": order.payload.token,
+		"food_event_id": str(order.payload.paid.payment_id)})
+	return Runtime.ok("原PA300秒作業候選；尚未佔用或扣時", {"owner": self, "jobs": _jobs, "job": job, "person_id": int(person.person_id), "site": lab.terrain.site, "terrain": lab.terrain})
+
+func publish_settlement_food_work(prepared: Dictionary) -> void:
+	# Actual second transfer and its arrival receipt publish immediately before.
+	# Preparation is the sole admission; this tail performs no failure-prone call.
+	_jobs[str(int(prepared.person_id))] = prepared.job
+
+func settlement_food_own_job(person: Dictionary, order: Dictionary) -> bool:
+	if person.is_empty(): return false
+	var job: Dictionary = _jobs.get(str(int(person.person_id)), {})
+	return job.get("kind") == "food_order" and is_same(job.get("food_order"), order) \
+		and is_same(job.get("executor_body"), person.body) and is_same(job.get("terrain"), lab.terrain) \
+		and is_same(job.get("site_state"), lab.terrain.site)
+
+func request_warehouse_food_order(requester_id: int, warehouse_id: String, operator_id: int, source_holder: String, project_id: int = 0, preview: bool = false) -> Dictionary:
+	return Runtime.request_warehouse_food_order(lab.terrain, warehouse_id, operator_id, requester_id, source_holder, project_id, preview)
+
+func transfer_settlement_food_order(requester_id: int, settlement_id: String, order_id: String, leg: String, token: Dictionary = {}, preview: bool = false) -> Dictionary:
+	var prepared := Runtime.prepare_settlement_food_transfer(lab.terrain, settlement_id, order_id, leg, requester_id, token)
+	if not prepared.ok: return prepared
+	if preview: return Runtime.ok("原具名實物腿已純預檢", {"leg": leg, "quantity": int(prepared.payload.quantity)})
+	var checked := Runtime.validate_settlement_food_transfer(prepared)
+	if not checked.ok: return checked
+	return Runtime.publish_settlement_food_transfer(prepared)
+
+func _technology_military_person_ready(person: Dictionary, order: Dictionary) -> bool:
+	if person.is_empty() or float(person.hp) <= 0.0 or float(person.ko) > 0.0 or bool(person.captive) or bool(person.moving): return false
+	var matching := _technology_matching_military_task(person, order) or not order.is_empty() and _technology_matching_settlement_task(person, str(order.get("payload", {}).get("purpose", "")))
+	var task := _technology_military_task(person)
+	if is_busy(int(person.person_id)) and not matching or not str(task.get("target", "")).is_empty() and not matching: return false
+	if person.owner is CrowdOwner and not person.owner.crowd_site.work_fatigue_work_start_ready(int(person.person_id)): return false
+	if _ready(person): return true
+	if not matching: return false
+	# Only the SAME accepted work task relaxes its own occupied-work check.
+	# Other original action, transport and delivery locks still apply.
+	if lab.site_controller.ship_person_in_journey(int(person.person_id)) or lab.site_controller.vehicles.is_siege_crew(int(person.person_id)): return false
+	for entry: Dictionary in lab.terrain.site.get("team_supply", {}).values():
+		var delivery: Dictionary = entry.get("delivery", {})
+		if not delivery.is_empty() and int(person.person_id) in [int(delivery.get("player_id", -1)), int(delivery.get("representative_id", -1))]: return false
+	if not person.owner is CrowdOwner and int(person.unit) < 0:
+		var actor: Variant = person.owner
+		if not actor.can_act() or actor.action_time > 0.0 or actor.guarding or actor.guard_transition_left > 0.0 or actor.guard_break_left > 0.0 or actor._rescue_left > 0.0: return false
+		if actor == lab.npc and (int(actor.command) != 0 or not actor._path.is_empty()): return false
+	return float(_body_get(person, "exchange_stagger")) <= 0.0 and not bool(_body_get(person, "attack")) and str(_body_get(person, "pose")) == "idle" \
+		and not is_guarding(int(person.person_id)) and not lab.site_controller.region_operation_pending() \
+		and (person.owner.combat_can_act(int(person.unit)) if int(person.unit) >= 0 else person.owner.can_act())
+
+func publish_nation_original_administration(prepared: Dictionary) -> void:
+	if not prepared.get("payment", {}).is_empty(): publish_phase_payment(prepared.payment)
+	elif not prepared.get("binding", {}).is_empty(): publish_phase_binding(prepared.binding)
+	if not prepared.get("job", {}).is_empty(): _jobs[str(int(prepared.job.executor_id))] = prepared.job
+
+func begin_nation_original_administration(requester_id: int, nation_id: String, original_key: String, binding: String) -> Dictionary:
+	if requester_id != _technology_controlled(): return Runtime.fail("NO_AUTHORITY")
+	var nation: Dictionary = _technology_scope_owner("nation", nation_id)
+	var technology_id := "N01" if binding == "procurement" else "N04"
+	if binding not in ["procurement", "workshop_certificate"] or nation.is_empty(): return Runtime.fail("NO_TARGET")
+	if Technology.scope_known(nation.get("technology", {}), technology_id): return Runtime.fail("NO_CHANGE", "已知原制度不重開首次研究工作")
+	var duty := "nation.procurement" if technology_id == "N01" else "nation.workshop"
+	if not equipment_orders._nation_duty_ok(requester_id, nation, duty): return Runtime.fail("NO_AUTHORITY")
+	var key := original_key.trim_prefix("procurement:" if technology_id == "N01" else "certificate:")
+	var original: Dictionary = nation.get("technology_operations", {}).get("specs" if technology_id == "N01" else "certificates", {}).get(key, {})
+	if original.is_empty(): return Runtime.fail("NO_TARGET")
+	var prepared := {}
+	if technology_id == "N04":
+		prepared = prepare_nation_workshop_administration(nation_id, key, original)
+	else:
+		var selection := _nation_original_research_token(nation_id, key, "N01", "procurement", "nation-procurement:" + JSON.stringify([_technology_site_id(), nation_id, key]), original.get("tech_trial", {}))
+		if not selection.ok or selection.token.is_empty() or not original.has("tech_trial") or original.receipts.size() != 2: return selection if not selection.ok else Runtime.fail("INCOMPLETE_OPERATION")
+		var ready := _technology_scope_person("nation", nation, int(selection.token.person.person_id))
+		if not ready.ok: return ready
+		var paid := false
+		for payment: Dictionary in selection.context.project.budget.get("payments", []):
+			if payment.attempt == selection.token.attempt and payment.phase_id == selection.token.phase_id and payment.target_id == selection.token.target_id \
+				and payment.person == selection.token.person and Technology.material_equal(payment.materials, selection.token.materials): paid = true
+		if not paid: return Runtime.fail("NO_PAYMENT")
+		for receipt: Variant in original.receipts:
+			if not Technology.keys(receipt, ["id", "source_person_id", "resources", "items"]) or receipt.source_person_id != selection.token.person.person_id \
+				or not Technology.material_equal(receipt.resources, {"wood": 1, "grain": 1}) or not receipt.items is Dictionary or not receipt.items.is_empty(): return Runtime.fail("INVALID_RECEIPT")
+		var job := _nation_original_administration_job(ready.person, nation, original, "procurement", key, selection.token, original)
+		prepared = Runtime.ok("", {"binding": {}, "payment": {}, "job": job})
+	if not prepared.ok: return prepared
+	# A stopped paid original N01 resumes work only; no delivery or payment repeats.
+	publish_nation_original_administration(prepared)
+	return Runtime.ok("原制度300秒檢验作業開始／重做；原已付物資不再扣", {"seconds": 300.0})
+
+func _nation_original_administration_job(person: Dictionary, nation: Dictionary, original: Dictionary, kind: String, key: String, token: Dictionary, expected: Dictionary) -> Dictionary:
+	var job := _new_job(person, "nation_administration", 0)
+	job.merge({"duration": 300.0, "terrain": lab.terrain, "site_state": lab.terrain.site, "executor_body": person.body,
+		"nation_id": str(token.scope_id), "nation_order_id": key, "nation_original_kind": kind, "nation_ref": nation,
+		"nation_order_ref": original, "nation_original_expected": expected.duplicate(true), "nation_binding": str(token.binding),
+		"nation_target": str(token.target_id), "nation_items": [], "nation_token": token,
+		"nation_event_id": JSON.stringify([_technology_site_id(), str(token.scope_id), str(token.purpose), int(token.project_id), int(token.attempt), kind, key, int(expected.revision)])})
+	return job
+
+func _nation_original_research_token(nation_id: String, _key: String, technology_id: String, binding: String, target: String, held: Dictionary = {}) -> Dictionary:
+	var nation: Dictionary = _technology_scope_owner("nation", nation_id)
+	if nation.is_empty() or Technology.scope_known(nation.get("technology", {}), technology_id): return Runtime.ok("", {"token": {}})
+	var project := Technology.active_project(nation.get("technology", {}))
+	var phase := Technology.scope_next_phase(project, project.get("executor", {}))
+	if project.is_empty() or project.tech_id != technology_id or phase.get("binding") != binding: return Runtime.fail("STALE_PHASE")
+	var token := {"scope": "nation", "scope_id": nation_id, "project_id": int(project.id), "epoch": int(nation.technology.epoch),
+		"purpose": str(project.purpose), "tech_id": technology_id, "phase_id": str(phase.id), "attempt": int(project.next_attempt),
+		"person": project.executor.duplicate(), "binding": binding, "target_id": target, "materials": phase.materials.duplicate()}
+	if not held.is_empty():
+		if not Technology.keys(held, token.keys()) or held.scope != "nation" or held.scope_id != nation_id or held.project_id != token.project_id or held.epoch != token.epoch \
+			or held.purpose != token.purpose or held.tech_id != technology_id or held.phase_id != token.phase_id or held.person != token.person \
+			or held.binding != binding or held.target_id != target or not Technology.material_equal(held.materials, token.materials): return Runtime.fail("STALE_PROJECT")
+		token = held
+	var checked := _technology_phase_context(token, held.is_empty(), false)
+	return Runtime.ok("", {"token": token, "context": checked}) if checked.ok else checked
+
+func _nation_military_issue_event(job: Dictionary) -> Dictionary:
+	return {"id": str(job.nation_issue_event_id), "site_id": _technology_site_id(), "target_id": str(job.nation_issue_token.target_id),
+		"operator_id": int(job.executor_id), "binding": "issue_bow", "work_seconds": 5.0, "item_ids": [], "outputs": {}, "materials": {}}
+
+func _nation_military_issue_job_context(job: Dictionary) -> Dictionary:
+	if not is_same(_jobs.get(str(int(job.executor_id)), {}), job) or str(job.get("kind", "")) != "equipment" \
+		or not job.has("nation_issue_token") or not is_same(job.get("terrain"), lab.terrain) or not is_same(job.get("site_state"), lab.terrain.site): return Runtime.fail("STALE_SOURCE")
+	var order: Dictionary = job.order
+	var nation: Dictionary = _technology_scope_owner("nation", str(order.get("nation_id", "")))
+	var production: Dictionary = nation.get("technology_operations", {}).get("orders", {}).get(str(order.get("military_production_id", "")), {})
+	var token: Dictionary = job.nation_issue_token
+	if not is_same(nation, job.nation_issue_nation_ref) or not is_same(production, job.nation_issue_order_ref) \
+		or production.get("status") != "complete" or int(production.get("operator_id", -1)) != int(job.executor_id) \
+		or int(production.get("recipient_id", -1)) != int(job.executor_id) or int(order.person_id) != int(job.executor_id) \
+		or token.get("binding") != "issue_bow" or token.get("tech_id") != "N05" or token.get("target_id") != "person:" + str(int(job.executor_id)) \
+		or token.get("scope_id") != order.nation_id or token.get("person", {}).get("person_id") != job.executor_id: return Runtime.fail("STALE_ORDER")
+	var current := _technology_phase_context(token, false, false)
+	if not current.ok: return current
+	if current.project.budget.get("holder") != "nation-order:" + JSON.stringify([_technology_site_id(), str(order.nation_id), str(order.military_production_id)]) \
+		or not _nation_military_first_payment(current.project, order): return Runtime.fail("BOUND_SOURCE")
+	var paid := false
+	for payment: Dictionary in current.project.budget.get("payments", []):
+		if payment.attempt == token.attempt and payment.phase_id == token.phase_id and payment.target_id == token.target_id \
+			and payment.person == token.person and payment.materials.is_empty(): paid = true
+	return current if paid else Runtime.fail("NO_PAYMENT")
+
+func _nation_military_first_payment(project: Dictionary, order: Dictionary) -> bool:
+	var first_phase := "one_standard_bow_order"
+	var first_payment := ""
+	var nation: Dictionary = _technology_scope_owner("nation", str(order.get("nation_id", "")))
+	var production: Dictionary = nation.get("technology_operations", {}).get("orders", {}).get(str(order.get("military_production_id", "")), {})
+	for payment: Dictionary in project.get("budget", {}).get("payments", []):
+		if payment.phase_id == first_phase and payment.person == project.executor and payment.target_id == "feature:" + str(production.get("feature_id", "")) \
+			and Technology.material_equal(payment.materials, {"wood": 4, "fiber": 2}): first_payment = str(payment.payment_id)
+	for receipt: Dictionary in project.get("receipts", []):
+		if receipt.phase_id == first_phase and receipt.person_id == project.executor.person_id and receipt.site_id == project.executor.site_id \
+			and not first_payment.is_empty() and receipt.payment_id == first_payment: return true
+	return false
+
+func _scope_project_activation(raw: Dictionary) -> bool:
+	var project := Technology.active_project(raw)
+	return not project.is_empty() and int(project.get("rules_version", -1)) == 2 and TechnologyCatalog.get_node(str(project.get("tech_id", ""))).get("enabled") == true
+
+# APPEND to original PA. Canonical orders.production_N selector only; no new
+# saved order/person/source authority and no acceptance based on caller flags.
+
+func _technology_supervision_person(identity: int) -> Dictionary:
+	var person := _person(identity)
+	if person.is_empty(): return {}
+	return {"person_id": identity, "label": "原人物 #%d · %s%s" % [identity, "已學 F07" if Technology.learned(_body_get(person, "technology"), "F07") else "未學 F07", " · 原作業忙碌" if is_busy(identity) else ""],
+		"owner_ref": person.owner, "body_ref": person.body, "holder_ref": person.holder, "cargo_ref": person.cargo, "job": job_for(identity)}
+
+func prepare_gd_contact_controlled_prefix(registered: Dictionary) -> Dictionary:
+	if _gd_contact_job_capture.is_empty() or registered.get("owner") != self or not is_same(registered.get("registered"), _checked_controlled_prefixes) \
+		or not is_same(_checked_controlled_prefixes.admitted.prepared, _gd_contact_job_capture.prepared): return Runtime.fail("STALE_WORK_PREFIX")
+	var admitted: Dictionary = validate_checked_controlled_runtime_prefixes(registered)
+	if not admitted.ok: return admitted
+	for candidate: Dictionary in admitted.checked.runtime:
+		var envelope: Dictionary = Runtime.prepare_gd_contact_work_envelope(candidate)
+		if not envelope.ok: return envelope
+		_gd_contact_job_capture.controlled_envelopes.append(envelope)
+	return Runtime.ok("原受控工作同held有限來源上界已純核", {"capture": _gd_contact_job_capture})
+
+func prepare_shared_nonwork_timers(seconds: float) -> Dictionary:
+	# The original escape watcher has NO effort/fatigue request. Capture its
+	# original start verdict, then settle its same raw timer after Native pub.
+	if not is_finite(seconds) or seconds <= 0.0: return Runtime.fail("INVALID_INTERVAL")
+	var held: Array[Dictionary] = []
+	for key: String in _jobs:
+		var job: Dictionary = _jobs[key]
+		if job.get("kind") != "escape": continue
+		var context: Dictionary = _job_context(job)
+		if not context.ok: continue
+		var person: Dictionary = _person(int(job.executor_id))
+		held.append({"key": key, "job": job, "elapsed": float(job.elapsed), "hit": int(person.hit),
+			"watched": int(person.hit) != int(job.executor_hit) or _escape_blocked(person, {})})
+	return Runtime.ok("原无努力逃脱计时起点已捕捉", {"owner": self, "seconds": seconds, "held": held})
+
+func prepare_shared_work_prefix(requests: Array, seconds: float) -> Dictionary:
+	if not is_finite(seconds) or seconds <= 0.0 or not _shared_work_prefix_consumption.is_empty(): return Runtime.fail("CLOCK_NOT_READY")
+	var held := {}
+	for request: Dictionary in requests:
+		if request.get("provider") != "person_actions": continue
+		var key: String = str(request.get("key", ""))
+		var job: Dictionary = _jobs.get(key, {})
+		if key.is_empty() or held.has(key) or job.is_empty() or str(job.get("kind", "")) == "fire_suppress" \
+			or bool(job.get("preparing", false)) or not request.get("participants") is Array: return Runtime.fail("STALE_SOURCE")
+		var qualified: Dictionary = _job_context(job) # TRUE original start qualification, before World/contacts.
+		if not qualified.ok: return qualified
+		var people := {}
+		for participant: Dictionary in request.participants:
+			var identity: int = int(participant.get("person_id", -1))
+			var person: Dictionary = _person(identity)
+			if identity <= 0 or people.has(identity) or person.is_empty(): return Runtime.fail("STALE_SOURCE")
+			var original_body: Variant = participant.get("original_body", participant.get("body"))
+			if not is_same(original_body, person.body): return Runtime.fail("STALE_SOURCE")
+			if participant.has("native_snapshot"):
+				var snapshot: Dictionary = participant.native_snapshot
+				if not person.owner is CrowdOwner or participant.get("native_owner") != person.owner \
+					or int(participant.get("unit", -1)) != int(person.unit) \
+					or not is_same(snapshot, lab.crowd_site.work_fatigue_snapshot_for_owner(person.owner)):
+					return Runtime.fail("STALE_NATIVE_WORK_PLAN")
+			people[identity] = {"owner": person.owner, "body": person.body, "holder": person.holder, "cargo": person.cargo,
+				"holder_version": int(person.holder.version), "person_id": identity, "unit": int(person.unit),
+				"faction": int(person.faction), "player": bool(person.player), "start_cell": person.cell}
+		if people.is_empty() or not people.has(int(job.get("executor_id", -1))): return Runtime.fail("STALE_SOURCE")
+		var task: Dictionary = job.get("work_task", {})
+		var item := {"key": key, "job": job, "kind": str(job.kind), "request": request, "people": people,
+			"task": task, "task_start": task.duplicate(true), "elapsed": float(job.get("elapsed", 0.0)),
+			"duration": float(job.get("duration", 0.0)), "feature": {}, "zone": {}, "vehicle": {}, "build": {}, "selector": {}, "scope": {}, "trial_facts": {}}
+		if str(job.kind) in ["technology_feature", "technology_vehicle"]:
+			var controlled: Dictionary = _prepared_controlled_features.get(key, {})
+			if controlled.is_empty() or not is_same(controlled.job, job) or not is_same(controlled.task, task): return Runtime.fail("STALE_SOURCE")
+			var target_ref: Dictionary
+			if str(job.kind) == "technology_feature":
+				item.feature = job.feature_ref
+				item.zone = job.zone_ref
+				item.build = job.get("repair_ref", {})
+				target_ref = item.feature
+			else:
+				item.vehicle = job.vehicle_ref
+				item.build = job.build_ref
+				target_ref = item.vehicle
+			item.trial_facts = Runtime.technology_trial_work_facts(lab.terrain, target_ref, task, int(job.executor_id)) if target_ref.has("tech_trial") else Runtime.ok("", {"policy_exception": ""})
+			if not item.trial_facts.ok: return item.trial_facts
+			item.selector = job.operation_selector.duplicate(true)
+			if job.operation_selector.has("token"):
+				var token: Dictionary = job.operation_selector.token
+				var authority: Dictionary = technology_phase_active_guard(token) # original start-only query.
+				if not authority.ok: return authority
+				item.scope = {"token": token, "token_start": token.duplicate(true), "owner": authority.owner,
+					"record": authority.record, "project": authority.project, "project_start": authority.project.duplicate(true)}
+		held[key] = item
+	return Runtime.ok("原人物作業起點與held refs已純捕捉", {"owner": self, "terrain": lab.terrain,
+		"site": lab.terrain.site, "jobs_ref": _jobs, "seconds": seconds, "held": held})
+
+func validate_shared_work_prefix(prepared: Dictionary, planned: Dictionary, requests: Array) -> Dictionary:
+	# AFTER actual contacts, BEFORE any material/progress/Native final publication.
+	# Original death queue remains undrained. HP/hit/THREAT at this endpoint cannot
+	# erase the already qualified non-P5 prefix; product/receipt endpoints still
+	# need their actual CURRENT original life/authority/material/geometry guards.
+	if prepared.get("owner") != self or not is_same(prepared.get("terrain"), lab.terrain) \
+		or not is_same(prepared.get("site"), lab.terrain.site) or not is_same(prepared.get("jobs_ref"), _jobs) \
+		or planned.get("ok") != true or not is_equal_approx(float(planned.get("seconds", -1.0)), float(prepared.seconds)):
+		return Runtime.fail("STALE_SOURCE")
+	var current := {}
+	for request: Dictionary in requests:
+		if request.get("provider") != "person_actions": continue
+		var key: String = str(request.get("key", ""))
+		if current.has(key): return Runtime.fail("DUPLICATE_ACTIVITY")
+		current[key] = request
+	var allocations: Dictionary = planned.get("jobs", {}).get("person_actions", {})
+	var admitted := {}
+	for key: String in prepared.held:
+		var held: Dictionary = prepared.held[key]
+		var job: Dictionary = _jobs.get(key, {})
+		if not is_same(job, held.job) or str(job.get("kind", "")) != held.kind \
+			or not current.has(key) or not is_same(current[key].participants, held.request.participants) \
+			or not is_same(job.get("work_task", held.task), held.task) or held.task != held.task_start \
+			or float(job.get("elapsed", 0.0)) != float(held.elapsed) or float(job.get("duration", 0.0)) != float(held.duration):
+			return Runtime.fail("STALE_SOURCE")
+		for identity: int in held.people:
+			var start: Dictionary = held.people[identity]
+			var person: Dictionary = _person(identity) # current refs only, no forged alive projection.
+			if person.is_empty() or person.owner != start.owner or int(person.unit) != int(start.unit) \
+				or not is_same(person.body, start.body) or not is_same(person.holder, start.holder) \
+				or not is_same(person.cargo, start.cargo) or int(person.holder.version) != int(start.holder_version):
+				return Runtime.fail("STALE_SOURCE")
+		if held.kind in ["technology_feature", "technology_vehicle"]:
+			var target_ref: Dictionary = held.feature if held.kind == "technology_feature" else held.vehicle
+			if held.kind == "technology_feature":
+				if not is_same(lab.terrain.site.features.get(job.feature_id), held.feature) \
+					or int(job.work_task.zone) < 0 or int(job.work_task.zone) >= lab.terrain.site.zones.size() \
+					or not is_same(lab.terrain.site.zones[int(job.work_task.zone)], held.zone) \
+					or not is_same(job.feature_ref, held.feature) or not is_same(job.zone_ref, held.zone) \
+					or job.operation_selector != held.selector or held.task.action == "repair" and not is_same(held.feature.get("repair"), held.build): return Runtime.fail("STALE_SOURCE")
+			else:
+				if not is_same(lab.terrain.site.get("vehicles"), job.vehicles_ref) or not is_same(job.vehicles_ref.get(job.vehicle_id), held.vehicle) or not is_same(job.vehicle_ref, held.vehicle) or not is_same(held.vehicle.get("repair" if held.task.action == "repair" else "build"), held.build) or not is_same(job.build_ref, held.build) or job.operation_selector != held.selector: return Runtime.fail("STALE_SOURCE")
+			if not held.scope.is_empty():
+				var scope: Dictionary = held.scope
+				if not is_same(target_ref.get("tech_trial"), scope.token) or scope.token != scope.token_start \
+					or not is_same(_technology_scope_owner(str(scope.token.scope), str(scope.token.scope_id)), scope.owner) \
+					or not is_same(scope.owner.get("technology"), scope.record) \
+					or not is_same(Technology.active_project(scope.record), scope.project) or scope.project != scope.project_start:
+					return Runtime.fail("STALE_PROJECT")
+		var allocation: Dictionary = allocations.get(key, {})
+		if allocation.is_empty(): continue # A rejected/waiting request grants no prefix.
+		var actual: float = float(allocation.get("actual_seconds", 0.0))
+		var productive: float = float(allocation.get("effective_seconds", 0.0))
+		if not is_finite(actual) or not is_finite(productive) or actual < 0.0 or actual > float(prepared.seconds) + Fatigue.WORK_PLAN_EPS or productive < 0.0:
+			return Runtime.fail("INVALID_WORK")
+		var active := false
+		for identity: int in held.people:
+			var effort: float = float(allocation.get("participant_seconds", {}).get(identity, 0.0))
+			if not is_finite(effort) or effort < 0.0 or effort > float(prepared.seconds) + Fatigue.WORK_PLAN_EPS: return Runtime.fail("INVALID_WORK")
+			if effort > 0.0: active = true
+		if active or held.kind in ["technology_feature", "technology_vehicle"] and float(held.request.get("remaining", -1.0)) == 0.0: admitted[key] = {"held": held, "allocation": allocation, "advance_consumed": false}
+	return Runtime.ok("原合法起點前綴已預驗；無成本／進度寫入", {"owner": self, "prepared": prepared,
+		"plan": planned, "seconds": float(prepared.seconds), "admitted": admitted})
+
+func publish_gd_contact_job_segment(segment: Dictionary) -> void:
+	assert(is_same(segment, _gd_contact_job_segment) and not bool(segment.published))
+	for candidate: Dictionary in segment.runtime:
+		Runtime.publish_checked_work_prefix(candidate)
+		_gd_contact_job_capture.runtime_priors.append(candidate)
+	for prefix: Dictionary in segment.prefixes:
+		var held: Dictionary = prefix.shared_item.held
+		_controlled_feature_consumed[str(held.key)] = true
+		held.job.paused = str(prefix.allocation.get("paused", ""))
+		var person: Dictionary = _person(int(prefix.person_id))
+		if not person.is_empty() and not bool(person.player):
+			if float(prefix.actual_seconds) > 0.0: _body_set(person, "work_resting", false)
+			if str(prefix.allocation.get("participant_paused", {}).get(int(prefix.person_id), prefix.allocation.get("paused", ""))) == "REST": _body_set(person, "work_resting", true)
+	for key: String in _gd_contact_job_capture.prepared.held:
+		var held: Dictionary = _gd_contact_job_capture.prepared.held[key]
+		if held.kind in ["technology_feature", "technology_vehicle"]: _controlled_feature_consumed[key] = true
+	for candidate: Dictionary in segment.candidates:
+		var held: Dictionary = candidate.held
+		var job: Dictionary = held.job
+		job.elapsed = float(candidate.elapsed)
+		job.paused = str(candidate.allocation.get("paused", ""))
+		settlement_food_prefix_progress(job)
+		if job.paused == "REST" and float(job.elapsed) >= float(held.duration) - Fatigue.WORK_PLAN_EPS: job.paused = ""
+		held.committed_elapsed = float(job.elapsed)
+		for identity: int in held.people:
+			var person: Dictionary = _person(identity)
+			if person.is_empty() or bool(person.player): continue
+			var actual: float = float(candidate.allocation.get("participant_seconds", {}).get(identity, 0.0))
+			if actual > 0.0: _body_set(person, "work_resting", false)
+			if str(candidate.allocation.get("participant_paused", {}).get(identity, candidate.allocation.get("paused", ""))) == "REST":
+				_body_set(person, "work_resting", true)
+	_gd_contact_job_capture.elapsed = float(_gd_contact_job_capture.elapsed) + float(segment.seconds)
+	_gd_contact_job_capture.published.append(segment)
+	segment.published = true
+	_gd_contact_job_segment = {}
+
+func finish_gd_contact_job_prefix() -> void:
+	# Original settle_after_contacts owns all CURRENT output/receipt/learning.
+	# No elapsed advance(), material callback or proxy fatigue fallback here.
+	var last: Array[Dictionary] = []
+	for candidate: Dictionary in _gd_contact_job_capture.get("runtime_priors", []):
+		for index: int in range(last.size() - 1, -1, -1):
+			if is_same(last[index].unit, candidate.unit): last.remove_at(index)
+		last.append(candidate)
+	for candidate: Dictionary in last: Runtime.settle_checked_work_prefix(candidate)
+	discard_checked_controlled_prefixes()
+	_gd_contact_job_capture = {}
+	_gd_contact_job_segment = {}
+
+func finish_shared_nonwork_timers(prepared: Dictionary) -> void:
+	if prepared.get("owner") != self or bool(prepared.get("finished", false)): return
+	prepared.finished = true
+	for held: Dictionary in prepared.held:
+		var job: Dictionary = _jobs.get(str(held.key), {})
+		if not is_same(job, held.job): continue
+		var current: Dictionary = _job_context(job)
+		if not current.ok: _finish(str(held.key), current); continue
+		var person: Dictionary = _person(int(job.executor_id))
+		if bool(held.watched) or int(person.hit) != int(held.hit) or _escape_blocked(person, {}):
+			job.elapsed = 0.0
+			job.paused = "WATCHED"
+			job.executor_hit = int(person.hit)
+		else:
+			job.paused = ""
+			job.elapsed = minf(ESCAPE_SECONDS, float(held.elapsed) + float(prepared.seconds))
+
+# ORIGINAL Lab caller supplement:
+# preWorld: nonwork = PA.prepare_shared_nonwork_timers(actual_game_seconds)
+# nofail tail (after begin_shared_work_prefix_consumption):
+#   PA.publish_checked_controlled_prefixes(checked.controlled)
+#   PA.publish_shared_job_prefix_timers(checked.person_actions)
+#   PA.end_shared_work_prefix_consumption()
+# Never call legacy PA.advance in this tail, even for no-allocation jobs.
+# after World pub:
+#   PA.finish_shared_job_prefix_timers(checked.person_actions)
+#   PA.finish_shared_nonwork_timers(nonwork)
+#   checked control/WT/Training REST and true current endpoints, then
+#   original PA.settle_after_contacts / true Native death event handoff.
+# Native suppression approach stays ORIGINAL prepare/actions before World;
+# final P5 classification/cost comes only from its already prevalidated pack.
+
+func _controlled_feature_job_context(job: Dictionary) -> Dictionary:
+	if job.get("kind") == "technology_vehicle": return _controlled_vehicle_job_context(job)
+	if not is_same(job.get("terrain"), lab.terrain) or not is_same(job.get("site_state"), lab.terrain.site) \
+		or not is_same(job.get("features_ref"), lab.terrain.site.features) or not is_same(job.get("zones_ref"), lab.terrain.site.zones) \
+		or not is_same(lab.terrain.site.features.get(job.feature_id), job.feature_ref): return Runtime.fail("STALE_SOURCE")
+	var task: Dictionary = job.work_task
+	if int(task.zone) < 0 or int(task.zone) >= lab.terrain.site.zones.size() or not is_same(lab.terrain.site.zones[int(task.zone)], job.zone_ref) \
+		or job.zone_ref.get("active") != true or task.target != "feature:" + str(job.feature_id) or task.action != job.zone_ref.action: return Runtime.fail("NO_ZONE")
+	if task.action == "repair" and not is_same(job.feature_ref.get("repair"), job.get("repair_ref")): return Runtime.fail("STALE_SOURCE")
+	var person := _person(int(job.executor_id))
+	if person.is_empty() or not is_same(person.owner, job.executor_owner) or not is_same(person.body, job.technology_executor_body) \
+		or not is_same(person.holder, job.executor_holder) or not is_same(person.cargo, job.executor_cargo) \
+		or int(person.holder.version) != int(job.executor_version) or int(person.hit) != int(job.executor_hit) \
+		or lab.terrain.index(person.cell) != int(job.executor_cell) or int(task.cell) != int(task.work_cell) or int(task.work_cell) != int(job.executor_cell): return Runtime.fail("INTERRUPTED")
+	if not _ready(person) or _threat(person, {}): return Runtime.fail("BUSY")
+	var selector: Dictionary = job.operation_selector
+	var authority: Dictionary
+	if selector.has("token"):
+		if not is_same(job.feature_ref.get("tech_trial"), selector.token): return Runtime.fail("STALE_PROJECT")
+		authority = technology_phase_active_guard(selector.token)
+	elif Technology.keys(selector, ["irrigation"]):
+		authority = Runtime.technology_irrigation_work_preflight(lab.terrain, selector, false)
+	else:
+		authority = technology_build_admission(selector)
+	if not authority.ok: return authority
+	return Runtime.ok("原已受理本人／當前原職責與同意仍有效", {"person": person})
+
+func _valid_gd_checked_controlled_prefix(prefix: Dictionary) -> bool:
+	for envelope: Dictionary in _gd_contact_job_capture.get("controlled_envelopes", []):
+		if is_same(prefix.get("entry"), envelope.prepared.prefix_ref.entry): return valid_gd_contact_work_prefix(envelope, prefix, prefix.runtime_priors)
+	return false
+
+func checked_work_prefix_for_task(task: Dictionary, identity: int) -> Dictionary:
+	if not _gd_contact_job_segment.is_empty():
+		for prefix: Dictionary in _gd_contact_job_segment.prefixes:
+			if int(prefix.person_id) == identity and is_same(prefix.task, task): return prefix
+		return lab.checked_shared_vehicle_prefix_for_task(task, identity) if lab.has_method("checked_shared_vehicle_prefix_for_task") else {}
+	for prefix: Dictionary in _checked_controlled_prefixes.get("prefixes", []):
+		if int(prefix.person_id) == identity and is_same(prefix.task, task): return prefix
+	return lab.checked_shared_vehicle_prefix_for_task(task, identity) if lab.has_method("checked_shared_vehicle_prefix_for_task") else {}
+
+func owned_checked_work_prefixes() -> Array:
+	return _gd_contact_job_segment.prefixes if not _gd_contact_job_segment.is_empty() else _checked_controlled_prefixes.get("prefixes", [])
+
+func _controlled_vehicle_job_context(job: Dictionary) -> Dictionary:
+	if not is_same(job.get("terrain"), lab.terrain) or not is_same(job.get("site_state"), lab.terrain.site) \
+		or not is_same(job.get("vehicles_ref"), lab.terrain.site.get("vehicles")) or not is_same(job.vehicles_ref.get(job.vehicle_id), job.vehicle_ref) \
+		or not is_same(job.vehicle_ref.get("repair" if job.work_task.action == "repair" else "build"), job.build_ref) or job.build_ref.is_empty() \
+		or job.work_task.target != "vehicle:" + str(job.vehicle_id) or job.work_task.action not in ["construct", "repair"]: return Runtime.fail("STALE_SOURCE")
+	var person := _person(int(job.executor_id))
+	if person.is_empty() or not is_same(person.owner, job.executor_owner) or not is_same(person.body, job.technology_executor_body) \
+		or not is_same(person.holder, job.executor_holder) or not is_same(person.cargo, job.executor_cargo) \
+		or int(person.holder.version) != int(job.executor_version) or int(person.hit) != int(job.executor_hit) \
+		or lab.terrain.index(person.cell) != int(job.executor_cell) or int(job.work_task.cell) != int(job.executor_cell) \
+		or (not is_same(person.owner if person.owner is CrowdOwner else _technology_team(person), job.team_ref) if job.work_task.action == "repair" else not is_same(_technology_team(person), job.team_ref)) or int(job.team_ref.team_id) != int(job.vehicle_ref.team_id): return Runtime.fail("INTERRUPTED")
+	if not _ready(person) or _threat(person, {}): return Runtime.fail("BUSY")
+	var selector: Dictionary = job.operation_selector
+	var authority: Dictionary
+	if job.work_task.action == "repair":
+		authority = Runtime.settlement_spare_work_guard(lab.terrain, job.vehicle_ref, job.work_task, int(job.executor_id))
+	elif selector.has("token"):
+		if not is_same(job.vehicle_ref.get("tech_trial"), selector.token): return Runtime.fail("STALE_PROJECT")
+		authority = technology_phase_active_guard(selector.token)
+	elif not selector.is_empty(): authority = equipment_orders.public_work_preflight(str(selector.nation_id), str(selector.order_id), "ballista_build")
+	else:
+		if job.team_ref.combat_order != TerrainArmy.CombatOrder.HOLD or job.team_ref.get_active_move_plan() != null \
+			or job.team_ref.has_ship_journey() or job.team_ref._team_ship_activity() \
+			or bool(lab.terrain.site.get("team_supply", {}).get(str(job.team_ref.team_id), {}).get("training_order", false)): return Runtime.fail("BUSY")
+		authority = Runtime.ok()
+	if not authority.ok: return authority
+	return Runtime.ok("原已受理本人仍在本器械原工位", {"person": person})
+
+func fire_pot_craft_guard(identity: int, token: Dictionary = {}, preview: bool = false) -> Dictionary:
+	if TechnologyCatalog.get_node("F15").get("enabled") != true: return Runtime.fail("UNIMPLEMENTED")
+	var person := _person(identity)
+	if person.is_empty(): return Runtime.fail("NO_AUTHORITY")
+	if float(person.hp) <= 0.0 or float(person.ko) > 0.0 or bool(person.captive): return Runtime.fail("BUSY")
+	if not token.is_empty():
+		if not _technology_member(identity): return Runtime.fail("NO_AUTHORITY")
+		return _scope_ranged_craft_guard(identity, token, preview)
+	if not Technology.learned(_body_get(person, "technology"), "F15"): return Runtime.fail("NO_TECHNOLOGY", "原製作者本人須已學會 F15")
+	return Runtime.ok()
+
+func scope_ranged_craft_guard(identity: int, recipe: String, token: Dictionary, preview: bool = false) -> Dictionary:
+	return _scope_ranged_craft_guard(identity, token, preview) if recipe == _scope_ranged_recipe(token) and not recipe.is_empty() else Runtime.fail("INVALID_TECHNOLOGY")
+
+func _commit_settlement_food_work(job: Dictionary) -> Dictionary:
+	var checked := _settlement_food_job_context(job)
+	if not checked.ok: return checked
+	if float(job.elapsed) != 300.0 or checked.order.receipts.size() != 2: return Runtime.fail("WAITING")
+	var phase := {}
+	if not job.nation_token.is_empty():
+		phase = technology_phase_receipt_candidate(job.nation_token, _settlement_food_event(job))
+		if not phase.ok: return phase
+	var order: Dictionary = checked.order
+	var arrival: Dictionary = order.receipts[1]
+	var receipt := {"id": JSON.stringify([_technology_site_id(), str(order.payload.settlement_id), str(order.id), "work"]), "kind": "work", "operator_id": int(job.executor_id),
+		"from": "feature:" + str(order.payload.warehouse_id), "to": "feature:" + str(order.payload.warehouse_id), "quantity": int(order.payload.quantity),
+		"source_version": int(arrival.destination_version), "destination_version": int(arrival.destination_version), "work_seconds": 300.0}
+	# All current life/Scope/source-history/real delivery checks precede this tail.
+	order.receipts.append(receipt)
+	order.payload.work_seconds = 300.0
+	order.payload.stage = "completed"
+	order.status = "completed"
+	order.revision = int(order.revision) + 1
+	if not phase.is_empty(): publish_phase_receipt(phase)
+	lab.terrain.environment_revision += 1
+	return Runtime.ok("原有限糧食單完成；真轉移與工時各一次")
+
+func _commit_water_schedule(job: Dictionary) -> Dictionary:
+	var event := _water_schedule_event(job)
+	var samples := water_schedule_receipt_query(job.nation_token, event)
+	if not samples.ok: return samples
+	var phase := technology_phase_receipt_candidate(job.nation_token, event)
+	if not phase.ok: return phase
+	# The same original allocator's second sample and sole Scope receipt publish
+	# together. No fallible authority, capacity, source or callback follows.
+	lab.terrain.site.water_status = samples.second.allocation
+	publish_phase_receipt(phase)
+	lab.terrain.environment_revision += 1
+	return Runtime.ok("原300秒供水排程試驗完成，供水總量守恆")
+
+func finish_controlled_feature_work(feature_id: String) -> void:
+	# Original Runtime calls in its successful no-yield receipt tail. No source
+	# lookup, command permission, arbitrary callback or duplicate product here.
+	for key: String in _jobs.keys():
+		var job: Dictionary = _jobs[key]
+		if job.get("kind") == "technology_feature" and job.get("feature_id") == feature_id:
+			_finish(key, Runtime.ok("原具名工序已完成；本人停止這項工作"))
+
+func finish_controlled_vehicle_work(vehicle_id: String) -> void:
+	for key: String in _jobs.keys():
+		var job: Dictionary = _jobs[key]
+		if job.get("kind") == "technology_vehicle" and job.get("vehicle_id") == vehicle_id: _finish(key, Runtime.ok("原器械施工已完成，本人停止這項工作"))
+
+func nation_operation_material_source_candidate(nation_id: String, order_id: String, binding_id: String) -> Dictionary:
+	if order_id.begins_with("production_"):
+		if binding_id != "workshop_bow": return Runtime.fail("STALE_ORDER")
+		var military := _nation_military_material_source(nation_id, order_id, true)
+		return Runtime.ok("", {"source": military}) if military.ok else military
+	var context := _nation_original_order_context(nation_id, order_id, binding_id)
+	if not context.ok: return context
+	var order: Dictionary = context.order
+	if int(order.project_id) != 0 or not Technology.scope_known(context.nation.technology, str(order.tech_id)): return Runtime.fail("STALE_PROJECT")
+	if not order.payload.has("source"): return Runtime.ok("", {"source": {}})
+	if not equipment_orders._public_source_paid(order): return Runtime.fail("NO_BUDGET")
+	var source: Dictionary = order.payload.source
+	var stock := SiteStockpiles.stock_endpoint(lab.terrain, str(order.payload.get("reserve_feature_id", "")))
+	if stock.is_empty(): return Runtime.fail("NO_SOURCE")
+	return Runtime.ok("", {"source": Runtime.ok("", {"kind": "nation_order", "holder": "nation-order:" + JSON.stringify([_technology_site_id(), nation_id, order_id]),
+		"source_site_id": _technology_site_id(), "grantor": {"site_id": _technology_site_id(), "person_id": int(source.person_id)},
+		"cap": source.cap.duplicate(), "spent": {}, "physical_holder": stock.holder, "physical_cargo": stock.cargo,
+		"holder_version": int(stock.holder.version), "expected_refs": {"terrain": lab.terrain, "site": lab.terrain.site, "nation": context.nation,
+			"operations": context.operations, "order": order, "holder": stock.holder, "cargo": stock.cargo}})})
+
+func technology_phase_material_source_candidate(token: Dictionary) -> Dictionary:
+	if not Technology.keys(token, ["scope", "scope_id", "project_id", "epoch", "purpose", "tech_id", "phase_id", "attempt", "person", "binding", "target_id", "materials"]): return Runtime.fail("INVALID_TECHNOLOGY")
+	var context := _technology_phase_context(token, true, false)
+	if not context.ok: context = _technology_phase_context(token, false, false)
+	if not context.ok: return context
+	if token.tech_id == "N05" and token.scope == "nation":
+		var candidates: Array[Dictionary] = []
+		for order_id: String in context.owner.get("technology_operations", {}).get("orders", {}):
+			var source := nation_research_source_candidate(token, order_id)
+			if not source.ok: continue
+			if not context.project.budget.is_empty() and context.project.budget.holder != source.holder: continue
+			var checked := _technology_original_source_query(token, source)
+			if checked.ok: candidates.append(checked)
+		if candidates.size() != 1: return Runtime.fail("NO_BUDGET" if candidates.is_empty() else "AMBIGUOUS_SOURCE")
+		return Runtime.ok("", {"source": candidates[0]})
+	if token.scope == "settlement" and token.tech_id in ["S03", "S04", "S05", "S06", "S12"]:
+		var settlement_sources: Array[Dictionary] = []
+		for order_id: String in context.owner.get("technology_operations", {}).get("orders", {}):
+			var order: Dictionary = context.owner.technology_operations.orders[order_id]
+			if int(order.get("payload", {}).get("project_id", -1)) != int(token.project_id) or order.get("payload", {}).get("purpose") != token.purpose: continue
+			var actual: Dictionary = settlement_research_source_candidate(token, order_id)
+			if not actual.ok: continue
+			if not context.project.budget.is_empty() and context.project.budget.holder not in [actual.holder, "no_materials"]: continue
+			var checked: Dictionary = _technology_settlement_source_query(token, actual)
+			if checked.ok: settlement_sources.append(checked)
+		if settlement_sources.size() != 1: return Runtime.fail("NO_BUDGET" if settlement_sources.is_empty() else "AMBIGUOUS_SOURCE")
+		return Runtime.ok("", {"source": settlement_sources[0]})
+	if token.materials.is_empty(): return Runtime.ok("", {"source": {}})
+	var budget: Dictionary = context.project.budget
+	if not budget.is_empty() and budget.holder == "depot":
+		var existing := _technology_phase_context(token, true)
+		if not existing.ok: existing = _technology_phase_context(token)
+		return Runtime.ok("", {"source": {}}) if existing.ok else existing
+	if token.scope != "nation" or equipment_orders == null: return Runtime.fail("NO_BUDGET")
+	var candidates: Array[Dictionary] = []
+	var orders: Dictionary = context.owner.get("technology_operations", {}).get("public_orders", {})
+	for order_id: String in orders:
+		var order: Dictionary = orders[order_id]
+		if order.get("tech_id") != token.tech_id or int(order.get("project_id", -1)) != int(token.project_id) or order.get("status") == "revoked": continue
+		var actual := nation_research_source_candidate(token, order_id)
+		if not actual.ok: continue
+		# Transfer/lesson paid witnesses belong to those original completions,
+		# never a second debit at a construction material endpoint.
+		if actual.has("paid_witness"): continue
+		if not budget.is_empty() and budget.holder != actual.holder and budget.holder != "no_materials": continue
+		var checked := _technology_original_source_query(token, actual)
+		if checked.ok: candidates.append(checked)
+	if candidates.size() != 1: return Runtime.fail("NO_BUDGET" if candidates.is_empty() else "AMBIGUOUS_SOURCE")
+	return Runtime.ok("", {"source": candidates[0]})
+
+func technology_build_admission(operation_selector: Dictionary) -> Dictionary:
+	if Technology.keys(operation_selector, ["irrigation"]): return Runtime.technology_irrigation_work_preflight(lab.terrain, operation_selector)
+	if Technology.keys(operation_selector, ["settlement_id", "order_id"]):
+		var settlement: Dictionary = SiteSettlement.record(lab.terrain)
+		var raw: Variant = settlement.get("technology_operations")
+		if not SiteSettlement.valid_technology_operations(lab.terrain, raw): return Runtime.fail("CORRUPT_STATE")
+		var order: Dictionary = raw.orders.get(operation_selector.order_id, {})
+		if order.get("kind") != "defense" or order.get("status") not in ["prepared", "active"] or int(order.next_step) >= order.steps.size(): return Runtime.fail("NO_TARGET")
+		return Runtime.settlement_defense_work_preflight(lab.terrain, operation_selector, {}, str(order.steps[int(order.next_step)].action))
+	if Technology.keys(operation_selector, ["token"]) and operation_selector.token is Dictionary:
+		if not has_method("technology_phase_work_preflight"): return Runtime.fail("UNIMPLEMENTED")
+		var token: Dictionary = operation_selector.token
+		var checked: Dictionary = call("technology_phase_work_preflight", token, true)
+		if not checked.ok: checked = call("technology_phase_work_preflight", token, false)
+		if not checked.ok: return checked
+		var identity: int = int(checked.person.person_id)
+		var operation_ref := {}
+		if token.scope == "settlement" and token.tech_id in ["S03", "S04", "S05", "S06", "S12"]:
+			var paid_context: Dictionary = _technology_paid_phase_context(token)
+			var holder_name := ""
+			if paid_context.ok and str(paid_context.project.budget.get("holder", "")).begins_with("settlement-order:"):
+				holder_name = str(paid_context.project.budget.holder)
+			else:
+				var source: Dictionary = technology_phase_material_source_candidate(token)
+				if not source.ok: return source
+				holder_name = str(source.source.get("holder", ""))
+			var source_parts: Variant = JSON.parse_string(holder_name.trim_prefix("settlement-order:"))
+			if not source_parts is Array or source_parts.size() != 3 or source_parts[0] != _technology_site_id() or source_parts[1] != token.scope_id: return Runtime.fail("STALE_SOURCE")
+			var admitted: Dictionary = _settlement_operation_context(str(token.scope_id), str(source_parts[2]), str(token.binding))
+			if not admitted.ok or (admitted.person_ids != [identity] and (token.tech_id != "S12" or admitted.person_ids.size() != 2 or admitted.person_ids[0] != identity or admitted.order.kind != "ship_cooperation")): return admitted if not admitted.ok else Runtime.fail("NO_WORKER")
+			admitted["scope_context"] = checked
+			return admitted
+		if token.scope == "nation" and token.tech_id == "N05":
+			var source := technology_phase_material_source_candidate(token)
+			if not source.ok: return source
+			var order_source_parts: Variant = JSON.parse_string(str(source.source.holder).trim_prefix("nation-order:"))
+			if not order_source_parts is Array or order_source_parts.size() != 3: return Runtime.fail("STALE_SOURCE")
+			var admitted: Dictionary = equipment_orders.call("military_work_preflight", str(token.scope_id), str(order_source_parts[2]))
+			if not admitted.ok or admitted.person_ids != [identity]: return admitted if not admitted.ok else Runtime.fail("NO_WORKER")
+			admitted["scope_context"] = checked
+			return admitted
+		if token.scope == "nation" and equipment_orders != null:
+			var orders: Dictionary = checked.owner.get("technology_operations", {}).get("public_orders", {})
+			for order_id: String in orders:
+				var order: Dictionary = orders[order_id]
+				if order.get("tech_id") != token.tech_id or int(order.get("project_id", -1)) != int(token.project_id) or order.get("status") == "revoked": continue
+				var admitted: Dictionary = equipment_orders.call("public_work_preflight", str(token.scope_id), order_id, str(token.binding))
+				if not admitted.ok or not admitted.person_ids.has(identity): continue
+				if not operation_ref.is_empty(): return Runtime.fail("AMBIGUOUS_SOURCE")
+				operation_ref = {"nation_id": str(token.scope_id), "order_id": order_id}
+		return Runtime.ok("", {"team": _technology_team(checked.person), "person_ids": [identity], "requester_id": _technology_controlled(), "operation_ref": operation_ref,
+			"person": checked.person, "scope_context": checked})
+	if Technology.keys(operation_selector, ["settlement_id", "order_id"]) and operation_selector.settlement_id is String and operation_selector.order_id is String:
+		var order: Dictionary = lab.terrain.site.get("settlement", {}).get("technology_operations", {}).get("orders", {}).get(str(operation_selector.order_id), {})
+		if order.get("kind") == "defense":
+			if not SiteSettlement.valid_technology_operations(lab.terrain, lab.terrain.site.settlement.technology_operations): return Runtime.fail("CORRUPT_STATE")
+			return Runtime.settlement_defense_work_preflight(lab.terrain, operation_selector)
+		return _settlement_operation_context(operation_selector.settlement_id, operation_selector.order_id)
+	if not Technology.keys(operation_selector, ["nation_id", "order_id"]) or not operation_selector.nation_id is String or not operation_selector.order_id is String \
+		or operation_selector.nation_id.is_empty() or operation_selector.order_id.is_empty() or equipment_orders == null: return Runtime.fail("INVALID")
+	if str(operation_selector.order_id).begins_with("production_"):
+		if not equipment_orders.has_method("military_work_preflight"): return Runtime.fail("UNIMPLEMENTED")
+		return equipment_orders.call("military_work_preflight", operation_selector.nation_id, operation_selector.order_id)
+	if not equipment_orders.has_method("public_work_preflight"): return Runtime.fail("UNIMPLEMENTED")
+	return equipment_orders.call("public_work_preflight", operation_selector.nation_id, operation_selector.order_id)
+
+func prepare_controlled_vehicle_work(selector: Dictionary, vehicle: Dictionary, vehicles_candidate: Dictionary = {}, actual_operator_id: int = 0, repair_candidate: Dictionary = {}) -> Dictionary:
+	if bool(lab.terrain.site.get("paused", false)): return Runtime.fail("BUSY")
+	var spare := not repair_candidate.is_empty()
+	var spare_resume := spare and is_same(vehicle.get("repair"), repair_candidate.get("repair"))
+	if spare and (not spare_resume and not vehicle.get("repair", {}).is_empty() or not Runtime.valid_settlement_spare_repair_storage(lab.terrain, vehicle, repair_candidate)): return Runtime.fail("STALE_SOURCE")
+	var admission := Runtime.settlement_spare_admission(lab.terrain, actual_operator_id, int(vehicle.get("team_id", -1)), selector.get("token", {}), vehicle if spare_resume else {}) if spare else (technology_vehicle_work_admission(actual_operator_id, int(vehicle.get("team_id", -1))) if selector.is_empty() else technology_build_admission(selector))
+	if not admission.ok: return admission
+	var identity := _technology_controlled()
+	if admission.get("person_ids") != [identity] or is_busy(identity): return Runtime.fail("BUSY")
+	var person := _person(identity)
+	var team: Variant = admission.team if spare else _technology_team(person)
+	if team == null or not _ready(person) or _threat(person, {}) or int(team.team_id) != int(vehicle.get("team_id", -1)): return Runtime.fail("NO_AUTHORITY")
+	var definition: Dictionary = Runtime.SIEGE_DEFINITIONS.get(str(vehicle.get("kind", "")), {})
+	var build: Dictionary = repair_candidate.repair if spare else vehicle.get("build", {})
+	var action := "repair" if spare else "construct"
+	if definition.is_empty() or (vehicle.get("phase") not in ["idle", "ready", "disabled"] if spare else vehicle.get("phase") != "building") or float(vehicle.get("hp", 0.0)) <= 0.0 or build.is_empty() \
+		or not Technology.material_equal(build.get("paid_cost", {}), {"ballista_spares": 1} if spare else definition.cost) \
+		or not is_equal_approx(float(build.get("total_work", -1.0)), 300.0 if spare else float(definition.work_seconds)) \
+		or not Technology.finite_number(build.get("progress")) or float(build.progress) > float(build.total_work) \
+		or not vehicle.get("action", {}).is_empty() or not vehicle.get("move", {}).is_empty() or not vehicle.get("crew_slots", {}).is_empty(): return Runtime.fail("NO_TARGET")
+	var key := ""
+	var vehicles: Dictionary = lab.terrain.site.get("vehicles", vehicles_candidate)
+	if lab.terrain.site.has("vehicles") and not vehicles_candidate.is_empty() and not is_same(vehicles_candidate, vehicles) \
+		or not lab.terrain.site.has("vehicles") and not vehicles_candidate.is_empty(): return Runtime.fail("STALE_SOURCE")
+	for current: String in lab.terrain.site.get("vehicles", {}):
+		if is_same(lab.terrain.site.vehicles[current], vehicle): key = current; break
+	var prospective := key.is_empty()
+	if prospective: key = str(int(lab.terrain.site.get("next_vehicle", 1)))
+	if vehicle.get("id") != key: return Runtime.fail("STALE_SOURCE")
+	var token: Dictionary = repair_candidate.get("tech_trial", {}) if spare else vehicle.get("tech_trial", {})
+	var held_selector := selector.duplicate()
+	if selector.has("token"):
+		if token.is_empty() or selector.token != token or token.target_id != "vehicle:" + key: return Runtime.fail("STALE_PROJECT")
+		held_selector.token = token
+	var physical: int = lab.terrain.index(person.cell)
+	var selected := {}
+	var claims: Dictionary = lab.site_controller.work_team.reserved_targets()
+	for slot: Dictionary in Runtime.siege_work_slots(lab.terrain, vehicle):
+		if int(slot.cell) != physical: continue
+		if not selected.is_empty(): return Runtime.fail("INVALID_OWNER")
+		if claims.has(Runtime.work_claim_key({"target": "vehicle:" + key, "action": action, "work_slot": int(slot.slot)})): return Runtime.fail("BUSY")
+		selected = slot
+	if selected.is_empty() or not lab.terrain.is_walkable(person.cell): return Runtime.fail("UNREACHABLE", "受控原人须已在本器械的原施工工位")
+	var clear := technology_vehicle_station_clear(held_selector, vehicle, person.cell, actual_operator_id, repair_candidate)
+	if not clear.ok: return clear
+	for job: Dictionary in _jobs.values():
+		if job.get("kind") in ["technology_feature", "technology_vehicle"] and Runtime.work_claim_key(job.work_task) == "vehicle:" + key + "@" + str(int(selected.slot)): return Runtime.fail("BUSY")
+	var source := {}
+	if spare:
+		if not Runtime.can_pay(lab.terrain.site.inventory, {"tools": 1}) or not spare_resume and not Runtime.can_pay(lab.terrain.site.inventory, build.paid_cost): return Runtime.fail("MATERIALS")
+		if spare_resume:
+			source = Runtime.technology_existing_paid_phase_source(lab.terrain, token) if selector.has("token") else Runtime.ok("原已付備件")
+		else:
+			source = technology_phase_material_source_candidate(token) if selector.has("token") else Runtime.ok("原營地實物備件", {"source": {"physical_holder": lab.terrain.site.depot_items}})
+		if not source.ok: return source
+	elif not prospective:
+		if selector.has("token"):
+			source = Runtime.technology_existing_paid_phase_source(lab.terrain, token)
+			if not source.ok: return source
+			var active := technology_phase_active_guard(token)
+			if not active.ok: return active
+		elif not selector.is_empty():
+			var ledger: Dictionary = vehicle.get("tech_batch", {})
+			if not Runtime.validate_technology_target_storage(lab.terrain, key, vehicle, "vehicle").ok or not ledger.get("token", {}).is_empty() \
+				or vehicle.get("technology_order", {}) != selector or not Technology.material_equal(ledger.get("materials", {}), build.paid_cost): return Runtime.fail("STALE_SOURCE")
+			source = Runtime.ok("原已付公共器械", {"ledger": ledger})
+	else:
+		if selector.is_empty():
+			if not Runtime.can_pay(lab.terrain.site.inventory, build.paid_cost) or not Runtime.can_pay(lab.terrain.site.inventory, {"tools": 1}): return Runtime.fail("MATERIALS")
+			source = Runtime.ok("原營地普通施工", {"source": {"physical_holder": lab.terrain.site.depot_items}})
+		else:
+			source = technology_phase_material_source_candidate(token) if selector.has("token") \
+				else nation_operation_material_source_candidate(str(selector.nation_id), str(selector.order_id), "ballista_build")
+		if not source.ok: return source
+	var task := {"version": 3, "zone": -1, "target": "vehicle:" + key, "action": action, "work_cell": physical, "cell": physical,
+		"mode": "work", "progress": 0.0, "status": "受控原人固定原器械工位", "work_slot": int(selected.slot), "named": true,
+		"operation_ref": admission.get("operation_ref", {}).duplicate()}
+	var job := _new_job(person, "technology_vehicle", 0)
+	job.merge({"duration": 0.0, "terrain": lab.terrain, "site_state": lab.terrain.site, "technology_executor_body": person.body,
+		"executor_owner": person.owner, "executor_holder": person.holder, "executor_cargo": person.cargo, "executor_version": int(person.holder.version),
+		"vehicle_id": key, "vehicle_ref": vehicle, "vehicles_ref": vehicles, "build_ref": build,
+		"team_ref": team, "work_task": task, "operation_selector": held_selector, "source_admission": source, "spare_original_team": admission.get("original_team"), "repair_candidate": repair_candidate})
+	var source_holder: Variant = source.get("source", {}).get("physical_holder")
+	if prospective and is_same(source_holder, person.holder): job.executor_version = int(person.holder.version) + 1
+	return Runtime.ok("原本人／原器械工位／原有限用途預檢完成", {"job_key": str(identity), "job": job, "prior_jobs": _jobs,
+		"terrain": lab.terrain, "site": lab.terrain.site, "vehicle": vehicle, "person": person})
+
+func publish_controlled_vehicle_work(prepared: Dictionary) -> void:
+	assert(prepared.ok and is_same(prepared.prior_jobs, _jobs) and not _jobs.has(prepared.job_key))
+	var job: Dictionary = prepared.job
+	assert(is_same(prepared.terrain, lab.terrain) and is_same(prepared.site, lab.terrain.site) \
+		and is_same(job.vehicles_ref, lab.terrain.site.vehicles) and is_same(job.vehicles_ref.get(job.vehicle_id), prepared.vehicle))
+	assert(is_same(prepared.person.holder, job.executor_holder) and int(job.executor_holder.version) == int(job.executor_version))
+	if not job.get("repair_candidate", {}).is_empty(): assert(is_same(job.vehicle_ref.get("repair"), job.repair_candidate.repair))
+	_jobs[prepared.job_key] = job
+
+func technology_vehicle_work_admission(operator_id: int, team_id: int) -> Dictionary:
+	if operator_id <= 0 or team_id <= 0 or bool(lab.terrain.site.get("paused", false)) or float(lab.terrain.site.get("combat_left", 0.0)) > 0.0: return Runtime.fail("BUSY")
+	var person := _person(operator_id)
+	var team: Variant = _technology_team(person)
+	if team == null or not team is TerrainArmy or int(team.team_id) != team_id or not lab.combat_armies.has(team) \
+		or not team.combat_enabled or team.combat_order != TerrainArmy.CombatOrder.HOLD: return Runtime.fail("NO_AUTHORITY")
+	var duty: Dictionary = team.duty_resolve_readonly("team.work", team)
+	if not duty.ok or int(duty.get("decider", -1)) != _technology_controlled(): return Runtime.fail("NO_AUTHORITY")
+	if not _ready(person) or _threat(person, {}) or is_busy(operator_id) or team.is_sustain_routed() or team.get_active_move_plan() != null \
+		or team.moving_member_count() > 0 or is_instance_valid(team.player_member) and team.player_member.is_moving() \
+		or team.has_ship_journey() or team._team_ship_activity() \
+		or bool(lab.terrain.site.get("team_supply", {}).get(str(team_id), {}).get("training_order", false)): return Runtime.fail("BUSY")
+	return Runtime.ok("原工作首長明示本次普通器械工人", {"team": team, "person_ids": [operator_id], "requester_id": _technology_controlled(),
+		"operation_ref": {}, "controlled_worker": operator_id == _technology_controlled(), "person": person})
+
+# Re-query the named ORIGINAL person at an original construction station. This
+# is an occupancy query only; it does not approve a job or bypass a reservation.
+
+func technology_vehicle_station_clear(selector: Dictionary, vehicle: Dictionary, cell: Vector2i, actual_operator_id: int = 0, repair_candidate: Dictionary = {}) -> Dictionary:
+	var admission := Runtime.settlement_spare_admission(lab.terrain, actual_operator_id, int(vehicle.get("team_id", -1)), selector.get("token", {}), vehicle if is_same(vehicle.get("repair"), repair_candidate.get("repair")) else {}) if not repair_candidate.is_empty() else (technology_vehicle_work_admission(actual_operator_id, int(vehicle.get("team_id", -1))) if selector.is_empty() else technology_build_admission(selector))
+	if not admission.ok: return admission
+	if admission.get("person_ids", []).size() != 1: return Runtime.fail("NO_OPERATOR")
+	var person := _person(int(admission.person_ids[0]))
+	var original: Variant = admission.get("original_team", admission.get("team")) if not repair_candidate.is_empty() else _technology_team(person)
+	if person.is_empty() or original == null or int(original.team_id) != int(vehicle.get("team_id", -1)) or person.cell != cell or not _ready(person): return Runtime.fail("OCCUPIED")
+	var at_station := false
+	for station: Dictionary in Runtime.siege_work_slots(lab.terrain, vehicle):
+		if int(station.cell) == lab.terrain.index(cell): at_station = true; break
+	if not at_station: return Runtime.fail("OCCUPIED")
+	var controller: Variant = lab.site_controller
+	if controller.vehicles.blocks_cell(cell): return Runtime.fail("OCCUPIED")
+	if person.owner is TerrainTestCharacter:
+		if controller._actor_people_blocked(cell, person.owner): return Runtime.fail("OCCUPIED")
+	elif controller.work_team._occupied(cell, person.owner, int(person.unit)): return Runtime.fail("OCCUPIED")
+	# Passage protection belongs to the original formations, including this
+	# worker's own formation. No standing worker makes that lease disappear.
+	for team: TerrainArmy in lab.combat_armies:
+		if team.has_army() and team._passage_cell_is_protected(cell): return Runtime.fail("OCCUPIED")
+	if "combat_movement_coordinator" in lab and lab.combat_movement_coordinator != null:
+		var lease: Variant = lab.combat_movement_coordinator.deployment_registry.slot_owners.get(cell)
+		if lease != null and int(lease.formation_id) != int(original.team_id): return Runtime.fail("OCCUPIED")
+	return Runtime.ok("只排除已核定且实际站在本原工位的这名原工人", {"person": person})
+
+# APPEND to ORIGINAL PA after shared-start and controlled feature/vehicle packs.
+# SAME _jobs/_prepared_controlled_features only. Root merges function-local.
+
+func prepare_controlled_feature_work(selector: Dictionary, feature: Dictionary, zone: Dictionary, action: String = "construct", repair_candidate: Dictionary = {}) -> Dictionary:
+	if action not in ["construct", "operate", "repair"] or bool(lab.terrain.site.get("paused", false)): return Runtime.fail("INVALID")
+	var admission := technology_build_admission(selector)
+	if not admission.ok: return admission
+	var identity := _technology_controlled()
+	if not admission.get("person_ids") is Array or admission.person_ids != [identity] or is_busy(identity): return Runtime.fail("BUSY")
+	var person := _person(identity)
+	if person.get("owner") is CrowdOwner and not person.owner.crowd_site.work_fatigue_work_start_ready(identity): return Runtime.fail("BUSY")
+	if not _ready(person) or _threat(person, {}): return Runtime.fail("BUSY")
+	if floori(Runtime.CARRY_CAPACITY - Runtime.carried_load(lab.terrain.site, {}, person.holder)) < 0: return Runtime.fail("STORAGE_FULL")
+	var layout := Runtime.validate_feature_layout(lab.terrain, feature, false)
+	if not layout.ok: return layout
+	if int(feature.get("owner_faction", -1)) >= 0 and int(feature.owner_faction) != int(person.faction): return Runtime.fail("NO_AUTHORITY")
+	var key := ""
+	for current_key: String in lab.terrain.site.features:
+		if is_same(lab.terrain.site.features[current_key], feature): key = current_key; break
+	var prospective := key.is_empty()
+	if not repair_candidate.is_empty() and (action != "repair" or prospective or not Runtime.valid_feature_repair_candidate(lab.terrain, feature, repair_candidate) \
+		or not feature.get("repair", {}).is_empty() and not is_same(feature.repair, repair_candidate)): return Runtime.fail("STALE_SOURCE")
+	var repair: Dictionary = feature.get("repair", {}) if repair_candidate.is_empty() else repair_candidate
+	if prospective:
+		if action != "construct": return Runtime.fail("STALE_SOURCE")
+		key = str(int(lab.terrain.site.next_feature))
+	var target := "feature:" + key
+	if selector.has("token") and selector.token.get("target_id") != target: return Runtime.fail("STALE_PROJECT")
+	var held_selector := selector.duplicate()
+	var feature_token: Variant = feature.get("tech_trial", {})
+	if not feature_token is Dictionary or not feature.get("tech_batch", {}) is Dictionary: return Runtime.fail("INVALID_TECHNOLOGY")
+	if selector.has("token") and not feature_token.is_empty():
+		if feature_token != selector.token: return Runtime.fail("STALE_PROJECT")
+		held_selector.token = feature_token # Runtime's SAME actual prepared binding, not an equal token copy.
+	if not Technology.keys(zone, ["cells", "kind", "action", "feature", "active"]) or zone.cells != feature.cells \
+		or not Technology.integer(zone.kind, -1, -1) or zone.action != action or zone.feature != key or not zone.active is bool: return Runtime.fail("NO_ZONE")
+	var zone_index := -1
+	for index: int in lab.terrain.site.zones.size():
+		if is_same(lab.terrain.site.zones[index], zone): zone_index = index; break
+	if zone_index < 0:
+		if not zone.active: return Runtime.fail("NO_ZONE")
+		for current: Dictionary in lab.terrain.site.zones:
+			if current.get("feature") == key and current.get("action") == action: return Runtime.fail("STALE_SOURCE")
+		zone_index = lab.terrain.site.zones.size()
+	var construction: Dictionary = feature.get("pending_build", feature)
+	if action == "construct":
+		if feature.get("stage") == "complete" and not feature.has("pending_build"): return Runtime.fail("NO_CHANGE")
+		for resource_id: String in construction.get("clearing", []):
+			if not bool(Runtime.Env.resource(lab.terrain, resource_id).get("cleared", true)): return Runtime.fail("CLEARING_REQUIRED")
+	elif action == "repair":
+		if repair.is_empty(): return Runtime.fail("NO_TARGET")
+	elif feature.get("stage") != "complete" or feature.has("pending_build") or feature.has("repair") or not Runtime.feature_usable(feature): return Runtime.fail("NO_TARGET")
+	var physical_cell: int = lab.terrain.index(person.cell)
+	var slots: Array[Dictionary] = Runtime.feature_work_slots(lab.terrain, feature) if action == "operate" else [{"slot": -1, "cell": int(repair.work_cell) if action == "repair" else int(construction.entrance)}]
+	var selected := {}
+	for slot: Dictionary in slots:
+		if int(slot.cell) != physical_cell: continue
+		if not selected.is_empty(): return Runtime.fail("INVALID_OWNER")
+		selected = slot
+	if selected.is_empty() or not lab.terrain.is_walkable(person.cell): return Runtime.fail("UNREACHABLE", "受控原人須已站在這個原工位；不自動移動或選另一工位")
+	var claim := Runtime.work_claim_key({"target": target, "action": action, "work_slot": int(selected.slot)})
+	if lab.site_controller.work_team.reserved_targets().has(claim): return Runtime.fail("BUSY")
+	for existing: Dictionary in _jobs.values():
+		if existing.get("kind") == "technology_feature" and Runtime.work_claim_key(existing.work_task) == claim: return Runtime.fail("BUSY")
+	var source := _controlled_feature_source(held_selector, feature, key, action, admission, repair)
+	if not source.ok: return source
+	var task := {"version": 3, "zone": zone_index, "target": target, "action": action, "work_cell": physical_cell, "cell": physical_cell,
+		"mode": "work", "progress": 0.0, "status": "受控原人固定原工位", "work_slot": int(selected.slot), "named": true,
+		"operation_ref": admission.get("operation_ref", {}).duplicate()}
+	var job := _new_job(person, "technology_feature", 0)
+	# duration/elapsed are original job envelope fields only. Neither produces an
+	# item or completes this command; Runtime's actual endpoint is the sole end.
+	job.merge({"duration": 0.0, "terrain": lab.terrain, "site_state": lab.terrain.site, "technology_executor_body": person.body,
+		"executor_owner": person.owner, "executor_holder": person.holder, "executor_cargo": person.cargo,
+		"executor_version": int(person.holder.version), "feature_id": key, "feature_ref": feature, "zone_ref": zone,
+		"features_ref": lab.terrain.site.features, "zones_ref": lab.terrain.site.zones, "work_task": task,
+		"operation_selector": held_selector, "source_admission": source, "repair_ref": repair})
+	if not bool(source.get("already_paid", false)) and is_same(source.get("holder"), person.holder): job.executor_version = int(person.holder.version) + 1
+	return Runtime.ok("原本人／原工位／原有限來源預檢完成", {"job_key": str(identity), "job": job, "prior_jobs": _jobs,
+		"terrain": lab.terrain, "site": lab.terrain.site, "feature": feature, "zone": zone, "person": person})
+
+func publish_controlled_feature_work(prepared: Dictionary) -> void:
+	assert(prepared.ok and is_same(prepared.prior_jobs, _jobs) and not _jobs.has(prepared.job_key))
+	var job: Dictionary = prepared.job
+	assert(is_same(prepared.terrain, lab.terrain) and is_same(prepared.site, lab.terrain.site) \
+		and is_same(job.features_ref, lab.terrain.site.features) and is_same(job.zones_ref, lab.terrain.site.zones))
+	assert(is_same(job.features_ref.get(job.feature_id), prepared.feature) and is_same(job.zones_ref[int(job.work_task.zone)], prepared.zone) and prepared.zone.active)
+	assert(is_same(prepared.person.holder, job.executor_holder) and int(job.executor_holder.version) == int(job.executor_version))
+	if job.work_task.action == "repair": assert(is_same(prepared.feature.get("repair"), job.repair_ref))
+	_jobs[prepared.job_key] = job
+
+func _fire_pot_crew_consent(person: Dictionary, project: Dictionary) -> bool:
+	var team: Variant = _fire_pot_original_team(person)
+	if not team is TerrainArmy: return false
+	var physical: Variant = person.owner if person.owner is CrowdOwner else team
+	if physical.combat_order != TerrainArmy.CombatOrder.HOLD or team.get_active_move_plan() != null or team.has_ship_journey() \
+		or team._team_ship_activity() or physical.is_sustain_routed() or bool(lab.terrain.site.get("team_supply", {}).get(str(team.team_id), {}).get("training_order", false)) \
+		or int(team.duty_resolve_readonly("team.work", physical if physical is CrowdOwner else null).get("decider", -1)) <= 0: return false
+	if not (physical.combat_can_act(int(person.unit)) if int(person.unit) >= 0 else person.owner.can_act()): return false
+	for receipt: Variant in project.consents:
+		if Technology.keys(receipt, ["site_id", "team_id", "person_id", "purpose", "decider_id", "revision", "status"]) \
+			and receipt.site_id == _technology_site_id() and int(receipt.team_id) == int(team.team_id) \
+			and int(receipt.person_id) == int(person.person_id) and receipt.purpose == project.purpose and receipt.status == "accepted": return true
+	return false
+
+func _fire_pot_shot_trial_guard(vehicle: Dictionary, identity: int, token: Dictionary) -> Dictionary:
+	var checked := _fire_pot_shot_phase_context(token, false)
+	if not checked.ok:
+		# Pure initial order admission precedes publishing this one attempt.
+		checked = _fire_pot_shot_phase_context(token, true)
+	if not checked.ok: return checked
+	if int(token.person.person_id) != identity or not is_same(checked.vehicle, vehicle): return Runtime.fail("STALE_SOURCE")
+	var proof: Dictionary = vehicle.get("tech_fire_pot_shot", {})
+	if not proof.is_empty() and int(proof.token.attempt) == int(token.attempt): return Runtime.fail("WAITING", "同一次真發射不重扣火罐")
+	if int(checked.project.budget.spent.get("fire_pot", 0)) + 1 > int(checked.project.budget.cap.get("fire_pot", 0)): return Runtime.fail("BUDGET_EXCEEDED")
+	return checked
+
+func water_schedule_active(schedule: Dictionary) -> bool:
+	for job: Dictionary in _jobs.values():
+		if job.get("kind") == "water_schedule" and is_same(job.get("water_schedule"), schedule) \
+			and is_same(job.get("site_state"), lab.terrain.site) and is_same(job.get("terrain"), lab.terrain):
+			return _water_schedule_context(job).ok
+	return false
+
+func technology_settlement_order_person_ready(person: Dictionary, order: Dictionary) -> Dictionary:
+	if person.is_empty() or not order.get("payload") is Dictionary: return Runtime.fail("INVALID_MEMBER")
+	var settlement: Dictionary = lab.terrain.site.get("settlement", {})
+	var operations: Dictionary = settlement.get("technology_operations", {})
+	if not is_same(operations.get("orders", {}).get(str(order.get("id", ""))), order) \
+		or (int(order.payload.get("operator_id", -1)) != int(person.person_id) and (order.get("kind") != "ship_cooperation" or int(person.person_id) not in [int(order.payload.helper_id), int(order.payload.carrier_id)])) \
+		or not SiteSettlement.valid_technology_operations(lab.terrain, operations): return Runtime.fail("STALE_SOURCE")
+	if not _technology_military_person_ready(person, order): return Runtime.fail("BUSY", "原具名工人被其他任務、威脅、移動或身體狀態占用")
+	return Runtime.ok("原人物資格可作此具名工單", {"person": person})
+
+func _technology_matching_settlement_task(person: Dictionary, purpose: String) -> bool:
+	if person.is_empty() or purpose.is_empty(): return false
+	var task := {}
+	if person.owner is CrowdOwner:
+		var actual: Dictionary = lab.crowd_site.siege_original_person(int(person.person_id))
+		if actual.is_empty() or actual.owner != person.owner or int(actual.unit) != int(person.unit): return false
+		task = actual.row.get("work_task", {})
+	elif person.body is Dictionary: task = person.body.get("work_task", {})
+	var job: Dictionary = _jobs.get(_job_key_for(int(person.person_id)), {})
+	if job.get("kind") == "technology_feature" and is_same(job.get("site_state"), lab.terrain.site) \
+		and is_same(job.get("technology_executor_body"), person.body): task = job.get("work_task", {})
+	if not Technology.integer(task.get("version"), 3, 3) or task.get("named") != true \
+		or not Technology.keys(task.get("operation_ref"), ["settlement_id", "order_id"]) \
+		or not task.get("target") is String or not str(task.target).begins_with("feature:"): return false
+	var settlement: Dictionary = SiteSettlement.record(lab.terrain)
+	var raw: Variant = settlement.get("technology_operations")
+	if settlement.get("settlement_id") != task.operation_ref.settlement_id or not SiteSettlement.valid_technology_operations(lab.terrain, raw): return false
+	var order: Dictionary = raw.orders.get(task.operation_ref.order_id, {})
+	var key: String = str(task.target).trim_prefix("feature:")
+	var feature: Dictionary = lab.terrain.site.features.get(key, {})
+	if order.get("kind") == "ship_cooperation":
+		return order.status == "active" and order.payload.purpose == purpose \
+			and int(person.person_id) in [int(order.payload.operator_id), int(order.payload.helper_id)] \
+			and task.action == "operate" and feature.get("technology_settlement_order") == task.operation_ref \
+			and Runtime.valid_settlement_ship_target(lab.terrain, key, feature) and SiteWorkTeam.valid_task(lab.terrain, lab.terrain.site, task)
+	if order.get("kind") in ["charcoal_batch", "textile_batch", "metal_chain"]:
+		return order.get("status") == "active" and order.get("payload", {}).get("purpose") == purpose \
+			and int(order.payload.get("operator_id", -1)) == int(person.person_id) and task.action == "operate" \
+			and feature.get("technology_settlement_order") == task.operation_ref \
+			and Runtime.valid_settlement_processing_target(lab.terrain, key, feature) and SiteWorkTeam.valid_task(lab.terrain, lab.terrain.site, task)
+	if order.get("kind") != "defense" or order.get("status") != "active" or order.get("purpose") != purpose \
+		or order.get("paid", {}).get("feature_id") != key or int(order.get("next_step", -1)) >= order.get("steps", []).size() \
+		or not Runtime.valid_settlement_work_storage(lab.terrain, key, feature) or not SiteWorkTeam.valid_task(lab.terrain, lab.terrain.site, task): return false
+	var step: Dictionary = order.steps[int(order.next_step)]
+	return int(step.operator_id) == int(person.person_id) and task.action == step.action \
+		and feature.settlement_work.order_id == task.operation_ref.order_id and feature.settlement_work.settlement_id == task.operation_ref.settlement_id
+
+func _technology_matching_military_task(person: Dictionary, order: Dictionary) -> bool:
+	var selector := _technology_military_selector_for_order(order)
+	if person.is_empty() or selector.is_empty() or order.get("status") != "active" or int(order.get("operator_id", -1)) != int(person.person_id): return false
+	var task := _technology_military_task(person)
+	var feature: Dictionary = lab.terrain.site.get("features", {}).get(str(order.feature_id), {})
+	return Technology.integer(task.get("version"), 3, 3) and task.get("named") == true \
+		and Technology.keys(task.get("operation_ref"), ["nation_id", "order_id"]) and task.operation_ref == selector \
+		and task.get("target") == "feature:" + str(order.feature_id) and task.get("action") == "operate" \
+		and not feature.is_empty() and feature.get("technology_order") == selector \
+		and SiteWorkTeam.valid_task(lab.terrain, lab.terrain.site, task)
+
+func _technology_military_task(person: Dictionary) -> Dictionary:
+	if person.is_empty(): return {}
+	var task: Dictionary = {}
+	if person.owner is CrowdOwner:
+		var actual: Dictionary = lab.crowd_site.siege_original_person(int(person.person_id))
+		if actual.is_empty() or actual.owner != person.owner or int(actual.unit) != int(person.unit): return {}
+		task = actual.row.get("work_task", {})
+		var actor: Variant = person.owner.actors.get(int(person.unit))
+		if actor != null: task = lab.terrain.site.manual if is_same(actor, lab.character) else (lab.terrain.site.worker if is_same(actor, lab.npc) else {})
+	elif person.body is Dictionary: task = person.body.get("work_task", {})
+	else: task = lab.terrain.site.manual if person.owner == lab.character else lab.terrain.site.worker
+	var job: Dictionary = _jobs.get(_job_key_for(int(person.person_id)), {})
+	if job.get("kind") == "technology_feature" and is_same(job.get("technology_executor_body"), person.body) \
+		and is_same(job.get("site_state"), lab.terrain.site): task = job.work_task
+	return task
+
+func _technology_military_team(person: Dictionary) -> Variant:
+	if person.is_empty(): return null
+	if person.owner is CrowdOwner:
+		var original: Variant = person.owner._command_owner(int(person.unit))
+		return person.owner if original is TerrainArmy or _technology_team(person) != null else null
+	return _technology_team(person)
+
+func gd_contact_job_runtime_candidate(candidate: Dictionary) -> bool:
+	for actual: Dictionary in _gd_contact_job_capture.get("runtime_priors", []):
+		if is_same(actual, candidate): return true
+	for actual: Dictionary in _gd_contact_job_segment.get("runtime", []):
+		if is_same(actual, candidate): return true
+	return false
+
+func validate_checked_controlled_runtime_prefixes(registered: Dictionary) -> Dictionary:
+	if registered.get("owner") != self or not is_same(registered.get("registered"), _checked_controlled_prefixes): return Runtime.fail("STALE_SOURCE")
+	var runtime_priors: Array = _checked_controlled_prefixes.runtime_priors
+	for prefix: Dictionary in _checked_controlled_prefixes.prefixes:
+		var candidate: Dictionary = Runtime.prepare_checked_work_prefix(lab.terrain, prefix.task, float(prefix.applied_productive_seconds), float(prefix.actual_seconds), prefix)
+		if not candidate.ok: return candidate
+		_checked_controlled_prefixes.runtime.append(candidate)
+		runtime_priors.append(candidate) # Same original Lab finite batch/source ledger.
+	return Runtime.ok("原受控任务已纯预验同held合法前缀", {"owner": self, "checked": _checked_controlled_prefixes})
+
+func settlement_food_prefix_progress(job: Dictionary) -> void:
+	# Called immediately after the ORIGINAL shared timer writes job.elapsed.
+	# This is saved evidence of that timer, not a second elapsed owner.
+	if job.get("kind") == "food_order": job.food_order.payload.work_seconds = float(job.elapsed)
+
+func discard_checked_controlled_prefixes() -> void:
+	_shared_vehicle_request_facts.clear()
+	_checked_controlled_prefixes = {}
+	_publishing_checked_controlled = false
+
+func begin_shared_work_prefix_consumption(admitted: Dictionary) -> void:
+	# Sole original Lab calls after ALL pure gates and Native final prepare, then
+	# consumes original providers in a synchronous no-failure tail. No callbacks.
+	assert(admitted.ok and admitted.owner == self and _shared_work_prefix_consumption.is_empty())
+	assert(is_same(admitted.plan, lab._shared_work_plan) and is_same(admitted.plan, lab.site_controller._shared_work_plan))
+	if lab.crowd_site != null and lab.crowd_site.active:
+		assert(lab.crowd_site.work_fatigue_point_active())
+		var state: PackedFloat64Array = lab.crowd_site.crowd.work_point_state()
+		assert(state.size() == 5 and state[1] == 1.0 and is_equal_approx(state[4], float(admitted.seconds)))
+	_shared_work_prefix_consumption = admitted
+
+func end_shared_work_prefix_consumption() -> void:
+	_shared_work_prefix_consumption = {}
+
+func finish_shared_job_prefix_timers(admitted: Dictionary) -> void:
+	# After World publication only. Original endpoint settle follows separately.
+	if admitted.get("owner") != self or not bool(admitted.get("timers_published", false)) or bool(admitted.get("timers_finished", false)): return
+	admitted.timers_finished = true
+	for key: String in admitted.prepared.held:
+		var held: Dictionary = admitted.prepared.held[key]
+		if held.kind in ["technology_feature", "technology_vehicle", "fire_suppress"]: continue
+		var allocation: Dictionary = admitted.plan.get("jobs", {}).get("person_actions", {}).get(key, {})
+		for identity: int in held.people:
+			var person: Dictionary = _person(identity)
+			if person.is_empty() or bool(person.player): continue
+			var actual: float = float(allocation.get("participant_seconds", {}).get(identity, 0.0))
+			if actual > 0.0: _body_set(person, "work_resting", false)
+			var paused: String = str(allocation.get("participant_paused", {}).get(identity, allocation.get("paused", "")))
+			if paused == "REST":
+				_body_set(person, "work_resting", true)
+				if person.owner is CrowdOwner: person.owner.work_fatigue_rest(identity)
+
+func publish_checked_controlled_prefixes(prepared: Dictionary) -> void:
+	assert(prepared.get("owner") == self and is_same(prepared.get("checked"), _checked_controlled_prefixes))
+	if bool(prepared.get("published", false)): return
+	assert(not _shared_work_prefix_consumption.is_empty() and is_same(_shared_work_prefix_consumption.plan, _checked_controlled_prefixes.plan))
+	_publishing_checked_controlled = true
+	for candidate: Dictionary in _checked_controlled_prefixes.runtime: Runtime.publish_checked_work_prefix(candidate)
+	for key: String in _checked_controlled_prefixes.admitted.prepared.held:
+		var held: Dictionary = _checked_controlled_prefixes.admitted.prepared.held[key]
+		if held.kind not in ["technology_feature", "technology_vehicle"]: continue
+		_controlled_feature_consumed[key] = true # Also zero/REST jobs: never legacy fallback in point tail.
+		held.job.paused = str(_checked_controlled_prefixes.plan.jobs.get("person_actions", {}).get(key, {}).get("paused", ""))
+	_publishing_checked_controlled = false
+	prepared.published = true
+
+func publish_shared_job_prefix_timers(admitted: Dictionary) -> Dictionary:
+	assert(admitted.get("owner") == self and admitted.ok and is_same(admitted, _shared_work_prefix_consumption))
+	if bool(admitted.get("timers_published", false)): return {"handled_seconds": {}}
+	var handled := {}
+	for key: String in admitted.prepared.held:
+		var held: Dictionary = admitted.prepared.held[key]
+		if held.kind in ["technology_feature", "technology_vehicle", "fire_suppress"]: continue
+		var allocation: Dictionary = admitted.plan.get("jobs", {}).get("person_actions", {}).get(key, {})
+		if allocation.is_empty(): continue # No allocation never reaches legacy charge/callback.
+		var job: Dictionary = held.job
+		job.paused = str(allocation.get("paused", ""))
+		job.elapsed = 0.0 if job.paused == "THREAT" else minf(float(held.duration), float(held.elapsed) + float(allocation.get("effective_seconds", 0.0)))
+		settlement_food_prefix_progress(job)
+		if job.paused == "REST" and float(job.elapsed) >= float(job.duration) - 0.00000001: job.paused = ""
+		for identity: int in held.people:
+			var actual: float = float(allocation.get("participant_seconds", {}).get(identity, 0.0))
+			if actual > 0.0: handled[identity] = actual
+		if admitted.admitted.has(key): admitted.admitted[key].advance_consumed = true
+	admitted.timers_published = true
+	return {"handled_seconds": handled}
+
+func _settlement_food_event(job: Dictionary) -> Dictionary:
+	return {"id": str(job.food_event_id), "site_id": _technology_site_id(), "target_id": Runtime.settlement_food_target(_technology_site_id(), str(job.food_order.payload.settlement_id), str(job.food_order.id)),
+		"operator_id": int(job.executor_id), "binding": "food_order", "work_seconds": float(job.elapsed), "item_ids": [], "outputs": {}, "materials": job.food_order.payload.paid.materials.duplicate(true)}
+
+func _settlement_food_job_context(job: Dictionary) -> Dictionary:
+	if not is_same(_jobs.get(str(int(job.executor_id))), job) or not is_same(job.terrain, lab.terrain) \
+		or not is_same(job.site_state, lab.terrain.site): return Runtime.fail("STALE_SOURCE")
+	var checked := Runtime.settlement_food_work_preflight(lab.terrain, str(job.food_order.payload.settlement_id), str(job.food_order.id), "food_order")
+	if not checked.ok: return checked
+	if not is_same(checked.settlement, job.food_settlement) or not is_same(checked.operations, job.food_operations) \
+		or not is_same(checked.order, job.food_order) or checked.order.payload.stage != "arrived" \
+		or not is_same(checked.feature, job.food_warehouse) or not is_same(checked.stock.holder, job.food_holder) \
+		or not is_same(checked.stock.cargo, job.food_cargo) or not is_same(checked.person.body, job.executor_body) \
+		or int(checked.person.hit) != int(job.executor_hit) or lab.terrain.index(checked.person.cell) != int(job.executor_cell) \
+		or not lab.site_controller._delivery_person_ready(checked.person, job): return Runtime.fail("INTERRUPTED")
+	if not bool(checked.person.player) and _threat(checked.person, {}): return Runtime.fail("THREAT")
+	if not job.nation_token.is_empty():
+		if not is_same(job.nation_token, checked.order.payload.token): return Runtime.fail("STALE_PROJECT")
+		var phase := _technology_paid_phase_context(job.nation_token)
+		if not phase.ok: return phase
+	return checked
+
+func _water_schedule_event(job: Dictionary) -> Dictionary:
+	return {"id": str(job.water_event_id), "site_id": _technology_site_id(), "target_id": str(job.nation_token.target_id),
+		"operator_id": int(job.executor_id), "binding": "water_priority", "work_seconds": float(job.duration),
+		"item_ids": [], "outputs": {}, "materials": {}}
+
+func water_schedule_receipt_query(token: Dictionary, event: Dictionary) -> Dictionary:
+	var job: Dictionary = _jobs.get(str(int(token.get("person", {}).get("person_id", -1))), {})
+	if job.get("kind") != "water_schedule" or job.get("nation_token") != token \
+		or float(job.elapsed) + 0.00000001 < float(job.duration) or _water_schedule_event(job) != event: return Runtime.fail("INVALID_RECEIPT")
+	var context := _water_schedule_context(job)
+	if not context.ok: return context
+	var first: Dictionary = job.water_first_sample
+	var second: Dictionary = Runtime.water_allocation_sample(lab.terrain, job.water_schedule.categories)
+	if not Runtime.valid_water_allocation_sample(first) or not Runtime.valid_water_allocation_sample(second) \
+		or float(second.source_capacity) <= 0.0 or first.categories != second.categories: return Runtime.fail("WATER")
+	return Runtime.ok("兩次原水源預算內的真需求/供給/優先序", {"first": first, "second": second})
+
+func grant_settlement_metal_source(requester_id: int, settlement_id: String, order_id: String, revoke: bool = false) -> Dictionary:
+	var settlement := _technology_scope_owner("settlement", settlement_id)
+	var admitted := _technology_scope_command(requester_id, "settlement", settlement)
+	if not admitted.ok: return admitted
+	var runtime_script: Variant = Runtime
+	if not runtime_script.has_method("grant_settlement_operation_source"): return Runtime.fail("UNIMPLEMENTED")
+	var view := settlement_metal_order_view(settlement_id, order_id)
+	if not view.ok: return view
+	var refs: Dictionary = runtime_script.call("_settlement_order_state", lab.terrain, settlement_id, order_id)
+	if refs.is_empty() or refs.order.get("kind") != "metal_chain": return Runtime.fail("NO_TARGET")
+	var holder_key := str(refs.order.payload.smithy_id) if refs.order.payload.carry_receipts.size() == 2 else str(refs.order.payload.smelter_id)
+	return runtime_script.call("grant_settlement_operation_source", lab.terrain, settlement_id, order_id, requester_id, holder_key, revoke)
+
+func stop_settlement_metal_order(requester_id: int, settlement_id: String, order_id: String, permanent: bool = false) -> Dictionary:
+	var settlement := _technology_scope_owner("settlement", settlement_id)
+	var admitted := _technology_scope_command(requester_id, "settlement", settlement)
+	if not admitted.ok: return admitted
+	var runtime_script: Variant = Runtime
+	if not runtime_script.has_method("stop_settlement_processing_order"): return Runtime.fail("UNIMPLEMENTED")
+	var view := settlement_metal_order_view(settlement_id, order_id)
+	if not view.ok: return view
+	return runtime_script.call("stop_settlement_processing_order", lab.terrain, settlement_id, order_id, requester_id, permanent)
+
+func cancel_settlement_food_order(requester_id: int, settlement_id: String, order_id: String) -> Dictionary:
+	var refs := Runtime._settlement_food_refs(lab.terrain, settlement_id, order_id)
+	if refs.is_empty() or requester_id != _technology_controlled() or requester_id != Settlement.head_executor(lab): return Runtime.fail("NO_AUTHORITY")
+	if refs.order.status in ["completed", "cancelled"]: return Runtime.fail("COMPLETE")
+	var key := str(int(refs.order.payload.operator_id))
+	var job: Dictionary = _jobs.get(key, {})
+	if job.get("kind") == "food_order" and is_same(job.get("food_order"), refs.order):
+		refs.order.payload.work_seconds = float(job.elapsed)
+		_jobs.erase(key)
+	refs.order.status = "cancelled"
+	refs.order.payload.source.status = "revoked"
+	refs.order.revision = int(refs.order.revision) + 1
+	return Runtime.ok("原糧食單已撤回；真已交物及有限spent保留")
+
+func accepted_controlled_feature_interval(task: Dictionary, named_id: int) -> Dictionary:
+	if _controlled_feature_allocation.is_empty() or named_id <= 0: return {}
+	var held: Dictionary = _controlled_feature_allocation.held
+	if not is_same(held.task, task) or int(held.job.executor_id) != named_id \
+		or not is_same(_jobs.get(_controlled_feature_allocation.key), held.job) or not _controlled_feature_job_context(held.job).ok: return {}
+	var interval: Dictionary = _controlled_feature_allocation.interval
+	var actual := float(interval.get("participant_seconds", {}).get(named_id, 0.0))
+	var productive := float(interval.get("participant_effective_seconds", {}).get(named_id, 0.0))
+	if not is_finite(actual) or not is_finite(productive) or actual <= 0.0 or productive <= 0.0 \
+		or actual + Fatigue.WORK_PLAN_EPS < float(interval.get("actual_seconds", 0.0)): return {}
+	var original_target: Dictionary = held.job.get("vehicle_ref", held.job.get("feature_ref", {}))
+	var token: Dictionary = original_target.get("tech_trial", {})
+	if not token.is_empty() and (int(token.person.person_id) != named_id or token.person.site_id != _technology_site_id() \
+		or token.target_id != task.target or not is_same(held.job.operation_selector.get("token"), token)): return {}
+	return {"person_id": named_id, "actual_seconds": actual, "productive": productive, "productive_seconds": productive,
+		"target": str(task.target), "phase_id": str(token.get("phase_id", "")), "attempt": int(token.get("attempt", -1))}
+
+
+# Append to ORIGINAL SitePersonActions; root owns the function-local merge.
+# This is a call-local view of its original held _jobs, never a permission flag,
+# second person/work owner, clock, saved schema or fake alive person.
+
+func _nation_military_material_source(nation_id: String, order_id: String, require_known: bool = false) -> Dictionary:
+	if equipment_orders == null or not equipment_orders.has_method("military_work_preflight"): return Runtime.fail("UNIMPLEMENTED")
+	var checked: Dictionary = equipment_orders.call("military_work_preflight", nation_id, order_id)
+	if not checked.ok: return checked
+	if require_known and not Technology.scope_known(checked.nation.get("technology", {}), "N05"): return Runtime.fail("STALE_PROJECT")
+	var order: Dictionary = checked.order
+	var stock := SiteStockpiles.stock_endpoint(lab.terrain, str(order.feature_id))
+	if stock.is_empty() or str(checked.feature.get("supply_mode", "")) != "local": return Runtime.fail("NO_SOURCE")
+	# source.spent proves the earlier REAL donor->localstock transfer. It is never
+	# copied into the new Scope payment or deducted from the donor a second time.
+	return Runtime.ok("", {"kind": "nation_order", "holder": "nation-order:" + JSON.stringify([_technology_site_id(), nation_id, order_id]),
+		"source_site_id": _technology_site_id(), "grantor": {"site_id": _technology_site_id(), "person_id": int(order.source.person_id)},
+		"cap": order.source.cap.duplicate(), "spent": {}, "physical_holder": stock.holder, "physical_cargo": stock.cargo,
+		"holder_version": int(stock.holder.version), "expected_refs": {"terrain": lab.terrain, "site": lab.terrain.site, "nation": checked.nation,
+			"operations": checked.operations, "order": order, "holder": stock.holder, "cargo": stock.cargo}})
+
+# APPEND after frozen 4CF4 checked-prefix package. NO change to that package.
+# A common point never calls whole legacy advance() in its no-failure tail.
+
+func _technology_settlement_source_query(token: Dictionary, source: Dictionary) -> Dictionary:
+	if not Technology.keys(source, ["ok", "code", "message", "kind", "holder", "source_site_id", "grantor", "cap", "spent", "physical_holder", "physical_cargo", "holder_version", "expected_refs"]) \
+		or source.ok != true or not source.ok is bool or not source.code is String or not source.message is String \
+		or source.kind != "settlement_order" or token.get("scope") != "settlement" \
+		or not source.holder is String or not source.holder.begins_with("settlement-order:") or source.source_site_id != _technology_site_id() \
+		or not Technology.valid_ref(source.grantor) or source.grantor.site_id != _technology_site_id() \
+		or not Technology.material_stack(source.cap) or not Technology.material_stack(source.spent) \
+		or not source.physical_holder is Dictionary or not source.physical_cargo is Dictionary or not Technology.integer(source.holder_version) \
+		or not Technology.keys(source.expected_refs, ["terrain", "site", "nation", "operations", "order", "holder", "cargo"]): return Runtime.fail("STALE_SOURCE")
+	var source_parts: Variant = JSON.parse_string(source.holder.trim_prefix("settlement-order:"))
+	if not source_parts is Array or source_parts.size() != 3 or source_parts[0] != _technology_site_id() \
+		or source_parts[1] != token.get("scope_id") or not source_parts[2] is String \
+		or source.holder != "settlement-order:" + JSON.stringify(source_parts): return Runtime.fail("STALE_SOURCE")
+	var actual: Dictionary = settlement_research_source_candidate(token, str(source_parts[2]))
+	if not actual.ok: return actual
+	for key: String in ["kind", "holder", "source_site_id", "grantor", "cap", "spent", "holder_version"]:
+		if source[key] != actual.get(key): return Runtime.fail("STALE_SOURCE")
+	for key: String in ["physical_holder", "physical_cargo"]:
+		if not is_same(source[key], actual.get(key)): return Runtime.fail("STALE_SOURCE")
+	for key: String in ["terrain", "site", "nation", "operations", "order", "holder", "cargo"]:
+		if not is_same(source.expected_refs[key], actual.expected_refs.get(key)): return Runtime.fail("STALE_SOURCE")
+	var settlement: Dictionary = _technology_scope_owner("settlement", str(token.get("scope_id", "")))
+	if not is_same(actual.expected_refs.terrain, lab.terrain) or not is_same(actual.expected_refs.site, lab.terrain.site) \
+		or not is_same(actual.expected_refs.nation, settlement) or not is_same(actual.expected_refs.operations, settlement.get("technology_operations")) \
+		or not is_same(actual.expected_refs.order, actual.expected_refs.operations.get("orders", {}).get(str(source_parts[2]))) \
+		or not is_same(actual.expected_refs.holder, actual.physical_holder) or not is_same(actual.expected_refs.cargo, actual.physical_cargo): return Runtime.fail("STALE_SOURCE")
+	return actual
+
+func settlement_research_source_candidate(token: Dictionary, order_id: String) -> Dictionary:
+	if token.get("scope") != "settlement" or token.get("tech_id") not in ["S03", "S04", "S05", "S06", "S12"]: return Runtime.fail("NO_BUDGET")
+	var ready: Dictionary = _settlement_operation_context(str(token.get("scope_id", "")), order_id, str(token.get("binding", "")))
+	if not ready.ok: return ready
+	var payload: Dictionary = ready.order.get("payload", {})
+	if int(payload.get("project_id", -1)) != int(token.get("project_id", -2)) or payload.get("purpose") != token.get("purpose") \
+		or int(payload.get("operator_id", -1)) != int(token.get("person", {}).get("person_id", -2)): return Runtime.fail("STALE_PROJECT")
+	return settlement_operation_material_source_candidate(str(token.scope_id), order_id, str(token.binding))
+
+func _settlement_operation_context(settlement_id: String, order_id: String, binding: String = "") -> Dictionary:
+	var runtime_script: Variant = Runtime
+	if not runtime_script.has_method("settlement_processing_preflight"): return Runtime.fail("UNIMPLEMENTED")
+	return runtime_script.call("settlement_processing_preflight", lab.terrain, settlement_id, order_id, binding)
+
+func _controlled_feature_source(selector: Dictionary, feature: Dictionary, key: String, action: String, admission: Dictionary, repair: Dictionary = {}) -> Dictionary:
+	if Technology.keys(selector, ["irrigation"]):
+		if action != "construct" or feature.get("kind") != "irrigation_channel": return Runtime.fail("INVALID")
+		var config: Dictionary = selector.irrigation.duplicate()
+		config.erase("operator_id")
+		if config != feature.get("irrigation"): return Runtime.fail("STALE_SOURCE")
+		if is_same(lab.terrain.site.features.get(key), feature):
+			if not Runtime.validate_irrigation_storage(lab.terrain, lab.terrain.site).ok: return Runtime.fail("STALE_SOURCE")
+			return Runtime.ok("原渠道已完整付料，接續不重扣", {"already_paid": true, "feature": feature})
+		return Runtime.ok("原本次營地完整建造來源", {"already_paid": false, "holder": lab.terrain.site.depot_items, "cargo": lab.terrain.site.inventory})
+	if Technology.keys(selector, ["settlement_id", "order_id"]):
+		var order: Dictionary = lab.terrain.site.get("settlement", {}).get("technology_operations", {}).get("orders", {}).get(str(selector.order_id), {})
+		if order.get("kind") == "defense": return Runtime.settlement_defense_material_source(lab.terrain, selector, feature, key, action, repair)
+		if action != "operate" or not is_same(lab.terrain.site.features.get(key), feature): return Runtime.fail("STALE_SOURCE")
+		if not feature.get("tech_batch", {}).is_empty():
+			if feature.get("technology_settlement_order") != selector or not Runtime.valid_settlement_processing_target(lab.terrain, key, feature) \
+				or not Runtime.valid_technology_batch(feature.tech_batch, lab.terrain, key) or not feature.tech_batch.token.is_empty() \
+				or not Runtime.validate_technology_ledger_source(lab.terrain, feature, feature.tech_batch): return Runtime.fail("STALE_SOURCE")
+			return Runtime.ok("原聚落已付款工序接續", {"already_paid": true, "ledger": feature.tech_batch})
+		var queried := settlement_operation_material_source_candidate(str(selector.settlement_id), str(selector.order_id))
+		if not queried.ok: return queried
+		return Runtime.ok("原有限聚落新來源", {"already_paid": false, "holder": queried.physical_holder, "cargo": queried.physical_cargo, "original_source": queried})
+	# A prospective future ledger is not a payment. Only the SAME live target can
+	# use an already-paid witness; new requests still query their real source.
+	if is_same(lab.terrain.site.features.get(key), feature) and selector.has("token"):
+		var paid := Runtime.technology_existing_paid_phase_source(lab.terrain, feature.get("tech_trial", {}))
+		if paid.ok and is_same(feature.get("tech_trial"), selector.token):
+			var active := technology_phase_active_guard(selector.token)
+			if not active.ok: return active
+			return Runtime.ok("原已付款工序接續", {"already_paid": true, "witness": paid})
+	if is_same(lab.terrain.site.features.get(key), feature) and not selector.has("token") and not feature.get("tech_batch", {}).is_empty():
+		var ledger: Dictionary = feature.tech_batch
+		if not Runtime.valid_technology_batch(ledger, lab.terrain, key, "feature") or not ledger.token.is_empty() \
+			or feature.get("technology_order") != selector or not Runtime.validate_technology_order_storage(lab.terrain, key, feature, "feature").ok: return Runtime.fail("STALE_SOURCE")
+		var cost: Dictionary = feature.get("pending_build", feature).get("cost", {}) if action == "construct" else Runtime.feature_recipe(feature).get("input", {})
+		if not Technology.material_equal(ledger.materials, cost) or action == "operate" and not bool(feature.get("batch_paid", false)) \
+			or not Technology.finite_number(feature.get("production", 0.0) if action == "operate" else feature.get("pending_build", feature).get("progress", 0.0)): return Runtime.fail("STALE_SOURCE")
+		return Runtime.ok("原公共單已付款工序接續", {"already_paid": true, "ledger": ledger})
+	var queried: Dictionary = technology_phase_material_source_candidate(selector.token) if selector.has("token") \
+		else nation_operation_material_source_candidate(str(selector.nation_id), str(selector.order_id), "workshop_bow" if str(selector.order_id).begins_with("production_") else "iron_armor" if admission.order.tech_id == "N11" else "house_build" if admission.order.tech_id == "N06" else "road_build")
+	if not queried.ok: return queried
+	var source: Dictionary = queried.source
+	return Runtime.ok("原新來源已查證", {"already_paid": false, "holder": source.get("physical_holder"), "cargo": source.get("physical_cargo"), "original_source": source})
+
+func _fire_pot_original_team(person: Dictionary) -> Variant:
+	if person.owner is CrowdOwner:
+		var original: Variant = person.owner._command_owner(int(person.unit))
+		if original is TerrainArmy and person.owner.crowd_site.owns_original_team(original): return original
+	return _technology_team(person)
+
+func _water_schedule_context(job: Dictionary) -> Dictionary:
+	if not is_same(_jobs.get(str(int(job.executor_id))), job) or not is_same(job.terrain, lab.terrain) \
+		or not is_same(job.site_state, lab.terrain.site): return Runtime.fail("STALE_SOURCE")
+	var settlement: Dictionary = Settlement.record(lab.terrain)
+	var center: Dictionary = Settlement.center(lab.terrain)
+	if not is_same(settlement, job.water_settlement) or not is_same(center, job.water_center) \
+		or not is_same(center.get("technology_water_schedule"), job.water_schedule) \
+		or not Runtime.valid_water_schedule(job.water_schedule, lab.terrain.site) \
+		or Settlement.status(lab).get("effective") != true: return Runtime.fail("NO_AUTHORITY")
+	var context := _technology_phase_context(job.nation_token, false, false)
+	if not context.ok: return context
+	var person: Dictionary = context.person
+	if not is_same(person.body, job.executor_body) or int(person.hit) != int(job.executor_hit) \
+		or lab.terrain.index(person.cell) != int(job.executor_cell): return Runtime.fail("INTERRUPTED")
+	return context
+
+func _technology_military_selector_for_order(order: Dictionary) -> Dictionary:
+	if equipment_orders == null or not is_same(equipment_orders.lab, lab) or order.is_empty(): return {}
+	for nation_id: String in lab.terrain.site.get("equipment_nations", {}):
+		var nation: Dictionary = lab.terrain.site.equipment_nations[nation_id]
+		var operations: Dictionary = nation.get("technology_operations", {})
+		if not equipment_orders.valid_nation_operation_record(operations, lab.terrain.site.item_definitions, {}): continue
+		for order_id: String in operations.get("orders", {}):
+			if is_same(operations.orders[order_id], order): return {"nation_id": nation_id, "order_id": order_id}
+	return {}
+
+func settlement_operation_material_source_candidate(settlement_id: String, order_id: String, binding: String = "") -> Dictionary:
+	var ready: Dictionary = _settlement_operation_context(settlement_id, order_id, binding)
+	if not ready.ok: return ready
+	var runtime_script: Variant = Runtime
+	if not runtime_script.has_method("settlement_operation_material_source_candidate"): return Runtime.fail("UNIMPLEMENTED")
+	return runtime_script.call("settlement_operation_material_source_candidate", lab.terrain, settlement_id, order_id, binding)
+
+var _shared_vehicle_request_facts: Dictionary = {}
+
+## Commands reference original people and sparse holders; no surrogate bodies.
+## advance() is before contact/life settlement; only settle_after_contacts commits.
+
+var _gd_contact_job_capture: Dictionary = {}
+
+var _gd_contact_job_segment: Dictionary = {}
+
+var _prepared_controlled_features: Dictionary = {}
+
+var _controlled_feature_seconds: float = 0.0
+
+var _controlled_feature_consumed: Dictionary = {}
+
+var _controlled_feature_allocation: Dictionary = {}
+
+var _shared_work_prefix_consumption: Dictionary = {}
+
+var _checked_controlled_prefixes: Dictionary = {}
+
+var _publishing_checked_controlled := false
+
+func _technology_matching_public_task(person: Dictionary, order: Dictionary) -> bool:
+	if not _technology_military_selector_for_order(order).is_empty(): return _technology_matching_military_task(person, order)
+	if person.is_empty() or order.is_empty() or equipment_orders == null or not is_same(equipment_orders.lab, lab): return false
+	var nation_id := str(order.get("scope_nation_id", ""))
+	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
+	var operations: Dictionary = nation.get("technology_operations", {})
+	if not equipment_orders.valid_nation_operation_record(operations, lab.terrain.site.item_definitions, {}) \
+		or order.get("scope_site_id") != _technology_site_id() or order.get("status") not in ["prepared", "active"]: return false
+	var task: Dictionary = {}
+	if person.owner is CrowdOwner:
+		var actual: Dictionary = lab.crowd_site.siege_original_person(int(person.person_id))
+		if actual.is_empty() or actual.owner != person.owner or int(actual.unit) != int(person.unit): return false
+		task = actual.row.get("work_task", {})
+	elif person.body is Dictionary:
+		task = person.body.get("work_task", {})
+	var job: Dictionary = _jobs.get(_job_key_for(int(person.person_id)), {})
+	if job.get("kind") in ["technology_feature", "technology_vehicle"] and is_same(job.get("technology_executor_body"), person.body) \
+		and is_same(job.get("site_state"), lab.terrain.site): task = job.work_task
+	if not Technology.integer(task.get("version"), 3, 3) or not task.get("named") is bool or task.named != true \
+		or not Technology.keys(task.get("operation_ref"), ["nation_id", "order_id"]) \
+		or task.operation_ref.nation_id != nation_id or not task.operation_ref.order_id is String \
+		or not is_same(operations.public_orders.get(task.operation_ref.order_id), order) \
+		or not SiteWorkTeam.valid_task(lab.terrain, lab.terrain.site, task): return false
+	var target := "feature:" + str(order.payload.get("feature_id", ""))
+	var identities: Array = order.payload.get("person_ids", order.payload.get("worker_ids", []))
+	if order.tech_id == "N10": identities = [int(order.payload.local_person_id)]
+	elif order.tech_id == "N11":
+		identities = [int(order.payload.operator_id)]
+		target = str(order.payload.target_id)
+	return order.tech_id in ["N02", "N06", "N10", "N11"] and identities.has(int(person.person_id)) \
+		and task.get("target") == target and str(task.get("action")) == ("operate" if order.tech_id == "N11" and order.payload.route == "armor" else "construct")
+
+# APPEND; Native fitness uses the current original physical owner. The disabled
+# original Army supplies only its actual organization/offices and stable IDs.
+
+func _technology_native_consent_readonly(person: Dictionary, consents: Array, purpose: String, token: Dictionary, order: Dictionary) -> bool:
+	var physical: CrowdOwner = person.owner
+	var original: Variant = physical._command_owner(int(person.unit))
+	if original is TerrainTestCharacter: original = _technology_team(person)
+	if not original is TerrainArmy: return _technology_team(person) == null
+	if original.data != lab.terrain or int(physical.team_id) != int(original.team_id) or not physical.crowd_site.owns_original_team(original) or physical.member_gone(int(person.unit)) \
+		or not physical.combat_can_act(int(person.unit)) or physical.combat_order != TerrainArmy.CombatOrder.HOLD or physical.is_sustain_routed() \
+		or original.get_active_move_plan() != null or original.has_ship_journey() or original._team_ship_activity() \
+		or float(lab.terrain.site.get("combat_left", 0.0)) > 0.0: return false
+	for index: int in physical.combat_units:
+		if bool(physical.person(index, false).get("moving", true)): return false
+	var supply: Dictionary = lab.terrain.site.get("team_supply", {}).get(str(physical.team_id), {})
+	if bool(supply.get("training_order", false)): return false
+	var actual: Dictionary = lab.crowd_site.siege_original_person(int(person.person_id))
+	if actual.is_empty() or actual.owner != physical or int(actual.unit) != int(person.unit) or bool(actual.row.get("logistics", false)): return false
+	var current_task: Dictionary = actual.row.get("work_task", {})
+	var source_actor: Variant = physical.actors.get(int(person.unit))
+	if source_actor != null:
+		if original.index_for_identity(int(person.person_id)) != TerrainArmy.PLAYER_MEMBER or not is_same(source_actor, original.player_member): return false
+		current_task = lab.terrain.site.manual if is_same(source_actor, lab.character) else (lab.terrain.site.worker if is_same(source_actor, lab.npc) else {})
+		if str(current_task.get("target", "")).is_empty(): current_task = {}
+	if not current_task.is_empty():
+		var view := person.duplicate() # original row reference, never a second body
+		view.body = actual.row if source_actor == null else source_actor
+		if source_actor != null: view.owner = source_actor # task selector only; all fitness below remains Native
+		if not _technology_matching_original_task(view, token) and not _technology_matching_public_task(person, order) and not _technology_matching_settlement_task(person, purpose): return false
+	if physical.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL or float(physical.combat_hot_get(int(person.unit), &"exchange_stagger", 0.0)) > 0.0 \
+		or bool(physical.combat_hot_get(int(person.unit), &"attack")) or str(physical.combat_hot_get(int(person.unit), &"pose")) != "idle": return false
+	if lab.site_controller != null and (lab.site_controller.vehicles.is_siege_crew(int(person.person_id)) \
+		or lab.site_controller.vehicles.is_operator(int(person.person_id)) or lab.site_controller.ship_person_in_journey(int(person.person_id))): return false
+	if int(original.duty_resolve_readonly("team.work", physical).get("decider", -1)) <= 0: return false
+	for receipt: Variant in consents:
+		if Technology.keys(receipt, ["site_id", "team_id", "person_id", "purpose", "decider_id", "revision", "status"]) \
+			and receipt.site_id == _technology_site_id() and Technology.integer(receipt.team_id, int(physical.team_id), int(physical.team_id)) \
+			and Technology.integer(receipt.person_id, int(person.person_id), int(person.person_id)) and receipt.purpose == purpose and receipt.status == "accepted": return true
+	return false
+
+func _technology_scope_consent_candidate(person: Dictionary, purpose: String, requester_id: int) -> Dictionary:
+	if person.is_empty(): return Runtime.fail("NO_MEMBER")
+	if person.get("owner") is CrowdOwner and person.owner.crowd_site == null: return Runtime.fail("INVALID_OWNER")
+	var team: Variant = _technology_team(person)
+	var physical: Variant = person.get("owner") if person.get("owner") is CrowdOwner else null
+	if physical != null:
+		var source: Variant = physical._command_owner(int(person.unit))
+		if source is TerrainArmy:
+			team = source
+		elif source is TerrainTestCharacter:
+			if not physical.actors.has(int(person.unit)) or not is_same(physical.actors[int(person.unit)], source) or int(source.person_id) != int(person.person_id): return Runtime.fail("NO_MEMBER")
+			if team != null and (team.index_for_identity(int(person.person_id)) != TerrainArmy.PLAYER_MEMBER or not is_same(team.player_member, source)): return Runtime.fail("NO_MEMBER")
+		else: return Runtime.fail("NO_MEMBER", "原Native人物缺原隊／Actor來源，不視為自由人")
+		if team != null and (not team is TerrainArmy or not is_same(team.data, lab.terrain) or int(team.team_id) != int(physical.team_id) \
+			or not physical.crowd_site.owns_original_team(team)): return Runtime.fail("INVALID_OWNER")
+	if team == null: return Runtime.ok("原真人不受原隊派工管轄", {"consent": {}})
+	if not team.has_method("technology_work_consent"): return Runtime.fail("UNSUPPORTED")
+	var response: Dictionary = team.technology_work_consent(int(person.person_id), purpose, requester_id, physical)
+	if not response.ok: return response
+	var current: Dictionary = team.duty_resolve_readonly("team.work", physical)
+	if not bool(current.get("ok", false)) or response.consent.get("decider_id") != current.get("decider") or response.consent.get("revision") != current.get("revision") \
+		or not _technology_consent_valid(int(person.person_id), [response.consent], purpose, {}, true): return Runtime.fail("STALE_AUTHORITY")
+	return response
+
+func _commit_nation_original_administration(job: Dictionary) -> Dictionary:
+	var checked := _nation_original_administration_context(job)
+	if not checked.ok: return checked
+	if float(job.elapsed) + 0.00000001 < 300.0: return Runtime.fail("INCOMPLETE")
+	var phase := nation_scope_receipt_candidate(job.nation_token, _nation_administration_event(job))
+	if not phase.ok: return phase
+	# All original operator/source/product/Scope checks precede this tail.
+	if job.nation_original_kind == "procurement": job.nation_order_ref.erase("tech_trial")
+	publish_phase_receipt(phase)
+	return Runtime.ok("原兩筆採購／原作坊實績及真人300秒檢验同次完成")
+
+func _nation_original_administration_context(job: Dictionary) -> Dictionary:
+	if not is_same(_jobs.get(str(int(job.executor_id)), {}), job) or not is_same(job.terrain, lab.terrain) or not is_same(job.site_state, lab.terrain.site): return Runtime.fail("STALE_SOURCE")
+	var nation: Dictionary = _technology_scope_owner("nation", str(job.nation_id))
+	var kind := str(job.nation_original_kind)
+	var map_key := "specs" if kind == "procurement" else "certificates"
+	var original: Dictionary = nation.get("technology_operations", {}).get(map_key, {}).get(str(job.nation_order_id), {})
+	if not is_same(nation, job.nation_ref) or not is_same(original, job.nation_order_ref) or original != job.nation_original_expected: return Runtime.fail("STALE_ORDER")
+	var duty_id := "nation.procurement" if kind == "procurement" else "nation.workshop"
+	var checked: Dictionary = equipment_orders._nation_operation_context(int(original.authorizer_id), str(job.nation_id), duty_id, "N01" if kind == "procurement" else "N04", str(job.nation_binding), true)
+	if not checked.ok: return checked
+	var person := _technology_scope_person("nation", nation, int(job.executor_id), true)
+	if not person.ok: return person
+	if not is_same(person.person.body, job.executor_body) or int(person.person.hit) != int(job.executor_hit) or lab.terrain.index(person.person.cell) != int(job.executor_cell): return Runtime.fail("INTERRUPTED")
+	var phase := _technology_phase_context(job.nation_token, false, false)
+	if not phase.ok: return phase
+	var paid := false
+	for payment: Dictionary in phase.project.budget.get("payments", []):
+		if payment.attempt == job.nation_token.attempt and payment.phase_id == job.nation_token.phase_id and payment.target_id == job.nation_target \
+			and payment.person == job.nation_token.person and Technology.material_equal(payment.materials, job.nation_token.materials): paid = true
+	if not paid: return Runtime.fail("NO_PAYMENT")
+	if kind == "procurement":
+		if original.get("tech_trial", {}) != job.nation_token or original.receipts.size() != 2: return Runtime.fail("INVALID_RECEIPT")
+		for receipt: Dictionary in original.receipts:
+			if receipt.source_person_id != job.executor_id or not Technology.material_equal(receipt.resources, {"wood": 1, "grain": 1}) or not receipt.items.is_empty(): return Runtime.fail("INVALID_RECEIPT")
+	else:
+		var output: Dictionary = equipment_orders._output_receipt(str(original.feature_id), int(original.receipt_id))
+		if original.status != "active" or output.is_empty() or output != original.accepted_receipt \
+			or not equipment_orders._workshop_context(str(original.feature_id), str(original.industry_id), int(original.operator_id)).ok: return Runtime.fail("STALE_PRODUCT")
+	return Runtime.ok("", {"context": {"nation": nation, "order": original}, "person": person.person})
+
+func settlement_food_receipt_query(token: Dictionary, event: Dictionary) -> Dictionary:
+	var job: Dictionary = _jobs.get(str(int(token.get("person", {}).get("person_id", -1))), {})
+	if job.get("kind") != "food_order" or not is_same(job.get("nation_token"), token) \
+		or _settlement_food_event(job) != event or float(job.elapsed) != 300.0: return Runtime.fail("INVALID_RECEIPT")
+	var checked := _settlement_food_job_context(job)
+	if not checked.ok: return checked
+	if checked.order.receipts.size() != 2 or checked.order.receipts[1].kind != "arrive" \
+		or int(checked.order.receipts[1].quantity) != 8 or not Technology.material_equal(event.materials, {"grain": 8}): return Runtime.fail("WAITING")
+	return Runtime.ok("原來源到倉庫8糧已實交且原具名300秒完成")
+
+func settle_fire_pot_trials() -> void:
+	for vehicle: Dictionary in lab.terrain.site.get("vehicles", {}).values():
+		var proof: Dictionary = vehicle.get("tech_fire_pot_shot", {})
+		if proof.get("phase") != "contact": continue
+		var unit: Dictionary = lab.terrain.site.get("fire", {}).get("units", {}).get(str(proof.unit_key), {})
+		if unit.is_empty() or int(unit.generation) != int(proof.generation) or float(unit.scorch) <= float(proof.scorch) + 0.000000001: continue
+		var token: Dictionary = proof.token
+		var context := _fire_pot_shot_phase_context(token, false, false)
+		if not context.ok: continue # Current life/authority governs knowledge.
+		var paid: Dictionary = {}
+		for payment: Dictionary in context.project.budget.payments:
+			if payment.payment_id == proof.payment_id and int(payment.attempt) == int(token.attempt) \
+				and payment.phase_id == token.phase_id and payment.target_id == token.target_id \
+				and Technology.same_person_ref(payment.person, token.person) and Technology.material_equal(payment.materials, {"fire_pot": 1}): paid = payment
+		if paid.is_empty(): continue
+		var payment := Runtime.ok("", {"owner": context.owner, "record": context.record, "state": context.record,
+			"payment_id": str(paid.payment_id), "site_state": lab.terrain.site})
+		var completed := _prepare_scope_phase_completion(token, payment, "F15:shot:" + str(proof.attack_id), 0.0)
+		if not completed.ok: continue
+		publish_phase_receipt(completed)
+		proof.phase = "complete"
+
+func publish_native_fire_point(prepared: Dictionary) -> void:
+	# Original point no-failure tail only: no context queries, new planning,
+	# fatigue writes, Runtime reprepare or callbacks between actual holder debits.
+	if bool(prepared.published): return # SAME original point candidate cannot debit twice.
+	prepared.published = true
+	for row: Dictionary in prepared.rows:
+		var job: Dictionary = row.job
+		job.pending = {}
+		if str(row.status) == "WORK":
+			if int(row.paid_q) > 0:
+				var committed: Dictionary = Runtime.publish_validated_fire_suppression(lab.terrain, row.prepared, row.check)
+				job.executor_version = int(committed.holder_version)
+				job.supply_q = int(committed.remaining_q)
+				job.committed_q = int(job.committed_q) + int(row.paid_q)
+				var profile: Dictionary = SiteCombatRules.fire_work_profile(str(job.get("fire_work_mode", "SUPPRESS")))
+				job.elapsed = float(job.elapsed) + float(row.paid_q) / int(profile.supply_q_per_second)
+			job.fraction_q = float(row.fraction_after)
+			job.paused = str(row.get("paused", ""))
+		elif str(row.status) == "DEFER": job.paused = "CAPACITY_DEFERRED"
+	# Post-tail original cancellation/release/REST owners run after all Native
+	# fatigue/progress publication. They never classify or debit this point again.
+
+func native_fire_point_envelope_requests(game_seconds: float) -> Dictionary:
+	# PURE conservative pre-World upper effort, solely for clipping REST80.
+	# This is not permission to work and is never passed to a real consumer.
+	# Include existing approach jobs: they can truly arrive at this endpoint.
+	if not is_finite(game_seconds) or game_seconds <= 0.0: return Runtime.fail("INVALID_TIME")
+	var requests: Array[Dictionary] = []
+	var keys: Array = _jobs.keys()
+	keys.sort_custom(func(a: String, b: String) -> bool: return int(a) < int(b))
+	for key: String in keys:
+		var job: Dictionary = _jobs[key]
+		if str(job.kind) != "fire_suppress" or bool(job.cancelled) or not job.executor_owner is CrowdOwner: continue
+		var participant: Dictionary = lab.crowd_site.work_fatigue_participant(int(job.executor_id), true)
+		if participant.is_empty(): continue # Original fresh host input forbids work.
+		requests.append({"provider": "fire_envelope", "key": key, "participants": [participant],
+			"remaining": game_seconds, "productive_kind": "raw", "progress_multiplier": 1.0, "max_game_seconds": game_seconds})
+	return Runtime.ok("原滅火努力上界；不代表授權／真消費", {"requests": requests})
+
+func finish_native_fire_point(prepared: Dictionary) -> void:
+	if not bool(prepared.published) or bool(prepared.finished): return
+	prepared.finished = true
+	for row: Dictionary in prepared.rows:
+		var job: Dictionary = row.job
+		if str(row.status) == "CANCEL": _cancel_fire_suppress(job, row.result)
+		elif str(row.status) == "WORK":
+			var person: Dictionary = _person(int(job.executor_id), false)
+			if not person.is_empty():
+				# Read TRUE published hot fatigue. A prefix ending exactly at80 is
+				# legal even when the planner does not iterate another REST segment.
+				var resting: bool = str(row.get("paused", "")) == "REST" or Fatigue.needs_work_rest(
+					float(_body_get(person, "fatigue")), bool(_body_get(person, "work_resting")))
+				_body_set(person, "work_resting", resting)
+				if resting:
+					job.phase = "REST"; job.paused = "REST"
+					person.owner.work_fatigue_rest(int(job.executor_id))
+			if int(job.supply_q) <= 0: _cancel_fire_suppress(job, Runtime.fail("NO_SUPPRESSION_SUPPLY", "本人有限補給已用盡"))
+		if bool(job.cancelled): _settle_cancelled_fire_suppress(str(row.key), job)
+
+func _advance_controlled_feature_work(key: String, job: Dictionary, seconds: float, work_plan: Dictionary, handled: Dictionary) -> void:
+	if job.get("kind") == "technology_vehicle":
+		_advance_controlled_vehicle_work(key, job, seconds, work_plan, handled)
+		return
+	if _controlled_feature_consumed.has(key) or not is_equal_approx(seconds, _controlled_feature_seconds): return
+	_controlled_feature_consumed[key] = true
+	var original_plan: Dictionary = lab.site_controller._shared_work_plan
+	if not is_same(original_plan, lab._shared_work_plan) or not bool(original_plan.get("ok", false)) \
+		or not is_equal_approx(float(original_plan.get("seconds", -1.0)), seconds) \
+		or not is_same(work_plan.get("jobs"), original_plan.get("jobs", {}).get("person_actions")): job.paused = "CLOCK_NOT_READY"; return
+	var held: Dictionary = _prepared_controlled_features.get(key, {})
+	if held.is_empty() or not is_same(held.job, job) or not is_same(_jobs.get(key), job): job.paused = "CLOCK_NOT_READY"; return
+	var context := _controlled_feature_job_context(job)
+	if not context.ok: _finish(key, context); return
+	var current := Runtime.work_preflight(lab.terrain, job.work_task, held.cargo, int(held.carry_limit), int(context.person.faction), int(job.executor_id), _tent_occupied)
+	if not current.ok or not is_equal_approx(float(current.get("productivity", -1.0)), float(held.productivity)) \
+		or current.get("required_skill", "") != held.required_skill or bool(current.get("eligible_master", false)) != bool(held.eligible_master): job.paused = "STALE_SOURCE"; return
+	var interval: Dictionary = work_plan.get("jobs", {}).get(key, {})
+	if interval.is_empty() and float(held.remaining) > 0.0: job.paused = "CLOCK_NOT_READY"; return
+	var identity := int(job.executor_id)
+	var effort := float(interval.get("participant_seconds", {}).get(identity, 0.0))
+	var base := float(interval.get("participant_effective_seconds", {}).get(identity, 0.0))
+	if not is_finite(effort) or effort < 0.0 or not is_finite(base) or base < 0.0: job.paused = "CLOCK_NOT_READY"; return
+	job.paused = str(interval.get("paused", ""))
+	if not bool(context.person.player):
+		if effort > 0.0: _body_set(context.person, "work_resting", false)
+		if job.paused == "REST" or interval.get("participant_paused", {}).get(identity) == "REST":
+			_body_set(context.person, "work_resting", true)
+			if context.person.owner is CrowdOwner: context.person.owner.work_fatigue_rest(identity)
+	if base <= 0.0 and float(held.remaining) > 0.0: return
+	_controlled_feature_allocation = {"key": key, "held": held, "interval": interval}
+	var consumed := {"used": false}
+	var work_time := func(_manual: bool, _minutes: float) -> float:
+		if consumed.used: return 0.0
+		consumed.used = true
+		handled[identity] = effort
+		return base / 60.0 # The original complete-pool collector charged fatigue once.
+	Runtime._work(lab.terrain, seconds / 60.0, true, false, _tent_occupied, work_time, job.work_task, held.cargo,
+		int(held.carry_limit), Runtime.CARRY_CAPACITY, int(context.person.faction), false, identity)
+	_controlled_feature_allocation = {}
+	if _jobs.has(key) and str(job.work_task.get("target", "")).is_empty(): _finish(key, Runtime.ok("原工序已收束，本人停止"))
+
+func _consume_shared_job_advance_prefix(key: String, job: Dictionary, seconds: float, work_plan: Dictionary) -> Dictionary:
+	var item: Dictionary = shared_job_work_prefix(key, job)
+	if item.is_empty(): return {}
+	if not is_equal_approx(seconds, float(_shared_work_prefix_consumption.seconds)) \
+		or not is_same(work_plan.get("jobs"), _shared_work_prefix_consumption.plan.get("jobs", {}).get("person_actions")):
+		return {"duplicate": true} # Wrong interval must not consume the held prefix or fall back.
+	if bool(item.advance_consumed): return {"duplicate": true}
+	item.advance_consumed = true
+	return {"duplicate": false, "prefix": item}
+
+func record_fire_pot_release(vehicle: Dictionary, flight: Dictionary) -> void:
+	var token: Dictionary = flight.get("tech_trial", {})
+	if token.is_empty(): return
+	if not lab.siege_projectiles.any(func(row: Dictionary) -> bool: return is_same(row, flight)) \
+		or not is_same(lab.terrain.site.get("vehicles", {}).get(str(vehicle.get("id", ""))), vehicle) \
+		or not is_same(vehicle.command.get("tech_trial"), token) or flight.get("ammo") != "fire_pot" \
+		or str(flight.source_vehicle) != str(vehicle.id) or int(flight.source_member_id) != int(token.person.person_id) \
+		or str(flight.attack_id) != _technology_site_id() + "|" + str(vehicle.id) + "|" + str(int(vehicle.next_attack_seq) - 1): return
+	var raw: Dictionary = _technology_family().get("technology", {})
+	var project := Technology.active_project(raw)
+	if project.is_empty() or project.get("tech_id") != "F15" or int(project.id) != int(token.project_id): return
+	var paid := false
+	for payment: Dictionary in project.budget.get("payments", []):
+		if payment.payment_id == str(flight.technology_payment_id) and int(payment.attempt) == int(token.attempt) \
+			and payment.phase_id == token.phase_id and payment.target_id == token.target_id \
+			and Technology.same_person_ref(payment.person, token.person) and Technology.material_equal(payment.materials, {"fire_pot": 1}): paid = true
+	if not paid: return
+	# Only the original launcher calls after its no-fail real ammo/payment tail.
+	# This persisted result belongs to that same original vehicle, not a new job.
+	vehicle.tech_fire_pot_shot = {"version": 1, "token": token, "attack_id": str(flight.attack_id),
+		"projectile_id": int(flight.projectile_id), "payment_id": str(flight.technology_payment_id), "phase": "flight",
+		"unit_key": "", "generation": 0, "scorch": 0.0, "impact_action": 0.0}
+
+func native_fire_point_candidates(action_begin: float, action_end: float, game_seconds: float) -> Dictionary:
+	if not is_finite(game_seconds) or game_seconds <= 0.0 or not is_finite(action_begin) or not is_finite(action_end) or action_end <= action_begin:
+		return Runtime.fail("INVALID_TIME")
+	var records: Array[Dictionary] = []
+	var requests: Array[Dictionary] = []
+	var keys: Array = _jobs.keys()
+	keys.sort_custom(func(a: String, b: String) -> bool: return int(a) < int(b))
+	for key: String in keys:
+		var job: Dictionary = _jobs[key]
+		if str(job.kind) != "fire_suppress": continue
+		if not job.executor_owner is CrowdOwner: continue # A truly dead Native executor still needs fail0cost settlement.
+		var row := {"key": key, "job": job, "pending": job.pending, "status": "SKIP", "result": Runtime.ok(),
+			"ratio": game_seconds / (action_end - action_begin), "limit": 0.0, "request": {}}
+		records.append(row)
+		if bool(job.cancelled) or job.pending.is_empty(): continue
+		if absf(float(job.pending.begin) - action_begin) > Runtime.FIRE_EPS or absf(float(job.pending.end) - action_end) > Runtime.FIRE_EPS \
+			or absf(float(job.pending.game_seconds) - game_seconds) > Runtime.FIRE_EPS:
+			return Runtime.fail("STALE_FIRE_INTERVAL")
+		if lab.native_checked_forecast_hp(int(job.executor_id)) <= 0.0:
+			row.status = "CANCEL"; row.result = Runtime.fail("DEAD"); continue
+		var check: Dictionary = _fire_suppress_context(job) # TRUE end-contact qualification, no mutation.
+		if not check.ok:
+			row.status = "CANCEL"; row.result = check; continue
+		if bool(check.target.complete):
+			row.status = "CANCEL"; row.result = Runtime.ok("原工作目標已完成"); continue
+		if str(check.movement.phase) != "ARRIVED" or bool(check.person.moving) or not _ready(check.person) \
+			or not lab.crowd_site.work_fatigue_work_start_ready(int(job.executor_id)):
+			row.status = "CANCEL"; row.result = Runtime.fail("INTERRUPTED"); continue
+		var participant: Dictionary = lab.crowd_site.work_fatigue_participant(int(job.executor_id), true)
+		if participant.is_empty(): return Runtime.fail("CLOCK_NOT_READY")
+		var profile: Dictionary = SiteCombatRules.fire_work_profile(str(job.get("fire_work_mode", "SUPPRESS")))
+		var fraction: float = float(job.fraction_q)
+		if not is_finite(fraction) or fraction < 0.0 or fraction >= 1.0 + Runtime.FIRE_EPS: return Runtime.fail("INVALID_WORK")
+		var supply_field: String = str(profile.supply_field)
+		var stock: int = int(check.person.holder.get(supply_field, 0))
+		if stock <= 0:
+			row.status = "CANCEL"; row.result = Runtime.fail("NO_SUPPRESSION_SUPPLY"); continue
+		var duration: float = minf(action_end - action_begin, maxf(0.0, float(stock) - fraction) / int(profile.supply_q_per_second))
+		if duration <= Runtime.FIRE_EPS: continue
+		var requested: int = floori(fraction + duration * int(profile.supply_q_per_second) + Runtime.FIRE_EPS)
+		if requested > 0:
+			var paid: Dictionary = Runtime.fire_prepare_suppression(lab.terrain, str(job.target_key), int(job.generation),
+				action_begin, action_begin + duration, requested, check.person.holder, int(job.executor_version), str(job.get("fire_work_mode", "SUPPRESS")))
+			if not paid.ok:
+				row.status = "DEFER" if str(paid.get("code", "")) == "CAPACITY_DEFERRED" else "CANCEL"
+				row.result = paid; continue
+			if int(paid.get("paid_q", 0)) <= 0: continue
+			if int(paid.paid_q) < requested: duration = minf(duration, maxf(0.0, float(paid.paid_q) - fraction) / int(profile.supply_q_per_second))
+		row.status = "WORK"
+		row.limit = duration * float(row.ratio)
+		row.request = {"provider": "fire_suppress", "key": key, "participants": [participant],
+			"remaining": float(row.limit), "productive_kind": "raw", "progress_multiplier": 1.0, "max_game_seconds": float(row.limit)}
+		requests.append(row.request)
+	return Runtime.ok("原滅火接觸後努力候選", {"records": records, "requests": requests})
+
+func prepare_native_fire_point(records: Array, plan: Dictionary) -> Dictionary:
+	# Pure finalization. Replan limits only decrease; no pending/holder/body/job
+	# progress is touched before every Native/Runtime/material final gate passes.
+	var rows: Array[Dictionary] = []
+	var paid_rows: Array[Dictionary] = []
+	for source: Dictionary in records:
+		var row: Dictionary = source.duplicate(false)
+		var job: Dictionary = row.job
+		if not is_same(_jobs.get(str(row.key), {}), job) or not is_same(job.pending, row.pending): return Runtime.fail("STALE_FIRE_JOB")
+		row.actual_game = 0.0; row.actual_action = 0.0; row.paid_q = 0; row.fraction_after = float(job.fraction_q)
+		row.prepared = {}; row.check = {}
+		rows.append(row)
+		if str(row.status) != "WORK": continue
+		var allocation: Dictionary = plan.get("jobs", {}).get("fire_suppress", {}).get(str(row.key), {})
+		if allocation.is_empty(): return Runtime.fail("MISSING_FIRE_ALLOCATION")
+		row.paused = str(allocation.get("paused", ""))
+		row.actual_game = float(allocation.get("participant_seconds", {}).get(int(job.executor_id), 0.0))
+		if not is_finite(float(row.actual_game)) or float(row.actual_game) < 0.0 or float(row.actual_game) > float(row.limit) + Runtime.FIRE_EPS:
+			return Runtime.fail("INVALID_WORK")
+		if float(row.actual_game) <= Runtime.FIRE_EPS: continue
+		var context: Dictionary = _fire_suppress_context(job)
+		if not context.ok: return Runtime.fail("FIRE_POINT_RECLASSIFY", "原接觸結果已變，尚未支付")
+		var profile: Dictionary = SiteCombatRules.fire_work_profile(str(job.get("fire_work_mode", "SUPPRESS")))
+		row.actual_action = float(row.actual_game) / float(row.ratio)
+		var exact: float = float(job.fraction_q) + float(row.actual_action) * int(profile.supply_q_per_second)
+		var requested: int = floori(exact + Runtime.FIRE_EPS)
+		if requested == 0:
+			row.fraction_after = exact # Legitimate fraction work STILL has real effort.
+			continue
+		var prepared: Dictionary = Runtime.fire_prepare_suppression(lab.terrain, str(job.target_key), int(job.generation),
+			float(row.pending.begin), float(row.pending.begin) + float(row.actual_action), requested, context.person.holder,
+			int(job.executor_version), str(job.get("fire_work_mode", "SUPPRESS")))
+		if not prepared.ok or int(prepared.get("paid_q", 0)) != requested:
+			return Runtime.fail("FIRE_POINT_RECLASSIFY", "原供給或目標候選已變，尚未支付")
+		row.prepared = prepared
+		row.paid_q = requested
+		row.fraction_after = maxf(0.0, exact - requested)
+		paid_rows.append({"key": str(row.key), "prepared": prepared,
+			"fraction": float(job.fraction_q), "ratio": float(row.ratio), "supply_per_second": int(profile.supply_q_per_second)})
+	var batch: Dictionary = Runtime.prepare_fire_suppression_batch(lab.terrain, paid_rows)
+	if not batch.ok: return batch
+	if bool(batch.get("needs_replan", false)):
+		return Runtime.ok("同點有限供給／火量已重新配額；未扣款", {"needs_replan": true, "limits": batch.limits})
+	for row: Dictionary in rows:
+		if int(row.paid_q) <= 0: continue
+		var admitted: Dictionary = batch.jobs[str(row.key)]
+		row.prepared = admitted.prepared; row.check = admitted.check
+	return Runtime.ok("原滅火同點全部純預驗完成", {"rows": rows, "needs_replan": false, "published": false, "finished": false})
+
+func record_fire_pot_impact(flight: Dictionary, received: Dictionary, impact_action: float) -> void:
+	var vehicle: Dictionary = lab.terrain.site.get("vehicles", {}).get(str(flight.source_vehicle), {})
+	var proof: Dictionary = vehicle.get("tech_fire_pot_shot", {})
+	if proof.is_empty() or proof.attack_id != flight.attack_id or int(proof.projectile_id) != int(flight.projectile_id) \
+		or proof.token != flight.get("tech_trial", {}) or proof.phase != "flight": return
+	proof.phase = "miss"
+	if not received.get("ok", false) or not received.get("accepted", false) or received.get("duplicate", false): return
+	var unit: Dictionary = lab.terrain.site.get("fire", {}).get("units", {}).get(str(received.unit_key), {})
+	if unit.is_empty() or int(unit.generation) != int(received.generation): return
+	proof.merge({"phase": "contact", "unit_key": str(received.unit_key), "generation": int(received.generation),
+		"scorch": float(unit.scorch), "impact_action": impact_action})
+
+func finish_checked_controlled_prefixes(prepared: Dictionary) -> void:
+	# Native already published. Original current product/receipt guard may now
+	# defer/cancel; it never discards the original paid completed progress.
+	if prepared.get("owner") != self or not bool(prepared.get("published", false)) or bool(prepared.get("finished", false)): return
+	prepared.finished = true
+	for key: String in prepared.checked.admitted.prepared.held:
+		var held: Dictionary = prepared.checked.admitted.prepared.held[key]
+		if held.kind not in ["technology_feature", "technology_vehicle"]: continue
+		var person: Dictionary = _person(int(held.job.executor_id))
+		if person.is_empty() or bool(person.player): continue
+		var allocation: Dictionary = prepared.checked.plan.jobs.get("person_actions", {}).get(key, {})
+		var actual: float = float(allocation.get("participant_seconds", {}).get(int(person.person_id), 0.0))
+		if actual > 0.0: _body_set(person, "work_resting", false)
+		if str(allocation.get("paused", "")) == "REST" or str(allocation.get("participant_paused", {}).get(int(person.person_id), "")) == "REST":
+			_body_set(person, "work_resting", true)
+			if person.owner is CrowdOwner: person.owner.work_fatigue_rest(int(person.person_id))
+	for candidate: Dictionary in prepared.checked.runtime: Runtime.settle_checked_work_prefix(candidate)
+	discard_checked_controlled_prefixes()
+
+# Root glue: init/teardown invokes discard_checked_controlled_prefixes().
+# Existing advance controlled feature and controlled vehicle branch remain
+# FIRST; both _advance methods early-return for _controlled_feature_consumed.
+# Their legacy predicates/_work/advance_siege_work are never the point tail.
+# No Native allocation/checked admission means CLOCK_NOT_READY, not fallback.
+
+func finish_shared_work_prefix(admitted: Dictionary) -> void:
+	# AFTER Native publication and before original new-death queue handoff.
+	# Original cancellation/receipt logic still runs in settle_after_contacts.
+	if admitted.get("owner") != self or not is_same(admitted.prepared.site, lab.terrain.site): return
+	if bool(admitted.get("rest_finished", false)): return
+	admitted.rest_finished = true
+	for key: String in admitted.admitted:
+		var item: Dictionary = admitted.admitted[key]
+		for identity: int in item.held.people:
+			var person: Dictionary = _person(identity)
+			if person.is_empty() or not person.owner is CrowdOwner or bool(person.player): continue
+			var paused: String = str(item.allocation.get("participant_paused", {}).get(identity, item.allocation.get("paused", "")))
+			if paused == "REST" or Fatigue.needs_work_rest(float(_body_get(person, "fatigue")), bool(_body_get(person, "work_resting"))):
+				_body_set(person, "work_resting", true)
+				person.owner.work_fatigue_rest(identity)
+
+func _advance_controlled_vehicle_work(key: String, job: Dictionary, seconds: float, work_plan: Dictionary, handled: Dictionary) -> void:
+	if _controlled_feature_consumed.has(key) or not is_equal_approx(seconds, _controlled_feature_seconds): return
+	_controlled_feature_consumed[key] = true
+	var original_plan: Dictionary = lab.site_controller._shared_work_plan
+	if not is_same(original_plan, lab._shared_work_plan) or not bool(original_plan.get("ok", false)) \
+		or not is_equal_approx(float(original_plan.get("seconds", -1.0)), seconds) \
+		or not is_same(work_plan.get("jobs"), original_plan.get("jobs", {}).get("person_actions")): job.paused = "CLOCK_NOT_READY"; return
+	var held: Dictionary = _prepared_controlled_features.get(key, {})
+	if held.is_empty() or not is_same(held.job, job) or not is_same(_jobs.get(key), job): job.paused = "CLOCK_NOT_READY"; return
+	var context := _controlled_vehicle_job_context(job)
+	if not context.ok: _finish(key, context); return
+	var current := Runtime.work_preflight(lab.terrain, job.work_task, held.cargo, int(held.carry_limit), int(context.person.faction), int(job.executor_id), _tent_occupied)
+	if not current.ok or not is_equal_approx(float(current.get("progress_multiplier", -1.0)), float(held.factor)) \
+		or not is_equal_approx(float(current.get("productivity", -1.0)), float(held.productivity)) \
+		or current.get("required_skill", "") != held.required_skill or bool(current.get("eligible_master", false)) != bool(held.eligible_master): job.paused = "STALE_SOURCE"; return
+	var interval: Dictionary = work_plan.get("jobs", {}).get(key, {})
+	if interval.is_empty() and float(held.remaining) > 0.0: job.paused = "CLOCK_NOT_READY"; return
+	var identity := int(job.executor_id)
+	var effort := float(interval.get("participant_seconds", {}).get(identity, 0.0))
+	var base := float(interval.get("participant_effective_seconds", {}).get(identity, 0.0))
+	if not is_finite(effort) or effort < 0.0 or not is_finite(base) or base < 0.0: job.paused = "CLOCK_NOT_READY"; return
+	job.paused = str(interval.get("paused", ""))
+	if not bool(context.person.player):
+		if effort > 0.0: _body_set(context.person, "work_resting", false)
+		if job.paused == "REST" or interval.get("participant_paused", {}).get(identity) == "REST": _body_set(context.person, "work_resting", true)
+	if base <= 0.0 and float(held.remaining) > 0.0: return
+	_controlled_feature_allocation = {"key": key, "held": held, "interval": interval}
+	handled[identity] = effort # Fatigue belongs to the original complete-pool publisher.
+	var result := Runtime.advance_siege_work(lab.terrain, str(job.vehicle_id), "construct", base, context.person.cell,
+		int(job.work_task.work_slot), int(job.team_ref.team_id), job.work_task, identity)
+	_controlled_feature_allocation = {}
+	if _jobs.has(key):
+		job.work_task.status = str(result.message)
+		if not result.ok: job.paused = str(result.code)
+
+# Original ordinary team.work command. Its current decider names an existing
+# member; membership/duty/fitness are re-queried, never a caller approval bool.
+
+func shared_job_work_prefix(key: String, job: Dictionary) -> Dictionary:
+	if _shared_work_prefix_consumption.is_empty() or not is_same(_shared_work_prefix_consumption.plan, lab._shared_work_plan): return {}
+	var item: Dictionary = _shared_work_prefix_consumption.admitted.get(key, {})
+	if item.is_empty() or not is_same(_jobs.get(key), job) or not is_same(item.held.job, job): return {}
+	return item # metadata only, no fake current person and no receipt permission.
+
+func controlled_feature_work_task(task: Dictionary) -> Dictionary:
+	for key: String in _prepared_controlled_features:
+		var held: Dictionary = _prepared_controlled_features[key]
+		if not is_same(held.task, task) or not is_same(_jobs.get(key), held.job): continue
+		var context := _controlled_feature_job_context(held.job)
+		if not context.ok: return {}
+		return {"task": task, "person_id": int(held.job.executor_id), "site": lab.terrain.site, "target": str(task.target),
+			"work_cell": int(task.work_cell), "work_slot": int(task.work_slot), "action": str(task.action)}
+	return {}
+
+func prepare_nation_route_load_phase(nation_id: String, order_id: String, original_order: Dictionary) -> Dictionary:
+	var selected := _nation_original_research_token(nation_id, order_id, "N08", "public_route", str(original_order.payload.destination_holder))
+	if not selected.ok: return selected
+	if selected.token.is_empty(): return Runtime.ok("", {"token": {}, "binding": {}, "payment": {}})
+	var token: Dictionary = selected.token
+	if int(token.person.person_id) != int(original_order.payload.driver_id) or not Technology.material_equal(token.materials, {"grain": 4}):
+		return Runtime.fail("WRONG_EXECUTOR", "本次研究須由本單原車的真舵手／操作人執行同四糧運輸")
+	var source := nation_research_source_candidate(token, order_id)
+	if not source.ok: return source
+	var binding := technology_phase_binding_candidate(token, source)
+	if not binding.ok: return binding
+	var payment := technology_phase_payment_candidate(token, {"grain": 4}, binding, source)
+	if not payment.ok: return payment
+	return Runtime.ok("", {"token": token, "binding": binding, "payment": payment})
+
+## Research work-consent still comes from the original team.work owner.
+## Only the exact current N08 project/order may use its actual wagon operator.
+
+func _nation_n08_driver_context(identity: int, purpose: String) -> Dictionary:
+	if lab.site_controller == null or lab.site_controller.region_slot == null: return Runtime.fail("NO_REGION_SLOT")
+	for nation_id: String in lab.terrain.site.get("equipment_nations", {}):
+		var nation: Dictionary = lab.terrain.site.equipment_nations[nation_id]
+		var record: Dictionary = nation.get("technology", {})
+		var project := Technology.active_project(record)
+		if project.get("tech_id") != "N08" or project.get("purpose") != purpose or int(project.get("executor", {}).get("person_id", -1)) != identity: continue
+		return lab.site_controller.region_slot.nation_n08_driver_consent_context(lab, nation_id, identity, purpose)
+	return Runtime.fail("NO_TARGET")

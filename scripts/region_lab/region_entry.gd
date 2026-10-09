@@ -24,14 +24,20 @@ static var draft: Dictionary = {}
 ## Failure to report on the main menu after a scene hand-off.
 static var menu_message := ""
 
-static func request_new_world(site: Vector2i, character: Dictionary = {}, world_name: String = "", initial_scenario_id: String = "") -> bool:
+static func request_new_world(site: Vector2i, character: Dictionary = {}, world_name: String = "", initial_scenario_id: String = "", manifest_path: String = RegionData.DEFAULT_MANIFEST) -> bool:
 	if not initial_scenario_id.is_empty() and TechnologyArtisans.scenario_config(initial_scenario_id).is_empty():
 		menu_message = "未知起始情境；未建立世界或人物"
 		return false
-	pending = {"manifest": RegionData.DEFAULT_MANIFEST, "world_id": "taiwan_%d" % int(Time.get_unix_time_from_system()),
+	var accepted := false
+	for choice: Dictionary in new_world_source_choices(): accepted = accepted or str(choice.path) == manifest_path
+	if not accepted:
+		menu_message = "所選固定來源尚未發布或配對不完整；未建立世界"
+		return false
+	pending = {"manifest": manifest_path, "world_id": "taiwan_%d" % int(Time.get_unix_time_from_system()),
 		"slot_id": SLOT, "site": site, "create_new": true, "character": character.duplicate(true),
 		"world_name": world_name.strip_edges(), "initial_scenario_id": initial_scenario_id}
 	return true
+
 
 static func request_world(world_id: String, slot_id: String = SLOT) -> bool:
 	var meta := read_world(world_id)
@@ -123,3 +129,21 @@ static func _write_json(path: String, value: Dictionary) -> void:
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
 	var file := FileAccess.open(path, FileAccess.WRITE)
 	if file != null: file.store_string(JSON.stringify(value, "\t"))
+
+
+static func new_world_source_choices() -> Array[Dictionary]:
+	# Selection projects original released source metadata; it grants neither
+	# knowledge nor policy. Candidate publication requires the same release gates.
+	var result: Array[Dictionary] = [{"path": RegionData.DEFAULT_MANIFEST, "label": "台灣（原地類規則）"}]
+	var catalog: Script = load("res://scripts/terrain_lab/site_technology_catalog.gd")
+	for identity: String in ["F04", "F06", "F11", "F12"]:
+		var node: Dictionary = catalog.call("get_node", identity) if catalog != null else {}
+		if node.get("enabled") != true or node.get("status") != "implemented" or node.get("tuning_confirmed") != true: return result
+	var geography := "res://assets/region_lab/earth_tw_tm2_121_v1_r4/manifest.terrain_mapped_potential_v1.json"
+	var hash := FileAccess.get_sha256(geography)
+	var pairs: Dictionary = RegionData.RESOURCE_SOURCE_PAIRS
+	var pair: Dictionary = pairs.get(hash, {})
+	if hash != "cdf59e3247c9db3eb1e5399f7346014f8dec5c2f90bb977fd41ea35bc3444446" or pair.is_empty() or FileAccess.get_sha256(str(pair.path)) != str(pair.sha256): return result
+	result.append({"path": geography, "label": "台灣（地形衍生建設與水井條件）"})
+	return result
+

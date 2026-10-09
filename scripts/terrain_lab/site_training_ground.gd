@@ -86,6 +86,7 @@ static func inspect(controller: Variant, team_id: int, feature_id: String = "", 
 		"training_multiplier": Runtime.training_multiplier(feature)})
 
 static func advance_native(controller: Variant, owner: RefCounted, entry: Dictionary, seconds: float, fed: bool) -> Dictionary:
+	if controller.lab.crowd_site.work_fatigue_point_active(): return Runtime.fail("CLOCK_NOT_READY")
 	if not bool(entry.get("training_order", false)): return Runtime.ok()
 	var checked := inspect(controller, int(owner.team_id), str(entry.get("training_feature_id", "")))
 	if not checked.ok or int(checked.get("commander_id", -1)) != int(entry.training_requester):
@@ -106,3 +107,104 @@ static func advance_native(controller: Variant, owner: RefCounted, entry: Dictio
 	for identity: int in trained.handled_ids:
 		owner.combat_hot_set(owner.index_for_identity(identity), &"work_resting", bool(checked.members[identity].get("work_resting", false)))
 	return Runtime.ok()
+
+
+# APPEND to ORIGINAL SiteTrainingGround (formal FAC8); original Controller owns
+# this call-local candidate. No roster, fatigue, command, timer or saved owner.
+
+
+static func prepare_native_work_prefix(controller: Variant, owner: RefCounted, entry: Dictionary, seconds: float, combat_left: float) -> Dictionary:
+	var crowd: Variant = controller.lab.crowd_site
+	if not is_finite(seconds) or seconds <= 0.0 or not is_finite(combat_left) or combat_left < 0.0 or crowd == null or not crowd.active or not crowd.crowd.has_method("work_training_start_ready"): return Runtime.fail("CLOCK_NOT_READY")
+	if not bool(entry.get("training_order", false)): return Runtime.ok("", {"requests": [], "held": {}})
+	if not is_same(owner_for(controller, int(owner.team_id)), owner) or not is_same(controller.lab.terrain.site.team_supply.get(str(owner.team_id)), entry): return Runtime.fail("STALE_SOURCE")
+	var checked: Dictionary = inspect(controller, int(owner.team_id), str(entry.get("training_feature_id", "")))
+	if not checked.ok: return checked
+	if int(checked.commander_id) != int(entry.get("training_requester", -1)): return Runtime.fail("NO_AUTHORITY")
+	var fed: bool = not entry.sustain.cohorts.is_empty()
+	for cohort: Dictionary in entry.sustain.cohorts: fed = fed and float(cohort.coverage) >= 1.0
+	if not fed or bool(entry.sustain.routed) or not bool(checked.safe) or not bool(crowd.crowd.work_training_start_ready(int(owner.formation_index), combat_left)): return Runtime.ok("原起點未滿足訓練條件", {"requests": [], "held": {}})
+	var snapshot: Dictionary = crowd.work_fatigue_snapshot_for_owner(owner)
+	if snapshot.is_empty(): return Runtime.fail("CLOCK_NOT_READY")
+	var free_living := 0
+	for body: Dictionary in checked.members.values():
+		if float(body.hp) > 0.0 and not bool(body.captive): free_living += 1
+	if free_living <= 0: return Runtime.ok("", {"requests": [], "held": {}})
+	var people := {}
+	var requests: Array[Dictionary] = []
+	for identity: int in checked.eligible_ids:
+		var participant: Dictionary = crowd.work_fatigue_participant(identity, identity != int(controller.lab.controlled_person_id()))
+		if participant.is_empty() or not is_same(participant.get("native_snapshot"), snapshot) or participant.get("native_owner") != owner: return Runtime.fail("STALE_NATIVE_WORK_PLAN")
+		var unit: int = int(participant.unit)
+		if not owner.combat_units.has(unit) or not is_same(owner.combat_units[unit], participant.original_body): return Runtime.fail("STALE_SOURCE")
+		people[identity] = {"unit": unit, "body": participant.original_body, "participant": participant}
+		requests.append({"provider": "training", "key": str(identity), "participants": [participant], "remaining": seconds,
+			"productive_kind": "single", "progress_multiplier": 1.0, "max_game_seconds": seconds})
+	var feature: Dictionary = controller.lab.terrain.site.features.get(str(checked.feature_id), {})
+	return Runtime.ok("原Native訓練起點純候選", {"requests": requests, "held": {"controller": controller,
+		"site": controller.lab.terrain.site, "owner": owner, "entry": entry, "seconds": seconds, "snapshot": snapshot,
+		"feature": feature, "feature_id": str(checked.feature_id), "commander_id": int(checked.commander_id),
+		"formation": int(owner.formation_index), "before_training": float(checked.native.training), "people": people,
+		"free_living": free_living, "coach": float(checked.coach), "training_multiplier": float(checked.training_multiplier), "requests": requests}})
+
+static func checked_native_work_prefix(controller: Variant, held: Dictionary, planned: Dictionary, requests: Array) -> Dictionary:
+	# AFTER actual contacts, BEFORE Native final readiness/any real host costs.
+	# Never call inspect/Sustain.train on endpoint HP or make fake alive members.
+	if held.is_empty(): return Runtime.ok("", {"packet": PackedFloat64Array(), "handled_seconds": {}, "held": held})
+	var crowd: Variant = controller.lab.crowd_site
+	var owner: Variant = held.owner
+	if held.controller != controller or not is_same(held.site, controller.lab.terrain.site) or not is_same(owner_for(controller, int(owner.team_id)), owner) or not is_same(crowd.work_fatigue_snapshot_for_owner(owner), held.snapshot) or not is_same(controller.lab.terrain.site.team_supply.get(str(owner.team_id)), held.entry) or not is_same(controller.lab.terrain.site.features.get(held.feature_id), held.feature) or not bool(held.entry.training_order) or int(held.entry.training_requester) != int(held.commander_id) or str(held.entry.training_feature_id) != str(held.feature_id) or planned.get("ok") != true or not is_equal_approx(float(planned.get("seconds", -1.0)), float(held.seconds)): return Runtime.fail("STALE_SOURCE")
+	var current := {}
+	for request: Dictionary in requests:
+		if request.get("provider") == "training":
+			var key: String = str(request.get("key", ""))
+			if current.has(key): return Runtime.fail("DUPLICATE_ACTIVITY")
+			current[key] = request
+	var handled := {}
+	var effort := 0.0
+	var productive := 0.0
+	var allocations: Dictionary = planned.get("jobs", {}).get("training", {})
+	for identity: int in held.people:
+		var start: Dictionary = held.people[identity]
+		var key: String = str(identity)
+		if owner.index_for_identity(identity) != int(start.unit) or not owner.combat_units.has(int(start.unit)) or not is_same(owner.combat_units[int(start.unit)], start.body) or not current.has(key) or current[key].participants.size() != 1 or not is_same(current[key].participants[0], start.participant): return Runtime.fail("STALE_SOURCE")
+		var allocation: Dictionary = allocations.get(key, {})
+		if allocation.is_empty(): continue
+		var actual: float = float(allocation.get("participant_seconds", {}).get(identity, -1.0))
+		var effective: float = float(allocation.get("participant_effective_seconds", {}).get(identity, -1.0))
+		if not is_finite(actual) or not is_finite(effective) or actual < 0.0 or actual > float(held.seconds) + PersonFatigue.WORK_PLAN_EPS or effective < 0.0 or effective > actual + PersonFatigue.WORK_PLAN_EPS: return Runtime.fail("INVALID_WORK")
+		handled[identity] = actual
+		effort += actual
+		productive += effective
+	var training: float = float(held.before_training)
+	# EXACT existing SiteSustain.train formula and original free-living start
+	# denominator. Cap limits growth only; accepted effort remains in full plan.
+	if training < 1000.0:
+		training = minf(1000.0, training + productive / Sustain.HOUR / int(held.free_living) * (1.0 + Sustain.Rules.diminishing(float(held.coach), 0.5)) * float(held.training_multiplier))
+	var packet := PackedFloat64Array()
+	if effort > 0.0: packet = PackedFloat64Array([float(held.formation), float(held.before_training), training, effort, productive])
+	return Runtime.ok("原Native訓練合法前綴已純預驗", {"packet": packet, "held": held, "plan": planned, "handled_seconds": handled, "training": training})
+
+static func finish_native_work_prefix(controller: Variant, checked: Dictionary) -> void:
+	# Native original point publisher already wrote training + fatigue ONCE.
+	# No apply_training_state, direct pool write, cold proxy or legacy charge.
+	var held: Dictionary = checked.get("held", {})
+	if held.is_empty() or bool(checked.get("finished", false)): return
+	checked.finished = true
+	for identity: int in held.people:
+		var allocation: Dictionary = checked.plan.get("jobs", {}).get("training", {}).get(str(identity), {})
+		var actual: float = float(allocation.get("participant_seconds", {}).get(identity, 0.0))
+		var paused: String = str(allocation.get("participant_paused", {}).get(identity, allocation.get("paused", "")))
+		var owner: Variant = held.owner
+		var unit: int = int(held.people[identity].unit)
+		if actual > 0.0: owner.combat_hot_set(unit, &"work_resting", false)
+		if identity != int(controller.lab.controlled_person_id()) and (paused == "REST" or PersonFatigue.needs_work_rest(float(owner.combat_hot_get(unit, &"fatigue")), bool(owner.combat_hot_get(unit, &"work_resting", false)))):
+			owner.combat_hot_set(unit, &"work_resting", true)
+			owner.work_fatigue_rest(identity) # Original cancel_siege_step/release, after point publication.
+	var current: Dictionary = inspect(controller, int(held.owner.team_id), str(held.feature_id))
+	if not current.ok or int(current.get("commander_id", -1)) != int(held.commander_id): stop(held.entry)
+
+# ORIGINAL advance_native(): before calling inspect or Sustain.train:
+#   if controller.lab.crowd_site.work_fatigue_point_active(): return Runtime.fail("CLOCK_NOT_READY")
+# Native common point is only the checked path above, with actual allocation.
+# No allocation must never fall back to legacy training/fatigue charge.

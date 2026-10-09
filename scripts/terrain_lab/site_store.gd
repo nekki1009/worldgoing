@@ -2895,6 +2895,9 @@ static func _siege_saved_person(state: Dictionary, people: Dictionary, identity:
 	return {"team": int(membership.team_id), "body": original.body, "snapshot": membership, "actor": true}
 
 static func _validate_siege_vehicle(data: TerrainData, state: Dictionary, identity: Variant, vehicle: Dictionary, people: Dictionary, team_counts: Dictionary, claims: Dictionary, operators: Dictionary, guards: Dictionary, check_terrain: bool, region_context: Dictionary = {}) -> Dictionary:
+	var yard_view := Env.navigation_for_state(data, state)
+	var yard_source := Runtime.validate_technology_yard_vehicle(yard_view, vehicle)
+	if not yard_source.ok: return yard_source
 	var hot := not region_context.is_empty()
 	const FIELDS := ["id", "kind", "team_id", "cell", "facing", "operator_id", "holder", "cargo", "move", "stop_pending", "vehicle_version", "definition_version", "hp", "ever_hp_damaged", "phase", "crew_slots", "build", "repair", "command", "action", "next_attack_seq", "rng_state"]
 	var tower := str(vehicle.get("kind", "")) == "siege_tower"
@@ -2925,23 +2928,26 @@ static func _validate_siege_vehicle(data: TerrainData, state: Dictionary, identi
 	elif not vehicle.build.is_empty(): return Runtime.fail("CORRUPT_SAVE", "完工器具仍帶施工交易")
 	if not vehicle.repair.is_empty():
 		if phase not in ["idle", "disabled"] or not vehicle.crew_slots.is_empty() or vehicle.command.get("type") == "attack" or not _number(vehicle.repair.get("amount"), 0.000001, float(definition.max_hp)): return Runtime.fail("CORRUPT_SAVE", "攻城修理資格／額度")
-		var terms := Runtime.siege_repair_terms(vehicle, float(vehicle.repair.amount))
+		if vehicle.has("technology_spare_repair") and not Runtime.valid_settlement_spare_repair_storage(data, vehicle, {}, state): return Runtime.fail("CORRUPT_SAVE", "原備件修理格式")
+		var terms := Runtime.settlement_spare_repair_terms(float(vehicle.repair.amount)) if vehicle.has("technology_spare_repair") else Runtime.siege_repair_terms(vehicle, float(vehicle.repair.amount))
 		if not _valid_siege_job(vehicle.repair, terms.paid_cost, float(terms.total_work), true, float(definition.max_hp), hot and _region_due_work(region_context, str(identity))): return Runtime.fail("CORRUPT_SAVE", "攻城修理投入／進度")
 	if not (_region_siege_command(data, state, vehicle.command, people) if hot else _valid_siege_command(data, state, vehicle.command, people)): return Runtime.fail("CORRUPT_SAVE", "攻城命令／目標引用")
+	if Runtime.inventory_size(vehicle.cargo) > int(definition.capacity): return Runtime.fail("CORRUPT_SAVE", "原石彈與火罐合計超過同一彈艙容量")
+	if vehicle.command.get("ammo") == "fire_pot" and (not Runtime.siege_ammo_valid(str(vehicle.kind), "fire_pot") or not vehicle.crew_slots.values().has(int(vehicle.command.operator_id)) or vehicle.command.has("tech_trial") and vehicle.command.tech_trial.target_id != "vehicle:" + str(vehicle.id)): return Runtime.fail("CORRUPT_SAVE", "火罐命令必須綁同一原投石機與原操作班本人")
 	if tower and vehicle.command.get("type") == "attack": return Runtime.fail("CORRUPT_SAVE", "攻城塔無攻擊命令")
 	for resource: Variant in vehicle.cargo:
-		if resource != str(definition.ammo) or str(definition.ammo).is_empty() or not _integer(vehicle.cargo[resource], 0, int(definition.capacity)): return Runtime.fail("CORRUPT_SAVE", "攻城器具僅接受定義內的原實物彈藥")
+		if not Runtime.siege_ammo_valid(str(vehicle.kind), str(resource)) or not _integer(vehicle.cargo[resource], 0, int(definition.capacity)): return Runtime.fail("CORRUPT_SAVE", "攻城器具僅接受定義內的原實物彈藥")
 	var footprint: Array[Vector2i] = Runtime.siege_cells(data, vehicle)
 	if footprint.size() != int(definition.size.x) * int(definition.size.y): return Runtime.fail("CORRUPT_SAVE", "攻城占地")
 	if check_terrain:
 		var foundation: Array[Vector2i] = footprint.duplicate()
 		if phase == "building" or not vehicle.repair.is_empty():
-			var stations := Runtime.siege_work_slots(data, vehicle)
-			if stations.size() != 4: return Runtime.fail("CORRUPT_SAVE", "攻城工位越界")
+			var stations := Runtime.siege_work_slots(yard_view, vehicle)
+			if stations.size() not in [4, 6]: return Runtime.fail("CORRUPT_SAVE", "攻城工位越界")
 			for station: Dictionary in stations: foundation.append(data.cell_from_index(int(station.cell)))
 		var base: int = int(data.height_levels[data.index(footprint[0])]) if tower else data.effective_height(footprint[0])
 		for cell: Vector2i in foundation:
-			if not data.contains(cell) or not data.is_walkable(cell) or int(data.height_levels[data.index(cell)]) != base or not tower and data.effective_height(cell) != base or int(data.surface_types[data.index(cell)]) in [TerrainData.Surface.WATER, TerrainData.Surface.WETLAND] or int(data.feature_at[data.index(cell)]) != 0: return Runtime.fail("CORRUPT_SAVE", "攻城地基／工位非合法平整乾燥地面")
+			if not data.contains(cell) or not data.is_walkable(cell) or int(data.height_levels[data.index(cell)]) != base or not tower and data.effective_height(cell) != base or int(data.surface_types[data.index(cell)]) in [TerrainData.Surface.WATER, TerrainData.Surface.WETLAND] or not Runtime.technology_siege_ground_cell_allowed(yard_view, vehicle, cell): return Runtime.fail("CORRUPT_SAVE", "攻城地基／工位非合法平整乾燥地面或原校場")
 	var physical := Runtime.siege_tower_physical_cells(data, vehicle) if tower else footprint
 	for cell: Vector2i in physical:
 		if not data.contains(cell) or claims.has(cell) and not _siege_tower_person_claim(data, vehicle, cell, claims[cell], people) and not (hot and _region_siege_claim(data, vehicle, cell, claims[cell])) or check_terrain and not data.is_walkable(cell): return Runtime.fail("CORRUPT_SAVE", "攻城器具與原人物／車輛／地形重疊")
@@ -2971,10 +2977,11 @@ static func _validate_siege_vehicle(data: TerrainData, state: Dictionary, identi
 			var expected := Runtime.siege_crew_cell(data, vehicle, slot)
 			if cell != expected: return Runtime.fail("CORRUPT_SAVE", "就緒攻城操作人尚未到原工位")
 			var station_base := int(data.height_levels[int(vehicle.cell)]) if tower else data.effective_height(data.cell_from_index(int(vehicle.cell)))
-			if check_terrain and (data.effective_height(cell) != station_base or data.effective_height(cell) != int(data.height_levels[data.index(cell)]) or int(data.feature_at[data.index(cell)]) != 0 or int(data.surface_types[data.index(cell)]) in [TerrainData.Surface.WATER, TerrainData.Surface.WETLAND]): return Runtime.fail("CORRUPT_SAVE", "就緒攻城操作人須在同高原地面工位")
+			if check_terrain and (data.effective_height(cell) != station_base or data.effective_height(cell) != int(data.height_levels[data.index(cell)]) or not Runtime.technology_siege_ground_cell_allowed(yard_view, vehicle, cell) or int(data.surface_types[data.index(cell)]) in [TerrainData.Surface.WATER, TerrainData.Surface.WETLAND]): return Runtime.fail("CORRUPT_SAVE", "就緒攻城操作人須在同高原地面工位")
 		operators[int(person_id)] = true
 	if phase == "ready" and vehicle.crew_slots.size() < int(definition.min_crew): return Runtime.fail("CORRUPT_SAVE", "攻城就緒卻沒有最低操作班")
 	return Runtime.ok()
+
 
 static func _valid_siege_job(job: Dictionary, cost: Dictionary, work: float, repair: bool, max_hp: float = 140.0, due: bool = false) -> bool:
 	if job.size() != (5 if repair else 3) or not job.get("paid_cost") is Dictionary or not _number(job.get("total_work"), 0.000001, 1000000.0) or not is_equal_approx(float(job.total_work), work) or not _number(job.get("progress"), 0, work) or float(job.progress) >= work and not due or job.paid_cost.size() != cost.size(): return false
@@ -2986,7 +2993,9 @@ static func _valid_siege_job(job: Dictionary, cost: Dictionary, work: float, rep
 static func _valid_siege_command(data: TerrainData, state: Dictionary, command: Dictionary, people: Dictionary) -> bool:
 	if command.is_empty(): return true
 	if command.get("type") == "stop": return command.size() == 2 and command.get("reason") is String and str(command.reason).length() <= 512
-	if command.size() != 2 + int(command.has("ai")) or command.get("type") != "attack" or not command.get("target") is Dictionary or not command.get("ai", false) is bool: return false
+	if command.size() != 2 + int(command.has("ai")) + 2 * int(command.has("ammo")) + int(command.has("tech_trial")) or command.get("type") != "attack" or not command.get("target") is Dictionary or not command.get("ai", false) is bool: return false
+	if command.has("ammo") and (command.ammo != "fire_pot" or not _integer(command.get("operator_id"), 1, 2147483647) or not people.has(int(command.operator_id))): return false
+	if command.has("tech_trial") and (not command.has("ammo") or not Runtime._technology_trial_shape(command.tech_trial, data) or command.tech_trial.get("tech_id") != "F15" or command.tech_trial.get("binding") != "fire_pot_shot" or int(command.tech_trial.person.person_id) != int(command.operator_id)): return false
 	var target: Dictionary = command.target
 	match str(target.get("type", "")):
 		"ground": return target.size() == 2 and _valid_xy_pair(data, target.get("cell")) and data.contains(Vector2i(int(target.cell[0]), int(target.cell[1])))
@@ -2997,6 +3006,7 @@ static func _valid_siege_command(data: TerrainData, state: Dictionary, command: 
 			var feature: Dictionary = state.features.get(target.feature_id, {})
 			return str(feature.get("stage", "")) == "complete" and feature.get("parts", {}).has(target.part_id)
 	return false
+
 
 static func _vehicle_facing(value: Variant) -> bool:
 	return value is Array and value.size() == 2 and _integer(value[0], -1, 1) and _integer(value[1], -1, 1) and absi(int(value[0])) + absi(int(value[1])) == 1
@@ -4151,11 +4161,16 @@ static func _region_capture_completion_guard(state: Dictionary, context: Diction
 ## World identity/policy stays in the original Slot pin projection. The fixed
 ## terrain base remains unchanged and supplies the geography comparison only.
 static func _validate_world_pin(data: TerrainData, state: Dictionary) -> Dictionary:
-	if not state.has("world_pin"): return Runtime.ok()
+	var source_base: Variant = data.parameters.get("fixed_base") if data != null else null
+	var declared_land: bool = source_base is Dictionary and source_base.has("land_condition_rule")
+	if not state.has("world_pin"):
+		return Runtime.fail("SAVE_VERSION", "Declared fixed land source requires the original full world pin") if declared_land else Runtime.ok()
 	var pin: Variant = state.world_pin
 	var base: Variant = data.parameters.get("fixed_base") if data != null else null
 	if not pin is Dictionary or not base is Dictionary or base.get("base_kind") != "fixed_geography" or not _integer(pin.get("format"), 1, 2):
 		return Runtime.fail("SAVE_VERSION", "Site 原世界 pin 缺少固定地理來源或版本非法")
+	if declared_land and (int(pin.format) != 2 or not pin.has("technology_policy")):
+		return Runtime.fail("SAVE_VERSION", "Declared fixed land source cannot downgrade the original world policy pin")
 	const FIELDS := ["format", "world_instance_id", "slot_id", "atlas_id", "grid_contract_version", "base_revision", "manifest_sha256", "ramp_rule_revision"]
 	var keys: Array = FIELDS.duplicate()
 	if pin.has("resource_layer_sha256") or pin.has("resource_rule_revision"):
@@ -4232,62 +4247,46 @@ static func _region_scene_capture_guard(data: TerrainData, captured: Dictionary)
 
 ## Append to ORIGINAL SiteStore after the Runtime F/S fragments are merged.
 ## Optional absence remains legacy. Present payloads pass the original schemas.
-const FS_TARGET_OPTIONALS := ["tech_trial", "tech_batch", "technology_output", "technology_construction", "technology_product_id"]
+const FS_TARGET_OPTIONALS := ["tech_fire_pot_shot", "technology_spare_repair", "settlement_work", "tech_trial", "tech_batch", "tech_work_credit", "technology_output", "technology_construction", "technology_product_id", "technology_order"]
 
 static func _fs_vehicle_optional_count(vehicle: Dictionary) -> int:
-	var count := 0
+	var count := int(vehicle.has("technology_yard_id")) + int(vehicle.has("technology_siege_method"))
 	for key: String in FS_TARGET_OPTIONALS: count += int(vehicle.has(key))
 	return count
 
+
 static func _validate_fs_targets(data: TerrainData, state: Dictionary, people: Dictionary) -> Dictionary:
-	# The load validator runs before data.site is replaced. This detached original
-	# navigation view supplies the same state to Runtime's read-only validators.
+	# Runtime owns the exact target schemas. This original Store adds current
+	# person and payment-holder references against the same detached state.
 	var view := Env.navigation_for_state(data, state)
+	var channels := Runtime.validate_irrigation_storage(view, state)
+	if not channels.ok: return channels
+	var water := Runtime.validate_water_schedule_storage(view, state)
+	if not water.ok: return water
 	for entry: Array in [["feature", state.get("features", {})], ["vehicle", state.get("vehicles", {})]]:
 		for key: String in entry[1]:
 			var target: Variant = entry[1][key]
 			if not target is Dictionary: return Runtime.fail("CORRUPT_TECHNOLOGY", "原目標格式")
-			var kind := str(entry[0])
-			if target.has("tech_trial"):
-				var token: Variant = target.tech_trial
-				if not Runtime._technology_trial_shape(token, view) or str(token.target_id) != kind + ":" + key or not people.has(int(token.person.person_id)):
-					return Runtime.fail("CORRUPT_TECHNOLOGY", "原具名試作人物／目標引用")
+			var checked := Runtime.validate_technology_target_storage(view, key, target, str(entry[0]))
+			if not checked.ok: return checked
+			var project_checked := Runtime.validate_technology_trial_project_storage(view, target)
+			if not project_checked.ok: return project_checked
+			if target.has("settlement_work"):
+				var order: Dictionary = state.settlement.technology_operations.orders[target.settlement_work.order_id]
+				if not people.has(int(order.paid.operator_id)): return Runtime.fail("CORRUPT_TECHNOLOGY", "原活動防禦清單人物不存在")
+			if target.has("tech_fire_pot_shot"):
+				if str(entry[0]) != "vehicle": return Runtime.fail("CORRUPT_SAVE")
+				var shot := _validate_fire_pot_shot_record(data, state, target, people)
+				if not shot.ok: return shot
+			if target.has("tech_trial") and not people.has(int(target.tech_trial.person.person_id)):
+				return Runtime.fail("CORRUPT_TECHNOLOGY", "原具名試作人物引用")
 			if target.has("tech_batch"):
-				var batch: Variant = target.tech_batch
-				if not Runtime.valid_technology_batch(batch, view, key, kind): return Runtime.fail("CORRUPT_TECHNOLOGY", "原已付款批次欄位")
+				var batch: Dictionary = target.tech_batch
 				if int(batch.operator_id) > 0 and not people.has(int(batch.operator_id)): return Runtime.fail("CORRUPT_TECHNOLOGY", "原活動批次人物不存在")
-				if not batch.token.is_empty() and (not target.has("tech_trial") or batch.token != target.tech_trial): return Runtime.fail("CORRUPT_TECHNOLOGY", "原批次試作引用")
-				if target.has("tech_trial") and batch.token != target.tech_trial: return Runtime.fail("CORRUPT_TECHNOLOGY", "原試作與已付批次不一致")
-				var holder := str(batch.source_holder)
-				if holder != "depot" and (not holder.begins_with("feature:") or not state.get("features", {}).has(holder.trim_prefix("feature:"))):
+				if not Runtime.validate_technology_ledger_source(view, target, batch):
 					return Runtime.fail("CORRUPT_TECHNOLOGY", "原付款來源持有人引用")
-				if kind == "vehicle":
-					if target.get("build", {}).is_empty() or not Technology.material_equal(batch.materials, target.build.get("paid_cost", {})):
-						return Runtime.fail("CORRUPT_TECHNOLOGY", "原器械施工付款不一致")
-				elif target.has("ship_build"):
-					if not Technology.material_equal(batch.materials, target.ship_build.get("paid_cost", {})): return Runtime.fail("CORRUPT_TECHNOLOGY", "原造船付款不一致")
-				elif str(target.get("stage", "")) != "complete":
-					if not Technology.material_equal(batch.materials, target.get("cost", {})): return Runtime.fail("CORRUPT_TECHNOLOGY", "原施工材料不一致")
-				elif target.get("batch_paid") != true:
-					return Runtime.fail("CORRUPT_TECHNOLOGY", "原生產批次未付款")
-			if target.has("technology_output"):
-				if kind != "feature" or not Runtime.valid_technology_output_state(target.technology_output, view, key): return Runtime.fail("CORRUPT_TECHNOLOGY", "原產出收據／序號")
-			if target.has("technology_construction"):
-				var event: Variant = target.technology_construction
-				if not _valid_fs_construction(event, kind, key):
-					return Runtime.fail("CORRUPT_TECHNOLOGY", "原建造完成 witness")
-				var expected_kind := str(Runtime.TECHNOLOGY_SIEGE_BINDINGS.get(str(event.binding), "")) if kind == "vehicle" else \
-					("shipyard" if str(event.binding) == "ferry_build" else str(Runtime.TECHNOLOGY_BUILD_BINDINGS.get(str(event.binding), "")))
-				if expected_kind.is_empty() or expected_kind != str(target.get("kind", "")): return Runtime.fail("CORRUPT_TECHNOLOGY", "原建造成果類型不一致")
-				if kind == "feature" and (str(event.site_id) != str(state.id) or str(target.get("stage", "")) != "complete"):
-					return Runtime.fail("CORRUPT_TECHNOLOGY", "原設施施工尚未完成")
-				if kind == "vehicle" and (str(target.get("phase", "")) == "building" or not target.get("build", {}).is_empty()):
-					return Runtime.fail("CORRUPT_TECHNOLOGY", "原器械施工尚未完成")
-			if target.has("technology_product_id"):
-				if not target.has("technology_construction") or not target.technology_product_id is String or not target.technology_product_id.begins_with("vehicle:") \
-					or not _fs_serial_text(target.technology_product_id.trim_prefix("vehicle:")):
-					return Runtime.fail("CORRUPT_TECHNOLOGY", "原建造產物引用")
 	return Runtime.ok()
+
 
 static func _fs_serial_text(value: String) -> bool:
 	return value.is_valid_int() and str(int(value)) == value and _integer(int(value), 1, 2147483646)
@@ -4304,31 +4303,71 @@ static func _valid_fs_construction(event: Variant, kind: String, key: String) ->
 	return kind == "vehicle" or str(event.target_id) == kind + ":" + key
 
 static func _normalize_fs_targets(state: Dictionary) -> void:
+	# Raw payloads have already passed validation. Canonicalization creates no
+	# missing optional record and preserves the original immutable lineage.
 	for entry: Dictionary in [state.get("features", {}), state.get("vehicles", {})]:
-		for target: Dictionary in entry.values():
-			if target.has("tech_trial"): _normalize_fs_token(target.tech_trial)
-			if target.has("tech_batch"):
-				var batch: Dictionary = target.tech_batch
-				for field: String in ["version", "id", "operator_id", "source_version"]: batch[field] = int(batch[field])
-				batch.work_seconds = float(batch.work_seconds)
-				for resource: String in batch.materials: batch.materials[resource] = int(batch.materials[resource])
-				if not batch.token.is_empty(): _normalize_fs_token(batch.token)
-			if target.has("technology_output"):
-				var output: Dictionary = target.technology_output
-				output.version = int(output.version)
-				output.next_seq = int(output.next_seq)
-				for receipt: Dictionary in output.receipts:
-					receipt.id = int(receipt.id)
-					receipt.operator_id = int(receipt.operator_id)
-					receipt.work_seconds = float(receipt.work_seconds)
-					for resource: String in receipt.resources: receipt.resources[resource] = int(receipt.resources[resource])
-			if target.has("technology_construction"):
-				var event: Dictionary = target.technology_construction
-				event.operator_id = int(event.operator_id)
-				event.work_seconds = float(event.work_seconds)
-				for resource: String in event.materials: event.materials[resource] = int(event.materials[resource])
+		for target: Dictionary in entry.values(): Runtime.normalize_technology_target_storage(target)
+
 
 static func _normalize_fs_token(token: Dictionary) -> void:
 	for field: String in ["project_id", "epoch", "attempt"]: token[field] = int(token[field])
 	token.person.person_id = int(token.person.person_id)
 	for resource: String in token.materials: token.materials[resource] = int(token.materials[resource])
+
+static func _validate_unadmitted_social_state(state: Dictionary) -> Dictionary:
+	var actors: Variant = state.get("actors", {})
+	if actors is Dictionary:
+		for body: Variant in actors.values():
+			if body is Dictionary and body.has("social_state") and not TerrainTestCharacter.PersonSocial.valid(body.social_state):
+				return Runtime.fail("SAVE_VERSION", "Actor social_state 尚未准入；完整原檔與原現場保留")
+	var armies: Variant = state.get("armies", [])
+	if armies is Array:
+		for army: Variant in armies:
+			if not army is Dictionary: continue
+			var units: Variant = army.get("units", [])
+			if not units is Array: continue
+			for body: Variant in units:
+				if body is Dictionary and body.has("social_state") and not TerrainTestCharacter.PersonSocial.valid(body.social_state):
+					return Runtime.fail("SAVE_VERSION", "Army person social_state 尚未准入；完整原檔與原現場保留")
+	return Runtime.ok()
+
+
+static func _validate_fire_pot_shot_record(data: TerrainData, state: Dictionary, vehicle: Dictionary, people: Dictionary) -> Dictionary:
+	var proof: Variant = vehicle.get("tech_fire_pot_shot")
+	var fields := ["version", "token", "attack_id", "projectile_id", "payment_id", "phase", "unit_key", "generation", "scorch", "impact_action"]
+	if not proof is Dictionary or proof.size() != fields.size(): return Runtime.fail("CORRUPT_SAVE", "原火罐發射收據欄位")
+	for key: String in fields:
+		if not proof.has(key): return Runtime.fail("CORRUPT_SAVE")
+	var view := Env.navigation_for_state(data, state)
+	if not _integer(proof.version, 1, 1) or not Runtime.siege_ammo_valid(str(vehicle.kind), "fire_pot") \
+		or not Runtime._technology_trial_shape(proof.token, view) or proof.token.get("scope") != "family" or proof.token.get("tech_id") != "F15" \
+		or proof.token.get("binding") != "fire_pot_shot" or proof.token.get("target_id") != "vehicle:" + str(vehicle.id) \
+		or not people.has(int(proof.token.person.person_id)) or not _integer(proof.projectile_id, 1, 2147483647) \
+		or not proof.payment_id is String or proof.payment_id.is_empty() or proof.phase not in ["flight", "miss", "contact", "complete"] \
+		or not proof.unit_key is String or not _integer(proof.generation, 0, 2147483647) or not _number(proof.scorch, 0.0, 1.0) \
+		or not _number(proof.impact_action, 0.0, 1000000000.0) or not proof.attack_id is String: return Runtime.fail("CORRUPT_SAVE", "原火罐發射身分／數值")
+	var prefix := str(state.id) + "|" + str(vehicle.id) + "|"
+	if not proof.attack_id.begins_with(prefix) or not proof.attack_id.trim_prefix(prefix).is_valid_int() \
+		or proof.attack_id != prefix + str(int(proof.attack_id.trim_prefix(prefix))) \
+		or not _integer(int(proof.attack_id.trim_prefix(prefix)), 1, int(vehicle.next_attack_seq) - 1): return Runtime.fail("CORRUPT_SAVE")
+	if proof.phase in ["contact", "complete"] and (proof.unit_key.is_empty() or int(proof.generation) < 1): return Runtime.fail("CORRUPT_SAVE")
+	if proof.phase in ["flight", "miss"] and (not proof.unit_key.is_empty() or int(proof.generation) != 0 or float(proof.scorch) != 0.0): return Runtime.fail("CORRUPT_SAVE")
+	var family: Dictionary = state.get("family", {})
+	var raw: Dictionary = family.get("technology", {})
+	if not Technology.valid_scope_record(raw, "family") or family.get("family_id") != proof.token.scope_id: return Runtime.fail("CORRUPT_SAVE")
+	var found := false
+	var completed := false
+	for project: Dictionary in raw.projects:
+		if int(project.id) != int(proof.token.project_id) or project.tech_id != "F15" or project.purpose != proof.token.purpose: continue
+		for payment: Dictionary in project.budget.get("payments", []):
+			if payment.payment_id == proof.payment_id and int(payment.attempt) == int(proof.token.attempt) and payment.phase_id == proof.token.phase_id \
+				and payment.target_id == proof.token.target_id and Technology.same_person_ref(payment.person, proof.token.person, raw.get("person_links", [])) \
+				and Technology.material_equal(payment.materials, {"fire_pot": 1}): found = true
+		for receipt: Dictionary in project.receipts:
+			if receipt.payment_id == proof.payment_id and int(receipt.attempt) == int(proof.token.attempt) \
+				and receipt.phase_id == proof.token.phase_id and int(receipt.person_id) == int(proof.token.person.person_id) \
+				and receipt.site_id == str(state.id) and receipt.event_id == "F15:shot:" + str(proof.attack_id): completed = true
+	if not found: return Runtime.fail("CORRUPT_SAVE", "原火罐發射缺一次真付款")
+	if completed != (proof.phase == "complete"): return Runtime.fail("CORRUPT_SAVE", "原火罐完成須對應同一次真接觸後收據")
+	return Runtime.ok()
+

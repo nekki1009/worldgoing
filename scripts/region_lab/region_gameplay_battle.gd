@@ -29,6 +29,7 @@ static func create(spec: Dictionary) -> Dictionary:
 	return {"ok": true, "code": "", "battle": battle}
 
 static func next_event(battle: Dictionary) -> float:
+	if str(battle.get("kind", "")) == "siege" and str(battle.get("mode", "")) != "formula_active": return INF
 	var result := float(battle.get("round_end", INF))
 	for event: Dictionary in battle.get("pending", []): result = minf(result, float(event.get("game_time", INF)))
 	var inputs: Dictionary = battle.get("round_inputs", {})
@@ -158,7 +159,9 @@ static func resolve_people(lab: TerrainLab, battle: Dictionary, eligibility_quer
 	if lab.crowd_site != null and lab.crowd_site.active: return _fail("UNSUPPORTED_BACKEND")
 	var original_refs := {}
 	var values := {}
-	var controlled := int(lab.controlled_person_id())
+	var control_scope := scoped_controlled_person(lab)
+	if not control_scope.get("ok", false): return control_scope
+	var controlled := int(control_scope.person_id)
 	for side: String in ["attackers", "defenders"]:
 		for value: Variant in battle.get(side, []):
 			var identity := int(value)
@@ -195,7 +198,7 @@ static func _original_rank(owner: Variant, identity: int) -> int:
 	if not owner is TerrainArmy: return 0
 	var commander: int = int(owner.combat_identity(int(owner.current_commander)))
 	var officers: Array = []
-	for seat: Dictionary in owner.team_offices().positions:
+	for seat: Dictionary in owner.team_offices(true).positions:
 		if not bool(seat.head) and int(seat.holder) > 0: officers.append(int(seat.holder))
 	return Policy.rank_for(identity, commander, officers)
 
@@ -225,7 +228,10 @@ static func _owned_damage(lab: TerrainLab, battle: Dictionary, effect: Dictionar
 	if target.is_empty() or source.is_empty(): return _fail("NO_ORIGINAL_PERSON")
 	var target_id := int(effect.person_id)
 	var source_id := int(effect.source_person_id)
-	if target_id == int(lab.controlled_person_id()) or source_id == int(lab.controlled_person_id()): return _fail("PLAYER_BARRIER")
+	var control_scope := scoped_controlled_person(lab)
+	if not control_scope.get("ok", false): return control_scope
+	var controlled := int(control_scope.person_id)
+	if controlled > 0 and (target_id == controlled or source_id == controlled): return _fail("PLAYER_BARRIER")
 	var source_ref := {"id": source_id, "faction": int(source.owner.faction_id), "cell": source.cell}
 	var target_ref := {"id": target_id, "faction": int(target.owner.faction_id), "cell": target.cell}
 	var witness: Dictionary = effect.get("contact", {})
@@ -257,7 +263,9 @@ static func _owned_damage(lab: TerrainLab, battle: Dictionary, effect: Dictionar
 static func _owned_fatigue(lab: TerrainLab, battle: Dictionary, effect: Dictionary) -> Dictionary:
 	var person := _effect_person(lab, battle, int(effect.get("person_id", -1)))
 	if person.is_empty(): return _fail("NO_ORIGINAL_PERSON")
-	if int(effect.person_id) == int(lab.controlled_person_id()): return _fail("PLAYER_BARRIER")
+	var control_scope := scoped_controlled_person(lab)
+	if not control_scope.get("ok", false): return control_scope
+	if int(control_scope.person_id) > 0 and int(effect.person_id) == int(control_scope.person_id): return _fail("PLAYER_BARRIER")
 	var amount := float(effect.get("amount", NAN))
 	if not is_finite(amount) or amount < 0.0: return _fail("INVALID_EFFECT")
 	var index := int(person.unit)
@@ -349,3 +357,333 @@ static func _effect_id(battle: Dictionary, interval: Dictionary, kind: String) -
 
 static func _fail(code: String) -> Dictionary:
 	return {"ok": false, "code": code}
+
+
+static func scoped_controlled_person(lab: TerrainLab) -> Dictionary:
+	if not is_instance_valid(lab) or lab.terrain == null: return _fail("NO_ORIGINAL_PERSON")
+	var identity := int(lab.controlled_person_id())
+	var slot: RegionSaveSlot = lab.site_controller.region_slot if lab.site_controller != null else null
+	if slot == null: return {"ok": true, "person_id": identity, "scope": "ordinary_original"}
+	var active := str(slot.control.get("active_site_id", ""))
+	var owner := str(lab.terrain.site.get("id", ""))
+	if not active.is_empty():
+		if owner != active: return {"ok": true, "person_id": -1, "scope": "cold_original"}
+		var receipt: Dictionary = lab.region_bind_receipt(lab.terrain)
+		if lab._region_bound_data != lab.terrain or receipt.get("complete") != true or receipt.get("owners_restored") != true or receipt.get("owner") != active or int(receipt.get("generation", -1)) != int(slot._marker.get("generation", 0)):
+			return _fail("COMMITTED_UNBOUND")
+		return {"ok": true, "person_id": identity, "scope": "active_original"}
+	var journey: Dictionary = slot.region_travel_journey()
+	var token := str(journey.get("token", ""))
+	if token.is_empty() or owner != "travel:" + token: return {"ok": true, "person_id": -1, "scope": "cold_original"}
+	# The existing getter is read-only after this SAME runtime-cache guard.
+	if slot._travel_party_runtime_token != token or slot._travel_party_runtime.is_empty(): return _fail("STALE_REGION_PARTY_OWNER")
+	var selected: Dictionary = slot.region_travel_party()
+	if not selected.get("ok", false): return selected
+	var runtime: Dictionary = slot.region_original_party_runtime_proof(token, selected.party)
+	if not runtime.get("ok", false): return runtime
+	if runtime.get("lab") != lab or not is_same(runtime.get("party"), selected.party): return _fail("STALE_REGION_PARTY_OWNER")
+	return {"ok": true, "person_id": identity, "scope": "player_party_original"}
+
+
+## Four siege phases are derived from the SAME original paid owners. This
+## metadata selects no target, changes no placement and owns no work/timer.
+## Until a measured casualty rule is admitted, the original exact GD consumer
+## remains responsible for people as well as finite siege/work/contact tails.
+
+
+const SIEGE_VERSION := 1
+
+const SIEGE_PHASES := ["siege", "breach", "assault", "capture", "finished"]
+
+const SIEGE_FIELDS := ["version", "center_id", "defender_faction", "attacker_faction", "phase", "source", "bodies", "structures", "vehicles", "flights", "work", "routes", "arrivals", "capture", "source_sha256", "resolution"]
+
+const SiegeCheckpoint = preload("res://scripts/terrain_lab/site_region_checkpoint.gd")
+
+
+static func _siege_hash(value: Variant) -> String:
+	return JSON.stringify(SiegeCheckpoint._hash_numbers(SiegeCheckpoint.wire(value)), "", true, true).sha256_text()
+
+
+static func validate_siege_metadata(value: Variant) -> Dictionary:
+	if not value is Dictionary or value.size() != SIEGE_FIELDS.size(): return _fail("INVALID_SIEGE_SOURCE")
+	for field: String in SIEGE_FIELDS:
+		if not value.has(field): return _fail("INVALID_SIEGE_SOURCE")
+	if not SiegeCheckpoint.integer(value.version, 1) or int(value.version) != SIEGE_VERSION or value.phase not in SIEGE_PHASES or not value.center_id is String or value.center_id.is_empty() \
+		or not SiegeCheckpoint.integer(value.defender_faction) or not SiegeCheckpoint.integer(value.attacker_faction) \
+		or int(value.defender_faction) == int(value.attacker_faction) or value.resolution != "original_exact_gd":
+		return _fail("INVALID_SIEGE_SOURCE")
+	for field: String in ["source", "bodies", "structures", "vehicles", "flights", "work", "routes", "arrivals", "capture"]:
+		if not value[field] is Dictionary or value[field].size() > 65536: return _fail("INVALID_SIEGE_SOURCE")
+	var source: Dictionary = value.source
+	if source.size() != 9 or not source.get("owner") is String or source.owner.is_empty() \
+		or not SiegeCheckpoint.integer(source.get("generation")) or not SiegeCheckpoint.integer(source.get("runtime_revision")) \
+		or not SiegeCheckpoint.time(source.get("game_seconds")) or not SiegeCheckpoint.time(source.get("action_seconds")) \
+		or not source.get("fire_epoch") is String or source.fire_epoch.is_empty() or not SiegeCheckpoint.integer(source.get("fire_sequence")) \
+		or not SiegeCheckpoint.integer(source.get("navigation_revision")) or not SiegeCheckpoint.integer(source.get("environment_revision")):
+		return _fail("INVALID_SIEGE_SOURCE")
+	var references: Dictionary = _validate_siege_references(value)
+	if not references.ok: return references
+	if not value.source_sha256 is String or value.source_sha256 != _siege_source_hash(value): return _fail("INVALID_SIEGE_SOURCE")
+	return {"ok": true}
+
+
+static func _siege_cell(value: Variant) -> bool:
+	return value is Array and value.size() == 2 and SiegeCheckpoint.integer(value[0], -1) and SiegeCheckpoint.integer(value[1], -1)
+
+
+static func _siege_digest(value: Variant) -> bool:
+	if not value is String or value.length() != 64: return false
+	for offset: int in value.length():
+		if not "0123456789abcdef".contains(value.substr(offset, 1)): return false
+	return true
+
+
+static func _validate_siege_references(value: Dictionary) -> Dictionary:
+	for key: Variant in value.bodies:
+		var body: Variant = value.bodies[key]
+		if not key is String or not body is Dictionary or body.size() != 15 or not SiegeCheckpoint.integer(body.get("person_id"), 1) or key != str(int(body.person_id)) \
+			or not SiegeCheckpoint.integer(body.get("faction")) or int(body.faction) not in [int(value.attacker_faction), int(value.defender_faction)] \
+			or not _siege_cell(body.get("cell")) or not _siege_cell(body.get("moving_from")) or not _siege_cell(body.get("moving_to")) \
+			or not SiegeCheckpoint.integer(body.get("surface")) or not SiegeCheckpoint.time(body.get("hp")) or not SiegeCheckpoint.time(body.get("ko")) \
+			or not body.get("captive") is bool or not body.get("moving") is bool or not SiegeCheckpoint.integer(body.get("team_id"), -1) \
+			or not SiegeCheckpoint.integer(body.get("order"), -1) or not SiegeCheckpoint.integer(body.get("commander"), -1) \
+			or not body.get("role") is String or not _siege_digest(body.get("holder_sha256")): return _fail("INVALID_SIEGE_REFERENCE")
+	for key: Variant in value.structures:
+		var feature: Variant = value.structures[key]
+		if not key is String or key.is_empty() or not feature is Dictionary or feature.size() != 4 or not feature.get("kind") is String \
+			or not SiegeCheckpoint.integer(feature.get("owner_faction"), -1) or not _siege_digest(feature.get("sha256")) or not feature.get("parts") is Dictionary: return _fail("INVALID_SIEGE_REFERENCE")
+		for part: Variant in feature.parts:
+			if not part is String or part.is_empty() or not _siege_digest(feature.parts[part]): return _fail("INVALID_SIEGE_REFERENCE")
+	if not value.structures.has(str(value.center_id)) or str(value.structures[str(value.center_id)].kind) != "settlement_center": return _fail("INVALID_SIEGE_REFERENCE")
+	for key: Variant in value.vehicles:
+		var vehicle: Variant = value.vehicles[key]
+		if not key is String or key.is_empty() or not vehicle is Dictionary or vehicle.size() != 6 or not SiteRuntime.SIEGE_DEFINITIONS.has(vehicle.get("kind")) \
+			or not SiegeCheckpoint.integer(vehicle.get("team_id"), 1) or not SiegeCheckpoint.integer(vehicle.get("faction"), -1) \
+			or not _siege_digest(vehicle.get("sha256")) or not SiegeCheckpoint.integer(vehicle.get("holder_version")) or not SiegeCheckpoint.integer(vehicle.get("attack_seq")): return _fail("INVALID_SIEGE_REFERENCE")
+	for key: Variant in value.flights:
+		var flight: Variant = value.flights[key]
+		if not key is String or key.is_empty() or not flight is Dictionary or flight.size() != 6 or not flight.get("source_vehicle") is String or flight.source_vehicle.is_empty() \
+			or not SiteRuntime.SIEGE_DEFINITIONS.has(flight.get("kind")) or not SiegeCheckpoint.integer(flight.get("faction")) \
+			or not SiegeCheckpoint.integer(flight.get("rule_version"), 1) or int(flight.rule_version) != 1 or not _siege_cell(flight.get("source_cell")) \
+			or not _siege_digest(flight.get("sha256")): return _fail("INVALID_SIEGE_REFERENCE")
+	for key: Variant in value.work:
+		if not key is String or not _siege_digest(value.work[key]) or not ((key.begins_with("feature:") and value.structures.has(key.trim_prefix("feature:"))) or (key.begins_with("vehicle:") and value.vehicles.has(key.trim_prefix("vehicle:")))): return _fail("INVALID_SIEGE_REFERENCE")
+	for key: Variant in value.routes:
+		var route: Variant = value.routes[key]
+		if not value.bodies.has(key) or not route is Dictionary or route.size() != 4 or not _siege_cell(route.get("source")) or not _siege_cell(route.get("goal")) \
+			or not _siege_digest(route.get("path_sha256")) or not SiegeCheckpoint.integer(route.get("steps"), 1): return _fail("INVALID_SIEGE_REFERENCE")
+	for key: Variant in value.arrivals:
+		var arrival: Variant = value.arrivals[key]
+		if not key is String or key.is_empty() or not arrival is Dictionary or arrival.size() != 5 or not _siege_cell(arrival.get("origin")) \
+			or not arrival.get("plan_path") is String or arrival.plan_path.is_empty() or not _siege_digest(arrival.get("plan_sha256")) \
+			or not SiegeCheckpoint.time(arrival.get("arrival_game_seconds")) or not _siege_digest(arrival.get("mapping_sha256")): return _fail("INVALID_SIEGE_REFERENCE")
+	var capture: Dictionary = value.capture
+	if capture.size() != 4 or not capture.get("sample") is Dictionary or capture.sample.size() != 3 or not SiegeCheckpoint.integer(capture.sample.get("owner")) \
+		or not SiegeCheckpoint.integer(capture.sample.get("attacker"), -1) or not SiegeCheckpoint.integer(capture.sample.get("leader"), -1) \
+		or not _siege_digest(capture.get("fall_sha256")) or not SiegeCheckpoint.time(capture.get("elapsed_action")) or not SiegeCheckpoint.time(capture.get("unconsumed_game_seconds")): return _fail("INVALID_SIEGE_REFERENCE")
+	return {"ok": true}
+
+
+static func _siege_source_hash(value: Dictionary) -> String:
+	var fields := {}
+	for field: String in SIEGE_FIELDS:
+		if field != "source_sha256": fields[field] = value[field]
+	return _siege_hash(fields)
+
+
+static func _siege_person_ref(lab: TerrainLab, identity: int) -> Dictionary:
+	var person: Dictionary = lab.site_controller.person_actions._person(identity, false)
+	if person.is_empty(): return {}
+	var cell: Vector2i = person.cell
+	var owner: Variant = person.owner
+	var unit := int(person.unit)
+	var ref := {"person_id": identity, "faction": int(person.faction), "cell": [cell.x, cell.y],
+		"surface": int(lab.terrain.effective_height(cell)), "hp": float(person.hp), "ko": float(person.ko),
+		"captive": bool(person.captive), "moving": bool(person.moving), "team_id": int(owner.team_id) if owner is TerrainArmy else -1,
+		"holder_sha256": _siege_hash(person.get("holder", {})), "role": SiteSettlement._role(person)}
+	if owner is TerrainArmy:
+		ref.order = int(owner.combat_order)
+		ref.commander = int(owner.combat_identity(owner.current_commander)) if owner.current_commander >= 0 else -1
+		ref.moving_from = [owner.cells[unit].x, owner.cells[unit].y]
+		ref.moving_to = [owner.moving_to[unit].x, owner.moving_to[unit].y]
+	else:
+		ref.order = -1
+		ref.commander = -1
+		ref.moving_from = [owner.movement_from_cell.x, owner.movement_from_cell.y]
+		ref.moving_to = [cell.x, cell.y]
+	return ref
+
+## A path is the actual original person's source/goal-purpose navigation proof.
+## Every edge uses the SAME TerrainData and tower/vehicle person-step guard.
+## It proves topology only; original movement/occupancy still admits each step.
+
+
+static func original_siege_path(lab: TerrainLab, identity: int, goal: Vector2i) -> Array[Vector2i]:
+	var result: Array[Vector2i] = []
+	var person: Dictionary = lab.site_controller.person_actions._person(identity, false)
+	if person.is_empty() or not lab.terrain.is_walkable(goal): return result
+	var source: Vector2i = person.cell
+	if source == goal:
+		result.append(source)
+		return result
+	var blocked := func(from: Vector2i, to: Vector2i) -> bool:
+		return lab.site_controller.vehicles.blocks_person_step(identity, source, from, to, goal)
+	return lab.terrain.path_between(source, goal, Callable(), blocked)
+
+
+static func prepare_original_siege(lab: TerrainLab, battle: Dictionary = {}) -> Dictionary:
+	if not is_instance_valid(lab) or lab.terrain == null or lab.site_controller == null or lab.site_controller.region_slot == null:
+		return _fail("MISSING_ORIGINAL_SIEGE_OWNER")
+	var slot: RegionSaveSlot = lab.site_controller.region_slot
+	var data := lab.terrain
+	if lab._region_bound_data != data or slot._region_bound_original_lab(data) != lab: return _fail("STALE_ORIGINAL_SIEGE_OWNER")
+	if lab.crowd_site != null and lab.crowd_site.active: return _fail("REGION_BACKEND_UNADMITTED")
+	var settlement := SiteSettlement.record(data)
+	var center := SiteSettlement.center(data)
+	if settlement.is_empty() or center.is_empty() or int(settlement.level) <= 0: return {"ok": true, "present": false}
+	var existing: Dictionary = battle.get("siege", {})
+	if not existing.is_empty():
+		var valid := validate_siege_metadata(existing)
+		if not valid.ok: return valid
+		if str(existing.source.owner) != str(data.site.id) or str(existing.center_id) != str(settlement.center_id): return _fail("SIEGE_CENTER_CHANGED")
+	var defender := int(existing.get("defender_faction", settlement.owner_faction))
+	var factions := {}
+	var bodies := {}
+	var scope := scoped_controlled_person(lab)
+	if not scope.ok: return scope
+	var controlled := int(scope.person_id)
+	var identities: Array[int] = []
+	for actor: TerrainTestCharacter in lab.combat_actors:
+		if lab.actor_present(actor) and not actor.site_exited and actor.person_id != controlled: identities.append(actor.person_id)
+	for team: TerrainArmy in lab.combat_armies:
+		if not team.combat_enabled: continue
+		for unit: int in team.combat_units.size():
+			if team.member_gone(unit): continue
+			var identity := team.combat_identity(unit)
+			if identity != controlled: identities.append(identity)
+	identities.sort()
+	for identity: int in identities:
+		if identity <= 0 or bodies.has(str(identity)): return _fail("INVALID_ORIGINAL_SIEGE_ROSTER")
+		var ref := _siege_person_ref(lab, identity)
+		if ref.is_empty(): return _fail("INVALID_ORIGINAL_SIEGE_ROSTER")
+		bodies[str(identity)] = ref
+		if not factions.has(int(ref.faction)): factions[int(ref.faction)] = []
+		factions[int(ref.faction)].append(identity)
+	var attacker := int(existing.get("attacker_faction", -1))
+	if attacker < 0:
+		var hostile := factions.keys()
+		hostile.erase(defender)
+		if hostile.size() != 1 or int(hostile[0]) < 0: return {"ok": true, "present": false, "reason": "EXACT_FACTION_TOPOLOGY"}
+		attacker = int(hostile[0])
+	for faction: int in factions:
+		if faction not in [attacker, defender]: return {"ok": true, "present": false, "reason": "EXACT_FACTION_TOPOLOGY"}
+	var structures := {}
+	var work := {}
+	var feature_keys: Array = data.site.features.keys()
+	feature_keys.sort()
+	for key: String in feature_keys:
+		var feature: Dictionary = data.site.features[key]
+		var geometry := SiteRuntime.feature_geometry(data, feature)
+		var parts := {}
+		for part: String in geometry.parts: parts[part] = _siege_hash(geometry.parts[part])
+		structures[key] = {"kind": str(feature.kind), "owner_faction": int(feature.get("owner_faction", -1)),
+			"sha256": _siege_hash(feature), "parts": parts}
+		if not feature.get("repair", {}).is_empty() or str(feature.get("stage", "")) != "complete": work["feature:" + key] = _siege_hash(feature)
+	var vehicles := {}
+	var breach := false
+	var activity := false
+	var vehicle_keys: Array = data.site.vehicles.keys()
+	vehicle_keys.sort()
+	for key: String in vehicle_keys:
+		var vehicle: Dictionary = data.site.vehicles[key]
+		if not lab.site_controller.vehicles.is_siege(vehicle): continue
+		var team: Variant = lab.site_controller.vehicles._siege_team(vehicle)
+		# A spent source may be disabled or its original crew no longer ready.
+		# Read the SAME existing team reference; this grants no command/crew duty.
+		var faction: int = int(team.faction_id) if team != null else lab._siege_faction(vehicle)
+		vehicles[key] = {"kind": str(vehicle.kind), "team_id": int(vehicle.team_id), "faction": faction,
+			"sha256": _siege_hash(vehicle), "holder_version": int(vehicle.holder.version), "attack_seq": int(vehicle.next_attack_seq)}
+		if not vehicle.build.is_empty() or not vehicle.repair.is_empty(): work["vehicle:" + key] = _siege_hash([vehicle.build, vehicle.repair])
+		if faction != attacker: continue
+		activity = true
+		var target: Dictionary = vehicle.action.get("target", vehicle.command.get("target", {}))
+		var target_feature: Dictionary = data.site.features.get(str(target.get("feature_id", "")), {})
+		if str(target.get("type", "")) == "structure" and int(target_feature.get("owner_faction", -1)) == defender \
+			and (str(vehicle.command.get("type", "")) == "attack" or not vehicle.action.is_empty()) \
+			and lab.siege_fire_preview(vehicle, target, false).get("ok", false): breach = true
+	var flights := {}
+	for flight: Dictionary in lab.siege_projectiles:
+		var key := str(flight.get("source_vehicle", ""))
+		var attack_id := str(flight.get("attack_id", ""))
+		if attack_id.is_empty() or flights.has(attack_id): return _fail("INVALID_ORIGINAL_SIEGE_FLIGHT")
+		var source_cell: Vector2i = flight.get("source_cell", Vector2i(-1, -1))
+		# Original flight snapshot owns its paid rule/faction/geometry/attack ID.
+		# Legal wreck clearing may erase the source vehicle while this continues.
+		flights[attack_id] = {"source_vehicle": key, "kind": str(flight.get("kind", "")), "faction": int(flight.get("faction", -1)),
+			"rule_version": int(flight.get("rule_version", -1)), "source_cell": [source_cell.x, source_cell.y], "sha256": _siege_hash(flight)}
+		if int(flight.get("faction", -1)) == attacker:
+			activity = true
+			breach = breach or str(existing.get("phase", "")) == "breach"
+	var arrivals := {}
+	for token: String in slot.region_registry().parties:
+		var ref: Dictionary = slot.region_registry().parties[token]
+		if str(ref.get("phase", "")) != "entered" or str(ref.get("destination_site", "")) != str(data.site.id): continue
+		var own_arrival := false
+		for local: Variant in ref.get("arrival_mapping", {}).get("maps", {}).get("person", {}).values():
+			if factions.get(attacker, []).has(int(local)): own_arrival = true
+		if not own_arrival: continue
+		arrivals[token] = {"origin": ref.get("origin", []).duplicate(), "plan_path": str(ref.get("plan_path", "")),
+			"plan_sha256": str(ref.get("plan_sha256", "")), "arrival_game_seconds": float(ref.get("arrival_game_seconds", 0.0)),
+			"mapping_sha256": _siege_hash(ref.get("arrival_mapping", {}))}
+		activity = true
+	var capture := SiteSettlement.capture_sample(lab)
+	var fall: Dictionary = settlement.fall_record
+	var paths := {}
+	var assault := false
+	var goals: Array = SiteSettlement.capture_zone(data).keys()
+	goals.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return data.index(a) < data.index(b))
+	for identity: int in factions.get(attacker, []):
+		var person: Dictionary = lab.site_controller.person_actions._person(identity, false)
+		if not SiteSettlement._fit(person) or SiteSettlement._role(person) == "civilian" or lab.site_controller.vehicles.is_siege_crew(identity): continue
+		if not person.owner is TerrainArmy: continue
+		var original_attack: bool = person.owner.combat_order == TerrainArmy.CombatOrder.ATTACK
+		var original_advance: bool = person.owner.combat_order == TerrainArmy.CombatOrder.MOVE and SiteSettlement.capture_zone(data).has(person.owner.combat_goal)
+		if not original_attack and not original_advance: continue
+		activity = true
+		var prior: Dictionary = existing.get("routes", {}).get(str(identity), {})
+		var source_cell: Vector2i = person.cell
+		if not prior.is_empty() and prior.get("source", []) == [source_cell.x, source_cell.y] \
+			and existing.get("vehicles", {}) == vehicles \
+			and int(existing.get("source", {}).get("navigation_revision", -1)) == int(data.navigation_revision) \
+			and int(existing.get("source", {}).get("environment_revision", -1)) == int(data.environment_revision):
+			paths[str(identity)] = prior.duplicate(true)
+			assault = true
+			continue
+		for goal: Vector2i in goals:
+			var path := original_siege_path(lab, identity, goal)
+			if path.is_empty(): continue
+			var first: Vector2i = person.cell
+			paths[str(identity)] = {"source": [first.x, first.y], "goal": [goal.x, goal.y], "path_sha256": _siege_hash(path), "steps": path.size()}
+			assault = true
+			break
+	if not activity and existing.is_empty(): return {"ok": true, "present": false}
+	var phase := "capture" if int(capture.get("attacker", -1)) == attacker else ("assault" if assault else ("breach" if breach else "siege"))
+	if int(settlement.owner_faction) != defender:
+		if int(settlement.owner_faction) != attacker or int(fall.last_fall.get("from", -1)) != defender or int(fall.last_fall.get("to", -1)) != attacker:
+			return _fail("SIEGE_CENTER_CHANGED")
+		phase = "finished"
+	var source := {"owner": str(data.site.id), "generation": int(slot._marker.generation), "runtime_revision": int(slot.region_registry().revision),
+		"game_seconds": float(slot.control.logical_game_seconds), "action_seconds": float(slot.control.fire_clock.action_seconds),
+		"fire_epoch": str(slot.control.fire_clock.epoch), "fire_sequence": int(slot.control.fire_clock.sequence),
+		"navigation_revision": int(data.navigation_revision), "environment_revision": int(data.environment_revision)}
+	var value := {"version": SIEGE_VERSION, "center_id": str(settlement.center_id), "defender_faction": defender,
+		"attacker_faction": attacker, "phase": phase, "source": source, "bodies": bodies, "structures": structures,
+		"vehicles": vehicles, "flights": flights, "work": work, "routes": paths, "arrivals": arrivals,
+		"capture": {"sample": capture, "fall_sha256": _siege_hash(fall), "elapsed_action": float(lab.site_controller._settlement_elapsed),
+			"unconsumed_game_seconds": float(lab.site_controller._settlement_game_seconds)}, "source_sha256": "", "resolution": "original_exact_gd"}
+	value.source_sha256 = _siege_source_hash(value)
+	var valid := validate_siege_metadata(value)
+	if not valid.ok: return valid
+	return {"ok": true, "present": true, "siege": value,
+		"attackers": factions.get(attacker, []).duplicate(), "defenders": factions.get(defender, []).duplicate()}
+

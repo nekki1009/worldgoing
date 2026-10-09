@@ -85,7 +85,33 @@ func _save_actual(lab: TerrainLab, pending: bool) -> Dictionary:
 	if not _check(loaded.ok, "Real JSON readback validates original body plus all transient roots", loaded): return loaded
 	_check(loaded.get("owners_restored") == false and loaded.get("bind_complete") == false,
 		"A validated file emits neither an owner-restored nor a bound receipt")
+	var decoded: Dictionary = Store._read(path)
+	if decoded.ok:
+		_check(Checkpoint.state_hash(decoded.payload.state) == Checkpoint.state_hash(loaded.data.site),
+			"Original authenticated body remains canonical through complete load normalization")
+		var revalidated: Dictionary = Store.validate_region_snapshot(loaded.data, {})
+		_check(revalidated.ok, "Actual loaded checkpoint positively revalidates before any scene bind", revalidated)
+		var raw_hash := Checkpoint.state_hash(decoded.payload.state)
+		var loaded_hash := Checkpoint.state_hash(loaded.data.site)
+		if raw_hash != loaded_hash:
+			print("REGION_SCENE_HASH_DIAGNOSTIC saved=", raw_hash, " loaded=", loaded_hash)
+			_checkpoint_diff(Checkpoint._hash_numbers(decoded.payload.state), Checkpoint._hash_numbers(loaded.data.site), "site")
 	return loaded
+
+func _checkpoint_diff(before: Variant, after: Variant, key_path: String) -> void:
+	if before is Dictionary and after is Dictionary:
+		var keys: Dictionary = {}
+		for key: Variant in before: keys[str(key)] = true
+		for key: Variant in after: keys[str(key)] = true
+		for key: String in keys:
+			if key in ["region_snapshot", "water_links", "water_status", "notices"] and key_path == "site": continue
+			if not before.has(key) or not after.has(key):
+				print("REGION_SCENE_HASH_DIFFERENCE ", key_path, ".", key, " before=", before.get(key, "<missing>"), " after=", after.get(key, "<missing>"))
+			else: _checkpoint_diff(before[key], after[key], key_path + "." + key)
+	elif before is Array and after is Array and before.size() == after.size():
+		for index: int in before.size(): _checkpoint_diff(before[index], after[index], key_path + "[" + str(index) + "]")
+	elif before != after:
+		print("REGION_SCENE_HASH_DIFFERENCE ", key_path, " before=", before, " after=", after)
 
 func _roundtrip_pending() -> void:
 	var source := _source("region:scene:A", 0.625)
@@ -208,12 +234,15 @@ func _pending_additive_projection() -> void:
 	var imported := TerrainArmy.new()
 	root.add_child(imported)
 	imported.set_process(false)
-	imported.team_id = int(target.site.army_next_team)
+	imported.team_id = source._next_army_identity()
 	imported.faction_id = source.character.faction_id
 	imported.roster_size = 2
+	imported.person_id_allocator = source._allocate_army_person_ids_for.bind(target, source.combat_actors, source.combat_armies)
 	var admitted := imported.deploy_at(target, null, null, cells) and imported.enable_combat(false, 0, TerrainArmy.TROOP_TYPE_ID)
 	if not _check(admitted, "Additional bodies are genesis-admitted by the original Army"): imported.free(); return
 	for row: Dictionary in imported.combat_units:
+		row.cargo = {}
+		row.item_state = {}
 		var equipment: Dictionary = SiteRuntime.seed_person_equipment(target, row.item_state, int(row.person_id), row.appearance)
 		if not _check(equipment.ok, "Each added original row owns registered original equipment", equipment): imported.free(); return
 	target.site.army_next_team = imported.team_id + 1

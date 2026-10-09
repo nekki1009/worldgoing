@@ -818,7 +818,9 @@ static func restore_cadence(lab: Variant) -> float:
 ## A consent receipt only. PersonActions owns the eventual technology job.
 ## Accepted work survives a later legitimate seat succession or AI toggle;
 ## continuation must separately recheck the original member and body guards.
-static func technology_work_consent(team: TerrainArmy, person_id: int, purpose: String, controlled_id: int) -> Dictionary:
+static func technology_work_consent(team: TerrainArmy, person_id: int, purpose: String, controlled_id: int, physical_context: Variant = null) -> Dictionary:
+	if physical_context != null and not is_same(physical_context, team):
+		return _technology_native_work_consent(team, physical_context, person_id, purpose, controlled_id)
 	if team == null or team.data == null or purpose.is_empty():
 		return SiteRuntime.fail("INVALID")
 	if not team.controlled_person_query.is_valid(): return SiteRuntime.fail("NO_CONTROL_AUTHORITY")
@@ -839,18 +841,62 @@ static func technology_work_consent(team: TerrainArmy, person_id: int, purpose: 
 		or float(team.data.site.get("combat_left", 0.0)) > 0.0 or team.is_sustain_routed() \
 		or team.has_ship_journey() or team._team_ship_activity():
 		return SiteRuntime.fail("BUSY")
+	var n08_driver := false
+	if team.vehicle_transport != null and team.vehicle_transport.lab != null:
+		var original_actions: Variant = team.vehicle_transport.lab.site_controller.person_actions
+		if original_actions.has_method("_nation_n08_driver_context"):
+			n08_driver = original_actions._nation_n08_driver_context(person_id, purpose).get("ok", false) == true
 	var supply: Dictionary = team.data.site.get("team_supply", {}).get(str(team.team_id), {})
 	if bool(supply.get("training_order", false)): return SiteRuntime.fail("BUSY")
 	if team.person_busy_query.is_valid() and bool(team.person_busy_query.call(person_id)):
 		return SiteRuntime.fail("BUSY")
 	if index != TerrainArmy.PLAYER_MEMBER:
-		if bool(team.combat_units[index].get("logistics", false)) or not team.combat_units[index].get("work_task", {}).is_empty() \
+		if bool(team.combat_units[index].get("logistics", false)) and not n08_driver or not team.combat_units[index].get("work_task", {}).is_empty() \
 			or team.moving_to[index] != TerrainArmy.INVALID_CELL or team._combat_action_blocks_step(index) \
 			or team._ship_embarked(index) or team._siege_crew(index) \
 			or team._unit_rescues.has(index) or team.patient_has_rescuer(index):
 			return SiteRuntime.fail("BUSY")
-	if team.vehicle_transport != null and team.vehicle_transport.is_operator(person_id):
+	if team.vehicle_transport != null and team.vehicle_transport.is_operator(person_id) and not n08_driver:
 		return SiteRuntime.fail("BUSY")
 	return SiteRuntime.ok("", {"consent": {"site_id": str(team.data.site.id), "team_id": int(team.team_id),
 		"person_id": person_id, "purpose": purpose, "decider_id": decider,
 		"revision": int(resolved.revision), "status": "accepted"}})
+
+static func _technology_native_work_consent(team: TerrainArmy, physical: Variant, person_id: int, purpose: String, controlled_id: int) -> Dictionary:
+	if team == null or team.data == null or purpose.is_empty() or not physical is CrowdPersonOwner \
+		or not is_same(physical.data, team.data) or int(physical.team_id) != int(team.team_id) or physical.crowd_site == null \
+		or not physical.crowd_site.owns_original_team(team) or not physical.has_army(): return SiteRuntime.fail("INVALID_OWNER")
+	if not team.controlled_person_query.is_valid(): return SiteRuntime.fail("NO_CONTROL_AUTHORITY")
+	if controlled_id != int(team.controlled_person_query.call()): return SiteRuntime.fail("STALE_CONTROL")
+	var unit: int = physical.index_for_identity(person_id)
+	var source_index: int = team.index_for_identity(person_id)
+	if unit < 0 or not physical.is_member(unit) or physical.member_gone(unit) or not physical.combat_can_act(unit) \
+		or source_index < 0 and source_index != TerrainArmy.PLAYER_MEMBER: return SiteRuntime.fail("NO_MEMBER")
+	if source_index == TerrainArmy.PLAYER_MEMBER:
+		if not physical.actors.has(unit) or not is_same(physical.actors[unit], team.player_member) or not is_same(physical._command_owner(unit), team.player_member): return SiteRuntime.fail("NO_MEMBER")
+	elif not team.is_member(source_index) or team.combat_identity(source_index) != person_id or not is_same(physical._command_owner(unit), team): return SiteRuntime.fail("NO_MEMBER")
+	if not physical.crowd_site.work_fatigue_work_start_ready(person_id): return SiteRuntime.fail("BUSY")
+	var resolved: Dictionary = team.duty_resolve_readonly("team.work", physical)
+	if not bool(resolved.get("ok", false)) or int(resolved.get("decider", -1)) <= 0: return resolved if not bool(resolved.get("ok", false)) else SiteRuntime.fail("NO_AUTHORITY")
+	var decider: int = int(resolved.decider)
+	# Old absent/default AI remains false; controlled human confirmation ignores
+	# that AI flag. Current physical acting head is resolved by original Offices.
+	if decider != controlled_id and not bool(team.offices.get("duty_ai", false)): return SiteRuntime.fail("DUTY_AI_OFF")
+	if not physical.crowd_site.work_fatigue_work_start_ready(decider): return SiteRuntime.fail("BUSY")
+	var lab: Variant = physical.crowd_site.lab
+	if lab == null or lab.site_controller == null or lab.site_controller.person_actions == null: return SiteRuntime.fail("INVALID_OWNER")
+	var actions: Variant = lab.site_controller.person_actions
+	var person: Dictionary = actions._person(person_id, false)
+	if person.is_empty() or not is_same(person.get("owner"), physical) or int(person.get("unit", -1)) != unit: return SiteRuntime.fail("NO_MEMBER")
+	var consent := {"site_id": str(team.data.site.id), "team_id": int(team.team_id), "person_id": person_id, "purpose": purpose,
+		"decider_id": decider, "revision": int(resolved.revision), "status": "accepted"}
+	# Reuse the existing ORIGINAL Native eligibility reader: actual HOLD/all
+	# moving/current task/role/vehicle/journey/health/true source-member checks.
+	# The receipt here is this command's prospective decision, no saved consent
+	# or completed operation is inferred from a caller dictionary.
+	if not actions._technology_native_consent_readonly(person, [consent], purpose, {}, {}) \
+		or actions.is_busy(person_id) or bool(team.data.site.get("paused", false)): return SiteRuntime.fail("BUSY")
+	# Original Offices readonly resolver may project necessary old-schema defaults
+	# locally. Do not rewrite, snapshot/restore or assign the disabled Army registry.
+	# The original PA alone records this named decision after scope revalidation.
+	return SiteRuntime.ok("", {"consent": consent})

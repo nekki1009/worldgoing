@@ -3,6 +3,7 @@ extends Node
 
 const Env = preload("res://scripts/terrain_lab/site_environment.gd")
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
+const CrowdOwner = preload("res://scripts/terrain_lab/crowd_person_owner.gd")
 const SiteSocial = preload("res://scripts/terrain_lab/site_social.gd")
 const Housing = preload("res://scripts/terrain_lab/site_housing.gd")
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
@@ -312,7 +313,11 @@ func setup(scene: Node2D) -> void:
 	person_actions.ransom_exchange_query = captivity_supply.ransom_exchange_query
 	person_actions.ransom_exchange_committed = captivity_supply.ransom_exchange_committed
 	equipment_orders.init(lab, person_actions)
+	equipment_orders.nation_build_request = _nation_build_request
+	equipment_orders.nation_arsenal_request = _nation_arsenal_request
 	equipment_orders.nation_course_request = person_actions.begin_nation_funded_course
+	equipment_orders.nation_route_query = nation_route_query
+	equipment_orders.nation_route_request = nation_route_request
 	equipment_orders.nation_owner_receipt_query = person_actions.nation_original_receipt_query
 	equipment_orders.equipment_apply_guard = equipment_apply_guard
 	equipment_orders.equipment_dye_guard = equipment_dye_guard
@@ -350,6 +355,7 @@ func wire_combat_team(team: TerrainArmy) -> void:
 	team.player_supply_hook = player_supply_change
 
 func bind() -> void:
+	_region_departure_intent.clear() # Source replacement invalidates only the volatile command.
 	invalidate_ui_context()
 	var data: TerrainData = lab.terrain
 	_restore_ship_journey()
@@ -2464,6 +2470,7 @@ func manual_work(action: String = "harvest") -> void:
 	show_result(Runtime.begin_manual(lab.terrain, source_key, lab.character.terrain_cell, action))
 
 func build_selected() -> void:
+	if _building_kind() == "irrigation_channel": _irrigation_build_selected(false); return
 	if not building_resize and _building_kind() == "settlement_center":
 		found_settlement_selected()
 		return
@@ -2597,9 +2604,9 @@ func tick(delta: float, accepted_game_seconds: float = -1.0) -> void:
 		var manual_limit: int = int(inputs.get("manual_limit", 0))
 		Runtime.advance(data, delta, worker_ready, manual_ready, reserves_cell, lab.fatigue_work_minutes, _advance_crew,
 			worker_limit, manual_limit, time_multiplier, int(inputs.get("worker_faction", -1)), work_interval,
-			not _shared_work_plan.is_empty() and is_same(_shared_work_plan, lab._shared_work_plan))
+			not _shared_work_plan.is_empty() and is_same(_shared_work_plan, lab._shared_work_plan), checked_runtime_clock_interval())
 		_advance_settlement(delta, work_interval)
-		if worker_ready and not lab.npc.work_resting:
+		if checked_runtime_clock_interval().is_empty() and worker_ready and not lab.npc.work_resting:
 			# Waiting on tools/inputs/output space is assigned duty, not a rest break.
 			lab._fatigue_work_seconds[lab.npc] = work_interval
 			lab.npc.fatigue_rest = 0.0
@@ -3653,6 +3660,7 @@ func _open_equipment_standards(authority_identity: int = 0, host: Window = null)
 	var column := VBoxContainer.new()
 	dialog.add_child(column)
 	var nation: Dictionary = lab.terrain.site.equipment_nations[nation_id]
+	_button(column, "本國制度／具名公務…", "StandardNationOperations", func() -> void: _open_nation_operations(nation_id, dialog))
 	var culture_label := _label(column, "本國文化只約束未來制式領裝；材質可混搭，外國戰利品保留。\n舊國別不猜文化；先修訂跨文化舊標準，再由真實軍事首長首次固定。", 14)
 	culture_label.name = "NationCultureStatus"
 	var culture_choice := _options(column, ["尚未固定：請明確選擇本國文化"], "NationCulture")
@@ -3850,7 +3858,7 @@ func _open_ranged_crafting(host: Window = null) -> void:
 	var column := VBoxContainer.new()
 	dialog.add_child(column)
 	_label(column, "本人須站在營地相鄰格、停止其他工作並脫戰。\n營地須有工具 1 件（不消耗）；完工才扣材料、製品入營地。\n取消、移動或受擊中斷不扣材料；疲勞沿原工作規則。", 15)
-	var names := {"fire_arrow": "火箭 5 支", "bow": "弓 1 把", "crossbow": "弩 1 把", "arrow": "箭 10 支", "bolt": "弩矢 10 支", "siege_bolt": "重弩矢 1 支"}
+	var names := {"fire_pot": "火罐 1 件", "ballista_spares": "弩砲備件 1 件", "fire_arrow": "火箭 5 支", "bow": "弓 1 把", "crossbow": "弩 1 把", "arrow": "箭 10 支", "bolt": "弩矢 10 支", "siege_bolt": "重弩矢 1 支"}
 	for key: String in Runtime.RANGED_RECIPES:
 		var recipe: Dictionary = Runtime.RANGED_RECIPES[key]
 		var duration := float(person_actions.ranged_craft_seconds(original_executor, key))
@@ -4220,6 +4228,9 @@ func _open_team_equipment(team: TerrainArmy = null, trial: bool = false, host: W
 	nation_choice.item_selected.connect(func(_index: int) -> void: fill_standards.call())
 	if nation_choice.item_count == 2: nation_choice.select(1)
 	fill_standards.call()
+	if not trial:
+		_button(column, "所選本國制度／具名公務…", "TeamNationOperations", func() -> void:
+			_open_nation_operations(str(nation_choice.get_item_metadata(nation_choice.selected)), dialog))
 	var representative_choice := _options(column, ["選擇營地旁原隊代表"], "TeamEquipmentRepresentative")
 	representative_choice.set_item_metadata(0, -1)
 	var roster := ItemList.new()
@@ -5033,22 +5044,11 @@ func _personal_opened_food(identity: int) -> Dictionary:
 	return lab.terrain.site.get("person_supply", {}).get(str(identity), {})
 
 func _receive_opened_food(identity: int, amount: float, original: Dictionary) -> void:
-	# Called synchronously after the original loot preflight/transfer. No food
-	# is converted to grain, and existing team/captive meal ownership stays put.
-	var pool := _personal_opened_food(identity)
-	assert((pool.is_empty() and original.is_empty()) or is_same(pool, original))
-	if pool.is_empty():
-		pool = Sustain.create(Runtime.now(lab.terrain) * 60.0)
-		if not lab.terrain.site.has("person_supply"):
-			lab.terrain.site.person_supply = {}
-		lab.terrain.site.person_supply[str(identity)] = pool
-	var states: Dictionary = captivity_supply._states()
-	if pool.cohorts.is_empty() and captivity_supply._feeding_owner(identity, states).is_empty():
-		# An old empty private store can lag safely; no living history is skipped.
-		# Once the original person is independent again, eating must resume here.
-		assert(_align_supply_clock(pool, Runtime.now(lab.terrain) * 60.0))
-		assert(Sustain.add_members(pool, captivity_supply._all_members(), [identity]).ok)
-	pool.open_rations = float(pool.open_rations) + amount
+	var prepared: Dictionary = prepare_received_opened_food(identity, amount, original)
+	assert(prepared.ok)
+	var checked: Dictionary = validate_received_opened_food(prepared)
+	assert(checked.ok)
+	publish_received_opened_food(prepared)
 
 func _chosen_supply_team() -> TerrainArmy:
 	return lab.player_army()
@@ -5198,7 +5198,8 @@ func transfer_ship_supply(team: TerrainArmy, source_location: String, target_loc
 	if region_operation_pending(): return Runtime.fail("BUSY", "原固定目標冷交換尚未完成，先等待再裝卸供養")
 	var entry := _supply_entry(team)
 	if entry.is_empty() or int(entry.version) != 3 or not entry.delivery.is_empty() or not _team_stopped(team): return Runtime.fail("BUSY")
-	if not vehicles._authorized(team, requester_id, 0, test_dispatch): return Runtime.fail("NO_AUTHORITY")
+	var arrived_unload: bool = not test_dispatch and source_location.begins_with("vehicle:") and target_location.begins_with("shore:") and region_slot != null and region_slot._region_entered_npc_ship_unload_authorized(lab, team, requester_id, vehicles.records().get(source_location.trim_prefix("vehicle:"), {}))
+	if not vehicles._authorized(team, requester_id, 0, test_dispatch) and not arrived_unload: return Runtime.fail("NO_AUTHORITY")
 	if source_location == target_location or not _supply_locations_valid(team, entry.locations) or not entry.locations.has(source_location) or not _supply_location_valid(team, target_location): return Runtime.fail("INVALID_SUSTAIN")
 	if not Runtime._resource_stack(resources) or not Sustain._number(open_amount, 0, 1000000.0) or resources.is_empty() and open_amount == 0.0: return Runtime.fail("INVALID")
 	for resource: String in resources:
@@ -5249,6 +5250,7 @@ func transfer_ship_supply(team: TerrainArmy, source_location: String, target_loc
 	entry.sustain.clear()
 	entry.sustain.merge(state)
 	entry.revision = int(entry.revision) + 1
+	_observe_original_food_result("team", str(team.team_id), float(entry.sustain.at), supplied)
 	return Runtime.ok("共有糧已由原接觸點實際搬移，原餐份只補當期未吃部分", {"consumed_rations": supplied.consumed_rations})
 
 func _team_members(team: TerrainArmy) -> Dictionary:
@@ -5556,6 +5558,7 @@ func settle_supply_deliveries() -> void:
 			continue
 		if not entry.delivery.is_empty() and bool(entry.delivery.get("pending", false)):
 			var result := food_delivery.commit(team, entry)
+			if result.ok: _observe_original_food_result("team", str(team.team_id), float(entry.sustain.at), result)
 			if not result.ok:
 				entry.delivery = {}
 			message.text = str(result.message)
@@ -5667,6 +5670,7 @@ func _team_ability(team: TerrainArmy, kind: String) -> float:
 func advance_team_sustain(team: TerrainArmy, elapsed_game_seconds: float) -> Dictionary:
 	# Root calls this ONLY from the existing common Site action step, not tick().
 	var handled := {}
+	if not lab._gd_mesh_work_point.is_empty(): return {"handled_ids": [], "handled_seconds": handled}
 	var entry := _supply_entry(team)
 	if entry.is_empty() or elapsed_game_seconds <= 0 or get_tree().paused or bool(lab.terrain.site.paused):
 		return {"handled_ids": [], "handled_seconds": handled}
@@ -5714,17 +5718,7 @@ func advance_team_sustain(team: TerrainArmy, elapsed_game_seconds: float) -> Dic
 				members[id].hp = _apply_supply_damage(int(id), loss)
 		for id: Variant in members:
 			entry.life_checkpoint[str(id)] = _life(members[id], hot_read, pending_hp) # Hunger isn't a combat casualty event.
-		if bool(entry.sustain.routed) and not was_routed:
-			_start_supply_rout(team)
-		elif bool(entry.sustain.routed) and not team.morale_retreat_terminal() and team.combat_order == TerrainArmy.CombatOrder.HOLD and stopped and not safe:
-			# A HOLD order cannot permanently cancel an available forced escape.
-			# Bounded game-time review, not a path search on every combat sample.
-			_supply_rout_review[team.team_id] = float(_supply_rout_review.get(team.team_id, 0.0)) + seconds
-			if float(_supply_rout_review[team.team_id]) >= 2.0:
-				_supply_rout_review[team.team_id] = 0.0
-				_start_supply_rout(team)
-		if bool(outcome.regrouped):
-			team.finish_morale_retreat()
+		_publish_sustain_team_commands(team, entry, was_routed, outcome, seconds, safe, stopped)
 		var fed: bool = not entry.sustain.cohorts.is_empty()
 		for cohort: Dictionary in entry.sustain.cohorts:
 			if float(cohort.coverage) < 1.0:
@@ -5769,6 +5763,7 @@ func advance_team_sustain(team: TerrainArmy, elapsed_game_seconds: float) -> Dic
 						var actual := float(allocation.get("participant_seconds", {}).get(identity, 0.0)) if not _shared_work_plan.is_empty() else seconds
 						handled[identity] = float(handled.get(identity, 0.0)) + actual
 		_finish_delivery_step(team, entry, seconds)
+		_observe_original_food_result("team", str(team.team_id), float(entry.sustain.at), outcome)
 		left -= seconds
 	return {"handled_ids": handled.keys(), "handled_seconds": handled}
 
@@ -5776,8 +5771,9 @@ func advance_crowd_sustain(elapsed_game_seconds: float) -> void:
 	if not _crowd_active() or elapsed_game_seconds <= 0.0 or get_tree().paused or bool(lab.terrain.site.paused): return
 	# Same-call projection only. With observers, retain each first-read sample
 	# across damage callbacks; people not read yet must then sample current native state.
+	var deferred_native: bool = lab._region_deferring_endpoint()
 	var life := PackedFloat64Array()
-	if lab.crowd_site.crowd.has_method("get_life_states"):
+	if not deferred_native and lab.crowd_site.crowd.has_method("get_life_states"):
 		life = lab.crowd_site.crowd.get_life_states()
 		if life.size() != int(lab.crowd_site.crowd.soldier_count()) * 3: life = PackedFloat64Array()
 	# Closures share this box; an unobserved call keeps its existing allocation-free reads.
@@ -5804,6 +5800,7 @@ func advance_crowd_sustain(elapsed_game_seconds: float) -> void:
 		var native_life: Dictionary = {"life": life, "indices": lab.crowd_site._index_by_id} if native_sample and team_owner.get_script() == CrowdPersonOwner \
 			and entry.get("life_checkpoint") is Dictionary and not entry.life_checkpoint.is_typed() and not entry.life_checkpoint.is_read_only() else {}
 		var hot_read := func(identity: int, field: StringName) -> Variant:
+			if field == &"hp" and deferred_native: return lab.crowd_site.work_fatigue_forecast_hp(identity)
 			if field == &"hp" or field == &"ko" or field == &"captive":
 				# Same-call samples survive mapping edits; use their original index/value.
 				var cached: Variant = samples.get(identity)
@@ -5900,7 +5897,8 @@ func advance_crowd_sustain(elapsed_game_seconds: float) -> void:
 						continue
 				entry.life_checkpoint[str(identity)] = _life(members[identity], hot_read, pending_hp)
 		lab.crowd_site.set_sustain_input(team_owner.formation_index, fully_fed, morale_delta)
-		TrainingGround.advance_native(self, team_owner, entry, elapsed_game_seconds, fully_fed)
+		if not deferred_native and lab._shared_work_plan.is_empty():
+			TrainingGround.advance_native(self, team_owner, entry, elapsed_game_seconds, fully_fed)
 
 func team_is_routed(team: TerrainArmy) -> bool:
 	var entry := _supply_entry(team)
@@ -5971,6 +5969,7 @@ func _apply_supply_damage(identity: int, loss: float) -> float:
 	return maxf(0.0, before_hp - loss) if deferred else float(person.owner.hp)
 
 func advance_person_supply(elapsed_game_seconds: float) -> void:
+	if not lab._gd_mesh_work_point.is_empty(): return # Same window was published chronologically by its original point.
 	if elapsed_game_seconds <= 0 or get_tree().paused or bool(lab.terrain.site.paused):
 		return
 	for owner_id: String in lab.terrain.site.get("person_supply", {}):
@@ -5981,6 +5980,8 @@ func advance_person_supply(elapsed_game_seconds: float) -> void:
 		if person.is_empty():
 			message.text = "個人供養原人物不存在，保留其原物资與餐份資料"
 			continue
+		var joint_supply: Dictionary = lab._native_begin_shared_window_prepared.get("sustain", {})
+		if native_sustain_point_covers_person(joint_supply, int(owner_id)): continue
 		var members := captivity_supply.personal_members_id(int(owner_id))
 		var prior := {}
 		for id: int in members:
@@ -6000,6 +6001,7 @@ func advance_person_supply(elapsed_game_seconds: float) -> void:
 			var loss := float(prior[id]) if ending_hp == 0.0 else float(result.damage[id])
 			if context.is_empty(): members[id].hp = float(prior[id])
 			_apply_supply_damage(int(id), loss)
+		_observe_original_food_result("person", owner_id, float(personal.at), result)
 
 func _update_team_supply_ui() -> void:
 	if team_supply_label == null:
@@ -6046,6 +6048,9 @@ func _build_vehicle_controls(parent: Node, trial: bool = false) -> void:
 		show_result(vehicles.unassign_crew(str(vehicle.id), 0, _vehicle_requester(vehicle, false, form), trial) if SiteVehicleTransport.is_siege(vehicle) else vehicles.unassign_operator(str(vehicle.id), _vehicle_requester(vehicle, false, form), trial))
 		_refresh_vehicle_controls(form))
 	form.siege_slot = _options(parent, ["器具操作位 1", "器具操作位 2"], "SiegeSlot")
+	form.siege_ammo = _options(parent, ["原器具彈種"], "SiegeAmmoKind")
+	form.siege_ammo.set_item_metadata(0, "")
+	_label(parent, "明示彈種後用原人物装卸；火罐須在位本人已學 F15。", 15)
 	form.siege_target = _options(parent, ["所選原人物", "所選格牆／門部件", "所選格器具", "所選格地點"], "SiegeTarget")
 	form.siege_part = _options(parent, ["請更新所選格部件"], "SiegePart")
 	_button(parent, "更新所選格牆／門部件", "SiegeRefreshParts", func() -> void: _refresh_siege_parts(form))
@@ -6168,6 +6173,16 @@ func _build_siege_construction_controls(parent: Node, form: Dictionary) -> void:
 	if bool(form.trial):
 		form.siege_team = _options(parent, ["請更新原隊伍"], "SiegeBuildTeam")
 		_button(parent, "更新原隊伍", "SiegeRefreshTeams", func() -> void: _refresh_siege_teams(form))
+	form.siege_builder = _options(parent, ["請具名選擇原施工人員"], "SiegeBuildOperator")
+	form.siege_builder.set_item_metadata(0, 0)
+	_button(parent, "重新查詢原施工人員", "SiegeRefreshOperators", func() -> void: _refresh_siege_build_people(form))
+	form.siege_kind.item_selected.connect(func(_index: int) -> void: _refresh_siege_build_people(form))
+	if form.has("siege_team"):
+		form.siege_team.item_selected.connect(func(_index: int) -> void: _refresh_siege_build_people(form))
+	_label(parent, "本次備料只委派明示的原人；師傅須實際到位，助手沿原工作隊另行具名派工。", 15)
+	form.siege_method = _options(parent, ["原基本工法", "F11木接（本人新工時九折）"], "SiegeJoinery")
+	form.siege_method.set_item_metadata(0, "basic")
+	form.siege_method.set_item_metadata(1, "joinery")
 	_button(parent, "預覽所選格器具施工", "SiegeBuildPreview", func() -> void: _build_siege_ui(form, true))
 	_button(parent, "在所選格備料建造器具", "SiegeBuild", func() -> void: _build_siege_ui(form, false))
 
@@ -6241,36 +6256,26 @@ func _build_siege_ui(form: Dictionary, preview: bool) -> void:
 	if _crowd_active() and not lab.crowd_site.siege_native_supported():
 		var returned: Dictionary = lab.crowd_site.clear()
 		if not returned.ok: show_result(returned); return
-	var team: Variant = lab.player_army()
-	if _crowd_active():
-		var controlled: Dictionary = person_actions._person(lab.controlled_person_id())
-		team = controlled.owner if not controlled.is_empty() and controlled.owner is CrowdPersonOwner and controlled.owner.has_army() else null
-	if bool(form.trial):
-		team = null
-		if form.siege_team.selected >= 0:
-			var team_id := int(form.siege_team.get_item_metadata(form.siege_team.selected))
-			for candidate: Variant in _siege_ui_teams():
-				if candidate.team_id == team_id: team = candidate; break
-	if team == null or not team.command_eligible(team.current_commander): show_result(Runtime.fail("NO_AUTHORITY", "須選擇有現任指揮的原隊伍")); return
-	var requester: int = team.combat_identity(team.current_commander) if bool(form.trial) else lab.controlled_person_id()
-	if not vehicles._authorized(team, requester, 0, bool(form.trial)): show_result(Runtime.fail("NO_AUTHORITY")); return
+	var context: Dictionary = _siege_build_person_context(form)
+	if not context.ok: show_result(context); return
+	var team: Variant = context.team
+	var requester: int = int(context.requester_id)
+	var actual_operator: int = int(context.person_id)
 	var direction: Vector2i = [Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT, Vector2i.UP][form.siege_facing.selected]
 	var kind := str(form.siege_kind.get_item_metadata(form.siege_kind.selected)) if form.has("siege_kind") and form.siege_kind.selected >= 0 else "ballista"
 	var anchor: Vector2i = selected
+	var method: String = str(form.siege_method.get_item_metadata(form.siege_method.selected)) if form.has("siege_method") and form.siege_method.selected >= 0 else "basic"
 	var original_data: TerrainData = lab.terrain
 	var trial := bool(form.trial)
 	if not preview:
-		var work_people: Array[int] = []
-		for index: int in _siege_ui_indices(team):
-			var identity: int = team.combat_identity(index)
-			if index == team.current_commander or not team.combat_can_act(index) or vehicles.is_operator(identity): continue
-			work_people.append(identity)
-			if work_people.size() >= int(Runtime.SIEGE_DEFINITIONS[kind].standard_crew): break
-		if not await _prepare_siege_work_people(work_people):
-			show_result(Runtime.fail("MISSING_ASSET", "原隊人員工作動作準備未完成；未扣施工材料"))
+		if not await _prepare_siege_work_people([actual_operator]):
+			show_result(Runtime.fail("MISSING_ASSET", "所選原人工作動作準備未完成；未扣施工材料"))
 			return
-		if not is_same(lab.terrain, original_data) or not is_instance_valid(team) or not _siege_ui_teams().has(team) or not vehicles._authorized(team, requester, 0, trial): show_result(Runtime.fail("STALE_SOURCE")); return
-	var result := Runtime.begin_siege_build(lab.terrain, kind, anchor, direction, team.team_id, requester, reserves_cell, preview)
+		if not is_same(lab.terrain, original_data) or not is_instance_valid(team) or not _siege_ui_teams().has(team): show_result(Runtime.fail("STALE_SOURCE")); return
+	var current: Dictionary = _siege_build_person_context(form)
+	if not current.ok: show_result(current); return
+	if not is_same(current.team, team) or int(current.person_id) != actual_operator or int(current.requester_id) != requester or not is_same(lab.terrain, original_data): show_result(Runtime.fail("STALE_SOURCE")); return
+	var result := Runtime.begin_siege_build(lab.terrain, kind, anchor, direction, int(team.team_id), requester, reserves_cell, preview, {}, {}, actual_operator, method)
 	if result.ok and preview:
 		var bounds := Rect2i(result.cells[0], Vector2i.ONE)
 		for cell: Vector2i in result.cells: bounds = bounds.expand(cell)
@@ -6311,17 +6316,26 @@ func _siege_order_ui(form: Dictionary, operation: String) -> void:
 						target = {"type": "vehicle", "vehicle_id": identity}
 						break
 			3: target = {"type": "ground", "cell": [selected.x, selected.y]}
+	var ammo_choice := _siege_ammo_choice(form, vehicle) if command == "attack" else Runtime.ok("", {"ammo": ""})
+	if not ammo_choice.ok: show_result(ammo_choice); return
+	var ammunition: String = ammo_choice.ammo
+	var operator_id := _siege_executor(form) if ammunition == "fire_pot" else 0
+	if ammunition == "fire_pot":
+		var original_guard: Dictionary = person_actions.fire_pot_ammo_guard(vehicle, operator_id)
+		if not original_guard.ok: show_result(original_guard); return
+	var original_data: TerrainData = lab.terrain
+	var original_control: int = lab.controlled_person_id()
 	var requester := _vehicle_requester(vehicle, false, form)
 	var trial := bool(form.trial)
 	if command != "stop" and not await _prepare_siege_work_people(vehicle.get("crew_slots", {}).values()):
 		show_result(Runtime.fail("MISSING_ASSET", "原人員工作動作準備未完成；未下達器具操作"))
 		return
-	if not is_same(vehicles.records().get(str(vehicle.id)), vehicle): show_result(Runtime.fail("STALE_SOURCE")); return
+	if lab.terrain != original_data or lab.controlled_person_id() != original_control or not is_same(vehicles.records().get(str(vehicle.id)), vehicle): show_result(Runtime.fail("STALE_SOURCE")); return
 	if command == "attack":
 		var check: Dictionary = lab.siege_fire_preview(vehicle, target)
 		if not check.ok: show_result(check); return
 		warning = str(check.message)
-	var result := vehicles.order_siege(str(vehicle.id), command, target, requester, trial)
+	var result := vehicles.order_siege(str(vehicle.id), command, target, requester, trial, ammunition, operator_id)
 	if result.ok and not warning.is_empty(): result.message += "；" + warning
 	show_result(result)
 	if is_instance_valid(form.get("status")): _refresh_vehicle_details(form)
@@ -6400,7 +6414,9 @@ func _siege_person_ammo_ui(form: Dictionary, loading: bool) -> void:
 	var source := vehicles._stock(source_id)
 	var destination := vehicles._stock(destination_id)
 	if source.is_empty() or destination.is_empty(): show_result(Runtime.fail("NO_TARGET", "須選擇原後勤或本人操作班")); return
-	var ammo := str(Runtime.SIEGE_DEFINITIONS[str(vehicle.kind)].ammo)
+	var choice := _siege_ammo_choice(form, vehicle)
+	if not choice.ok: show_result(choice); return
+	var ammo: String = choice.ammo
 	if ammo.is_empty(): show_result(Runtime.fail("NO_TARGET", "此器具不使用彈藥")); return
 	show_result(vehicles.transfer(source_id, destination_id, {ammo: int(form.quantity.value)}, [], int(source.holder.version), int(destination.holder.version), _siege_executor_requester(form, identity), bool(form.trial)))
 	_refresh_vehicle_details(form)
@@ -6492,6 +6508,7 @@ func _refresh_vehicle_controls(form: Dictionary = {}) -> void:
 		form.choice.set_item_metadata(0, "")
 	_refresh_vehicle_details(form)
 	if form.has("siege_team"): _refresh_siege_teams(form)
+	if form.has("siege_builder"): _refresh_siege_build_people(form)
 	_refresh_shipyards(form)
 
 func _refresh_vehicle_details(form: Dictionary = {}) -> void:
@@ -6499,6 +6516,7 @@ func _refresh_vehicle_details(form: Dictionary = {}) -> void:
 	if form.is_empty(): return
 	if form.operator == null: return
 	var vehicle := _selected_vehicle(form)
+	_refresh_siege_ammo_choices(form, vehicle)
 	if form.has("siege_slot"):
 		var old_slot: int = maxi(0, form.siege_slot.selected)
 		form.siege_slot.clear()
@@ -7264,6 +7282,7 @@ func _building_options() -> Dictionary:
 		options["launch_cell"] = _waterfront_launch_cell(bounds, building_direction.selected)
 	var person := person_actions._person(lab.controlled_person_id())
 	if not person.is_empty(): options["owner_faction"] = int(person.faction)
+	if _building_kind() == "irrigation_channel": options["irrigation"] = _irrigation_options()
 	return options
 
 func _building_kind_changed() -> void:
@@ -9972,8 +9991,13 @@ func _shared_person_request(provider: String, key: String, people: Array, remain
 	for person: Dictionary in people:
 		if person.is_empty(): return {}
 		var identity := int(person.person_id)
-		participants.append({"person_id": identity, "body": person.body,
-			"effort_rate": PersonFatigue.effort_rate(person.body), "rest_limited": identity != lab.controlled_person_id()})
+		var participant: Dictionary
+		if person.owner is CrowdPersonOwner:
+			participant = lab.crowd_site.work_fatigue_participant(identity, identity != lab.controlled_person_id())
+			if participant.is_empty(): return {}
+		else:
+			participant = {"person_id": identity, "body": person.body, "effort_rate": PersonFatigue.effort_rate(person.body), "rest_limited": identity != lab.controlled_person_id()}
+		participants.append(participant)
 		if identity != lab.controlled_person_id() and person_actions._threat(person, {}): paused = "THREAT"
 	if participants.is_empty(): return {}
 	return {"provider": provider, "key": key, "participants": participants, "remaining": remaining,
@@ -9986,6 +10010,9 @@ func prepare_shared_owner_work_requests(seconds: float) -> Array[Dictionary]:
 		if not bool(_shared_worker_inputs.get(name + "_ready", false)): continue
 		var actor: TerrainTestCharacter = lab.character if manual else lab.npc
 		var task: Dictionary = lab.terrain.site[name]
+		if not _native_held_runtime_ready(int(actor.person_id), task):
+			_shared_worker_inputs[name + "_ready"] = false
+			continue
 		var checked := Runtime.work_preflight(lab.terrain, task, task.cargo,
 			int(_shared_worker_inputs.get(name + "_limit", 0)), int(actor.faction_id), int(actor.person_id), reserves_cell)
 		if not checked.ok:
@@ -9993,7 +10020,9 @@ func prepare_shared_owner_work_requests(seconds: float) -> Array[Dictionary]:
 			continue
 		var request := _shared_person_request("runtime", name, [person_actions._person(actor.person_id)],
 			float(checked.remaining), seconds)
-		if request.is_empty(): continue
+		if request.is_empty():
+			_shared_worker_inputs[name + "_ready"] = false
+			continue
 		# Original pickup/deposit has zero effort. The original Runtime callback
 		# can still complete it with a zero effective allocation.
 		request.payment = checked.get("payment", {})
@@ -10001,9 +10030,18 @@ func prepare_shared_owner_work_requests(seconds: float) -> Array[Dictionary]:
 		request.payment_key = str(checked.get("payment_key", name))
 		request.payment_order = -2 if not manual else -1
 		request.task = task
+		request = _shared_runtime_physical_request(request, checked)
+		if request.is_empty():
+			_shared_worker_inputs[name + "_ready"] = false
+			continue
 		requests.append(request)
+	var native_training: Dictionary = prepare_shared_native_training_requests(seconds, float(lab.terrain.site.combat_left))
+	if not native_training.ok:
+		latch_original_step_fault(native_training)
+		return []
+	requests.append_array(native_training.requests)
 	for team: TerrainArmy in lab.combat_armies:
-		if not team.combat_enabled: continue
+		if not team.combat_enabled or _crowd_active() and lab.crowd_site.owns_original_team(team): continue
 		var entry := _supply_entry(team)
 		if entry.is_empty(): continue
 		var members := _team_members(team)
@@ -10022,7 +10060,15 @@ func prepare_shared_owner_work_requests(seconds: float) -> Array[Dictionary]:
 			var people := _delivery_people(entry)
 			var request := _shared_person_request("delivery", str(team.team_id), people, float(entry.delivery.left), seconds,
 				"joint" if people.size() == 2 else "single")
-			if not request.is_empty(): requests.append(request)
+			if not request.is_empty():
+				# Original finite source reservation only for a possible positive
+				# terminal. Opened food and internal moves remain FoodDelivery's
+				# original scalar/locations transaction, not an integer recipe.
+				if str(request.paused).is_empty() and float(request.remaining) <= seconds + PersonFatigue.WORK_PLAN_EPS:
+					request.payment_source = entry.delivery.source_cargo
+					request.payment = entry.delivery.items.duplicate(true)
+					request.payment_key = "delivery:" + str(team.team_id)
+				requests.append(request)
 	var guards := {}
 	for relation: Dictionary in lab.terrain.site.captivity.values():
 		if str(relation.get("prison_id", "")).is_empty(): guards[int(relation.guard_id)] = true
@@ -10035,10 +10081,14 @@ func prepare_shared_owner_work_requests(seconds: float) -> Array[Dictionary]:
 
 func shared_supply_event_limit(maximum: float) -> Dictionary:
 	var limit := maximum
+	if _crowd_active():
+		var native_due: Dictionary = settle_native_supply_begin_endpoint(maximum)
+		if not native_due.ok: return native_due
+		limit = minf(limit, float(native_due.game_seconds))
 	# A due meal is an original zero-time resupply. It changes no body/time;
 	# its real inventory debit precedes this interval's work-material admission.
 	for team: TerrainArmy in lab.combat_armies:
-		if not team.combat_enabled: continue
+		if not team.combat_enabled or _crowd_active() and lab.crowd_site.owns_original_team(team): continue
 		var entry := _supply_entry(team)
 		if entry.is_empty(): continue
 		var members := _team_members(team)
@@ -10048,8 +10098,10 @@ func shared_supply_event_limit(maximum: float) -> Dictionary:
 		var supplied := Sustain.resupply(entry.sustain, members, _supply_stock(entry), true, hot_read, {}, context)
 		if not supplied.ok: return Runtime.fail("SUPPLY_PREFLIGHT", str(supplied.get("message", "")))
 		if float(supplied.get("consumed_rations", 0.0)) > 0.0: entry.revision = int(entry.revision) + 1
+		_observe_original_food_result("team", str(team.team_id), float(entry.sustain.at), supplied)
 		limit = minf(limit, _shared_supply_state_limit(entry.sustain, members, maximum))
 	for key: String in lab.terrain.site.get("person_supply", {}):
+		if _native_sustain_original_person(int(key)): continue
 		var state: Dictionary = lab.terrain.site.person_supply[key]
 		var person := _supply_person(int(key))
 		if person.is_empty(): return Runtime.fail("STALE_SUPPLY_OWNER")
@@ -10057,6 +10109,7 @@ func shared_supply_event_limit(maximum: float) -> Dictionary:
 		var supplied := Sustain.resupply(state, members, person.cargo, true)
 		if not supplied.ok: return Runtime.fail("SUPPLY_PREFLIGHT", str(supplied.get("message", "")))
 		if float(supplied.get("consumed_rations", 0.0)) > 0.0: person.holder.version = int(person.holder.version) + 1
+		_observe_original_food_result("person", key, float(state.at), supplied)
 		limit = minf(limit, _shared_supply_state_limit(state, members, maximum))
 	return Runtime.ok("", {"game_seconds": limit})
 
@@ -10150,13 +10203,15 @@ func _prepare_initial_world(candidate: RegionSaveSlot, starting_site: Vector2i, 
 		if initial_scenario_id.is_empty():
 			birth = lab.prepare_fresh_initial_population(opened.data)
 		else:
-			birth = lab.prepare_initial_artisan_birth(opened.data, initial_scenario_id, [])
+			# Same original Slot has already frozen/validated this policy.
+			var policy: Dictionary = preload("res://scripts/terrain_lab/site_technology_policy.gd").candidate(candidate.pin)
+			if not policy.ok: return policy
+			birth = lab.prepare_initial_artisan_birth(opened.data, initial_scenario_id, policy.policy.categories)
 		if not birth.ok: return birth
 		# Keep this exact unpublished original candidate through SAVE_IO retries.
 		# It is never a second saved body and never captures the previous world.
 		_initial_world_birth_data = birth.data
 	return candidate.prepare_initial_site(_initial_world_birth_data)
-
 
 func _initial_creation_appearance(source: Dictionary) -> Dictionary:
 	var result := {}
@@ -10224,3 +10279,2498 @@ func prepare_nation_technology_output(token: Dictionary, event: Dictionary) -> D
 func publish_nation_technology_output(prepared: Dictionary) -> void:
 	if not prepared.operation.is_empty(): equipment_orders.publish_public_owner_receipt(prepared.operation)
 
+
+func _open_farm_trial_protocol() -> void:
+	if _existing_dialog("farm_trial_protocol", "current"): return
+	var data_owner: TerrainData = lab.terrain
+	var site_owner: Dictionary = data_owner.site
+	var requester: int = int(lab.controlled_person_id())
+	var selected_key: String = feature_key
+	var selected_feature: Dictionary = site_owner.get("features", {}).get(selected_key, {})
+	var dialog := Window.new()
+	dialog.title = "原農事 · 兩田各一個真作物批次"
+	dialog.size = Vector2i(620, 440)
+	dialog.close_requested.connect(dialog.queue_free)
+	var margin := MarginContainer.new()
+	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	for side: String in ["left", "right", "top", "bottom"]: margin.add_theme_constant_override("margin_" + side, 18)
+	dialog.add_child(margin)
+	var column := VBoxContainer.new()
+	margin.add_child(column)
+	_label(column,"明選兩田、原作物和服務格；原人原工序各完成一次付料收穫就停該田工作區。需另沿原派工入口安排這位真人。",16)
+	var operator := _options(column,[],"FarmTrialOriginalPerson")
+	for person: Dictionary in lab._siege_people():
+		operator.add_item("原人 #%d" % int(person.id))
+		operator.set_item_metadata(operator.item_count-1,int(person.id))
+		if int(person.id)==requester: operator.select(operator.item_count-1)
+	var choices: Array[OptionButton] = [_options(column,[],"FarmTrialControlPlot"),_options(column,[],"FarmTrialComparisonPlot")]
+	var refs := {}
+	for key: String in site_owner.get("features",{}):
+		var feature: Dictionary = site_owner.features[key]
+		if str(feature.get("kind","")) not in Runtime.FARM_KINDS or feature.get("stage")!="complete" or int(feature.get("layout_version",0))!=1: continue
+		refs[key]=feature
+		for slot: Dictionary in Runtime.feature_work_slots(data_owner,feature):
+			for choice: OptionButton in choices:
+				choice.add_item("#%s · %s · 原服務格 %s" % [key,_building_name(feature),data_owner.cell_from_index(int(slot.cell))])
+				choice.set_item_metadata(choice.item_count-1,{"feature_id":key,"work_slot":int(slot.slot),"recipe_id":str(feature.get("recipe_id",""))})
+	if choices[1].item_count>1: choices[1].select(1)
+	var active: bool = bool(preload("res://scripts/terrain_lab/site_technology_catalog.gd").get_node("F01").get("enabled",false))
+	var status := _label(column,str(selected_feature.get("farm_trial_protocol",{}))+("" if active else "\nF01 尚未具名驗收啟用；登記入口唯讀。"),16)
+	var current := func() -> bool:
+		return is_same(lab.terrain,data_owner) and is_same(data_owner.site,site_owner) and int(lab.controlled_person_id())==requester
+	var invoke := func(preview: bool) -> void:
+		if not current.call(): show_result(Runtime.fail("STALE_SOURCE")); return
+		if not bool(preload("res://scripts/terrain_lab/site_technology_catalog.gd").get_node("F01").get("enabled",false)): show_result(Runtime.fail("UNSUPPORTED")); return
+		if operator.selected<0 or choices[0].selected<0 or choices[1].selected<0: show_result(Runtime.fail("NO_TARGET")); return
+		var selections: Array = []
+		for choice: OptionButton in choices:
+			var selection: Dictionary = choice.get_item_metadata(choice.selected)
+			if not is_same(site_owner.get("features",{}).get(selection.feature_id),refs.get(selection.feature_id)): show_result(Runtime.fail("STALE_SOURCE")); return
+			selections.append(selection.duplicate())
+		var result: Dictionary = Runtime.request_farm_trial_protocol(data_owner,requester,int(operator.get_item_metadata(operator.selected)),selections,preview)
+		show_result(result)
+		status.text=str(result.message)
+		if result.ok and not preview: view.refresh(); _sync_building_actions()
+	var row := HBoxContainer.new()
+	column.add_child(row)
+	var preview := _button(row,"原兩田預檢","FarmTrialPreview",func() -> void: invoke.call(true))
+	var register := _button(row,"明示登記兩田單批","FarmTrialRegister",func() -> void: invoke.call(false))
+	preview.disabled=not active
+	register.disabled=not active
+	_button(column,"解除目前所選田的試驗（先停止原派工）","FarmTrialCancel",func() -> void:
+		if not current.call() or not is_same(site_owner.get("features",{}).get(selected_key),selected_feature): show_result(Runtime.fail("STALE_SOURCE")); return
+		var result: Dictionary = Runtime.cancel_farm_trial_protocol(data_owner,selected_key,requester)
+		show_result(result)
+		status.text=str(result.message)
+		if result.ok: view.refresh(); _sync_building_actions())
+	_show_dialog(dialog,"farm_trial_protocol","current")
+
+func _open_saved_survey_plan() -> void:
+	var data_owner: TerrainData = lab.terrain
+	var site_owner: Dictionary = data_owner.site
+	var key: String = feature_key
+	var feature_owner: Dictionary = site_owner.get("features", {}).get(key, {})
+	var requester: int = int(lab.controlled_person_id())
+	if feature_owner.get("kind") != "survey_stakes": show_result(Runtime.fail("NO_TARGET")); return
+	if _existing_dialog("saved_survey", key): return
+	var dialog := Window.new()
+	dialog.title = "原真放樣方案 #%s" % key
+	dialog.size = Vector2i(620, 330)
+	dialog.close_requested.connect(dialog.queue_free)
+	var margin := MarginContainer.new()
+	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	for side: String in ["left", "right", "top", "bottom"]: margin.add_theme_constant_override("margin_" + side, 18)
+	dialog.add_child(margin)
+	var column := VBoxContainer.new()
+	margin.add_child(column)
+	var status := _label(column, str(feature_owner.get("survey_plan", {})), 16)
+	var invoke := func(preview: bool) -> void:
+		if not is_same(lab.terrain, data_owner) or not is_same(data_owner.site, site_owner) or not is_same(site_owner.get("features", {}).get(key), feature_owner) or int(lab.controlled_person_id()) != requester:
+			show_result(Runtime.fail("STALE_SOURCE")); return
+		var result: Dictionary = Runtime.request_build_from_survey(data_owner, key, requester, reserves_cell, preview)
+		show_result(result)
+		status.text = str(result.message)
+		if result.ok and not preview: view.refresh()
+	_button(column, "重驗當前完整原建設預覽／材料", "SavedSurveyPreview", func() -> void: invoke.call(true))
+	_button(column, "沿原建造入口實際備料施工", "SavedSurveyBuild", func() -> void: invoke.call(false))
+	_show_dialog(dialog, "saved_survey", key)
+
+func _open_survey_plan() -> void:
+	if _existing_dialog("survey_plan", "draft"): return
+	var data_owner: TerrainData = lab.terrain
+	var site_owner: Dictionary = data_owner.site
+	var requester: int = int(lab.controlled_person_id())
+	var plan := {"kind": _building_kind(), "cells": build_cells.duplicate(), "options": _building_options()}
+	if building_resize or not Runtime.valid_survey_plan(data_owner, plan): show_result(Runtime.fail("INVALID", "先在原建設窗完成新的真占地預覽")); return
+	var dialog := Window.new()
+	dialog.title = "原建設方案 · 真双樁放樣"
+	dialog.size = Vector2i(660, 430)
+	dialog.close_requested.connect(dialog.queue_free)
+	var margin := MarginContainer.new()
+	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	for side: String in ["left", "right", "top", "bottom"]: margin.add_theme_constant_override("margin_" + side, 18)
+	dialog.add_child(margin)
+	var column := VBoxContainer.new()
+	margin.add_child(column)
+	_label(column, "沿目前完整原建設預覽，在邊界外明選兩個相鄰真樁；木材2、原120秒施工。日後使用方案仍重驗原地形、占用及完整建造材料。", 16)
+	var operator := _options(column, [], "SurveyOriginalPerson")
+	for person: Dictionary in lab._siege_people():
+		operator.add_item("原人 #%d" % int(person.id))
+		operator.set_item_metadata(operator.item_count - 1, int(person.id))
+		if int(person.id) == requester: operator.select(operator.item_count - 1)
+	var marks := _options(column, [], "SurveyActualBoundaryMarks")
+	var outside := {}
+	for index: int in plan.cells:
+		for direction: Vector2i in TerrainData.DIRECTIONS:
+			var cell: Vector2i = data_owner.cell_from_index(index) + direction
+			if data_owner.contains(cell) and not plan.cells.has(data_owner.index(cell)): outside[data_owner.index(cell)] = true
+	for first: int in outside:
+		for direction: Vector2i in [Vector2i.RIGHT, Vector2i.DOWN]:
+			var next: Vector2i = data_owner.cell_from_index(first) + direction
+			if not data_owner.contains(next) or not outside.has(data_owner.index(next)): continue
+			var pair: Array[int] = [first, data_owner.index(next)]
+			marks.add_item("真格 %s、%s" % [data_owner.cell_from_index(first), next])
+			marks.set_item_metadata(marks.item_count - 1, pair)
+	var active: bool = bool(preload("res://scripts/terrain_lab/site_technology_catalog.gd").get_node("F09").get("enabled", false))
+	_label(column, "原方案 %s · %d格%s" % [str(plan.kind), plan.cells.size(), "" if active else "\nF09 尚未具名驗收啟用；放樣入口唯讀。"], 16)
+	var invoke := func(preview: bool) -> void:
+		if not is_same(lab.terrain, data_owner) or not is_same(data_owner.site, site_owner) or int(lab.controlled_person_id()) != requester \
+			or build_cells != plan.cells or _building_kind() != plan.kind or _building_options() != plan.options: show_result(Runtime.fail("STALE_SOURCE")); return
+		if not bool(preload("res://scripts/terrain_lab/site_technology_catalog.gd").get_node("F09").get("enabled", false)): show_result(Runtime.fail("UNSUPPORTED")); return
+		if operator.selected < 0 or marks.selected < 0: show_result(Runtime.fail("NO_TARGET")); return
+		var cells: Array[int] = []
+		cells.assign(marks.get_item_metadata(marks.selected))
+		var result: Dictionary = Runtime.request_survey_plan(data_owner, requester, int(operator.get_item_metadata(operator.selected)), cells, plan, reserves_cell, preview)
+		show_result(result)
+		if result.ok and not preview: view.refresh()
+	var row := HBoxContainer.new()
+	column.add_child(row)
+	var preview := _button(row, "真双樁預檢", "SurveyPreview", func() -> void: invoke.call(true))
+	var build := _button(row, "真放樣施工（木材2）", "SurveyBuild", func() -> void: invoke.call(false))
+	preview.disabled = not active
+	build.disabled = not active
+	_show_dialog(dialog, "survey_plan", "draft")
+
+func _open_family_construction_method() -> void:
+	var data_owner: TerrainData = lab.terrain
+	var site_owner: Dictionary = data_owner.site
+	var key: String = feature_key
+	var feature_owner: Dictionary = site_owner.get("features", {}).get(key, {})
+	var requester: int = int(lab.controlled_person_id())
+	if feature_owner.is_empty(): show_result(Runtime.fail("NO_TARGET")); return
+	if _existing_dialog("construction_method", key): return
+	var dialog := Window.new()
+	dialog.title = "原施工 · 丈量接榫工法"
+	dialog.size = Vector2i(540, 340)
+	dialog.close_requested.connect(dialog.queue_free)
+	var margin := MarginContainer.new()
+	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	for side: String in ["left", "right", "top", "bottom"]: margin.add_theme_constant_override("margin_" + side, 18)
+	dialog.add_child(margin)
+	var column := VBoxContainer.new()
+	margin.add_child(column)
+	_label(column, "只改所選學會者的新施工工作段為原90%時間；原材料、占地、工時基準和修理不變。仍須沿原派工入口安排真人。", 16)
+	var operator := _options(column, [], "ConstructionMethodOriginalPerson")
+	for person: Dictionary in lab._siege_people():
+		operator.add_item("原人 #%d" % int(person.id))
+		operator.set_item_metadata(operator.item_count - 1, int(person.id))
+		if int(person.id) == requester: operator.select(operator.item_count - 1)
+	var status := _label(column, "", 16)
+	var active := bool(preload("res://scripts/terrain_lab/site_technology_catalog.gd").get_node("F10").get("enabled", false))
+	status.text = str(feature_owner.get("pending_build", feature_owner).get("construction_method", {})) + ("" if active else "\nF10 尚未具名驗收啟用；此處唯讀。")
+	var invoke := func(improved: bool, preview: bool) -> void:
+		if not is_same(lab.terrain, data_owner) or not is_same(lab.terrain.site, site_owner) or not is_same(site_owner.get("features", {}).get(key), feature_owner) or int(lab.controlled_person_id()) != requester:
+			show_result(Runtime.fail("STALE_SOURCE")); return
+		if operator.selected < 0: show_result(Runtime.fail("NO_TARGET")); return
+		if improved and not bool(preload("res://scripts/terrain_lab/site_technology_catalog.gd").get_node("F10").get("enabled", false)):
+			show_result(Runtime.fail("UNSUPPORTED", "F10 尚未具名驗收啟用")); return
+		var result: Dictionary = Runtime.request_family_construction_method(data_owner, key, requester, int(operator.get_item_metadata(operator.selected)), improved, preview)
+		show_result(result)
+		status.text = str(feature_owner.get("pending_build", feature_owner).get("construction_method", {}))
+		if result.ok and not preview: view.refresh(); _sync_building_actions()
+	var row := HBoxContainer.new()
+	column.add_child(row)
+	var preview := _button(row, "預檢所選工法", "PreviewConstructionMethod", func() -> void: invoke.call(true, true))
+	var apply := _button(row, "明選丈量接榫", "SelectConstructionMethod", func() -> void: invoke.call(true, false))
+	preview.disabled = not active
+	apply.disabled = not active
+	_button(column, "恢復原普通施工（未開工才可）", "ResetConstructionMethod", func() -> void: invoke.call(false, false))
+	_show_dialog(dialog, "construction_method", key)
+
+func _refresh_siege_ammo_choices(form: Dictionary, vehicle: Dictionary) -> void:
+	if not form.has("siege_ammo"): return
+	var choice: OptionButton = form.siege_ammo
+	var previous: String = str(choice.get_item_metadata(choice.selected)) if choice.selected >= 0 else ""
+	if not is_same(form.get("siege_ammo_vehicle"), vehicle): previous = ""
+	choice.clear()
+	form.siege_ammo_vehicle = vehicle
+	var ordinary: String = str(Runtime.SIEGE_DEFINITIONS.get(str(vehicle.get("kind", "")), {}).get("ammo", ""))
+	choice.add_item("原器具彈種 " + ordinary if not ordinary.is_empty() else "此器具不使用彈藥")
+	choice.set_item_metadata(0, ordinary)
+	if Runtime.siege_ammo_valid(str(vehicle.get("kind", "")), "fire_pot"):
+		choice.add_item("火罐（原實物；在位本人須已學 F15）")
+		choice.set_item_metadata(1, "fire_pot")
+		if previous == "fire_pot": choice.select(1)
+	choice.disabled = ordinary.is_empty()
+
+func _siege_ammo_choice(form: Dictionary, vehicle: Dictionary) -> Dictionary:
+	var ordinary: String = str(Runtime.SIEGE_DEFINITIONS.get(str(vehicle.get("kind", "")), {}).get("ammo", ""))
+	if not form.has("siege_ammo"): return Runtime.ok("", {"ammo": ordinary})
+	if not is_same(form.get("siege_ammo_vehicle"), vehicle): return Runtime.fail("STALE_SOURCE", "原器具已變更，請重查彈種")
+	var choice: OptionButton = form.siege_ammo
+	if choice.selected < 0: return Runtime.fail("NO_TARGET", "請明示原器具彈種")
+	var value: Variant = choice.get_item_metadata(choice.selected)
+	if not value is String or not ordinary.is_empty() and not Runtime.siege_ammo_valid(str(vehicle.kind), value): return Runtime.fail("INVALID")
+	return Runtime.ok("", {"ammo": value})
+
+func _install_irrigation_controls(column: VBoxContainer) -> void:
+	column.add_child(HSeparator.new())
+	_label(column, "灌排渠道 · 原格路徑／同源有限延伸", 18)
+	var form := {"signature": ""}
+	column.set_meta(&"irrigation_form", form)
+	form.status = _label(column, "", 14)
+	form.source = _options(column, [], "IrrigationSource")
+	form.upstream = _options(column, [], "IrrigationUpstream")
+	form.source.item_selected.connect(func(_index: int) -> void: form.signature = ""; _refresh_irrigation_controls())
+	var row := HBoxContainer.new()
+	column.add_child(row)
+	form.add = _button(row, "加入目前真格", "IrrigationAppendCell", func() -> void: show_result(_irrigation_add_selected()); _refresh_irrigation_controls())
+	_button(row, "清空渠道草稿", "IrrigationClearCells", func() -> void: build_cells.clear(); _refresh_irrigation_controls())
+	row = HBoxContainer.new()
+	column.add_child(row)
+	form.preview = _button(row, "预檢渠道", "IrrigationPreview", func() -> void: _irrigation_build_selected(true))
+	form.begin = _button(row, "本人於原工位開始", "IrrigationBegin", func() -> void: _irrigation_build_selected(false))
+	form.resume = _button(row, "接續所選已付渠道", "IrrigationResume", func() -> void:
+		show_result(Runtime.resume_irrigation_channel(lab.terrain, int(lab.controlled_person_id()), feature_key)); view.refresh())
+	form.stop = _button(row, "本人停工（保留物資／進度）", "IrrigationStop", func() -> void:
+		var identity := int(lab.controlled_person_id())
+		var job: Dictionary = person_actions._jobs.get(person_actions._job_key_for(identity), {})
+		if job.get("kind") == "technology_feature" and job.get("operation_selector", {}).has("irrigation"):
+			show_result(person_actions.cancel(identity))
+		else: show_result(Runtime.fail("NO_TARGET", "目前本人沒有普通渠道作業；科技試作沿原研習停止入口")))
+	_refresh_irrigation_controls()
+
+func _irrigation_build_selected(preview: bool) -> void:
+	if _building_kind() != "irrigation_channel" or build_cells.is_empty(): show_result(Runtime.fail("NO_TARGET", "先選原渠道種類及完整真格路徑")); return
+	var config := _irrigation_options()
+	var result := Runtime.irrigation_channel_draft(lab.terrain, build_cells, _building_options(), reserves_cell) if preview else Runtime.begin_irrigation_channel(lab.terrain, int(lab.controlled_person_id()), str(config.get("source_feature_id", "")), str(config.get("upstream_feature_id", "")), build_cells, _building_options(), false, reserves_cell)
+	if result.ok and not preview:
+		feature_key = str(result.feature)
+		_cancel_building_draft()
+		view.refresh()
+	show_result(result)
+
+func reuse_selected_settlement_blueprint(plan_id: String) -> Dictionary:
+	# The original selected map cell is a real anchor; Runtime reconstructs the
+	# full saved geometry and applies all current original paid-build guards.
+	return SiteRuntime.reuse_settlement_blueprint(lab.terrain, int(person_actions._technology_controlled()), plan_id, selected)
+
+func save_selected_settlement_blueprint(name: String, preview: bool = false) -> Dictionary:
+	return SiteRuntime.save_settlement_blueprint(lab.terrain, int(person_actions._technology_controlled()), feature_key, name, preview)
+
+func begin_settlement_defense_work(order_id: String, preview: bool = false) -> Dictionary:
+	return SiteRuntime.begin_settlement_defense_step(lab.terrain, int(person_actions._technology_controlled()), order_id, preview)
+
+func request_settlement_defense_work(steps: Array, person_ids: Array, cap: Dictionary, preview: bool = false) -> Dictionary:
+	# IDs identify real selected original people. They grant nothing; the manual
+	# owner verifies its current head plus actual team.work decision for all IDs.
+	return SiteRuntime.request_settlement_defense_order(lab.terrain, int(person_actions._technology_controlled()), steps, person_ids, cap, preview)
+
+func _nation_ui_command(nation_id: String, action: String, selected_values: Dictionary) -> Dictionary:
+	var requester := int(lab.controlled_person_id())
+	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
+	if nation.is_empty(): return Runtime.fail("NO_TARGET")
+	var ops: Dictionary = nation.get("technology_operations", {})
+	if not ops.is_empty() and not EquipmentOrders.valid_nation_operation_record(ops, lab.terrain.site.item_definitions, {}): return Runtime.fail("CORRUPT_STATE")
+	var s: Dictionary = selected_values
+	var order_id := str(s.get("order", ""))
+	var order: Dictionary = ops.get("public_orders", {}).get(order_id, {})
+	var military: Dictionary = ops.get("orders", {}).get(order_id, {})
+	var resources: Dictionary = s.get("resources", {})
+	var people: Array[int] = []
+	for identity: Variant in s.get("people", []): people.append(int(identity))
+	match action:
+		"publish_spec":
+			var key := str(s.get("key", "")) if not str(s.get("key", "")).is_empty() else str(s.get("spec", ""))
+			var standard: Dictionary = nation.get("standards", {}).get(str(s.get("standard", "")), {})
+			var requirements := {}
+			if int(s.get("item_batch", 0)) > 0:
+				if standard.is_empty(): return Runtime.fail("NO_TARGET", "實物規格須選原標準與真替代定義")
+				for slot: String in standard.slots:
+					var entry: Dictionary = standard.slots[slot]
+					requirements[slot] = {"definition": str(entry.definition), "alternatives": entry.get("alternatives", []).duplicate(), "batch": int(s.item_batch), "total": int(s.item_total)}
+			return equipment_orders.publish_procurement_spec(requester, nation_id, key, str(s.get("name", "")), str(s.get("reserve", "")), s.resource_limits, requirements, int(ops.get("specs", {}).get(key, {}).get("revision", 0)))
+		"deliver_spec":
+			var key := str(s.get("spec", ""))
+			var spec: Dictionary = ops.get("specs", {}).get(key, {})
+			if spec.is_empty(): return Runtime.fail("NO_TARGET")
+			return equipment_orders.accept_procurement_delivery(requester, nation_id, key, resources, s.get("items", []), _nation_ui_version("person:" + str(requester)), _nation_ui_version("feature:" + str(spec.destination_feature_id)), "manual_delivery_" + str(spec.receipts.size() + 1))
+		"certify":
+			var key := str(s.get("key", "")) if not str(s.get("key", "")).is_empty() else str(s.get("certificate", ""))
+			if not EquipmentOrders.Technology.integer(s.get("receipt"), 1): return Runtime.fail("NO_RECEIPT")
+			return equipment_orders.certify_workshop(requester, nation_id, key, str(s.get("host", "")), str(s.get("industry", "")), int(s.receipt), int(ops.get("certificates", {}).get(key, {}).get("revision", 0)))
+		"administration_spec": return person_actions.begin_nation_administration(requester, nation_id, "procurement:" + str(s.get("spec", "")), "procurement")
+		"administration_certificate": return person_actions.begin_nation_administration(requester, nation_id, "certificate:" + str(s.get("certificate", "")), "workshop_certificate")
+		"request_military": return equipment_orders.request_military_production_order(requester, nation_id, str(s.get("certificate", "")), int(s.get("operator", 0)), int(s.get("recipient", 0)), str(s.get("standard", "")))
+		"grant_military": return equipment_orders.authorize_military_materials(requester, nation_id, order_id, resources)
+		"revoke_military_source": return equipment_orders.revoke_military_materials(requester, nation_id, order_id)
+		"supply_military":
+			if military.is_empty(): return Runtime.fail("NO_TARGET")
+			return equipment_orders.supply_military_production(requester, nation_id, order_id, resources, _nation_ui_version("person:" + str(requester)), _nation_ui_version("feature:" + str(military.feature_id)))
+		"begin_military":
+			return Runtime.begin_nation_military_operation(lab.terrain, nation_id, order_id)
+		"issue_military": return equipment_orders.begin_military_issue(requester, nation_id, order_id)
+		"renew_military": return equipment_orders.renew_military_production_order(requester, nation_id, order_id, int(military.get("revision", -1)))
+		"labor": return equipment_orders.register_nation_labor(requester, nation_id, people)
+		"aid": return equipment_orders.request_aid_order(requester, nation_id, str(s.get("reserve", "")), people)
+		"public_work": return equipment_orders.request_public_work_order(requester, nation_id, "house", str(s.get("labor", "")), people, str(s.get("reserve", "")))
+		"course": return equipment_orders.request_funded_course(requester, nation_id, str(s.get("reserve", "")), int(s.get("teacher", 0)), people, str(s.get("skill", "")))
+		"lesson": return equipment_orders.begin_funded_course(requester, nation_id, order_id, int(s.get("student", 0)))
+		"tax": return equipment_orders.declare_tax_source(requester, nation_id, str(s.get("reserve", "")), int(s.get("recipient", 0)))
+		"grant_source": return equipment_orders.authorize_public_source(requester, nation_id, order_id, resources)
+		"revoke_source": return equipment_orders.revoke_public_source(requester, nation_id, order_id)
+		"fund":
+			if order.is_empty() or not order.payload.has("reserve_feature_id"): return Runtime.fail("NO_TARGET")
+			return equipment_orders.fund_public_order(requester, nation_id, order_id, resources, _nation_ui_version("person:" + str(requester)), _nation_ui_version("feature:" + str(order.payload.reserve_feature_id)))
+		"share":
+			if order.is_empty() or not order.payload.has("reserve_feature_id"): return Runtime.fail("NO_TARGET")
+			var recipient := int(s.get("recipient", 0))
+			return equipment_orders.deliver_public_share(requester, nation_id, order_id, recipient, _nation_ui_version("feature:" + str(order.payload.reserve_feature_id)), _nation_ui_version("person:" + str(recipient)))
+		"administration":
+			if order.is_empty(): return Runtime.fail("NO_TARGET")
+			var binding: String = {"N02": "labor_register", "N03": "aid_order", "N09": "tax", "N10": "mandate", "N11": "arsenal", "N12": "fleet"}.get(str(order.tech_id), "")
+			return person_actions.begin_nation_administration(requester, nation_id, order_id, str(binding))
+		"mandate", "renew_mandate":
+			var now := equipment_orders._original_world_seconds()
+			if now < 0.0: return Runtime.fail("NO_WORLD_CLOCK")
+			var expiry := now + float(s.get("minutes", 0)) * 60.0
+			return equipment_orders.grant_settlement_mandate(requester, nation_id, int(s.get("local", 0)), expiry) if action == "mandate" else equipment_orders.renew_settlement_mandate(requester, nation_id, order_id, int(order.get("revision", -1)), int(s.get("local", 0)), expiry)
+		"arsenal": return equipment_orders.request_arsenal_order(requester, nation_id, str(s.get("arsenal_route", "")), str(s.get("host", "")), int(s.get("operator", 0)), str(s.get("reserve", "")))
+		"begin_arsenal":
+			if order.is_empty(): return Runtime.fail("NO_TARGET")
+			var geometry := {}
+			if order.payload.route == "siege":
+				var person: Dictionary = person_actions._person(int(order.payload.operator_id), false)
+				var team: Variant = person_actions._technology_team(person)
+				if team == null or not s.get("facing") is Vector2i: return Runtime.fail("NO_TEAM")
+				geometry = {"anchor": Vector2i(int(s.x), int(s.y)), "facing": s.facing, "team_id": int(team.team_id)}
+			return begin_nation_arsenal(nation_id, order_id, geometry)
+		"construction":
+			if order.is_empty(): return Runtime.fail("NO_TARGET")
+			var cells: Array[int] = []
+			for y: int in range(int(s.get("depth", 1))):
+				for x: int in range(int(s.get("width", 1))):
+					var cell := Vector2i(int(s.x) + x, int(s.y) + y)
+					if not lab.terrain.contains(cell): return Runtime.fail("TERRAIN")
+					cells.append(lab.terrain.index(cell))
+			return equipment_orders.begin_nation_construction(requester, nation_id, order_id, cells)
+		"route":
+			var route: Variant = s.get("route")
+			if not route is Dictionary: return Runtime.fail("NO_ROUTE", "請選原 Region 已驗路線")
+			return equipment_orders.authorize_public_transport_route(requester, nation_id, str(s.get("reserve", "")), str(route.get("route_id", "")), str(route.get("destination_site_id", "")), str(route.get("destination_holder", "")), str(route.get("vehicle_id", "")), int(route.get("driver_id", 0)))
+		"load_route":
+			if order.is_empty(): return Runtime.fail("NO_TARGET")
+			return equipment_orders.load_public_route(requester, nation_id, order_id, _nation_ui_version("feature:" + str(order.payload.reserve_feature_id)), _nation_ui_version(str(order.payload.vehicle_id)))
+		"begin_route": return equipment_orders.begin_public_route(requester, nation_id, order_id)
+		"fleet":
+			var ship_ids: Array[String] = []
+			for identity: Variant in s.get("ships", []): ship_ids.append(str(identity))
+			return equipment_orders.request_fleet_order(requester, nation_id, str(s.get("corps", "")), ship_ids)
+		"command_ship": return equipment_orders.command_fleet_ship(requester, nation_id, order_id, str(s.get("ship", "")))
+		"accept_ship": return equipment_orders.accept_fleet_ship_stop(requester, nation_id, order_id, str(s.get("ship", "")))
+		"renew": return equipment_orders.renew_public_operation(requester, nation_id, order_id, int(order.get("revision", -1)))
+		"revoke":
+			if not military.is_empty(): return equipment_orders.cancel_military_production_order(requester, nation_id, order_id, int(military.revision), str(s.get("reason", "")))
+			if s.has("certificate"): return equipment_orders.revoke_workshop_certificate(requester, nation_id, str(s.certificate), int(ops.get("certificates", {}).get(str(s.certificate), {}).get("revision", -1)), str(s.get("reason", "")))
+			return equipment_orders.revoke_public_operation(requester, nation_id, order_id, int(order.get("revision", -1)), str(s.get("reason", "")))
+	return Runtime.fail("INVALID")
+
+func _nation_ui_submit(form: Dictionary, action: String) -> void:
+	if lab.terrain != form.data or not is_same(lab.terrain.site, form.site) or lab.controlled_person_id() != int(form.requester):
+		form.status.text = "原 Site 或受控人物已變更，請重開；未提交。"
+		return
+	var nation_id := str(form.nation_choice.get_item_metadata(form.nation_choice.selected))
+	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
+	if nation.is_empty() or not is_same(nation, form.nation):
+		form.status.text = "原國家已變更，請重查。"
+		return
+	var selection := _nation_ui_selection(form)
+	var result := _nation_ui_command(nation_id, action, selection)
+	show_result(result)
+	form.status.text = "%s：%s" % [str(result.get("code", "OK")), str(result.get("message", ""))]
+	if result.ok: form.status.text += "（重查原工單以查看新狀態）"
+
+func _open_nation_operations(nation_id: String = "", host: Window = null, tech_id: String = "") -> void:
+	if _existing_dialog("nation_operations", nation_id, host): return
+	var original_data: TerrainData = lab.terrain
+	var original_control: int = lab.controlled_person_id()
+	var dialog := AcceptDialog.new()
+	dialog.name = "NationOperationsDialog"
+	dialog.title = "國家制度與具名公務"
+	dialog.min_size = Vector2i(820, 640)
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(790, 560)
+	dialog.add_child(scroll)
+	var column := VBoxContainer.new()
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(column)
+	_label(column, "選擇原國家與本次操作。供料取自目前受控人物；同意、工位、期限與實物均由原入口重新核對。", 15)
+	var nations := _options(column, ["選擇原國家"], "NationOperationNation")
+	nations.set_item_metadata(0, "")
+	for key: String in original_data.site.get("equipment_nations", {}):
+		nations.add_item(key)
+		nations.set_item_metadata(nations.item_count - 1, key)
+		if key == nation_id: nations.select(nations.item_count - 1)
+	var technology := _options(column, [], "NationOperationTechnology")
+	for index: int in range(1, 13):
+		var key := "N%02d" % index
+		technology.add_item("%s · %s" % [key, str(SiteTechnologyCatalog.get_node(key).get("name", key))])
+		technology.set_item_metadata(technology.item_count - 1, key)
+		if key == tech_id: technology.select(technology.item_count - 1)
+	var body := VBoxContainer.new()
+	column.add_child(body)
+	var status := _label(column, "", 15)
+	var form := {"data": original_data, "site": original_data.site, "requester": original_control,
+		"nation_choice": nations, "technology": technology, "body": body, "status": status, "dialog": dialog,
+		"controls": {}, "resources": {}, "nation": {}}
+	nations.item_selected.connect(func(_index: int) -> void: _nation_ui_render(form))
+	technology.item_selected.connect(func(_index: int) -> void: _nation_ui_render(form))
+	_button(column, "重查原工單與現場", "RefreshNationOperations", func() -> void: _nation_ui_render(form))
+	dialog.confirmed.connect(dialog.queue_free)
+	dialog.canceled.connect(dialog.queue_free)
+	_nation_ui_render(form)
+	_show_dialog(dialog, "nation_operations", nation_id, host)
+
+func prepare_gd_mesh_supply_window(seconds: float) -> Dictionary:
+	if _crowd_active() or not is_finite(seconds) or seconds <= 0.0: return Runtime.fail("CLOCK_NOT_READY")
+	var rows: Array[Dictionary] = []
+	for owner_id: String in lab.terrain.site.get("person_supply", {}):
+		var state: Dictionary = lab.terrain.site.person_supply[owner_id]
+		if state.is_empty(): continue
+		var person: Dictionary = _supply_person(int(owner_id))
+		if person.is_empty(): return Runtime.fail("STALE_SUPPLY_OWNER")
+		var members: Dictionary = captivity_supply.personal_members_id(int(owner_id))
+		rows.append({"kind": "personal", "owner_id": owner_id, "state": state, "members": members,
+			"stock": person.cargo, "holder": person.holder, "context": {}, "reader": _gd_mesh_supply_reader(members), "seconds": seconds})
+	for team: TerrainArmy in lab.combat_armies:
+		if not team.combat_enabled: continue
+		var entry: Dictionary = _supply_entry(team)
+		if entry.is_empty(): continue
+		var members: Dictionary = _team_members(team)
+		var reader: Callable = _gd_mesh_supply_reader(members)
+		var context := {"hot_read": reader, "safe": _team_safe(team, members), "stopped": _team_stopped(team, true)}
+		if int(entry.version) == 3: context.food_locations = ship_food_locations(team, members)
+		rows.append({"kind": "team", "owner": team, "entry": entry, "state": entry.sustain, "members": members,
+			"stock": _supply_stock(entry), "context": context, "reader": reader, "seconds": seconds})
+	for row: Dictionary in rows:
+		# Source membership is original. Snapshot only Supply's own finite
+		# scalar state/stock, as its existing Native candidate already does.
+		var state: Dictionary = row.state.duplicate(true)
+		var stock: Dictionary = row.stock.duplicate(true)
+		var life := {}
+		for identity: int in row.members:
+			life[identity] = {"hp": float(Sustain._member_value(row.members, identity, &"hp", row.reader)),
+				"ko": float(Sustain._member_value(row.members, identity, &"ko", row.reader)),
+				"captive": bool(Sustain._member_value(row.members, identity, &"captive", row.reader))}
+		var context: Dictionary = row.context.duplicate(false)
+		context.hot_read = func(identity: int, field: StringName) -> Variant:
+			return life[identity][String(field)] if life[identity].has(String(field)) else row.members[identity].get(String(field))
+		context.pending_hp = {}
+		var forecast: Dictionary = Sustain.advance_to(state, row.members, stock, float(state.at) + seconds, context)
+		if not forecast.ok: return Runtime.fail("SUPPLY_PREFLIGHT", str(forecast.get("message", "")))
+		if float(forecast.consumed_rations) > 0.0 or not forecast.damage.is_empty(): return Runtime.fail("CONTACT_SUPPLY_COST_NOT_PREPARED")
+		# Source is fixed; real contact may only reduce the living population.
+		# No old-snapshot ration debit is made on the post-contact membership.
+		row["state_values"] = row.state.duplicate(true)
+		row["stock_values"] = row.stock.duplicate(true)
+	return Runtime.ok("原供养本窗无餐费/饥饿伤害；同源已核", {"owner": self, "rows": rows, "seconds": seconds, "elapsed": 0.0})
+
+func prepare_gd_contact_training_window(supply: Dictionary, requests: Array, planned: Dictionary) -> Dictionary:
+	if supply.get("owner") != self or not planned.get("ok", false) or not is_same(requests, lab._shared_work_requests) \
+		or not is_same(planned, lab._shared_work_plan) or float(planned.get("seconds", -1.0)) != float(supply.get("seconds", 0.0)): return Runtime.fail("CLOCK_NOT_READY")
+	var rows: Array[Dictionary] = []
+	var people := {}
+	for row: Dictionary in supply.rows:
+		if row.kind != "team" or not bool(row.entry.get("training_order", false)): continue
+		var field: Dictionary = TrainingGround.inspect(self, int(row.owner.team_id), str(row.entry.get("training_feature_id", "")))
+		var feature_id: String = str(row.entry.get("training_feature_id", ""))
+		var entry := {"supply_row": row, "field": field, "feature_id": feature_id,
+			"feature": lab.terrain.site.features.get(feature_id, {}), "requester": int(row.entry.training_requester), "eligible": field.get("eligible_ids", [])}
+		rows.append(entry)
+		for request: Dictionary in requests:
+			if request.get("provider") != "training": continue
+			if not request.get("participants") is Array or request.participants.size() != 1: return Runtime.fail("INVALID_OWNER")
+			var participant: Dictionary = request.participants[0]
+			var identity: int = int(participant.get("person_id", 0))
+			if not row.members.has(identity): continue
+			var person: Dictionary = person_actions._person(identity)
+			if people.has(identity) or not field.ok or not entry.eligible.has(identity) or person.is_empty() \
+				or not is_same(person.body, participant.get("body")) or _person_has_duty(identity): return Runtime.fail("STALE_TRAINING_SOURCE")
+			people[identity] = {"row": entry, "request": request, "participant": participant, "owner": person.owner,
+				"unit": int(person.unit), "body": person.body, "cell": person.cell, "hit": int(person.hit)}
+		# Original Sustain checks the real roster/numbers before any work/body cost.
+		# work_plan branch is pure: it does not charge or recover a native/GD pool.
+		var checked: Dictionary = Sustain.train(float(row.owner.training), row.members, entry.eligible,
+			float(supply.seconds), _gd_contact_training_context(entry, planned))
+		if not checked.ok: return Runtime.fail("TRAINING_PREFLIGHT", str(checked.get("message", "")))
+	for request: Dictionary in requests:
+		if request.get("provider") == "training" and (request.get("participants", []).size() != 1 \
+			or not people.has(int(request.participants[0].get("person_id", 0)))): return Runtime.fail("STALE_TRAINING_SOURCE")
+	supply["training"] = {"rows": rows, "people": people}
+	return Runtime.ok("原校場與同人物訓練分配已核；不扣疲勞")
+
+func _gd_contact_training_context(entry: Dictionary, planned: Dictionary) -> Dictionary:
+	var row: Dictionary = entry.supply_row
+	var fed: bool = not row.state.cohorts.is_empty()
+	for cohort: Dictionary in row.state.cohorts: fed = fed and float(cohort.coverage) >= 1.0
+	return {"ordered": bool(row.entry.get("training_order", false)), "commander": row.owner.command_eligible(row.owner.current_commander),
+		"safe": bool(entry.field.get("safe", false)) and float(lab.terrain.site.get("combat_left", 0.0)) <= 0.0 and _team_safe(row.owner, row.members),
+		"stopped": _team_stopped(row.owner, true), "fed": fed, "routed": bool(row.state.routed), "coach": _team_ability(row.owner, "coach"),
+		"controlled_person_id": lab.controlled_person_id(), "hot_read": row.reader, "pending_hp": {},
+		"training_multiplier": entry.field.get("training_multiplier", 1.0), "work_plan": planned}
+
+func gd_contact_training_person_ready(identity: int) -> bool:
+	var supply: Dictionary = lab._gd_mesh_work_point.get("supply", {})
+	var held: Dictionary = supply.get("training", {}).get("people", {}).get(identity, {})
+	if held.is_empty(): return false
+	var entry: Dictionary = held.row
+	var row: Dictionary = entry.supply_row
+	var person: Dictionary = person_actions._person(identity)
+	if person.is_empty() or not is_same(_supply_entry(row.owner), row.entry) or not bool(row.entry.get("training_order", false)) \
+		or int(row.entry.training_requester) != int(entry.requester) or str(row.entry.training_feature_id) != entry.feature_id \
+		or not is_same(lab.terrain.site.features.get(entry.feature_id), entry.feature) \
+		or not Runtime.feature_usable(entry.feature, "training") or _person_has_duty(identity) \
+		or person.owner != held.owner or int(person.unit) != int(held.unit) or not is_same(person.body, held.body) \
+		or person.cell != held.cell or int(person.hit) != int(held.hit) or bool(person.moving) or bool(person.captive) \
+		or not (person.owner.combat_can_act(int(person.unit)) if int(person.unit) >= 0 else person.owner.can_act()): return false
+	var context: Dictionary = _gd_contact_training_context(entry, lab._gd_mesh_work_point.nominal_plan)
+	for condition: String in ["ordered", "commander", "safe", "stopped", "fed"]:
+		if not bool(context[condition]): return false
+	return not bool(context.routed)
+
+func prepare_gd_contact_training_segment(planned: Dictionary, seconds: float) -> Dictionary:
+	var point: Dictionary = lab._gd_mesh_work_point
+	if point.is_empty() or not is_same(point.get("segment_plan"), planned) or not is_finite(seconds) or seconds <= 0.0 \
+		or float(planned.get("seconds", -1.0)) != seconds or float(point.elapsed) + seconds > float(point.seconds) + PersonFatigue.WORK_PLAN_EPS: return Runtime.fail("CLOCK_NOT_READY")
+	var supply: Dictionary = point.supply
+	var entries: Array[Dictionary] = []
+	for entry: Dictionary in supply.training.rows:
+		var row: Dictionary = entry.supply_row
+		var checked: Dictionary = Sustain.train(float(row.owner.training), row.members, entry.eligible, seconds,
+			_gd_contact_training_context(entry, planned))
+		if not checked.ok: return Runtime.fail("TRAINING_PREFLIGHT", str(checked.get("message", "")))
+		entries.append({"entry": entry, "before": float(row.owner.training), "result": checked})
+	var segment := {"owner": self, "supply": supply, "plan": planned, "seconds": seconds, "entries": entries, "published": false}
+	supply["training_segment"] = segment # SAME existing point's call-local registry only.
+	return Runtime.ok("", {"segment": segment})
+
+func publish_gd_contact_training_segment(segment: Dictionary) -> void:
+	assert(segment.owner == self and not segment.published and is_same(lab._gd_mesh_work_point.supply, segment.supply) \
+		and is_same(segment.supply.get("training_segment"), segment) and is_same(lab._gd_mesh_work_point.get("segment_plan"), segment.plan))
+	for item: Dictionary in segment.entries:
+		var row: Dictionary = item.entry.supply_row
+		assert(float(row.owner.training) == float(item.before))
+		row.owner.training = float(item.result.training)
+		for identity: int in item.result.handled_ids:
+			if identity == lab.controlled_person_id(): continue
+			var allocation: Dictionary = segment.plan.jobs.get("training", {}).get(str(identity), {})
+			var person: Dictionary = person_actions._person(identity)
+			if not person.is_empty() and (str(allocation.get("paused", "")) == "REST" or float(allocation.get("actual_seconds", 0.0)) > 0.0):
+				person_actions._body_set(person, "work_resting", str(allocation.get("paused", "")) == "REST")
+	segment.published = true
+	segment.supply.erase("training_segment")
+
+func finish_gd_contact_training_window(supply: Dictionary) -> void:
+	for entry: Dictionary in supply.get("training", {}).get("rows", []):
+		var row: Dictionary = entry.supply_row
+		if not bool(row.entry.get("training_order", false)): continue
+		var field: Dictionary = TrainingGround.inspect(self, int(row.owner.team_id), str(row.entry.get("training_feature_id", "")))
+		var issuer_index: int = row.owner.index_for_identity(int(row.entry.training_requester))
+		if not field.ok or issuer_index < 0 or row.owner.member_gone(issuer_index):
+			TrainingGround.stop(row.entry)
+
+func checked_work_prefix_for_task(task: Dictionary, identity: int) -> Dictionary:
+	for prefix: Dictionary in owned_checked_work_prefixes():
+		if int(prefix.person_id) == identity and is_same(prefix.task, task): return prefix
+	return lab.checked_shared_vehicle_prefix_for_task(task, identity) if lab.has_method("checked_shared_vehicle_prefix_for_task") else {}
+
+func prepare_shared_runtime_work_prefix(requests: Array, seconds: float) -> Dictionary:
+	if not is_finite(seconds) or seconds <= 0.0 or not _checked_runtime_work_capture.is_empty(): return Runtime.fail("CLOCK_NOT_READY")
+	if seconds > (1.0 - float(lab.terrain.site.phase)) * 60.0 + PersonFatigue.WORK_PLAN_EPS: return Runtime.fail("INVALID_INTERVAL", "原共同point必须截至下一原分钟端点")
+	bind_checked_runtime_work_prefix()
+	var clock := {"owner": self, "site": lab.terrain.site, "seconds": seconds, "minute": int(lab.terrain.site.minute),
+		"phase": float(lab.terrain.site.phase), "combat_left": float(lab.terrain.site.combat_left),
+		"advanced": false, "ship_build_due": false, "minute_due": false, "consumed": false}
+	var held: Array[Dictionary] = []
+	# Preserve original camp-worker before manual order, regardless of Array order.
+	for key: String in ["worker", "manual"]:
+		for request: Dictionary in requests:
+			if request.get("provider") != "runtime" or request.get("key") != key or not str(request.get("paused", "")).is_empty(): continue
+			var source: Dictionary = _shared_runtime_request_source(request)
+			if not _shared_runtime_source_ready(source): return Runtime.fail("STALE_SOURCE")
+			var person: Dictionary = source.person
+			var task: Dictionary = source.task
+			if person.cell != lab.terrain.cell_from_index(int(task.get("cell", -1))): return Runtime.fail("UNREACHABLE")
+			var checked: Dictionary = Runtime.work_preflight(lab.terrain, task, person.cargo, int(source.carry_limit), int(person.faction), int(person.person_id), reserves_cell)
+			if not checked.ok: return checked
+			var skills: Dictionary = work_team._work_skill_facts(checked)
+			if skills.is_empty(): return Runtime.fail("INVALID_WORK_SKILLS")
+			var target_ref: Dictionary = _checked_runtime_target(task)
+			if target_ref.is_empty(): return Runtime.fail("NO_TARGET")
+			var trial: Dictionary = Runtime.technology_trial_work_facts(lab.terrain, target_ref, task, int(person.person_id)) if target_ref.has("tech_trial") else Runtime.ok("", {"policy_exception": ""})
+			if not trial.ok: return trial
+			var start := {"owner": person.owner, "unit": int(person.unit), "body": person.body, "row": person.body,
+				"cargo": person.cargo, "item_state": person.holder, "cargo_values": person.cargo.duplicate(true), "item_values": person.holder.duplicate(true),
+				"cell": person.cell, "faction": int(person.faction), "occupied": reserves_cell, "carry_limit": int(source.carry_limit),
+				"task_values": task.duplicate(true), "work_unit": _checked_runtime_unit(task, target_ref),
+				"productivity": float(checked.get("productivity", 1.0)), "progress_multiplier": float(checked.get("progress_multiplier", 1.0)),
+				"required_skill": str(checked.get("required_skill", "")), "eligible_master": bool(checked.get("eligible_master", false)), "required_skills": skills.required, "eligible_skills": skills.eligible,
+				"policy_exception": str(trial.get("policy_exception", ""))}
+			held.append({"key": key, "actor": source.actor, "person_id": int(person.person_id), "task": task, "request": request,
+				"target_ref": target_ref, "start": start, "remaining": float(checked.remaining)})
+	_checked_runtime_work_capture = Runtime.ok("原Camp/manual同held起点已捕捉", {"owner": self, "terrain": lab.terrain, "site": lab.terrain.site, "seconds": seconds, "held": held, "clock": clock})
+	return _checked_runtime_work_capture
+
+func refresh_shared_runtime_work_request(request: Dictionary) -> Dictionary:
+	# Called after original operating-slot projection, before pure pool planning.
+	# Nothing selects work, advances timers or debits finite materials here.
+	var source: Dictionary = _shared_runtime_request_source(request)
+	if not _shared_runtime_source_ready(source): return {}
+	if not str(request.get("paused", "")).is_empty(): return request
+	var person: Dictionary = source.person
+	var checked: Dictionary = Runtime.work_preflight(lab.terrain, source.task, person.cargo, int(source.carry_limit), int(person.faction), int(person.person_id), reserves_cell)
+	if not checked.ok: return {}
+	var updated: Dictionary = request.duplicate(false)
+	updated.participants = request.participants.duplicate(false)
+	updated.participants[0] = request.participants[0].duplicate(false)
+	updated.participants[0].progress_multiplier = float(checked.get("productivity", 1.0))
+	updated.productive_kind = "sum"
+	updated.progress_multiplier = float(checked.get("progress_multiplier", 1.0))
+	updated.remaining = float(checked.remaining)
+	updated.payment = checked.get("payment", {})
+	updated.payment_source = checked.get("payment_source", {})
+	updated.payment_key = str(checked.get("payment_key", source.key))
+	return _shared_runtime_physical_request(updated, checked)
+
+func valid_checked_work_prefix(task: Dictionary, identity: int, prefix_ref: Dictionary) -> bool:
+	var actual: Dictionary = checked_work_prefix_for_task(task, identity)
+	if not _gd_contact_runtime_segment.is_empty():
+		if actual.is_empty() or not is_same(actual, prefix_ref): return false
+		for envelope: Dictionary in _gd_contact_runtime_capture.envelopes:
+			if is_same(actual.held, envelope.prepared.prefix_ref.held): return valid_gd_contact_work_prefix(envelope, actual, actual.runtime_priors)
+		return false
+	return not actual.is_empty() and is_same(actual, prefix_ref) and actual.owner == self \
+		and is_same(actual.plan, _checked_runtime_work_preparing.plan) and is_same(actual.runtime_priors, _checked_runtime_work_preparing.runtime_priors) \
+		and _checked_runtime_refs_valid(actual.held)
+
+func validate_shared_runtime_work_prefix(prepared: Dictionary, planned: Dictionary, runtime_priors: Array = [], pre_registered: Dictionary = {}) -> Dictionary:
+	var registered: Dictionary = pre_registered
+	if registered.is_empty(): registered = prepare_shared_runtime_prefix_allocations(prepared, planned, runtime_priors)
+	elif registered.get("owner") != self or not is_same(registered.get("registered"), _checked_runtime_work_preparing) or not is_same(_checked_runtime_work_preparing.get("prepared"), prepared) or not is_same(_checked_runtime_work_preparing.get("plan"), planned) or not is_same(_checked_runtime_work_preparing.get("runtime_priors"), runtime_priors): return Runtime.fail("STALE_WORK_PREFIX")
+	if not registered.ok: return registered
+	for prefix: Dictionary in _checked_runtime_work_preparing.prefixes:
+		var candidate: Dictionary = Runtime.prepare_checked_work_prefix(lab.terrain, prefix.task, float(prefix.applied_productive_seconds), float(prefix.actual_seconds), prefix)
+		if not candidate.ok: return candidate
+		_checked_runtime_work_preparing.runtime.append(candidate)
+		runtime_priors.append(candidate) # Sole preparer; Runtime only reads SAME Array.
+	_checked_runtime_work_admission = Runtime.ok("原Camp/manual所有候选已纯预验", _checked_runtime_work_preparing)
+	return _checked_runtime_work_admission
+
+func prepare_gd_contact_runtime_prefix(prepared: Dictionary, planned: Dictionary, runtime_priors: Array, pre_registered: Dictionary = {}) -> Dictionary:
+	if not _gd_contact_runtime_capture.is_empty() or not _gd_contact_runtime_segment.is_empty(): return Runtime.fail("CLOCK_NOT_READY")
+	var upper: Dictionary = planned.duplicate(false)
+	upper.jobs = {}
+	for provider: String in planned.jobs:
+		upper.jobs[provider] = {}
+		for key: String in planned.jobs[provider]:
+			var allocation: Dictionary = planned.jobs[provider][key].duplicate(false)
+			allocation.participant_effective_seconds = allocation.participant_seconds.duplicate()
+			upper.jobs[provider][key] = allocation
+	var admitted: Dictionary = validate_shared_runtime_work_prefix(prepared, upper if pre_registered.is_empty() else _checked_runtime_work_preparing.plan, runtime_priors, pre_registered)
+	if not admitted.ok: return admitted
+	var envelopes: Array[Dictionary] = []
+	var people := {}
+	for candidate: Dictionary in admitted.runtime:
+		var envelope: Dictionary = Runtime.prepare_gd_contact_work_envelope(candidate)
+		if not envelope.ok: return envelope
+		envelopes.append(envelope)
+		var prefix: Dictionary = candidate.prefix_ref
+		var person: Dictionary = person_actions._person(int(prefix.person_id))
+		var intent: Dictionary = prefix.task.duplicate(false)
+		for field: String in ["progress", "status", "cargo"]: intent.erase(field)
+		people[int(prefix.person_id)] = {"prefix": prefix, "hit": int(person.hit), "intent": intent}
+	_gd_contact_runtime_capture = Runtime.ok("原camp/manual來源與有限材料上界已純核", {"owner": self, "prepared": prepared,
+		"admitted": admitted, "seconds": float(prepared.seconds), "elapsed": 0.0, "envelopes": envelopes,
+		"people": people, "priors": [], "finished": false})
+	return _gd_contact_runtime_capture
+
+func prepare_gd_contact_runtime_segment(planned: Dictionary, seconds: float, defer_runtime: bool = false) -> Dictionary:
+	if _gd_contact_runtime_capture.is_empty() or not _gd_contact_runtime_segment.is_empty() or planned.get("ok") != true \
+		or not is_same(planned, lab.gd_mesh_work_segment_plan()) or not is_finite(seconds) or seconds <= 0.0 \
+		or not is_equal_approx(float(planned.get("seconds", -1.0)), seconds) \
+		or float(_gd_contact_runtime_capture.elapsed) + seconds > float(_gd_contact_runtime_capture.seconds) + PersonFatigue.WORK_PLAN_EPS:
+		return Runtime.fail("STALE_WORK_PREFIX")
+	var segment := {"owner": self, "plan": planned, "seconds": seconds, "prefixes": [], "runtime": [],
+		"priors": lab.gd_mesh_work_segment_priors(), "published": false}
+	for envelope: Dictionary in _gd_contact_runtime_capture.envelopes:
+		var original: Dictionary = envelope.prepared.prefix_ref
+		var allocation: Dictionary = planned.jobs.get("runtime", {}).get(str(original.held.key), {})
+		var identity: int = int(original.person_id)
+		var actual: float = float(allocation.get("participant_seconds", {}).get(identity, 0.0))
+		var productive: float = float(allocation.get("participant_effective_seconds", {}).get(identity, 0.0))
+		if actual <= 0.0 or productive <= 0.0:
+			if float(original.held.remaining) > PersonFatigue.WORK_PLAN_EPS: continue
+			# Original mark_combat clears manual target AND progress. A zero
+			# retry cannot resurrect its captured pre-contact work/intent.
+			if is_same(original.task, lab.terrain.site.manual) and not gd_contact_runtime_person_ready(identity): continue
+			var already := false
+			for prior: Dictionary in _gd_contact_runtime_capture.priors: already = already or is_same(prior.task, original.task)
+			if already: continue
+		var prefix: Dictionary = original.duplicate(false)
+		prefix.plan = planned
+		prefix.allocation = allocation
+		prefix.actual_seconds = actual
+		prefix.productive_seconds = productive
+		prefix.applied_productive_seconds = productive * float(original.start.productivity) * float(original.start.progress_multiplier)
+		prefix.group_actual_seconds = float(allocation.get("actual_seconds", 0.0))
+		prefix.runtime_priors = segment.priors
+		segment.prefixes.append(prefix)
+	_gd_contact_runtime_segment = segment
+	if defer_runtime: return Runtime.ok("同段真本人分配已登記", {"segment": segment})
+	return validate_gd_contact_runtime_segment(segment)
+
+func _shared_runtime_physical_request(request: Dictionary, checked: Dictionary) -> Dictionary:
+	var physical: Dictionary = Runtime.shared_physical_work_unit(lab.terrain, request.get("task", {}))
+	if physical.is_empty(): return request
+	if request.get("participants", []).size() != 1: return {}
+	var weight: float = float(checked.get("productivity", NAN)) * float(checked.get("progress_multiplier", 1.0))
+	if not is_finite(weight) or weight <= 0.0: return {}
+	request.productive_kind = "sum"
+	request.progress_multiplier = 1.0
+	request.remaining = float(physical.physical_remaining)
+	request.participants[0].progress_multiplier = weight
+	return request
+
+func shared_vehicle_work_request_facts(request: Dictionary) -> Dictionary:
+	if request.get("productive_kind") != "sum" or str(request.get("paused", "")) not in ["", "REST"]: return {}
+	var source: Dictionary = _shared_runtime_request_source(request)
+	if not _shared_runtime_source_ready(source): return {}
+	var physical: Dictionary = Runtime.shared_physical_work_unit(lab.terrain, source.task)
+	if physical.is_empty(): return {}
+	var checked: Dictionary = Runtime.work_preflight(lab.terrain, source.task, source.person.cargo, int(source.carry_limit), int(source.person.faction), int(source.person.person_id), reserves_cell)
+	if not checked.ok: return {}
+	var skills: Dictionary = work_team._work_skill_facts(checked)
+	var participant: Dictionary = request.participants[0]
+	var identity: int = int(source.person.person_id)
+	if skills.is_empty() or not is_same(participant.get("original_body", participant.get("body")), source.person.body) or not is_equal_approx(float(participant.get("progress_multiplier", 1.0)), float(checked.get("productivity", 1.0)) * float(checked.get("progress_multiplier", 1.0))) or not is_equal_approx(float(request.progress_multiplier), 1.0): return {}
+	var facts: Dictionary = physical.duplicate(false)
+	facts.merge({"owner": self, "request": request, "site": lab.terrain.site, "source": source, "task": source.task,
+		"person_ids": [identity], "required_skills": skills.required, "eligible_by_id": {identity: skills.eligible},
+		"remaining": float(physical.physical_remaining), "participants": request.participants, "values": request.duplicate(false),
+		"participant_values": work_team._shared_vehicle_participant_values(request)})
+	if not _shared_worker_inputs.has("shared_work_facts"): _shared_worker_inputs["shared_work_facts"] = {}
+	_shared_worker_inputs.shared_work_facts[str(request.key)] = facts
+	return facts
+
+func valid_shared_vehicle_work_request_facts(request: Dictionary, facts: Dictionary) -> bool:
+	if facts.get("owner") != self or not is_same(facts.get("request"), request) or not is_same(facts.get("site"), lab.terrain.site) or not is_same(facts.get("participants"), request.get("participants")) or request != facts.get("values") or work_team._shared_vehicle_participant_values(request) != facts.get("participant_values") or not is_same(_shared_worker_inputs.get("shared_work_facts", {}).get(str(request.key)), facts): return false
+	var source: Dictionary = _shared_runtime_request_source(request)
+	var physical: Dictionary = Runtime.shared_physical_work_unit(lab.terrain, facts.task)
+	return not source.is_empty() and is_same(source.task, facts.task) and not physical.is_empty() and is_same(physical.target_ref, facts.target_ref) and is_same(physical.work_unit, facts.work_unit) and physical.action == facts.action and physical.field == facts.field
+
+func owned_checked_work_prefixes() -> Array:
+	return _gd_contact_runtime_segment.prefixes if not _gd_contact_runtime_segment.is_empty() else _checked_runtime_work_preparing.get("prefixes", [])
+
+func prepare_shared_runtime_prefix_allocations(prepared: Dictionary, planned: Dictionary, runtime_priors: Array = []) -> Dictionary:
+	if prepared.get("owner") != self or not is_same(prepared, _checked_runtime_work_capture) or not is_same(prepared.get("terrain"), lab.terrain) or not is_same(prepared.get("site"), lab.terrain.site) or planned.get("ok") != true or absf(float(planned.get("seconds", -1.0)) - float(prepared.seconds)) > PersonFatigue.WORK_PLAN_EPS: return Runtime.fail("STALE_SOURCE")
+	_checked_runtime_work_preparing = {"owner": self, "prepared": prepared, "plan": planned, "runtime_priors": runtime_priors, "prefixes": [], "runtime": []}
+	for held: Dictionary in prepared.held:
+		if not _checked_runtime_refs_valid(held): return Runtime.fail("STALE_SOURCE")
+		var allocation: Dictionary = planned.jobs.get("runtime", {}).get(str(held.key), {})
+		var identity: int = int(held.person_id)
+		var actual: float = float(allocation.get("participant_seconds", {}).get(identity, 0.0))
+		var productive: float = float(allocation.get("participant_effective_seconds", {}).get(identity, 0.0))
+		if not is_finite(actual) or not is_finite(productive) or actual < 0.0 or actual > float(prepared.seconds) + PersonFatigue.WORK_PLAN_EPS or productive < 0.0 or productive > actual + PersonFatigue.WORK_PLAN_EPS: return Runtime.fail("INVALID_WORK")
+		if actual <= 0.0 and float(held.remaining) > PersonFatigue.WORK_PLAN_EPS: continue
+		var applied: float = productive * float(held.start.productivity) * float(held.start.progress_multiplier)
+		if not is_finite(applied) or applied < 0.0: return Runtime.fail("INVALID_WORK")
+		var prefix := {"owner": self, "plan": planned, "entry": held, "person_id": identity, "task": held.task, "start": held.start,
+			"target_ref": held.target_ref, "target": str(held.task.target), "plan_key": str(allocation.get("shared_vehicle_group", {}).get("key", "runtime:" + str(held.key))), "shared_vehicle_group": allocation.get("shared_vehicle_group", {}),
+			"actual_seconds": actual, "productive_seconds": productive, "applied_productive_seconds": applied,
+			"group_actual_seconds": float(allocation.get("actual_seconds", actual)), "allocation": allocation, "required_skill": str(held.start.required_skill),
+			"eligible_master": bool(held.start.eligible_master), "required_skills": held.start.required_skills, "eligible_skills": held.start.eligible_skills, "held": held, "runtime_priors": runtime_priors,
+			"work_unit": held.start.work_unit, "policy_exception": str(held.start.policy_exception)}
+		_checked_runtime_work_preparing.prefixes.append(prefix)
+	return Runtime.ok("原camp/manual本人分配已登記，尚未來源候選", {"owner": self, "registered": _checked_runtime_work_preparing})
+
+func validate_gd_contact_runtime_segment(segment: Dictionary) -> Dictionary:
+	if not is_same(segment, _gd_contact_runtime_segment) or bool(segment.get("published", true)) or not segment.get("runtime", []).is_empty() or not is_same(segment.get("plan"), lab.gd_mesh_work_segment_plan()) or not is_same(segment.get("priors"), lab.gd_mesh_work_segment_priors()): return Runtime.fail("STALE_WORK_PREFIX")
+	for envelope: Dictionary in _gd_contact_runtime_capture.envelopes:
+		for prefix: Dictionary in segment.prefixes:
+			if not is_same(prefix.held, envelope.prepared.prefix_ref.held): continue
+			var candidate: Dictionary = Runtime.restrict_gd_contact_work_prefix(envelope, prefix, segment.priors)
+			if not candidate.ok: return candidate
+			segment.runtime.append(candidate)
+			segment.priors.append(candidate)
+	return Runtime.ok("原camp/manual實際段已派生；未施工／付款", {"segment": segment})
+
+func _gd_contact_delivery_intent(job: Dictionary) -> Dictionary:
+	var value: Dictionary = job.duplicate(false)
+	for key: String in ["left", "pending", "source_cargo", "source_holder", "source_body", "source_owner", "receiver_body", "receiver_owner", "source_open"]: value.erase(key)
+	return value.duplicate(true)
+
+func prepare_gd_contact_delivery_window(supply: Dictionary, requests: Array, planned: Dictionary) -> Dictionary:
+	if supply.get("owner") != self or not planned.get("ok", false) or not is_same(requests, lab._shared_work_requests) \
+		or not is_same(planned, lab._shared_work_plan) or float(planned.get("seconds", -1.0)) != float(supply.get("seconds", 0.0)): return Runtime.fail("CLOCK_NOT_READY")
+	var rows: Array[Dictionary] = []
+	var people := {}
+	var accepted := {}
+	for row: Dictionary in supply.rows:
+		if row.kind != "team" or row.entry.get("delivery", {}).is_empty(): continue
+		var job: Dictionary = row.entry.delivery
+		var held := {"supply_row": row, "job": job, "intent": _gd_contact_delivery_intent(job), "refs": job.duplicate(false), "request": {}, "people": {},
+			"valid": _delivery_valid(row.owner, row.entry)}
+		rows.append(held)
+		if not bool(held.valid): continue # Original current endpoint cancels this source without blocking unrelated work.
+		for request: Dictionary in requests:
+			if request.get("provider") != "delivery" or str(request.get("key", "")) != str(row.owner.team_id): continue
+			if bool(job.get("pending", false)) or not held.request.is_empty(): return Runtime.fail("STALE_DELIVERY_SOURCE")
+			var originals: Array[Dictionary] = _delivery_people(row.entry)
+			if originals.is_empty() or request.get("participants", []).size() != originals.size() \
+				or str(request.get("productive_kind")) != ("joint" if originals.size() == 2 else "single") \
+				or float(request.get("remaining", -1.0)) != float(job.left): return Runtime.fail("STALE_DELIVERY_SOURCE")
+			for person: Dictionary in originals:
+				var identity: int = int(person.person_id)
+				var participant: Dictionary = {}
+				for candidate: Dictionary in request.participants:
+					if int(candidate.person_id) == identity: participant = candidate
+				if participant.is_empty() or people.has(identity) or not is_same(person.body, participant.get("body")): return Runtime.fail("STALE_DELIVERY_SOURCE")
+				var source := {"held": held, "person_id": identity, "owner": person.owner, "unit": int(person.unit), "body": person.body,
+					"cell": person.cell, "hit": int(person.hit), "participant": participant}
+				held.people[identity] = source
+				people[identity] = source
+			held.request = request
+			accepted[str(row.owner.team_id)] = request
+	for request: Dictionary in requests:
+		if request.get("provider") == "delivery" and not is_same(accepted.get(str(request.get("key", ""))), request): return Runtime.fail("STALE_DELIVERY_SOURCE")
+	supply["delivery"] = {"rows": rows, "people": people}
+	return Runtime.ok("原交糧具名來源與雙人工作已核；尚無工時／餐費")
+
+func gd_contact_delivery_person_ready(identity: int) -> bool:
+	var supply: Dictionary = lab._gd_mesh_work_point.get("supply", {})
+	var held: Dictionary = supply.get("delivery", {}).get("people", {}).get(identity, {}).get("held", {})
+	if held.is_empty() or not bool(held.valid): return false
+	var row: Dictionary = held.supply_row
+	if not is_same(_supply_entry(row.owner), row.entry) or not is_same(row.entry.get("delivery"), held.job) \
+		or bool(held.job.get("pending", false)) or _gd_contact_delivery_intent(held.job) != held.intent \
+		or not _delivery_valid(row.owner, row.entry): return false
+	for key: String in ["source_cargo", "source_holder", "source_body", "receiver_body"]:
+		if not is_same(held.job.get(key), held.refs.get(key)): return false
+	for key: String in ["source_owner", "receiver_owner"]:
+		if held.job.get(key) != held.refs.get(key): return false
+	if not held.refs.get("source_open", {}).is_empty() and not is_same(held.job.get("source_open"), held.refs.source_open): return false
+	# Joint carrying requires BOTH true original people through every prefix.
+	# REST remains the common planner's authority, not this physical predicate.
+	for source: Dictionary in held.people.values():
+		var person: Dictionary = person_actions._person(int(source.person_id))
+		if person.is_empty() or person.owner != source.owner or int(person.unit) != int(source.unit) or not is_same(person.body, source.body) \
+			or person.cell != source.cell or int(person.hit) != int(source.hit): return false
+		if int(person.person_id) != lab.controlled_person_id() and person_actions._threat(person, {}): return false
+	return true
+
+func _project_gd_contact_delivery_segment(planned: Dictionary, seconds: float) -> Dictionary:
+	var point: Dictionary = lab._gd_mesh_work_point
+	if point.is_empty() or not is_same(point.get("segment_plan"), planned) or not is_finite(seconds) or seconds <= 0.0 \
+		or float(planned.get("seconds", -1.0)) != seconds or float(point.elapsed) + seconds > float(point.seconds) + PersonFatigue.WORK_PLAN_EPS: return Runtime.fail("CLOCK_NOT_READY")
+	var entries: Array[Dictionary] = []
+	for held: Dictionary in point.supply.delivery.rows:
+		if held.request.is_empty(): continue
+		var row: Dictionary = held.supply_row
+		var allocation: Dictionary = planned.jobs.get("delivery", {}).get(str(row.owner.team_id), {})
+		if allocation.is_empty(): return Runtime.fail("STALE_DELIVERY_SOURCE")
+		var actual: float = float(allocation.actual_seconds)
+		var effective: float = float(allocation.effective_seconds)
+		if not is_finite(actual) or not is_finite(effective) or actual < 0.0 or effective < 0.0 \
+			or actual > seconds + PersonFatigue.WORK_PLAN_EPS or effective > actual + PersonFatigue.WORK_PLAN_EPS: return Runtime.fail("INVALID_WORK_PLAN")
+		if not is_same(row.entry.get("delivery"), held.job):
+			if actual > 0.0 or effective > 0.0: return Runtime.fail("STALE_DELIVERY_SOURCE")
+			continue
+		var smallest := INF
+		for identity: int in held.people:
+			var participant_actual: float = float(allocation.participant_seconds.get(identity, -1.0))
+			var participant_effective: float = float(allocation.participant_effective_seconds.get(identity, -1.0))
+			if participant_actual != actual or participant_effective < 0.0 or participant_effective > participant_actual + PersonFatigue.WORK_PLAN_EPS: return Runtime.fail("INVALID_WORK_PLAN")
+			smallest = minf(smallest, participant_effective)
+		if effective > smallest + PersonFatigue.WORK_PLAN_EPS or effective > float(held.job.left) + PersonFatigue.WORK_PLAN_EPS: return Runtime.fail("INVALID_WORK_PLAN")
+		entries.append({"held": held, "allocation": allocation, "left_before": float(held.job.left), "pending_before": bool(held.job.pending),
+			"left_after": maxf(0.0, float(held.job.left) - effective)})
+	return Runtime.ok("", {"segment": {"owner": self, "supply": point.supply, "plan": planned, "seconds": seconds, "entries": entries, "published": false}})
+
+func prepare_gd_contact_delivery_segment(planned: Dictionary, seconds: float) -> Dictionary:
+	var prepared: Dictionary = _project_gd_contact_delivery_segment(planned, seconds)
+	if not prepared.ok: return prepared
+	prepared.segment.supply["delivery_segment"] = prepared.segment
+	return prepared
+
+func validate_gd_contact_delivery_segment(segment: Dictionary) -> Dictionary:
+	var point: Dictionary = lab._gd_mesh_work_point
+	if point.is_empty() or segment.get("owner") != self or bool(segment.get("published", true)) \
+		or not is_same(segment.get("supply"), point.supply) or not is_same(point.supply.get("delivery_segment"), segment): return Runtime.fail("STALE_DELIVERY_SOURCE")
+	var expected: Dictionary = _project_gd_contact_delivery_segment(segment.plan, float(segment.seconds))
+	if not expected.ok or segment.entries.size() != expected.segment.entries.size(): return Runtime.fail("STALE_DELIVERY_SOURCE")
+	for index: int in segment.entries.size():
+		var value: Dictionary = segment.entries[index]
+		var original: Dictionary = expected.segment.entries[index]
+		if not is_same(value.get("held"), original.held) or not is_same(value.get("allocation"), original.allocation) \
+			or value.get("left_before") != original.left_before or value.get("pending_before") != original.pending_before or value.get("left_after") != original.left_after: return Runtime.fail("STALE_DELIVERY_SOURCE")
+	return Runtime.ok()
+
+func publish_gd_contact_delivery_segment(segment: Dictionary) -> void:
+	assert(segment.owner == self and not segment.published and is_same(lab._gd_mesh_work_point.supply.get("delivery_segment"), segment))
+	for value: Dictionary in segment.entries:
+		var held: Dictionary = value.held
+		var allocation: Dictionary = value.allocation
+		for identity: int in held.people:
+			var source: Dictionary = held.people[identity]
+			var actual: float = float(allocation.participant_seconds[identity])
+			if identity != lab.controlled_person_id() and (str(allocation.paused) == "REST" or actual > 0.0):
+				person_actions._body_set({"body": source.body, "owner": source.owner, "unit": source.unit}, "work_resting", str(allocation.paused) == "REST")
+			if int(source.unit) < 0: lab._fatigue_work_seconds[source.owner] = float(lab._fatigue_work_seconds.get(source.owner, 0.0)) + actual
+		# Only the original job's effective game seconds change. Food/source and
+		# pools have their separate original publishers, each once.
+		held.job.left = float(value.left_after)
+		if float(held.job.left) <= 0.00000001:
+			held.job.left = 0.0
+			held.job.pending = true
+	segment.published = true
+	segment.supply.erase("delivery_segment")
+
+func finish_gd_contact_delivery_window(supply: Dictionary) -> void:
+	for held: Dictionary in supply.get("delivery", {}).get("rows", []):
+		var row: Dictionary = held.supply_row
+		if not is_same(row.entry.get("delivery"), held.job): continue
+		if not _delivery_valid(row.owner, row.entry):
+			row.entry.delivery = {}
+			message.text = "交糧條件已變更，當批取消；來源未扣物"
+
+func prepare_received_opened_food(identity: int, amount: float, original: Dictionary, source_only: bool = false) -> Dictionary:
+	# The original private Supply owner prepares its OWN finite scalar state.
+	# No food debit, person, cohort or clock is published by this reader.
+	if not is_instance_valid(lab) or lab.terrain == null or captivity_supply == null or not is_finite(amount) or amount <= 0.0 or amount > Runtime.CARRY_CAPACITY:
+		return Runtime.fail("INVALID", "原開封口糧數量或供養來源失效")
+	var site: Dictionary = lab.terrain.site
+	var person: Dictionary = _supply_person(identity)
+	if person.is_empty() or person.owner is CrowdOwner: return Runtime.fail("UNSUPPORTED", "原GD私人餐份尚無同點Native提交")
+	var pool: Dictionary = _personal_opened_food(identity)
+	if (not pool.is_empty() or not original.is_empty()) and not is_same(pool, original): return Runtime.fail("STALE_SOURCE")
+	var at_seconds: float = Runtime.now(lab.terrain) * 60.0
+	var state: Dictionary = Sustain.create(at_seconds) if pool.is_empty() else pool.duplicate(true)
+	var members: Dictionary = captivity_supply._all_members()
+	if state.get("version") != 1 or not Sustain.validate(state, members): return Runtime.fail("INVALID_SUSTAIN", "原私人餐份狀態非法")
+	var feeding: String = captivity_supply._feeding_owner(identity, captivity_supply._states())
+	if state.cohorts.is_empty() and feeding.is_empty():
+		if not _align_supply_clock(state, at_seconds): return Runtime.fail("STALE_SUPPLY_CLOCK")
+		var joined: Dictionary = Sustain.add_members(state, members, [identity])
+		if not joined.ok: return joined
+	if not Sustain._number(float(state.open_rations) + amount, 0.0, 1000000.0): return Runtime.fail("STORAGE_FULL")
+	state.open_rations = float(state.open_rations) + amount
+	return Runtime.ok("原私人開封餐份候選；尚未收物", {"owner": self, "terrain": lab.terrain, "site": site,
+		"identity": identity, "amount": amount, "original": original, "pool": pool, "pool_before": pool.duplicate(true),
+		"had_map": site.has("person_supply"), "map": site.get("person_supply", {}), "at_seconds": at_seconds,
+		"person": person, "feeding": feeding, "state": state, "source_only": source_only, "published": false})
+
+func validate_received_opened_food(prepared: Dictionary, require_completion: bool = true) -> Dictionary:
+	if prepared.get("ok") != true or prepared.get("owner") != self or prepared.get("published") != false \
+		or require_completion and bool(prepared.get("source_only", true)) or not is_instance_valid(lab) \
+		or not is_same(lab.terrain, prepared.get("terrain")) or not is_same(lab.terrain.site, prepared.get("site")):
+		return Runtime.fail("STALE_SOURCE")
+	var expected: Dictionary = prepare_received_opened_food(int(prepared.get("identity", -1)), float(prepared.get("amount", -1.0)), prepared.get("original", {}), bool(prepared.source_only))
+	if not expected.ok: return expected
+	if bool(expected.had_map) != bool(prepared.get("had_map", false)) or expected.had_map and not is_same(expected.map, prepared.get("map")) \
+		or (not expected.pool.is_empty() or not prepared.get("pool", {}).is_empty()) and not is_same(expected.pool, prepared.get("pool")) \
+		or expected.pool_before != prepared.get("pool_before") or expected.at_seconds != prepared.get("at_seconds") \
+		or expected.feeding != prepared.get("feeding") or expected.state != prepared.get("state"):
+		return Runtime.fail("STALE_SUPPLY_SOURCE")
+	var person: Dictionary = expected.person
+	var original_person: Dictionary = prepared.get("person", {})
+	if original_person.is_empty() or not is_same(person.owner, original_person.get("owner")) or not is_same(person.body, original_person.get("body")) \
+		or not is_same(person.holder, original_person.get("holder")) or not is_same(person.cargo, original_person.get("cargo")):
+		return Runtime.fail("STALE_SUPPLY_OWNER")
+	return Runtime.ok()
+
+func publish_received_opened_food(prepared: Dictionary) -> void:
+	# Caller checked every original loot/current-person endpoint immediately
+	# before its first debit. This original Supply publication has no callback.
+	assert(prepared.ok and prepared.owner == self and not prepared.source_only and not prepared.published)
+	var site: Dictionary = prepared.site
+	if not bool(prepared.had_map): site.person_supply = {}
+	if prepared.pool.is_empty():
+		site.person_supply[str(int(prepared.identity))] = prepared.state
+	else:
+		prepared.pool.clear()
+		prepared.pool.merge(prepared.state)
+	prepared.published = true
+
+func _refresh_siege_build_people(form: Dictionary) -> void:
+	if not form.has("siege_builder"): return
+	var choice: OptionButton = form.siege_builder
+	var prior: int = int(choice.get_item_metadata(choice.selected)) if choice.selected >= 0 else 0
+	var previous: Dictionary = choice.get_meta(&"siege_build_context", {})
+	choice.clear()
+	choice.add_item("請具名選擇原施工人員")
+	choice.set_item_metadata(0, 0)
+	choice.set_meta(&"siege_build_context", {})
+	if person_actions.lab == null or not person_actions.has_method("technology_vehicle_work_admission"): return
+	var team: Variant = _siege_build_ui_team(form)
+	if team == null or not team.has_army(): return
+	var requester: int = team.combat_identity(team.current_commander) if bool(form.get("trial", false)) else lab.controlled_person_id()
+	if not is_same(previous.get("data"), lab.terrain) or not is_same(previous.get("team"), team) or int(previous.get("requester_id", -1)) != requester or int(previous.get("controlled_id", -1)) != lab.controlled_person_id(): prior = 0
+	choice.set_meta(&"siege_build_context", {"data": lab.terrain, "team": team, "requester_id": requester, "controlled_id": lab.controlled_person_id()})
+	var kind: String = str(form.siege_kind.get_item_metadata(form.siege_kind.selected)) if form.siege_kind.selected >= 0 else ""
+	var category: String = preload("res://scripts/terrain_lab/site_technology_policy.gd").siege_category(kind)
+	for index: int in _siege_ui_indices(team):
+		if not team.is_member(index): continue
+		var identity: int = team.combat_identity(index)
+		var person: Dictionary = person_actions._person(identity)
+		if person.is_empty(): continue
+		var ready: Dictionary = person_actions.technology_vehicle_work_admission(identity, int(team.team_id))
+		var learned: bool = category.is_empty() or preload("res://scripts/terrain_lab/site_technology.gd").learned(person_actions._body_get(person, "technology"), category)
+		choice.add_item("原人 #%d · 格%s · %s%s" % [identity, person.cell, "已學本工法" if learned else "未學本工法", "" if ready.ok else " · " + str(ready.get("code", "不可開工"))])
+		choice.set_item_metadata(choice.item_count - 1, identity)
+		# Preserve only a HUMAN's earlier explicit ID. Never auto-select a master.
+		if identity == prior and prior > 0: choice.select(choice.item_count - 1)
+
+func _siege_build_person_context(form: Dictionary) -> Dictionary:
+	if not form.has("siege_builder") or form.siege_builder.selected < 0: return Runtime.fail("NO_OPERATOR", "請明示本次原施工人員")
+	var identity: int = int(form.siege_builder.get_item_metadata(form.siege_builder.selected))
+	if identity <= 0: return Runtime.fail("NO_OPERATOR", "請明示本次原施工人員")
+	var held: Dictionary = form.siege_builder.get_meta(&"siege_build_context", {})
+	var team: Variant = _siege_build_ui_team(form)
+	if team == null or held.is_empty() or not is_same(held.get("data"), lab.terrain) or not is_same(held.get("team"), team) or int(held.get("controlled_id", -1)) != lab.controlled_person_id(): return Runtime.fail("STALE_SOURCE", "原人／隊伍／Site 已變更，請重新查詢")
+	var requester: int = team.combat_identity(team.current_commander) if bool(form.get("trial", false)) else lab.controlled_person_id()
+	if int(held.get("requester_id", -1)) != requester: return Runtime.fail("NO_AUTHORITY")
+	if not person_actions.has_method("technology_vehicle_work_admission"): return Runtime.fail("UNSUPPORTED")
+	var ready: Dictionary = person_actions.technology_vehicle_work_admission(identity, int(team.team_id))
+	if not ready.ok: return ready
+	if not is_same(ready.get("team"), team) or ready.get("person_ids", []) != [identity] or int(ready.get("requester_id", -1)) != requester: return Runtime.fail("STALE_SOURCE")
+	return Runtime.ok("明示原人，施工准入仍由原 Runtime 重查", {"team": team, "requester_id": requester, "person_id": identity})
+
+func _irrigation_add_selected() -> Dictionary:
+	if not lab.terrain.contains(selected): return Runtime.fail("NO_TARGET")
+	var index: int = lab.terrain.index(selected)
+	if build_cells.size() >= Runtime.IRRIGATION_MAX_CELLS or build_cells.has(index): return Runtime.fail("INVALID")
+	if not build_cells.is_empty() and not Runtime._irrigation_adjacent(lab.terrain, int(build_cells[-1]), index): return Runtime.fail("INVALID", "下一格須與草稿尾端真相鄰")
+	var choice := _building_choice("irrigation_channel")
+	if choice < 0: return Runtime.fail("NO_OWNER_HOOK")
+	buildings.select(choice)
+	building_resize = false
+	build_cells.append(index)
+	modes.select(5)
+	return Runtime.ok("已加入原地圖真格；只保存在建設草稿，未扣料")
+
+func _refresh_irrigation_controls() -> void:
+	var form := _irrigation_controls()
+	if form.is_empty() or lab.terrain == null: return
+	var sources: Array[String] = []
+	var upstreams: Array[String] = []
+	var source := _irrigation_choice(form.source)
+	var upstream := _irrigation_choice(form.upstream)
+	for key: String in lab.terrain.site.features:
+		var feature: Dictionary = lab.terrain.site.features[key]
+		if feature.get("kind") in ["well", "intake"] and feature.get("stage") == "complete" and Runtime.feature_usable(feature): sources.append(key)
+		if feature.get("kind") == "irrigation_channel" and feature.get("stage") == "complete" and Runtime.feature_usable(feature) \
+			and feature.get("irrigation", {}).get("source_feature_id") == source: upstreams.append(key)
+	var signature := JSON.stringify([sources, upstreams, source])
+	if signature != str(form.signature):
+		form.source.clear()
+		for key: String in sources:
+			form.source.add_item("原水站 #" + key)
+			form.source.set_item_metadata(form.source.item_count - 1, key)
+			if key == source: form.source.select(form.source.item_count - 1)
+		form.upstream.clear()
+		form.upstream.add_item("直接接原水站")
+		form.upstream.set_item_metadata(0, "")
+		for key: String in upstreams:
+			form.upstream.add_item("原同源渠道尾端 #" + key)
+			form.upstream.set_item_metadata(form.upstream.item_count - 1, key)
+			if key == upstream: form.upstream.select(form.upstream.item_count - 1)
+		form.signature = signature
+	var activated: bool = SiteTechnologyCatalog.get_node("S02").get("enabled") == true
+	form.status.text = "本草稿 %d／36 格；每格木1＋石2／原工作300秒，沿原共享取水预算；上游毀壞即停效。%s" % [build_cells.size(), "可提交原owner預檢" if activated else "尚未命名驗收，唯讀／禁止付款"]
+	form.begin.disabled = not activated
+	form.resume.disabled = not activated
+	# Geometry selection/preview never creates knowledge or a paid request.
+	form.preview.disabled = false
+
+func _irrigation_options() -> Dictionary:
+	var form := _irrigation_controls()
+	if form.is_empty(): return {}
+	return {"version": 1, "settlement_id": str(lab.terrain.site.get("settlement", {}).get("settlement_id", "")),
+		"source_feature_id": _irrigation_choice(form.source), "upstream_feature_id": _irrigation_choice(form.upstream)}
+
+func _nation_ui_version(key: String) -> int:
+	var stock: Dictionary = {}
+	if key.begins_with("person:"):
+		var person: Dictionary = person_actions._person(int(key.trim_prefix("person:")), false)
+		return int(person.get("holder", {}).get("version", -1))
+	if key.begins_with("feature:"): stock = Stockpiles.stock_endpoint(lab.terrain, key.trim_prefix("feature:"))
+	else:
+		var vehicle: Dictionary = vehicles.records().get(key, {})
+		if not vehicle.is_empty(): stock = {"holder": vehicle.holder}
+	return int(stock.get("holder", {}).get("version", -1))
+
+func begin_nation_arsenal(nation_id: String, order_id: String, work_target: Dictionary = {}) -> Dictionary:
+	return equipment_orders.begin_arsenal_order(int(lab.controlled_person_id()), nation_id, order_id, work_target)
+
+func _nation_ui_selection(form: Dictionary) -> Dictionary:
+	var chosen := {"resources": {}, "resource_limits": {}}
+	for key: String in form.controls:
+		var node: Node = form.controls[key]
+		if node is OptionButton: chosen[key] = node.get_item_metadata(node.selected) if node.selected >= 0 else ""
+		elif node is ItemList:
+			chosen[key] = []
+			for index: int in node.get_selected_items(): chosen[key].append(node.get_item_metadata(index))
+		elif node is SpinBox: chosen[key] = int(node.value)
+		elif node is LineEdit: chosen[key] = node.text.strip_edges()
+	for resource: String in form.resources:
+		var fields: Dictionary = form.resources[resource]
+		if int(fields.quantity.value) > 0: chosen.resources[resource] = int(fields.quantity.value)
+		if fields.has("batch") and int(fields.batch.value) > 0:
+			chosen.resource_limits[resource] = {"batch": int(fields.batch.value), "total": int(fields.total.value)}
+	return chosen
+
+func _nation_ui_render(form: Dictionary) -> void:
+	if lab.terrain != form.data or not is_same(lab.terrain.site, form.site) or lab.controlled_person_id() != int(form.requester):
+		form.status.text = "原 Site 或受控人物已變更，請重新開啟。"
+		return
+	for child: Node in form.body.get_children():
+		form.body.remove_child(child)
+		child.queue_free()
+	form.controls = {}
+	form.resources = {}
+	var nation_id := str(form.nation_choice.get_item_metadata(form.nation_choice.selected))
+	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
+	form.nation = nation
+	if nation.is_empty(): return
+	var tech_id := str(form.technology.get_item_metadata(form.technology.selected))
+	var ops: Dictionary = nation.get("technology_operations", {})
+	if not ops.is_empty() and not EquipmentOrders.valid_nation_operation_record(ops, lab.terrain.site.item_definitions, {}):
+		form.status.text = "原制度紀錄損壞；停止提交。"
+		return
+	var public_orders := {}
+	for key: String in ops.get("public_orders", {}):
+		if ops.public_orders[key].tech_id == tech_id: public_orders[key] = ops.public_orders[key]
+	var people := _nation_ui_people()
+	var order_records: Dictionary = ops.get("orders", {}) if tech_id == "N05" else public_orders
+	if tech_id not in ["N01", "N04"]:
+		var order_choice := _nation_ui_choice(form, "order", "原具名工單", _nation_ui_entries(order_records))
+		var order_summary := _label(form.body, "選單可查看本單成本、來源與已接受實績。", 14)
+		order_choice.item_selected.connect(func(_index: int) -> void: _nation_ui_order_summary(form, order_summary))
+	if tech_id in ["N01", "N03", "N06", "N07", "N08", "N09", "N11"]: _nation_ui_choice(form, "reserve", "原倉庫", _nation_ui_features(["warehouse"]))
+	if tech_id in ["N01", "N05"]: _nation_ui_choice(form, "standard", "原兵種標準（採購時沿此真定義與替代清單）", _nation_ui_entries(nation.get("standards", {})))
+	if tech_id == "N01":
+		_nation_ui_choice(form, "spec", "原採購規格", _nation_ui_entries(ops.get("specs", {})))
+		_nation_ui_text(form, "key", "新增採購規格代號；選既有規格時留空")
+		_nation_ui_text(form, "name", "規格名稱")
+		_nation_ui_number(form, "item_batch", "實物單批數量", 0, 128)
+		_nation_ui_number(form, "item_total", "實物總數量", 0, 128)
+		_nation_ui_resource_fields(form, Env.ITEM_NAMES.keys(), true)
+		var held_items: Array = []
+		var person: Dictionary = person_actions._person(int(form.requester), false)
+		for key: String in person.get("holder", {}).get("item_ids", []):
+			var item: Dictionary = lab.terrain.site.get("item_records", {}).get(key, {})
+			if not item.is_empty(): held_items.append({"id": key, "label": "#%s · %s" % [key, str(item.get("definition", ""))]})
+		_nation_ui_list(form, "items", "本次交付本人原實物", held_items)
+		_nation_ui_button(form, "發布／重新核准採購規格", "publish_spec")
+		_nation_ui_button(form, "交出本次選定真材料與實物", "deliver_spec")
+		_nation_ui_button(form, "重做所選原規格已付行政工作", "administration_spec")
+	elif tech_id == "N04":
+		_nation_ui_choice(form, "certificate", "原作坊證書", _nation_ui_entries(ops.get("certificates", {})))
+		_nation_ui_text(form, "key", "新增作坊證書代號；選既有證書時留空")
+		var host_choice := _nation_ui_choice(form, "host", "本地原作坊", _nation_ui_features(["smithy", "weaver"]))
+		_nation_ui_choice(form, "industry", "本次驗收產業", [{"id": "S04", "label": "鍛造作坊"}, {"id": "S05", "label": "紡織作坊"}, {"id": "S07", "label": "弓作作坊"}])
+		var receipts := _nation_ui_choice(form, "receipt", "所選作坊本次真出貨", [])
+		host_choice.item_selected.connect(func(_index: int) -> void:
+			receipts.clear()
+			receipts.add_item("請選真出貨")
+			receipts.set_item_metadata(0, "")
+			var feature: Dictionary = lab.terrain.site.features.get(str(host_choice.get_item_metadata(host_choice.selected)), {})
+			for receipt: Dictionary in feature.get("technology_output", {}).get("receipts", []):
+				receipts.add_item("批次 %d · 操作者 #%d" % [int(receipt.id), int(receipt.operator_id)])
+				receipts.set_item_metadata(receipts.item_count - 1, int(receipt.id)))
+		_nation_ui_button(form, "驗收所選真出貨並核准作坊", "certify")
+		_nation_ui_button(form, "重做所選原證書檢驗工作", "administration_certificate")
+	elif tech_id == "N05":
+		_nation_ui_choice(form, "certificate", "有效原弓作證書", _nation_ui_entries(ops.get("certificates", {})))
+		_nation_ui_choice(form, "operator", "具名原操作者", people)
+		_nation_ui_choice(form, "recipient", "原領裝人", people)
+		_nation_ui_resource_fields(form, ["wood", "fiber"])
+		_nation_ui_button(form, "建立一批弓的原生產與領裝單，請求原隊同意", "request_military")
+		_nation_ui_button(form, "明示核准本人本單有限材料", "grant_military")
+		_nation_ui_button(form, "交出本人材料至本單原作坊", "supply_military")
+		_nation_ui_button(form, "開始本單真一批生產", "begin_military")
+		_nation_ui_button(form, "沿原領裝入口領取本單成品", "issue_military")
+	elif tech_id == "N02":
+		_nation_ui_list(form, "people", "本次原居民與勞役人", people)
+		_nation_ui_button(form, "登記具名勞役並請求原隊同意", "labor")
+		_nation_ui_button(form, "開始本單名冊行政工作", "administration")
+		_nation_ui_geometry(form, false)
+		_nation_ui_button(form, "開始本單一格道路施工", "construction")
+	elif tech_id == "N03":
+		_nation_ui_list(form, "people", "本次兩名真接收者", people)
+		_nation_ui_choice(form, "recipient", "本次送糧接收者", people)
+		_nation_ui_button(form, "建立兩名接收者的有限賑濟單", "aid")
+	elif tech_id == "N06":
+		var labor := {}
+		for key: String in ops.get("public_orders", {}):
+			if ops.public_orders[key].tech_id == "N02": labor[key] = ops.public_orders[key]
+		_nation_ui_choice(form, "labor", "真原勞役名冊", _nation_ui_entries(labor))
+		_nation_ui_list(form, "people", "本次名冊內原工人", people)
+		_nation_ui_button(form, "依原住宅藍圖開單並請求原隊同意", "public_work")
+		_nation_ui_geometry(form, true)
+		_nation_ui_button(form, "以本單真有限材料開始住宅施工", "construction")
+	elif tech_id == "N07":
+		_nation_ui_choice(form, "teacher", "真原師傅", people)
+		_nation_ui_list(form, "people", "本次最多兩個學生席位", people)
+		_nation_ui_choice(form, "student", "本次上課原學生", people)
+		var skills: Array = []
+		for key: String in EquipmentOrders.Technology.FAMILY_IDS: skills.append({"id": key, "label": "%s · %s" % [key, str(SiteTechnologyCatalog.get_node(key).name)]})
+		_nation_ui_choice(form, "skill", "師傅本次傳授技藝", skills)
+		_nation_ui_button(form, "開設最多兩席的真授課津貼單", "course")
+		_nation_ui_button(form, "開始所選學生的一對一真授課", "lesson")
+	elif tech_id == "N08":
+		var routes: Array = []
+		if has_method("nation_route_options"):
+			var queried: Variant = call("nation_route_options")
+			if queried is Dictionary and queried.get("ok", false) and queried.get("routes") is Array:
+				for route: Variant in queried.routes:
+					if route is Dictionary and route.get("label") is String: routes.append({"id": route, "label": route.label})
+		_nation_ui_choice(form, "route", "原 Region 可用路線與真車船／目的倉", routes)
+		if routes.is_empty(): _label(form.body, "目前沒有原 Region 可批准的具名公共運輸路線。", 14)
+		_nation_ui_button(form, "批准所選原路線的四糧運輸單", "route")
+		_nation_ui_button(form, "真裝四糧至本單原車船", "load_route")
+		_nation_ui_button(form, "沿原 Region 行程開始運輸", "begin_route")
+	elif tech_id == "N09":
+		_nation_ui_choice(form, "recipient", "真原支付接收者", people)
+		_nation_ui_button(form, "登記一糧有限收支單", "tax")
+	elif tech_id == "N10":
+		_nation_ui_choice(form, "local", "真正現任地方首長", people)
+		_nation_ui_number(form, "minutes", "自目前原世界時間起有效分鐘", 60, 1440, 1)
+		_nation_ui_button(form, "向所選現任首長明示有限委任並請求原隊同意", "mandate")
+		_nation_ui_button(form, "以當前首長及新期限續任原單", "renew_mandate")
+		_nation_ui_button(form, "開始本單真行政委任工作", "administration")
+		_nation_ui_geometry(form, false)
+		_nation_ui_button(form, "由本單真現任地方首長開始一格道路", "construction")
+	elif tech_id == "N11":
+		_nation_ui_choice(form, "arsenal_route", "軍械原工序", [{"id": "armor", "label": "真鐵甲"}, {"id": "siege", "label": "真弩砲"}])
+		_nation_ui_choice(form, "host", "原甲冑作坊／器械場", _nation_ui_features(["smithy", "training_ground"]))
+		_nation_ui_choice(form, "operator", "本次具名真工人", people)
+		_nation_ui_button(form, "開立軍械單並請求原隊同意", "arsenal")
+		_nation_ui_geometry(form, false, true)
+		_nation_ui_button(form, "開始所選原單真軍械製造", "begin_arsenal")
+		_nation_ui_button(form, "真製造收據後開始本單驗收行政工作", "administration")
+	elif tech_id == "N12":
+		_nation_ui_choice(form, "corps", "真正原軍團", _nation_ui_entries(lab.terrain.site.get("corps", {})))
+		var ships: Array = []
+		for key: String in vehicles.records():
+			var ship: Dictionary = vehicles.records()[key]
+			if SiteVehicleTransport.is_ship(ship): ships.append({"id": key, "label": "船 #%s · 原舵手 #%d" % [key, int(ship.operator_id)]})
+		_nation_ui_list(form, "ships", "本次兩條原船", ships)
+		_nation_ui_choice(form, "ship", "本次下令／驗收原船", ships)
+		_nation_ui_button(form, "登記兩船的原軍團編制單", "fleet")
+		_nation_ui_button(form, "向本單所選船真舵手下令前進一步", "command_ship")
+		_nation_ui_button(form, "真到本步終點且停止後驗收此船", "accept_ship")
+	if tech_id in ["N03", "N06", "N07", "N08", "N09", "N11"]:
+		_nation_ui_resource_fields(form, ["grain"] if tech_id in ["N03", "N07", "N08", "N09"] else (["wood", "stone"] if tech_id == "N06" else ["wood", "iron", "fiber", "leather", "charcoal"]))
+		_nation_ui_button(form, "明示核准本人本單有限用途額度", "grant_source")
+		_nation_ui_button(form, "將本次数量真交入本單原倉庫", "fund")
+		_nation_ui_button(form, "撤銷本人後續來源授權", "revoke_source")
+	if tech_id in ["N03", "N09"]: _nation_ui_button(form, "從本單真倉庫交糧給所選接收者", "share")
+	if tech_id in ["N03", "N09", "N12"]: _nation_ui_button(form, "本次真操作完成後開始制度試行行政工作", "administration")
+	if tech_id == "N04" or tech_id == "N05" or tech_id in EquipmentOrders.PUBLIC_TECHNOLOGIES:
+		_nation_ui_text(form, "reason", "撤銷／取消原因")
+		_nation_ui_button(form, "撤銷證書" if tech_id == "N04" else "取消軍工單" if tech_id == "N05" else "撤銷本原公務单", "revoke")
+		if tech_id == "N05":
+			_nation_ui_button(form, "撤銷本人軍工材料授權", "revoke_military_source")
+			_nation_ui_button(form, "由真現任職責人重新核准本軍工單", "renew_military")
+		elif tech_id != "N04" and tech_id != "N10": _nation_ui_button(form, "由真現任職責人重新核准本原單", "renew")
+	form.status.text = "%s · 請選定原對象；每次提交都重新核對現任權限與實際狀態。" % tech_id
+
+func valid_gd_contact_work_prefix(envelope: Dictionary, prefix: Dictionary, priors: Array) -> bool:
+	if _gd_contact_runtime_capture.is_empty() or _gd_contact_runtime_segment.is_empty() \
+		or not is_same(priors, _gd_contact_runtime_segment.priors) or bool(_gd_contact_runtime_capture.finished): return false
+	for prior: Dictionary in priors:
+		if not lab.gd_mesh_work_prior_candidate(prior, priors): return false
+	var found := false
+	for original: Dictionary in _gd_contact_runtime_capture.envelopes: found = found or is_same(original, envelope)
+	if not found or envelope.owner != self or prefix.get("owner") != self: return false
+	for actual: Dictionary in _gd_contact_runtime_segment.prefixes:
+		if not is_same(actual, prefix): continue
+		var allocation: Dictionary = _gd_contact_runtime_segment.plan.jobs.get("runtime", {}).get(str(prefix.held.key), {})
+		var identity: int = int(prefix.person_id)
+		var seconds: float = float(allocation.get("participant_seconds", {}).get(identity, 0.0))
+		var productive: float = float(allocation.get("participant_effective_seconds", {}).get(identity, 0.0))
+		return seconds >= 0.0 and seconds <= float(_gd_contact_runtime_segment.seconds) + PersonFatigue.WORK_PLAN_EPS \
+			and productive >= 0.0 and productive <= seconds + PersonFatigue.WORK_PLAN_EPS \
+			and is_equal_approx(float(prefix.actual_seconds), seconds) and is_equal_approx(float(prefix.productive_seconds), productive) \
+			and is_equal_approx(float(prefix.applied_productive_seconds), productive * float(prefix.start.productivity) * float(prefix.start.progress_multiplier)) \
+			and is_same(prefix.held, envelope.prepared.prefix_ref.held) and is_same(prefix.plan, _gd_contact_runtime_segment.plan) \
+			and is_same(prefix.task, envelope.prepared.task) and is_same(prefix.target_ref, envelope.target) \
+			and is_same(prefix.work_unit, envelope.unit) and identity == int(envelope.prepared.identity)
+	return false
+
+func _gd_mesh_supply_reader(members: Dictionary) -> Callable:
+	# No captured hot column: packed arrays can detach on the real contact write.
+	return func(identity: int, field: StringName) -> Variant:
+		var person: Dictionary = _supply_person(identity)
+		return person_actions._body_get(person, String(field)) if not person.is_empty() else members.get(identity, {}).get(String(field))
+
+func gd_contact_runtime_person_ready(identity: int) -> bool:
+	if _gd_contact_runtime_capture.is_empty() or not _gd_contact_runtime_capture.people.has(identity): return false
+	var held: Dictionary = _gd_contact_runtime_capture.people[identity]
+	var prefix: Dictionary = held.prefix
+	var start: Dictionary = prefix.start
+	var person: Dictionary = person_actions._person(identity)
+	if person.is_empty() or person.owner != start.owner or int(person.unit) != int(start.unit) \
+		or not is_same(person.body, start.body) or not is_same(person.holder, start.item_state) or not is_same(person.cargo, start.cargo) \
+		or not is_same(lab.terrain.site.get(str(prefix.held.key)), prefix.task) or int(person.hit) != int(held.hit) \
+		or person.cell != start.cell or bool(person.captive) or bool(person.moving): return false
+	var intent: Dictionary = prefix.task.duplicate(false)
+	for field: String in ["progress", "status", "cargo"]: intent.erase(field)
+	return intent == held.intent and (person.owner.combat_can_act(int(person.unit)) if int(person.unit) >= 0 else person.owner.can_act())
+
+func publish_gd_contact_runtime_segment(segment: Dictionary) -> void:
+	assert(is_same(segment, _gd_contact_runtime_segment) and not bool(segment.published))
+	for candidate: Dictionary in segment.runtime:
+		Runtime.publish_checked_work_prefix(candidate)
+		_gd_contact_runtime_capture.priors.append(candidate)
+	for prefix: Dictionary in segment.prefixes:
+		lab._shared_runtime_consumed[str(prefix.held.key)] = true
+		var person: Dictionary = person_actions._person(int(prefix.person_id))
+		if person.is_empty() or bool(person.player): continue
+		if float(prefix.actual_seconds) > 0.0: person_actions._body_set(person, "work_resting", false)
+		if str(prefix.allocation.get("participant_paused", {}).get(int(prefix.person_id), prefix.allocation.get("paused", ""))) == "REST":
+			person_actions._body_set(person, "work_resting", true)
+	_gd_contact_runtime_capture.elapsed = float(_gd_contact_runtime_capture.elapsed) + float(segment.seconds)
+	segment.published = true
+	_gd_contact_runtime_segment = {}
+
+func publish_gd_mesh_supply_segment(prepared: Dictionary, seconds: float) -> void:
+	assert(prepared.owner == self and seconds > 0.0 and float(prepared.elapsed) + seconds <= float(prepared.seconds) + PersonFatigue.WORK_PLAN_EPS)
+	for row: Dictionary in prepared.rows:
+		var was_routed: bool = bool(row.state.routed)
+		if row.kind == "team":
+			# Actual original ordered contacts are now reflected in this life
+			# checkpoint BEFORE the next positive hunger/morale segment.
+			_observe_team_life(row.owner, row.entry, row.members, row.reader)
+		var state: Dictionary = row.state.duplicate(true)
+		var stock: Dictionary = row.stock.duplicate(true)
+		var context: Dictionary = row.context.duplicate(false)
+		context.hot_read = row.reader
+		if row.kind == "team":
+			# Actual endpoint geometry/life, not optimistic BEGIN safe/stopped.
+			context.safe = _team_safe(row.owner, row.members)
+			context.stopped = _team_stopped(row.owner, true)
+		context.pending_hp = {}
+		var outcome: Dictionary = Sustain.advance_to(state, row.members, stock, float(state.at) + seconds, context)
+		assert(outcome.ok and float(outcome.consumed_rations) == 0.0 and outcome.damage.is_empty())
+		row.state.clear()
+		row.state.merge(state)
+		if row.kind == "team":
+			_publish_sustain_team_commands(row.owner, row.entry, was_routed, outcome, seconds, bool(context.safe), bool(context.stopped))
+	prepared.elapsed = float(prepared.elapsed) + seconds
+
+func finish_gd_contact_runtime_prefix() -> void:
+	if _gd_contact_runtime_capture.is_empty() or bool(_gd_contact_runtime_capture.finished): return
+	_gd_contact_runtime_capture.finished = true
+	var last: Array[Dictionary] = []
+	for candidate: Dictionary in _gd_contact_runtime_capture.priors:
+		for index: int in range(last.size() - 1, -1, -1):
+			if is_same(last[index].unit, candidate.unit): last.remove_at(index)
+		last.append(candidate)
+	for candidate: Dictionary in last: Runtime.settle_checked_work_prefix(candidate)
+	_gd_contact_runtime_capture = {}
+	_gd_contact_runtime_segment = {}
+
+func finish_shared_runtime_clock() -> void:
+	# AFTER Native pub AND all true current work endpoints. Runtime uses the
+	# existing exact minute/ship helpers once; it never advances elapsed again.
+	var clock: Dictionary = checked_runtime_clock_interval()
+	if clock.is_empty() or bool(clock.get("consumed", false)): return
+	Runtime.finish_checked_work_clock(lab.terrain, clock, reserves_cell)
+	discard_checked_runtime_work_prefix()
+
+func _native_held_runtime_ready(identity: int, task: Dictionary) -> bool:
+	if not _crowd_active() or not lab.crowd_site.contains_person(identity): return true
+	if not lab.crowd_site.work_fatigue_work_start_ready(identity): return false
+	var person: Dictionary = person_actions._person(identity, false)
+	if person.is_empty() or not person.owner is CrowdPersonOwner or not person_actions._ready(person) or _person_has_duty(identity): return false
+	if str(task.get("target", "")).is_empty() or not lab.terrain.contains(person.cell): return false
+	var actual: int = lab.terrain.index(person.cell)
+	return actual == int(task.get("work_cell", task.get("cell", -1))) and actual == int(task.get("cell", -1))
+
+func prepare_shared_native_training_requests(seconds: float, combat_left: float) -> Dictionary:
+	_shared_native_training_prefixes = {}
+	if not _crowd_active(): return Runtime.ok("", {"requests": []})
+	var requests: Array[Dictionary] = []
+	for owner: RefCounted in lab.crowd_site.person_owners():
+		var entry: Dictionary = lab.terrain.site.team_supply.get(str(owner.team_id), {})
+		if entry.is_empty() or not bool(entry.get("training_order", false)): continue
+		# Existing Sustain zero-time resupply is already settled and its true
+		# coverage interval clipped. Refresh ORIGINAL World input before start
+		# qualification; old previous-tick fully_fed is not today's authority.
+		var fed: bool = not entry.sustain.cohorts.is_empty()
+		for cohort: Dictionary in entry.sustain.cohorts: fed = fed and float(cohort.coverage) >= 1.0
+		lab.crowd_site.set_sustain_input(int(owner.formation_index), fed, 0.0)
+		var prepared: Dictionary = TrainingGround.prepare_native_work_prefix(self, owner, entry, seconds, combat_left)
+		if not prepared.ok: return prepared
+		if prepared.held.is_empty(): continue
+		_shared_native_training_prefixes[int(owner.formation_index)] = prepared.held
+		requests.append_array(prepared.requests)
+	return Runtime.ok("原Native训练参与者已纳入共同pool", {"requests": requests})
+
+func _checked_runtime_target(task: Dictionary) -> Dictionary:
+	var target: String = str(task.get("target", ""))
+	if target.begins_with("feature:"): return lab.terrain.site.features.get(target.trim_prefix("feature:"), {})
+	if target == "depot": return lab.terrain.site
+	return lab.terrain.resource_base.get(target, {})
+
+func _checked_runtime_unit(task: Dictionary, target: Dictionary) -> Dictionary:
+	if not str(task.get("target", "")).begins_with("feature:"): return task
+	var action: String = str(task.get("action", ""))
+	return target.get("repair", {}) if action == "repair" else target.get("pending_build", target) if action == "construct" else target
+
+func _shared_runtime_request_source(request: Dictionary) -> Dictionary:
+	if request.get("provider") != "runtime" or request.get("key") not in ["worker", "manual"] or not request.get("participants") is Array or request.participants.size() != 1: return {}
+	var key: String = str(request.key)
+	var actor: TerrainTestCharacter = lab.character if key == "manual" else lab.npc
+	var task: Dictionary = lab.terrain.site.get(key, {})
+	if actor == null or not bool(_shared_worker_inputs.get(key + "_ready", false)) or not is_same(request.get("task"), task) or int(request.participants[0].get("person_id", 0)) != int(actor.person_id): return {}
+	var person: Dictionary = person_actions._person(int(actor.person_id))
+	if person.is_empty() or not is_same(person.body, actor) or not is_same(person.cargo, task.get("cargo")) or not is_same(person.holder, actor.item_state): return {}
+	return {"key": key, "actor": actor, "task": task, "person": person,
+		"carry_limit": int(_shared_worker_inputs.get(key + "_limit", 0))}
+
+func _shared_runtime_source_ready(source: Dictionary) -> bool:
+	# Original camp/manual work is already accepted by its owner. PA._ready
+	# checks idle admission of a NEW job and deliberately rejects this task.
+	# Preserve original ongoing-work qualification; never clear/clone activity.
+	if source.is_empty(): return false
+	var actor: TerrainTestCharacter = source.actor
+	var person: Dictionary = source.person
+	var task: Dictionary = source.task
+	if actor == null or not lab.actor_present(actor) or not is_same(person.body, actor) or person.cell != lab.terrain.cell_from_index(int(task.get("cell", -1))) or _person_has_duty(int(person.person_id)): return false
+	if person.owner is CrowdPersonOwner:
+		return _native_held_runtime_ready(int(person.person_id), task)
+	if person.owner != actor or not actor.can_act() or actor.is_moving() or actor.action_time > 0.0 or actor.guarding or actor.guard_transition_left > 0.0 or actor.guard_break_left > 0.0 or actor._rescue_left > 0.0: return false
+	return actor != lab.npc or actor.visible
+
+func bind_checked_runtime_work_prefix() -> void:
+	if lab != null and lab.terrain != null: lab.terrain.set_meta(&"site_controller", weakref(self))
+
+func _checked_runtime_refs_valid(held: Dictionary) -> bool:
+	var person: Dictionary = person_actions._person(int(held.person_id))
+	var start: Dictionary = held.start
+	# Current HP/hit/position may reject the later endpoint, never erase real
+	# positive work accepted at this same original start. No fabricated life.
+	return not person.is_empty() and person.owner == start.owner and int(person.unit) == int(start.unit) \
+		and is_same(person.body, start.body) and is_same(person.cargo, start.cargo) and is_same(person.holder, start.item_state) \
+		and is_same(lab.terrain.site.get(str(held.key)), held.task) and held.task == start.task_values \
+		and start.cargo == start.cargo_values and start.item_state == start.item_values \
+		and is_same(_checked_runtime_target(held.task), held.target_ref) and is_same(_checked_runtime_unit(held.task, held.target_ref), start.work_unit)
+
+func _siege_build_ui_team(form: Dictionary) -> Variant:
+	if lab == null or lab.terrain == null: return null
+	if bool(form.get("trial", false)):
+		if not form.has("siege_team") or form.siege_team.selected < 0: return null
+		var selected_team: int = int(form.siege_team.get_item_metadata(form.siege_team.selected))
+		for team: Variant in _siege_ui_teams():
+			if int(team.team_id) == selected_team: return team
+		return null
+	if _crowd_active():
+		var controlled: Dictionary = person_actions._person(lab.controlled_person_id())
+		return controlled.owner if not controlled.is_empty() and controlled.owner is CrowdPersonOwner and controlled.owner.has_army() else null
+	return lab.player_army()
+
+func _irrigation_choice(choice: OptionButton) -> String:
+	return str(choice.get_item_metadata(choice.selected)) if choice.selected >= 0 else ""
+
+func _irrigation_controls() -> Dictionary:
+	return _formal_columns.construction.get_meta(&"irrigation_form", {}) if _formal_columns.has("construction") else {}
+
+func _nation_ui_button(form: Dictionary, label: String, action: String) -> void:
+	_button(form.body, label, "NationOperation_" + action, func() -> void: _nation_ui_submit(form, action))
+
+func _nation_ui_choice(form: Dictionary, key: String, title: String, rows: Array) -> OptionButton:
+	_label(form.body, title, 14)
+	var choice := _options(form.body, ["請選擇"], "NationOperation_" + key)
+	choice.set_item_metadata(0, "")
+	for row: Dictionary in rows:
+		choice.add_item(str(row.label))
+		choice.set_item_metadata(choice.item_count - 1, row.id)
+	form.controls[key] = choice
+	return choice
+
+func _nation_ui_entries(records: Dictionary) -> Array:
+	var rows: Array = []
+	for key: String in records:
+		var record: Dictionary = records[key]
+		rows.append({"id": key, "label": "%s · %s%s" % [key, str(record.get("name", record.get("status", ""))),
+			" · 已接受 %d 次" % record.get("receipts", record.get("receipt_ids", [])).size()]})
+	return rows
+
+func _nation_ui_features(kinds_filter: Array) -> Array:
+	var rows: Array = []
+	for key: String in lab.terrain.site.get("features", {}):
+		var feature: Dictionary = lab.terrain.site.features[key]
+		if str(feature.get("kind", "")) in kinds_filter and str(feature.get("stage", "")) == "complete":
+			rows.append({"id": key, "label": "#%s · %s" % [key, str(Runtime.FEATURES.get(str(feature.kind), {}).get("name", feature.kind))]})
+	return rows
+
+func _nation_ui_geometry(form: Dictionary, house: bool, siege: bool = false) -> void:
+	_label(form.body, "本次施工位置；不移動人物或隊伍。操作者須已在原工位。", 14)
+	_nation_ui_number(form, "x", "地圖 X", selected.x, lab.terrain.size.x - 1)
+	_nation_ui_number(form, "y", "地圖 Y", selected.y, lab.terrain.size.y - 1)
+	if siege:
+		_nation_ui_choice(form, "facing", "器械朝向", [{"id": Vector2i.RIGHT, "label": "東"}, {"id": Vector2i.DOWN, "label": "南"}, {"id": Vector2i.LEFT, "label": "西"}, {"id": Vector2i.UP, "label": "北"}])
+	else:
+		_nation_ui_number(form, "width", "占地寬", 3 if house else 1, 3 if house else 1, 3 if house else 1)
+		_nation_ui_number(form, "depth", "占地深", 3 if house else 1, 3 if house else 1, 3 if house else 1)
+
+func _nation_ui_list(form: Dictionary, key: String, title: String, rows: Array) -> ItemList:
+	_label(form.body, title + "（Ctrl／Shift 多選）", 14)
+	var list := ItemList.new()
+	list.name = "NationOperation_" + key
+	list.select_mode = ItemList.SELECT_MULTI
+	list.custom_minimum_size = Vector2(700, 115)
+	form.body.add_child(list)
+	for row: Dictionary in rows:
+		var index := list.add_item(str(row.label))
+		list.set_item_metadata(index, row.id)
+	form.controls[key] = list
+	return list
+
+func _nation_ui_number(form: Dictionary, key: String, title: String, value: float, maximum: float = 1000000.0, minimum: float = 0.0) -> SpinBox:
+	var row := HBoxContainer.new()
+	form.body.add_child(row)
+	_label(row, title, 14)
+	var input := SpinBox.new()
+	input.name = "NationOperation_" + key
+	input.min_value = minimum
+	input.max_value = maximum
+	input.step = 1.0
+	input.value = value
+	row.add_child(input)
+	form.controls[key] = input
+	return input
+
+func _nation_ui_order_summary(form: Dictionary, summary: Label) -> void:
+	if lab.terrain != form.data or lab.controlled_person_id() != int(form.requester):
+		summary.text = "原人物或 Site 已變更；請重開。"
+		return
+	var nation_id := str(form.nation_choice.get_item_metadata(form.nation_choice.selected))
+	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
+	var order_id := str(form.controls.order.get_item_metadata(form.controls.order.selected))
+	var records: Dictionary = nation.get("technology_operations", {}).get("orders" if str(form.technology.get_item_metadata(form.technology.selected)) == "N05" else "public_orders", {})
+	var order: Dictionary = records.get(order_id, {})
+	if order.is_empty(): summary.text = "請選原工單"; return
+	var source: Dictionary = order.get("source", order.get("payload", {}).get("source", {}))
+	var cost: Dictionary = Runtime.RANGED_RECIPES.bow.cost if records == nation.get("technology_operations", {}).get("orders", {}) else equipment_orders._public_cost(str(order.tech_id), order.payload)
+	summary.text = "狀態 %s · 已接受 %d 次\n本單成本：%s\n本人授權：%s · 已交：%s" % [str(order.status), order.get("receipt_ids", order.get("receipts", [])).size(),
+		_nation_ui_stack_text(cost), _nation_ui_stack_text(source.get("cap", {})), _nation_ui_stack_text(source.get("spent", {}))]
+
+func _nation_ui_people() -> Array:
+	var identities := {int(lab.controlled_person_id()): true}
+	for actor: TerrainTestCharacter in lab.combat_actors:
+		if is_instance_valid(actor): identities[int(actor.person_id)] = true
+	if _crowd_active():
+		for owner: RefCounted in lab.crowd_site.person_owners():
+			for unit: int in owner.combat_units: identities[int(owner.combat_identity(unit))] = true
+	else:
+		for team: TerrainArmy in lab.combat_armies:
+			for unit: int in team.command_members(): identities[int(team.combat_identity(unit))] = true
+	var keys: Array = identities.keys()
+	keys.sort()
+	var rows: Array = []
+	for identity: int in keys:
+		var person: Dictionary = person_actions._person(identity, false)
+		if person.is_empty() or float(person.hp) <= 0.0: continue
+		rows.append({"id": identity, "label": "#%d%s" % [identity, " · 目前受控" if identity == lab.controlled_person_id() else ""]})
+	return rows
+
+func _nation_ui_resource_fields(form: Dictionary, resources: Array, procurement: bool = false) -> void:
+	_label(form.body, "每項數量（0 表示本次不交）；核額與交物為兩個明示操作。" if not procurement else "每項交付／單批上限／總上限；0 不列入規格。", 14)
+	for resource: String in resources:
+		var row := HBoxContainer.new()
+		form.body.add_child(row)
+		_label(row, str(Env.ITEM_NAMES.get(resource, resource)), 14)
+		var fields := {}
+		for field: String in (["quantity", "batch", "total"] if procurement else ["quantity"]):
+			var input := SpinBox.new()
+			input.min_value = 0
+			input.max_value = 1000000
+			input.step = 1
+			input.tooltip_text = {"quantity": "本次交付／核額數量", "batch": "單批上限", "total": "總上限"}[field]
+			row.add_child(input)
+			fields[field] = input
+		form.resources[resource] = fields
+
+func _nation_ui_text(form: Dictionary, key: String, hint: String) -> LineEdit:
+	var input := LineEdit.new()
+	input.name = "NationOperation_" + key
+	input.placeholder_text = hint
+	form.body.add_child(input)
+	form.controls[key] = input
+	return input
+
+func gd_contact_runtime_candidate(candidate: Dictionary) -> bool:
+	for actual: Dictionary in _gd_contact_runtime_capture.get("priors", []):
+		if is_same(actual, candidate): return true
+	for actual: Dictionary in _gd_contact_runtime_segment.get("runtime", []):
+		if is_same(actual, candidate): return true
+	return false
+
+func _publish_sustain_team_commands(team: TerrainArmy, entry: Dictionary, was_routed: bool, outcome: Dictionary, seconds: float, safe: bool, stopped: bool) -> void:
+	if bool(entry.sustain.routed) and not was_routed:
+		_start_supply_rout(team)
+	elif bool(entry.sustain.routed) and not team.morale_retreat_terminal() and team.combat_order == TerrainArmy.CombatOrder.HOLD and stopped and not safe:
+		# A HOLD order cannot permanently cancel an available forced escape.
+		# Bounded game-time review, not a path search on every combat sample.
+		_supply_rout_review[team.team_id] = float(_supply_rout_review.get(team.team_id, 0.0)) + seconds
+		if float(_supply_rout_review[team.team_id]) >= 2.0:
+			_supply_rout_review[team.team_id] = 0.0
+			_start_supply_rout(team)
+	if bool(outcome.regrouped):
+		team.finish_morale_retreat()
+
+func checked_runtime_clock_interval() -> Dictionary:
+	return _checked_runtime_work_capture.get("clock", {})
+
+func discard_checked_runtime_work_prefix() -> void:
+	_checked_runtime_work_capture = {}
+	_gd_contact_runtime_capture = {}
+	_gd_contact_runtime_segment = {}
+	_checked_runtime_work_preparing = {}
+	_checked_runtime_work_admission = {}
+
+func _nation_ui_stack_text(stack: Dictionary) -> String:
+	var entries: PackedStringArray = []
+	for resource: String in stack:
+		entries.append("%s × %d" % [str(Env.ITEM_NAMES.get(resource, resource)), int(stack[resource])])
+	return "、".join(entries) if not entries.is_empty() else "無"
+
+func valid_checked_runtime_clock(clock: Dictionary, seconds: float) -> bool:
+	if clock.get("owner") != self or not is_same(clock, checked_runtime_clock_interval()) or not is_same(clock.get("site"), lab.terrain.site) or not is_finite(seconds) or absf(seconds - float(clock.seconds)) > PersonFatigue.WORK_PLAN_EPS or bool(clock.get("consumed", false)): return false
+	if not bool(clock.get("advanced", false)):
+		return int(lab.terrain.site.minute) == int(clock.minute) and float(lab.terrain.site.phase) == float(clock.phase) and float(lab.terrain.site.combat_left) == float(clock.combat_left)
+	# Native contacts may legitimately refresh combat_left after this clock
+	# advanced. The same source owner, interval, phase and once guard still apply.
+	return int(lab.terrain.site.minute) == int(clock.minute_after) and float(lab.terrain.site.phase) == float(clock.phase_after)
+
+var _gd_contact_runtime_capture: Dictionary = {}
+
+var _gd_contact_runtime_segment: Dictionary = {}
+
+var _shared_native_training_prefixes: Dictionary = {} # Same point only; never saved.
+
+var _checked_runtime_work_capture: Dictionary = {}
+
+var _checked_runtime_work_preparing: Dictionary = {}
+
+var _checked_runtime_work_admission: Dictionary = {}
+
+func _refresh_settlement_engineering_controls() -> void:
+	if not _formal_columns.has("construction") or not _formal_columns.construction.has_meta(&"settlement_engineering_form"): return
+	var form: Dictionary = _formal_columns.construction.get_meta(&"settlement_engineering_form")
+	var view := settlement_engineering_view()
+	if not view.ok:
+		form.status.text = str(view.message)
+		for key: String in ["save", "delete", "preview", "reuse", "add_build", "add_repair", "request", "begin", "resume", "cancel", "remove"]: form[key].disabled = true
+		return
+	var signature := JSON.stringify([view.plans, view.orders])
+	if signature != str(form.signature):
+		var selected_plan := _settlement_engineering_choice(form.plans)
+		var selected_order := _settlement_engineering_choice(form.orders)
+		form.plans.clear()
+		for key: String in view.plans:
+			form.plans.add_item(str(view.plans[key].name) + " · " + str(view.plans[key].kind))
+			form.plans.set_item_metadata(form.plans.item_count - 1, key)
+			if key == selected_plan: form.plans.select(form.plans.item_count - 1)
+		form.orders.clear()
+		for key: String in view.orders:
+			var order: Dictionary = view.orders[key]
+			if order.kind != "defense": continue
+			form.orders.add_item(key + " · " + str(order.status) + " · " + str(int(order.next_step)) + "/" + str(order.steps.size()))
+			form.orders.set_item_metadata(form.orders.item_count - 1, key)
+			if key == selected_order: form.orders.select(form.orders.item_count - 1)
+		form.signature = signature
+	form.status.text = str(view.read_only_reason) if not str(view.read_only_reason).is_empty() else "所選格 %s；所選建物 %s。方案每次重新核占地／人員／權限／完整材料。" % [str(selected), feature_key]
+	var lines: Array[String] = []
+	for step: Dictionary in form.steps:
+		var target: String = str(view.plans.get(str(step.plan_id), {}).get("name", "方案已移除")) if step.action == "construct" else "建物 #" + str(step.feature_id) + "／" + str(step.part)
+		lines.append("%d. %s · %s · 原人 #%d" % [lines.size() + 1, "施工" if step.action == "construct" else "維護", target, int(step.operator_id)])
+	form.steps_label.text = "尚未加入清單步驟。每步使用目前選中的原人。" if lines.is_empty() else "\n".join(lines)
+	var can_plan: bool = bool(view.can_command) and bool(view.effective) and bool(view.blueprints_available)
+	var can_work: bool = bool(view.can_command) and bool(view.effective) and bool(view.defense_available)
+	for key: String in ["save", "delete", "preview", "reuse"]: form[key].disabled = not can_plan
+	for key: String in ["add_build", "add_repair", "request", "begin", "resume"]: form[key].disabled = not can_work
+	# Effect suspension still permits the current original head to stop/release.
+	form.cancel.disabled = not bool(view.can_command)
+	form.remove.disabled = not bool(view.can_command)
+
+func prepare_native_sustain_point(seconds: float, requests: Array, planned: Dictionary = {}) -> Dictionary:
+	if not _crowd_active() or not is_finite(seconds) or seconds <= 0.0 or lab._region_deferring_endpoint(): return Runtime.fail("CLOCK_NOT_READY")
+	var rows: Array[Dictionary] = []
+	var payments: Array[Dictionary] = []
+	var seen: Dictionary = {}
+	for request: Dictionary in requests:
+		if not str(request.get("paused", "")).is_empty(): continue
+		if not planned.is_empty() and float(planned.jobs.get(str(request.provider), {}).get(str(request.key), {}).get("actual_seconds", 0.0)) <= 0.0: continue
+		if not request.get("payment_source") is Dictionary or not request.get("payment") is Dictionary: continue
+		var key: String = str(request.get("payment_key", str(request.provider) + ":" + str(request.key)))
+		if seen.has(key): continue
+		seen[key] = true
+		payments.append({"cargo": request.payment_source, "cost": request.payment})
+	var original_rows: Dictionary = _native_sustain_original_rows(seconds)
+	if not original_rows.ok: return original_rows
+	rows = original_rows.rows
+	# Preserve original personal-then-team order even when two original meal
+	# sources borrow the same physical inventory/location.
+	var ordered_rows: Array[Dictionary] = []
+	for row: Dictionary in rows:
+		if row.held.kind == "personal": ordered_rows.append(row)
+	for row: Dictionary in rows:
+		if row.held.kind == "team": ordered_rows.append(row)
+	rows = ordered_rows
+	var prior_lower: Array = []
+	var prior_upper: Array = payments.duplicate(false)
+	for row: Dictionary in rows:
+		for cohort: Dictionary in row.held.state_values.cohorts:
+			var until: float = float(cohort.meal_until) - float(row.held.state_values.at)
+			if until <= 0.0 or seconds > until: return Runtime.fail("SUPPLY_ENDPOINT_NOT_SETTLED")
+		var lower: Dictionary = _native_sustain_point_projection(row.held, prior_lower)
+		if not lower.ok: return lower
+		var upper: Dictionary = _native_sustain_point_projection(row.held, prior_upper)
+		if not upper.ok: return upper
+		if row.held.kind == "team" and (lower.fully_fed != upper.fully_fed or float(lower.morale_delta) != float(upper.morale_delta)):
+			return Runtime.fail("SUPPLY_WORK_ENDPOINT_COLLISION")
+		if lower.damage != upper.damage: return Runtime.fail("SUPPLY_WORK_ENDPOINT_COLLISION")
+		row.input = lower
+		prior_lower.append_array(_native_sustain_projection_debits(lower))
+		prior_upper.append_array(_native_sustain_projection_debits(upper))
+	return Runtime.ok("原共同供養input在首cost前固定", {"owner": self, "site": lab.terrain.site, "seconds": seconds, "rows": rows, "published": false})
+
+func retime_shared_native_training_begin(seconds: float, requests: Array, begin: Dictionary) -> Dictionary:
+	# Only the SAME original Lab's registered pure BEGIN may shorten its held
+	# training interval. No new inspect/selector, body setter, growth or charge.
+	if not lab.valid_native_begin_shared_window(begin) or not is_finite(seconds) or seconds <= 0.0 \
+		or seconds != float(begin.game_seconds) or not is_same(requests, begin.requests): return Runtime.fail("STALE_INTERVAL")
+	for held: Dictionary in _shared_native_training_prefixes.values():
+		if seconds > float(held.seconds) + PersonFatigue.WORK_PLAN_EPS: return Runtime.fail("INVALID_INTERVAL")
+		for identity: int in held.people:
+			var found: bool = false
+			for request: Dictionary in requests:
+				if str(request.provider) == "training" and str(request.key) == str(identity) \
+					and request.participants.size() == 1 and is_same(request.participants[0], held.people[identity].participant): found = true; break
+			if not found: return Runtime.fail("STALE_SOURCE")
+	for held: Dictionary in _shared_native_training_prefixes.values(): held.seconds = seconds
+	return Runtime.ok("Original held training interval retimed without growth/effort")
+
+func validate_native_sustain_point(prepared: Dictionary, runtime_priors: Array = []) -> Dictionary:
+	if prepared.get("owner") != self or not is_same(prepared.get("site"), lab.terrain.site) or prepared.get("published") != false:
+		return Runtime.fail("STALE_SOURCE")
+	var payments: Array[Dictionary] = []
+	for prior: Dictionary in runtime_priors:
+		if not prior.get("payment", {}).is_empty(): payments.append(prior.payment)
+	var candidates: Array[Dictionary] = []
+	for row: Dictionary in prepared.rows:
+		var held: Dictionary = row.held
+		if held.kind == "team":
+			if not is_same(_supply_entry(held.owner), held.entry) or not is_same(held.entry.get("sustain"), held.state) \
+				or not is_same(_supply_stock(held.entry), held.stock) or int(held.entry.revision) != int(held.revision): return Runtime.fail("STALE_SOURCE")
+		else:
+			var current: Dictionary = _supply_person(int(held.owner_id))
+			if current.is_empty() or not is_same(lab.terrain.site.get("person_supply", {}).get(held.owner_id), held.state) \
+				or not is_same(current.holder, held.entry) or not is_same(current.cargo, held.stock) or held.entry != held.holder_values:
+				return Runtime.fail("STALE_SOURCE")
+		if held.state != held.state_values or held.stock != held.stock_values: return Runtime.fail("STALE_SOURCE")
+		for source: Dictionary in held.stock_sources:
+			if not source.key.is_empty() and (not is_same(held.stock.get(source.key), source.location) \
+				or not is_same(source.location.get("inventory"), source.inventory)): return Runtime.fail("STALE_SOURCE")
+		var candidate: Dictionary = _native_sustain_point_projection(held, payments)
+		if not candidate.ok: return candidate
+		if held.kind == "team" and (candidate.fully_fed != row.input.fully_fed or float(candidate.morale_delta) != float(row.input.morale_delta) or candidate.damage != row.input.damage):
+			return Runtime.fail("SUPPLY_WORK_ENDPOINT_COLLISION")
+		candidates.append(candidate)
+		payments.append_array(_native_sustain_projection_debits(candidate))
+	return Runtime.ok("原Sustain來源與前序真支付已純核", {"prepared": prepared, "candidates": candidates})
+
+func publish_native_sustain_inputs(prepared: Dictionary) -> void:
+	# Original input setters only: no meal cost, hunger state, HP or clock writes.
+	for row: Dictionary in prepared.rows:
+		if row.held.kind != "team": continue
+		lab.crowd_site.set_sustain_input(int(row.held.owner.formation_index), bool(row.input.fully_fed), float(row.input.morale_delta))
+
+func _settlement_engineering_choice(choice: OptionButton) -> String:
+	return str(choice.get_item_metadata(choice.selected)) if choice.selected >= 0 and choice.selected < choice.item_count else ""
+
+func settlement_engineering_view() -> Dictionary:
+	if lab == null or lab.terrain == null: return SiteRuntime.fail("NO_SITE")
+	var owner: Variant = load("res://scripts/terrain_lab/site_settlement.gd")
+	var settlement: Dictionary = owner.call("record", lab.terrain)
+	if settlement.is_empty(): return SiteRuntime.fail("UNREGISTERED")
+	var operations: Variant = settlement.get("technology_operations")
+	if operations != null and not owner.call("valid_technology_operations", lab.terrain, operations): return SiteRuntime.fail("CORRUPT_STATE")
+	var status: Dictionary = owner.call("status", lab)
+	var duty: Dictionary = person_actions._technology_scope_duty("settlement", settlement, true)
+	var enabled9: bool = SiteTechnologyCatalog.get_node("S09").get("enabled") == true
+	var enabled10: bool = SiteTechnologyCatalog.get_node("S10").get("enabled") == true
+	return SiteRuntime.ok("", {"settlement_id": str(settlement.settlement_id), "effective": bool(status.get("effective", false)),
+		"can_command": bool(duty.get("ok", false)) and int(duty.get("decider", -1)) == int(person_actions._technology_controlled()),
+		"blueprints_available": enabled9 and SiteTechnology.scope_known(settlement.get("technology", {}), "S09"),
+		"defense_available": enabled10 and SiteTechnology.scope_known(settlement.get("technology", {}), "S10"),
+		"plans": operations.get("plans", {}).duplicate(true) if operations is Dictionary else {},
+		"orders": operations.get("orders", {}).duplicate(true) if operations is Dictionary else {},
+		"source_feature_id": feature_key, "anchor": selected, "read_only_reason": "真实操作和命名验收未发布" if not enabled9 or not enabled10 else ""})
+
+func _nation_arsenal_request(nation_id: String, order_id: String, order: Dictionary, preview: bool, work_target: Dictionary = {}) -> Dictionary:
+	if order.get("tech_id") != "N11" or order.get("scope_site_id") != str(lab.terrain.site.id) \
+		or order.get("scope_nation_id") != nation_id or not EquipmentOrders._valid_public_order(order, {}, {}, order_id): return Runtime.fail("INVALID")
+	if preview:
+		# The original request owner has checked this not-yet-stored candidate,
+		# current command authority and explicit original team consent. Only
+		# original host/person/industry/definition availability is projected here.
+		var host: Dictionary = equipment_orders._arsenal_workshop_context(order)
+		if not host.ok: return host
+		if order.payload.route == "armor":
+			if Runtime.FEATURE_RECIPES.get("smithy", {}).get("iron_armor", {}).is_empty(): return Runtime.fail("NO_RECIPE")
+		elif Runtime.SIEGE_DEFINITIONS.get("ballista", {}).is_empty(): return Runtime.fail("NO_RECIPE")
+		return Runtime.ok("原作坊、原操作者與實際配方可登記具名軍械單；尚未付款或派工")
+	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
+	var actual: Dictionary = nation.get("technology_operations", {}).get("public_orders", {}).get(order_id, {})
+	if actual.is_empty() or actual != order or int(actual.authorizer_id) != int(lab.controlled_person_id()): return Runtime.fail("STALE_ORDER")
+	if int(actual.project_id) == 0:
+		return Runtime.begin_nation_technology_operation(lab.terrain, nation_id, order_id, false, work_target)
+	var binding := "ballista_build" if actual.payload.route == "siege" else "iron_armor"
+	var target := "vehicle:" + str(int(lab.terrain.site.next_vehicle)) if actual.payload.route == "siege" else "feature:" + str(actual.payload.host_id)
+	return person_actions.begin_scope_technology_phase(int(lab.controlled_person_id()), "nation", nation_id, binding, target, work_target)
+
+func _nation_build_request(nation_id: String, order_id: String, request: Dictionary, preview: bool) -> Dictionary:
+	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
+	var order: Dictionary = nation.get("technology_operations", {}).get("public_orders", {}).get(order_id, {})
+	if order.is_empty() or order.tech_id not in ["N02", "N06", "N10"] or not request.get("cells") is Array: return Runtime.fail("NO_TARGET")
+	var requester := int(lab.controlled_person_id())
+	var expected := int(order.payload.local_person_id) if order.tech_id == "N10" else int(order.authorizer_id)
+	if requester != expected or int(request.get("requester_id", -1)) != requester: return Runtime.fail("NO_AUTHORITY")
+	var cells: Array[int] = []
+	for index: Variant in request.cells:
+		if not EquipmentOrders.Technology.integer(index, 0, lab.terrain.size.x * lab.terrain.size.y - 1): return Runtime.fail("INVALID")
+		cells.append(int(index))
+	var binding := "house_build" if order.tech_id == "N06" else "road_build"
+	var work_target := {"cells": cells, "options": {}}
+	if int(order.project_id) == 0: return Runtime.begin_nation_technology_operation(lab.terrain, nation_id, order_id, preview, work_target)
+	var target := "feature:" + str(int(lab.terrain.site.next_feature))
+	var selected_phase: Dictionary = person_actions._nation_phase_token(nation_id, order_id, binding, target)
+	if not selected_phase.ok: return selected_phase
+	if selected_phase.token.is_empty(): return Runtime.fail("STALE_PROJECT")
+	return Runtime.begin_technology_operation(lab.terrain, selected_phase.token, preview, work_target)
+
+func publish_native_sustain_point(checked: Dictionary) -> void:
+	# Called after common host work/payment and native publishers. Write only
+	# Sustain's own meal debit delta, preserving other accepted cargo costs.
+	for candidate: Dictionary in checked.candidates:
+		var held: Dictionary = candidate.held
+		for source: Dictionary in held.stock_sources:
+			var before: Dictionary = candidate.before_food if source.key.is_empty() else candidate.before_food[source.key].inventory
+			var after: Dictionary = candidate.stock if source.key.is_empty() else candidate.stock[source.key].inventory
+			for food: String in Sustain.FOODS:
+				var amount: int = int(before.get(food, 0)) - int(after.get(food, 0))
+				if amount > 0: source.inventory[food] = int(source.inventory.get(food, 0)) - amount
+			if not source.key.is_empty():
+				var opened: float = float(candidate.before_food[source.key].open_rations) - float(candidate.stock[source.key].open_rations)
+				source.location.open_rations = float(source.location.open_rations) - opened
+		held.state.clear()
+		held.state.merge(candidate.state)
+		if held.kind == "team": held.entry.revision = int(held.entry.revision) + int(candidate.revision_delta)
+		elif int(candidate.revision_delta) > 0: held.entry.version = int(held.entry.version) + 1
+		for identity: int in candidate.damage:
+			# The SAME original pendingpoint queue preserves native count and HP
+			# until common publication; no proxy/body snapshot is charged.
+			_apply_supply_damage(identity, float(candidate.damage[identity]))
+		for identity: int in held.members:
+			if held.kind != "team": break
+			var hp: float = lab.crowd_site.work_fatigue_forecast_hp(identity) if lab.crowd_site.contains_person(identity) else float(held.members[identity].hp)
+			var ko: float = float(held.owner.combat_hot_get(held.owner.index_for_identity(identity), &"ko", 0.0)) if lab.crowd_site.contains_person(identity) else float(held.members[identity].ko)
+			held.entry.life_checkpoint[str(identity)] = 2 if hp <= 0.0 else 1 if ko > 0.0 else 0
+	checked.prepared.published = true
+
+func settle_gd_mesh_supply_contact(prepared: Dictionary) -> void:
+	# Same original contact group just applied real HP/KO. No elapsed advance,
+	# ration debit, body step, synthetic casualty or second supply timer.
+	assert(prepared.get("owner") == self)
+	for row: Dictionary in prepared.rows:
+		if row.kind != "team": continue
+		assert(is_same(row.state, row.entry.sustain))
+		var was_routed: bool = bool(row.state.routed)
+		_observe_team_life(row.owner, row.entry, row.members, row.reader)
+		_publish_sustain_team_commands(row.owner, row.entry, was_routed, {"regrouped": false}, 0.0,
+			_team_safe(row.owner, row.members), _team_stopped(row.owner, true))
+
+func native_checked_supply_interval_limit(maximum: float) -> Dictionary:
+	# Counterfactual BEGIN bounds call this READ-ONLY method. The original zero
+	# meal publisher runs once in shared_supply_event_limit before snapshot.
+	if not is_finite(maximum) or maximum <= 0.0: return Runtime.fail("INVALID_TIME")
+	var rows: Dictionary = _native_sustain_original_rows(0.0)
+	if not rows.ok: return rows
+	var limit: float = maximum
+	for row: Dictionary in rows.rows:
+		for cohort: Dictionary in row.held.state_values.cohorts:
+			var until: float = float(cohort.meal_until) - float(row.held.state_values.at)
+			if not is_finite(until) or until <= 0.0: return Runtime.fail("SUPPLY_ENDPOINT_NOT_SETTLED")
+			limit = minf(limit, until)
+			var deficit: float = 1.0 - float(cohort.coverage)
+			if deficit <= 0.0: continue
+			var hunger: float = float(cohort.hunger)
+			if hunger < 48.0: limit = minf(limit, (48.0 - hunger) / deficit * Sustain.HOUR)
+			for identity: int in cohort.ids:
+				var hp: float = float(row.held.life.get(identity, {}).get("hp", 0.0))
+				if hp > 0.0: limit = minf(limit, (maxf(0.0, 48.0 - hunger) + hp) / deficit * Sustain.HOUR)
+	for team: TerrainArmy in lab.combat_armies:
+		if not team.combat_enabled or _native_sustain_original_team(team): continue
+		var entry: Dictionary = _supply_entry(team)
+		if not entry.is_empty(): limit = minf(limit, _shared_supply_state_limit(entry.sustain, _team_members(team), maximum))
+	for key: String in lab.terrain.site.get("person_supply", {}):
+		if _native_sustain_original_person(int(key)): continue
+		limit = minf(limit, _shared_supply_state_limit(lab.terrain.site.person_supply[key], captivity_supply.personal_members_id(int(key)), maximum))
+	if not is_finite(limit) or limit <= 0.0: return Runtime.fail("INVALID_TIME")
+	return Runtime.ok("Original current supply boundary; no state/cost/time writes", {"game_seconds": limit})
+
+func _native_sustain_original_rows(seconds: float) -> Dictionary:
+	if not _crowd_active() or not is_finite(seconds) or seconds < 0.0: return Runtime.fail("CLOCK_NOT_READY")
+	var rows: Array[Dictionary] = []
+	var feeding: Dictionary = captivity_supply.feeding_index()
+	for owner: RefCounted in lab.crowd_site.person_owners():
+		var entry: Dictionary = _supply_entry(owner)
+		if entry.is_empty(): continue
+		var originals: Dictionary = {}
+		for index: int in owner.records: originals[owner.combat_identity(index)] = owner.records[index]
+		for index: int in owner.actors: originals[owner.combat_identity(index)] = _actor_supply_adapter(owner.actors[index])
+		var members: Dictionary = captivity_supply.team_members(owner, originals, feeding, lab.crowd_site._records)
+		var life: Dictionary = {}
+		for identity: int in members:
+			if lab.crowd_site.contains_person(identity):
+				var physical: Dictionary = lab.crowd_site.soldier_state(int(lab.crowd_site._index_by_id[identity]))
+				life[identity] = {"hp": float(physical.hp), "ko": float(physical.ko), "captive": bool(physical.captive)}
+			else:
+				life[identity] = {"hp": float(members[identity].hp), "ko": float(members[identity].ko), "captive": bool(members[identity].captive)}
+		var stock: Dictionary = _supply_stock(entry)
+		var sources: Array[Dictionary] = []
+		if int(entry.get("version", 0)) == 3:
+			for key: String in stock: sources.append({"key": key, "location": stock[key], "inventory": stock[key].inventory})
+		else: sources.append({"key": "", "location": {}, "inventory": stock})
+		var held: Dictionary = {"kind": "team", "owner": owner, "entry": entry, "state": entry.sustain, "state_values": entry.sustain.duplicate(true),
+			"stock": stock, "stock_values": stock.duplicate(true), "stock_sources": sources, "revision": int(entry.revision),
+			"members": members, "life": life, "seconds": seconds}
+		if int(entry.get("version", 0)) == 3:
+			var original: TerrainArmy = null
+			for plan: Dictionary in lab.crowd_site._original_team_plans:
+				if int(plan.crowd_formation) == int(owner.formation_index) and int(plan.source.team_id) == int(owner.team_id): original = plan.source; break
+			if original == null: return Runtime.fail("STALE_SUPPLY_OWNER")
+			held["food_locations"] = ship_food_locations(original, members)
+		rows.append({"held": held})
+	# Personal meals use the SAME original personal state/cargo. Native people
+	# must not also receive the legacy positive advance_person_supply call.
+	for owner_id: String in lab.terrain.site.get("person_supply", {}):
+		var state: Dictionary = lab.terrain.site.person_supply[owner_id]
+		if state.is_empty(): continue
+		var person: Dictionary = _supply_person(int(owner_id))
+		if person.is_empty(): continue
+		var members: Dictionary = captivity_supply.personal_members_id(int(owner_id))
+		var includes_native: bool = lab.crowd_site.contains_person(int(person.person_id))
+		for identity: int in members: includes_native = includes_native or lab.crowd_site.contains_person(identity)
+		if not includes_native: continue
+		var life: Dictionary = {}
+		for identity: int in members:
+			if lab.crowd_site.contains_person(identity):
+				var physical: Dictionary = lab.crowd_site.soldier_state(int(lab.crowd_site._index_by_id[identity]))
+				life[identity] = {"hp": float(physical.hp), "ko": float(physical.ko), "captive": bool(physical.captive)}
+			else: life[identity] = {"hp": float(members[identity].hp), "ko": float(members[identity].ko), "captive": bool(members[identity].captive)}
+		var held: Dictionary = {"kind": "personal", "owner_id": owner_id, "person": person,
+			"entry": person.holder, "holder_values": person.holder.duplicate(true), "state": state, "state_values": state.duplicate(true),
+			"stock": person.cargo, "stock_values": person.cargo.duplicate(true),
+			"stock_sources": [{"key": "", "location": {}, "inventory": person.cargo}], "revision": int(person.holder.version),
+			"members": members, "life": life, "seconds": seconds}
+		rows.append({"held": held})
+	return Runtime.ok("Actual original Native Sustain sources captured", {"rows": rows})
+
+func _native_sustain_point_projection(held: Dictionary, payments: Array) -> Dictionary:
+	# The borrowed original life sample and stock/state candidates are local to
+	# this accepted interval. Sustain remains the only meal/hunger authority.
+	var state: Dictionary = held.state_values.duplicate(true)
+	var stock: Dictionary = held.stock_values.duplicate(true)
+	for debit: Dictionary in payments:
+		for source: Dictionary in held.stock_sources:
+			if not is_same(debit.get("cargo"), source.inventory): continue
+			var candidate: Dictionary = stock if source.key.is_empty() else stock[source.key].inventory
+			for food: String in Sustain.FOODS:
+				var amount: int = int(debit.get("cost", {}).get(food, 0))
+				if amount < 0 or int(candidate.get(food, 0)) < amount: return Runtime.fail("MATERIALS")
+				if amount > 0: candidate[food] = int(candidate.get(food, 0)) - amount
+			if not source.key.is_empty() and is_same(debit.get("location"), source.location):
+				var opened: float = float(debit.get("open_rations", 0.0))
+				if opened < 0.0 or float(stock[source.key].open_rations) < opened: return Runtime.fail("MATERIALS")
+				stock[source.key].open_rations = float(stock[source.key].open_rations) - opened
+	var before_food: Dictionary = stock.duplicate(true)
+	var pending_hp: Dictionary = {}
+	var reader: Callable = func(identity: int, field: StringName) -> Variant:
+		if held.life.has(identity) and held.life[identity].has(String(field)): return held.life[identity][String(field)]
+		return held.members.get(identity, {}).get(String(field))
+	var left: float = float(held.seconds)
+	var fully_fed: bool = true
+	var morale_delta: float = 0.0
+	var revision_delta: int = 0
+	var damage: Dictionary = {}
+	while left > 0.0:
+		state.morale = 50.0
+		state.routed = false
+		state.regroup_seconds = 0.0
+		var seconds: float = minf(left, 600.0)
+		var at: float = float(state.at)
+		for cohort: Dictionary in state.cohorts:
+			var until: float = float(cohort.meal_until)
+			if until <= at: until = Sustain._next_meal(at)
+			seconds = minf(seconds, until - at)
+		if not is_finite(seconds) or seconds <= 0.0 or at + seconds <= at: return Runtime.fail("INVALID_TIME")
+		var context: Dictionary = {"safe": false, "stopped": false, "hot_read": reader, "pending_hp": pending_hp}
+		if held.has("food_locations"): context["food_locations"] = held.food_locations
+		var outcome: Dictionary = Sustain.advance_to(state, held.members, stock, at + seconds, context)
+		if not outcome.ok: return outcome
+		fully_fed = fully_fed and bool(outcome.fully_fed)
+		morale_delta += float(state.morale) - 50.0
+		if float(outcome.consumed_rations) > 0.0: revision_delta += 1
+		for identity: int in outcome.damage:
+			damage[identity] = float(damage.get(identity, 0.0)) + float(outcome.damage[identity])
+		left = maxf(0.0, left - seconds)
+	state.morale = float(held.state_values.morale)
+	state.routed = bool(held.state_values.routed)
+	state.regroup_seconds = float(held.state_values.regroup_seconds)
+	if int(held.revision) + revision_delta > 2147483647: return Runtime.fail("STALE_SOURCE")
+	return Runtime.ok("原Sustain純正時間候選；未扣物／HP", {"held": held, "state": state, "stock": stock,
+		"before_food": before_food, "fully_fed": fully_fed, "morale_delta": morale_delta,
+		"revision_delta": revision_delta, "damage": damage})
+
+func _native_sustain_projection_debits(candidate: Dictionary) -> Array[Dictionary]:
+	var debits: Array[Dictionary] = []
+	for source: Dictionary in candidate.held.stock_sources:
+		var before: Dictionary = candidate.before_food if source.key.is_empty() else candidate.before_food[source.key].inventory
+		var after: Dictionary = candidate.stock if source.key.is_empty() else candidate.stock[source.key].inventory
+		var cost: Dictionary = {}
+		for food: String in Sustain.FOODS:
+			var amount: int = int(before.get(food, 0)) - int(after.get(food, 0))
+			if amount > 0: cost[food] = amount
+		var opened: float = 0.0 if source.key.is_empty() else float(candidate.before_food[source.key].open_rations) - float(candidate.stock[source.key].open_rations)
+		debits.append({"cargo": source.inventory, "cost": cost, "location": source.location, "open_rations": opened})
+	return debits
+
+func validate_shared_native_training_prefix(planned: Dictionary, requests: Array) -> Dictionary:
+	var checked: Array[Dictionary] = []
+	var formations: Array = _shared_native_training_prefixes.keys()
+	formations.sort()
+	for formation: int in formations:
+		var item: Dictionary = TrainingGround.checked_native_work_prefix(self, _shared_native_training_prefixes[formation], planned, requests)
+		if not item.ok: return item
+		checked.append(item)
+	return Runtime.ok("原Native训练所有同held前缀已预验", {"checked": checked})
+
+func native_held_actual_work_person(identity: int) -> bool:
+	# Admission to the ORIGINAL fire reader only, never a new work selector or
+	# person permission. Existing _person_has_duty remains unchanged so ongoing
+	# Runtime work does not reject its own source recheck as "busy".
+	if not _crowd_active() or not lab.crowd_site.contains_person(identity) \
+		or lab.crowd_site.work_fatigue_point_active() or int(lab.crowd_site._work_fatigue_tick) < 0: return false
+	var native_owner: Variant = lab.crowd_site.person_owner(identity)
+	var snapshot: Dictionary = lab.crowd_site.work_fatigue_snapshot_for_owner(native_owner)
+	if snapshot.is_empty() or int(snapshot.get("tick", -1)) != int(lab.crowd_site._work_fatigue_tick): return false
+	var hot: PackedFloat64Array = lab.crowd_site.crowd.work_fatigue_state(int(native_owner.formation_index))
+	if hot.size() < 5 or int(hot[0]) != int(snapshot.tick) or float(hot[2]) != float(snapshot.pool.fatigue) \
+		or float(hot[3]) != float(snapshot.pool.fatigue_rest) or int(hot[4]) != int(snapshot.pool.count): return false
+	for request: Dictionary in lab._shared_work_requests:
+		if request.get("provider") not in ["runtime", "training"] or not str(request.get("paused", "")).is_empty() \
+			or not is_finite(float(request.get("remaining", -1.0))) or float(request.get("remaining", 0.0)) <= 0.0 \
+			or float(request.get("max_game_seconds", 0.0)) <= 0.0 or request.get("participants", []).size() != 1: continue
+		var participant: Dictionary = request.participants[0]
+		if int(participant.get("person_id", 0)) != identity or str(participant.get("native_effort_kind", "")) != "work" \
+			or participant.get("native_owner") != native_owner or not is_same(participant.get("native_snapshot"), snapshot) \
+			or not is_finite(float(participant.get("effort_rate", 0.0))) or float(participant.get("effort_rate", 0.0)) <= 0.0: continue
+		var unit: int = int(participant.get("unit", -1))
+		if native_owner.index_for_identity(identity) != unit or not native_owner.combat_units.has(unit) \
+			or not is_same(native_owner.combat_units[unit], participant.get("original_body")): continue
+		var body: Dictionary = participant.get("body", {})
+		if not is_same(body.get("_fatigue_pool"), snapshot.pool) \
+			or bool(participant.get("rest_limited", true)) and PersonFatigue.needs_work_rest(PersonFatigue.read(body), bool(body.get("work_resting", false))): continue
+		if not lab.crowd_site.work_fatigue_work_start_ready(identity): continue
+		if request.provider == "runtime":
+			var source: Dictionary = _shared_runtime_request_source(request)
+			if source.is_empty() or not _shared_runtime_source_ready(source): continue
+		else:
+			var held: Dictionary = _shared_native_training_prefixes.get(int(native_owner.formation_index), {})
+			if held.is_empty() or not is_same(held.snapshot, snapshot) or held.owner != native_owner \
+				or not held.people.has(identity) or not is_same(held.people[identity].participant, participant) \
+				or not is_same(lab.terrain.site.get("team_supply", {}).get(str(native_owner.team_id)), held.entry) \
+				or not bool(held.entry.get("training_order", false)) \
+				or int(held.entry.get("training_requester", -1)) != int(held.commander_id) \
+				or str(held.entry.get("training_feature_id", "")) != str(held.feature_id) \
+				or not is_same(lab.terrain.site.features.get(str(held.feature_id)), held.feature): continue
+			var current: Dictionary = TrainingGround.inspect(self, int(native_owner.team_id), str(held.feature_id))
+			if not current.ok or int(current.get("commander_id", -1)) != int(held.commander_id) \
+				or not bool(current.get("safe", false)) or not current.get("eligible_ids", []).has(identity) \
+				or not lab.crowd_site.crowd.work_training_start_ready(int(native_owner.formation_index), float(lab.terrain.site.combat_left)): continue
+		return true
+	return false
+
+func _install_settlement_engineering_controls(column: VBoxContainer) -> void:
+	column.add_child(HSeparator.new())
+	_label(column, "施工方案與有限防禦清單", 18)
+	var form := {"steps": [], "signature": "", "caps": {}}
+	column.set_meta(&"settlement_engineering_form", form)
+	form.status = _label(column, "", 14)
+	form.name = LineEdit.new()
+	form.name.placeholder_text = "方案名稱（目前選中已完工建物）"
+	form.name.max_length = 48
+	column.add_child(form.name)
+	form.plans = _options(column, [], "SettlementEngineeringPlans")
+	var row := HBoxContainer.new()
+	column.add_child(row)
+	form.save = _button(row, "保存幾何", "SaveSettlementBlueprint", func() -> void: show_result(save_selected_settlement_blueprint(str(form.name.text))); _refresh_settlement_engineering_controls())
+	form.delete = _button(row, "移除方案", "DeleteSettlementBlueprint", func() -> void: show_result(delete_selected_settlement_blueprint(_settlement_engineering_choice(form.plans))); _refresh_settlement_engineering_controls())
+	row = HBoxContainer.new()
+	column.add_child(row)
+	form.preview = _button(row, "預檢重用", "PreviewSettlementBlueprint", func() -> void: show_result(preview_settlement_blueprint(_settlement_engineering_choice(form.plans))))
+	form.reuse = _button(row, "在所選格重用", "ReuseSettlementBlueprint", func() -> void: show_result(reuse_selected_settlement_blueprint(_settlement_engineering_choice(form.plans))); _refresh_settlement_engineering_controls())
+	form.steps_label = _label(column, "尚未加入清單步驟。每步使用目前選中的原人。", 14)
+	row = HBoxContainer.new()
+	column.add_child(row)
+	form.add_build = _button(row, "加入防禦施工", "AddSettlementDefenseBuild", func() -> void: _settlement_engineering_add_step(form, "construct"))
+	form.add_repair = _button(row, "加入所選部件維護", "AddSettlementDefenseRepair", func() -> void: _settlement_engineering_add_step(form, "repair"))
+	_button(row, "清空草稿", "ClearSettlementDefenseDraft", func() -> void: form.steps.clear(); _refresh_settlement_engineering_controls())
+	_label(column, "本單材料上限（每步先預檢，開始才按完整原成本付款）", 14)
+	row = HBoxContainer.new()
+	column.add_child(row)
+	for resource: String in ["wood", "stone", "iron", "rope"]:
+		_label(row, str(Env.ITEM_NAMES.get(resource, resource)), 14)
+		var amount := SpinBox.new()
+		amount.min_value = 0
+		amount.max_value = 10000
+		amount.step = 1
+		amount.custom_minimum_size.x = 90
+		row.add_child(amount)
+		form.caps[resource] = amount
+	form.request = _button(column, "登記有限清單並明示本隊同意", "RequestSettlementDefense", func() -> void:
+		var cap := {}
+		for resource: String in form.caps:
+			var amount: int = int(form.caps[resource].value)
+			if amount > 0: cap[resource] = amount
+		var people: Array = []
+		for step: Dictionary in form.steps:
+			if not people.has(int(step.operator_id)): people.append(int(step.operator_id))
+		var result := request_settlement_defense_work(form.steps, people, cap)
+		show_result(result)
+		if result.ok: form.steps.clear()
+		_refresh_settlement_engineering_controls())
+	form.orders = _options(column, [], "SettlementDefenseOrders")
+	row = HBoxContainer.new()
+	column.add_child(row)
+	form.begin = _button(row, "開始下一步", "BeginSettlementDefense", func() -> void: show_result(begin_settlement_defense_work(_settlement_engineering_choice(form.orders))); _refresh_settlement_engineering_controls())
+	form.resume = _button(row, "接續已付步驟", "ResumeSettlementDefense", func() -> void: show_result(resume_settlement_defense_work(_settlement_engineering_choice(form.orders))); _refresh_settlement_engineering_controls())
+	form.cancel = _button(row, "停止並解除本單", "CancelSettlementDefense", func() -> void: show_result(cancel_settlement_defense_work(_settlement_engineering_choice(form.orders))); _refresh_settlement_engineering_controls())
+	form.remove = _button(column, "移除完成／取消清單", "RemoveSettlementDefense", func() -> void: show_result(remove_settlement_defense_work(_settlement_engineering_choice(form.orders))); _refresh_settlement_engineering_controls())
+	_refresh_settlement_engineering_controls()
+
+func native_sustain_point_covers_person(prepared: Dictionary, identity: int) -> bool:
+	if prepared.get("owner") != self or not is_same(prepared.get("site"), lab.terrain.site): return false
+	for row: Dictionary in prepared.get("rows", []):
+		if row.held.kind == "personal" and int(row.held.owner_id) == identity: return true
+	return false
+
+func publish_shared_runtime_work_prefix(admitted: Dictionary) -> Dictionary:
+	assert(admitted.ok and is_same(admitted, _checked_runtime_work_admission))
+	if bool(admitted.get("published", false)): return {"handled_seconds": {}}
+	assert(is_same(admitted.plan, lab._shared_work_plan) and is_same(admitted.plan, _shared_work_plan))
+	var handled := {}
+	for candidate: Dictionary in admitted.runtime: Runtime.publish_checked_work_prefix(candidate)
+	for prefix: Dictionary in admitted.prefixes:
+		lab._shared_runtime_consumed[str(prefix.held.key)] = true # No legacy work-time fallback.
+		if float(prefix.actual_seconds) > 0.0:
+			handled[int(prefix.person_id)] = float(prefix.actual_seconds)
+			if not prefix.start.owner is CrowdPersonOwner:
+				lab._fatigue_work_seconds[prefix.held.actor] = float(lab._fatigue_work_seconds.get(prefix.held.actor, 0.0)) + float(prefix.actual_seconds)
+	admitted.published = true
+	return {"handled_seconds": handled}
+
+func _native_sustain_original_person(identity: int) -> bool:
+	if not _crowd_active(): return false
+	if lab.crowd_site.contains_person(identity): return true
+	for member: int in captivity_supply.personal_members_id(identity):
+		if lab.crowd_site.contains_person(member): return true
+	return false
+
+func settle_native_supply_begin_endpoint(maximum: float) -> Dictionary:
+	if not is_finite(maximum) or maximum <= 0.0 or lab._region_deferring_endpoint(): return Runtime.fail("CLOCK_NOT_READY")
+	var original: Dictionary = _native_sustain_original_rows(0.0)
+	if not original.ok: return original
+	# Same original zero-resupply order: teams first, then personal owners.
+	var candidates: Array[Dictionary] = []
+	var prior: Array = []
+	var limit: float = maximum
+	for row: Dictionary in original.rows:
+		var candidate: Dictionary = _native_sustain_due_candidate(row.held, prior)
+		if not candidate.ok: return candidate
+		candidates.append(candidate)
+		prior.append_array(_native_sustain_projection_debits(candidate))
+		for cohort: Dictionary in candidate.state.cohorts:
+			var meal: float = float(cohort.meal_until) - float(candidate.state.at)
+			if not is_finite(meal) or meal <= 0.0: return Runtime.fail("INVALID_TIME")
+			limit = minf(limit, meal)
+			var deficit: float = 1.0 - float(cohort.coverage)
+			if deficit <= 0.0: continue
+			var hunger: float = float(cohort.hunger)
+			if hunger < 48.0: limit = minf(limit, (48.0 - hunger) / deficit * Sustain.HOUR)
+			for identity: int in cohort.ids:
+				var hp: float = float(row.held.life.get(identity, {}).get("hp", 0.0))
+				if hp <= 0.0: continue
+				limit = minf(limit, (maxf(0.0, 48.0 - hunger) + hp) / deficit * Sustain.HOUR)
+	if not is_finite(limit) or limit <= 0.0: return Runtime.fail("INVALID_TIME")
+	# ALL original states/stocks have been checked, with shared inventory debits.
+	# No callback/yield can alter them before this original zero-time tail.
+	for candidate: Dictionary in candidates:
+		var held: Dictionary = candidate.held
+		for source: Dictionary in held.stock_sources:
+			var before: Dictionary = candidate.before_food if source.key.is_empty() else candidate.before_food[source.key].inventory
+			var after: Dictionary = candidate.stock if source.key.is_empty() else candidate.stock[source.key].inventory
+			for food: String in Sustain.FOODS:
+				var amount: int = int(before.get(food, 0)) - int(after.get(food, 0))
+				if amount > 0: source.inventory[food] = int(source.inventory.get(food, 0)) - amount
+			if not source.key.is_empty():
+				source.location.open_rations = float(source.location.open_rations) - (float(candidate.before_food[source.key].open_rations) - float(candidate.stock[source.key].open_rations))
+		held.state.clear()
+		held.state.merge(candidate.state)
+		if held.kind == "team": held.entry.revision = int(held.entry.revision) + int(candidate.revision_delta)
+		elif int(candidate.revision_delta) > 0: held.entry.version = int(held.entry.version) + 1
+	return Runtime.ok("Original zero meal settled before Native snapshot, no elapsed/HP/fatigue", {"game_seconds": limit})
+
+func _native_sustain_original_team(team: TerrainArmy) -> bool:
+	if not _crowd_active(): return false
+	for plan: Dictionary in lab.crowd_site._original_team_plans:
+		if is_same(plan.source, team): return true
+	return false
+
+func finish_shared_native_training_prefix(prepared: Dictionary) -> void:
+	# AFTER actual World common publisher, then current authority/cancellation.
+	for item: Dictionary in prepared.get("checked", []): TrainingGround.finish_native_work_prefix(self, item)
+	_shared_native_training_prefixes.clear()
+
+# ORIGINAL collector insert in prepare_shared_owner_work_requests():
+# after original worker/manual inputs, BEFORE Army training/delivery loop:
+#   if _crowd_active():
+#       var native_training: Dictionary = prepare_shared_native_training_requests(seconds, float(lab.terrain.site.combat_left))
+#       if not native_training.ok: latch_original_step_fault(native_training); return []
+#       requests.append_array(native_training.requests)
+# The caller must stop the original point on error, not treat [] as success.
+# Existing _shared_person_request uses original CrowdSite.work_fatigue_participant
+# for native bodies, never PersonFatigue.bind onto a real record or Actor.
+#
+# ORIGINAL advance_crowd_sustain(): replace ONLY final legacy call:
+#   if not lab._region_deferring_endpoint() and lab._shared_work_plan.is_empty():
+#       TrainingGround.advance_native(self, team_owner, entry, elapsed_game_seconds, fully_fed)
+# Native common collector preserves original Sustain.set_sustain_input/HP work;
+# training growth/effort is solely the true captured shared-prefix path.
+# This existing method must never call legacy train with missing allocations
+# during a common interval, before or after World. Preserve original food time.
+# Teardown/failed preflight clears _shared_native_training_prefixes explicitly.
+
+# APPEND to ORIGINAL SiteController, then merge callsites into original Lab.
+# Original worker/manual dictionaries, persons and finite same-point priors only.
+
+func finish_shared_runtime_work_prefix(admitted: Dictionary) -> void:
+	if admitted.get("owner") != self or not bool(admitted.get("published", false)) or bool(admitted.get("finished", false)): return
+	admitted.finished = true
+	for held: Dictionary in admitted.prepared.held:
+		var person: Dictionary = person_actions._person(int(held.person_id))
+		if person.is_empty() or bool(person.player): continue
+		var allocation: Dictionary = admitted.plan.jobs.get("runtime", {}).get(str(held.key), {})
+		if float(allocation.get("participant_seconds", {}).get(int(held.person_id), 0.0)) > 0.0: person_actions._body_set(person, "work_resting", false)
+		if str(allocation.get("participant_paused", {}).get(int(held.person_id), allocation.get("paused", ""))) == "REST":
+			person_actions._body_set(person, "work_resting", true)
+			if person.owner is CrowdPersonOwner: person.owner.work_fatigue_rest(int(held.person_id))
+	for candidate: Dictionary in admitted.runtime: Runtime.settle_checked_work_prefix(candidate)
+	# Retain true capture/clock until all original provider endpoints settle.
+
+# Original setup/rebind: bind_checked_runtime_work_prefix(). Failed preflight
+# and original teardown: discard_checked_runtime_work_prefix(). No saved fields.
+# Runtime supplement admits ONLY original data meta SAME self + SAME registry.
+# Manual stays its original shape; Runtime preflight must allow SAME site.manual
+# without adding mode/work_cell. Other task shapes/guards are unchanged.
+
+func _settlement_engineering_add_step(form: Dictionary, action: String) -> void:
+	if form.steps.size() >= 4: show_result(Runtime.fail("LIMIT", "本清單至多四步")); return
+	var identity: int = int(lab.selected_army_target) if int(lab.selected_army_target) > 0 else int(person_executor_id)
+	var person: Dictionary = person_actions._person(identity)
+	if person.is_empty(): show_result(Runtime.fail("NO_WORKER", "先在原人物／隊伍介面選中真原人")); return
+	var part := ""
+	if action == "repair" and building_parts.selected >= 0 and building_parts.selected < building_parts.item_count:
+		part = str(building_parts.get_item_metadata(building_parts.selected))
+	var chosen := selected_settlement_defense_step(_settlement_engineering_choice(form.plans), identity, action, part)
+	if not chosen.ok: show_result(chosen); return
+	form.steps.append(chosen.step)
+	_refresh_settlement_engineering_controls()
+
+func cancel_settlement_defense_work(order_id: String) -> Dictionary:
+	return SiteRuntime.cancel_settlement_defense_order(lab.terrain, int(person_actions._technology_controlled()), order_id)
+
+func delete_selected_settlement_blueprint(plan_id: String) -> Dictionary:
+	return SiteRuntime.delete_settlement_blueprint(lab.terrain, int(person_actions._technology_controlled()), plan_id)
+
+func preview_settlement_blueprint(plan_id: String) -> Dictionary:
+	return SiteRuntime.reuse_settlement_blueprint(lab.terrain, int(person_actions._technology_controlled()), plan_id, selected, true)
+
+func remove_settlement_defense_work(order_id: String) -> Dictionary:
+	return SiteRuntime.remove_finished_settlement_defense_order(lab.terrain, int(person_actions._technology_controlled()), order_id)
+
+func resume_settlement_defense_work(order_id: String, preview: bool = false) -> Dictionary:
+	return SiteRuntime.resume_settlement_defense_step(lab.terrain, int(person_actions._technology_controlled()), order_id, preview)
+
+func _native_sustain_due_candidate(held: Dictionary, payments: Array) -> Dictionary:
+	# Zero time: original Sustain meal only, before any new point snapshot.
+	var state: Dictionary = held.state_values.duplicate(true)
+	var stock: Dictionary = held.stock_values.duplicate(true)
+	for debit: Dictionary in payments:
+		for source: Dictionary in held.stock_sources:
+			if not is_same(debit.get("cargo"), source.inventory): continue
+			var inventory: Dictionary = stock if source.key.is_empty() else stock[source.key].inventory
+			for food: String in Sustain.FOODS:
+				var amount: int = int(debit.get("cost", {}).get(food, 0))
+				if amount < 0 or int(inventory.get(food, 0)) < amount: return Runtime.fail("MATERIALS")
+				if amount > 0: inventory[food] = int(inventory.get(food, 0)) - amount
+			if not source.key.is_empty() and is_same(debit.get("location"), source.location):
+				var opened: float = float(debit.get("open_rations", 0.0))
+				if opened < 0.0 or float(stock[source.key].open_rations) < opened: return Runtime.fail("MATERIALS")
+				stock[source.key].open_rations = float(stock[source.key].open_rations) - opened
+	var before: Dictionary = stock.duplicate(true)
+	var reader: Callable = func(identity: int, field: StringName) -> Variant:
+		return held.life[identity][String(field)] if held.life.has(identity) and held.life[identity].has(String(field)) else held.members.get(identity, {}).get(String(field))
+	var context: Dictionary = {}
+	if held.has("food_locations"): context["food_locations"] = held.food_locations
+	var result: Dictionary = Sustain.resupply(state, held.members, stock, true, reader, {}, context)
+	if not result.ok: return result
+	var revision: int = 1 if float(result.consumed_rations) > 0.0 else 0
+	if int(held.revision) + revision > 2147483647: return Runtime.fail("STALE_SOURCE")
+	return Runtime.ok("Original zero meal candidate", {"held": held, "state": state, "stock": stock,
+		"before_food": before, "revision_delta": revision, "damage": {}})
+
+func selected_settlement_defense_step(plan_id: String, operator_id: int, action: String = "construct", part: String = "") -> Dictionary:
+	if action == "construct":
+		var target := SiteRuntime.settlement_blueprint_target(lab.terrain, plan_id, selected)
+		if not target.ok: return target
+		return SiteRuntime.ok("", {"step": {"action": action, "plan_id": plan_id, "anchor": [selected.x, selected.y], "feature_id": "", "part": "", "operator_id": operator_id}})
+	if action != "repair" or feature_key.is_empty(): return SiteRuntime.fail("INVALID")
+	var feature: Dictionary = lab.terrain.site.features.get(feature_key, {})
+	if not feature.get("parts", {}).has(part): return SiteRuntime.fail("NO_TARGET")
+	return SiteRuntime.ok("", {"step": {"action": action, "plan_id": "", "anchor": [], "feature_id": feature_key, "part": part, "operator_id": operator_id}})
+
+func nation_route_options() -> Dictionary:
+	if region_slot == null: return Runtime.fail("NO_REGION_SLOT", "先開啟原固定世界存檔槽")
+	return region_slot.nation_route_options(lab)
+
+func nation_route_query(route_id: String, destination_site_id: String, vehicle_id: String,
+		driver_id: int, destination_holder: String) -> Dictionary:
+	if region_slot == null: return Runtime.fail("NO_REGION_SLOT")
+	return region_slot.nation_route_query(lab, route_id, destination_site_id, vehicle_id, driver_id, destination_holder)
+
+func nation_route_request(nation_id: String, order_id: String, original_order: Dictionary) -> Dictionary:
+	if region_slot == null: return Runtime.fail("NO_REGION_SLOT")
+	return region_slot.begin_nation_transport_route(lab, nation_id, order_id, original_order)
+
+func prepare_nation_route_load(nation_id: String, order_id: String, original_order: Dictionary) -> Dictionary:
+	if region_slot == null: return Runtime.fail("NO_REGION_SLOT")
+	return region_slot.prepare_nation_route_load(lab, nation_id, order_id, original_order)
+
+var _region_departure_intent: Dictionary = {}
+
+func _request_region_departure() -> Dictionary:
+	if not _region_departure_intent.is_empty(): return Runtime.fail("BUSY")
+	var selected := RegionTravelSite.selected_departure(self)
+	if not selected.ok: return selected
+	var mode: Dictionary = region_slot.region_registry().modes.get(str(lab.terrain.site.id), {})
+	if str(mode.get("mode", "")) != "live" or str(mode.get("backend", "")) != "gd": return Runtime.fail("REGION_MODE")
+	var siege := RegionSaveSlot.RegionBattle.prepare_original_siege(lab)
+	if not siege.ok or not siege.get("present", false): return Runtime.fail("IN_COMBAT", "非已准入的原攻城 owner")
+	var nonce := "depart_" + Crypto.new().generate_random_bytes(16).hex_encode()
+	_region_departure_intent = {"nonce": nonce, "source": lab.terrain, "slot": region_slot, "lab": weakref(lab),
+		"owner": str(lab.terrain.site.id), "selection": selected.selection, "people": selected.people.duplicate(), "candidate": {}}
+	return Runtime.ok("等待本人已承諾操作抵達合法端點；再次整隊出發可取消", {"pending": true, "nonce": nonce})
+
+func _cancel_region_departure(nonce: String) -> Dictionary:
+	if _region_departure_intent.is_empty() or str(_region_departure_intent.nonce) != nonce: return Runtime.fail("STALE_REGION_INTENT")
+	var prepared: Dictionary = _region_departure_intent.candidate
+	if not prepared.is_empty():
+		var discard: Variant = prepared.get("binding", {}).get("discard", Callable())
+		if discard is Callable and discard.is_valid(): discard.call()
+	_region_departure_intent.clear()
+	return Runtime.ok("已取消離場意圖；原命令與已付進度繼續", {"cancelled": true, "nonce": nonce})
+
+func _region_departure_capability(nonce: String) -> Dictionary:
+	if _region_departure_intent.is_empty() or str(_region_departure_intent.nonce) != nonce: return Runtime.fail("STALE_REGION_INTENT")
+	var intent: Dictionary = _region_departure_intent
+	if intent.lab.get_ref() != lab or intent.source != lab.terrain or intent.slot != region_slot or str(intent.owner) != str(lab.terrain.site.id): return Runtime.fail("STALE_REGION_INTENT")
+	var selected := RegionTravelSite.selected_departure(self)
+	if not selected.ok: return selected
+	if selected.selection != intent.selection: return Runtime.fail("STALE_REGION_INTENT")
+	return selected
+
+func _region_departure_defers_person(identity: int) -> bool:
+	return not _region_departure_intent.is_empty() and _region_departure_intent.source == lab.terrain and _region_departure_intent.people.has(identity)
+
+func _finish_region_departure() -> bool:
+	if _region_departure_intent.is_empty(): return false
+	var nonce := str(_region_departure_intent.nonce)
+	var selected := _region_departure_capability(nonce)
+	if not selected.ok:
+		_cancel_region_departure(nonce)
+		show_result(selected)
+		return false
+	if bool(selected.waiting): return false
+	# A queued contact/P0/Fire boundary is consumed by its original zero owner.
+	if not region_slot.region_player_barrier().is_empty() or not lab._region_point_pending.is_empty() or lab._region_point_consuming or lab._region_point_dispatching \
+		or not lab._region_point_contacts.is_empty() or not lab._region_point_wakes.is_empty() or not lab._combat_contacts.is_empty() or not lab.terrain.get_meta(&"fire_boundary", {}).is_empty(): return false
+	var prepared := region_slot.prepare_region_player_departure(self, nonce)
+	if not prepared.ok:
+		if str(prepared.get("code", "")) == "SAVE_IO":
+			show_result(prepared)
+			return false # Keep the nonce; no private candidate or ownership move.
+		# An unsupported selected closure is an explicit refusal, never perpetual wait.
+		_cancel_region_departure(nonce)
+		show_result(prepared)
+		return false
+	_region_departure_intent.candidate = prepared
+	var committed := region_slot.commit_region_player_departure(prepared)
+	if not committed.ok:
+		if not bool(committed.get("committed", false)):
+			prepared.binding.discard.call()
+			_region_departure_intent.candidate = {}
+		else:
+			_region_departure_intent.clear()
+		show_result(committed)
+		return bool(committed.get("committed", false))
+	_region_departure_intent.clear()
+	_auto_save_blocked = true
+	RegionTravelSite.open_travel_map(self, str(region_slot.pin.world_instance_id), str(region_slot.pin.slot_id), _region_manifest_path)
+	show_result(Runtime.ok("已由原完整端點整隊出發", {"token": committed.token, "generation": committed.generation}))
+	return true
+
+var _resume_region_party_map_button: Button
+
+func _update_region_party_map_resume_button() -> void:
+	if not is_instance_valid(_resume_region_party_map_button): return
+	_resume_region_party_map_button.visible = region_slot != null and lab != null and lab.terrain != null \
+		and lab.terrain.has_meta(&"region_party_owner") and not lab.restore_only
+	if not _resume_region_party_map_button.visible: return
+	if launcher_window != null and launcher_window.visible:
+		var prepared := region_slot.prepare_region_party_map_resume(lab)
+		_resume_region_party_map_button.disabled = not prepared.ok or prepared.get("already_map", false)
+		_resume_region_party_map_button.tooltip_text = str(prepared.get("message", "在同一已付原端點繼續旅行"))
+
+func _resume_region_party_map() -> void:
+	if region_slot == null: return
+	var accepted := region_slot.resume_region_party_map(lab)
+	show_result(accepted)
+	if not accepted.ok: return
+	_auto_save_blocked = true
+	# The ordinary production scene handoff follows the durable original graph.
+	# Stop this scene's input loop immediately; the map supplies subsequent input.
+	if RegionTravelSite.scene_handoff: lab.set_process(false)
+	RegionTravelSite.open_travel_map(self, str(region_slot.pin.world_instance_id), str(region_slot.pin.slot_id), _region_manifest_path)
+
+func _observe_original_food_result(kind: String, identity: String, at_game_seconds: float, result: Dictionary) -> void:
+	# Read-only per-call exposure after the original owner published this result.
+	if region_slot == null or _crowd_active(): return
+	region_slot._observe_original_food_result(lab, kind, identity, at_game_seconds, result)
