@@ -472,6 +472,10 @@ static func save(data: TerrainData, path: String = DEFAULT_PATH, native_candidat
 	state.erase("water_status")
 	state["notices"] = []
 	if hot:
+		# Hash the same detached canonical body that load_site returns. Optional
+		# supply/housing defaults must exist before authentication, not appear
+		# only after the persisted checkpoint has already been validated.
+		_normalize_state(state)
 		var checkpoint := RegionCheckpoint.make(state, region_capture.context, region_capture.owners)
 		if not checkpoint.ok: return checkpoint
 		state["region_snapshot"] = checkpoint.snapshot

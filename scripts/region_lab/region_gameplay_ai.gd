@@ -174,7 +174,7 @@ static func _fail(code: String) -> Dictionary:
 	return {"ok": false, "code": code}
 
 static func json_data(value: Variant) -> bool:
-	if value == null or value is bool or value is String or value is int: return true
+	if value == null or value is bool or value is String or value is StringName or value is int: return true
 	if value is float: return is_finite(float(value))
 	if value is Array:
 		for child: Variant in value:
@@ -182,7 +182,7 @@ static func json_data(value: Variant) -> bool:
 		return true
 	if value is Dictionary:
 		for key: Variant in value:
-			if not key is String or not json_data(value[key]): return false
+			if not (key is String or key is StringName) or not json_data(value[key]): return false
 		return true
 	return false
 

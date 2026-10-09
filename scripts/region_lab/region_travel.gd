@@ -175,7 +175,7 @@ static func _remap_holder(holder: String, maps: Dictionary) -> String:
 
 ## Remap only current semantic references. Receipts/episodes keep stable history.
 static func _remap_current(value: Variant, maps: Dictionary, field: String = "") -> Variant:
-	if field in ["receipts", "inventory_receipts", "history", "episodes", "completed_events", "paid_receipts", "hit_receipts", "travel_identity", "source_token", "family", "family_refs", "organization_refs", "original_owner"]:
+	if field in ["receipts", "inventory_receipts", "history", "episodes", "completed_events", "paid_receipts", "hit_receipts", "travel_identity", "source_token", "family", "family_refs", "organization_refs", "original_owner", "technology_construction"]:
 		return value
 	if value is Dictionary:
 		var result := {}
@@ -1140,6 +1140,15 @@ static func advance_upkeep(party: Dictionary, to_game_seconds: float, options: D
 	return {"ok": true, "party": candidate, "at": float(upkeep.at), "metres": metres, "consumed_rations": consumed, "events": events,
 		"can_move": can_move, "resting": bool(upkeep.resting), "reason": str(transport.get("reason", "")), "speed_mps": float(candidate.speed_mps)}
 
+## Decision A2 (Nekki, 2026-10-10): a settled dead row (hp <= 0 and its loot
+## already settled) and a discharged row (member = false) do not block a team's
+## departure. They are non-departing members that travel inert with their
+## container, every field unchanged, and stay in it at the destination.
+static func _row_inert(row: Dictionary) -> bool:
+	if bool(row.get("departed", false)) or bool(row.get("site_exited", false)): return false
+	if float(row.get("hp", 0.0)) <= 0.0: return bool(row.get("loot_settled", false))
+	return not bool(row.get("member", true))
+
 static func _row_ready(row: Dictionary, independent: bool = false, sea: bool = false) -> String:
 	if float(row.get("hp", 0.0)) <= 0.0 or bool(row.get("departed", false)) or bool(row.get("site_exited", false)):
 		return "隊內有陣亡或已離場者；R1 只帶全員在世的隊伍出發"
@@ -1359,7 +1368,11 @@ static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dicti
 			if not army.get("rescues", []).is_empty(): return fail("BUSY", "隊伍仍在救助傷者")
 			if int(army.get("combat_order", 0)) != 0: return fail("BUSY", "隊伍須先停在守位（取消移動、追擊、撤退）")
 			for row: Dictionary in army.get("units", []):
-				var reason := _row_ready(row, int(spec.get("solo_row", -1)) == int(row.person_id), sea)
+				var independent := int(spec.get("solo_row", -1)) == int(row.person_id)
+				if not independent and _row_inert(row):
+					movers[int(row.person_id)] = true # Inert: travels with its container, unchanged.
+					continue
+				var reason := _row_ready(row, independent, sea)
 				if not reason.is_empty(): return fail("NOT_READY", reason)
 				movers[int(row.person_id)] = true
 			content.armies.append(army)
@@ -1586,6 +1599,25 @@ static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dicti
 				member.path = ""
 				origin.travel_identity.family_members.erase(old_key)
 				if not reference.is_empty(): origin.travel_identity.family_members[JSON.stringify([member.site_id, int(member.person_id)])] = reference
+		# Both original registries describe current locations. Their stable
+		# PersonRefs, explicit membership, labels and ages stay unchanged.
+		var registry: Dictionary = content.get("family", content.get("family_refs", {}))
+		for member: Dictionary in registry.get("members", []):
+			if str(member.site_id) != str(origin.id) or not movers.has(int(member.person_id)): continue
+			var old_key := JSON.stringify([str(member.site_id), int(member.person_id)])
+			var reference: Dictionary = content.travel_identity.family_members.get(old_key, {})
+			member.site_id = "travel:" + token
+			member.path = ""
+			content.travel_identity.family_members.erase(old_key)
+			if not reference.is_empty(): content.travel_identity.family_members[JSON.stringify([member.site_id, int(member.person_id)])] = reference
+		# Original automatic departure rule only vacates holders absent from
+		# this exact owner; it does not appoint or copy a second local holder.
+		if origin.family.get("offices") is Dictionary:
+			var local := Family.member_ids(origin.family, str(origin.id))
+			SiteOffices.vacate_unless(origin.family.offices, func(holder: int) -> bool: return local.has(holder))
+		if content.get("family", {}).get("offices") is Dictionary:
+			var local := Family.member_ids(content.family, "travel:" + token)
+			SiteOffices.vacate_unless(content.family.offices, func(holder: int) -> bool: return local.has(holder))
 	var people: Array = movers.keys()
 	people.sort()
 	var vehicles: Array = moving_vehicles.keys()

@@ -1504,6 +1504,47 @@ var _region_route_snapshot: Dictionary = {}
 var _region_route_snapshot_revision := ""
 
 func prepare_region_route_context(active_data: TerrainData = null, party: Dictionary = {}, route_sites: Array[Vector2i] = []) -> Dictionary:
+	return _prepare_region_route_context(active_data, party, route_sites, true)
+
+## Uncached twin: identical inputs and output, always fresh detached copies.
+func prepare_region_route_context_uncached(active_data: TerrainData = null, party: Dictionary = {}, route_sites: Array[Vector2i] = []) -> Dictionary:
+	return _prepare_region_route_context(active_data, party, route_sites, false)
+
+## Performance proposal B. A detached navigation snapshot depends only on its
+## source body. Live sources (active data, bound cold Lab, fire candidate) are
+## keyed by instance and navigation_revision; file sources by marker path and
+## SHA-256. A changed key misses and rebuilds; nothing else is cached. Cached
+## snapshots are shared read-only by route consumers, exactly like the fresh
+## ones they replace. clear_route_context_cache() empties it.
+const ROUTE_CONTEXT_CACHE_LIMIT := 32
+var _route_context_cache: Dictionary = {} # source key -> detached TerrainData
+var _route_context_cache_order: Array[String] = []
+var _route_context_file_navigation: Dictionary = {} # file key -> source navigation_revision
+
+static func _live_route_key(original: TerrainData) -> String:
+	return "live|%d|%d|%d|%d|%d" % [original.get_instance_id(), original.navigation_revision, hash(original.site), hash(original.parameters), hash(original.resource_base)]
+
+func clear_route_context_cache() -> void:
+	_route_context_cache.clear()
+	_route_context_cache_order.clear()
+	_route_context_file_navigation.clear()
+
+func _route_context_detached(original: TerrainData, cache_key: String, use_cache: bool) -> TerrainData:
+	if use_cache and _route_context_cache.has(cache_key): return _route_context_cache[cache_key]
+	var detached := Env.navigation_for_state(original, original.site.duplicate(true))
+	detached.parameters = original.parameters.duplicate(true)
+	detached.resource_base = original.resource_base.duplicate(true)
+	for meta: StringName in detached.get_meta_list(): detached.remove_meta(meta)
+	if use_cache:
+		_route_context_cache[cache_key] = detached
+		_route_context_cache_order.append(cache_key)
+		while _route_context_cache_order.size() > ROUTE_CONTEXT_CACHE_LIMIT:
+			var evicted: String = _route_context_cache_order.pop_front()
+			_route_context_cache.erase(evicted)
+			_route_context_file_navigation.erase(evicted)
+	return detached
+
+func _prepare_region_route_context(active_data: TerrainData, party: Dictionary, route_sites: Array[Vector2i], use_cache: bool) -> Dictionary:
 	if source == null or pin.is_empty(): return fail("INVALID_SLOT", "原路線來源尚未開啟")
 	if not Thread.is_main_thread(): return fail("REGION_ROUTE_THREAD", "原導航快照須在主執行緒準備")
 	var snapshots := {}
@@ -1514,6 +1555,8 @@ func prepare_region_route_context(active_data: TerrainData = null, party: Dictio
 		var coordinate := Vector2i(int(pair[0]), int(pair[1]))
 		if not route_sites.is_empty() and coordinate not in route_sites: continue
 		var original: TerrainData
+		var cache_key := ""
+		var file_navigation_revision := -1
 		if active_data != null and _coordinate(active_data).get("site") == coordinate:
 			original = active_data
 		else:
@@ -1528,23 +1571,27 @@ func prepare_region_route_context(active_data: TerrainData = null, party: Dictio
 			elif _fire_cold_candidates.has(identity):
 				original = _fire_cold_candidates[identity].data
 			else:
-				var loaded := _load_checked(site_path(coordinate), coordinate)
-				if not loaded.ok: return loaded
-				original = loaded.data
-		var detached := Env.navigation_for_state(original, original.site.duplicate(true))
-		detached.parameters = original.parameters.duplicate(true)
-		detached.resource_base = original.resource_base.duplicate(true)
-		for meta: StringName in detached.get_meta_list(): detached.remove_meta(meta)
-		snapshots[coordinate] = detached
-		revision += ":" + key + ":" + str(original.navigation_revision)
+				var entry: Dictionary = _marker.get("sites", {}).get(key, {})
+				cache_key = "file|%s|%s" % [str(entry.get("path", "")), str(entry.get("sha256", ""))]
+				if use_cache and _route_context_cache.has(cache_key) and not str(entry.get("sha256", "")).is_empty():
+					file_navigation_revision = int(_route_context_file_navigation.get(cache_key, -1))
+				if file_navigation_revision < 0:
+					var loaded := _load_checked(site_path(coordinate), coordinate)
+					if not loaded.ok: return loaded
+					original = loaded.data
+		if original != null:
+			if cache_key.is_empty(): cache_key = _live_route_key(original)
+			var detached := _route_context_detached(original, cache_key, use_cache)
+			if use_cache and cache_key.begins_with("file|"): _route_context_file_navigation[cache_key] = original.navigation_revision
+			snapshots[coordinate] = detached
+			revision += ":" + key + ":" + str(original.navigation_revision)
+		else:
+			snapshots[coordinate] = _route_context_cache[cache_key]
+			revision += ":" + key + ":" + str(file_navigation_revision)
 	if active_data != null:
 		var coordinate := _coordinate(active_data)
 		if not coordinate.ok: return coordinate
-		var detached := Env.navigation_for_state(active_data, active_data.site.duplicate(true))
-		detached.parameters = active_data.parameters.duplicate(true)
-		detached.resource_base = active_data.resource_base.duplicate(true)
-		for meta: StringName in detached.get_meta_list(): detached.remove_meta(meta)
-		snapshots[coordinate.site] = detached
+		snapshots[coordinate.site] = _route_context_detached(active_data, _live_route_key(active_data), use_cache)
 		revision += ":active:" + str(active_data.navigation_revision)
 	_region_route_snapshot = snapshots
 	_region_route_snapshot_revision = revision
@@ -2622,6 +2669,10 @@ func begin_region_travel(source_data: TerrainData, spec: Dictionary, start_compo
 	extraction_spec.game_seconds = float(control.logical_game_seconds)
 	var extracted := RegionTravel.extract(captured, extraction_spec, token)
 	if not extracted.ok: return extracted
+	# Original departure records the already accepted shared ACTION point.
+	extracted.party.upkeep.owner_action_seconds = float(control.fire_clock.action_seconds)
+	# Ordinary original departure already refused unfinished death transfers.
+	extracted.party.upkeep.original_deaths = {}
 	var candidate := Env.navigation_for_state(source_data, extracted.origin)
 	for hook: StringName in [&"siege_event_guard", &"fire_event_guard", &"fire_transport_snapshot", &"fire_owner_snapshot",
 		&"fire_owner_checkpoint", &"fire_pending_projectile_query", &"site_garrison_lab", &"ship_journey_active",
@@ -3644,6 +3695,9 @@ func prepare_region_gameplay_interval(interval: Dictionary) -> Dictionary:
 		if not host is TerrainLab or host.site_controller == null or host.site_controller.region_slot != self: return fail("INVALID_REGION_PARTY_PROGRESS")
 		var restored: Dictionary = host.prepare_region_party_original_owner(token, preview.source_party, self)
 		if not restored.ok: return restored
+		restored.lab.simulation_speed = float(interval.scale)
+		var original_guard: Dictionary = restored.lab._region_original_interval_guard(interval)
+		if not original_guard.ok: return original_guard
 		if restored.lab._region_party_original_action_limit(float(interval.action_end) - float(interval.action_begin)) < float(interval.action_end) - float(interval.action_begin) - 0.000000001: return fail("EVENT_CLIP_REQUIRED")
 		preview.original_lab = restored.lab
 		parties[token] = preview
@@ -4397,6 +4451,7 @@ func region_sea_pose_projection(plan: Dictionary, party: Dictionary) -> Dictiona
 
 func _region_player_sea_candidate(party: Dictionary, plan: Dictionary, action: Dictionary,
 		duration: float, moving: bool, interval: Dictionary) -> Dictionary:
+	if str(party.get("upkeep", {}).get("live", {}).get("upkeep", "")) == "liveBody": return _region_live_party_candidate(interval, party)
 	var options := {"moving": moving, "safe_rest": true, "distance_mode": "sea_action", "active_ship_ids": [str(action.vehicle_id)]}
 	var endpoint := RegionTravel.next_upkeep_event(party, options.merged({"until": float(interval.game_end)}, true))
 	if not endpoint.ok: return endpoint
