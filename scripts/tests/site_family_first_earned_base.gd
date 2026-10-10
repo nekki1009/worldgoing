@@ -57,6 +57,9 @@ func _earned_fixture() -> Dictionary:
 		"The named positive fixture requires the separately admitted isolated Catalog")
 	var data = TerrainGenerator.generate(TerrainPreset.Kind.PLAINS, 12345)
 	Env.initialize(data, "family-first-earned-natural-" + identity)
+	# Bound/loaded/visited Sites carry item storage; Core building payment reads its depot.
+	var fixture_item_storage = Runtime.initialize_item_storage(data.site)
+	assert(fixture_item_storage.ok, "Fixture natural world carries original item storage")
 	# Explicit finite starting stock only. Never alter generated terrain or
 	# the five original land-condition arrays to make the cold test buildable.
 	for material: String in Env.ITEM_NAMES: data.site.inventory[material] = 10000

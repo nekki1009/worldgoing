@@ -84,6 +84,9 @@ func _shipyard_fixture() -> Dictionary:
 	for seed_value: int in [17,12345,98761]:
 		data=TerrainGenerator.generate(TerrainPreset.Kind.COASTAL_CLIFF,seed_value,{"max_height":1,"micro_strength":0})
 		Env.initialize(data,"technology-s12-natural-shore-"+str(seed_value))
+		# Bound/loaded/visited Sites carry item storage; Core building payment reads its depot.
+		var fixture_item_storage = Runtime.initialize_item_storage(data.site)
+		assert(fixture_item_storage.ok, "Fixture natural world carries original item storage")
 		for material: String in Env.ITEM_NAMES: data.site.inventory[material]=10000
 		data.site.capacity=1000000
 		shore=_shipyard_natural_shore(data)

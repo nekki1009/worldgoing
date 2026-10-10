@@ -97,17 +97,19 @@ func _fixed_source() -> RegionData:
 	var elevation := PackedByteArray()
 	var levels := PackedByteArray()
 	var water := PackedByteArray()
-	elevation.resize(20 * 20 * 2)
-	levels.resize(20 * 20)
-	water.resize(20 * 20)
-	for index: int in range(20 * 20):
+	# 22x22 posts at 20 m from -20 m: a margin past every site edge so the adapter's
+	# 2 m edge halo samples real fixture terrain instead of missing neighbourhood data.
+	elevation.resize(22 * 22 * 2)
+	levels.resize(22 * 22)
+	water.resize(22 * 22)
+	for index: int in range(22 * 22):
 		elevation.encode_s16(index * 2, 40)
 		levels[index] = 2
 	var height_record := _asset("birth.height.zlib", elevation.compress(FileAccess.COMPRESSION_DEFLATE))
 	var level_record := _asset("birth.levels.zlib", levels.compress(FileAccess.COMPRESSION_DEFLATE))
 	var water_record := _asset("birth.water.zlib", water.compress(FileAccess.COMPRESSION_DEFLATE))
 	if height_record.is_empty() or level_record.is_empty() or water_record.is_empty(): return null
-	height_record.merge({"id": "birth_plain", "origin": [0, 0], "size": [20, 20], "spacing_m": 20,
+	height_record.merge({"id": "birth_plain", "origin": [-20, -20], "size": [22, 22], "spacing_m": 20,
 		"encoding": "int16_le_zlib", "row_order": "north_to_south", "nodata": -32767,
 		"derived": {"encoding": "u8_zlib", "levels_path": level_record.path, "levels_sha256": level_record.sha256,
 			"water_path": water_record.path, "water_sha256": water_record.sha256}})

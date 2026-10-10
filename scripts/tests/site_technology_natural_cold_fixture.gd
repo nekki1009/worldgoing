@@ -5,6 +5,9 @@ extends "res://scripts/tests/site_building_ui_test.gd"
 func _cold_natural_template(specs: Array, site_id: String, extra: Array[Vector2i] = [], stride: int = 1, paths: Array = []) -> Dictionary:
 	var data = TerrainGenerator.generate(TerrainPreset.Kind.PLAINS, 12345)
 	Env.initialize(data, site_id)
+	# Bound/loaded/visited Sites carry item storage; Core building payment reads its depot.
+	var fixture_item_storage = Runtime.initialize_item_storage(data.site)
+	assert(fixture_item_storage.ok, "Fixture natural world carries original item storage")
 	for item: String in Env.ITEM_NAMES: data.site.inventory[item] = 10000
 	data.site.capacity = 1000000
 	# Only translate fixture infrastructure on the unchanged source. Every

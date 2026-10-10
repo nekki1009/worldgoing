@@ -304,6 +304,9 @@ func _run() -> void:
 func _material_natural_data() -> TerrainData:
 	var data = TerrainGenerator.generate(TerrainPreset.Kind.PLAINS, 12345)
 	Env.initialize(data, "nation-material-natural")
+	# Bound/loaded/visited Sites carry item storage; Core building payment reads its depot.
+	var fixture_item_storage = Runtime.initialize_item_storage(data.site)
+	assert(fixture_item_storage.ok, "Fixture natural world carries original item storage")
 	return data # No generated terrain or land-condition field is overwritten.
 
 func _material_natural_lab(data: TerrainData) -> TerrainLab:
