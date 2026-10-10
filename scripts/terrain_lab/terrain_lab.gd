@@ -337,16 +337,24 @@ func _trim_empty_army_slots() -> void:
 		team.queue_free()
 	_configure_army_blockers()
 
+var _army_warmup_step := 0
+
 func _start_army_visual_warmup() -> void:
 	if DisplayServer.get_name() == "headless" or army == null:
 		return
 	army.warmup_visual_step(0)
-	await get_tree().process_frame
+	# A connected method (unlike an await) is dropped when this lab is freed
+	# before the next frames, so a closed scene never resumes a dead warmup.
+	_army_warmup_step = 1
+	if not get_tree().process_frame.is_connected(_continue_army_visual_warmup):
+		get_tree().process_frame.connect(_continue_army_visual_warmup)
+
+func _continue_army_visual_warmup() -> void:
 	if is_instance_valid(army):
-		army.warmup_visual_step(1)
-	await get_tree().process_frame
-	if is_instance_valid(army):
-		army.warmup_visual_step(2)
+		army.warmup_visual_step(_army_warmup_step)
+	_army_warmup_step += 1
+	if _army_warmup_step > 2:
+		get_tree().process_frame.disconnect(_continue_army_visual_warmup)
 
 func _notification(what: int) -> void:
 	if not pause_when_unfocused:

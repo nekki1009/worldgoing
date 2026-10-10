@@ -5,6 +5,77 @@ extends SceneTree
 const AudioView := preload("res://scripts/terrain_lab/site_audio_view.gd")
 const OUTPUT := "res://output/audio_implementation_20261008/site_audio_contract_result.json"
 const SETTINGS := "user://audio_settings.cfg"
+const EXPECTED_ACTIVE_PATHS: Array[String] = [
+	"res://assets/audio/bow_longbow_release.wav",
+	"res://assets/audio/contact_heavy.wav",
+	"res://assets/audio/contact_light.wav",
+	"res://assets/audio/contact_mixed.wav",
+	"res://assets/audio/crossbow_recorded_release.wav",
+	"res://assets/audio/down_body_foley.wav",
+	"res://assets/audio/fire_extinguish.wav",
+	"res://assets/audio/fire_large_original.wav",
+	"res://assets/audio/fire_small_original.wav",
+	"res://assets/audio/horse_hoof_1.wav",
+	"res://assets/audio/horse_hoof_2.wav",
+	"res://assets/audio/horse_hoof_3.wav",
+	"res://assets/audio/hurt_voice_1.wav",
+	"res://assets/audio/hurt_voice_2.wav",
+	"res://assets/audio/p3/animal_boar_01.wav",
+	"res://assets/audio/p3/animal_boar_02.wav",
+	"res://assets/audio/p3/animal_boar_03.wav",
+	"res://assets/audio/p3/animal_deer_fallow_rut_01.wav",
+	"res://assets/audio/p3/animal_horse_01.wav",
+	"res://assets/audio/p3/animal_sheep_01.wav",
+	"res://assets/audio/p3/cart_roll_loop_01.wav",
+	"res://assets/audio/p3/door_close_provisional_01.wav",
+	"res://assets/audio/p3/door_open_provisional_01.wav",
+	"res://assets/audio/p3/equipment_handle_01.wav",
+	"res://assets/audio/p3/fish_catch_01.wav",
+	"res://assets/audio/p3/ship_deck_contact_provisional_01.wav",
+	"res://assets/audio/p3/ship_row_loop_01.wav",
+	"res://assets/audio/p3/soft_handle_01.wav",
+	"res://assets/audio/p3/tool_complete_01.wav",
+	"res://assets/audio/p3/tool_mining_01.wav",
+	"res://assets/audio/p3/tool_shovel_01.wav",
+	"res://assets/audio/p3/tool_wood_chop_01.wav",
+	"res://assets/audio/p3/water_fresh_loop_01.wav",
+	"res://assets/audio/p3/water_shore_loop_01.wav",
+	"res://assets/audio/p3/work_earth_oneshot_01.wav",
+	"res://assets/audio/p3/work_metal_oneshot_01.wav",
+	"res://assets/audio/p3/work_stone_oneshot_01.wav",
+	"res://assets/audio/p3/work_textile_oneshot_01.wav",
+	"res://assets/audio/p3/work_wood_oneshot_01.wav",
+	"res://assets/audio/projectile_ground.wav",
+	"res://assets/audio/projectile_metal.wav",
+	"res://assets/audio/projectile_wood.wav",
+	"res://assets/audio/shield_contact_1.wav",
+	"res://assets/audio/shield_contact_2.wav",
+	"res://assets/audio/step_grass_run_fast_01.wav",
+	"res://assets/audio/step_grass_run_fast_02.wav",
+	"res://assets/audio/step_grass_run_slow_01.wav",
+	"res://assets/audio/step_grass_run_slow_02.wav",
+	"res://assets/audio/step_grass_walk_fast_01.wav",
+	"res://assets/audio/step_grass_walk_fast_02.wav",
+	"res://assets/audio/step_grass_walk_slow_01.wav",
+	"res://assets/audio/step_grass_walk_slow_02.wav",
+	"res://assets/audio/step_hard_run_fast_01.wav",
+	"res://assets/audio/step_hard_run_fast_02.wav",
+	"res://assets/audio/step_hard_run_slow_01.wav",
+	"res://assets/audio/step_hard_run_slow_02.wav",
+	"res://assets/audio/step_hard_walk_fast_01.wav",
+	"res://assets/audio/step_hard_walk_fast_02.wav",
+	"res://assets/audio/step_hard_walk_slow_01.wav",
+	"res://assets/audio/step_hard_walk_slow_02.wav",
+	"res://assets/audio/step_water_run_fast_01.wav",
+	"res://assets/audio/step_water_run_slow_01.wav",
+	"res://assets/audio/step_water_walk_fast_01.wav",
+	"res://assets/audio/step_water_walk_slow_01.wav",
+	"res://assets/audio/step_wood_run_fast_01.wav",
+	"res://assets/audio/step_wood_run_slow_01.wav",
+	"res://assets/audio/step_wood_walk_fast_01.wav",
+	"res://assets/audio/step_wood_walk_slow_01.wav",
+]
+
 
 class MockActor extends RefCounted:
 	var knockout_left: float = 0.0
@@ -191,8 +262,25 @@ func _test_catalog() -> void:
 				step_paths[path] = true
 				banks[str(entry.surface) + ":" + str(entry.locomotion) + ":" + str(entry.tempo)] = true
 				_check(int(entry.footsteps) == 2, "each completed-cell segment has two beats", path)
-	_check(unique.size() == 42 and step_paths.size() == 24 and banks.size() == 16, "36 baseline plus 6 additional / 24 footsteps / 16 banks", [unique.size(), step_paths.size(), banks.size()])
-	_check(int(catalog.baseline_files) == 36 and int(catalog.additional_p1_files) == 6, "catalog preserves baseline counts")
+	_check(unique.size() == 68 and step_paths.size() == 24 and banks.size() == 16, "36 baseline plus 7 P1 and 25 P3 / 24 footsteps / 16 banks", [unique.size(), step_paths.size(), banks.size()])
+	_check(int(catalog.baseline_files) == 36 and int(catalog.additional_p1_files) == 7, "catalog preserves baseline counts")
+	var actual_paths: Array[String] = []
+	for actual_path: Variant in unique:
+		actual_paths.append(str(actual_path))
+	actual_paths.sort()
+	_check(actual_paths == EXPECTED_ACTIVE_PATHS, "exact active paths preserve P1 and admit only reviewed P3 candidates", actual_paths)
+	_check(int(catalog.additional_p3_files) == 25 and int(catalog.active_unique_files) == 68, "catalog separates 36 baseline / 7 P1 / 25 P3 files")
+	var source_ids: Dictionary = {}
+	for source: Dictionary in catalog.get("sources", []):
+		source_ids[str(source.get("id", ""))] = true
+	var provisional_banks_ok: bool = true
+	for kind: String in ["fish_catch", "animal_boar"]:
+		var new_sound: Dictionary = sounds.get(kind, {})
+		var new_variants: Array = new_sound.get("variants", [])
+		provisional_banks_ok = provisional_banks_ok and not new_variants.is_empty()
+		for variant: Dictionary in new_variants:
+			provisional_banks_ok = provisional_banks_ok and bool(variant.get("provisional", false)) and not bool(variant.get("loop", true)) and source_ids.has(str(variant.get("source_id", "")))
+	_check(provisional_banks_ok and source_ids.has("p3_skippy_water_fish_catch") and source_ids.has("p3_tsa_sus_scrofa_group"), "new fish/boar banks remain provisional non-loop with retained source metadata")
 
 func _test_ranges() -> void:
 	var center: Vector2 = _ground()
@@ -646,6 +734,7 @@ func _run() -> void:
 	view.set_volume(0.8, false)
 	_tick()
 	_test_catalog()
+	_test_down_component()
 	_test_ranges()
 	_test_batches_and_pools()
 	_reset_audio()
@@ -667,3 +756,22 @@ func _run() -> void:
 	_test_fire_sources()
 	_test_fire_hysteresis()
 	_finish(not failed)
+
+func _test_down_component() -> void:
+	var down: Dictionary = view._catalog.get("down", {})
+	_check(str(down.get("group", "")) == "call" and int(down.get("priority", -1)) == 95 and down.get("variants", []).size() == 1, "explicit generic fall Foley, call quota and priority")
+	_check(view._group(&"down") == "call" and view._priority(&"down", lab.identity) == view._priority(&"down", 2) + 100, "controlled standing-to-down retains original high-priority policy")
+	_reset_audio()
+	var center := _ground()
+	_offer(&"down", center + Vector2(100, 0), _key("down-npc1"), 2)
+	_offer(&"down", center + Vector2(50, 0), _key("down-npc2"), 3)
+	_offer(&"down", center, _key("down-player"), lab.identity)
+	_tick()
+	_check(_players().size() == 2, "down shares existing two-call voice quota")
+	var controlled := false
+	for row: Dictionary in view._short_rows:
+		if not row.is_empty() and int(row.get("person_id", 0)) == lab.identity and row.get("kind") == &"down":
+			controlled = true
+	_check(controlled, "nearest controlled KO/down survives NPC quota contention")
+	_check(int(view.stats_snapshot().peak_short) <= 20 and int(view.stats_snapshot().peak_loop) <= 4, "down introduces no additional pool")
+	_reset_audio()
