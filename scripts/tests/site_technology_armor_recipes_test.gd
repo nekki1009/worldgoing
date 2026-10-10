@@ -115,7 +115,9 @@ func _ordinary_armor(fixture: Dictionary, key: String, recipe: String, expected_
 	var row: Dictionary = fixture.row
 	var workers = lab.site_controller.work_team
 	_check(Runtime.request_feature_recipe(data, key, recipe, 1).ok and Runtime.operate_feature(data, key).ok, "Original recipe/window operation opens the real armor host")
-	_check(workers.assign(fixture.team, [int(fixture.executor)], fixture.team.duty_decider("team.work")).ok, "Actual team duty assigns its real armor craftsman")
+	# workers is untyped (4.7.2 relaxation), so pass an explicit Array[int] to SiteWorkTeam.assign.
+	var armor_assignees: Array[int] = [int(fixture.executor)]
+	_check(workers.assign(fixture.team, armor_assignees, fixture.team.duty_decider("team.work")).ok, "Actual team duty assigns its real armor craftsman")
 	workers.prepare_work_requests(1.0)
 	var task: Dictionary = row.work_task
 	_check(task.get("target") == "feature:" + key, "The original selector chooses the actual armor work zone")

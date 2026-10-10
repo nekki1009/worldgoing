@@ -82,6 +82,16 @@ func _nation_fixture(known: Array[String]) -> Dictionary:
 		var lodging = Runtime.house_layout(data, home)
 		_check(lodging.ok, "Original completed large house owns its actual finite resident slots")
 		for cell: int in lodging.slots: slots.append({"house_id": home, "cell": cell})
+	if slots.size() < team.combat_units.size():
+		# Ten houses fell short on this generated world (height step / edge overlap);
+		# one more genuine large house keeps a real house slot for every resident.
+		var extra_house: String = _material_setup_feature(lab, "house", Vector2i(10, 25), Vector2i.ONE, {"variant": "large"}, excluded)
+		var extra_feature: Dictionary = data.site.features[extra_house]
+		for fixture_pair: Dictionary in Runtime._building_entrances(data, extra_feature.cells, int(extra_feature.quarter)):
+			for fixture_key: String in Env.resources_in(data, Rect2i(fixture_pair.cell, Vector2i.ONE)): Env.change(data, fixture_key, {"cleared": true, "remaining": 0})
+		Env.rebuild_indexes(data)
+		houses.append(extra_house)
+		for cell: int in Runtime.house_layout(data, extra_house).slots: slots.append({"house_id": extra_house, "cell": cell})
 	_check(slots.size() >= team.combat_units.size(), "Real houses contain all forty actual original people")
 	var people = {}
 	var housing = {}
