@@ -73,6 +73,13 @@ func _armor_fixture(known: bool, upgrade_to_three: bool = true) -> Dictionary:
 	for y: int in [15, 37]:
 		for x: int in [15, 21, 27, 33, 39]: houses.append(_cold_natural_feature(data, "house", Vector2i(x, y) + offset, Vector2i.ONE, {"variant": "large"}))
 	var housing_slots: Array[Dictionary] = []
+	# Fixture worlds carry generated natural resources; clear any on each house's
+	# entrance row (as for the center clearing) so its real slots are counted.
+	for fixture_house: String in houses:
+		var fixture_feature: Dictionary = data.site.features[fixture_house]
+		for fixture_pair: Dictionary in Runtime._building_entrances(data, fixture_feature.cells, int(fixture_feature.quarter)):
+			for fixture_key: String in Env.resources_in(data, Rect2i(fixture_pair.cell, Vector2i.ONE)): Env.change(data, fixture_key, {"cleared": true, "remaining": 0})
+	Env.rebuild_indexes(data)
 	for house: String in houses:
 		var layout := Runtime.house_layout(data, house)
 		_check(layout.ok, "A true original completed house supplies its real housing slots")

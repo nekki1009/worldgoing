@@ -113,6 +113,13 @@ func _shipyard_fixture() -> Dictionary:
 		houses.append(_shipyard_natural_host(data,"house",center+Vector2i((index%5-2)*6,(floori(float(index)/5.0)*2-1)*12),Vector2i.ONE,{"variant":"large"}))
 	var team:=_shipyard_natural_team(lab,center)
 	var slots: Array[Dictionary]=[]
+	# Fixture worlds carry generated natural resources; clear any on each house's
+	# entrance row (as for the center clearing) so its real slots are counted.
+	for fixture_house: String in houses:
+		var fixture_feature: Dictionary = data.site.features[fixture_house]
+		for fixture_pair: Dictionary in Runtime._building_entrances(data, fixture_feature.cells, int(fixture_feature.quarter)):
+			for fixture_key: String in Env.resources_in(data, Rect2i(fixture_pair.cell, Vector2i.ONE)): Env.change(data, fixture_key, {"cleared": true, "remaining": 0})
+	Env.rebuild_indexes(data)
 	for house: String in houses:
 		var layout:=Runtime.house_layout(data,house)
 		_check(layout.ok,"Original completed natural house resolves its true resident slots")

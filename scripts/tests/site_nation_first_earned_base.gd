@@ -223,6 +223,13 @@ func _earned_fixture(target: String, fixed: bool = false, metropolis: bool = fal
 	# Initial NPC housing is a strict prior-world relation to the finite original
 	# people and actual original house slots; no population or permission field.
 	var slots: Array[Dictionary] = []
+	# Fixture worlds carry generated natural resources; clear any on each house's
+	# entrance row (as for the center clearing) so its real slots are counted.
+	for fixture_house: String in houses:
+		var fixture_feature: Dictionary = data.site.features[fixture_house]
+		for fixture_pair: Dictionary in Runtime._building_entrances(data, fixture_feature.cells, int(fixture_feature.quarter)):
+			for fixture_key: String in Env.resources_in(data, Rect2i(fixture_pair.cell, Vector2i.ONE)): Env.change(data, fixture_key, {"cleared": true, "remaining": 0})
+	Env.rebuild_indexes(data)
 	for key: String in houses:
 		var layout = Runtime.house_layout(data, key)
 		_check(layout.ok, "True original house computes its actual resident slots")
