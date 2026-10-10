@@ -7,7 +7,7 @@ extends "res://scripts/tests/site_technology_paid_feature_resume_test.gd"
 const VehiclePolicy = preload("res://scripts/terrain_lab/site_technology_policy.gd")
 
 func _vehicle_team(lab: TerrainLab, join_actor: bool) -> TerrainArmy:
-	var team = TerrainArmy.new()
+	var team := TerrainArmy.new()
 	root.add_child(team)
 	team.set_process(false)
 	team.team_id = 301
@@ -28,52 +28,54 @@ func _vehicle_team(lab: TerrainLab, join_actor: bool) -> TerrainArmy:
 
 func _vehicle_family(lab: TerrainLab, team: TerrainArmy, executor: int) -> String:
 	var actions = lab.site_controller.person_actions
-	var control = lab.controlled_person_id()
+	var control := lab.controlled_person_id()
 	var refs: Array = []
 	for identity: int in [control, int(lab.npc.person_id), team.combat_identity(0), team.combat_identity(1)]:
 		refs.append({"site_id": str(lab.terrain.site.id), "person_id": identity, "path": "", "label": "真实原人物", "age_years": -1})
 	_check(lab.site_controller.family_continuity.register_members(refs, true, control).ok and lab.site_controller.family_continuity.appoint_head(control, control).ok, "Original family registration and current duty establish the true named family")
+	# Original pure schema upgrade for this explicitly registered prerequisite fixture.
+	lab.terrain.site.family = actions._technology_candidate()
 	lab.terrain.site.family.technology = Technology.empty_scope_record(str(lab.terrain.site.id))
 	lab.terrain.site.family.technology.known = ["F09"]
 	_check(Family.validate_family(lab.terrain.site.family, str(lab.terrain.site.id)), "Original Family validator admits the explicit legitimate prerequisite archive")
 	_check(lab.character.place(Vector2i(9, 10), true), "The actual grantor stands at original camp contact")
 	_check(actions.prepare_scope_technology(control, executor, "F11").ok, "Original F11 research names this actual executor")
-	var family_id = str(lab.terrain.site.family.family_id)
+	var family_id := str(lab.terrain.site.family.family_id)
 	_check(actions.grant_scope_technology_budget(control, "family", family_id, {"wood": 300, "iron": 100, "fiber": 100, "cloth": 50}).ok and actions.request_scope_technology_consent(control, "family", family_id, executor).ok, "Original finite material grant and actual team consent are both accepted")
 	return family_id
 
 func _vehicle_station(data: TerrainData, kind: String, anchor: Vector2i) -> Vector2i:
-	var proposed = {"kind": kind, "cell": data.index(anchor), "facing": [1, 0]}
-	var slots = Runtime.siege_work_slots(data, proposed)
+	var proposed := {"kind": kind, "cell": data.index(anchor), "facing": [1, 0]}
+	var slots := Runtime.siege_work_slots(data, proposed)
 	_check(slots.size() == 4, "Original vehicle geometry computes exactly four true construction stations")
 	return data.cell_from_index(int(slots[0].cell))
 
 func _controlled_vehicle_resume() -> void:
-	var data = _building_fixture()
-	var lab = _building_lab(data)
-	var team = _vehicle_team(lab, true)
-	var control = lab.controlled_person_id()
+	var data := _building_fixture()
+	var lab := _building_lab(data)
+	var team := _vehicle_team(lab, true)
+	var control := lab.controlled_person_id()
 	var actions = lab.site_controller.person_actions
-	var family_id = _vehicle_family(lab, team, control)
-	var allowance = Technology.analysis_candidate(lab.character.technology, "F11", family_id, _project(lab), "original-consumed-engine", "original-accepted-capture")
+	var family_id := _vehicle_family(lab, team, control)
+	var allowance := Technology.analysis_candidate(lab.character.technology, "F11", family_id, _project(lab), "original-consumed-engine", "original-accepted-capture")
 	_check(not allowance.is_empty(), "Original strict historical analysis receipt is an explicit saved precondition")
 	lab.character.technology = allowance
-	var key = str(int(data.site.get("next_vehicle", 1)))
-	var target = "vehicle:" + key
-	var request = {"anchor": Vector2i(20, 20), "facing": Vector2i.RIGHT, "team_id": int(team.team_id)}
-	var before = var_to_bytes([data.site, actions._jobs, lab.character.technology, lab.character.fatigue])
+	var key := str(int(data.site.get("next_vehicle", 1)))
+	var target := "vehicle:" + key
+	var request := {"anchor": Vector2i(20, 20), "facing": Vector2i.RIGHT, "team_id": int(team.team_id)}
+	var before := var_to_bytes([data.site, actions._jobs, lab.character.technology, lab.character.fatigue])
 	var refused = actions.begin_scope_technology_phase(control, "family", family_id, "ballista_build", target, request)
 	_check(not refused.ok and refused.code == "UNREACHABLE" and var_to_bytes([data.site, actions._jobs, lab.character.technology, lab.character.fatigue]) == before, "A controlled Actor outside the real station cannot pay, allocate credit or publish any job")
-	var station = _vehicle_station(data, "ballista", request.anchor)
+	var station := _vehicle_station(data, "ballista", request.anchor)
 	_check(lab.character.place(station, true), "Actual original Actor reaches the original construction station")
-	var npc_origin = lab.npc.terrain_cell
+	var npc_origin := lab.npc.terrain_cell
 	_check(lab.npc.place(station, true), "A second actual original Actor deliberately occupies the same fixture station")
 	before = var_to_bytes([data.site, actions._jobs, lab.character.technology])
 	refused = actions.begin_scope_technology_phase(control, "family", family_id, "ballista_build", target, request)
 	_check(not refused.ok and refused.code == "OCCUPIED" and var_to_bytes([data.site, actions._jobs, lab.character.technology]) == before, "The named-person exclusion cannot hide a second original Actor or debit any stock")
 	_check(lab.npc.place(npc_origin, true), "The other real Actor leaves the station")
 	before = var_to_bytes([data.site, actions._jobs, lab.character.technology])
-	var preview = Runtime.begin_technology_operation(data, _token(lab, control, target), true, request)
+	var preview := Runtime.begin_technology_operation(data, _token(lab, control, target), true, request)
 	_check(preview.ok and var_to_bytes([data.site, actions._jobs, lab.character.technology]) == before, "A legal actual stationed named Actor previews without its own body falsely blocking the station")
 	var stock = data.site.inventory.duplicate()
 	var started = actions.begin_scope_technology_phase(control, "family", family_id, "ballista_build", target, request)
@@ -88,10 +90,10 @@ func _controlled_vehicle_resume() -> void:
 	before = var_to_bytes([vehicle, lab.character.technology, lab.character.fatigue])
 	actions.advance(600.0, {})
 	_check(var_to_bytes([vehicle, lab.character.technology, lab.character.fatigue]) == before, "No canonical collector means no timer progress, evidence or fatigue")
-	var step = _controlled_step(lab, 60.0)
+	var step := _controlled_step(lab, 60.0)
 	_check(vehicle.build.progress == 120.0 and vehicle.tech_batch.work_seconds == 60.0 and float(step.handled.get(control, -1.0)) == 60.0 and PersonalFatigue.read(lab.character) > 0.0, "True 60-second effort moves only physical progress by two; original shared fatigue is charged once")
-	var paid = var_to_bytes(_project(lab).budget)
-	var attempt = int(_project(lab).next_attempt)
+	var paid := var_to_bytes(_project(lab).budget)
+	var attempt := int(_project(lab).next_attempt)
 	_check(actions.stop_scope_technology(control, "family", family_id).ok and not actions.is_busy(control), "Original Scope stop immediately cancels this exact controlled vehicle job")
 	_check(actions.prepare_scope_technology(control, control, "F11").ok, "Original project reactivates its same purpose and retained paid target")
 	_check(lab.character.place(Vector2i(9, 10), true), "The actual worker temporarily leaves the station")
@@ -129,16 +131,16 @@ func _controlled_vehicle_resume() -> void:
 	await process_frame
 
 func _npc_vehicle_resume() -> void:
-	var data = _building_fixture()
-	var lab = _building_lab(data)
-	var team = _vehicle_team(lab, false)
+	var data := _building_fixture()
+	var lab := _building_lab(data)
+	var team := _vehicle_team(lab, false)
 	var actions = lab.site_controller.person_actions
-	var control = lab.controlled_person_id()
-	var executor = team.combat_identity(1)
-	var family_id = _vehicle_family(lab, team, executor)
-	var key = str(int(data.site.get("next_vehicle", 1)))
-	var target = "vehicle:" + key
-	var request = {"anchor": Vector2i(20, 20), "facing": Vector2i.RIGHT, "team_id": int(team.team_id)}
+	var control := lab.controlled_person_id()
+	var executor := team.combat_identity(1)
+	var family_id := _vehicle_family(lab, team, executor)
+	var key := str(int(data.site.get("next_vehicle", 1)))
+	var target := "vehicle:" + key
+	var request := {"anchor": Vector2i(20, 20), "facing": Vector2i.RIGHT, "team_id": int(team.team_id)}
 	var started = actions.begin_scope_technology_phase(control, "family", family_id, "ballista_build", target, request)
 	_check(started.ok and lab.site_controller.work_team.is_assigned(executor), "Original Runtime publishes the actual named WT vehicle task in the same paid tail")
 	var vehicle: Dictionary = data.site.vehicles[key]
@@ -149,12 +151,12 @@ func _npc_vehicle_resume() -> void:
 	team.cells[1] = data.cell_from_index(int(task.work_cell))
 	task.cell = int(task.work_cell)
 	task.mode = "work"
-	var before = var_to_bytes(vehicle)
-	var wrong = Runtime.advance_siege_work(data, key, "construct", 60.0, team.cells[1], int(task.work_slot), int(team.team_id), task, team.combat_identity(0))
+	var before := var_to_bytes(vehicle)
+	var wrong := Runtime.advance_siege_work(data, key, "construct", 60.0, team.cells[1], int(task.work_slot), int(team.team_id), task, team.combat_identity(0))
 	_check(not wrong.ok and var_to_bytes(vehicle) == before, "Another real NPC cannot borrow the SAME named task identity")
 	_check(Runtime.advance_siege_work(data, key, "construct", 60.0, team.cells[1], int(task.work_slot), int(team.team_id), task, executor).ok and vehicle.build.progress == 60.0, "The actual original NPC at its true station performs a real direct interval")
-	var paid = var_to_bytes(_project(lab).budget)
-	var attempt = int(_project(lab).next_attempt)
+	var paid := var_to_bytes(_project(lab).budget)
+	var attempt := int(_project(lab).next_attempt)
 	_check(actions.stop_scope_technology(control, "family", family_id).ok and not lab.site_controller.work_team.is_assigned(executor) and row.work_task.is_empty(), "Original Scope stop removes its exact true NPC vehicle assignment")
 	_check(actions.prepare_scope_technology(control, executor, "F11").ok, "Original project reactivates the retained purpose")
 	started = actions.begin_scope_technology_phase(control, "family", family_id, "ballista_build", target)
@@ -166,7 +168,7 @@ func _npc_vehicle_resume() -> void:
 	team.cells[1] = data.cell_from_index(int(task.work_cell))
 	task.cell = int(task.work_cell)
 	task.mode = "work"
-	var finished = Runtime.advance_siege_work(data, key, "construct", 5340.0, team.cells[1], int(task.work_slot), int(team.team_id), task, executor)
+	var finished := Runtime.advance_siege_work(data, key, "construct", 5340.0, team.cells[1], int(task.work_slot), int(team.team_id), task, executor)
 	_check(finished.ok and finished.complete and vehicle.phase == "idle" and row.work_task.is_empty() and not lab.site_controller.work_team.is_assigned(executor) and _project(lab).receipts.size() == 1 and _project(lab).budget.payments.size() == 1, "True NPC completion commits one paid personal phase and clears the finite named original task")
 	_cleanup_fixture(lab, team)
 	await process_frame

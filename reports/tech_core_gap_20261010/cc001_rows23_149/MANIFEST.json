@@ -1,0 +1,2986 @@
+{
+ "base": "D HEAD d8b8276",
+ "rows": "23-149 (127 scripts) plus transitive test bases",
+ "counts": {
+  "MISSING_IN_D": 105,
+  "MATCH": 28,
+  "DIFFERS": 24
+ },
+ "delivered_files": 107,
+ "check_only_done": 107,
+ "files": [
+  {
+   "target": "scripts/tests/region_controlled_death_restriction_test.gd",
+   "status_vs_D": "DIFFERS",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\09\\26\\01a0def5-6320-7ba0-84af-45301ed38863\\region_source_incremental_union\\fixture_overlay_v2\\candidates\\scripts\\tests\\region_controlled_death_restriction_test.gd",
+   "pin_sha256": "6015E91241F976DDFC2FD5B72027976C7A0A1C28E4D55251BD0E82E865A6D8B0",
+   "D_head_sha256": "1BD266A6608F88C565467B3267DF1598AA15DA3E6B7798BFE3DCF1C95072B243",
+   "needed_by": [
+    "base of scripts/tests/region_n08_civil_original_ui_test.gd"
+   ],
+   "D_commits": [
+    "b85549b 2026-10-10 Region round 8: destination genesis, operator-less wagon refusal, pose ints",
+    "ef39140 2026-10-09 Restore point 2026-10-09: work in progress across threads before cleanup"
+   ],
+   "action": "KEEP_D: Region round 8 (b85549b) land-condition rule required by current production",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/region_initial_world_transaction_test.gd",
+   "status_vs_D": "DIFFERS",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\09\\26\\01a0def5-6320-7ba0-84af-45301ed38863\\region_source_incremental_union\\fixture_overlay_v2\\candidates\\scripts\\tests\\region_initial_world_transaction_test.gd",
+   "pin_sha256": "8B985861ACF0854F23CA972920F870F88A8B7561861707647A962B1E7EF4A535",
+   "D_head_sha256": "8CD94921D9CCF66A66972F7C772F0B230D557284412D634FEF2726EBA4EB8BDA",
+   "needed_by": [
+    "base of scripts/tests/site_technology_artisan_production_base.gd"
+   ],
+   "D_commits": [
+    "ef39140 2026-10-09 Restore point 2026-10-09: work in progress across threads before cleanup"
+   ],
+   "action": "KEEP_D: line endings only; content identical to pin",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/region_n08_civil_original_ui_test.gd",
+   "status_vs_D": "DIFFERS",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\09\\26\\01a0def5-6320-7ba0-84af-45301ed38863\\region_n08_civil_v4_fixture\\region_n08_civil_original_ui_test.gd.source",
+   "pin_sha256": "1939340C46C0BD519912D10DDBCC699A2199C307ECD89EA1523558EE31A4EB5F",
+   "D_head_sha256": "894F2E9A0CAA931237B3C9145A6236FC7596A908E2F4BC7D36EDE71487D526C9",
+   "needed_by": [
+    "row 131"
+   ],
+   "D_commits": [
+    "b85549b 2026-10-10 Region round 8: destination genesis, operator-less wagon refusal, pose ints",
+    "b41c6b3 2026-10-09 Integrate Core and Region stage 1 into D (checkpoint after T0/T5)"
+   ],
+   "action": "KEEP_D: Region round 8 (b85549b) mapped-land/rope/tools fixture setup for current production",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_building_runtime_contract_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\09\\26\\01a0def5-6320-7ba0-84af-45301ed38863\\region_c06_original_ship_physical_tests_v1\\scripts\\tests\\site_building_runtime_contract_test.gd",
+   "pin_sha256": "B36E992D32A54159578B02037F3E5581F21443220BD384BC4912C5E4EAE11422",
+   "D_head_sha256": "B36E992D32A54159578B02037F3E5581F21443220BD384BC4912C5E4EAE11422",
+   "needed_by": [
+    "base of scripts/tests/site_ship_build_test.gd",
+    "base of scripts/tests/site_siege_runtime_contract_test.gd"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_building_ui_test.gd",
+   "status_vs_D": "DIFFERS",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\09\\26\\01a0def5-6320-7ba0-84af-45301ed38863\\region_source_incremental_union\\fixture_overlay_v2\\candidates\\scripts\\tests\\site_building_ui_test.gd",
+   "pin_sha256": "8CA77757F3D425C87F9E6F78DD0EE81C395778E6E1E465A4306F2F5C0DF7C403",
+   "D_head_sha256": "9A8F90D0C9E6740945F434C90935D68451960947B6C32463335D0D94858269BF",
+   "needed_by": [
+    "base of scripts/tests/site_f01_farm_protocol_test.gd",
+    "base of scripts/tests/site_f09_survey_stakes_test.gd",
+    "base of scripts/tests/site_f10_construction_method_test.gd",
+    "base of scripts/tests/site_family_recipe_effect_test.gd"
+   ],
+   "D_commits": [
+    "4105977 2026-10-10 Ecology test fixtures: pending build entrance, transient notices, herb source",
+    "ef39140 2026-10-09 Restore point 2026-10-09: work in progress across threads before cleanup"
+   ],
+   "action": "KEEP_D: ecology fixture fix 4105977 (pending_build entrance)",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_controller_work_team_water_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_controller_work_team_water_test.gd",
+   "pin_sha256": "456F8EAFFF0134B669052FDCA2C131E989948DFF07439B0F3799DFD83D48C884",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 24"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "456F8EAFFF0134B669052FDCA2C131E989948DFF07439B0F3799DFD83D48C884",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_equipment_original_prepared_exchange_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\gd-typed-terminal-equipment\\20261008_equipment_exchange_v2\\tests\\site_equipment_original_prepared_exchange_test.gd",
+   "pin_sha256": "E40A7612C6FD49743898FF9BEC12F5723906E735DBA03638EFE7B4861D3B97AD",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 142"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "E40A7612C6FD49743898FF9BEC12F5723906E735DBA03638EFE7B4861D3B97AD",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_f01_family_first_earned_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_f01_family_first_earned_test.v1.gd.txt",
+   "pin_sha256": "DCA9ADCD24D700C1717EFE8F5D02344886464111F47C3AC39581F075B80FB252",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 109"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "DCA9ADCD24D700C1717EFE8F5D02344886464111F47C3AC39581F075B80FB252",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_f01_farm_protocol_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_f01_farm_protocol_test.gd",
+   "pin_sha256": "D2467AF330F54101C126F1E087448A744081012BEC7468B6437307E0E48C0E56",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 25"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "D2467AF330F54101C126F1E087448A744081012BEC7468B6437307E0E48C0E56",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_f02_family_first_earned_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_f02_family_first_earned_test.v1.gd.txt",
+   "pin_sha256": "F930133DC80E5E36AFEFA9FF767A29F7ACC488EDB7CD96BAC2E9FF2913E35674",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 110"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "F930133DC80E5E36AFEFA9FF767A29F7ACC488EDB7CD96BAC2E9FF2913E35674",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_f03_family_first_earned_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_f03_family_first_earned_test.v1.gd.txt",
+   "pin_sha256": "043C9FAC45C128D7DA2799F052CF17A8B4C6308486EC37BC1779779251113111",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 111"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "043C9FAC45C128D7DA2799F052CF17A8B4C6308486EC37BC1779779251113111",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_f04_f06_fixed_first_earned_base.gd",
+   "status_vs_D": "DIFFERS",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\09\\26\\01a0def5-6320-7ba0-84af-45301ed38863\\region_core_c33_native43_application_source_v1\\fixture_overlay\\scripts\\tests\\site_f04_f06_fixed_first_earned_base.gd",
+   "pin_sha256": "DF0EC5CEF11927755E139E6145D08A60D7ED131FF1A5EC5C1E8E130F170D04B5",
+   "D_head_sha256": "F404634B3889D0CD90E79636ACF028093A1E4E7BE693736F7EE6BE74BBFA39A8",
+   "needed_by": [
+    "base of scripts/tests/site_f04_fixed_first_earned_test.gd",
+    "base of scripts/tests/site_f06_fixed_first_earned_test.gd"
+   ],
+   "D_commits": [
+    "bbd967a 2026-10-10 Tests: CC-001 stage-1 bases and type-relaxed frozen fixtures"
+   ],
+   "action": "KEEP_D: type-only relaxation (bbd967a)",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_f04_fixed_first_earned_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_f04_fixed_first_earned_test.gd.v1.txt",
+   "pin_sha256": "4EB7CE8C009ADA57FC6752505BBDD48B2B5F135A367A8EAC60D86D388BB24C3C",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 116"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "4EB7CE8C009ADA57FC6752505BBDD48B2B5F135A367A8EAC60D86D388BB24C3C",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_f05_family_first_earned_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_f05_family_first_earned_test.v1.gd.txt",
+   "pin_sha256": "3BC2F08DB077078BEA8971C880314E2DD7858BC4B55E68C06359A94E16938307",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 112"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "3BC2F08DB077078BEA8971C880314E2DD7858BC4B55E68C06359A94E16938307",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_f06_fixed_first_earned_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_f06_fixed_first_earned_test.gd.v1.txt",
+   "pin_sha256": "274BB55BD9CAE95F55B9F50FED8061FA7F2F92E7FB7CB3043458F1CB3F13107A",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 117"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "274BB55BD9CAE95F55B9F50FED8061FA7F2F92E7FB7CB3043458F1CB3F13107A",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_f07_army_consent_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_f07_army_consent_test.gd",
+   "pin_sha256": "CBC141FC3578F52B5E55B5CFBE8575AAE2127704B06D2F4A271E80E9C74C9AB4",
+   "D_head_sha256": "CBC141FC3578F52B5E55B5CFBE8575AAE2127704B06D2F4A271E80E9C74C9AB4",
+   "needed_by": [
+    "row 26"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_f07_authority_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_f07_authority_test.gd",
+   "pin_sha256": "EB278D3A6C081DB294A464B165C30CE971A861AE50F6014C866C0B39E3948DAD",
+   "D_head_sha256": "EB278D3A6C081DB294A464B165C30CE971A861AE50F6014C866C0B39E3948DAD",
+   "needed_by": [
+    "row 27"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_f07_cold_jobs_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_f07_cold_jobs_test.gd",
+   "pin_sha256": "0FD6DE272E48859D0C41F1B79C5218DB7BE55C95D40EB6109DAE9EB4A465258C",
+   "D_head_sha256": "0FD6DE272E48859D0C41F1B79C5218DB7BE55C95D40EB6109DAE9EB4A465258C",
+   "needed_by": [
+    "row 28",
+    "base of scripts/tests/site_f08_scope_camp_test.gd"
+   ],
+   "action": "NONE",
+   "overlay_sha256": "17B37A84F4F026740218FFA5A310C0B1862CF83C6E681500BB0EBACDC8106623",
+   "overlay_changes": [
+    {
+     "line": 268,
+     "name": "current"
+    },
+    {
+     "line": 271,
+     "name": "bad"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_f07_person_state_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_f07_person_state_test.gd",
+   "pin_sha256": "1E7448FC113561935CE25145205D3CD4697FC8E3B99915E3E41913BD7A9D4B32",
+   "D_head_sha256": "1E7448FC113561935CE25145205D3CD4697FC8E3B99915E3E41913BD7A9D4B32",
+   "needed_by": [
+    "row 29"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_f07_research_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_f07_research_test.gd",
+   "pin_sha256": "5ABCFF9EE87305EAF96C2028D8EE1803D70828C9BD3CC94ABEE694F291B57D3F",
+   "D_head_sha256": "5ABCFF9EE87305EAF96C2028D8EE1803D70828C9BD3CC94ABEE694F291B57D3F",
+   "needed_by": [
+    "row 30",
+    "base of scripts/tests/site_f07_army_consent_test.gd",
+    "base of scripts/tests/site_f07_authority_test.gd",
+    "base of scripts/tests/site_f08_new_job_duration_test.gd"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_f08_new_job_duration_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_f08_new_job_duration_test.gd",
+   "pin_sha256": "87154613260DE4079C36809F1590BE83F28D7C7B85364AC34516F1839B3D4C0F",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 31"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "87154613260DE4079C36809F1590BE83F28D7C7B85364AC34516F1839B3D4C0F",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_f08_scope_camp_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_f08_scope_camp_test.gd",
+   "pin_sha256": "A166B6E30545E68FBD29554D303E2148A54163715D845122FF11A1679AB97D3C",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 32"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "A166B6E30545E68FBD29554D303E2148A54163715D845122FF11A1679AB97D3C",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_f09_family_first_earned_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_f09_family_first_earned_test.v1.gd.txt",
+   "pin_sha256": "2EC7928B2952225C61C8231E9530EFC3B113B00B9172CB83C546A15404010478",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 113"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "2EC7928B2952225C61C8231E9530EFC3B113B00B9172CB83C546A15404010478",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_f09_survey_stakes_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_f09_survey_stakes_test.gd",
+   "pin_sha256": "DA1BDED5DD18572B303E15C74DB1A9B95CB18BF8C85CF1C024D1BFFB6F3558DE",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 33"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "DA1BDED5DD18572B303E15C74DB1A9B95CB18BF8C85CF1C024D1BFFB6F3558DE",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_f10_construction_method_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_f10_construction_method_test.gd.v1.txt",
+   "pin_sha256": "EB34DD72E4E48F6E336FF861917935CF08E42ED90F2813B2378137B28AC0FB4E",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 34"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "EB34DD72E4E48F6E336FF861917935CF08E42ED90F2813B2378137B28AC0FB4E",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "48BB1CAF8DB36D9C60FB6A26B29324CC7B5B6F1EB2B342BDDF12C16BCFC128C9",
+   "overlay_changes": [
+    {
+     "line": 16,
+     "name": "original_cost"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_f10_family_first_earned_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_f10_family_first_earned_test.v1.gd.txt",
+   "pin_sha256": "43C2EE8B1C72DCE57C02E9985BAA5CE51D585AAC7101D8644D5DA1602EC31A3D",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 114"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "43C2EE8B1C72DCE57C02E9985BAA5CE51D585AAC7101D8644D5DA1602EC31A3D",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_f11_joinery_scope_ui_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\09\\26\\01a0def5-6320-7ba0-84af-45301ed38863\\region_core_c33_native43_application_source_v1\\fixture_overlay\\scripts\\tests\\site_f11_joinery_scope_ui_test.gd",
+   "pin_sha256": "B6DFBE1212A2DF054B35FCF5967B750E2B12527D0FF4ED8D51BDA7DA1ECE8BD5",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 35"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "B6DFBE1212A2DF054B35FCF5967B750E2B12527D0FF4ED8D51BDA7DA1ECE8BD5",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "009050B6762E8B7E7F729A48D9F4A0C184C2593B0CD523DA14217B3ACC087AD3",
+   "overlay_changes": [
+    {
+     "line": 77,
+     "name": "actions"
+    },
+    {
+     "line": 99,
+     "name": "captured"
+    },
+    {
+     "line": 103,
+     "name": "admitted"
+    },
+    {
+     "line": 105,
+     "name": "checked"
+    },
+    {
+     "line": 130,
+     "name": "prepared"
+    },
+    {
+     "line": 136,
+     "name": "workers"
+    },
+    {
+     "line": 140,
+     "name": "assigned"
+    },
+    {
+     "line": 151,
+     "name": "captured"
+    },
+    {
+     "line": 154,
+     "name": "admitted"
+    },
+    {
+     "line": 182,
+     "name": "stock"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_f12_first_earned_counterweight_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\09\\26\\01a0def5-6320-7ba0-84af-45301ed38863\\region_core_c33_native43_application_source_v1\\fixture_overlay\\scripts\\tests\\site_f12_first_earned_counterweight_test.gd",
+   "pin_sha256": "7E3E248D2360530EF4DD66E48EAD0C0C35E360814AACDA054D06C5EAAFDB18CE",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 123"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "7E3E248D2360530EF4DD66E48EAD0C0C35E360814AACDA054D06C5EAAFDB18CE",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "BEA53C2B1CAD13ACCA99F8440BB42E8BC62A2FF66F8A2F579954367D972EB43A",
+   "overlay_changes": [
+    {
+     "line": 97,
+     "name": "actions"
+    },
+    {
+     "line": 105,
+     "name": "refused"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_f14_family_first_earned_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_f14_family_first_earned_test.v1.gd.txt",
+   "pin_sha256": "16A9BBFEDAA54175192A70BA7BE371BD804ECEE49FFB34C13337BFC92A20E36C",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 115"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "16A9BBFEDAA54175192A70BA7BE371BD804ECEE49FFB34C13337BFC92A20E36C",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_family_first_earned_base.gd",
+   "status_vs_D": "DIFFERS",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\09\\26\\01a0def5-6320-7ba0-84af-45301ed38863\\region_core_c33_native43_application_source_v1\\fixture_overlay\\scripts\\tests\\site_family_first_earned_base.gd",
+   "pin_sha256": "D350EDF60F51129CBEB66ABFCB577D707C033678F0A7DD3073F7F388FFAE9072",
+   "D_head_sha256": "C09777BDC9CCF94310B9696F2EA8C7A54B06804D3BA32D243047DD3CE8E729A8",
+   "needed_by": [
+    "base of scripts/tests/site_f11_joinery_scope_ui_test.gd",
+    "base of scripts/tests/site_f01_family_first_earned_test.gd",
+    "base of scripts/tests/site_f02_family_first_earned_test.gd",
+    "base of scripts/tests/site_f03_family_first_earned_test.gd"
+   ],
+   "D_commits": [
+    "bbd967a 2026-10-10 Tests: CC-001 stage-1 bases and type-relaxed frozen fixtures"
+   ],
+   "action": "KEEP_D: type-only relaxation (bbd967a)",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_family_recipe_effect_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_family_recipe_effect_test.gd",
+   "pin_sha256": "F01A6985CE78BF2DC5C0E78328694D9B6B2E7C80027FDFAB986E7B85EF647138",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 36"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "F01A6985CE78BF2DC5C0E78328694D9B6B2E7C80027FDFAB986E7B85EF647138",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "FEBD36F12E7FC080A138E69ACFFB69EFAA849B2077E301E4C4A9A59C5C465E24",
+   "overlay_changes": [
+    {
+     "line": 50,
+     "name": "stock_before"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_g06_source_rule_ui_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\09\\26\\01a0def5-6320-7ba0-84af-45301ed38863\\region_core_c33_native43_application_source_v1\\fixture_overlay\\scripts\\tests\\site_g06_source_rule_ui_test.gd",
+   "pin_sha256": "441796EC06D82CF5DCD4DCEC88869F55273599367CC16166EC061DDD4C1FCCBB",
+   "D_head_sha256": "441796EC06D82CF5DCD4DCEC88869F55273599367CC16166EC061DDD4C1FCCBB",
+   "needed_by": [
+    "row 118"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_gd_contact_controlled_f11_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\gd-mesh-contact-prefix\\20261008_controlled_v5\\tests\\site_gd_contact_controlled_f11_test.gd",
+   "pin_sha256": "0AF5B4C891990E543F8C28691B9F2ED7BB0048EE26E7E0B20E46EC08F42BD973",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 127"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "0AF5B4C891990E543F8C28691B9F2ED7BB0048EE26E7E0B20E46EC08F42BD973",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_gd_contact_controlled_f12_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\gd-mesh-contact-prefix\\20261008_controlled_v5\\tests\\site_gd_contact_controlled_f12_test.gd",
+   "pin_sha256": "806C9416F43A06B43B3A37AB1598C620127E00B4BACFB297037214E3BA7A72A5",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 128"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "806C9416F43A06B43B3A37AB1598C620127E00B4BACFB297037214E3BA7A72A5",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_gd_contact_controlled_original_point_base.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\gd-mesh-contact-prefix\\20261008_controlled_v5\\tests\\site_gd_contact_controlled_original_point_base.gd",
+   "pin_sha256": "2A893039B5409DAA08DFBA9005AE475920246E7B31A2A63D09E94AB66FB6F2AB",
+   "D_head_sha256": null,
+   "needed_by": [
+    "base of scripts/tests/site_gd_contact_controlled_f11_test.gd",
+    "base of scripts/tests/site_gd_contact_controlled_f12_test.gd"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "2A893039B5409DAA08DFBA9005AE475920246E7B31A2A63D09E94AB66FB6F2AB",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_gd_contact_manual_original_point_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\gd-mesh-contact-prefix\\20261008_runtime_v4a\\tests\\site_gd_contact_manual_original_point_test.gd",
+   "pin_sha256": "62D0D81A185E80B8B3BC736B1E76D42B9D34F0EB5B07FFB3C2A4B63B55A48D2A",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 126"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "62D0D81A185E80B8B3BC736B1E76D42B9D34F0EB5B07FFB3C2A4B63B55A48D2A",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_gd_contact_supply_f11_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\gd-mesh-contact-prefix\\20261008_supply_v4d\\tests\\site_gd_contact_supply_f11_test.gd",
+   "pin_sha256": "29FED51283EE38AFF1C5489B1993842F5004C13F9DBC6E5E548E4B552F6686FB",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 129"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "29FED51283EE38AFF1C5489B1993842F5004C13F9DBC6E5E548E4B552F6686FB",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_gd_contact_supply_f12_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\gd-mesh-contact-prefix\\20261008_supply_v4d\\tests\\site_gd_contact_supply_f12_test.gd",
+   "pin_sha256": "195774CC375C34493251AF133E70651528CFE1C4FED08A802190F8A2576A0E3B",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 130"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "195774CC375C34493251AF133E70651528CFE1C4FED08A802190F8A2576A0E3B",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_gd_contact_supply_original_point_base.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\gd-mesh-contact-prefix\\20261008_supply_v4d\\tests\\site_gd_contact_supply_original_point_base.gd",
+   "pin_sha256": "55192EECDCF056B5AAC23D651BC108DA17F0C78194C49438966054C458B693ED",
+   "D_head_sha256": null,
+   "needed_by": [
+    "base of scripts/tests/site_gd_contact_supply_f11_test.gd",
+    "base of scripts/tests/site_gd_contact_supply_f12_test.gd"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "55192EECDCF056B5AAC23D651BC108DA17F0C78194C49438966054C458B693ED",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_gd_contact_training_original_point_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\gd-mesh-contact-prefix\\20261008_training_v6a\\tests\\site_gd_contact_training_original_point_test.gd",
+   "pin_sha256": "157C4E369AFAB5236CF7209AC39A867823A494C8067770146476B09AB358DBB0",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 132"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "157C4E369AFAB5236CF7209AC39A867823A494C8067770146476B09AB358DBB0",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_gd_custody_terminal_point_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\gd-typed-terminal-custody\\20261008_121150_479910\\tests\\site_gd_custody_terminal_point_test.gd.txt",
+   "pin_sha256": "658AD8EE3AFD6C587A523CA0F1E03F59297AC2A8ABC76EAAC7C9E1DC53416F4D",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 144"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "658AD8EE3AFD6C587A523CA0F1E03F59297AC2A8ABC76EAAC7C9E1DC53416F4D",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "8BF872EA3C63E9F6B12390C57114F8261FAF6791BD0ED96A9FC6A3CEDB733F37",
+   "overlay_changes": [],
+   "apply": "overlay_typed (pinned bytes + type relaxations + capture_fields substitution)"
+  },
+  {
+   "target": "scripts/tests/site_gd_delivery_mesh_contact_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\gd-mesh-contact-prefix\\20261008_delivery_v9\\tests\\site_gd_delivery_mesh_contact_test.gd",
+   "pin_sha256": "38FD9CD1EF65749BADCB5D61D64F9D9B4D836E79245E0CF8A089DB38FA48341A",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 138"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "38FD9CD1EF65749BADCB5D61D64F9D9B4D836E79245E0CF8A089DB38FA48341A",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_gd_delivery_prefix_owner_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\gd-mesh-contact-prefix\\20261008_delivery_v9\\tests\\site_gd_delivery_prefix_owner_test.gd",
+   "pin_sha256": "AE266E3B070A81748942D9E9DACE8507DD83B4E7FB84E45614AB5909C85B7B4A",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 137"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "AE266E3B070A81748942D9E9DACE8507DD83B4E7FB84E45614AB5909C85B7B4A",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_gd_opened_loot_supply_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\gd-typed-terminal-person\\20261008_opened_loot_supply_v11\\tests\\site_gd_opened_loot_supply_test.gd",
+   "pin_sha256": "492CE4CB85CFB80E140C88424F02E13F2A8B2267446AF045788F9468A23E1A72",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 143"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "492CE4CB85CFB80E140C88424F02E13F2A8B2267446AF045788F9468A23E1A72",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_gd_original_action_endpoint_point_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\acceptance-reconciliation\\20261008_action_endpoint_source_v1\\tests\\site_gd_original_action_endpoint_point_test.gd",
+   "pin_sha256": "4FFD68DC7CFA1855838557D1F23F362FC5BDFE8B5B6265440F59CB1F21BA024D",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 149"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "4FFD68DC7CFA1855838557D1F23F362FC5BDFE8B5B6265440F59CB1F21BA024D",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_gd_rest_terminal_source_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\gd-mesh-contact-prefix\\20261008_ranged_terminal_v8a\\tests\\site_gd_rest_terminal_source_test.gd",
+   "pin_sha256": "BF4F53AE1499F66039FF08D4B06DEDEA3398E93F50CAAB1ACEA2D66F05E76755",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 136"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "BF4F53AE1499F66039FF08D4B06DEDEA3398E93F50CAAB1ACEA2D66F05E76755",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_gd_same_unit_sum_original_point_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\gd-mesh-contact-prefix\\20261008_same_unit_v7b\\tests\\site_gd_same_unit_sum_original_point_test.gd",
+   "pin_sha256": "FF099ED37EEAF6428FC7BE9DB812C645FA0F3039F913768CBD0683BAF43BDB91",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 133"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "FF099ED37EEAF6428FC7BE9DB812C645FA0F3039F913768CBD0683BAF43BDB91",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_gd_shiprepair_mesh_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\gd-mesh-contact-prefix\\20261008_shiprepair_v10a\\tests\\site_gd_shiprepair_mesh_test.gd",
+   "pin_sha256": "03F7378AF6F1FBA2D0EDB94FF4B6DF4491AE58BB8F7D9DABA51A9BC57296FF2B",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 141"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "03F7378AF6F1FBA2D0EDB94FF4B6DF4491AE58BB8F7D9DABA51A9BC57296FF2B",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_gd_shiprepair_point_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\gd-mesh-contact-prefix\\20261008_shiprepair_v10a\\tests\\site_gd_shiprepair_point_test.gd",
+   "pin_sha256": "635D5F6014C4ACB01973BE24EC75DF053DD7773F82AD986CB08F95A01D221A93",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 140",
+    "base of scripts/tests/site_gd_shiprepair_mesh_test.gd"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "635D5F6014C4ACB01973BE24EC75DF053DD7773F82AD986CB08F95A01D221A93",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_gd_typed_loot_mesh_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\gd-typed-terminal-person\\20261008_typed_terminal_caller_v13\\tests\\site_gd_typed_loot_mesh_test.gd",
+   "pin_sha256": "7A8709E0986E9584A2E95A6D01219DC6D087352E304CD46C446CBD4B0091B8C7",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 148"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "7A8709E0986E9584A2E95A6D01219DC6D087352E304CD46C446CBD4B0091B8C7",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_gd_typed_loot_point_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\gd-typed-terminal-person\\20261008_typed_terminal_caller_v13\\tests\\site_gd_typed_loot_point_test.gd",
+   "pin_sha256": "BA8CAB6385F43A69CD39F3E722086511783FD2082C6F6213E351C74C4113C23A",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 147",
+    "base of scripts/tests/site_gd_typed_loot_mesh_test.gd"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "BA8CAB6385F43A69CD39F3E722086511783FD2082C6F6213E351C74C4113C23A",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_n01_procurement_earned_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\09\\26\\01a0def5-6320-7ba0-84af-45301ed38863\\region_core_c33_native43_application_source_v1\\fixture_overlay\\scripts\\tests\\site_n01_procurement_earned_test.gd",
+   "pin_sha256": "D43221E67A7BABD1448C6E248B700EDA032DEEFF1C5822E1261073793D32F916",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 37",
+    "base of scripts/tests/site_n04_workshop_earned_test.gd"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "D43221E67A7BABD1448C6E248B700EDA032DEEFF1C5822E1261073793D32F916",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "42E9BC817890244546EEB833134FDD4066DF7FAAA97F1A88E338F1F9D0C1703F",
+   "overlay_changes": [
+    {
+     "line": 8,
+     "name": "actions"
+    },
+    {
+     "line": 9,
+     "name": "requests"
+    },
+    {
+     "line": 17,
+     "name": "results"
+    },
+    {
+     "line": 21,
+     "name": "actions"
+    },
+    {
+     "line": 33,
+     "name": "actions"
+    },
+    {
+     "line": 34,
+     "name": "orders"
+    },
+    {
+     "line": 43,
+     "name": "person"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_n02_first_earned_labor_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_n02_first_earned_labor_test.gd.v3.txt",
+   "pin_sha256": "2044676E3252D45CE86DE1656E805A04ED46716545052F437182377D645FEF65",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 38"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "2044676E3252D45CE86DE1656E805A04ED46716545052F437182377D645FEF65",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_n03_aid_ui_earned_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_n03_aid_ui_earned_test.v2.gd.txt",
+   "pin_sha256": "C91B2CA54A4C1AF81C51395A29522ACD268D1A3FB033719831D807188143717C",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 39"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "C91B2CA54A4C1AF81C51395A29522ACD268D1A3FB033719831D807188143717C",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_n04_workshop_earned_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\09\\26\\01a0def5-6320-7ba0-84af-45301ed38863\\region_core_c33_native43_application_source_v1\\fixture_overlay\\scripts\\tests\\site_n04_workshop_earned_test.gd",
+   "pin_sha256": "89BA53E3232E3E3BE75AF8D67D97AE3C662F4BBDE8D4EC485AB7BB1AC94C14A8",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 40",
+    "base of scripts/tests/site_n05_military_issue_earned_test.gd",
+    "base of scripts/tests/site_nation_first_earned_base.gd"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "89BA53E3232E3E3BE75AF8D67D97AE3C662F4BBDE8D4EC485AB7BB1AC94C14A8",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "B346ED116DE1E05B5C99E476C950069AB6CE9038B01724E31AACEDCB809500CA",
+   "overlay_changes": [
+    {
+     "line": 13,
+     "name": "actions"
+    },
+    {
+     "line": 47,
+     "name": "workers"
+    },
+    {
+     "line": 50,
+     "name": "captured"
+    },
+    {
+     "line": 54,
+     "name": "admitted"
+    },
+    {
+     "line": 74,
+     "name": "started"
+    },
+    {
+     "line": 95,
+     "name": "camp"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_n05_military_issue_earned_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\09\\26\\01a0def5-6320-7ba0-84af-45301ed38863\\region_core_c33_native43_application_source_v1\\fixture_overlay\\scripts\\tests\\site_n05_military_issue_earned_test.gd",
+   "pin_sha256": "9676079ED11177F63686763969E65A199037D5EE3293154E4AAED29315BE3DD5",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 41"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "9676079ED11177F63686763969E65A199037D5EE3293154E4AAED29315BE3DD5",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "4A0F5EF1EB30054C408C1E2328CC770F7FB46DD414AFE915FAEF1538FCC2566B",
+   "overlay_changes": [
+    {
+     "line": 15,
+     "name": "actions"
+    },
+    {
+     "line": 16,
+     "name": "orders"
+    },
+    {
+     "line": 46,
+     "name": "workers"
+    },
+    {
+     "line": 75,
+     "name": "requested"
+    },
+    {
+     "line": 76,
+     "name": "other"
+    },
+    {
+     "line": 81,
+     "name": "donor"
+    },
+    {
+     "line": 104,
+     "name": "camp"
+    },
+    {
+     "line": 105,
+     "name": "donor_spent"
+    },
+    {
+     "line": 189,
+     "name": "accepted_scope"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_n07_first_earned_course_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_n07_first_earned_course_test.gd.v2.txt",
+   "pin_sha256": "36D8CA2C156955992B19E7953BA528A124D1A15CD9AE40C6A78C36CA5DD4F895",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 42"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "36D8CA2C156955992B19E7953BA528A124D1A15CD9AE40C6A78C36CA5DD4F895",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "8434F4BD76F0E0BEC79D7E6D933CBAC550A85431AE4E7F7C30B500156AE6C698",
+   "overlay_changes": [
+    {
+     "line": 2,
+     "name": "SiteFamilyContinuity",
+     "kind": "resolution_alias_preload_const"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_n07_funded_lesson_terminal_point_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\gd-mesh-contact-prefix\\20261008_funded_captive_terminal_v4\\tests\\site_n07_funded_lesson_terminal_point_test.gd",
+   "pin_sha256": "BC11FB0DEA2228AF6855A1DD7EA6F57A0FA26EC904B380B31F7A12636E5EF07C",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 145"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "BC11FB0DEA2228AF6855A1DD7EA6F57A0FA26EC904B380B31F7A12636E5EF07C",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "A1245EC1814312AF54630F97DA5179CBB102AF8CBCA1A6A2DFEC6D97FC41830A",
+   "overlay_changes": [
+    {
+     "line": 2,
+     "name": "SiteFamilyContinuity",
+     "kind": "resolution_alias_preload_const"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_n09_tax_ui_earned_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_n09_tax_ui_earned_test.v2.gd.txt",
+   "pin_sha256": "00C54D6B67341B6491D2C4251494FF204BD029E102F469BA11A3856EAF7460EA",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 43"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "00C54D6B67341B6491D2C4251494FF204BD029E102F469BA11A3856EAF7460EA",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_n10_first_earned_mandate_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_n10_first_earned_mandate_test.gd.v3.txt",
+   "pin_sha256": "66C07037582FAB31C6AB8354FED9AA5632FD10E77F434961CA5FA82C0FDD31F0",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 44"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "66C07037582FAB31C6AB8354FED9AA5632FD10E77F434961CA5FA82C0FDD31F0",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "FFBF65E70B61A537CC3CDF2F58910F7251F3D07A93FCF6D8CDD5A66BD0DC1BDB",
+   "overlay_changes": [
+    {
+     "line": 54,
+     "name": "payments_before"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_n11_first_earned_armor_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_n11_first_earned_armor_test.gd.v2.txt",
+   "pin_sha256": "BE3CCEB13344A2BECE997020B74BE3955FA9EA773AD55B1889F3A0B128489A3A",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 45"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "BE3CCEB13344A2BECE997020B74BE3955FA9EA773AD55B1889F3A0B128489A3A",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_n12_first_earned_fleet_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_n12_first_earned_fleet_test.gd.v2.txt",
+   "pin_sha256": "6426B23179A0F91AC4DCCEA585065882981DC3BB938D52E41C991A6BF33F4FA6",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 46"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "6426B23179A0F91AC4DCCEA585065882981DC3BB938D52E41C991A6BF33F4FA6",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_nation_first_earned_base.gd",
+   "status_vs_D": "DIFFERS",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\09\\26\\01a0def5-6320-7ba0-84af-45301ed38863\\region_core_c33_native43_application_source_v1\\fixture_overlay\\scripts\\tests\\site_nation_first_earned_base.gd",
+   "pin_sha256": "44C1AA3627212B5AF30C8031D22EB1E10EE17CF961CE9BB91ECE8BD3EDB49863",
+   "D_head_sha256": "A196B025550F8D031394143FBC84D1AC7EE3163470684DC180C7372B5AB3AC1D",
+   "needed_by": [
+    "base of scripts/tests/site_n02_first_earned_labor_test.gd",
+    "base of scripts/tests/site_n10_first_earned_mandate_test.gd",
+    "base of scripts/tests/site_n11_first_earned_armor_test.gd"
+   ],
+   "D_commits": [
+    "bbd967a 2026-10-10 Tests: CC-001 stage-1 bases and type-relaxed frozen fixtures"
+   ],
+   "action": "KEEP_D: type-only relaxation (bbd967a)",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_nation_fleet_operation_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_nation_fleet_operation_test.gd",
+   "pin_sha256": "BD96B16F0DDFD0830BA11B3A898637A891D28685D91586F9F9F0AAAB0F5C039A",
+   "D_head_sha256": "BD96B16F0DDFD0830BA11B3A898637A891D28685D91586F9F9F0AAAB0F5C039A",
+   "needed_by": [
+    "row 47",
+    "base of scripts/tests/site_n12_first_earned_fleet_test.gd"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_nation_public_operations_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_nation_public_operations_test.gd",
+   "pin_sha256": "8AC5E6765D25DB68344109B7FAC640E6B8B19D990A3024EAB96532469392A72C",
+   "D_head_sha256": "8AC5E6765D25DB68344109B7FAC640E6B8B19D990A3024EAB96532469392A72C",
+   "needed_by": [
+    "row 48"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_nation_shares_ui_earned_base.gd",
+   "status_vs_D": "DIFFERS",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\09\\26\\01a0def5-6320-7ba0-84af-45301ed38863\\region_core_c33_native43_application_source_v1\\fixture_overlay\\scripts\\tests\\site_nation_shares_ui_earned_base.gd",
+   "pin_sha256": "C3632C22C1630087BBAA0DD9D55A0CE4A0CD01B6CD86E37EFD3A525CF46F8DCF",
+   "D_head_sha256": "7A22A59413F3501D266EDBF5BE28AC10A205DDF6C3E742B6B7BD160567646236",
+   "needed_by": [
+    "base of scripts/tests/site_n03_aid_ui_earned_test.gd",
+    "base of scripts/tests/site_n09_tax_ui_earned_test.gd"
+   ],
+   "D_commits": [
+    "bbd967a 2026-10-10 Tests: CC-001 stage-1 bases and type-relaxed frozen fixtures"
+   ],
+   "action": "KEEP_D: type-only relaxation (bbd967a)",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_nation_technology_operations_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_nation_technology_operations_test.gd",
+   "pin_sha256": "903FF797299A18F73620F6069796CBBEC2FEC8CB5E595D917CEFFCE35A370C32",
+   "D_head_sha256": "903FF797299A18F73620F6069796CBBEC2FEC8CB5E595D917CEFFCE35A370C32",
+   "needed_by": [
+    "row 49"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_p4_cold_original_research_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\P4_COLD_RESEARCH_PRIVATE.v2\\tests\\scripts\\tests\\site_p4_cold_original_research_test.gd",
+   "pin_sha256": "B5C33F8F97D992889C5458C23F7DCC46CF6CE7340435A57A812D187B7BFF150D",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 134"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "B5C33F8F97D992889C5458C23F7DCC46CF6CE7340435A57A812D187B7BFF150D",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "6D56487229D5CF10FDFB0921A47C0C88A16AB928DBBD199785D43ED51DFD507C",
+   "overlay_changes": [
+    {
+     "line": 109,
+     "name": "depot"
+    },
+    {
+     "line": 203,
+     "name": "prior_receipts"
+    },
+    {
+     "line": 272,
+     "name": "station"
+    },
+    {
+     "line": 397,
+     "name": "station"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_person_actions_shared_prefix_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_person_actions_shared_prefix_test.gd",
+   "pin_sha256": "FE139F5ADE1F712212593061C626AA7A2361965409BF3CC1AC3BC7D4DCD7FD9D",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 50"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "FE139F5ADE1F712212593061C626AA7A2361965409BF3CC1AC3BC7D4DCD7FD9D",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_person_actions_shared_prefix_vehicle_owner_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_person_actions_shared_prefix_vehicle_owner_test.gd",
+   "pin_sha256": "91EEEA915B5B831A81F886923F94C2C2814FCA30C306BA8E7DC6A216411063AC",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 51"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "91EEEA915B5B831A81F886923F94C2C2814FCA30C306BA8E7DC6A216411063AC",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_ranged_terminal_batch_owner_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\gd-mesh-contact-prefix\\20261008_ranged_terminal_v8a\\tests\\site_ranged_terminal_batch_owner_test.gd",
+   "pin_sha256": "24A7E09AB14241A1A363C7A47AC1D8A3BB53D936D0C20ABAF16ACDDA23F98B40",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 135"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "24A7E09AB14241A1A363C7A47AC1D8A3BB53D936D0C20ABAF16ACDDA23F98B40",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_runtime_typed_terminal_prepare_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\gd-typed-terminal-runtime\\20261008_loot_tent_v1\\site_runtime_typed_terminal_prepare_test.gd",
+   "pin_sha256": "75B6299F1A898DDDE1A4C38B6ED034227F870868AEB0D7131E5AD296143BB2FD",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 139"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "75B6299F1A898DDDE1A4C38B6ED034227F870868AEB0D7131E5AD296143BB2FD",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_s07_first_earned_workshop_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_s07_first_earned_workshop_test.gd.v1.txt",
+   "pin_sha256": "2BA71D32BBE77C32466434A414EEC9D01B7FDF11EA8D4FDDD75F4B54AFBE239F",
+   "D_head_sha256": "2BA71D32BBE77C32466434A414EEC9D01B7FDF11EA8D4FDDD75F4B54AFBE239F",
+   "needed_by": [
+    "row 119"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_s08_first_earned_spares_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_s08_first_earned_spares_test.gd.v1.txt",
+   "pin_sha256": "F9369376F62CF0397A1E1E9FACECD3683EEFC4D0AC1CADED33EB60912D59D76A",
+   "D_head_sha256": "F9369376F62CF0397A1E1E9FACECD3683EEFC4D0AC1CADED33EB60912D59D76A",
+   "needed_by": [
+    "row 120"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_s09_first_earned_engineering_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_s09_first_earned_engineering_test.gd.v1.txt",
+   "pin_sha256": "8D3E5BE05A5DFBB95EEA5ACE55793C1A22CF1097E71D5E64228BBF976D5B6837",
+   "D_head_sha256": "8D3E5BE05A5DFBB95EEA5ACE55793C1A22CF1097E71D5E64228BBF976D5B6837",
+   "needed_by": [
+    "row 121"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_s10_first_earned_defense_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_s10_first_earned_defense_test.gd.v1.txt",
+   "pin_sha256": "0B315AA947EF1D3027081919ACCA1FA16F589EEA48C5A81A7E01D6376930F880",
+   "D_head_sha256": "0B315AA947EF1D3027081919ACCA1FA16F589EEA48C5A81A7E01D6376930F880",
+   "needed_by": [
+    "row 122"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_settlement_engineering_test.gd",
+   "status_vs_D": "DIFFERS",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_settlement_engineering_test.gd.v2.txt",
+   "pin_sha256": "1656956CC137EC012FFFA8345732580BE36100B03CEC9E582B4C03A61A9AB0EC",
+   "D_head_sha256": "5FD6618237CDC3BBCECE1E5C8E457A9D7AC1AB57498AFD2795DD55C5075EF4DD",
+   "needed_by": [
+    "row 52"
+   ],
+   "D_commits": [
+    "bbd967a 2026-10-10 Tests: CC-001 stage-1 bases and type-relaxed frozen fixtures",
+    "ff84cbf 2026-10-10 Tests: add CC-001 stage-1 frozen Core acceptance fixtures"
+   ],
+   "action": "KEEP_D: type-only relaxation (bbd967a)",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_settlement_first_earned_base.gd",
+   "status_vs_D": "DIFFERS",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\09\\26\\01a0def5-6320-7ba0-84af-45301ed38863\\region_core_c33_native43_application_source_v1\\fixture_overlay\\scripts\\tests\\site_settlement_first_earned_base.gd",
+   "pin_sha256": "B0291A7498BD5BAAB40C3C31E7B01C21FF018C54C209DE75D7A2BE2C76365A63",
+   "D_head_sha256": "ADB9927A3CE4D35F45FD533858E389ADD0CD1292005896A63111BE2C001D7827",
+   "needed_by": [
+    "base of scripts/tests/site_s07_first_earned_workshop_test.gd",
+    "base of scripts/tests/site_s08_first_earned_spares_test.gd",
+    "base of scripts/tests/site_s09_first_earned_engineering_test.gd",
+    "base of scripts/tests/site_s10_first_earned_defense_test.gd"
+   ],
+   "D_commits": [
+    "bbd967a 2026-10-10 Tests: CC-001 stage-1 bases and type-relaxed frozen fixtures"
+   ],
+   "action": "KEEP_D: type-only relaxation (bbd967a)",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_settlement_irrigation_test.gd",
+   "status_vs_D": "DIFFERS",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_settlement_irrigation_test.gd.NATURAL_COLD_CORRECTION.v2.txt",
+   "pin_sha256": "BF6F0641072FA0128EFE51AD6578A55AB63E3011861B24A16611950923E989D3",
+   "D_head_sha256": "A6A787F7395B7BCD9C179555D01642E012CC24E1A0B123CFD39C53004B3C436D",
+   "needed_by": [
+    "row 53"
+   ],
+   "D_commits": [
+    "bbd967a 2026-10-10 Tests: CC-001 stage-1 bases and type-relaxed frozen fixtures",
+    "ff84cbf 2026-10-10 Tests: add CC-001 stage-1 frozen Core acceptance fixtures"
+   ],
+   "action": "KEEP_D: type-only relaxation (bbd967a)",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_settlement_metal_chain_test.gd",
+   "status_vs_D": "DIFFERS",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_settlement_metal_chain_test.gd.NATURAL_COLD_CORRECTION.v2.txt",
+   "pin_sha256": "4FEC44573697FEE344677EF839A0B7AF26A495C345F5BEF488EB052D292234D2",
+   "D_head_sha256": "F45C729688759B67F9AEF9091508E8CCDC7327160F8A87A0EC43D8369CB7ABDC",
+   "needed_by": [
+    "row 54"
+   ],
+   "D_commits": [
+    "bbd967a 2026-10-10 Tests: CC-001 stage-1 bases and type-relaxed frozen fixtures",
+    "ff84cbf 2026-10-10 Tests: add CC-001 stage-1 frozen Core acceptance fixtures"
+   ],
+   "action": "KEEP_D: type-only relaxation (bbd967a)",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_settlement_spares_test.gd",
+   "status_vs_D": "DIFFERS",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_settlement_spares_test.gd.v3.txt",
+   "pin_sha256": "53F6974A5B3B85878EA1B2F4AD1C482D4876FFA31DF4F9FB13275A8DD88E1690",
+   "D_head_sha256": "2A51CB5E4C5FD42EA8C95688CF653F8D82E0422F0E0A4588177E29F1A2D810B9",
+   "needed_by": [
+    "row 55"
+   ],
+   "D_commits": [
+    "bbd967a 2026-10-10 Tests: CC-001 stage-1 bases and type-relaxed frozen fixtures",
+    "ff84cbf 2026-10-10 Tests: add CC-001 stage-1 frozen Core acceptance fixtures"
+   ],
+   "action": "KEEP_D: type-only relaxation (bbd967a)",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_shared_vehicle_master_groups_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_shared_vehicle_master_groups_test.gd",
+   "pin_sha256": "C1B04544E2F142C6504640B198B1BAB420E5DD96C5697ACB14E1FC23EA0577E8",
+   "D_head_sha256": null,
+   "needed_by": [
+    "base of scripts/tests/site_shared_vehicle_master_groups_v2_test.gd"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "C1B04544E2F142C6504640B198B1BAB420E5DD96C5697ACB14E1FC23EA0577E8",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_shared_vehicle_master_groups_v2_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_shared_vehicle_master_groups_v2_test.gd",
+   "pin_sha256": "33D7871F5582D50ED5C7804453C1E128A0E8DFE9BC2676DD837C0D6DF86228B2",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 56"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "33D7871F5582D50ED5C7804453C1E128A0E8DFE9BC2676DD837C0D6DF86228B2",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_ship_build_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\09\\26\\01a0def5-6320-7ba0-84af-45301ed38863\\region_c06_original_ship_physical_tests_v1\\scripts\\tests\\site_ship_build_test.gd",
+   "pin_sha256": "1120898A6F9213BB5D5AD53EDA5362F279841E3993486B35EB8C780EFEDD438E",
+   "D_head_sha256": "1120898A6F9213BB5D5AD53EDA5362F279841E3993486B35EB8C780EFEDD438E",
+   "needed_by": [
+    "base of scripts/tests/site_ship_repair_test.gd"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_ship_repair_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\09\\26\\01a0def5-6320-7ba0-84af-45301ed38863\\region_core_method_merge_source_v2_native_closure_20261008_134100\\original_fixed_11_test_snapshots\\site_ship_repair_test.gd.txt",
+   "pin_sha256": "52198F7D6FDF372589D4AEA3AC94738BBD85B82BB995F3C0FB43BF0B8F776D46",
+   "D_head_sha256": "52198F7D6FDF372589D4AEA3AC94738BBD85B82BB995F3C0FB43BF0B8F776D46",
+   "needed_by": [
+    "base of scripts/tests/site_gd_shiprepair_point_test.gd"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_ship_transport_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\09\\26\\01a0def5-6320-7ba0-84af-45301ed38863\\region_c06_original_ship_physical_tests_v1\\scripts\\tests\\site_ship_transport_test.gd",
+   "pin_sha256": "3FC486BA03ACEFA7045F606F0B31467C4F57CE647C653158B1448061A8D5F1D0",
+   "D_head_sha256": "3FC486BA03ACEFA7045F606F0B31467C4F57CE647C653158B1448061A8D5F1D0",
+   "needed_by": [
+    "base of scripts/tests/site_nation_fleet_operation_test.gd"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_siege_ballista_contract_test.gd",
+   "status_vs_D": "DIFFERS",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\09\\26\\01a0def5-6320-7ba0-84af-45301ed38863\\region_core_method_merge_source_v2_native_closure_20261008_134100\\original_fixed_11_test_snapshots\\site_siege_ballista_contract_test.gd.txt",
+   "pin_sha256": "30197F03774650FEF911DBF978EC80D6F79AA9B2BE671EABA03A74837A8B5EBC",
+   "D_head_sha256": "9C4EA2F04DA09E21DC48A5C27FA4FFD2BCADFE7E691DDD3477132585BC34CD37",
+   "needed_by": [
+    "base of scripts/tests/site_siege_stone_contract_test.gd"
+   ],
+   "D_commits": [
+    "4e034e5 2026-10-10 Tests: bring 53 stale fixtures up to current signatures and entry scene",
+    "ef39140 2026-10-09 Restore point 2026-10-09: work in progress across threads before cleanup"
+   ],
+   "action": "KEEP_D: 4e034e5 stale-signature fix (tick accepted_game_seconds)",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_siege_runtime_contract_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\09\\26\\01a0def5-6320-7ba0-84af-45301ed38863\\region_core_method_merge_source_v2_native_closure_20261008_134100\\original_fixed_11_test_snapshots\\site_siege_runtime_contract_test.gd.txt",
+   "pin_sha256": "F7FEB17F538AFCEC4DB75E6CFFBA0423DCDFEC18719625F9DE917D51CF1E6A28",
+   "D_head_sha256": "F7FEB17F538AFCEC4DB75E6CFFBA0423DCDFEC18719625F9DE917D51CF1E6A28",
+   "needed_by": [
+    "base of scripts/tests/site_siege_ballista_contract_test.gd"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_siege_stone_contract_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\09\\26\\01a0def5-6320-7ba0-84af-45301ed38863\\region_core_method_merge_source_v2_native_closure_20261008_134100\\original_fixed_11_test_snapshots\\site_siege_stone_contract_test.gd.txt",
+   "pin_sha256": "9F67F3B0F118316B5FC76162DC147E97648898982C446B6FA769469E2DF464E7",
+   "D_head_sha256": "9F67F3B0F118316B5FC76162DC147E97648898982C446B6FA769469E2DF464E7",
+   "needed_by": [
+    "base of scripts/tests/site_siege_takeover_ai_contract_test.gd"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_siege_takeover_ai_contract_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\09\\26\\01a0def5-6320-7ba0-84af-45301ed38863\\region_core_method_merge_source_v2_native_closure_20261008_134100\\original_fixed_11_test_snapshots\\site_siege_takeover_ai_contract_test.gd.txt",
+   "pin_sha256": "AA9BBB61CB3910BAE807A349F006A75F4181F4E56C3484D5B579BF0BF896F1A2",
+   "D_head_sha256": "AA9BBB61CB3910BAE807A349F006A75F4181F4E56C3484D5B579BF0BF896F1A2",
+   "needed_by": [
+    "base of scripts/tests/site_t6_capture_provenance_test.gd"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_t5_captive_production_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_t5_captive_production_test.gd",
+   "pin_sha256": "A7B9ADC61684193060526B851F5C61268F45EE77992E1407F7EED769DE69F605",
+   "D_head_sha256": "A7B9ADC61684193060526B851F5C61268F45EE77992E1407F7EED769DE69F605",
+   "needed_by": [
+    "row 57",
+    "base of scripts/tests/site_t5_supervised_public_ui_test.gd",
+    "base of scripts/tests/site_t5_captive_terminal_point_test.gd"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_t5_captive_terminal_point_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\gd-mesh-contact-prefix\\20261008_funded_captive_terminal_v4\\tests\\site_t5_captive_terminal_point_test.gd",
+   "pin_sha256": "C421D94290788BE1018E57678BC1E3C1EEAACAC35C4DFEA5330762B46E80DD9A",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 146"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "C421D94290788BE1018E57678BC1E3C1EEAACAC35C4DFEA5330762B46E80DD9A",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_t5_supervised_public_ui_test.gd",
+   "status_vs_D": "DIFFERS",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_t5_supervised_public_ui_test.gd.v1.txt",
+   "pin_sha256": "FB5D1BE401DC5AFD5FC709A6069F0BC7CAF533B6DD3AFDF1E7F278783DDF15B9",
+   "D_head_sha256": "12EDA30422B53362AF7B6B83A857D6361F779A8293A2B5E0A5DB8BFB02A71F89",
+   "needed_by": [
+    "row 107"
+   ],
+   "D_commits": [
+    "bbd967a 2026-10-10 Tests: CC-001 stage-1 bases and type-relaxed frozen fixtures",
+    "ff84cbf 2026-10-10 Tests: add CC-001 stage-1 frozen Core acceptance fixtures"
+   ],
+   "action": "KEEP_D: type-only relaxation (bbd967a)",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_t6_analysis_public_ui_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\09\\26\\01a0def5-6320-7ba0-84af-45301ed38863\\region_core_c33_native43_application_source_v1\\fixture_overlay\\scripts\\tests\\site_t6_analysis_public_ui_test.gd",
+   "pin_sha256": "9526EE12A384F171265E88824B23B68DC86AB0D2691E9E3F740C14FD26237E23",
+   "D_head_sha256": "9526EE12A384F171265E88824B23B68DC86AB0D2691E9E3F740C14FD26237E23",
+   "needed_by": [
+    "row 108"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_t6_capture_provenance_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_t6_capture_provenance_test.gd",
+   "pin_sha256": "E4D0DD5B87AB1819CF872A771CB3B8EBDC319171FB785A32D6ED044BAE19373C",
+   "D_head_sha256": "E4D0DD5B87AB1819CF872A771CB3B8EBDC319171FB785A32D6ED044BAE19373C",
+   "needed_by": [
+    "base of scripts/tests/site_t6_analysis_public_ui_test.gd"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_technology_armor_recipes_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_armor_recipes_test.gd.NATURAL_COLD_ANCESTOR_CORRECTION.v1.txt",
+   "pin_sha256": "4A5F50195B64A66A1B95A590CE021E4B5B2709F50EE9F48511054B3172775ABF",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 58",
+    "base of scripts/tests/site_technology_settlement_processing_test.gd",
+    "base of scripts/tests/site_technology_shipyard_physical_test.gd",
+    "base of scripts/tests/site_technology_siege_yard_test.gd"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "4A5F50195B64A66A1B95A590CE021E4B5B2709F50EE9F48511054B3172775ABF",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "F740F617EE22F2BE33110D0BA11D3061DC648CD02CB96320D0F51F87B5E9B6C3",
+   "overlay_changes": [
+    {
+     "line": 35,
+     "name": "actions"
+    },
+    {
+     "line": 109,
+     "name": "workers"
+    },
+    {
+     "line": 124,
+     "name": "cost_before"
+    },
+    {
+     "line": 161,
+     "name": "orders"
+    },
+    {
+     "line": 171,
+     "name": "issued"
+    },
+    {
+     "line": 174,
+     "name": "camp"
+    },
+    {
+     "line": 190,
+     "name": "actions"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_technology_artisan_birth_test.gd",
+   "status_vs_D": "DIFFERS",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_technology_artisan_birth_test.gd",
+   "pin_sha256": "C695EE34DA2966D6B93ED789ACB706DBFFBABF7E2557E1A2BC2B0134466ACB34",
+   "D_head_sha256": "2E95334B0B333CB4FE4C641AA1FCBCC7384507CD92A108DD45CDFC317E778BD7",
+   "needed_by": [
+    "row 59"
+   ],
+   "D_commits": [
+    "ef39140 2026-10-09 Restore point 2026-10-09: work in progress across threads before cleanup"
+   ],
+   "action": "KEEP_D: type-only relaxation (ef39140)",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_technology_artisan_f04_production_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_artisan_f04_production_test.gd.v1.txt",
+   "pin_sha256": "2E1A699E994CA07E87813745D6388212CAC79D3C43EE54AE4AC8060E3B2DF16B",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 60"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "2E1A699E994CA07E87813745D6388212CAC79D3C43EE54AE4AC8060E3B2DF16B",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_artisan_f06_production_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_artisan_f06_production_test.gd.v1.txt",
+   "pin_sha256": "70EADC0B5B33E27BF9F63115FF7DB97B426510601C8C86D48CDC4D688BB1F932",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 61"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "70EADC0B5B33E27BF9F63115FF7DB97B426510601C8C86D48CDC4D688BB1F932",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_artisan_f11_production_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_artisan_f11_production_test.gd.v1.txt",
+   "pin_sha256": "0839B10A056CD0E94C1E4A79BA775EABFDE1409173970B52A7C9929D99D01708",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 62"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "0839B10A056CD0E94C1E4A79BA775EABFDE1409173970B52A7C9929D99D01708",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_artisan_f12_production_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_artisan_f12_production_test.gd.v1.txt",
+   "pin_sha256": "3984F89BC02F096E3BED30D12C6306F3E536B6C9582F1CBAB3CE3E3551132228",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 63"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "3984F89BC02F096E3BED30D12C6306F3E536B6C9582F1CBAB3CE3E3551132228",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_artisan_fixed_f04_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_artisan_fixed_f04_test.gd.v3.txt",
+   "pin_sha256": "2A321B6D6D02D8B36EC1772DE0BC5C244A057655B05D1C4711305E46100FCC21",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 64"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "2A321B6D6D02D8B36EC1772DE0BC5C244A057655B05D1C4711305E46100FCC21",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_artisan_fixed_f06_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_artisan_fixed_f06_test.gd.v3.txt",
+   "pin_sha256": "D22C5DF7E4E627B07D6CC269407B1B091FC9794AEA816D0B1B0A7057993521E7",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 65"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "D22C5DF7E4E627B07D6CC269407B1B091FC9794AEA816D0B1B0A7057993521E7",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_artisan_fixed_f11_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_artisan_fixed_f11_test.gd.v2.txt",
+   "pin_sha256": "BB6B24355A4B625EFBE4F43C040818163B2AEFD7ECDAE70C7E6C9B35F6D7BF41",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 66"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "BB6B24355A4B625EFBE4F43C040818163B2AEFD7ECDAE70C7E6C9B35F6D7BF41",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_artisan_fixed_f12_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_artisan_fixed_f12_test.gd.v2.txt",
+   "pin_sha256": "C158E018311D0737091090515A9F622120BB6A2193C753CCA5CE2F7A27446C09",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 67"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "C158E018311D0737091090515A9F622120BB6A2193C753CCA5CE2F7A27446C09",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_artisan_fixed_processing_base.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_artisan_fixed_processing_base.gd.v3.txt",
+   "pin_sha256": "514B4EF6044C88C43A422EB653F285863039FF823F875BB34024295B5181C96D",
+   "D_head_sha256": null,
+   "needed_by": [
+    "base of scripts/tests/site_technology_artisan_fixed_f04_test.gd",
+    "base of scripts/tests/site_technology_artisan_fixed_f06_test.gd",
+    "base of scripts/tests/site_technology_artisan_g06_processing_gates_base.gd",
+    "base of scripts/tests/site_f04_f06_fixed_first_earned_base.gd"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "514B4EF6044C88C43A422EB653F285863039FF823F875BB34024295B5181C96D",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_artisan_fixed_siege_base.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_artisan_fixed_siege_base.gd.v2.txt",
+   "pin_sha256": "76703C8B6D33C559DDB2B33328C3D2C84FBBBBC639EDFB50E9C5DE87873E4C47",
+   "D_head_sha256": null,
+   "needed_by": [
+    "base of scripts/tests/site_technology_artisan_fixed_f11_test.gd",
+    "base of scripts/tests/site_technology_artisan_fixed_f12_test.gd",
+    "base of scripts/tests/site_technology_artisan_fixed_processing_base.gd",
+    "base of scripts/tests/site_technology_artisan_g06_siege_gates_base.gd"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "76703C8B6D33C559DDB2B33328C3D2C84FBBBBC639EDFB50E9C5DE87873E4C47",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_artisan_g06_contact_point_base.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_artisan_g06_contact_point_base.gd.v1.txt",
+   "pin_sha256": "12FF92D0CD2ED923156CF759378C0225D470DC4075A0C471709D1B4C285A2EDA",
+   "D_head_sha256": null,
+   "needed_by": [
+    "base of scripts/tests/site_technology_artisan_g06_f11_contact_point_test.gd",
+    "base of scripts/tests/site_technology_artisan_g06_f12_contact_point_test.gd",
+    "base of scripts/tests/site_technology_f11_gd_mesh_work_test.gd",
+    "base of scripts/tests/site_technology_f12_gd_mesh_work_test.gd"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "12FF92D0CD2ED923156CF759378C0225D470DC4075A0C471709D1B4C285A2EDA",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_artisan_g06_f04_gates_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_artisan_g06_f04_gates_test.gd.v1.txt",
+   "pin_sha256": "89FCBD5A4A61A94F79965FDC9039CAA7B193CCF8692F91F3C0D84999178EE325",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 68"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "89FCBD5A4A61A94F79965FDC9039CAA7B193CCF8692F91F3C0D84999178EE325",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_artisan_g06_f06_gates_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_artisan_g06_f06_gates_test.gd.v1.txt",
+   "pin_sha256": "B3ABEE134AC54F0CCAAB54B6B3567799FE0D2ED491B3598FB1938878A256DF43",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 69"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "B3ABEE134AC54F0CCAAB54B6B3567799FE0D2ED491B3598FB1938878A256DF43",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_artisan_g06_f11_contact_point_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_artisan_g06_f11_contact_point_test.gd.v1.txt",
+   "pin_sha256": "ABF27D3D0541B4B5732F268CB8FB72551249F537F05E1F290D15F98E47187B78",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 70"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "ABF27D3D0541B4B5732F268CB8FB72551249F537F05E1F290D15F98E47187B78",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_artisan_g06_f11_gates_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_artisan_g06_f11_gates_test.gd.v1.txt",
+   "pin_sha256": "5A32DB9DFF7648388EEF281F592554D2053209C2D52963A915C28AF21B6EDC79",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 71"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "5A32DB9DFF7648388EEF281F592554D2053209C2D52963A915C28AF21B6EDC79",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_artisan_g06_f11_point_order_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_artisan_g06_f11_point_order_test.gd.v1.txt",
+   "pin_sha256": "0E0B4FA177CCFB4A0F54129B122951F5748C84DC830D228671F4F9F3425C682C",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 72"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "0E0B4FA177CCFB4A0F54129B122951F5748C84DC830D228671F4F9F3425C682C",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_artisan_g06_f12_contact_point_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_artisan_g06_f12_contact_point_test.gd.v1.txt",
+   "pin_sha256": "C4FCDD1FDD4323AB224B66CE35A8FF36FECF3A759888BE2419276D96346DD709",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 73"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "C4FCDD1FDD4323AB224B66CE35A8FF36FECF3A759888BE2419276D96346DD709",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_artisan_g06_f12_gates_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_artisan_g06_f12_gates_test.gd.v1.txt",
+   "pin_sha256": "06A8B30D7CD4CF53150F162CFC222E7E711508C7354593AB0AF31179BB37D64A",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 74"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "06A8B30D7CD4CF53150F162CFC222E7E711508C7354593AB0AF31179BB37D64A",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_artisan_g06_f12_point_order_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_artisan_g06_f12_point_order_test.gd.v1.txt",
+   "pin_sha256": "89EF3C3799ABE3A28EFD26774487B85E0050A02D0ECF18D4378E90B5BCFE3117",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 75"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "89EF3C3799ABE3A28EFD26774487B85E0050A02D0ECF18D4378E90B5BCFE3117",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_artisan_g06_point_order_base.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_artisan_g06_point_order_base.gd.v1.txt",
+   "pin_sha256": "0B9B78E456A0543915965F931E423CBF90DBA1DC089687F2E23506F6A612B44C",
+   "D_head_sha256": null,
+   "needed_by": [
+    "base of scripts/tests/site_technology_artisan_g06_f11_point_order_test.gd",
+    "base of scripts/tests/site_technology_artisan_g06_f12_point_order_test.gd",
+    "base of scripts/tests/site_technology_artisan_g06_contact_point_base.gd"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "0B9B78E456A0543915965F931E423CBF90DBA1DC089687F2E23506F6A612B44C",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_artisan_g06_processing_gates_base.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_artisan_g06_processing_gates_base.gd.v1.txt",
+   "pin_sha256": "75D4AA5674C6958CCC9991B9A6AC46ACA252F6640BB11982A39DBA02AD961353",
+   "D_head_sha256": null,
+   "needed_by": [
+    "base of scripts/tests/site_technology_artisan_g06_f04_gates_test.gd",
+    "base of scripts/tests/site_technology_artisan_g06_f06_gates_test.gd"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "75D4AA5674C6958CCC9991B9A6AC46ACA252F6640BB11982A39DBA02AD961353",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_artisan_g06_siege_gates_base.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_artisan_g06_siege_gates_base.gd.v1.txt",
+   "pin_sha256": "28A6F524B16AA8A61959A445C09893425733B344EFD6246AF736F77432F34FF0",
+   "D_head_sha256": null,
+   "needed_by": [
+    "base of scripts/tests/site_technology_artisan_g06_f11_gates_test.gd",
+    "base of scripts/tests/site_technology_artisan_g06_f12_gates_test.gd",
+    "base of scripts/tests/site_technology_artisan_g06_point_order_base.gd"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "28A6F524B16AA8A61959A445C09893425733B344EFD6246AF736F77432F34FF0",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "95EA53892E0F94DB30F8B04745550362B30CF31D553DFF8BEE3238DAD7FE6DB9",
+   "overlay_changes": [
+    {
+     "line": 2,
+     "name": "SiteFamilyContinuity",
+     "kind": "resolution_alias_preload_const"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_technology_artisan_g06_three_birth_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_artisan_g06_three_birth_test.gd.v2.txt",
+   "pin_sha256": "A9470D48494FE9B1FB6EFA4DC484705CCA002DE08031C9490F4512028505D284",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 76"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "A9470D48494FE9B1FB6EFA4DC484705CCA002DE08031C9490F4512028505D284",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_artisan_production_base.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_artisan_production_base.gd.v1.txt",
+   "pin_sha256": "8D3C230405C4B764F5CB48D418C54AEC2F87DF194D2A9C2687A13B41478D6CC7",
+   "D_head_sha256": null,
+   "needed_by": [
+    "base of scripts/tests/site_technology_artisan_f04_production_test.gd",
+    "base of scripts/tests/site_technology_artisan_f06_production_test.gd",
+    "base of scripts/tests/site_technology_artisan_f11_production_test.gd",
+    "base of scripts/tests/site_technology_artisan_f12_production_test.gd"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "8D3C230405C4B764F5CB48D418C54AEC2F87DF194D2A9C2687A13B41478D6CC7",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "9F7C9B9920DEAB2B7F6A0134DE9EB9FE4BB2B0F022108534B0004115D3BD1471",
+   "overlay_changes": [
+    {
+     "line": 444,
+     "name": "restored"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_technology_artisans_test.gd",
+   "status_vs_D": "DIFFERS",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_technology_artisans_test.gd",
+   "pin_sha256": "0039B5A114A7EE5101247336B17A1A453E04A6067F8280D3F3EDAE3A80DCEA9E",
+   "D_head_sha256": "6BD0A4042012DB16F058B432870BEFC73F0C6C26505CEC4A548F7EA46F6495F4",
+   "needed_by": [
+    "row 77"
+   ],
+   "D_commits": [
+    "7357eb5 2026-10-10 Match nation food-order and water-schedule jobs as technology work",
+    "ef39140 2026-10-09 Restore point 2026-10-09: work in progress across threads before cleanup"
+   ],
+   "action": "KEEP_D: type-only relaxation (7357eb5)",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_technology_catalog_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_technology_catalog_test.gd",
+   "pin_sha256": "215A591A2809F5DB25B9C9A9C452A60D2C4F272B663F6B54E077E362A6AB5CD5",
+   "D_head_sha256": "215A591A2809F5DB25B9C9A9C452A60D2C4F272B663F6B54E077E362A6AB5CD5",
+   "needed_by": [
+    "row 23"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_technology_checked_work_prefix_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_technology_checked_work_prefix_test.gd",
+   "pin_sha256": "D8CFC96CB3BE750A98F54D4B976919DDC9B3080CD32F41FF8EB010A75CB61131",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 78"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "D8CFC96CB3BE750A98F54D4B976919DDC9B3080CD32F41FF8EB010A75CB61131",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "99CFD4996B7754AE827D30ABC9ECBED306355DBE647F85BD4E7D97342550A8CB",
+   "overlay_changes": [
+    {
+     "line": 10,
+     "name": "actions"
+    },
+    {
+     "line": 21,
+     "name": "requests"
+    },
+    {
+     "line": 25,
+     "name": "captured"
+    },
+    {
+     "line": 28,
+     "name": "person"
+    },
+    {
+     "line": 33,
+     "name": "admitted"
+    },
+    {
+     "line": 35,
+     "name": "checked"
+    },
+    {
+     "line": 66,
+     "name": "actions"
+    },
+    {
+     "line": 77,
+     "name": "workers"
+    },
+    {
+     "line": 78,
+     "name": "requests"
+    },
+    {
+     "line": 81,
+     "name": "captured"
+    },
+    {
+     "line": 88,
+     "name": "admitted"
+    },
+    {
+     "line": 96,
+     "name": "published"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_technology_completed_vehicle_lineage_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_technology_completed_vehicle_lineage_test.gd",
+   "pin_sha256": "27E7B85D55E8C1832DA1E9008D7E66BD6D0EBBA9954D7E85C63B1ACEA9D92BC3",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 79"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "27E7B85D55E8C1832DA1E9008D7E66BD6D0EBBA9954D7E85C63B1ACEA9D92BC3",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "395E6853CCEFE4DDD92DF1F98FEC9CD1B482F6068D98A0C2735BFA10876F349E",
+   "overlay_changes": [
+    {
+     "line": 15,
+     "name": "actions"
+    },
+    {
+     "line": 35,
+     "name": "event"
+    },
+    {
+     "line": 49,
+     "name": "valid"
+    },
+    {
+     "line": 51,
+     "name": "candidate"
+    },
+    {
+     "line": 58,
+     "name": "unfinished"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_technology_controller_prefix_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_technology_controller_prefix_test.gd",
+   "pin_sha256": "AD780B6B8CE29784C36ED4EDBD937CD804EFD4FAB72EE5B3DBBB9B0B20F26ACB",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 80",
+    "base of scripts/tests/site_controller_work_team_water_test.gd"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "AD780B6B8CE29784C36ED4EDBD937CD804EFD4FAB72EE5B3DBBB9B0B20F26ACB",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "84BE143FE1BD96E2D46246D589DA46C4B3FA9CB2A32BDB51B43264C49607E34C",
+   "overlay_changes": [
+    {
+     "line": 51,
+     "name": "held_items"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_technology_f11_gd_mesh_work_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\gd-mesh-contact-prefix\\20261008_source_v1e\\tests\\site_technology_f11_gd_mesh_work_test.gd",
+   "pin_sha256": "F993AA7479C37F9FD57EDA01F6A493A5C99FE6DF4934F02A8EF2DC53F91E1CB4",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 124"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "F993AA7479C37F9FD57EDA01F6A493A5C99FE6DF4934F02A8EF2DC53F91E1CB4",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_f12_gd_mesh_work_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\gd-mesh-contact-prefix\\20261008_source_v1e\\tests\\site_technology_f12_gd_mesh_work_test.gd",
+   "pin_sha256": "213B8C8418DCFE7E0931702CF56C1F213DCE9AE4A8DFA4EC077D40C9154A859C",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 125"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "213B8C8418DCFE7E0931702CF56C1F213DCE9AE4A8DFA4EC077D40C9154A859C",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_f13_named_ferry_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_technology_f13_named_ferry_test.gd",
+   "pin_sha256": "791AB98DD320FA8856E785B032361400C0E750D1BA86CD4112BA48CE30932D90",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 81"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "791AB98DD320FA8856E785B032361400C0E750D1BA86CD4112BA48CE30932D90",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "CC1FBAC42FD0FDA7AEFBE5F875B361F3FA109C0518BE36E6020341C225950FF2",
+   "overlay_changes": [
+    {
+     "line": 9,
+     "name": "actions"
+    },
+    {
+     "line": 25,
+     "name": "inventory"
+    },
+    {
+     "line": 37,
+     "name": "person"
+    },
+    {
+     "line": 41,
+     "name": "paid"
+    },
+    {
+     "line": 43,
+     "name": "paid_inventory"
+    },
+    {
+     "line": 44,
+     "name": "original_token"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_technology_family_ai_original_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_technology_family_ai_original_test.gd",
+   "pin_sha256": "C53512B3F63FD0798345FC7E4633A7583C0EFF8B49562FECC6C2BAD5D3E77239",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 82"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "C53512B3F63FD0798345FC7E4633A7583C0EFF8B49562FECC6C2BAD5D3E77239",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_feature_output_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_technology_feature_output_test.gd",
+   "pin_sha256": "9FAB2E2883032EB7838547BB227F4042BECA0F178E2A846A66761EBD24405841",
+   "D_head_sha256": "9FAB2E2883032EB7838547BB227F4042BECA0F178E2A846A66761EBD24405841",
+   "needed_by": [
+    "row 83"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_technology_fire_pot_ordinary_ui_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_fire_pot_ordinary_ui_test.gd.v1.txt",
+   "pin_sha256": "653072598DAD669D65CE01D9B2F240E405B65C7F2206DA32AA0A6DC8E8F415EC",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 84"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "653072598DAD669D65CE01D9B2F240E405B65C7F2206DA32AA0A6DC8E8F415EC",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_fire_pot_scope_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_technology_fire_pot_scope_test.gd",
+   "pin_sha256": "91DE0BFB0226518F3AE6DA186009F3A607B8299436F99D4843E4070A61E3A05B",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 85",
+    "base of scripts/tests/site_technology_fire_pot_trial_test.gd"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "91DE0BFB0226518F3AE6DA186009F3A607B8299436F99D4843E4070A61E3A05B",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_fire_pot_trial_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_technology_fire_pot_trial_test.gd",
+   "pin_sha256": "16E8692729E29EB4463FB4CFE6FE2801EBAB2C7E8EE829EEAC0860DEB425E196",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 86",
+    "base of scripts/tests/site_technology_fire_pot_ordinary_ui_test.gd"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "16E8692729E29EB4463FB4CFE6FE2801EBAB2C7E8EE829EEAC0860DEB425E196",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_g06_paired_source_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_g06_paired_source_test.gd.v1.txt",
+   "pin_sha256": "2842BE6BCD2BA3A933E91AF467A93D8E14FACF62B3557AE231C56359E7BE76CF",
+   "D_head_sha256": "2842BE6BCD2BA3A933E91AF467A93D8E14FACF62B3557AE231C56359E7BE76CF",
+   "needed_by": [
+    "row 87"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_technology_holder_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_technology_holder_test.gd",
+   "pin_sha256": "83C340FBCE3FEFC065DE35CF43CC552A4355C13EE10595139A37752512095CB6",
+   "D_head_sha256": "83C340FBCE3FEFC065DE35CF43CC552A4355C13EE10595139A37752512095CB6",
+   "needed_by": [
+    "row 88"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_technology_military_production_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_technology_military_production_test.gd",
+   "pin_sha256": "499182DB8F2DAE4E2EAEDE6486FB078A3C3BAF9B1B186472A9EB8BE3055D40DD",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 89"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "499182DB8F2DAE4E2EAEDE6486FB078A3C3BAF9B1B186472A9EB8BE3055D40DD",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "ACA00050306A2D31C06E4EDF54B3AA5F65557BE58C537BF6648E3B257AF6D26E",
+   "overlay_changes": [
+    {
+     "line": 12,
+     "name": "actions"
+    },
+    {
+     "line": 13,
+     "name": "orders"
+    },
+    {
+     "line": 42,
+     "name": "workers"
+    },
+    {
+     "line": 63,
+     "name": "requested"
+    },
+    {
+     "line": 67,
+     "name": "donor"
+    },
+    {
+     "line": 74,
+     "name": "initial"
+    },
+    {
+     "line": 89,
+     "name": "camp"
+    },
+    {
+     "line": 91,
+     "name": "result"
+    },
+    {
+     "line": 106,
+     "name": "source"
+    },
+    {
+     "line": 109,
+     "name": "resumed"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_technology_nation_material_test.gd",
+   "status_vs_D": "DIFFERS",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_nation_material_test.gd.NATURAL_SCHEMA_CORRECTION.v1.txt",
+   "pin_sha256": "10F7AED4639DBE7A84C9800283225A25943487638B5D24C6F22F9B22FDDAFBE8",
+   "D_head_sha256": "AD1DC577CCAEA36FD5C685964C5D6B97E83149430381831EA0F750D1236E6028",
+   "needed_by": [
+    "row 90",
+    "base of scripts/tests/site_n01_procurement_earned_test.gd",
+    "base of scripts/tests/site_n07_first_earned_course_test.gd",
+    "base of scripts/tests/site_technology_armor_recipes_test.gd"
+   ],
+   "D_commits": [
+    "bbd967a 2026-10-10 Tests: CC-001 stage-1 bases and type-relaxed frozen fixtures"
+   ],
+   "action": "KEEP_D: type-only relaxation (bbd967a)",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_technology_natural_cold_fixture.gd",
+   "status_vs_D": "DIFFERS",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_natural_cold_fixture.gd.v2.txt",
+   "pin_sha256": "08B7246EDC10DB9A2B19D4E5D55835EA230C608FBA747C5EF578E894B8862C4D",
+   "D_head_sha256": "E0CC16F0822806FD7881EA8807C4879DCCB6A4254F9CF873FBBF36524CAFBDCF",
+   "needed_by": [
+    "base of scripts/tests/site_settlement_irrigation_test.gd",
+    "base of scripts/tests/site_settlement_metal_chain_test.gd",
+    "base of scripts/tests/site_technology_s01_water_owner_test.gd"
+   ],
+   "D_commits": [
+    "bbd967a 2026-10-10 Tests: CC-001 stage-1 bases and type-relaxed frozen fixtures"
+   ],
+   "action": "KEEP_D: type-only relaxation (bbd967a)",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_technology_paid_feature_resume_test.gd",
+   "status_vs_D": "DIFFERS",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_technology_paid_feature_resume_test.gd",
+   "pin_sha256": "0AB16C8931DD22DF87D126AB4BEA9C0EDB2CC16FA531A8917CC551D15B186630",
+   "D_head_sha256": "B224E2C07FF27F058D5BF4167CAB53D59B0B4294E2BBFDB3C83E4BF515514F59",
+   "needed_by": [
+    "row 91",
+    "base of scripts/tests/site_technology_targeted_vehicle_test.gd",
+    "base of scripts/tests/site_family_first_earned_base.gd"
+   ],
+   "D_commits": [
+    "bbd967a 2026-10-10 Tests: CC-001 stage-1 bases and type-relaxed frozen fixtures"
+   ],
+   "action": "KEEP_D: type-only relaxation (bbd967a)",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_technology_productive_processing_window_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_technology_productive_processing_window_test.gd",
+   "pin_sha256": "92E1280C9B48934FED2DD23EAB56A074763DC6275177F913E128A53EAB599FF2",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 92"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "92E1280C9B48934FED2DD23EAB56A074763DC6275177F913E128A53EAB599FF2",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "0A7BBCF050E30111AEB12B6C142345A725544AE402FCE3C3263864F13444356C",
+   "overlay_changes": [
+    {
+     "line": 32,
+     "name": "stock"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_technology_productive_ship_window_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_technology_productive_ship_window_test.gd",
+   "pin_sha256": "BE134CB16BE528AD4716FC2953587E31C211EAB4BB8E8985C4E5FFEC22D839AF",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 93"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "BE134CB16BE528AD4716FC2953587E31C211EAB4BB8E8985C4E5FFEC22D839AF",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_productive_yard_window_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_technology_productive_yard_window_test.gd",
+   "pin_sha256": "43DEF5DE842FB4D04BB6E40FFB9D39F3F3A6609C2FED9AB5126144ABF3C92837",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 94"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "43DEF5DE842FB4D04BB6E40FFB9D39F3F3A6609C2FED9AB5126144ABF3C92837",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_technology_s01_water_owner_test.gd",
+   "status_vs_D": "DIFFERS",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_s01_water_owner_test.gd.NATURAL_COLD_CORRECTION.v1.txt",
+   "pin_sha256": "BC3AA031CB4890B9DFEC51EC653AC6BADE166A31F290D56A09D01D6757CF9155",
+   "D_head_sha256": "DEEB78F121AB913E3B5CEBACD82AB5D46890D57FE66AB405E11F64E7D3CE7C2A",
+   "needed_by": [
+    "row 95",
+    "base of scripts/tests/site_technology_s06_food_owner_test.gd"
+   ],
+   "D_commits": [
+    "bbd967a 2026-10-10 Tests: CC-001 stage-1 bases and type-relaxed frozen fixtures",
+    "ff84cbf 2026-10-10 Tests: add CC-001 stage-1 frozen Core acceptance fixtures"
+   ],
+   "action": "KEEP_D: type-only relaxation (bbd967a)",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_technology_s06_food_owner_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_s06_food_owner_test.gd.NATURAL_COLD_CORRECTION.v2.txt",
+   "pin_sha256": "25BB3FB050DC8C4F363BA60A5ACE35C89E3413B5ACEC26F4019521062B9F0C96",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 96"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "25BB3FB050DC8C4F363BA60A5ACE35C89E3413B5ACEC26F4019521062B9F0C96",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "2DD591121FF699339D6F95A62CE8998450AAEE0DC9BCC68D0157A78DB471DC4E",
+   "overlay_changes": [
+    {
+     "line": 84,
+     "name": "query"
+    },
+    {
+     "line": 93,
+     "name": "result"
+    },
+    {
+     "line": 124,
+     "name": "source_fingerprint"
+    },
+    {
+     "line": 137,
+     "name": "resumed"
+    },
+    {
+     "line": 146,
+     "name": "refused"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_technology_settlement_processing_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_settlement_processing_test.gd.NATURAL_COLD_CORRECTION.v1.txt",
+   "pin_sha256": "18E5AA1C6582E8A663717489F3F90C16F1B84C5A1ABF310E1CBB58FA64BD73AB",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 97",
+    "base of scripts/tests/site_technology_productive_processing_window_test.gd"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "18E5AA1C6582E8A663717489F3F90C16F1B84C5A1ABF310E1CBB58FA64BD73AB",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "83D78313D2A98493D8186615F9F5E1BF812AD35CBE648348CB0B123351725516",
+   "overlay_changes": [
+    {
+     "line": 23,
+     "name": "workers"
+    },
+    {
+     "line": 26,
+     "name": "captured"
+    },
+    {
+     "line": 31,
+     "name": "admitted"
+    },
+    {
+     "line": 70,
+     "name": "stock"
+    },
+    {
+     "line": 97,
+     "name": "stock"
+    },
+    {
+     "line": 136,
+     "name": "started"
+    },
+    {
+     "line": 164,
+     "name": "camp"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_technology_settlement_ship_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_settlement_ship_test.gd.NATURAL_CORRECTION.v2.txt",
+   "pin_sha256": "54C590DBA40B88E89FF25473DE65A1202A4A27C1993A453E3175E3C49F8022CF",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 98",
+    "base of scripts/tests/site_technology_productive_ship_window_test.gd",
+    "base of scripts/tests/site_technology_ship_target_config_test.gd"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "54C590DBA40B88E89FF25473DE65A1202A4A27C1993A453E3175E3C49F8022CF",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "19C71111C087379BF2F7278DAF5B7E46B76F02C2988A981FBE9B8DDE7AE9B659",
+   "overlay_changes": [
+    {
+     "line": 70,
+     "name": "master"
+    },
+    {
+     "line": 76,
+     "name": "paid"
+    },
+    {
+     "line": 109,
+     "name": "prepared"
+    },
+    {
+     "line": 121,
+     "name": "paid_before"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_technology_ship_target_config_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_technology_ship_target_config_test.gd",
+   "pin_sha256": "F85BB516D2D3766DBAC65AAC8E0FA0BE23E5C100E8365CB303C4CD9F4C9784D4",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 99"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "F85BB516D2D3766DBAC65AAC8E0FA0BE23E5C100E8365CB303C4CD9F4C9784D4",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "50355BF04A2FBF9CF8382633992CE0490BA66DFFF68B562DA6A6A32C5286FC8D",
+   "overlay_changes": [
+    {
+     "line": 14,
+     "name": "paid"
+    },
+    {
+     "line": 15,
+     "name": "materials"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_technology_shipyard_physical_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_shipyard_physical_test.gd.NATURAL_CORRECTION.v2.txt",
+   "pin_sha256": "4522BBC3129034B0D24FFF2446682884FC7060FA633B898010846BF6F1E052E9",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 100",
+    "base of scripts/tests/site_technology_f13_named_ferry_test.gd",
+    "base of scripts/tests/site_technology_settlement_ship_test.gd"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "4522BBC3129034B0D24FFF2446682884FC7060FA633B898010846BF6F1E052E9",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "6F6B5F3DD8162E1A281D5FDD2E8494265DAD0714B2435AF66112E2024430F23C",
+   "overlay_changes": [
+    {
+     "line": 107,
+     "name": "center"
+    },
+    {
+     "line": 202,
+     "name": "vehicles"
+    },
+    {
+     "line": 205,
+     "name": "depot"
+    },
+    {
+     "line": 220,
+     "name": "workers"
+    },
+    {
+     "line": 223,
+     "name": "captured"
+    },
+    {
+     "line": 228,
+     "name": "admitted"
+    },
+    {
+     "line": 250,
+     "name": "stock"
+    },
+    {
+     "line": 254,
+     "name": "workers"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_technology_siege_yard_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_siege_yard_test.gd.NATURAL_COLD_CORRECTION.v1.txt",
+   "pin_sha256": "E77BE4681606277DB58A9DA16E453E082817990C7174AD1FA46699FDFB4B4B42",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 101",
+    "base of scripts/tests/site_technology_productive_yard_window_test.gd",
+    "base of scripts/tests/site_work_team_master_groups_test.gd"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "E77BE4681606277DB58A9DA16E453E082817990C7174AD1FA46699FDFB4B4B42",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "0DC6B9C9AC6BE7E8CD135BFF7C9A4D15DABE80684A9FD1A72F040E70424DD507",
+   "overlay_changes": [
+    {
+     "line": 40,
+     "name": "captain_index"
+    },
+    {
+     "line": 76,
+     "name": "workers"
+    },
+    {
+     "line": 77,
+     "name": "requests"
+    },
+    {
+     "line": 80,
+     "name": "captured"
+    },
+    {
+     "line": 85,
+     "name": "admitted"
+    },
+    {
+     "line": 91,
+     "name": "handled"
+    },
+    {
+     "line": 104,
+     "name": "transport"
+    },
+    {
+     "line": 142,
+     "name": "workers"
+    },
+    {
+     "line": 144,
+     "name": "camp"
+    },
+    {
+     "line": 248,
+     "name": "actions"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_technology_targeted_vehicle_test.gd",
+   "status_vs_D": "DIFFERS",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_targeted_vehicle_test.gd.FAMILY_SCHEMA_CORRECTION.v1.txt",
+   "pin_sha256": "02657AD5B661B7B4A185B158EB23DE8500820DE11A4E2FBC7C10E7797C3423B3",
+   "D_head_sha256": "1F946C7A3525CBA64E0459CE8238C238638B64071FECA3210B331539D4A033BE",
+   "needed_by": [
+    "row 102",
+    "base of scripts/tests/site_technology_checked_work_prefix_test.gd",
+    "base of scripts/tests/site_technology_completed_vehicle_lineage_test.gd"
+   ],
+   "D_commits": [
+    "bbd967a 2026-10-10 Tests: CC-001 stage-1 bases and type-relaxed frozen fixtures"
+   ],
+   "action": "RESTORE_PIN: D copy (bbd967a) lacks the pinned schema-upgrade line and logic; restore pin, keep only type relaxations",
+   "delivered_sha256": "02657AD5B661B7B4A185B158EB23DE8500820DE11A4E2FBC7C10E7797C3423B3",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "45D89DC0EEBF0DF5A8BBCE7FEADF85467FD347E52870C00FE0FBF6D0CA4CEF88",
+   "overlay_changes": [
+    {
+     "line": 30,
+     "name": "actions"
+    },
+    {
+     "line": 58,
+     "name": "actions"
+    },
+    {
+     "line": 67,
+     "name": "refused"
+    },
+    {
+     "line": 80,
+     "name": "stock"
+    },
+    {
+     "line": 81,
+     "name": "started"
+    },
+    {
+     "line": 137,
+     "name": "actions"
+    },
+    {
+     "line": 144,
+     "name": "started"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_technology_work_credit_test.gd",
+   "status_vs_D": "DIFFERS",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\output\\tech_tree_implementation_20261007\\site_technology_work_credit_test.gd.FAMILY_SCHEMA_CORRECTION.v1.txt",
+   "pin_sha256": "0CBDEA205D9FDC511DC5FAACA1DC4068E1CAF48DB933D77324212418DB8F4E82",
+   "D_head_sha256": "64EB312ED07DAAA0D05B4F71845D5789B04AF70473276804E60BF8D225807E79",
+   "needed_by": [
+    "row 103",
+    "base of scripts/tests/site_technology_nation_material_test.gd",
+    "base of scripts/tests/site_work_team_t6_weights_test.gd"
+   ],
+   "D_commits": [
+    "3fab306 2026-10-10 Tech: restore the release scope functions the Core closure pruned",
+    "ef39140 2026-10-09 Restore point 2026-10-09: work in progress across threads before cleanup"
+   ],
+   "action": "RESTORE_PIN: D copy predates the pinned FAMILY_SCHEMA_CORRECTION.v1 (lacks the registered-prerequisite schema upgrade and the already_named guard); then re-apply the 5 type-only fixes from 3fab306",
+   "delivered_sha256": "0CBDEA205D9FDC511DC5FAACA1DC4068E1CAF48DB933D77324212418DB8F4E82",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "B298DED792E014FC87623F1576912735BFD3E8A2E2D236C2AA3C4F780C5CA0A4",
+   "overlay_changes": [
+    {
+     "line": 44,
+     "name": "work"
+    },
+    {
+     "line": 46,
+     "name": "already_named"
+    },
+    {
+     "line": 81,
+     "name": "actions"
+    },
+    {
+     "line": 92,
+     "name": "started"
+    },
+    {
+     "line": 118,
+     "name": "paid_count"
+    },
+    {
+     "line": 141,
+     "name": "stale"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_work_team_master_groups_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_work_team_master_groups_test.gd",
+   "pin_sha256": "DC3FEE3A71BB996D76C327204ACEA2BBAC51C5C08B00CD917E4E9F3F763B0F85",
+   "D_head_sha256": null,
+   "needed_by": [
+    "base of scripts/tests/site_work_team_master_groups_v2_test.gd",
+    "base of scripts/tests/site_gd_same_unit_sum_original_point_test.gd",
+    "base of scripts/tests/site_shared_vehicle_master_groups_test.gd"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "DC3FEE3A71BB996D76C327204ACEA2BBAC51C5C08B00CD917E4E9F3F763B0F85",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "BCDC2F497776267178CEC60518B654FE1DC1656FBFF5D7AA9188BEDA89A8781C",
+   "overlay_changes": [
+    {
+     "line": 36,
+     "name": "paid_before"
+    },
+    {
+     "line": 58,
+     "name": "requests"
+    },
+    {
+     "line": 65,
+     "name": "workers"
+    },
+    {
+     "line": 66,
+     "name": "captured"
+    },
+    {
+     "line": 71,
+     "name": "admitted"
+    },
+    {
+     "line": 77,
+     "name": "handled"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_work_team_master_groups_v2_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_work_team_master_groups_v2_test.gd",
+   "pin_sha256": "CB54A7678465B896E6263760FE162CB66184A2588F46FCFD35B5D33C7475A9DB",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 104"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "CB54A7678465B896E6263760FE162CB66184A2588F46FCFD35B5D33C7475A9DB",
+   "delivered_equals_pin": true,
+   "apply": "files (exact pinned bytes)"
+  },
+  {
+   "target": "scripts/tests/site_work_team_plan_integration_test.gd",
+   "status_vs_D": "MATCH",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_work_team_plan_integration_test.gd",
+   "pin_sha256": "B184CBB9F55B4A1397EE8D94995F31E406F2D27F60DFB02FC9D57C55CB57F046",
+   "D_head_sha256": "B184CBB9F55B4A1397EE8D94995F31E406F2D27F60DFB02FC9D57C55CB57F046",
+   "needed_by": [
+    "row 105"
+   ],
+   "action": "NONE",
+   "apply": "none (keep D HEAD)"
+  },
+  {
+   "target": "scripts/tests/site_work_team_t6_weights_test.gd",
+   "status_vs_D": "MISSING_IN_D",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\10\\02\\01a0fcb4-b140-7861-8f45-82f28a42bccd\\tech-implementation\\stage\\scripts\\tests\\site_work_team_t6_weights_test.gd",
+   "pin_sha256": "B5791D1AB89C8256FAADA33F8F1A17859E9650B7CAD052C69EFD168E5FAE0AB6",
+   "D_head_sha256": null,
+   "needed_by": [
+    "row 106"
+   ],
+   "action": "ADD_PIN",
+   "delivered_sha256": "B5791D1AB89C8256FAADA33F8F1A17859E9650B7CAD052C69EFD168E5FAE0AB6",
+   "delivered_equals_pin": true,
+   "overlay_sha256": "90192CACD1DCF53B44FA67674BBEF24C1F5CAE73D8FF2675FDFA9A92175E9783",
+   "overlay_changes": [
+    {
+     "line": 10,
+     "name": "actions"
+    },
+    {
+     "line": 37,
+     "name": "workers"
+    },
+    {
+     "line": 38,
+     "name": "requests"
+    },
+    {
+     "line": 44,
+     "name": "captured"
+    },
+    {
+     "line": 49,
+     "name": "prepared"
+    },
+    {
+     "line": 55,
+     "name": "handled"
+    }
+   ],
+   "apply": "overlay_typed (pinned bytes + type relaxations)"
+  },
+  {
+   "target": "scripts/tests/site_workflow_test.gd",
+   "status_vs_D": "DIFFERS",
+   "source": "C:\\Users\\Nekki\\.codex\\visualizations\\2026\\09\\26\\01a0def5-6320-7ba0-84af-45301ed38863\\region_c06_original_ship_physical_tests_v1\\scripts\\tests\\site_workflow_test.gd",
+   "pin_sha256": "1DE98173AC6EDCB037ABA422914F72F209782049BDCEBC11455FA3007C674BFC",
+   "D_head_sha256": "A2A0FDEE6D56F90441DA178C7F58D964B50B2DBD4BCFFBA7F0E39DF36FDF3487",
+   "needed_by": [
+    "base of scripts/tests/site_gd_delivery_prefix_owner_test.gd",
+    "base of scripts/tests/site_gd_delivery_mesh_contact_test.gd",
+    "base of scripts/tests/site_building_ui_test.gd",
+    "base of scripts/tests/site_ship_build_test.gd"
+   ],
+   "D_commits": [
+    "5fe600a 2026-10-09 Restore point 2026-10-09: before D integration merge",
+    "ef39140 2026-10-09 Restore point 2026-10-09: work in progress across threads before cleanup",
+    "a643aee 2026-09-12 V0.35R"
+   ],
+   "action": "KEEP_D: item-storage init that Core preview_build requires (note: side effect inside assert)",
+   "apply": "none (keep D HEAD)"
+  }
+ ],
+ "check_only": {
+  "result": "CLEAN: all 157 set files load in Godot 4.7.2 (parsecheck = D HEAD + this set)",
+  "runs": "output/d_integration_20261009_024321/runs/CC001_CO1..CO6_*"
+ },
+ "semantic_substitution": {
+  "target": "scripts/tests/site_gd_custody_terminal_point_test.gd",
+  "change": "SitePersonActions.new_capture_fields(data) -> controller.person_actions.capture_fields(target_id, controller.person_actions._person(target_id))",
+  "approved_by": "command center 2026-10-10",
+  "note": "If the test asserts the old 10-field relation, report as: pinned expectation predates D captivity v3"
+ },
+ "resolution_aliases": "3 files get const SiteFamilyContinuity = preload(site_family_continuity.gd): no global class_name exists in D or Tech",
+ "apply_counts": {
+  "overlay_typed": 32,
+  "files": 76,
+  "none": 49
+ }
+}

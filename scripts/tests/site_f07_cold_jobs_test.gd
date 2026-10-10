@@ -265,10 +265,10 @@ func check_cold_admission_boundaries() -> void:
 	assert(f.actions.begin_technology_trial(1, 2).ok)
 	f.actions.cancel(2)
 	check(not f.actions.prepare_restore_cold_technology_jobs(captured.state).ok, "Only next_attempt-1 may restore; canceled earlier clock is stale")
-	var current := captured.state.duplicate(true)
+	var current = captured.state.duplicate(true)
 	current.jobs[0].technology_attempt = int(f.project().next_attempt) - 1
 	for field: String in ["elapsed", "duration", "recipe", "executor_version", "technology_epoch", "technology_family_id", "technology_purpose", "paused"]:
-		var bad := current.duplicate(true)
+		var bad = current.duplicate(true)
 		match field:
 			"elapsed": bad.jobs[0].elapsed = 120.0
 			"duration": bad.jobs[0].duration = 240.0

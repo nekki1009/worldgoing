@@ -41,15 +41,16 @@ func _army(lab: TerrainLab, data: TerrainData) -> TerrainArmy:
 	return team
 
 func _work_task(lab: TerrainLab, team: TerrainArmy, executor: int, key: String) -> Dictionary:
-	var work: Variant = lab.site_controller.work_team
-	_check(work.assign(team, [executor], team.duty_decider("team.work")).ok, "Actual original team.work authority assigns the true member")
+	var work = lab.site_controller.work_team
 	var row: Dictionary = team.combat_units[team.index_for_identity(executor)]
+	var already_named = work.is_assigned(executor) and row.get("work_task", {}).get("version") == 3 and row.work_task.get("named") == true and row.work_task.get("target") == "vehicle:" + key
+	if not already_named: _check(work.assign(team, [executor], team.duty_decider("team.work")).ok, "Actual original team.work authority assigns the true ordinary member")
 	var slots := Runtime.siege_work_slots(lab.terrain, lab.terrain.site.vehicles[key])
 	_check(not slots.is_empty(), "Actual original vehicle computes its original work slots")
 	# The fixture places the ORIGINAL Army hot cell at this real station. This
 	# excludes travel acceptance; no surrogate body, consent, receipt or validator.
 	team.cells[team.index_for_identity(executor)] = lab.terrain.cell_from_index(int(slots[0].cell))
-	Runtime.assign_task(lab.terrain, Runtime.ok("原fixture明示真施工工位", {"target": "vehicle:" + key, "action": "construct", "work_slot": int(slots[0].slot), "cell": int(slots[0].cell), "zone": -1}), row.work_task)
+	if not already_named: Runtime.assign_task(lab.terrain, Runtime.ok("原fixture明示真施工工位", {"target": "vehicle:" + key, "action": "construct", "work_slot": int(slots[0].slot), "cell": int(slots[0].cell), "zone": -1}), row.work_task)
 	row.work_task.cell = int(slots[0].cell)
 	row.work_task.mode = "work"
 	_check(not lab.site_controller.person_actions._technology_operator_for_task(row.work_task, executor).is_empty(), "PA resolves the SAME original body/task/assigned member at the real station")
@@ -72,10 +73,12 @@ func _run() -> void:
 	_check(lab.site_controller.family_continuity.register_members(refs, true, control).ok and lab.site_controller.family_continuity.appoint_head(control, control).ok, "Actual registry and office owners explicitly establish this family")
 	# A legitimate existing prerequisite archive is the fixture precondition.
 	# Earning F09 and analysis capture provenance have separate owner fixtures.
+	# Original pure schema upgrade for this explicitly registered prerequisite fixture.
+	data.site.family = lab.site_controller.person_actions._technology_candidate()
 	data.site.family.technology = Technology.empty_scope_record(str(data.site.id))
 	data.site.family.technology.known = ["F09"]
 	_check(Family.validate_family(data.site.family, str(data.site.id)), "The original Family validator admits the explicit prerequisite archive")
-	var actions: Variant = lab.site_controller.person_actions
+	var actions = lab.site_controller.person_actions
 	_check(actions.prepare_scope_technology(control, executor, "F11").ok, "An unlearned real original member prepares F11")
 	var family_id := str(data.site.family.family_id)
 	_check(actions.grant_scope_technology_budget(control, "family", family_id, {"wood": 300, "iron": 100, "fiber": 100, "cloth": 50}).ok, "Actual controlled camp user grants finite original material use")
@@ -86,7 +89,7 @@ func _run() -> void:
 	var request := {"anchor": Vector2i(20, 20), "facing": Vector2i.RIGHT, "team_id": team.team_id}
 	var preview := Runtime.begin_technology_operation(data, _token(lab, executor, "vehicle:" + first_key), true, request)
 	_check(preview.ok and var_to_bytes(data.site) == before and row.get("technology", {}).is_empty(), "True original preview writes neither materials, attempt, population nor credit")
-	var started: Dictionary = actions.begin_scope_technology_phase(control, "family", family_id, "ballista_build", "vehicle:" + first_key, request)
+	var started = actions.begin_scope_technology_phase(control, "family", family_id, "ballista_build", "vehicle:" + first_key, request)
 	_check(started.ok, "No-analysis original research starts through the actual full geometry/payment guards: " + str(started))
 	var first: Dictionary = data.site.vehicles[first_key]
 	_check(not first.has("tech_work_credit") and first.build.total_work == Runtime.SIEGE_DEFINITIONS.ballista.work_seconds, "No analysis leaves the original baseline and ordinary effort intact")
@@ -112,7 +115,7 @@ func _run() -> void:
 	_check(started.ok, "The same person may have a second genuine paid attempt while the first remains parked")
 	var second: Dictionary = data.site.vehicles[second_key]
 	_check(second.build.total_work == 5400.0 and second.tech_work_credit == {"remaining_work": 5400.0, "credit": 2700.0} and row.technology.analysis[0].used_work == 2700.0, "Credit consumes one finite original allowance, leaving total_work immutable")
-	var paid_count: int = _project(lab).budget.payments.size()
+	var paid_count = _project(lab).budget.payments.size()
 	var attempt := int(_project(lab).next_attempt)
 	started = actions.begin_scope_technology_phase(control, "family", family_id, "ballista_build", "vehicle:" + second_key, request)
 	_check(started.ok and started.resumed and row.technology.analysis[0].used_work == 2700.0 and _project(lab).budget.payments.size() == paid_count and int(_project(lab).next_attempt) == attempt, "Same paid target resume never charges a second credit/payment/attempt")
@@ -135,7 +138,7 @@ func _run() -> void:
 	corrupt.build.total_work = 2700.0
 	_check(not Store._valid_siege_job(corrupt.build, Runtime.SIEGE_DEFINITIONS.ballista.cost, 5400.0, false), "Original Store still rejects analysis that rewrites the original baseline job")
 	var release_a := Runtime.prepare_release_technology_operation(data, first.tech_trial, true)
-	var stale: Dictionary = second.tech_trial.duplicate(true)
+	var stale = second.tech_trial.duplicate(true)
 	stale.target_id = "vehicle:999999"
 	before = var_to_bytes(data.site)
 	person_before = var_to_bytes(row.technology)
@@ -156,7 +159,7 @@ func _run() -> void:
 	_check(not Runtime.technology_siege_history_source_candidate(data, first_key, executor, task).ok, "Ready/finished vehicle status alone is not another completion source")
 	_check(not Technology.learned(row.technology, "F11") and not data.site.family.technology.known.has("F11"), "One ballista does not replace the distinct tower phase or award the whole node")
 	_check(Runtime.validate_technology_target_storage(data, first_key, first, "vehicle").ok, "Strict current original completed-event shape saves without an active trial")
-	_check(lab.site_controller.work_team.cancel(executor).ok, "Actual worker is released by the original owner")
+	_check(not lab.site_controller.work_team.is_assigned(executor) and row.work_task.is_empty(), "Actual named completion releases the true worker through the original owner")
 	var history_before := var_to_bytes(data.site.family.technology.siege_history)
 	task = _work_task(lab, team, executor, second_key)
 	completed = _advance(lab, team, executor, second_key, task, 4800.0)
