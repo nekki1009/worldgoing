@@ -13,21 +13,21 @@ func _select_supervised(choice: OptionButton, field: String, value: Variant) -> 
 
 func _run() -> void:
 	create_timer(120.0).timeout.connect(func() -> void: quit(1))
-	var data := _building_fixture()
-	var lab := _building_lab(data)
+	var data = _building_fixture()
+	var lab = _building_lab(data)
 	lab.restore_only = true
 	_learn_original_npc(lab)
 	_capture_original(lab)
-	var controller := lab.site_controller
-	var actions := controller.person_actions
+	var controller = lab.site_controller
+	var actions = controller.person_actions
 	# T5 is a true original custody operation; it must remain visible without
 	# a family registry. The skill above came from three actual original bows.
 	var family: Dictionary = data.site.family
 	data.site.erase("family")
-	var column := VBoxContainer.new()
+	var column = VBoxContainer.new()
 	root.add_child(column)
-	var window := SupervisedWindow.new()
-	var before := var_to_bytes([data.site, actions._jobs, lab.character.capture_state(), lab.npc.capture_state()])
+	var window = SupervisedWindow.new()
+	var before = var_to_bytes([data.site, actions._jobs, lab.character.capture_state(), lab.npc.capture_state()])
 	window.install(controller, column)
 	assert(var_to_bytes([data.site, actions._jobs, lab.character.capture_state(), lab.npc.capture_state()]) == before)
 	assert(window._supervised_form.captive.selected == 0 and window._supervised_form.supervisor.selected == 0)
@@ -48,7 +48,7 @@ func _run() -> void:
 	_select_supervised(window._supervised_form.captive, "person_id", lab.npc.person_id)
 	_select_supervised(window._supervised_form.supervisor, "person_id", lab.character.person_id)
 	var stock: Dictionary = data.site.inventory.duplicate()
-	var bows := _bows(data)
+	var bows = _bows(data)
 	window._supervised_form.begin_captive.pressed.emit()
 	assert(actions.is_busy(lab.character.person_id) and actions.is_busy(lab.npc.person_id) and lab.npc.captive)
 	assert(data.site.inventory == stock and str(actions.save_guard().code) == "BUSY")
@@ -58,7 +58,7 @@ func _run() -> void:
 	window._supervised_form.begin_captive.pressed.emit()
 	assert(actions.is_busy(lab.npc.person_id) and is_equal_approx(float(actions.job_for(lab.npc.person_id).duration), 108.0))
 	_plan_step(lab, 108.0)
-	var completed := actions.settle_after_contacts()
+	var completed = actions.settle_after_contacts()
 	assert(completed.size() == 1 and completed[0].ok and _bows(data) == bows + 1)
 	assert(int(data.site.inventory.wood) == int(stock.wood) - 4 and int(data.site.inventory.fiber) == int(stock.fiber) - 2)
 	assert(lab.npc.captive and not lab.npc.can_act() and Technology.learned(lab.npc.technology, "F07"))

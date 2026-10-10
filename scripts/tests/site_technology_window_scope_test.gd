@@ -5,8 +5,8 @@ const F07Fixture = preload("res://scripts/tests/site_f07_research_test.gd")
 const WindowOwner = preload("res://scripts/terrain_lab/site_tech_window.gd")
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
 const Catalog = preload("res://scripts/terrain_lab/site_technology_catalog.gd")
-var checks := 0
-var failures := 0
+var checks = 0
+var failures = 0
 
 func _initialize() -> void:
 	call_deferred("run")
@@ -26,8 +26,8 @@ func select_node(window: SiteTechWindow, identity: String) -> void:
 	check(false, "Original node absent from the formal Window: " + identity)
 
 func run() -> void:
-	var fixture := F07Fixture.Fixture.new()
-	var lab := TerrainLab.new()
+	var fixture = F07Fixture.Fixture.new()
+	var lab = TerrainLab.new()
 	lab.restore_only = true # No original UI frame/update or simulation is run.
 	lab.terrain = fixture.terrain
 	lab.character = fixture.character
@@ -38,10 +38,10 @@ func run() -> void:
 	fixture.site_controller.lab = lab
 	fixture.site_controller.person_actions = fixture.actions
 	fixture.actions.init(lab)
-	var column := VBoxContainer.new()
+	var column = VBoxContainer.new()
 	root.add_child(column)
-	var window := WindowOwner.new()
-	var before := fixture.commit_snapshot()
+	var window = WindowOwner.new()
+	var before = fixture.commit_snapshot()
 	window.install(fixture.site_controller, column)
 	check(window._scope_node.item_count == 28, "All 15 family and 13 settlement nodes are visible")
 	check(window._buttons.has("F07BeginTrial") and window._buttons.has("F07BeginLesson"), "Original F07 inputs are retained")
@@ -70,12 +70,12 @@ func run() -> void:
 	var cells: Array[int] = []
 	for y: int in range(6, 11):
 		for x: int in range(6, 11): cells.append(lab.terrain.index(Vector2i(x, y)))
-	var founded := Settlement.found(lab, 1, cells, {"quarter": 0}, Callable(), "原中心")
+	var founded = Settlement.found(lab, 1, cells, {"quarter": 0}, Callable(), "原中心")
 	check(founded.ok, "Original founding command supplies the real settlement record: " + str(founded))
 	if founded.ok:
 		before = fixture.commit_snapshot()
 		check(not fixture.actions.scope_technology_query("F03").ok, "An unregistered family remains unregistered")
-		var settlement_query := fixture.actions.scope_technology_query("S01")
+		var settlement_query = fixture.actions.scope_technology_query("S01")
 		check(settlement_query.ok and settlement_query.scope == "settlement", "Original settlement query is independent of family registration")
 		select_node(window, "S01")
 		check(window._scope_context.get("scope") == "settlement", "F07 early UNREGISTERED does not hide settlement state")

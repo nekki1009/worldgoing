@@ -14,7 +14,7 @@ func _channel_cells(first: Vector2i, length: int, direction: Vector2i = Vector2i
 	return cells
 
 var _channel_data: TerrainData
-var _channel_offset := Vector2i.ZERO
+var _channel_offset = Vector2i.ZERO
 
 func _channel_fixture() -> Dictionary:
 	var specs: Array = [
@@ -29,15 +29,15 @@ func _channel_fixture() -> Dictionary:
 	var route: Array[Vector2i] = []
 	for x: int in range(11, 33): route.append(Vector2i(x, 22))
 	for y: int in range(23, 25): route.append(Vector2i(32, y))
-	var selected := _cold_natural_template(specs, "technology-s02-natural", extras, 1, [route])
+	var selected = _cold_natural_template(specs, "technology-s02-natural", extras, 1, [route])
 	var data: TerrainData = selected.data
 	_channel_offset = selected.offset
 	data.site.depot_cell = data.index(Vector2i(9, 9) + _channel_offset)
 	_channel_data = data
-	var pump := _cold_natural_feature(data, "well", Vector2i(10, 22) + _channel_offset)
-	var remote := _cold_natural_feature(data, "house", Vector2i(30, 19) + _channel_offset)
-	var lab := _cold_natural_lab(data)
-	var control := int(lab.controlled_person_id())
+	var pump = _cold_natural_feature(data, "well", Vector2i(10, 22) + _channel_offset)
+	var remote = _cold_natural_feature(data, "house", Vector2i(30, 19) + _channel_offset)
+	var lab = _cold_natural_lab(data)
+	var control = int(lab.controlled_person_id())
 	assert(lab.character.place(Vector2i(9, 10) + _channel_offset, true))
 	var members: Array = [{"site_id": str(data.site.id), "person_id": control, "path": "", "label": "原測量者", "age_years": -1}]
 	assert(lab.site_controller.family_continuity.register_members(members, true, control).ok)
@@ -47,11 +47,11 @@ func _channel_fixture() -> Dictionary:
 	data.site.family.technology.known = ["F09"] # Strict saved-world prerequisite, no F09 research claim.
 	lab.character.technology = Technology.learned_candidate(lab.character.technology, "F09")
 	assert(Family.validate_family(data.site.family, str(data.site.id)) and Technology.valid_person(lab.character.technology))
-	var proposal := Runtime.building_cells(data, "settlement_center", Vector2i(18, 10) + _channel_offset, Vector2i(5, 5), {"layout_version": 1, "quarter": 0, "owner_faction": 1})
+	var proposal = Runtime.building_cells(data, "settlement_center", Vector2i(18, 10) + _channel_offset, Vector2i(5, 5), {"layout_version": 1, "quarter": 0, "owner_faction": 1})
 	var cells: Array[int] = []
 	cells.assign(proposal.cells)
 	for key: String in selected.plans[2].preview.get("clearing", []): Env.change(data, key, {"cleared": true, "remaining": 0})
-	var founded := Settlement.found(lab, control, cells)
+	var founded = Settlement.found(lab, control, cells)
 	assert(founded.ok, str(founded))
 	_complete_key(data, str(founded.feature))
 	data.site.settlement.version = 2
@@ -68,7 +68,7 @@ func _channel_options(f: Dictionary, upstream: String = "") -> Dictionary:
 	return {"layout_version": 1, "quarter": 0, "owner_faction": 1, "irrigation": _channel_config(f, upstream)}
 
 func _station_for_draft(f: Dictionary, cells: Array[int], upstream: String = "") -> Dictionary:
-	var draft := Runtime.irrigation_channel_draft(f.data, cells, _channel_options(f, upstream))
+	var draft = Runtime.irrigation_channel_draft(f.data, cells, _channel_options(f, upstream))
 	assert(draft.ok, str(draft))
 	assert(f.lab.character.place(f.data.cell_from_index(int(draft.entrance)), true))
 	return draft
@@ -76,15 +76,15 @@ func _station_for_draft(f: Dictionary, cells: Array[int], upstream: String = "")
 func _actor_interval(f: Dictionary, seconds: float) -> float:
 	var requests: Array = f.actions.work_requests(seconds)
 	assert(requests.size() == 1 and requests[0].provider == "person_actions", str(requests))
-	var plan := Fatigue.plan_work_interval(requests, seconds)
+	var plan = Fatigue.plan_work_interval(requests, seconds)
 	assert(plan.ok, str(plan))
 	f.lab._shared_work_plan = plan
 	f.lab._shared_work_pools_committed = false
 	f.lab.site_controller._shared_work_plan = plan
-	var owner_plan := {"jobs": plan.jobs.get("person_actions", {})}
+	var owner_plan = {"jobs": plan.jobs.get("person_actions", {})}
 	var result: Dictionary = f.actions.advance(seconds, owner_plan)
 	f.lab._commit_shared_work_pools()
-	var before := var_to_bytes(f.data.site)
+	var before = var_to_bytes(f.data.site)
 	var fatigue: float = f.lab.character.fatigue
 	f.actions.advance(seconds, owner_plan)
 	f.lab._commit_shared_work_pools()
@@ -100,30 +100,30 @@ func _finish_actor_channel(f: Dictionary, key: String) -> void:
 	assert(feature.stage == "complete" and not f.actions.is_busy(int(f.control)), str(feature))
 
 func _known_segment(f: Dictionary, cells: Array[int], upstream: String) -> String:
-	var draft := _station_for_draft(f, cells, upstream)
-	var before := var_to_bytes([f.data.site, f.actions._jobs, f.lab.character.capture_state()])
+	var draft = _station_for_draft(f, cells, upstream)
+	var before = var_to_bytes([f.data.site, f.actions._jobs, f.lab.character.capture_state()])
 	assert(Runtime.begin_irrigation_channel(f.data, int(f.control), str(f.pump), upstream, cells, _channel_options(f, upstream), true).ok)
 	assert(var_to_bytes([f.data.site, f.actions._jobs, f.lab.character.capture_state()]) == before, "Known preview mutated an original owner")
 	var stock: Dictionary = f.data.site.inventory.duplicate()
-	var begun := Runtime.begin_irrigation_channel(f.data, int(f.control), str(f.pump), upstream, cells, _channel_options(f, upstream))
+	var begun = Runtime.begin_irrigation_channel(f.data, int(f.control), str(f.pump), upstream, cells, _channel_options(f, upstream))
 	assert(begun.ok, str(begun))
 	assert(int(f.data.site.inventory.wood) == int(stock.wood) - cells.size() and int(f.data.site.inventory.stone) == int(stock.stone) - cells.size() * 2)
-	var key := str(begun.feature)
+	var key = str(begun.feature)
 	assert(float(f.data.site.features[key].work) * 60.0 == cells.size() * 300.0)
 	assert(not Runtime.irrigation_channel_flow(f.data, key).ok, "Unbuilt channel supplied water")
 	_finish_actor_channel(f, key)
 	return key
 
 func _run() -> void:
-	var f := _channel_fixture()
+	var f = _channel_fixture()
 	var data: TerrainData = f.data
-	var cells := _channel_cells(Vector2i(11, 22), 4)
-	var before := var_to_bytes([data.site, f.actions._jobs])
+	var cells = _channel_cells(Vector2i(11, 22), 4)
+	var before = var_to_bytes([data.site, f.actions._jobs])
 	# The ordinary formal construction window chooses true original source IDs
 	# and current map cells; a read-only button never authors completion state.
-	var source_choice := f.lab.find_child("IrrigationSource", true, false) as OptionButton
-	var preview_button := f.lab.find_child("IrrigationPreview", true, false) as Button
-	var begin_button := f.lab.find_child("IrrigationBegin", true, false) as Button
+	var source_choice = f.lab.find_child("IrrigationSource", true, false) as OptionButton
+	var preview_button = f.lab.find_child("IrrigationPreview", true, false) as Button
+	var begin_button = f.lab.find_child("IrrigationBegin", true, false) as Button
 	assert(source_choice != null and preview_button != null and begin_button != null)
 	for index: int in source_choice.item_count:
 		if source_choice.get_item_metadata(index) == f.pump: source_choice.select(index)
@@ -139,7 +139,7 @@ func _run() -> void:
 		assert(not f.actions.prepare_scope_technology(int(f.control), int(f.control), "S02", str(data.site.settlement.settlement_id)).ok)
 		assert(var_to_bytes([data.site, f.actions._jobs]) == before, "Disabled node charged stock or created a project/job")
 		assert(Runtime.irrigation_channel_draft(data, cells, _channel_options(f)).ok, "Read-only real geometry draft was lost")
-		var road := _cold_natural_feature(data, "road", Vector2i(12, 30) + _channel_offset, Vector2i(4, 1))
+		var road = _cold_natural_feature(data, "road", Vector2i(12, 30) + _channel_offset, Vector2i(4, 1))
 		assert(data.site.features[road].stage == "complete", "Existing stock road acquired a technology lock")
 		print("S02_DISABLED_BYTE_BOUNDARY_PASS; PRODUCTIVE_CASES_NOT_RUN_ACTIVATION_REQUIRED")
 		f.lab.queue_free()
@@ -147,15 +147,15 @@ func _run() -> void:
 		return
 	# A true first project supplies the original exact4/8 payment and actual
 	# 1200 productive seconds before S02 knowledge is committed.
-	var scope_id := str(data.site.settlement.settlement_id)
+	var scope_id = str(data.site.settlement.settlement_id)
 	assert(f.actions.prepare_scope_technology(int(f.control), int(f.control), "S02", scope_id).ok)
 	assert(f.actions.request_scope_technology_consent(int(f.control), "settlement", scope_id, int(f.control)).ok)
 	assert(f.actions.grant_scope_technology_budget(int(f.control), "settlement", scope_id, {"wood": 4, "stone": 8}).ok)
-	var draft := _station_for_draft(f, cells)
+	var draft = _station_for_draft(f, cells)
 	var stock: Dictionary = data.site.inventory.duplicate()
-	var begun := f.actions.begin_scope_technology_phase(int(f.control), "settlement", scope_id, "irrigation", "feature:" + str(int(data.site.next_feature)), {"cells": cells, "options": _channel_options(f)})
+	var begun = f.actions.begin_scope_technology_phase(int(f.control), "settlement", scope_id, "irrigation", "feature:" + str(int(data.site.next_feature)), {"cells": cells, "options": _channel_options(f)})
 	assert(begun.ok, str(begun))
-	var first := str(int(data.site.next_feature) - 1)
+	var first = str(int(data.site.next_feature) - 1)
 	var feature: Dictionary = data.site.features[first]
 	assert(is_same(f.actions._jobs[f.actions._job_key_for(int(f.control))].feature_ref, feature))
 	assert(int(data.site.inventory.wood) == int(stock.wood) - 4 and int(data.site.inventory.stone) == int(stock.stone) - 8)
@@ -167,11 +167,11 @@ func _run() -> void:
 	assert(not feature.has("tech_trial") and Runtime.validate_irrigation_storage(data, data.site).ok)
 	assert(float(data.site.water_status[f.remote].supplied) == 0.0, "Baseline 14-cell route already reached the remote consumer")
 	# Real connected segments extend an unchanged pump; no independent water key.
-	var middle := _known_segment(f, _channel_cells(Vector2i(15, 22), 14), first)
-	var last := _known_segment(f, _channel_cells(Vector2i(29, 22), 4), middle)
+	var middle = _known_segment(f, _channel_cells(Vector2i(15, 22), 14), first)
+	var last = _known_segment(f, _channel_cells(Vector2i(29, 22), 4), middle)
 	assert(data.site.water_links.has(f.pump) and not data.site.water_links.has(first) and not data.site.water_links.has(last))
 	assert(float(data.site.water_status[f.remote].supplied) > 0.0, "Completed source→channels→real house entrance gave no new water service")
-	var amount := 0.0
+	var amount = 0.0
 	for status: Dictionary in data.site.water_status.values(): amount += float(status.supplied)
 	assert(amount <= 2.0 + 0.000001, "A channel increased the original well budget")
 	# Entire preflight rejection preserves original features, stock, jobs and seq.
@@ -201,19 +201,19 @@ func _run() -> void:
 	_station_for_draft(f, cells, last)
 	begun = Runtime.begin_irrigation_channel(data, int(f.control), str(f.pump), last, cells, _channel_options(f, last))
 	assert(begun.ok, str(begun))
-	var paused_key := str(begun.feature)
+	var paused_key = str(begun.feature)
 	assert(_actor_interval(f, 60.0) > 0.0 and not f.actions.save_guard().ok)
-	var progress := float(data.site.features[paused_key].progress)
+	var progress = float(data.site.features[paused_key].progress)
 	stock = data.site.inventory.duplicate()
 	assert(f.actions.cancel(int(f.control)).ok and f.actions.save_guard().ok)
 	assert(progress > 0.0 and float(data.site.features[paused_key].progress) == progress and data.site.inventory == stock)
 	f.lab._clear_shared_work_step()
 	f.lab.site_controller._capture_positions()
-	var saved := Store.save(data, "res://.godot-temp/site_settlement_irrigation_v1/paused.json")
+	var saved = Store.save(data, "res://.godot-temp/site_settlement_irrigation_v1/paused.json")
 	assert(saved.ok, str(saved))
-	var source_fingerprint := data.fingerprint()
-	var source_conditions := _cold_natural_conditions(data)
-	var loaded := Store.load_site("res://.godot-temp/site_settlement_irrigation_v1/paused.json")
+	var source_fingerprint = data.fingerprint()
+	var source_conditions = _cold_natural_conditions(data)
+	var loaded = Store.load_site("res://.godot-temp/site_settlement_irrigation_v1/paused.json")
 	assert(loaded.ok, str(loaded))
 	assert(loaded.data.fingerprint() == source_fingerprint and _cold_natural_conditions(loaded.data) == source_conditions, "Channel cold source/land conditions were not reconstructed")
 	assert(Runtime.validate_irrigation_storage(loaded.data, loaded.data.site).ok)

@@ -5,14 +5,14 @@ const DisabledJoineryCatalog = preload("res://scripts/terrain_lab/site_technolog
 
 func _run() -> void:
 	deadline = Time.get_ticks_msec() + 90000
-	var data := _building_fixture()
-	var lab := _building_lab(data)
-	var team := _vehicle_team(lab, true)
-	var control := int(lab.controlled_person_id())
+	var data = _building_fixture()
+	var lab = _building_lab(data)
+	var team = _vehicle_team(lab, true)
+	var control = int(lab.controlled_person_id())
 	lab.character.technology = Technology.learned_candidate(lab.character.technology, "F11")
 	_check(not bool(DisabledJoineryCatalog.get_node("F11").get("enabled", false)), "Production Catalog stays disabled before canonical acceptance")
-	var before := var_to_bytes([data.site, lab.character.technology, lab.character.fatigue, lab.site_controller.person_actions._jobs])
-	var result := Runtime.begin_siege_build(data, "ram", Vector2i(20, 20), Vector2i.RIGHT, int(team.team_id), control, Callable(), false, {}, {}, control, "joinery")
+	var before = var_to_bytes([data.site, lab.character.technology, lab.character.fatigue, lab.site_controller.person_actions._jobs])
+	var result = Runtime.begin_siege_build(data, "ram", Vector2i(20, 20), Vector2i.RIGHT, int(team.team_id), control, Callable(), false, {}, {}, control, "joinery")
 	_check(not result.ok and result.code == "NO_TECHNOLOGY" and var_to_bytes([data.site, lab.character.technology, lab.character.fatigue, lab.site_controller.person_actions._jobs]) == before, "Raw direct improved admission cannot bypass disabled Catalog or charge/spawn/work")
 	_check(Runtime.begin_siege_build(data, "ram", Vector2i(20, 20), Vector2i.RIGHT, int(team.team_id), control, Callable(), true).ok and var_to_bytes([data.site, lab.character.technology, lab.character.fatigue, lab.site_controller.person_actions._jobs]) == before, "Original default eleven-argument basic preview remains available and pure")
 	result = Runtime.begin_siege_build(data, "ram", Vector2i(20, 20), Vector2i.RIGHT, int(team.team_id), control, Callable(), false, {}, {}, control, "caller_override")

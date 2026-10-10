@@ -15,14 +15,14 @@ func _metal_fixture() -> Dictionary:
 		{"kind": "smithy", "anchor": Vector2i(34, 18), "extent": Vector2i.ONE},
 		{"kind": "settlement_center", "anchor": Vector2i(18, 10), "extent": Vector2i(5, 5)},
 	]
-	var selected := _cold_natural_template(specs, "technology-s04-natural")
+	var selected = _cold_natural_template(specs, "technology-s04-natural")
 	var data: TerrainData = selected.data
 	var offset: Vector2i = selected.offset
-	var smelter := _cold_natural_feature(data, "smelter", Vector2i(25, 18) + offset)
-	var smithy := _cold_natural_feature(data, "smithy", Vector2i(34, 18) + offset)
-	var lab := _cold_natural_lab(data)
-	var actions := lab.site_controller.person_actions
-	var control := int(lab.controlled_person_id())
+	var smelter = _cold_natural_feature(data, "smelter", Vector2i(25, 18) + offset)
+	var smithy = _cold_natural_feature(data, "smithy", Vector2i(34, 18) + offset)
+	var lab = _cold_natural_lab(data)
+	var actions = lab.site_controller.person_actions
+	var control = int(lab.controlled_person_id())
 	var refs: Array = [{"site_id": str(data.site.id), "person_id": control, "path": "", "label": "原冶鐵者", "age_years": -1}]
 	assert(lab.site_controller.family_continuity.register_members(refs, true, control).ok)
 	assert(lab.site_controller.family_continuity.appoint_head(control, control).ok)
@@ -31,12 +31,12 @@ func _metal_fixture() -> Dictionary:
 	data.site.family.technology.known = ["F04"] # Legitimate strict saved-world prerequisite, never S04 evidence.
 	lab.character.technology = Technology.learned_candidate(lab.character.technology, "F04")
 	assert(Family.validate_family(data.site.family, str(data.site.id)))
-	var center := Runtime.building_cells(data, "settlement_center", Vector2i(18, 10) + offset, Vector2i(5, 5), {"layout_version": 1, "quarter": 0, "owner_faction": 1})
+	var center = Runtime.building_cells(data, "settlement_center", Vector2i(18, 10) + offset, Vector2i(5, 5), {"layout_version": 1, "quarter": 0, "owner_faction": 1})
 	var cells: Array[int] = []
 	cells.assign(center.cells)
 	assert(lab.character.place(data.cell_from_index(int(selected.plans[2].preview.entrance)), true))
 	for key: String in selected.plans[2].preview.get("clearing", []): Env.change(data, key, {"cleared": true, "remaining": 0})
-	var founded := Settlement.found(lab, control, cells)
+	var founded = Settlement.found(lab, control, cells)
 	assert(founded.ok, str(founded))
 	_complete_key(data, str(founded.feature))
 	data.site.settlement.version = 2
@@ -46,7 +46,7 @@ func _metal_fixture() -> Dictionary:
 	var person: Dictionary = actions._person(control)
 	person.cargo.clear()
 	person.cargo.merge({"iron_ore": 3, "charcoal": 3, "wood": 1}) # Explicit finite original actor inventory precondition.
-	var stock := Stocks.stock_endpoint(data, smelter)
+	var stock = Stocks.stock_endpoint(data, smelter)
 	assert(lab.character.place(stock.cell, true))
 	assert(lab.site_controller.vehicles.transfer("person:" + str(control), "feature:" + smelter, {"iron_ore": 3, "charcoal": 2}, [], int(person.holder.version), int(stock.holder.version), control).ok)
 	assert(stock.cargo == {"iron_ore": 3, "charcoal": 2} and person.cargo == {"charcoal": 1, "wood": 1})
@@ -55,15 +55,15 @@ func _metal_fixture() -> Dictionary:
 func _metal_interval(f: Dictionary, seconds: float) -> void:
 	var requests: Array = f.actions.work_requests(seconds)
 	assert(requests.size() == 1 and requests[0].provider == "person_actions")
-	var plan := Fatigue.plan_work_interval(requests, seconds)
+	var plan = Fatigue.plan_work_interval(requests, seconds)
 	assert(plan.ok, str(plan))
 	f.lab._shared_work_plan = plan
 	f.lab._shared_work_pools_committed = false
 	f.lab.site_controller._shared_work_plan = plan
-	var owned := {"jobs": plan.jobs.get("person_actions", {})}
+	var owned = {"jobs": plan.jobs.get("person_actions", {})}
 	f.actions.advance(seconds, owned)
 	f.lab._commit_shared_work_pools()
-	var before := var_to_bytes([f.data.site, f.lab.character.capture_state(), f.actions._jobs])
+	var before = var_to_bytes([f.data.site, f.lab.character.capture_state(), f.actions._jobs])
 	f.actions.advance(seconds, owned)
 	f.lab._commit_shared_work_pools()
 	assert(var_to_bytes([f.data.site, f.lab.character.capture_state(), f.actions._jobs]) == before, "Repeated accepted interval changed mass/progress/payment/fatigue")
@@ -80,12 +80,12 @@ func _metal_scope_begin(f: Dictionary, order_id: String, binding: String, key: S
 	return f.actions.begin_scope_technology_phase(int(f.control), "settlement", str(f.data.site.settlement.settlement_id), binding, "feature:" + key, {"order_id": order_id})
 
 func _metal_mass(f: Dictionary) -> int:
-	var total := int(f.actions._person(int(f.control)).cargo.get("iron", 0))
+	var total = int(f.actions._person(int(f.control)).cargo.get("iron", 0))
 	for stock: Dictionary in f.data.site.stockpiles.values(): total += int(stock.cargo.get("iron", 0))
 	return total
 
 func _metal_negative_schema(f: Dictionary, order: Dictionary) -> void:
-	var before := var_to_bytes(f.data.site)
+	var before = var_to_bytes(f.data.site)
 	for field: String in ["carrier_id", "source", "carry_receipts", "project_id", "cap"]:
 		var malformed: Dictionary = order.duplicate(true)
 		malformed.payload.erase(field)
@@ -110,23 +110,23 @@ func _metal_negative_schema(f: Dictionary, order: Dictionary) -> void:
 	assert(var_to_bytes(f.data.site) == before, "Malformed cold validation mutated an original owner")
 
 func _metal_known_chain() -> void:
-	var f := _metal_fixture()
+	var f = _metal_fixture()
 	var data: TerrainData = f.data
 	data.site.settlement.technology.known = ["S04"] # Explicit pre-existing institution, not a research result.
-	var id_scope := str(data.site.settlement.settlement_id)
+	var id_scope = str(data.site.settlement.settlement_id)
 	var request: Dictionary = f.actions.request_settlement_metal_order(int(f.control), str(f.smelter), str(f.smithy), int(f.control))
 	assert(request.ok, str(request))
-	var id := str(request.order_id)
+	var id = str(request.order_id)
 	var order: Dictionary = data.site.settlement.technology_operations.orders[id]
-	var scope_before := var_to_bytes(data.site.settlement.technology)
-	var before := var_to_bytes([data.site, f.actions._jobs])
+	var scope_before = var_to_bytes(data.site.settlement.technology)
+	var before = var_to_bytes([data.site, f.actions._jobs])
 	assert(Runtime.begin_settlement_metal_operation(data, id_scope, id, true).ok and var_to_bytes([data.site, f.actions._jobs]) == before, "Known preview mutated original owners")
 	assert(f.actions.begin_settlement_metal_operation(int(f.control), id_scope, id).ok)
 	_metal_finish(f, str(f.smelter))
-	var pending := Runtime.prepare_settlement_metal_transfer(data, id_scope, id, int(f.control))
+	var pending = Runtime.prepare_settlement_metal_transfer(data, id_scope, id, int(f.control))
 	assert(pending.ok, str(pending))
 	before = var_to_bytes([data.site, f.actions._jobs])
-	var forged := pending.duplicate()
+	var forged = pending.duplicate()
 	forged.transfer = pending.transfer.duplicate()
 	forged.transfer.source = pending.transfer.source.duplicate(true)
 	assert(not Runtime.validate_settlement_metal_transfer(forged).ok, "Equal copied holder was accepted as the original source")
@@ -138,7 +138,7 @@ func _metal_known_chain() -> void:
 	assert(not f.lab.site_controller.vehicles.prepare_transfer("depot", "person:" + str(int(f.control)), {"iron": 2}, [], int(data.site.depot_items.version), int(f.person.holder.version), int(f.control)).ok, "Metal work broadened the original Actor camp logistics guard")
 	assert(var_to_bytes([data.site, f.actions._jobs]) == before)
 	assert(f.actions.begin_settlement_metal_operation(int(f.control), id_scope, id).ok and _metal_mass(f) == 2)
-	var smithy := Stocks.stock_endpoint(data, str(f.smithy))
+	var smithy = Stocks.stock_endpoint(data, str(f.smithy))
 	assert(f.lab.character.place(smithy.cell, true))
 	assert(f.actions.begin_settlement_metal_operation(int(f.control), id_scope, id).ok and _metal_mass(f) == 2)
 	assert(f.lab.site_controller.vehicles.transfer("person:" + str(int(f.control)), "feature:" + str(f.smithy), {"charcoal": 1, "wood": 1}, [], int(f.person.holder.version), int(smithy.holder.version), int(f.control)).ok)
@@ -151,22 +151,22 @@ func _metal_known_chain() -> void:
 	await process_frame
 
 func _run() -> void:
-	var f := _metal_fixture()
+	var f = _metal_fixture()
 	var data: TerrainData = f.data
-	var scope_id := str(data.site.settlement.settlement_id)
-	var before := var_to_bytes([data.site, f.lab.character.capture_state(), f.actions._jobs])
-	var node := f.lab.find_child("ScopeTechnologyNode", true, false) as OptionButton
+	var scope_id = str(data.site.settlement.settlement_id)
+	var before = var_to_bytes([data.site, f.lab.character.capture_state(), f.actions._jobs])
+	var node = f.lab.find_child("ScopeTechnologyNode", true, false) as OptionButton
 	assert(node != null)
 	for index: int in node.item_count:
 		if node.get_item_metadata(index) == "S04": node.select(index); node.item_selected.emit(index); break
-	var request_button := f.lab.find_child("MetalRequestOrder", true, false) as Button
+	var request_button = f.lab.find_child("MetalRequestOrder", true, false) as Button
 	assert(request_button != null)
 	if Catalog.get_node("S04").get("enabled") != true:
 		assert(request_button.disabled)
 		assert(not f.actions.prepare_scope_technology(int(f.control), int(f.control), "S04", scope_id).ok)
 		assert(not f.actions.request_settlement_metal_order(int(f.control), str(f.smelter), str(f.smithy), int(f.control)).ok)
 		assert(var_to_bytes([data.site, f.lab.character.capture_state(), f.actions._jobs]) == before, "Disabled S04 changed bytes or charged materials")
-		var original := Runtime.feature_recipe(data.site.features[f.smelter])
+		var original = Runtime.feature_recipe(data.site.features[f.smelter])
 		assert(original.input == {"iron_ore": 3, "charcoal": 2} and original.output == {"iron": 2} and str(data.site.features[f.smelter].get("recipe_id", "")).is_empty())
 		print("S04_DISABLED_BYTE_BOUNDARY_PASS; PRODUCTIVE_CASES_NOT_RUN_ACTIVATION_REQUIRED")
 		f.lab.queue_free()
@@ -174,15 +174,15 @@ func _run() -> void:
 		return
 	assert(f.actions.prepare_scope_technology(int(f.control), int(f.control), "S04", scope_id).ok)
 	assert(f.actions.request_scope_technology_consent(int(f.control), "settlement", scope_id, int(f.control)).ok)
-	var project := Technology.active_project(data.site.settlement.technology)
+	var project = Technology.active_project(data.site.settlement.technology)
 	var opened: Dictionary = f.actions.request_settlement_metal_order(int(f.control), str(f.smelter), str(f.smithy), int(f.control), int(project.id))
 	assert(opened.ok, str(opened))
-	var id := str(opened.order_id)
+	var id = str(opened.order_id)
 	var order: Dictionary = data.site.settlement.technology_operations.orders[id]
 	assert(Runtime.valid_settlement_metal_order(data, data.site, order) and order.payload.cap == Runtime.SETTLEMENT_METAL_CAP)
 	_metal_negative_schema(f, order)
 	var camp: Dictionary = data.site.inventory.duplicate()
-	var stock := Stocks.stock_endpoint(data, str(f.smelter))
+	var stock = Stocks.stock_endpoint(data, str(f.smelter))
 	assert(f.lab.character.place(stock.cell, true))
 	assert(_metal_scope_begin(f, id, "iron", str(f.smelter)).ok)
 	assert(stock.cargo.is_empty() and data.site.inventory == camp and not Technology.scope_known(data.site.settlement.technology, "S04"))
@@ -203,9 +203,9 @@ func _run() -> void:
 	# the original bounded order retains the first accepted transfer fact.
 	f.lab.site_controller._capture_positions()
 	assert(Store.save(data, "res://.godot-temp/site_settlement_metal_chain_v1/carry.json").ok)
-	var source_fingerprint := data.fingerprint()
-	var source_conditions := _cold_natural_conditions(data)
-	var loaded := Store.load_site("res://.godot-temp/site_settlement_metal_chain_v1/carry.json")
+	var source_fingerprint = data.fingerprint()
+	var source_conditions = _cold_natural_conditions(data)
+	var loaded = Store.load_site("res://.godot-temp/site_settlement_metal_chain_v1/carry.json")
 	assert(loaded.ok, str(loaded))
 	assert(loaded.data.fingerprint() == source_fingerprint and _cold_natural_conditions(loaded.data) == source_conditions, "Metal carry cold source/land conditions were not reconstructed")
 	assert(Runtime.valid_settlement_metal_order(loaded.data, loaded.data.site, loaded.data.site.settlement.technology_operations.orders[id]))
@@ -216,9 +216,9 @@ func _run() -> void:
 	f.actions = f.lab.site_controller.person_actions
 	f.person = f.actions._person(int(f.control))
 	order = data.site.settlement.technology_operations.orders[id]
-	var smithy := Stocks.stock_endpoint(data, str(f.smithy))
+	var smithy = Stocks.stock_endpoint(data, str(f.smithy))
 	assert(f.lab.character.place(smithy.cell, true))
-	var payments := Technology.active_project(data.site.settlement.technology).budget.payments.size()
+	var payments = Technology.active_project(data.site.settlement.technology).budget.payments.size()
 	assert(_metal_scope_begin(f, id, "transfer", str(f.smelter)).ok)
 	assert(_metal_mass(f) == 2 and not f.person.cargo.has("iron") and int(smithy.cargo.iron) == 2 and order.payload.carry_receipts.size() == 2)
 	project = Technology.active_project(data.site.settlement.technology)

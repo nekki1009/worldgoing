@@ -5,16 +5,16 @@ const Technology = preload("res://scripts/terrain_lab/site_technology.gd")
 const Catalog = preload("res://scripts/terrain_lab/site_technology_catalog.gd")
 
 func _engineering_fixture() -> Dictionary:
-	var data := _building_fixture()
-	var lab := _building_lab(data)
-	var control := lab.controlled_person_id()
+	var data = _building_fixture()
+	var lab = _building_lab(data)
+	var control = lab.controlled_person_id()
 	# Real camp adjacency. Initial building fixture's diagonal (10,10) is not
 	# sufficient for the original finite camp-source command.
 	assert(lab.character.place(Vector2i(9, 10), true))
-	var placement := Runtime.building_cells(data, "settlement_center", Vector2i(18, 10), Vector2i(5, 5), {"layout_version": 1, "quarter": 0, "owner_faction": 1})
+	var placement = Runtime.building_cells(data, "settlement_center", Vector2i(18, 10), Vector2i(5, 5), {"layout_version": 1, "quarter": 0, "owner_faction": 1})
 	var cells: Array[int] = []
 	cells.assign(placement.cells)
-	var founded := Settlement.found(lab, control, cells)
+	var founded = Settlement.found(lab, control, cells)
 	assert(founded.ok, str(founded))
 	_complete_key(data, str(founded.feature))
 	data.site.settlement.version = 2
@@ -31,7 +31,7 @@ func _engineering_fixture() -> Dictionary:
 	team.person_busy_query = lab.site_controller.person_actions.is_busy
 	assert(team.join_player(lab.character).ok)
 	var offices: Dictionary = team.team_offices()
-	var appointment := team.apply_office_plan(team.combat_identity(team.formal_commander), int(offices.revision), [
+	var appointment = team.apply_office_plan(team.combat_identity(team.formal_commander), int(offices.revision), [
 		{"op": "add", "name": "施工主持", "office_class": "civil", "ref": "engineering_work"},
 		{"op": "appoint", "position_id": "engineering_work", "person_id": control},
 		{"op": "assign", "position_id": "engineering_work", "duty_id": "team.work"}])
@@ -48,10 +48,10 @@ func _set_named_station(f: Dictionary, index: int) -> Dictionary:
 	return task
 
 func _run() -> void:
-	var f := _engineering_fixture()
+	var f = _engineering_fixture()
 	var data: TerrainData = f.data
-	var source := _formal_feature(data, "stone_wall", Vector2i(20, 18))
-	var before := var_to_bytes(data.site)
+	var source = _formal_feature(data, "stone_wall", Vector2i(20, 18))
+	var before = var_to_bytes(data.site)
 	if Catalog.get_node("S09").get("enabled") != true or Catalog.get_node("S10").get("enabled") != true:
 		assert(not Runtime.save_settlement_blueprint(data, int(f.control), source, "城牆", true).ok)
 		assert(var_to_bytes(data.site) == before, "Disabled engineering changed original state")
@@ -65,9 +65,9 @@ func _run() -> void:
 		return
 	assert(Runtime.save_settlement_blueprint(data, int(f.control), source, "城牆", true).ok)
 	assert(var_to_bytes(data.site) == before)
-	var saved := Runtime.save_settlement_blueprint(data, int(f.control), source, "城牆")
+	var saved = Runtime.save_settlement_blueprint(data, int(f.control), source, "城牆")
 	assert(saved.ok, str(saved))
-	var plan_id := str(saved.plan_id)
+	var plan_id = str(saved.plan_id)
 	var plan: Dictionary = data.site.settlement.technology_operations.plans[plan_id]
 	assert(not plan.has("progress") and not plan.has("cost") and not plan.has("person_ids"))
 	before = var_to_bytes(data.site)
@@ -75,30 +75,30 @@ func _run() -> void:
 	assert(var_to_bytes(data.site) == before, "Occupied plan reuse changed original stock or plan")
 	assert(Runtime.reuse_settlement_blueprint(data, int(f.control), plan_id, Vector2i(22, 20), true).ok)
 	assert(var_to_bytes(data.site) == before)
-	var reused := Runtime.reuse_settlement_blueprint(data, int(f.control), plan_id, Vector2i(22, 20))
+	var reused = Runtime.reuse_settlement_blueprint(data, int(f.control), plan_id, Vector2i(22, 20))
 	assert(reused.ok and str(reused.feature) != source)
 	_complete_key(data, str(reused.feature))
-	var npc := int(f.team.combat_identity(1))
-	var steps := [{"action": "construct", "plan_id": plan_id, "anchor": [20, 22], "feature_id": "", "part": "", "operator_id": npc}]
-	var target := Runtime.settlement_blueprint_target(data, plan_id, Vector2i(20, 22))
-	var preview := Runtime.preview_build(data, target.kind, target.cells, f.lab.site_controller.reserves_cell, target.options)
+	var npc = int(f.team.combat_identity(1))
+	var steps = [{"action": "construct", "plan_id": plan_id, "anchor": [20, 22], "feature_id": "", "part": "", "operator_id": npc}]
+	var target = Runtime.settlement_blueprint_target(data, plan_id, Vector2i(20, 22))
+	var preview = Runtime.preview_build(data, target.kind, target.cells, f.lab.site_controller.reserves_cell, target.options)
 	assert(preview.ok, str(preview))
 	var cost: Dictionary = preview.cost
-	var stock := data.site.inventory.duplicate()
-	var ordered := Runtime.request_settlement_defense_order(data, int(f.control), steps, [npc], cost)
+	var stock = data.site.inventory.duplicate()
+	var ordered = Runtime.request_settlement_defense_order(data, int(f.control), steps, [npc], cost)
 	assert(ordered.ok, str(ordered))
-	var order_id := str(ordered.order_id)
+	var order_id = str(ordered.order_id)
 	var operations: Dictionary = data.site.settlement.technology_operations
 	var order: Dictionary = operations.orders[order_id]
 	assert(order.spent.is_empty() and data.site.inventory == stock and order.consents[0].person_id == npc)
 	before = var_to_bytes([data.site, f.team.combat_units[1]])
 	assert(Runtime.begin_settlement_defense_step(data, int(f.control), order_id, true).ok)
 	assert(var_to_bytes([data.site, f.team.combat_units[1]]) == before, "Preview mutated true row, ops or source")
-	var begun := Runtime.begin_settlement_defense_step(data, int(f.control), order_id)
+	var begun = Runtime.begin_settlement_defense_step(data, int(f.control), order_id)
 	assert(begun.ok, str(begun))
 	assert(is_same(operations, data.site.settlement.technology_operations) and is_same(order, operations.orders[order_id]))
-	var task := _set_named_station(f, 1)
-	var key := str(task.target).trim_prefix("feature:")
+	var task = _set_named_station(f, 1)
+	var key = str(task.target).trim_prefix("feature:")
 	var feature: Dictionary = data.site.features[key]
 	for resource: String in cost: assert(int(data.site.inventory[resource]) == int(stock[resource]) - int(cost[resource]))
 	assert(Runtime.valid_settlement_work_storage(data, key, feature) and order.status == "active")
@@ -108,9 +108,9 @@ func _run() -> void:
 	assert(Runtime.resume_settlement_defense_step(data, int(f.control), order_id).get("already_working", false))
 	assert(data.site.inventory == stock)
 	f.lab.site_controller._capture_positions()
-	var snapshot := Store.save(data, "res://.godot-temp/site_settlement_engineering_v2/active.json")
+	var snapshot = Store.save(data, "res://.godot-temp/site_settlement_engineering_v2/active.json")
 	assert(snapshot.ok, str(snapshot))
-	var loaded := Store.load_site("res://.godot-temp/site_settlement_engineering_v2/active.json")
+	var loaded = Store.load_site("res://.godot-temp/site_settlement_engineering_v2/active.json")
 	assert(loaded.ok, str(loaded))
 	assert(Settlement.valid_technology_operations(loaded.data, loaded.data.site.settlement.technology_operations))
 	assert(Runtime.valid_settlement_work_storage(loaded.data, key, loaded.data.site.features[key]))
@@ -133,7 +133,7 @@ func _run() -> void:
 	# this finite worklist. Basic original repair can then finish normally.
 	var part: String = feature.parts.keys()[0]
 	assert(Runtime.damage_structure_part(data, key, part, 4.0).ok)
-	var repair_preview := Runtime.prepare_feature_repair_request(data, key, part, 1)
+	var repair_preview = Runtime.prepare_feature_repair_request(data, key, part, 1)
 	assert(repair_preview.ok)
 	steps = [{"action": "repair", "plan_id": "", "anchor": [], "feature_id": key, "part": part, "operator_id": npc}]
 	ordered = Runtime.request_settlement_defense_order(data, int(f.control), steps, [npc], repair_preview.repair.cost)
@@ -144,7 +144,7 @@ func _run() -> void:
 	var repair: Dictionary = feature.repair
 	stock = data.site.inventory.duplicate()
 	Runtime._feature_work(data, key, float(repair.work) * 0.5, Callable(), Callable(), task, f.team.combat_units[1].cargo, Runtime.CARRY_CAPACITY, 1, npc)
-	var progress := float(repair.progress)
+	var progress = float(repair.progress)
 	assert(progress > 0.0 and Runtime.cancel_settlement_defense_order(data, int(f.control), order_id).ok)
 	assert(is_same(repair, feature.repair) and float(repair.progress) == progress and data.site.inventory == stock and not feature.has("settlement_work"))
 	Runtime.assign_task(data, Runtime.ok("", {"target": "feature:" + key, "action": "repair", "cell": repair.work_cell}))
