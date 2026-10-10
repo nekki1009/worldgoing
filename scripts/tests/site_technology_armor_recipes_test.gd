@@ -122,6 +122,10 @@ func _ordinary_armor(fixture: Dictionary, key: String, recipe: String, expected_
 	var task: Dictionary = row.work_task
 	_check(task.get("target") == "feature:" + key, "The original selector chooses the actual armor work zone")
 	fixture.team.cells[1] = data.cell_from_index(int(task.work_cell))
+	# Assignment started a real walk; the fixture places the craftsman, so it must
+	# also settle him there (no pending move, idle pose) as an arrived worker is.
+	fixture.team.moving_to[1] = TerrainArmy.INVALID_CELL
+	fixture.team.combat_hot_set(1, &"pose", "idle")
 	task.cell = int(task.work_cell)
 	task.mode = "work"
 	var learned_before: Dictionary = row.technology
@@ -173,7 +177,8 @@ func _known_arsenal_armor(fixture: Dictionary) -> void:
 	data.site.equipment_nations = {"n1": {"offices": SiteOffices.default_offices("nation", int(fixture.control)), "members": [int(fixture.control), int(fixture.executor)], "standards": {}, "technology": nation}}
 	_check(Stocks.ensure_storage(data, str(fixture.warehouse), 1).ok, "Actual original Warehouse owns the finite private arsenal source")
 	_check(lab.character.place(data.cell_from_index(int(data.site.features[fixture.warehouse].entrance)), true), "Actual grantor reaches the true Warehouse contact")
-	_check(orders.register_nation_labor(int(fixture.control), "n1", [int(fixture.executor)]).ok, "Original national duty and actual team consent name the real armor worker")
+	var labor_ids: Array[int] = [int(fixture.executor)]
+	_check(orders.register_nation_labor(int(fixture.control), "n1", labor_ids).ok, "Original national duty and actual team consent name the real armor worker")
 	orders.nation_arsenal_request = func(nation_id: String, selected_order: String, prospective_order: Dictionary, preview_only: bool) -> Dictionary:
 		if preview_only and not data.site.equipment_nations[nation_id].technology_operations.public_orders.has(selected_order): return orders._arsenal_workshop_context(prospective_order)
 		return Runtime.begin_nation_technology_operation(data, nation_id, selected_order, preview_only)

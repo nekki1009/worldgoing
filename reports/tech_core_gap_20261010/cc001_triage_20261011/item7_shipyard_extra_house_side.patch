@@ -1,0 +1,9 @@
+--- a/scripts/tests/site_technology_shipyard_physical_test.gd
++++ b/scripts/tests/site_technology_shipyard_physical_test.gd
+@@ -128,5 +128,5 @@
+ 		# Ten houses fell short on this generated world (height step / edge overlap);
+ 		# one more genuine large house keeps a real house slot for every resident.
+-		var extra_house: String = _shipyard_natural_host(data, "house", center + Vector2i(-12, 0), Vector2i.ONE, {"variant": "large"})
++		var extra_house: String = _shipyard_natural_host(data, "house", center + Vector2i(12, 0), Vector2i.ONE, {"variant": "large"})
+ 		var extra_feature: Dictionary = data.site.features[extra_house]
+ 		for fixture_pair: Dictionary in Runtime._building_entrances(data, extra_feature.cells, int(extra_feature.quarter)):

@@ -127,7 +127,7 @@ func _shipyard_fixture() -> Dictionary:
 	if slots.size() < 40:
 		# Ten houses fell short on this generated world (height step / edge overlap);
 		# one more genuine large house keeps a real house slot for every resident.
-		var extra_house: String = _shipyard_natural_host(data, "house", center + Vector2i(-12, 0), Vector2i.ONE, {"variant": "large"})
+		var extra_house: String = _shipyard_natural_host(data, "house", center + Vector2i(12, 0), Vector2i.ONE, {"variant": "large"})
 		var extra_feature: Dictionary = data.site.features[extra_house]
 		for fixture_pair: Dictionary in Runtime._building_entrances(data, extra_feature.cells, int(extra_feature.quarter)):
 			for fixture_key: String in Env.resources_in(data, Rect2i(fixture_pair.cell, Vector2i.ONE)): Env.change(data, fixture_key, {"cleared": true, "remaining": 0})

@@ -61,7 +61,9 @@ func _nation_fixture(known: Array[String]) -> Dictionary:
 	var warehouse = _material_setup_feature(lab, "warehouse", Vector2i(8, 18), Vector2i.ONE, {}, excluded)
 	var smithy = _material_setup_feature(lab, "smithy", Vector2i(25, 18), Vector2i.ONE, {}, excluded)
 	var tannery = _material_setup_feature(lab, "tannery", Vector2i(34, 18), Vector2i.ONE, {}, excluded)
-	_material_setup_feature(lab, "well", Vector2i(9, 25), Vector2i.ONE, {}, excluded)
+	# Level 2 counts only a well inside the level-1 jurisdiction (radius 12 from the
+	# center at (25,25)); (9,25) lay 16 cells out, so anchor it within reach.
+	_material_setup_feature(lab, "well", Vector2i(20, 31), Vector2i.ONE, {}, excluded)
 	_material_setup_feature(lab, "farm", Vector2i(15, 25), Vector2i(2, 2), {}, excluded)
 	_check(lab.character.place(data.cell_from_index(int(center.fixture_preview.entrance)), true), "Actual controlled founder reaches the original natural center contact")
 	for key: String in center.fixture_preview.get("clearing", []): Env.change(data, key, {"cleared": true, "remaining": 0})
