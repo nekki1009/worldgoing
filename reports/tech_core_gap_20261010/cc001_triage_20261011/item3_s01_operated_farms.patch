@@ -1,0 +1,14 @@
+--- a/scripts/tests/site_technology_s01_water_owner_test.gd
++++ b/scripts/tests/site_technology_s01_water_owner_test.gd
+@@ -180,4 +180,11 @@
+ 	for intakes: bool in [false, true]:
+ 		var fixture = _s01_fixture(intakes)
++		# Farm water demand is the projection of operators at real farm work slots
++		# (Runtime.set_operating_slots); stage both original farms as operated.
++		var fixture_operating: Array = []
++		for fixture_farm: String in [str(fixture.farm), str(fixture.other_farm)]:
++			for fixture_slot: Dictionary in Runtime.feature_work_slots(fixture.data, fixture.data.site.features[fixture_farm]):
++				fixture_operating.append({"task": {"target": "feature:" + fixture_farm, "action": "operate", "work_slot": int(fixture_slot.slot)}})
++		Runtime.set_operating_slots(fixture.data, fixture_operating)
+ 		var sample: Dictionary = Runtime.water_allocation_sample(fixture.data, ["farm", "house", "workshop"])
+ 		var expected = 6.0 if intakes else 2.0

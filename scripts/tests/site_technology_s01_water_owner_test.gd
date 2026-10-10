@@ -179,6 +179,13 @@ func _close_s01(fixture: Dictionary) -> void:
 func _finite_sources_and_partition() -> void:
 	for intakes: bool in [false, true]:
 		var fixture = _s01_fixture(intakes)
+		# Farm water demand is the projection of operators at real farm work slots
+		# (Runtime.set_operating_slots); stage both original farms as operated.
+		var fixture_operating: Array = []
+		for fixture_farm: String in [str(fixture.farm), str(fixture.other_farm)]:
+			for fixture_slot: Dictionary in Runtime.feature_work_slots(fixture.data, fixture.data.site.features[fixture_farm]):
+				fixture_operating.append({"task": {"target": "feature:" + fixture_farm, "action": "operate", "work_slot": int(fixture_slot.slot)}})
+		Runtime.set_operating_slots(fixture.data, fixture_operating)
 		var sample: Dictionary = Runtime.water_allocation_sample(fixture.data, ["farm", "house", "workshop"])
 		var expected = 6.0 if intakes else 2.0
 		_check(Runtime.valid_water_allocation_sample(sample) and is_equal_approx(float(sample.source_capacity), expected) and float(sample.total_supply) <= expected, "Two SAME-source original pumps retain finite %s capacity rather than multiplying it" % expected)

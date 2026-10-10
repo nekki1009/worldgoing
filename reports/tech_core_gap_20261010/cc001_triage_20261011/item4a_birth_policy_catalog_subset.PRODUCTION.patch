@@ -1,0 +1,94 @@
+--- a/scripts/terrain_lab/site_technology_policy.gd
++++ b/scripts/terrain_lab/site_technology_policy.gd
+@@ -40,6 +40,21 @@
+ 	if not checked.ok: return checked
+ 	return {"ok": true, "policy": {"version": VERSION, "rules_version": RULES_VERSION, "categories": checked.categories}}
+ 
++## Plan D10 (tech-tree v2 lines 22/168/172): a new world fixes, at creation, only
++## the threshold categories whose nodes the loaded catalog currently admits. With
++## the formal catalog disabled that set is empty, so births stay policy-free.
++static func catalog_admitted_categories() -> Array[String]:
++	var result: Array[String] = []
++	for category: String in CATEGORIES:
++		if SiteTechnologyCatalog.get_node(category).get("enabled") == true: result.append(category)
++	return result
++
++static func birth_categories_admitted(policy: Dictionary) -> bool:
++	var admitted := catalog_admitted_categories()
++	for category: Variant in policy.get("categories", []):
++		if not admitted.has(str(category)): return false
++	return true
++
+ static func candidate(record: Variant, legacy_format: bool = false) -> Dictionary:
+ 	# The owner validates its outer format. Field presence is checked here so an
+ 	# existing null / malformed policy cannot be mistaken for a legacy absence.
+--- a/scripts/terrain_lab/terrain_lab.gd
++++ b/scripts/terrain_lab/terrain_lab.gd
+@@ -10265,7 +10265,7 @@
+ 	if not pin is Dictionary or int(pin.get("format", 0)) != 2: return SiteRuntime.fail("NOT_NEW_WORLD_FORMAT")
+ 	var policy := TechnologyPolicy.candidate(pin)
+ 	if not policy.ok: return policy
+-	if not policy.policy.categories.is_empty(): return SiteRuntime.fail("TECH_POLICY_CONFLICT")
++	if not TechnologyPolicy.birth_categories_admitted(policy.policy): return SiteRuntime.fail("TECH_POLICY_CONFLICT")
+ 	if not new_data.site.get("actors", {}).is_empty() or not new_data.site.get("armies", []).is_empty() or new_data.site.has("family") or new_data.site.has("crowd") or new_data.site.has("initial_scenario") or not new_data.site.get("captivity", {}).is_empty() or not new_data.site.get("vehicles", {}).is_empty() or not new_data.site.get("item_records", {}).is_empty() or int(new_data.site.get("minute", -1)) != 0 or float(new_data.site.get("phase", -1.0)) != 0.0 or bool(new_data.site.get("paused", false)) or float(new_data.site.get("combat_left", 0.0)) != 0.0: return SiteRuntime.fail("NOT_INITIAL_SCENARIO")
+ 	var candidate := SiteEnv.navigation_for_state(new_data, new_data.site.duplicate(true))
+ 	var start := candidate.cell_from_index(int(candidate.site.get("player_cell", candidate.index(candidate.spawn_cell))))
+--- a/scripts/region_lab/region_save_slot.gd
++++ b/scripts/region_lab/region_save_slot.gd
+@@ -5207,7 +5207,7 @@
+ func _check_initial_record(record: Dictionary) -> Dictionary:
+ 	if not _initial_pending_ok(_initialization, pin) or int(record.get("generation", 0)) != 1 or not _same_pin(record.get("pin"), pin) or record.get("sites", {}).size() != 1 or not str(record.get("transfer_token", "")).is_empty() or not record.get("journey", {}).is_empty(): return fail("INVALID_INITIAL_GENERATION")
+ 	var policy := TechnologyPolicy.candidate(pin)
+-	if not policy.ok or not policy.policy.categories.is_empty(): return fail("TECH_POLICY_CONFLICT")
++	if not policy.ok or not TechnologyPolicy.birth_categories_admitted(policy.policy): return fail("TECH_POLICY_CONFLICT")
+ 	var coordinate := Vector2i(int(_initialization.starting_site[0]), int(_initialization.starting_site[1]))
+ 	var key := _site_key(coordinate)
+ 	if not record.sites.has(key) or str(record.get("control", {}).get("active_site_id", "")) != Grid.site_id(str(pin.atlas_id), coordinate) or float(record.control.get("logical_game_seconds", -1.0)) != 0.0: return fail("INVALID_INITIAL_GENERATION")
+--- /dev/null
++++ b/scripts/tests/site_technology_policy_birth_admission_test.gd
+@@ -0,0 +1,45 @@
++extends SceneTree
++## World birth admits only catalog-admitted threshold categories (plan D10 lines
++## 22/168/172). Any category the loaded catalog does not admit is still refused.
++
++const Policy = preload("res://scripts/terrain_lab/site_technology_policy.gd")
++var _failed := false
++
++func _check(condition: bool, message: String) -> void:
++	if not condition:
++		_failed = true
++		push_error("SITE_TECHNOLOGY_POLICY_BIRTH_ADMISSION_FAIL: " + message)
++
++func _initialize() -> void:
++	var admitted: Array[String] = Policy.catalog_admitted_categories()
++	for category: String in admitted:
++		_check(SiteTechnologyCatalog.get_node(category).get("enabled") == true, "Admitted category %s is an enabled catalog node" % category)
++	var empty: Dictionary = Policy.new_policy([])
++	_check(empty.ok and Policy.birth_categories_admitted(empty.policy), "An empty policy is always admitted at birth")
++	var refused := 0
++	for category: String in Policy.CATEGORIES:
++		var single: Dictionary = Policy.new_policy([category])
++		_check(single.ok, "Policy with %s is well-formed" % category)
++		if admitted.has(category):
++			_check(Policy.birth_categories_admitted(single.policy), "Catalog-admitted %s is admitted at birth" % category)
++		else:
++			refused += 1
++			_check(not Policy.birth_categories_admitted(single.policy), "Category %s that the catalog does not admit is refused at birth" % category)
++			var mixed: Dictionary = Policy.new_policy(admitted + [category] if not admitted.has(category) else admitted)
++			_check(mixed.ok and not Policy.birth_categories_admitted(mixed.policy), "Adding unadmitted %s to admitted categories is still refused" % category)
++			var lab_result: Dictionary = _birth_guard_result(single.policy)
++			_check(not lab_result.ok and str(lab_result.code) == "TECH_POLICY_CONFLICT", "TerrainLab birth guard refuses unadmitted %s: %s" % [category, str(lab_result)])
++	_check(refused > 0 or admitted.size() == Policy.CATEGORIES.size(), "Refusal coverage is exercised whenever any category is unadmitted")
++	if _failed:
++		quit(1)
++		return
++	print("SITE_TECHNOLOGY_POLICY_BIRTH_ADMISSION_PASS: admitted=%s refused_categories=%d" % [str(admitted), refused])
++	quit(0)
++
++func _birth_guard_result(policy: Dictionary) -> Dictionary:
++	var lab: TerrainLab = TerrainLab.new()
++	var data := TerrainData.new()
++	data.site = {"id": "policy-birth", "world_pin": {"format": 2, "technology_policy": policy}}
++	var result: Dictionary = lab.prepare_fresh_initial_population(data)
++	lab.free()
++	return result
