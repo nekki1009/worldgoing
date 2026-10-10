@@ -8010,7 +8010,9 @@ func _shared_rest_event_limit(maximum: float, planned: Dictionary) -> float:
 		var rest := PersonFatigue.REST_DELAY - PersonFatigue.read(body, "fatigue_rest")
 		if rest > ACTION_TIME_EPSILON: limit = minf(limit, rest)
 		else:
-			var target := 50.0 if fatigue > 50.0 and bool(body.get("work_resting")) else 0.0
+			# A row that never rested carries no work_resting key; treat it as not resting.
+			var resting: bool = bool(body.get("work_resting", false)) if body is Dictionary else bool(body.get("work_resting"))
+			var target := 50.0 if fatigue > 50.0 and resting else 0.0
 			limit = minf(limit, maxf(ACTION_TIME_EPSILON, (fatigue - target) / PersonFatigue.RECOVERY_RATE))
 	return limit
 
