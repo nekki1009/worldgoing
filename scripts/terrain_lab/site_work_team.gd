@@ -1980,7 +1980,11 @@ func prepare_assign_feature(team: Variant, identities: Array, requester_id: int,
 		if zone_index < 0 or not zone_candidate.is_empty() and not is_same(zone, zone_candidate): return SiteRuntime.fail("NO_ZONE")
 	var authority := _targeted_feature_authority(team, identities, requester_id, feature_id, action, feature, prospective, operation_ref, technology_token)
 	if not authority.ok: return authority
-	var slots: Array[Dictionary] = SiteRuntime.feature_work_slots(lab.terrain, feature) if action == "operate" else [{"slot": -1, "cell": int(repair.work_cell) if action == "repair" else int(construction.entrance)}]
+	# A ternary with an untyped literal is assigned as plain Array and refused at
+	# runtime for construct/repair; fill the typed array on both branches instead.
+	var slots: Array[Dictionary] = []
+	if action == "operate": slots = SiteRuntime.feature_work_slots(lab.terrain, feature)
+	else: slots.append({"slot": -1, "cell": int(repair.work_cell) if action == "repair" else int(construction.entrance)})
 	if operation_ref.has("settlement_id") and action == "operate":
 		var original_order: Dictionary = lab.terrain.site.get("settlement", {}).get("technology_operations", {}).get("orders", {}).get(str(operation_ref.get("order_id", "")), {})
 		if original_order.get("kind") == "ship_cooperation": slots = SiteRuntime.technology_shipyard_work_slots(lab.terrain, feature)
