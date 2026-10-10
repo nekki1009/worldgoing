@@ -4215,10 +4215,12 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 				data.site.terrain_changes[str(index)] = int(feature.level)
 			rebuild_terrain_edges(data)
 			data.site.features.erase(key)
+		# Release the named worker first: finish_named_feature_work matches the task by
+		# its "feature:<key>" target, which the lines below clear (repair already does this).
+		_technology_finish_named_feature(data, key)
 		worker.mode = "idle"
 		worker.target = ""
 		_stop_feature_zones(data, key, "construct")
-		_technology_finish_named_feature(data, key)
 		Env.rebuild_indexes(data)
 		if Env.ecology_active(data): ecology_reconcile(data)
 		rebuild_water(data)
