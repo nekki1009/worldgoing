@@ -457,6 +457,9 @@ func _bind_original_travel_host(slot: RegionSaveSlot) -> bool:
 func _complete_original_travel(slot: RegionSaveSlot) -> bool:
 	while Time.get_ticks_msec() <= deadline:
 		var advanced: Dictionary = slot.advance_region_travel(1000)
+		# A visited Site on the route catches up by the original budgeted exact cold
+		# replay; PENDING asks the caller to call again (bounded by the deadline).
+		if not advanced.ok and str(advanced.get("code", "")) == "PENDING": continue
 		if not _must(advanced.ok, "Actual original travel consumer: " + str(advanced)): return false
 		if bool(advanced.arrived): return true
 	return _must(false, "Original travel deadline")

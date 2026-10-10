@@ -78,6 +78,8 @@ func _setup_action_world() -> bool:
 		for key: String in original.terrain.resource_base: Env.change(original.terrain, key, {"cleared": true, "remaining": 0})
 		original.terrain.site.capacity = 100000
 		for resource: String in Env.ITEM_NAMES: original.terrain.site.inventory[resource] = 1000
+		# The finite Depot proof pays grain only: no other original food is stocked.
+		for food: String in ["fish", "meat", "wild_food"]: original.terrain.site.inventory[food] = 0
 		original.terrain.site.inventory.grain = 8
 		original.terrain.site.depot_cell = original.terrain.index(Vector2i(x, 20))
 		if not _check(SiteRuntime.initialize_item_storage(original.terrain.site).ok, "finite initial Depot stock uses the original allocator", index): return false
@@ -90,10 +92,10 @@ func _setup_action_world() -> bool:
 		var control_ok: bool = int(original.terrain.site.get("controlled_person_id", -1)) == 1 and actor.person_id == 1 if index == 0 else not original.terrain.site.has("controlled_person_id")
 		if not _check(actor == original.character and control_ok, "local existing Actor is the original founder under the opening control rule", index): return false
 		if not _check(FleetGarrison.set_military_role(original, actor.person_id, "officer").ok, "original Garrison qualifies the original local Actor", index): return false
-		var side := {"prefix": "friendly", "count": 4, "slot_count": 4, "female_count": 0, "faction": faction, "training": 0.0, "role": "combat", "troop_type": "melee_infantry", "attack": false, "cart_count": 0, "wagon_count": 0, "abilities": {}, "ai_enabled": false}
+		var side := {"prefix": "friendly", "count": 3, "slot_count": 3, "female_count": 0, "faction": faction, "training": 0.0, "role": "combat", "troop_type": "melee_infantry", "attack": false, "cart_count": 0, "wagon_count": 0, "abilities": {}, "ai_enabled": false}
 		var other: Dictionary = side.duplicate(true)
 		other.prefix = "enemy"; other.count = 1; other.slot_count = 1
-		var source_cells: Array[Vector2i] = [Vector2i(x, 24), Vector2i(x, 20), Vector2i(x, 17), Vector2i(x - 1, 17)]
+		var source_cells: Array[Vector2i] = [Vector2i(x, 24), Vector2i(x, 20), Vector2i(x, 17)]
 		var headquarters_cells: Array[Vector2i] = [Vector2i(x + 1, 24)]
 		var born: Dictionary = original._deploy_trial_teams([side, other], [source_cells, headquarters_cells], 0)
 		if not _check(born.ok, "original typed genesis creates four finite real bodies and holders", born): return false
@@ -108,7 +110,7 @@ func _setup_action_world() -> bool:
 		var offices: Dictionary = source.team_offices()
 		var seat := str(offices.duties.get("team.training", ""))
 		var position: Dictionary = SiteOffices.position(offices, seat)
-		if not _check(people.size() == 3 and not position.is_empty() and not bool(position.head) and str(position.office_class) == "military" and int(position.holder) <= 0, "existing military duty can seat the true future NPC captain", index): return false
+		if not _check(people.size() == 2 and not position.is_empty() and not bool(position.head) and str(position.office_class) == "military" and int(position.holder) <= 0, "existing military duty can seat the true future NPC captain", index): return false
 		var appointed: Dictionary = source.apply_office_plan(actor.person_id, int(offices.revision), [{"op": "set_role", "person_id": people[0], "role": "officer"}, {"op": "appoint", "position_id": seat, "person_id": people[0]}])
 		if not _check(appointed.ok and source.is_serving_military(0), "original transaction appoints a real serving NPC successor", appointed): return false
 		var anchor := Vector2i(x, 19 if index == 0 else 18)
@@ -180,26 +182,31 @@ func _public_board(index: int, row: int, berth: int) -> bool:
 
 func _public_fit(index: int) -> bool:
 	var fleet: Dictionary = fleets[index]
-	# Row 1 (bow passenger) boards first and frees the shore cell row 2 waits
-	# behind; row 0 boards berth 1 and takes the helm; row 2 then sits on the
-	# freed crew berth 1, so helm + one seated crew are the ferry's standard crew.
-	if not await _public_board(index, 1, 9) or not await _public_board(index, 0, 1): return false
+	# Two NPCs: row 0 boards berth 1 and takes the helm; row 1 then boards the
+	# freed crew berth 1 and stays seated (helm + one seated crew = standard crew).
+	if not await _public_board(index, 0, 1): return false
 	var original := _fleet_owner(index)
-	var person := int(fleet.people[1])
-	# Matching real bow positions avoid inventing a lateral contact or hull overlap.
-	var target := Vector2(-0.1 if index == 0 else 1.1, 3.25)
-	var walked: Dictionary = original.site_controller.person_actions.begin_ship_walk(person, target, int(fleet.actor), false)
-	if not _check(walked.ok, "false-dispatch original deck path starts on its genuine boat", walked): return false
-	if not await _fleet_until(func() -> bool: return not _fleet_owner(index).site_controller.person_actions.is_busy(person), "original paid deck path completes without cell or berth rewriting"): return false
-	if not _check(_fleet_owner(index).site_controller.vehicles.ship_local_position(person).distance_to(target) <= EPS, "actual completed deck path reaches the legal authored bow position"): return false
-	original = _fleet_owner(index)
 	var helm: Dictionary = original.site_controller.person_actions.begin_ship_helm(int(fleet.people[0]), str(fleet.boat), int(fleet.actor), false)
 	if not _check(helm.ok and int(_fleet_boat(index).operator_id) == 0, "false-dispatch public helm reserves an actual uncommitted duty", helm): return false
 	if not await _fleet_until(func() -> bool: return int(_fleet_boat(index).operator_id) == int(fleet.people[0]) and not _fleet_owner(index).site_controller.person_actions.is_busy(int(fleet.people[0])), "original paid helm seats the same actual operator"): return false
-	if not await _public_board(index, 2, 1): return false
+	if not await _public_board(index, 1, 1): return false
+	# Boarding leaves row 1 at the hull edge; the original deck path seats it on
+	# its own crew berth position (crew is counted only there).
+	var seat: Vector2 = preload("res://scripts/terrain_lab/site_vehicle_ship_definitions.gd").local_position(str(_fleet_boat(index).ship_type), 1)
+	var seated: Dictionary = _fleet_owner(index).site_controller.person_actions.begin_ship_walk(int(fleet.people[1]), seat, int(fleet.actor), false)
+	if not _check(seated.ok, "false-dispatch original deck path seats the crew row on its berth", seated): return false
+	if not await _fleet_until(func() -> bool: return not _fleet_owner(index).site_controller.person_actions.is_busy(int(fleet.people[1])), "original paid deck path seats the same actual crew row"): return false
+	if not _check(_fleet_owner(index).site_controller.vehicles.ship_local_position(int(fleet.people[1])).distance_to(seat) <= EPS, "actual crew row sits exactly on its crew berth"): return false
 	original = _fleet_owner(index)
 	var team := _fleet_team(index)
-	if not _check(original.site_controller.vehicles.ship_driver_ready(_fleet_boat(index)) and original.site_controller.vehicles.ship_crew_count(_fleet_boat(index)) == 2, "one real helm and one separate real combat crew own each full ferry"): return false
+	# A ferry's standard crew is its helm alone (standard_crew 1); the second
+	# real NPC rides aboard the same boat, able, on a legal seated position.
+	var second: Dictionary = original.site_controller.vehicles.ship_person(int(fleet.people[1]))
+	var second_seat: Vector2 = preload("res://scripts/terrain_lab/site_vehicle_ship_definitions.gd").local_position(str(_fleet_boat(index).ship_type), int(second.get("row", {}).get("berth_id", -1)))
+	if not _check(original.site_controller.vehicles.ship_driver_ready(_fleet_boat(index)) and original.site_controller.vehicles.ship_crew_count(_fleet_boat(index)) == 1
+		and not second.is_empty() and str(second.row.get("embarked_vehicle_id", "")) == str(fleet.boat) and original.site_controller.vehicles._ship_capable(second)
+		and original.site_controller.vehicles.ship_local_position(int(fleet.people[1])).distance_to(second_seat) <= EPS,
+		"one real helm is the full standard crew and one separate real NPC rides seated aboard each ferry"): return false
 	var delivery: Dictionary = original.site_controller.begin_team_food(team, float(fleet.delivered), int(fleet.people[1]), {"kind": "depot"})
 	if not _check(delivery.ok, "public actual shore Depot fill starts finite original productive work", delivery): return false
 	if not await _fleet_until(func() -> bool: return _fleet_owner(index).site_controller._supply_entry(_fleet_team(index)).delivery.is_empty(), "original accepted delivery publishes its actual boat food pool"): return false

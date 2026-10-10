@@ -192,6 +192,13 @@ func _delivery_prepare_and_commit() -> bool:
 	if not _delivery_initial_visible_feature(Vector2i(start_x - 1, 48)): return false
 	var saved := controller.checkpoint_region_internal("region_checkpoint", true)
 	if not _check(saved.ok, "actual source bodies, nation and TypedPersonRefs publish before observation or dispatch", saved): return false
+	# The source team and courier nation were created after the earlier index;
+	# the original allocator adds their stable refs, then the same graph republishes.
+	var source_identified := RegionTravel.prepare_identity(lab.terrain.site)
+	if not _check(source_identified.ok, "original identity allocator indexes the source team and courier nation", source_identified): return false
+	lab.terrain.site.travel_identity = source_identified.state.travel_identity
+	saved = controller.checkpoint_region_internal("region_checkpoint", true)
+	if not _check(saved.ok, "the indexed source team and nation publish with the same graph", saved): return false
 	var morale := DeliveryMilitary._morale_by_person(lab.terrain)
 	var own := DeliveryMilitary._team_summary(source, morale, {})
 	var other := DeliveryMilitary._team_summary(enemy, morale, {})
