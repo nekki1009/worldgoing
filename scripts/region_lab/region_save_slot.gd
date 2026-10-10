@@ -2156,6 +2156,8 @@ func _ground_destination(geography: TerrainData, seconds: float) -> Dictionary:
 		var retired := Store.retire_default_worker(data)
 		if not retired.ok: return retired
 		Runtime.initialize_item_storage(data.site)
+		# Same as open_site: a new Site of this slot carries the slot's fixed world pin.
+		if not pin.is_empty(): data.site.world_pin = pin.duplicate(true)
 	return _settle_cold_candidate(data, seconds)
 
 func _ground_surfaces(source_data: TerrainData, destination_data: TerrainData, request: Dictionary) -> Dictionary:
