@@ -1,0 +1,152 @@
+{
+ "base": "D HEAD 60e9921",
+ "tech_reference": "tech-implementation/effect-union-gd-typed-caller/20261008_123728_534766 (latest Tech candidate)",
+ "final_reference": "region_core_native6_contact_final_source_v1 (CoreV3 selected closure, 10-08 14:01, integrated 17:50)",
+ "files": {
+  "scripts/main_menu/main_menu.gd": {
+   "differing_bodies_vs_D": 0
+  },
+  "scripts/region_lab/region_data.gd": {
+   "differing_bodies_vs_D": 0
+  },
+  "scripts/region_lab/region_entry.gd": {
+   "differing_bodies_vs_D": 0
+  },
+  "scripts/region_lab/region_lab.gd": {
+   "differing_bodies_vs_D": 0
+  },
+  "scripts/region_lab/region_save_slot.gd": {
+   "differing_bodies_vs_D": 60
+  },
+  "scripts/region_lab/region_terrain_adapter.gd": {
+   "differing_bodies_vs_D": 0
+  },
+  "scripts/region_lab/region_travel.gd": {
+   "differing_bodies_vs_D": 10
+  },
+  "scripts/terrain_lab/crowd_person_owner.gd": {
+   "differing_bodies_vs_D": 1
+  },
+  "scripts/terrain_lab/crowd_site.gd": {
+   "missing_funcs": {
+    "arm_work_fatigue_point": "NOT CLASSIFIED: likely superseded by the final native/shared-step or Region design; owner review needed",
+    "prepare_native_work_point_base": "NOT CLASSIFIED: likely superseded by the final native/shared-step or Region design; owner review needed"
+   },
+   "missing_consts_vars": [],
+   "differing_bodies_vs_D": 15
+  },
+  "scripts/terrain_lab/person_fatigue.gd": {
+   "differing_bodies_vs_D": 0
+  },
+  "scripts/terrain_lab/site_captivity_supply.gd": {
+   "differing_bodies_vs_D": 2
+  },
+  "scripts/terrain_lab/site_combat_rules.gd": {
+   "differing_bodies_vs_D": 0
+  },
+  "scripts/terrain_lab/site_controller.gd": {
+   "missing_funcs": {
+    "_native_shared_supply_event_limit": "NOT CLASSIFIED: likely superseded by the final native/shared-step or Region design; owner review needed",
+    "scope_survey_work_target": "NOT CLASSIFIED: likely superseded by the final native/shared-step or Region design; owner review needed"
+   },
+   "missing_consts_vars": [],
+   "differing_bodies_vs_D": 26
+  },
+  "scripts/terrain_lab/site_duty_ai.gd": {
+   "differing_bodies_vs_D": 5
+  },
+  "scripts/terrain_lab/site_environment.gd": {
+   "differing_bodies_vs_D": 0
+  },
+  "scripts/terrain_lab/site_equipment_orders.gd": {
+   "differing_bodies_vs_D": 11
+  },
+  "scripts/terrain_lab/site_family_continuity.gd": {
+   "differing_bodies_vs_D": 3
+  },
+  "scripts/terrain_lab/site_food_delivery.gd": {
+   "differing_bodies_vs_D": 0
+  },
+  "scripts/terrain_lab/site_person_actions.gd": {
+   "missing_funcs": {
+    "accepted_work_prefix_for_task": "NOT CLASSIFIED: likely superseded by the final native/shared-step or Region design; owner review needed",
+    "new_capture_fields": "NOT CLASSIFIED: likely superseded by the final native/shared-step or Region design; owner review needed",
+    "prepare_checked_controlled_prefixes": "NOT CLASSIFIED: likely superseded by the final native/shared-step or Region design; owner review needed"
+   },
+   "missing_consts_vars": [],
+   "differing_bodies_vs_D": 23
+  },
+  "scripts/terrain_lab/site_resource_view.gd": {
+   "missing_funcs": {
+    "_draw_irrigation_channel": "NOT CLASSIFIED: likely superseded by the final native/shared-step or Region design; owner review needed"
+   },
+   "missing_consts_vars": [],
+   "differing_bodies_vs_D": 3
+  },
+  "scripts/terrain_lab/site_runtime.gd": {
+   "missing_funcs": {
+    "prepare_release_technology_operation": "ADD (patch): permanent research release + S12 scope suspension; required by D stop_settlement_ship_order SCOPE_STOP_REQUIRED path and CC-001 work_credit fixture",
+    "prepare_settlement_metal_output": "DEAD in Tech 12:37 (no references); do not add",
+    "prepare_settlement_metal_payment": "DEAD in Tech 12:37; do not add",
+    "publish_release_technology_operation": "ADD (patch): as above",
+    "release_settlement_spare_repair": "ADD (patch): named spare-repair release; called by CC-001 site_settlement_spares_test",
+    "settlement_metal_work_context": "DEAD in Tech 12:37; do not add",
+    "settlement_ship_binding_valid": "DEAD in Tech 12:37; do not add",
+    "settlement_ship_material_source_candidate": "DEAD in Tech 12:37; do not add",
+    "settlement_ship_paid_source_candidate": "DEAD in Tech 12:37; do not add",
+    "settlement_ship_spec": "DEAD in Tech 12:37; do not add",
+    "survey_stakes_operator_guard": "DEAD in Tech 12:37; do not add"
+   },
+   "missing_consts_vars": [],
+   "differing_bodies_vs_D": 37
+  },
+  "scripts/terrain_lab/site_settlement.gd": {
+   "differing_bodies_vs_D": 7
+  },
+  "scripts/terrain_lab/site_stockpiles.gd": {
+   "differing_bodies_vs_D": 0
+  },
+  "scripts/terrain_lab/site_store.gd": {
+   "differing_bodies_vs_D": 7
+  },
+  "scripts/terrain_lab/site_tech_window.gd": {
+   "missing_funcs": {},
+   "missing_consts_vars": [
+    "Environment"
+   ],
+   "differing_bodies_vs_D": 5
+  },
+  "scripts/terrain_lab/site_technology.gd": {
+   "missing_funcs": {
+    "_f15_cold_jobs_candidate": "NOT CLASSIFIED: likely superseded by the final native/shared-step or Region design; owner review needed",
+    "cold_job_fields": "NOT CLASSIFIED: likely superseded by the final native/shared-step or Region design; owner review needed"
+   },
+   "missing_consts_vars": [],
+   "differing_bodies_vs_D": 1
+  },
+  "scripts/terrain_lab/site_training_ground.gd": {
+   "differing_bodies_vs_D": 1
+  },
+  "scripts/terrain_lab/site_vehicle_transport.gd": {
+   "differing_bodies_vs_D": 10
+  },
+  "scripts/terrain_lab/site_work_team.gd": {
+   "differing_bodies_vs_D": 2
+  },
+  "scripts/terrain_lab/terrain_army.gd": {
+   "differing_bodies_vs_D": 28
+  },
+  "scripts/terrain_lab/terrain_lab.gd": {
+   "missing_funcs": {
+    "_native_begin_ranged_game_seconds": "NOT CLASSIFIED: likely superseded by the final native/shared-step or Region design; owner review needed",
+    "_native_shared_point_window": "NOT CLASSIFIED: likely superseded by the final native/shared-step or Region design; owner review needed",
+    "_valid_native_begin_ranged_preview": "NOT CLASSIFIED: likely superseded by the final native/shared-step or Region design; owner review needed"
+   },
+   "missing_consts_vars": [],
+   "differing_bodies_vs_D": 62
+  },
+  "scripts/tests/site_technology_g06_paired_source_test.gd": {
+   "differing_bodies_vs_D": 0
+  }
+ }
+}

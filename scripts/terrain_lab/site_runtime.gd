@@ -7094,13 +7094,48 @@ static func _resume_technology_operation(data: TerrainData, proposed: Dictionary
 	return ok("恢復同一原付費器械", {"target_id": str(original.target_id), "token": original.duplicate(true), "resumed": true, "already_working": bool(work.already_working)})
 
 
-static func release_technology_operation(data: TerrainData, token: Dictionary) -> Dictionary:
+static func release_technology_operation(data: TerrainData, token: Dictionary, permanent: bool = false) -> Dictionary:
+	var prepared := prepare_release_technology_operation(data, token, permanent)
+	if not prepared.ok: return prepared
+	publish_release_technology_operation(prepared)
+	return ok("已明示放棄本研究綁定；原付款／進度保留，只可沿普通合法工序完成" if permanent else "原具名工作已停止；原付費token／進度保留供同目的恢復")
+
+# Tech gap (10-08 Tech effect-union lineage, pruned from the integrated Core closure):
+# permanent research release and S12 ship-order suspension through the original scope.
+static func prepare_release_technology_operation(data: TerrainData, token: Dictionary, permanent: bool = false) -> Dictionary:
 	if data == null or not _technology_trial_shape(token, data): return fail("INVALID_TECHNOLOGY")
 	var target: Dictionary = data.site.get("features" if str(token.target_id).begins_with("feature:") else "vehicles", {}).get(str(token.target_id).get_slice(":", 1), {})
 	if target.is_empty() or target.get("tech_trial", {}) != token: return fail("STALE_SOURCE")
-	# Stopping the PA task does not revoke the paid source's original purpose.
-	# It remains parked and may resume only through the same true project/person.
-	return ok("原具名工作已停止；原付費token／進度保留供同目的恢復")
+	if target.has("tech_batch") and (not target.tech_batch is Dictionary or target.tech_batch.get("token", {}) != token): return fail("STALE_SOURCE")
+	if target.has("technology_settlement_order") and token.tech_id == "S12":
+		if not valid_settlement_ship_target(data, str(token.target_id).trim_prefix("feature:"), target): return fail("STALE_SOURCE")
+		var ref: Dictionary = target.technology_settlement_order
+		var refs := _settlement_order_state(data, str(ref.settlement_id), str(ref.order_id))
+		if int(refs.order.revision) >= 2147483646: return fail("LIMIT")
+	return ok("", {"terrain": data, "site_state": data.site, "target": target, "token": token, "permanent": permanent})
+
+static func publish_release_technology_operation(prepared: Dictionary) -> void:
+	assert(prepared.ok and is_same(prepared.terrain.site, prepared.site_state) and prepared.target.get("tech_trial", {}) == prepared.token)
+	if prepared.target.has("technology_settlement_order") and prepared.token.get("tech_id") == "S12":
+		var ref: Dictionary = prepared.target.technology_settlement_order
+		var refs := _settlement_order_state(prepared.terrain, str(ref.settlement_id), str(ref.order_id))
+		assert(refs.order.kind == "ship_cooperation")
+		_technology_finish_named_feature(prepared.terrain, str(refs.order.payload.feature_id))
+		_stop_feature_zones(prepared.terrain, str(refs.order.payload.feature_id), "operate")
+		refs.order.status = "cancelled" if prepared.permanent else "suspended"
+		refs.order.revision = int(refs.order.revision) + 1
+		if prepared.permanent:
+			refs.order.payload.source.status = "revoked"
+			prepared.target.tech_batch.operator_id = 0
+	if not prepared.permanent: return
+	var target: Dictionary = prepared.target
+	# Paid cost/progress/operator work remain honest original records. Clearing
+	# the research binding cannot give another person its personal phase receipt.
+	if target.has("technology_spare_repair"): target.technology_spare_repair.released = true
+	target.erase("tech_trial")
+	target.erase("technology_order")
+	target.erase("tech_work_credit")
+	if target.has("tech_batch"): target.tech_batch.token = {}
 
 
 static func technology_recipe_guard(data: TerrainData, key: String, feature: Dictionary, operator_id: int, token: Dictionary = {}) -> Dictionary:
@@ -11962,6 +11997,24 @@ static func _prepare_settlement_spare_workers(data: TerrainData, key: String, ve
 	var prepared: Dictionary = workers.prepare_assign_vehicle(admission.team, admission.person_ids, int(admission.requester_id), key, vehicle, {},
 		projected.get("tech_trial", {}), {}, projected)
 	return prepared if not prepared.ok else ok("", {"controlled": {}, "assignment": prepared, "workers": workers})
+
+static func release_settlement_spare_repair(data: TerrainData, vehicle_id: String, requester_id: int) -> Dictionary:
+	var actions: Variant = _technology_actions(data)
+	var vehicle: Dictionary = data.site.get("vehicles", {}).get(vehicle_id, {})
+	if actions == null or requester_id != int(actions._technology_controlled()) or not valid_settlement_spare_repair_storage(data, vehicle): return fail("NO_AUTHORITY")
+	if not vehicle.get("tech_trial", {}).is_empty(): return fail("BUSY", "科研工作須沿原科技停止／永久解除入口")
+	var person: Dictionary = actions._person(int(vehicle.technology_spare_repair.operator.person_id))
+	var original: Variant = actions._technology_team(person)
+	var physical: Variant = original
+	if person.get("owner") is CrowdPersonOwner:
+		physical = person.owner
+		var source: Variant = physical._command_owner(int(person.unit))
+		if source is TerrainArmy: original = source
+	if not original is TerrainArmy or not original.duty_resolve_readonly("team.work", physical).get("ok", false) \
+		or int(original.duty_resolve_readonly("team.work", physical).get("decider", -1)) != requester_id: return fail("NO_AUTHORITY")
+	vehicle.technology_spare_repair.released = true
+	_technology_finish_named_vehicle(data, vehicle_id)
+	return ok("已停止具名備件工作；一包支出、已修HP與原修理進度保留，後續沿基本原修理權")
 
 static func resume_settlement_spare_repair(data: TerrainData, vehicle_id: String, operator_id: int, preview: bool = false, token: Dictionary = {}) -> Dictionary:
 	var vehicle: Dictionary = data.site.get("vehicles", {}).get(vehicle_id, {})
