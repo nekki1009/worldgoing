@@ -188,7 +188,9 @@ func _known_arsenal_armor(fixture: Dictionary) -> void:
 	var camp = data.site.inventory.duplicate(true)
 	var next_item := int(data.site.next_item)
 	var started := Runtime.begin_nation_technology_operation(data, "n1", str(issued.order_id))
-	_check(started.ok and data.site.inventory == camp and reserve.cargo.is_empty(), "One actual private Warehouse payment starts N11 without silently taking any camp material")
+	# Core technology debits subtract to zero and keep the key (Tech 12:37 = D),
+	# so the funded reserve is spent when no positive amount remains.
+	_check(started.ok and data.site.inventory == camp and reserve.cargo.values().all(func(amount: Variant) -> bool: return int(amount) == 0), "One actual private Warehouse payment starts N11 without silently taking any camp material")
 	_check(Runtime.validate_technology_target_storage(data, str(fixture.smithy), data.site.features[fixture.smithy]).ok, "Strict original target validator accepts the real bounded source/order ledger")
 	_finish_feature(lab, fixture.team, int(fixture.executor), str(fixture.smithy), 15.0)
 	var order: Dictionary = data.site.equipment_nations.n1.technology_operations.public_orders[issued.order_id]

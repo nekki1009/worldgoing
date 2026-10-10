@@ -133,7 +133,10 @@ func _shipyard_fixture() -> Dictionary:
 			for fixture_key: String in Env.resources_in(data, Rect2i(fixture_pair.cell, Vector2i.ONE)): Env.change(data, fixture_key, {"cleared": true, "remaining": 0})
 		Env.rebuild_indexes(data)
 		houses.append(extra_house)
-		for cell: int in Runtime.house_layout(data, extra_house).slots: slots.append({"house_id": extra_house, "cell": cell})
+		# The new house can take cells from a neighbour's entrance row: recount all.
+		slots.clear()
+		for recount_house: String in houses:
+			for cell: int in Runtime.house_layout(data, recount_house).slots: slots.append({"house_id": recount_house, "cell": cell})
 	_check(slots.size()>=40,"True original houses hold forty separate original residents")
 	data.site.housing={}
 	var people: Dictionary={}

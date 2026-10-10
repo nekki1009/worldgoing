@@ -93,7 +93,10 @@ func _nation_fixture(known: Array[String]) -> Dictionary:
 			for fixture_key: String in Env.resources_in(data, Rect2i(fixture_pair.cell, Vector2i.ONE)): Env.change(data, fixture_key, {"cleared": true, "remaining": 0})
 		Env.rebuild_indexes(data)
 		houses.append(extra_house)
-		for cell: int in Runtime.house_layout(data, extra_house).slots: slots.append({"house_id": extra_house, "cell": cell})
+		# The new house can take cells from a neighbour's entrance row: recount all.
+		slots.clear()
+		for recount_house: String in houses:
+			for cell: int in Runtime.house_layout(data, recount_house).slots: slots.append({"house_id": recount_house, "cell": cell})
 	_check(slots.size() >= team.combat_units.size(), "Real houses contain all forty actual original people")
 	var people = {}
 	var housing = {}
@@ -281,7 +284,10 @@ func _run() -> void:
 	var feature: Dictionary = data.site.features[built.feature]
 	_check(feature.tech_batch.source_holder == reserve.holder.holder and int(feature.tech_batch.source_version) == source_version and feature.tech_batch.token.is_empty(), "Ledger records actual physical source/predebit version; known project0 creates no research token")
 	before = _state_bytes(data, row)
-	_check(not Runtime.begin_nation_technology_operation(data, "n1", order_id, false, request).ok and _state_bytes(data, row) == before, "Retry cannot double-pay or create a second feature/order binding")
+	# Core (Tech 12:37 = D) answers a retry of the same paid order with an idempotent
+	# resume of the SAME target; the invariant is no second payment or binding.
+	var retried = Runtime.begin_nation_technology_operation(data, "n1", order_id, false, request)
+	_check((not retried.ok or bool(retried.get("resumed", false)) and str(retried.get("target_id", "")) == "feature:" + str(built.feature)) and _state_bytes(data, row) == before, "Retry cannot double-pay or create a second feature/order binding")
 	_check(Runtime.validate_technology_target_storage(data, str(built.feature), feature).ok, "Active paid source and order cross-reference pass strict original target validation")
 	var decoded: Dictionary = JSON.parse_string(JSON.stringify(feature))
 	decoded.tech_batch.source_holder = actual.source.holder
