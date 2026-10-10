@@ -9564,7 +9564,8 @@ func restore_combat_state(snapshot: Dictionary, map: TerrainData, restored_playe
 		unit.erase("exchange_visual") # Ignore any transient presentation payload on restore.
 		unit.fatigue = float(saved.get("fatigue", 0.0))
 		unit.fatigue_rest = float(saved.get("fatigue_rest", 0.0))
-		unit.work_resting = bool(saved.get("work_resting", false))
+		# Restore never invents a row field the saved body did not carry.
+		if saved.has("work_resting"): unit.work_resting = bool(saved.work_resting)
 		unit.attack_reduction = float(saved.get("attack_reduction", SiteCombatRules.diminishing(training if bool(saved.get("member", true)) else 0.0, 0.15)))
 		unit.attack_fatigue = float(saved.get("attack_fatigue", 0.0))
 		unit.hits = {}
@@ -9576,7 +9577,8 @@ func restore_combat_state(snapshot: Dictionary, map: TerrainData, restored_playe
 			for point: Array in polygon:
 				shape.append(Vector2(float(point[0]), float(point[1])))
 			unit.previous.append(shape)
-		for field: String in ["cell", "slot", "destination", "facing", "progress", "duration"]:
+		# Packed per-row state (move_curve included) lives outside the row dictionary.
+		for field: String in ["cell", "slot", "destination", "facing", "progress", "duration", "move_curve"]:
 			unit.erase(field)
 		combat_units.append(unit)
 		combat_slots.append(Vector2i(int(saved.slot[0]), int(saved.slot[1])))
