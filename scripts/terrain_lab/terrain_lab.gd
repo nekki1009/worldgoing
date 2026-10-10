@@ -10602,6 +10602,15 @@ func _region_gameplay_player_materialize(event: Dictionary) -> Dictionary:
 	var continuous := slot.region_live_party_required(queued, status)
 	if not continuous.ok: return continuous
 	if continuous.required: return _region_gameplay_live_party_materialize(queued)
+	# The player's own final arrival is bound by the main controller lab through
+	# the world-open path, exactly like a non-host journey: this endpoint only
+	# records that the journey reached its destination. The player is never
+	# placed into a cold owner, and no cold receipt is promoted to live.
+	if bool(status.get("pending", false)) and bool(status.get("arrived", false)) and str(queued.kind) == "player_arrival" \
+			and npc_token.is_empty() and str(queued.payload.get("player_token", "")) == str(status.token):
+		return {"ok": true, "receipt": {"complete": true, "effects_complete": true, "deferred_to_world_open": true,
+			"owner": str(queued.owner), "generation": int(slot._marker.generation),
+			"game_seconds": float(slot.control.logical_game_seconds), "action_seconds": float(slot.control.fire_clock.action_seconds)}}
 	var activated: TerrainLab = null
 	if bool(status.get("pending", false)):
 		var raw: Variant = queued.payload.get("site", [status.site.x, status.site.y])

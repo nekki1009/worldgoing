@@ -25,6 +25,7 @@ var delivery_trace: Array[Dictionary] = []
 func _initialize() -> void:
 	deadline = Time.get_ticks_msec() + 300000
 	out = "res://.godot-temp/region_carried_intel_original/run_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
+	fixture_land_condition_rule = "terrain_mapped_potential_v1" # Initial walls and founding need mapped land.
 	last_world_exists = FileAccess.file_exists(Entry.LAST_WORLD)
 	if last_world_exists: last_world_bytes = FileAccess.get_file_as_bytes(Entry.LAST_WORLD)
 	action_kind = "ballista"
@@ -120,6 +121,17 @@ func _delivery_receiver_office() -> bool:
 	action_owner.terrain.site.equipment_nations[delivery_receiver_nation] = {"members": [delivery_receiver, delivery_guard], "standards": {}, "offices": SiteOffices.default_offices("nation", delivery_receiver, false)}
 	var saved := controller.checkpoint_region_internal("region_checkpoint", true)
 	if not _check(saved.ok, "recipient and original national office publish through the true full joint checkpoint", saved): return false
+	# Stable person refs come from the original travel identity allocator (a
+	# departure would run it); it indexes the captured armies after the checkpoint.
+	var identified := RegionTravel.prepare_identity(action_owner.terrain.site)
+	if not _check(identified.ok, "original identity allocator indexes the recipient", identified): return false
+	action_owner.terrain.site.travel_identity = identified.state.travel_identity
+	if lab != action_owner:
+		var main_identified := RegionTravel.prepare_identity(lab.terrain.site)
+		if not _check(main_identified.ok, "original identity allocator indexes the observing officer's team", main_identified): return false
+		lab.terrain.site.travel_identity = main_identified.state.travel_identity
+	saved = controller.checkpoint_region_internal("region_checkpoint", true)
+	if not _check(saved.ok, "the indexed recipient identity publishes with the same joint checkpoint", saved): return false
 	delivery_receiver_ref = DeliveryAI.person_ref(action_owner.terrain.site, delivery_receiver)
 	return _check(DeliveryAI.valid_person_ref(delivery_receiver_ref), "actual recipient has the original persisted TypedPersonRef", delivery_receiver_ref)
 
