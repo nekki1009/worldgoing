@@ -237,6 +237,7 @@ const COLD_FIELDS := ["executor_id", "executor_cell", "executor_hit", "executor_
 	"technology_project", "technology_purpose", "technology_family_id", "technology_epoch", "technology_attempt"]
 
 static func cold_jobs_candidate(raw: Variant, state: Dictionary, people: Dictionary) -> Dictionary:
+	if raw is Dictionary and integer(raw.get("version"), 2, 2): return _f15_cold_jobs_candidate(raw, state, people)
 	if not keys(raw, ["version", "config_version", "site_id", "jobs"]) or not integer(raw.version, 1, 1) or raw.config_version != COLD_CONFIG \
 		or raw.site_id != str(state.get("id", "")) or not raw.jobs is Array or raw.jobs.size() > 1:
 		return {"ok": false, "code": "INVALID_TECHNOLOGY_JOBS"}
@@ -265,6 +266,52 @@ static func cold_jobs_candidate(raw: Variant, state: Dictionary, people: Diction
 		for resource: String in TRIAL_COST:
 			if int(project.budget.spent[resource]) + int(TRIAL_COST[resource]) > int(project.budget.cap[resource]): return {"ok": false, "code": "BUDGET_EXCEEDED"}
 		for field: String in ["executor_id", "executor_cell", "executor_hit", "executor_version", "technology_project", "technology_epoch", "technology_attempt"]: job[field] = int(job[field])
+		job.elapsed = float(job.elapsed)
+		job.duration = float(job.duration)
+	return {"ok": true, "state": result}
+
+static func cold_job_fields(row: Dictionary) -> Array:
+	return F15_COLD_FIELDS if row.has("technology_scope_token") else COLD_FIELDS
+
+static func _f15_cold_jobs_candidate(raw: Variant, state: Dictionary, people: Dictionary) -> Dictionary:
+	if not keys(raw, ["version", "config_version", "site_id", "jobs"]) or not integer(raw.version, 2, 2) \
+		or raw.config_version != F15_COLD_CONFIG or raw.site_id != str(state.get("id", "")) or not raw.jobs is Array or raw.jobs.size() > 1: return {"ok": false, "code": "INVALID_TECHNOLOGY_JOBS"}
+	var family: Dictionary = state.get("family", {})
+	var record: Dictionary = family.get("technology", {})
+	if not valid_scope_record(record, "family") or record.holder_site_id != str(state.id): return {"ok": false, "code": "STALE_PROJECT"}
+	var result: Dictionary = raw.duplicate(true)
+	result.version = 2
+	for job: Variant in result.jobs:
+		if not keys(job, F15_COLD_FIELDS) or not integer(job.executor_id, 1, 2147483647) or int(job.executor_id) == int(state.get("controlled_person_id", -1)) \
+			or not integer(job.executor_cell) or not integer(job.executor_hit) or not integer(job.executor_version) or job.recipe not in ["fire_arrow", "fire_pot", "crossbow"] \
+			or not finite_number(job.elapsed) or not finite_number(job.duration) or float(job.duration) != (60.0 if job.recipe == "fire_arrow" else 90.0 if job.recipe == "fire_pot" else 180.0) \
+			or float(job.elapsed) >= float(job.duration) or job.paused not in ["", "REST", "THREAT"]: return {"ok": false, "code": "INVALID_TECHNOLOGY_JOB"}
+		var token: Variant = job.technology_scope_token
+		if not keys(token, ["scope", "scope_id", "project_id", "epoch", "purpose", "tech_id", "phase_id", "attempt", "person", "binding", "target_id", "materials"]) \
+			or token.scope != "family" or token.scope_id != family.family_id or token.tech_id not in ["F15", "F08"] or token.tech_id == "F08" and job.recipe != "crossbow" or token.tech_id == "F15" and job.recipe == "crossbow" or token.binding != job.recipe \
+			or token.target_id != "ranged:" + str(int(job.executor_id)) or not valid_ref(token.person) or token.person.site_id != str(state.id) \
+			or int(token.person.person_id) != int(job.executor_id) or not integer(token.project_id, 1) or not integer(token.epoch, int(record.epoch), int(record.epoch)) \
+			or not integer(token.attempt, 1): return {"ok": false, "code": "INVALID_TECHNOLOGY_JOB"}
+		var project := active_project(record)
+		if project.is_empty() or int(project.rules_version) != 2 or project.tech_id != token.tech_id or int(project.id) != int(token.project_id) \
+			or project.purpose != token.purpose or not same_person_ref(project.executor, token.person, record.get("person_links", [])) \
+			or int(token.attempt) != int(project.next_attempt) - 1: return {"ok": false, "code": "STALE_PROJECT"}
+		var phase := scope_next_phase(project, token.person, record.get("person_links", []))
+		if phase.is_empty() or phase.id != token.phase_id or phase.binding != token.binding or float(phase.seconds) != float(job.duration) \
+			or not material_equal(token.materials, phase.materials): return {"ok": false, "code": "STALE_PHASE"}
+		if project.budget.is_empty() or project.budget.status != "granted" or project.budget.holder != "depot" or project.budget.source_site_id != str(state.id): return {"ok": false, "code": "NO_BUDGET"}
+		for material: String in token.materials:
+			if int(project.budget.spent.get(material, 0)) + int(token.materials[material]) > int(project.budget.cap.get(material, 0)): return {"ok": false, "code": "BUDGET_EXCEEDED"}
+		for payment: Dictionary in project.budget.payments:
+			if int(payment.attempt) == int(token.attempt): return {"ok": false, "code": "DUPLICATE"}
+		var person: Dictionary = people.get(int(job.executor_id), {})
+		if person.is_empty() or not person.get("item_state") is Dictionary or int(person.item_state.get("version", -1)) != int(job.executor_version) \
+			or learned(person.get("technology", {}), str(token.tech_id)) or float(person.get("hp", 0.0)) <= 0.0 or float(person.get("ko", person.get("knockout_left", 0.0))) > 0.0 \
+			or person.get("captive", false) == true: return {"ok": false, "code": "STALE_TECHNOLOGY_PERSON"}
+		for key: String in ["executor_id", "executor_cell", "executor_hit", "executor_version"]: job[key] = int(job[key])
+		for key: String in ["project_id", "epoch", "attempt"]: token[key] = int(token[key])
+		token.person.person_id = int(token.person.person_id)
+		for material: String in token.materials: token.materials[material] = int(token.materials[material])
 		job.elapsed = float(job.elapsed)
 		job.duration = float(job.duration)
 	return {"ok": true, "state": result}

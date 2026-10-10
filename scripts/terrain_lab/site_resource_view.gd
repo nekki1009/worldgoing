@@ -1340,6 +1340,7 @@ func _building_gate_draws(feature: Dictionary, geometry: Dictionary, key: String
 func _draw_feature(canvas: Node2D, feature: Dictionary, row_index: int = -1) -> void:
 	if str(feature.kind) == "siege_ladder": return # Original VehicleView shows the generated ladder sprite.
 	if _building_uses_art(feature): return
+	if feature.get("kind") == "irrigation_channel": _draw_irrigation_channel(canvas, feature, row_index); return
 	var kind := str(feature.kind)
 	var complete := str(feature.stage) == "complete"
 	var min_cell := data.cell_from_index(int(feature.cells[0]))
@@ -1422,6 +1423,29 @@ func _draw_feature(canvas: Node2D, feature: Dictionary, row_index: int = -1) -> 
 			_draw_wildlife(canvas, animal, 0.0, int(_resource_art._wildlife_indices[str(feature.species)]), 38.0 if kind == "pasture" else 46.0)
 	var label := str(Runtime.FEATURES[kind].name) + ("" if complete else "·施工")
 	_draw_string(canvas, ThemeDB.fallback_font, p + Vector2(-30, 22), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color("fff0c8"))
+
+func _draw_irrigation_channel(canvas: Node2D, feature: Dictionary, row_index: int) -> void:
+	var live := false
+	for key: String in data.site.features:
+		if is_same(data.site.features[key], feature): live = Runtime.irrigation_channel_flow(data, key).ok; break
+	var broken := float(feature.get("parts", {}).get("body", {}).get("hp", 100.0)) <= 0.0
+	var complete: bool = feature.get("stage") == "complete"
+	var color := Color("467f9a") if live else Color("756653")
+	if not complete: color.a = 0.4
+	# Half-edges belong to the original cell's actual painter row. This renders
+	# bends and each row once; no bounding-rectangle water/placeholder house.
+	for index: int in feature.cells.size():
+		var cell := int(feature.cells[index])
+		if row_index >= 0 and data.cell_from_index(cell).y != row_index: continue
+		var center := _center(cell)
+		var ends: Array[Vector2] = []
+		if index > 0: ends.append((_center(int(feature.cells[index - 1])) + center) * 0.5)
+		if index + 1 < feature.cells.size(): ends.append((_center(int(feature.cells[index + 1])) + center) * 0.5)
+		if ends.is_empty(): ends = [center + Vector2(-CELL * 0.25, 0), center + Vector2(CELL * 0.25, 0)]
+		for endpoint: Vector2 in ends:
+			_draw_thick_line(canvas, center, endpoint, Color("b2a28b"), 15.0)
+			_draw_thick_line(canvas, center, endpoint, color, 8.0)
+		if broken: _draw_thick_line(canvas, center + Vector2(-10, -10), center + Vector2(10, 10), Color("a46e50"), 4.0)
 
 # Engineering component presentation through the original row draw records.
 # The approved intact artwork remains the source for existing whole sprites;

@@ -51,3 +51,28 @@ This one is already settled by the CC-001 work order (`reports/tech-tree-core-ve
 - D's formal catalog stays disabled; CoreV3's manifest records `formal_Catalog_remains_disabled: true`.
 
 So rows 23+ should get an isolated-project catalog published by Region. D should not get a catalog switch, and this doesn't wait on tuning sign-off. Tuning sign-off is only needed later, to enable nodes in D's formal (player-facing) catalog.
+
+## Addendum: the four possible features (base 3fab306)
+
+| Function | Verdict | Reason |
+|---|---|---|
+| `scope_survey_work_target` | Dead, don't add | Zero references in Tech 12:37. |
+| `cold_job_fields` and `_f15_cold_jobs_candidate` (`site_technology.gd`) | Live gap, patched | D creates `technology_scope_token` ranged-craft research jobs (`site_person_actions` 1241/1375/4340). `F15_COLD_CONFIG` and `F15_COLD_FIELDS` are already defined in D but nothing uses them. D's `export_cold_technology_jobs` refuses scope-token jobs as `BUSY`, so cold export and restore of NPC scope research (F15/F08) can't happen. |
+| `_draw_irrigation_channel` (`site_resource_view.gd`) | Live gap, patched | D builds `irrigation_channel` features (`site_runtime` FEATURES/BODY_KINDS and `irrigation_channel_flow`), but `_draw_feature` has no channel painter, so channels fall through to the generic drawing. |
+
+`f15_cold_scope_jobs_and_irrigation_view.patch` makes these changes:
+- **Adds:** `cold_job_fields` and `_f15_cold_jobs_candidate` after `cold_jobs_candidate`; `_draw_irrigation_channel` after `_draw_feature`.
+- **Replaces with Tech's versions:**
+  - `Technology.cold_jobs_candidate`: one dispatch line for the version 2 record.
+  - `SitePersonActions.export_cold_technology_jobs`, `prepare_restore_cold_technology_jobs` and `can_publish_restore_cold_technology_jobs`: scope-token jobs plus the version 2 F15 record.
+  - `SiteResourceView._draw_feature`: one dispatch line for the channel.
+
+The merge is a clean three-way: every replaced function in D is byte-identical to the integrated final. All bodies are byte-identical to Tech 12:37. All dependencies exist in D: the F15 constants, `irrigation_channel_flow`, `_draw_thick_line` and `_center`.
+
+Verification (parsecheck, A/B, runs `PROBE_feat_*`):
+- `site_technology_scope_test` passes in both runs.
+- `site_f07_cold_jobs_test` fails in both runs: a test-side parse error, `Cannot infer the type of "current"`.
+- `site_settlement_irrigation_test` fails in both runs at a fixture assertion before drawing.
+- `site_technology_work_credit_test` fails in both runs at the catalog gate.
+
+So there is no regression, but no test reaches the new code yet. Positive proof is left to the CC-001 rows that cover F15 and irrigation.

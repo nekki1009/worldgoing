@@ -3021,15 +3021,16 @@ func export_cold_technology_jobs() -> Dictionary:
 	if lab.get("restore_only") != true: return Runtime.fail("BUSY", "人工在途科研仍須完成或取消後保存")
 	var rows: Array = []
 	for job: Dictionary in _jobs.values():
-		if str(job.kind) != "ranged_craft" or not job.has("technology_project") or bool(_person(int(job.executor_id)).get("player", true)):
+		if str(job.kind) != "ranged_craft" or not (job.has("technology_project") or job.has("technology_scope_token")) or bool(_person(int(job.executor_id)).get("player", true)):
 			return Runtime.fail("BUSY", "冷科研終點只允合法原 NPC 研究；其他作業沿原守衛")
 		var check := _job_context(job)
 		if not check.ok: return check
 		if float(job.elapsed) >= float(job.duration) - 0.00000001: return Runtime.fail("BUSY", "先沿原接觸後提交已完成試作")
 		var row := {}
-		for field: String in Technology.COLD_FIELDS: row[field] = job[field]
+		for field: String in Technology.cold_job_fields(job): row[field] = job[field]
 		rows.append(row)
-	var state := {"version": 1, "config_version": Technology.COLD_CONFIG, "site_id": _technology_site_id(), "jobs": rows}
+	var expanded: bool = rows.any(func(row: Dictionary) -> bool: return row.has("technology_scope_token"))
+	var state := {"version": 2 if expanded else 1, "config_version": Technology.F15_COLD_CONFIG if expanded else Technology.COLD_CONFIG, "site_id": _technology_site_id(), "jobs": rows}
 	return Runtime.ok("", {"state": state})
 
 func cold_technology_jobs_save_guard() -> Dictionary:
@@ -3054,7 +3055,7 @@ func prepare_restore_cold_technology_jobs(raw: Variant) -> Dictionary:
 		var person := _person(int(row.executor_id))
 		if bool(person.player) or lab.terrain.index(person.cell) != int(row.executor_cell) or int(person.hit) != int(row.executor_hit): return Runtime.fail("STALE_TECHNOLOGY_PERSON")
 		var job := _new_job(person, "ranged_craft", int(row.executor_id))
-		for field: String in Technology.COLD_FIELDS: job[field] = row[field]
+		for field: String in Technology.cold_job_fields(row): job[field] = row[field]
 		job.merge({"terrain": lab.terrain, "site_state": lab.terrain.site, "executor_holder": person.holder, "executor_cargo": person.cargo,
 			"depot_holder": lab.terrain.site.depot_items, "depot_stock": lab.terrain.site.inventory, "technology_executor_owner": person.owner, "technology_executor_body": person.body})
 		var check := _job_context(job)
@@ -3068,7 +3069,7 @@ func can_publish_restore_cold_technology_jobs(prepared: Dictionary) -> bool:
 	if not bool(prepared.get("ok", false)) or not is_same(prepared.get("jobs_owner"), _jobs) or not _jobs.is_empty() \
 		or not is_same(prepared.get("terrain"), lab.terrain) or not is_same(prepared.get("site_state"), lab.terrain.site): return false
 	if not prepared.get("jobs") is Dictionary or not prepared.get("people") is Dictionary or not prepared.get("cold_state") is Dictionary or prepared.jobs.size() != prepared.people.size(): return false
-	var raw := {"version": 1, "config_version": Technology.COLD_CONFIG, "site_id": _technology_site_id(), "jobs": []}
+	var raw := {"version": int(prepared.cold_state.version), "config_version": str(prepared.cold_state.config_version), "site_id": _technology_site_id(), "jobs": []}
 	var people := {}
 	for identity: int in prepared.people:
 		var person := _person(identity)
@@ -3077,7 +3078,7 @@ func can_publish_restore_cold_technology_jobs(prepared: Dictionary) -> bool:
 			or not is_same(person.cargo, expected.cargo) or int(person.holder.version) != int(expected.version) or int(person.hit) != int(expected.hit) or person.cell != expected.cell: return false
 		if not prepared.jobs.has(str(identity)) or not prepared.jobs[str(identity)] is Dictionary or not _job_context(prepared.jobs[str(identity)]).ok: return false
 		var row := {}
-		for field: String in Technology.COLD_FIELDS:
+		for field: String in Technology.cold_job_fields(prepared.jobs[str(identity)]):
 			if not prepared.jobs[str(identity)].has(field): return false
 			row[field] = prepared.jobs[str(identity)][field]
 		raw.jobs.append(row)
