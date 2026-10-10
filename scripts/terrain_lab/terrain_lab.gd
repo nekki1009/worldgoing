@@ -10265,7 +10265,7 @@ func prepare_fresh_initial_population(new_data: TerrainData) -> Dictionary:
 	if not pin is Dictionary or int(pin.get("format", 0)) != 2: return SiteRuntime.fail("NOT_NEW_WORLD_FORMAT")
 	var policy := TechnologyPolicy.candidate(pin)
 	if not policy.ok: return policy
-	if not policy.policy.categories.is_empty(): return SiteRuntime.fail("TECH_POLICY_CONFLICT")
+	if not TechnologyPolicy.birth_categories_admitted(policy.policy): return SiteRuntime.fail("TECH_POLICY_CONFLICT")
 	if not new_data.site.get("actors", {}).is_empty() or not new_data.site.get("armies", []).is_empty() or new_data.site.has("family") or new_data.site.has("crowd") or new_data.site.has("initial_scenario") or not new_data.site.get("captivity", {}).is_empty() or not new_data.site.get("vehicles", {}).is_empty() or not new_data.site.get("item_records", {}).is_empty() or int(new_data.site.get("minute", -1)) != 0 or float(new_data.site.get("phase", -1.0)) != 0.0 or bool(new_data.site.get("paused", false)) or float(new_data.site.get("combat_left", 0.0)) != 0.0: return SiteRuntime.fail("NOT_INITIAL_SCENARIO")
 	var candidate := SiteEnv.navigation_for_state(new_data, new_data.site.duplicate(true))
 	var start := candidate.cell_from_index(int(candidate.site.get("player_cell", candidate.index(candidate.spawn_cell))))

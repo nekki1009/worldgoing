@@ -5207,7 +5207,7 @@ func _derive_initial_context() -> Dictionary:
 func _check_initial_record(record: Dictionary) -> Dictionary:
 	if not _initial_pending_ok(_initialization, pin) or int(record.get("generation", 0)) != 1 or not _same_pin(record.get("pin"), pin) or record.get("sites", {}).size() != 1 or not str(record.get("transfer_token", "")).is_empty() or not record.get("journey", {}).is_empty(): return fail("INVALID_INITIAL_GENERATION")
 	var policy := TechnologyPolicy.candidate(pin)
-	if not policy.ok or not policy.policy.categories.is_empty(): return fail("TECH_POLICY_CONFLICT")
+	if not policy.ok or not TechnologyPolicy.birth_categories_admitted(policy.policy): return fail("TECH_POLICY_CONFLICT")
 	var coordinate := Vector2i(int(_initialization.starting_site[0]), int(_initialization.starting_site[1]))
 	var key := _site_key(coordinate)
 	if not record.sites.has(key) or str(record.get("control", {}).get("active_site_id", "")) != Grid.site_id(str(pin.atlas_id), coordinate) or float(record.control.get("logical_game_seconds", -1.0)) != 0.0: return fail("INVALID_INITIAL_GENERATION")

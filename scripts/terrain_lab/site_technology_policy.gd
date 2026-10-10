@@ -40,6 +40,21 @@ static func new_policy(admitted_categories: Variant = []) -> Dictionary:
 	if not checked.ok: return checked
 	return {"ok": true, "policy": {"version": VERSION, "rules_version": RULES_VERSION, "categories": checked.categories}}
 
+## Plan D10 (tech-tree v2 lines 22/168/172): a new world fixes, at creation, only
+## the threshold categories whose nodes the loaded catalog currently admits. With
+## the formal catalog disabled that set is empty, so births stay policy-free.
+static func catalog_admitted_categories() -> Array[String]:
+	var result: Array[String] = []
+	for category: String in CATEGORIES:
+		if SiteTechnologyCatalog.get_node(category).get("enabled") == true: result.append(category)
+	return result
+
+static func birth_categories_admitted(policy: Dictionary) -> bool:
+	var admitted := catalog_admitted_categories()
+	for category: Variant in policy.get("categories", []):
+		if not admitted.has(str(category)): return false
+	return true
+
 static func candidate(record: Variant, legacy_format: bool = false) -> Dictionary:
 	# The owner validates its outer format. Field presence is checked here so an
 	# existing null / malformed policy cannot be mistaken for a legacy absence.
