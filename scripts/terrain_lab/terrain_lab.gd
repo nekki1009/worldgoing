@@ -8902,7 +8902,7 @@ func _wire_region_gameplay_adapters(slot: RegionSaveSlot) -> Dictionary:
 	if not scheduled.ok: return scheduled
 	return SiteRuntime.ok("", {"complete": true})
 
-func _region_gameplay_owner_lab(site_id: String, requested_mode: String) -> Dictionary:
+func _region_gameplay_owner_lab(site_id: String, requested_mode: String, travel_destination: bool = false) -> Dictionary:
 	var slot: RegionSaveSlot = site_controller.region_slot
 	if slot == null or requested_mode not in ["live", "cold_exact", "formula_active"]:
 		return SiteRuntime.fail("INVALID_REGION_OWNER")
@@ -8921,7 +8921,7 @@ func _region_gameplay_owner_lab(site_id: String, requested_mode: String) -> Dict
 	if RegionGrid.site_id(str(slot.pin.atlas_id), coordinate) != site_id: return SiteRuntime.fail("WRONG_SITE")
 	var original: TerrainLab = slot._region_original_labs.get(site_id)
 	if not is_instance_valid(original):
-		var opened: Dictionary = slot.open_site(coordinate)
+		var opened: Dictionary = slot.open_site(coordinate, not travel_destination)
 		if not opened.get("ok", false): return opened
 		var scene: PackedScene = load("res://scenes/terrain_lab/TerrainLab.tscn")
 		if scene == null: return SiteRuntime.fail("MISSING_ORIGINAL_SCENE")
@@ -10598,7 +10598,7 @@ func _region_gameplay_player_materialize(event: Dictionary) -> Dictionary:
 		if not raw is Array or raw.size() != 2: return SiteRuntime.fail("INVALID_JOINT_ENDPOINT")
 		var coordinate := Vector2i(int(raw[0]), int(raw[1]))
 		var identity := RegionPartyGrid.site_id(str(slot.pin.atlas_id), coordinate)
-		var owner: Dictionary = slot.region_owner_lab.call(identity, "cold_exact")
+		var owner: Dictionary = slot.region_owner_lab.call(identity, "cold_exact", true)
 		if not owner.get("ok", false) or not owner.get("lab") is TerrainLab: return owner
 		activated = owner.lab
 		var window: Dictionary = slot.validate_settlement(activated.terrain.site, slot.control.logical_game_seconds)
@@ -10943,6 +10943,32 @@ func _region_advance_original_quiet_minute(target: float, game_seconds: float) -
 	if not recorded.ok: return recorded
 	return SiteRuntime.ok("", {"game_seconds": game_seconds, "action_seconds": action_seconds, "at": float(recorded.at)})
 
+## The original idle branch of combat_logic_tick_if_needed: no egress retry,
+## siege compound or active formation work (and no occupancy rebuild unless the
+## caller runs that original full tick itself) is pending.
+func _region_cold_coordinator_idle(rebuild_allowed: bool = false) -> bool:
+	var original := combat_movement_coordinator
+	if original == null: return true
+	if not original.idle_tick_skip_enabled or original._occupancy_rebuild_pending and not rebuild_allowed or not original._egress_retry_queue.is_empty(): return false
+	for transport: Object in original._siege_transports():
+		if transport.has_pending_siege_compounds(): return false
+	for formation: Variant in original._active_formations:
+		if not is_instance_valid(formation) or not formation.has_method("get_active_move_plan") or not formation.has_method("get_active_deployment_plan"): return false
+		if formation.has_pending_suppress_approach() or formation.has_pending_fire_navigation(): return false
+		if formation.get_active_move_plan() != null or formation.get_active_deployment_plan() != null: return false
+		if formation.has_method("has_pending_retreat_pair") and formation.has_pending_retreat_pair(): return false
+	return true
+
+## Original exact steps on the fixed action grid from the isolated replay start
+## whose slices begin inside [begin, end) (formal journals count their own steps).
+func _region_cold_replaced_steps(begin: float, end: float) -> int:
+	var step := EXCHANGE_ACTION_STEP if exchange_enabled else ACTION_STEP
+	var origin := float(_region_cold_isolated.get("logic_action_origin", begin))
+	# Grid positions are accumulated floats; a millionth of a step absorbs drift.
+	var before := ceili((begin - origin) / step - 0.000001)
+	var after := ceili((end - origin) / step - 0.000001)
+	return maxi(0, after - before)
+
 func _region_cold_quiet_limit(maximum: float) -> float:
 	var limit := minf(60.0, maximum)
 	if _duty_ai_elapsed > ACTION_TIME_EPSILON:
@@ -10975,6 +11001,15 @@ func advance_isolated_region_cold(target: float, budget_usec: int = 4000, max_st
 	if not _region_cold_formal.is_empty(): return SiteRuntime.fail("COLD_ISOLATED_SCOPE")
 	return _region_advance_original_cold_budget(target, budget_usec, max_steps, tail_seconds)
 
+## The isolated exact path steps on a fixed idle grid from the replay start
+## (quiet admission proves combat_left == 0, so one step is STEP * 60 * speed game
+## seconds). Ending the quiet prefix on that grid lets the exact tail continue the
+## very same steps; formal journals already fix their own step boundaries.
+func _region_cold_grid_prefix_end(from: float, prefix_end: float) -> float:
+	if not _region_cold_formal.is_empty() or not is_finite(simulation_speed) or simulation_speed <= 0.0: return prefix_end
+	var grid := (EXCHANGE_ACTION_STEP if exchange_enabled else ACTION_STEP) * 60.0 * simulation_speed
+	return from + floorf((prefix_end - from) / grid + 0.000001) * grid
+
 func _region_advance_original_cold_budget(target: float, budget_usec: int, max_steps: int,
 		tail_seconds: float) -> Dictionary:
 	if not is_finite(target) or target < 0.0 or not is_finite(tail_seconds) or tail_seconds < 0.0 or budget_usec < 1 or max_steps < 1:
@@ -10989,8 +11024,9 @@ func _region_advance_original_cold_budget(target: float, budget_usec: int, max_s
 		if not original.ok: return original
 		_region_cold_isolated = {"data": terrain, "target": target, "tail": tail_seconds,
 			"source_sha256": str(_region_cold_formal.get("source_sha256", source.source_sha256)), "owner_generation": int(original.inputs.owner_generation),
-			"prefix_end": maxf(float(window.from), target - tail_seconds), "prefix_steps": 0, "exact_steps": 0,
-			"prefix_game_seconds": 0.0, "prefix_action_seconds": 0.0, "fallback": ""}
+			"prefix_end": _region_cold_grid_prefix_end(float(window.from), maxf(float(window.from), target - tail_seconds)), "prefix_steps": 0, "exact_steps": 0,
+			"prefix_game_seconds": 0.0, "prefix_action_seconds": 0.0, "fallback": "",
+			"logic_action_origin": fire_action_cursor}
 	if _region_cold_isolated.data != terrain or float(_region_cold_isolated.target) != target or float(_region_cold_isolated.tail) != tail_seconds:
 		return SiteRuntime.fail("BUSY", "原隔離來源／固定目標仍在補算")
 	var steps := 0
@@ -11023,8 +11059,24 @@ func _region_advance_original_cold_budget(target: float, budget_usec: int, max_s
 		if game <= ACTION_TIME_EPSILON:
 			_region_cold_isolated.fallback = "COLD_LIFE_ENDPOINT"
 			break
+		# Every replaced original shared step runs one idle movement-coordinator
+		# tick; only that plain idle tick may be represented by the quiet prefix.
+		# A pending occupancy rebuild is the original first-step full tick; with no
+		# body moving it runs identically here and is one of the replaced steps.
+		var rebuild := combat_movement_coordinator != null and combat_movement_coordinator._occupancy_rebuild_pending and journal.is_empty()
+		if not _region_cold_coordinator_idle(rebuild):
+			_region_cold_isolated.fallback = "COLD_COORDINATOR_ACTIVE"
+			break
+		var logic_begin := fire_action_cursor
+		var opening := 0
+		if rebuild:
+			combat_movement_coordinator.combat_logic_tick_if_needed(EXCHANGE_ACTION_STEP if exchange_enabled else ACTION_STEP, _combat_actor_blocked_cells())
+			opening = 1
 		var advanced := _region_advance_original_quiet_minute(target, game)
 		if not advanced.ok: return advanced
+		if combat_movement_coordinator != null:
+			var replaced := int(journal.consumed_steps) if not journal.is_empty() else _region_cold_replaced_steps(logic_begin, fire_action_cursor)
+			combat_movement_coordinator.current_logic_tick += maxi(0, replaced - opening)
 		if not journal.is_empty():
 			# The actual original providers and physical Fire completion just ran.
 			# Consume their existing accepted journal endpoint; never publish world time.

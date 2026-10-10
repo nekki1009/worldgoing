@@ -206,7 +206,10 @@ func site_path(site: Vector2i) -> String:
 	if not entry.is_empty(): return folder.path_join(str(entry.path))
 	return folder.path_join("sites/%d/%d.json" % [site.x, site.y])
 
-func open_site(site: Vector2i) -> Dictionary:
+## starter=false: an unvisited Site opened as an arriving party's destination
+## has no resident Actor or default worker (as _ground_destination). Every other
+## caller keeps the standard starter.
+func open_site(site: Vector2i, starter: bool = true) -> Dictionary:
 	if pin.is_empty() or source == null:
 		return fail("INVALID_SLOT", "存檔尚未開啟")
 	var path := site_path(site)
@@ -260,6 +263,12 @@ func open_site(site: Vector2i) -> Dictionary:
 	# storage, which Core construction payment reads before any first save.
 	var storage := Runtime.initialize_item_storage(data.site)
 	if not storage.ok: return storage
+	if not starter:
+		data.site.actor_presence_version = 1
+		data.site.actors = {}
+		data.site.worker_enabled = false
+		var retired := Store.retire_default_worker(data)
+		if not retired.ok: return retired
 	data.site.world_pin = pin.duplicate(true)
 	var genesis := _settle_cold_candidate(data, float(control.logical_game_seconds))
 	if not genesis.ok: return genesis

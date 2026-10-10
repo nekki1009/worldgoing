@@ -1044,6 +1044,15 @@ static func _normalize_state(state: Dictionary) -> void:
 		state.travel_identity = original.normalize_identity(state.travel_identity)
 	if state.has("ecology_version"):
 		state.ecology_version = int(state.ecology_version)
+	# The validated world pin reads back with JSON numbers and an untyped list;
+	# restore the integer fields and the policy's own canonical form.
+	var world_pin: Variant = state.get("world_pin")
+	if world_pin is Dictionary:
+		for field: String in ["format", "grid_contract_version"]:
+			if world_pin.has(field): world_pin[field] = int(world_pin[field])
+		if world_pin.has("technology_policy"):
+			var policy := TechnologyPolicy.validate(world_pin.technology_policy)
+			if policy.ok: world_pin.technology_policy = policy.policy
 	_normalize_fs_targets(state)
 	Stockpiles.normalize(state)
 	for corps: Dictionary in state.get("corps", {}).values():
