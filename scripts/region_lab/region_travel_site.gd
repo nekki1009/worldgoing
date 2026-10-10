@@ -6,6 +6,7 @@ extends RefCounted
 
 const RegionEntry = preload("res://scripts/region_lab/region_entry.gd")
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
+const TravelPanel = preload("res://scripts/region_lab/region_travel_panel.gd")
 const ENEMY_RADIUS := 24 # cells (48 m): an able hostile this close means "not out of combat".
 
 static func _hostile_near(lab: Node, faction: int, cells: Array[Vector2i]) -> bool:
@@ -129,6 +130,13 @@ static func world_opened(controller: Node, candidate: RegionSaveSlot, manifest_p
 		var fresh: Dictionary = candidate.source.make_terrain_data(destination.x, destination.y)
 		if not bool(fresh.get("ok", false)): return fresh
 		opened = candidate._ground_destination(fresh.data, now)
+		if opened.ok:
+			# Decision A: a never-visited destination publishes its genesis as one
+			# generation at this same game time; the arrival bind keeps its
+			# published-source rule.
+			var genesis := candidate.publish_region_destination_genesis(opened.data)
+			if not genesis.ok: return controller._remember_region_pending(_staged(genesis, "destination_genesis"), request)
+			if genesis.get("data") is TerrainData: opened.data = genesis.data # Continue from the selected canonical body.
 	if not opened.ok: return controller._remember_region_pending(_staged(opened, "open_destination"), request)
 	var preflight: Dictionary = controller._journey_arrival_preflight(opened.data)
 	if not preflight.ok: return _staged(preflight, "destination_preflight")
@@ -137,7 +145,24 @@ static func world_opened(controller: Node, candidate: RegionSaveSlot, manifest_p
 		if not checked.ok: return checked
 		if not lab.has_method("prepare_region_owner_bind"): return Runtime.fail("MISSING_REGION_BIND_PREFLIGHT")
 		return lab.call("prepare_region_owner_bind", data, "live", candidate)
+	# The final land leg is re-proved by its original party-progress host. A
+	# reopened Slot has none wired yet: borrow the travel map's own adapter host
+	# for this commit only, then release it (the player stays in the main lab).
+	var host_panel: Node = null
+	if str(selected.party.get("mode", "land")) == "land" and not candidate.region_original_party_progress.is_valid():
+		host_panel = TravelPanel.new()
+		host_panel.visible = false
+		host_panel.process_mode = Node.PROCESS_MODE_DISABLED
+		controller.add_child(host_panel)
+		host_panel.slot = candidate
+		var hosted: Dictionary = host_panel._ensure_original_adapter_host(selected.party)
+		if not hosted.get("ok", false):
+			host_panel.free()
+			return _staged(hosted, "arrival_host")
 	var committed := candidate.commit_region_arrival(opened.data, original_bind)
+	if host_panel != null:
+		host_panel._release_original_adapter_host()
+		host_panel.free()
 	if not committed.ok: return _staged(committed, "commit_arrival")
 	var data: TerrainData = committed.destination_data
 	var attached := candidate.attach_active_site(data)

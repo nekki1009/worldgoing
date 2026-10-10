@@ -1,0 +1,26 @@
+--- a/scripts/terrain_lab/terrain_lab.gd
++++ b/scripts/terrain_lab/terrain_lab.gd
+@@ -2760,6 +2760,7 @@
+ 
+ func _fire_transport_owners() -> Array[Node2D]:
+ 	var owners: Array[Node2D] = []
++	var teams := {} # team_id -> index in owners: one owner per team id.
+ 	for owner_ref: Node2D in _ranged_owners():
+ 		if owner_ref is TerrainArmy:
+ 			var saved := false
+@@ -2767,7 +2768,14 @@
+ 				if int(saved_team.get("team_id", 0)) == owner_ref.team_id:
+ 					saved = true
+ 					break
+-			if saved or owner_ref.combat_enabled: owners.append(owner_ref)
++			if not (saved or owner_ref.combat_enabled): continue
++			if teams.has(owner_ref.team_id):
++				# A stale slot can still carry the id of a saved team; the live,
++				# combat-enabled slot is that team's only fire owner.
++				if owner_ref.combat_enabled and not owners[teams[owner_ref.team_id]].combat_enabled: owners[teams[owner_ref.team_id]] = owner_ref
++				continue
++			teams[owner_ref.team_id] = owners.size()
++			owners.append(owner_ref)
+ 		elif owner_ref is TerrainTestCharacter and actor_present(owner_ref):
+ 			owners.append(owner_ref)
+ 	return owners

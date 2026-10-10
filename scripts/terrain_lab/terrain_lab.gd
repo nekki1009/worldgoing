@@ -2760,6 +2760,7 @@ func _ranged_owners() -> Array[Node2D]:
 
 func _fire_transport_owners() -> Array[Node2D]:
 	var owners: Array[Node2D] = []
+	var teams := {} # team_id -> index in owners: one owner per team id.
 	for owner_ref: Node2D in _ranged_owners():
 		if owner_ref is TerrainArmy:
 			var saved := false
@@ -2767,7 +2768,14 @@ func _fire_transport_owners() -> Array[Node2D]:
 				if int(saved_team.get("team_id", 0)) == owner_ref.team_id:
 					saved = true
 					break
-			if saved or owner_ref.combat_enabled: owners.append(owner_ref)
+			if not (saved or owner_ref.combat_enabled): continue
+			if teams.has(owner_ref.team_id):
+				# A stale slot can still carry the id of a saved team; the live,
+				# combat-enabled slot is that team's only fire owner.
+				if owner_ref.combat_enabled and not owners[teams[owner_ref.team_id]].combat_enabled: owners[teams[owner_ref.team_id]] = owner_ref
+				continue
+			teams[owner_ref.team_id] = owners.size()
+			owners.append(owner_ref)
 		elif owner_ref is TerrainTestCharacter and actor_present(owner_ref):
 			owners.append(owner_ref)
 	return owners
@@ -3717,7 +3725,7 @@ func _resolve_ranged_arrival(shooter_owner: Node2D, flight: Dictionary, occupied
 		var index := int(target.unit)
 		var defense: Dictionary = target_owner.ranged_defense(index) if index >= 0 else target_owner.ranged_defense()
 		defense.facility = SiteRuntime.exchange_facility_bonus(terrain, target.cell) > 0.0
-		var noise := (int(flight.shooter_id) * 73856093) ^ (int(flight.shot_id) * 83492791) ^ (int(target.id) * 19349663) ^ terrain.seed_value
+		var noise := _region_legacy_noise(flight, int(target.id))
 		result = SiteCombatRules.ranged_result(flight.shooter, defense, Vector2(flight.target_cell - flight.source_cell).length(), float(posmod(noise, 10000)) / 100.0)
 		var shooter_index: int = shooter_owner.index_for_identity(int(flight.shooter_id)) if shooter_owner is TerrainArmy else -1
 		var packet := {"attacker": shooter_owner, "attacker_unit": shooter_index, "shield": false, "result": result}

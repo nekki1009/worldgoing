@@ -441,7 +441,9 @@ func publish_region_destination_genesis(data: TerrainData) -> Dictionary:
 			"active": false, "fire_active": false, "sequence": int(fire_settlement.sequence),
 			"action_seconds": float(fire_settlement.action_seconds), "game_seconds": float(fire_settlement.game_seconds)}
 	var published := _publish(sites, next_control, str(_marker.get("transfer_token", "")), _marker.get("journey", {}))
-	if published.ok: published["published"] = true
+	if published.ok:
+		published["published"] = true
+		published["data"] = saved.data # The canonical readback is the selected source body.
 	return published
 
 func _file_entry(path: String) -> Dictionary:

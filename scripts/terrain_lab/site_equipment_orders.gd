@@ -1976,10 +1976,14 @@ static func _valid_public_order(raw: Variant, people: Dictionary, orders: Dictio
 	var targets := {}
 	var receipt_index := 0
 	for receipt: Variant in raw.receipts:
-		if not Technology.keys(receipt, ["id", "site_id", "binding", "operator_id", "target_id", "work_seconds", "item_ids"]) or not _public_reference(receipt.id) \
-			or receipt.site_id != raw.scope_site_id or not Technology.finite_number(receipt.work_seconds, _public_receipt_seconds(str(receipt.get("binding", "")))) \
+		var receipt_fields := ["id", "site_id", "binding", "operator_id", "target_id", "work_seconds", "item_ids"]
+		if raw.tech_id == "N08": receipt_fields.append_array(["source_operator_id", "operator_reference", "transfer_token"])
+		if not Technology.keys(receipt, receipt_fields) or not _public_reference(receipt.id) \
+			or receipt.site_id != (raw.payload.destination_site_id if raw.tech_id == "N08" else raw.scope_site_id) or not Technology.finite_number(receipt.work_seconds, _public_receipt_seconds(str(receipt.get("binding", "")))) \
 			or seen.has(receipt.id) or not receipt.binding is String or not PUBLIC_BINDINGS[str(raw.tech_id)].has(receipt.binding) \
-			or not _operation_person(receipt.operator_id, people) or not _public_reference(receipt.target_id) or not receipt.item_ids is Array: return false
+			or not _operation_person(receipt.operator_id, {} if raw.tech_id == "N08" else people) or not _public_reference(receipt.target_id) or not receipt.item_ids is Array: return false
+		if raw.tech_id == "N08" and (not _operation_person(receipt.source_operator_id, people) or not _portable_ref(receipt.operator_reference, "person") \
+			or receipt.transfer_token != raw.payload.travel_token): return false
 		var items := {}
 		for identity: Variant in receipt.item_ids:
 			if not identity is String or not identity.is_valid_int() or str(int(identity)) != identity or not Technology.integer(int(identity), 1) or items.has(identity): return false
@@ -2020,7 +2024,7 @@ static func _public_receipt_matches_order(order: Dictionary, order_id: String, r
 				if target == "person:" + str(int(identity)): return receipt.id == _public_event_id(order, order_id, "lesson", str(int(identity)))
 			return false
 		"N08":
-			return index == 0 and receipt.binding == "public_route" and payload.loaded and not payload.travel_token.is_empty() and target == payload.destination_holder and operator_id == int(payload.driver_id) and receipt.item_ids.is_empty()
+			return index == 0 and receipt.binding == "public_route" and payload.loaded and not payload.travel_token.is_empty() and target == payload.destination_holder and int(receipt.source_operator_id) == int(payload.driver_id) and receipt.transfer_token == payload.travel_token and receipt.item_ids.is_empty()
 		"N09":
 			return receipt.binding == "tax" and receipt.item_ids.is_empty() and ((index == 0 and target == "feature:" + str(payload.reserve_feature_id) and operator_id == int(payload.source.person_id) and receipt.id == _public_event_id(order, order_id, "tax_collect", str(payload.reserve_feature_id))) or (index == 1 and target == "person:" + str(int(payload.recipient_id)) and operator_id == int(payload.recipient_id) and receipt.id == _public_event_id(order, order_id, "share", target)))
 		"N11":
@@ -2080,6 +2084,9 @@ static func _normalize_public_order(order: Dictionary) -> void:
 		for key: String in ["from_cell", "to_cell", "driver_id", "accepted_revision"]: step[key] = int(step[key])
 	for receipt: Dictionary in order.receipts:
 		receipt.operator_id = int(receipt.operator_id)
+		if order.tech_id == "N08":
+			receipt.source_operator_id = int(receipt.source_operator_id)
+			receipt.operator_reference.lineage = int(receipt.operator_reference.lineage)
 		receipt.work_seconds = float(receipt.work_seconds)
 
 func _public_context(nation_id: String, order_id: String, binding_id: String, read_only: bool = true) -> Dictionary:
