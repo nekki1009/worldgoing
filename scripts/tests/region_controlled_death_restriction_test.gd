@@ -14,6 +14,9 @@ func _original_down_seconds() -> float:
 
 var out := ""
 var manifest_path := ""
+## Fixtures that found settlements declare the fixed land rule so their
+## synthetic geography carries mapped foundation/fertility.
+var fixture_land_condition_rule := ""
 var world_id := ""
 var lab: TerrainLab
 var controller: SiteController
@@ -110,6 +113,7 @@ func _write_manifest() -> bool:
 		"base_revision": "region-travel-r1-fixture-v1", "crs": "EPSG:3826",
 		"grid": {"origin": [0, 0], "cell_m": 2, "site_cells": 100, "region_sites": 100},
 		"summary": summary_record, "elevation_tiles": [height_record], "sources": [{"title": "Synthetic Region travel fixture only"}]}
+	if not fixture_land_condition_rule.is_empty(): manifest["land_condition_rule"] = fixture_land_condition_rule
 	manifest_path = out.path_join("manifest.json")
 	var file := FileAccess.open(manifest_path, FileAccess.WRITE)
 	file.store_string(JSON.stringify(manifest, "", true, true))

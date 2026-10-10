@@ -20,6 +20,7 @@ var n08_steps := 0
 func _initialize() -> void:
 	deadline = Time.get_ticks_msec() + 180000
 	out = "res://.godot-temp/region_n08_civil_original_ui/run_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
+	fixture_land_condition_rule = "terrain_mapped_potential_v1" # Founding needs mapped land.
 	last_world_exists = FileAccess.file_exists(Entry.LAST_WORLD)
 	if last_world_exists: last_world_bytes = FileAccess.get_file_as_bytes(Entry.LAST_WORLD)
 	_run.call_deferred()
@@ -66,7 +67,9 @@ func _run() -> void:
 ## constructors, before the first N08 command. These are not delivery receipts.
 func _n08_birth_warehouse(original: TerrainLab, anchor: Vector2i) -> String:
 	var data := original.terrain
-	data.site.inventory.wood = 64; data.site.inventory.stone = 64
+	data.site.inventory.wood = 64; data.site.inventory.stone = 64; data.site.inventory.rope = 64 # Original warehouse cost: wood, stone and rope.
+	# Construction keeps (does not consume) one tool; a fixed-geography Site starts with none.
+	if int(data.site.inventory.get("tools", 0)) < 1: data.site.inventory["tools"] = 1
 	var faction := int(original.character.faction_id)
 	var settings := {"layout_version": 1, "quarter": 0, "owner_faction": faction}
 	var placement: Dictionary = N08Runtime.building_cells(data, "warehouse", anchor, Vector2i.ONE, settings)
@@ -110,6 +113,7 @@ func _n08_genesis() -> bool:
 	supply.inventory.grain = 2
 	var technology: Dictionary = N08Technology.empty_scope_record(owner_id)
 	technology.known = ["N06"] # Named prerequisite antecedent only; N08 stays unknown.
+	if not lab.terrain.site.has("equipment_nations"): lab.terrain.site.equipment_nations = {}
 	lab.terrain.site.equipment_nations[n08_nation] = {"offices": SiteOffices.default_offices("nation", lab.controlled_person_id()),
 		"members": [lab.controlled_person_id(), n08_driver], "standards": {}, "technology": technology}
 	var funding_person: Dictionary = controller.person_actions._person(lab.controlled_person_id())

@@ -1096,7 +1096,10 @@ static func verify_vehicle_paths(first: TerrainData, second: TerrainData, vehicl
 		if not poses.has(identity) or not path is Array or path.size() < 2 or not finish is Dictionary: return {"ok": false, "code": "MISSING_VEHICLE_PROOF"}
 		var pose: Dictionary = poses[identity]
 		var position: Array = pose.anchor if sea else pose.operator
-		if path[0] != [int(position[0]), int(position[1]), int(pose.facing[0]), int(pose.facing[1])]: return {"ok": false, "code": "STALE_VEHICLE_POSE"}
+		# A stored plan reads back with JSON numbers; compare as whole cells like every later path step.
+		var head: Variant = path[0]
+		if not head is Array or head.size() != 4: return {"ok": false, "code": "CORRUPT_VEHICLE_PROOF"}
+		if [int(head[0]), int(head[1]), int(head[2]), int(head[3])] != [int(position[0]), int(position[1]), int(pose.facing[0]), int(pose.facing[1])]: return {"ok": false, "code": "STALE_VEHICLE_POSE"}
 		for index: int in range(1, path.size()):
 			if not path[index] is Array or path[index].size() != 4 or not path[index - 1] is Array or path[index - 1].size() != 4: return {"ok": false, "code": "CORRUPT_VEHICLE_PROOF"}
 			var old: Array = path[index - 1]
@@ -1112,13 +1115,13 @@ static func verify_vehicle_paths(first: TerrainData, second: TerrainData, vehicl
 				if not accepted.ok or accepted.facing != facing: return {"ok": false, "code": "VEHICLE_BLOCKED"}
 		var last: Array = path.back()
 		var ending: Array = finish.anchor if sea else finish.operator
-		if Vector2i(int(last[0]), int(last[1])) - shift != Vector2i(int(ending[0]), int(ending[1])) or finish.facing != [int(last[2]), int(last[3])]: return {"ok": false, "code": "CORRUPT_VEHICLE_ENDPOINT"}
+		if Vector2i(int(last[0]), int(last[1])) - shift != Vector2i(int(ending[0]), int(ending[1])) or not finish.get("facing") is Array or finish.facing.size() != 2 or [int(finish.facing[0]), int(finish.facing[1])] != [int(last[2]), int(last[3])]: return {"ok": false, "code": "CORRUPT_VEHICLE_ENDPOINT"}
 		if not sea:
 			if not finish.get("anchor") is Array or finish.anchor.size() != 2: return {"ok": false, "code": "CORRUPT_VEHICLE_ENDPOINT"}
 			var operator_cell := Vector2i(int(ending[0]), int(ending[1]))
 			var direction := Vector2i(int(last[2]), int(last[3]))
 			var original_anchor := operator_cell - direction * 2 if str(vehicle.kind) == "wagon" else operator_cell + direction
-			if finish.anchor != [original_anchor.x, original_anchor.y]: return {"ok": false, "code": "CORRUPT_VEHICLE_ENDPOINT"}
+			if [int(finish.anchor[0]), int(finish.anchor[1])] != [original_anchor.x, original_anchor.y]: return {"ok": false, "code": "CORRUPT_VEHICLE_ENDPOINT"}
 	return {"ok": true}
 
 ## Local landing cell for a route's final step.

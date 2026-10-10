@@ -186,6 +186,14 @@ func _make_team() -> TerrainArmy:
 	team.team_id = lab._next_army_identity()
 	team.roster_size = 4
 	var cells := _free_cells(lab.character.terrain_cell, 4)
+	# Plan before the formation stands on its cells (original setup order): a
+	# wagon driver rides inside the footprint, so planning after deployment
+	# would see the driver itself as a blocker and leave the wagon parked.
+	var plan: Dictionary = controller.vehicles.plan_team(team.team_id, 1, 1, cells)
+	if not _must(plan.ok, "Vehicle plan failed: " + str(plan)): return null
+	var drivers := 0
+	for planned: Dictionary in plan.plan: drivers += 1 if int(planned.operator_index) >= 0 else 0
+	if not _must(drivers == plan.plan.size(), "Original planner gives every fixture vehicle a driver: " + str(plan.plan)): return null
 	if not _must(team.deploy_at(lab.terrain, lab.character, lab.npc, cells) and team.enable_combat(false, 0), "Team deployment failed"): return null
 	lab.terrain.site.army_next_team = team.team_id + 1
 	lab.terrain.site.army_trial_active = true
@@ -202,8 +210,6 @@ func _make_team() -> TerrainArmy:
 	team._command_dirty = true
 	team.settle_combat_command()
 	if not _must(team.formal_commander == TerrainArmy.PLAYER_MEMBER, "Player did not stay captain: %d" % team.formal_commander): return null
-	var plan: Dictionary = controller.vehicles.plan_team(team.team_id, 1, 1, cells)
-	if not _must(plan.ok, "Vehicle plan failed: " + str(plan)): return null
 	var deployed: Dictionary = controller.vehicles.deploy_plan(team, plan.plan)
 	if not _must(deployed.ok, "Vehicle deploy failed: " + str(deployed)): return null
 	for vehicle: Dictionary in controller.vehicles.records().values():
@@ -337,6 +343,17 @@ func _captain_trip() -> bool:
 	refused = RegionTravelSite.depart(controller)
 	lab.npc.faction_id = npc_faction
 	if not _must(not refused.ok and refused.code == "IN_COMBAT", "Departure beside an enemy was not refused: " + str(refused)): return false
+	# A carried wagon without a capable driver would never move: refused by name.
+	var wagon_id := ""
+	for vehicle: Dictionary in controller.vehicles.records().values():
+		if int(vehicle.team_id) == team.team_id and str(vehicle.kind) == "wagon": wagon_id = str(vehicle.id)
+	var wagon: Dictionary = controller.vehicles.records().get(wagon_id, {})
+	var driver := int(wagon.get("operator_id", 0))
+	if not _must(driver > 0, "Fixture wagon has its original driver: " + str(wagon)): return false
+	wagon.operator_id = 0
+	refused = RegionTravelSite.depart(controller)
+	wagon.operator_id = driver
+	if not _must(not refused.ok and refused.code == "VEHICLE_OPERATOR" and str(refused.message).contains(wagon_id), "Departure with a driverless wagon was not refused by name: " + str(refused)): return false
 	if not _must(int(slot._marker.get("generation", 0)) == generation and slot.region_travel_journey().is_empty(), "A refused departure published a commit"): return false
 	# Departure.
 	var from: Vector2i = controller._current_region_site()

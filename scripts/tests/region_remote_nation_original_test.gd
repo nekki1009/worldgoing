@@ -22,6 +22,7 @@ var nation_trace: Array[Dictionary] = []
 func _initialize() -> void:
 	deadline = Time.get_ticks_msec() + 480000
 	out = "res://.godot-temp/region_remote_nation_original/run_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
+	fixture_land_condition_rule = "terrain_mapped_potential_v1" # Founding needs mapped land.
 	last_world_exists = FileAccess.file_exists(Entry.LAST_WORLD)
 	if last_world_exists: last_world_bytes = FileAccess.get_file_as_bytes(Entry.LAST_WORLD)
 	action_kind = "ballista"
@@ -117,6 +118,7 @@ func _nation_initial_bodies() -> bool:
 	nation_guard = headquarters.combat_identity(1)
 	nation_courier_team = lab.combat_armies[2].team_id
 	nation_id = "source_nation_%d" % OS.get_process_id()
+	if not lab.terrain.site.has("equipment_nations"): lab.terrain.site.equipment_nations = {}
 	lab.terrain.site.equipment_nations[nation_id] = {"members": members, "standards": {}, "offices": SiteOffices.default_offices("nation", nation_head, true)}
 	var offices: Dictionary = lab.terrain.site.equipment_nations[nation_id].offices
 	var explicit_head: Dictionary = lab.site_controller.equipment_orders.apply_nation_office_plan(nation_head, nation_id, int(offices.revision),
@@ -142,6 +144,13 @@ func _nation_initial_bodies() -> bool:
 		nation_goal.site_controller.initialize_team_items(enemy)
 	nation_goal.terrain.site.army_next_team = nation_goal._next_army_identity()
 	if not _check(controller.checkpoint_region_internal("region_checkpoint", true).ok, "initial Source, receiver and strategic target whole graphs publish together"): return false
+	# Stable nation/team refs come from the original travel identity allocator,
+	# which a departure would run; nothing has travelled yet in this fixture. It
+	# indexes the captured armies, so it follows the whole-graph checkpoint.
+	var identified := RegionTravel.prepare_identity(lab.terrain.site)
+	if not _check(identified.ok, "original identity allocator indexes the source nation and teams", identified): return false
+	lab.terrain.site.travel_identity = identified.state.travel_identity
+	if not _check(controller.checkpoint_region_internal("region_checkpoint", true).ok, "the indexed source identity publishes with the same whole graphs"): return false
 	nation_source_head_ref = DeliveryAI.person_ref(lab.terrain.site, nation_head)
 	nation_source_nation_ref = lab.terrain.site.travel_identity.refs.nation[nation_id].duplicate(true)
 	nation_remote_team_ref = lab.terrain.site.travel_identity.refs.team[str(remote.team_id)].duplicate(true)

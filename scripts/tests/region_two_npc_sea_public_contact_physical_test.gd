@@ -85,7 +85,10 @@ func _setup_action_world() -> bool:
 		original.character.faction_id = faction
 		if not _check(original.character.place(Vector2i(x, 21), true), "original founder begins on dry shore before intervals", index): return false
 		var actor: TerrainTestCharacter = original.controlled_target().owner
-		if not _check(actor == original.character and not original.terrain.site.has("controlled_person_id"), "local existing Actor fallback is not a controlled NPC or a new control field", index): return false
+		# Opening rule: the new World's main Site controls its own founder as person 1
+		# (INVALID_INITIAL_POPULATION); the other cold Site's founder has no control field.
+		var control_ok: bool = int(original.terrain.site.get("controlled_person_id", -1)) == 1 and actor.person_id == 1 if index == 0 else not original.terrain.site.has("controlled_person_id")
+		if not _check(actor == original.character and control_ok, "local existing Actor is the original founder under the opening control rule", index): return false
 		if not _check(FleetGarrison.set_military_role(original, actor.person_id, "officer").ok, "original Garrison qualifies the original local Actor", index): return false
 		var side := {"prefix": "friendly", "count": 3, "slot_count": 3, "female_count": 0, "faction": faction, "training": 0.0, "role": "combat", "troop_type": "melee_infantry", "attack": false, "cart_count": 0, "wagon_count": 0, "abilities": {}, "ai_enabled": false}
 		var other: Dictionary = side.duplicate(true)
@@ -120,6 +123,7 @@ func _setup_action_world() -> bool:
 			for row: int in team.combat_units.size(): members.append(team.combat_identity(row))
 		var head := headquarters.combat_identity(headquarters.current_commander)
 		var nation := "c06_sea_nation_%d_%d" % [OS.get_process_id(), index]
+		if not original.terrain.site.has("equipment_nations"): original.terrain.site.equipment_nations = {}
 		original.terrain.site.equipment_nations[nation] = {"members": members, "standards": {}, "offices": SiteOffices.default_offices("nation", head, true)}
 		var nation_offices: Dictionary = original.terrain.site.equipment_nations[nation].offices
 		var authorized: Dictionary = original.site_controller.equipment_orders.apply_nation_office_plan(head, nation, int(nation_offices.revision), [{"op": "assign", "duty_id": "nation.dispatch", "position_id": str(SiteOffices.head_position(nation_offices).id)}])

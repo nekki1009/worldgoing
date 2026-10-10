@@ -10612,6 +10612,13 @@ func _region_gameplay_player_materialize(event: Dictionary) -> Dictionary:
 		var window: Dictionary = slot.validate_settlement(activated.terrain.site, slot.control.logical_game_seconds)
 		if not window.ok or bool(window.get("legacy", true)) or float(window.get("pending", INF)) > 0.00000001:
 			return SiteRuntime.fail("UNSETTLED_SITE")
+		if slot.region_bind_proof(activated.terrain).is_empty():
+			# A never-visited destination has no selected source yet. Publish its
+			# own genesis (unchanged journey) as one generation at this same game
+			# time; the arrival bind then keeps its published-source rule.
+			var genesis: Dictionary = slot.publish_region_destination_genesis(activated.terrain)
+			if not genesis.ok: return genesis
+			if slot.region_bind_proof(activated.terrain).is_empty(): return SiteRuntime.fail("UNSELECTED_REGION_SOURCE")
 		var captured: Dictionary = activated.site_controller.capture_region_checkpoint("region_barrier", false, {"player_event": str(queued.id)})
 		if not captured.ok: return captured
 		var player := slot.region_travel_party()

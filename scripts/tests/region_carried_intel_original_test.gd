@@ -116,6 +116,7 @@ func _delivery_receiver_office() -> bool:
 	action_owner.terrain.site.army_next_team = action_owner._next_army_identity()
 	delivery_guard = guard.combat_identity(guard.current_commander)
 	delivery_receiver_nation = "receiver_nation_%d" % OS.get_process_id()
+	if not action_owner.terrain.site.has("equipment_nations"): action_owner.terrain.site.equipment_nations = {}
 	action_owner.terrain.site.equipment_nations[delivery_receiver_nation] = {"members": [delivery_receiver, delivery_guard], "standards": {}, "offices": SiteOffices.default_offices("nation", delivery_receiver, false)}
 	var saved := controller.checkpoint_region_internal("region_checkpoint", true)
 	if not _check(saved.ok, "recipient and original national office publish through the true full joint checkpoint", saved): return false
@@ -174,6 +175,7 @@ func _delivery_prepare_and_commit() -> bool:
 	var nation_id := "courier_nation_%d" % OS.get_process_id()
 	var members: Array[int] = []
 	for index: int in source.combat_units.size(): members.append(source.combat_identity(index))
+	if not lab.terrain.site.has("equipment_nations"): lab.terrain.site.equipment_nations = {}
 	lab.terrain.site.equipment_nations[nation_id] = {"members": members, "standards": {}, "offices": SiteOffices.default_offices("nation", captain, true)}
 	if not _delivery_initial_visible_feature(Vector2i(start_x - 1, 48)): return false
 	var saved := controller.checkpoint_region_internal("region_checkpoint", true)

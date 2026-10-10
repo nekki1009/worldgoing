@@ -418,6 +418,32 @@ func _save_checked(data: TerrainData, site: Vector2i, path: String) -> Dictionar
 	if not readback.ok: return readback
 	return {"ok": true, "path": path, "data": readback.data}
 
+## Decision A: a never-visited Site created as an arrival destination becomes a
+## selected source before the arrival bind. Only its own settled genesis is
+## written; clock, journey, transfer token and every other Site entry carry over.
+func publish_region_destination_genesis(data: TerrainData) -> Dictionary:
+	var coordinate := _coordinate(data)
+	if not coordinate.ok: return coordinate
+	if not region_bind_proof(data).is_empty(): return {"ok": true, "generation": int(_marker.get("generation", 0)), "published": false}
+	if str(region_travel_journey().get("token", "")).is_empty(): return fail("NO_TARGET", "沒有原玩家旅隊")
+	var settlement := validate_settlement(data.site, control.logical_game_seconds)
+	if not settlement.ok or bool(settlement.legacy) or float(settlement.pending) > 0.00001: return fail("UNSETTLED_SITE", "目的地 genesis 尚未到同一端點")
+	var generation := int(_marker.get("generation", 0)) + 1
+	var path := _generation_path(generation, coordinate.site)
+	var saved := _save_checked(data, coordinate.site, path)
+	if not saved.ok: return saved
+	var sites: Dictionary = _marker.get("sites", {}).duplicate(true)
+	sites[_site_key(coordinate.site)] = _file_entry(path)
+	var next_control := control.duplicate(true)
+	if data.site.has("fire_settlement"):
+		var fire_settlement: Dictionary = data.site.fire_settlement
+		next_control.fire_clock.index[str(data.site.id)] = {"coordinate": [coordinate.site.x, coordinate.site.y],
+			"active": false, "fire_active": false, "sequence": int(fire_settlement.sequence),
+			"action_seconds": float(fire_settlement.action_seconds), "game_seconds": float(fire_settlement.game_seconds)}
+	var published := _publish(sites, next_control, str(_marker.get("transfer_token", "")), _marker.get("journey", {}))
+	if published.ok: published["published"] = true
+	return published
+
 func _file_entry(path: String) -> Dictionary:
 	return {"path": path.trim_prefix(folder + "/"), "sha256": FileAccess.get_sha256(path)}
 

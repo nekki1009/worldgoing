@@ -832,6 +832,28 @@ static func validate_patients(content: Dictionary) -> Dictionary:
 			seen[person] = true
 	return {"ok": true, "patients": seen}
 
+## The first land vehicle (cart/wagon) that prepare_transport's operator rule
+## would refuse, in the same stable order and with the same shared-role
+## accounting; empty when every one has a capable, unshared operator.
+static func land_vehicle_operator_gap(content: Dictionary) -> Dictionary:
+	var people := _body_records(content)
+	var taken := {}
+	var vehicles: Array = content.get("vehicles", {}).keys()
+	vehicles.sort()
+	for vehicle_id: String in vehicles:
+		var vehicle: Dictionary = content.vehicles[vehicle_id]
+		var operator_id := int(vehicle.get("operator_id", 0))
+		if str(vehicle.get("kind", "")) in PATIENT_SEATS:
+			if not people.has(operator_id) or not _able(people[operator_id]) or _busy_role(people[operator_id]) or taken.has(operator_id):
+				return {"vehicle_id": vehicle_id, "kind": str(vehicle.get("kind", "")), "operator_id": operator_id}
+			taken[operator_id] = true
+		for crew: Variant in vehicle.get("crew_slots", {}).values():
+			if int(crew) > 0: taken[int(crew)] = true
+		if str(vehicle.get("kind", "")) == "ship":
+			for person: int in people:
+				if str(people[person].get("embarked_vehicle_id", "")) == vehicle_id and int(people[person].get("berth_id", -1)) in Ship.crew_berths(str(vehicle.ship_type)): taken[person] = true
+	return {}
+
 ## Allocate original-person roles in stable order, not one pair per loop visit.
 static func prepare_transport(party: Dictionary, patient_schema: bool = true) -> Dictionary:
 	var content: Dictionary = party.content
@@ -1642,6 +1664,12 @@ static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dicti
 	vehicles.sort()
 	var teams: Array = selected_teams.keys()
 	teams.sort()
+	if not sea:
+		# A land party never moves while a carried cart/wagon lacks its driver;
+		# refuse here instead of publishing a party that stays at distance 0.
+		var gap := land_vehicle_operator_gap(content)
+		if not gap.is_empty():
+			return fail("VEHICLE_OPERATOR", "車輛 %s（%s）沒有可行動且未兼任的操作者；先指派操作者，或不帶此車出發" % [str(gap.vehicle_id), str(gap.kind)])
 	var party := {"version": VERSION, "kind": "travel_party", "party_id": token, "controller": "player",
 		"leader_person_id": int(spec.get("person_id", -1)), "person_ids": people,
 		"team_ids": teams, "vehicle_ids": vehicles,
