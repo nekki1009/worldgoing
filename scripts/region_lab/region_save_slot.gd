@@ -2376,6 +2376,8 @@ static func validate_fire_clock(value: Variant, world_game: Variant) -> Dictiona
 		previous_action = float(row.action_end)
 		previous_game = float(row.game_end)
 	if previous_sequence != int(value.sequence) or previous_action != float(value.action_seconds) or previous_game != float(world_game): return _fail("CORRUPT_FIRE_JOURNAL", "共同完成端點不一致")
+	# A Site watermark read back from its saved JSON can differ from the in-memory
+	# clock in the last ulp; index rows use the same tolerance as the journal rows.
 	for identity: Variant in value.index:
 		var row: Variant = value.index[identity]
 		if not identity is String or identity.is_empty() or not row is Dictionary or row.size() not in [5, 6] \
@@ -2384,7 +2386,8 @@ static func validate_fire_clock(value: Variant, world_game: Variant) -> Dictiona
 			or not row.get("active") is bool or not _whole(row.get("sequence"), base_sequence, previous_sequence) \
 			or row.size() == 6 and not row.get("fire_active") is bool \
 			or not _seconds(row.get("action_seconds")) or not _seconds(row.get("game_seconds")) \
-			or float(row.action_seconds) > previous_action or float(row.game_seconds) > previous_game:
+			or float(row.action_seconds) > previous_action + maxf(0.00000001, previous_action * 0.000000001) \
+			or float(row.game_seconds) > previous_game + maxf(0.00000001, previous_game * 0.000000001):
 			return _fail("CORRUPT_FIRE_INDEX", "原 Site 活動索引非法")
 	return {"ok": true}
 
