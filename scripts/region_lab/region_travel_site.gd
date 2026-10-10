@@ -173,6 +173,11 @@ static func world_opened(controller: Node, candidate: RegionSaveSlot, manifest_p
 	if not receipt.get("complete", false) or str(receipt.get("owner", "")) != str(data.site.id) \
 			or int(receipt.get("generation", -1)) != int(committed.generation):
 		return Runtime.fail("BIND_FAILED_AFTER_COMMIT", "旅隊已提交抵達，原人物／物品／租約尚未完整綁定；請從主選單繼續重試")
+	# attach_active_site marks the attached Site committed-unbound until its bind
+	# is acknowledged; the arrival bind completed before the attach, so the main
+	# lab re-acknowledges the same complete receipt (live, this generation).
+	var live: Dictionary = candidate.acknowledge_region_bind(data, receipt)
+	if not live.ok: return live
 	controller._region_manifest_path = manifest_path
 	controller._auto_save_blocked = false
 	controller.save_path = candidate.site_path(destination)

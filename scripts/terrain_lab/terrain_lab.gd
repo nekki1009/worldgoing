@@ -11141,7 +11141,7 @@ func _region_advance_original_cold_budget(target: float, budget_usec: int, max_s
 		"prefix_steps": int(_region_cold_isolated.prefix_steps), "exact_steps": int(_region_cold_isolated.exact_steps),
 		"prefix_game_seconds": float(_region_cold_isolated.prefix_game_seconds), "prefix_action_seconds": float(_region_cold_isolated.prefix_action_seconds),
 		"fallback": str(_region_cold_isolated.fallback), "source_sha256": str(_region_cold_isolated.source_sha256),
-		"owner_generation": int(_region_cold_isolated.owner_generation), "progress": progress, "data": terrain,
+		"owner_generation": int(_region_cold_isolated.owner_generation), "progress": progress, "data": replay.data if complete and replay.get("data") is TerrainData else terrain,
 		"interval_complete": complete, "effects_complete": complete, "published": false})
 
 ## This is called only by the existing parent's retained _cold_replay_lab.
