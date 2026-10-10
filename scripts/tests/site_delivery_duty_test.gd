@@ -5,6 +5,7 @@ const Sustain = preload("res://scripts/terrain_lab/site_sustain.gd")
 
 func _run() -> void:
 	var lab := TerrainLab.new()
+	lab.npc = TerrainTestNPC.new() # The lab no longer creates a default worker presenter.
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	for owner: Node in [lab, lab.character, lab.npc, lab.army, lab.opposing_army]:

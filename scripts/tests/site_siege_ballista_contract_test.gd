@@ -32,7 +32,7 @@ class QueryLab extends TerrainLab:
 class ClockController extends Controller:
 	var work_seconds := 0.0
 	var tick_count := 0
-	func tick(delta: float) -> void:
+	func tick(delta: float, _accepted_game_seconds: float = -1.0) -> void:
 		# Exercise the real calendar/work integrator without constructing its UI.
 		tick_count += 1
 		SiteRuntime.advance(lab.terrain, delta, false, false, Callable(), Callable(), _record_work)

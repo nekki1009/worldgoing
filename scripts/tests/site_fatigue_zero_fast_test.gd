@@ -5,8 +5,8 @@ const TrainingFixture = preload("res://scripts/tests/site_training_ground_fixtur
 
 class ObservedLab extends TerrainLab:
 	var after_fatigue := Callable()
-	func _advance_fatigue(seconds: float) -> void:
-		super._advance_fatigue(seconds)
+	func _advance_fatigue(seconds: float, accepted_prefix_only: bool = false) -> void:
+		super._advance_fatigue(seconds, accepted_prefix_only)
 		if after_fatigue.is_valid():
 			after_fatigue.call(seconds)
 

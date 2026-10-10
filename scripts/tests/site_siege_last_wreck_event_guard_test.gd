@@ -9,11 +9,11 @@ var edge_evidence: Dictionary = {}
 class HeldContactLab extends TerrainLab:
 	var hold_contact_publish := false
 	var held_publish_calls := 0
-	func siege_flush_contact_batch() -> void:
+	func siege_flush_contact_batch() -> Dictionary:
 		if hold_contact_publish:
 			held_publish_calls += 1
-			return
-		super.siege_flush_contact_batch()
+			return SiteRuntime.ok("", {"complete": false, "pending": true})
+		return super.siege_flush_contact_batch()
 
 func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()

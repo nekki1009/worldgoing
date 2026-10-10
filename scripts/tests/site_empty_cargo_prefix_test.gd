@@ -4,9 +4,9 @@ const Frozen := "res://scripts/tests/fixtures/site_exchange_snapshot_phase22.gd.
 
 class CustomArmy extends TerrainArmy:
 	var calls: Array[int] = []
-	func ranged_profile(index: int) -> Dictionary:
+	func ranged_profile(index: int, ammo_mode: String = "NORMAL") -> Dictionary:
 		calls.append(index)
-		return super.ranged_profile(index)
+		return super.ranged_profile(index, ammo_mode)
 
 func _initialize() -> void:
 	_run.call_deferred()

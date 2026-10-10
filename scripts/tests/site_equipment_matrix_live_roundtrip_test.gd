@@ -71,7 +71,7 @@ func _freeze_simulation() -> void:
 
 func _setup() -> bool:
 	if not _check(DisplayServer.get_name() == "headless", "headless-only test"): return false
-	var scene: PackedScene = load(ProjectSettings.get_setting("application/run/main_scene"))
+	var scene: PackedScene = load("res://scenes/terrain_lab/TerrainLab.tscn")
 	lab = scene.instantiate()
 	lab.pause_when_unfocused = false
 	root.add_child(lab)

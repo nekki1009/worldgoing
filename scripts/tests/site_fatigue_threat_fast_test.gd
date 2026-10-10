@@ -222,6 +222,7 @@ func run() -> void:
 	deadline_usec = Time.get_ticks_usec() + 17000000
 	assert(DisplayServer.get_name() == "headless")
 	lab = TerrainLab.new()
+	lab.npc = TerrainTestNPC.new() # The lab no longer creates a default worker presenter.
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	lab.set_process(false)

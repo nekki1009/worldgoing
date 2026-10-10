@@ -161,6 +161,7 @@ func _pause_and_snapshot(lab: ClockLab) -> void:
 func _run() -> void:
 	assert(DisplayServer.get_name() == "headless")
 	var lab := ClockLab.new()
+	lab.npc = TerrainTestNPC.new() # The lab no longer creates a default worker presenter.
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	lab.set_process(false)

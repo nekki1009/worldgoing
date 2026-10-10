@@ -90,9 +90,9 @@ class RealtimeLab extends LongrunFixture.ObservedLab:
 	var bucket_trace_steps: Dictionary = {}
 	var bucket_trace: Dictionary = {}
 
-	func _advance_fatigue(seconds: float) -> void:
+	func _advance_fatigue(seconds: float, accepted_prefix_only: bool = false) -> void:
 		var started := Time.get_ticks_usec()
-		super._advance_fatigue(seconds)
+		super._advance_fatigue(seconds, accepted_prefix_only)
 		stage_usec.fatigue_supply += Time.get_ticks_usec() - started
 
 	func _advance_combat(delta: float, combat_clock: float = -1.0) -> void:

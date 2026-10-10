@@ -29,7 +29,7 @@ func _process(_delta: float) -> bool:
 
 func _run() -> void:
 	assert(DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUT)) == OK)
-	var main_scene: PackedScene = load(ProjectSettings.get_setting("application/run/main_scene"))
+	var main_scene: PackedScene = load("res://scenes/terrain_lab/TerrainLab.tscn")
 	lab = main_scene.instantiate()
 	lab.enemy_query_owner_cells_enabled = OS.get_environment("WORLDGOING_ENEMY_INDEX") != "off"
 	print("THREE_ARMIES enemy_index=", lab.enemy_query_owner_cells_enabled)

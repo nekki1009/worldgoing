@@ -20,7 +20,7 @@ func _fresh(row: bool, clock_hz: int = 30) -> void:
 	if is_instance_valid(lab):
 		lab.queue_free()
 		await process_frame
-	lab = (load(ProjectSettings.get_setting("application/run/main_scene")) as PackedScene).instantiate()
+	lab = (load("res://scenes/terrain_lab/TerrainLab.tscn") as PackedScene).instantiate()
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	lab.set_process(false)
