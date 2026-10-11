@@ -76,7 +76,9 @@ func _point_fixture() -> Dictionary:
 	var job: Dictionary = f.vehicle.naval.repair
 	assert(job.size() == 7 and Runtime.validate_ship_repair(data, f.vehicle).ok and float(job.progress) == 0.0)
 	assert(lab.site_controller._control_family_person(null, lab.character.person_id).ok)
-	assert(lab.site_controller.work_team.assign(team, [worker], captain).ok, "Original captain/team.work authority assigns the original NPC; not a controlled worker bypass")
+	var assigned_ids: Array[int] = [worker]
+	var assigned: Dictionary = lab.site_controller.work_team.assign(team, assigned_ids, captain)
+	assert(assigned.ok, "Original captain/team.work authority assigns the original NPC; not a controlled worker bypass")
 	f.merge({"lab": lab, "team": team, "worker": worker, "row": team.combat_units[1], "station": station,
 		"work_cell": work_cell, "job": job, "cost": job.paid_cost.duplicate(true), "holder_begin": int(f.vehicle.holder.version), "captain": captain})
 	return f
