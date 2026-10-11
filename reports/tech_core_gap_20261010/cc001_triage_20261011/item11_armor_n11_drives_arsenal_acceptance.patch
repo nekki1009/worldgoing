@@ -1,0 +1,19 @@
+--- a/scripts/tests/site_technology_armor_recipes_test.gd
++++ b/scripts/tests/site_technology_armor_recipes_test.gd
+@@ -195,5 +195,15 @@
+ 	_finish_feature(lab, fixture.team, int(fixture.executor), str(fixture.smithy), 15.0)
+ 	var order: Dictionary = data.site.equipment_nations.n1.technology_operations.public_orders[issued.order_id]
+-	_check(int(data.site.next_item) == next_item + 1 and data.site.item_records[str(next_item)].definition == "armor:armor_iron_01" and order.receipts.size() == 1 and order.status == "complete", "Actual original N11 output emits exactly one iron armor and one finite accepted order receipt")
++	_check(int(data.site.next_item) == next_item + 1 and data.site.item_records[str(next_item)].definition == "armor:armor_iron_01" and order.receipts.size() == 1, "Actual original N11 output emits exactly one iron armor and its first order receipt")
++	# N11 completes on its second receipt: the original public acceptance job
++	# (administration, the "arsenal" binding) by the same operator on that item.
++	var accepted: Dictionary = lab.site_controller._nation_ui_command("n1", "administration", {"order": str(issued.order_id)})
++	_check(accepted.ok, "Actual public acceptance form begins the original arsenal job: " + str(accepted))
++	var acceptance_steps := 0
++	while lab.site_controller.person_actions.is_busy(int(fixture.executor)) and acceptance_steps < 2000:
++		var point: Dictionary = lab._advance_original_shared_step(TerrainLab.EXCHANGE_ACTION_STEP if lab.exchange_enabled else TerrainLab.ACTION_STEP)
++		if not point.ok: break
++		acceptance_steps += 1
++	_check(order.receipts.size() == 2 and order.status == "complete" and int(data.site.next_item) == next_item + 1, "Actual original N11 acceptance adds the arsenal receipt and completes the order without a second item")
+ 	var before := var_to_bytes(data.site)
+ 	_check(not Runtime.begin_nation_technology_operation(data, "n1", str(issued.order_id)).ok and var_to_bytes(data.site) == before, "The completed original arsenal order cannot buy or fabricate a second armor")
