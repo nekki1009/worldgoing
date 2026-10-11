@@ -148,6 +148,28 @@ func _shipyard_fixture() -> Dictionary:
 	var warehouse:=_shipyard_natural_host(data,"warehouse",center)
 	_shipyard_natural_host(data,"well",center)
 	_shipyard_natural_host(data,"farm",center,Vector2i(2,2))
+	# These host scans ignore the fixture army placed before them: step any member
+	# standing inside a building or on its entrance to the nearest free walkable cell.
+	var entrance_cells: Array[int] = []
+	for fixture_key: String in data.site.features: entrance_cells.append(int(data.site.features[fixture_key].get("entrance", -1)))
+	for unit_index: int in team.cells.size():
+		var unit_cell: Vector2i = team.cells[unit_index]
+		if data.feature_at[data.index(unit_cell)] == 0 and not entrance_cells.has(data.index(unit_cell)): continue
+		var moved := false
+		for radius: int in range(1, 9):
+			for dy: int in range(-radius, radius + 1):
+				for dx: int in range(-radius, radius + 1):
+					if maxi(absi(dx), absi(dy)) != radius: continue
+					var spot: Vector2i = unit_cell + Vector2i(dx, dy)
+					if data.contains(spot) and data.is_walkable(spot) and data.feature_at[data.index(spot)] == 0 and not entrance_cells.has(data.index(spot)) and not team.cells.has(spot) and spot != lab.character.terrain_cell:
+						team._cell_owners.erase(unit_cell)
+						team.cells[unit_index] = spot
+						team._cell_owners[spot] = unit_index
+						moved = true
+						break
+				if moved: break
+			if moved: break
+		_check(moved, "A fixture member inside a later building or on its entrance steps to a free walkable cell")
 	_check(Settlement.request_upgrade(lab,control).ok,"Original actual prerequisites and payment permit the genuine level-two upgrade")
 	_complete_key(data,str(founded.feature))
 	_check(Settlement.status(lab).effective and int(Settlement.status(lab).level)==2,"True same-owner settlement is effective at level two")
@@ -249,12 +271,42 @@ func _shipyard_guards_and_true_local_holder() -> void:
 	_check(lab.character.place(data.cell_from_index(int(data.site.features[fixture.warehouse].entrance)), true), "Actual carrier reaches original Warehouse contact")
 	_check(vehicles.transfer("person:" + str(fixture.control), "feature:" + str(fixture.warehouse), cost, [], int(actor.holder.version), int(source.holder.version), int(fixture.control)).ok, "True original Actor deposits its starting materials once into the real source holder")
 	var depot = data.site.inventory.duplicate(true)
-	_check(vehicles.transfer("feature:" + str(fixture.warehouse), "person:" + str(fixture.control), cost, [], int(source.holder.version), int(actor.holder.version), int(fixture.control)).ok, "At the first true contact the existing original carrier takes the actual cargo")
-	_check(source.cargo.is_empty() and actor.cargo == cost and destination.cargo.is_empty(), "The first transfer has one real holder owner and no virtual remote delivery")
-	before = var_to_bytes([data.site, actor.cargo, actor.holder])
-	_check(not vehicles.transfer("person:" + str(fixture.control), "feature:" + str(fixture.yard), cost, [], int(actor.holder.version), int(destination.holder.version), int(fixture.control)).ok and var_to_bytes([data.site, actor.cargo, actor.holder]) == before, "Remote second contact fails byte-equivalently before any cargo mutation")
-	_check(lab.character.place(data.cell_from_index(int(feature.entrance)), true), "The same actual carrier reaches the original destination contact")
-	_check(vehicles.transfer("person:" + str(fixture.control), "feature:" + str(fixture.yard), cost, [], int(actor.holder.version), int(destination.holder.version), int(fixture.control)).ok, "Second true contact delivers to the same original shipyard local holder once")
+	# A person carries at most Runtime.CARRY_CAPACITY and the hull recipe is larger, so
+	# the same real carrier makes as many two-contact trips as its free load needs.
+	var source_contact: Vector2i = data.cell_from_index(int(data.site.features[fixture.warehouse].entrance))
+	var yard_contact: Vector2i = data.cell_from_index(int(feature.entrance))
+	var remaining: Dictionary = cost.duplicate()
+	var trips := 0
+	var trips_ok := true
+	while trips_ok and not remaining.is_empty() and trips < 20:
+		trips += 1
+		var free := floori(Runtime.CARRY_CAPACITY - Runtime.carried_load(data.site, actor.cargo, actor.holder))
+		var trip_load := {}
+		for item: String in remaining:
+			var amount := mini(int(remaining[item]), free)
+			if amount <= 0: break
+			trip_load[item] = amount
+			free -= amount
+		if trip_load.is_empty():
+			trips_ok = false
+			break
+		var placed_at_source: bool = trips == 1 or lab.character.place(source_contact, true)
+		var taken: bool = placed_at_source and vehicles.transfer("feature:" + str(fixture.warehouse), "person:" + str(fixture.control), trip_load, [], int(source.holder.version), int(actor.holder.version), int(fixture.control)).ok
+		if trips == 1:
+			_check(taken, "At the first true contact the existing original carrier takes the actual cargo")
+			_check(actor.cargo == trip_load and destination.cargo.is_empty(), "The first transfer has one real holder owner and no virtual remote delivery")
+			before = var_to_bytes([data.site, actor.cargo, actor.holder])
+			_check(not vehicles.transfer("person:" + str(fixture.control), "feature:" + str(fixture.yard), trip_load, [], int(actor.holder.version), int(destination.holder.version), int(fixture.control)).ok and var_to_bytes([data.site, actor.cargo, actor.holder]) == before, "Remote second contact fails byte-equivalently before any cargo mutation")
+			_check(lab.character.place(yard_contact, true), "The same actual carrier reaches the original destination contact")
+		else:
+			taken = taken and lab.character.place(yard_contact, true)
+		var delivered: bool = taken and vehicles.transfer("person:" + str(fixture.control), "feature:" + str(fixture.yard), trip_load, [], int(actor.holder.version), int(destination.holder.version), int(fixture.control)).ok and actor.cargo.is_empty()
+		if trips == 1: _check(delivered, "Second true contact delivers to the same original shipyard local holder once")
+		trips_ok = delivered
+		for item: String in trip_load:
+			remaining[item] = int(remaining[item]) - int(trip_load[item])
+			if int(remaining[item]) == 0: remaining.erase(item)
+	_check(trips_ok and remaining.is_empty() and trips == ceili(float(Runtime.inventory_size(cost)) / float(Runtime.CARRY_CAPACITY)) and source.cargo.is_empty(), "Every later trip repeats the same two true contacts until the whole recipe has moved")
 	_check(actor.cargo.is_empty() and destination.cargo == cost and data.site.inventory == depot and Stocks.validate(data.site).ok, "Actual two-contact delivery never copies stock or debits camp manufacture")
 	_check(Stocks.set_local_supply(data, str(fixture.yard), true, 1).ok and feature.supply_mode == "local", "Original current source selection explicitly names the real shipyard local holder")
 	_check(Runtime.configure_shipyard_work(data, str(fixture.yard), int(fixture.control), 0, false).ok and not feature.has("technology_shipyard_work") and Stocks.storage(data, str(fixture.yard)).cargo == cost, "Lawful clear revocation preserves original material property and restores the existing one-station feature")
@@ -299,6 +351,19 @@ func _two_true_workers_and_suspended_save() -> void:
 	for item: String in cost: _check(int(data.site.inventory[item]) == int(stock[item]) - int(cost[item]), "Original hull material %s is debited once" % item)
 	var workers = lab.site_controller.work_team
 	var identities: Array[int] = [int(fixture.executor), team.combat_identity(2)]
+	# The packed fixture army holds every neighbour of the helper, so under real
+	# occupancy no station is reachable; stand him inside the yard footprint, off
+	# both shore stations and every team cell.
+	var helper_index := team.index_for_identity(identities[1])
+	var station_cells: Array[int] = []
+	for station: Dictionary in Runtime.feature_work_slots(data, feature): station_cells.append(int(station.cell))
+	for fixture_cell: int in feature.cells:
+		var spot: Vector2i = data.cell_from_index(fixture_cell)
+		if data.is_walkable(spot) and not station_cells.has(fixture_cell) and not team.cells.has(spot):
+			team._cell_owners.erase(team.cells[helper_index])
+			team.cells[helper_index] = spot
+			team._cell_owners[spot] = helper_index
+			break
 	_check(workers.assign(team, identities, team.duty_decider("team.work")).ok, "True current original team duty assigns its actual artisan and actual helper")
 	workers.prepare_work_requests(30.0)
 	var claims := {}
@@ -307,14 +372,24 @@ func _two_true_workers_and_suspended_save() -> void:
 		var task: Dictionary = team.combat_units[index].work_task
 		_check(task.target == "feature:" + str(fixture.yard) and task.action == "operate" and not claims.has(int(task.work_slot)), "Original selector gives each true person a different actual shipyard work cell")
 		claims[int(task.work_slot)] = true
+		# Settle him on the station: the selector already started a travel step.
+		team._cell_owners.erase(team.cells[index])
 		team.cells[index] = data.cell_from_index(int(task.work_cell))
+		team._cell_owners[team.cells[index]] = index
+		team.moving_to[index] = TerrainArmy.INVALID_CELL
+		team.combat_hot_set(index, &"pose", "idle")
 		task.cell = int(task.work_cell)
 		task.mode = "work"
 		_check(SiteWorkTeam.valid_task(data, data.site, task), "Original task validator admits the same actual shore station")
 	_check(claims.has(0) and claims.has(1), "Both original physical shore stations are held by true separate people")
 	var archive := var_to_bytes([data.site.family.technology, data.site.settlement.technology])
 	var admitted := _shipyard_work_point(fixture, 30.0)
-	_check(admitted.runtime.size() == 2 and is_equal_approx(float(feature.production), 1.0), "Two actual thirty-second contributions advance one real hull by sixty physical seconds")
+	# With catalog node F13 enabled the batch carries the one-time F13 method, and a
+	# configured yard applies it to both workers (10/9); otherwise plain seconds.
+	var method_enabled: bool = Runtime.TechnologyCatalog.get_node("F13").get("enabled") == true
+	_check(feature.has("technology_ship_method") == method_enabled, "The batch carries the F13 method marker exactly when F13 is admitted")
+	var method_factor := 10.0 / 9.0 if method_enabled else 1.0
+	_check(admitted.runtime.size() == 2 and is_equal_approx(float(feature.production), method_factor), "Two actual thirty-second contributions advance one real hull by sixty physical seconds")
 	_check(var_to_bytes([data.site.family.technology, data.site.settlement.technology]) == archive, "Ordinary physical collaboration never fabricates a research phase or individual skill")
 	var housing: Dictionary = data.site.housing
 	data.site.housing = {}

@@ -2923,7 +2923,7 @@ static func validate_waterfront(data: TerrainData, feature: Dictionary, check_na
 	return ok("合法水岸")
 
 static func validate_ship_build(_data: TerrainData, feature: Dictionary) -> Dictionary:
-	if feature.has("technology_ship_method") and (feature.get("kind") != "shipyard" or not feature.has("ship_build") or feature.technology_ship_method != {"version": 1}): return fail("CORRUPT_SAVE", "原單次 F13 方法標記")
+	if feature.has("technology_ship_method") and (feature.get("kind") != "shipyard" or not feature.has("ship_build") or not valid_technology_ship_method(feature.technology_ship_method)): return fail("CORRUPT_SAVE", "原單次 F13 方法標記")
 	if not feature.has("ship_build"):
 		if str(feature.get("kind", "")) in WATERFRONT_KINDS and (bool(feature.get("batch_paid", false)) or float(feature.get("production", 0.0)) != 0.0):
 			return fail("CORRUPT_SAVE", "水岸設施沒有原造船投入批次")
@@ -8041,6 +8041,10 @@ static func technology_siege_method_work_facts(data: TerrainData, vehicle: Dicti
 		learned = prefix.get("eligible_skills", []).has("F11")
 	return ok("本人木接倍率；助手仍基本工時", {"factor": 10.0 / 9.0 if learned else 1.0})
 
+# A loaded marker carries its version as a JSON number; accept the same integer.
+static func valid_technology_ship_method(raw: Variant) -> bool:
+	return Technology.keys(raw, ["version"]) and Technology.integer(raw.version, 1, 1)
+
 static func valid_technology_siege_method(raw: Variant, kind: String) -> bool:
 	return kind in ["ballista", "ram", "traction_trebuchet"] and Technology.keys(raw, ["version"]) and Technology.integer(raw.version, 1, 1)
 
@@ -8089,7 +8093,7 @@ static func _technology_shipyard_work_facts(data: TerrainData, key: String, task
 	# A new original batch opts into this individual method exactly once. A
 	# configured shared group may apply its REAL admitted F13 master's method
 	# to helpers; ordinary unconfigured people only improve their own effort.
-	var factor := 10.0 / 9.0 if feature.get("technology_ship_method") == {"version": 1} and (configured or learned) else 1.0
+	var factor := 10.0 / 9.0 if valid_technology_ship_method(feature.get("technology_ship_method")) and (configured or learned) else 1.0
 	return ok("", {"required_skill": "F13" if configured else "", "eligible_master": learned, "required_skills": ["F13"] if configured else [], "eligible_skills": ["F13"] if learned else [], "factor": factor})
 
 static func prepare_water_schedule(data: TerrainData, requester_id: int, categories: Array, token: Dictionary = {}) -> Dictionary:
@@ -12840,7 +12844,7 @@ static func valid_settlement_ship_target(data: TerrainData, key: String, feature
 	var refs := _settlement_order_state(data, str(ref.settlement_id), str(ref.order_id))
 	if refs.is_empty() or not valid_settlement_ship_order(data, data.site, refs.order) or refs.order.status in ["prepared", "completed"] \
 		or refs.order.payload.feature_id != key or feature.get("kind") != "shipyard" or not feature.has("ship_build") \
-		or not feature.has("technology_shipyard_work") or not valid_technology_shipyard_work(feature) or feature.get("technology_ship_method") != {"version": 1}: return false
+		or not feature.has("technology_shipyard_work") or not valid_technology_shipyard_work(feature) or not valid_technology_ship_method(feature.get("technology_ship_method")): return false
 	var token: Dictionary = feature.get("tech_trial", {})
 	return token.is_empty() and refs.order.payload.project_id == 0 or token.is_empty() and refs.order.status == "cancelled" \
 		or not token.is_empty() and token.get("scope") == "settlement" and token.get("scope_id") == ref.settlement_id and token.get("tech_id") == "S12" \
