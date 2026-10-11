@@ -1,0 +1,5 @@
+{
+  "_doc": "Registry of tests known to be stale (fixture or API drifted from production) or quarantined for an environment reason. triage_receipts.ps1 reports them under STALE_REGISTERED instead of counting them as product defects; batch_plan.ps1 leaves them out unless -IncludeStale. Add an entry only with the owning thread's agreement; remove it when the test is repaired.",
+  "_fields": "test = script base name without .gd; reason = one line; owner = thread; since = YYYY-MM-DD; evidence = receipt run id or report path",
+  "tests": []
+}
