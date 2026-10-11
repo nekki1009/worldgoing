@@ -4291,7 +4291,11 @@ func nation_original_receipt_query(binding: String, target: String, event_id: St
 		"work_seconds": float(ledger.work_seconds), "item_ids": items, "outputs": outputs, "materials": ledger.materials.duplicate()}
 	var checked: Dictionary = Runtime.technology_public_output_candidate(lab.terrain, record, event) if token.is_empty() \
 		else Runtime.technology_output_candidate(lab.terrain, token, event)
-	return Runtime.ok("", {"receipt": _nation_receipt_projection(event), "token": token}) if checked.ok else checked
+	if not checked.ok: return checked
+	var receipt := _nation_receipt_projection(event)
+	# An iron_armor receipt carries the batch's effective seconds as recorded now.
+	if binding == "iron_armor" and ledger.has("effective_seconds"): receipt["effective_seconds"] = float(ledger.effective_seconds)
+	return Runtime.ok("", {"receipt": receipt, "token": token})
 
 func begin_nation_funded_course(nation_id: String, order_id: String, teacher_id: int, student_id: int, skill_id: String) -> Dictionary:
 	var checked := _nation_original_order_context(nation_id, order_id, "funded_course")

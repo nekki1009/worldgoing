@@ -1479,7 +1479,19 @@ static func building_grade(feature: Dictionary) -> int:
 	return int(feature.get("building_grade", 1))
 
 static func building_productivity(feature: Dictionary) -> float:
-	return 1.0 + 0.25 * float(building_grade(feature) - 1) if int(feature.get("civil_version", 0)) == CIVIL_VERSION else 1.0
+	return _grade_productivity(building_grade(feature)) if int(feature.get("civil_version", 0)) == CIVIL_VERSION else 1.0
+
+static func _grade_productivity(grade: int) -> float:
+	return 1.0 + 0.25 * float(grade - 1)
+
+# The largest per-step factor a workshop batch can apply (water_ratio <= 1).
+static func max_building_productivity() -> float:
+	return _grade_productivity(CIVIL_MAX_GRADE)
+
+# Production minutes one work step adds; the SAME value advances production and,
+# for workshop batches, the batch's effective work.
+static func feature_production_minutes(minutes: float, water_ratio: float, productivity: float) -> float:
+	return minutes * water_ratio * productivity
 
 static func civil_max_hp(feature: Dictionary) -> float:
 	return 100.0 + 50.0 * float(building_grade(feature) - 1)
@@ -4283,9 +4295,10 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 		return
 	if work_time.is_valid() and float(feature.production) < float(definition.cycle):
 		minutes = float(work_time.call(false, minutes))
-	technology_record_work(feature, minutes, int(technology_guard.get("operator_id", 0)))
+	var production_minutes := feature_production_minutes(minutes, water_ratio, productivity)
+	technology_record_work(feature, minutes, int(technology_guard.get("operator_id", 0)), production_minutes)
 	var audio_before_production := float(feature.production)
-	feature.production = minf(float(definition.cycle), float(feature.production) + minutes * water_ratio * productivity)
+	feature.production = minf(float(definition.cycle), float(feature.production) + production_minutes)
 	feature.status = "生產 %.1f / %.1f 分" % [float(feature.production), float(definition.cycle)]
 	_audio_p3_work_progress_notice(data, key, worker, feature, "operate", audio_before_production, float(feature.production), original_identity)
 	worker.status = feature.status
@@ -7221,13 +7234,28 @@ static func technology_batch_operator_guard(data: TerrainData, key: String, feat
 # original feature.progress update. Water/fertility/grade remain original math.
 
 
-static func technology_record_work(feature: Dictionary, actual_minutes: float, actual_identity: int) -> void:
+static func technology_record_work(feature: Dictionary, actual_minutes: float, actual_identity: int, effective_minutes: float = -1.0) -> void:
 	if feature.has("tech_batch") and actual_identity > 0 and is_finite(actual_minutes) and actual_minutes > 0.0 and _technology_unbound_ordinary_feature_ledger(feature, feature.tech_batch):
 		feature.tech_batch.operator_id = actual_identity
 		feature.tech_batch.work_seconds = float(feature.tech_batch.work_seconds) + actual_minutes * 60.0
+		_technology_record_effective(feature, actual_minutes, effective_minutes)
 		return
 	if feature.has("tech_batch") and (int(feature.tech_batch.operator_id) == actual_identity or int(feature.tech_batch.operator_id) == 0 and feature.has("technology_settlement_order")) and is_finite(actual_minutes) and actual_minutes > 0.0:
 		feature.tech_batch.work_seconds = float(feature.tech_batch.work_seconds) + actual_minutes * 60.0
+		_technology_record_effective(feature, actual_minutes, effective_minutes)
+
+# Workshop batches also keep the production-equivalent seconds of the same steps.
+# A batch without the key reads as effective = work_seconds (older saves).
+static func _technology_record_effective(feature: Dictionary, actual_minutes: float, effective_minutes: float) -> void:
+	if effective_minutes < 0.0 or not is_finite(effective_minutes) or str(feature.get("kind", "")) in FARM_KINDS + PASTURE_KINDS: return
+	var prior := float(feature.tech_batch.get("effective_seconds", float(feature.tech_batch.work_seconds) - actual_minutes * 60.0))
+	feature.tech_batch.effective_seconds = prior + effective_minutes * 60.0
+
+static func technology_batch_effective_seconds(ledger: Dictionary) -> float:
+	return float(ledger.get("effective_seconds", ledger.get("work_seconds", 0.0)))
+
+static func _technology_batch_keys_ok(raw: Variant) -> bool:
+	return Technology.keys(raw, TECHNOLOGY_BATCH_FIELDS) or Technology.keys(raw, TECHNOLOGY_BATCH_FIELDS + ["effective_seconds"])
 
 static func _technology_output_products(definition: Dictionary) -> Array:
 	var products: Array = []
@@ -7336,10 +7364,15 @@ static func publish_feature_output(data: TerrainData, prepared: Dictionary) -> v
 		prepared.products.get("item_ids", []))
 
 static func valid_technology_batch(raw: Variant, data: TerrainData, key: String, target_kind: String = "feature") -> bool:
-	if not Technology.keys(raw, TECHNOLOGY_BATCH_FIELDS) or not Technology.integer(raw.version, 1, 1) or not Technology.integer(raw.id, 1) \
+	if not _technology_batch_keys_ok(raw) or not Technology.integer(raw.version, 1, 1) or not Technology.integer(raw.id, 1) \
 		or raw.site_id != str(data.site.get("id", "")) or raw.feature_id != key or not Technology.integer(raw.operator_id, 0) \
 		or not raw.recipe_id is String or not Technology.material_stack(raw.materials) or not raw.source_holder is String or raw.source_holder.is_empty() \
 		or not Technology.integer(raw.source_version, 0, 2147483645) or not Technology.finite_number(raw.work_seconds) or not raw.payment_id is String or raw.payment_id.is_empty() or not raw.token is Dictionary: return false
+	if raw.has("effective_seconds"):
+		# Workshop batches only, and never more than the physical work allows.
+		var host: Dictionary = data.site.get("features", {}).get(key, {}) if target_kind == "feature" else {}
+		if host.is_empty() or str(host.get("kind", "")) in FARM_KINDS + PASTURE_KINDS or not Technology.finite_number(raw.effective_seconds) \
+			or float(raw.effective_seconds) < 0.0 or float(raw.effective_seconds) > float(raw.work_seconds) * max_building_productivity() * 1.000001 + 0.000001: return false
 	return target_kind in ["feature", "vehicle"] and (raw.token.is_empty() or _technology_trial_shape(raw.token, data) and str(raw.token.target_id) == target_kind + ":" + key and int(raw.token.person.person_id) == int(raw.operator_id) and Technology.material_equal(raw.token.materials, raw.materials))
 
 
@@ -7384,7 +7417,7 @@ static func technology_output_candidate(data: TerrainData, token: Dictionary, ev
 	var key := str(token.target_id).get_slice(":", 1)
 	var target: Dictionary = data.site.get(source_kind, {}).get(key, {})
 	var ledger: Dictionary = target.get("tech_batch", {})
-	if target.get("tech_trial", {}) != token or not Technology.keys(ledger, TECHNOLOGY_BATCH_FIELDS) or ledger.get("token", {}) != token \
+	if target.get("tech_trial", {}) != token or not _technology_batch_keys_ok(ledger) or ledger.get("token", {}) != token \
 		or str(ledger.get("payment_id", "")) != str(event.id) or int(ledger.get("operator_id", 0)) != int(event.operator_id) \
 		or not Technology.material_equal(ledger.get("materials", {}), event.materials) or not is_equal_approx(float(ledger.get("work_seconds", -1.0)), float(event.work_seconds)): return fail("STALE_SOURCE")
 	if source_kind == "vehicles":
@@ -7915,6 +7948,7 @@ static func normalize_technology_target_storage(target: Dictionary) -> void:
 	if target.has("tech_batch"):
 		for field: String in ["version", "id", "operator_id", "source_version"]: target.tech_batch[field] = int(target.tech_batch[field])
 		target.tech_batch.work_seconds = float(target.tech_batch.work_seconds)
+		if target.tech_batch.has("effective_seconds"): target.tech_batch.effective_seconds = float(target.tech_batch.effective_seconds)
 		for resource: String in target.tech_batch.materials: target.tech_batch.materials[resource] = int(target.tech_batch.materials[resource])
 		if not target.tech_batch.token.is_empty(): target.tech_batch.token = target.tech_trial.duplicate(true)
 	if target.has("tech_work_credit"):
@@ -9282,6 +9316,7 @@ static func prepare_gd_contact_work_envelope(prepared: Dictionary) -> Dictionary
 	return ok("原工作有限scalar/source上界候选已核", {"prepared": prepared, "owner": prepared.owner, "data": data,
 		"target": target, "unit": unit, "threshold": threshold, "scale": scale, "progress_begin": float(unit.get(prepared.field, 0.0)),
 		"ledger": ledger_template, "ledger_begin": float(target.get("tech_batch", {}).get("work_seconds", 0.0)),
+		"ledger_effective_begin": technology_batch_effective_seconds(target.get("tech_batch", {})),
 		"ledger_operator_id": int(prepared.get("ledger_operator_id", 0)), "field": prepared.field,
 		"payment_template": payment_template, "holder_begin": holder_begin, "repair_maximum": repair_maximum,
 		"repair_hp_begin": float(target.naval.hp) if endpoint == "ship_repair" else float(target.get("hp", 0.0)), "repair_applied_begin": float(unit.get("applied", 0.0)),
@@ -9303,6 +9338,7 @@ static func restrict_gd_contact_work_prefix(envelope: Dictionary, prefix: Dictio
 	var previous: float = float(envelope.progress_begin)
 	var ledger: Dictionary = envelope.ledger
 	var ledger_seconds: float = float(envelope.ledger_begin)
+	var ledger_effective: float = float(envelope.get("ledger_effective_begin", envelope.ledger_begin))
 	var ledger_operator_id: int = int(envelope.ledger_operator_id)
 	var paid := false
 	var hp: float = float(envelope.repair_hp_begin)
@@ -9314,6 +9350,7 @@ static func restrict_gd_contact_work_prefix(envelope: Dictionary, prefix: Dictio
 		if is_same(prior.get("target"), envelope.target):
 			ledger = prior.ledger
 			ledger_seconds = float(prior.ledger_seconds)
+			ledger_effective = float(prior.get("ledger_effective", prior.ledger_seconds))
 			ledger_operator_id = int(prior.ledger_operator_id)
 			paid = paid or not prior.get("payment", {}).is_empty()
 	var payment := {}
@@ -9331,19 +9368,26 @@ static func restrict_gd_contact_work_prefix(envelope: Dictionary, prefix: Dictio
 		ledger_operator_id = int(prefix.person_id)
 		ledger.operator_id = ledger_operator_id
 		ledger_seconds = 0.0
+		ledger_effective = 0.0
 	var endpoint: String = str(envelope.prepared.endpoint)
 	var action: String = str(prefix.task.action)
+	var envelope_counted := false
 	if not ledger.is_empty() and (action in ["construct", "operate"] or envelope.target.has("technology_spare_repair")):
 		if endpoint == "feature" and action == "operate" and _technology_unbound_ordinary_feature_ledger(envelope.target, ledger):
 			ledger_operator_id = int(prefix.person_id)
 			ledger_seconds += productive
-		elif ledger_operator_id == int(prefix.person_id): ledger_seconds += productive
+			envelope_counted = true
+		elif ledger_operator_id == int(prefix.person_id):
+			ledger_seconds += productive
+			envelope_counted = true
 	var result: Dictionary = envelope.prepared.duplicate(false)
 	result.prefix_ref = prefix
 	result.prior_progress = previous
 	result.progress = minf(float(envelope.threshold), previous + applied * float(envelope.scale))
 	result.ledger = ledger
 	result.ledger_seconds = ledger_seconds
+	if bool(result.get("ledger_effective_tracked", false) and envelope_counted): ledger_effective += maxf(0.0, float(result.progress) - previous) * 60.0
+	result.ledger_effective = ledger_effective
 	result.ledger_operator_id = ledger_operator_id
 	result.payment = payment
 	result.repair = {}
@@ -9781,6 +9825,7 @@ static func prepare_checked_work_prefix(data: TerrainData, task: Dictionary, pro
 	var previous := float(unit.get(field, 0.0))
 	var ledger: Dictionary = target.get("tech_batch", {})
 	var ledger_seconds := float(ledger.get("work_seconds", 0.0))
+	var ledger_effective := technology_batch_effective_seconds(ledger)
 	var ledger_operator_id := int(ledger.get("operator_id", 0))
 	var payment := {}
 	var priors: Array = prefix_ref.runtime_priors
@@ -9791,6 +9836,7 @@ static func prepare_checked_work_prefix(data: TerrainData, task: Dictionary, pro
 		if is_same(prior.get("target"), target):
 			ledger = prior.ledger
 			ledger_seconds = float(prior.ledger_seconds)
+			ledger_effective = float(prior.get("ledger_effective", prior.ledger_seconds))
 			ledger_operator_id = int(prior.get("ledger_operator_id", ledger.get("operator_id", 0)))
 	if endpoint == "feature" and action == "operate" and not target.has("ship_build") and not bool(target.get("batch_paid", false)):
 		var already_reserved := false
@@ -9818,6 +9864,7 @@ static func prepare_checked_work_prefix(data: TerrainData, task: Dictionary, pro
 				"source_version": expected_version, "work_seconds": 0.0, "token": {}, "payment_id": str(data.site.id) + "|feature:" + key + "|" + str(int(output.next_seq))}
 			payment = {"holder": source.holder, "cargo": source.cargo, "version": expected_version, "cost": inputs.duplicate(true)}
 			ledger_seconds = 0.0
+			ledger_effective = 0.0
 			ledger_operator_id = identity
 	# Only the actual paid S08 repair owns a repair work ledger. Ordinary
 	# repair does not borrow a previous manufacture operator or ledger.
@@ -9828,13 +9875,21 @@ static func prepare_checked_work_prefix(data: TerrainData, task: Dictionary, pro
 		return fail("STALE_SOURCE")
 	var named := _checked_prefix_named_effort(data, task, target, prefix_ref) if productive_seconds > 0.0 and (action in ["construct", "operate"] or named_repair) else ok("修理或零端点不增加研究贡献", {"seconds": 0.0})
 	if not named.ok: return named
+	var ledger_counted := false
 	if not ledger.is_empty() and (action in ["construct", "operate"] or named_repair):
 		if endpoint == "feature" and action == "operate" and productive_seconds > 0.0 and _technology_unbound_ordinary_feature_ledger(target, ledger):
 			# Temporary scalars only: preserve SAME paid ledger/id/material/source.
 			ledger_operator_id = identity
 			ledger_seconds += float(prefix_ref.productive_seconds)
-		elif int(ledger.operator_id) == identity: ledger_seconds += float(prefix_ref.productive_seconds)
+			ledger_counted = true
+		elif int(ledger.operator_id) == identity:
+			ledger_seconds += float(prefix_ref.productive_seconds)
+			ledger_counted = true
 	var progress := minf(threshold, previous + productive_seconds * scale)
+	# Workshop batches: the production this step adds, in seconds, is its effective work.
+	var ledger_effective_tracked: bool = endpoint == "feature" and action == "operate" and not target.has("ship_build") and not ledger.is_empty() \
+		and str(target.get("kind", "")) not in FARM_KINDS + PASTURE_KINDS
+	if ledger_effective_tracked and ledger_counted: ledger_effective += maxf(0.0, progress - previous) * 60.0
 	if previous > threshold + 0.000000001 or progress < previous: return fail("INVALID_WORK")
 	var repair := {}
 	if target_id.begins_with("vehicle:") and action == "repair" and productive_seconds > 0.0:
@@ -9865,7 +9920,7 @@ static func prepare_checked_work_prefix(data: TerrainData, task: Dictionary, pro
 		else: repair = {"hp": minf(maximum, original_hp + maxf(0.0, applied - prior_applied)), "applied": applied}
 	return ok("原合法工作前缀全部纯预验，完成端点留到Native发布后", {"prefix_ref": prefix_ref, "owner": owner, "identity": identity,
 		"data": data, "site": data.site, "task": task, "target_id": target_id, "target": target, "unit": unit, "field": field,
-		"prior_progress": previous, "progress": progress, "ledger": ledger, "ledger_seconds": ledger_seconds, "ledger_operator_id": ledger_operator_id, "payment": payment, "repair": repair,
+		"prior_progress": previous, "progress": progress, "ledger": ledger, "ledger_seconds": ledger_seconds, "ledger_effective": ledger_effective, "ledger_effective_tracked": ledger_effective_tracked, "ledger_operator_id": ledger_operator_id, "payment": payment, "repair": repair,
 		"start": start, "endpoint": endpoint, "deferred_endpoint": progress + 0.000000001 >= threshold, "published": false})
 
 static func _checked_prefix_source_usage(priors: Array, holder: Dictionary, cargo: Dictionary) -> Dictionary:
@@ -12749,7 +12804,7 @@ static func _technology_unbound_ordinary_feature_ledger(feature: Dictionary, led
 	if not FEATURES.has(kind) or not FEATURES[kind].has("cycle") or feature.get("stage") != "complete": return false
 	for marker: String in ["tech_trial", "technology_order", "technology_settlement_order", "settlement_work", "ship_build"]:
 		if feature.has(marker): return false # Malformed present markers are not legacy absence.
-	return Technology.keys(ledger, TECHNOLOGY_BATCH_FIELDS) and Technology.integer(ledger.get("version"), 1, 1) 		and Technology.integer(ledger.get("operator_id"), 1) and ledger.get("token") is Dictionary and ledger.token.is_empty()
+	return _technology_batch_keys_ok(ledger) and Technology.integer(ledger.get("version"), 1, 1) 		and Technology.integer(ledger.get("operator_id"), 1) and ledger.get("token") is Dictionary and ledger.token.is_empty()
 
 static func settlement_spares_recipe_guard(data: TerrainData, identity: int, token: Dictionary = {}, preview: bool = false) -> Dictionary:
 	var checked := settlement_spares_context(data, identity, token)
@@ -13488,6 +13543,7 @@ static func publish_checked_work_prefix(prepared: Dictionary) -> void:
 	prepared.unit[prepared.field] = float(prepared.progress)
 	if not prepared.ledger.is_empty():
 		prepared.ledger.work_seconds = float(prepared.ledger_seconds)
+		if bool(prepared.get("ledger_effective_tracked", false)): prepared.ledger.effective_seconds = float(prepared.ledger_effective)
 		prepared.ledger.operator_id = int(prepared.ledger_operator_id)
 	if prepared.endpoint == "feature" and prepared.task.action == "construct" and not prepared.target.has("pending_build"): prepared.target.stage = "building"
 	if not prepared.repair.is_empty():

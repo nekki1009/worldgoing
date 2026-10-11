@@ -1987,8 +1987,9 @@ static func _valid_public_order(raw: Variant, people: Dictionary, orders: Dictio
 	for receipt: Variant in raw.receipts:
 		var receipt_fields := ["id", "site_id", "binding", "operator_id", "target_id", "work_seconds", "item_ids"]
 		if raw.tech_id == "N08": receipt_fields.append_array(["source_operator_id", "operator_reference", "transfer_token"])
+		if receipt is Dictionary and receipt.has("effective_seconds"): receipt_fields.append("effective_seconds")
 		if not Technology.keys(receipt, receipt_fields) or not _public_reference(receipt.id) \
-			or receipt.site_id != (raw.payload.destination_site_id if raw.tech_id == "N08" else raw.scope_site_id) or not Technology.finite_number(receipt.work_seconds, _public_receipt_seconds(str(receipt.get("binding", "")))) \
+			or receipt.site_id != (raw.payload.destination_site_id if raw.tech_id == "N08" else raw.scope_site_id) or not public_receipt_effective_ok(receipt, str(receipt.get("binding", ""))) \
 			or seen.has(receipt.id) or not receipt.binding is String or not PUBLIC_BINDINGS[str(raw.tech_id)].has(receipt.binding) \
 			or not _operation_person(receipt.operator_id, {} if raw.tech_id == "N08" else people) or not _public_reference(receipt.target_id) or not receipt.item_ids is Array: return false
 		if raw.tech_id == "N08" and (not _operation_person(receipt.source_operator_id, people) or not _portable_ref(receipt.operator_reference, "person") \
@@ -2042,6 +2043,18 @@ static func _public_receipt_matches_order(order: Dictionary, order_id: String, r
 			var ship_id := target.trim_prefix("vehicle:")
 			return index < 2 and receipt.binding == "fleet" and target == "vehicle:" + ship_id and payload.steps.has(ship_id) and operator_id == int(payload.steps[ship_id].driver_id) and receipt.id == _public_event_id(order, order_id, "fleet", ship_id) and receipt.item_ids.is_empty()
 	return false
+
+# One receipt rule for the live check and the stored validator. An iron_armor
+# receipt may carry effective_seconds (bounded by its physical work at the best
+# workshop grade); otherwise, and for older receipts, work_seconds is compared.
+static func public_receipt_effective_ok(receipt: Dictionary, binding_id: String) -> bool:
+	if not Technology.finite_number(receipt.get("work_seconds")): return false
+	var effective := float(receipt.work_seconds)
+	if receipt.has("effective_seconds"):
+		if binding_id != "iron_armor" or not Technology.finite_number(receipt.effective_seconds) or float(receipt.effective_seconds) < 0.0 \
+			or float(receipt.effective_seconds) > float(receipt.work_seconds) * Runtime.max_building_productivity() * 1.000001 + 0.000001: return false
+		effective = float(receipt.effective_seconds)
+	return effective + 0.00000001 >= _public_receipt_seconds(binding_id)
 
 static func _public_receipt_seconds(binding_id: String) -> float:
 	match binding_id:
@@ -2097,6 +2110,7 @@ static func _normalize_public_order(order: Dictionary) -> void:
 			receipt.source_operator_id = int(receipt.source_operator_id)
 			receipt.operator_reference.lineage = int(receipt.operator_reference.lineage)
 		receipt.work_seconds = float(receipt.work_seconds)
+		if receipt.has("effective_seconds"): receipt.effective_seconds = float(receipt.effective_seconds)
 
 func _public_context(nation_id: String, order_id: String, binding_id: String, read_only: bool = true) -> Dictionary:
 	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
@@ -2687,7 +2701,8 @@ func prepare_public_owner_receipt(nation_id: String, order_id: String, binding_i
 	var queried: Dictionary = nation_owner_receipt_query.call(binding_id, target_id, event_id)
 	if not queried.ok: return queried
 	var receipt: Variant = queried.get("receipt")
-	if not Technology.keys(receipt, ["id", "site_id", "target_id", "operator_id", "binding", "work_seconds", "item_ids"]) \
+	if not (Technology.keys(receipt, ["id", "site_id", "target_id", "operator_id", "binding", "work_seconds", "item_ids"]) \
+		or Technology.keys(receipt, ["id", "site_id", "target_id", "operator_id", "binding", "work_seconds", "item_ids", "effective_seconds"])) \
 		or receipt.id != event_id or receipt.site_id != str(lab.terrain.site.id) or receipt.target_id != target_id or receipt.binding != binding_id \
 		or not _operation_person(receipt.operator_id, {}) or not Technology.finite_number(receipt.work_seconds) or not receipt.item_ids is Array: return Runtime.fail("INVALID_RECEIPT")
 	match str(order.tech_id):
@@ -2705,13 +2720,13 @@ func prepare_public_owner_receipt(nation_id: String, order_id: String, binding_i
 			if binding_id == "arsenal" and order.receipts.size() != 1 or binding_id != "arsenal" and not order.receipts.is_empty(): return Runtime.fail("STALE_ORDER")
 		_:
 			return Runtime.fail("INVALID", "原physical transfer/PA课程/船步使用各自真提交入口")
-	var minimum := _public_receipt_seconds(binding_id)
-	if float(receipt.work_seconds) + 0.00000001 < minimum: return Runtime.fail("INCOMPLETE", "原有效工作未達本固定規則秒數")
+	if not public_receipt_effective_ok(receipt, binding_id): return Runtime.fail("INCOMPLETE", "原有效工作未達本固定規則秒數")
 	var candidate := _public_candidate(context.nation)
 	var next: Dictionary = candidate.public_orders[order_id]
 	for prior: Dictionary in next.receipts:
 		if prior.id == event_id: return Runtime.fail("NO_CHANGE")
 	next.receipts.append({"id": event_id, "site_id": str(receipt.site_id), "binding": binding_id, "operator_id": int(receipt.operator_id), "target_id": target_id, "work_seconds": float(receipt.work_seconds), "item_ids": receipt.item_ids.duplicate()})
+	if receipt.has("effective_seconds"): next.receipts[next.receipts.size() - 1]["effective_seconds"] = float(receipt.effective_seconds)
 	next.status = "complete" if _public_order_complete(next) else "active"
 	next.revision = int(order.revision) + 1
 	if not valid_nation_operation_record(candidate, lab.terrain.site.item_definitions, {}): return Runtime.fail("INVALID")

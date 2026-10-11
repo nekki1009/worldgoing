@@ -23,7 +23,7 @@ func _contact_birth(source: RegionData) -> Dictionary:
 			var identity: int = actual.combat_identity(index)
 			_require(identity > 1 and not seen.has(identity), "Actual person allocator remains unique across all THREE teams")
 			seen[identity] = true
-			_require(actual.combat_units[index].get("technology", {}) == ({} if index == 0 else {"version": 1, "learned": [Artisans.CATEGORIES[index - 1]]}), "No fixture assigns or manufactures an extra learned master")
+			_require(actual.combat_units[index].get("technology", {}) == ({} if index == 0 else {"version": 2, "learned": [Artisans.CATEGORIES[index - 1]], "analysis": []}), "No fixture assigns or manufactures an extra learned master")
 	_require(seen.size() == 15, "All 15 original bodies survived actual complete bind")
 	var team: TerrainArmy = lab.army
 	var enemy: TerrainArmy = lab.opposing_army

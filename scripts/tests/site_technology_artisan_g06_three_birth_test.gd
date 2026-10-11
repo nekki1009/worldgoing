@@ -13,7 +13,7 @@ func _three_facts(lab: TerrainLab, state: Dictionary) -> void:
 			_require(identity > 1 and not ids.has(identity), "True allocator gives each original faction row one globally unique person ID")
 			ids[identity] = true
 			var learned: Dictionary = team.combat_units[index].get("technology", {})
-			_require(learned.is_empty() if index == 0 else learned == {"version": 1, "learned": [Artisans.CATEGORIES[index - 1]]}, "Precisely the original configured named row learned one category; original commander learns none")
+			_require(learned.is_empty() if index == 0 else learned == {"version": 2, "learned": [Artisans.CATEGORIES[index - 1]], "analysis": []}, "Precisely the original configured named row learned one category; original commander learns none")
 	_require(ids.size() == 15 and lab.character.person_id == 1 and lab.character.technology.is_empty(), "Original Actor is preserved as person one with no faction skill flag")
 
 

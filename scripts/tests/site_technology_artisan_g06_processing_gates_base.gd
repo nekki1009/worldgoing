@@ -91,7 +91,7 @@ func _no_reissue(f: Dictionary) -> void:
 	if f.kind == "fixed_birth":
 		var manifest_sha: String = FileAccess.get_sha256(f.slot.folder.path_join("manifest.json"))
 		var repeated: Dictionary = f.lab.site_controller.open_fixed_world(manifest_path, str(f.world), SLOT, START, true, Artisans.PRIMARY)
-		_require(not repeated.ok and repeated.code == "CONFLICT" and FileAccess.get_sha256(f.slot.folder.path_join("manifest.json")) == manifest_sha, "Actual completed newworld transaction cannot overwrite/reissue")
+		_require(not repeated.ok and repeated.code == "CONFLICT" and FileAccess.get_sha256(f.slot.folder.path_join("manifest.json")) == manifest_sha, "Actual completed newworld transaction cannot overwrite/reissue", repeated)
 func _replacement_recipe(f: Dictionary, key: String, recipe: String, output: Dictionary) -> void:
 	_teach_second_master(f) # Real original 300-second lesson, never authored learned.
 	var feature: Dictionary = f.data.site.features[key]

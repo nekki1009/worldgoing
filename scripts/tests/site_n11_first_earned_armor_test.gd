@@ -79,8 +79,9 @@ func _run() -> void:
 	project = Technology.active_project(f.nation.technology)
 	_check(f.data.site.next_item == next_item + 1 and output.item_ids == [str(next_item)] and f.data.site.item_records[str(next_item)].definition == "armor:armor_iron_01"
 		and f.row.item_state.item_ids.has(str(next_item)) and f.row.work_task.is_empty() and not host.batch_paid, "Real ItemSeq creates one actual armor item on the actual original named worker, then ends this batch")
-	_check(project.receipts.size() == 1 and project.receipts[0].phase_id == "one_real_iron_armor_order" and is_equal_approx(float(project.receipts[0].work_seconds), 900.0)
-		and order.receipts.size() == 1 and order.receipts[0].item_ids == [str(next_item)] and not Technology.scope_known(f.nation.technology, "N11"), "True900 armor output earns only the first Scope/public phase, never an invented ready-product receipt")
+	_check(project.receipts.size() == 1 and project.receipts[0].phase_id == "one_real_iron_armor_order" and is_equal_approx(float(project.receipts[0].work_seconds), float(order.receipts[0].work_seconds))
+		and is_equal_approx(float(order.receipts[0].get("effective_seconds", order.receipts[0].work_seconds)), 900.0)
+		and order.receipts.size() == 1 and order.receipts[0].item_ids == [str(next_item)] and not Technology.scope_known(f.nation.technology, "N11"), "True900 effective armor output (grade-3 work at its building productivity) earns only the first Scope/public phase, never an invented ready-product receipt")
 	_earned_cold(f, "N11", false)
 	var paid_stock := var_to_bytes([reserve.cargo, reserve.holder, person.cargo, person.holder])
 	_check(f.controller._nation_ui_command("n1", "administration", {"order": order_id}).ok, "Actual public acceptance form begins the original300 job bound to this actual original armor item")

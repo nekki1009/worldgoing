@@ -44,7 +44,7 @@ func _point_original_delta(f: Dictionary, action_seconds: float) -> Dictionary:
 	var fault: Dictionary = f.lab.site_controller.original_step_fault_guard()
 	_require(fault.ok, "Original whole caller did not latch a partial-work/clock fault", fault)
 	_require(f.lab._region_point_pending.is_empty() and f.lab._shared_work_plan.is_empty(), "True Region/contact/work point is settled; no hand-cleared prefix")
-	_require(absf(float(f.lab._action_time_remainder)) < 0.000000001, "Original caller consumed its exact whole fixed-step input; no discarded backlog")
+	_require(absf(float(f.lab._action_time_remainder)) < 0.000000001, "Original caller consumed its exact whole fixed-step input; no discarded backlog", {"remainder": float(f.lab._action_time_remainder), "region_pending": f.lab.site_controller.region_operation_pending(), "crossing": f.lab.site_controller.ground_crossing_blocks_clock(), "paused": bool(f.data.site.get("paused", false))})
 	var action: float = float(f.lab.fire_action_cursor) - action_begin
 	var game: float = (Runtime.now(f.data) - game_begin) * 60.0
 	var logical: float = float(f.slot.control.logical_game_seconds) - logical_begin
