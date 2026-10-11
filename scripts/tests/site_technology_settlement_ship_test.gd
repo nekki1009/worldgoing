@@ -137,6 +137,9 @@ func _known_ship_once_and_resume() -> void:
 	var intervals := 1
 	while yard.has("ship_build") and intervals < 20:
 		_shipyard_work_point(f, 30.0)
+		# The Lab launches a finished hull at its clock endpoint
+		# (finish_checked_work_clock) with the controller reservation query.
+		Runtime.advance_ship_builds(data, f.lab.site_controller.reserves_cell)
 		intervals += 1
 	_check(intervals == 9 and not yard.has("ship_build"), "Exactly 540 aggregate original productive seconds complete 600 baseline once, never 486")
 	_check(data.site.vehicles.has(output_identity) and data.site.vehicles[output_identity].kind == "ship" and data.site.vehicles[output_identity].ship_type == "ferry" and int(data.site.next_vehicle) == int(output_identity) + 1, "Original Ships.make_record adopts exactly one actual ferry with its real ID")
@@ -153,6 +156,7 @@ func _unknown_scope_and_current_guard() -> void:
 	var data: TerrainData = f.data
 	var prepared = f.actions.prepare_scope_technology(int(f.control), int(f.executor), "S12", str(f.settlement_id))
 	_check(prepared.ok, "Actual original unknown settlement registers S12 without requiring its own knowledge/config")
+	_check(f.actions.request_scope_technology_consent(int(f.control), "settlement", str(f.settlement_id), int(f.executor)).ok, "The real original team accepts the S12 research purpose for its operator")
 	var project := Technology.active_project(data.site.settlement.technology)
 	var id := _adopt_ship_order(f, int(project.id))
 	_deliver_ship_order(f, id)
@@ -180,7 +184,9 @@ func _unknown_scope_and_current_guard() -> void:
 	var person: Dictionary = f.actions._person(int(f.executor))
 	_check(not Runtime.work_preflight(data, f.row.work_task, person.cargo, Runtime.CARRY_CAPACITY, 1, int(f.executor), f.lab.site_controller.reserves_cell).ok and var_to_bytes([data.site, f.team.capture_combat_state()]) == before, "Lost original F13 master stops work with no paid progress/knowledge loss")
 	f.row.technology = learned
-	for index: int in range(8): _shipyard_work_point(f, 30.0)
+	for index: int in range(8):
+		_shipyard_work_point(f, 30.0)
+		Runtime.advance_ship_builds(data, f.lab.site_controller.reserves_cell) # Lab clock endpoint
 	_check(order.status == "completed" and order.receipts.size() == 1 and Technology.scope_known(data.site.settlement.technology, "S12"), "One genuine completed ship and true personal phase receipt close only this actual S12 Scope")
 	project = Technology.active_project(data.site.settlement.technology)
 	_check(project.is_empty() or project.get("receipts", []).size() == 1, "Scope output is accepted once; helper creates no duplicate evidence")

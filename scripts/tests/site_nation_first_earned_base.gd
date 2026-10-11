@@ -148,6 +148,8 @@ func _earned_army(lab: TerrainLab, count: int) -> TerrainArmy:
 	root.add_child(team)
 	team.set_process(false)
 	team.team_id = 402 if count == 40 else 301
+	# Real deployments advance the site team counter past the new team.
+	lab.terrain.site["army_next_team"] = maxi(int(lab.terrain.site.get("army_next_team", 1)), int(team.team_id) + 1)
 	team.roster_size = count
 	team.faction_id = 1
 	team.person_id_allocator = Callable(lab, "_allocate_army_person_ids")
