@@ -456,7 +456,7 @@ func _productive_adopt(preview: bool) -> void:
 	var result: Dictionary
 	if kind == "ship_cooperation":
 		var helper := _scope_row(query.people, _ref(_productive_form().helper))
-		var carrier := _scope_row(query.people, _ref(_productive_form().carrier))
+		var carrier := _scope_row(query.get("carriers", []), _ref(_productive_form().carrier))
 		if helper.is_empty() or carrier.is_empty(): _productive_result(Runtime.fail("NO_WORKER", "請具名第二原工人及搬料者")); return
 		result = runtime.call("request_settlement_ship_order", query.terrain_ref, key, int(person.person_id), int(helper.person_id), int(carrier.person_id), str(source.holder_id), _scope_requester(), project_id, preview)
 	else:
@@ -1009,7 +1009,9 @@ func _refresh_metal_controls(query: Dictionary) -> void:
 func _refresh_productive_controls(query: Dictionary) -> void:
 	var form := _productive_form()
 	if form.is_empty(): return
-	for choice: OptionButton in [form.helper, form.carrier]: _scope_fill_people(choice, query.people)
+	_scope_fill_people(form.helper, query.people)
+	# S12 carriers follow the order's own per-person rule (query.carriers).
+	_scope_fill_people(form.carrier, query.get("carriers", []) if _productive_kind() == "ship_cooperation" else query.people)
 	var old_source := _ref(form.source)
 	form.source.clear()
 	form.source.add_item("請明示原有限來源（不自動選來源）")

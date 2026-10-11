@@ -31,6 +31,25 @@ func _window_ship_output() -> void:
 	_choose_node(window, "S12")
 	_check(var_to_bytes([f.data.site, f.team.capture_combat_state()]) == before, "Installing/selecting original productive controls is byte-identical")
 	var form: Dictionary = window._productive_form()
+	# The carrier list is the order's own per-person rule: the controlled head is
+	# offered when Runtime accepts him; a person Runtime refuses is not offered.
+	var carrier_ids: Array[int] = []
+	for index: int in form.carrier.item_count:
+		var offered: Variant = form.carrier.get_item_metadata(index)
+		if offered is Dictionary and not offered.is_empty(): carrier_ids.append(int(offered.person_id))
+	_check(Runtime.settlement_ship_person_eligible(f.data, f.data.site.settlement, int(f.control)) and carrier_ids.has(int(f.control)), "The controlled head is offered as carrier exactly when the order rule accepts him")
+	var refused_index := 5
+	var refused_id: int = f.team.combat_identity(refused_index)
+	var refused_ko: Variant = f.team.combat_hot_get(refused_index, &"ko", 0.0)
+	f.team.combat_hot_set(refused_index, &"ko", 30.0)
+	window.refresh()
+	var refused_offered := false
+	for index: int in form.carrier.item_count:
+		var offered: Variant = form.carrier.get_item_metadata(index)
+		if offered is Dictionary and int(offered.get("person_id", -1)) == refused_id: refused_offered = true
+	_check(not Runtime.settlement_ship_person_eligible(f.data, f.data.site.settlement, refused_id) and not refused_offered, "A person the order rule refuses (knocked out) is not offered as carrier")
+	f.team.combat_hot_set(refused_index, &"ko", refused_ko)
+	window.refresh()
 	_choose_ui(window._scope_researcher, "person_id", int(f.executor))
 	_choose_ui(form.helper, "person_id", int(f.helper))
 	_choose_ui(form.carrier, "person_id", int(f.control))
@@ -63,6 +82,16 @@ func _window_ship_output() -> void:
 	_choose_ui(form.source, "id", "feature:" + str(f.yard))
 	window._productive_source(false)
 	_check(orders[id].payload.source.status == "granted" and orders[id].payload.spent.is_empty(), "UI explicit finite source grant changes no manufacture spend")
+	# The carrier ends on the yard entrance, which is also a shore station; after the
+	# grant he steps to a free footprint cell so both named workers can take theirs.
+	var yard_cells: Dictionary = f.data.site.features[f.yard]
+	var busy_cells: Array[int] = []
+	for station: Dictionary in Runtime.technology_shipyard_work_slots(f.data, yard_cells): busy_cells.append(int(station.cell))
+	for fixture_cell: int in yard_cells.cells:
+		var spot: Vector2i = f.data.cell_from_index(fixture_cell)
+		if f.data.is_walkable(spot) and not busy_cells.has(fixture_cell) and not f.team.cells.has(spot):
+			_check(f.lab.character.place(spot, true), "The carrier steps off the shore station after the grant")
+			break
 	var next := str(f.data.site.next_vehicle)
 	var camp := var_to_bytes([f.data.site.inventory, f.data.site.depot_items])
 	window._productive_step()
@@ -71,6 +100,8 @@ func _window_ship_output() -> void:
 	var intervals := 0
 	while f.data.site.features[f.yard].has("ship_build") and intervals < 20:
 		_shipyard_work_point(f, 30.0)
+		# The Lab launches a finished hull at its clock endpoint (finish_checked_work_clock).
+		Runtime.advance_ship_builds(f.data, f.lab.site_controller.reserves_cell)
 		intervals += 1
 	_check(intervals == 9 and f.data.site.vehicles[next].ship_type == "ferry" and orders[id].receipts.size() == 1, "Thin original UI reaches one real ferry and bounded owner output at540 aggregate effort")
 	_check(var_to_bytes([f.data.site.inventory, f.data.site.depot_items]) == camp, "The original UI never converts private local cost into camp debit")

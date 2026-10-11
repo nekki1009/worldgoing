@@ -8986,6 +8986,16 @@ static func publish_settlement_ship_delivery(prepared: Dictionary) -> Dictionary
 	prepared.published = true
 	return ok("真搬料及唯一有限交付已同次提交")
 
+# The per-person rule an S12 order applies to its operator, helper and carrier;
+# the productive Window lists carriers through this same predicate.
+static func settlement_ship_person_eligible(data: TerrainData, settlement: Dictionary, identity: int) -> bool:
+	var actions: Variant = _technology_actions(data)
+	if actions == null or identity <= 0: return false
+	var person: Dictionary = actions._person(identity)
+	var script: Script = load("res://scripts/terrain_lab/site_settlement.gd")
+	return not person.is_empty() and actions._ready(person) and int(person.faction) == int(settlement.get("owner_faction", -1)) \
+		and bool(script.call("office_person_ok", actions.lab, identity))
+
 static func request_settlement_ship_order(data: TerrainData, shipyard_id: String, operator_id: int, helper_id: int, carrier_id: int,
 	donor_id: String, requester_id: int, project_id: int = 0, preview: bool = false) -> Dictionary:
 	var actions: Variant = _technology_actions(data)
@@ -9015,8 +9025,7 @@ static func request_settlement_ship_order(data: TerrainData, shipyard_id: String
 	var consents: Array = []
 	for identity: int in [operator_id, helper_id, carrier_id]:
 		var person: Dictionary = actions._person(identity)
-		if person.is_empty() or not actions._ready(person) or int(person.faction) != int(settlement.get("owner_faction", -1)) \
-			or not bool(script.call("office_person_ok", actions.lab, identity)): return fail("NO_WORKER")
+		if not settlement_ship_person_eligible(data, settlement, identity): return fail("NO_WORKER")
 		if identity in [operator_id, helper_id]:
 			var original: Variant = actions._technology_team(person)
 			if original == null or identity == int(actions._technology_controlled()) or team != null and not is_same(team, original): return fail("NO_WORKER")

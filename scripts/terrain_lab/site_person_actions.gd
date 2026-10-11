@@ -4641,6 +4641,19 @@ func _technology_paid_phase_context(token: Dictionary) -> Dictionary:
 # Append to ORIGINAL SitePersonActions. The original _jobs holds the transient
 # command; Runtime still owns all feature progress, payment and actual output.
 
+func _scope_people_row(scope: String, owner: Dictionary, identity: int, tech_id: String) -> Dictionary:
+	var person := _person(identity, false)
+	if person.is_empty(): return {}
+	var label := "原居民"
+	if scope == "family":
+		for member: Dictionary in owner.members:
+			if member.site_id == _technology_site_id() and int(member.person_id) == identity: label = str(member.label)
+	var team: Variant = person.owner if person.owner is CrowdOwner else _technology_team(person)
+	return {"site_id": _technology_site_id(), "person_id": identity, "label": label,
+		"team_id": int(team.team_id) if team != null else -1, "owner_ref": person.owner, "body_ref": person.body,
+		"learned": Technology.learned(_body_get(person, "technology"), tech_id), "ready": _ready(person),
+		"busy": is_busy(identity), "job": job_for(identity)}
+
 func scope_technology_query(tech_id: String, scope_id: String = "") -> Dictionary:
 	if lab == null or lab.terrain == null: return Runtime.fail("NO_SITE")
 	var node := TechnologyCatalog.get_node(tech_id)
@@ -4659,17 +4672,16 @@ func scope_technology_query(tech_id: String, scope_id: String = "") -> Dictionar
 			if Technology.integer(value, 1) and equipment_orders._member(owner, int(value)): identities.append(int(value))
 	var people: Array[Dictionary] = []
 	for identity: int in identities:
-		var person := _person(identity, false)
-		if person.is_empty(): continue
-		var label := "原居民"
-		if scope == "family":
-			for member: Dictionary in owner.members:
-				if member.site_id == _technology_site_id() and int(member.person_id) == identity: label = str(member.label)
-		var team: Variant = person.owner if person.owner is CrowdOwner else _technology_team(person)
-		people.append({"site_id": _technology_site_id(), "person_id": identity, "label": label,
-			"team_id": int(team.team_id) if team != null else -1, "owner_ref": person.owner, "body_ref": person.body,
-			"learned": Technology.learned(_body_get(person, "technology"), tech_id), "ready": _ready(person),
-			"busy": is_busy(identity), "job": job_for(identity)})
+		var row := _scope_people_row(scope, owner, identity, tech_id)
+		if not row.is_empty(): people.append(row)
+	# S12 carriers: every person on this Site that the order's own per-person rule
+	# admits (Runtime.settlement_ship_person_eligible), not only housed residents.
+	var carriers: Array[Dictionary] = []
+	if scope == "settlement" and lab.site_controller != null:
+		for candidate: Dictionary in lab.site_controller._nation_ui_people():
+			if not Runtime.settlement_ship_person_eligible(lab.terrain, owner, int(candidate.id)): continue
+			var row := _scope_people_row(scope, owner, int(candidate.id), tech_id)
+			if not row.is_empty(): carriers.append(row)
 	var project := Technology.active_project(raw)
 	var phase := {}
 	if not project.is_empty() and int(project.rules_version) == 2: phase = Technology.scope_next_phase(project, project.executor, raw.get("person_links", []))
@@ -4679,7 +4691,7 @@ func scope_technology_query(tech_id: String, scope_id: String = "") -> Dictionar
 		"terrain_ref": lab.terrain, "site_ref": lab.terrain.site, "owner_ref": owner, "site_id": _technology_site_id(),
 		"current_person_id": _technology_controlled(), "research_decider": int(duty.get("decider", -1)),
 		"teaching_decider": int(teaching.get("decider", -1)), "duty_result": duty.duplicate(true),
-		"known": Technology.scope_known(raw, tech_id), "known_ids": _technology_known_for(scope_id if scope == "nation" else ""), "people": people,
+		"known": Technology.scope_known(raw, tech_id), "known_ids": _technology_known_for(scope_id if scope == "nation" else ""), "people": people, "carriers": carriers,
 		"project": project.duplicate(true), "phase": phase, "routes": node.research.routes.duplicate(true)})
 
 # Narrow original technology_query replacement: immediately after reading

@@ -55,27 +55,35 @@ func _point_fixture() -> Dictionary:
 	assert(captain_cell != TerrainArmy.INVALID_CELL)
 	var excluded: Array[Vector2i] = [work_cell, captain_cell]
 	var extra: Array[Vector2i] = _free_cells(data, 2, excluded, work_cell, 12)
-	assert(lab.character.place(extra[0], true))
-	if is_instance_valid(lab.npc): assert(lab.npc.place(extra[1], true))
+	var character_placed: bool = lab.character.place(extra[0], true)
+	assert(character_placed)
+	if is_instance_valid(lab.npc):
+		var npc_placed: bool = lab.npc.place(extra[1], true)
+		assert(npc_placed)
 	var team: TerrainArmy = lab.army
 	team.roster_size = 4
 	var near: Array[Vector2i] = _near_cells(data, 2, excluded, work_cell)
 	var positions: Array[Vector2i] = [captain_cell, work_cell, near[0], near[1]]
-	assert(team.deploy_at(data, lab.character, lab.npc, positions) and team.enable_combat(false))
+	var deployed: bool = team.deploy_at(data, lab.character, lab.npc, positions) and team.enable_combat(false)
+	assert(deployed)
 	team.faction_id = int(data.site.features[f.feature_id].owner_faction)
 	team.settle_combat_command()
 	lab.site_controller.initialize_team_items(team)
 	assert(int(f.vehicle.team_id) == int(team.team_id), "Original initial boat/team identity is retained; no late authority rewrite")
 	var captain: int = team.combat_identity(team.current_commander)
 	var worker: int = team.combat_identity(1)
-	assert(lab.site_controller._control_family_person(null, captain).ok)
+	var captain_control: Dictionary = lab.site_controller._control_family_person(null, captain)
+	assert(captain_control.ok)
 	var before: PackedByteArray = var_to_bytes([data.site.inventory, f.vehicle, Fatigue.read(team.combat_units[1])])
-	assert(lab.site_controller.begin_ship_repair("1", f.feature_id, captain, true).ok)
+	var repair_preview: Dictionary = lab.site_controller.begin_ship_repair("1", f.feature_id, captain, true)
+	assert(repair_preview.ok)
 	assert(var_to_bytes([data.site.inventory, f.vehicle, Fatigue.read(team.combat_units[1])]) == before, "True original repair preview has zero material/time/fatigue cost")
-	assert(lab.site_controller.begin_ship_repair("1", f.feature_id, captain).ok)
+	var repair_begun: Dictionary = lab.site_controller.begin_ship_repair("1", f.feature_id, captain)
+	assert(repair_begun.ok)
 	var job: Dictionary = f.vehicle.naval.repair
 	assert(job.size() == 7 and Runtime.validate_ship_repair(data, f.vehicle).ok and float(job.progress) == 0.0)
-	assert(lab.site_controller._control_family_person(null, lab.character.person_id).ok)
+	var character_control: Dictionary = lab.site_controller._control_family_person(null, lab.character.person_id)
+	assert(character_control.ok)
 	var assigned_ids: Array[int] = [worker]
 	var assigned: Dictionary = lab.site_controller.work_team.assign(team, assigned_ids, captain)
 	assert(assigned.ok, "Original captain/team.work authority assigns the original NPC; not a controlled worker bypass")
@@ -150,9 +158,13 @@ func _earned_zero_component() -> void:
 	assert(not Runtime.advance_ship_repair_work(f.data, "1", 0.0, f.work_cell, int(f.station.slot), int(f.team.team_id)).ok)
 	assert(var_to_bytes([f.vehicle, f.data.site.inventory, Fatigue.read(f.row)]) == counter_before, "Completed zero endpoint cannot overflow the true vehicle revision")
 	f.vehicle.revision = original_revision # Restore only the finite input, never work/body/time.
-	assert(Runtime.advance_ship_repair_work(f.data, "1", 0.0, f.work_cell, int(f.station.slot), int(f.team.team_id)).ok)
+	var zero_endpoint: Dictionary = Runtime.advance_ship_repair_work(f.data, "1", 0.0, f.work_cell, int(f.station.slot), int(f.team.team_id))
+	assert(zero_endpoint.ok)
 	assert(f.vehicle.naval.repair.is_empty() and int(f.vehicle.holder.version) == version and Fatigue.read(f.row) == fatigue)
 	work.finish_shared_work_prefix(admitted)
+	# As the Lab does after its endpoint: break the transient ledger cycle
+	# (priors -> candidate -> prefix -> same priors).
+	priors.clear()
 	_close_point(f)
 
 func _revision_source_limit() -> void:
