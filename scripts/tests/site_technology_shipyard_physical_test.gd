@@ -336,6 +336,9 @@ func _shipyard_work_point(fixture: Dictionary, seconds: float) -> Dictionary:
 	lab._commit_shared_work_pools()
 	_check(lab.terrain.site.features[fixture.yard] == progress and fixture.team.team_fatigue == fatigue, "The same actual registered interval spends work and pooled fatigue only once")
 	workers.finish_shared_work_prefix(admitted)
+	# As the Lab does after its endpoint: every candidate is used, so break the
+	# transient ledger cycle (priors -> candidate -> prefix -> same priors).
+	priors.clear()
 	return admitted
 
 func _two_true_workers_and_suspended_save() -> void:

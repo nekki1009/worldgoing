@@ -490,7 +490,7 @@ func _productive_step() -> void:
 	if not selected.ok: _productive_result(selected); return
 	var order: Dictionary = selected.order
 	var runtime: Variant = Runtime
-	if order.kind == "ship_cooperation" and order.payload.delivery_receipts.size() < 2:
+	if order.kind == "ship_cooperation" and not Runtime.settlement_ship_delivery_complete(order.payload):
 		var prepared: Dictionary = runtime.call("prepare_settlement_ship_delivery", query.terrain_ref, str(query.scope_id), str(order.id), _scope_requester())
 		_productive_result(runtime.call("publish_settlement_ship_delivery", prepared) if prepared.ok else prepared)
 		return

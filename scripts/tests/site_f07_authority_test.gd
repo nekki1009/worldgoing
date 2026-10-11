@@ -94,7 +94,14 @@ func _check_budget_regrant_revoke_and_unrelated_jobs() -> void:
 	var ordinary := f.actions.job_for(2)
 	_check(not f.actions.stop_technology(1, 2).ok and f.actions.job_for(2) == ordinary, "Technology stop cannot cancel an ordinary arrow job")
 	_check(f.commit_snapshot() == before, "Refused technology stop does not edit project state")
-	_check(f.actions.grant_technology_budget(1, {}, "revoke").ok and f.actions.job_for(2) == ordinary, "Budget revocation cancels only related technology trials")
+	# job_for() deep-copies the job with its live site_state; the revoke itself changes
+	# that site, so compare the ordinary job without it.
+	var ordinary_job := ordinary.duplicate()
+	ordinary_job.erase("site_state")
+	var revoked := f.actions.grant_technology_budget(1, {}, "revoke")
+	var after_job := f.actions.job_for(2)
+	after_job.erase("site_state")
+	_check(revoked.ok and f.actions.is_busy(2) and after_job == ordinary_job, "Budget revocation cancels only related technology trials")
 	f.close()
 
 func _check_accepted_family_handover_and_distinct_material_rights() -> void:

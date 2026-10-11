@@ -5,6 +5,7 @@ extends "res://scripts/tests/site_f07_cold_jobs_test.gd"
 ## complete TerrainLab/Region replay/Native/visual/full40 proof.
 const F08Catalog = preload("res://scripts/terrain_lab/site_technology_catalog.gd")
 var f08_deadline := 0
+var f08_project_id := 0
 
 func _f08_fixture() -> Fixture:
 	var f := Fixture.new()
@@ -39,6 +40,7 @@ func _f08_item_count(f: Fixture) -> int:
 
 func _three_true_crossbows() -> void:
 	var f := _f08_fixture()
+	f08_project_id = int(f.terrain.site.family.technology.get("active", 0))
 	var original_stock: Dictionary = f.terrain.site.inventory.duplicate()
 	for index: int in 3:
 		_f08_begin(f)
@@ -53,7 +55,10 @@ func _three_true_crossbows() -> void:
 			f.terrain.site.capacity = capacity
 		var completed: Array = f.actions.settle_after_contacts()
 		check(completed.size() == 1 and completed[0].ok and _f08_item_count(f) == index + 1, "One actual unique original crossbow and Scope result commit together")
-		var project: Dictionary = Technology.active_project(f.terrain.site.family.technology)
+		# The third result teaches F08 and archives the project; read the same one by id.
+		var project: Dictionary = {}
+		for candidate: Dictionary in f.terrain.site.family.technology.get("projects", []):
+			if int(candidate.id) == f08_project_id: project = candidate
 		check(project.receipts.size() == index + 1 and project.budget.payments.size() == index + 1, "Each real paid attempt contributes exactly one personal receipt")
 		var before := f.snapshot()
 		check(not f.actions._commit_scope_ranged_craft(job).ok and f.snapshot() == before, "Original completed job cannot replay payment or evidence")

@@ -8,6 +8,19 @@ func _ship_order_fixture(known: bool = true) -> Dictionary:
 	f.data.site.family.technology.known = ["F13"]
 	f.data.site.settlement.technology.known = ["S12"] if known else []
 	f.helper = f.team.combat_identity(2)
+	# The packed fixture army holds every neighbour of the helper; stand him inside
+	# the yard footprint, off both shore stations and every team cell.
+	var yard_feature: Dictionary = f.data.site.features[f.yard]
+	var helper_index: int = f.team.index_for_identity(int(f.helper))
+	var station_cells: Array[int] = []
+	for station: Dictionary in Runtime.technology_shipyard_work_slots(f.data, yard_feature): station_cells.append(int(station.cell))
+	for fixture_cell: int in yard_feature.cells:
+		var spot: Vector2i = f.data.cell_from_index(fixture_cell)
+		if f.data.is_walkable(spot) and not station_cells.has(fixture_cell) and not f.team.cells.has(spot):
+			f.team._cell_owners.erase(f.team.cells[helper_index])
+			f.team.cells[helper_index] = spot
+			f.team._cell_owners[spot] = helper_index
+			break
 	_check(Stocks.ensure_storage(f.data, str(f.warehouse), 1).ok, "Original source Warehouse has its actual holder")
 	var actor: Dictionary = f.actions._person(int(f.control))
 	var cost := Runtime.Ships.build_cost("ferry")
@@ -28,18 +41,50 @@ func _adopt_ship_order(f: Dictionary, project_id: int = 0) -> String:
 	return str(requested.order_id)
 
 func _deliver_ship_order(f: Dictionary, id: String) -> void:
+	var donor_contact: Vector2i = f.lab.character.terrain_cell
 	var first := Runtime.prepare_settlement_ship_delivery(f.data, str(f.settlement_id), id, int(f.control))
 	_check(first.ok and Runtime.publish_settlement_ship_delivery(first).ok, "First actual source-to-carrier transfer publishes one physical leg")
 	var order: Dictionary = f.data.site.settlement.technology_operations.orders[id]
 	_check(order.payload.delivery_receipts.size() == 1 and order.payload.spent.is_empty(), "Physical supply is not a second manufacture payment")
+	# A real Store round trip of the mid-delivery state (carrier holding one take).
+	f.lab.site_controller._capture_positions()
+	var mid_saved := ShipStore.save(f.data, "user://technology_s12_mid_delivery.json")
+	var mid_loaded := ShipStore.load_site("user://technology_s12_mid_delivery.json") if mid_saved.ok else mid_saved
+	var mid_data: TerrainData = mid_loaded.get("data", mid_loaded.get("terrain")) if mid_loaded.ok else null
+	var mid_order: Dictionary = mid_data.site.settlement.technology_operations.orders.get(id, {}) if mid_data != null else {}
+	_check(mid_saved.ok and mid_loaded.ok and not mid_order.is_empty() and mid_order.payload.delivery_receipts == order.payload.delivery_receipts and not Runtime.settlement_ship_delivery_complete(mid_order.payload), "A mid-delivery order (carrier holding one take) saves and reloads as the same partial state: " + str(mid_loaded.get("code", "")) + " " + str(mid_loaded.get("message", "")))
 	var state := var_to_bytes(f.data.site)
 	_check(not Runtime.publish_settlement_ship_delivery(first).ok and var_to_bytes(f.data.site) == state, "One actual prepared delivery cannot replay")
 	_check(not Runtime.prepare_settlement_ship_delivery(f.data, str(f.settlement_id), id, int(f.control)).ok and var_to_bytes(f.data.site) == state, "Remote second contact cannot copy carrier cargo into the yard")
 	_check(f.lab.character.place(f.data.cell_from_index(int(f.data.site.features[f.yard].entrance)), true), "Same actual carrier reaches the original shipyard")
 	var second := Runtime.prepare_settlement_ship_delivery(f.data, str(f.settlement_id), id, int(f.control))
 	_check(second.ok and Runtime.publish_settlement_ship_delivery(second).ok, "Second original carrier-to-yard contact transfers actual material once")
-	_check(order.payload.delivery_receipts.size() == 2 and order.payload.spent.is_empty(), "Finite two physical legs retain their own bounded original history")
+	# A person carries at most Runtime.CARRY_CAPACITY; the same carrier repeats the
+	# two real contacts until the delivered legs add up to the whole cap.
+	var legs_ok := true
+	var rounds := 1
+	while legs_ok and not Runtime.settlement_ship_delivery_complete(order.payload) and rounds < 20:
+		rounds += 1
+		legs_ok = f.lab.character.place(donor_contact, true)
+		var take := Runtime.prepare_settlement_ship_delivery(f.data, str(f.settlement_id), id, int(f.control))
+		legs_ok = legs_ok and take.ok and Runtime.publish_settlement_ship_delivery(take).ok
+		legs_ok = legs_ok and f.lab.character.place(f.data.cell_from_index(int(f.data.site.features[f.yard].entrance)), true)
+		var deliver := Runtime.prepare_settlement_ship_delivery(f.data, str(f.settlement_id), id, int(f.control))
+		legs_ok = legs_ok and deliver.ok and Runtime.publish_settlement_ship_delivery(deliver).ok
+	_check(legs_ok and Runtime.settlement_ship_delivery_complete(order.payload) and rounds == ceili(float(Runtime.inventory_size(order.payload.cap)) / float(Runtime.CARRY_CAPACITY)) and order.payload.delivery_receipts.size() == 2 * rounds, "Every later round repeats the same two real contacts until the whole cap is delivered")
+	_check(Runtime.valid_settlement_ship_order(f.data, f.data.site, order) and not Runtime.prepare_settlement_ship_delivery(f.data, str(f.settlement_id), id, int(f.control)).ok, "A fully delivered order validates and refuses another leg")
+	_check(order.payload.spent.is_empty(), "Finite physical legs retain their own bounded original history")
 	_check(Runtime.grant_settlement_operation_source(f.data, str(f.settlement_id), id, int(f.control), str(f.yard)).ok, "Head at the real yard explicitly grants the finite manufacturing source without resetting cap/spent")
+	# The carrier ends on the yard entrance, which is also a shore station; after the
+	# grant he steps to a free footprint cell so both named workers can take theirs.
+	var yard_cells: Dictionary = f.data.site.features[f.yard]
+	var busy_cells: Array[int] = []
+	for station: Dictionary in Runtime.technology_shipyard_work_slots(f.data, yard_cells): busy_cells.append(int(station.cell))
+	for fixture_cell: int in yard_cells.cells:
+		var spot: Vector2i = f.data.cell_from_index(fixture_cell)
+		if f.data.is_walkable(spot) and not busy_cells.has(fixture_cell) and not f.team.cells.has(spot):
+			_check(f.lab.character.place(spot, true), "The carrier steps off the shore station after the grant")
+			break
 
 func _place_ship_workers(f: Dictionary) -> void:
 	for identity: int in [int(f.executor), int(f.helper)]:
@@ -64,7 +109,7 @@ func _known_ship_once_and_resume() -> void:
 	_check(Runtime.begin_settlement_ship_operation(data, str(f.settlement_id), id, true).ok and var_to_bytes([data.site, f.team.capture_combat_state()]) == before, "Full local cost/two original tasks/launch candidates pass purely before payment")
 	_check(Runtime.begin_settlement_ship_operation(data, str(f.settlement_id), id).ok, "Actual named ferry begins in the original ship owner")
 	var order: Dictionary = data.site.settlement.technology_operations.orders[id]
-	_check(local.cargo.is_empty() and int(local.holder.version) == version + 1 and var_to_bytes([data.site.inventory, data.site.depot_items]) == camp, "True whole hull material debits the SAME yard once; camp pays nothing")
+	_check(Runtime.inventory_size(local.cargo) == 0 and int(local.holder.version) == version + 1 and var_to_bytes([data.site.inventory, data.site.depot_items]) == camp, "True whole hull material debits the SAME yard once; camp pays nothing")
 	_check(yard.ship_build.total_work == 600.0 and yard.technology_ship_method == {"version": 1} and order.payload.spent == order.payload.cap, "Original baseline remains 600; one F13 marker and one full manufacturing debit")
 	_place_ship_workers(f)
 	var master = f.actions._person(int(f.executor))

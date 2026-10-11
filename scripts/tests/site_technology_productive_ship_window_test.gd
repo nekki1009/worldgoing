@@ -45,11 +45,21 @@ func _window_ship_output() -> void:
 	_check(Stocks.ensure_storage(f.data, str(f.yard), 1).ok, "Explicit original stock owner opens the adopted yard endpoint")
 	window.refresh()
 	_choose_ui(form.order, "key", id)
+	var donor_contact: Vector2i = f.lab.character.terrain_cell
 	window._productive_step()
 	_check(orders[id].payload.delivery_receipts.size() == 1 and orders[id].payload.spent.is_empty(), "UI first step publishes one real donor-to-carrier transfer without manufacture double-payment")
 	_check(f.lab.character.place(f.data.cell_from_index(int(f.data.site.features[f.yard].entrance)), true), "Same actual carrier reaches the second original contact")
 	window._productive_step()
 	_check(orders[id].payload.delivery_receipts.size() == 2, "UI second step deposits the real original carrier materials once")
+	# Later UI rounds repeat the same two real contacts within the carrier's load.
+	var ui_rounds := 1
+	while not Runtime.settlement_ship_delivery_complete(orders[id].payload) and ui_rounds < 20:
+		ui_rounds += 1
+		f.lab.character.place(donor_contact, true)
+		window._productive_step()
+		f.lab.character.place(f.data.cell_from_index(int(f.data.site.features[f.yard].entrance)), true)
+		window._productive_step()
+	_check(Runtime.settlement_ship_delivery_complete(orders[id].payload) and orders[id].payload.delivery_receipts.size() == 2 * ui_rounds, "UI rounds deliver the whole cap through real carrier legs")
 	_choose_ui(form.source, "id", "feature:" + str(f.yard))
 	window._productive_source(false)
 	_check(orders[id].payload.source.status == "granted" and orders[id].payload.spent.is_empty(), "UI explicit finite source grant changes no manufacture spend")

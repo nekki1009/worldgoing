@@ -238,6 +238,19 @@ func _earned_fixture(target: String, fixed: bool = false, metropolis: bool = fal
 	var housing = {}
 	var identities: Array[int] = []
 	for index: int in team.combat_units.size(): identities.append(team.combat_identity(index))
+	if slots.size() < identities.size():
+		# The houses fell short on this generated world (height step / edge overlap);
+		# one more genuine large house keeps a real house slot for every resident.
+		var extra_house: String = _earned_setup_feature(lab, "house", Vector2i(38, 25), Vector2i.ONE, {"variant": "large"}, reserved_center)
+		var extra_feature: Dictionary = data.site.features[extra_house]
+		for fixture_pair: Dictionary in Runtime._building_entrances(data, extra_feature.cells, int(extra_feature.quarter)):
+			for fixture_key: String in Env.resources_in(data, Rect2i(fixture_pair.cell, Vector2i.ONE)): Env.change(data, fixture_key, {"cleared": true, "remaining": 0})
+		Env.rebuild_indexes(data)
+		houses.append(extra_house)
+		# The new house can take cells from a neighbour's entrance row: recount all.
+		slots.clear()
+		for recount_house: String in houses:
+			for cell: int in Runtime.house_layout(data, recount_house).slots: slots.append({"house_id": recount_house, "cell": cell})
 	_check(slots.size() >= identities.size(), "Actual initial houses hold all original finite NPC residents")
 	for index: int in identities.size():
 		housing[str(identities[index])] = {"version": 1, "house_id": str(slots[index].house_id), "cell": int(slots[index].cell)}

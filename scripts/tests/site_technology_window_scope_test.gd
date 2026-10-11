@@ -30,12 +30,28 @@ func run() -> void:
 	var lab = TerrainLab.new()
 	lab.restore_only = true # No original UI frame/update or simulation is run.
 	lab.terrain = fixture.terrain
+	# The F07 fixture allocates terrain by hand; real worlds size the feature index
+	# in Env. Building previews behind the Window read it.
+	if lab.terrain.feature_at.size() != lab.terrain.surface_types.size():
+		lab.terrain.feature_at.resize(lab.terrain.surface_types.size())
+		lab.terrain.feature_at.fill(0)
+	# Founding below reads real land conditions; give the hand fixture one explicit,
+	# uniform soil (as it already gives uniform walkable flags).
+	for land_name: String in ["fertility", "moisture", "drainage", "foundation", "groundwater"]:
+		var land = lab.terrain.get(land_name)
+		if land.size() != lab.terrain.surface_types.size():
+			land.resize(lab.terrain.surface_types.size())
+			land.fill(50)
+			lab.terrain.set(land_name, land)
 	lab.character = fixture.character
 	lab.npc = fixture.npc
 	lab.combat_actors.append(fixture.character)
 	lab.combat_actors.append(fixture.npc)
 	lab.site_controller = fixture.site_controller
 	fixture.site_controller.lab = lab
+	# The real controller initialises its vehicle transport on bind; stock reads
+	# (productive sources, preview_build/found) go through it.
+	fixture.site_controller.vehicles.init(fixture.site_controller)
 	fixture.site_controller.person_actions = fixture.actions
 	fixture.actions.init(lab)
 	var column = VBoxContainer.new()
@@ -43,7 +59,8 @@ func run() -> void:
 	var window = WindowOwner.new()
 	var before = fixture.commit_snapshot()
 	window.install(fixture.site_controller, column)
-	check(window._scope_node.item_count == 28, "All 15 family and 13 settlement nodes are visible")
+	# The Window also lists the 12 nation nodes (N01-N12) added to the catalog.
+	check(window._scope_node.item_count == 40, "All 15 family, 13 settlement and 12 nation nodes are visible")
 	check(window._buttons.has("F07BeginTrial") and window._buttons.has("F07BeginLesson"), "Original F07 inputs are retained")
 	select_node(window, "F03")
 	check(not bool(Catalog.get_node("F03").enabled), "This fixture covers the undelivered F03 activation boundary")

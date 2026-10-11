@@ -3032,6 +3032,7 @@ static func _enable_ship_zone(data: TerrainData, key: String) -> void:
 	data.site.zones.append({"cells": data.site.features[key].cells.duplicate(), "kind": -1, "action": "operate", "feature": key, "active": true})
 
 static func cancel_ship_build(data: TerrainData, key: String, requester_faction: int = -1, preview: bool = false) -> Dictionary:
+	if data.site.get("features", {}).get(key, {}).has("technology_settlement_order"): return fail("NAMED_STOP_REQUIRED", "本原有限船塢單只沿原 stop；私庫不退成營地物資")
 	if _ship_runtime_pending(data): return fail("BUSY", "原固定目標仍待補算或交接；暫不能接受新設施操作")
 	if not _siege_depot_ready(data): return fail("INVALID")
 	var feature: Dictionary = data.site.get("features", {}).get(key, {})
@@ -8041,6 +8042,29 @@ static func technology_siege_method_work_facts(data: TerrainData, vehicle: Dicti
 		learned = prefix.get("eligible_skills", []).has("F11")
 	return ok("本人木接倍率；助手仍基本工時", {"factor": 10.0 / 9.0 if learned else 1.0})
 
+# The order is supplied once its deliver legs (odd receipts) add up to the cap.
+static func settlement_ship_delivered(p: Dictionary) -> Dictionary:
+	var total := {}
+	for index: int in range(1, p.delivery_receipts.size(), 2):
+		var moved: Dictionary = p.delivery_receipts[index].resources
+		for key: String in moved: total[key] = int(total.get(key, 0)) + int(moved[key])
+	return total
+
+static func settlement_ship_delivery_complete(p: Dictionary) -> bool:
+	return p.delivery_receipts.size() % 2 == 0 and Technology.material_equal(settlement_ship_delivered(p), p.cap)
+
+static func _settlement_ship_next_load(p: Dictionary, free: int) -> Dictionary:
+	var delivered := settlement_ship_delivered(p)
+	var keys: Array = p.cap.keys()
+	keys.sort()
+	var next := {}
+	for key: String in keys:
+		var amount := mini(int(p.cap[key]) - int(delivered.get(key, 0)), free)
+		if amount <= 0: continue
+		next[key] = amount
+		free -= amount
+	return next
+
 # A loaded marker carries its version as a JSON number; accept the same integer.
 static func valid_technology_ship_method(raw: Variant) -> bool:
 	return Technology.keys(raw, ["version"]) and Technology.integer(raw.version, 1, 1)
@@ -8886,23 +8910,29 @@ static func prepare_settlement_ship_delivery(data: TerrainData, settlement_id: S
 	var actions: Variant = _technology_actions(data)
 	if refs.is_empty() or actions == null or not valid_settlement_ship_order(data, data.site, refs.order): return fail("NO_TARGET")
 	var p: Dictionary = refs.order.payload
-	if refs.order.status != "prepared" or not p.spent.is_empty() or p.delivery_receipts.size() >= 2: return fail("COMPLETE")
+	if refs.order.status != "prepared" or not p.spent.is_empty() or settlement_ship_delivery_complete(p): return fail("COMPLETE")
 	if requester_id != int(actions._technology_controlled()) or requester_id != int(refs.order.authorizer_id): return fail("NO_AUTHORITY")
 	var carrier: Dictionary = actions._person(int(p.carrier_id))
 	if carrier.is_empty() or not actions._technology_military_person_ready(carrier, refs.order) \
 		or not actions._technology_consent_valid(int(p.carrier_id), p.consents, str(p.purpose), {}, true, refs.order): return fail("NO_CONSENT")
+	# Legs alternate: take (donor -> carrier), then deliver (carrier -> yard).
 	var leg: int = p.delivery_receipts.size()
-	var source := str(p.donor_id) if leg == 0 else "person:" + str(p.carrier_id)
-	var destination := "person:" + str(p.carrier_id) if leg == 0 else "feature:" + str(p.feature_id)
+	var take := leg % 2 == 0
+	var source := str(p.donor_id) if take else "person:" + str(p.carrier_id)
+	var destination := "person:" + str(p.carrier_id) if take else "feature:" + str(p.feature_id)
 	var vehicles: Variant = actions.lab.site_controller.vehicles
 	var a: Dictionary = vehicles._stock(source, true)
 	var b: Dictionary = vehicles._stock(destination, true)
 	if a.is_empty() or b.is_empty(): return fail("NO_TARGET")
-	var transfer: Dictionary = vehicles.prepare_transfer(source, destination, p.cap, [], int(a.holder.version), int(b.holder.version), requester_id)
+	# A person carries at most its own free load: a take moves what remains of the
+	# cap up to that load, and the following deliver moves exactly that take.
+	var resources: Dictionary = _settlement_ship_next_load(p, floori(float(b.capacity) - carried_load(data.site, b.cargo, b.holder))) if take else p.delivery_receipts[leg - 1].resources.duplicate(true)
+	if resources.is_empty(): return fail("STORAGE_FULL")
+	var transfer: Dictionary = vehicles.prepare_transfer(source, destination, resources, [], int(a.holder.version), int(b.holder.version), requester_id)
 	if not transfer.ok: return transfer
 	var receipt := {"id": "ship-delivery:" + JSON.stringify([str(data.site.id), order_id, leg, source, destination, int(a.holder.version), int(b.holder.version)]),
 		"site_id": str(data.site.id), "carrier_id": int(p.carrier_id), "source_holder": source, "destination_holder": destination,
-		"source_version": int(a.holder.version), "destination_version": int(b.holder.version), "resources": p.cap.duplicate(true)}
+		"source_version": int(a.holder.version), "destination_version": int(b.holder.version), "resources": resources.duplicate(true)}
 	var candidate: Dictionary = refs.order.duplicate(true)
 	candidate.payload.delivery_receipts.append(receipt)
 	candidate.revision = int(candidate.revision) + 1
@@ -10747,7 +10777,8 @@ static func _technology_material_source(data: TerrainData, selector: Dictionary,
 		elif selector.has("settlement_id"):
 			operation_ref = selector.duplicate()
 			if not actions.has_method("settlement_operation_material_source_candidate"): return fail("UNSUPPORTED")
-			query = actions.settlement_operation_material_source_candidate(str(selector.settlement_id), str(selector.order_id), binding)
+			var settlement_source: Dictionary = actions.settlement_operation_material_source_candidate(str(selector.settlement_id), str(selector.order_id), binding)
+			query = ok("", {"source": settlement_source}) if settlement_source.get("ok", false) else settlement_source
 		else:
 			operation_ref = selector.duplicate()
 			if not actions.has_method("nation_operation_material_source_candidate"): return fail("UNSUPPORTED")
@@ -12498,7 +12529,7 @@ static func valid_settlement_ship_order(data: TerrainData, site: Dictionary, raw
 		or not p.purpose is String or p.purpose.is_empty() or p.purpose.length() > 2048 \
 		or not p.donor_id is String or not (p.donor_id == "depot" or p.donor_id.begins_with("feature:")) \
 		or not Technology.material_equal(p.cap, Ships.build_cost("ferry")) or not Technology.material_stack(p.spent) \
-		or not p.delivery_receipts is Array or p.delivery_receipts.size() > 2 or not p.consents is Array or p.consents.size() > 3 \
+		or not p.delivery_receipts is Array or p.delivery_receipts.size() > 2 * inventory_size(p.cap) or not p.consents is Array or p.consents.size() > 3 \
 		or not raw.receipts is Array or raw.receipts.size() != int(p.completed): return false
 	if p.donor_id.begins_with("feature:"):
 		var donor := str(p.donor_id).trim_prefix("feature:")
@@ -12507,24 +12538,33 @@ static func valid_settlement_ship_order(data: TerrainData, site: Dictionary, raw
 		or p.source.holder != "feature:" + str(p.feature_id) or not Technology.integer(p.source.grantor_id, 1) or p.source.status not in ["granted", "revoked"]: return false
 	if p.project_id == 0 and p.purpose != "settlement-ship:" + JSON.stringify([str(site.get("id", "")), str(p.settlement_id), str(raw.id)]): return false
 	var seen := {}
+	var taken := {}
 	for index: int in p.delivery_receipts.size():
 		var r: Variant = p.delivery_receipts[index]
-		var source := str(p.donor_id) if index == 0 else "person:" + str(p.carrier_id)
-		var destination := "person:" + str(p.carrier_id) if index == 0 else "feature:" + str(p.feature_id)
+		# A loaded carrier id is a JSON float: str(1.0) would read "person:1.0".
+		var source := str(p.donor_id) if index % 2 == 0 else "person:" + str(int(p.carrier_id))
+		var destination := "person:" + str(int(p.carrier_id)) if index % 2 == 0 else "feature:" + str(p.feature_id)
 		if not Technology.keys(r, ["id", "site_id", "carrier_id", "source_holder", "destination_holder", "source_version", "destination_version", "resources"]) \
 			or r.site_id != str(site.get("id", "")) or r.carrier_id != p.carrier_id or r.source_holder != source or r.destination_holder != destination \
 			or not Technology.integer(r.source_version, 0, 2147483645) or not Technology.integer(r.destination_version, 0, 2147483645) \
-			or not Technology.material_equal(r.resources, p.cap) \
+			or not Technology.material_stack(r.resources) or r.resources.is_empty() or inventory_size(r.resources) > CARRY_CAPACITY \
+			or index % 2 == 1 and not Technology.material_equal(r.resources, p.delivery_receipts[index - 1].resources) \
+			or index % 2 == 1 and int(r.source_version) < int(p.delivery_receipts[index - 1].destination_version) + 1 \
+			or index > 0 and index % 2 == 0 and int(r.destination_version) < int(p.delivery_receipts[index - 1].source_version) + 1 \
 			or r.id != "ship-delivery:" + JSON.stringify([r.site_id, str(raw.id), index, source, destination, int(r.source_version), int(r.destination_version)]) \
 			or seen.has(r.id): return false
 		seen[r.id] = true
-	if p.delivery_receipts.size() == 2 and int(p.delivery_receipts[1].source_version) < int(p.delivery_receipts[0].destination_version) + 1: return false
+		if index % 2 == 0:
+			for key: String in r.resources: taken[key] = int(taken.get(key, 0)) + int(r.resources[key])
+	for key: String in taken:
+		if not p.cap.has(key) or int(taken[key]) > int(p.cap[key]): return false
 	seen.clear()
 	for c: Variant in p.consents:
 		if not Technology.keys(c, ["site_id", "team_id", "person_id", "purpose", "decider_id", "revision", "status"]) \
-			or c.site_id != str(site.get("id", "")) or not Technology.integer(c.team_id, 1) or c.person_id not in [p.operator_id, p.helper_id, p.carrier_id] \
-			or seen.has(c.person_id) or not Technology.integer(c.decider_id, 1) or not Technology.integer(c.revision, 0) or c.status != "accepted" or c.purpose != p.purpose: return false
-		seen[c.person_id] = true
+			or c.site_id != str(site.get("id", "")) or not Technology.integer(c.team_id, 1) or not Technology.integer(c.person_id, 1) \
+			or int(c.person_id) not in [int(p.operator_id), int(p.helper_id), int(p.carrier_id)] \
+			or seen.has(int(c.person_id)) or not Technology.integer(c.decider_id, 1) or not Technology.integer(c.revision, 0) or c.status != "accepted" or c.purpose != p.purpose: return false
+		seen[int(c.person_id)] = true
 	var f: Dictionary = site.get("features", {}).get(str(p.feature_id), {})
 	var paid: Dictionary = f.get("tech_batch", {})
 	var bound: bool = f.get("technology_settlement_order", {}) == {"settlement_id": str(p.settlement_id), "order_id": str(raw.id)}
@@ -12533,7 +12573,7 @@ static func valid_settlement_ship_order(data: TerrainData, site: Dictionary, raw
 			or paid.source_holder != p.source.holder or not Technology.material_equal(paid.materials, p.cap) \
 			or paid.operator_id != p.operator_id and (raw.status != "cancelled" or paid.operator_id != 0) \
 			or not f.has("ship_build") or f.get("batch_paid") != true: return false
-		if not Technology.material_equal(p.spent, p.cap) or p.delivery_receipts.size() != 2 or p.completed != 0: return false
+		if not Technology.material_equal(p.spent, p.cap) or not settlement_ship_delivery_complete(p) or p.completed != 0: return false
 	elif raw.status == "active" or bound and raw.status == "prepared": return false
 	if raw.status == "prepared" and not p.spent.is_empty() or raw.status in ["active", "completed"] and not Technology.material_equal(p.spent, p.cap): return false
 	if raw.status in ["suspended", "cancelled"] and not p.spent.is_empty() and not Technology.material_equal(p.spent, p.cap): return false
@@ -13344,6 +13384,37 @@ static func _settlement_ship_resume_candidate(data: TerrainData, current: Dictio
 	var named := _settlement_ship_named_candidate(data, current, token, context.zone)
 	if not named.ok: return named
 	return ok("原已付船體兩工位可真重派", {"already": false, "zone": context.zone, "existing": context.existing, "named": named})
+
+static func settlement_ship_binding_valid(order: Dictionary, binding: String) -> bool:
+	return order.get("kind") == "ship_cooperation" and binding == "ferry_build"
+
+static func settlement_ship_material_source_candidate(data: TerrainData, settlement_id: String, order_id: String, binding: String = "") -> Dictionary:
+	var refs := _settlement_order_state(data, settlement_id, order_id)
+	if refs.is_empty() or not valid_settlement_ship_order(data, data.site, refs.order) or not binding.is_empty() and binding != "ferry_build": return fail("NO_TARGET")
+	var p: Dictionary = refs.order.payload
+	if refs.order.status not in ["prepared", "active", "suspended"] or p.source.status != "granted" or not settlement_ship_delivery_complete(p) or not p.spent.is_empty(): return fail("NO_BUDGET")
+	var endpoint := SiteStockpiles.stock_endpoint(data, str(p.feature_id))
+	if endpoint.is_empty() or endpoint.get("withdraw_only", true) or not _item_holder_shape(endpoint.get("holder", {})) or endpoint.holder.holder != p.source.holder \
+		or int(endpoint.get("faction", -1)) != int(refs.settlement.get("owner_faction", -2)) or not Technology.integer(endpoint.holder.version, 0, 2147483645): return fail("STALE_SOURCE")
+	return ok("", {"kind": "settlement_order", "holder": "settlement-order:" + JSON.stringify([str(data.site.id), settlement_id, order_id]), "source_site_id": str(data.site.id),
+		"grantor": {"site_id": str(data.site.id), "person_id": int(p.source.grantor_id)}, "cap": p.cap.duplicate(true), "spent": p.spent.duplicate(true),
+		"physical_holder": endpoint.holder, "physical_cargo": endpoint.cargo, "holder_version": int(endpoint.holder.version),
+		"expected_refs": {"terrain": data, "site": data.site, "nation": refs.settlement, "operations": refs.operations, "order": refs.order, "holder": endpoint.holder, "cargo": endpoint.cargo}})
+
+static func settlement_ship_paid_source_candidate(data: TerrainData, token: Dictionary, order_id: String) -> Dictionary:
+	var refs := _settlement_order_state(data, str(token.get("scope_id", "")), order_id)
+	if refs.is_empty() or not valid_settlement_ship_order(data, data.site, refs.order) or token.get("scope") != "settlement": return fail("STALE_SOURCE")
+	var p: Dictionary = refs.order.payload
+	var target: Dictionary = data.site.features.get(str(p.feature_id), {})
+	var paid: Dictionary = target.get("tech_batch", {})
+	if target.get("technology_settlement_order") != {"settlement_id": str(p.settlement_id), "order_id": order_id} or not is_same(target.get("tech_trial"), token) \
+		or token.get("tech_id") != "S12" or token.get("binding") != "ferry_build" or token.get("target_id") != "feature:" + str(p.feature_id) \
+		or token.get("project_id") != p.project_id or token.get("purpose") != p.purpose or token.get("person", {}).get("person_id") != p.operator_id \
+		or not valid_technology_batch(paid, data, str(p.feature_id)) or paid.token != token or paid.source_holder != p.source.holder \
+		or not Technology.material_equal(paid.materials, p.cap) or not Technology.material_equal(p.spent, p.cap) or not target.has("ship_build"): return fail("STALE_SOURCE")
+	return ok("原船體全款歷史；不讀已耗／已拆 donor", {"kind": "settlement_order", "holder": "settlement-order:" + JSON.stringify([str(data.site.id), str(p.settlement_id), order_id]), "source_site_id": str(data.site.id),
+		"grantor": {"site_id": str(data.site.id), "person_id": int(p.source.grantor_id)}, "cap": p.cap.duplicate(true), "spent": p.spent.duplicate(true), "settlement": refs.settlement,
+		"operations": refs.operations, "order": refs.order, "target": target, "paid": paid, "source_holder": str(paid.source_holder)})
 
 static func prepare_settlement_ship_payment(data: TerrainData, selector: Dictionary, cost: Dictionary) -> Dictionary:
 	var current := settlement_ship_work_preflight(data, str(selector.get("settlement_id", "")), str(selector.get("order_id", "")), "ferry_build")
