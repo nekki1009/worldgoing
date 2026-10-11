@@ -7311,6 +7311,9 @@ static func publish_feature_output(data: TerrainData, prepared: Dictionary) -> v
 		# One current immutable output, with a finite monotonic original sequence.
 		# Accepted Scope/Nation receipts retain their own strict historical evidence.
 		prepared.feature_ref.technology_output = {"version": 1, "next_seq": int(prepared.receipt.id) + 1, "receipts": [prepared.receipt.duplicate(true)]}
+	# Release the named worker first: finish_named_feature_work matches the task by its
+	# "feature:<key>" target, which the next lines clear.
+	_technology_finish_named_feature(data, str(prepared.receipt.get("feature_id", "")))
 	prepared.worker_ref.target = ""
 	prepared.worker_ref.mode = "idle"
 	data.site.total_produced = int(data.site.total_produced) + inventory_size(prepared.output) + prepared.products.get("item_ids", []).size()
@@ -7326,7 +7329,6 @@ static func publish_feature_output(data: TerrainData, prepared: Dictionary) -> v
 		_stop_feature_zones(data, str(prepared.receipt.get("feature_id", order.get("payload", {}).get("feature_id", ""))), "operate")
 		if order.get("status") in ["completed", "cancelled"]: prepared.feature_ref.erase("technology_settlement_order")
 	prepared.feature_ref.erase("technology_order")
-	_technology_finish_named_feature(data, str(prepared.receipt.get("feature_id", "")))
 	data.environment_revision += 1
 	_audio_p3_work_finished_notice(data, str(prepared.receipt.get("feature_id", "")), prepared.worker_ref,
 		prepared.feature_before, "produce", int(prepared.receipt.get("operator_id", 0)), prepared.output,
