@@ -114,6 +114,7 @@ func _replacement_recipe(f: Dictionary, key: String, recipe: String, output: Dic
 	var paid_history: Dictionary = ledger.duplicate(true)
 	paid_history.erase("operator_id")
 	paid_history.erase("work_seconds")
+	paid_history.erase("effective_seconds") # Round 16 work-sum field, like work_seconds.
 	var prior_work := float(ledger.work_seconds)
 	var started := float(feature.production)
 	var station: Vector2i = f.data.cell_from_index(int(feature.entrance))
@@ -149,6 +150,7 @@ func _replacement_recipe(f: Dictionary, key: String, recipe: String, output: Dic
 	var loaded_history: Dictionary = ledger.duplicate(true)
 	loaded_history.erase("operator_id")
 	loaded_history.erase("work_seconds")
+	loaded_history.erase("effective_seconds") # Round 16 work-sum field, like work_seconds.
 	_require(loaded_history == paid_history and float(ledger.work_seconds) == prior_work and f.data.site.inventory == paid_stock, "True cold restore retains one exact payment/material/source identity and original work sum")
 	_original_feature_ui(f, key, recipe, int(f.helper), true)
 	_interval(f)
@@ -156,6 +158,7 @@ func _replacement_recipe(f: Dictionary, key: String, recipe: String, output: Dic
 	var continued_history: Dictionary = ledger.duplicate(true)
 	continued_history.erase("operator_id")
 	continued_history.erase("work_seconds")
+	continued_history.erase("effective_seconds") # Round 16 work-sum field, like work_seconds.
 	_require(is_same(ledger, feature.tech_batch) and continued_history == paid_history and int(ledger.operator_id) == int(f.helper) and float(ledger.work_seconds) > prior_work, "Successful actual replacement prefix updates only same original ledger operator/work sum")
 	_require(f.lab.site_controller.work_team.cancel(int(f.helper)).ok, "Real student legally releases original work before leaving")
 	_park(f, int(f.helper), station + Vector2i(-3, 2))

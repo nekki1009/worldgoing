@@ -30,12 +30,34 @@ func _normalized(value: Variant) -> String:
 	return JSON.stringify(JSON.parse_string(JSON.stringify(value, "", true, true)), "", true, true)
 
 func _require(condition: bool, label: String, detail: Variant = "") -> void:
-	assert(_check(condition, label, detail), label + " " + str(detail))
+	# Only a failure prints its detail, bounded and cycle-safe: live plans and
+	# held prefixes reference themselves and must never be stringified whole.
+	var text := "" if condition else _detail_text(detail)
+	var passed := _check(condition, label, text)
+	assert(passed, label + " " + text)
+
+func _detail_text(detail: Variant, depth: int = 0) -> String:
+	if detail is Dictionary:
+		var parts: Array[String] = []
+		for key: Variant in detail.keys().slice(0, 16):
+			var value: Variant = detail[key]
+			var shown := _detail_text(value, depth + 1) if depth < 1 and (value is Dictionary or value is Array) else ("<%s>" % type_string(typeof(value)) if value is Dictionary or value is Array or value is Object else str(value).left(160))
+			parts.append("%s: %s" % [str(key), shown])
+		return "{" + ", ".join(parts) + ("" if detail.size() <= 16 else ", ...%d keys" % detail.size()) + "}"
+	if detail is Array: return "Array[%d]" % detail.size()
+	if detail is Object: return "<%s>" % detail.get_class()
+	return str(detail).left(600)
 
 func _g06_source() -> RegionData:
 	# Reuse the checksummed original RegionData helper verbatim. Foundation's
 	# genuine source admission is required; never fill soil or erase fixed_base.
 	return _fixed_source()
+
+# Teardown timing only: draw a few frames so D3D12 runs the deferred frees of
+# released presenters before the next lab allocates. No-op when headless.
+func _settle_render_frees() -> void:
+	if DisplayServer.get_name() == "headless": return
+	for _frame: int in 3: RenderingServer.force_draw(false)
 
 func _birth(source: RegionData, category: String) -> Dictionary:
 	var lab := _source_lab("g06_" + category)
@@ -46,6 +68,7 @@ func _birth(source: RegionData, category: String) -> Dictionary:
 	slot.folder = "user://region_lab/worlds/%s/slots/%s" % [world, SLOT]
 	lab.site_controller._initial_world_candidate = slot
 	var result: Dictionary = lab.site_controller.open_fixed_world(manifest_path, world, SLOT, START, true, Artisans.PRIMARY)
+	_settle_render_frees()
 	_require(result.ok, "Actual full-pin Controller first-generation transaction", result)
 	_freeze(lab)
 	_require(lab.site_controller.region_slot == slot and int(slot._marker.generation) == 1 and not slot.initialization_pending(), "Same original Slot committed exactly one generation")
@@ -137,6 +160,12 @@ func _generated_production(fixed: Dictionary) -> Dictionary:
 		"category": fixed.category, "source_body_path": fixed.slot.site_path(START), "source_body_sha256": FileAccess.get_sha256(fixed.slot.site_path(START)),
 		"next_person": int(data.site.next_person_id), "next_item_birth": int(data.site.next_item), "geography": data.fingerprint(), "generated_seed": data.seed_value}
 
+func _clear_station(f: Dictionary, identity: int, cell: Vector2i) -> void:
+	# An earlier assignee may still stand on this station; park it first, as _transfer does.
+	for index: int in f.team.cells.size():
+		var other: int = f.team.combat_identity(index)
+		if other != identity and f.team.cells[index] == cell: _park(f, other, cell + Vector2i(0, 4))
+
 func _place(f: Dictionary, identity: int, cell: Vector2i) -> void:
 	# Explicit station fixture placement of SAME original GD hot rows; travel,
 	# Reservation Grid navigation and Native movement are separate named tests.
@@ -182,7 +211,14 @@ func _finite_stock(f: Dictionary, extra: Dictionary = {}) -> void:
 	f.data.site.depot_items.version = int(f.data.site.depot_items.version) + 1
 	_require(not f.data.site.has("technology_artisans") and int(f.data.site.next_item) == int(f.next_item_birth), "Supplied resources never claim a birth/product/skill grant")
 
+var _interval_failed := false
+
 func _interval(f: Dictionary, seconds: float = 60.0) -> Dictionary:
+	# After its first failure the shared interval stops working, so the long
+	# completion loops end quietly instead of repeating the same failure.
+	if _interval_failed: return {"effective": 0.0, "actual": 0.0, "handled": {}}
+	var failures_before := failures.size()
+	_interval_failed = true # Cleared at the end; a runtime error midway leaves it set.
 	var lab: TerrainLab = f.lab
 	var work: SiteWorkTeam = lab.site_controller.work_team
 	var requests := work.prepare_work_requests(seconds, seconds / 60.0)
@@ -212,6 +248,7 @@ func _interval(f: Dictionary, seconds: float = 60.0) -> Dictionary:
 	_work_effective += effective
 	_work_actual += actual
 	_work_intervals += 1
+	_interval_failed = failures.size() > failures_before
 	return {"effective": effective, "actual": actual, "handled": consumed.handled_seconds}
 
 func _idle_all(f: Dictionary) -> void:
@@ -222,6 +259,7 @@ func _idle_all(f: Dictionary) -> void:
 func _feature_assign(f: Dictionary, key: String, identity: int, action: String) -> void:
 	var feature: Dictionary = f.data.site.features[key]
 	var cell: Vector2i = f.data.cell_from_index(int(feature.repair.work_cell) if action == "repair" else int(feature.entrance))
+	_clear_station(f, identity, cell)
 	_place(f, identity, cell)
 	_park(f, int(f.commander), cell + Vector2i(0, 3))
 	var prepared: Dictionary = f.lab.site_controller.work_team.prepare_assign_feature(f.team, [identity], int(f.commander), key, action)
@@ -300,14 +338,15 @@ func _transfer(f: Dictionary, identity: int, source_id: String, destination_id: 
 		if other != identity and f.team.cells[index] == cell: _park(f, other, cell + Vector2i(0, 4))
 	_place(f, identity, cell)
 	_park(f, int(f.commander), cell + Vector2i(0, 3))
-	_require(f.lab.site_controller.order_team_logistics(f.team, [identity], int(f.commander), true).ok, "Actual current logistics decider names original person")
+	var logistics_people: Array[int] = [identity] # The controller API takes a typed array.
+	_require(f.lab.site_controller.order_team_logistics(f.team, logistics_people, int(f.commander), true).ok, "Actual current logistics decider names original person")
 	var vehicles: SiteVehicleTransport = f.lab.site_controller.vehicles
 	var source: Dictionary = vehicles._stock(source_id, source_id.begins_with("feature:") or destination_id.begins_with("feature:"))
 	var destination: Dictionary = vehicles._stock(destination_id, source_id.begins_with("feature:") or destination_id.begins_with("feature:"))
 	_require(not source.is_empty() and not destination.is_empty(), "True original physical cargo endpoints")
 	var result := vehicles.transfer(source_id, destination_id, resources, [], int(source.holder.version), int(destination.holder.version), int(f.commander))
 	_require(result.ok, "True original full-version adjacent resource transfer", result)
-	_require(f.lab.site_controller.order_team_logistics(f.team, [identity], int(f.commander), false).ok, "Original person ends logistics without new owner")
+	_require(f.lab.site_controller.order_team_logistics(f.team, logistics_people, int(f.commander), false).ok, "Original person ends logistics without new owner")
 
 func _processing(f: Dictionary) -> void:
 	_finite_stock(f, {"iron": 2, "charcoal": 3, "wool": 3})
@@ -446,6 +485,7 @@ func _cold_resume(f: Dictionary, label: String) -> void:
 	_freeze(lab)
 	_require(int(birth_counts[lab.get_instance_id()]) == 0 and _facts(lab.terrain.site) == facts and lab.region_bind_receipt(lab.terrain).get("complete", false), "Cold/reopen retains exact products/skills/allocators; no new birth")
 	f.lab.free()
+	_settle_render_frees()
 	f.lab = lab
 	f.data = lab.terrain
 	f.team = lab.army
@@ -474,6 +514,7 @@ func _generated_cold_resume(f: Dictionary, label: String) -> void:
 	_require(int(birth_counts[lab.get_instance_id()]) == 0 and _facts(lab.terrain.site) == facts and lab.region_bind_receipt(lab.terrain).get("complete", false), "Generated cold rebind retains true people/skills/items with zero births")
 	_require(_normalized([lab.terrain.site.features, lab.terrain.site.get("vehicles", {}), lab.terrain.site.inventory, lab.terrain.site.get("family", {})]) == products, "Actual completed products/finite budgets/history retain exact saved normalized values")
 	f.lab.free()
+	_settle_render_frees()
 	f.lab = lab
 	f.data = lab.terrain
 	f.team = lab.army

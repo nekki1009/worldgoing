@@ -13,13 +13,14 @@ const Policy = preload("res://scripts/terrain_lab/site_technology_policy.gd")
 const MENU := "res://scenes/main_menu/MainMenu.tscn"
 var checks := 0
 var deadline := 0
+var finished := false # _run completed and reported; the deadline only catches an unfinished run.
 
 func _initialize() -> void:
 	deadline = Time.get_ticks_msec() + 90000
 	_run.call_deferred()
 
 func _process(_delta: float) -> bool:
-	if Time.get_ticks_msec() > deadline:
+	if not finished and Time.get_ticks_msec() > deadline:
 		push_error("Original artisan birth deadline")
 		quit(1)
 	return false
@@ -47,6 +48,12 @@ func _fresh(id: String, categories: Array, extent: int = 48) -> TerrainData:
 	data.site.world_pin = {"format": 2, "world_instance_id": "t7-birth-original", "technology_policy": Policy.new_policy(categories).policy}
 	return data
 
+# Teardown timing only: draw a few frames so D3D12 runs the deferred frees of
+# released presenters before the next lab allocates. No-op when headless.
+func _settle_render_frees() -> void:
+	if DisplayServer.get_name() == "headless": return
+	for _frame: int in 3: RenderingServer.force_draw(false)
+
 func _lab() -> TerrainLab:
 	var lab := TerrainLab.new()
 	lab.restore_only = true
@@ -64,6 +71,7 @@ func _run() -> void:
 	_check_refusals_and_old_paths()
 	TerrainArmy.release_contact_source()
 	print("SITE_TECHNOLOGY_ARTISAN_BIRTH_PASS: %d checks; actual original Lab Actor/Army births, fixed finite blueprint, original allocator/item/body validators and bind; no full fixed-world save/production/G06 close claim" % checks)
+	finished = true
 	quit(0)
 
 func _check_formal_menu_entry_selection() -> void:
@@ -106,6 +114,7 @@ func _check_real_birth_partial_and_all() -> void:
 			var input_before := var_to_bytes(data.site)
 			var children_before := lab.get_child_count()
 			var born: Dictionary = lab.prepare_initial_artisan_birth(data, scenario, Artisans.CATEGORIES)
+			_settle_render_frees()
 			_check(born.ok and born.changed and born.data != data, "Original Lab prepares detached genuine original births")
 			_check(var_to_bytes(data.site) == input_before and lab.terrain == old_site and var_to_bytes([old_site.site, lab.character.capture_state()]) == old_before, "Birth preparation leaves original new input and live old world/body/sequence unchanged")
 			_check(lab.get_child_count() == children_before, "Disposable original birth owners released before candidate handoff")
@@ -151,6 +160,7 @@ func _check_real_birth_partial_and_all() -> void:
 			var replay: Dictionary = lab.prepare_initial_artisan_birth(lab.terrain, scenario, Artisans.CATEGORIES)
 			_check(replay.ok and not replay.changed and var_to_bytes(lab.terrain.site) == live_before, "Accepted birth is one-time even after bind/reading/later release")
 			lab.free()
+			_settle_render_frees()
 
 func _check_refusals_and_old_paths() -> void:
 	var lab := _lab()
@@ -163,6 +173,7 @@ func _check_refusals_and_old_paths() -> void:
 		var no_classes := _fresh("t7-empty-policy", [])
 		var empty_before := var_to_bytes(no_classes.site)
 		var empty: Dictionary = lab.prepare_initial_artisan_birth(no_classes, scenario, Artisans.CATEGORIES)
+		_settle_render_frees()
 		var count := 1 if scenario == Artisans.PRIMARY else 3
 		_check(empty.ok and empty.changed and not empty.skills_changed and empty.data.site.armies.size() == count and var_to_bytes(no_classes.site) == empty_before, "Explicit empty-policy scenario births exactly finite original NPCs, without mutating source")
 		_check(empty.data.site.world_pin.technology_policy.categories.is_empty() and not empty.data.site.has("technology_artisans") and not empty.data.site.has("family"), "Empty policy stays frozen; population change is no skill/family/artisan-PASS receipt")
@@ -183,3 +194,4 @@ func _check_refusals_and_old_paths() -> void:
 	var guard: Dictionary = lab.site_controller.open_fixed_world("invalid-no-io", "t7-no-rewrite", "main", Vector2i.ZERO, false, Artisans.PRIMARY)
 	_check(not guard.ok and lab.terrain == old and var_to_bytes(old.site) == before, "Original world controller refuses scenario on resume/existing-world entry before publication")
 	lab.free()
+	_settle_render_frees()

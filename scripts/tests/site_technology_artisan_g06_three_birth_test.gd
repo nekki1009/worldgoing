@@ -26,6 +26,7 @@ func _run() -> void:
 	slot.folder = "user://region_lab/worlds/%s/slots/%s" % [world, SLOT]
 	lab.site_controller._initial_world_candidate = slot
 	var begun: Dictionary = lab.site_controller.open_fixed_world(manifest_path, world, SLOT, START, true, Artisans.THREE_FACTIONS)
+	_settle_render_frees()
 	_require(begun.ok and int(slot._marker.generation) == 1 and not slot.initialization_pending(), "Original Controller/Slot actual three-faction first transaction commits once", begun)
 	_freeze(lab)
 	var data: TerrainData = lab.terrain
@@ -42,6 +43,7 @@ func _run() -> void:
 	_require(lab.site_controller.save_to(lab.site_controller.save_path).ok, "Original Store/Slot saves full-pin all-three state")
 	var cold: Dictionary = slot._load_checked(slot.site_path(START), START)
 	_require(cold.ok and cold.data.site.world_pin == pin and cold.data.site.technology_artisans == birth and _facts(cold.data.site) == facts, "True original read strictly preserves pin/all actors/all three armies/items and bounded grants", cold)
+	_settle_render_frees()
 	var reopened: TerrainLab = _source_lab("g06_three_reopen")
 	var loaded: Dictionary = reopened.site_controller.open_fixed_world(manifest_path, world, SLOT, Vector2i(-1, -1), false)
 	_require(loaded.ok, "Actual original full-graph cold reopen/bind", loaded)

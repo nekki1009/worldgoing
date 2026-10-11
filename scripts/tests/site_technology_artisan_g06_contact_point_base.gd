@@ -10,6 +10,7 @@ func _contact_birth(source: RegionData) -> Dictionary:
 	slot.folder = "user://region_lab/worlds/%s/slots/%s" % [world, SLOT]
 	lab.site_controller._initial_world_candidate = slot
 	var begun: Dictionary = lab.site_controller.open_fixed_world(manifest_path, world, SLOT, START, true, Artisans.THREE_FACTIONS)
+	_settle_render_frees()
 	_require(begun.ok and int(slot._marker.generation) == 1 and not slot.initialization_pending(), "True original THREE first-world transaction commits once", begun)
 	_freeze(lab)
 	var data: TerrainData = lab.terrain

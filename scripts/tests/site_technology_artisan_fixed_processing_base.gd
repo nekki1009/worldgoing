@@ -117,6 +117,7 @@ func _original_feature_ui(f: Dictionary, key: String, recipe: String, identity: 
 		if Fatigue.read(selected_body) <= Fatigue.WORK_RESUME_AT: break
 		_interval(f, 30.0)
 	_require(Fatigue.read(selected_body) <= Fatigue.WORK_RESUME_AT, "True original selected worker recovers before public dispatch")
+	_clear_station(f, identity, station)
 	_place(f, identity, station)
 	_park(f, int(f.commander), station + Vector2i(0, 3))
 	controller.select_cell(f.data.cell_from_index(int(feature.cells[0])))
@@ -132,8 +133,9 @@ func _original_feature_ui(f: Dictionary, key: String, recipe: String, identity: 
 		_require(found and not controller.building_actions.recipe.disabled, "Original visible recipe selector admits explicit recipe")
 		controller.building_actions.recipe.pressed.emit()
 		_require(feature.get("recipe_id") == recipe, "Original visible apply command changes only true host recipe")
-	var button: Button = controller.ui.get_node_or_null("OperateFeature") as Button
-	if button == null: button = controller.ui.find_child("OperateFeature", true, false) as Button
+	# The formal Site UI is the Lab's "SiteUI" layer built by SiteController._build_ui.
+	var site_ui: Node = f.lab.get_node_or_null("SiteUI")
+	var button: Button = site_ui.find_child("OperateFeature", true, false) as Button if site_ui != null else null
 	_require(button != null and f.lab.npc == null, "Original formal operation button exists without parallel default worker")
 	button.pressed.emit()
 	f.lab.selected_army_target = identity
@@ -202,7 +204,7 @@ func _finish_recipe(f: Dictionary, key: String, recipe: String, output: Dictiona
 	var receipt: Dictionary = feature.get("technology_output", {}).get("receipts", [])[0] if not feature.get("technology_output", {}).get("receipts", []).is_empty() else {}
 	_require(not receipt.is_empty() and receipt.operator_id == int(f.master) and receipt.recipe_id == recipe and receipt.resources == output, "Actual canonical output recorded by original owner")
 	f.lab.selected_army_target = int(f.master)
-	var stop: Button = f.lab.site_controller.ui.find_child("CancelSelectedWorker", true, false) as Button
+	var stop: Button = f.lab.get_node("SiteUI").find_child("CancelSelectedWorker", true, false) as Button
 	_require(stop != null, "Original formal selected-worker stop exists")
 	stop.pressed.emit()
 	_require(not f.lab.site_controller.work_team.is_assigned(int(f.master)), "Original public stop preserves completed cargo and receipt")
@@ -232,6 +234,7 @@ func _replacement_recipe(f: Dictionary, key: String, recipe: String, output: Dic
 	var paid_history: Dictionary = ledger.duplicate(true)
 	paid_history.erase("operator_id")
 	paid_history.erase("work_seconds")
+	paid_history.erase("effective_seconds") # Round 16 work-sum field, like work_seconds.
 	var prior_work := float(ledger.work_seconds)
 	var started := float(feature.production)
 	var station: Vector2i = f.data.cell_from_index(int(feature.entrance))
@@ -258,6 +261,7 @@ func _replacement_recipe(f: Dictionary, key: String, recipe: String, output: Dic
 	var loaded_history: Dictionary = ledger.duplicate(true)
 	loaded_history.erase("operator_id")
 	loaded_history.erase("work_seconds")
+	loaded_history.erase("effective_seconds") # Round 16 work-sum field, like work_seconds.
 	_require(loaded_history == paid_history and float(ledger.work_seconds) == prior_work and f.data.site.inventory == paid_stock, "True cold restore retains one exact payment/material/source identity and original work sum")
 	_original_feature_ui(f, key, recipe, int(f.helper), true)
 	_interval(f)
@@ -265,6 +269,7 @@ func _replacement_recipe(f: Dictionary, key: String, recipe: String, output: Dic
 	var continued_history: Dictionary = ledger.duplicate(true)
 	continued_history.erase("operator_id")
 	continued_history.erase("work_seconds")
+	continued_history.erase("effective_seconds") # Round 16 work-sum field, like work_seconds.
 	_require(is_same(ledger, feature.tech_batch) and continued_history == paid_history and int(ledger.operator_id) == int(f.helper) and float(ledger.work_seconds) > prior_work, "Successful actual replacement prefix updates only same original ledger operator/work sum")
 	_require(f.lab.site_controller.work_team.cancel(int(f.helper)).ok, "Real student legally releases original work before leaving")
 	_park(f, int(f.helper), station + Vector2i(-3, 2))
