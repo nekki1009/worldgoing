@@ -39,7 +39,9 @@ func _contact_position(f: Dictionary, enemy_index: int) -> void:
 	var master_cell: Vector2i = f.team.cells[f.team.index_for_identity(int(f.master))]
 	var foreign: Dictionary = f.duplicate(false)
 	foreign.team = f.enemy
-	for distance: int in [2, 1]:
+	# Exchange-mode melee reaches only an adjacent cell; otherwise the original
+	# two-cell reach is tried first.
+	for distance: int in ([1] if f.enemy.exchange_enabled else [2, 1]):
 		for direction: Vector2i in TerrainData.DIRECTIONS:
 			var cell: Vector2i = master_cell + direction * distance
 			if not f.data.is_walkable(cell) or not SiteCombatRules.terrain_line_clear(f.data, cell, master_cell) or f.lab.site_controller.reserves_cell(cell): continue

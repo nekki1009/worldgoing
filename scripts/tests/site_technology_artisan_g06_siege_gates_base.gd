@@ -90,9 +90,7 @@ func _no_reissue(f: Dictionary) -> void:
 		_require(not replay.ok and var_to_bytes([f.data.site, f.team.capture_combat_state()]) == before, "Generated restored input has no original first-world birth authority and cannot regrant")
 	_cold_resume(f, "no_reissue")
 	if f.kind == "fixed_birth":
-		var manifest_sha: String = FileAccess.get_sha256(f.slot.folder.path_join("manifest.json"))
-		var repeated: Dictionary = f.lab.site_controller.open_fixed_world(manifest_path, str(f.world), SLOT, START, true, Artisans.PRIMARY)
-		_require(not repeated.ok and repeated.code == "CONFLICT" and FileAccess.get_sha256(f.slot.folder.path_join("manifest.json")) == manifest_sha, "Actual completed newworld transaction cannot overwrite/reissue", repeated)
+		_completed_open_refuses(f)
 func _begin_original_siege_ui(f: Dictionary, kind: String, anchor: Vector2i) -> Dictionary:
 	var controller: SiteController = f.lab.site_controller
 	var form: Dictionary = controller._siege_construction_form

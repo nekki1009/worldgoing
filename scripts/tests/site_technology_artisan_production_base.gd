@@ -633,9 +633,25 @@ func _no_reissue(f: Dictionary) -> void:
 		_require(not replay.ok and var_to_bytes([f.data.site, f.team.capture_combat_state()]) == before, "Generated restored input has no original first-world birth authority and cannot regrant")
 	_cold_resume(f, "no_reissue")
 	if f.kind == "fixed_birth":
-		var manifest_sha: String = FileAccess.get_sha256(f.slot.folder.path_join("manifest.json"))
-		var repeated: Dictionary = f.lab.site_controller.open_fixed_world(manifest_path, str(f.world), SLOT, START, true, Artisans.PRIMARY)
-		_require(not repeated.ok and repeated.code == "CONFLICT" and FileAccess.get_sha256(f.slot.folder.path_join("manifest.json")) == manifest_sha, "Actual completed newworld transaction cannot overwrite/reissue", repeated)
+		_completed_open_refuses(f)
+
+func _completed_open_refuses(f: Dictionary) -> void:
+	var manifest_sha: String = FileAccess.get_sha256(f.slot.folder.path_join("manifest.json"))
+	# A repeat under another policy is refused by the recorded policy itself.
+	f.lab.site_controller._initial_world_candidate = null
+	var other: Dictionary = f.lab.site_controller.open_fixed_world(manifest_path, str(f.world), SLOT, START, true, Artisans.PRIMARY)
+	_require(not other.ok and other.code == "SAVE_VERSION" and FileAccess.get_sha256(f.slot.folder.path_join("manifest.json")) == manifest_sha, "A repeat under a different technology policy is refused without touching the slot", other)
+	# The same recorded policy reaches the completed-slot reissue guard.
+	# f.slot may be the reopened plain slot by now; read the policy the slot recorded.
+	var recorded: Variant = JSON.parse_string(FileAccess.get_file_as_string(f.slot.folder.path_join("manifest.json")))
+	_require(recorded is Dictionary and recorded.get("technology_policy") is Dictionary, "The completed slot records its own technology policy", recorded)
+	var same := CandidatePolicySlot.new()
+	same.candidate_categories = recorded.technology_policy.get("categories", []).duplicate()
+	same.folder = f.slot.folder
+	f.lab.site_controller._initial_world_candidate = same
+	var repeated: Dictionary = f.lab.site_controller.open_fixed_world(manifest_path, str(f.world), SLOT, START, true, Artisans.PRIMARY)
+	_require(not repeated.ok and repeated.code == "CONFLICT" and FileAccess.get_sha256(f.slot.folder.path_join("manifest.json")) == manifest_sha, "Actual completed newworld transaction cannot overwrite/reissue", repeated)
+	f.lab.site_controller._initial_world_candidate = null
 
 func _run() -> void:
 	var category := _g06_category()
