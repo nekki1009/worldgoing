@@ -186,9 +186,15 @@ static func _remap_current(value: Variant, maps: Dictionary, field: String = "")
 		var result: Array = []
 		var type := "person" if field in ["person_ids", "ids", "captives", "carriers", "patient_ids", "members"] else ("team" if field in ["team_ids", "teams"] else ("item" if field == "item_ids" else ""))
 		for member: Variant in value:
-			result.append(_mapped(member, type, maps) if not type.is_empty() and (member is int or member is String) else _remap_current(member, maps, field))
+			var whole_member: bool = member is float and is_finite(member) and member == floorf(member)
+			result.append(_mapped(int(member) if whole_member else member, type, maps) if not type.is_empty() and (member is int or member is String or whole_member) else _remap_current(member, maps, field))
 		return result
-	if not (value is int or value is String): return value
+	# A body read back from a saved Site carries JSON numbers: a whole-number
+	# float id maps as the int it is. Every non-id field keeps its own value.
+	var whole: bool = value is float and is_finite(value) and value == floorf(value)
+	if not (value is int or value is String or whole): return value
+	var original_value: Variant = value
+	if whole: value = int(value)
 	if field in ["person_id", "operator_id", "commander_person_id", "leader_person_id", "controlled_person_id", "captor_id", "guard_id", "patient_id", "carrier_id", "military_head", "requester_id", "executor_id", "head_person_id", "training_requester", "borrower_id", "rider_id"]:
 		return _mapped(value, "person", maps)
 	if field == "holder": return _mapped(value, "person", maps) if value is int else _remap_holder(str(value), maps)
@@ -200,7 +206,7 @@ static func _remap_current(value: Variant, maps: Dictionary, field: String = "")
 	if field in ["item_id", "equipment_item_id"]: return _mapped(value, "item", maps)
 	if field in ["nation_id", "equipment_nation_id"]: return _mapped(value, "nation", maps)
 	if field == "corps_id": return _mapped(value, "corps", maps)
-	return value
+	return original_value
 
 static func _remap_content(content: Dictionary, maps: Dictionary) -> Dictionary:
 	var result: Dictionary = _remap_current(content.duplicate(true), maps)

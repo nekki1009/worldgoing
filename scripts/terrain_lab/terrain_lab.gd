@@ -8817,6 +8817,15 @@ func _prepare_region_main_interval(maximum: float, local_tactical: float, travel
 			if not due_capture.ok: return due_capture
 			return {"ok": true, "pending": true, "status": "REGION_EVENT_PENDING"}
 		limited = minf(limited, slot.GameplayClock.action_for_game(capture_game, simulation_speed, float(interval.tactical_seconds)))
+	# prepare_region_gameplay_interval requires each travelling NPC party's own
+	# route preview to end exactly at the interval end. A seam crossing or upkeep
+	# stop inside this interval (an off-grid departure puts it there) clips it here.
+	for token: String in slot.region_registry().parties:
+		if str(slot.region_registry().parties[token].get("phase", "")) != "travelling": continue
+		var stop := slot._preview_npc_party_to(token, float(interval.game_end), interval)
+		if not stop.ok: return _region_preflight_failure(originals, stop)
+		if float(stop.at) < float(interval.game_end) - 0.0000001:
+			limited = minf(limited, slot.GameplayClock.action_for_game(float(stop.at) - float(interval.game_begin), simulation_speed, float(interval.tactical_seconds)))
 	for original: TerrainLab in originals:
 		var work: Dictionary = original._prepare_shared_work_step(accepted_action, accepted_game, float(interval.tactical_seconds))
 		if not work.get("ok", false): return _region_preflight_failure(originals, work)

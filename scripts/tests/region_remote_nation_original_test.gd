@@ -18,6 +18,7 @@ var nation_source_observation: Dictionary = {}
 var nation_goal_coordinate := Vector2i(0, 1)
 var nation_goal: TerrainLab
 var nation_trace: Array[Dictionary] = []
+var nation_step_min := INF # Smallest accepted positive world step since the last reset.
 
 func _initialize() -> void:
 	deadline = Time.get_ticks_msec() + 480000
@@ -81,7 +82,12 @@ func _run() -> void:
 		if not _nation_dispatched_receipt(): _finish(); return
 		if not await _nation_reopen(): _finish(); return
 		var token := str(_nation_report().delivery.result.effect.execution_receipt.transfer_token)
+		# The command party departs between 0.5 s steps (an earlier clip); its first
+		# route seam falls inside a step, which the interval must be cut at.
+		var departure_offgrid := fmod(float(_nation_report().delivery.result.effect.execution_receipt.game_seconds), 0.5) > 0.000001
+		nation_step_min = INF
 		if not await _nation_until(func() -> bool: return slot.region_registry().parties[token].phase == "entered", "the recipient's actual original cohort physically travels the second genuine Route and enters the strategic Site"): _finish(); return
+		if not _check(not departure_offgrid or nation_step_min < 0.5 - 0.000001, "an off-grid departure's route seam cuts an accepted interval below the 0.5 s step", {"offgrid": departure_offgrid, "min_step": nation_step_min}): _finish(); return
 		if not await _nation_until(Callable(self, "_nation_actual_tactical_effect"), "only the recipient's original SiteArmyAI sees the now-local real enemy and issues its own tactical order"): _finish(); return
 	else:
 		if not _nation_failed_receipt(): _finish(); return
@@ -170,7 +176,25 @@ func _nation_initial_remote_departure() -> bool:
 	var prepared := slot.prepare_npc_region_dispatch(lab, nation_id, team.team_id, action_coordinate, component, [], nation_initial_remote_token)
 	if not _check(prepared.ok and prepared.party.content.equipment_nations.is_empty()
 		and not prepared.party.content.organization_refs.nation_memberships.is_empty(), "partial Nation membership travels by the original foreign-reference contract while the sole real Nation remains at HQ", prepared.get("code")): return false
-	return _check(slot.commit_npc_region_dispatch(prepared).ok, "the original physical dispatch commits the first real remote cohort")
+	if not _check(slot.commit_npc_region_dispatch(prepared).ok, "the original physical dispatch commits the first real remote cohort"): return false
+	return _nation_departure_contact_probes()
+
+## Read-only probes of the departure-segment exclusion. The party was just
+## extracted from the player's own active Site, so (a) it is not met on the road;
+## (c) the same physical position with an origin elsewhere is a real encounter.
+func _nation_departure_contact_probes() -> bool:
+	var token := nation_initial_remote_token
+	var reference: Dictionary = slot.region_registry().parties[token]
+	var before := var_to_bytes([slot.control, slot._marker])
+	var to := float(slot.control.logical_game_seconds) + 1.0
+	var own := slot._region_first_player_route_contact(token, to)
+	if not _check(own.ok and not own.get("contact", false), "(a) a party just extracted from the player's own Site is not met on its departure segment", own): return false
+	var true_origin: Variant = reference.origin.duplicate()
+	reference.origin = [int(action_coordinate.x), int(action_coordinate.y)]
+	var foreign := slot._region_first_player_route_contact(token, to)
+	reference.origin = true_origin
+	if not _check(foreign.ok and foreign.get("contact", false) and str(foreign.get("contact_receipt", {}).get("kind", "")) == "same_component", "(c) the same position for a party from another node is still a player encounter", foreign): return false
+	return _check(before == var_to_bytes([slot.control, slot._marker]), "departure contact probes change no Slot state")
 
 func _nation_receiver_team() -> TerrainArmy:
 	return slot._region_delivery_team(action_owner, nation_remote_team_ref)
@@ -349,6 +373,8 @@ func _nation_until(predicate: Callable, label: String) -> bool:
 		var before := [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence]
 		var step := lab._advance_original_shared_step(TerrainLab.ACTION_STEP)
 		if not step.get("ok", false): return _check(false, "true original common step accepts the remote Nation interval", step)
+		var advanced_world := float(slot.control.logical_game_seconds) - float(before[0])
+		if advanced_world > 0.0: nation_step_min = minf(nation_step_min, advanced_world)
 		if nation_trace.size() < 1000: nation_trace.append({"before": before, "after": [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence],
 			"step": step.duplicate(true), "report": _nation_report().duplicate(true)})
 		if count % 60 == 0: await process_frame
