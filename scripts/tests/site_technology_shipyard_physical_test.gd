@@ -161,10 +161,16 @@ func _shipyard_fixture() -> Dictionary:
 	for identity: int in [control,executor]: refs.append({"site_id":str(data.site.id),"person_id":identity,"path":"","label":"Original artisan","age_years":-1})
 	_check(lab.site_controller.family_continuity.register_members(refs,true,control).ok and lab.site_controller.family_continuity.appoint_head(control,control).ok,"Actual registry/head establish the original prerequisite archive")
 	data.site.family=actions._technology_candidate()
+	# A v1 family technology record admits only F07; F13 lives in the scope record.
+	data.site.family.technology=Technology.empty_scope_record(str(data.site.id))
 	data.site.family.technology.known=["F13"]
 	_check(Family.validate_family(data.site.family,str(data.site.id)),"Original pure candidate yields valid Family v3 before explicit prerequisite knowledge")
 	var feature: Dictionary=data.site.features[yard]
-	team.cells[1]=data.cell_from_index(int(feature.entrance))
+	# Adoption requires the named F13 master inside the shipyard footprint, not at its entrance.
+	var master_cell:=int(feature.entrance)
+	for fixture_cell: int in feature.cells:
+		if data.is_walkable(data.cell_from_index(fixture_cell)): master_cell=fixture_cell; break
+	team.cells[1]=data.cell_from_index(master_cell)
 	return {"data":data,"lab":lab,"team":team,"row":row,"executor":executor,"control":control,"actions":actions,"warehouse":warehouse,"settlement_id":str(data.site.settlement.settlement_id),"center":str(founded.feature),"yard":yard}
 
 func _shipyard_natural_lab(data: TerrainData) -> TerrainLab:
