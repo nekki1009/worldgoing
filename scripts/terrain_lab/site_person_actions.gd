@@ -4140,6 +4140,9 @@ func begin_nation_administration(requester_id: int, nation_id: String, order_id:
 	if not selection.ok: return selection
 	var token: Dictionary = selection.token
 	var identity := requester_id if token.is_empty() else int(token.person.person_id)
+	# A known N11 has no research token: its acceptance worker is the order's named
+	# operator, as in the research case. Requester authority was checked above.
+	if token.is_empty() and checked.order.tech_id == "N11": identity = int(checked.order.payload.operator_id)
 	if checked.order.tech_id == "N11" and identity != int(checked.order.payload.operator_id): return Runtime.fail("NO_WORKER")
 	var ready := _technology_scope_person("nation", checked.nation, identity)
 	if not ready.ok: return ready
