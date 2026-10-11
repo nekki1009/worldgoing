@@ -1857,6 +1857,15 @@ func _operations_candidate_claims_valid(nation_id: String, operations: Dictionar
 static func _public_reference(value: Variant, allow_empty: bool = false) -> bool:
 	return value is String and str(value).length() <= 512 and (allow_empty or not str(value).is_empty())
 
+# Loaded JSON numbers are floats and Array.has() compares types strictly:
+# match a saved id list as integers.
+static func _int_ids(raw: Variant) -> Array:
+	var ids: Array = []
+	if raw is Array:
+		for value: Variant in raw:
+			if value is int or value is float: ids.append(int(value))
+	return ids
+
 static func _valid_public_people(raw: Variant, people: Dictionary, minimum: int = 1, maximum: int = 6) -> bool:
 	if not raw is Array or raw.size() < minimum or raw.size() > maximum: return false
 	var seen := {}
@@ -1916,7 +1925,7 @@ static func _valid_public_payload(raw: Variant, tech_id: String, people: Diction
 				and _operation_key(raw.reserve_feature_id) and _public_reference(raw.feature_id, true) and _valid_public_source(raw.source, _public_cost(tech_id, raw), people)
 		"N07":
 			return Technology.keys(raw, ["reserve_feature_id", "source", "teacher_id", "student_ids", "skill_id"]) and _operation_key(raw.reserve_feature_id) \
-				and _operation_person(raw.teacher_id, people) and _valid_public_people(raw.student_ids, people, 1, 2) and not raw.student_ids.has(int(raw.teacher_id)) \
+				and _operation_person(raw.teacher_id, people) and _valid_public_people(raw.student_ids, people, 1, 2) and not _int_ids(raw.student_ids).has(int(raw.teacher_id)) \
 				and raw.skill_id is String and Technology.FAMILY_IDS.has(raw.skill_id) and _valid_public_source(raw.source, _public_cost(tech_id, raw), people)
 		"N08":
 			return Technology.keys(raw, ["reserve_feature_id", "source", "route_id", "destination_site_id", "destination_holder", "vehicle_id", "driver_id", "route_ref", "travel_token", "loaded"]) \
@@ -1966,8 +1975,8 @@ static func _valid_public_order(raw: Variant, people: Dictionary, orders: Dictio
 		or (raw.status != "revoked" and not raw.reason.is_empty()): return false
 	var identities: Array = []
 	match str(raw.tech_id):
-		"N02": identities = raw.payload.person_ids
-		"N06": identities = raw.payload.worker_ids
+		"N02": identities = _int_ids(raw.payload.person_ids)
+		"N06": identities = _int_ids(raw.payload.worker_ids)
 		"N10": identities = [int(raw.payload.local_person_id)]
 		"N11": identities = [int(raw.payload.operator_id)]
 	if raw.payload.has("consents") and not _valid_public_consents(raw.payload.consents, identities, _public_purpose(raw, order_id), str(raw.scope_site_id), people): return false
@@ -2012,12 +2021,12 @@ static func _public_receipt_matches_order(order: Dictionary, order_id: String, r
 		"N02", "N10":
 			if index == 0:
 				return receipt.binding == ("labor_register" if order.tech_id == "N02" else "mandate") and target == _public_order_target(order, order_id) and receipt.item_ids.is_empty()
-			var workers: Array = payload.person_ids if order.tech_id == "N02" else [int(payload.local_person_id)]
+			var workers: Array = _int_ids(payload.person_ids) if order.tech_id == "N02" else [int(payload.local_person_id)]
 			return index == 1 and receipt.binding == "road_build" and not payload.feature_id.is_empty() and target == "feature:" + str(payload.feature_id) and workers.has(operator_id) and receipt.item_ids.is_empty()
 		"N03":
-			return index < 2 and receipt.binding == "aid_order" and payload.recipient_ids.has(operator_id) and target == "person:" + str(operator_id) and receipt.id == _public_event_id(order, order_id, "share", target) and receipt.item_ids.is_empty()
+			return index < 2 and receipt.binding == "aid_order" and _int_ids(payload.recipient_ids).has(operator_id) and target == "person:" + str(operator_id) and receipt.id == _public_event_id(order, order_id, "share", target) and receipt.item_ids.is_empty()
 		"N06":
-			return index == 0 and receipt.binding == "house_build" and not payload.feature_id.is_empty() and target == "feature:" + str(payload.feature_id) and payload.worker_ids.has(operator_id) and receipt.item_ids.is_empty()
+			return index == 0 and receipt.binding == "house_build" and not payload.feature_id.is_empty() and target == "feature:" + str(payload.feature_id) and _int_ids(payload.worker_ids).has(operator_id) and receipt.item_ids.is_empty()
 		"N07":
 			if index >= payload.student_ids.size() or receipt.binding != "funded_course" or operator_id != int(payload.teacher_id) or not receipt.item_ids.is_empty(): return false
 			for identity: Variant in payload.student_ids:

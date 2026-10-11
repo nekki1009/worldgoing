@@ -1233,6 +1233,10 @@ static func _normalize_state(state: Dictionary) -> void:
 			nation.members[index] = int(nation.members[index])
 		for standard: Dictionary in nation.standards.values():
 			standard.revision = int(standard.revision)
+	# Nation research and public/military operation records carry JSON numbers too;
+	# their own normalizer validates first and leaves an invalid state untouched.
+	if state.get("equipment_nations") is Dictionary and not state.equipment_nations.is_empty():
+		EquipmentOrders.normalize_nation_operations(state)
 	for order: Dictionary in state.get("escort_orders", {}).values():
 		order.destination = int(order.destination)
 		if order.has("version"): order.version = int(order.version)
