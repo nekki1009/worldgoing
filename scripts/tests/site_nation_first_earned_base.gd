@@ -213,7 +213,8 @@ func _earned_fixture(target: String, fixed: bool = false, metropolis: bool = fal
 			_complete_key(data, key)
 			_check(Runtime.request_upgrade(data, key, 1).ok, "Original un-founded world legally upgrades the same original workshop to grade3")
 			_complete_key(data, key)
-		_earned_setup_feature(lab, "well", Vector2i(9, 25), Vector2i.ONE, {}, reserved_center)
+		# Inside the radius-12 jurisdiction of the center at (25, 25).
+		_earned_setup_feature(lab, "well", Vector2i(20, 31), Vector2i.ONE, {}, reserved_center)
 		_earned_setup_feature(lab, "farm", Vector2i(15, 25), Vector2i(2, 2), {}, reserved_center)
 	_check(lab.character.place(data.cell_from_index(int(center.fixture_preview.entrance)), true), "The actual controlled founder reaches the true original founding radius")
 	var center_cells: Array[int] = []

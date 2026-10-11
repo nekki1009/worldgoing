@@ -1331,7 +1331,7 @@ func renew_public_operation(requester_id: int, nation_id: String, order_id: Stri
 	if not nation.has("technology_operations") or not valid_nation_operation_record(nation.technology_operations, lab.terrain.site.item_definitions, {}): return Runtime.fail("CORRUPT_STATE")
 	var original: Dictionary = nation.technology_operations.get("public_orders", {}).get(order_id, {})
 	if original.is_empty() or original.status == "complete" or int(original.revision) != expected_revision: return Runtime.fail("STALE_ORDER")
-	var binding_id: String = str(PUBLIC_BINDINGS[str(original.tech_id)][0])
+	var binding_id: String = _public_first_binding(original)
 	if original.tech_id in ["N02", "N10"] and original.receipts.size() == 1: binding_id = "road_build"
 	elif original.tech_id == "N11" and original.receipts.size() == 1: binding_id = "arsenal"
 	var context := _public_manual_context(requester_id, nation_id, str(original.tech_id), binding_id)
@@ -2232,13 +2232,19 @@ func declare_tax_source(requester_id: int, nation_id: String, reserve_feature_id
 	context.requester_id = requester_id
 	return _public_publish_new(context, _public_new_candidate(context, "N09", {"reserve_feature_id": reserve_feature_id, "source": {}, "recipient_id": recipient_id}))
 
+# A public order's first binding: N11 follows its route (as the arsenal and
+# output paths do); every other node uses its first listed binding.
+func _public_first_binding(order: Dictionary) -> String:
+	if str(order.get("tech_id", "")) == "N11": return "ballista_build" if order.get("payload", {}).get("route") == "siege" else "iron_armor"
+	return str(PUBLIC_BINDINGS[str(order.tech_id)][0])
+
 func authorize_public_source(grantor_id: int, nation_id: String, order_id: String, cap: Dictionary) -> Dictionary:
 	if grantor_id != int(lab.controlled_person_id()): return Runtime.fail("NO_AUTHORITY", "私人物資只能本人明示本單有限用途")
 	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
 	if not nation.has("technology_operations") or not valid_nation_operation_record(nation.technology_operations, lab.terrain.site.item_definitions, {}): return Runtime.fail("CORRUPT_STATE")
 	var order: Dictionary = nation.technology_operations.get("public_orders", {}).get(order_id, {})
 	if order.is_empty() or not order.payload.has("source"): return Runtime.fail("NO_TARGET")
-	var context := _public_context(nation_id, order_id, str(PUBLIC_BINDINGS[str(order.tech_id)][0]))
+	var context := _public_context(nation_id, order_id, _public_first_binding(order))
 	if not context.ok: return context
 	var person: Dictionary = actions._person(grantor_id)
 	if person.is_empty() or not _ready(person).ok: return Runtime.fail("BUSY")
@@ -2277,7 +2283,7 @@ func fund_public_order(grantor_id: int, nation_id: String, order_id: String, res
 	var order: Dictionary = nation.technology_operations.get("public_orders", {}).get(order_id, {})
 	if order.is_empty() or not order.payload.has("source") or order.payload.source.is_empty() or order.payload.source.status != "granted" \
 		or int(order.payload.source.person_id) != grantor_id or not _operation_stack(resources) or resources.is_empty(): return Runtime.fail("NO_BUDGET")
-	var context := _public_context(nation_id, order_id, str(PUBLIC_BINDINGS[str(order.tech_id)][0]))
+	var context := _public_context(nation_id, order_id, _public_first_binding(order))
 	if not context.ok: return context
 	var reserve := _procurement_destination(int(order.authorizer_id), str(order.payload.reserve_feature_id))
 	if not reserve.ok: return reserve
