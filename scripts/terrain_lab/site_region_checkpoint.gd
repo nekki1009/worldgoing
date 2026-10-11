@@ -42,6 +42,12 @@ static func validate_context(value: Variant, expected: Dictionary = {}) -> Dicti
 	for field: String in expected:
 		# Context is JSON metadata; its owner graph retains typed numbers. Compare
 		# complete canonical values so an unchanged persisted event is accepted.
+		# A time read back from the saved JSON can differ from the in-memory clock in
+		# the last ulp; the two clock fields use the fire-clock journal tolerance.
+		if field in ["game_seconds", "action_seconds"] and value.has(field) and time(value[field]) and time(expected[field]):
+			if absf(float(value[field]) - float(expected[field])) > maxf(0.00000001, absf(float(expected[field])) * 0.000000001):
+				return Runtime.fail("STALE_REGION_CONTEXT", field)
+			continue
 		if not value.has(field) or not supported(expected[field]) or JSON.stringify(_hash_numbers(value[field]), "", true, true) != JSON.stringify(_hash_numbers(expected[field]), "", true, true):
 			return Runtime.fail("STALE_REGION_CONTEXT", field)
 	if not supported(value): return Runtime.fail("INVALID_REGION_CONTEXT", "unsupported value")

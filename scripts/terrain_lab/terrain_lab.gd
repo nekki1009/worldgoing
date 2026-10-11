@@ -44,6 +44,7 @@ var _fire_replay_keep_tactical := false
 var _fire_replay_segments: Array[Dictionary] = []
 var _fire_replay_segment_index := 0
 var _fire_replay_segment_offset := 0
+var _fire_replay_partial_cursor := -1.0 # Completed cursor inside the current journal step; -1 when none.
 var _fire_replay_end_sequence := -1
 var _fire_replay_end_action := 0.0
 var _fire_replay_end_game := 0.0
@@ -1671,7 +1672,12 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 		recorded = SiteRuntime.ok("", {"complete": true})
 	elif replaying:
 		recorded = RegionSaveSlot.record_completed_replay_step(terrain.site, replay_target, completed_game_seconds)
-		if recorded.ok and not fire_replay_interval.is_empty():
+		# An original capture/work endpoint can stop the step inside its journal
+		# interval; the rest of that same interval resumes from the completed cursor.
+		var fire_partial := not fire_replay_interval.is_empty() \
+			and elapsed < float(fire_replay_interval.action_end) - float(fire_replay_interval.action_begin) - 0.00000001
+		if recorded.ok and fire_partial: recorded.fire_partial = true
+		elif recorded.ok and not fire_replay_interval.is_empty():
 			RegionSaveSlot.record_completed_fire_replay(terrain.site, fire_replay_interval)
 		if _fire_replay_tracking:
 			_fire_replay_keep_tactical = _fire_activity() or (_fire_replay_keep_tactical or fire_active_at_start) \
@@ -1702,6 +1708,15 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 # New flag belongs to ORIGINAL TerrainLab. The existing _region_formula_active
 # controls only melee suppression, not permission to run a deferred owner interval.
 
+## A completed whole journal step advances the offset; a step that stopped at
+## an original endpoint keeps it and resumes the same interval from the cursor.
+func _fire_replay_consume_step(result: Dictionary) -> void:
+	if bool(result.get("fire_partial", false)):
+		_fire_replay_partial_cursor = fire_action_cursor
+		return
+	_fire_replay_segment_offset += 1
+	_fire_replay_partial_cursor = -1.0
+
 func _next_fire_replay_interval() -> Dictionary:
 	while _fire_replay_segment_index < _fire_replay_segments.size():
 		var row: Dictionary = _fire_replay_segments[_fire_replay_segment_index]
@@ -1718,6 +1733,13 @@ func _next_fire_replay_interval() -> Dictionary:
 		var action_end := float(row.action_end) if offset + 1 == steps else float(row.action_begin) + action_per_step * (offset + 1)
 		var game_begin := float(row.game_begin) + game_per_step * offset
 		var game_end := float(row.game_end) if offset + 1 == steps else float(row.game_begin) + game_per_step * (offset + 1)
+		if _fire_replay_partial_cursor >= 0.0:
+			if fire_action_cursor != _fire_replay_partial_cursor or fire_action_cursor <= action_begin or fire_action_cursor >= action_end: return {}
+			var consumed := fire_action_cursor - action_begin
+			var tactical_consumed := minf(consumed, tactical_per_step)
+			game_begin += (tactical_consumed + (consumed - tactical_consumed) * 60.0) * float(row.scale)
+			tactical_per_step -= tactical_consumed
+			action_begin = fire_action_cursor
 		return {"epoch": _fire_replay_epoch, "sequence": int(row.first_sequence) + offset,
 			"action_begin": action_begin, "action_end": action_end, "game_begin": game_begin, "game_end": game_end,
 			"scale": float(row.scale), "tactical_seconds": tactical_per_step,
@@ -1784,7 +1806,7 @@ func replay_site_to(target_game_seconds: float, budget_usec: int = 0, max_steps:
 		if not bool(result.get("ok", false)): return result
 		if not result.has("pending"):
 			return SiteRuntime.fail("CLOCK_CONTRACT", "補算步進未完成且無欠秒：" + str(result.get("status", "")))
-		if _fire_replay_tracking: _fire_replay_segment_offset += 1
+		if _fire_replay_tracking: _fire_replay_consume_step(result)
 		completed_steps += 1
 		pending = _replay_pending_residue(float(result.pending))
 		if pending > 0.0 and ((max_steps > 0 and completed_steps >= max_steps) or (deadline > 0 and Time.get_ticks_usec() >= deadline)):
@@ -5523,6 +5545,7 @@ func _region_advance_original_cold_site(data: TerrainData, target_seconds: float
 		_cold_replay_lab._fire_replay_segments = replay_segments
 		_cold_replay_lab._fire_replay_segment_index = 0
 		_cold_replay_lab._fire_replay_segment_offset = 0
+		_cold_replay_lab._fire_replay_partial_cursor = -1.0
 		_cold_replay_lab._fire_replay_end_sequence = int(fire_replay.get("to_sequence", -1))
 		_cold_replay_lab._fire_replay_end_action = float(site_controller.region_slot.control.get("fire_clock", {}).get("action_seconds", 0.0)) if _cold_replay_lab._fire_replay_tracking else 0.0
 		_cold_replay_lab._fire_replay_end_game = target_seconds if _cold_replay_lab._fire_replay_tracking else 0.0
@@ -8027,7 +8050,10 @@ func _shared_rest_event_limit(maximum: float, planned: Dictionary) -> float:
 			# A row that never rested carries no work_resting key; treat it as not resting.
 			var resting: bool = bool(body.get("work_resting", false)) if body is Dictionary else bool(body.get("work_resting"))
 			var target := 50.0 if fatigue > 50.0 and resting else 0.0
-			limit = minf(limit, maxf(ACTION_TIME_EPSILON, (fatigue - target) / PersonFatigue.RECOVERY_RATE))
+			# Like the rest delay above, a recovery endpoint closer than one epsilon is
+			# reached by any step (recovery clamps at its target); it never splits one.
+			var recovered := (fatigue - target) / PersonFatigue.RECOVERY_RATE
+			if recovered > ACTION_TIME_EPSILON: limit = minf(limit, recovered)
 	return limit
 
 func _shared_pool_has_effort(body: Variant, planned: Dictionary = {}) -> bool:
@@ -8944,7 +8970,8 @@ func _region_gameplay_owner_lab(site_id: String, requested_mode: String, travel_
 	var coordinate := Vector2i(parts[0].to_int(), parts[1].to_int())
 	if RegionGrid.site_id(str(slot.pin.atlas_id), coordinate) != site_id: return SiteRuntime.fail("WRONG_SITE")
 	var original: TerrainLab = slot._region_original_labs.get(site_id)
-	if not is_instance_valid(original):
+	var restored_now := not is_instance_valid(original)
+	if restored_now:
 		var opened: Dictionary = slot.open_site(coordinate, not travel_destination)
 		if not opened.get("ok", false): return opened
 		var scene: PackedScene = load("res://scenes/terrain_lab/TerrainLab.tscn")
@@ -8985,6 +9012,16 @@ func _region_gameplay_owner_lab(site_id: String, requested_mode: String, travel_
 	receipt.consumer = "original_formula_site" if requested_mode == "formula_active" else "original_replay"
 	receipt.generation = int(slot._marker.get("generation", 0))
 	var mode: Dictionary = slot.region_registry().modes.get(site_id, {})
+	# A freshly restored original whose saved state already settled at the world
+	# endpoint resumes its cold consumer there; its mode watermark follows.
+	if restored_now and not mode.is_empty() and str(mode.get("mode", "")) == requested_mode:
+		var settled := RegionSaveSlot.validate_settlement(original.terrain.site, float(slot.control.logical_game_seconds))
+		var fire: Dictionary = original.terrain.site.get("fire_settlement", {})
+		if settled.ok and not settled.get("legacy", true) and float(settled.pending) <= 0.00000001 \
+				and str(fire.get("epoch", "")) == str(slot.control.fire_clock.epoch) and int(fire.get("sequence", -1)) == int(slot.control.fire_clock.sequence) \
+				and absf(original.fire_action_cursor - float(slot.control.fire_clock.action_seconds)) <= 0.00000001:
+			mode.game_seconds = float(slot.control.logical_game_seconds)
+			mode.action_seconds = float(slot.control.fire_clock.action_seconds)
 	if str(mode.get("mode", "")) != requested_mode or int(mode.get("generation", -1)) != receipt.generation or not mode.get("activation", {}).get("complete", false):
 		var activated := slot.activate_region_mode(site_id, requested_mode, str(receipt.consumer), receipt)
 		if not activated.ok: return activated
@@ -11087,7 +11124,7 @@ func _region_advance_original_cold_budget(target: float, budget_usec: int, max_s
 					var quantum := _next_fire_replay_interval()
 					var exact := _advance_original_shared_step(float(quantum.action_end) - float(quantum.action_begin), target, quantum)
 					if not exact.get("ok", false) or not exact.get("completed", false): return exact
-					_fire_replay_segment_offset += 1
+					_fire_replay_consume_step(exact)
 					steps += 1
 					_region_cold_isolated.exact_steps = int(_region_cold_isolated.exact_steps) + 1
 					window = RegionSaveSlot.replay_window(terrain.site, target)

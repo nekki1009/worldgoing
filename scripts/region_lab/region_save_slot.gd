@@ -1767,8 +1767,11 @@ static func validate_settlement(state: Dictionary, logical_game_seconds: Variant
 			or not _seconds(stamp.last_settled_game_seconds):
 		return _fail("CORRUPT_SAVE", "Site 結算時間版本或欄位非法")
 	var last := float(stamp.last_settled_game_seconds)
-	if last > float(logical_game_seconds):
+	# A watermark read back from the saved JSON can exceed the in-memory world
+	# clock by its last ulp; within the fire-clock journal tolerance it is that clock.
+	if last > float(logical_game_seconds) + maxf(0.00000001, float(logical_game_seconds) * 0.000000001):
 		return _fail("SAVE_VERSION", "Site 結算時間超前於原世界存檔")
+	last = minf(last, float(logical_game_seconds))
 	return {"ok": true, "legacy": false, "last": last, "pending": float(logical_game_seconds) - last}
 
 static func attach_settlement(state: Dictionary, logical_game_seconds: Variant) -> Dictionary:
