@@ -1,0 +1,37 @@
+diff --git a/scripts/terrain_lab/site_controller.gd b/scripts/terrain_lab/site_controller.gd
+index b028850..557b449 100644
+--- a/scripts/terrain_lab/site_controller.gd
++++ b/scripts/terrain_lab/site_controller.gd
+@@ -9184,7 +9184,9 @@ func ship_vehicle_in_journey(identity: String) -> bool:
+ 	return vehicles != null and vehicles.has_region_ship_projection(identity) or not _ship_journey.is_empty() and _ship_journey.get("boat_ids", []).has(identity)
+ 
+ func ship_person_in_journey(identity: int) -> bool:
+-	if _ship_journey.is_empty() and vehicles._region_ship_frames(lab.terrain).is_empty(): return false
++	# No journey and no Region ship projection to read (including a controller
++	# whose lab is not bound yet) means nobody is aboard a travelling ship.
++	if _ship_journey.is_empty() and (lab == null or lab.terrain == null or SiteVehicleTransport._region_ship_frames(lab.terrain).is_empty()): return false
+ 	for original: TerrainArmy in lab.combat_armies:
+ 		var index := original.index_for_identity(identity)
+ 		if index >= 0 and index < original.combat_units.size():
+diff --git a/scripts/tests/region_initial_world_transaction_test.gd b/scripts/tests/region_initial_world_transaction_test.gd
+index 5883f05..d9f9e89 100644
+--- a/scripts/tests/region_initial_world_transaction_test.gd
++++ b/scripts/tests/region_initial_world_transaction_test.gd
+@@ -192,11 +192,15 @@ func _verify_born(data: TerrainData, scenario: String, world_id: String) -> bool
+ 		for row: Dictionary in team.units:
+ 			_check(not identities.has(int(row.person_id)) and int(row.person_id) >= 2 and row.get("technology", {}).is_empty(), "Every bounded NPC retains one distinct unlearned original body")
+ 			identities[int(row.person_id)] = true
+-			_check(row.get("item_state", {}).get("holder") == "person:" + str(row.person_id), "Born NPC item holder is the original actual person")
++			# A cold-reopened row carries JSON numbers; the person id is a whole number.
++			_check(row.get("item_state", {}).get("holder") == "person:" + str(int(row.person_id)), "Born NPC item holder is the original actual person")
+ 	_check(int(state.next_person_id) == count * 5 + 2 and int(state.army_next_team) == count + 1, "True birth advances original person/team allocation exactly once")
+ 	var policy: Dictionary = Policy.candidate(state.world_pin)
+ 	_check(policy.ok and policy.policy.categories.is_empty() and str(state.world_pin.world_instance_id) == world_id, "Original World/Site geographic pin freezes the empty release policy")
+-	_check(not state.has("initial_scenario") if scenario.is_empty() else state.get("initial_scenario") == {"version": 1, "scenario_id": scenario, "world_id": world_id}, "Only the explicit original scenario has its matching one-time persisted selection")
++	# Compare in the saved JSON numeric domain, as _facts does for cold reopen.
++	var selection: Variant = state.get("initial_scenario")
++	_check(not state.has("initial_scenario") if scenario.is_empty() else (selection is Dictionary and selection.size() == 3 and (selection.get("version") is int or selection.get("version") is float) and float(selection.version) == 1.0
++		and selection.get("scenario_id") == scenario and selection.get("world_id") == world_id), "Only the explicit original scenario has its matching one-time persisted selection")
+ 	_check(Store._validate_actors(data, state).ok and Store._validate_armies(data, state, true).ok and Store._validate_items(data, state).ok and Store._validate_person_allocator(state).ok, "Original body/item/allocator validators admit the full first-generation cold population")
+ 	return true
+ 

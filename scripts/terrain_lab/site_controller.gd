@@ -9184,7 +9184,9 @@ func ship_vehicle_in_journey(identity: String) -> bool:
 	return vehicles != null and vehicles.has_region_ship_projection(identity) or not _ship_journey.is_empty() and _ship_journey.get("boat_ids", []).has(identity)
 
 func ship_person_in_journey(identity: int) -> bool:
-	if _ship_journey.is_empty() and vehicles._region_ship_frames(lab.terrain).is_empty(): return false
+	# No journey and no Region ship projection to read (including a controller
+	# whose lab is not bound yet) means nobody is aboard a travelling ship.
+	if _ship_journey.is_empty() and (lab == null or lab.terrain == null or SiteVehicleTransport._region_ship_frames(lab.terrain).is_empty()): return false
 	for original: TerrainArmy in lab.combat_armies:
 		var index := original.index_for_identity(identity)
 		if index >= 0 and index < original.combat_units.size():

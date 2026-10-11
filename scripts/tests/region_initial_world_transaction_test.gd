@@ -192,11 +192,15 @@ func _verify_born(data: TerrainData, scenario: String, world_id: String) -> bool
 		for row: Dictionary in team.units:
 			_check(not identities.has(int(row.person_id)) and int(row.person_id) >= 2 and row.get("technology", {}).is_empty(), "Every bounded NPC retains one distinct unlearned original body")
 			identities[int(row.person_id)] = true
-			_check(row.get("item_state", {}).get("holder") == "person:" + str(row.person_id), "Born NPC item holder is the original actual person")
+			# A cold-reopened row carries JSON numbers; the person id is a whole number.
+			_check(row.get("item_state", {}).get("holder") == "person:" + str(int(row.person_id)), "Born NPC item holder is the original actual person")
 	_check(int(state.next_person_id) == count * 5 + 2 and int(state.army_next_team) == count + 1, "True birth advances original person/team allocation exactly once")
 	var policy: Dictionary = Policy.candidate(state.world_pin)
 	_check(policy.ok and policy.policy.categories.is_empty() and str(state.world_pin.world_instance_id) == world_id, "Original World/Site geographic pin freezes the empty release policy")
-	_check(not state.has("initial_scenario") if scenario.is_empty() else state.get("initial_scenario") == {"version": 1, "scenario_id": scenario, "world_id": world_id}, "Only the explicit original scenario has its matching one-time persisted selection")
+	# Compare in the saved JSON numeric domain, as _facts does for cold reopen.
+	var selection: Variant = state.get("initial_scenario")
+	_check(not state.has("initial_scenario") if scenario.is_empty() else (selection is Dictionary and selection.size() == 3 and (selection.get("version") is int or selection.get("version") is float) and float(selection.version) == 1.0
+		and selection.get("scenario_id") == scenario and selection.get("world_id") == world_id), "Only the explicit original scenario has its matching one-time persisted selection")
 	_check(Store._validate_actors(data, state).ok and Store._validate_armies(data, state, true).ok and Store._validate_items(data, state).ok and Store._validate_person_allocator(state).ok, "Original body/item/allocator validators admit the full first-generation cold population")
 	return true
 
