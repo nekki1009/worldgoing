@@ -153,13 +153,14 @@ static func apply_pending(battle: Dictionary, prepared: Dictionary, callbacks: D
 ## Ephemeral references to the original Lab. A caller restriction can only
 ## remove legal people; it cannot turn a hidden/blocked person into a contact.
 ## Ranged releases retain the original finite-ammo/flight owner and are omitted.
-static func resolve_people(lab: TerrainLab, battle: Dictionary, eligibility_query: Callable = Callable()) -> Dictionary:
+static func resolve_people(lab: TerrainLab, battle: Dictionary, eligibility_query: Callable = Callable(), scope: Dictionary = {}) -> Dictionary:
 	if lab == null or lab.terrain == null or str(lab.terrain.site.get("id", "")) != str(battle.get("site_id", "")):
 		return _fail("WRONG_BATTLE_SITE")
 	if lab.crowd_site != null and lab.crowd_site.active: return _fail("UNSUPPORTED_BACKEND")
 	var original_refs := {}
 	var values := {}
-	var control_scope := scoped_controlled_person(lab)
+	# A detached bind child has no Slot of its own; its caller supplies the scope.
+	var control_scope := scope if not scope.is_empty() else scoped_controlled_person(lab)
 	if not control_scope.get("ok", false): return control_scope
 	var controlled := int(control_scope.person_id)
 	for side: String in ["attackers", "defenders"]:

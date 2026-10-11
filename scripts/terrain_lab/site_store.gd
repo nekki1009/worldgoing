@@ -1036,12 +1036,26 @@ static func _validate_military(data: TerrainData, state: Dictionary) -> Dictiona
 			return Runtime.fail("CORRUPT_SAVE", "軍營容量不能遺失或重複原人物")
 	return Runtime.ok()
 
+static func _normalize_portable_lineage(value: Variant) -> void:
+	if value is Dictionary:
+		if value.has("type") and value.has("namespace") and value.has("lineage") and (value.lineage is int or value.lineage is float):
+			value.lineage = int(value.lineage)
+		for key: Variant in value: _normalize_portable_lineage(value[key])
+	elif value is Array:
+		for entry: Variant in value: _normalize_portable_lineage(entry)
+
 static func _normalize_state(state: Dictionary) -> void:
 	# Raw identity was validated with all original candidate fields before this
 	# normalizer runs. Only detached integer metadata is canonicalized.
 	if state.has("travel_identity"):
 		var original: GDScript = load("res://scripts/region_lab/region_travel.gd")
 		state.travel_identity = original.normalize_identity(state.travel_identity)
+	# Portable organization references compare by value; their lineage and the
+	# container version are whole numbers like the travel identity they mirror.
+	if state.get("organization_refs") is Dictionary:
+		var portable: Dictionary = state.organization_refs
+		if portable.has("version"): portable.version = int(portable.version)
+		_normalize_portable_lineage(portable)
 	if state.has("ecology_version"):
 		state.ecology_version = int(state.ecology_version)
 	# The validated world pin reads back with JSON numbers and an untyped list;
@@ -1274,6 +1288,7 @@ static func _normalize_state(state: Dictionary) -> void:
 			for resource: String in feature.ship_build.paid_cost: feature.ship_build.paid_cost[resource] = int(feature.ship_build.paid_cost[resource])
 		for field: String in ["civil_version", "building_grade", "layout_version", "owner_faction", "quarter"]:
 			if feature.has(field): feature[field] = int(feature[field])
+		if feature.get("gate") is Dictionary and feature.gate.has("operator_id"): feature.gate.operator_id = int(feature.gate.operator_id)
 		if feature.has("residents"):
 			feature.residents = int(feature.residents)
 		for item: String in feature.cost:

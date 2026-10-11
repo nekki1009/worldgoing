@@ -290,6 +290,11 @@ func _action_graph() -> Dictionary:
 	var scene: Dictionary = graph.owner_states.scene
 	return {"root": scene.root.duplicate(true), "nodes": scene.nodes.duplicate(true)}
 
+## The store's own save path: stringify(sort_keys, full_precision) -> parse ->
+## stringify. No custom rounding.
+func _saved_json_domain(value: Variant) -> String:
+	return JSON.stringify(JSON.parse_string(JSON.stringify(value, "", true, true)), "", true, true)
+
 func _reopen_actual_partial() -> bool:
 	var source_facts := _action_facts()
 	var source_clock := {"world": float(slot.control.logical_game_seconds), "action": float(slot.control.fire_clock.action_seconds), "sequence": int(slot.control.fire_clock.sequence)}
@@ -321,7 +326,10 @@ func _reopen_actual_partial() -> bool:
 	lab.simulation_speed = action_speed
 	var restored_graph := _action_graph()
 	if restored_graph.is_empty(): return false
-	if not _check(source_facts == _action_facts() and source_graph == restored_graph and (_partial_ready() if action_fault == "none" else true)
+	# The graph comparison replaces an exact equality that cannot hold across a
+	# JSON reopen (number types and last-ulp floats change in the store round
+	# trip); facts, clocks, proof and partial progress stay compared value by value.
+	if not _check(source_facts == _action_facts() and _saved_json_domain(source_graph) == _saved_json_domain(restored_graph) and (_partial_ready() if action_fault == "none" else true)
 		and float(slot.control.logical_game_seconds) == float(source_clock.world) and float(slot.control.fire_clock.action_seconds) == float(source_clock.action) and int(slot.control.fire_clock.sequence) == int(source_clock.sequence)
 		and selected == slot.region_bind_proof(action_owner.terrain), "positive reopen restores exact hot graph, partial progress, stable items, reserved cells and both clocks", {"source_graph_sha": SiegeCheckpoint.state_hash(source_graph), "restored_graph_sha": SiegeCheckpoint.state_hash(restored_graph), "clock": source_clock}): return false
 	# A manual fresh-Slot reopen wires the restored main original as the common

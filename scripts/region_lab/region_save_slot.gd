@@ -3178,11 +3178,14 @@ func _admit_world_pin(data: TerrainData) -> Dictionary:
 	if not _same_pin(data.site.world_pin, pin): return fail("TECH_POLICY_CONFLICT", "Site 原世界政策與存檔槽不同")
 	return {"ok": true}
 
-func _region_npc_party(token: String) -> Dictionary:
+## allow_entered reads an entered party's last frozen document (its stable
+## references); only callers that inspect an arrived cohort pass it.
+func _region_npc_party(token: String, allow_entered: bool = false) -> Dictionary:
 	var reference: Dictionary = region_registry().parties.get(token, {})
-	if str(reference.get("controller", "")) != "npc" or str(reference.get("phase", "")) not in ["travelling", "pending_life", "materializing"]:
+	var phases := ["travelling", "pending_life", "materializing", "entered"] if allow_entered else ["travelling", "pending_life", "materializing"]
+	if str(reference.get("controller", "")) != "npc" or str(reference.get("phase", "")) not in phases:
 		return fail("NO_TARGET", "沒有此原 NPC 在途 owner")
-	if _region_npc_party_runtime.has(token): return {"ok": true, "party": _region_npc_party_runtime[token]}
+	if _region_npc_party_runtime.has(token) and str(reference.phase) != "entered": return {"ok": true, "party": _region_npc_party_runtime[token]}
 	var document := _travel_document(str(reference.party_path), str(reference.party_sha256), _travel_party_cache)
 	if not document.ok: return document
 	var payload: Dictionary = document.payload
@@ -3195,7 +3198,7 @@ func _region_npc_party(token: String) -> Dictionary:
 		return fail("CORRUPT_SAVE", "原 stable 身分引用非法")
 	var admitted := RegionTravel.validate_patients(party.content)
 	if not admitted.ok: return admitted
-	_region_npc_party_runtime[token] = party
+	if str(reference.phase) != "entered": _region_npc_party_runtime[token] = party
 	return {"ok": true, "party": party}
 
 func _region_npc_plan(token: String) -> Dictionary:
@@ -3237,6 +3240,17 @@ func prepare_npc_region_dispatch(lab: TerrainLab, nation_id: String, team_id: in
 	var window := validate_settlement(lab.terrain.site, control.logical_game_seconds)
 	if not window.ok or bool(window.get("legacy", true)) or float(window.get("pending", INF)) > 0.0000001:
 		return fail("UNSETTLED_SITE", "派遣前原 Site 須完成同一原區間")
+	# A source with progress its selected publication lacks (an earlier frame, or
+	# owners changed at this same time) is published at this point first; no clock
+	# moves. The probe is the bind preflight's own canonical source check, so the
+	# publish decision and the bind decision share one capture rule.
+	var source_check: Dictionary = lab._region_selected_bind_source(lab.terrain, self)
+	if not source_check.ok and str(source_check.get("code", "")) in ["STALE_REGION_CONTEXT", "STALE_REGION_SOURCE_OWNERS", "STALE_REGION_SOURCE_BODY"]:
+		if not region_original_endpoint_checkpoint.is_valid(): return fail("MISSING_REGION_ADAPTER", "缺含原活動 Lab 的共同端點 checkpoint")
+		var clocks := [float(control.logical_game_seconds), float(control.fire_clock.action_seconds), int(control.fire_clock.sequence)]
+		var published: Variant = region_original_endpoint_checkpoint.call({"region_source_publish": "npc_dispatch", "token": token})
+		if not published is Dictionary or not published.get("ok", false): return published if published is Dictionary else fail("INVALID_REGION_RECEIPT")
+		if clocks != [float(control.logical_game_seconds), float(control.fire_clock.action_seconds), int(control.fire_clock.sequence)]: return fail("CLOCK_CONTRACT", "派遣前發布不得推進時鐘")
 	var captured: Dictionary = lab.site_controller.capture_region_checkpoint("region_barrier", false,
 		{"npc_dispatch": true, "token": token, "owner": str(lab.terrain.site.id)}, token)
 	if not captured.ok: return captured
@@ -3387,6 +3401,15 @@ func commit_npc_region_dispatch(prepared: Dictionary) -> Dictionary:
 # For P0 encounter, Root first supplies the correctly bound original player Site
 # (or combines this detached insert in the same original P0 candidate).
 
+## The cold original has accepted progress its selected publication lacks: it is
+## a pending cold candidate, or its snapshot context is older than the world.
+func _region_cold_unpublished(original: TerrainLab) -> bool:
+	if original == null or original.terrain == null: return false
+	if _fire_cold_candidates.has(str(original.terrain.site.id)): return true
+	var context: Variant = original.terrain.site.get("region_snapshot", {}).get("context", {})
+	if not context is Dictionary or not context.has("game_seconds"): return false
+	return float(context.game_seconds) < float(control.logical_game_seconds) - 0.00000001
+
 func prepare_npc_region_arrival(event: Dictionary) -> Dictionary:
 	var token := str(event.get("payload", {}).get("token", ""))
 	var reference: Dictionary = region_registry().parties.get(token, {})
@@ -3413,6 +3436,15 @@ func prepare_npc_region_arrival(event: Dictionary) -> Dictionary:
 	var window := validate_settlement(lab.terrain.site, control.logical_game_seconds)
 	if not window.ok or bool(window.get("legacy", true)) or float(window.get("pending", INF)) > 0.00000001:
 		return fail("UNSETTLED_SITE", "目的地須先完成同一原區間")
+	# A cold destination advanced by accepted intervals since its last joint
+	# publication is published at this same point first; no clock moves. The
+	# bind preflight below still requires that exact published frame.
+	if requested_mode == "cold_exact" and _region_cold_unpublished(lab):
+		if not region_original_endpoint_checkpoint.is_valid(): return fail("MISSING_REGION_ADAPTER", "缺含原活動 Lab 的共同端點 checkpoint")
+		var clocks := [float(control.logical_game_seconds), float(control.fire_clock.action_seconds), int(control.fire_clock.sequence)]
+		var published: Variant = region_original_endpoint_checkpoint.call({"region_source_publish": "npc_arrival", "event": str(event.get("id", ""))})
+		if not published is Dictionary or not published.get("ok", false): return published if published is Dictionary else fail("INVALID_REGION_RECEIPT")
+		if clocks != [float(control.logical_game_seconds), float(control.fire_clock.action_seconds), int(control.fire_clock.sequence)]: return fail("CLOCK_CONTRACT", "到站前發布不得推進時鐘")
 	var party: Dictionary = loaded.party
 	if absf(float(party.get("upkeep", {}).get("at", -1.0)) - float(control.logical_game_seconds)) > 0.00000001:
 		return fail("UNSETTLED_PARTY", "原到站 party 與世界端點不同")
@@ -3464,6 +3496,9 @@ func prepare_npc_region_arrival(event: Dictionary) -> Dictionary:
 	var binding: Dictionary = region_bind_candidate.call(lab, candidate, requested_mode)
 	if not binding.get("ok", false) or not binding.get("can_publish") is Callable or not binding.get("publish") is Callable:
 		return fail("MISSING_REGION_ADAPTER", "原到站完整 bind 未准入")
+	# The bind ticket authenticated its own prepared body (as dispatch and player
+	# departure use); save and publish exactly that body.
+	if binding.get("data") is TerrainData: candidate = binding.data
 	var battle := _region_arrival_battle_candidate(destination, inserted.state, party, inserted.mapping, token, binding, requested_mode == "live")
 	if not battle.ok: return battle
 	if contact_entry and str(battle.get("battle", {}).get("kind", "")) == "siege":
@@ -3602,6 +3637,12 @@ func _region_first_player_route_contact(token: String, to: float, interval: Dict
 	var cache := {}
 	var begin := float(control.logical_game_seconds)
 	var npc_reference: Dictionary = region_registry().parties[token]
+	# The party was just extracted from this Site. While the player stays in that
+	# same active Site and the party is still on its departure segment, they are
+	# not meeting on the road; any later position or player move is judged as usual.
+	var npc_origin: Variant = npc_reference.get("origin", [])
+	var departure_site := Grid.site_id(str(pin.atlas_id), Vector2i(int(npc_origin[0]), int(npc_origin[1]))) if npc_origin is Array and npc_origin.size() == 2 else ""
+	var player_in_origin := not active.is_empty() and not departure_site.is_empty() and departure_site == str(control.active_site_id)
 	var first := _region_contact_sea_points(npc.party, npc_plan.plan, to, context, cache, interval) if npc_plan.plan.get("mode") == "sea" \
 		else _region_contact_land_points(npc.party, npc_plan.plan, to, true, npc_reference.position, context, cache)
 	if not first.ok: return first
@@ -3631,6 +3672,7 @@ func _region_first_player_route_contact(token: String, to: float, interval: Dict
 		var a: Dictionary = candidate.first.position
 		var b: Dictionary = candidate.second.position
 		if str(a.get("mode", "land")) != str(b.get("mode", "land")): continue # Cross-layer attack needs its original engagement owner.
+		if player_in_origin and int(a.get("step_index", -1)) == 0 and a.get("site") == npc_origin: continue
 		if candidate.kind == "reverse_seam":
 			var old: Dictionary = candidate.first_before.position
 			var from := Vector2i(int(old.site[0]), int(old.site[1]))
@@ -9033,7 +9075,7 @@ func _region_produce_remote_nation_dispatch(source_lab: TerrainLab) -> Dictionar
 			var receiver_owner: Dictionary = region_owner_lab.call(receiver_scope, mode)
 			if not receiver_owner.get("ok", false) or not receiver_owner.get("lab") is TerrainLab: return receiver_owner
 			var original: TerrainLab = receiver_owner.lab
-			var party := _region_npc_party(remote_token)
+			var party := _region_npc_party(remote_token, true) # An entered cohort: read its frozen stable references.
 			if not party.ok: return party
 			var remote_ref: Dictionary = party.party.content.get("travel_identity", {}).get("refs", {}).get("team", {}).get(str(int(request.team_id)), {})
 			var remote_team := _region_delivery_team(original, remote_ref)

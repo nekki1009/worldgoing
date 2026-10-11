@@ -10422,7 +10422,15 @@ func _region_resolve_prepared_battle_people(battle: Dictionary, token: String) -
 	if not is_instance_valid(child) or child.get_parent() != self or child.terrain == null or str(child.terrain.site.id) != str(ticket.data.site.id):
 		return SiteRuntime.fail("STALE_REGION_BIND_CHILD")
 	var rules: Script = load("res://scripts/region_lab/region_gameplay_battle.gd")
-	return rules.resolve_people(child, battle)
+	# The detached child is not bound to the Slot; scope its controlled person by
+	# the ticket's Slot exactly as scoped_controlled_person does for a bound Lab.
+	var ticket_slot: RegionSaveSlot = ticket.get("slot")
+	var scope := {}
+	if ticket_slot != null:
+		var active := str(ticket_slot.control.get("active_site_id", ""))
+		var cold := active.is_empty() or str(child.terrain.site.id) != active
+		scope = {"ok": true, "person_id": -1 if cold else int(child.controlled_person_id()), "scope": "cold_original" if cold else "active_original"}
+	return rules.resolve_people(child, battle, Callable(), scope)
 ## The same original Lab coordinates travel. All Site and party original
 ## consumers finish one accepted dual-clock interval before Slot records it.
 func _region_advance_original_travel_interval(request: Dictionary) -> Dictionary:

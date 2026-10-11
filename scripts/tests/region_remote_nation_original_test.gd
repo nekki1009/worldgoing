@@ -181,6 +181,16 @@ func _nation_send_command() -> bool:
 	var person: Dictionary = lab.site_controller.person_actions._person(courier.combat_identity(courier.current_commander), false)
 	var component := RegionTravelSite.start_component(slot, Vector2i.ZERO, person.cell, lab.terrain)
 	nation_courier_token = "nation_courier_%d" % OS.get_process_id()
+	# Right after the cohort's arrival the HQ source carries unpublished progress,
+	# so dispatch publishes first. A failing publication refuses the whole dispatch
+	# atomically: the same code, and no Slot, marker or graph byte changes.
+	var real_checkpoint: Callable = slot.region_original_endpoint_checkpoint
+	var before_refusal := var_to_bytes([slot.control, slot._marker, _nation_graphs()])
+	slot.region_original_endpoint_checkpoint = func(_payload: Dictionary = {}) -> Dictionary: return {"ok": false, "code": "TEST_PUBLISH_REFUSED"}
+	var refused := slot.prepare_npc_region_dispatch(lab, nation_id, courier.team_id, action_coordinate, component, [], nation_courier_token)
+	slot.region_original_endpoint_checkpoint = real_checkpoint
+	if not _check(not refused.ok and str(refused.get("code", "")) == "TEST_PUBLISH_REFUSED" and before_refusal == var_to_bytes([slot.control, slot._marker, _nation_graphs()]),
+		"a failed pre-dispatch source publication refuses the dispatch atomically with its own code", refused): return false
 	var prepared := slot.prepare_npc_region_dispatch(lab, nation_id, courier.team_id, action_coordinate, component, [], nation_courier_token)
 	if not _check(prepared.ok, "resident original Nation dispatcher authorizes an independent physical local courier", prepared.get("code")): return false
 	var signed := slot.prepare_region_carried_nation_command(prepared, str(nation_source_observation.id), str(action_owner.terrain.site.id), nation_remote_team_ref, nation_goal_coordinate)
@@ -295,16 +305,40 @@ func _nation_graphs() -> Dictionary:
 		graphs[str(original.terrain.site.id)] = captured.owner_states.scene.duplicate(true)
 	return graphs
 
+## Saved JSON domain (stringify sort_keys + full_precision -> parse -> stringify,
+## no custom rounding) with only the capture-request metadata set aside.
+func _nation_canonical(graphs: Dictionary) -> String:
+	var copy: Dictionary = graphs.duplicate(true)
+	for site: Variant in copy:
+		var context: Variant = copy[site].get("context")
+		if context is Dictionary:
+			for field: String in ["source_generation", "mode_revision", "token"]: context.erase(field)
+	return JSON.stringify(JSON.parse_string(JSON.stringify(copy, "", true, true)), "", true, true)
+
+func _nation_capture_contexts(graphs: Dictionary, generation: int) -> bool:
+	for site: Variant in graphs:
+		var context: Variant = graphs[site].get("context")
+		if not context is Dictionary or int(context.get("source_generation", -1)) != generation: return false
+		if int(context.get("mode_revision", -1)) < 0: return false
+	return true
+
 func _nation_reopen() -> bool:
 	var graphs := _nation_graphs()
 	if graphs.is_empty(): return false
+	var generation_before := int(slot._marker.generation)
 	var old_reports: Array = slot.region_registry().reports.duplicate(true)
 	var clocks := [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence]
 	if not await _reopen_actual_partial(): return false
 	var restored: Dictionary = lab._region_gameplay_owner_lab(Grid.site_id(str(slot.pin.atlas_id), nation_goal_coordinate), str(slot.region_registry().modes.get(Grid.site_id(str(slot.pin.atlas_id), nation_goal_coordinate), {}).get("mode", "cold_exact")))
 	if not _check(restored.ok and restored.lab is TerrainLab, "fresh Slot also restores the strategic Site's positively selected full original graph", restored.get("code")): return false
 	nation_goal = restored.lab
-	return _check(graphs == _nation_graphs() and old_reports == slot.region_registry().reports
+	# This replaces an exact equality that cannot hold across a JSON reopen: the
+	# reopen publishes once (each capture context names its generation and mode
+	# revision) and the store round trip changes number types and last ulps.
+	var reopened_graphs := _nation_graphs()
+	if not _check(_nation_capture_contexts(graphs, generation_before) and _nation_capture_contexts(reopened_graphs, int(slot._marker.generation))
+		and int(slot._marker.generation) == generation_before + 1, "reopen publishes exactly once and each capture context names its own generation and mode revision"): return false
+	return _check(_nation_canonical(graphs) == _nation_canonical(reopened_graphs) and old_reports == slot.region_registry().reports
 		and clocks == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence],
 		"positive selected reopen preserves all three whole original graphs, immutable command, current delay and both clock epochs")
 

@@ -218,6 +218,19 @@ func _public_fit(index: int) -> bool:
 	team = _fleet_team(index)
 	return _check(left.ok and team.player_member == null and team.combat_identity(team.current_commander) == int(fleet.people[0]) and team.command_eligible(team.current_commander) and not team.needs_attack_order, "original public leave selects the genuine eligible NPC captain without force-order or control flags", left)
 
+## Stable person/team/nation refs come from the original travel identity
+## allocator, which a departure would run; nothing has travelled yet in this
+## fixture, and the resident head's observation needs them first. The first
+## reopen checkpoint publishes them with the same whole graphs.
+func _fleet_identities() -> bool:
+	for index: int in 2:
+		var original := _fleet_owner(index)
+		if not _check(original != null, "each fleet Site has its actual original owner before identity indexing"): return false
+		var identified := RegionTravel.prepare_identity(original.terrain.site)
+		if not _check(identified.ok, "original identity allocator indexes each fleet Site's nation, teams and people", identified): return false
+		original.terrain.site.travel_identity = identified.state.travel_identity
+	return true
+
 func _fleet_dispatch(index: int) -> bool:
 	var original := _fleet_owner(index)
 	var fleet: Dictionary = fleets[index]
@@ -252,13 +265,51 @@ func _fleet_graphs() -> Dictionary:
 		graphs[str(fleet.token)] = {"party": selected.party.duplicate(true), "graph": {"root": owners.scene.root.duplicate(true), "nodes": owners.scene.nodes.duplicate(true), "transport": owners.transport.duplicate(true)}, "proof": slot.region_live_party_proof(str(fleet.token)).proof}
 	return graphs
 
+## Saved JSON domain: the same stringify(sort_keys, full_precision) -> parse ->
+## stringify path the store saves with; no custom rounding. Only the three
+## re-activation fields of each mode row are set aside (checked separately);
+## tactical_until_action compares as its remaining demand.
+func _reopen_canonical(control: Dictionary, marker: Dictionary, graphs: Dictionary) -> String:
+	var control_copy: Dictionary = control.duplicate(true)
+	var action := float(control.fire_clock.action_seconds)
+	for owner: Variant in control_copy.get("region_gameplay", {}).get("modes", {}):
+		var mode: Dictionary = control_copy.region_gameplay.modes[owner]
+		mode.erase("revision")
+		mode.tactical_until_action = maxf(0.0, float(mode.get("tactical_until_action", 0.0)) - action)
+		if mode.get("activation") is Dictionary:
+			mode.activation.erase("session")
+			mode.activation.erase("mode_revision")
+			mode.activation.erase(&"mode_revision")
+	var saved := JSON.stringify([control_copy, marker, graphs], "", true, true)
+	return JSON.stringify(JSON.parse_string(saved), "", true, true)
+
+## Each re-activated mode advances revision and mode_revision by exactly one and
+## carries the session of the original Lab now bound to that owner.
+func _reopen_modes_reactivated(before: Dictionary) -> bool:
+	var after: Dictionary = slot.region_registry().modes
+	if before.size() != after.size(): return false
+	for owner: Variant in before:
+		if not after.has(owner): return false
+		var old: Dictionary = before[owner]
+		var now: Dictionary = after[owner]
+		var old_activation: Dictionary = old.get("activation", {})
+		var new_activation: Dictionary = now.get("activation", {})
+		if int(now.revision) == int(old.revision) and str(new_activation.get("session", "")) == str(old_activation.get("session", "")) \
+				and int(new_activation.get("mode_revision", -1)) == int(old_activation.get("mode_revision", -1)): continue
+		if int(now.revision) != int(old.revision) + 1 or int(new_activation.get("mode_revision", -1)) != int(old_activation.get("mode_revision", -1)) + 1: return false
+		var owner_lab: TerrainLab = lab if str(owner) == str(slot.control.active_site_id) else slot._region_original_labs.get(str(owner))
+		if not is_instance_valid(owner_lab) or owner_lab.terrain == null: return false
+		if str(new_activation.get("session", "")) != str(owner_lab.region_bind_receipt(owner_lab.terrain).get("session", "-")): return false
+	return true
+
 func _fleet_reopen() -> bool:
 	if not _food_results(): return false
 	var saved: Dictionary = controller.checkpoint_region_internal("region_checkpoint", true)
 	if not _check(saved.ok, "original joint publisher captures both complete Sites and all true current party owners", saved): return false
 	var graphs := _fleet_graphs()
 	if not _check(not graphs.is_empty(), "complete actual Sites/party graphs are observed after original publication"): return false
-	var truth := var_to_bytes([slot.control, slot._marker, graphs])
+	var truth_modes: Dictionary = slot.region_registry().modes.duplicate(true)
+	var truth := _reopen_canonical(slot.control, slot._marker, graphs)
 	var reopened := RegionSaveSlot.new()
 	var opened: Dictionary = reopened.open_map(slot.source, world_id, "main")
 	if not _check(opened.ok, "fresh original Slot opens the same immutable publication", opened): return false
@@ -269,7 +320,16 @@ func _fleet_reopen() -> bool:
 	lab = restored; controller = lab.site_controller; slot = reopened; action_owner = lab
 	lab.simulation_speed = 1.0
 	if not fleet_primary.is_empty() and not _bind_live_observer(): return false
-	if not _check(truth == var_to_bytes([slot.control, slot._marker, _fleet_graphs()]), "true full cold bind preserves every Site and current party graph, clock and selected marker byte"): return false
+	# This replaces a byte check that cannot hold across a JSON reopen with a fresh
+	# original Lab: the store's JSON round trip changes number types, key order and
+	# last-ulp floats, and the new Lab re-activates each mode under its own session.
+	var reopened_graphs := _fleet_graphs()
+	if not _check(_reopen_modes_reactivated(truth_modes), "fresh cold bind re-activates each mode exactly once under its new original Lab session"): return false
+	if not _check(truth == _reopen_canonical(slot.control, slot._marker, reopened_graphs), "true full cold bind preserves every Site and current party graph, clock and selected marker in the saved JSON domain"): return false
+	# The manual fresh Slot gets the restored main original as its common adapter
+	# host, as the original controller did for the first Slot.
+	var rewired := lab._wire_region_gameplay_adapters(slot)
+	if not _check(rewired.ok, "fresh Slot adapters wire to the positively restored main original", rewired): return false
 	if not _food_results(): return false
 	var before := var_to_bytes([slot.control, _fleet_graphs()])
 	var retry: Dictionary = slot.consume_due_region_events()
@@ -391,6 +451,7 @@ func _run() -> void:
 	fleet_observation = "public_work"
 	for index: int in 2:
 		if not await _public_fit(index): _finish(); return
+	if not _fleet_identities(): _finish(); return
 	if not await _fleet_reopen(): _finish(); return
 	for index: int in 2:
 		if not _fleet_dispatch(index): _finish(); return
