@@ -143,7 +143,7 @@ func _earned_pinned_lab() -> TerrainLab:
 	_check(lab.site_controller.region_slot._coordinate(lab.terrain).ok, "The actual generated Site retains the same immutable original map pin")
 	return lab
 
-func _earned_army(lab: TerrainLab, count: int) -> TerrainArmy:
+func _earned_army(lab: TerrainLab, count: int, excluded_cells: Array = []) -> TerrainArmy:
 	var team = TerrainArmy.new()
 	root.add_child(team)
 	team.set_process(false)
@@ -155,14 +155,17 @@ func _earned_army(lab: TerrainLab, count: int) -> TerrainArmy:
 	team.person_id_allocator = Callable(lab, "_allocate_army_person_ids")
 	var cells: Array[Vector2i] = []
 	for index: int in range(count):
-		var near = Vector2i(10 + index % 20, 48 + floori(float(index) / 20.0)) if count == 40 else Vector2i(11 + index, 11)
+		# The 40-person army stands beside the workshops so production's command
+		# radius covers the named operator's workplace.
+		var near = Vector2i(14 + index % 20, 21 + floori(float(index) / 20.0)) if count == 40 else Vector2i(11 + index, 11)
 		var chosen = Vector2i(-1, -1)
 		for radius: int in range(5):
 			for y: int in range(-radius, radius + 1):
 				for x: int in range(-radius, radius + 1):
 					if absi(x) + absi(y) != radius: continue
 					var candidate = near + Vector2i(x, y)
-					if lab.terrain.contains(candidate) and lab.terrain.is_walkable(candidate) and not cells.has(candidate) and candidate not in [lab.character.terrain_cell, lab.npc.terrain_cell]:
+					if lab.terrain.contains(candidate) and lab.terrain.is_walkable(candidate) and not cells.has(candidate) and candidate not in [lab.character.terrain_cell, lab.npc.terrain_cell] \
+						and (excluded_cells.is_empty() or lab.terrain.feature_at[lab.terrain.index(candidate)] == 0 and not excluded_cells.has(lab.terrain.index(candidate))):
 						chosen = candidate
 						break
 				if chosen.x >= 0: break
@@ -190,8 +193,9 @@ func _earned_fixture(target: String, fixed: bool = false, metropolis: bool = fal
 	data.site.capacity = 1000000
 	var controller = lab.site_controller
 	var control = int(lab.controlled_person_id())
-	var team = _earned_army(lab, 40 if metropolis else 2)
-	var executor = control if target == "N10" else team.combat_identity(1)
+	# The 40-person army deploys after the buildings (below); the small one now.
+	var team = null if metropolis else _earned_army(lab, 2)
+	var executor = control if target == "N10" or team == null else team.combat_identity(1)
 	var center_anchor = Vector2i(25, 25) if metropolis else Vector2i(18, 10)
 	var center = _earned_setup_geometry(lab, "settlement_center", center_anchor, Vector2i(5, 5))
 	var reserved_center: Array = center.cells.duplicate()
@@ -216,6 +220,20 @@ func _earned_fixture(target: String, fixed: bool = false, metropolis: bool = fal
 		# Inside the radius-12 jurisdiction of the center at (25, 25).
 		_earned_setup_feature(lab, "well", Vector2i(20, 31), Vector2i.ONE, {}, reserved_center)
 		_earned_setup_feature(lab, "farm", Vector2i(15, 25), Vector2i(2, 2), {}, reserved_center)
+		# Deploy after the buildings: never on a building cell, any entrance or the
+		# reserved center; deploy_at then sets command radius and presence itself.
+		var army_excluded: Array = reserved_center.duplicate()
+		for fixture_key: String in data.site.features:
+			army_excluded.append(int(data.site.features[fixture_key].get("entrance", -1)))
+			# Keep a one-cell ring round every building free: work cells and access paths.
+			for fixture_cell: Variant in data.site.features[fixture_key].get("cells", []):
+				var ring_centre: Vector2i = data.cell_from_index(int(fixture_cell))
+				for ring_y: int in range(-1, 2):
+					for ring_x: int in range(-1, 2):
+						var ring_cell: Vector2i = ring_centre + Vector2i(ring_x, ring_y)
+						if data.contains(ring_cell): army_excluded.append(data.index(ring_cell))
+		team = _earned_army(lab, 40, army_excluded)
+		executor = control if target == "N10" else team.combat_identity(1)
 	_check(lab.character.place(data.cell_from_index(int(center.fixture_preview.entrance)), true), "The actual controlled founder reaches the true original founding radius")
 	var center_cells: Array[int] = []
 	center_cells.assign(center.cells)
@@ -340,6 +358,7 @@ func _earned_until_idle(f: Dictionary) -> void:
 		_earned_true_step(f)
 		count += 1
 		_check(count < 2000, "Original effective-work completion or REST recovery is finitely bounded")
+		if count >= 2000: break # Report the bound once instead of running into the timeout.
 	_check(not f.actions.is_busy(int(f.executor)) and not f.controller.work_team.is_assigned(int(f.executor)), "Original work owners release the real completed named task")
 
 func _earned_cold(f: Dictionary, node: String, expected_known: bool = true) -> void:

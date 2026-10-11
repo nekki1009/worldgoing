@@ -11,6 +11,7 @@ func _run() -> void:
 		and Runtime.building_grade(f.data.site.features[f.smithy]) == 3 and Runtime.building_grade(f.data.site.features[f.tannery]) == 3,
 		"Actual original upgrades, forty real housing relations and both grade3 real workshops meet S13's physical industry requirements")
 	_earned_prepare(f, "N11", "armor")
+	_check(f.team._member_can_serve(f.team.index_for_identity(int(f.executor))), "The named N11 operator is present within the team's own command radius before the job")
 	var cap := {"iron": 4, "leather": 2, "charcoal": 2}
 	var learned: Dictionary = f.row.technology
 	f.row.technology = {}
