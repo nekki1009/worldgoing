@@ -26,6 +26,7 @@ var e3_failed := false
 var e3_saw_cold := false
 var e3_out := ""
 var e3_journeys: Array[Dictionary] = []
+var e3_departed_fire_clock: Dictionary = {} # Actual journal observed right after departure.
 
 func _initialize() -> void:
 	deadline = Time.get_ticks_msec() + 180000
@@ -97,6 +98,9 @@ func _run() -> void:
 	var restored := e3_reference.restore_original_site(e3_source)
 	if not _must(restored.ok and restored.get("owners_restored", false), "Reference restores actual full owners: " + str(restored)): _finish_e3(false); return
 	if not _journey_to(DEST_SITE): _finish_e3(false); return
+	# The reference is not a durable indexed owner, so the original prune drops its
+	# prefix once the departed Site settles. Keep the actual journal seen now.
+	e3_departed_fire_clock = controller.region_slot.control.fire_clock.duplicate(true)
 	var until := float(controller.region_slot.control.logical_game_seconds) + E3_IDLE_SECONDS
 	for _step: int in range(E3_LIMIT):
 		if float(controller.region_slot.control.logical_game_seconds) + E3_EPS >= until: break
@@ -171,6 +175,40 @@ func _journey_to(destination: Vector2i) -> bool:
 	_freeze()
 	return true
 
+## Test-only: give the reference the same Fire journal segments and tracking the
+## original cold transaction uses. While the retained journal still covers the
+## reference watermark it is used as is; otherwise the actual journal observed at
+## departure is spliced onto it. The original fire_replay_segments validates
+## continuity and refuses any gap.
+func _reference_fire_replay(target: float) -> bool:
+	var current: Dictionary = controller.region_slot.control.fire_clock
+	var merged: Dictionary = current.duplicate(true)
+	if int(e3_reference.terrain.site.fire_settlement.sequence) < int(current.get("base_sequence", 0)):
+		var departed: Dictionary = e3_departed_fire_clock
+		if not _must(not departed.is_empty() and str(departed.get("epoch", "")) == str(current.epoch) and int(departed.sequence) >= int(current.get("base_sequence", 0)), "Observed departure journal reaches the retained current journal"): return false
+		var journal: Array = []
+		for row: Dictionary in departed.journal:
+			if int(row.last_sequence) <= int(current.get("base_sequence", 0)): journal.append(row.duplicate(true))
+		journal.append_array(current.journal.duplicate(true))
+		for field: String in ["base_sequence", "base_action_seconds", "base_game_seconds"]: merged[field] = departed.get(field, 0)
+		merged.journal = journal
+	var replay := RegionSaveSlot.fire_replay_segments(e3_reference.terrain.site, merged, target)
+	if not _must(replay.ok, "Reference has the complete original Fire journal from its own watermark: " + str(replay)): return false
+	var indexed: Dictionary = current.index.get(str(e3_reference.terrain.site.id), {})
+	e3_reference._fire_replay_tracking = true
+	e3_reference._fire_replay_epoch = str(e3_reference.terrain.site.fire_settlement.get("epoch", ""))
+	e3_reference._fire_replay_keep_tactical = bool(indexed.get("fire_active", false)) or e3_reference._fire_activity()
+	var segments: Array[Dictionary] = []
+	for segment: Dictionary in replay.segments: segments.append(segment)
+	e3_reference._fire_replay_segments = segments
+	e3_reference._fire_replay_segment_index = 0
+	e3_reference._fire_replay_segment_offset = 0
+	e3_reference._fire_replay_partial_cursor = -1.0
+	e3_reference._fire_replay_end_sequence = int(replay.to_sequence)
+	e3_reference._fire_replay_end_action = float(current.action_seconds)
+	e3_reference._fire_replay_end_game = target
+	return true
+
 func _return_to_visited() -> bool:
 	e3_saw_cold = false
 	if not _journey_to(START_SITE): return false
@@ -179,6 +217,7 @@ func _return_to_visited() -> bool:
 	var target := float(controller.region_slot.control.logical_game_seconds)
 	var settlement := RegionSaveSlot.validate_settlement(lab.terrain.site, target)
 	if not _must(settlement.ok and not settlement.get("legacy", true) and float(settlement.pending) <= E3_EPS, "Original return has no unsettled debt"): return false
+	if not _reference_fire_replay(target): return false
 	var reference_done := false
 	for _pump: int in range(E3_LIMIT):
 		if not _alive(): return false
@@ -213,6 +252,7 @@ func _paired_return_batch() -> Dictionary:
 		if not _must(stepped.ok and stepped.get("completed", false), "Paired live original clock: " + str(stepped)): return {"ok": false}
 	var target := float(controller.region_slot.control.logical_game_seconds)
 	if not _must(str(lab.terrain.site.manual.target).is_empty() and target > begin, "Live paid batch completes with positive actual time"): return {"ok": false}
+	if not _reference_fire_replay(target): return {"ok": false}
 	var complete := false
 	for _pump: int in range(E3_LIMIT):
 		if not _alive(): return {"ok": false}
