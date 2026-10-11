@@ -324,6 +324,17 @@ func _reopen_actual_partial() -> bool:
 	if not _check(source_facts == _action_facts() and source_graph == restored_graph and (_partial_ready() if action_fault == "none" else true)
 		and float(slot.control.logical_game_seconds) == float(source_clock.world) and float(slot.control.fire_clock.action_seconds) == float(source_clock.action) and int(slot.control.fire_clock.sequence) == int(source_clock.sequence)
 		and selected == slot.region_bind_proof(action_owner.terrain), "positive reopen restores exact hot graph, partial progress, stable items, reserved cells and both clocks", {"source_graph_sha": SiegeCheckpoint.state_hash(source_graph), "restored_graph_sha": SiegeCheckpoint.state_hash(restored_graph), "clock": source_clock}): return false
+	# A manual fresh-Slot reopen wires the restored main original as the common
+	# adapter host, as the original controller did for the first Slot, and
+	# completes the positive restore of every travelling party's original owner
+	# before the same-point retry is measured.
+	var rewired := lab._wire_region_gameplay_adapters(slot)
+	if not _check(rewired.ok, "fresh Slot adapters wire to the positively restored main original", rewired): return false
+	for token: String in slot.region_registry().parties:
+		if str(slot.region_registry().parties[token].get("phase", "")) not in ["travelling", "pending_life"]: continue
+		var travelling := slot._region_npc_party(token)
+		var owner: Dictionary = lab.prepare_region_party_original_owner(token, travelling.party, slot) if travelling.ok else travelling
+		if not _check(owner.ok, "fresh Slot restores the travelling party's actual original owner", owner.get("code")): return false
 	var retry_before := var_to_bytes([slot.control, _action_facts(), restored_graph])
 	var retry: Dictionary = slot.consume_due_region_events()
 	var retry_graph := _action_graph()

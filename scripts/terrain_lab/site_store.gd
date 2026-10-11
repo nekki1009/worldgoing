@@ -1268,7 +1268,7 @@ static func _normalize_state(state: Dictionary) -> void:
 			for field: String in ["version", "recipe_version", "team_id"]: feature.ship_build[field] = int(feature.ship_build[field])
 			feature.ship_build.total_work = float(feature.ship_build.total_work)
 			for resource: String in feature.ship_build.paid_cost: feature.ship_build.paid_cost[resource] = int(feature.ship_build.paid_cost[resource])
-		for field: String in ["civil_version", "building_grade"]:
+		for field: String in ["civil_version", "building_grade", "layout_version", "owner_faction", "quarter"]:
 			if feature.has(field): feature[field] = int(feature[field])
 		if feature.has("residents"):
 			feature.residents = int(feature.residents)
