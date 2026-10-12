@@ -60,6 +60,13 @@ func _workshop_named_point(f: Dictionary, seconds: float) -> void:
 	f.lab._commit_shared_work_pools()
 	workers.publish_shared_work_prefix(admitted)
 	workers.finish_shared_work_prefix(admitted)
+	# Match the original Lab terminal boundary after all paid endpoint effects.
+	if bool(admitted.get("finished", false)): priors.clear()
+	_check(bool(admitted.get("finished", false)) and is_same(priors, admitted.runtime_priors) and priors.is_empty(),
+		"Completed original workshop point clears only its SAME terminal ledger")
+	for candidate: Dictionary in admitted.runtime:
+		_check(is_same(candidate.prefix_ref.runtime_priors, priors) and candidate.prefix_ref.runtime_priors.is_empty(),
+			"Completed original workshop prefix no longer retains candidate ledger loop")
 
 func _n04_real_product_then_inspection() -> void:
 	var f := _workshop_earned_fixture()
