@@ -27,5 +27,6 @@
 | `trim_run_logs.ps1 -RunsRoot <runs…> [-ReportPath] [-WriteDigest] [-LargeMB 50]` | 找出逐位元組相同的重複日誌與超大日誌；`-WriteDigest` 在超大日誌旁新增 `log_digest_*.txt` | 不刪檔 |
 | `timeout_baseline.ps1 -TriageJson <triage.json> -OutDir <dir> [-TestsRoot scripts/tests]` | 每支測試 PASS p50／max、測試內 deadline、參考逾時、錯配與疑似卡死 | 只讀；寫 OutDir |
 | `batch_plan.ps1 -TriageJson <triage.json> -TestList <txt 或 json> -OutDir <dir> [-StaleRegistry] [-IncludeStale]` | 批次排序（PREVIOUS_PASS → REPRESENTATIVE → UNIQUE_FAIL → DEFERRED → TIMEOUT_LAST → UNKNOWN） | 只讀；寫 OutDir |
+| `dedupe_run_logs.ps1 -RunsRoot <runs…> -ReceiptPath <json> [-Apply] [-MinAgeMinutes 15] [-KeepGodotLog]` | 刪可重建的重複副本：`combined.log`（僅當大小 = stdout＋換行＋stderr）與 appdata `godot.log`；一律保留 stdout.log、stderr.log、result.json；跳過剛修改的 run；拒絕 `.godot-temp/godot_verify`；`-Apply` 前先寫含雜湊的清單 | 無 `-Apply` 只試算；**刪除需 Nekki 親自同意**（2026-10-12 已對 runs 與 evidence 執行一次） |
 
 注意：`godot_prepass.ps1` 的 `-GodotArguments` 是陣列，從外層 shell 呼叫時要用 `powershell -Command "& '…\godot_prepass.ps1' -GodotArguments @('--script','res://…')"`，用 `-File` 會把陣列當成字串。prepass 的輸出行序來自兩條串流的事件，跨串流的先後只是近似；首錯行本身與回溯內容不受影響。
