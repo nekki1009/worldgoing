@@ -221,6 +221,7 @@ func _initialize_visual_resources(contact_cpu_only: bool) -> void:
 	editor_window.visible = false
 	add_child(editor_window)
 	editor = HumanCharacter3DEditor.new()
+	editor.runtime_raw_cache = true # Runtime Actor presenter; authoring keeps raw reloads.
 	editor.preview_host = self
 	editor.visual_state = visual_state
 	editor_window.add_child(editor)
