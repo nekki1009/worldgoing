@@ -111,6 +111,7 @@ func _two_true_masters(f: Dictionary, kind: String) -> void:
 	_siege_assign(f, key, [int(f.helper)])
 	var assistant: int = f.team.combat_identity(2)
 	_require(assistant not in [int(f.master), int(f.helper)] and not Technology.learned(f.team.combat_units[2].get("technology", {}), str(f.category)), "Third original assistant truly lacks this manufacturing skill")
+	_station_named_member(f, assistant, anchor + Vector2i(-4, 2))
 	_siege_assign(f, key, [assistant])
 	_interval(f)
 	var progress: float = float(vehicle.build.progress)

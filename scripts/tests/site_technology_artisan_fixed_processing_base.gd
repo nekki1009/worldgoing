@@ -113,6 +113,7 @@ func _original_feature_ui(f: Dictionary, key: String, recipe: String, identity: 
 	var station: Vector2i = f.data.cell_from_index(int(feature.entrance))
 	var selected_body: Dictionary = f.team.combat_units[f.team.index_for_identity(identity)]
 	# Real original REST bookkeeping, no fatigue/pool reset or work shortcut.
+	if Fatigue.read(selected_body) > Fatigue.WORK_RESUME_AT: _settle_team_for_rest(f, identity)
 	for tick: int in 1000:
 		if Fatigue.read(selected_body) <= Fatigue.WORK_RESUME_AT: break
 		_interval(f, 30.0)

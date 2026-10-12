@@ -166,11 +166,76 @@ func _clear_station(f: Dictionary, identity: int, cell: Vector2i) -> void:
 		var other: int = f.team.combat_identity(index)
 		if other != identity and f.team.cells[index] == cell: _park(f, other, cell + Vector2i(0, 4))
 
+func _rest_block_reason(f: Dictionary, index: int) -> String:
+	var team: TerrainArmy = f.team
+	var other := team.combat_identity(index)
+	var actions: SitePersonActions = f.lab.site_controller.person_actions
+	var job: Dictionary = actions._jobs.get(actions._job_key_for(other), {})
+	var parts: Array[String] = []
+	if f.lab.site_controller.work_team.is_assigned(other): parts.append("assigned")
+	if team.moving_to[index] != TerrainArmy.INVALID_CELL: parts.append("moving")
+	if str(team.combat_hot_get(index, &"pose")) != "idle": parts.append("pose=" + str(team.combat_hot_get(index, &"pose")))
+	if actions.blocks_fatigue_rest(other): parts.append("job=%s/%s" % [str(job.get("kind", "")), str(job.get("paused", ""))])
+	return ",".join(parts)
+
+func _recover_pooled_knockouts(f: Dictionary, shared: Dictionary) -> void:
+	# A knocked-out pooled member blocks whole-team rest by design. Its KO ends on
+	# its own through original game time (public speed control, real action time).
+	var team: TerrainArmy = f.team
+	var downed: Array[int] = []
+	for index: int in team.combat_units.size():
+		if is_same(Fatigue.pool(team.combat_units[index]), shared) and float(team.combat_hot_get(index, &"hp")) > 0.0 and float(team.combat_hot_get(index, &"ko")) > 0.0: downed.append(index)
+	if downed.is_empty(): return
+	var speed_before: float = float(f.lab.simulation_speed)
+	while float(f.lab.simulation_speed) < 4.0: f.lab.change_simulation_speed(1)
+	for second: int in 120:
+		if downed.all(func(index: int) -> bool: return float(team.combat_hot_get(index, &"ko")) <= 0.0 and str(team.combat_hot_get(index, &"pose")) == "idle"): break
+		f.lab._advance_action_time(1.0)
+	while float(f.lab.simulation_speed) > speed_before: f.lab.change_simulation_speed(-1)
+	var still: Array = []
+	for index: int in downed:
+		if float(team.combat_hot_get(index, &"ko")) > 0.0 or str(team.combat_hot_get(index, &"pose")) != "idle" or not team.combat_can_act(index):
+			still.append("%d:ko=%.1f,pose=%s" % [team.combat_identity(index), float(team.combat_hot_get(index, &"ko")), str(team.combat_hot_get(index, &"pose"))])
+	_require(still.is_empty() and float(f.lab.simulation_speed) == speed_before, "Original KO recovery ends through real game time; the pooled member is up before team rest", "still=" + str(still))
+
+func _settle_team_for_rest(f: Dictionary, identity: int) -> void:
+	# Pooled fatigue recovers only as a whole-team decision (TerrainLab
+	# _advance_team_fatigue). Release the other pooled members' work and settle
+	# their in-flight steps through the original APIs, then require eligibility.
+	var team: TerrainArmy = f.team
+	var shared: Dictionary = team.team_fatigue
+	if shared.is_empty(): return
+	var work: SiteWorkTeam = f.lab.site_controller.work_team
+	var actions: SitePersonActions = f.lab.site_controller.person_actions
+	var blockers: Array = []
+	for index: int in team.combat_units.size():
+		if not is_same(Fatigue.pool(team.combat_units[index]), shared): continue
+		var other := team.combat_identity(index)
+		var reason := _rest_block_reason(f, index)
+		if not reason.is_empty(): blockers.append("%d:%s" % [other, reason])
+		if other == identity: continue
+		if work.is_assigned(other): _require(work.cancel(other).ok, "Original pooled teammate releases its work before the team rests")
+		if team.moving_to[index] != TerrainArmy.INVALID_CELL: team.cancel_committed_move_to_source(other)
+	_case["rest_blockers_%d" % identity] = blockers
+	_recover_pooled_knockouts(f, shared)
+	var still: Array = []
+	for index: int in team.combat_units.size():
+		if not is_same(Fatigue.pool(team.combat_units[index]), shared): continue
+		var other := team.combat_identity(index)
+		var left := _rest_block_reason(f, index)
+		if not left.is_empty(): still.append("%d:%s" % [other, left])
+	_require(still.is_empty() and team.combat_order == TerrainArmy.CombatOrder.HOLD, "Shared team fatigue pool is eligible to rest: every pooled member idle, unassigned and stationary under HOLD", "before=%s still=%s" % [str(blockers), str(still)])
+
 func _place(f: Dictionary, identity: int, cell: Vector2i) -> void:
 	# Explicit station fixture placement of SAME original GD hot rows; travel,
 	# Reservation Grid navigation and Native movement are separate named tests.
 	var team: TerrainArmy = f.team
 	var index := team.index_for_identity(identity)
+	if index >= 0 and team.moving_to[index] != TerrainArmy.INVALID_CELL:
+		# A committed step is cancelled through the original owner API before an
+		# explicit fixture placement; no stale step may survive the placement.
+		team.cancel_committed_move_to_source(identity)
+		_require(team.moving_to[index] == TerrainArmy.INVALID_CELL and float(team.move_progress[index]) == 0.0, "Original committed step cancelled before explicit fixture placement")
 	_require(index >= 0 and f.data.is_walkable(cell) and team.moving_to[index] == TerrainArmy.INVALID_CELL, "Actual original person can occupy fixture station")
 	for at: int in team.cells.size():
 		_require(at == index or team.cells[at] != cell, "No second original person occupies station")
@@ -397,7 +462,27 @@ func _processing(f: Dictionary) -> void:
 	f.master = original_master
 	_case.true_taught_replacement = {"person_id": f.helper, "lesson_effective_seconds": 300, "recipe": second_recipe, "output": output.duplicate(true)}
 
+func _land_committed_step(f: Dictionary, identity: int) -> void:
+	# A committed step (for example travel of a task cancelled just before) finishes
+	# through the original movement time the Lab runs; bounded, then required.
+	var index: int = f.team.index_for_identity(identity)
+	for step: int in 600:
+		if index < 0 or f.team.moving_to[index] == TerrainArmy.INVALID_CELL: break
+		f.lab._advance_action_time(TerrainLab.ACTION_STEP)
+	_require(index >= 0 and f.team.moving_to[index] == TerrainArmy.INVALID_CELL and float(f.team.move_progress[index]) == 0.0, "Original committed step lands through real movement time before reassignment", {"identity": identity, "moving_to": str(f.team.moving_to[index]) if index >= 0 else ""})
+
+func _station_named_member(f: Dictionary, identity: int, near: Vector2i) -> void:
+	# Explicit station input like the master/commander placements. A fixture placement
+	# is not a landed step, so presence is refreshed by a real command event: the
+	# current commander re-confirms the unchanged tactical-AI setting.
+	_park(f, identity, near)
+	var team: TerrainArmy = f.team
+	var confirmed: Dictionary = team.set_tactical_ai_enabled(team.current_commander, team.tactical_ai_enabled)
+	_require(confirmed.ok and team.get_active_move_plan() == null and team.moving_member_count() == 0, "Unchanged tactical-AI confirmation refreshes presence without any movement", confirmed)
+	_require(bool(team.combat_hot_get(team.index_for_identity(identity), &"present", false)), "Named member stands within the team's command radius at its job")
+
 func _siege_assign(f: Dictionary, key: String, identities: Array) -> void:
+	for identity: Variant in identities: _land_committed_step(f, int(identity))
 	var prepared: Dictionary = f.lab.site_controller.work_team.prepare_assign_vehicle(f.team, identities, int(f.commander), key)
 	_require(prepared.ok, "Current original team.work decider names true siege members", prepared)
 	_require(f.lab.site_controller.work_team.publish_assign_vehicle(prepared).ok, "Original fixed siege work slots published")
@@ -595,6 +680,7 @@ func _two_true_masters(f: Dictionary, kind: String) -> void:
 	var assistant: int = f.team.combat_identity(1 if f.category != "F04" else 3)
 	if assistant == int(f.master) or assistant == int(f.helper): assistant = f.team.combat_identity(2)
 	_require(not Technology.learned(f.team.combat_units[f.team.index_for_identity(assistant)].get("technology", {}), str(f.category)), "Third actual engineer is unlearned helper")
+	_station_named_member(f, assistant, anchor + Vector2i(-4, 2))
 	_siege_assign(f, key, [assistant])
 	_interval(f)
 	var progress := float(vehicle.build.progress)
