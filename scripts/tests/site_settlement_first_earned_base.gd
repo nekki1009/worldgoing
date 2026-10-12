@@ -85,10 +85,15 @@ func _settlement_fixture() -> Dictionary:
 		"initial_kits": int(data.site.inventory.get("ballista_spares", 0))}
 
 func _settlement_f07_prerequisite(f: Dictionary) -> void:
-	_check(f.lab.character.place(f.data.cell_from_index(int(f.data.site.depot_cell)), true), "Original future workshop operator reaches the real F07 trial contact")
-	_check(f.actions.prepare_technology(int(f.control), int(f.control)).ok
-		and f.actions.request_technology_consent(int(f.control), int(f.control)).ok
-		and f.actions.grant_technology_budget(int(f.control), {"wood": 12, "fiber": 6}).ok, "Original F07 first research has finite source and genuine consent")
+	var contact_ok := _earned_depot_contact(f.lab)
+	_check(contact_ok, "Original future workshop operator reaches the real F07 trial contact")
+	if not contact_ok: _earned_authorization_failed = true; return
+	var prepared: Dictionary = f.actions.prepare_technology(int(f.control), int(f.control))
+	var consent: Dictionary = f.actions.request_technology_consent(int(f.control), int(f.control)) if prepared.ok else {"ok":false,"code":"NOT_RUN"}
+	var grant: Dictionary = f.actions.grant_technology_budget(int(f.control), {"wood": 12, "fiber": 6}) if prepared.ok and consent.ok else {"ok":false,"code":"NOT_RUN"}
+	if not prepared.ok or not consent.ok or not grant.ok: _earned_grant_failure(f.lab, "family", prepared, consent, grant)
+	_check(prepared.ok and consent.ok and grant.ok, "Original F07 first research has finite source and genuine consent")
+	if not prepared.ok or not consent.ok or not grant.ok: _earned_authorization_failed = true; return
 	for index: int in 3:
 		_check(f.actions.begin_technology_trial(int(f.control), int(f.control)).ok, "Original F07 trial explicitly starts")
 		await _settlement_points(f)
@@ -165,15 +170,24 @@ func _settlement_earned() -> void:
 		print(identity, "_ORIGINAL_SETTLEMENT_FIRST_EARNED_DISABLED_PASS checks=", checks)
 		return
 	if identity == "S07": await _settlement_f07_prerequisite(f)
-	_check(f.lab.character.place(f.data.cell_from_index(int(f.data.site.depot_cell)), true), "Original head explicitly reaches the finite camp grant source")
-	_check(f.actions.prepare_scope_technology(int(f.control), int(f.control), identity, str(f.settlement_id)).ok, "Public original command prepares an unknown Settlement target")
+	if _earned_authorization_failed: return
+	var contact_ok := _earned_depot_contact(f.lab)
+	_check(contact_ok, "Original head explicitly reaches the finite camp grant source")
+	if not contact_ok: _earned_authorization_failed = true; return
+	var prepared: Dictionary = f.actions.prepare_scope_technology(int(f.control), int(f.control), identity, str(f.settlement_id))
+	if not prepared.ok: _earned_grant_failure(f.lab, "settlement", prepared, {"code":"NOT_RUN"}, {"code":"NOT_RUN"})
+	_check(prepared.ok, "Public original command prepares an unknown Settlement target")
+	if not prepared.ok: _earned_authorization_failed = true; return
 	var cap: Dictionary = {}
 	var count = 0
 	for phase: Dictionary in EarnedCatalog.get_node(identity).research.routes[0].phases:
 		count += int(phase.repeat)
 		for resource: String in phase.materials: cap[resource] = int(cap.get(resource, 0)) + int(phase.materials[resource]) * int(phase.repeat)
-	_check(f.actions.request_scope_technology_consent(int(f.control), "settlement", str(f.settlement_id), int(f.control)).ok
-		and f.actions.grant_scope_technology_budget(int(f.control), "settlement", str(f.settlement_id), cap).ok, "Actual team/head/person approve this purpose and exact finite cumulative budget")
+	var consent: Dictionary = f.actions.request_scope_technology_consent(int(f.control), "settlement", str(f.settlement_id), int(f.control))
+	var grant: Dictionary = f.actions.grant_scope_technology_budget(int(f.control), "settlement", str(f.settlement_id), cap) if consent.ok else {"ok":false,"code":"NOT_RUN"}
+	if not consent.ok or not grant.ok: _earned_grant_failure(f.lab, "settlement", prepared, consent, grant)
+	_check(consent.ok and grant.ok, "Actual team/head/person approve this purpose and exact finite cumulative budget")
+	if not consent.ok or not grant.ok: _earned_authorization_failed = true; return
 	var sequence = 0
 	var cold_done = false
 	while not _settlement_project(f).is_empty():
@@ -236,7 +250,7 @@ func _settlement_earned() -> void:
 func _run() -> void:
 	deadline = Time.get_ticks_msec() + 210000
 	await _settlement_earned()
-	quit(0)
+	quit(1 if _earned_authorization_failed else 0)
 
 func _settlement_center_placement(data: TerrainData) -> Dictionary:
 	var camp = data.cell_from_index(int(data.site.depot_cell))

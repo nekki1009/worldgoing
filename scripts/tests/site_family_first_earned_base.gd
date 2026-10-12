@@ -4,6 +4,21 @@ extends "res://scripts/tests/site_technology_paid_feature_resume_test.gd"
 ## route, combat contact geometry, Native or performance acceptance.
 const EarnedCatalog = preload("res://scripts/terrain_lab/site_technology_catalog.gd")
 
+var _earned_authorization_failed := false
+
+func _earned_depot_contact(lab: TerrainLab) -> bool:
+	var data: TerrainData = lab.terrain
+	var camp := data.cell_from_index(int(data.site.depot_cell))
+	for direction: Vector2i in TerrainData.DIRECTIONS:
+		var cell := camp + direction
+		if data.contains(cell) and data.is_walkable(cell) and data.can_step(cell, camp) and lab.character.place(cell, true): return true
+	return false
+
+func _earned_grant_failure(lab: TerrainLab, scope: String, prepared: Dictionary, consent: Dictionary, grant: Dictionary) -> void:
+	printerr("CC001_LEGAL_CONTACT_GRANT_FAIL: " + JSON.stringify({"prepare":prepared.get("code", "OK"), "consent":consent.get("code", "OK"), "grant":grant.get("code", "OK"),
+		"person":lab.controlled_person_id(), "actor_cell":str(lab.character.terrain_cell), "depot_cell":str(lab.terrain.cell_from_index(int(lab.terrain.site.depot_cell))),
+		"budget":Technology.active_project(lab.terrain.site.get(scope, {}).get("technology", {})).get("budget", {})}, "", true, true))
+
 func _earned_id() -> String:
 	return ""
 
@@ -98,8 +113,13 @@ func _earned_fixture() -> Dictionary:
 		and not Technology.learned(lab.character.technology, identity), "Target starts unknown in both original owners")
 	Runtime.rebuild_water(data)
 	var actions: SitePersonActions = lab.site_controller.person_actions
-	_check(lab.character.place(data.cell_from_index(int(data.site.depot_cell)), true), "Actual executor stands at original finite material grant contact")
-	_check(actions.prepare_scope_technology(control, control, identity).ok, "Public original preparation creates the true target project")
+	var contact_ok := _earned_depot_contact(lab)
+	_check(contact_ok, "Actual executor stands at original finite material grant contact")
+	if not contact_ok: _earned_authorization_failed = true; return {}
+	var prepared: Dictionary = actions.prepare_scope_technology(control, control, identity)
+	if not prepared.ok: _earned_grant_failure(lab, "family", prepared, {"code":"NOT_RUN"}, {"code":"NOT_RUN"})
+	_check(prepared.ok, "Public original preparation creates the true target project")
+	if not prepared.ok: _earned_authorization_failed = true; return {}
 	var family_id = str(data.site.family.family_id)
 	var cap: Dictionary = {}
 	var expected_receipts = 0
@@ -107,9 +127,12 @@ func _earned_fixture() -> Dictionary:
 		expected_receipts += int(phase.repeat)
 		for material: String in phase.materials:
 			cap[material] = int(cap.get(material, 0)) + int(phase.materials[material]) * int(phase.repeat)
-	_check(actions.request_scope_technology_consent(control, "family", family_id, control).ok
-		and actions.grant_scope_technology_budget(control, "family", family_id, cap).ok,
+	var consent: Dictionary = actions.request_scope_technology_consent(control, "family", family_id, control)
+	var grant: Dictionary = actions.grant_scope_technology_budget(control, "family", family_id, cap) if consent.ok else {"ok":false,"code":"NOT_RUN"}
+	if not consent.ok or not grant.ok: _earned_grant_failure(lab, "family", prepared, consent, grant)
+	_check(consent.ok and grant.ok,
 		"Actual original person consents and grants exactly the finite full phase budget")
+	if not consent.ok or not grant.ok: _earned_authorization_failed = true; return {}
 	return {"data": data, "lab": lab, "controller": lab.site_controller, "actions": actions,
 		"control": control, "family_id": family_id, "keys": keys, "cap": cap,
 		"expected_receipts": expected_receipts, "tech_id": identity, "cold_count": 0}
@@ -204,6 +227,7 @@ func _earned_cold(f: Dictionary, completed: bool) -> void:
 
 func _earned() -> void:
 	var f = _earned_fixture()
+	if f.is_empty(): return
 	var sequence = 0
 	var first_payment: Dictionary = {}
 	while not _earned_project(f).is_empty():
@@ -273,6 +297,7 @@ func _earned() -> void:
 func _run() -> void:
 	deadline = Time.get_ticks_msec() + (540000 if _earned_id() in ["F01", "F02"] else 180000)
 	await _earned()
+	if _earned_authorization_failed: quit(1); return
 	print(_earned_id(), "_ORIGINAL_FAMILY_FIRST_EARNED_SHARED_COLD_PASS checks=", checks,
 		"; target initially unknown; actual finite paid outputs, full local shared points and cold graph; no pinned World/route/contact geometry/Native/performance/full40 proof")
 	quit(0)

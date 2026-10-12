@@ -7,6 +7,19 @@ const SharesCatalog = preload("res://scripts/terrain_lab/site_technology_catalog
 func _target_id() -> String:
 	return ""
 
+func _after_nation_infrastructure(f: Dictionary) -> void:
+	# The starting background needs the finished Warehouse, so it runs after the
+	# parent infrastructure; the forty prior residents (team 402) stay as built.
+	var team: TerrainArmy = _army(f.lab, f.data)
+	var captain_id: int = team.combat_identity(0)
+	var captain: Dictionary = f.actions._person(captain_id)
+	_check(not captain.is_empty() and float(captain.hp) <= 0.0 and team.formal_commander == TerrainArmy.PLAYER_MEMBER
+		and team.combat_identity(team.current_commander) == int(f.control),
+		"The starting captain is truly dead and the original succession seated the controlled Actor before any settlement check")
+	f.team = team
+	f.executor = team.combat_identity(1)
+	f.row = team.combat_units[1]
+
 func _army(lab: TerrainLab, data: TerrainData) -> TerrainArmy:
 	# Explicit starting background, not combat/route acceptance: use the actual
 	# scene Army, its original person allocator, equipment and lifecycle hooks.
@@ -108,7 +121,9 @@ func _shares_choice(dialog: AcceptDialog, key: String, value: Variant) -> void:
 	_check(choice != null, "Actual Nation window exposes the original " + key + " selection")
 	var found = false
 	for index: int in range(choice.item_count):
-		if choice.get_item_metadata(index) == value:
+		var metadata: Variant = choice.get_item_metadata(index)
+		# The window's placeholder item carries "" metadata; compare like types only.
+		if typeof(metadata) == typeof(value) and metadata == value:
 			choice.select(index)
 			found = true
 			break
@@ -192,7 +207,8 @@ func _shares_earned() -> void:
 	person.cargo.clear() # Explicit finite initial donor stock; all following movement uses the real transfer.
 	person.cargo.grain = amount
 	stock.cargo.clear()
-	var recipient_ids: Array[int] = recipients if tech_id == "N03" else [int(f.executor)]
+	var recipient_ids: Array[int] = recipients.duplicate()
+	if tech_id != "N03": recipient_ids = [int(f.executor)] # Typed assignment, not an untyped ternary literal.
 	for identity: int in recipient_ids:
 		_check(f.actions._person(identity).cargo.is_empty(), "Actual receiving original NPC starts with an empty holder")
 	var dialog = _shares_dialog(f)
