@@ -968,7 +968,8 @@ func issue_army_command(command_id: int) -> bool:
 func _exit_tree() -> void:
 	_clear_shared_work_step()
 	remove_from_group(&"terrain_lab_contact_source_users")
-	if get_tree().get_nodes_in_group(&"terrain_lab_contact_source_users").is_empty():
+	# Visual runtime sources outlive Lab navigation; headless keeps its full reload.
+	if DisplayServer.get_name() == "headless" and get_tree().get_nodes_in_group(&"terrain_lab_contact_source_users").is_empty():
 		TerrainArmy.release_contact_source()
 		RuntimeHumanCharacter3DEditor.release_runtime_raw_cache()
 

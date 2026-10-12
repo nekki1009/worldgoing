@@ -8,6 +8,11 @@ static var runtime_raw_cache_enabled := true
 static func release_runtime_raw_cache() -> void:
 	_runtime_raw_scenes.clear()
 
+static func _retain_raw_cache_until_exit() -> void:
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree != null and not tree.root.tree_exiting.is_connected(release_runtime_raw_cache):
+		tree.root.tree_exiting.connect(release_runtime_raw_cache, CONNECT_ONE_SHOT)
+
 func _runtime_raw_cache_active() -> bool:
 	return runtime_raw_cache and runtime_raw_cache_enabled and DisplayServer.get_name() != "headless"
 
@@ -63,6 +68,7 @@ func _load_body_model(index: int, preview_model_path: String = "") -> void:
 				for child: Node in generated.find_children("*", "", true, false): child.owner = generated
 				var packed_raw := PackedScene.new()
 				if packed_raw.pack(generated) == OK:
+					_retain_raw_cache_until_exit()
 					_runtime_raw_scenes[cache_key] = packed_raw
 					# Every runtime instance, this first one included, comes from the pack;
 					# the parsed source tree is not a scene node and is freed.

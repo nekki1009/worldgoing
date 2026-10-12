@@ -6046,7 +6046,14 @@ func enable_combat(attacking: bool = true, female_count: int = -1, troop_type: S
 	_visual_dirty = true
 	return true
 
+static func _retain_contact_sources_until_exit() -> void:
+	if DisplayServer.get_name() == "headless": return
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree != null and not tree.root.tree_exiting.is_connected(release_contact_source):
+		tree.root.tree_exiting.connect(release_contact_source, CONNECT_ONE_SHOT)
+
 static func load_contact_source(reference: HumanCharacter3DEditor = null) -> bool:
+	_retain_contact_sources_until_exit()
 	if _contact_source != null and is_instance_valid(_contact_source.editor):
 		return true
 	if not load_combat_bake():
@@ -6063,6 +6070,7 @@ static func load_contact_source(reference: HumanCharacter3DEditor = null) -> boo
 static func prepare_contact_source_for(appearance: Dictionary, reference: HumanCharacter3DEditor = null) -> bool:
 	# Deployment/load preparation only. Queries below never instantiate a rig.
 	if not HumanCharacter3DEditor.valid_appearance(appearance) or bool(appearance.mounted): return false
+	_retain_contact_sources_until_exit()
 	var body := int(appearance.body)
 	if body == 0:
 		return load_contact_source(reference) and _contact_source.supports_appearance(appearance)
@@ -10011,6 +10019,7 @@ func _promote_deferred_captain() -> void:
 	_combat_pose_cache.erase(combat_identity(0))
 
 func _captain_geometry_entry(index: int) -> Dictionary:
+	_retain_contact_sources_until_exit()
 	var appearance: Dictionary = equipment_appearance(index)
 	if appearance.is_empty(): appearance = combat_units[index].get("appearance", {})
 	var body := int(appearance.get("body", 0))

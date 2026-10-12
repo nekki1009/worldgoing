@@ -3,6 +3,14 @@ extends HumanCharacter3DEditor
 
 static var _raw_scenes: Dictionary = {}
 
+static func release_raw_cache() -> void:
+	_raw_scenes.clear()
+
+static func _retain_raw_cache_until_exit() -> void:
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree != null and not tree.root.tree_exiting.is_connected(release_raw_cache):
+		tree.root.tree_exiting.connect(release_raw_cache, CONNECT_ONE_SHOT)
+
 func _initialize_preview() -> void:
 	super._initialize_preview()
 	preview_viewport.size = CharacterRenderContract.MAP_VIEWPORT_SIZE
@@ -56,6 +64,7 @@ func _load_body_model(index: int, preview_model_path: String = "") -> void:
 					child.owner = generated
 				shared_scene = PackedScene.new()
 				if shared_scene.pack(generated) == OK:
+					_retain_raw_cache_until_exit()
 					_raw_scenes[cache_key] = shared_scene
 				else:
 					push_error("TerrainArmySharedVisualSource: failed to cache raw model %s" % model_path)
