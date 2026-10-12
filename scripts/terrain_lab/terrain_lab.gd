@@ -970,7 +970,7 @@ func _exit_tree() -> void:
 	remove_from_group(&"terrain_lab_contact_source_users")
 	if get_tree().get_nodes_in_group(&"terrain_lab_contact_source_users").is_empty():
 		TerrainArmy.release_contact_source()
-		HumanCharacter3DEditor.release_runtime_raw_cache()
+		RuntimeHumanCharacter3DEditor.release_runtime_raw_cache()
 
 func _update_army_controls() -> void:
 	var active := army != null and army.has_army()

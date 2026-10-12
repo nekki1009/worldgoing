@@ -8,7 +8,7 @@ const SourceBounds = preload("res://scripts/terrain_lab/terrain_army_source_boun
 const ShapesDescriptor = preload("res://scripts/terrain_lab/terrain_army_shapes_descriptor.gd")
 const COMPILED_SHAPES_PATH := "res://scripts/terrain_lab/compiled_contact_shapes.cs"
 
-class ComponentQueryEditor extends HumanCharacter3DEditor:
+class ComponentQueryEditor extends RuntimeHumanCharacter3DEditor:
 	# Only this private query model has a fixed hierarchy after initialization.
 	# Cache original lookup results, never visibility, transforms or geometry.
 	# Any future same-root reparent/rename must explicitly clear this lookup.
@@ -445,7 +445,6 @@ func initialize(parent: Node, appearance: Dictionary, reference_source: HumanCha
 	if is_instance_valid(reference_source) and not reference_source.use_imported_model and reference_source._body_index == int(appearance.body):
 		raw_animation = reference_source.animation_player
 	editor.use_imported_model = is_instance_valid(raw_animation) and imported_mesh_is_current(int(appearance.body))
-	editor.runtime_raw_cache = true # Shares the runtime raw-GLB parse with Actor editors.
 	editor.name = "SharedSoldierContactSource"
 	editor.preview_host = parent
 	editor.visual_state.body_index = int(appearance.body)
