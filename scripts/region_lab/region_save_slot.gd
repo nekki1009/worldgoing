@@ -3144,6 +3144,9 @@ func checkpoint_region_site(data: TerrainData, context: Dictionary, owner_states
 	sites[_site_key(coordinate.site)] = _file_entry(path)
 	var collected := _collect_cold_checkpoint(generation, sites, next_clock)
 	if not collected.ok: return collected
+	# The active checkpoint selects the completed party bodies at this same endpoint.
+	var parties := collect_region_party_checkpoint(generation, next_clock)
+	if not parties.ok: return parties
 	var published := _publish(sites, next_clock, str(_marker.get("transfer_token", "")), _marker.get("journey", {}))
 	if not published.ok: return published
 	return {"ok": true, "path": path, "generation": published.generation, "data": loaded.data, "snapshot": validated.snapshot}
@@ -4188,6 +4191,15 @@ func collect_region_party_checkpoint(generation: int, next_control: Dictionary, 
 		var reference: Dictionary = next_control.region_gameplay.parties.get(token, {})
 		if str(reference.get("phase", "")) not in ["travelling", "pending_life", "materializing"]: continue
 		var party: Dictionary = _region_npc_party_runtime[token]
+		var upkeep: Dictionary = party.get("upkeep", {})
+		if not _seconds(upkeep.get("at")) or not _seconds(upkeep.get("owner_action_seconds")) \
+				or absf(float(upkeep.at) - float(next_control.logical_game_seconds)) > 0.00000001 \
+				or absf(float(upkeep.owner_action_seconds) - float(next_control.fire_clock.action_seconds)) > 0.00000001:
+			var refused := fail("UNSETTLED_PARTY", "共同 checkpoint 不能選定未完成同一雙時間端點的原 party")
+			refused.diagnostic = {"token": token, "phase": str(reference.phase), "generation": generation,
+				"party_game": upkeep.get("at"), "party_action": upkeep.get("owner_action_seconds"),
+				"world_game": next_control.logical_game_seconds, "world_action": next_control.fire_clock.action_seconds}
+			return refused
 		var capture := _region_capture_party_graph(token, party)
 		if not capture.ok: return capture
 		var actual: Dictionary = capture.get("party", party)
@@ -4198,7 +4210,8 @@ func collect_region_party_checkpoint(generation: int, next_control: Dictionary, 
 		if not written.ok: return written
 		reference.party_path = relative
 		reference.party_sha256 = FileAccess.get_sha256(folder.path_join(relative))
-		_region_npc_party_runtime[token] = actual
+		# Capture verifies the same party bytes; checkpoint publication must retain
+		# its runtime identity for original callers spanning this common marker.
 	return {"ok": true}
 
 func _finish_original_cold_region_points() -> Dictionary:
@@ -4864,30 +4877,7 @@ func _region_contact_navigation(site: Vector2i, context: Dictionary, mode: Strin
 	else:
 		# Same original ocean/water-step guards as the full-hull route proof.
 		# These labels never alias the ground layer's component numbers.
-		var labels := PackedInt32Array()
-		labels.resize(10000)
-		labels.fill(-1)
-		var label := 10000
-		for index: int in range(10000):
-			if labels[index] >= 0: continue
-			var cell := Vector2i(index % 100, index / 100)
-			if not RegionRoute._ocean({"data": data, "cell": cell}): continue
-			var pending: Array[Vector2i] = [cell]
-			labels[index] = label
-			var cursor := 0
-			while cursor < pending.size():
-				var current: Vector2i = pending[cursor]
-				cursor += 1
-				for direction: Vector2i in TerrainData.DIRECTIONS:
-					var next := current + direction
-					if next.x < 0 or next.y < 0 or next.x >= 100 or next.y >= 100: continue
-					var next_index := next.y * 100 + next.x
-					if labels[next_index] >= 0 or not RegionRoute._ocean({"data": data, "cell": next}) \
-							or not data.can_water_step(current, next): continue
-					labels[next_index] = label
-					pending.append(next)
-			label += 1
-		projected = {"ok": true, "labels": labels, "ids": {}}
+		projected = RegionRoute.sea_contact_labels(data)
 	if not projected.ok: return projected
 	projected.data = data
 	cache[key] = projected

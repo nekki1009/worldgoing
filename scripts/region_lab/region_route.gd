@@ -149,6 +149,9 @@ static var _navigation_layer_names: Array[String] = []
 ## choose the walk layers), plus size and parameters. Collected once from the
 ## script's own property list so a new layer is included automatically.
 static func _navigation_content_hash(data: TerrainData) -> int:
+	return hash(_navigation_content_values(data))
+
+static func _navigation_content_values(data: TerrainData) -> Array:
 	if _navigation_layer_names.is_empty():
 		var names: Array[String] = []
 		for property: Dictionary in data.get_property_list():
@@ -161,7 +164,73 @@ static func _navigation_content_hash(data: TerrainData) -> int:
 		_mutex.unlock()
 	var values: Array = [data.size, data.parameters]
 	for name: String in _navigation_layer_names: values.append(data.get(name))
-	return hash(values)
+	return values
+
+## Derived contact labels only; current TerrainData stays with the Slot caller.
+const SEA_CONTACT_LABEL_SCHEMA := "sea-contact-labels-v1/nav-pod-v1"
+
+static func sea_contact_labels(data: TerrainData) -> Dictionary:
+	if data == null or data.get_script() != TerrainData or data.size != Vector2i(Adapter.SIDE, Adapter.SIDE): return _sea_contact_labels_uncached(data)
+	var values := _navigation_content_values(data)
+	if not _sea_contact_pod(values): return _sea_contact_labels_uncached(data)
+	var signature := var_to_bytes([SEA_CONTACT_LABEL_SCHEMA, _navigation_layer_names, values])
+	var key := "%s|%d" % [SEA_CONTACT_LABEL_SCHEMA, hash(values)]
+	_mutex.lock()
+	var cached: Variant = _table_memo.get(key)
+	if cached is Dictionary and cached.get("signature") is PackedByteArray and cached.signature == signature and cached.get("projection") is Dictionary:
+		var copied: Dictionary = cached.projection.duplicate(true)
+		copied.labels = copied.labels.duplicate()
+		_mutex.unlock()
+		return copied
+	_mutex.unlock()
+	var computed := _sea_contact_labels_uncached(data)
+	var after := _navigation_content_values(data)
+	if computed.ok and _sea_contact_pod(after) and signature == var_to_bytes([SEA_CONTACT_LABEL_SCHEMA, _navigation_layer_names, after]):
+		var stored := computed.duplicate(true)
+		stored.labels = stored.labels.duplicate()
+		_mutex.lock()
+		if not _table_memo.has(key): _table_memo_order.append(key)
+		_table_memo[key] = {"signature": signature.duplicate(), "projection": stored}
+		while _table_memo_order.size() > TABLE_MEMO_LIMIT: _table_memo.erase(_table_memo_order.pop_front())
+		_mutex.unlock()
+	return computed
+
+## Only the signature is retained. Unsupported/deep runtime inputs remain uncached.
+static func _sea_contact_pod(value: Variant, depth: int = 0) -> bool:
+	if depth > 64 or typeof(value) in [TYPE_OBJECT, TYPE_CALLABLE, TYPE_SIGNAL, TYPE_RID]: return false
+	if value is Dictionary:
+		for key: Variant in value:
+			if not _sea_contact_pod(key, depth + 1) or not _sea_contact_pod(value[key], depth + 1): return false
+	elif value is Array:
+		for item: Variant in value:
+			if not _sea_contact_pod(item, depth + 1): return false
+	return true
+
+static func _sea_contact_labels_uncached(data: TerrainData) -> Dictionary:
+	var labels := PackedInt32Array()
+	labels.resize(10000)
+	labels.fill(-1)
+	var label := 10000
+	for index: int in range(10000):
+		if labels[index] >= 0: continue
+		var cell := Vector2i(index % 100, index / 100)
+		if not RegionRoute._ocean({"data": data, "cell": cell}): continue
+		var pending: Array[Vector2i] = [cell]
+		labels[index] = label
+		var cursor := 0
+		while cursor < pending.size():
+			var current: Vector2i = pending[cursor]
+			cursor += 1
+			for direction: Vector2i in TerrainData.DIRECTIONS:
+				var next := current + direction
+				if next.x < 0 or next.y < 0 or next.x >= 100 or next.y >= 100: continue
+				var next_index := next.y * 100 + next.x
+				if labels[next_index] >= 0 or not RegionRoute._ocean({"data": data, "cell": next}) \
+						or not data.can_water_step(current, next): continue
+				labels[next_index] = label
+				pending.append(next)
+		label += 1
+	return {"ok": true, "labels": labels, "ids": {}}
 
 static func _table_from_terrain_uncached(data: TerrainData, resource_cover: PackedByteArray, effective: bool) -> Dictionary:
 	var policy := travel_policy(data, resource_cover)
@@ -595,7 +664,7 @@ static func _ship_sweep(first: TerrainData, second: TerrainData, shift: Vector2i
 ## Pose A* uses only original geometry. It returns an actual per-cell proof.
 ## The next Site is a narrow arrival strip, so search cannot leave and re-enter.
 static func vehicle_crossing(first: TerrainData, second: TerrainData, vehicle: Dictionary,
-		pose: Dictionary, edge: int, offset: int, sea: bool = false, target: Vector2i = Vector2i(-999, -999)) -> Dictionary:
+		pose: Dictionary, edge: int, offset: int, sea: bool = false, target: Vector2i = Vector2i(-999, -999), reach_cache: Variant = null) -> Dictionary:
 	var direction: Vector2i = TerrainData.DIRECTIONS[edge]
 	var shift := direction * Adapter.SIDE
 	var kind := str(vehicle.get("ship_type", "")) if sea else str(vehicle.get("kind", ""))
@@ -604,6 +673,11 @@ static func vehicle_crossing(first: TerrainData, second: TerrainData, vehicle: D
 	if not Ship.valid_facing(facing): return {"ok": false}
 	var goal := Adapter.boundary_cell(edge, offset) + direction * (int(Ship.definition(kind).get("length", 1)) + 2 if sea else 4)
 	if target != Vector2i(-999, -999): goal = target
+	if sea and reach_cache is Dictionary:
+		var depth := goal.x * direction.x + goal.y * direction.y
+		var reach_key := "%s:%d:%d:%d:%d:%d:%d" % [kind, start.x, start.y, facing.x, facing.y, edge, depth]
+		if not reach_cache.has(reach_key): reach_cache[reach_key] = hull_reach(first, second, kind, start, facing, edge, depth)
+		if not reach_cache[reach_key].has(goal): return {"ok": false, "code": "HULL_NO_ROUTE"}
 	var search := Search.new()
 	var open: Array = []
 	var parents := {}
@@ -662,6 +736,35 @@ static func vehicle_crossing(first: TerrainData, second: TerrainData, vehicle: D
 			parents[next_key] = {"cell": next, "facing": next_heading, "parent": key}
 			search._push(open, [cost + Vector2(next - goal).length(), cost, next_key])
 	return {"ok": false, "code": "HULL_NO_ROUTE" if sea else "VEHICLE_NO_ROUTE"}
+
+## Every cell the hull reaches from one start pose under any heading, by the
+## vehicle_crossing moves, sweep and bound. The bound depends on the goal only
+## through its depth along the crossing direction, so one sweep serves every
+## offset of the edge; an unreachable goal cell is a HULL_NO_ROUTE without A*.
+static func hull_reach(first: TerrainData, second: TerrainData, kind: String,
+		start: Vector2i, facing: Vector2i, edge: int, goal_depth: int) -> Dictionary:
+	var direction: Vector2i = TerrainData.DIRECTIONS[edge]
+	var shift := direction * Adapter.SIDE
+	var cells := {start: true}
+	var seen := {Vector4i(start.x, start.y, facing.x, facing.y): true}
+	var frontier: Array[Vector4i] = [Vector4i(start.x, start.y, facing.x, facing.y)]
+	var index := 0
+	while index < frontier.size():
+		var state := frontier[index]
+		index += 1
+		var cell := Vector2i(state.x, state.y)
+		var heading := Vector2i(state.z, state.w)
+		for move: Array in [[cell + heading, heading], [cell - heading, heading], [cell, Vector2i(-heading.y, heading.x)], [cell, Vector2i(heading.y, -heading.x)]]:
+			var next: Vector2i = move[0]
+			var next_heading: Vector2i = move[1]
+			var key := Vector4i(next.x, next.y, next_heading.x, next_heading.y)
+			if seen.has(key): continue
+			if not first.contains(next) and (not second.contains(next - shift) or next.x * direction.x + next.y * direction.y - goal_depth > 2): continue
+			if not _ship_sweep(first, second, shift, kind, cell, heading, next, next_heading): continue
+			seen[key] = true
+			cells[next] = true
+			frontier.append(key)
+	return cells
 
 static func _shore_contact(first: TerrainData, second: TerrainData, shift: Vector2i,
 		kind: String, anchor: Vector2i, facing: Vector2i, occupied: Dictionary) -> bool:
@@ -757,6 +860,7 @@ class Search:
 	var context: Dictionary = {}
 	var _terrain_cache: Dictionary = {}
 	var _provider_failure: Dictionary = {}
+	var _hull_reach: Dictionary = {} # "from>to" -> hull_reach results by start pose and edge depth.
 
 	func run() -> Dictionary:
 		result = _run()
@@ -836,7 +940,9 @@ class Search:
 			var proof_vehicle := vehicle.duplicate(true)
 			if sea: proof_vehicle.route_crew = int(RegionTravel.ship_metrics(context.get("party", {}).get("content", {}), vehicle).crew)
 			var target: Vector2i = RegionRoute.Adapter.boundary_cell(edge, offset) + direction * padding + unpacked.anchor - lead if sea else Vector2i(-999, -999)
-			var crossed := RegionRoute.vehicle_crossing(first, second, proof_vehicle, unpacked, edge, offset, sea, target)
+			var pair := "%d,%d>%d,%d" % [from.x, from.y, to.x, to.y]
+			if sea and not _hull_reach.has(pair): _hull_reach[pair] = {}
+			var crossed := RegionRoute.vehicle_crossing(first, second, proof_vehicle, unpacked, edge, offset, sea, target, _hull_reach[pair] if sea else null)
 			if not crossed.ok: return crossed
 			output[identity] = {"anchor": [crossed.pose.anchor.x, crossed.pose.anchor.y], "operator": [crossed.pose.operator.x, crossed.pose.operator.y], "facing": [crossed.pose.facing.x, crossed.pose.facing.y]}
 			paths[identity] = crossed.path

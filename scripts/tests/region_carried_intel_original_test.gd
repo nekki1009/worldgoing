@@ -67,6 +67,7 @@ func _run() -> void:
 			action_owner.site_controller._building_person_query, action_owner.site_controller.reserves_cell)
 		if not _check(closed.ok, "true original gate command reserves the old physical route entry after departure", closed): _finish(); return
 	if delivery_case == "blocked":
+		if not _delivery_blocked_seal(): _finish(); return
 		if not await _delivery_until(func() -> bool: return _delivery_report().delivery.has("last_navigation_result"), "actual route stop records the blocked courier outcome without a received report"): _finish(); return
 		var carried: Dictionary = _delivery_report()
 		var party := slot._region_npc_party(delivery_token)
@@ -75,6 +76,12 @@ func _run() -> void:
 		if not await _delivery_reopen(): _finish(); return
 	if not await _delivery_until(func() -> bool: return DeliveryAI.carried_report_terminal(_delivery_report()), "real physical route/arrival or original expiry owns the single report result"): _finish(); return
 	var actual_report := _delivery_report()
+	if delivery_case == "blocked":
+		var gate: Dictionary = action_owner.terrain.site.features[delivery_gate].gate
+		var step: Dictionary = delivery_plan.steps.back()
+		if not _check(not bool(gate.open) and str(gate.pending).is_empty()
+			and not RegionRoute.seam_step(lab.terrain, action_owner.terrain, RegionRoute.opposite(int(step.edge)), int(step.offset)),
+			"blocked fixture retains its real selected seam seal after paid gate closure and original expiry"): _finish(); return
 	var expected: String = str({"positive": "DELIVERED", "death": "COURIER_DEAD", "ko": "COURIER_UNAVAILABLE", "receiver_authority": "RECEIVER_AUTHORITY_CHANGED", "receiver_captive": "RECEIVER_CAPTIVE", "blocked": "REPORT_EXPIRED", "expiry": "REPORT_EXPIRED"}[delivery_case])
 	if not _check(str(actual_report.delivery.result.code) == expected and float(actual_report.receipt.game_time) == float(delivery_source_receipt.game_time)
 		and float(actual_report.receipt.expires_at) == float(delivery_source_receipt.expires_at) and actual_report.source_receipt == delivery_source_receipt,
@@ -137,7 +144,12 @@ func _delivery_receiver_office() -> bool:
 
 func _delivery_initial_gate() -> bool:
 	var data := action_owner.terrain
-	var layout := SiteRuntime.building_cells(data, "gate", Vector2i(0, 48), Vector2i(3, 4), {"quarter": 3})
+	# Only blocked needs a free seam cell for a lawful original wall seal: a gate
+	# at x 0 (3x4 from (0, 48)) covers the selected entry cell (0, 49/50), so the
+	# wall allocator could not place there. At x 1 the gate keeps its role and the
+	# seam column x 0 stays free; every other case keeps the original x 0 gate.
+	var gate_x := 1 if delivery_case == "blocked" else 0
+	var layout := SiteRuntime.building_cells(data, "gate", Vector2i(gate_x, 48), Vector2i(3, 4), {"quarter": 3})
 	if not _check(layout.ok, "initial original west gate layout is legal", layout): return false
 	var options: Dictionary = layout.options.duplicate(true)
 	options.owner_faction = 1
@@ -150,9 +162,39 @@ func _delivery_initial_gate() -> bool:
 	feature.progress = float(feature.work)
 	feature.gate.open = true
 	Env.rebuild_indexes(data)
-	if not _check(action_owner.character.place(Vector2i(3, 49), true), "real original recipient stands at the actual gate operator square"): return false
+	if not _check(action_owner.character.place(Vector2i(gate_x + 3, 49), true), "real original recipient stands at the actual gate operator square"): return false
 	var ready := SiteRuntime._gate_operator(data, feature, delivery_receiver, action_owner.site_controller._building_person_query)
 	return _check(ready.ok and controller.checkpoint_region_internal("region_checkpoint", true).ok, "true open gate and operator share one original initial checkpoint", ready)
+
+func _delivery_blocked_seal() -> bool:
+	# Explicit GAME/ACTION-zero fixture authoring, using the same paid feature
+	# allocator/completion owner as the existing initial walls. No gate rewrite.
+	var clocks := [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence]
+	if not _check(delivery_case == "blocked" and float(clocks[0]) == 0.0 and float(clocks[1]) == 0.0,
+		"blocked seam authoring precedes every positive original interval"): return false
+	var data := action_owner.terrain
+	var step: Dictionary = delivery_plan.steps.back()
+	var entry := RegionRoute.entry_cell(step)
+	var edge := RegionRoute.opposite(int(step.edge))
+	if not _check(entry.x == 0 and entry.y in [49, 50] and data.feature_at[data.index(entry)] == 0
+		and RegionRoute.seam_step(lab.terrain, data, edge, int(step.offset)),
+		"selected original seam is open and has a free destination cell before blocked fixture sealing", entry): return false
+	var stone_before := int(data.site.inventory.get("stone", 0))
+	var built := SiteRuntime.request_build(data, "stone_wall", [data.index(entry)], action_owner.site_controller.reserves_cell,
+		{"owner_faction": 1, "material": "stone"})
+	if not _check(built.ok, "blocked fixture original allocator pays finite stone for the selected seam seal", built): return false
+	var key := str(built.feature)
+	var feature: Dictionary = data.site.features[key]
+	if not _check(int(data.site.inventory.get("stone", 0)) == stone_before - int(feature.cost.stone),
+		"blocked fixture seam material debit is exact"): return false
+	var task := {"version": 2, "zone": -1, "target": "feature:" + key, "action": "construct", "work_cell": int(feature.entrance),
+		"cell": int(feature.entrance), "mode": "work", "progress": 0.0, "status": "", "work_slot": -1}
+	SiteRuntime._feature_work(data, key, float(feature.work), action_owner.site_controller.reserves_cell, Callable(), task, {},
+		SiteRuntime.CARRY_CAPACITY, 1, action_owner.character.person_id)
+	return _check(feature.stage == "complete" and not RegionRoute.seam_step(lab.terrain, data, edge, int(step.offset))
+		and clocks == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence],
+		"original completed wall truly seals the immutable selected seam without assigning navigation or clocks",
+		{"feature": key, "entry": entry, "height": data.effective_height(entry), "gate": data.site.features[delivery_gate].gate.duplicate(true)})
 
 func _delivery_partial_binding() -> bool:
 	action_owner.character.apply_contact({"result": {"hp": 1.0, "stun": 110.0, "guard_break": false}, "shield": false, "environmental": true})

@@ -261,8 +261,24 @@ func _fleet_graphs() -> Dictionary:
 		if not selected.ok: return {}
 		var graph: Dictionary = slot._region_capture_party_graph(str(fleet.token), selected.party)
 		if not graph.ok: return {}
+		var proof: Dictionary = slot.region_live_party_proof(str(fleet.token))
+		var mode: Dictionary = slot.region_registry().modes.get("travel:" + str(fleet.token), {})
+		var diagnostic := {"token": str(fleet.token), "phase": str(reference.phase), "stage": fleet_observation,
+			"generation": int(slot._marker.generation), "revision": int(slot.region_registry().revision),
+			"party_path": reference.party_path, "party_sha256": reference.party_sha256, "code": proof.get("code", "OK"),
+			"party_game": selected.party.upkeep.at, "party_action": selected.party.upkeep.get("owner_action_seconds"),
+			"world_game": slot.control.logical_game_seconds, "world_action": slot.control.fire_clock.action_seconds,
+			"mode_game": mode.get("game_seconds"), "mode_action": mode.get("action_seconds"), "sequence": slot.control.fire_clock.sequence}
+		if not _check(proof.ok, "joint checkpoint selects each complete original party proof", diagnostic): return {}
+		if not _check(var_to_bytes(proof.party) == var_to_bytes(selected.party)
+			and absf(float(proof.proof.game_seconds) - float(slot.control.logical_game_seconds)) <= 0.00000001
+			and absf(float(proof.proof.action_seconds) - float(slot.control.fire_clock.action_seconds)) <= 0.00000001,
+			"selected checkpoint body and both clocks match the completed original runtime party", diagnostic): return {}
+		if not _check(graph.original_live_graph.has("owners") and graph.original_live_graph.owners is Dictionary
+			and graph.original_live_graph.owners.get("scene") is Dictionary and graph.original_live_graph.owners.get("transport") is Dictionary,
+			"original party graph contains the actual complete scene and transport owners", {"token": str(fleet.token), "stage": fleet_observation}): return {}
 		var owners: Dictionary = graph.original_live_graph.owners
-		graphs[str(fleet.token)] = {"party": selected.party.duplicate(true), "graph": {"root": owners.scene.root.duplicate(true), "nodes": owners.scene.nodes.duplicate(true), "transport": owners.transport.duplicate(true)}, "proof": slot.region_live_party_proof(str(fleet.token)).proof}
+		graphs[str(fleet.token)] = {"party": selected.party.duplicate(true), "graph": {"root": owners.scene.root.duplicate(true), "nodes": owners.scene.nodes.duplicate(true), "transport": owners.transport.duplicate(true)}, "proof": proof.proof}
 	return graphs
 
 ## Saved JSON domain: the same stringify(sort_keys, full_precision) -> parse ->
@@ -283,6 +299,32 @@ func _reopen_canonical(control: Dictionary, marker: Dictionary, graphs: Dictiona
 	var saved := JSON.stringify([control_copy, marker, graphs], "", true, true)
 	return JSON.stringify(JSON.parse_string(saved), "", true, true)
 
+## Every travelling party's selected document as the Slot reads it from disk:
+## body, saved original owner graph and proof. Needs no adapter or owner Lab.
+## Before any dispatch there are none; null means a document failed to read.
+func _fleet_selected_documents(source_slot: RegionSaveSlot) -> Variant:
+	var documents := {}
+	for fleet: Dictionary in fleets:
+		var reference: Dictionary = source_slot.region_registry().parties.get(str(fleet.token), {})
+		if reference.is_empty() or reference.phase != "travelling": continue
+		var selected: Dictionary = source_slot.region_live_party_proof(str(fleet.token))
+		if not _check(selected.ok, "each selected party document reads back complete", {"token": str(fleet.token), "code": selected.get("code", "OK")}): return null
+		documents[str(fleet.token)] = {"party": selected.party, "graph": selected.original_live_graph, "proof": selected.proof}
+	return documents
+
+## As _reopen_canonical, but a fresh open has not yet re-admitted any mode: each
+## runtime activation is set aside here and checked after rewire instead.
+func _restore_canonical(control: Dictionary, marker: Dictionary, documents: Dictionary) -> String:
+	var control_copy: Dictionary = control.duplicate(true)
+	var action := float(control.fire_clock.action_seconds)
+	for owner: Variant in control_copy.get("region_gameplay", {}).get("modes", {}):
+		var mode: Dictionary = control_copy.region_gameplay.modes[owner]
+		mode.erase("revision")
+		mode.erase("activation")
+		mode.tactical_until_action = maxf(0.0, float(mode.get("tactical_until_action", 0.0)) - action)
+	var saved := JSON.stringify([control_copy, marker, documents], "", true, true)
+	return JSON.stringify(JSON.parse_string(saved), "", true, true)
+
 ## Each re-activated mode advances revision and mode_revision by exactly one and
 ## carries the session of the original Lab now bound to that owner.
 func _reopen_modes_reactivated(before: Dictionary) -> bool:
@@ -298,6 +340,10 @@ func _reopen_modes_reactivated(before: Dictionary) -> bool:
 				and int(new_activation.get("mode_revision", -1)) == int(old_activation.get("mode_revision", -1)): continue
 		if int(now.revision) != int(old.revision) + 1 or int(new_activation.get("mode_revision", -1)) != int(old_activation.get("mode_revision", -1)) + 1: return false
 		var owner_lab: TerrainLab = lab if str(owner) == str(slot.control.active_site_id) else slot._region_original_labs.get(str(owner))
+		# A travelling party's original Lab is not a Site owner: the Slot keeps it
+		# under region_party_owner_labs, keyed by token, after the positive bind.
+		if str(owner).begins_with("travel:"):
+			owner_lab = slot.get_meta(&"region_party_owner_labs", {}).get(str(owner).trim_prefix("travel:"))
 		if not is_instance_valid(owner_lab) or owner_lab.terrain == null: return false
 		if str(new_activation.get("session", "")) != str(owner_lab.region_bind_receipt(owner_lab.terrain).get("session", "-")): return false
 	return true
@@ -310,15 +356,38 @@ func _fleet_reopen() -> bool:
 	if not _check(not graphs.is_empty(), "complete actual Sites/party graphs are observed after original publication"): return false
 	var truth_modes: Dictionary = slot.region_registry().modes.duplicate(true)
 	var truth := _reopen_canonical(slot.control, slot._marker, graphs)
+	var truth_documents: Variant = _fleet_selected_documents(slot)
+	if truth_documents == null: return false
+	var truth_publication := _restore_canonical(slot.control, slot._marker, truth_documents)
 	var reopened := RegionSaveSlot.new()
 	var opened: Dictionary = reopened.open_map(slot.source, world_id, "main")
 	if not _check(opened.ok, "fresh original Slot opens the same immutable publication", opened): return false
 	var read: Dictionary = reopened.open_site(Vector2i.ZERO)
 	if not _check(read.ok and read.data.site.has("region_snapshot"), "fresh source retains its entire genuine owner graph", read.get("code")): return false
+	# Restore itself is compared first, before any adapter rewire or party owner
+	# bind can touch it: the read-back marker, clocks and every selected party
+	# document equal the saved publication in the saved JSON domain.
+	var restored_documents: Variant = _fleet_selected_documents(reopened)
+	if restored_documents == null: return false
+	if not _check(truth_publication == _restore_canonical(reopened.control, reopened._marker, restored_documents),
+		"fresh restore reads back the same selected marker, clocks and party documents before any rewire"): return false
 	var restored := _restore_selected(read.data, reopened, false)
 	if restored == null: return false
 	lab = restored; controller = lab.site_controller; slot = reopened; action_owner = lab
 	lab.simulation_speed = 1.0
+	# The manual fresh Slot gets the restored main original as its common adapter
+	# host, as the original controller did for the first Slot.
+	var rewired := lab._wire_region_gameplay_adapters(slot)
+	if not _check(rewired.ok, "fresh Slot adapters wire to the positively restored main original", rewired): return false
+	# Sites restore separately; positively restore every travelling party before observing its graph.
+	for token: String in slot.region_registry().parties:
+		if str(slot.region_registry().parties[token].get("phase", "")) not in ["travelling", "pending_life"]: continue
+		var travelling := slot._region_npc_party(token)
+		var owner: Dictionary = lab.prepare_region_party_original_owner(token, travelling.party, slot) if travelling.ok else travelling
+		if not _check(owner.ok and owner.lab is TerrainLab and owner.receipt.get("complete", false)
+			and owner.receipt.get("owners_restored", false), "fresh original bind restores the selected party's complete owner", {"token": token, "code": owner.get("code", "OK")}): return false
+		var actual := slot.region_original_party_runtime_proof(token, travelling.party)
+		if not _check(actual.ok and actual.lab == owner.lab, "restored travelling party has its actual current runtime proof", {"token": token, "code": actual.get("code", "OK")}): return false
 	if not fleet_primary.is_empty() and not _bind_live_observer(): return false
 	# This replaces a byte check that cannot hold across a JSON reopen with a fresh
 	# original Lab: the store's JSON round trip changes number types, key order and
@@ -326,10 +395,6 @@ func _fleet_reopen() -> bool:
 	var reopened_graphs := _fleet_graphs()
 	if not _check(_reopen_modes_reactivated(truth_modes), "fresh cold bind re-activates each mode exactly once under its new original Lab session"): return false
 	if not _check(truth == _reopen_canonical(slot.control, slot._marker, reopened_graphs), "true full cold bind preserves every Site and current party graph, clock and selected marker in the saved JSON domain"): return false
-	# The manual fresh Slot gets the restored main original as its common adapter
-	# host, as the original controller did for the first Slot.
-	var rewired := lab._wire_region_gameplay_adapters(slot)
-	if not _check(rewired.ok, "fresh Slot adapters wire to the positively restored main original", rewired): return false
 	if not _food_results(): return false
 	var before := var_to_bytes([slot.control, _fleet_graphs()])
 	var retry: Dictionary = slot.consume_due_region_events()

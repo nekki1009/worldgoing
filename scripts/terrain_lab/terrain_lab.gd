@@ -8516,9 +8516,10 @@ func _region_publish_original_owner_state(prepared: Dictionary) -> Dictionary:
 	var cadence: Dictionary = DutyAI._cadence_state(self)
 	if not cadence.is_empty():
 		cadence.round = int(roots.duty.round)
-		cadence.elapsed = float(_duty_ai_elapsed)
+		# Restore existing cadence fields without normalizing the selected sparse row.
+		if cadence.has("elapsed"): cadence.elapsed = float(_duty_ai_elapsed)
 		cadence.seat_waits = DutyAI._seat_waits.duplicate(true)
-		cadence.inmate_since = DutyAI._inmate_since.duplicate(true)
+		if cadence.has("inmate_since"): cadence.inmate_since = DutyAI._inmate_since.duplicate(true)
 	_fatigue_work_seconds.clear()
 	for work: Array in roots.fatigue_work: _fatigue_work_seconds[refs["person:" + str(int(work[0])) + ":owner"]] = float(work[1])
 	for meta: StringName in [&"fire_boundary", &"fire_structure_step"]:
@@ -12173,8 +12174,48 @@ func _region_selected_party_owner(token: String, party: Dictionary, slot: Region
 			"owner": "travel:" + token, "generation": int(selected.proof.generation), "consumer": "original_party",
 			"effects_complete": bool(original._region_bind_receipt_value.get("effects_complete", true)),
 			"zero_world_only": bool(original._region_bind_receipt_value.get("zero_world_only", false))})
+	var owner := "travel:" + token
+	var prior: Dictionary = slot.region_registry().modes.get(owner, {})
+	var mode_check := slot.GameplayClock.validate_mode(prior, owner, float(slot.control.logical_game_seconds))
+	if not mode_check.ok: return mode_check.merged({"handled": true}, true)
+	if prior.backend != "gd" or prior.consumer not in ["original_region_travel", "original_party"] \
+			or prior.mode not in ["cold_exact", "live"] or prior.consumer == "original_region_travel" and prior.mode != "cold_exact" \
+			or int(prior.generation) != int(selected.proof.generation) \
+			or absf(float(prior.game_seconds) - float(selected.proof.game_seconds)) > 0.00000001 \
+			or absf(float(prior.action_seconds) - float(selected.proof.action_seconds)) > 0.00000001:
+		return SiteRuntime.fail("STALE_REGION_PARTY_MODE").merged({"handled": true}, true)
+	# Fresh open clears runtime activation; the selected marker retains its
+	# validated historical payload, which cannot authorize this new bind.
+	var activation_history: Dictionary = prior.activation
+	if activation_history.is_empty():
+		var saved_mode: Dictionary = slot._marker.get("control", {}).get("region_gameplay", {}).get("modes", {}).get(owner, {})
+		var saved_check := slot.GameplayClock.validate_mode(saved_mode, owner, float(slot.control.logical_game_seconds))
+		if not saved_check.ok: return saved_check.merged({"handled": true}, true)
+		var saved_epoch := saved_mode.duplicate(true)
+		var current_epoch := prior.duplicate(true)
+		saved_epoch.erase("activation"); current_epoch.erase("activation")
+		if saved_epoch != current_epoch: return SiteRuntime.fail("STALE_REGION_PARTY_MODE").merged({"handled": true}, true)
+		activation_history = saved_mode.activation
+	if activation_history.get("ok") != true or activation_history.get("complete") != true:
+		return SiteRuntime.fail("STALE_REGION_PARTY_MODE").merged({"handled": true}, true)
 	var restored := _region_party_bootstrap_child(token, party, slot, selected.proof, selected.original_live_graph)
 	if not restored.ok: return restored.merged({"handled": true}, true)
+	# A fresh full-graph bootstrap restores the original owner, then re-admits its saved mode once.
+	var activation: Dictionary = restored.receipt.duplicate(true)
+	activation.owner = owner; activation.mode = str(prior.mode)
+	activation.generation = int(selected.proof.generation); activation.backend = "gd"
+	activation.consumer = str(prior.consumer)
+	var enabled := slot.activate_region_mode(owner, str(prior.mode), str(prior.consumer), activation, "gd")
+	if not enabled.ok:
+		_region_discard_party_child(restored.child)
+		return enabled.merged({"handled": true}, true)
+	# Admission above uses the genuine complete restored receipt. The saved
+	# activation payload stays intact; only its validated session/revision renew.
+	var renewed_activation: Dictionary = activation_history.duplicate(true)
+	renewed_activation.session = enabled.mode.activation.session
+	renewed_activation.mode_revision = enabled.mode.activation.mode_revision
+	enabled.mode.activation = renewed_activation
+	enabled.mode.tactical_until_action = prior.tactical_until_action
 	cached[token] = restored.child
 	slot.set_meta(&"region_party_owner_labs", cached)
 	if is_instance_valid(original) and original != restored.child and original.get_parent() == self: _region_discard_party_child(original)
