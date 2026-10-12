@@ -90,6 +90,7 @@ func _drop_and_collect() -> void:
 	Runtime.notify_cleared_ground_loot(take.cleanup)
 	assert(notifications == 1 and not data.site.ground_loot.has(result.container_id))
 	assert(not data.ground_loot_at.has(data.index(data.spawn_cell)))
+	data.ground_loot_removed = Callable()
 
 func _open_only_and_sealed() -> void:
 	var data := _data("typed-terminal-open")
