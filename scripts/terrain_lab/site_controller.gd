@@ -6423,7 +6423,9 @@ func _siege_people_occupied(cell: Vector2i) -> bool:
 	if _actor_people_blocked(cell, null): return true
 	for team: TerrainArmy in lab.combat_armies:
 		if _crowd_active() and lab.crowd_site.owns_original_team(team): continue
-		if team.reserves_terrain_cell(cell): return true
+		# Real people and committed destinations were checked above. Generic
+		# terrain reservations also include vehicles, which cannot block themselves.
+		if team.has_army() and team._passage_cell_is_protected(cell): return true
 	return false
 
 func _siege_executor(form: Dictionary) -> int:
