@@ -252,8 +252,30 @@ func _nation_unknown_before_receipt() -> bool:
 func _nation_fault() -> bool:
 	if nation_case in ["positive", "production"]: return true
 	if nation_case == "source_authority":
-		var changed: Dictionary = lab.site_controller.equipment_orders.appoint_nation_head(nation_id, nation_guard)
-		return _check(changed.ok, "actual original scenario head appointment changes the signed Nation's office revision after courier departure", changed)
+		var orders: Variant = lab.site_controller.equipment_orders
+		var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
+		var guard_ref: Dictionary = DeliveryAI.person_ref(lab.terrain.site, nation_guard)
+		var guard_before: Dictionary = slot._region_delivery_person(lab, guard_ref)
+		if not _check(not nation.is_empty() and orders._member(nation, nation_guard) and not guard_before.is_empty()
+			and guard_before.owner is TerrainArmy and int(guard_before.unit) >= 0, "head replacement uses the same actual resident guard and original Nation member"): return false
+		var original_body: Dictionary = guard_before.owner.combat_units[int(guard_before.unit)]
+		var previous_revision := int(nation.offices.revision)
+		var seat := SiteOffices.position_of(nation.offices, nation_guard)
+		if not seat.is_empty() and not bool(seat.head):
+			var dismissed: Dictionary = orders.apply_nation_office_plan(orders.nation_head_executor(nation), nation_id, previous_revision,
+				[{"op": "dismiss", "position_id": str(seat.id)}])
+			if not _check(dismissed.ok, "current actual Nation head lawfully dismisses the guard's incumbent non-head post before scenario head replacement", dismissed): return false
+			nation = lab.terrain.site.equipment_nations[nation_id]
+			if not _check(SiteOffices.position_of(nation.offices, nation_guard).is_empty(), "lawful personnel plan leaves this same guard without a second Nation post"): return false
+		var changed: Dictionary = orders.appoint_nation_head(nation_id, nation_guard)
+		if not _check(changed.ok, "actual original scenario head appointment changes the signed Nation's office revision after courier departure", changed): return false
+		nation = lab.terrain.site.equipment_nations[nation_id]
+		var guard_after: Dictionary = slot._region_delivery_person(lab, guard_ref)
+		return _check(not guard_after.is_empty() and guard_after.owner == guard_before.owner and int(guard_after.unit) == int(guard_before.unit)
+			and is_same(guard_after.owner.combat_units[int(guard_after.unit)], original_body) and orders._member(nation, nation_guard)
+			and int(SiteOffices.head_position(nation.offices).holder) == nation_guard and int(nation.offices.revision) > previous_revision
+			and int(nation.offices.revision) != int(_nation_report().delivery.command.offices_revision),
+			"same original guard body and citizenship survive lawful head replacement; the immutable signed command keeps its old office revision")
 	if nation_case == "receiver_superseded":
 		var team := _nation_receiver_team()
 		return _check(team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.HOLD).ok, "actual current captain independently supersedes the signed old local order before reception")
