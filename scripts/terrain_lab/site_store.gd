@@ -316,6 +316,9 @@ static func save(data: TerrainData, path: String = DEFAULT_PATH, native_candidat
 	var siege_guard := _region_fire_guard(data, region_capture) if hot else siege_save_guard(data, allow_dirty_fire_save)
 	if not siege_guard.ok: return siege_guard
 	var fixed_base: Variant = data.parameters.get("fixed_base")
+	var rule_base: Dictionary = fixed_base if fixed_base is Dictionary else {}
+	if not _same_land_condition_rule(data.parameters, rule_base, "fixed_land_condition_rule", "land_condition_rule"):
+		return Runtime.fail("SAVE_VERSION", "Fixed land-condition declaration invalid; original archive retained")
 	if fixed_base is Dictionary and not _resource_base_matches(data, fixed_base):
 		return Runtime.fail("SAVE_VERSION", "固定資源基底已變更，原存檔保留")
 	if not data.site.get("armies", []) is Array:
@@ -627,7 +630,7 @@ static func load_site(path: String = DEFAULT_PATH, fixed_base_loader: Callable =
 		data = loaded_base.data
 		# The true source loader supplies the rule. Saved parameters cannot invent,
 		# erase, change type or downgrade a declared source rule.
-		if params.has("fixed_land_condition_rule") != data.parameters.has("fixed_land_condition_rule") or params.get("fixed_land_condition_rule") != data.parameters.get("fixed_land_condition_rule") or params.has("fixed_land_condition_rule") and (not params.fixed_land_condition_rule is String or params.fixed_land_condition_rule != "terrain_mapped_potential_v1"):
+		if not _same_land_condition_rule(params, data.parameters, "fixed_land_condition_rule", "fixed_land_condition_rule"):
 			return Runtime.fail("SAVE_VERSION", "Fixed land-condition source differs; original archive retained")
 		if data.size != params.size or data.preset != int(payload.preset) \
 				or data.seed_value != int(payload.seed) or not _same_fixed_base(data.parameters.get("fixed_base"), fixed_base) \
@@ -750,14 +753,20 @@ static func read_fixed_terrain_changes(path: String) -> Dictionary:
 			return Runtime.fail("CORRUPT_SAVE", "固定地形修改格位非法")
 	return Runtime.ok("", {"base": base, "changes": changes})
 
+# Reject non-String rules before JSON can erase their original Variant type.
+static func _same_land_condition_rule(left: Dictionary, right: Dictionary, left_key: String, right_key: String) -> bool:
+	if left.has(left_key) != right.has(right_key): return false
+	if not left.has(left_key): return true
+	return left[left_key] is String and right[right_key] is String \
+		and left[left_key] == "terrain_mapped_potential_v1" and right[right_key] == left[left_key]
+
 static func _same_fixed_base(left: Variant, right: Variant) -> bool:
 	if not left is Dictionary or not right is Dictionary or left.size() != right.size():
 		return false
 	for key: String in ["base_kind", "atlas_id", "base_revision", "manifest_sha256", "site_id", "terrain_fingerprint"]:
 		if not left.get(key) is String or left.get(key) != right.get(key):
 			return false
-	if left.has("land_condition_rule") or right.has("land_condition_rule"):
-		if not left.get("land_condition_rule") is String or not right.get("land_condition_rule") is String or left.get("land_condition_rule") != "terrain_mapped_potential_v1" or right.get("land_condition_rule") != left.land_condition_rule: return false
+	if not _same_land_condition_rule(left, right, "land_condition_rule", "land_condition_rule"): return false
 	if left.get("ramp_rule_revision", "") != right.get("ramp_rule_revision", ""):
 		return false
 	if not _same_resource_pin(left, right, true):
