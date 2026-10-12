@@ -126,7 +126,9 @@ func _find_layout(data: TerrainData, kind: String) -> Array[Dictionary]:
 			if step > 0 and not data.can_place_water_vehicle(Ship.swept_footprint(kind, anchor + direction * (step - 1), direction, anchor + direction * step, direction)): return []
 		selected.append({"anchor": anchor, "facing": direction, "shore": port, "destination_shore": arrival})
 		claimed.merge(reserved)
-	return selected if selected.size() == int(HULL_COUNTS[kind]) else []
+	if selected.size() == int(HULL_COUNTS[kind]): return selected
+	var none: Array[Dictionary] = [] # Typed empty result, not an untyped ternary literal.
+	return none
 
 func _asset(name: String, bytes: PackedByteArray) -> Dictionary:
 	var path := OUT.path_join(name)

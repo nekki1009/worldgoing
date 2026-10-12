@@ -7008,7 +7008,10 @@ func prepare_controlled_feature_work(selector: Dictionary, feature: Dictionary, 
 		if repair.is_empty(): return Runtime.fail("NO_TARGET")
 	elif feature.get("stage") != "complete" or feature.has("pending_build") or feature.has("repair") or not Runtime.feature_usable(feature): return Runtime.fail("NO_TARGET")
 	var physical_cell: int = lab.terrain.index(person.cell)
-	var slots: Array[Dictionary] = Runtime.feature_work_slots(lab.terrain, feature) if action == "operate" else [{"slot": -1, "cell": int(repair.work_cell) if action == "repair" else int(construction.entrance)}]
+	# Typed per branch: an untyped ternary literal cannot fill Array[Dictionary].
+	var slots: Array[Dictionary] = []
+	if action == "operate": slots = Runtime.feature_work_slots(lab.terrain, feature)
+	else: slots.append({"slot": -1, "cell": int(repair.work_cell) if action == "repair" else int(construction.entrance)})
 	var selected := {}
 	for slot: Dictionary in slots:
 		if int(slot.cell) != physical_cell: continue

@@ -713,7 +713,9 @@ func siege_crew_released(member_id: int) -> void:
 		selected = cell
 		break
 	if selected != INVALID_CELL:
-		var slots: Array[Vector2i] = registry.get_formation_reserved_slots(team_id) if registry != null else []
+		# Typed per branch: an untyped ternary literal cannot fill Array[Vector2i].
+		var slots: Array[Vector2i] = []
+		if registry != null: slots = registry.get_formation_reserved_slots(team_id)
 		if not slots.has(selected): slots.append(selected)
 		if registry != null and not bool(registry.try_replace_reservations(team_id, _combat_deployment_plan.order_serial, _combat_deployment_plan.order_serial, slots).get("ok", false)): selected = INVALID_CELL
 	if selected != INVALID_CELL and _combat_deployment_plan.reassign_returning_member(member_id, selected, registry):
@@ -17185,7 +17187,8 @@ func _fire_nav_capacity_replan() -> void:
 	if _combat_deployment_plan == null: return
 	var state := _fire_navigation
 	var original_cells := get_active_members_occupancy()
-	var protected: Array[Vector2i] = _combat_move_plan.macro_path if _combat_move_plan != null else []
+	var protected: Array[Vector2i] = [] # Typed per branch, as above.
+	if _combat_move_plan != null: protected = _combat_move_plan.macro_path
 	var preview := FormationDestinationPlanner.fire_replacements(_combat_deployment_plan, data, state.registry,
 		original_cells, _fire_nav_safe, protected)
 	state.capacity = preview.capacity
