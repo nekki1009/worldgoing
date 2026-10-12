@@ -139,6 +139,9 @@ func _original_feature_ui(f: Dictionary, key: String, recipe: String, identity: 
 	var button: Button = site_ui.find_child("OperateFeature", true, false) as Button if site_ui != null else null
 	_require(button != null and f.lab.npc == null, "Original formal operation button exists without parallel default worker")
 	button.pressed.emit()
+	# A realistic dispatch comes from the team's current work-duty decider.
+	var dispatcher: Dictionary = controller._control_family_person(null, int(f.commander))
+	_require(dispatcher.ok, "Original command control restored to the team work decider before selected-worker dispatch", dispatcher)
 	f.lab.selected_army_target = identity
 	controller.update_ui()
 	_require(controller._selected_worker_assignment().ok, "Actual current original decider admits named selected original NPC")

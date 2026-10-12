@@ -3259,6 +3259,13 @@ static func _stop_feature_zones(data: TerrainData, key: String, action: String =
 			worker.mode = "idle"
 			worker.progress = 0.0
 
+# A completed named phase ends only the operate zone its own operation created.
+static func _stop_technology_owned_zones(data: TerrainData, key: String) -> void:
+	for zone: Dictionary in data.site.zones:
+		if str(zone.get("feature", "")) == key and str(zone.get("action", "")) == "operate" and bool(zone.get("technology_owned", false)):
+			zone.active = false
+			zone.erase("technology_owned")
+
 static func _prison_in_use(data: TerrainData, key: String) -> bool:
 	for relation: Dictionary in data.site.get("captivity", {}).values():
 		if str(relation.get("prison_id", "")) == key:
@@ -7352,6 +7359,7 @@ static func publish_feature_output(data: TerrainData, prepared: Dictionary) -> v
 	# Release the named worker first: finish_named_feature_work matches the task by its
 	# "feature:<key>" target, which the next lines clear.
 	_technology_finish_named_feature(data, str(prepared.receipt.get("feature_id", "")))
+	if prepared.feature_before.has("tech_trial"): _stop_technology_owned_zones(data, str(prepared.receipt.get("feature_id", "")))
 	prepared.worker_ref.target = ""
 	prepared.worker_ref.mode = "idle"
 	data.site.total_produced = int(data.site.total_produced) + inventory_size(prepared.output) + prepared.products.get("item_ids", []).size()
@@ -10643,7 +10651,9 @@ static func _technology_begin_feature_operation(data: TerrainData, selector: Dic
 			zone = current
 			existing_zone = true
 			break
-	if zone.is_empty(): zone = {"cells": feature.cells.duplicate(), "kind": -1, "action": "operate", "feature": key, "active": true}
+	# A zone this technology operation creates is marked as its own; a player's
+	# existing ordinary zone is reused unmarked and is never stopped by the phase.
+	if zone.is_empty(): zone = {"cells": feature.cells.duplicate(), "kind": -1, "action": "operate", "feature": key, "active": true, "technology_owned": true}
 	# The true host remains unchanged through WT preparation. WT checks original
 	# layout/slots; only Runtime owns the prospective recipe/material validation.
 	var named := _technology_prepare_named_feature(data, key, feature, zone, "operate", selected)

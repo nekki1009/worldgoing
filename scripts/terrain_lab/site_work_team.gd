@@ -1965,7 +1965,7 @@ func prepare_assign_feature(team: Variant, identities: Array, requester_id: int,
 				zone_index = index
 				break
 		if zone_index < 0 and not zone_candidate.is_empty():
-			if not TargetedTechnology.keys(zone_candidate, ["cells", "kind", "action", "feature", "active"]) or zone_candidate.cells != feature.cells \
+			if not (TargetedTechnology.keys(zone_candidate, ["cells", "kind", "action", "feature", "active"]) or TargetedTechnology.keys(zone_candidate, ["cells", "kind", "action", "feature", "active", "technology_owned"]) and zone_candidate.technology_owned == true and action == "operate") or zone_candidate.cells != feature.cells \
 				or not _integer(zone_candidate.kind, -1, -1) or zone_candidate.action != action or zone_candidate.feature != feature_id \
 				or not zone_candidate.active is bool: return SiteRuntime.fail("NO_ZONE")
 			for index: int in lab.terrain.site.zones.size():

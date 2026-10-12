@@ -4120,8 +4120,20 @@ func _nation_phase_token(nation_id: String, order_id: String, binding: String, t
 	var phase := Technology.scope_next_phase(project, project.get("executor", {}))
 	if project.is_empty() or int(project.id) != int(checked.order.project_id) or project.tech_id != checked.order.tech_id \
 		or phase.get("binding") != binding: return Runtime.fail("STALE_PHASE")
-	return Runtime.ok("", {"token": {"scope": "nation", "scope_id": nation_id, "project_id": int(project.id), "epoch": int(record.epoch),
-		"purpose": str(project.purpose), "tech_id": str(project.tech_id), "phase_id": str(phase.id), "attempt": int(project.next_attempt),
+	# A cancelled job keeps its paid attempt: payments are never refunded, so a
+	# paid phase on this target without its receipt resumes on that attempt.
+	var attempt := int(project.next_attempt)
+	var paid := false
+	for payment: Dictionary in project.get("budget", {}).get("payments", []):
+		if str(payment.get("phase_id")) != str(phase.id) or str(payment.get("target_id")) != target or payment.get("person") != project.executor: continue
+		var receipted := false
+		for receipt: Dictionary in project.get("receipts", []):
+			if str(receipt.get("payment_id", "")) == str(payment.payment_id) or int(receipt.get("attempt", -1)) == int(payment.attempt): receipted = true
+		if not receipted:
+			attempt = int(payment.attempt)
+			paid = true
+	return Runtime.ok("", {"paid": paid, "token": {"scope": "nation", "scope_id": nation_id, "project_id": int(project.id), "epoch": int(record.epoch),
+		"purpose": str(project.purpose), "tech_id": str(project.tech_id), "phase_id": str(phase.id), "attempt": attempt,
 		"person": project.executor.duplicate(), "binding": binding, "target_id": target, "materials": phase.materials.duplicate()}})
 
 func begin_nation_administration(requester_id: int, nation_id: String, order_id: String, binding: String) -> Dictionary:
@@ -4148,7 +4160,11 @@ func begin_nation_administration(requester_id: int, nation_id: String, order_id:
 	if not ready.ok: return ready
 	var binding_prepared := {}
 	var payment_prepared := {}
-	if not token.is_empty():
+	if not token.is_empty() and bool(selection.get("paid", false)):
+		# Resume of a paid attempt: its binding and payment already exist.
+		var resumed := _technology_paid_phase_context(token)
+		if not resumed.ok: return resumed
+	elif not token.is_empty():
 		var source := {} if token.materials.is_empty() else nation_research_source_candidate(token, order_id)
 		if not source.is_empty() and not source.ok: return source
 		binding_prepared = technology_phase_binding_candidate(token, source)
@@ -6989,7 +7005,7 @@ func prepare_controlled_feature_work(selector: Dictionary, feature: Dictionary, 
 	if selector.has("token") and not feature_token.is_empty():
 		if feature_token != selector.token: return Runtime.fail("STALE_PROJECT")
 		held_selector.token = feature_token # Runtime's SAME actual prepared binding, not an equal token copy.
-	if not Technology.keys(zone, ["cells", "kind", "action", "feature", "active"]) or zone.cells != feature.cells \
+	if not (Technology.keys(zone, ["cells", "kind", "action", "feature", "active"]) or Technology.keys(zone, ["cells", "kind", "action", "feature", "active", "technology_owned"]) and zone.technology_owned == true and action == "operate") or zone.cells != feature.cells \
 		or not Technology.integer(zone.kind, -1, -1) or zone.action != action or zone.feature != key or not zone.active is bool: return Runtime.fail("NO_ZONE")
 	var zone_index := -1
 	for index: int in lab.terrain.site.zones.size():

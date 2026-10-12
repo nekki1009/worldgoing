@@ -1885,6 +1885,8 @@ static func _validate_site_values(data: TerrainData, state: Dictionary) -> Dicti
 			return Runtime.fail("CORRUPT_SAVE", "活捉工作區畜種")
 		if feature_zone and not zone.get("feature") is String:
 			return Runtime.fail("CORRUPT_SAVE", "工作區建物")
+		if zone.has("technology_owned") and (zone.technology_owned != true or str(zone.action) != "operate"):
+			return Runtime.fail("CORRUPT_SAVE", "工作區科技所有標記")
 	for actor_key: String in ["worker", "manual"]:
 		var actor: Dictionary = state[actor_key]
 		if actor.has("work_slot") and (actor_key != "worker" or not _integer(actor.work_slot, -1, 80)):
