@@ -123,6 +123,9 @@ func _begin_original_siege_ui(f: Dictionary, kind: String, anchor: Vector2i) -> 
 	_require(var_to_bytes([f.data.site, f.team.capture_combat_state()]) == before and controller.view.selection.size.x > 1, "Actual original UI preview calls true geometry/admission without materials or work mutation")
 	var expected: int = int(f.data.site.get("next_vehicle", 1))
 	await controller._build_siege_ui(form, false)
+	# Atlas capture can resume this fixture inside its draw signal. Leave that
+	# signal before later cold-resume teardown frees the original Lab.
+	await process_frame
 	_require(f.data.site.get("vehicles", {}).has(str(expected)) and int(f.data.site.next_vehicle) == expected + 1, "Actual original formal UI command publishes exactly one real paid named construction")
 	_case.actual_formal_siege_ui = {"named_person": f.master, "vehicle": str(expected), "no_auto_master": true}
 	return Runtime.ok("", {"vehicle": str(expected)})
@@ -254,7 +257,10 @@ func _two_true_masters(f: Dictionary, kind: String) -> void:
 	_case.lifecycle_edges = {"task_replacement": true, "shared_rest_source_and_original_recovery": true, "original_contact_ko": true, "original_contact_death": true, "real_taught_survivor": int(f.helper), "paid_once": paid_before, "subsequent_interval_only_not_midframe_contact_proof": true}
 	_case.two_masters = {"vehicle": key, "teacher": f.master, "student": f.helper, "lesson_seconds": 300, "assistant": assistant, "fixed_policy_gated": true}
 	_idle_all(f)
-	_require(Runtime.cancel_siege_job(f.data, key, int(f.team.team_id), Callable(f.lab.site_controller, "reserves_cell")).ok, "Actual second unfinished product cancels/refunds through original owner before basic repair")
+	# Match the original lifecycle UI: people occupy cells; the cancelled
+	# vehicle must not block removal of its own construction footprint.
+	var cancelled: Dictionary = Runtime.cancel_siege_job(f.data, key, int(f.team.team_id), Callable(f.lab.site_controller, "_siege_people_occupied"))
+	_require(cancelled.ok, "Actual second unfinished product cancels/refunds through original owner before basic repair", cancelled)
 func _siege(f: Dictionary) -> void:
 	var kind: String = "siege_tower" if f.category == "F11" else "counterweight_trebuchet"
 	var terms: Dictionary = Runtime.SIEGE_DEFINITIONS[kind]
@@ -298,7 +304,7 @@ func _siege(f: Dictionary) -> void:
 	_case.full_work_seconds = terms.work_seconds
 	_case.paid_cost = terms.cost.duplicate(true)
 	await _two_true_masters(f, kind)
-	_basic_siege_use_repair(f, key)
+	await _basic_siege_use_repair(f, key)
 func _run() -> void:
 	var category: String = _g06_category()
 	_require(category in ["F11", "F12"], "Named fixed-world original siege acceptance only")

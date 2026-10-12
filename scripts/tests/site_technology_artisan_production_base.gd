@@ -306,6 +306,24 @@ func _interval(f: Dictionary, seconds: float = 60.0) -> Dictionary:
 	var before := var_to_bytes([f.data.site, f.team.capture_combat_state()])
 	_require(work.publish_shared_work_prefix(admitted).handled_seconds.is_empty() and var_to_bytes([f.data.site, f.team.capture_combat_state()]) == before, "SAME allocation cannot pay/progress/charge fatigue twice")
 	work.finish_shared_work_prefix(admitted)
+	# Mirror the original Lab terminal ledger break after every endpoint finish.
+	var completed_priors: Array = admitted.runtime_priors
+	var record_ledger: bool = not completed_priors.is_empty() and not _case.has("first_completed_interval_ledger")
+	var ledger_fact: Dictionary = {}
+	if record_ledger:
+		ledger_fact = {"work_id": str(work.get_instance_id()), "terrain_id": str(lab.terrain.get_instance_id()),
+			"work_refs_before": work.get_reference_count(), "terrain_refs_before": lab.terrain.get_reference_count(),
+			"priors_before": completed_priors.size()}
+	if bool(admitted.get("finished", false)): completed_priors.clear()
+	_require(bool(admitted.get("finished", false)) and is_same(completed_priors, admitted.runtime_priors)
+		and completed_priors.is_empty(), "Completed original interval clears only its SAME terminal ledger")
+	for candidate: Dictionary in admitted.runtime:
+		_require(is_same(candidate.prefix_ref.runtime_priors, completed_priors) and candidate.prefix_ref.runtime_priors.is_empty(),
+			"Completed original Runtime prefix no longer retains candidate ledger loop")
+	if record_ledger:
+		ledger_fact.merge({"priors_after": completed_priors.size(), "finished": bool(admitted.get("finished", false)),
+			"work_refs_after": work.get_reference_count(), "terrain_refs_after": lab.terrain.get_reference_count()})
+		_case["first_completed_interval_ledger"] = ledger_fact
 	# Genuine original recovery/provider bookkeeping; no pool zeroing, fake
 	# fatigue reset, second effort clock or made-up completed-work receipt.
 	lab._advance_fatigue(seconds)
@@ -548,7 +566,7 @@ func _siege(f: Dictionary) -> void:
 	_case.full_work_seconds = terms.work_seconds
 	_case.paid_cost = terms.cost.duplicate(true)
 	_two_true_masters(f, kind)
-	_basic_siege_use_repair(f, key)
+	await _basic_siege_use_repair(f, key)
 
 func _cold_resume(f: Dictionary, label: String) -> void:
 	if f.kind == "generated_production":
@@ -699,7 +717,8 @@ func _two_true_masters(f: Dictionary, kind: String) -> void:
 		"before_last_master_left": progress, "after_last_master_left": float(vehicle.build.progress), "helper": assistant, "D10_gated_interruption_not_verified": true}
 	# Retire the actual second paid job through its original cancellation API.
 	# Never leave another construction for the ordinary repair selector to pick.
-	_require(Runtime.cancel_siege_job(f.data, key, int(f.team.team_id), Callable(f.lab.site_controller, "reserves_cell")).ok, "Original second unfinished job cancels/refunds remaining real materials")
+	var cancelled: Dictionary = Runtime.cancel_siege_job(f.data, key, int(f.team.team_id), Callable(f.lab.site_controller, "_siege_people_occupied"))
+	_require(cancelled.ok, "Original second unfinished job cancels/refunds remaining real materials", cancelled)
 
 func _basic_siege_use_repair(f: Dictionary, key: String) -> void:
 	_idle_all(f)
@@ -708,12 +727,49 @@ func _basic_siege_use_repair(f: Dictionary, key: String) -> void:
 	if Technology.learned(f.team.combat_units[1].get("technology", {}), str(f.category)): unlearned = f.team.combat_identity(2)
 	_require(not Technology.learned(f.team.combat_units[f.team.index_for_identity(unlearned)].get("technology", {}), str(f.category)), "Selected product user/repairer truly lacks manufacturing skill")
 	var crew_cell: Vector2i = Runtime.siege_crew_cell(f.data, vehicle, 0)
+	# Land through real action time before the existing explicit station inputs.
+	_land_committed_step(f, unlearned)
+	_land_committed_step(f, int(f.commander))
 	_place(f, unlearned, crew_cell)
 	_park(f, int(f.commander), crew_cell + Vector2i(0, 3))
-	_require(f.lab.site_controller.vehicles.assign_crew(key, unlearned, "0", int(f.commander)).ok, "Unlearned original member may use completed siege product")
-	_require(f.lab.site_controller.vehicles.unassign_crew(key, unlearned, int(f.commander)).ok, "Original crew releases same product")
+	# Original crew authority requires the actual controlled requester.
+	var control: Dictionary = f.lab.site_controller._control_family_person(null, int(f.commander))
+	_require(control.ok, "Original command control restored before actual crew dispatch", control)
+	var crew_index: int = f.team.index_for_identity(unlearned)
+	var crew_before: Dictionary = {"requester": int(f.commander), "controlled": f.lab.controlled_person_id(),
+		"current_commander": f.team.current_commander, "member": f.team.is_member(crew_index),
+		"hp": f.team.combat_hot_get(crew_index, &"hp"), "ko": f.team.combat_hot_get(crew_index, &"ko"),
+		"pose": f.team.combat_hot_get(crew_index, &"pose"), "present": f.team.combat_hot_get(crew_index, &"present"),
+		"moving_to": str(f.team.moving_to[crew_index]), "cell": str(f.team.cells[crew_index]), "crew_cell": str(crew_cell),
+		"work_task": f.team.combat_units[crew_index].get("work_task", {}).duplicate(true),
+		"assigned": f.lab.site_controller.work_team.is_assigned(unlearned), "phase": vehicle.phase,
+		"crew_slots": vehicle.crew_slots.duplicate(true), "action": vehicle.action.duplicate(true), "move": vehicle.move.duplicate(true)}
+	var appearance_before: Dictionary = f.lab.site_controller.person_appearance(unlearned).duplicate(true)
+	var asset_preparation: Dictionary = {"person_id": unlearned, "appearance_before": appearance_before,
+		"key_before": TerrainArmy.EquipmentAtlas._mixed_key(appearance_before),
+		"ready_before": SiteController.SiegeWorkAppend.ready(appearance_before),
+		"output_before": SiteController.SiegeWorkAppend.directory(appearance_before)}
+	# Match the original UI command boundary for this same original crew member.
+	var assets_prepared: bool = await f.lab.site_controller._prepare_siege_work_people([unlearned])
+	# Capture can return inside its draw signal; leave it before any caller teardown.
+	await process_frame
+	var appearance_after: Dictionary = f.lab.site_controller.person_appearance(unlearned).duplicate(true)
+	asset_preparation.merge({"result": assets_prepared, "appearance_after": appearance_after,
+		"key_after": TerrainArmy.EquipmentAtlas._mixed_key(appearance_after),
+		"ready_after": SiteController.SiegeWorkAppend.ready(appearance_after),
+		"output_after": SiteController.SiegeWorkAppend.directory(appearance_after)})
+	_case["siege_work_prepare_" + key] = asset_preparation
+	_require(assets_prepared, "Original command preparation admits SAME unlearned crew work appearance", asset_preparation)
+	if not assets_prepared: return
+	var crew_assigned: Dictionary = f.lab.site_controller.vehicles.assign_crew(key, unlearned, "0", int(f.commander))
+	_require(crew_assigned.ok, "Unlearned original member may use completed siege product", {"result": crew_assigned, "before": crew_before})
+	var crew_released: Dictionary = f.lab.site_controller.vehicles.unassign_crew(key, unlearned, int(f.commander))
+	_require(crew_released.ok, "Original crew releases same product", crew_released)
+	_case["basic_siege_" + key] = {"crew_before": crew_before, "assign_crew": crew_assigned, "unassign_crew": crew_released}
 	_require(Runtime.damage_siege_vehicle(f.data, key, 1.0).ok and Runtime.request_siege_repair(f.data, key, int(f.team.team_id)).ok, "Original basic repair command pays existing terms without manufacturing gate")
 	var slot: Dictionary = Runtime.siege_work_slots(f.data, vehicle)[0]
+	_land_committed_step(f, unlearned)
+	_land_committed_step(f, int(f.commander))
 	_place(f, unlearned, f.data.cell_from_index(int(slot.cell)))
 	_park(f, int(f.commander), crew_cell + Vector2i(-4, 0))
 	var work: SiteWorkTeam = f.lab.site_controller.work_team
@@ -721,7 +777,10 @@ func _basic_siege_use_repair(f: Dictionary, key: String) -> void:
 	var occupied := func(cell: Vector2i) -> bool: return work._occupied(cell, f.team, unit_index)
 	var selected: Dictionary = work._choose_vehicle_task(f.team, f.team.cells[unit_index], occupied, work.reserved_targets())
 	_require(selected.ok and selected.target == "vehicle:" + key and selected.action == "repair" and int(selected.cell) == int(slot.cell), "Original basic selector actually selects this true repair/station before any work", selected)
-	_require(f.lab.site_controller.work_team.assign(f.team, [unlearned], int(f.commander)).ok, "Original basic repair dispatch retains old owner path")
+	var repair_workers: Array[int] = [unlearned]
+	var repair_assigned: Dictionary = work.assign(f.team, repair_workers, int(f.commander))
+	_case["basic_siege_" + key]["repair_assign"] = repair_assigned
+	_require(repair_assigned.ok, "Original basic repair dispatch retains old owner path", repair_assigned)
 	for tick: int in 100:
 		if vehicle.repair.is_empty(): break
 		_interval(f)
@@ -739,8 +798,20 @@ func _no_reissue(f: Dictionary) -> void:
 		_require(f.lab.site_controller._control_family_person(null, identity).ok, "Original same-Site control switch")
 		_require(var_to_bytes(f.data.site.get("technology_artisans", {})) == receipt and int(f.data.site.next_item) == next_item and int(f.data.site.next_person_id) == next_person, "Control switch issues no birth or free items")
 		for row: Dictionary in f.team.combat_units: _require(row.get("technology", {}) == skills[int(row.person_id)], "Control switch cannot teach a faction member")
+	_land_committed_step(f, int(f.helper))
 	_require(f.lab.site_controller._control_family_person(null, int(f.helper)).ok, "Original member controls their own roster consent")
-	_require(f.lab.leave_player_army().ok and f.lab.join_player_army().ok, "Actual existing NPC leaves/joins same original faction roster")
+	var member_index: int = f.team.index_for_identity(int(f.helper))
+	var membership_before: Dictionary = {"identity": int(f.helper), "controlled": f.lab.controlled_person_id(),
+		"member": f.team.is_member(member_index), "moving_to": str(f.team.moving_to[member_index]),
+		"pose": f.team.combat_hot_get(member_index, &"pose"), "hp": f.team.combat_hot_get(member_index, &"hp"),
+		"ko": f.team.combat_hot_get(member_index, &"ko"), "attack": f.team.combat_hot_get(member_index, &"attack"),
+		"work_task": f.team.combat_units[member_index].get("work_task", {}).duplicate(true),
+		"garrison": f.team.garrison_feature_id, "paused": f.data.site.paused}
+	var left: Dictionary = f.lab.leave_player_army()
+	var joined: Dictionary = f.lab.join_player_army() if left.ok else {}
+	var membership_result: Dictionary = {"before": membership_before, "leave": left, "join": joined, "join_called": left.ok}
+	_case["membership_" + str(f.kind)] = membership_result
+	_require(left.ok and joined.ok, "Actual existing NPC leaves/joins same original faction roster", membership_result)
 	_require(var_to_bytes(f.data.site.get("technology_artisans", {})) == receipt and int(f.data.site.next_item) == next_item and int(f.data.site.next_person_id) == next_person, "Actual membership join issues no skills/items/people")
 	_require(f.lab.site_controller._control_family_person(null, 1).ok, "Actual original Actor controls explicit army expansion")
 	var expansion_before: PackedByteArray = var_to_bytes([f.data.site, f.team.capture_combat_state(), f.lab.character.capture_state()])
@@ -796,7 +867,7 @@ func _run() -> void:
 		"evidence_groups_are_distinct": true, "world_transfer_continuity_excluded": true, "navigation_and_native_excluded": true, "formal_release": false,
 		"full_G06_open": true, "fixed_product_construction_not_verified": true, "D10_master_gated_work_interruption_not_verified": true}, true)
 	if category in ["F04", "F06"]: _processing(f)
-	else: _siege(f)
+	else: await _siege(f)
 	_no_reissue(f)
 	_case.checked_intervals = _work_intervals
 	_case.actual_participant_seconds = _work_actual
