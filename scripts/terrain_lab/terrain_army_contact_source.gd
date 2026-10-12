@@ -445,6 +445,7 @@ func initialize(parent: Node, appearance: Dictionary, reference_source: HumanCha
 	if is_instance_valid(reference_source) and not reference_source.use_imported_model and reference_source._body_index == int(appearance.body):
 		raw_animation = reference_source.animation_player
 	editor.use_imported_model = is_instance_valid(raw_animation) and imported_mesh_is_current(int(appearance.body))
+	editor.runtime_raw_cache = true # Shares the runtime raw-GLB parse with Actor editors.
 	editor.name = "SharedSoldierContactSource"
 	editor.preview_host = parent
 	editor.visual_state.body_index = int(appearance.body)

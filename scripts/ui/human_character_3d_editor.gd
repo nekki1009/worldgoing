@@ -320,10 +320,17 @@ var use_imported_model := false # Fixed runtime query only; authoring keeps raw 
 # covered meshes already use per-instance overrides/copies; animation libraries
 # are privatized per instance below.
 var runtime_raw_cache := false
-static var _runtime_raw_scenes: Dictionary = {}
+static var _runtime_raw_scenes: Dictionary = {} # cache key -> PackedScene of the parsed raw GLB
 
 static func release_runtime_raw_cache() -> void:
 	_runtime_raw_scenes.clear()
+
+# Headless (dummy renderer) keeps the full reload: shared parsed resources that
+# outlive freed instances are reported there at teardown.
+static var runtime_raw_cache_enabled := true # Process-wide switch; tests compare against a full reload.
+
+func _runtime_raw_cache_active() -> bool:
+	return runtime_raw_cache and runtime_raw_cache_enabled and DisplayServer.get_name() != "headless"
 var visual_state: CharacterVisualState = CharacterVisualState.new()
 var combat_ready: bool = false
 var preview_container: SubViewportContainer
@@ -1304,8 +1311,11 @@ func _load_body_model(index: int, preview_model_path: String = "") -> void:
 		if packed != null:
 			generated = packed.instantiate() as Node3D
 	else:
+		# Runtime presenters (real renderer only) parse each raw GLB once and
+		# instantiate every instance from the packed parse; authoring keeps a full reload.
 		var cache_key := "%s:%d" % [absolute_path, FileAccess.get_modified_time(absolute_path)]
-		var cached: PackedScene = _runtime_raw_scenes.get(cache_key) if runtime_raw_cache and preview_model_path.is_empty() else null
+		var use_cache := _runtime_raw_cache_active() and preview_model_path.is_empty()
+		var cached: PackedScene = _runtime_raw_scenes.get(cache_key) if use_cache else null
 		if cached != null:
 			generated = cached.instantiate() as Node3D
 		else:
@@ -1316,13 +1326,13 @@ func _load_body_model(index: int, preview_model_path: String = "") -> void:
 				model_label.text = "GLB 載入失敗：%s" % parse_error
 				return
 			generated = document.generate_scene(state) as Node3D
-			if generated != null and runtime_raw_cache and preview_model_path.is_empty():
+			if generated != null and use_cache:
 				for child: Node in generated.find_children("*", "", true, false): child.owner = generated
 				var packed_raw := PackedScene.new()
 				if packed_raw.pack(generated) == OK:
 					_runtime_raw_scenes[cache_key] = packed_raw
-					# Every runtime instance, including this first one, comes from the cache;
-					# the parsed source tree is not a scene node and must be freed.
+					# Every runtime instance, this first one included, comes from the pack;
+					# the parsed source tree is not a scene node and is freed.
 					var parsed_source := generated
 					generated = packed_raw.instantiate() as Node3D
 					parsed_source.free()
@@ -1340,7 +1350,7 @@ func _load_body_model(index: int, preview_model_path: String = "") -> void:
 	var players: Array[Node] = model_root.find_children("*", "AnimationPlayer", true, false)
 	if not players.is_empty():
 		animation_player = players[0] as AnimationPlayer
-		if runtime_raw_cache and not use_imported_model:
+		if _runtime_raw_cache_active() and not use_imported_model:
 			# The cached scene shares its libraries; each instance edits a private copy.
 			for library_name: StringName in animation_player.get_animation_library_list():
 				var private_library := animation_player.get_animation_library(library_name).duplicate(true) as AnimationLibrary

@@ -90,8 +90,28 @@ func _run() -> void:
 		for slot: String in other.equipment_dyes: other.equipment_dyes[slot] = "2050a0ff"
 	_check(cached[0].restore_appearance(other), "Cache-hit editor accepts a different dye")
 	_check(_signature(first[0]) == reference, "Editing one cached instance never changes another")
-	_check(HumanCharacter3DEditor._runtime_raw_scenes.size() >= 1, "Runtime cache holds the parsed raw scene")
+	var headless := DisplayServer.get_name() == "headless"
+	_check(HumanCharacter3DEditor._runtime_raw_scenes.is_empty() if headless else HumanCharacter3DEditor._runtime_raw_scenes.size() >= 1, "Runtime cache is used only with a real renderer; headless keeps the full reload")
 	print("HUMAN_CHARACTER_RUNTIME_RAW_CACHE_TIMING raw_ms=%d first_cached_ms=%d cache_hit_ms=%d" % [raw[1], first[1], cached[1]])
+	# Shared contact rig: full reload, cold cached build and warm cached rebuild must agree.
+	TerrainArmy.release_contact_source()
+	HumanCharacter3DEditor.release_runtime_raw_cache()
+	HumanCharacter3DEditor.runtime_raw_cache_enabled = false
+	_check(TerrainArmy.load_contact_source(), "Original shared contact rig builds by full reload")
+	var rig_reload := _signature(TerrainArmy._contact_source.editor)
+	TerrainArmy.release_contact_source()
+	HumanCharacter3DEditor.runtime_raw_cache_enabled = true
+	var rig_started := Time.get_ticks_usec()
+	_check(TerrainArmy.load_contact_source(), "Original shared contact rig builds")
+	var rig_cold := (Time.get_ticks_usec() - rig_started) / 1000
+	var rig_first := _signature(TerrainArmy._contact_source.editor)
+	TerrainArmy.release_contact_source()
+	rig_started = Time.get_ticks_usec()
+	_check(TerrainArmy.load_contact_source(), "Original shared contact rig rebuilds")
+	var rig_warm := (Time.get_ticks_usec() - rig_started) / 1000
+	var rig_hit := _signature(TerrainArmy._contact_source.editor)
+	print("HUMAN_CHARACTER_RUNTIME_RAW_CACHE_RIG cold_ms=%d warm_ms=%d headless=%s" % [rig_cold, rig_warm, str(headless)])
+	_check(rig_first == rig_reload and rig_hit == rig_reload, "Cached contact rig equals its full reload: appearance, meshes, overrides, every animation including siege clips, and pose")
 	for built: Array in [raw, first, cached]:
 		built[0].get_parent().free() # The host owns the editor and its preview viewport.
 	TerrainArmy.release_contact_source()
