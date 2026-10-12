@@ -127,9 +127,16 @@ func _nation_fixture(known: Array[String]) -> Dictionary:
 	_check(lab.character.place(entrance, true), "Actual donor reaches the original Warehouse contact")
 	var labor = orders.register_nation_labor(control, "n1", [executor])
 	_check(labor.ok, "Actual national duty registers this real housed NPC after its real team accepts the finite purpose: " + str(labor))
-	return {"data": data, "lab": lab, "warehouse": warehouse, "smithy": smithy, "controller": controller,
+	var fixture := {"data": data, "lab": lab, "warehouse": warehouse, "smithy": smithy, "controller": controller,
 		"actions": actions, "orders": orders, "control": control, "team": team, "executor": executor, "row": row,
 		"labor": labor, "nation_tech": nation_tech, "entrance": entrance}
+	_after_nation_infrastructure(fixture)
+	return fixture
+
+# Extension point for derived fixtures: called once after every piece of the
+# original infrastructure above exists. The default changes nothing.
+func _after_nation_infrastructure(_fixture: Dictionary) -> void:
+	pass
 
 func _cleanup_fixture(lab: TerrainLab, team: TerrainArmy) -> void:
 	var controller = lab.site_controller

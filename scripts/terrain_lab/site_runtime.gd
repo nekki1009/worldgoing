@@ -1247,10 +1247,10 @@ static func advance_siege_work(data: TerrainData, identity: String, action: Stri
 		if not yard_facts.required_skills.is_empty() and not yard_facts.eligible_skills.has("F11"): return fail("WAITING", "原直接六工位端點須真F11師傅；助手進度只走原已核共同前綴")
 	if field == "build":
 		if vehicle.has("technology_yard_id") and vehicle.has("tech_batch") and int(vehicle.tech_batch.operator_id) == 0 and vehicle.tech_batch.token.is_empty():
-			vehicle.tech_batch.work_seconds = float(vehicle.tech_batch.work_seconds) + seconds
+			vehicle.tech_batch.work_seconds = json_stable_seconds(float(vehicle.tech_batch.work_seconds) + seconds)
 		else: technology_record_work(vehicle, seconds / 60.0, int(technology_guard.get("operator_id", 0)))
 	job.progress = minf(float(job.total_work), float(job.progress) + seconds * float(credit_facts.factor) * float(method_facts.factor))
-	if spare and vehicle.has("tech_batch"): vehicle.tech_batch.work_seconds = minf(300.0, float(vehicle.tech_batch.work_seconds) + seconds)
+	if spare and vehicle.has("tech_batch"): vehicle.tech_batch.work_seconds = json_stable_seconds(minf(300.0, float(vehicle.tech_batch.work_seconds) + seconds))
 	if field == "repair":
 		var applied := float(job.amount) * float(job.progress) / float(job.total_work)
 		vehicle.hp = minf(float(SIEGE_DEFINITIONS[str(vehicle.kind)].max_hp), float(vehicle.hp) + maxf(0.0, applied - float(job.applied)))
@@ -7237,11 +7237,11 @@ static func technology_batch_operator_guard(data: TerrainData, key: String, feat
 static func technology_record_work(feature: Dictionary, actual_minutes: float, actual_identity: int, effective_minutes: float = -1.0) -> void:
 	if feature.has("tech_batch") and actual_identity > 0 and is_finite(actual_minutes) and actual_minutes > 0.0 and _technology_unbound_ordinary_feature_ledger(feature, feature.tech_batch):
 		feature.tech_batch.operator_id = actual_identity
-		feature.tech_batch.work_seconds = float(feature.tech_batch.work_seconds) + actual_minutes * 60.0
+		feature.tech_batch.work_seconds = json_stable_seconds(float(feature.tech_batch.work_seconds) + actual_minutes * 60.0)
 		_technology_record_effective(feature, actual_minutes, effective_minutes)
 		return
 	if feature.has("tech_batch") and (int(feature.tech_batch.operator_id) == actual_identity or int(feature.tech_batch.operator_id) == 0 and feature.has("technology_settlement_order")) and is_finite(actual_minutes) and actual_minutes > 0.0:
-		feature.tech_batch.work_seconds = float(feature.tech_batch.work_seconds) + actual_minutes * 60.0
+		feature.tech_batch.work_seconds = json_stable_seconds(float(feature.tech_batch.work_seconds) + actual_minutes * 60.0)
 		_technology_record_effective(feature, actual_minutes, effective_minutes)
 
 # Workshop batches also keep the production-equivalent seconds of the same steps.
@@ -7249,7 +7249,16 @@ static func technology_record_work(feature: Dictionary, actual_minutes: float, a
 static func _technology_record_effective(feature: Dictionary, actual_minutes: float, effective_minutes: float) -> void:
 	if effective_minutes < 0.0 or not is_finite(effective_minutes) or str(feature.get("kind", "")) in FARM_KINDS + PASTURE_KINDS: return
 	var prior := float(feature.tech_batch.get("effective_seconds", float(feature.tech_batch.work_seconds) - actual_minutes * 60.0))
-	feature.tech_batch.effective_seconds = prior + effective_minutes * 60.0
+	feature.tech_batch.effective_seconds = json_stable_seconds(prior + effective_minutes * 60.0)
+
+# A saved ledger second is kept at the double the Store's own JSON round trip
+# (full-precision stringify, JSON.parse) returns, so a cold save/load reproduces it
+# exactly. Same save format, no custom parser; one more round trip changes nothing.
+static func json_stable_seconds(value: float) -> float:
+	if not is_finite(value): return value
+	var parser := JSON.new()
+	if parser.parse(JSON.stringify([value], "", true, true)) != OK or not parser.data is Array or parser.data.size() != 1: return value
+	return float(parser.data[0])
 
 static func technology_batch_effective_seconds(ledger: Dictionary) -> float:
 	return float(ledger.get("effective_seconds", ledger.get("work_seconds", 0.0)))
@@ -13542,8 +13551,8 @@ static func publish_checked_work_prefix(prepared: Dictionary) -> void:
 		prepared.target.batch_paid = true
 	prepared.unit[prepared.field] = float(prepared.progress)
 	if not prepared.ledger.is_empty():
-		prepared.ledger.work_seconds = float(prepared.ledger_seconds)
-		if bool(prepared.get("ledger_effective_tracked", false)): prepared.ledger.effective_seconds = float(prepared.ledger_effective)
+		prepared.ledger.work_seconds = json_stable_seconds(float(prepared.ledger_seconds))
+		if bool(prepared.get("ledger_effective_tracked", false)): prepared.ledger.effective_seconds = json_stable_seconds(float(prepared.ledger_effective))
 		prepared.ledger.operator_id = int(prepared.ledger_operator_id)
 	if prepared.endpoint == "feature" and prepared.task.action == "construct" and not prepared.target.has("pending_build"): prepared.target.stage = "building"
 	if not prepared.repair.is_empty():
