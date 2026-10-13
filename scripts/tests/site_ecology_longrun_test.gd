@@ -23,7 +23,8 @@ func _process(_delta: float) -> bool:
 	return false
 
 func _write_report() -> void:
-	assert(DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(out)) == OK)
+	var directory_error := DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(out))
+	assert(directory_error == OK)
 	var file := FileAccess.open(out.path_join("ECO15_DATA_CLOCK_RECEIPT.json"), FileAccess.WRITE)
 	assert(file != null)
 	file.store_string(JSON.stringify(report, "\t", true, true))
@@ -39,7 +40,8 @@ func _run() -> void:
 			if regime == "clear_restore" and kind not in Env.RESTORABLE_KINDS:
 				report.not_applicable.append({"kind": kind, "regime": regime, "reason": "Original clear/restore whitelist excludes fish and wildlife"})
 				continue
-			assert(_timeline(selected, regime), "Longrun timeline did not finish")
+			var timeline_complete := _timeline(selected, regime)
+			assert(timeline_complete, "Longrun timeline did not finish")
 			_write_report()
 	assert(report.timelines.size() == 18 and report.observations.size() == 54 and report.not_applicable.size() == 2)
 	report.status = "PASS_DATA_CLOCK_ONLY"
@@ -165,7 +167,8 @@ func _timeline(selected: Dictionary, regime: String) -> bool:
 	data.site.capacity = 1000000 # Explicit ideal depot capacity, fixed for the whole experiment.
 	data.site.worker_enabled = false
 	assert(int(data.site.inventory.get("tools", 0)) > 0)
-	assert(Runtime.ecology_set_modes(data, [key], "sustainable" if regime == "sustainable" else "general").ok)
+	var initial_mode := Runtime.ecology_set_modes(data, [key], "sustainable" if regime == "sustainable" else "general")
+	assert(initial_mode.ok)
 	data = _roundtrip(data, name + "_initial") # Normalize legacy defaults once for all lanes.
 	var lanes: Array[Dictionary] = []
 	for lane_name: String in ["continuous", "save_load", "cold"]:
@@ -206,10 +209,14 @@ func _timeline(selected: Dictionary, regime: String) -> bool:
 		else:
 			if stage == "clear" and bool(r.cleared):
 				stage = "restore"
-				for lane: Dictionary in lanes: assert(Runtime.ecology_set_modes(lane.data, [key], "protected").ok)
+				for lane: Dictionary in lanes:
+					var protected_mode := Runtime.ecology_set_modes(lane.data, [key], "protected")
+					assert(protected_mode.ok)
 			elif stage == "restore" and not bool(r.cleared):
 				stage = "harvest"
-				for lane: Dictionary in lanes: assert(Runtime.ecology_set_modes(lane.data, [key], "general").ok)
+				for lane: Dictionary in lanes:
+					var general_mode := Runtime.ecology_set_modes(lane.data, [key], "general")
+					assert(general_mode.ok)
 			var moderate := regime == "moderate" or regime == "clear_restore" and stage == "harvest"
 			# Demand belongs to start + n * period, never to a later recovery.
 			# Skip slots elapsed during paid preparation or pre-moderate stages.
@@ -223,11 +230,14 @@ func _timeline(selected: Dictionary, regime: String) -> bool:
 				if str(preview.code) == "STORAGE_FULL":
 					for lane: Dictionary in lanes:
 						var carried := _stock(lane.data)
-						assert(Runtime.deposit(lane.data, lane.data.site.manual.cargo, lane.data.cell_from_index(int(lane.data.site.depot_cell))).ok)
+						var deposited := Runtime.deposit(lane.data, lane.data.site.manual.cargo, lane.data.cell_from_index(int(lane.data.site.depot_cell)))
+						assert(deposited.ok)
 						assert(_stock(lane.data) == carried, "Ideal handling transfers original cargo; it never discards it")
 					continue
 				if preview.ok:
-					for lane: Dictionary in lanes: assert(Runtime.begin_manual(lane.data, key, cell, action).ok)
+					for lane: Dictionary in lanes:
+						var begun := Runtime.begin_manual(lane.data, key, cell, action)
+						assert(begun.ok)
 					# Accepted harvest consumes this slot immediately. A survey also
 					# occupies it: after paid discovery, wait for the next fixed slot.
 					if moderate: next_request = start + (floorf((at - start) / period) + 1.0) * period
@@ -240,7 +250,9 @@ func _timeline(selected: Dictionary, regime: String) -> bool:
 		var due := int(r.next_recovery)
 		if due >= 0: end = minf(end, maxf(floorf(at) + 1.0, float(due)))
 		assert(end > at + EPS)
-		for lane: Dictionary in lanes: assert(_step(lane, key, end, work, gap))
+		for lane: Dictionary in lanes:
+			var step_complete := _step(lane, key, end, work, gap)
+			assert(step_complete)
 		if gap: gap_intervals.append([at, end])
 		current = lanes[0].data
 		var save_action := "restore" if regime == "clear_restore" else "harvest"

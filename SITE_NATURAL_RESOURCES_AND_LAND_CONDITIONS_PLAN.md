@@ -361,7 +361,7 @@
 
 ## 13. 生態永續與復育計畫
 
-日期：2026-10-08，第六輪覆核修訂。狀態：**計畫已修正，待實作**。保留文件所載 Nekki 於 2026-10-07 的四項決定：野生動物合格來源最低容量 2、休養保護阻擋新占地、管理交由新職責 settlement.ecology／預設虞衡、永續與復育不綁科技。20%／50% 門檻及復育工時仍是候選平衡值。本節不屬於文件開頭已完成的 V0.35R 範圍；本輪僅修正文稿，未改遊戲程式或執行 Godot。
+日期：2026-10-13，CC-20261013-004 重新定基準草稿。狀態：**E0～E2 已接入原 owner；歷史驗證有 PASS，整案仍未 CLOSE，e91e678 完整原模式验收未執行。** 2026-10-07 的四項決定不變；20%／50% 門檻與60分鐘復育仍為候選平衡值。第1～12節不變。本節13.1～13.12保留原設計合同與10/08歷史審查；其中「現行」與來源行號屬當時定位，目前進度以13.13與本單矩陣為準。
 
 ### 13.1 目標與目前真正的缺口
 
@@ -582,7 +582,7 @@ View 只讀結果：採空保留棲地提示、休養顯示標記、清地顯示
 
 ### 13.10 驗收矩陣與測量
 
-以下全為**待執行驗收**。優先延伸既有測試，避免每種生物另造測試框架。
+以下為必須保持的16組情境合同；32支既有驗收測試已取得分散的歷史收據，目前版本完整重跑仍未執行。兩種計數不能互相替代，進度詳13.13。
 
 | ID | 必須驗證的情境 | 可沿用的測試／入口 |
 | --- | --- | --- |
@@ -678,3 +678,18 @@ View 只讀結果：採空保留棲地提示、休養顯示標記、清地顯示
 #### 〔審核〕第七輪（Claude，2026-10-08）
 
 第六輪的兩項更正都已核對成立，第五輪的失敗描述撤回：`SiteStore.save` 在開檔寫入前就依序執行 `_validate_site_values`、`_validate_armies` 等驗證（`site_store.gd:413–436`，寫暫存檔在其後），漏接會在保存時被拒，不會先寫出讀不回的檔案。`SiteWorkTeam.valid_task` 的自然來源分支白名單（`site_work_team.gd:1118`）與依種類的工時上限（1123–1125，survey／clear 為 3 分）也確實存在。本輪沒有新的修正或待決定事項，第 13 節可交付實作。
+
+
+### 13.13 2026-10-13 生態重新定基準（草稿，未套用）
+
+本次基準為 committed e91e678d8f38e2640d63776a82978d4530a892cc。只稽核收據、來源與原合同，未啟動 Godot、未修改正式來源。原32清單由 output/ecology_d_port_20261008/batch1.ps1、batch2.ps1、batch2.log及run_one.ps1對位，包含生態、資源、工作、火場、Region、職務與聚落回歸，不能縮成16支site_ecology腳本。
+
+最新正式D canonical觀察為30 PASS／2 FAIL；13項最新模式不等於原模式。所有PASS仍是各自source epoch的歷史觀察，canonical原件大多缺完整HEAD／source census／watchdog；不得宣告這32項是目前版本同樹整批PASS。兩個最新FAIL（reservation_fire、GPU）皆是headless触發既有renderer准入；保留FAIL及原visual歷史PASS，不刪守衛、不改原模式取得PASS。
+
+E0～E2接在原Environment／Runtime／WorkTeam／Offices／Store／Controller／Region Slot與cold/replay，沒有另一份生態帳。最低野物容量2、保護阻擋新占地、settlement.ecology／虞衡、不綁科技四項決定維持。生態版本、遲滯旗標、既付工程、復育進度與source／checkpoint身分仍須沿原validator與原子交易。
+
+longrun_owner舊「生態資源ID」根因為測試添加的藥草不在鎖版基底；7d3189b已改用原台灣地理／資源配對。最新10/13 headless55.58秒PASS不替代原visual210秒；數字ID應在JSON边界以int比對，生態key與item_ids則為字串，不強轉。Store的來源身分檢查不放寬。
+
+E3分兩種證據：site_ecology_longrun_test是7／30／90天理想輸入資料／時鐘比較；longrun_owner是一次真實出發、900秒離場與回場校準。後者不是90天完整Scene／吞吐／世界等價證明。longrun資料測試仍有8個assert內副作用呼叫，本單候選patch將它們移到assert前，保留原斷言、180000ms內部期限與原canonical210秒；尚未套用或驗證。
+
+結案前：中心凍結正式D與共享RegionSaveSlot WIP，按原模式／原期限完整重跑32項，保留完整canonical原件與source／程序歸屬；逐張覆核GPU新圖，檢查E3報告內容與模式。原期限90／120／150／180／210秒均不加長。來源未知、模式不符、人工畫面未驗與效能／Native／发布驗收分列。詳 output/project_command_center/evidence/CC-20261013-004/TEST_MATRIX.json、VERIFY_LIST.md、LONGRUN_ID_AUDIT.md。
