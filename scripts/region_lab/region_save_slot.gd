@@ -2572,6 +2572,9 @@ var _travel_party_cache: Dictionary = {}
 # verified once. Party documents are write-once, so the same selected path and
 # SHA-256 name the same bytes; a new checkpoint selects a new path and replaces it.
 var _region_selected_document_cache: Dictionary = {}
+# token -> {path, sha256, controller, party, fingerprint, graph}: the decoded and
+# fully validated selected document. Pure in its bytes, token, controller and pin.
+var _region_selected_decoded_cache: Dictionary = {}
 var _travel_plan_cache: Dictionary = {}
 var _travel_party_runtime: Dictionary = {}
 var _travel_party_runtime_token := ""
@@ -6011,9 +6014,11 @@ func _region_live_party_world(token: String, party: Dictionary, plan: Dictionary
 			var vehicle: Dictionary = party.content.vehicles[identity]
 			var pose: Dictionary = current.poses.get(identity, {}).duplicate(true)
 			if str(vehicle.get("kind", "")) != "ship" or not pose.get("world_anchor") is Array or pose.world_anchor.size() != 2: return fail("CORRUPT_SEA_CURSOR")
-			# Original Vector2 pose query returns floats. Only validated integral
-			# grid endpoints become typed cells; the interpolated anchor stays exact.
-			for field: String in ["from", "to"]:
+			# Original Vector2 pose query returns floats, and a plan read back from its
+			# saved JSON document carries its facings as JSON numbers. Only validated
+			# integral grid endpoints and facings become typed pairs; the interpolated
+			# anchor stays exact.
+			for field: String in ["from", "to", "facing", "from_facing", "to_facing"]:
 				if not pose.has(field): continue
 				var endpoint: Variant = pose[field]
 				if not endpoint is Array or endpoint.size() != 2 or not Store._integer(endpoint[0], -2147483648, 2147483647) or not Store._integer(endpoint[1], -2147483648, 2147483647): return fail("CORRUPT_SEA_CURSOR")
@@ -6146,6 +6151,14 @@ func _region_selected_party_document(token: String, require_current: bool = true
 	if controller not in ["player", "npc"] or not _travel_relative(reference.get("party_path"), token) \
 			or str(reference.get("party_path", "")).is_empty() or str(reference.get("party_sha256", "")).length() != 64:
 		return fail("STALE_REGION_PARTY", "真 marker 未選定原 party 文件")
+	# A document already decoded and fully validated under the same selected path,
+	# SHA-256 and controller yields fresh copies of the same values; only the clock
+	# check, which depends on the current endpoint, runs again in its own place.
+	var decoded_cache: Dictionary = _region_selected_decoded_cache.get(token, {})
+	if str(decoded_cache.get("path", "")) == str(reference.party_path) and str(decoded_cache.get("sha256", "")) == str(reference.party_sha256) \
+			and str(decoded_cache.get("controller", "")) == controller and _same_pin(decoded_cache.get("pin"), pin):
+		return _region_selected_party_result(token, reference, controller, decoded_cache.party.duplicate(true),
+			str(decoded_cache.fingerprint), decoded_cache.graph.duplicate(true), require_current)
 	var document := _region_selected_document(token, str(reference.party_path), str(reference.party_sha256))
 	if not document.ok: return document
 	var payload: Dictionary = document.payload
@@ -6171,6 +6184,17 @@ func _region_selected_party_document(token: String, require_current: bool = true
 				or not RegionCheckpoint.validate_context(decoded.context).ok:
 			return fail("CORRUPT_REGION_GRAPH", "party body 與完整原 graph 不是同一份提交")
 		graph = decoded
+	_region_selected_decoded_cache[token] = {"path": str(reference.party_path), "sha256": str(reference.party_sha256), "controller": controller,
+		"pin": pin.duplicate(true), "party": party.duplicate(true), "fingerprint": fingerprint, "graph": graph.duplicate(true)}
+	return _region_selected_party_result(token, reference, controller, party, fingerprint, graph, false)
+
+## The selected proof result from validated values. require_current repeats the
+## same clock check for a cached document; the miss path already ran it.
+func _region_selected_party_result(token: String, reference: Dictionary, controller: String, party: Dictionary,
+		fingerprint: String, graph: Dictionary, require_current: bool) -> Dictionary:
+	if require_current and (absf(float(party.get("upkeep", {}).get("at", -1.0)) - float(control.logical_game_seconds)) > 0.00000001 \
+			or absf(float(party.upkeep.get("owner_action_seconds", control.fire_clock.action_seconds)) - float(control.fire_clock.action_seconds)) > 0.00000001):
+		return fail("UNSETTLED_PARTY", "真 selected party 尚未完成同一共同雙時間端點")
 	var phase := str(party.upkeep.get("live", {}).get("phase", reference.get("phase", "travelling")))
 	var proof := {"version": 1, "token": token, "owner": "travel:" + token, "generation": int(_marker.get("generation", 0)),
 		"revision": int(region_registry().revision), "path": str(reference.party_path), "sha256": str(reference.party_sha256),
