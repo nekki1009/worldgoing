@@ -50,7 +50,10 @@ func _ship_supply() -> Dictionary:
 
 func _ship_build_barrier(anchor: Vector2i, length: int) -> bool:
 	var data := action_owner.terrain
-	var options := {"owner_faction": action_owner.character.faction_id}
+	# A 1-wide north-south wall faces its work entrance east (quarter 3), on the
+	# ship side the builder stands on. The default south quarter offers only the cell
+	# below a segment's end, which for the last segment (ending at y 99) is off the map.
+	var options := {"owner_faction": action_owner.character.faction_id, "quarter": 3}
 	var layout: Dictionary = SiteRuntime.building_cells(data, "stone_wall", anchor, Vector2i(1, length), options)
 	if not _check(layout.ok, "original legal land barrier layout respects per-request limits", layout): return false
 	var cells: Array[int] = []; cells.assign(layout.cells)
