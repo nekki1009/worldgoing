@@ -175,6 +175,16 @@ func _replacement_recipe(f: Dictionary, key: String, recipe: String, output: Dic
 	_idle_all(f)
 	_g06_original_hazard(f, int(f.master), true)
 	_feature_paused(f, key, "Actual dead original teacher gives no future processing work to unlearned members")
+	# The down pose and remains transfer settle only through the original main
+	# caller's real elapsed steps (the work interval does not advance them); a
+	# save is refused while the death is pending.
+	var deaths: SiteController = f.lab.site_controller
+	for tick: int in 2000:
+		if not deaths._pending_deaths.has(int(f.master)): break
+		var stepped: Dictionary = f.lab._advance_original_shared_step(TerrainLab.ACTION_STEP)
+		_require(stepped.ok, "Original main caller settles the actual death's down pose and remains", stepped)
+	var dead: Dictionary = deaths.person_actions._person(int(f.master))
+	_require(not deaths._pending_deaths.has(int(f.master)) and not dead.is_empty() and bool(deaths.person_actions._body_get(dead, "loot_settled")), "Actual original death settles its remains before any save")
 	_case.ordinary_lifecycle = {"shared_rest_source_and_original_recovery": true, "original_contact_ko_then_true_taught_replacement": true, "original_contact_death": true, "no_second_payment": true, "normalized_environment_input_not_hit_geometry": true}
 	_case.true_taught_replacement = {"teacher": f.master, "student": f.helper, "lesson_seconds": 300, "one_original_slot_legal_reassignment": true, "output": output}
 func _run() -> void:

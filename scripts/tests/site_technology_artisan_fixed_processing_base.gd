@@ -140,7 +140,17 @@ func _original_feature_ui(f: Dictionary, key: String, recipe: String, identity: 
 	_require(button != null and f.lab.npc == null, "Original formal operation button exists without parallel default worker")
 	button.pressed.emit()
 	# A realistic dispatch comes from the team's current work-duty decider.
+	# Fixture placements are not landed steps; refresh presence through a real
+	# command event (unchanged tactical-AI confirmation) before resolving duty.
+	f.team.set_tactical_ai_enabled(f.team.current_commander, f.team.tactical_ai_enabled)
+	if f.team.current_commander < 0:
+		# Presence is measured from the team's median member, not the station; a
+		# commander parked by the station can be out of command radius. Re-park the
+		# formal commander at that reference (explicit fixture input) and refresh.
+		_park(f, int(f.commander), Vector2i(f.team.command_reference.floor()))
+		f.team.set_tactical_ai_enabled(f.team.current_commander, f.team.tactical_ai_enabled)
 	var work_decider: int = int(f.team.duty_decider("team.work"))
+	_require(work_decider > 0, "The team work duty resolves to an actual present decider", f.team.duty_resolve("team.work", true))
 	var dispatcher: Dictionary = controller._control_family_person(null, work_decider)
 	_require(dispatcher.ok, "Original command control restored to the team work decider before selected-worker dispatch", dispatcher)
 	f.lab.selected_army_target = identity

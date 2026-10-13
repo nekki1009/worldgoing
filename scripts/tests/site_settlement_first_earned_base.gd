@@ -117,16 +117,50 @@ func _settlement_target(f: Dictionary, phase: Dictionary) -> Dictionary:
 	if binding == "workshop_bow":
 		var key = str(f.keys.smithy)
 		_check(f.lab.character.place(f.data.cell_from_index(int(f.data.site.features[key].entrance)), true), "Actual workshop operator reaches the original smithy entrance")
+		_settlement_team_with_actor(f)
 		return {"target": "feature:" + key, "work_target": {}}
 	if binding == "spares":
 		_check(f.lab.character.place(f.data.cell_from_index(int(f.data.site.depot_cell)), true), "Actual craftsman reaches the original camp source contact")
+		_settlement_team_with_actor(f)
 		return {"target": "depot", "work_target": {}}
 	if binding == "spare_repair":
 		var key = str(f.keys.ballista)
 		var slots = Runtime.siege_work_slots(f.data, f.data.site.vehicles[key])
 		_check(not slots.is_empty() and f.lab.character.place(f.data.cell_from_index(int(slots[0].cell)), true), "Actual repair operator reaches one real original ballista work slot")
+		_settlement_team_with_actor(f)
 		return {"target": "vehicle:" + key, "work_target": {}}
 	return _settlement_natural_geometry(f, binding)
+
+# The Actor works as a member of its original team, which accompanies it: team
+# consent counts only members present within command radius. Explicit fixture
+# stations beside the Actor, then a real command event (unchanged tactical-AI
+# confirmation) refreshes presence. Travel is covered by the movement tests.
+func _settlement_team_with_actor(f: Dictionary) -> void:
+	var team: TerrainArmy = f.team
+	var data: TerrainData = f.data
+	var actor_cell: Vector2i = f.lab.character.terrain_cell
+	var taken: Array[Vector2i] = [actor_cell]
+	for index: int in team.combat_units.size():
+		if not team.is_member(index) or team.member_gone(index): continue
+		_check(team.moving_to[index] == TerrainArmy.INVALID_CELL, "No committed step survives an explicit team fixture station")
+		var station := Vector2i(-1, -1)
+		for radius: int in range(1, 6):
+			for y: int in range(-radius, radius + 1):
+				for x: int in range(-radius, radius + 1):
+					if station.x >= 0 or absi(x) + absi(y) != radius: continue
+					var cell := actor_cell + Vector2i(x, y)
+					if not data.contains(cell) or not data.is_walkable(cell) or int(data.feature_at[data.index(cell)]) != 0 or f.controller.reserves_cell(cell) or cell in taken: continue
+					var occupied: bool = f.lab.npc != null and f.lab.npc.terrain_cell == cell
+					for other: int in team.cells.size(): occupied = occupied or other != index and team.cells[other] == cell
+					if not occupied: station = cell
+		_check(station.x >= 0, "A free natural station exists beside the working Actor for each original team member")
+		if station.x < 0: return
+		taken.append(station)
+		team.cells[index] = station
+		team.combat_slots[index] = station
+	team._rebuild_ground_cell_owners()
+	team.set_tactical_ai_enabled(team.current_commander, team.tactical_ai_enabled)
+	_check(team._member_can_serve(TerrainArmy.PLAYER_MEMBER), "The working Actor stays present with its accompanying original team")
 
 func _settlement_cold(f: Dictionary, complete: bool) -> void:
 	var old_data: TerrainData = f.data
@@ -348,6 +382,7 @@ func _settlement_natural_geometry(f: Dictionary, binding: String) -> Dictionary:
 		var preview = Runtime.preview_build(data, kind, cells, f.controller.reserves_cell, options, {}, {"token": _settlement_token(f, target)})
 		if not preview.ok or not preview.get("clearing", []).is_empty(): continue
 		_check(f.lab.character.place(data.cell_from_index(int(preview.entrance)), true), "Actual Actor reaches this pure original natural geometry station")
+		_settlement_team_with_actor(f)
 		if binding == "wall_build": f.keys.wall_anchor = anchor
 		return {"target": target, "work_target": {"cells": cells, "options": options}}
 	_check(false, "Original natural scan finds the legal current Settlement trial geometry")
