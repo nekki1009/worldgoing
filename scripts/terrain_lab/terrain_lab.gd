@@ -10645,6 +10645,12 @@ func _region_gameplay_party_zero_points() -> Dictionary:
 		var bound := prepare_region_party_original_owner(token, selected.party, slot)
 		if not bound.ok: return bound
 		var original: TerrainLab = bound.lab
+		# A live NPC party original pays its interval as a cold consumer; like every
+		# other cold owner (and the travel host) it finishes that point here, at zero
+		# time, before its body is captured.
+		if not original._region_point_pending.is_empty():
+			var finished: Dictionary = original.consume_region_point(false)
+			if not finished.get("ok", false) or not finished.get("complete", false): return finished
 		original.site_controller.settle_person_deaths(0.0)
 		var captured := _region_capture_original_party(original, selected.party, slot)
 		if not captured.ok: return captured
