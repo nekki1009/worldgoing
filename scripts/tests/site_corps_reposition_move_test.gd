@@ -132,6 +132,9 @@ func _move_and_resume() -> bool:
 	var restored: TerrainArmy
 	for team_snapshot: Dictionary in loaded.data.site.armies:
 		var copy := TerrainArmy.new()
+		# Production armies live in the scene tree; fixtures step them explicitly.
+		root.add_child(copy)
+		copy.set_process(false)
 		copy.roster_size = team_snapshot.units.size()
 		copy.exchange_enabled = true
 		restored_coordinator.register_formation(copy)

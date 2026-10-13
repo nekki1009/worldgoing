@@ -14,7 +14,7 @@ func _initialize() -> void:
 func _run() -> void:
 	var data := Helper.build_flat_map(40, 40)
 	var team := Helper.create_test_army(data, 1, 0, 4, Vector2i(5, 5))
-	root.add_child(team)
+	if team.get_parent() == null: root.add_child(team)
 	assert(not team.tactical_ai_enabled)
 	assert(not team.issue_tactical_ai_order(TerrainArmy.CombatOrder.ATTACK).ok)
 	assert(not team.set_tactical_ai_enabled(-1, true).ok)
@@ -169,7 +169,7 @@ func _store_roundtrip() -> bool:
 	var expected: Array[Dictionary] = []
 	for index in range(3):
 		var team := Helper.create_test_army(data, index + 1, index, 2, origin + Vector2i(index * 4, 0))
-		root.add_child(team)
+		if team.get_parent() == null: root.add_child(team)
 		if not _store_check(team.set_tactical_ai_enabled(team.current_commander, true).ok, "Cannot enable faction %d AI" % index): return false
 		team.tactical_ai_recovering = index == 0
 		team.tactical_ai_order_cooldown = 0.75 + float(index)

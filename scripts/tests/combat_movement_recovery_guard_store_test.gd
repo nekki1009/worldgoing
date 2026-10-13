@@ -84,6 +84,9 @@ func _run() -> void:
 	if not _require(bool(loaded.get("ok", false)), "Real recovery-guard load rejected: " + str(loaded)): return
 	var restored_data: TerrainData = loaded.data
 	var restored := TerrainArmy.new()
+	# Production armies live in the scene tree; fixtures step them explicitly.
+	root.add_child(restored)
+	restored.set_process(false)
 	restored.roster_size = 4
 	restored.exchange_enabled = true
 	var restored_coordinator := Coordinator.new()
@@ -112,6 +115,9 @@ func _run() -> void:
 	var legacy_loaded: Dictionary = Store.load_site(LEGACY)
 	if not _require(bool(legacy_loaded.get("ok", false)), "Legacy guard fields must remain optional"): return
 	var legacy_army := TerrainArmy.new()
+	# Production armies live in the scene tree; fixtures step them explicitly.
+	root.add_child(legacy_army)
+	legacy_army.set_process(false)
 	legacy_army.roster_size = 4
 	legacy_army.exchange_enabled = true
 	legacy_army.restore_combat_state(legacy_loaded.data.site.armies[0], legacy_loaded.data, null, null)

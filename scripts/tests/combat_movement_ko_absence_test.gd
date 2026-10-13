@@ -37,6 +37,9 @@ func _run() -> void:
 	bad["combat_absent_slots"][str(mid)] = [29, 19]
 	if not _require(not Store._valid_combat_movement_snapshot(terrain, bad, {}), "SiteStore must reject an absent intent outside final-slot candidates"): return
 	var restored := ArmyScript.new()
+	# Production armies live in the scene tree; fixtures step them explicitly.
+	root.add_child(restored)
+	restored.set_process(false)
 	restored.roster_size = 2
 	restored.exchange_enabled = true
 	var restored_coordinator := Coordinator.new()

@@ -41,7 +41,7 @@ func _fixture(data: TerrainData = null, origin: Vector2i = Vector2i(8, 12)) -> b
 	_coordinator = Coordinator.new()
 	_army = Helper.create_test_army(_data, 1, 0, 9, origin)
 	if not _check(is_instance_valid(_army), "Fixture: original Army could not be created"): return false
-	root.add_child(_army)
+	if _army.get_parent() == null: root.add_child(_army)
 	_army.set_process(false)
 	_coordinator.register_formation(_army)
 	_target_available = true

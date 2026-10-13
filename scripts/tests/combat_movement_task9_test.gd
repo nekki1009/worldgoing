@@ -44,6 +44,9 @@ func _run() -> void:
 
 	# Restore into army2
 	var army2 := TerrainArmyScript.new()
+	# Production armies live in the scene tree; fixtures step them explicitly.
+	root.add_child(army2)
+	army2.set_process(false)
 	army2.roster_size = 100
 	army2.exchange_enabled = true
 	army2.restore_combat_state(snapshot, flat_map, null, null)

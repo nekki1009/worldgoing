@@ -46,13 +46,13 @@ func _targets(army: TerrainArmy, label: String) -> void:
 func _run() -> void:
 	var data := Helper.build_flat_map(40, 30)
 	var army := Helper.create_test_army(data, 1, 1, 4, Vector2i(4, 4))
-	root.add_child(army)
+	if army.get_parent() == null: root.add_child(army)
 	army.set_process(false)
 	army.combat_profile_enabled = true
 	for index in range(4): army.combat_units[index].person_id = 9007199254741000 + index
 	army._invalidate_combat_identity_cache()
 	var other := Helper.create_test_army(data, 2, 2, 2, Vector2i(20, 20))
-	root.add_child(other)
+	if other.get_parent() == null: root.add_child(other)
 	other.set_process(false)
 	army.external_blocker = other.blocks_cell
 	var actor := TerrainTestCharacter.new()

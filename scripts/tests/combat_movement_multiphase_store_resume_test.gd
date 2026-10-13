@@ -61,6 +61,9 @@ func _resume(snapshot: Dictionary, label: String, expected_phase: int, expect_ho
 	if not _require(bool(loaded.get("ok", false)), "Real SiteStore.load_site rejected %s: %s" % [label, loaded]): return false
 	var live_data: TerrainData = loaded.data
 	var army := TerrainArmy.new()
+	# Production armies live in the scene tree; fixtures step them explicitly.
+	root.add_child(army)
+	army.set_process(false)
 	army.roster_size = MEMBERS
 	army.exchange_enabled = true
 	var coordinator := Coordinator.new()
@@ -130,6 +133,9 @@ func _resume(snapshot: Dictionary, label: String, expected_phase: int, expect_ho
 		if not _require(bool(legacy_loaded.get("ok", false)), "Legacy movement fields must migrate through real load: " + str(legacy_loaded)): return false
 		var legacy_data: TerrainData = legacy_loaded.data
 		var legacy_army := TerrainArmy.new()
+		# Production armies live in the scene tree; fixtures step them explicitly.
+		root.add_child(legacy_army)
+		legacy_army.set_process(false)
 		legacy_army.roster_size = MEMBERS
 		legacy_army.exchange_enabled = true
 		var legacy_coordinator := Coordinator.new()

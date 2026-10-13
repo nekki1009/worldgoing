@@ -23,6 +23,9 @@ func _restore(map: TerrainData, saved: Dictionary, expected_move: Array, expecte
 	var valid: Dictionary = Store._validate_armies(map, {"actors": {}, "armies": [saved]}, true)
 	if not _check(valid.ok and TerrainArmy.valid_combat_state(saved, map), "complete original validators admit the saved owner"): return false
 	var restored := TerrainArmy.new()
+	# Production armies live in the scene tree; fixtures step them explicitly.
+	root.add_child(restored)
+	restored.set_process(false)
 	restored.roster_size = saved.units.size()
 	restored.exchange_enabled = true
 	owners.append(restored)

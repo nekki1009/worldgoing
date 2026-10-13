@@ -114,6 +114,9 @@ func _run() -> void:
 	var active_data: TerrainData = loaded.data
 	if not _require(active_data != data and active_data.height_levels == data.height_levels and active_data.static_blocked == data.static_blocked, "Load must reconstruct a separate terrain with the same legal geometry"): return
 	_restored = TerrainArmy.new()
+	# Production armies live in the scene tree; fixtures step them explicitly.
+	root.add_child(_restored)
+	_restored.set_process(false)
 	_restored.roster_size = MEMBERS
 	_restored.exchange_enabled = true
 	_restored_coordinator.register_formation(_restored)

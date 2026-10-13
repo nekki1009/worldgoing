@@ -155,6 +155,9 @@ func _run() -> void:
 	if not _require(bool(loaded.get("ok", false)), "SiteStore could not load the chain snapshot"): return
 	var restored_data: TerrainData = loaded.data
 	_restored = TerrainArmy.new()
+	# Production armies live in the scene tree; fixtures step them explicitly.
+	root.add_child(_restored)
+	_restored.set_process(false)
 	_restored.roster_size = 9
 	_restored.exchange_enabled = true
 	_restored_coordinator.register_formation(_restored)

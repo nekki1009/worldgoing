@@ -65,6 +65,9 @@ func _run() -> void:
 	legacy["combat_deployment_plan"]["resolved_anchor"] = [-1, -1]
 	if not _require(Store._valid_combat_movement_snapshot(data, legacy, {}), "Legacy movement anchor must be accepted for normalization"): return
 	var legacy_restored := ArmyScript.new()
+	# Production armies live in the scene tree; fixtures step them explicitly.
+	root.add_child(legacy_restored)
+	legacy_restored.set_process(false)
 	legacy_restored.roster_size = 3
 	legacy_restored.exchange_enabled = true
 	legacy_restored.restore_combat_state(legacy, data, null, null)
@@ -84,6 +87,9 @@ func _run() -> void:
 	if not _require(not bool(Store._validate_armies(data, base_state).get("ok", false)), "Cross-team final-slot overlap must be rejected before restore"): return
 	other.free()
 	var restored := ArmyScript.new()
+	# Production armies live in the scene tree; fixtures step them explicitly.
+	root.add_child(restored)
+	restored.set_process(false)
 	restored.roster_size = 3
 	restored.exchange_enabled = true
 	var restored_coordinator := Coordinator.new()

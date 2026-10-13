@@ -173,6 +173,9 @@ func _check_batch() -> void:
 	invalid.erase("structure_waiting")
 	assert(not Store._valid_combat_movement_snapshot(data, invalid, {}))
 	var restored := TerrainArmy.new()
+	# Production armies live in the scene tree; fixtures step them explicitly.
+	root.add_child(restored)
+	restored.set_process(false)
 	restored.restore_combat_state(snapshot, data, null, null)
 	assert(restored.combat_order == TerrainArmy.CombatOrder.MOVE and restored.get_order_serial() == serial)
 	assert(not restored._refresh_move_terrain_revision() and restored._combat_move_plan.structure_blocked)

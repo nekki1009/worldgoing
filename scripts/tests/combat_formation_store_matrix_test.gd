@@ -99,6 +99,9 @@ func _round_trip(data: TerrainData, source: TerrainArmy, preset: String, members
 		and int(snapshot.combat_order_serial) == int(snapshot.combat_deployment_plan.order_serial),
 		"SiteStore changed %s preset or order serial" % label): return {}
 	var restored := TerrainArmy.new()
+	# Production armies live in the scene tree; fixtures step them explicitly.
+	root.add_child(restored)
+	restored.set_process(false)
 	restored.roster_size = members
 	restored.exchange_enabled = true
 	var coordinator := Coordinator.new()

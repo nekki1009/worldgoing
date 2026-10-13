@@ -22,7 +22,8 @@ func _fixture(native_enabled: bool) -> Dictionary:
 	for side in range(2):
 		var origin := Vector2i(4, 8 if side == 0 else 19)
 		var army := Helper.create_test_army(terrain, side + 1, side, 8, origin)
-		owner_root.add_child(army)
+		# The helper army is already in the tree; keep it owned (and freed) by owner_root.
+		army.reparent(owner_root)
 		coordinator.register_formation(army)
 		army.set("native_move_intent_enabled", native_enabled)
 		armies.append(army)

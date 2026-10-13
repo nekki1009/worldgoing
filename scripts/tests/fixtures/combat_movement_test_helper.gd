@@ -172,6 +172,13 @@ static func create_test_army(data: TerrainData, team_id: int = 1, faction_id: in
 	army.faction_id = faction_id
 	army.roster_size = soldier_count
 	army.exchange_enabled = true
+	# Like TerrainLab's dynamic team slots (_ensure_army_slots), the captain uses
+	# the shared pooled geometry instead of a private live presenter per army.
+	army.defer_captain_presenter = true
+	# Production armies live in the scene tree, and their live presenters build
+	# their UI in _ready, so the fixture army joins the tree before it deploys.
+	(Engine.get_main_loop() as SceneTree).root.add_child(army)
+	# READY re-enables an overridden _process; fixtures step the army explicitly.
 	army.set_process(false)
 	
 	var placement_cells: Array[Vector2i] = []

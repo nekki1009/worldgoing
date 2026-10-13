@@ -50,6 +50,9 @@ func _run() -> void:
 	var loaded: Dictionary = Store.load_site(OUTPUT)
 	if not _require(bool(loaded.get("ok", false)), "SiteStore could not reload the completed KO formation: " + str(loaded)): return
 	var restored := TerrainArmy.new()
+	# Production armies live in the scene tree; fixtures step them explicitly.
+	root.add_child(restored)
+	restored.set_process(false)
 	var restored_coordinator := Coordinator.new()
 	restored_coordinator.register_formation(restored)
 	restored.restore_combat_state(loaded.data.site.armies[0], loaded.data, null, null)
