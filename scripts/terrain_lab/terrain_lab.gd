@@ -2101,6 +2101,9 @@ func _region_advance_original_duty_ai(game_seconds: float) -> void:
 		DutyAI.capture_cadence(self, _duty_ai_elapsed)
 		return
 	_duty_ai_elapsed = fmod(_duty_ai_elapsed, DutyAI.REVIEW_GAME_SECONDS)
+	# The review is admitted up to one epsilon early; a remainder that close below
+	# a whole period is that period, not 59.99… s toward an immediate second review.
+	if _duty_ai_elapsed + ACTION_TIME_EPSILON >= DutyAI.REVIEW_GAME_SECONDS: _duty_ai_elapsed = 0.0
 	DutyAI.capture_cadence(self, _duty_ai_elapsed)
 	DutyAI.review(self)
 
