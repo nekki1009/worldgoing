@@ -366,6 +366,16 @@ func begin_prison_release(executor_id: int, target_id: int, requester_id: int = 
 	return Runtime.ok("開始四秒出監解綁；完成前保持原拘押", {"seconds": BIND_SECONDS})
 
 func _prison_release_context(executor_id: int, target_id: int, job: Dictionary = {}) -> Dictionary:
+	var original := _prison_release_geometry(executor_id, target_id, job)
+	if not original.ok: return original
+	if not captivity_change_guard.is_valid() or not captivity_supply_commit.is_valid() or not captivity_changed.is_valid(): return Runtime.fail("UNSUPPORTED")
+	var check: Dictionary = captivity_change_guard.call(target_id, int(original.relation.captor_id), false)
+	if not check.ok: return check
+	return original
+
+# Political adoption reuses this physical exit proof, then prepares only its
+# final supply home. Ordinary release retains its original supply guard above.
+func _prison_release_geometry(executor_id: int, target_id: int, job: Dictionary = {}) -> Dictionary:
 	var original := prison_slot(target_id)
 	if not original.ok: return original
 	var target := _person(target_id)
@@ -384,9 +394,6 @@ func _prison_release_context(executor_id: int, target_id: int, job: Dictionary =
 	if executor.cell != original.slot.exit_cell:
 		var route: Array[Vector2i] = lab.terrain.path_between(executor.cell, original.slot.exit_cell, func(cell: Vector2i) -> bool: return prison_blocked(cell, [executor_id], contacts))
 		if route.is_empty(): return Runtime.fail("UNREACHABLE", "接觸格至出口沒有合法空路")
-	if not captivity_change_guard.is_valid() or not captivity_supply_commit.is_valid() or not captivity_changed.is_valid(): return Runtime.fail("UNSUPPORTED")
-	var check: Dictionary = captivity_change_guard.call(target_id, int(original.relation.captor_id), false)
-	if not check.ok: return check
 	original.person = target
 	return original
 

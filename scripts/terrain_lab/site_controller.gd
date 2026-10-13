@@ -16,6 +16,7 @@ const Garrison = preload("res://scripts/terrain_lab/site_garrison.gd")
 const FoodDelivery = preload("res://scripts/terrain_lab/site_food_delivery.gd")
 const PersonActions = preload("res://scripts/terrain_lab/site_person_actions.gd")
 const CaptivitySupply = preload("res://scripts/terrain_lab/site_captivity_supply.gd")
+const PoliticalAdoption = preload("res://scripts/terrain_lab/site_political_adoption.gd")
 const EquipmentOrders = preload("res://scripts/terrain_lab/site_equipment_orders.gd")
 const CaptiveEscort = preload("res://scripts/terrain_lab/site_captive_escort.gd")
 const FamilyContinuity = preload("res://scripts/terrain_lab/site_family_continuity.gd")
@@ -681,6 +682,7 @@ func _build_ui() -> void:
 	_button(column, "攻擊所選目標", "AttackSelectedPerson", lab.attack_selected_soldier)
 	_button(column, "救助所選友方", "RescueSelectedPerson", lab.rescue_selected_soldier)
 	_button(column, "被俘本人：嘗試逃脫", "BeginCaptiveEscape", func() -> void: show_result(person_actions.begin_escape(lab.controlled_person_id())))
+	_button(column, "俘虜歸降／接收同意", "CaptiveAdoption", _open_captive_adoption)
 	_button(column, "指定所選友方人物回收（須自行到相鄰格）", "ChooseRecoveryWorker", _choose_recovery_executor)
 	_button(column, "改由玩家搜刮", "ChoosePlayerLooter", func() -> void:
 		person_executor_id = lab.controlled_person_id()
@@ -7577,6 +7579,64 @@ func _prison_regular_release_target(executor: int, query: Dictionary) -> Diction
 		if check.ok: return Runtime.ok("", {"person_id": identity})
 		failure = check
 	return failure
+
+func order_captive_adoption(target_id: int, offer: Dictionary) -> Dictionary:
+	return PoliticalAdoption.command(lab, target_id, offer, int(lab.controlled_person_id()))
+
+func _open_captive_adoption() -> void:
+	var requester := int(lab.controlled_person_id())
+	var original: TerrainData = lab.terrain
+	var context := str([str(original.site.id), requester])
+	if _existing_dialog("adoption", context): return
+	var person: Dictionary = person_actions._person(requester, false)
+	if person.is_empty(): show_result(Runtime.fail("NO_TARGET")); return
+	var dialog := AcceptDialog.new()
+	dialog.name = "CaptiveAdoptionDialog"
+	dialog.title = "俘虜歸降／接收同意"
+	dialog.min_size = Vector2i(580, 440)
+	var column := VBoxContainer.new()
+	dialog.add_child(column)
+	_label(column, "本人願意、拘押方及戶籍官同意後，才依原出口與移交規則完成。\n他方職責 AI 關閉時，須由其本人明示操作；不會自動入隊或授官。", 15)
+	var targets := _options(column, [], "AdoptionCaptives")
+	var keys: Array = original.site.get("captivity", {}).keys()
+	keys.sort()
+	for key: String in keys:
+		var relation: Dictionary = original.site.captivity[key]
+		if int(relation.captor_faction) != int(person.faction) and int(key) != requester: continue
+		targets.add_item("原俘虜 #%s" % key)
+		targets.set_item_metadata(targets.item_count - 1, int(key))
+	var nations := _options(column, [], "AdoptionNations")
+	var nation_ids: Array = original.site.get("equipment_nations", {}).keys()
+	nation_ids.sort()
+	for nation_id: String in nation_ids:
+		var nation: Dictionary = original.site.equipment_nations[nation_id]
+		if not nation.has("offices") or equipment_orders.nation_head_executor(nation, true) <= 0: continue
+		nations.add_item("目標國：%s" % nation_id)
+		nations.set_item_metadata(nations.item_count - 1, nation_id)
+	var teams := _options(column, [], "AdoptionTeams")
+	for team: TerrainArmy in lab.combat_armies:
+		if not is_instance_valid(team) or not team.combat_enabled or not team.garrison_feature_id.is_empty(): continue
+		teams.add_item("接收隊伍 #%d · 陣營 %d" % [team.team_id, team.faction_id])
+		teams.set_item_metadata(teams.item_count - 1, team.team_id)
+	var consent := CheckBox.new()
+	consent.name = "AdoptionSelfConsent"
+	consent.text = "若所選俘虜是本人，我明示願意歸降"
+	column.add_child(consent)
+	var result_label := _label(column, "期滿只進入處置評估；未完成合法交易仍在監。", 15)
+	result_label.name = "AdoptionResult"
+	var submit := _button(column, "以目前本人權責提出／接收歸降", "SubmitCaptiveAdoption", func() -> void:
+		if lab.terrain != original or int(lab.controlled_person_id()) != requester:
+			show_result(Runtime.fail("STALE", "Site 或控制人物已變更，請重新開啟")); return
+		if targets.selected < 0 or nations.selected < 0 or teams.selected < 0: return
+		var offer := {"nation_id": str(nations.get_item_metadata(nations.selected)), "destination_team_id": int(teams.get_item_metadata(teams.selected)), "consent": consent.button_pressed}
+		var result := order_captive_adoption(int(targets.get_item_metadata(targets.selected)), offer)
+		result_label.text = str(result.message) if result.ok else "%s：%s" % [str(result.code), str(result.message)]
+		show_result(result)
+		if result.ok: dialog.queue_free())
+	submit.disabled = targets.item_count == 0 or nations.item_count == 0 or teams.item_count == 0
+	dialog.confirmed.connect(dialog.queue_free)
+	dialog.canceled.connect(dialog.queue_free)
+	_show_dialog(dialog, "adoption", context)
 
 func _open_prison() -> void:
 	var prison_id := feature_key

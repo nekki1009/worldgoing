@@ -67,8 +67,15 @@ static func prepare(lab: Variant, target_id: int, offer: Dictionary, jail_reques
 	var head: Dictionary = actions._person(orders.nation_head_executor(nation))
 	if destination == null or head.is_empty() or int(head.faction) != int(destination.faction_id):
 		return Runtime.fail("NO_DESTINATION", "須明示目標國勢力的合法接收隊伍")
+	# The original prison owner proves contact, exit and current custody before
+	# Supply prepares the political transaction's final home (not old release home).
+	if not str(relation.get("prison_id", "")).is_empty():
+		if actions.is_busy(jail_requester): return Runtime.fail("BUSY", "典獄須先完成現有作業")
+		var exit: Dictionary = actions._prison_release_geometry(jail_requester, target_id)
+		if not exit.ok: return exit
 	var moved := source.adoption_row_check(destination, target_id)
 	if not moved.ok: return moved
+	if not actions.captivity_changed.is_valid(): return Runtime.fail("UNSUPPORTED", "原拘押通知尚未安裝")
 	var supply: Dictionary = lab.site_controller.captivity_supply.adoption_guard(target_id, int(relation.captor_id), source.combat_hot_materialize(unit))
 	if not supply.ok: return supply
 	var old_nations: Array[String] = []
@@ -80,6 +87,52 @@ static func prepare(lab: Variant, target_id: int, offer: Dictionary, jail_reques
 	return Runtime.ok("", {"target_id": target_id, "relation": relation, "source": source, "destination": destination,
 		"nation_id": nation_id, "old_nations": old_nations, "corps": corps_keys, "minute": minute, "person": person,
 		"willingness": willing})
+
+## Formal direct/UI command: only the actual controlled person gives manual
+## consent. Other sides use their existing enabled, deterministic R3 policy.
+static func command(lab: Variant, target_id: int, offer: Dictionary, requester_id: int) -> Dictionary:
+	if lab == null or lab.terrain == null or lab.site_controller == null: return Runtime.fail("NO_SITE")
+	if requester_id != int(lab.controlled_person_id()): return Runtime.fail("NO_AUTHORITY", "須由目前受控人物明示同意")
+	if not offer.get("nation_id") is String or not Runtime._building_integer(offer.get("destination_team_id"), 1, 2147483646) \
+		or offer.has("consent") and not offer.consent is bool: return Runtime.fail("INVALID", "歸降提案須有目標國、真接收隊伍與布林本人同意")
+	for field: Variant in offer:
+		if field not in ["nation_id", "destination_team_id", "consent"]: return Runtime.fail("INVALID", "歸降提案含未知欄位")
+	if lab.crowd_site != null and lab.crowd_site.active: return Runtime.fail("CROWD_UNSUPPORTED")
+	if requester_id != target_id and not lab.site_controller.person_actions._ready(lab.site_controller.person_actions._person(requester_id)):
+		return Runtime.fail("BUSY", "明示下令者須清醒自由且可行動")
+	var relation: Dictionary = lab.terrain.site.get("captivity", {}).get(str(target_id), {})
+	if relation.is_empty(): return Runtime.fail("NO_TARGET")
+	var settlement: Dictionary = Settlement.record(lab.terrain)
+	var governed := not settlement.is_empty() and int(settlement.owner_faction) == int(relation.captor_faction)
+	var jail: Dictionary = Settlement.duty_resolve(lab, "settlement.prison") if governed else {"ok": true, "decider": int(relation.captor_id)}
+	if not bool(jail.get("ok", false)): return Runtime.fail("NO_AUTHORITY", "拘押方職責暫停")
+	var nations: Dictionary = lab.terrain.site.get("equipment_nations", {})
+	var nation: Dictionary = nations.get(str(offer.get("nation_id", "")), {})
+	var orders: Variant = lab.site_controller.equipment_orders
+	if nation.is_empty() or not nation.has("offices"): return Runtime.fail("NO_NATION")
+	var admission: Dictionary = orders.nation_duty_resolve(nation, "nation.admission")
+	if not bool(admission.get("ok", false)): return Runtime.fail("NO_AUTHORITY", "戶籍官職責暫停")
+	var jail_id := int(jail.decider)
+	var admission_id := int(admission.decider)
+	if requester_id not in [target_id, jail_id, admission_id]: return Runtime.fail("NO_AUTHORITY", "須由本人、典獄或戶籍官提出")
+	if jail_id != requester_id:
+		if not governed or not Settlement.prison_governed(lab, str(relation.get("prison_id", ""))) 			or not bool(Settlement.offices(lab).get("duty_ai", false)):
+			return Runtime.fail("NEEDS_CONSENT", "拘押方尚未明示接受；職責 AI 關閉時不能代其同意")
+	if admission_id != requester_id and not bool(nation.offices.get("duty_ai", false)):
+		return Runtime.fail("NEEDS_CONSENT", "戶籍官尚未明示接受；職責 AI 關閉時不能代其同意")
+	var submitted := offer.duplicate(true)
+	submitted.consent = target_id == requester_id and bool(offer.get("consent", false))
+	return adopt(lab, target_id, submitted, jail_id, admission_id)
+
+## Only this proven GD-row/prison path has the R3 assessment policy. Actor and
+## Crowd paths retain their prior policy until their own transfer is admitted.
+static func prison_policy_supported(lab: Variant, target_id: int) -> bool:
+	if lab == null or lab.terrain == null or lab.site_controller == null: return false
+	if lab.crowd_site != null and lab.crowd_site.active: return false
+	var relation: Dictionary = lab.terrain.site.get("captivity", {}).get(str(target_id), {})
+	if int(relation.get("version", 0)) != 3 or not Settlement.prison_governed(lab, str(relation.get("prison_id", ""))): return false
+	var person: Dictionary = lab.site_controller.person_actions._person(target_id, false)
+	return not person.is_empty() and person.owner is TerrainArmy and int(person.unit) >= 0 and person.owner.garrison_feature_id.is_empty() 		and bool(lab.site_controller.person_actions.prison_slot(target_id).get("ok", false))
 
 ## Commit (no fallible step after prepare). Called in the same step as prepare.
 static func commit(lab: Variant, prepared: Dictionary) -> Dictionary:

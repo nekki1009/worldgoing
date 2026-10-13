@@ -530,6 +530,8 @@ static func review_prison(lab: Variant, controlled: int) -> Dictionary:
 		if int(key) == controlled_now or not prisons.has(str(relation.get("prison_id", ""))): continue
 		var offer := PoliticalAdoption.standing_offer(lab, relation)
 		if offer.is_empty() or int(offer.admission_decider) == controlled_now: continue
+		var accepting_nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(str(offer.nation_id), {})
+		if not bool(accepting_nation.get("offices", {}).get("duty_ai", false)): continue
 		var adopted := PoliticalAdoption.adopt(lab, int(key), offer, decider, int(offer.admission_decider))
 		if bool(adopted.get("ok", false)):
 			_record_settlement(resolved, mind, {}, {"inmate": int(key), "nation": str(offer.nation_id)}, "adopt %s into %s" % [key, str(offer.nation_id)], adopted)
@@ -548,7 +550,12 @@ static func review_prison(lab: Variant, controlled: int) -> Dictionary:
 		var relation: Dictionary = lab.terrain.site.captivity[key]
 		if int(relation.get("version", 0)) >= 3: _inmate_since[key] = floori(float(relation.admitted_at_game_seconds) / 60.0)
 		elif not _inmate_since.has(key): _inmate_since[key] = now
-		if now - int(_inmate_since[key]) >= hold: due_inmates.append(int(key))
+		if now - int(_inmate_since[key]) >= hold:
+			if PoliticalAdoption.prison_policy_supported(lab, int(key)):
+				_record_settlement(resolved, mind, {"hold_minutes": hold}, {"inmate": int(key)}, "assessment pending %s" % key,
+					{"ok": false, "code": "WAIT", "message": "期滿處置評估；未完成合法受降或贖回，保留拘押"})
+				continue
+			due_inmates.append(int(key))
 	for key: String in _inmate_since.keys():
 		if not seen.has(key): _inmate_since.erase(key)
 	if due_inmates.is_empty() or actions.is_busy(decider) or escort.is_release_walking(decider) or lab.terrain.site.escort_orders.has(str(decider)): return {}

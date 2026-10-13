@@ -6450,6 +6450,8 @@ func transfer_members_to(recipient: TerrainArmy, identities: Array[int], request
 ## transaction; this only checks containers. Ordinary same-faction transfer
 ## rules are untouched; no other row or team faction changes.
 func adoption_row_check(recipient: TerrainArmy, person_id: int) -> Dictionary:
+	if not garrison_feature_id.is_empty(): return SiteRuntime.fail("GARRISON_PENDING", "駐營原人政治移交尚未准入；保留拘押")
+	if not roster_change_ready(): return SiteRuntime.fail("BUSY", "來源隊伍須停止、HOLD 並收束原作業")
 	var index := index_for_identity(person_id)
 	if index < 0 or index == PLAYER_MEMBER: return SiteRuntime.fail("NO_TARGET", "須為原名冊中的 NPC 原人物")
 	if recipient == null or recipient == self or not recipient.has_army() or not recipient.combat_enabled \
