@@ -223,7 +223,11 @@ func _reopen_actual_partial() -> bool:
 	lab = restored; controller = lab.site_controller; slot = reopened; action_owner = lab
 	lab.simulation_speed = action_speed
 	var next_graph := _action_graph()
-	if not _check(not next_graph.is_empty() and facts == _action_facts() and graph == next_graph and _partial_ready() and proof == slot.region_bind_proof(action_owner.terrain) and clock == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "true cold bind restores every original body/boat/job/holder alias and both clocks", ship_observation): return false
+	# The facts cross a saved JSON round trip and a fresh original Lab: the restored
+	# rows read back whole-number ids as floats (person_id 3.0, target -1.0). Compare
+	# them in the store's own saved JSON domain, as the inherited helper does; the
+	# graph, partial job, bind proof and clocks stay exact.
+	if not _check(not next_graph.is_empty() and _saved_json_domain(facts) == _saved_json_domain(_action_facts()) and graph == next_graph and _partial_ready() and proof == slot.region_bind_proof(action_owner.terrain) and clock == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "true cold bind restores every original body/boat/job/holder alias and both clocks", ship_observation): return false
 	if not _observe_ship_food_results(): return false
 	var before := var_to_bytes([slot.control, _action_facts(), next_graph])
 	var retry: Dictionary = slot.consume_due_region_events()
