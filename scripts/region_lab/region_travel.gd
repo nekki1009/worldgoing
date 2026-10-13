@@ -1363,6 +1363,14 @@ static func wire_transport(raw: Dictionary) -> Dictionary:
 
 ## Lift the party's exact record closure out of `state` (a detached copy).
 ## spec: {"person_id": controlled id, "actor_key": "player"/"npc"/"", "team_id": 0 or captained team}
+## Whole-number float team and person ids of one army row become ints, in place.
+static func _int_army_ids(army: Dictionary) -> void:
+	var team: Variant = army.get("team_id")
+	if team is float and is_finite(team) and team == floorf(team): army.team_id = int(team)
+	for row: Dictionary in army.get("units", []):
+		var person: Variant = row.get("person_id")
+		if person is float and is_finite(person) and person == floorf(person): row.person_id = int(person)
+
 static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dictionary:
 	if state.has("crowd"): return fail("UNSUPPORTED", "群眾模式（Crowd）暫不支援整隊出發")
 	if state.has("family"):
@@ -1420,6 +1428,10 @@ static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dicti
 				var reason := _row_ready(row, independent, sea)
 				if not reason.is_empty(): return fail("NOT_READY", reason)
 				movers[int(row.person_id)] = true
+			# A Site state read back from its saved JSON carries whole-number ids as
+			# floats. The party owns int ids, so every later identity map and body index
+			# sees the same key; a non-integral id stays as is for validation to refuse.
+			_int_army_ids(army)
 			content.armies.append(army)
 			var member: Dictionary = army.get("player_member", {})
 			if not member.is_empty(): movers[int(member.id)] = true

@@ -279,6 +279,12 @@ static func _symbol_key(key: String, row: Dictionary, maps: Dictionary, options:
 static func _map_value(value: Variant, field: String, row: Dictionary, maps: Dictionary, options: Dictionary,
 		seen: Array, error: Dictionary) -> Variant:
 	if field in HISTORY_FIELDS: return value
+	# A body read back from saved JSON carries whole-number ids as floats; an id
+	# field maps such a value as the int it is. Any other field keeps its value.
+	if value is float and is_finite(value) and value == floorf(value) and (RUNTIME_FIELDS.has(field) or field in PERSON_VALUES \
+			or field in ["team_id", "source_formation_id", "group", "vehicle_id", "embarked_vehicle_id", "bound_vehicle_id", "ship_vehicle_id",
+			"source_vehicle", "item_id", "equipment_item_id", "holder"]):
+		value = int(value)
 	if value is int or value is String:
 		if RUNTIME_FIELDS.has(field) and int(value) > 0:
 			var mapped := current(row, RUNTIME_FIELDS[field], int(value))
