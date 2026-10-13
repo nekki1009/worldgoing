@@ -6114,6 +6114,11 @@ func _region_live_party_world(token: String, party: Dictionary, plan: Dictionary
 				var endpoint: Variant = pose[field]
 				if not endpoint is Array or endpoint.size() != 2 or not Store._integer(endpoint[0], -2147483648, 2147483647) or not Store._integer(endpoint[1], -2147483648, 2147483647): return fail("CORRUPT_SEA_CURSOR")
 				pose[field] = [int(endpoint[0]), int(endpoint[1])]
+			# The cursor may name the next action before it starts (duration 0). That Ship
+			# rests at the action's start pose and owns no move, exactly as the original Lab
+			# frame later records it, so the frame carries no action for it either.
+			if float(pose.get("duration_action_seconds", 0.0)) <= 0.0:
+				for field: String in ["action", "from", "to", "from_facing", "to_facing", "weight", "elapsed_action_seconds", "duration_action_seconds"]: pose.erase(field)
 			var accepted: Array = pose.get("from", pose.world_anchor) if float(pose.get("duration_action_seconds", 0.0)) > 0.0 else pose.world_anchor
 			if accepted.size() != 2 or not Store._integer(accepted[0], -2147483648, 2147483647) or not Store._integer(accepted[1], -2147483648, 2147483647): return fail("CORRUPT_SEA_CURSOR")
 			var at := Vector2i(int(accepted[0]), int(accepted[1]))
