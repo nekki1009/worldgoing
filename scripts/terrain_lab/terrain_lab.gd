@@ -10457,7 +10457,11 @@ func _region_prepare_selected_owner_restore(data: TerrainData, slot: RegionSaveS
 	if not restored.ok:
 		child.free()
 		return restored
-	if RegionCheckpoint.state_hash(candidate.site) != RegionCheckpoint.state_hash(canonical.site):
+	# Bind reattaches each saved ration delivery recipe as its live original job.
+	# The durable body of that job is its recipe, exactly as the Store saves it.
+	var durable: Dictionary = candidate.site.duplicate(true)
+	var recipes := SiteStore._region_prepare_deliveries(durable)
+	if not recipes.ok or RegionCheckpoint.state_hash(durable) != RegionCheckpoint.state_hash(canonical.site):
 		child.free()
 		return SiteRuntime.fail("SELECTED_REGION_BIND_NORMALIZATION", "Original disposable bind changed the selected durable body; retain the selected marker")
 	var graph := child.validate_region_owner_bind_payload(canonical, snapshot.owners, snapshot.context)
