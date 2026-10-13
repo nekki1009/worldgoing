@@ -12872,6 +12872,274 @@
       "opaque_pixels": 775679,
       "sha256": "DFB88146CD236D6B2C5180DED7B6922662053BDE03D1A748435FB732325E5B2E",
       "origin": "Built-in image_gen; selected source and complete prompts in output/building_art_20261011/generation_20261011.json; original PNG bytes unchanged."
+    },
+    "survey_stakes": {
+      "file": "survey_stakes_v1.png",
+      "name": "測量雙樁",
+      "mode": "structure",
+      "variant": "",
+      "base_art_size": [
+        2,
+        1
+      ],
+      "art_size": [
+        2,
+        1
+      ],
+      "orientation": "south",
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        346,
+        392,
+        559,
+        532
+      ],
+      "bbox_alpha_threshold": 16,
+      "sha256": "22DF655DDCF63E7B87500598DC8645A589845B6DA49B405A0546A7D6AB8EE998",
+      "source_pixels_unchanged": true,
+      "transparent_pixels": 1442574,
+      "sprites": {
+        "stake_0": {
+          "bbox": [
+            344,
+            390,
+            129,
+            535
+          ],
+          "ground_anchor": [
+            0.4483765869003484,
+            0.9953271028037384
+          ],
+          "anchor_pixels": [
+            401.84057971014494,
+            922.5
+          ],
+          "anchor_basis": "Visible bottom foot of this real stake, measured on source alpha16; renderer places it at its actual cell center."
+        },
+        "stake_1": {
+          "bbox": [
+            784,
+            390,
+            123,
+            536
+          ],
+          "ground_anchor": [
+            0.5523328206255036,
+            0.9953358208955224
+          ],
+          "anchor_pixels": [
+            851.936936936937,
+            923.5
+          ],
+          "anchor_basis": "Visible bottom foot of this real stake, measured on source alpha16; renderer places it at its actual cell center."
+        }
+      },
+      "source": "built-in image_gen; CC-20261013-007; separate call per direction",
+      "scale_basis": "Each source stake is drawn separately at 0.55 original CELL height; both real cell contacts and rows retained; GPU NOT_RUN."
+    },
+    "survey_stakes_west": {
+      "file": "survey_stakes_west_v1.png",
+      "name": "測量雙樁",
+      "mode": "structure",
+      "variant": "",
+      "base_art_size": [
+        2,
+        1
+      ],
+      "art_size": [
+        1,
+        2
+      ],
+      "orientation": "west",
+      "pixels": [
+        1024,
+        1536
+      ],
+      "bbox": [
+        435,
+        130,
+        143,
+        1239
+      ],
+      "bbox_alpha_threshold": 16,
+      "sha256": "C2C1E90533F13EC82F39D0AF05A9F9D54E535BDA778F234B7F89D574E67712D7",
+      "source_pixels_unchanged": true,
+      "transparent_pixels": 1403905,
+      "sprites": {
+        "stake_0": {
+          "bbox": [
+            433,
+            128,
+            145,
+            606
+          ],
+          "ground_anchor": [
+            0.5382528735632185,
+            0.9958745874587459
+          ],
+          "anchor_pixels": [
+            511.0466666666667,
+            731.5
+          ],
+          "anchor_basis": "Visible bottom foot of this real stake, measured on source alpha16; renderer places it at its actual cell center."
+        },
+        "stake_1": {
+          "bbox": [
+            435,
+            788,
+            145,
+            583
+          ],
+          "ground_anchor": [
+            0.5622988505747124,
+            0.9957118353344768
+          ],
+          "anchor_pixels": [
+            516.5333333333333,
+            1368.5
+          ],
+          "anchor_basis": "Visible bottom foot of this real stake, measured on source alpha16; renderer places it at its actual cell center."
+        }
+      },
+      "source": "built-in image_gen; CC-20261013-007; separate call per direction",
+      "scale_basis": "Each source stake is drawn separately at 0.55 original CELL height; both real cell contacts and rows retained; GPU NOT_RUN."
+    },
+    "survey_stakes_north": {
+      "file": "survey_stakes_north_v1.png",
+      "name": "測量雙樁",
+      "mode": "structure",
+      "variant": "",
+      "base_art_size": [
+        2,
+        1
+      ],
+      "art_size": [
+        2,
+        1
+      ],
+      "orientation": "north",
+      "pixels": [
+        1254,
+        1254
+      ],
+      "bbox": [
+        342,
+        389,
+        571,
+        537
+      ],
+      "bbox_alpha_threshold": 16,
+      "sha256": "9EEDA562A57CAE2B9DE909E2278C6EEE59D487C373BC5A4AA9B68FBC10992766",
+      "source_pixels_unchanged": true,
+      "transparent_pixels": 1432954,
+      "sprites": {
+        "stake_0": {
+          "bbox": [
+            340,
+            387,
+            134,
+            541
+          ],
+          "ground_anchor": [
+            0.4737739872068229,
+            0.9953789279112755
+          ],
+          "anchor_pixels": [
+            403.48571428571427,
+            925.5
+          ],
+          "anchor_basis": "Visible bottom foot of this real stake, measured on source alpha16; renderer places it at its actual cell center."
+        },
+        "stake_1": {
+          "bbox": [
+            783,
+            387,
+            132,
+            541
+          ],
+          "ground_anchor": [
+            0.48754107338444724,
+            0.9953789279112755
+          ],
+          "anchor_pixels": [
+            847.355421686747,
+            925.5
+          ],
+          "anchor_basis": "Visible bottom foot of this real stake, measured on source alpha16; renderer places it at its actual cell center."
+        }
+      },
+      "source": "built-in image_gen; CC-20261013-007; separate call per direction",
+      "scale_basis": "Each source stake is drawn separately at 0.55 original CELL height; both real cell contacts and rows retained; GPU NOT_RUN."
+    },
+    "survey_stakes_east": {
+      "file": "survey_stakes_east_v1.png",
+      "name": "測量雙樁",
+      "mode": "structure",
+      "variant": "",
+      "base_art_size": [
+        2,
+        1
+      ],
+      "art_size": [
+        1,
+        2
+      ],
+      "orientation": "east",
+      "pixels": [
+        1024,
+        1536
+      ],
+      "bbox": [
+        433,
+        91,
+        147,
+        1315
+      ],
+      "bbox_alpha_threshold": 16,
+      "sha256": "F6EC10A3407CAE08E0E7C33D62C32788F5B1F3E100A2EC98A7A53E004F5B902E",
+      "source_pixels_unchanged": true,
+      "transparent_pixels": 1386877,
+      "sprites": {
+        "stake_0": {
+          "bbox": [
+            431,
+            89,
+            151,
+            647
+          ],
+          "ground_anchor": [
+            0.5378052248811603,
+            0.9961360123647605
+          ],
+          "anchor_pixels": [
+            512.2085889570552,
+            733.5
+          ],
+          "anchor_basis": "Visible bottom foot of this real stake, measured on source alpha16; renderer places it at its actual cell center."
+        },
+        "stake_1": {
+          "bbox": [
+            432,
+            796,
+            150,
+            612
+          ],
+          "ground_anchor": [
+            0.4964634146341465,
+            0.9959150326797386
+          ],
+          "anchor_pixels": [
+            506.469512195122,
+            1405.5
+          ],
+          "anchor_basis": "Visible bottom foot of this real stake, measured on source alpha16; renderer places it at its actual cell center."
+        }
+      },
+      "source": "built-in image_gen; CC-20261013-007; separate call per direction",
+      "scale_basis": "Each source stake is drawn separately at 0.55 original CELL height; both real cell contacts and rows retained; GPU NOT_RUN."
     }
   },
   "auxiliary_images": {

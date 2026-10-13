@@ -1289,6 +1289,11 @@ static func _normalize_state(state: Dictionary) -> void:
 		feature.cells = _int_array(feature.cells)
 		feature.entrance = int(feature.entrance)
 		feature.level = int(feature.level)
+		if str(feature.get("kind", "")) == "survey_stakes":
+			feature.survey_plan.cells = _int_array(feature.survey_plan.cells)
+			for field: String in feature.survey_plan.options:
+				if field not in ["variant", "material", "camp_type"]: feature.survey_plan.options[field] = int(feature.survey_plan.options[field])
+			feature.survey_operator.person_id = int(feature.survey_operator.person_id)
 		if feature.has("barracks_layout_version"):
 			feature.barracks_layout_version = int(feature.barracks_layout_version)
 		if feature.has("waterfront_version"):

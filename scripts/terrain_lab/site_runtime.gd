@@ -53,6 +53,7 @@ const SIEGE_DEFINITIONS := {
 		"cost": {"wood": 120, "iron": 24, "fiber": 24, "cloth": 20}, "work_seconds": 28800.0},
 }
 const FEATURES := {
+	"survey_stakes": {"placement": "fixed", "size": Vector2i(2, 1), "name": "測量雙樁", "cost": {"wood": 2}, "work": 2.0, "solid": false, "water": 0.0},
 	"house": {"placement": "fixed", "size": Vector2i(3, 3), "name": "住宅", "cost": {"wood": 8, "stone": 4}, "work": 15.0, "solid": true, "water": 0.02},
 	"warehouse": {"placement": "fixed", "size": Vector2i(3, 2), "name": "倉庫（露天堆棧）", "cost": {"wood": 12, "stone": 4, "rope": 2}, "work": 20.0, "solid": true, "water": 0.0},
 	"well": {"placement": "fixed", "size": Vector2i(1, 1), "name": "水井", "cost": {"wood": 4, "stone": 6}, "work": 12.0, "solid": false, "water": 0.0},
@@ -1776,6 +1777,11 @@ static func building_spec(kind: String, options: Dictionary = {}) -> Dictionary:
 		return fail("INVALID", "非橋梁含橋面欄位")
 	if kind == "bridge" and (not _building_integer(options.get("bridge_version", 1), 1, 1) or not _building_integer(options.get("bridge_clearance", 0), 0, 0)):
 		return fail("INVALID", "首版橋梁只允許單一橋面，橋下淨空為零")
+	if kind == "survey_stakes":
+		if not Technology.keys(options.get("survey_plan"), ["kind", "cells", "options"]) or not Technology.valid_ref(options.get("survey_operator")):
+			return fail("INVALID", "測量雙樁需完整原方案及原操作員")
+	elif options.has("survey_plan") or options.has("survey_operator"):
+		return fail("INVALID", "非測量雙樁含測量欄位")
 	if options.has("irrigation") and kind != "irrigation_channel": return fail("INVALID", "非渠道含渠道來源")
 	if kind == "irrigation_channel" and (not Technology.keys(options.get("irrigation"), IRRIGATION_FIELDS) or not Technology.integer(options.irrigation.version, 1, 1)):
 		return fail("INVALID", "渠道必須明示原水站及上游")
@@ -1811,7 +1817,7 @@ static func building_spec(kind: String, options: Dictionary = {}) -> Dictionary:
 	if kind == "bridge" and quarter % 2:
 		result.min_size = Vector2i(result.min_size.y, result.min_size.x)
 		result.max_size = Vector2i(result.max_size.y, result.max_size.x)
-	result["max_cells"] = 2500 if kind in FARM_KINDS + PASTURE_KINDS + MILITARY_KINDS else 36
+	result["max_cells"] = 2 if kind == "survey_stakes" else (2500 if kind in FARM_KINDS + PASTURE_KINDS + MILITARY_KINDS else 36)
 	result["variants"] = HOUSE_VARIANTS.keys() if kind == "house" else []
 	result["materials"] = ["wood", "stone"] if kind in ["wall_stairs", "gate", "bridge", "warehouse"] else [material]
 	result["rotatable"] = true
@@ -1826,6 +1832,9 @@ static func building_spec(kind: String, options: Dictionary = {}) -> Dictionary:
 	if kind == "barracks":
 		result.options["barracks_layout_version"] = options.get("barracks_layout_version", BARRACKS_LAYOUT_VERSION)
 		result.options["camp_type"] = options.get("camp_type", "standard")
+	if kind == "survey_stakes":
+		result.options["survey_plan"] = options.survey_plan.duplicate(true)
+		result.options["survey_operator"] = options.survey_operator.duplicate(true)
 	if kind == "irrigation_channel": result.options["irrigation"] = options.irrigation.duplicate(true)
 	result["ok"] = true
 	return result
@@ -1846,6 +1855,8 @@ static func _feature_options(feature: Dictionary) -> Dictionary:
 	if str(feature.get("kind", "")) in WATERFRONT_KINDS:
 		options["waterfront_version"] = feature.get("waterfront_version", 0)
 		options["launch_cell"] = feature.get("launch_cell", -1)
+	if feature.has("survey_plan"): options["survey_plan"] = feature.survey_plan.duplicate(true)
+	if feature.has("survey_operator"): options["survey_operator"] = feature.survey_operator.duplicate(true)
 	if feature.has("irrigation"): options["irrigation"] = feature.irrigation.duplicate(true)
 	return options
 
@@ -1930,6 +1941,8 @@ static func _building_number(value: Variant, low: float, high: float) -> bool:
 # Store calls this after its general feature type checks. No materials, live
 # actor or current feature_at query participates in validating a saved layout.
 static func validate_feature_layout(data: TerrainData, feature: Dictionary, check_navigation: bool = true) -> Dictionary:
+	var survey_storage: Dictionary = validate_survey_stakes_storage(data, feature)
+	if not survey_storage.ok: return survey_storage
 	if not valid_technology_shipyard_work(feature): return fail("CORRUPT_SAVE", "原船塢兩席位配置非法")
 	if not valid_technology_siege_yard(feature): return fail("CORRUPT_SAVE", "原校場器械場配置非法")
 	if feature.get("kind") == "irrigation_channel" and (not _irrigation_shape(feature.get("irrigation")) or feature.has("pending_build")): return fail("CORRUPT_SAVE", "渠道來源／版本／不支援改界")
@@ -1947,7 +1960,7 @@ static func validate_feature_layout(data: TerrainData, feature: Dictionary, chec
 	if (feature.has("bridge_version") or feature.has("bridge_clearance")) and str(feature.get("kind", "")) != "bridge":
 		return fail("CORRUPT_SAVE", "非橋梁含橋面欄位")
 	if not feature.has("layout_version"):
-		if str(feature.get("kind", "")) in ["stone_wall", "wall_stairs", "siege_ladder", "gate", "prison", "tent", "bridge"] + MILITARY_KINDS + WATERFRONT_KINDS:
+		if str(feature.get("kind", "")) in ["stone_wall", "wall_stairs", "siege_ladder", "gate", "prison", "tent", "bridge", "survey_stakes"] + MILITARY_KINDS + WATERFRONT_KINDS:
 			return fail("CORRUPT_SAVE", "新增建築種類缺少布局版本")
 		return ok("保留舊布局")
 	if not _building_integer(feature.layout_version, BUILDING_LAYOUT_VERSION, BUILDING_LAYOUT_VERSION):
@@ -2732,6 +2745,17 @@ static func _preview_build(data: TerrainData, kind: String, cells: Array[int], o
 	var candidate_feature := {"kind": kind, "cells": cells, "stage": "complete", "solid": bool(definition.solid),
 		"level": min_height, "entrance": entrance}
 	candidate_feature.merge(spec.options, true)
+	if kind == "survey_stakes":
+		candidate_feature.cost = _building_cost(data, kind, cells, spec.options)
+		candidate_feature.work = _building_work(data, kind, cells, spec.options)
+		var survey_storage: Dictionary = validate_survey_stakes_storage(data, candidate_feature)
+		if not survey_storage.ok: return fail("INVALID", str(survey_storage.message))
+		var plan: Dictionary = normalized_survey_plan(data, spec.options.survey_plan)
+		var plan_cells: Array[int] = []
+		plan_cells.assign(plan.cells)
+		var original_preview: Dictionary = _preview_build(data, str(plan.kind), plan_cells, occupied, plan.options, "", false)
+		if not original_preview.ok: return original_preview
+		if not survey_stakes_art_available(int(spec.options.quarter)): return fail("MISSING_ART", "測量雙樁缺可讀正式美術；不以幾何占位替代")
 	var geometry := feature_geometry(data, candidate_feature)
 	if kind in MILITARY_KINDS:
 		entrance = -1
@@ -3320,6 +3344,7 @@ static func _barracks_in_use(data: TerrainData, key: String) -> bool:
 	return false
 
 static func preview_resize(data: TerrainData, key: String, new_cells: Array[int], occupied: Callable = Callable()) -> Dictionary:
+	if data.site.get("features", {}).get(key, {}).get("kind") == "survey_stakes": return fail("INVALID", "測量雙樁保留原放樣方案；請取消後重新放樣")
 	if _ship_runtime_pending(data): return fail("BUSY", "原固定目標仍待補算或交接；暫不能接受新設施操作")
 	var feature: Dictionary = data.site.get("features", {}).get(key, {})
 	if feature.has("technology_siege_yard"): return fail("BUSY", "請先由原首長撤回器械場配置")
@@ -13110,6 +13135,35 @@ static func water_allocation_sample(data: TerrainData, priority: Array) -> Dicti
 	return {"categories": priority.duplicate(), "allocation": allocation, "source_capacity": capacity,
 		"total_demand": total_demand, "total_supply": total_supply}
 
+static func survey_stakes_art_available(quarter: int) -> bool:
+	if quarter < 0 or quarter > 3: return false
+	const ART_ROOT := "res://assets/map/site/settlement/building_v2/"
+	if not FileAccess.file_exists(ART_ROOT + "art_manifest.json"): return false
+	var manifest: Variant = JSON.parse_string(FileAccess.get_file_as_string(ART_ROOT + "art_manifest.json"))
+	if not manifest is Dictionary or not manifest.get("assets") is Dictionary: return false
+	var key: String = "survey_stakes" + ["", "_west", "_north", "_east"][quarter]
+	var asset: Variant = manifest.assets.get(key)
+	return _survey_stakes_asset_readable(asset)
+
+static func _survey_stakes_asset_readable(asset: Variant) -> bool:
+	const ART_ROOT := "res://assets/map/site/settlement/building_v2/"
+	if not asset is Dictionary or not asset.get("file") is String or not asset.get("sprites") is Dictionary: return false
+	var file: String = str(asset.file)
+	if file.get_file() != file or not file.ends_with(".png"): return false
+	var path: String = ART_ROOT + file
+	if not ResourceLoader.exists(path, "Texture2D"): return false
+	var texture: Texture2D = load(path) as Texture2D
+	if texture == null or texture.get_width() <= 0 or texture.get_height() <= 0: return false
+	for component: String in ["stake_0", "stake_1"]:
+		var sprite: Variant = asset.sprites.get(component)
+		if not sprite is Dictionary or not sprite.get("bbox") is Array or sprite.bbox.size() != 4 or not sprite.get("ground_anchor") is Array or sprite.ground_anchor.size() != 2: return false
+		for coordinate: Variant in sprite.bbox:
+			if not Technology.integer(coordinate, 0): return false
+		if int(sprite.bbox[2]) <= 0 or int(sprite.bbox[3]) <= 0 or int(sprite.bbox[0]) + int(sprite.bbox[2]) > texture.get_width() or int(sprite.bbox[1]) + int(sprite.bbox[3]) > texture.get_height(): return false
+		for coordinate: Variant in sprite.ground_anchor:
+			if not Technology.finite_number(coordinate, 0.0) or float(coordinate) > 1.0: return false
+	return true
+
 static func validate_survey_stakes_storage(data: TerrainData, feature: Dictionary) -> Dictionary:
 	if str(feature.get("kind", "")) != "survey_stakes":
 		return fail("CORRUPT_SAVE", "非原放樣設施含測量欄位") if feature.has("survey_plan") or feature.has("survey_operator") else ok()
@@ -13117,16 +13171,18 @@ static func validate_survey_stakes_storage(data: TerrainData, feature: Dictionar
 		or feature.survey_operator.site_id != str(data.site.get("id", "")) or not feature.get("cells") is Array or feature.cells.size() != 2 \
 		or bool(feature.get("solid", true)) or feature.has("pending_build") or feature.has("repair") \
 		or not Technology.material_equal(feature.get("cost"), {"wood": 2}) or not Technology.finite_number(feature.get("work"), 2.0) or float(feature.work) != 2.0: return fail("CORRUPT_SAVE", "原双樁／完整原幾何方案非法")
+	var plan_cells := {}
+	for value: Variant in feature.survey_plan.cells: plan_cells[int(value)] = true
 	var cells: Array[int] = []
 	for value: Variant in feature.cells:
-		if not Technology.integer(value, 0, data.size.x * data.size.y - 1) or feature.survey_plan.cells.has(value): return fail("CORRUPT_SAVE", "真樁須在原方案占地外")
+		if not Technology.integer(value, 0, data.size.x * data.size.y - 1) or plan_cells.has(int(value)): return fail("CORRUPT_SAVE", "真樁須在原方案占地外")
 		cells.append(int(value))
 	if absi(data.cell_from_index(cells[0]).x - data.cell_from_index(cells[1]).x) + absi(data.cell_from_index(cells[0]).y - data.cell_from_index(cells[1]).y) != 1: return fail("CORRUPT_SAVE", "原雙樁須相邻")
 	for cell: int in cells:
 		var adjacent := false
 		for direction: Vector2i in TerrainData.DIRECTIONS:
 			var next: Vector2i = data.cell_from_index(cell) + direction
-			if data.contains(next) and feature.survey_plan.cells.has(data.index(next)): adjacent = true
+			if data.contains(next) and plan_cells.has(data.index(next)): adjacent = true
 		if not adjacent: return fail("CORRUPT_SAVE", "真樁須在原方案邊界旁")
 	return ok()
 

@@ -727,8 +727,12 @@ func building_art_key(feature: Dictionary) -> String:
 func building_art_available(feature: Dictionary) -> bool:
 	if feature.get("kind") == "irrigation_channel": return data != null and Runtime._irrigation_path(data, feature.get("cells")) and Runtime._irrigation_config(feature.get("irrigation"), data.site)
 	if _building_art_manifest.is_empty():
-		_building_art_manifest = JSON.parse_string(FileAccess.get_file_as_string(BUILDING_ART_ROOT + "art_manifest.json"))
-	return _building_art_manifest.assets.has(building_art_key(feature))
+		var manifest: Variant = JSON.parse_string(FileAccess.get_file_as_string(BUILDING_ART_ROOT + "art_manifest.json"))
+		if not manifest is Dictionary or not manifest.get("assets") is Dictionary: return false
+		_building_art_manifest = manifest
+	var key: String = building_art_key(feature)
+	if feature.get("kind") == "survey_stakes": return Runtime._survey_stakes_asset_readable(_building_art_manifest.assets.get(key))
+	return _building_art_manifest.assets.has(key)
 
 
 func _building_asset(key: String, component: String = "") -> Dictionary:
@@ -785,13 +789,30 @@ func _building_local_point(feature: Dictionary, local: Vector2) -> Vector2:
 func building_part_draws(feature: Dictionary, geometry: Dictionary = {}) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	if data == null or feature.get("cells", []).is_empty() or not _building_uses_art(feature): return result
+	if str(feature.kind) == "survey_stakes" and not building_art_available(feature):
+		push_error("MISSING_ART: survey_stakes requires readable formal directional PNG; no geometry fallback")
+		return result
 	if str(feature.kind) == "siege_ladder": return result # Generated sprite is shown by the original VehicleView.
 	if geometry.is_empty(): geometry = Runtime.feature_geometry(data, feature)
 	if _fire_component_presentation(feature, geometry): return _fire_component_draws(feature, geometry)
 	var kind := str(feature.kind)
 	var key := building_art_key(feature)
 	var bounds := Runtime._cell_bounds(data, feature.cells)
-	if kind == "bridge":
+	if kind == "survey_stakes":
+		# Each real stake keeps its own contact cell and original row occlusion.
+		for index: int in range(2):
+			var art: Dictionary = _building_asset(key, "stake_%d" % index)
+			var region: Rect2 = art.region
+			var height := float(CELL) * 0.55
+			var size := Vector2(height * region.size.x / region.size.y, height)
+			var cell: Vector2i = bounds.position
+			if index == 1:
+				if int(feature.quarter) % 2 == 0: cell += Vector2i.RIGHT
+				else: cell += Vector2i.DOWN
+			var foot := (Vector2(cell) + Vector2(0.5, 0.5)) * CELL
+			var anchor := Vector2(float(art.ground_anchor[0]), float(art.ground_anchor[1]))
+			result.append(_building_draw(art, Rect2(foot - anchor * size, size), cell.y))
+	elif kind == "bridge":
 		result = _building_bridge_draws(feature)
 	elif kind in Runtime.MILITARY_KINDS:
 		result = _military_building_draws(feature)

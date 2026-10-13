@@ -636,6 +636,7 @@ func _build_ui() -> void:
 	column = _formal_columns.construction
 	buildings = _options(column, [], "BuildingKind")
 	for kind: String in Runtime.FEATURES:
+		if kind == "survey_stakes": continue # Requires the original F09 plan and operator caller.
 		var choice := {"kind": kind, "camp_type": "standard" if kind == "barracks" else ""}
 		buildings.add_item(Runtime.barracks_type_name(choice) if kind == "barracks" else str(Runtime.FEATURES[kind].name))
 		buildings.set_item_metadata(buildings.item_count - 1, choice)
