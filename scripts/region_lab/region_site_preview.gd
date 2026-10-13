@@ -14,19 +14,20 @@ const RAMP_LOW_COLOR := Color("806b49")
 const RAMP_COLOR := Color("c3b17b")
 const SHORE_COLOR := Color("b9b78b")
 
-static func bake(source: RefCounted, site: Vector2i) -> Dictionary:
+static func bake(source: RefCounted, site: Vector2i, context: Dictionary = {}) -> Dictionary:
 	var result: Dictionary = source.make_terrain_data(site.x, site.y)
 	if not bool(result.get("ok", false)):
+		result["context"] = context.duplicate()
 		return result
 	var data: TerrainData = result.get("data") as TerrainData
 	var pixels := from_terrain(data)
 	if pixels.is_empty():
-		return {"ok": false, "code": "INVALID_PREVIEW_TERRAIN", "message": "地形縮圖需要完整的 100×100 Site"}
+		return {"ok": false, "code": "INVALID_PREVIEW_TERRAIN", "message": "地形縮圖需要完整的 100×100 Site", "context": context.duplicate()}
 	var hasher := HashingContext.new()
 	hasher.start(HashingContext.HASH_SHA256)
 	if not result.data.water_body.is_empty():
 		hasher.update(result.data.water_body.to_byte_array())
-	return {"ok": true, "site": site, "pixels": pixels,
+	return {"ok": true, "context": context.duplicate(), "site": site, "pixels": pixels,
 		"size": Vector2i(SIDE_PIXELS, SIDE_PIXELS), "terrain_result": result,
 		"water_body_sha256": hasher.finish().hex_encode(),
 		"resource_counts": visible_resource_counts(data)}

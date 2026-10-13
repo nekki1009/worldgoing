@@ -157,7 +157,7 @@ class ResourceRow extends Node2D:
 		animated_runs.clear()
 		queue_redraw()
 		var has_res: bool = view.resources_by_row.has(row)
-		var has_feature: bool = view.features_by_row.has(row) or (view.data != null and view.data.cell_from_index(int(view.data.site.depot_cell)).y == row)
+		var has_feature: bool = view.features_by_row.has(row) or (view.data != null and not view.data.site.is_empty() and view.data.cell_from_index(int(view.data.site.depot_cell)).y == row)
 		var has_loot: bool = view.loot_cells_by_row.has(row)
 		visible = not view.retain_static_rows or has_res or has_feature or has_loot or view._building_on_row(row)
 		if not visible: return
@@ -223,6 +223,26 @@ func display(value: TerrainData) -> void:
 	for cell: int in data.ground_loot_at:
 		data.ground_loot_dirty_rows[data.cell_from_index(cell).y] = true
 	refresh()
+
+func display_source(value: TerrainData) -> void:
+	# Immutable Adapter candidate: no SiteEnvironment.initialize or gameplay state.
+	display(value)
+	resources_by_row.clear()
+	features_by_row.clear()
+	building_draws_by_row.clear()
+	heat.clear()
+	for key: String in data.resource_base:
+		var resource: Dictionary = data.resource_base[key]
+		var source_rows: Array[int] = []
+		source_rows.append(data.cell_from_index(int(resource.cell)).y)
+		if int(resource.kind) == Env.Kind.WILDLIFE:
+			for cell: int in resource.cells:
+				var row := data.cell_from_index(cell).y
+				if not source_rows.has(row): source_rows.append(row)
+		for row: int in source_rows:
+			if not resources_by_row.has(row): resources_by_row[row] = []
+			resources_by_row[row].append(key)
+	for row: Node2D in rows: row.rebuild()
 
 func refresh() -> void:
 	if data == null or data.site.is_empty():
@@ -331,7 +351,7 @@ func animate(delta: float) -> void:
 				break
 
 func _draw() -> void:
-	if data == null:
+	if data == null or data.site.is_empty():
 		return
 	# Walkable crop beds and low defensive positions stay below their occupants.
 	for feature: Dictionary in data.site.features.values():
@@ -466,7 +486,7 @@ func _draw_row_resources(canvas: Node2D, row_index: int, keys: Array) -> void:
 			if display_cells.is_empty():
 				continue
 			display_cell = display_cells[0]
-		var feature_key := str(data.feature_at[display_cell])
+		var feature_key := str(data.feature_at[display_cell]) if not data.feature_at.is_empty() else "0"
 		if feature_key != "0" and str(data.site.features[feature_key].stage) == "complete":
 			if int(r.kind) not in [Env.Kind.CLAY, Env.Kind.IRON] or view_mode != 1:
 				continue
@@ -478,7 +498,7 @@ func _draw_row_resources(canvas: Node2D, row_index: int, keys: Array) -> void:
 			var animals: Array = r.cells if display_cells.is_empty() else display_cells
 			for n: int in range(mini(int(r.remaining), animals.size())):
 				var i: int = int(animals[n])
-				if data.cell_from_index(i).y != row_index or not data.is_walkable(data.cell_from_index(i)) or data.feature_at[i] != 0:
+				if data.cell_from_index(i).y != row_index or not data.is_walkable(data.cell_from_index(i)) or (not data.feature_at.is_empty() and data.feature_at[i] != 0):
 					continue
 				var phase := animation_time * 0.8 + float(n * 2 + int(r.cell) % 11)
 				var animal_position := _center(i) + Vector2(sin(phase) * 9, cos(phase * 0.7) * 5)
@@ -535,7 +555,7 @@ func _resource_label(key: String, resource: Dictionary) -> String:
 
 func _draw_row_features(canvas: Node2D, row_index: int) -> void:
 	var feature_keys: Array = features_by_row.get(row_index, [])
-	var is_depot: bool = data != null and data.cell_from_index(int(data.site.depot_cell)).y == row_index
+	var is_depot: bool = data != null and not data.site.is_empty() and data.cell_from_index(int(data.site.depot_cell)).y == row_index
 	if feature_keys.is_empty() and not is_depot:
 		return
 	var batcher := TriangleBatcher.new(canvas.get_canvas_item())

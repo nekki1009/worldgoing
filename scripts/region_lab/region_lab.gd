@@ -83,6 +83,26 @@ var _preview_dirty := false
 var _preview_after_usec := 0
 var _preview_manifest_hash := ""
 var _overview_view: Dictionary = {}
+var draft_revision := 0
+var _selected_generation := 0
+var _preview_context: Dictionary = {}
+var _open_context: Dictionary = {}
+var _display_context: Dictionary = {}
+
+func preview_context() -> Dictionary:
+	return {"source_sha256": source.manifest_hash, "mode": "base", "region_mode": _mode,
+		"draft_revision": draft_revision, "selected_generation": _selected_generation}
+
+func _preview_context_current(context: Dictionary) -> bool:
+	return context == preview_context()
+
+func _open_content_current(context: Dictionary) -> bool:
+	# Only an explicit same-Site open may renew selection; content must match.
+	var worker_content := context.duplicate()
+	var current_content := preview_context()
+	worker_content.erase("selected_generation")
+	current_content.erase("selected_generation")
+	return worker_content == current_content
 
 func _ready() -> void:
 	_build_ui()
@@ -320,6 +340,10 @@ func select_site(site: Vector2i) -> Dictionary:
 		return {"ok": false, "code": "SITE_ACTIVE", "message": _status.text}
 	if render_pending and site != _pending_display_site:
 		_cancel_display()
+	_selected_generation += 1
+	_preview_tiles.clear()
+	_preview_lru.clear()
+	_preview_errors.clear()
 	selected_site = site
 	if _open_thread != null and site != _open_request_site:
 		_open_cancelled = true
@@ -391,11 +415,15 @@ func _update_selected_preview() -> void:
 		_preview_label.text = "地形預覽失敗：" + str(_preview_errors[selected_site])
 	elif _preview_tiles.has(selected_site):
 		var tile: Dictionary = _preview_tiles[selected_site]
+		if not _preview_context_current(tile.metadata.get("context", {})):
+			_preview_label.text = "正在準備目前版本地形…"
+			return
 		_preview_image.texture = tile.texture
 		var info: Dictionary = tile.metadata
 		_preview_label.text = "所選 Site 地形・200 × 200 公尺\n台階 %d–%d・水域 %.1f%%\n%s" % [
 			int(info.height_min), int(info.height_max), float(info.water_cells) / 100.0,
 			_resource_info_text(info.get("resource_counts", []), str(info.get("resource_source_summary", "")))]
+		_preview_label.text += "\n來源 %s・base・修訂 %d・選取 %d" % [source.manifest_hash.left(12), draft_revision, _selected_generation]
 	else:
 		_preview_label.text = "正在準備所選地形…"
 
@@ -405,11 +433,11 @@ func _refresh_preview_queue() -> void:
 	_preview_visible_sites.clear()
 	if site_visible or render_pending or source.manifest.is_empty():
 		return
-	if _preview_manifest_hash != source.manifest_hash:
+	if _preview_manifest_hash != JSON.stringify(preview_context(), "", true):
 		_preview_tiles.clear()
 		_preview_lru.clear()
 		_preview_errors.clear()
-		_preview_manifest_hash = source.manifest_hash
+		_preview_manifest_hash = JSON.stringify(preview_context(), "", true)
 	# Selected Site has priority even at the whole-island scale.
 	if bool(selection.get("has_terrain", false)):
 		_preview_queue.append(selected_site)
@@ -452,6 +480,9 @@ func _process_preview() -> void:
 		var result: Dictionary = _preview_thread.wait_to_finish()
 		_preview_thread = null
 		_preview_queue.erase(completed_site)
+		if not _preview_context_current(result.get("context", {})):
+			_queue_preview_refresh()
+			return
 		# A completed old position may be cached, but never relabelled as the selection.
 		if bool(result.get("ok", false)):
 			var built: Dictionary = result.terrain_result
@@ -461,7 +492,7 @@ func _process_preview() -> void:
 			var texture := ImageTexture.create_from_image(Image.create_from_data(
 				dimensions.x, dimensions.y, false, Image.FORMAT_RGBA8, pixels))
 			_preview_tiles[completed_site] = {"texture": texture,
-				"metadata": {"site_id": built.metadata.site_id, "fingerprint": built.base.terrain_fingerprint,
+				"metadata": {"context": result.context.duplicate(), "site_id": built.metadata.site_id, "fingerprint": built.base.terrain_fingerprint,
 					"terrain_fingerprint": built.base.terrain_fingerprint, "water_body_sha256": result.water_body_sha256,
 					"height_min": 5,
 					"height_max": 0, "water_cells": built.metadata.water_cells,
@@ -506,8 +537,9 @@ func _process_preview() -> void:
 			or _preview_dirty or _preview_queue.is_empty():
 		return
 	_preview_requested_site = _preview_queue.pop_front()
+	_preview_context = preview_context()
 	_preview_thread = Thread.new()
-	var started := _preview_thread.start(PreviewScript.bake.bind(source, _preview_requested_site))
+	var started := _preview_thread.start(PreviewScript.bake.bind(source, _preview_requested_site, _preview_context))
 	if started != OK:
 		_preview_thread = null
 		_preview_errors[_preview_requested_site] = error_string(started)
@@ -545,15 +577,21 @@ func request_open_selected_site() -> void:
 		if selected_site != _open_request_site:
 			_queued_open_site = selected_site
 			_status.text = "正在準備新的地點；先完成前一份讀取。"
-		else:
+		elif _open_content_current(_open_context):
 			_queued_open_site = null
 			_open_cancelled = false
+			_open_context = preview_context()
+		else:
+			_queued_open_site = selected_site
+			_open_cancelled = true
+			_status.text = "來源或版本已變動；完成舊讀取後重新準備目前地點。"
 		return
 	_start_open(selected_site)
 
 func _start_open(site: Vector2i) -> void:
 	_preview_queue.clear()
 	_open_request_site = site
+	_open_context = preview_context()
 	_open_cancelled = false
 	_queued_open_site = null
 	_open_thread = Thread.new()
@@ -592,6 +630,7 @@ func _show_site(result: Dictionary) -> Dictionary:
 	render_pending = _renderer.display_pending
 	if render_pending:
 		_pending_display = result
+		_display_context = preview_context()
 		_pending_display_site = selected_site
 		# Keep the renderer visible so actual draw callbacks prepare its retained
 		# commands behind this cover; visibility alone is not completion evidence.
@@ -826,7 +865,7 @@ func _process(_delta: float) -> void:
 		_back_button.text = "返回地圖"
 		if _queued_open_site is Vector2i:
 			_start_open(_queued_open_site)
-		elif _open_cancelled or selected_site != completed_site:
+		elif _open_cancelled or selected_site != completed_site or not _preview_context_current(_open_context):
 			_back_button.disabled = true
 			select_site(selected_site)
 			_status.text = "已取消；目前地圖保持原樣。"
@@ -836,7 +875,7 @@ func _process(_delta: float) -> void:
 				_back_button.disabled = true
 				_open_button.disabled = not bool(selection.get("has_terrain", false))
 	if render_pending and not _renderer.display_pending:
-		if selected_site != _pending_display_site:
+		if selected_site != _pending_display_site or not _preview_context_current(_display_context):
 			_cancel_display()
 		else:
 			var prepared := _pending_display

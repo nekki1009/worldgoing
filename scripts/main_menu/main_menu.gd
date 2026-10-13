@@ -174,7 +174,12 @@ func _build_main_page(parent: Node) -> void:
 		RegionEntry.draft = {"step": "map", "map": "taiwan"}
 		show_page("map"))
 	_button(page, "載入世界", "LoadWorld", func() -> void: show_page("load"))
+	_button(page, "地圖編輯器", "MapEditor", _open_map_editor)
 	_button(page, "離開", "QuitGame", func() -> void: get_tree().quit())
+
+func _open_map_editor() -> void:
+	RegionEntry.request_author_editor()
+	get_tree().change_scene_to_file(RegionEntry.MAP_EDITOR_SCENE)
 
 func _refresh_continue() -> void:
 	var last := RegionEntry.last_world()

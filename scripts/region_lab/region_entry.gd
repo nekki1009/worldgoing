@@ -6,6 +6,7 @@ extends RefCounted
 const MAIN_MENU := "res://scenes/main_menu/MainMenu.tscn"
 const SITE_SCENE := "res://scenes/terrain_lab/TerrainLab.tscn"
 const REGION_SCENE := "res://scenes/region_lab/RegionLab.tscn"
+const MAP_EDITOR_SCENE := "res://scenes/map_editor/MapEditor.tscn"
 const WORLDS := "user://region_lab/worlds"
 const LAST_WORLD := "user://region_lab/last_world.json"
 const SLOT := "main"
@@ -15,6 +16,16 @@ const TechnologyArtisans = preload("res://scripts/terrain_lab/site_technology_ar
 
 ## Main-scene request: {manifest, world_id, slot_id, site, create_new[, character, world_name]}.
 static var pending: Dictionary = {}
+# Author UI hand-off is separate from gameplay/Technology initial_scenario_id.
+static var author_request: Dictionary = {}
+
+static func request_author_editor() -> void:
+	author_request = {"manifest": RegionData.DEFAULT_MANIFEST}
+
+static func take_author_request() -> Dictionary:
+	var request := author_request
+	author_request = {}
+	return request
 ## RegionLab mode: "pick_start" from New Game, "view" from inside the game, "" for the lab.
 static var region_mode := ""
 ## Map context while viewing from the game: {world_id, slot_id, active, visited}.
