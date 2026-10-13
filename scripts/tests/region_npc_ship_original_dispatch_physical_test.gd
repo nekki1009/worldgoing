@@ -38,6 +38,9 @@ func _setup_action_world() -> bool:
 	if not _check(headquarters != null and headquarters.command_eligible(headquarters.current_commander), "initial true resident HQ captain supplies the original Nation head"): return false
 	sea_nation_head = headquarters.combat_identity(headquarters.current_commander)
 	sea_nation_id = "c06_ship_source_nation_%d" % OS.get_process_id()
+	# A Site with no Nation yet has no equipment_nations container; the original
+	# trial Nation register creates it the same way before its first Nation.
+	if not lab.terrain.site.has("equipment_nations"): lab.terrain.site.equipment_nations = {}
 	lab.terrain.site.equipment_nations[sea_nation_id] = {"members": members, "standards": {}, "offices": SiteOffices.default_offices("nation", sea_nation_head, true)}
 	var offices: Dictionary = lab.terrain.site.equipment_nations[sea_nation_id].offices
 	var explicit_head: Dictionary = lab.site_controller.equipment_orders.apply_nation_office_plan(sea_nation_head, sea_nation_id, int(offices.revision), [{"op": "assign", "duty_id": "nation.dispatch", "position_id": str(SiteOffices.head_position(offices).id)}])
