@@ -500,25 +500,23 @@ func _recover_control() -> Dictionary:
 		_control_scope = previous_scope
 	return result
 
-func _recover_control_from_files() -> Dictionary:
-	var live_control: Dictionary = control
-	var live_marker := _marker.duplicate(true)
-	var preserve_live := _control_scope == folder
-	_marker = {}
-	control = {"logical_game_seconds": 0.0, "active_site_id": "", "fire_clock": _new_fire_clock(0.0)}
-	_control_scope = folder
+# folder -> {name, generation, recorded}: the last fully validated latest commit.
+var _recover_known_commit: Dictionary = {}
+
+## Lists, reads and fully validates the latest commit of this folder.
+func _recover_read_latest(preserve_live: bool, live_control: Dictionary) -> Dictionary:
 	var commits := DirAccess.open(folder.path_join("commits"))
 	if commits == null:
 		if preserve_live: control = live_control
 		if not control.has("fire_clock"): control.fire_clock = _new_fire_clock(float(control.logical_game_seconds))
-		return {"ok": true}
+		return {"ok": true, "empty": true}
 	var files: Array[String] = []
 	for name: String in commits.get_files():
 		if name.ends_with(".json") and name.trim_suffix(".json").length() == 20 and name.trim_suffix(".json").is_valid_int(): files.append(name)
 	if files.is_empty():
 		if preserve_live: control = live_control
 		if not control.has("fire_clock"): control.fire_clock = _new_fire_clock(float(control.logical_game_seconds))
-		return {"ok": true}
+		return {"ok": true, "empty": true}
 	files.sort()
 	# A fully renamed marker is a commit. Corruption of its selected generation
 	# is an error; falling back would resurrect ownership from an older Site.
@@ -577,6 +575,32 @@ func _recover_control_from_files() -> Dictionary:
 	var normalized := _normalize_journey(journey)
 	if not normalized.ok: return normalized
 	recorded.journey = normalized.journey
+	return {"ok": true, "recorded": recorded, "name": files.back()}
+
+func _recover_control_from_files() -> Dictionary:
+	var live_control: Dictionary = control
+	var live_marker := _marker.duplicate(true)
+	var preserve_live := _control_scope == folder
+	_marker = {}
+	control = {"logical_game_seconds": 0.0, "active_site_id": "", "fire_clock": _new_fire_clock(0.0)}
+	_control_scope = folder
+	# A commit is write-once and generations are strictly sequential: while the last
+	# fully validated commit still exists and its successor does not, it is still the
+	# latest, with the same bytes and the same write-once Site files. Its validated
+	# record is reused; the steps below rebuild marker and control exactly as before.
+	var recorded: Dictionary = {}
+	var known: Dictionary = _recover_known_commit.get(folder, {})
+	var commits_path := folder.path_join("commits")
+	if not known.is_empty() and FileAccess.file_exists(commits_path.path_join(str(known.name))) \
+			and not FileAccess.file_exists(commits_path.path_join("%020d.json" % (int(known.generation) + 1))):
+		recorded = known.recorded.duplicate(true)
+	else:
+		var read := _recover_read_latest(preserve_live, live_control)
+		if not read.ok: return read
+		if read.get("empty", false): return {"ok": true}
+		recorded = read.recorded
+		_recover_known_commit[folder] = {"name": str(read.name), "generation": int(recorded.generation), "recorded": recorded.duplicate(true)}
+	var clock: Dictionary = recorded.control
 	_marker = recorded
 	control = clock.duplicate(true)
 	if not preserve_live and control.has("region_gameplay"):
