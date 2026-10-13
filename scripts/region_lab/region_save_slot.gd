@@ -1627,8 +1627,16 @@ var _route_context_cache: Dictionary = {} # source key -> detached TerrainData
 var _route_context_cache_order: Array[String] = []
 var _route_context_file_navigation: Dictionary = {} # file key -> source navigation_revision
 
+## Site fields that move every step and never reach a route snapshot's navigation:
+## Env.navigation_for_state and RegionRoute read none of them (only ecology_info
+## reads minute/phase). Measured on carried blocked (4,800 calls): phase,
+## fire_settlement and simulation_settlement changed on 4,799, minute on 40.
+const ROUTE_CONTEXT_CLOCK_FIELDS := ["phase", "minute", "fire_settlement", "simulation_settlement"]
+
 static func _live_route_key(original: TerrainData) -> String:
-	return "live|%d|%d|%d|%d|%d" % [original.get_instance_id(), original.navigation_revision, hash(original.site), hash(original.parameters), hash(original.resource_base)]
+	var site: Dictionary = original.site.duplicate()
+	for field: String in ROUTE_CONTEXT_CLOCK_FIELDS: site.erase(field)
+	return "live|%d|%d|%d|%d|%d" % [original.get_instance_id(), original.navigation_revision, hash(site), hash(original.parameters), hash(original.resource_base)]
 
 func clear_route_context_cache() -> void:
 	for cached: TerrainData in _route_context_cache.values(): RegionRoute.unregister_readonly_body(cached)
