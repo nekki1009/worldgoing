@@ -125,6 +125,17 @@ static func build(source: RefCounted, site: Vector2i) -> Dictionary:
 		base["resource_layer_sha256"] = source.resource_manifest_hash
 		base["resource_rule_revision"] = source.resource_rule_revision
 		base["resource_fingerprint"] = JSON.stringify(data.resource_base, "", true, true).sha256_text()
+	if source.has_method("author_identity"):
+		var author: Dictionary = source.author_identity()
+		if not author.is_empty():
+			if not valid_author_identity(author): return {"ok": false, "code": "INVALID_AUTHOR_IDENTITY"}
+			for key: String in AUTHOR_FIELDS: base[key] = author[key]
+			# P1A admits the unchanged static base; edited layers belong to P2.
+			data.fertility.resize(SIDE * SIDE); data.moisture.resize(SIDE * SIDE)
+			data.drainage.resize(SIDE * SIDE); data.foundation.resize(SIDE * SIDE); data.groundwater.resize(SIDE * SIDE)
+			if data.parameters.get("fixed_land_condition_rule", "") == "terrain_mapped_potential_v1":
+				SiteEnvironment._populate_soil_conditions(data, false)
+			base["effective_environment_sha256"] = author_environment_fingerprint(data)
 	data.parameters["fixed_base"] = base.duplicate(true)
 	return {"ok": true, "code": "OK", "message": "固定地形已展開", "data": data, "base": base,
 		"metadata": {"site_id": identity, "site": site, "absolute_elevation_m": absolute_height,
@@ -134,6 +145,65 @@ static func build(source: RefCounted, site: Vector2i) -> Dictionary:
 			"height_rule": str(source.manifest.get("terrain_rule", "packaged_relative_levels_v1")),
 			"height_levels_are_metres": false, "resource_cover": resource_cover,
 			"resource_source_summary": "地類範圍依 OSM；2m 配置、棲地資源及存量為遊戲規則。未標示地類與未確認礦種不代表沒有資源。" if resources_enabled else "此來源尚未提供資源圖層。"}}
+
+const AUTHOR_FIELDS := ["scenario_id", "scenario_revision", "scenario_package_sha256"]
+
+static func has_author_identity(value: Variant) -> bool:
+	if not value is Dictionary: return false
+	for key: String in AUTHOR_FIELDS:
+		if value.has(key): return true
+	return value.has("effective_environment_sha256")
+
+static func author_id_valid(value: Variant) -> bool:
+	if not value is String or value.is_empty() or value.length() > 64: return false
+	for i: int in range(value.length()):
+		if "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-".find(value.substr(i, 1)) < 0: return false
+	return true
+
+static func author_digest_valid(value: Variant) -> bool:
+	return value is String and value.length() == 64 and value == value.to_lower() and value.is_valid_hex_number(false)
+
+static func author_integer(value: Variant, low: int, high: int) -> bool:
+	return (value is int or value is float) and is_finite(float(value)) and float(value) == floorf(float(value)) and float(value) >= low and float(value) <= high
+
+static func valid_author_identity(value: Variant, environment: bool = false) -> bool:
+	if not value is Dictionary: return false
+	if not has_author_identity(value): return true # Original natural/legacy identity.
+	if not author_id_valid(value.get("scenario_id")) or not author_integer(value.get("scenario_revision"), 1, 2147483647) or not author_digest_valid(value.get("scenario_package_sha256")): return false
+	return (not environment and not value.has("effective_environment_sha256")) or author_digest_valid(value.get("effective_environment_sha256"))
+
+static func same_author_identity(left: Variant, right: Variant, environment: bool = false) -> bool:
+	if not left is Dictionary or not right is Dictionary: return false
+	var left_author: bool = has_author_identity(left)
+	var right_author: bool = has_author_identity(right)
+	if left_author != right_author: return false
+	if not left_author: return true
+	if not valid_author_identity(left, environment) or not valid_author_identity(right, environment): return false
+	for key: String in AUTHOR_FIELDS:
+		if key == "scenario_revision":
+			if int(left[key]) != int(right[key]): return false
+		elif left[key] != right[key]: return false
+	return not environment or left.effective_environment_sha256 == right.effective_environment_sha256
+
+static func author_environment_fingerprint(data: TerrainData) -> String:
+	# Only the rebuilt base is hashed, before any initial/current SiteState.
+	var packet := {"rule": 1, "terrain": data.fingerprint(), "water_kind": data.water_kind,
+		"water_body": data.water_body, "fertility": data.fertility, "moisture": data.moisture,
+		"drainage": data.drainage, "foundation": data.foundation, "groundwater": data.groundwater,
+		"spawn": [data.spawn_cell.x, data.spawn_cell.y], "resources": data.resource_base,
+		"water_version": data.parameters.get("navigable_water_version", 0),
+		"water_source": data.parameters.get("navigable_water_source", ""),
+		"water_cells": data.parameters.get("navigable_water_cells", []),
+		"water_bodies": data.parameters.get("navigable_water_bodies", [])}
+	return JSON.stringify(packet, "", true, true).sha256_text()
+
+static func author_pair_valid(value: Variant, low: int, high: int) -> bool:
+	return value is Array and value.size() == 2 and author_integer(value[0], low, high) and author_integer(value[1], low, high)
+
+static func author_start_valid(value: Variant) -> bool:
+	if not value is Dictionary or not author_pair_valid(value.get("site"), -10000000, 10000000) or not author_pair_valid(value.get("cell"), 0, SIDE - 1): return false
+	if value.get("mode") == "created_player": return value.size() == 3
+	return value.get("mode") == "existing_person" and value.size() == 4 and author_integer(value.get("person_id"), 1, 2147483647) and int(value.person_id) != 1000000000
 
 static func boundary_cell(direction: int, offset: int) -> Vector2i:
 	return [Vector2i(offset, 0), Vector2i(SIDE - 1, offset), Vector2i(offset, SIDE - 1), Vector2i(0, offset)][direction]

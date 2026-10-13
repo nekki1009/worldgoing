@@ -37,6 +37,161 @@ var _tile_index: Dictionary = {}
 var _lru: Array[String] = []
 var _cache_bytes := 0
 var peak_cache_bytes := 0
+var _author_pin: Dictionary = {}
+var _author_document: Dictionary = {}
+
+const AUTHOR_MANIFEST_BYTES := 256 * 1024
+const AUTHOR_FILE_BYTES := 32 * 1024 * 1024
+const AUTHOR_PACKAGE_BYTES := 64 * 1024 * 1024
+const AUTHOR_DEPENDENCY_BYTES := 64 * 1024 * 1024
+const AUTHOR_DEPENDENCIES_BYTES := 512 * 1024 * 1024
+
+func author_identity() -> Dictionary:
+	return _author_pin.duplicate(true)
+
+func author_identity_matches(value: Variant) -> bool:
+	return Adapter.same_author_identity(_author_pin, value)
+
+func author_document() -> Dictionary:
+	return _author_document.duplicate(true)
+
+static func _author_path_valid(path: Variant) -> bool:
+	if not path is String or path.is_empty() or path.length() > 512 or path.is_absolute_path() or path.contains(":") or path.contains("\\"): return false
+	for part: String in path.split("/"):
+		if part in ["", ".", ".."] or not part.is_valid_filename() or part != part.strip_edges() or part.ends_with("."): return false
+	return true
+
+static func _author_dependency_path_valid(path: Variant) -> bool:
+	return path is String and (path.begins_with("res://") or path.begins_with("user://")) and _author_path_valid(path.substr(path.find("://") + 3))
+
+static func _author_file_shape(raw: Variant, limit: int) -> bool:
+	return raw is Dictionary and raw.get("path") is String and Adapter.author_digest_valid(raw.get("sha256")) and Adapter.author_integer(raw.get("bytes"), 1, limit)
+
+static func _author_text_valid(value: Variant, limit: int, name: bool = false) -> bool:
+	if not value is String or value.length() > limit: return false
+	if name and (value.is_empty() or value != value.strip_edges()): return false
+	for i: int in range(value.length()):
+		var code: int = value.unicode_at(i)
+		if code < 32 and (name or code not in [9, 10, 13]): return false
+		if code == 127: return false
+	return true
+
+static func _author_manifest_shape(raw: Variant) -> bool:
+	const KEYS := ["format", "source_kind", "scenario_id", "revision", "name", "description", "atlas_id", "grid_contract_version", "natural_source", "dependencies", "files", "start", "package_digest"]
+	if not raw is Dictionary or raw.size() != KEYS.size(): return false
+	for key: String in KEYS:
+		if not raw.has(key): return false
+	if not Adapter.author_integer(raw.format, 1, 1) or raw.source_kind != "fixed_tw_author" or raw.atlas_id != Grid.ATLAS_ID or not Adapter.author_integer(raw.grid_contract_version, Grid.CONTRACT_VERSION, Grid.CONTRACT_VERSION): return false
+	if not Adapter.author_id_valid(raw.scenario_id) or not Adapter.author_integer(raw.revision, 1, 2147483647) or not Adapter.author_digest_valid(raw.package_digest) or not Adapter.author_start_valid(raw.start): return false
+	if not _author_text_valid(raw.name, 64, true) or not _author_text_valid(raw.description, 4096): return false
+	if not Adapter.author_id_valid(raw.natural_source) or not raw.dependencies is Array or raw.dependencies.is_empty() or raw.dependencies.size() > 32 or not raw.files is Array or raw.files.size() > 64: return false
+	var ids := {}
+	var paths := {}
+	var total := 0
+	for entry: Variant in raw.dependencies:
+		if not _author_file_shape(entry, AUTHOR_DEPENDENCY_BYTES) or entry.size() != 4 or not Adapter.author_id_valid(entry.get("id")) or not _author_dependency_path_valid(entry.path): return false
+		if ids.has(entry.id) or paths.has(str(entry.path).to_lower()): return false
+		ids[entry.id] = true; paths[str(entry.path).to_lower()] = true
+		total += int(entry.bytes)
+	if not ids.has(raw.natural_source) or total > AUTHOR_DEPENDENCIES_BYTES: return false
+	paths.clear()
+	var roles := {}
+	total = 0
+	for entry: Variant in raw.files:
+		if not _author_file_shape(entry, AUTHOR_FILE_BYTES) or entry.size() != 5 or entry.get("kind") not in ["static", "initial"] or not _author_path_valid(entry.path) or not Adapter.author_pair_valid(entry.get("site"), -10000000, 10000000): return false
+		var role := "%s:%d:%d" % [entry.kind, int(entry.site[0]), int(entry.site[1])]
+		if paths.has(str(entry.path).to_lower()) or roles.has(role): return false
+		paths[str(entry.path).to_lower()] = true; roles[role] = true
+		total += int(entry.bytes)
+	return total <= AUTHOR_PACKAGE_BYTES
+
+static func author_package_digest(raw: Variant) -> String:
+	if not _author_manifest_shape(raw): return ""
+	var payload: Dictionary = raw.duplicate(true)
+	payload.erase("package_digest")
+	payload.format = int(payload.format); payload.revision = int(payload.revision)
+	payload.grid_contract_version = int(payload.grid_contract_version)
+	for entry: Dictionary in payload.dependencies: entry.bytes = int(entry.bytes)
+	for entry: Dictionary in payload.files:
+		entry.bytes = int(entry.bytes)
+		entry.site = [int(entry.site[0]), int(entry.site[1])]
+	payload.start.site = [int(payload.start.site[0]), int(payload.start.site[1])]
+	payload.start.cell = [int(payload.start.cell[0]), int(payload.start.cell[1])]
+	if payload.start.has("person_id"): payload.start.person_id = int(payload.start.person_id)
+	return JSON.stringify(payload, "", true, true).sha256_text()
+
+static func _author_no_links(folder: String, relative: String) -> bool:
+	var directory := DirAccess.open(folder)
+	if directory == null: return false
+	var parts := relative.split("/")
+	for i: int in range(parts.size()):
+		if directory.is_link(parts[i]): return false
+		if i + 1 < parts.size() and directory.change_dir(parts[i]) != OK: return false
+	return true
+
+static func _read_author_file(path: String, record: Dictionary, limit: int) -> Dictionary:
+	var root := path.get_base_dir()
+	var relative := path.get_file()
+	if path.begins_with("res://") or path.begins_with("user://"):
+		var split := path.find("://") + 3
+		root = path.substr(0, split); relative = path.substr(split)
+	if not _author_no_links(root, relative): return fail("AUTHOR_UNSAFE_PATH", path)
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null: return fail("MISSING_AUTHOR_DEPENDENCY", path)
+	var size := file.get_length()
+	if size > limit or size != int(record.bytes): return fail("AUTHOR_FILE_SIZE", path)
+	var bytes := file.get_buffer(size)
+	file.close()
+	if bytes.size() != size: return fail("AUTHOR_FILE_SIZE", path)
+	var pointer := "version https://git-lfs.github.com/spec/v1".to_utf8_buffer()
+	if bytes.slice(0, pointer.size()) == pointer: return fail("AUTHOR_LFS_POINTER", path)
+	var hash := HashingContext.new()
+	var started := hash.start(HashingContext.HASH_SHA256)
+	if started != OK: return fail("AUTHOR_HASH_ERROR", path)
+	hash.update(bytes)
+	if hash.finish().hex_encode() != record.sha256: return fail("AUTHOR_HASH_MISMATCH", path)
+	return {"ok": true, "bytes": bytes}
+
+func load_author_package(path: String) -> Dictionary:
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null: return fail("MISSING_AUTHOR_PACKAGE", path)
+	if file.get_length() > AUTHOR_MANIFEST_BYTES: return fail("AUTHOR_MANIFEST_SIZE", path)
+	var text := file.get_as_text()
+	file.close()
+	var parsed: Variant = JSON.parse_string(text)
+	if not _author_manifest_shape(parsed): return fail("INVALID_AUTHOR_PACKAGE", "作者格式／路徑／尺寸非法")
+	if author_package_digest(parsed) != parsed.package_digest: return fail("AUTHOR_HASH_MISMATCH", "作者包摘要不同")
+	var natural: Dictionary = {}
+	for entry: Dictionary in parsed.dependencies:
+		var checked := _read_author_file(str(entry.path), entry, AUTHOR_DEPENDENCY_BYTES)
+		if not checked.ok: return checked
+		if entry.id == parsed.natural_source: natural = entry
+	for entry: Dictionary in parsed.files:
+		if not _author_no_links(path.get_base_dir(), str(entry.path)): return fail("AUTHOR_UNSAFE_PATH", str(entry.path))
+		var checked := _read_author_file(path.get_base_dir().path_join(str(entry.path)), entry, AUTHOR_FILE_BYTES)
+		if not checked.ok: return checked
+		var content: Variant = JSON.parse_string(checked.bytes.get_string_from_utf8())
+		if not content is Dictionary: return fail("INVALID_AUTHOR_FILE", str(entry.path))
+		if entry.kind == "static":
+			if content.size() != 3 or not Adapter.author_integer(content.get("format"), 1, 1) or not content.get("terrain") is Dictionary or not content.get("resources") is Dictionary: return fail("INVALID_AUTHOR_STATIC", str(entry.path))
+			if not content.terrain.is_empty() or not content.resources.is_empty(): return fail("AUTHOR_STATIC_UNSUPPORTED", "P2尚未准入地形／資源覆寫")
+		# Initial records are transport-checked only; P5B still rejects birth.
+	var candidate := RegionData.new()
+	var loaded := candidate.load_manifest(str(natural.path))
+	if not loaded.ok: return loaded
+	if candidate.manifest_hash != natural.sha256: return fail("AUTHOR_HASH_MISMATCH", "自然來源與作者依賴不同")
+	if not candidate.resource_manifest_hash.is_empty():
+		var paired := false
+		for entry: Dictionary in parsed.dependencies:
+			paired = paired or entry.path == candidate.RESOURCE_SOURCE_PAIRS[candidate.manifest_hash].path and entry.sha256 == candidate.resource_manifest_hash
+		if not paired: return fail("MISSING_RESOURCE_PAIR", "作者包未列出原配對資源依賴")
+	candidate._author_pin = {"scenario_id": str(parsed.scenario_id), "scenario_revision": int(parsed.revision), "scenario_package_sha256": str(parsed.package_digest)}
+	candidate._author_document = parsed.duplicate(true)
+	# Stage on the same owner, then replace only script state after every check.
+	for property: Dictionary in candidate.get_property_list():
+		if (int(property.usage) & PROPERTY_USAGE_SCRIPT_VARIABLE) != 0:
+			set(str(property.name), candidate.get(str(property.name)))
+	return {"ok": true, "code": "OK", "initial_admitted": false}
 
 static func fail(code: String, message: String) -> Dictionary:
 	return {"ok": false, "code": code, "message": message}
@@ -128,6 +283,8 @@ func load_manifest(path: String = DEFAULT_MANIFEST) -> Dictionary:
 				if not _tile_index.has(key):
 					_tile_index[key] = []
 				_tile_index[key].append(tile)
+	_author_pin = {}
+	_author_document = {}
 	return {"ok": true, "code": "OK", "message": "固定地理資料已載入"}
 
 func _read_resource_manifest(geography_hash: String) -> Dictionary:

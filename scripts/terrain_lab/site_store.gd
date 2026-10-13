@@ -643,6 +643,8 @@ static func load_site(path: String = DEFAULT_PATH, fixed_base_loader: Callable =
 	else:
 		data = TerrainGenerator.generate(int(payload.preset), int(payload.seed), params)
 	Env.initialize(data, str(payload.state.id))
+	if RegionTerrainAdapter.has_author_identity(fixed_base) and RegionTerrainAdapter.author_environment_fingerprint(data) != str(fixed_base.effective_environment_sha256):
+		return Runtime.fail("SAVE_VERSION", "作者環境基底摘要不符；原存檔保留")
 	# Army paths and final slots must be checked against the terrain that was
 	# actually saved. Validate the delta before applying it to this new data.
 	var saved_terrain_changes: Variant = payload.state.get("terrain_changes", {})
@@ -763,6 +765,7 @@ static func _same_land_condition_rule(left: Dictionary, right: Dictionary, left_
 static func _same_fixed_base(left: Variant, right: Variant) -> bool:
 	if not left is Dictionary or not right is Dictionary or left.size() != right.size():
 		return false
+	if not RegionTerrainAdapter.same_author_identity(left, right, true): return false
 	for key: String in ["base_kind", "atlas_id", "base_revision", "manifest_sha256", "site_id", "terrain_fingerprint"]:
 		if not left.get(key) is String or left.get(key) != right.get(key):
 			return false
@@ -4212,19 +4215,26 @@ static func _region_capture_completion_guard(state: Dictionary, context: Diction
 static func _validate_world_pin(data: TerrainData, state: Dictionary) -> Dictionary:
 	var source_base: Variant = data.parameters.get("fixed_base") if data != null else null
 	var declared_land: bool = source_base is Dictionary and source_base.has("land_condition_rule")
+	var declared_author := RegionTerrainAdapter.has_author_identity(source_base)
 	if not state.has("world_pin"):
+		if declared_author: return Runtime.fail("SAVE_VERSION", "作者來源需要完整format3世界pin")
 		return Runtime.fail("SAVE_VERSION", "Declared fixed land source requires the original full world pin") if declared_land else Runtime.ok()
 	var pin: Variant = state.world_pin
 	var base: Variant = data.parameters.get("fixed_base") if data != null else null
-	if not pin is Dictionary or not base is Dictionary or base.get("base_kind") != "fixed_geography" or not _integer(pin.get("format"), 1, 2):
+	if not pin is Dictionary or not base is Dictionary or base.get("base_kind") != "fixed_geography" or not _integer(pin.get("format"), 1, 3):
 		return Runtime.fail("SAVE_VERSION", "Site 原世界 pin 缺少固定地理來源或版本非法")
-	if declared_land and (int(pin.format) != 2 or not pin.has("technology_policy")):
+	var author_format := int(pin.format) == 3
+	if author_format != declared_author or not RegionTerrainAdapter.same_author_identity(pin, base): return Runtime.fail("SAVE_VERSION", "作者身分不能借用自然／legacy格式")
+	if author_format and (not RegionTerrainAdapter.valid_author_identity(base, true) or not pin.has("technology_policy")): return Runtime.fail("SAVE_VERSION", "作者來源／政策pin不完整")
+	if declared_land and ((int(pin.format) != 2 and not author_format) or not pin.has("technology_policy")):
 		return Runtime.fail("SAVE_VERSION", "Declared fixed land source cannot downgrade the original world policy pin")
 	const FIELDS := ["format", "world_instance_id", "slot_id", "atlas_id", "grid_contract_version", "base_revision", "manifest_sha256", "ramp_rule_revision"]
 	var keys: Array = FIELDS.duplicate()
 	if pin.has("resource_layer_sha256") or pin.has("resource_rule_revision"):
 		keys.append("resource_layer_sha256"); keys.append("resource_rule_revision")
 	if pin.has("technology_policy"): keys.append("technology_policy")
+	if author_format:
+		for field: String in RegionTerrainAdapter.AUTHOR_FIELDS: keys.append(field)
 	if pin.size() != keys.size(): return Runtime.fail("SAVE_VERSION", "Site 原世界 pin 欄位非法")
 	for key: String in keys:
 		if not pin.has(key): return Runtime.fail("SAVE_VERSION", "Site 原世界 pin 欄位缺少 " + key)

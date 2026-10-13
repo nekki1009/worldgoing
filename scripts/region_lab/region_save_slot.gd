@@ -49,6 +49,9 @@ static func _new_fire_clock(base_game_seconds: float) -> Dictionary:
 		"base_game_seconds": base_game_seconds, "journal": [], "index": {}}
 
 func open_map(map_data: RegionData, world_instance_id: String, slot_id: String, prepare_new: bool = false, initial_context: Dictionary = {}) -> Dictionary:
+	# P1A locks the author contract; P5B must implement the actual transaction.
+	if initial_context.get("mode") == "author" or map_data != null and not map_data.author_identity().is_empty():
+		return fail("AUTHOR_INITIALIZATION_UNSUPPORTED", "作者來源已辨識；P5B尚未准入世界／人口初始化")
 	# Reject non-creation config before reading a world file or making folders.
 	if not prepare_new and not initial_context.is_empty(): return fail("INVALID_INITIAL_SCENARIO")
 	if prepare_new and not _initial_context_ok(initial_context): return fail("INVALID_INITIAL_SCENARIO")
@@ -177,7 +180,18 @@ static func _same_pin(left: Variant, right: Dictionary) -> bool:
 			return false
 	if not Store._same_resource_pin(left, right):
 		return false
-	if not _whole(left.get("format"), 1, 2) or not _whole(right.get("format"), 1, 2) or int(left.format) != int(right.format): return false
+	if not _whole(left.get("format"), 1, 3) or not _whole(right.get("format"), 1, 3) or int(left.format) != int(right.format): return false
+	var author := int(left.format) == 3
+	if author != RegionTerrainAdapter.has_author_identity(left) or author != RegionTerrainAdapter.has_author_identity(right) or not RegionTerrainAdapter.same_author_identity(left, right): return false
+	if author:
+		var count := 8 + RegionTerrainAdapter.AUTHOR_FIELDS.size() + 1
+		if left.has("resource_layer_sha256") or left.has("resource_rule_revision"): count += 2
+		if left.size() != count or not left.has("technology_policy") or left.has("effective_environment_sha256") or right.has("effective_environment_sha256"): return false
+		for field: String in ["format", "world_instance_id", "slot_id", "atlas_id", "grid_contract_version", "base_revision", "manifest_sha256", "ramp_rule_revision", "technology_policy"]:
+			if not left.has(field) or not right.has(field): return false
+		if not Store._world_pin_identity(left.world_instance_id) or not Store._world_pin_identity(left.slot_id) or left.atlas_id != Grid.ATLAS_ID or not _whole(right.grid_contract_version, Grid.CONTRACT_VERSION, Grid.CONTRACT_VERSION) or int(left.grid_contract_version) != Grid.CONTRACT_VERSION or not RegionTerrainAdapter.author_digest_valid(left.manifest_sha256): return false
+		for field: String in ["base_revision", "ramp_rule_revision"]:
+			if not left[field] is String or str(left[field]).is_empty(): return false
 	var policy: Dictionary = TechnologyPolicy.same_candidate(left, right, int(left.format) == 1, int(right.format) == 1)
 	return policy.ok \
 		and _whole(left.get("grid_contract_version"), 1, 1000) \
@@ -185,6 +199,9 @@ static func _same_pin(left: Variant, right: Dictionary) -> bool:
 
 func _matches_base(base: Dictionary, site: Vector2i) -> bool:
 	return not pin.is_empty() and source != null and source.manifest_hash == str(pin.manifest_sha256) \
+		and RegionTerrainAdapter.same_author_identity(base, pin) \
+		and RegionTerrainAdapter.valid_author_identity(base, true) \
+		and source.author_identity_matches(pin) \
 		and source.resource_manifest_hash == str(pin.get("resource_layer_sha256", "")) \
 		and source.resource_rule_revision == str(pin.get("resource_rule_revision", "")) \
 		and Store._same_resource_pin(base, pin) and Store._same_resource_pin(base, base, true) \
@@ -5238,6 +5255,35 @@ static func _initial_site_same(left: Variant, right: Variant) -> bool:
 
 static func _initial_context_ok(context: Variant) -> bool:
 	return context is Dictionary and context.size() == 2 and context.get("starting_site") is Array and context.starting_site.size() == 2 and _whole(context.starting_site[0], -10000000, 10000000) and _whole(context.starting_site[1], -10000000, 10000000) and context.get("initial_scenario_id") is String and str(context.initial_scenario_id) in ["", InitialArtisans.PRIMARY, InitialArtisans.THREE_FACTIONS]
+
+static func author_initial_context_valid(context: Variant) -> bool:
+	# Schema only. _initial_context_ok deliberately still rejects this mode.
+	if not context is Dictionary or context.size() != 6 or not _whole(context.get("version"), 2, 2) or context.get("mode") != "author": return false
+	var identity: Variant = context.get("author_identity")
+	if not identity is Dictionary or identity.size() != RegionTerrainAdapter.AUTHOR_FIELDS.size() or not RegionTerrainAdapter.has_author_identity(identity) or not RegionTerrainAdapter.valid_author_identity(identity): return false
+	if not RegionTerrainAdapter.author_pair_valid(context.get("starting_site"), -10000000, 10000000) or not RegionTerrainAdapter.author_start_valid(context.get("start")): return false
+	if not _initial_site_same(context.starting_site, context.start.site): return false
+	var sites: Variant = context.get("expected_initial_sites")
+	if not sites is Array or sites.is_empty() or sites.size() > 2: return false
+	var seen := {}
+	var found := false
+	for pair: Variant in sites:
+		if not RegionTerrainAdapter.author_pair_valid(pair, -10000000, 10000000): return false
+		var key := "%d:%d" % [int(pair[0]), int(pair[1])]
+		if seen.has(key): return false
+		seen[key] = true
+		found = found or _initial_site_same(pair, context.starting_site)
+	return found
+
+static func same_author_initial_context(left: Variant, right: Variant) -> bool:
+	if not author_initial_context_valid(left) or not author_initial_context_valid(right): return false
+	if not RegionTerrainAdapter.same_author_identity(left.author_identity, right.author_identity) or not _initial_site_same(left.starting_site, right.starting_site): return false
+	if left.start.mode != right.start.mode or not _initial_site_same(left.start.site, right.start.site) or not _initial_site_same(left.start.cell, right.start.cell): return false
+	if left.start.mode == "existing_person" and int(left.start.person_id) != int(right.start.person_id): return false
+	if left.expected_initial_sites.size() != right.expected_initial_sites.size(): return false
+	for i: int in range(left.expected_initial_sites.size()):
+		if not _initial_site_same(left.expected_initial_sites[i], right.expected_initial_sites[i]): return false
+	return true
 
 
 func _initial_pending_ok(record: Variant, expected: Dictionary) -> bool:
