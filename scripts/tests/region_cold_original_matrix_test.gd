@@ -161,7 +161,8 @@ func _r2_fixture(name: String) -> Dictionary:
 		if not _r2_ok(): return {"ok": false}
 		if not _r2_check(_r2_operation_3.ok, "_r2_fixture: original condition failed"): return {"ok": false}
 		data.site.person_supply = {"1": supply}
-		data.site.manual.cargo.grain = 1000
+		# Bulk provisions stay in the depot; this is the original person's legal carry buffer.
+		data.site.manual.cargo.grain = SiteRuntime.CARRY_CAPACITY
 		if name in ["army_105", "army_max"]:
 			var total_rows := SiteStore.MAX_ARMY_ROWS if name == "army_max" else 105
 			var team_count := ceili(float(total_rows) / TerrainArmy.MAX_ROSTER_SIZE)
