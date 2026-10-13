@@ -32,7 +32,9 @@ func _setup_action_world() -> bool:
 	var headquarters: TerrainArmy
 	for team: TerrainArmy in lab.combat_armies:
 		for index: int in team.combat_units.size(): members.append(team.combat_identity(index))
-		if team.team_id != ship_team_id: headquarters = team
+		# The resident HQ is the non-ship team that holds bodies. An empty team
+		# container (no member, no commander) is not a resident head's team.
+		if team.team_id != ship_team_id and not team.combat_units.is_empty(): headquarters = team
 	if not _check(headquarters != null and headquarters.command_eligible(headquarters.current_commander), "initial true resident HQ captain supplies the original Nation head"): return false
 	sea_nation_head = headquarters.combat_identity(headquarters.current_commander)
 	sea_nation_id = "c06_ship_source_nation_%d" % OS.get_process_id()
