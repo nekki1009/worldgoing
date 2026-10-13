@@ -3259,6 +3259,15 @@ static func _stop_feature_zones(data: TerrainData, key: String, action: String =
 			worker.mode = "idle"
 			worker.progress = 0.0
 
+# Publish the operation's operate zone. A new zone arrives already marked as the
+# operation's own; a dormant zone it re-activates becomes its own for this phase;
+# a zone the player already runs stays theirs and is never stopped.
+static func _technology_activate_zone(data: TerrainData, zone: Dictionary, existing: bool) -> void:
+	if existing:
+		if not bool(zone.active): zone.technology_owned = true
+		zone.active = true
+	else: data.site.zones.append(zone)
+
 # A completed named phase ends only the operate zone its own operation created.
 static func _stop_technology_owned_zones(data: TerrainData, key: String) -> void:
 	for zone: Dictionary in data.site.zones:
@@ -10684,8 +10693,7 @@ static func _technology_begin_feature_operation(data: TerrainData, selector: Dic
 	feature.batch_paid = true
 	feature.production = 0.0
 	feature.status = "原完整材料已付；具名原人前往本工位"
-	if existing_zone: zone.active = true
-	else: data.site.zones.append(zone)
+	_technology_activate_zone(data, zone, existing_zone)
 	if not scope.is_empty(): actions.publish_phase_payment(scope.payment)
 	_technology_publish_public_begin(nation)
 	_technology_publish_named_feature(named)

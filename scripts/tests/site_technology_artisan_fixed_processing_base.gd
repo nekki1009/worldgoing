@@ -140,7 +140,8 @@ func _original_feature_ui(f: Dictionary, key: String, recipe: String, identity: 
 	_require(button != null and f.lab.npc == null, "Original formal operation button exists without parallel default worker")
 	button.pressed.emit()
 	# A realistic dispatch comes from the team's current work-duty decider.
-	var dispatcher: Dictionary = controller._control_family_person(null, int(f.commander))
+	var work_decider: int = int(f.team.duty_decider("team.work"))
+	var dispatcher: Dictionary = controller._control_family_person(null, work_decider)
 	_require(dispatcher.ok, "Original command control restored to the team work decider before selected-worker dispatch", dispatcher)
 	f.lab.selected_army_target = identity
 	controller.update_ui()
