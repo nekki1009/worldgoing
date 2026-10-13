@@ -10,18 +10,46 @@ const RegionEntry = preload("res://scripts/region_lab/region_entry.gd")
 const PersonPersonality = preload("res://scripts/terrain_lab/person_personality.gd")
 const START := Vector2i(1170, 13252)
 var deadline := 0
+var _finished := false
+
+class MainFlowErrors extends Logger:
+	var _mutex := Mutex.new()
+	var _first := ""
+	func _log_error(function: String, file: String, line: int, code: String, rationale: String, _editor_notify: bool, error_type: int, _script_backtraces: Array[ScriptBacktrace]) -> void:
+		if error_type == Logger.ERROR_TYPE_WARNING: return
+		_mutex.lock()
+		if _first.is_empty(): _first = "%s:%d %s: %s %s" % [file, line, function, code, rationale]
+		_mutex.unlock()
+	func first_error() -> String:
+		_mutex.lock()
+		var result := _first
+		_mutex.unlock()
+		return result
+
+var _errors := MainFlowErrors.new()
 
 func _initialize() -> void:
+	OS.add_logger(_errors)
 	deadline = Time.get_ticks_msec() + 280000
 	_run.call_deferred()
 
+func _finalize() -> void:
+	OS.remove_logger(_errors)
+
 func _process(_delta: float) -> bool:
-	if Time.get_ticks_msec() > deadline:
-		push_error("MAIN MENU FLOW deadline")
-		quit(1)
+	if not _healthy(): return false
+	if Time.get_ticks_msec() > deadline: _fail("deadline")
 	return false
 
+func _healthy() -> bool:
+	if _finished: return false
+	var error: String = _errors.first_error()
+	if not error.is_empty(): return _fail("script/engine error: " + error)
+	return true
+
 func _fail(reason: String) -> bool:
+	if _finished: return false
+	_finished = true
 	push_error("MAIN MENU FLOW FAIL: " + reason)
 	quit(1)
 	return false
@@ -29,21 +57,25 @@ func _fail(reason: String) -> bool:
 func _scene_is(path: String, frames: int = 600) -> bool:
 	for i: int in range(frames):
 		await process_frame
+		if not _healthy(): return false
 		if current_scene != null and current_scene.scene_file_path == path and current_scene.is_node_ready(): break
 	await process_frame
+	if not _healthy(): return false
 	return current_scene != null and current_scene.scene_file_path == path
 
 func _press(node_name: String) -> bool:
+	if not _healthy(): return false
 	var button := current_scene.find_child(node_name, true, false) as Button
 	if button == null or button.disabled or not button.is_visible_in_tree(): return _fail("button unavailable: " + node_name)
 	button.pressed.emit()
-	return true
+	return _healthy()
 
 func _press_text(text: String) -> bool:
+	if not _healthy(): return false
 	for node: Node in current_scene.find_children("*", "Button", true, false):
 		if (node as Button).text == text and not (node as Button).disabled and (node as Button).is_visible_in_tree():
 			(node as Button).pressed.emit()
-			return true
+			return _healthy()
 	return _fail("button text unavailable: " + text)
 
 func _page_visible(page: String) -> bool:
@@ -96,7 +128,7 @@ func _run() -> void:
 	(menu.find_child("WorldName", true, false) as LineEdit).text = "測試世界"
 	if not _press("StartGame"): return
 	if not await _scene_is(SITE): return _fail("new game did not open TerrainLab")
-	await _frames(20)
+	if not await _frames(20): return
 	var lab := current_scene as TerrainLab
 	var slot: RegionSaveSlot = lab.site_controller.region_slot
 	if slot == null: return _fail("world not opened: " + lab.site_controller.message.text)
@@ -114,7 +146,7 @@ func _run() -> void:
 		return _fail("view context wrong: " + str(RegionEntry.view))
 	if not _press_text("返回遊戲"): return
 	if not await _scene_is(SITE): return _fail("map return did not open TerrainLab")
-	await _frames(20)
+	if not await _frames(20): return
 	lab = current_scene as TerrainLab
 	if lab.site_controller.region_slot == null or str(lab.site_controller.region_slot.pin.world_instance_id) != world_id: return _fail("map return did not resume the world")
 	if not _player_matches(lab, expected): return
@@ -127,7 +159,7 @@ func _run() -> void:
 	if note.is_empty() or (current_scene.find_child("ContinueGame", true, false) as Button).disabled: return _fail("Continue does not offer the world")
 	if not _press("ContinueGame"): return
 	if not await _scene_is(SITE): return _fail("Continue did not open TerrainLab")
-	await _frames(20)
+	if not await _frames(20): return
 	lab = current_scene as TerrainLab
 	if lab.site_controller.region_slot == null or str(lab.site_controller.region_slot.pin.world_instance_id) != world_id: return _fail("Continue opened another world")
 	if not _player_matches(lab, expected): return
@@ -141,15 +173,19 @@ func _run() -> void:
 	list.item_selected.emit(0)
 	if not _press("LoadSelectedWorld"): return
 	if not await _scene_is(SITE): return _fail("Load World did not open TerrainLab")
-	await _frames(20)
+	if not await _frames(20): return
 	lab = current_scene as TerrainLab
 	if lab.site_controller.region_slot == null or not _player_matches(lab, expected): return _fail("loaded world mismatch")
+	if not _healthy(): return
+	_finished = true
 	print("MAIN MENU FLOW PASS")
 	quit(0)
 
-func _frames(count: int) -> void:
+func _frames(count: int) -> bool:
 	for i: int in range(count):
 		await process_frame
+		if not _healthy(): return false
+	return true
 
 func _player_matches(lab: TerrainLab, expected: Dictionary) -> bool:
 	var actor := lab.character
@@ -175,6 +211,7 @@ func _files_under(root: String) -> int:
 	return count
 
 func _unit_checks() -> bool:
+	if not _creation_whitelist_check(): return false
 	var neutral := PersonPersonality.neutral()
 	if not PersonPersonality.valid(neutral) or not PersonPersonality.saved(neutral).is_empty(): return _fail("neutral packet")
 	var bad := neutral.duplicate()
@@ -189,4 +226,25 @@ func _unit_checks() -> bool:
 	bad = neutral.duplicate()
 	bad.mercy = 12.5
 	if PersonPersonality.valid(bad): return _fail("fraction accepted")
+	return true
+
+func _creation_whitelist_check() -> bool:
+	# MAIN_MENU_PLAN P3 permits these explicit new-game choices, not old-world state.
+	var traits := PersonPersonality.neutral()
+	traits.risk = 90
+	traits.mercy = 10
+	traits.innovation = 75
+	var approved := {"body": 1, "face": "face_standard_04", "hair": "hair_standard_03",
+		"hair_dye": "2050c0", "hair_dyed": true, "name": "林測試", "combat_ability": 80,
+		"command_abilities": {"tactics": 70, "leadership": 20, "coach": 90}, "personality": traits}
+	var source := approved.duplicate(true)
+	for forbidden: String in ["hp", "faction_id", "technology", "item_state", "equipment", "family"]:
+		source[forbidden] = {"old_world": true}
+	var before := var_to_bytes(source)
+	var controller := SiteController.new()
+	var filtered: Dictionary = controller._initial_creation_appearance(source)
+	controller.free()
+	if not _healthy(): return false
+	if filtered != approved: return _fail("creation whitelist dropped approved fields or admitted old-world fields")
+	if var_to_bytes(source) != before: return _fail("creation whitelist mutated input")
 	return true

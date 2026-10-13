@@ -10348,7 +10348,7 @@ func _prepare_initial_world(candidate: RegionSaveSlot, starting_site: Vector2i, 
 
 func _initial_creation_appearance(source: Dictionary) -> Dictionary:
 	var result := {}
-	for key: String in ["body", "face", "hair", "hair_dye", "hair_dyed", "name"]:
+	for key: String in ["body", "face", "hair", "hair_dye", "hair_dyed", "name", "combat_ability", "command_abilities", "personality"]:
 		if source.has(key): result[key] = source[key]
 	return result
 
@@ -10369,7 +10369,7 @@ func _initial_creation_appearance(source: Dictionary) -> Dictionary:
 # var applied := apply_created_character(appearance) if bool(request.get("create_new", false)) else Runtime.fail("INVALID_INITIAL_SCENARIO")
 # Keep its existing failure/menu and successful _record_world behavior.
 # Existing apply_created_character() remains the original validator/appearance
-# restore/save owner; unapproved stats/personality/technology/items never enter.
+# restore/save owner; only MAIN_MENU_PLAN creation fields enter, never old hp/faction/technology/items.
 
 
 func begin_nation_administration(nation_id: String, order_id: String, binding: String) -> Dictionary:
