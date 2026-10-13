@@ -420,6 +420,9 @@ static func party_frame_geometry(source: RegionData, frame: Dictionary, context:
 		data.set(field, values)
 	var sources := []
 	var buffers := {}
+	# Each tile states navigable water by its own linear cell indices and its own
+	# water-body numbering. The frame re-states both rules as frame cell indices.
+	var frame_water_cells: Array = []
 	for field: String in ["height_levels", "surface_types", "flags", "ramp_edges", "detail_variation", "fertility", "moisture", "drainage",
 		"foundation", "groundwater", "water_kind", "water_body", "static_blocked", "feature_at", "facility_cells"]:
 		buffers[field] = data.get(field)
@@ -441,6 +444,16 @@ static func party_frame_geometry(source: RegionData, frame: Dictionary, context:
 				"navigation_hash": party_frame_navigation_hash(original)}
 			if selected.has("proof"): record.proof = selected.proof.duplicate(true)
 			sources.append(record)
+			var rule_cells: Variant = original.parameters.get("navigable_water_cells")
+			if rule_cells is Array:
+				for value: Variant in rule_cells:
+					if (value is int or value is float) and float(value) == floorf(float(value)) and int(value) >= 0 and int(value) < 10000:
+						frame_water_cells.append(data.index(original.cell_from_index(int(value)) + offset))
+			var rule_bodies: Variant = original.parameters.get("navigable_water_bodies")
+			if rule_bodies is Array and not rule_bodies.is_empty() and original.water_body.size() == 10000:
+				for from: int in 10000:
+					if int(original.water_body[from]) >= 0 and original._water_rule_has(rule_bodies, int(original.water_body[from])):
+						frame_water_cells.append(data.index(original.cell_from_index(from) + offset))
 			var flags := original.navigation_flags()
 			var heights := original.navigation_heights()
 			var ramps := original.navigation_ramps()
@@ -464,6 +477,8 @@ static func party_frame_geometry(source: RegionData, frame: Dictionary, context:
 			data.navigation_revision = maxi(data.navigation_revision, original.navigation_revision)
 			data.environment_revision = maxi(data.environment_revision, original.environment_revision)
 	for field: String in buffers: data.set(field, buffers[field])
+	data.parameters.navigable_water_cells = frame_water_cells
+	data.parameters.navigable_water_bodies = []
 	var proof := {"version": 1, "world_origin": frame.world_origin.duplicate(), "size": frame.size.duplicate(), "sources": []}
 	for record: Dictionary in sources:
 		proof.sources.append({"site": record.site.duplicate(), "offset": record.offset.duplicate(), "revision": record.revision,
