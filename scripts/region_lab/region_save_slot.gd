@@ -2568,6 +2568,10 @@ static func record_completed_fire_replay(state: Dictionary, interval: Dictionary
 const TRAVEL_JOURNEY_FIELDS := ["version", "kind", "token", "party_path", "party_sha256", "departure_game_seconds",
 	"origin", "position", "plan_path", "plan_sha256", "plan_started_game_seconds", "plans"]
 var _travel_party_cache: Dictionary = {}
+# token -> {path, sha256, payload}: the latest selected party document as read and
+# verified once. Party documents are write-once, so the same selected path and
+# SHA-256 name the same bytes; a new checkpoint selects a new path and replaces it.
+var _region_selected_document_cache: Dictionary = {}
 var _travel_plan_cache: Dictionary = {}
 var _travel_party_runtime: Dictionary = {}
 var _travel_party_runtime_token := ""
@@ -6115,6 +6119,18 @@ func _region_party_frame_context(party: Dictionary) -> Dictionary:
 				"path": str(selected.path), "sha256": str(selected.sha256)}}
 	return {"ok": true, "context": {"effective_terrain": provider}}
 
+## The selected party document payload. The original proof reads it several
+## times per shared step; hashing, reading and parsing the same write-once file
+## each time dominated the step. Every caller still validates and decodes the
+## payload itself, so each result is built fresh from the same verified bytes.
+func _region_selected_document(token: String, relative: String, sha256: String) -> Dictionary:
+	var cached: Dictionary = _region_selected_document_cache.get(token, {})
+	if str(cached.get("path", "")) == relative and str(cached.get("sha256", "")) == sha256:
+		return {"ok": true, "payload": cached.payload}
+	var document := _travel_document(relative, sha256, {})
+	if document.ok: _region_selected_document_cache[token] = {"path": relative, "sha256": sha256, "payload": document.payload}
+	return document
+
 func _region_selected_party_document(token: String, require_current: bool = true) -> Dictionary:
 	var recovered := _recover_control()
 	if not recovered.ok: return recovered
@@ -6130,7 +6146,7 @@ func _region_selected_party_document(token: String, require_current: bool = true
 	if controller not in ["player", "npc"] or not _travel_relative(reference.get("party_path"), token) \
 			or str(reference.get("party_path", "")).is_empty() or str(reference.get("party_sha256", "")).length() != 64:
 		return fail("STALE_REGION_PARTY", "真 marker 未選定原 party 文件")
-	var document := _travel_document(str(reference.party_path), str(reference.party_sha256), {})
+	var document := _region_selected_document(token, str(reference.party_path), str(reference.party_sha256))
 	if not document.ok: return document
 	var payload: Dictionary = document.payload
 	if payload.get("version") != 1 or payload.get("token") != token or not _same_pin(payload.get("pin"), pin) \
