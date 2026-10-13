@@ -6527,7 +6527,8 @@ func combat_hot_set(index: int, field: StringName, value: Variant) -> void:
 	if _active_member_scope and field in [&"member", &"hp", &"ko", &"pose", &"site_exited", &"surrender_pending"]:
 		_invalidate_active_member_read_scope()
 	if _combat_hot_store != null and index != _combat_hot_borrowed_index and COMBAT_HOT_FIELDS.has(field):
-		assert(bool(_combat_hot_store.set_field(index, field, value)))
+		var hot_stored: bool = bool(_combat_hot_store.set_field(index, field, value))
+		assert(hot_stored)
 		if field in [&"hp", &"ko", &"pose", &"attack", &"exchange_visual", &"member", &"departed", &"captive", &"site_exited", &"surrender_pending"]:
 			_mark_visual_row(index)
 		return
@@ -6554,7 +6555,8 @@ func combat_hot_erase(index: int, field: StringName) -> void:
 	if _active_member_scope and field in [&"member", &"hp", &"ko", &"pose", &"site_exited", &"surrender_pending"]:
 		_invalidate_active_member_read_scope()
 	if _combat_hot_store != null and index != _combat_hot_borrowed_index and COMBAT_HOT_FIELDS.has(field):
-		assert(bool(_combat_hot_store.erase_field(index, String(field))))
+		var hot_erased: bool = bool(_combat_hot_store.erase_field(index, String(field)))
+		assert(hot_erased)
 		if field == &"exchange_visual": _mark_visual_row(index)
 		return
 	if combat_hot_diagnostics_enabled and COMBAT_HOT_FIELDS.has(field):
@@ -6697,7 +6699,8 @@ func _return_combat_hot_row() -> void:
 	assert(_combat_hot_store != null and _combat_hot_borrowed_index >= 0)
 	var index := _combat_hot_borrowed_index
 	var row: Dictionary = combat_units[index]
-	assert(bool(_combat_hot_store.absorb_row(index, row)))
+	var hot_absorbed: bool = bool(_combat_hot_store.absorb_row(index, row))
+	assert(hot_absorbed)
 	for field: StringName in COMBAT_HOT_FIELDS:
 		row.erase(field)
 		row.erase(String(field))
@@ -10144,7 +10147,8 @@ func _ensure_live_presenters() -> void:
 		if editor == null:
 			editor = _captain_editor if _captain_editor != null and not _live_presenters.values().has(_captain_editor) else _create_visual_source(body, "ArmyPerson_%d" % combat_identity(index))
 		if not appearance.is_empty() and editor.capture_appearance() != appearance:
-			assert(editor.restore_appearance(appearance))
+			var appearance_restored: bool = bool(editor.restore_appearance(appearance))
+			assert(appearance_restored)
 		_live_presenters[combat_identity(index)] = editor
 		_visual_sources_owned = true
 

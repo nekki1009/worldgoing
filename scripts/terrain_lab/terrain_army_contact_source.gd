@@ -520,9 +520,11 @@ func _copy_private_animations(animation_reference: AnimationPlayer = null) -> vo
 				_compact_constant_morph_keys(animation)
 			if cape_track_omission_enabled:
 				_disable_private_cape_tracks(animation)
-			assert(library.add_animation(clip, animation) == OK)
+			var clip_added: Error = library.add_animation(clip, animation)
+			assert(clip_added == OK)
 		editor.animation_player.remove_animation_library(library_name)
-		assert(editor.animation_player.add_animation_library(library_name, library) == OK)
+		var library_added: Error = editor.animation_player.add_animation_library(library_name, library)
+		assert(library_added == OK)
 	_key.clear()
 
 func _disable_private_cape_tracks(animation: Animation) -> int:
