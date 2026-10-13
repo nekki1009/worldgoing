@@ -48,6 +48,12 @@ static func prepare_restore(snapshot: Variant, references: Dictionary, expected:
 	return Runtime.ok("", {"roots": roots, "context": checked.context, "owners_prepared": true,
 		"effects_pending": not bool(checked.context.effects_complete), "zero_world_only": not bool(checked.context.effects_complete)})
 
+## A live ration delivery job holds aliases of original stocks, bodies and owners.
+## The Store saves only its recipe and removes exactly these fields, so a path
+## through them never exists in a saved body. Each aliased value keeps the path
+## of its actual home; a pool stored nowhere else stays a plain graph value.
+const DELIVERY_ALIAS_FIELDS := ["source_owner", "receiver_owner", "source_body", "receiver_body", "source_cargo", "source_holder", "source_open"]
+
 static func register_tree(references: Dictionary, prefix: String, value: Variant) -> void:
 	# Deterministic original Site/body paths; this is a transient reference index, not stored state.
 	_register_tree(references, prefix, value, [], [], 0)
@@ -71,6 +77,7 @@ static func _register_tree(references: Dictionary, prefix: String, value: Varian
 	if value is Dictionary:
 		for key: Variant in value:
 			if not Checkpoint.supported(key): continue
+			if prefix == "site" and path.size() == 3 and str(path[0]) == "team_supply" and str(path[2]) == "delivery" and str(key) in DELIVERY_ALIAS_FIELDS: continue
 			_register_tree(references, prefix, value[key], path + [key], seen, depth + 1)
 	else:
 		for index: int in value.size(): _register_tree(references, prefix, value[index], path + [index], seen, depth + 1)
