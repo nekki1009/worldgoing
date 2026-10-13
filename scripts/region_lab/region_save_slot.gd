@@ -1844,6 +1844,11 @@ static func validate_settlement(state: Dictionary, logical_game_seconds: Variant
 	if last > float(logical_game_seconds) + maxf(0.00000001, float(logical_game_seconds) * 0.000000001):
 		return _fail("SAVE_VERSION", "Site 結算時間超前於原世界存檔")
 	last = minf(last, float(logical_game_seconds))
+	# The same holds below the clock: a watermark recorded AT the world clock and
+	# read back from the Site's saved JSON is exactly that clock's JSON read-back.
+	if last < float(logical_game_seconds):
+		var read_back: Variant = JSON.parse_string(JSON.stringify(float(logical_game_seconds), "", false, true))
+		if (read_back is float or read_back is int) and float(read_back) == last: last = float(logical_game_seconds)
 	return {"ok": true, "legacy": false, "last": last, "pending": float(logical_game_seconds) - last}
 
 static func attach_settlement(state: Dictionary, logical_game_seconds: Variant) -> Dictionary:
