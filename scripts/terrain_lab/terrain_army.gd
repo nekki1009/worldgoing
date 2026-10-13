@@ -2289,7 +2289,9 @@ func finalize_combat_movement_tick(_delta: float, _reservation_grid: Object, _de
 		var rejected_by_occupancy := false
 		if pid >= 0 and _reservation_grid != null and "proposal_lookup" in _reservation_grid:
 			var prop = _reservation_grid.proposal_lookup.get(pid, null)
-			if prop != null:
+			# Proposal ids restart every tick; an id kept from an earlier tick can
+			# name another member's proposal. Only this member's own proposal counts.
+			if prop != null and int(prop.member_id) == mid:
 				is_accepted = prop.status == CombatMovementTypes.MoveProposalStatus.ACCEPTED
 				rejected_by_occupancy = prop.status in [
 					CombatMovementTypes.MoveProposalStatus.REJECTED_DEPENDENCY,
