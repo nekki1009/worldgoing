@@ -9,9 +9,15 @@ var formal_marker := 0
 var formal_sequence := 0
 var formal_world := 0.0
 var formal_action := 0.0
+## "exact" (default): this build's journal. "legacy": the same live journal
+## re-merged by the older 1e-10 rule, as an older save holds it.
+var journal_case := "exact"
+var legacy_rows := {}
 
 func _initialize() -> void:
 	deadline = Time.get_ticks_msec() + 180000
+	for argument: String in OS.get_cmdline_args() + OS.get_cmdline_user_args():
+		if argument.begins_with("--journal-case="): journal_case = argument.trim_prefix("--journal-case=")
 	out = "res://.godot-temp/region_cold_formal_original/run_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
 	last_world_exists = FileAccess.file_exists(Entry.LAST_WORLD)
 	if last_world_exists: last_world_bytes = FileAccess.get_file_as_bytes(Entry.LAST_WORLD)
@@ -103,6 +109,8 @@ func _run() -> void:
 	if not _check(actual_context.ok, "Comparison context comes from actual Slot clocks", actual_context): _finish(false); return
 	formal_expected = _formal_capture(cold, actual_context.context)
 	if failed: _finish(false); return
+	if not _check(journal_case in ["exact", "legacy"], "one bounded journal case", journal_case): _finish(false); return
+	if journal_case == "legacy" and not _formal_legacy_journal(): _finish(false); return
 	var first := lab.advance_cold_site(formal_source, formal_world)
 	if not _check(not first.ok and first.get("code") == "PENDING" and is_instance_valid(lab._cold_replay_lab),
 		"The actual fixed-target cold caller retains its original candidate", first): _finish(false); return
@@ -116,10 +124,25 @@ func _run() -> void:
 		if not _check(progressed.ok, "Actual formal original replay pump", progressed): _finish(false); return
 		if progressed.status == "COMPLETE": break
 		await process_frame
-	if not _check(progressed.get("status") == "COMPLETE" and int(progressed.get("prefix_steps", 0)) > 0,
+	if journal_case == "legacy":
+		if not _check(progressed.get("status") == "COMPLETE" and int(progressed.get("prefix_steps", -1)) == 0 and str(progressed.get("fallback", "")) == "COLD_EXACT_JOURNAL",
+			"Legacy tolerance-merged rows replay on the exact path without a quiet prefix", progressed): _finish(false); return
+	elif not _check(progressed.get("status") == "COMPLETE" and int(progressed.get("prefix_steps", 0)) > 0,
 		"Formal positive requires a consumed actual quiet prefix and complete exact tail", progressed): _finish(false); return
 	var candidate := _formal_capture(replay, actual_context.context)
-	if failed or not _formal_same(candidate, formal_expected): _finish(false); return
+	if failed: _finish(false); return
+	if journal_case == "legacy":
+		# Older merged rows no longer hold each live step width, so the exact path
+		# cannot promise bit equality there; the case asserts the safe fallback above
+		# and records whether the replay still happened to equal the original.
+		legacy_rows["full_original_equal"] = JSON.stringify(candidate, "", true, true) == JSON.stringify(formal_expected, "", true, true)
+		legacy_rows["exchange_equal"] = var_to_bytes([replay._exchange_phase, replay._exchange_round]) == var_to_bytes([cold._exchange_phase, cold._exchange_round])
+	else:
+		if not _formal_same(candidate, formal_expected): _finish(false); return
+		# The exchange cadence is not in the captured graph; the quiet prefix must leave
+		# it bit-identical to the original that ran every live step.
+		if not _check(var_to_bytes([replay._exchange_phase, replay._exchange_round]) == var_to_bytes([cold._exchange_phase, cold._exchange_round]),
+			"Quiet prefix and exact tail leave the exchange phase and round bit-identical to the original", [replay._exchange_phase, cold._exchange_phase, replay._exchange_round, cold._exchange_round]): _finish(false); return
 	var finalized := lab.advance_cold_site(formal_source, formal_world)
 	if not _check(finalized.ok and not is_instance_valid(lab._cold_replay_lab), "Actual parent registers the completed body before retirement", finalized): _finish(false); return
 	var source_receipt := lab._region_selected_bind_source(finalized.data, slot)
@@ -133,8 +156,39 @@ func _run() -> void:
 	formal_result = {"main_steps": steps, "game_seconds": formal_world, "action_seconds": formal_action,
 		"sequence": formal_sequence, "generation": formal_marker, "prefix_steps": int(progressed.prefix_steps),
 		"exact_steps": int(progressed.exact_steps), "processing_usec_last_pump": int(progressed.processing_usec),
-		"full_original_equal": true, "source_sha256": formal_source_hash, "world_published_by_cold": false}
+		"full_original_equal": journal_case == "exact", "source_sha256": formal_source_hash, "world_published_by_cold": false,
+		"journal_case": journal_case, "journal_rows": slot.control.fire_clock.journal.size(), "legacy_rows": legacy_rows}
 	_finish()
+
+## Re-merge the actual live journal by the older rule (same scale, same tactical
+## shape, average widths within 1e-10). The live run must have produced at least
+## one row split the older rule would merge, or there is no legacy case to test.
+func _formal_legacy_journal() -> bool:
+	var journal: Array = slot.control.fire_clock.journal
+	var merged: Array = []
+	for source: Dictionary in journal:
+		var row := source.duplicate(true)
+		if not merged.is_empty():
+			var last: Dictionary = merged.back()
+			var old_action := (float(last.action_end) - float(last.action_begin)) / int(last.steps)
+			var delta := (float(row.action_end) - float(row.action_begin)) / int(row.steps)
+			var old_tactical := float(last.tactical_seconds) / int(last.steps)
+			var new_tactical := float(row.tactical_seconds) / int(row.steps)
+			var uniform := (old_tactical == 0.0 and new_tactical == 0.0) \
+				or (absf(old_tactical - old_action) < 0.0000000001 and absf(new_tactical - delta) < 0.0000000001)
+			if uniform and float(last.scale) == float(row.scale) and absf(old_action - delta) < 0.0000000001 \
+				and float(last.action_end) == float(row.action_begin) and int(last.last_sequence) + 1 == int(row.first_sequence):
+				last.last_sequence = int(row.last_sequence)
+				last.action_end = float(row.action_end)
+				last.game_end = float(row.game_end)
+				last.tactical_seconds = float(last.tactical_seconds) + float(row.tactical_seconds)
+				last.steps = int(last.steps) + int(row.steps)
+				continue
+		merged.append(row)
+	legacy_rows = {"exact": journal.size(), "legacy": merged.size()}
+	if not _check(merged.size() < journal.size(), "the live journal holds rows the older 1e-10 rule would merge", legacy_rows): return false
+	slot.control.fire_clock.journal = merged
+	return true
 
 func _finish(ok: bool = true, message: String = "") -> void:
 	if finished: return

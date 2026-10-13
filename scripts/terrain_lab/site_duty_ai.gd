@@ -814,6 +814,10 @@ static func review_nation_personnel(orders: Variant, nation_id: String, nation: 
 static func _cadence_state(lab: Variant, ledger: Dictionary = {}) -> Dictionary:
 	if lab == null or lab.terrain == null: return {}
 	var registry := ledger
+	# A formal cold replay owns a private copy of the source commit's ledger.
+	if registry.is_empty() and lab is Object:
+		var private: Variant = lab.get("_region_private_duty_ledger")
+		if private is Dictionary and not private.is_empty(): registry = private
 	if registry.is_empty():
 		if lab.site_controller == null or lab.site_controller.region_slot == null: return {}
 		registry = lab.site_controller.region_slot.region_registry_view()

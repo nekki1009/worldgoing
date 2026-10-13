@@ -644,6 +644,29 @@ static func _normalize_journey(value: Dictionary) -> Dictionary:
 		return fail("CORRUPT_SAVE", "返航距離必須等於已航原 ACTION，不能縮短或超前")
 	return {"ok": true, "journey": value.duplicate(true)}
 
+## The control a given commit recorded, decoded and checked as _recover_read_latest
+## checks the latest one. Read-only: nothing here touches the live control.
+func region_commit_control(generation: int) -> Dictionary:
+	var document := _read_document(folder.path_join("commits").path_join("%020d.json" % generation))
+	if not document.ok: return document
+	var recorded: Dictionary = document.payload
+	if not _whole(recorded.get("generation"), 1, 2147483647) or int(recorded.generation) != generation or not _same_pin(recorded.get("pin"), pin) \
+			or not recorded.get("sites") is Dictionary or not recorded.get("control") is Dictionary:
+		return fail("CORRUPT_SAVE", "存檔槽提交版本／來源／欄位")
+	var clock: Dictionary = recorded.control
+	if clock.has("encoding") or clock.has("value"):
+		if clock.size() != 2 or clock.get("encoding") != "godot_var_v1" or not clock.get("value") is String:
+			return fail("CORRUPT_SAVE", "存檔槽 control 原 Variant 編碼欄位")
+		var raw := Marshalls.base64_to_raw(str(clock.value))
+		var decoded: Variant = bytes_to_var(raw)
+		if raw.is_empty() or Marshalls.raw_to_base64(raw) != str(clock.value) or not decoded is Dictionary or var_to_bytes(decoded) != raw:
+			return fail("CORRUPT_SAVE", "存檔槽 control 原 Variant 字節非法")
+		clock = decoded
+	if clock.has("region_gameplay"):
+		var gameplay_check := GameplayClock.validate_registry(clock.region_gameplay, float(clock.get("logical_game_seconds", 0.0)))
+		if not gameplay_check.ok: return gameplay_check
+	return {"ok": true, "control": clock, "sites": recorded.sites}
+
 func _publish(sites: Dictionary, clock: Dictionary, transfer_token: String = "", journey: Dictionary = {}) -> Dictionary:
 	var expected := int(_marker.get("generation", 0))
 	var recovered := _recover_control()
@@ -2518,7 +2541,7 @@ static func append_completed_fire_interval(clock: Dictionary, interval: Dictiona
 		var old_tactical := float(last.tactical_seconds) / int(last.steps)
 		var uniform := (old_tactical == 0.0 and float(interval.tactical_seconds) == 0.0) \
 			or (absf(old_tactical - old_action) < 0.0000000001 and absf(float(interval.tactical_seconds) - delta) < 0.0000000001)
-		if uniform and float(last.scale) == float(interval.scale) and absf(old_action - delta) < 0.0000000001:
+		if uniform and float(last.scale) == float(interval.scale) and _fire_row_width(last, interval) > 0.0:
 			last.last_sequence = int(interval.sequence)
 			last.action_end = float(interval.action_end)
 			last.game_end = float(interval.game_end)
@@ -2528,6 +2551,20 @@ static func append_completed_fire_interval(clock: Dictionary, interval: Dictiona
 	else: journal.append(row)
 	clock.action_seconds = float(interval.action_end)
 	clock.sequence = int(interval.sequence)
+
+## The single live step width that extends this journal row bit-exactly, or 0.
+## A row holds only steps of one live width w (ACTION_STEP or EXCHANGE_ACTION_STEP)
+## whose ends are each the previous end + w, so a replay rebuilds every boundary
+## from the row's begin. A one-step row is checked directly; a longer row was
+## built under this rule, so its average already names its w.
+static func _fire_row_width(last: Dictionary, interval: Dictionary) -> float:
+	var steps := int(last.steps)
+	for width: float in [TerrainLab.EXCHANGE_ACTION_STEP, TerrainLab.ACTION_STEP]:
+		if float(last.action_end) + width != float(interval.action_end): continue
+		if steps == 1 and float(last.action_begin) + width != float(last.action_end): continue
+		if steps > 1 and absf((float(last.action_end) - float(last.action_begin)) / steps - width) >= 0.0000000001: continue
+		return width
+	return 0.0
 
 static func prune_fire_clock_prefix(clock: Dictionary) -> int:
 	# Every indexed Fire Site must have reached the prefix; a dormant old Site pins it safely.

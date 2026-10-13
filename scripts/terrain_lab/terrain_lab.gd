@@ -42,6 +42,9 @@ var _fire_replay_tracking := false
 var _fire_replay_epoch := ""
 var _fire_replay_keep_tactical := false
 var _fire_replay_segments: Array[Dictionary] = []
+var _fire_replay_boundaries: Array = [] # Per segment: the live action clock values A_0..A_n.
+var _fire_replay_boundaries_unrecoverable := false # Legacy rows: exact path only, no quiet prefix.
+var _region_quiet_formal_steps: Array = [] # Live boundaries one quiet prefix replaces.
 var _fire_replay_segment_index := 0
 var _fire_replay_segment_offset := 0
 var _fire_replay_partial_cursor := -1.0 # Completed cursor inside the current journal step; -1 when none.
@@ -1719,6 +1722,62 @@ func _fire_replay_consume_step(result: Dictionary) -> void:
 	_fire_replay_segment_offset += 1
 	_fire_replay_partial_cursor = -1.0
 
+## Live publishes each step as action_end = clock.action_seconds + step, and the
+## Lab advances by action_end - action_begin. Rebuild the same values by the same
+## sum from an exact live value (the Site watermark, then each row end). The
+## rebuilt step must land bit-exactly on the row end; otherwise refuse.
+func _fire_replay_build_boundaries(segments: Array[Dictionary], start_action: float) -> Dictionary:
+	var result: Array = []
+	var begin := start_action
+	for index: int in segments.size():
+		var segment: Dictionary = segments[index]
+		var steps := int(segment.steps)
+		var end := float(segment.action_end)
+		if index > 0 and begin != float(segment.action_begin): return SiteRuntime.fail("REPLAY_STEP_UNRECOVERABLE", "segment begin")
+		if index == 0 and absf(begin - float(segment.action_begin)) > 0.00000001: return SiteRuntime.fail("REPLAY_STEP_UNRECOVERABLE", "watermark")
+		if steps == 1:
+			result.append([begin, end])
+			begin = end
+			continue
+		var found: Array = []
+		for width: float in [EXCHANGE_ACTION_STEP, ACTION_STEP, (end - begin) / steps]:
+			var values: Array = [begin]
+			var at := begin
+			for _step: int in steps:
+				at += width
+				values.append(at)
+			if at != end: continue
+			if not found.is_empty() and found != values: return SiteRuntime.fail("REPLAY_STEP_UNRECOVERABLE", "ambiguous width")
+			found = values
+		if found.is_empty(): return SiteRuntime.fail("REPLAY_STEP_UNRECOVERABLE", "no live width reproduces the row end")
+		result.append(found)
+		begin = end
+	return SiteRuntime.ok("", {"boundaries": result})
+
+## One exact replay step. A formal replay reproduces the live cold owner bit for
+## bit, and live drives that owner by advance_region_cold_stages: the same original
+## step in owner mode over the journal interval (no work-prefix retime at an event
+## boundary the interval's clock width overshoots by ulps). It keeps this replay's
+## own target so pending time is still measured. Every other replay is unchanged.
+func _fire_replay_exact_step(action_step: float, target: float, interval: Dictionary) -> Dictionary:
+	if _region_cold_formal.is_empty() or interval.is_empty():
+		return _advance_original_shared_step(action_step, target, interval)
+	var guarded := _region_original_interval_guard(interval)
+	if not guarded.ok: return guarded
+	var elapsed := float(interval.action_end) - float(interval.action_begin)
+	if _region_owner_action_limit(elapsed, float(interval.tactical_seconds)) + ACTION_TIME_EPSILON < elapsed:
+		return SiteRuntime.fail("REGION_OWNER_UNCLIPPED_ENDPOINT")
+	_region_owner_interval_active = true
+	_region_formula_active = false # advance_region_cold_stages: suppress_melee false.
+	var result := _advance_original_shared_step(elapsed, target, interval, true)
+	_region_owner_interval_active = false
+	# Live then finishes this cold owner's point with consume_region_point(false)
+	# (_finish_original_cold_region_points); the replay finishes it the same way.
+	if result.get("ok", false) and result.get("completed", false) and not _region_point_pending.is_empty():
+		var finished := consume_region_point(false)
+		if not finished.get("ok", false) or not finished.get("complete", false): return finished
+	return result
+
 func _next_fire_replay_interval() -> Dictionary:
 	while _fire_replay_segment_index < _fire_replay_segments.size():
 		var row: Dictionary = _fire_replay_segments[_fire_replay_segment_index]
@@ -1733,6 +1792,9 @@ func _next_fire_replay_interval() -> Dictionary:
 		var tactical_per_step := float(row.tactical_seconds) / steps
 		var action_begin := float(row.action_begin) + action_per_step * offset
 		var action_end := float(row.action_end) if offset + 1 == steps else float(row.action_begin) + action_per_step * (offset + 1)
+		if _fire_replay_segment_index < _fire_replay_boundaries.size():
+			action_begin = float(_fire_replay_boundaries[_fire_replay_segment_index][offset])
+			action_end = float(_fire_replay_boundaries[_fire_replay_segment_index][offset + 1])
 		var game_begin := float(row.game_begin) + game_per_step * offset
 		var game_end := float(row.game_end) if offset + 1 == steps else float(row.game_begin) + game_per_step * (offset + 1)
 		if _fire_replay_partial_cursor >= 0.0:
@@ -1771,6 +1833,7 @@ func replay_site_to(target_game_seconds: float, budget_usec: int = 0, max_steps:
 	var completed_steps := 0
 	var pending := _replay_pending_residue(float(window.pending))
 	while pending > 0.0:
+		_region_formal_duty_due(_replay_target - pending)
 		var fire_interval := _next_fire_replay_interval() if _fire_replay_tracking else {}
 		if _fire_replay_tracking and fire_interval.is_empty():
 			return SiteRuntime.fail("MISSING_FIRE_HISTORY", "Site 尚有共同時間欠秒，但原火攻 journal 已耗盡")
@@ -1804,7 +1867,7 @@ func replay_site_to(target_game_seconds: float, budget_usec: int = 0, max_steps:
 				action_step *= 1.0 - ACTION_TIME_EPSILON
 		if action_step <= 0.0 or not is_finite(action_step):
 			return SiteRuntime.fail("INVALID_TIME", "原補算時間不可表示")
-		var result := _advance_original_shared_step(action_step, _replay_target, fire_interval)
+		var result := _fire_replay_exact_step(action_step, _replay_target, fire_interval)
 		if not bool(result.get("ok", false)): return result
 		if not result.has("pending"):
 			return SiteRuntime.fail("CLOCK_CONTRACT", "補算步進未完成且無欠秒：" + str(result.get("status", "")))
@@ -1821,6 +1884,7 @@ func replay_site_to(target_game_seconds: float, budget_usec: int = 0, max_steps:
 				or absf(float(final_settlement.get("action_seconds", -1.0)) - _fire_replay_end_action) > 0.00000001 \
 			or absf(float(final_settlement.get("game_seconds", -1.0)) - _fire_replay_end_game) > 0.00000001:
 			return SiteRuntime.fail("CLOCK_CONTRACT", "冷火場未消費完整固定 journal 端點")
+	_region_formal_duty_due(target_game_seconds)
 	var parent: TerrainLab = get_parent() as TerrainLab
 	if parent != null and parent.site_controller != null and parent.site_controller.region_slot != null or terrain.site.has("region_snapshot"):
 		var region_completed := _region_finish_cold_replay(target_game_seconds)
@@ -5545,6 +5609,16 @@ func _region_advance_original_cold_site(data: TerrainData, target_seconds: float
 				return SiteRuntime.fail("CORRUPT_FIRE_JOURNAL", "原火攻回放區間格式非法")
 			replay_segments.append(segment)
 		_cold_replay_lab._fire_replay_segments = replay_segments
+		_cold_replay_lab._fire_replay_boundaries = []
+		if _cold_replay_lab._fire_replay_tracking:
+			var built := _cold_replay_lab._fire_replay_build_boundaries(replay_segments, float(data.site.fire_settlement.action_seconds))
+			if built.ok: _cold_replay_lab._fire_replay_boundaries = built.boundaries
+			# An older save's tolerance-merged rows: replay every step on the exact path.
+			elif str(built.get("code", "")) == "REPLAY_STEP_UNRECOVERABLE": _cold_replay_lab._fire_replay_boundaries_unrecoverable = true
+			else:
+				_cold_replay_lab.free()
+				_cold_replay_lab = null
+				return built
 		_cold_replay_lab._fire_replay_segment_index = 0
 		_cold_replay_lab._fire_replay_segment_offset = 0
 		_cold_replay_lab._fire_replay_partial_cursor = -1.0
@@ -10900,6 +10974,10 @@ func capture_region_fire_transport(context: Dictionary, expected_owners: Diction
 ## safety helper never becomes a second saved body or a clock publisher.
 var _region_cold_isolated: Dictionary = {}
 var _region_cold_formal: Dictionary = {} # Original retained replay transaction only.
+# Formal replay only: a private copy of the registry of the commit that published
+# the source Site, and the next evaluation time of this owner in it. Never live.
+var _region_private_duty_ledger: Dictionary = {}
+var _region_private_evaluation_at := -1.0
 
 func region_cold_original_inputs() -> Dictionary:
 	if terrain == null or site_controller == null or not restore_only or _region_bound_data != terrain:
@@ -11007,6 +11085,10 @@ func _region_advance_original_quiet_minute(target: float, game_seconds: float) -
 	var original := terrain
 	var action_begin := fire_action_cursor
 	var action_end := action_begin + action_seconds
+	if not _region_quiet_formal_steps.is_empty():
+		if absf(float(_region_quiet_formal_steps[0]) - action_begin) > ACTION_TIME_EPSILON or absf(float(_region_quiet_formal_steps.back()) - action_end) > maxf(ACTION_TIME_EPSILON, action_seconds * 0.000000001):
+			return SiteRuntime.fail("CLOCK_CONTRACT", "quiet prefix and live boundaries differ")
+		action_end = float(_region_quiet_formal_steps.back())
 	var opened := _begin_fire_boundary(action_end)
 	if not opened.ok: return opened
 	site_controller.prepare_settlement_interval()
@@ -11015,16 +11097,41 @@ func _region_advance_original_quiet_minute(target: float, game_seconds: float) -
 		return site_controller.latch_original_step_fault(SiteRuntime.fail("INTERRUPTED_STEP"))
 	_advance_fatigue(game_seconds)
 	_advance_tactical_ai(action_seconds)
-	_advance_duty_ai(game_seconds)
+	if not _region_quiet_formal_steps.is_empty():
+		# Live advances duty inside _advance_combat, one call per combat sub-step of
+		# each replaced live step, with that sub-step's own game seconds (no combat
+		# clock here). The same float sums cross each review at the same step.
+		for step: int in range(1, _region_quiet_formal_steps.size()):
+			var remaining := float(_region_quiet_formal_steps[step]) - float(_region_quiet_formal_steps[step - 1])
+			while remaining > ACTION_TIME_EPSILON:
+				var sub_step := minf(remaining, EXCHANGE_ACTION_STEP if exchange_enabled else ACTION_STEP)
+				remaining -= sub_step
+				_advance_duty_ai(SiteRuntime.game_seconds(sub_step, 0.0) * simulation_speed)
+	else:
+		_advance_duty_ai(game_seconds)
 	for actor: TerrainTestCharacter in combat_actors:
 		if actor_present(actor): actor.advance_combat(action_seconds, true, game_seconds)
 	if exchange_enabled:
 		# The actual quiet admission proved no paid flight or enabled Fire order.
 		# Its original Fire boundary below completes this same idle action interval.
-		_exchange_phase += action_seconds
-		while _exchange_phase + ACTION_TIME_EPSILON >= EXCHANGE_QUERY_STEP:
-			_exchange_phase -= EXCHANGE_QUERY_STEP
-			_resolve_exchanges()
+		if not _region_quiet_formal_steps.is_empty():
+			# Each replaced live step runs _advance_combat's own sub-steps over its exact
+			# width: min(remaining, the combat step), stopping at ACTION_TIME_EPSILON, and
+			# each sub-step wraps at most once. A width 1 ulp over the step adds the step.
+			for step: int in range(1, _region_quiet_formal_steps.size()):
+				var remaining := float(_region_quiet_formal_steps[step]) - float(_region_quiet_formal_steps[step - 1])
+				while remaining > ACTION_TIME_EPSILON:
+					var sub_step := minf(remaining, EXCHANGE_ACTION_STEP)
+					remaining -= sub_step
+					_exchange_phase += sub_step
+					if _exchange_phase + ACTION_TIME_EPSILON >= EXCHANGE_QUERY_STEP:
+						_exchange_phase -= EXCHANGE_QUERY_STEP
+						_resolve_exchanges()
+		else:
+			_exchange_phase += action_seconds
+			while _exchange_phase + ACTION_TIME_EPSILON >= EXCHANGE_QUERY_STEP:
+				_exchange_phase -= EXCHANGE_QUERY_STEP
+				_resolve_exchanges()
 	else:
 		TerrainArmy.begin_contact_step()
 		for actor: TerrainTestCharacter in combat_actors:
@@ -11132,6 +11239,7 @@ func _region_advance_original_cold_budget(target: float, budget_usec: int, max_s
 	if not window.ok: return window
 	while float(window.from) + ACTION_TIME_EPSILON < float(_region_cold_isolated.prefix_end) \
 		and steps < max_steps and Time.get_ticks_usec() < deadline and str(_region_cold_isolated.fallback).is_empty():
+		_region_formal_duty_due(float(window.from))
 		var admitted := _region_cold_quiet_admission()
 		if not admitted.ok:
 			_region_cold_isolated.fallback = str(admitted.get("code", "COLD_UNSUPPORTED_OWNER"))
@@ -11142,7 +11250,7 @@ func _region_advance_original_cold_budget(target: float, budget_usec: int, max_s
 			if not journal.get("ok", false):
 				if str(journal.get("code", "")) == "COLD_EXACT_REMAINDER":
 					var quantum := _next_fire_replay_interval()
-					var exact := _advance_original_shared_step(float(quantum.action_end) - float(quantum.action_begin), target, quantum)
+					var exact := _fire_replay_exact_step(float(quantum.action_end) - float(quantum.action_begin), target, quantum)
 					if not exact.get("ok", false) or not exact.get("completed", false): return exact
 					_fire_replay_consume_step(exact)
 					steps += 1
@@ -11159,17 +11267,23 @@ func _region_advance_original_cold_budget(target: float, budget_usec: int, max_s
 		# Every replaced original shared step runs one idle movement-coordinator
 		# tick; only that plain idle tick may be represented by the quiet prefix.
 		# A pending occupancy rebuild is the original first-step full tick; with no
-		# body moving it runs identically here and is one of the replaced steps.
-		var rebuild := combat_movement_coordinator != null and combat_movement_coordinator._occupancy_rebuild_pending and journal.is_empty()
+		# body moving it runs identically here and is one of the replaced steps. A
+		# formal journal fixes that first step's width; otherwise the original grid does.
+		var rebuild := combat_movement_coordinator != null and combat_movement_coordinator._occupancy_rebuild_pending \
+			and (journal.is_empty() or int(journal.get("consumed_steps", 0)) > 0)
 		if not _region_cold_coordinator_idle(rebuild):
 			_region_cold_isolated.fallback = "COLD_COORDINATOR_ACTIVE"
 			break
 		var logic_begin := fire_action_cursor
 		var opening := 0
 		if rebuild:
-			combat_movement_coordinator.combat_logic_tick_if_needed(EXCHANGE_ACTION_STEP if exchange_enabled else ACTION_STEP, _combat_actor_blocked_cells())
+			var opening_step := (float(journal.action_end) - float(journal.action_begin)) / int(journal.consumed_steps) if not journal.is_empty() \
+				else (EXCHANGE_ACTION_STEP if exchange_enabled else ACTION_STEP)
+			combat_movement_coordinator.combat_logic_tick_if_needed(opening_step, _combat_actor_blocked_cells())
 			opening = 1
+		_region_quiet_formal_steps = journal.get("live_boundaries", []) if not journal.is_empty() else []
 		var advanced := _region_advance_original_quiet_minute(target, game)
+		_region_quiet_formal_steps = []
 		if not advanced.ok: return advanced
 		if combat_movement_coordinator != null:
 			var replaced := int(journal.consumed_steps) if not journal.is_empty() else _region_cold_replaced_steps(logic_begin, fire_action_cursor)
@@ -11228,6 +11342,10 @@ func advance_region_cold_actual_fixed(source_data: TerrainData, target: float,
 		_region_cold_formal = {"slot": slot, "parent": parent, "source_data": source_data,
 			"source_sha256": str(identity.source_sha256), "selected_proof": selected.proof.duplicate(true),
 			"generation": int(slot._marker.get("generation", -1)), "target": target}
+		var ledger := _region_formal_duty_setup(slot, source_data)
+		if not ledger.ok:
+			_region_cold_formal = {}
+			return ledger
 	elif _region_cold_formal.get("slot") != slot or str(_region_cold_formal.source_sha256) != str(identity.source_sha256):
 		return SiteRuntime.fail("STALE_COLD_TRANSACTION")
 	# Each pending retry receives a fresh detached copy of the same durable source
@@ -11235,6 +11353,38 @@ func advance_region_cold_actual_fixed(source_data: TerrainData, target: float,
 	elif _region_cold_formal.get("source_data") != source_data:
 		_region_cold_formal.source_data = source_data
 	return _region_advance_original_cold_budget(target, budget_usec, max_steps, tail_seconds)
+
+## Live keeps each owner's duty cadence in the Slot registry and reviews it at the
+## owner's hourly evaluation. The formal replay reproduces both against a private
+## copy of the registry recorded by the commit that published the source Site.
+func _region_formal_duty_setup(slot: RegionSaveSlot, source_data: TerrainData) -> Dictionary:
+	var context: Variant = source_data.site.get("region_snapshot", {}).get("context", {})
+	if not context is Dictionary or not RegionSaveSlot.GameplayClock.whole(context.get("source_generation"), 0):
+		return SiteRuntime.fail("COLD_FORMAL_DUTY_SOURCE", "原 source 缺少發布世代")
+	var commit := slot.region_commit_control(int(context.source_generation) + 1)
+	if not commit.ok: return commit
+	var coordinate := slot._coordinate(source_data)
+	if not coordinate.ok: return coordinate
+	var key := slot._site_key(coordinate.site)
+	var selected: Dictionary = slot._marker.get("sites", {}).get(key, {})
+	if selected.is_empty() or commit.sites.get(key, {}) != selected:
+		return SiteRuntime.fail("COLD_FORMAL_DUTY_SOURCE", "發布世代未選定同一原 source")
+	_region_private_duty_ledger = commit.control.get("region_gameplay", {}).duplicate(true)
+	_region_private_evaluation_at = -1.0
+	var owner := str(source_data.site.get("id", ""))
+	for event: Dictionary in _region_private_duty_ledger.get("events", []):
+		if str(event.get("kind", "")) == "evaluation" and str(event.get("owner", "")) == owner \
+				and (_region_private_evaluation_at < 0.0 or float(event.at) < _region_private_evaluation_at):
+			_region_private_evaluation_at = float(event.at)
+	return SiteRuntime.ok("")
+
+## Live consumes an owner's evaluation at the first step boundary at or after its
+## time, before that step; the formal replay reviews duty at the same boundary.
+func _region_formal_duty_due(current_game: float) -> void:
+	if _region_cold_formal.is_empty() or _region_private_duty_ledger.is_empty(): return
+	while _region_private_evaluation_at >= 0.0 and current_game + ACTION_TIME_EPSILON >= _region_private_evaluation_at:
+		review_region_duty(_region_private_evaluation_at, _region_private_duty_ledger)
+		_region_private_evaluation_at += RegionSaveSlot.REGION_EVALUATION_SECONDS
 
 func _region_cold_formal_admission() -> Dictionary:
 	if _region_cold_formal.is_empty() or not _fire_replay_tracking:
@@ -11277,6 +11427,7 @@ func _region_cold_formal_admission() -> Dictionary:
 func _region_cold_quiet_journal(maximum_game_seconds: float) -> Dictionary:
 	var admitted := _region_cold_formal_admission()
 	if not admitted.ok: return admitted
+	if _fire_replay_boundaries_unrecoverable: return SiteRuntime.fail("COLD_EXACT_JOURNAL", "legacy journal rows: exact path")
 	var first := _next_fire_replay_interval()
 	if float(first.tactical_seconds) > ACTION_TIME_EPSILON or float(first.scale) != simulation_speed:
 		return SiteRuntime.fail("COLD_EXACT_JOURNAL")
@@ -11299,6 +11450,9 @@ func _region_cold_quiet_journal(maximum_game_seconds: float) -> Dictionary:
 		or absf((float(result.action_end) - float(result.action_begin)) * 60.0 * simulation_speed \
 			- (float(result.game_end) - float(result.game_begin))) > ACTION_TIME_EPSILON:
 		return SiteRuntime.fail("CLOCK_CONTRACT")
+	if _fire_replay_segment_index < _fire_replay_boundaries.size():
+		result.action_end = float(_fire_replay_boundaries[_fire_replay_segment_index][_fire_replay_segment_offset + count])
+		result["live_boundaries"] = _fire_replay_boundaries[_fire_replay_segment_index].slice(_fire_replay_segment_offset, _fire_replay_segment_offset + count + 1)
 	return SiteRuntime.ok("", result)
 
 # A completed Region point can retain its original paid siege contact batch.
