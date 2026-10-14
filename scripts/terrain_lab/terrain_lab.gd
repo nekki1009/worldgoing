@@ -9500,7 +9500,12 @@ func _region_prepare_original_bind(candidate: TerrainData, mode: String, slot: R
 	var ecology := SiteStore.prepare_ecology_candidate(target, context)
 	if not ecology.ok: child.free(); return ecology
 	target = ecology.data
-	var transformed := RegionCheckpoint.state_hash(source_copy.site) != RegionCheckpoint.state_hash(target.site)
+	# The bootstrapped source holds each ration delivery as its live original job;
+	# the target holds the recipe the Store saves. Compare both as the Store saves.
+	var durable_source: Dictionary = source_copy.site.duplicate(true)
+	var source_recipes := SiteStore._region_prepare_deliveries(durable_source)
+	if not source_recipes.ok: child.free(); return source_recipes
+	var transformed := RegionCheckpoint.state_hash(durable_source) != RegionCheckpoint.state_hash(target.site)
 	if transformed:
 		var projection := _region_project_original_bind_child(child, target, context)
 		if not projection.ok: child.free(); return projection
