@@ -596,10 +596,10 @@ func _recover_read_latest(preserve_live: bool, live_control: Dictionary) -> Dict
 
 func _recover_control_from_files() -> Dictionary:
 	var live_control: Dictionary = control
-	var live_marker := _marker.duplicate(true)
+	# Only the live marker generation is compared below; no copy of the marker.
+	var live_generation := int(_marker.get("generation", -1))
 	var preserve_live := _control_scope == folder
 	_marker = {}
-	control = {"logical_game_seconds": 0.0, "active_site_id": "", "fire_clock": _new_fire_clock(0.0)}
 	_control_scope = folder
 	# A commit is write-once and generations are strictly sequential: while the last
 	# fully validated commit still exists and its successor does not, it is still the
@@ -612,6 +612,9 @@ func _recover_control_from_files() -> Dictionary:
 			and not FileAccess.file_exists(commits_path.path_join("%020d.json" % (int(known.generation) + 1))):
 		recorded = known.recorded.duplicate(true)
 	else:
+		# Only the file read can leave this placeholder (an empty folder); the known
+		# commit path always replaces control below.
+		control = {"logical_game_seconds": 0.0, "active_site_id": "", "fire_clock": _new_fire_clock(0.0)}
 		var read := _recover_read_latest(preserve_live, live_control)
 		if not read.ok: return read
 		if read.get("empty", false): return {"ok": true}
@@ -619,14 +622,15 @@ func _recover_control_from_files() -> Dictionary:
 		_recover_known_commit[folder] = {"name": str(read.name), "generation": int(recorded.generation), "recorded": recorded.duplicate(true)}
 	var clock: Dictionary = recorded.control
 	_marker = recorded
+	# The live control is kept exactly when it is ahead of, or of the same generation
+	# as, the recorded one; only otherwise is the recorded clock copied in.
+	if preserve_live and (float(live_control.logical_game_seconds) > float(clock.logical_game_seconds) or live_generation == int(recorded.generation)):
+		control = live_control
+		return {"ok": true}
 	control = clock.duplicate(true)
 	if not preserve_live and control.has("region_gameplay"):
 		# A persisted activation records history, not a bind in this process.
 		for value: Dictionary in control.region_gameplay.modes.values(): value.activation = {}
-	if preserve_live and float(live_control.logical_game_seconds) > float(control.logical_game_seconds):
-		control = live_control
-	elif preserve_live and int(live_marker.get("generation", -1)) == int(recorded.generation):
-		control = live_control
 	return {"ok": true}
 
 static func _normalize_journey(value: Dictionary) -> Dictionary:
