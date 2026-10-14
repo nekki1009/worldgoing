@@ -1,0 +1,132 @@
+{
+  "project": "D:/worldgoing",
+  "powershell": "pwsh",
+  "verifier": "C:/Users/Nekki/.codex/skills/godot-runtime-verify/scripts/verify_godot.ps1",
+  "verifier_sha256": "b74380127076b65d2b5ca3699950ed84c41d3ee1d60741687b4a0b258bd1dec1",
+  "godot_executable": "C:/Users/Nekki/Godot_v4.7.2-stable_mono_win64/Godot_v4.7.2-stable_mono_win64_console.exe",
+  "run_output": "output/site_army_mechanism_rebuild",
+  "source_head": "354b00c2e517e5d8ad4fa1aa63ff7f0d5f3602a8",
+  "source_window": null,
+  "committed_source_sha256": {
+    "res://AGENTS.md": "083efe23ba9badbfb043f9d31694a7c5015d612496caaa1905d836029321b30b",
+    "res://PROJECT_ARCHITECTURE.md": "6659070b3750b0b1aaa729a5f7667dc1e0563034a6c36b1fb0c595f4840b77bc",
+    "res://PROJECT_COMMAND_CENTER.md": "6ce1c980a00b041b23299e74cec5390925b7b6b0a1bc286142940acd5f01f200",
+    "res://project.godot": "3f8ff6156c5805146e38461d8214f327eab3d9800ba2b2c798a5a11825dee91f",
+    "res://scripts/tests/site_army_mechanism_test.gd": "3211409c6ab94be7facfb5ac5f916a5ad695aa9900d398370a29d2071a66ee60",
+    "res://scripts/tests/fixtures/site_army_mechanism_gate.gd": "89f6c14597652289cd912148ac5e3f3570d2da7cff09a334f0565c36d7694954",
+    "res://scripts/tests/site_army_oracle_stream_test.gd": "7de82a82610ed20cca71904b0ee111ea3f6432006b973a75faebc1632fb0c04a",
+    "res://scripts/terrain_lab/terrain_army.gd": "f8b7c4c5a56caab2a40ab060a958b82494dc5892f92cb06694648c3e12c58562",
+    "res://scripts/terrain_lab/terrain_army_batch_view.gd": "fb3343855f6911e4ebf513a503ee33ee6a7e3dfc0cafab6f8c6640a26f9c36c7",
+    "res://native/army_idle/army_idle.cpp": "69d560ba282548c486f379299157610bfd368f55c776201bde88282c539b5558",
+    "res://scripts/tests/site_army_hot_store_native_test.gd": "cdc4ec6bc97672f445f0ec0f3d2802e93f78d7be30239ed54c7f111b125b7f24",
+    "res://scripts/tests/site_army_hot_prepare_test.gd": "7013e011a624b629aa2f3260f74039a5abca37216895c80e407944cded952edb",
+    "res://scripts/tests/site_army_hot_lifecycle_test.gd": "df2c7836e3be54948be38e7395d4cc26af4bcc2b37c8a9f51eb14df934aee5bb",
+    "res://scripts/tests/site_army_hot_projection_native_test.gd": "77a7aa938e5aa44dc0f51ff26093e521527f52e6a7aa35414e9fcbadc59f4c7e",
+    "res://scripts/tests/site_army_retained_batch_test.gd": "38d890957a252c4bc052a0c6cb89ae1ea78199fcd3e2605ae7afdcb1358fc7f3",
+    "res://scripts/tests/site_army_hot_retained_integration_test.gd": "8c10e34c0664a7788b84ef7a4ad9ba317d1d81e4480f24b5c23124802f64bc73",
+    "res://scripts/tests/verify_site_army_hot_pixels.ps1": "824846fdc45f529c3d45f953172f8526b1f1b9a7fdbd932d73b84e0d88beea07",
+    "res://scripts/tests/site_army_native_exact_oracle_test.gd": "69f877309681e22bc3102a56b2760124531da2726c1f2adc86431bcea57ca921",
+    "res://scripts/tests/site_army_scale_realtime_test.gd": "8e0c3d5be03f8652975c8d2284284361f01e80d01df552b37e35459d7a6e3c8f"
+  },
+  "raw_source_sha256": {
+    "res://project.godot": "3f8ff6156c5805146e38461d8214f327eab3d9800ba2b2c798a5a11825dee91f",
+    "res://scripts/tests/site_army_mechanism_test.gd": "3211409c6ab94be7facfb5ac5f916a5ad695aa9900d398370a29d2071a66ee60",
+    "res://scripts/tests/fixtures/site_army_mechanism_gate.gd": "89f6c14597652289cd912148ac5e3f3570d2da7cff09a334f0565c36d7694954",
+    "res://scripts/tests/site_army_oracle_stream_test.gd": "7de82a82610ed20cca71904b0ee111ea3f6432006b973a75faebc1632fb0c04a",
+    "res://scripts/terrain_lab/terrain_army.gd": "f8b7c4c5a56caab2a40ab060a958b82494dc5892f92cb06694648c3e12c58562",
+    "res://scripts/terrain_lab/terrain_army_batch_view.gd": "fb3343855f6911e4ebf513a503ee33ee6a7e3dfc0cafab6f8c6640a26f9c36c7",
+    "res://native/army_idle/army_idle.cpp": "d92b31d30369ace989dc457987c2d556b66eaf9993992137341cf11870554b55",
+    "res://scripts/tests/site_army_hot_store_native_test.gd": "cdc4ec6bc97672f445f0ec0f3d2802e93f78d7be30239ed54c7f111b125b7f24",
+    "res://scripts/tests/site_army_hot_prepare_test.gd": "7013e011a624b629aa2f3260f74039a5abca37216895c80e407944cded952edb",
+    "res://scripts/tests/site_army_hot_lifecycle_test.gd": "df2c7836e3be54948be38e7395d4cc26af4bcc2b37c8a9f51eb14df934aee5bb",
+    "res://scripts/tests/site_army_hot_projection_native_test.gd": "77a7aa938e5aa44dc0f51ff26093e521527f52e6a7aa35414e9fcbadc59f4c7e",
+    "res://scripts/tests/site_army_retained_batch_test.gd": "38d890957a252c4bc052a0c6cb89ae1ea78199fcd3e2605ae7afdcb1358fc7f3",
+    "res://scripts/tests/site_army_hot_retained_integration_test.gd": "8c10e34c0664a7788b84ef7a4ad9ba317d1d81e4480f24b5c23124802f64bc73",
+    "res://scripts/tests/verify_site_army_hot_pixels.ps1": "824846fdc45f529c3d45f953172f8526b1f1b9a7fdbd932d73b84e0d88beea07",
+    "res://scripts/tests/site_army_native_exact_oracle_test.gd": "69f877309681e22bc3102a56b2760124531da2726c1f2adc86431bcea57ca921",
+    "res://scripts/tests/site_army_scale_realtime_test.gd": "8e0c3d5be03f8652975c8d2284284361f01e80d01df552b37e35459d7a6e3c8f",
+    "res://native/army_idle/bin/army_idle.windows.x86_64.dll": null
+  },
+  "timeouts": {
+    "manifest_before": {
+      "seconds": null,
+      "source": null,
+      "transport_seconds": null
+    },
+    "hot_store_smoke": {
+      "seconds": null,
+      "source": null,
+      "transport_seconds": null
+    },
+    "hot_prepare_smoke": {
+      "seconds": null,
+      "source": null,
+      "transport_seconds": null
+    },
+    "hot_lifecycle_smoke": {
+      "seconds": null,
+      "source": null,
+      "transport_seconds": null
+    },
+    "hot_projection_smoke": {
+      "seconds": null,
+      "source": null,
+      "transport_seconds": null
+    },
+    "native_exact_oracle": {
+      "seconds": null,
+      "source": null,
+      "transport_seconds": null
+    },
+    "oracle_stream_selfcheck": {
+      "seconds": null,
+      "source": null,
+      "transport_seconds": null
+    },
+    "retained_batch_smoke": {
+      "seconds": null,
+      "source": null,
+      "transport_seconds": null
+    },
+    "hot_retained_integration": {
+      "seconds": null,
+      "source": null,
+      "transport_seconds": null
+    },
+    "scope": {
+      "seconds": null,
+      "source": null,
+      "transport_seconds": null
+    },
+    "oracle_A": {
+      "seconds": null,
+      "source": null,
+      "transport_seconds": null
+    },
+    "oracle_B0": {
+      "seconds": null,
+      "source": null,
+      "transport_seconds": null
+    },
+    "oracle_B1": {
+      "seconds": null,
+      "source": null,
+      "transport_seconds": null
+    },
+    "oracle_B2": {
+      "seconds": null,
+      "source": null,
+      "transport_seconds": null
+    },
+    "oracle_merge": {
+      "seconds": null,
+      "source": null,
+      "transport_seconds": null
+    },
+    "manifest_after": {
+      "seconds": null,
+      "source": null,
+      "transport_seconds": null
+    }
+  }
+}
