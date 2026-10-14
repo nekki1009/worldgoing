@@ -89,6 +89,25 @@ func _sea_graphs(in_transit: bool) -> Dictionary:
 		graphs["party"] = {"root": owners.scene.root.duplicate(true), "nodes": owners.scene.nodes.duplicate(true), "transport": owners.transport.duplicate(true)}
 	return graphs
 
+## A fresh-Slot reopen restores the actual destination cold owner from the same
+## selected commit, exactly as the inherited reopen restores its cold action owner,
+## and the common factory adopts that same original. Without it the fresh Slot has
+## no original for the destination and refuses to advance its stale saved body.
+func _restore_sea_goal_owner() -> bool:
+	var cold_read: Dictionary = slot.open_site(sea_goal_coordinate)
+	if not _check(cold_read.ok and cold_read.data.site.has("region_snapshot"), "mode-aware open retains the destination's real cold fullgraph", cold_read.get("code")): return false
+	var next_cold := _restore_selected(cold_read.data, slot, true)
+	if next_cold == null: return false
+	slot._region_original_labs[str(next_cold.terrain.site.id)] = next_cold
+	var adopted: Dictionary = lab._region_gameplay_owner_lab(str(next_cold.terrain.site.id), "cold_exact")
+	if not _check(adopted.ok and adopted.lab == next_cold, "actual factory uses the same positively restored destination cold owner", adopted.get("code")): return false
+	_freeze(next_cold)
+	return true
+
+func _reopen_actual_partial() -> bool:
+	if not await super._reopen_actual_partial(): return false
+	return _restore_sea_goal_owner()
+
 func _sea_reopen(in_transit: bool) -> bool:
 	if not _observe_ship_food_results(): return false
 	var clock := [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence]
@@ -109,6 +128,7 @@ func _sea_reopen(in_transit: bool) -> bool:
 	if restored == null: return false
 	lab = restored; controller = lab.site_controller; slot = reopened; action_owner = lab
 	lab.simulation_speed = action_speed
+	if not _restore_sea_goal_owner(): return false
 	var next_graphs := _sea_graphs(in_transit)
 	if not _check(not next_graphs.is_empty() and graphs == next_graphs and reference == slot.region_registry().parties[sea_token] and clock == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "true selected reopen preserves both full Sites and the full actual party graph without clock drift"): return false
 	if in_transit:
