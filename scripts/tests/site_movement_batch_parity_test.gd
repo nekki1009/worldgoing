@@ -49,11 +49,31 @@ func _script_state(owner: Object) -> Dictionary:
 		if (int(property.usage) & PROPERTY_USAGE_SCRIPT_VARIABLE) == 0:
 			continue
 		var name := str(property.name)
+		# The platform BFS cache is an exact derived result keyed by the world's own
+		# terrain instance; it is not plan state, so each world may hold its own.
+		if name.begins_with("platform_bfs_cache_"):
+			continue
 		var value: Variant = owner.get(name)
 		if not value is Object:
 			state[name] = value
 	for name: StringName in owner.get_meta_list():
 		state["@" + str(name)] = owner.get_meta(name)
+	return state
+
+# Committed intents carry the owner's plan objects; like _script_state, compare
+# their plain values only (each world owns its own plan instances).
+func _batch_state(members: Dictionary) -> Dictionary:
+	var state := {}
+	for mid: Variant in members:
+		var intent: Variant = members[mid]
+		if intent is Dictionary:
+			var plain := {}
+			for key: Variant in intent:
+				if not intent[key] is Object:
+					plain[key] = intent[key]
+			state[mid] = plain
+		else:
+			state[mid] = intent
 	return state
 
 func _proposal_state(grid: SiteMovementReservationGrid) -> Array:
@@ -85,7 +105,7 @@ func _state(world: Dictionary) -> Dictionary:
 			"proposal_count": army.proposal_count, "accepted_count": army.accepted_count,
 			"rejected_count": army.rejected_dependency_count,
 			"reserved": army._reserved_cells.duplicate(),
-			"batch_members": army._combat_batch_members.duplicate(),
+			"batch_members": _batch_state(army._combat_batch_members),
 			"absent_slots": army._combat_absent_slots.duplicate(),
 			"move_plan": _script_state(army.get_active_move_plan()),
 			"deployment_plan": _script_state(army.get_active_deployment_plan()),
