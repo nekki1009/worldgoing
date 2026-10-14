@@ -127,6 +127,18 @@ func _enable(team: TerrainArmy) -> void:
 func _decide(f: Dictionary, seconds: float = 0.51) -> void:
 	f.lab._advance_tactical_ai(seconds)
 
+# Nekki 2026-10-13 (retreat rule, option 3): with intact morale the tactical AI may
+# withdraw in good order to a destination (SiteArmyAI._withdraw). It must never rout.
+func _orderly_withdrawal(team: TerrainArmy) -> bool:
+	return team.combat_order in [TerrainArmy.CombatOrder.HOLD, TerrainArmy.CombatOrder.RETREAT] and not team.is_sustain_routed() \
+		and str(team._retreat_resolution.get("reason", "")) != "morale_collapse"
+
+# An accepted withdrawal finishes before the AI reviews again (arrival returns HOLD).
+func _finish_withdrawal(f: Dictionary, team: TerrainArmy) -> void:
+	for window in range(40):
+		if team.combat_order != TerrainArmy.CombatOrder.RETREAT or not _within_deadline(): return
+		_advance(f, 0.5)
+
 func _no_overlap(f: Dictionary) -> bool:
 	var occupied := {}
 	var reserved := {}
@@ -284,13 +296,15 @@ func _non_morale_retreat_guards() -> void:
 			team.tactical_ai_recovering = true
 		var initial_cells := team.cells.duplicate()
 		for decision in range(3): _decide(f)
-		_check(not team.is_sustain_routed() and team.combat_order == TerrainArmy.CombatOrder.HOLD,
-			"Non-morale condition must not create RETREAT")
+		_check(team.tactical_ai_recovering and _orderly_withdrawal(team),
+			"Non-morale condition may hold or withdraw in good order, never rout")
 		_check(team.cells == initial_cells, "AI caution must not relocate original people")
 		var before := team.capture_combat_state()
-		var refused := team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.RETREAT, Vector2i(16, 24))
+		# A captain RETREAT with a destination is an allowed orderly retreat (round 54,
+		# site_tactical_ai_retreat_test); a goal-less one stays refused before a collapse.
+		var refused := team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.RETREAT)
 		_check(not bool(refused.ok) and team.capture_combat_state() == before,
-			"Direct pre-collapse RETREAT must be rejected without changing the original army")
+			"Direct goal-less pre-collapse RETREAT must be rejected without changing the original army")
 		_record(f)
 		_dispose(f)
 
@@ -302,10 +316,10 @@ func _recovery_and_rout() -> void:
 	_enable(team)
 	PersonFatigue.write(team.combat_units[0], "fatigue", 85.0)
 	_decide(f)
-	_check(team.combat_order == TerrainArmy.CombatOrder.HOLD and team.tactical_ai_recovering, "Fatigue without a sustain rout must hold")
+	_check(_orderly_withdrawal(team) and team.tactical_ai_recovering, "Fatigue without a sustain rout must hold or withdraw in good order")
 	_advance(f, 0.5)
-	_check(team.combat_order == TerrainArmy.CombatOrder.HOLD and team.tactical_ai_recovering,
-		"Fatigue recovery must not manufacture a retreat")
+	_check(_orderly_withdrawal(team) and team.tactical_ai_recovering,
+		"Fatigue recovery must not manufacture a rout")
 	PersonFatigue.write(team.combat_units[0], "fatigue", 60.0)
 	_decide(f, 3.0)
 	_check(team.tactical_ai_recovering and team.combat_order not in [TerrainArmy.CombatOrder.ATTACK, TerrainArmy.CombatOrder.PURSUE],
@@ -315,6 +329,7 @@ func _recovery_and_rout() -> void:
 	_decide(f, 3.0)
 	_check(team.tactical_ai_recovering, "Low morale must prevent premature recovery")
 	state.morale = 70.0
+	_finish_withdrawal(f, team)
 	_decide(f, 3.0)
 	_check(not team.tactical_ai_recovering and team.combat_order in [TerrainArmy.CombatOrder.MOVE, TerrainArmy.CombatOrder.ATTACK],
 		"Recovered fatigue/morale and favourable strength must resume approach")
@@ -327,7 +342,7 @@ func _recovery_and_rout() -> void:
 	_enable(team)
 	state.morale = 20.0
 	_decide(f, 3.0)
-	_check(team.tactical_ai_recovering and team.combat_order == TerrainArmy.CombatOrder.HOLD and not state.routed,
+	_check(team.tactical_ai_recovering and _orderly_withdrawal(team) and not state.routed,
 		"A low morale snapshot cannot replace the original sustain rout transition")
 	state.morale = 100.0
 	state.routed = true
@@ -766,14 +781,16 @@ func _ammunition_and_mixed_commander() -> void:
 			_dispose(f)
 			continue
 		_enable(team)
+		var initial_gap := _nearest_gap(team, f.teams[1])
 		_decide(f)
-		_check(team.tactical_ai_recovering and team.combat_order == TerrainArmy.CombatOrder.HOLD,
-			"Empty ammunition without a sustain rout must hold instead of retreating or falsely attacking")
+		_check(team.tactical_ai_recovering and _orderly_withdrawal(team),
+			"Empty ammunition without a sustain rout must hold or withdraw in good order, never falsely attack")
 		_advance(f, 1.0)
-		_check(f.lab.ranged_shots == 0 and team.accepted_count == 0, "Empty ammunition must not fabricate shots or retreat movement")
-		_check(team.combat_order == TerrainArmy.CombatOrder.HOLD, "Ranged caution persists before resupply")
+		_check(f.lab.ranged_shots == 0 and _nearest_gap(team, f.teams[1]) >= initial_gap, "Empty ammunition must not fabricate shots or advance on the enemy")
+		_check(_orderly_withdrawal(team), "Ranged caution persists before resupply")
 		var ammo := str(profile.ammo)
 		for row: Dictionary in team.combat_units: row.cargo[ammo] = 6
+		_finish_withdrawal(f, team)
 		_decide(f, 3.0)
 		_check(not team.tactical_ai_recovering and team.combat_order in [TerrainArmy.CombatOrder.MOVE, TerrainArmy.CombatOrder.ATTACK],
 			"Real ammunition replenishment permits recovery and a new approach")
