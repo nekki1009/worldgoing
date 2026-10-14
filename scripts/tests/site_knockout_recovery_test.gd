@@ -72,6 +72,9 @@ func run() -> void:
 	if not _test_native_clock():
 		return
 	print("SITE_KNOCKOUT_RECOVERY_PASS")
+	# Headless skips the production release at tree exit (_retain_contact_sources_until_exit);
+	# free the static contact rigs before the first draw (as round 62). Runs after every check.
+	TerrainArmy.release_contact_source()
 	quit(0)
 
 func _fail(message: String) -> void:
@@ -397,4 +400,7 @@ func _test_commandless_duel() -> void:
 	lab.combat_armies.clear()
 	lab.free()
 	print("SITE_KNOCKOUT_DUEL_PASS")
+	# Headless skips the production release at tree exit (_retain_contact_sources_until_exit);
+	# free the static contact rigs before the first draw (as round 62). Runs after every check.
+	TerrainArmy.release_contact_source()
 	quit(0)

@@ -24,6 +24,9 @@ func _run() -> void:
 			_check_seed(baseline, count, native_front, false)
 	_check_seed(baseline, 100, true, true)
 	print("ARMY_SEED_PREDICATES_PASS canonical 200/5000 native and fallback; custom terrain calls; original state/claims/RNG/external order")
+	# Headless skips the production release at tree exit (_retain_contact_sources_until_exit);
+	# free the static contact rigs before the first draw (as round 62). Runs after every check.
+	TerrainArmy.release_contact_source()
 	quit(0)
 
 func _check_seed(baseline: GDScript, count: int, native_front: bool, custom_terrain: bool) -> void:

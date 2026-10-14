@@ -223,4 +223,7 @@ func _run() -> void:
 			print("ARMY_PRESENCE_OWNER_PASS people=", count * 2, " native=", accelerated, " rows=", rows)
 			_dispose(before); _dispose(after)
 	print("ARMY_PRESENCE_PASS 100 seeded layouts/movement/KO/get_up/captive/departed/member/64-bit ties/alias/hysteresis/empty/COW/coercion/player; exact frozen phase10 owner state/claims/RNG")
+	# Headless skips the production release at tree exit (_retain_contact_sources_until_exit);
+	# free the static contact rigs before the first draw (as round 62). Runs after every check.
+	TerrainArmy.release_contact_source()
 	quit(0)
