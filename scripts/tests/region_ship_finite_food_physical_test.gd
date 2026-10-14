@@ -92,6 +92,9 @@ func _setup_action_world() -> bool:
 	for key: String in data.resource_base: Env.change(data, key, {"cleared": true, "remaining": 0})
 	data.site.capacity = 100000
 	for resource: String in Env.ITEM_NAMES: data.site.inventory[resource] = 1000
+	# The authored genesis food is finite grain only. Every other original food would
+	# be taken first (Sustain.FOODS order: fish, meat, wild_food, grain) by a Depot fill.
+	for food: String in PhysicalSustain.FOODS: data.site.inventory[food] = 0
 	data.site.inventory.grain = int(ship_food_initial)
 	data.site.depot_cell = data.index(Vector2i(30, 20))
 	if not _check(SiteRuntime.initialize_item_storage(data.site).ok, "original Depot owns the finite authored genesis grain and building stock"): return false
