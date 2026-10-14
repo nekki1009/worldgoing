@@ -13,6 +13,10 @@ const CAPACITY := {"cart": 100, "wagon": 300}
 const LENGTH := {"cart": 1, "wagon": 3}
 var controller: Variant
 var lab: Variant
+# Ship id -> the last refused route step of a live NPC ship (code, action, destination,
+# facing). Observation only: never saved, never part of the owner graph, never read
+# by movement. Cleared when that ship next commits a step.
+var ship_step_refusals: Dictionary = {}
 
 static func is_siege(value: Variant) -> bool:
 	return Runtime.SIEGE_DEFINITIONS.has(str(value.get("kind", "")) if value is Dictionary else str(value))
@@ -1991,6 +1995,9 @@ func update_ships(delta: float) -> void:
 				return
 			if selected.get("eligible", false):
 				var reserved := _commit_ship_step(vehicle, selected.destination, selected.facing, str(selected.action), bool(selected.docking))
+				if reserved.ok: ship_step_refusals.erase(str(vehicle.id))
+				else: ship_step_refusals[str(vehicle.id)] = {"code": str(reserved.get("code", "")), "action": str(selected.action), "action_index": int(selected.get("action_index", -1)),
+					"destination": selected.destination, "facing": selected.facing, "cell": int(vehicle.cell)}
 				if not reserved.ok and str(reserved.get("code", "")) not in ["NO_SPACE", "BUSY", "NO_CREW"]:
 					controller.latch_original_step_fault(reserved)
 					return
