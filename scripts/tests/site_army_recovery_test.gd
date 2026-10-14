@@ -197,4 +197,8 @@ func _run() -> void:
 			print("ARMY_RECOVERY_OWNER_PASS people=", count * 2, " native=", accelerated, " rows=", rows)
 			_dispose(before); _dispose(after)
 	print("ARMY_RECOVERY_PASS 5000 idle and 5000 unconscious numeric rows, signed-zero/grace/cooldown/KO boundaries/key types/aliasing; rejection/subclass; same-clock state/claims/RNG native and GD parity; archived phase11 body retained")
+	# Headless skips the production release at tree exit (_retain_contact_sources_until_exit);
+	# free the static contact rigs before the first draw so the dummy renderer never
+	# updates their material instances. Runs after every check.
+	TerrainArmy.release_contact_source()
 	quit(0)
