@@ -37,6 +37,10 @@ var actor: TerrainTestCharacter
 var site_visible := false
 var render_pending := false
 var _pending_display: Dictionary = {}
+var _completion_job: Dictionary = {}
+var _completion_generation := 0
+const COMPLETION_BUDGET_USEC := 2000
+const COMPLETION_MAX_UNITS := 4096
 var _pending_display_site := Vector2i(-1, -1)
 var _route: Array[Vector2i] = []
 var _bounds: Array = []
@@ -623,12 +627,15 @@ func _show_site(result: Dictionary) -> Dictionary:
 		return {"ok": false, "code": "INVALID_TERRAIN"}
 	if not site_visible and not render_pending:
 		_overview_view = {"scale": _scale, "offset": _offset}
+	_completion_generation += 1
+	_completion_job = {}
 	_clear_resource_view()
 	terrain = candidate
 	_renderer.display(terrain)
 	_clear_actor()
 	render_pending = _renderer.display_pending
 	if render_pending:
+		site_visible = false
 		_pending_display = result
 		_display_context = preview_context()
 		_pending_display_site = selected_site
@@ -652,6 +659,9 @@ func _finish_display(result: Dictionary) -> Dictionary:
 		_resource_view.name = "SiteResources"
 		_renderer.add_child(_resource_view)
 		_resource_view.display(terrain)
+	return _publish_display(result)
+
+func _publish_display(result: Dictionary) -> Dictionary:
 	var spawn := terrain.spawn_cell
 	if not terrain.is_walkable(spawn):
 		spawn = Vector2i(-1, -1)
@@ -685,7 +695,62 @@ func _finish_display(result: Dictionary) -> Dictionary:
 	_fit_view()
 	return result
 
+func _completion_current() -> bool:
+	return (render_pending and not _completion_job.is_empty()
+		and int(_completion_job.generation) == _completion_generation
+		and _completion_job.data == terrain and _renderer.data == terrain
+		and int(_completion_job.renderer_generation) == _renderer._display_generation
+		and selected_site == _pending_display_site and _preview_context_current(_display_context))
+
+func _begin_completion() -> void:
+	_completion_job = {"generation": _completion_generation, "data": terrain,
+		"renderer_generation": _renderer._display_generation, "stage": "environment"}
+	if terrain.spawn_cell != Vector2i(-1, -1):
+		var job := Env.begin_initialize(terrain, str(_pending_display.get("metadata", {}).get("site_id", "")))
+		if job.is_empty():
+			_cancel_display()
+			_status.text = "固定地理環境無法準備；保留地圖。"
+			return
+		_completion_job.environment = job
+	else: _completion_job.stage = "resources"
+
+func _advance_completion() -> void:
+	if not _completion_current():
+		_cancel_display()
+		return
+	var job: Dictionary = _completion_job
+	if job.stage == "environment":
+		if Env.step_initialize(job.environment, COMPLETION_BUDGET_USEC, COMPLETION_MAX_UNITS):
+			job.erase("environment")
+			job.stage = "resources"
+	elif job.stage == "resources":
+		if not terrain.site.is_empty() and not terrain.resource_base.is_empty():
+			if _resource_view == null:
+				_resource_view = ResourceViewScript.new()
+				_resource_view.name = "SiteResources"
+				_renderer.add_child(_resource_view)
+				job.resource_generation = _resource_view.begin_display(terrain)
+			elif _resource_view.data != terrain or _resource_view._display_generation != int(job.resource_generation):
+				_cancel_display()
+				return
+			elif _resource_view.step_display(COMPLETION_BUDGET_USEC, COMPLETION_MAX_UNITS):
+				job.stage = "publish"
+		else: job.stage = "publish"
+	elif job.stage == "publish":
+		# This is a later process frame than the last resource build unit.
+		if not _completion_current():
+			_cancel_display()
+			return
+		var result := _pending_display
+		_pending_display = {}
+		_completion_job = {}
+		render_pending = false
+		_publish_display(result)
+	if not _completion_job.is_empty() and not _completion_current(): _cancel_display()
+
 func _cancel_display() -> void:
+	_completion_generation += 1
+	_completion_job = {}
 	render_pending = false
 	_pending_display = {}
 	_clear_resource_view()
@@ -740,6 +805,8 @@ func show_overview() -> void:
 func _clear_resource_view() -> void:
 	if _resource_view == null:
 		return
+	_resource_view.cancel_display()
+	_resource_view.data = null
 	_resource_view.visible = false
 	_renderer.remove_child(_resource_view)
 	_resource_view.queue_free()
@@ -877,11 +944,8 @@ func _process(_delta: float) -> void:
 	if render_pending and not _renderer.display_pending:
 		if selected_site != _pending_display_site or not _preview_context_current(_display_context):
 			_cancel_display()
-		else:
-			var prepared := _pending_display
-			_pending_display = {}
-			render_pending = false
-			_finish_display(prepared)
+		elif _completion_job.is_empty(): _begin_completion()
+		else: _advance_completion()
 	if not site_visible or actor == null:
 		return
 	if not actor.is_moving() and not _route.is_empty():
@@ -893,6 +957,11 @@ func _process(_delta: float) -> void:
 	_overlay.queue_redraw()
 
 func _exit_tree() -> void:
+	if render_pending: _cancel_display()
+	else:
+		_completion_generation += 1
+		_completion_job = {}
+		_clear_resource_view()
 	if _preview_thread != null:
 		_preview_thread.wait_to_finish()
 		_preview_thread = null

@@ -2,6 +2,10 @@ extends SceneTree
 
 const SCENE_PATH := "res://scenes/region_lab/RegionLab.tscn"
 const TestSource = preload("res://scripts/tests/region_lab_test_source.gd")
+const ResourceView = preload("res://scripts/terrain_lab/site_resource_view.gd")
+const LabScript = preload("res://scripts/region_lab/region_lab.gd")
+const Renderer = preload("res://scripts/terrain_lab/terrain_renderer.gd")
+const Terrain = preload("res://scripts/terrain_lab/terrain_data.gd")
 const Env = preload("res://scripts/terrain_lab/site_environment.gd")
 const YUSHAN := Vector2i(1228, 12981)
 const TAIPEI := Vector2i(1535, 13847)
@@ -345,7 +349,109 @@ func _run() -> void:
 	if DisplayServer.get_name() != "headless" and max_frame_ms > 50.0:
 		_failures.append("frame_gap_over_50ms")
 	_report["scope"] = "Isolated RegionLab scene; formal project main entry not changed"
+	_completion_contracts() # After the cold/normal measurement; do not prewarm its owners.
 	_finish()
+
+func _completion_fixture() -> TerrainData:
+	var data := Terrain.new()
+	data.size = Vector2i(4, 4); data.spawn_cell = Vector2i.ZERO
+	data.seed_value = 47
+	data.parameters = {"composition": "fixed_geography", "fixed_land_condition_rule": "terrain_mapped_potential_v1",
+		"fixed_base": {"land_condition_rule": "terrain_mapped_potential_v1"}}
+	data.surface_types.resize(16); data.surface_types.fill(Terrain.Surface.ROCK)
+	data.surface_types[0] = Terrain.Surface.WATER; data.surface_types[1] = Terrain.Surface.SAND
+	data.surface_types[2] = Terrain.Surface.WETLAND
+	data.height_levels.resize(16); data.height_levels.fill(2)
+	data.ramp_edges.resize(16); data.flags.resize(16); data.flags.fill(Terrain.Flag.WALKABLE)
+	data.water_kind.resize(16); data.water_kind[0] = 1
+	data.water_body.resize(16); data.water_body.fill(-1); data.water_body[0] = 0
+	for entry: Array in [["tree", Env.Kind.TIMBER, 4, [4]], ["animal", Env.Kind.WILDLIFE, 5, [5, 9, 13]], ["rock", Env.Kind.STONE, 6, [6]], ["fish", Env.Kind.FISH, 0, [0, 4, 8]]]:
+		data.resource_base[str(entry[0])] = {"kind": int(entry[1]), "cell": int(entry[2]), "cells": entry[3], "capacity": 8, "blocks": false, "variant": 0}
+	return data
+
+func _environment_projection(data: TerrainData) -> Array:
+	return [data.site, data.fertility, data.moisture, data.drainage, data.foundation, data.groundwater,
+		data.resources_at, data.static_blocked, data.feature_at, data.walk_height_levels,
+		data.walk_ramp_edges, data.bridge_walkable, data.facility_cells,
+		data.navigation_revision, data.environment_revision, data.resource_base, data.water_kind, data.water_body]
+
+func _row_projection(view: Node2D) -> Array:
+	var result: Array = []
+	for row: Node2D in view.rows:
+		var runs: Array = []
+		for run: Node in row.get_children():
+			runs.append([run.keys.duplicate(), run.decorations])
+		result.append([row.row, row.z_index, row.visible, runs, row.animated_runs.size()])
+	return [view.resources_by_row, view.features_by_row, view.building_draws_by_row, view.heat, result, view._seen_revision]
+
+func _completion_contracts() -> void:
+	var reference := _completion_fixture()
+	var atomic := _completion_fixture()
+	var stepped := _completion_fixture()
+	Env._initialize_atomic(reference, "cc037:fixture")
+	Env.initialize(atomic, "cc037:fixture")
+	var job := Env.begin_initialize(stepped, "cc037:fixture")
+	if job.is_empty() or Env.step_initialize(job, 0, 1) or not stepped.site.is_empty():
+		_failures.append("completion_environment_first_unit_published")
+	var done := false
+	for unit in range(4096):
+		if Env.step_initialize(job, 0, 1): done = true; break
+	if not done or _environment_projection(reference) != _environment_projection(atomic) or _environment_projection(reference) != _environment_projection(stepped):
+		_failures.append("completion_environment_atomic_stepped_mismatch")
+	if reference.fertility[0] != 0 or reference.foundation[0] != 0 or reference.groundwater[0] != 0 \
+		or reference.fertility[1] != 18 or reference.foundation[1] != 32 or reference.groundwater[1] != 15 \
+		or reference.moisture[2] != 95 or reference.drainage[2] != 15 or reference.foundation[2] != 15 \
+		or reference.moisture[15] != 63:
+		_failures.append("completion_original_soil_golden")
+	var av := ResourceView.new()
+	var sv := ResourceView.new()
+	av.display(atomic)
+	var generation := sv.begin_display(stepped)
+	if sv.step_display(0, 1) or not sv.display_pending() or sv.rows.size() != 1:
+		_failures.append("completion_resource_first_unit_complete")
+	done = false
+	for unit in range(4096):
+		if sv.step_display(0, 1): done = true; break
+	if not done or _row_projection(av) != _row_projection(sv):
+		_failures.append("completion_resource_order_mismatch")
+	sv.begin_display(stepped); sv.step_display(0, 1); sv.cancel_display()
+	if sv.display_pending() or sv._display_generation == generation:
+		_failures.append("completion_resource_cancel_generation")
+	av.free(); sv.free()
+	# No scene/worker startup: exercise the real completion guard and cancellation owner.
+	var probe := LabScript.new()
+	probe._renderer = Renderer.new(); probe._render_cover = ColorRect.new()
+	probe._overview = TextureRect.new(); probe._back_button = Button.new(); probe._status = Label.new()
+	probe.selected_site = TAIPEI; probe._pending_display_site = TAIPEI
+	probe.terrain = _completion_fixture(); probe._renderer.data = probe.terrain
+	probe.render_pending = true; probe._display_context = probe.preview_context()
+	probe._pending_display = {"ok": true}
+	probe._begin_completion()
+	probe._advance_completion()
+	if probe.site_visible or not probe.render_pending or not probe._render_cover.visible:
+		_failures.append("completion_partial_site_published")
+	var old_generation: int = probe._completion_generation
+	probe._selected_generation += 2 # A -> B -> A: same coordinate, different context.
+	probe._advance_completion()
+	if probe.render_pending or probe.site_visible or probe.terrain != null or not probe._completion_job.is_empty() or probe._completion_generation == old_generation:
+		_failures.append("completion_aba_retained")
+	probe.terrain = _completion_fixture(); probe._renderer.data = probe.terrain
+	probe.render_pending = true; probe._display_context = probe.preview_context()
+	probe._begin_completion()
+	if not probe._completion_current() or probe._completion_generation == old_generation:
+		_failures.append("completion_reopen_generation")
+	probe._renderer._display_generation += 1
+	probe._advance_completion()
+	if probe.render_pending or probe.terrain != null: _failures.append("completion_renderer_generation_retained")
+	probe.terrain = _completion_fixture(); probe._renderer.data = probe.terrain
+	probe.render_pending = true; probe._display_context = probe.preview_context()
+	probe._begin_completion()
+	probe.terrain = _completion_fixture()
+	probe._advance_completion()
+	if probe.render_pending or probe.terrain != null: _failures.append("completion_body_replacement_retained")
+	_report["completion_contracts"] = {"failures": _failures.duplicate(), "scope": "Contract assertions; no performance inference"}
+	probe._renderer.free(); probe._render_cover.free(); probe._overview.free()
+	probe._back_button.free(); probe._status.free(); probe.free()
 
 func _blank_frame_probe() -> void:
 	var intervals: Array[int] = []

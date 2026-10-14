@@ -33,7 +33,7 @@ static func wildlife_species(variant: int, source_cell: int) -> String:
 	# Source identity is immutable; stock, animation and refresh never change species.
 	return WILDLIFE_SPECIES[posmod(variant, 3)][posmod(source_cell, 2)]
 
-static func initialize(data: TerrainData, site_id: String = "") -> void:
+static func _prepare_initialize(data: TerrainData) -> bool:
 	var count := data.size.x * data.size.y
 	var fixed_geography: bool = data.parameters.get("composition") == "fixed_geography" \
 		and data.parameters.get("fixed_base") is Dictionary
@@ -41,10 +41,10 @@ static func initialize(data: TerrainData, site_id: String = "") -> void:
 		var base: Dictionary = data.parameters.fixed_base
 		if base.has("land_condition_rule") != data.parameters.has("fixed_land_condition_rule") or base.get("land_condition_rule") != data.parameters.get("fixed_land_condition_rule") or base.has("land_condition_rule") and (not base.land_condition_rule is String or not data.parameters.fixed_land_condition_rule is String or base.land_condition_rule != "terrain_mapped_potential_v1"):
 			push_error("Fixed source land-condition rule is invalid; original data retained")
-			return
+			return false
 	if fixed_geography and (data.water_kind.size() != count or data.water_body.size() != count):
 		push_error("Fixed geography must supply its own water classification")
-		return
+		return false
 	data.fertility.resize(count)
 	data.moisture.resize(count)
 	data.drainage.resize(count)
@@ -62,6 +62,11 @@ static func initialize(data: TerrainData, site_id: String = "") -> void:
 	if not fixed_geography:
 		data.resource_base.clear()
 	data.resources_at.clear()
+	return true
+
+static func _initialize_atomic(data: TerrainData, site_id: String = "") -> void:
+	if not _prepare_initialize(data): return
+	var fixed_geography: bool = data.parameters.get("composition") == "fixed_geography" and data.parameters.get("fixed_base") is Dictionary
 	if fixed_geography:
 		# Keep resource_base supplied by the verified fixed-base loader. The
 		# geography-only atlas leaves it empty; never generate deposits here.
@@ -77,6 +82,51 @@ static func initialize(data: TerrainData, site_id: String = "") -> void:
 		_generate_water(data)
 		_generate_soil(data)
 		_generate_resources(data)
+	_initialize_state(data, site_id, fixed_geography)
+	rebuild_indexes(data)
+	if not fixed_geography:
+		_preserve_connectivity(data)
+		rebuild_indexes(data)
+
+static func initialize(data: TerrainData, site_id: String = "") -> void:
+	if data.parameters.get("composition") != "fixed_geography" or not data.parameters.get("fixed_base") is Dictionary:
+		_initialize_atomic(data, site_id)
+		return
+	var job := begin_initialize(data, site_id)
+	while not job.is_empty() and not bool(job.done):
+		step_initialize(job, 0, 4096)
+
+static func begin_initialize(data: TerrainData, site_id: String = "") -> Dictionary:
+	if data.parameters.get("composition") != "fixed_geography" or not data.parameters.get("fixed_base") is Dictionary: return {}
+	if not _prepare_initialize(data): return {}
+	return {"data": data, "site_id": site_id, "stage": "soil", "soil": _begin_soil(data, false), "done": false}
+
+static func step_initialize(job: Dictionary, budget_usec: int = 2000, max_units: int = 256) -> bool:
+	if job.is_empty(): return false
+	var started := Time.get_ticks_usec()
+	for unit in range(maxi(1, max_units)):
+		var data: TerrainData = job.data
+		if job.stage == "soil":
+			if data.parameters.get("fixed_land_condition_rule", "") != "terrain_mapped_potential_v1":
+				data.fertility.fill(0); data.moisture.fill(0); data.drainage.fill(0)
+				data.foundation.fill(0); data.groundwater.fill(0)
+				job.stage = "state"
+			elif _step_soil(data, job.soil): job.stage = "state"
+		elif job.stage == "state":
+			_initialize_state(data, str(job.site_id), true)
+			job.index = _begin_resource_index(data)
+			job.stage = "index"
+		elif job.stage == "index":
+			if _step_resource_index(data, job.index):
+				# Fresh initialization has no feature/vehicle geometry.
+				_finish_index(data, job.index)
+				job.done = true
+				job.stage = "done"
+		if bool(job.done): return true
+		if budget_usec > 0 and Time.get_ticks_usec() - started >= budget_usec: break
+	return false
+
+static func _initialize_state(data: TerrainData, site_id: String, fixed_geography: bool) -> void:
 	data.site = {
 		"id": site_id if not site_id.is_empty() else "site-%d-%d" % [Time.get_ticks_usec(), randi()],
 		"minute": 0, "phase": 0.0, "paused": false, "combat_left": 0.0, "ecology_version": ECOLOGY_VERSION,
@@ -87,10 +137,57 @@ static func initialize(data: TerrainData, site_id: String = "") -> void:
 		"manual": {"target": "", "progress": 0.0, "action": "harvest", "cargo": {}},
 		"water_status": {}, "water_links": {}, "total_produced": 0, "notices": [],
 	}
-	rebuild_indexes(data)
-	if not fixed_geography:
-		_preserve_connectivity(data)
-		rebuild_indexes(data)
+
+static func _begin_resource_index(data: TerrainData) -> Dictionary:
+	var before := data.static_blocked.duplicate()
+	var before_heights := data.walk_height_levels.duplicate()
+	var before_ramps := data.walk_ramp_edges.duplicate()
+	var before_facilities := data.facility_cells.duplicate()
+	var before_bridge := data.bridge_walkable.duplicate()
+	var count := data.size.x * data.size.y
+	data.static_blocked.resize(count)
+	data.static_blocked.fill(0)
+	data.feature_at.resize(count)
+	data.feature_at.fill(0)
+	data.bridge_walkable.resize(count)
+	data.bridge_walkable.fill(0)
+	data.bridge_navigation_flags = PackedByteArray()
+	data.walk_height_levels = data.height_levels.duplicate()
+	data.walk_ramp_edges = data.ramp_edges.duplicate()
+	data.has_raised_surfaces = false
+	data.has_navigation_overrides = false
+	data.facility_cells.resize(count)
+	data.facility_cells.fill(0)
+	data.resources_at.clear()
+	return {"keys": data.resource_base.keys(), "key": 0, "cell": 0, "resource": {},
+		"before": before, "before_heights": before_heights, "before_ramps": before_ramps,
+		"before_facilities": before_facilities, "before_bridge": before_bridge}
+
+static func _step_resource_index(data: TerrainData, job: Dictionary) -> bool:
+	if int(job.key) >= job.keys.size(): return true
+	var key: String = job.keys[int(job.key)]
+	if job.resource.is_empty(): job.resource = resource(data, key)
+	var r: Dictionary = job.resource
+	if int(job.cell) < r.cells.size():
+		var i := int(r.cells[int(job.cell)])
+		if not data.resources_at.has(i): data.resources_at[i] = []
+		data.resources_at[i].append(key)
+		job.cell = int(job.cell) + 1
+	else:
+		if bool(r.blocks) and int(r.remaining) > 0 and not bool(r.cleared): data.static_blocked[int(r.cell)] = 1
+		job.key = int(job.key) + 1; job.cell = 0; job.resource = {}
+	return int(job.key) >= job.keys.size()
+
+static func _finish_index(data: TerrainData, job: Dictionary) -> void:
+	var before = job.before
+	var before_heights = job.before_heights
+	var before_ramps = job.before_ramps
+	var before_facilities = job.before_facilities
+	var before_bridge = job.before_bridge
+	if before != data.static_blocked or before_heights != data.walk_height_levels or before_ramps != data.walk_ramp_edges or before_facilities != data.facility_cells or before_bridge != data.bridge_walkable:
+		data.navigation_revision += 1
+	data.environment_revision += 1
+
 
 static func initialize_marine(data: TerrainData, site_id: String) -> Dictionary:
 	if data == null or data.spawn_cell != Vector2i(-1, -1) or data.parameters.get("composition") != "fixed_geography" or not data.parameters.get("fixed_base") is Dictionary:
@@ -395,34 +492,9 @@ static func resources_in(data: TerrainData, area: Rect2i, kind: int = -1) -> Arr
 	return found
 
 static func rebuild_indexes(data: TerrainData) -> void:
-	var before := data.static_blocked.duplicate()
-	var before_heights := data.walk_height_levels.duplicate()
-	var before_ramps := data.walk_ramp_edges.duplicate()
-	var before_facilities := data.facility_cells.duplicate()
-	var before_bridge := data.bridge_walkable.duplicate()
+	var index_job := _begin_resource_index(data)
+	while not _step_resource_index(data, index_job): pass
 	var count := data.size.x * data.size.y
-	data.static_blocked.resize(count)
-	data.static_blocked.fill(0)
-	data.feature_at.resize(count)
-	data.feature_at.fill(0)
-	data.bridge_walkable.resize(count)
-	data.bridge_walkable.fill(0)
-	data.bridge_navigation_flags = PackedByteArray()
-	data.walk_height_levels = data.height_levels.duplicate()
-	data.walk_ramp_edges = data.ramp_edges.duplicate()
-	data.has_raised_surfaces = false
-	data.has_navigation_overrides = false
-	data.facility_cells.resize(count)
-	data.facility_cells.fill(0)
-	data.resources_at.clear()
-	for key: String in data.resource_base:
-		var r := resource(data, key)
-		for i: int in r.cells:
-			if not data.resources_at.has(i):
-				data.resources_at[i] = []
-			data.resources_at[i].append(key)
-		if bool(r.blocks) and int(r.remaining) > 0 and not bool(r.cleared):
-			data.static_blocked[int(r.cell)] = 1
 	var geometries: Array[Dictionary] = []
 	for key: String in data.site.get("features", {}):
 		var feature: Dictionary = data.site.features[key]
@@ -488,9 +560,7 @@ static func rebuild_indexes(data: TerrainData) -> void:
 			if data.bridge_walkable[i] != 0:
 				data.bridge_navigation_flags[i] = (data.bridge_navigation_flags[i] | TerrainData.Flag.WALKABLE) & ~TerrainData.Flag.BLOCKED
 	data.has_navigation_overrides = data.has_raised_surfaces or data.walk_ramp_edges != data.ramp_edges or not data.bridge_navigation_flags.is_empty()
-	if before != data.static_blocked or before_heights != data.walk_height_levels or before_ramps != data.walk_ramp_edges or before_facilities != data.facility_cells or before_bridge != data.bridge_walkable:
-		data.navigation_revision += 1
-	data.environment_revision += 1
+	_finish_index(data, index_job)
 
 static func preview_navigation(data: TerrainData, key: String, candidate_feature: Dictionary) -> TerrainData:
 	var state := data.site.duplicate()
@@ -664,51 +734,69 @@ static func land_summary(data: TerrainData, area: Rect2i) -> Dictionary:
 
 
 static func _populate_soil_conditions(data: TerrainData, generated_variation: bool) -> void:
+	var job := _begin_soil(data, generated_variation)
+	while not _step_soil(data, job): pass
+
+static func _begin_soil(data: TerrainData, generated_variation: bool) -> Dictionary:
+	# Reference array avoids copying a packed distance buffer on every cursor update.
 	var noise := FastNoiseLite.new()
 	noise.seed = int((data.seed_value + 19391) & 0x7fffffff)
 	noise.frequency = 0.07
-	var wet_distance := PackedInt32Array()
+	var wet_distance: Array[int] = []
 	wet_distance.resize(data.surface_types.size())
 	wet_distance.fill(20)
 	var pending: Array[int] = []
-	for i: int in range(wet_distance.size()):
-		if data.water_kind[i] != 0:
-			wet_distance[i] = 0
-			pending.append(i)
-	var head := 0
-	while head < pending.size():
-		var current := pending[head]
-		head += 1
-		for direction: Vector2i in TerrainData.DIRECTIONS:
-			var next := data.cell_from_index(current) + direction
-			if not data.contains(next):
-				continue
-			var j := data.index(next)
-			if wet_distance[j] > wet_distance[current] + 1:
-				wet_distance[j] = wet_distance[current] + 1
-				pending.append(j)
-	for i: int in range(data.surface_types.size()):
-		var cell := data.cell_from_index(i)
-		var variation := int(noise.get_noise_2d(cell.x, cell.y) * 35.0) if generated_variation else 0
-		var surface := int(data.surface_types[i])
-		data.fertility[i] = clampi(62 + variation, 15, 95)
-		data.moisture[i] = clampi(75 - wet_distance[i] * 2 + variation, 10, 95)
-		data.drainage[i] = clampi(68 + variation, 25, 90)
-		data.foundation[i] = clampi(75 + variation, 40, 95)
-		data.groundwater[i] = clampi(65 - int(data.height_levels[i]) * 7 + variation, 10, 90)
-		if surface == TerrainData.Surface.ROCK:
-			data.fertility[i] = 10
-			data.foundation[i] = 90
-		elif surface == TerrainData.Surface.SAND:
-			data.fertility[i] = 18
-			data.foundation[i] = 32
-			data.groundwater[i] = 15
-		elif surface == TerrainData.Surface.WETLAND:
-			data.moisture[i] = 95
-			data.drainage[i] = 15
-			data.foundation[i] = 15
-		if surface == TerrainData.Surface.WATER:
-			data.fertility[i] = 0
-			data.foundation[i] = 0
-			data.groundwater[i] = 0
+	return {"noise": noise, "distance": wet_distance, "pending": pending, "cursor": 0, "head": 0, "stage": "seed", "variation": generated_variation}
 
+static func _step_soil(data: TerrainData, job: Dictionary) -> bool:
+	var pending: Array[int] = job.pending
+	if job.stage == "seed":
+		var i := int(job.cursor)
+		if i < job.distance.size():
+			if data.water_kind[i] != 0: job.distance[i] = 0; pending.append(i)
+			job.cursor = i + 1
+		else: job.stage = "bfs"
+	elif job.stage == "bfs":
+		if int(job.head) < pending.size():
+			var current := pending[int(job.head)]
+			job.head = int(job.head) + 1
+			for direction: Vector2i in TerrainData.DIRECTIONS:
+				var next := data.cell_from_index(current) + direction
+				if not data.contains(next): continue
+				var j := data.index(next)
+				if job.distance[j] > job.distance[current] + 1:
+					job.distance[j] = job.distance[current] + 1
+					pending.append(j)
+		else: job.stage = "cells"; job.cursor = 0
+	elif job.stage == "cells":
+		var i := int(job.cursor)
+		if i < data.surface_types.size():
+			_apply_soil_cell(data, i, job.noise, bool(job.variation), job.distance)
+			job.cursor = i + 1
+		else: job.stage = "done"
+	return job.stage == "done"
+
+static func _apply_soil_cell(data: TerrainData, i: int, noise: FastNoiseLite, generated_variation: bool, wet_distance: Array[int]) -> void:
+	var cell := data.cell_from_index(i)
+	var variation := int(noise.get_noise_2d(cell.x, cell.y) * 35.0) if generated_variation else 0
+	var surface := int(data.surface_types[i])
+	data.fertility[i] = clampi(62 + variation, 15, 95)
+	data.moisture[i] = clampi(75 - wet_distance[i] * 2 + variation, 10, 95)
+	data.drainage[i] = clampi(68 + variation, 25, 90)
+	data.foundation[i] = clampi(75 + variation, 40, 95)
+	data.groundwater[i] = clampi(65 - int(data.height_levels[i]) * 7 + variation, 10, 90)
+	if surface == TerrainData.Surface.ROCK:
+		data.fertility[i] = 10
+		data.foundation[i] = 90
+	elif surface == TerrainData.Surface.SAND:
+		data.fertility[i] = 18
+		data.foundation[i] = 32
+		data.groundwater[i] = 15
+	elif surface == TerrainData.Surface.WETLAND:
+		data.moisture[i] = 95
+		data.drainage[i] = 15
+		data.foundation[i] = 15
+	if surface == TerrainData.Surface.WATER:
+		data.fertility[i] = 0
+		data.foundation[i] = 0
+		data.groundwater[i] = 0

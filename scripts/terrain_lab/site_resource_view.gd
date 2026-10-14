@@ -150,7 +150,11 @@ class ResourceRow extends Node2D:
 			view._draw_row_loot(self, row)
 		else:
 			view.draw_row(self, row)
+	var _rebuild_job: Dictionary = {}
 	func rebuild() -> void:
+		begin_rebuild()
+		while not step_rebuild(): pass
+	func begin_rebuild() -> void:
 		for child in get_children():
 			remove_child(child)
 			child.queue_free()
@@ -160,26 +164,33 @@ class ResourceRow extends Node2D:
 		var has_feature: bool = view.features_by_row.has(row) or (view.data != null and not view.data.site.is_empty() and view.data.cell_from_index(int(view.data.site.depot_cell)).y == row)
 		var has_loot: bool = view.loot_cells_by_row.has(row)
 		visible = not view.retain_static_rows or has_res or has_feature or has_loot or view._building_on_row(row)
-		if not visible: return
+		if not visible:
+			_rebuild_job = {}
+			return
 		if not view.retain_static_rows:
+			_rebuild_job = {}
 			view._install_building_runs(self, row)
 			return
-		# Retain contiguous runs in the ORIGINAL painter order. Putting all
-		# animated props above static props would break overlapping silhouettes.
-		var run: ResourceRun = null
-		var was_animated := false
-		for key: String in view.resources_by_row.get(row, []):
+		_rebuild_job = {"cursor": 0, "run": null, "animated": false, "feature": has_feature, "visible": visible}
+		visible = false
+	func step_rebuild() -> bool:
+		if _rebuild_job.is_empty(): return true
+		var keys: Array = view.resources_by_row.get(row, [])
+		var cursor := int(_rebuild_job.cursor)
+		if cursor < keys.size():
+			var key: String = keys[cursor]
 			var animated: bool = int(view.data.resource_base[key].kind) in [Env.Kind.WILDLIFE, Env.Kind.FISH]
-			if run == null or animated != was_animated:
+			var run: ResourceRun = _rebuild_job.run
+			if run == null or animated != bool(_rebuild_job.animated):
 				run = ResourceRun.new()
-				run.view = view
-				run.row = row
-				run.use_parent_material = true
+				run.view = view; run.row = row; run.use_parent_material = true
 				add_child(run)
 				if animated: animated_runs.append(run)
-				was_animated = animated
+				_rebuild_job.run = run; _rebuild_job.animated = animated
 			run.keys.append(key)
-		if has_feature:
+			_rebuild_job.cursor = cursor + 1
+			return false
+		if bool(_rebuild_job.feature):
 			var features := ResourceRun.new()
 			features.view = view
 			features.row = row
@@ -187,6 +198,9 @@ class ResourceRow extends Node2D:
 			features.use_parent_material = true
 			add_child(features)
 		view._install_building_runs(self, row)
+		visible = bool(_rebuild_job.visible)
+		_rebuild_job = {}
+		return true
 
 func _ready() -> void:
 	var prop_material := ShaderMaterial.new()
@@ -200,7 +214,17 @@ func _ready() -> void:
 	add_child(ground)
 	_building_ground = ground
 
+var _display_job: Dictionary = {}
+var _display_generation := 0
+
 func display(value: TerrainData) -> void:
+	begin_display(value)
+	_display_job.atomic = true
+	while not _display_job.is_empty(): step_display(0, 4096)
+
+func begin_display(value: TerrainData) -> int:
+	cancel_display()
+	visible = true
 	data = value
 	building_preview.clear()
 	_building_preview_draws.clear()
@@ -209,20 +233,57 @@ func display(value: TerrainData) -> void:
 		remove_child(row)
 		row.queue_free()
 	rows.clear()
-	for y: int in range(data.size.y):
-		var row := ResourceRow.new()
-		row.name = "ResourceRow%d" % y
-		row.view = self
-		row.row = y
-		row.z_index = 10 + y
-		row.use_parent_material = true
-		add_child(row)
-		rows.append(row)
-	_seen_revision = -1
-	loot_cells_by_row.clear()
-	for cell: int in data.ground_loot_at:
-		data.ground_loot_dirty_rows[data.cell_from_index(cell).y] = true
-	refresh()
+	_display_job = {"generation": _display_generation, "data": value, "stage": "rows", "row": 0}
+	return _display_generation
+
+func cancel_display() -> void:
+	visible = false
+	_display_generation += 1
+	_display_job = {}
+
+func display_pending() -> bool:
+	return not _display_job.is_empty()
+
+func _append_resource_row(y: int) -> void:
+	var row := ResourceRow.new()
+	row.name = "ResourceRow%d" % y; row.view = self; row.row = y
+	row.z_index = 10 + y; row.use_parent_material = true
+	add_child(row); rows.append(row)
+
+func step_display(budget_usec: int = 2000, max_units: int = 256) -> bool:
+	if _display_job.is_empty(): return true
+	if _display_job.data != data or int(_display_job.generation) != _display_generation:
+		cancel_display()
+		return false
+	var started := Time.get_ticks_usec()
+	for unit in range(maxi(1, max_units)):
+		var job: Dictionary = _display_job
+		if job.stage == "rows":
+			if int(job.row) < data.size.y:
+				_append_resource_row(int(job.row)); job.row = int(job.row) + 1
+			else:
+				_seen_revision = -1
+				loot_cells_by_row.clear()
+				for cell: int in data.ground_loot_at:
+					data.ground_loot_dirty_rows[data.cell_from_index(cell).y] = true
+				if bool(job.get("atomic", false)) or data.site.is_empty() or not data.site.features.is_empty() or view_mode != 0:
+					# Existing arbitrary-state display keeps its original refresh path.
+					refresh(); _display_job = {}; return true
+				resources_by_row.clear(); features_by_row.clear(); building_draws_by_row.clear(); heat.clear()
+				job.index = _begin_resource_rows(); job.stage = "index"
+		elif job.stage == "index":
+			if _step_resource_rows(job.index): job.stage = "runs"; job.row = 0; job.started_row = false
+		elif job.stage == "runs":
+			if int(job.row) >= rows.size():
+				_seen_revision = data.environment_revision
+				queue_redraw()
+				if is_instance_valid(_building_ground): _building_ground.queue_redraw()
+				_display_job = {}; return true
+			var row: ResourceRow = rows[int(job.row)]
+			if not bool(job.started_row): row.begin_rebuild(); job.started_row = true
+			elif row.step_rebuild(): job.row = int(job.row) + 1; job.started_row = false
+		if budget_usec > 0 and Time.get_ticks_usec() - started >= budget_usec: break
+	return false
 
 func display_source(value: TerrainData) -> void:
 	# Immutable Adapter candidate: no SiteEnvironment.initialize or gameplay state.
@@ -244,22 +305,39 @@ func display_source(value: TerrainData) -> void:
 			resources_by_row[row].append(key)
 	for row: Node2D in rows: row.rebuild()
 
+func _begin_resource_rows() -> Dictionary:
+	return {"keys": data.resource_base.keys(), "key": 0, "cell": 0, "rows": [], "publish": 0, "phase": "begin"}
+
+func _step_resource_rows(job: Dictionary) -> bool:
+	if int(job.key) >= job.keys.size(): return true
+	var key: String = job.keys[int(job.key)]
+	var resource: Dictionary = data.resource_base[key]
+	if job.phase == "begin":
+		job.rows = [data.cell_from_index(int(resource.cell)).y]
+		job.phase = "cells" if int(resource.kind) == Env.Kind.WILDLIFE or (Env.ecology_active(data) and int(resource.kind) == Env.Kind.FISH) else "publish"
+	elif job.phase == "cells":
+		if int(job.cell) < resource.cells.size():
+			var row := data.cell_from_index(int(resource.cells[int(job.cell)])).y
+			if not job.rows.has(row): job.rows.append(row)
+			job.cell = int(job.cell) + 1
+		else: job.phase = "publish"
+	else:
+		if int(job.publish) < job.rows.size():
+			var row := int(job.rows[int(job.publish)])
+			if not resources_by_row.has(row): resources_by_row[row] = []
+			resources_by_row[row].append(key)
+			job.publish = int(job.publish) + 1
+		else:
+			job.key = int(job.key) + 1; job.cell = 0; job.publish = 0; job.phase = "begin"
+	return int(job.key) >= job.keys.size()
+
 func refresh() -> void:
 	if data == null or data.site.is_empty():
 		return
 	resources_by_row.clear()
 	features_by_row.clear()
-	for key: String in data.resource_base:
-		var resource_rows: Array[int] = [data.cell_from_index(int(data.resource_base[key].cell)).y]
-		if int(data.resource_base[key].kind) == Env.Kind.WILDLIFE or (Env.ecology_active(data) and int(data.resource_base[key].kind) == Env.Kind.FISH):
-			for i: int in data.resource_base[key].cells:
-				var row := data.cell_from_index(i).y
-				if not resource_rows.has(row):
-					resource_rows.append(row)
-		for row: int in resource_rows:
-			if not resources_by_row.has(row):
-				resources_by_row[row] = []
-			resources_by_row[row].append(key)
+	var row_index := _begin_resource_rows()
+	while not _step_resource_rows(row_index): pass
 	for key: String in data.site.features:
 		var row := 0
 		var feature_rows: Array[int] = []
@@ -312,6 +390,7 @@ func clear_combat_move_preview() -> void:
 	queue_redraw()
 
 func animate(delta: float) -> void:
+	if display_pending(): return
 	if data == null:
 		return
 	for row: int in data.ground_loot_dirty_rows:
