@@ -7190,6 +7190,13 @@ func combat_offset(index: int) -> Vector2:
 func equipment_appearance(index: int) -> Dictionary:
 	return equipment_appearance_query.call(combat_identity(index)) if equipment_appearance_query.is_valid() else {}
 
+## The appearance a contact source is resolved for: the same rule enable_combat uses
+## to prepare the sources (and _sync_pooled_captain to pose the pooled captain), so a
+## row without an equipment query answer still finds its prepared same-body source.
+func _contact_appearance(index: int) -> Dictionary:
+	var appearance: Dictionary = equipment_appearance(index)
+	return appearance if not appearance.is_empty() else combat_units[index].get("appearance", {})
+
 func supports_equipment_recipe(appearance: Dictionary) -> bool:
 	# Full baseline is already published. Missing-piece recipes are admitted only
 	# after their complete original-animation atlas has passed the baker contract.
@@ -7302,7 +7309,7 @@ func _contact_inputs(index: int) -> Dictionary:
 		if target.has("inputs"):
 			return target.inputs
 	var sample := contact_sample(index)
-	var appearance := equipment_appearance(index)
+	var appearance := _contact_appearance(index)
 	var ground := combat_ground(index)
 	var offset := combat_offset(index)
 	var inputs := {"sample": sample, "appearance": appearance,
@@ -7319,7 +7326,7 @@ func _continuous_pose(index: int, include_weapon: bool = true) -> Dictionary:
 	# An active target will need its own weapon later in the original team order.
 	# Fill it now, avoiding a second restore of A after another person's pose B.
 	include_weapon = include_weapon or not lazy_weapon_queries_enabled or _needs_weapon_sample(index)
-	var appearance: Dictionary = inputs.appearance if not inputs.is_empty() else equipment_appearance(index)
+	var appearance: Dictionary = inputs.appearance if not inputs.is_empty() else _contact_appearance(index)
 	var source: RefCounted = contact_source_for(appearance)
 	if source == null:
 		push_error("MISSING_ASSET: original same-body combat contact source was not prepared")
@@ -7460,7 +7467,7 @@ func combat_query_bounds(index: int) -> Rect2:
 	if not ground.is_finite() or maxf(absf(ground.x), absf(ground.y)) > 16384.0:
 		return combat_bounds(index)
 	var sample: Array = inputs.sample if not inputs.is_empty() else contact_sample(index)
-	var appearance: Dictionary = inputs.appearance if not inputs.is_empty() else equipment_appearance(index)
+	var appearance: Dictionary = inputs.appearance if not inputs.is_empty() else _contact_appearance(index)
 	var source: RefCounted = contact_source_for(appearance)
 	if source == null or not source.cheap_query_bounds_enabled: return combat_bounds(index)
 	var bounds: Rect2 = source.query_bounds(sample[0], sample[1], sample[2], sample[3], sample[4], appearance)
@@ -7485,7 +7492,7 @@ func conservative_contact_radius(index: int) -> float:
 	if not _combat_bake.get("contact_clocks", {}).has(clip):
 		return 256.0
 	var clock: Array = _combat_bake.contact_clocks[clip][_soldier_direction_id(facing[index])]
-	var appearance: Dictionary = equipment_appearance(index)
+	var appearance: Dictionary = _contact_appearance(index)
 	var source: RefCounted = contact_source_for(appearance)
 	return source.conservative_nonattack_radius(clock[0], appearance) if source != null and source.conservative_nonattack_bounds_enabled else 256.0
 
@@ -7551,7 +7558,7 @@ func contact_protection(index: int, hit: Dictionary, profile: Dictionary) -> Vec
 	var inputs := _contact_inputs(index) if not _contact_batch_inputs.is_empty() else {}
 	var sample: Array = inputs.sample if not inputs.is_empty() else contact_sample(index)
 	var local_point: Vector2 = point - inputs.ground - inputs.offset if not inputs.is_empty() else point - combat_ground(index) - combat_offset(index)
-	var appearance: Dictionary = inputs.appearance if not inputs.is_empty() else equipment_appearance(index)
+	var appearance: Dictionary = inputs.appearance if not inputs.is_empty() else _contact_appearance(index)
 	var source: RefCounted = contact_source_for(appearance)
 	if source == null:
 		push_error("MISSING_ASSET: original same-body armor contact source was not prepared")
