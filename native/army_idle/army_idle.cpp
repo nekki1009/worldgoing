@@ -2092,7 +2092,7 @@ HotAdvance advance_hot(HotStore *store, void *moving, void *progress, void *dura
         bool no_patient, int64_t controlled_index) {
     if (start < 0 || end < start || end > store->count || size(moving) != store->count ||
             packed_size(size_doubles, progress) != store->count || packed_size(size_doubles, durations) != store->count ||
-            !std::isfinite(delta) || delta <= 0.0 || !std::isfinite(game_seconds) || game_seconds <= 0.0 ||
+            !std::isfinite(delta) || delta <= 0.0 || !std::isfinite(game_seconds) || game_seconds < 0.0 ||
             !std::isfinite(recovery) || recovery < 0.0 ||
             (no_patient && (controlled_index < -1 || controlled_index >= store->count)))
         return {start, HOT_OWNER, REASON_INPUT_INVALID};
