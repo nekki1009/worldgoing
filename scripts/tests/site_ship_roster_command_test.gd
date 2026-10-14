@@ -3,6 +3,14 @@ extends "res://scripts/tests/site_ship_full_transport_test.gd"
 
 const TestWindow = preload("res://scripts/terrain_lab/site_test_window.gd")
 
+# Nekki 2026-10-14 23:28Z (decision card, option A): this test's own budget is
+# 300 s instead of the shared 240 s. Its 0.51 s fixture step and fixture
+# controller send all 100 rows through the GD HOLD review every step; the
+# assertions are unchanged. Recorded in
+# output/acceptance_efficiency_20261012/timeout/timeout_adjustments_20261015_nekki.json.
+func _ship_test_deadline_ms(default_ms: int = 300000) -> int:
+	return super(default_ms)
+
 func _ui_boundary() -> bool:
 	var controller: SiteController = lab.site_controller
 	if not is_instance_valid(lab.site_test_window):
