@@ -4128,6 +4128,12 @@ func _preflight_combat_move(goal: Vector2i, requested_facing: Vector2i, serial: 
 	if combat_profile_enabled: _profile_combat_stage("order_deployment", deployment_started)
 	if plan == null:
 		return SiteRuntime.fail("INSUFFICIENT_SPACE", "目的地空間不足以部署")
+	# Platform and approach-queue slots are both final places. A destination whose
+	# walkable footprint plus its queue cannot give every active member a slot is
+	# refused here. Followers created only by temporary blocking (other people,
+	# leases) on a large-enough footprint stay valid and wait (WAIT_SPACE).
+	if plan.structural_platform_capacity + plan.queue_capacity < active_mids.size():
+		return SiteRuntime.fail("INSUFFICIENT_SPACE", "目的地空間不足以部署")
 	plan.terrain_revision = data.navigation_revision
 	if selected_preset != "auto":
 		var other_claims: Dictionary = {}
