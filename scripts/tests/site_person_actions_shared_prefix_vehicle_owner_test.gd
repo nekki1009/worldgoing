@@ -18,6 +18,7 @@ class Fixture extends RefCounted:
 	var actions: Variant = Actions.new()
 	var site_controller := Controller.new()
 	var crowd_site: Variant = null
+	var combat_armies: Array[TerrainArmy] = []
 	var _shared_work_plan: Dictionary = {}
 	func setup() -> void:
 		terrain.allocate(Vector2i(12, 12))

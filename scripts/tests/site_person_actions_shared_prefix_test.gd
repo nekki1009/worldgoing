@@ -8,6 +8,8 @@ var failures := 0
 
 class Controller extends RefCounted:
 	var _shared_work_plan: Dictionary = {}
+	var lab: Variant
+	var vehicles := SiteVehicleTransport.new()
 
 class Fixture extends RefCounted:
 	var terrain := TerrainData.new()
@@ -16,6 +18,7 @@ class Fixture extends RefCounted:
 	var actions: Variant = Actions.new()
 	var site_controller := Controller.new()
 	var crowd_site: Variant = null
+	var combat_armies: Array[TerrainArmy] = []
 	var _shared_work_plan: Dictionary = {}
 	func setup() -> void:
 		terrain.allocate(Vector2i(12, 12))
@@ -35,6 +38,8 @@ class Fixture extends RefCounted:
 		character.ammo_inventory = terrain.site.manual.cargo
 		npc.ammo_inventory = terrain.site.worker.cargo
 		npc.knockout_left = 30.0
+		site_controller.lab = self
+		site_controller.vehicles.init(site_controller)
 		actions.init(self)
 	func _original_person_target(identity: int) -> Dictionary:
 		for actor: TerrainTestCharacter in [character, npc]:
@@ -47,6 +52,11 @@ class Fixture extends RefCounted:
 	func close() -> void:
 		if actions.has_method("end_shared_work_prefix_consumption"): actions.end_shared_work_prefix_consumption()
 		actions.lab = null
+		terrain.item_transfer_guard = Callable()
+		terrain.ground_loot_removed = Callable()
+		site_controller.vehicles.lab = null
+		site_controller.vehicles.controller = null
+		site_controller.lab = null
 		character.free()
 		npc.free()
 
