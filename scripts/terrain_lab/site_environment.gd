@@ -13,7 +13,7 @@ const ITEM_NAMES := {
 	"pottery": "陶器", "steel": "鋼料", "rope": "繩索",
 	"brick": "磚瓦", "iron": "鐵料", "cloth": "布料", "leather": "皮革", "wool": "羊毛", "sheep": "羊", "horse": "馬匹",
 	"arrow": "箭", "fire_arrow": "火箭", "bolt": "弩矢", "siege_bolt": "重弩矢", "siege_stone": "石彈", "camp_tent": "營帳包",
-	"fire_pot": "火罐", "ballista_spares": "弩砲備件",
+	"fire_pot": "火罐", "ballista_spares": "弩砲備件", "coin": "通用幣",
 }
 const WORK_MINUTES := [5.0, 4.0, 3.0, 6.0, 2.0, 2.0, 3.0, 4.0, 6.0]
 const BATCH := [4, 3, 3, 2, 2, 3, 2, 2, 1]

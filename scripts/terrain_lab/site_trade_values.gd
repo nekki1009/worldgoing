@@ -74,8 +74,10 @@ static func derive_equipment() -> Dictionary:
 	return raw
 
 static func validate_table() -> Dictionary:
-	if RESOURCE_VALUES.size() != Runtime.Env.ITEM_NAMES.size() or RESOURCE_VALUES.has("coin"): return Runtime.fail("TRADE_VALUES_VERSION")
-	for resource: String in Runtime.Env.ITEM_NAMES:
+	var resources: Array = Runtime.Env.ITEM_NAMES.keys()
+	resources.erase("coin")
+	if RESOURCE_VALUES.size() != resources.size() or RESOURCE_VALUES.has("coin"): return Runtime.fail("TRADE_VALUES_VERSION")
+	for resource: String in resources:
 		if not RESOURCE_VALUES.has(resource) or not is_finite(float(RESOURCE_VALUES[resource])) or float(RESOURCE_VALUES[resource]) <= 0.0: return Runtime.fail("TRADE_VALUES_VERSION")
 	if derive_resources() != RESOURCE_VALUES or derive_equipment() != EQUIPMENT_VALUES: return Runtime.fail("TRADE_VALUES_RECIPE_MISMATCH")
 	return Runtime.ok()

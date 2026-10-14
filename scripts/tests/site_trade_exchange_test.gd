@@ -98,6 +98,17 @@ func _run() -> void:
 	if not _reject(a, b, _goods({"wood": 1000001}), _goods({"grain": 1}), "INVALID"): return
 	if not _reject(a, b, _goods({"unknown": 1}), _goods({"grain": 1}), "INVALID"): return
 	if not _reject(a, b, _goods({"coin": 1}), _goods({"grain": 1}), "INVALID"): return
+	if not _check(Runtime.Env.ITEM_NAMES.has("coin"), "TR78 real R4 coin registration context"): return
+	var wood_before_coin: int = int(a_cargo.wood)
+	a_cargo["wood"] = wood_before_coin - 1
+	a_cargo[&"coin"] = 1
+	b_cargo["coin"] = 1
+	if not _reject(a, b, _goods({&"coin": 1}), _goods({"grain": 1}), "INVALID"): return
+	if not _reject(a, b, _goods({"wood": 1, &"coin": 1}), _goods({"grain": 1}), "INVALID"): return
+	if not _reject(a, b, _goods({"wood": 1}), _goods({"coin": 1}), "INVALID"): return
+	a_cargo.erase(&"coin")
+	b_cargo.erase("coin")
+	a_cargo["wood"] = wood_before_coin
 	if not _reject(a, b, _goods(), _goods({"grain": 1}), "EMPTY"): return
 	if not _reject(a, a, _goods({"wood": 1}), _goods({"wood": 1}), "INVALID"): return
 	var fake: Dictionary = a.duplicate()

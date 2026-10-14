@@ -21,6 +21,7 @@ func _decision(receive: Dictionary, give: Dictionary, stock: Dictionary, targets
 
 func _run() -> void:
 	create_timer(30.0).timeout.connect(func() -> void: push_error("SITE_TRADE_VALUES_TIMEOUT"); quit(1))
+	if not _check(Runtime.Env.ITEM_NAMES.has("coin") and not Values.RESOURCE_VALUES.has("coin") and Values.validate_table().ok and Values.resource_value("coin") == -1.0, "TR78 registered coin is excluded from the complete resource table and cannot be valued"): return
 	if not _check(Values.validate_table().ok, "TR04 current recipes and versioned table"): return
 	if not _check(Values.derive_resources() == Values.RESOURCE_VALUES and Values.derive_equipment() == Values.EQUIPMENT_VALUES, "TR04 all original recipe alternatives"): return
 	if not _check(Values.resource_value("coin") < 0.0 and Values.resource_value("bow") < 0.0, "TR78 namespaces and inactive coin"): return

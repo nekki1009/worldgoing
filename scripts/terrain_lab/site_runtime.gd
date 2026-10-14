@@ -3227,6 +3227,8 @@ static func cancel_feature(data: TerrainData, key: String, occupied: Callable = 
 		rebuild_water(data)
 		return ok("已取消未完成作業，原建築與已使用材料保留")
 	var stock: Dictionary = data.site.get("stockpiles", {}).get(key, {})
+	if stock.has("nation_id"):
+		return fail("BUSY", "已綁國庫須先由合法國家管理入口解除，不能拆除丟失引用")
 	if not stock.is_empty() and (inventory_size(stock.get("cargo", {})) != 0 or not stock.get("holder", {}).get("item_ids", []).is_empty()):
 		return fail("BUSY", "先沿原裝卸入口取出設施全部原物資")
 	if _fire_feature_hot(data, key): return fail("BUSY", "原建物仍熱；不能拆除丟失剩餘火勢與燃料")
@@ -14139,6 +14141,8 @@ static func _trade_ref_valid(ref: Dictionary) -> bool:
 static func _trade_goods_valid(data: TerrainData, endpoint: Dictionary, goods: Dictionary) -> Dictionary:
 	if not Technology.keys(goods, ["resources", "item_ids"]) or not goods.resources is Dictionary or not _resource_stack(goods.resources, false) \
 		or not goods.item_ids is Array or goods.item_ids.size() > 1000000: return fail("INVALID")
+	for resource: String in goods.resources:
+		if resource == "coin": return fail("INVALID", "coin是計價單位，不是T0交換物資")
 	if goods.resources.is_empty() and goods.item_ids.is_empty(): return fail("EMPTY", "交易雙方都須有付出")
 	var selected: Dictionary = {}
 	for identity: Variant in goods.item_ids:

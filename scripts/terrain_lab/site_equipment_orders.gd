@@ -10,6 +10,7 @@ const CULTURES := {"chinese": "中式", "japanese": "日式", "western": "西式
 const Technology = preload("res://scripts/terrain_lab/site_technology.gd")
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
 const Stockpiles = preload("res://scripts/terrain_lab/site_stockpiles.gd")
+const RansomData = preload("res://scripts/terrain_lab/site_ransom_data.gd")
 const NATION_OPERATIONS_VERSION := 1
 const NATION_OPERATIONS_MAX := 128
 const NATION_PUBLIC_VERSION := 2
@@ -860,7 +861,7 @@ static func valid_nations(value: Variant, definitions: Dictionary, known_people:
 	var assigned := {}
 	for nation_id: Variant in value:
 		var nation: Variant = value[nation_id]
-		if not nation_id is String or not _valid_key(nation_id) or not nation is Dictionary or nation.size() != 3 + int(nation.has("culture")) + int(nation.has("technology")) + int(nation.has("technology_operations")) or not nation.get("members") is Array or not nation.get("standards") is Dictionary:
+		if not nation_id is String or not _valid_key(nation_id) or not nation is Dictionary or nation.size() != 3 + int(nation.has("culture")) + int(nation.has("technology")) + int(nation.has("technology_operations")) + int(nation.has("ransom_data")) or not nation.get("members") is Array or not nation.get("standards") is Dictionary:
 			return false
 		if nation.has("technology") and not Technology.valid_scope_record(nation.technology, "nation"): return false
 		if nation.has("technology_operations") and not nation.has("technology"): return false
@@ -885,7 +886,7 @@ static func valid_nations(value: Variant, definitions: Dictionary, known_people:
 				return false
 			if nation.has("culture") and not _slots_match_culture(standard.slots, definitions, nation.culture):
 				return false
-	return true
+	return RansomData.valid_nations(value, state)
 
 static func _integer(value: Variant) -> bool:
 	return (value is int or value is float) and is_finite(float(value)) and float(value) == floorf(float(value)) and float(value) >= 1.0 and float(value) < 2147483647.0
@@ -2875,6 +2876,10 @@ static func prepare_region_departure(state: Dictionary, movers: Dictionary, sele
 			all_moving = all_moving and movers.has(int(member))
 		if not touched: continue
 		if all_moving:
+			if nation.has("ransom_data"):
+				if not RansomData.valid_record(nation.ransom_data): return Runtime.fail("CORRUPT_STATE", "國庫資料版本／格式非法")
+				if not nation.ransom_data.treasury.is_empty():
+					return Runtime.fail("TREASURY_TRANSFER_UNSUPPORTED", "已綁國庫留在原 Site，須先由合法管理入口解除；本版不移轉國庫權威")
 			moving_nations[nation_id] = nation
 			source_nations.erase(nation_id)
 			continue

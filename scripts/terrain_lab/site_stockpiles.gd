@@ -77,7 +77,7 @@ static func validate(state: Dictionary) -> Dictionary:
 		if not state.features[key] is Dictionary: return Runtime.fail("CORRUPT_SAVE", "設施庫存引用格式")
 		var feature: Dictionary = state.features[key]
 		var stock: Variant = stockpiles[key]
-		if not eligible(feature) or str(feature.get("stage", "")) != "complete" or not stock is Dictionary or stock.size() != 3 \
+		if not eligible(feature) or str(feature.get("stage", "")) != "complete" or not stock is Dictionary or stock.size() != 3 + int(stock.has("nation_id")) \
 			or not Runtime._building_integer(stock.get("version"), 1, 1) or not stock.get("cargo") is Dictionary \
 			or not stock.get("holder") is Dictionary or stock.holder.size() != 4 \
 			or not stock.holder.get("holder") is String or stock.holder.holder != identity(key) \
@@ -85,6 +85,8 @@ static func validate(state: Dictionary) -> Dictionary:
 			or not stock.holder.get("item_ids") is Array or not stock.holder.get("equipped") is Dictionary \
 			or not stock.holder.equipped.is_empty():
 			return Runtime.fail("CORRUPT_SAVE", "設施庫存版本／原持物位置")
+		if stock.has("nation_id") and (not stock.nation_id is String or stock.nation_id.is_empty()):
+			return Runtime.fail("CORRUPT_SAVE", "公用國庫的明示國家引用")
 		for item: Variant in stock.cargo:
 			if not item is String or not Runtime.Env.ITEM_NAMES.has(item) or not Runtime._building_integer(stock.cargo[item], 0, 1000000):
 				return Runtime.fail("CORRUPT_SAVE", "設施庫存資源數量")

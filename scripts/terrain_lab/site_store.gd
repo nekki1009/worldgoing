@@ -1261,6 +1261,7 @@ static func _normalize_state(state: Dictionary) -> void:
 		relation.episode.seq = int(relation.episode.seq)
 	for nation: Dictionary in state.get("equipment_nations", {}).values():
 		if nation.has("military_head"): nation.military_head = int(nation.military_head)
+		if nation.get("ransom_data") is Dictionary: EquipmentOrders.RansomData.normalize_numbers(nation.ransom_data)
 		if nation.get("offices") is Dictionary: SiteOffices.normalize_numbers(nation.offices)
 		for index in range(nation.members.size()):
 			nation.members[index] = int(nation.members[index])
