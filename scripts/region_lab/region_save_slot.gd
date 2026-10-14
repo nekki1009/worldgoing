@@ -10622,7 +10622,10 @@ func _observe_original_food_result(original: TerrainLab, kind: String, identity:
 		for field: String in ["epoch", "sequence", "game_begin", "game_end", "action_begin", "action_end"]: identity_interval[field] = point[field]
 	var accepted := identity_interval.is_empty()
 	if not accepted and bool(original._region_point_pending.get("interval_complete", false)):
-		accepted = str(control.fire_clock.epoch) == str(point.epoch) and int(control.fire_clock.sequence) == int(point.sequence) and float(control.logical_game_seconds) == float(point.game_end) and float(control.fire_clock.action_seconds) == float(point.action_end)
+		# The common clocks reach the endpoint by their own accumulation; like every other
+		# endpoint proof here, they are that endpoint within the shared clock tolerance.
+		accepted = str(control.fire_clock.epoch) == str(point.epoch) and int(control.fire_clock.sequence) == int(point.sequence) \
+			and absf(float(control.logical_game_seconds) - float(point.game_end)) <= 0.00000001 and absf(float(control.fire_clock.action_seconds) - float(point.action_end)) <= 0.00000001
 	_original_food_results.append({"site_id": str(original.terrain.site.id), "owner_kind": kind, "owner_id": identity, "at_game_seconds": at_game_seconds, "consumed_rations": float(consumed), "interval": identity_interval, "accepted": accepted})
 
 func take_original_food_results() -> Array[Dictionary]:
