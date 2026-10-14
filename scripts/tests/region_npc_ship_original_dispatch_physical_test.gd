@@ -114,6 +114,11 @@ func _sea_reopen(in_transit: bool) -> bool:
 	if in_transit:
 		var next: Dictionary = _sea_selected()
 		if not _check(next.ok and party_bytes == var_to_bytes(next.party) and proof == slot.region_live_party_proof(sea_token).proof, "actual sea cursor, body, stock, holders and selected proof survive full cold reopen"): return false
+	# A manual fresh-Slot reopen wires the restored main original as the common
+	# adapter host, as the original controller did for the first Slot (the inherited
+	# reopen does the same after its own graph comparison).
+	var rewired := lab._wire_region_gameplay_adapters(slot)
+	if not _check(rewired.ok, "fresh Slot adapters wire to the positively restored main original", rewired): return false
 	if not _observe_ship_food_results(): return false
 	var before := var_to_bytes([slot.control, _sea_graphs(in_transit)])
 	var retry: Dictionary = slot.consume_due_region_events()

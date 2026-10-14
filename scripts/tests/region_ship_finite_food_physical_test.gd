@@ -233,6 +233,11 @@ func _reopen_actual_partial() -> bool:
 	# it is compared in that domain too, exactly as the inherited reopen compares it;
 	# partial job, bind proof and clocks stay exact.
 	if not _check(not next_graph.is_empty() and _saved_json_domain(facts) == _saved_json_domain(_action_facts()) and _saved_json_domain(graph) == _saved_json_domain(next_graph) and _partial_ready() and proof == slot.region_bind_proof(action_owner.terrain) and clock == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "true cold bind restores every original body/boat/job/holder alias and both clocks", ship_observation): return false
+	# A manual fresh-Slot reopen wires the restored main original as the common
+	# adapter host, as the original controller did for the first Slot (the inherited
+	# reopen does the same after its own graph comparison).
+	var rewired := lab._wire_region_gameplay_adapters(slot)
+	if not _check(rewired.ok, "fresh Slot adapters wire to the positively restored main original", rewired): return false
 	if not _observe_ship_food_results(): return false
 	var before := var_to_bytes([slot.control, _action_facts(), next_graph])
 	var retry: Dictionary = slot.consume_due_region_events()
