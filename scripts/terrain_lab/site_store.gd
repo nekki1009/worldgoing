@@ -3,6 +3,7 @@ extends RefCounted
 
 const Env = preload("res://scripts/terrain_lab/site_environment.gd")
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
+const Boarding = preload("res://scripts/terrain_lab/site_boarding_link_contract.gd")
 const Trade = preload("res://scripts/terrain_lab/site_trade.gd")
 const RegionCheckpoint = preload("res://scripts/terrain_lab/site_region_checkpoint.gd")
 const Housing = preload("res://scripts/terrain_lab/site_housing.gd")
@@ -301,6 +302,8 @@ static func save(data: TerrainData, path: String = DEFAULT_PATH, native_candidat
 	allow_dirty_fire_save: bool = false, region_context: Dictionary = {}, capture_only: bool = false) -> Dictionary:
 	if data == null or data.site.is_empty():
 		return Runtime.fail("NO_TARGET")
+	var boarding: Dictionary = Boarding.data_save_guard(data)
+	if not boarding.ok: return boarding
 	var source_data: TerrainData = data
 	var region_capture := _region_capture_owners(region_context) if not region_context.is_empty() else Runtime.ok()
 	if not region_capture.ok: return region_capture
@@ -1637,6 +1640,8 @@ static func _validate_crowd(data: TerrainData, state: Dictionary, workers: int =
 	return Runtime.ok("", {"native": native})
 
 static func _validate_state(data: TerrainData, state: Dictionary, crowd_workers: int = 1, native_candidate: Variant = null, region_context: Dictionary = {}) -> Dictionary:
+	var boarding: Dictionary = Boarding.save_guard(state, data)
+	if not boarding.ok: return boarding
 	var hot := not region_context.is_empty()
 	var region_capture := {"context": region_context}
 	var pending_action_cursor := _region_pending_fire_cursor(state, region_context)
@@ -3823,7 +3828,7 @@ static func _validate_ship_vehicle(data: TerrainData, state: Dictionary, identit
 static func _validate_ship_naval(data: TerrainData, state: Dictionary, vehicle: Dictionary) -> Dictionary:
 	if not vehicle.has("naval"): return Runtime.ok() # Known original v1 hulls remain valid.
 	var naval: Variant = vehicle.naval
-	if not naval is Dictionary or naval.size() != 4 or not _integer(naval.get("version"), 1, 1) or not _number(naval.get("hp"), 0.0, ShipDefs.hull_hp(str(vehicle.ship_type))) or not naval.get("state") is String or naval.state not in ["afloat", "sinking", "wrecked"] or not naval.get("repair") is Dictionary:
+	if not naval is Dictionary or naval.size() != 4 + int(naval.has("boarding_link")) or not _integer(naval.get("version"), 1, 1) or not _number(naval.get("hp"), 0.0, ShipDefs.hull_hp(str(vehicle.ship_type))) or not naval.get("state") is String or naval.state not in ["afloat", "sinking", "wrecked"] or not naval.get("repair") is Dictionary:
 		return Runtime.fail("CORRUPT_SAVE", "船體耐久／狀態版本非法")
 	if (str(naval.state) == "afloat") != (float(naval.hp) > 0.0): return Runtime.fail("CORRUPT_SAVE", "船體耐久與沉船狀態不符")
 	var repair_validation: Dictionary = Runtime.validate_ship_repair(data, vehicle, state)
@@ -3836,7 +3841,7 @@ static func _validate_ship_loot_location(data: TerrainData, state: Dictionary, i
 	var afloat := container.has("vehicle_id") or container.has("local_position")
 	var fields := ["holder", "version", "item_ids", "equipped", "kind", "original_owner", "cargo"]
 	fields.append_array(["vehicle_id", "local_position"] if afloat else ["cell"])
-	if container.size() != fields.size() + int(container.has("open_rations")) or not _serial(identity, int(state.get("next_loot", 1))): return Runtime.fail("CORRUPT_SAVE", "原遺物身分／互斥位置欄位")
+	if container.size() != fields.size() + int(container.has("open_rations")) + int(container.has("boarding_position")) or not _serial(identity, int(state.get("next_loot", 1))): return Runtime.fail("CORRUPT_SAVE", "原遺物身分／互斥位置欄位")
 	for field: String in fields:
 		if not container.has(field): return Runtime.fail("CORRUPT_SAVE", "原遺物缺少 " + field)
 	if not afloat:

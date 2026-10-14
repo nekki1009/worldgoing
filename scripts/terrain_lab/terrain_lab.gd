@@ -8228,6 +8228,9 @@ static func _region_plan_values(plan: Object) -> Dictionary:
 	return result
 
 func capture_region_owner_state(context: Dictionary) -> Dictionary:
+	if terrain == null or site_controller == null: return SiteRuntime.fail("NO_TARGET")
+	var boarding: Dictionary = site_controller.vehicles.boarding_save_guard()
+	if not boarding.ok: return boarding
 	var duty_scope := _region_duty_enter()
 	var captured := _region_capture_original_owner_state(context)
 	_region_duty_leave(duty_scope)

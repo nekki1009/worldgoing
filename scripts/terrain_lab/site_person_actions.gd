@@ -97,6 +97,13 @@ func has_active_issue(order: Dictionary = {}) -> bool:
 			return true
 	return false
 
+func boarding_save_guard() -> Dictionary:
+	# Preserve original ship_cross/ship_evac jobs and their existing busy guard.
+	for job: Dictionary in _jobs.values():
+		if str(job.get("kind", "")) == "boarding_cross" or job.has("boarding_link") or job.has("boarding_position"):
+			return Runtime.fail("BUSY", "Original boarding job has not settled")
+	return Runtime.ok()
+
 func save_guard() -> Dictionary:
 	return Runtime.ok() if _jobs.is_empty() else Runtime.fail("BUSY", "人物作業未完成；完成或取消後再保存")
 

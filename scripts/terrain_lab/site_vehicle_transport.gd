@@ -3,6 +3,7 @@ extends RefCounted
 ## Original Site vehicle records own ship steps; land carts borrow Army steps.
 ## Original people, item holders and TerrainData remain the only authorities.
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
+const Boarding = preload("res://scripts/terrain_lab/site_boarding_link_contract.gd")
 const SiegeWorkPose = preload("res://scripts/terrain_lab/site_siege_work_pose.gd")
 const SiegeWorkAppend = preload("res://scripts/terrain_lab/site_siege_work_append.gd")
 const Stockpiles = preload("res://scripts/terrain_lab/site_stockpiles.gd")
@@ -1524,6 +1525,20 @@ func commit_ship_walk(job: Dictionary) -> Dictionary:
 	vehicle.revision = int(vehicle.revision) + 1
 	person.owner.ship_embarkation_changed(int(person.id))
 	return Runtime.ok("原人物已走到甲板位置")
+
+func boarding_link_query(vehicle_id: String) -> Dictionary:
+	return Boarding.query(lab.terrain.site, vehicle_id, lab.terrain)
+
+func boarding_save_guard() -> Dictionary:
+	if lab == null or lab.terrain == null: return Runtime.fail("NO_TARGET")
+	var checked: Dictionary = Boarding.save_guard(lab.terrain.site, lab.terrain)
+	if not checked.ok: return checked
+	# Live Army rows precede Controller snapshot replacement.
+	for team: TerrainArmy in lab.combat_armies:
+		for row: Dictionary in team.combat_units:
+			checked = Boarding.position_guard(row)
+			if not checked.ok: return checked
+	return controller.person_actions.boarding_save_guard()
 
 func ship_cross_query(identity: int, target_id: String, berth: int, requester_id: int, test_dispatch: bool = false) -> Dictionary:
 	var source := ship_for_person(identity)

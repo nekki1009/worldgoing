@@ -6195,6 +6195,9 @@ func _region_party_base_proof(proof: Dictionary) -> Dictionary:
 	return base
 
 func _region_party_document(token: String, party: Dictionary, graph: Dictionary = {}) -> Dictionary:
+	if not party.get("content") is Dictionary: return fail("CORRUPT_SAVE", "Original party content")
+	var boarding: Dictionary = preload("res://scripts/terrain_lab/site_boarding_link_contract.gd").save_guard(party.content)
+	if not boarding.ok: return boarding
 	var payload := {"version": 1, "token": token, "pin": pin.duplicate(true), "encoding": "godot_var_v1",
 		"party": Marshalls.raw_to_base64(var_to_bytes(party))}
 	if not graph.is_empty():
@@ -6277,6 +6280,8 @@ func _region_selected_party_document(token: String, require_current: bool = true
 	if require_current and (absf(float(party.get("upkeep", {}).get("at", -1.0)) - float(control.logical_game_seconds)) > 0.00000001 \
 			or absf(float(party.upkeep.get("owner_action_seconds", control.fire_clock.action_seconds)) - float(control.fire_clock.action_seconds)) > 0.00000001):
 		return fail("UNSETTLED_PARTY", "真 selected party 尚未完成同一共同雙時間端點")
+	var boarding: Dictionary = preload("res://scripts/terrain_lab/site_boarding_link_contract.gd").save_guard(party.content)
+	if not boarding.ok: return boarding
 	var fingerprint := Marshalls.raw_to_base64(var_to_bytes(party)).sha256_text()
 	var graph := {}
 	if payload.has("original_live_graph"):

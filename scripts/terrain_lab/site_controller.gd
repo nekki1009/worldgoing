@@ -2834,6 +2834,8 @@ func _crowd_active() -> bool:
 	return lab != null and lab.get("crowd_site") != null and lab.crowd_site.active
 
 func _capture_for_save() -> Dictionary:
+	var boarding: Dictionary = vehicles.boarding_save_guard()
+	if not boarding.ok: return boarding
 	var captured := {}
 	if _crowd_active():
 		# One synchronous native sync supplies both the original actor snapshot
@@ -10048,6 +10050,8 @@ func _trial_fire_weather() -> void:
 func capture_region_checkpoint(purpose: String, effects_complete: bool = true,
 		endpoint_payload: Dictionary = {}, token: String = "") -> Dictionary:
 	if region_slot == null or lab.terrain == null: return Runtime.fail("NO_REGION_SLOT")
+	var boarding: Dictionary = vehicles.boarding_save_guard()
+	if not boarding.ok: return boarding
 	if _crowd_active(): return Runtime.fail("REGION_BACKEND_UNADMITTED")
 	if token.is_empty(): token = "region_" + Crypto.new().generate_random_bytes(16).hex_encode()
 	var request: Dictionary = region_slot.region_checkpoint_context(lab.terrain, purpose, token, effects_complete, endpoint_payload)
