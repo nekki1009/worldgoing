@@ -129,6 +129,15 @@ func _sea_reopen(in_transit: bool) -> bool:
 
 func _sea_dispatch() -> bool:
 	sea_token = "c06_original_npc_ship_%d" % OS.get_process_id()
+	# Stable person/team/nation/vehicle refs come from the original travel identity
+	# allocator, which a departure would run; nothing has travelled from this Site
+	# yet, and the resident head's observation needs them first. They index the
+	# actual current Site, and the same whole-graph checkpoint publishes them.
+	var identified := RegionTravel.prepare_identity(lab.terrain.site)
+	if not _check(identified.ok, "original identity allocator indexes the source Site's nation, teams, people and boats", identified): return false
+	lab.terrain.site.travel_identity = identified.state.travel_identity
+	if not _check(controller.checkpoint_region_internal("region_checkpoint", true).ok, "the indexed source identity publishes with the same whole graphs"): return false
+	if not _check(preload("res://scripts/region_lab/region_gameplay_ai.gd").valid_person_ref(preload("res://scripts/region_lab/region_gameplay_ai.gd").person_ref(lab.terrain.site, sea_nation_head)), "the resident Nation head has a real typed person reference"): return false
 	var before := var_to_bytes([slot.control, lab.terrain.site])
 	var unknown: Dictionary = slot.prepare_npc_region_dispatch(lab, sea_nation_id, ship_team_id, sea_goal_coordinate, 0, [], sea_token)
 	if not _check(not unknown.ok and str(unknown.code) == "UNKNOWN_TARGET" and before == var_to_bytes([slot.control, lab.terrain.site]), "original Nation refuses dispatch before its true scoped geography observation", unknown): return false
