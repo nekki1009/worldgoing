@@ -52,6 +52,8 @@ func _fixture(counts: Array[int], origins: Array[Vector2i], placements: Dictiona
 	var teams: Array[TerrainArmy] = []
 	for faction in range(3):
 		var team := TerrainArmy.new()
+		# Production armies live in the scene tree; the set_process(false) below then sticks.
+		root.add_child(team)
 		team.team_id = faction + 1
 		team.faction_id = faction
 		team.roster_size = counts[faction]
