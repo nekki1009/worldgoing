@@ -77,6 +77,14 @@ func run() -> void:
 	team.combat_units[99].ko = 0.0
 	team.combat_units[99].pose = "idle"
 	team._cell_owners[team.cells[99]] = 99
+	# R1b: an ordinary soldier cannot act or succeed; only an appointed officer holding a
+	# military post can. Appoint the one able member through the real API, so this block
+	# still checks that succession never nominates an incapacitated person.
+	var promoted_last: Dictionary = team.set_military_role(team.combat_identity(99), "officer")
+	assert(bool(promoted_last.ok), "Fixture officer promotion: " + str(promoted_last))
+	var last_cadre: Array[int] = [99]
+	var appointed_last: Dictionary = team.record_officer_service(last_cadre, true)
+	assert(bool(appointed_last.ok), "Fixture officer appointment: " + str(appointed_last))
 	team._command_dirty = true
 	team.settle_combat_command()
 	assert(team.current_commander == 99 and team.formal_commander == 2 and team.acting_commander == 99)
