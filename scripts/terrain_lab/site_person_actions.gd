@@ -1490,7 +1490,10 @@ func _removal_guard(source: Dictionary, item_ids: Array) -> Dictionary:
 	return equipment_removal_guard.call(owner_id, item_ids)
 
 func _binding_context(executor: Dictionary, target: Dictionary, guard_id: int, capturing: bool) -> Dictionary:
-	if not _ready(executor, capturing) or target.is_empty() or float(target.hp) <= 0.0 or bool(target.moving) or not _adjacent(executor.cell, target.cell):
+	var relation: Dictionary = lab.terrain.site.captivity.get(str(target.get("person_id", -1)), {})
+	var own_guard_release: bool = not capturing and not executor.is_empty() and not target.is_empty() \
+		and int(relation.get("guard_id", -1)) == int(executor.person_id) and str(relation.get("prison_id", "")).is_empty()
+	if not _ready(executor, capturing or own_guard_release) or target.is_empty() or float(target.hp) <= 0.0 or bool(target.moving) or not _adjacent(executor.cell, target.cell):
 		return Runtime.fail("BUSY", "雙方須存活、停止並相鄰可達")
 	if capturing:
 		if (float(target.ko) <= 0.0 and not bool(target.surrender_pending)) or bool(target.captive) or lab.terrain.site.captivity.has(str(target.person_id)):
