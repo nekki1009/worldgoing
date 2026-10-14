@@ -45,6 +45,12 @@ static func _prepare_initialize(data: TerrainData) -> bool:
 	if fixed_geography and (data.water_kind.size() != count or data.water_body.size() != count):
 		push_error("Fixed geography must supply its own water classification")
 		return false
+	if data.parameters.has("author_land_cells") and (not fixed_geography or not RegionTerrainAdapter.valid_author_identity(data.parameters.fixed_base, true)):
+		push_error("Author land requires verified fixed author source; original data retained")
+		return false
+	if not author_land_valid(data.parameters.get("author_land_cells", {})):
+		push_error("Invalid author land values; original candidate retained")
+		return false
 	data.fertility.resize(count)
 	data.moisture.resize(count)
 	data.drainage.resize(count)
@@ -82,6 +88,7 @@ static func _initialize_atomic(data: TerrainData, site_id: String = "") -> void:
 		_generate_water(data)
 		_generate_soil(data)
 		_generate_resources(data)
+	restore_author_land(data)
 	_initialize_state(data, site_id, fixed_geography)
 	rebuild_indexes(data)
 	if not fixed_geography:
@@ -113,6 +120,7 @@ static func step_initialize(job: Dictionary, budget_usec: int = 2000, max_units:
 				job.stage = "state"
 			elif _step_soil(data, job.soil): job.stage = "state"
 		elif job.stage == "state":
+			restore_author_land(data)
 			_initialize_state(data, str(job.site_id), true)
 			job.index = _begin_resource_index(data)
 			job.stage = "index"
@@ -800,3 +808,25 @@ static func _apply_soil_cell(data: TerrainData, i: int, noise: FastNoiseLite, ge
 		data.fertility[i] = 0
 		data.foundation[i] = 0
 		data.groundwater[i] = 0
+
+static func author_land_valid(value: Variant) -> bool:
+	if not value is Dictionary or value.size() > 10000: return false
+	for key: Variant in value:
+		if not key is String or not key.is_valid_int() or str(int(key)) != key or int(key) < 0 or int(key) >= 10000: return false
+		var row: Variant = value[key]
+		if not row is Dictionary or row.is_empty(): return false
+		for field: Variant in row:
+			if field not in ["fertility", "moisture", "drainage", "foundation", "groundwater"] or not RegionTerrainAdapter.author_integer(row[field], 0, 100): return false
+	return true
+
+static func restore_author_land(data: TerrainData) -> void:
+	var values: Variant = data.parameters.get("author_land_cells", {})
+	if not author_land_valid(values): return
+	for field: String in ["fertility", "moisture", "drainage", "foundation", "groundwater"]:
+		var array: PackedByteArray = data.get(field)
+		if array.size() != 10000: return
+	for key: String in values:
+		for field: String in values[key]:
+			var array: PackedByteArray = data.get(field)
+			array[int(key)] = int(values[key][field])
+			data.set(field, array)

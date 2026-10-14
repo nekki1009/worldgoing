@@ -105,6 +105,7 @@ func _build_ui() -> void:
 	var reason := Label.new()
 	reason.text = PLAYTEST_REASON
 	column.add_child(reason)
+	_build_terrain_form(column)
 	_canvas = Control.new()
 	_canvas.name = "AuthorCanvas"
 	_canvas.clip_contents = true
@@ -152,10 +153,10 @@ func new_work(site: Vector2i) -> bool:
 	return _accept_work(candidate, false)
 
 func validate_work(value: Variant) -> bool:
-	if not value is Dictionary or value.size() != 7: return false
+	if not value is Dictionary or not Adapter.author_integer(value.get("format"), 1, 2) or value.size() != (7 if int(value.format) == 1 else 8): return false
 	for key: String in ["format", "kind", "name", "manifest", "source_sha256", "site", "revision"]:
 		if not value.has(key): return false
-	if not Adapter.author_integer(value.format, 1, 1): return false
+	if int(value.format) == 2 and not source.author_static_valid(value.get("terrain_static")): return false
 	if not value.kind is String or value.kind != "fixed_tw_editor_draft": return false
 	if not Data._author_text_valid(value.name, 64, true): return false
 	if not value.manifest is String or not Adapter.author_digest_valid(value.source_sha256): return false
@@ -163,11 +164,13 @@ func validate_work(value: Variant) -> bool:
 	if not Adapter.author_integer(value.revision, 1, 2147483647) or not Adapter.author_pair_valid(value.site, 0, 1000000): return false
 	return Vector2i(int(value.site[0]), int(value.site[1])) in _samples
 
-func _accept_work(value: Dictionary, saved: bool) -> bool:
+func _accept_work(value: Dictionary, saved: bool, keep_file: bool = false) -> bool:
 	if not validate_work(value):
 		_status.text = "草稿格式、來源 SHA 或標準 Site 不符；目前作品保持原狀。"
 		return false
-	var result: Dictionary = source.make_terrain_data(int(value.site[0]), int(value.site[1]))
+	var result: Dictionary
+	if int(value.format) == 2: result = source.make_author_draft(Vector2i(int(value.site[0]), int(value.site[1])), value.terrain_static, int(value.revision))
+	else: result = source.make_terrain_data(int(value.site[0]), int(value.site[1]))
 	if not bool(result.get("ok", false)) or not result.get("data") is TerrainData:
 		_status.text = "標準候選讀取失敗；目前作品保持原狀。"
 		return false
@@ -177,11 +180,16 @@ func _accept_work(value: Dictionary, saved: bool) -> bool:
 		return false
 	terrain = candidate
 	draft = value.duplicate(true)
+	draft.format = int(draft.format); draft.revision = int(draft.revision)
+	draft.site = [int(draft.site[0]), int(draft.site[1])]
+	if int(draft.format) == 2: draft.terrain_static = Data.author_static_normalized(draft.terrain_static)
 	_name.text = str(draft.name)
 	_renderer.display(terrain)
 	_resources.display_source(terrain)
-	_saved_content = _content() if saved else ""
-	if not saved: _saved_path = ""
+	if saved: _saved_content = _content()
+	elif not keep_file: _saved_content = ""
+	if not saved and not keep_file: _saved_path = ""
+	_read_terrain_cell()
 	_fit_view()
 	_refresh_status()
 	return true
@@ -356,3 +364,82 @@ func _input(event: InputEvent) -> void:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_APPLICATION_FOCUS_OUT: _dragging = false
+
+var _terrain_fields: Dictionary = {}
+var _cell_x: SpinBox
+var _cell_y: SpinBox
+var _water_permission: CheckBox
+
+static func empty_terrain_static() -> Dictionary:
+	return {"format": 2, "terrain": {}, "resources": {}, "water_bodies": {}, "water_permissions": {"cells": [], "bodies": []}}
+
+func set_cell_patch(cell: Vector2i, row: Dictionary, bodies: Dictionary = {}, permitted: bool = false) -> bool:
+	if draft.is_empty() or not terrain.contains(cell) or int(draft.revision) == 2147483647: return false
+	var value: Dictionary = draft.duplicate(true)
+	value.format = 2
+	var raw: Dictionary = value.get("terrain_static", empty_terrain_static()).duplicate(true)
+	raw.terrain[str(terrain.index(cell))] = row.duplicate(true)
+	for key: String in bodies: raw.water_bodies[key] = bodies[key].duplicate(true)
+	var permission: Array = raw.water_permissions.cells
+	permission.erase(terrain.index(cell))
+	if permitted: permission.append(terrain.index(cell))
+	value.terrain_static = raw
+	value.revision = int(value.revision) + 1
+	return _accept_work(value, false, true)
+
+func _build_terrain_form(column: Node) -> void:
+	var row: HBoxContainer = HBoxContainer.new()
+	column.add_child(row)
+	_cell_x = _terrain_spin(row, "格X", 0, 99)
+	_cell_y = _terrain_spin(row, "格Y", 0, 99)
+	_cell_x.value_changed.connect(func(_value: float) -> void: _read_terrain_cell())
+	_cell_y.value_changed.connect(func(_value: float) -> void: _read_terrain_cell())
+	for field: String in ["height", "surface", "water_kind", "water_body", "fertility", "moisture", "drainage", "foundation", "groundwater"]:
+		var maximum := 100
+		if field == "height": maximum = 5
+		elif field == "surface": maximum = 6
+		elif field == "water_kind": maximum = 4
+		elif field == "water_body": maximum = 2147483646
+		_terrain_fields[field] = _terrain_spin(row, field, -1 if field == "water_body" else 0, maximum)
+	_water_permission = CheckBox.new()
+	_water_permission.text = "明示可航許可"
+	_water_permission.tooltip_text = "只授予此真水格；不推定水深，橋占格仍禁止船通行。"
+	row.add_child(_water_permission)
+	_button(row, "套用單格", "ApplyTerrainCell", _apply_terrain_cell)
+	var note: Label = Label.new()
+	note.text = "高度0–5／地表0–6／水0–4／土地0–100；新水體ID>=1000000000。單Site，不跨界筆刷。"
+	column.add_child(note)
+
+func _terrain_spin(parent: Node, label: String, minimum: int, maximum: int) -> SpinBox:
+	var column: VBoxContainer = VBoxContainer.new()
+	parent.add_child(column)
+	var title: Label = Label.new()
+	title.text = label
+	column.add_child(title)
+	var spin: SpinBox = SpinBox.new()
+	spin.min_value = minimum
+	spin.max_value = maximum
+	spin.step = 1
+	column.add_child(spin)
+	return spin
+
+func _read_terrain_cell() -> void:
+	if terrain == null or _cell_x == null: return
+	var cell: Vector2i = Vector2i(int(_cell_x.value), int(_cell_y.value))
+	var index: int = terrain.index(cell)
+	for field: String in _terrain_fields:
+		var actual: String = "height_levels" if field == "height" else ("surface_types" if field == "surface" else field)
+		var array: Variant = terrain.get(actual)
+		_terrain_fields[field].value = int(array[index]) if array.size() > index else 0
+	var raw: Dictionary = draft.get("terrain_static", {})
+	_water_permission.button_pressed = index in raw.get("water_permissions", {}).get("cells", [])
+
+func _apply_terrain_cell() -> void:
+	if _unsaved.visible or terrain == null: return
+	var row := {}
+	for field: String in _terrain_fields: row[field] = int(_terrain_fields[field].value)
+	var bodies := {}
+	if int(row.water_kind) > 0 and int(row.water_body) >= Data.AUTHOR_BODY_MIN:
+		bodies[str(int(row.water_body))] = {"id": "water_%d" % int(row.water_body), "kind": int(row.water_kind)}
+	var accepted: bool = set_cell_patch(Vector2i(int(_cell_x.value), int(_cell_y.value)), row, bodies, _water_permission.button_pressed)
+	if not accepted: _status.text = "地形／水／土地候選非法或衝突；原草稿及保存位置保持不變。"

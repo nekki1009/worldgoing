@@ -162,6 +162,7 @@ func load_author_package(path: String) -> Dictionary:
 	if not _author_manifest_shape(parsed): return fail("INVALID_AUTHOR_PACKAGE", "作者格式／路徑／尺寸非法")
 	if author_package_digest(parsed) != parsed.package_digest: return fail("AUTHOR_HASH_MISMATCH", "作者包摘要不同")
 	var natural: Dictionary = {}
+	var records: Array[Dictionary] = []
 	for entry: Dictionary in parsed.dependencies:
 		var checked := _read_author_file(str(entry.path), entry, AUTHOR_DEPENDENCY_BYTES)
 		if not checked.ok: return checked
@@ -172,10 +173,7 @@ func load_author_package(path: String) -> Dictionary:
 		if not checked.ok: return checked
 		var content: Variant = JSON.parse_string(checked.bytes.get_string_from_utf8())
 		if not content is Dictionary: return fail("INVALID_AUTHOR_FILE", str(entry.path))
-		if entry.kind == "static":
-			if content.size() != 3 or not Adapter.author_integer(content.get("format"), 1, 1) or not content.get("terrain") is Dictionary or not content.get("resources") is Dictionary: return fail("INVALID_AUTHOR_STATIC", str(entry.path))
-			if not content.terrain.is_empty() or not content.resources.is_empty(): return fail("AUTHOR_STATIC_UNSUPPORTED", "P2尚未准入地形／資源覆寫")
-		# Initial records are transport-checked only; P5B still rejects birth.
+		records.append({"entry": entry, "content": content})
 	var candidate := RegionData.new()
 	var loaded := candidate.load_manifest(str(natural.path))
 	if not loaded.ok: return loaded
@@ -185,8 +183,28 @@ func load_author_package(path: String) -> Dictionary:
 		for entry: Dictionary in parsed.dependencies:
 			paired = paired or entry.path == candidate.RESOURCE_SOURCE_PAIRS[candidate.manifest_hash].path and entry.sha256 == candidate.resource_manifest_hash
 		if not paired: return fail("MISSING_RESOURCE_PAIR", "作者包未列出原配對資源依賴")
+	var bodies := {}
+	var body_ids := {}
+	for record: Dictionary in records:
+		var entry: Dictionary = record.entry
+		var key: String = "%d:%d" % [int(entry.site[0]), int(entry.site[1])]
+		var content: Dictionary = record.content
+		if entry.kind == "static":
+			if not candidate.author_static_valid(content):
+				if Adapter.author_integer(content.get("format"), 1, 1) and content.get("terrain") is Dictionary and content.get("resources") is Dictionary and (not content.terrain.is_empty() or not content.resources.is_empty()): return fail("AUTHOR_STATIC_UNSUPPORTED", "舊format1不准入覆寫；P2A須使用format2")
+				return fail("INVALID_AUTHOR_STATIC", "離散地形／水／土地格式非法")
+			for identity: String in content.get("water_bodies", {}):
+				var body: Dictionary = content.water_bodies[identity]
+				if bodies.has(identity) and bodies[identity] != body or body_ids.has(body.id) and body_ids[body.id] != identity: return fail("AUTHOR_WATER_ID_CONFLICT", "跨Site水體映射不同")
+				bodies[identity] = body; body_ids[body.id] = identity
+			candidate._author_static[key] = author_static_normalized(content)
+		else: candidate._author_initial[key] = content.duplicate(true)
 	candidate._author_pin = {"scenario_id": str(parsed.scenario_id), "scenario_revision": int(parsed.revision), "scenario_package_sha256": str(parsed.package_digest)}
 	candidate._author_document = parsed.duplicate(true)
+	for key: String in candidate._author_static:
+		var pair: PackedStringArray = key.split(":")
+		var built: Dictionary = candidate.make_terrain_data(int(pair[0]), int(pair[1]))
+		if not bool(built.get("ok", false)): return built
 	# Stage on the same owner, then replace only script state after every check.
 	for property: Dictionary in candidate.get_property_list():
 		if (int(property.usage) & PROPERTY_USAGE_SCRIPT_VARIABLE) != 0:
@@ -285,6 +303,8 @@ func load_manifest(path: String = DEFAULT_MANIFEST) -> Dictionary:
 				_tile_index[key].append(tile)
 	_author_pin = {}
 	_author_document = {}
+	_author_static = {}
+	_author_initial = {}
 	return {"ok": true, "code": "OK", "message": "固定地理資料已載入"}
 
 func _read_resource_manifest(geography_hash: String) -> Dictionary:
@@ -355,6 +375,9 @@ func site_resource_cover(site: Vector2i) -> Dictionary:
 
 func get_water_body(identity: int) -> Dictionary:
 	if not _water_bodies.has(identity):
+		for raw: Dictionary in _author_static.values():
+			var body: Dictionary = raw.get("water_bodies", {}).get(str(identity), {})
+			if not body.is_empty(): return {"id": identity, "kind": int(body.kind), "source_id": "author:" + str(body.id), "name": str(body.id)}
 		return {}
 	var index: int = _water_bodies[identity]
 	return {"id": identity, "kind": int(_water_body_kinds[index]),
@@ -701,10 +724,10 @@ func _sample_center(easting: float, northing: float) -> Dictionary:
 		"water_id": _water_body_sources[_water_bodies[body]] if water != 0 else "", "water_body": body, "source_quality_code": quality}
 
 func sample_meters(easting: float, northing: float) -> Dictionary:
-	return _sample_meters(easting, northing, null)
+	return _author_sample(_sample_meters(easting, northing, null), easting, northing)
 
 func _sample_site_meters(easting: float, northing: float, centre_cache: Dictionary) -> Dictionary:
-	return _sample_meters(easting, northing, centre_cache)
+	return _author_sample(_sample_meters(easting, northing, centre_cache), easting, northing)
 
 func _sample_point(easting: float, northing: float, centre_cache: Variant) -> Dictionary:
 	if centre_cache == null or _sample_spacing_m == 0:
@@ -895,3 +918,209 @@ const RESOURCE_SOURCE_PAIRS := {
 	"cdf59e3247c9db3eb1e5399f7346014f8dec5c2f90bb977fd41ea35bc3444446": {"path": "res://assets/region_lab/earth_tw_resources_v1/manifest.terrain_mapped_potential_v1.json", "sha256": "9acfdc50025eac0c296880102af57cc9d1faef34cc24486eef1594fcc07bd5ef"}
 }
 
+
+const AUTHOR_BODY_MIN := 1000000000
+const AUTHOR_LAND_FIELDS := ["fertility", "moisture", "drainage", "foundation", "groundwater"]
+var _author_static: Dictionary = {}
+var _author_initial: Dictionary = {}
+
+static func author_cell_key(value: Variant) -> bool:
+	return value is String and value.is_valid_int() and str(int(value)) == value and Adapter.author_integer(int(value), 0, 9999)
+
+func author_static_valid(raw: Variant) -> bool:
+	if not raw is Dictionary or not Adapter.author_integer(raw.get("format"), 1, 2): return false
+	if int(raw.format) == 1:
+		return raw.size() == 3 and raw.get("terrain") is Dictionary and raw.terrain.is_empty() and raw.get("resources") is Dictionary and raw.resources.is_empty()
+	if raw.size() != 5 or not raw.get("terrain") is Dictionary or raw.terrain.size() > 10000 or not raw.get("resources") is Dictionary or not raw.resources.is_empty(): return false
+	if not raw.get("water_bodies") is Dictionary or raw.water_bodies.size() > 10000 or not raw.get("water_permissions") is Dictionary: return false
+	var identities := {}
+	for key: Variant in raw.water_bodies:
+		if not key is String or not key.is_valid_int() or str(int(key)) != key or not Adapter.author_integer(int(key), AUTHOR_BODY_MIN, 2147483646): return false
+		if _water_bodies.has(int(key)): return false
+		var body: Variant = raw.water_bodies[key]
+		if not body is Dictionary or body.size() != 2 or not Adapter.author_id_valid(body.get("id")) or not Adapter.author_integer(body.get("kind"), 1, 4) or identities.has(body.id): return false
+		identities[body.id] = int(key)
+	for key: Variant in raw.terrain:
+		if not author_cell_key(key): return false
+		var row: Variant = raw.terrain[key]
+		if not row is Dictionary or row.is_empty(): return false
+		for field: Variant in row:
+			if not field is String: return false
+			if field in AUTHOR_LAND_FIELDS:
+				if not Adapter.author_integer(row[field], 0, 100): return false
+			elif field == "height":
+				if not Adapter.author_integer(row[field], 0, 5): return false
+			elif field == "surface":
+				if not Adapter.author_integer(row[field], 0, 6): return false
+			elif field == "water_kind":
+				if not Adapter.author_integer(row[field], 0, 4): return false
+			elif field == "water_body":
+				if not Adapter.author_integer(row[field], -1, 2147483646): return false
+			else: return false
+		if row.has("water_kind") != row.has("water_body"): return false
+		if row.has("surface") and (int(row.surface) == TerrainData.Surface.WATER) != (row.has("water_kind") and int(row.water_kind) > 0): return false
+		if row.has("water_kind"):
+			var kind: int = int(row.water_kind)
+			var body: int = int(row.water_body)
+			if (kind == 0) != (body == -1): return false
+			if kind > 0:
+				if not row.has("surface") or int(row.surface) != TerrainData.Surface.WATER: return false
+				var definition: Dictionary = get_water_body(body) if _water_bodies.has(body) or body < AUTHOR_BODY_MIN else raw.water_bodies.get(str(body), {})
+				if definition.is_empty() or int(definition.kind) != kind: return false
+	var permissions: Dictionary = raw.water_permissions
+	if permissions.size() != 2 or not permissions.get("cells") is Array or not permissions.get("bodies") is Array: return false
+	for field: String in ["cells", "bodies"]:
+		var seen := {}
+		if permissions[field].size() > 10000: return false
+		for value: Variant in permissions[field]:
+			if not Adapter.author_integer(value, 0 if field == "cells" else AUTHOR_BODY_MIN, 9999 if field == "cells" else 2147483646) or seen.has(int(value)): return false
+			if field == "bodies" and not raw.water_bodies.has(str(int(value))): return false
+			seen[int(value)] = true
+	return true
+
+func author_static_for(site: Vector2i) -> Dictionary:
+	return _author_static.get("%d:%d" % [site.x, site.y], {}).duplicate(true)
+
+func _author_sample(sample: Dictionary, easting: float, northing: float) -> Dictionary:
+	if not bool(sample.get("ok", false)) or _author_static.is_empty(): return sample
+	var site: Vector2i = Grid.site_from_meters(easting, northing)
+	var cell: Vector2i = Grid.local_from_mm(roundi(easting * 1000.0), roundi(northing * 1000.0))
+	var row: Dictionary = _author_static.get("%d:%d" % [site.x, site.y], {}).get("terrain", {}).get(str(cell.y * 100 + cell.x), {})
+	if row.is_empty(): return sample
+	var result: Dictionary = sample.duplicate(true)
+	if row.has("height"): result.level = int(row.height)
+	if row.has("water_kind"):
+		result.water_kind = int(row.water_kind)
+		result.water_body = int(row.water_body)
+		result.water_id = "author:%d" % int(row.water_body) if int(row.water_kind) > 0 else ""
+	return result
+
+func apply_author_layers(data: TerrainData, site: Vector2i) -> Dictionary:
+	var raw: Dictionary = author_static_for(site)
+	if raw.is_empty() or int(raw.format) == 1: return {"ok": true}
+	if not author_static_valid(raw): return fail("INVALID_AUTHOR_STATIC", "作者離散層非法")
+	raw = author_static_normalized(raw)
+	var land := {}
+	var changed_water: Array[int] = []
+	for key: String in raw.terrain:
+		var row: Dictionary = raw.terrain[key]
+		var i: int = int(key)
+		if row.has("surface"):
+			data.surface_types[i] = int(row.surface)
+		if (data.surface_types[i] == TerrainData.Surface.WATER) != (data.water_kind[i] > 0): return fail("AUTHOR_WATER_CONFLICT", "水體與地表不一致")
+		if row.has("water_kind"): changed_water.append(i)
+		var values := {}
+		for field: String in AUTHOR_LAND_FIELDS:
+			if row.has(field): values[field] = int(row[field])
+		if not values.is_empty(): land[key] = values
+	for record: Dictionary in data.resource_base.values():
+		for index: int in record.cells:
+			var water: bool = data.surface_types[index] == TerrainData.Surface.WATER
+			if (int(record.kind) == SiteEnvironment.Kind.FISH and (not water or record.has("water") and int(record.water) != int(data.water_body[index]))) or (bool(record.blocks) and water): return fail("AUTHOR_RESOURCE_CONFLICT", "地形與既有資源足跡衝突")
+	for i: Variant in raw.water_permissions.cells:
+		if data.water_kind[int(i)] == 0: return fail("AUTHOR_WATER_PERMISSION", "許可必須引用真水格")
+	changed_water.sort()
+	data.parameters["author_land_cells"] = land
+	data.parameters["author_water_bodies"] = raw.water_bodies.duplicate(true)
+	data.parameters["author_water_changed_cells"] = changed_water
+	data.parameters["author_water_permissions"] = raw.water_permissions.duplicate(true)
+	data.parameters["author_water_rule"] = "author_water_rule_v1"
+	return {"ok": true}
+
+func make_author_draft(site: Vector2i, raw: Dictionary, revision: int) -> Dictionary:
+	if not author_static_valid(raw) or not Adapter.author_integer(revision, 1, 2147483647): return fail("INVALID_AUTHOR_STATIC", "作者草稿離散層非法")
+	raw = author_static_normalized(raw)
+	var candidate: RegionData = RegionData.new()
+	for property: Dictionary in get_property_list():
+		if (int(property.usage) & PROPERTY_USAGE_SCRIPT_VARIABLE) == 0: continue
+		var value: Variant = get(str(property.name))
+		candidate.set(str(property.name), value.duplicate(true) if value is Dictionary or value is Array else value)
+	candidate._author_static = {"%d:%d" % [site.x, site.y]: raw.duplicate(true)}
+	candidate._author_initial = {}
+	candidate._author_pin = {"scenario_id": "editor_draft", "scenario_revision": revision,
+		"scenario_package_sha256": JSON.stringify({"natural": manifest_hash, "resources": resource_manifest_hash, "site": [site.x, site.y], "revision": revision, "static": raw}, "", true, true).sha256_text()}
+	return candidate.make_terrain_data(site.x, site.y)
+
+func _initial_body(site: Vector2i) -> Dictionary:
+	var built: Dictionary = make_terrain_data(site.x, site.y)
+	if not bool(built.get("ok", false)): return built
+	var key: String = "%d:%d" % [site.x, site.y]
+	var data: TerrainData = built.data
+	if not _author_initial.has(key): return built
+	var state: Dictionary = _author_initial[key].duplicate(true)
+	if not state.get("id") is String or state.id != str(built.base.site_id) or state.has("world_pin") or state.has("region_snapshot") or state.has("initial_scenario") or state.has("crowd"): return fail("INVALID_AUTHOR_INITIAL", "初始投影不得攜帶目的世界或Native引用")
+	SiteEnvironment.initialize(data, str(built.base.site_id))
+	var delta: Variant = state.get("terrain_changes")
+	if not delta is Dictionary: return fail("INVALID_AUTHOR_INITIAL", "初始高度差異非法")
+	for cell: Variant in delta:
+		if not author_cell_key(cell) or not Adapter.author_integer(delta[cell], 0, 5): return fail("INVALID_AUTHOR_INITIAL", "初始高度必須是0–5整數")
+		data.height_levels[int(cell)] = int(delta[cell])
+	if not delta.is_empty(): SiteRuntime.rebuild_terrain_edges(data)
+	state["world_pin"] = author_projection_pin(built.base)
+	var checked: Dictionary = SiteStore._validate_state(data, state)
+	if not bool(checked.get("ok", false)):
+		state.erase("world_pin")
+		return checked
+	SiteStore._normalize_state(state)
+	state.erase("world_pin")
+	var navigation: TerrainData = SiteEnvironment.navigation_for_state(data, state)
+	return {"ok": true, "data": navigation, "base": built.base, "metadata": built.metadata}
+
+func project_terrain(site: Vector2i, mode: String = "base") -> Dictionary:
+	if mode == "base": return make_terrain_data(site.x, site.y)
+	if mode != "author_initial" or _author_pin.is_empty(): return fail("INVALID_TERRAIN_MODE", "current必須由原Slot provider提供；initial須有作者來源")
+	# Validate all referenced neighbours once in this projection call, before any edge commit.
+	var neighbours := {}
+	for offset: Vector2i in [Vector2i.ZERO, Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN, Vector2i(-1,-1), Vector2i(-1,1), Vector2i(1,-1), Vector2i(1,1)]:
+		var coordinate: Vector2i = site + offset
+		var built: Dictionary = _initial_body(coordinate)
+		if not bool(built.get("ok", false)): return built
+		neighbours[coordinate] = built
+	var result: Dictionary = neighbours[site]
+	var data: TerrainData = result.data
+	var refreshed: Dictionary = refresh_boundary(data, site, func(at: Vector2i, cell: Vector2i) -> Dictionary:
+		if not neighbours.has(at): return fail("MISSING_AUTHOR_NEIGHBOUR", "初始鄰圖缺失")
+		var other: TerrainData = neighbours[at].data
+		return {"ok": true, "level": int(other.height_levels[other.index(cell)]), "water_kind": int(other.water_kind[other.index(cell)])})
+	if not refreshed.ok: return refreshed
+	if not data.site.is_empty():
+		var validation_state: Dictionary = data.site.duplicate(true)
+		validation_state["world_pin"] = author_projection_pin(result.base)
+		var checked: Dictionary = SiteStore._validate_state(data, validation_state)
+		validation_state.erase("world_pin")
+		if not bool(checked.get("ok", false)): return checked
+	# A Site without an initial template still needs query-ready derived indexes.
+	SiteEnvironment.rebuild_indexes(data)
+	result["readonly"] = true
+	result["projection_mode"] = mode
+	result["revision"] = JSON.stringify(_author_pin, "", true, true).sha256_text() + ":initial"
+	return result
+
+
+static func author_projection_pin(base: Dictionary) -> Dictionary:
+	# Read-only validation binding, never registered as a world or a gameplay slot.
+	var empty: Dictionary = SiteTechnologyPolicy.new_policy()
+	var pin: Dictionary = {"format": 3, "world_instance_id": "author_projection", "slot_id": "readonly", "technology_policy": empty.policy}
+	for field: String in ["atlas_id", "grid_contract_version", "base_revision", "manifest_sha256", "ramp_rule_revision"]:
+		pin[field] = base[field]
+	for field: String in Adapter.AUTHOR_FIELDS: pin[field] = base[field]
+	for field: String in ["resource_layer_sha256", "resource_rule_revision"]:
+		if base.has(field): pin[field] = base[field]
+	return pin
+
+func _sample_natural_site_meters(easting: float, northing: float, centre_cache: Dictionary) -> Dictionary:
+	return _sample_meters(easting, northing, centre_cache)
+
+
+static func author_static_normalized(raw: Dictionary) -> Dictionary:
+	var normalized: Dictionary = raw.duplicate(true)
+	normalized.format = int(normalized.format)
+	for key: String in normalized.terrain:
+		for field: String in normalized.terrain[key]: normalized.terrain[key][field] = int(normalized.terrain[key][field])
+	if int(normalized.format) == 2:
+		for key: String in normalized.water_bodies: normalized.water_bodies[key].kind = int(normalized.water_bodies[key].kind)
+		for field: String in ["cells", "bodies"]:
+			var values: Array[int] = []
+			for value: Variant in normalized.water_permissions[field]: values.append(int(value))
+			normalized.water_permissions[field] = values
+	return normalized

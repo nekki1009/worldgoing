@@ -100,7 +100,37 @@ static func vehicle_entry_policy(policy: Dictionary, kind: String) -> Dictionary
 static func cache_key(source: RegionData) -> String:
 	var text := "%s|%s|%s|%s|%d|%d" % [source.manifest_hash, Adapter.RAMP_RULE_REVISION,
 		source.resource_manifest_hash, source.resource_rule_revision, TABLE_VERSION, POLICY_REVISION]
+	var author: Dictionary = source.author_identity()
+	if not author.is_empty(): text += "|author|" + JSON.stringify(author, "", true, true)
 	return text.sha256_text().substr(0, 24)
+
+## Unvisited authored worlds use the standard initial projection, never current overlay.
+static func fallback_mode(source: RegionData, mode: String) -> String:
+	if mode == "slot_current" and not source.author_identity().is_empty(): return "author_initial"
+	return "base" if mode == "slot_current" else mode
+
+static func table_cache_key(source: RegionData, mode: String) -> String:
+	var key: String = cache_key(source)
+	return (key + "|author_initial").sha256_text().substr(0, 24) if fallback_mode(source, mode) == "author_initial" else key
+
+## Null is a valid unvisited result; malformed success/revision is never absence.
+static func _provider_terrain(provider: Callable, site: Vector2i, authored_current: bool = false) -> Dictionary:
+	var supplied: Variant = provider.call(site)
+	if authored_current and supplied is Dictionary and not supplied.get("ok") is bool: return {"ok": false, "code": "INVALID_PROVIDER"}
+	if not supplied is Dictionary or not bool(supplied.get("ok", false)): return supplied if supplied is Dictionary else {"ok": false, "code": "INVALID_PROVIDER"}
+	if authored_current and (not supplied.has("data") or supplied.has("revision") and not supplied.revision is String): return {"ok": false, "code": "INVALID_PROVIDER"}
+	if supplied.get("data") != null:
+		if not supplied.data is TerrainData or str(supplied.get("revision", "")).is_empty(): return {"ok": false, "code": "INVALID_PROVIDER"}
+		if authored_current:
+			var body: TerrainData = supplied.data
+			var count: int = Adapter.SIDE * Adapter.SIDE
+			if body.size != Vector2i(Adapter.SIDE, Adapter.SIDE) or body.height_levels.size() != count or body.surface_types.size() != count or body.flags.size() != count or body.ramp_edges.size() != count or body.water_kind.size() != count or body.water_body.size() != count:
+				return {"ok": false, "code": "INVALID_PROVIDER"}
+			if (not body.static_blocked.is_empty() and body.static_blocked.size() != count) or (not body.feature_at.is_empty() and body.feature_at.size() != count) or (not body.site.is_empty() and body.feature_at.size() != count):
+				return {"ok": false, "code": "INVALID_PROVIDER"}
+			if (body.has_raised_surfaces and body.walk_height_levels.size() != count) or (body.has_navigation_overrides and body.walk_ramp_edges.size() != count) or (not body.bridge_navigation_flags.is_empty() and body.bridge_navigation_flags.size() != count) or (not body.bridge_walkable.is_empty() and body.bridge_walkable.size() != count):
+				return {"ok": false, "code": "INVALID_PROVIDER"}
+	return supplied
 
 static func opposite(edge: int) -> int:
 	return (edge + 2) % 4
@@ -333,14 +363,18 @@ static func _ensure_region(key: String, region: Vector2i) -> void:
 ## Exact table for one Site; builds it through the fixed geography when missing.
 ## An empty table means the Site cannot be entered on foot (sea, missing data…).
 static func effective_terrain(source: RegionData, site: Vector2i, context: Dictionary = {}) -> Dictionary:
+	var mode: String = str(context.get("projection_mode", "base"))
+	if mode not in ["base", "author_initial", "slot_current"]: return {"ok": false, "code": "INVALID_TERRAIN_MODE"}
+	if mode == "author_initial":
+		if context.get("effective_terrain", Callable()).is_valid(): return {"ok": false, "code": "INITIAL_CURRENT_PROVIDER_CONFLICT"}
+		return memo_terrain(source, site, mode)
+	if mode == "slot_current" and not context.get("effective_terrain", Callable()).is_valid(): return {"ok": false, "code": "MISSING_CURRENT_PROVIDER"}
 	var provider: Callable = context.get("effective_terrain", Callable())
 	if provider.is_valid():
-		var supplied: Variant = provider.call(site)
-		if not supplied is Dictionary or not bool(supplied.get("ok", false)): return supplied if supplied is Dictionary else {"ok": false, "code": "INVALID_PROVIDER"}
-		if supplied.get("data") != null:
-			if not supplied.data is TerrainData or str(supplied.get("revision", "")).is_empty(): return {"ok": false, "code": "INVALID_PROVIDER"}
-			return supplied
-	var memo := memo_terrain(source, site)
+		var supplied: Dictionary = _provider_terrain(provider, site, mode == "slot_current" and not source.author_identity().is_empty())
+		if not bool(supplied.get("ok", false)): return supplied
+		if supplied.get("data") != null: return supplied
+	var memo: Dictionary = memo_terrain(source, site, fallback_mode(source, mode))
 	if not bool(memo.get("ok", false)): return memo
 	return {"ok": true, "data": memo.data, "revision": "", "visited": false}
 
@@ -365,13 +399,14 @@ static func unregister_readonly_body(data: TerrainData) -> void:
 			if table_key.begins_with(owner_key + "#"): _table_memo.erase(table_key)
 	_mutex.unlock()
 
-static func memo_terrain(source: RegionData, site: Vector2i) -> Dictionary:
-	var key := "%s|%s|%s|%d,%d" % [source.manifest_hash, source.resource_manifest_hash, source.resource_rule_revision, site.x, site.y]
+static func memo_terrain(source: RegionData, site: Vector2i, mode: String = "base") -> Dictionary:
+	if mode not in ["base", "author_initial"]: return {"ok": false, "code": "INVALID_TERRAIN_MODE"}
+	var key: String = "%s|%s|%d,%d" % [cache_key(source), mode, site.x, site.y]
 	_mutex.lock()
 	var cached: Variant = _terrain_memo.get(key)
 	_mutex.unlock()
 	if cached != null: return {"ok": true, "data": cached, "memo": true}
-	var built: Dictionary = source.make_terrain_data(site.x, site.y)
+	var built: Dictionary = source.project_terrain(site, mode)
 	if not bool(built.get("ok", false)) or source.manifest_hash.is_empty(): return built
 	_mutex.lock()
 	if not _terrain_memo.has(key):
@@ -444,16 +479,21 @@ static func party_frame_geometry(source: RegionData, frame: Dictionary, context:
 				"navigation_hash": party_frame_navigation_hash(original)}
 			if selected.has("proof"): record.proof = selected.proof.duplicate(true)
 			sources.append(record)
-			var rule_cells: Variant = original.parameters.get("navigable_water_cells")
-			if rule_cells is Array:
-				for value: Variant in rule_cells:
-					if (value is int or value is float) and float(value) == floorf(float(value)) and int(value) >= 0 and int(value) < 10000:
-						frame_water_cells.append(data.index(original.cell_from_index(int(value)) + offset))
-			var rule_bodies: Variant = original.parameters.get("navigable_water_bodies")
-			if rule_bodies is Array and not rule_bodies.is_empty() and original.water_body.size() == 10000:
+			if original.parameters.get("author_water_rule") == "author_water_rule_v1":
 				for from: int in 10000:
-					if int(original.water_body[from]) >= 0 and original._water_rule_has(rule_bodies, int(original.water_body[from])):
-						frame_water_cells.append(data.index(original.cell_from_index(from) + offset))
+					var cell: Vector2i = original.cell_from_index(from)
+					if original.can_navigate_water(cell): frame_water_cells.append(data.index(cell + offset))
+			else:
+				var rule_cells: Variant = original.parameters.get("navigable_water_cells")
+				if rule_cells is Array:
+					for value: Variant in rule_cells:
+						if (value is int or value is float) and float(value) == floorf(float(value)) and int(value) >= 0 and int(value) < 10000:
+							frame_water_cells.append(data.index(original.cell_from_index(int(value)) + offset))
+				var rule_bodies: Variant = original.parameters.get("navigable_water_bodies")
+				if rule_bodies is Array and not rule_bodies.is_empty() and original.water_body.size() == 10000:
+					for from: int in 10000:
+						if int(original.water_body[from]) >= 0 and original._water_rule_has(rule_bodies, int(original.water_body[from])):
+							frame_water_cells.append(data.index(original.cell_from_index(from) + offset))
 			var flags := original.navigation_flags()
 			var heights := original.navigation_heights()
 			var ramps := original.navigation_ramps()
@@ -479,6 +519,8 @@ static func party_frame_geometry(source: RegionData, frame: Dictionary, context:
 	for field: String in buffers: data.set(field, buffers[field])
 	data.parameters.navigable_water_cells = frame_water_cells
 	data.parameters.navigable_water_bodies = []
+	for field: String in ["author_water_rule", "author_water_bodies", "author_water_changed_cells", "author_water_permissions", "author_land_cells"]:
+		data.parameters.erase(field) # Already folded into frame-indexed arrays/rules.
 	var proof := {"version": 1, "world_origin": frame.world_origin.duplicate(), "size": frame.size.duplicate(), "sources": []}
 	for record: Dictionary in sources:
 		proof.sources.append({"site": record.site.duplicate(), "offset": record.offset.duplicate(), "revision": record.revision,
@@ -508,13 +550,16 @@ static func party_frame_source(data: TerrainData, cell: Vector2i) -> Dictionary:
 	return {"ok": false, "code": "MISSING_ORIGINAL_FRAME_GEOMETRY"}
 
 static func site_table(source: RegionData, site: Vector2i, context: Dictionary = {}) -> PackedByteArray:
+	var mode: String = str(context.get("projection_mode", "base"))
+	if mode not in ["base", "author_initial", "slot_current"]: return PackedByteArray()
+	if mode == "author_initial" and context.get("effective_terrain", Callable()).is_valid(): return PackedByteArray()
+	if mode == "slot_current" and not context.get("effective_terrain", Callable()).is_valid(): return PackedByteArray()
 	var provider: Callable = context.get("effective_terrain", Callable())
 	if provider.is_valid():
-		var supplied: Variant = provider.call(site)
-		if not supplied is Dictionary or not bool(supplied.get("ok", false)): return PackedByteArray()
+		var supplied: Dictionary = _provider_terrain(provider, site, mode == "slot_current" and not source.author_identity().is_empty())
+		if not bool(supplied.get("ok", false)): return PackedByteArray()
 		if supplied.get("data") != null:
-			if not supplied.data is TerrainData or str(supplied.get("revision", "")).is_empty(): return PackedByteArray()
-			var volatile_key := "%s|%s|%s" % [cache_key(source), site, supplied.revision]
+			var volatile_key: String = "%s|%s|%s|%s" % [cache_key(source), mode, site, supplied.revision]
 			_mutex.lock()
 			var known: Variant = _volatile.get(volatile_key)
 			_mutex.unlock()
@@ -525,7 +570,8 @@ static func site_table(source: RegionData, site: Vector2i, context: Dictionary =
 			_volatile[volatile_key] = table
 			_mutex.unlock()
 			return table
-	var key := cache_key(source)
+	var fallback: String = fallback_mode(source, mode)
+	var key: String = table_cache_key(source, mode)
 	_mutex.lock()
 	_ensure_region(key, Grid.region_of(site))
 	var cached: Variant = _memory[key].get(site)
@@ -533,7 +579,13 @@ static func site_table(source: RegionData, site: Vector2i, context: Dictionary =
 	if cached is PackedByteArray:
 		return cached
 	var table := PackedByteArray()
-	var summary := source.get_site_summary(site.x, site.y)
+	if fallback == "author_initial":
+		var projected: Dictionary = memo_terrain(source, site, fallback)
+		if not projected.ok: return PackedByteArray()
+		var derived: Dictionary = table_from_terrain(projected.data, _cover(source, site), true)
+		if not derived.ok: return PackedByteArray()
+		table = derived.table
+	var summary: Dictionary = source.get_site_summary(site.x, site.y) if fallback == "base" else {}
 	if bool(summary.get("ok", false)) and str(summary.get("status", "")) != "outside_content" \
 			and int(summary.get("class_id", 0)) in [2, 3, 4] and bool(summary.get("has_terrain", false)):
 		var built: Dictionary = source.make_terrain_data(site.x, site.y)
@@ -886,13 +938,40 @@ class Search:
 		return Vector2(site - goal_site).length() * RegionRoute.SITE_METRES * RegionRoute.HEURISTIC_WEIGHT
 
 	func _table(site: Vector2i) -> PackedByteArray:
-		var key := RegionRoute.cache_key(source)
+		var mode: String = str(context.get("projection_mode", "base"))
+		if mode != "slot_current" or source.author_identity().is_empty():
+			var legacy_key: String = RegionRoute.table_cache_key(source, mode)
+			RegionRoute._mutex.lock()
+			RegionRoute._ensure_region(legacy_key, RegionGrid.region_of(site))
+			var legacy_known: bool = RegionRoute._memory[legacy_key].has(site)
+			RegionRoute._mutex.unlock()
+			if not legacy_known: builds += 1
+			return RegionRoute.site_table(source, site, context)
+		var provider: Callable = context.get("effective_terrain", Callable())
+		if not provider.is_valid():
+			_provider_failure = {"ok": false, "code": "MISSING_CURRENT_PROVIDER"}
+			return PackedByteArray()
+		var supplied: Dictionary = {"ok": true, "data": null, "revision": ""}
+		var frozen: Dictionary = context
+		if provider.is_valid():
+			supplied = RegionRoute._provider_terrain(provider, site, true)
+			if not supplied.ok:
+				_provider_failure = supplied
+				return PackedByteArray()
+			frozen = context.duplicate()
+			frozen.effective_terrain = func(_site: Vector2i) -> Dictionary: return supplied
+		var key: String = RegionRoute.table_cache_key(source, mode)
 		RegionRoute._mutex.lock()
-		RegionRoute._ensure_region(key, RegionGrid.region_of(site))
-		var known: bool = RegionRoute._memory[key].has(site)
+		var known := false
+		if supplied.data != null and RegionRoute.fallback_mode(source, mode) == "author_initial":
+			var volatile_key: String = "%s|%s|%s|%s" % [RegionRoute.cache_key(source), mode, site, supplied.revision]
+			known = RegionRoute._volatile.has(volatile_key)
+		else:
+			RegionRoute._ensure_region(key, RegionGrid.region_of(site))
+			known = RegionRoute._memory[key].has(site)
 		RegionRoute._mutex.unlock()
 		if not known: builds += 1
-		return RegionRoute.site_table(source, site, context)
+		return RegionRoute.site_table(source, site, frozen)
 
 	func _terrain(site: Vector2i) -> TerrainData:
 		if _terrain_cache.has(site): return _terrain_cache[site]
@@ -977,6 +1056,7 @@ class Search:
 		if not context.get("capabilities", {}).get("vehicle_kinds", []).is_empty() and _vehicles().is_empty():
 			return {"ok": false, "code": "MISSING_VEHICLE_POSE", "message": "帶車規劃須讀取原車姿向"}
 		var start_table := _table(start_site)
+		if str(context.get("projection_mode", "base")) == "slot_current" and not source.author_identity().is_empty() and not _provider_failure.is_empty(): return _provider_failure
 		var retained_start: Variant = context.get("capabilities", {}).get("start_cell")
 		if retained_start is Vector2i:
 			var actual_start := _terrain(start_site)
@@ -986,6 +1066,7 @@ class Search:
 		if start_table.size() != RegionRoute.TABLE_BYTES or start_component < 0 or start_component >= int(start_table[400]):
 			return {"ok": false, "code": "NO_ROUTE", "message": "出發位置沒有可走出此 Site 的通道"}
 		var goal_table := _table(goal_site)
+		if str(context.get("projection_mode", "base")) == "slot_current" and not source.author_identity().is_empty() and not _provider_failure.is_empty(): return _provider_failure
 		if not _allowed(goal_table) or int(goal_table[400]) == 0:
 			return {"ok": false, "code": "NO_ROUTE", "message": "目的地沒有可徒步進入的陸地邊界"}
 		# Open list entries: [f, g, kind, site.x, site.y, component/edge, parent key, offset]
@@ -1010,11 +1091,13 @@ class Search:
 				var edge := int(entry[5])
 				var parent_key := str(entry[6])
 				var table := _table(site)
+				if str(context.get("projection_mode", "base")) == "slot_current" and not source.author_identity().is_empty() and not _provider_failure.is_empty(): return _provider_failure
 				if builds > max_site_builds:
 					return {"ok": false, "code": "TOO_FAR", "message": "路線搜尋超過 %d 個地點；請選較近的目的地或分段前往" % max_site_builds}
 				if not _allowed(table): continue
 				var parent: Dictionary = parents[parent_key]
 				var from_table := _table(parent.site)
+				if str(context.get("projection_mode", "base")) == "slot_current" and not source.author_identity().is_empty() and not _provider_failure.is_empty(): return _provider_failure
 				var reached := {}
 				var first := _terrain(parent.site)
 				var second := _terrain(site)
@@ -1046,6 +1129,7 @@ class Search:
 			if site == goal_site:
 				return _finish(parents, node_key)
 			var here := _table(site)
+			if str(context.get("projection_mode", "base")) == "slot_current" and not source.author_identity().is_empty() and not _provider_failure.is_empty(): return _provider_failure
 			for exit_edge: int in range(4):
 				var open_here := false
 				for offset: int in range(100):

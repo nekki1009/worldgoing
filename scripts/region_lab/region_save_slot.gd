@@ -1735,7 +1735,7 @@ func region_route_context(party: Dictionary = {}) -> Dictionary:
 	if str(party.get("upkeep", {}).get("live", {}).get("upkeep", "")) == "mapBody": node = _region_map_route_reference(party)
 	var poses: Dictionary = node.get("vehicle_poses", {})
 	var start: Variant = Vector2i(int(node.cell[0]), int(node.cell[1])) if node.get("cell") is Array and node.cell.size() == 2 else null
-	return {"effective_terrain": provider, "capabilities": {"mode": "sea" if kinds.has("ship") else "land",
+	return {"projection_mode": "slot_current", "effective_terrain": provider, "capabilities": {"mode": "sea" if kinds.has("ship") else "land",
 		"vehicle_kinds": kinds, "vehicles": vehicles, "vehicle_poses": poses.duplicate(true), "start_cell": start}, "party": party.duplicate(true), "revision": revision}
 
 func effective_site_path(site: Vector2i) -> Dictionary:

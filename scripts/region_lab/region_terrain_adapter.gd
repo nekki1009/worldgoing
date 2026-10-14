@@ -6,14 +6,16 @@ const SIDE := 100
 const HALO_SIDE := SIDE + 2
 const RAMP_RULE_REVISION := "sparse_platform_passes_v1"
 
-static func build(source: RefCounted, site: Vector2i) -> Dictionary:
+static func build(source: RefCounted, site: Vector2i, apply_author: bool = true) -> Dictionary:
 	var samples: Array[Dictionary] = []
 	var centre_cache: Dictionary = {} # One build only; typically 12x12 source cells.
 	var ramp_visual_halo: Dictionary = {}
 	# A global two-metre halo supplies every edge, including all four corners.
 	for y: int in range(-1, SIDE + 1):
 		for x: int in range(-1, SIDE + 1):
-			var sample: Dictionary = source._sample_site_meters(site.x * 200.0 + x * 2.0 + 1.0, site.y * 200.0 + (SIDE - 1 - y) * 2.0 + 1.0, centre_cache)
+			var sample: Dictionary
+			if apply_author: sample = source._sample_site_meters(site.x * 200.0 + x * 2.0 + 1.0, site.y * 200.0 + (SIDE - 1 - y) * 2.0 + 1.0, centre_cache)
+			else: sample = source._sample_natural_site_meters(site.x * 200.0 + x * 2.0 + 1.0, site.y * 200.0 + (SIDE - 1 - y) * 2.0 + 1.0, centre_cache)
 			if not sample.ok:
 				return sample
 			samples.append(sample)
@@ -114,7 +116,27 @@ static func build(source: RefCounted, site: Vector2i) -> Dictionary:
 		resources_enabled = bool(resources.get("enabled", false))
 		if resources_enabled:
 			resource_cover = resources.cover
-			SiteEnvironment.populate_fixed_resources(data, resource_cover, site, absolute_height)
+			if apply_author and source.has_method("author_static_for") and not source.author_static_for(site).is_empty():
+				# Reuse this owner with natural samples; never regenerate away an original footprint.
+				var natural: Dictionary = build(source, site, false)
+				if not bool(natural.get("ok", false)): return natural
+				data.resource_base = natural.data.resource_base.duplicate(true)
+				SiteEnvironment.rebuild_indexes(data)
+			else: SiteEnvironment.populate_fixed_resources(data, resource_cover, site, absolute_height)
+	if apply_author and source.has_method("author_static_for") and not source.author_static_for(site).is_empty() and int(source.author_static_for(site).get("format", 1)) == 2:
+		var layered: Dictionary = source.apply_author_layers(data, site)
+		if not bool(layered.get("ok", false)): return layered
+		water_cells = 0
+		best_spawn = INF
+		data.spawn_cell = Vector2i(-1, -1)
+		for index: int in range(SIDE * SIDE):
+			if data.water_kind[index] > 0: water_cells += 1
+			elif data.is_walkable(data.cell_from_index(index)):
+				var cell: Vector2i = data.cell_from_index(index)
+				var distance: float = Vector2(cell).distance_squared_to(Vector2(49.5, 49.5))
+				if distance < best_spawn:
+					best_spawn = distance
+					data.spawn_cell = cell
 	var base := {"base_kind": "fixed_geography", "atlas_id": str(source.manifest.atlas_id),
 		"grid_contract_version": Grid.CONTRACT_VERSION, "base_revision": str(source.manifest.base_revision),
 		"manifest_sha256": str(source.manifest_hash), "site_id": identity, "site": [site.x, site.y],
@@ -125,7 +147,7 @@ static func build(source: RefCounted, site: Vector2i) -> Dictionary:
 		base["resource_layer_sha256"] = source.resource_manifest_hash
 		base["resource_rule_revision"] = source.resource_rule_revision
 		base["resource_fingerprint"] = JSON.stringify(data.resource_base, "", true, true).sha256_text()
-	if source.has_method("author_identity"):
+	if apply_author and source.has_method("author_identity"):
 		var author: Dictionary = source.author_identity()
 		if not author.is_empty():
 			if not valid_author_identity(author): return {"ok": false, "code": "INVALID_AUTHOR_IDENTITY"}
@@ -135,6 +157,7 @@ static func build(source: RefCounted, site: Vector2i) -> Dictionary:
 			data.drainage.resize(SIDE * SIDE); data.foundation.resize(SIDE * SIDE); data.groundwater.resize(SIDE * SIDE)
 			if data.parameters.get("fixed_land_condition_rule", "") == "terrain_mapped_potential_v1":
 				SiteEnvironment._populate_soil_conditions(data, false)
+			SiteEnvironment.restore_author_land(data)
 			base["effective_environment_sha256"] = author_environment_fingerprint(data)
 	data.parameters["fixed_base"] = base.duplicate(true)
 	return {"ok": true, "code": "OK", "message": "固定地形已展開", "data": data, "base": base,
@@ -195,6 +218,9 @@ static func author_environment_fingerprint(data: TerrainData) -> String:
 		"water_source": data.parameters.get("navigable_water_source", ""),
 		"water_cells": data.parameters.get("navigable_water_cells", []),
 		"water_bodies": data.parameters.get("navigable_water_bodies", [])}
+	if data.parameters.has("author_water_rule"):
+		for field: String in ["author_water_rule", "author_water_bodies", "author_water_changed_cells", "author_water_permissions"]:
+			packet[field] = data.parameters[field]
 	return JSON.stringify(packet, "", true, true).sha256_text()
 
 static func author_pair_valid(value: Variant, low: int, high: int) -> bool:

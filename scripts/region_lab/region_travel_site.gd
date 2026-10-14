@@ -26,7 +26,7 @@ static func _hostile_near(lab: Node, faction: int, cells: Array[Vector2i]) -> bo
 ## No nearest-cell fallback: a disconnected original position remains blocked.
 static func start_component(slot: RegionSaveSlot, site: Vector2i, cell: Vector2i, active: TerrainData = null) -> int:
 	var prepared := slot.prepare_region_route_context(active)
-	if not prepared.ok: return -1
+	if not prepared.ok or prepared.context.get("projection_mode") != "slot_current": return -1
 	var built := RegionRoute.effective_terrain(slot.source, site, prepared.context)
 	if not bool(built.get("ok", false)): return -1
 	var cover: Dictionary = slot.source.site_resource_cover(site)
@@ -314,4 +314,3 @@ static func selected_departure(controller: Node) -> Dictionary:
 	people.sort()
 	return {"ok": true, "spec": spec, "people": people, "component": component, "waiting": waiting,
 		"selection": var_to_bytes([identity, spec.actor_key, spec.team_id, spec.get("solo_row", 0), spec.get("solo_actor", 0), people, orders])}
-

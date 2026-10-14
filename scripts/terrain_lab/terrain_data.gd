@@ -186,6 +186,10 @@ func can_navigate_water(terrain_cell: Vector2i) -> bool:
 		return false
 	if has_raised_surfaces and (walk_height_levels.size() != count or walk_height_levels[i] != height_levels[i]):
 		return false
+	if parameters.get("author_water_rule") == "author_water_rule_v1":
+		var permission: Dictionary = parameters.get("author_water_permissions", {})
+		if _water_rule_has(permission.get("cells"), i) or water_body.size() == count and _water_rule_has(permission.get("bodies"), water_body[i]): return true
+		if _water_rule_has(parameters.get("author_water_changed_cells"), i): return false
 	if _water_rule_has(parameters.get("navigable_water_cells"), i):
 		return true
 	return water_body.size() == count and water_body[i] >= 0 \
