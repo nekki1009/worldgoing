@@ -6,7 +6,7 @@ const ArmyReference = preload("res://scripts/tests/fixtures/site_army_encircleme
 func _initialize() -> void:
 	_run.call_deferred()
 
-func _fixture(reference: bool, per_team: int = 100, maneuver: bool = false, army_type: GDScript = null, lab_type: GDScript = null) -> TerrainLab:
+func _fixture(reference: bool, per_team: int = 100, maneuver: bool = false, army_type: GDScript = null, lab_type: GDScript = null, in_tree: bool = false) -> TerrainLab:
 	var lab: TerrainLab = lab_type.new() if lab_type != null else (Reference.new() if reference else TerrainLab.new())
 	var data := TerrainGenerator.generate(TerrainPreset.Kind.PLAINS, 581)
 	SiteEnvironment.initialize(data, "scale-rules")
@@ -22,6 +22,13 @@ func _fixture(reference: bool, per_team: int = 100, maneuver: bool = false, army
 		team.exchange_enabled = true
 		team.shared_fatigue_enabled = false # Frozen V0.41R arithmetic parity; new team policy has separate tests.
 		team.roster_size = per_team
+		if in_tree:
+			# Like TerrainLab's dynamic team slots (_ensure_army_slots), the captain uses the
+			# shared pooled geometry; live presenters build their UI in _ready, so the army
+			# joins the tree before it deploys. READY re-enables an overridden _process.
+			team.defer_captain_presenter = true
+			root.add_child(team)
+			team.set_process(false)
 		var cells: Array[Vector2i] = []
 		for i in range(per_team):
 			cells.append(Vector2i(49 - floori(float(i) / 98.0) if side == 0 else 50 + floori(float(i) / 98.0), 1 + i % 98) if maneuver else Vector2i(40 + side * 10 + i % 10, 40 + floori(float(i) / 10.0)))

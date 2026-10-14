@@ -95,8 +95,8 @@ func _run() -> void:
 	assert(original.reload() == OK)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 5814911
-	var before := _fixture(false, 100, true, original)
-	var after := _fixture(false, 100, true)
+	var before := _fixture(false, 100, true, original, null, true)
+	var after := _fixture(false, 100, true, null, null, true)
 	var a: TerrainArmy = before.combat_armies[0]
 	var b: TerrainArmy = after.combat_armies[0]
 	for trial in range(100):
@@ -173,8 +173,8 @@ func _run() -> void:
 	custom.source_code = "extends TerrainArmy\n" + hook
 	custom_original.source_code = original.source_code + hook
 	assert(custom.reload() == OK and custom_original.reload() == OK)
-	before = _fixture(false, 100, true, custom_original)
-	after = _fixture(false, 100, true, custom)
+	before = _fixture(false, 100, true, custom_original, null, true)
+	after = _fixture(false, 100, true, custom, null, true)
 	for side in range(2):
 		before.combat_armies[side]._refresh_command_presence()
 		after.combat_armies[side]._refresh_command_presence()
@@ -194,8 +194,8 @@ func _run() -> void:
 		for accelerated in [false, true]:
 			# Both owners must keep the approved canonical tactical staggering.
 			# A subclass disables it; use the byte-identical GD fallback above.
-			before = _fixture(false, count, true)
-			after = _fixture(false, count, true)
+			before = _fixture(false, count, true, null, null, true)
+			after = _fixture(false, count, true, null, null, true)
 			for team: TerrainArmy in before.combat_armies:
 				team.native_presence_enabled = false
 			for team: TerrainArmy in after.combat_armies:
