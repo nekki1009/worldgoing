@@ -6237,7 +6237,9 @@ func _region_selected_document(token: String, relative: String, sha256: String) 
 	if document.ok: _region_selected_document_cache[token] = {"path": relative, "sha256": sha256, "payload": document.payload}
 	return document
 
-func _region_selected_party_document(token: String, require_current: bool = true) -> Dictionary:
+## shared: a cache hit returns the cached validated values themselves, not copies.
+## Only a caller that never mutates the returned party or graph may pass it.
+func _region_selected_party_document(token: String, require_current: bool = true, shared: bool = false) -> Dictionary:
 	var recovered := _recover_control()
 	if not recovered.ok: return recovered
 	var reference: Dictionary
@@ -6258,6 +6260,8 @@ func _region_selected_party_document(token: String, require_current: bool = true
 	var decoded_cache: Dictionary = _region_selected_decoded_cache.get(token, {})
 	if str(decoded_cache.get("path", "")) == str(reference.party_path) and str(decoded_cache.get("sha256", "")) == str(reference.party_sha256) \
 			and str(decoded_cache.get("controller", "")) == controller and _same_pin(decoded_cache.get("pin"), pin):
+		if shared:
+			return _region_selected_party_result(token, reference, controller, decoded_cache.party, str(decoded_cache.fingerprint), decoded_cache.graph, require_current)
 		return _region_selected_party_result(token, reference, controller, decoded_cache.party.duplicate(true),
 			str(decoded_cache.fingerprint), decoded_cache.graph.duplicate(true), require_current)
 	var document := _region_selected_document(token, str(reference.party_path), str(reference.party_sha256))
@@ -6622,7 +6626,9 @@ func region_original_party_runtime_proof(token: String, party: Dictionary) -> Di
 			or absf(float(mode.get("game_seconds", -1.0)) - float(control.logical_game_seconds)) > 0.00000001 \
 			or absf(float(mode.get("action_seconds", -1.0)) - float(control.fire_clock.action_seconds)) > 0.00000001:
 		return fail("STALE_REGION_PARTY_MODE")
-	var durable: Dictionary = _region_selected_party_document(token, false)
+	# This proof only reads the selected document. Its selected_party and
+	# original_live_graph are the cached validated values; callers read them only.
+	var durable: Dictionary = _region_selected_party_document(token, false, true)
 	if not durable.ok: return durable
 	if int(durable.proof.generation) != int(mode.generation) or int(durable.proof.revision) != int(region_registry().revision):
 		return fail("STALE_REGION_PARTY_MODE")
