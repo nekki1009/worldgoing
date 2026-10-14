@@ -12060,6 +12060,8 @@ func checked_runtime_clock_interval() -> Dictionary:
 	return _checked_runtime_work_capture.get("clock", {})
 
 func discard_checked_runtime_work_prefix() -> void:
+	Runtime.release_checked_prefix_links(_checked_runtime_work_preparing.get("prefixes"))
+	Runtime.release_checked_prefix_links(_gd_contact_runtime_segment.get("prefixes"))
 	_checked_runtime_work_capture = {}
 	_gd_contact_runtime_capture = {}
 	_gd_contact_runtime_segment = {}

@@ -9823,6 +9823,22 @@ static func validate_prepared_ranged_source(prepared: Dictionary) -> bool:
 	return RANGED_RECIPES.has(recipe) and is_same(prepared.get("recipe"), RANGED_RECIPES[recipe]) \
 		and prepared.get("cost") == RANGED_RECIPES[recipe].cost and prepared.get("output") == RANGED_RECIPES[recipe].get("output", {})
 
+## A checked work prefix and each candidate prepared from it reference each other
+## through the SAME runtime_priors Array: the prefix holds the Array, the Array
+## holds the candidate, and the candidate's prefix_ref is the prefix (with its
+## data). Once a registry is discarded nothing reads that link again, and a
+## container cycle is never released, so dropping the link frees the ledger and
+## the TerrainData it pins. Only the dead prefix loses its back reference.
+static func release_checked_prefix_links(prefixes: Variant) -> void:
+	if not prefixes is Array: return
+	for prefix: Variant in prefixes:
+		if prefix is Dictionary: prefix.erase("runtime_priors")
+
+static func release_checked_segment_links(segments: Variant) -> void:
+	if not segments is Array: return
+	for segment: Variant in segments:
+		if segment is Dictionary: release_checked_prefix_links(segment.get("prefixes"))
+
 static func prepare_checked_work_prefix(data: TerrainData, task: Dictionary, productive_seconds: float, actual_seconds: float, prefix_ref: Dictionary) -> Dictionary:
 	var identity := int(prefix_ref.get("person_id", 0))
 	var owner: Variant = _checked_work_prefix_owner(data, task, identity, prefix_ref)

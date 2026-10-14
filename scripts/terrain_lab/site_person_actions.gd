@@ -6540,6 +6540,8 @@ func finish_gd_contact_job_prefix() -> void:
 		last.append(candidate)
 	for candidate: Dictionary in last: Runtime.settle_checked_work_prefix(candidate)
 	discard_checked_controlled_prefixes()
+	Runtime.release_checked_segment_links(_gd_contact_job_capture.get("published"))
+	Runtime.release_checked_prefix_links(_gd_contact_job_segment.get("prefixes"))
 	_gd_contact_job_capture = {}
 	_gd_contact_job_segment = {}
 
@@ -7216,6 +7218,7 @@ func settlement_food_prefix_progress(job: Dictionary) -> void:
 	if job.get("kind") == "food_order": job.food_order.payload.work_seconds = float(job.elapsed)
 
 func discard_checked_controlled_prefixes() -> void:
+	Runtime.release_checked_prefix_links(_checked_controlled_prefixes.get("prefixes"))
 	_shared_vehicle_request_facts.clear()
 	_checked_controlled_prefixes = {}
 	_publishing_checked_controlled = false

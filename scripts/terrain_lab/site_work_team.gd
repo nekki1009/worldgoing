@@ -2092,6 +2092,9 @@ func _checked_work_refs_valid(held: Dictionary) -> bool:
 	return true
 
 func discard_checked_work_prefix() -> void:
+	SiteRuntime.release_checked_prefix_links(_preparing_shared_prefix.get("prefixes"))
+	SiteRuntime.release_checked_prefix_links(_gd_contact_work_segment.get("prefixes"))
+	SiteRuntime.release_checked_segment_links(_gd_contact_work_capture.get("published"))
 	_gd_contact_work_capture = {}
 	_gd_contact_work_segment = {}
 	_shared_vehicle_request_facts.clear()
