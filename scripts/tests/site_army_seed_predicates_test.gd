@@ -1,6 +1,9 @@
 extends "res://scripts/tests/site_army_scale_rules_test.gd"
 ## Compare canonical fast predicates and custom-terrain fallback with phase21.
-const FROZEN := "res://scripts/tests/fixtures/terrain_army_encirclement_phase21.gd.txt"
+# The canonical encirclement body (HEAD 2026-10-14). A script subclass takes its pure
+# GD branch, so this compares the fast predicate/native paths against the canonical one.
+# The historical phase21 fixture stays for site_army_scale_realtime_test --phase21-seeds.
+const FROZEN := "res://scripts/tests/fixtures/terrain_army_encirclement_canonical.gd.txt"
 
 class ObservedTerrain extends TerrainData:
 	var probes: Array = []
@@ -44,6 +47,22 @@ func _check_seed(baseline: GDScript, count: int, native_front: bool, custom_terr
 			lab.terrain = observed
 		for side in range(2):
 			var team := lab.combat_armies[side]
+			# R1b: only an appointed officer holding a military post may succeed. The shared
+			# fixture gives front-line row 0 (the commander) 1 HP, so each side needs real
+			# successors to keep its ATTACK order and reach encirclement reviews. Both owners
+			# get the same appointments through the real API (default team seats are free).
+			# A role change needs a stopped, disengaged team (roster_change_ready: HOLD), so
+			# the commander holds, appoints, then restores the fixture's ATTACK order.
+			var held: Dictionary = team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.HOLD)
+			assert(bool(held.ok), "Fixture HOLD before appointment: " + str(held))
+			var cadre: Array[int] = [1, 2, 3]
+			for member: int in cadre:
+				var promoted: Dictionary = team.set_military_role(team.combat_identity(member), "officer")
+				assert(bool(promoted.ok), "Fixture officer promotion: " + str(promoted))
+			var appointed: Dictionary = team.record_officer_service(cadre, true)
+			assert(bool(appointed.ok), "Fixture officer appointment: " + str(appointed))
+			var attacking: Dictionary = team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.ATTACK)
+			assert(bool(attacking.ok), "Fixture ATTACK after appointment: " + str(attacking))
 			team.data = lab.terrain
 			team.native_front_enabled = native_front
 			team.external_blocker = func(cell: Vector2i, owner: TerrainLab, log: Array, opponent: int) -> bool:
