@@ -52,6 +52,9 @@ func _fixture(counts: Array[int], origins: Array[Vector2i], placements: Dictiona
 	var teams: Array[TerrainArmy] = []
 	for faction in range(3):
 		var team := TerrainArmy.new()
+		# Like TerrainLab's dynamic team slots (_ensure_army_slots), the captain uses the
+		# shared pooled geometry instead of a private live presenter SubViewport per army.
+		team.defer_captain_presenter = true
 		# Production armies live in the scene tree; the set_process(false) below then sticks.
 		root.add_child(team)
 		team.team_id = faction + 1
@@ -206,7 +209,9 @@ func _rotation_matrix() -> void:
 			_decide(f)
 			var expected := TerrainArmy.CombatOrder.MOVE
 			if mode == "adjacent_attack": expected = TerrainArmy.CombatOrder.ATTACK
-			if mode == "outnumbered_hold": expected = TerrainArmy.CombatOrder.HOLD
+			# Nekki 2026-10-13 (retreat rule, option 3): with intact morale tactical AI may
+			# order an orderly destination RETREAT, so an outnumbered team withdraws.
+			if mode == "outnumbered_hold": expected = TerrainArmy.CombatOrder.RETREAT
 			_check(team.combat_order == expected, "Expected order %d, got %d" % [expected, team.combat_order])
 			_check(enemy.index_for_identity(team.tactical_ai_target_id) >= 0, "Chosen enemy must be the nearest hostile group")
 			var initial_orders := team.tactical_ai_orders
@@ -216,8 +221,11 @@ func _rotation_matrix() -> void:
 			if mode == "adjacent_attack":
 				_check(f.lab.exchange_count > 0, "Adjacent ATTACK must produce real exchanges")
 			elif mode == "outnumbered_hold":
-				_check(team.cells == initial_cells and team.combat_order == TerrainArmy.CombatOrder.HOLD,
-					"Strength disadvantage without a sustain rout must hold, not retreat")
+				# A one-person withdrawal may already have arrived (HOLD) within the 4 s.
+				_check(team.combat_order in [TerrainArmy.CombatOrder.RETREAT, TerrainArmy.CombatOrder.HOLD] and not team.is_sustain_routed()
+					and str(team._retreat_resolution.get("reason", "")) != "morale_collapse"
+					and team.cells != initial_cells and _nearest_gap(team, enemy) > initial_gap,
+					"Strength disadvantage without a sustain rout must withdraw in good order, not rout")
 			else:
 				_check(team.cells != initial_cells, "Decision must produce actual landed movement")
 				_check(_nearest_gap(team, enemy) < initial_gap, "Physical distance must follow the issued approach")
