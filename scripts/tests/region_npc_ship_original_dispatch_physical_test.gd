@@ -130,7 +130,16 @@ func _sea_reopen(in_transit: bool) -> bool:
 	lab.simulation_speed = action_speed
 	if not _restore_sea_goal_owner(): return false
 	var next_graphs := _sea_graphs(in_transit)
-	if not _check(not next_graphs.is_empty() and graphs == next_graphs and reference == slot.region_registry().parties[sea_token] and clock == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "true selected reopen preserves both full Sites and the full actual party graph without clock drift"): return false
+	# Owner graphs are stored in the Store's saved JSON (plain JSON numbers), so they
+	# are compared in that domain, exactly as the inherited reopen and the cold bind
+	# compare them; the registry reference and both clocks stay exact.
+	var reopen_facts := {"graphs_present": not next_graphs.is_empty(),
+		"source": _saved_json_domain(graphs.get("source")) == _saved_json_domain(next_graphs.get("source")),
+		"destination": _saved_json_domain(graphs.get("destination")) == _saved_json_domain(next_graphs.get("destination")),
+		"party": _saved_json_domain(graphs.get("party")) == _saved_json_domain(next_graphs.get("party")),
+		"reference": reference == slot.region_registry().parties[sea_token],
+		"clock": clock == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence]}
+	if not _check(not reopen_facts.values().has(false), "true selected reopen preserves both full Sites and the full actual party graph without clock drift", reopen_facts): return false
 	if in_transit:
 		var next: Dictionary = _sea_selected()
 		if not _check(next.ok and party_bytes == var_to_bytes(next.party) and proof == slot.region_live_party_proof(sea_token).proof, "actual sea cursor, body, stock, holders and selected proof survive full cold reopen"): return false
