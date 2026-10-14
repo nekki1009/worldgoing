@@ -221,6 +221,7 @@ func run() -> void:
 	if not _check(Runtime.initialize_item_storage(data.site).ok, "Original item registry"):
 		return
 	lab = FlowLab.new()
+	lab.exchange_enabled = false # This fixture exercises the original mesh sample/resolve branch.
 	lab.terrain = data
 	lab.contact_buckets_enabled = false
 	lab.trace_contacts = contact_buckets
