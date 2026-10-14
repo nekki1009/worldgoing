@@ -79,6 +79,7 @@ func _job_key_for(identity: int) -> String:
 	if _jobs.has(direct): return direct
 	for key: String in _jobs:
 		var job: Dictionary = _jobs[key]
+		if str(job.kind) == "ransom" and int(job.representative_id) == identity: return key
 		if str(job.kind) in ["technology_lesson", "captive_craft"] and int(job.target_id) == identity: return key
 		if str(job.kind) == "equipment" and str(job.order.mode) == "team_issue" and job.order.target_ids.has(identity):
 			return key
@@ -1288,7 +1289,7 @@ func _commit(job: Dictionary) -> Dictionary:
 		return result
 	var target := _person(int(job.target_id))
 	if str(job.kind) == "ransom":
-		var query := _ransom_context(executor, target, _person(int(job.representative_id)))
+		var query := _ransom_context(executor, target, _person(int(job.representative_id)), job)
 		if not query.ok:
 			return query
 		# Both original owners have been checked. No callback/yield until both move.
@@ -1414,7 +1415,7 @@ func _job_context(job: Dictionary) -> Dictionary:
 	var target := _person(int(job.target_id))
 	if str(job.kind) == "ransom":
 		var representative := _person(int(job.representative_id))
-		var query := _ransom_context(executor, target, representative)
+		var query := _ransom_context(executor, target, representative, job)
 		if not query.ok:
 			return query
 		if int(representative.hit) != int(job.representative_hit) or lab.terrain.index(representative.cell) != int(job.representative_cell):
@@ -1526,12 +1527,15 @@ func _escape_context(person: Dictionary) -> Dictionary:
 func _escape_blocked(person: Dictionary, candidates: Dictionary) -> bool:
 	return has_effective_guard(int(person.person_id)) or _threat(person, candidates)
 
-func _ransom_context(payer: Dictionary, target: Dictionary, representative: Dictionary) -> Dictionary:
+func _ransom_context(payer: Dictionary, target: Dictionary, representative: Dictionary, job: Dictionary = {}) -> Dictionary:
 	if not _ready(payer) or not _ready(representative, true) or target.is_empty() or float(target.hp) <= 0.0 or not bool(target.captive) or not lab.terrain.site.captivity.has(str(target.person_id)):
 		return Runtime.fail("BUSY", "須由雙方清醒自由的實際代表交付")
 	if not str(lab.terrain.site.captivity[str(target.person_id)].get("prison_id", "")).is_empty():
 		return Runtime.fail("CONFINED", "先由战俘營相鄰接觸格完成出監解綁")
-	if is_busy(int(representative.person_id)):
+	var busy_key := _job_key_for(int(representative.person_id))
+	if not busy_key.is_empty() and (job.get("kind") != "ransom" or not is_same(_jobs[busy_key], job) \
+		or job.get("executor_id") != payer.person_id or job.get("target_id") != target.person_id \
+		or job.get("representative_id") != representative.person_id):
 		return Runtime.fail("BUSY", "拘押代表已有其他未完成作業")
 	if int(payer.faction) != int(target.faction) or int(representative.faction) != int(lab.terrain.site.captivity[str(target.person_id)].captor_faction) or not _adjacent(payer.cell, representative.cell):
 		return Runtime.fail("AUTHORITY", "友方付款代表與拘押方代表須相鄰可達")
@@ -5620,7 +5624,7 @@ func prepare_gd_custody_terminal(job: Dictionary, source_only: bool = false) -> 
 			"captor_faction": int(executor.faction), "sealed_container": prepared.container_id, "prison_id": ""}
 		prepared.next_relation.merge(_gd_custody_capture_fields(int(prepared.sequence)))
 	elif job.kind == "ransom":
-		prepared.query = _ransom_context(executor, target, _person(int(job.representative_id)))
+		prepared.query = _ransom_context(executor, target, _person(int(job.representative_id)), job)
 		if not prepared.query.ok: return prepared.query
 		prepared.source_before = prepared.query.source.duplicate(true)
 		prepared.destination_before = prepared.query.destination.duplicate(true)
@@ -5679,7 +5683,7 @@ func validate_gd_custody_terminal(prepared: Dictionary) -> Dictionary:
 		expected.merge(_gd_custody_capture_fields(int(prepared.sequence)))
 		if prepared.next_relation != expected: return Runtime.fail("INVALID")
 	elif job.kind == "ransom":
-		var query: Dictionary = _ransom_context(executor, target, _person(int(job.representative_id)))
+		var query: Dictionary = _ransom_context(executor, target, _person(int(job.representative_id)), job)
 		if not query.ok: return query
 		var held: Dictionary = prepared.query
 		if not is_same(query.source, held.get("source")) or not is_same(query.destination, held.get("destination")) \
