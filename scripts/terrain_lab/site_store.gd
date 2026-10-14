@@ -3,6 +3,7 @@ extends RefCounted
 
 const Env = preload("res://scripts/terrain_lab/site_environment.gd")
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
+const Trade = preload("res://scripts/terrain_lab/site_trade.gd")
 const RegionCheckpoint = preload("res://scripts/terrain_lab/site_region_checkpoint.gd")
 const Housing = preload("res://scripts/terrain_lab/site_housing.gd")
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
@@ -453,6 +454,8 @@ static func save(data: TerrainData, path: String = DEFAULT_PATH, native_candidat
 		return corps_validation
 	var cape_validation := _validate_cape_roles(state)
 	if not cape_validation.ok: return cape_validation
+	var trade_validation: Dictionary = Trade.validate_snapshot(state, float(region_capture.get("context", {}).get("action_seconds", -1.0)), data)
+	if not trade_validation.ok: return trade_validation
 	var allocator_validation := _validate_person_allocator(state)
 	if not allocator_validation.ok:
 		return allocator_validation
@@ -1057,6 +1060,7 @@ static func _normalize_portable_lineage(value: Variant) -> void:
 		for entry: Variant in value: _normalize_portable_lineage(entry)
 
 static func _normalize_state(state: Dictionary) -> void:
+	Trade.normalize_snapshot(state)
 	# Raw identity was validated with all original candidate fields before this
 	# normalizer runs. Only detached integer metadata is canonicalized.
 	if state.has("travel_identity"):
@@ -1677,6 +1681,8 @@ static func _validate_state(data: TerrainData, state: Dictionary, crowd_workers:
 		return item_validation
 	var cape_validation := _validate_cape_roles(state)
 	if not cape_validation.ok: return cape_validation
+	var trade_validation: Dictionary = Trade.validate_snapshot(state, float(region_context.get("action_seconds", -1.0)), data)
+	if not trade_validation.ok: return trade_validation
 	var allocator_validation := _validate_person_allocator(state)
 	if not allocator_validation.ok:
 		return allocator_validation

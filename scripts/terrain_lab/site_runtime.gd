@@ -11789,6 +11789,12 @@ static func prepare_settlement_metal_transfer(data: TerrainData, settlement_id: 
 
 static func publish_item_transfer(prepared: Dictionary) -> Dictionary:
 	assert(prepared.ok)
+	_publish_item_transfer_contents(prepared)
+	prepared.source.version = int(prepared.source.version) + 1
+	prepared.destination.version = int(prepared.destination.version) + 1
+	return ok("物品已轉移", {"source_version": prepared.source.version, "destination_version": prepared.destination.version})
+
+static func _publish_item_transfer_contents(prepared: Dictionary) -> void:
 	var data: TerrainData = prepared.terrain
 	var source: Dictionary = prepared.source
 	var source_cargo: Dictionary = prepared.source_cargo
@@ -11812,10 +11818,6 @@ static func publish_item_transfer(prepared: Dictionary) -> Dictionary:
 		source.equipped.erase(slot)
 		if preserve_slots:
 			destination.equipped[slot] = retained_slots[slot]
-	source.version = int(source.version) + 1
-	destination.version = int(destination.version) + 1
-	# Item ownership does not rebuild terrain/resource heatmaps on every loot step.
-	return ok("物品已轉移", {"source_version": source.version, "destination_version": destination.version})
 
 static func publish_settlement_metal_order(prepared: Dictionary) -> void:
 	if prepared.order_ref.is_empty(): return
@@ -14063,3 +14065,163 @@ static func prepare_fire_suppression_batch(data: TerrainData, rows: Array) -> Di
 		offset += 1
 		jobs[key] = {"prepared": prepared, "check": check}
 	return ok("原同點有限火工候選已配額", {"jobs": jobs, "limits": limits, "needs_replan": not limits.is_empty()})
+
+# T0 core only; the future PersonActions caller owns consent/contact/action time.
+static func exchange_items(data: TerrainData, a_ref: Dictionary, b_ref: Dictionary, a_gives: Dictionary, b_gives: Dictionary, preview: bool = false) -> Dictionary:
+	var prepared: Dictionary = prepare_item_exchange(data, a_ref, b_ref, a_gives, b_gives)
+	if not prepared.ok: return prepared
+	return ok() if preview else publish_item_exchange(prepared)
+
+static func trade_endpoint(data: TerrainData, holder_id: String) -> Dictionary:
+	if data == null or data.site.is_empty(): return fail("NO_TARGET")
+	var endpoint: Dictionary = {}
+	if holder_id == "depot":
+		endpoint = {"holder": data.site.get("depot_items", {}), "cargo": data.site.get("inventory", {}), "capacity": data.site.get("capacity", -1)}
+	elif holder_id.begins_with("person:"):
+		var suffix: String = holder_id.trim_prefix("person:")
+		if not suffix.is_valid_int() or str(int(suffix)) != suffix or not _building_integer(int(suffix), 1, 2147483647): return fail("INVALID")
+		var actions: Variant = _technology_actions(data)
+		if actions == null: return fail("UNSUPPORTED", "原人物 owner 尚未綁定")
+		var guard: Dictionary = actions.crowd_action_guard([int(suffix)])
+		if not guard.ok: return fail("UNSUPPORTED", "T0不支援Crowd人物")
+		var person: Dictionary = actions._person(int(suffix))
+		if person.is_empty(): return fail("NO_TARGET")
+		if not person.owner is TerrainArmy and not person.owner is TerrainTestCharacter: return fail("UNSUPPORTED")
+		if person.body is Dictionary and str(person.body.get("embarked_vehicle_id", "")) != "": return fail("UNSUPPORTED", "T0不支援登船人物")
+		if actions.lab.site_controller != null and actions.lab.site_controller.vehicles.is_embarked(int(suffix)): return fail("UNSUPPORTED")
+		endpoint = {"holder": person.holder, "cargo": person.cargo, "capacity": CARRY_CAPACITY}
+	elif holder_id.begins_with("feature:"):
+		var key: String = holder_id.trim_prefix("feature:")
+		var stock_owner: Script = load("res://scripts/terrain_lab/site_stockpiles.gd")
+		endpoint = stock_owner.call("stock_endpoint", data, key)
+		var feature: Dictionary = data.site.get("features", {}).get(key, {})
+		if endpoint.is_empty(): return fail("NO_TARGET")
+		if endpoint.get("withdraw_only", true) or feature.has("pending_build") or feature.has("repair"): return fail("BUSY", "原設施禁止進料")
+	elif holder_id.begins_with("vehicle:"):
+		var key: String = holder_id.trim_prefix("vehicle:")
+		var vehicle: Dictionary = data.site.get("vehicles", {}).get(key, {})
+		if vehicle.is_empty(): return fail("NO_TARGET")
+		if str(vehicle.get("kind", "")) not in ["cart", "wagon"]: return fail("UNSUPPORTED", "T0只支援停穩陸車")
+		if not vehicle.get("move") is Dictionary or not vehicle.move.is_empty() or vehicle.get("stop_pending", false): return fail("BUSY")
+		var transport_owner: Script = load("res://scripts/terrain_lab/site_vehicle_transport.gd")
+		var reserved: Variant = vehicle.get("travel_patients", {}).get("reserved_capacity", 0)
+		if not reserved is int or int(reserved) < 0: return fail("INVALID")
+		endpoint = {"holder": vehicle.get("holder", {}), "cargo": vehicle.get("cargo", {}), "capacity": int(transport_owner.call("capacity_of", vehicle)) - int(reserved)}
+	else:
+		return fail("UNSUPPORTED", "T0不支援此持物端點（含team_supply）")
+	if not endpoint.get("holder") is Dictionary or not _item_holder_shape(endpoint.holder) or endpoint.holder.holder != holder_id \
+		or not endpoint.get("cargo") is Dictionary or not _resource_stack(endpoint.cargo) \
+		or not endpoint.get("capacity") is int or int(endpoint.capacity) < 0: return fail("INVALID", "原持物端點不合法")
+	var load_value: float = carried_load(data.site, endpoint.cargo, endpoint.holder)
+	if not is_finite(load_value) or load_value < 0.0: return fail("INVALID")
+	return ok("", endpoint)
+
+static func _trade_ref_valid(ref: Dictionary) -> bool:
+	return Technology.keys(ref, ["holder", "expected_version"]) and ref.holder is String and str(ref.holder).length() <= 128 \
+		and ref.expected_version is int and int(ref.expected_version) >= 0 and int(ref.expected_version) < 2147483646
+
+static func _trade_goods_valid(data: TerrainData, endpoint: Dictionary, goods: Dictionary) -> Dictionary:
+	if not Technology.keys(goods, ["resources", "item_ids"]) or not goods.resources is Dictionary or not _resource_stack(goods.resources, false) \
+		or not goods.item_ids is Array or goods.item_ids.size() > 1000000: return fail("INVALID")
+	if goods.resources.is_empty() and goods.item_ids.is_empty(): return fail("EMPTY", "交易雙方都須有付出")
+	var selected: Dictionary = {}
+	for identity: Variant in goods.item_ids:
+		if not identity is String or selected.has(identity): return fail("INVALID")
+		selected[identity] = true
+		var record: Variant = data.site.item_records.get(identity)
+		if not record is Dictionary or not valid_item_definition(record.get("definition"), data.site.item_definitions.get(record.get("definition"))): return fail("INVALID", "未知或毀損的原物品定義")
+		for slot: String in endpoint.holder.equipped:
+			if endpoint.holder.equipped[slot] == identity: return fail("UNSUPPORTED", "請先沿原入口卸裝")
+	return ok()
+
+static func prepare_item_exchange(data: TerrainData, a_ref: Dictionary, b_ref: Dictionary, a_gives: Dictionary, b_gives: Dictionary) -> Dictionary:
+	if data == null or not data.site.get("item_records") is Dictionary or not data.site.get("item_definitions") is Dictionary \
+		or not _trade_ref_valid(a_ref) or not _trade_ref_valid(b_ref) or a_ref.holder == b_ref.holder: return fail("INVALID")
+	var a: Dictionary = trade_endpoint(data, str(a_ref.holder))
+	if not a.ok: return a
+	var b: Dictionary = trade_endpoint(data, str(b_ref.holder))
+	if not b.ok: return b
+	if is_same(a.holder, b.holder) or is_same(a.cargo, b.cargo): return fail("INVALID", "原持物端點不可共用字典")
+	for pair: Array in [[a, a_gives], [b, b_gives]]:
+		var checked: Dictionary = _trade_goods_valid(data, pair[0], pair[1])
+		if not checked.ok: return checked
+	var a_copy: Dictionary = a_gives.duplicate(true)
+	var b_copy: Dictionary = b_gives.duplicate(true)
+	if not can_pay(a.cargo, a_copy.resources) or not can_pay(b.cargo, b_copy.resources): return fail("EMPTY")
+	var prepared: Dictionary = ok("", {"terrain": data, "site_state": data.site, "item_records": data.site.item_records,
+		"a_ref": a_ref.duplicate(), "b_ref": b_ref.duplicate(), "a": a, "b": b, "a_gives": a_copy, "b_gives": b_copy,
+		"a_before": a.holder.duplicate(true), "b_before": b.holder.duplicate(true), "a_cargo_before": a.cargo.duplicate(), "b_cargo_before": b.cargo.duplicate(),
+		"a_load_before": carried_load(data.site, a.cargo, a.holder), "b_load_before": carried_load(data.site, b.cargo, b.holder)})
+	var net_a: Dictionary = a.cargo.duplicate()
+	var net_b: Dictionary = b.cargo.duplicate()
+	add_items(net_a, a_copy.resources, -1)
+	add_items(net_a, b_copy.resources)
+	add_items(net_b, b_copy.resources, -1)
+	add_items(net_b, a_copy.resources)
+	if not _resource_stack(net_a) or not _resource_stack(net_b): return fail("INVALID", "交換後資源堆疊不合法")
+	# Derived net allowance, never a caller-provided capacity. Both guards run on original owners.
+	var allowance_b: int = int(b.capacity) + inventory_size(b_copy.resources) + b_copy.item_ids.size()
+	var leg_a: Dictionary = prepare_item_transfer(data, a.holder, a.cargo, b.holder, b.cargo, a_copy.resources, a_copy.item_ids, int(a_ref.expected_version), int(b_ref.expected_version), allowance_b)
+	if not leg_a.ok: return leg_a
+	var allowance_a: int = int(a.capacity) + inventory_size(a_copy.resources) + a_copy.item_ids.size()
+	var leg_b: Dictionary = prepare_item_transfer(data, b.holder, b.cargo, a.holder, a.cargo, b_copy.resources, b_copy.item_ids, int(b_ref.expected_version), int(a_ref.expected_version), allowance_a)
+	if not leg_b.ok: return leg_b
+	prepared.legs = [leg_a, leg_b]
+	var stable: Dictionary = validate_prepared_item_exchange(prepared)
+	return prepared if stable.ok else stable
+
+static func validate_prepared_item_exchange(prepared: Dictionary) -> Dictionary:
+	if prepared.get("ok") != true or not prepared.get("terrain") is TerrainData or not prepared.get("legs") is Array or prepared.legs.size() != 2: return fail("INVALID")
+	for field: String in ["site_state", "item_records", "a_ref", "b_ref", "a", "b", "a_gives", "b_gives", "a_before", "b_before", "a_cargo_before", "b_cargo_before"]:
+		if not prepared.get(field) is Dictionary: return fail("INVALID")
+	for side: String in ["a", "b"]:
+		if not _building_number(prepared.get(side + "_load_before"), 0.0, 1.0e12): return fail("INVALID")
+	for leg: Variant in prepared.legs:
+		if not leg is Dictionary or not leg.get("source") is Dictionary or not leg.get("source_cargo") is Dictionary \
+			or not leg.get("destination") is Dictionary or not leg.get("destination_cargo") is Dictionary \
+			or not leg.get("resources") is Dictionary or not leg.get("selected") is Dictionary \
+			or not leg.get("retained_slots") is Dictionary or not leg.get("preserve_slots") is bool: return fail("INVALID")
+	var data: TerrainData = prepared.terrain
+	if not is_same(data.site, prepared.site_state) or not is_same(data.site.get("item_records"), prepared.item_records): return fail("STALE_SOURCE")
+	for side: String in ["a", "b"]:
+		var ref: Dictionary = prepared[side + "_ref"]
+		if not _trade_ref_valid(ref): return fail("INVALID")
+		var current: Dictionary = trade_endpoint(data, str(ref.holder))
+		if not current.ok: return current
+		var original: Dictionary = prepared[side]
+		if not is_same(current.holder, original.holder) or not is_same(current.cargo, original.cargo) \
+			or current.holder != prepared[side + "_before"] or current.cargo != prepared[side + "_cargo_before"] \
+			or int(current.holder.version) != int(ref.expected_version) or current.capacity != original.capacity \
+			or carried_load(data.site, current.cargo, current.holder) != float(prepared[side + "_load_before"]): return fail("STALE_SOURCE")
+		var own: Dictionary = prepared[side + "_gives"]
+		var incoming: Dictionary = prepared[("b" if side == "a" else "a") + "_gives"]
+		var goods_check: Dictionary = _trade_goods_valid(data, current, own)
+		if not goods_check.ok: return goods_check
+		var final_load: float = carried_load(data.site, current.cargo, current.holder) - inventory_size(own.resources) - own.item_ids.size() + inventory_size(incoming.resources) + incoming.item_ids.size()
+		if final_load > int(current.capacity): return fail("STORAGE_FULL")
+		var net: Dictionary = current.cargo.duplicate()
+		add_items(net, own.resources, -1)
+		add_items(net, incoming.resources)
+		if not _resource_stack(net): return fail("INVALID")
+	for index: int in range(2):
+		var leg: Dictionary = prepared.legs[index]
+		var goods: Dictionary = prepared.a_gives if index == 0 else prepared.b_gives
+		var source: Dictionary = prepared.a if index == 0 else prepared.b
+		var destination: Dictionary = prepared.b if index == 0 else prepared.a
+		if not is_same(leg.source, source.holder) or not is_same(leg.source_cargo, source.cargo) \
+			or not is_same(leg.destination, destination.holder) or not is_same(leg.destination_cargo, destination.cargo) \
+			or leg.resources != goods.resources or leg.selected.size() != goods.item_ids.size(): return fail("INVALID")
+		for identity: String in goods.item_ids:
+			if not leg.selected.has(identity): return fail("INVALID")
+		var stable: Dictionary = validate_prepared_item_transfer(leg)
+		if not stable.ok: return stable
+	return ok()
+
+static func publish_item_exchange(prepared: Dictionary) -> Dictionary:
+	var stable: Dictionary = validate_prepared_item_exchange(prepared)
+	if not stable.ok: return stable
+	# Validation is complete; no callback/yield/save boundary inside this commit.
+	for leg: Dictionary in prepared.legs: _publish_item_transfer_contents(leg)
+	prepared.a.holder.version = int(prepared.a_ref.expected_version) + 1
+	prepared.b.holder.version = int(prepared.b_ref.expected_version) + 1
+	return ok("原物品已同次交換", {"a_version": prepared.a.holder.version, "b_version": prepared.b.holder.version})
