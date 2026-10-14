@@ -4,6 +4,11 @@ extends RefCounted
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const Sustain = preload("res://scripts/terrain_lab/site_sustain.gd")
 const Ship = preload("res://scripts/terrain_lab/site_vehicle_ship_definitions.gd")
+## The Site itself owns its Depot and ground-loot stock. A live job lives inside
+## that Site's own state, so naming the owning TerrainData there would make the Site
+## hold itself (a container cycle that is never released). Its identity is already
+## proved by the SAME stock and version holders; the owner is this fixed name.
+const SITE_OWNER := "site"
 var controller: Variant
 
 func init(owner: Variant) -> void:
@@ -99,7 +104,7 @@ func source(specification: Dictionary, receiver: Dictionary) -> Dictionary:
 				stock = data.site.inventory
 				version_owner = data.site.depot_items
 				origin = data.cell_from_index(int(data.site.depot_cell))
-				original_owner = data
+				original_owner = SITE_OWNER
 			else:
 				var container: Dictionary = data.site.ground_loot.get(str(specification.get("container_id", "")), {})
 				if container.is_empty():
@@ -109,7 +114,7 @@ func source(specification: Dictionary, receiver: Dictionary) -> Dictionary:
 				version_owner = container
 				source_ship = str(container.get("vehicle_id", ""))
 				origin = data.cell_from_index(int(container.cell)) if source_ship.is_empty() else receiver.cell
-				original_owner = data
+				original_owner = SITE_OWNER
 		_:
 			return {}
 	if receiver.is_empty() or not controller._delivery_person_ready(sender) or not controller._delivery_person_ready(receiver):

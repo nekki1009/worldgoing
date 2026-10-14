@@ -8586,7 +8586,11 @@ func _region_publish_original_owner_state(prepared: Dictionary) -> Dictionary:
 			if not team.combat_enabled: continue
 			combat_movement_coordinator._registered_formations[team.get_instance_id()] = team.formation_runtime_id
 			combat_movement_coordinator._formation_by_id[team.formation_runtime_id] = team
-	for team_id: String in roots.deliveries: terrain.site.team_supply[team_id].delivery = roots.deliveries[team_id]
+	for team_id: String in roots.deliveries:
+		var restored_delivery: Dictionary = roots.deliveries[team_id]
+		# A graph saved before the Site-owner name restores that owner as this terrain.
+		if is_same(restored_delivery.get("source_owner"), terrain): restored_delivery.source_owner = preload("res://scripts/terrain_lab/site_food_delivery.gd").SITE_OWNER
+		terrain.site.team_supply[team_id].delivery = restored_delivery
 	DutyAI.review_round = int(roots.duty.round)
 	DutyAI._seat_waits.clear(); DutyAI._seat_waits.merge(roots.duty.seat_waits)
 	DutyAI._inmate_since.clear(); DutyAI._inmate_since.merge(roots.duty.inmate_since)
