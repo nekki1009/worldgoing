@@ -32,11 +32,23 @@ func run() -> void:
 	assert(team.formal_commander == 0 and team.command_abilities.size() == 1)
 	var original_cells := team.cells.duplicate()
 	var original_abilities: Dictionary = team.command_abilities[0].duplicate()
+	# R1b: only an appointed officer holding a military post may act or succeed
+	# (command_eligible = officer role + present + is_serving_military). Promote and
+	# appoint 1 and 2 through the real API; the default team offices have free
+	# military seats, which set_military_role fills automatically.
+	for member: int in [1, 2]:
+		var promoted: Dictionary = team.set_military_role(team.combat_identity(member), "officer")
+		assert(bool(promoted.ok), "Fixture officer promotion: " + str(promoted))
+	var cadre: Array[int] = [1, 2]
+	var appointed: Dictionary = team.record_officer_service(cadre, true)
+	assert(bool(appointed.ok), "Fixture officer appointment: " + str(appointed))
 	team.officer_order.assign([1, 2])
 	knockout(team, 0)
 	team.settle_combat_command()
 	assert(team.formal_commander == 0 and team.acting_commander == 1 and team.current_commander == 1)
-	assert(team.cells == original_cells and team.command_abilities.size() == 2, "Role handover cannot move a person or generate all soldiers' abilities")
+	# R1b: an appointed officer receives command abilities when promoted, so the
+	# commander and both officers hold them (3); ordinary soldiers still do not.
+	assert(team.cells == original_cells and team.command_abilities.size() == 3, "Role handover cannot move a person or generate all soldiers' abilities")
 	knockout(team, 1)
 	team.settle_combat_command()
 	assert(team.current_commander == 2)
@@ -160,6 +172,9 @@ func run() -> void:
 	team.clear()
 	copy.queue_free()
 	team.queue_free()
+	# Headless skips the production release at tree exit (_retain_contact_sources_until_exit);
+	# free the static contact rigs in this same frame, before the first draw (as round 62).
+	TerrainArmy.release_contact_source()
 	await process_frame
 	print("SITE ARMY COMMAND SAVE PASS: priority/acting/permanent succession, no role teleport, sparse ability RNG, vacancy latch, authority, movement claims, format3 no-heal roundtrip, corrupt/duplicate rejection")
 	quit(0)
