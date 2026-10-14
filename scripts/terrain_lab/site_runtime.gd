@@ -12291,7 +12291,7 @@ static func _settlement_defense_occupied(data: TerrainData, identity: int, cell:
 	var actions: Variant = _technology_actions(data)
 	var person: Dictionary = actions._person(identity) if actions != null else {}
 	if person.is_empty(): return true
-	if actions.lab.site_controller.vehicles.blocks(cell, data): return true
+	if actions.lab.site_controller.vehicles.blocks_cell(cell): return true
 	if person.owner is TerrainTestCharacter: return actions.lab.site_controller._actor_people_blocked(cell, person.owner)
 	return actions.lab.site_controller.work_team._occupied(cell, person.owner, int(person.unit))
 
