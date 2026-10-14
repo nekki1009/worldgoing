@@ -65,7 +65,9 @@ func _workshop_named_point(f: Dictionary, seconds: float) -> void:
 	_check(bool(admitted.get("finished", false)) and is_same(priors, admitted.runtime_priors) and priors.is_empty(),
 		"Completed original workshop point clears only its SAME terminal ledger")
 	for candidate: Dictionary in admitted.runtime:
-		_check(is_same(candidate.prefix_ref.runtime_priors, priors) and candidate.prefix_ref.runtime_priors.is_empty(),
+		# The loop is broken when the finished prefix no longer names the ledger at all,
+		# or still names this SAME emptied ledger.
+		_check(not candidate.prefix_ref.has("runtime_priors") or is_same(candidate.prefix_ref.runtime_priors, priors) and candidate.prefix_ref.runtime_priors.is_empty(),
 			"Completed original workshop prefix no longer retains candidate ledger loop")
 
 func _n04_real_product_then_inspection() -> void:

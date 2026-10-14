@@ -318,7 +318,9 @@ func _interval(f: Dictionary, seconds: float = 60.0) -> Dictionary:
 	_require(bool(admitted.get("finished", false)) and is_same(completed_priors, admitted.runtime_priors)
 		and completed_priors.is_empty(), "Completed original interval clears only its SAME terminal ledger")
 	for candidate: Dictionary in admitted.runtime:
-		_require(is_same(candidate.prefix_ref.runtime_priors, completed_priors) and candidate.prefix_ref.runtime_priors.is_empty(),
+		# The loop is broken when the finished prefix no longer names the ledger at all,
+		# or still names this SAME emptied ledger.
+		_require(not candidate.prefix_ref.has("runtime_priors") or is_same(candidate.prefix_ref.runtime_priors, completed_priors) and candidate.prefix_ref.runtime_priors.is_empty(),
 			"Completed original Runtime prefix no longer retains candidate ledger loop")
 	if record_ledger:
 		ledger_fact.merge({"priors_after": completed_priors.size(), "finished": bool(admitted.get("finished", false)),

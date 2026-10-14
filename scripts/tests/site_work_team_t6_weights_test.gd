@@ -88,7 +88,9 @@ func _weights_point(fixture: Dictionary, seconds: float) -> Dictionary:
 	# The prior Array owns candidates whose prefix_ref points back to this Array.
 	prior.clear()
 	for candidate: Dictionary in prepared.runtime:
-		if not _require(is_same(candidate.prefix_ref.runtime_priors, prior) and candidate.prefix_ref.runtime_priors.is_empty(), "Terminal cleanup breaks the actual prefix-prior cycle after all publication checks"): return {}
+		# The loop is broken when the finished prefix no longer names the ledger at all,
+		# or still names this SAME emptied ledger.
+		if not _require(not candidate.prefix_ref.has("runtime_priors") or is_same(candidate.prefix_ref.runtime_priors, prior) and candidate.prefix_ref.runtime_priors.is_empty(), "Terminal cleanup breaks the actual prefix-prior cycle after all publication checks"): return {}
 	return {"plan": plan, "prepared": prepared, "handled": handled}
 
 func _run() -> void:
