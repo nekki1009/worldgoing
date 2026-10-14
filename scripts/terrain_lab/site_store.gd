@@ -2015,6 +2015,7 @@ static func prepare_ecology_candidate(data: TerrainData, region_context: Diction
 	if needs_recapture: candidate.site.erase("region_snapshot")
 	var validation := _validate_state(candidate, candidate.site.duplicate(true), 1, null, context)
 	if not validation.ok: return validation
+	Runtime.rebuild_loot_index(candidate)
 	return Runtime.ok("", {"data": candidate, "state": candidate.site, "changed": changed, "needs_region_recapture": needs_recapture})
 
 static func _valid_site_anchor(data: TerrainData, state: Dictionary, value: Variant) -> bool:
