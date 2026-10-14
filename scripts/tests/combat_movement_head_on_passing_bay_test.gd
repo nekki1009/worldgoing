@@ -76,12 +76,17 @@ func _advance(data: TerrainData, previous: Array[Vector2i], label: String, tick:
 func _setup(data: TerrainData, label: String) -> bool:
 	_coordinator = Coordinator.new()
 	_armies.append(Helper.create_test_army(data, 1, 0, 1, Vector2i(4, 7)))
-	_armies.append(Helper.create_test_army(data, 2, 1, 1, Vector2i(25, 7)))
+	# Both teams are allies (faction 0). Between hostile factions an adjacent able enemy
+	# sets the ENGAGING overlay, which by design freezes the stall clock for combat, so
+	# a passing/congestion test only applies to allied teams.
+	_armies.append(Helper.create_test_army(data, 2, 0, 1, Vector2i(25, 7)))
 	for army in _armies:
 		_coordinator.register_formation(army)
 	for index in range(2):
 		var army: TerrainArmy = _armies[index]
-		var goal := Vector2i(24, 7) if index == 0 else Vector2i(5, 7)
+		# A one-person auto deployment lands on its anchor (compact platform), so each
+		# goal lies beyond the other person's start: the finals genuinely require a pass.
+		var goal := Vector2i(26, 7) if index == 0 else Vector2i(3, 7)
 		var facing := Vector2i.RIGHT if index == 0 else Vector2i.LEFT
 		var order: Dictionary = army.issue_combat_order(army.current_commander, TerrainArmy.CombatOrder.MOVE, goal, -1, facing)
 		if not _require(bool(order.get("ok", false)), label + " opposing MOVE rejected: " + str(order)): return false

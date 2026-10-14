@@ -80,7 +80,10 @@ func _run() -> void:
 
 	assert(lab.terrain.is_walkable(PEAK_CELL), "Peak cell must be walkable")
 
-	var trial_result: Dictionary = lab.start_melee_trial({})
+	# This is a movement smoke test, not a combat test: the opposing side is a work
+	# team, which the trial places at least 8 cells from its enemy, so melee cannot KO
+	# the only commander before the peak MOVE is measured.
+	var trial_result: Dictionary = lab.start_melee_trial({"enemy_role": "work"})
 	assert(trial_result.get("ok", false), "start_melee_trial must succeed")
 
 	for i in range(5):
