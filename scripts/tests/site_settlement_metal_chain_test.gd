@@ -1,4 +1,19 @@
 extends "res://scripts/tests/site_technology_natural_cold_fixture.gd"
+
+const DisabledCatalogContract = preload("res://scripts/tests/fixtures/disabled_catalog_test_contract.gd")
+var _disabled_contract := DisabledCatalogContract.new()
+
+func _finalize() -> void:
+	OS.remove_logger(_disabled_contract)
+
+func _initialize() -> void:
+	OS.add_logger(_disabled_contract)
+	super._initialize()
+
+func _process(delta: float) -> bool:
+	if not _disabled_contract.poll(self): return false
+	return super._process(delta)
+
 ## Original productive PA collector + original Vehicle prepared transfer. Root
 ## runs only after the shared processing/transfer/source/metal cohort is merged.
 ## This file does not enable Catalog, fabricate production, or launch Godot.
@@ -16,11 +31,15 @@ func _metal_fixture() -> Dictionary:
 		{"kind": "settlement_center", "anchor": Vector2i(18, 10), "extent": Vector2i(5, 5)},
 	]
 	var selected = _cold_natural_template(specs, "technology-s04-natural")
+	if not _disabled_contract.poll(self): return {}
 	var data: TerrainData = selected.data
 	var offset: Vector2i = selected.offset
 	var smelter = _cold_natural_feature(data, "smelter", Vector2i(25, 18) + offset)
+	if not _disabled_contract.poll(self): return {}
 	var smithy = _cold_natural_feature(data, "smithy", Vector2i(34, 18) + offset)
+	if not _disabled_contract.poll(self): return {}
 	var lab = _cold_natural_lab(data)
+	if not _disabled_contract.poll(self): return {}
 	var actions = lab.site_controller.person_actions
 	var control = int(lab.controlled_person_id())
 	var refs: Array = [{"site_id": str(data.site.id), "person_id": control, "path": "", "label": "原冶鐵者", "age_years": -1}]
@@ -39,6 +58,7 @@ func _metal_fixture() -> Dictionary:
 	var founded = Settlement.found(lab, control, cells)
 	assert(founded.ok, str(founded))
 	_complete_key(data, str(founded.feature))
+	if not _disabled_contract.poll(self): return {}
 	data.site.settlement.version = 2
 	data.site.settlement.technology = Technology.empty_scope_record(str(data.site.id))
 	assert(Settlement.status(lab).effective)
@@ -73,6 +93,7 @@ func _metal_finish(f: Dictionary, key: String) -> void:
 		if not f.data.site.features[key].has("tech_batch"): break
 		assert(f.actions.is_busy(int(f.control)))
 		_metal_interval(f, 60.0)
+		if not _disabled_contract.poll(self): return
 	assert(not f.data.site.features[key].has("tech_batch") and not f.actions.is_busy(int(f.control)))
 	f.lab._clear_shared_work_step()
 
@@ -111,6 +132,7 @@ func _metal_negative_schema(f: Dictionary, order: Dictionary) -> void:
 
 func _metal_known_chain() -> void:
 	var f = _metal_fixture()
+	if not _disabled_contract.poll(self): return
 	var data: TerrainData = f.data
 	data.site.settlement.technology.known = ["S04"] # Explicit pre-existing institution, not a research result.
 	var id_scope = str(data.site.settlement.settlement_id)
@@ -123,6 +145,7 @@ func _metal_known_chain() -> void:
 	assert(Runtime.begin_settlement_metal_operation(data, id_scope, id, true).ok and var_to_bytes([data.site, f.actions._jobs]) == before, "Known preview mutated original owners")
 	assert(f.actions.begin_settlement_metal_operation(int(f.control), id_scope, id).ok)
 	_metal_finish(f, str(f.smelter))
+	if not _disabled_contract.poll(self): return
 	var pending = Runtime.prepare_settlement_metal_transfer(data, id_scope, id, int(f.control))
 	assert(pending.ok, str(pending))
 	before = var_to_bytes([data.site, f.actions._jobs])
@@ -145,13 +168,17 @@ func _metal_known_chain() -> void:
 	assert(f.actions.grant_settlement_metal_source(int(f.control), id_scope, id).ok)
 	assert(f.actions.begin_settlement_metal_operation(int(f.control), id_scope, id).ok)
 	_metal_finish(f, str(f.smithy))
+	if not _disabled_contract.poll(self): return
 	assert(order.status == "completed" and order.payload.spent == Runtime.SETTLEMENT_METAL_CAP and smithy.cargo == {"tools": 1})
 	assert(var_to_bytes(data.site.settlement.technology) == scope_before and order.payload.carry_receipts[0].token.is_empty(), "Known operation fabricated new research evidence")
 	f.lab.queue_free()
 	await process_frame
+	if not _disabled_contract.poll(self): return
 
 func _run() -> void:
+	if not _disabled_contract.begin(self, ["S04"]): return
 	var f = _metal_fixture()
+	if not _disabled_contract.poll(self): return
 	var data: TerrainData = f.data
 	var scope_id = str(data.site.settlement.settlement_id)
 	var before = var_to_bytes([data.site, f.lab.character.capture_state(), f.actions._jobs])
@@ -168,9 +195,13 @@ func _run() -> void:
 		assert(var_to_bytes([data.site, f.lab.character.capture_state(), f.actions._jobs]) == before, "Disabled S04 changed bytes or charged materials")
 		var original = Runtime.feature_recipe(data.site.features[f.smelter])
 		assert(original.input == {"iron_ore": 3, "charcoal": 2} and original.output == {"iron": 2} and str(data.site.features[f.smelter].get("recipe_id", "")).is_empty())
-		print("S04_DISABLED_BYTE_BOUNDARY_PASS; PRODUCTIVE_CASES_NOT_RUN_ACTIVATION_REQUIRED")
 		f.lab.queue_free()
-		quit(2)
+		await process_frame
+		if not _disabled_contract.poll(self): return
+		if not _disabled_contract.ready(self): return
+		print("S04_DISABLED_BYTE_BOUNDARY_PASS; PRODUCTIVE_CASES_NOT_RUN_ACTIVATION_REQUIRED")
+		if not _disabled_contract.emit_disabled(self, "site_settlement_metal_chain_test", 6): return
+		quit(0)
 		return
 	assert(f.actions.prepare_scope_technology(int(f.control), int(f.control), "S04", scope_id).ok)
 	assert(f.actions.request_scope_technology_consent(int(f.control), "settlement", scope_id, int(f.control)).ok)
@@ -181,6 +212,7 @@ func _run() -> void:
 	var order: Dictionary = data.site.settlement.technology_operations.orders[id]
 	assert(Runtime.valid_settlement_metal_order(data, data.site, order) and order.payload.cap == Runtime.SETTLEMENT_METAL_CAP)
 	_metal_negative_schema(f, order)
+	if not _disabled_contract.poll(self): return
 	var camp: Dictionary = data.site.inventory.duplicate()
 	var stock = Stocks.stock_endpoint(data, str(f.smelter))
 	assert(f.lab.character.place(stock.cell, true))
@@ -188,6 +220,7 @@ func _run() -> void:
 	assert(stock.cargo.is_empty() and data.site.inventory == camp and not Technology.scope_known(data.site.settlement.technology, "S04"))
 	assert(f.actions.is_busy(int(f.control)) and not f.actions.save_guard().ok)
 	_metal_finish(f, str(f.smelter))
+	if not _disabled_contract.poll(self): return
 	assert(order.payload.completed == 1 and order.receipts.size() == 1 and _metal_mass(f) == 2 and stock.cargo == {"iron": 2})
 	assert(not data.site.features[f.smelter].has("technology_settlement_order") and not Technology.scope_known(data.site.settlement.technology, "S04"))
 	assert(Technology.active_project(data.site.settlement.technology).receipts.size() == 1)
@@ -199,6 +232,7 @@ func _run() -> void:
 	assert(not _metal_scope_begin(f, id, "transfer", str(f.smelter)).ok)
 	assert(var_to_bytes([data.site, f.lab.character.capture_state()]) == before, "Remote second contact changed original bytes")
 	_metal_negative_schema(f, order)
+	if not _disabled_contract.poll(self): return
 	# No PA timer remains. The original saved Actor owns its physical iron and
 	# the original bounded order retains the first accepted transfer fact.
 	f.lab.site_controller._capture_positions()
@@ -233,6 +267,7 @@ func _run() -> void:
 	assert(_metal_scope_begin(f, id, "tools", str(f.smithy)).ok)
 	assert(smithy.cargo.is_empty() and _metal_mass(f) == 0 and data.site.inventory == camp)
 	_metal_finish(f, str(f.smithy))
+	if not _disabled_contract.poll(self): return
 	assert(order.status == "completed" and order.receipts.size() == 2 and order.payload.spent == Runtime.SETTLEMENT_METAL_CAP)
 	assert(smithy.cargo == {"tools": 1} and Technology.scope_known(data.site.settlement.technology, "S04"))
 	project = data.site.settlement.technology.projects[0]
@@ -240,6 +275,7 @@ func _run() -> void:
 	before = var_to_bytes([data.site, f.actions._jobs])
 	assert(not _metal_scope_begin(f, id, "tools", str(f.smithy)).ok and var_to_bytes([data.site, f.actions._jobs]) == before, "Completed order manufactured again")
 	_metal_negative_schema(f, order)
+	if not _disabled_contract.poll(self): return
 	# Accepted history does not borrow live artifacts as its permanent source.
 	var cold: Dictionary = data.site.duplicate(true)
 	cold.features.erase(str(f.smelter))
@@ -249,6 +285,10 @@ func _run() -> void:
 	assert(Runtime.valid_settlement_metal_order(data, cold, cold.settlement.technology_operations.orders[id]), "Legal host removal retroactively erased accepted history")
 	f.lab.queue_free()
 	await process_frame
+	if not _disabled_contract.poll(self): return
 	await _metal_known_chain()
+	if not _disabled_contract.poll(self): return
+	await process_frame
+	if not _disabled_contract.ready(self): return
 	print("SITE_SETTLEMENT_METAL_CHAIN_PASS: actual original 900/transfer0/720; known and first research; finite private material conservation; two physical contacts; one phase payment per stage; strict cold/replay; Native/AI/full40 excluded")
 	quit(0)

@@ -1,4 +1,19 @@
 extends "res://scripts/tests/site_building_ui_test.gd"
+
+const DisabledCatalogContract = preload("res://scripts/tests/fixtures/disabled_catalog_test_contract.gd")
+var _disabled_contract := DisabledCatalogContract.new()
+
+func _finalize() -> void:
+	OS.remove_logger(_disabled_contract)
+
+func _initialize() -> void:
+	OS.add_logger(_disabled_contract)
+	super._initialize()
+
+func _process(delta: float) -> bool:
+	if not _disabled_contract.poll(self): return false
+	return super._process(delta)
+
 ## Root named source cohort only. No Godot was run by this package.
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
 const Technology = preload("res://scripts/terrain_lab/site_technology.gd")
@@ -6,7 +21,9 @@ const Catalog = preload("res://scripts/terrain_lab/site_technology_catalog.gd")
 
 func _engineering_fixture() -> Dictionary:
 	var data = _building_fixture()
+	if not _disabled_contract.poll(self): return {}
 	var lab = _building_lab(data)
+	if not _disabled_contract.poll(self): return {}
 	var control = lab.controlled_person_id()
 	# Real camp adjacency. Initial building fixture's diagonal (10,10) is not
 	# sufficient for the original finite camp-source command.
@@ -17,6 +34,7 @@ func _engineering_fixture() -> Dictionary:
 	var founded = Settlement.found(lab, control, cells)
 	assert(founded.ok, str(founded))
 	_complete_key(data, str(founded.feature))
+	if not _disabled_contract.poll(self): return {}
 	data.site.settlement.version = 2
 	data.site.settlement.technology = Technology.empty_scope_record(str(data.site.id))
 	data.site.settlement.technology.known = ["S09", "S10"] # Saved-world precondition, no research claim.
@@ -48,9 +66,12 @@ func _set_named_station(f: Dictionary, index: int) -> Dictionary:
 	return task
 
 func _run() -> void:
+	if not _disabled_contract.begin(self, ["S09", "S10"]): return
 	var f = _engineering_fixture()
+	if not _disabled_contract.poll(self): return
 	var data: TerrainData = f.data
 	var source = _formal_feature(data, "stone_wall", Vector2i(20, 18))
+	if not _disabled_contract.poll(self): return
 	var before = var_to_bytes(data.site)
 	if Catalog.get_node("S09").get("enabled") != true or Catalog.get_node("S10").get("enabled") != true:
 		assert(not Runtime.save_settlement_blueprint(data, int(f.control), source, "城牆", true).ok)
@@ -59,9 +80,13 @@ func _run() -> void:
 		var part: String = data.site.features[source].parts.keys()[0]
 		assert(Runtime.damage_structure_part(data, source, part, 1.0).ok)
 		assert(Runtime.request_repair(data, source, part, 1).ok)
-		print("S09_S10_DISABLED_BOUNDARY_PASS; PRODUCTIVE_CASES_NOT_RUN_ACTIVATION_REQUIRED")
 		f.lab.queue_free()
-		quit(2)
+		await process_frame
+		if not _disabled_contract.poll(self): return
+		if not _disabled_contract.ready(self): return
+		print("S09_S10_DISABLED_BOUNDARY_PASS; PRODUCTIVE_CASES_NOT_RUN_ACTIVATION_REQUIRED")
+		if not _disabled_contract.emit_disabled(self, "site_settlement_engineering_test", 4): return
+		quit(0)
 		return
 	assert(Runtime.save_settlement_blueprint(data, int(f.control), source, "城牆", true).ok)
 	assert(var_to_bytes(data.site) == before)
@@ -78,6 +103,7 @@ func _run() -> void:
 	var reused = Runtime.reuse_settlement_blueprint(data, int(f.control), plan_id, Vector2i(22, 20))
 	assert(reused.ok and str(reused.feature) != source)
 	_complete_key(data, str(reused.feature))
+	if not _disabled_contract.poll(self): return
 	var npc = int(f.team.combat_identity(1))
 	var steps = [{"action": "construct", "plan_id": plan_id, "anchor": [20, 22], "feature_id": "", "part": "", "operator_id": npc}]
 	var target = Runtime.settlement_blueprint_target(data, plan_id, Vector2i(20, 22))
@@ -98,6 +124,7 @@ func _run() -> void:
 	assert(begun.ok, str(begun))
 	assert(is_same(operations, data.site.settlement.technology_operations) and is_same(order, operations.orders[order_id]))
 	var task = _set_named_station(f, 1)
+	if not _disabled_contract.poll(self): return
 	var key = str(task.target).trim_prefix("feature:")
 	var feature: Dictionary = data.site.features[key]
 	for resource: String in cost: assert(int(data.site.inventory[resource]) == int(stock[resource]) - int(cost[resource]))
@@ -141,6 +168,7 @@ func _run() -> void:
 	order_id = str(ordered.order_id)
 	assert(Runtime.begin_settlement_defense_step(data, int(f.control), order_id).ok)
 	task = _set_named_station(f, 1)
+	if not _disabled_contract.poll(self): return
 	var repair: Dictionary = feature.repair
 	stock = data.site.inventory.duplicate()
 	Runtime._feature_work(data, key, float(repair.work) * 0.5, Callable(), Callable(), task, f.team.combat_units[1].cargo, Runtime.CARRY_CAPACITY, 1, npc)
@@ -153,5 +181,7 @@ func _run() -> void:
 	Runtime._feature_work(data, key, float(repair.work), Callable(), Callable(), data.site.worker, data.site.worker.cargo, Runtime.CARRY_CAPACITY, 1)
 	assert(not feature.has("repair") and data.site.inventory == stock)
 	f.lab.queue_free()
+	await process_frame
+	if not _disabled_contract.ready(self): return
 	print("S09_S10_ACTIVATED_ORIGINAL_PLAN_NAMED_WORK_COLD_CANCEL_PASS; direct GD intervals only, no Scope/shared-clock/Native/GPU/UI acceptance")
 	quit(0)

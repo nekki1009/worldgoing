@@ -1,4 +1,19 @@
 extends "res://scripts/tests/site_building_ui_test.gd"
+
+const DisabledCatalogContract = preload("res://scripts/tests/fixtures/disabled_catalog_test_contract.gd")
+var _disabled_contract := DisabledCatalogContract.new()
+
+func _finalize() -> void:
+	OS.remove_logger(_disabled_contract)
+
+func _initialize() -> void:
+	OS.add_logger(_disabled_contract)
+	super._initialize()
+
+func _process(delta: float) -> bool:
+	if not _disabled_contract.poll(self): return false
+	return super._process(delta)
+
 ## Named actual owner test. Run only in Root's reviewed S08 activated source
 ## cohort; disabled production source is a separate byte-equivalent negative.
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
@@ -7,7 +22,9 @@ const Catalog = preload("res://scripts/terrain_lab/site_technology_catalog.gd")
 
 func _spares_fixture() -> Dictionary:
 	var data = _building_fixture()
+	if not _disabled_contract.poll(self): return {}
 	var lab = _building_lab(data)
+	if not _disabled_contract.poll(self): return {}
 	var control = lab.controlled_person_id()
 	assert(lab.character.place(Vector2i(9, 10), true)) # Real original camp adjacency, not diagonal.
 	var placement = Runtime.building_cells(data, "settlement_center", Vector2i(18, 10), Vector2i(5, 5), {"layout_version": 1, "quarter": 0, "owner_faction": 1})
@@ -16,6 +33,7 @@ func _spares_fixture() -> Dictionary:
 	var founded = Settlement.found(lab, control, cells)
 	assert(founded.ok, str(founded))
 	_complete_key(data, str(founded.feature))
+	if not _disabled_contract.poll(self): return {}
 	data.site.settlement.version = 2
 	data.site.settlement.technology = Technology.empty_scope_record(str(data.site.id))
 	data.site.settlement.technology.known = ["S07", "S08"] # Legitimate saved-world precondition; no claim of research proof.
@@ -47,7 +65,9 @@ func _spares_fixture() -> Dictionary:
 	return {"data": data, "lab": lab, "team": team, "control": control, "vehicle": vehicle, "actions": lab.site_controller.person_actions}
 
 func _run() -> void:
+	if not _disabled_contract.begin(self, ["S08"]): return
 	var f = _spares_fixture()
+	if not _disabled_contract.poll(self): return
 	var data: TerrainData = f.data
 	var vehicle: Dictionary = f.vehicle
 	var before = var_to_bytes(data.site)
@@ -55,9 +75,13 @@ func _run() -> void:
 		assert(not Runtime.request_settlement_spare_repair(data, str(vehicle.id), int(f.control), true).ok)
 		assert(var_to_bytes(data.site) == before, "Disabled S08 changed original state")
 		assert(Runtime.request_siege_repair(data, str(vehicle.id), int(f.team.team_id)).ok, "Original basic repair remains available")
-		print("S08_DISABLED_BOUNDARY_PASS; S08_NAMED_PRODUCTIVE_CASES_NOT_RUN_ACTIVATION_REQUIRED")
 		f.lab.queue_free()
-		quit(2)
+		await process_frame
+		if not _disabled_contract.poll(self): return
+		if not _disabled_contract.ready(self): return
+		print("S08_DISABLED_BOUNDARY_PASS; S08_NAMED_PRODUCTIVE_CASES_NOT_RUN_ACTIVATION_REQUIRED")
+		if not _disabled_contract.emit_disabled(self, "site_settlement_spares_test", 7): return
+		quit(0)
 		return
 	var inventory: Dictionary = data.site.inventory
 	var wood = int(inventory.wood)
@@ -106,5 +130,7 @@ func _run() -> void:
 	before = var_to_bytes(data.site)
 	assert(not Runtime.request_settlement_spare_repair(data, str(vehicle.id), npc).ok and var_to_bytes(data.site) == before)
 	f.lab.queue_free()
+	await process_frame
+	if not _disabled_contract.ready(self): return
 	print("S08_ACTIVATED_ORIGINAL_PRODUCT_REPAIR_PASS; direct GD owner intervals only, no Scope research/shared-clock/Native/GPU acceptance")
 	quit(0)

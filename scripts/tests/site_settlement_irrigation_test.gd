@@ -1,4 +1,19 @@
 extends "res://scripts/tests/site_technology_natural_cold_fixture.gd"
+
+const DisabledCatalogContract = preload("res://scripts/tests/fixtures/disabled_catalog_test_contract.gd")
+var _disabled_contract := DisabledCatalogContract.new()
+
+func _finalize() -> void:
+	OS.remove_logger(_disabled_contract)
+
+func _initialize() -> void:
+	OS.add_logger(_disabled_contract)
+	super._initialize()
+
+func _process(delta: float) -> bool:
+	if not _disabled_contract.poll(self): return false
+	return super._process(delta)
+
 ## Root's activated source cohort only. This packet never launches Godot.
 ## Construction exercises the real controlled PA + complete-pool planner;
 ## repair below is a physically placed original camp NPC/direct Runtime interval.
@@ -30,13 +45,17 @@ func _channel_fixture() -> Dictionary:
 	for x: int in range(11, 33): route.append(Vector2i(x, 22))
 	for y: int in range(23, 25): route.append(Vector2i(32, y))
 	var selected = _cold_natural_template(specs, "technology-s02-natural", extras, 1, [route])
+	if not _disabled_contract.poll(self): return {}
 	var data: TerrainData = selected.data
 	_channel_offset = selected.offset
 	data.site.depot_cell = data.index(Vector2i(9, 9) + _channel_offset)
 	_channel_data = data
 	var pump = _cold_natural_feature(data, "well", Vector2i(10, 22) + _channel_offset)
+	if not _disabled_contract.poll(self): return {}
 	var remote = _cold_natural_feature(data, "house", Vector2i(30, 19) + _channel_offset)
+	if not _disabled_contract.poll(self): return {}
 	var lab = _cold_natural_lab(data)
+	if not _disabled_contract.poll(self): return {}
 	var control = int(lab.controlled_person_id())
 	assert(lab.character.place(Vector2i(9, 10) + _channel_offset, true))
 	var members: Array = [{"site_id": str(data.site.id), "person_id": control, "path": "", "label": "原測量者", "age_years": -1}]
@@ -54,6 +73,7 @@ func _channel_fixture() -> Dictionary:
 	var founded = Settlement.found(lab, control, cells)
 	assert(founded.ok, str(founded))
 	_complete_key(data, str(founded.feature))
+	if not _disabled_contract.poll(self): return {}
 	data.site.settlement.version = 2
 	data.site.settlement.technology = Technology.empty_scope_record(str(data.site.id))
 	data.site.settlement.technology.known = ["S01"] # Existing supply charter, not a fake S02 receipt.
@@ -101,6 +121,7 @@ func _finish_actor_channel(f: Dictionary, key: String) -> void:
 
 func _known_segment(f: Dictionary, cells: Array[int], upstream: String) -> String:
 	var draft = _station_for_draft(f, cells, upstream)
+	if not _disabled_contract.poll(self): return ""
 	var before = var_to_bytes([f.data.site, f.actions._jobs, f.lab.character.capture_state()])
 	assert(Runtime.begin_irrigation_channel(f.data, int(f.control), str(f.pump), upstream, cells, _channel_options(f, upstream), true).ok)
 	assert(var_to_bytes([f.data.site, f.actions._jobs, f.lab.character.capture_state()]) == before, "Known preview mutated an original owner")
@@ -112,10 +133,13 @@ func _known_segment(f: Dictionary, cells: Array[int], upstream: String) -> Strin
 	assert(float(f.data.site.features[key].work) * 60.0 == cells.size() * 300.0)
 	assert(not Runtime.irrigation_channel_flow(f.data, key).ok, "Unbuilt channel supplied water")
 	_finish_actor_channel(f, key)
+	if not _disabled_contract.poll(self): return ""
 	return key
 
 func _run() -> void:
+	if not _disabled_contract.begin(self, ["S02"]): return
 	var f = _channel_fixture()
+	if not _disabled_contract.poll(self): return
 	var data: TerrainData = f.data
 	var cells = _channel_cells(Vector2i(11, 22), 4)
 	var before = var_to_bytes([data.site, f.actions._jobs])
@@ -140,10 +164,15 @@ func _run() -> void:
 		assert(var_to_bytes([data.site, f.actions._jobs]) == before, "Disabled node charged stock or created a project/job")
 		assert(Runtime.irrigation_channel_draft(data, cells, _channel_options(f)).ok, "Read-only real geometry draft was lost")
 		var road = _cold_natural_feature(data, "road", Vector2i(12, 30) + _channel_offset, Vector2i(4, 1))
+		if not _disabled_contract.poll(self): return
 		assert(data.site.features[road].stage == "complete", "Existing stock road acquired a technology lock")
-		print("S02_DISABLED_BYTE_BOUNDARY_PASS; PRODUCTIVE_CASES_NOT_RUN_ACTIVATION_REQUIRED")
 		f.lab.queue_free()
-		quit(2)
+		await process_frame
+		if not _disabled_contract.poll(self): return
+		if not _disabled_contract.ready(self): return
+		print("S02_DISABLED_BYTE_BOUNDARY_PASS; PRODUCTIVE_CASES_NOT_RUN_ACTIVATION_REQUIRED")
+		if not _disabled_contract.emit_disabled(self, "site_settlement_irrigation_test", 5): return
+		quit(0)
 		return
 	# A true first project supplies the original exact4/8 payment and actual
 	# 1200 productive seconds before S02 knowledge is committed.
@@ -152,6 +181,7 @@ func _run() -> void:
 	assert(f.actions.request_scope_technology_consent(int(f.control), "settlement", scope_id, int(f.control)).ok)
 	assert(f.actions.grant_scope_technology_budget(int(f.control), "settlement", scope_id, {"wood": 4, "stone": 8}).ok)
 	var draft = _station_for_draft(f, cells)
+	if not _disabled_contract.poll(self): return
 	var stock: Dictionary = data.site.inventory.duplicate()
 	var begun = f.actions.begin_scope_technology_phase(int(f.control), "settlement", scope_id, "irrigation", "feature:" + str(int(data.site.next_feature)), {"cells": cells, "options": _channel_options(f)})
 	assert(begun.ok, str(begun))
@@ -161,6 +191,7 @@ func _run() -> void:
 	assert(int(data.site.inventory.wood) == int(stock.wood) - 4 and int(data.site.inventory.stone) == int(stock.stone) - 8)
 	assert(not Technology.scope_known(data.site.settlement.technology, "S02"))
 	_finish_actor_channel(f, first)
+	if not _disabled_contract.poll(self): return
 	assert(Technology.scope_known(data.site.settlement.technology, "S02"))
 	var project: Dictionary = data.site.settlement.technology.projects[0]
 	assert(project.receipts.size() == 1 and float(project.receipts[0].work_seconds) + 0.000001 >= 1200.0, str(project))
@@ -168,7 +199,9 @@ func _run() -> void:
 	assert(float(data.site.water_status[f.remote].supplied) == 0.0, "Baseline 14-cell route already reached the remote consumer")
 	# Real connected segments extend an unchanged pump; no independent water key.
 	var middle = _known_segment(f, _channel_cells(Vector2i(15, 22), 14), first)
+	if not _disabled_contract.poll(self): return
 	var last = _known_segment(f, _channel_cells(Vector2i(29, 22), 4), middle)
+	if not _disabled_contract.poll(self): return
 	assert(data.site.water_links.has(f.pump) and not data.site.water_links.has(first) and not data.site.water_links.has(last))
 	assert(float(data.site.water_status[f.remote].supplied) > 0.0, "Completed source→channels→real house entrance gave no new water service")
 	var amount = 0.0
@@ -199,6 +232,7 @@ func _run() -> void:
 	# progress. Cold raw validation rejects malformed fields, costs and cycles.
 	cells = _channel_cells(Vector2i(32, 23), 2, Vector2i.DOWN)
 	_station_for_draft(f, cells, last)
+	if not _disabled_contract.poll(self): return
 	begun = Runtime.begin_irrigation_channel(data, int(f.control), str(f.pump), last, cells, _channel_options(f, last))
 	assert(begun.ok, str(begun))
 	var paused_key = str(begun.feature)
@@ -247,6 +281,7 @@ func _run() -> void:
 	assert(Runtime.resume_irrigation_channel(loaded.data, int(f.control), paused_key).ok)
 	assert(loaded.data.site.inventory == stock and float(original_feature.progress) == progress)
 	_finish_actor_channel(f, paused_key)
+	if not _disabled_contract.poll(self): return
 	# Legal upstream demolition is history loss of a physical route, not corrupt
 	# save data. Its old ID/config survive downstream without supplying water.
 	assert(Runtime.cancel_feature(loaded.data, middle, Callable(), 1).ok)
@@ -256,5 +291,7 @@ func _run() -> void:
 	assert(Store.save(loaded.data, "res://.godot-temp/site_settlement_irrigation_v1/demolished.json").ok)
 	assert(Store.load_site("res://.godot-temp/site_settlement_irrigation_v1/demolished.json").ok)
 	f.lab.queue_free()
+	await process_frame
+	if not _disabled_contract.ready(self): return
 	print("S02_ACTIVATED_TRUE_CHANNEL_SCOPE_PAYMENT_NAMED_WORK_WATER_BOUND_DAMAGE_REPAIR_COLD_PASS; no Native/UI/GPU/full40 activation claim")
 	quit(0)
