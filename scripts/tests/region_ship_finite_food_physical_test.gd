@@ -290,12 +290,41 @@ func _ship_public_food() -> bool:
 	if not _check(absf(held + consumed - 4.0) <= EPS, "finite original held plus consumed meal conserves the four actual delivered rations", {"held": held, "consumed": consumed}): return false
 	var shore_key := "shore:%d" % action_owner.terrain.index(Vector2i(30, 20))
 	var revision := int(supply.revision)
+	# The original transfer resupplies the team at its new food locations: a member
+	# who had no food location this period eats the unpaid part of the current meal
+	# from the unloaded stack (opening one whole grain). Every quantity below is the
+	# actual value read back; together they conserve the one unloaded grain.
+	var boat_before: Dictionary = _ship_supply().locations[boat_key].duplicate(true)
+	var boat_rations_before := PhysicalSustain.rations(boat_before, boat_before.inventory)
+	var eaten_before := ship_consumed_rations
 	var unloaded: Dictionary = action_owner.site_controller.transfer_ship_supply(_ship_team(), boat_key, shore_key, {"grain": 1}, 0.0, ship_actor_id, false)
-	if not _check(unloaded.ok and int(_ship_supply().revision) == revision + 1 and int(_ship_supply().locations[shore_key].inventory.get("grain", 0)) == 1, "false-dispatch public food UNLOAD uses the real boat/shore contact and version once", unloaded): return false
+	var unload_meal := float(unloaded.get("consumed_rations", -1.0))
+	var after_unload: Dictionary = _ship_supply()
+	var shore_after: Dictionary = after_unload.locations.get(shore_key, {"inventory": {}, "open_rations": 0.0})
+	var shore_rations := PhysicalSustain.rations(shore_after, shore_after.inventory)
+	var boat_after: Dictionary = after_unload.locations[boat_key]
+	var unload_facts := {"meal": unload_meal, "shore_rations": shore_rations, "shore": shore_after, "boat_before": boat_before, "boat_after": boat_after, "revision": [revision, after_unload.revision]}
+	if not _check(unloaded.ok and int(after_unload.revision) == revision + 1 and is_finite(unload_meal) and unload_meal >= 0.0
+		and int(boat_after.inventory.get("grain", 0)) == int(boat_before.inventory.get("grain", 0)) - 1 and absf(float(boat_after.open_rations) - float(boat_before.open_rations)) <= EPS
+		and absf(shore_rations + unload_meal - 1.0) <= EPS, "false-dispatch public food UNLOAD moves one actual grain through the real boat/shore contact and version once; the shore stack plus the meal it paid conserve it", unload_facts): return false
 	if not _observe_ship_food_results(): return false
-	var loaded: Dictionary = action_owner.site_controller.transfer_ship_supply(_ship_team(), shore_key, boat_key, {"grain": 1}, 0.0, ship_actor_id, false)
-	if not _check(loaded.ok and int(_ship_supply().revision) == revision + 2 and int(_ship_supply().locations[shore_key].inventory.get("grain", 0)) == 0, "false-dispatch public food LOAD returns the same finite shore stack without minting a meal", loaded): return false
+	if not _check(absf(ship_consumed_rations - eaten_before - unload_meal) <= EPS, "the UNLOAD meal is the one accepted original food result", {"observed": ship_consumed_rations - eaten_before, "meal": unload_meal}): return false
+	# LOAD returns exactly what actually remains on the shore stack.
+	var shore_items: Dictionary = shore_after.inventory.duplicate(true)
+	var shore_open := float(shore_after.open_rations)
+	var loaded: Dictionary = action_owner.site_controller.transfer_ship_supply(_ship_team(), shore_key, boat_key, shore_items, shore_open, ship_actor_id, false)
+	var load_meal := float(loaded.get("consumed_rations", -1.0))
+	var after_load: Dictionary = _ship_supply()
+	var shore_final: Dictionary = after_load.locations.get(shore_key, {"inventory": {}, "open_rations": 0.0})
+	var boat_final: Dictionary = after_load.locations[boat_key]
+	var boat_rations_final := PhysicalSustain.rations(boat_final, boat_final.inventory)
+	var load_facts := {"meal": load_meal, "shore": shore_final, "boat": boat_final, "boat_rations": [boat_rations_before, boat_rations_final], "revision": after_load.revision}
+	if not _check(loaded.ok and int(after_load.revision) == revision + 2 and is_finite(load_meal) and load_meal >= 0.0
+		and PhysicalSustain.rations(shore_final, shore_final.inventory) <= EPS and absf(boat_rations_final + unload_meal + load_meal - boat_rations_before) <= EPS,
+		"false-dispatch public food LOAD returns the actual remaining shore stack without minting a meal", load_facts): return false
+	eaten_before = ship_consumed_rations
 	if not _observe_ship_food_results(): return false
+	if not _check(absf(ship_consumed_rations - eaten_before - load_meal) <= EPS, "the LOAD meal, if any, is the one accepted original food result", {"observed": ship_consumed_rations - eaten_before, "meal": load_meal}): return false
 	var facts := var_to_bytes([_ship_supply().locations, _ship_supply().sustain, _ship_supply().revision, slot.control])
 	var empty: Dictionary = action_owner.site_controller.transfer_ship_supply(_ship_team(), shore_key, boat_key, {"grain": 1}, 0.0, ship_actor_id, false)
 	if not _check(slot.take_original_food_results().is_empty(), "rejected original transfer publishes no accepted food result"): return false
