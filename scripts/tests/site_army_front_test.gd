@@ -48,7 +48,7 @@ func _check() -> bool:
 	assert(matcher.compile("(?ms)^func _try_exchange_encirclement\\([^\\n]*\\n.*?(?=^(?:static )?func |\\z)") == OK)
 	var original := GDScript.new()
 	var candidate := GDScript.new()
-	var probes := "\nvar blocker_probes: Array[Vector2i] = []\nfunc _is_external_cell(cell: Vector2i) -> bool:\n\tblocker_probes.append(cell)\n\treturn super._is_external_cell(cell)\n"
+	var probes := "\nvar blocker_probes: Array[Vector2i] = []\nfunc _is_external_cell(cell: Vector2i, ignore_operator: int = 0, from: Vector2i = INVALID_CELL, goal: Vector2i = INVALID_CELL, origin: Vector2i = INVALID_CELL) -> bool:\n\tblocker_probes.append(cell)\n\treturn super._is_external_cell(cell, ignore_operator, from, goal, origin)\n"
 	original.source_code = "extends TerrainArmy\n" + matcher.search(FileAccess.get_file_as_string(FROZEN)).get_string() + probes
 	candidate.source_code = "extends TerrainArmy\n" + probes
 	assert(original.reload() == OK and candidate.reload() == OK)
