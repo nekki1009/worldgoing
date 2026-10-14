@@ -3325,6 +3325,48 @@ func _initialize_combat_command() -> void:
 
 func _refresh_command_presence() -> void:
 	if has_ship_journey(): return # Coarse owner retains the original team order.
+	# Commander hysteresis reads the presence that held before this refresh.
+	var prior := {}
+	for index: int in [formal_commander, acting_commander]:
+		if index == PLAYER_MEMBER:
+			prior[index] = player_present
+		elif index >= 0 and index < combat_units.size():
+			prior[index] = bool(combat_hot_get(index, &"present"))
+	_refresh_reference_presence()
+	_refresh_commander_presence(prior)
+
+## Nekki 2026-10-13 (commander presence, option 1): a commander is present when
+## within command_radius (with the same two-cell hysteresis) of the reference OR
+## of any other living, free member of their own formation. The deployment keeps
+## the commander's rear slot. Every other row keeps the reference presence. The
+## commander rows are rewritten on every refresh, so a native delta cache can
+## never leave a stale commander flag behind.
+func _refresh_commander_presence(prior: Dictionary) -> void:
+	var others: Array[Vector2] = []
+	var owners: Array[int] = []
+	for index: int in command_members():
+		if member_gone(index) or (player_member.captive if index == PLAYER_MEMBER else bool(combat_hot_get(index, &"captive"))):
+			continue
+		others.append(combat_ground(index) / TerrainRenderer.CELL_PIXELS)
+		owners.append(index)
+	for index: int in prior:
+		var radius := command_radius + (2.0 if bool(prior[index]) else 0.0)
+		var able: bool
+		if index == PLAYER_MEMBER:
+			able = is_instance_valid(player_member) and player_member.can_act()
+		else:
+			able = is_member(index) and combat_can_act(index)
+		var present := false
+		if able:
+			var own := combat_ground(index) / TerrainRenderer.CELL_PIXELS
+			present = command_reference_valid and command_reference.distance_to(own) <= radius
+			for at in range(owners.size()):
+				if present: break
+				if owners[at] != index and others[at].distance_to(own) <= radius: present = true
+		if index == PLAYER_MEMBER: player_present = present
+		else: combat_hot_set(index, &"present", present)
+
+func _refresh_reference_presence() -> void:
 	# Only the original pure Army methods qualify; live player hooks stay in GD.
 	var embarked := _team_has_embarked()
 	if embarked: _presence_geometry_cache = []
@@ -4539,10 +4581,6 @@ func issue_formation_change(requester: int, preset_id: String) -> Dictionary:
 	if formation_preset_id == preset_id and not _formation_change_pending and _combat_deployment_plan != null \
 		and _combat_deployment_plan.formation_preset_id == preset_id and _combat_deployment_plan.terrain_revision == data.navigation_revision \
 		and _combat_deployment_plan.requested_count == _get_active_member_ids().size() and _settled_deployment_leases_valid():
-		# An accepted manual command takes control even when nothing needs rebuilding,
-		# exactly as issue_combat_order and a changed formation do.
-		if not _issuing_tactical_ai_order:
-			_stop_tactical_ai()
 		return SiteRuntime.ok("已選擇此陣型")
 	formation_preset_id = preset_id
 	formation_intent_version = 1
@@ -4885,8 +4923,12 @@ func _issue_combat_order(requester: int, order_id: int, goal: Vector2i, target_i
 		return SiteRuntime.fail("BUSY", "暫停時不結算新命令")
 	if order_id in [CombatOrder.MOVE, CombatOrder.RETURN, CombatOrder.ATTACK, CombatOrder.PURSUE] and _team_ship_activity():
 		return SiteRuntime.fail("EMBARKED", "乘載或船岸作業中只接受守位停止或原潰退流程")
-	if order_id == CombatOrder.RETREAT and not is_sustain_routed() and not _issuing_tactical_ai_order:
-		return SiteRuntime.fail("NOT_ROUTED", "士氣尚未崩潰，隊長不能下令撤退")
+	# Nekki 2026-10-13 (retreat rule, option 3): with intact morale both the captain
+	# and tactical AI may order an orderly RETREAT to a destination; after a Sustain
+	# collapse the captain's RETREAT becomes the boundary morale retreat (below).
+	# Without a destination an intact team cannot withdraw by order.
+	if order_id == CombatOrder.RETREAT and not is_sustain_routed() and not _issuing_tactical_ai_order and goal == INVALID_CELL:
+		return SiteRuntime.fail("NOT_ROUTED", "士氣尚未崩潰；有序撤退須指定目的地")
 	_command_dirty = true
 	settle_combat_command()
 	if not corps_authorized and (requester != current_commander or not command_eligible(requester)):

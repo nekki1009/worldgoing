@@ -88,7 +88,10 @@ func _run() -> void:
 	var matcher := RegEx.new()
 	assert(matcher.compile("(?ms)^func _refresh_command_presence\\([^\\n]*\\n.*?(?=^(?:static )?func |\\z)") == OK)
 	var original := GDScript.new()
-	original.source_code = "extends TerrainArmy\n" + matcher.search(FileAccess.get_file_as_string(FROZEN)).get_string()
+	# Round 53 (Nekki 2026-10-13, commander presence option 1): the frozen body is now the
+	# reference presence step; both owners then apply the same commander rule on top.
+	original.source_code = "extends TerrainArmy\n" + matcher.search(FileAccess.get_file_as_string(FROZEN)).get_string() \
+		.replace("func _refresh_command_presence(", "func _refresh_reference_presence(")
 	assert(original.reload() == OK)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 5814911
@@ -179,7 +182,9 @@ func _run() -> void:
 		assert(var_to_bytes(_presence_state(before.combat_armies[side])) == var_to_bytes(_presence_state(after.combat_armies[side])))
 	_dispose(before); _dispose(after)
 	var army_script := load("res://scripts/terrain_lab/terrain_army.gd") as GDScript
-	var current_presence := matcher.search(army_script.source_code).get_string()
+	var reference_matcher := RegEx.new()
+	assert(reference_matcher.compile("(?ms)^func _refresh_reference_presence\\([^\\n]*\\n.*?(?=^(?:static )?func |\\z)") == OK)
+	var current_presence := reference_matcher.search(army_script.source_code).get_string()
 	var body_marker := "\tvar positions: Array[Vector2] = []"
 	assert(current_presence.substr(current_presence.find(body_marker)).strip_edges() == original.source_code.substr(original.source_code.find(body_marker)).strip_edges(), "Canonical GD fallback must still be the exact frozen presence body")
 	assert(army_script.source_code.count("selected.size() > MAX_ROSTER_SIZE") == 1)

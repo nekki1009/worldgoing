@@ -132,6 +132,9 @@ func _run() -> void:
 		and active_data.static_blocked == data.static_blocked,
 		"Load must reconstruct the same legal terrain"): return
 	_restored = TerrainArmy.new()
+	# Production armies live in the scene tree; fixtures step them explicitly.
+	root.add_child(_restored)
+	_restored.set_process(false)
 	_restored.roster_size = 2
 	_restored.exchange_enabled = true
 	_restored_coordinator.register_formation(_restored)
@@ -176,6 +179,9 @@ func _run() -> void:
 	_restored_coordinator.unregister_formation(_restored)
 	_restored.free()
 	_restored = TerrainArmy.new()
+	# Production armies live in the scene tree; fixtures step them explicitly.
+	root.add_child(_restored)
+	_restored.set_process(false)
 	_restored.roster_size = 2
 	_restored.exchange_enabled = true
 	_restored_coordinator.register_formation(_restored)

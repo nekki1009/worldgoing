@@ -308,20 +308,30 @@ func _run() -> void:
 	var prior_batch := coordinator.get_inflight_batches_for_formation(team).duplicate(true)
 	var prior_leases := coordinator.deployment_registry.get_formation_reserved_slots(team.team_id)
 	var threats: Array[Vector2i] = [Vector2i(25, 21)]
-	for request: Dictionary in [{"ai": false, "goal": GOAL}, {"ai": true, "goal": GOAL},
-		{"ai": true, "goal": Vector2i(35, 25)}]:
-		var refused: Dictionary = team.issue_tactical_ai_order(TerrainArmy.CombatOrder.RETREAT, request.goal, -1, threats) if request.ai \
-			else team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.RETREAT, request.goal)
-		if not _check(not bool(refused.ok) and (request.goal != GOAL or str(refused.code) == "NOT_ROUTED"),
-			"Manual/AI RETREAT cannot bypass intact Sustain morale, even toward a legal safer goal: " + str(refused)): return
-		if not _check(team.get_active_move_plan() == old_plan and team.get_order_serial() == serial and team.combat_slots == prior_slots
-			and team.move_progress == prior_progress and team._reserved_cells == prior_claims
-			and coordinator.get_inflight_batches_for_formation(team) == prior_batch
-			and coordinator.deployment_registry.get_formation_reserved_slots(team.team_id) == prior_leases
-			and team.combat_order == TerrainArmy.CombatOrder.MOVE and team.tactical_ai_enabled and not team.is_sustain_routed(),
-			"Rejected RETREAT changed the original order, AI setting, lease or physical edge"): return
+	# Nekki 2026-10-13 (retreat rule, option 3): with intact morale both the captain
+	# and tactical AI may order an orderly destination RETREAT. Each is checked on its
+	# own fresh bent column, so this fixture's in-flight MOVE stays for the collapse below.
+	for ai: bool in [false, true]:
+		var fresh := _create_army(_map())
+		if fresh == null: return
+		if ai and not _check(fresh.set_tactical_ai_enabled(fresh.current_commander, true).ok, "Cannot enable fresh commander AI"): return
+		var ordered: Dictionary = fresh.issue_tactical_ai_order(TerrainArmy.CombatOrder.RETREAT, GOAL, -1, threats) if ai \
+			else fresh.issue_combat_order(fresh.current_commander, TerrainArmy.CombatOrder.RETREAT, GOAL)
+		if not _check(bool(ordered.ok) and fresh.combat_order == TerrainArmy.CombatOrder.RETREAT and not fresh.is_sustain_routed()
+			and str(fresh._retreat_resolution.get("reason", "")) != "morale_collapse",
+			("AI" if ai else "Captain") + " orderly RETREAT with intact morale must be accepted toward its destination: " + str(ordered)): return
+	# The AI's own retreat checks still apply: this goal stays refused (not a morale refusal).
+	var unsafe: Dictionary = team.issue_tactical_ai_order(TerrainArmy.CombatOrder.RETREAT, Vector2i(35, 25), -1, threats)
+	if not _check(not bool(unsafe.ok), "AI RETREAT toward (35, 25) must still be refused by the AI's own retreat checks: " + str(unsafe)): return
+	if not _check(team.get_active_move_plan() == old_plan and team.get_order_serial() == serial and team.combat_slots == prior_slots
+		and team.move_progress == prior_progress and team._reserved_cells == prior_claims
+		and coordinator.get_inflight_batches_for_formation(team) == prior_batch
+		and coordinator.deployment_registry.get_formation_reserved_slots(team.team_id) == prior_leases
+		and team.combat_order == TerrainArmy.CombatOrder.MOVE and team.tactical_ai_enabled and not team.is_sustain_routed(),
+		"The collapse fixture keeps its original order, AI setting, lease and physical edge"): return
 	if not _collapse_sustain(team): return
-	var retreat := team.begin_morale_retreat()
+	# After the collapse, the captain's own RETREAT becomes the boundary morale retreat.
+	var retreat := team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.RETREAT, GOAL)
 	if not _check(bool(retreat.ok), "Original Sustain collapse failed to start retreat: " + str(retreat)): return
 	if not _check(team.combat_order == TerrainArmy.CombatOrder.RETREAT and team.get_active_move_plan() == null and team.get_active_deployment_plan() == null
 		and team.get_order_serial() == serial + 1 and not team.tactical_ai_enabled

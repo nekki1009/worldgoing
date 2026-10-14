@@ -303,40 +303,23 @@ func _initialize_combat_command() -> void:
 func _refresh_command_presence() -> void:
 	var positions: Array[Vector2] = []
 	var members: Array[int] = []
-	var horizontal: Array[float] = []
-	var vertical: Array[float] = []
 	for index: int in command_members():
-		if member_gone(index) or (player_member.captive if index == PLAYER_MEMBER else bool(combat_units[index].captive)):
+		if member_gone(index) or (player_member.captive if index == PLAYER_MEMBER else bool(combat_hot_get(index, &"captive"))):
 			continue
 		var ground := combat_ground(index) / TerrainRenderer.CELL_PIXELS
 		positions.append(ground)
 		members.append(index)
-		horizontal.append(ground.x)
-		vertical.append(ground.y)
 	command_reference_valid = not members.is_empty()
 	if command_reference_valid:
-		horizontal.sort()
-		vertical.sort()
-		var middle := floori(float(members.size()) / 2.0)
-		var lower := floori(float(members.size() - 1) / 2.0)
-		var median_point := Vector2((horizontal[middle] + horizontal[lower]) * 0.5, (vertical[middle] + vertical[lower]) * 0.5)
-		var best := INF
-		var best_identity := 2147483647
-		# Stable row identity breaks ties; positions never swap on promotion.
-		for position_index in range(positions.size()):
-			var distance := positions[position_index].distance_squared_to(median_point)
-			var identity := combat_identity(members[position_index])
-			if distance < best or distance == best and identity < best_identity:
-				best = distance
-				best_identity = identity
-				command_reference = positions[position_index]
+		var identities: Array[int] = []
+		for index: int in members: identities.append(combat_identity(index))
+		command_reference = _command_reference_from_positions(positions, identities)
 	for index in range(combat_units.size()):
-		var unit: Dictionary = combat_units[index]
-		var radius := command_radius + (2.0 if bool(unit.present) else 0.0)
-		unit.present = is_member(index) and command_reference_valid and combat_can_act(index) and command_reference.distance_to(combat_ground(index) / TerrainRenderer.CELL_PIXELS) <= radius
+		var radius := command_radius + (2.0 if bool(combat_hot_get(index, &"present")) else 0.0)
+		combat_hot_set(index, &"present", is_member(index) and command_reference_valid and combat_can_act(index) and command_reference.distance_to(combat_ground(index) / TerrainRenderer.CELL_PIXELS) <= radius)
 	if is_instance_valid(player_member):
 		var radius := command_radius + (2.0 if player_present else 0.0)
-		player_present = command_reference_valid and player_member.can_act() and command_reference.distance_to(player_member.position / TerrainRenderer.CELL_PIXELS) <= radius
+		player_present = command_reference_valid and player_member.can_act() and command_reference.distance_to(combat_ground(PLAYER_MEMBER) / TerrainRenderer.CELL_PIXELS) <= radius
 
 func command_eligible(index: int) -> bool:
 	if index == PLAYER_MEMBER:

@@ -39,9 +39,19 @@ func _geometry(label: String, native_calls: int) -> bool:
 	var old_reference: Vector2 = TerrainArmy._command_reference_from_positions(historical, identities)
 	_settle_commands()
 	if not _must(team.command_reference_valid and team.command_reference.is_equal_approx(expected) and not expected.is_equal_approx(old_reference), "Effective hundred-person command reference disagrees with physical boats: " + label): return false
+	var free_members: Array[int] = []
+	for member: int in team.command_members():
+		if member >= 0 and member < 100 and not team.member_gone(member) and not bool(team.combat_hot_get(member, &"captive")): free_members.append(member)
 	for index in range(100):
 		var radius := team.command_radius + (2.0 if previous[index] else 0.0)
 		var present := team.combat_can_act(index) and expected.distance_to(positions[index]) <= radius
+		# Nekki 2026-10-13 (commander presence, option 1): the formal and acting commanders
+		# are also present within the radius of any other free member of their formation.
+		if not present and team.combat_can_act(index) and (index == team.formal_commander or index == team.acting_commander):
+			for member: int in free_members:
+				if member != index and positions[member].distance_to(positions[index]) <= radius:
+					present = true
+					break
 		if not _must(bool(team.combat_hot_get(index, &"present", false)) == present and team.combat_ground(index).is_equal_approx(vehicles.ship_person_ground(people[index])), "Effective original presence disagrees at #%d: %s" % [people[index], label]): return false
 		if not _must(not team._cell_owners.values().has(index) and team.moving_to[index] == TerrainArmy.INVALID_CELL, "Geometry refresh published a historical shore claim: " + label): return false
 	return _must(team.native_presence_delta_calls == native_calls and team._presence_geometry_cache.is_empty(), "Aboard hundred-person presence reused native historical cells: " + label)
