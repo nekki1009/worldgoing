@@ -222,13 +222,50 @@ func _run() -> void:
 	data.site.person_supply[str(row_id)] = orphan
 	var row_cargo: Dictionary = row.cargo
 	key = _drop(lab, row_id, 0.375)
+	var pickup_source: Dictionary = data.site.ground_loot[key]
+	var pickup_holder: Dictionary = row.item_state
+	var pickup_version: int = int(pickup_holder.version)
+	var pickup_receipt: Dictionary = {}
+	var original_changed: Callable = controller.person_actions.equipment_changed
+	assert(original_changed.is_valid())
+	# Observe the original no-fail tail; preserve its real equipment notification.
+	controller.person_actions.equipment_changed = func(identity: int) -> void:
+		original_changed.call(identity)
+		if identity != row_id: return
+		var received: Dictionary = controller._personal_opened_food(row_id)
+		pickup_receipt["count"] = int(pickup_receipt.get("count", 0)) + 1
+		pickup_receipt.merge({"at": Runtime.now(data) * 60.0, "open_rations": float(received.open_rations),
+			"same": is_same(orphan, received), "cohorts": received.cohorts.duplicate(true),
+			"holder_same": is_same(pickup_holder, row.item_state), "holder_version": int(row.item_state.version),
+			"source_remaining": float(pickup_source.open_rations), "source_cleared": not data.site.ground_loot.has(key)})
 	_begin_ui(lab, key)
 	_finish_clock(lab)
-	assert(is_same(orphan, controller._personal_opened_food(row_id)) and float(orphan.open_rations) == 0.375)
+	controller.person_actions.equipment_changed = original_changed
+	assert(pickup_receipt.get("count", 0) == 1 and pickup_receipt.same and pickup_receipt.holder_same)
+	assert(float(pickup_receipt.open_rations) == 0.375 and int(pickup_receipt.holder_version) == pickup_version + 1)
+	assert(float(pickup_receipt.source_remaining) == 0.0 and pickup_receipt.source_cleared)
+	assert(pickup_receipt.cohorts.size() == 1 and pickup_receipt.cohorts[0] is Dictionary)
+	var received_cohort: Dictionary = pickup_receipt.cohorts[0]
+	assert(received_cohort.ids == [row_id] and float(received_cohort.coverage) == 0.0)
+	_near(float(received_cohort.meal_until), float(pickup_receipt.at), "new cohort becomes due at the exact original pickup point")
+	var meal_end: float = (floorf(float(pickup_receipt.at) / Sustain.MEAL) + 1.0) * Sustain.MEAL
+	var paid_meal: float = (meal_end - float(pickup_receipt.at)) / Sustain.DAY
+	assert(float(orphan.at) + Sustain.EPS >= float(pickup_receipt.at) and float(orphan.at) < meal_end)
+	assert(is_same(orphan, controller._personal_opened_food(row_id)) and is_same(pickup_holder, row.item_state))
+	assert(orphan.cohorts.size() == 1 and orphan.cohorts[0].ids == [row_id])
+	_near(float(orphan.open_rations) + paid_meal, 0.375, "exact pickup stock equals remainder plus the due meal paid by the original clock")
+	_near(float(orphan.cohorts[0].coverage), 1.0, "the original due resupply pays this independent cohort in full")
+	_near(float(orphan.cohorts[0].meal_until), meal_end, "original next-meal deadline")
+	assert(int(pickup_holder.version) == pickup_version + 2)
 	assert(Sustain._ids(orphan) == [row_id] and not team.is_member(index) and is_same(row_cargo, row.cargo) and row_cargo.is_empty())
 	_near(float(orphan.at), Runtime.now(data) * 60.0, "empty old private pool aligns only before attaching its original person")
+	meal_before = orphan.duplicate(true)
 	_clock_step(lab)
 	assert(float(orphan.open_rations) > 0.125 and float(orphan.open_rations) < 0.126)
+	_near(float(orphan.open_rations) + paid_meal, 0.375, "the first meal is paid exactly once across the next original step")
+	_assert_existing_meals(meal_before, orphan)
+	assert(int(pickup_holder.version) == pickup_version + 2)
+	assert(controller.person_actions.settle_after_contacts().is_empty() and not data.site.ground_loot.has(key))
 	key = _drop(lab, row_id, 0.25)
 	_begin_ui(lab, key)
 	data.site.person_supply[str(row_id)] = orphan.duplicate(true)
