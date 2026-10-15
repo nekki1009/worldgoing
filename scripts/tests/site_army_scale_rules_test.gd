@@ -2,6 +2,7 @@ extends SceneTree
 ## Original V0.41R pairing/threat functions versus the optimized real owners.
 const Reference = preload("res://scripts/tests/fixtures/site_army_scale_reference_v041r.gd")
 const ArmyReference = preload("res://scripts/tests/fixtures/site_army_encirclement_reference_v041r.gd")
+const ScaleClockReference = preload("res://scripts/tests/fixtures/site_army_scale_game_clock_reference.gd")
 
 func _initialize() -> void:
 	_run.call_deferred()
@@ -61,14 +62,62 @@ func _dispose(lab: TerrainLab) -> void:
 		team.free()
 	lab.free()
 
+func _check_ko_clock_contract(in_tree: bool) -> bool:
+	assert(SiteCombatRules.KNOCKOUT_GAME_SECONDS == 14400.0 and SiteCombatRules.RESCUED_KNOCKOUT_GAME_SECONDS == 3600.0)
+	var reference: TerrainLab = _fixture(true, 1, false, ScaleClockReference, null, in_tree)
+	var candidate: TerrainLab = _fixture(false, 1, false, null, null, in_tree)
+	# Independent clock examples from the documented 60:1 peace / 1:1 combat contract.
+	var action: float = 1.0 / 30.0
+	var cases: Array[Dictionary] = [
+		{"combat": 0.0, "speed": 1.0, "initial": 14400.0, "game": 2.0, "expected": 14398.0},
+		{"combat": 1.0, "speed": 1.0, "initial": 14400.0, "game": action, "expected": 14400.0 - action},
+		{"combat": 1.0 / 60.0, "speed": 2.0, "initial": 14400.0, "game": (1.0 / 60.0 + 1.0) * 2.0, "expected": 14400.0 - (1.0 / 60.0 + 1.0) * 2.0},
+		{"combat": 0.0, "speed": 2.0, "initial": 14400.0, "game": 4.0, "expected": 14396.0},
+		{"combat": 0.0, "speed": 1.0, "initial": 1.0, "game": 2.0, "expected": 0.0}]
+	for sample: Dictionary in cases:
+		assert(SiteRuntime.game_seconds(action, float(sample.combat)) * float(sample.speed) == float(sample.game))
+		for lab: TerrainLab in [reference, candidate]:
+			lab.simulation_speed = float(sample.speed)
+			for team: TerrainArmy in lab.combat_armies:
+				team.combat_hot_set(0, &"hp", 100.0)
+				team.combat_hot_set(0, &"stun", 0.0)
+				team.combat_hot_set(0, &"ko", 0.0)
+				team.apply_unit_contact(0, {"shield": false, "result": {"hp": 0.0, "stun": 110.0, "guard_break": false}})
+				assert(float(team.combat_hot_get(0, &"ko")) == 14400.0, "Original contact creates four game hours")
+				team.combat_hot_set(0, &"ko", float(sample.initial)) # Explicit initial remaining-time boundary input.
+				team.combat_hot_set(0, &"exchange_cooldown", 0.75)
+			lab._advance_combat(action, float(sample.combat))
+			for team: TerrainArmy in lab.combat_armies:
+				assert(float(team.combat_hot_get(0, &"ko")) == float(sample.expected), "KO must match the independent game-clock expected value")
+				assert(float(team.combat_hot_get(0, &"exchange_cooldown")) == 0.75 - action, "Combat cooldown remains in action seconds")
+				if float(sample.expected) > 0.0:
+					assert(float(team.combat_hot_get(0, &"age")) == action)
+				else:
+					assert(str(team.combat_hot_get(0, &"pose")) == "get_up" and float(team.combat_hot_get(0, &"age")) == 0.0)
+	for lab: TerrainLab in [reference, candidate]:
+		for team: TerrainArmy in lab.combat_armies:
+			team.combat_hot_set(0, &"ko", 10.0)
+			team.combat_hot_set(0, &"age", 0.0)
+			team.prepare_combat(action) # Original direct-call fallback is still 1:1.
+			assert(float(team.combat_hot_get(0, &"ko")) == 10.0 - action)
+		lab.terrain.site.paused = true
+		var stopped: PackedByteArray = var_to_bytes(_state(lab))
+		lab._advance_combat(action, 0.0)
+		assert(var_to_bytes(_state(lab)) == stopped, "Site pause freezes the full original combat state")
+	_dispose(reference); _dispose(candidate)
+	return true
+
 func _run() -> void:
-	var original := _fixture(true)
-	var candidate := _fixture(false)
+	var in_tree: bool = DisplayServer.get_name() != "headless"
+	if not _check_ko_clock_contract(in_tree): quit(1); return
+	var original: TerrainLab = _fixture(true, 100, false, ScaleClockReference, null, in_tree)
+	var candidate: TerrainLab = _fixture(false, 100, false, null, null, in_tree)
 	candidate.combat_armies[0].combat_units[0].combat_ability = 100.0
 	assert(candidate.combat_armies[0].exchange_stats(0).ability == TerrainArmy.TROOP_COMBAT_ABILITY,
 		"A legacy per-row value cannot override the single troop-type base")
 	candidate.combat_armies[0].combat_units[0].combat_ability = TerrainArmy.TROOP_COMBAT_ABILITY
 	for step in range(360):
+		var step_clock: Dictionary = {"action_delta": 1.0 / 30.0, "reference_combat_left": original.terrain.site.get("combat_left", 0.0), "candidate_combat_left": candidate.terrain.site.get("combat_left", 0.0), "reference_speed": original.simulation_speed, "candidate_speed": candidate.simulation_speed}
 		original._advance_combat(1.0 / 30.0)
 		candidate._advance_combat(1.0 / 30.0)
 		if var_to_bytes(_state(original)) != var_to_bytes(_state(candidate)):
@@ -78,6 +127,10 @@ func _run() -> void:
 					var after: Dictionary = candidate.combat_armies[side].combat_units[i]
 					if var_to_bytes(before) != var_to_bytes(after):
 						print("First changed row ", side, ":", i, " before=", before, " after=", after)
+						var changed_fields: Array[String] = []
+						for field: Variant in before:
+							if before[field] != after.get(field): changed_fields.append(str(field))
+						print("SCALE_FIRST_ROW_DIAG ", {"side": side, "row": i, "fields": changed_fields, "clock_before": step_clock, "reference_ko": before.get("ko"), "candidate_ko": after.get("ko")})
 						break
 			push_error("Scale optimization changed original gameplay at 30 Hz step %d" % step)
 			_dispose(original); _dispose(candidate); quit(1); return
