@@ -568,17 +568,21 @@ func _compact_constant_morph_keys(animation: Animation) -> void:
 		if count <= 1 or animation.track_get_key_time(track, 0) != 0.0:
 			continue
 		var constant_positive_zero := true
+		var key_values: PackedFloat64Array = PackedFloat64Array()
+		key_values.resize(count)
 		var previous_time := -1.0
 		for index in range(count):
 			var time := animation.track_get_key_time(track, index)
 			var value: float = animation.track_get_key_value(track, index)
-			# Numeric equality alone admits -0. Native float -> float64 preserves
-			# its sign; all eight zero bytes are exclusively IEEE positive zero.
-			if not is_finite(time) or time <= previous_time or time > animation.length or animation.track_get_key_transition(track, index) != 1.0 or value != 0.0 or PackedFloat64Array([value]).to_byte_array().decode_u64(0) != 0:
+			if not is_finite(time) or time <= previous_time or time > animation.length or animation.track_get_key_transition(track, index) != 1.0 or value != 0.0:
 				constant_positive_zero = false
 				break
+			key_values[index] = value
 			previous_time = time
 		if constant_positive_zero:
+			# The same native float64 bits, batched once per track instead of per key.
+			var value_bytes: PackedByteArray = key_values.to_byte_array()
+			if value_bytes.count(0) != value_bytes.size(): continue # Retain negative zero too.
 			for index in range(count - 1, 0, -1):
 				animation.track_remove_key(track, index)
 
