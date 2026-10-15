@@ -1,4 +1,8 @@
 extends "res://scripts/tests/site_ship_full_transport_test.gd"
+
+# Keeps its own 240 s budget; only the full-transport and roster tests were raised to 300 s.
+func _ship_test_deadline_ms(default_ms: int = 240000) -> int:
+	return super(default_ms)
 ## Real Controller/Slot/UI journey over the original packaged 2m fixed coast.
 ## All boarding, helm replacement, ACTION/GAME steps and restoration use the
 ## formal owners. The fixture explicitly creates four original people once.
