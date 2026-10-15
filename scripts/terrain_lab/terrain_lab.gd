@@ -11383,6 +11383,13 @@ func advance_region_cold_actual_fixed(source_data: TerrainData, target: float,
 ## owner's hourly evaluation. The formal replay reproduces both against a private
 ## copy of the registry recorded by the commit that published the source Site.
 func _region_formal_duty_setup(slot: RegionSaveSlot, source_data: TerrainData) -> Dictionary:
+	# A selected plain body (saved without an owner graph) carries no publication
+	# context. Its replay keeps the live duty cadence, exactly as before the private
+	# ledger existed; only an owner-graph source is held to its publishing commit.
+	if not source_data.site.has("region_snapshot"):
+		_region_private_duty_ledger = {}
+		_region_private_evaluation_at = -1.0
+		return SiteRuntime.ok("")
 	var context: Variant = source_data.site.get("region_snapshot", {}).get("context", {})
 	if not context is Dictionary or not RegionSaveSlot.GameplayClock.whole(context.get("source_generation"), 0):
 		return SiteRuntime.fail("COLD_FORMAL_DUTY_SOURCE", "原 source 缺少發布世代")
