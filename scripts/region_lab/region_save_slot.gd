@@ -2479,6 +2479,14 @@ static func validate_fire_clock(value: Variant, world_game: Variant) -> Dictiona
 			return _fail("CORRUPT_FIRE_INDEX", "原 Site 活動索引非法")
 	return {"ok": true}
 
+## The Site watermark is written AT the fire clock and read back from the Site's
+## saved JSON, which is not last-ulp exact; the clock itself is restored exactly.
+## A watermark that is exactly that clock's JSON read-back is that clock, not ahead.
+static func _fire_watermark_after_clock(watermark: Variant, clock_action: Variant) -> bool:
+	if float(watermark) <= float(clock_action): return false
+	var read_back: Variant = JSON.parse_string(JSON.stringify(float(clock_action), "", false, true))
+	return not ((read_back is float or read_back is int) and float(read_back) == float(watermark))
+
 static func validate_fire_settlement(state: Dictionary, clock: Dictionary) -> Dictionary:
 	var value: Variant = state.get("fire_settlement")
 	if not value is Dictionary or value.size() != FIRE_SETTLEMENT_FIELDS.size(): return _fail("MISSING_FIRE_HISTORY", "火攻地點缺少雙時間水印")
@@ -2486,7 +2494,7 @@ static func validate_fire_settlement(state: Dictionary, clock: Dictionary) -> Di
 		if not value.has(field): return _fail("CORRUPT_FIRE_SETTLEMENT", "火攻結算欄位")
 	if not _whole(value.version, 1, 1) or value.epoch != clock.epoch \
 		or not _whole(value.sequence, 0, int(clock.sequence)) or not _seconds(value.action_seconds) or not _seconds(value.game_seconds) \
-		or float(value.action_seconds) > float(clock.action_seconds): return _fail("CORRUPT_FIRE_SETTLEMENT", "火攻結算版本或端點")
+		or _fire_watermark_after_clock(value.action_seconds, clock.action_seconds): return _fail("CORRUPT_FIRE_SETTLEMENT", "火攻結算版本或端點")
 	var base_sequence := int(clock.get("base_sequence", 0))
 	var previous_game := float(clock.base_game_seconds)
 	var previous_action := float(clock.get("base_action_seconds", 0.0))
