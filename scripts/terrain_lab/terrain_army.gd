@@ -8203,6 +8203,61 @@ func _hold_no_patient_controlled_index() -> Variant:
 		controlled_index = index
 	return controlled_index
 
+# HOLD candidates live only within one prepare_combat call. Claims stay live queries.
+func _hold_rescue_candidates() -> Array[int]:
+	var patients: Array[int] = []
+	# Canonical hot readers are pure. Read member only for a possible patient;
+	# retain ascending NPC indices, then PLAYER_MEMBER, exactly command_members order.
+	for patient: int in range(combat_units.size()):
+		if not (float(combat_hot_get(patient, &"ko")) <= SiteCombatRules.RESCUED_KNOCKOUT_GAME_SECONDS) and is_member(patient):
+			patients.append(patient)
+	if is_instance_valid(player_member) and not (player_member.knockout_left <= SiteCombatRules.RESCUED_KNOCKOUT_GAME_SECONDS):
+		patients.append(PLAYER_MEMBER)
+	return patients
+
+func _hold_rescue_query_original(query: Callable, owner: Object, method: StringName) -> bool:
+	return not query.is_valid() or query.get_object() == owner and query.get_method() == method and query.get_bound_arguments_count() == 0 and query.get_unbound_arguments_count() == 0
+
+func _hold_rescue_candidate_cache_admitted() -> bool:
+	if get_script() != TerrainArmy or data == null or data.get_script() != TerrainData:
+		return false
+	if _combat_hot_store != null and (_combat_hot_store.get_class() != "ArmyCombatHot" or _combat_hot_store.get_script() != null): return false
+	if is_instance_valid(player_member) and player_member.get_script() not in [TerrainTestCharacter, TerrainTestNPC]: return false
+	if not enemy_query.is_valid() and not controlled_person_query.is_valid(): return false
+	var query_owner: Object = enemy_query.get_object() if enemy_query.is_valid() else controlled_person_query.get_object()
+	if not query_owner is TerrainLab or query_owner.get_script() != TerrainLab: return false
+	var lab: TerrainLab = query_owner
+	if lab.terrain != data or not _hold_rescue_query_original(enemy_query, lab, &"_nearest_unit_enemy") or not _hold_rescue_query_original(controlled_person_query, lab, &"controlled_person_id"): return false
+	if lab.site_controller != null and not lab.site_controller is SiteController: return false
+	var controller: SiteController = lab.site_controller as SiteController
+	if person_busy_query.is_valid() or sustain_routed_query.is_valid() or vehicle_transport != null:
+		if controller == null or controller.lab != lab or not controller.get_script() is GDScript: return false
+		if not _hold_rescue_query_original(person_busy_query, controller, &"_person_has_duty") or not _hold_rescue_query_original(sustain_routed_query, controller, &"team_is_routed"): return false
+		if controller.person_actions == null or controller.person_actions.get_script() != SitePersonActions or controller.work_team == null or controller.work_team.get_script() != SiteWorkTeam or controller.vehicles == null or controller.vehicles.get_script() != SiteVehicleTransport: return false
+		if controller.vehicles.lab != lab or controller.vehicles.controller != controller or controller.person_actions.lab != lab or controller.work_team.lab != lab: return false
+		if vehicle_transport != null and vehicle_transport != controller.vehicles: return false
+		if controller.get_script() != SiteController:
+			# GDScript lists inherited declarations too; an override adds a second name.
+			var readers: Dictionary = {&"_person_has_duty": 0, &"_is_delivering_person": 0, &"team_is_routed": 0, &"_supply_entry": 0, &"ship_person_in_journey": 0, &"ship_vehicle_in_journey": 0, &"ship_journey_active": 0, &"region_operation_pending": 0}
+			var script: Script = controller.get_script()
+			for entry: Dictionary in script.get_script_method_list():
+				var method: StringName = StringName(entry.get("name", ""))
+				if readers.has(method): readers[method] = int(readers[method]) + 1
+			for count: int in readers.values():
+				if count != 1: return false
+	# The original nearest-enemy reader may call these owners. Unknown overrides keep the full scan.
+	for team: TerrainArmy in lab.combat_armies:
+		if team.get_script() != TerrainArmy or team._combat_hot_store != null and (team._combat_hot_store.get_class() != "ArmyCombatHot" or team._combat_hot_store.get_script() != null): return false
+		# Original ship/person readers skip disabled armies; the journey reader
+		# can only perform an empty identity lookup here. Unknown scripts/hot stores
+		# were rejected above. Nonempty or PLAYER containers retain all guards.
+		if not team.combat_enabled and team.combat_units.is_empty() and not is_instance_valid(team.player_member):
+			continue
+		if team.data != data or team.vehicle_transport != null and team.vehicle_transport != vehicle_transport: return false
+	for actor: TerrainTestCharacter in lab.combat_actors:
+		if actor.get_script() not in [TerrainTestCharacter, TerrainTestNPC]: return false
+	return true
+
 func prepare_combat(delta: float, game_seconds: float = -1.0) -> void:
 	_invalidate_ship_projection()
 	if not combat_enabled or delta <= 0.0 or (is_inside_tree() and get_tree().paused):
@@ -8232,6 +8287,10 @@ func prepare_combat(delta: float, game_seconds: float = -1.0) -> void:
 	var next := 0
 	var hold_rescue_patient_checked := false
 	var hold_rescue_patient_absent := false
+	var hold_rescue_candidates_checked: bool = false
+	var hold_rescue_cache_admission_checked: bool = false
+	var hold_rescue_cache_admitted: bool = false
+	var hold_rescue_candidates: Array[int] = []
 	while next < end:
 		var index := next
 		# Finish each exceptional row BEFORE inspecting later rows: movement,
@@ -8304,6 +8363,7 @@ func prepare_combat(delta: float, game_seconds: float = -1.0) -> void:
 		if moving_to[index] != INVALID_CELL:
 			move_progress[index] = CombatTimings.advance_movement_progress(move_progress[index], delta, move_duration[index])
 			if move_progress[index] >= 1.0:
+				hold_rescue_candidates_checked = false; hold_rescue_cache_admission_checked = false
 				_complete_move(index)
 		if float(unit.hp) <= 0.0:
 			if _combat_hot_store != null: _return_combat_hot_row()
@@ -8314,6 +8374,7 @@ func prepare_combat(delta: float, game_seconds: float = -1.0) -> void:
 				unit.pose = "unconscious"
 				unit.age = 0.0
 			if float(unit.ko) <= 0.0:
+				hold_rescue_candidates_checked = false; hold_rescue_cache_admission_checked = false
 				_wake_unit(index)
 			if _combat_hot_store != null: _return_combat_hot_row()
 			continue
@@ -8360,7 +8421,14 @@ func prepare_combat(delta: float, game_seconds: float = -1.0) -> void:
 										hold_rescue_patient_absent = false
 										break
 					if not hold_rescue_patient_absent and (_ship_embarked(index) or (enemy_query.call(self, index) as Dictionary).is_empty()):
-						for patient: int in command_members():
+						if not hold_rescue_cache_admission_checked:
+							hold_rescue_cache_admitted = _hold_rescue_candidate_cache_admitted()
+							hold_rescue_cache_admission_checked = true
+						if hold_rescue_cache_admitted and not hold_rescue_candidates_checked:
+							hold_rescue_candidates = _hold_rescue_candidates()
+							hold_rescue_candidates_checked = true
+						var patients: Array[int] = hold_rescue_candidates if hold_rescue_cache_admitted else command_members()
+						for patient: int in patients:
 							if start_unit_rescue(index, patient):
 								break
 			if _combat_hot_store != null: _return_combat_hot_row()
