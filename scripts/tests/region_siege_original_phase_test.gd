@@ -24,6 +24,7 @@ var phase_flight_snapshot: Dictionary = {}
 func _initialize() -> void:
 	deadline = Time.get_ticks_msec() + 360000
 	out = "res://.godot-temp/region_siege_original_phase/run_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
+	fixture_land_condition_rule = "terrain_mapped_potential_v1" # Original founding needs mapped land.
 	last_world_exists = FileAccess.file_exists(Entry.LAST_WORLD)
 	if last_world_exists: last_world_bytes = FileAccess.get_file_as_bytes(Entry.LAST_WORLD)
 	action_kind = "ballista"

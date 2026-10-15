@@ -26,6 +26,7 @@ var action_target_hp := 0.0
 func _initialize() -> void:
 	deadline = Time.get_ticks_msec() + 240000
 	out = "res://.godot-temp/region_siege_cold_action_epoch/run_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
+	fixture_land_condition_rule = "terrain_mapped_potential_v1" # The original target wall needs mapped land.
 	last_world_exists = FileAccess.file_exists(Entry.LAST_WORLD)
 	if last_world_exists: last_world_bytes = FileAccess.get_file_as_bytes(Entry.LAST_WORLD)
 	for argument: String in OS.get_cmdline_args() + OS.get_cmdline_user_args():
