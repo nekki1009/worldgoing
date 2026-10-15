@@ -735,17 +735,21 @@ func advance_world_time(delta: float) -> float:
 	return float(control.logical_game_seconds)
 
 func _settle_cold_candidate(data: TerrainData, target_seconds: float) -> Dictionary:
-	var fire_guard := Store.fire_event_guard(data)
-	if not fire_guard.ok: return fire_guard
-	if data.site.is_empty(): return {"ok": true, "data": data}
 	# A completed bound original must keep its actual body/item capture owner.
 	# A derived copy cannot stand in for that owner even at the same GAME time.
+	# That owner is saved through its full owner graph (_save_checked ->
+	# capture_region_checkpoint), exactly like the active Site, and the graph holds
+	# its in-progress person jobs; the ordinary-save guard below applies only to a
+	# body that is saved without that graph.
 	var original := _region_bound_original_lab(data)
 	if original != null and original.region_bind_receipt(data).get("complete") == true:
 		var completed_original := validate_settlement(data.site, target_seconds)
 		if not completed_original.ok: return completed_original
 		if not completed_original.legacy and float(completed_original.pending) <= 0.00001:
 			return {"ok": true, "data": data}
+	var fire_guard := Store.fire_event_guard(data)
+	if not fire_guard.ok: return fire_guard
+	if data.site.is_empty(): return {"ok": true, "data": data}
 	var detached := _detached_cold_copy(data, original)
 	if not detached.ok: return detached
 	var copy: TerrainData = detached.data
