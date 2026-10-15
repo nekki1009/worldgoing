@@ -290,6 +290,7 @@ func setup(scene: Node2D) -> void:
 	if lab.terrain != null and lab.has_method("fire_save_guard"): lab.terrain.set_meta(&"fire_event_guard", lab.fire_save_guard)
 	if lab.terrain != null and lab.has_method("fire_pending_projectile_query"): lab.terrain.set_meta(&"fire_pending_projectile_query", lab.fire_pending_projectile_query)
 	view = View.new()
+	view.faction_query = func(faction: int) -> Dictionary: return region_slot.faction_display(faction) if region_slot != null else RegionFactionQuery.display({}, faction)
 	view.name = "SiteResources"
 	lab.add_child(view)
 	# Same-row props are behind the existing actors; northern actors still sort behind roofs.
@@ -865,7 +866,7 @@ func _refresh_formal_team_choices() -> void:
 		for row: Dictionary in lab.crowd_site.command_teams(): rows.append([int(row.team_id), "隊伍 #%d" % int(row.team_id)])
 	else:
 		for team: TerrainArmy in lab.combat_armies:
-			if team.has_army(): rows.append([team.team_id, "隊伍 #%d · 陣營 %d" % [team.team_id, team.faction_id]])
+			if team.has_army(): rows.append([team.team_id, "隊伍 #%d · 陣營 %s" % [team.team_id, _faction_label(team.faction_id)]])
 	var signature := str(rows)
 	if signature == _formal_team_signature: return
 	_formal_team_signature = signature
@@ -1213,7 +1214,7 @@ func _sync_trial_captain_selection() -> void:
 func _trial_team_choice_text(team: TerrainArmy) -> String:
 	var purpose: String = {"combat": "戰鬥", "work": "工作", "logistics": "後勤"}.get(team.role, team.role)
 	var status: String = "未部署" if not team.has_army() else COMBAT_ORDER_NAMES[clampi(team.combat_order, 0, COMBAT_ORDER_NAMES.size() - 1)]
-	return "隊伍 #%d · 陣營 %d · %s · %d 人 · %s" % [team.team_id, team.faction_id + 1, purpose, team.combat_units.size(), status]
+	return "隊伍 #%d · 陣營 %s · %s · %d 人 · %s" % [team.team_id, _faction_label(team.faction_id), purpose, team.combat_units.size(), status]
 
 func _sync_trial_team_choices() -> void:
 	if trial_command_team == null:
@@ -2123,8 +2124,8 @@ func _update_combat_window() -> void:
 				wagons += int(vehicle.kind == "wagon")
 				parked += int(int(vehicle.operator_id) == 0)
 		var purpose: String = {"combat": "戰鬥隊", "work": "工作隊", "logistics": "後勤隊"}.get(retreat_team.role, retreat_team.role)
-		combat_summary_label.text += "\n所選隊伍 #%d：陣營 %d · %s\n人員 %d · 物資車 %d／馬車 %d（停泊 %d）· 共 %d 名額\n%s\nAI：%s · %s" % [
-			retreat_team.team_id, retreat_team.faction_id + 1, purpose,
+		combat_summary_label.text += "\n所選隊伍 #%d：陣營 %s · %s\n人員 %d · 物資車 %d／馬車 %d（停泊 %d）· 共 %d 名額\n%s\nAI：%s · %s" % [
+			retreat_team.team_id, _faction_label(retreat_team.faction_id), purpose,
 			retreat_team.combat_units.size(), carts, wagons, parked, retreat_team.combat_units.size() + carts + wagons,
 			retreat_team.combat_summary(), retreat_team.tactical_ai_status if retreat_team.tactical_ai_enabled else "手動指揮", retreat_team.tactical_ai_reason]
 	elif deployed > 0:
@@ -3265,7 +3266,7 @@ func _open_logistics(host: Window = null) -> void:
 	targets.set_item_metadata(0, -1)
 	for team: TerrainArmy in lab.combat_armies:
 		if team.combat_enabled and team.has_army():
-			targets.add_item("隊伍 #%d · 陣營 %d" % [team.team_id, team.faction_id])
+			targets.add_item("隊伍 #%d · 陣營 %s" % [team.team_id, _faction_label(team.faction_id)])
 			targets.set_item_metadata(targets.item_count - 1, team.team_id)
 	var receiver := _options(column, ["選取實際收糧／取糧代表"], "LogisticsReceiver")
 	var roster := ItemList.new()
@@ -6741,17 +6742,17 @@ func _update_team_info() -> void:
 				summaries.append(_trial_team_choice_text(team) + "\n" + (batch_texts[summary_index] if not batch_texts.is_empty() else team.combat_summary()))
 				summary_index += 1
 			else:
-				summaries.append("隊伍 #%d · 陣營 %d · %d 人\n%s\n陣型：%s · 站位 %d · 移動 %d" % [team.team_id, team.faction_id + 1, team.roster_size, team.command_status, team.formation_mode_name(), team.occupied_count(), team.moving_count()])
+				summaries.append("隊伍 #%d · 陣營 %s · %d 人\n%s\n陣型：%s · 站位 %d · 移動 %d" % [team.team_id, _faction_label(team.faction_id), team.roster_size, team.command_status, team.formation_mode_name(), team.occupied_count(), team.moving_count()])
 	team_info_label.text = "尚未部署隊伍。" if summaries.is_empty() else ((_team_info_report + "\n\n") if not _team_info_report.is_empty() else "") + "\n\n".join(summaries)
 	if _team_info_list == null: return # Summary-only callers retain the original serial/batch read order.
 	var rows: Array[Dictionary] = []
 	if _crowd_active():
 		for team: Dictionary in lab.crowd_site.command_teams():
-			rows.append({"id": int(team.team_id), "meta": "陣營 %d · %d 人" % [int(team.faction) + 1, int(team.count)], "prefix": "隊伍 #%d｜" % int(team.team_id)})
+			rows.append({"id": int(team.team_id), "meta": "陣營 %s · %d 人" % [_faction_label(int(team.faction)), int(team.count)], "prefix": "隊伍 #%d｜" % int(team.team_id)})
 	else:
 		for team: TerrainArmy in lab.combat_armies:
 			if not team.has_army(): continue
-			var caption := _trial_team_choice_text(team) if team.combat_enabled else "隊伍 #%d · 陣營 %d · %d 人" % [team.team_id, team.faction_id + 1, team.roster_size]
+			var caption: String = _trial_team_choice_text(team) if team.combat_enabled else "隊伍 #%d · 陣營 %s · %d 人" % [team.team_id, _faction_label(team.faction_id), team.roster_size]
 			rows.append({"id": team.team_id, "meta": caption.trim_prefix("隊伍 #%d · " % team.team_id), "prefix": caption + "\n"})
 	var ids: Array[int] = []
 	for row: Dictionary in rows: ids.append(int(row.id))
@@ -7618,7 +7619,7 @@ func _open_captive_adoption() -> void:
 	var teams := _options(column, [], "AdoptionTeams")
 	for team: TerrainArmy in lab.combat_armies:
 		if not is_instance_valid(team) or not team.combat_enabled or not team.garrison_feature_id.is_empty(): continue
-		teams.add_item("接收隊伍 #%d · 陣營 %d" % [team.team_id, team.faction_id])
+		teams.add_item("接收隊伍 #%d · 陣營 %s" % [team.team_id, _faction_label(team.faction_id)])
 		teams.set_item_metadata(teams.item_count - 1, team.team_id)
 	var consent := CheckBox.new()
 	consent.name = "AdoptionSelfConsent"
@@ -12972,3 +12973,7 @@ func _audio_build_controls(column: VBoxContainer) -> void:
 func _audio_settings_changed(volume: float, muted: bool) -> void:
 	if is_instance_valid(_audio_volume_slider): _audio_volume_slider.set_value_no_signal(volume * 100.0)
 	if is_instance_valid(_audio_mute_toggle): _audio_mute_toggle.set_pressed_no_signal(muted)
+
+func _faction_label(faction_id: int) -> String:
+	var view: Dictionary = region_slot.faction_display(faction_id) if region_slot != null else RegionFactionQuery.display({}, faction_id)
+	return str(faction_id) if view.name == "勢力 %d" % faction_id else str(view.name)

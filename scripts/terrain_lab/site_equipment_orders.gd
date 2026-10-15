@@ -859,10 +859,19 @@ static func valid_nations(value: Variant, definitions: Dictionary, known_people:
 	var operation_people := known_people.duplicate()
 	for identity: String in remote: operation_people[int(identity)] = true
 	var assigned := {}
+	var faction_nations := {}
 	for nation_id: Variant in value:
 		var nation: Variant = value[nation_id]
-		if not nation_id is String or not _valid_key(nation_id) or not nation is Dictionary or nation.size() != 3 + int(nation.has("culture")) + int(nation.has("technology")) + int(nation.has("technology_operations")) + int(nation.has("ransom_data")) or not nation.get("members") is Array or not nation.get("standards") is Dictionary:
+		if not nation_id is String or not _valid_key(nation_id) or not nation is Dictionary or nation.size() != 3 + int(nation.has("culture")) + int(nation.has("technology")) + int(nation.has("technology_operations")) + int(nation.has("ransom_data")) + int(nation.has("faction_version")) + int(nation.has("faction_id")) or not nation.get("members") is Array or not nation.get("standards") is Dictionary:
 			return false
+		if not RegionFactionQuery.nation_schema(nation, nation_id): return false
+		if nation.has("faction_id"):
+			var faction: int = int(nation.faction_id)
+			var stable: Variant = state.get("travel_identity", {}).get("refs", {}).get("nation", {}).get(nation_id)
+			if faction_nations.has(faction) or not RegionFactionQuery.ref_valid(stable, "nation"): return false
+			faction_nations[faction] = true
+			var head: int = int(SiteOffices.head_position(nation_offices(nation, true)).get("holder", -1))
+			if head > 0 and _faction_person(state, head) != faction: return false
 		if nation.has("technology") and not Technology.valid_scope_record(nation.technology, "nation"): return false
 		if nation.has("technology_operations") and not nation.has("technology"): return false
 		if nation.has("technology_operations") and not valid_nation_operation_record(nation.technology_operations, definitions, operation_people): return false
@@ -3498,3 +3507,30 @@ static func _valid_procurement_trial(raw: Variant) -> bool:
 		and raw.tech_id == "N01" and raw.phase_id == "accept_two_named_procurement_deliveries" and raw.binding == "procurement" \
 		and Technology.valid_ref(raw.person) and raw.target_id is String and str(raw.target_id).begins_with("nation-procurement:") \
 		and Technology.material_equal(raw.materials, {"wood": 2, "grain": 2})
+
+## F1a author/scenario binding candidate; no political appointment or guessed mapping.
+static func prepare_faction_nation(state: Dictionary, nation_id: String, faction_id: int, original_nation: Dictionary = {}) -> Dictionary:
+	if not _valid_key(nation_id) or nation_id.begins_with("trial_team_") or not RegionFactionQuery.whole(faction_id, 0, RegionFactionQuery.MAX_ID): return Runtime.fail("INVALID_FACTION_NATION")
+	var candidate: Variant = state.duplicate(true)
+	if not candidate.has("equipment_nations"): candidate.equipment_nations = {}
+	if not original_nation.is_empty():
+		if candidate.equipment_nations.has(nation_id): return Runtime.fail("CONFLICT")
+		candidate.equipment_nations[nation_id] = original_nation.duplicate(true)
+	var nation: Dictionary = candidate.equipment_nations.get(nation_id, {})
+	if nation.is_empty() or nation.has("faction_id") or nation.has("faction_version"): return Runtime.fail("NO_TARGET")
+	nation.faction_version = 1
+	nation.faction_id = faction_id
+	var identity: Variant = RegionTravel.prepare_identity(candidate)
+	if not identity.ok: return identity
+	candidate = identity.state
+	var people: Variant = RegionTravel._body_records(candidate)
+	if not valid_nations(candidate.equipment_nations, candidate.get("item_definitions", {}), people, candidate): return Runtime.fail("CORRUPT_SAVE", "original nation owner validation")
+	return Runtime.ok("", {"state": candidate})
+
+static func _faction_person(state: Dictionary, person_id: int) -> int:
+	for actor: Dictionary in state.get("actors", {}).values():
+		if int(actor.get("person_id", -1)) == person_id: return int(actor.get("faction_id", -1))
+	for team: Dictionary in state.get("armies", []):
+		for row: Dictionary in team.get("units", []):
+			if int(row.get("person_id", -1)) == person_id: return int(team.get("faction_id", -1))
+	return int(state.get("organization_refs", {}).get("remote_people", {}).get(str(person_id), {}).get("faction_id", -1))

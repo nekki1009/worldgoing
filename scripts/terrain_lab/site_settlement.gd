@@ -30,7 +30,7 @@ static func record(data: TerrainData) -> Dictionary:
 	return value if value is Dictionary else {}
 
 static func empty_fall_record() -> Dictionary:
-	return {"version": 1, "contest_faction": -1, "contest_seconds": 0.0, "last_fall": {}}
+	return {"version": 2, "contest_faction": -1, "contest_seconds": 0.0, "last_fall": {}}
 
 static func _int(value: Variant, low: int, high: int) -> bool:
 	return (value is int or value is float) and is_finite(float(value)) and float(value) == floorf(float(value)) and float(value) >= float(low) and float(value) <= float(high)
@@ -74,15 +74,14 @@ static func validate(data: TerrainData, state: Dictionary, people: Dictionary) -
 		var holder: Dictionary = people.get(head, {})
 		if holder.is_empty() or int(holder.get("_housing_faction", holder.get("faction_id", -1))) != int(settlement.owner_faction): return Runtime.fail("CORRUPT_SAVE", "聚落首長須是同陣營原人物")
 	var fall: Variant = settlement.fall_record
-	if not fall is Dictionary or fall.size() != 4 or not _int(fall.get("version"), 1, 1) or not _int(fall.get("contest_faction"), -1, MAX_FACTION) \
+	if not fall is Dictionary or fall.size() != 4 or not _int(fall.get("version"), 1, 2) or not _int(fall.get("contest_faction"), -1, MAX_FACTION) \
 		or not _number(fall.get("contest_seconds"), 0.0, CAPTURE_SECONDS) or not fall.get("last_fall") is Dictionary:
 		return Runtime.fail("CORRUPT_SAVE", "聚落陷落紀錄")
 	if int(fall.contest_faction) == int(settlement.owner_faction) or int(fall.contest_faction) < 0 and float(fall.contest_seconds) != 0.0 or int(fall.contest_faction) >= 0 and int(settlement.level) == 0:
 		return Runtime.fail("CORRUPT_SAVE", "聚落攻陷計時")
 	var last: Dictionary = fall.last_fall
 	if not last.is_empty():
-		if last.size() != 4 or not _int(last.get("from"), 0, MAX_FACTION) or not _int(last.get("to"), 0, MAX_FACTION) or int(last.from) == int(last.to) \
-			or int(last.to) != int(settlement.owner_faction) or not _int(last.get("leader"), -1, MAX_PERSON) or not _int(last.get("minute"), 0, 1000000000):
+		if not valid_last_fall(last, int(settlement.owner_faction), int(fall.version), int(state.get("minute", 0))):
 			return Runtime.fail("CORRUPT_SAVE", "聚落最後陷落紀錄")
 	return Runtime.ok()
 
@@ -441,7 +440,7 @@ static func fall_to(lab: Variant, attacker: int, leader_id: int) -> Dictionary:
 	head.holder = leader_id if leader_id > 0 else -1
 	settlement.offices.duty_ai = leader_id != int(lab.controlled_person_id())
 	settlement.offices.revision = mini(SiteOffices.MAX_SEQ, int(settlement.offices.revision) + 1)
-	settlement.fall_record = {"version": 1, "contest_faction": -1, "contest_seconds": 0.0,
+	settlement.fall_record = {"version": 2, "contest_faction": -1, "contest_seconds": 0.0,
 		"last_fall": {"from": defender, "to": attacker, "leader": leader_id if leader_id > 0 else -1, "minute": int(data.site.get("minute", 0))}}
 	data.environment_revision += 1
 	var message := "%s已陷落：陣營 %d 取得 %d 座建物；%d 名原居民住宅登記解除" % [str(settlement.name), attacker, changed.size(), released.size()]
@@ -777,3 +776,9 @@ const ENGINEERING_KINDS := ["house", "warehouse", "stone_wall", "gate", "wall_st
 
 const DEFENSE_ENGINEERING_KINDS := ["stone_wall", "gate", "wall_stairs", "siege_ladder"]
 
+
+## v1 retains its historical/current coupling. v2 validates history independently.
+static func valid_last_fall(last: Dictionary, owner_faction: int, version: int, now_minute: int) -> bool:
+	if version not in [1, 2]: return false
+	if last.is_empty(): return true
+	return last.size() == 4 and _int(last.get("from"), 0, MAX_FACTION) and _int(last.get("to"), 0, MAX_FACTION) and int(last.from) != int(last.to) and (version != 1 or int(last.to) == owner_faction) and _int(last.get("leader"), -1, MAX_PERSON) and _int(last.get("minute"), 0, 1000000000) and (version == 1 or int(last.minute) <= now_minute)

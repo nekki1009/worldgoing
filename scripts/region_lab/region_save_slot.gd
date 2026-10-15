@@ -22,6 +22,15 @@ var control: Dictionary = {"logical_game_seconds": 0.0, "active_site_id": "", "f
 var cold_site_advance: Callable
 var ship_site_initialize: Callable
 var _marker: Dictionary = {}
+var _faction_source_cache: Dictionary = {}
+var _faction_clock_cache: Dictionary = {}
+var _faction_cache_scope := ""
+# Exact input bytes catch nested/in-place pin changes, including int vs float.
+var _faction_context_inputs: Dictionary = {}
+# Independent computed bytes/digests; no mutable summary/clock refs are stored.
+var _faction_summary_digest_memo: Dictionary = {}
+var _faction_clock_digest_memo: Dictionary = {}
+const FACTION_SOURCE_CACHE_LIMIT := 128
 var _prepared: Dictionary = {}
 var last_error: Dictionary = {}
 var _control_scope := ""
@@ -505,6 +514,7 @@ func _write_new_document(path: String, payload: Dictionary) -> Dictionary:
 	return {"ok": true} if renamed == OK else fail("SAVE_IO", error_string(renamed))
 
 func _recover_control() -> Dictionary:
+	_faction_static_reading = _faction_static_cold
 	# Reading a bad latest commit must not erase the live owner's clock/job.
 	# Keep exact original objects; strict file validation still returns its error.
 	var previous_control: Dictionary = control
@@ -515,9 +525,21 @@ func _recover_control() -> Dictionary:
 		control = previous_control
 		_marker = previous_marker
 		_control_scope = previous_scope
+	elif not is_same(_marker, previous_marker) and previous_scope == folder \
+			and _whole(previous_marker.get("generation"), 1, 2147483647) \
+			and int(previous_marker.generation) == int(_marker.get("generation", -1)) \
+			and _faction_marker_same_wire(previous_marker, _marker):
+		# Disk/scope/source validation already succeeded. Keep an independent typed
+		# snapshot so the specified hot algorithm can match on its next invocation.
+		var known_snapshot: Dictionary = _recover_known_commit.get(folder, {})
+		if known_snapshot.get("scope") == _faction_cache_scope and int(known_snapshot.get("generation", -1)) == int(previous_marker.generation):
+			known_snapshot.recorded = previous_marker.duplicate(true)
+		_marker = previous_marker
+	_faction_static_reading = false
+	_faction_static_cold = false
 	return result
 
-# folder -> {name, generation, recorded}: the last fully validated latest commit.
+# folder -> last fully validated commit, including its faction result.
 var _recover_known_commit: Dictionary = {}
 
 ## Lists, reads and fully validates the latest commit of this folder.
@@ -540,7 +562,7 @@ func _recover_read_latest(preserve_live: bool, live_control: Dictionary) -> Dict
 	var latest := _read_document(folder.path_join("commits").path_join(files.back()))
 	if not latest.ok: return latest
 	var recorded: Dictionary = latest.payload
-	if recorded.size() != 7 or not _whole(recorded.get("format"), 1, 1) \
+	if recorded.size() != 7 or not _whole(recorded.get("format"), 1, 2) \
 			or not _whole(recorded.get("generation"), 1, 2147483647) or not _same_pin(recorded.get("pin"), pin) \
 			or int(recorded.generation) != int(files.back().trim_suffix(".json")) \
 			or not recorded.get("sites") is Dictionary or not recorded.get("transfer_token") is String \
@@ -552,15 +574,15 @@ func _recover_read_latest(preserve_live: bool, live_control: Dictionary) -> Dict
 	if clock.has("encoding") or clock.has("value"):
 		if clock.size() != 2 or clock.get("encoding") != "godot_var_v1" or not clock.get("value") is String:
 			return fail("CORRUPT_SAVE", "存檔槽 control 原 Variant 編碼欄位")
-		var raw := Marshalls.base64_to_raw(str(clock.value))
-		if raw.is_empty() or Marshalls.raw_to_base64(raw) != str(clock.value):
-			return fail("CORRUPT_SAVE", "存檔槽 control 原 Variant Base64 非唯一格式")
-		var decoded: Variant = bytes_to_var(raw)
-		if not decoded is Dictionary or var_to_bytes(decoded) != raw:
-			return fail("CORRUPT_SAVE", "存檔槽 control 原 Variant 字節非法")
-		clock = decoded
+		var decoded: Dictionary = _faction_decode_clock(str(clock.value))
+		if not decoded.ok: return decoded
+		clock = decoded.clock
 		recorded.control = clock
-	if clock.size() not in [2, 3, 4] or clock.size() == 4 and not clock.has("region_gameplay") or not clock.get("active_site_id") is String \
+	var clock_fields: Array = ["logical_game_seconds", "active_site_id"]
+	for optional: String in ["fire_clock", "region_gameplay", "faction_registry"]:
+		if clock.has(optional): clock_fields.append(optional)
+	if int(recorded.format) == 1 and clock.has("faction_registry") or int(recorded.format) == 2 and not clock.has("faction_registry"): return fail("SAVE_VERSION", "faction control marker version")
+	if not RegionFactionQuery.keys(clock, clock_fields) or not clock.get("active_site_id") is String \
 			or not clock.get("logical_game_seconds") is float and not clock.get("logical_game_seconds") is int \
 			or not is_finite(float(clock.logical_game_seconds)) or float(clock.logical_game_seconds) < 0.0:
 		return fail("CORRUPT_SAVE", "存檔槽唯一遊戲時鐘／活動地點")
@@ -581,23 +603,36 @@ func _recover_read_latest(preserve_live: bool, live_control: Dictionary) -> Dict
 			return fail("CORRUPT_SAVE", "提交地點／檔案欄位")
 		var relative := str(entry.path)
 		if not relative.begins_with("generations/") or not relative.ends_with(".json") or relative.contains("..") or relative.contains("\\") \
-				or relative.split("/").size() != 2 or str(entry.sha256).length() != 64 \
-				or FileAccess.get_sha256(folder.path_join(relative)) != str(entry.sha256):
+				or relative.split("/").size() != 2 or not _faction_digest_valid(str(entry.sha256)):
 			return fail("CORRUPT_SAVE", "提交地點檔案缺失／變更，拒絕重播舊移交")
 		var coordinate := Vector2i(int(components[0]), int(components[1]))
 		if _site_key(coordinate) != key: return fail("CORRUPT_SAVE", "提交地點坐標不是唯一格式")
+		if clock.has("faction_registry"):
+			# The write-once digest selects fully validated facts across generations.
+			# A miss still checks the bytes and the original Store/World validator.
+			var selected: Dictionary = _faction_site_source(folder.path_join(relative), coordinate, str(entry.sha256))
+			if not selected.ok: return selected
+		elif _faction_file_sha256(folder.path_join(relative)) != str(entry.sha256):
+			return fail("CORRUPT_SAVE", "提交地點檔案缺失／變更，拒絕重播舊移交")
 		active_found = active_found or str(clock.active_site_id) == Grid.site_id(str(pin.atlas_id), coordinate)
 	if not active_found: return fail("CORRUPT_SAVE", "活動地點未包含在同代提交")
 	var journey: Dictionary = recorded.journey
 	var normalized := _normalize_journey(journey)
 	if not normalized.ok: return normalized
 	recorded.journey = normalized.journey
+	if clock.has("faction_registry"):
+		var factions: Variant = RegionFactionQuery.validate(clock.faction_registry, float(clock.logical_game_seconds))
+		if not factions.ok: return factions
+		var sources: Dictionary = _faction_scan(recorded.sites, clock, recorded.journey, clock.faction_registry, [], false)
+		if not sources.ok: return sources
+		if sources.registry.entries != clock.faction_registry.entries or int(sources.registry.next_faction_id) != int(clock.faction_registry.next_faction_id): return fail("CORRUPT_SAVE", "faction marker/source disagreement")
 	return {"ok": true, "recorded": recorded, "name": files.back()}
 
 func _recover_control_from_files() -> Dictionary:
 	var live_control: Dictionary = control
-	# Only the live marker generation is compared below; no copy of the marker.
-	var live_generation := int(_marker.get("generation", -1))
+	# Recovery detaches _marker before validation; retain the original read-only owner.
+	var live_marker: Dictionary = _marker
+	var live_generation := int(live_marker.get("generation", -1))
 	var preserve_live := _control_scope == folder
 	_marker = {}
 	_control_scope = folder
@@ -606,10 +641,18 @@ func _recover_control_from_files() -> Dictionary:
 	# latest, with the same bytes and the same write-once Site files. Its validated
 	# record is reused; the steps below rebuild marker and control exactly as before.
 	var recorded: Dictionary = {}
+	var scope := _faction_cache_context()
 	var known: Dictionary = _recover_known_commit.get(folder, {})
 	var commits_path := folder.path_join("commits")
-	if not known.is_empty() and FileAccess.file_exists(commits_path.path_join(str(known.name))) \
+	if not known.is_empty() and known.get("scope") == scope and FileAccess.file_exists(commits_path.path_join(str(known.name))) \
 			and not FileAccess.file_exists(commits_path.path_join("%020d.json" % (int(known.generation) + 1))):
+		# The live owner of this same generation equals the validated record: the full
+		# path below would keep the live control (same generation) and the RAM marker
+		# (equivalent record). Keep both without copying the record first.
+		if preserve_live and live_generation == int(known.generation) and live_marker == known.recorded:
+			_marker = live_marker
+			control = live_control
+			return {"ok": true}
 		recorded = known.recorded.duplicate(true)
 	else:
 		# Only the file read can leave this placeholder (an empty folder); the known
@@ -619,18 +662,22 @@ func _recover_control_from_files() -> Dictionary:
 		if not read.ok: return read
 		if read.get("empty", false): return {"ok": true}
 		recorded = read.recorded
-		_recover_known_commit[folder] = {"name": str(read.name), "generation": int(recorded.generation), "recorded": recorded.duplicate(true)}
+		_recover_known_commit[folder] = {"name": str(read.name), "generation": int(recorded.generation), "recorded": recorded.duplicate(true), "scope": scope}
 	var clock: Dictionary = recorded.control
 	_marker = recorded
 	# The live control is kept exactly when it is ahead of, or of the same generation
 	# as, the recorded one; only otherwise is the recorded clock copied in.
 	if preserve_live and (float(live_control.logical_game_seconds) > float(clock.logical_game_seconds) or live_generation == int(recorded.generation)):
 		control = live_control
-		return {"ok": true}
-	control = clock.duplicate(true)
-	if not preserve_live and control.has("region_gameplay"):
-		# A persisted activation records history, not a bind in this process.
-		for value: Dictionary in control.region_gameplay.modes.values(): value.activation = {}
+	else:
+		control = clock.duplicate(true)
+		if not preserve_live and control.has("region_gameplay"):
+			# A persisted activation records history, not a bind in this process.
+			for value: Dictionary in control.region_gameplay.modes.values(): value.activation = {}
+	# Marker ownership is independent of whether the live clock is ahead of disk.
+	# Only a fully validated equivalent same-generation record retains RAM types.
+	if preserve_live and live_generation == int(recorded.generation) and live_marker == recorded:
+		_marker = live_marker
 	return {"ok": true}
 
 static func _normalize_journey(value: Dictionary) -> Dictionary:
@@ -657,6 +704,7 @@ func region_commit_control(generation: int) -> Dictionary:
 	if not _whole(recorded.get("generation"), 1, 2147483647) or int(recorded.generation) != generation or not _same_pin(recorded.get("pin"), pin) \
 			or not recorded.get("sites") is Dictionary or not recorded.get("control") is Dictionary:
 		return fail("CORRUPT_SAVE", "存檔槽提交版本／來源／欄位")
+	if not _whole(recorded.get("format"), 1, 2): return fail("SAVE_VERSION")
 	var clock: Dictionary = recorded.control
 	if clock.has("encoding") or clock.has("value"):
 		if clock.size() != 2 or clock.get("encoding") != "godot_var_v1" or not clock.get("value") is String:
@@ -669,6 +717,14 @@ func region_commit_control(generation: int) -> Dictionary:
 	if clock.has("region_gameplay"):
 		var gameplay_check := GameplayClock.validate_registry(clock.region_gameplay, float(clock.get("logical_game_seconds", 0.0)))
 		if not gameplay_check.ok: return gameplay_check
+	var fields: Array = ["logical_game_seconds", "active_site_id"]
+	for optional: String in ["fire_clock", "region_gameplay", "faction_registry"]:
+		if clock.has(optional): fields.append(optional)
+	if not RegionFactionQuery.keys(clock, fields): return fail("CORRUPT_SAVE", "unknown control fields")
+	if int(recorded.format) == 1 and clock.has("faction_registry") or int(recorded.format) == 2 and not clock.has("faction_registry"): return fail("SAVE_VERSION")
+	if clock.has("faction_registry"):
+		var factions: Variant = RegionFactionQuery.validate(clock.faction_registry, float(clock.get("logical_game_seconds", 0.0)))
+		if not factions.ok: return factions
 	return {"ok": true, "control": clock, "sites": recorded.sites}
 
 func _publish(sites: Dictionary, clock: Dictionary, transfer_token: String = "", journey: Dictionary = {}) -> Dictionary:
@@ -679,6 +735,8 @@ func _publish(sites: Dictionary, clock: Dictionary, transfer_token: String = "",
 	if float(clock.logical_game_seconds) < float(control.logical_game_seconds) - 0.00001:
 		return fail("TIME_MISMATCH", "同一世界遊戲時鐘不可倒退")
 	var next_clock := clock.duplicate(true)
+	if not next_clock.has("faction_registry") and control.has("faction_registry"):
+		next_clock.faction_registry = control.faction_registry.duplicate(true)
 	# Older transfer callers supply just the clock/active ID. Carry the original
 	# registry instead of dropping NPC owners and pending player barriers.
 	if not next_clock.has("region_gameplay") and control.has("region_gameplay"):
@@ -703,7 +761,10 @@ func _publish(sites: Dictionary, clock: Dictionary, transfer_token: String = "",
 		for value: Dictionary in next_clock.region_gameplay.modes.values():
 			value.generation = generation
 			if not value.activation.is_empty(): value.activation.generation = generation
-	var record := {"format": 1, "generation": generation, "pin": pin.duplicate(true), "sites": sites.duplicate(true),
+	var faction_scan: Dictionary = _faction_scan(sites, next_clock, journey, next_clock.get("faction_registry", {}))
+	if not faction_scan.ok: return faction_scan
+	next_clock.faction_registry = faction_scan.registry
+	var record: Dictionary = {"format": 2, "generation": generation, "pin": pin.duplicate(true), "sites": sites.duplicate(true),
 		"control": next_clock.duplicate(true), "transfer_token": transfer_token, "journey": journey.duplicate(true)}
 	if initialization_pending() and expected == 0:
 		var initial_guard := _check_initial_record(record)
@@ -1757,6 +1818,10 @@ func known_saved_sites() -> Dictionary:
 	if pin.is_empty() or source == null: return fail("INVALID_SLOT", "尚未開啟原地圖存檔")
 	var recovered := _recover_control()
 	if not recovered.ok: return recovered
+	return _known_saved_sites_current()
+
+func _known_saved_sites_current() -> Dictionary:
+	if pin.is_empty() or source == null: return fail("INVALID_SLOT", "尚未開啟原地圖存檔")
 	var known := {}
 	for key: String in _marker.get("sites", {}):
 		var pair := key.split(":")
@@ -3235,7 +3300,7 @@ func region_checkpoint_context(data: TerrainData, purpose: String, token: String
 	if not checked.ok: return checked
 	return {"ok": true, "context": context}
 
-func checkpoint_region_site(data: TerrainData, context: Dictionary, owner_states: Dictionary) -> Dictionary:
+func checkpoint_region_site(data: TerrainData, context: Dictionary, owner_states: Dictionary, faction_candidate: Dictionary = {}) -> Dictionary:
 	var expected := {"source_generation": int(_marker.get("generation", 0)), "runtime_revision": int(region_registry().revision),
 		"game_seconds": float(control.logical_game_seconds), "action_seconds": float(control.fire_clock.action_seconds),
 		"fire_epoch": str(control.fire_clock.epoch), "fire_sequence": int(control.fire_clock.sequence)}
@@ -3254,6 +3319,10 @@ func checkpoint_region_site(data: TerrainData, context: Dictionary, owner_states
 	var validated := Store.validate_region_snapshot(loaded.data, {}, expected)
 	if not validated.ok: return validated
 	var next_clock := control.duplicate(true)
+	if not faction_candidate.is_empty():
+		var checked_factions: Variant = RegionFactionQuery.validate(faction_candidate, float(next_clock.logical_game_seconds))
+		if not checked_factions.ok: return checked_factions
+		next_clock.faction_registry = faction_candidate.duplicate(true)
 	var sites: Dictionary = _marker.get("sites", {}).duplicate(true)
 	sites[_site_key(coordinate.site)] = _file_entry(path)
 	var collected := _collect_cold_checkpoint(generation, sites, next_clock)
@@ -10823,3 +10892,472 @@ func _region_entered_npc_ship_unload_authorized(original: TerrainLab, team: Terr
 		if not completed or matched: return false
 		matched = true
 	return matched
+
+## F1a uses the existing common marker, never a second persistence owner.
+func faction_registry_view() -> Dictionary:
+	return control.get("faction_registry", {}).duplicate(true)
+
+func active_faction(faction_id: int) -> Dictionary:
+	return RegionFactionQuery.active(control.get("faction_registry", {}), faction_id)
+
+# Source I/O seam: regressions count real hashing without replacing validation.
+func _faction_file_sha256(path: String) -> String:
+	return FileAccess.get_sha256(path)
+
+func _faction_digest_valid(checksum: String) -> bool:
+	return checksum.length() == 64 and checksum == checksum.to_lower() and checksum.is_valid_hex_number(false)
+
+func _faction_scope_digest(inputs: Array) -> String:
+	return var_to_bytes(inputs).hex_encode().sha256_text()
+
+func _faction_digest_bytes(bytes: PackedByteArray) -> String:
+	return bytes.hex_encode().sha256_text()
+
+func _faction_digest_matches(memo: Dictionary, key: String, value: Dictionary, expected: String) -> bool:
+	var bytes: PackedByteArray = var_to_bytes(value)
+	var known: Variant = memo.get(key)
+	if known is Dictionary and known.get("bytes") is PackedByteArray and known.get("digest") is String \
+			and known.bytes == bytes and known.digest == expected:
+		return true
+	var actual: String = _faction_digest_bytes(bytes)
+	if actual != expected:
+		memo.erase(key)
+		return false
+	if memo.size() >= FACTION_SOURCE_CACHE_LIMIT and not memo.has(key): memo.erase(memo.keys()[0])
+	memo[key] = {"bytes": bytes, "digest": actual}
+	return true
+
+func _faction_cache_context() -> String:
+	if _faction_source_cache.is_empty(): _faction_summary_digest_memo.clear()
+	if _faction_clock_cache.is_empty(): _faction_clock_digest_memo.clear()
+	var source_id: int = source.get_instance_id() if source != null else 0
+	var manifest_hash: String = source.manifest_hash if source != null else ""
+	var pin_bytes: PackedByteArray = var_to_bytes(pin)
+	if _faction_context_inputs.get("folder") is String and _faction_context_inputs.get("source_id") is int \
+			and _faction_context_inputs.get("manifest_hash") is String and _faction_context_inputs.get("pin_bytes") is PackedByteArray \
+			and _faction_context_inputs.get("scope") is String and _faction_context_inputs.folder == folder \
+			and _faction_context_inputs.source_id == source_id and _faction_context_inputs.manifest_hash == manifest_hash \
+			and _faction_context_inputs.pin_bytes == pin_bytes and _faction_context_inputs.scope == _faction_cache_scope:
+		return _faction_cache_scope
+	var current: String = _faction_scope_digest([folder, pin, source_id, manifest_hash])
+	if current != _faction_cache_scope:
+		_faction_source_cache.clear()
+		_faction_clock_cache.clear()
+		_faction_summary_digest_memo.clear()
+		_faction_clock_digest_memo.clear()
+		_faction_cache_scope = current
+	_faction_context_inputs = {"folder": folder, "source_id": source_id, "manifest_hash": manifest_hash,
+		"pin_bytes": pin_bytes, "scope": current}
+	return current
+
+func _faction_cached(key: String) -> Dictionary:
+	var raw: Variant = _faction_source_cache.get(key, {})
+	if not raw is Dictionary:
+		_faction_source_cache.erase(key)
+		_faction_summary_digest_memo.erase(key)
+		return {}
+	var cached: Dictionary = raw
+	if cached.is_empty():
+		_faction_summary_digest_memo.erase(key)
+		return {}
+	if not cached.get("summary") is Dictionary or not cached.get("digest") is String \
+			or not _faction_digest_matches(_faction_summary_digest_memo, key, cached.summary, cached.digest):
+		_faction_source_cache.erase(key)
+		_faction_summary_digest_memo.erase(key)
+		return {}
+	return {"ok": true, "summary": cached.summary.duplicate(true)}
+
+func _faction_remember(key: String, summary: Dictionary) -> Dictionary:
+	if _faction_source_cache.is_empty(): _faction_summary_digest_memo.clear()
+	if _faction_source_cache.size() >= FACTION_SOURCE_CACHE_LIMIT and not _faction_source_cache.has(key):
+		var evicted: Variant = _faction_source_cache.keys()[0]
+		_faction_source_cache.erase(evicted)
+		if evicted is String: _faction_summary_digest_memo.erase(evicted)
+	var bytes: PackedByteArray = var_to_bytes(summary)
+	var digest: String = _faction_digest_bytes(bytes)
+	_faction_source_cache[key] = {"summary": summary.duplicate(true), "digest": digest}
+	if _faction_summary_digest_memo.size() >= FACTION_SOURCE_CACHE_LIMIT and not _faction_summary_digest_memo.has(key):
+		_faction_summary_digest_memo.erase(_faction_summary_digest_memo.keys()[0])
+	_faction_summary_digest_memo[key] = {"bytes": bytes, "digest": digest}
+	return {"ok": true, "summary": summary}
+
+func _faction_summary(state: Dictionary, owner: String, at: Variant, runtime_revision: Variant = null) -> Dictionary:
+	var ids := {}
+	var scanned: Variant = RegionFactionQuery.collect_ids(state, ids)
+	if not scanned.ok: return scanned
+	var historical := {"historical_factions": []}
+	for id: String in ids: historical.historical_factions.append({"faction_id": int(id)})
+	var live: Dictionary = historical.duplicate(true)
+	live.equipment_nations = {}
+	live.travel_identity = {"refs": {"nation": {}}}
+	for nation_id: String in state.get("equipment_nations", {}):
+		var nation: Dictionary = state.equipment_nations[nation_id]
+		if not RegionFactionQuery.nation_schema(nation, nation_id): return fail("CORRUPT_SAVE", "nation faction schema")
+		if not nation.has("faction_id"): continue
+		var ref: Variant = state.get("travel_identity", {}).get("refs", {}).get("nation", {}).get(nation_id)
+		if not RegionFactionQuery.ref_valid(ref, "nation"): return fail("CORRUPT_SAVE", "bound nation lacks original typed ref")
+		live.equipment_nations[nation_id] = {"faction_version": nation.faction_version, "faction_id": nation.faction_id}
+		live.travel_identity.refs.nation[nation_id] = ref.duplicate(true)
+	return {"ok": true, "summary": {"live": live, "historical": historical, "owner": owner, "at": at, "runtime_revision": runtime_revision}}
+
+func _faction_site_key(checksum: String, site: Vector2i, path: String) -> String:
+	return _faction_cache_context() + ":site:" + _site_key(site) + ":" + path + ":" + checksum
+
+func _faction_site_source(path: String, site: Vector2i, checksum: String) -> Dictionary:
+	var key: String = _faction_site_key(checksum, site, path)
+	var present: bool = _faction_source_cache.has(key)
+	var cached: Dictionary = _faction_cached(key)
+	if not cached.is_empty(): return cached
+	if not _faction_digest_valid(checksum): return fail("CORRUPT_SAVE", "faction source checksum")
+	if not FileAccess.file_exists(path):
+		Store.invalidate_faction_summary_path(path)
+		return fail("CORRUPT_SAVE", "faction source file missing")
+	var shared_record: Dictionary = _faction_static_site_record(path, site, checksum) if _faction_static_original_validator() else {}
+	if _faction_static_reading and not present and not shared_record.is_empty():
+		var shared: Dictionary = _faction_static_site_cached(shared_record)
+		if not shared.is_empty():
+			if _faction_file_sha256(path) != checksum:
+				Store.invalidate_faction_summary_path(path)
+				return fail("CORRUPT_SAVE", "faction source changed during validation")
+			if Store.faction_summary_serial() == int(shared_record.serial):
+				return _faction_remember(key, shared.summary)
+	var loaded: Dictionary = _load_checked(path, site)
+	if _faction_file_sha256(path) != checksum:
+		Store.invalidate_faction_summary_path(path)
+		return fail("CORRUPT_SAVE", "faction source changed during validation")
+	if not loaded.ok:
+		Store.invalidate_faction_summary_path(path)
+		return loaded
+	var summarized: Dictionary = _faction_summary(loaded.data.site, str(loaded.data.site.id), _site_seconds(loaded.data), loaded.data.site.get("region_snapshot", {}).get("context", {}).get("runtime_revision"))
+	if not summarized.ok:
+		Store.invalidate_faction_summary_path(path)
+		return summarized
+	if not shared_record.is_empty(): _faction_static_site_remember(shared_record, summarized.summary)
+	return _faction_remember(key, summarized.summary)
+
+func _faction_read_party(path: String) -> Dictionary:
+	var document: Dictionary = _read_document(path, 64 * 1024 * 1024)
+	if not document.ok: return document
+	var payload: Dictionary = document.payload
+	if not _whole(payload.get("version"), 1, 1): return fail("SAVE_VERSION", "unknown party document schema")
+	if payload.get("encoding") != "godot_var_v1" or not payload.get("party") is String or not _same_pin(payload.get("pin"), pin): return fail("CORRUPT_SAVE", "faction party version/pin")
+	var raw: Variant = Marshalls.base64_to_raw(payload.party)
+	var party: Variant = bytes_to_var(raw)
+	if raw.is_empty() or Marshalls.raw_to_base64(raw) != payload.party or not party is Dictionary or var_to_bytes(party) != raw or not party.get("content") is Dictionary or not RegionTravel.validate_identity(party.content.get("travel_identity")): return fail("CORRUPT_SAVE", "faction party stable identity")
+	if not _whole(party.get("version"), 1, RegionTravel.VERSION): return fail("SAVE_VERSION", "unknown party schema")
+	if str(payload.get("token", "")) != str(party.get("party_id", "")): return fail("CORRUPT_SAVE", "faction party token")
+	var patients: Variant = RegionTravel.validate_patients(party.content)
+	if not patients.ok: return patients
+	if party.get("kind") != "travel_party" or party.get("controller") not in ["player", "npc"]: return fail("CORRUPT_SAVE", "party original controller/kind")
+	return {"ok": true, "party": party}
+
+func _faction_party_source(path: String, checksum: String) -> Dictionary:
+	var key: String = _faction_cache_context() + ":party:" + path + ":" + checksum
+	var cached: Dictionary = _faction_cached(key)
+	if not cached.is_empty(): return cached
+	if not _faction_digest_valid(checksum): return fail("CORRUPT_SAVE", "faction source checksum")
+	if not FileAccess.file_exists(path): return fail("CORRUPT_SAVE", "faction source file missing")
+	var loaded: Dictionary = _faction_read_party(path)
+	if _faction_file_sha256(path) != checksum: return fail("CORRUPT_SAVE", "faction party changed during validation")
+	if not loaded.ok: return loaded
+	var party: Dictionary = loaded.party
+	var summarized: Dictionary = _faction_summary(party.content, str(party.party_id), party.get("upkeep", {}).get("at"))
+	if not summarized.ok: return summarized
+	summarized.summary.controller = str(party.controller)
+	return _faction_remember(key, summarized.summary)
+
+func _faction_decode_clock(encoded: String) -> Dictionary:
+	_faction_cache_context()
+	var key: Variant = encoded.sha256_text()
+	var cached: Variant = _faction_clock_cache.get(key, {})
+	if cached is Dictionary and not cached.is_empty() and cached.get("clock") is Dictionary and cached.get("digest") is String and _faction_digest_matches(_faction_clock_digest_memo, str(key), cached.clock, cached.digest):
+		return {"ok": true, "clock": cached.clock.duplicate(true)}
+	var raw: Variant = Marshalls.base64_to_raw(encoded)
+	if raw.is_empty() or Marshalls.raw_to_base64(raw) != encoded: return fail("CORRUPT_SAVE", "存檔槽 control 原 Variant Base64 非唯一格式")
+	var decoded: Variant = bytes_to_var(raw)
+	if not decoded is Dictionary or var_to_bytes(decoded) != raw: return fail("CORRUPT_SAVE", "存檔槽 control 原 Variant 字節非法")
+	_faction_clock_cache.clear()
+	_faction_clock_digest_memo.clear()
+	var digest: String = _faction_digest_bytes(raw)
+	_faction_clock_cache[key] = {"clock": decoded.duplicate(true), "digest": digest}
+	_faction_clock_digest_memo[key] = {"bytes": raw, "digest": digest}
+	return {"ok": true, "clock": decoded}
+
+func _faction_joined_destination(token: String, clock: Dictionary, journey: Dictionary) -> Dictionary:
+	var seen := {}
+	var parties: Dictionary = clock.get("region_gameplay", {}).get("parties", {})
+	for step in range(parties.size() + 1):
+		if seen.has(token): return fail("FACTION_SCAN_INCOMPLETE", "joined party cycle")
+		seen[token] = true
+		var reference: Dictionary = parties.get(token, {})
+		if journey.get("kind") == RegionTravel.KIND and str(journey.get("token", "")) == token: return {"ok": true}
+		if reference.get("phase") != "joined":
+			return {"ok": true} if reference.get("phase") in ["travelling", "pending_life", "materializing", "controlled", "entered"] else fail("FACTION_SCAN_INCOMPLETE", "joined destination missing")
+		var next: Variant = reference.get("entered_party")
+		if not next is String or next.is_empty(): return fail("FACTION_SCAN_INCOMPLETE", "joined destination missing")
+		token = next
+	return fail("FACTION_SCAN_INCOMPLETE", "joined destination chain")
+
+func _faction_scan(sites: Dictionary, clock: Dictionary, journey: Dictionary, previous: Dictionary, reserved: Array = [], include_legacy: bool = true) -> Dictionary:
+	var states: Array[Dictionary] = []
+	var receipts: Array[Dictionary] = []
+	var coordinates := {}
+	if include_legacy:
+		var known := _known_saved_sites_current()
+		if not known.ok: return known
+		for site: Vector2i in known.sites: coordinates[_site_key(site)] = site
+	for key: String in sites:
+		var pair: Variant = key.split(":")
+		if pair.size() != 2 or not pair[0].is_valid_int() or not pair[1].is_valid_int(): return fail("CORRUPT_SAVE", "faction source coordinate")
+		coordinates[key] = Vector2i(int(pair[0]), int(pair[1]))
+	for key: String in coordinates:
+		var coordinate: Vector2i = coordinates[key]
+		var entry: Dictionary = sites.get(key, _marker.get("sites", {}).get(key, {}))
+		var path: Variant = folder.path_join(str(entry.path)) if not entry.is_empty() else site_path(coordinate)
+		# Recorded immutable digests are authoritative cache selectors. Only
+		# unrecorded legacy Sites require a fresh digest before lookup.
+		var checksum: String = str(entry.get("sha256", "")) if not entry.is_empty() else _faction_file_sha256(path)
+		if not _faction_digest_valid(checksum): return fail("CORRUPT_SAVE", "faction source checksum")
+		if not entry.is_empty() and (not str(entry.get("path", "")).begins_with("generations/") or not str(entry.path).ends_with(".json") or str(entry.path).contains("..") or str(entry.path).contains("\\") or str(entry.path).split("/").size() != 2): return fail("CORRUPT_SAVE", "faction source path")
+		var loaded: Dictionary = _faction_site_source(path, coordinate, checksum)
+		if not loaded.ok: return loaded
+		states.append(loaded.summary.live)
+		var prefix: Variant = path.get_file().split("_")[0]
+		var source_generation: Variant = int(prefix) if not entry.is_empty() and prefix.length() == 20 and prefix.is_valid_int() else 0 if entry.is_empty() else null
+		receipts.append({"owner": str(loaded.summary.owner), "source_generation": source_generation, "runtime_revision": loaded.summary.runtime_revision, "checksum": checksum, "as_of_game_seconds": loaded.summary.at, "complete": true})
+	var references: Array[Dictionary] = []
+	if journey.get("kind") == RegionTravel.KIND: references.append(journey)
+	for token: String in clock.get("region_gameplay", {}).get("parties", {}):
+		var reference: Dictionary = clock.region_gameplay.parties[token]
+		if str(journey.get("token", "")) == token and journey.get("kind") == RegionTravel.KIND: continue # Journey selects this party's current document.
+		if reference.get("phase") not in ["travelling", "pending_life", "materializing", "controlled", "entered", "joined"] or reference.get("party_path", "") == "": return fail("FACTION_SCAN_INCOMPLETE", "party owner/source unavailable")
+		if reference.get("phase") == "joined":
+			var destination: Dictionary = _faction_joined_destination(token, clock, journey)
+			if not destination.ok: return destination
+		references.append(reference)
+	var seen := {}
+	for reference: Dictionary in references:
+		var path: String = str(reference.get("party_path", ""))
+		var checksum: String = str(reference.get("party_sha256", ""))
+		if not path.begins_with("travel/") or path.contains("..") or path.contains("\\") or not _faction_digest_valid(checksum): return fail("CORRUPT_SAVE", "faction party checksum/path")
+		var loaded: Dictionary = _faction_party_source(folder.path_join(path), checksum)
+		if not loaded.ok: return loaded
+		var summary: Dictionary = loaded.summary
+		if str(reference.get("token", summary.owner)) != str(summary.owner): return fail("CORRUPT_SAVE", "faction party token")
+		var historical: bool = reference.get("phase") in ["entered", "joined"]
+		# Check each reference before dedupe; conflicting phase/owner cannot hide
+		# behind another reference to the same bytes.
+		var selected_key: Variant = checksum + (":history" if historical else ":live")
+		if seen.has(selected_key): continue
+		seen[selected_key] = true
+		states.append(summary.historical if historical else summary.live)
+		receipts.append({"owner": "party:" + str(summary.owner), "source_generation": null, "runtime_revision": null, "checksum": checksum, "as_of_game_seconds": summary.at, "complete": true})
+	# Battle participant fields and remote claims are projected by their original registry/Sites.
+	var political_ids := {}
+	var battle_ids: Variant = RegionFactionQuery.collect_ids(clock.get("region_gameplay", {}).get("battles", {}), political_ids)
+	if not battle_ids.ok: return battle_ids
+	var all_reserved: Array = reserved.duplicate()
+	for id: String in political_ids: all_reserved.append(int(id))
+	return RegionFactionQuery.migration(states, receipts, all_reserved, previous, float(clock.logical_game_seconds), true)
+
+## Explicit mapping only. Optional original nation record creates a new nation;
+## existing legacy records are bound without changing membership or offices.
+func prepare_faction_nation(data: TerrainData, nation_id: String, faction_id: int, original_nation: Dictionary = {}) -> Dictionary:
+	if data == null or str(data.site.get("id", "")) != str(control.active_site_id): return fail("REGION_SOURCE")
+	var registry := faction_registry_view()
+	var checked: Variant = RegionFactionQuery.validate(registry, float(control.logical_game_seconds))
+	if not checked.ok: return checked
+	var selected: Dictionary = active_faction(faction_id)
+	if not selected.ok: return selected
+	if selected.entry.nation_ref != null: return fail("FACTION_ALREADY_BOUND")
+	if nation_id.begins_with("trial_team_"): return fail("LEGACY_TRIAL_UNSUPPORTED")
+	var source_hash: String = var_to_bytes(data.site).hex_encode().sha256_text()
+	var prepared: Variant = SiteEquipmentOrders.prepare_faction_nation(data.site, nation_id, faction_id, original_nation)
+	if not prepared.ok: return prepared
+	var identity: Variant = RegionTravel.prepare_identity(prepared.state)
+	if not identity.ok: return identity
+	var ref: Dictionary = identity.state.travel_identity.refs.nation[nation_id]
+	var candidate: Variant = registry.duplicate(true)
+	candidate.entries[str(faction_id)].nation_ref = ref.duplicate(true)
+	candidate.entries[str(faction_id)].leader_ref = null
+	candidate.entries[str(faction_id)].erase("duty_ai")
+	if int(candidate.revision) >= RegionFactionQuery.MAX_REVISION: return fail("FACTION_REVISION_EXHAUSTED")
+	candidate.revision = int(candidate.revision) + 1
+	var valid: Variant = RegionFactionQuery.validate(candidate, float(control.logical_game_seconds))
+	if not valid.ok: return valid
+	return {"ok": true, "source_generation": int(_marker.get("generation", 0)), "registry_revision": int(registry.revision), "source_hash": source_hash, "nation_id": nation_id, "faction_id": faction_id, "original_nation": original_nation.duplicate(true), "state": identity.state, "registry": candidate}
+
+## The caller captures original scene owners first. No live nation mutation occurs
+## until the exact common checkpoint has succeeded; returned data is its admitted candidate.
+func checkpoint_faction_nation(data: TerrainData, prepared: Dictionary, context: Dictionary, owners: Dictionary) -> Dictionary:
+	if data == null or not prepared.get("ok", false) or not prepared.get("original_nation") is Dictionary or not prepared.get("nation_id") is String or not RegionFactionQuery.whole(prepared.get("faction_id"), 0, RegionFactionQuery.MAX_ID) or int(prepared.get("source_generation", -1)) != int(_marker.get("generation", 0)) or int(prepared.get("registry_revision", -1)) != int(control.get("faction_registry", {}).get("revision", -2)) or prepared.get("source_hash") != var_to_bytes(data.site).hex_encode().sha256_text(): return fail("CONFLICT")
+	var current: Dictionary = prepare_faction_nation(data, str(prepared.get("nation_id", "")), int(prepared.get("faction_id", -1)), prepared.get("original_nation", {}))
+	if not current.ok: return current
+	if current.state != prepared.get("state") or current.registry != prepared.get("registry"): return fail("CONFLICT", "binding candidate changed")
+	var candidate: Variant = Env.navigation_for_state(data, current.state)
+	return checkpoint_region_site(candidate, context, owners, prepared.registry)
+
+## Explicit scenario reservations participate in the same detached full scan.
+func prepare_faction_migration(reserved_ids: Array = []) -> Dictionary:
+	var recovered: Dictionary = _recover_control()
+	if not recovered.ok: return recovered
+	var candidate: Dictionary = _faction_scan(_marker.get("sites", {}), control, _marker.get("journey", {}), faction_registry_view(), reserved_ids)
+	if not candidate.ok: return candidate
+	candidate.source_generation = int(_marker.get("generation", 0))
+	candidate.registry_revision = int(control.get("faction_registry", {}).get("revision", 0))
+	candidate.reserved_ids = reserved_ids.duplicate()
+	return candidate
+
+func checkpoint_faction_migration(data: TerrainData, prepared: Dictionary, context: Dictionary, owners: Dictionary) -> Dictionary:
+	if not prepared.get("ok", false) or int(prepared.get("source_generation", -1)) != int(_marker.get("generation", 0)) or int(prepared.get("registry_revision", -1)) != int(control.get("faction_registry", {}).get("revision", 0)): return fail("CONFLICT")
+	var current: Dictionary = prepare_faction_migration(prepared.get("reserved_ids", []))
+	if not current.ok: return current
+	if current.registry != prepared.get("registry"): return fail("CONFLICT", "migration sources changed")
+	return checkpoint_region_site(data, context, owners, current.registry)
+
+func prepare_faction_creation(data: TerrainData, expected_revision: int, reserved_ids: Array = []) -> Dictionary:
+	if data == null or str(data.site.get("id", "")) != str(control.active_site_id): return fail("REGION_SOURCE")
+	if int(control.get("faction_registry", {}).get("revision", 0)) != expected_revision: return fail("CONFLICT")
+	var all_reserved: Array = reserved_ids.duplicate()
+	var current_ids := {}
+	var scanned: Variant = RegionFactionQuery.collect_ids(data.site, current_ids)
+	if not scanned.ok: return scanned
+	for id: String in current_ids: all_reserved.append(int(id))
+	var migration: Dictionary = prepare_faction_migration(all_reserved)
+	if not migration.ok: return migration
+	var allocated: Variant = RegionFactionQuery.allocate(migration.registry, int(migration.registry.revision), float(control.logical_game_seconds))
+	if not allocated.ok: return allocated
+	return {"ok": true, "source_generation": int(_marker.get("generation", 0)), "registry_revision": expected_revision, "source_hash": var_to_bytes(data.site).hex_encode().sha256_text(), "reserved_ids": reserved_ids.duplicate(), "registry": allocated.registry, "faction_id": allocated.faction_id}
+
+func checkpoint_faction_creation(data: TerrainData, prepared: Dictionary, context: Dictionary, owners: Dictionary) -> Dictionary:
+	if data == null or not prepared.get("ok", false) or int(prepared.get("source_generation", -1)) != int(_marker.get("generation", 0)) or prepared.get("source_hash") != var_to_bytes(data.site).hex_encode().sha256_text(): return fail("CONFLICT")
+	var current: Dictionary = prepare_faction_creation(data, int(prepared.get("registry_revision", -1)), prepared.get("reserved_ids", []))
+	if not current.ok: return current
+	if current.registry != prepared.get("registry") or current.faction_id != prepared.get("faction_id"): return fail("CONFLICT", "allocator source changed")
+	return checkpoint_region_site(data, context, owners, current.registry)
+
+func nation_faction(state: Dictionary, nation_id: String) -> Dictionary:
+	return RegionFactionQuery.bound_faction(control.get("faction_registry", {}), state, nation_id)
+
+func faction_display(faction_id: int) -> Dictionary:
+	return RegionFactionQuery.display(control.get("faction_registry", {}), faction_id)
+
+# No admission authority: compare only AFTER complete original record validation.
+# Typed control bytes remain exact; only JSON outer numeric coercion is tolerated.
+func _faction_marker_same_wire(original: Dictionary, recorded: Dictionary) -> bool:
+	const FIELDS: Array[String] = ["format", "generation", "pin", "sites", "control", "transfer_token", "journey"]
+	if original.size() != FIELDS.size() or recorded.size() != FIELDS.size(): return false
+	for key: Variant in original:
+		if not key is String or key not in FIELDS: return false
+	for key: Variant in recorded:
+		if not key is String or key not in FIELDS: return false
+	if not original.get("control") is Dictionary or not recorded.get("control") is Dictionary: return false
+	if var_to_bytes(original.control) != var_to_bytes(recorded.control): return false
+	var budget: Array[int] = [1048576]
+	for field: String in FIELDS:
+		if field != "control" and not _faction_json_outer_equal(original[field], recorded[field], budget, 0): return false
+	return true
+
+func _faction_json_outer_equal(original: Variant, recorded: Variant, budget: Array[int], depth: int) -> bool:
+	budget[0] -= 1
+	if budget[0] < 0 or depth > 128: return false
+	var left_type: int = typeof(original)
+	var right_type: int = typeof(recorded)
+	if left_type != right_type:
+		if left_type not in [TYPE_INT, TYPE_FLOAT] or right_type not in [TYPE_INT, TYPE_FLOAT]: return false
+		return is_finite(float(original)) and is_finite(float(recorded)) and absf(float(original)) <= 9007199254740991.0 and absf(float(recorded)) <= 9007199254740991.0 and float(original) == float(recorded)
+	if left_type == TYPE_DICTIONARY:
+		if original.size() != recorded.size(): return false
+		for key: Variant in original:
+			if not key is String or not recorded.has(key) or not _faction_json_outer_equal(original[key], recorded[key], budget, depth + 1): return false
+		for key: Variant in recorded:
+			if not key is String: return false
+		return true
+	if left_type == TYPE_ARRAY:
+		if original.size() != recorded.size(): return false
+		for index: int in original.size():
+			if not _faction_json_outer_equal(original[index], recorded[index], budget, depth + 1): return false
+		return true
+	if left_type == TYPE_FLOAT: return is_finite(float(original)) and is_finite(float(recorded)) and original == recorded
+	return original == recorded if left_type in [TYPE_NIL, TYPE_BOOL, TYPE_INT, TYPE_STRING] else false
+
+# Derived facts only. Custom Slot validators retain their original complete path.
+var _faction_static_cold: bool = true
+var _faction_static_reading: bool = false
+static var _faction_static_site_cache: Dictionary = Store.faction_summary_cache
+static var _faction_static_site_memo: Dictionary = Store.faction_summary_memo
+static var _faction_static_site_metadata: Dictionary = Store.faction_summary_metadata
+static var _faction_static_site_mutex: Mutex = Store._faction_summary_mutex
+
+static func clear_faction_static_site_cache() -> void:
+	Store.clear_faction_summary_cache()
+
+func _faction_static_original_validator() -> bool:
+	var original_script: Script = get_script()
+	return original_script != null and original_script.resource_path == "res://scripts/region_lab/region_save_slot.gd" \
+		and source != null and source.manifest_hash == str(pin.get("manifest_sha256", "")) \
+		and source.author_identity_matches(pin) \
+		and source.resource_manifest_hash == str(pin.get("resource_layer_sha256", "")) \
+		and source.resource_rule_revision == str(pin.get("resource_rule_revision", ""))
+
+func _faction_static_site_record(path: String, site: Vector2i, checksum: String) -> Dictionary:
+	var serial: int = Store.faction_summary_serial()
+	var file: FileAccess = FileAccess.open(path, FileAccess.READ)
+	if file == null: return {}
+	var size: int = file.get_length()
+	file.close()
+	var modified: int = FileAccess.get_modified_time(path)
+	var metadata: Dictionary = {"slot_path": folder, "site_path": Store.faction_summary_path(path), "record_path": path,
+		"site": [site.x, site.y], "sha256": checksum, "scope": _faction_cache_scope, "mtime": modified, "size": size}
+	return {"key": JSON.stringify(metadata, "", true, true), "metadata": metadata, "serial": serial}
+
+func _faction_static_site_cached(record: Dictionary) -> Dictionary:
+	var key: String = str(record.key)
+	_faction_static_site_mutex.lock()
+	var raw: Variant = _faction_static_site_cache.get(key)
+	var known: Variant = _faction_static_site_memo.get(key)
+	var stored_metadata: Variant = _faction_static_site_metadata.get(key)
+	var current: bool = int(record.serial) == Store._faction_summary_serial
+	var cached: Dictionary = raw.duplicate(true) if raw is Dictionary else {}
+	var memo: Dictionary = known.duplicate(true) if known is Dictionary else {}
+	var metadata: Dictionary = stored_metadata.duplicate(true) if stored_metadata is Dictionary else {}
+	_faction_static_site_mutex.unlock()
+	if not current: return {}
+	if cached.is_empty() or var_to_bytes(metadata) != var_to_bytes(record.metadata):
+		_faction_static_site_drop(key)
+		return {}
+	if not cached.get("summary") is Dictionary or not cached.get("digest") is String \
+			or not memo.get("bytes") is PackedByteArray or not memo.get("digest") is String:
+		_faction_static_site_drop(key)
+		return {}
+	var bytes: PackedByteArray = var_to_bytes(cached.summary)
+	if bytes != memo.bytes or cached.digest != memo.digest or _faction_digest_bytes(bytes) != cached.digest:
+		_faction_static_site_drop(key)
+		return {}
+	return {"ok": true, "summary": cached.summary}
+
+func _faction_static_site_remember(record: Dictionary, summary: Dictionary) -> void:
+	var key: String = str(record.key)
+	var bytes: PackedByteArray = var_to_bytes(summary)
+	var digest: String = _faction_digest_bytes(bytes)
+	var cached: Dictionary = {"summary": summary.duplicate(true), "digest": digest}
+	_faction_static_site_mutex.lock()
+	if int(record.serial) != Store._faction_summary_serial:
+		_faction_static_site_mutex.unlock()
+		return
+	if _faction_static_site_cache.size() >= FACTION_SOURCE_CACHE_LIMIT and not _faction_static_site_cache.has(key):
+		var evicted: Variant = _faction_static_site_cache.keys()[0]
+		_faction_static_site_cache.erase(evicted)
+		_faction_static_site_memo.erase(evicted)
+		_faction_static_site_metadata.erase(evicted)
+	_faction_static_site_cache[key] = cached
+	_faction_static_site_memo[key] = {"bytes": bytes, "digest": digest}
+	_faction_static_site_metadata[key] = record.metadata.duplicate(true)
+	_faction_static_site_mutex.unlock()
+
+func _faction_static_site_drop(key: String) -> void:
+	_faction_static_site_mutex.lock()
+	_faction_static_site_cache.erase(key)
+	_faction_static_site_memo.erase(key)
+	_faction_static_site_metadata.erase(key)
+	_faction_static_site_mutex.unlock()

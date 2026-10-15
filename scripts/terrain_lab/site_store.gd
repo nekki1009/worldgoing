@@ -20,7 +20,7 @@ const Vehicles = preload("res://scripts/terrain_lab/site_vehicle_transport.gd")
 const ShipDefs = preload("res://scripts/terrain_lab/site_vehicle_ship_definitions.gd")
 const RiderAtlas = preload("res://scripts/terrain_lab/site_vehicle_rider_atlas.gd")
 const Destination = preload("res://scripts/terrain_lab/formation_destination_planner.gd")
-const FORMAT := 3
+const FORMAT := 4
 const TERRAIN_VERSION := 1
 const DEFAULT_PATH := "user://sites/current.json"
 const MAX_ARMIES := 50
@@ -544,6 +544,7 @@ static func save(data: TerrainData, path: String = DEFAULT_PATH, native_candidat
 		return Runtime.fail("SAVE_IO", "替換失敗，保留／恢復上一份存檔")
 	var committed_fire_owners: Variant = state.get("fire_owners", {})
 	source_data.set_meta(&"fire_owner_checkpoint", committed_fire_owners.duplicate(true) if committed_fire_owners is Dictionary else {})
+	invalidate_faction_summary_path(absolute)
 	return Runtime.ok("地圖已保存", {"path": path})
 
 class CrowdJsonBatch extends RefCounted:
@@ -1260,6 +1261,7 @@ static func _normalize_state(state: Dictionary) -> void:
 		relation.episode.person_id = int(relation.episode.person_id)
 		relation.episode.seq = int(relation.episode.seq)
 	for nation: Dictionary in state.get("equipment_nations", {}).values():
+		if nation.has("faction_id"): nation.faction_id = int(nation.faction_id); nation.faction_version = int(nation.faction_version)
 		if nation.has("military_head"): nation.military_head = int(nation.military_head)
 		if nation.get("ransom_data") is Dictionary: EquipmentOrders.RansomData.normalize_numbers(nation.ransom_data)
 		if nation.get("offices") is Dictionary: SiteOffices.normalize_numbers(nation.offices)
@@ -1393,6 +1395,9 @@ static func _read(path: String) -> Dictionary:
 		return Runtime.fail("SAVE_VERSION", "生成／存檔版本不同，原檔保留")
 	if not payload.get("state") is Dictionary or not payload.get("parameters") is Dictionary:
 		return Runtime.fail("CORRUPT_SAVE")
+	if int(payload.format) < 4:
+		for nation: Variant in payload.state.get("equipment_nations", {}).values():
+			if nation is Dictionary and (nation.has("faction_version") or nation.has("faction_id")): return Runtime.fail("SAVE_VERSION", "formal faction binding requires Site format 4")
 	if int(payload.format) == 1:
 		# Explicit migration of this Site format only; no retired World saves.
 		payload.state["actors"] = {}
@@ -4448,3 +4453,39 @@ static func _validate_fire_pot_shot_record(data: TerrainData, state: Dictionary,
 	if completed != (proof.phase == "complete"): return Runtime.fail("CORRUPT_SAVE", "原火罐完成須對應同一次真接觸後收據")
 	return Runtime.ok()
 
+# Derived plain facts only; this writer owner never references RegionSaveSlot.
+static var faction_summary_cache: Dictionary = {}
+static var faction_summary_memo: Dictionary = {}
+static var faction_summary_metadata: Dictionary = {}
+static var _faction_summary_mutex: Mutex = Mutex.new()
+static var _faction_summary_serial: int = 0
+
+static func faction_summary_path(path: String) -> String:
+	var absolute: String = ProjectSettings.globalize_path(path).simplify_path()
+	return absolute.to_lower() if OS.has_feature("windows") else absolute
+
+static func faction_summary_serial() -> int:
+	_faction_summary_mutex.lock()
+	var serial: int = _faction_summary_serial
+	_faction_summary_mutex.unlock()
+	return serial
+
+static func invalidate_faction_summary_path(path: String) -> void:
+	var absolute: String = faction_summary_path(path)
+	_faction_summary_mutex.lock()
+	_faction_summary_serial += 1
+	for key: Variant in faction_summary_cache.keys():
+		var metadata: Variant = faction_summary_metadata.get(key)
+		if not metadata is Dictionary or metadata.get("site_path") == absolute:
+			faction_summary_cache.erase(key)
+			faction_summary_memo.erase(key)
+			faction_summary_metadata.erase(key)
+	_faction_summary_mutex.unlock()
+
+static func clear_faction_summary_cache() -> void:
+	_faction_summary_mutex.lock()
+	faction_summary_cache.clear()
+	faction_summary_memo.clear()
+	faction_summary_metadata.clear()
+	_faction_summary_serial += 1 # Prevent an in-flight old validation repopulating cleared facts.
+	_faction_summary_mutex.unlock()

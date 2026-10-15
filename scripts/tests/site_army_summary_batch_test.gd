@@ -171,7 +171,7 @@ func _ordered_ui(ui: SiteController) -> String:
 		if team.combat_enabled:
 			texts.append(ui._trial_team_choice_text(team) + "\n" + team.combat_summary())
 		else:
-			texts.append("隊伍 #%d · 陣營 %d · %d 人\n%s\n陣型：%s · 站位 %d · 移動 %d" % [team.team_id, team.faction_id + 1, team.roster_size, team.command_status, team.formation_mode_name(), team.occupied_count(), team.moving_count()])
+			texts.append("隊伍 #%d · 陣營 %d · %d 人\n%s\n陣型：%s · 站位 %d · 移動 %d" % [team.team_id, team.faction_id, team.roster_size, team.command_status, team.formation_mode_name(), team.occupied_count(), team.moving_count()])
 	return "\n\n".join(texts)
 
 func _check_ui() -> void:

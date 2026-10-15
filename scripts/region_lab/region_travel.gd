@@ -241,7 +241,18 @@ static func _remap_content(content: Dictionary, maps: Dictionary) -> Dictionary:
 			var refs := {}
 			for old: String in result.travel_identity.refs.get(kind, {}): refs[str(_mapped(old, kind, maps))] = result.travel_identity.refs[kind][old]
 			result.travel_identity.refs[kind] = refs
+	if not _faction_nations_remapped(content, result, maps): return {}
 	return result
+
+static func _faction_nations_remapped(content: Dictionary, result: Dictionary, maps: Dictionary) -> bool:
+	# Binding is a typed identity; a missing mapped nation/ref is a refusal.
+	for old: String in content.get("equipment_nations", {}):
+		var nation: Dictionary = content.equipment_nations[old]
+		if not nation.has("faction_id"): continue
+		if not validate_identity(content.get("travel_identity")): return false
+		var local: String = str(_mapped(old, "nation", maps))
+		if result.get("equipment_nations", {}).get(local, {}).get("faction_id") != nation.faction_id or result.get("travel_identity", {}).get("refs", {}).get("nation", {}).get(local) != content.travel_identity.refs.nation.get(old): return false
+	return true
 
 ## Reservation is deterministic and returned to the Slot for the same commit.
 static func validate_arrival_mapping(value: Variant) -> bool:

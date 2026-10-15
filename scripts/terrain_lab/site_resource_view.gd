@@ -19,6 +19,7 @@ const CELL := 64.0
 const VIEW_NAMES := ["自然地圖", "天然資源", "農耕適性", "放牧條件", "淡水服務", "建設適性"]
 static var _oval_unit := _make_oval_unit()
 static var _oval_triangles := Geometry2D.triangulate_polygon(_oval_unit)
+var faction_query: Callable # Pure original Slot query; never persisted.
 var data: TerrainData
 var view_mode := 0
 var resource_filter := -1
@@ -1120,6 +1121,9 @@ func _barracks_flag_draws(feature: Dictionary) -> Array[Dictionary]:
 	var palette_id := SiteEquipmentOrders.npc_palette_id(faction) if faction >= 0 else ""
 	var colors: Dictionary = Runtime.EquipmentDye.PRESETS[palette_id].colors if not palette_id.is_empty() else {}
 	var face := Color(str(colors.get("armor", "8a897fff")))
+	if faction_query.is_valid():
+		var projection: Variant = faction_query.call(faction)
+		if projection is Dictionary and projection.get("color") != null: face = Color(str(projection.color))
 	var accent := Color(str(colors.get("outfit", "dedbcfff")))
 	var bases := {"center": Vector2(bounds.get_center()) * CELL}
 	var posts := _barracks_entrance_posts(feature)
