@@ -38,6 +38,7 @@ var simulation_speed := 1.0
 var restore_only := false # Original cold Site scene; no frame/input/autosave publisher.
 var _region_formula_active := false # The original formula interval uses its accepted melee receipt.
 var _replay_target := -1.0 # Fixed command target, never a second simulation clock.
+var _replay_action_step_remaining: float = 0.0 # Continuation of one nonjournal replay quantum, not supplied time.
 var _fire_replay_tracking := false
 var _fire_replay_epoch := ""
 var _fire_replay_keep_tactical := false
@@ -119,6 +120,7 @@ var fatigue_zero_eligible_rows := 0 # Counts, not microseconds; profiling only.
 var fatigue_zero_skipped_advances := 0
 var fixed_action_steps_enabled := false # A/B: retain incomplete 120 Hz time, never clamp or discard it.
 var _action_time_remainder := 0.0 # Original clock's pending time and fractional phase.
+var _action_step_remaining: float = 0.0 # Tail of one admitted fixed quantum, including pending frames.
 var action_elapsed_measure_enabled := false # Formal fixture only; record the input actually accepted by this clock.
 var action_elapsed_input_sum := 0.0
 var action_elapsed_input_count := 0
@@ -696,6 +698,8 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 		crowd_site = null
 	_reset_action_elapsed_input()
 	_action_time_remainder = 0.0 # A replaced/loaded Site starts from its own saved simulation time.
+	_action_step_remaining = 0.0
+	_replay_action_step_remaining = 0.0
 	_exchange_phase = 0.0
 	_tactical_ai_elapsed = 0.0
 	_duty_ai_elapsed = 0.0
@@ -1452,14 +1456,18 @@ func _advance_action_time(delta: float, budget_usec: int = 0) -> void:
 	var step := EXCHANGE_ACTION_STEP if exchange_enabled else ACTION_STEP
 	if exchange_enabled or fixed_action_steps_enabled:
 		_action_time_remainder += delta
-		while _action_time_remainder + ACTION_TIME_EPSILON >= step:
+		while _action_step_remaining > 0.0 or _action_time_remainder + ACTION_TIME_EPSILON >= step:
+			if _action_step_remaining == 0.0: _action_step_remaining = step
+			var requested_seconds: float = _action_step_remaining
 			var source_before_step: TerrainData = terrain
-			var result := _advance_original_shared_step(step)
+			var result: Dictionary = _advance_original_shared_step(requested_seconds)
 			if bool(result.get("completed", false)) and terrain != source_before_step: return
 			# Body time is consumed even when its AFTER-step publisher reports an
 			# error. Never run completed work a second time on the next frame.
 			if bool(result.get("completed", false)):
-				_action_time_remainder -= float(result.get("action_seconds", step))
+				var consumed_seconds: float = float(result.get("action_seconds", requested_seconds))
+				_action_time_remainder -= consumed_seconds
+				_action_step_remaining -= consumed_seconds
 			if str(result.get("status", "")) in ["FIRE_SYNC_PENDING", "REGION_EVENT_PENDING"]: return
 			if not bool(result.get("ok", false)):
 				if site_controller != null: site_controller.show_result(result)
@@ -1473,6 +1481,7 @@ func _advance_action_time(delta: float, budget_usec: int = 0) -> void:
 	# Retain the existing nonfixed 120 Hz mode's render-boundary fraction.
 	var remaining := delta + _action_time_remainder
 	_action_time_remainder = 0.0
+	_action_step_remaining = 0.0 # Nonfixed mode consumes the same retained backlog below.
 	while remaining > 0.0:
 		var elapsed := minf(remaining, step)
 		var source_before_step: TerrainData = terrain
@@ -1828,6 +1837,7 @@ func replay_site_to(target_game_seconds: float, budget_usec: int = 0, max_steps:
 		return SiteRuntime.fail("BUSY", "原補算目標仍固定；先完成既有欠秒")
 	var window := RegionSaveSlot.replay_window(terrain.site, target_game_seconds)
 	if not window.ok: return window
+	if _replay_target < 0.0: _replay_action_step_remaining = 0.0
 	_replay_target = target_game_seconds
 	var deadline := Time.get_ticks_usec() + budget_usec if budget_usec > 0 else 0
 	var completed_steps := 0
@@ -1843,6 +1853,8 @@ func replay_site_to(target_game_seconds: float, budget_usec: int = 0, max_steps:
 		var combat_left := float(terrain.site.get("combat_left", 0.0))
 		if _siege_active(): combat_left = maxf(combat_left, 10.0)
 		if _fire_activity(): combat_left = maxf(combat_left, SiteRuntime.COMBAT_GRACE)
+		var retained_quantum: bool = not _fire_replay_tracking and (exchange_enabled or fixed_action_steps_enabled)
+		if not retained_quantum: _replay_action_step_remaining = 0.0
 		var action_step: float
 		if _fire_replay_tracking:
 			action_step = float(fire_interval.action_end) - float(fire_interval.action_begin)
@@ -1862,12 +1874,19 @@ func replay_site_to(target_game_seconds: float, budget_usec: int = 0, max_steps:
 			# seconds to original Runtime.advance. Never feed it game seconds.
 			var unscaled := pending / simulation_speed
 			var until_target := unscaled if unscaled <= combat_left else combat_left + (unscaled - combat_left) / 60.0
-			action_step = minf(EXCHANGE_ACTION_STEP if exchange_enabled else ACTION_STEP, until_target)
+			# Match live's interrupted quantum before admitting the next fixed step.
+			var quantum: float = _replay_action_step_remaining if retained_quantum and _replay_action_step_remaining > 0.0 else (EXCHANGE_ACTION_STEP if exchange_enabled else ACTION_STEP)
+			action_step = minf(quantum, until_target)
 			while SiteRuntime.game_seconds(action_step, combat_left) * simulation_speed > pending:
 				action_step *= 1.0 - ACTION_TIME_EPSILON
 		if action_step <= 0.0 or not is_finite(action_step):
 			return SiteRuntime.fail("INVALID_TIME", "原補算時間不可表示")
+		if retained_quantum and _replay_action_step_remaining == 0.0:
+			_replay_action_step_remaining = action_step
 		var result := _fire_replay_exact_step(action_step, _replay_target, fire_interval)
+		# A completed body is consumed even if its AFTER publisher reports a fault.
+		if retained_quantum and bool(result.get("completed", false)):
+			_replay_action_step_remaining -= float(result.get("action_seconds", action_step))
 		if not bool(result.get("ok", false)): return result
 		if not result.has("pending"):
 			return SiteRuntime.fail("CLOCK_CONTRACT", "補算步進未完成且無欠秒：" + str(result.get("status", "")))
@@ -1889,6 +1908,7 @@ func replay_site_to(target_game_seconds: float, budget_usec: int = 0, max_steps:
 	if parent != null and parent.site_controller != null and parent.site_controller.region_slot != null or terrain.site.has("region_snapshot"):
 		var region_completed := _region_finish_cold_replay(target_game_seconds)
 		if not region_completed.ok: return region_completed
+		_replay_action_step_remaining = 0.0
 		_replay_target = -1.0
 		return SiteRuntime.ok("原地點補算完成", {"status": "COMPLETE", "target": target_game_seconds, "pending": 0.0, "steps": completed_steps, "data": region_completed.data})
 	var transport_capture := capture_fire_transport()
@@ -1906,6 +1926,7 @@ func replay_site_to(target_game_seconds: float, budget_usec: int = 0, max_steps:
 	if not captured.ok: return captured
 	var validation := SiteStore._validate_state(terrain, terrain.site)
 	if not validation.ok: return validation
+	_replay_action_step_remaining = 0.0
 	_replay_target = -1.0
 	return SiteRuntime.ok("原地點補算完成", {"status": "COMPLETE", "target": target_game_seconds,
 		"pending": 0.0, "steps": completed_steps, "data": terrain})
@@ -8156,7 +8177,7 @@ func _commit_shared_work_pools() -> void:
 # UI and derived collision/search caches are rebuilt by the original bind.
 const RegionOwnerSnapshot = preload("res://scripts/terrain_lab/site_region_owner_snapshot.gd")
 const RegionCheckpoint = preload("res://scripts/terrain_lab/site_region_checkpoint.gd")
-const REGION_LAB_FIELDS := ["_action_time_remainder", "_exchange_phase", "_exchange_round", "_tactical_ai_elapsed", "_duty_ai_elapsed",
+const REGION_LAB_FIELDS := ["_action_time_remainder", "_action_step_remaining", "_exchange_phase", "_exchange_round", "_tactical_ai_elapsed", "_duty_ai_elapsed",
 	"_region_point_pending", "_region_point_contacts", "_region_point_wakes", "_region_point_consuming", "exchange_count", "exchange_results", "ranged_shots", "ranged_resolutions", "ranged_results", "siege_shots", "siege_contacts",
 	"siege_projectiles", "_siege_contact_batch", "_siege_collect_contacts", "_fire_body_active", "_fire_exposure_sequence", "_fire_unsaved", "fire_action_cursor", "_fire_boundary_error", "_fire_motion", "_fire_motion_delta", "_fire_exposure_snapshot", "_fire_body_buckets"]
 const REGION_CONTROLLER_FIELDS := ["_work_elapsed", "_settlement_elapsed", "_settlement_game_seconds", "_save_elapsed",
@@ -8340,6 +8361,13 @@ static func _region_compatible(old: Variant, value: Variant) -> bool:
 	if old is Array and not _region_typed_array(old, value): return false
 	return true
 
+static func _region_action_clock_valid(values: Dictionary) -> bool:
+	var remainder: Variant = values.get("_action_time_remainder")
+	var tail: Variant = values.get("_action_step_remaining", 0.0)
+	if not (remainder is float or remainder is int) or not is_finite(float(remainder)) or not RegionCheckpoint.time(tail): return false
+	# Tail is already part of the retained backlog; epsilon admits only the original boundary error.
+	return float(tail) <= maxf(ACTION_STEP, EXCHANGE_ACTION_STEP) and float(tail) <= float(remainder) + ACTION_TIME_EPSILON
+
 static func _region_valid_fields(values: Variant, owner: Object, fields: Array) -> bool:
 	if not values is Dictionary or values.size() != fields.size(): return false
 	for field: String in fields:
@@ -8409,6 +8437,10 @@ func prepare_restore_region_owner_state(owners: Dictionary, context: Dictionary,
 		return SiteRuntime.fail("INVALID_REGION_OWNERS")
 	for field: String in ROOTS:
 		if not roots.has(field): return SiteRuntime.fail("INVALID_REGION_OWNERS")
+	# Legacy owner graphs predate the admitted fixed-quantum ledger.
+	if roots.get("lab") is Dictionary:
+		if not roots.lab.has("_action_step_remaining"): roots.lab["_action_step_remaining"] = 0.0
+		if not _region_action_clock_valid(roots.lab): return SiteRuntime.fail("INVALID_REGION_OWNER_FIELDS", "lab clock tail")
 	var legacy := _region_validate_legacy_roots(domain, roots, terrain.get_meta(&"region_party_runtime_mapping", {}))
 	if not legacy.ok: return legacy
 	for group: Array in [["lab", self, REGION_LAB_FIELDS], ["controller", site_controller, REGION_CONTROLLER_FIELDS],
@@ -8724,6 +8756,10 @@ func validate_region_owner_bind_payload(data: TerrainData, owners: Dictionary, c
 	if roots.size() != ROOTS.size() or not RegionCheckpoint.integer(roots.get("version"), 1) or int(roots.version) != 1 or roots.get("site_id") != str(data.site.id): return SiteRuntime.fail("INVALID_REGION_OWNERS")
 	for field: String in ROOTS:
 		if not roots.has(field): return SiteRuntime.fail("INVALID_REGION_OWNERS")
+	# Legacy owner graphs predate the admitted fixed-quantum ledger.
+	if roots.get("lab") is Dictionary:
+		if not roots.lab.has("_action_step_remaining"): roots.lab["_action_step_remaining"] = 0.0
+		if not _region_action_clock_valid(roots.lab): return SiteRuntime.fail("INVALID_REGION_OWNER_FIELDS", "lab clock tail")
 	var legacy := _region_validate_legacy_roots(data, roots, data.get_meta(&"region_party_runtime_mapping", {}))
 	if not legacy.ok: return legacy
 	for group: Array in [["lab", self, REGION_LAB_FIELDS], ["controller", site_controller, REGION_CONTROLLER_FIELDS], ["actions", site_controller.person_actions, REGION_ACTION_FIELDS], ["work", site_controller.work_team, REGION_WORK_FIELDS], ["escort", site_controller.captive_escort, REGION_ESCORT_FIELDS]]:
@@ -13476,8 +13512,11 @@ func _collect_original_shared_work_requests(action_seconds: float, game_seconds:
 	if is_finite(retry) and retry > ACTION_TIME_EPSILON: game_seconds = minf(game_seconds, retry)
 	if 0.5 - site_controller._work_elapsed > ACTION_TIME_EPSILON:
 		action_seconds = minf(action_seconds, 0.5 - site_controller._work_elapsed)
-	game_seconds = minf(game_seconds, SiteRuntime.game_seconds(action_seconds, tactical_seconds) * simulation_speed)
-	action_seconds = RegionSaveSlot.GameplayClock.action_for_game(game_seconds, simulation_speed, tactical_seconds)
+	var full_game_seconds: float = SiteRuntime.game_seconds(action_seconds, tactical_seconds) * simulation_speed
+	game_seconds = minf(game_seconds, full_game_seconds)
+	# An uncut window already owns this exact action duration; do not round-trip it.
+	if game_seconds < full_game_seconds:
+		action_seconds = RegionSaveSlot.GameplayClock.action_for_game(game_seconds, simulation_speed, tactical_seconds)
 	var native_active: bool = crowd_site != null and crowd_site.active
 	if native_active:
 		if native_combat_begin < 0.0: return SiteRuntime.fail("NATIVE_COMBAT_INPUT")
