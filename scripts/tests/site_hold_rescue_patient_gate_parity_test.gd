@@ -14,7 +14,8 @@ func _setup_world(gated: bool, patient_kind: String, columns: bool = true) -> Te
 		team.hold_rescue_column_enabled = columns
 		team.native_hold_no_patient_enabled = false # Preserve the original three-way gate oracle below.
 		team.native_hot_enabled = true
-		assert(team._try_install_combat_hot_store())
+		var _army_action_check_1: bool = team._try_install_combat_hot_store()
+		assert(_army_action_check_1)
 		for index in range(team.combat_units.size()):
 			team.combat_hot_set(index, &"think", 0.0)
 	var holding: TerrainArmy = lab.combat_armies[0]
@@ -249,9 +250,11 @@ func _run() -> void:
 			var failure := _save_continuation_case(boundary)
 			if not failure.is_empty():
 				push_error(failure)
+				TerrainArmy.release_contact_source()
 				quit(1)
 				return
 		print("HOLD_SAVE_CONTINUATION_DIAGNOSTIC_PASS")
+		TerrainArmy.release_contact_source()
 		quit(0)
 		return
 	for patient_kind: String in ["none", "member", "player"]:
@@ -287,6 +290,7 @@ func _run() -> void:
 		_dispose_world(candidate)
 		if not failure.is_empty():
 			push_error(failure)
+			TerrainArmy.release_contact_source()
 			quit(1)
 			return
 	var unsupported := _setup_world(true, "none")
@@ -309,12 +313,14 @@ func _run() -> void:
 	_dispose_world(unsupported)
 	if not (missing_member_falls_back and changed_borrow_falls_back and nonfinite_player_falls_back):
 		push_error("Unsupported member, borrowed-row, or player KO column state failed to fall back")
+		TerrainArmy.release_contact_source()
 		quit(1)
 		return
 	for scenario: String in ["none", "member", "player", "threshold_below", "threshold_above", "controlled", "nonmember", "custom_enemy", "custom_busy", "custom_routed", "columns_disabled", "timers", "visual_expiry", "rescue_completion"]:
 		var failure := _native_case(scenario, 1 if scenario in ["visual_expiry", "rescue_completion"] else STEPS)
 		if not failure.is_empty():
 			push_error(failure)
+			TerrainArmy.release_contact_source()
 			quit(1)
 			return
 	var duplicate_control := _native_world(true, "controlled")
@@ -324,13 +330,16 @@ func _run() -> void:
 	_dispose_world(duplicate_control)
 	if not duplicate_control_falls_back:
 		push_error("Ambiguous controlled identity incorrectly admitted the no-patient native prefix")
+		TerrainArmy.release_contact_source()
 		quit(1)
 		return
 	for boundary: String in ["before_due", "after_reset", "rescue"]:
 		var failure := _save_continuation_case(boundary)
 		if not failure.is_empty():
 			push_error(failure)
+			TerrainArmy.release_contact_source()
 			quit(1)
 			return
 	print("HOLD_RESCUE_PATIENT_GATE_PARITY PASS original 17-step three-way replay; 14 no-patient native A/B owner/save/callback cases; both due reviews, KO thresholds, exclusions, interleaved visual/rescue barriers; before/after think and real rescue JSON-restore continuation")
+	TerrainArmy.release_contact_source()
 	quit(0)

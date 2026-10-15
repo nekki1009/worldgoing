@@ -33,7 +33,8 @@ func _fixture(reference: bool, per_team: int = 100, maneuver: bool = false, army
 		var cells: Array[Vector2i] = []
 		for i in range(per_team):
 			cells.append(Vector2i(49 - floori(float(i) / 98.0) if side == 0 else 50 + floori(float(i) / 98.0), 1 + i % 98) if maneuver else Vector2i(40 + side * 10 + i % 10, 40 + floori(float(i) / 10.0)))
-		assert(team.deploy_at(data, null, null, cells) and team.enable_combat())
+		var _army_action_check_1: bool = team.deploy_at(data, null, null, cells) and team.enable_combat()
+		assert(_army_action_check_1)
 		team.controlled_person_query = lab.controlled_person_id
 		lab.combat_armies.append(team)
 		for i in range(per_team):

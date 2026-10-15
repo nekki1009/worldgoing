@@ -4,7 +4,9 @@ const Store = preload("res://scripts/terrain_lab/site_store.gd")
 const SAVE := "res://.godot-temp/site_combat/ko-army-new.json"
 
 func _initialize() -> void:
-	create_timer(20.0).timeout.connect(func() -> void: quit(1))
+	create_timer(20.0).timeout.connect(func() -> void:
+		TerrainArmy.release_contact_source()
+		quit(1))
 	_run.call_deferred()
 
 func _run() -> void:
@@ -21,7 +23,8 @@ func _run() -> void:
 	team.set_process(false)
 	var cell := Vector2i(25, 25)
 	var selected: Array[Vector2i] = [cell]
-	assert(data.is_walkable(cell) and team.deploy_at(data, null, null, selected) and team.enable_combat(false))
+	var _army_action_check_1: bool = data.is_walkable(cell) and team.deploy_at(data, null, null, selected) and team.enable_combat(false)
+	assert(_army_action_check_1)
 	team.apply_unit_contact(0, {"shield": false, "result": {"hp": 1.0, "stun": 110.0, "guard_break": false}})
 	team.settle_combat_command()
 	data.site.army_trial_active = true
@@ -62,6 +65,7 @@ func _run() -> void:
 		_fail("Invalid legacy Army KO changed the valid save")
 		return
 	team.free()
+	TerrainArmy.release_contact_source()
 	print("SITE_KO_ARMY_STORE_PASS")
 	quit(0)
 
@@ -74,4 +78,5 @@ func _write(path: String, payload: Dictionary) -> void:
 
 func _fail(message: String) -> void:
 	push_error(message)
+	TerrainArmy.release_contact_source()
 	quit(1)
