@@ -3752,6 +3752,12 @@ static func work_claim_key(task: Dictionary) -> String:
 # A disposable projection of workers already at their original work positions.
 # The worker owner replaces it each simulation slice; it is never in Site saves.
 static func set_operating_slots(data: TerrainData, jobs: Array) -> void:
+	# Retain only the original non-camp input task refs so an early camp-only
+	# reprojection cannot erase WorkTeam/controlled-person demands.
+	var other_jobs: Array[Dictionary] = []
+	for job: Dictionary in jobs:
+		if not is_same(job.task, data.site.get("worker", {})): other_jobs.append({"task": job.task})
+	data.set_meta(&"site_operating_other_jobs", other_jobs)
 	var by_feature := {}
 	var all_jobs := jobs.duplicate()
 	var camp_task: Dictionary = data.get_meta(&"site_camp_operating_task", {})
@@ -3768,6 +3774,10 @@ static func set_operating_slots(data: TerrainData, jobs: Array) -> void:
 	data.set_meta(&"site_operating_slots", by_feature)
 	allocate_water(data)
 	data.set_meta(&"site_operating_water_revision", data.environment_revision)
+
+static func set_camp_operating_task(data: TerrainData, task: Dictionary) -> void:
+	data.set_meta(&"site_camp_operating_task", task)
+	set_operating_slots(data, data.get_meta(&"site_operating_other_jobs", []))
 
 static func _operating_slots(data: TerrainData, key: String, feature: Dictionary) -> Array[Dictionary]:
 	var assigned: Dictionary = data.get_meta(&"site_operating_slots", {}).get(key, {})
@@ -6757,6 +6767,19 @@ static func _technology_policy(data: TerrainData) -> Dictionary:
 	return TechnologyPolicy.candidate(pin, int(pin.format) == 1)
 
 static func work_preflight(data: TerrainData, task: Dictionary, cargo: Dictionary, carry_limit: int, worker_faction: int, original_identity: int = 0, occupied: Callable = Callable(), checked_prefix: Dictionary = {}) -> Dictionary:
+	return _work_preflight(data, task, cargo, carry_limit, worker_faction, original_identity, occupied, checked_prefix)
+
+static func camp_operating_slot_preflight(data: TerrainData, task: Dictionary, cargo: Dictionary, carry_limit: int, worker_faction: int, original_identity: int, occupied: Callable) -> Dictionary:
+	if data == null or data.site.is_empty() or not is_same(task, data.site.get("worker", {})) or not is_same(cargo, task.get("cargo")): return fail("STALE_SOURCE")
+	var feature: Dictionary = data.site.get("features", {}).get(str(task.get("target", "")).trim_prefix("feature:"), {})
+	if not str(task.get("target", "")).begins_with("feature:") or task.get("action") != "operate" or int(feature.get("layout_version", 0)) != BUILDING_LAYOUT_VERSION or str(feature.get("kind", "")) not in FARM_KINDS + PASTURE_KINDS: return fail("NO_TARGET")
+	var checked := _work_preflight(data, task, cargo, carry_limit, worker_faction, original_identity, occupied, {}, true)
+	# Zero-work pickup and any other successful branch cannot become water demand.
+	if not checked.ok: return checked
+	if checked.get("operating_slot_projection", false) != true: return fail("WAITING")
+	return checked
+
+static func _work_preflight(data: TerrainData, task: Dictionary, cargo: Dictionary, carry_limit: int, worker_faction: int, original_identity: int, occupied: Callable, checked_prefix: Dictionary = {}, operating_projection_only: bool = false) -> Dictionary:
 	if data == null or data.site.is_empty() or bool(data.site.get("paused", false)) or task.is_empty() or _fire_work_pending(data, task): return fail("BUSY")
 	var original_manual := is_same(task, data.site.get("manual", {}))
 	# The original manual owner never saves mode/work_cell. Only its SAME
@@ -6926,6 +6949,10 @@ static func work_preflight(data: TerrainData, task: Dictionary, cargo: Dictionar
 	if feature.has("species") and (int(feature.residents) > grazing_capacity(data, feature.cells) or int(feature.residents) < (2 if str(feature.species) == "horse" else 1)): return fail("NO_RESIDENTS")
 	var recipe_guard := technology_batch_operator_guard(data, key, feature, task, original_identity) if checked_prefix.is_empty() else ok("原真实起点资格只准此held前缀", {"operator_id": original_identity})
 	if not recipe_guard.ok: return recipe_guard
+	if operating_projection_only:
+		var projection_inputs: Dictionary = _production_input_preflight(data, feature, key, definition, cargo, carry_limit)
+		if not projection_inputs.ok: return projection_inputs
+		return ok("只准原Camp供水投影；仍須完整含水預檢", {"operating_slot_projection": true})
 	var water: Dictionary = data.site.get("water_status", {}).get(key, {})
 	if not service.is_empty(): water = water.get("slots", {}).get(str(slot), {})
 	var demand := float(water.get("demand", water_demand(feature)))
@@ -6944,6 +6971,18 @@ static func work_preflight(data: TerrainData, task: Dictionary, cargo: Dictionar
 		productivity = _pasture_scale(data, feature, total_service) * float(service.size()) / maxf(1.0, float(total_service))
 	productivity *= ratio * building_productivity(feature)
 	if productivity <= 0.0: return fail("NO_WORK_CELLS")
+	var inputs: Dictionary = _production_input_preflight(data, feature, key, definition, cargo, carry_limit)
+	if not inputs.ok: return inputs
+	base.payment = inputs.payment
+	base.payment_source = inputs.payment_source
+	base.payment_key = inputs.payment_key
+	base.productivity = productivity
+	var shared := slot >= 0 and kind in FARM_KINDS + PASTURE_KINDS
+	base.remaining = maxf(0.0, float(definition.cycle) - float(feature.production)) * 60.0 / (1.0 if shared else productivity)
+	return ok("原現場生產預檢", base)
+
+static func _production_input_preflight(data: TerrainData, feature: Dictionary, key: String, definition: Dictionary, cargo: Dictionary, carry_limit: int) -> Dictionary:
+	var base := {"payment": {}, "payment_source": {}, "payment_key": ""}
 	if inventory_size(cargo) + inventory_size(definition.get("output", {})) > carry_limit: return fail("STORAGE_FULL")
 	if not bool(feature.get("batch_paid", false)):
 		var stock := feature_input_inventory(data, feature, key)
@@ -6954,10 +6993,7 @@ static func work_preflight(data: TerrainData, task: Dictionary, cargo: Dictionar
 		base.payment = definition.input.duplicate(true)
 		base.payment_source = stock
 		base.payment_key = "feature:" + key
-	base.productivity = productivity
-	var shared := slot >= 0 and kind in FARM_KINDS + PASTURE_KINDS
-	base.remaining = maxf(0.0, float(definition.cycle) - float(feature.production)) * 60.0 / (1.0 if shared else productivity)
-	return ok("原現場生產預檢", base)
+	return ok("原配方／庫存／承載純預檢", base)
 
 static func technology_capture_valid(raw: Variant, allow_empty: bool = true) -> bool:
 	if not raw is Dictionary: return false

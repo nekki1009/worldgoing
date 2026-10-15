@@ -10140,7 +10140,34 @@ func _shared_person_request(provider: String, key: String, people: Array, remain
 	return {"provider": provider, "key": key, "participants": participants, "remaining": remaining,
 		"productive_kind": productive_kind, "progress_multiplier": 1.0, "max_game_seconds": seconds, "paused": paused}
 
+func _prepare_camp_operating_projection(seconds: float) -> void:
+	var data: TerrainData = lab.terrain
+	var camp: Dictionary = {}
+	if is_finite(seconds) and seconds > 0.0 and bool(_shared_worker_inputs.get("worker_ready", false)) and lab.actor_present(lab.npc):
+		var actor: TerrainTestCharacter = lab.npc
+		var task: Dictionary = data.site.worker
+		var person: Dictionary = person_actions._person(int(actor.person_id))
+		var source: Dictionary = {"actor": actor, "person": person, "task": task}
+		if not person.is_empty() and is_same(person.body, actor) and is_same(person.cargo, task.get("cargo")) and is_same(person.holder, actor.item_state) \
+			and Runtime._item_holder_shape(person.holder) and str(person.holder.holder) == "person:" + str(int(person.person_id)) \
+			and Runtime._resource_stack(person.cargo) and _shared_runtime_source_ready(source) \
+			and _native_held_runtime_ready(int(actor.person_id), task) and not person_actions._threat(person, {}):
+			var checked: Dictionary = Runtime.camp_operating_slot_preflight(data, task, person.cargo,
+				int(_shared_worker_inputs.get("worker_limit", 0)), int(person.faction), int(person.person_id), reserves_cell)
+			if checked.ok: camp = task
+	Runtime.set_camp_operating_task(data, camp)
+
+func _retain_admitted_camp_projection(requests: Array) -> void:
+	var data: TerrainData = lab.terrain
+	var admitted: bool = false
+	for request: Dictionary in requests:
+		if str(request.provider) == "runtime" and str(request.key) == "worker" and is_same(request.get("task"), data.site.worker) and str(request.get("paused", "")).is_empty():
+			admitted = true
+	if not admitted:
+		Runtime.set_camp_operating_task(data, {})
+
 func prepare_shared_owner_work_requests(seconds: float) -> Array[Dictionary]:
+	_prepare_camp_operating_projection(seconds)
 	var requests: Array[Dictionary] = []
 	for manual: bool in [false, true]:
 		var name := "manual" if manual else "worker"
@@ -10172,9 +10199,11 @@ func prepare_shared_owner_work_requests(seconds: float) -> Array[Dictionary]:
 			_shared_worker_inputs[name + "_ready"] = false
 			continue
 		requests.append(request)
+	_retain_admitted_camp_projection(requests)
 	var native_training: Dictionary = prepare_shared_native_training_requests(seconds, float(lab.terrain.site.combat_left))
 	if not native_training.ok:
 		latch_original_step_fault(native_training)
+		_retain_admitted_camp_projection([])
 		return []
 	requests.append_array(native_training.requests)
 	for team: TerrainArmy in lab.combat_armies:
