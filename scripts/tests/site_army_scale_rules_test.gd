@@ -109,7 +109,7 @@ func _check_ko_clock_contract(in_tree: bool) -> bool:
 
 func _run() -> void:
 	var in_tree: bool = DisplayServer.get_name() != "headless"
-	if not _check_ko_clock_contract(in_tree): quit(1); return
+	if not _check_ko_clock_contract(in_tree): TerrainArmy.release_contact_source(); quit(1); return
 	var original: TerrainLab = _fixture(true, 100, false, ScaleClockReference, null, in_tree)
 	var candidate: TerrainLab = _fixture(false, 100, false, null, null, in_tree)
 	candidate.combat_armies[0].combat_units[0].combat_ability = 100.0
@@ -133,7 +133,7 @@ func _run() -> void:
 						print("SCALE_FIRST_ROW_DIAG ", {"side": side, "row": i, "fields": changed_fields, "clock_before": step_clock, "reference_ko": before.get("ko"), "candidate_ko": after.get("ko")})
 						break
 			push_error("Scale optimization changed original gameplay at 30 Hz step %d" % step)
-			_dispose(original); _dispose(candidate); quit(1); return
+			_dispose(original); _dispose(candidate); TerrainArmy.release_contact_source(); quit(1); return
 	var queries := 0
 	for faction in range(3):
 		var before := {}
@@ -143,9 +143,10 @@ func _run() -> void:
 				var cell := Vector2i(x, y)
 				if original._fatigue_threat(cell, faction, original.combat_armies[0], 0, before) != candidate._fatigue_threat(cell, faction, candidate.combat_armies[0], 0, after):
 					push_error("Scale optimization changed rest threat at %s" % cell)
-					_dispose(original); _dispose(candidate); quit(1); return
+					_dispose(original); _dispose(candidate); TerrainArmy.release_contact_source(); quit(1); return
 				queries += 1
 	print("SCALE_RULES_PASS original V0.41R exact state, 200 people, 360 common steps, exchanges=", candidate.exchange_count, "; rest queries=", queries)
 	_dispose(original)
 	_dispose(candidate)
+	TerrainArmy.release_contact_source()
 	quit(0)
