@@ -47,9 +47,10 @@ class FixtureController extends SiteController:
 		if not rebuilt.ok or not Store._same_fixed_base(rebuilt.get("base"), saved): return Runtime.fail("SAVE_VERSION")
 		return rebuilt
 
-# Nekki 2026-10-15 02:22Z (decision card, option A): 300 s for this test; assertions unchanged.
+# Nekki 2026-10-15 02:22Z (decision card, option A): 300 s for this test; raised to 360 s by
+# Nekki 2026-10-15 10:37Z (direct confirmation); assertions unchanged.
 # Recorded in output/acceptance_efficiency_20261012/timeout/timeout_adjustments_20261015_nekki.json.
-func _ship_test_deadline_ms(default_ms: int = 300000) -> int:
+func _ship_test_deadline_ms(default_ms: int = 360000) -> int:
 	# Same user argument in headless/GPU runs; subclasses can reuse this helper.
 	# An explicit budget never reduces real walking/jobs/JSON acceptance.
 	var budget: int = default_ms
