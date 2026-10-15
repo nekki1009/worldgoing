@@ -3833,6 +3833,15 @@ func publish_phase_binding(prepared: Dictionary) -> void:
 func begin_scope_technology_phase(requester_id: int, scope: String, scope_id: String, binding: String, target_id: String, work_target: Dictionary = {}) -> Dictionary:
 	var owner := _technology_scope_owner(scope, scope_id)
 	var checked := _technology_scope_command(requester_id, scope, owner)
+	if not checked.ok and checked.get("code") == "BUSY":
+		var original_job: Dictionary = _jobs.get(_job_key_for(requester_id), {})
+		var original_token: Dictionary = original_job.get("operation_selector", {}).get("token", {})
+		# Only this same live named job may reach Runtime's paid resume guards.
+		if original_job.get("kind") in ["technology_feature", "technology_vehicle"] \
+			and original_token.get("scope") == scope and original_token.get("scope_id") == _technology_scope_id(scope, owner, scope_id) \
+			and original_token.get("binding") == binding and original_token.get("target_id") == target_id \
+			and _technology_matching_original_task(_person(requester_id), original_token):
+			checked = _technology_scope_person(scope, owner, requester_id, true, original_token)
 	if not checked.ok: return checked
 	var raw: Dictionary = owner.get("technology", {})
 	if not _scope_project_activation(raw): return Runtime.fail("UNIMPLEMENTED")
@@ -3883,9 +3892,13 @@ func stop_scope_technology(requester_id: int, scope: String, scope_id: String, p
 				task.mode = "idle"
 				task.target = ""
 				task.progress = 0.0
-	var job := job_for(executor_id)
+	var job: Dictionary = _jobs.get(_job_key_for(executor_id), {})
 	var job_token: Dictionary = job.get("nation_token", {})
-	if not job_token.is_empty() and job_token.get("scope") == scope and job_token.get("scope_id") == _technology_scope_id(scope, owner, scope_id) \
+	# job_for() is a deep read projection; identity guards need the original job.
+	if not token.is_empty() and job.get("kind") in ["technology_feature", "technology_vehicle"] \
+		and is_same(job.get("operation_selector", {}).get("token"), token) and _technology_matching_original_task(person, token):
+		cancel(executor_id)
+	elif not job_token.is_empty() and job_token.get("scope") == scope and job_token.get("scope_id") == _technology_scope_id(scope, owner, scope_id) \
 		and int(job_token.get("project_id", -1)) == int(project.id) and job_token.get("purpose") == project.purpose: cancel(executor_id)
 	elif scope == "family" and job.get("technology_family_id") == owner.get("family_id") \
 		and int(job.get("technology_project", -1)) == int(project.id) and job.get("technology_purpose") == project.purpose: cancel(executor_id)
