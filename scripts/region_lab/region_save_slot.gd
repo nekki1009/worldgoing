@@ -11284,10 +11284,18 @@ func _faction_json_outer_equal(original: Variant, recorded: Variant, budget: Arr
 # Derived facts only. Custom Slot validators retain their original complete path.
 var _faction_static_cold: bool = true
 var _faction_static_reading: bool = false
-static var _faction_static_site_cache: Dictionary = Store.faction_summary_cache
-static var _faction_static_site_memo: Dictionary = Store.faction_summary_memo
-static var _faction_static_site_metadata: Dictionary = Store.faction_summary_metadata
-static var _faction_static_site_mutex: Mutex = Store._faction_summary_mutex
+static var _faction_static_site_cache: Dictionary:
+	get:
+		return Store.faction_summary_cache
+static var _faction_static_site_memo: Dictionary:
+	get:
+		return Store.faction_summary_memo
+static var _faction_static_site_metadata: Dictionary:
+	get:
+		return Store.faction_summary_metadata
+static var _faction_static_site_mutex: Mutex:
+	get:
+		return Store._faction_summary_mutex
 
 static func clear_faction_static_site_cache() -> void:
 	Store.clear_faction_summary_cache()

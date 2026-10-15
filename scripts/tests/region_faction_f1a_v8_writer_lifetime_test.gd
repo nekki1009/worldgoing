@@ -2,12 +2,8 @@ extends "res://scripts/tests/region_gameplay_scene_restore_test.gd"
 ## Reuse the original real Scene/Controller/codec for both shared save APIs.
 func _initialize() -> void:
 	if not _check(Store._faction_summary_mutex != null, "V8 writer fixture uses its initialized original Store-owned mutex"): _finish(); return
+	if not _check(RegionSaveSlot._faction_static_site_mutex != null and is_same(RegionSaveSlot._faction_static_site_mutex, Store._faction_summary_mutex), "V8 Slot resolves the original Store mutex before any fixture repair"): _finish(); return
 	print("F1A_V8_WRITER_ALIAS_BEFORE ", is_same(RegionSaveSlot._faction_static_site_cache, Store.faction_summary_cache), " ", is_same(RegionSaveSlot._faction_static_site_memo, Store.faction_summary_memo), " ", is_same(RegionSaveSlot._faction_static_site_metadata, Store.faction_summary_metadata))
-	# This Store-led fixture reconnects Slot to the same existing Store containers and mutex.
-	RegionSaveSlot._faction_static_site_cache = Store.faction_summary_cache
-	RegionSaveSlot._faction_static_site_memo = Store.faction_summary_memo
-	RegionSaveSlot._faction_static_site_metadata = Store.faction_summary_metadata
-	RegionSaveSlot._faction_static_site_mutex = Store._faction_summary_mutex
 	if not _check(is_same(RegionSaveSlot._faction_static_site_cache, Store.faction_summary_cache) and is_same(RegionSaveSlot._faction_static_site_memo, Store.faction_summary_memo) and is_same(RegionSaveSlot._faction_static_site_metadata, Store.faction_summary_metadata), "V8 writer fixture aliases all original Store-owned containers"): _finish(); return
 	RegionSaveSlot.clear_faction_static_site_cache()
 	super._initialize()
