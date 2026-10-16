@@ -1219,6 +1219,10 @@ static func valid_task(data: TerrainData, state: Dictionary, value: Variant) -> 
 		return false
 	if not data.resource_base.has(target) or str(value.action) not in ["harvest", "survey", "clear", "capture", "restore"]:
 		return false
+	# Existing runtime keys may be symbolic; author/structured source IDs stay strict.
+	if SiteEnvironment.resource_key_valid(target) or target.contains(":"):
+		if not SiteEnvironment.validate_resource_definitions(data, {target: data.resource_base[target]}).ok: return false
+	elif not SiteEnvironment.resource_definition_shape(data.resource_base[target], data.size.x * data.size.y, false): return false
 	var resource: Dictionary = data.resource_base[target]
 	if str(value.action) == "capture" and SiteRuntime.capturable_species(resource).is_empty():
 		return false

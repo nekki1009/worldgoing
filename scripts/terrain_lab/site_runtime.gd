@@ -186,6 +186,7 @@ static func ecology_reconcile(data: TerrainData, keys: Array[String] = []) -> Di
 		var r := Env.resource(data, key)
 		if r.is_empty(): return fail("NO_TARGET", key)
 		var fields := {}
+		if (int(r.recover) == 0 or bool(r.cleared)) and int(r.next_recovery) != -1: fields.next_recovery = -1
 		if int(r.kind) in Env.ECOLOGY_KINDS:
 			var capacity := Env.habitat_capacity(data, key)
 			if int(r.kind) in Env.POPULATION_KINDS and (not keys.is_empty() or data.site.changes.has(key) or capacity != int(r.capacity)):
@@ -226,6 +227,7 @@ static func ecology_action_guard(data: TerrainData, key: String, action: String)
 	var admitted := Env.ecology_active(data)
 	if data.site.has("ecology_version") and not admitted: return fail("ECOLOGY_PENDING", "不支援的原生態合同")
 	if action == "restore":
+		if int(r.recover) <= 0: return fail("FINITE_RESOURCE", "不恢復來源不能自然復育")
 		if not admitted: return fail("ECOLOGY_PENDING", "復育須先完成原生態候選准入")
 		if int(r.kind) not in Env.RESTORABLE_KINDS or not bool(r.cleared) or int(r.remaining) != 0:
 			return fail("INVALID", "只能復育原已清除且零量的植物來源")
@@ -615,7 +617,7 @@ static func harvest(data: TerrainData, key: String, actor_cell: Vector2i, cargo:
 		if not preview:
 			var original_fire := _fire_resource_restored(data, key)
 			if not original_fire.ok: return original_fire
-			Env.change(data, key, {"cleared": false, "remaining": 0, "next_recovery": ceili(now(data)) + int(r.recover)})
+			Env.change(data, key, {"cleared": false, "remaining": 0, "next_recovery": ceili(now(data)) + int(r.recover) if int(r.recover) > 0 else -1})
 			Env.rebuild_indexes(data)
 			rebuild_water(data)
 		return ok("復育作業完成，等待自然生長", {"restored": true, "items": {}, "taken": 0})
@@ -681,7 +683,7 @@ static func harvest(data: TerrainData, key: String, actor_cell: Vector2i, cargo:
 static func capturable_species(resource: Dictionary) -> String:
 	if int(resource.get("kind", -1)) != Env.Kind.WILDLIFE:
 		return ""
-	var species := Env.wildlife_species(int(resource.variant), int(resource.cell))
+	var species: String = Env.resource_species(resource)
 	return species if species in ["horse", "sheep"] else ""
 
 static func items_text(items: Dictionary) -> String:
@@ -4372,7 +4374,7 @@ static func _regenerate(data: TerrainData, occupied: Callable) -> void:
 	keys.sort()
 	for key: String in keys:
 		var r := Env.resource(data, key)
-		if r.is_empty() or bool(r.cleared) or int(r.next_recovery) < 0 or int(r.next_recovery) > int(data.site.minute): continue
+		if r.is_empty() or int(r.recover) <= 0 or int(r.kind) == Env.Kind.SALT or bool(r.cleared) or int(r.next_recovery) < 0 or int(r.next_recovery) > int(data.site.minute): continue
 		if int(r.kind) == Env.Kind.TIMBER and _fire_regeneration_blocked(data, key):
 			Env.change(data, key, {"next_recovery": int(data.site.minute) + maxi(1, int(r.recover))})
 			continue

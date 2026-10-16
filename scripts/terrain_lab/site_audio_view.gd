@@ -1008,7 +1008,7 @@ func _audio_environment_sources(data: TerrainData, listener_ground: Vector2) -> 
 				var source_distance := source_ground.distance_squared_to(listener_ground)
 				if source_distance >= GENERAL_RADIUS * GENERAL_RADIUS:
 					continue
-				var species := SiteEnvironment.wildlife_species(int(source.get("variant", 0)), source_index)
+				var species: String = SiteEnvironment.resource_species(source)
 				var kind := StringName("animal_" + ("deer" if species in ["stag", "doe"] else species))
 				var row := {"key": "wildlife:" + key, "kind": kind,
 					"position": source_ground, "person_id": 0, "distance_squared": source_distance,

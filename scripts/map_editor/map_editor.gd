@@ -105,7 +105,13 @@ func _build_ui() -> void:
 	var reason := Label.new()
 	reason.text = PLAYTEST_REASON
 	column.add_child(reason)
+	var history_row: HBoxContainer = HBoxContainer.new()
+	column.add_child(history_row)
+	_button(history_row, "復原", "UndoWork", func() -> void: undo_work())
+	_button(history_row, "重做", "RedoWork", func() -> void: redo_work())
 	_build_terrain_form(column)
+	_build_resource_form(column)
+	_build_resource_state_form(column)
 	_canvas = Control.new()
 	_canvas.name = "AuthorCanvas"
 	_canvas.clip_contents = true
@@ -153,10 +159,17 @@ func new_work(site: Vector2i) -> bool:
 	return _accept_work(candidate, false)
 
 func validate_work(value: Variant) -> bool:
-	if not value is Dictionary or not Adapter.author_integer(value.get("format"), 1, 2) or value.size() != (7 if int(value.format) == 1 else 8): return false
+	if not value is Dictionary or not Adapter.author_integer(value.get("format"), 1, 3): return false
+	var version: int = int(value.format)
+	if value.size() != (7 if version == 1 else (8 if version == 2 else 10)): return false
 	for key: String in ["format", "kind", "name", "manifest", "source_sha256", "site", "revision"]:
 		if not value.has(key): return false
-	if int(value.format) == 2 and not source.author_static_valid(value.get("terrain_static")): return false
+	if version >= 2 and not source.author_static_valid(value.get("terrain_static")): return false
+	if version == 3:
+		if not Env.resource_integer(value.get("resource_highwater"), 0, 2147483646) or not value.get("initial_state") is Dictionary: return false
+		for key: String in value.terrain_static.resources:
+			if key.begins_with("author_resource:") and int(key.get_slice(":", 1)) > int(value.resource_highwater): return false
+	elif version == 2 and not value.terrain_static.resources.is_empty(): return false
 	if not value.kind is String or value.kind != "fixed_tw_editor_draft": return false
 	if not Data._author_text_valid(value.name, 64, true): return false
 	if not value.manifest is String or not Adapter.author_digest_valid(value.source_sha256): return false
@@ -164,46 +177,31 @@ func validate_work(value: Variant) -> bool:
 	if not Adapter.author_integer(value.revision, 1, 2147483647) or not Adapter.author_pair_valid(value.site, 0, 1000000): return false
 	return Vector2i(int(value.site[0]), int(value.site[1])) in _samples
 
+
 func _accept_work(value: Dictionary, saved: bool, keep_file: bool = false) -> bool:
-	if not validate_work(value):
-		_status.text = "草稿格式、來源 SHA 或標準 Site 不符；目前作品保持原狀。"
+	var prepared: Dictionary = _prepare_work(value)
+	if not bool(prepared.get("ok", false)):
+		_status.text = "草稿格式、來源或候選非法；作品、保存位置與歷史保持原狀。"
 		return false
-	var result: Dictionary
-	if int(value.format) == 2: result = source.make_author_draft(Vector2i(int(value.site[0]), int(value.site[1])), value.terrain_static, int(value.revision))
-	else: result = source.make_terrain_data(int(value.site[0]), int(value.site[1]))
-	if not bool(result.get("ok", false)) or not result.get("data") is TerrainData:
-		_status.text = "標準候選讀取失敗；目前作品保持原狀。"
-		return false
-	var candidate: TerrainData = result.data
-	if not candidate.site.is_empty():
-		_status.text = "作者候選不可帶玩法 SiteState；未替換目前作品。"
-		return false
-	terrain = candidate
-	draft = value.duplicate(true)
-	draft.format = int(draft.format); draft.revision = int(draft.revision)
-	draft.site = [int(draft.site[0]), int(draft.site[1])]
-	if int(draft.format) == 2: draft.terrain_static = Data.author_static_normalized(draft.terrain_static)
-	_name.text = str(draft.name)
-	_renderer.display(terrain)
-	_resources.display_source(terrain)
+	_publish_work(prepared)
 	if saved: _saved_content = _content()
 	elif not keep_file: _saved_content = ""
 	if not saved and not keep_file: _saved_path = ""
-	_read_terrain_cell()
-	_fit_view()
+	_clear_work_history()
 	_refresh_status()
 	return true
 
 func _rename_work(value: String) -> void:
-	if draft.is_empty(): return
-	if str(draft.name) == value: return
-	if int(draft.revision) == 2147483647:
-		_name.text = str(draft.name)
-		_status.text = "草稿修訂已達上限；未套用名稱。"
-		return
-	draft.name = value
-	draft.revision = int(draft.revision) + 1
-	_refresh_status()
+	if draft.is_empty() or str(draft.name) == value: return
+	var next: Dictionary = draft.duplicate(true)
+	next.name = value
+	if int(next.revision) < 2147483647:
+		next.revision = int(next.revision) + 1
+		if _commit_work(next, "作品名稱"): return
+	_name.set_block_signals(true)
+	_name.text = str(draft.name)
+	_name.set_block_signals(false)
+	_status.text = "名稱或修訂非法；未變更作品與歷史。"
 
 func _content() -> String:
 	return JSON.stringify(draft, "", true, true)
@@ -231,6 +229,7 @@ func _save_to_path(path: String) -> bool:
 	if path.is_empty() or not validate_work(draft):
 		_status.text = "名稱、檔名或草稿無效；沒有保存。"
 		return false
+	if not bool(_prepare_work(draft).get("ok", false)): return false
 	var text := _content()
 	if text.to_utf8_buffer().size() > MAX_DRAFT_BYTES: return false
 	if DirAccess.make_dir_recursive_absolute(DRAFT_ROOT) != OK: return false
@@ -358,12 +357,20 @@ func _input(event: InputEvent) -> void:
 			if key.keycode == KEY_S:
 				save_work()
 				get_viewport().set_input_as_handled()
+			elif key.keycode == KEY_Z and not _text_focus():
+				if key.shift_pressed: redo_work()
+				else: undo_work()
+				get_viewport().set_input_as_handled()
+			elif key.keycode == KEY_Y and not _text_focus():
+				redo_work()
+				get_viewport().set_input_as_handled()
 			elif key.keycode == KEY_O and not _text_focus():
 				_request_open_work()
 				get_viewport().set_input_as_handled()
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_APPLICATION_FOCUS_OUT: _dragging = false
+	if what == NOTIFICATION_PREDELETE and is_instance_valid(_history): _history.free()
 
 var _terrain_fields: Dictionary = {}
 var _cell_x: SpinBox
@@ -376,7 +383,7 @@ static func empty_terrain_static() -> Dictionary:
 func set_cell_patch(cell: Vector2i, row: Dictionary, bodies: Dictionary = {}, permitted: bool = false) -> bool:
 	if draft.is_empty() or not terrain.contains(cell) or int(draft.revision) == 2147483647: return false
 	var value: Dictionary = draft.duplicate(true)
-	value.format = 2
+	value.format = maxi(2, int(value.format))
 	var raw: Dictionary = value.get("terrain_static", empty_terrain_static()).duplicate(true)
 	raw.terrain[str(terrain.index(cell))] = row.duplicate(true)
 	for key: String in bodies: raw.water_bodies[key] = bodies[key].duplicate(true)
@@ -385,7 +392,7 @@ func set_cell_patch(cell: Vector2i, row: Dictionary, bodies: Dictionary = {}, pe
 	if permitted: permission.append(terrain.index(cell))
 	value.terrain_static = raw
 	value.revision = int(value.revision) + 1
-	return _accept_work(value, false, true)
+	return _commit_work(value, "單格地形／水／土地")
 
 func _build_terrain_form(column: Node) -> void:
 	var row: HBoxContainer = HBoxContainer.new()
@@ -443,3 +450,424 @@ func _apply_terrain_cell() -> void:
 		bodies[str(int(row.water_body))] = {"id": "water_%d" % int(row.water_body), "kind": int(row.water_kind)}
 	var accepted: bool = set_cell_patch(Vector2i(int(_cell_x.value), int(_cell_y.value)), row, bodies, _water_permission.button_pressed)
 	if not accepted: _status.text = "地形／水／土地候選非法或衝突；原草稿及保存位置保持不變。"
+
+const HISTORY_LIMIT := 100
+const HISTORY_BYTES := 16777216
+var _history: UndoRedo = UndoRedo.new()
+var _history_records: Array[Dictionary] = []
+var _history_cursor := 0
+var _history_ready: Dictionary = {}
+var _history_expected := ""
+
+
+func _prepare_work(value: Dictionary) -> Dictionary:
+	if not validate_work(value): return {"ok": false}
+	var result: Dictionary
+	if int(value.format) >= 2: result = source.make_author_draft(Vector2i(int(value.site[0]), int(value.site[1])), value.terrain_static, int(value.revision))
+	else: result = source.make_terrain_data(int(value.site[0]), int(value.site[1]))
+	if not bool(result.get("ok", false)) or not result.get("data") is TerrainData: return {"ok": false}
+	var candidate: TerrainData = result.data
+	if not candidate.site.is_empty(): return {"ok": false}
+	var value_copy: Dictionary = value.duplicate(true)
+	value_copy.format = int(value_copy.format)
+	value_copy.revision = int(value_copy.revision)
+	value_copy.site = [int(value_copy.site[0]), int(value_copy.site[1])]
+	if int(value_copy.format) >= 2: value_copy.terrain_static = Data.author_static_normalized(value_copy.terrain_static)
+	if int(value_copy.format) == 3:
+		value_copy.resource_highwater = int(value_copy.resource_highwater)
+		var state: Dictionary = value_copy.initial_state
+		if state.is_empty():
+			Env.initialize(candidate, str(result.base.site_id))
+			if candidate.site.is_empty(): return {"ok": false}
+			# Capture-only supplies the original item/holder schemas without creating a world or file.
+			candidate.site.world_pin = Data.author_projection_pin(result.base)
+			var captured: Dictionary = SiteStore.save(candidate, "", null, false, {}, true)
+			candidate.site.erase("world_pin")
+			if not bool(captured.get("ok", false)): return {"ok": false}
+			state = captured.state
+			state.erase("world_pin")
+		if state.get("id") != str(result.base.site_id): return {"ok": false}
+		var prepared: Dictionary = Env.prepare_author_resource_state(candidate, state)
+		if not bool(prepared.get("ok", false)): return {"ok": false}
+		candidate = prepared.data
+		value_copy.initial_state = prepared.state
+	if JSON.stringify(value_copy, "", true, true).to_utf8_buffer().size() > MAX_DRAFT_BYTES: return {"ok": false}
+	return {"ok": true, "draft": value_copy, "terrain": candidate}
+
+
+func _publish_work(prepared: Dictionary) -> void:
+	# All fallible source generation and validation happened before history moved.
+	draft = prepared.draft
+	terrain = prepared.terrain
+	_name.set_block_signals(true)
+	_name.text = str(draft.name)
+	_name.set_block_signals(false)
+	_renderer.display(terrain)
+	if terrain.site.is_empty(): _resources.display_source(terrain)
+	else: _resources.display(terrain)
+	_refresh_resources()
+	_read_terrain_cell()
+	_fit_view()
+	_history_expected = _content()
+	_refresh_status()
+
+
+func _history_publish() -> void:
+	_publish_work(_history_ready)
+	_history_ready = {}
+
+
+func _clear_work_history() -> void:
+	_history.clear_history()
+	_history_records.clear()
+	_history_cursor = 0
+	_history_ready = {}
+	_history_expected = _content()
+
+
+func _commit_work(value: Dictionary, label: String) -> bool:
+	if draft.is_empty() or _unsaved.visible or _history_expected != _content(): return false
+	if int(value.get("resource_highwater", 0)) < int(draft.get("resource_highwater", 0)): return false
+	var prepared: Dictionary = _prepare_work(value)
+	if not bool(prepared.get("ok", false)): return false
+	var record: Dictionary = {"edits": _history_delta(draft, prepared.draft), "label": label}
+	var records: Array[Dictionary] = []
+	for i: int in range(_history_cursor): records.append(_history_records[i])
+	records.append(record)
+	if records.size() > HISTORY_LIMIT: records.pop_front()
+	if JSON.stringify(records, "", true, true).to_utf8_buffer().size() > HISTORY_BYTES: return false
+	_publish_work(prepared)
+	_history.max_steps = HISTORY_LIMIT
+	_history.create_action(label, UndoRedo.MERGE_DISABLE)
+	_history.add_do_method(_history_publish)
+	_history.add_undo_method(_history_publish)
+	_history.commit_action(false)
+	_history_records = records
+	_history_cursor = records.size()
+	return true
+
+
+func undo_work() -> bool:
+	if _unsaved.visible or _history_cursor <= 0 or not _history.has_undo() or _history_expected != _content(): return false
+	var prepared: Dictionary = _prepare_work(_history_value(_history_records[_history_cursor - 1], false))
+	if not bool(prepared.get("ok", false)): return false
+	_history_ready = prepared
+	if not _history.undo():
+		_history_ready = {}
+		return false
+	_history_cursor -= 1
+	return true
+
+
+func redo_work() -> bool:
+	if _unsaved.visible or _history_cursor >= _history_records.size() or not _history.has_redo() or _history_expected != _content(): return false
+	var prepared: Dictionary = _prepare_work(_history_value(_history_records[_history_cursor], true))
+	if not bool(prepared.get("ok", false)): return false
+	_history_ready = prepared
+	if not _history.redo():
+		_history_ready = {}
+		return false
+	_history_cursor += 1
+	return true
+
+
+const Env = preload("res://scripts/terrain_lab/site_environment.gd")
+var _resource_list: OptionButton
+var _resource_kind: OptionButton
+var _resource_fields: Dictionary = {}
+var _resource_cells: LineEdit
+
+func _resource_work() -> Dictionary:
+	var value: Dictionary = draft.duplicate(true)
+	value.format = 3
+	value.terrain_static = value.get("terrain_static", empty_terrain_static()).duplicate(true)
+	value.resource_highwater = int(value.get("resource_highwater", 0))
+	value.initial_state = value.get("initial_state", {}).duplicate(true)
+	value.revision = int(value.revision) + 1
+	return value
+
+func add_resource(row: Dictionary) -> String:
+	if draft.is_empty() or int(draft.revision) >= 2147483647: return ""
+	var value: Dictionary = _resource_work()
+	if int(value.resource_highwater) >= 2147483646: return ""
+	value.resource_highwater = int(value.resource_highwater) + 1
+	var key: String = "author_resource:%d" % int(value.resource_highwater)
+	if terrain.resource_base.has(key): return ""
+	value.terrain_static.resources[key] = row.duplicate(true)
+	return key if _commit_work(value, "新增資源") else ""
+
+func set_resource(key: String, row: Dictionary) -> bool:
+	if terrain == null or not terrain.resource_base.has(key) or int(draft.revision) >= 2147483647: return false
+	var previous: Dictionary = terrain.resource_base[key]
+	if not Env.resource_definition_shape(row, terrain.size.x * terrain.size.y, true) or int(row.kind) != int(previous.kind): return false
+	var value: Dictionary = _resource_work()
+	var definition: Dictionary = row.duplicate(true)
+	if int(previous.kind) == Env.Kind.WILDLIFE:
+		var identity: int = int(previous.get("identity_cell", previous.cell))
+		if definition.has("identity_cell") and int(definition.identity_cell) != identity: return false
+		definition.identity_cell = identity
+	value.terrain_static.resources[key] = definition
+	return _commit_work(value, "編輯／搬移資源")
+
+func move_resource(key: String, cell: Vector2i) -> bool:
+	if terrain == null or not terrain.contains(cell) or not terrain.resource_base.has(key): return false
+	var row: Dictionary = terrain.resource_base[key].duplicate(true)
+	var offset: Vector2i = cell - terrain.cell_from_index(int(row.cell))
+	var cells: Array[int] = []
+	for index: int in row.cells:
+		var moved: Vector2i = terrain.cell_from_index(index) + offset
+		if not terrain.contains(moved): return false
+		cells.append(terrain.index(moved))
+	row.cell = terrain.index(cell)
+	row.cells = cells
+	row.water = int(terrain.water_body[int(row.cell)])
+	return set_resource(key, row)
+
+func remove_resource(key: String) -> bool:
+	if terrain == null or not terrain.resource_base.has(key) or int(draft.revision) >= 2147483647: return false
+	var value: Dictionary = _resource_work()
+	if key.begins_with("author_resource:"): value.terrain_static.resources.erase(key)
+	else: value.terrain_static.resources[key] = null
+	return _commit_work(value, "刪除資源（引用未收束則拒絕）")
+
+func reset_resource(key: String) -> bool:
+	if terrain == null or not terrain.resource_base.has(key) or int(draft.revision) >= 2147483647: return false
+	var value: Dictionary = _resource_work()
+	var target: TerrainData = terrain
+	if target.site.is_empty():
+		var prepared: Dictionary = _prepare_work(value)
+		if not bool(prepared.get("ok", false)): return false
+		target = prepared.terrain
+	var reset: Dictionary = Env.prepare_author_resource_state(target, target.site, key)
+	if not bool(reset.get("ok", false)): return false
+	value.initial_state = reset.state
+	return _commit_work(value, "重設存量（保留生態與分鐘配額）")
+
+func _build_resource_form(column: Node) -> void:
+	var row: HBoxContainer = HBoxContainer.new()
+	column.add_child(row)
+	_resource_list = OptionButton.new()
+	_resource_list.name = "ResourceSelection"
+	row.add_child(_resource_list)
+	_resource_list.item_selected.connect(func(_index: int) -> void: _read_resource())
+	_resource_kind = OptionButton.new()
+	_resource_kind.name = "ResourceKind"
+	for kind: String in Env.NAMES: _resource_kind.add_item(kind)
+	row.add_child(_resource_kind)
+	for field: String in ["capacity", "variant", "recover", "identity_cell"]:
+		_resource_fields[field] = _terrain_spin(row, field, 0 if field != "capacity" else 1, 2 if field == "variant" else (9999 if field == "identity_cell" else 1000000))
+	_resource_fields.capacity.value = 20
+	_resource_cells = LineEdit.new()
+	_resource_cells.name = "ResourceFootprint"
+	_resource_cells.placeholder_text = "足跡格號，以逗號分隔；留白使用格X/Y"
+	_resource_cells.custom_minimum_size.x = 220
+	row.add_child(_resource_cells)
+	var actions: HBoxContainer = HBoxContainer.new()
+	column.add_child(actions)
+	_button(actions, "新增資源", "AddResource", func() -> void: _resource_ui("add"))
+	_button(actions, "套用資源", "SetResource", func() -> void: _resource_ui("set"))
+	_button(actions, "搬至格X/Y", "MoveResource", func() -> void: _resource_ui("move"))
+	_button(actions, "刪除資源", "RemoveResource", func() -> void: _resource_ui("remove"))
+	_button(actions, "補滿資源存量", "ResetResource", func() -> void: _resource_ui("reset"))
+	_button(actions, "恢復自然來源", "RestoreNaturalResource", func() -> void: _resource_ui("natural"))
+	_button(actions, "恢復作者定義", "RestoreResourceDefinition", func() -> void: _resource_ui("definition"))
+
+func _refresh_resources() -> void:
+	if _resource_list == null or terrain == null: return
+	var selected: String = _selected_resource()
+	_resource_list.clear()
+	var keys: Array = terrain.resource_base.keys()
+	for key: String in draft.get("terrain_static", {}).get("resources", {}):
+		if not key.begins_with("author_resource:") and key not in keys: keys.append(key)
+	keys.sort()
+	for key: String in keys:
+		var definition: Dictionary = terrain.resource_base.get(key, {})
+		_resource_list.add_item("%s %s" % [key, "已刪除（可恢復自然來源）" if definition.is_empty() else Env.NAMES[int(definition.kind)]])
+		var index: int = _resource_list.item_count - 1
+		_resource_list.set_item_metadata(index, key)
+		if key == selected: _resource_list.select(index)
+	_read_resource()
+
+func _selected_resource() -> String:
+	if _resource_list == null or _resource_list.selected < 0: return ""
+	return str(_resource_list.get_item_metadata(_resource_list.selected))
+
+func _read_resource() -> void:
+	var key: String = _selected_resource()
+	if terrain == null or not terrain.resource_base.has(key): return
+	var definition: Dictionary = terrain.resource_base[key]
+	_resource_kind.select(int(definition.kind))
+	for field: String in _resource_fields:
+		_resource_fields[field].value = int(definition.get(field, definition.cell))
+	var cells: PackedStringArray = []
+	for index: int in definition.cells: cells.append(str(index))
+	_resource_cells.text = ",".join(cells)
+	_cell_x.value = terrain.cell_from_index(int(definition.cell)).x
+	_cell_y.value = terrain.cell_from_index(int(definition.cell)).y
+	_read_resource_initial_state(key)
+
+func _resource_ui(action: String) -> void:
+	if terrain == null or _unsaved.visible: return
+	var key: String = _selected_resource()
+	var accepted: bool = false
+	var cell: Vector2i = Vector2i(int(_cell_x.value), int(_cell_y.value))
+	if action == "remove": accepted = remove_resource(key)
+	elif action == "reset": accepted = reset_resource(key)
+	elif action == "move": accepted = move_resource(key, cell)
+	elif action == "natural": accepted = restore_natural_resource(key)
+	elif action == "definition": accepted = restore_resource_definition(key)
+	else:
+		var cells: Array[int] = []
+		if _resource_cells.text.strip_edges().is_empty(): cells.append(terrain.index(cell))
+		else:
+			for token: String in _resource_cells.text.split(","):
+				var value: String = token.strip_edges()
+				if not value.is_valid_int() or str(int(value)) != value: return
+				cells.append(int(value))
+		var kind: int = _resource_kind.selected
+		var row: Dictionary = {"kind": kind, "cell": terrain.index(cell), "cells": cells,
+			"capacity": int(_resource_fields.capacity.value), "variant": int(_resource_fields.variant.value),
+			"recover": int(_resource_fields.recover.value), "blocks": kind in [Env.Kind.TIMBER, Env.Kind.STONE],
+			"water": int(terrain.water_body[terrain.index(cell)])}
+		if kind == Env.Kind.WILDLIFE: row.identity_cell = int(_resource_fields.identity_cell.value)
+		accepted = not add_resource(row).is_empty() if action == "add" else set_resource(key, row)
+	if not accepted: _status.text = "資源候選非法或仍有引用；草稿、ID、歷史與原檔保持不變。"
+
+func _history_delta(before: Dictionary, after: Dictionary, path: Array = []) -> Array[Dictionary]:
+	var changes: Array[Dictionary] = []
+	var keys: Array = before.keys()
+	for key: Variant in after:
+		if not before.has(key): keys.append(key)
+	for key: Variant in keys:
+		var at: Array = path.duplicate()
+		at.append(key)
+		# Keep dictionary key order and types when a structural edit is undone.
+		if before.has(key) and after.has(key) and before[key] is Dictionary and after[key] is Dictionary and var_to_bytes(before[key].keys()) == var_to_bytes(after[key].keys()):
+			changes.append_array(_history_delta(before[key], after[key], at))
+		elif not before.has(key) or not after.has(key) or var_to_bytes(before[key]) != var_to_bytes(after[key]):
+			changes.append({"path": at, "before_present": before.has(key), "after_present": after.has(key),
+				"before": before.get(key), "after": after.get(key)})
+	return changes
+
+
+func _history_value(record: Dictionary, forward: bool) -> Dictionary:
+	var value: Dictionary = draft.duplicate(true)
+	var side: String = "after" if forward else "before"
+	for change: Dictionary in record.edits:
+		var target: Dictionary = value
+		for depth: int in range(change.path.size() - 1): target = target[change.path[depth]]
+		var key: Variant = change.path.back()
+		if bool(change[side + "_present"]):
+			var restored: Variant = change[side]
+			target[key] = restored.duplicate(true) if restored is Dictionary or restored is Array else restored
+		else: target.erase(key)
+	# Allocation history survives undo and discarded redo branches, including a legacy first edit.
+	if int(draft.get("resource_highwater", 0)) > int(value.get("resource_highwater", 0)):
+		value.format = 3
+		value.resource_highwater = int(draft.resource_highwater)
+		value.terrain_static = value.get("terrain_static", empty_terrain_static())
+		value.initial_state = value.get("initial_state", {})
+	return value
+
+
+var _resource_state_fields: Dictionary = {}
+var _resource_cleared: CheckBox
+var _resource_discovered: CheckBox
+
+func set_resource_initial_state(key: String, fields: Dictionary) -> bool:
+	if terrain == null or not terrain.resource_base.has(key) or fields.is_empty() or int(draft.revision) >= 2147483647: return false
+	var definition: Dictionary = terrain.resource_base[key]
+	for field: Variant in fields:
+		if field in ["cleared", "discovered"]:
+			if not fields[field] is bool: return false
+		elif field == "remaining":
+			if not Env.resource_integer(fields[field], 0, int(definition.capacity)): return false
+		elif field == "next_recovery":
+			if not Env.resource_integer(fields[field], -1, 1100000000): return false
+		elif field == "used":
+			if int(definition.kind) != Env.Kind.SALT or not (fields[field] is int or fields[field] is float) or not is_finite(float(fields[field])) or float(fields[field]) < 0.0 or float(fields[field]) > float(definition.capacity): return false
+		elif field == "used_minute":
+			if int(definition.kind) != Env.Kind.SALT or not Env.resource_integer(fields[field], 0, 1000000000): return false
+		else: return false
+	var value: Dictionary = _resource_work()
+	if value.initial_state.is_empty():
+		var prepared: Dictionary = _prepare_work(value)
+		if not bool(prepared.get("ok", false)): return false
+		value.initial_state = prepared.draft.initial_state
+	var candidate: TerrainData = Env.navigation_for_state(terrain, value.initial_state)
+	# Typed input is admitted before the original change owner derives population latches.
+	Env.change(candidate, key, fields)
+	value.initial_state = candidate.site
+	return _commit_work(value, "編輯資源初始狀態")
+
+func restore_natural_resource(key: String) -> bool:
+	if draft.is_empty() or not Env.resource_key_valid(key) or key.begins_with("author_resource:") or int(draft.revision) >= 2147483647: return false
+	var raw: Dictionary = draft.get("terrain_static", {})
+	if not raw.get("resources", {}).has(key): return false
+	var value: Dictionary = _resource_work()
+	value.terrain_static.resources.erase(key)
+	# Keep every initial delta/reference; a mismatch with natural capacity/habitat must refuse.
+	return _commit_work(value, "恢復自然來源（移除作者覆寫）")
+
+func restore_resource_definition(key: String) -> bool:
+	if terrain == null or not terrain.resource_base.has(key) or int(draft.revision) >= 2147483647: return false
+	var value: Dictionary = _resource_work()
+	var target: TerrainData = terrain
+	if target.site.is_empty():
+		var prepared: Dictionary = _prepare_work(value)
+		if not bool(prepared.get("ok", false)): return false
+		target = prepared.terrain
+	var restored: Dictionary = Env.prepare_author_resource_state(target, target.site, key)
+	if not bool(restored.get("ok", false)): return false
+	var delta: Dictionary = restored.state.changes.get(key, {}).duplicate(true)
+	# Clear only initial operational overrides; minute quota and ecology/management stay.
+	for field: String in ["remaining", "cleared", "discovered", "next_recovery"]: delta.erase(field)
+	if delta.is_empty(): restored.state.changes.erase(key)
+	else: restored.state.changes[key] = delta
+	value.initial_state = restored.state
+	return _commit_work(value, "恢復作者定義（保留管理與配額）")
+
+func _build_resource_state_form(column: Node) -> void:
+	var row: HBoxContainer = HBoxContainer.new()
+	column.add_child(row)
+	_resource_state_fields.remaining = _terrain_spin(row, "初始剩餘量", 0, 1000000)
+	_resource_state_fields.next_recovery = _terrain_spin(row, "下次恢復分鐘（-1停排）", -1, 1100000000)
+	_resource_state_fields.used = _terrain_spin(row, "鹽：本分鐘已用", 0, 1000000)
+	_resource_state_fields.used.step = 0.0
+	_resource_state_fields.used_minute = _terrain_spin(row, "鹽：使用分鐘", 0, 1000000000)
+	_resource_cleared = CheckBox.new()
+	_resource_cleared.text = "初始已清除"
+	row.add_child(_resource_cleared)
+	_resource_discovered = CheckBox.new()
+	_resource_discovered.text = "初始已發現"
+	row.add_child(_resource_discovered)
+	_button(row, "套用初始狀態", "ApplyResourceInitialState", _apply_resource_initial_state)
+
+func _read_resource_initial_state(key: String) -> void:
+	if terrain == null or not terrain.resource_base.has(key) or _resource_state_fields.is_empty(): return
+	var resource: Dictionary = Env.resource(terrain, key)
+	_resource_state_fields.remaining.max_value = int(resource.capacity)
+	_resource_state_fields.remaining.value = int(resource.remaining)
+	_resource_state_fields.next_recovery.value = int(resource.next_recovery)
+	_resource_state_fields.used.max_value = int(resource.capacity)
+	_resource_state_fields.used.value = float(resource.get("used", 0.0))
+	# SpinBox refreshes its text on draw; author reads must also work before drawing.
+	_resource_state_fields.used.get_line_edit().text = String.num(_resource_state_fields.used.value, 16)
+	_resource_state_fields.used_minute.value = maxi(0, int(resource.get("used_minute", terrain.site.get("minute", 0))))
+	_resource_state_fields.used.editable = int(resource.kind) == Env.Kind.SALT
+	_resource_state_fields.used_minute.editable = int(resource.kind) == Env.Kind.SALT
+	_resource_cleared.button_pressed = bool(resource.cleared)
+	_resource_discovered.button_pressed = bool(resource.discovered)
+
+func _apply_resource_initial_state() -> void:
+	if terrain == null or _unsaved.visible: return
+	var key: String = _selected_resource()
+	if not terrain.resource_base.has(key): return
+	var fields: Dictionary = {"remaining": int(_resource_state_fields.remaining.value),
+		"cleared": _resource_cleared.button_pressed, "discovered": _resource_discovered.button_pressed,
+		"next_recovery": int(_resource_state_fields.next_recovery.value)}
+	if int(terrain.resource_base[key].kind) == Env.Kind.SALT:
+		# Initial-state field keys must stay String for the original Store schema.
+		fields["used"] = float(_resource_state_fields.used.value)
+		fields["used_minute"] = int(_resource_state_fields.used_minute.value)
+	if not set_resource_initial_state(key, fields): _status.text = "初始狀態與容量／排程／分鐘配額／引用不符；作品與歷史保持原狀。"

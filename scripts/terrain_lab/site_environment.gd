@@ -51,6 +51,9 @@ static func _prepare_initialize(data: TerrainData) -> bool:
 	if not author_land_valid(data.parameters.get("author_land_cells", {})):
 		push_error("Invalid author land values; original candidate retained")
 		return false
+	if fixed_geography and not validate_resource_definitions(data, data.resource_base).ok:
+		push_error("Invalid source resource definitions; original data retained")
+		return false
 	data.fertility.resize(count)
 	data.moisture.resize(count)
 	data.drainage.resize(count)
@@ -442,25 +445,27 @@ static func ecology_info(data: TerrainData, key: String) -> Dictionary:
 	if r.is_empty(): return {}
 	var kind := int(r.kind)
 	var admitted := ecology_active(data)
-	var renewable := kind in ECOLOGY_KINDS
+	var biological: bool = kind in ECOLOGY_KINDS
+	var renewable: bool = biological and int(r.recover) > 0
 	var population := kind in POPULATION_KINDS
 	var potential_capacity := habitat_capacity(data, key)
 	var capacity := 0 if bool(r.cleared) and kind in RESTORABLE_KINDS else potential_capacity
 	var remaining := int(r.remaining)
-	var mode := str(r.get("eco_mode", "sustainable")) if admitted and renewable else "general"
+	var mode: String = str(r.get("eco_mode", "sustainable")) if admitted and biological else "general"
 	var reserve := maxi(1, ceili(float(capacity) * 0.2)) if population else 0
 	var resume := mini(capacity, maxi(reserve + 1, ceili(float(capacity) * 0.5))) if population else capacity
 	var resting := bool(r.eco_resting) if r.get("eco_resting") is bool else ecology_resting(remaining, capacity)
 	var reason := ""
 	if bool(r.cleared): reason = "CLEARED"
-	elif not renewable: reason = "FINITE" if kind != Kind.SALT else "SUPPLY"
+	elif not biological: reason = "FINITE" if kind != Kind.SALT else "SUPPLY"
 	elif capacity <= 0: reason = "NO_HABITAT"
 	elif (not admitted or not population) and data.feature_at[int(r.cell)] != 0: reason = "OCCUPIED"
 	elif admitted and population and work_cells(data, key).is_empty(): reason = "NO_WORK_CELL"
 	elif kind == Kind.TIMBER and SiteRuntime._fire_regeneration_blocked(data, key): reason = "FIRE_HOT"
+	elif not renewable: reason = "FINITE"
 	var takeable := remaining
-	if bool(r.cleared) or (renewable and reason in ["NO_HABITAT", "OCCUPIED", "NO_WORK_CELL"]): takeable = 0
-	if admitted and renewable:
+	if bool(r.cleared) or (biological and reason in ["NO_HABITAT", "OCCUPIED", "NO_WORK_CELL"]): takeable = 0
+	if admitted and biological:
 		if mode == "protected": takeable = 0
 		elif population and mode == "sustainable": takeable = 0 if resting or capacity <= 1 else maxi(0, takeable - reserve)
 	var at := float(data.site.get("minute", 0)) + float(data.site.get("phase", 0.0))
@@ -473,7 +478,7 @@ static func ecology_info(data: TerrainData, key: String) -> Dictionary:
 		"recovery_minutes": int(r.recover), "next_recovery": deadline,
 		"wait_minutes": maxf(0.0, float(deadline) - at) if deadline >= 0 else -1.0,
 		"recovery_amount": (1 if population else maxi(0, capacity - remaining)) if renewable else 0,
-		"restorable": admitted and kind in RESTORABLE_KINDS and bool(r.cleared) and remaining == 0 and ecology_cell_usable(data, r, int(r.cell))
+		"restorable": admitted and renewable and kind in RESTORABLE_KINDS and bool(r.cleared) and remaining == 0 and ecology_cell_usable(data, r, int(r.cell))
 			and SiteRuntime._fire_resource_restored(data, key, true).ok}
 
 static func change(data: TerrainData, key: String, fields: Dictionary) -> void:
@@ -830,3 +835,176 @@ static func restore_author_land(data: TerrainData) -> void:
 			var array: PackedByteArray = data.get(field)
 			array[int(key)] = int(values[key][field])
 			data.set(field, array)
+
+# Author definitions enter the same resource_base used by gameplay and persistence.
+
+static func resource_species(value: Dictionary) -> String:
+	if int(value.get("kind", -1)) != Kind.WILDLIFE: return ""
+	return wildlife_species(int(value.variant), int(value.get("identity_cell", value.cell)))
+
+
+static func resource_integer(value: Variant, minimum: int, maximum: int) -> bool:
+	return (value is int or value is float) and is_finite(float(value)) and float(value) == floor(float(value)) and value >= minimum and value <= maximum
+
+
+static func resource_key_valid(key: Variant) -> bool:
+	if not key is String: return false
+	var parts: PackedStringArray = key.split(":")
+	if parts.size() != 2 or not parts[1].is_valid_int() or str(int(parts[1])) != parts[1]: return false
+	if parts[0] == "author_resource": return int(parts[1]) >= 1 and int(parts[1]) <= 2147483646
+	return parts[0].is_valid_int() and str(int(parts[0])) == parts[0] and int(parts[0]) >= 0 and int(parts[0]) < NAMES.size() and int(parts[1]) >= 0 and int(parts[1]) <= 2147483646
+
+
+static func validate_resource_definitions(data: TerrainData, definitions: Variant, strict_keys: Array[String] = []) -> Dictionary:
+	if data == null or not definitions is Dictionary: return SiteRuntime.fail("INVALID_RESOURCE", "來源表或數量非法")
+	var count: int = data.size.x * data.size.y
+	if data.water_body.size() != count or data.water_kind.size() != count or data.surface_types.size() != count: return SiteRuntime.fail("INVALID_RESOURCE", "來源缺少原水域分類")
+	for key: Variant in definitions:
+		if not resource_key_valid(key) or not definitions[key] is Dictionary: return SiteRuntime.fail("INVALID_RESOURCE", "來源key非法")
+		var row: Dictionary = definitions[key]
+		if not resource_definition_shape(row, count, str(key) in strict_keys or str(key).begins_with("author_resource:")): return SiteRuntime.fail("INVALID_RESOURCE", "來源欄位非法")
+		if int(str(key).get_slice(":", 1)) >= count and not str(key).begins_with("author_resource:"): return SiteRuntime.fail("INVALID_RESOURCE", "原來源身分格越界")
+		var authored: bool = str(key) in strict_keys or str(key).begins_with("author_resource:")
+		if not str(key).begins_with("author_resource:") and int(str(key).get_slice(":", 0)) != int(row.kind): return SiteRuntime.fail("INVALID_RESOURCE", "原來源key種類不符")
+		if str(key).begins_with("author_resource:") and int(row.kind) == Kind.WILDLIFE and not row.has("identity_cell"): return SiteRuntime.fail("INVALID_RESOURCE", "新增野生來源須有明示身分")
+		# Existing natural sources keep their original habitat rules; authored rows are stricter.
+		if authored:
+			if int(row.water) != data.water_body[int(row.cell)]: return SiteRuntime.fail("WATER", "來源水體不符")
+			for index: int in row.cells:
+				if int(row.kind) == Kind.FISH:
+					if data.water_kind[index] not in [1, 2] or data.water_body[index] != int(row.water) or data.surface_types[index] != TerrainData.Surface.WATER: return SiteRuntime.fail("WATER", "魚點須在同一真水體")
+				elif int(row.kind) == Kind.SALT:
+					if data.water_kind[index] not in [2, 3] or int(row.recover) != 0: return SiteRuntime.fail("WATER", "鹽源沿分鐘配額且須海水或原鹵水")
+				elif data.water_kind[index] != 0 or data.surface_types[index] == TerrainData.Surface.WATER: return SiteRuntime.fail("WATER", "陸地來源不可放入水中")
+	return SiteRuntime.ok()
+
+
+static func normalize_resource_definition(row: Dictionary) -> Dictionary:
+	var value: Dictionary = row.duplicate(true)
+	for field: String in ["kind", "cell", "capacity", "variant", "water", "recover", "identity_cell"]:
+		if value.has(field): value[field] = int(value[field])
+	var cells: Array[int] = []
+	for index: Variant in value.cells: cells.append(int(index))
+	value.cells = cells
+	return value
+
+
+static func prepare_author_resource_source(data: TerrainData, edits: Variant) -> Dictionary:
+	if data == null or not data.site.is_empty() or not edits is Dictionary: return SiteRuntime.fail("AUTHOR_ONLY", "只准原純來源的隔離作者候選")
+	var original: Dictionary = validate_resource_definitions(data, data.resource_base)
+	if not original.ok: return original
+	var definitions: Dictionary = data.resource_base.duplicate(true)
+	var strict: Array[String] = []
+	for key: Variant in edits:
+		if not resource_key_valid(key) or (not definitions.has(key) and not str(key).begins_with("author_resource:")): return SiteRuntime.fail("INVALID_RESOURCE", "新來源須使用作者命名空間")
+		if edits[key] == null:
+			if not definitions.has(key): return SiteRuntime.fail("INVALID_RESOURCE", "移除不存在的來源")
+			definitions.erase(key)
+			continue
+		if not edits[key] is Dictionary: return SiteRuntime.fail("INVALID_RESOURCE", "來源定義非法")
+		var row: Dictionary = edits[key].duplicate(true)
+		var previous: Dictionary = definitions.get(key, {})
+		if not previous.is_empty():
+			if not resource_integer(row.get("kind"), 0, NAMES.size() - 1) or int(row.kind) != int(previous.kind): return SiteRuntime.fail("INVALID_RESOURCE", "既有key不可換種類")
+			if int(previous.kind) == Kind.WILDLIFE:
+				var identity: int = int(previous.get("identity_cell", previous.cell))
+				if row.has("identity_cell") and (not resource_integer(row.identity_cell, 0, data.size.x * data.size.y - 1) or int(row.identity_cell) != identity): return SiteRuntime.fail("INVALID_RESOURCE", "物種身分不可改")
+				row.identity_cell = identity
+		definitions[key] = row
+		strict.append(str(key))
+	var checked: Dictionary = validate_resource_definitions(data, definitions, strict)
+	if not checked.ok: return checked
+	for key: String in definitions: definitions[key] = normalize_resource_definition(definitions[key])
+	var candidate: TerrainData = navigation_for_state(data, {})
+	candidate.resource_base = definitions
+	candidate.parameters = data.parameters.duplicate(true)
+	rebuild_indexes(candidate)
+	candidate.environment_revision = data.environment_revision + 1
+	return SiteRuntime.ok("", {"data": candidate})
+
+
+static func author_resource_state_guard(data: TerrainData, state: Dictionary) -> Dictionary:
+	# No native handoff, live owner capture, clock advancement or Fire history erasure here.
+	if state.has("crowd") or state.has("world_pin") or state.has("region_snapshot") or state.has("initial_scenario") or state.has("travel_identity"): return SiteRuntime.fail("AUTHOR_IMPORT_UNSUPPORTED", "活動世界須由原owner完成安全副本交接")
+	if not state.get("fire", {}) is Dictionary or not state.get("vehicles", {}) is Dictionary or not state.get("armies", []) is Array or not state.get("actors", {}) is Dictionary: return SiteRuntime.fail("INVALID_RESOURCE", "來源活動格式非法")
+	if not state.get("actors", {}).is_empty() or not state.get("armies", []).is_empty(): return SiteRuntime.fail("AUTHOR_IMPORT_UNSUPPORTED", "人物及隊伍須原owner提供安全副本；此入口不接管")
+	var family: Variant = state.get("family", {})
+	if not family is Dictionary: return SiteRuntime.fail("INVALID_RESOURCE", "家族引用格式非法")
+	if family.has("members") and (not family.members is Array or not family.members.is_empty()): return SiteRuntime.fail("AUTHOR_IMPORT_UNSUPPORTED", "原人物及家族引用須原owner提供安全副本")
+	if SiteTechnology.is_holder_reference(family.get("technology")): return SiteRuntime.fail("AUTHOR_IMPORT_UNSUPPORTED", "外部科技holder須原owner完成閉包")
+	var combat: Variant = state.get("combat_left", 0.0)
+	if not (combat is int or combat is float) or not is_finite(float(combat)) or combat != 0.0: return SiteRuntime.fail("BUSY", "戰鬥須原owner收束")
+	if not state.get("fire", {}).is_empty() or not state.get("vehicles", {}).is_empty(): return SiteRuntime.fail("BUSY", "Fire、車船、戰鬥保留原世界")
+	for name: String in ["worker", "manual"]:
+		var worker: Variant = state.get(name, {})
+		if not worker is Dictionary or not worker.get("target", "") is String or not str(worker.get("target", "")).is_empty() or not resource_integer(worker.get("progress", 0), 0, 0): return SiteRuntime.fail("BUSY", "先沿原作業owner收束")
+	return SiteRuntime.ok()
+
+
+static func validate_resource_deltas(data: TerrainData, state: Dictionary) -> Dictionary:
+	if data == null: return SiteRuntime.fail("NO_TARGET")
+	if not state.get("changes") is Dictionary or not resource_integer(state.get("minute"), 0, 1000000000): return SiteRuntime.fail("INVALID_RESOURCE", "來源差異或時鐘非法")
+	for key: Variant in state.changes:
+		if not key is String or not data.resource_base.has(key) or not state.changes[key] is Dictionary: return SiteRuntime.fail("INVALID_RESOURCE", "來源引用非法")
+		var row: Dictionary = data.resource_base[key]
+		var delta: Dictionary = state.changes[key]
+		var remaining: Variant = delta.get("remaining", row.capacity)
+		var deadline: Variant = delta.get("next_recovery", -1)
+		if not resource_integer(remaining, 0, int(row.capacity)) or not resource_integer(deadline, -1, 1100000000): return SiteRuntime.fail("INVALID_RESOURCE", "存量或排程非法")
+		if (int(row.recover) == 0 or delta.get("cleared", false) == true) and int(deadline) != -1: return SiteRuntime.fail("INVALID_RESOURCE", "不恢復或清除來源不得保留排程")
+		if delta.has("used") or delta.has("used_minute"):
+			if int(row.kind) != Kind.SALT or not (delta.get("used") is int or delta.get("used") is float) or not is_finite(float(delta.get("used", -1))) or float(delta.get("used", -1)) < 0.0 or float(delta.get("used", -1)) > float(row.capacity) or not resource_integer(delta.get("used_minute"), 0, int(state.minute)): return SiteRuntime.fail("INVALID_RESOURCE", "鹽源分鐘配額或時鐘非法")
+	return SiteRuntime.ok()
+
+
+static func prepare_author_resource_state(data: TerrainData, state: Dictionary, reset_key: String = "") -> Dictionary:
+	if data == null: return SiteRuntime.fail("NO_TARGET")
+	var definitions: Dictionary = validate_resource_definitions(data, data.resource_base)
+	if not definitions.ok: return definitions
+	if data.has_meta(&"site_garrison_lab") or data.has_meta(&"siege_event_guard") or data.has_meta(&"fire_event_guard"): return SiteRuntime.fail("AUTHOR_IMPORT_UNSUPPORTED", "活動owner只能沿原安全副本入口")
+	var guard: Dictionary = author_resource_state_guard(data, state)
+	if not guard.ok: return guard
+	var candidate: TerrainData = navigation_for_state(data, state.duplicate(true))
+	var heights: Variant = candidate.site.get("terrain_changes")
+	if not heights is Dictionary: return SiteRuntime.fail("INVALID_RESOURCE", "初始高度差異非法")
+	if not heights.is_empty():
+		for field: String in ["height_levels", "flags", "cliff_drops", "ramp_edges"]: candidate.set(field, candidate.get(field).duplicate())
+		for key: Variant in heights:
+			if not key is String or not key.is_valid_int() or str(int(key)) != key or not resource_integer(int(key), 0, candidate.size.x * candidate.size.y - 1) or not resource_integer(heights[key], 0, 5): return SiteRuntime.fail("INVALID_RESOURCE", "初始高度差異非法")
+			candidate.height_levels[int(key)] = int(heights[key])
+		SiteRuntime.rebuild_terrain_edges(candidate)
+		rebuild_indexes(candidate)
+	if not reset_key.is_empty():
+		if not candidate.resource_base.has(reset_key): return SiteRuntime.fail("NO_TARGET")
+		# Reset stock, never ecology admission, modes, duties, earned technology or minute quota.
+		change(candidate, reset_key, {"remaining": int(candidate.resource_base[reset_key].capacity), "cleared": false, "next_recovery": -1})
+	var valid: Dictionary = validate_resource_deltas(candidate, candidate.site)
+	if not valid.ok: return valid
+	var checked_state: Dictionary = candidate.site.duplicate(true)
+	var base: Variant = candidate.parameters.get("fixed_base")
+	if RegionTerrainAdapter.has_author_identity(base): checked_state.world_pin = RegionData.author_projection_pin(base)
+	var checked: Dictionary = SiteStore._validate_state(candidate, checked_state)
+	if not checked.ok: return checked
+	SiteStore._normalize_state(candidate.site)
+	# Match the original Store load boundary for validated integral Site fields.
+	for field: String in ["minute", "next_feature", "depot_cell", "capacity"]:
+		candidate.site[field] = int(candidate.site[field])
+	rebuild_indexes(candidate)
+	return SiteRuntime.ok("", {"data": candidate, "state": candidate.site})
+
+
+static func resource_definition_shape(row: Variant, count: int, authored: bool) -> bool:
+	if not row is Dictionary or row.size() < 8 or row.size() > 9: return false
+	for field: Variant in row:
+		if field not in ["kind", "cell", "cells", "capacity", "variant", "water", "blocks", "recover", "identity_cell"]: return false
+	if not resource_integer(row.get("kind"), 0, 8) or not resource_integer(row.get("cell"), 0, count - 1): return false
+	if not resource_integer(row.get("capacity"), 1, 1000000 if authored else 2147483646) or not resource_integer(row.get("recover"), 0, 1000000 if authored else 1100000000): return false
+	if not resource_integer(row.get("variant"), 0, 2) or not resource_integer(row.get("water"), -1, 2147483646): return false
+	if not row.get("blocks") is bool or row.blocks != (int(row.kind) in [Kind.TIMBER, Kind.STONE]): return false
+	if row.has("identity_cell") and (int(row.kind) != Kind.WILDLIFE or not resource_integer(row.identity_cell, 0, count - 1)): return false
+	if not row.get("cells") is Array or row.cells.is_empty() or row.cells.size() > count: return false
+	var seen: Dictionary = {}
+	for index: Variant in row.cells:
+		if not resource_integer(index, 0, count - 1) or seen.has(int(index)): return false
+		seen[int(index)] = true
+	return seen.has(int(row.cell))

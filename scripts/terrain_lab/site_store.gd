@@ -304,6 +304,8 @@ static func save(data: TerrainData, path: String = DEFAULT_PATH, native_candidat
 		return Runtime.fail("NO_TARGET")
 	var boarding: Dictionary = Boarding.data_save_guard(data)
 	if not boarding.ok: return boarding
+	var definitions: Dictionary = Env.validate_resource_definitions(data, data.resource_base)
+	if not definitions.ok: return Runtime.fail("CORRUPT_SAVE", str(definitions.get("message", "Invalid resource definitions")))
 	var source_data: TerrainData = data
 	var region_capture := _region_capture_owners(region_context) if not region_context.is_empty() else Runtime.ok()
 	if not region_capture.ok: return region_capture
@@ -649,6 +651,8 @@ static func load_site(path: String = DEFAULT_PATH, fixed_base_loader: Callable =
 			return Runtime.fail("NO_TARGET", "此地點沒有合法落腳點，僅能檢視地形")
 	else:
 		data = TerrainGenerator.generate(int(payload.preset), int(payload.seed), params)
+	var definitions: Dictionary = Env.validate_resource_definitions(data, data.resource_base) if fixed_base != null else Runtime.ok()
+	if not definitions.ok: return Runtime.fail("CORRUPT_SAVE", str(definitions.get("message", "Invalid resource definitions")))
 	Env.initialize(data, str(payload.state.id))
 	if RegionTerrainAdapter.has_author_identity(fixed_base) and RegionTerrainAdapter.author_environment_fingerprint(data) != str(fixed_base.effective_environment_sha256):
 		return Runtime.fail("SAVE_VERSION", "作者環境基底摘要不符；原存檔保留")
@@ -1804,6 +1808,10 @@ static func _restore_crowd_navigation(data: TerrainData, native: Object) -> Dict
 
 
 static func _validate_site_values(data: TerrainData, state: Dictionary) -> Dictionary:
+	var definitions: Dictionary = Env.validate_resource_definitions(data, data.resource_base)
+	if not definitions.ok: return Runtime.fail("CORRUPT_SAVE", str(definitions.get("message", "Invalid resource definitions")))
+	var deltas: Dictionary = Env.validate_resource_deltas(data, state)
+	if not deltas.ok: return Runtime.fail("CORRUPT_SAVE", str(deltas.get("message", "Invalid resource deltas")))
 	if state.has("initial_scenario"):
 		var born: Variant = state.initial_scenario
 		var born_pin: Variant = state.get("world_pin", {})

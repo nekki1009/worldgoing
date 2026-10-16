@@ -3120,7 +3120,7 @@ func update_ui(refresh_combat_window: bool = true) -> void:
 		details.text += "\n未占用時農耕潛力：%d" % int(condition.potential_farm)
 	if not source_key.is_empty():
 		var resource := Env.resource(data, source_key)
-		var resource_name: String = str(Env.WILDLIFE_NAMES[Env.wildlife_species(int(resource.variant), int(resource.cell))]) if int(resource.kind) == Env.Kind.WILDLIFE else str(Env.NAMES[int(resource.kind)])
+		var resource_name: String = str(Env.WILDLIFE_NAMES[Env.resource_species(resource)]) if int(resource.kind) == Env.Kind.WILDLIFE else str(Env.NAMES[int(resource.kind)])
 		details.text += "\n%s · %s" % [resource_name, "已勘探" if bool(resource.discovered) else "待勘探，儲量未知"]
 		if bool(resource.discovered):
 			details.text += "\n%s %d / %d · 一批 %.0f 遊戲分" % ["本分可取" if int(resource.kind) == Env.Kind.SALT else "存量", int(resource.remaining) - (int(resource.get("used", 0)) if int(resource.get("used_minute", -1)) == int(data.site.minute) else 0), resource.capacity, Env.WORK_MINUTES[int(resource.kind)]]

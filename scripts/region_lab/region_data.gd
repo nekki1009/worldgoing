@@ -931,8 +931,11 @@ func author_static_valid(raw: Variant) -> bool:
 	if not raw is Dictionary or not Adapter.author_integer(raw.get("format"), 1, 2): return false
 	if int(raw.format) == 1:
 		return raw.size() == 3 and raw.get("terrain") is Dictionary and raw.terrain.is_empty() and raw.get("resources") is Dictionary and raw.resources.is_empty()
-	if raw.size() != 5 or not raw.get("terrain") is Dictionary or raw.terrain.size() > 10000 or not raw.get("resources") is Dictionary or not raw.resources.is_empty(): return false
+	if raw.size() != 5 or not raw.get("terrain") is Dictionary or raw.terrain.size() > 10000 or not raw.get("resources") is Dictionary or raw.resources.size() > 10000: return false
 	if not raw.get("water_bodies") is Dictionary or raw.water_bodies.size() > 10000 or not raw.get("water_permissions") is Dictionary: return false
+	for key: Variant in raw.resources:
+		if not SiteEnvironment.resource_key_valid(key): return false
+		if raw.resources[key] != null and not SiteEnvironment.resource_definition_shape(raw.resources[key], 10000, true): return false
 	var identities := {}
 	for key: Variant in raw.water_bodies:
 		if not key is String or not key.is_valid_int() or str(int(key)) != key or not Adapter.author_integer(int(key), AUTHOR_BODY_MIN, 2147483646): return false
@@ -1013,6 +1016,11 @@ func apply_author_layers(data: TerrainData, site: Vector2i) -> Dictionary:
 		for field: String in AUTHOR_LAND_FIELDS:
 			if row.has(field): values[field] = int(row[field])
 		if not values.is_empty(): land[key] = values
+	if not raw.resources.is_empty():
+		var resources: Dictionary = SiteEnvironment.prepare_author_resource_source(data, raw.resources)
+		if not bool(resources.get("ok", false)): return resources
+		data.resource_base = resources.data.resource_base
+		SiteEnvironment.rebuild_indexes(data)
 	for record: Dictionary in data.resource_base.values():
 		for index: int in record.cells:
 			var water: bool = data.surface_types[index] == TerrainData.Surface.WATER
@@ -1115,6 +1123,8 @@ func _sample_natural_site_meters(easting: float, northing: float, centre_cache: 
 static func author_static_normalized(raw: Dictionary) -> Dictionary:
 	var normalized: Dictionary = raw.duplicate(true)
 	normalized.format = int(normalized.format)
+	for key: String in normalized.resources:
+		if normalized.resources[key] != null: normalized.resources[key] = SiteEnvironment.normalize_resource_definition(normalized.resources[key])
 	for key: String in normalized.terrain:
 		for field: String in normalized.terrain[key]: normalized.terrain[key][field] = int(normalized.terrain[key][field])
 	if int(normalized.format) == 2:

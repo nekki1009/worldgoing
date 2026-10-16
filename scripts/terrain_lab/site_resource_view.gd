@@ -574,7 +574,7 @@ func _draw_row_resources(canvas: Node2D, row_index: int, keys: Array) -> void:
 			continue
 		var p := _center(display_cell)
 		if int(r.kind) == Env.Kind.WILDLIFE:
-			var art_index := wildlife_art_index(int(r.variant), int(r.cell))
+			var art_index: int = resource_art_index(r)
 			var animals: Array = r.cells if display_cells.is_empty() else display_cells
 			for n: int in range(mini(int(r.remaining), animals.size())):
 				var i: int = int(animals[n])
@@ -721,7 +721,7 @@ func _draw_fish(canvas: Node2D, p: Vector2) -> void:
 	_draw_resource_sprite(canvas, p, "fish")
 
 static func wildlife_art_index(variant: int, source_cell: int) -> int:
-	return int(_resource_art._wildlife_indices[Env.wildlife_species(variant, source_cell)])
+	return resource_art_index({"kind": Env.Kind.WILDLIFE, "variant": variant, "cell": source_cell})
 
 func _draw_wildlife(canvas: Node2D, p: Vector2, phase: float, art_index: int, display_width: float = -1.0) -> void:
 	var art: Dictionary = _resource_art.wildlife[art_index]
@@ -1631,3 +1631,6 @@ func _draw_fire_component(canvas: Node2D, part: Dictionary) -> void:
 	if float(part.fraction) < 1.0:
 		var crack := front.position + Vector2(front.size.x * 0.4, 0)
 		canvas.draw_polyline(PackedVector2Array([crack, crack + Vector2(7, front.size.y * 0.45), crack + Vector2(2, front.size.y)]), Color("201a16"), 2.0)
+
+static func resource_art_index(resource: Dictionary) -> int:
+	return int(_resource_art._wildlife_indices[Env.resource_species(resource)])

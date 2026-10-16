@@ -252,6 +252,9 @@ func _check_original_army() -> void:
 	fixture.controlled_id = identity
 	assert(fixture.crew.begin_manual(identity, "horse", "capture").ok)
 	assert(SiteWorkTeam.valid_task(data, data.site, JSON.parse_string(JSON.stringify(row.work_task))))
+	if not _check_task_source_validation(data, JSON.parse_string(JSON.stringify(row.work_task))):
+		fixture.close()
+		return
 	if not _check_army_snapshot(fixture):
 		fixture.close()
 		return
@@ -337,5 +340,72 @@ func _check_army_snapshot(fixture: WorkTests.Fixture) -> bool:
 			return false
 	if not SiteWorkTeam.valid_task(fixture.terrain, decoded, normalized.units[1].work_task):
 		push_error("Army saved capture task is invalid")
+		return false
+	return true
+
+
+func _check_task_source_validation(data: TerrainData, task: Dictionary) -> bool:
+	var before_state: PackedByteArray = var_to_bytes(data.site)
+	var before_sources: PackedByteArray = var_to_bytes(data.resource_base)
+	# Original 254 already checks the real JSON task; these copies must not alter its fixture.
+	for invalid: Dictionary in [{"variant": 1}, {"variant": 3}, {"cells": []}, {"kind": 9}, {"capacity": 0}, {"recover": -1}, {"identity_cell": 1024}, {"unknown": true}]:
+		var view: TerrainData = Env.navigation_for_state(data, data.site.duplicate(true))
+		view.resource_base = data.resource_base.duplicate(true)
+		view.resource_base["horse"].merge(invalid, true)
+		if SiteWorkTeam.valid_task(view, view.site, task):
+			push_error("WILDLIFE_TASK_SOURCE_FAIL: malformed legacy definition or non-capturable species admitted: " + str(invalid))
+			return false
+	var index: int = int(data.resource_base["horse"].cell)
+	var natural: TerrainData = Env.navigation_for_state(data, data.site.duplicate(true))
+	natural.resource_base = {}
+	Env._add_resource(natural, Env.Kind.WILDLIFE, index, 2, 0)
+	var natural_task: Dictionary = task.duplicate(true)
+	natural_task.target = "8:%d" % index
+	if not SiteWorkTeam.valid_task(natural, natural.site, natural_task):
+		push_error("WILDLIFE_TASK_SOURCE_FAIL: original canonical natural source rejected")
+		return false
+	var pure: TerrainData = Env.navigation_for_state(data, {})
+	pure.resource_base = {}
+	var definition: Dictionary = data.resource_base["horse"].duplicate(true)
+	definition.identity_cell = index
+	# Author admission remains strict: runtime symbolic IDs are not new author IDs.
+	if Env.prepare_author_resource_source(pure, {"horse": definition}).ok:
+		push_error("WILDLIFE_TASK_SOURCE_FAIL: legacy reference exception leaked into author admission")
+		return false
+	var prepared: Dictionary = Env.prepare_author_resource_source(pure, {"author_resource:1": definition})
+	if not prepared.ok:
+		push_error("WILDLIFE_TASK_SOURCE_FAIL: valid author source rejected: " + str(prepared))
+		return false
+	var author: TerrainData = Env.navigation_for_state(prepared.data, data.site.duplicate(true))
+	author.resource_base = prepared.data.resource_base.duplicate(true)
+	var author_task: Dictionary = task.duplicate(true)
+	author_task.target = "author_resource:1"
+	if not SiteWorkTeam.valid_task(author, author.site, author_task) or Runtime.capturable_species(author.resource_base[author_task.target]) != "horse":
+		push_error("WILDLIFE_TASK_SOURCE_FAIL: authored identity/capture task rejected")
+		return false
+	var no_identity: TerrainData = Env.navigation_for_state(author, author.site.duplicate(true))
+	no_identity.resource_base = author.resource_base.duplicate(true)
+	no_identity.resource_base["author_resource:1"].erase("identity_cell")
+	if SiteWorkTeam.valid_task(no_identity, no_identity.site, author_task):
+		push_error("WILDLIFE_TASK_SOURCE_FAIL: author wildlife without immutable identity admitted")
+		return false
+	var malformed_key: TerrainData = Env.navigation_for_state(author, author.site.duplicate(true))
+	malformed_key.resource_base = {"author_resource:bad": definition.duplicate(true)}
+	var malformed_task: Dictionary = author_task.duplicate(true)
+	malformed_task.target = "author_resource:bad"
+	if SiteWorkTeam.valid_task(malformed_key, malformed_key.site, malformed_task):
+		push_error("WILDLIFE_TASK_SOURCE_FAIL: malformed author namespace admitted")
+		return false
+	var fish: TerrainData = Env.navigation_for_state(author, author.site.duplicate(true))
+	fish.resource_base = author.resource_base.duplicate(true)
+	fish.resource_base["author_resource:1"].kind = Env.Kind.FISH
+	fish.resource_base["author_resource:1"].erase("identity_cell")
+	var fish_task: Dictionary = author_task.duplicate(true)
+	fish_task.action = "harvest"
+	if SiteWorkTeam.valid_task(fish, fish.site, fish_task):
+		push_error("WILDLIFE_TASK_SOURCE_FAIL: author fish on land admitted")
+		return false
+	if var_to_bytes(data.site) != before_state or var_to_bytes(data.resource_base) != before_sources:
+		push_error("WILDLIFE_TASK_SOURCE_FAIL: original task fixture mutated")
 		return false
 	return true
