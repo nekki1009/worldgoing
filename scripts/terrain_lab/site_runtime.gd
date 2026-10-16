@@ -11398,24 +11398,7 @@ static func valid_water_schedule(raw: Variant, state: Dictionary) -> bool:
 		seen[category] = true
 	return true
 
-static func prepare_build_request(data: TerrainData, kind: String, cells: Array[int], occupied: Callable = Callable(), options: Dictionary = {}, original_source: Dictionary = {}, operation_selector: Dictionary = {}) -> Dictionary:
-	if kind == "irrigation_channel" and not operation_selector.is_empty():
-		if not Technology.keys(operation_selector, ["token"]) or not operation_selector.token is Dictionary \
-			or operation_selector.token.get("scope") != "settlement" or operation_selector.token.get("tech_id") != "S02" \
-			or operation_selector.token.get("binding") != "irrigation" or cells.size() != 4 \
-			or operation_selector.token.get("scope_id") != options.get("irrigation", {}).get("settlement_id"): return fail("INVALID_TECHNOLOGY")
-	if kind == "irrigation_channel" and operation_selector.is_empty():
-		var request: Dictionary = options.get("irrigation", {}).duplicate()
-		var actions: Variant = _technology_actions(data)
-		request.operator_id = int(actions._technology_controlled()) if actions != null else 0
-		var authority := technology_irrigation_work_preflight(data, {"irrigation": request})
-		if not authority.ok: return authority
-	var preview := preview_build(data, kind, cells, occupied, options, original_source, operation_selector)
-	if not preview.ok: return preview
-	if kind == "settlement_center" and options.get("settlement_found") != true: return fail("NO_AUTHORITY", "聚落中心須由原建立聚落入口安排")
-	if not Technology.integer(data.site.get("next_feature"), 1, 2147483646): return fail("STALE_SOURCE")
-	var key := str(int(data.site.next_feature))
-	if data.site.features.has(key): return fail("STALE_SOURCE")
+static func _building_feature_candidate(kind: String, cells: Array[int], preview: Dictionary) -> Dictionary:
 	var definition: Dictionary = FEATURES[kind]
 	var feature := {"kind": kind, "cells": cells.duplicate(), "entrance": int(preview.entrance), "source": str(preview.source),
 		"stage": "planned", "progress": 0.0, "solid": bool(definition.solid), "cost": preview.cost,
@@ -11438,6 +11421,28 @@ static func prepare_build_request(data: TerrainData, kind: String, cells: Array[
 	if kind in ["pasture", "horse_ranch"]:
 		feature.species = "horse" if kind == "horse_ranch" else "sheep"
 		feature.residents = 2 if kind == "horse_ranch" else 1
+	return feature
+
+static func prepare_build_request(data: TerrainData, kind: String, cells: Array[int], occupied: Callable = Callable(), options: Dictionary = {}, original_source: Dictionary = {}, operation_selector: Dictionary = {}) -> Dictionary:
+	if kind == "irrigation_channel" and not operation_selector.is_empty():
+		if not Technology.keys(operation_selector, ["token"]) or not operation_selector.token is Dictionary \
+			or operation_selector.token.get("scope") != "settlement" or operation_selector.token.get("tech_id") != "S02" \
+			or operation_selector.token.get("binding") != "irrigation" or cells.size() != 4 \
+			or operation_selector.token.get("scope_id") != options.get("irrigation", {}).get("settlement_id"): return fail("INVALID_TECHNOLOGY")
+	if kind == "irrigation_channel" and operation_selector.is_empty():
+		var request: Dictionary = options.get("irrigation", {}).duplicate()
+		var actions: Variant = _technology_actions(data)
+		request.operator_id = int(actions._technology_controlled()) if actions != null else 0
+		var authority: Dictionary = technology_irrigation_work_preflight(data, {"irrigation": request})
+		if not authority.ok: return authority
+	var preview: Dictionary = preview_build(data, kind, cells, occupied, options, original_source, operation_selector)
+	if not preview.ok: return preview
+	if kind == "settlement_center" and options.get("settlement_found") != true: return fail("NO_AUTHORITY", "聚落中心須由原建立聚落入口安排")
+	if not Technology.integer(data.site.get("next_feature"), 1, 2147483646): return fail("STALE_SOURCE")
+	var key: String = str(int(data.site.next_feature))
+	if data.site.features.has(key): return fail("STALE_SOURCE")
+	var definition: Dictionary = FEATURES[kind]
+	var feature: Dictionary = _building_feature_candidate(kind, cells, preview)
 	var zone := {"cells": cells.duplicate(), "kind": -1, "action": "construct", "feature": key, "active": true}
 	var binding := ""
 	for candidate: String in TECHNOLOGY_BUILD_BINDINGS:
@@ -14283,3 +14288,195 @@ static func publish_item_exchange(prepared: Dictionary) -> Dictionary:
 	prepared.a.holder.version = int(prepared.a_ref.expected_version) + 1
 	prepared.b.holder.version = int(prepared.b_ref.expected_version) + 1
 	return ok("原物品已同次交換", {"a_version": prepared.a.holder.version, "b_version": prepared.b.holder.version})
+
+# Author operations only prepare detached candidates; normal construction keeps its payment/work owners.
+static func _author_building_guard(data: TerrainData, work: Dictionary) -> Dictionary:
+	if data == null or work.get("kind") != "fixed_tw_editor_draft" or work.get("format") != 4: return fail("AUTHOR_ONLY")
+	var base: Dictionary = data.parameters.get("fixed_base", {})
+	if base.get("scenario_id") != "editor_draft" or base.get("scenario_revision") != work.get("revision") or base.get("manifest_sha256") != work.get("source_sha256") or data.site != work.get("initial_state"): return fail("AUTHOR_ONLY", "須使用同一修訂的已驗作者候選")
+	if data.has_meta(&"site_garrison_lab") or data.has_meta(&"fire_event_guard") or data.has_meta(&"siege_event_guard"): return fail("AUTHOR_ONLY", "活動 owner 不可免費初始化")
+	return Env.prepare_author_resource_state(data, data.site)
+
+static func _author_feature_refs(value: Variant, key: String, path: String, refs: Array[String]) -> void:
+	if value is Dictionary:
+		for field: Variant in value:
+			var at: String = path + "." + str(field)
+			if str(field) in ["feature", "feature_id", "house_id", "home_id", "garrison_feature_id", "prison_id", "center_id", "training_feature_id", "source_feature_id", "upstream_feature_id", "yard_feature_id"] and str(value[field]) == key:
+				refs.append(at)
+			else: _author_feature_refs(value[field], key, at, refs)
+	elif value is Array:
+		for index: int in range(value.size()): _author_feature_refs(value[index], key, "%s[%d]" % [path, index], refs)
+	elif value is String and value == "feature:" + key: refs.append(path)
+
+static func author_feature_referrers(data: TerrainData, key: String) -> Array[String]:
+	var refs: Array[String] = []
+	var feature: Dictionary = data.site.features.get(key, {})
+	for field: String in ["pending_build", "repair", "ship_build", "tech_batch", "technology_order", "technology_siege_yard", "technology_shipyard_work"]:
+		if feature.has(field): refs.append("features." + key + "." + field)
+	for field: String in ["gate", "ladder"]:
+		if not str(feature.get(field, {}).get("pending", "")).is_empty(): refs.append("features." + key + "." + field)
+	if bool(feature.get("batch_paid", false)) or float(feature.get("production", 0.0)) != 0.0: refs.append("features." + key + ".production")
+	var stock: Dictionary = data.site.get("stockpiles", {}).get(key, {})
+	if inventory_size(stock.get("cargo", {})) > 0: refs.append("stockpiles." + key + ".cargo")
+	if not stock.get("holder", {}).get("item_ids", []).is_empty(): refs.append("stockpiles." + key + ".holder.item_ids")
+	if stock.has("nation_id"): refs.append("stockpiles." + key + ".nation_id")
+	for root: String in data.site:
+		if root == "features":
+			for other: String in data.site.features:
+				if other != key: _author_feature_refs(data.site.features[other], key, "features." + other, refs)
+		elif root == "settlement" and str(feature.get("kind")) == "settlement_center":
+			for field: String in data.site.settlement:
+				if field != "center_id": _author_feature_refs(data.site.settlement[field], key, "settlement." + field, refs)
+		elif root != "stockpiles": _author_feature_refs(data.site[root], key, root, refs)
+	if not data.site.get("fire", {}).is_empty(): refs.append("fire")
+	return refs
+
+static func validate_author_buildings(data: TerrainData) -> Dictionary:
+	for key: String in data.site.features:
+		var feature: Dictionary = data.site.features[key]
+		if feature.get("stage") != "complete" or feature.has("pending_build") or feature.has("repair"): return fail("AUTHOR_BUILDING_STATE", "features." + key)
+		var cells: Array[int] = []
+		cells.assign(feature.cells)
+		var preview: Dictionary = _preview_build(data, str(feature.kind), cells, Callable(), _feature_options(feature), key, false)
+		if not preview.ok: return preview
+		if not preview.clearing.is_empty(): return fail("AUTHOR_CLEARING_REQUIRED", "features." + key + ": " + str(preview.clearing))
+		var layout: Dictionary = validate_feature_layout(data, feature)
+		if not layout.ok: return layout
+	return ok()
+
+static func prepare_author_building(data: TerrainData, work: Dictionary, action: String, key: String = "", kind: String = "", cells: Array[int] = [], options: Dictionary = {}, cargo: Dictionary = {}) -> Dictionary:
+	var admission: Dictionary = _author_building_guard(data, work)
+	if not admission.ok: return admission
+	if action not in ["place", "move", "copy", "delete", "owner", "stock"]: return fail("INVALID")
+	if action in ["place", "move", "copy"] and cells.is_empty(): return fail("INVALID", "建物足跡不可空白")
+	var candidate: TerrainData = Env.navigation_for_state(data, data.site.duplicate(true))
+	var original: Dictionary = candidate.site.features.get(key, {})
+	if action != "place" and original.is_empty(): return fail("NO_TARGET")
+	if action in ["move", "delete", "owner"]:
+		var refs: Array[String] = author_feature_referrers(candidate, key)
+		if action == "move" and int(original.get("residents", 0)) > 0: refs.append("features." + key + ".residents")
+		if not refs.is_empty():
+			var rejected: Dictionary = fail("AUTHOR_REFERENCED", str(refs))
+			rejected["referrers"] = refs
+			return rejected
+	if action == "stock":
+		var normalized: Dictionary = {}
+		for item: Variant in cargo:
+			if not item is String or not _building_integer(cargo[item], 0, 1000000): return fail("INVALID", "庫房只接受原資源整數堆疊")
+			normalized[item] = int(cargo[item])
+		if not _resource_stack(normalized): return fail("INVALID")
+		var storage: Dictionary = SiteStockpiles.ensure_storage(candidate, key, int(original.get("owner_faction", -1)))
+		if not storage.ok: return storage
+		if storage.stock.has("nation_id"): return fail("AUTHOR_REFERENCED", "stockpiles." + key + ".nation_id")
+		if carried_size(normalized, storage.stock.holder) > SiteStockpiles.capacity(original): return fail("STORAGE_FULL")
+		storage.stock.cargo = normalized
+	elif action == "owner":
+		if not _building_integer(options.get("owner_faction"), 0, 100000000): return fail("INVALID")
+		original.owner_faction = int(options.owner_faction)
+		if str(original.kind) == "settlement_center":
+			var center_guard: Dictionary = _author_center_unbound(candidate)
+			if not center_guard.ok: return center_guard
+			candidate.site.settlement.owner_faction = int(options.owner_faction)
+	elif action == "delete":
+		var change: Dictionary = structure_change_guard(candidate, key, {}, Callable(), "remove")
+		if not change.ok: return change
+		var recovered: Dictionary = {}
+		if str(original.kind) == "tent": recovered["camp_tent"] = 1
+		if original.has("species"): recovered[str(original.species)] = int(original.residents)
+		if not _depot_can_receive(candidate, recovered): return fail("STORAGE_FULL")
+		if str(original.kind) == "settlement_center":
+			var center_guard: Dictionary = _author_center_unbound(candidate)
+			if not center_guard.ok: return center_guard
+			candidate.site.erase("settlement")
+		add_items(candidate.site.inventory, recovered)
+		candidate.site.features.erase(key)
+		candidate.site.get("stockpiles", {}).erase(key)
+	else:
+		var offset: Vector2i = Vector2i.ZERO
+		if action in ["move", "copy"]:
+			kind = str(original.kind)
+			options = _feature_options(original)
+			var old_bounds: Rect2i = _cell_bounds(data, original.cells)
+			var new_bounds: Rect2i = _cell_bounds(data, cells)
+			if old_bounds.size != new_bounds.size: return fail("AUTHOR_UNSUPPORTED", "搬移不得改變布局尺寸")
+			var shifted: Array[int] = []
+			offset = new_bounds.position - old_bounds.position
+			for index: int in original.cells: shifted.append(data.index(data.cell_from_index(index) + offset))
+			var expected: Array[int] = cells.duplicate()
+			shifted.sort(); expected.sort()
+			if shifted != expected: return fail("AUTHOR_UNSUPPORTED", "搬移只接受原足跡平移")
+			if original.get("stage") != "complete" or original.has("pending_build") or original.has("repair") or bool(original.get("batch_paid", false)) or float(original.get("production", 0.0)) != 0.0: return fail("BUSY", "features." + key)
+			if action == "copy" and kind == "tent":
+				if not can_pay(candidate.site.inventory, {"camp_tent": 1}): return fail("MATERIALS", "複製營帳布局需原營地已有一個營帳包；不複製活資產")
+				candidate.site.inventory["camp_tent"] = int(candidate.site.inventory.camp_tent) - 1
+			if kind in WATERFRONT_KINDS:
+				options["launch_cell"] = data.index(data.cell_from_index(int(original.launch_cell)) + offset)
+		if kind in ["level", "survey_stakes", "irrigation_channel"]: return fail("AUTHOR_UNSUPPORTED", "整地沿地形工具；測量／渠道須原人物與科技作業閉包")
+		if not _building_integer(options.get("owner_faction", -1), -1, 100000000) or not _building_integer(options.get("quarter", 0), 0, 3): return fail("INVALID")
+		if action == "move":
+			candidate.site.features.erase(key)
+			Env.rebuild_indexes(candidate)
+		var preview: Dictionary = _preview_build(candidate, kind, cells, Callable(), options, key if action == "move" else "", false)
+		if not preview.ok: return preview
+		if not preview.clearing.is_empty(): return fail("AUTHOR_CLEARING_REQUIRED", str(preview.clearing))
+		var feature: Dictionary = _completed_tent_candidate(cells, preview) if kind == "tent" else _building_feature_candidate(kind, cells, preview)
+		feature.stage = "complete"
+		feature.progress = float(feature.work)
+		feature.status = "作者初始完工"
+		if action == "copy" and int(original.get("civil_version", 0)) == CIVIL_VERSION:
+			feature = _civil_upgrade_candidate(feature, building_grade(original))
+			feature.cost = original.cost.duplicate(true)
+			feature.work = float(original.work)
+			feature.progress = float(feature.work)
+		if action == "move":
+			feature = original.duplicate(true)
+			feature.cells = cells.duplicate()
+			feature.entrance = int(preview.entrance)
+			feature.source = str(preview.source)
+			feature.level = int(preview.level)
+			if kind in WATERFRONT_KINDS: feature.launch_cell = int(preview.options.launch_cell)
+			if original.has("parts"):
+				var parts: Dictionary = {}
+				for part_id: String in original.parts:
+					var mapped: String = part_id
+					if part_id.begins_with("c:") and part_id.get_slice(":", 1).is_valid_int(): mapped = "c:" + str(data.index(data.cell_from_index(int(part_id.get_slice(":", 1))) + offset))
+					parts[mapped] = original.parts[part_id].duplicate(true)
+				feature.parts = parts
+			var guard: Dictionary = structure_change_guard(data, key, feature, Callable(), "move")
+			if not guard.ok: return guard
+		else:
+			if not _building_integer(candidate.site.next_feature, 1, 999999): return fail("AUTHOR_ID_EXHAUSTED")
+			key = str(int(candidate.site.next_feature))
+			if candidate.site.features.has(key): return fail("STALE_SOURCE")
+			candidate.site.next_feature = int(candidate.site.next_feature) + 1
+			if action == "copy" and feature.has("residents"): feature.residents = 0
+			if kind == "settlement_center":
+				if candidate.site.has("settlement") or _settlement_center_count(candidate) > 0 or int(feature.owner_faction) < 0: return fail("AUTHOR_REFERENCED", "每Site只可有一座具明示管理方的中心")
+				candidate.site["settlement"] = {"version": SiteSettlement.VERSION, "settlement_id": "settlement_%s_%s" % [str(candidate.site.id).left(64), key], "center_id": key, "level": 1, "name": "初始聚落", "owner_faction": int(feature.owner_faction), "offices": SiteOffices.default_offices("settlement"), "fall_record": SiteSettlement.empty_fall_record()}
+		candidate.site.features[key] = feature
+	Env.rebuild_indexes(candidate)
+	var environment: Dictionary = validate_author_buildings(candidate)
+	if not environment.ok: return environment
+	var checked: Dictionary = Env.prepare_author_resource_state(candidate, candidate.site)
+	if not checked.ok: return checked
+	return ok("作者候選已驗證", {"state": checked.state, "feature": key, "asset_report": {"before": _author_building_assets(data.site), "after": _author_building_assets(checked.state)}})
+
+static func _author_center_unbound(data: TerrainData) -> Dictionary:
+	var record: Dictionary = SiteSettlement.record(data)
+	for position: Dictionary in record.get("offices", {}).get("positions", []):
+		if int(position.get("holder", -1)) > 0: return fail("AUTHOR_REFERENCED", "settlement.offices.positions." + str(position.id))
+	var technology: Dictionary = record.get("technology", {})
+	if not technology.get("known", []).is_empty() or not technology.get("projects", []).is_empty() or int(technology.get("active", 0)) != 0 or record.has("technology_operations"): return fail("AUTHOR_REFERENCED", "settlement.technology")
+	var fall: Dictionary = record.get("fall_record", {})
+	if not fall.get("last_fall", {}).is_empty() or float(fall.get("contest_seconds", 0.0)) != 0.0: return fail("AUTHOR_REFERENCED", "settlement.fall_record")
+	return ok()
+
+static func _author_building_assets(state: Dictionary) -> Dictionary:
+	var resources: Dictionary = state.inventory.duplicate(true)
+	for stock: Dictionary in state.get("stockpiles", {}).values(): add_items(resources, stock.cargo)
+	for feature: Dictionary in state.features.values():
+		if feature.get("kind") == "tent": resources["camp_tent"] = int(resources.get("camp_tent", 0)) + 1
+		if feature.has("species"): resources[str(feature.species)] = int(resources.get(str(feature.species), 0)) + int(feature.residents)
+	var item_ids: Array = state.get("item_records", {}).keys()
+	item_ids.sort()
+	return {"resources": resources, "item_ids": item_ids}

@@ -7,7 +7,7 @@ const Grid = preload("res://scripts/region_lab/region_grid.gd")
 const Preview = preload("res://scripts/region_lab/region_site_preview.gd")
 const DRAFT_ROOT := "user://map_editor/drafts"
 const MAX_DRAFT_BYTES := 65536
-const PLAYTEST_REASON := "作者初始化尚未實作；目前只能保存草稿，不能建立試玩世界。"
+const PLAYTEST_REASON := "情境發布／建立試玩世界尚未實作，仍可保存草稿。"
 var source = Data.new()
 var terrain: TerrainData
 var draft: Dictionary = {}
@@ -112,6 +112,7 @@ func _build_ui() -> void:
 	_build_terrain_form(column)
 	_build_resource_form(column)
 	_build_resource_state_form(column)
+	_build_building_form(column)
 	_canvas = Control.new()
 	_canvas.name = "AuthorCanvas"
 	_canvas.clip_contents = true
@@ -159,17 +160,22 @@ func new_work(site: Vector2i) -> bool:
 	return _accept_work(candidate, false)
 
 func validate_work(value: Variant) -> bool:
-	if not value is Dictionary or not Adapter.author_integer(value.get("format"), 1, 3): return false
+	if not value is Dictionary or not Adapter.author_integer(value.get("format"), 1, 4): return false
 	var version: int = int(value.format)
-	if value.size() != (7 if version == 1 else (8 if version == 2 else 10)): return false
+	if value.size() != (7 if version == 1 else (8 if version == 2 else (10 if version == 3 else 11))): return false
 	for key: String in ["format", "kind", "name", "manifest", "source_sha256", "site", "revision"]:
 		if not value.has(key): return false
 	if version >= 2 and not source.author_static_valid(value.get("terrain_static")): return false
-	if version == 3:
+	if version >= 3:
 		if not Env.resource_integer(value.get("resource_highwater"), 0, 2147483646) or not value.get("initial_state") is Dictionary: return false
 		for key: String in value.terrain_static.resources:
 			if key.begins_with("author_resource:") and int(key.get_slice(":", 1)) > int(value.resource_highwater): return false
 	elif version == 2 and not value.terrain_static.resources.is_empty(): return false
+	if version == 4:
+		if not Env.resource_integer(value.get("feature_highwater"), 0, 999999): return false
+		if not value.initial_state.get("features", {}) is Dictionary: return false
+		for key: Variant in value.initial_state.get("features", {}):
+			if not key is String or not key.is_valid_int() or str(int(key)) != key or int(key) < 1 or int(key) > int(value.feature_highwater): return false
 	if not value.kind is String or value.kind != "fixed_tw_editor_draft": return false
 	if not Data._author_text_valid(value.name, 64, true): return false
 	if not value.manifest is String or not Adapter.author_digest_valid(value.source_sha256): return false
@@ -473,7 +479,7 @@ func _prepare_work(value: Dictionary) -> Dictionary:
 	value_copy.revision = int(value_copy.revision)
 	value_copy.site = [int(value_copy.site[0]), int(value_copy.site[1])]
 	if int(value_copy.format) >= 2: value_copy.terrain_static = Data.author_static_normalized(value_copy.terrain_static)
-	if int(value_copy.format) == 3:
+	if int(value_copy.format) >= 3:
 		value_copy.resource_highwater = int(value_copy.resource_highwater)
 		var state: Dictionary = value_copy.initial_state
 		if state.is_empty():
@@ -487,10 +493,17 @@ func _prepare_work(value: Dictionary) -> Dictionary:
 			state = captured.state
 			state.erase("world_pin")
 		if state.get("id") != str(result.base.site_id): return {"ok": false}
+		if int(value_copy.format) == 4:
+			value_copy.feature_highwater = int(value_copy.feature_highwater)
+			if not Env.resource_integer(state.get("next_feature"), 1, 1000000): return {"ok": false}
+			state.next_feature = maxi(int(state.next_feature), int(value_copy.feature_highwater) + 1)
 		var prepared: Dictionary = Env.prepare_author_resource_state(candidate, state)
 		if not bool(prepared.get("ok", false)): return {"ok": false}
 		candidate = prepared.data
 		value_copy.initial_state = prepared.state
+		if int(value_copy.format) == 4:
+			var buildings: Dictionary = SiteRuntime.validate_author_buildings(candidate)
+			if not buildings.ok: return {"ok": false}
 	if JSON.stringify(value_copy, "", true, true).to_utf8_buffer().size() > MAX_DRAFT_BYTES: return {"ok": false}
 	return {"ok": true, "draft": value_copy, "terrain": candidate}
 
@@ -506,6 +519,7 @@ func _publish_work(prepared: Dictionary) -> void:
 	if terrain.site.is_empty(): _resources.display_source(terrain)
 	else: _resources.display(terrain)
 	_refresh_resources()
+	_refresh_buildings()
 	_read_terrain_cell()
 	_fit_view()
 	_history_expected = _content()
@@ -579,7 +593,7 @@ var _resource_cells: LineEdit
 
 func _resource_work() -> Dictionary:
 	var value: Dictionary = draft.duplicate(true)
-	value.format = 3
+	value.format = maxi(3, int(value.get("format", 1)))
 	value.terrain_static = value.get("terrain_static", empty_terrain_static()).duplicate(true)
 	value.resource_highwater = int(value.get("resource_highwater", 0))
 	value.initial_state = value.get("initial_state", {}).duplicate(true)
@@ -763,10 +777,16 @@ func _history_value(record: Dictionary, forward: bool) -> Dictionary:
 		else: target.erase(key)
 	# Allocation history survives undo and discarded redo branches, including a legacy first edit.
 	if int(draft.get("resource_highwater", 0)) > int(value.get("resource_highwater", 0)):
-		value.format = 3
+		value.format = maxi(3, int(value.get("format", 1)))
 		value.resource_highwater = int(draft.resource_highwater)
 		value.terrain_static = value.get("terrain_static", empty_terrain_static())
 		value.initial_state = value.get("initial_state", {})
+	if draft.has("feature_highwater"):
+		value.format = 4
+		value["feature_highwater"] = maxi(int(draft.feature_highwater), int(value.get("feature_highwater", 0)))
+		value["resource_highwater"] = maxi(int(draft.get("resource_highwater", 0)), int(value.get("resource_highwater", 0)))
+		value["terrain_static"] = value.get("terrain_static", empty_terrain_static())
+		value["initial_state"] = value.get("initial_state", {})
 	return value
 
 
@@ -871,3 +891,221 @@ func _apply_resource_initial_state() -> void:
 		fields["used"] = float(_resource_state_fields.used.value)
 		fields["used_minute"] = int(_resource_state_fields.used_minute.value)
 	if not set_resource_initial_state(key, fields): _status.text = "初始狀態與容量／排程／分鐘配額／引用不符；作品與歷史保持原狀。"
+
+var _building_list: OptionButton
+var _building_kind: OptionButton
+var _building_quarter: OptionButton
+var _building_material: OptionButton
+var _building_variant: OptionButton
+var _building_camp: OptionButton
+var _building_width: SpinBox
+var _building_height: SpinBox
+var _building_launch_x: SpinBox
+var _building_launch_y: SpinBox
+var _building_resource: OptionButton
+var _building_stock: SpinBox
+var _building_owner: SpinBox
+
+func edit_building(action: String, key: String = "", kind: String = "", cells: Array[int] = [], options: Dictionary = {}, cargo: Dictionary = {}) -> Dictionary:
+	if draft.is_empty() or _unsaved.visible or int(draft.revision) >= 2147483647: return SiteRuntime.fail("BUSY")
+	var value: Dictionary = _resource_work()
+	value.format = 4
+	value["feature_highwater"] = maxi(int(value.get("feature_highwater", 0)), int(value.initial_state.get("next_feature", 1)) - 1)
+	var prepared: Dictionary = _prepare_work(value)
+	if not prepared.get("ok", false): return SiteRuntime.fail("INVALID", "作者來源或初始閉包不合法")
+	var result: Dictionary = SiteRuntime.prepare_author_building(prepared.terrain, prepared.draft, action, key, kind, cells, options, cargo)
+	if not result.ok: return result
+	value.initial_state = result.state
+	value.feature_highwater = maxi(int(value.feature_highwater), int(result.state.next_feature) - 1)
+	var committed: bool = _commit_work(value, "建築／初始配置：" + action)
+	if not committed: return SiteRuntime.fail("INVALID", "候選或歷史預驗拒絕；作品與游標保持不變")
+	return result
+
+
+func _building_choice(parent: Node, title: String, node_name: String) -> OptionButton:
+	var column: VBoxContainer = VBoxContainer.new()
+	parent.add_child(column)
+	var label: Label = Label.new()
+	label.text = title
+	column.add_child(label)
+	var choice: OptionButton = OptionButton.new()
+	choice.name = node_name
+	column.add_child(choice)
+	return choice
+
+func _build_building_form(column: Node) -> void:
+	var panel: VBoxContainer = VBoxContainer.new()
+	panel.name = "AuthorBuildings"
+	panel.visible = false
+	_button(column, "建築與初始配置", "BuildingTools", func() -> void: panel.visible = not panel.visible)
+	column.add_child(panel)
+	var row: HBoxContainer = HBoxContainer.new()
+	panel.add_child(row)
+	_building_list = _building_choice(row, "已放置建築", "BuildingSelection")
+	_building_kind = _building_choice(row, "原建築種類", "BuildingKind")
+	var kinds: Array = SiteRuntime.FEATURES.keys()
+	kinds.sort()
+	for kind: String in kinds:
+		_building_kind.add_item(str(SiteRuntime.FEATURES[kind].name))
+		_building_kind.set_item_metadata(_building_kind.item_count - 1, kind)
+	_building_owner = _terrain_spin(row, "建物管理方（不改居民國籍）", 0, 100000000)
+	_building_quarter = _building_choice(row, "面向", "BuildingQuarter")
+	for quarter: int in range(4): _building_quarter.add_item(str(quarter * 90) + "°")
+	_building_width = _terrain_spin(row, "寬", 1, 50)
+	_building_height = _terrain_spin(row, "深", 1, 50)
+	var attributes: HBoxContainer = HBoxContainer.new()
+	panel.add_child(attributes)
+	_building_material = _building_choice(attributes, "原材質", "BuildingMaterial")
+	_building_variant = _building_choice(attributes, "住宅版型", "BuildingVariant")
+	_building_camp = _building_choice(attributes, "軍營型式", "BuildingCampType")
+	for camp: String in SiteRuntime.BARRACKS_TYPES:
+		_building_camp.add_item(str(SiteRuntime.BARRACKS_TYPES[camp].name))
+		_building_camp.set_item_metadata(_building_camp.item_count - 1, camp)
+	_building_launch_x = _terrain_spin(attributes, "原泊位 X", 0, 99)
+	_building_launch_y = _terrain_spin(attributes, "原泊位 Y", 0, 99)
+	var actions: HBoxContainer = HBoxContainer.new()
+	panel.add_child(actions)
+	for entry: Array in [["於格X/Y放置完工建築", "PlaceBuilding", "place"], ["空建物搬至格X/Y", "MoveBuilding", "move"], ["複製布局至格X/Y", "CopyBuilding", "copy"], ["刪除／回收承載資產", "DeleteBuilding", "delete"], ["變更管理方", "ManageBuilding", "owner"]]:
+		_button(actions, str(entry[0]), str(entry[1]), _building_ui.bind(str(entry[2])))
+	var stock: HBoxContainer = HBoxContainer.new()
+	panel.add_child(stock)
+	_building_resource = _building_choice(stock, "庫房原資源", "BuildingStockResource")
+	var resources: Array = Env.ITEM_NAMES.keys()
+	resources.sort()
+	for item: String in resources:
+		_building_resource.add_item(str(Env.ITEM_NAMES[item]))
+		_building_resource.set_item_metadata(_building_resource.item_count - 1, item)
+	_building_stock = _terrain_spin(stock, "此資源初始數量（0移除）", 0, 1000000)
+	_building_stock.name = "BuildingInitialStock"
+	_button(stock, "設定此項庫房初始資源", "SetBuildingStock", _building_ui.bind("stock"))
+	_building_resource.item_selected.connect(_read_building_stock)
+	_building_list.item_selected.connect(func(_index: int) -> void: _read_building())
+	_building_kind.item_selected.connect(_building_kind_changed)
+	_building_quarter.item_selected.connect(_building_dimensions_changed)
+	_building_material.item_selected.connect(_building_dimensions_changed)
+	_building_variant.item_selected.connect(_building_dimensions_changed)
+	_building_camp.item_selected.connect(_building_dimensions_changed)
+	var note: Label = Label.new()
+	note.text = "位置沿上方格X/Y；尺寸和屬性沿原目錄。完工材料已耗用，複製不帶人／庫貨／實物。整地用地形工具；測量／渠道待原人物科技閉包。"
+	panel.add_child(note)
+	_building_kind_changed(0)
+
+func _building_kind_changed(_index: int) -> void:
+	var kind: String = str(_building_kind.get_item_metadata(_building_kind.selected))
+	var spec: Dictionary = SiteRuntime.building_spec(kind, {"quarter": _building_quarter.selected})
+	if not spec.ok: return
+	_building_material.clear()
+	for material: String in spec.materials:
+		_building_material.add_item("木" if material == "wood" else "石")
+		_building_material.set_item_metadata(_building_material.item_count - 1, material)
+	_building_variant.clear()
+	for variant: String in spec.variants:
+		_building_variant.add_item(variant)
+		_building_variant.set_item_metadata(_building_variant.item_count - 1, variant)
+	if not spec.variants.is_empty(): _building_variant.select(maxi(0, spec.variants.find(str(spec.options.get("variant", "standard")))))
+	(_building_material.get_parent() as Control).visible = spec.materials.size() > 1
+	(_building_variant.get_parent() as Control).visible = not spec.variants.is_empty()
+	(_building_camp.get_parent() as Control).visible = kind == "barracks"
+	(_building_launch_x.get_parent() as Control).visible = kind in SiteRuntime.WATERFRONT_KINDS
+	(_building_launch_y.get_parent() as Control).visible = kind in SiteRuntime.WATERFRONT_KINDS
+	_building_dimensions_changed(0)
+
+func _building_dimensions_changed(_index: int) -> void:
+	var kind: String = str(_building_kind.get_item_metadata(_building_kind.selected))
+	var options: Dictionary = {"quarter": _building_quarter.selected}
+	if kind == "house" and _building_variant.selected >= 0: options["variant"] = str(_building_variant.get_item_metadata(_building_variant.selected))
+	var spec: Dictionary = SiteRuntime.building_spec(kind, options)
+	if not spec.ok: return
+	var fixed: bool = str(spec.placement) == "fixed"
+	var minimum: Vector2i = spec.size if fixed else spec.min_size
+	var maximum: Vector2i = spec.size if fixed else spec.max_size
+	_building_width.min_value = minimum.x
+	_building_width.max_value = maximum.x
+	_building_height.min_value = minimum.y
+	_building_height.max_value = maximum.y
+	_building_width.value = minimum.x
+	_building_height.value = minimum.y
+	_building_width.editable = not fixed
+	_building_height.editable = not fixed
+
+func _selected_building() -> String:
+	return "" if _building_list == null or _building_list.selected < 0 else str(_building_list.get_item_metadata(_building_list.selected))
+
+func _refresh_buildings() -> void:
+	if _building_list == null or terrain == null: return
+	var selected: String = _selected_building()
+	_building_list.clear()
+	var keys: Array = terrain.site.get("features", {}).keys()
+	keys.sort_custom(func(a: String, b: String) -> bool: return int(a) < int(b))
+	for key: String in keys:
+		_building_list.add_item("%s %s" % [key, str(SiteRuntime.FEATURES[str(terrain.site.features[key].kind)].name)])
+		_building_list.set_item_metadata(_building_list.item_count - 1, key)
+		if key == selected: _building_list.select(_building_list.item_count - 1)
+	_read_building()
+
+func _read_building() -> void:
+	var key: String = _selected_building()
+	if terrain == null or not terrain.site.get("features", {}).has(key): return
+	var feature: Dictionary = terrain.site.features[key]
+	for index: int in range(_building_kind.item_count):
+		if str(_building_kind.get_item_metadata(index)) == str(feature.kind): _building_kind.select(index)
+	_building_quarter.select(int(feature.get("quarter", 0)))
+	_building_kind_changed(0)
+	for pair: Array in [[_building_material, str(feature.get("material", ""))], [_building_variant, str(feature.get("variant", ""))], [_building_camp, str(feature.get("camp_type", ""))]]:
+		var choice: OptionButton = pair[0]
+		for index: int in range(choice.item_count):
+			if str(choice.get_item_metadata(index)) == str(pair[1]): choice.select(index)
+	_building_owner.value = maxi(0, int(feature.get("owner_faction", -1)))
+	var bounds: Rect2i = SiteRuntime._cell_bounds(terrain, feature.cells)
+	_building_width.value = bounds.size.x
+	_building_height.value = bounds.size.y
+	if feature.has("launch_cell"):
+		var launch: Vector2i = terrain.cell_from_index(int(feature.launch_cell))
+		_building_launch_x.value = launch.x
+		_building_launch_y.value = launch.y
+	_read_building_stock(0)
+
+func _read_building_stock(_index: int) -> void:
+	if terrain == null or _building_resource.selected < 0: return
+	var item: String = str(_building_resource.get_item_metadata(_building_resource.selected))
+	_building_stock.value = int(terrain.site.get("stockpiles", {}).get(_selected_building(), {}).get("cargo", {}).get(item, 0))
+
+func _building_ui(action: String) -> void:
+	if terrain == null or _unsaved.visible: return
+	var key: String = _selected_building()
+	var kind: String = str(_building_kind.get_item_metadata(_building_kind.selected))
+	var options: Dictionary = {"owner_faction": int(_building_owner.value), "quarter": _building_quarter.selected}
+	if _building_material.selected >= 0: options["material"] = str(_building_material.get_item_metadata(_building_material.selected))
+	if kind == "house" and _building_variant.selected >= 0: options["variant"] = str(_building_variant.get_item_metadata(_building_variant.selected))
+	if kind == "barracks": options["camp_type"] = str(_building_camp.get_item_metadata(_building_camp.selected))
+	if kind in SiteRuntime.WATERFRONT_KINDS: options["launch_cell"] = terrain.index(Vector2i(int(_building_launch_x.value), int(_building_launch_y.value)))
+	var anchor: Vector2i = Vector2i(int(_cell_x.value), int(_cell_y.value))
+	var cells: Array[int] = []
+	var cargo: Dictionary = terrain.site.get("stockpiles", {}).get(key, {}).get("cargo", {}).duplicate(true)
+	if action == "stock":
+		var item: String = str(_building_resource.get_item_metadata(_building_resource.selected))
+		if int(_building_stock.value) == 0: cargo.erase(item)
+		else: cargo[item] = int(_building_stock.value)
+	if action in ["move", "copy"]:
+		if not terrain.site.get("features", {}).has(key): return
+		var original: Dictionary = terrain.site.features[key]
+		var offset: Vector2i = anchor - SiteRuntime._cell_bounds(terrain, original.cells).position
+		for index: int in original.cells:
+			var cell: Vector2i = terrain.cell_from_index(index) + offset
+			if not terrain.contains(cell):
+				_status.text = "搬移／複製足跡越界。"
+				return
+			cells.append(terrain.index(cell))
+	elif action == "place":
+		var footprint: Dictionary = SiteRuntime.building_cells(terrain, kind, anchor, Vector2i(int(_building_width.value), int(_building_height.value)), options)
+		if not footprint.ok:
+			_status.text = str(footprint.message)
+			return
+		cells.assign(footprint.cells)
+	var result: Dictionary = edit_building(action, key, kind, cells, options, cargo)
+	if result.ok:
+		for index: int in range(_building_list.item_count):
+			if str(_building_list.get_item_metadata(index)) == str(result.feature): _building_list.select(index)
+		_read_building()
+	_status.text = str(result.message)
+	if result.ok: _status.text += "\n初始總資產：" + SiteRuntime.items_text(result.asset_report.after.resources) + "；實物 " + str(result.asset_report.after.item_ids.size()) + " 件"
