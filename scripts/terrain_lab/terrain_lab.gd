@@ -1467,7 +1467,12 @@ func _advance_action_time(delta: float, budget_usec: int = 0) -> void:
 			if bool(result.get("completed", false)):
 				var consumed_seconds: float = float(result.get("action_seconds", requested_seconds))
 				_action_time_remainder -= consumed_seconds
-				_action_step_remaining -= consumed_seconds
+				# Region end-begin can round past the requested width by one ulp.
+				# Keep the actual backlog charge; close only a proven complete request.
+				if is_finite(consumed_seconds) and consumed_seconds > 0.0 and bool(result.get("completed_action_request", false)):
+					_action_step_remaining = 0.0
+				else:
+					_action_step_remaining -= consumed_seconds
 			if str(result.get("status", "")) in ["FIRE_SYNC_PENDING", "REGION_EVENT_PENDING"]: return
 			if not bool(result.get("ok", false)):
 				if site_controller != null: site_controller.show_result(result)
@@ -1540,6 +1545,8 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 	var permit := {}
 	var region_joint_interval: Dictionary = {}
 	var region_gameplay_prepared: Dictionary = {}
+	var region_whole_action_request: bool = false
+	var region_request_slot: RegionSaveSlot = null
 	var region_originals: Array[TerrainLab] = []
 	var gd_original: bool = crowd_site == null or not crowd_site.active
 	var region_callers: bool = gd_original and not replaying and site_controller.region_slot != null and site_controller.region_slot.source != null and not site_controller.region_slot.pin.is_empty()
@@ -1566,12 +1573,14 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 	if _siege_tactical_active(): pre_step_combat_left = maxf(pre_step_combat_left, 10.0)
 	if fire_active_at_start: pre_step_combat_left = maxf(pre_step_combat_left, SiteRuntime.COMBAT_GRACE)
 	if region_callers:
+		region_request_slot = site_controller.region_slot
 		var joint := _prepare_region_main_interval(elapsed, pre_step_combat_left)
 		if not joint.get("ok", false): return joint
 		if joint.get("pending", false):
 			var due: Dictionary = site_controller.region_slot.consume_due_region_events()
 			if not due.ok: return due
 			return {"ok": true, "completed": false, "status": "REGION_EVENT_PENDING", "action_seconds": 0.0, "game_seconds": 0.0}
+		region_whole_action_request = bool(joint.get("whole_action_request", false))
 		region_joint_interval = joint.interval
 		region_gameplay_prepared = joint.prepared
 		region_originals.assign(joint.originals)
@@ -1713,6 +1722,11 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 			if not consumed_point.ok: recorded = consumed_point
 			elif not bool(consumed_point.get("complete", false)): recorded.status = "REGION_EVENT_PENDING"
 	if recorded.get("ok", false) and _region_point_pending.is_empty(): _clear_shared_work_step()
+	if region_callers:
+		# Only the successful publisher on the same source/Slot may close a quantum.
+		recorded.completed_action_request = region_whole_action_request and bool(recorded.get("ok", false)) \
+			and terrain == original_site and site_controller.region_slot == region_request_slot \
+			and float(region_request_slot.control.fire_clock.action_seconds) == float(region_joint_interval.action_end)
 	recorded.completed = true
 	recorded.action_seconds = elapsed
 	recorded.game_seconds = completed_game_seconds
@@ -8868,6 +8882,8 @@ static func _region_validate_bind_reference(data: TerrainData, key: String, kind
 
 func _prepare_region_main_interval(maximum: float, local_tactical: float, travelling: bool = false) -> Dictionary:
 	var slot: RegionSaveSlot = site_controller.region_slot
+	var requested_maximum: float = maximum
+	var requested_action_begin: float = float(slot.control.fire_clock.action_seconds)
 	var party_host := terrain.has_meta(&"region_party_owner")
 	if travelling:
 		if not str(slot.control.active_site_id).is_empty(): return SiteRuntime.fail("INVALID_TRAVEL_HOST")
@@ -8977,7 +8993,11 @@ func _prepare_region_main_interval(maximum: float, local_tactical: float, travel
 			if not retimed.get("ok", false): return _region_preflight_failure(originals, retimed)
 	var prepared: Dictionary = slot.prepare_region_gameplay_interval(interval)
 	if not prepared.get("ok", false): return _region_preflight_failure(originals, prepared)
-	return {"ok": true, "pending": false, "interval": interval, "prepared": prepared, "permit": permit, "originals": originals}
+	# Prove the full request by exact accepted endpoints, not a tail tolerance.
+	var whole_action_request: bool = maximum == requested_maximum and action_begin == requested_action_begin \
+		and float(interval.action_begin) == requested_action_begin \
+		and float(interval.action_end) == requested_action_begin + requested_maximum
+	return {"ok": true, "pending": false, "interval": interval, "prepared": prepared, "permit": permit, "originals": originals, "whole_action_request": whole_action_request}
 
 func _region_clear_shared_work_plans(originals: Array[TerrainLab]) -> void:
 	if originals.is_empty(): _clear_shared_work_step()
