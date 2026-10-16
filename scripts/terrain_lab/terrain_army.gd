@@ -8343,7 +8343,9 @@ func prepare_combat(delta: float, game_seconds: float = -1.0) -> void:
 		# Original idle ATTACK rear ranks have no active recovery/movement work.
 		# Normalize the same optional timers once, retain age/think exactly, and
 		# leave all rescue/guard/hit/KO/moving rows on the complete owner path.
-		if exchange_enabled and combat_order != CombatOrder.HOLD and unit.pose == "idle" and float(unit.hp) > 0.0 and float(unit.ko) <= 0.0 and moving_to[index] == INVALID_CELL and not _unit_rescues.has(index) \
+		if exchange_enabled and (combat_order != CombatOrder.HOLD or get_script() == TerrainArmy and not combat_hot_diagnostics_enabled \
+			and (_combat_hot_store == null or _combat_hot_borrowed_index == index) and float(unit.think) > delta \
+			and (not unit.has("exchange_visual") or unit.exchange_visual is Dictionary)) and unit.pose == "idle" and float(unit.hp) > 0.0 and float(unit.ko) <= 0.0 and moving_to[index] == INVALID_CELL and not _unit_rescues.has(index) \
 			and unit.stun == 0.0 and unit.grace == 0.0 and (not unit.has("exchange_visual") or unit.exchange_visual.is_empty()) and unit.get("exchange_pose_duration", 0.0) == 0.0 \
 			and unit.get("exchange_cooldown", 0.0) == 0.0 and unit.get("exchange_stagger", 0.0) == 0.0 and unit.get("exchange_skill_cooldown", 0.0) == 0.0 and unit.get("ranged_cooldown", 0.0) == 0.0:
 			unit["exchange_cooldown"] = 0.0
