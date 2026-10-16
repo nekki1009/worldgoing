@@ -43,14 +43,17 @@ func _run() -> void:
 	lab.bind_terrain(data)
 	var controller: SiteController = lab.site_controller
 	controller._auto_save_blocked = true
-	assert(lab.character.place(Vector2i(21, 22), true))
-	assert(lab.npc.place(Vector2i(15, 15), true))
+	var player_placed: bool = lab.character.place(Vector2i(21, 22), true)
+	assert(player_placed)
+	var npc_placed: bool = lab.npc.place(Vector2i(15, 15), true)
+	assert(npc_placed)
 	lab.npc.issue_command(TerrainTestNPC.Command.STOP)
 	lab.npc.faction_id = 2 # The remote original ground owner is not allied.
 	var team: TerrainArmy = lab.army
 	team.roster_size = 4
 	var cells: Array[Vector2i] = [Vector2i(22, 22), Vector2i(22, 23), Vector2i(22, 24), Vector2i(22, 25)]
-	assert(team.deploy_at(data, lab.character, lab.npc, cells) and team.enable_combat(false))
+	var team_deployed: bool = team.deploy_at(data, lab.character, lab.npc, cells) and team.enable_combat(false)
+	assert(team_deployed)
 	team.set_process(false)
 	team.faction_id = lab.character.faction_id
 	team.settle_combat_command()
@@ -58,7 +61,8 @@ func _run() -> void:
 	var source_team: TerrainArmy = lab.opposing_army
 	source_team.roster_size = 3
 	var source_cells: Array[Vector2i] = [Vector2i(23, 22), Vector2i(23, 23), Vector2i(23, 24)]
-	assert(source_team.deploy_at(data, lab.character, lab.npc, source_cells) and source_team.enable_combat(false))
+	var source_deployed: bool = source_team.deploy_at(data, lab.character, lab.npc, source_cells) and source_team.enable_combat(false)
+	assert(source_deployed)
 	source_team.set_process(false)
 	source_team.faction_id = team.faction_id
 	source_team.settle_combat_command()
@@ -113,7 +117,19 @@ func _run() -> void:
 	_click(dialog, "BeginLogisticsFood")
 	assert(entry.delivery.is_empty() and controller.message.text.begins_with(Runtime.fail("STORAGE_FULL").message))
 	# An already-open form cannot become the newly controlled captain's order.
-	assert(controller._control_family_person(null, captain).ok)
+	var captain_control: Dictionary = controller._control_family_person(null, captain)
+	assert(captain_control.ok)
+	assert(lab.controlled_person_id() == captain)
+	assert(is_instance_valid(dialog) and not dialog.visible and not dialog.is_inside_tree() and dialog.get_parent() == null and dialog.is_queued_for_deletion() and not controller._ui_dialogs.has("logistics"), "Changing control must immediately detach and invalidate the old logistics scope")
+	for stale_action: String in ["AssignLogisticsMembers", "ReleaseLogisticsMembers", "BeginLogisticsFood", "CancelLogisticsFood"]:
+		controller.message.text = ""
+		_click(dialog, stale_action)
+		assert(controller.message.text.begins_with(Runtime.fail("STALE").message), "Detached old logistics callbacks must refuse changed control: " + stale_action)
+		assert(controller.team_food_capacity(team) == base_capacity and not team.combat_units[1].logistics and not team.combat_units[2].logistics)
+		assert(entry.delivery.is_empty() and cargo.fish == 16 and float(private.open_rations) == 0.123456789123)
+	# queue_free is deferred; two frame signals cross the deletion flush from either entry phase.
+	await process_frame
+	await process_frame
 	assert(not is_instance_valid(dialog) and not controller._ui_dialogs.has("logistics"), "Changing control must dispose the old logistics dispatch scope")
 	assert(controller.team_food_capacity(team) == base_capacity and not team.combat_units[1].logistics and not team.combat_units[2].logistics)
 	assert(entry.delivery.is_empty() and cargo.fish == 16 and float(private.open_rations) == 0.123456789123)
@@ -155,7 +171,8 @@ func _run() -> void:
 	_click(dialog, "CancelLogisticsFood")
 	dialog.free()
 	# The actual source team's commander selects its own real representative.
-	assert(controller._control_family_person(null, donor).ok)
+	var donor_control: Dictionary = controller._control_family_person(null, donor)
+	assert(donor_control.ok)
 	dialog = _open(lab)
 	_select(dialog, "LogisticsTargetTeam", team.team_id)
 	_select(dialog, "LogisticsReceiver", receiver)
