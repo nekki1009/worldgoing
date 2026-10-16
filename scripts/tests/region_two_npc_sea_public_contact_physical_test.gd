@@ -4,6 +4,7 @@ extends "res://scripts/tests/region_siege_cold_action_epoch_test.gd"
 const FleetGenesis = preload("res://scripts/tests/region_two_npc_sea_legal_named_genesis.gd")
 const FleetGarrison = preload("res://scripts/terrain_lab/site_garrison.gd")
 const FleetSustain = preload("res://scripts/terrain_lab/site_sustain.gd")
+const FleetFatigue = preload("res://scripts/terrain_lab/person_fatigue.gd")
 var fleet_case := "hostile"
 var fleets: Array[Dictionary] = []
 var fleet_food: Array[Dictionary] = []
@@ -153,6 +154,11 @@ func _food_results() -> bool:
 
 func _fleet_step() -> bool:
 	if not _food_results(): return false
+	# Observe before the accepted caller, including exchanges during contact readiness.
+	var body_before: Dictionary = _melee_bodies()
+	var exchange_begin: int = fleet_exchanges.size()
+	var paid_begin: float = action_paid
+	var sequence_begin: int = int(slot.control.fire_clock.sequence)
 	var stepped: Dictionary = lab._advance_original_shared_step(TerrainLab.ACTION_STEP)
 	if not _check(stepped.ok, "original main caller accepts the actual common interval or due-zero endpoint", stepped): return false
 	if stepped.get("completed", false):
@@ -160,6 +166,13 @@ func _fleet_step() -> bool:
 		action_paid += float(stepped.action_seconds); action_game_paid += float(stepped.game_seconds)
 	else:
 		if not _check(float(stepped.get("action_seconds", 0.0)) == 0.0 and float(stepped.get("game_seconds", 0.0)) == 0.0, "same-point completion consumes no elapsed duration", stepped): return false
+	if fleet_exchanges.size() > exchange_begin:
+		var body_after: Dictionary = _melee_bodies()
+		for ordinal: int in range(exchange_begin, fleet_exchanges.size()):
+			fleet_exchanges[ordinal]["body_interval"] = {"before": body_before.duplicate(true), "after": body_after.duplicate(true),
+				"paid_begin": paid_begin, "paid_end": action_paid, "completed": bool(stepped.get("completed", false)),
+				"sequence_begin": sequence_begin, "sequence_end": int(slot.control.fire_clock.sequence),
+				"endpoint_consumed": is_instance_valid(fleet_live_lab) and fleet_live_lab._region_point_pending.is_empty()}
 	if not _fleet_reservation_observation(bool(stepped.get("completed", false))): return false
 	return _check(lab.controlled_person_id() == fleet_main_actor and not lab.controlled_target().is_empty(), "actual main human control remains at its original Site Actor") and _food_results()
 
@@ -179,6 +192,46 @@ func _public_board(index: int, row: int, berth: int) -> bool:
 	if not _check(begun.ok and not original.site_controller.vehicles.is_embarked(person), "false-dispatch public boarding creates only the original pending job", begun): return false
 	if not await _fleet_until(func() -> bool: return _fleet_owner(index).site_controller.vehicles.is_embarked(person) and not _fleet_owner(index).site_controller.person_actions.is_busy(person), "original paid board completes for the same actual row"): return false
 	return _check(int(_fleet_owner(index).site_controller.vehicles.ship_person(person).row.berth_id) == berth, "actual body owns only its original requested berth")
+
+func _contact_bow_local(vehicle: Dictionary) -> Vector2:
+	var spec: Dictionary = preload("res://scripts/terrain_lab/site_vehicle_ship_definitions.gd").definition(str(vehicle.ship_type))
+	return Vector2(float(int(spec.width) - 1) * 0.5, float(spec.length) - 0.75)
+
+func _public_contact_bow(index: int) -> bool:
+	# Move under the real Actor Captain before leave/dispatch; never command the NPC host.
+	var original: TerrainLab = _fleet_owner(index)
+	var fleet: Dictionary = fleets[index]
+	var vehicles: SiteVehicleTransport = original.site_controller.vehicles
+	var actions: SitePersonActions = original.site_controller.person_actions
+	var identity: int = int(fleet.people[1])
+	var boat: Dictionary = _fleet_boat(index)
+	var target: Vector2 = _contact_bow_local(boat)
+	var before: Vector2 = vehicles.ship_local_position(identity)
+	var before_action: float = action_paid
+	var begun: Dictionary = actions.begin_ship_walk(identity, target, int(fleet.actor), false)
+	if not _check(begun.ok and actions.is_busy(identity) and float(begun.get("seconds", 0.0)) > 0.0
+		and vehicles.ship_local_position(identity).distance_to(before) <= EPS,
+		"false-dispatch public bow walk reserves the same real crew without teleporting", {"fleet": index, "result": begun, "from": before, "target": target}): return false
+	if not await _fleet_until(func() -> bool: return _fleet_owner(index).site_controller.person_actions.is_busy(identity) and _fleet_owner(index).site_controller.vehicles.ship_local_position(identity).distance_to(before) > EPS, "original shared paid interval advances the genuine bow path"): return false
+	original = _fleet_owner(index)
+	vehicles = original.site_controller.vehicles; actions = original.site_controller.person_actions; boat = _fleet_boat(index)
+	var partial: Vector2 = vehicles.ship_local_position(identity)
+	var job: Dictionary = actions.job_for(identity)
+	var projected: Vector2 = vehicles.ship_local_ground(boat, partial)
+	if not _check(action_paid > before_action and float(job.get("elapsed", 0.0)) > 0.0
+		and float(job.get("elapsed", 0.0)) < float(job.get("duration", 0.0))
+		and not bool(job.get("test_dispatch", true)) and not vehicles.ship_can_attack(identity)
+		and partial.distance_to(target) > EPS and vehicles.ship_person_ground(identity).distance_to(projected) <= EPS,
+		"actual partial bow motion pays ACTION and projects the original busy noncombat body", {"fleet": index, "local": partial, "ground": projected, "elapsed": job.get("elapsed"), "duration": job.get("duration")}): return false
+	if not await _fleet_until(func() -> bool: return not _fleet_owner(index).site_controller.person_actions.is_busy(identity), "original paid bow walk reaches its actual committed endpoint"): return false
+	original = _fleet_owner(index)
+	vehicles = original.site_controller.vehicles; boat = _fleet_boat(index)
+	var arrived: Dictionary = vehicles.ship_person(identity)
+	return _check(action_paid > before_action and not arrived.is_empty()
+		and int(arrived.id) == identity and str(arrived.row.get("embarked_vehicle_id", "")) == str(fleet.boat)
+		and int(arrived.row.get("berth_id", -1)) == 1 and vehicles.ship_local_position(identity).distance_to(target) <= EPS
+		and vehicles.ship_driver_ready(boat) and vehicles.ship_crew_count(boat) == 1,
+		"real paid crew reaches the legal bow while the same ferry retains its original helm and full standard crew", {"fleet": index, "target": target, "paid_action": action_paid - before_action})
 
 func _public_fit(index: int) -> bool:
 	var fleet: Dictionary = fleets[index]
@@ -214,6 +267,7 @@ func _public_fit(index: int) -> bool:
 	original = _fleet_owner(index)
 	team = _fleet_team(index)
 	if not _check(team.current_commander == TerrainArmy.PLAYER_MEMBER and team.command_eligible(team.current_commander) and team.command_eligible(0), "real Actor Captain and serving future NPC are present before public leave"): return false
+	if not await _public_contact_bow(index): return false
 	var left: Dictionary = original.leave_player_army()
 	team = _fleet_team(index)
 	return _check(left.ok and team.player_member == null and team.combat_identity(team.current_commander) == int(fleet.people[0]) and team.command_eligible(team.current_commander) and not team.needs_attack_order, "original public leave selects the genuine eligible NPC captain without force-order or control flags", left)
@@ -483,7 +537,61 @@ func _live_food_held() -> float:
 			held += FleetSustain.rations(supply.sustain, supply.locations)
 	return held
 
+func _melee_bodies() -> Dictionary:
+	var bodies: Dictionary = {}
+	if not is_instance_valid(fleet_live_lab): return bodies
+	for fleet_index: int in 2:
+		var person: Dictionary = _crew(fleet_index, 1)
+		if person.is_empty(): return {}
+		var owner: TerrainArmy = person.owner
+		var unit: int = int(person.unit)
+		var body: Dictionary = person.row
+		bodies[str(int(person.id))] = {"owner": owner.get_instance_id(), "unit": unit,
+			"ref": fleet_live_lab.terrain.site.travel_identity.refs.person[str(int(person.id))].duplicate(true),
+			"hp": float(owner.combat_hot_get(unit, &"hp", 0.0)), "fatigue": FleetFatigue.read(body),
+			"cooldown": float(owner.combat_hot_get(unit, &"exchange_cooldown", 0.0)),
+			"stun": float(owner.combat_hot_get(unit, &"stun", 0.0)),
+			"hold": float(owner.combat_hot_get(unit, &"exchange_stagger", 0.0)),
+			"hit_revision": int(body.get("hit_revision", 0))}
+	return bodies
+
+func _melee_effect_applied(exchange: Dictionary) -> bool:
+	var interval: Dictionary = exchange.get("body_interval", {})
+	if interval.is_empty() or not bool(interval.get("completed", false)) or not bool(interval.get("endpoint_consumed", false)): return false
+	var paid_begin: float = float(interval.get("paid_begin", -1.0))
+	var paid_end: float = float(interval.get("paid_end", -1.0))
+	if not is_finite(paid_begin) or not is_finite(paid_end) or paid_begin < 0.0 or paid_end <= paid_begin: return false
+	if int(exchange.sequence) < int(interval.sequence_begin) or int(exchange.sequence) > int(interval.sequence_end): return false
+	var result: Dictionary = exchange.result
+	for field: String in ["hp_a", "hp_b", "stun_a", "stun_b", "hold", "stagger"]:
+		if not is_finite(float(result.get(field, 0.0))) or float(result.get(field, 0.0)) < 0.0: return false
+	var changed: bool = false
+	for side: int in [1, -1]:
+		var identity: String = str(int(exchange.first if side == 1 else exchange.second))
+		var before: Dictionary = interval.before.get(identity, {})
+		var after: Dictionary = interval.after.get(identity, {})
+		if before.is_empty() or after.is_empty() or int(before.owner) != int(after.owner) or int(before.unit) != int(after.unit) or before.ref != after.ref: return false
+		for field: String in ["hp", "fatigue", "cooldown", "stun", "hold"]:
+			if not is_finite(float(before[field])) or not is_finite(float(after[field])): return false
+		var hp: float = float(result.get("hp_a" if side == 1 else "hp_b", 0.0))
+		var stun: float = float(result.get("stun_a" if side == 1 else "stun_b", 0.0))
+		var hold: float = float(result.hold) if int(result.winner) == 0 else float(result.stagger) if int(result.winner) != side else 0.0
+		if hp > 0.0 and float(after.hp) >= float(before.hp): return false
+		if stun > 0.0 and (float(after.stun) <= float(before.stun) or float(after.stun) + EPS < stun): return false
+		if (hp > 0.0 or stun > 0.0) and int(after.hit_revision) <= int(before.hit_revision): return false
+		if hold > 0.0 and float(after.hold) + EPS < hold: return false
+		changed = changed or float(before.hp) != float(after.hp) or float(before.fatigue) != float(after.fatigue) \
+			or float(before.cooldown) != float(after.cooldown) or float(before.stun) != float(after.stun) or float(before.hold) != float(after.hold)
+	return changed
+
 func _real_melee() -> bool:
+	var contact_a: Dictionary = _crew(0, 1)
+	var contact_b: Dictionary = _crew(1, 1)
+	var contact_transport: SiteVehicleTransport = fleet_live_lab.site_controller.vehicles
+	if not _check(not contact_a.is_empty() and not contact_b.is_empty()
+		and contact_transport.ship_local_position(int(contact_a.id)).distance_to(_contact_bow_local(contact_transport.ship_for_person(int(contact_a.id)))) <= EPS
+		and contact_transport.ship_local_position(int(contact_b.id)).distance_to(_contact_bow_local(contact_transport.ship_for_person(int(contact_b.id)))) <= EPS,
+		"original full cold restore and NPC frame retain both publicly paid bow positions"): return false
 	if not await _fleet_until(_actual_contact_ready, "original completed boat moves release journey/moving guards and expose true crew contact"): return false
 	var a := _crew(0, 1)
 	var b := _crew(1, 1)
@@ -496,17 +604,16 @@ func _real_melee() -> bool:
 		if not await _fleet_until(func() -> bool: return fleet_live_meals > 0.0, "actual original NPC child Controller publishes a genuine accepted meal result"): return false
 		return _check(fleet_exchanges.is_empty(), "friendly actual paid frame produces no hostile exchange")
 	if not _check(a.owner.exchange_initiates(int(a.unit), int(b.id), true) and b.owner.exchange_initiates(int(b.unit), int(a.id), true), "actual lawful nonhelm HOLD crews receive only original current defensive contact authorization"): return false
-	var before := [float(a.hp), float(b.hp), float(a.owner.combat_hot_get(int(a.unit), &"fatigue", 0.0)), float(b.owner.combat_hot_get(int(b.unit), &"fatigue", 0.0)), float(a.owner.combat_hot_get(int(a.unit), &"exchange_cooldown", 0.0)), float(b.owner.combat_hot_get(int(b.unit), &"exchange_cooldown", 0.0))]
-	var paid_before := action_paid
 	if not await _fleet_until(func() -> bool: return not fleet_exchanges.is_empty(), "actual main paid caller resolves the genuine original reciprocal melee pair"): return false
 	a = _crew(0, 1); b = _crew(1, 1)
-	var after := [float(a.hp), float(b.hp), float(a.owner.combat_hot_get(int(a.unit), &"fatigue", 0.0)), float(b.owner.combat_hot_get(int(b.unit), &"fatigue", 0.0)), float(a.owner.combat_hot_get(int(a.unit), &"exchange_cooldown", 0.0)), float(b.owner.combat_hot_get(int(b.unit), &"exchange_cooldown", 0.0))]
 	var sequences := {}
+	var physical_effects: bool = true
 	for exchange: Dictionary in fleet_exchanges:
 		var key := "%s:%d:%d" % [str(exchange.sequence), mini(int(exchange.first), int(exchange.second)), maxi(int(exchange.first), int(exchange.second))]
 		if not _check(not sequences.has(key), "original reciprocal pair is observed once per accepted ACTION sequence", key): return false
 		sequences[key] = true
-	return _check(action_paid > paid_before and before != after and fleet_live_lab._region_point_pending.is_empty(), "genuine accepted original exchange changes real life/fatigue/cooldown effects after its endpoint is consumed", {"before": before, "after": after, "exchanges": fleet_exchanges})
+		physical_effects = physical_effects and _melee_effect_applied(exchange)
+	return _check(not fleet_exchanges.is_empty() and physical_effects and fleet_live_lab._region_point_pending.is_empty(), "genuine accepted original exchange changes real life/fatigue/cooldown effects after its endpoint is consumed", {"exchanges": fleet_exchanges})
 
 func _run() -> void:
 	RegionTravelSite.scene_handoff = false

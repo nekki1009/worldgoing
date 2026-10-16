@@ -8052,6 +8052,8 @@ func _prepare_shared_work_step(action_seconds: float, game_seconds: float, tacti
 	if not collected.ok: return collected
 	action_seconds = float(collected.action_seconds)
 	game_seconds = float(collected.game_seconds)
+	if not is_finite(action_seconds) or action_seconds <= 0.0 or not is_finite(game_seconds) or game_seconds <= 0.0:
+		return SiteRuntime.fail("INVALID_TIME")
 	var native_active: bool = crowd_site != null and crowd_site.active
 	var limit := minf(game_seconds, _shared_production_event_limit(game_seconds))
 	var selected_retry := float(site_controller.work_team.prepared_retry_endpoint())
@@ -8069,7 +8071,7 @@ func _prepare_shared_work_step(action_seconds: float, game_seconds: float, tacti
 				if beginning < 30.0 - ACTION_TIME_EPSILON: limit = minf(limit, (30.0 - beginning) / float(segment.rate))
 				elif beginning < 100.0 - ACTION_TIME_EPSILON: limit = minf(limit, (100.0 - beginning) / float(segment.rate))
 			break
-	limit = minf(limit, _shared_rest_event_limit(game_seconds, planned))
+	limit = minf(limit, _shared_rest_event_limit(game_seconds, planned, ACTION_TIME_EPSILON * game_seconds / action_seconds))
 	if native_active:
 		var native_rest: float = crowd_site.work_fatigue_idle_limit(game_seconds, planned, maxf(0.0, _shared_native_combat_begin - action_seconds))
 		if not is_finite(native_rest) or native_rest <= 0.0: return SiteRuntime.fail("INVALID_NATIVE_REST_LIMIT")
@@ -8159,8 +8161,13 @@ func _shared_raw_effort(identity: int, body: Variant, rate: float, seconds: floa
 		"effort_rate": PersonFatigue.effort_rate(body, rate), "rest_limited": false}], "remaining": seconds,
 		"productive_kind": "raw", "progress_multiplier": 1.0, "max_game_seconds": seconds}
 
-func _shared_rest_event_limit(maximum: float, planned: Dictionary) -> float:
+func _shared_rest_event_limit(maximum: float, planned: Dictionary, minimum_split_game: float = 0.0) -> float:
 	var limit := maximum
+	# With no work pools, original Fatigue.advance integrates delay and recovery
+	# analytically inside the paid GAME interval. Keep a tiny positive delay there
+	# instead of converting it into an ACTION prefix the scheduler cannot admit.
+	var split_floor: float = ACTION_TIME_EPSILON
+	if planned.get("pools", []).is_empty(): split_floor = maxf(split_floor, minimum_split_game)
 	var seen: Array = []
 	for actor: TerrainTestCharacter in combat_actors:
 		if actor_present(actor): seen.append(actor)
@@ -8172,7 +8179,8 @@ func _shared_rest_event_limit(maximum: float, planned: Dictionary) -> float:
 		var fatigue := PersonFatigue.read(body)
 		if fatigue <= 0.0: continue
 		var rest := PersonFatigue.REST_DELAY - PersonFatigue.read(body, "fatigue_rest")
-		if rest > ACTION_TIME_EPSILON: limit = minf(limit, rest)
+		if rest > ACTION_TIME_EPSILON:
+			if rest > split_floor: limit = minf(limit, rest)
 		else:
 			# A row that never rested carries no work_resting key; treat it as not resting.
 			var resting: bool = bool(body.get("work_resting", false)) if body is Dictionary else bool(body.get("work_resting"))
@@ -8180,7 +8188,7 @@ func _shared_rest_event_limit(maximum: float, planned: Dictionary) -> float:
 			# Like the rest delay above, a recovery endpoint closer than one epsilon is
 			# reached by any step (recovery clamps at its target); it never splits one.
 			var recovered := (fatigue - target) / PersonFatigue.RECOVERY_RATE
-			if recovered > ACTION_TIME_EPSILON: limit = minf(limit, recovered)
+			if recovered > split_floor: limit = minf(limit, recovered)
 	return limit
 
 func _shared_pool_has_effort(body: Variant, planned: Dictionary = {}) -> bool:
