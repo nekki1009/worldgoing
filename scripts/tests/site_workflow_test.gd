@@ -5,15 +5,30 @@ const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const Store = preload("res://scripts/terrain_lab/site_store.gd")
 const SAVE := "res://.godot-temp/site_resources_contract/workflow.json"
 var deadline := 0
+var _workflow_body_complete: bool = false
+var _workflow_deadline_failed: bool = false
 
 func _initialize() -> void:
 	deadline = Time.get_ticks_msec() + 15000
 	_run.call_deferred()
 
-func _process(_delta: float) -> bool:
-	if Time.get_ticks_msec() > deadline:
-		push_error("SITE WORKFLOW did not complete")
+func _workflow_deadline_ok() -> bool:
+	if _workflow_deadline_failed:
 		quit(1)
+		return false
+	if _workflow_body_complete or Time.get_ticks_msec() <= deadline: return true
+	_workflow_deadline_failed = true
+	push_error("SITE WORKFLOW did not complete")
+	quit(1)
+	return false
+
+func _finish_workflow_body() -> bool:
+	if not _workflow_deadline_ok(): return false
+	_workflow_body_complete = true
+	return true
+
+func _process(_delta: float) -> bool:
+	_workflow_deadline_ok()
 	return false
 
 func _fixture() -> TerrainData:
@@ -227,6 +242,7 @@ func _run() -> void:
 	Runtime.advance(natural, 1)
 	assert(int(Env.resource(natural, source).remaining) == 0, "Cleared plot regrew")
 	_clearing_and_load()
+	if not _finish_workflow_body(): return
 	print("SITE WORKFLOW PASS: reservations, build resume, corrupt save, walls, water budget, paid production, hauling, regeneration")
 	quit(0)
 

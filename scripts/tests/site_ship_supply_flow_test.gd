@@ -170,6 +170,8 @@ func _run() -> void:
 	corrupt = state.duplicate(true)
 	corrupt.team_supply[str(team.team_id)].locations["vehicle:999"] = {"inventory": {}, "open_rations": 0.0}
 	assert(not Store._validate_supply(corrupt, data).ok)
+	var completed_in_time: bool = _finish_workflow_body()
 	lab.queue_free()
+	if not completed_in_time or _workflow_deadline_failed: return
 	print("SITE SHIP SUPPLY FLOW PASS: zero-food first opt-in, no remote migration, positional Controller meal/clock, original row leave/join private stocks, original shore training start/stop authority without v3 downgrade or free food, active/stopped supply save validation and versioned save rejection")
 	quit(0)

@@ -173,8 +173,10 @@ func _run() -> void:
 	assert(not personal.cohorts.is_empty(), "Clearing NPC test roster preserves actual player's eating history")
 	controller.update_ui()
 	assert(lab.find_child("DeliverTeamFood", true, false) != null and lab.find_child("CancelTeamFood", true, false) != null and lab.find_child("TrainPlayerTeam", true, false) != null)
+	var completed_in_time: bool = _finish_workflow_body()
 	lab.queue_free()
 	await process_frame
 	TerrainArmy.release_contact_source()
+	if not completed_in_time or _workflow_deadline_failed: return
 	print("SITE TEAM SUSTAIN FLOW PASS: original controller physical atomic food/delivery/cancel/hit/pause, explicit supply/gear, original-row training80/50, environmental death and orphan-stock retention; common-clock/full-save integration separately required")
 	quit(0)

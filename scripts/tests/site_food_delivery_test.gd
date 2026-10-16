@@ -252,7 +252,9 @@ func _run() -> void:
 	assert(loaded.ok, str(loaded))
 	assert(loaded.data.site.armies[0].units[1].logistics)
 	assert(loaded.data.site.ground_loot == data.site.ground_loot)
-	print("SITE_FOOD_DELIVERY_PASS: actual camp/team/person/ground stocks + opened pools, 30 cap, original contact-before-commit, cancellation/source ownership, dedicated 3/6 role, original 80/50, routed later/last carrier drops and full Store roundtrip; not GPU/FPS")
+	var completed_in_time: bool = _finish_workflow_body()
 	lab.free()
 	TerrainArmy.release_contact_source()
+	if not completed_in_time or _workflow_deadline_failed: return
+	print("SITE_FOOD_DELIVERY_PASS: actual camp/team/person/ground stocks + opened pools, 30 cap, original contact-before-commit, cancellation/source ownership, dedicated 3/6 role, original 80/50, routed later/last carrier drops and full Store roundtrip; not GPU/FPS")
 	quit(0)

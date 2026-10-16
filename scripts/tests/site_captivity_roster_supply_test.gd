@@ -225,7 +225,9 @@ func _run() -> void:
 	assert(is_same(data.site.worker.cargo, original_npc_cargo))
 	_check(helper)
 	assert(source.combat_units.size() + target.combat_units.size() == 12)
+	var completed_in_time: bool = _finish_workflow_body()
 	lab.free()
 	TerrainArmy.release_contact_source()
+	if not completed_in_time or _workflow_deadline_failed: return
 	print("SITE CAPTIVITY ROSTER SUPPLY PASS: original transfer/row leave-rejoin/Actor join-leave; captured military registration preserves actual feeding, unfed joins once, captor's dependants retain meal/hunger without moving stock, guard alone does not; busy/lag/job rejection atomic; original personal history and body/cargo/gear references survive")
 	quit(0)

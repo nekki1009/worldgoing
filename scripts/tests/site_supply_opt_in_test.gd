@@ -116,6 +116,8 @@ func _run() -> void:
 	invalid = data.site.duplicate(true)
 	invalid.armies[0].units[1].logistics = "true"
 	assert(not Store._validate_armies(data, invalid).ok)
-	print("SITE_SUPPLY_OPT_IN_PASS original row and captive private meal history, atomic stale rejection, no stock movement, pure opened-food bag, failed-drop conservation, strict original save/load roles and fractions")
+	var completed_in_time: bool = _finish_workflow_body()
 	lab.free()
+	if not completed_in_time or _workflow_deadline_failed: return
+	print("SITE_SUPPLY_OPT_IN_PASS original row and captive private meal history, atomic stale rejection, no stock movement, pure opened-food bag, failed-drop conservation, strict original save/load roles and fractions")
 	quit()

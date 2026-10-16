@@ -129,8 +129,10 @@ func _run() -> void:
 	assert(controller.person_actions.save_guard().ok and controller.person_actions._jobs.is_empty())
 	assert(source == source_before and destination == destination_before and captive == captive_before and relation == relation_before)
 	assert(Runtime.now(data) == 0.0 and data.site.manual.cargo.is_empty() and data.site.worker.cargo.is_empty())
+	var completed_in_time: bool = _finish_workflow_body()
 	lab.queue_free()
 	await process_frame
 	TerrainArmy.release_contact_source()
+	if not completed_in_time or _workflow_deadline_failed: return
 	print("SITE RANSOM UI SCOPE PASS: real child window, stale controlled person/payer/TerrainData rejected before jobs or food, original 10-second/100-ration start/cancel, unchanged captive and original team inventories; no timed completion or capture-animation claim")
 	quit(0)
