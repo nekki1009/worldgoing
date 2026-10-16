@@ -9,6 +9,7 @@ var r2_output := ""
 var r2_evidence: Array[Dictionary] = []
 var r2_failed: Array[String] = []
 var r2_source_files: Dictionary = {}
+var _r2_fire_wire_negative_checked: bool = false
 
 class R2FaultLog extends Logger:
 	var _mutex: Mutex = Mutex.new()
@@ -91,10 +92,24 @@ func _capture(lab: TerrainLab) -> Dictionary:
 	if not _r2_check(owners.ok, str(owners)): return {}
 	if owners.state.is_empty(): state.erase("fire_owners")
 	else: state.fire_owners = owners.state
-	var validated: Dictionary = SiteStore._validate_state(lab.terrain, state)
+	# Validate the original Runtime wire copy; Store restores its existing runtime representation.
+	var live_fire: Variant = lab.terrain.site.get("fire")
+	var fire_snapshot: Dictionary = SiteRuntime.capture_fire_snapshot(lab.terrain, lab.fire_action_cursor)
+	if not _r2_ok(): return {}
+	if not _r2_check(fire_snapshot.ok, str(fire_snapshot)): return {}
+	var validation_state: Dictionary = state.duplicate(false)
+	if state.has("fire"): validation_state.fire = fire_snapshot.state
+	var validated: Dictionary = SiteStore._validate_state(lab.terrain, validation_state)
 	if not _r2_ok(): return {}
 	if not _r2_check(validated.ok, str(validated)): return {}
-	return state
+	if not _r2_fire_wire_negative_checked and not SiteRuntime._fire_snapshot_json(state.get("fire", {})):
+		if not _r2_check(is_same(live_fire, lab.terrain.site.get("fire")), "wire validation preserves the original live fire alias"): return {}
+		var rejected_raw: Dictionary = SiteStore._validate_state(lab.terrain, state)
+		if not _r2_ok(): return {}
+		if not _r2_check(not rejected_raw.ok and rejected_raw.get("code") == "INVALID_FIRE_SNAPSHOT", "raw runtime fire remains rejected by the unchanged saved-wire validator"): return {}
+		_r2_fire_wire_negative_checked = true
+	# Preserve Store validation normalizations, including runtime integer receipt IDs.
+	return validation_state
 
 func _r2_scene(with_npc: bool = false) -> TerrainLab:
 	var packed: PackedScene = load("res://scenes/terrain_lab/TerrainLab.tscn")
@@ -137,6 +152,103 @@ func _r2_data(name: String) -> TerrainData:
 	if not _r2_ok(): return null
 	return data
 
+func _r2_fire_step(lab: TerrainLab) -> bool:
+	var was_restore: bool = lab.restore_only
+	lab.restore_only = false
+	lab._advance_action_time(TerrainLab.ACTION_STEP)
+	lab.restore_only = was_restore
+	return _r2_ok()
+
+func _r2_real_fire_contact(lab: TerrainLab, cell: Vector2i) -> Dictionary:
+	var data: TerrainData = lab.terrain
+	var actor: TerrainTestCharacter = lab.character
+	var cargo: Dictionary = data.site.manual.cargo
+	var depot: Dictionary = data.site.depot_items
+	var grain_before: int = int(cargo.get("grain", 0)) + int(data.site.inventory.get("grain", 0))
+	var ammo_before: int = int(data.site.inventory.get("fire_arrow", 0))
+	# Keep the full initial grain: transfer one unit home, then carry one finite arrow.
+	var stowed: Dictionary = SiteRuntime.transfer_items(data, actor.item_state, cargo, depot, data.site.inventory,
+		{&"grain": 1}, [], int(actor.item_state.version), int(depot.version), int(data.site.capacity))
+	if not _r2_ok(): return {"ok": false}
+	if not _r2_check(stowed.ok, "real fire fixture legally stows grain without deleting original provisions"): return {"ok": false}
+	var loaded: Dictionary = SiteRuntime.transfer_items(data, depot, data.site.inventory, actor.item_state, cargo,
+		{&"fire_arrow": 1}, [], int(depot.version), int(actor.item_state.version), SiteRuntime.CARRY_CAPACITY)
+	if not _r2_ok(): return {"ok": false}
+	if not _r2_check(loaded.ok and int(cargo.get("fire_arrow", 0)) == 1
+		and int(data.site.inventory.get("fire_arrow", 0)) == ammo_before - 1
+		and int(cargo.get("grain", 0)) + int(data.site.inventory.get("grain", 0)) == grain_before
+		and SiteRuntime.carried_load(data.site, cargo, actor.item_state) <= SiteRuntime.CARRY_CAPACITY,
+		"real fire fixture transfers one finite arrow within original carry capacity and conserves grain"): return {"ok": false}
+	var placed: bool = actor.place(cell + Vector2i(0, -5), true)
+	if not _r2_check(placed and actor.person_id == 1 and lab.controlled_person_id() == actor.person_id,
+		"same original registered bow Actor starts on a legal surface before paid fire work"): return {"ok": false}
+	actor.ammo_inventory = cargo
+	lab.movement_input_enabled = false
+	lab._wire_fire_ranged()
+	var initial_action: float = lab.fire_action_cursor
+	var issued: Dictionary = lab.issue_fire_order(actor.person_id, actor, {"type": "ground", "cell": [cell.x, cell.y]}, "FIRE_ARROW")
+	if not _r2_ok(): return {"ok": false}
+	if not _r2_check(issued.ok, "original Actor accepts the actual one-arrow FIRE_ARROW order"): return {"ok": false}
+	for tick: int in range(180):
+		if lab.ranged_shots == 1: break
+		if not _r2_fire_step(lab): return {"ok": false}
+	var transport: Dictionary = lab.capture_fire_transport()
+	if not _r2_ok(): return {"ok": false}
+	if not _r2_check(transport.ok and int(transport.state.get("release_sequence", -1)) == 1
+		and lab.ranged_shots == 1 and lab.fire_projectiles.size() == 1 and int(cargo.get("fire_arrow", -1)) == 0
+		and float(lab.fire_projectiles[0].profile.ember) == 20.0
+		and float(lab.fire_projectiles[0].profile.contact_rate) == 10.0
+		and float(lab.fire_projectiles[0].profile.contact_seconds) == 2.0
+		and lab.fire_action_cursor > initial_action,
+		"paid original release owns watermark one, one ammo debit and the unchanged twenty-heat arrow profile"): return {"ok": false}
+	var stopped: Dictionary = lab.stop_fire_order(actor.person_id, actor)
+	if not _r2_ok(): return {"ok": false}
+	if not _r2_check(stopped.ok, "original stop preserves the already released finite flight"): return {"ok": false}
+	for tick: int in range(180):
+		if lab.ranged_resolutions == 1: break
+		if not _r2_fire_step(lab): return {"ok": false}
+	if not _r2_check(lab.ranged_shots == 1 and lab.ranged_resolutions == 1
+		and lab.fire_projectiles.is_empty() and lab.fire_impact_recorder.size() == 1,
+		"original physical flight produces exactly one actual terminal record"): return {"ok": false}
+	var payload: Dictionary = lab.fire_impact_recorder[0]
+	var contact: Dictionary = data.site.get("fire", {}).get("contacts", {}).get(str(payload.event_id), {})
+	if not _r2_check(not contact.is_empty() and lab._fire_boundary_error.is_empty()
+		and int(contact.projectile_id) == 1 and str(contact.event_id) == str(payload.event_id)
+		and str(payload.type) == "ground" and payload.cell == cell
+		and int(payload.projectile_id) == 1 and str(payload.event_id) == "arrow:1"
+		and float(payload.remaining_heat_budget) > 0.0 and float(payload.remaining_heat_budget) <= 20.0
+		and float(payload.heat_rate) == 10.0 and float(payload.max_seconds) == 2.0
+		and int(data.site.get("fire", {}).get("receipt_floor", -1)) == 1 and data.site.get("fire", {}).get("receipt_ids", {}).is_empty(),
+		"real receiver closes only the genuine released arrow and retains its original flight-decayed heat"): return {"ok": false}
+	var normal: Dictionary = lab.issue_fire_order(actor.person_id, actor, {"type": "ground", "cell": [cell.x, cell.y]}, "NORMAL")
+	if not _r2_ok(): return {"ok": false}
+	var ceased: Dictionary = lab.stop_fire_order(actor.person_id, actor)
+	if not _r2_ok(): return {"ok": false}
+	if not _r2_check(normal.ok and ceased.ok and not actor.ranged_enabled and actor.ranged_ammo_mode == "NORMAL",
+		"original NORMAL and stop leave no active fire order while preserving terminal history"): return {"ok": false}
+	for tick: int in range(180):
+		if float(data.site.get("fire", {}).get("units", {}).get(str(contact.get("unit_key", "")), {}).get("heat", 0.0)) > 0.0: break
+		if not _r2_fire_step(lab): return {"ok": false}
+	if not _r2_check(SiteRuntime.fire_active(data)
+		and float(data.site.get("fire", {}).get("units", {}).get(str(contact.get("unit_key", "")), {}).get("heat", 0.0)) > 0.0,
+		"actual accepted terminal deposits positive active heat on the original fuel owner"): return {"ok": false}
+	var terminal_transport: Dictionary = lab.capture_fire_transport()
+	if not _r2_ok(): return {"ok": false}
+	if not _r2_check(terminal_transport.ok and int(terminal_transport.state.get("release_sequence", -1)) == 1
+		and int(data.site.fire.receipt_floor) == 1 and data.site.fire.receipt_ids.is_empty()
+		and lab.ranged_shots == 1 and lab.ranged_resolutions == 1
+		and lab.fire_projectiles.is_empty() and lab.fire_reservations.is_empty() and lab._fire_boundary_error.is_empty(),
+		"completed original boundary compacts the closed single-arrow receipt under its real release watermark"): return {"ok": false}
+	# A real release dirties its original owner: acknowledge it only through a real save.
+	var previous_root: String = lab.site_controller.save_root
+	lab.site_controller.save_root = r2_output
+	var checkpoint: Dictionary = lab.site_controller.save_to(r2_output.path_join("fire_terminal_checkpoint.json"))
+	lab.site_controller.save_root = previous_root
+	if not _r2_ok(): return {"ok": false}
+	if not _r2_check(checkpoint.ok and not lab._fire_unsaved,
+		"original Controller persists and acknowledges the real terminal before the unchanged final Store save"): return {"ok": false}
+	return contact.duplicate(true)
+
 func _r2_fixture(name: String) -> Dictionary:
 	var data := _r2_data(name)
 	if not _r2_ok(): return {"ok": false}
@@ -146,7 +258,7 @@ func _r2_fixture(name: String) -> Dictionary:
 		if not _r2_ok(): return {"ok": false}
 		# Explicit newborn fixture through original Actor capture/restore and
 		# original equipment creation. Clothing is chosen before any gear exists.
-		if not _r2_birth(data, 1, false): return {"ok": false}
+		if not _r2_birth(data, 1, false, name == "fire"): return {"ok": false}
 		if is_instance_valid(lab.npc) and not _r2_birth(data, 2, true): return {"ok": false}
 		lab.bind_terrain(data)
 		if not _r2_ok(): return {"ok": false}
@@ -237,6 +349,7 @@ func _r2_fixture(name: String) -> Dictionary:
 			if not _r2_ok(): return {"ok": false}
 			lab.restore_only = true
 			if not _r2_check(data.site.features[farm].batch_paid and float(data.site.features[farm].production) > 0.0, "_r2_fixture: original condition failed"): return {"ok": false}
+			if not _r2_check(float(data.site.features[farm].production) <= 33.75, "original half-action-second farm cannot apply the same station productivity twice"): return {"ok": false}
 		elif name == "captivity":
 			lab.npc.faction_id = 2
 			lab.npc.issue_command(TerrainTestNPC.Command.STOP)
@@ -257,11 +370,9 @@ func _r2_fixture(name: String) -> Dictionary:
 			SiteEnvironment._add_resource(data, SiteEnvironment.Kind.TIMBER, data.index(cell), 4, 0)
 			SiteEnvironment.rebuild_indexes(data)
 			if not _r2_ok(): return {"ok": false}
-			var contact: Dictionary = SiteRuntime.fire_receive_impact(data, {"site_id": str(data.site.id), "projectile_id": 1,
-				"event_id": "arrow:1", "action_time": lab.fire_action_cursor, "type": "ground", "cell": cell,
-				"remaining_heat_budget": 20.0, "heat_rate": 100.0, "max_seconds": 0.2, "heat_transfer": 1.0, "contact_scale": 1.0})
+			var contact: Dictionary = _r2_real_fire_contact(lab, cell)
 			if not _r2_ok(): return {"ok": false}
-			if not _r2_check(contact.ok and contact.accepted, str(contact)): return {"ok": false}
+			if not _r2_check(not contact.is_empty() and int(contact.projectile_id) == 1 and str(contact.event_id) == "arrow:1" and int(data.site.fire.receipt_floor) == 1 and data.site.fire.receipt_ids.is_empty() and lab._fire_boundary_error.is_empty() and SiteRuntime.fire_active(data), str(contact)): return {"ok": false}
 		var _r2_operation_5: Dictionary = lab.site_controller._capture_for_save()
 		if not _r2_ok(): return {"ok": false}
 		if not _r2_check(_r2_operation_5.ok, "_r2_fixture: original condition failed"): return {"ok": false}
@@ -284,7 +395,7 @@ func _r2_fixture(name: String) -> Dictionary:
 	r2_source_files[name] = {"path": path, "sha256": FileAccess.get_sha256(path)}
 	return {"ok": true, "data": loaded.data, "at": at, "path": path}
 
-func _r2_birth(data: TerrainData, identity: int, is_npc: bool) -> bool:
+func _r2_birth(data: TerrainData, identity: int, is_npc: bool, fire_archer: bool = false) -> bool:
 	var body: TerrainTestCharacter = TerrainTestNPC.new() if is_npc else TerrainTestCharacter.new()
 	body.person_id = identity
 	body.data = data
@@ -299,6 +410,10 @@ func _r2_birth(data: TerrainData, identity: int, is_npc: bool) -> bool:
 	if not _r2_ok(): return false
 	if not _r2_check(body.item_state.is_empty(), "Newborn has no existing equipment to delete"): return false
 	initial.appearance.parts.cape = "none"
+	if fire_archer:
+		initial.appearance.parts.weapon = "bow_01"
+		initial.appearance.parts.shield = "none"
+		initial.training = 100.0
 	body.restore_state(initial)
 	if not _r2_ok(): return false
 	var seeded: Dictionary = SiteRuntime.seed_person_equipment(data, body.item_state, identity, initial.appearance)
@@ -510,6 +625,7 @@ func _run() -> void:
 			var cancelled: Dictionary = _r2_cancel(fixture.data)
 			if not _r2_ok(): return
 			r2_evidence.append(cancelled)
+	if not _r2_check(_r2_fire_wire_negative_checked, "actual original fire exercised strict raw-versus-wire negative control"): return
 	var sources := {}
 	for path: String in ["res://scripts/terrain_lab/terrain_lab.gd", "res://scripts/terrain_lab/site_controller.gd",
 		"res://scripts/terrain_lab/site_region_cold.gd", "res://scripts/terrain_lab/site_sustain.gd", "res://scripts/region_lab/region_save_slot.gd"]:

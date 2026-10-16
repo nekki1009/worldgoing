@@ -2175,7 +2175,20 @@ func fatigue_work_minutes(manual: bool, minutes: float) -> float:
 		var actual := float(allocation.get("participant_seconds", {}).get(original.person_id, 0.0))
 		_fatigue_work_seconds[original] = float(_fatigue_work_seconds.get(original, 0.0)) + actual
 		if original.person_id != controlled_person_id(): original.work_resting = str(allocation.get("paused", "")) == "REST"
-		return float(allocation.get("effective_seconds", 0.0)) / 60.0
+		var productive_seconds: float = float(allocation.get("effective_seconds", 0.0))
+		for request: Dictionary in _shared_work_requests:
+			if request.get("provider") != "runtime" or request.get("key") != key: continue
+			var task: Dictionary = request.get("task", {})
+			var feature: Dictionary = terrain.site.features.get(str(task.get("target", "")).trim_prefix("feature:"), {})
+			if task.get("action") == "operate" and int(task.get("work_slot", -1)) >= 0 and str(feature.get("kind", "")) in SiteRuntime.FARM_KINDS + SiteRuntime.PASTURE_KINDS:
+				var productivity: float = float(request.get("runtime_productivity", NAN))
+				if not is_finite(productivity) or productivity <= 0.0:
+					site_controller.latch_original_step_fault(SiteRuntime.fail("WORK_SHARED_PREFLIGHT", "原農牧工位 callback 缺已准入產能"))
+					return 0.0
+				# Runtime applies this same slot/water/building factor once after the callback.
+				productive_seconds /= productivity
+			break
+		return productive_seconds / 60.0
 	var actor: TerrainTestCharacter = character if manual else npc
 	if not actor_present(actor): return 0.0
 	var autonomous := actor.person_id != controlled_person_id()

@@ -10103,6 +10103,9 @@ func _prepare_original_work_inputs() -> Dictionary:
 			if not str(worker.target).is_empty():
 				var goal := data.cell_from_index(int(worker.work_cell))
 				if lab.npc.terrain_cell == goal and not lab.npc.is_moving():
+					# Autonomous work owns this arrived body; user orders first release_worker().
+					if lab.npc.command != TerrainTestNPC.Command.STOP:
+						lab.npc.issue_command(TerrainTestNPC.Command.STOP)
 					worker.mode = "work"
 					worker_ready = true
 				elif not lab.npc.is_moving() and 0.5 - _work_elapsed <= lab.ACTION_TIME_EPSILON:
