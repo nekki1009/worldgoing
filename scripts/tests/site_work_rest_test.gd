@@ -13,7 +13,7 @@ func _run() -> void:
 	lab.bind_terrain(data)
 	var npc := lab.npc
 	npc.faction_id = lab.character.faction_id
-	var built := Runtime.request_build(data, "house", [data.index(Vector2i(22, 20))])
+	var built: Dictionary = Runtime.request_build(data, "house", _footprint(data, "house", Vector2i(22, 20)))
 	assert(built.ok)
 	var feature: Dictionary = data.site.features[str(built.feature)]
 	var task := "feature:" + str(built.feature)
@@ -21,8 +21,11 @@ func _run() -> void:
 	data.site.worker.mode = "work"
 	data.site.worker.cell = feature.entrance
 	data.site.worker.cargo.wood = 2
-	assert(npc.place(data.cell_from_index(feature.entrance), true))
-	assert(lab.character.place(Vector2i(18, 20), true))
+	var npc_placed: bool = npc.place(data.cell_from_index(feature.entrance), true)
+	assert(npc_placed)
+	var actor_placed: bool = lab.character.place(Vector2i(18, 20), true)
+	assert(actor_placed)
+	lab.site_controller.enable_worker()
 	npc.fatigue = 79.99
 	lab._process(1.0)
 	var checkpoint := float(feature.progress)
@@ -36,7 +39,8 @@ func _run() -> void:
 	assert(npc.work_resting and feature.progress == checkpoint and data.site.worker.target == task)
 	lab.site_controller._capture_positions()
 	var path := "res://.godot-temp/site_resources_contract/work_rest.json"
-	assert(Store.save(data, path).ok)
+	var saved: Dictionary = Store.save(data, path)
+	assert(saved.ok)
 	var loaded := Store.load_site(path)
 	assert(loaded.ok)
 	lab.bind_terrain(loaded.data)
@@ -72,7 +76,8 @@ func _run() -> void:
 	assert(not npc.work_resting and float(feature.progress) > checkpoint and data.site.worker.target == task)
 	# Player autonomy: the same efficiency formula still permits work at 100.
 	lab.character.fatigue = 100.0
-	assert(is_equal_approx(lab.fatigue_work_minutes(true, 1.0), 1.0 / 1.3))
+	var manual_minutes: float = lab.fatigue_work_minutes(true, 1.0)
+	assert(is_equal_approx(manual_minutes, 1.0 / 1.3))
 	assert(not lab.character.work_resting)
 	lab._fatigue_work_seconds.clear()
 	npc.fatigue = 85.0
@@ -81,7 +86,8 @@ func _run() -> void:
 	paused = true
 	lab._process(1.0)
 	paused = false
-	assert(npc.capture_state() == state_before)
+	var state_after: Dictionary = npc.capture_state()
+	assert(state_after == state_before)
 	lab.site_controller.release_worker()
 	lab._process(0.1)
 	assert(not data.site.worker_enabled and data.site.worker.target == "" and data.site.worker.cargo == {"wood": 2})
@@ -89,13 +95,16 @@ func _run() -> void:
 	assert("輪休" in lab.site_controller.worker_label.text and "50" in lab.site_controller.worker_label.text)
 	if DisplayServer.get_name() != "headless":
 		root.size = Vector2i(1440, 900)
-		var scroll := lab.site_controller.panel.get_child(0) as ScrollContainer
+		lab.site_controller.open_window("work")
+		var scroll: ScrollContainer = lab.site_controller.formal_windows.work.get_child(0).get_child(0) as ScrollContainer
+		assert(scroll != null)
 		await process_frame
 		scroll.ensure_control_visible(lab.site_controller.worker_label)
 		await process_frame
 		await RenderingServer.frame_post_draw
 		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("res://.visual_captures/site_work_rest"))
-		assert(root.get_texture().get_image().save_png("res://.visual_captures/site_work_rest/worker.png") == OK)
+		var worker_image_saved: Error = root.get_texture().get_image().save_png("res://.visual_captures/site_work_rest/worker.png")
+		assert(worker_image_saved == OK)
 	lab.queue_free()
 	await process_frame
 	print("SITE WORK REST PASS: real controller/production, 80 checkpoint and 50 resume, source task/cargo/save retained, invalid/legacy flag, threat and pause, player autonomy; existing one-worker slice")

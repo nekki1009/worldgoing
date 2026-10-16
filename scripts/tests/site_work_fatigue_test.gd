@@ -18,7 +18,7 @@ func _run() -> void:
 	lab.npc.faction_id = lab.character.faction_id
 	var actor := lab.character
 	var npc := lab.npc
-	var cells: Array[int] = [data.index(Vector2i(22, 20))]
+	var cells: Array[int] = _footprint(data, "house", Vector2i(22, 20))
 	var building := Runtime.request_build(data, "house", cells)
 	assert(building.ok)
 	var feature: Dictionary = data.site.features[str(building.feature)]
@@ -27,6 +27,7 @@ func _run() -> void:
 	data.site.worker.cell = feature.entrance
 	npc.place(data.cell_from_index(feature.entrance), true)
 	actor.place(Vector2i(18, 20), true)
+	lab.site_controller.enable_worker()
 	npc.fatigue = 70
 	# Actual controller -> Runtime -> person, then shared body/fatigue boundary.
 	lab._process(1.0)
@@ -72,10 +73,10 @@ func _run() -> void:
 	data.site.inventory.clay = 0
 	Runtime.advance(data, 1, true, false, Callable(), lab.fatigue_work_minutes)
 	near(npc.fatigue, 50, "missing production input")
-	var farm := _build(data, "farm", Vector2i(22, 22))
+	var farm: String = _build(data, "farm", Vector2i(22, 27))
 	var field: Dictionary = data.site.features[farm]
-	Runtime.assign_task(data, {"ok": true, "target": "feature:" + farm, "action": "operate", "cell": field.entrance, "message": ""})
-	data.site.worker.cell = field.entrance
+	Runtime.assign_task(data, _operate_task(data, farm))
+	data.site.worker.cell = data.site.worker.work_cell
 	data.site.worker.mode = "work"
 	data.site.water_status[farm] = {"supplied": 0.0}
 	Runtime.advance(data, 0.1, true, false, Callable(), lab.fatigue_work_minutes)
@@ -98,7 +99,8 @@ func _run() -> void:
 			break
 	assert(not source.is_empty())
 	Env.change(data, source, {"discovered": true})
-	assert(Runtime.begin_manual(data, source, work_cell).ok)
+	var manual_started: Dictionary = Runtime.begin_manual(data, source, work_cell)
+	assert(manual_started.ok)
 	actor.fatigue = 100
 	Runtime.advance(data, 1, false, true, Callable(), lab.fatigue_work_minutes)
 	near(float(data.site.manual.progress), 1.0 / 1.3, "manual resource work")
@@ -117,7 +119,8 @@ func _run() -> void:
 	near(npc.fatigue, 50, "missing gathering tools")
 	data.site.inventory.tools = 100
 	data.site.worker.target = ""
-	assert(Runtime.begin_manual(data, source, work_cell).ok)
+	var manual_started_2: Dictionary = Runtime.begin_manual(data, source, work_cell)
+	assert(manual_started_2.ok)
 	actor.fatigue = 50
 	data.site.manual.cargo = {"stone": Runtime.CARRY_CAPACITY}
 	Runtime.advance(data, 1, false, true, Callable(), lab.fatigue_work_minutes)
@@ -140,16 +143,20 @@ func _run() -> void:
 		root.size = Vector2i(1440, 900)
 		var output := "res://.visual_captures/site_work_fatigue"
 		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(output))
-		var scroll := lab.site_controller.panel.get_child(0) as ScrollContainer
+		lab.site_controller.open_window("work")
+		var scroll: ScrollContainer = lab.site_controller.formal_windows.work.get_child(0).get_child(0) as ScrollContainer
+		assert(scroll != null)
 		await process_frame
 		scroll.ensure_control_visible(lab.site_controller.worker_label)
 		await process_frame
 		await RenderingServer.frame_post_draw
-		assert(root.get_texture().get_image().save_png(output + "/worker.png") == OK)
+		var worker_image_saved: Error = root.get_texture().get_image().save_png(output + "/worker.png")
+		assert(worker_image_saved == OK)
 		scroll.scroll_vertical = 0
 		await process_frame
 		await RenderingServer.frame_post_draw
-		assert(root.get_texture().get_image().save_png(output + "/player.png") == OK)
+		var player_image_saved: Error = root.get_texture().get_image().save_png(output + "/player.png")
+		assert(player_image_saved == OK)
 	lab.queue_free()
 	await process_frame
 	print("SITE WORK FATIGUE PASS: real controller construction/rest, manual/NPC gathering, productive workshop time/input/output, tools/occupancy/cargo/input waits, pause and visible Site labels")
