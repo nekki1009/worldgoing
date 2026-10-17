@@ -1390,11 +1390,37 @@ static func _int_army_ids(army: Dictionary) -> void:
 		var person: Variant = row.get("person_id")
 		if person is float and is_finite(person) and person == floorf(person): row.person_id = int(person)
 
+## P4 S2 guard: a version 4 family identity cannot yet travel with a player party
+## (the destination adopts no family registry for non-technology families, and the
+## family registry is P6). Refused before anything is copied or changed.
+static func family_departure_guard(state: Dictionary, controller: String) -> Dictionary:
+	var family: Variant = state.get("family", {})
+	if controller == "player" and family is Dictionary and int(family.get("version", 0)) == 4:
+		return fail("RELATION_OPEN", "家族身分（v4）尚未能隨旅行移交；先保留在原地")
+	return {"ok": true}
+
+## P4 S2 guard: a settlement whose nation would leave the origin (every member of
+## that equipment nation is a mover) would be left pointing at nothing. Partial
+## departures keep the nation at origin and stay allowed.
+static func settlement_nation_guard(state: Dictionary, movers: Dictionary) -> Dictionary:
+	var settlement: Variant = state.get("settlement", {})
+	var nation_id: Variant = settlement.get("nation_id") if settlement is Dictionary else null
+	if not nation_id is String: return {"ok": true}
+	var nations: Variant = state.get("equipment_nations", {})
+	if not nations is Dictionary or not nations.has(nation_id): return {"ok": true}
+	var nation: Variant = nations[nation_id]
+	if not nation is Dictionary or not nation.get("members") is Array or nation.members.is_empty(): return {"ok": true}
+	for member: Variant in nation.members:
+		if not movers.has(int(member)): return {"ok": true}
+	return fail("RELATION_OPEN", "聚落所屬國家會整國離開；先改派或解除聚落國家")
+
 static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dictionary:
 	if state.has("crowd"): return fail("UNSUPPORTED", "群眾模式（Crowd）暫不支援整隊出發")
 	if state.has("family"):
 		var version := int(state.family.get("version", 0))
 		if version not in [1, 2, 3, 4] or version != 3 and not Family.validate_family(state.family, str(state.get("id", ""))): return fail("INVALID_FAMILY", "必要原家族 schema 未准入")
+	var p4_family_guard: Dictionary = family_departure_guard(state, str(spec.get("controller", "player")))
+	if not p4_family_guard.ok: return p4_family_guard
 	var family_transfer := {}
 	var prepared := prepare_identity(state, str(spec.get("namespace", "")))
 	if not prepared.ok: return prepared
@@ -1492,6 +1518,8 @@ static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dicti
 		if movers.has(int(key)): return fail("RELATION_OPEN", "押送尚未結束")
 		for identity: Variant in origin.escort_orders[key].get("captives", []):
 			if movers.has(int(identity)): return fail("RELATION_OPEN", "押送尚未結束")
+	var settlement_guard := settlement_nation_guard(origin, movers)
+	if not settlement_guard.ok: return settlement_guard
 	# Partial national/corps membership remains in its ORIGINAL organisation
 	# owner. Only its immutable original-person/team references accompany us.
 	var organization := SiteEquipmentOrders.prepare_region_departure(state, movers, selected_teams, token, origin.travel_identity)
