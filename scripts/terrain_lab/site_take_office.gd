@@ -7,8 +7,16 @@ const Settlement := preload("res://scripts/terrain_lab/site_settlement.gd")
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 
 ## Only the controlled person, acting for the head seat, may take an office in this slice.
-static func authority_refusal(authority: Variant, requester_id: int, controlled_id: int) -> Dictionary:
+## R5 S5F: a vacancy_contest authority is accepted only for the matching open episode at its deadline, and only for its
+## candidate as requester; the episode is passed in by the owner (empty when none matches).
+static func authority_refusal(authority: Variant, requester_id: int, controlled_id: int, episode: Dictionary = {}) -> Dictionary:
 	if not authority is Dictionary: return Runtime.fail("NO_AUTHORITY", "缺少接任授權")
+	if str(authority.get("kind", "")) == "vacancy_contest":
+		if episode.is_empty() or str(episode.get("episode_id", "")) != str(authority.get("episode_id", "")): return Runtime.fail("NO_AUTHORITY", "未對應開放中的空缺紀錄")
+		if str(episode.get("status", "")) != "open" or str(episode.timer.status) != "deadline_reached": return Runtime.fail("NO_AUTHORITY", "空缺尚未到期或已結束")
+		if requester_id <= 0 or not episode.candidates.has(requester_id): return Runtime.fail("NO_AUTHORITY", "得位者須是此空缺的候選人")
+		if str(authority.get("seat", "head")) != "head": return Runtime.fail("UNSUPPORTED", "副職接任尚未支援")
+		return {"ok": true, "code": "", "message": ""}
 	if str(authority.get("kind", "")) != "controlled": return Runtime.fail("NO_AUTHORITY", "本階段只接受受控授權")
 	if requester_id <= 0 or requester_id != controlled_id: return Runtime.fail("NO_AUTHORITY", "須由目前受控的人本人接任")
 	if str(authority.get("seat", "head")) != "head": return Runtime.fail("UNSUPPORTED", "副職接任尚未支援")

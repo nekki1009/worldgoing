@@ -255,7 +255,8 @@ func appoint_head(requester_id: int, person_id: int) -> Dictionary:
 func take_vacant_head(requester_id: int, person_id: int, authority: Variant) -> Dictionary:
 	var family: Variant = lab.terrain.site.get("family")
 	if not validate_family(family, str(lab.terrain.site.id)): return Runtime.fail("UNREGISTERED", "先明確登錄家族名單")
-	var auth: Dictionary = Take.authority_refusal(authority, requester_id, _controlled_id())
+	var contest_episode: Dictionary = _contest_episode(lab.terrain.site, authority)
+	var auth: Dictionary = Take.authority_refusal(authority, requester_id, _controlled_id(), contest_episode)
 	if not auth.ok: return auth
 	var members := local_member_ids(family)
 	if not members.has(person_id) or not members.has(requester_id): return Runtime.fail("NO_TARGET", "接任人須是登錄族人")
@@ -266,9 +267,36 @@ func take_vacant_head(requester_id: int, person_id: int, authority: Variant) -> 
 	if offices.is_empty(): offices = SiteOffices.default_offices("family", -1, person_id != _controlled_id())
 	var committed: Dictionary = Take.commit_head(offices, person_id)
 	if not committed.ok: return committed
+	var closed_episode: Dictionary = {}
+	if not contest_episode.is_empty():
+		var closed: Dictionary = VacancyEpisode.close(contest_episode, person_id)
+		if not closed.ok: return closed
+		closed_episode = closed.episode
 	family.version = maxi(2, int(family.get("version", 1)))
 	family.offices = committed.offices
+	if not closed_episode.is_empty():
+		var episodes: Dictionary = lab.terrain.site.vacancy_episodes.duplicate(true)
+		episodes[str(closed_episode.episode_id)] = closed_episode
+		lab.terrain.site.vacancy_episodes = episodes
 	return Runtime.ok("已就任家主 #%d" % person_id, {"revision": int(committed.offices.revision)})
+
+## R5 S5F: the open episode named by a vacancy_contest authority, or empty.
+func _contest_episode(site: Dictionary, authority: Variant) -> Dictionary:
+	if not authority is Dictionary or str(authority.get("kind", "")) != "vacancy_contest" or not site.has("vacancy_episodes"): return {}
+	var episodes: Dictionary = site.vacancy_episodes
+	return episodes.get(str(authority.get("episode_id", "")), {})
+
+## R5 S5F: the deadline close and winner. Zero votes or no candidate is pending (no change). The winner takes the head
+## through take_vacant_head with the matching vacancy_contest authority, in one commit with the episode close.
+func settle_contest(leadership: Dictionary = {}) -> Dictionary:
+	var site: Dictionary = lab.terrain.site
+	var episodes: Dictionary = site.vacancy_episodes if site.has("vacancy_episodes") else {}
+	var open: Dictionary = VacancyEpisode.find_open(episodes, "family", str(site.id))
+	if open.is_empty(): return Runtime.fail("NO_TARGET", "沒有開放中的家族空缺")
+	var decided: Dictionary = VacancyEpisode.decide(open, leadership)
+	if not decided.ok: return decided
+	var winner := int(decided.winner)
+	return take_vacant_head(winner, winner, {"kind": "vacancy_contest", "episode_id": str(open.episode_id)})
 
 ## R5 S3F: the vacancy episode hook. Explicit call (the per-tick settle path is a later slice). An episode opens when the
 ## family head seat has no awake holder and no designated heir (one open episode per owner, never an overwrite). An awake
@@ -290,6 +318,13 @@ func observe_vacancy(onset_day: int) -> Dictionary:
 			episodes[str(open.episode_id)] = cancelled.episode
 			result.cancelled = true
 			changed = true
+	elif heir_designated and not open.is_empty():
+		# R5 S5F (D7): the designated heir is in place; the open episode is cancelled and kept, the seat is not overwritten.
+		var heir_cancelled: Dictionary = VacancyEpisode.cancel(open, "heir_return")
+		if not heir_cancelled.ok: return heir_cancelled
+		episodes[str(open.episode_id)] = heir_cancelled.episode
+		result.cancelled = true
+		changed = true
 	elif not heir_designated and open.is_empty():
 		var episode: Dictionary = VacancyEpisode.empty_episode("family", str(site.id), "family-%d-%d" % [onset_day, episodes.size()], onset_day)
 		episodes[str(episode.episode_id)] = episode
