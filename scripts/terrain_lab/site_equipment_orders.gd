@@ -155,6 +155,33 @@ func set_nation_duty_ai(requester_id: int, nation_id: String, enabled: bool) -> 
 	nation.offices.duty_ai = enabled
 	return Runtime.ok("已%s國家職責 AI" % ("開啟" if enabled else "關閉"))
 
+## R4b-1 (OFFICE R4): the 贖務官 (nation.ransom) binds the nation's own treasury to one
+## complete warehouse it owns. Binding only: no coin moves, nothing is paid or released.
+func bind_nation_treasury(requester_id: int, nation_id: String, feature_id: String) -> Dictionary:
+	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
+	if nation.is_empty() or not nation.has("offices"): return Runtime.fail("NO_TARGET", "須為已建立職位的正式國家")
+	var resolved: Dictionary = nation_duty_resolve(nation, "nation.ransom", true)
+	if not bool(resolved.ok) or int(resolved.decider) != requester_id: return SiteOffices.refusal(resolved, requester_id, nation.offices)
+	var candidate: Dictionary = RansomData.bind_candidate(lab.terrain.site, nation_id, nation, feature_id)
+	if not bool(candidate.ok): return Runtime.fail(str(candidate.code), "國庫綁定未通過，原狀未變")
+	nation_offices(nation) # Stores the complete seat list (one revision step) only after authority is proven.
+	nation.ransom_data = candidate.nation.ransom_data
+	lab.terrain.site.stockpiles[feature_id].nation_id = nation_id
+	return Runtime.ok("已綁定本國國庫；硬幣仍在原倉，未付款", {"feature_id": feature_id})
+
+## R4b-1: the 贖務官 sets the per-person / daily / reserve ceilings. Numbers only.
+func set_nation_ransom_policy(requester_id: int, nation_id: String, per_person: int, daily: int, reserve: int) -> Dictionary:
+	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
+	if nation.is_empty() or not nation.has("offices"): return Runtime.fail("NO_TARGET", "須為已建立職位的正式國家")
+	var resolved: Dictionary = nation_duty_resolve(nation, "nation.ransom", true)
+	if not bool(resolved.ok) or int(resolved.decider) != requester_id: return SiteOffices.refusal(resolved, requester_id, nation.offices)
+	var candidate: Dictionary = RansomData.policy_candidate(lab.terrain.site, nation_id, nation, per_person, daily, reserve)
+	if not bool(candidate.ok): return Runtime.fail(str(candidate.code), "國庫政策未通過，原狀未變")
+	nation_offices(nation)
+	nation.ransom_data = candidate.nation.ransom_data
+	return Runtime.ok("已更新贖金政策上限", {"per_person": per_person, "daily": daily, "reserve": reserve})
+
+
 func set_standard(requester_id: int, nation_id: String, standard_id: String, display_name: String, slots: Dictionary, dyes: Variant = null) -> Dictionary:
 	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
 	if not _can_set_standard(requester_id, nation):

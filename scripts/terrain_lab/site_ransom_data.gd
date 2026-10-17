@@ -94,3 +94,50 @@ static func quote(captivity: Dictionary, resolved_prison_decider: Dictionary) ->
 	return {"ok": true, "code": "QUOTE_DATA_ONLY", "coin": price, "base": base,
 		"rank_source": "legacy_unknown" if rank == "unknown" else "captured_snapshot",
 		"decider": resolved_prison_decider.duplicate(true)}
+
+## R4b-1 candidate: bind the nation's own treasury to one complete warehouse it owns.
+## Pure: the caller has already resolved the nation.ransom duty. No coin moves here.
+static func bind_candidate(site: Dictionary, nation_id: String, nation: Dictionary, feature_id: String) -> Dictionary:
+	if nation_id.begins_with("trial_team_") or not nation.has("offices") or not nation.has("faction_id") \
+		or not Technology.integer(nation.faction_id, 0, 2147483647): return {"ok": false, "code": "NO_FORMAL_NATION"}
+	var record: Dictionary = nation.ransom_data if nation.has("ransom_data") else empty_record()
+	if not valid_record(record): return {"ok": false, "code": "CORRUPT_STATE"}
+	if not record.treasury.is_empty(): return {"ok": false, "code": "TREASURY_BOUND"}
+	var features: Variant = site.get("features", {})
+	var stockpiles: Variant = site.get("stockpiles", {})
+	if not features is Dictionary or not stockpiles is Dictionary: return {"ok": false, "code": "CORRUPT_STATE"}
+	var feature: Variant = features.get(feature_id)
+	var stock: Variant = stockpiles.get(feature_id)
+	if not feature is Dictionary or not stock is Dictionary: return {"ok": false, "code": "NO_TARGET"}
+	if str(feature.get("kind", "")) != "warehouse" or str(feature.get("stage", "")) != "complete": return {"ok": false, "code": "NOT_WAREHOUSE"}
+	if not Technology.integer(feature.get("owner_faction"), 0, 2147483647) or int(feature.owner_faction) != int(nation.faction_id): return {"ok": false, "code": "FOREIGN_FACTION"}
+	if stock.has("nation_id"): return {"ok": false, "code": "STOCK_CLAIMED"}
+	var candidate_record: Dictionary = record.duplicate(true)
+	candidate_record.treasury = {"site_id": str(site.get("id", "")), "feature_id": feature_id, "holder": Stocks.identity(feature_id)}
+	var candidate_nation: Dictionary = nation.duplicate(true)
+	candidate_nation.ransom_data = candidate_record
+	var candidate_stock: Dictionary = stock.duplicate(true)
+	candidate_stock.nation_id = nation_id
+	if not valid_nations({nation_id: candidate_nation}, _view(site, feature_id, candidate_stock)): return {"ok": false, "code": "CORRUPT_STATE"}
+	return {"ok": true, "code": "", "nation": candidate_nation, "stock": candidate_stock}
+
+## R4b-1 policy candidate: ceilings only. `authorized` stays false; R4b-2 owns activation.
+static func policy_candidate(site: Dictionary, nation_id: String, nation: Dictionary, per_person: int, daily: int, reserve: int) -> Dictionary:
+	if nation_id.begins_with("trial_team_") or not nation.has("offices"): return {"ok": false, "code": "NO_FORMAL_NATION"}
+	var record: Dictionary = nation.ransom_data if nation.has("ransom_data") else empty_record()
+	if not valid_record(record): return {"ok": false, "code": "CORRUPT_STATE"}
+	var candidate_record: Dictionary = record.duplicate(true)
+	candidate_record.policy.per_person = per_person
+	candidate_record.policy.daily = daily
+	candidate_record.policy.reserve = reserve
+	if not valid_record(candidate_record): return {"ok": false, "code": "INVALID_POLICY"}
+	var candidate_nation: Dictionary = nation.duplicate(true)
+	candidate_nation.ransom_data = candidate_record
+	if not valid_nations({nation_id: candidate_nation}, _view(site, "", {})): return {"ok": false, "code": "CORRUPT_STATE"}
+	return {"ok": true, "code": "", "nation": candidate_nation}
+
+## Read-only validation view: the site's own features and stock, with one candidate stock replaced.
+static func _view(site: Dictionary, feature_id: String, stock: Dictionary) -> Dictionary:
+	var stockpiles: Dictionary = site.get("stockpiles", {}).duplicate(false)
+	if not feature_id.is_empty(): stockpiles[feature_id] = stock
+	return {"id": site.get("id", ""), "minute": site.get("minute", 0), "features": site.get("features", {}), "stockpiles": stockpiles}
