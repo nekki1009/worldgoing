@@ -317,6 +317,9 @@ func setup(scene: Node2D) -> void:
 	person_actions.captivity_changed = _captivity_changed
 	person_actions.ransom_exchange_query = captivity_supply.ransom_exchange_query
 	person_actions.ransom_exchange_committed = captivity_supply.ransom_exchange_committed
+	person_actions.coin_ransom_query = captivity_supply.coin_ransom_query
+	person_actions.coin_ransom_committed = captivity_supply.coin_ransom_committed
+	person_actions.coin_ransom_carried_query = captivity_supply.coin_ransom_carried_query
 	equipment_orders.init(lab, person_actions)
 	equipment_orders.nation_build_request = _nation_build_request
 	equipment_orders.nation_arsenal_request = _nation_arsenal_request

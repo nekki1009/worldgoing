@@ -6,6 +6,10 @@ const CrowdOwner = preload("res://scripts/terrain_lab/crowd_person_owner.gd")
 const Sustain = preload("res://scripts/terrain_lab/site_sustain.gd")
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const RANSOM_RATIONS := 100
+const RansomData = preload("res://scripts/terrain_lab/site_ransom_data.gd")
+const Technology = preload("res://scripts/terrain_lab/site_technology.gd")
+const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
+const PersonPersonality = preload("res://scripts/terrain_lab/person_personality.gd")
 var controller: Variant
 var _prepared: Dictionary = {}
 
@@ -704,3 +708,124 @@ func ransom_exchange_committed(query: Dictionary) -> void:
 	# Membership commit follows synchronously and never rewrites stock/open food.
 	query.source_entry.revision = int(query.source_entry.revision) + 1
 	query.destination_entry.revision = int(query.destination_entry.revision) + 1
+
+## R4c-2: coin ransom query (decisions D1-D10). Read-only: D4 authority, D6 prison decider, D7 quote and
+## ceilings (RansomData.spend_candidate), and D2 captor representative's carried supply. The job publishes.
+func coin_ransom_query(nation_id: String, payer_id: int, target_id: int, representative_id: int) -> Dictionary:
+	var site: Dictionary = controller.lab.terrain.site
+	var relation: Dictionary = site.get("captivity", {}).get(str(target_id), {})
+	var nation: Dictionary = site.get("equipment_nations", {}).get(nation_id, {})
+	if relation.is_empty() or nation.is_empty() or not nation.has("offices") or not nation.has("ransom_data"):
+		return Runtime.fail("NO_TARGET", "須為已拘押且已綁定國庫的本國")
+	var orders: Variant = controller.equipment_orders
+	var resolved: Dictionary = orders.nation_duty_resolve(nation, "nation.ransom", true)
+	var authorizer: int = int(nation.ransom_data.policy.get("authorized_by", -1))
+	var live: bool = bool(resolved.ok) and int(resolved.decider) == payer_id and authorizer == payer_id and bool(orders._nation_person_ok(nation, payer_id))
+	if not live:
+		return Runtime.fail("STALE_AUTHORITY", "贖金授權已非現任贖務官，或授權人已失能；原狀未變")
+	# R4c-2 decision (2026-10-17 revision, option c): a field captive (not confined) is released by the captor team exactly
+	# as in food. No settlement.prison confirmation here; D6 applies only to prison-confined releases (refused as CONFINED).
+	if not str(relation.get("prison_id", "")).is_empty(): return Runtime.fail("CONFINED", "監中釋放尚未支援（待後續分片）；原狀未變")
+	# Pricing person: the captor team's authorized representative (the receiver). RansomData.quote's validation is unchanged;
+	# its duty_id token must stay "settlement.prison" (the validator's required value), so it is only a data label here.
+	var jailer: int = representative_id
+	var ref: Dictionary = controller.person_actions._technology_ref(jailer)
+	if not Technology.valid_ref(ref):
+		return Runtime.fail("NO_REF", "收款代表 #%d 的 PersonRef 無效" % jailer)
+	var jailer_person: Dictionary = controller.person_actions._person(jailer)
+	if jailer_person.is_empty():
+		return Runtime.fail("NO_TARGET", "收款代表不在場")
+	var mind: Dictionary = _prison_mind(jailer_person)
+	var priced: Dictionary = RansomData.quote(relation, {"duty_id": "settlement.prison", "person_ref": ref.duplicate(true),
+		"thrift": int(mind.get("thrift", 50)), "mercy": int(mind.get("mercy", 50))})
+	if not bool(priced.ok):
+		return priced
+	var day: int = floori(float(site.get("minute", 0)) / 1440.0)
+	var spend: Dictionary = RansomData.spend_candidate(site, nation_id, nation, int(priced.coin), day, true)
+	if not bool(spend.ok):
+		return Runtime.fail(str(spend.code), "贖金上限、準備金或國庫未通過；原狀未變")
+	var captor_id: int = int(relation.get("captor_id", -1))
+	var recipient: Variant = _authorized_team(representative_id)
+	if recipient == null or _original_team(captor_id) != recipient:
+		return Runtime.fail("AUTHORITY", "收款代表不是原拘押者所屬隊伍")
+	if not controller._team_stopped(recipient):
+		return Runtime.fail("BUSY", "拘押隊伍尚未停止")
+	var second: Dictionary = controller._supply_entry(recipient)
+	if second.is_empty() or not second.delivery.is_empty():
+		return Runtime.fail("BUSY", "拘押隊伍供給不可用或另有交付")
+	var destination: Dictionary = controller._team_food_endpoint(recipient, representative_id, true)
+	if destination.is_empty() or not bool(destination.exists) or not Runtime._resource_stack(destination.inventory):
+		return Runtime.fail("NO_SUPPLY_OWNER", "須先由原交糧入口建立拘押隊伍的實際庫存")
+	if str(destination.key).begins_with("vehicle:"):
+		return Runtime.fail("UNREACHABLE", "硬幣首版須先卸到實際可達岸格")
+	var feature_id: String = str(nation.ransom_data.treasury.feature_id)
+	var stock: Dictionary = site.stockpiles[feature_id]
+	return Runtime.ok("", {"source": stock.cargo, "source_owner": "stockpile:" + feature_id, "source_revision": int(stock.holder.version),
+		"source_entry": stock, "destination": destination.inventory, "destination_owner": "team:%d" % recipient.team_id,
+		"destination_revision": int(second.revision), "destination_entry": second, "price": int(priced.coin),
+		"record": spend.record, "nation": nation, "feature_id": feature_id, "coin_after": int(spend.coin_after)})
+
+func coin_ransom_carried_query(nation_id: String, payer_id: int, target_id: int, representative_id: int) -> Dictionary:
+	var site: Dictionary = controller.lab.terrain.site
+	var relation: Dictionary = site.get("captivity", {}).get(str(target_id), {})
+	var nation: Dictionary = site.get("equipment_nations", {}).get(nation_id, {})
+	if relation.is_empty() or nation.is_empty() or not nation.has("offices") or not nation.has("ransom_data"):
+		return Runtime.fail("NO_TARGET", "須為已拘押且已綁定國庫的本國")
+	var orders: Variant = controller.equipment_orders
+	var resolved: Dictionary = orders.nation_duty_resolve(nation, "nation.ransom", true)
+	var authorizer: int = int(nation.ransom_data.policy.get("authorized_by", -1))
+	var live: bool = bool(resolved.ok) and int(resolved.decider) == payer_id and authorizer == payer_id and bool(orders._nation_person_ok(nation, payer_id))
+	if not live:
+		return Runtime.fail("STALE_AUTHORITY", "贖金授權已非現任贖務官，或授權人已失能；原狀未變")
+	# R4c-2 decision (2026-10-17 revision, option c): a field captive (not confined) is released by the captor team exactly
+	# as in food. No settlement.prison confirmation here; D6 applies only to prison-confined releases (refused as CONFINED).
+	if not str(relation.get("prison_id", "")).is_empty(): return Runtime.fail("CONFINED", "監中釋放尚未支援（待後續分片）；原狀未變")
+	# Pricing person: the captor team's authorized representative (the receiver). RansomData.quote's validation is unchanged;
+	# its duty_id token must stay "settlement.prison" (the validator's required value), so it is only a data label here.
+	var jailer: int = representative_id
+	var ref: Dictionary = controller.person_actions._technology_ref(jailer)
+	if not Technology.valid_ref(ref):
+		return Runtime.fail("NO_REF", "收款代表 #%d 的 PersonRef 無效" % jailer)
+	var jailer_person: Dictionary = controller.person_actions._person(jailer)
+	if jailer_person.is_empty():
+		return Runtime.fail("NO_TARGET", "收款代表不在場")
+	var mind: Dictionary = _prison_mind(jailer_person)
+	var priced: Dictionary = RansomData.quote(relation, {"duty_id": "settlement.prison", "person_ref": ref.duplicate(true),
+		"thrift": int(mind.get("thrift", 50)), "mercy": int(mind.get("mercy", 50))})
+	if not bool(priced.ok):
+		return priced
+	# R4c-3: the payment moves only coin the payer CARRIES (withdrawn at the warehouse, ceilings charged there).
+	var payer_person: Dictionary = controller.person_actions._person(payer_id)
+	if payer_person.is_empty(): return Runtime.fail("NO_TARGET", "付款人不在場")
+	var carried: int = int(payer_person.get("cargo", {}).get("coin", 0))
+	var priced_coin: int = int(priced.coin)
+	if carried < priced_coin: return Runtime.fail("MATERIALS", "付款人身上硬幣不足：需要 %d，持有 %d；原狀未變" % [priced_coin, carried])
+	var captor_id: int = int(relation.get("captor_id", -1))
+	var recipient: Variant = _authorized_team(representative_id)
+	if recipient == null or _original_team(captor_id) != recipient:
+		return Runtime.fail("AUTHORITY", "收款代表不是原拘押者所屬隊伍")
+	if not controller._team_stopped(recipient):
+		return Runtime.fail("BUSY", "拘押隊伍尚未停止")
+	var second: Dictionary = controller._supply_entry(recipient)
+	if second.is_empty() or not second.delivery.is_empty():
+		return Runtime.fail("BUSY", "拘押隊伍供給不可用或另有交付")
+	var destination: Dictionary = controller._team_food_endpoint(recipient, representative_id, true)
+	if destination.is_empty() or not bool(destination.exists) or not Runtime._resource_stack(destination.inventory):
+		return Runtime.fail("NO_SUPPLY_OWNER", "須先由原交糧入口建立拘押隊伍的實際庫存")
+	if str(destination.key).begins_with("vehicle:"):
+		return Runtime.fail("UNREACHABLE", "硬幣首版須先卸到實際可達岸格")
+	var feature_id: String = str(nation.ransom_data.treasury.feature_id)
+	return Runtime.ok("", {"source": payer_person.cargo, "source_owner": "person:%d" % payer_id, "source_revision": int(payer_person.holder.version),
+		"source_entry": payer_person.holder, "destination": destination.inventory, "destination_owner": "team:%d" % recipient.team_id,
+		"destination_revision": int(second.revision), "destination_entry": second, "price": priced_coin,
+		"record": nation.ransom_data.duplicate(true), "nation": nation, "feature_id": feature_id, "coin_after": carried - priced_coin})
+
+func coin_ransom_committed(query: Dictionary) -> void:
+	# The stock holder version is advanced by PersonActions in the same publish; only the captor supply revision here.
+	query.destination_entry.revision = int(query.destination_entry.revision) + 1
+
+func _prison_mind(person: Dictionary) -> Dictionary:
+	var owner: Variant = person.owner
+	if int(person.unit) >= 0:
+		return PersonPersonality.read(owner.combat_units[int(person.unit)].get("personality"))
+	return PersonPersonality.read(owner.get("personality"))

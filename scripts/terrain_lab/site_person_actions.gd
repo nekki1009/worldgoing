@@ -35,6 +35,9 @@ var captivity_supply_commit: Callable # Same arguments; fully prevalidated, no f
 var captivity_changed: Callable # Same arguments; prepared commit must not fail/yield.
 var ransom_exchange_query: Callable # (payer, captive, representative) -> original inventories/owners/revisions.
 var ransom_exchange_committed: Callable # (query); only synchronous owner revision notification.
+var coin_ransom_query: Callable # R4c-2: (nation_id, payer, captive, representative) -> coin query; read-only.
+var coin_ransom_committed: Callable # R4c-2: (query); captor supply revision only, synchronous.
+var coin_ransom_carried_query: Callable # R4c-3: payment query; the payer CARRIES the coin (withdrawn earlier).
 var equipment_orders: Variant # Thin rules provider; this remains the only job clock.
 var _results: Array[Dictionary] = []
 var _jobs: Dictionary = {} # Active commands are transient; save_guard refuses them.
@@ -941,6 +944,101 @@ func begin_ransom(payer_id: int, target_id: int, representative_id: int) -> Dict
 	_jobs[str(payer_id)] = job
 	return Runtime.ok("開始交付一百實物日份贖回；完成前不扣糧", {"seconds": RANSOM_SECONDS})
 
+## R4c-2: payer-side coin ransom (decisions D1-D10, 2026-10-17). A custody job variant of "ransom": the same
+## prepare / validate / single publish as food, with coin as its resource. Authority (D4) and the prison decider
+## (D6) are re-checked by coin_ransom_query on prepare AND on validate; a stale result refuses with nothing moved.
+func begin_coin_ransom(payer_id: int, target_id: int, representative_id: int, nation_id: String) -> Dictionary:
+	if not coin_ransom_query.is_valid() or not coin_ransom_committed.is_valid(): return Runtime.fail("UNSUPPORTED")
+	var crowd_guard := crowd_action_guard([payer_id, target_id, representative_id])
+	if not crowd_guard.ok:
+		return crowd_guard
+	if is_busy(payer_id):
+		return Runtime.fail("BUSY")
+	var payer := _person(payer_id)
+	var target := _person(target_id)
+	var representative := _person(representative_id)
+	if payer.is_empty() or target.is_empty() or representative.is_empty():
+		return Runtime.fail("NO_TARGET")
+	var query := _coin_ransom_context(payer, target, representative, nation_id)
+	if not query.ok:
+		return query
+	var job := _new_job(payer, "ransom", target_id)
+	job.merge({"duration": RANSOM_SECONDS, "representative_id": representative_id,
+		"representative_cell": lab.terrain.index(representative.cell), "representative_hit": int(representative.hit),
+		"payment": "coin", "nation_id": nation_id, "price": int(query.price), "resources": {"coin": int(query.price)},
+		"source_owner": str(query.source_owner), "destination_owner": str(query.destination_owner),
+		"source_revision": int(query.source_revision), "destination_revision": int(query.destination_revision),
+		"source_stock": query.source.duplicate(), "captivity": lab.terrain.site.captivity[str(target_id)].duplicate(),
+		"source_version": int(target.holder.version)})
+	_jobs[str(payer_id)] = job
+	return Runtime.ok("開始原國庫硬幣贖金交付；完成前不扣款", {"seconds": RANSOM_SECONDS, "price": int(query.price)})
+
+## R4c-3: the payer physically withdraws the quoted price from the bound treasury warehouse into its own cargo (the
+## formal transfer). Ceilings and spent are charged HERE (D7); the 10 s payment then moves only the carried coin.
+func withdraw_treasury_coin(payer_id: int, nation_id: String, target_id: int, representative_id: int) -> Dictionary:
+	if not coin_ransom_query.is_valid(): return Runtime.fail("UNSUPPORTED")
+	var payer := _person(payer_id)
+	if payer.is_empty() or not _ready(payer) or is_busy(payer_id): return Runtime.fail("BUSY", "付款人須自由且未作業")
+	var query: Dictionary = coin_ransom_query.call(nation_id, payer_id, target_id, representative_id)
+	if not query.ok: return query
+	var feature_id: String = str(query.feature_id)
+	if not _treasury_adjacent(payer, feature_id): return Runtime.fail("AUTHORITY", "付款人須站在原國庫倉庫旁取款")
+	var stock: Dictionary = lab.terrain.site.stockpiles[feature_id]
+	var price: int = int(query.price)
+	var moved: Dictionary = Runtime.transfer_items(lab.terrain, stock.holder, stock.cargo, payer.holder, payer.cargo, {"coin": price}, [], int(stock.holder.version), int(payer.holder.version))
+	if not moved.ok: return moved
+	query.nation.ransom_data = query.record
+	return Runtime.ok("已由原國庫取出贖金硬幣；尚未付款", {"price": price, "carried": int(payer.cargo.get("coin", 0))})
+
+func _treasury_adjacent(payer: Dictionary, feature_id: String) -> bool:
+	# The formal interaction cell is the warehouse ENTRANCE (the cell construction and use stand on).
+	var feature: Dictionary = lab.terrain.site.get("features", {}).get(feature_id, {})
+	var entrance: int = int(feature.get("entrance", -1))
+	if entrance < 0: return false
+	var cell: Vector2i = lab.terrain.cell_from_index(entrance)
+	return cell == payer.cell or _adjacent(payer.cell, cell)
+
+func _coin_ransom_context(payer: Dictionary, target: Dictionary, representative: Dictionary, nation_id: String, job: Dictionary = {}) -> Dictionary:
+	if not _ready(payer) or not _ready(representative, true) or target.is_empty() or float(target.hp) <= 0.0 or not bool(target.captive) \
+		or not lab.terrain.site.captivity.has(str(target.person_id)):
+		return Runtime.fail("BUSY", "須由雙方清醒自由的實際代表交付")
+	var relation: Dictionary = lab.terrain.site.captivity[str(target.person_id)]
+	if not str(relation.get("prison_id", "")).is_empty():
+		return Runtime.fail("CONFINED", "先由戰俘營相鄰接觸格完成出監解綁")
+	var busy_key := _job_key_for(int(representative.person_id))
+	if not busy_key.is_empty() and (job.get("kind") != "ransom" or not is_same(_jobs[busy_key], job) \
+		or job.get("executor_id") != payer.person_id or job.get("target_id") != target.person_id \
+		or job.get("representative_id") != representative.person_id):
+		return Runtime.fail("BUSY", "拘押代表已有其他未完成作業")
+	if int(payer.faction) != int(target.faction) or int(representative.faction) != int(relation.captor_faction) \
+		or not _adjacent(payer.cell, representative.cell):
+		return Runtime.fail("AUTHORITY", "友方付款代表與拘押方代表須相鄰可達")
+	if not coin_ransom_carried_query.is_valid() or not captivity_change_guard.is_valid() or not captivity_supply_commit.is_valid() or not captivity_changed.is_valid():
+		return Runtime.fail("UNSUPPORTED")
+	var check: Dictionary = captivity_change_guard.call(int(target.person_id), int(relation.captor_id), false)
+	if not check.ok:
+		return check
+	var query: Dictionary = coin_ransom_carried_query.call(nation_id, int(payer.person_id), int(target.person_id), int(representative.person_id))
+	if not query.ok:
+		return query
+	if not Runtime._resource_stack(query.source) or not Runtime._resource_stack(query.destination) or is_same(query.source, query.destination):
+		return Runtime.fail("INVALID", "原國庫或拘押隊伍庫存不合法")
+	return query
+
+## Prepare and validate both call this; food jobs take the original path unchanged.
+func _ransom_custody_query(payer: Dictionary, target: Dictionary, representative: Dictionary, job: Dictionary) -> Dictionary:
+	if job.get("payment") == "coin":
+		return _coin_ransom_context(payer, target, representative, str(job.get("nation_id", "")), job)
+	return _ransom_context(payer, target, representative, job)
+
+## The exact resources a ransom job must carry: food selection, or the coin price for a coin job.
+func _ransom_selection(job: Dictionary, stock: Dictionary) -> Dictionary:
+	if job.get("payment") == "coin":
+		var price: int = int(job.get("price", 0))
+		return {"coin": price} if price > 0 else {}
+	return _gd_custody_ransom_resources(stock)
+
+
 func _begin_binding(executor_id: int, target_id: int, guard_id: int, capturing: bool) -> Dictionary:
 	var crowd_guard := crowd_action_guard([executor_id, target_id, guard_id])
 	if not crowd_guard.ok:
@@ -1296,6 +1394,7 @@ func _commit(job: Dictionary) -> Dictionary:
 		return result
 	var target := _person(int(job.target_id))
 	if str(job.kind) == "ransom":
+		if job.get("payment") == "coin": return Runtime.fail("UNSUPPORTED", "硬幣贖金只走原拘押交付路徑")
 		var query := _ransom_context(executor, target, _person(int(job.representative_id)), job)
 		if not query.ok:
 			return query
@@ -1422,7 +1521,7 @@ func _job_context(job: Dictionary) -> Dictionary:
 	var target := _person(int(job.target_id))
 	if str(job.kind) == "ransom":
 		var representative := _person(int(job.representative_id))
-		var query := _ransom_context(executor, target, representative, job)
+		var query := _ransom_custody_query(executor, target, representative, job)
 		if not query.ok:
 			return query
 		if int(representative.hit) != int(job.representative_hit) or lab.terrain.index(representative.cell) != int(job.representative_cell):
@@ -5602,7 +5701,17 @@ func _gd_custody_ransom_resources(stock: Dictionary) -> Dictionary:
 		left -= quantity
 	return selected if left == 0 else {}
 
+## R4c-2: the coin job D4 authority check, run before the generic custody checks. Food returns ok (no-op).
+func _coin_authority_first(job: Dictionary) -> Dictionary:
+	if job.get("payment") != "coin": return Runtime.ok()
+	var fresh: Dictionary = coin_ransom_query.call(str(job.get("nation_id", "")), int(job.get("executor_id", -1)), int(job.get("target_id", -1)), int(job.get("representative_id", -1)))
+	if not fresh.ok and str(fresh.code) == "STALE_AUTHORITY": return fresh
+	return Runtime.ok()
+
 func prepare_gd_custody_terminal(job: Dictionary, source_only: bool = false) -> Dictionary:
+	# R4c-2: a coin job re-checks the D4 authority FIRST, so a revoked authorization reports STALE_AUTHORITY (not a generic source change).
+	var authority_first: Dictionary = _coin_authority_first(job)
+	if not authority_first.ok: return authority_first
 	if job.get("kind") not in ["capture", "unbind", "ransom", "prison_release"] or _gd_custody_native(job): return Runtime.fail("UNSUPPORTED")
 	if not is_same(_jobs.get(str(int(job.get("executor_id", -1))), {}), job) \
 		or bool(lab.terrain.site.get("paused", false)) or not str(job.get("paused", "")).is_empty() and (not source_only or str(job.paused) != "REST") \
@@ -5647,7 +5756,7 @@ func prepare_gd_custody_terminal(job: Dictionary, source_only: bool = false) -> 
 			"captor_faction": int(executor.faction), "sealed_container": prepared.container_id, "prison_id": ""}
 		prepared.next_relation.merge(_gd_custody_capture_fields(int(prepared.sequence)))
 	elif job.kind == "ransom":
-		prepared.query = _ransom_context(executor, target, _person(int(job.representative_id)), job)
+		prepared.query = _ransom_custody_query(executor, target, _person(int(job.representative_id)), job)
 		if not prepared.query.ok: return prepared.query
 		prepared.source_before = prepared.query.source.duplicate(true)
 		prepared.destination_before = prepared.query.destination.duplicate(true)
@@ -5658,6 +5767,8 @@ func validate_gd_custody_terminal(prepared: Dictionary) -> Dictionary:
 	if prepared.get("ok") != true or prepared.get("published") != false or not prepared.get("source_only") is bool \
 		or not is_same(prepared.get("terrain"), lab.terrain) or not is_same(prepared.get("site_state"), lab.terrain.site): return Runtime.fail("STALE_SOURCE")
 	var job: Dictionary = prepared.get("job", {})
+	var authority_first: Dictionary = _coin_authority_first(job)
+	if not authority_first.ok: return authority_first
 	if job.get("kind") not in ["capture", "unbind", "ransom", "prison_release"] or _gd_custody_native(job) \
 		or not is_same(_jobs.get(str(int(job.get("executor_id", -1))), {}), job) \
 		or bool(lab.terrain.site.get("paused", false)) or _gd_custody_job_signature(job) != prepared.get("job_signature") \
@@ -5706,8 +5817,9 @@ func validate_gd_custody_terminal(prepared: Dictionary) -> Dictionary:
 		expected.merge(_gd_custody_capture_fields(int(prepared.sequence)))
 		if prepared.next_relation != expected: return Runtime.fail("INVALID")
 	elif job.kind == "ransom":
-		var query: Dictionary = _ransom_context(executor, target, _person(int(job.representative_id)), job)
+		var query: Dictionary = _ransom_custody_query(executor, target, _person(int(job.representative_id)), job)
 		if not query.ok: return query
+		if job.get("payment") == "coin" and (int(query.price) != int(job.price) or query.record != prepared.query.record): return Runtime.fail("STALE_AUTHORITY", "贖金價格或授權已變更")
 		var held: Dictionary = prepared.query
 		if not is_same(query.source, held.get("source")) or not is_same(query.destination, held.get("destination")) \
 			or not is_same(query.source_entry, held.get("source_entry")) or not is_same(query.destination_entry, held.get("destination_entry")) \
@@ -5715,7 +5827,7 @@ func validate_gd_custody_terminal(prepared: Dictionary) -> Dictionary:
 			or query.source_owner != held.source_owner or query.destination_owner != held.destination_owner \
 			or int(query.source_revision) != int(held.source_revision) or int(query.destination_revision) != int(held.destination_revision) \
 			or int(query.source_revision) >= 2147483646 or int(query.destination_revision) >= 2147483646 \
-			or job.resources != _gd_custody_ransom_resources(query.source) or not Runtime.can_pay(query.source, job.resources): return Runtime.fail("STALE_SOURCE")
+			or job.resources != _ransom_selection(job, query.source) or not Runtime.can_pay(query.source, job.resources): return Runtime.fail("STALE_SOURCE")
 		var after: Dictionary = query.destination.duplicate(true)
 		Runtime.add_items(after, job.resources)
 		if not Runtime._resource_stack(after): return Runtime.fail("STORAGE_FULL")
@@ -5738,7 +5850,11 @@ func validate_gd_custody_terminal(prepared: Dictionary) -> Dictionary:
 	if capturing and not prepared.loot.is_empty():
 		var final_loot: Dictionary = Runtime.validate_prepared_leave_ground_loot(prepared.loot)
 		if not final_loot.ok: return final_loot
-	if job.kind == "ransom" and (prepared.query.source != prepared.source_before or prepared.query.destination != prepared.destination_before \
+	if job.kind == "ransom" and job.get("payment") == "coin" and (prepared.query.source != prepared.source_before \
+		or prepared.query.destination != prepared.destination_before or int(prepared.query.source_entry.version) != int(prepared.query.source_revision) \
+		or int(prepared.query.destination_entry.revision) != int(prepared.query.destination_revision) \
+		or not is_same(_person(int(job.executor_id)).get("cargo", {}), prepared.query.source)): return Runtime.fail("STALE_SOURCE")
+	if job.kind == "ransom" and job.get("payment") != "coin" and (prepared.query.source != prepared.source_before or prepared.query.destination != prepared.destination_before \
 		or int(prepared.query.source_entry.revision) != int(prepared.query.source_revision) \
 		or int(prepared.query.destination_entry.revision) != int(prepared.query.destination_revision) \
 		or not is_same(site.get("team_supply", {}).get(str(prepared.query.source_owner).get_slice(":", 1)), prepared.query.source_entry) \
@@ -5749,7 +5865,14 @@ func publish_gd_custody_terminal(prepared: Dictionary) -> Dictionary:
 	assert(prepared.ok and not prepared.source_only and not prepared.published)
 	var job: Dictionary = prepared.job
 	var target: Dictionary = prepared.target
-	if job.kind == "ransom":
+	if job.kind == "ransom" and job.get("payment") == "coin":
+		Runtime.add_items(prepared.query.source, job.resources, -1)
+		if int(prepared.query.source.get("coin", 0)) == 0: prepared.query.source.erase("coin")
+		Runtime.add_items(prepared.query.destination, job.resources)
+		prepared.query.source_entry.version = int(prepared.query.source_entry.version) + 1
+		coin_ransom_committed.call(prepared.query)
+		prepared.query.nation.ransom_data = prepared.query.record
+	elif job.kind == "ransom":
 		Runtime.add_items(prepared.query.source, job.resources, -1)
 		for resource: String in prepared.query.source.keys():
 			if int(prepared.query.source[resource]) == 0: prepared.query.source.erase(resource)
