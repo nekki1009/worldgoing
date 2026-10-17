@@ -176,3 +176,25 @@ static func _named_member(nation: Dictionary, identity: int) -> bool:
 	for member: Variant in nation.get("members", []):
 		if int(member) == identity: return true
 	return false
+
+## R4c-1 pure spend candidate: ceilings, reserve and payer authorization for one coin ransom.
+## `authority_ok` is the caller's live check (D4: the current nation.ransom authority equals authorized_by,
+## and authorized_by is still a living member). Moves no coin: the caller applies `coin_after` and `record`
+## in one publish together with the captive release, or changes nothing.
+static func spend_candidate(site: Dictionary, nation_id: String, nation: Dictionary, price: int, day: int, authority_ok: bool) -> Dictionary:
+	if not authority_ok: return {"ok": false, "code": "STALE_AUTHORITY"}
+	if nation_id.begins_with("trial_team_") or not nation.has("ransom_data") or not valid_record(nation.ransom_data): return {"ok": false, "code": "CORRUPT_STATE"}
+	var record: Dictionary = nation.ransom_data
+	if record.treasury.is_empty() or not bool(record.policy.authorized): return {"ok": false, "code": "NOT_AUTHORIZED"}
+	if price < 5 or price > 35: return {"ok": false, "code": "INVALID_PRICE"}
+	if price > int(record.policy.per_person): return {"ok": false, "code": "PER_PERSON_CEILING"}
+	var spent: int = int(record.spent) if int(record.spent_day) == day else 0
+	if spent + price > int(record.policy.daily): return {"ok": false, "code": "DAILY_CEILING"}
+	var stock: Variant = site.get("stockpiles", {}).get(str(record.treasury.feature_id))
+	if not stock is Dictionary or str(stock.get("nation_id", "")) != nation_id: return {"ok": false, "code": "NO_TREASURY_STOCK"}
+	var held: int = int(stock.get("cargo", {}).get("coin", 0))
+	if held - price < int(record.policy.reserve): return {"ok": false, "code": "RESERVE"}
+	var candidate_record: Dictionary = record.duplicate(true)
+	candidate_record.spent_day = day
+	candidate_record.spent = spent + price
+	return {"ok": true, "code": "", "record": candidate_record, "coin_after": held - price}
