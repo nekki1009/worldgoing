@@ -1134,3 +1134,53 @@ static func author_static_normalized(raw: Dictionary) -> Dictionary:
 			for value: Variant in normalized.water_permissions[field]: values.append(int(value))
 			normalized.water_permissions[field] = values
 	return normalized
+
+## P4 S5d (B): pure export of an author package carrying initial entries (the loader's "initial" kind, read at
+## load_author_package above). It reads the dependency files and writes the package and its initial files into
+## `folder`. The manifest is checked with the loader's own shape check before any file is written, so a written
+## package has the shape the loader reads. Admission is unchanged: load_author_package still reports
+## initial_admitted false, and the P5B gate (region_save_slot.gd open_map) is not touched.
+## `dependencies`: [{path, id}] (res:// or user://); `initial_states`: {"x:y": state} with state.id a String and no
+## world_pin, region_snapshot, initial_scenario or crowd (the guards in _initial_body).
+static func export_author_initial_package(folder: String, package_name: String, dependencies: Array, natural_id: String, scenario_id: String, revision: int, name_text: String, description: String, start: Dictionary, initial_states: Dictionary) -> Dictionary:
+	if not DirAccess.dir_exists_absolute(folder) or not _author_path_valid(package_name): return fail("EXPORT_FOLDER", folder)
+	var dependency_rows: Array = []
+	for dependency: Variant in dependencies:
+		if not dependency is Dictionary or not _author_dependency_path_valid(dependency.get("path")): return fail("INVALID_AUTHOR_DEPENDENCY", str(dependency))
+		var handle := FileAccess.open(str(dependency.path), FileAccess.READ)
+		if handle == null: return fail("MISSING_AUTHOR_DEPENDENCY", str(dependency.path))
+		var dependency_bytes: int = handle.get_length()
+		handle.close()
+		dependency_rows.append({"path": str(dependency.path), "id": str(dependency.get("id", "")), "bytes": dependency_bytes, "sha256": FileAccess.get_sha256(str(dependency.path))})
+	var file_rows: Array = []
+	var file_texts: Array = []
+	for key: Variant in initial_states:
+		var pair: PackedStringArray = str(key).split(":")
+		var state: Variant = initial_states[key]
+		if pair.size() != 2 or not pair[0].is_valid_int() or not pair[1].is_valid_int(): return fail("INVALID_AUTHOR_FILE", str(key))
+		if not state is Dictionary or not state.get("id") is String or state.has("world_pin") or state.has("region_snapshot") or state.has("initial_scenario") or state.has("crowd"): return fail("INVALID_AUTHOR_INITIAL", str(key))
+		var file_name := "initial_%s_%s.json" % [pair[0], pair[1]]
+		var bytes := JSON.stringify(state, "", true, true).to_utf8_buffer()
+		var hash := HashingContext.new()
+		if hash.start(HashingContext.HASH_SHA256) != OK: return fail("AUTHOR_HASH_ERROR", file_name)
+		hash.update(bytes)
+		file_rows.append({"path": file_name, "site": [int(pair[0]), int(pair[1])], "kind": "initial", "sha256": hash.finish().hex_encode(), "bytes": bytes.size()})
+		file_texts.append({"path": file_name, "bytes": bytes})
+	var manifest := {"format": 1, "source_kind": "fixed_tw_author", "scenario_id": scenario_id, "revision": revision,
+		"name": name_text, "description": description, "atlas_id": Grid.ATLAS_ID, "grid_contract_version": Grid.CONTRACT_VERSION,
+		"natural_source": natural_id, "dependencies": dependency_rows, "files": file_rows, "start": start, "package_digest": "0".repeat(64)}
+	if not _author_manifest_shape(manifest): return fail("INVALID_AUTHOR_PACKAGE", "作者格式／路徑／尺寸非法；未寫入")
+	var digest := author_package_digest(manifest)
+	if digest.is_empty(): return fail("INVALID_AUTHOR_PACKAGE", "作者包摘要無法計算；未寫入")
+	manifest.package_digest = digest
+	for entry: Dictionary in file_texts:
+		var handle := FileAccess.open(folder.path_join(str(entry.path)), FileAccess.WRITE)
+		if handle == null: return fail("EXPORT_WRITE", str(entry.path))
+		handle.store_buffer(entry.bytes)
+		handle.close()
+	var package_path := folder.path_join(package_name)
+	var package_file := FileAccess.open(package_path, FileAccess.WRITE)
+	if package_file == null: return fail("EXPORT_WRITE", package_path)
+	package_file.store_string(JSON.stringify(manifest, "", true, true))
+	package_file.close()
+	return {"ok": true, "code": "OK", "path": package_path, "files": file_rows.size(), "package_digest": digest}
