@@ -14303,6 +14303,13 @@ static func exchange_candidate(data: TerrainData, refs: Array, transfers: Array,
 	return ok() if preview else publish_item_candidate(prepared)
 
 static func prepare_item_candidate(data: TerrainData, refs: Array, transfers: Array) -> Dictionary:
+	return _prepare_candidate(data, refs, transfers, "", 0)
+
+# T6 S4: collector_id is "" and percent 0 for the zero-tax S1 path. With percent > 0 the collector
+# must be listed in refs; every other holder's incoming RESOURCES are taxed floor(received * percent / 100)
+# per resource and that tax is added to the collector. Items are never taxed; the collector's own
+# incoming goods are not taxed.
+static func _prepare_candidate(data: TerrainData, refs: Array, transfers: Array, collector_id: String, percent: int) -> Dictionary:
 	if data == null or not data.site.get("item_records") is Dictionary or not data.site.get("item_definitions") is Dictionary \
 		or refs.size() < 2 or refs.size() > MAX_CANDIDATE_HOLDERS or transfers.is_empty() or transfers.size() > MAX_CANDIDATE_TRANSFERS:
 		return fail("INVALID")
@@ -14332,6 +14339,9 @@ static func prepare_item_candidate(data: TerrainData, refs: Array, transfers: Ar
 		out_ids[holder_id] = []
 		in_ids[holder_id] = []
 		used[holder_id] = false
+	if collector_id != "":
+		if not endpoints.has(collector_id): return fail("INVALID", "收稅持有人須列入候選")
+		used[collector_id] = true
 	var selected: Dictionary = {}
 	for transfer: Variant in transfers:
 		if not transfer is Dictionary or not Technology.keys(transfer, ["from", "to", "resources", "item_ids"]) \
@@ -14358,6 +14368,24 @@ static func prepare_item_candidate(data: TerrainData, refs: Array, transfers: Ar
 		in_ids[dest_id].append_array(transfer.item_ids)
 		used[source_id] = true
 		used[dest_id] = true
+	# T6 S4 in-kind tax: floor per resource on each non-collector side's incoming resources, paid to the collector.
+	var taxed: Dictionary = {}
+	if collector_id != "" and percent > 0:
+		var collected: Dictionary = {}
+		for holder_id: String in order:
+			if holder_id == collector_id: continue
+			var incoming: Dictionary = in_res[holder_id]
+			var before: Dictionary = incoming.duplicate()
+			var levied: Dictionary = {}
+			for key: Variant in before.keys():
+				var resource: String = str(key)
+				var tax: int = int(before[resource]) * percent / 100
+				if tax > 0:
+					levied[resource] = tax
+					incoming[resource] = int(incoming[resource]) - tax
+					collected[resource] = int(collected.get(resource, 0)) + tax
+			taxed[holder_id] = {"received": before, "tax": levied}
+		add_items(in_res[collector_id], collected)
 	var plan: Array = []
 	for holder_id: String in order:
 		if not bool(used[holder_id]): return fail("INVALID", "持有人未參與任何移轉")
@@ -14373,10 +14401,12 @@ static func prepare_item_candidate(data: TerrainData, refs: Array, transfers: Ar
 		var load_after: float = load_before + float(inventory_size(after_cargo) - inventory_size(endpoint.cargo)) \
 			+ float(in_ids[holder_id].size() - out_ids[holder_id].size())
 		if not is_finite(load_after) or load_after > float(int(endpoint.capacity)): return fail("STORAGE_FULL")
+		var detail: Dictionary = taxed.get(holder_id, {})
 		plan.append({"id": holder_id, "endpoint": endpoint, "version": int(refs_version(refs, holder_id)),
 			"cargo_before": endpoint.cargo.duplicate(), "items_before": endpoint.holder.item_ids.duplicate(),
 			"load_before": load_before, "cargo_after": after_cargo,
-			"out_ids": out_ids[holder_id].duplicate(), "in_ids": in_ids[holder_id].duplicate()})
+			"out_ids": out_ids[holder_id].duplicate(), "in_ids": in_ids[holder_id].duplicate(),
+			"received": detail.get("received", {}), "tax": detail.get("tax", {})})
 	var prepared: Dictionary = ok("", {"terrain": data, "site_state": data.site, "item_records": data.site.item_records, "plan": plan})
 	var stable: Dictionary = validate_prepared_item_candidate(prepared)
 	return prepared if stable.ok else stable
@@ -14426,6 +14456,119 @@ static func publish_item_candidate(prepared: Dictionary) -> Dictionary:
 		record.endpoint.holder.version = int(record.version) + 1
 		versions[str(record.id)] = int(record.version) + 1
 	return ok("原物品已同次多端點交換", {"versions": versions})
+
+# T6 S4: in-kind trade tax with per-side receipts. The rate is the settlement's trade_tax_percent (S2)
+# and the collector is the nation's bound treasury (R4b-1). Rate 0 needs no collector and writes no
+# receipt, so it is the S1 result exactly. A repeated trade_id returns its stored receipts and changes nothing.
+const TRADE_TAX_MAX_PERCENT := 50 # Same bound as site_settlement.gd TRADE_TAX_MAX (S2).
+
+static func _settlement_percent(data: TerrainData) -> int:
+	var settlement: Variant = data.site.get("settlement", null)
+	if settlement == null: return 0
+	if not settlement is Dictionary: return -1
+	var record: Dictionary = settlement
+	if not record.has("trade_tax_percent"): return 0
+	var value: Variant = record.trade_tax_percent
+	if not value is int or int(value) < 0 or int(value) > TRADE_TAX_MAX_PERCENT: return -1
+	return int(value)
+
+static func trade_tax_terms(data: TerrainData) -> Dictionary:
+	if data == null or data.site.is_empty(): return fail("NO_TARGET")
+	var percent: int = _settlement_percent(data)
+	if percent < 0: return fail("INVALID", "聚落貿易稅率不合法")
+	if percent == 0: return ok("", {"percent": 0, "collector": "", "derived": true})
+	var settlement: Dictionary = data.site.get("settlement", {})
+	var nation_id: Variant = settlement.get("nation_id")
+	var nations: Variant = data.site.get("equipment_nations", {})
+	if not nation_id is String or not nations is Dictionary or not nations.get(nation_id) is Dictionary: return fail("NO_COLLECTOR", "聚落須隸屬已建立的本國")
+	var nation: Dictionary = nations[nation_id]
+	var ransom: Variant = nation.get("ransom_data", {})
+	var treasury: Variant = {}
+	if ransom is Dictionary: treasury = ransom.get("treasury", {})
+	if not treasury is Dictionary or treasury.is_empty(): return fail("NO_COLLECTOR", "本國國庫未綁定")
+	var holder: Variant = treasury.get("holder")
+	if str(treasury.get("site_id", "")) != str(data.site.get("id", "")) or not holder is String or not str(holder).begins_with("feature:"):
+		return fail("NO_COLLECTOR", "國庫不在本聚落")
+	var feature: Variant = data.site.get("features", {}).get(str(holder).trim_prefix("feature:"))
+	if not feature is Dictionary or str(feature.get("kind", "")) != "warehouse": return fail("NO_COLLECTOR", "國庫須為原倉庫")
+	return ok("", {"percent": percent, "collector": str(holder), "derived": true})
+
+static func _trade_id_valid(trade_id: String) -> bool:
+	return not trade_id.is_empty() and trade_id.length() <= 64 and not trade_id.contains(":")
+
+static func _trade_receipt_store(data: TerrainData) -> Dictionary:
+	var store: Variant = data.site.get("trade_tax_receipts", {})
+	if store is Dictionary: return store
+	return {}
+
+static func _trade_receipts_for(data: TerrainData, trade_id: String) -> Dictionary:
+	var found: Dictionary = {}
+	var store: Dictionary = _trade_receipt_store(data)
+	for key: Variant in store.keys():
+		if str(key).begins_with(trade_id + ":"): found[str(key)] = store[key]
+	return found
+
+static func exchange_taxed_candidate(data: TerrainData, refs: Array, transfers: Array, trade_id: String, preview: bool = false) -> Dictionary:
+	var terms: Dictionary = trade_tax_terms(data)
+	if not terms.ok: return terms
+	return commit_taxed_candidate(data, refs, transfers, trade_id, terms, preview)
+
+## Terms are passed in by the caller (exchange_taxed_candidate derives them); publish re-checks the rate and, for derived terms, the collector.
+static func commit_taxed_candidate(data: TerrainData, refs: Array, transfers: Array, trade_id: String, terms: Dictionary, preview: bool = false) -> Dictionary:
+	if data == null or not _trade_id_valid(trade_id): return fail("INVALID", "貿易編號不合法")
+	var request: String = JSON.stringify(transfers)
+	var existing: Dictionary = _trade_receipts_for(data, trade_id)
+	if not existing.is_empty():
+		for key: Variant in existing.keys():
+			if str(existing[key].get("request", "")) != request: return fail("INVALID", "收據鍵已用於不同交易")
+		return ok("重複提交：沿用原收據，未再收稅", {"replayed": true, "receipt_keys": existing.keys()})
+	var prepared: Dictionary = prepare_taxed_candidate(data, refs, transfers, trade_id, terms)
+	if not prepared.ok: return prepared
+	return ok() if preview else publish_taxed_candidate(prepared)
+
+static func prepare_taxed_candidate(data: TerrainData, refs: Array, transfers: Array, trade_id: String, terms: Dictionary) -> Dictionary:
+	if not _trade_id_valid(trade_id) or not terms.get("percent") is int or not terms.get("collector") is String or not terms.get("derived") is bool:
+		return fail("INVALID")
+	var percent: int = int(terms.percent)
+	var collector_id: String = str(terms.collector)
+	if percent < 0 or percent > TRADE_TAX_MAX_PERCENT or (percent > 0) != (not collector_id.is_empty()): return fail("INVALID", "收稅持有人與稅率不一致")
+	var prepared: Dictionary = _prepare_candidate(data, refs, transfers, collector_id, percent)
+	if not prepared.ok: return prepared
+	var request: String = JSON.stringify(transfers)
+	var receipts: Array = []
+	if percent > 0:
+		for record: Dictionary in prepared.plan:
+			var side: String = str(record.id)
+			if side == collector_id or (record.received.is_empty() and record.in_ids.is_empty()): continue
+			receipts.append({"key": trade_id + ":" + side, "record": {"trade_id": trade_id, "side": side, "collector": collector_id,
+				"percent": percent, "received": record.received.duplicate(), "tax": record.tax.duplicate(), "items": record.in_ids.duplicate(), "request": request}})
+	prepared["terms"] = terms.duplicate()
+	prepared["receipts"] = receipts
+	return prepared
+
+static func publish_taxed_candidate(prepared: Dictionary) -> Dictionary:
+	var stable: Dictionary = validate_prepared_item_candidate(prepared)
+	if not stable.ok: return stable
+	var data: TerrainData = prepared.terrain
+	var terms: Dictionary = prepared.terms
+	if _settlement_percent(data) != int(terms.percent): return fail("STALE_SOURCE", "聚落貿易稅率已改變")
+	if bool(terms.derived):
+		var now: Dictionary = trade_tax_terms(data)
+		if not now.ok or int(now.percent) != int(terms.percent) or str(now.collector) != str(terms.collector): return fail("STALE_SOURCE", "收稅國庫已改變")
+	var store: Dictionary = _trade_receipt_store(data)
+	for entry: Dictionary in prepared.receipts:
+		if store.has(str(entry.key)): return fail("STALE_SOURCE", "收據已存在")
+	var committed: Dictionary = publish_item_candidate(prepared)
+	if not committed.ok: return committed
+	if not prepared.receipts.is_empty():
+		if not data.site.get("trade_tax_receipts") is Dictionary: data.site["trade_tax_receipts"] = {}
+		var saved: Dictionary = data.site["trade_tax_receipts"]
+		var keys: Array = []
+		for entry: Dictionary in prepared.receipts:
+			saved[str(entry.key)] = entry.record
+			keys.append(str(entry.key))
+		committed["receipt_keys"] = keys
+	return committed
 
 # Author operations only prepare detached candidates; normal construction keeps its payment/work owners.
 static func _author_building_guard(data: TerrainData, work: Dictionary) -> Dictionary:
