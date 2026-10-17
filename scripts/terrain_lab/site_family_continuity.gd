@@ -28,6 +28,7 @@ static func _integer(value: Variant, lower: int, upper: int) -> bool:
 ## the same number elsewhere is not a member here.
 const Succession = preload("res://scripts/terrain_lab/site_succession.gd") # R5 S1B: optional v5 heir section.
 const Take = preload("res://scripts/terrain_lab/site_take_office.gd") # R5 S2: vacancy take-office core.
+const VacancyEpisode = preload("res://scripts/terrain_lab/site_vacancy_episode.gd") # R5 S3F: vacancy episode hook.
 
 static func validate_family(value: Variant, site_id: String) -> bool:
 	# v1: unestablished registry. v2: the same registry plus offices, created by
@@ -268,6 +269,47 @@ func take_vacant_head(requester_id: int, person_id: int, authority: Variant) -> 
 	family.version = maxi(2, int(family.get("version", 1)))
 	family.offices = committed.offices
 	return Runtime.ok("已就任家主 #%d" % person_id, {"revision": int(committed.offices.revision)})
+
+## R5 S3F: the vacancy episode hook. Explicit call (the per-tick settle path is a later slice). An episode opens when the
+## family head seat has no awake holder and no designated heir (one open episode per owner, never an overwrite). An awake
+## holder cancels the open episode as a legitimate appointment. Otherwise nothing changes.
+func observe_vacancy(onset_day: int) -> Dictionary:
+	var site: Dictionary = lab.terrain.site
+	var family: Variant = site.get("family")
+	if not family is Dictionary or not validate_family(family, str(site.id)): return Runtime.fail("UNREGISTERED", "先明確登錄家族名單")
+	var episodes: Dictionary = site.vacancy_episodes.duplicate(true) if site.has("vacancy_episodes") else {}
+	var seat_id := str(SiteOffices.head_position(family_offices(family, true)).get("id", ""))
+	var heir_designated: bool = family.has("succession") and (family.succession.get("heirs", {}) as Dictionary).has(seat_id)
+	var open: Dictionary = VacancyEpisode.find_open(episodes, "family", str(site.id))
+	var result := {"ok": true, "code": "", "message": "", "opened": false, "cancelled": false}
+	var changed := false
+	if head_executor(family, true) > 0:
+		if not open.is_empty():
+			var cancelled: Dictionary = VacancyEpisode.cancel(open, "appointment")
+			if not cancelled.ok: return cancelled
+			episodes[str(open.episode_id)] = cancelled.episode
+			result.cancelled = true
+			changed = true
+	elif not heir_designated and open.is_empty():
+		var episode: Dictionary = VacancyEpisode.empty_episode("family", str(site.id), "family-%d-%d" % [onset_day, episodes.size()], onset_day)
+		episodes[str(episode.episode_id)] = episode
+		result.opened = true
+		changed = true
+	if changed: site.vacancy_episodes = episodes
+	return result
+
+## R5 S3F: a G0 proven political day advances the open family episode's S4 timer. Only proven days are passed in.
+func observe_proven_day(proven_day: int) -> Dictionary:
+	var site: Dictionary = lab.terrain.site
+	if not site.has("vacancy_episodes"): return {"ok": true, "code": "", "message": "", "advanced": false}
+	var episodes: Dictionary = site.vacancy_episodes.duplicate(true)
+	var open: Dictionary = VacancyEpisode.find_open(episodes, "family", str(site.id))
+	if open.is_empty(): return {"ok": true, "code": "", "message": "", "advanced": false}
+	var ticked: Dictionary = VacancyEpisode.tick(open, proven_day)
+	if not ticked.ok: return ticked
+	episodes[str(open.episode_id)] = ticked.episode
+	site.vacancy_episodes = episodes
+	return {"ok": true, "code": "", "message": "", "advanced": true}
 
 ## Organization adjustment is the head's own, non-delegable power (3.5).
 func apply_office_plan(requester_id: int, expected_revision: int, ops: Array) -> Dictionary:

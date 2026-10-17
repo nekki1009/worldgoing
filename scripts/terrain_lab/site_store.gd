@@ -3,6 +3,7 @@ extends RefCounted
 
 const Env = preload("res://scripts/terrain_lab/site_environment.gd")
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
+const VacancyEpisode = preload("res://scripts/terrain_lab/site_vacancy_episode.gd") # R5 S3F: vacancy episode map.
 const Boarding = preload("res://scripts/terrain_lab/site_boarding_link_contract.gd")
 const Trade = preload("res://scripts/terrain_lab/site_trade.gd")
 const RegionCheckpoint = preload("res://scripts/terrain_lab/site_region_checkpoint.gd")
@@ -1167,6 +1168,7 @@ static func _normalize_state(state: Dictionary) -> void:
 		for member: Dictionary in state.family.members:
 			member.person_id = int(member.person_id)
 			member.age_years = int(member.age_years)
+	if state.get("vacancy_episodes") is Dictionary: VacancyEpisode.normalize_episodes(state.vacancy_episodes)
 	if state.has("next_lineage"):
 		state.next_lineage = int(state.next_lineage)
 	else:
@@ -3523,6 +3525,7 @@ static func _validate_captivity(data: TerrainData, state: Dictionary, region_con
 		return Runtime.fail("CORRUPT_SAVE", "受控原人物不存在")
 	if state.has("family") and not FamilyContinuity.validate_family(state.family, str(state.get("id", ""))):
 		return Runtime.fail("CORRUPT_SAVE", "家族原人物引用名單")
+	if state.has("vacancy_episodes") and not VacancyEpisode.valid_episodes(state.vacancy_episodes): return Runtime.fail("CORRUPT_SAVE", "空缺紀錄")
 	if not ResidentRoster.valid_state(state): return Runtime.fail("CORRUPT_SAVE", "居民名冊格式")
 	if not CaptiveEscort.valid_orders(state.get("escort_orders", {}), data.size.x * data.size.y, people, relations):
 		return Runtime.fail("CORRUPT_SAVE", "原人押送命令／拘押引用")

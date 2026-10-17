@@ -110,3 +110,23 @@ static func normalize_numbers(episode: Dictionary) -> void:
 
 static func _fail(code: String, message: String) -> Dictionary:
 	return {"ok": false, "code": code, "message": message}
+
+## R5 S3F: the site episode map, keyed by episode id. An absent or empty map is valid (old saves have none).
+static func valid_episodes(raw: Variant) -> bool:
+	if not raw is Dictionary: return false
+	for key: Variant in raw:
+		if not key is String or not raw[key] is Dictionary: return false
+		if str(raw[key].get("episode_id", "")) != str(key) or not valid_episode(raw[key]): return false
+	return true
+
+## JSON numbers load as floats; restore exact integers for every episode in the map.
+static func normalize_episodes(raw: Dictionary) -> void:
+	for key: String in raw:
+		normalize_numbers(raw[key])
+
+## The open episode of one owner, or an empty dictionary.
+static func find_open(raw: Dictionary, owner_kind: String, owner_id: String) -> Dictionary:
+	for key: String in raw:
+		var episode: Dictionary = raw[key]
+		if str(episode.owner_kind) == owner_kind and str(episode.owner_id) == owner_id and str(episode.status) == "open": return episode
+	return {}
