@@ -26,15 +26,18 @@ static func _integer(value: Variant, lower: int, upper: int) -> bool:
 ## `site_id`: the Site whose `site.family` this is. Office holders are people of
 ## that Site, so they must be registered with that site_id (F01): a person with
 ## the same number elsewhere is not a member here.
+const Succession = preload("res://scripts/terrain_lab/site_succession.gd") # R5 S1B: optional v5 heir section.
+
 static func validate_family(value: Variant, site_id: String) -> bool:
 	# v1: unestablished registry. v2: the same registry plus offices, created by
 	# the first explicit head appointment (OFFICE plan 6.3).
-	if not value is Dictionary or not _integer(value.get("version"), 1, 4) or not value.get("complete") is bool or not value.get("members") is Array:
+	if not value is Dictionary or not _integer(value.get("version"), 1, 5) or not value.get("complete") is bool or not value.get("members") is Array:
 		return false
-	if value.size() != (3 if int(value.version) == 1 else (4 if int(value.version) == 2 else 6)) or int(value.version) >= 2 and not SiteOffices.validate(value.get("offices"), "family"):
+	if value.size() != (3 if int(value.version) == 1 else (4 if int(value.version) == 2 else 6 + int(int(value.version) == 5 and value.has("succession")))) or int(value.version) >= 2 and not SiteOffices.validate(value.get("offices"), "family"):
 		return false
 	if int(value.version) == 3 and (not Technology.valid_family_id(value.get("family_id")) or not Technology.valid_family_tech(value.get("technology"))): return false
-	if int(value.version) == 4 and not valid_identity(value.get("name"), value.get("lineage_id")): return false
+	if int(value.version) >= 4 and not valid_identity(value.get("name"), value.get("lineage_id")): return false
+	if not valid_succession(value, site_id): return false
 	var seen := {}
 	for member: Variant in value.members:
 		if not member is Dictionary or member.size() != 5 or not member.get("site_id") is String or str(member.site_id).is_empty() or not member.get("path") is String or not member.get("label") is String:
@@ -49,6 +52,44 @@ static func validate_family(value: Variant, site_id: String) -> bool:
 		for seat: Dictionary in value.offices.positions:
 			if int(seat.holder) > 0 and not member_ids(value, site_id).has(int(seat.holder)): return false
 	return true
+
+## R5 S1B (D-F1): the optional v5 succession section. The heir is a current family member of this Site, on the head seat.
+static func valid_succession(family: Dictionary, site_id: String) -> bool:
+	if not family.has("succession"): return true
+	if int(family.get("version", 0)) != 5 or not family.get("offices") is Dictionary: return false
+	var seats: Array = []
+	var head := SiteOffices.head_position(family.offices)
+	if not head.is_empty(): seats.append(str(head.id))
+	var members := {}
+	for identity: int in member_ids(family, site_id): members[identity] = true
+	return Succession.valid_record(family.succession, seats, members)
+
+## R5 S1B: the candidate of a family heir designation. Authority = the family head; family v4 or later (identity present).
+static func designate_heir_candidate(family: Dictionary, site_id: String, requester_id: int, person_id: int, alive: Callable) -> Dictionary:
+	if int(family.get("version", 0)) < 4 or not family.get("offices") is Dictionary: return {"ok": false, "code": "NO_TARGET"}
+	var head := SiteOffices.head_position(family.offices)
+	var holder := int(head.get("holder", -1))
+	if holder <= 0 or requester_id != holder: return {"ok": false, "code": "NO_AUTHORITY"}
+	var members := {}
+	for identity: int in member_ids(family, site_id): members[identity] = true
+	var record: Dictionary = family.succession if family.has("succession") else Succession.empty_record()
+	var designated: Dictionary = Succession.designate(record, str(head.id), person_id, [str(head.id)], members, holder, alive)
+	if not bool(designated.ok): return designated
+	var candidate: Dictionary = family.duplicate(true)
+	candidate.version = 5
+	candidate.succession = designated.record
+	candidate.offices.revision = mini(SiteOffices.MAX_SEQ, int(candidate.offices.revision) + 1)
+	return {"ok": true, "code": "", "family": candidate}
+
+## R5 S1B: the lab command. The family head designates a living local member, in place, in one commit.
+func designate_heir(requester_id: int, person_id: int) -> Dictionary:
+	var family: Variant = lab.terrain.site.get("family", {})
+	if not family is Dictionary or family.is_empty(): return Runtime.fail("NO_TARGET", "沒有家族紀錄")
+	var checked: Dictionary = designate_heir_candidate(family, str(lab.terrain.site.id), requester_id, person_id, func(identity: int) -> bool: return office_person_ok(family, identity))
+	if not bool(checked.get("ok", false)): return Runtime.fail(str(checked.code), "家族繼承人指定未通過；原狀未變")
+	family.clear()
+	family.merge(checked.family, true)
+	return Runtime.ok("已指定家族繼承人", {"person_id": person_id})
 
 ## Version 4 identity: display name (String, may be empty) and an integer lineage id.
 static func valid_identity(display_name: Variant, lineage_id: Variant) -> bool:

@@ -14,7 +14,9 @@ const FIELDS := ["version", "settlement_id", "center_id", "level", "name", "owne
 const FIELDS_V3 := ["version", "settlement_id", "center_id", "level", "name", "owner_faction", "offices", "fall_record", "nation_id"]
 ## Version 4 adds the trade tax rate: an integer percent 0..TRADE_TAX_MAX on the resource stacks received at this settlement's trades (S2: stored and validated only; no collection yet). v1-v3 never carry it.
 const FIELDS_V4 := ["version", "settlement_id", "center_id", "level", "name", "owner_faction", "offices", "fall_record", "nation_id", "trade_tax_percent"]
-const VERSION_MAX := 4
+const VERSION_MAX := 4 # The v4 candidate ceiling and setter write version (D-V1).
+const VERSION_LATEST := 5 # R5 S1B (D-V1): load ceiling and designation upgrade. Optional succession section only.
+const Succession = preload("res://scripts/terrain_lab/site_succession.gd")
 const TRADE_TAX_MAX := 50
 const NAME_MAX := 16
 const RADIUS := {1: 12, 2: 20, 3: 30}
@@ -56,11 +58,12 @@ static func validate(data: TerrainData, state: Dictionary, people: Dictionary) -
 	if not state.has("settlement"):
 		return Runtime.fail("CORRUPT_SAVE", "聚落中心沒有對應聚落紀錄") if not centers.is_empty() else Runtime.ok()
 	var settlement: Variant = state.settlement
-	if not settlement is Dictionary or not _int(settlement.get("version"), 1, VERSION_MAX): return Runtime.fail("CORRUPT_SAVE", "聚落紀錄版本")
+	if not settlement is Dictionary or not _int(settlement.get("version"), 1, VERSION_LATEST): return Runtime.fail("CORRUPT_SAVE", "聚落紀錄版本")
 	var expected_fields: Array = _fields_for_version(int(settlement.version)).duplicate()
 	if int(settlement.version) >= 2:
 		expected_fields.append("technology")
 		if settlement.has("technology_operations"): expected_fields.append("technology_operations")
+	if int(settlement.version) >= 5 and settlement.has("succession"): expected_fields.append("succession")
 	if not Technology.keys(settlement, expected_fields): return Runtime.fail("CORRUPT_SAVE", "聚落紀錄欄位")
 	if int(settlement.version) >= 2 and (not Technology.valid_scope_record(settlement.technology, "settlement") or str(settlement.technology.holder_site_id) != str(state.get("id", ""))): return Runtime.fail("CORRUPT_SAVE", "聚落科技版本／本原Site歸屬")
 	if int(settlement.version) >= 3 and not valid_nation_reference(settlement.get("nation_id"), state): return Runtime.fail("CORRUPT_SAVE", "聚落國家引用")
@@ -77,6 +80,7 @@ static func validate(data: TerrainData, state: Dictionary, people: Dictionary) -
 	if not name_valid(settlement.name): return Runtime.fail("CORRUPT_SAVE", "聚落名稱")
 	if not _int(settlement.owner_faction, 0, MAX_FACTION) or int(settlement.owner_faction) != int(center_feature.get("owner_faction", -1)): return Runtime.fail("CORRUPT_SAVE", "聚落陣營須等於中心管理方")
 	if not SiteOffices.validate(settlement.offices, "settlement", true): return Runtime.fail("CORRUPT_SAVE", "聚落職位")
+	if not valid_succession(settlement, people): return Runtime.fail("CORRUPT_SAVE", "聚落繼承人")
 	var head := int(SiteOffices.head_position(settlement.offices).get("holder", -1))
 	if head > 0:
 		var holder: Dictionary = people.get(head, {})
@@ -104,7 +108,62 @@ static func valid_nation_reference(value: Variant, state: Dictionary) -> bool:
 
 ## T6 S2: version-4 settlement trade tax (integer percent). Pure helpers; no collection here.
 static func _fields_for_version(version: int) -> Array:
-	return FIELDS_V4 if version == 4 else (FIELDS_V3 if version == 3 else FIELDS)
+	return FIELDS_V4 if version >= 4 else (FIELDS_V3 if version == 3 else FIELDS)
+
+## D-V1: a setter writes the higher of the v4 ceiling and the current version, so a v5 record keeps its succession.
+static func setter_version(current: int) -> int:
+	return maxi(VERSION_MAX, current)
+
+## R5 S1B (D-S1): the optional succession section of a v5 record. The heir is a living person of the owner faction.
+static func valid_succession(settlement: Dictionary, people: Dictionary) -> bool:
+	if not settlement.has("succession"): return true
+	if int(settlement.get("version", 0)) < 5 or not settlement.get("offices") is Dictionary: return false
+	var seats: Array = []
+	var head := SiteOffices.head_position(settlement.offices)
+	if not head.is_empty(): seats.append(str(head.id))
+	var faction := int(settlement.get("owner_faction", -1))
+	var members := {}
+	for identity: Variant in people:
+		var projection: Variant = people[identity]
+		if projection is Dictionary and int(projection.get("_housing_faction", -2)) == faction: members[int(identity)] = true
+	return Succession.valid_record(settlement.succession, seats, members)
+
+## R5 S1B: the candidate of a settlement heir designation. Authority = the settlement head; v4 or later.
+static func designate_heir_candidate(settlement: Dictionary, requester_id: int, person_id: int, members: Dictionary, alive: Callable) -> Dictionary:
+	if not settlement.get("offices") is Dictionary or int(settlement.get("version", 0)) < 4: return {"ok": false, "code": "NO_TARGET"}
+	var head := SiteOffices.head_position(settlement.offices)
+	var holder := int(head.get("holder", -1))
+	if holder <= 0 or requester_id != holder: return {"ok": false, "code": "NO_AUTHORITY"}
+	var record: Dictionary = settlement.succession if settlement.has("succession") else Succession.empty_record()
+	var designated: Dictionary = Succession.designate(record, str(head.id), person_id, [str(head.id)], members, holder, alive)
+	if not bool(designated.ok): return designated
+	var candidate: Dictionary = settlement.duplicate(true)
+	candidate.version = VERSION_LATEST
+	candidate.succession = designated.record
+	candidate.offices.revision = mini(SiteOffices.MAX_SEQ, int(candidate.offices.revision) + 1)
+	return {"ok": true, "code": "", "settlement": candidate}
+
+## Living persons of the owner faction on this Site (from the lab).
+static func faction_members(lab: Variant, faction: int) -> Dictionary:
+	var result := {}
+	for actor: Variant in lab.combat_actors:
+		if is_instance_valid(actor) and int(actor.faction_id) == faction and int(actor.person_id) > 0: result[int(actor.person_id)] = true
+	for team: Variant in lab.combat_armies:
+		if is_instance_valid(team) and int(team.faction_id) == faction:
+			for index: int in range(team.combat_units.size()):
+				if team.is_member(index) and int(team.combat_identity(index)) > 0: result[int(team.combat_identity(index))] = true
+	return result
+
+## R5 S1B: the lab command. The head designates a living person of the owner faction, in place, in one commit.
+static func designate_heir(lab: Variant, requester_id: int, person_id: int) -> Dictionary:
+	var settlement: Dictionary = record(lab.terrain)
+	if settlement.is_empty(): return Runtime.fail("NO_TARGET", "沒有聚落紀錄")
+	var members: Dictionary = faction_members(lab, int(settlement.get("owner_faction", -1)))
+	var checked: Dictionary = designate_heir_candidate(settlement, requester_id, person_id, members, func(identity: int) -> bool: return office_person_ok(lab, identity))
+	if not bool(checked.get("ok", false)): return Runtime.fail(str(checked.code), "聚落繼承人指定未通過；原狀未變")
+	settlement.clear()
+	settlement.merge(checked.settlement, true)
+	return Runtime.ok("已指定聚落繼承人", {"person_id": person_id})
 
 static func valid_trade_tax_percent(value: Variant) -> bool:
 	return _int(value, 0, TRADE_TAX_MAX)
@@ -114,7 +173,9 @@ static func valid_trade_tax_candidate(candidate: Dictionary, state: Dictionary) 
 	var fields: Array = FIELDS_V4.duplicate()
 	fields.append("technology")
 	if candidate.has("technology_operations"): fields.append("technology_operations")
-	if int(candidate.get("version", 0)) != VERSION_MAX or not Technology.keys(candidate, fields): return false
+	var candidate_version := int(candidate.get("version", 0))
+	if candidate_version == VERSION_LATEST and candidate.has("succession"): fields.append("succession")
+	if (candidate_version != VERSION_MAX and candidate_version != VERSION_LATEST) or not Technology.keys(candidate, fields): return false
 	return valid_nation_reference(candidate.get("nation_id"), state) and valid_trade_tax_percent(candidate.get("trade_tax_percent")) \
 		and Technology.valid_scope_record(candidate.technology, "settlement") and str(candidate.technology.holder_site_id) == str(state.get("id", ""))
 
@@ -128,12 +189,12 @@ static func set_nation(data: TerrainData, requester_id: int, nation_id: Variant)
 	var current: Variant = state.get("settlement")
 	if not current is Dictionary: return Runtime.fail("NO_TARGET", "沒有聚落紀錄")
 	var version: int = int(current.get("version", 0))
-	if version < 1 or version > VERSION_MAX: return Runtime.fail("UNSUPPORTED", "聚落版本未知")
+	if version < 1 or version > VERSION_LATEST: return Runtime.fail("UNSUPPORTED", "聚落版本未知")
 	var holder: int = int(SiteOffices.head_position(current.get("offices", {})).get("holder", -1))
 	if holder <= 0 or requester_id != holder: return Runtime.fail("NO_AUTHORITY", "只有聚落首長可設定所屬國家")
 	if nation_id != null and not valid_nation_reference(nation_id, state): return Runtime.fail("NATION_UNKNOWN", "所屬國家須是現有正式國家（非測試國別）")
 	var candidate: Dictionary = current.duplicate(true)
-	candidate.version = VERSION_MAX
+	candidate.version = setter_version(version)
 	candidate.nation_id = nation_id
 	if not candidate.has("technology"): candidate.technology = Technology.empty_scope_record(str(state.get("id", "")))
 	if not candidate.has("trade_tax_percent"): candidate.trade_tax_percent = 0
@@ -148,12 +209,12 @@ static func set_trade_tax_percent(data: TerrainData, requester_id: int, percent:
 	var record: Variant = state.get("settlement")
 	if not record is Dictionary: return Runtime.fail("NO_TARGET", "沒有聚落紀錄")
 	var version: int = int(record.get("version", 0))
-	if version < 1 or version > VERSION_MAX: return Runtime.fail("UNSUPPORTED", "聚落版本未知")
+	if version < 1 or version > VERSION_LATEST: return Runtime.fail("UNSUPPORTED", "聚落版本未知")
 	var holder: int = int(SiteOffices.head_position(record.get("offices", {})).get("holder", -1))
 	if holder <= 0 or requester_id != holder: return Runtime.fail("NO_AUTHORITY", "只有聚落首長可設定貿易稅率")
 	if not valid_trade_tax_percent(percent): return Runtime.fail("INVALID", "稅率須為 0 至 50 的整數百分比")
 	var candidate: Dictionary = record.duplicate(true)
-	candidate.version = VERSION_MAX
+	candidate.version = setter_version(version)
 	if not candidate.has("nation_id"): candidate.nation_id = null
 	if not candidate.has("technology"): candidate.technology = Technology.empty_scope_record(str(state.get("id", "")))
 	candidate.trade_tax_percent = int(percent)
@@ -168,6 +229,7 @@ static func normalize(state: Dictionary) -> void:
 	for field: String in ["version", "level", "owner_faction"]:
 		if settlement.has(field): settlement[field] = int(settlement[field])
 	if settlement.get("offices") is Dictionary: SiteOffices.normalize_numbers(settlement.offices)
+	if settlement.get("succession") is Dictionary: Succession.normalize_numbers(settlement.succession)
 	var fall: Variant = settlement.get("fall_record")
 	if fall is Dictionary:
 		for field: String in ["version", "contest_faction"]:

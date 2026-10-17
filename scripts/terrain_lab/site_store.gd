@@ -1109,6 +1109,7 @@ static func _normalize_state(state: Dictionary) -> void:
 		state.family.version = int(state.family.version)
 		if state.family.has("lineage_id"): state.family.lineage_id = int(state.family.lineage_id)
 		if state.family.get("offices") is Dictionary: SiteOffices.normalize_numbers(state.family.offices)
+		if state.family.get("succession") is Dictionary: EquipmentOrders.Succession.normalize_numbers(state.family.succession)
 		if state.family.has("technology"): state.family.technology = Technology.normalize_family_tech(state.family.technology)
 		for member: Dictionary in state.family.members:
 			member.person_id = int(member.person_id)

@@ -1418,7 +1418,7 @@ static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dicti
 	if state.has("crowd"): return fail("UNSUPPORTED", "群眾模式（Crowd）暫不支援整隊出發")
 	if state.has("family"):
 		var version := int(state.family.get("version", 0))
-		if version not in [1, 2, 3, 4] or version != 3 and not Family.validate_family(state.family, str(state.get("id", ""))): return fail("INVALID_FAMILY", "必要原家族 schema 未准入")
+		if version not in [1, 2, 3, 4, 5] or version != 3 and not Family.validate_family(state.family, str(state.get("id", ""))): return fail("INVALID_FAMILY", "必要原家族 schema 未准入")
 	var p4_family_guard: Dictionary = family_departure_guard(state, str(spec.get("controller", "player")))
 	if not p4_family_guard.ok: return p4_family_guard
 	var family_transfer := {}
@@ -1884,7 +1884,7 @@ static func insert(destination_state: Dictionary, party: Dictionary, nav: Terrai
 		destination_path: String, departure_seconds: float, arrival_seconds: float, options: Dictionary = {}) -> Dictionary:
 	if party.get("content", {}).has("family"):
 		var version := int(party.content.family.get("version", 0))
-		if version not in [1, 2, 3, 4] or version != 3 and not Family.validate_family(party.content.family, str(party.get("origin_site_id", ""))): return fail("INVALID_FAMILY", "旅隊必要原家族 schema 未准入")
+		if version not in [1, 2, 3, 4, 5] or version != 3 and not Family.validate_family(party.content.family, str(party.get("origin_site_id", ""))): return fail("INVALID_FAMILY", "旅隊必要原家族 schema 未准入")
 	var original_party := party
 	var remapped := prepare_arrival(destination_state, party, int(options.get("generation", 0)))
 	if not remapped.ok: return remapped

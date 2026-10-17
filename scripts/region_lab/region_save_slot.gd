@@ -3437,7 +3437,7 @@ func region_family_transfer_guard(first: Dictionary, second: Dictionary) -> Dict
 	for family: Variant in families:
 		if not family is Dictionary: return fail("INVALID_FAMILY", "原家族不是必要 schema")
 		if family.is_empty(): continue
-		if int(family.get("version", 0)) not in [1, 2, 3, 4]: return fail("INVALID_FAMILY", "未知原家族版本")
+		if int(family.get("version", 0)) not in [1, 2, 3, 4, 5]: return fail("INVALID_FAMILY", "未知原家族版本")
 		if int(family.version) == 3: needs_original_technology = true
 	if not needs_original_technology: return {"ok": true}
 	# Original technology API must preflight the same epoch and return its own
