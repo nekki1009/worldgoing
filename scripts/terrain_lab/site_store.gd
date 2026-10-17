@@ -1275,6 +1275,7 @@ static func _normalize_state(state: Dictionary) -> void:
 		if nation.has("faction_id"): nation.faction_id = int(nation.faction_id); nation.faction_version = int(nation.faction_version)
 		if nation.has("military_head"): nation.military_head = int(nation.military_head)
 		if nation.get("ransom_data") is Dictionary: EquipmentOrders.RansomData.normalize_numbers(nation.ransom_data)
+		if nation.get("succession") is Dictionary: EquipmentOrders.Succession.normalize_numbers(nation.succession)
 		if nation.get("offices") is Dictionary: SiteOffices.normalize_numbers(nation.offices)
 		for index in range(nation.members.size()):
 			nation.members[index] = int(nation.members[index])

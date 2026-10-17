@@ -11,6 +11,7 @@ const Technology = preload("res://scripts/terrain_lab/site_technology.gd")
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
 const Stockpiles = preload("res://scripts/terrain_lab/site_stockpiles.gd")
 const RansomData = preload("res://scripts/terrain_lab/site_ransom_data.gd")
+const Succession = preload("res://scripts/terrain_lab/site_succession.gd")
 const NATION_OPERATIONS_VERSION := 1
 const NATION_OPERATIONS_MAX := 128
 const NATION_PUBLIC_VERSION := 2
@@ -195,6 +196,24 @@ func authorize_nation_ransom(requester_id: int, nation_id: String, authorized: b
 	nation.ransom_data = candidate.nation.ransom_data
 	return Runtime.ok("已%s本國贖金付款授權；未付款、未移動硬幣、未解除拘押" % ("授權" if authorized else "撤銷"), {"authorized": authorized})
 
+
+## R5 S1: the head executor designates the nation's heir. Data only: no holder changes, no transfer.
+func designate_nation_heir(requester_id: int, nation_id: String, person_id: int) -> Dictionary:
+	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
+	if nation.is_empty() or not nation.has("offices") or requester_id != nation_head_executor(nation, true):
+		return Runtime.fail("NO_AUTHORITY", "只有清醒自由的本國元首可指定繼承人")
+	var head_seat: Dictionary = SiteOffices.head_position(nation.offices)
+	if head_seat.is_empty(): return Runtime.fail("NO_TARGET", "元首職位不存在")
+	var seat_ids: Array = [str(head_seat.id)]
+	var members := {}
+	for member: Variant in nation.members: members[int(member)] = true
+	var record: Dictionary = nation.get("succession", Succession.empty_record())
+	var candidate: Dictionary = Succession.designate(record, str(head_seat.id), person_id, seat_ids, members, int(head_seat.get("holder", -1)), func(identity: int) -> bool: return _nation_person_ok(nation, identity))
+	if not bool(candidate.ok): return Runtime.fail(str(candidate.code), "繼承人指定未通過；原狀未變")
+	nation_offices(nation)
+	nation.offices.revision = mini(SiteOffices.MAX_SEQ, int(nation.offices.revision) + 1)
+	nation.succession = candidate.record
+	return Runtime.ok("已指定繼承人", {"person_id": person_id})
 
 func set_standard(requester_id: int, nation_id: String, standard_id: String, display_name: String, slots: Dictionary, dyes: Variant = null) -> Dictionary:
 	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
@@ -907,7 +926,7 @@ static func valid_nations(value: Variant, definitions: Dictionary, known_people:
 	var faction_nations := {}
 	for nation_id: Variant in value:
 		var nation: Variant = value[nation_id]
-		if not nation_id is String or not _valid_key(nation_id) or not nation is Dictionary or nation.size() != 3 + int(nation.has("culture")) + int(nation.has("technology")) + int(nation.has("technology_operations")) + int(nation.has("ransom_data")) + int(nation.has("faction_version")) + int(nation.has("faction_id")) + int(nation.has("name")) or not nation.get("members") is Array or not nation.get("standards") is Dictionary:
+		if not nation_id is String or not _valid_key(nation_id) or not nation is Dictionary or nation.size() != 3 + int(nation.has("culture")) + int(nation.has("technology")) + int(nation.has("technology_operations")) + int(nation.has("ransom_data")) + int(nation.has("faction_version")) + int(nation.has("faction_id")) + int(nation.has("name")) + int(nation.has("succession")) or not nation.get("members") is Array or not nation.get("standards") is Dictionary:
 			return false
 		if not RegionFactionQuery.nation_schema(nation, nation_id): return false
 		if nation.has("name") and not valid_nation_name(nation.get("name")): return false
@@ -931,6 +950,14 @@ static func valid_nations(value: Variant, definitions: Dictionary, known_people:
 				if int(seat.holder) > 0 and not _member(nation, int(seat.holder)): return false
 		elif not _integer(nation.get("military_head")) or int(nation.military_head) == 1000000000 or not _member(nation, int(nation.military_head)):
 			return false
+		if nation.has("succession"):
+			if not nation.has("offices") or not nation.offices is Dictionary: return false
+			var seat_ids: Array = []
+			for seat: Dictionary in nation.offices.positions:
+				if bool(seat.head): seat_ids.append(str(seat.id))
+			var member_set := {}
+			for member: Variant in nation.members: member_set[int(member)] = true
+			if not Succession.valid_record(nation.succession, seat_ids, member_set): return false
 		for identity: Variant in nation.members:
 			if not _integer(identity) or int(identity) == 1000000000 or not known_people.has(int(identity)) and not remote.has(str(int(identity))) or assigned.has(int(identity)):
 				return false
