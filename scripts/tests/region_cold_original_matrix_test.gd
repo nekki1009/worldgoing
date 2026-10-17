@@ -10,6 +10,9 @@ var r2_evidence: Array[Dictionary] = []
 var r2_failed: Array[String] = []
 var r2_source_files: Dictionary = {}
 var _r2_fire_wire_negative_checked: bool = false
+var _r2_fire_resource_key: String = ""
+var _r2_fire_disengage: Dictionary = {}
+var _r2_contact_keeper: Node = null
 
 class R2FaultLog extends Logger:
 	var _mutex: Mutex = Mutex.new()
@@ -126,6 +129,25 @@ func _r2_scene(with_npc: bool = false) -> TerrainLab:
 	lab.site_controller._auto_save_blocked = true
 	return lab
 
+func _r2_original_fire_resource(data: TerrainData) -> String:
+	var keys: Array = data.resource_base.keys()
+	keys.sort()
+	var selected: String = ""
+	var nearest: int = 2147483647
+	for key: String in keys:
+		var definition: Dictionary = data.resource_base[key]
+		if int(definition.kind) != SiteEnvironment.Kind.TIMBER or int(definition.capacity) <= 0: continue
+		var cell: Vector2i = data.cell_from_index(int(definition.cell))
+		var archer: Vector2i = cell + Vector2i(0, -5)
+		if not data.contains(archer) or int(data.water_kind[int(definition.cell)]) != 0 \
+			or int(data.water_kind[data.index(archer)]) != 0: continue
+		var offset: Vector2i = cell - Vector2i(20, 20)
+		var distance: int = offset.x * offset.x + offset.y * offset.y
+		if distance < nearest:
+			selected = key
+			nearest = distance
+	return selected
+
 func _r2_data(name: String) -> TerrainData:
 	var data := TerrainGenerator.generate(TerrainPreset.Kind.PLAINS, 77319, {"size": Vector2i(100, 100)})
 	if not _r2_ok(): return null
@@ -135,8 +157,13 @@ func _r2_data(name: String) -> TerrainData:
 	for index: int in range(data.height_levels.size()):
 		data.height_levels[index] = 0
 		data.site.terrain_changes[str(index)] = 0
+	if name == "fire":
+		_r2_fire_resource_key = _r2_original_fire_resource(data)
+		if not _r2_check(not _r2_fire_resource_key.is_empty(), "fire fixture selects an existing seed-owned dry TIMBER with a legal original bow position"): return null
 	for key: String in data.resource_base:
-		SiteEnvironment.change(data, key, {"cleared": true, "remaining": 0})
+		# Keep this original birth resource; memory-only definitions cannot survive Store regeneration.
+		if name != "fire" or key != _r2_fire_resource_key:
+			SiteEnvironment.change(data, key, {"cleared": true, "remaining": 0})
 		if not _r2_ok(): return null
 	data.site.capacity = 100000
 	for item: String in SiteEnvironment.ITEM_NAMES: data.site.inventory[item] = 1000
@@ -158,6 +185,34 @@ func _r2_fire_step(lab: TerrainLab) -> bool:
 	lab._advance_action_time(TerrainLab.ACTION_STEP)
 	lab.restore_only = was_restore
 	return _r2_ok()
+
+func _r2_wait_fire_disengage(lab: TerrainLab, contact: Dictionary) -> bool:
+	var data: TerrainData = lab.terrain
+	var start_action: float = lab.fire_action_cursor
+	var start_game: float = SiteRuntime.now(data) * 60.0
+	var calls: int = 0
+	_r2_fire_disengage = {"active_action": start_action, "active_game": start_game, "active_fire": SiteRuntime.fire_active(data),
+		"active_heat": data.site.fire.units.get(str(contact.unit_key), {}).get("heat", 0.0), "combat_before": data.site.combat_left}
+	print("R2_FIRE_BEFORE_DISENGAGE ", JSON.stringify(_r2_fire_disengage, "", true, true))
+	# Fire renews grace while active; original paid consumers must finish both.
+	while true:
+		if not _r2_ok(): return false
+		if Time.get_ticks_msec() > deadline: return _r2_check(false, "original fire disengagement exceeded the unchanged matrix deadline")
+		if not lab.site_controller._original_step_fault.is_empty(): return _r2_check(false, "original paid fire disengagement fault: " + str(lab.site_controller._original_step_fault))
+		if not SiteRuntime.fire_active(data) and float(data.site.combat_left) <= 0.0: break
+		if not _r2_fire_step(lab): return false
+		calls += 1
+		if calls % 60 == 0: await process_frame
+	_r2_fire_disengage.merge({"requested_action": float(calls) * TerrainLab.ACTION_STEP,
+		"actual_action_delta": lab.fire_action_cursor - start_action, "actual_game_delta": SiteRuntime.now(data) * 60.0 - start_game,
+		"combat_after": data.site.combat_left, "fire_after": SiteRuntime.fire_active(data), "history_floor": data.site.fire.get("receipt_floor"),
+		"source_scope": "active hit proved before disengage; ordinary saved source retains inactive fire history"}, true)
+	print("R2_FIRE_AFTER_DISENGAGE ", JSON.stringify(_r2_fire_disengage, "", true, true))
+	return _r2_check(not SiteRuntime.fire_active(data) and float(data.site.combat_left) == 0.0 and lab._fire_unsaved
+		and lab.ranged_shots == 1 and lab.ranged_resolutions == 1 and lab._fire_release_sequence == 1
+		and int(data.site.fire.receipt_floor) == 1 and data.site.fire.receipt_ids.is_empty()
+		and lab.fire_projectiles.is_empty() and lab.fire_reservations.is_empty() and lab._fire_boundary_error.is_empty(),
+		"original paid fire expiry and grace preserve the single-arrow history before actual Controller save")
 
 func _r2_real_fire_contact(lab: TerrainLab, cell: Vector2i) -> Dictionary:
 	var data: TerrainData = lab.terrain
@@ -239,6 +294,8 @@ func _r2_real_fire_contact(lab: TerrainLab, cell: Vector2i) -> Dictionary:
 		and lab.ranged_shots == 1 and lab.ranged_resolutions == 1
 		and lab.fire_projectiles.is_empty() and lab.fire_reservations.is_empty() and lab._fire_boundary_error.is_empty(),
 		"completed original boundary compacts the closed single-arrow receipt under its real release watermark"): return {"ok": false}
+	if not _r2_check(not contact.is_empty() and int(contact.projectile_id) == 1 and str(contact.event_id) == "arrow:1" and int(data.site.fire.receipt_floor) == 1 and data.site.fire.receipt_ids.is_empty() and lab._fire_boundary_error.is_empty() and SiteRuntime.fire_active(data), str(contact)): return {"ok": false}
+	if not await _r2_wait_fire_disengage(lab, contact): return {"ok": false}
 	# A real release dirties its original owner: acknowledge it only through a real save.
 	var previous_root: String = lab.site_controller.save_root
 	lab.site_controller.save_root = r2_output
@@ -250,6 +307,7 @@ func _r2_real_fire_contact(lab: TerrainLab, cell: Vector2i) -> Dictionary:
 	return contact.duplicate(true)
 
 func _r2_fixture(name: String) -> Dictionary:
+	var fire_source: Dictionary = {}
 	var data := _r2_data(name)
 	if not _r2_ok(): return {"ok": false}
 	var lab: TerrainLab = null
@@ -366,13 +424,21 @@ func _r2_fixture(name: String) -> Dictionary:
 			if not _r2_ok(): return {"ok": false}
 			if not _r2_check(data.site.captivity.has("2") and lab.npc.captive, "_r2_fixture: original condition failed"): return {"ok": false}
 		elif name == "fire":
-			var cell := Vector2i(20, 20)
-			SiteEnvironment._add_resource(data, SiteEnvironment.Kind.TIMBER, data.index(cell), 4, 0)
+			var resource: Dictionary = SiteEnvironment.resource(data, _r2_fire_resource_key)
+			if not _r2_check(not resource.is_empty() and int(resource.kind) == SiteEnvironment.Kind.TIMBER
+				and not bool(resource.cleared) and int(resource.remaining) == int(resource.capacity),
+				"one original seed-owned finite TIMBER remains unchanged before the real fire release"): return {"ok": false}
+			var cell: Vector2i = data.cell_from_index(int(resource.cell))
 			SiteEnvironment.rebuild_indexes(data)
 			if not _r2_ok(): return {"ok": false}
-			var contact: Dictionary = _r2_real_fire_contact(lab, cell)
+			var contact: Dictionary = await _r2_real_fire_contact(lab, cell)
 			if not _r2_ok(): return {"ok": false}
-			if not _r2_check(not contact.is_empty() and int(contact.projectile_id) == 1 and str(contact.event_id) == "arrow:1" and int(data.site.fire.receipt_floor) == 1 and data.site.fire.receipt_ids.is_empty() and lab._fire_boundary_error.is_empty() and SiteRuntime.fire_active(data), str(contact)): return {"ok": false}
+			resource = SiteEnvironment.resource(data, _r2_fire_resource_key)
+			var unit: Dictionary = data.site.fire.units[str(contact.unit_key)]
+			fire_source = {"key": _r2_fire_resource_key, "unit_key": str(contact.unit_key),
+				"definition": data.resource_base[_r2_fire_resource_key].duplicate(true),
+				"remaining": int(resource.remaining), "cleared": bool(resource.cleared),
+				"fuel_q": SiteRuntime._fire_fuel_q(data, unit), "generation": int(unit.generation)}
 		var _r2_operation_5: Dictionary = lab.site_controller._capture_for_save()
 		if not _r2_ok(): return {"ok": false}
 		if not _r2_check(_r2_operation_5.ok, "_r2_fixture: original condition failed"): return {"ok": false}
@@ -392,6 +458,21 @@ func _r2_fixture(name: String) -> Dictionary:
 	var loaded := SiteStore.load_site(path, Callable(), 1, true)
 	if not _r2_ok(): return {"ok": false}
 	if not loaded.ok: return loaded
+	if name == "fire":
+		var resource: Dictionary = SiteEnvironment.resource(loaded.data, str(fire_source.key))
+		var unit: Dictionary = loaded.data.site.fire.units.get(str(fire_source.unit_key), {})
+		if not _r2_check(loaded.data.resource_base.get(str(fire_source.key), {}) == fire_source.definition
+			and not resource.is_empty() and not unit.is_empty() and str(unit.resource) == str(fire_source.key)
+			and int(resource.remaining) == int(fire_source.remaining) and bool(resource.cleared) == bool(fire_source.cleared)
+			and int(unit.generation) == int(fire_source.generation) and SiteRuntime._fire_fuel_q(loaded.data, unit) == int(fire_source.fuel_q)
+			and not SiteRuntime._fire_descriptor(loaded.data, unit).is_empty(),
+			"original Store regeneration preserves the same resource definition, generation and finite fire fuel"): return {"ok": false}
+		var missing: Dictionary = unit.duplicate(true)
+		missing.resource = "0:" + str(loaded.data.size.x * loaded.data.size.y)
+		var missing_key: String = SiteRuntime._fire_unit_key("resource", str(missing.resource))
+		var rejected: Dictionary = SiteRuntime._validate_fire_unit_snapshot(loaded.data, missing_key, missing, float(loaded.data.site.fire.observed_action_end))
+		if not _r2_check(not rejected.ok and str(rejected.get("code", "")) == "STALE_FIRE_UNIT_OWNER",
+			"unchanged strict validator still rejects a cold history whose resource definition is absent"): return {"ok": false}
 	r2_source_files[name] = {"path": path, "sha256": FileAccess.get_sha256(path)}
 	return {"ok": true, "data": loaded.data, "at": at, "path": path}
 
@@ -597,6 +678,12 @@ func _r2_cancel(source: TerrainData) -> Dictionary:
 func _run() -> void:
 	_started = true
 	deadline = Time.get_ticks_msec() + 360000
+	# Hold one existing contact-source user for the whole matrix. Without it, every
+	# freed row/fixture lab releases the same immutable original contact source
+	# (TerrainLab._exit_tree) and the next army restore reloads it from scratch.
+	_r2_contact_keeper = Node.new()
+	root.add_child(_r2_contact_keeper)
+	_r2_contact_keeper.add_to_group(&"terrain_lab_contact_source_users")
 	r2_output = "res://.godot-temp/region_cold_original_matrix/run_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
 	var _r2_condition_36: bool = DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(r2_output)) == OK
 	if not _r2_check(_r2_condition_36, "_run: original condition failed"): return
@@ -607,7 +694,7 @@ func _run() -> void:
 	if not _r2_check(_r2_condition_37, "install staged original bridge before calibration"): return
 	probe.free()
 	for name: String in R2_CASES:
-		var fixture := _r2_fixture(name)
+		var fixture: Dictionary = await _r2_fixture(name)
 		if not _r2_ok(): return
 		if not fixture.ok:
 			r2_evidence.append(fixture)
@@ -633,9 +720,13 @@ func _run() -> void:
 	var out := FileAccess.open(r2_output.path_join("result.json"), FileAccess.WRITE)
 	if not _r2_check(out != null, "_run: original condition failed"): return
 	out.store_string(JSON.stringify({"scope": "R2 S01/S02 isolated original calibration only", "checks": checks,
+		"fire_disengage": _r2_fire_disengage,
 		"failed": r2_failed, "sources": sources, "rows": r2_evidence, "formal_slot_admitted": false,
 		"performance_complete": false, "process_cpu_seconds": null}, "\t"))
 	out.close()
+	_r2_contact_keeper.remove_from_group(&"terrain_lab_contact_source_users")
+	_r2_contact_keeper.free()
+	_r2_contact_keeper = null
 	TerrainArmy.release_contact_source()
 	if not _r2_ok(): return
 	_finished = true

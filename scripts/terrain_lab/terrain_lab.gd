@@ -1841,7 +1841,9 @@ func replay_site_to(target_game_seconds: float, budget_usec: int = 0, max_steps:
 		var step_fault: Dictionary = site_controller.original_step_fault_guard()
 		if not step_fault.ok: return step_fault
 	if not _region_point_pending.is_empty() or _region_point_consuming: return SiteRuntime.fail("REGION_EFFECTS_PENDING")
-	var fire_guard := SiteRuntime.ok() if terrain.site.has("region_snapshot") else SiteStore.fire_event_guard(terrain)
+	# Only a fresh fixed target must start from a saved Fire boundary; a budgeted
+	# continuation of the same target carries the Fire events its own earlier calls created.
+	var fire_guard := SiteRuntime.ok() if terrain.site.has("region_snapshot") or _replay_target >= 0.0 else SiteStore.fire_event_guard(terrain)
 	if not fire_guard.ok: return fire_guard
 	if not is_finite(target_game_seconds) or target_game_seconds < 0.0 or budget_usec < 0 or max_steps < 0:
 		return SiteRuntime.fail("INVALID_TIME", "補算固定目標或預算非法")
