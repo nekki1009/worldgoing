@@ -8910,7 +8910,9 @@ func _prepare_region_main_interval(maximum: float, local_tactical: float, travel
 	var battle_owners := {}
 	for battle: Dictionary in slot.region_registry().battles.values():
 		if str(battle.get("phase", "")) == "finished" or str(battle.site_id) == str(slot.control.active_site_id): continue
-		var bound: Dictionary = slot.region_owner_lab.call(str(battle.site_id), "formula_active")
+		# Exact siege metadata must retain its original cold progress consumer.
+		var requested_mode: String = "cold_exact" if str(battle.get("mode", "")) == "cold_exact" else "formula_active"
+		var bound: Dictionary = slot.region_owner_lab.call(str(battle.site_id), requested_mode)
 		if not bound.get("ok", false): return bound
 		battle_owners[str(battle.site_id)] = true
 	for owner: String in slot.control.fire_clock.get("index", {}):
