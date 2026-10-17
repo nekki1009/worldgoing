@@ -11123,7 +11123,7 @@ func _faction_site_source(path: String, site: Vector2i, checksum: String) -> Dic
 	# by multiplying the independently accumulated minute/phase projection.
 	var source_context: Dictionary = loaded.data.site.get("region_snapshot", {}).get("context", {})
 	var source_seconds: float = float(source_context.game_seconds) if not source_context.is_empty() else _site_seconds(loaded.data)
-	var summarized: Dictionary = _faction_summary(loaded.data.site, str(loaded.data.site.id), source_seconds, source_context.get("runtime_revision"))
+	var summarized: Dictionary = _faction_summary(loaded.data.site, str(loaded.data.site.id), source_seconds, RegionFactionQuery.whole_or_null(source_context.get("runtime_revision")))
 	if not summarized.ok:
 		Store.invalidate_faction_summary_path(path)
 		return summarized
@@ -11143,7 +11143,7 @@ func _faction_remember_captured_source(path: String, site: Vector2i, checksum: S
 		var encoded: Variant = JSON.parse_string(JSON.stringify(context.get(field), "", false, true))
 		if recorded.get(field) != encoded: return fail("CORRUPT_SAVE", "faction captured source context")
 	# This immutable file was just validated; retain its actual capture clock.
-	var summarized: Dictionary = _faction_summary(data.site, str(data.site.id), context.game_seconds, context.get("runtime_revision"))
+	var summarized: Dictionary = _faction_summary(data.site, str(data.site.id), context.game_seconds, RegionFactionQuery.whole_or_null(context.get("runtime_revision")))
 	if not summarized.ok: return summarized
 	return _faction_remember(_faction_site_key(checksum, site, path), summarized.summary)
 
@@ -11266,7 +11266,7 @@ func _faction_scan(sites: Dictionary, clock: Dictionary, journey: Dictionary, pr
 		states.append(loaded.summary.live)
 		var prefix: Variant = path.get_file().split("_")[0]
 		var source_generation: Variant = int(prefix) if not entry.is_empty() and prefix.length() == 20 and prefix.is_valid_int() else 0 if entry.is_empty() else null
-		receipts.append({"owner": str(loaded.summary.owner), "source_generation": source_generation, "runtime_revision": loaded.summary.runtime_revision, "checksum": checksum, "as_of_game_seconds": _faction_source_receipt_seconds(loaded.summary, checksum, source_generation, previous, clock), "complete": true})
+		receipts.append({"owner": str(loaded.summary.owner), "source_generation": RegionFactionQuery.whole_or_null(source_generation), "runtime_revision": RegionFactionQuery.whole_or_null(loaded.summary.runtime_revision), "checksum": checksum, "as_of_game_seconds": _faction_source_receipt_seconds(loaded.summary, checksum, source_generation, previous, clock), "complete": true})
 	var references: Array[Dictionary] = []
 	if journey.get("kind") == RegionTravel.KIND: references.append(journey)
 	for token: String in clock.get("region_gameplay", {}).get("parties", {}):

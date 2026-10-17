@@ -127,13 +127,41 @@ static func reciprocal(registry: Dictionary, states: Array[Dictionary]) -> Dicti
 		if entry.nation_ref != null and actual.get(ref_key(entry.nation_ref), -1) != int(entry.faction_id): return fail("CORRUPT_SAVE", "registry nation owner missing")
 	return {"ok": true}
 
+## JSON-loaded numbers are floats, while the in-memory originals are ints. Both
+## spellings name the same integer, so the registry stores one canonical int form.
+static func whole_or_null(value: Variant) -> Variant:
+	if value == null: return null
+	return int(value) if (value is int or value is float) else value
+
+static func canonical_receipt(source: Dictionary) -> Dictionary:
+	var receipt: Dictionary = source.duplicate(true)
+	if receipt.has("source_generation"): receipt.source_generation = whole_or_null(receipt.source_generation)
+	if receipt.has("runtime_revision"): receipt.runtime_revision = whole_or_null(receipt.runtime_revision)
+	if receipt.get("as_of_game_seconds") is int or receipt.get("as_of_game_seconds") is float: receipt.as_of_game_seconds = float(receipt.as_of_game_seconds)
+	return receipt
+
+static func canonical_registry(value: Dictionary) -> Dictionary:
+	var registry: Dictionary = value.duplicate(true)
+	if registry.get("revision") is int or registry.get("revision") is float: registry.revision = int(registry.revision)
+	if registry.get("next_faction_id") is int or registry.get("next_faction_id") is float: registry.next_faction_id = int(registry.next_faction_id)
+	if registry.get("coverage") is Dictionary and registry.coverage.get("sources") is Array:
+		var sources: Array = []
+		for source: Variant in registry.coverage.sources:
+			if source is Dictionary: sources.append(canonical_receipt(source))
+			else: sources.append(source)
+		registry.coverage.sources = sources
+	return registry
+
 static func migration(states: Array[Dictionary], receipts: Array[Dictionary], reserved: Array, previous: Dictionary, now: float, complete: bool) -> Dictionary:
 	if not complete or states.size() != receipts.size(): return fail("FACTION_SCAN_INCOMPLETE")
 	var ids := {}
-	var registry: Dictionary = previous.duplicate(true) if not previous.is_empty() else {"version": VERSION, "revision": 0, "next_faction_id": 0, "migration_complete": true, "entries": {}, "coverage": {"complete": false, "sources": [], "counts": null}}
 	if not previous.is_empty():
 		var prior: Dictionary = validate(previous, now)
 		if not prior.ok: return prior
+	# Compare against the canonical form of the previous registry, so a same-source
+	# republish (int previously stored, float freshly read) is not a new revision.
+	var base: Dictionary = canonical_registry(previous) if not previous.is_empty() else {"version": VERSION, "revision": 0, "next_faction_id": 0, "migration_complete": true, "entries": {}, "coverage": {"complete": false, "sources": [], "counts": null}}
+	var registry: Dictionary = base.duplicate(true)
 	for id: Variant in reserved:
 		if not whole(id, 0, MAX_ID): return fail("INVALID_FACTION")
 		ids[str(int(id))] = true
@@ -143,8 +171,10 @@ static func migration(states: Array[Dictionary], receipts: Array[Dictionary], re
 	for id: String in ids:
 		if not registry.entries.has(id): registry.entries[id] = legacy_entry(int(id))
 		registry.next_faction_id = maxi(int(registry.next_faction_id), int(id) + 1)
-	registry.coverage = {"complete": false, "sources": receipts.duplicate(true), "counts": null}
-	if registry != previous:
+	var canonical_sources: Array = []
+	for receipt: Dictionary in receipts: canonical_sources.append(canonical_receipt(receipt))
+	registry.coverage = {"complete": false, "sources": canonical_sources, "counts": null}
+	if previous.is_empty() or registry != base:
 		if int(registry.revision) >= MAX_REVISION: return fail("FACTION_REVISION_EXHAUSTED")
 		registry.revision = int(registry.revision) + 1
 	# ID coverage is complete; demographic/scenario coverage is deliberately UNKNOWN.
