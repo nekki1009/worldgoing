@@ -12,6 +12,10 @@ const VERSION := 1
 const FIELDS := ["version", "settlement_id", "center_id", "level", "name", "owner_faction", "offices", "fall_record"]
 ## Version 3 adds the nullable equipment-nation key (String key of equipment_nations, null = none). v1/v2 never carry it.
 const FIELDS_V3 := ["version", "settlement_id", "center_id", "level", "name", "owner_faction", "offices", "fall_record", "nation_id"]
+## Version 4 adds the trade tax rate: an integer percent 0..TRADE_TAX_MAX on the resource stacks received at this settlement's trades (S2: stored and validated only; no collection yet). v1-v3 never carry it.
+const FIELDS_V4 := ["version", "settlement_id", "center_id", "level", "name", "owner_faction", "offices", "fall_record", "nation_id", "trade_tax_percent"]
+const VERSION_MAX := 4
+const TRADE_TAX_MAX := 50
 const NAME_MAX := 16
 const RADIUS := {1: 12, 2: 20, 3: 30}
 const RESIDENTS := {1: 0, 2: 12, 3: 40}
@@ -52,14 +56,15 @@ static func validate(data: TerrainData, state: Dictionary, people: Dictionary) -
 	if not state.has("settlement"):
 		return Runtime.fail("CORRUPT_SAVE", "聚落中心沒有對應聚落紀錄") if not centers.is_empty() else Runtime.ok()
 	var settlement: Variant = state.settlement
-	if not settlement is Dictionary or not _int(settlement.get("version"), 1, 3): return Runtime.fail("CORRUPT_SAVE", "聚落紀錄版本")
-	var expected_fields: Array = (FIELDS_V3 if int(settlement.version) == 3 else FIELDS).duplicate()
+	if not settlement is Dictionary or not _int(settlement.get("version"), 1, VERSION_MAX): return Runtime.fail("CORRUPT_SAVE", "聚落紀錄版本")
+	var expected_fields: Array = _fields_for_version(int(settlement.version)).duplicate()
 	if int(settlement.version) >= 2:
 		expected_fields.append("technology")
 		if settlement.has("technology_operations"): expected_fields.append("technology_operations")
 	if not Technology.keys(settlement, expected_fields): return Runtime.fail("CORRUPT_SAVE", "聚落紀錄欄位")
 	if int(settlement.version) >= 2 and (not Technology.valid_scope_record(settlement.technology, "settlement") or str(settlement.technology.holder_site_id) != str(state.get("id", ""))): return Runtime.fail("CORRUPT_SAVE", "聚落科技版本／本原Site歸屬")
-	if int(settlement.version) == 3 and not valid_nation_reference(settlement.get("nation_id"), state): return Runtime.fail("CORRUPT_SAVE", "聚落國家引用")
+	if int(settlement.version) >= 3 and not valid_nation_reference(settlement.get("nation_id"), state): return Runtime.fail("CORRUPT_SAVE", "聚落國家引用")
+	if int(settlement.version) >= 4 and not valid_trade_tax_percent(settlement.get("trade_tax_percent")): return Runtime.fail("CORRUPT_SAVE", "聚落貿易稅率")
 	if settlement.has("technology_operations") and not valid_technology_operations(data, settlement.technology_operations, state): return Runtime.fail("CORRUPT_SAVE", "聚落有限用途格式")
 	if not settlement.settlement_id is String or str(settlement.settlement_id).is_empty() or str(settlement.settlement_id).length() > 96: return Runtime.fail("CORRUPT_SAVE", "聚落身分")
 	if centers.size() != 1: return Runtime.fail("CORRUPT_SAVE", "每個 Site 必須恰有一座聚落中心")
@@ -97,6 +102,42 @@ static func valid_nation_reference(value: Variant, state: Dictionary) -> bool:
 	if not value is String or str(value).is_empty() or str(value).length() > 96 or str(value).begins_with("trial_team_"): return false
 	return state.get("equipment_nations", {}) is Dictionary and state.get("equipment_nations", {}).has(value)
 
+## T6 S2: version-4 settlement trade tax (integer percent). Pure helpers; no collection here.
+static func _fields_for_version(version: int) -> Array:
+	return FIELDS_V4 if version == 4 else (FIELDS_V3 if version == 3 else FIELDS)
+
+static func valid_trade_tax_percent(value: Variant) -> bool:
+	return _int(value, 0, TRADE_TAX_MAX)
+
+## Shape of a version-4 candidate record (does not touch the Site). Technology must be the Site's own scope record.
+static func valid_trade_tax_candidate(candidate: Dictionary, state: Dictionary) -> bool:
+	var fields: Array = FIELDS_V4.duplicate()
+	fields.append("technology")
+	if candidate.has("technology_operations"): fields.append("technology_operations")
+	if int(candidate.get("version", 0)) != VERSION_MAX or not Technology.keys(candidate, fields): return false
+	return valid_nation_reference(candidate.get("nation_id"), state) and valid_trade_tax_percent(candidate.get("trade_tax_percent")) \
+		and Technology.valid_scope_record(candidate.technology, "settlement") and str(candidate.technology.holder_site_id) == str(state.get("id", ""))
+
+## Only the settlement head (holder of the head position) may set the rate. The record is upgraded to v4 in the same candidate: nation_id null if absent, and an empty technology scope record for this Site if absent (founded v1 settlements have none, per the existing empty-record convention). Refusal changes nothing.
+static func set_trade_tax_percent(data: TerrainData, requester_id: int, percent: Variant) -> Dictionary:
+	var state: Dictionary = data.site if data != null else {}
+	var record: Variant = state.get("settlement")
+	if not record is Dictionary: return Runtime.fail("NO_TARGET", "沒有聚落紀錄")
+	var version: int = int(record.get("version", 0))
+	if version < 1 or version > VERSION_MAX: return Runtime.fail("UNSUPPORTED", "聚落版本未知")
+	var holder: int = int(SiteOffices.head_position(record.get("offices", {})).get("holder", -1))
+	if holder <= 0 or requester_id != holder: return Runtime.fail("NO_AUTHORITY", "只有聚落首長可設定貿易稅率")
+	if not valid_trade_tax_percent(percent): return Runtime.fail("INVALID", "稅率須為 0 至 50 的整數百分比")
+	var candidate: Dictionary = record.duplicate(true)
+	candidate.version = VERSION_MAX
+	if not candidate.has("nation_id"): candidate.nation_id = null
+	if not candidate.has("technology"): candidate.technology = Technology.empty_scope_record(str(state.get("id", "")))
+	candidate.trade_tax_percent = int(percent)
+	if not valid_trade_tax_candidate(candidate, state): return Runtime.fail("CORRUPT_SAVE", "聚落紀錄格式")
+	record.clear()
+	record.merge(candidate, true)
+	return Runtime.ok("聚落貿易稅率已設定", {"trade_tax_percent": int(percent)})
+
 static func normalize(state: Dictionary) -> void:
 	var settlement: Variant = state.get("settlement")
 	if not settlement is Dictionary: return
@@ -110,6 +151,7 @@ static func normalize(state: Dictionary) -> void:
 		if fall.has("contest_seconds"): fall.contest_seconds = float(fall.contest_seconds)
 		if fall.get("last_fall") is Dictionary:
 			for field: String in fall.last_fall: fall.last_fall[field] = int(fall.last_fall[field])
+	if settlement.has("trade_tax_percent"): settlement.trade_tax_percent = int(settlement.trade_tax_percent)
 	if int(settlement.get("version", 0)) >= 2 and settlement.get("technology") is Dictionary:
 		settlement.technology = Technology.normalize_scope_record(settlement.technology, "settlement")
 	if settlement.get("technology_operations") is Dictionary: normalize_technology_operations(settlement.technology_operations)
