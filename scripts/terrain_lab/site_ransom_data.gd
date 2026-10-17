@@ -19,11 +19,16 @@ static func valid_record(raw: Variant) -> bool:
 		or not Technology.integer(raw.spent_day, -1, 2147483647) or not Technology.integer(raw.spent, 0, 1000000): return false
 	if int(raw.spent_day) == -1 and int(raw.spent) != 0: return false
 	var policy: Dictionary = raw.policy if raw.policy is Dictionary else {}
-	# Activation requires the future true-head command; this schema grants no spend.
-	if not _keys(policy, ["authorized", "per_person", "daily", "reserve"]) \
-		or not policy.authorized is bool or policy.authorized \
+	var plain := _keys(policy, ["authorized", "per_person", "daily", "reserve"])
+	var named := _keys(policy, ["authorized", "per_person", "daily", "reserve", "authorized_by"])
+	if not (plain or named) or not policy.authorized is bool \
 		or not Technology.integer(policy.per_person, 1, 35) or not Technology.integer(policy.daily, 1, 1000000) \
 		or not Technology.integer(policy.reserve, 0, 1000000): return false
+	# R4b-2: authority exists only as a command result: a bound treasury and one named authorizer.
+	# A raw authorized flag without authorized_by (or without treasury) is still refused on load.
+	if policy.authorized:
+		if raw.treasury.is_empty() or not named or not Technology.integer(policy.authorized_by, 1, 2147483646): return false
+	elif named: return false
 	if raw.treasury.is_empty(): return true
 	return _keys(raw.treasury, ["site_id", "feature_id", "holder"]) \
 		and raw.treasury.site_id is String and not raw.treasury.site_id.is_empty() \
@@ -40,6 +45,7 @@ static func valid_nations(nations: Dictionary, state: Dictionary) -> bool:
 		if not nation.has("ransom_data"): continue
 		if not nation.has("offices") or not valid_record(nation.ransom_data): return false
 		var record: Dictionary = nation.ransom_data
+		if bool(record.policy.authorized) and not _named_member(nation, int(record.policy.authorized_by)): return false
 		if int(record.spent_day) > floori(float(state.get("minute", 0)) / 1440.0): return false
 		if record.treasury.is_empty(): continue
 		if nation_id.begins_with("trial_team_"): return false
@@ -71,6 +77,7 @@ static func normalize_numbers(record: Dictionary) -> void:
 	record.spent_day = int(record.spent_day)
 	record.spent = int(record.spent)
 	for field: String in ["per_person", "daily", "reserve"]: record.policy[field] = int(record.policy[field])
+	if record.policy.has("authorized_by"): record.policy.authorized_by = int(record.policy.authorized_by)
 
 static func _round_tenths(value: int) -> int:
 	return (1 if value >= 0 else -1) * floori(float(absi(value)) / 10.0 + 0.5)
@@ -130,6 +137,9 @@ static func policy_candidate(site: Dictionary, nation_id: String, nation: Dictio
 	candidate_record.policy.per_person = per_person
 	candidate_record.policy.daily = daily
 	candidate_record.policy.reserve = reserve
+	# Changing ceilings revokes payer authorization; the holder must authorize the new numbers.
+	candidate_record.policy.authorized = false
+	candidate_record.policy.erase("authorized_by")
 	if not valid_record(candidate_record): return {"ok": false, "code": "INVALID_POLICY"}
 	var candidate_nation: Dictionary = nation.duplicate(true)
 	candidate_nation.ransom_data = candidate_record
@@ -141,3 +151,28 @@ static func _view(site: Dictionary, feature_id: String, stock: Dictionary) -> Di
 	var stockpiles: Dictionary = site.get("stockpiles", {}).duplicate(false)
 	if not feature_id.is_empty(): stockpiles[feature_id] = stock
 	return {"id": site.get("id", ""), "minute": site.get("minute", 0), "features": site.get("features", {}), "stockpiles": stockpiles}
+
+## R4b-2 payer-side authorization candidate. Only the caller's resolved nation.ransom authority may
+## use it. Authorization needs a bound treasury; revocation clears the authorizer. Grants no spend (R4c).
+static func authorize_candidate(site: Dictionary, nation_id: String, nation: Dictionary, requester_id: int, authorized: bool) -> Dictionary:
+	if nation_id.begins_with("trial_team_") or not nation.has("offices") or not nation.has("ransom_data"): return {"ok": false, "code": "NO_TREASURY"}
+	var record: Dictionary = nation.ransom_data
+	if not valid_record(record): return {"ok": false, "code": "CORRUPT_STATE"}
+	if authorized and record.treasury.is_empty(): return {"ok": false, "code": "NO_TREASURY"}
+	if authorized and requester_id <= 0: return {"ok": false, "code": "NO_AUTHORITY"}
+	# Re-sending the same state by the same authorizer is no change; a different legitimate
+	# authorizer re-authorizing updates authorized_by (a real change of who stands behind it).
+	if authorized == bool(record.policy.authorized) and (not authorized or int(record.policy.authorized_by) == requester_id): return {"ok": false, "code": "NO_CHANGE"}
+	var candidate_record: Dictionary = record.duplicate(true)
+	candidate_record.policy.authorized = authorized
+	if authorized: candidate_record.policy.authorized_by = requester_id
+	else: candidate_record.policy.erase("authorized_by")
+	var candidate_nation: Dictionary = nation.duplicate(true)
+	candidate_nation.ransom_data = candidate_record
+	if not valid_nations({nation_id: candidate_nation}, _view(site, "", {})): return {"ok": false, "code": "CORRUPT_STATE"}
+	return {"ok": true, "code": "", "nation": candidate_nation}
+
+static func _named_member(nation: Dictionary, identity: int) -> bool:
+	for member: Variant in nation.get("members", []):
+		if int(member) == identity: return true
+	return false

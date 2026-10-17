@@ -4082,6 +4082,78 @@ func _open_ransom(target_id: int, source_window: Window = null) -> void:
 	dialog.canceled.connect(dialog.queue_free)
 	_show_dialog(dialog, "ransom", ui_context, source_window)
 
+## R4b-2 UI: nation treasury, ceilings and payer-side authorization (no payment, no release).
+func _nation_ransom_status_text(nation: Dictionary) -> String:
+	var record: Dictionary = nation.get("ransom_data", EquipmentOrders.RansomData.empty_record())
+	var treasury := "未綁定國庫" if record.treasury.is_empty() else "國庫：倉庫 %s（硬幣仍在原倉）" % str(record.treasury.feature_id)
+	var authority := ("已授權付款（授權人 #%d）" % int(record.policy.authorized_by)) if bool(record.policy.authorized) else "未授權付款"
+	return "%s\n%s\n每人上限 %d · 每日上限 %d · 準備金 %d" % [treasury, authority,
+		int(record.policy.per_person), int(record.policy.daily), int(record.policy.reserve)]
+
+func _open_nation_ransom(nation_id: String, source_window: Window = null) -> void:
+	var controlled_id: int = lab.controlled_person_id()
+	var ui_context := str([nation_id, controlled_id])
+	if _existing_dialog("nation_ransom", ui_context, source_window): return
+	var nations: Dictionary = lab.terrain.site.get("equipment_nations", {})
+	if not nations.has(nation_id) or not nations[nation_id] is Dictionary or not nations[nation_id].has("offices"):
+		show_result(Runtime.fail("NO_TARGET", "須為已建制的國家"))
+		return
+	var nation: Dictionary = nations[nation_id]
+	var record: Dictionary = nation.get("ransom_data", EquipmentOrders.RansomData.empty_record())
+	var dialog := AcceptDialog.new()
+	dialog.name = "NationRansomDialog"
+	dialog.title = "國家贖金：%s" % nation_id
+	var column := VBoxContainer.new()
+	dialog.add_child(column)
+	var status := _label(column, _nation_ransom_status_text(nation), 16)
+	status.name = "NationRansomStatus"
+	_label(column, "付款方：本國贖務官授權。拘押方同意與實物付款於後續階段才生效；本步不移動硬幣，也不解除拘押。", 15)
+	var faction := int(nation.get("faction_id", -1))
+	var features: Dictionary = lab.terrain.site.get("features", {})
+	var stocks: Dictionary = lab.terrain.site.get("stockpiles", {})
+	var warehouses: Array[String] = []
+	var keys: Array = features.keys()
+	keys.sort()
+	for key: Variant in keys:
+		var feature: Dictionary = features[key]
+		if str(feature.get("kind", "")) == "warehouse" and str(feature.get("stage", "")) == "complete" \
+			and int(feature.get("owner_faction", -1)) == faction and stocks.has(key): warehouses.append(str(key))
+	var choice := _options(column, warehouses, "NationRansomWarehouse")
+	_button(column, "綁定所選倉庫為國庫", "NationRansomBind", func() -> void:
+		if choice.selected < 0 or choice.selected >= warehouses.size():
+			show_result(Runtime.fail("NO_TARGET", "沒有可綁定的完整本國倉庫"))
+			return
+		show_result(equipment_orders.bind_nation_treasury(lab.controlled_person_id(), nation_id, warehouses[choice.selected]))
+		dialog.queue_free())
+	var per := SpinBox.new()
+	per.name = "NationRansomPerPerson"
+	per.min_value = 1
+	per.max_value = 35
+	per.value = int(record.policy.per_person)
+	column.add_child(per)
+	var daily := SpinBox.new()
+	daily.name = "NationRansomDaily"
+	daily.min_value = 1
+	daily.max_value = 1000000
+	daily.value = int(record.policy.daily)
+	column.add_child(daily)
+	var reserve := SpinBox.new()
+	reserve.name = "NationRansomReserve"
+	reserve.min_value = 0
+	reserve.max_value = 1000000
+	reserve.value = int(record.policy.reserve)
+	column.add_child(reserve)
+	_button(column, "設定贖金上限", "NationRansomSetPolicy", func() -> void:
+		show_result(equipment_orders.set_nation_ransom_policy(lab.controlled_person_id(), nation_id, int(per.value), int(daily.value), int(reserve.value)))
+		dialog.queue_free())
+	var authorized := bool(record.policy.authorized)
+	_button(column, "撤銷本國付款授權" if authorized else "授權本國付款（僅授權，不付款）", "NationRansomAuthorize", func() -> void:
+		show_result(equipment_orders.authorize_nation_ransom(lab.controlled_person_id(), nation_id, not authorized))
+		dialog.queue_free())
+	dialog.confirmed.connect(dialog.queue_free)
+	dialog.canceled.connect(dialog.queue_free)
+	_show_dialog(dialog, "nation_ransom", ui_context, source_window)
+
 static func _initial_uniform(appearance: Dictionary, faction_id: int) -> Dictionary:
 	var uniform := appearance.duplicate(true)
 	# An explicitly authored finish, including an empty one, is not a missing default.
@@ -8637,6 +8709,12 @@ func _open_offices(host: Window = null) -> void:
 	var labels: Array = []
 	for org: Dictionary in orgs: labels.append(org.label)
 	var org_choice := _options(column, labels, "OfficeOrg")
+	_button(column, "國家贖金與國庫", "OfficesNationRansom", func() -> void:
+		var picked: Dictionary = orgs[org_choice.selected]
+		if str(picked.kind) != "nation":
+			show_result(Runtime.fail("NO_TARGET", "請先在上方選擇國家"))
+			return
+		_open_nation_ransom(str(picked.id), dialog))
 	var note := _label(column, "", 15)
 	note.name = "OfficeNote"
 	note.custom_minimum_size.x = 0

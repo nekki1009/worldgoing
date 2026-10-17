@@ -182,6 +182,20 @@ func set_nation_ransom_policy(requester_id: int, nation_id: String, per_person: 
 	return Runtime.ok("已更新贖金政策上限", {"per_person": per_person, "daily": daily, "reserve": reserve})
 
 
+## R4b-2: the 贖務官 authorizes (or revokes) payer-side ransom spending for the nation's own bound treasury.
+## Authorization only; coin stays in the warehouse and no captive is released.
+func authorize_nation_ransom(requester_id: int, nation_id: String, authorized: bool) -> Dictionary:
+	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
+	if nation.is_empty() or not nation.has("offices"): return Runtime.fail("NO_TARGET", "須為已建立職位的正式國家")
+	var resolved: Dictionary = nation_duty_resolve(nation, "nation.ransom", true)
+	if not bool(resolved.ok) or int(resolved.decider) != requester_id: return SiteOffices.refusal(resolved, requester_id, nation.offices)
+	var candidate: Dictionary = RansomData.authorize_candidate(lab.terrain.site, nation_id, nation, requester_id, authorized)
+	if not bool(candidate.ok): return Runtime.fail(str(candidate.code), "國庫授權未通過，原狀未變")
+	nation_offices(nation)
+	nation.ransom_data = candidate.nation.ransom_data
+	return Runtime.ok("已%s本國贖金付款授權；未付款、未移動硬幣、未解除拘押" % ("授權" if authorized else "撤銷"), {"authorized": authorized})
+
+
 func set_standard(requester_id: int, nation_id: String, standard_id: String, display_name: String, slots: Dictionary, dyes: Variant = null) -> Dictionary:
 	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
 	if not _can_set_standard(requester_id, nation):
