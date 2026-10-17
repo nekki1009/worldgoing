@@ -14289,6 +14289,144 @@ static func publish_item_exchange(prepared: Dictionary) -> Dictionary:
 	prepared.b.holder.version = int(prepared.b_ref.expected_version) + 1
 	return ok("原物品已同次交換", {"a_version": prepared.a.holder.version, "b_version": prepared.b.holder.version})
 
+# T6 S1: N-holder atomic candidate, zero tax. Holders are listed once in refs. Several transfers
+# may touch one holder: its net effect is validated once and its version is bumped once.
+# Outgoing goods and items must come from the ORIGINAL holder (incoming goods in the same
+# candidate cannot be spent again), so there is no circular virtual balance. exchange_items
+# keeps its own two-leg path unchanged.
+const MAX_CANDIDATE_HOLDERS := 8
+const MAX_CANDIDATE_TRANSFERS := 32
+
+static func exchange_candidate(data: TerrainData, refs: Array, transfers: Array, preview: bool = false) -> Dictionary:
+	var prepared: Dictionary = prepare_item_candidate(data, refs, transfers)
+	if not prepared.ok: return prepared
+	return ok() if preview else publish_item_candidate(prepared)
+
+static func prepare_item_candidate(data: TerrainData, refs: Array, transfers: Array) -> Dictionary:
+	if data == null or not data.site.get("item_records") is Dictionary or not data.site.get("item_definitions") is Dictionary \
+		or refs.size() < 2 or refs.size() > MAX_CANDIDATE_HOLDERS or transfers.is_empty() or transfers.size() > MAX_CANDIDATE_TRANSFERS:
+		return fail("INVALID")
+	var endpoints: Dictionary = {}
+	var order: Array[String] = []
+	for ref: Variant in refs:
+		if not ref is Dictionary or not _trade_ref_valid(ref): return fail("INVALID")
+		var holder_id: String = str(ref.holder)
+		if endpoints.has(holder_id): return fail("INVALID", "同一持有人只能列一次")
+		var endpoint: Dictionary = trade_endpoint(data, holder_id)
+		if not endpoint.ok: return endpoint
+		endpoints[holder_id] = endpoint
+		order.append(holder_id)
+	for index: int in range(order.size()):
+		for other: int in range(index + 1, order.size()):
+			var first: Dictionary = endpoints[order[index]]
+			var second: Dictionary = endpoints[order[other]]
+			if is_same(first.holder, second.holder) or is_same(first.cargo, second.cargo): return fail("INVALID", "原持物端點不可共用字典")
+	var out_res: Dictionary = {}
+	var in_res: Dictionary = {}
+	var out_ids: Dictionary = {}
+	var in_ids: Dictionary = {}
+	var used: Dictionary = {}
+	for holder_id: String in order:
+		out_res[holder_id] = {}
+		in_res[holder_id] = {}
+		out_ids[holder_id] = []
+		in_ids[holder_id] = []
+		used[holder_id] = false
+	var selected: Dictionary = {}
+	for transfer: Variant in transfers:
+		if not transfer is Dictionary or not Technology.keys(transfer, ["from", "to", "resources", "item_ids"]) \
+			or not transfer.from is String or not transfer.to is String: return fail("INVALID")
+		var source_id: String = transfer.from
+		var dest_id: String = transfer.to
+		if source_id == dest_id or not endpoints.has(source_id) or not endpoints.has(dest_id): return fail("INVALID")
+		var source: Dictionary = endpoints[source_id]
+		var destination: Dictionary = endpoints[dest_id]
+		var goods: Dictionary = {"resources": transfer.resources, "item_ids": transfer.item_ids}
+		var checked: Dictionary = _trade_goods_valid(data, source, goods)
+		if not checked.ok: return checked
+		for identity: String in transfer.item_ids:
+			if selected.has(identity): return fail("INVALID", "同一物品只能出現一次")
+			selected[identity] = true
+			if str(data.site.item_records[identity].get("holder", "")) != source_id or not source.holder.item_ids.has(identity):
+				return fail("STALE_SOURCE", "物品不在付出方")
+		if data.item_transfer_guard.is_valid():
+			var guard: Dictionary = data.item_transfer_guard.call(source.holder, destination.holder, transfer.resources, transfer.item_ids)
+			if not guard.ok: return guard
+		add_items(out_res[source_id], transfer.resources)
+		add_items(in_res[dest_id], transfer.resources)
+		out_ids[source_id].append_array(transfer.item_ids)
+		in_ids[dest_id].append_array(transfer.item_ids)
+		used[source_id] = true
+		used[dest_id] = true
+	var plan: Array = []
+	for holder_id: String in order:
+		if not bool(used[holder_id]): return fail("INVALID", "持有人未參與任何移轉")
+		var endpoint: Dictionary = endpoints[holder_id]
+		if not can_pay(endpoint.cargo, out_res[holder_id]): return fail("EMPTY")
+		var after_cargo: Dictionary = endpoint.cargo.duplicate()
+		add_items(after_cargo, out_res[holder_id], -1)
+		add_items(after_cargo, in_res[holder_id])
+		for key: Variant in after_cargo.keys():
+			if int(after_cargo[key]) == 0: after_cargo.erase(key)
+		if not _resource_stack(after_cargo): return fail("INVALID", "交換後資源堆疊不合法")
+		var load_before: float = carried_load(data.site, endpoint.cargo, endpoint.holder)
+		var load_after: float = load_before + float(inventory_size(after_cargo) - inventory_size(endpoint.cargo)) \
+			+ float(in_ids[holder_id].size() - out_ids[holder_id].size())
+		if not is_finite(load_after) or load_after > float(int(endpoint.capacity)): return fail("STORAGE_FULL")
+		plan.append({"id": holder_id, "endpoint": endpoint, "version": int(refs_version(refs, holder_id)),
+			"cargo_before": endpoint.cargo.duplicate(), "items_before": endpoint.holder.item_ids.duplicate(),
+			"load_before": load_before, "cargo_after": after_cargo,
+			"out_ids": out_ids[holder_id].duplicate(), "in_ids": in_ids[holder_id].duplicate()})
+	var prepared: Dictionary = ok("", {"terrain": data, "site_state": data.site, "item_records": data.site.item_records, "plan": plan})
+	var stable: Dictionary = validate_prepared_item_candidate(prepared)
+	return prepared if stable.ok else stable
+
+static func refs_version(refs: Array, holder_id: String) -> int:
+	for ref: Variant in refs:
+		if ref is Dictionary and str(ref.holder) == holder_id: return int(ref.expected_version)
+	return -1
+
+static func validate_prepared_item_candidate(prepared: Dictionary) -> Dictionary:
+	if prepared.get("ok") != true or not prepared.get("terrain") is TerrainData or not prepared.get("plan") is Array or prepared.plan.is_empty(): return fail("INVALID")
+	var data: TerrainData = prepared.terrain
+	if not is_same(data.site, prepared.get("site_state")) or not is_same(data.site.get("item_records"), prepared.get("item_records")): return fail("STALE_SOURCE")
+	for record: Variant in prepared.plan:
+		if not record is Dictionary or not record.get("endpoint") is Dictionary or not record.get("cargo_after") is Dictionary \
+			or not record.get("out_ids") is Array or not record.get("in_ids") is Array or not record.get("items_before") is Array: return fail("INVALID")
+		var current: Dictionary = trade_endpoint(data, str(record.id))
+		if not current.ok: return current
+		var original: Dictionary = record.endpoint
+		if not is_same(current.holder, original.holder) or not is_same(current.cargo, original.cargo) \
+			or int(current.holder.version) != int(record.version) or current.cargo != record.cargo_before \
+			or current.holder.item_ids != record.items_before or carried_load(data.site, current.cargo, current.holder) != float(record.load_before) \
+			or not _item_holder_shape(current.holder) or not _resource_stack(record.cargo_after): return fail("STALE_SOURCE")
+		for identity: String in record.out_ids:
+			if str(data.site.item_records.get(identity, {}).get("holder", "")) != str(record.id): return fail("STALE_SOURCE")
+		for identity: String in record.in_ids:
+			if current.holder.item_ids.has(identity): return fail("STALE_SOURCE")
+	return ok()
+
+static func publish_item_candidate(prepared: Dictionary) -> Dictionary:
+	var stable: Dictionary = validate_prepared_item_candidate(prepared)
+	if not stable.ok: return stable
+	# Validation is complete; no callback/yield/save boundary inside this commit.
+	var data: TerrainData = prepared.terrain
+	var versions: Dictionary = {}
+	for record: Dictionary in prepared.plan:
+		var holder: Dictionary = record.endpoint.holder
+		var cargo: Dictionary = record.endpoint.cargo
+		cargo.clear()
+		cargo.merge(record.cargo_after)
+		for identity: String in record.out_ids:
+			holder.item_ids.erase(identity)
+		for identity: String in record.in_ids:
+			holder.item_ids.append(identity)
+			data.site.item_records[identity]["holder"] = str(record.id)
+	for record: Dictionary in prepared.plan:
+		record.endpoint.holder.version = int(record.version) + 1
+		versions[str(record.id)] = int(record.version) + 1
+	return ok("原物品已同次多端點交換", {"versions": versions})
+
 # Author operations only prepare detached candidates; normal construction keeps its payment/work owners.
 static func _author_building_guard(data: TerrainData, work: Dictionary) -> Dictionary:
 	if data == null or work.get("kind") != "fixed_tw_editor_draft" or work.get("format") != 4: return fail("AUTHOR_ONLY")
