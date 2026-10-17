@@ -1059,6 +1059,57 @@ static func _validate_military(data: TerrainData, state: Dictionary) -> Dictiona
 			return Runtime.fail("CORRUPT_SAVE", "軍營容量不能遺失或重複原人物")
 	return Runtime.ok()
 
+# T6 S4b: per-side in-kind trade tax receipts (site_runtime.gd, S4) are a top-level Site key "trade_tax_receipts".
+# Keys are "trade_id:side". A missing key is a valid old save. Load validates before normalization, so whole-number
+# JSON floats are admitted here and made int by _normalize_trade_tax_receipts.
+const TRADE_RECEIPT_FIELDS := ["trade_id", "side", "collector", "percent", "received", "tax", "items", "request"]
+const TRADE_RECEIPT_ID_MAX := 64
+const TRADE_RECEIPT_SIDE_MAX := 128
+const TRADE_RECEIPT_REQUEST_MAX := 1048576
+
+static func validate_trade_tax_receipts(state: Dictionary) -> Dictionary:
+	if not state.has("trade_tax_receipts"): return Runtime.ok()
+	var store: Variant = state.trade_tax_receipts
+	if not store is Dictionary: return Runtime.fail("CORRUPT_SAVE", "貿易稅收據格式")
+	for key: Variant in store:
+		var entry: Variant = store[key]
+		if not key is String or not entry is Dictionary or not Technology.keys(entry, TRADE_RECEIPT_FIELDS) or not _trade_receipt_valid(str(key), entry):
+			return Runtime.fail("CORRUPT_SAVE", "貿易稅收據")
+	return Runtime.ok()
+
+static func _trade_receipt_valid(key: String, entry: Dictionary) -> bool:
+	var parts: PackedStringArray = key.split(":", true, 1)
+	if parts.size() != 2 or parts[0].is_empty() or parts[0].length() > TRADE_RECEIPT_ID_MAX or parts[1].is_empty() or parts[1].length() > TRADE_RECEIPT_SIDE_MAX: return false
+	if not entry.trade_id is String or str(entry.trade_id) != parts[0] or not entry.side is String or str(entry.side) != parts[1]: return false
+	if not _integer(entry.percent, 1, Settlement.TRADE_TAX_MAX): return false
+	var percent: int = int(entry.percent)
+	if not entry.collector is String or str(entry.collector).is_empty() or str(entry.collector).length() > TRADE_RECEIPT_SIDE_MAX or str(entry.collector) == parts[1]: return false
+	if not entry.request is String or str(entry.request).length() > TRADE_RECEIPT_REQUEST_MAX: return false
+	if not entry.items is Array: return false
+	for identity: Variant in entry.items:
+		if not identity is String or str(identity).is_empty(): return false
+	if not entry.received is Dictionary or not entry.tax is Dictionary: return false
+	var received: Dictionary = entry.received
+	var tax: Dictionary = entry.tax
+	for resource: Variant in received:
+		if not resource is String or str(resource).is_empty() or not _integer(received[resource], 1, 2147483647): return false
+		# Exact tax rule of S4: floor(received * percent / 100) per resource; no tax entry means 0.
+		var levied: int = int(received[resource]) * percent / 100
+		if int(tax.get(resource, 0)) != levied: return false
+	for resource: Variant in tax:
+		if not resource is String or not received.has(resource) or not _integer(tax[resource], 1, 2147483647): return false
+	return true
+
+static func _normalize_trade_tax_receipts(state: Dictionary) -> void:
+	var store: Variant = state.get("trade_tax_receipts")
+	if not store is Dictionary: return
+	for key: Variant in store.keys():
+		var entry: Dictionary = store[key]
+		entry.percent = int(entry.percent)
+		for field: String in ["received", "tax"]:
+			var amounts: Dictionary = entry[field]
+			for resource: Variant in amounts.keys(): amounts[resource] = int(amounts[resource])
+
 static func _normalize_portable_lineage(value: Variant) -> void:
 	if value is Dictionary:
 		if value.has("type") and value.has("namespace") and value.has("lineage") and (value.lineage is int or value.lineage is float):
@@ -1069,6 +1120,7 @@ static func _normalize_portable_lineage(value: Variant) -> void:
 
 static func _normalize_state(state: Dictionary) -> void:
 	Trade.normalize_snapshot(state)
+	_normalize_trade_tax_receipts(state)
 	# Raw identity was validated with all original candidate fields before this
 	# normalizer runs. Only detached integer metadata is canonicalized.
 	if state.has("travel_identity"):
@@ -1830,6 +1882,8 @@ static func _validate_site_values(data: TerrainData, state: Dictionary) -> Dicti
 	if not world_pin.ok: return world_pin
 	var marine_validation := _validate_marine_state(data, state)
 	if not marine_validation.ok: return marine_validation
+	var trade_tax_validation: Dictionary = validate_trade_tax_receipts(state)
+	if not trade_tax_validation.ok: return trade_tax_validation
 	if state.has("actor_presence_version") and not _integer(state.actor_presence_version, 1, 1): return Runtime.fail("CORRUPT_SAVE", "原獨立人物存在格式版本")
 	if state.has("simulation_settlement"):
 		var settlement: Variant = state.simulation_settlement
