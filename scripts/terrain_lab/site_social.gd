@@ -16,7 +16,6 @@ const PersonPersonality = preload("res://scripts/terrain_lab/person_personality.
 const DAY_MINUTES := 1440
 const DAY_SECONDS := 86400.0
 const BASE_LOYALTY := 6000
-const MAX_CATCH_UP_DAYS := 60
 const OMEN_DAYS := 3
 
 static func org_key(ref: Dictionary) -> String:
@@ -41,19 +40,23 @@ static func decay(body: Variant) -> int:
 static func leave_threshold(body: Variant) -> int:
 	return clampi(70 - floori(2.0 * (_axis(body, "ambition") - 50) / 5.0) + floori(2.0 * (_axis(body, "lawful") - 50) / 5.0), 30, 95)
 
-## Returns the person's v2 packet (upgrading v1 / empty in place).
+## Returns the person's v3 packet (upgrading v1 / empty / v2 in place).
 static func state_of(body: Variant) -> Dictionary:
 	var packet := PersonSocial.read(body)
 	if packet.is_empty() or int(packet.get("version", 0)) < 2:
 		packet = PersonSocial.upgraded(packet)
-		if body is Dictionary: body.social_state = packet
-		elif body is Object: body.set("social_state", packet)
+	elif int(packet.get("version", 0)) == 2:
+		packet = PersonSocial.migrated_v2(packet)
+	else:
+		return packet
+	if body is Dictionary: body.social_state = packet
+	elif body is Object: body.set("social_state", packet)
 	return packet
 
 static func relation(packet: Dictionary, ref: Dictionary) -> Dictionary:
 	var key := org_key(ref)
 	if not packet.orgs.has(key):
-		packet.orgs[key] = {"ref": ref.duplicate(), "G": 0, "L": BASE_LOYALTY, "obs": 0, "intent": false}
+		packet.orgs[key] = {"ref": ref.duplicate(), "G": 0, "L": BASE_LOYALTY, "obs": 0, "obs_from": -1, "intent": false}
 	return packet.orgs[key]
 
 ## An original owner records one event after its commit. `event_id` deduplicates
@@ -67,22 +70,57 @@ static func record(body: Variant, ref: Dictionary, kind: String, amount: int, ev
 	packet.pending.append({"day": floori(float(minute) / DAY_MINUTES), "org": org_key(ref), "kind": kind, "amount": amount, "l": loyalty, "id": event_id})
 	return true
 
-## Settles every completed day up to now for one person. `context`:
+## Settles completed days for one person from its own observation evidence (G0 F10).
+## A day D is proven only when the person was observed on D (its start-of-day
+## evidence is recorded then) and again on D+1 (the end stamp). Only a proven day is
+## evaluated, and only from its own recorded evidence, never from the current state.
+## Any other completed day since the last settlement is recorded as not executed
+## (the unexecuted counter): no G/L/obs change, and its pending events are dropped
+## and counted. `context`:
 ## {minute, controlled (bool), affiliations: [refs], captive_relation (Dictionary or {}),
-##  holds_post (bool), eligible_for_post (bool)}.
+##  holds_post (bool), eligible_for_post (bool), team_ref (ref or null)}.
 static func settle_person(body: Variant, context: Dictionary) -> void:
 	var packet := state_of(body)
 	var today := floori(float(context.minute) / DAY_MINUTES)
 	for ref: Dictionary in context.get("affiliations", []): relation(packet, ref)
 	if int(packet.settled_day) == -2: # -2 = not started (PersonSocial.upgraded)
 		packet.settled_day = today - 1 # A new record starts now; no past days are invented.
-	var first := maxi(int(packet.settled_day) + 1, today - MAX_CATCH_UP_DAYS)
-	for day in range(first, today):
-		_settle_day(body, packet, day, context)
-		packet.settled_day = day
+	var evidence: Dictionary = packet.evidence
+	if int(evidence.get("day", -1)) != today:
+		if not evidence.is_empty() and int(evidence.day) == today - 1:
+			if int(packet.settled_day) < today - 1:
+				_settle_day(body, packet, today - 1, evidence, int(context.minute))
+				packet.proven = {"day": today - 1, "start": int(evidence.start), "end": int(context.minute)}
+				packet.settled_day = today - 1
+		else:
+			_mark_unexecuted(packet, today - 1)
+		packet.evidence = _evidence(context, today)
 	_settle_captivity_days(packet, context)
 
-static func _settle_day(body: Variant, packet: Dictionary, day: int, context: Dictionary) -> void:
+## The start-of-day evidence of `day`, recorded at its first observation.
+static func _evidence(context: Dictionary, day: int) -> Dictionary:
+	var team_value: Variant = context.get("team_ref")
+	return {"day": day, "start": int(context.minute), "affiliations": (context.get("affiliations", []) as Array).duplicate(true),
+		"captive": not (context.get("captive_relation", {}) as Dictionary).is_empty(), "controlled": bool(context.get("controlled", false)),
+		"holds_post": bool(context.get("holds_post", false)), "eligible_for_post": bool(context.get("eligible_for_post", false)),
+		"team_ref": (team_value as Dictionary).duplicate(true) if team_value is Dictionary else {}}
+
+## Completed days up to `through` that were not observed on both ends: recorded, not executed.
+static func _mark_unexecuted(packet: Dictionary, through: int) -> void:
+	var count := through - int(packet.settled_day)
+	if count <= 0: return
+	var kept: Array = []
+	var dropped := 0
+	for entry: Dictionary in packet.pending:
+		if int(entry.day) > through: kept.append(entry)
+		else: dropped += 1
+	packet.pending = kept
+	var record: Dictionary = packet.unexecuted
+	record.days = int(record.days) + count
+	record.events = int(record.events) + dropped
+	packet.settled_day = through
+
+static func _settle_day(body: Variant, packet: Dictionary, day: int, evidence: Dictionary, end_minute: int) -> void:
 	var positive := {}
 	var negative := {}
 	var bonus := {}
@@ -99,47 +137,51 @@ static func _settle_day(body: Variant, packet: Dictionary, day: int, context: Di
 	packet.pending = kept
 	while packet.seen.size() > PersonSocial.MAX_SEEN: packet.seen.pop_front()
 	# 野心≥70, qualified, seven straight days without a post: +2/day from day 8.
-	var team_ref_value: Variant = context.get("team_ref")
-	if bool(context.get("eligible_for_post", false)) and not bool(context.get("holds_post", false)) and _axis(body, "ambition") >= 70:
+	var team_ref_value: Variant = evidence.get("team_ref")
+	var has_team: bool = team_ref_value is Dictionary and not (team_ref_value as Dictionary).is_empty()
+	if bool(evidence.get("eligible_for_post", false)) and not bool(evidence.get("holds_post", false)) and _axis(body, "ambition") >= 70:
 		packet.no_post_days = int(packet.no_post_days) + 1
-		if int(packet.no_post_days) > 7 and team_ref_value is Dictionary:
+		if int(packet.no_post_days) > 7 and has_team:
 			var key := org_key(team_ref_value)
 			positive[key] = int(positive.get(key, 0)) + 2
 	else:
 		packet.no_post_days = 0
-	var captive := not (context.get("captive_relation", {}) as Dictionary).is_empty()
+	var captive := bool(evidence.get("captive", false))
 	for key: String in packet.orgs:
 		var entry: Dictionary = packet.orgs[key]
 		var p := mini(20, int(positive.get(key, 0)))
 		var n := int(negative.get(key, 0))
 		entry.G = clampi(int(entry.G) + p + n - decay(body), 0, 100)
 		var loyalty := int(entry.L) - 50 * p + int(bonus.get(key, 0))
-		if p == 0 and not captive and _affiliated(context, entry.ref): loyalty += 50 # Free, serving, no grievance.
+		if p == 0 and not captive and _affiliated(evidence, entry.ref): loyalty += 50 # Free, serving, no grievance.
 		entry.L = clampi(loyalty, 0, 10000)
-		_omen(body, entry, bool(context.get("controlled", false)))
+		_omen(body, entry, bool(evidence.get("controlled", false)), end_minute)
 
 static func _affiliated(context: Dictionary, ref: Dictionary) -> bool:
 	for other: Dictionary in context.get("affiliations", []):
 		if org_key(other) == org_key(ref): return true
 	return false
 
-## §8.4: G>=H for three observed days forms an intent; before that, dropping
-## below H clears progress; after, only dropping below H−10 clears it.
-static func _omen(body: Variant, entry: Dictionary, controlled: bool) -> void:
-	if controlled: # The controlled person never forms an automatic intent.
-		entry.obs = 0
-		entry.intent = false
-		return
+## §8.4: G>=H on proven days for three observed days forms an intent; before that,
+## dropping below H clears progress; after, only dropping below H−10 clears it.
+## F11: the count starts at the first proven settlement with G>=H (obs_from = its
+## end stamp). A controlled day pauses the automatic omen: progress, intent and the
+## start are kept, and no intent is formed for the controlled person.
+static func _omen(body: Variant, entry: Dictionary, controlled: bool, end_minute: int) -> void:
+	if controlled: return
 	var threshold := leave_threshold(body)
 	if bool(entry.intent):
 		if int(entry.G) < threshold - 10:
 			entry.intent = false
 			entry.obs = 0
+			entry.obs_from = -1
 	elif int(entry.G) >= threshold:
+		if int(entry.obs) == 0: entry.obs_from = end_minute
 		entry.obs = mini(int(entry.obs) + int(DAY_SECONDS), OMEN_DAYS * int(DAY_SECONDS))
 		if int(entry.obs) >= OMEN_DAYS * int(DAY_SECONDS): entry.intent = true
 	else:
 		entry.obs = 0
+		entry.obs_from = -1
 
 ## §8.2/8.3: each complete 24 h in enemy custody costs 100 loyalty to the
 ## organization saved at capture; counted from the capture time, never twice.
@@ -182,7 +224,7 @@ static func status(body: Variant, ref: Dictionary) -> Dictionary:
 	elif int(entry.G) >= 30: label = "不滿"
 	return {"G": int(entry.G), "L": int(entry.L), "threshold": threshold, "label": label, "intent": bool(entry.intent),
 		"days_left": maxi(0, OMEN_DAYS - floori(float(entry.obs) / DAY_SECONDS)) if int(entry.G) >= threshold and not bool(entry.intent) else -1,
-		"settled_day": int(packet.settled_day)}
+		"settled_day": int(packet.settled_day), "obs_from": int(entry.get("obs_from", -1))}
 
 # Last fully settled Site day, per live lab (instance id → day). One process
 # can hold several labs (Region cold replay, tests); a shared latch made the
