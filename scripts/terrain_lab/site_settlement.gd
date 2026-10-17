@@ -10,6 +10,8 @@ const CrowdOwner = preload("res://scripts/terrain_lab/crowd_person_owner.gd")
 const Technology = preload("res://scripts/terrain_lab/site_technology.gd")
 const VERSION := 1
 const FIELDS := ["version", "settlement_id", "center_id", "level", "name", "owner_faction", "offices", "fall_record"]
+## Version 3 adds the nullable equipment-nation key (String key of equipment_nations, null = none). v1/v2 never carry it.
+const FIELDS_V3 := ["version", "settlement_id", "center_id", "level", "name", "owner_faction", "offices", "fall_record", "nation_id"]
 const NAME_MAX := 16
 const RADIUS := {1: 12, 2: 20, 3: 30}
 const RESIDENTS := {1: 0, 2: 12, 3: 40}
@@ -50,13 +52,14 @@ static func validate(data: TerrainData, state: Dictionary, people: Dictionary) -
 	if not state.has("settlement"):
 		return Runtime.fail("CORRUPT_SAVE", "聚落中心沒有對應聚落紀錄") if not centers.is_empty() else Runtime.ok()
 	var settlement: Variant = state.settlement
-	if not settlement is Dictionary or not _int(settlement.get("version"), 1, 2): return Runtime.fail("CORRUPT_SAVE", "聚落紀錄版本")
-	var expected_fields: Array = FIELDS.duplicate()
-	if int(settlement.version) == 2:
+	if not settlement is Dictionary or not _int(settlement.get("version"), 1, 3): return Runtime.fail("CORRUPT_SAVE", "聚落紀錄版本")
+	var expected_fields: Array = (FIELDS_V3 if int(settlement.version) == 3 else FIELDS).duplicate()
+	if int(settlement.version) >= 2:
 		expected_fields.append("technology")
 		if settlement.has("technology_operations"): expected_fields.append("technology_operations")
 	if not Technology.keys(settlement, expected_fields): return Runtime.fail("CORRUPT_SAVE", "聚落紀錄欄位")
-	if int(settlement.version) == 2 and (not Technology.valid_scope_record(settlement.technology, "settlement") or str(settlement.technology.holder_site_id) != str(state.get("id", ""))): return Runtime.fail("CORRUPT_SAVE", "聚落科技版本／本原Site歸屬")
+	if int(settlement.version) >= 2 and (not Technology.valid_scope_record(settlement.technology, "settlement") or str(settlement.technology.holder_site_id) != str(state.get("id", ""))): return Runtime.fail("CORRUPT_SAVE", "聚落科技版本／本原Site歸屬")
+	if int(settlement.version) == 3 and not valid_nation_reference(settlement.get("nation_id"), state): return Runtime.fail("CORRUPT_SAVE", "聚落國家引用")
 	if settlement.has("technology_operations") and not valid_technology_operations(data, settlement.technology_operations, state): return Runtime.fail("CORRUPT_SAVE", "聚落有限用途格式")
 	if not settlement.settlement_id is String or str(settlement.settlement_id).is_empty() or str(settlement.settlement_id).length() > 96: return Runtime.fail("CORRUPT_SAVE", "聚落身分")
 	if centers.size() != 1: return Runtime.fail("CORRUPT_SAVE", "每個 Site 必須恰有一座聚落中心")
@@ -88,6 +91,12 @@ static func validate(data: TerrainData, state: Dictionary, people: Dictionary) -
 ## JSON numbers load as floats; restore exact integer types after validation.
 
 ## JSON numbers load as floats; restore exact integer types after validation.
+## Null or an existing equipment_nations key (never a trial_team_ nation).
+static func valid_nation_reference(value: Variant, state: Dictionary) -> bool:
+	if value == null: return true
+	if not value is String or str(value).is_empty() or str(value).length() > 96 or str(value).begins_with("trial_team_"): return false
+	return state.get("equipment_nations", {}) is Dictionary and state.get("equipment_nations", {}).has(value)
+
 static func normalize(state: Dictionary) -> void:
 	var settlement: Variant = state.get("settlement")
 	if not settlement is Dictionary: return
@@ -101,7 +110,7 @@ static func normalize(state: Dictionary) -> void:
 		if fall.has("contest_seconds"): fall.contest_seconds = float(fall.contest_seconds)
 		if fall.get("last_fall") is Dictionary:
 			for field: String in fall.last_fall: fall.last_fall[field] = int(fall.last_fall[field])
-	if int(settlement.get("version", 0)) == 2 and settlement.get("technology") is Dictionary:
+	if int(settlement.get("version", 0)) >= 2 and settlement.get("technology") is Dictionary:
 		settlement.technology = Technology.normalize_scope_record(settlement.technology, "settlement")
 	if settlement.get("technology_operations") is Dictionary: normalize_technology_operations(settlement.technology_operations)
 

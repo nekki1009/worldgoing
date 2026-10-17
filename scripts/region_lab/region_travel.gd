@@ -273,6 +273,13 @@ static func validate_arrival_mapping(value: Variant) -> bool:
 			targets[target] = true
 	return true
 
+## A family identity arriving with a party is reserved at the destination: the
+## destination counter never reissues its lineage id (max merge, like the other counters).
+static func merge_lineage_counter(destination: Dictionary, incoming: Dictionary) -> void:
+	var family: Variant = incoming.get("family", {})
+	if not family is Dictionary or not family.has("lineage_id"): return
+	destination.next_lineage = maxi(int(destination.get("next_lineage", 1)), int(family.lineage_id) + 1)
+
 static func prepare_arrival(destination_state: Dictionary, party: Dictionary, generation: int = 0) -> Dictionary:
 	var prepared := prepare_identity(destination_state)
 	if not prepared.ok: return prepared
@@ -285,6 +292,7 @@ static func prepare_arrival(destination_state: Dictionary, party: Dictionary, ge
 	Runtime.initialize_item_storage(destination)
 	var incoming: Dictionary = party.get("content", {})
 	if not validate_identity(incoming.get("travel_identity")): return fail("INVALID_IDENTITY", "旅隊缺少原資產穩定引用")
+	merge_lineage_counter(destination, incoming)
 	var maps := {}
 	var operation_maps := {}
 	var prior: Dictionary = party.get("arrival_mapping", {})
@@ -1386,7 +1394,7 @@ static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dicti
 	if state.has("crowd"): return fail("UNSUPPORTED", "群眾模式（Crowd）暫不支援整隊出發")
 	if state.has("family"):
 		var version := int(state.family.get("version", 0))
-		if version not in [1, 2, 3] or version < 3 and not Family.validate_family(state.family, str(state.get("id", ""))): return fail("INVALID_FAMILY", "必要原家族 schema 未准入")
+		if version not in [1, 2, 3, 4] or version != 3 and not Family.validate_family(state.family, str(state.get("id", ""))): return fail("INVALID_FAMILY", "必要原家族 schema 未准入")
 	var family_transfer := {}
 	var prepared := prepare_identity(state, str(spec.get("namespace", "")))
 	if not prepared.ok: return prepared
@@ -1848,7 +1856,7 @@ static func insert(destination_state: Dictionary, party: Dictionary, nav: Terrai
 		destination_path: String, departure_seconds: float, arrival_seconds: float, options: Dictionary = {}) -> Dictionary:
 	if party.get("content", {}).has("family"):
 		var version := int(party.content.family.get("version", 0))
-		if version not in [1, 2, 3] or version < 3 and not Family.validate_family(party.content.family, str(party.get("origin_site_id", ""))): return fail("INVALID_FAMILY", "旅隊必要原家族 schema 未准入")
+		if version not in [1, 2, 3, 4] or version != 3 and not Family.validate_family(party.content.family, str(party.get("origin_site_id", ""))): return fail("INVALID_FAMILY", "旅隊必要原家族 schema 未准入")
 	var original_party := party
 	var remapped := prepare_arrival(destination_state, party, int(options.get("generation", 0)))
 	if not remapped.ok: return remapped

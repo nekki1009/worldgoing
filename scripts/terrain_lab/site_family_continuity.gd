@@ -5,6 +5,9 @@ extends RefCounted
 
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const Technology = preload("res://scripts/terrain_lab/site_technology.gd")
+## Version 4 display name (at most NAME_MAX characters, may be empty) and stable lineage id.
+const NAME_MAX := 32
+const LINEAGE_MAX := 2147483646
 var lab: Variant
 var load_site_query: Callable # (path) -> original SiteStore.load_site result.
 var archive_current: Callable # () -> guarded original snapshot/save result.
@@ -26,11 +29,12 @@ static func _integer(value: Variant, lower: int, upper: int) -> bool:
 static func validate_family(value: Variant, site_id: String) -> bool:
 	# v1: unestablished registry. v2: the same registry plus offices, created by
 	# the first explicit head appointment (OFFICE plan 6.3).
-	if not value is Dictionary or not _integer(value.get("version"), 1, 3) or not value.get("complete") is bool or not value.get("members") is Array:
+	if not value is Dictionary or not _integer(value.get("version"), 1, 4) or not value.get("complete") is bool or not value.get("members") is Array:
 		return false
 	if value.size() != (3 if int(value.version) == 1 else (4 if int(value.version) == 2 else 6)) or int(value.version) >= 2 and not SiteOffices.validate(value.get("offices"), "family"):
 		return false
 	if int(value.version) == 3 and (not Technology.valid_family_id(value.get("family_id")) or not Technology.valid_family_tech(value.get("technology"))): return false
+	if int(value.version) == 4 and not valid_identity(value.get("name"), value.get("lineage_id")): return false
 	var seen := {}
 	for member: Variant in value.members:
 		if not member is Dictionary or member.size() != 5 or not member.get("site_id") is String or str(member.site_id).is_empty() or not member.get("path") is String or not member.get("label") is String:
@@ -45,6 +49,30 @@ static func validate_family(value: Variant, site_id: String) -> bool:
 		for seat: Dictionary in value.offices.positions:
 			if int(seat.holder) > 0 and not member_ids(value, site_id).has(int(seat.holder)): return false
 	return true
+
+## Version 4 identity: display name (String, may be empty) and an integer lineage id.
+static func valid_identity(display_name: Variant, lineage_id: Variant) -> bool:
+	return display_name is String and str(display_name).length() <= NAME_MAX and _integer(lineage_id, 1, LINEAGE_MAX)
+
+## Formal owner of the version 4 identity. Only the controlled member may name the
+## family; the Site counter next_lineage issues the id once and advances. Never on load.
+func establish_identity(requester_id: int, display_name: String) -> Dictionary:
+	var site: Dictionary = lab.terrain.site
+	var family: Variant = site.get("family")
+	if not validate_family(family, str(site.id)): return Runtime.fail("UNREGISTERED", "先明確登錄家族名單")
+	if requester_id != _controlled_id(): return Runtime.fail("NO_AUTHORITY", "只有目前受控的族人可以建立家族身分")
+	var version := int(family.get("version", 1))
+	if version == 3: return Runtime.fail("TECHNOLOGY_FAMILY", "已有科技的家族維持 v3，本次不改寫")
+	if version >= 4: return Runtime.fail("ALREADY_IDENTIFIED", "家族身分已建立")
+	if not valid_identity(display_name, 1): return Runtime.fail("INVALID_FAMILY_NAME", "家族名稱最多 32 字")
+	var lineage := int(site.get("next_lineage", 1))
+	if lineage < 1 or lineage > LINEAGE_MAX: return Runtime.fail("LINEAGE_LIMIT", "家族序號已達上限")
+	var offices: Dictionary = family.offices.duplicate(true) if version >= 2 else SiteOffices.default_offices("family", -1, false)
+	var candidate := {"version": 4, "complete": bool(family.complete), "members": family.members.duplicate(true), "offices": offices, "name": display_name, "lineage_id": lineage}
+	if not validate_family(candidate, str(site.id)): return Runtime.fail("INVALID_FAMILY", "家族身分未通過驗證；未改變")
+	site.family = candidate
+	site.next_lineage = lineage + 1
+	return Runtime.ok("已建立家族身分", {"lineage_id": lineage})
 
 ## Members who are people of `site_id` (full reference: site + person, F01).
 static func member_ids(family: Dictionary, site_id: String) -> Array[int]:
@@ -252,6 +280,12 @@ func register_members(members: Array, complete: bool, requester_id: int = -1) ->
 		family.version = 2
 		family.offices = offices
 	var previous: Dictionary = lab.terrain.site.get("family", {})
+	if int(previous.get("version", 1)) == 4:
+		# Version 4 keeps its identity through every roster rewrite (offices already carried above).
+		family.version = 4
+		family.name = previous.name
+		family.lineage_id = previous.lineage_id
+		family.offices = offices
 	if int(previous.get("version", 1)) == 3:
 		family.version = 3
 		family.family_id = previous.family_id

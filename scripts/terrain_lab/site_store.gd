@@ -1107,11 +1107,18 @@ static func _normalize_state(state: Dictionary) -> void:
 			for field: String in ["old_hp", "ending_hp", "loss"]: event[field] = float(event[field])
 	if state.has("family"):
 		state.family.version = int(state.family.version)
+		if state.family.has("lineage_id"): state.family.lineage_id = int(state.family.lineage_id)
 		if state.family.get("offices") is Dictionary: SiteOffices.normalize_numbers(state.family.offices)
 		if state.family.has("technology"): state.family.technology = Technology.normalize_family_tech(state.family.technology)
 		for member: Dictionary in state.family.members:
 			member.person_id = int(member.person_id)
 			member.age_years = int(member.age_years)
+	if state.has("next_lineage"):
+		state.next_lineage = int(state.next_lineage)
+	else:
+		# Legacy Site without the counter: continue after its one version 4 identity, else start at 1.
+		var legacy_family: Variant = state.get("family", {})
+		state.next_lineage = int(legacy_family.get("lineage_id", 0)) + 1 if legacy_family is Dictionary and int(legacy_family.get("version", 0)) == 4 else 1
 	if state.has("next_person_id"):
 		state.next_person_id = int(state.next_person_id)
 	if not state.has("team_supply"):
@@ -3273,7 +3280,18 @@ static func _validate_crowd_formation_references(state: Dictionary) -> Dictionar
 			officers[identity] = true
 	return Runtime.ok()
 
+## Lineage counter: a Site without the key is filled on load; a present counter must lie past the family id.
+static func _validate_lineage_allocator(state: Dictionary) -> Dictionary:
+	if not state.has("next_lineage"): return Runtime.ok()
+	if not _integer(state.next_lineage, 1, 2147483647): return Runtime.fail("CORRUPT_SAVE", "家族序號")
+	var family: Variant = state.get("family", {})
+	if family is Dictionary and int(family.get("version", 0)) == 4 and int(family.get("lineage_id", 0)) >= int(state.next_lineage):
+		return Runtime.fail("CORRUPT_SAVE", "家族序號會重用既有家族身分")
+	return Runtime.ok()
+
 static func _validate_person_allocator(state: Dictionary) -> Dictionary:
+	var lineage_validation := _validate_lineage_allocator(state)
+	if not lineage_validation.ok: return lineage_validation
 	var current_references := _validate_crowd_formation_references(state)
 	if not current_references.ok: return current_references
 	if not state.has("next_person_id"):

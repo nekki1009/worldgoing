@@ -879,6 +879,10 @@ static func _slots_match_culture(slots: Dictionary, definitions: Dictionary, cul
 			if not actual.is_empty() and actual != culture: return false
 	return true
 
+## Optional display name of an equipment nation: 1..32 characters.
+static func valid_nation_name(value: Variant) -> bool:
+	return value is String and not str(value).is_empty() and str(value).length() <= 32
+
 static func valid_nations(value: Variant, definitions: Dictionary, known_people: Dictionary, state: Dictionary = {}) -> bool:
 	if not value is Dictionary or not valid_organization_refs(state):
 		return false
@@ -889,9 +893,10 @@ static func valid_nations(value: Variant, definitions: Dictionary, known_people:
 	var faction_nations := {}
 	for nation_id: Variant in value:
 		var nation: Variant = value[nation_id]
-		if not nation_id is String or not _valid_key(nation_id) or not nation is Dictionary or nation.size() != 3 + int(nation.has("culture")) + int(nation.has("technology")) + int(nation.has("technology_operations")) + int(nation.has("ransom_data")) + int(nation.has("faction_version")) + int(nation.has("faction_id")) or not nation.get("members") is Array or not nation.get("standards") is Dictionary:
+		if not nation_id is String or not _valid_key(nation_id) or not nation is Dictionary or nation.size() != 3 + int(nation.has("culture")) + int(nation.has("technology")) + int(nation.has("technology_operations")) + int(nation.has("ransom_data")) + int(nation.has("faction_version")) + int(nation.has("faction_id")) + int(nation.has("name")) or not nation.get("members") is Array or not nation.get("standards") is Dictionary:
 			return false
 		if not RegionFactionQuery.nation_schema(nation, nation_id): return false
+		if nation.has("name") and not valid_nation_name(nation.get("name")): return false
 		if nation.has("faction_id"):
 			var faction: int = int(nation.faction_id)
 			var stable: Variant = state.get("travel_identity", {}).get("refs", {}).get("nation", {}).get(nation_id)
