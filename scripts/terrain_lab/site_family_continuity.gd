@@ -74,6 +74,25 @@ func establish_identity(requester_id: int, display_name: String) -> Dictionary:
 	site.next_lineage = lineage + 1
 	return Runtime.ok("已建立家族身分", {"lineage_id": lineage})
 
+## P4 S4B: the editor name candidate (data level). A version 1 or 2 family becomes version 4 with
+## `lineage` as its id (the caller advances the Site counter); a version 4 family is renamed and
+## keeps its id. Nothing is written here.
+static func name_candidate(family: Variant, site_id: String, lineage: int, display_name: String) -> Dictionary:
+	if not validate_family(family, site_id): return Runtime.fail("UNREGISTERED", "先建立並登錄家族名單")
+	var version := int(family.get("version", 1))
+	if version == 3: return Runtime.fail("TECHNOLOGY_FAMILY", "已有科技的家族維持 v3，本次不改寫")
+	if not valid_identity(display_name, 1): return Runtime.fail("INVALID_FAMILY_NAME", "家族名稱最多 32 字")
+	var candidate: Dictionary
+	if version >= 4:
+		candidate = family.duplicate(true)
+		candidate.name = display_name
+	else:
+		if lineage < 1 or lineage > LINEAGE_MAX: return Runtime.fail("LINEAGE_LIMIT", "家族序號已達上限")
+		var offices: Dictionary = family.offices.duplicate(true) if version >= 2 else SiteOffices.default_offices("family", -1, false)
+		candidate = {"version": 4, "complete": bool(family.complete), "members": family.members.duplicate(true), "offices": offices, "name": display_name, "lineage_id": lineage}
+	if not validate_family(candidate, site_id): return Runtime.fail("INVALID_FAMILY", "家族名稱候選未通過驗證；未改變")
+	return Runtime.ok("", {"family": candidate})
+
 ## P4 S4: pure authoring plan for a family roster. Never writes. `requested` is the complete
 ## list of member references the editor wants (each with the five roster fields). Other-Site
 ## members are read-only: they must be kept exactly, and no local edit may add one. A local

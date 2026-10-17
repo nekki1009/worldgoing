@@ -5,6 +5,7 @@ const Data = preload("res://scripts/region_lab/region_data.gd")
 const Adapter = preload("res://scripts/region_lab/region_terrain_adapter.gd")
 const Grid = preload("res://scripts/region_lab/region_grid.gd")
 const Preview = preload("res://scripts/region_lab/region_site_preview.gd")
+const FamilyContinuity = preload("res://scripts/terrain_lab/site_family_continuity.gd")
 const DRAFT_ROOT := "user://map_editor/drafts"
 const MAX_DRAFT_BYTES := 65536
 const PLAYTEST_REASON := "情境發布／建立試玩世界尚未實作，仍可保存草稿。"
@@ -113,6 +114,7 @@ func _build_ui() -> void:
 	_build_resource_form(column)
 	_build_resource_state_form(column)
 	_build_building_form(column)
+	_build_family_form(column)
 	_canvas = Control.new()
 	_canvas.name = "AuthorCanvas"
 	_canvas.clip_contents = true
@@ -905,6 +907,110 @@ var _building_launch_y: SpinBox
 var _building_resource: OptionButton
 var _building_stock: SpinBox
 var _building_owner: SpinBox
+
+## P4 S4B: the family panel. The family lives in the draft initial state where a Site keeps it.
+## Each action builds a candidate from the committed draft, checks it (roster planner or name
+## candidate, plus the original-person check), and commits through the same path as building
+## edits. A refusal changes nothing.
+var _family_name: LineEdit
+var _family_person: SpinBox
+var _family_summary: Label
+
+func _family_work() -> Dictionary:
+	var prepared: Dictionary = _prepare_work(_resource_work())
+	if not bool(prepared.get("ok", false)): return {}
+	var value: Dictionary = prepared.draft
+	value.revision = int(value.revision) + 1
+	return value
+
+func _family_ui(action: String) -> void:
+	if draft.is_empty() or _unsaved.visible or terrain == null: return
+	var value: Dictionary = _family_work()
+	if value.is_empty():
+		_status.text = "家族未改變：草稿初始狀態無法準備"
+		return
+	var state: Dictionary = value.initial_state
+	var site_id: String = str(state.get("id", ""))
+	var family: Variant = state.get("family")
+	var result: Dictionary = SiteRuntime.fail("INVALID", "未知家族動作")
+	if action == "create":
+		if family != null: result = SiteRuntime.fail("ALREADY_EXISTS", "此草稿已有家族；未改變")
+		else: result = SiteRuntime.ok("", {"family": {"version": 1, "complete": true, "members": []}})
+	elif family == null:
+		result = SiteRuntime.fail("NO_TARGET", "請先建立家族；未改變")
+	elif action == "name":
+		result = FamilyContinuity.name_candidate(family, site_id, int(state.get("next_lineage", 1)), _family_name.text.strip_edges())
+	else:
+		var members: Array = family.members.duplicate(true)
+		if action == "add":
+			var added_person: int = int(_family_person.value)
+			if not RegionTravel._body_records(state).has(added_person):
+				result = SiteRuntime.fail("NO_TARGET", "原人物不在此草稿初始狀態中；未改變")
+			else:
+				members.append({"site_id": site_id, "person_id": added_person, "path": "", "label": "原人物 #%d" % added_person, "age_years": -1})
+				result = FamilyContinuity.roster_plan(family, site_id, members)
+		elif action == "remove":
+			var removed_person: int = int(_family_person.value)
+			var kept: Array = []
+			for member: Dictionary in members:
+				if int(member.person_id) != removed_person: kept.append(member)
+			if kept.size() == members.size(): result = SiteRuntime.fail("NO_TARGET", "此人不在家族名冊中；未改變")
+			else: result = FamilyContinuity.roster_plan(family, site_id, kept)
+	if not bool(result.get("ok", false)):
+		_status.text = "家族未改變：" + str(result.get("message", ""))
+		return
+	var candidate: Dictionary = result.family
+	value.initial_state.family = candidate
+	if action == "name" and int(candidate.version) == 4 and (family == null or int(family.version) != 4):
+		value.initial_state.next_lineage = int(candidate.lineage_id) + 1
+	if not _commit_work(value, "家族：" + action):
+		_status.text = "家族未改變：候選或歷史預驗拒絕；作品與游標保持不變"
+		return
+	_read_family()
+	_status.text = "家族名冊已更新"
+
+func _read_family() -> void:
+	if _family_summary == null or draft.is_empty(): return
+	var family: Variant = draft.get("initial_state", {}).get("family")
+	if family == null:
+		_family_summary.text = "家族：尚未建立"
+		return
+	var label: String = "家族 v%d" % int(family.version)
+	if int(family.version) == 4: label += "「%s」" % str(family.name)
+	_family_summary.text = "%s：%d 人" % [label, family.members.size()]
+
+## P4 S4B: the panel (toggle, name field, person field, create/add/remove/name buttons).
+func _build_family_form(column: Node) -> void:
+	var panel: VBoxContainer = VBoxContainer.new()
+	panel.name = "AuthorFamily"
+	panel.visible = false
+	_button(column, "家族與人物", "FamilyTools", func() -> void: panel.visible = not panel.visible)
+	column.add_child(panel)
+	_family_summary = Label.new()
+	_family_summary.name = "FamilySummary"
+	panel.add_child(_family_summary)
+	var name_row: HBoxContainer = HBoxContainer.new()
+	panel.add_child(name_row)
+	_family_name = LineEdit.new()
+	_family_name.name = "FamilyName"
+	_family_name.max_length = 64
+	_family_name.placeholder_text = "家族名稱（最多 32 字）"
+	_family_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_row.add_child(_family_name)
+	_button(name_row, "設定家族名稱", "FamilySetName", _family_ui.bind("name"))
+	var person_row: HBoxContainer = HBoxContainer.new()
+	panel.add_child(person_row)
+	_family_person = SpinBox.new()
+	_family_person.name = "FamilyPerson"
+	_family_person.min_value = 1
+	_family_person.max_value = 2147483647
+	_family_person.step = 1
+	_family_person.value = 1
+	person_row.add_child(_family_person)
+	_button(person_row, "建立空家族", "FamilyCreate", _family_ui.bind("create"))
+	_button(person_row, "加入原人物", "FamilyAddMember", _family_ui.bind("add"))
+	_button(person_row, "移除成員", "FamilyRemoveMember", _family_ui.bind("remove"))
+	_read_family()
 
 func edit_building(action: String, key: String = "", kind: String = "", cells: Array[int] = [], options: Dictionary = {}, cargo: Dictionary = {}) -> Dictionary:
 	if draft.is_empty() or _unsaved.visible or int(draft.revision) >= 2147483647: return SiteRuntime.fail("BUSY")
