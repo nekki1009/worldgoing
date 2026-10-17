@@ -12,6 +12,7 @@ const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
 const Stockpiles = preload("res://scripts/terrain_lab/site_stockpiles.gd")
 const RansomData = preload("res://scripts/terrain_lab/site_ransom_data.gd")
 const Succession = preload("res://scripts/terrain_lab/site_succession.gd")
+const Take = preload("res://scripts/terrain_lab/site_take_office.gd") # R5 S2: vacancy take-office core.
 const NATION_OPERATIONS_VERSION := 1
 const NATION_OPERATIONS_MAX := 128
 const NATION_PUBLIC_VERSION := 2
@@ -137,6 +138,23 @@ func appoint_nation_head(nation_id: String, person_id: int) -> Dictionary:
 	nation.erase("military_head")
 	nation.offices = offices
 	return Runtime.ok("已設定元首", {"revision": int(offices.revision)})
+
+## R5 S2: the nation head seat is taken only when vacant; an occupied seat refuses (BUSY) and is never overwritten.
+## Controlled authority only. Removes military_head as appoint_nation_head does.
+func take_nation_head(requester_id: int, nation_id: String, person_id: int, authority: Variant) -> Dictionary:
+	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
+	if nation.is_empty(): return Runtime.fail("NO_TARGET", "沒有此國家")
+	var auth: Dictionary = Take.authority_refusal(authority, requester_id, int(lab.controlled_person_id()))
+	if not auth.ok: return auth
+	if not _member(nation, person_id): return Runtime.fail("NO_TARGET", "元首須是本國真實國民")
+	var offices := nation_offices(nation).duplicate(true)
+	SiteOffices.ensure_catalog(offices, "nation")
+	if int(SiteOffices.head_position(offices).get("holder", -1)) > 0: return Runtime.fail("BUSY", "元首在任")
+	var committed: Dictionary = Take.commit_head(offices, person_id)
+	if not committed.ok: return committed
+	nation.erase("military_head")
+	nation.offices = committed.offices
+	return Runtime.ok("已就任元首", {"revision": int(committed.offices.revision)})
 
 ## Organization adjustment is the head's own, non-delegable power (3.5).
 func apply_nation_office_plan(requester_id: int, nation_id: String, expected_revision: int, ops: Array) -> Dictionary:

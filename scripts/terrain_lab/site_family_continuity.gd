@@ -27,6 +27,7 @@ static func _integer(value: Variant, lower: int, upper: int) -> bool:
 ## that Site, so they must be registered with that site_id (F01): a person with
 ## the same number elsewhere is not a member here.
 const Succession = preload("res://scripts/terrain_lab/site_succession.gd") # R5 S1B: optional v5 heir section.
+const Take = preload("res://scripts/terrain_lab/site_take_office.gd") # R5 S2: vacancy take-office core.
 
 static func validate_family(value: Variant, site_id: String) -> bool:
 	# v1: unestablished registry. v2: the same registry plus offices, created by
@@ -247,6 +248,26 @@ func appoint_head(requester_id: int, person_id: int) -> Dictionary:
 	family.version = maxi(2, int(family.get("version", 1)))
 	family.offices = offices
 	return Runtime.ok("已指定家主 #%d" % person_id, {"revision": int(offices.revision)})
+
+## R5 S2: the family head seat is taken only when no awake head holds it (an absent or unfit head is replaced in one commit).
+## Controlled authority only; the seated awake head refuses (BUSY).
+func take_vacant_head(requester_id: int, person_id: int, authority: Variant) -> Dictionary:
+	var family: Variant = lab.terrain.site.get("family")
+	if not validate_family(family, str(lab.terrain.site.id)): return Runtime.fail("UNREGISTERED", "先明確登錄家族名單")
+	var auth: Dictionary = Take.authority_refusal(authority, requester_id, _controlled_id())
+	if not auth.ok: return auth
+	var members := local_member_ids(family)
+	if not members.has(person_id) or not members.has(requester_id): return Runtime.fail("NO_TARGET", "接任人須是登錄族人")
+	if head_executor(family) > 0: return Runtime.fail("BUSY", "家主在任且清醒")
+	var person := _current_person(person_id)
+	if person.is_empty() or float(person.hp) <= 0.0: return Runtime.fail("NO_TARGET", "家主人選須是在此地存活的原人物")
+	var offices: Dictionary = family_offices(family).duplicate(true)
+	if offices.is_empty(): offices = SiteOffices.default_offices("family", -1, person_id != _controlled_id())
+	var committed: Dictionary = Take.commit_head(offices, person_id)
+	if not committed.ok: return committed
+	family.version = maxi(2, int(family.get("version", 1)))
+	family.offices = committed.offices
+	return Runtime.ok("已就任家主 #%d" % person_id, {"revision": int(committed.offices.revision)})
 
 ## Organization adjustment is the head's own, non-delegable power (3.5).
 func apply_office_plan(requester_id: int, expected_revision: int, ops: Array) -> Dictionary:
