@@ -118,6 +118,30 @@ static func valid_trade_tax_candidate(candidate: Dictionary, state: Dictionary) 
 	return valid_nation_reference(candidate.get("nation_id"), state) and valid_trade_tax_percent(candidate.get("trade_tax_percent")) \
 		and Technology.valid_scope_record(candidate.technology, "settlement") and str(candidate.technology.holder_site_id) == str(state.get("id", ""))
 
+## P4 S3: the settlement's formal equipment nation (a key of equipment_nations, or null).
+## Only the settlement head may set it, as set_trade_tax_percent does. The record is upgraded
+## to the current version in the same candidate (empty technology scope and trade tax 0 if
+## absent) and validated as a whole before commit. Owner faction, residents and center
+## features are never touched: only the settlement record changes.
+static func set_nation(data: TerrainData, requester_id: int, nation_id: Variant) -> Dictionary:
+	var state: Dictionary = data.site if data != null else {}
+	var current: Variant = state.get("settlement")
+	if not current is Dictionary: return Runtime.fail("NO_TARGET", "沒有聚落紀錄")
+	var version: int = int(current.get("version", 0))
+	if version < 1 or version > VERSION_MAX: return Runtime.fail("UNSUPPORTED", "聚落版本未知")
+	var holder: int = int(SiteOffices.head_position(current.get("offices", {})).get("holder", -1))
+	if holder <= 0 or requester_id != holder: return Runtime.fail("NO_AUTHORITY", "只有聚落首長可設定所屬國家")
+	if nation_id != null and not valid_nation_reference(nation_id, state): return Runtime.fail("NATION_UNKNOWN", "所屬國家須是現有正式國家（非測試國別）")
+	var candidate: Dictionary = current.duplicate(true)
+	candidate.version = VERSION_MAX
+	candidate.nation_id = nation_id
+	if not candidate.has("technology"): candidate.technology = Technology.empty_scope_record(str(state.get("id", "")))
+	if not candidate.has("trade_tax_percent"): candidate.trade_tax_percent = 0
+	if not valid_trade_tax_candidate(candidate, state): return Runtime.fail("CORRUPT_SAVE", "聚落紀錄格式")
+	current.clear()
+	current.merge(candidate, true)
+	return Runtime.ok("聚落所屬國家已設定", {"nation_id": nation_id})
+
 ## Only the settlement head (holder of the head position) may set the rate. The record is upgraded to v4 in the same candidate: nation_id null if absent, and an empty technology scope record for this Site if absent (founded v1 settlements have none, per the existing empty-record convention). Refusal changes nothing.
 static func set_trade_tax_percent(data: TerrainData, requester_id: int, percent: Variant) -> Dictionary:
 	var state: Dictionary = data.site if data != null else {}
