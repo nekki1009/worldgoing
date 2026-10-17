@@ -118,6 +118,9 @@ var fatigue_two_hop_witness_enabled := true # Exact positive proof only; false k
 var fatigue_zero_fast_path_enabled := true # Exact zero-effort shortcut, compared against V0.41R.
 var fatigue_zero_eligible_rows := 0 # Counts, not microseconds; profiling only.
 var fatigue_zero_skipped_advances := 0
+const SHIP_LOOKUP_FAST := true # KO94M production switch; false keeps the per-row ship lookups.
+var ship_lookup_fast_test_enabled := true # KO94M private toggle: only the equivalence test sets this.
+var ship_lookup_skipped_rows := 0 # Member rows whose ship lookups were skipped by the no-ship gate (counter only).
 var fixed_action_steps_enabled := false # A/B: retain incomplete 120 Hz time, never clamp or discard it.
 var _action_time_remainder := 0.0 # Original clock's pending time and fractional phase.
 var _action_step_remaining: float = 0.0 # Tail of one admitted fixed quantum, including pending frames.
@@ -2437,12 +2440,17 @@ func _advance_team_fatigue(team: TerrainArmy, seconds: float, handled: Dictionar
 		npc_moving = true
 		if team.combat_can_act(index) and team.move_duration[index] <= TerrainArmy.RUN_DURATION + 0.000001:
 			effort += maxf(0.0, seconds - float(handled.get(team.combat_identity(index), 0.0))) * PersonFatigue.RUN_RATE
+	# KO94M: with no ship record in the site, _ship_crew_work and _ship_embarked are false for every person
+	# (ship_for_person is always empty), so those calls are skipped. _ship_person_in_journey always runs.
+	var ships_possible := _site_has_ship_records()
 	for index in range(team.combat_units.size()):
 		var row: Dictionary = team.combat_units[index]
 		if not is_same(PersonFatigue.pool(row), shared): continue
 		var identity := team.combat_identity(index)
-		if _ship_crew_work(identity): effort += maxf(0.0, seconds - float(handled.get(identity, 0.0))) * PersonFatigue.WORK_RATE
-		if _ship_person_in_journey(identity) or site_controller != null and _ship_embarked(identity) and (not site_controller.vehicles.ships_stopped_for_team(team.team_id) or site_controller.person_actions.is_busy(identity)): npc_moving = true
+		if ships_possible and _ship_crew_work(identity): effort += maxf(0.0, seconds - float(handled.get(identity, 0.0))) * PersonFatigue.WORK_RATE
+		var in_journey := _ship_person_in_journey(identity)
+		if not ships_possible: ship_lookup_skipped_rows += 1
+		if in_journey or ships_possible and site_controller != null and _ship_embarked(identity) and (not site_controller.vehicles.ships_stopped_for_team(team.team_id) or site_controller.person_actions.is_busy(identity)): npc_moving = true
 	if is_instance_valid(team.player_member) and is_same(team.player_member._fatigue_pool, shared):
 		var actor := team.player_member
 		var actor_rate := actor.riding_fatigue_rate()
@@ -5510,6 +5518,19 @@ func _ship_vehicle_in_journey(identity: String) -> bool:
 
 func _ship_embarked(identity: int) -> bool:
 	return site_controller != null and site_controller.vehicles.is_embarked(identity)
+
+## KO94M: false only when the site has no ship record at all. Then ship_for_person (and so is_embarked and
+## ship_person_crew_work) is false for every person; records() is a read-only lookup. Any ship record, the
+## toggle off, or SHIP_LOOKUP_FAST false returns true and the original per-row calls run unchanged.
+func _site_has_ship_records() -> bool:
+	if not SHIP_LOOKUP_FAST or not ship_lookup_fast_test_enabled:
+		return true
+	if site_controller == null:
+		return false
+	for vehicle: Variant in site_controller.vehicles.records().values():
+		if SiteVehicleTransport.is_ship(vehicle):
+			return true
+	return false
 
 func _ship_crew_work(identity: int) -> bool:
 	return site_controller != null and site_controller.vehicles.ship_person_crew_work(identity)
