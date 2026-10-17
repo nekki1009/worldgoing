@@ -8962,7 +8962,10 @@ func _prepare_region_main_interval(maximum: float, local_tactical: float, travel
 	var interval: Dictionary = slot.preview_region_interval(maximum, simulation_speed, tactical)
 	if not interval.get("ok", false) or interval.get("pending", false): return interval
 	var accepted_action := float(interval.action_end) - float(interval.action_begin)
-	var accepted_game := float(interval.game_end) - float(interval.game_begin)
+	# Lab-side GAME width uses the same exact formula the interval guard checks
+	# against the Slot (<=1e-8). Subtracting absolute Slot clocks near 16439
+	# quantizes by ~3.6e-12 (1 ULP), which exceeds ACTION_TIME_EPSILON.
+	var accepted_game := SiteRuntime.game_seconds(accepted_action, float(interval.tactical_seconds)) * simulation_speed
 	var limited := accepted_action
 	# Check every source and due capture BEFORE preparing any future work.
 	for original: TerrainLab in originals:
@@ -8995,7 +8998,7 @@ func _prepare_region_main_interval(maximum: float, local_tactical: float, travel
 		interval = slot.preview_region_interval(limited, simulation_speed, minf(limited, tactical))
 		if not interval.get("ok", false) or interval.get("pending", false): return _region_preflight_failure(originals, interval)
 		accepted_action = float(interval.action_end) - float(interval.action_begin)
-		accepted_game = float(interval.game_end) - float(interval.game_begin)
+		accepted_game = SiteRuntime.game_seconds(accepted_action, float(interval.tactical_seconds)) * simulation_speed
 		for original: TerrainLab in originals:
 			var retimed: Dictionary = original._retime_shared_work_step(accepted_action, accepted_game)
 			if not retimed.get("ok", false): return _region_preflight_failure(originals, retimed)
@@ -10685,7 +10688,7 @@ func _region_advance_original_travel_interval(request: Dictionary) -> Dictionary
 		interval = slot.preview_region_interval(float(outcome.action_seconds), simulation_speed, minf(float(outcome.action_seconds), float(interval.tactical_seconds)))
 		if not interval.get("ok", false) or interval.get("pending", false): return _region_preflight_failure(originals, interval)
 		accepted = float(interval.action_end) - float(interval.action_begin)
-		var game := float(interval.game_end) - float(interval.game_begin)
+		var game := SiteRuntime.game_seconds(accepted, float(interval.tactical_seconds)) * simulation_speed
 		for original: TerrainLab in originals:
 			var retimed := original._retime_shared_work_step(accepted, game)
 			if not retimed.ok: return _region_preflight_failure(originals, retimed)

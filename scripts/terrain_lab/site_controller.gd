@@ -9376,8 +9376,13 @@ func _checkpoint_ship_journey() -> Dictionary:
 	if not guard.ok: return guard
 	var captured := _capture_for_save()
 	if not captured.ok: return captured
+	var had_checkpoint_due: bool = _ship_journey.has("checkpoint_due")
+	var previous_due: Variant = _ship_journey.get("checkpoint_due")
+	_ship_journey.checkpoint_due = 0.0
 	var result: Dictionary = region_slot.checkpoint_ship_transfer(str(_ship_journey.token), lab.terrain, float(_ship_journey.elapsed_action_seconds), str(_ship_journey.phase), float(_ship_journey.return_elapsed_action_seconds))
-	if result.ok: _ship_journey.checkpoint_due = 0.0
+	if not result.ok:
+		if had_checkpoint_due: _ship_journey.checkpoint_due = previous_due
+		else: _ship_journey.erase("checkpoint_due")
 	return result
 
 func cancel_ship_journey() -> Dictionary:

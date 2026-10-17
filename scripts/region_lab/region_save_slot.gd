@@ -418,16 +418,22 @@ func _load_checked(path: String, site: Vector2i) -> Dictionary:
 	var policy_guard := _admit_world_pin(loaded.data)
 	return loaded if policy_guard.ok else policy_guard
 
-func _save_checked(data: TerrainData, site: Vector2i, path: String) -> Dictionary:
+func _save_checked(data: TerrainData, site: Vector2i, path: String, reuse_entry: Dictionary = {}) -> Dictionary:
 	var coordinate := _coordinate(data)
 	if not coordinate.ok or coordinate.site != site: return coordinate if not coordinate.ok else fail("SAVE_VERSION", "候選位置不符")
 	var original := _region_bound_original_lab(data)
 	var saved: Dictionary
+	var source_context: Dictionary = {}
 	if original != null:
 		var effects_complete := original._region_point_pending.is_empty() and not original._region_point_consuming and pending_region_events().is_empty()
 		var capture: Dictionary = original.site_controller.capture_region_checkpoint("region_checkpoint" if effects_complete else "region_barrier",
 			effects_complete, original._region_point_pending)
 		if not capture.ok: return capture
+		source_context = capture.context
+		if not reuse_entry.is_empty():
+			var reused: Dictionary = _reuse_ship_checkpoint_source(site, reuse_entry, capture)
+			if not reused.ok: return reused
+			if bool(reused.get("reused", false)): return reused
 		saved = Store.save_region_snapshot(data, path, capture.context, capture.owners)
 	elif data.site.has("region_snapshot"):
 		var captured := Store.validate_region_snapshot(data, {})
@@ -440,8 +446,12 @@ func _save_checked(data: TerrainData, site: Vector2i, path: String) -> Dictionar
 	else:
 		saved = Store.save(data, path)
 	if not saved.ok: return saved
+	var source_checksum: String = _faction_file_sha256(path) if not source_context.is_empty() else ""
 	var readback := _load_checked(path, site)
 	if not readback.ok: return readback
+	if not source_context.is_empty():
+		var remembered: Dictionary = _faction_remember_captured_source(path, site, source_checksum, readback.data, source_context)
+		if not remembered.ok: return remembered
 	return {"ok": true, "path": path, "data": readback.data}
 
 ## Decision A: a never-visited Site created as an arrival destination becomes a
@@ -1251,7 +1261,29 @@ func _adjacent_ship_route(origin: TerrainData, destination: TerrainData, from: V
 					if hull.has(world + adjacent) and not _ship_route_edge(origin, destination, from, to, world, world + adjacent): return fail("NO_ROUTE", "原完整船體內部水域邊禁止")
 	return {"ok": true, "distance": float(distance)}
 
+func _ship_selected_source_guard(request: Dictionary) -> Dictionary:
+	var from: Vector2i = Vector2i(int(request.from[0]), int(request.from[1]))
+	var sites: Dictionary = _marker.get("sites", {})
+	var site_key: String = _site_key(from)
+	# A first checkpoint may publish this source for the first time.
+	if not sites.has(site_key): return {"ok": true}
+	var entry: Dictionary = sites[site_key]
+	# This boundary checks only the departing selected Site, never the whole world.
+	if not entry.get("path") is String or not _faction_digest_valid(str(entry.get("sha256", ""))):
+		return fail("CORRUPT_SAVE", "原船旅程 selected Site 記錄非法")
+	var path: String = folder.path_join(str(entry.path))
+	if FileAccess.file_exists(path) and _faction_file_sha256(path) == str(entry.sha256): return {"ok": true}
+	# A changed source cannot retain a known-commit or summary admission.
+	_recover_known_commit.erase(folder)
+	_faction_source_cache.clear()
+	_faction_summary_digest_memo.clear()
+	Store.invalidate_faction_summary_path(path)
+	return fail("CORRUPT_SAVE", "原船旅程 selected Site 已遺失或 SHA 不符")
+
 func ship_transfer_status(token: String = "") -> Dictionary:
+	var previous_control: Dictionary = control
+	var previous_marker: Dictionary = _marker
+	var previous_scope: String = _control_scope
 	var recovered := _recover_control()
 	if not recovered.ok: return recovered
 	var journey: Dictionary = _marker.get("journey", {})
@@ -1260,8 +1292,16 @@ func ship_transfer_status(token: String = "") -> Dictionary:
 		if not journey.is_empty(): token = str(journey.get("token", ""))
 		elif _prepared.size() == 1: token = str(_prepared.keys()[0])
 		else: return {"ok": true, "pending": false}
+	var had_prepared: bool = _prepared.has(token)
 	var requested := _request(token)
 	if not requested.ok: return requested
+	var selected: Dictionary = _ship_selected_source_guard(requested.request)
+	if not selected.ok:
+		control = previous_control
+		_marker = previous_marker
+		_control_scope = previous_scope
+		if not had_prepared: _prepared.erase(token)
+		return selected
 	var status: Dictionary = requested.request.duplicate(true)
 	status["pending"] = true
 	status["ok"] = true
@@ -1273,11 +1313,58 @@ func ship_transfer_status(token: String = "") -> Dictionary:
 	if float(status.elapsed_action_seconds) > float(status.seconds) + 0.000001: return fail("CORRUPT_SAVE", "旅程 ACTION 超過已提交路程")
 	return status
 
+func _reuse_ship_checkpoint_source(site: Vector2i, entry: Dictionary, captured: Dictionary) -> Dictionary:
+	var selected_path: String = folder.path_join(str(entry.get("path", "")))
+	if not str(entry.get("path", "")).begins_with("generations/") or not _faction_digest_valid(str(entry.get("sha256", ""))):
+		return fail("CORRUPT_SAVE", "原 checkpoint source entry 非法")
+	if FileAccess.get_sha256(selected_path) != str(entry.sha256): return fail("CONFLICT", "原 checkpoint source bytes 已變")
+	var selected: Dictionary = _load_checked(selected_path, site)
+	if not selected.ok: return selected
+	var previous: Dictionary = _read_document(selected_path, Store.MAX_BYTES)
+	if not previous.ok: return previous
+	if FileAccess.get_sha256(selected_path) != str(entry.sha256): return fail("CONFLICT", "原 checkpoint source 在完整驗證中已變")
+	if not captured.get("payload") is Dictionary or not previous.payload.get("state", {}).get("region_snapshot") is Dictionary:
+		return {"ok": true, "reused": false}
+	var candidate: Variant = JSON.parse_string(JSON.stringify(captured.payload, "", true, true))
+	if not candidate is Dictionary: return fail("CORRUPT_SAVE", "原 checkpoint codec candidate 非法")
+	var prior_context: Dictionary = previous.payload.state.region_snapshot.context
+	var next_context: Dictionary = candidate.state.region_snapshot.context
+	if int(prior_context.source_generation) > int(next_context.source_generation): return {"ok": true, "reused": false}
+	# These two fields identify a capture attempt, never body/graph progress.
+	for payload: Dictionary in [previous.payload, candidate]:
+		var snapshot: Dictionary = payload.state.region_snapshot
+		var owners: Variant = RegionCheckpoint.unwire(snapshot.owners)
+		if not owners is Dictionary: return fail("INVALID_REGION_OWNERS")
+		var snapshot_owner: GDScript = preload("res://scripts/terrain_lab/site_region_owner_snapshot.gd")
+		var reference_shape: Callable = func(key: String, kind: int) -> bool:
+			return not key.is_empty() and kind in [TYPE_OBJECT, TYPE_CALLABLE, TYPE_DICTIONARY, TYPE_ARRAY]
+		var graph: Dictionary = snapshot_owner.validate_for_bind(owners.get("scene"), reference_shape, snapshot.context)
+		if not graph.ok: return graph
+		var scene_context: Dictionary = owners.scene.context
+		for field: String in ["source_generation", "token"]:
+			if scene_context.get(field) != snapshot.context.get(field): return {"ok": true, "reused": false}
+			scene_context.erase(field)
+			snapshot.context.erase(field)
+		snapshot.owners = RegionCheckpoint.wire(owners)
+	if previous.payload != candidate: return {"ok": true, "reused": false}
+	return {"ok": true, "reused": true, "path": selected_path, "data": selected.data}
+
 func checkpoint_ship_transfer(token: String, source_data: TerrainData, elapsed_action_seconds: float = 0.0, phase: String = "outbound", return_elapsed_action_seconds: float = 0.0) -> Dictionary:
+	var previous_control: Dictionary = control
+	var previous_marker: Dictionary = _marker
+	var previous_scope: String = _control_scope
 	var recovered := _recover_control()
 	if not recovered.ok: return recovered
+	var had_prepared: bool = _prepared.has(token)
 	var requested := _request(token)
 	if not requested.ok: return requested
+	var selected: Dictionary = _ship_selected_source_guard(requested.request)
+	if not selected.ok:
+		control = previous_control
+		_marker = previous_marker
+		_control_scope = previous_scope
+		if not had_prepared: _prepared.erase(token)
+		return selected
 	var request: Dictionary = requested.request
 	if not _seconds(elapsed_action_seconds): return fail("INVALID_TIME", "原旅程 ACTION 進度非法")
 	var previous: Dictionary = _marker.get("journey", {})
@@ -1301,13 +1388,14 @@ func checkpoint_ship_transfer(token: String, source_data: TerrainData, elapsed_a
 	# Checkpoint keeps original people and ships at the source. Its one marker
 	# records the original clock progress, allowing resume without replaying food.
 	var path := _generation_path(int(_marker.get("generation", 0)) + 1, from)
-	var checked := _save_checked(source_data, from, path)
+	var entry: Dictionary = _marker.get("sites", {}).get(_site_key(from), {})
+	var checked: Dictionary = _save_checked(source_data, from, path, entry)
 	if not checked.ok: return checked
 	var sites: Dictionary = _marker.get("sites", {}).duplicate(true)
-	sites[_site_key(from)] = _file_entry(path)
+	sites[_site_key(from)] = entry.duplicate(true) if bool(checked.get("reused", false)) else _file_entry(str(checked.path))
 	var clock := {"logical_game_seconds": float(control.logical_game_seconds), "active_site_id": str(source_data.site.id)}
 	var published := _publish(sites, clock, str(_marker.get("transfer_token", "")), journey)
-	return {"ok": true, "generation": published.generation, "path": path, "elapsed_game_seconds": float(control.logical_game_seconds) - float(request.departure_game_seconds), "elapsed_action_seconds": elapsed_action_seconds} if published.ok else published
+	return {"ok": true, "generation": published.generation, "path": checked.path, "elapsed_game_seconds": float(control.logical_game_seconds) - float(request.departure_game_seconds), "elapsed_action_seconds": elapsed_action_seconds} if published.ok else published
 
 func commit_ship_transfer(token: String, source_data: TerrainData, arrival_preflight: Callable = Callable()) -> Dictionary:
 	var recovered := _recover_control()
@@ -3314,10 +3402,13 @@ func checkpoint_region_site(data: TerrainData, context: Dictionary, owner_states
 	var saved := Store.save_region_snapshot(data, path, context, owner_states)
 	if not saved.ok: return saved
 	# Same mode-aware readback as resume; never a normal cold catch-up.
+	var source_checksum: String = _faction_file_sha256(path)
 	var loaded := _load_checked(path, coordinate.site)
 	if not loaded.ok: return loaded
 	var validated := Store.validate_region_snapshot(loaded.data, {}, expected)
 	if not validated.ok: return validated
+	var remembered: Dictionary = _faction_remember_captured_source(path, coordinate.site, source_checksum, loaded.data, context)
+	if not remembered.ok: return remembered
 	var next_clock := control.duplicate(true)
 	if not faction_candidate.is_empty():
 		var checked_factions: Variant = RegionFactionQuery.validate(faction_candidate, float(next_clock.logical_game_seconds))
@@ -11028,12 +11119,63 @@ func _faction_site_source(path: String, site: Vector2i, checksum: String) -> Dic
 	if not loaded.ok:
 		Store.invalidate_faction_summary_path(path)
 		return loaded
-	var summarized: Dictionary = _faction_summary(loaded.data.site, str(loaded.data.site.id), _site_seconds(loaded.data), loaded.data.site.get("region_snapshot", {}).get("context", {}).get("runtime_revision"))
+	# Region's paid endpoint is captured from the same Slot clock, not rebuilt
+	# by multiplying the independently accumulated minute/phase projection.
+	var source_context: Dictionary = loaded.data.site.get("region_snapshot", {}).get("context", {})
+	var source_seconds: float = float(source_context.game_seconds) if not source_context.is_empty() else _site_seconds(loaded.data)
+	var summarized: Dictionary = _faction_summary(loaded.data.site, str(loaded.data.site.id), source_seconds, source_context.get("runtime_revision"))
 	if not summarized.ok:
 		Store.invalidate_faction_summary_path(path)
 		return summarized
+	if not source_context.is_empty():
+		summarized.summary.source_clock = {"fire_epoch": source_context.fire_epoch, "fire_sequence": source_context.fire_sequence,
+			"game_seconds": source_context.game_seconds, "action_seconds": source_context.action_seconds}
 	if not shared_record.is_empty(): _faction_static_site_remember(shared_record, summarized.summary)
 	return _faction_remember(key, summarized.summary)
+
+func _faction_remember_captured_source(path: String, site: Vector2i, checksum: String, data: TerrainData, context: Dictionary) -> Dictionary:
+	if not _faction_digest_valid(checksum) or _faction_file_sha256(path) != checksum:
+		return fail("CONFLICT", "faction captured source changed during readback")
+	if not _seconds(context.get("game_seconds")) or not _seconds(context.get("action_seconds")):
+		return fail("CORRUPT_SAVE", "faction captured source time")
+	var recorded: Dictionary = data.site.get("region_snapshot", {}).get("context", {})
+	for field: String in ["game_seconds", "action_seconds", "fire_epoch", "fire_sequence", "source_generation", "runtime_revision"]:
+		var encoded: Variant = JSON.parse_string(JSON.stringify(context.get(field), "", false, true))
+		if recorded.get(field) != encoded: return fail("CORRUPT_SAVE", "faction captured source context")
+	# This immutable file was just validated; retain its actual capture clock.
+	var summarized: Dictionary = _faction_summary(data.site, str(data.site.id), context.game_seconds, context.get("runtime_revision"))
+	if not summarized.ok: return summarized
+	return _faction_remember(_faction_site_key(checksum, site, path), summarized.summary)
+
+func _faction_source_receipt_seconds(summary: Dictionary, checksum: String, generation: Variant, previous: Dictionary, clock: Dictionary) -> Variant:
+	# A committed receipt binds this same immutable owner/source after reopen.
+	var coverage: Variant = previous.get("coverage")
+	if coverage is Dictionary and coverage.get("sources") is Array:
+		for raw: Variant in coverage.sources:
+			if not raw is Dictionary or str(raw.get("owner", "")) != str(summary.owner) or raw.get("checksum") != checksum \
+				or raw.get("source_generation") != generation or raw.get("runtime_revision") != summary.get("runtime_revision"): continue
+			var accepted: Variant = raw.get("as_of_game_seconds")
+			if not _seconds(accepted) or not _seconds(summary.at): continue
+			var encoded: Variant = JSON.parse_string(JSON.stringify(float(accepted), "", false, true))
+			var recorded: Variant = JSON.parse_string(JSON.stringify(float(summary.at), "", false, true))
+			if encoded == recorded: return accepted
+	return _faction_source_game_seconds(summary, clock)
+
+func _faction_source_game_seconds(summary: Dictionary, clock: Dictionary) -> Variant:
+	var stamp: Dictionary = summary.get("source_clock", {})
+	if stamp.is_empty(): return summary.at
+	var fire: Dictionary = clock.get("fire_clock", {})
+	var indexed: Dictionary = fire.get("index", {}).get(str(summary.owner), {})
+	if indexed.is_empty() or str(stamp.fire_epoch) != str(fire.get("epoch", "")) \
+		or int(stamp.fire_sequence) != int(indexed.sequence): return summary.at
+	# The saved JSON stamp identifies this exact original indexed endpoint.
+	# Return its existing binary clock, never a rounded time or a substitute now.
+	for field: String in ["game_seconds", "action_seconds"]:
+		var original: Variant = indexed.get(field)
+		if not _seconds(original): return summary.at
+		var encoded: Variant = JSON.parse_string(JSON.stringify(float(original), "", false, true))
+		if encoded != stamp.get(field): return summary.at
+	return indexed.game_seconds
 
 func _faction_read_party(path: String) -> Dictionary:
 	var document: Dictionary = _read_document(path, 64 * 1024 * 1024)
@@ -11124,7 +11266,7 @@ func _faction_scan(sites: Dictionary, clock: Dictionary, journey: Dictionary, pr
 		states.append(loaded.summary.live)
 		var prefix: Variant = path.get_file().split("_")[0]
 		var source_generation: Variant = int(prefix) if not entry.is_empty() and prefix.length() == 20 and prefix.is_valid_int() else 0 if entry.is_empty() else null
-		receipts.append({"owner": str(loaded.summary.owner), "source_generation": source_generation, "runtime_revision": loaded.summary.runtime_revision, "checksum": checksum, "as_of_game_seconds": loaded.summary.at, "complete": true})
+		receipts.append({"owner": str(loaded.summary.owner), "source_generation": source_generation, "runtime_revision": loaded.summary.runtime_revision, "checksum": checksum, "as_of_game_seconds": _faction_source_receipt_seconds(loaded.summary, checksum, source_generation, previous, clock), "complete": true})
 	var references: Array[Dictionary] = []
 	if journey.get("kind") == RegionTravel.KIND: references.append(journey)
 	for token: String in clock.get("region_gameplay", {}).get("parties", {}):

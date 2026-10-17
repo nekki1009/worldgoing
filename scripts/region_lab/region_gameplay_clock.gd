@@ -200,7 +200,10 @@ static func clip_interval(registry: Dictionary, world: float, action: float, ela
 	var delta_game: float = (tactical + 60.0 * (elapsed - tactical)) * scale
 	var endpoint: float = next_endpoint(registry, world, world + delta_game, held_player_death_ids)
 	if endpoint <= world + 0.0000000001: return {"ok": true, "pending": true, "action_seconds": 0.0, "game_seconds": 0.0, "tactical_seconds": 0.0, "game_end": world}
-	var clipped: float = minf(elapsed, action_for_game(endpoint - world, scale, tactical))
+	var clipped: float = elapsed
+	# An uncut interval already owns its exact ACTION input.
+	if endpoint < world + delta_game:
+		clipped = minf(elapsed, action_for_game(endpoint - world, scale, tactical))
 	var clipped_tactical: float = minf(tactical, clipped)
 	var game: float = (clipped_tactical + 60.0 * (clipped - clipped_tactical)) * scale
 	return {"ok": true, "pending": false, "action_seconds": clipped, "game_seconds": game, "tactical_seconds": clipped_tactical, "game_end": world + game}
