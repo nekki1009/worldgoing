@@ -2331,7 +2331,7 @@ static func _validate_armies(data: TerrainData, state: Dictionary, check_terrain
 				if not vehicle is Dictionary or not Runtime.SIEGE_DEFINITIONS.has(str(vehicle.get("kind", ""))) or not _integer(vehicle.get("team_id"), int(team.team_id), int(team.team_id)) or not vehicle.get("crew_slots") is Dictionary: continue
 				for person_id: Variant in vehicle.crew_slots.values():
 					if _integer(person_id, 1, 2147483647): excluded_crew[int(person_id)] = true
-		if not _valid_combat_movement_snapshot(data, team, batch_groups, excluded_crew):
+		if not _valid_combat_movement_snapshot(data, team, batch_groups, excluded_crew, state):
 			return Runtime.fail("CORRUPT_SAVE", "軍隊行軍／部署／在途依賴非法")
 		var deployment: Variant = team.get("combat_deployment_plan", null)
 		if deployment is Dictionary:
@@ -2428,7 +2428,7 @@ static func _validate_armies(data: TerrainData, state: Dictionary, check_terrain
 					return Runtime.fail("CORRUPT_SAVE", "軍隊命中去重指向未知人物")
 	return Runtime.ok()
 
-static func _valid_combat_movement_snapshot(data: TerrainData, team: Dictionary, batch_groups: Dictionary, excluded_crew: Dictionary = {}) -> bool:
+static func _valid_combat_movement_snapshot(data: TerrainData, team: Dictionary, batch_groups: Dictionary, excluded_crew: Dictionary = {}, state: Dictionary = {}) -> bool:
 	if team.has("structure_waiting") and (team.structure_waiting != true or int(team.get("combat_order", 0)) == TerrainArmy.CombatOrder.HOLD): return false
 	var people: Dictionary = {}
 	for unit: Dictionary in team.units:
@@ -2723,7 +2723,15 @@ static func _valid_combat_movement_snapshot(data: TerrainData, team: Dictionary,
 		if empty_tails == 0:
 			if group.size() != 2 or (move_count != 2 and retreat_count != 2): return false
 		elif not same_direction or empty_tails != 1:
-			return false
+			var compound_bound: bool = false
+			if state.get("vehicles") is Dictionary:
+				for vehicle: Variant in state.vehicles.values():
+					if not vehicle is Dictionary or not TerrainArmy.valid_saved_siege_compound(team, data, vehicle) or vehicle.crew_slots.size() != group.size(): continue
+					var same_members: bool = true
+					for member: Variant in group:
+						if not vehicle.crew_slots.values().has(int(member)): same_members = false
+					if same_members: compound_bound = true; break
+			if not compound_bound: return false
 	for mid: int in retreat_member_set:
 		if not seen_batch_members.has(mid): return false
 	for mid: int in move_member_set:
