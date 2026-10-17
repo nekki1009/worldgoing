@@ -6,6 +6,7 @@ const Adapter = preload("res://scripts/region_lab/region_terrain_adapter.gd")
 const Grid = preload("res://scripts/region_lab/region_grid.gd")
 const Preview = preload("res://scripts/region_lab/region_site_preview.gd")
 const FamilyContinuity = preload("res://scripts/terrain_lab/site_family_continuity.gd")
+const ResidentRoster = preload("res://scripts/terrain_lab/site_resident_roster.gd")
 const DRAFT_ROOT := "user://map_editor/drafts"
 const MAX_DRAFT_BYTES := 65536
 const PLAYTEST_REASON := "情境發布／建立試玩世界尚未實作，仍可保存草稿。"
@@ -115,6 +116,7 @@ func _build_ui() -> void:
 	_build_resource_state_form(column)
 	_build_building_form(column)
 	_build_family_form(column)
+	_build_residents_form(column)
 	_canvas = Control.new()
 	_canvas.name = "AuthorCanvas"
 	_canvas.clip_contents = true
@@ -170,6 +172,7 @@ func validate_work(value: Variant) -> bool:
 	if version >= 2 and not source.author_static_valid(value.get("terrain_static")): return false
 	if version >= 3:
 		if not Env.resource_integer(value.get("resource_highwater"), 0, 2147483646) or not value.get("initial_state") is Dictionary: return false
+		if not ResidentRoster.valid_state(value.initial_state): return false
 		for key: String in value.terrain_static.resources:
 			if key.begins_with("author_resource:") and int(key.get_slice(":", 1)) > int(value.resource_highwater): return false
 	elif version == 2 and not value.terrain_static.resources.is_empty(): return false
@@ -506,6 +509,7 @@ func _prepare_work(value: Dictionary) -> Dictionary:
 		if int(value_copy.format) == 4:
 			var buildings: Dictionary = SiteRuntime.validate_author_buildings(candidate)
 			if not buildings.ok: return {"ok": false}
+		if not ResidentRoster.draft_refusal(candidate, value_copy.initial_state).ok: return {"ok": false}
 	if JSON.stringify(value_copy, "", true, true).to_utf8_buffer().size() > MAX_DRAFT_BYTES: return {"ok": false}
 	return {"ok": true, "draft": value_copy, "terrain": candidate}
 
@@ -978,6 +982,59 @@ func _read_family() -> void:
 	var label: String = "家族 v%d" % int(family.version)
 	if int(family.version) == 4: label += "「%s」" % str(family.name)
 	_family_summary.text = "%s：%d 人" % [label, family.members.size()]
+
+## P5 S5c: the resident roster (author rows only; no bodies are created in the editor). The whole roster
+## is replaced by one commit through the draft path, so undo and redo follow the normal history.
+var _residents_text: LineEdit
+var _residents_summary: Label
+
+func set_residents(rows: Array) -> bool:
+	if draft.is_empty() or _unsaved.visible or terrain == null: return false
+	var value: Dictionary = _resource_work()
+	var prepared: Dictionary = _prepare_work(value)
+	if not bool(prepared.get("ok", false)): return false
+	var candidate: Dictionary = ResidentRoster.roster_candidate(prepared.draft.initial_state, rows)
+	if not bool(candidate.get("ok", false)): return false
+	value.initial_state = candidate.state
+	if not _commit_work(value, "居民名冊"): return false
+	_read_residents()
+	return true
+
+func _apply_residents() -> void:
+	if _residents_text == null or draft.is_empty(): return
+	# User text: parse with a JSON instance so bad input is a refusal, not an engine error.
+	var parser := JSON.new()
+	if parser.parse(_residents_text.text) != OK or not parser.data is Array:
+		_status.text = "居民名冊未改變：須為 JSON 陣列 [{name, faction_id, house}]"
+		return
+	var parsed: Array = parser.data
+	if not set_residents(parsed):
+		_status.text = "居民名冊未改變：名冊格式、人數、陣營或住宅床位不合法；作品與歷史保持原狀。"
+		return
+	_status.text = "居民名冊已更新（僅作者資料；出生於開局時）"
+
+func _read_residents() -> void:
+	if _residents_summary == null or draft.is_empty(): return
+	var rows: Variant = draft.get("initial_state", {}).get(ResidentRoster.STATE_KEY, [])
+	var count: int = rows.size() if rows is Array else 0
+	_residents_summary.text = "居民：%d 人（上限 %d）" % [count, ResidentRoster.ROSTER_MAX]
+
+func _build_residents_form(column: Node) -> void:
+	var panel: VBoxContainer = VBoxContainer.new()
+	panel.name = "AuthorResidents"
+	panel.visible = false
+	_button(column, "居民名冊", "ResidentTools", func() -> void: panel.visible = not panel.visible)
+	column.add_child(panel)
+	_residents_summary = Label.new()
+	_residents_summary.name = "ResidentsSummary"
+	panel.add_child(_residents_summary)
+	_residents_text = LineEdit.new()
+	_residents_text.name = "ResidentsJson"
+	_residents_text.placeholder_text = "[{\"name\": \"甲\", \"faction_id\": 1, \"house\": \"12\"}]"
+	_residents_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	panel.add_child(_residents_text)
+	_button(panel, "套用居民名冊", "ApplyResidents", _apply_residents)
+	_read_residents()
 
 ## P4 S4B: the panel (toggle, name field, person field, create/add/remove/name buttons).
 func _build_family_form(column: Node) -> void:

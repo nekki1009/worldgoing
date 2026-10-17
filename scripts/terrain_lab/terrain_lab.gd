@@ -10548,6 +10548,140 @@ func prepare_fresh_initial_population(new_data: TerrainData) -> Dictionary:
 
 
 
+## P4 S5c consumer (S5_DESIGN section 4). Author resident rows (initial_state.residents) become real
+## civilians: one "work" army deployed on each row's house rest cell, with a housing relation for each
+## person. Runs only from the fresh initial-population branch (site_controller _prepare_initial_world),
+## never on restore. Whole roster or nothing: the plan runs first, and every step runs on a duplicated
+## candidate, so the input TerrainData is never changed on any refusal. Idempotent: a state that already
+## holds the resident work army is returned unchanged.
+const ResidentRoster = preload("res://scripts/terrain_lab/site_resident_roster.gd")
+const ResidentHousing = preload("res://scripts/terrain_lab/site_housing.gd")
+
+## A resident army is a "work" army with a unit that holds a housing relation. Any other army is not one.
+func _resident_army_present(site: Dictionary) -> bool:
+	var housing: Dictionary = site.get("housing", {})
+	for army: Variant in site.get("armies", []):
+		if not army is Dictionary or str(army.get("role", "")) != "work": continue
+		for unit: Variant in army.get("units", []):
+			if unit is Dictionary and housing.has(str(int(unit.get("person_id", -1)))): return true
+	return false
+
+func prepare_initial_resident_roster(new_data: TerrainData) -> Dictionary:
+	if new_data == null or new_data.site.is_empty(): return SiteRuntime.fail("NO_TARGET")
+	if not ResidentRoster.valid_state(new_data.site): return SiteRuntime.fail("INVALID_RESIDENT_ROSTER", "居民名冊格式或人數不合法；未改變")
+	var rows: Array = new_data.site.get(ResidentRoster.STATE_KEY, [])
+	if rows.is_empty(): return SiteRuntime.ok("無原居民名冊", {"data": new_data, "changed": false})
+	# Idempotent: the resident army is already present. Other armies (the player's) are not refused.
+	if _resident_army_present(new_data.site): return SiteRuntime.ok("原居民已出生，不補發", {"data": new_data, "changed": false})
+	# Refused guard (no armies rule): the clock, pause, combat, housing, family, crowd and captivity fields below.
+	if not new_data.site.get("housing", {}).is_empty() or new_data.site.has("family") or new_data.site.has("crowd") or not new_data.site.get("captivity", {}).is_empty() \
+		or int(new_data.site.get("minute", -1)) != 0 or bool(new_data.site.get("paused", false)) or float(new_data.site.get("combat_left", 0.0)) != 0.0:
+		return SiteRuntime.fail("NOT_INITIAL_SCENARIO", "原已進行世界不補發居民")
+	var candidate: TerrainData = SiteEnv.navigation_for_state(new_data, new_data.site.duplicate(true))
+	var layouts: Dictionary = {}
+	var capacity: Dictionary = {}
+	for row: Dictionary in rows:
+		var key: String = str(row.house)
+		if not layouts.has(key): layouts[key] = SiteRuntime.house_layout(candidate, key)
+		if layouts[key].ok: capacity[key] = int(layouts[key].capacity)
+		else: capacity[key] = 0
+	var planned: Dictionary = ResidentRoster.plan(candidate.site, rows, capacity)
+	if not planned.ok: return planned
+	# Rest cells in row order; the player's start cell and any claimed rest cell are never reused.
+	var start := candidate.cell_from_index(int(candidate.site.get("player_cell", candidate.index(candidate.spawn_cell))))
+	var claimed := {candidate.index(start): true}
+	var positions: Array[Vector2i] = []
+	var homes: Array[Dictionary] = []
+	for row: Dictionary in rows:
+		var home_key: String = str(row.house)
+		var chosen := -1
+		for slot: Variant in layouts[home_key].slots:
+			if not claimed.has(int(slot)):
+				chosen = int(slot)
+				break
+		if chosen < 0: return SiteRuntime.fail("NO_BIRTH_GROUND", "住宅門前休息格不足；居民未出生")
+		claimed[chosen] = true
+		positions.append(candidate.cell_from_index(chosen))
+		homes.append({"house_id": home_key, "cell": chosen})
+	var staging := Node2D.new()
+	staging.name = "InitialResidentCandidate"
+	staging.visible = false
+	staging.process_mode = Node.PROCESS_MODE_DISABLED
+	add_child(staging)
+	var identity_floor := 1
+	for actor_row: Dictionary in candidate.site.get("actors", {}).values():
+		identity_floor = maxi(identity_floor, int(actor_row.get("person_id", 0)) + 1)
+	var team_floor := 1
+	for army_row: Variant in candidate.site.get("armies", []):
+		if not army_row is Dictionary: continue
+		team_floor = maxi(team_floor, int(army_row.get("team_id", 0)) + 1)
+		for existing_unit: Variant in army_row.get("units", []):
+			if existing_unit is Dictionary: identity_floor = maxi(identity_floor, int(existing_unit.get("person_id", 0)) + 1)
+	candidate.site["next_person_id"] = maxi(int(candidate.site.get("next_person_id", 1)), identity_floor)
+	var team := TerrainArmy.new()
+	team.name = "residents"
+	team.team_id = maxi(int(candidate.site.get("army_next_team", 1)), team_floor)
+	team.faction_id = int(rows[0]["faction_id"])
+	team.role = "work"
+	team.roster_size = rows.size()
+	team.exchange_enabled = exchange_enabled
+	team.person_id_allocator = _allocate_army_person_ids_for.bind(candidate, [], [])
+	staging.add_child(team)
+	team.set_process(false)
+	if not team.deploy_at(candidate, null, null, positions) or not team.enable_combat(false): return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("RESIDENT_DEPLOY_FAILED", "居民無法安置；未改變"))
+	# No commander: the same state the garrison path uses (terrain_army.gd ~3524). enable_combat seats unit 0
+	# as commander; the validator refuses a commander that is not an officer, so the civilian team has none.
+	team.formal_commander = -1
+	team.acting_commander = -1
+	team.current_commander = -1
+	team.officer_order.clear()
+	team.officer_service.clear()
+	team.needs_attack_order = true
+	team.combat_attacking = false
+	team.combat_order = TerrainArmy.CombatOrder.HOLD
+	for index: int in team.combat_units.size():
+		var body: Dictionary = team.combat_units[index]
+		body.cargo = {}
+		# Residents start with no items: an empty holder and no equipment records, so the item ledger
+		# is unchanged and every record stays located. Equipment is issued later, not at birth.
+		body.item_state = SiteRuntime.new_item_state("person:%d" % team.combat_identity(index))
+		body.military_role = "civilian"
+	var resident_team: Dictionary = team.capture_combat_state()
+	if not candidate.site.get("armies") is Array: candidate.site["armies"] = []
+	candidate.site.armies.append(resident_team)
+	candidate.site["army_next_team"] = team.team_id + 1
+	var housing: Dictionary = candidate.site.get("housing", {})
+	for index: int in team.combat_units.size():
+		housing[str(int(team.combat_units[index].person_id))] = {"version": 1, "house_id": homes[index].house_id, "cell": homes[index].cell}
+	candidate.site["housing"] = housing
+	var actors_checked := SiteStore._validate_actors(candidate, candidate.site)
+	if not actors_checked.ok: return _initial_artisan_birth_dispose(staging, actors_checked)
+	var allocator_checked := SiteStore._validate_person_allocator(candidate.site)
+	if not allocator_checked.ok: return _initial_artisan_birth_dispose(staging, allocator_checked)
+	var armies_checked := SiteStore._validate_armies(candidate, candidate.site, true)
+	if not armies_checked.ok: return _initial_artisan_birth_dispose(staging, armies_checked)
+	var items_checked := SiteStore._validate_items(candidate, candidate.site)
+	if not items_checked.ok: return _initial_artisan_birth_dispose(staging, items_checked)
+	var cape_checked := SiteStore._validate_cape_roles(candidate.site)
+	if not cape_checked.ok: return _initial_artisan_birth_dispose(staging, cape_checked)
+	var housing_people := {}
+	for actor: Dictionary in candidate.site.get("actors", {}).values():
+		var actor_projection: Dictionary = actor.duplicate()
+		actor_projection["_housing_faction"] = int(actor.faction_id)
+		housing_people[int(actor.person_id)] = actor_projection
+	if not TerrainArmy.valid_combat_state(resident_team, candidate, {}, candidate.site): return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("INVALID_RESIDENT_ROSTER", "居民軍隊快照非法；未改變"))
+	# Housing counts every army's people, so the player's existing army is part of the projection.
+	for roster_snapshot: Dictionary in candidate.site.armies:
+		var roster: Dictionary = TerrainArmy.normalize_roster_snapshot(roster_snapshot)
+		for unit: Dictionary in roster.units:
+			var unit_projection: Dictionary = unit.duplicate()
+			unit_projection["_housing_faction"] = int(roster.faction_id)
+			housing_people[int(unit.person_id)] = unit_projection
+	var housing_checked := ResidentHousing.validate(candidate, candidate.site, housing_people)
+	if not housing_checked.ok: return _initial_artisan_birth_dispose(staging, housing_checked)
+	return _initial_artisan_birth_dispose(staging, SiteRuntime.ok("原居民名冊已出生", {"data": candidate, "changed": true, "count": rows.size()}))
+
+
 ## Reopen an already-selected complete checkpoint. No candidate save or new marker.
 func prepare_selected_region_owner_restore(data: TerrainData, slot: RegionSaveSlot) -> Dictionary:
 	var duty := _region_capture_duty_cache()

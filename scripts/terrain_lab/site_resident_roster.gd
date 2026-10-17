@@ -77,3 +77,23 @@ static func plan(state: Dictionary, rows: Variant, capacity: Dictionary) -> Dict
 		if int(needed[house_id]) > room:
 			return Runtime.fail("NO_BEDS", "住宅「%s」床位不足：需要 %d、只有 %d；未改變" % [house_id, int(needed[house_id]), room])
 	return Runtime.ok("居民名冊可分配", {"counts": needed, "total": rows.size()})
+
+## P4 S5c: the draft-side check (editor and load). A state with no roster or an empty roster is
+## valid. Otherwise every row must fit the settlement and its houses, using the bed counts of the
+## candidate terrain (`data.site` is the state). Creates nothing.
+static func draft_refusal(data: TerrainData, state: Dictionary) -> Dictionary:
+	if not valid_state(state): return Runtime.fail("INVALID_RESIDENT_ROSTER", "居民名冊格式或人數不合法；未改變")
+	var rows: Variant = state.get(STATE_KEY, [])
+	if not rows is Array or rows.is_empty(): return Runtime.ok("無居民名冊")
+	return plan(state, rows, capacity_for(data, rows))
+
+## Bed count per house key for the rows (house_layout capacity; 0 when the house has no known layout).
+static func capacity_for(data: TerrainData, rows: Array) -> Dictionary:
+	var capacity: Dictionary = {}
+	for row: Dictionary in rows:
+		var key: String = str(row.get("house", ""))
+		if capacity.has(key): continue
+		var layout: Dictionary = Runtime.house_layout(data, key)
+		if layout.ok: capacity[key] = int(layout.capacity)
+		else: capacity[key] = 0
+	return capacity

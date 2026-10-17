@@ -7,6 +7,7 @@ const Boarding = preload("res://scripts/terrain_lab/site_boarding_link_contract.
 const Trade = preload("res://scripts/terrain_lab/site_trade.gd")
 const RegionCheckpoint = preload("res://scripts/terrain_lab/site_region_checkpoint.gd")
 const Housing = preload("res://scripts/terrain_lab/site_housing.gd")
+const ResidentRoster = preload("res://scripts/terrain_lab/site_resident_roster.gd")
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
 const Stockpiles = preload("res://scripts/terrain_lab/site_stockpiles.gd")
 const Sustain = preload("res://scripts/terrain_lab/site_sustain.gd")
@@ -3522,6 +3523,7 @@ static func _validate_captivity(data: TerrainData, state: Dictionary, region_con
 		return Runtime.fail("CORRUPT_SAVE", "受控原人物不存在")
 	if state.has("family") and not FamilyContinuity.validate_family(state.family, str(state.get("id", ""))):
 		return Runtime.fail("CORRUPT_SAVE", "家族原人物引用名單")
+	if not ResidentRoster.valid_state(state): return Runtime.fail("CORRUPT_SAVE", "居民名冊格式")
 	if not CaptiveEscort.valid_orders(state.get("escort_orders", {}), data.size.x * data.size.y, people, relations):
 		return Runtime.fail("CORRUPT_SAVE", "原人押送命令／拘押引用")
 	var guarded := {}

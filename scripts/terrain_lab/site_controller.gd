@@ -10458,6 +10458,8 @@ func _prepare_initial_world(candidate: RegionSaveSlot, starting_site: Vector2i, 
 		var birth: Dictionary
 		if initial_scenario_id.is_empty():
 			birth = lab.prepare_fresh_initial_population(opened.data)
+			# P4 S5c: author resident rows, fresh branch only (never restore, never the scenario branch).
+			if birth.ok: birth = lab.prepare_initial_resident_roster(birth.data)
 		else:
 			# Same original Slot has already frozen/validated this policy.
 			var policy: Dictionary = preload("res://scripts/terrain_lab/site_technology_policy.gd").candidate(candidate.pin)

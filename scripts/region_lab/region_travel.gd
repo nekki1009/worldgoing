@@ -1414,6 +1414,20 @@ static func settlement_nation_guard(state: Dictionary, movers: Dictionary) -> Di
 		if not movers.has(int(member)): return {"ok": true}
 	return fail("RELATION_OPEN", "聚落所屬國家會整國離開；先改派或解除聚落國家")
 
+## P4 S5c guard (narrow): refuse a departure only when a mover is a housed resident, that is a civilian
+## unit of a "work" army with a housing relation. Release and rehouse are a later slice. A departure from a
+## Site that merely has residents is not refused. Checked on the source state, before any mutation.
+static func resident_mover_guard(state: Dictionary, movers: Dictionary) -> Dictionary:
+	var housing: Variant = state.get("housing", {})
+	if not housing is Dictionary or housing.is_empty(): return {"ok": true}
+	for army: Variant in state.get("armies", []):
+		if not army is Dictionary or str(army.get("role", "")) != "work": continue
+		for row: Variant in army.get("units", []):
+			if not row is Dictionary or str(row.get("military_role", "")) != "civilian": continue
+			var identity: int = int(row.get("person_id", -1))
+			if movers.has(identity) and housing.has(str(identity)): return fail("RELATION_OPEN", "departure would move a housed resident; release or rehouse first")
+	return {"ok": true}
+
 static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dictionary:
 	if state.has("crowd"): return fail("UNSUPPORTED", "群眾模式（Crowd）暫不支援整隊出發")
 	if state.has("family"):
@@ -1520,6 +1534,8 @@ static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dicti
 			if movers.has(int(identity)): return fail("RELATION_OPEN", "押送尚未結束")
 	var settlement_guard := settlement_nation_guard(origin, movers)
 	if not settlement_guard.ok: return settlement_guard
+	var resident_guard: Dictionary = resident_mover_guard(state, movers)
+	if not resident_guard.ok: return resident_guard
 	# Partial national/corps membership remains in its ORIGINAL organisation
 	# owner. Only its immutable original-person/team references accompany us.
 	var organization := SiteEquipmentOrders.prepare_region_departure(state, movers, selected_teams, token, origin.travel_identity)
