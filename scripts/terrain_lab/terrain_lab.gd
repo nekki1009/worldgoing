@@ -119,6 +119,8 @@ var fatigue_zero_fast_path_enabled := true # Exact zero-effort shortcut, compare
 var fatigue_zero_eligible_rows := 0 # Counts, not microseconds; profiling only.
 var fatigue_zero_skipped_advances := 0
 const SHIP_LOOKUP_FAST := true # KO94M production switch; false keeps the per-row ship lookups.
+const SETTLE_THREAT_FAST := true # KO94P production switch; false keeps the per-row ship scan in exchange threat tables.
+var settle_threat_fast_test_enabled := true # KO94P private toggle: only the equivalence test sets this.
 var ship_lookup_fast_test_enabled := true # KO94M private toggle: only the equivalence test sets this.
 var ship_lookup_skipped_rows := 0 # Member rows whose ship lookups were skipped by the no-ship gate (counter only).
 var fixed_action_steps_enabled := false # A/B: retain incomplete 120 Hz time, never clamp or discard it.
@@ -2587,11 +2589,13 @@ func _exchange_rest_threat(cell: Vector2i, faction: int, candidates: Dictionary)
 			if actor.faction_id != faction and actor.can_act():
 				actor_cells[actor.terrain_cell] = true
 				if actor.is_moving(): actor_cells[actor.movement_from_cell] = true
+		# KO94P: with no ship record every _ship_embarked answer is false, so the per-row ship scan adds nothing.
+		var ships_possible: bool = true if not (SETTLE_THREAT_FAST and settle_threat_fast_test_enabled) else _site_has_ship_records()
 		var ship_cells := {}
 		for team: TerrainArmy in combat_armies:
 			if not team.combat_enabled or team.faction_id == faction: continue
 			for index in range(team.combat_units.size()):
-				if not team._ship_in_journey(index) and _ship_embarked(team.combat_identity(index)) and team.combat_can_act(index): ship_cells[_army_effective_cell(team, index)] = true
+				if ships_possible and not team._ship_in_journey(index) and _ship_embarked(team.combat_identity(index)) and team.combat_can_act(index): ship_cells[_army_effective_cell(team, index)] = true
 		var teams: Array[TerrainArmy] = []
 		for team: TerrainArmy in combat_armies:
 			if team.combat_enabled and team.faction_id != faction: teams.append(team)
