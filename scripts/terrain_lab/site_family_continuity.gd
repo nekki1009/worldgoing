@@ -74,6 +74,45 @@ func establish_identity(requester_id: int, display_name: String) -> Dictionary:
 	site.next_lineage = lineage + 1
 	return Runtime.ok("已建立家族身分", {"lineage_id": lineage})
 
+## P4 S4: pure authoring plan for a family roster. Never writes. `requested` is the complete
+## list of member references the editor wants (each with the five roster fields). Other-Site
+## members are read-only: they must be kept exactly, and no local edit may add one. A local
+## member who holds an office seat is never dropped silently: the refusal lists the seats.
+static func roster_plan(family: Variant, site_id: String, requested: Array) -> Dictionary:
+	if not validate_family(family, site_id): return Runtime.fail("INVALID_FAMILY", "家族名冊未通過驗證")
+	var offices: Dictionary = family.get("offices", {}) if int(family.version) >= 2 else {}
+	var existing_keys := {}
+	for prior_member: Dictionary in family.members:
+		existing_keys[JSON.stringify([str(prior_member.site_id), int(prior_member.person_id)])] = true
+	var wanted_keys := {}
+	for requested_member: Variant in requested:
+		if not requested_member is Dictionary or requested_member.size() != 5 or not requested_member.get("site_id") is String \
+				or not _integer(requested_member.get("person_id"), 1, 2147483647) or not requested_member.get("path") is String \
+				or not requested_member.get("label") is String or not _integer(requested_member.get("age_years"), -1, 200):
+			return Runtime.fail("INVALID_MEMBER", "人物引用欄位不完整")
+		var wanted_key := JSON.stringify([str(requested_member.site_id), int(requested_member.person_id)])
+		if wanted_keys.has(wanted_key): return Runtime.fail("DUPLICATE_MEMBER", "同一原人物只能登錄一次")
+		if str(requested_member.site_id) != site_id and not existing_keys.has(wanted_key): return Runtime.fail("FOREIGN_MEMBER", "外地人物只能保留唯讀，不能由本地名冊新增")
+		wanted_keys[wanted_key] = true
+	var references: Array = []
+	for existing_member: Dictionary in family.members:
+		var current_key := JSON.stringify([str(existing_member.site_id), int(existing_member.person_id)])
+		if wanted_keys.has(current_key): continue
+		if str(existing_member.site_id) != site_id: return Runtime.fail("FOREIGN_READ_ONLY", "外地族人須原樣保留，不能由本地名冊移除")
+		var seat: Dictionary = SiteOffices.position_of(offices, int(existing_member.person_id)) if not offices.is_empty() else {}
+		if not seat.is_empty(): references.append(str(seat.name))
+	if not references.is_empty():
+		var refused := Runtime.fail("HOLDS_OFFICE", "此人仍擔任職位，須先卸任：" + ", ".join(PackedStringArray(references)))
+		refused.references = references
+		return refused
+	var candidate: Dictionary = family.duplicate(true)
+	candidate.members = []
+	for candidate_member: Dictionary in requested:
+		candidate.members.append({"site_id": str(candidate_member.site_id), "person_id": int(candidate_member.person_id),
+			"path": str(candidate_member.path), "label": str(candidate_member.label), "age_years": int(candidate_member.age_years)})
+	if not validate_family(candidate, site_id): return Runtime.fail("INVALID_FAMILY", "名冊候選未通過驗證；未改變")
+	return Runtime.ok("", {"family": candidate})
+
 ## Members who are people of `site_id` (full reference: site + person, F01).
 static func member_ids(family: Dictionary, site_id: String) -> Array[int]:
 	var result: Array[int] = []
