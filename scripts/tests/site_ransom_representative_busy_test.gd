@@ -1,7 +1,7 @@
 extends "res://scripts/tests/site_gd_custody_terminal_point_test.gd"
 ## Original custody fixture and finite work-pool endpoint component; no main-clock claim.
 
-func _ransom_component() -> void:
+func _ransom_component() -> bool:
 	var data: TerrainData = _building_fixture()
 	var lab: TerrainLab = _building_lab(data)
 	var actions: SitePersonActions = lab.site_controller.person_actions
@@ -107,6 +107,7 @@ func _ransom_component() -> void:
 	assert(actions.cancel(representative).ok)
 	assert(not actions.is_busy(payer) and not actions.is_busy(representative) and actions.save_guard().ok)
 	lab.free()
+	return true
 
 
 func _run() -> void:
