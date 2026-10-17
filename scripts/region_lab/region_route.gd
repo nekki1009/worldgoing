@@ -694,17 +694,36 @@ static func land_step(first: TerrainData, second: TerrainData, shift: Vector2i, 
 			if y > minimum.y and not _step(first, second, shift, cell - Vector2i.DOWN, cell): return {"ok": false}
 	return {"ok": true, "operator": operator_to, "anchor": anchor, "facing": direction}
 
-static func _ocean(local: Dictionary) -> bool:
+## Per-search memo of TerrainData.can_navigate_water. One ship sweep asks the
+## same ocean cells again for every water-step test, so the search stores the
+## exact boolean for (TerrainData object, cell index). The TerrainData is not
+## mutated while one search runs. A null/absent memo means no caching, which
+## keeps the original behaviour for every existing caller.
+static func _memo_of(value: Variant) -> Dictionary:
+	if value is Dictionary: return value
+	return {}
+
+static func _navigable(data: TerrainData, cell: Vector2i, memo: Dictionary) -> bool:
+	if not data.contains(cell): return false
+	if not memo.has(data): memo[data] = {}
+	var table: Dictionary = memo[data]
+	var index := data.index(cell)
+	if not table.has(index): table[index] = data.can_navigate_water(cell)
+	return bool(table[index])
+
+static func _ocean(local: Dictionary, ocean_memo: Variant = null) -> bool:
 	if local.is_empty(): return false
+	var memo := _memo_of(ocean_memo)
 	var data: TerrainData = local.data
 	var cell: Vector2i = local.cell
-	return data.can_navigate_water(cell) and int(data.water_kind[data.index(cell)]) == 2 \
+	return _navigable(data, cell, memo) and int(data.water_kind[data.index(cell)]) == 2 \
 		and data.water_body.size() == data.water_kind.size() and int(data.water_body[data.index(cell)]) == 1
 
-static func _water_step(first: TerrainData, second: TerrainData, shift: Vector2i, from: Vector2i, to: Vector2i) -> bool:
+static func _water_step(first: TerrainData, second: TerrainData, shift: Vector2i, from: Vector2i, to: Vector2i, ocean_memo: Variant = null) -> bool:
+	var memo := _memo_of(ocean_memo)
 	var a := _local(from, shift, first, second)
 	var b := _local(to, shift, first, second)
-	if not _ocean(a) or not _ocean(b): return false
+	if not _ocean(a, memo) or not _ocean(b, memo): return false
 	if a.data == b.data: return a.data.can_water_step(a.cell, b.cell)
 	var edge := TerrainData.DIRECTIONS.find(to - from)
 	if edge < 0 or a.data.height_levels[a.data.index(a.cell)] != b.data.height_levels[b.data.index(b.cell)]: return false
@@ -713,25 +732,27 @@ static func _water_step(first: TerrainData, second: TerrainData, shift: Vector2i
 	return (ra & (1 << (edge + 4))) == 0 and (rb & (1 << (opposite(edge) + 4))) == 0
 
 static func _ship_sweep(first: TerrainData, second: TerrainData, shift: Vector2i, kind: String,
-		anchor: Vector2i, facing: Vector2i, next: Vector2i, heading: Vector2i) -> bool:
+		anchor: Vector2i, facing: Vector2i, next: Vector2i, heading: Vector2i, ocean_memo: Variant = null) -> bool:
 	if next != anchor and (heading != facing or next - anchor not in [facing, -facing]): return false
 	if next == anchor and (facing.x * heading.x + facing.y * heading.y != 0 or not Ship.valid_facing(heading)): return false
+	var memo := _memo_of(ocean_memo)
 	var swept := Ship.swept_footprint(kind, anchor, facing, next, heading)
 	if swept.is_empty(): return false
 	var cells := {}
 	for cell: Vector2i in swept: cells[cell] = true
 	for cell: Vector2i in swept:
-		if not _ocean(_local(cell, shift, first, second)): return false
+		if not _ocean(_local(cell, shift, first, second), memo): return false
 		for direction: Vector2i in [Vector2i.RIGHT, Vector2i.DOWN]:
 			var adjacent := cell + direction
 			if not cells.has(adjacent): continue
-			if not _water_step(first, second, shift, cell, adjacent): return false
+			if not _water_step(first, second, shift, cell, adjacent, memo): return false
 	return true
 
 ## Pose A* uses only original geometry. It returns an actual per-cell proof.
 ## The next Site is a narrow arrival strip, so search cannot leave and re-enter.
 static func vehicle_crossing(first: TerrainData, second: TerrainData, vehicle: Dictionary,
-		pose: Dictionary, edge: int, offset: int, sea: bool = false, target: Vector2i = Vector2i(-999, -999), reach_cache: Variant = null) -> Dictionary:
+		pose: Dictionary, edge: int, offset: int, sea: bool = false, target: Vector2i = Vector2i(-999, -999), reach_cache: Variant = null, ocean_memo: Variant = null) -> Dictionary:
+	var memo := _memo_of(ocean_memo)
 	var direction: Vector2i = TerrainData.DIRECTIONS[edge]
 	var shift := direction * Adapter.SIDE
 	var kind := str(vehicle.get("ship_type", "")) if sea else str(vehicle.get("kind", ""))
@@ -743,7 +764,7 @@ static func vehicle_crossing(first: TerrainData, second: TerrainData, vehicle: D
 	if sea and reach_cache is Dictionary:
 		var depth := goal.x * direction.x + goal.y * direction.y
 		var reach_key := "%s:%d:%d:%d:%d:%d:%d" % [kind, start.x, start.y, facing.x, facing.y, edge, depth]
-		if not reach_cache.has(reach_key): reach_cache[reach_key] = hull_reach(first, second, kind, start, facing, edge, depth)
+		if not reach_cache.has(reach_key): reach_cache[reach_key] = hull_reach(first, second, kind, start, facing, edge, depth, memo)
 		if not reach_cache[reach_key].has(goal): return {"ok": false, "code": "HULL_NO_ROUTE"}
 	var search := Search.new()
 	var open: Array = []
@@ -791,7 +812,7 @@ static func vehicle_crossing(first: TerrainData, second: TerrainData, vehicle: D
 			var distance_to_goal := next - goal
 			if not first.contains(next) and (not second.contains(next - shift) or distance_to_goal.x * direction.x + distance_to_goal.y * direction.y > 2): continue
 			if sea:
-				if not _ship_sweep(first, second, shift, kind, cell, heading, next, next_heading): continue
+				if not _ship_sweep(first, second, shift, kind, cell, heading, next, next_heading, memo): continue
 			else:
 				var accepted := land_step(first, second, shift, kind, cell, heading, next)
 				if not accepted.ok: continue
@@ -809,7 +830,8 @@ static func vehicle_crossing(first: TerrainData, second: TerrainData, vehicle: D
 ## through its depth along the crossing direction, so one sweep serves every
 ## offset of the edge; an unreachable goal cell is a HULL_NO_ROUTE without A*.
 static func hull_reach(first: TerrainData, second: TerrainData, kind: String,
-		start: Vector2i, facing: Vector2i, edge: int, goal_depth: int) -> Dictionary:
+		start: Vector2i, facing: Vector2i, edge: int, goal_depth: int, ocean_memo: Variant = null) -> Dictionary:
+	var memo := _memo_of(ocean_memo)
 	var direction: Vector2i = TerrainData.DIRECTIONS[edge]
 	var shift := direction * Adapter.SIDE
 	var cells := {start: true}
@@ -827,7 +849,7 @@ static func hull_reach(first: TerrainData, second: TerrainData, kind: String,
 			var key := Vector4i(next.x, next.y, next_heading.x, next_heading.y)
 			if seen.has(key): continue
 			if not first.contains(next) and (not second.contains(next - shift) or next.x * direction.x + next.y * direction.y - goal_depth > 2): continue
-			if not _ship_sweep(first, second, shift, kind, cell, heading, next, next_heading): continue
+			if not _ship_sweep(first, second, shift, kind, cell, heading, next, next_heading, memo): continue
 			seen[key] = true
 			cells[next] = true
 			frontier.append(key)
@@ -848,7 +870,8 @@ static func _shore_contact(first: TerrainData, second: TerrainData, shift: Vecto
 ## Fleet steps are serialized, so every sweep is checked against other original
 ## hulls at their actually completed poses instead of ignoring fleet collision.
 static func sea_action_steps(first: TerrainData, second: TerrainData, vehicles: Array,
-		poses: Dictionary, paths: Dictionary, edge: int, content: Dictionary) -> Dictionary:
+		poses: Dictionary, paths: Dictionary, edge: int, content: Dictionary, ocean_memo: Variant = null) -> Dictionary:
+	var memo := _memo_of(ocean_memo)
 	var shift: Vector2i = TerrainData.DIRECTIONS[edge] * Adapter.SIDE
 	var moving := {}
 	var current := {}
@@ -887,7 +910,7 @@ static func sea_action_steps(first: TerrainData, second: TerrainData, vehicles: 
 			var anchor := Vector2i(int(following[0]), int(following[1]))
 			var facing := Vector2i(int(following[2]), int(following[3]))
 			if current[identity].anchor != from or current[identity].facing != from_facing \
-					or not _ship_sweep(first, second, shift, str(vehicle.ship_type), from, from_facing, anchor, facing): return {"ok": false, "code": "STALE_SHIP_PROOF"}
+					or not _ship_sweep(first, second, shift, str(vehicle.ship_type), from, from_facing, anchor, facing, memo): return {"ok": false, "code": "STALE_SHIP_PROOF"}
 			var occupied := static_claims.duplicate()
 			for other: String in keys:
 				if other == identity: continue
@@ -928,6 +951,7 @@ class Search:
 	var _terrain_cache: Dictionary = {}
 	var _provider_failure: Dictionary = {}
 	var _hull_reach: Dictionary = {} # "from>to" -> hull_reach results by start pose and edge depth.
+	var _ocean_memo: Dictionary = {} # TerrainData -> {cell index: can_navigate_water}; follows _terrain_cache.
 
 	func run() -> Dictionary:
 		result = _run()
@@ -980,7 +1004,10 @@ class Search:
 			_provider_failure = built
 			return null
 		# Bounded cache: old full terrain is disposable; edge tables stay cached.
-		if _terrain_cache.size() >= 32: _terrain_cache.erase(_terrain_cache.keys()[0])
+		if _terrain_cache.size() >= 32:
+			var evicted = _terrain_cache.keys()[0]
+			_ocean_memo.erase(_terrain_cache[evicted])
+			_terrain_cache.erase(evicted)
 		_terrain_cache[site] = built.data
 		return built.data
 
@@ -1036,13 +1063,13 @@ class Search:
 			var target: Vector2i = RegionRoute.Adapter.boundary_cell(edge, offset) + direction * padding + unpacked.anchor - lead if sea else Vector2i(-999, -999)
 			var pair := "%d,%d>%d,%d" % [from.x, from.y, to.x, to.y]
 			if sea and not _hull_reach.has(pair): _hull_reach[pair] = {}
-			var crossed := RegionRoute.vehicle_crossing(first, second, proof_vehicle, unpacked, edge, offset, sea, target, _hull_reach[pair] if sea else null)
+			var crossed := RegionRoute.vehicle_crossing(first, second, proof_vehicle, unpacked, edge, offset, sea, target, _hull_reach[pair] if sea else null, _ocean_memo)
 			if not crossed.ok: return crossed
 			output[identity] = {"anchor": [crossed.pose.anchor.x, crossed.pose.anchor.y], "operator": [crossed.pose.operator.x, crossed.pose.operator.y], "facing": [crossed.pose.facing.x, crossed.pose.facing.y]}
 			paths[identity] = crossed.path
 		var result := {"ok": true, "poses": output, "paths": paths}
 		if sea:
-			var timeline := RegionRoute.sea_action_steps(first, second, _vehicles(), poses, paths, edge, context.get("party", {}).get("content", {}))
+			var timeline := RegionRoute.sea_action_steps(first, second, _vehicles(), poses, paths, edge, context.get("party", {}).get("content", {}), _ocean_memo)
 			if not timeline.ok: return timeline
 			result.merge(timeline, true)
 		return result
@@ -1219,7 +1246,7 @@ class Search:
 				if first == null or second == null: continue
 				var offsets: Array[int] = []
 				for offset: int in range(100):
-					if RegionRoute._ocean({"data": first, "cell": RegionRoute.Adapter.boundary_cell(edge, offset)}) and RegionRoute._ocean({"data": second, "cell": RegionRoute.Adapter.boundary_cell(RegionRoute.opposite(edge), offset)}): offsets.append(offset)
+					if RegionRoute._ocean({"data": first, "cell": RegionRoute.Adapter.boundary_cell(edge, offset)}, _ocean_memo) and RegionRoute._ocean({"data": second, "cell": RegionRoute.Adapter.boundary_cell(RegionRoute.opposite(edge), offset)}, _ocean_memo): offsets.append(offset)
 				offsets.sort_custom(func(a: int, b: int) -> bool: return absi(a - 50) < absi(b - 50))
 				for offset: int in offsets:
 					var proof := _cross_vehicles(site, next, current.poses, edge, offset, true)

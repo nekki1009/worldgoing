@@ -197,9 +197,12 @@ func can_navigate_water(terrain_cell: Vector2i) -> bool:
 
 func _water_rule_has(values: Variant, expected: int) -> bool:
 	if not values is Array: return false
-	for value: Variant in values:
-		if (value is int or value is float) and float(value) == float(expected): return true
-	return false
+	# Native lookup instead of a GDScript loop over the whole Site ocean list
+	# (up to ~10^4 cells), which ran on every can_navigate_water call. A stored
+	# number matches when it equals the int or the float of expected; the same
+	# test as the former loop over int/float elements.
+	var list: Array = values
+	return list.has(expected) or list.has(float(expected))
 
 func can_water_step(from: Vector2i, to: Vector2i) -> bool:
 	if not can_navigate_water(from) or not can_navigate_water(to): return false
