@@ -48,13 +48,13 @@ class FaultSlot:
 				output.close()
 			return fail("SAVE_IO", "Injected original " + fault + " IO failure")
 		return super._write_new_document(path, payload)
-	func _save_checked(data: TerrainData, site: Vector2i, path: String) -> Dictionary:
+	func _save_checked(data: TerrainData, site: Vector2i, path: String, reuse_entry: Dictionary = {}) -> Dictionary:
 		save_body_ids.append(data.get_instance_id())
 		if fault == "site" and remaining > 0:
 			remaining -= 1
 			fault_count += 1
 			return fail("SAVE_IO", "Injected original SiteStore candidate IO failure")
-		return super._save_checked(data, site, path)
+		return super._save_checked(data, site, path, reuse_entry)
 	func _finish_initial_manifest() -> Dictionary:
 		if fault == "manifest" and remaining > 0:
 			remaining -= 1
