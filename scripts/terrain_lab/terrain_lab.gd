@@ -10646,6 +10646,13 @@ func prepare_initial_resident_roster(new_data: TerrainData) -> Dictionary:
 		# is unchanged and every record stays located. Equipment is issued later, not at birth.
 		body.item_state = SiteRuntime.new_item_state("person:%d" % team.combat_identity(index))
 		body.military_role = "civilian"
+		# Unarmed look: the game's own projection of this empty holder (SiteRuntime.equipment_appearance, the
+		# reconcile that site_store.gd _validate_army_assets and terrain_lab.gd _presentation_holder use). Every
+		# equipment slot becomes "none"; body, face and hair stay. Checked like enable_combat's contact preparation.
+		var unarmed: Dictionary = SiteRuntime.equipment_appearance(candidate, body.item_state, body.appearance)
+		if unarmed.is_empty() or not TerrainArmy.prepare_contact_source_for(unarmed):
+			return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("RESIDENT_DEPLOY_FAILED", "居民外觀無法卸裝；未改變"))
+		body.appearance = unarmed
 	var resident_team: Dictionary = team.capture_combat_state()
 	if not candidate.site.get("armies") is Array: candidate.site["armies"] = []
 	candidate.site.armies.append(resident_team)

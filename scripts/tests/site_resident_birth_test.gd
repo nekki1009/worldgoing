@@ -131,6 +131,22 @@ func _run() -> void:
 		assert(slot_set.has(cell) and not cells.has(cell), "Each resident has its own rest cell")
 		cells[cell] = true
 
+	# Unarmed: no resident holds an item or shows an equipment part without a record. The reconcile is the
+	# game's own projection, SiteRuntime.equipment_appearance (site_store.gd _validate_army_assets calls it the same way).
+	var equipment_slots: Array = Runtime.EQUIPMENT_SLOTS
+	for unit: Dictionary in units:
+		var holder: Dictionary = unit.get("item_state", {})
+		var item_ids: Array = holder.get("item_ids", [0])
+		var equipped: Dictionary = holder.get("equipped", {"x": 0})
+		assert(item_ids.is_empty() and equipped.is_empty(), "Resident %d holds no items" % int(unit.person_id))
+		var appearance: Dictionary = unit.get("appearance", {})
+		var parts: Dictionary = appearance.get("parts", {})
+		for slot: Variant in equipment_slots:
+			assert(str(parts.get(str(slot), "")) == "none", "Resident %d shows no %s part" % [int(unit.person_id), str(slot)])
+		assert(not appearance.has("equipment_dyes"), "Resident %d has no equipment dye" % int(unit.person_id))
+		var reconciled: Dictionary = Runtime.equipment_appearance(candidate, holder, appearance)
+		assert(not reconciled.is_empty() and reconciled == appearance, "Resident %d appearance equals the item reconcile" % int(unit.person_id))
+
 	# Idempotent: the candidate already holds the resident army, so nothing new is created.
 	var again := lab.prepare_initial_resident_roster(candidate)
 	assert(again.ok and not bool(again.changed), str(again))
