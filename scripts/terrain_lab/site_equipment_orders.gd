@@ -13,6 +13,7 @@ const Stockpiles = preload("res://scripts/terrain_lab/site_stockpiles.gd")
 const RansomData = preload("res://scripts/terrain_lab/site_ransom_data.gd")
 const Succession = preload("res://scripts/terrain_lab/site_succession.gd")
 const Take = preload("res://scripts/terrain_lab/site_take_office.gd") # R5 S2: vacancy take-office core.
+const VacancyEpisode = preload("res://scripts/terrain_lab/site_vacancy_episode.gd") # R5 S7: vacancy episode record.
 const NATION_OPERATIONS_VERSION := 1
 const NATION_OPERATIONS_MAX := 128
 const NATION_PUBLIC_VERSION := 2
@@ -144,7 +145,8 @@ func appoint_nation_head(nation_id: String, person_id: int) -> Dictionary:
 func take_nation_head(requester_id: int, nation_id: String, person_id: int, authority: Variant) -> Dictionary:
 	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
 	if nation.is_empty(): return Runtime.fail("NO_TARGET", "沒有此國家")
-	var auth: Dictionary = Take.authority_refusal(authority, requester_id, int(lab.controlled_person_id()))
+	var contest: Dictionary = Take.contest_episode(lab.terrain.site, authority, "nation", nation_id)
+	var auth: Dictionary = Take.authority_refusal(authority, requester_id, int(lab.controlled_person_id()), contest)
 	if not auth.ok: return auth
 	if not _member(nation, person_id): return Runtime.fail("NO_TARGET", "元首須是本國真實國民")
 	var offices := nation_offices(nation).duplicate(true)
@@ -152,9 +154,34 @@ func take_nation_head(requester_id: int, nation_id: String, person_id: int, auth
 	if int(SiteOffices.head_position(offices).get("holder", -1)) > 0: return Runtime.fail("BUSY", "元首在任")
 	var committed: Dictionary = Take.commit_head(offices, person_id)
 	if not committed.ok: return committed
+	var closed_episode: Dictionary = {}
+	if not contest.is_empty():
+		var closed: Dictionary = VacancyEpisode.close(contest, person_id)
+		if not closed.ok: return closed
+		closed_episode = closed.episode
 	nation.erase("military_head")
 	nation.offices = committed.offices
+	if not closed_episode.is_empty():
+		var episodes: Dictionary = lab.terrain.site.vacancy_episodes.duplicate(true)
+		episodes[str(closed_episode.episode_id)] = closed_episode
+		lab.terrain.site.vacancy_episodes = episodes
 	return Runtime.ok("已就任元首", {"revision": int(committed.offices.revision)})
+
+## R5 S7: the nation head seat through the shared observation (a present executor, or a designated heir in place).
+func observe_nation_vacancy(nation_id: String, onset_day: int) -> Dictionary:
+	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
+	if nation.is_empty() or not nation.has("offices"): return Runtime.fail("NO_TARGET", "沒有此國家")
+	var seat := str(SiteOffices.head_position(nation_offices(nation, true)).get("id", ""))
+	var heir: bool = nation.has("succession") and (nation.succession.get("heirs", {}) as Dictionary).has(seat)
+	return Take.observe_seat(lab.terrain.site, "nation", nation_id, nation_head_executor(nation, true) > 0, heir, onset_day)
+
+func observe_nation_proven_day(nation_id: String, proven_day: int) -> Dictionary:
+	return Take.observe_proven(lab.terrain.site, "nation", nation_id, proven_day)
+
+func settle_nation_contest(nation_id: String, leadership: Dictionary = {}) -> Dictionary:
+	var won: Dictionary = Take.settle_seat_winner(lab.terrain.site, "nation", nation_id, leadership)
+	if not won.ok: return won
+	return take_nation_head(int(won.winner), nation_id, int(won.winner), {"kind": "vacancy_contest", "episode_id": str(won.episode_id)})
 
 ## Organization adjustment is the head's own, non-delegable power (3.5).
 func apply_nation_office_plan(requester_id: int, nation_id: String, expected_revision: int, ops: Array) -> Dictionary:
