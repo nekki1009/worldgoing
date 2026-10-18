@@ -11005,11 +11005,9 @@ func prepare_gd_mesh_supply_window(seconds: float) -> Dictionary:
 		# scalar state/stock, as its existing Native candidate already does.
 		var state: Dictionary = row.state.duplicate(true)
 		var stock: Dictionary = row.stock.duplicate(true)
-		var life := {}
-		for identity: int in row.members:
-			life[identity] = {"hp": float(Sustain._member_value(row.members, identity, &"hp", row.reader)),
-				"ko": float(Sustain._member_value(row.members, identity, &"ko", row.reader)),
-				"captive": bool(Sustain._member_value(row.members, identity, &"captive", row.reader))}
+		var sampled: Dictionary = _gd_mesh_supply_life(row.members, row.reader)
+		if not sampled.ok: return sampled
+		var life: Dictionary = sampled.life
 		var context: Dictionary = row.context.duplicate(false)
 		context.hot_read = func(identity: int, field: StringName) -> Variant:
 			return life[identity][String(field)] if life[identity].has(String(field)) else row.members[identity].get(String(field))
@@ -11857,11 +11855,27 @@ func valid_gd_contact_work_prefix(envelope: Dictionary, prefix: Dictionary, prio
 			and is_same(prefix.work_unit, envelope.unit) and identity == int(envelope.prepared.identity)
 	return false
 
+func _gd_mesh_supply_life(members: Dictionary, reader: Callable) -> Dictionary:
+	var life: Dictionary = {}
+	for identity: int in members:
+		if not members[identity] is Dictionary: return Runtime.fail("INVALID_SUSTAIN", "Supply member must be a Dictionary")
+		var hp: Variant = Sustain._member_value(members, identity, &"hp", reader)
+		var ko: Variant = Sustain._member_value(members, identity, &"ko", reader)
+		var captive: Variant = Sustain._member_value(members, identity, &"captive", reader)
+		if not Sustain._number(hp, 0.0) or not Sustain._number(ko, 0.0) or not captive is bool:
+			return Runtime.fail("INVALID_SUSTAIN", "Supply HP/KO must be finite nonnegative numbers and captive must be bool")
+		life[identity] = {"hp": float(hp), "ko": float(ko), "captive": captive}
+	return Runtime.ok("", {"life": life})
+
 func _gd_mesh_supply_reader(members: Dictionary) -> Callable:
 	# No captured hot column: packed arrays can detach on the real contact write.
 	return func(identity: int, field: StringName) -> Variant:
 		var person: Dictionary = _supply_person(identity)
-		return person_actions._body_get(person, String(field)) if not person.is_empty() else members.get(identity, {}).get(String(field))
+		if person.is_empty(): return members.get(identity, {}).get(String(field))
+		if int(person.unit) < 0:
+			if field == &"ko": return person.get("ko") # Actor exposes knockout_left through the original person adapter.
+			if field == &"present": return members.get(identity, {}).get("present")
+		return person_actions._body_get(person, String(field))
 
 func gd_contact_runtime_person_ready(identity: int) -> bool:
 	if _gd_contact_runtime_capture.is_empty() or not _gd_contact_runtime_capture.people.has(identity): return false
