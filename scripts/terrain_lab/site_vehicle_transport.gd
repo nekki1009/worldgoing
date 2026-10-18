@@ -1540,6 +1540,61 @@ func boarding_save_guard() -> Dictionary:
 			if not checked.ok: return checked
 	return controller.person_actions.boarding_save_guard()
 
+## B2S3 read-only begin gate for a player-side boarding link. Only a living person
+## embarked on the source hull, authorised as the controlled person, may start it.
+func boarding_begin_query(identity: int, self_id: String, peer_id: String, requester_id: int, test_dispatch: bool = false) -> Dictionary:
+	var source: Dictionary = records().get(self_id, {})
+	var target: Dictionary = records().get(peer_id, {})
+	var person: Dictionary = ship_person(identity)
+	if person.is_empty() or self_id == peer_id or not ship_afloat(source) or not ship_afloat(target): return Runtime.fail("NO_TARGET")
+	if str(person.row.get("embarked_vehicle_id", "")) != self_id or float(person.hp) <= 0.0: return Runtime.fail("NO_TARGET", "Only a living person aboard the source hull may start")
+	if not _ship_capable(person, true): return Runtime.fail("BUSY", "Original boarding executor must be able to act")
+	if _region_operation_pending() or _ship_in_journey(self_id) or _ship_in_journey(peer_id): return Runtime.fail("BUSY", "先完成兩船原旅程")
+	if not source.get("naval", {}).get("repair", {}).is_empty() or not target.get("naval", {}).get("repair", {}).is_empty(): return Runtime.fail("BUSY", "先完成岸上維修")
+	if not _authorized(person.owner, requester_id, identity, test_dispatch): return Runtime.fail("NO_AUTHORITY")
+	if bool(lab.terrain.site.get("paused", false)) or not source.move.is_empty() or not target.move.is_empty() or not ship_job(self_id).is_empty() or not ship_job(peer_id).is_empty(): return Runtime.fail("BUSY")
+	if source.get("naval", {}).has("boarding_link") or target.get("naval", {}).has("boarding_link"): return Runtime.fail("BUSY", "已有接舷紀錄")
+	var active: Dictionary = boarding_link_query(self_id)
+	if not active.ok or active.linked: return Runtime.fail("BUSY", "接舷紀錄不可用")
+	if not _hulls_adjacent(source, target): return Runtime.fail("UNREACHABLE", "本人兩船須已在合法接舷邊")
+	return Runtime.ok("", {"person": person, "source": source, "target": target})
+
+func _hulls_adjacent(source: Dictionary, target: Dictionary) -> bool:
+	return not _boarding_cells(source, target).is_empty()
+
+## First own/peer cell pair that is 4-adjacent, in footprint order (deterministic).
+func _boarding_cells(source: Dictionary, target: Dictionary) -> Dictionary:
+	var own: Array[Vector2i] = Ship.footprint(str(source.ship_type), lab.terrain.cell_from_index(int(source.cell)), Vector2i(int(source.facing[0]), int(source.facing[1])))
+	var other: Array[Vector2i] = Ship.footprint(str(target.ship_type), lab.terrain.cell_from_index(int(target.cell)), Vector2i(int(target.facing[0]), int(target.facing[1])))
+	for a: Vector2i in own:
+		for b: Vector2i in other:
+			if absi(a.x - b.x) + absi(a.y - b.y) == 1: return {"a": a, "b": b}
+	return {}
+
+## B2S4 atomic commit: both naval records become v2 linked, or nothing is written.
+## Epoch 1 is safe here: boarding_begin_query refuses any existing boarding_link.
+func commit_boarding_link(job: Dictionary) -> Dictionary:
+	var source: Dictionary = records().get(str(job.vehicle_id), {})
+	var target: Dictionary = records().get(str(job.peer_vehicle_id), {})
+	if not is_ship(source) or not is_ship(target): return Runtime.fail("NO_TARGET")
+	var cells: Dictionary = _boarding_cells(source, target)
+	if cells.is_empty(): return Runtime.fail("UNREACHABLE", "兩船已不在接舷邊")
+	var source_anchor: Vector2i = lab.terrain.cell_from_index(int(source.cell))
+	var target_anchor: Vector2i = lab.terrain.cell_from_index(int(target.cell))
+	var source_facing: Vector2i = Vector2i(int(source.facing[0]), int(source.facing[1]))
+	var target_facing: Vector2i = Vector2i(int(target.facing[0]), int(target.facing[1]))
+	var source_local: Vector2 = Ship.local_from_world(source_anchor, source_facing, Vector2(cells.a))
+	var target_local: Vector2 = Ship.local_from_world(target_anchor, target_facing, Vector2(cells.b))
+	var state: Dictionary = {"id": str(lab.terrain.site.id), "vehicles": records()}
+	var link_id: String = "boarding_%s_%s" % [str(source.id), str(target.id)]
+	var made: Dictionary = Boarding.make_pair(state, str(source.id), str(target.id), link_id, 1,
+		source_anchor, target_anchor, [source_local.x, source_local.y], [target_local.x, target_local.y])
+	if not made.ok: return made # make_pair works on a copy, so nothing changed.
+	var live: Dictionary = records()
+	for identity: String in [str(source.id), str(target.id)]:
+		live[identity].naval = made.state.vehicles[identity].naval.duplicate(true)
+	return Runtime.ok("接舷已建立；兩船原紀錄同時寫入", {"link_id": link_id, "epoch": 1})
+
 func ship_cross_query(identity: int, target_id: String, berth: int, requester_id: int, test_dispatch: bool = false) -> Dictionary:
 	var source := ship_for_person(identity)
 	var target: Dictionary = records().get(target_id, {})
@@ -1949,6 +2004,9 @@ func ship_order(vehicle_id: String, action: String, target: Vector2i, requester_
 		vehicle.command = {}
 		vehicle.stop_pending = not vehicle.move.is_empty()
 		return Runtime.ok("已承諾船步完成後停止")
+	var b2_link_guard: Dictionary = boarding_link_query(str(vehicle.id))
+	if not b2_link_guard.ok: return b2_link_guard
+	if b2_link_guard.linked: return Runtime.fail("BUSY", "Original linked hull must remain fixed")
 	if not vehicle.get("naval", {}).get("repair", {}).is_empty(): return Runtime.fail("BUSY", "原船體維修中")
 	if bool(lab.terrain.site.get("paused", false)) or not vehicle.move.is_empty() or not ship_job(vehicle_id).is_empty() or not ship_driver_ready(vehicle): return Runtime.fail("BUSY", "船須停穩且當值舵手可行動")
 	if team.is_sustain_routed() and not retreat: return Runtime.fail("ROUTED", "潰退船只接受撤退靠岸")
@@ -1970,6 +2028,9 @@ func ship_order(vehicle_id: String, action: String, target: Vector2i, requester_
 	return Runtime.ok("船按原水域查詢逐步取得整船預約")
 
 func _commit_ship_step(vehicle: Dictionary, destination: Vector2i, facing: Vector2i, action: String, docking: bool = false) -> Dictionary:
+	var b2_link_guard: Dictionary = boarding_link_query(str(vehicle.id))
+	if not b2_link_guard.ok: return b2_link_guard
+	if b2_link_guard.linked: return Runtime.fail("BUSY", "Original linked hull must remain fixed")
 	if _ship_journey_active() or not vehicle.get("naval", {}).get("repair", {}).is_empty(): return Runtime.fail("BUSY")
 	if not ship_driver_ready(vehicle) or not vehicle.move.is_empty() or not ship_job(str(vehicle.id)).is_empty(): return Runtime.fail("BUSY")
 	# The first step away from either original shore contact uses the same

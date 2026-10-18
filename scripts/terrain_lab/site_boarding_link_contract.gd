@@ -9,6 +9,8 @@ const Ship = preload("res://scripts/terrain_lab/site_vehicle_ship_definitions.gd
 const VERSION: int = 1
 # B2 must pay this duration in original PersonActions; B0 starts no job.
 const LINK_ACTION_SECONDS: float = 4.0
+# B2S2 legal link state moves. "establishing" is only written by a creator.
+const TRANSITIONS: Dictionary = {"establishing": ["linked", "invalid"], "linked": ["closing", "invalid"], "closing": ["linked", "invalid"], "invalid": []}
 
 static func _empty(value: Variant) -> bool:
 	return value == null or value is Dictionary and value.is_empty()
@@ -204,3 +206,46 @@ static func _end_record(site_id: String, link_id: String, epoch: int, vehicle: D
 		"frame": {"site_id": site_id, "anchor": [anchor.x, anchor.y], "facing": vehicle.facing.duplicate()},
 		"peer_frame": {"site_id": site_id, "anchor": [peer_anchor.x, peer_anchor.y], "facing": peer.facing.duplicate()},
 		"local": [float(local[0]), float(local[1])], "world_point": [point.x, point.y], "state": "linked", "crosser_id": 0}
+
+## B2S2 pure transitions. Each returns a copy; both ends are written together,
+## and the copy is accepted only if query() passes. Epochs never change here.
+static func set_state(state: Dictionary, self_id: String, next_state: String) -> Dictionary:
+	var current: Dictionary = query(state, self_id)
+	if not current.ok: return current
+	if not current.linked: return Runtime.fail("NO_TARGET", "No boarding link")
+	var link: Dictionary = current.link
+	if not (next_state in TRANSITIONS.get(str(link.state), [])): return Runtime.fail("BUSY", "Illegal link transition")
+	var pair: Dictionary = state.duplicate(true)
+	pair.vehicles[self_id].naval.boarding_link.state = next_state
+	pair.vehicles[str(link.peer.vehicle_id)].naval.boarding_link.state = next_state
+	return _accepted(pair, self_id)
+
+static func enter_crosser(state: Dictionary, self_id: String, person_id: int) -> Dictionary:
+	var current: Dictionary = query(state, self_id)
+	if not current.ok: return current
+	if not current.linked: return Runtime.fail("NO_TARGET", "No boarding link")
+	var link: Dictionary = current.link
+	if link.state != "linked": return Runtime.fail("BUSY", "Entrants are closed")
+	if int(link.crosser_id) != 0: return Runtime.fail("BUSY", "One crosser at a time")
+	if not _integer(person_id, 1): return Runtime.fail("NO_TARGET", "Crosser id")
+	var pair: Dictionary = state.duplicate(true)
+	pair.vehicles[self_id].naval.boarding_link.crosser_id = person_id
+	pair.vehicles[str(link.peer.vehicle_id)].naval.boarding_link.crosser_id = person_id
+	return _accepted(pair, self_id)
+
+static func leave_crosser(state: Dictionary, self_id: String) -> Dictionary:
+	var current: Dictionary = query(state, self_id)
+	if not current.ok: return current
+	if not current.linked: return Runtime.fail("NO_TARGET", "No boarding link")
+	var link: Dictionary = current.link
+	if not (link.state in ["linked", "closing"]): return Runtime.fail("BUSY", "Crosser cannot leave a link in this state")
+	if int(link.crosser_id) == 0: return Runtime.fail("NO_TARGET", "No crosser")
+	var pair: Dictionary = state.duplicate(true)
+	pair.vehicles[self_id].naval.boarding_link.crosser_id = 0
+	pair.vehicles[str(link.peer.vehicle_id)].naval.boarding_link.crosser_id = 0
+	return _accepted(pair, self_id)
+
+static func _accepted(pair: Dictionary, self_id: String) -> Dictionary:
+	var checked: Dictionary = query(pair, self_id)
+	if not checked.ok: return checked
+	return Runtime.ok("", {"state": pair, "link_state": str(checked.link.state), "crosser_id": int(checked.link.crosser_id), "entrants_open": checked.entrants_open, "can_execute": false})

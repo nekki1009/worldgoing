@@ -4,6 +4,7 @@ extends RefCounted
 ## advance() is before contact/life settlement; only settle_after_contacts commits.
 
 const CrowdOwner = preload("res://scripts/terrain_lab/crowd_person_owner.gd")
+const BoardingContract = preload("res://scripts/terrain_lab/site_boarding_link_contract.gd")
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const PersonSocial = preload("res://scripts/terrain_lab/person_social.gd")
 const SiteSocial = preload("res://scripts/terrain_lab/site_social.gd")
@@ -1077,7 +1078,7 @@ func advance(seconds: float, work_plan: Dictionary = {}) -> Dictionary:
 				job.executor_owner.advance_suppress_approach(int(job.executor_id), int(job.job_token))
 			handled[int(job.executor_id)] = _fire_work_handled_seconds(job, seconds)
 			continue
-		if str(job.kind) in ["housing_return", "ground_boundary"] or str(job.kind).begins_with("ship_"): continue # Original ACTION boundary owns finite movement.
+		if str(job.kind) in ["housing_return", "ground_boundary", "boarding_cross"] or str(job.kind).begins_with("ship_"): continue # Original ACTION boundary owns finite movement.
 		var accepted: Dictionary = _consume_shared_job_advance_prefix(key, job, seconds, work_plan)
 		if bool(accepted.get("duplicate", false)): continue
 		var check: Dictionary = Runtime.ok() if not accepted.is_empty() else _job_context(job)
@@ -1265,6 +1266,7 @@ func settle_after_contacts() -> Array[Dictionary]:
 		if str(job.kind) == "ground_boundary":
 			_settle_ground_boundary(key, job)
 			continue
+		if str(job.kind) == "boarding_cross": continue # Settled only by the boarding action clock (B2S3/B2S4).
 		if str(job.kind).begins_with("ship_"):
 			_settle_ship_job(key, job)
 			continue
@@ -1842,6 +1844,20 @@ func begin_ship_walk(person_id: int, local_target: Vector2, requester_id: int, t
 	if not query.ok: return query
 	return _begin_ship_path_job("ship_walk", query, requester_id, test_dispatch)
 
+## B2S3: starts the original 4.0 s link action only. Committing the link is B2S4.
+func begin_boarding_link(person_id: int, self_id: String, peer_id: String, requester_id: int, test_dispatch: bool = false) -> Dictionary:
+	var query: Dictionary = lab.site_controller.vehicles.boarding_begin_query(person_id, self_id, peer_id, requester_id, test_dispatch)
+	if not query.ok: return query
+	if is_busy(person_id): return Runtime.fail("BUSY")
+	var person: Dictionary = query.person
+	var job: Dictionary = _new_job(person, "boarding_cross", 0)
+	job.merge({"vehicle_id": self_id, "peer_vehicle_id": peer_id, "requester_id": requester_id, "test_dispatch": test_dispatch,
+		"ship_revision": int(query.source.revision), "peer_revision": int(query.target.revision),
+		"terrain": lab.terrain, "site_state": lab.terrain.site, "duration": BoardingContract.LINK_ACTION_SECONDS,
+		"elapsed": 0.0, "paused": "", "cancelled": false})
+	_jobs[str(person_id)] = job
+	return Runtime.ok("原人物開始接舷作業", {"seconds": float(job.duration)})
+
 func begin_ship_cross(person_id: int, target_id: String, requester_id: int, berth: int = -1, test_dispatch: bool = false) -> Dictionary:
 	var query: Dictionary = lab.site_controller.vehicles.ship_cross_query(person_id, target_id, berth, requester_id, test_dispatch)
 	if not query.ok: return query
@@ -1897,6 +1913,37 @@ func _begin_ship_action(kind: String, person_id: int, vehicle_id: String, reques
 	_jobs[str(person_id)] = job
 	return Runtime.ok("原人物開始船內／水岸作業；完成前保留原關係", {"seconds": float(job.duration)})
 
+## Re-proves every begin condition on the live owners; a changed hull, person or
+## authority interrupts the job without committing anything.
+func _boarding_context(job: Dictionary) -> Dictionary:
+	var vehicles: Variant = lab.site_controller.vehicles
+	if not is_same(job.terrain, lab.terrain) or not is_same(job.site_state, lab.terrain.site): return Runtime.fail("STALE")
+	var person: Dictionary = vehicles.ship_person(int(job.executor_id))
+	if person.is_empty() or int(person.hit) != int(job.executor_hit) or lab.terrain.index(person.cell) != int(job.executor_cell): return Runtime.fail("INTERRUPTED", "原人物受擊或位置已變；未提交接舷")
+	var check: Dictionary = vehicles.boarding_begin_query(int(job.executor_id), str(job.vehicle_id), str(job.peer_vehicle_id), int(job.requester_id), bool(job.test_dispatch))
+	if not check.ok: return check
+	if int(check.source.revision) != int(job.ship_revision) or int(check.target.revision) != int(job.peer_revision): return Runtime.fail("STALE")
+	return Runtime.ok("", {"person": person})
+
+func _advance_boarding_link(key: String, job: Dictionary, seconds: float) -> void:
+	var check: Dictionary = _boarding_context(job)
+	if not check.ok:
+		_finish(key, check)
+		return
+	if str(job.paused) == "AWAIT_COMMIT":
+		_commit_boarding_link(key, job)
+		return
+	job.elapsed = minf(float(job.duration), float(job.elapsed) + seconds)
+	if float(job.elapsed) >= float(job.duration): job.paused = "AWAIT_COMMIT"
+
+## B2S4: the held action commits on the next action tick, after the same re-proof.
+func _commit_boarding_link(key: String, job: Dictionary) -> void:
+	var check: Dictionary = _boarding_context(job)
+	if not check.ok:
+		_finish(key, check)
+		return
+	_finish(key, lab.site_controller.vehicles.commit_boarding_link(job))
+
 func _ship_job_context(job: Dictionary) -> Dictionary:
 	var vehicles: Variant = lab.site_controller.vehicles
 	if str(job.kind) in ["ship_helm", "ship_walk", "ship_cross", "ship_evac"]:
@@ -1917,6 +1964,8 @@ func advance_ship_jobs(action_seconds: float) -> void:
 		var job: Dictionary = _jobs[key]
 		if str(job.kind) == "ground_boundary":
 			_advance_ground_boundary(key, job, action_seconds)
+		elif str(job.kind) == "boarding_cross":
+			_advance_boarding_link(key, job, action_seconds)
 		elif str(job.kind).begins_with("ship_"):
 			_advance_ship_job(key, job, action_seconds)
 
