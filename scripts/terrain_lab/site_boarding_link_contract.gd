@@ -163,3 +163,44 @@ static func save_guard(state: Dictionary, data: TerrainData = null) -> Dictionar
 			var checked: Dictionary = position_guard(row)
 			if not checked.ok: return checked
 	return Runtime.fail("BUSY", "Boarding link persistence not admitted before B5") if active else Runtime.ok()
+
+## B2S1 pure pair constructor. It copies the state and writes only the two
+## original naval records; it starts no person job, UI or NPC order. A linked
+## copy is still refused by save_guard (BUSY) until B5 admits persistence.
+static func make_pair(state: Dictionary, self_id: String, peer_id: String, link_id: String, epoch: int,
+		self_anchor: Vector2i, peer_anchor: Vector2i, self_local: Array, peer_local: Array) -> Dictionary:
+	var site_id: Variant = state.get("id")
+	var vehicles: Variant = state.get("vehicles", {})
+	if not site_id is String or site_id.is_empty() or not vehicles is Dictionary or self_id.is_empty() or peer_id.is_empty() or self_id == peer_id or link_id.is_empty() or not _integer(epoch, 1):
+		return Runtime.fail("NO_TARGET")
+	if not vehicles.get(self_id) is Dictionary or not vehicles.get(peer_id) is Dictionary: return Runtime.fail("NO_TARGET")
+	if not _point(self_local) or not _point(peer_local): return Runtime.fail("CORRUPT_SAVE", "Boarding local point type")
+	var pair: Dictionary = state.duplicate(true)
+	var first: Dictionary = pair.vehicles[self_id]
+	var second: Dictionary = pair.vehicles[peer_id]
+	for vehicle: Dictionary in [first, second]:
+		if vehicle.get("kind") != "ship" or not vehicle.get("naval") is Dictionary or vehicle.naval.get("version") != 1 or vehicle.naval.get("state") != "afloat" or vehicle.naval.has("boarding_link"):
+			return Runtime.fail("BUSY", "Boarding pair needs two afloat v1 ships without a link")
+		if not vehicle.get("move") is Dictionary or not vehicle.get("move").is_empty() or not vehicle.get("command") is Dictionary or not vehicle.get("command").is_empty():
+			return Runtime.fail("BUSY", "Boarding pair needs two stopped ships with no command")
+	var first_link: Dictionary = _end_record(site_id, link_id, epoch, first, second, self_anchor, peer_anchor, self_local)
+	var second_link: Dictionary = _end_record(site_id, link_id, epoch, second, first, peer_anchor, self_anchor, peer_local)
+	first.naval.version = 2
+	first.naval.boarding_link = first_link
+	second.naval.version = 2
+	second.naval.boarding_link = second_link
+	var checked: Dictionary = query(pair, self_id)
+	if not checked.ok: return checked
+	return Runtime.ok("", {"state": pair, "linked": true, "entrants_open": checked.entrants_open, "can_execute": false})
+
+# One end of a link, in the same arithmetic query() uses to check world_point.
+static func _end_record(site_id: String, link_id: String, epoch: int, vehicle: Dictionary, peer: Dictionary,
+		anchor: Vector2i, peer_anchor: Vector2i, local: Array) -> Dictionary:
+	var direction := Vector2(float(vehicle.facing[0]), float(vehicle.facing[1]))
+	var point: Vector2 = Vector2(anchor.x, anchor.y) + Vector2(-direction.y, direction.x) * float(local[0]) + direction * float(local[1])
+	return {"version": VERSION, "id": link_id, "epoch": epoch,
+		"self": {"site_id": site_id, "vehicle_id": str(vehicle.id)},
+		"peer": {"site_id": site_id, "vehicle_id": str(peer.id)},
+		"frame": {"site_id": site_id, "anchor": [anchor.x, anchor.y], "facing": vehicle.facing.duplicate()},
+		"peer_frame": {"site_id": site_id, "anchor": [peer_anchor.x, peer_anchor.y], "facing": peer.facing.duplicate()},
+		"local": [float(local[0]), float(local[1])], "world_point": [point.x, point.y], "state": "linked", "crosser_id": 0}
