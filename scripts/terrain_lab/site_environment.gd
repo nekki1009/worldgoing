@@ -927,10 +927,9 @@ static func author_resource_state_guard(data: TerrainData, state: Dictionary) ->
 	# No native handoff, live owner capture, clock advancement or Fire history erasure here.
 	if state.has("crowd") or state.has("world_pin") or state.has("region_snapshot") or state.has("initial_scenario") or state.has("travel_identity"): return SiteRuntime.fail("AUTHOR_IMPORT_UNSUPPORTED", "活動世界須由原owner完成安全副本交接")
 	if not state.get("fire", {}) is Dictionary or not state.get("vehicles", {}) is Dictionary or not state.get("armies", []) is Array or not state.get("actors", {}) is Dictionary: return SiteRuntime.fail("INVALID_RESOURCE", "來源活動格式非法")
-	if not state.get("actors", {}).is_empty() or not state.get("armies", []).is_empty(): return SiteRuntime.fail("AUTHOR_IMPORT_UNSUPPORTED", "人物及隊伍須原owner提供安全副本；此入口不接管")
 	var family: Variant = state.get("family", {})
 	if not family is Dictionary: return SiteRuntime.fail("INVALID_RESOURCE", "家族引用格式非法")
-	if family.has("members") and (not family.members is Array or not family.members.is_empty()): return SiteRuntime.fail("AUTHOR_IMPORT_UNSUPPORTED", "原人物及家族引用須原owner提供安全副本")
+	if family.has("members") and not family.members is Array: return SiteRuntime.fail("INVALID_RESOURCE", "家族名冊格式非法")
 	if SiteTechnology.is_holder_reference(family.get("technology")): return SiteRuntime.fail("AUTHOR_IMPORT_UNSUPPORTED", "外部科技holder須原owner完成閉包")
 	var combat: Variant = state.get("combat_left", 0.0)
 	if not (combat is int or combat is float) or not is_finite(float(combat)) or combat != 0.0: return SiteRuntime.fail("BUSY", "戰鬥須原owner收束")

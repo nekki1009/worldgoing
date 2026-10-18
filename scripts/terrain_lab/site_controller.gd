@@ -9593,6 +9593,11 @@ func open_fixed_world(manifest_path: String, world_id: String, slot_id: String, 
 			_initial_world_birth_data = null
 			_initial_world_archive = {}
 	var context := {"starting_site": [starting_site.x, starting_site.y], "initial_scenario_id": initial_scenario_id} if create_new else {}
+	if not source.author_identity().is_empty():
+		if not initial_scenario_id.is_empty(): return Runtime.fail("INITIAL_SCENARIO_CONFLICT")
+		var authored: Dictionary = source.author_initial_context()
+		if create_new and not RegionSaveSlot._initial_site_same([starting_site.x, starting_site.y], authored.starting_site): return Runtime.fail("INITIAL_SCENARIO_CONFLICT")
+		if create_new: context = authored
 	var opened: Dictionary = candidate.open_map(source, world_id, slot_id, create_new, context)
 	if not opened.ok: return _remember_initial_world_pending(opened, request, candidate)
 	candidate.ship_site_initialize = _initialize_ship_destination
@@ -10456,7 +10461,18 @@ func _prepare_initial_world(candidate: RegionSaveSlot, starting_site: Vector2i, 
 		if not opened.get("created", false) or not opened.get("interactive", true) or opened.data.site.is_empty():
 			return Runtime.fail("NO_BIRTH_GROUND", "新世界須從真正全新的合法陸地落腳")
 		var birth: Dictionary
-		if initial_scenario_id.is_empty():
+		var author: Dictionary = candidate.source.author_initial_context()
+		if not author.is_empty():
+			var start: Vector2i = Vector2i(int(author.start.cell[0]), int(author.start.cell[1]))
+			opened.data.site["player_cell"] = opened.data.index(start)
+		if not author.is_empty() and author.start.mode == "existing_person":
+			var people: Dictionary = RegionTravel._body_records(opened.data.site)
+			if not people.has(int(author.start.person_id)): return Runtime.fail("NO_TARGET")
+			var person: Dictionary = people[int(author.start.person_id)]
+			if not RegionTravel._able(person) or not RegionSaveSlot._initial_site_same(person.get("cell"), author.start.cell): return Runtime.fail("NO_BIRTH_GROUND")
+			opened.data.site.controlled_person_id = int(author.start.person_id)
+			birth = Runtime.ok("", {"data": opened.data})
+		elif initial_scenario_id.is_empty():
 			birth = lab.prepare_fresh_initial_population(opened.data)
 			# P4 S5c: author resident rows, fresh branch only (never restore, never the scenario branch).
 			if birth.ok: birth = lab.prepare_initial_resident_roster(birth.data)

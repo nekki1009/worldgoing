@@ -10509,7 +10509,7 @@ func _region_original_family_reference(slot: RegionSaveSlot, original: TerrainLa
 func prepare_fresh_initial_population(new_data: TerrainData) -> Dictionary:
 	if new_data == null or new_data.site.is_empty(): return SiteRuntime.fail("NO_TARGET")
 	var pin: Variant = new_data.site.get("world_pin")
-	if not pin is Dictionary or int(pin.get("format", 0)) != 2: return SiteRuntime.fail("NOT_NEW_WORLD_FORMAT")
+	if not pin is Dictionary or int(pin.get("format", 0)) not in [2, 3]: return SiteRuntime.fail("NOT_NEW_WORLD_FORMAT")
 	var policy := TechnologyPolicy.candidate(pin)
 	if not policy.ok: return policy
 	if not TechnologyPolicy.birth_categories_admitted(policy.policy): return SiteRuntime.fail("TECH_POLICY_CONFLICT")
@@ -10646,6 +10646,7 @@ func prepare_initial_resident_roster(new_data: TerrainData) -> Dictionary:
 		# is unchanged and every record stays located. Equipment is issued later, not at birth.
 		body.item_state = SiteRuntime.new_item_state("person:%d" % team.combat_identity(index))
 		body.military_role = "civilian"
+		body["name"] = str(rows[index].name)
 		# Unarmed look: the game's own projection of this empty holder (SiteRuntime.equipment_appearance, the
 		# reconcile that site_store.gd _validate_army_assets and terrain_lab.gd _presentation_holder use). Every
 		# equipment slot becomes "none"; body, face and hair stay. Checked like enable_combat's contact preparation.

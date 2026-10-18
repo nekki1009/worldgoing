@@ -123,7 +123,7 @@ func _run() -> void:
 	if _failed: return
 	var source: RegionData = Data.new()
 	var admitted: Dictionary = source.load_author_package(path)
-	if not _check(admitted.ok and not admitted.initial_admitted, "source admission, no birth"): return
+	if not _check(admitted.ok and admitted.initial_admitted, "author source admitted; source load itself does not birth"): return
 	var built: Dictionary = source.make_terrain_data(0,0)
 	if not _check(built.ok and built.data.height_levels[4949] == 2 and built.data.surface_types[4949] == TerrainData.Surface.FOREST_GROUND, "E03 real Adapter applies static"): return
 	var data: TerrainData = built.data
@@ -345,7 +345,7 @@ func _mapped_land() -> bool:
 func _current_contract(natural: RegionData, initial_source: RegionData) -> bool:
 	var refused: RegionSaveSlot = Slot.new()
 	var unsupported: Dictionary = refused.open_map(initial_source, "must_not_birth", "readonly")
-	if not _check(not unsupported.ok and unsupported.code == "AUTHOR_INITIALIZATION_UNSUPPORTED", "P5B author birth guard unchanged"): return false
+	if not _check(not unsupported.ok and unsupported.code == "AUTHOR_MULTI_SITE_UNSUPPORTED" and not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path("user://region_lab/worlds/must_not_birth/slots/readonly")), "cross-Site initial package refuses partial initialization and writes nothing"): return false
 	var slot: RegionSaveSlot = Slot.new()
 	var opened: Dictionary = slot.open_map(natural, "p2a_current_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()], "contract")
 	if not _check(opened.ok, "real natural Slot API"): return false

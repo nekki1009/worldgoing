@@ -3,7 +3,7 @@ extends "res://scripts/tests/map_editor_undo_contract_test.gd"
 ## The fixture's draft initial state has no original persons, and no author-side path creates them
 ## yet (plan 11.3 resident roster import is S5), so this test covers the person-free actions:
 ## refused naming without a family, create, a refused unknown person, a refused over-long name,
-## a valid naming to version 4 with lineage one, and undo. Adding an original person is left to S5.
+## a valid naming to version 4 with lineage one, and undo. The positive original-person add/remove/Undo path is covered by map_editor_author_world_test.
 
 const BaseFixture = preload("res://scripts/tests/map_editor_undo_contract_test.gd")
 

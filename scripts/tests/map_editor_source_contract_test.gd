@@ -61,16 +61,16 @@ func run() -> void:
 	folder = "user://map_editor_source_contract_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
 	var made := DirAccess.make_dir_recursive_absolute(folder)
 	if not _check(made == OK, "fixture directory"): return
-	var summary := _bytes(folder.path_join("summary.bin"), PackedByteArray([2]))
+	var summary: Dictionary = _bytes(folder.path_join("summary.bin"), PackedByteArray([2,2,2,2,2,2,2,2,2]))
 	if _failed: return
 	summary.erase("bytes")
-	summary.merge({"size": [1, 1], "site_origin": [0, 0], "encoding": "u8", "row_order": "north_to_south", "nodata": 0})
+	summary.merge({"size": [3, 3], "site_origin": [-1, -1], "encoding": "u8", "row_order": "north_to_south", "nodata": 0})
 	var heights := PackedFloat32Array()
 	heights.resize(25); heights.fill(20.0)
 	var elevation := _bytes(folder.path_join("elevation.bin"), heights.to_byte_array())
 	if _failed: return
 	elevation.erase("bytes")
-	elevation.merge({"id": "fixture", "size": [5, 5], "origin": [-200, -200], "spacing_m": 200,
+	elevation.merge({"id": "fixture", "size": [5, 5], "origin": [-400, -400], "spacing_m": 200,
 		"encoding": "float32_le", "row_order": "north_to_south", "nodata": -9999})
 	var levels := PackedByteArray()
 	levels.resize(25); levels.fill(1)
@@ -110,7 +110,7 @@ func run() -> void:
 	if _failed: return
 	var source := Data.new()
 	var admitted := source.load_author_package(package_path)
-	if not _check(admitted.ok and admitted.initial_admitted == false, "positive source-only admission"): return
+	if not _check(admitted.ok and admitted.initial_admitted == true, "positive author admission; loading alone creates no population"): return
 	var identity: Dictionary = source.author_identity()
 	var owner_match: bool = source.author_identity_matches(identity)
 	if not _check(owner_match, "verified owner matches identity without cloning it"): return
@@ -234,8 +234,9 @@ func run() -> void:
 		var changed_match := Slot.same_author_initial_context(birth, changed_birth)
 		if not _check(not changed_match, "reserved author context compares " + change): return
 	var builtin_valid := Slot._initial_context_ok(birth)
-	var blocked := slot.open_map(source, "p1a_blocked_birth", "main", true, birth)
-	if not _check(schema_valid and not builtin_valid and not blocked.ok and blocked.code == "AUTHOR_INITIALIZATION_UNSUPPORTED", "v2 contract is locked, not admitted as builtin birth"): return
+	var blocked: Dictionary = slot.open_map(source, "p1a_author_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()], "main", true, birth)
+	if not blocked.ok: printerr("P5B_SOURCE_OPEN_RESULT: " + JSON.stringify(blocked))
+	if not _check(schema_valid and builtin_valid and blocked.ok and slot.initialization_pending() and int(slot.pin.format) == 3 and slot._marker.is_empty(), "v2 author context starts pinned pending transaction without birthing"): return
 
 	var plain := Data.new()
 	var plain_loaded := plain.load_manifest(str(source_record.path))

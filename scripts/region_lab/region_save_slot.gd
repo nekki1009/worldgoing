@@ -58,9 +58,23 @@ static func _new_fire_clock(base_game_seconds: float) -> Dictionary:
 		"base_game_seconds": base_game_seconds, "journal": [], "index": {}}
 
 func open_map(map_data: RegionData, world_instance_id: String, slot_id: String, prepare_new: bool = false, initial_context: Dictionary = {}) -> Dictionary:
-	# P1A locks the author contract; P5B must implement the actual transaction.
-	if initial_context.get("mode") == "author" or map_data != null and not map_data.author_identity().is_empty():
-		return fail("AUTHOR_INITIALIZATION_UNSUPPORTED", "作者來源已辨識；P5B尚未准入世界／人口初始化")
+	if not prepare_new and not initial_context.is_empty(): return fail("INVALID_INITIAL_SCENARIO")
+	if map_data == null or map_data.manifest.is_empty(): return fail("MISSING_BASE")
+	var author_context: Dictionary = map_data.author_initial_context()
+	_opening_author_context = author_context
+	if not author_context.is_empty():
+		if not author_initial_context_valid(author_context): return fail("INVALID_AUTHOR_CONTEXT")
+		# Cross-Site initial population is P6; never publish only part of a package.
+		if author_context.expected_initial_sites.size() != 1: return fail("AUTHOR_MULTI_SITE_UNSUPPORTED")
+		if prepare_new and not same_author_initial_context(initial_context, author_context): return fail("INITIAL_SCENARIO_CONFLICT")
+		var start_site: Vector2i = Vector2i(int(author_context.starting_site[0]), int(author_context.starting_site[1]))
+		var initial: Dictionary = map_data.project_terrain(start_site, "author_initial")
+		if not initial.ok: return initial
+		if not initial.data.site.is_empty():
+			var buildings: Dictionary = Runtime.validate_author_buildings(initial.data)
+			if not buildings.ok: return buildings
+		if not initial.data.contains(Vector2i(int(author_context.start.cell[0]), int(author_context.start.cell[1]))) or not initial.data.is_walkable(Vector2i(int(author_context.start.cell[0]), int(author_context.start.cell[1]))): return fail("NO_BIRTH_GROUND")
+	elif initial_context.get("mode") == "author": return fail("INITIAL_PIN_CONFLICT")
 	# Reject non-creation config before reading a world file or making folders.
 	if not prepare_new and not initial_context.is_empty(): return fail("INVALID_INITIAL_SCENARIO")
 	if prepare_new and not _initial_context_ok(initial_context): return fail("INVALID_INITIAL_SCENARIO")
@@ -72,6 +86,9 @@ func open_map(map_data: RegionData, world_instance_id: String, slot_id: String, 
 		"technology_policy": empty_policy.policy, "atlas_id": str(map_data.manifest.atlas_id),
 		"grid_contract_version": int(map_data.manifest.grid_contract_version), "base_revision": str(map_data.manifest.base_revision),
 		"manifest_sha256": map_data.manifest_hash, "ramp_rule_revision": RegionTerrainAdapter.RAMP_RULE_REVISION}
+	if not author_context.is_empty():
+		expected.format = 3
+		expected.merge(map_data.author_identity(), true)
 	if map_data.resource_manifest_hash.is_empty() != map_data.resource_rule_revision.is_empty(): return fail("MISSING_BASE")
 	if not map_data.resource_manifest_hash.is_empty():
 		expected["resource_layer_sha256"] = map_data.resource_manifest_hash
@@ -82,6 +99,7 @@ func open_map(map_data: RegionData, world_instance_id: String, slot_id: String, 
 	var pending_path := location.path_join("manifest.pending.json")
 	var complete_path := location.path_join("manifest.initialized.json")
 	var manifest_exists := FileAccess.file_exists(manifest_path)
+	if not prepare_new and not author_context.is_empty() and not manifest_exists and not FileAccess.file_exists(pending_path) and not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(location)): return fail("INITIALIZATION_REQUIRED")
 	var pending_record := {}
 	var recover_first_marker := false
 	if manifest_exists:
@@ -89,7 +107,7 @@ func open_map(map_data: RegionData, world_instance_id: String, slot_id: String, 
 		if file == null or file.get_length() > 4096: return fail("INVALID_SLOT")
 		var recorded: Variant = JSON.parse_string(file.get_as_text())
 		file.close()
-		if not recorded is Dictionary or not _whole(recorded.get("format"), 1, 2): return fail("INVALID_SLOT")
+		if not recorded is Dictionary or not _whole(recorded.get("format"), 1, 3): return fail("INVALID_SLOT")
 		var policy := TechnologyPolicy.candidate(recorded, int(recorded.format) == 1)
 		if not policy.ok: return policy
 		var metadata := EntryPolicy.read_world(world_instance_id)
@@ -108,13 +126,13 @@ func open_map(map_data: RegionData, world_instance_id: String, slot_id: String, 
 		if not pending_read.ok: return pending_read
 		if not _initial_pending_ok(pending_read.payload, expected): return fail("INITIAL_PIN_CONFLICT")
 		pending_record = pending_read.payload
-		if prepare_new and (not _initial_site_same(pending_record.starting_site, initial_context.starting_site) or pending_record.initial_scenario_id != initial_context.initial_scenario_id): return fail("INITIAL_SCENARIO_CONFLICT", "待提交的原開局選擇不可重選")
+		if prepare_new and not _same_initial_request(pending_record, initial_context): return fail("INITIAL_SCENARIO_CONFLICT", "待提交的原開局選擇不可重選")
 	elif not manifest_exists:
 		# A valid same-pin pending write can be completed after a rename crash.
 		if FileAccess.file_exists(pending_path + ".tmp"):
 			var pending_read := _read_document(pending_path + ".tmp", 16384)
 			if pending_read.ok and _initial_pending_ok(pending_read.get("payload"), expected):
-				if prepare_new and (not _initial_site_same(pending_read.payload.starting_site, initial_context.starting_site) or pending_read.payload.initial_scenario_id != initial_context.initial_scenario_id): return fail("INITIAL_SCENARIO_CONFLICT")
+				if prepare_new and not _same_initial_request(pending_read.payload, initial_context): return fail("INITIAL_SCENARIO_CONFLICT")
 				if DirAccess.rename_absolute(ProjectSettings.globalize_path(pending_path + ".tmp"), ProjectSettings.globalize_path(pending_path)) != OK: return fail("SAVE_IO")
 				pending_record = pending_read.payload
 			elif folder == location and _initial_pending_ok(_initialization, expected):
@@ -145,8 +163,11 @@ func open_map(map_data: RegionData, world_instance_id: String, slot_id: String, 
 		if pending_record.is_empty() and folder == location and _initial_pending_ok(_initialization, expected):
 			pending_record = _initialization.duplicate(true)
 		if pending_record.is_empty() and prepare_new and not recover_first_marker:
-			pending_record = {"version": 1, "pin": expected.duplicate(true), "starting_site": initial_context.starting_site.duplicate(), "initial_scenario_id": str(initial_context.initial_scenario_id)}
-	if prepare_new and not pending_record.is_empty() and (not _initial_site_same(pending_record.starting_site, initial_context.starting_site) or pending_record.initial_scenario_id != initial_context.initial_scenario_id): return fail("INITIAL_SCENARIO_CONFLICT")
+			pending_record = {"version": 1, "pin": expected.duplicate(true), "starting_site": initial_context.starting_site.duplicate(), "initial_scenario_id": str(initial_context.get("initial_scenario_id", ""))}
+			if not author_context.is_empty():
+				pending_record.version = 2
+				pending_record["author_context"] = author_context.duplicate(true)
+	if prepare_new and not pending_record.is_empty() and not _same_initial_request(pending_record, initial_context): return fail("INITIAL_SCENARIO_CONFLICT")
 	source = map_data
 	pin = expected
 	folder = location
@@ -159,7 +180,7 @@ func open_map(map_data: RegionData, world_instance_id: String, slot_id: String, 
 		var derived := _derive_initial_context()
 		if not derived.ok: return derived
 		_initialization = derived.context
-		if prepare_new and (not _initial_site_same(_initialization.starting_site, initial_context.starting_site) or _initialization.initial_scenario_id != initial_context.initial_scenario_id): return fail("INITIAL_SCENARIO_CONFLICT")
+		if prepare_new and not _same_initial_request(_initialization, initial_context): return fail("INITIAL_SCENARIO_CONFLICT")
 	if not _initialization.is_empty():
 		if not FileAccess.file_exists(pending_path):
 			var pending_written := _write_new_document(pending_path, _initialization)
@@ -271,7 +292,7 @@ func open_site(site: Vector2i, starter: bool = true) -> Dictionary:
 		if not settled.ok: return settled
 		loaded.data = settled.data
 		return loaded
-	var fresh: Dictionary = source.make_terrain_data(site.x, site.y)
+	var fresh: Dictionary = source.project_terrain(site, "author_initial") if not source.author_identity().is_empty() else source.make_terrain_data(site.x, site.y)
 	if not bool(fresh.get("ok", false)):
 		return fresh
 	if not _matches_base(fresh.base, site):
@@ -284,7 +305,7 @@ func open_site(site: Vector2i, starter: bool = true) -> Dictionary:
 		return refreshed
 	if not data.is_walkable(data.spawn_cell):
 		return {"ok": true, "data": data, "interactive": false, "message": "此地點僅能檢視地形"}
-	Env.initialize(data, str(fresh.base.site_id))
+	if data.site.is_empty(): Env.initialize(data, str(fresh.base.site_id))
 	# Same as the ground-crossing visit: a fresh interactive Site carries item
 	# storage, which Core construction payment reads before any first save.
 	var storage := Runtime.initialize_item_storage(data.site)
@@ -5468,6 +5489,8 @@ func _preview_npc_sea_party_to(token: String, party: Dictionary, plan: Dictionar
 
 const InitialArtisans = preload("res://scripts/terrain_lab/site_technology_artisans.gd")
 
+var _opening_author_context: Dictionary = {}
+
 var _initialization: Dictionary = {}
 
 var _initial_candidate: Dictionary = {}
@@ -5480,10 +5503,11 @@ static func _initial_site_same(left: Variant, right: Variant) -> bool:
 
 
 static func _initial_context_ok(context: Variant) -> bool:
+	if author_initial_context_valid(context): return true
 	return context is Dictionary and context.size() == 2 and context.get("starting_site") is Array and context.starting_site.size() == 2 and _whole(context.starting_site[0], -10000000, 10000000) and _whole(context.starting_site[1], -10000000, 10000000) and context.get("initial_scenario_id") is String and str(context.initial_scenario_id) in ["", InitialArtisans.PRIMARY, InitialArtisans.THREE_FACTIONS]
 
 static func author_initial_context_valid(context: Variant) -> bool:
-	# Schema only. _initial_context_ok deliberately still rejects this mode.
+	# This schema is admitted only with the same loaded package identity and start.
 	if not context is Dictionary or context.size() != 6 or not _whole(context.get("version"), 2, 2) or context.get("mode") != "author": return false
 	var identity: Variant = context.get("author_identity")
 	if not identity is Dictionary or identity.size() != RegionTerrainAdapter.AUTHOR_FIELDS.size() or not RegionTerrainAdapter.has_author_identity(identity) or not RegionTerrainAdapter.valid_author_identity(identity): return false
@@ -5512,12 +5536,20 @@ static func same_author_initial_context(left: Variant, right: Variant) -> bool:
 	return true
 
 
-func _initial_pending_ok(record: Variant, expected: Dictionary) -> bool:
-	return record is Dictionary and record.size() == 4 and _whole(record.get("version"), 1, 1) and _same_pin(record.get("pin"), expected) and _initial_context_ok({"starting_site": record.get("starting_site"), "initial_scenario_id": record.get("initial_scenario_id")})
+static func _same_initial_request(record: Dictionary, context: Dictionary) -> bool:
+	if record.has("author_context") or context.get("mode") == "author": return same_author_initial_context(record.get("author_context"), context)
+	return _initial_site_same(record.get("starting_site"), context.get("starting_site")) and record.get("initial_scenario_id") == context.get("initial_scenario_id")
 
+func _initial_pending_ok(record: Variant, expected: Dictionary) -> bool:
+	if not record is Dictionary or not _same_pin(record.get("pin"), expected): return false
+	if int(expected.get("format", 0)) == 3:
+		return record.size() == 5 and author_initial_context_valid(record.get("author_context")) and _whole(record.get("version"), 2, 2) and record.get("initial_scenario_id") == "" and _initial_site_same(record.get("starting_site"), record.get("author_context", {}).get("starting_site")) and same_author_initial_context(record.get("author_context"), _opening_author_context)
+	return record.size() == 4 and _whole(record.get("version"), 1, 1) and _initial_context_ok({"starting_site": record.get("starting_site"), "initial_scenario_id": record.get("initial_scenario_id")})
 
 func _initial_complete_ok(record: Variant) -> bool:
-	return record is Dictionary and record.size() == 5 and _whole(record.get("version"), 1, 1) and _whole(record.get("first_generation"), 1, 1) and _same_pin(record.get("pin"), pin) and _initial_site_same(record.get("starting_site"), _initialization.get("starting_site")) and record.get("initial_scenario_id") == _initialization.get("initial_scenario_id")
+	if not record is Dictionary or not _whole(record.get("first_generation"), 1, 1) or not _same_pin(record.get("pin"), pin) or not _initial_site_same(record.get("starting_site"), _initialization.get("starting_site")) or record.get("initial_scenario_id") != _initialization.get("initial_scenario_id"): return false
+	if _initialization.has("author_context"): return record.size() == 6 and _whole(record.get("version"), 2, 2) and same_author_initial_context(record.get("author_context"), _initialization.author_context)
+	return record.size() == 5 and _whole(record.get("version"), 1, 1)
 
 
 func initialization_pending() -> bool:
@@ -5535,6 +5567,10 @@ func _derive_initial_context() -> Dictionary:
 	if not loaded.ok: return loaded
 	var selected := str(loaded.data.site.get("initial_scenario", {}).get("scenario_id", ""))
 	var context := {"version": 1, "pin": pin.duplicate(true), "starting_site": [coordinate.x, coordinate.y], "initial_scenario_id": selected}
+	if int(pin.format) == 3:
+		context.version = 2
+		context.initial_scenario_id = ""
+		context["author_context"] = source.author_initial_context()
 	if not _initial_pending_ok(context, pin): return fail("INVALID_INITIAL_SCENARIO")
 	_initialization = context
 	var checked := _check_initial_record(_marker)
@@ -5555,6 +5591,8 @@ func _check_initial_record(record: Dictionary) -> Dictionary:
 	var loaded := _load_checked(path, coordinate)
 	if not loaded.ok: return loaded
 	var state: Dictionary = loaded.data.site
+	if _initialization.has("author_context"):
+		return _check_author_initial_state(loaded.data, record, coordinate, path)
 	var scenario := str(_initialization.initial_scenario_id)
 	if int(state.get("minute", -1)) != 0 or float(state.get("phase", -1.0)) != 0.0 or int(state.get("controlled_person_id", -1)) != 1 or int(state.get("actors", {}).get("player", {}).get("person_id", -1)) != 1 or state.get("actors", {}).size() != 1 or state.has("family") or state.has("crowd"): return fail("INVALID_INITIAL_POPULATION")
 	if scenario.is_empty():
@@ -5657,9 +5695,12 @@ func finish_initial_birth(receipt: Dictionary) -> Dictionary:
 	var path := folder.path_join("manifest.initialized.json")
 	var record := {"version": 1, "pin": pin.duplicate(true), "first_generation": 1,
 		"starting_site": _initialization.starting_site.duplicate(), "initial_scenario_id": str(_initialization.initial_scenario_id)}
+	if _initialization.has("author_context"):
+		record.version = 2
+		record["author_context"] = _initialization.author_context.duplicate(true)
 	if FileAccess.file_exists(path):
 		var prior := _read_document(path, 16384)
-		if not prior.ok or prior.payload != record: return fail("INVALID_INITIAL_RECEIPT")
+		if not prior.ok or not _initial_complete_ok(prior.payload): return fail("INVALID_INITIAL_RECEIPT")
 	else:
 		var completed := _write_new_document(path, record)
 		if not completed.ok: return completed
@@ -11511,3 +11552,36 @@ func _faction_static_site_drop(key: String) -> void:
 	_faction_static_site_memo.erase(key)
 	_faction_static_site_metadata.erase(key)
 	_faction_static_site_mutex.unlock()
+
+func _check_author_initial_state(data: TerrainData, record: Dictionary, coordinate: Vector2i, path: String) -> Dictionary:
+	var state: Dictionary = data.site
+	var context: Dictionary = _initialization.author_context
+	var bodies: Dictionary = RegionTravel._body_records(state)
+	var controlled: int = int(state.get("controlled_person_id", -1))
+	if not bodies.has(controlled) or not RegionTravel._able(bodies[controlled]) or not _initial_site_same(bodies[controlled].get("cell"), context.start.cell) or state.has("initial_scenario") or state.has("crowd") or int(state.minute) != 0 or float(state.phase) != 0.0: return fail("INVALID_INITIAL_POPULATION")
+	if context.start.mode == "created_player":
+		if controlled != 1 or state.get("actors", {}).size() != 1 or int(state.actors.get("player", {}).get("person_id", -1)) != 1: return fail("INVALID_INITIAL_POPULATION")
+	elif controlled != int(context.start.person_id): return fail("INVALID_INITIAL_POPULATION")
+	var rows: Array = state.get("residents", [])
+	var housing: Dictionary = state.get("housing", {})
+	if not rows.is_empty():
+		var matched: Dictionary = {}
+		for row: Dictionary in rows:
+			var found: bool = false
+			for army: Dictionary in state.get("armies", []):
+				if army.get("role") != "work": continue
+				for unit: Dictionary in army.units:
+					var id: String = str(int(unit.person_id))
+					var home: Dictionary = housing.get(id, {})
+					if matched.has(id) or unit.get("name", "") != row.name or int(army.faction_id) != int(row.faction_id) or home.get("house_id") != row.house: continue
+					var layout: Dictionary = Runtime.house_layout(data, str(row.house))
+					if not layout.ok or not layout.slots.has(int(home.get("cell", -1))): return fail("INVALID_INITIAL_POPULATION")
+					matched[id] = true
+					found = true
+					break
+				if found: break
+			if not found: return fail("INVALID_INITIAL_POPULATION")
+	var settled: Dictionary = validate_settlement(state, 0.0)
+	var fire: Dictionary = validate_fire_settlement(state, record.control.get("fire_clock", {}))
+	if not settled.ok or settled.legacy or float(settled.pending) != 0.0 or not fire.ok or int(record.control.fire_clock.sequence) != 0 or float(record.control.fire_clock.action_seconds) != 0.0: return fail("INVALID_INITIAL_GENERATION")
+	return {"ok": true, "data": data, "coordinate": coordinate, "path": path}

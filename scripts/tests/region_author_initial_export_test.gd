@@ -1,7 +1,7 @@
 extends SceneTree
 ## P4 S5d (B): the author-package export writer. A package written by RegionData.export_author_initial_package
-## loads through load_author_package, its initial state reads back identically, admission stays closed
-## (initial_admitted false, the P5B gate untouched), and every refusal writes nothing. Synthetic fixtures in a
+## loads through load_author_package, its initial state reads back identically, world admission validates separately
+## (source loading creates no world), and every refusal writes nothing. Synthetic fixtures in a
 ## test-owned user:// folder, removed at the end. Pure: no Site, no world is born.
 
 const Data = preload("res://scripts/region_lab/region_data.gd")
@@ -91,12 +91,12 @@ func run() -> void:
 	var state := {"id": "p4s5d_site", "residents": [{"name": "甲", "faction_id": 1, "house": "12"}],
 		"features": {"12": {"kind": "house", "stage": "complete"}}, "next_feature": 13}
 
-	# 1. Export, then load through the loader: the state reads back identically, admission stays closed.
+	# 1. Export, then load through the loader: the state reads back identically, world admission validates separately.
 	var exported: Dictionary = Data.export_author_initial_package(folder, "package.json", dependencies, "natural", "p4s5d_export", 1, "P4S5D 匯出", "P4S5D 寫出後讀回", start, {"0:0": state})
 	if not _check(exported.ok, "export writes the package: " + str(exported)): return
 	var source := Data.new()
 	var loaded: Dictionary = source.load_author_package(str(exported.path))
-	if not _check(loaded.ok and loaded.get("initial_admitted") == false, "loader accepts the export and admission stays closed: " + str(loaded)): return
+	if not _check(loaded.ok and loaded.get("initial_admitted") == true, "loader accepts export capability; full template validation remains at world creation: " + str(loaded)): return
 	# The loader stores JSON.parse_string output as it is (region_data.gd ~196-201), so every whole number is a float.
 	# Compare like with like: the written state through the same JSON round trip, both sides normalized the same way.
 	var expected: Variant = JSON.parse_string(JSON.stringify(state, "", true, true))

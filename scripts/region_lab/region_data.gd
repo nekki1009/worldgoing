@@ -175,6 +175,8 @@ func load_author_package(path: String) -> Dictionary:
 		if not content is Dictionary: return fail("INVALID_AUTHOR_FILE", str(entry.path))
 		records.append({"entry": entry, "content": content})
 	var candidate := RegionData.new()
+	var natural_document: Variant = JSON.parse_string(FileAccess.get_file_as_string(str(natural.path)))
+	if not natural_document is Dictionary or natural_document.get("source_kind") == "fixed_tw_author": return fail("INVALID_AUTHOR_DEPENDENCY", "作者依賴必須是自然來源")
 	var loaded := candidate.load_manifest(str(natural.path))
 	if not loaded.ok: return loaded
 	if candidate.manifest_hash != natural.sha256: return fail("AUTHOR_HASH_MISMATCH", "自然來源與作者依賴不同")
@@ -209,7 +211,7 @@ func load_author_package(path: String) -> Dictionary:
 	for property: Dictionary in candidate.get_property_list():
 		if (int(property.usage) & PROPERTY_USAGE_SCRIPT_VARIABLE) != 0:
 			set(str(property.name), candidate.get(str(property.name)))
-	return {"ok": true, "code": "OK", "initial_admitted": false}
+	return {"ok": true, "code": "OK", "initial_admitted": true}
 
 static func fail(code: String, message: String) -> Dictionary:
 	return {"ok": false, "code": code, "message": message}
@@ -223,6 +225,7 @@ func load_manifest(path: String = DEFAULT_MANIFEST) -> Dictionary:
 	var parsed: Variant = JSON.parse_string(text)
 	if not parsed is Dictionary:
 		return fail("INVALID_MANIFEST", "來源清冊格式錯誤")
+	if parsed.get("source_kind") == "fixed_tw_author": return load_author_package(path)
 	var checked := _validate_manifest(parsed)
 	if not checked.ok:
 		return checked
@@ -1070,6 +1073,7 @@ func _initial_body(site: Vector2i) -> Dictionary:
 		state.erase("world_pin")
 		return checked
 	SiteStore._normalize_state(state)
+	for field: String in ["minute", "next_feature", "depot_cell", "capacity"]: state[field] = int(state[field])
 	state.erase("world_pin")
 	var navigation: TerrainData = SiteEnvironment.navigation_for_state(data, state)
 	return {"ok": true, "data": navigation, "base": built.base, "metadata": built.metadata}
@@ -1139,10 +1143,10 @@ static func author_static_normalized(raw: Dictionary) -> Dictionary:
 ## load_author_package above). It reads the dependency files and writes the package and its initial files into
 ## `folder`. The manifest is checked with the loader's own shape check before any file is written, so a written
 ## package has the shape the loader reads. Admission is unchanged: load_author_package still reports
-## initial_admitted false, and the P5B gate (region_save_slot.gd open_map) is not touched.
+## Initial world admission is completed by the original Slot transaction, after full state validation.
 ## `dependencies`: [{path, id}] (res:// or user://); `initial_states`: {"x:y": state} with state.id a String and no
 ## world_pin, region_snapshot, initial_scenario or crowd (the guards in _initial_body).
-static func export_author_initial_package(folder: String, package_name: String, dependencies: Array, natural_id: String, scenario_id: String, revision: int, name_text: String, description: String, start: Dictionary, initial_states: Dictionary) -> Dictionary:
+static func export_author_initial_package(folder: String, package_name: String, dependencies: Array, natural_id: String, scenario_id: String, revision: int, name_text: String, description: String, start: Dictionary, initial_states: Dictionary, static_states: Dictionary = {}) -> Dictionary:
 	if not DirAccess.dir_exists_absolute(folder) or not _author_path_valid(package_name): return fail("EXPORT_FOLDER", folder)
 	var dependency_rows: Array = []
 	for dependency: Variant in dependencies:
@@ -1154,6 +1158,17 @@ static func export_author_initial_package(folder: String, package_name: String, 
 		dependency_rows.append({"path": str(dependency.path), "id": str(dependency.get("id", "")), "bytes": dependency_bytes, "sha256": FileAccess.get_sha256(str(dependency.path))})
 	var file_rows: Array = []
 	var file_texts: Array = []
+	var validator: RegionData = RegionData.new()
+	for key: Variant in static_states:
+		var pair: PackedStringArray = str(key).split(":")
+		if pair.size() != 2 or not pair[0].is_valid_int() or not pair[1].is_valid_int() or not validator.author_static_valid(static_states[key]): return fail("INVALID_AUTHOR_STATIC", str(key))
+		var file_name: String = "static_%s_%s.json" % [pair[0], pair[1]]
+		var bytes: PackedByteArray = JSON.stringify(author_static_normalized(static_states[key]), "", true, true).to_utf8_buffer()
+		var hash: HashingContext = HashingContext.new()
+		if hash.start(HashingContext.HASH_SHA256) != OK: return fail("AUTHOR_HASH_ERROR", file_name)
+		hash.update(bytes)
+		file_rows.append({"path": file_name, "site": [int(pair[0]), int(pair[1])], "kind": "static", "sha256": hash.finish().hex_encode(), "bytes": bytes.size()})
+		file_texts.append({"path": file_name, "bytes": bytes})
 	for key: Variant in initial_states:
 		var pair: PackedStringArray = str(key).split(":")
 		var state: Variant = initial_states[key]
@@ -1184,3 +1199,17 @@ static func export_author_initial_package(folder: String, package_name: String, 
 	package_file.store_string(JSON.stringify(manifest, "", true, true))
 	package_file.close()
 	return {"ok": true, "code": "OK", "path": package_path, "files": file_rows.size(), "package_digest": digest}
+
+func author_initial_context() -> Dictionary:
+	if _author_pin.is_empty(): return {}
+	var start: Dictionary = _author_document.start.duplicate(true)
+	var sites: Array = []
+	var keys: Array = _author_initial.keys()
+	keys.sort()
+	for key: String in keys:
+		var pair: PackedStringArray = key.split(":")
+		sites.append([int(pair[0]), int(pair[1])])
+	var has_start: bool = false
+	for pair: Array in sites: has_start = has_start or int(pair[0]) == int(start.site[0]) and int(pair[1]) == int(start.site[1])
+	if not has_start: sites.append(start.site.duplicate())
+	return {"version": 2, "mode": "author", "author_identity": author_identity(), "starting_site": start.site.duplicate(), "expected_initial_sites": sites, "start": start}

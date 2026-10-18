@@ -42,6 +42,11 @@ static func request_new_world(site: Vector2i, character: Dictionary = {}, world_
 	var accepted := false
 	for choice: Dictionary in new_world_source_choices(): accepted = accepted or str(choice.path) == manifest_path
 	if not accepted:
+		var author: RegionData = RegionData.new()
+		var loaded: Dictionary = author.load_author_package(manifest_path)
+		var context: Dictionary = author.author_initial_context()
+		accepted = loaded.ok and not context.is_empty() and initial_scenario_id.is_empty() and Vector2i(int(context.starting_site[0]), int(context.starting_site[1])) == site
+	if not accepted:
 		menu_message = "所選固定來源尚未發布或配對不完整；未建立世界"
 		return false
 	pending = {"manifest": manifest_path, "world_id": "taiwan_%d" % int(Time.get_unix_time_from_system()),
@@ -84,7 +89,7 @@ static func record_world(world_id: String, slot_id: String, manifest_path: Strin
 	elif FileAccess.file_exists(world_path(world_id)): return # Preserve invalid metadata.
 	var now := int(Time.get_unix_time_from_system())
 	if meta.is_empty():
-		meta = {"version": 2 if int(slot_pin.get("format", 0)) == 2 else 1, "world_id": world_id, "created_unix": now,
+		meta = {"version": 2 if int(slot_pin.get("format", 0)) in [2, 3] else 1, "world_id": world_id, "created_unix": now,
 			"name": world_name if not world_name.is_empty() else "台灣 %s" % Time.get_datetime_string_from_unix_time(now, true)}
 	if int(meta.version) == 2: meta["technology_policy"] = policy.policy.duplicate(true)
 	meta["slot_id"] = slot_id
