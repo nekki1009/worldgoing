@@ -17,6 +17,7 @@ const REVIEW_GAME_SECONDS := 60.0
 const FamilyContinuity = preload("res://scripts/terrain_lab/site_family_continuity.gd")
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
 const SiteSocial = preload("res://scripts/terrain_lab/site_social.gd")
+const VacancyEpisode = preload("res://scripts/terrain_lab/site_vacancy_episode.gd") # R5 S6: per-tick family vacancy caller.
 const PoliticalAdoption = preload("res://scripts/terrain_lab/site_political_adoption.gd")
 const PRISON_HOLD_BASE_DAYS := 30.0 # Neutral hold before the 典獄 releases (appendix D.7).
 const GAME_MINUTES_PER_DAY := 1440
@@ -124,6 +125,31 @@ static func _seat_ready(key: String, wait_rounds: int) -> bool:
 static func _seat_filled(key: String) -> void:
 	_seat_waits.erase(key)
 
+## R5 S6: the per-tick family vacancy caller. It rides the same 60-second review as the G0 day settlement. The clock is the
+## controlled person's G0 proven political day (PersonSocial v3 proven.day, read through SiteSocial.state_of); the contest
+## leadership is each candidate's command_abilities.leadership on the person body (site_person_actions._person). Idempotent:
+## nothing changes unless a vacancy opens, cancels, advances, or a deadline settles.
+static func settle_family_vacancy(lab: Variant) -> void:
+	if lab.terrain == null or lab.site_controller == null: return
+	var site: Dictionary = lab.terrain.site
+	if not site.get("family") is Dictionary: return
+	var family_db: Variant = lab.site_controller.family_continuity
+	var today := floori(float(int(site.get("minute", 0))) / float(SiteSocial.DAY_MINUTES))
+	family_db.observe_vacancy(today)
+	var controlled := int(lab.controlled_person_id())
+	var body: Variant = lab.site_controller.person_actions._person(controlled, false).get("body")
+	if body is Dictionary:
+		var proven: Dictionary = SiteSocial.state_of(body).get("proven", {})
+		if not proven.is_empty(): family_db.observe_proven_day(int(proven.day))
+	var episodes: Dictionary = site.get("vacancy_episodes", {})
+	var open: Dictionary = VacancyEpisode.find_open(episodes, "family", str(site.id))
+	if open.is_empty() or str(open.timer.status) != "deadline_reached": return
+	var leadership := {}
+	for candidate: int in open.candidates:
+		var candidate_body: Variant = lab.site_controller.person_actions._person(int(candidate), false).get("body")
+		leadership[int(candidate)] = int(candidate_body.get("command_abilities", {}).get("leadership", 0)) if candidate_body is Dictionary else 0
+	family_db.settle_contest(leadership)
+
 static func review(lab: Variant, review_game_time: float = -1.0, ledger: Dictionary = {}) -> void:
 	if lab.terrain == null or lab.site_controller == null or bool(lab.terrain.site.get("paused", false)) \
 		or (lab.is_inside_tree() and lab.get_tree().paused):
@@ -131,6 +157,7 @@ static func review(lab: Variant, review_game_time: float = -1.0, ledger: Diction
 	if lab.crowd_site != null and lab.crowd_site.active:
 		return
 	SiteSocial.settle_site(lab) # R2 day settlement rides the same 60-second tick.
+	settle_family_vacancy(lab) # R5 S6: family vacancy episodes ride the same tick, after the G0 day settlement.
 	var controller: Variant = lab.site_controller
 	var controlled: int = lab.controlled_person_id()
 	var cadence := _cadence_state(lab, ledger)
