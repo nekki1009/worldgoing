@@ -176,6 +176,54 @@ static func roster_plan(family: Variant, site_id: String, requested: Array) -> D
 	return Runtime.ok("", {"family": candidate})
 
 ## Members who are people of `site_id` (full reference: site + person, F01).
+## R6 S1 (plan 10.1): a family member leaves the family. An NPC leaves only by a declared npc_event; the controlled person
+## leaves only by an explicit controlled act. The member's entries are removed and the seats it held are vacated (a vacated
+## head is a legal vacancy that the S3F hook picks up). Nothing else changes: nation, team, lineage, items and captives stay.
+static func departure_candidate(family: Dictionary, site_id: String, person_id: int, authority: Variant, controlled_id: int) -> Dictionary:
+	if not validate_family(family, site_id): return Runtime.fail("UNREGISTERED", "先明確登錄家族名單")
+	if not member_ids(family, site_id).has(person_id): return Runtime.fail("NO_TARGET", "此人不是本家族成員")
+	if not authority is Dictionary: return Runtime.fail("NO_AUTHORITY", "缺少離族授權")
+	var kind: String = str(authority.get("kind", ""))
+	if kind == "controlled" and person_id != controlled_id: return Runtime.fail("NO_AUTHORITY", "只有受控者本人可明示離族")
+	if kind == "npc_event" and person_id == controlled_id: return Runtime.fail("NO_AUTHORITY", "受控者離族須明示操作")
+	if kind != "controlled" and kind != "npc_event": return Runtime.fail("NO_AUTHORITY", "未知的離族授權")
+	var candidate: Dictionary = family.duplicate(true)
+	var kept: Array = []
+	for member: Dictionary in candidate.members:
+		if not (str(member.site_id) == site_id and int(member.person_id) == person_id): kept.append(member)
+	if kept.is_empty(): return Runtime.fail("NO_TARGET", "家族至少須保留一位族人")
+	candidate.members = kept
+	var seat_vacated: bool = false
+	var changed: bool = false
+	if candidate.get("offices") is Dictionary:
+		for entry: Dictionary in candidate.offices.positions:
+			if int(entry.holder) == person_id:
+				entry.holder = -1
+				changed = true
+				if bool(entry.head): seat_vacated = true
+	# A departing member cannot remain a designated heir of this organization.
+	if candidate.get("succession") is Dictionary:
+		for seat_id: String in candidate.succession.heirs.keys():
+			if int(candidate.succession.heirs[seat_id]) == person_id:
+				candidate.succession.heirs.erase(seat_id)
+				changed = true
+	if changed: candidate.offices.revision = mini(SiteOffices.MAX_SEQ, int(candidate.offices.revision) + 1)
+	if not validate_family(candidate, site_id): return Runtime.fail("CORRUPT_STATE", "離族後家族紀錄不合法")
+	return {"ok": true, "code": "", "message": "", "family": candidate, "seat_vacated": seat_vacated}
+
+## R6 S1: the optional departure history on the site (absent in old saves). Strict: four keys, integer ids and minute,
+## a known authority kind, and a boolean seat flag.
+static func valid_departures(raw: Variant) -> bool:
+	if not raw is Array: return false
+	for entry: Variant in raw:
+		if not entry is Dictionary or entry.size() != 4: return false
+		for key: String in ["person_id", "minute", "authority", "seat_vacated"]:
+			if not entry.has(key): return false
+		if not _integer(entry.person_id, 1, 2147483647) or not _integer(entry.minute, 0, 2147483647): return false
+		if not entry.authority is String or not ["controlled", "npc_event"].has(str(entry.authority)): return false
+		if not entry.seat_vacated is bool: return false
+	return true
+
 static func member_ids(family: Dictionary, site_id: String) -> Array[int]:
 	var result: Array[int] = []
 	for member: Dictionary in family.get("members", []):
@@ -260,10 +308,10 @@ func take_vacant_head(requester_id: int, person_id: int, authority: Variant) -> 
 	if not auth.ok: return auth
 	var members := local_member_ids(family)
 	if not members.has(person_id) or not members.has(requester_id): return Runtime.fail("NO_TARGET", "接任人須是登錄族人")
-	if head_executor(family) > 0: return Runtime.fail("BUSY", "家主在任且清醒")
+	if head_executor(family, true) > 0: return Runtime.fail("BUSY", "家主在任且清醒")
 	var person := _current_person(person_id)
 	if person.is_empty() or float(person.hp) <= 0.0: return Runtime.fail("NO_TARGET", "家主人選須是在此地存活的原人物")
-	var offices: Dictionary = family_offices(family).duplicate(true)
+	var offices: Dictionary = family_offices(family, true).duplicate(true)
 	if offices.is_empty(): offices = SiteOffices.default_offices("family", -1, person_id != _controlled_id())
 	var committed: Dictionary = Take.commit_head(offices, person_id)
 	if not committed.ok: return committed
@@ -272,12 +320,16 @@ func take_vacant_head(requester_id: int, person_id: int, authority: Variant) -> 
 		var closed: Dictionary = VacancyEpisode.close(contest_episode, person_id)
 		if not closed.ok: return closed
 		closed_episode = closed.episode
+	var losses: Dictionary = Take.prepare_contest_losses(lab, contest_episode, person_id,
+		{"kind": "family", "site_id": str(lab.terrain.site.id), "org_id": str(lab.terrain.site.id)}, members)
+	if not losses.ok: return losses
 	family.version = maxi(2, int(family.get("version", 1)))
 	family.offices = committed.offices
 	if not closed_episode.is_empty():
 		var episodes: Dictionary = lab.terrain.site.vacancy_episodes.duplicate(true)
 		episodes[str(closed_episode.episode_id)] = closed_episode
 		lab.terrain.site.vacancy_episodes = episodes
+	Take.commit_contest_losses(losses.losses)
 	return Runtime.ok("已就任家主 #%d" % person_id, {"revision": int(committed.offices.revision)})
 
 ## R5 S5F: the open episode named by a vacancy_contest authority, or empty.
@@ -297,6 +349,21 @@ func settle_contest(leadership: Dictionary = {}) -> Dictionary:
 	if not decided.ok: return decided
 	var winner := int(decided.winner)
 	return take_vacant_head(winner, winner, {"kind": "vacancy_contest", "episode_id": str(open.episode_id)})
+
+## R6 S1: the family departure transaction. It writes the family and the site's departure history only (the S3F hook picks up
+## a vacated head on the next observation). Refusals leave the family and the history byte-identical.
+func leave_family(person_id: int, authority: Variant) -> Dictionary:
+	var site: Dictionary = lab.terrain.site
+	var family: Variant = site.get("family")
+	if not family is Dictionary: return Runtime.fail("UNREGISTERED", "先明確登錄家族名單")
+	var checked: Dictionary = departure_candidate(family, str(site.id), person_id, authority, _controlled_id())
+	if not checked.ok: return checked
+	var history: Array = site.family_departures.duplicate(true) if site.has("family_departures") else []
+	history.append({"person_id": person_id, "minute": int(site.get("minute", 0)), "authority": str(authority.get("kind", "")), "seat_vacated": bool(checked.seat_vacated)})
+	family.clear()
+	family.merge(checked.family, true)
+	site.family_departures = history
+	return Runtime.ok("已離族", {"seat_vacated": bool(checked.seat_vacated)})
 
 ## R5 S3F: the vacancy episode hook. Explicit call (the per-tick settle path is a later slice). An episode opens when the
 ## family head seat has no awake holder and no designated heir (one open episode per owner, never an overwrite). An awake

@@ -18,6 +18,9 @@ const FamilyContinuity = preload("res://scripts/terrain_lab/site_family_continui
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
 const SiteSocial = preload("res://scripts/terrain_lab/site_social.gd")
 const VacancyEpisode = preload("res://scripts/terrain_lab/site_vacancy_episode.gd") # R5 S6: per-tick family vacancy caller.
+const Take = preload("res://scripts/terrain_lab/site_take_office.gd") # R5 S8: settlement seat contest entries.
+const Clock = preload("res://scripts/terrain_lab/site_vacancy_clock.gd") # R5 S9: owner proven day for the vacancy clock.
+const PersonSocial = preload("res://scripts/terrain_lab/person_social.gd") # R5 S9: read-only packet access.
 const PoliticalAdoption = preload("res://scripts/terrain_lab/site_political_adoption.gd")
 const PRISON_HOLD_BASE_DAYS := 30.0 # Neutral hold before the 典獄 releases (appendix D.7).
 const GAME_MINUTES_PER_DAY := 1440
@@ -125,30 +128,64 @@ static func _seat_ready(key: String, wait_rounds: int) -> bool:
 static func _seat_filled(key: String) -> void:
 	_seat_waits.erase(key)
 
-## R5 S6: the per-tick family vacancy caller. It rides the same 60-second review as the G0 day settlement. The clock is the
-## controlled person's G0 proven political day (PersonSocial v3 proven.day, read through SiteSocial.state_of); the contest
-## leadership is each candidate's command_abilities.leadership on the person body (site_person_actions._person). Idempotent:
-## nothing changes unless a vacancy opens, cancels, advances, or a deadline settles.
+## R5 S6/S8: the per-tick vacancy caller for the family, nation and settlement head seats. It rides the same 60-second
+## review as the G0 day settlement. The clock is the controlled person's G0 proven political day (PersonSocial v3 proven.day,
+## read through SiteSocial.state_of); the contest leadership is each candidate's command_abilities.leadership on the person
+## body (site_person_actions._person). Idempotent per tick. Each losing candidate of a closed contest receives one G+10
+## pending event atomically with the first successful close in its original owner; historical closed episodes are never replayed.
 static func settle_family_vacancy(lab: Variant) -> void:
 	if lab.terrain == null or lab.site_controller == null: return
 	var site: Dictionary = lab.terrain.site
-	if not site.get("family") is Dictionary: return
-	var family_db: Variant = lab.site_controller.family_continuity
 	var today := floori(float(int(site.get("minute", 0))) / float(SiteSocial.DAY_MINUTES))
-	family_db.observe_vacancy(today)
-	var controlled := int(lab.controlled_person_id())
-	var body: Variant = lab.site_controller.person_actions._person(controlled, false).get("body")
-	if body is Dictionary:
-		var proven: Dictionary = SiteSocial.state_of(body).get("proven", {})
-		if not proven.is_empty(): family_db.observe_proven_day(int(proven.day))
-	var episodes: Dictionary = site.get("vacancy_episodes", {})
-	var open: Dictionary = VacancyEpisode.find_open(episodes, "family", str(site.id))
-	if open.is_empty() or str(open.timer.status) != "deadline_reached": return
+	var site_id: String = str(site.get("id", ""))
+	if site.get("family") is Dictionary:
+		var family_db: Variant = lab.site_controller.family_continuity
+		family_db.observe_vacancy(today)
+		var family_day: int = _owner_proven_day(lab, {"kind": "family", "site_id": site_id, "org_id": site_id}, FamilyContinuity.member_ids(site.family, site_id))
+		if family_day >= 0: family_db.observe_proven_day(family_day)
+		var open: Dictionary = VacancyEpisode.find_open(site.get("vacancy_episodes", {}), "family", site_id)
+		if not open.is_empty() and str(open.timer.status) == "deadline_reached":
+			family_db.settle_contest(_contest_leadership(lab, open))
+	if site.get("equipment_nations") is Dictionary:
+		var orders: Variant = lab.site_controller.equipment_orders
+		for nation_id: String in site.equipment_nations:
+			orders.observe_nation_vacancy(nation_id, today)
+			var nation_day: int = _owner_proven_day(lab, {"kind": "nation", "site_id": site_id, "org_id": nation_id}, site.equipment_nations[nation_id].get("members", []))
+			if nation_day >= 0: orders.observe_nation_proven_day(nation_id, nation_day)
+			var open_nation: Dictionary = VacancyEpisode.find_open(site.get("vacancy_episodes", {}), "nation", nation_id)
+			if not open_nation.is_empty() and str(open_nation.timer.status) == "deadline_reached":
+				orders.settle_nation_contest(nation_id, _contest_leadership(lab, open_nation))
+	var settlement: Dictionary = Settlement.record(lab.terrain)
+	if not settlement.is_empty():
+		Take.observe_settlement_vacancy(lab, today)
+		var settlement_day: int = _owner_proven_day(lab, {"kind": "settlement", "site_id": site_id, "org_id": str(settlement.get("settlement_id", ""))}, Settlement.faction_members(lab, int(settlement.get("owner_faction", -1))).keys())
+		if settlement_day >= 0: Take.observe_settlement_proven_day(lab, settlement_day)
+		var open_settlement: Dictionary = VacancyEpisode.find_open(site.get("vacancy_episodes", {}), "settlement", site_id)
+		if not open_settlement.is_empty() and str(open_settlement.timer.status) == "deadline_reached":
+			Take.settle_settlement_contest(lab, _contest_leadership(lab, open_settlement))
+
+## R5 S9: the owner's proven political day: the latest stored G0 stamp among the owner's affiliated members (site_vacancy_clock).
+## Only stored proven stamps are read (PersonSocial.read, no writes); -1 when no affiliated member has one.
+static func _owner_proven_day(lab: Variant, owner_ref: Dictionary, identities: Variant) -> int:
+	var packets: Array = []
+	for identity: Variant in identities:
+		var body: Variant = lab.site_controller.person_actions._person(int(identity), false).get("body")
+		if body != null: packets.append(PersonSocial.read(body))
+	return Clock.owner_proven_day(packets, owner_ref)
+
+## Each candidate's leadership from its person body (0 when the body or the field is absent).
+static func _contest_leadership(lab: Variant, open: Dictionary) -> Dictionary:
 	var leadership := {}
 	for candidate: int in open.candidates:
 		var candidate_body: Variant = lab.site_controller.person_actions._person(int(candidate), false).get("body")
-		leadership[int(candidate)] = int(candidate_body.get("command_abilities", {}).get("leadership", 0)) if candidate_body is Dictionary else 0
-	family_db.settle_contest(leadership)
+		leadership[int(candidate)] = _leadership(candidate_body)
+	return leadership
+
+## R5 S9D: the leadership of a person body (a Dictionary or an Object such as the lab NPC); 0 when absent.
+static func _leadership(body: Variant) -> int:
+	if body == null: return 0
+	var abilities: Variant = body.get("command_abilities")
+	return int(abilities.get("leadership", 0)) if abilities is Dictionary else 0
 
 static func review(lab: Variant, review_game_time: float = -1.0, ledger: Dictionary = {}) -> void:
 	if lab.terrain == null or lab.site_controller == null or bool(lab.terrain.site.get("paused", false)) \

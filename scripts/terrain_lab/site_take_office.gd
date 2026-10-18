@@ -6,6 +6,41 @@ extends RefCounted
 const Settlement := preload("res://scripts/terrain_lab/site_settlement.gd")
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const VacancyEpisode = preload("res://scripts/terrain_lab/site_vacancy_episode.gd") # R5 S7: vacancy episode record.
+const Social = preload("res://scripts/terrain_lab/site_social.gd")
+
+## Stage only social packets on the first close; a later closed episode must never emit losses again.
+static func prepare_contest_losses(lab: Variant, episode: Dictionary, winner_id: int, owner_ref: Dictionary, members: Array) -> Dictionary:
+	if episode.is_empty(): return Runtime.ok("", {"losses": []})
+	if not VacancyEpisode.valid_episode(episode) or str(episode.status) != "open": return Runtime.fail("CLOSED", "空缺已結束或格式非法")
+	if not Social.PersonSocial.valid_org_ref(owner_ref): return Runtime.fail("NO_TARGET", "落敗事件缺少原組織引用")
+	var owner_id: String = str(owner_ref.site_id) if str(owner_ref.kind) == "settlement" else str(owner_ref.org_id)
+	if str(owner_ref.site_id) != str(lab.terrain.site.id) or str(episode.owner_kind) != str(owner_ref.kind) or str(episode.owner_id) != owner_id:
+		return Runtime.fail("NO_AUTHORITY", "空缺紀錄不屬於此次接任的原組織")
+	var losses: Array[Dictionary] = []
+	for candidate: int in episode.candidates:
+		if candidate == winner_id: continue
+		if not members.has(candidate): return Runtime.fail("NO_TARGET", "落敗候選已不屬於此組織")
+		var person: Dictionary = lab.site_controller.person_actions._person(candidate, false)
+		var body: Variant = person.get("body")
+		if person.is_empty() or (not body is Dictionary and not is_instance_valid(body)):
+			return Runtime.fail("NO_TARGET", "落敗候選的原人物引用已失效")
+		var source: Dictionary = Social.PersonSocial.read(body)
+		if not source.is_empty() and not Social.PersonSocial.valid(source): return Runtime.fail("CORRUPT_STATE", "落敗候選的社會狀態非法")
+		# record() may migrate or append; give it a detached packet, never the original body.
+		var staged: Dictionary = {"social_state": source.duplicate(true)}
+		var event_id: String = "%s:loss:%d" % [str(episode.episode_id), candidate]
+		if not Social.record(staged, owner_ref, "vacancy_loss", 10, event_id, int(lab.terrain.site.get("minute", 0))):
+			return Runtime.fail("SOCIAL_EVENT_REJECTED", "落敗事件已存在或待結清單已滿；整份接任保持原狀")
+		if not Social.PersonSocial.valid(staged.social_state): return Runtime.fail("SOCIAL_EVENT_REJECTED", "落敗事件超出原社會狀態容量")
+		losses.append({"body": body, "packet": staged.social_state})
+	return Runtime.ok("", {"losses": losses})
+
+## No callbacks, yields or fallible work between preparation and the owner's synchronous commit.
+static func commit_contest_losses(losses: Array) -> void:
+	for loss: Dictionary in losses:
+		var body: Variant = loss.body
+		if body is Dictionary: body.social_state = loss.packet
+		else: body.set("social_state", loss.packet)
 
 ## Only the controlled person, acting for the head seat, may take an office in this slice.
 ## R5 S5F: a vacancy_contest authority is accepted only for the matching open episode at its deadline, and only for its
@@ -63,12 +98,17 @@ static func take_settlement_head(lab: Variant, requester_id: int, person_id: int
 		var closed: Dictionary = VacancyEpisode.close(contest, person_id)
 		if not closed.ok: return closed
 		closed_episode = closed.episode
+	var losses: Dictionary = prepare_contest_losses(lab, contest, person_id,
+		{"kind": "settlement", "site_id": str(data.site.id), "org_id": str(settlement.settlement_id)},
+		Settlement.faction_members(lab, int(settlement.owner_faction)).keys())
+	if not losses.ok: return losses
 	settlement.offices = committed.offices
 	settlement.offices.duty_ai = not bool(person.player)
 	if not closed_episode.is_empty():
 		var episodes: Dictionary = data.site.vacancy_episodes.duplicate(true)
 		episodes[str(closed_episode.episode_id)] = closed_episode
 		data.site.vacancy_episodes = episodes
+	commit_contest_losses(losses.losses)
 	return Runtime.ok("已就任「%s」" % str(head.name), {"revision": int(settlement.offices.revision)})
 
 ## R5 S7: the per-seat observation shared by nation and settlement (the family keeps its own, same rules). An open episode

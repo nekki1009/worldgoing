@@ -149,7 +149,7 @@ func take_nation_head(requester_id: int, nation_id: String, person_id: int, auth
 	var auth: Dictionary = Take.authority_refusal(authority, requester_id, int(lab.controlled_person_id()), contest)
 	if not auth.ok: return auth
 	if not _member(nation, person_id): return Runtime.fail("NO_TARGET", "元首須是本國真實國民")
-	var offices := nation_offices(nation).duplicate(true)
+	var offices: Dictionary = nation_offices(nation, true).duplicate(true)
 	SiteOffices.ensure_catalog(offices, "nation")
 	if int(SiteOffices.head_position(offices).get("holder", -1)) > 0: return Runtime.fail("BUSY", "元首在任")
 	var committed: Dictionary = Take.commit_head(offices, person_id)
@@ -159,12 +159,16 @@ func take_nation_head(requester_id: int, nation_id: String, person_id: int, auth
 		var closed: Dictionary = VacancyEpisode.close(contest, person_id)
 		if not closed.ok: return closed
 		closed_episode = closed.episode
+	var losses: Dictionary = Take.prepare_contest_losses(lab, contest, person_id,
+		{"kind": "nation", "site_id": str(lab.terrain.site.id), "org_id": nation_id}, nation.members)
+	if not losses.ok: return losses
 	nation.erase("military_head")
 	nation.offices = committed.offices
 	if not closed_episode.is_empty():
 		var episodes: Dictionary = lab.terrain.site.vacancy_episodes.duplicate(true)
 		episodes[str(closed_episode.episode_id)] = closed_episode
 		lab.terrain.site.vacancy_episodes = episodes
+	Take.commit_contest_losses(losses.losses)
 	return Runtime.ok("已就任元首", {"revision": int(committed.offices.revision)})
 
 ## R5 S7: the nation head seat through the shared observation (a present executor, or a designated heir in place).
@@ -182,6 +186,16 @@ func settle_nation_contest(nation_id: String, leadership: Dictionary = {}) -> Di
 	var won: Dictionary = Take.settle_seat_winner(lab.terrain.site, "nation", nation_id, leadership)
 	if not won.ok: return won
 	return take_nation_head(int(won.winner), nation_id, int(won.winner), {"kind": "vacancy_contest", "episode_id": str(won.episode_id)})
+
+## R6 S3: the national departure transaction. It writes that nation only (its members, seats and military_head).
+func leave_nation(nation_id: String, person_id: int, authority: Variant) -> Dictionary:
+	var nation: Variant = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
+	if not nation is Dictionary or nation.is_empty(): return Runtime.fail("NO_TARGET", "沒有此國家")
+	var checked: Dictionary = nation_departure_candidate(nation, person_id, authority, int(lab.controlled_person_id()))
+	if not checked.ok: return checked
+	nation.clear()
+	nation.merge(checked.nation, true)
+	return Runtime.ok("已離國", {"seat_vacated": bool(checked.seat_vacated)})
 
 ## Organization adjustment is the head's own, non-delegable power (3.5).
 func apply_nation_office_plan(requester_id: int, nation_id: String, expected_revision: int, ops: Array) -> Dictionary:
@@ -918,6 +932,43 @@ func _held_definition(identity: String, owner_key: String) -> Dictionary:
 	var definition_id := str(record.get("definition", ""))
 	var definition: Dictionary = lab.terrain.site.item_definitions.get(definition_id, {})
 	return definition if str(record.get("holder", "")) == owner_key and valid_definition(definition_id, definition) else {}
+
+## R6 S3 (plan 10.1 叛國): a national member leaves its nation by a declared npc_event or by the controlled person's explicit act.
+## The member is removed from the nation's members and every seat it held is vacated (a vacated head is a legal vacancy for the
+## S5/S7 path); a military_head naming it is cleared. Family, team, captivity and personal items are not changed by this.
+static func nation_departure_candidate(nation: Dictionary, person_id: int, authority: Variant, controlled_id: int) -> Dictionary:
+	if not nation.get("members", []).has(person_id): return Runtime.fail("NO_TARGET", "此人不是本國國民")
+	if not authority is Dictionary: return Runtime.fail("NO_AUTHORITY", "缺少離國授權")
+	var kind: String = str(authority.get("kind", ""))
+	if kind == "controlled" and person_id != controlled_id: return Runtime.fail("NO_AUTHORITY", "只有受控者本人可明示離國")
+	if kind == "npc_event" and person_id == controlled_id: return Runtime.fail("NO_AUTHORITY", "受控者離國須明示操作")
+	if kind != "controlled" and kind != "npc_event": return Runtime.fail("NO_AUTHORITY", "未知的離國授權")
+	# Legacy records cannot represent an empty military_head; keep the original until explicitly migrated.
+	if not nation.has("offices") and int(nation.get("military_head", -1)) == person_id:
+		return Runtime.fail("MIGRATION_REQUIRED", "舊國別須先完成職位制遷移，才能讓軍事首長離國")
+	var kept: Array = []
+	for member: Variant in nation.members:
+		if int(member) != person_id: kept.append(member)
+	if kept.is_empty(): return Runtime.fail("NO_TARGET", "國家至少須保留一位國民")
+	var candidate: Dictionary = nation.duplicate(true)
+	candidate.members = kept
+	var seat_vacated: bool = false
+	var changed: bool = false
+	if candidate.get("offices") is Dictionary:
+		for entry: Dictionary in candidate.offices.positions:
+			if int(entry.holder) == person_id:
+				entry.holder = -1
+				changed = true
+				if bool(entry.head): seat_vacated = true
+	# A departing member cannot remain a designated heir of this organization.
+	if candidate.get("succession") is Dictionary:
+		for seat_id: String in candidate.succession.heirs.keys():
+			if int(candidate.succession.heirs[seat_id]) == person_id:
+				candidate.succession.heirs.erase(seat_id)
+				changed = true
+	if changed: candidate.offices.revision = mini(SiteOffices.MAX_SEQ, int(candidate.offices.revision) + 1)
+
+	return {"ok": true, "code": "", "message": "", "nation": candidate, "seat_vacated": seat_vacated}
 
 static func _member(nation: Dictionary, identity: int) -> bool:
 	for member_id: Variant in nation.get("members", []):

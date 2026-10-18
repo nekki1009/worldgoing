@@ -1217,6 +1217,10 @@ static func _normalize_state(state: Dictionary) -> void:
 		for member: Dictionary in state.family.members:
 			member.person_id = int(member.person_id)
 			member.age_years = int(member.age_years)
+	if state.get("family_departures") is Array:
+		for entry: Dictionary in state.family_departures:
+			entry.person_id = int(entry.person_id)
+			entry.minute = int(entry.minute)
 	if state.get("vacancy_episodes") is Dictionary: VacancyEpisode.normalize_episodes(state.vacancy_episodes)
 	if state.has("next_lineage"):
 		state.next_lineage = int(state.next_lineage)
@@ -3577,6 +3581,7 @@ static func _validate_captivity(data: TerrainData, state: Dictionary, region_con
 	if state.has("family") and not FamilyContinuity.validate_family(state.family, str(state.get("id", ""))):
 		return Runtime.fail("CORRUPT_SAVE", "家族原人物引用名單")
 	if state.has("vacancy_episodes") and not VacancyEpisode.valid_episodes(state.vacancy_episodes): return Runtime.fail("CORRUPT_SAVE", "空缺紀錄")
+	if state.has("family_departures") and not FamilyContinuity.valid_departures(state.family_departures): return Runtime.fail("CORRUPT_SAVE", "家族離族紀錄")
 	if not ResidentRoster.valid_state(state): return Runtime.fail("CORRUPT_SAVE", "居民名冊格式")
 	if not CaptiveEscort.valid_orders(state.get("escort_orders", {}), data.size.x * data.size.y, people, relations):
 		return Runtime.fail("CORRUPT_SAVE", "原人押送命令／拘押引用")
