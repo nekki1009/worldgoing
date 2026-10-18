@@ -14309,9 +14309,10 @@ static func prepare_item_candidate(data: TerrainData, refs: Array, transfers: Ar
 # must be listed in refs; every other holder's incoming RESOURCES are taxed floor(received * percent / 100)
 # per resource and that tax is added to the collector. Items are never taxed; the collector's own
 # incoming goods are not taxed.
-static func _prepare_candidate(data: TerrainData, refs: Array, transfers: Array, collector_id: String, percent: int) -> Dictionary:
+static func _prepare_candidate(data: TerrainData, refs: Array, transfers: Array, collector_id: String, percent: int, coin_transfers: Array = []) -> Dictionary:
 	if data == null or not data.site.get("item_records") is Dictionary or not data.site.get("item_definitions") is Dictionary \
-		or refs.size() < 2 or refs.size() > MAX_CANDIDATE_HOLDERS or transfers.is_empty() or transfers.size() > MAX_CANDIDATE_TRANSFERS:
+		or refs.size() < 2 or refs.size() > MAX_CANDIDATE_HOLDERS or (transfers.is_empty() and coin_transfers.is_empty()) \
+		or transfers.size() + coin_transfers.size() > MAX_CANDIDATE_TRANSFERS:
 		return fail("INVALID")
 	var endpoints: Dictionary = {}
 	var order: Array[String] = []
@@ -14343,7 +14344,11 @@ static func _prepare_candidate(data: TerrainData, refs: Array, transfers: Array,
 		if not endpoints.has(collector_id): return fail("INVALID", "收稅持有人須列入候選")
 		used[collector_id] = true
 	var selected: Dictionary = {}
-	for transfer: Variant in transfers:
+	# T6 S5: coin payment legs follow the goods legs. They are the only legs allowed to carry coin (D-T7).
+	var legs: Array = transfers.duplicate()
+	legs.append_array(coin_transfers)
+	for index: int in range(legs.size()):
+		var transfer: Variant = legs[index]
 		if not transfer is Dictionary or not Technology.keys(transfer, ["from", "to", "resources", "item_ids"]) \
 			or not transfer.from is String or not transfer.to is String: return fail("INVALID")
 		var source_id: String = transfer.from
@@ -14352,7 +14357,11 @@ static func _prepare_candidate(data: TerrainData, refs: Array, transfers: Array,
 		var source: Dictionary = endpoints[source_id]
 		var destination: Dictionary = endpoints[dest_id]
 		var goods: Dictionary = {"resources": transfer.resources, "item_ids": transfer.item_ids}
-		var checked: Dictionary = _trade_goods_valid(data, source, goods)
+		var checked: Dictionary = {}
+		if index < transfers.size():
+			checked = _trade_goods_valid(data, source, goods)
+		else:
+			checked = _coin_leg_valid(goods)
 		if not checked.ok: return checked
 		for identity: String in transfer.item_ids:
 			if selected.has(identity): return fail("INVALID", "同一物品只能出現一次")
@@ -14410,6 +14419,20 @@ static func _prepare_candidate(data: TerrainData, refs: Array, transfers: Array,
 	var prepared: Dictionary = ok("", {"terrain": data, "site_state": data.site, "item_records": data.site.item_records, "plan": plan})
 	var stable: Dictionary = validate_prepared_item_candidate(prepared)
 	return prepared if stable.ok else stable
+
+# T6 S5 (D-T7): a coin payment leg carries exactly one resource, "coin", with a positive integer amount and no items.
+static func _coin_leg_valid(goods: Dictionary) -> Dictionary:
+	if not Technology.keys(goods, ["resources", "item_ids"]) or not goods.resources is Dictionary or goods.resources.size() != 1:
+		return fail("INVALID", "硬幣付款腿只能有單一 coin 數量")
+	if not goods.resources.has("coin") or not goods.item_ids is Array or not goods.item_ids.is_empty():
+		return fail("INVALID", "硬幣付款腿只能有 coin 且不可帶物品")
+	var amount: Variant = goods.resources.coin
+	if not amount is int or int(amount) < 1 or int(amount) > 1000000: return fail("INVALID", "硬幣數量不合法")
+	return ok()
+
+## T6 S5: the S1 candidate with coin payment legs. Coin legs are checked against the ORIGINAL cargo like goods.
+static func prepare_candidate_with_coin(data: TerrainData, refs: Array, transfers: Array, coin_transfers: Array) -> Dictionary:
+	return _prepare_candidate(data, refs, transfers, "", 0, coin_transfers)
 
 static func refs_version(refs: Array, holder_id: String) -> int:
 	for ref: Variant in refs:
@@ -14516,6 +14539,11 @@ static func exchange_taxed_candidate(data: TerrainData, refs: Array, transfers: 
 ## Terms are passed in by the caller (exchange_taxed_candidate derives them); publish re-checks the rate and, for derived terms, the collector.
 static func commit_taxed_candidate(data: TerrainData, refs: Array, transfers: Array, trade_id: String, terms: Dictionary, preview: bool = false) -> Dictionary:
 	if data == null or not _trade_id_valid(trade_id): return fail("INVALID", "貿易編號不合法")
+	# T6 S5C: one trade_id names one kind of receipt; an id used by a leg receipt (trade_leg_receipts) is refused.
+	var leg_store: Variant = data.site.get("trade_leg_receipts", {})
+	if leg_store is Dictionary:
+		for leg_key: Variant in leg_store.keys():
+			if str(leg_key).begins_with(trade_id + ":"): return fail("INVALID", "貿易編號已用於付款收據")
 	var request: String = JSON.stringify(transfers)
 	var existing: Dictionary = _trade_receipts_for(data, trade_id)
 	if not existing.is_empty():

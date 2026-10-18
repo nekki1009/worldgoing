@@ -1112,6 +1112,54 @@ static func _normalize_trade_tax_receipts(state: Dictionary) -> void:
 			var amounts: Dictionary = entry[field]
 			for resource: Variant in amounts.keys(): amounts[resource] = int(amounts[resource])
 
+# T6 S5C: trade payment and nation-leg receipts (site_trade_nation_leg.gd) are a separate top-level key
+# "trade_leg_receipts". Its shape differs from the S4 tax receipts (kind, nation_id, day, given, treasury_spend), so it
+# has its own exact field set and validator. A missing key is a valid old save. Keys are "trade_id:side".
+const TRADE_LEG_FIELDS := ["trade_id", "side", "kind", "nation_id", "day", "received", "given", "items", "treasury_spend", "request"]
+const TRADE_LEG_KINDS := ["nation_leg", "trade"]
+
+static func validate_trade_leg_receipts(state: Dictionary) -> Dictionary:
+	if not state.has("trade_leg_receipts"): return Runtime.ok()
+	var store: Variant = state.trade_leg_receipts
+	if not store is Dictionary: return Runtime.fail("CORRUPT_SAVE", "交易付款收據格式")
+	for key: Variant in store:
+		var entry: Variant = store[key]
+		if not key is String or not entry is Dictionary or not Technology.keys(entry, TRADE_LEG_FIELDS) or not _trade_leg_valid(str(key), entry):
+			return Runtime.fail("CORRUPT_SAVE", "交易付款收據")
+	return Runtime.ok()
+
+static func _trade_leg_valid(key: String, entry: Dictionary) -> bool:
+	var parts: PackedStringArray = key.split(":", true, 1)
+	if parts.size() != 2 or parts[0].is_empty() or parts[0].length() > TRADE_RECEIPT_ID_MAX or parts[1].is_empty() or parts[1].length() > TRADE_RECEIPT_SIDE_MAX: return false
+	if not entry.trade_id is String or str(entry.trade_id) != parts[0] or not entry.side is String or str(entry.side) != parts[1]: return false
+	if not entry.kind is String or not (str(entry.kind) in TRADE_LEG_KINDS): return false
+	if not entry.nation_id is String or str(entry.nation_id).length() > TRADE_RECEIPT_SIDE_MAX: return false
+	# A nation-leg receipt names its nation; a plain trade receipt names none and spends no treasury coin.
+	if (str(entry.kind) == "nation_leg") != (not str(entry.nation_id).is_empty()): return false
+	if not _integer(entry.day, 0, 2147483646) or not _integer(entry.treasury_spend, 0, 1000000): return false
+	if str(entry.kind) == "trade" and int(entry.treasury_spend) != 0: return false
+	if not entry.request is String or str(entry.request).length() > TRADE_RECEIPT_REQUEST_MAX: return false
+	if not entry.items is Array: return false
+	for identity: Variant in entry.items:
+		if not identity is String or str(identity).is_empty(): return false
+	for field: String in ["received", "given"]:
+		if not entry[field] is Dictionary: return false
+		var amounts: Dictionary = entry[field]
+		for resource: Variant in amounts:
+			if not resource is String or str(resource).is_empty() or not _integer(amounts[resource], 1, 1000000): return false
+	return true
+
+static func _normalize_trade_leg_receipts(state: Dictionary) -> void:
+	var store: Variant = state.get("trade_leg_receipts")
+	if not store is Dictionary: return
+	for key: Variant in store.keys():
+		var entry: Dictionary = store[key]
+		entry.day = int(entry.day)
+		entry.treasury_spend = int(entry.treasury_spend)
+		for field: String in ["received", "given"]:
+			var amounts: Dictionary = entry[field]
+			for resource: Variant in amounts.keys(): amounts[resource] = int(amounts[resource])
+
 static func _normalize_portable_lineage(value: Variant) -> void:
 	if value is Dictionary:
 		if value.has("type") and value.has("namespace") and value.has("lineage") and (value.lineage is int or value.lineage is float):
@@ -1123,6 +1171,7 @@ static func _normalize_portable_lineage(value: Variant) -> void:
 static func _normalize_state(state: Dictionary) -> void:
 	Trade.normalize_snapshot(state)
 	_normalize_trade_tax_receipts(state)
+	_normalize_trade_leg_receipts(state)
 	# Raw identity was validated with all original candidate fields before this
 	# normalizer runs. Only detached integer metadata is canonicalized.
 	if state.has("travel_identity"):
@@ -1887,6 +1936,8 @@ static func _validate_site_values(data: TerrainData, state: Dictionary) -> Dicti
 	if not marine_validation.ok: return marine_validation
 	var trade_tax_validation: Dictionary = validate_trade_tax_receipts(state)
 	if not trade_tax_validation.ok: return trade_tax_validation
+	var trade_leg_validation: Dictionary = validate_trade_leg_receipts(state)
+	if not trade_leg_validation.ok: return trade_leg_validation
 	if state.has("actor_presence_version") and not _integer(state.actor_presence_version, 1, 1): return Runtime.fail("CORRUPT_SAVE", "原獨立人物存在格式版本")
 	if state.has("simulation_settlement"):
 		var settlement: Variant = state.simulation_settlement
