@@ -64,8 +64,16 @@ func open_map(map_data: RegionData, world_instance_id: String, slot_id: String, 
 	_opening_author_context = author_context
 	if not author_context.is_empty():
 		if not author_initial_context_valid(author_context): return fail("INVALID_AUTHOR_CONTEXT")
-		# Cross-Site initial population is P6; never publish only part of a package.
-		if author_context.expected_initial_sites.size() != 1: return fail("AUTHOR_MULTI_SITE_UNSUPPORTED")
+		# A read-only open of a cross-Site package that was never born keeps the P5B refusal code.
+		if not prepare_new and author_context.expected_initial_sites.size() != 1:
+			if not _safe_part(world_instance_id) or not _safe_part(slot_id): return fail("INVALID_SLOT")
+			var unborn_location: String = "user://region_lab/worlds/%s/slots/%s" % [world_instance_id, slot_id]
+			if not FileAccess.file_exists(unborn_location.path_join("manifest.json")) and not FileAccess.file_exists(unborn_location.path_join("manifest.pending.json")) and not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(unborn_location)): return fail("AUTHOR_MULTI_SITE_UNSUPPORTED")
+		# P5C-S2: every expected initial Site projects before any file IO, so a
+		# damaged companion never leaves a partial birth behind.
+		for coordinate: Vector2i in author_initial_site_order(author_context):
+			var projected: Dictionary = map_data.project_terrain(coordinate, "author_initial")
+			if not projected.ok: return projected
 		if prepare_new and not same_author_initial_context(initial_context, author_context): return fail("INITIAL_SCENARIO_CONFLICT")
 		var start_site: Vector2i = Vector2i(int(author_context.starting_site[0]), int(author_context.starting_site[1]))
 		var initial: Dictionary = map_data.project_terrain(start_site, "author_initial")
@@ -5494,6 +5502,10 @@ var _opening_author_context: Dictionary = {}
 var _initialization: Dictionary = {}
 
 var _initial_candidate: Dictionary = {}
+# P5C-S2 test seam (default invalid = no fault). Called before each companion
+# Site file is written with its canonical index (start is index 0); returning
+# true makes that write fail with SAVE_IO and leaves the candidate unset.
+var initial_write_fault: Callable
 
 static func _initial_site_same(left: Variant, right: Variant) -> bool:
 	if not left is Array or not right is Array or left.size() != 2 or right.size() != 2: return false
@@ -5506,6 +5518,10 @@ static func _initial_context_ok(context: Variant) -> bool:
 	if author_initial_context_valid(context): return true
 	return context is Dictionary and context.size() == 2 and context.get("starting_site") is Array and context.starting_site.size() == 2 and _whole(context.starting_site[0], -10000000, 10000000) and _whole(context.starting_site[1], -10000000, 10000000) and context.get("initial_scenario_id") is String and str(context.initial_scenario_id) in ["", InitialArtisans.PRIMARY, InitialArtisans.THREE_FACTIONS]
 
+# P5C-S1: schema cap for one authored birth package. open_map still admits
+# exactly one Site until the P5C-S2 birth transaction lands.
+const AUTHOR_INITIAL_SITE_LIMIT := 16
+
 static func author_initial_context_valid(context: Variant) -> bool:
 	# This schema is admitted only with the same loaded package identity and start.
 	if not context is Dictionary or context.size() != 6 or not _whole(context.get("version"), 2, 2) or context.get("mode") != "author": return false
@@ -5514,7 +5530,7 @@ static func author_initial_context_valid(context: Variant) -> bool:
 	if not RegionTerrainAdapter.author_pair_valid(context.get("starting_site"), -10000000, 10000000) or not RegionTerrainAdapter.author_start_valid(context.get("start")): return false
 	if not _initial_site_same(context.starting_site, context.start.site): return false
 	var sites: Variant = context.get("expected_initial_sites")
-	if not sites is Array or sites.is_empty() or sites.size() > 2: return false
+	if not sites is Array or sites.is_empty() or sites.size() > AUTHOR_INITIAL_SITE_LIMIT: return false
 	var seen := {}
 	var found := false
 	for pair: Variant in sites:
@@ -5530,10 +5546,23 @@ static func same_author_initial_context(left: Variant, right: Variant) -> bool:
 	if not RegionTerrainAdapter.same_author_identity(left.author_identity, right.author_identity) or not _initial_site_same(left.starting_site, right.starting_site): return false
 	if left.start.mode != right.start.mode or not _initial_site_same(left.start.site, right.start.site) or not _initial_site_same(left.start.cell, right.start.cell): return false
 	if left.start.mode == "existing_person" and int(left.start.person_id) != int(right.start.person_id): return false
-	if left.expected_initial_sites.size() != right.expected_initial_sites.size(): return false
-	for i: int in range(left.expected_initial_sites.size()):
-		if not _initial_site_same(left.expected_initial_sites[i], right.expected_initial_sites[i]): return false
-	return true
+	# P5C-S2: the birth set is a set. Compare canonical order, not the stored list order.
+	return author_initial_site_order(left) == author_initial_site_order(right)
+
+# P5C-S1: canonical birth order. The starting Site comes first, then every other
+# expected Site in x,y order. An invalid context yields an empty order.
+static func author_initial_site_order(context: Variant) -> Array:
+	var ordered: Array = []
+	if not author_initial_context_valid(context): return ordered
+	var start: Array = context.get("starting_site")
+	var rest: Array = []
+	for pair: Variant in context.get("expected_initial_sites"):
+		if _initial_site_same(pair, start): continue
+		rest.append(Vector2i(int(pair[0]), int(pair[1])))
+	rest.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return a.x < b.x or (a.x == b.x and a.y < b.y))
+	ordered.append(Vector2i(int(start[0]), int(start[1])))
+	ordered.append_array(rest)
+	return ordered
 
 
 static func _same_initial_request(record: Dictionary, context: Dictionary) -> bool:
@@ -5557,6 +5586,18 @@ func initialization_pending() -> bool:
 
 
 func _derive_initial_context() -> Dictionary:
+	if int(pin.format) == 3:
+		# P5C-S2: the authored context names the start and every companion Site.
+		var authored: Dictionary = source.author_initial_context()
+		if not author_initial_context_valid(authored): return fail("INVALID_AUTHOR_CONTEXT")
+		var derived_context: Dictionary = {"version": 2, "pin": pin.duplicate(true), "starting_site": authored.starting_site.duplicate(), "initial_scenario_id": "", "author_context": authored.duplicate(true)}
+		if not _initial_pending_ok(derived_context, pin): return fail("INVALID_INITIAL_SCENARIO")
+		_initialization = derived_context
+		var author_checked: Dictionary = _check_initial_record(_marker)
+		if not author_checked.ok:
+			_initialization = {}
+			return author_checked
+		return {"ok": true, "context": derived_context}
 	if int(_marker.get("generation", 0)) != 1 or _marker.get("sites", {}).size() != 1: return fail("INVALID_SLOT")
 	var key: String = _marker.sites.keys()[0]
 	var parts := key.split(":")
@@ -5579,7 +5620,7 @@ func _derive_initial_context() -> Dictionary:
 
 
 func _check_initial_record(record: Dictionary) -> Dictionary:
-	if not _initial_pending_ok(_initialization, pin) or int(record.get("generation", 0)) != 1 or not _same_pin(record.get("pin"), pin) or record.get("sites", {}).size() != 1 or not str(record.get("transfer_token", "")).is_empty() or not record.get("journey", {}).is_empty(): return fail("INVALID_INITIAL_GENERATION")
+	if not _initial_pending_ok(_initialization, pin) or int(record.get("generation", 0)) != 1 or not _same_pin(record.get("pin"), pin) or record.get("sites", {}).size() != _initial_site_coordinates().size() or not str(record.get("transfer_token", "")).is_empty() or not record.get("journey", {}).is_empty(): return fail("INVALID_INITIAL_GENERATION")
 	var policy := TechnologyPolicy.candidate(pin)
 	if not policy.ok or not TechnologyPolicy.birth_categories_admitted(policy.policy): return fail("TECH_POLICY_CONFLICT")
 	var coordinate := Vector2i(int(_initialization.starting_site[0]), int(_initialization.starting_site[1]))
@@ -5592,7 +5633,16 @@ func _check_initial_record(record: Dictionary) -> Dictionary:
 	if not loaded.ok: return loaded
 	var state: Dictionary = loaded.data.site
 	if _initialization.has("author_context"):
-		return _check_author_initial_state(loaded.data, record, coordinate, path)
+		# P5C-S2: every companion must be present and valid before the start is accepted.
+		for other: Vector2i in _initial_site_coordinates():
+			if other != coordinate and not record.sites.has(_site_key(other)): return fail("INVALID_INITIAL_GENERATION")
+		var started: Dictionary = _check_author_initial_state(loaded.data, record, coordinate, path)
+		if not started.ok: return started
+		for companion_site: Vector2i in _initial_site_coordinates():
+			if companion_site == coordinate: continue
+			var companion: Dictionary = _check_author_companion_state(record, companion_site)
+			if not companion.ok: return companion
+		return started
 	var scenario := str(_initialization.initial_scenario_id)
 	if int(state.get("minute", -1)) != 0 or float(state.get("phase", -1.0)) != 0.0 or int(state.get("controlled_person_id", -1)) != 1 or int(state.get("actors", {}).get("player", {}).get("person_id", -1)) != 1 or state.get("actors", {}).size() != 1 or state.has("family") or state.has("crowd"): return fail("INVALID_INITIAL_POPULATION")
 	if scenario.is_empty():
@@ -5636,6 +5686,8 @@ func initial_site_candidate() -> Dictionary:
 	if not _marker.is_empty(): return _check_initial_record(_marker)
 	if not _initial_candidate.is_empty():
 		if FileAccess.get_sha256(str(_initial_candidate.path)) != str(_initial_candidate.sha256): return fail("STALE_INITIAL_CANDIDATE")
+		for companion: Dictionary in _initial_candidate.get("companions", []):
+			if FileAccess.get_sha256(str(companion.path)) != str(companion.sha256): return fail("STALE_INITIAL_CANDIDATE")
 		return {"ok": true, "data": _initial_candidate.data, "coordinate": _initial_candidate.coordinate, "prepared": true}
 	return {"ok": true, "prepared": false}
 
@@ -5650,6 +5702,15 @@ func prepare_initial_site(data: TerrainData) -> Dictionary:
 	elif data.site.has("initial_scenario"): return fail("INVALID_INITIAL_SCENARIO")
 	if float(control.logical_game_seconds) != 0.0 or int(control.fire_clock.sequence) != 0 or float(control.fire_clock.action_seconds) != 0.0: return fail("INVALID_INITIAL_GENERATION")
 	data.site.fire_settlement = {"version": 1, "epoch": str(control.fire_clock.epoch), "sequence": 0, "action_seconds": 0.0, "game_seconds": 0.0}
+	# P5C-S2: every companion is projected and validated in memory before the
+	# start is attached or any file is written.
+	var companions: Array = []
+	if _initialization.has("author_context"):
+		for other: Vector2i in _initial_site_coordinates():
+			if other == coordinate.site: continue
+			var companion: Dictionary = _author_companion_candidate(other)
+			if not companion.ok: return companion
+			companions.append(companion)
 	var original_control := control.duplicate(true)
 	var attached := attach_active_site(data)
 	if not attached.ok:
@@ -5661,14 +5722,77 @@ func prepare_initial_site(data: TerrainData) -> Dictionary:
 		control = original_control
 		return saved
 	var entry := _file_entry(path)
-	var record := {"format": 1, "generation": 1, "pin": pin.duplicate(true), "sites": {_site_key(coordinate.site): entry},
+	var sites: Dictionary = {_site_key(coordinate.site): entry}
+	var written: Array = []
+	for index: int in range(companions.size()):
+		# Index 0 is the start Site already written above; companion writes start at 1.
+		if initial_write_fault.is_valid() and bool(initial_write_fault.call(index + 1)):
+			control = original_control
+			return fail("SAVE_IO", "原作者初始化寫入故障（測試注入）")
+		var prepared_companion: Dictionary = companions[index]
+		var companion_path: String = _generation_path(1, prepared_companion.coordinate)
+		var companion_saved: Dictionary = _save_checked(prepared_companion.data, prepared_companion.coordinate, companion_path)
+		if not companion_saved.ok:
+			control = original_control
+			return companion_saved
+		var companion_entry: Dictionary = _file_entry(companion_path)
+		sites[_site_key(prepared_companion.coordinate)] = companion_entry
+		written.append({"coordinate": prepared_companion.coordinate, "path": companion_path, "sha256": str(companion_entry.sha256),
+			"id": str(prepared_companion.data.site.id), "fire": prepared_companion.data.site.fire_settlement.duplicate(true)})
+	var record: Dictionary = {"format": 1, "generation": 1, "pin": pin.duplicate(true), "sites": sites,
 		"control": control.duplicate(true), "transfer_token": "", "journey": {}}
 	var checked := _check_initial_record(record)
 	if not checked.ok:
 		control = original_control
 		return checked
-	_initial_candidate = {"data": checked.data, "coordinate": coordinate.site, "path": path, "sha256": str(entry.sha256), "generation": 1}
+	_initial_candidate = {"data": checked.data, "coordinate": coordinate.site, "path": path, "sha256": str(entry.sha256), "generation": 1, "companions": written}
 	return {"ok": true, "data": checked.data, "coordinate": coordinate.site, "prepared": true}
+
+
+# P5C-S2: canonical list of every Site this birth must publish (start first).
+func _initial_site_coordinates() -> Array:
+	if _initialization.has("author_context"): return author_initial_site_order(_initialization.author_context)
+	return [Vector2i(int(_initialization.starting_site[0]), int(_initialization.starting_site[1]))]
+
+
+# P5C-S2: companion birth state. Terrain only; any authored population is refused
+# here and waits for P5C-S3. Mirrors open_site's fresh genesis for an uncontrolled Site.
+func _author_companion_candidate(site: Vector2i) -> Dictionary:
+	var projected: Dictionary = source.project_terrain(site, "author_initial")
+	if not projected.ok: return projected
+	if not _matches_base(projected.base, site): return fail("SAVE_VERSION", "固定地圖版本已變更")
+	var data: TerrainData = projected.data
+	if not Store._resource_base_matches(data, projected.base): return fail("SAVE_VERSION", "固定資源內容與來源版本不同")
+	if data.site.is_empty(): return fail("AUTHOR_INITIAL_EMPTY_SITE", "作者初始地點缺少內容")
+	if not RegionTravel._body_records(data.site).is_empty() or not data.site.get("armies", []).is_empty() or not data.site.get("residents", []).is_empty() or data.site.has("initial_scenario") or data.site.has("crowd") or data.site.has("family"):
+		return fail("AUTHOR_POPULATION_UNSUPPORTED", "非起點作者地點的人口留待 P5C-S3")
+	var refreshed: Dictionary = _refresh_boundaries(data, site)
+	if not refreshed.ok: return refreshed
+	data.site.world_pin = pin.duplicate(true)
+	var genesis: Dictionary = _settle_cold_candidate(data, float(control.logical_game_seconds))
+	if not genesis.ok: return genesis
+	data = genesis.data
+	if not _fire_history_empty(data.site): return fail("INVALID_NEW_SITE", "新地點已存在原火攻歷史")
+	data.site.fire_settlement = {"version": 1, "epoch": str(control.fire_clock.epoch), "sequence": 0, "action_seconds": 0.0, "game_seconds": float(control.logical_game_seconds)}
+	return {"ok": true, "coordinate": site, "data": data}
+
+
+# P5C-S2: checks one companion file of the generation-1 record.
+func _check_author_companion_state(record: Dictionary, coordinate: Vector2i) -> Dictionary:
+	var key: String = _site_key(coordinate)
+	if not record.sites.has(key): return fail("INVALID_INITIAL_GENERATION")
+	var entry: Dictionary = record.sites[key]
+	var path: String = folder.path_join(str(entry.get("path", "")))
+	if not str(entry.get("path", "")).begins_with("generations/") or FileAccess.get_sha256(path) != str(entry.get("sha256", "")): return fail("INVALID_INITIAL_GENERATION")
+	var loaded: Dictionary = _load_checked(path, coordinate)
+	if not loaded.ok: return loaded
+	var state: Dictionary = loaded.data.site
+	if not RegionTravel._body_records(state).is_empty() or not state.get("armies", []).is_empty() or not state.get("residents", []).is_empty() or state.has("initial_scenario") or state.has("crowd") or state.has("family") or int(state.get("minute", -1)) != 0 or float(state.get("phase", -1.0)) != 0.0: return fail("INVALID_INITIAL_POPULATION")
+	var settled: Dictionary = validate_settlement(state, 0.0)
+	if not settled.ok or float(settled.pending) != 0.0: return fail("INVALID_INITIAL_GENERATION")
+	var fire: Dictionary = validate_fire_settlement(state, record.control.get("fire_clock", {}))
+	if not fire.ok or int(state.get("fire_settlement", {}).get("sequence", -1)) != 0: return fail("INVALID_INITIAL_GENERATION")
+	return {"ok": true, "data": loaded.data}
 
 
 func commit_initial_site() -> Dictionary:
@@ -5680,7 +5804,15 @@ func commit_initial_site() -> Dictionary:
 		return recovered if manifested.ok else manifested
 	if _initial_candidate.is_empty() or FileAccess.get_sha256(str(_initial_candidate.path)) != str(_initial_candidate.sha256): return fail("STALE_INITIAL_CANDIDATE")
 	var sites := {_site_key(_initial_candidate.coordinate): _file_entry(str(_initial_candidate.path))}
-	var committed := _publish(sites, control)
+	# P5C-S2: all companions publish in the same generation as the start.
+	var clock: Dictionary = control.duplicate(true)
+	for companion: Dictionary in _initial_candidate.get("companions", []):
+		if FileAccess.get_sha256(str(companion.path)) != str(companion.sha256): return fail("STALE_INITIAL_CANDIDATE")
+		sites[_site_key(companion.coordinate)] = _file_entry(str(companion.path))
+		var fire: Dictionary = companion.fire
+		clock.fire_clock.index[str(companion.id)] = {"coordinate": [companion.coordinate.x, companion.coordinate.y], "active": false, "fire_active": false,
+			"sequence": int(fire.sequence), "action_seconds": float(fire.action_seconds), "game_seconds": float(fire.game_seconds)}
+	var committed: Dictionary = _publish(sites, clock)
 	if not committed.ok: return committed
 	return _check_initial_record(_marker)
 

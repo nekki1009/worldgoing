@@ -9598,6 +9598,8 @@ func open_fixed_world(manifest_path: String, world_id: String, slot_id: String, 
 		var authored: Dictionary = source.author_initial_context()
 		if create_new and not RegionSaveSlot._initial_site_same([starting_site.x, starting_site.y], authored.starting_site): return Runtime.fail("INITIAL_SCENARIO_CONFLICT")
 		if create_new: context = authored
+	# P5C-S2B test seam: forwards the default-invalid Callable to the slot before birth.
+	if create_new: candidate.initial_write_fault = initial_write_fault
 	var opened: Dictionary = candidate.open_map(source, world_id, slot_id, create_new, context)
 	if not opened.ok: return _remember_initial_world_pending(opened, request, candidate)
 	candidate.ship_site_initialize = _initialize_ship_destination
@@ -10424,6 +10426,8 @@ func advance_person_death_timers(real_seconds: float) -> void:
 
 const InitialArtisans = preload("res://scripts/terrain_lab/site_technology_artisans.gd")
 
+# P5C-S2B test seam (default invalid = off). Forwarded to the slot on creation only.
+var initial_write_fault: Callable
 var _initial_world_candidate: RegionSaveSlot
 
 var _initial_world_birth_data: TerrainData
