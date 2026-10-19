@@ -29,8 +29,9 @@ static func _naval_guard(vehicle: Dictionary) -> Dictionary:
 	if vehicle.has("boarding_link"): return Runtime.fail("CORRUPT_SAVE", "Link belongs to original naval owner")
 	if not vehicle.has("naval"): return Runtime.ok()
 	var naval: Variant = vehicle.naval
+	if naval is Dictionary and naval.has("link_epoch") and not (_integer(naval.link_epoch, 0)): return Runtime.fail("CORRUPT_SAVE", "Link epoch type")
 	if not naval is Dictionary or not _integer(naval.get("version"), 1) or float(naval.version) not in [1.0, 2.0]: return Runtime.fail("CORRUPT_SAVE", "Unknown naval version/type")
-	if naval.size() != 4 + int(naval.has("boarding_link")) or not (naval.get("hp") is int or naval.get("hp") is float) or not is_finite(float(naval.hp)) or float(naval.hp) < 0.0 or not naval.get("state") is String or naval.state not in ["afloat", "sinking", "wrecked"] or not naval.get("repair") is Dictionary:
+	if naval.size() != 4 + int(naval.has("boarding_link")) + int(naval.has("link_epoch")) or not (naval.get("hp") is int or naval.get("hp") is float) or not is_finite(float(naval.hp)) or float(naval.hp) < 0.0 or not naval.get("state") is String or naval.state not in ["afloat", "sinking", "wrecked"] or not naval.get("repair") is Dictionary:
 		return Runtime.fail("CORRUPT_SAVE", "Original naval hull state/type")
 	if (naval.state == "afloat") != (float(naval.hp) > 0.0): return Runtime.fail("CORRUPT_SAVE", "Original naval hp/state")
 	if naval.version == 1 and not _empty(naval.get("boarding_link")): return Runtime.fail("CORRUPT_SAVE", "Active link requires naval v2")

@@ -8049,6 +8049,8 @@ func _ship_repair_authority(identity: String, requester_id: int, starting: bool)
 func begin_ship_repair(identity: String, feature_id: String, requester_id: int, preview: bool = false) -> Dictionary:
 	var authority: Dictionary = _ship_repair_authority(identity, requester_id, true)
 	if not authority.ok: return authority
+	var fixed_vehicle: Dictionary = vehicles.records().get(identity, {})
+	if fixed_vehicle.get("naval", {}).has("boarding_link"): return Runtime.fail("BUSY", "接舷連結中船隻固定；先解除連結")
 	var feature: Dictionary = lab.terrain.site.features.get(feature_id, {})
 	var vehicle: Dictionary = vehicles.records().get(identity, {})
 	if str(feature.get("kind", "")) not in Runtime.WATERFRONT_KINDS or int(feature.get("owner_faction", -1)) != int(authority.faction): return Runtime.fail("NO_AUTHORITY")
@@ -9411,6 +9413,8 @@ func ship_journey_claims(vehicle: Dictionary) -> Dictionary:
 	return claims
 
 func begin_ship_journey(boat_ids: Array[String], destination: Vector2i, anchor: Vector2i, facing: Vector2i, requester_id: int = 0) -> Dictionary:
+	for linked_id: String in boat_ids:
+		if vehicles.records().get(linked_id, {}).get("naval", {}).has("boarding_link"): return Runtime.fail("BUSY", "接舷連結中船隻固定；先解除連結")
 	if ground_crossing_blocks_input(): return Runtime.fail("BUSY", "原地面跨界候選或共同步進故障尚未結束")
 	if region_slot == null: return Runtime.fail("NO_TARGET", "先在固定地圖世界開啟原存檔槽")
 	if region_operation_pending(): return Runtime.fail("BUSY", "原固定目標補算尚未完成")

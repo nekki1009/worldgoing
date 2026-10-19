@@ -1503,6 +1503,8 @@ func ship_walk_query(identity: int, target: Vector2, requester_id: int, test_dis
 	var person := ship_person(identity)
 	var vehicle := ship_for_person(identity)
 	if not ship_afloat(vehicle) or person.is_empty(): return Runtime.fail("NO_TARGET")
+	var fixed: Dictionary = link_fixed_refusal(vehicle)
+	if not fixed.ok: return fixed
 	if not _authorized(person.owner, requester_id, identity, test_dispatch): return Runtime.fail("NO_AUTHORITY")
 	if _region_operation_pending() or (_ship_in_journey(str(vehicle.id))) or not vehicle.get("naval", {}).get("repair", {}).is_empty(): return Runtime.fail("BUSY", "先完成原船旅程或岸上維修；失能待命時僅准原舵手接替")
 	if bool(lab.terrain.site.get("paused", false)) or not vehicle.move.is_empty() or not ship_job(str(vehicle.id)).is_empty() or not _ship_capable(person): return Runtime.fail("BUSY")
@@ -1573,6 +1575,44 @@ func _boarding_cells(source: Dictionary, target: Dictionary) -> Dictionary:
 
 ## B2S4 atomic commit: both naval records become v2 linked, or nothing is written.
 ## Epoch 1 is safe here: boarding_begin_query refuses any existing boarding_link.
+## B2b (plan lines 33, 60, 99): the link epoch advances on every connect and is kept on each hull's
+## naval record as link_epoch, so it survives unlink. Replays never reach this (job is erased on commit).
+func _next_link_epoch_b3(source: Dictionary, target: Dictionary) -> int:
+	return maxi(int(source.get("naval", {}).get("link_epoch", 0)), int(target.get("naval", {}).get("link_epoch", 0))) + 1
+
+## Q1 A: a hull with an original link record is fixed to its place (no walk, action, journey, repair).
+func link_fixed_refusal(vehicle: Dictionary) -> Dictionary:
+	if vehicle.get("naval", {}).has("boarding_link"): return Runtime.fail("BUSY", "接舷連結中船隻固定；先解除連結")
+	return Runtime.ok()
+
+## Clears both ends in one write: the link record is removed and the naval record returns to v1.
+## link_epoch stays, so the next connect advances it.
+func _clear_link_b3(from_id: String, to_id: String) -> Dictionary:
+	var live: Dictionary = records()
+	var prepared: Dictionary = {}
+	for identity: String in [from_id, to_id]:
+		var naval: Dictionary = live[identity].naval.duplicate(true)
+		naval.erase("boarding_link")
+		naval.version = 1
+		prepared[identity] = naval
+	for identity: String in [from_id, to_id]:
+		live[identity].naval = prepared[identity]
+	return Runtime.ok("接舷連結已解除；兩船原紀錄同時清除")
+
+## Q2 A request: stop new entries. With no crosser the clear is immediate; with a crosser the link
+## goes closing and the clear follows when that crossing ends (see _write_link_b3).
+func request_boarding_unlink(identity: int, requester_id: int, test_dispatch: bool = false) -> Dictionary:
+	var person: Dictionary = ship_person(identity)
+	if person.is_empty() or float(person.hp) <= 0.0: return Runtime.fail("NO_TARGET")
+	var from_id: String = str(person.row.get("embarked_vehicle_id", ""))
+	var source: Dictionary = records().get(from_id, {})
+	var link: Variant = source.get("naval", {}).get("boarding_link")
+	if not link is Dictionary: return Runtime.fail("NO_TARGET", "沒有接舷連結")
+	if not _authorized(person.owner, requester_id, identity, test_dispatch): return Runtime.fail("NO_AUTHORITY")
+	var to_id: String = str(link.peer.vehicle_id)
+	if int(link.crosser_id) == 0: return _clear_link_b3(from_id, to_id)
+	return Runtime.fail("BUSY", "通道中有原人；收束後解除（B3R）")
+
 func commit_boarding_link(job: Dictionary) -> Dictionary:
 	var source: Dictionary = records().get(str(job.vehicle_id), {})
 	var target: Dictionary = records().get(str(job.peer_vehicle_id), {})
@@ -1587,13 +1627,15 @@ func commit_boarding_link(job: Dictionary) -> Dictionary:
 	var target_local: Vector2 = Ship.local_from_world(target_anchor, target_facing, Vector2(cells.b))
 	var state: Dictionary = {"id": str(lab.terrain.site.id), "vehicles": records()}
 	var link_id: String = "boarding_%s_%s" % [str(source.id), str(target.id)]
-	var made: Dictionary = Boarding.make_pair(state, str(source.id), str(target.id), link_id, 1,
+	var epoch: int = _next_link_epoch_b3(source, target)
+	var made: Dictionary = Boarding.make_pair(state, str(source.id), str(target.id), link_id, epoch,
 		source_anchor, target_anchor, [source_local.x, source_local.y], [target_local.x, target_local.y])
 	if not made.ok: return made # make_pair works on a copy, so nothing changed.
 	var live: Dictionary = records()
 	for identity: String in [str(source.id), str(target.id)]:
 		live[identity].naval = made.state.vehicles[identity].naval.duplicate(true)
-	return Runtime.ok("接舷已建立；兩船原紀錄同時寫入", {"link_id": link_id, "epoch": 1})
+		live[identity].naval["link_epoch"] = epoch
+	return Runtime.ok("接舷已建立；兩船原紀錄同時寫入", {"link_id": link_id, "epoch": epoch})
 
 func ship_cross_query(identity: int, target_id: String, berth: int, requester_id: int, test_dispatch: bool = false) -> Dictionary:
 	var source := ship_for_person(identity)
@@ -1908,6 +1950,8 @@ func ship_action_query(kind: String, person_id: int, vehicle_id: String, berth: 
 	var vehicle: Dictionary = records().get(vehicle_id, {})
 	if not is_ship(vehicle) or person.is_empty(): return Runtime.fail("NO_TARGET", "船與原 Army 人物不存在")
 	if kind != "ship_disembark" and not ship_afloat(vehicle): return Runtime.fail("NO_TARGET", "沉船不能登船或承職")
+	var fixed: Dictionary = link_fixed_refusal(vehicle)
+	if not fixed.ok: return fixed
 	if _region_operation_pending() or (_ship_in_journey(vehicle_id) and not (kind == "ship_helm" and controller.ship_journey_waiting_for_crew(vehicle_id))) or not vehicle.get("naval", {}).get("repair", {}).is_empty(): return Runtime.fail("BUSY", "先完成原船旅程或岸上維修；失能待命時僅准原舵手接替")
 	if bool(lab.terrain.site.get("paused", false)) or not vehicle.move.is_empty(): return Runtime.fail("BUSY", "船必須停穩")
 	if int(vehicle.team_id) != int(person.owner.team_id) and not (kind == "ship_disembark" and person.row.get("ship_guest", false) == true): return Runtime.fail("NO_AUTHORITY", "登船／操舵限原同隊；接舷原人可合法離船")

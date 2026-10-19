@@ -3985,7 +3985,7 @@ static func _validate_ship_vehicle(data: TerrainData, state: Dictionary, identit
 static func _validate_ship_naval(data: TerrainData, state: Dictionary, vehicle: Dictionary) -> Dictionary:
 	if not vehicle.has("naval"): return Runtime.ok() # Known original v1 hulls remain valid.
 	var naval: Variant = vehicle.naval
-	if not naval is Dictionary or naval.size() != 4 + int(naval.has("boarding_link")) or not _integer(naval.get("version"), 1, 1) or not _number(naval.get("hp"), 0.0, ShipDefs.hull_hp(str(vehicle.ship_type))) or not naval.get("state") is String or naval.state not in ["afloat", "sinking", "wrecked"] or not naval.get("repair") is Dictionary:
+	if not naval is Dictionary or naval.size() != 4 + int(naval.has("boarding_link")) + int(naval.has("link_epoch")) or not _integer(naval.get("version"), 1, 1) or not _number(naval.get("hp"), 0.0, ShipDefs.hull_hp(str(vehicle.ship_type))) or not naval.get("state") is String or naval.state not in ["afloat", "sinking", "wrecked"] or not naval.get("repair") is Dictionary:
 		return Runtime.fail("CORRUPT_SAVE", "船體耐久／狀態版本非法")
 	if (str(naval.state) == "afloat") != (float(naval.hp) > 0.0): return Runtime.fail("CORRUPT_SAVE", "船體耐久與沉船狀態不符")
 	var repair_validation: Dictionary = Runtime.validate_ship_repair(data, vehicle, state)
