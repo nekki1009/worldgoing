@@ -74,6 +74,12 @@ func _resident_ids(data: TerrainData) -> Array:
 				ids.append(int(unit.get("person_id", 0)))
 	return ids
 
+## The team id of the residents' work army (the team that supporter A belongs to).
+func _resident_team_id(data: TerrainData) -> int:
+	for army: Variant in data.site.get("armies", []):
+		if army is Dictionary and str(army.get("role", "")) == "work": return int(army.get("team_id", 0))
+	return 0
+
 func _run() -> void:
 	deadline = Time.get_ticks_msec() + 120000
 	var data := _building_fixture()
@@ -104,6 +110,7 @@ func _run() -> void:
 	var heir: int = int(lab.npc.person_id)
 	var residents := _resident_ids(born_data)
 	if not _r3_check(residents.size() == 2, "two residents are born: %s" % str(residents)): return
+	var resident_team_id: int = _resident_team_id(born_data)
 	var supporter_a: int = int(residents[0])
 	var supporter_b: int = int(residents[1])
 	var ids := [head, heir, supporter_a, supporter_b]
@@ -170,6 +177,10 @@ func _run() -> void:
 	if not _r3_check(int(loser.loser) == head and bool(loser.admitted), "the loser (ambition 80, lawful 20) is admitted: %s" % str(loser)): return
 	if not _r3_check(loser.invited == [supporter_a], "only supporter A passes its own rule and is invited: %s" % str(loser)): return
 	if not _r3_check(bool(loser.executed.get("ok", false)) and int(loser.executed.get("count", 0)) == 1, "the executor departs supporter A: %s" % str(loser.executed)): return
+	# R7 G (plan 10.2): supporter A is also a member of the residents' work team. Its team and family rows are listed, not executed:
+	# the nation batch leaves them in place, and each organisation is judged on its own.
+	var other: Array = loser.other_organisations
+	if not _r3_check(other.size() == 1 and int(other[0].id) == supporter_a and int(other[0].team_id) == resident_team_id and resident_team_id > 0 and not bool(other[0].family_member) and not bool(other[0].executed), "the team and family rows of supporter A are listed, not executed: %s" % str(other)): return
 
 	# A left the nation through the executor; B and everyone else are unchanged.
 	var members_after: Array = nation.members

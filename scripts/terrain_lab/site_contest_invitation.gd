@@ -10,6 +10,8 @@ const Admission = preload("res://scripts/terrain_lab/site_admission.gd")
 const PersonPersonality = preload("res://scripts/terrain_lab/person_personality.gd")
 const SiteSocial = preload("res://scripts/terrain_lab/site_social.gd")
 const Executor = preload("res://scripts/terrain_lab/site_defection_executor.gd")
+const FamilyContinuity = preload("res://scripts/terrain_lab/site_family_continuity.gd") # R7 G: the family rows of a defector (listed, not executed).
+const TerrainArmyType = preload("res://scripts/terrain_lab/terrain_army.gd") # R7 G: team owner check.
 
 ## The summary of the last evaluation (losers, admission codes, invited ids, execution result). Read by the tests.
 static var last_summary: Dictionary = {}
@@ -29,7 +31,7 @@ static func invite_losers(lab: Variant, owner_kind: String, owner_id: String, ow
 			ambition = int(axes.ambition)
 			lawful = int(axes.lawful)
 		var admitted: Dictionary = Admission.admission(ambition, lawful, roster, loser)
-		var entry := {"loser": loser, "admitted": bool(admitted.get("ok", false)), "code": str(admitted.get("code", "")), "invited": [], "executed": {}}
+		var entry := {"loser": loser, "admitted": bool(admitted.get("ok", false)), "code": str(admitted.get("code", "")), "invited": [], "executed": {}, "other_organisations": []}
 		if bool(admitted.get("ok", false)):
 			var supporters: Array = []
 			for member: Dictionary in roster:
@@ -37,6 +39,7 @@ static func invite_losers(lab: Variant, owner_kind: String, owner_id: String, ow
 					supporters.append(_supporter(lab, member, owner_ref, ambition, lawful))
 			var plan: Dictionary = Admission.invitation(supporters)
 			entry.invited = plan.members
+			entry.other_organisations = _other_organisations(lab, plan.members)
 			if not plan.members.is_empty() and owner_kind == "nation":
 				var requests: Array = []
 				for identity: Variant in plan.members:
@@ -45,6 +48,21 @@ static func invite_losers(lab: Variant, owner_kind: String, owner_id: String, ow
 		summary.losers.append(entry)
 	last_summary = summary
 	return summary
+
+## R7 G (plan 10.2): a defector is judged separately in each organisation ("跨組織另各自判定，不一鍵全清"), so the family and
+## team rows of an invited supporter are only listed here, with executed false. The nation batch does not move them.
+static func _other_organisations(lab: Variant, identities: Array) -> Array:
+	var rows: Array = []
+	var site: Dictionary = lab.terrain.site
+	var family_ids: Array[int] = []
+	if site.get("family") is Dictionary: family_ids = FamilyContinuity.member_ids(site.family, str(site.id))
+	for identity: Variant in identities:
+		var person_id := int(identity)
+		var target: Dictionary = lab._original_person_target(person_id)
+		var team_id := -1
+		if not target.is_empty() and target.owner is TerrainArmyType: team_id = int(target.owner.team_id)
+		rows.append({"id": person_id, "team_id": team_id, "family_member": family_ids.has(person_id), "executed": false})
+	return rows
 
 static func _roster(lab: Variant, members: Array, episode: Dictionary) -> Array:
 	var roster: Array = []
