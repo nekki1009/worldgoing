@@ -19,6 +19,7 @@ const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
 const SiteSocial = preload("res://scripts/terrain_lab/site_social.gd")
 const VacancyEpisode = preload("res://scripts/terrain_lab/site_vacancy_episode.gd") # R5 S6: per-tick family vacancy caller.
 const Take = preload("res://scripts/terrain_lab/site_take_office.gd") # R5 S8: settlement seat contest entries.
+const ContestInvitation = preload("res://scripts/terrain_lab/site_contest_invitation.gd") # R7 E: the live companion-invitation trigger.
 const Clock = preload("res://scripts/terrain_lab/site_vacancy_clock.gd") # R5 S9: owner proven day for the vacancy clock.
 const PersonSocial = preload("res://scripts/terrain_lab/person_social.gd") # R5 S9: read-only packet access.
 const PoliticalAdoption = preload("res://scripts/terrain_lab/site_political_adoption.gd")
@@ -155,6 +156,9 @@ static func settle_family_vacancy(lab: Variant) -> void:
 			var open_nation: Dictionary = VacancyEpisode.find_open(site.get("vacancy_episodes", {}), "nation", nation_id)
 			if not open_nation.is_empty() and str(open_nation.timer.status) == "deadline_reached":
 				orders.settle_nation_contest(nation_id, _contest_leadership(lab, open_nation))
+				var closed_nation: Dictionary = site.vacancy_episodes[str(open_nation.episode_id)]
+				if str(closed_nation.get("status", "")) == "closed":
+					ContestInvitation.invite_losers(lab, "nation", nation_id, {"kind": "nation", "site_id": site_id, "org_id": nation_id}, site.equipment_nations[nation_id].get("members", []), closed_nation)
 	var settlement: Dictionary = Settlement.record(lab.terrain)
 	if not settlement.is_empty():
 		Take.observe_settlement_vacancy(lab, today)
