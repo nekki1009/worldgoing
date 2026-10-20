@@ -148,7 +148,7 @@ func _run() -> void:
 	assert(source.transfer_members_to(target, [captor_id], source.current_commander, target.current_commander).code == "BUSY")
 	assert(data.site == before)
 	supplying.sustain.at += 1.0
-	controller.person_actions._jobs["fixture"] = {"executor_id": lab.character.person_id, "target_id": lab.npc.person_id}
+	controller.person_actions._jobs["fixture"] = {"kind": "fixture", "executor_id": lab.character.person_id, "target_id": lab.npc.person_id}
 	before = data.site.duplicate(true)
 	assert(source.transfer_members_to(target, [captor_id], source.current_commander, target.current_commander).code == "BUSY")
 	assert(data.site == before)

@@ -98,8 +98,12 @@ func _payload_case(mode: String) -> bool:
 	actions = payload_owner.site_controller.person_actions
 	if not await _payload_until(func() -> bool: return not actions.is_busy(payload_guard), "same restored original job commits the sole capture"): return false
 	var captured: Dictionary = payload_owner.terrain.site.captivity.get(str(payload_captive), {}).duplicate(true)
-	if not _check(int(captured.get("version", 0)) == 3 and not bool(captured.legacy_observed) and str(captured.episode) == "%s:%d" % [str(payload_owner.terrain.site.id), next_episode]
-		and float(captured.captured_at_game_seconds) <= float(slot.control.logical_game_seconds) and float(captured.admitted_at_game_seconds) == -1.0
+	# v3 episode is the dictionary {site_id, person_id, seq} (ef39140), not a "site:N" string.
+	# seq is this person's own first capture sequence (social_state v1), as in site_prison_actions_test.
+	var episode: Dictionary = captured.get("episode", {})
+	if not _check(int(captured.get("version", 0)) == 3 and not bool(captured.legacy_observed)
+		and str(episode.get("site_id", "")) == str(payload_owner.terrain.site.id) and int(episode.get("person_id", -1)) == payload_captive and int(episode.get("seq", 0)) == 1
+		and float(captured.captured_at_game_seconds) <= SiteRuntime.now(payload_owner.terrain) * 60.0 and float(captured.admitted_at_game_seconds) == -1.0
 		and int(payload_owner.terrain.site.capture_episode_next) == next_episode + 1, "one original commit produces genuine v3 time/episode provenance exactly once", captured): return false
 	if not _payload_fail_preflight(): return false
 	# Original GAME life consumes the real four-hour KO, including any rescue.
@@ -110,7 +114,7 @@ func _payload_case(mode: String) -> bool:
 	if not await _payload_until(func() -> bool: return str(payload_owner.terrain.site.captivity.get(str(payload_captive), {}).get("prison_id", "")) == payload_prison, "original escort moves both actual bodies and commits true admission"): return false
 	var admitted: Dictionary = payload_owner.terrain.site.captivity[str(payload_captive)].duplicate(true)
 	if not _check(admitted.episode == captured.episode and admitted.captured_at_game_seconds == captured.captured_at_game_seconds
-		and float(admitted.admitted_at_game_seconds) >= float(admitted.captured_at_game_seconds) and float(admitted.admitted_at_game_seconds) <= float(slot.control.logical_game_seconds)
+		and float(admitted.admitted_at_game_seconds) >= float(admitted.captured_at_game_seconds) and float(admitted.admitted_at_game_seconds) <= SiteRuntime.now(payload_owner.terrain) * 60.0
 		and admitted.captor_id == captured.captor_id and admitted.guard_id == captured.guard_id and admitted.captor_faction == captured.captor_faction
 		and admitted.sealed_container == captured.sealed_container and not payload_owner.terrain.site.escort_orders.has(str(payload_guard)), "true admission retains original capture, holder/history reference and sole episode", admitted): return false
 	if not await _payload_reopen("admitted", mode): return false
@@ -121,7 +125,7 @@ func _payload_case(mode: String) -> bool:
 	if not await _payload_until(func() -> bool: return _payload_job_partial("prison_release"), "common owner pays actual partial release work"): return false
 	var before_release: Dictionary = _payload_facts()
 	if not await _payload_reopen("release_partial", mode): return false
-	if not _check(_payload_facts() == before_release and payload_owner.terrain.site.captivity[str(payload_captive)] == admitted, "partial release load retains custody until the original commit"): return false
+	if not _check(_persisted_form(_payload_facts()) == _persisted_form(before_release) and _persisted_form(payload_owner.terrain.site.captivity[str(payload_captive)]) == _persisted_form(admitted), "partial release load retains custody until the original commit"): return false
 	actions = payload_owner.site_controller.person_actions
 	var version := int(actions._person(payload_captive, false).holder.version)
 	if not await _payload_until(func() -> bool: return not actions.is_busy(payload_guard), "same restored original release finishes its accepted work"): return false
@@ -135,7 +139,7 @@ func _payload_case(mode: String) -> bool:
 	if not await _payload_reopen("released", mode): return false
 	var reopened_actions: SitePersonActions = payload_owner.site_controller.person_actions
 	var reopened_person := reopened_actions._person(payload_captive, false)
-	if not _check(final_facts == _payload_facts() and not reopened_person.is_empty() and not bool(reopened_person.captive)
+	if not _check(_persisted_form(final_facts) == _persisted_form(_payload_facts()) and not reopened_person.is_empty() and not bool(reopened_person.captive)
 		and not payload_owner.terrain.site.captivity.has(str(payload_captive)) and reopened_actions.job_for(payload_guard).is_empty()
 		and int(reopened_person.holder.version) == version + 1 and int(payload_owner.terrain.site.capture_episode_next) == next_episode + 1,
 		"actual released reopen keeps both bodies, original holder version and completed empty job without recapture or replay", reopened_person.get("person_id")): return false
@@ -168,6 +172,10 @@ func _payload_fixture() -> bool:
 	SiteRuntime._feature_work(data, payload_prison, float(feature.work), Callable(), Callable(), task, {}, 20, 1)
 	if not _check(str(feature.stage) == "complete", "original Runtime commits its real initial prison work"): return false
 	if not _check(payload_owner.character.place(Vector2i(35, 38), true), "original guard occupies a legal actual cell"): return false
+	# The prison is declared owner_faction 1 above. Begin/admit require the guard to be of the
+	# managing faction (site_captive_escort.begin_prison, site_person_actions.admit_prison; ef39140).
+	# Set the real guard's faction before capture, so captor_faction is that same faction.
+	payload_owner.character.faction_id = 1
 	payload_guard = payload_owner.character.person_id
 	payload_owner._ensure_army_slots(1)
 	var team: TerrainArmy = payload_owner.army
@@ -234,6 +242,61 @@ func _payload_capture() -> Dictionary:
 	if not _check(captured.ok and captured.owner_states.get("scene") is Dictionary, "original owner captures its full alias graph", captured.get("code")): return {}
 	return {"context": context.context, "owners": captured.owner_states, "graph": {"root": captured.owner_states.scene.root.duplicate(true), "nodes": captured.owner_states.scene.nodes.duplicate(true)}}
 
+## Prints the first differing leaves of two values at full precision (var_to_str), never more than 25.
+func _payload_diff(part: String, expected: Variant, actual: Variant) -> void:
+	if expected == actual: return
+	var budget: Array = [0]
+	_payload_walk(part, expected, actual, budget)
+	if int(budget[0]) == 0: print("REGION_DIFF %s differs but no leaf differs (container type or key identity)" % part)
+
+func _payload_walk(path: String, a: Variant, b: Variant, budget: Array) -> void:
+	if int(budget[0]) >= 25: return
+	if a is Dictionary and b is Dictionary:
+		var keys: Dictionary = {}
+		for k: Variant in a.keys(): keys[k] = true
+		for k: Variant in b.keys(): keys[k] = true
+		for k: Variant in keys.keys():
+			if not a.has(k) or not b.has(k):
+				print("REGION_DIFF missing %s/%s expected_has=%s actual_has=%s" % [path, str(k), str(a.has(k)), str(b.has(k))])
+				budget[0] = int(budget[0]) + 1
+				continue
+			_payload_walk(path + "/" + str(k), a[k], b[k], budget)
+		return
+	if a is Array and b is Array:
+		if a.size() != b.size():
+			print("REGION_DIFF size %s expected=%d actual=%d" % [path, a.size(), b.size()])
+			budget[0] = int(budget[0]) + 1
+			return
+		for i: int in range(a.size()): _payload_walk(path + "[%d]" % i, a[i], b[i], budget)
+		return
+	if typeof(a) != typeof(b) or a != b:
+		print("REGION_DIFF leaf %s type_expected=%d type_actual=%d expected=%s actual=%s" % [path, typeof(a), typeof(b), var_to_str(a), var_to_str(b)])
+		budget[0] = int(budget[0]) + 1
+
+## Decodes a Store-written file the way SiteStore reads it: envelope, optional zstd payload, JSON.
+func _saved_payload(path: String) -> Variant:
+	var envelope: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if not envelope is Dictionary or not envelope.get("payload") is String: return null
+	var body: String = envelope.payload
+	if envelope.has("payload_encoding"):
+		var original: PackedByteArray = Marshalls.base64_to_raw(body).decompress(int(envelope.payload_bytes), FileAccess.COMPRESSION_ZSTD)
+		body = original.get_string_from_utf8()
+	return JSON.parse_string(body)
+
+## The same uncompressed envelope Store writes: {payload: JSON text, checksum: sha256 of that text}.
+func _envelope_text(payload: Dictionary) -> String:
+	var body := JSON.stringify(payload, "", true, true)
+	return JSON.stringify({"payload": body, "checksum": body.sha256_text()}, "	")
+
+func _persisted_form(value: Variant) -> Variant:
+	var encoded: String = JSON.stringify(value, "", true, true)
+	for _round in range(8):
+		var decoded: Variant = JSON.parse_string(encoded)
+		var next: String = JSON.stringify(decoded, "", true, true)
+		if next == encoded: return decoded
+		encoded = next
+	return JSON.parse_string(encoded)
+
 func _payload_reopen(label: String, mode: String) -> bool:
 	var facts := _payload_facts()
 	var clock := [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence]
@@ -265,8 +328,28 @@ func _payload_reopen(label: String, mode: String) -> bool:
 	payload_owner = next_owner
 	var restored := _payload_capture()
 	if restored.is_empty(): return false
-	if not _check(facts == _payload_facts() and restored.graph == captured.graph and proof == slot.region_bind_proof(payload_owner.terrain)
-		and clock == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "actual selected restore retains whole v3 bodies, references and accepted work exactly: " + label): return false
+	# The saved state is settled through the save codec (site_region_checkpoint._json_write_state):
+	# full-precision stringify and parse repeated until stable. A live double can differ from its
+	# settled value by one ULP, so judge the facts in settled form on both sides.
+	# Four labelled checks with the same conditions as the former single chain. Facts are compared in
+	# settled save-codec form (make() settles state); graph, proof and clock raw. Any unequal part
+	# prints its differing leaves at full precision (REGION_DIFF).
+	var restored_facts := _payload_facts()
+	_payload_diff("facts", _persisted_form(facts), _persisted_form(restored_facts))
+	if not _check(_persisted_form(facts) == _persisted_form(restored_facts), "restore facts (settled save codec): " + label): return false
+	# The graph that was saved is the captured graph settled through the save codec (typed shape kept).
+	# Compare the restored graph RAW against that saved form.
+	var saved_graph_settled: Dictionary = PayloadCheckpoint._json_write_state({"graph": captured.graph})
+	if not _check(saved_graph_settled.ok, "captured graph settles through the save codec: " + label, saved_graph_settled): return false
+	var saved_graph: Variant = saved_graph_settled.state.graph
+	_payload_diff("graph", saved_graph, restored.graph)
+	if not _check(restored.graph == saved_graph, "restore whole alias graph: " + label): return false
+	var restored_proof = slot.region_bind_proof(payload_owner.terrain)
+	_payload_diff("proof", proof, restored_proof)
+	if not _check(proof == restored_proof, "restore region bind proof: " + label): return false
+	var restored_clock := [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence]
+	_payload_diff("clock", clock, restored_clock)
+	if not _check(clock == restored_clock, "restore logical and fire clocks: " + label): return false
 	var retry_facts := _payload_facts()
 	var retry := slot.consume_due_region_events()
 	return _check(retry.ok and retry.get("complete", false) and retry_facts == _payload_facts()
@@ -285,7 +368,9 @@ func _payload_reject_social() -> bool:
 	if captured.is_empty(): return false
 	var saved_path := slot.site_path(payload_coordinate)
 	var original_bytes := FileAccess.get_file_as_bytes(saved_path)
-	var raw: Variant = JSON.parse_string(original_bytes.get_string_from_utf8())
+	# Store bytes are an envelope {payload: JSON text, checksum} (optionally zstd-base64 with
+	# payload_encoding), not the bare payload. Decode exactly as Store does.
+	var raw: Variant = _saved_payload(saved_path)
 	if not _check(raw is Dictionary and raw.get("state") is Dictionary, "selected original payload exists as real Store bytes"): return false
 	for kind: String in ["actor", "army"]:
 		for schema: Dictionary in [{}, {"version": 1}, {"version": 2147483647, "necessary_relationships": [{"original_org": "unsupported-future-owner"}], "proven_progress_seconds": 2.0, "progress_endpoint": 10.0}]:
@@ -321,7 +406,7 @@ func _payload_reject_social() -> bool:
 			var incompatible := out.path_join("unsupported_" + kind + "_" + str(schema.get("version", 0)) + ".json")
 			file = FileAccess.open(incompatible, FileAccess.WRITE)
 			if not _check(file != null, "private incompatible archive can be written"): return false
-			file.store_string(JSON.stringify(bad_file, "", true, true)); file.close()
+			file.store_string(_envelope_text(bad_file)); file.close()
 			var incompatible_bytes := FileAccess.get_file_as_bytes(incompatible)
 			var load_refused := slot._load_checked(incompatible, payload_coordinate)
 			if not _check(not load_refused.ok and str(load_refused.get("code", "")) == "SAVE_VERSION" and FileAccess.get_file_as_bytes(incompatible) == incompatible_bytes

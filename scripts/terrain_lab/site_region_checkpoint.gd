@@ -217,7 +217,11 @@ static func make(state: Dictionary, context: Dictionary, owners: Dictionary) -> 
 	if not supported(owners): return Runtime.fail("INVALID_REGION_OWNERS")
 	var normalized: Dictionary = _json_write_state(state)
 	if not normalized.ok: return normalized
-	return Runtime.ok("", {"state": normalized.state, "snapshot": {"version": 1, "context": checked.context, "owners": wire(owners), "state_hash": state_hash(normalized.state)}})
+	# The owner graph is written detached and settled through the same save codec as the state (CC-102),
+	# so a reload returns exactly these values. Live owners are not changed.
+	var settled_owners: Dictionary = _json_write_state(owners)
+	if not settled_owners.ok: return settled_owners
+	return Runtime.ok("", {"state": normalized.state, "snapshot": {"version": 1, "context": checked.context, "owners": wire(settled_owners.state), "state_hash": state_hash(normalized.state)}})
 
 ## Preserve typed detached state while settling floats with Store.save's codec.
 static func _json_write_state(state: Dictionary) -> Dictionary:
