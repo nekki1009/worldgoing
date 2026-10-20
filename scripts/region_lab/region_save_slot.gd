@@ -215,7 +215,9 @@ func open_map(map_data: RegionData, world_instance_id: String, slot_id: String, 
 			if not finalized.ok: return finalized
 		elif not prepare_new:
 			return fail("INITIALIZATION_PENDING", "原開局尚無已提交世代，請接續同一建立請求")
-	return {"ok": true, "path": manifest_path, "initialization_pending": initialization_pending(), "initialization_committed": not _marker.is_empty()}
+	var persons: Dictionary = _open_person_allocator(prepare_new)
+	if not persons.ok: return persons
+	return {"ok": true, "person_upgrade": persons.get("upgrade_refused", {}), "path": manifest_path, "initialization_pending": initialization_pending(), "initialization_committed": not _marker.is_empty()}
 
 static func _same_pin(left: Variant, right: Dictionary) -> bool:
 	if not left is Dictionary or left.size() != right.size():
@@ -325,7 +327,7 @@ func open_site(site: Vector2i, starter: bool = true) -> Dictionary:
 	# storage, which Core construction payment reads before any first save.
 	var storage := Runtime.initialize_item_storage(data.site)
 	if not storage.ok: return storage
-	if not starter:
+	if not starter or (person_allocator_enabled() and not _marker.is_empty() and data.site.get("actors", {}).is_empty()):
 		data.site.actor_presence_version = 1
 		data.site.actors = {}
 		data.site.worker_enabled = false
@@ -338,6 +340,7 @@ func open_site(site: Vector2i, starter: bool = true) -> Dictionary:
 	if not _fire_history_empty(data.site): return fail("INVALID_NEW_SITE", "新地點已存在原火攻歷史")
 	data.site.fire_settlement = {"version": 1, "epoch": str(control.fire_clock.epoch), "sequence": int(control.fire_clock.sequence),
 		"action_seconds": float(control.fire_clock.action_seconds), "game_seconds": float(control.logical_game_seconds)}
+	attach_person_allocator(data)
 	return {"ok": true, "data": data, "interactive": true, "created": true}
 
 func save_site(data: TerrainData) -> Dictionary:
@@ -625,7 +628,7 @@ func _recover_read_latest(preserve_live: bool, live_control: Dictionary) -> Dict
 		clock = decoded.clock
 		recorded.control = clock
 	var clock_fields: Array = ["logical_game_seconds", "active_site_id"]
-	for optional: String in ["fire_clock", "region_gameplay", "faction_registry"]:
+	for optional: String in ["fire_clock", "region_gameplay", "faction_registry", "person_allocator"]:
 		if clock.has(optional): clock_fields.append(optional)
 	if int(recorded.format) == 1 and clock.has("faction_registry") or int(recorded.format) == 2 and not clock.has("faction_registry"): return fail("SAVE_VERSION", "faction control marker version")
 	if not RegionFactionQuery.keys(clock, clock_fields) or not clock.get("active_site_id") is String \
@@ -640,6 +643,7 @@ func _recover_read_latest(preserve_live: bool, live_control: Dictionary) -> Dict
 		if not gameplay_check.ok: return gameplay_check
 	var fire_clock_check := validate_fire_clock(clock.fire_clock, clock.logical_game_seconds)
 	if not fire_clock_check.ok: return fire_clock_check
+	if clock.has("person_allocator") and not person_allocator_valid(clock.person_allocator, str(pin.world_instance_id)): return fail("CORRUPT_PERSON_ALLOCATOR")
 	var active_found: bool = str(clock.active_site_id).is_empty()
 	for key: Variant in recorded.sites:
 		var components: PackedStringArray = str(key).split(":")
@@ -669,8 +673,11 @@ func _recover_read_latest(preserve_live: bool, live_control: Dictionary) -> Dict
 	if clock.has("faction_registry"):
 		var factions: Variant = RegionFactionQuery.validate(clock.faction_registry, float(clock.logical_game_seconds))
 		if not factions.ok: return factions
-		var sources: Dictionary = _faction_scan(recorded.sites, clock, recorded.journey, clock.faction_registry, [], false)
+		var sources: Dictionary = _faction_scan(recorded.sites, clock, recorded.journey, clock.faction_registry, [], false, clock.has("person_allocator"))
 		if not sources.ok: return sources
+		if clock.has("person_allocator"):
+			var persons: Dictionary = person_migration(str(pin.world_instance_id), sources.person_sources, clock.person_allocator)
+			if not persons.ok or persons.allocator != clock.person_allocator: return fail("CORRUPT_PERSON_ALLOCATOR")
 		if sources.registry.entries != clock.faction_registry.entries or int(sources.registry.next_faction_id) != int(clock.faction_registry.next_faction_id): return fail("CORRUPT_SAVE", "faction marker/source disagreement")
 	return {"ok": true, "recorded": recorded, "name": files.back()}
 
@@ -764,9 +771,10 @@ func region_commit_control(generation: int) -> Dictionary:
 		var gameplay_check := GameplayClock.validate_registry(clock.region_gameplay, float(clock.get("logical_game_seconds", 0.0)))
 		if not gameplay_check.ok: return gameplay_check
 	var fields: Array = ["logical_game_seconds", "active_site_id"]
-	for optional: String in ["fire_clock", "region_gameplay", "faction_registry"]:
+	for optional: String in ["fire_clock", "region_gameplay", "faction_registry", "person_allocator"]:
 		if clock.has(optional): fields.append(optional)
 	if not RegionFactionQuery.keys(clock, fields): return fail("CORRUPT_SAVE", "unknown control fields")
+	if clock.has("person_allocator") and not person_allocator_valid(clock.person_allocator, str(pin.world_instance_id)): return fail("CORRUPT_PERSON_ALLOCATOR")
 	if int(recorded.format) == 1 and clock.has("faction_registry") or int(recorded.format) == 2 and not clock.has("faction_registry"): return fail("SAVE_VERSION")
 	if clock.has("faction_registry"):
 		var factions: Variant = RegionFactionQuery.validate(clock.faction_registry, float(clock.get("logical_game_seconds", 0.0)))
@@ -778,6 +786,8 @@ func _publish(sites: Dictionary, clock: Dictionary, transfer_token: String = "",
 	var recovered := _recover_control()
 	if not recovered.ok: return recovered
 	if int(_marker.get("generation", 0)) != expected: return fail("CONFLICT", "存檔槽已有新提交，未發布舊候選")
+	if not _person_pending.is_empty() and _person_generation != expected: return fail("PERSON_ALLOCATION_CONFLICT")
+	if control.has("person_allocator") and not _person_upgrade_error.is_empty(): return _person_upgrade_error
 	if float(clock.logical_game_seconds) < float(control.logical_game_seconds) - 0.00001:
 		return fail("TIME_MISMATCH", "同一世界遊戲時鐘不可倒退")
 	var next_clock := clock.duplicate(true)
@@ -807,9 +817,14 @@ func _publish(sites: Dictionary, clock: Dictionary, transfer_token: String = "",
 		for value: Dictionary in next_clock.region_gameplay.modes.values():
 			value.generation = generation
 			if not value.activation.is_empty(): value.activation.generation = generation
-	var faction_scan: Dictionary = _faction_scan(sites, next_clock, journey, next_clock.get("faction_registry", {}))
+	var faction_scan: Dictionary = _faction_scan(sites, next_clock, journey, next_clock.get("faction_registry", {}), [], true, person_allocator_enabled() or control.has("person_allocator"))
 	if not faction_scan.ok: return faction_scan
 	next_clock.faction_registry = faction_scan.registry
+	if person_allocator_enabled() or control.has("person_allocator"):
+		var prior: Dictionary = _person_pending if person_allocator_enabled() else control.person_allocator
+		var persons: Dictionary = person_migration(str(pin.world_instance_id), faction_scan.person_sources, prior)
+		if not persons.ok: return persons
+		next_clock["person_allocator"] = persons.allocator
 	var record: Dictionary = {"format": 2, "generation": generation, "pin": pin.duplicate(true), "sites": sites.duplicate(true),
 		"control": next_clock.duplicate(true), "transfer_token": transfer_token, "journey": journey.duplicate(true)}
 	if initialization_pending() and expected == 0:
@@ -822,6 +837,10 @@ func _publish(sites: Dictionary, clock: Dictionary, transfer_token: String = "",
 	if not committed.ok: return committed
 	_marker = record
 	control = next_clock
+	if next_clock.has("person_allocator"):
+		_person_pending = next_clock.person_allocator.duplicate(true)
+		_person_generation = generation
+		_person_allocation_owners.clear()
 	if initialization_pending() and generation == 1:
 		var manifested := _finish_initial_manifest()
 		if not manifested.ok:
@@ -958,7 +977,7 @@ func _transfer_pair(source_data: TerrainData, destination_data: TerrainData, boa
 		var direction := _rotate_offset(Vector2i(int(boat.facing[0]), int(boat.facing[1])), old_facing, facing)
 		poses[identity] = {"anchor": [at.x, at.y], "facing": [direction.x, direction.y]}
 	var navigation := Env.navigation_for_state(destination_data, destination_data.site)
-	var inserted := RegionTravel.insert(destination_data.site, extracted.party, navigation, anchor, destination_path,
+	var inserted: Dictionary = _insert_people(destination_data.site, extracted.party, navigation, anchor, destination_path,
 		float(control.logical_game_seconds), float(control.logical_game_seconds),
 		{"generation": int(_marker.get("generation", 0)) + 1, "family_transfer_guard": region_family_transfer_guard, "vehicle_poses": poses})
 	if not inserted.ok: return inserted
@@ -2472,6 +2491,7 @@ func _ground_destination(geography: TerrainData, seconds: float) -> Dictionary:
 	if fresh and settled.ok and not _marker.is_empty() and settled.data.site.get("fire_settlement", {}).is_empty() and _fire_history_empty(settled.data.site):
 		settled.data.site.fire_settlement = {"version": 1, "epoch": str(control.fire_clock.epoch), "sequence": int(control.fire_clock.sequence),
 			"action_seconds": float(control.fire_clock.action_seconds), "game_seconds": float(control.logical_game_seconds)}
+	if settled.ok: attach_person_allocator(settled.data)
 	return settled
 
 func _ground_surfaces(source_data: TerrainData, destination_data: TerrainData, request: Dictionary) -> Dictionary:
@@ -2524,7 +2544,7 @@ func _ground_transfer_pair(source_data: TerrainData, destination_data: TerrainDa
 	if extracted.party.person_ids.size() != 1 or extracted.party.person_ids[0] != identity \
 			or not extracted.party.vehicle_ids.is_empty(): return fail("RELATION_OPEN", "原細格跨界僅接單一獨立Actor")
 	var nav := Env.navigation_for_state(destination_data, destination_data.site)
-	var inserted := RegionTravel.insert(destination_data.site, extracted.party, nav, request.to_cell, destination_path,
+	var inserted: Dictionary = _insert_people(destination_data.site, extracted.party, nav, request.to_cell, destination_path,
 		float(control.logical_game_seconds), float(control.logical_game_seconds),
 		{"generation": int(_marker.get("generation", 0)) + 1, "family_transfer_guard": region_family_transfer_guard})
 	if not inserted.ok: return inserted
@@ -3321,7 +3341,7 @@ func commit_region_arrival(destination_data: TerrainData, bind_guard: Callable =
 	var generation := int(_marker.get("generation", 0)) + 1
 	var path := _generation_path(generation, to)
 	var nav := Env.navigation_for_state(destination_data, destination_data.site)
-	var inserted := RegionTravel.insert(destination_data.site, party, nav, location.entry, path,
+	var inserted: Dictionary = _insert_people(destination_data.site, party, nav, location.entry, path,
 		float(status.departure_game_seconds), float(control.logical_game_seconds),
 		{"generation": generation, "family_transfer_guard": region_family_transfer_guard, "vehicle_poses": location.vehicle_poses})
 	if not inserted.ok: return inserted
@@ -3336,7 +3356,7 @@ func commit_region_arrival(destination_data: TerrainData, bind_guard: Callable =
 		if not npc_location.get("ok", false) or not npc_location.get("entry") is Vector2i:
 			return fail("INVALID_JOINT_ENDPOINT", "同刻NPC須自己的真入界位置")
 		var npc_nav := Env.navigation_for_state(destination_data, inserted.state)
-		var placed := RegionTravel.insert(inserted.state, npc, npc_nav, npc_location.entry, path,
+		var placed: Dictionary = _insert_people(inserted.state, npc, npc_nav, npc_location.entry, path,
 			float(region_registry().parties[npc_token].departure_game_seconds), float(control.logical_game_seconds),
 			{"generation": generation, "family_transfer_guard": region_family_transfer_guard,
 			"vehicle_poses": npc_location.get("vehicle_poses", {})})
@@ -3530,6 +3550,7 @@ func _admit_world_pin(data: TerrainData) -> Dictionary:
 		if int(pin.get("format", 0)) != 1: return fail("MISSING_WORLD_PIN", "新世界 Site 缺固定科技政策")
 		data.site.world_pin = pin.duplicate(true) # Verified old slot only, empty policy.
 	if not _same_pin(data.site.world_pin, pin): return fail("TECH_POLICY_CONFLICT", "Site 原世界政策與存檔槽不同")
+	attach_person_allocator(data)
 	return {"ok": true}
 
 ## allow_entered reads an entered party's last frozen document (its stable
@@ -3843,7 +3864,7 @@ func prepare_npc_region_arrival(event: Dictionary) -> Dictionary:
 	var fire_capture := _capture_transfer_fire_snapshots(lab.terrain, destination)
 	if not fire_capture.ok: return fire_capture
 	var nav := Env.navigation_for_state(lab.terrain, destination)
-	var inserted := RegionTravel.insert(destination, party, nav, entry, to_path,
+	var inserted: Dictionary = _insert_people(destination, party, nav, entry, to_path,
 		float(reference.departure_game_seconds), float(control.logical_game_seconds),
 		insertion_options)
 	if not inserted.ok: return inserted
@@ -4768,7 +4789,7 @@ func retry_region_arrival(options: Dictionary = {}) -> Dictionary:
 	var generation := int(_marker.get("generation", 0)) + 1
 	var path := _generation_path(generation, status.destination)
 	var nav := Env.navigation_for_state(destination.data, destination.data.site)
-	var placed := RegionTravel.insert(destination.data.site, loaded.party, nav, entry, path,
+	var placed: Dictionary = _insert_people(destination.data.site, loaded.party, nav, entry, path,
 		float(status.departure_game_seconds), float(control.logical_game_seconds),
 		{"generation": generation, "family_transfer_guard": region_family_transfer_guard, "vehicle_poses": poses})
 	if not placed.ok: return placed
@@ -5061,7 +5082,7 @@ func prepare_region_mode_stop() -> Dictionary:
 	if not destination.ok: return destination
 	var generation := int(_marker.get("generation", 0)) + 1
 	var nav := Env.navigation_for_state(destination.data, destination.data.site)
-	var admitted := RegionTravel.insert(destination.data.site, candidate, nav, entry, _generation_path(generation, status.site),
+	var admitted: Dictionary = _insert_people(destination.data.site, candidate, nav, entry, _generation_path(generation, status.site),
 		float(status.departure_game_seconds), float(control.logical_game_seconds),
 		{"generation": generation, "family_transfer_guard": region_family_transfer_guard, "vehicle_poses": poses})
 	if not admitted.ok: return admitted
@@ -6918,7 +6939,7 @@ func prepare_region_live_party(event: Dictionary) -> Dictionary:
 		original_ship = _region_install_live_ship_moves(npc_projected.party, npc_world, npc_frame)
 		if not original_ship.ok: return original_ship
 		npc_projected.party = original_ship.party
-		var joined := RegionTravel.join_party(candidate, npc_projected.party, int(player.proof.generation) + 1)
+		var joined: Dictionary = RegionTravel.join_party(candidate, npc_projected.party, int(player.proof.generation) + 1, person_allocator_enabled())
 		if not joined.ok: return joined
 		candidate = joined.party
 		incoming = {"token": npc_token, "source_party": npc.party, "proof": npc.proof, "mapping": joined.mapping,
@@ -6988,7 +7009,7 @@ func region_live_party_candidate_proof(token: String, candidate: Dictionary, pro
 		if index == 0:
 			expected = projected.party
 		else:
-			var joined := RegionTravel.join_party(expected, projected.party, int(base.generation) + 1)
+			var joined: Dictionary = RegionTravel.join_party(expected, projected.party, int(base.generation) + 1, person_allocator_enabled())
 			if not joined.ok: return joined
 			mapping = joined.mapping
 			if mapping != proof.get("mapping"): return fail("INVALID_PARTY_JOIN_MAPPING")
@@ -11368,17 +11389,17 @@ func _faction_summary(state: Dictionary, owner: String, at: Variant, runtime_rev
 func _faction_site_key(checksum: String, site: Vector2i, path: String) -> String:
 	return _faction_cache_context() + ":site:" + _site_key(site) + ":" + path + ":" + checksum
 
-func _faction_site_source(path: String, site: Vector2i, checksum: String) -> Dictionary:
+func _faction_site_source(path: String, site: Vector2i, checksum: String, with_persons: bool = false) -> Dictionary:
 	var key: String = _faction_site_key(checksum, site, path)
 	var present: bool = _faction_source_cache.has(key)
 	var cached: Dictionary = _faction_cached(key)
-	if not cached.is_empty(): return cached
+	if not cached.is_empty() and (not with_persons or _person_source_cache.has(key)): return cached
 	if not _faction_digest_valid(checksum): return fail("CORRUPT_SAVE", "faction source checksum")
 	if not FileAccess.file_exists(path):
 		Store.invalidate_faction_summary_path(path)
 		return fail("CORRUPT_SAVE", "faction source file missing")
 	var shared_record: Dictionary = _faction_static_site_record(path, site, checksum) if _faction_static_original_validator() else {}
-	if _faction_static_reading and not present and not shared_record.is_empty():
+	if not with_persons and _faction_static_reading and not present and not shared_record.is_empty():
 		var shared: Dictionary = _faction_static_site_cached(shared_record)
 		if not shared.is_empty():
 			if _faction_file_sha256(path) != checksum:
@@ -11397,6 +11418,7 @@ func _faction_site_source(path: String, site: Vector2i, checksum: String) -> Dic
 	# by multiplying the independently accumulated minute/phase projection.
 	var source_context: Dictionary = loaded.data.site.get("region_snapshot", {}).get("context", {})
 	var source_seconds: float = float(source_context.game_seconds) if not source_context.is_empty() else _site_seconds(loaded.data)
+	if with_persons: _remember_person_source(key, person_projection(loaded.data.site))
 	var summarized: Dictionary = _faction_summary(loaded.data.site, str(loaded.data.site.id), source_seconds, RegionFactionQuery.whole_or_null(source_context.get("runtime_revision")))
 	if not summarized.ok:
 		Store.invalidate_faction_summary_path(path)
@@ -11419,6 +11441,7 @@ func _faction_remember_captured_source(path: String, site: Vector2i, checksum: S
 	# This immutable file was just validated; retain its actual capture clock.
 	var summarized: Dictionary = _faction_summary(data.site, str(data.site.id), context.game_seconds, RegionFactionQuery.whole_or_null(context.get("runtime_revision")))
 	if not summarized.ok: return summarized
+	if person_allocator_enabled(): _remember_person_source(_faction_site_key(checksum, site, path), person_projection(data.site))
 	return _faction_remember(_faction_site_key(checksum, site, path), summarized.summary)
 
 func _faction_source_receipt_seconds(summary: Dictionary, checksum: String, generation: Variant, previous: Dictionary, clock: Dictionary) -> Variant:
@@ -11467,16 +11490,21 @@ func _faction_read_party(path: String) -> Dictionary:
 	if party.get("kind") != "travel_party" or party.get("controller") not in ["player", "npc"]: return fail("CORRUPT_SAVE", "party original controller/kind")
 	return {"ok": true, "party": party}
 
-func _faction_party_source(path: String, checksum: String) -> Dictionary:
+func _faction_party_source(path: String, checksum: String, with_persons: bool = false) -> Dictionary:
 	var key: String = _faction_cache_context() + ":party:" + path + ":" + checksum
 	var cached: Dictionary = _faction_cached(key)
-	if not cached.is_empty(): return cached
+	if not cached.is_empty() and (not with_persons or _person_source_cache.has(key)): return cached
 	if not _faction_digest_valid(checksum): return fail("CORRUPT_SAVE", "faction source checksum")
 	if not FileAccess.file_exists(path): return fail("CORRUPT_SAVE", "faction source file missing")
 	var loaded: Dictionary = _faction_read_party(path)
 	if _faction_file_sha256(path) != checksum: return fail("CORRUPT_SAVE", "faction party changed during validation")
 	if not loaded.ok: return loaded
 	var party: Dictionary = loaded.party
+	if with_persons:
+		var projection: Dictionary = person_projection(party.content)
+		for local: String in party.get("arrival_mapping", {}).get("maps", {}).get("person", {}):
+			if int(local) != int(party.arrival_mapping.maps.person[local]): projection["pending_remap"] = true
+		_remember_person_source(key, projection)
 	var summarized: Dictionary = _faction_summary(party.content, str(party.party_id), party.get("upkeep", {}).get("at"))
 	if not summarized.ok: return summarized
 	summarized.summary.controller = str(party.controller)
@@ -11514,8 +11542,9 @@ func _faction_joined_destination(token: String, clock: Dictionary, journey: Dict
 		token = next
 	return fail("FACTION_SCAN_INCOMPLETE", "joined destination chain")
 
-func _faction_scan(sites: Dictionary, clock: Dictionary, journey: Dictionary, previous: Dictionary, reserved: Array = [], include_legacy: bool = true) -> Dictionary:
+func _faction_scan(sites: Dictionary, clock: Dictionary, journey: Dictionary, previous: Dictionary, reserved: Array = [], include_legacy: bool = true, with_persons: bool = false) -> Dictionary:
 	var states: Array[Dictionary] = []
+	var person_sources: Array = []
 	var receipts: Array[Dictionary] = []
 	var coordinates := {}
 	if include_legacy:
@@ -11535,9 +11564,10 @@ func _faction_scan(sites: Dictionary, clock: Dictionary, journey: Dictionary, pr
 		var checksum: String = str(entry.get("sha256", "")) if not entry.is_empty() else _faction_file_sha256(path)
 		if not _faction_digest_valid(checksum): return fail("CORRUPT_SAVE", "faction source checksum")
 		if not entry.is_empty() and (not str(entry.get("path", "")).begins_with("generations/") or not str(entry.path).ends_with(".json") or str(entry.path).contains("..") or str(entry.path).contains("\\") or str(entry.path).split("/").size() != 2): return fail("CORRUPT_SAVE", "faction source path")
-		var loaded: Dictionary = _faction_site_source(path, coordinate, checksum)
+		var loaded: Dictionary = _faction_site_source(path, coordinate, checksum, with_persons)
 		if not loaded.ok: return loaded
 		states.append(loaded.summary.live)
+		if with_persons: person_sources.append({"projection": _person_source_cache[_faction_site_key(checksum, coordinate, path)], "location": {"kind": "site", "id": str(loaded.summary.owner)}})
 		var prefix: Variant = path.get_file().split("_")[0]
 		var source_generation: Variant = int(prefix) if not entry.is_empty() and prefix.length() == 20 and prefix.is_valid_int() else 0 if entry.is_empty() else null
 		receipts.append({"owner": str(loaded.summary.owner), "source_generation": RegionFactionQuery.whole_or_null(source_generation), "runtime_revision": RegionFactionQuery.whole_or_null(loaded.summary.runtime_revision), "checksum": checksum, "as_of_game_seconds": _faction_source_receipt_seconds(loaded.summary, checksum, source_generation, previous, clock), "complete": true})
@@ -11556,7 +11586,7 @@ func _faction_scan(sites: Dictionary, clock: Dictionary, journey: Dictionary, pr
 		var path: String = str(reference.get("party_path", ""))
 		var checksum: String = str(reference.get("party_sha256", ""))
 		if not path.begins_with("travel/") or path.contains("..") or path.contains("\\") or not _faction_digest_valid(checksum): return fail("CORRUPT_SAVE", "faction party checksum/path")
-		var loaded: Dictionary = _faction_party_source(folder.path_join(path), checksum)
+		var loaded: Dictionary = _faction_party_source(folder.path_join(path), checksum, with_persons)
 		if not loaded.ok: return loaded
 		var summary: Dictionary = loaded.summary
 		if str(reference.get("token", summary.owner)) != str(summary.owner): return fail("CORRUPT_SAVE", "faction party token")
@@ -11567,6 +11597,19 @@ func _faction_scan(sites: Dictionary, clock: Dictionary, journey: Dictionary, pr
 		if seen.has(selected_key): continue
 		seen[selected_key] = true
 		states.append(summary.historical if historical else summary.live)
+		if with_persons:
+			var person_key: String = _faction_cache_context() + ":party:" + folder.path_join(path) + ":" + checksum
+			var persons: Dictionary = _person_source_cache[person_key]
+			if not historical:
+				for local: String in reference.get("arrival_mapping", {}).get("maps", {}).get("person", {}):
+					if int(local) != int(reference.arrival_mapping.maps.person[local]):
+						persons = persons.duplicate(true)
+						persons["pending_remap"] = true
+			if historical:
+				persons = persons.duplicate(true)
+				persons.bodies = []
+				persons.erase("pending_remap")
+			person_sources.append({"projection": persons, "location": {"kind": "party", "id": str(summary.owner)}})
 		receipts.append({"owner": "party:" + str(summary.owner), "source_generation": null, "runtime_revision": null, "checksum": checksum, "as_of_game_seconds": summary.at, "complete": true})
 	# Battle participant fields and remote claims are projected by their original registry/Sites.
 	var political_ids := {}
@@ -11574,7 +11617,9 @@ func _faction_scan(sites: Dictionary, clock: Dictionary, journey: Dictionary, pr
 	if not battle_ids.ok: return battle_ids
 	var all_reserved: Array = reserved.duplicate()
 	for id: String in political_ids: all_reserved.append(int(id))
-	return RegionFactionQuery.migration(states, receipts, all_reserved, previous, float(clock.logical_game_seconds), true)
+	var result: Dictionary = RegionFactionQuery.migration(states, receipts, all_reserved, previous, float(clock.logical_game_seconds), true)
+	if result.ok: result["person_sources"] = person_sources
+	return result
 
 ## Explicit mapping only. Optional original nation record creates a new nation;
 ## existing legacy records are bound without changing membership or offices.
@@ -11818,3 +11863,211 @@ func _check_author_initial_state(data: TerrainData, record: Dictionary, coordina
 	var fire: Dictionary = validate_fire_settlement(state, record.control.get("fire_clock", {}))
 	if not settled.ok or settled.legacy or float(settled.pending) != 0.0 or not fire.ok or int(record.control.fire_clock.sequence) != 0 or float(record.control.fire_clock.action_seconds) != 0.0: return fail("INVALID_INITIAL_GENERATION")
 	return {"ok": true, "data": data, "coordinate": coordinate, "path": path}
+
+# World identity is an index over original Site/party bodies, never a second body store.
+const PERSON_ID_LIMIT := 2147483647
+const PERSON_RESERVED_ID := 1000000000
+var _person_pending: Dictionary = {}
+var _person_upgrade_error: Dictionary = {}
+var _person_allocation_owners: Array[String] = []
+var _person_scope := ""
+var _person_nonce := ""
+var _person_generation: int = -1
+var _person_source_cache: Dictionary = {}
+
+func _remember_person_source(key: String, projection: Dictionary) -> void:
+	if _person_source_cache.size() >= FACTION_SOURCE_CACHE_LIMIT and not _person_source_cache.has(key): _person_source_cache.erase(_person_source_cache.keys()[0])
+	_person_source_cache[key] = projection
+
+static func person_allocator_empty(world: String) -> Dictionary:
+	return {"version": 1, "world_instance_id": world, "next_person_id": 1, "aliases": {}, "locations": {}}
+
+static func person_allocator_valid(value: Variant, world: String) -> bool:
+	if not value is Dictionary or value.size() != 5 or not _whole(value.get("version"), 1, 1) or world.is_empty() or value.get("world_instance_id") != world or not _whole(value.get("next_person_id"), 1, PERSON_ID_LIMIT) or int(value.next_person_id) == PERSON_RESERVED_ID or not value.get("aliases") is Dictionary or not value.get("locations") is Dictionary: return false
+	var inverse: Dictionary = {}
+	for key: Variant in value.aliases:
+		if not key is String or not _whole(value.aliases[key], 1, PERSON_ID_LIMIT - 1) or int(value.aliases[key]) == PERSON_RESERVED_ID or int(value.aliases[key]) >= int(value.next_person_id): return false
+		var parsed: Variant = JSON.parse_string(key)
+		if not parsed is Array or parsed.size() != 3 or parsed[0] != "person" or not parsed[1] is String or str(parsed[1]).is_empty() or not RegionTravel._identity_integer(parsed[2], 1, RegionTravel.MAX_IDENTITY_SEQUENCE): return false
+		if RegionTravel.stable_key({"type": "person", "namespace": parsed[1], "lineage": parsed[2]}) != key or inverse.has(str(int(value.aliases[key]))): return false
+		inverse[str(int(value.aliases[key]))] = key
+	for key: Variant in value.locations:
+		if not key is String or not key.is_valid_int() or str(int(key)) != key or int(key) < 1 or int(key) >= int(value.next_person_id) or int(key) == PERSON_RESERVED_ID: return false
+		var location: Variant = value.locations[key]
+		if not location is Dictionary or location.size() != 2 or location.get("kind") not in ["site", "party"] or not location.get("id") is String or str(location.id).is_empty(): return false
+	return true
+
+static func person_range(value: Dictionary, count: int, floor_id: int = 1) -> Dictionary:
+	if not person_allocator_valid(value, str(value.get("world_instance_id", ""))) or count < 0 or count > PERSON_ID_LIMIT or floor_id < 1 or floor_id > PERSON_ID_LIMIT: return fail("INVALID_PERSON_ALLOCATOR")
+	var begin: int = maxi(int(value.next_person_id), floor_id)
+	if begin <= PERSON_RESERVED_ID and begin + count > PERSON_RESERVED_ID or begin == PERSON_RESERVED_ID: begin = PERSON_RESERVED_ID + 1
+	if begin + count > PERSON_ID_LIMIT: return fail("PERSON_ID_EXHAUSTED")
+	var ids: Array[int] = []
+	for offset: int in count: ids.append(begin + offset)
+	var candidate: Dictionary = value.duplicate(true)
+	candidate.next_person_id = begin + count
+	if int(candidate.next_person_id) == PERSON_RESERVED_ID: candidate.next_person_id = PERSON_RESERVED_ID + 1
+	if not person_allocator_valid(candidate, str(value.world_instance_id)): return fail("INVALID_PERSON_ALLOCATOR")
+	return {"ok": true, "allocator": candidate, "ids": ids}
+
+static func person_projection(state: Dictionary) -> Dictionary:
+	var bodies: Dictionary = RegionTravel._body_records(state)
+	var refs: Dictionary = state.get("travel_identity", {}).get("refs", {}).get("person", {})
+	var rows: Array[Dictionary] = []
+	for id: int in bodies:
+		rows.append({"id": id, "alias": RegionTravel.stable_key(refs[str(id)]) if refs.has(str(id)) else ""})
+	var aliases: Dictionary = {}
+	for id: String in refs: aliases[RegionTravel.stable_key(refs[id])] = int(id)
+	return {"bodies": rows, "aliases": aliases, "next_person_id": int(state.get("next_person_id", 1))}
+
+static func person_migration(world: String, sources: Array, previous: Dictionary = {}) -> Dictionary:
+	var candidate: Dictionary = person_allocator_empty(world) if previous.is_empty() else previous.duplicate(true)
+	if not person_allocator_valid(candidate, world): return fail("INVALID_PERSON_ALLOCATOR")
+	for raw: Variant in sources:
+		if not raw is Dictionary: return fail("PERSON_SCAN_INCOMPLETE")
+	var inverse: Dictionary = {}
+	for key: String in candidate.aliases: inverse[str(int(candidate.aliases[key]))] = key
+	candidate.locations = {}
+	# Current bodies establish the number; historical local numbers never overwrite that alias.
+	for source_record: Dictionary in sources:
+		if not source_record.get("projection") is Dictionary or not source_record.get("location") is Dictionary: return fail("PERSON_SCAN_INCOMPLETE")
+		var projection: Dictionary = source_record.projection
+		if projection.get("pending_remap", false): return fail("PERSON_MIGRATION_PENDING")
+		if not _whole(projection.get("next_person_id"), 1, PERSON_ID_LIMIT) or not projection.get("bodies") is Array or not projection.get("aliases") is Dictionary: return fail("PERSON_SCAN_INCOMPLETE")
+		candidate.next_person_id = maxi(int(candidate.next_person_id), int(projection.get("next_person_id", 1)))
+		for raw: Variant in projection.bodies:
+			if not raw is Dictionary or not raw.get("alias", "") is String: return fail("PERSON_SCAN_INCOMPLETE")
+			var row: Dictionary = raw
+			if not _whole(row.get("id"), 1, PERSON_ID_LIMIT - 1) or int(row.id) == PERSON_RESERVED_ID: return fail("INVALID_PERSON_ID")
+			var id: String = str(int(row.id))
+			var alias: String = str(row.get("alias", ""))
+			if candidate.locations.has(id): return fail("PERSON_ID_COLLISION", id)
+			if alias.is_empty() and inverse.has(id): return fail("PERSON_ALIAS_UNRESOLVED", id)
+			if not alias.is_empty():
+				if candidate.aliases.has(alias) and int(candidate.aliases[alias]) != int(id): return fail("PERSON_ID_REMAP_REQUIRED", alias)
+				if inverse.has(id) and inverse[id] != alias: return fail("PERSON_ID_COLLISION", id)
+				candidate.aliases[alias] = int(id)
+				inverse[id] = alias
+			candidate.locations[id] = source_record.location.duplicate(true)
+			candidate.next_person_id = maxi(int(candidate.next_person_id), int(id) + 1)
+	for source_record: Dictionary in sources:
+		for alias: Variant in source_record.projection.aliases:
+			if not alias is String or not _whole(source_record.projection.aliases[alias], 1, PERSON_ID_LIMIT - 1): return fail("INVALID_PERSON_ID")
+			if candidate.aliases.has(alias): continue
+			var id: int = int(source_record.projection.aliases[alias])
+			if candidate.locations.has(str(id)) and not inverse.has(str(id)): return fail("PERSON_ALIAS_UNRESOLVED", str(id))
+			if inverse.has(str(id)) and inverse[str(id)] != alias: return fail("PERSON_ID_COLLISION", str(id))
+			candidate.aliases[alias] = id
+			inverse[str(id)] = alias
+			candidate.next_person_id = maxi(int(candidate.next_person_id), id + 1)
+	if int(candidate.next_person_id) == PERSON_RESERVED_ID: candidate.next_person_id = PERSON_RESERVED_ID + 1
+	if not person_allocator_valid(candidate, world): return fail("INVALID_PERSON_ALLOCATOR")
+	return {"ok": true, "allocator": candidate}
+
+func person_allocator_enabled() -> bool:
+	return not _person_pending.is_empty() and _person_upgrade_error.is_empty()
+
+func person_allocator_view() -> Dictionary:
+	return _person_pending.duplicate(true)
+
+func prepare_person_migration() -> Dictionary:
+	var scan: Dictionary = _faction_scan(_marker.get("sites", {}), control, _marker.get("journey", {}), faction_registry_view(), [], true, true)
+	if not scan.ok: return scan
+	return person_migration(str(pin.world_instance_id), scan.person_sources, control.get("person_allocator", {}))
+
+func _open_person_allocator(prepare_new: bool) -> Dictionary:
+	var scope: String = folder + ":" + str(pin.world_instance_id)
+	if _person_scope != scope:
+		_person_scope = scope
+		_person_nonce = Crypto.new().generate_random_bytes(16).hex_encode()
+		_person_pending = {}
+		_person_generation = -1
+		_person_source_cache.clear()
+		_person_upgrade_error = {}
+		_person_allocation_owners.clear()
+	var generation: int = int(_marker.get("generation", 0))
+	if not _person_pending.is_empty() and _person_generation != generation:
+		if not _person_allocation_owners.is_empty():
+			_person_upgrade_error = fail("PERSON_ALLOCATION_CONFLICT")
+			return _person_upgrade_error
+		_person_pending = {}
+		_person_upgrade_error = {}
+	if person_allocator_enabled(): return {"ok": true}
+	var prepared: Dictionary
+	if _marker.is_empty() and prepare_new:
+		var sources: Array = []
+		for pair: Array in source.author_initial_context().get("expected_initial_sites", []):
+			var initial: Dictionary = source.project_terrain(Vector2i(int(pair[0]), int(pair[1])), "author_initial")
+			if not initial.ok: return initial
+			var projection: Dictionary = person_projection(initial.data.site)
+			if projection.bodies.is_empty(): projection.next_person_id = 1
+			sources.append({"projection": projection, "location": {"kind": "site", "id": str(initial.data.site.get("id", initial.base.site_id))}})
+		prepared = person_migration(str(pin.world_instance_id), sources)
+	else: prepared = prepare_person_migration()
+	if not prepared.ok:
+		_person_upgrade_error = prepared.duplicate(true)
+		# Legacy collision refuses only upgrade; its original world still opens.
+		return prepared if prepare_new or control.has("person_allocator") else {"ok": true, "upgrade_refused": prepared}
+	_person_pending = prepared.allocator
+	_person_generation = generation
+	_person_upgrade_error = {}
+	return {"ok": true}
+
+func attach_person_allocator(data: TerrainData) -> void:
+	if data == null: return
+	if data.site.has("world_pin") and not _same_pin(data.site.world_pin, pin): return
+	var ticket: Dictionary = {"scope": _person_scope, "world_instance_id": str(pin.world_instance_id), "nonce": _person_nonce}
+	data.set_meta(&"world_person_allocator", Callable(self, "allocate_person_ids").bind(ticket))
+
+func allocate_person_ids(count: int, data: TerrainData, floor_id: int = 1, ticket: Dictionary = {}) -> Array[int]:
+	var empty: Array[int] = []
+	if ticket.get("scope") != _person_scope or ticket.get("world_instance_id") != pin.get("world_instance_id") or ticket.get("nonce") != _person_nonce: return empty
+	if data != null and data.site.has("world_pin") and not _same_pin(data.site.world_pin, pin): return empty
+	if not person_allocator_enabled() or data == null: return empty
+	var base: Variant = data.parameters.get("fixed_base")
+	if not base is Dictionary or not base.get("site") is Array or base.site.size() != 2 or not _whole(base.site[0], -2147483648, 2147483647) or not _whole(base.site[1], -2147483648, 2147483647): return empty
+	if not _matches_base(base, Vector2i(int(base.site[0]), int(base.site[1]))): return empty
+	var generation: int = int(_marker.get("generation", 0))
+	var recovered: Dictionary = _recover_control()
+	if not recovered.ok or int(_marker.get("generation", 0)) != generation or _person_generation != generation:
+		_person_upgrade_error = fail("PERSON_ALLOCATION_CONFLICT")
+		return empty
+	var prepared: Dictionary = person_range(_person_pending, count, floor_id)
+	if not prepared.ok: return empty
+	_person_pending = prepared.allocator
+	_person_allocation_owners.append(str(data.site.id))
+	return prepared.ids
+
+func person_allocation_checkpoint() -> Dictionary:
+	return {"scope": folder, "nonce": _person_nonce, "generation": int(_marker.get("generation", 0)), "pending_generation": _person_generation, "allocator": _person_pending.duplicate(true), "owners": _person_allocation_owners.size()}
+
+func rollback_person_allocation(checkpoint: Dictionary, allowed_owners: Array = []) -> bool:
+	if checkpoint.get("scope") != folder or checkpoint.get("nonce") != _person_nonce or int(checkpoint.get("generation", -1)) != int(_marker.get("generation", 0)) or int(checkpoint.get("pending_generation", -2)) != _person_generation or (not _person_pending.is_empty() and _person_generation != int(_marker.get("generation", 0))) or not checkpoint.get("allocator") is Dictionary: return false
+	var begin: int = int(checkpoint.get("owners", -1))
+	if begin < 0 or begin > _person_allocation_owners.size(): return false
+	for owner: String in _person_allocation_owners.slice(begin):
+		if not allowed_owners.is_empty() and owner not in allowed_owners: return false
+	_person_pending = checkpoint.allocator.duplicate(true)
+	_person_allocation_owners.resize(begin)
+	return true
+
+func person_reference(person_id: int) -> Dictionary:
+	if not person_allocator_enabled() or not _person_pending.locations.has(str(person_id)): return {}
+	return {"world_instance_id": str(pin.world_instance_id), "person_id": person_id}
+
+func resolve_person_reference(reference: Dictionary) -> Dictionary:
+	if reference.size() != 2 or reference.get("world_instance_id") != pin.get("world_instance_id") or not _whole(reference.get("person_id"), 1, PERSON_ID_LIMIT - 1) or int(reference.person_id) == PERSON_RESERVED_ID or not person_allocator_enabled(): return fail("INVALID_PERSON_REF")
+	var id: String = str(int(reference.person_id))
+	var typed: Dictionary = {}
+	for key: String in _person_pending.aliases:
+		if int(_person_pending.aliases[key]) != int(reference.person_id): continue
+		var parts: Array = JSON.parse_string(key)
+		typed = {"type": parts[0], "namespace": parts[1], "lineage": int(parts[2])}
+		break
+	if not _person_pending.locations.has(id) and typed.is_empty(): return fail("UNKNOWN_PERSON_REF")
+	return {"ok": true, "status": "current" if _person_pending.locations.has(id) else "historical", "reference": reference.duplicate(true), "typed_ref": typed, "location": _person_pending.locations.get(id, {}).duplicate(true)}
+
+func _insert_people(state: Dictionary, party: Dictionary, nav: TerrainData, entry: Vector2i, path: String, departure: float, arrival: float, options: Dictionary = {}) -> Dictionary:
+	var settings: Dictionary = options.duplicate(true)
+	settings["preserve_person_ids"] = person_allocator_enabled()
+	return RegionTravel.insert(state, party, nav, entry, path, departure, arrival, settings)

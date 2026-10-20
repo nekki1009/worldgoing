@@ -10470,6 +10470,12 @@ func _remember_initial_world_pending(result: Dictionary, request: Dictionary, ca
 
 
 func _prepare_initial_world(candidate: RegionSaveSlot, starting_site: Vector2i, initial_scenario_id: String) -> Dictionary:
+	var checkpoint: Dictionary = candidate.person_allocation_checkpoint()
+	var result: Dictionary = _prepare_initial_world_candidate(candidate, starting_site, initial_scenario_id)
+	if not result.ok and _initial_world_birth_data == null and not candidate.rollback_person_allocation(checkpoint): return Runtime.fail("PERSON_ALLOCATION_CONFLICT")
+	return result
+
+func _prepare_initial_world_candidate(candidate: RegionSaveSlot, starting_site: Vector2i, initial_scenario_id: String) -> Dictionary:
 	var retained: Dictionary = candidate.initial_site_candidate()
 	if not retained.ok: return retained
 	if retained.has("data"):
@@ -10516,23 +10522,21 @@ func _prepare_initial_world(candidate: RegionSaveSlot, starting_site: Vector2i, 
 	return candidate.prepare_initial_site(_initial_world_birth_data)
 
 
-# P5C-S3: resident roster births for authored companion Sites. Ids continue from the start's
-# allocator and every Site ends with the same high-water mark, so person ids stay unique.
+# Original resident births use the pending World allocator; Site counters are mirrors only.
 func _author_companion_population(candidate: RegionSaveSlot, start_data: TerrainData) -> Dictionary:
 	var births: Dictionary = {}
-	var next_id: int = int(start_data.site.get("next_person_id", 1))
 	for companion: Vector2i in candidate.initial_companion_sites():
 		var projected: Dictionary = candidate.source.project_terrain(companion, "author_initial")
 		if not projected.ok: return projected
 		var data: TerrainData = projected.data
 		var rows: Array = data.site.get("residents", [])
 		if data.site.is_empty() or rows.is_empty(): continue
-		data.site["next_person_id"] = next_id
+		candidate.attach_person_allocator(data)
 		var populated: Dictionary = lab.prepare_initial_resident_roster(data)
 		if not populated.ok: return populated
 		births[companion] = populated.data
-		next_id = maxi(next_id, int(populated.data.site.get("next_person_id", next_id)))
-	start_data.site["next_person_id"] = maxi(int(start_data.site.get("next_person_id", 1)), next_id)
+	var next_id: int = int(candidate.person_allocator_view().get("next_person_id", start_data.site.get("next_person_id", 1)))
+	start_data.site["next_person_id"] = next_id
 	for companion: Vector2i in births: births[companion].site["next_person_id"] = next_id
 	return {"ok": true, "births": births}
 

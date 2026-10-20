@@ -311,7 +311,7 @@ static func boarding_departure_guard(state: Dictionary, spec: Dictionary) -> Dic
 				if int(body.get("person_id", -1)) == solo and body.has("embarked_vehicle_id"): selected.append(str(body.embarked_vehicle_id))
 	return boarding_travel_guard(state, selected)
 
-static func prepare_arrival(destination_state: Dictionary, party: Dictionary, generation: int = 0) -> Dictionary:
+static func prepare_arrival(destination_state: Dictionary, party: Dictionary, generation: int = 0, preserve_person_ids: bool = false) -> Dictionary:
 	var boarding_guard_0: Dictionary = boarding_travel_guard(party.get("content", {}))
 	if not boarding_guard_0.ok: return boarding_guard_0
 	var prepared := prepare_identity(destination_state)
@@ -364,6 +364,9 @@ static func prepare_arrival(destination_state: Dictionary, party: Dictionary, ge
 			var wanted := returning_local if not returning_local.is_empty() else str(prior_map.get(original_local, original_local))
 			if not returning_local.is_empty() and not prior.is_empty() and str(prior_map.get(original_local, "")) != wanted:
 				return fail("STALE_MAPPING", "原返鄉預留與原遠端登錄不同")
+			if preserve_person_ids and kind == "person":
+				if wanted != original_local: return fail("PERSON_ID_REMAP_REQUIRED", original_local)
+				if used.has(wanted) and returning_local.is_empty(): return fail("PERSON_ID_COLLISION", original_local)
 			if used.has(wanted) and returning_local.is_empty():
 				if not prior.is_empty(): return fail("STALE_MAPPING", "預留到站編號已被其他原資產占用")
 				var next := maxi(1, int(destination.get(ID_COUNTERS.get(kind, ""), 1)))
@@ -393,7 +396,7 @@ static func prepare_arrival(destination_state: Dictionary, party: Dictionary, ge
 ## operation reserves through the same typed arrival allocator as a Site; it
 ## neither places bodies nor retires the incoming party. Only the Slot's joint
 ## marker may publish the returned body closure and source retirement.
-static func join_party(destination_party: Dictionary, incoming_party: Dictionary, generation: int = 0) -> Dictionary:
+static func join_party(destination_party: Dictionary, incoming_party: Dictionary, generation: int = 0, preserve_person_ids: bool = false) -> Dictionary:
 	var boarding_guard_0: Dictionary = boarding_travel_guard(destination_party.get("content", {}))
 	if not boarding_guard_0.ok: return boarding_guard_0
 	var boarding_guard_1: Dictionary = boarding_travel_guard(incoming_party.get("content", {}))
@@ -434,7 +437,7 @@ static func join_party(destination_party: Dictionary, incoming_party: Dictionary
 	var state: Dictionary = destination_party.content.duplicate(true)
 	state.id = "travel:" + destination_token
 	for field: String in ID_COUNTERS.values(): state[field] = int(state.get("counters", {}).get(field, 1))
-	var prepared := prepare_arrival(state, incoming_party, generation)
+	var prepared: Dictionary = prepare_arrival(state, incoming_party, generation, preserve_person_ids)
 	if not prepared.ok: return prepared
 	var destination: Dictionary = prepared.state
 	var incoming: Dictionary = prepared.party.content.duplicate(true)
@@ -1945,7 +1948,7 @@ static func insert(destination_state: Dictionary, party: Dictionary, nav: Terrai
 		var version := int(party.content.family.get("version", 0))
 		if version not in [1, 2, 3, 4, 5] or version != 3 and not Family.validate_family(party.content.family, str(party.get("origin_site_id", ""))): return fail("INVALID_FAMILY", "旅隊必要原家族 schema 未准入")
 	var original_party := party
-	var remapped := prepare_arrival(destination_state, party, int(options.get("generation", 0)))
+	var remapped: Dictionary = prepare_arrival(destination_state, party, int(options.get("generation", 0)), bool(options.get("preserve_person_ids", false)))
 	if not remapped.ok: return remapped
 	party = remapped.party
 	var destination: Dictionary = remapped.state

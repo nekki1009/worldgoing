@@ -893,6 +893,11 @@ func _next_army_person_id() -> int:
 	return _next_army_person_id_for(terrain, combat_actors, combat_armies)
 
 func _can_allocate_army_person_ids(count: int) -> bool:
+	if terrain.has_meta(&"world_person_allocator"):
+		var allocator: Callable = terrain.get_meta(&"world_person_allocator")
+		if not allocator.is_valid(): return false
+		var slot: RegionSaveSlot = allocator.get_object()
+		return slot != null and slot.person_allocator_enabled() and RegionSaveSlot.person_range(slot.person_allocator_view(), count, _next_army_person_id()).get("ok", false)
 	var next_person := _next_army_person_id()
 	if next_person <= TerrainArmy.PLAYER_MEMBER and next_person + count >= TerrainArmy.PLAYER_MEMBER:
 		next_person = TerrainArmy.PLAYER_MEMBER + 1
@@ -4836,6 +4841,13 @@ func add_melee_trial_team(setup: Dictionary = {}) -> Dictionary:
 	return SiteRuntime.fail("NO_SPACE", "第三隊須置於敵軍旁，或遠程隊伍可在二十步內接近的合法連通空地；原兩隊及地形未修改")
 
 func _deploy_trial_teams(sides: Array[Dictionary], formations: Array, first_slot: int) -> Dictionary:
+	var slot: RegionSaveSlot = site_controller.region_slot if site_controller != null else null
+	var checkpoint: Dictionary = slot.person_allocation_checkpoint() if slot != null else {}
+	var result: Dictionary = _deploy_trial_teams_candidate(sides, formations, first_slot)
+	if not result.ok and slot != null and not slot.rollback_person_allocation(checkpoint, [str(terrain.site.id)]): return SiteRuntime.fail("PERSON_ALLOCATION_CONFLICT")
+	return result
+
+func _deploy_trial_teams_candidate(sides: Array[Dictionary], formations: Array, first_slot: int) -> Dictionary:
 	var journey_guard := _ship_journey_guard()
 	if not journey_guard.ok: return journey_guard
 	if crowd_site != null:
@@ -9941,6 +9953,15 @@ func _next_army_person_id_for(source_data: TerrainData, source_actors: Array, so
 	return next_person
 
 func _allocate_army_person_ids_for(count: int, source_data: TerrainData, source_actors: Array, source_teams: Array) -> Array[int]:
+	if source_data.has_meta(&"world_person_allocator"):
+		var callback: Callable = source_data.get_meta(&"world_person_allocator")
+		if not callback.is_valid(): return []
+		var slot: RegionSaveSlot = callback.get_object()
+		if slot == null: return []
+		var issued: Array[int] = callback.call(count, source_data, _next_army_person_id_for(source_data, source_actors, source_teams))
+		if issued.size() == count:
+			source_data.site["next_person_id"] = int(slot.person_allocator_view().next_person_id)
+		return issued
 	var next_person := _next_army_person_id_for(source_data, source_actors, source_teams)
 	if next_person <= TerrainArmy.PLAYER_MEMBER and next_person + count >= TerrainArmy.PLAYER_MEMBER: next_person = TerrainArmy.PLAYER_MEMBER + 1
 	var result: Array[int] = []
@@ -10046,7 +10067,10 @@ func prepare_initial_artisan_birth(new_data: TerrainData, scenario_id: String, a
 	# Same ORIGINAL starter Actor type/identity as _ready, in a NEW namespace.
 	# Capturing it avoids carrying old-world hp/faction/skills/personality/items.
 	var starter := TerrainTestCharacter.new()
-	starter.person_id = 1
+	starter.person_id = _allocate_initial_person_id(candidate)
+	if starter.person_id < 1:
+		starter.free()
+		return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("PERSON_ID_EXHAUSTED"))
 	starter.data = candidate
 	staging.add_child(starter)
 	starter.set_process(false)
@@ -10060,6 +10084,7 @@ func prepare_initial_artisan_birth(new_data: TerrainData, scenario_id: String, a
 	var starter_items := SiteRuntime.seed_person_equipment(candidate, starter.item_state, starter.person_id, starter_state.appearance)
 	if not starter_items.ok: return _initial_artisan_birth_dispose(staging, starter_items)
 	candidate.site.actors["player"] = starter.capture_state()
+	candidate.site["controlled_person_id"] = starter.person_id
 	var born_teams: Array[TerrainArmy] = []
 	var selected: Array = []
 	for source: Dictionary in sources:
@@ -10523,7 +10548,10 @@ func prepare_fresh_initial_population(new_data: TerrainData) -> Dictionary:
 	staging.process_mode = Node.PROCESS_MODE_DISABLED
 	add_child(staging)
 	var starter := TerrainTestCharacter.new()
-	starter.person_id = 1
+	starter.person_id = _allocate_initial_person_id(candidate)
+	if starter.person_id < 1:
+		starter.free()
+		return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("PERSON_ID_EXHAUSTED"))
 	starter.data = candidate
 	staging.add_child(starter)
 	starter.set_process(false)
@@ -10534,13 +10562,13 @@ func prepare_fresh_initial_population(new_data: TerrainData) -> Dictionary:
 	# starting clothes before the original owner creates any equipment.
 	snapshot.appearance.parts.cape = "none"
 	starter.restore_state(snapshot)
-	var equipped := SiteRuntime.seed_person_equipment(candidate, starter.item_state, 1, snapshot.appearance)
+	var equipped : Dictionary = SiteRuntime.seed_person_equipment(candidate, starter.item_state, starter.person_id, snapshot.appearance)
 	if not equipped.ok: return _initial_artisan_birth_dispose(staging, equipped)
 	candidate.site["actors"] = {"player": starter.capture_state()}
 	candidate.site["armies"] = []
 	candidate.site["actor_presence_version"] = 1
-	candidate.site["controlled_person_id"] = 1
-	candidate.site["next_person_id"] = maxi(2, int(candidate.site.get("next_person_id", 1)))
+	candidate.site["controlled_person_id"] = starter.person_id
+	candidate.site["next_person_id"] = maxi(starter.person_id + 1, int(candidate.site.get("next_person_id", 1)))
 	candidate.site["army_next_team"] = maxi(1, int(candidate.site.get("army_next_team", 1)))
 	for checked: Dictionary in [SiteStore._validate_actors(candidate, candidate.site), SiteStore._validate_person_allocator(candidate.site), SiteStore._validate_items(candidate, candidate.site), SiteStore._validate_cape_roles(candidate.site)]:
 		if not checked.ok: return _initial_artisan_birth_dispose(staging, checked)
@@ -15055,3 +15083,14 @@ func _advance_original_shared_step(elapsed: float, replay_target: float = -1.0,
 			view.set_loops([])
 			view.discard_batch()
 	return result
+
+func _allocate_initial_person_id(candidate: TerrainData) -> int:
+	if not candidate.has_meta(&"world_person_allocator"): return 1
+	var callback: Callable = candidate.get_meta(&"world_person_allocator")
+	if not callback.is_valid(): return -1
+	var slot: RegionSaveSlot = callback.get_object()
+	if slot == null: return -1
+	var issued: Array[int] = callback.call(1, candidate, 1)
+	if issued.size() != 1: return -1
+	candidate.site["next_person_id"] = int(slot.person_allocator_view().next_person_id)
+	return issued[0]

@@ -589,6 +589,7 @@ static func navigation_for_state(data: TerrainData, state: Dictionary) -> Terrai
 	for field: String in ["size", "height_levels", "surface_types", "flags", "cliff_drops", "ramp_edges", "detail_variation", "spawn_cell", "preset", "seed_value", "parameters", "fertility", "moisture", "drainage", "foundation", "groundwater", "water_kind", "water_body", "resource_base"]:
 		candidate.set(field, data.get(field))
 	candidate.site = state
+	if data.has_meta(&"world_person_allocator"): candidate.set_meta(&"world_person_allocator", data.get_meta(&"world_person_allocator"))
 	rebuild_indexes(candidate)
 	return candidate
 
