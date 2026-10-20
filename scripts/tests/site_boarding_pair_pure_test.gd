@@ -8,7 +8,7 @@ func _must(condition: bool, message: String) -> bool:
 	if condition: return true
 	if not failed:
 		failed = true
-		push_error(message)
+		push_error(message + " [hex " + message.to_utf8_buffer().hex_encode() + "]")
 	return false
 
 func _state() -> Dictionary:
@@ -34,7 +34,7 @@ func _initialize() -> void:
 	var other: Dictionary = LinkContract.query(linked, "boat_b")
 	_must(other.ok and other.linked and other.link.self.vehicle_id == "boat_b" and other.link.peer.vehicle_id == "boat_a", "B2S1_BOTH_ENDS_CLOSED")
 	_must(linked.vehicles.boat_a.naval.version == 2 and linked.vehicles.boat_b.naval.version == 2, "B2S1_NAVAL_V2_BOTH")
-	_must(LinkContract.save_guard(linked).code == "BUSY", "B2S1_SAVE_GUARD_STILL_BUSY_BEFORE_B5")
+	_must(LinkContract.save_guard(linked).ok, "B5_STEADY_LINK_ADMITTED")
 	# Stable JSON round trip keeps the same closure (numbers become floats).
 	var parsed: Variant = JSON.parse_string(JSON.stringify(linked, "", true, true))
 	if not _must(parsed is Dictionary, "B2S1_JSON_PARSE"): _finish(); return

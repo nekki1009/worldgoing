@@ -8,7 +8,7 @@ func _must(condition: bool, message: String) -> bool:
 	if condition: return true
 	if not failed:
 		failed = true
-		push_error(message)
+		push_error(message + " [hex " + message.to_utf8_buffer().hex_encode() + "]")
 	return false
 
 func _state() -> Dictionary:

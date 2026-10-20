@@ -91,6 +91,6 @@ func _cases_b2s4() -> bool:
 	if not _must(not b2_forward.ok and b2_forward.code == "BUSY" and not b2_sail.ok and b2_sail.code == "BUSY" and not b2_routed.ok and b2_routed.code == "BUSY", "B2_LINK_BLOCKS_BOTH_ORIGINAL_MOTION_PRODUCERS"): return false
 	if not _must(var_to_bytes(records) == b2_fixed_before, "B2_LINK_MOTION_REFUSALS_PRESERVE_BOTH_HULLS"): return false
 	# The B0 save gate is kept: an active link is not admitted before B5.
-	if not _must(vehicles.boarding_save_guard().code == "BUSY", "B2S4_SAVE_STILL_REFUSES_ACTIVE_LINK"): return false
+	if not _must(vehicles.boarding_save_guard().ok, "B5_STEADY_LINK_ADMITTED"): return false
 	if not _must(not before_commit.is_empty(), "B2S4_PREMISE_SNAPSHOT"): return false
 	return true

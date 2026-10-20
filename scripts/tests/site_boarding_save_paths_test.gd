@@ -51,10 +51,10 @@ func _cases_b2s5() -> bool:
 	# Committed link: the job is gone, but the B0 gate keeps every path refusing until B5.
 	actions.advance_ship_jobs(0.1)
 	if not _must(actions._jobs.is_empty() and not _no_link_b2s3(), "B2S5_PREMISE_COMMITTED"): return false
-	if not _refuse_all_b2s5(path, true): return false
+	if not _refuse_all_b2s5(path, false): return false
 	# Party-document writers call the same contract on a copy of the Site state.
 	var content: Dictionary = {"vehicles": vehicles.records().duplicate(true), "actors": {}, "armies": [], "ground_loot": {}}
-	if not _must(B2S5Contract.save_guard(content).code == "BUSY", "B2S5_PARTY_COPY_LINKED_BUSY"): return false
+	if not _must(B2S5Contract.save_guard(content).ok, "B5_PARTY_COPY_STEADY_ADMITTED: " + str(B2S5Contract.save_guard(content))): return false
 	# Same copy with the link removed (a legacy shape) passes again.
 	for identity: String in content.vehicles:
 		content.vehicles[identity].naval.erase("boarding_link")

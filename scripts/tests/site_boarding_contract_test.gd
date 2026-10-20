@@ -15,7 +15,7 @@ func _must(condition: bool, message: String) -> bool:
 	if condition: return true
 	if not b0_failed:
 		b0_failed = true
-		push_error(message)
+		push_error(message + " [hex " + message.to_utf8_buffer().hex_encode() + "]")
 		_cleanup.call_deferred(1)
 	return false
 
@@ -146,7 +146,10 @@ func _cases() -> bool:
 	if not _must(linked.vehicles[boat_id].naval.boarding_link.epoch == 7, "B0_QUERY_RETURN_ALIAS"): return false
 	linked.vehicles[boat_id].revision += 1
 	if not _must(LinkContract.query(linked, boat_id, lab.terrain).ok, "B0_EPOCH_NOT_DECK_REVISION"): return false
-	if not _reject_unchanged(linked, "BUSY"): return false
+	var crossing: Dictionary = linked.duplicate(true)
+	for identity: String in [boat_id, enemy_boat]: crossing.vehicles[identity].naval.boarding_link.crosser_id = people[0]
+	if not _must(LinkContract.save_guard(linked).ok, "B5_STEADY_LINK_ADMITTED"): return false
+	if not _reject_unchanged(crossing, "BUSY"): return false
 	for kind: String in ["version", "half", "peer", "epoch", "frame", "endpoint", "site_type", "move_type", "command_type", "facing_type", "naval_type", "naval_version", "hull_id_type", "naval_state_type", "naval_version_type"]:
 		var bad: Dictionary = _linked_state()
 		match kind:
@@ -171,7 +174,7 @@ func _cases() -> bool:
 		for vehicle: Dictionary in closing.vehicles.values(): vehicle.naval.boarding_link.state = state_name
 		var closed: Dictionary = LinkContract.query(closing, boat_id, lab.terrain)
 		if not _must(closed.ok and not closed.entrants_open, "B0_CLOSING_NO_NEW_ENTRY"): return false
-		if not _reject_unchanged(closing, "BUSY"): return false
+		if not _reject_unchanged(closing, "CORRUPT_SAVE" if state_name == "invalid" else "BUSY"): return false
 	var occupied: Dictionary = _linked_state()
 	for vehicle: Dictionary in occupied.vehicles.values(): vehicle.naval.boarding_link.crosser_id = people[0]
 	var occupied_query: Dictionary = LinkContract.query(occupied, boat_id, lab.terrain)

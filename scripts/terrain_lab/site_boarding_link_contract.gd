@@ -141,7 +141,6 @@ static func data_save_guard(data: TerrainData) -> Dictionary:
 static func save_guard(state: Dictionary, data: TerrainData = null) -> Dictionary:
 	var vehicles: Variant = state.get("vehicles", {})
 	if not vehicles is Dictionary: return Runtime.fail("CORRUPT_SAVE", "Original vehicles")
-	var active: bool = false
 	for identity: Variant in vehicles:
 		if not vehicles[identity] is Dictionary: return Runtime.fail("CORRUPT_SAVE", "Original vehicle row")
 		var naval_checked: Dictionary = _naval_guard(vehicles[identity])
@@ -150,7 +149,11 @@ static func save_guard(state: Dictionary, data: TerrainData = null) -> Dictionar
 			if not identity is String: return Runtime.fail("CORRUPT_SAVE", "Original vehicle ID")
 			var checked: Dictionary = query(state, identity, data)
 			if not checked.ok: return checked
-			active = true
+			# B5S1: only a steady link saves. An invalid record is not a steady state (sinking clears the link).
+			var link: Dictionary = vehicles[identity].naval.boarding_link
+			if str(link.state) == "invalid": return Runtime.fail("CORRUPT_SAVE", "失效接舷不得保存；沉沒時已清除")
+			if str(link.state) != "linked": return Runtime.fail("BUSY", "接舷未收束（建立或解除中）；收束後再存")
+			if int(link.crosser_id) != 0: return Runtime.fail("BUSY", "通道中仍有原人；通道結束後才存（Q7 A）")
 	var actors: Variant = state.get("actors", {})
 	var armies: Variant = state.get("armies", [])
 	var loot: Variant = state.get("ground_loot", {})
@@ -165,7 +168,7 @@ static func save_guard(state: Dictionary, data: TerrainData = null) -> Dictionar
 			if not row is Dictionary: return Runtime.fail("CORRUPT_SAVE", "Original person row")
 			var checked: Dictionary = position_guard(row)
 			if not checked.ok: return checked
-	return Runtime.fail("BUSY", "Boarding link persistence not admitted before B5") if active else Runtime.ok()
+	return Runtime.ok()
 
 ## B2S1 pure pair constructor. It copies the state and writes only the two
 ## original naval records; it starts no person job, UI or NPC order. A linked

@@ -40,6 +40,36 @@ func _reach_b4s3(container: Dictionary) -> String:
 		out += " " + str(identity) + " nearest=" + str(nearest) + " reach=" + str(Ship.CHANNEL_REACH)
 	return out
 
+## Item holders of the settled loot container and of the item records they name.
+func _holder_diag_b5(container: Dictionary) -> String:
+	var records: Dictionary = lab.terrain.site.get("item_records", {})
+	var out: String = " container_holder=" + str(container.get("holder", "")) + " items="
+	for identity: Variant in container.get("item_ids", []):
+		out += "[" + str(identity) + " -> " + str(records.get(str(identity), {}).get("holder", "MISSING")) + " held_by=" + _holder_scan_b5e(str(identity)) + "]"
+	return out
+
+## Every holder whose item_ids (or equipped values) list this item.
+func _holder_scan_b5e(item: String) -> String:
+	var site: Dictionary = lab.terrain.site
+	var found: Array = []
+	for identity: Variant in site.get("vehicles", {}):
+		var holder: Variant = site.vehicles[identity].get("holder", {})
+		if holder is Dictionary and holder.get("item_ids", []).has(item): found.append("vehicle:" + str(identity))
+	for key: Variant in site.get("ground_loot", {}):
+		if site.ground_loot[key].get("item_ids", []).has(item): found.append("ground:" + str(key))
+	for key: Variant in site.get("actors", {}):
+		var state: Variant = site.actors[key].get("item_state", {})
+		if state is Dictionary and state.get("item_ids", []).has(item): found.append("actor:" + str(key))
+	for team: TerrainArmy in lab.combat_armies:
+		for row: Dictionary in team.combat_units:
+			var state: Variant = row.get("item_state", {})
+			if state is Dictionary and state.get("item_ids", []).has(item): found.append("live_unit:" + str(row.get("person_id", "?")))
+	for army: Variant in site.get("armies", []):
+		for unit: Variant in army.get("units", []):
+			var state: Variant = unit.get("item_state", {})
+			if state is Dictionary and state.get("item_ids", []).has(item): found.append("snapshot_unit:" + str(unit.get("person_id", "?")))
+	return str(found)
+
 func _cases_b4s2_path() -> bool:
 	var vehicles: Variant = lab.site_controller.vehicles
 	var actions: Variant = lab.site_controller.person_actions
@@ -73,5 +103,6 @@ func _cases_b4s2_path() -> bool:
 	var checked: Dictionary = StoreChannelPath._validate_ship_loot_location(lab.terrain, lab.terrain.site, found, container)
 	if not _must(checked.ok, "B4S2P_STORE_VALID: " + str(checked)): return false
 	# Saving stays refused while the link is still active (B5 gate); the body is no longer pending.
+	lab.site_controller._capture_for_save()
 	var stored: Dictionary = StoreChannelPath.save(lab.terrain, "user://b4s2_channel_death.json", null, false, {}, true)
-	return _must(str(stored.get("code", "")) == "BUSY", "B4S2P_SAVE_BUSY_WHILE_LINKED: " + str(stored))
+	return _must(bool(stored.get("ok", false)), "B5_SETTLED_DEATH_SAVE_ADMITTED: " + str(stored) + _holder_diag_b5(container))

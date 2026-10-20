@@ -676,6 +676,7 @@ static func load_site(path: String = DEFAULT_PATH, fixed_base_loader: Callable =
 		if not region_loaded.ok: return region_loaded
 		if payload.state.has("crowd"): return Runtime.fail("REGION_BACKEND_UNADMITTED")
 		preserve_simulation = true
+	_normalize_boarding_numbers(payload.state)
 	var validation := _validate_state(data, payload.state, crowd_workers, null, region_loaded.get("context", {}))
 	if not validation.ok:
 		return validation
@@ -1168,6 +1169,42 @@ static func _normalize_portable_lineage(value: Variant) -> void:
 		for key: Variant in value: _normalize_portable_lineage(value[key])
 	elif value is Array:
 		for entry: Variant in value: _normalize_portable_lineage(entry)
+
+## B5E: JSON numbers load as floats. Integral floats in the vehicle and boarding link integer fields become int
+## at the load boundary, before the contract's exact-type checks. Non-integral values are left untouched.
+static func _normalize_boarding_numbers(state: Dictionary) -> void:
+	var vehicles: Variant = state.get("vehicles", {})
+	if not vehicles is Dictionary: return
+	for identity: Variant in vehicles:
+		var vehicle: Variant = vehicles[identity]
+		if not vehicle is Dictionary: continue
+		var naval: Variant = vehicle.get("naval")
+		if not naval is Dictionary: continue
+		var link: Variant = naval.get("boarding_link")
+		if not link is Dictionary: continue
+		_int_field_b5e(vehicle, "cell")
+		_int_field_b5e(vehicle, "revision")
+		if vehicle.get("facing") is Array:
+			for index: int in range(vehicle.facing.size()): _int_index_b5e(vehicle.facing, index)
+		_int_field_b5e(naval, "version")
+		_int_field_b5e(naval, "link_epoch")
+		_int_field_b5e(link, "version")
+		_int_field_b5e(link, "epoch")
+		_int_field_b5e(link, "crosser_id")
+		for frame_key: String in ["frame", "peer_frame"]:
+			var frame: Variant = link.get(frame_key)
+			if not frame is Dictionary: continue
+			for key: String in ["anchor", "facing"]:
+				var values: Variant = frame.get(key)
+				if values is Array:
+					for index: int in range(values.size()): _int_index_b5e(values, index)
+
+static func _int_field_b5e(holder: Dictionary, key: String) -> void:
+	if holder.has(key) and (holder[key] is float) and is_finite(holder[key]) and holder[key] == floorf(holder[key]): holder[key] = int(holder[key])
+
+static func _int_index_b5e(values: Array, index: int) -> void:
+	var value: Variant = values[index]
+	if (value is float) and is_finite(value) and value == floorf(value): values[index] = int(value)
 
 static func _normalize_state(state: Dictionary) -> void:
 	Trade.normalize_snapshot(state)
@@ -3986,7 +4023,7 @@ static func _validate_ship_vehicle(data: TerrainData, state: Dictionary, identit
 static func _validate_ship_naval(data: TerrainData, state: Dictionary, vehicle: Dictionary) -> Dictionary:
 	if not vehicle.has("naval"): return Runtime.ok() # Known original v1 hulls remain valid.
 	var naval: Variant = vehicle.naval
-	if not naval is Dictionary or naval.size() != 4 + int(naval.has("boarding_link")) + int(naval.has("link_epoch")) or not _integer(naval.get("version"), 1, 1) or not _number(naval.get("hp"), 0.0, ShipDefs.hull_hp(str(vehicle.ship_type))) or not naval.get("state") is String or naval.state not in ["afloat", "sinking", "wrecked"] or not naval.get("repair") is Dictionary:
+	if not naval is Dictionary or naval.size() != 4 + int(naval.has("boarding_link")) + int(naval.has("link_epoch")) or not _integer(naval.get("version"), 1, 2) or not _number(naval.get("hp"), 0.0, ShipDefs.hull_hp(str(vehicle.ship_type))) or not naval.get("state") is String or naval.state not in ["afloat", "sinking", "wrecked"] or not naval.get("repair") is Dictionary:
 		return Runtime.fail("CORRUPT_SAVE", "船體耐久／狀態版本非法")
 	if (str(naval.state) == "afloat") != (float(naval.hp) > 0.0): return Runtime.fail("CORRUPT_SAVE", "船體耐久與沉船狀態不符")
 	var repair_validation: Dictionary = Runtime.validate_ship_repair(data, vehicle, state)

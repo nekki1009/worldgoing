@@ -87,6 +87,8 @@ func _cases() -> bool:
 	if not _must(region.ok, "B0_STABLE_REGION_CAPTURE: " + str(region)): return false
 	var original: Dictionary = lab.terrain.site.duplicate(true)
 	var linked: Dictionary = _linked_state()
+	# B5: a steady link is admitted; the unsettled case here has a crosser in the channel (Q7 A).
+	for identity: String in [boat_id, enemy_boat]: linked.vehicles[identity].naval.boarding_link.crosser_id = people[0]
 	# Original record mutation only in this isolated fixture, no producer enabled.
 	for identity: String in [boat_id, enemy_boat]: lab.terrain.site.vehicles[identity].naval = linked.vehicles[identity].naval.duplicate(true)
 	if not _four_gates("BUSY"): return false
