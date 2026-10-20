@@ -76,8 +76,83 @@ func _author_place(editor: Variant, site: Vector2i, static_data: Dictionary, sta
 	if not placed.ok: return {"ok": false, "stage": "place " + kind + " " + str(placed)}
 	return {"ok": true, "state": placed.state, "feature": str(placed.feature)}
 
+# --- P5C-S4D (D2): first arrival at the configured companion. The departure, route, bind, advance and
+# arrival steps are the ones region_travel_test.gd uses (_solo_trip, _bind_original_travel_host,
+# _original_party_route, _prove_route, _complete_original_travel), adapted to this author world:
+# the route proof reads the author-initial projection of each Site, as the Region producer does for
+# an unvisited authored world (region_route.gd: unvisited authored worlds use the initial projection).
+const OriginalTravelPanel = preload("res://scripts/region_lab/region_travel_panel.gd")
+var original_travel_panel: OriginalTravelPanel
+
+func _d2_bind(slot: RegionSaveSlot) -> bool:
+	if is_instance_valid(original_travel_panel): original_travel_panel.free()
+	original_travel_panel = OriginalTravelPanel.new()
+	original_travel_panel.process_mode = Node.PROCESS_MODE_DISABLED
+	original_travel_panel.visible = false
+	root.add_child(original_travel_panel)
+	original_travel_panel.slot = slot
+	var selected: Dictionary = slot.region_travel_party()
+	if not _pass("D2 the panel reads the exact committed party (" + str(selected.get("code", "")) + ")", selected.ok): return false
+	var hosted: Dictionary = original_travel_panel._ensure_original_adapter_host(selected.party)
+	return _pass("D2 the actual original panel binds its shared-step host (" + str(hosted.get("code", "")) + ")", hosted.ok and slot.region_original_travel_interval.is_valid() and slot.region_original_party_progress.is_valid())
+
+func _d2_route(slot: RegionSaveSlot, source: RegionData, from: Vector2i, component: int, to: Vector2i) -> Dictionary:
+	var selected: Dictionary = slot.region_travel_party()
+	if not selected.ok: return selected
+	var prepared: Dictionary = slot.prepare_region_route_context(null, selected.party)
+	if not prepared.ok: return prepared
+	var context: Dictionary = prepared.context
+	var current: Dictionary = slot.region_travel_status()
+	if not current.get("vehicle_poses", {}).is_empty():
+		context.capabilities.vehicle_poses = current.vehicle_poses.duplicate(true)
+	var search: RegionRoute.Search = RegionRoute.Search.new()
+	search.source = source
+	search.start_site = from
+	search.start_component = component
+	search.goal_site = to
+	search.context = context
+	return search.run()
+
+# Independent oracle, as in region_travel_test.gd _prove_route, on the author-initial projection.
+func _d2_prove(source: RegionData, steps: Array) -> bool:
+	var built: Dictionary = {}
+	var fetch: Callable = func(site: Vector2i) -> TerrainData:
+		if not built.has(site):
+			var made: Dictionary = source.project_terrain(site, "author_initial")
+			built[site] = made.data if made.ok else null
+		return built[site]
+	var entry := Vector2i(-1, -1)
+	for index: int in range(1, steps.size()):
+		var a: Dictionary = steps[index - 1]
+		var b: Dictionary = steps[index]
+		var from: Vector2i = Vector2i(int(a.site[0]), int(a.site[1]))
+		var to: Vector2i = Vector2i(int(b.site[0]), int(b.site[1]))
+		var exit_edge: int = RegionRoute.opposite(int(b.edge))
+		var left: TerrainData = fetch.call(from)
+		var right: TerrainData = fetch.call(to)
+		if not _pass("D2 route Sites project through the author-initial projection", left != null and right != null): return false
+		var out_cell: Vector2i = RegionTerrainAdapter.boundary_cell(exit_edge, int(b.offset))
+		var in_cell: Vector2i = RegionTerrainAdapter.boundary_cell(int(b.edge), int(b.offset))
+		var direction: Vector2i = TerrainData.DIRECTIONS[exit_edge]
+		var pair: Dictionary = RegionSaveSlot.boundary_pair(from, out_cell, direction)
+		if not _pass("D2 crossing %s to %s is an original boundary pair" % [str(from), str(to)], pair.ok and pair.site == to and pair.cell == in_cell): return false
+		if not _pass("D2 crossing %s to %s is passable under the original rule" % [str(from), str(to)], RegionSaveSlot.boundary_surfaces_can_step(RegionSaveSlot.boundary_surface(left, out_cell), RegionSaveSlot.boundary_surface(right, in_cell), direction)): return false
+		if entry != Vector2i(-1, -1) and entry != out_cell and left.path_between(entry, out_cell).is_empty():
+			return _pass("D2 leg inside %s has an original path" % str(from), false)
+		entry = in_cell
+	return true
+
+func _d2_complete(slot: RegionSaveSlot, until_ms: int) -> bool:
+	while Time.get_ticks_msec() <= until_ms:
+		var advanced: Dictionary = slot.advance_region_travel(1000)
+		# PENDING asks the caller to call again (the original budgeted catch-up), bounded by until_ms.
+		if not advanced.ok and str(advanced.get("code", "")) == "PENDING": continue
+		if not advanced.ok: return _pass("D2 original travel consumer advances (" + str(advanced.get("code", "")) + ")", false)
+		if bool(advanced.arrived): return true
+	return _pass("D2 original travel finishes before its bounded deadline", false)
+
 func _run() -> void:
-	create_timer(300.0).timeout.connect(func() -> void: push_error("P5CS3B_TIMEOUT"); quit(1))
+	create_timer(540.0).timeout.connect(func() -> void: push_error("P5CS3B_TIMEOUT"); quit(1))
 	folder = "user://map_editor_author_world_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
 	var made: Error = DirAccess.make_dir_recursive_absolute(folder)
 	if not _check(made == OK, "fixture folder"): return
@@ -201,6 +276,39 @@ func _run() -> void:
 	for coordinate: Vector2i in index.sites: summaries.append(reopened_slot.building_summary(coordinate))
 	var combined: Dictionary = RegionSaveSlot.aggregate_building_summaries(summaries)
 	if not _pass("D1 the overview aggregate counts one visited Site, not two (" + str(combined.get("visited_sites", "?")) + ")", combined.ok and int(combined.visited_sites) == 1): return
+	# D2: first arrival at the configured companion through the real Region travel path (see the helpers
+	# above). The player departs the start Site alone, the committed plan carries the player to the companion,
+	# and the arrival opens the companion for the first time. Then visited must hold after a reopen.
+	var travel_controller: SiteController = lab.site_controller
+	var travel_slot: RegionSaveSlot = travel_controller.region_slot
+	var d2_from: Vector2i = travel_controller._current_region_site()
+	var d2_departed: Dictionary = RegionTravelSite.depart(travel_controller)
+	if not _pass("D2 the player departs the start Site through the real Region departure (" + str(d2_departed.get("code", "")) + ")", d2_departed.ok): return
+	if not _d2_bind(travel_slot): return
+	var d2_router: RegionData = RegionData.new()
+	if not _pass("D2 the route producer loads the same package", bool(d2_router.load_manifest(str(exported.path)).ok)): return
+	var d2_route: Dictionary = _d2_route(travel_slot, d2_router, d2_from, int(travel_slot.region_travel_status().component), companion)
+	if not _pass("D2 the real route producer finds the start-to-companion leg (" + str(d2_route.get("code", "")) + ")", d2_route.ok): return
+	if not _d2_prove(d2_router, d2_route.steps): return
+	if not _pass("D2 the committed plan admits the route", travel_slot.set_region_travel_plan(d2_route.steps).ok): return
+	if not _d2_complete(travel_slot, Time.get_ticks_msec() + 360000): return
+	travel_slot.checkpoint_region_travel()
+	var d2_arrived: Dictionary = travel_controller.open_fixed_world(str(exported.path), world, "main", Vector2i(-1, -1), false)
+	if not d2_arrived.ok:
+		# P5CS4E diagnostic: which layer returns the code. open_site is the layer the arrival calls for a saved destination.
+		var d2_probe: Dictionary = travel_slot.open_site(companion)
+		push_error("P5CS4E arrival result: " + str(d2_arrived) + " | open_site probe: " + str(d2_probe))
+	if not _pass("D2 the arrival opens the companion through the real arrival (" + str(d2_arrived.get("code", "")) + ": " + str(d2_arrived.get("message", "")) + ")", d2_arrived.ok): return
+	_freeze(lab)
+	var arrived_slot: RegionSaveSlot = lab.site_controller.region_slot
+	if not _pass("D2 the player stands on the companion Site", lab.site_controller._current_region_site() == companion): return
+	if not _pass("D2 cold catch-up: the companion keeps its residents on arrival", RegionTravel._body_records(lab.terrain.site).size() >= 2): return
+	if not _pass("D2 the companion is visited after its first arrival, the start still visited", arrived_slot.is_visited(companion) and arrived_slot.is_visited(at)): return
+	var d2_saved: Dictionary = lab.site_controller.save_to(lab.site_controller.save_path)
+	if not _pass("D2 the arrived world saves", d2_saved.ok): return
+	var d2_reopened: Dictionary = lab.site_controller.open_fixed_world(str(exported.path), world, "main", Vector2i(-1, -1), false)
+	if not _pass("D2 the saved arrival reopens without a rebirth (" + str(d2_reopened.get("code", "")) + ")", d2_reopened.ok): return
+	if not _pass("D2 visited is durable after the reopen", lab.site_controller.region_slot.is_visited(companion)): return
 	# C4: a companion resident whose house does not exist refuses the open, with nothing written.
 	var broken_state: Dictionary = built_companion.state.duplicate(true)
 	broken_state["residents"] = [{"name": "丙", "faction_id": 1, "house": "no_such_house"}]

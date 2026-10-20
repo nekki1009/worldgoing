@@ -5866,6 +5866,12 @@ func _author_companion_candidate(site: Vector2i) -> Dictionary:
 	if not genesis.ok: return genesis
 	data = genesis.data
 	if not _fire_history_empty(data.site): return fail("INVALID_NEW_SITE", "新地點已存在原火攻歷史")
+	# Explicit actor presence, as a fresh non-starter Site has it (open_site starter=false, region_save_slot.gd:885-889,
+	# site_controller.gd:9574): no resident Actor. terrain_lab.gd cold replay refuses a snapshot with neither the
+	# presence version nor a stated empty Actor set (its 5591 guard is not loosened here). Bodies stay in armies.
+	if data.site.get("actors", {}).is_empty():
+		data.site.actor_presence_version = 1
+		data.site.actors = {}
 	data.site.fire_settlement = {"version": 1, "epoch": str(control.fire_clock.epoch), "sequence": 0, "action_seconds": 0.0, "game_seconds": float(control.logical_game_seconds)}
 	return {"ok": true, "coordinate": site, "data": data}
 
