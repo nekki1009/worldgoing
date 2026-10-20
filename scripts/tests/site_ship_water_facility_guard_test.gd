@@ -67,6 +67,10 @@ func _natural_dock_probe(data: TerrainData, yard: Dictionary) -> Dictionary:
 	Env.initialize(probe,"water_facility_new_probe")
 	probe.site.inventory = data.site.inventory.duplicate()
 	probe.site.capacity = 100000
+	# Public preview_build pays through the original depot holder; the probe
+	# needs the same item storage the natural fixture initialized on data.
+	var probe_storage: Dictionary = Runtime.initialize_item_storage(probe.site)
+	if not _must_facility(probe_storage.ok,"Independent dock probe initializes original item storage: " + str(probe_storage)): return {}
 	var facing: Vector2i = Runtime.waterfront_facing(yard)
 	var shore: Vector2i = data.cell_from_index(int(yard.launch_cell))-facing
 	var options: Dictionary = {"owner_faction":0,"quarter":int(yard.quarter),"waterfront_version":1,"launch_cell":int(yard.launch_cell)}
