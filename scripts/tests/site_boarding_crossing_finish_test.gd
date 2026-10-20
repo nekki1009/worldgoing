@@ -78,16 +78,21 @@ func _cases_b3r() -> bool:
 	if not _must(_cleared_b3(live), "B3R_CANCEL_CLEARS_LINK_ON_EXIT: " + _naval_b3(live)): return false
 	if not _must(vehicles.boarding_save_guard().ok, "B3R_SAVE_RELEASED_AFTER_CLEAR"): return false
 
-	# Refusal: the target changes during the crossing. The body does not move, the crosser is released,
-	# and the link stays connected (only a closing link clears).
+	# Target changed during the crossing: the channel is no longer valid (B6, plan
+	# output/project_command_center/evidence/CC-20261014-052/BOARDING_QUESTIONS_FOR_NEKKI.md line 24, Q3 A, and
+	# BOARDING_LINK_PLAN.md line 86). The live, non-KO person is still on the supported source deck, so it
+	# walks to a reachable berth there as a real paid leg, commits, and the link clears on both ends.
+	# The body never teleports and is never returned to the target hull.
 	if not _must(_link_live_b3(), "B3R_REFUSAL_LINK"): return false
 	var back: Dictionary = actions.begin_boarding_cross(aboard, boat_id, aboard)
 	if not _must(back.ok, "B3R_REFUSAL_BEGIN: " + str(back)): return false
 	live[boat_id].revision += 1
 	if not _must(_settle_b3(actions), "B3R_REFUSAL_SETTLES: " + _state_b3(actions)): return false
-	var refused: Dictionary = last_b3
-	if not _must(not bool(refused.get("ok", true)) and str(refused.get("code", "")) == "STALE" and bool(refused.get("link_released", false)), "B3R_REFUSAL_RESULT: " + str(refused)): return false
-	if not _must(str(vehicles.ship_for_person(aboard).id) == enemy_boat and _linked_clear_b3(live, "linked"), "B3R_REFUSAL_NO_MOVE"): return false
+	var walked: Dictionary = last_b3
+	if not _must(bool(walked.get("ok", false)) and bool(walked.get("link_released", false)), "B6_WALKOUT_RESULT: " + str(walked)): return false
+	if not _must(str(vehicles.ship_for_person(aboard).id) == enemy_boat and _cleared_b3(live), "B6_WALKOUT_KEEPS_PERSON_AND_CLEARS_LINK: " + _naval_b3(live)): return false
+	# The commit section below needs a live link again; re-linked through the same contract builder as above.
+	if not _must(_link_live_b3(), "B6_RELINK_AFTER_WALKOUT"): return false
 
 	# Commit: body moves, the ledger exit is written together, and the link stays connected.
 	began = actions.begin_boarding_cross(aboard, boat_id, aboard)
@@ -98,12 +103,14 @@ func _cases_b3r() -> bool:
 	if not _must(str(vehicles.ship_for_person(aboard).id) == boat_id and _linked_clear_b3(live, "linked"), "B3R_COMMIT_MOVES_BODY_KEEPS_LINK"): return false
 
 	# Sink: the peer sinks during the crossing. The link clears on both ends; the person stays on the source hull.
+	# B6 (same plan lines as the refusal above): the surviving source deck still supports the person, so the
+	# person walks to a reachable berth there as a real paid leg instead of stopping at the paid point.
 	began = actions.begin_boarding_cross(aboard, enemy_boat, aboard)
 	if not _must(began.ok, "B3R_SINK_BEGIN: " + str(began)): return false
 	live[enemy_boat].naval.state = "wrecked"
 	live[enemy_boat].naval.hp = 0.0
 	if not _must(_settle_b3(actions), "B3R_SINK_SETTLES: " + _state_b3(actions)): return false
 	var sunk: Dictionary = last_b3
-	if not _must(not bool(sunk.get("ok", true)) and bool(sunk.get("link_released", false)), "B3R_SINK_RESULT: " + str(sunk)): return false
+	if not _must(bool(sunk.get("ok", false)) and bool(sunk.get("link_released", false)), "B6_SINK_WALKOUT_RESULT: " + str(sunk)): return false
 	if not _must(_cleared_b3(live), "B3R_SINK_CLEARS_BOTH_ENDS"): return false
 	return _must(str(vehicles.ship_for_person(aboard).id) == boat_id, "B3R_SINK_PERSON_STAYS")

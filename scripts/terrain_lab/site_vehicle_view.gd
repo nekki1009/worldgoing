@@ -160,14 +160,14 @@ func _refresh_ship(identity: String, vehicle: Dictionary) -> void:
 func _refresh_ship_loot() -> void:
 	var containers: Dictionary = lab.terrain.site.get("ground_loot", {})
 	for identity: String in _ship_loot_nodes.keys():
-		if not containers.has(identity) or not containers[identity].has("vehicle_id"):
+		if not containers.has(identity) or not (containers[identity].has("vehicle_id") or containers[identity].has("world_point")):
 			_ship_loot_nodes[identity].queue_free()
 			_ship_loot_nodes.erase(identity)
 	for identity: String in containers:
 		var container: Dictionary = containers[identity]
-		if not container.has("vehicle_id"): continue
+		if not container.has("vehicle_id") and not container.has("world_point"): continue
 		var boat: Dictionary = lab.terrain.site.get("vehicles", {}).get(str(container.get("vehicle_id", "")), {})
-		if boat.is_empty() or int(boat.get("cell", -1)) < 0 or _ship_in_journey(str(boat.get("id", ""))):
+		if not container.has("world_point") and (boat.is_empty() or int(boat.get("cell", -1)) < 0 or _ship_in_journey(str(boat.get("id", "")))):
 			if _ship_loot_nodes.has(identity): _ship_loot_nodes[identity].visible = false
 			continue
 		var point: Vector2 = lab.site_controller.vehicles.ship_loot_ground(container)

@@ -104,7 +104,7 @@ func has_active_issue(order: Dictionary = {}) -> bool:
 func boarding_save_guard() -> Dictionary:
 	# Preserve original ship_cross/ship_evac jobs and their existing busy guard.
 	for job: Dictionary in _jobs.values():
-		if str(job.get("kind", "")) == "boarding_cross" or job.has("boarding_link") or job.has("boarding_position"):
+		if bool(job.get("link_crossing", false)) or bool(job.get("link_exit", false)) or str(job.get("kind", "")) == "boarding_cross" or job.has("boarding_link") or job.has("boarding_position"):
 			return Runtime.fail("BUSY", "Original boarding job has not settled")
 	return Runtime.ok()
 
@@ -1325,13 +1325,37 @@ func settle_after_contacts() -> Array[Dictionary]:
 	_results = []
 	return results
 
+func _ship_job_owner_current(job: Dictionary) -> bool:
+	return is_same(job.get("terrain"), lab.terrain) and is_same(job.get("site_state"), lab.terrain.site)
+
 func _finish(key: String, result: Dictionary) -> void:
 	var job: Dictionary = _jobs.get(key, {})
+	if str(job.get("kind", "")) in ["ship_cross", "ship_evac"] and not _ship_job_owner_current(job):
+		# The retired job owns no state in the new Site, even when local IDs repeat.
+		_jobs.erase(key)
+		var stale: Dictionary = Runtime.fail("STALE", "Original ship job owner changed")
+		stale["executor_id"] = int(key)
+		_results.append(stale)
+		return
+	if str(job.get("kind", "")) in ["ship_cross", "ship_evac"] and not bool(job.get("link_crossing", false)):
+		lab.site_controller.vehicles.freeze_ship_job_death(job)
 	if bool(job.get("link_crossing", false)) and not bool(job.get("link_released", false)):
-		lab.site_controller.vehicles.settle_link_position(job)
-		var released: Dictionary = lab.site_controller.vehicles.release_link_crosser(job)
-		job.link_released = bool(released.ok)
-		result["link_released"] = bool(released.ok)
+		var original: Dictionary = lab.site_controller.vehicles.ship_person(int(job.executor_id))
+		if not original.is_empty() and float(original.hp) > 0.0:
+			# Failed terminal re-proof must retain the real person and paid point.
+			if not bool(result.get("ok", false)):
+				job.exit_blocked = true
+				job.link_exit = true
+				lab.site_controller.vehicles.prepare_boarding_exit(job)
+				return
+		if bool(job.get("link_exit", false)) or not original.is_empty() and original.row.has("ship_death_world"):
+			lab.site_controller.vehicles._boarding_exit_clear(job)
+			job.link_released = true
+		else:
+			lab.site_controller.vehicles.settle_link_position(job)
+			var released: Dictionary = lab.site_controller.vehicles.release_link_crosser(job)
+			job.link_released = bool(released.ok)
+		result["link_released"] = bool(job.link_released)
 	_release_work_hold(job)
 	_jobs.erase(key)
 	result["executor_id"] = int(key)
@@ -1705,6 +1729,11 @@ func _source(kind: String, identity: String) -> Dictionary:
 	var holder: Dictionary = lab.terrain.site.get("ground_loot", {}).get(identity, {})
 	if holder.is_empty():
 		return {}
+	if holder.has("world_point"):
+		var location: Dictionary = {"ship_world_version": holder.get("ship_world_version"), "world_point": holder.world_point}
+		if not Runtime.valid_ship_loot_location(lab.terrain, location): return {}
+		var point: Vector2 = lab.site_controller.vehicles.ship_loot_ground(holder)
+		return {"holder": holder, "cargo": holder.cargo, "cell": Vector2i((point / TerrainRenderer.CELL_PIXELS).floor())}
 	if holder.has("vehicle_id"):
 		if not Runtime.valid_ship_loot_location(lab.terrain, {"vehicle_id": holder.vehicle_id, "local_position": holder.get("local_position")}): return {}
 		var vehicles: Variant = lab.site_controller.vehicles
@@ -1911,6 +1940,7 @@ func _begin_ship_path_job(kind: String, query: Dictionary, requester_id: int, te
 		job.secondary_vehicle_id = str(query.target.id)
 		job.target_revision = int(query.target.revision)
 		job.berth_id = int(query.berth_id)
+		job.boarding_frames = {str(query.vehicle.id): lab.site_controller.vehicles._boarding_exit_frame(query.vehicle), str(query.target.id): lab.site_controller.vehicles._boarding_exit_frame(query.target)}
 	_jobs[str(person.id)] = job
 	return Runtime.ok("原人物開始甲板／接舷／撤岸路徑", {"seconds": float(job.duration)})
 
@@ -1969,6 +1999,10 @@ func _commit_boarding_link(key: String, job: Dictionary) -> void:
 
 func _ship_job_context(job: Dictionary) -> Dictionary:
 	var vehicles: Variant = lab.site_controller.vehicles
+	if bool(job.get("link_exit", false)):
+		var original: Dictionary = vehicles.ship_person(int(job.executor_id))
+		if original.is_empty() or not is_same(job.terrain, lab.terrain) or not is_same(job.site_state, lab.terrain.site): return Runtime.fail("STALE")
+		return Runtime.ok("", {"person": original, "vehicle": vehicles.records().get(str(job.vehicle_id), {})})
 	if str(job.kind) in ["ship_helm", "ship_walk", "ship_cross", "ship_evac"]:
 		var person: Dictionary = vehicles.ship_person(int(job.executor_id))
 		var vehicle: Dictionary = vehicles.records().get(str(job.vehicle_id), {})
@@ -1995,6 +2029,15 @@ func advance_ship_jobs(action_seconds: float) -> void:
 			_advance_ship_job(key, job, action_seconds)
 
 func _advance_ship_job(key: String, job: Dictionary, seconds: float) -> void:
+	if str(job.get("kind", "")) in ["ship_cross", "ship_evac"] and not _ship_job_owner_current(job):
+		_finish(key, Runtime.fail("STALE"))
+		return
+	if bool(job.get("link_crossing", false)):
+		var exit_check: Dictionary = lab.site_controller.vehicles.prepare_boarding_exit(job)
+		if not exit_check.ok: return
+		var original: Dictionary = lab.site_controller.vehicles.ship_person(int(job.executor_id))
+		if not original.is_empty() and float(original.hp) > 0.0:
+			if not original.owner.combat_can_act(int(original.unit)): return
 	var check := _ship_job_context(job)
 	if not check.ok:
 		_finish(key, check)
@@ -2013,6 +2056,15 @@ func _advance_ship_job(key: String, job: Dictionary, seconds: float) -> void:
 	# Original fatigue handles its no-rest state; the boat's crew work is separate.
 
 func _settle_ship_job(key: String, job: Dictionary) -> void:
+	if str(job.get("kind", "")) in ["ship_cross", "ship_evac"] and not _ship_job_owner_current(job):
+		_finish(key, Runtime.fail("STALE"))
+		return
+	if bool(job.get("link_crossing", false)):
+		var exit_check: Dictionary = lab.site_controller.vehicles.prepare_boarding_exit(job)
+		if not exit_check.ok: return
+		var original: Dictionary = lab.site_controller.vehicles.ship_person(int(job.executor_id))
+		if not original.is_empty() and float(original.hp) > 0.0:
+			if not original.owner.combat_can_act(int(original.unit)): return
 	var check := _ship_job_context(job)
 	if not check.ok:
 		_finish(key, check)
@@ -2035,11 +2087,14 @@ func _commit_ship_path(job: Dictionary) -> Dictionary:
 		var location: Dictionary = vehicles.ship_death_location(int(person.id))
 		if location.has("local_position"): person.row.ship_death_local = location.local_position
 		if location.has("channel_point"): person.row.ship_death_channel = location.duplicate(true)
+		if location.has("world_point"): person.row.ship_death_world = location.world_point.duplicate()
 		return Runtime.ok("原死亡入口保留途中物品在原船殘骸")
 	match str(job.kind):
 		"ship_helm": return vehicles.commit_ship_helm(job)
 		"ship_walk": return vehicles.commit_ship_walk(job)
-		"ship_cross": return vehicles.commit_link_crossing(job) if bool(job.get("link_crossing", false)) else vehicles.commit_ship_cross(job)
+		"ship_cross":
+			if bool(job.get("link_exit", false)): return vehicles.commit_boarding_exit(job)
+			return vehicles.commit_link_crossing(job) if bool(job.get("link_crossing", false)) else vehicles.commit_ship_cross(job)
 		"ship_evac": return vehicles.commit_ship_evacuation(job)
 	return vehicles.commit_ship_person(job)
 

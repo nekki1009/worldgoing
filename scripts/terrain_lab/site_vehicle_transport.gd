@@ -1474,7 +1474,11 @@ func ship_deck_path(identity: int, target: Vector2) -> Array[Vector2]:
 	var path: Array[Vector2] = []
 	var vehicle := ship_for_person(identity)
 	if vehicle.is_empty() or not _deck_point_free(vehicle, target, identity): return path
-	var start := ship_local_position(identity)
+	return _ship_deck_path_on(vehicle, identity, ship_local_position(identity), target)
+
+func _ship_deck_path_on(vehicle: Dictionary, identity: int, start: Vector2, target: Vector2) -> Array[Vector2]:
+	var path: Array[Vector2] = []
+	if not _deck_point_free(vehicle, start, identity) or not _deck_point_free(vehicle, target, identity): return path
 	var spec := Ship.definition(str(vehicle.ship_type))
 	var grid := AStarGrid2D.new()
 	grid.region = Rect2i(0, 0, int(spec.width) * 4 - 1, int(spec.length) * 4 - 1)
@@ -1700,6 +1704,131 @@ func _link_cross_route(identity: int, source: Dictionary, target: Dictionary, be
 	return Runtime.fail("UNREACHABLE", "甲板上沒有通往接舷邊的合法路徑")
 
 ## Free berth of the target nearest to a cell-coordinate point; -1 when none is free.
+# Frozen frame belongs to the original paid job, never a new support surface.
+func _boarding_exit_frame(vehicle: Dictionary) -> Dictionary:
+	return {"cell": vehicle.get("cell"), "facing": vehicle.get("facing", []).duplicate(), "ship_type": vehicle.get("ship_type")}
+
+func _boarding_exit_supported(job: Dictionary, identity: String, point: Vector2) -> bool:
+	var hull: Dictionary = records().get(identity, {})
+	if not ship_afloat(hull) or not hull.get("move", {}).is_empty(): return false
+	if _boarding_exit_frame(hull) != job.get("boarding_frames", {}).get(identity, {}): return false
+	var local: Vector2 = Ship.local_from_world(lab.terrain.cell_from_index(int(hull.cell)), Vector2i(int(hull.facing[0]), int(hull.facing[1])), point)
+	return Ship.deck_contains(str(hull.ship_type), local)
+
+func _boarding_exit_clear(job: Dictionary) -> void:
+	for identity: String in job.get("boarding_frames", {}):
+		var hull: Dictionary = records().get(identity, {})
+		var link: Variant = hull.get("naval", {}).get("boarding_link")
+		if not link is Dictionary or int(link.get("crosser_id", 0)) != int(job.executor_id): continue
+		hull.naval.erase("boarding_link")
+		hull.naval.version = 1
+
+## Keeps the original job and person at its paid point until a real supported exit commits.
+func prepare_boarding_exit(job: Dictionary) -> Dictionary:
+	if not is_same(job.terrain, lab.terrain) or not is_same(job.site_state, lab.terrain.site): return Runtime.fail("STALE", "Original crossing owner changed; job retained")
+	var person: Dictionary = ship_person(int(job.executor_id))
+	if person.is_empty(): return Runtime.fail("STALE", "Original person unavailable; crossing retained")
+	var point: Vector2 = _ship_job_point(job)
+	if float(person.hp) <= 0.0:
+		var source_dead: Dictionary = records().get(str(job.vehicle_id), {})
+		var target_dead: Dictionary = records().get(str(job.secondary_vehicle_id), {})
+		if bool(job.get("link_exit", false)) or not ship_afloat(source_dead) or not ship_afloat(target_dead) or _boarding_exit_frame(source_dead) != job.get("boarding_frames", {}).get(str(job.vehicle_id), {}) or _boarding_exit_frame(target_dead) != job.get("boarding_frames", {}).get(str(job.secondary_vehicle_id), {}):
+			person.row.ship_death_world = [point.x, point.y]
+		return Runtime.ok()
+	if float(person.owner.combat_hot_get(int(person.unit), &"ko", 0.0)) > 0.0: job.exit_ko = true
+	if bool(job.get("exit_ko", false)) and person.owner.patient_has_rescuer(int(person.unit)): job.exit_rescue_seen = true
+	if person.owner.combat_can_act(int(person.unit)): job.exit_ko = false
+	if bool(job.get("link_evacuation", false)):
+		if not person.owner.combat_can_act(int(person.unit)):
+			person.row.ship_death_world = [point.x, point.y]
+			_kill_ship_person(person)
+		return Runtime.ok()
+	var source: Dictionary = records().get(str(job.vehicle_id), {})
+	var target: Dictionary = records().get(str(job.secondary_vehicle_id), {})
+	var valid_pair: bool = not bool(job.get("link_exit", false)) and ship_afloat(source) and ship_afloat(target)
+	if valid_pair:
+		var queried: Dictionary = boarding_link_query(str(job.vehicle_id))
+		valid_pair = queried.ok and bool(queried.get("linked", false)) and int(source.revision) == int(job.ship_revision) and int(target.revision) == int(job.target_revision)
+	if valid_pair: return Runtime.ok()
+	# A logical link cannot stand in for a sunk, moved or deleted physical surface.
+	var supported: Array[String] = []
+	for identity: String in job.get("boarding_frames", {}):
+		if _boarding_exit_supported(job, identity, point): supported.append(identity)
+	_boarding_exit_clear(job)
+	if supported.is_empty():
+		if person.owner.combat_can_act(int(person.unit)) and not bool(job.get("exit_ko", false)):
+			var evacuation: Array[Vector2] = _ship_evacuation_path_from(point, str(job.vehicle_id))
+			if evacuation.size() >= 2:
+				var distance: float = 0.0
+				for index: int in range(1, evacuation.size()): distance += evacuation[index - 1].distance_to(evacuation[index])
+				job.kind = "ship_evac"
+				job.path = evacuation
+				job.elapsed = 0.0
+				job.speed = minf(float(job.speed), 0.5)
+				job.duration = maxf(0.000001, distance / float(job.speed))
+				job.link_exit = true
+				job.link_evacuation = true
+				job.exit_blocked = false
+				return Runtime.ok()
+		person.row.ship_death_world = [point.x, point.y]
+		_kill_ship_person(person)
+		return Runtime.ok()
+	if bool(job.get("link_exit", false)) and not bool(job.get("exit_blocked", false)) and str(job.secondary_vehicle_id) in supported and int(target.get("revision", -1)) == int(job.target_revision): return Runtime.ok()
+	for identity: String in supported:
+		var hull: Dictionary = records()[identity]
+		var start: Vector2 = Ship.local_from_world(lab.terrain.cell_from_index(int(hull.cell)), Vector2i(int(hull.facing[0]), int(hull.facing[1])), point)
+		var berth: int = _nearest_free_berth(hull, point)
+		if berth < 0: continue
+		var destination: Vector2 = Ship.local_position(str(hull.ship_type), berth)
+		var local_path: Array[Vector2] = _ship_deck_path_on(hull, int(person.id), start, destination)
+		if local_path.is_empty(): continue
+		var amount: float = Runtime.carried_load(lab.terrain.site, person.cargo, person.holder) + float(person.holder.equipped.size())
+		if identity != str(person.row.get("embarked_vehicle_id", "")) and ship_load(identity) + amount > float(capacity_of(hull)): continue
+		var path: Array = []
+		var distance: float = 0.0
+		for local: Vector2 in local_path: path.append(ship_local_ground(hull, local) / TerrainRenderer.CELL_PIXELS - Vector2.ONE * 0.5)
+		# A zero-length exit still commits at the next original settlement, never a synthetic step.
+		if path.size() == 1: path.append(path[0])
+		for index: int in range(1, path.size()): distance += path[index - 1].distance_to(path[index])
+		job.path = path
+		job.elapsed = 0.0
+		job.duration = maxf(0.000001, distance / float(job.speed))
+		job.secondary_vehicle_id = identity
+		job.target_revision = int(hull.revision)
+		job.berth_id = berth
+		job.link_exit = true
+		job.exit_blocked = false
+		return Runtime.ok()
+	# Supported but occupied: retain this exact point and original busy job, including KO.
+	job.path = [point, point]
+	job.elapsed = 0.0
+	job.duration = 0.000001
+	job.link_exit = true
+	job.exit_blocked = true
+	return Runtime.fail("BUSY", "Original supported exit has no free deck path or berth")
+
+func commit_boarding_exit(job: Dictionary) -> Dictionary:
+	var person: Dictionary = ship_person(int(job.executor_id))
+	var target: Dictionary = records().get(str(job.secondary_vehicle_id), {})
+	var point: Vector2 = _ship_job_point(job)
+	if not person.is_empty() and not person.owner.combat_can_act(int(person.unit)): return Runtime.fail("BUSY", "Original person cannot walk out while KO")
+	if person.is_empty() or not _boarding_exit_supported(job, str(job.secondary_vehicle_id), point) or int(target.revision) != int(job.target_revision) or not _ship_berth_free(target, int(job.berth_id), int(person.id)): return Runtime.fail("STALE")
+	var amount: float = Runtime.carried_load(lab.terrain.site, person.cargo, person.holder) + float(person.holder.equipped.size())
+	if str(person.row.get("embarked_vehicle_id", "")) != str(target.id) and ship_load(str(target.id)) + amount > float(capacity_of(target)): return Runtime.fail("CAPACITY")
+	var source: Dictionary = records().get(str(job.vehicle_id), {})
+	person.row.embarked_vehicle_id = str(target.id)
+	person.row.berth_id = int(job.berth_id)
+	person.row.erase("ship_deck_position")
+	if int(person.owner.team_id) != int(target.team_id): person.row.ship_guest = true
+	else: person.row.erase("ship_guest")
+	if not source.is_empty() and int(source.operator_id) == int(person.id): source.operator_id = 0
+	target.revision = int(target.revision) + 1
+	person.owner.ship_embarkation_changed(int(person.id))
+	job.link_released = true
+	var walked: Dictionary = Runtime.ok("原人沿仍有支撐的付時甲板路徑走出")
+	walked["link_released"] = true
+	return walked
+
 func _nearest_free_berth(target: Dictionary, point: Vector2) -> int:
 	var chosen: int = -1
 	var nearest: float = INF
@@ -1854,6 +1983,10 @@ func ship_evacuation_path(identity: int) -> Array[Vector2]:
 	var vehicle := ship_for_person(identity)
 	if vehicle.is_empty(): return path
 	var first := ship_person_ground(identity) / TerrainRenderer.CELL_PIXELS - Vector2.ONE * 0.5
+	return _ship_evacuation_path_from(first, str(vehicle.id))
+
+func _ship_evacuation_path_from(first: Vector2, original_vehicle_id: String) -> Array[Vector2]:
+	var path: Array[Vector2] = []
 	var source := Vector2i(first.round())
 	var queue: Array[Vector2i] = [source]
 	var previous := {source: source}
@@ -1872,7 +2005,7 @@ func ship_evacuation_path(identity: int) -> Array[Vector2]:
 			if not lab.terrain.can_water_step(cell, next): continue
 			var blocked := false
 			for other: Dictionary in records().values():
-				if str(other.id) != str(vehicle.id) and _claims(other).has(next): blocked = true; break
+				if str(other.id) != original_vehicle_id and _claims(other).has(next): blocked = true; break
 			if blocked: continue
 			previous[next] = cell
 			queue.append(next)
@@ -1922,7 +2055,7 @@ func _settle_ship_wreck(vehicle: Dictionary) -> void:
 func commit_ship_evacuation(job: Dictionary) -> Dictionary:
 	var person := ship_person(int(job.executor_id))
 	var vehicle := ship_for_person(int(job.executor_id))
-	if person.is_empty() or vehicle.is_empty(): return Runtime.fail("STALE")
+	if person.is_empty() or vehicle.is_empty() and not bool(job.get("link_evacuation", false)): return Runtime.fail("STALE")
 	if float(person.hp) <= 0.0: return Runtime.ok("死亡由原入口將物資留在殘骸")
 	var destination := Vector2i((job.path.back() as Vector2).round())
 	if not person.owner.combat_can_act(int(person.unit)) or not lab.terrain.is_walkable(destination) or _people_block(destination):
@@ -1933,7 +2066,7 @@ func commit_ship_evacuation(job: Dictionary) -> Dictionary:
 	person.row.erase("ship_deck_position")
 	person.row.erase("ship_guest")
 	person.owner.ship_disembarked(int(person.unit), destination)
-	vehicle.revision = int(vehicle.revision) + 1
+	if not vehicle.is_empty(): vehicle.revision = int(vehicle.revision) + 1
 	return Runtime.ok("原人物已沿實際水域路徑撤到合法岸格")
 
 func _kill_ship_person(person: Dictionary) -> void:
@@ -1986,6 +2119,12 @@ func ship_local_ground(vehicle: Dictionary, local: Vector2) -> Vector2:
 	return (Vector2(pose.anchor) + Vector2(-direction.y, direction.x) * local.x + direction * local.y + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
 
 func ship_person_ground(identity: int) -> Vector2:
+	var original: Dictionary = ship_person(identity)
+	if not original.is_empty() and original.row.has("ship_death_world"):
+		return (Vector2(float(original.row.ship_death_world[0]), float(original.row.ship_death_world[1])) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
+	var transit: Dictionary = controller.person_actions.job_for(identity)
+	if bool(transit.get("link_exit", false)):
+		return (_ship_job_point(transit) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
 	var vehicle := ship_for_person(identity)
 	if vehicle.is_empty() or _ship_in_journey(str(vehicle.id)) and not has_region_ship_projection(str(vehicle.id)): return Vector2(-1.0, -1.0)
 	var job: Dictionary = controller.person_actions.job_for(identity)
@@ -2000,6 +2139,11 @@ func ship_person_cell(identity: int) -> Vector2i:
 	return Vector2i((point / TerrainRenderer.CELL_PIXELS).floor())
 
 func ship_loot_ground(container: Dictionary) -> Vector2:
+	if container.has("world_point"):
+		if not Runtime.valid_ship_loot_location(lab.terrain, {"ship_world_version": container.get("ship_world_version"), "world_point": container.world_point}): return Vector2(-1, -1)
+		return (Vector2(float(container.world_point[0]), float(container.world_point[1])) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
+	if container.has("channel_point"):
+		return (Vector2(float(container.channel_point[0]), float(container.channel_point[1])) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
 	var vehicle: Dictionary = records().get(str(container.get("vehicle_id", "")), {})
 	var local: Array = container.get("local_position", [])
 	if not is_ship(vehicle) or _ship_in_journey(str(vehicle.id)) and not has_region_ship_projection(str(vehicle.id)) or local.size() != 2: return Vector2(-1.0, -1.0)
@@ -2331,7 +2475,31 @@ func update_ships(delta: float) -> void:
 		else:
 			_commit_ship_step(vehicle, path[0], facing, "reverse" if direction == -facing else "forward", bool(vehicle.command.docking) and (path.size() == 1 or not ship_contacts(vehicle).is_empty()))
 
+## Freeze only the original dead body before its paid path job can be erased as stale.
+func freeze_ship_job_death(job: Dictionary) -> void:
+	if not is_same(job.get("terrain"), lab.terrain) or not is_same(job.get("site_state"), lab.terrain.site): return
+	if str(job.get("kind", "")) not in ["ship_cross", "ship_evac"]: return
+	# An ordinary job whose source hull still exists keeps the original death closure (hull-relative clamp).
+	if not records().get(str(job.get("vehicle_id", "")), {}).is_empty(): return
+	var original: Dictionary = ship_person(int(job.executor_id))
+	if original.is_empty() or float(original.hp) > 0.0: return
+	var point: Vector2 = _ship_job_point(job)
+	if Runtime.valid_ship_world_point(lab.terrain, [point.x, point.y]): original.row.ship_death_world = [point.x, point.y]
+
 func ship_death_location(identity: int) -> Dictionary:
+	var original: Dictionary = ship_person(identity)
+	if not original.is_empty() and original.row.has("ship_death_world"):
+		return {"ship_world_version": 1, "world_point": original.row.ship_death_world.duplicate()}
+	var transit: Dictionary = controller.person_actions.job_for(identity)
+	if str(transit.get("kind", "")) in ["ship_cross", "ship_evac"]:
+		var actual: Vector2 = _ship_job_point(transit)
+		# Exact point: a link exit, a link crossing whose pair is no longer afloat, or an ordinary job whose
+		# source hull was deleted. Present ordinary hulls (afloat or wrecked) keep the original clamp below.
+		if bool(transit.get("link_exit", false)) or bool(transit.get("link_crossing", false)) and (not ship_afloat(records().get(str(transit.get("vehicle_id", "")), {})) or not ship_afloat(records().get(str(transit.get("secondary_vehicle_id", "")), {}))) or records().get(str(transit.get("vehicle_id", "")), {}).is_empty():
+			return {"ship_world_version": 1, "world_point": [actual.x, actual.y]}
+	if not original.is_empty() and original.row.has("ship_death_channel"):
+		var frozen: Dictionary = original.row.ship_death_channel
+		if not Runtime.valid_ship_loot_location(lab.terrain, frozen): return {"ship_world_version": 1, "world_point": frozen.channel_point.duplicate()}
 	var vehicle := ship_for_person(identity)
 	if vehicle.is_empty(): return {}
 	var person := ship_person(identity)
@@ -2346,6 +2514,7 @@ func ship_death_location(identity: int) -> Dictionary:
 		return {"vehicle_id": str(vehicle.id), "peer_vehicle_id": str(peer.id), "channel_point": [point.x, point.y]}
 	var local := ship_local_position(identity)
 	if str(job.get("kind", "")) in ["ship_cross", "ship_evac"]:
+		# Original ordinary cross/evac death: the hull-relative point, clamped to the source deck (HEAD behaviour).
 		local = Ship.local_from_world(lab.terrain.cell_from_index(int(vehicle.cell)), Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1])), _ship_job_point(job))
 		var spec := Ship.definition(str(vehicle.ship_type))
 		local = local.clamp(Vector2.ONE * -0.25, Vector2(float(spec.width) - 0.75, float(spec.length) - 0.75))
@@ -2354,6 +2523,8 @@ func ship_death_location(identity: int) -> Dictionary:
 func ship_death_settled(identity: int) -> void:
 	var person := ship_person(identity)
 	if person.is_empty(): return
+	var frozen: Dictionary = ship_death_location(identity)
+	if frozen.has("world_point"): person.row.ship_death_world = frozen.world_point.duplicate()
 	var vehicle := ship_for_person(identity)
 	person.row.erase("embarked_vehicle_id")
 	person.row.erase("berth_id")

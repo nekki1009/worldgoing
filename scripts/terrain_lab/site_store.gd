@@ -3829,6 +3829,10 @@ static func _validate_ship_relationships(_data: TerrainData, state: Dictionary, 
 		if body.has("ship_death_settled"):
 			if body.ship_death_settled != true or not body.ship_death_settled is bool or float(body.hp) > 0.0 or body.get("loot_settled", false) != true or body.has("embarked_vehicle_id") or body.has("berth_id"):
 				return Runtime.fail("CORRUPT_SAVE", "船上死者結算標記與原人物不符")
+		if body.has("ship_death_world"):
+			if float(body.hp) > 0.0 or not Runtime.valid_ship_world_point(_data, body.ship_death_world): return Runtime.fail("CORRUPT_SAVE", "Original ship death world point")
+			if body.get("loot_settled", false) != true: return Runtime.fail("BUSY", "Original world-point death still pending")
+			if body.get("ship_death_settled", false) != true: return Runtime.fail("CORRUPT_SAVE", "Original world-point death closure")
 		var aboard := body.has("embarked_vehicle_id")
 		if body.has("ship_deck_position") or body.has("ship_guest"):
 			if not aboard: return Runtime.fail("CORRUPT_SAVE", "甲板位置／接舷者缺少原船引用")
@@ -4033,13 +4037,16 @@ static func _validate_ship_naval(data: TerrainData, state: Dictionary, vehicle: 
 	return Runtime.ok()
 
 static func _validate_ship_loot_location(data: TerrainData, state: Dictionary, identity: Variant, container: Dictionary) -> Dictionary:
+	var world: bool = container.has("world_point")
 	var channel := container.has("channel_point")
 	var afloat := container.has("vehicle_id") or container.has("local_position") or channel
 	var fields := ["holder", "version", "item_ids", "equipped", "kind", "original_owner", "cargo"]
-	fields.append_array((["vehicle_id", "peer_vehicle_id", "channel_point"] if channel else ["vehicle_id", "local_position"]) if afloat else ["cell"])
+	fields.append_array(["ship_world_version", "world_point"] if world else ((["vehicle_id", "peer_vehicle_id", "channel_point"] if channel else ["vehicle_id", "local_position"]) if afloat else ["cell"]))
 	if container.size() != fields.size() + int(container.has("open_rations")) + int(container.has("boarding_position")) or not _serial(identity, int(state.get("next_loot", 1))): return Runtime.fail("CORRUPT_SAVE", "原遺物身分／互斥位置欄位")
 	for field: String in fields:
 		if not container.has(field): return Runtime.fail("CORRUPT_SAVE", "原遺物缺少 " + field)
+	if world:
+		return Runtime.ok() if Runtime.valid_ship_loot_location(data, {"ship_world_version": container.ship_world_version, "world_point": container.world_point}) else Runtime.fail("CORRUPT_SAVE", "Original fixed ship death point")
 	if not afloat:
 		return Runtime.ok() if _valid_cell(data, container.cell) else Runtime.fail("CORRUPT_SAVE", "原地面遺物格位")
 	if container.has("cell") or not container.vehicle_id is String or container.vehicle_id.is_empty(): return Runtime.fail("CORRUPT_SAVE", "船上遺物不留地面 cell／claim 或空船引用")

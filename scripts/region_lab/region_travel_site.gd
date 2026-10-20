@@ -308,6 +308,8 @@ static func selected_departure(controller: Node) -> Dictionary:
 		if people.has(int(flight.get("shooter_id", 0))): waiting = true
 	var mode := "sea" if controller.vehicles.is_embarked(identity) else "land"
 	spec.mode = mode
+	var boarding_guard: Dictionary = RegionTravel.boarding_departure_guard(lab.terrain.site, spec)
+	if not boarding_guard.ok: return boarding_guard
 	var site: Vector2i = controller._current_region_site()
 	var component := 0 if mode == "sea" else start_component(slot, site, Vector2i(person.cell), lab.terrain)
 	if component < 0 or component > 253: return Runtime.fail("NO_ROUTE")

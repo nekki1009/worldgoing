@@ -280,7 +280,40 @@ static func merge_lineage_counter(destination: Dictionary, incoming: Dictionary)
 	if not family is Dictionary or not family.has("lineage_id"): return
 	destination.next_lineage = maxi(int(destination.get("next_lineage", 1)), int(family.lineage_id) + 1)
 
+## Active boarding has Site-local frames and person/holder closure; coarse travel cannot carry it.
+static func boarding_travel_guard(content: Dictionary, selected_ids: Variant = null) -> Dictionary:
+	if selected_ids != null and not selected_ids is Array: return fail("INVALID", "Original selected vehicle IDs")
+	var vehicles: Variant = content.get("vehicles", {})
+	if not vehicles is Dictionary: return fail("INVALID", "Original vehicle collection")
+	for identity: Variant in vehicles:
+		if selected_ids != null and not selected_ids.has(str(identity)): continue
+		var vehicle: Variant = vehicles[identity]
+		if not vehicle is Dictionary: return fail("INVALID", "Original vehicle row")
+		var naval: Variant = vehicle.get("naval", {})
+		if not naval is Dictionary: return fail("INVALID", "Original naval record")
+		var link: Variant = naval.get("boarding_link")
+		if link != null and not (link is Dictionary and link.is_empty()):
+			return fail("BOARDING_TRAVEL_UNSUPPORTED", "接舷兩端須先收束並解除；此旅行不支援連結的 Site-local frame／原人閉包")
+	return {"ok": true}
+
+static func boarding_departure_guard(state: Dictionary, spec: Dictionary) -> Dictionary:
+	var selected: Array[String] = []
+	var raw_teams: Variant = spec.get("team_ids", [int(spec.get("team_id", 0))])
+	if not raw_teams is Array: return fail("INVALID_TEAM_CLOSURE", "Original selected teams")
+	var teams: Array = raw_teams
+	for identity: String in state.get("vehicles", {}):
+		var vehicle: Dictionary = state.vehicles[identity]
+		if int(spec.get("solo_row", -1)) <= 0 and int(spec.get("solo_actor", -1)) <= 0 and teams.has(int(vehicle.get("team_id", 0))) and int(vehicle.get("team_id", 0)) > 0: selected.append(identity)
+	var solo: int = int(spec.get("solo_row", -1))
+	if solo > 0:
+		for army: Dictionary in state.get("armies", []):
+			for body: Dictionary in army.get("units", []):
+				if int(body.get("person_id", -1)) == solo and body.has("embarked_vehicle_id"): selected.append(str(body.embarked_vehicle_id))
+	return boarding_travel_guard(state, selected)
+
 static func prepare_arrival(destination_state: Dictionary, party: Dictionary, generation: int = 0) -> Dictionary:
+	var boarding_guard_0: Dictionary = boarding_travel_guard(party.get("content", {}))
+	if not boarding_guard_0.ok: return boarding_guard_0
 	var prepared := prepare_identity(destination_state)
 	if not prepared.ok: return prepared
 	var destination: Dictionary = prepared.state
@@ -361,6 +394,10 @@ static func prepare_arrival(destination_state: Dictionary, party: Dictionary, ge
 ## neither places bodies nor retires the incoming party. Only the Slot's joint
 ## marker may publish the returned body closure and source retirement.
 static func join_party(destination_party: Dictionary, incoming_party: Dictionary, generation: int = 0) -> Dictionary:
+	var boarding_guard_0: Dictionary = boarding_travel_guard(destination_party.get("content", {}))
+	if not boarding_guard_0.ok: return boarding_guard_0
+	var boarding_guard_1: Dictionary = boarding_travel_guard(incoming_party.get("content", {}))
+	if not boarding_guard_1.ok: return boarding_guard_1
 	var destination_token := str(destination_party.get("party_id", ""))
 	var incoming_token := str(incoming_party.get("party_id", ""))
 	if destination_token.is_empty() or incoming_token.is_empty() or destination_token == incoming_token \
@@ -881,6 +918,8 @@ static func land_vehicle_operator_gap(content: Dictionary) -> Dictionary:
 
 ## Allocate original-person roles in stable order, not one pair per loop visit.
 static func prepare_transport(party: Dictionary, patient_schema: bool = true) -> Dictionary:
+	var boarding_guard_0: Dictionary = boarding_travel_guard(party.get("content", {}))
+	if not boarding_guard_0.ok: return boarding_guard_0
 	var content: Dictionary = party.content
 	var people := _body_records(content)
 	var teams := _body_teams(content)
@@ -1429,6 +1468,8 @@ static func resident_mover_guard(state: Dictionary, movers: Dictionary) -> Dicti
 	return {"ok": true}
 
 static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dictionary:
+	var boarding_guard: Dictionary = boarding_departure_guard(state, spec)
+	if not boarding_guard.ok: return boarding_guard
 	if state.has("crowd"): return fail("UNSUPPORTED", "群眾模式（Crowd）暫不支援整隊出發")
 	if state.has("family"):
 		var version := int(state.family.get("version", 0))
@@ -1898,6 +1939,8 @@ static func _sea_arrival(content: Dictionary, destination: Dictionary, nav: Terr
 ## `nav` is the destination TerrainData (with its buildings) used for placement.
 static func insert(destination_state: Dictionary, party: Dictionary, nav: TerrainData, entry: Vector2i,
 		destination_path: String, departure_seconds: float, arrival_seconds: float, options: Dictionary = {}) -> Dictionary:
+	var boarding_guard_0: Dictionary = boarding_travel_guard(party.get("content", {}))
+	if not boarding_guard_0.ok: return boarding_guard_0
 	if party.get("content", {}).has("family"):
 		var version := int(party.content.family.get("version", 0))
 		if version not in [1, 2, 3, 4, 5] or version != 3 and not Family.validate_family(party.content.family, str(party.get("origin_site_id", ""))): return fail("INVALID_FAMILY", "旅隊必要原家族 schema 未准入")

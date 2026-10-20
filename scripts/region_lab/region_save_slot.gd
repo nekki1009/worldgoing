@@ -1190,6 +1190,9 @@ func _was_cancelled(token: String) -> bool:
 	return false
 
 func prepare_ship_transfer(source_data: TerrainData, destination_site: Vector2i, boat_ids: Array[String], destination_anchor: Vector2i, destination_facing: Vector2i, edge_only: bool = false) -> Dictionary:
+	if source_data == null: return fail("INVALID", "Original source required")
+	var boarding_guard: Dictionary = RegionTravel.boarding_travel_guard(source_data.site, boat_ids)
+	if not boarding_guard.ok: return boarding_guard
 	var recovered := _recover_control()
 	if not recovered.ok: return recovered
 	if not _marker.get("journey", {}).is_empty() or not _prepared.is_empty(): return fail("BUSY", "同一存檔槽已有原船旅程")
@@ -3033,7 +3036,16 @@ func region_travel_status() -> Dictionary:
 	status.moving = not status.arrived
 	return _region_map_status_position(party, region_mode_stop_status(party, status))
 
+func _boarding_current_party_guard() -> Dictionary:
+	if region_travel_journey().is_empty(): return {"ok": true}
+	var original: Dictionary = region_travel_party()
+	if not original.ok: return original
+	return RegionTravel.boarding_travel_guard(original.party.content)
+
 func begin_region_travel(source_data: TerrainData, spec: Dictionary, start_component: int) -> Dictionary:
+	if source_data == null: return fail("INVALID", "Original source required")
+	var boarding_guard: Dictionary = RegionTravel.boarding_departure_guard(source_data.site, spec)
+	if not boarding_guard.ok: return boarding_guard
 	var recovered := _recover_control()
 	if not recovered.ok: return recovered
 	if not _marker.get("journey", {}).is_empty() or not _prepared.is_empty(): return fail("BUSY", "存檔槽已有旅程")
@@ -3195,6 +3207,8 @@ func stop_region_travel() -> Dictionary:
 ## The only clock publisher while travelling: whole peace-time steps of the
 ## fire journal (8 game seconds each), never past the route's arrival.
 func advance_region_travel(max_steps: int) -> Dictionary:
+	var boarding_guard: Dictionary = _boarding_current_party_guard()
+	if not boarding_guard.ok: return boarding_guard
 	var entry := _region_retry_blocked_land_entry()
 	if not entry.ok: return entry
 	if entry.get("complete", true) == false: return {"ok": true, "pending": true, "source": entry}
@@ -3270,6 +3284,8 @@ func checkpoint_region_travel(journey_override: Dictionary = {}) -> Dictionary:
 	return published
 
 func commit_region_arrival(destination_data: TerrainData, bind_guard: Callable = Callable(), endpoint: Dictionary = {}) -> Dictionary:
+	var boarding_guard: Dictionary = _boarding_current_party_guard()
+	if not boarding_guard.ok: return boarding_guard
 	var recovered := _recover_control()
 	if not recovered.ok: return recovered
 	var status := region_travel_status()
@@ -3760,6 +3776,8 @@ func prepare_npc_region_arrival(event: Dictionary) -> Dictionary:
 	if not region_owner_lab.is_valid() or not region_bind_candidate.is_valid(): return fail("MISSING_REGION_ADAPTER", "缺原到站 Site 與完整 bind 預檢")
 	var loaded := _region_npc_party(token)
 	if not loaded.ok: return loaded
+	var boarding_guard: Dictionary = RegionTravel.boarding_travel_guard(loaded.party.content)
+	if not boarding_guard.ok: return boarding_guard
 	var planned := _region_npc_plan(token)
 	if not planned.ok: return planned
 	var coordinate_raw: Variant = event.get("payload", {}).get("site", [])
@@ -4961,6 +4979,8 @@ func _region_player_sea_candidate(party: Dictionary, plan: Dictionary, action: D
 
 
 func advance_region_sea_travel(max_steps: int) -> Dictionary:
+	var boarding_guard: Dictionary = _boarding_current_party_guard()
+	if not boarding_guard.ok: return boarding_guard
 	if not region_original_travel_interval.is_valid() or not region_original_party_progress.is_valid():
 		return fail("MISSING_REGION_ADAPTER", "原海路須全部Site／NPC／公式／作業共同區間")
 	var before := float(control.logical_game_seconds)

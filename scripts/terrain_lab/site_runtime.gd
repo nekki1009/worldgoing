@@ -537,7 +537,7 @@ static func migrate_settled_opened_food(data: TerrainData) -> Dictionary:
 			plan.container.version = int(plan.container.version) + 1
 			plan.body.item_state.version = int(plan.body.item_state.version) + 1
 			plan.pool.open_rations = 0.0
-			data.ground_loot_dirty_rows[data.cell_from_index(int(plan.container.cell)).y] = true
+			if plan.container.has("cell"): data.ground_loot_dirty_rows[data.cell_from_index(int(plan.container.cell)).y] = true
 	return ok("原死者餘糧已併回實際遺物", {"migrated": plans.size()})
 
 static func clear_empty_ground_loot(data: TerrainData, identity: String) -> Dictionary:
@@ -551,7 +551,7 @@ static func rebuild_loot_index(data: TerrainData) -> void:
 	data.ground_loot_at.clear()
 	data.ground_loot_dirty_rows.clear()
 	for identity: String in data.site.get("ground_loot", {}):
-		if data.site.ground_loot[identity].has("vehicle_id"): continue
+		if data.site.ground_loot[identity].has("vehicle_id") or data.site.ground_loot[identity].has("world_point"): continue
 		var cell := int(data.site.ground_loot[identity].cell)
 		if not data.ground_loot_at.has(cell):
 			data.ground_loot_at[cell] = []
@@ -4481,7 +4481,13 @@ static func _valid_channel_location(data: TerrainData, location: Dictionary, veh
 	var ship = preload("res://scripts/terrain_lab/site_vehicle_ship_definitions.gd")
 	return ship.channel_point_near_pair(str(vehicle.ship_type), data.cell_from_index(int(vehicle.cell)), Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1])), str(peer.ship_type), data.cell_from_index(int(peer.cell)), Vector2i(int(peer.facing[0]), int(peer.facing[1])), Vector2(float(point[0]), float(point[1])))
 
+## Versioned fixed Site point: no live hull/peer is needed after physical support is lost.
+static func valid_ship_world_point(data: TerrainData, point: Variant) -> bool:
+	return data != null and point is Array and point.size() == 2 and (point[0] is int or point[0] is float) and (point[1] is int or point[1] is float) and is_finite(float(point[0])) and is_finite(float(point[1])) and float(point[0]) >= -0.5 and float(point[1]) >= -0.5 and float(point[0]) < float(data.size.x) - 0.5 and float(point[1]) < float(data.size.y) - 0.5
+
 static func valid_ship_loot_location(data: TerrainData, location: Dictionary) -> bool:
+	if location.has("world_point"):
+		return location.size() == 2 and location.get("ship_world_version") == 1 and valid_ship_world_point(data, location.world_point)
 	if not location.get("vehicle_id") is String: return false
 	var vehicle: Dictionary = data.site.get("vehicles", {}).get(str(location.vehicle_id), {})
 	if str(vehicle.get("kind", "")) != "ship" or int(vehicle.get("ship_version", 0)) != 1 or int(vehicle.get("definition_version", 0)) != 1: return false
