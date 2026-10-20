@@ -8,6 +8,8 @@ extends RefCounted
 const FamilyContinuity = preload("res://scripts/terrain_lab/site_family_continuity.gd")
 const EquipmentOrders = preload("res://scripts/terrain_lab/site_equipment_orders.gd")
 const MAX_BATCH := 10
+const TeamDeparture = preload("res://scripts/terrain_lab/site_team_departure.gd") # R7 C: the team seat candidate.
+const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd") # R7 C: the shared last-member refusal.
 
 ## requests: Array of {person_id: int, owner_kind: "family" | "nation", nation_id: String (nation only)}.
 static func execute(lab: Variant, requests: Array) -> Dictionary:
@@ -28,6 +30,8 @@ static func execute(lab: Variant, requests: Array) -> Dictionary:
 	var family_changed := false
 	var departures: Array = []
 	var nation_candidates: Dictionary = {}
+	var team_plans: Array = []
+	var team_seen := {}
 	for request: Variant in requests:
 		var person_id := int(request.get("person_id", 0))
 		var authority := {"kind": "npc_event", "event_id": "batch"}
@@ -46,6 +50,20 @@ static func execute(lab: Variant, requests: Array) -> Dictionary:
 			var checked_nation: Dictionary = EquipmentOrders.nation_departure_candidate(nation_now, person_id, authority, controlled)
 			if not checked_nation.get("ok", false): return {"ok": false, "code": str(checked_nation.code), "message": "整批未提交：%s" % str(checked_nation.get("message", "")), "failed": person_id}
 			nation_candidates[nation_id] = checked_nation.nation
+		elif str(request.get("owner_kind", "")) == "team":
+			var team: TerrainArmy = _team_by_id(lab, int(request.get("team_id", 0)))
+			if team == null: return {"ok": false, "code": "NO_TARGET", "message": "沒有此隊伍", "failed": person_id}
+			if team_seen.has(team.team_id): return {"ok": false, "code": "TEAM_MULTI", "message": "同一批僅能處理一隊的成員（供養計畫不互相接續）", "failed": person_id}
+			team_seen[team.team_id] = true
+			var refusal: Dictionary = team.row_membership_refusal(person_id, false, -1, true)
+			if not bool(refusal.get("ok", false)): return {"ok": false, "code": str(refusal.get("code", "BUSY")), "message": "整批未提交：%s" % str(refusal.get("message", "")), "failed": person_id}
+			var last_member: Dictionary = Runtime.team_last_member_refusal(lab.terrain, team, false)
+			if not bool(last_member.get("ok", false)): return {"ok": false, "code": "BUSY", "message": "整批未提交：先完成或取消本隊原船塢作業", "failed": person_id}
+			var supply: Dictionary = lab.site_controller.captivity_supply.membership_change_candidate(team, person_id, false)
+			if not bool(supply.get("ok", false)): return {"ok": false, "code": str(supply.get("code", "INVALID_SUSTAIN")), "message": "整批未提交：供養計畫不可提交", "failed": person_id}
+			var seats: Dictionary = TeamDeparture.vacate_seats(team.team_offices(true), person_id)
+			if not bool(seats.get("ok", false)): return {"ok": false, "code": "NO_TARGET", "message": "整批未提交：隊職位不可更新", "failed": person_id}
+			team_plans.append({"team": team, "person": person_id, "plan": supply.get("plan", {}), "changed": bool(seats.get("changed", false)), "offices": seats.offices})
 		else:
 			return {"ok": false, "code": "NO_TARGET", "message": "未知的組織種類", "failed": person_id}
 
@@ -60,4 +78,14 @@ static func execute(lab: Variant, requests: Array) -> Dictionary:
 		var target: Dictionary = site.equipment_nations[nation_id]
 		target.clear()
 		target.merge(nation_candidates[nation_id], true)
+	for plan: Dictionary in team_plans:
+		var team: TerrainArmy = plan.team
+		if not plan.plan.is_empty(): lab.site_controller.captivity_supply.membership_change_commit(plan.plan)
+		team.commit_row_membership_change(int(plan.person), false)
+		if bool(plan.changed): team.offices = plan.offices
 	return {"ok": true, "code": "", "message": "已整批離開", "count": requests.size()}
+
+static func _team_by_id(lab: Variant, team_id: int) -> TerrainArmy:
+	for team: TerrainArmy in lab.combat_armies:
+		if is_instance_valid(team) and team.team_id == team_id: return team
+	return null

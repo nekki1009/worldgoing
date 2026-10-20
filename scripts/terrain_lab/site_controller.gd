@@ -8031,8 +8031,8 @@ func cancel_ship_build(key: String, requester_id: int, preview: bool = false) ->
 func _ship_membership_change(team: TerrainArmy, identity: int, joining: bool) -> Dictionary:
 	# The same original membership transaction remains authoritative. Reject the
 	# last voluntary departure before its original supply/history mutates.
-	if not joining and team != null and team.living_member_count() <= 1 and (Runtime.ship_build_uses_team(lab.terrain, team.team_id) or Runtime.ship_repair_uses_team(lab.terrain, team.team_id)):
-		return Runtime.fail("BUSY", "先完成或取消本隊原船塢作業，再讓最後原隊員正式退隊")
+	var last_member: Dictionary = Runtime.team_last_member_refusal(lab.terrain, team, joining)
+	if not bool(last_member.get("ok", false)): return last_member
 	return captivity_supply.membership_change(team, identity, joining)
 
 func _ship_repair_q_query(identity: String) -> Dictionary:

@@ -2980,6 +2980,12 @@ static func validate_ship_build(_data: TerrainData, feature: Dictionary) -> Dict
 			return fail("CORRUPT_SAVE", "造船投入與原配方不符")
 	return ok()
 
+## R7 C2: the last voluntary departure of a team that a ship build or repair uses is refused (pure: reads the site and the team).
+static func team_last_member_refusal(data: TerrainData, team: Variant, joining: bool) -> Dictionary:
+	if not joining and team != null and team.living_member_count() <= 1 and (ship_build_uses_team(data, team.team_id) or ship_repair_uses_team(data, team.team_id)):
+		return fail("BUSY", "先完成或取消本隊原船塢作業，再讓最後原隊員正式退隊")
+	return ok()
+
 static func ship_build_uses_team(data: TerrainData, team_id: int) -> bool:
 	for feature: Dictionary in data.site.get("features", {}).values():
 		if int(feature.get("ship_build", {}).get("team_id", 0)) == team_id: return true
