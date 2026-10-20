@@ -52,8 +52,14 @@ func _remote_fixture() -> TerrainData:
 	data.site.actors = {"player": person.capture_state(), "npc": guard.capture_state()}
 	data.site.armies = []
 	data.site.controlled_person_id = 1
-	data.site.captivity = {"1": {"version": 1, "captor_id": 2, "guard_id": 2,
-		"captor_faction": 2, "sealed_container": ""}}
+	# Current (v3) shape, exactly as the one-time v2->v3 migration (site_store.gd, F02 /
+	# plan 6.1; reports/ai-office-duty-integration-v2-plan.md:239) writes it. Bind does not
+	# migrate a v3 record again, so the live record matches this fixture.
+	data.site.captivity = {"1": {"version": 3, "captor_id": 2, "guard_id": 2,
+		"captor_faction": 2, "sealed_container": "", "prison_id": "",
+		"captured_at_game_seconds": 0.0, "admitted_at_game_seconds": -1.0,
+		"episode": {"site_id": str(data.site.id), "person_id": 1, "seq": 0},
+		"legacy_observed": true, "loyal_org": null, "rank_snapshot": "unknown", "settled_days": 0}}
 	var supply := Sustain.create()
 	assert(Sustain.add_members(supply, {1: data.site.actors.player, 2: data.site.actors.npc}, [1, 2]).ok)
 	supply.cohorts[0].hunger = 7.5
