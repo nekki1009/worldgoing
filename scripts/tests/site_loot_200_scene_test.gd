@@ -59,6 +59,7 @@ func _run() -> void:
 		measurements.alive = await _frames(lab, false)
 	var death_start := Time.get_ticks_usec()
 	for team: TerrainArmy in lab.combat_armies:
+		if not team.has_army(): continue # The third original slot is an empty team, not a 100-row death owner.
 		for index in range(100):
 			team.apply_unit_contact(index, {"result": {"hp": 1000.0, "stun": 0.0, "guard_break": false}, "shield": false, "environmental": true})
 	measurements.death_dispatch_ms = (Time.get_ticks_usec() - death_start) / 1000.0
