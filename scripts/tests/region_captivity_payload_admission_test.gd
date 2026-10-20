@@ -230,10 +230,13 @@ func _payload_facts() -> Dictionary:
 	var job := actions.job_for(payload_guard)
 	# Owner aliases are compared by the full original graph, not Object instances.
 	job.erase("terrain"); job.erase("site_state")
-	return {"people": people, "job": job, "captivity": payload_owner.terrain.site.captivity.duplicate(true),
-		"episode_next": int(payload_owner.terrain.site.get("capture_episode_next", 1)), "escort_orders": payload_owner.terrain.site.escort_orders.duplicate(true),
-		"person_supply": payload_owner.terrain.site.person_supply.duplicate(true), "inventory": payload_owner.terrain.site.inventory.duplicate(true),
-		"item_records": payload_owner.terrain.site.item_records.duplicate(true), "ground_loot": payload_owner.terrain.site.ground_loot.duplicate(true)}
+	# Optional Site fields are absent until their first use (e.g. person_supply before any feeding); read
+	# them with an empty default so the snapshot is {} then, not a runtime error.
+	var site: Dictionary = payload_owner.terrain.site
+	return {"people": people, "job": job, "captivity": site.get("captivity", {}).duplicate(true),
+		"episode_next": int(site.get("capture_episode_next", 1)), "escort_orders": site.get("escort_orders", {}).duplicate(true),
+		"person_supply": site.get("person_supply", {}).duplicate(true), "inventory": site.get("inventory", {}).duplicate(true),
+		"item_records": site.get("item_records", {}).duplicate(true), "ground_loot": site.get("ground_loot", {}).duplicate(true)}
 
 func _payload_capture() -> Dictionary:
 	var context := slot.region_checkpoint_context(payload_owner.terrain, "region_checkpoint", "actual_custody_payload_observer", true, {})
