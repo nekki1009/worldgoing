@@ -250,3 +250,23 @@ static func _accepted(pair: Dictionary, self_id: String) -> Dictionary:
 	var checked: Dictionary = query(pair, self_id)
 	if not checked.ok: return checked
 	return Runtime.ok("", {"state": pair, "link_state": str(checked.link.state), "crosser_id": int(checked.link.crosser_id), "entrants_open": checked.entrants_open, "can_execute": false})
+
+## B3S1 pure crossing ledger on top of the B2S2 crosser slot. A crossing is one
+## original person moving across one linked pair. This only records who is in
+## the channel; it moves no body, row, cargo or position (B3S2+ owns that).
+static func crossing_begin(state: Dictionary, from_id: String, to_id: String, person_id: int) -> Dictionary:
+	var current: Dictionary = query(state, from_id)
+	if not current.ok: return current
+	if not current.linked: return Runtime.fail("NO_TARGET", "No boarding link")
+	var link: Dictionary = current.link
+	if str(link.peer.vehicle_id) != to_id: return Runtime.fail("NO_TARGET", "Not the linked peer hull")
+	return enter_crosser(state, from_id, person_id)
+
+static func crossing_end(state: Dictionary, from_id: String, person_id: int) -> Dictionary:
+	var current: Dictionary = query(state, from_id)
+	if not current.ok: return current
+	if not current.linked: return Runtime.fail("NO_TARGET", "No boarding link")
+	var link: Dictionary = current.link
+	if int(link.crosser_id) == 0: return Runtime.fail("NO_TARGET", "No crosser in the channel")
+	if int(link.crosser_id) != person_id: return Runtime.fail("BUSY", "Only the recorded crosser may leave the channel")
+	return leave_crosser(state, from_id)

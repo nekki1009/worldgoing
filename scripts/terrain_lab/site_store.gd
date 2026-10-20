@@ -3787,7 +3787,7 @@ static func _validate_ship_relationships(_data: TerrainData, state: Dictionary, 
 	for identity: int in people:
 		var original: Dictionary = people[identity]
 		var body: Dictionary = original.body
-		if body.has("ship_death_local"):
+		if body.has("ship_death_local") or body.has("ship_death_channel"):
 			return Runtime.fail("BUSY", "船上死亡位置仍待原死亡結算；原人與物保留")
 		if body.has("ship_death_settled"):
 			if body.ship_death_settled != true or not body.ship_death_settled is bool or float(body.hp) > 0.0 or body.get("loot_settled", false) != true or body.has("embarked_vehicle_id") or body.has("berth_id"):
@@ -3996,9 +3996,10 @@ static func _validate_ship_naval(data: TerrainData, state: Dictionary, vehicle: 
 	return Runtime.ok()
 
 static func _validate_ship_loot_location(data: TerrainData, state: Dictionary, identity: Variant, container: Dictionary) -> Dictionary:
-	var afloat := container.has("vehicle_id") or container.has("local_position")
+	var channel := container.has("channel_point")
+	var afloat := container.has("vehicle_id") or container.has("local_position") or channel
 	var fields := ["holder", "version", "item_ids", "equipped", "kind", "original_owner", "cargo"]
-	fields.append_array(["vehicle_id", "local_position"] if afloat else ["cell"])
+	fields.append_array((["vehicle_id", "peer_vehicle_id", "channel_point"] if channel else ["vehicle_id", "local_position"]) if afloat else ["cell"])
 	if container.size() != fields.size() + int(container.has("open_rations")) + int(container.has("boarding_position")) or not _serial(identity, int(state.get("next_loot", 1))): return Runtime.fail("CORRUPT_SAVE", "原遺物身分／互斥位置欄位")
 	for field: String in fields:
 		if not container.has(field): return Runtime.fail("CORRUPT_SAVE", "原遺物缺少 " + field)
@@ -4007,6 +4008,14 @@ static func _validate_ship_loot_location(data: TerrainData, state: Dictionary, i
 	if container.has("cell") or not container.vehicle_id is String or container.vehicle_id.is_empty(): return Runtime.fail("CORRUPT_SAVE", "船上遺物不留地面 cell／claim 或空船引用")
 	var vehicle: Variant = state.get("vehicles", {}).get(container.vehicle_id)
 	if not vehicle is Dictionary or vehicle.get("kind") != "ship" or not vehicle.get("ship_type") is String or not ShipDefs.is_kind(vehicle.ship_type): return Runtime.fail("CORRUPT_SAVE", "船上遺物引用不存在的船型")
+	if channel:
+		if container.has("local_position") or container.has("cell"): return Runtime.fail("CORRUPT_SAVE", "通道遺物不得同時帶地面或船內相對位置")
+		var peer: Variant = state.get("vehicles", {}).get(container.get("peer_vehicle_id"))
+		if not peer is Dictionary or peer.get("kind") != "ship" or not peer.get("ship_type") is String or not ShipDefs.is_kind(peer.ship_type): return Runtime.fail("CORRUPT_SAVE", "通道遺物的對方船不存在")
+		var point: Variant = container.channel_point
+		if not point is Array or point.size() != 2 or not _number(point[0], -1.0e9, 1.0e9) or not _number(point[1], -1.0e9, 1.0e9): return Runtime.fail("CORRUPT_SAVE", "通道遺物位置格式")
+		var near: bool = ShipDefs.channel_point_near_pair(vehicle.ship_type, data.cell_from_index(int(vehicle.cell)), Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1])), peer.ship_type, data.cell_from_index(int(peer.cell)), Vector2i(int(peer.facing[0]), int(peer.facing[1])), Vector2(float(point[0]), float(point[1])))
+		return Runtime.ok() if near else Runtime.fail("CORRUPT_SAVE", "通道遺物位置不在接舷兩船的通道範圍內")
 	var definition := ShipDefs.definition(vehicle.ship_type)
 	var position: Variant = container.local_position
 	if not position is Array or position.size() != 2 or not _number(position[0], -0.5, float(definition.width) - 0.5) or not _number(position[1], -0.5, float(definition.length) - 0.5) or float(position[0]) >= float(definition.width) - 0.5 or float(position[1]) >= float(definition.length) - 0.5:

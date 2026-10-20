@@ -174,3 +174,16 @@ static func deck_contains(kind: String, point: Vector2) -> bool:
 	var spec := definition(kind)
 	return not spec.is_empty() and point.is_finite() and point.x >= -0.25 and point.y >= -0.25 \
 		and point.x <= float(spec.width) - 0.75 and point.y <= float(spec.length) - 0.75
+
+## B4S2 (plan line 86): a channel point is a legal death location when it is within reach of either
+## hull footprint of the linked pair (cell coordinates, the frame of the crossing path). The link itself
+## is not required afterwards, so a settled channel body never depends on a link that was cleared.
+const CHANNEL_REACH: float = 2.0
+
+static func channel_point_near_pair(kind_a: String, anchor_a: Vector2i, facing_a: Vector2i, kind_b: String, anchor_b: Vector2i, facing_b: Vector2i, point: Vector2) -> bool:
+	if not is_kind(kind_a) or not is_kind(kind_b) or not valid_facing(facing_a) or not valid_facing(facing_b) or not point.is_finite(): return false
+	for cell: Vector2i in footprint(kind_a, anchor_a, facing_a):
+		if point.distance_to(Vector2(cell)) <= CHANNEL_REACH: return true
+	for cell: Vector2i in footprint(kind_b, anchor_b, facing_b):
+		if point.distance_to(Vector2(cell)) <= CHANNEL_REACH: return true
+	return false

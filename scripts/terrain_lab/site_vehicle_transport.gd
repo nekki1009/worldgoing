@@ -1611,7 +1611,9 @@ func request_boarding_unlink(identity: int, requester_id: int, test_dispatch: bo
 	if not _authorized(person.owner, requester_id, identity, test_dispatch): return Runtime.fail("NO_AUTHORITY")
 	var to_id: String = str(link.peer.vehicle_id)
 	if int(link.crosser_id) == 0: return _clear_link_b3(from_id, to_id)
-	return Runtime.fail("BUSY", "通道中有原人；收束後解除（B3R）")
+	var closed: Dictionary = close_link_for_cross({"vehicle_id": from_id, "secondary_vehicle_id": to_id})
+	if not closed.ok: return closed
+	return Runtime.ok("接舷連結已進入收束；既有通道完成後解除", {"pending": true})
 
 func commit_boarding_link(job: Dictionary) -> Dictionary:
 	var source: Dictionary = records().get(str(job.vehicle_id), {})
@@ -1638,13 +1640,22 @@ func commit_boarding_link(job: Dictionary) -> Dictionary:
 	return Runtime.ok("接舷已建立；兩船原紀錄同時寫入", {"link_id": link_id, "epoch": epoch})
 
 func ship_cross_query(identity: int, target_id: String, berth: int, requester_id: int, test_dispatch: bool = false) -> Dictionary:
+	return _cross_query(identity, target_id, berth, requester_id, test_dispatch, false)
+
+## link_path is true only for the B3S3 link-gated begin. Unlinked pairs take the same checks as before.
+func _cross_query(identity: int, target_id: String, berth: int, requester_id: int, test_dispatch: bool, link_path: bool) -> Dictionary:
 	var source := ship_for_person(identity)
 	var target: Dictionary = records().get(target_id, {})
 	var person := ship_person(identity)
 	if not ship_afloat(source) or not ship_afloat(target) or str(source.id) == target_id or person.is_empty(): return Runtime.fail("NO_TARGET")
+	# B3S2: a linked pair crosses only through the link-gated path; unlinked pairs are unchanged.
+	var linked: bool = _linked_pair(source, target)
+	if linked and not link_path: return Runtime.fail("BUSY", "接舷對只能經原接舷通道換船")
+	if link_path and not linked: return Runtime.fail("NO_TARGET", "兩船之間沒有原接舷紀錄")
 	if _region_operation_pending() or _ship_in_journey(str(source.id)) or _ship_in_journey(target_id) or not source.get("naval", {}).get("repair", {}).is_empty() or not target.get("naval", {}).get("repair", {}).is_empty(): return Runtime.fail("BUSY", "先完成兩船原旅程或岸上維修")
 	if not _authorized(person.owner, requester_id, identity, test_dispatch): return Runtime.fail("NO_AUTHORITY")
 	if bool(lab.terrain.site.get("paused", false)) or not source.move.is_empty() or not target.move.is_empty() or not ship_job(str(source.id)).is_empty() or not ship_job(target_id).is_empty() or not _ship_capable(person): return Runtime.fail("BUSY")
+	if link_path: return _link_cross_route(identity, source, target, berth, person)
 	if berth < 0:
 		for index in range(int(Ship.definition(str(target.ship_type)).max_people)):
 			if _ship_berth_free(target, index): berth = index; break
@@ -1657,6 +1668,168 @@ func ship_cross_query(identity: int, target_id: String, berth: int, requester_id
 	var amount := Runtime.carried_load(lab.terrain.site, person.cargo, person.holder) + float(person.holder.equipped.size())
 	if ship_load(target_id) + amount > float(capacity_of(target)): return Runtime.fail("CAPACITY")
 	return Runtime.ok("", {"person": person, "vehicle": source, "target": target, "berth_id": berth, "path": [first, second]})
+
+## B3R3: the link-gated route, one path in cell coordinates. Leg 1 is the existing deck walk
+## (ship_deck_path, ship-local points, the same planner ship_walk uses) from the person's current deck
+## point to the source edge cell that touches the target. Leg 2 is the cross to the nearest free target
+## berth (reserved in the job by berth_id; commit re-checks it). Refusals reuse UNREACHABLE/NO_SPACE/CAPACITY.
+func _link_cross_route(identity: int, source: Dictionary, target: Dictionary, berth: int, person: Dictionary) -> Dictionary:
+	var here := ship_person_ground(identity) / TerrainRenderer.CELL_PIXELS - Vector2.ONE * 0.5
+	var touches := _touch_cells(source, target, here)
+	if touches.is_empty(): return Runtime.fail("UNREACHABLE", "兩船沒有相鄰甲板邊")
+	var source_anchor: Vector2i = lab.terrain.cell_from_index(int(source.cell))
+	var source_facing := Vector2i(int(source.facing[0]), int(source.facing[1]))
+	for touch: Vector2i in touches:
+		var goal: Vector2 = Ship.local_from_world(source_anchor, source_facing, Vector2(touch))
+		var walk: Array[Vector2] = ship_deck_path(identity, goal)
+		if walk.is_empty(): continue
+		var route: Array = []
+		for local_point: Vector2 in walk:
+			route.append(ship_local_ground(source, local_point) / TerrainRenderer.CELL_PIXELS - Vector2.ONE * 0.5)
+		var edge: Vector2 = route.back()
+		var chosen: int = berth if berth >= 0 else _nearest_free_berth(target, edge)
+		if chosen < 0 or not _ship_berth_free(target, chosen): return Runtime.fail("NO_SPACE")
+		var destination := Ship.local_position(str(target.ship_type), chosen)
+		var second := ship_local_ground(target, destination) / TerrainRenderer.CELL_PIXELS - Vector2.ONE * 0.5
+		if edge.distance_to(second) > 1.05: return Runtime.fail("UNREACHABLE", "接舷邊與目的甲板不在合法接舷距離內")
+		if not _deck_point_free(target, destination, 0): return Runtime.fail("NO_SPACE")
+		var amount := Runtime.carried_load(lab.terrain.site, person.cargo, person.holder) + float(person.holder.equipped.size())
+		if ship_load(str(target.id)) + amount > float(capacity_of(target)): return Runtime.fail("CAPACITY")
+		route.append(second)
+		return Runtime.ok("", {"person": person, "vehicle": source, "target": target, "berth_id": chosen, "path": route})
+	return Runtime.fail("UNREACHABLE", "甲板上沒有通往接舷邊的合法路徑")
+
+## Free berth of the target nearest to a cell-coordinate point; -1 when none is free.
+func _nearest_free_berth(target: Dictionary, point: Vector2) -> int:
+	var chosen: int = -1
+	var nearest: float = INF
+	for index in range(int(Ship.definition(str(target.ship_type)).max_people)):
+		if not _ship_berth_free(target, index): continue
+		var candidate := ship_local_ground(target, Ship.local_position(str(target.ship_type), index)) / TerrainRenderer.CELL_PIXELS - Vector2.ONE * 0.5
+		if point.distance_to(candidate) < nearest:
+			nearest = point.distance_to(candidate)
+			chosen = index
+	return chosen
+
+## Source-footprint cells 4-adjacent to the target footprint, nearest to here first.
+func _touch_cells(source: Dictionary, target: Dictionary, here: Vector2) -> Array[Vector2i]:
+	var own: Array[Vector2i] = Ship.footprint(str(source.ship_type), lab.terrain.cell_from_index(int(source.cell)), Vector2i(int(source.facing[0]), int(source.facing[1])))
+	var other: Array[Vector2i] = Ship.footprint(str(target.ship_type), lab.terrain.cell_from_index(int(target.cell)), Vector2i(int(target.facing[0]), int(target.facing[1])))
+	var touches: Array[Vector2i] = []
+	for cell: Vector2i in own:
+		for peer: Vector2i in other:
+			if absi(cell.x - peer.x) + absi(cell.y - peer.y) == 1 and not touches.has(cell): touches.append(cell)
+	touches.sort_custom(func(first: Vector2i, second: Vector2i) -> bool: return here.distance_to(Vector2(first)) < here.distance_to(Vector2(second)))
+	return touches
+
+## True when either hull's original naval record names the other as its link peer.
+static func _linked_pair(source: Dictionary, target: Dictionary) -> bool:
+	var own: Variant = source.get("naval", {}).get("boarding_link")
+	if own is Dictionary and str(own.get("peer", {}).get("vehicle_id", "")) == str(target.get("id", "")): return true
+	var other: Variant = target.get("naval", {}).get("boarding_link")
+	return other is Dictionary and str(other.get("peer", {}).get("vehicle_id", "")) == str(source.get("id", ""))
+
+## B3S3: link-gated query (same checks as ship_cross_query, linked pair required).
+func ship_cross_link_query(identity: int, target_id: String, requester_id: int, test_dispatch: bool = false) -> Dictionary:
+	return _cross_query(identity, target_id, -1, requester_id, test_dispatch, true)
+
+## Enters the crosser on both link ends in one copy; writes only if the crossing ledger accepts.
+func enter_link_crosser(from_id: String, to_id: String, person_id: int) -> Dictionary:
+	var site: Dictionary = lab.terrain.site
+	var state: Dictionary = {"id": str(site.id), "vehicles": records(), "actors": site.get("actors", {}), "armies": site.get("armies", [])}
+	var entered: Dictionary = Boarding.crossing_begin(state, from_id, to_id, person_id)
+	if not entered.ok: return entered
+	var live: Dictionary = records()
+	for identity: String in [from_id, to_id]:
+		live[identity].naval = entered.state.vehicles[identity].naval.duplicate(true)
+	return Runtime.ok("", {"crosser_id": person_id})
+
+## B3S4: the original ledger state for crossing functions (copied by the callee, never returned live).
+func _boarding_link_state_b3() -> Dictionary:
+	var site: Dictionary = lab.terrain.site
+	return {"id": str(site.id), "vehicles": records(), "actors": site.get("actors", {}), "armies": site.get("armies", [])}
+
+## Writes only the naval records of the two ends, from an accepted ledger copy.
+## Writes both ends from an accepted copy. Q2 A: when the link is closing at the crossing's exit,
+## the same write clears it (boarding_link removed, naval back to v1, link_epoch kept).
+func _write_link_b3(accepted: Dictionary, from_id: String, to_id: String, clear_when_closing: bool = true) -> void:
+	var live: Dictionary = records()
+	var link: Variant = accepted.state.vehicles[from_id].naval.get("boarding_link")
+	var clear: bool = clear_when_closing and link is Dictionary and str(link.state) == "closing"
+	for identity: String in [from_id, to_id]:
+		var naval: Dictionary = accepted.state.vehicles[identity].naval.duplicate(true)
+		if clear:
+			naval.erase("boarding_link")
+			naval.version = 1
+		live[identity].naval = naval
+
+## B3S4 atomic completion. The ledger exit is computed on a copy first; the body move
+## (commit_ship_cross) refuses before any write; the ledger is written only after the body moved.
+func commit_link_crossing(job: Dictionary) -> Dictionary:
+	var from_id: String = str(job.vehicle_id)
+	var to_id: String = str(job.secondary_vehicle_id)
+	var ended: Dictionary = Boarding.crossing_end(_boarding_link_state_b3(), from_id, int(job.executor_id))
+	if not ended.ok: return ended
+	var moved: Dictionary = commit_ship_cross(job)
+	if not moved.ok: return moved
+	_write_link_b3(ended, from_id, to_id)
+	job.link_released = true
+	moved["link_released"] = true
+	return moved
+
+## B3S5: releases the crosser of a link-gated crossing. The person stays where the body is (source hull).
+## Q2 A / plan line 73: the point reached on the path is the person's real row point.
+func settle_link_position(job: Dictionary) -> void:
+	var person: Dictionary = ship_person(int(job.executor_id))
+	if person.is_empty(): return
+	var point: Vector2 = _ship_job_point(job)
+	# Completed walk + cross leg: the path end is the target berth. The person was not moved (the commit
+	# refused), so the real point is the walk leg's last point, the edge the crossing starts from.
+	if float(job.elapsed) >= float(job.duration) and job.path.size() >= 2: point = job.path[job.path.size() - 2]
+	if not point.is_finite(): return
+	var hull: Dictionary = records().get(str(job.vehicle_id), {})
+	var local: Vector2 = Ship.local_from_world(lab.terrain.cell_from_index(int(hull.cell)), Vector2i(int(hull.facing[0]), int(hull.facing[1])), point)
+	person.row.ship_deck_position = [local.x, local.y]
+
+## Q2 A: closes entries for a link with a crossing in progress; the clear happens when the crossing ends.
+func close_link_for_cross(job: Dictionary) -> Dictionary:
+	var from_id: String = str(job.vehicle_id)
+	var to_id: String = str(job.secondary_vehicle_id)
+	var link: Variant = records().get(from_id, {}).get("naval", {}).get("boarding_link")
+	if not link is Dictionary: return Runtime.fail("NO_TARGET", "沒有接舷連結")
+	if str(link.state) == "closing": return Runtime.ok("接舷連結已在收束")
+	var closed: Dictionary = Boarding.set_state(_boarding_link_state_b3(), from_id, "closing")
+	if not closed.ok: return closed
+	_write_link_b3(closed, from_id, to_id, false)
+	return Runtime.ok("接舷連結已進入收束")
+
+func release_link_crosser(job: Dictionary) -> Dictionary:
+	var from_id: String = str(job.vehicle_id)
+	var to_id: String = str(job.secondary_vehicle_id)
+	var person_id: int = int(job.executor_id)
+	var link: Variant = records().get(from_id, {}).get("naval", {}).get("boarding_link")
+	if not link is Dictionary: return Runtime.ok("接舷連結已於沉沒時清除")
+	if int(link.get("crosser_id", -1)) != person_id: return Runtime.fail("BUSY", "釋放者不是通道中的人物")
+	var state: Dictionary = _boarding_link_state_b3()
+	var ended: Dictionary
+	if ship_afloat(records().get(from_id, {})) and ship_afloat(records().get(to_id, {})):
+		var current: Dictionary = Boarding.query(state, from_id)
+		if not current.ok: return current
+		ended = Boarding.crossing_end(state, from_id, person_id)
+	else:
+		ended = _clear_copy_b3(state, from_id, to_id)
+	if not ended.ok: return ended
+	_write_link_b3(ended, from_id, to_id)
+	return Runtime.ok("接舷通道已釋放")
+
+## A sunk hull cannot hold an active link (query needs both hulls afloat), so the link becomes
+## invalid: terminal, no entry, no re-link. Crosser cleared. Nothing else is written.
+func _clear_copy_b3(state: Dictionary, from_id: String, to_id: String) -> Dictionary:
+	var copy: Dictionary = state.duplicate(true)
+	for identity: String in [from_id, to_id]:
+		copy.vehicles[identity].naval.erase("boarding_link")
+		copy.vehicles[identity].naval.version = 1
+	return Runtime.ok("", {"state": copy})
 
 func commit_ship_cross(job: Dictionary) -> Dictionary:
 	var person := ship_person(int(job.executor_id))
@@ -1712,6 +1885,17 @@ func ship_evacuation_path(identity: int) -> Array[Vector2]:
 	path.push_front(first)
 	return path
 
+## B3R6: a sinking hull clears its link on both ends in one write. An open crossing then finds no link
+## and releases nothing more (release_link_crosser treats a cleared link as released).
+func _clear_wrecked_link_b3(vehicle: Dictionary) -> void:
+	var link: Variant = vehicle.get("naval", {}).get("boarding_link")
+	if not link is Dictionary: return
+	var from_id: String = str(vehicle.id)
+	var to_id: String = str(link.get("peer", {}).get("vehicle_id", ""))
+	if not records().has(to_id): return
+	var cleared: Dictionary = _clear_copy_b3(_boarding_link_state_b3(), from_id, to_id)
+	_write_link_b3(cleared, from_id, to_id, false)
+
 func _settle_ship_wreck(vehicle: Dictionary) -> void:
 	if str(vehicle.get("naval", {}).get("state", "")) == "afloat": return
 	var repair_result: Dictionary = Runtime.settle_ship_repair_damage(lab.terrain, str(vehicle.id))
@@ -1722,6 +1906,7 @@ func _settle_ship_wreck(vehicle: Dictionary) -> void:
 	vehicle.command = {}
 	vehicle.stop_pending = false
 	vehicle.naval.state = "wrecked"
+	_clear_wrecked_link_b3(vehicle)
 	if not ship_job(str(vehicle.id)).is_empty(): return
 	for person: Dictionary in ship_people(vehicle):
 		if not person.owner.combat_can_act(int(person.unit)):
@@ -2149,8 +2334,17 @@ func update_ships(delta: float) -> void:
 func ship_death_location(identity: int) -> Dictionary:
 	var vehicle := ship_for_person(identity)
 	if vehicle.is_empty(): return {}
-	var local := ship_local_position(identity)
+	var person := ship_person(identity)
+	if not person.is_empty() and person.row.has("ship_death_channel"): return (person.row.ship_death_channel as Dictionary).duplicate(true)
 	var job: Dictionary = controller.person_actions.job_for(identity)
+	if str(job.get("kind", "")) in ["ship_cross", "ship_evac"] and bool(job.get("link_crossing", false)):
+		# B4S2 (plan line 86): a link-gated channel death records the real point and the peer hull; the
+		# source-hull clamp never applies. A point outside the pair's reach is not a location at all.
+		var point: Vector2 = _ship_job_point(job)
+		var peer: Dictionary = records().get(str(job.get("secondary_vehicle_id", "")), {})
+		if peer.is_empty() or not Ship.channel_point_near_pair(str(vehicle.ship_type), lab.terrain.cell_from_index(int(vehicle.cell)), Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1])), str(peer.ship_type), lab.terrain.cell_from_index(int(peer.cell)), Vector2i(int(peer.facing[0]), int(peer.facing[1])), point): return {}
+		return {"vehicle_id": str(vehicle.id), "peer_vehicle_id": str(peer.id), "channel_point": [point.x, point.y]}
+	var local := ship_local_position(identity)
 	if str(job.get("kind", "")) in ["ship_cross", "ship_evac"]:
 		local = Ship.local_from_world(lab.terrain.cell_from_index(int(vehicle.cell)), Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1])), _ship_job_point(job))
 		var spec := Ship.definition(str(vehicle.ship_type))
@@ -2164,6 +2358,7 @@ func ship_death_settled(identity: int) -> void:
 	person.row.erase("embarked_vehicle_id")
 	person.row.erase("berth_id")
 	person.row.erase("ship_death_local")
+	person.row.erase("ship_death_channel")
 	person.row.erase("ship_deck_position")
 	person.row.erase("ship_guest")
 	person.row.ship_death_settled = true

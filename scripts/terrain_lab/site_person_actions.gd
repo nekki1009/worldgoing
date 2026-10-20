@@ -449,6 +449,11 @@ func cancel(identity: int) -> Dictionary:
 	if str(_jobs[key].kind) == "housing_return":
 		_cancel_housing_job(_jobs[key])
 		return Runtime.ok("已取消後續返家；原已承諾步進收束後即可保存")
+	if bool(_jobs[key].get("link_crossing", false)):
+		# Q2 A: no new entry; the existing cross finishes, then the link clears (commit or release).
+		_jobs[key].cancelled = true
+		var closing: Dictionary = lab.site_controller.vehicles.close_link_for_cross(_jobs[key])
+		return Runtime.ok("已取消接舷換船新進入；既有通道完成後解除連結", {"closing": closing.ok})
 	if str(_jobs[key].kind) in ["ship_helm", "ship_walk", "ship_cross", "ship_evac"]:
 		_jobs[key].cancelled = true
 		return Runtime.ok("已取消接手意圖；已承諾通路仍完成到駕駛席再停")
@@ -1321,7 +1326,13 @@ func settle_after_contacts() -> Array[Dictionary]:
 	return results
 
 func _finish(key: String, result: Dictionary) -> void:
-	_release_work_hold(_jobs.get(key, {}))
+	var job: Dictionary = _jobs.get(key, {})
+	if bool(job.get("link_crossing", false)) and not bool(job.get("link_released", false)):
+		lab.site_controller.vehicles.settle_link_position(job)
+		var released: Dictionary = lab.site_controller.vehicles.release_link_crosser(job)
+		job.link_released = bool(released.ok)
+		result["link_released"] = bool(released.ok)
+	_release_work_hold(job)
 	_jobs.erase(key)
 	result["executor_id"] = int(key)
 	_results.append(result)
@@ -1858,6 +1869,18 @@ func begin_boarding_link(person_id: int, self_id: String, peer_id: String, reque
 	_jobs[str(person_id)] = job
 	return Runtime.ok("原人物開始接舷作業", {"seconds": float(job.duration)})
 
+## B3S3: link-gated ship cross. Enters the crosser on both link ends, then starts the existing ship_cross path.
+func begin_boarding_cross(person_id: int, target_id: String, requester_id: int, test_dispatch: bool = false) -> Dictionary:
+	var vehicles: Variant = lab.site_controller.vehicles
+	if is_busy(person_id): return Runtime.fail("BUSY")
+	var query: Dictionary = vehicles.ship_cross_link_query(person_id, target_id, requester_id, test_dispatch)
+	if not query.ok: return query
+	var entered: Dictionary = vehicles.enter_link_crosser(str(query.vehicle.id), target_id, person_id)
+	if not entered.ok: return entered
+	var began: Dictionary = _begin_ship_path_job("ship_cross", query, requester_id, test_dispatch)
+	if began.ok: _jobs[str(person_id)].link_crossing = true
+	return began
+
 func begin_ship_cross(person_id: int, target_id: String, requester_id: int, berth: int = -1, test_dispatch: bool = false) -> Dictionary:
 	var query: Dictionary = lab.site_controller.vehicles.ship_cross_query(person_id, target_id, berth, requester_id, test_dispatch)
 	if not query.ok: return query
@@ -1950,6 +1973,8 @@ func _ship_job_context(job: Dictionary) -> Dictionary:
 		var person: Dictionary = vehicles.ship_person(int(job.executor_id))
 		var vehicle: Dictionary = vehicles.records().get(str(job.vehicle_id), {})
 		if person.is_empty() or not vehicles.is_ship(vehicle) or not is_same(job.terrain, lab.terrain) or not is_same(job.site_state, lab.terrain.site) or str(person.row.get("embarked_vehicle_id", "")) != str(job.vehicle_id) or not vehicle.move.is_empty(): return Runtime.fail("STALE")
+		if bool(job.get("link_crossing", false)) and (not vehicles.ship_afloat(vehicle) or not vehicles.ship_afloat(vehicles.records().get(str(job.secondary_vehicle_id), {}))):
+			return Runtime.fail("STALE", "接舷雙方船隻須仍然漂浮")
 		return Runtime.ok("", {"person": person, "vehicle": vehicle})
 	var check: Dictionary = vehicles.ship_action_query(str(job.kind), int(job.executor_id), str(job.vehicle_id), int(job.berth_id), job.shore, int(job.requester_id), bool(job.test_dispatch), job, bool(job.retreat))
 	if not check.ok: return check
@@ -2009,11 +2034,12 @@ func _commit_ship_path(job: Dictionary) -> Dictionary:
 	if str(job.kind) in ["ship_cross", "ship_evac"] and not person.is_empty() and float(person.hp) <= 0.0:
 		var location: Dictionary = vehicles.ship_death_location(int(person.id))
 		if location.has("local_position"): person.row.ship_death_local = location.local_position
+		if location.has("channel_point"): person.row.ship_death_channel = location.duplicate(true)
 		return Runtime.ok("原死亡入口保留途中物品在原船殘骸")
 	match str(job.kind):
 		"ship_helm": return vehicles.commit_ship_helm(job)
 		"ship_walk": return vehicles.commit_ship_walk(job)
-		"ship_cross": return vehicles.commit_ship_cross(job)
+		"ship_cross": return vehicles.commit_link_crossing(job) if bool(job.get("link_crossing", false)) else vehicles.commit_ship_cross(job)
 		"ship_evac": return vehicles.commit_ship_evacuation(job)
 	return vehicles.commit_ship_person(job)
 

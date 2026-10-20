@@ -4465,10 +4465,22 @@ static func date_text(data: TerrainData) -> String:
 
 
 # Ship-relative ground_loot stays in the original item container collection.
+## B4S2: the channel descriptor is the source hull, the peer hull and the real point (cell coordinates).
+static func _valid_channel_location(data: TerrainData, location: Dictionary, vehicle: Dictionary) -> bool:
+	if location.size() != 3 or not location.get("peer_vehicle_id") is String or not location.get("channel_point") is Array: return false
+	var peer: Dictionary = data.site.get("vehicles", {}).get(str(location.peer_vehicle_id), {})
+	if str(peer.get("kind", "")) != "ship" or not peer.get("ship_type") is String or not vehicle.get("ship_type") is String: return false
+	var point: Array = location.channel_point
+	if point.size() != 2 or not (point[0] is float or point[0] is int) or not (point[1] is float or point[1] is int): return false
+	var ship = preload("res://scripts/terrain_lab/site_vehicle_ship_definitions.gd")
+	return ship.channel_point_near_pair(str(vehicle.ship_type), data.cell_from_index(int(vehicle.cell)), Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1])), str(peer.ship_type), data.cell_from_index(int(peer.cell)), Vector2i(int(peer.facing[0]), int(peer.facing[1])), Vector2(float(point[0]), float(point[1])))
+
 static func valid_ship_loot_location(data: TerrainData, location: Dictionary) -> bool:
-	if location.size() != 2 or not location.get("vehicle_id") is String or not location.get("local_position") is Array: return false
+	if not location.get("vehicle_id") is String: return false
 	var vehicle: Dictionary = data.site.get("vehicles", {}).get(str(location.vehicle_id), {})
 	if str(vehicle.get("kind", "")) != "ship" or int(vehicle.get("ship_version", 0)) != 1 or int(vehicle.get("definition_version", 0)) != 1: return false
+	if location.has("channel_point"): return _valid_channel_location(data, location, vehicle)
+	if location.size() != 2 or not location.get("local_position") is Array: return false
 	var local: Array = location.local_position
 	if local.size() != 2 or not (local[0] is float or local[0] is int) or not (local[1] is float or local[1] is int): return false
 	var ship = preload("res://scripts/terrain_lab/site_vehicle_ship_definitions.gd")
