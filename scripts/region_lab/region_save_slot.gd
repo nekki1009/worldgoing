@@ -74,6 +74,13 @@ func open_map(map_data: RegionData, world_instance_id: String, slot_id: String, 
 		for coordinate: Vector2i in author_initial_site_order(author_context):
 			var projected: Dictionary = map_data.project_terrain(coordinate, "author_initial")
 			if not projected.ok: return projected
+			# P5C-S3C: every authored resident must name a house that exists on its own Site, refused before any IO.
+			var residents: Array = projected.data.site.get("residents", [])
+			if not residents.is_empty():
+				# Same view the birth roster uses: navigation rebuilds the indexes that house_layout reads.
+				var housed: TerrainData = Env.navigation_for_state(projected.data, projected.data.site.duplicate(true))
+				for row: Variant in residents:
+					if not row is Dictionary or not Runtime.house_layout(housed, str(row.get("house", ""))).ok: return fail("AUTHOR_RESIDENT_HOUSE_MISSING", "居民住宅不存在；未寫入")
 		if prepare_new and not same_author_initial_context(initial_context, author_context): return fail("INITIAL_SCENARIO_CONFLICT")
 		var start_site: Vector2i = Vector2i(int(author_context.starting_site[0]), int(author_context.starting_site[1]))
 		var initial: Dictionary = map_data.project_terrain(start_site, "author_initial")
@@ -5506,6 +5513,8 @@ var _initial_candidate: Dictionary = {}
 # Site file is written with its canonical index (start is index 0); returning
 # true makes that write fail with SAVE_IO and leaves the candidate unset.
 var initial_write_fault: Callable
+# P5C-S3: populated companion bodies supplied by the controller (key "x:y" -> TerrainData).
+var _companion_births: Dictionary = {}
 
 static func _initial_site_same(left: Variant, right: Variant) -> bool:
 	if not left is Array or not right is Array or left.size() != 2 or right.size() != 2: return false
@@ -5638,10 +5647,16 @@ func _check_initial_record(record: Dictionary) -> Dictionary:
 			if other != coordinate and not record.sites.has(_site_key(other)): return fail("INVALID_INITIAL_GENERATION")
 		var started: Dictionary = _check_author_initial_state(loaded.data, record, coordinate, path)
 		if not started.ok: return started
+		# P5C-S3: person ids are unique across every Site of the birth transaction.
+		var people: Dictionary = {}
+		for start_person: int in RegionTravel._body_records(loaded.data.site).keys(): people[int(start_person)] = true
 		for companion_site: Vector2i in _initial_site_coordinates():
 			if companion_site == coordinate: continue
 			var companion: Dictionary = _check_author_companion_state(record, companion_site)
 			if not companion.ok: return companion
+			for companion_person: int in RegionTravel._body_records(companion.data.site).keys():
+				if people.has(int(companion_person)): return fail("INVALID_INITIAL_POPULATION", "人物編號跨地點重複")
+				people[int(companion_person)] = true
 		return started
 	var scenario := str(_initialization.initial_scenario_id)
 	if int(state.get("minute", -1)) != 0 or float(state.get("phase", -1.0)) != 0.0 or int(state.get("controlled_person_id", -1)) != 1 or int(state.get("actors", {}).get("player", {}).get("person_id", -1)) != 1 or state.get("actors", {}).size() != 1 or state.has("family") or state.has("crowd"): return fail("INVALID_INITIAL_POPULATION")
@@ -5749,6 +5764,34 @@ func prepare_initial_site(data: TerrainData) -> Dictionary:
 	return {"ok": true, "data": checked.data, "coordinate": coordinate.site, "prepared": true}
 
 
+# P5C-S3: the controller hands in a populated companion body before the first commit.
+func set_companion_birth(site: Vector2i, data: TerrainData) -> Dictionary:
+	if not initialization_pending() or not _marker.is_empty() or not _initial_candidate.is_empty(): return fail("INITIAL_ALREADY_PREPARED")
+	if not _initialization.has("author_context"): return fail("INVALID_COMPANION_SITE", "no authored birth is pending")
+	var start: Vector2i = Vector2i(int(_initialization.starting_site[0]), int(_initialization.starting_site[1]))
+	if site == start: return fail("INVALID_COMPANION_SITE", "companion birth offered for the start Site %s" % str(site))
+	if not site in _initial_site_coordinates(): return fail("INVALID_COMPANION_SITE", "Site %s is not an expected initial Site of this birth" % str(site))
+	if data == null or data.site.is_empty(): return fail("INVALID_COMPANION_SITE", "companion birth state is empty for %s" % str(site))
+	# The populated body comes from the roster birth on a projection, which carries no world pin yet.
+	# Set it the way _author_companion_candidate does before the shared coordinate check.
+	if not data.site.has("world_pin"): data.site.world_pin = pin.duplicate(true)
+	var coordinate: Dictionary = _coordinate(data)
+	if not coordinate.ok: return fail("INVALID_COMPANION_SITE", "companion %s fails the coordinate/world-pin check: %s %s" % [str(site), str(coordinate.get("code", "")), str(coordinate.get("message", ""))])
+	if coordinate.site != site: return fail("INVALID_COMPANION_SITE", "companion birth addresses %s, expected %s" % [str(coordinate.site), str(site)])
+	_companion_births[_site_key(site)] = data
+	return {"ok": true}
+
+
+# P5C-S3: every expected Site except the start, in canonical order.
+func initial_companion_sites() -> Array:
+	var result: Array = []
+	if not _initialization.has("author_context"): return result
+	var start: Vector2i = Vector2i(int(_initialization.starting_site[0]), int(_initialization.starting_site[1]))
+	for site: Vector2i in _initial_site_coordinates():
+		if site != start: result.append(site)
+	return result
+
+
 # P5C-S2: canonical list of every Site this birth must publish (start first).
 func _initial_site_coordinates() -> Array:
 	if _initialization.has("author_context"): return author_initial_site_order(_initialization.author_context)
@@ -5762,10 +5805,15 @@ func _author_companion_candidate(site: Vector2i) -> Dictionary:
 	if not projected.ok: return projected
 	if not _matches_base(projected.base, site): return fail("SAVE_VERSION", "固定地圖版本已變更")
 	var data: TerrainData = projected.data
+	var supplied: bool = _companion_births.has(_site_key(site))
+	if supplied: data = _companion_births[_site_key(site)]
 	if not Store._resource_base_matches(data, projected.base): return fail("SAVE_VERSION", "固定資源內容與來源版本不同")
 	if data.site.is_empty(): return fail("AUTHOR_INITIAL_EMPTY_SITE", "作者初始地點缺少內容")
-	if not RegionTravel._body_records(data.site).is_empty() or not data.site.get("armies", []).is_empty() or not data.site.get("residents", []).is_empty() or data.site.has("initial_scenario") or data.site.has("crowd") or data.site.has("family"):
-		return fail("AUTHOR_POPULATION_UNSUPPORTED", "非起點作者地點的人口留待 P5C-S3")
+	# Population is admitted only as a controller-supplied birth (P5C-S3); bare authored residents are refused.
+	if not supplied and (not RegionTravel._body_records(data.site).is_empty() or not data.site.get("armies", []).is_empty() or not data.site.get("residents", []).is_empty()):
+		return fail("AUTHOR_POPULATION_UNSUPPORTED", "非起點作者地點的人口須由原出生流程提供")
+	if data.site.has("initial_scenario") or data.site.has("crowd") or data.site.has("family"):
+		return fail("AUTHOR_POPULATION_UNSUPPORTED", "非起點地點不支援情境、群眾或家族欄位")
 	var refreshed: Dictionary = _refresh_boundaries(data, site)
 	if not refreshed.ok: return refreshed
 	data.site.world_pin = pin.duplicate(true)
@@ -5787,7 +5835,9 @@ func _check_author_companion_state(record: Dictionary, coordinate: Vector2i) -> 
 	var loaded: Dictionary = _load_checked(path, coordinate)
 	if not loaded.ok: return loaded
 	var state: Dictionary = loaded.data.site
-	if not RegionTravel._body_records(state).is_empty() or not state.get("armies", []).is_empty() or not state.get("residents", []).is_empty() or state.has("initial_scenario") or state.has("crowd") or state.has("family") or int(state.get("minute", -1)) != 0 or float(state.get("phase", -1.0)) != 0.0: return fail("INVALID_INITIAL_POPULATION")
+	if state.has("initial_scenario") or state.has("crowd") or state.has("family") or int(state.get("minute", -1)) != 0 or float(state.get("phase", -1.0)) != 0.0: return fail("INVALID_INITIAL_POPULATION")
+	for body: Dictionary in RegionTravel._body_records(state).values():
+		if not RegionTravel._able(body): return fail("INVALID_INITIAL_POPULATION", "非起點原人物須可行動")
 	var settled: Dictionary = validate_settlement(state, 0.0)
 	if not settled.ok or float(settled.pending) != 0.0: return fail("INVALID_INITIAL_GENERATION")
 	var fire: Dictionary = validate_fire_settlement(state, record.control.get("fire_clock", {}))

@@ -9625,6 +9625,7 @@ func open_fixed_world(manifest_path: String, world_id: String, slot_id: String, 
 		if create_new:
 			_initial_world_candidate = candidate # Retain before the first IO attempt.
 			_initial_world_birth_data = null
+			_initial_companion_births = {}
 			_initial_world_archive = {}
 	var context := {"starting_site": [starting_site.x, starting_site.y], "initial_scenario_id": initial_scenario_id} if create_new else {}
 	if not source.author_identity().is_empty():
@@ -9669,6 +9670,7 @@ func open_fixed_world(manifest_path: String, world_id: String, slot_id: String, 
 		_auto_save_blocked = false
 		var archive_path := str(_initial_world_archive.get("path", ""))
 		_initial_world_birth_data = null
+		_initial_companion_births = {}
 		_initial_world_archive = {}
 		_initial_world_candidate = null
 		return Runtime.ok("新世界原開局首代已提交並完整綁定", {"archive": archive_path, "site": [starting_site.x, starting_site.y], "initial_generation": 1})
@@ -10465,6 +10467,8 @@ var initial_write_fault: Callable
 var _initial_world_candidate: RegionSaveSlot
 
 var _initial_world_birth_data: TerrainData
+# P5C-S3: populated companion bodies from the same birth; reset with the birth data.
+var _initial_companion_births: Dictionary = {}
 
 var _initial_world_archive: Dictionary = {}
 
@@ -10522,8 +10526,36 @@ func _prepare_initial_world(candidate: RegionSaveSlot, starting_site: Vector2i, 
 		if not birth.ok: return birth
 		# Keep this exact unpublished original candidate through SAVE_IO retries.
 		# It is never a second saved body and never captures the previous world.
+		# P5C-S3: populate authored companions with the original roster rule, ids continuing from the start.
+		var companions: Dictionary = _author_companion_population(candidate, birth.data)
+		if not companions.ok: return companions
+		_initial_companion_births = companions.births
 		_initial_world_birth_data = birth.data
+	for companion_site: Vector2i in _initial_companion_births:
+		var supplied: Dictionary = candidate.set_companion_birth(companion_site, _initial_companion_births[companion_site])
+		if not supplied.ok: return supplied
 	return candidate.prepare_initial_site(_initial_world_birth_data)
+
+
+# P5C-S3: resident roster births for authored companion Sites. Ids continue from the start's
+# allocator and every Site ends with the same high-water mark, so person ids stay unique.
+func _author_companion_population(candidate: RegionSaveSlot, start_data: TerrainData) -> Dictionary:
+	var births: Dictionary = {}
+	var next_id: int = int(start_data.site.get("next_person_id", 1))
+	for companion: Vector2i in candidate.initial_companion_sites():
+		var projected: Dictionary = candidate.source.project_terrain(companion, "author_initial")
+		if not projected.ok: return projected
+		var data: TerrainData = projected.data
+		var rows: Array = data.site.get("residents", [])
+		if data.site.is_empty() or rows.is_empty(): continue
+		data.site["next_person_id"] = next_id
+		var populated: Dictionary = lab.prepare_initial_resident_roster(data)
+		if not populated.ok: return populated
+		births[companion] = populated.data
+		next_id = maxi(next_id, int(populated.data.site.get("next_person_id", next_id)))
+	start_data.site["next_person_id"] = maxi(int(start_data.site.get("next_person_id", 1)), next_id)
+	for companion: Vector2i in births: births[companion].site["next_person_id"] = next_id
+	return {"ok": true, "births": births}
 
 func _initial_creation_appearance(source: Dictionary) -> Dictionary:
 	var result := {}
