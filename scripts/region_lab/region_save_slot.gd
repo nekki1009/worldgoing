@@ -1938,6 +1938,31 @@ func effective_site_path(site: Vector2i) -> Dictionary:
 	return {"ok": true, "path": path if FileAccess.file_exists(path) else ""}
 
 # Read only the original slot's committed/legacy paths. No Site is opened.
+# P5C-S4: visited means entered and committed, not merely configured or materialised.
+# The birth start is visited. Any other Site is visited only when its marker entry was written by a
+# generation after the birth (an arrival or later commit writes a new generation for it). A Site that
+# only the birth wrote (generation 1) is configured: present in the marker, never entered.
+func is_visited(site: Vector2i) -> bool:
+	var entry: Variant = _marker.get("sites", {}).get(_site_key(site))
+	if not entry is Dictionary: return FileAccess.file_exists(folder.path_join("sites").path_join(str(site.x)).path_join(str(site.y) + ".json"))
+	var start: Vector2i = _birth_start_site()
+	if start == site: return true
+	return _entry_generation(entry) > 1
+
+
+func _birth_start_site() -> Vector2i:
+	var record: Dictionary = _read_document(folder.path_join("manifest.initialized.json"), 16384)
+	if not record.get("ok", false): return Vector2i(-2147483647, -2147483647)
+	var start: Variant = record.payload.get("starting_site")
+	if not start is Array or start.size() != 2: return Vector2i(-2147483647, -2147483647)
+	return Vector2i(int(start[0]), int(start[1]))
+
+
+static func _entry_generation(entry: Dictionary) -> int:
+	var file_name: String = str(entry.get("path", "")).get_file()
+	return int(file_name.get_slice("_", 0)) if file_name.get_slice("_", 0).is_valid_int() else 0
+
+
 func known_saved_sites() -> Dictionary:
 	if pin.is_empty() or source == null: return fail("INVALID_SLOT", "尚未開啟原地圖存檔")
 	var recovered := _recover_control()
@@ -2228,7 +2253,7 @@ static func read_site_building_summary(slot: Object, site: Vector2i, effective_p
 		if not result.counts.has(kind):
 			result.counts[kind] = {"planned": 0, "building": 0, "complete": 0}
 		result.counts[kind][str(feature.stage)] += 1
-	result.visited = true
+	result.visited = bool(slot.call("is_visited", site))
 	result.source_checksum = str(decoded.checksum)
 	return result
 

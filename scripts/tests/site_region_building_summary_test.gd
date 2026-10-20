@@ -36,6 +36,10 @@ class SummarySlot:
 	var source := MapSource.new()
 	var folder := ""
 	var expected_base := {}
+	# The real rule (P5C-S4, region_save_slot.gd is_visited): this stub's only saved Site is the one
+	# whose base it has recorded, so that Site is visited and any other Site is not.
+	func is_visited(site: Vector2i) -> bool:
+		return not expected_base.is_empty() and expected_base.get("site") == [site.x, site.y]
 	func _matches_base(base: Dictionary, site: Vector2i) -> bool:
 		# The real Store reader returns the entire JSON representation.
 		var stored_expected: Dictionary = JSON.parse_string(JSON.stringify(expected_base, "", true, true))

@@ -152,6 +152,10 @@ func _run() -> void:
 	if not (not first.ok and fault_state[0] == 1):
 		push_error("P5CS3E first attempt: " + str(first) + " fault_calls=" + str(fault_state[0]))
 	if not _pass("fault on the companion file fails the first attempt", not first.ok and fault_state[0] == 1): return
+	# D3: an uncommitted birth is absent from the saved-site index the overview reads.
+	var parked_candidate: RegionSaveSlot = lab.site_controller._initial_world_candidate
+	var parked: Dictionary = parked_candidate.known_saved_sites()
+	if not _pass("D3 the uncommitted birth is absent from the saved-site index", parked.ok and parked.sites.is_empty()): return
 	# Same parked-PENDING retry as P5CS2C: a fresh open returns BUSY.
 	var second: Dictionary = lab.site_controller.resume_region_operation()
 	if not second.ok: push_error("P5CS3B retry result: " + str(second))
@@ -188,6 +192,15 @@ func _run() -> void:
 	var reopened_slot: RegionSaveSlot = lab.site_controller.region_slot
 	var reread: Dictionary = reopened_slot._load_checked(reopened_slot.folder.path_join(str(reopened_slot._marker.sites[companion_key].path)), companion)
 	if not _pass("C3 companion residents and housing read back after reopen", reread.ok and _housed_at(reread.data.site, RegionTravel._body_records(reread.data.site), built_companion.house)): return
+	# D1: configured versus visited, read through the overview's own path (building_summary and the
+	# aggregate the overview uses). The birth start is visited; the companion was only configured.
+	var index: Dictionary = reopened_slot.known_saved_sites()
+	if not _pass("D1 the saved-site index lists both Sites", index.ok and index.sites.size() == 2): return
+	if not _pass("D1 the birth start is visited and the companion is only configured", reopened_slot.is_visited(at) and not reopened_slot.is_visited(companion)): return
+	var summaries: Array[Dictionary] = []
+	for coordinate: Vector2i in index.sites: summaries.append(reopened_slot.building_summary(coordinate))
+	var combined: Dictionary = RegionSaveSlot.aggregate_building_summaries(summaries)
+	if not _pass("D1 the overview aggregate counts one visited Site, not two (" + str(combined.get("visited_sites", "?")) + ")", combined.ok and int(combined.visited_sites) == 1): return
 	# C4: a companion resident whose house does not exist refuses the open, with nothing written.
 	var broken_state: Dictionary = built_companion.state.duplicate(true)
 	broken_state["residents"] = [{"name": "丙", "faction_id": 1, "house": "no_such_house"}]
