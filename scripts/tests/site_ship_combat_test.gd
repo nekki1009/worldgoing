@@ -46,6 +46,9 @@ func _run() -> void:
 	lab.npc = TerrainTestNPC.new()
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
+	# Set after add_child: the lab's own _ready regenerates and rebinds terrain, which re-enables physical fire.
+	# This test pins the original legacy bow release (ranged_fire); physical ground fire has no ship/deck admission.
+	lab.physical_ranged_enabled = false
 	lab.set_process(false)
 	lab.site_controller.set_process(false)
 	lab.site_controller._auto_save_blocked = true
@@ -106,6 +109,7 @@ func _run() -> void:
 	if not _must(shot.source_cell == source_cell and shot.target_cell == target_cell and (shot.origin as Vector2).is_equal_approx(ground - Vector2(0, 20) + lab.terrain.surface_visual_offset(source_cell)), "Flight records original launch position and target"): return
 	var frozen := shot.duplicate(true)
 	lab.bind_terrain(lab.terrain)
+	lab.physical_ranged_enabled = false # The rebind publishes physical fire on; this test keeps its legacy contract.
 	if not _must(team.projectiles.size() == 1 and is_same(team.projectiles[0], shot) and is_same(team.combat_units[0], source), "Active original arrow blocks replacement"): return
 	lab._advance_ranged(float(shot.total) + 0.01)
 	if not _must(events.size() == 1 and int(events[0].shooter) == people[0] and int(events[0].target) == enemy_ids[0] and not lab.has_ranged_projectiles(), "Arrival finds the actual original aboard opponent"): return
