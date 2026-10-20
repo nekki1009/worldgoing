@@ -292,7 +292,8 @@ func _actual_research(lab: TerrainLab, team: TerrainArmy, captain: int, actions:
 		var record: Dictionary = data.site.item_records[item_id]
 		var definition: Dictionary = data.site.item_definitions[str(record.definition)]
 		if str(definition.asset) == "bow_01": bows += 1
-	_check(bows == 3 and int(data.site.inventory.wood) == 0 and int(data.site.inventory.fiber) == 0, "Three original depot bows conserve all twelve wood and six fiber")
+	# Production craft paths erase a stock key once it reaches zero (site_runtime.gd:9715, :9754, :9820), so an absent key means 0.
+	_check(bows == 3 and int(data.site.inventory.get("wood", 0)) == 0 and int(data.site.inventory.get("fiber", 0)) == 0, "Three original depot bows conserve all twelve wood and six fiber")
 	_check(data.site.family.technology.known.has("F07") and Technology.learned(team.combat_units[1].get("technology", {})), "Three true same-person trial receipts grant original family and personal F07")
 	_check(str(project.purpose) == purpose and lab.controlled_person_id() == before_control and before_control == 1, "AI keeps prepared project identity and actual human control")
 	_check(str(actions.technology_ai_query(captain).code) == "NO_CANDIDATE", "Completed original F07 project cannot repeat AI reward")
