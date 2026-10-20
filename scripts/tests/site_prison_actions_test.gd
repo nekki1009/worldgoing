@@ -38,6 +38,7 @@ func _run() -> void:
 	assert(captive.terrain_cell == starting_cell)
 	data.site.paused = false
 	var moved := false
+	var escort_closed := false
 	for _frame: int in range(3600):
 		var previous := captive.terrain_cell
 		var previous_guard := guard.terrain_cell
@@ -46,6 +47,15 @@ func _run() -> void:
 		assert(previous_guard == guard.terrain_cell or data.can_step(previous_guard, guard.terrain_cell))
 		moved = moved or previous != captive.terrain_cell
 		assert(captive.hp == 63.0 and captive.knockout_left == 0.0 and captive.captive)
+		# Both bodies have reached their final cells, so the escort has no walking left.
+		# Close its order here: otherwise a later 0.25 s escort tick can auto-commit the
+		# admission on the same frame the stop is observed. Admission under test is the
+		# explicit admit_prison call below, and the escort's own admission is covered by
+		# region_captivity_payload_admission_test.
+		if not escort_closed and captive.terrain_cell == slot.cell and guard.terrain_cell == slot.contact_cell:
+			var closed: Dictionary = controller.captive_escort.cancel(guard.person_id)
+			assert(closed.ok, str(closed))
+			escort_closed = true
 		if captive.terrain_cell == slot.cell and guard.terrain_cell == slot.contact_cell \
 			and actions._prison_stopped(actions._person(captive.person_id)) and actions._prison_stopped(actions._person(guard.person_id)): break
 	assert(moved and captive.terrain_cell != starting_cell)
