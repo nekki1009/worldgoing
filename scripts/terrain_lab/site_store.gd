@@ -2472,6 +2472,12 @@ static func _validate_armies(data: TerrainData, state: Dictionary, check_terrain
 			for actor: Dictionary in actors.values():
 				if int(actor.get("person_id", 0)) == int(original_team.player_member.get("id", -1)):
 					member_actor = actor
+		# Army person social packet this build does not admit: SAVE_VERSION, the same contract as
+		# _validate_unadmitted_social_state (army units). Only social rejection; other invalid state stays CORRUPT_SAVE.
+		var army_units: Array = original_team.get("units", []) if original_team is Dictionary and original_team.get("units") is Array else []
+		for unit: Variant in army_units:
+			if unit is Dictionary and unit.has("social_state") and not TerrainTestCharacter.PersonSocial.valid(unit.social_state):
+				return Runtime.fail("SAVE_VERSION", "Army person social_state 尚未准入；完整原檔與原現場保留")
 		if not TerrainArmy.valid_combat_state(original_team, data, member_actor, state):
 			return Runtime.fail("CORRUPT_SAVE", "軍隊人物／動作／指揮關係非法")
 		var team := TerrainArmy.normalize_roster_snapshot(original_team)
@@ -2559,6 +2565,10 @@ static func _validate_armies(data: TerrainData, state: Dictionary, check_terrain
 		for identity: Variant in native_team.get("person_ids", []): native_actor_ids[int(identity)] = true
 	for actor: Variant in actors.values():
 		# _validate_actors performs native continuous-coordinate and legacy metadata validation.
+		# A social packet this build does not admit is SAVE_VERSION (not yet admitted), the same contract as
+		# _validate_unadmitted_social_state. Only social rejection; other invalid state stays CORRUPT_SAVE.
+		if actor is Dictionary and not native_actor_ids.has(int(actor.get("person_id", -1))) and actor.has("social_state") and not TerrainTestCharacter.PersonSocial.valid(actor.social_state):
+			return Runtime.fail("SAVE_VERSION", "Actor social_state 尚未准入；完整原檔與原現場保留")
 		if not actor is Dictionary or (not native_actor_ids.has(int(actor.get("person_id", -1))) and not TerrainTestCharacter.valid_state(actor, data)):
 			return Runtime.fail("CORRUPT_SAVE", "人物狀態非法")
 		if identities.has(int(actor.person_id)):
