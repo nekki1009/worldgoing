@@ -1483,6 +1483,9 @@ func _advance_action_time(delta: float, budget_usec: int = 0) -> void:
 					_action_step_remaining = 0.0
 				else:
 					_action_step_remaining -= consumed_seconds
+					# Float residue below the clock epsilon is the same completed quantum. Left in place, it is requested
+					# as a sub-representable step that makes no progress (site_ship_travel_test at game 3600 s).
+					if _action_step_remaining <= ACTION_TIME_EPSILON: _action_step_remaining = 0.0
 			if str(result.get("status", "")) in ["FIRE_SYNC_PENDING", "REGION_EVENT_PENDING"]: return
 			if not bool(result.get("ok", false)):
 				if site_controller != null: site_controller.show_result(result)
