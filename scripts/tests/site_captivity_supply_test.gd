@@ -72,6 +72,17 @@ func _run() -> void:
 		team.settle_combat_command()
 	assert(first.join_player(lab.character).ok)
 	first.player_present = true
+	# R1b (ef39140): a player representative must be an officer who is a formal
+	# captain or serves in an office. Qualify through the original office path and
+	# stand the player inside the team's command radius so presence is settled, not forced.
+	lab.character.military_role = "officer"
+	var placed := lab.character.place(Vector2i(16, 21), true)
+	assert(placed, "Player stands inside the team's command radius")
+	var appointment_offices := first.team_offices()
+	var appointed := first.apply_office_plan(first.combat_identity(first.formal_commander), int(appointment_offices.revision),
+		[{"op": "appoint", "position_id": str(appointment_offices.duties["team.logistics"]), "person_id": lab.character.person_id}])
+	assert(appointed.ok, str(appointed))
+	assert(first.command_eligible(TerrainArmy.PLAYER_MEMBER), "Player is an officer serving in an office and present")
 	var helper := Feeding.new()
 	helper.init(controller)
 	var private := Sustain.create(10800.0)
