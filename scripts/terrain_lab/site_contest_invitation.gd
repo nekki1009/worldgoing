@@ -78,4 +78,16 @@ static func _supporter(lab: Variant, member: Dictionary, owner_ref: Dictionary, 
 			observed = 3 if intent else (3 - days_left if days_left >= 0 else 0)
 	return {"id": int(member.id), "ambition": ambition, "lawful": lawful, "g": g, "intent": intent, "observed_days": observed,
 		"blocked": not bool(member.awake) or not bool(member.free), "controlled": bool(member.controlled), "willing": true,
-		"holds_captives": false, "carries_treasury": false}
+		"holds_captives": _holds_captives(lab, int(member.id)), "carries_treasury": _carries_treasury(lab, int(member.id))}
+
+## R7 F: the live captivity and carried-coin state of a supporter (plan 10.2/10.3): a captor of any captive holds captives; a person carrying
+## coin in its own cargo (the coin withdrawn from the nation treasury, site_person_actions.gd:996) carries treasury.
+static func _holds_captives(lab: Variant, identity: int) -> bool:
+	for relation: Variant in lab.terrain.site.get("captivity", {}).values():
+		if relation is Dictionary and int(relation.get("captor_id", -1)) == identity: return true
+	return false
+
+static func _carries_treasury(lab: Variant, identity: int) -> bool:
+	var person: Dictionary = lab.site_controller.person_actions._person(identity, false)
+	var cargo: Variant = person.get("cargo", {})
+	return cargo is Dictionary and int(cargo.get("coin", 0)) > 0
