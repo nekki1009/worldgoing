@@ -144,12 +144,16 @@ func _complete_original_pending(prepared: Dictionary, require_pending: bool = fa
 		var cells: Array[int] = [lab.terrain.index(Vector2i(75,40))]
 		if not _refuse("pending_land_new",func() -> Dictionary: return Runtime.request_build(lab.terrain,"road",cells,Callable(),{"owner_faction":0})): return false
 		if not _refuse("pending_zone",func() -> Dictionary: return Runtime.add_zone(lab.terrain,Rect2i(20,30,10,10),-1,"harvest")): return false
+		# The original team.work duty decides who may request a work assignment.
+		# Use that real decider so the pending gate, not the authority refusal, is what this check exercises.
+		var work_decider: int = land_team.duty_decider("team.work")
+		if not _must(work_decider > 0,"Original team.work duty has no decider while the resident is pending"): return false
 		var before: PackedByteArray = var_to_bytes(lab.terrain.site)
 		controller.enable_worker()
 		controller.release_worker()
 		var person: Dictionary = lab._combat_target(land_ids[1])
 		var workers: Array[int] = [land_ids[1]]
-		var assigned: Dictionary = controller.work_team.assign(land_team,workers,land_ids[0])
+		var assigned: Dictionary = controller.work_team.assign(land_team,workers,work_decider)
 		if not _must(not assigned.ok and assigned.code == "BUSY" and not person.is_empty() and not controller._can_command_person(person) and controller._work_person_unavailable(land_ids[1]) and var_to_bytes(lab.terrain.site) == before,"Pending original Worker / resident WorkTeam inputs changed the source"): return false
 		checked_inputs.append("pending_original_worker_and_land_workteam")
 	return super._complete_original_pending(prepared,require_pending)
@@ -188,7 +192,9 @@ func _land_and_biology() -> bool:
 	var worker: Dictionary = controller.person_actions._person(land_ids[1])
 	if not _must(not worker.is_empty() and worker.owner == land_team and not bool(worker.body.get("logistics",false))
 		and not controller._work_person_unavailable(land_ids[1]), "Original resident body/work guard still unavailable before normal land WORK"): return false
-	var assigned: Dictionary = controller.work_team.assign(land_team,people_to_work,land_ids[0])
+	var normal_decider: int = land_team.duty_decider("team.work")
+	if not _must(normal_decider > 0,"Original team.work duty has no decider for normal land WORK"): return false
+	var assigned: Dictionary = controller.work_team.assign(land_team,people_to_work,normal_decider)
 	if not _must(assigned.ok,"Coarse source land resident cannot take original work: " + str(assigned)): return false
 	var clock_before: float = RegionSaveSlot._site_seconds(data)
 	var fatigue_before: float = PF.read(team.combat_units[0])
