@@ -3236,6 +3236,11 @@ func _change_row_membership(person_id: int, joining: bool, recruiter_id: int = -
 		var supplied: Dictionary = membership_change_hook.call(self, person_id, joining)
 		if not bool(supplied.get("ok", false)):
 			return supplied
+	return commit_row_membership_change(person_id, joining)
+
+## R7 C1: the post-hook flip of one team row membership change. No refusal path: the check and the membership hook have run.
+func commit_row_membership_change(person_id: int, joining: bool) -> Dictionary:
+	var index := index_for_identity(person_id)
 	if joining:
 		var count := living_member_count()
 		training = training * count / (count + 1.0)

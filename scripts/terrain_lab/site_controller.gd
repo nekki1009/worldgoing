@@ -5802,30 +5802,9 @@ func _team_ability(team: TerrainArmy, kind: String) -> float:
 ## person state under its person key carrying its current values). Everything is computed and validated first; the roster and seats
 ## leave through the team's depart_member; the supply is written only after that succeeds. Any refusal changes nothing.
 func depart_team_member(team: TerrainArmy, person_id: int, authority: Dictionary = {}) -> Dictionary:
-	var supply_release = preload("res://scripts/terrain_lab/site_supply_release.gd")
-	var entry := _supply_entry(team)
-	if entry.is_empty() or not [2, 3].has(int(entry.version)): return team.depart_member(person_id, authority)
-	var before_members := _team_members(team)
-	if not before_members.has(person_id): return Runtime.fail("NO_TARGET", "此人不是本隊成員")
-	var released: Dictionary = supply_release.release_candidate({"team": entry.sustain}, person_id, "team")
-	if not bool(released.get("ok", false)): return released
-	var team_state: Dictionary = released.supply["team"]
-	var leaver_state: Variant = released.supply.get(str(person_id))
-	var members_after := before_members.duplicate()
-	members_after.erase(person_id)
-	if not Sustain.validate(team_state, members_after, _supply_hot_reader(team, members_after, {})):
-		return Runtime.fail("INVALID_SUSTAIN", "隊伍供養狀態驗證失敗；原狀未變")
-	if leaver_state is Dictionary and not Sustain.validate(leaver_state, {person_id: before_members[person_id]}, _supply_hot_reader(team, before_members, {})):
-		return Runtime.fail("INVALID_SUSTAIN", "離隊人員的供養狀態驗證失敗；原狀未變")
-	var left: Dictionary = team.depart_member(person_id, authority)
-	if not bool(left.get("ok", false)): return left
-	entry.sustain.clear()
-	entry.sustain.merge(team_state, true)
-	if leaver_state is Dictionary:
-		var site: Dictionary = lab.terrain.site
-		if not site.has("person_supply"): site.person_supply = {}
-		site.person_supply[str(person_id)] = leaver_state
-	return left
+	# R7 C1: membership_change (the roster hook every membership flip uses) is the single supply writer for a team departure.
+	# The seats vacate and the roster leave run through team.depart_member; no separate team-sustain release is written here.
+	return team.depart_member(person_id, authority)
 
 func advance_team_sustain(team: TerrainArmy, elapsed_game_seconds: float) -> Dictionary:
 	# Root calls this ONLY from the existing common Site action step, not tick().

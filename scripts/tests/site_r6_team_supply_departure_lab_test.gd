@@ -7,6 +7,22 @@ extends "res://scripts/tests/site_r3_prison_interface_test.gd"
 const Sustain = preload("res://scripts/terrain_lab/site_sustain.gd")
 const R6S6C_SAVE := "res://.godot-temp/site_r6_s6c_team_supply/team.json"
 
+func _cohort_totals(site: Dictionary) -> Array:
+	var ids := 0
+	var hunger := 0.0
+	var coverage := 0.0
+	var states: Array = []
+	for key: String in site.get("team_supply", {}):
+		states.append(site.team_supply[key].sustain)
+	for key: String in site.get("person_supply", {}):
+		states.append(site.person_supply[key])
+	for state: Dictionary in states:
+		for cohort: Dictionary in state.cohorts:
+			ids += cohort.ids.size()
+			hunger += float(cohort.hunger)
+			coverage += float(cohort.coverage)
+	return [ids, hunger, coverage]
+
 func _run() -> void:
 	deadline = Time.get_ticks_msec() + 120000
 	var data := _building_fixture()
@@ -47,11 +63,23 @@ func _run() -> void:
 		if cohort.ids.has(departing): holds_cohort = true
 
 	var before: PackedByteArray = var_to_bytes(entry.sustain)
+	# R7 C1: totals and the team morale and revision before the departure (new assertions only).
+	var totals_before: Array = _cohort_totals(lab.terrain.site)
+	var team_morale_before: float = float(entry.sustain.morale)
+	var revision_before: int = int(entry.revision)
 	var refused: Dictionary = controller.depart_team_member(team, 999999, {"kind": "npc_event"})
 	if not _r3_check(not bool(refused.get("ok", false)) and var_to_bytes(entry.sustain) == before, "a non-member departure changes no supply: %s" % str(refused)): return
 
 	var left: Dictionary = controller.depart_team_member(team, departing, {"kind": "npc_event"})
 	if not _r3_check(bool(left.get("ok", false)) and not team.is_member(team.index_for_identity(departing)), "the NPC leaves the team roster with its supply: %s" % str(left)): return
+	# R7 C1: the total feeding ids, hunger and coverage are unchanged by the departure (no duplication, no loss).
+	var totals_after: Array = _cohort_totals(lab.terrain.site)
+	if not _r3_check(totals_after[0] == totals_before[0] and is_equal_approx(totals_after[1], totals_before[1]) and is_equal_approx(totals_after[2], totals_before[2]), "the total feeding ids, hunger and coverage are unchanged by the departure: before=%s after=%s" % [str(totals_before), str(totals_after)]): return
+	# R7 C1: the team supply revision steps once (membership_change's bump, the only writer).
+	if not _r3_check(int(entry.revision) == revision_before + 1, "the team supply revision steps once for the departure"): return
+	# R7 C1: the leaver's personal supply keeps membership_change's weighted morale (the value the old release overwrote).
+	if holds_cohort:
+		if not _r3_check(is_equal_approx(float(lab.terrain.site.person_supply[str(departing)].morale), team_morale_before), "the leaver's personal supply keeps the weighted morale of the membership move"): return
 	var members_after: Dictionary = controller._team_members(team)
 	if not _r3_check(not members_after.has(departing) and Sustain.validate(entry.sustain, members_after, controller._supply_hot_reader(team, members_after, {})), "the team's sustain state validates after the departure without the leaver"): return
 	var site: Dictionary = lab.terrain.site
