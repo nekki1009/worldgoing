@@ -491,6 +491,7 @@ static func save(data: TerrainData, path: String = DEFAULT_PATH, native_candidat
 		_normalize_state(state)
 		var checkpoint := RegionCheckpoint.make(state, region_capture.context, region_capture.owners)
 		if not checkpoint.ok: return checkpoint
+		state = checkpoint.state
 		state["region_snapshot"] = checkpoint.snapshot
 	var params: Dictionary = data.parameters.duplicate()
 	params.erase("fixed_ramp_edges") # Rebuilt from the pinned source, never a saved authority.

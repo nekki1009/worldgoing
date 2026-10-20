@@ -215,7 +215,33 @@ static func make(state: Dictionary, context: Dictionary, owners: Dictionary) -> 
 	var checked := validate_context(context)
 	if not checked.ok: return checked
 	if not supported(owners): return Runtime.fail("INVALID_REGION_OWNERS")
-	return Runtime.ok("", {"snapshot": {"version": 1, "context": checked.context, "owners": wire(owners), "state_hash": state_hash(state)}})
+	var normalized: Dictionary = _json_write_state(state)
+	if not normalized.ok: return normalized
+	return Runtime.ok("", {"state": normalized.state, "snapshot": {"version": 1, "context": checked.context, "owners": wire(owners), "state_hash": state_hash(normalized.state)}})
+
+## Preserve typed detached state while settling floats with Store.save's codec.
+static func _json_write_state(state: Dictionary) -> Dictionary:
+	var encoded: String = JSON.stringify(wire(state), "", true, true)
+	for _round in range(8):
+		var decoded: Variant = JSON.parse_string(encoded)
+		if not decoded is Dictionary: return Runtime.fail("UNSTABLE_REGION_SNAPSHOT_JSON")
+		var next: String = JSON.stringify(decoded, "", true, true)
+		if next == encoded: return Runtime.ok("", {"state": _write_state_shape(state, unwire(decoded))})
+		encoded = next
+	return Runtime.fail("UNSTABLE_REGION_SNAPSHOT_JSON")
+
+
+## wire/unwire preserves values; retain typed Array containers made by SiteStore too.
+static func _write_state_shape(original: Variant, normalized: Variant) -> Variant:
+	if original is Dictionary:
+		var result: Dictionary = original.duplicate(false)
+		for key: Variant in original: result[key] = _write_state_shape(original[key], normalized[key])
+		return result
+	if original is Array:
+		var result: Array = original.duplicate(false)
+		for index: int in original.size(): result[index] = _write_state_shape(original[index], normalized[index])
+		return result
+	return normalized
 
 static func validate(state: Dictionary, snapshot: Variant, expected: Dictionary = {}) -> Dictionary:
 	if not snapshot is Dictionary or snapshot.size() != 4 or not integer(snapshot.get("version"), 1) or int(snapshot.version) != 1 or not snapshot.get("state_hash") is String or not _snapshot_hash_matches(state, str(snapshot.state_hash)):
