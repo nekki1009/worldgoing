@@ -29,6 +29,10 @@ const RESOURCE_SPEEDS := [0.90, 0.60, 1.00, 0.75, 0.90, 0.85, 0.80, 1.00]
 ## for far fewer Site builds in open country.
 const HEURISTIC_WEIGHT := 1.4
 const DEFAULT_MAX_SITE_BUILDS := 1500
+const LAND_CROSS_CACHE_LIMIT := 128
+const LAND_CROSS_CACHE_POINTS := 32768
+const LAND_CROSS_GEOMETRY_CELLS := 65536
+const LAND_CROSS_BASE_TERRAIN = preload("res://scripts/terrain_lab/terrain_data.gd")
 
 static var _mutex := Mutex.new()
 static var _memory: Dictionary = {} # cache key -> {site: PackedByteArray}
@@ -952,10 +956,16 @@ class Search:
 	var _provider_failure: Dictionary = {}
 	var _hull_reach: Dictionary = {} # "from>to" -> hull_reach results by start pose and edge depth.
 	var _ocean_memo: Dictionary = {} # TerrainData -> {cell index: can_navigate_water}; follows _terrain_cache.
+	var _land_crossings: Array[Dictionary] = []
+	var _land_crossing_points: int = 0
 
 	func run() -> Dictionary:
+		_land_crossings.clear()
+		_land_crossing_points = 0
 		result = _run()
 		RegionRoute.flush_cache()
+		_land_crossings.clear()
+		_land_crossing_points = 0
 		return result
 
 	func _heuristic(site: Vector2i) -> float:
@@ -1007,9 +1017,57 @@ class Search:
 		if _terrain_cache.size() >= 32:
 			var evicted = _terrain_cache.keys()[0]
 			_ocean_memo.erase(_terrain_cache[evicted])
+			_drop_land_crossings(_terrain_cache[evicted])
 			_terrain_cache.erase(evicted)
 		_terrain_cache[site] = built.data
 		return built.data
+
+	## Snapshot every lookup: a provider may mutate a previously returned body.
+	func _land_geometry(data: TerrainData) -> PackedByteArray:
+		if data.get_script() != RegionRoute.LAND_CROSS_BASE_TERRAIN: return PackedByteArray()
+		var count: int = data.size.x * data.size.y
+		if data.size.x <= 0 or data.size.y <= 0 or count > RegionRoute.LAND_CROSS_GEOMETRY_CELLS: return PackedByteArray()
+		var heights: PackedByteArray = data.navigation_heights()
+		var ramps: PackedByteArray = data.navigation_ramps()
+		if data.flags.size() != count or heights.size() != count or ramps.size() != count \
+				or not data.bridge_walkable.is_empty() and data.bridge_walkable.size() != count \
+				or not data.static_blocked.is_empty() and data.static_blocked.size() != count:
+			return PackedByteArray()
+		return var_to_bytes([data.size, data.flags, data.bridge_walkable, data.static_blocked, heights, ramps])
+
+	func _drop_land_crossings(data: TerrainData) -> void:
+		for index: int in range(_land_crossings.size() - 1, -1, -1):
+			var entry: Dictionary = _land_crossings[index]
+			if entry.first == data or entry.second == data:
+				_land_crossing_points -= int(entry.points)
+				_land_crossings.remove_at(index)
+
+	## Reuse only a complete original land A*, including its original cap failure.
+	func _land_vehicle_crossing(first: TerrainData, second: TerrainData, vehicle: Dictionary,
+			pose: Dictionary, edge: int, offset: int) -> Dictionary:
+		var kind: String = str(vehicle.get("kind", ""))
+		var first_geometry: PackedByteArray = _land_geometry(first)
+		var second_geometry: PackedByteArray = _land_geometry(second)
+		if kind not in ["cart", "wagon"] or first_geometry.is_empty() or second_geometry.is_empty():
+			return RegionRoute.vehicle_crossing(first, second, vehicle, pose, edge, offset)
+		var operator: Vector2i = pose.get("operator", Vector2i.ZERO)
+		var facing: Vector2i = pose.get("facing", Vector2i.ZERO)
+		var key: String = var_to_bytes([kind, operator, facing, edge, offset, is_same(first, second)]).hex_encode()
+		for entry: Dictionary in _land_crossings:
+			if entry.key == key and entry.first_geometry == first_geometry and entry.second_geometry == second_geometry:
+				return entry.result.duplicate(true)
+		var crossed: Dictionary = RegionRoute.vehicle_crossing(first, second, vehicle, pose, edge, offset)
+		var points: int = crossed.get("path", []).size()
+		if points <= RegionRoute.LAND_CROSS_CACHE_POINTS:
+			while not _land_crossings.is_empty() and (_land_crossings.size() >= RegionRoute.LAND_CROSS_CACHE_LIMIT \
+					or _land_crossing_points + points > RegionRoute.LAND_CROSS_CACHE_POINTS):
+				var evicted: Dictionary = _land_crossings.pop_front()
+				_land_crossing_points -= int(evicted.points)
+			_land_crossings.append({"first": first, "second": second, "key": key,
+				"first_geometry": first_geometry, "second_geometry": second_geometry,
+				"result": crossed.duplicate(true), "points": points})
+			_land_crossing_points += points
+		return crossed
 
 	func _vehicles() -> Array:
 		return context.get("capabilities", {}).get("vehicles", [])
@@ -1063,7 +1121,8 @@ class Search:
 			var target: Vector2i = RegionRoute.Adapter.boundary_cell(edge, offset) + direction * padding + unpacked.anchor - lead if sea else Vector2i(-999, -999)
 			var pair := "%d,%d>%d,%d" % [from.x, from.y, to.x, to.y]
 			if sea and not _hull_reach.has(pair): _hull_reach[pair] = {}
-			var crossed := RegionRoute.vehicle_crossing(first, second, proof_vehicle, unpacked, edge, offset, sea, target, _hull_reach[pair] if sea else null, _ocean_memo)
+			var crossed: Dictionary = RegionRoute.vehicle_crossing(first, second, proof_vehicle, unpacked, edge, offset, true, target, _hull_reach[pair], _ocean_memo) \
+				if sea else _land_vehicle_crossing(first, second, proof_vehicle, unpacked, edge, offset)
 			if not crossed.ok: return crossed
 			output[identity] = {"anchor": [crossed.pose.anchor.x, crossed.pose.anchor.y], "operator": [crossed.pose.operator.x, crossed.pose.operator.y], "facing": [crossed.pose.facing.x, crossed.pose.facing.y]}
 			paths[identity] = crossed.path
