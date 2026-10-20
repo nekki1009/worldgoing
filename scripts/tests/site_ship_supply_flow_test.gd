@@ -159,6 +159,11 @@ func _run() -> void:
 	assert(personal.cohorts.is_empty() and identity in Sustain._ids(entry.sustain))
 	assert(is_same(row.cargo, cargo) and is_same(row.item_state, holder) and row.cargo.grain == 1)
 	_near(float(personal.open_rations), private_stock)
+	# R1b: leaving the team ends the formal command; a rejoined officer is re-appointed through the original roster path.
+	var reseat: Array[int] = []
+	reseat.append(0)
+	var reseated: Dictionary = team.record_officer_service(reseat, true)
+	assert(reseated.ok, str(reseated))
 	_check_shore_training(lab, team, entry)
 	# Saved positional stock validates against the original terrain and owner.
 	var state := data.site.duplicate(true)
