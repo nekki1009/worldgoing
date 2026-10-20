@@ -2,6 +2,7 @@ class_name TerrainArmy
 extends Node2D
 
 const ExchangeTimings = preload("res://scripts/terrain_lab/character_exchange_timings.gd")
+const TeamDeparture = preload("res://scripts/terrain_lab/site_team_departure.gd") # R6 S5: team officer-seat departure part.
 const WagonRiderRecipe = preload("res://scripts/terrain_lab/site_wagon_rider_recipe.gd")
 const SharedVisualSource = preload("res://scripts/terrain_lab/terrain_army_shared_visual_source.gd")
 const SiegeWorkClips = preload("res://scripts/terrain_lab/site_siege_work_clips.gd")
@@ -3100,6 +3101,24 @@ func team_troop_equipment_guard(proposed: Dictionary) -> Dictionary:
 		return SiteRuntime.fail("MIXED_TROOP", "整隊最終普通隊員須維持同一兵種（近戰／弓／弩）；隊長與現任幹部除外，未扣物")
 	return SiteRuntime.ok()
 
+## R6 S5 (plan 10.1 退隊): the team departure transaction. The officer seats the person holds are computed first (pure, site_team_departure);
+## the roster leave (leave_row) runs next; the seats are written only after that succeeds. A refused departure changes neither the roster nor the seats.
+func depart_member(person_id: int, authority: Dictionary = {}) -> Dictionary:
+	var kind := str(authority.get("kind", ""))
+	if kind != "npc_event" and kind != "controlled": return SiteRuntime.fail("NO_AUTHORITY", "離隊須為受控者明示或 NPC 離隊事件")
+	var vacated: Dictionary = TeamDeparture.vacate_seats(team_offices(true), person_id)
+	if not bool(vacated.get("ok", false)): return vacated
+	var left: Dictionary = leave_row_by_event(person_id) if kind == "npc_event" else leave_row(person_id)
+	if not bool(left.get("ok", false)): return left
+	if bool(vacated.get("changed", false)): offices = vacated.offices
+	left["seat_vacated"] = bool(vacated.get("seat_vacated", false))
+	return left
+
+## R6 S5D: a non-controlled member leaves through a declared NPC departure event. The same guards as leave_row apply, except the
+## controlled-person authority check, which this path does not satisfy for the controlled person (it is refused).
+func leave_row_by_event(person_id: int) -> Dictionary:
+	return _change_row_membership(person_id, false, -1, true)
+
 func leave_row(person_id: int) -> Dictionary:
 	return _change_row_membership(person_id, false)
 
@@ -3178,12 +3197,13 @@ func recruit_candidates() -> Array[int]:
 		result.append(combat_identity(index))
 	return result
 
-func _change_row_membership(person_id: int, joining: bool, recruiter_id: int = -1) -> Dictionary:
+func _change_row_membership(person_id: int, joining: bool, recruiter_id: int = -1, npc_event: bool = false) -> Dictionary:
 	if not garrison_feature_id.is_empty(): return SiteRuntime.fail("GARRISONED", "駐營人員沿軍營的編成或解編入口辦理")
 	var index := index_for_identity(person_id)
 	if not combat_enabled or index < 0 or index == PLAYER_MEMBER:
 		return SiteRuntime.fail("NO_TARGET", "須為此原容器中的實際人物；不建立第二份隊員")
-	if recruiter_id < 0 and not is_controlled_person(index) or recruiter_id >= 0 and not joining:
+	# R6 S5D (plan 10.1/10.2): an NPC departure is a declared npc_event; the controlled person may not use it.
+	if (npc_event and is_controlled_person(index)) or (not npc_event and recruiter_id < 0 and not is_controlled_person(index)) or (recruiter_id >= 0 and not joining):
 		return SiteRuntime.fail("NO_AUTHORITY", "只有目前受控的原人物可自行入退队")
 	if is_member(index) == joining:
 		return SiteRuntime.fail("NO_TARGET", "已是此隊成員" if joining else "已正式退隊")
