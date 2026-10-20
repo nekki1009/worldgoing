@@ -54,8 +54,15 @@ func _run() -> void:
 	assert(str(orphan.code) == "EMPTY_POSITION", str(orphan))
 	assert(family.apply_office_plan(elder, int(offices.revision), [{"op": "add", "name": "族老"}, {"op": "rename", "position_id": str(SiteOffices.head_position(offices).id), "name": "宗主"}]).ok)
 	offices = data.site.family.offices
-	assert(SiteOffices.head_position(offices).name == "宗主" and offices.positions.size() == 2)
-	assert(DutyAI.review_family_personnel(family, data.site.family, player).is_empty(), "No vacant duty seat: AI seats nobody and never edits the registry")
+	assert(SiteOffices.head_position(offices).name == "宗主" and offices.positions.size() == SiteOffices.duty_ids("family").size() + 1, "Default family seats (roster, research, teach) plus 族老")
+	# Research and teaching seats are vacant duty seats in the family catalog. The NPC head fills
+	# the first one through the same apply entry (plan FP) and never edits the registry.
+	var registry_before: Array = data.site.family.members.duplicate(true)
+	var filled: Dictionary = DutyAI.review_family_personnel(family, data.site.family, player)
+	assert(bool(filled.get("ok", false)), str(filled))
+	var research_seat: String = str(data.site.family.offices.duties["family.research"])
+	assert(int(SiteOffices.position(data.site.family.offices, research_seat).holder) == cousin, "NPC head seats the registered kin on the first vacant duty seat")
+	assert(data.site.family.members == registry_before, "AI never edits the registry")
 
 	# Unfit head: duty paused; the controlled member names a new head (D7).
 	team.apply_unit_contact(team.current_commander, {"result": {"hp": 1.0, "stun": 110.0, "guard_break": false}, "shield": false})
@@ -65,12 +72,14 @@ func _run() -> void:
 	assert(family.appoint_head(player, player).ok)
 	assert(int(family.duty_resolve("family.roster").decider) == player)
 
-	# Re-registration by the head keeps offices (one duty only, so no other seat can be held).
+	# Re-registration by the head keeps offices. The last non-head seat is the added 族老
+	# seat, which holds no duty; the former head (elder) is seatless now and is the appointee.
 	offices = data.site.family.offices
 	var spare := ""
 	for seat: Dictionary in offices.positions:
 		if not bool(seat.head): spare = str(seat.id)
-	assert(family.apply_office_plan(player, int(offices.revision), [{"op": "appoint", "position_id": spare, "person_id": cousin},
+	assert(SiteOffices.duties_of_position(offices, spare).is_empty(), "The spare seat carries no duty")
+	assert(family.apply_office_plan(player, int(offices.revision), [{"op": "appoint", "position_id": spare, "person_id": elder},
 		{"op": "add", "name": "管家", "ref": "m"}]).ok == false, "Held seat with no duty is rejected")
 	var kept := family.register_members([_ref(data, player, "本人"), _ref(data, elder, "伯父")], true, player)
 	assert(kept.ok and int(data.site.family.version) == 2 and FamilyContinuity.validate_family(data.site.family, str(data.site.id)), str(kept))
