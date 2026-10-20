@@ -509,7 +509,8 @@ func move_roster(source: TerrainArmy, target: TerrainArmy, ids: Array[int]) -> D
 		selected[id] = true
 	return _change_membership_supply(source, {"key": "team:%d" % target.team_id, "team": target}, ids)
 
-func membership_change(team: TerrainArmy, identity: int, joining: bool) -> Dictionary:
+## R7 C0: the read-only candidate of a team membership change. Nothing in the site or the supply state is written here.
+func membership_change_candidate(team: TerrainArmy, identity: int, joining: bool) -> Dictionary:
 	# Called by the original row leave/join entry after its body/action guards,
 	# immediately before flipping membership. Storage owner/row/cargo never move.
 	if team == null:
@@ -527,9 +528,25 @@ func membership_change(team: TerrainArmy, identity: int, joining: bool) -> Dicti
 			return Runtime.fail("INVALID_MEMBERS")
 		personal = {"key": "person:%d" % identity, "actor": person.owner}
 	var destination := {"key": "team:%d" % team.team_id, "team": team} if joining else personal
-	return _change_membership_supply(team, destination, [identity])
+	return _membership_plan(team, destination, [identity])
+
+## R7 C0: the live membership change = candidate + commit (byte-identical behaviour to the former single function).
+func membership_change(team: TerrainArmy, identity: int, joining: bool) -> Dictionary:
+	var candidate: Dictionary = membership_change_candidate(team, identity, joining)
+	if not bool(candidate.get("ok", false)): return candidate
+	return membership_change_commit(candidate.plan)
+
+## R7 C0: applies a candidate plan returned by membership_change_candidate (the only writer of this change).
+func membership_change_commit(plan: Dictionary) -> Dictionary:
+	return _commit_membership_plan(plan)
 
 func _change_membership_supply(source: Variant, destination_home: Dictionary, ids: Array[int], dry_run: bool = false) -> Dictionary:
+	var planned: Dictionary = _membership_plan(source, destination_home, ids)
+	if not bool(planned.get("ok", false)): return planned
+	if dry_run: return Runtime.ok()
+	return _commit_membership_plan(planned.plan)
+
+func _membership_plan(source: Variant, destination_home: Dictionary, ids: Array[int]) -> Dictionary:
 	var site: Dictionary = controller.lab.terrain.site
 	var members := _all_members()
 	var states := _states()
@@ -581,7 +598,7 @@ func _change_membership_supply(source: Variant, destination_home: Dictionary, id
 		if str(job.get("source_kind", "")) == "person" and destinations.has(int(job.get("source_id", -1))):
 			return Runtime.fail("BUSY", "涉及的原持物人仍在作業")
 	if not has_history:
-		return Runtime.ok() # Two never-opted-in rosters do not invent feeding.
+		return Runtime.ok("", {"plan": {}}) # Two never-opted-in rosters do not invent feeding: an empty plan writes nothing.
 	var moves: Array = []
 	var joined: Array = []
 	if target_key in destinations.values() and not states.has(target_key):
@@ -639,10 +656,14 @@ func _change_membership_supply(source: Variant, destination_home: Dictionary, id
 		values.append(owner.state)
 	if not Sustain.validate_owners(values, members):
 		return Runtime.fail("INVALID_SUSTAIN", "供養移轉將造成重複或遺失原人歷史")
-	if dry_run: return Runtime.ok()
-	_commit_states({"site": site, "states": states, "members": members, "moves": moves, "joined": joined})
-	var source_entry: Dictionary = controller._supply_entry(source)
-	if not source_entry.is_empty() and selected.has(int(source_entry.training_requester)):
+	return Runtime.ok("", {"plan": {"site": site, "states": states, "members": members, "moves": moves, "joined": joined, "selected": selected, "source": source}})
+
+## R7 C0: the writer of a membership plan: the same state commit and training reset as before the split.
+func _commit_membership_plan(plan: Dictionary) -> Dictionary:
+	if plan.is_empty(): return Runtime.ok() # The no-op plan commits nothing and does not reset training (as before the split).
+	_commit_states({"site": plan.site, "states": plan.states, "members": plan.members, "moves": plan.moves, "joined": plan.joined})
+	var source_entry: Dictionary = controller._supply_entry(plan.source)
+	if not source_entry.is_empty() and plan.selected.has(int(source_entry.training_requester)):
 		source_entry.training_order = false
 		source_entry.training_requester = -1
 		source_entry.training_feature_id = ""

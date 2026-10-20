@@ -3197,7 +3197,8 @@ func recruit_candidates() -> Array[int]:
 		result.append(combat_identity(index))
 	return result
 
-func _change_row_membership(person_id: int, joining: bool, recruiter_id: int = -1, npc_event: bool = false) -> Dictionary:
+## R7 C0: the leave/join refusals of one team row, verbatim from the former change body. Reads only; used by the change and by a batch phase 1.
+func row_membership_refusal(person_id: int, joining: bool, recruiter_id: int = -1, npc_event: bool = false) -> Dictionary:
 	if not garrison_feature_id.is_empty(): return SiteRuntime.fail("GARRISONED", "駐營人員沿軍營的編成或解編入口辦理")
 	var index := index_for_identity(person_id)
 	if not combat_enabled or index < 0 or index == PLAYER_MEMBER:
@@ -3221,6 +3222,12 @@ func _change_row_membership(person_id: int, joining: bool, recruiter_id: int = -
 	elif cape_departure_guard.is_valid():
 		var cape_guard: Dictionary = cape_departure_guard.call(person_id)
 		if not cape_guard.ok: return cape_guard
+	return SiteRuntime.ok()
+
+func _change_row_membership(person_id: int, joining: bool, recruiter_id: int = -1, npc_event: bool = false) -> Dictionary:
+	var refusal: Dictionary = row_membership_refusal(person_id, joining, recruiter_id, npc_event)
+	if not bool(refusal.get("ok", false)): return refusal
+	var index := index_for_identity(person_id)
 	# No body/cargo mutation precedes this hook. A failed hook must leave its
 	# original supply owners untouched; after success only infallible state commits.
 	# The hook checks active person jobs/deliveries; a stationary captivity guard
