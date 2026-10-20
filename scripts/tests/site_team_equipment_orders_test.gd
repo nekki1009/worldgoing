@@ -46,6 +46,8 @@ class Fixture extends RefCounted:
 			row.person_id = identity
 			row.item_state = SiteRuntime.new_item_state("person:%d" % identity)
 			row["member"] = true
+			# Same rank convention as TerrainArmy.enable_combat: the first captain is the officer.
+			row["military_role"] = "officer" if index == 0 else "soldier"
 			row["present"] = true
 			row["appearance"] = HumanCharacter3DEditor.default_appearance(0)
 			row.appearance.parts.cape = "none"
@@ -60,12 +62,19 @@ class Fixture extends RefCounted:
 		orders.equipment_team_apply_guard = _appearance
 		orders.equipment_team_external_duty_guard = func(identity: int) -> bool: return identity == external_busy
 		terrain.site.equipment_nations = {"batch": {"military_head": 3, "members": members, "standards": {}}}
-		assert(orders.set_standard(3, "batch", "line", "Original spear issue", {"weapon": {"definition": "weapon:spear_01"}}).ok)
+		var standard := orders.set_standard(3, "batch", "line", "Original spear issue", {"weapon": {"definition": "weapon:spear_01"}})
+		assert(standard.ok, str(standard))
 	func _combat_target(identity: int) -> Dictionary:
 		var index := army.index_for_identity(identity)
 		if index >= 0:
 			return {"owner": army, "unit": index, "cell": army.cells[index], "hp": army.combat_units[index].hp}
 		return source._combat_target(identity)
+	# Core SitePersonActions._person reads lab.site_controller and TerrainLab._original_person_target.
+	var site_controller: Variant = null
+	func _original_person_target(identity: int, with_bodies: bool = false) -> Dictionary:
+		var person: Dictionary = _combat_target(identity)
+		if not person.is_empty() and with_bodies: person.bodies = []
+		return person
 	func controlled_person_id() -> int:
 		return source.controlled_id
 	func _fatigue_threat(_cell: Vector2i, _faction: int, _owner: Variant, _unit: int, _candidates: Dictionary) -> bool:
