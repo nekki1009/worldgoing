@@ -155,9 +155,10 @@ func _run() -> void:
 	# Shared non-player 80/50 pauses this SAME job, without transfers or rest work.
 	var carrier: Dictionary = first.combat_units[1]
 	var shared := PersonFatigue.pool(carrier)
-	assert(is_same(shared, first.team_fatigue) and int(shared.count) == 3)
-	assert(PersonFatigue.pool(first_row).is_empty(), "The controlled captain keeps personal fatigue")
-	for index: int in [2, 3]:
+	# Every living formal member shares the team pool, the controlled captain included (人馬共用).
+	assert(is_same(shared, first.team_fatigue) and int(shared.count) == 4)
+	assert(is_same(PersonFatigue.pool(first_row), shared), "The controlled captain shares the team fatigue pool")
+	for index: int in [1, 2, 3]:
 		assert(is_same(shared, PersonFatigue.pool(first.combat_units[index])))
 	_near(PersonFatigue.effort_rate(carrier), PersonFatigue.WORK_RATE / float(shared.count), "One carrier contributes work divided by actual shared membership")
 	PersonFatigue.write(carrier, "fatigue", 79.999)
