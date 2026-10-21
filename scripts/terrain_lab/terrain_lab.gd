@@ -2310,6 +2310,7 @@ func _advance_fatigue(seconds: float, accepted_prefix_only: bool = false) -> voi
 		# Escort and release walks advance once per accepted interval in both branches
 		# (GD mesh prefix and native checked prefix). Work/fatigue prefixes stay single-consumption.
 		site_controller.captive_escort.advance(seconds)
+		if accepted_prefix_only: site_controller.person_actions.advance_fire_approaches()
 		if not accepted_prefix_only:
 			for identity: int in action_seconds:
 				training_seconds[identity] = float(training_seconds.get(identity, 0.0)) + float(action_seconds[identity])

@@ -1068,6 +1068,14 @@ func _new_job(executor: Dictionary, kind: String, target_id: int) -> Dictionary:
 		"executor_cell": lab.terrain.index(executor.cell), "executor_hit": int(executor.hit),
 		"elapsed": 0.0, "paused": ""}
 
+## Native fire-suppression approaches are movement, not work: like escort walks they advance on every
+## accepted interval, including GD mesh prefix-only steps that skip advance(). The order is idempotent.
+func advance_fire_approaches() -> void:
+	for key: String in _jobs.keys():
+		var job: Dictionary = _jobs[key]
+		if str(job.kind) == "fire_suppress" and job.executor_owner is CrowdPersonOwner and not bool(job.cancelled):
+			job.executor_owner.advance_suppress_approach(int(job.executor_id), int(job.job_token))
+
 func advance(seconds: float, work_plan: Dictionary = {}) -> Dictionary:
 	var handled := {}
 	if not is_finite(seconds) or seconds <= 0.0 or bool(lab.terrain.site.get("paused", false)):
