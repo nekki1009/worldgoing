@@ -79,7 +79,7 @@ static func designate_heir_candidate(family: Dictionary, site_id: String, reques
 	if not bool(designated.ok): return designated
 	var candidate: Dictionary = family.duplicate(true)
 	candidate.version = 5
-	candidate.succession = designated.record
+	candidate["succession"] = designated.record
 	candidate.offices.revision = mini(SiteOffices.MAX_SEQ, int(candidate.offices.revision) + 1)
 	return {"ok": true, "code": "", "family": candidate}
 
@@ -92,6 +92,31 @@ func designate_heir(requester_id: int, person_id: int) -> Dictionary:
 	family.clear()
 	family.merge(checked.family, true)
 	return Runtime.ok("已指定家族繼承人", {"person_id": person_id})
+
+## Saved v5 only: B3 freezes the family version; original live founding stays above.
+func designate_heir_in_organization_edit(ticket: Dictionary, revision: int, requester_id: int, person_id: int) -> Dictionary:
+	if not is_instance_valid(lab) or not is_instance_valid(lab.site_controller) or lab.site_controller.family_continuity != self or lab.site_controller.region_slot == null: return Runtime.fail("NO_ORIGINAL_FAMILY_OWNER", "須使用原 Controller 的家族 owner")
+	var slot: RefCounted = lab.site_controller.region_slot
+	var target: Dictionary = slot.call("organization_family_edit_target", ticket, revision, lab.terrain, self)
+	if not target.ok: return target
+	var live: Dictionary = lab.terrain.site.family
+	var draft: Dictionary = target.family
+	var site_id: String = str(lab.terrain.site.id)
+	# Original command checks the seated head and the heir's actual physical state.
+	var live_plan: Dictionary = designate_heir_candidate(live, site_id, requester_id, person_id,
+		func(identity: int) -> bool: return office_person_ok(live, identity))
+	if not live_plan.ok: return live_plan
+	var draft_plan: Dictionary = designate_heir_candidate(draft, site_id, requester_id, person_id,
+		func(identity: int) -> bool: return office_person_ok(draft, identity))
+	if not draft_plan.ok: return draft_plan
+	if int(draft.version) != 5: return Runtime.fail("ORGANIZATION_IDENTITY_MIGRATION_REQUIRED", "本片不在私有路徑升級家族版本；先沿原命令保存 v5")
+	var changed: Dictionary = slot.call("mutate_organization_edit", ticket, revision, "family", target.reference, draft_plan.family)
+	if changed.ok:
+		changed["command"] = "family.designate_heir"
+		changed["validation"] = "family_heir_command_preflight_only"
+		changed["person_id"] = person_id
+		changed["office_revision"] = int(draft_plan.family.offices.revision)
+	return changed
 
 ## Version 4 identity: display name (String, may be empty) and an integer lineage id.
 static func valid_identity(display_name: Variant, lineage_id: Variant) -> bool:
