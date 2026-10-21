@@ -180,7 +180,8 @@ func _integration() -> void:
 	var checked_before: bool = TerrainArmy._idle_kernel_checked
 	var data := TerrainData.new()
 	var state := _base()
-	state.merge({"item_storage_version": Store.Runtime.ITEM_STORAGE_VERSION, "ground_loot": {}, "depot_items": {}, "next_loot": 1})
+	# A real Site always carries features/stockpiles; Store validates facility stock before holders.
+	state.merge({"item_storage_version": Store.Runtime.ITEM_STORAGE_VERSION, "ground_loot": {}, "depot_items": {}, "next_loot": 1, "features": {}, "stockpiles": {}})
 	for api: RefCounted in [kernel, null, RefCounted.new()]:
 		TerrainArmy._idle_kernel_checked = true
 		TerrainArmy._idle_kernel = api
