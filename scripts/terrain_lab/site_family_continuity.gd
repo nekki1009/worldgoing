@@ -455,13 +455,42 @@ func observe_proven_day(proven_day: int) -> Dictionary:
 ## Organization adjustment is the head's own, non-delegable power (3.5).
 func apply_office_plan(requester_id: int, expected_revision: int, ops: Array) -> Dictionary:
 	var family: Variant = lab.terrain.site.get("family", {})
-	if family_offices(family).is_empty() or requester_id != head_executor(family):
+	if not _office_plan_authorized(family, requester_id):
 		return Runtime.fail("NO_AUTHORITY", "只有清醒自由的家主可調整家族職位")
 	var members := local_member_ids(family)
 	var result := SiteOffices.apply_plan(family.offices, "family", expected_revision, ops, func(identity: int, _office_class: String) -> bool: return members.has(identity))
 	if not bool(result.ok): return result
 	family.offices = result.offices
 	return Runtime.ok("已套用家族人事方案", {"revision": int(family.offices.revision), "refs": result.refs})
+
+## Original non-delegable head predicate; default retains live upgrade-on-read.
+func _office_plan_authorized(family: Variant, requester_id: int, read_only: bool = false) -> bool:
+	return not family_offices(family, read_only).is_empty() and requester_id == head_executor(family, read_only)
+
+## Actual live authority and membership cannot be granted by draft edits.
+func apply_office_plan_in_organization_edit(ticket: Dictionary, revision: int, requester_id: int, expected_revision: int, ops: Array) -> Dictionary:
+	if not is_instance_valid(lab) or not is_instance_valid(lab.site_controller) or lab.site_controller.family_continuity != self or lab.site_controller.region_slot == null: return Runtime.fail("NO_ORIGINAL_FAMILY_OWNER", "須使用原 Controller 的家族 owner")
+	var slot: RefCounted = lab.site_controller.region_slot
+	var target: Dictionary = slot.call("organization_family_edit_target", ticket, revision, lab.terrain, self)
+	if not target.ok: return target
+	var draft: Dictionary = target.family
+	var live: Dictionary = lab.terrain.site.family
+	if requester_id <= 0 or not _office_plan_authorized(live, requester_id, true) or not _office_plan_authorized(draft, requester_id, true):
+		return Runtime.fail("NO_AUTHORITY", "只有清醒自由的家主可調整家族職位")
+	var live_members: Array[int] = local_member_ids(live)
+	var draft_members: Array[int] = local_member_ids(draft)
+	var result: Dictionary = SiteOffices.apply_plan(family_offices(draft, true), "family", expected_revision, ops,
+		func(identity: int, _office_class: String) -> bool: return live_members.has(identity) and draft_members.has(identity))
+	if not result.ok: return result
+	var candidate: Dictionary = draft.duplicate(true)
+	candidate.offices = result.offices
+	var changed: Dictionary = slot.call("mutate_organization_edit", ticket, revision, "family", target.reference, candidate)
+	if changed.ok:
+		changed["command"] = "family.apply_office_plan"
+		changed["validation"] = "family_office_command_preflight_only"
+		changed["office_revision"] = int(result.offices.revision)
+		changed["refs"] = result.refs.duplicate(true)
+	return changed
 
 func set_duty_ai_enabled(requester_id: int, enabled: bool) -> Dictionary:
 	var family: Variant = lab.terrain.site.get("family", {})
