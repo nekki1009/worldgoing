@@ -155,7 +155,7 @@ static func commit(lab: Variant, prepared: Dictionary) -> Dictionary:
 	if not prepared.corps.is_empty():
 		var corps: Dictionary = site.corps.duplicate(true)
 		for key: String in prepared.corps: corps.erase(key) # Only corps this person commanded end.
-		site.corps = corps
+		site["corps"] = corps
 	var holder: Variant = prepared.person.get("holder")
 	if holder is Dictionary: holder.version = int(holder.get("version", 0)) + 1
 	var actions: Variant = lab.site_controller.person_actions

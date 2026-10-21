@@ -75,18 +75,18 @@ static func _summary(data: TerrainData, plan: Dictionary, target: float, budget:
 		if steps >= budget:
 			var completed := maxf(float(plan.cursor), float(plan.start) + cursor_minute * 60.0 - float(plan.site_seconds))
 			plan.cursor = completed
-			data.site.phase = 0.0
+			data.site["phase"] = 0.0
 			data.set_meta(&"region_cold_plan", plan)
 			return _receipt(plan, target, "resource_events", steps)
-		data.site.minute = due
-		data.site.phase = 0.0
+		data.site["minute"] = due
+		data.site["phase"] = 0.0
 		Runtime._regenerate(data, occupied)
 		Runtime.allocate_water(data)
 		cursor_minute = due
 		steps += 1
 		plan.steps = int(plan.steps) + 1
-	data.site.minute = final_minute
-	data.site.phase = clampf(site_end / 60.0 - final_minute, 0.0, 0.999999999)
+	data.site["minute"] = final_minute
+	data.site["phase"] = clampf(site_end / 60.0 - final_minute, 0.0, 0.999999999)
 	Runtime.allocate_water(data)
 	plan.cursor = target
 	data.set_meta(&"region_cold_plan", plan)

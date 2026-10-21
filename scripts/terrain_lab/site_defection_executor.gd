@@ -73,7 +73,7 @@ static func execute(lab: Variant, requests: Array) -> Dictionary:
 		history.append_array(departures)
 		site.family.clear()
 		site.family.merge(family_candidate, true)
-		site.family_departures = history
+		site["family_departures"] = history
 	for nation_id: String in nation_candidates:
 		var target: Dictionary = site.equipment_nations[nation_id]
 		target.clear()

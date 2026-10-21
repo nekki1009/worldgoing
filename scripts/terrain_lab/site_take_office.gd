@@ -107,7 +107,7 @@ static func take_settlement_head(lab: Variant, requester_id: int, person_id: int
 	if not closed_episode.is_empty():
 		var episodes: Dictionary = data.site.vacancy_episodes.duplicate(true)
 		episodes[str(closed_episode.episode_id)] = closed_episode
-		data.site.vacancy_episodes = episodes
+		data.site["vacancy_episodes"] = episodes
 	commit_contest_losses(losses.losses)
 	return Runtime.ok("已就任「%s」" % str(head.name), {"revision": int(settlement.offices.revision)})
 
@@ -137,7 +137,7 @@ static func observe_seat(site: Dictionary, owner_kind: String, owner_id: String,
 		episodes[str(episode.episode_id)] = episode
 		result.opened = true
 		changed = true
-	if changed: site.vacancy_episodes = episodes
+	if changed: site["vacancy_episodes"] = episodes
 	return result
 
 ## R5 S7: a G0 proven political day advances the owner's open episode timer (the caller passes only proven days).
@@ -149,7 +149,7 @@ static func observe_proven(site: Dictionary, owner_kind: String, owner_id: Strin
 	var ticked: Dictionary = VacancyEpisode.tick(open, proven_day)
 	if not ticked.ok: return ticked
 	episodes[str(open.episode_id)] = ticked.episode
-	site.vacancy_episodes = episodes
+	site["vacancy_episodes"] = episodes
 	return {"ok": true, "code": "", "message": "", "advanced": true}
 
 ## R5 S7: the deadline result of the owner's open episode (pure decide). Returns the winner and the episode id; nothing is written.

@@ -21,7 +21,7 @@ func init(scene: Node2D, person_actions: RefCounted) -> void:
 	lab = scene
 	actions = person_actions
 	if not lab.terrain.site.has("escort_orders"):
-		lab.terrain.site.escort_orders = {}
+		lab.terrain.site["escort_orders"] = {}
 	_check_left = 0.0
 
 func begin(requester_id: int, guard_id: int, destination: Vector2i, duty_authorized: bool = false) -> Dictionary:

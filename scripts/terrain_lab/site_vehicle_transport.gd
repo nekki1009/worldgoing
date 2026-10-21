@@ -820,8 +820,8 @@ func init(owner: Variant) -> void:
 	if lab.terrain != null:
 		lab.terrain.item_transfer_guard = ship_transfer_guard
 		lab.terrain.ground_loot_removed = clear_ship_remains_reference
-		if not lab.terrain.site.has("vehicles"): lab.terrain.site.vehicles = {}
-		if not lab.terrain.site.has("next_vehicle"): lab.terrain.site.next_vehicle = 1
+		if not lab.terrain.site.has("vehicles"): lab.terrain.site["vehicles"] = {}
+		if not lab.terrain.site.has("next_vehicle"): lab.terrain.site["next_vehicle"] = 1
 
 func records() -> Dictionary:
 	return lab.terrain.site.get("vehicles", {}) if lab != null and lab.terrain != null else {}
@@ -921,7 +921,7 @@ func checkpoint() -> Dictionary:
 func rollback(saved: Dictionary) -> void:
 	for identity: String in records().keys():
 		if identity not in saved.ids: records().erase(identity)
-	lab.terrain.site.next_vehicle = int(saved.next_vehicle)
+	lab.terrain.site["next_vehicle"] = int(saved.next_vehicle)
 
 func plan_claims(plan: Array) -> Dictionary:
 	var result := {}
@@ -1031,7 +1031,7 @@ func deploy_plan(team: TerrainArmy, plan: Array) -> Dictionary:
 		vehicle.move = {}
 		vehicle.stop_pending = false
 		lab.terrain.site.vehicles[vehicle.id] = vehicle
-	lab.terrain.site.next_vehicle = next + plan.size()
+	lab.terrain.site["next_vehicle"] = next + plan.size()
 	return Runtime.ok("已建立原車輛；沒有操作人的車輛保持停泊")
 
 func _operator(identity: int) -> Dictionary:
@@ -2244,7 +2244,7 @@ func deploy_ship(team: TerrainArmy, ship_type: String, anchor: Vector2i, facing:
 		"cargo": {}, "holder": Runtime.new_item_state("vehicle:" + str(next)), "move": {}, "stop_pending": false, "revision": 1, "command": {}}
 	if not _ship_fits(vehicle, Ship.footprint(ship_type, anchor, facing)): return Runtime.fail("NO_SPACE", "船體整個範圍須在明示可航水域且無人物或載具")
 	records()[vehicle.id] = vehicle
-	lab.terrain.site.next_vehicle = next + 1
+	lab.terrain.site["next_vehicle"] = next + 1
 	return Runtime.ok("明示測試船已建立；未生成額外人物或物資", {"vehicle_id": str(vehicle.id)})
 
 func ship_contacts(vehicle: Dictionary) -> Array[Vector2i]:

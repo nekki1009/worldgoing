@@ -1664,7 +1664,7 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 	# All remaining guards passed before the first original body mutation.
 	if (gd_original or formula_interval) and _siege_tactical_active(): SiteRuntime.mark_combat(terrain, 10.0)
 	if fire_active_at_start: SiteRuntime.mark_combat(terrain, SiteRuntime.COMBAT_GRACE, true)
-	if bool(permit.get("cold_fire_active", false)): terrain.site.combat_left = maxf(float(terrain.site.get("combat_left", 0.0)), elapsed)
+	if bool(permit.get("cold_fire_active", false)): terrain.site["combat_left"] = maxf(float(terrain.site.get("combat_left", 0.0)), elapsed)
 	if (not replaying or formula_interval) and not region_interval.is_empty() and gd_original:
 		_region_point_pending = region_interval.duplicate(true)
 		_region_point_pending.fire_action_begin = fire_action_cursor
@@ -1878,7 +1878,7 @@ func replay_site_to(target_game_seconds: float, budget_usec: int = 0, max_steps:
 			return SiteRuntime.fail("MISSING_FIRE_HISTORY", "Site 尚有共同時間欠秒，但原火攻 journal 已耗盡")
 		# Recreate the world-wide tactical permit recorded by this original interval.
 		if _fire_replay_tracking:
-			terrain.site.combat_left = maxf(float(terrain.site.get("combat_left", 0.0)), float(fire_interval.tactical_seconds))
+			terrain.site["combat_left"] = maxf(float(terrain.site.get("combat_left", 0.0)), float(fire_interval.tactical_seconds))
 		var combat_left := float(terrain.site.get("combat_left", 0.0))
 		if _siege_active(): combat_left = maxf(combat_left, 10.0)
 		if _fire_activity(): combat_left = maxf(combat_left, SiteRuntime.COMBAT_GRACE)
@@ -1943,11 +1943,11 @@ func replay_site_to(target_game_seconds: float, budget_usec: int = 0, max_steps:
 	var transport_capture := capture_fire_transport()
 	if not transport_capture.ok: return transport_capture
 	if transport_capture.state.is_empty(): terrain.site.erase("fire_transport")
-	else: terrain.site.fire_transport = transport_capture.state
+	else: terrain.site["fire_transport"] = transport_capture.state
 	var owner_capture := capture_fire_owner_state()
 	if not owner_capture.ok: return owner_capture
 	if owner_capture.state.is_empty(): terrain.site.erase("fire_owners")
-	else: terrain.site.fire_owners = owner_capture.state
+	else: terrain.site["fire_owners"] = owner_capture.state
 	# Persistable state is captured by the original owners, never a projection.
 	var guard: Dictionary = site_controller.supply_save_guard(false, _fire_replay_tracking)
 	if not guard.ok: return guard
@@ -7122,10 +7122,10 @@ func _initialize_fire_lab_fixture(seed_value: int, show_window: bool) -> Diction
 	data.moisture.fill(10)
 	data.resource_base.clear()
 	data.site.changes.clear()
-	data.site.inventory = {}
+	data.site["inventory"] = {}
 	for item: String in SiteEnvironment.ITEM_NAMES: data.site.inventory[item] = 100
-	data.site.capacity = 100000
-	data.site.depot_cell = data.index(Vector2i(8, 8))
+	data.site["capacity"] = 100000
+	data.site["depot_cell"] = data.index(Vector2i(8, 8))
 	data.site.manual.cell = data.index(data.spawn_cell)
 	data.site.worker.cell = data.index(Vector2i(8, 9))
 	SiteEnvironment._add_resource(data, SiteEnvironment.Kind.TIMBER, data.index(Vector2i(20, 20)), 12, 0)
@@ -7235,7 +7235,7 @@ func _initialize_fire_lab_fixture(seed_value: int, show_window: bool) -> Diction
 	add_child(site_test_window)
 	site_test_window.setup(self)
 	if show_window: site_test_window.open()
-	terrain.site.paused = true
+	terrain.site["paused"] = true
 	set_process(true)
 	_reset_action_elapsed_input()
 	return SiteRuntime.ok()
@@ -7251,10 +7251,10 @@ func step_fire_lab_fixture() -> Dictionary:
 	var pending := _action_time_remainder
 	# Synchronous temporary admission. There is one call and one cleanup path;
 	# every returned failure also restores both pauses and the original remainder.
-	original_data.site.paused = false
+	original_data.site["paused"] = false
 	get_tree().paused = false
 	var result := _advance_original_shared_step(EXCHANGE_ACTION_STEP if exchange_enabled else ACTION_STEP)
-	original_data.site.paused = site_paused
+	original_data.site["paused"] = site_paused
 	get_tree().paused = world_paused
 	_action_time_remainder = pending
 	_reset_action_elapsed_input()
@@ -12153,7 +12153,7 @@ func _region_party_domain_view(token: String, party: Dictionary, slot: RegionSav
 		if not lab_cursor.ok: return lab_cursor
 		var fire := SiteRuntime.validate_fire_snapshot(data, graph.owners.transport.fire_state, float(lab_cursor.value.fire_action_cursor))
 		if not fire.ok: return fire
-		if not fire.state.is_empty(): data.site.fire = fire.state
+		if not fire.state.is_empty(): data.site["fire"] = fire.state
 	if str(party.get("mode", "land")) == "sea" and party.upkeep.has("sea_cursor"):
 		var plan: Dictionary = slot.region_travel_plan() if str(slot.region_travel_journey().get("token", "")) == token else slot._region_npc_plan(token)
 		if not plan.ok: return plan
@@ -12414,7 +12414,7 @@ func _region_validate_party_graph(data: TerrainData, party: Dictionary, graph: D
 			or not transport.get("fire_state") is Dictionary:
 		return SiteRuntime.fail("INVALID_REGION_PARTY_GRAPH")
 	data = _region_detached_bind_data(data)
-	data.site.fire_transport = transport.fire_transport.duplicate(true)
+	data.site["fire_transport"] = transport.fire_transport.duplicate(true)
 	var fire_transport := validate_fire_transport(data, transport.fire_transport)
 	if not fire_transport.ok: return fire_transport
 	var lab_cursor := RegionOwnerSnapshot.peek_values(owners.scene, "lab", context)
@@ -13094,7 +13094,7 @@ func prepare_region_party_map_motion(before: Dictionary, after: Dictionary, targ
 	var proposed: TerrainData = geometry.data
 	proposed.site = terrain.site.duplicate(true)
 	for field: String in RegionPartyTravel.CONTENT_DICTS: proposed.site[field] = projected.party.content.get(field, {}).duplicate(true)
-	proposed.site.armies = projected.party.content.armies.duplicate(true)
+	proposed.site["armies"] = projected.party.content.armies.duplicate(true)
 	var people: Dictionary = RegionPartyTravel._body_records(projected.party.content)
 	for identity: Variant in people:
 		var cell: Variant = people[identity].get("cell")
@@ -14700,7 +14700,7 @@ func publish_region_party_map_motion(candidate: Dictionary, motion: Dictionary,
 	if not projected.ok: return projected
 	motion.geometry.data.site = terrain.site.duplicate(true)
 	for field: String in RegionPartyTravel.CONTENT_DICTS: motion.geometry.data.site[field] = projected.party.content.get(field, {}).duplicate(true)
-	motion.geometry.data.site.armies = projected.party.content.armies.duplicate(true)
+	motion.geometry.data.site["armies"] = projected.party.content.armies.duplicate(true)
 	var checkpoint := slot.region_party_checkpoint_context(_region_party_token, "region_barrier", false, {"map_motion": _region_party_token})
 	if not checkpoint.ok: return checkpoint
 	var context: Dictionary = checkpoint.context.duplicate(true)

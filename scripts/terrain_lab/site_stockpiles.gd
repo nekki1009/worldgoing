@@ -33,7 +33,7 @@ static func ensure_storage(data: TerrainData, key: String, faction: int) -> Dict
 	if int(feature.get("owner_faction", -1)) < 0 or int(feature.owner_faction) != faction: return Runtime.fail("NO_AUTHORITY")
 	if feature.has("pending_build") or feature.has("repair"): return Runtime.fail("BUSY")
 	if int(data.site.get("item_storage_version", 0)) != Runtime.ITEM_STORAGE_VERSION: return Runtime.fail("INVALID", "原實物持有資料尚未初始化")
-	if not data.site.has("stockpiles"): data.site.stockpiles = {}
+	if not data.site.has("stockpiles"): data.site["stockpiles"] = {}
 	if not data.site.stockpiles.has(key):
 		data.site.stockpiles[key] = {"version": 1, "cargo": {}, "holder": Runtime.new_item_state(identity(key))}
 		data.environment_revision += 1

@@ -669,7 +669,7 @@ static func harvest(data: TerrainData, key: String, actor_cell: Vector2i, cargo:
 		fields["next_recovery"] = ceili(now(data)) + int(r.recover)
 	Env.change(data, key, fields)
 	add_items(cargo, output)
-	data.site.total_produced = int(data.site.total_produced) + inventory_size(output)
+	data.site["total_produced"] = int(data.site.total_produced) + inventory_size(output)
 	Env.rebuild_indexes(data)
 	rebuild_water(data)
 	var result := ok("取得 " + items_text(output), {"items": output, "taken": taken})
@@ -921,9 +921,9 @@ static func begin_siege_build(data: TerrainData, kind: String, anchor: Vector2i,
 	if int(data.site.get("next_vehicle", 1)) != next or had_vehicles != data.site.has("vehicles") or had_vehicles and not is_same(data.site.vehicles, original_vehicles): return fail("STALE_SOURCE")
 	if preview: return ok("可建造" + str(definition.name), {"cells": cells, "work_slots": stations, "cost": definition.cost.duplicate(), "work_seconds": definition.work_seconds, "work_method": work_method})
 	_technology_publish_material_payment(source)
-	if not had_vehicles: data.site.vehicles = original_vehicles
+	if not had_vehicles: data.site["vehicles"] = original_vehicles
 	data.site.vehicles[identity] = candidate
-	data.site.next_vehicle = next + 1
+	data.site["next_vehicle"] = next + 1
 	if not scope.is_empty(): _technology_actions(data).publish_phase_payment(scope.payment)
 	if not credit.is_empty(): publish_technology_work_credit(candidate, credit)
 	_technology_publish_public_begin(nation)
@@ -3129,9 +3129,9 @@ static func _launch_ship_build(data: TerrainData, key: String, feature: Dictiona
 	if record.is_empty(): return fail("INVALID")
 	var technology_completed := prepare_technology_geometry_completion(data, feature, "feature:" + key, "vehicle:" + str(launch.identity))
 	if not technology_completed.ok: return technology_completed
-	if not data.site.has("vehicles"): data.site.vehicles = {}
+	if not data.site.has("vehicles"): data.site["vehicles"] = {}
 	data.site.vehicles[str(launch.identity)] = record
-	data.site.next_vehicle = int(launch.identity) + 1
+	data.site["next_vehicle"] = int(launch.identity) + 1
 	publish_technology_geometry_completion(technology_completed)
 	_finish_ship_build(data, key, feature, "已完成下水")
 	return ok("原船已下水", {"vehicle_id": str(launch.identity)})
@@ -3993,7 +3993,7 @@ static func begin_manual(data: TerrainData, key: String, cell: Vector2i, action:
 static func mark_combat(data: TerrainData, duration: float = COMBAT_GRACE, preserve_manual: bool = false) -> void:
 	if data.site.is_empty():
 		return
-	data.site.combat_left = maxf(float(data.site.combat_left), duration)
+	data.site["combat_left"] = maxf(float(data.site.combat_left), duration)
 	if not preserve_manual:
 		data.site.manual.target = ""
 		data.site.manual.progress = 0.0
@@ -4015,13 +4015,13 @@ static func advance(data: TerrainData, real_seconds: float, worker_ready: bool =
 		if original == null or checked_clock.get("owner") != original or not original.has_method("valid_checked_runtime_clock") or bool(checked_clock.get("advanced", false)) or not original.valid_checked_runtime_clock(checked_clock, minutes * 60.0): return
 		checked_clock.advanced = true
 	var combat_seconds := minf(real_seconds, float(data.site.combat_left))
-	data.site.combat_left = maxf(0.0, float(data.site.combat_left) - combat_seconds)
+	data.site["combat_left"] = maxf(0.0, float(data.site.combat_left) - combat_seconds)
 	# Float residue below the clock epsilon is the same finished combat; left in place it reaches the native begin
 	# window as a sub-representable prefix that makes no progress (site_fire_native_admission_test, DIAG8).
-	if float(data.site.combat_left) <= 0.000000000001: data.site.combat_left = 0.0
+	if float(data.site.combat_left) <= 0.000000000001: data.site["combat_left"] = 0.0
 	while minutes > 0.00000001:
 		var slice := minf(minutes, 1.0 - float(data.site.phase))
-		data.site.phase = float(data.site.phase) + slice
+		data.site["phase"] = float(data.site.phase) + slice
 		if checked_point:
 			checked_clock.ship_build_due = true
 		else:
@@ -4031,8 +4031,8 @@ static func advance(data: TerrainData, real_seconds: float, worker_ready: bool =
 			advance_ship_builds(data, occupied)
 		minutes -= slice
 		if float(data.site.phase) >= 0.99999999:
-			data.site.phase = 0.0
-			data.site.minute = int(data.site.minute) + 1
+			data.site["phase"] = 0.0
+			data.site["minute"] = int(data.site.minute) + 1
 			if checked_point: checked_clock.minute_due = true
 			else:
 				_regenerate(data, occupied)
@@ -4436,7 +4436,7 @@ static func rebuild_terrain_edges(data: TerrainData) -> void:
 	data.environment_revision += 1
 
 static func rebuild_water(data: TerrainData) -> void:
-	data.site.water_links = {}
+	data.site["water_links"] = {}
 	for key: String in data.site.features:
 		var feature: Dictionary = data.site.features[key]
 		if str(feature.stage) != "complete" or str(feature.kind) not in ["well", "intake"] or not feature_usable(feature):
@@ -4466,7 +4466,7 @@ static func rebuild_water(data: TerrainData) -> void:
 	allocate_water(data)
 
 static func allocate_water(data: TerrainData) -> void:
-	data.site.water_status = _water_allocation_candidate(data, _water_schedule_categories(data))
+	data.site["water_status"] = _water_allocation_candidate(data, _water_schedule_categories(data))
 
 static func date_text(data: TerrainData) -> String:
 	var minute := int(data.site.get("minute", 0))
@@ -4848,7 +4848,7 @@ static func _fire_time_valid(action_time: float) -> bool:
 static func _fire_state(data: TerrainData, at: float) -> Dictionary:
 	if not data.site.has("fire"):
 		var completed := float(data.get_meta(&"fire_completed_action_end", at))
-		data.site.fire = {"version": FIRE_VERSION, "config_version": FIRE_CONFIG_VERSION,
+		data.site["fire"] = {"version": FIRE_VERSION, "config_version": FIRE_CONFIG_VERSION,
 			"site_id": str(data.site.id), "step_index": floori(minf(at, completed) * FIRE_HZ + FIRE_EPS),
 			"observed_action_end": completed, "receipt_floor": 0, "receipt_ids": {},
 			"units": {}, "active": {}, "contacts": {}, "repair_generations": {}, "dirty": false}
@@ -7132,7 +7132,7 @@ static func _publish_equipment_creation(data: TerrainData, prepared: Dictionary)
 	assert(prepared.ok and is_same(data.site, prepared.state_ref) and int(data.site.next_item) == int(prepared.expected_next_item) and prepared.destination_ref == prepared.destination_before)
 	data.site.item_definitions.merge(prepared.definitions, true)
 	data.site.item_records.merge(prepared.records, false)
-	data.site.next_item = int(prepared.next_item)
+	data.site["next_item"] = int(prepared.next_item)
 	prepared.destination_ref.clear()
 	prepared.destination_ref.merge(prepared.destination_candidate, true)
 
@@ -7465,7 +7465,7 @@ static func publish_feature_output(data: TerrainData, prepared: Dictionary) -> v
 	if prepared.feature_before.has("tech_trial"): _stop_technology_owned_zones(data, str(prepared.receipt.get("feature_id", "")))
 	prepared.worker_ref.target = ""
 	prepared.worker_ref.mode = "idle"
-	data.site.total_produced = int(data.site.total_produced) + inventory_size(prepared.output) + prepared.products.get("item_ids", []).size()
+	data.site["total_produced"] = int(data.site.total_produced) + inventory_size(prepared.output) + prepared.products.get("item_ids", []).size()
 	if not prepared.phase.is_empty(): prepared.actions.publish_phase_receipt(prepared.phase)
 	if not prepared.nation.is_empty(): prepared.actions.lab.site_controller.publish_nation_technology_output(prepared.nation)
 	_technology_publish_public_output(prepared.public_operation)
@@ -10248,7 +10248,7 @@ static func publish_prepared_leave_ground_loot(prepared: Dictionary) -> Dictiona
 	if float(prepared.open_amount) > 0.0:
 		prepared.source_open.open_rations = float(prepared.source_open.open_rations) - float(prepared.open_amount)
 		container["open_rations"] = float(prepared.open_amount)
-	data.site.next_loot = int(prepared.next_loot) + 1
+	data.site["next_loot"] = int(prepared.next_loot) + 1
 	prepared.ground[str(prepared.identity)] = container
 	if prepared.ship_location.is_empty():
 		if not data.ground_loot_at.has(int(container.cell)): data.ground_loot_at[int(container.cell)] = []
@@ -11514,7 +11514,7 @@ static func publish_build_request(data: TerrainData, prepared: Dictionary) -> Di
 	_technology_publish_material_payment(prepared.source)
 	data.site.features[prepared.key] = prepared.feature
 	data.site.zones.append(prepared.zone)
-	data.site.next_feature = int(prepared.next_feature) + 1
+	data.site["next_feature"] = int(prepared.next_feature) + 1
 	if not prepared.scope.is_empty(): _technology_actions(data).publish_phase_payment(prepared.scope.payment)
 	_technology_publish_public_begin(prepared.nation)
 	if prepared.has("settlement_publish"):
@@ -14786,7 +14786,7 @@ static func prepare_author_building(data: TerrainData, work: Dictionary, action:
 			if not _building_integer(candidate.site.next_feature, 1, 999999): return fail("AUTHOR_ID_EXHAUSTED")
 			key = str(int(candidate.site.next_feature))
 			if candidate.site.features.has(key): return fail("STALE_SOURCE")
-			candidate.site.next_feature = int(candidate.site.next_feature) + 1
+			candidate.site["next_feature"] = int(candidate.site.next_feature) + 1
 			if action == "copy" and feature.has("residents"): feature.residents = 0
 			if kind == "settlement_center":
 				if candidate.site.has("settlement") or _settlement_center_count(candidate) > 0 or int(feature.owner_faction) < 0: return fail("AUTHOR_REFERENCED", "每Site只可有一座具明示管理方的中心")

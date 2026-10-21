@@ -417,7 +417,7 @@ func bind() -> void:
 		release_worker()
 	else:
 		if not data.site.has("worker_enabled"):
-			data.site.worker_enabled = false
+			data.site["worker_enabled"] = false
 		data.site.worker.cell = data.index(lab.npc.terrain_cell)
 	view.display(data)
 	Runtime.rebuild_water(data)
@@ -1510,7 +1510,7 @@ func register_trial_equipment_nation(team: TerrainArmy, nation_id: String, head_
 	if not EquipmentOrders.valid_nations({nation_id: nation}, lab.terrain.site.item_definitions, known_people):
 		return Runtime.fail("INVALID", "國別、文化或原人物資料未通過保存規則")
 	if not lab.terrain.site.has("equipment_nations"):
-		lab.terrain.site.equipment_nations = {}
+		lab.terrain.site["equipment_nations"] = {}
 	lab.terrain.site.equipment_nations[nation_id] = nation
 	return Runtime.ok("已建立測試國別 %s：原成員 %d 人、軍事首長 #%d；未換裝或新增物品" % [nation_id, member_ids.size(), head_id])
 
@@ -2490,7 +2490,7 @@ func manual_work(action: String = "harvest") -> void:
 			show_result(Runtime.fail("NO_TARGET"))
 			return
 		Runtime.assign_task(lab.terrain, Runtime.ok("原人物手動作業", {"target": source_key, "action": action if bool(resource.discovered) else "survey", "cell": lab.terrain.index(person.cell)}))
-		lab.terrain.site.worker_enabled = false
+		lab.terrain.site["worker_enabled"] = false
 		lab.terrain.site.worker.manual_control = true
 		return
 	show_result(Runtime.begin_manual(lab.terrain, source_key, lab.character.terrain_cell, action))
@@ -2512,14 +2512,14 @@ func enable_worker() -> void:
 	if region_operation_pending():
 		show_result(Runtime.fail("BUSY", "正在更新目的地；完成前暫停新派工"))
 		return
-	lab.terrain.site.worker_enabled = lab.npc != null
+	lab.terrain.site["worker_enabled"] = lab.npc != null
 	_work_elapsed = 1.0
 
 func release_worker() -> void:
 	if region_operation_pending():
 		show_result(Runtime.fail("BUSY", "正在更新目的地；完成前暫停新派工"))
 		return
-	lab.terrain.site.worker_enabled = false
+	lab.terrain.site["worker_enabled"] = false
 	lab.terrain.site.worker.mode = "idle"
 	lab.terrain.site.worker.target = ""
 	lab.terrain.site.worker.progress = 0.0
@@ -2598,7 +2598,7 @@ func _combat_event(duration: float) -> void:
 
 func toggle_pause() -> void:
 	_cancel_facing_move()
-	lab.terrain.site.paused = not bool(lab.terrain.site.paused)
+	lab.terrain.site["paused"] = not bool(lab.terrain.site.paused)
 	get_tree().paused = bool(lab.terrain.site.paused)
 	lab._clear_movement_input()
 	update_ui()
@@ -2740,7 +2740,7 @@ func _open_officer_priority(host: Window = null) -> void:
 func _capture_positions() -> void:
 	lab.terrain.site["actors"] = {}
 	if lab.actor_present(lab.character):
-		lab.terrain.site.player_cell = lab.terrain.index(lab.character.terrain_cell)
+		lab.terrain.site["player_cell"] = lab.terrain.index(lab.character.terrain_cell)
 		lab.terrain.site.actors["player"] = lab.character.capture_state()
 	if lab.actor_present(lab.npc):
 		lab.terrain.site.worker.cell = lab.terrain.index(lab.npc.terrain_cell)
@@ -2857,7 +2857,7 @@ func _capture_for_save() -> Dictionary:
 				"linear": false, "ride": false, "ride_running": false, "start_speed": 0.0, "end_speed": 0.0}
 			actor.ride_speed = 0.0
 		lab.terrain.site.armies.append_array(captured.rosters)
-		lab.terrain.site.crowd = captured.section
+		lab.terrain.site["crowd"] = captured.section
 	return Runtime.ok()
 
 func save_to(path: String) -> Dictionary:
@@ -3048,7 +3048,7 @@ func _confirm_unsaved_exit(reason: String, next_scene: String = "") -> void:
 	var tree_was_paused := get_tree().paused
 	_exit_pending = true
 	lab._clear_movement_input()
-	data.site.paused = true
+	data.site["paused"] = true
 	get_tree().paused = true
 	var dialog := ConfirmationDialog.new()
 	_exit_dialog = dialog
@@ -3064,7 +3064,7 @@ func _confirm_unsaved_exit(reason: String, next_scene: String = "") -> void:
 		dialog.hide()
 		_exit_dialog = null
 		_exit_pending = false
-		data.site.paused = site_was_paused
+		data.site["paused"] = site_was_paused
 		get_tree().paused = tree_was_paused
 		dialog.queue_free())
 	dialog.popup_centered()
@@ -4693,7 +4693,7 @@ func _control_family_person(data: Variant, identity: int) -> Dictionary:
 		var guard: Dictionary = lab.exchange_snapshot_guard(data)
 		if not guard.ok:
 			return guard
-		data.site.controlled_person_id = identity
+		data.site["controlled_person_id"] = identity
 		lab.bind_terrain(data) # Original validated actor/row restore, never a substitute body.
 	var target: Dictionary = lab._combat_target(identity)
 	if data == null and ship_person_in_journey(identity):
@@ -4707,7 +4707,7 @@ func _control_family_person(data: Variant, identity: int) -> Dictionary:
 	if _crowd_active():
 		var switched: Dictionary = lab.crowd_site.on_control_changed(old_identity, identity)
 		if not switched.ok: return switched
-	lab.terrain.site.controlled_person_id = identity
+	lab.terrain.site["controlled_person_id"] = identity
 	invalidate_ui_context()
 	for team: TerrainArmy in lab.combat_armies: team.sync_shared_fatigue(true)
 	person_executor_id = identity
@@ -4719,7 +4719,7 @@ func _control_family_person(data: Variant, identity: int) -> Dictionary:
 	if is_instance_valid(_family_dialog):
 		_family_dialog.queue_free()
 	_family_dialog = null
-	lab.terrain.site.paused = false
+	lab.terrain.site["paused"] = false
 	get_tree().paused = false
 	return Runtime.ok("已接續原人物 #%d；保留生命、年齡、拘押、實物與原職位" % identity)
 
@@ -4746,7 +4746,7 @@ func _open_family(host: Window = null) -> void:
 	var death := family_continuity.death_tick()
 	var dead: bool = death.ok and str(death.status) == "DEAD"
 	if dead:
-		lab.terrain.site.paused = true
+		lab.terrain.site["paused"] = true
 		get_tree().paused = true
 		lab._clear_movement_input()
 	var dialog := AcceptDialog.new()
@@ -4782,7 +4782,7 @@ func _open_family(host: Window = null) -> void:
 			_family_wait = true
 			dialog.queue_free()
 			_family_dialog = null
-			lab.terrain.site.paused = false
+			lab.terrain.site["paused"] = false
 			get_tree().paused = false)
 	dialog.confirmed.connect(func() -> void:
 		if not dead:
@@ -9571,14 +9571,14 @@ func _initialize_ship_destination(data: TerrainData) -> Dictionary:
 		if not marine.ok: return marine
 	else:
 		Env.initialize(data, str(data.parameters.fixed_base.site_id))
-		data.site.actor_presence_version = 1
-		data.site.actors = {}
+		data.site["actor_presence_version"] = 1
+		data.site["actors"] = {}
 	# Same fresh-Site contract as RegionSaveSlot.open_site: item storage exists
 	# before any first save, and the Site carries this slot's world policy pin.
 	var storage := Runtime.initialize_item_storage(data.site)
 	if not storage.ok: return storage
 	if region_slot != null and not region_slot.pin.is_empty() and not data.site.has("world_pin"):
-		data.site.world_pin = region_slot.pin.duplicate(true)
+		data.site["world_pin"] = region_slot.pin.duplicate(true)
 	return Runtime.ok("", {"data": data})
 
 func open_fixed_world(manifest_path: String, world_id: String, slot_id: String, starting_site: Vector2i, create_new: bool = false, initial_scenario_id: String = "") -> Dictionary:
@@ -10497,7 +10497,7 @@ func _prepare_initial_world_candidate(candidate: RegionSaveSlot, starting_site: 
 			if not people.has(int(author.start.person_id)): return Runtime.fail("NO_TARGET")
 			var person: Dictionary = people[int(author.start.person_id)]
 			if not RegionTravel._able(person) or not RegionSaveSlot._initial_site_same(person.get("cell"), author.start.cell): return Runtime.fail("NO_BIRTH_GROUND")
-			opened.data.site.controlled_person_id = int(author.start.person_id)
+			opened.data.site["controlled_person_id"] = int(author.start.person_id)
 			birth = Runtime.ok("", {"data": opened.data})
 		elif initial_scenario_id.is_empty():
 			birth = lab.prepare_fresh_initial_population(opened.data)
@@ -11608,7 +11608,7 @@ func publish_received_opened_food(prepared: Dictionary) -> void:
 	# before its first debit. This original Supply publication has no callback.
 	assert(prepared.ok and prepared.owner == self and not prepared.source_only and not prepared.published)
 	var site: Dictionary = prepared.site
-	if not bool(prepared.had_map): site.person_supply = {}
+	if not bool(prepared.had_map): site["person_supply"] = {}
 	if prepared.pool.is_empty():
 		site.person_supply[str(int(prepared.identity))] = prepared.state
 	else:

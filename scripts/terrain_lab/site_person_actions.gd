@@ -2896,7 +2896,7 @@ func prepare_technology(requester_id: int, executor_id: int, mode: String = "fir
 	selected.executor = _technology_ref(executor_id)
 	tech.active = int(selected.id)
 	if not Technology.valid_family_tech(tech): return Runtime.fail("INVALID_TECHNOLOGY")
-	lab.terrain.site.family = family
+	lab.terrain.site["family"] = family
 	return Runtime.ok("已選原項目與原人；尚未占人、扣料或授予技藝")
 
 func request_technology_consent(requester_id: int, person_id: int) -> Dictionary:
@@ -3629,7 +3629,7 @@ func _commit_technology_analysis(job: Dictionary) -> Dictionary:
 	# All guards precede removal. These two original owner writes cannot fail or
 	# yield. No material refund, skill grant, knowledge or automatic phase finish.
 	_body_set(check.person, "technology", prepared.person_candidate)
-	lab.terrain.site.family = prepared.family_candidate
+	lab.terrain.site["family"] = prepared.family_candidate
 	return Runtime.ok("已消耗原繳獲器械並同次提交此人的一次性分析抵扣", {"vehicle": str(job.vehicle_id), "person_id": int(job.executor_id)})
 
 func _technology_analysis_research_candidate(requester_id: int, executor_id: int, vehicle: Dictionary, job: Dictionary = {}) -> Dictionary:
@@ -3930,7 +3930,7 @@ func prepare_scope_technology(requester_id: int, executor_id: int, tech_id: Stri
 			return Runtime.fail("CORRUPT_STATE", "原聚落科技候選欄位不符")
 	if scope == "family":
 		if not Family.validate_family(candidate, _technology_site_id()): return Runtime.fail("INVALID_TECHNOLOGY")
-		lab.terrain.site.family = candidate
+		lab.terrain.site["family"] = candidate
 	else:
 		if scope == "settlement": owner.version = int(candidate.version)
 		owner["technology"] = prepared.state
@@ -6237,7 +6237,7 @@ func begin_water_schedule_trial(token: Dictionary, categories: Array, preview: b
 	publish_phase_payment(payment)
 	_jobs[str(int(executor.person_id))] = job
 	prepared.center.technology_water_schedule = prepared.schedule
-	lab.terrain.site.water_status = sample.allocation
+	lab.terrain.site["water_status"] = sample.allocation
 	lab.terrain.environment_revision += 1
 	return Runtime.ok("原供水優先序已實施；具名原人沿共同工時驗證300秒", {"seconds": 300.0})
 
@@ -6975,7 +6975,7 @@ func _commit_water_schedule(job: Dictionary) -> Dictionary:
 	if not phase.ok: return phase
 	# The same original allocator's second sample and sole Scope receipt publish
 	# together. No fallible authority, capacity, source or callback follows.
-	lab.terrain.site.water_status = samples.second.allocation
+	lab.terrain.site["water_status"] = samples.second.allocation
 	publish_phase_receipt(phase)
 	lab.terrain.environment_revision += 1
 	return Runtime.ok("原300秒供水排程試驗完成，供水總量守恆")

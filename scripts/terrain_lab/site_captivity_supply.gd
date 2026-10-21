@@ -456,7 +456,7 @@ func _commit_states(plan: Dictionary) -> void:
 		var identity := key.get_slice(":", 1)
 		if key.begins_with("team:"):
 			if not site.has("team_supply"):
-				site.team_supply = {}
+				site["team_supply"] = {}
 			if bool(owner.created):
 				owner.entry = {"version": 2, "sustain": owner.state, "inventory": {}, "training_order": false,
 					"training_requester": -1, "training_feature_id": "", "revision": 0, "delivery": {}, "life_checkpoint": {}}
@@ -467,7 +467,7 @@ func _commit_states(plan: Dictionary) -> void:
 			owner.entry.revision = int(owner.entry.revision) + 1
 		else:
 			if not site.has("person_supply"):
-				site.person_supply = {}
+				site["person_supply"] = {}
 			if bool(owner.created):
 				site.person_supply[identity] = owner.state
 			else:

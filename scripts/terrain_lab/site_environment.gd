@@ -208,13 +208,13 @@ static func initialize_marine(data: TerrainData, site_id: String) -> Dictionary:
 		if data.can_navigate_water(data.cell_from_index(index)): navigable = true; break
 	if not navigable: return {"ok": false, "code": "WATER", "message": "海域沒有明示可航許可"}
 	initialize(data, site_id)
-	data.site.marine = {"version": 1}
-	data.site.actor_presence_version = 1
-	data.site.actors = {}
-	data.site.player_cell = -1
-	data.site.depot_cell = -1
+	data.site["marine"] = {"version": 1}
+	data.site["actor_presence_version"] = 1
+	data.site["actors"] = {}
+	data.site["player_cell"] = -1
+	data.site["depot_cell"] = -1
 	data.site.worker.cell = -1
-	data.site.worker_enabled = false
+	data.site["worker_enabled"] = false
 	return {"ok": true, "code": "OK", "message": "原固定海域 Site 已建立，沒有假陸地人物"}
 
 static func _generate_water(data: TerrainData) -> void:

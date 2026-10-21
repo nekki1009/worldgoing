@@ -690,18 +690,18 @@ static func load_site(path: String = DEFAULT_PATH, fixed_base_loader: Callable =
 	data.site = payload.state if payload.state.has("crowd") else payload.state.duplicate(true)
 	# JSON numbers are normalized at the boundary; generated base is not in the save.
 	_normalize_state(data.site)
-	data.site.minute = int(data.site.minute)
-	data.site.next_feature = int(data.site.next_feature)
-	data.site.depot_cell = int(data.site.depot_cell)
-	data.site.capacity = int(data.site.capacity)
+	data.site["minute"] = int(data.site.minute)
+	data.site["next_feature"] = int(data.site.next_feature)
+	data.site["depot_cell"] = int(data.site.depot_cell)
+	data.site["capacity"] = int(data.site.capacity)
 	data.site.worker.cell = int(data.site.worker.cell)
 	data.site.worker.progress = float(data.site.worker.progress)
 	if not preserve_simulation:
 		data.site.worker.mode = "idle" if str(data.site.worker.target).is_empty() else "travel"
-		data.site.combat_left = 0.0
-	data.site.water_links = {}
-	data.site.water_status = {}
-	data.site.notices = []
+		data.site["combat_left"] = 0.0
+	data.site["water_links"] = {}
+	data.site["water_status"] = {}
+	data.site["notices"] = []
 	Env.rebuild_indexes(data)
 	Runtime.rebuild_water(data)
 	Runtime.rebuild_loot_index(data)
@@ -2185,7 +2185,7 @@ static func prepare_ecology_candidate(data: TerrainData, region_context: Diction
 	if not candidate.site.has("ecology_version"):
 		candidate.site["ecology_version"] = Env.ECOLOGY_VERSION
 	else:
-		candidate.site.ecology_version = int(candidate.site.ecology_version)
+		candidate.site["ecology_version"] = int(candidate.site.ecology_version)
 	var reconciled := Runtime.ecology_reconcile(candidate)
 	if not reconciled.ok: return reconciled
 	var changed := candidate.site != data.site

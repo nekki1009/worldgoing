@@ -588,7 +588,7 @@ func deploy(sides: Array, formations: Array) -> Dictionary:
 	d5_commit_existing(self, prepared.plans)
 	_original_team_plans = prepared.plans
 	data.site.armies.append_array(rosters)
-	data.site.army_next_team = _solo_team_id()
+	data.site["army_next_team"] = _solo_team_id()
 	_begin_player()
 	_make_panel()
 	_prewarm_captivity_atlases.call_deferred()
@@ -2753,7 +2753,7 @@ static func d5_commit_existing(crowd_site: Variant, plans: Array) -> void:
 	for old: Dictionary in crowd_site.lab.terrain.site.get("armies", []):
 		if not imported.has(int(old.get("team_id", -1))):
 			retained.append(old)
-	crowd_site.lab.terrain.site.armies = retained
+	crowd_site.lab.terrain.site["armies"] = retained
 
 
 static func build_siege_navigation(data: TerrainData, ground_cells: PackedInt64Array) -> Dictionary:

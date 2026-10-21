@@ -138,8 +138,8 @@ func establish_identity(requester_id: int, display_name: String) -> Dictionary:
 	var offices: Dictionary = family.offices.duplicate(true) if version >= 2 else SiteOffices.default_offices("family", -1, false)
 	var candidate := {"version": 4, "complete": bool(family.complete), "members": family.members.duplicate(true), "offices": offices, "name": display_name, "lineage_id": lineage}
 	if not validate_family(candidate, str(site.id)): return Runtime.fail("INVALID_FAMILY", "家族身分未通過驗證；未改變")
-	site.family = candidate
-	site.next_lineage = lineage + 1
+	site["family"] = candidate
+	site["next_lineage"] = lineage + 1
 	return Runtime.ok("已建立家族身分", {"lineage_id": lineage})
 
 ## P4 S4B: the editor name candidate (data level). A version 1 or 2 family becomes version 4 with
@@ -392,7 +392,7 @@ func take_vacant_head(requester_id: int, person_id: int, authority: Variant) -> 
 	if not closed_episode.is_empty():
 		var episodes: Dictionary = lab.terrain.site.vacancy_episodes.duplicate(true)
 		episodes[str(closed_episode.episode_id)] = closed_episode
-		lab.terrain.site.vacancy_episodes = episodes
+		lab.terrain.site["vacancy_episodes"] = episodes
 	Take.commit_contest_losses(losses.losses)
 	return Runtime.ok("已就任家主 #%d" % person_id, {"revision": int(committed.offices.revision)})
 
@@ -426,7 +426,7 @@ func leave_family(person_id: int, authority: Variant) -> Dictionary:
 	history.append({"person_id": person_id, "minute": int(site.get("minute", 0)), "authority": str(authority.get("kind", "")), "seat_vacated": bool(checked.seat_vacated)})
 	family.clear()
 	family.merge(checked.family, true)
-	site.family_departures = history
+	site["family_departures"] = history
 	return Runtime.ok("已離族", {"seat_vacated": bool(checked.seat_vacated)})
 
 ## R5 S3F: the vacancy episode hook. Explicit call (the per-tick settle path is a later slice). An episode opens when the
@@ -461,7 +461,7 @@ func observe_vacancy(onset_day: int) -> Dictionary:
 		episodes[str(episode.episode_id)] = episode
 		result.opened = true
 		changed = true
-	if changed: site.vacancy_episodes = episodes
+	if changed: site["vacancy_episodes"] = episodes
 	return result
 
 ## R5 S3F: a G0 proven political day advances the open family episode's S4 timer. Only proven days are passed in.
@@ -474,7 +474,7 @@ func observe_proven_day(proven_day: int) -> Dictionary:
 	var ticked: Dictionary = VacancyEpisode.tick(open, proven_day)
 	if not ticked.ok: return ticked
 	episodes[str(open.episode_id)] = ticked.episode
-	site.vacancy_episodes = episodes
+	site["vacancy_episodes"] = episodes
 	return {"ok": true, "code": "", "message": "", "advanced": true}
 
 ## Organization adjustment is the head's own, non-delegable power (3.5).
@@ -679,7 +679,7 @@ func register_members(members: Array, complete: bool, requester_id: int = -1) ->
 	for member: Dictionary in checked.members:
 		if str(member.status) == "UNKNOWN":
 			return Runtime.fail(str(member.code), "無法確認原人物，不會新增虛構家人：" + str(member.message))
-	lab.terrain.site.family = family
+	lab.terrain.site["family"] = family
 	return Runtime.ok("已明確登錄既有人物；沒有建立人物、親屬身體或財物")
 
 func death_tick() -> Dictionary:
@@ -730,5 +730,5 @@ func choose(site_id: String, identity: int) -> Dictionary:
 		if not bool(saved.get("ok", false)):
 			return saved # Including BUSY: selection stays; never delete old remains.
 		# Carry only the explicit reference registry, not old HP/cargo/office data.
-		source.data.site.family = family.duplicate(true)
+		source.data.site["family"] = family.duplicate(true)
 	return control_selected.call(null if bool(source.local) else source.data, identity)

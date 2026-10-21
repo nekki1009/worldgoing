@@ -167,7 +167,7 @@ func take_nation_head(requester_id: int, nation_id: String, person_id: int, auth
 	if not closed_episode.is_empty():
 		var episodes: Dictionary = lab.terrain.site.vacancy_episodes.duplicate(true)
 		episodes[str(closed_episode.episode_id)] = closed_episode
-		lab.terrain.site.vacancy_episodes = episodes
+		lab.terrain.site["vacancy_episodes"] = episodes
 	Take.commit_contest_losses(losses.losses)
 	return Runtime.ok("已就任元首", {"revision": int(committed.offices.revision)})
 
