@@ -45,12 +45,21 @@ func _new_fire_lab() -> TerrainLab:
 	return lab
 
 func _shared(lab: TerrainLab, ticks: int = 1) -> bool:
-	for tick in range(ticks):
-		var result := lab._advance_original_shared_step(FIRE_STEP)
-		if not _check_fire(result.ok and bool(result.get("completed", false))
-			and is_equal_approx(float(result.get("action_seconds", 0.0)), FIRE_STEP),
+	# The original clock may clip a slice (exchange-query window, half-slice prefixes).
+	# Advance until the requested action interval is fully consumed; each call must complete.
+	var target: float = float(ticks) * FIRE_STEP
+	var advanced: float = 0.0
+	var calls: int = 0
+	while advanced + 0.000000001 < target and calls < ticks * 20:
+		calls += 1
+		# Request only what remains, so a clipped slice cannot overshoot the interval.
+		var requested: float = minf(FIRE_STEP, target - advanced)
+		var result: Dictionary = lab._advance_original_shared_step(requested)
+		var action: float = float(result.get("action_seconds", 0.0))
+		if not _check_fire(result.ok and bool(result.get("completed", false)) and action > 0.0 and action <= requested + 0.000000001,
 			"Original complete shared step, without replacement projectile/fire clock"): return false
-	return true
+		advanced += action
+	return _check_fire(is_equal_approx(advanced, target), "Shared interval consumes exactly the requested original action time")
 
 func _add_test_timber(data: TerrainData, cell: Vector2i) -> String:
 	var key := "%d:%d" % [Env.Kind.TIMBER, data.index(cell)]
@@ -59,10 +68,10 @@ func _add_test_timber(data: TerrainData, cell: Vector2i) -> String:
 	Env.rebuild_indexes(data)
 	return key
 
-func _test_burning_unit(data: TerrainData, key: String, action_at: float) -> Dictionary:
+func _test_burning_unit(data: TerrainData, key: String, action_at: float, profile_id: String = "TEST_HEAT_100") -> Dictionary:
 	var state := Runtime._fire_state(data, action_at)
 	var unit := Runtime._fire_unit(data, state, Runtime._fire_resource_descriptor(data, key))
-	unit.merge({"profile": "TEST_HEAT_100", "heat": 100.0, "state": "BURNING", "intensity": 1.0, "moisture": 0.0}, true)
+	unit.merge({"profile": profile_id, "heat": 100.0, "state": "BURNING", "intensity": 1.0, "moisture": 0.0}, true)
 	state.active["resource:" + key] = true
 	return unit
 
@@ -78,7 +87,8 @@ func _clock_matrix() -> bool:
 		Runtime._work(data, 0.5, false, true, Callable())
 		var earned := float(data.site.manual.progress)
 		if not _check_fire(earned > 0.0 and str(data.site.manual.target) == key, "Manual progress is earned by original _work before fire continuation"): return false
-		_test_burning_unit(data, key, lab.fire_action_cursor)
+		# Formal TIMBER profile: TEST_HEAT_100 is rejected by the persisted-state validator.
+		_test_burning_unit(data, key, lab.fire_action_cursor, "TIMBER")
 		lab.simulation_speed = speed
 		var game_start := Runtime.now(data) * 60.0
 		var action_start := lab.fire_action_cursor
@@ -87,8 +97,9 @@ func _clock_matrix() -> bool:
 		if not _check_fire(is_equal_approx(lab.fire_action_cursor - action_start, 0.2)
 			and is_equal_approx(Runtime.now(data) * 60.0 - game_start, 0.2 * speed),
 			"TM-01 shared action interval stays0.2 while original game seconds retain simulation multiplier"): return false
-		if not _check_fire(Env.resource(data, key).remaining == 3 and unit.fuel_remainder_q == 768
-			and unit.heat == 100.0 and str(data.site.manual.target) == key and float(data.site.manual.progress) > earned
+		# Derived for TIMBER over six 1/30 s steps (see NOTES.md): 4096 - 51 = 4045 q, heat 100 + 3.304375.
+		if not _check_fire(Env.resource(data, key).remaining == 3 and unit.fuel_remainder_q == 973
+			and is_equal_approx(float(unit.heat), 103.304375) and str(data.site.manual.target) == key and float(data.site.manual.progress) > earned
 			and float(data.site.combat_left) > 0.0,
 			"TM-01/TM-02 one fire burn per action boundary and renewal preserves real manual progress"): return false
 		if not _check_fire(not lab.fire_save_guard().ok and not lab.site_controller.supply_save_guard().ok
@@ -169,12 +180,18 @@ func _actual_arrow_and_work() -> bool:
 	# Prepare real labor through the existing owner; the final completion remains
 	# inside the next actual shared step, exactly at the due fire boundary.
 	var required := float(Env.WORK_MINUTES[Env.Kind.TIMBER])
-	var preparation_seconds := (required - float(task.progress)) * 60.0 - FIRE_STEP * 0.5
+	var preparation_seconds: float = (required - float(task.progress)) * 60.0 - FIRE_STEP
 	if not _check_fire(preparation_seconds > 0.0, "Named task still has unpaid final work before completion boundary"): return false
 	lab.site_controller.work_team.advance(preparation_seconds)
 	if not _check_fire(task.target == tree_key and task.progress < required and int(worker.cargo.get("wood", 0)) == 0,
 		"Original worker earned near-complete progress without harvesting yet"): return false
-	_test_burning_unit(data, tree_key, lab.fire_action_cursor)
+	# Leave one full requested slice unpaid: a half-slice must not harvest first.
+	var unpaid_action: float = (required - float(task.progress)) * 60.0
+	if not _check_fire(Runtime.fire_boundary_due(data, lab.fire_action_cursor + unpaid_action)
+		and not Runtime.fire_boundary_due(data, lab.fire_action_cursor + FIRE_STEP * 0.5),
+		"Actual earned-work completion is due at the original fire boundary, not the first half-slice"): return false
+	var prepared_burn: Dictionary = _test_burning_unit(data, tree_key, lab.fire_action_cursor)
+	if not _check_fire(int(Env.resource(data, tree_key).remaining) == 4 and int(prepared_burn.fuel_remainder_q) == 0 and float(prepared_burn.burn_remainder_q) == 0.0, "Original barrier arithmetic begins with four whole timber units and no fractional burn"): return false
 	var cargo: Dictionary = worker.cargo
 	if not _shared(lab): return false
 	var burned: Dictionary = data.site.fire.units["resource:" + tree_key]
@@ -239,9 +256,17 @@ func _safe_rest_boundary() -> bool:
 	if not _check_fire(data.is_walkable(hot_cell) and Runtime.fire_hazard_at(data, hot_cell) > 0.0
 		and lab._fatigue_threat(hot_cell, team.faction_id, team, 0, {}),
 		"Local original residue is a threat even on walkable terrain without an enemy"): return false
-	if not _shared(lab, 12): return false
-	if not _check_fire(PersonFatigue.read(worker) >= 60.0 and PersonFatigue.read(worker, "fatigue_rest") == 0.0,
-		"One locally threatened member denies recovery to the original whole-team pool"): return false
+	# The threatened member may evacuate through original fire navigation; recovery is
+	# denied for every complete interval it spends threatened, and may resume only after.
+	var threatened_intervals := 0
+	for tick in range(12):
+		var threatened_before: bool = lab._fatigue_threat(lab._army_effective_cell(team, 0), team.faction_id, team, 0, {})
+		if not _shared(lab): return false
+		if not threatened_before or not lab._fatigue_threat(lab._army_effective_cell(team, 0), team.faction_id, team, 0, {}): continue
+		threatened_intervals += 1
+		if not _check_fire(PersonFatigue.read(worker) >= 60.0 and PersonFatigue.read(worker, "fatigue_rest") == 0.0,
+			"One locally threatened member denies recovery to the original whole-team pool"): return false
+	if not _check_fire(threatened_intervals > 0, "Local residue threatens the member for at least one complete shared interval"): return false
 	# Observe real production cooling, with all time supplied by original shared steps.
 	for tick in range(1600):
 		if Runtime.fire_hazard_at(data, hot_cell) <= 0.0: break
