@@ -12164,3 +12164,84 @@ func _organization_preflight_unchanged(snapshot: Dictionary, receipts: Array) ->
 	for receipt: Dictionary in receipts:
 		if _faction_file_sha256(receipt.path) != receipt.checksum: return fail("ORGANIZATION_SOURCE_CHANGED")
 	return {"ok": true}
+
+## P6-B2: one private prepared proposal per original Slot. No Site aliases,
+## live writer, record editing or durable organization authority is installed.
+var _organization_stage: Dictionary = {}
+
+func _organization_stage_owner(data: TerrainData, lab: TerrainLab) -> Dictionary:
+	if data == null or lab == null or not _same_pin(data.site.get("world_pin"), pin): return fail("ORGANIZATION_STAGE_BIND_REQUIRED")
+	if lab.terrain != data or lab._region_bound_data != data or lab.site_controller == null or lab.site_controller.region_slot != self or _region_bound_original_lab(data) != lab: return fail("ORGANIZATION_STAGE_BIND_REQUIRED")
+	var receipt: Dictionary = lab.region_bind_receipt(data)
+	if lab.restore_only or not receipt.get("complete", false) or receipt.get("mode") != "live" or receipt.get("consumer") != "original_site": return fail("ORGANIZATION_STAGE_BIND_REQUIRED")
+	return {"ok": true}
+
+func _organization_stage_body_digest(data: TerrainData) -> String:
+	var registry: GDScript = preload("res://scripts/region_lab/region_organization_registry.gd")
+	return registry.digest({"family": data.site.get("family"), "nations": data.site.get("equipment_nations", {}), "identity": data.site.get("travel_identity", {})})
+
+## Admission always reruns original B1 provenance, never accepts caller-supplied
+## registry bodies. A successful replacement revokes the previous capability.
+func stage_organization_registry(data: TerrainData, lab: TerrainLab) -> Dictionary:
+	var owner: Dictionary = _organization_stage_owner(data, lab)
+	if not owner.ok: return owner
+	var before: String = _organization_stage_body_digest(data)
+	if before.is_empty(): return fail("UNSUPPORTED_ORGANIZATION_TYPE")
+	var proposal: Dictionary = prepare_organization_migration({"pin": pin.duplicate(true), "generation": int(_marker.get("generation", 0))})
+	if not proposal.ok: return proposal
+	owner = _organization_stage_owner(data, lab)
+	if not owner.ok: return owner
+	if _organization_stage_body_digest(data) != before: return fail("ORGANIZATION_STAGE_STALE")
+	var token: Dictionary = {"nonce": Crypto.new().generate_random_bytes(16).hex_encode(),
+		"slot_instance_id": get_instance_id(), "lab_instance_id": lab.get_instance_id(), "data_instance_id": data.get_instance_id(),
+		"folder": folder, "generation": int(proposal.base_generation), "pin": pin.duplicate(true)}
+	_organization_stage = {"ticket": token.duplicate(true), "proposal": proposal.duplicate(true), "lab": weakref(lab), "data": weakref(data), "body_digest": before}
+	return {"ok": true, "ticket": token, "state": "prepared_only", "snapshot_kind": "committed_sources", "live_authority": false,
+		"read": Callable(self, "read_organization_stage").bind(token.duplicate(true))}
+
+func _organization_stage_guard(ticket: Dictionary) -> Dictionary:
+	var lifecycle: GDScript = preload("res://scripts/region_lab/region_organization_stage.gd")
+	var admitted: Dictionary = lifecycle.authenticate(ticket, _organization_stage.get("ticket", {}))
+	if not admitted.ok: return admitted
+	var data: TerrainData = _organization_stage.data.get_ref()
+	var lab: TerrainLab = _organization_stage.lab.get_ref()
+	var owner: Dictionary = _organization_stage_owner(data, lab)
+	if not owner.ok: return owner
+	var current: Dictionary = {"slot_instance_id": get_instance_id(), "lab_instance_id": lab.get_instance_id(), "data_instance_id": data.get_instance_id(),
+		"folder": folder, "generation": int(_marker.get("generation", 0)), "pin": pin}
+	admitted = lifecycle.guard(ticket, _organization_stage.ticket, current)
+	if not admitted.ok: return admitted
+	if _organization_stage_body_digest(data) != _organization_stage.body_digest: return fail("ORGANIZATION_STAGE_STALE")
+	var proposal: Dictionary = _organization_stage.proposal
+	var site_keys: Array[String] = []
+	for receipt: Dictionary in proposal.source_receipts:
+		if receipt.kind == "site": site_keys.append(_site_key(Vector2i(int(receipt.site[0]), int(receipt.site[1]))))
+	site_keys.sort()
+	# Original B1 guard verifies the immutable sources and selected generation.
+	# Live time may advance between explicit reads without changing that epoch.
+	var snapshot: Dictionary = {"generation": int(proposal.base_generation), "pin": proposal.pin, "folder": folder,
+		"control": var_to_bytes(control), "marker": var_to_bytes(_marker), "commit_sha256": proposal.commit_sha256, "site_keys": site_keys}
+	return _organization_preflight_unchanged(snapshot, proposal.source_receipts)
+
+func read_organization_stage(ticket: Dictionary) -> Dictionary:
+	var admitted: Dictionary = _organization_stage_guard(ticket)
+	if not admitted.ok: return admitted
+	return {"ok": true, "state": "prepared_only", "snapshot_kind": "committed_sources", "live_authority": false, "proposal": _organization_stage.proposal.duplicate(true)}
+
+## Closing remains available after a world/owner change, but requires the exact
+## capability. No live body or original archive is touched by cleanup.
+func release_organization_stage(ticket: Dictionary) -> Dictionary:
+	var lifecycle: GDScript = preload("res://scripts/region_lab/region_organization_stage.gd")
+	var admitted: Dictionary = lifecycle.authenticate(ticket, _organization_stage.get("ticket", {}))
+	if not admitted.ok: return admitted
+	_organization_stage = {}
+	return {"ok": true}
+
+func activate_organization_registry(ticket: Dictionary, data: TerrainData, lab: TerrainLab) -> Dictionary:
+	var admitted: Dictionary = _organization_stage_guard(ticket)
+	if not admitted.ok: return admitted
+	var owner: Dictionary = _organization_stage_owner(data, lab)
+	if not owner.ok: return owner
+	if _organization_stage.data.get_ref() != data or _organization_stage.lab.get_ref() != lab: return fail("ORGANIZATION_STAGE_BIND_REQUIRED")
+	# Domain writers and Store/CAS must migrate together before any live alias.
+	return fail("ORGANIZATION_ACTIVATION_REQUIRES_MIGRATION", "原領域寫入與 Store/CAS 正文遷移尚未完成；保留原 Site 權威")
