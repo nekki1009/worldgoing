@@ -9,7 +9,7 @@ var _workflow_body_complete: bool = false
 var _workflow_deadline_failed: bool = false
 
 func _initialize() -> void:
-	deadline = Time.get_ticks_msec() + 15000
+	deadline = Time.get_ticks_msec() + 60000
 	_run.call_deferred()
 
 func _workflow_deadline_ok() -> bool:

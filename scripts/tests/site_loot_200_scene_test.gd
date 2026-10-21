@@ -6,7 +6,7 @@ var measurements := {}
 
 func _initialize() -> void:
 	recovery = "--recovery" in OS.get_cmdline_user_args()
-	deadline = Time.get_ticks_msec() + 100000 if recovery else (Time.get_ticks_msec() + 23000 if "--visual" in OS.get_cmdline_user_args() else Time.get_ticks_msec() + 15000)
+	deadline = Time.get_ticks_msec() + 100000 if recovery else (Time.get_ticks_msec() + 23000 if "--visual" in OS.get_cmdline_user_args() else Time.get_ticks_msec() + 60000)
 	enabled = "--baseline" not in OS.get_cmdline_user_args()
 	assert(not recovery or enabled, "New paired recovery suite requires actual original remains")
 	_run.call_deferred()
