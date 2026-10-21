@@ -11,6 +11,19 @@ func _finish(ok: bool, reason: String = "") -> void:
 	await process_frame
 	quit(0 if ok else 1)
 
+# The base pipeline _step supplies a fixed peaceful clock (combat_clock 0), so game time ran at 60x
+# even while fire was active. These worker cases use the Lab-owned clock, as the real step does:
+# original fire activity keeps the combat grace, and an explicit clock still overrides it.
+func _step(f: Fixture, seconds: float, chunk: float = STEP, combat_clock: float = -1.0) -> void:
+	if combat_clock >= 0.0:
+		super(f, seconds, chunk, combat_clock)
+		return
+	var left := seconds
+	while left > 0.000000001:
+		var elapsed := minf(left, chunk)
+		f.lab._advance_combat(elapsed)
+		left = maxf(0.0, left - elapsed)
+
 func _worker_fixture(start: Vector2i, supply: int = 1024, house: bool = false) -> Dictionary:
 	var f := _fixture()
 	var team := _team(f, [Vector2i(8, 8), start], 1, 0, TerrainArmy.TROOP_TYPE_ID)
