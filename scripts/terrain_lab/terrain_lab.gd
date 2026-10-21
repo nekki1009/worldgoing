@@ -6173,6 +6173,15 @@ func _fire_target_aim(target: Dictionary, identity: int = 0) -> Dictionary:
 			"key": "structure:%s:%s" % [target.feature_id, target.part_id] if kind == "structure" else "ground:%d" % terrain.index(cell)}
 	return {}
 
+func _fire_attack_cell(person: Dictionary) -> Vector2i:
+	# Only embarked Army rows change cell: they use the same deck cell query as the release.
+	# Land people keep the snapshot cell unchanged.
+	var owner_ref: Variant = person.get("owner")
+	var unit := int(person.get("unit", -2))
+	if owner_ref is TerrainArmy and unit >= 0 and unit < owner_ref.combat_units.size() and owner_ref._ship_embarked(unit):
+		return owner_ref._combat_attack_cell(unit)
+	return person.cell
+
 func _fire_person_ready(person: Dictionary, ignore_pause: bool = false) -> bool:
 	var owner_ref: Variant = person.get("owner")
 	var unit := int(person.get("unit", -2))
@@ -6189,6 +6198,8 @@ func _fire_person_ready(person: Dictionary, ignore_pause: bool = false) -> bool:
 	if not (owner_ref.exchange_ready(unit) if unit >= 0 else owner_ref.exchange_ready()): return false
 	if (float(owner_ref.combat_hot_get(unit, &"ranged_cooldown", 0.0)) if unit >= 0 else float(owner_ref.ranged_cooldown)) > ACTION_TIME_EPSILON: return false
 	if unit >= 0 and (owner_ref.combat_order in [TerrainArmy.CombatOrder.MOVE, TerrainArmy.CombatOrder.RETREAT, TerrainArmy.CombatOrder.RETURN] or owner_ref.is_sustain_routed()): return false
+	# Embarked shooters fire from their real deck only while their hull is afloat, admitted and not in a journey.
+	if unit >= 0 and owner_ref is TerrainArmy and owner_ref._ship_embarked(unit) and not owner_ref._ship_attack_allowed(unit): return false
 	if site_controller != null and site_controller._person_has_duty(identity): return false
 	if owner_ref is CrowdPersonOwner and site_controller != null and site_controller.native_held_actual_work_person(identity): return false
 	return true
@@ -6294,14 +6305,17 @@ func _resolve_physical_ranged_fire(people: Array[Dictionary], draft: Dictionary 
 					var adjacent := false
 					var selected := {}
 					var allies: Dictionary = friendly.get(int(person.faction), {})
+					# Embarked people sit on their real deck cell, not a stale shore cell.
+					var person_cell := _fire_attack_cell(person)
 					for other: Dictionary in people:
 						if int(other.faction) == int(person.faction): continue
-						var distance := Vector2(other.cell - person.cell).length_squared()
+						var other_cell := _fire_attack_cell(other)
+						var distance := Vector2(other_cell - person_cell).length_squared()
 						if distance > maxf(1.0, float(profile.range) * float(profile.range)): continue
 						if not (other.owner.combat_can_act(int(other.unit)) if int(other.unit) >= 0 else other.owner.can_act()): continue
-						if _combat_melee_clear(int(person.id), int(other.id), person.cell, other.cell): adjacent = true; break
+						if _combat_melee_clear(int(person.id), int(other.id), person_cell, other_cell): adjacent = true; break
 						if distance <= 1.0 or distance >= nearest or not _exchange_initiates(person, int(other.id)): continue
-						if not SiteCombatRules.ranged_friendly_clear(person.cell, other.cell, allies, terrain) or not _person_ranged_line_clear(int(person.id), person.cell, other.cell): continue
+						if not SiteCombatRules.ranged_friendly_clear(person_cell, other_cell, allies, terrain) or not _person_ranged_line_clear(int(person.id), person_cell, other_cell): continue
 						selected = other
 						nearest = distance
 					if adjacent or selected.is_empty(): continue
@@ -6573,9 +6587,16 @@ func _fire_polygon_normal(polygon: PackedVector2Array, point: Vector2) -> Vector
 				normal = Vector2(-edge.y, edge.x)
 	return normal
 
+func _fire_own_vehicle_id(flight: Dictionary) -> String:
+	# Original ship record of the shooter aboard, or empty when the shooter is on land.
+	if site_controller == null or site_controller.vehicles == null: return ""
+	var boat: Dictionary = site_controller.vehicles.ship_for_person(int(flight.get("source_member_id", 0)))
+	return str(boat.get("id", ""))
+
 func _fire_first_contact(flight: Dictionary, from: Vector3, to: Vector3, interval_begin: float, interval_end: float, include_people: bool = true) -> Dictionary:
 	var events: Array[Dictionary] = []
 	var candidates := {}
+	var own_vehicle := _fire_own_vehicle_id(flight)
 	var navigation_bounds := Rect2(Vector2(from.x, from.y) * TerrainRenderer.CELL_PIXELS, Vector2.ZERO).expand(Vector2(to.x, to.y) * TerrainRenderer.CELL_PIXELS).grow(1.0)
 	for y in range(floori(navigation_bounds.position.y / 128.0), floori(navigation_bounds.end.y / 128.0) + 1):
 		for x in range(floori(navigation_bounds.position.x / 128.0), floori(navigation_bounds.end.x / 128.0) + 1):
@@ -6630,6 +6651,8 @@ func _fire_first_contact(flight: Dictionary, from: Vector3, to: Vector3, interva
 			var cell := Vector2i(x, y)
 			if not terrain.contains(cell): continue
 			for collider: Dictionary in _fire_static_buckets.get(cell, []):
+				# The shooter stands on its own hull; that hull is not an obstacle to its own launch.
+				if str(collider.get("type", "")) == "vehicle" and str(collider.get("vehicle", "")) == own_vehicle: continue
 				var hit_value := FatigueGeometry.segment_prism_contact(from, to, collider.bounds, float(collider.lower), float(collider.upper), 0.015)
 				if not hit_value.is_empty():
 					var event := collider.duplicate()

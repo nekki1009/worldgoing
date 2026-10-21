@@ -6897,8 +6897,16 @@ func _ranged_release(index: int, target_cell: Vector2i, shot_id: int, ammo_mode:
 			_mark_visual_row(index)
 		return {}
 	var source_cell := _combat_attack_cell(index)
-	if not legacy and (not data.is_walkable(source_cell) or not data.contains(target_cell) or _ship_embarked(index)):
-		return {} # P1 physical ground flights have no ship/deck admission.
+	if not legacy:
+		# Physical flights launch from the shooter's real deck cell. An embarked shooter
+		# must be afloat, admitted and not mid-journey; land shooters keep the walk gate.
+		var embarked := _ship_embarked(index)
+		if not data.contains(target_cell) or not data.contains(source_cell):
+			return {}
+		if embarked and not _ship_attack_allowed(index):
+			return {}
+		if not embarked and not data.is_walkable(source_cell):
+			return {}
 	var offset := target_cell - source_cell
 	var distance := Vector2(offset).length()
 	if not SiteCombatRules.ranged_in_range(source_cell, target_cell, float(profile.range)) \
