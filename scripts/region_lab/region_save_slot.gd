@@ -12245,3 +12245,116 @@ func activate_organization_registry(ticket: Dictionary, data: TerrainData, lab: 
 	if _organization_stage.data.get_ref() != data or _organization_stage.lab.get_ref() != lab: return fail("ORGANIZATION_STAGE_BIND_REQUIRED")
 	# Domain writers and Store/CAS must migrate together before any live alias.
 	return fail("ORGANIZATION_ACTIVATION_REQUIRES_MIGRATION", "原領域寫入與 Store/CAS 正文遷移尚未完成；保留原 Site 權威")
+
+## P6-B3 record transactions remain inside the B2 private stage. Replacing or
+## releasing that stage releases its draft, views and opaque checkpoints too.
+func begin_organization_edit(ticket: Dictionary) -> Dictionary:
+	var admitted: Dictionary = _organization_stage_guard(ticket)
+	if not admitted.ok: return admitted
+	if _organization_stage.has("edit"): return read_organization_edit(ticket)
+	var proposal: Dictionary = _organization_stage.proposal
+	var contexts: Dictionary = {}
+	for receipt: Dictionary in proposal.source_receipts:
+		var owner: String = str(receipt.kind) + ":" + str(receipt.owner)
+		if receipt.kind != "site" or not proposal.bindings.has(owner): continue
+		var refs: Dictionary = proposal.bindings[owner]
+		if refs.nation_refs.is_empty() and refs.family_ref == null: continue
+		var loaded: Dictionary = _load_checked(receipt.path, Vector2i(int(receipt.site[0]), int(receipt.site[1])))
+		if not loaded.ok: return loaded
+		contexts[owner] = loaded.data.site.duplicate(true)
+	var operations: GDScript = preload("res://scripts/region_lab/region_organization_edit.gd")
+	var valid: Dictionary = operations.validate(proposal.registry, proposal.registry, contexts, proposal.bindings, proposal.identities, proposal.person_allocator)
+	if not valid.ok: return valid
+	admitted = _organization_stage_guard(ticket)
+	if not admitted.ok: return admitted
+	_organization_stage["edit"] = operations.create(proposal.registry, contexts)
+	return _organization_edit_snapshot()
+
+func _organization_edit_guard(ticket: Dictionary, revision: int = -1) -> Dictionary:
+	var admitted: Dictionary = _organization_stage_guard(ticket)
+	if not admitted.ok: return admitted
+	if not _organization_stage.has("edit"): return fail("ORGANIZATION_EDIT_REQUIRED")
+	if revision >= 0 and revision != int(_organization_stage.edit.revision): return fail("ORGANIZATION_EDIT_CONFLICT")
+	return {"ok": true}
+
+func read_organization_edit(ticket: Dictionary) -> Dictionary:
+	var admitted: Dictionary = _organization_edit_guard(ticket)
+	if not admitted.ok: return admitted
+	return _organization_edit_snapshot()
+
+func _organization_edit_snapshot() -> Dictionary:
+	return {"ok": true, "state": "private_edit", "live_authority": false, "publishable": false, "validation": "record_schema_only",
+		"revision": int(_organization_stage.edit.revision), "registry": _organization_stage.edit.registry.duplicate(true)}
+
+func _organization_edit_key(kind: String, reference: Dictionary) -> Dictionary:
+	var registry: GDScript = preload("res://scripts/region_lab/region_organization_registry.gd")
+	if kind not in ["nation", "family"] or not registry.reference_valid(reference, kind): return fail("ORGANIZATION_EDIT_IDENTITY")
+	var key: String = RegionTravel.stable_key(reference)
+	var records: Dictionary = _organization_stage.edit.registry.nations if kind == "nation" else _organization_stage.edit.registry.families
+	if not records.has(key): return fail("ORGANIZATION_RECORD_RETIRED")
+	return {"ok": true, "key": key}
+
+func organization_edit_record(ticket: Dictionary, kind: String, reference: Dictionary) -> Dictionary:
+	var admitted: Dictionary = _organization_edit_guard(ticket)
+	if not admitted.ok: return admitted
+	var selected: Dictionary = _organization_edit_key(kind, reference)
+	if not selected.ok: return selected
+	var edit: Dictionary = _organization_stage.edit
+	if not edit.views.has(selected.key):
+		var view_script: GDScript = preload("res://scripts/region_lab/region_organization_record_view.gd")
+		edit.views[selected.key] = view_script.new(self, ticket, kind, selected.key, int(edit.epochs.get(selected.key, 0)))
+	return {"ok": true, "view": edit.views[selected.key], "state": "private_edit", "live_authority": false}
+
+func _read_organization_edit_record(ticket: Dictionary, kind: String, key: String, epoch: int) -> Dictionary:
+	var admitted: Dictionary = _organization_edit_guard(ticket)
+	if not admitted.ok: return admitted
+	var edit: Dictionary = _organization_stage.edit
+	var records: Dictionary = edit.registry.nations if kind == "nation" else edit.registry.families
+	if not records.has(key) or int(edit.epochs.get(key, 0)) != epoch: return fail("ORGANIZATION_RECORD_RETIRED")
+	return {"ok": true, "state": "private_edit", "live_authority": false, "revision": int(edit.revision), "reference": records[key].reference.duplicate(true), "record": records[key].record.duplicate(true)}
+
+## No external validator or validation flag is accepted. Record schemas and
+## Person membership come from original owners and captured immutable sources.
+func mutate_organization_edit(ticket: Dictionary, revision: int, kind: String, reference: Dictionary, candidate: Dictionary = {}, remove: bool = false) -> Dictionary:
+	var admitted: Dictionary = _organization_edit_guard(ticket, revision)
+	if not admitted.ok: return admitted
+	if revision < 0 or revision >= 2147483647: return fail("ORGANIZATION_EDIT_CONFLICT")
+	var selected: Dictionary = _organization_edit_key(kind, reference)
+	if not selected.ok: return selected
+	var edit: Dictionary = _organization_stage.edit
+	var proposed: Dictionary = edit.registry.duplicate(true)
+	var operations: GDScript = preload("res://scripts/region_lab/region_organization_edit.gd")
+	var records: Dictionary = operations.table(proposed, kind)
+	if remove:
+		proposed.retired[selected.key] = records[selected.key].reference.duplicate(true)
+		records.erase(selected.key)
+	else: records[selected.key].record = candidate.duplicate(true)
+	var original: Dictionary = _organization_stage.proposal
+	var valid: Dictionary = operations.validate(proposed, edit.base, edit.contexts, original.bindings, original.identities, original.person_allocator)
+	if not valid.ok: return valid
+	if remove: operations.delete_record(edit, kind, selected.key)
+	else: operations.replace_record(edit, kind, selected.key, candidate)
+	return _organization_edit_snapshot()
+
+func checkpoint_organization_edit(ticket: Dictionary, revision: int) -> Dictionary:
+	var admitted: Dictionary = _organization_edit_guard(ticket, revision)
+	if not admitted.ok: return admitted
+	if revision < 0: return fail("ORGANIZATION_EDIT_CONFLICT")
+	var operations: GDScript = preload("res://scripts/region_lab/region_organization_edit.gd")
+	var identity: String = Crypto.new().generate_random_bytes(16).hex_encode()
+	_organization_stage.edit.checkpoints[identity] = operations.checkpoint(_organization_stage.edit)
+	return {"ok": true, "checkpoint": identity, "revision": revision, "state": "private_edit", "publishable": false}
+
+func rollback_organization_edit(ticket: Dictionary, revision: int, checkpoint_identity: String) -> Dictionary:
+	var admitted: Dictionary = _organization_edit_guard(ticket, revision)
+	if not admitted.ok: return admitted
+	if revision < 0 or revision >= 2147483647: return fail("ORGANIZATION_EDIT_CONFLICT")
+	var edit: Dictionary = _organization_stage.edit
+	if not edit.checkpoints.has(checkpoint_identity): return fail("ORGANIZATION_EDIT_CHECKPOINT")
+	var checkpoint_value: Dictionary = edit.checkpoints[checkpoint_identity]
+	var operations: GDScript = preload("res://scripts/region_lab/region_organization_edit.gd")
+	var original: Dictionary = _organization_stage.proposal
+	var valid: Dictionary = operations.validate(checkpoint_value.snapshot, edit.base, edit.contexts, original.bindings, original.identities, original.person_allocator)
+	if not valid.ok: return valid
+	operations.rollback(edit, checkpoint_value)
+	return _organization_edit_snapshot()
