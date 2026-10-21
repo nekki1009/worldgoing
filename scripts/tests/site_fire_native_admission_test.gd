@@ -307,7 +307,13 @@ func _native_ignite_work_roundtrip() -> bool:
 		"Hot Native reload restores IGNITE mode, finite holder, work lease and route", {"save": saved, "load": loaded,
 			"job": job, "route": route}): return false
 	var ignited := false
-	for tick in range(180):
+	# The evacuation stage left the worker away from its slot. The walk back is bounded
+	# by the job's own original approach deadline; the 180 work ticks start on arrival.
+	var tick := 0
+	var calls := 0
+	while tick < 180:
+		calls += 1
+		if str(job.get("phase", "")) != "MOVING_TO_SLOT" or float(job.get("last_interval_end", INF)) >= float(job.get("approach_deadline", 0.0)): tick += 1
 		var step: Dictionary = lab._advance_original_shared_step(STEP)
 		if not step.get("ok", false) or not step.get("completed", false):
 			return _check(false, "Native IGNITE shares the original action interval", step)
@@ -321,7 +327,7 @@ func _native_ignite_work_roundtrip() -> bool:
 			and job.is_empty() and registry.owner_of(slot) == null:
 			ignited = true
 			break
-		if tick % 30 == 29: await process_frame
+		if calls % 30 == 29: await process_frame
 	var final_unit: Dictionary = lab.terrain.site.get("fire", {}).get("units", {}).get(fire_key, {})
 	return _check(ignited and int(holder.get("fire_lab_ignition_q", 1024)) < 1024
 		and float(final_unit.get("heat", heat_before)) > heat_before and not actions.is_busy(worker_id) and registry.owner_of(slot) == null,
@@ -422,6 +428,15 @@ func _run() -> void:
 	if not _check(path_config.ok, "Native in-flight fixture receives an isolated save path", path_config): _finish(false, "save path"); return
 	for tick in range(450):
 		var stepped: Dictionary = lab._advance_original_shared_step(STEP)
+		# A zero-time REGION_EVENT_PENDING point (action_seconds 0, nothing consumed) is
+		# settled by the original Lab; retry the same interval a bounded number of times.
+		var zero_time_retries := 0
+		while (bool(stepped.get("ok", false)) and not bool(stepped.get("completed", false))
+			and str(stepped.get("status", "")) == "REGION_EVENT_PENDING" and float(stepped.get("action_seconds", -1.0)) == 0.0
+			and zero_time_retries < 16):
+			zero_time_retries += 1
+			await process_frame
+			stepped = lab._advance_original_shared_step(STEP)
 		if not _check(bool(stepped.get("ok", false)) and bool(stepped.get("completed", false)), "same original action interval steps Native fire and crowd", stepped): _finish(false, "shared step"); return
 		if first_flight.is_empty() and not lab.fire_projectiles.is_empty():
 			var flight: Dictionary = lab.fire_projectiles[0]
@@ -445,12 +460,21 @@ func _run() -> void:
 			if not _check(hot_disk.ok and hot_transport.get("projectiles", []).size() == 1
 				and int(hot_transport.projectiles[0].get("projectile_id", -1)) == int(expected_flight.get("projectile_id", -2)),
 				"committed envelope retains the same still-flying release", {"read": hot_disk, "transport": hot_transport}): _finish(false, "Native flight missing from save"); return
+			# Option A: a paid arrow still in the air keeps combat open, and combat
+			# gates every Site load (site_controller.gd load_from). The hot load is
+			# therefore refused BUSY and must leave the live flight and save file
+			# unchanged. The full Site roundtrip is checked after combat ends below.
+			var refusal_live_before: PackedByteArray = var_to_bytes([lab.terrain.site, lab.fire_projectiles])
+			var refusal_file_before: PackedByteArray = FileAccess.get_file_as_bytes(lab.site_controller.save_path)
 			var hot_loaded: Dictionary = lab.site_controller.load_from(lab.site_controller.save_path)
 			native = lab.crowd_site
-			if not _check(hot_loaded.ok and native != null and native.fire_host_active() and lab.fire_projectiles.size() == 1
-				and int(lab.fire_projectiles[0].get("projectile_id", -1)) == int(expected_flight.get("projectile_id", -2)),
-				"hot Native reload restores the same single paid flight and host owner", {"load": hot_loaded,
-					"flights": lab.fire_projectiles, "host_active": native != null and native.fire_host_active()}): _finish(false, "Native hot reload"); return
+			if not _check(not hot_loaded.ok and str(hot_loaded.get("code", "")) == "BUSY"
+				and var_to_bytes([lab.terrain.site, lab.fire_projectiles]) == refusal_live_before
+				and lab.fire_projectiles.size() == 1
+				and int(lab.fire_projectiles[0].get("projectile_id", -1)) == int(expected_flight.get("projectile_id", -2))
+				and FileAccess.get_file_as_bytes(lab.site_controller.save_path) == refusal_file_before,
+				"hot Native load is refused BUSY while the paid arrow is airborne; live flight and save file unchanged",
+				{"load": hot_loaded, "flights": lab.fire_projectiles, "combat_left": lab.terrain.site.get("combat_left", 0.0)}): _finish(false, "Native hot load refusal"); return
 			shooter_owner = native.person_owner(shooter_id)
 			target_owner = native.person_owner(target_id)
 			shooter_index = native.crowd.soldier_index(shooter_id)
