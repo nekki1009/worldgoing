@@ -239,6 +239,35 @@ func set_nation_duty_ai_in_organization_edit(ticket: Dictionary, revision: int, 
 		changed["office_revision"] = int(candidate.offices.revision)
 	return changed
 
+## Original non-delegable head predicate; default retains live upgrade-on-read.
+func _nation_office_plan_authorized(nation: Dictionary, requester_id: int, read_only: bool = false) -> bool:
+	return not nation.is_empty() and nation.has("offices") and requester_id == nation_head_executor(nation, read_only)
+
+## Actual live authority and membership cannot be granted by draft edits; the
+## original upgrade/catalog revision applies to the draft copy before the plan.
+func apply_nation_office_plan_in_organization_edit(ticket: Dictionary, revision: int, requester_id: int, nation_id: String, expected_revision: int, ops: Array) -> Dictionary:
+	if not is_instance_valid(lab) or not is_instance_valid(lab.site_controller) or lab.site_controller.equipment_orders != self or lab.site_controller.region_slot == null: return Runtime.fail("NO_ORIGINAL_NATION_OWNER", "須使用原 Controller 的國家 owner")
+	var slot: RefCounted = lab.site_controller.region_slot
+	var target: Dictionary = slot.call("organization_nation_edit_target", ticket, revision, lab.terrain, self, nation_id)
+	if not target.ok: return target
+	var live: Dictionary = lab.terrain.site.equipment_nations[nation_id]
+	var draft: Dictionary = target.nation
+	if requester_id <= 0 or not _nation_office_plan_authorized(live, requester_id, true) or not _nation_office_plan_authorized(draft, requester_id, true):
+		return Runtime.fail("NO_AUTHORITY", "只有清醒自由的本國元首可調整國家職位")
+	var candidate: Dictionary = draft.duplicate(true)
+	nation_offices(candidate) # Original successful path: upgrade + missing-duty revision once.
+	var result := SiteOffices.apply_plan(candidate.offices, "nation", expected_revision, ops,
+		func(person_id: int, _office_class: String) -> bool: return _member(live, person_id) and _member(draft, person_id))
+	if not bool(result.ok): return result
+	candidate["offices"] = result.offices
+	var changed: Dictionary = slot.call("mutate_organization_edit", ticket, revision, "nation", target.reference, candidate)
+	if changed.ok:
+		changed["command"] = "nation.apply_office_plan"
+		changed["validation"] = "nation_office_command_preflight_only"
+		changed["office_revision"] = int(result.offices.revision)
+		changed["refs"] = result.refs.duplicate(true)
+	return changed
+
 ## R4b-1 (OFFICE R4): the 贖務官 (nation.ransom) binds the nation's own treasury to one
 ## complete warehouse it owns. Binding only: no coin moves, nothing is paid or released.
 func bind_nation_treasury(requester_id: int, nation_id: String, feature_id: String) -> Dictionary:
