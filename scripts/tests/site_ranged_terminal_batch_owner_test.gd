@@ -78,6 +78,10 @@ func _run() -> void:
 	# Genuine original PA jobs consume the real shared clock. No elapsed write,
 	# synthetic contact, hand-picked prefix or fixture-owned inventory publisher.
 	_stock(data, {"wood": 2, "iron": 2, "tools": 1})
+	# Camp craft requires a legal cell 4-adjacent to the depot (9,9); the shared
+	# fixture leaves the character diagonal at (10,10), so stand it at (9,10).
+	var character_placed: bool = lab.character.place(Vector2i(9, 10), true)
+	assert(character_placed)
 	var actions: SitePersonActions = lab.site_controller.person_actions
 	assert(actions.begin_ranged_craft(person_a, "arrow").ok)
 	assert(actions.begin_ranged_craft(person_b, "bolt").ok)
