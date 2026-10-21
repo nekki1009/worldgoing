@@ -312,7 +312,17 @@ func authorize_nation_ransom(requester_id: int, nation_id: String, authorized: b
 ## R5 S1: the head executor designates the nation's heir. Data only: no holder changes, no transfer.
 func designate_nation_heir(requester_id: int, nation_id: String, person_id: int) -> Dictionary:
 	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
-	if nation.is_empty() or not nation.has("offices") or requester_id != nation_head_executor(nation, true):
+	var checked: Dictionary = _nation_heir_record(nation, requester_id, person_id)
+	if not checked.ok: return checked
+	nation_offices(nation)
+	nation.offices.revision = mini(SiteOffices.MAX_SEQ, int(nation.offices.revision) + 1)
+	nation["succession"] = checked.record
+	return Runtime.ok("已指定繼承人", {"person_id": person_id})
+
+## Original head-executor authority and the heir's actual physical state; never mutates the nation.
+func _nation_heir_record(nation: Dictionary, requester_id: int, person_id: int) -> Dictionary:
+	# An unfit head resolves to the -1 sentinel; a -1 requester must not match it.
+	if requester_id <= 0 or nation.is_empty() or not nation.has("offices") or requester_id != nation_head_executor(nation, true):
 		return Runtime.fail("NO_AUTHORITY", "只有清醒自由的本國元首可指定繼承人")
 	var head_seat: Dictionary = SiteOffices.head_position(nation.offices)
 	if head_seat.is_empty(): return Runtime.fail("NO_TARGET", "元首職位不存在")
@@ -322,10 +332,30 @@ func designate_nation_heir(requester_id: int, nation_id: String, person_id: int)
 	var record: Dictionary = nation.get("succession", Succession.empty_record())
 	var candidate: Dictionary = Succession.designate(record, str(head_seat.id), person_id, seat_ids, members, int(head_seat.get("holder", -1)), func(identity: int) -> bool: return _nation_person_ok(nation, identity))
 	if not bool(candidate.ok): return Runtime.fail(str(candidate.code), "繼承人指定未通過；原狀未變")
-	nation_offices(nation)
-	nation.offices.revision = mini(SiteOffices.MAX_SEQ, int(nation.offices.revision) + 1)
-	nation.succession = candidate.record
-	return Runtime.ok("已指定繼承人", {"person_id": person_id})
+	return {"ok": true, "record": candidate.record}
+
+## The live head and the draft head must both be the requester; the original
+## upgrade/catalog and designation revision apply to the draft copy only.
+func designate_nation_heir_in_organization_edit(ticket: Dictionary, revision: int, requester_id: int, nation_id: String, person_id: int) -> Dictionary:
+	if not is_instance_valid(lab) or not is_instance_valid(lab.site_controller) or lab.site_controller.equipment_orders != self or lab.site_controller.region_slot == null: return Runtime.fail("NO_ORIGINAL_NATION_OWNER", "須使用原 Controller 的國家 owner")
+	var slot: RefCounted = lab.site_controller.region_slot
+	var target: Dictionary = slot.call("organization_nation_edit_target", ticket, revision, lab.terrain, self, nation_id)
+	if not target.ok: return target
+	var live_plan: Dictionary = _nation_heir_record(lab.terrain.site.equipment_nations[nation_id], requester_id, person_id)
+	if not live_plan.ok: return live_plan
+	var draft_plan: Dictionary = _nation_heir_record(target.nation, requester_id, person_id)
+	if not draft_plan.ok: return draft_plan
+	var candidate: Dictionary = target.nation.duplicate(true)
+	nation_offices(candidate)
+	candidate.offices.revision = mini(SiteOffices.MAX_SEQ, int(candidate.offices.revision) + 1)
+	candidate["succession"] = draft_plan.record
+	var changed: Dictionary = slot.call("mutate_organization_edit", ticket, revision, "nation", target.reference, candidate)
+	if changed.ok:
+		changed["command"] = "nation.designate_heir"
+		changed["validation"] = "nation_heir_command_preflight_only"
+		changed["person_id"] = person_id
+		changed["office_revision"] = int(candidate.offices.revision)
+	return changed
 
 func set_standard(requester_id: int, nation_id: String, standard_id: String, display_name: String, slots: Dictionary, dyes: Variant = null) -> Dictionary:
 	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
