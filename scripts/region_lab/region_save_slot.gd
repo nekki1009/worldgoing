@@ -11542,9 +11542,10 @@ func _faction_joined_destination(token: String, clock: Dictionary, journey: Dict
 		token = next
 	return fail("FACTION_SCAN_INCOMPLETE", "joined destination chain")
 
-func _faction_scan(sites: Dictionary, clock: Dictionary, journey: Dictionary, previous: Dictionary, reserved: Array = [], include_legacy: bool = true, with_persons: bool = false) -> Dictionary:
+func _faction_scan(sites: Dictionary, clock: Dictionary, journey: Dictionary, previous: Dictionary, reserved: Array = [], include_legacy: bool = true, with_persons: bool = false, with_organization_sources: bool = false) -> Dictionary:
 	var states: Array[Dictionary] = []
 	var person_sources: Array = []
+	var organization_sources: Array = []
 	var receipts: Array[Dictionary] = []
 	var coordinates := {}
 	if include_legacy:
@@ -11571,6 +11572,7 @@ func _faction_scan(sites: Dictionary, clock: Dictionary, journey: Dictionary, pr
 		var prefix: Variant = path.get_file().split("_")[0]
 		var source_generation: Variant = int(prefix) if not entry.is_empty() and prefix.length() == 20 and prefix.is_valid_int() else 0 if entry.is_empty() else null
 		receipts.append({"owner": str(loaded.summary.owner), "source_generation": RegionFactionQuery.whole_or_null(source_generation), "runtime_revision": RegionFactionQuery.whole_or_null(loaded.summary.runtime_revision), "checksum": checksum, "as_of_game_seconds": _faction_source_receipt_seconds(loaded.summary, checksum, source_generation, previous, clock), "complete": true})
+		if with_organization_sources: organization_sources.append({"kind": "site", "owner": str(loaded.summary.owner), "site": coordinate, "path": path, "checksum": checksum, "historical": false, "phase": "selected" if not entry.is_empty() else "legacy", "original_receipt": receipts.back().duplicate(true)})
 	var references: Array[Dictionary] = []
 	if journey.get("kind") == RegionTravel.KIND: references.append(journey)
 	for token: String in clock.get("region_gameplay", {}).get("parties", {}):
@@ -11611,6 +11613,7 @@ func _faction_scan(sites: Dictionary, clock: Dictionary, journey: Dictionary, pr
 				persons.erase("pending_remap")
 			person_sources.append({"projection": persons, "location": {"kind": "party", "id": str(summary.owner)}})
 		receipts.append({"owner": "party:" + str(summary.owner), "source_generation": null, "runtime_revision": null, "checksum": checksum, "as_of_game_seconds": summary.at, "complete": true})
+		if with_organization_sources: organization_sources.append({"kind": "party", "owner": str(summary.owner), "path": folder.path_join(path), "checksum": checksum, "historical": historical, "phase": str(reference.get("phase", "travelling")), "original_receipt": receipts.back().duplicate(true)})
 	# Battle participant fields and remote claims are projected by their original registry/Sites.
 	var political_ids := {}
 	var battle_ids: Variant = RegionFactionQuery.collect_ids(clock.get("region_gameplay", {}).get("battles", {}), political_ids)
@@ -11618,7 +11621,9 @@ func _faction_scan(sites: Dictionary, clock: Dictionary, journey: Dictionary, pr
 	var all_reserved: Array = reserved.duplicate()
 	for id: String in political_ids: all_reserved.append(int(id))
 	var result: Dictionary = RegionFactionQuery.migration(states, receipts, all_reserved, previous, float(clock.logical_game_seconds), true)
-	if result.ok: result["person_sources"] = person_sources
+	if result.ok:
+		result["person_sources"] = person_sources
+		if with_organization_sources: result["organization_sources"] = organization_sources
 	return result
 
 ## Explicit mapping only. Optional original nation record creates a new nation;
@@ -12071,3 +12076,91 @@ func _insert_people(state: Dictionary, party: Dictionary, nav: TerrainData, entr
 	var settings: Dictionary = options.duplicate(true)
 	settings["preserve_person_ids"] = person_allocator_enabled()
 	return RegionTravel.insert(state, party, nav, entry, path, departure, arrival, settings)
+
+## P6-B1 read-only preflight. All recovery/cache work belongs to a disposable
+## original Slot reader; no live control, allocator or source file is replaced.
+func prepare_organization_migration(expected: Dictionary = {}) -> Dictionary:
+	var organizations: GDScript = preload("res://scripts/region_lab/region_organization_registry.gd")
+	var generation: int = int(_marker.get("generation", 0))
+	if generation < 1 or source == null or not _same_pin(pin, pin): return fail("ORGANIZATION_SOURCE_REQUIRED")
+	if not expected.is_empty() and (expected.size() != 2 or not _same_pin(expected.get("pin"), pin) or not _whole(expected.get("generation"), generation, generation)): return fail("ORGANIZATION_PREFLIGHT_CONFLICT")
+	var snapshot: Dictionary = {"generation": generation, "pin": pin.duplicate(true), "folder": folder,
+		"control": var_to_bytes(control), "marker": var_to_bytes(_marker)}
+	var probe: RegionSaveSlot = RegionSaveSlot.new()
+	probe.source = source
+	probe.pin = pin.duplicate(true)
+	probe.folder = folder
+	probe.control = control.duplicate(true)
+	probe._marker = _marker.duplicate(true)
+	var commit_path: String = folder.path_join("commits/%020d.json" % generation)
+	snapshot["commit_sha256"] = _faction_file_sha256(commit_path)
+	if not _faction_digest_valid(snapshot.commit_sha256): return fail("ORGANIZATION_SOURCE_CHANGED")
+	var latest: Dictionary = probe._recover_read_latest(false, {})
+	if not latest.ok: return latest
+	if latest.get("empty", false) or int(latest.recorded.generation) != generation: return fail("ORGANIZATION_PREFLIGHT_CONFLICT")
+	probe._marker = latest.recorded
+	probe.control = latest.recorded.control.duplicate(true)
+	if _faction_file_sha256(commit_path) != snapshot.commit_sha256: return fail("ORGANIZATION_SOURCE_CHANGED")
+	var scanned: Dictionary = probe._faction_scan(probe._marker.sites, probe.control, probe._marker.journey, probe.faction_registry_view(), [], true, true, true)
+	if not scanned.ok: return scanned
+	var persons: Dictionary = person_migration(str(pin.world_instance_id), scanned.person_sources, probe.control.get("person_allocator", {}))
+	if not persons.ok: return persons
+	var sources: Array = []
+	var provenance: Array = []
+	var site_keys: Array[String] = []
+	for descriptor: Dictionary in scanned.organization_sources:
+		if _faction_file_sha256(descriptor.path) != descriptor.checksum: return fail("ORGANIZATION_SOURCE_CHANGED")
+		var state: Dictionary
+		if descriptor.kind == "site":
+			site_keys.append(_site_key(descriptor.site))
+			var loaded: Dictionary = probe._load_checked(descriptor.path, descriptor.site)
+			if not loaded.ok: return loaded
+			state = loaded.data.site.duplicate(true)
+			if not _same_pin(state.get("world_pin"), pin): return fail("ORGANIZATION_PIN_MISMATCH")
+		else:
+			var loaded: Dictionary = probe._faction_read_party(descriptor.path)
+			if not loaded.ok: return loaded
+			state = loaded.party.content.duplicate(true)
+			if not loaded.party.get("origin_site_id") is String or loaded.party.origin_site_id.is_empty(): return fail("ORGANIZATION_PARTY_BODY_CONTEXT_REQUIRED")
+			state["id"] = loaded.party.origin_site_id
+		if _faction_file_sha256(descriptor.path) != descriptor.checksum: return fail("ORGANIZATION_SOURCE_CHANGED")
+		sources.append({"kind": descriptor.kind, "owner": str(descriptor.kind) + ":" + str(descriptor.owner), "historical": descriptor.historical, "state": state})
+		var receipt: Dictionary = descriptor.duplicate(true)
+		if receipt.has("site"): receipt.site = [descriptor.site.x, descriptor.site.y]
+		receipt["pin"] = pin.duplicate(true)
+		receipt["selected_generation"] = generation
+		provenance.append(receipt)
+	site_keys.sort()
+	snapshot["site_keys"] = site_keys
+	var prepared: Dictionary = organizations.migrate_sources(str(pin.world_instance_id), generation, sources, persons.allocator, person_allocator_valid)
+	if not prepared.ok: return prepared
+	var unchanged: Dictionary = _organization_preflight_unchanged(snapshot, provenance)
+	if not unchanged.ok: return unchanged
+	prepared["pin"] = pin.duplicate(true)
+	prepared["base_generation"] = generation
+	prepared["commit_sha256"] = snapshot.commit_sha256
+	prepared["source_receipts"] = provenance
+	prepared["person_allocator"] = persons.allocator
+	return prepared
+
+func _organization_preflight_unchanged(snapshot: Dictionary, receipts: Array) -> Dictionary:
+	if folder != snapshot.folder or not _same_pin(pin, snapshot.pin) or int(_marker.get("generation", 0)) != int(snapshot.generation) or var_to_bytes(control) != snapshot.control or var_to_bytes(_marker) != snapshot.marker: return fail("ORGANIZATION_PREFLIGHT_CONFLICT")
+	var known: Dictionary = _known_saved_sites_current()
+	if not known.ok: return known
+	var coordinates: Dictionary = {}
+	for coordinate: Vector2i in known.sites: coordinates[_site_key(coordinate)] = true
+	for key: String in _marker.get("sites", {}): coordinates[key] = true
+	var site_keys: Array = coordinates.keys()
+	site_keys.sort()
+	if site_keys != snapshot.site_keys: return fail("ORGANIZATION_SOURCE_CHANGED")
+	var directory: DirAccess = DirAccess.open(folder.path_join("commits"))
+	if directory == null: return fail("ORGANIZATION_SOURCE_CHANGED")
+	var latest: int = 0
+	for name: String in directory.get_files():
+		var stem: String = name.trim_suffix(".json")
+		if name.ends_with(".json") and stem.length() == 20 and stem.is_valid_int(): latest = maxi(latest, int(stem))
+	if latest != int(snapshot.generation): return fail("ORGANIZATION_PREFLIGHT_CONFLICT")
+	if _faction_file_sha256(folder.path_join("commits/%020d.json" % latest)) != snapshot.commit_sha256: return fail("ORGANIZATION_SOURCE_CHANGED")
+	for receipt: Dictionary in receipts:
+		if _faction_file_sha256(receipt.path) != receipt.checksum: return fail("ORGANIZATION_SOURCE_CHANGED")
+	return {"ok": true}
