@@ -51,7 +51,15 @@ func _published_clock_case(source: RegionData, logical_clock: Dictionary, label:
 	var probe: RegionSaveSlot = RegionSaveSlot.new()
 	var result: Dictionary = probe.open_map(source, world_id, SLOT)
 	if not _check(result.ok, "Original reader reopens published bare JSON clock: " + label, result): return false
-	if not _check(probe.control == logical_clock and float(probe.control.fire_clock.action_seconds) == float(logical_clock.fire_clock.action_seconds) and float(probe.control.logical_game_seconds) == float(logical_clock.logical_game_seconds), "Original JSON publisher/reader retain exact complete fractional clock: " + label): return false
+	# The format-2 publisher always adds its faction-era control fields; every supplied field must roundtrip exactly.
+	var supplied: Dictionary = {}
+	var added: Array[String] = []
+	for key: Variant in probe.control:
+		if logical_clock.has(str(key)): supplied[str(key)] = probe.control[key]
+		else: added.append(str(key))
+	added.sort()
+	if not _check(added == ["faction_registry", "person_allocator"], "Publisher adds only its faction-era control fields: " + label, added): return false
+	if not _check(supplied == logical_clock and float(probe.control.fire_clock.action_seconds) == float(logical_clock.fire_clock.action_seconds) and float(probe.control.logical_game_seconds) == float(logical_clock.logical_game_seconds), "Original JSON publisher/reader retain exact complete fractional clock: " + label): return false
 	var validated: Dictionary = RegionSaveSlot.validate_fire_clock(probe.control.fire_clock, probe.control.logical_game_seconds)
 	if not _check(validated.ok, "Original full fire validator admits bare JSON roundtrip: " + label, validated): return false
 	if logical_clock.has("region_gameplay"):
