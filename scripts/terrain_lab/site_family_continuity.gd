@@ -494,10 +494,29 @@ func apply_office_plan_in_organization_edit(ticket: Dictionary, revision: int, r
 
 func set_duty_ai_enabled(requester_id: int, enabled: bool) -> Dictionary:
 	var family: Variant = lab.terrain.site.get("family", {})
-	if family_offices(family).is_empty() or requester_id != head_executor(family):
+	if not _office_plan_authorized(family, requester_id):
 		return Runtime.fail("NO_AUTHORITY", "職責 AI 開關屬家主的組織設定")
 	family.offices.duty_ai = enabled
 	return Runtime.ok("已%s家族職責 AI" % ("開啟" if enabled else "關閉"))
+
+## Configuration only: no AI tick or duty execution occurs in a private edit.
+func set_duty_ai_enabled_in_organization_edit(ticket: Dictionary, revision: int, requester_id: int, enabled: bool) -> Dictionary:
+	if not is_instance_valid(lab) or not is_instance_valid(lab.site_controller) or lab.site_controller.family_continuity != self or lab.site_controller.region_slot == null: return Runtime.fail("NO_ORIGINAL_FAMILY_OWNER", "須使用原 Controller 的家族 owner")
+	var slot: RefCounted = lab.site_controller.region_slot
+	var target: Dictionary = slot.call("organization_family_edit_target", ticket, revision, lab.terrain, self)
+	if not target.ok: return target
+	var draft: Dictionary = target.family
+	if requester_id <= 0 or not _office_plan_authorized(lab.terrain.site.family, requester_id, true) or not _office_plan_authorized(draft, requester_id, true):
+		return Runtime.fail("NO_AUTHORITY", "職責 AI 開關屬家主的組織設定")
+	var candidate: Dictionary = draft.duplicate(true)
+	candidate.offices = family_offices(draft, true).duplicate(true)
+	candidate.offices.duty_ai = enabled
+	var changed: Dictionary = slot.call("mutate_organization_edit", ticket, revision, "family", target.reference, candidate)
+	if changed.ok:
+		changed["command"] = "family.set_duty_ai_enabled"
+		changed["validation"] = "family_duty_ai_command_preflight_only"
+		changed["office_revision"] = int(candidate.offices.revision)
+	return changed
 
 func _controlled_id() -> int:
 	return int(lab.terrain.site.get("controlled_person_id", lab.character.person_id))
