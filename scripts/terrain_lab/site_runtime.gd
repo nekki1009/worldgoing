@@ -4990,7 +4990,7 @@ static func fire_receive_impact(data: TerrainData, payload: Dictionary) -> Dicti
 		"end_action": float(payload.action_time) + float(payload.max_seconds), "budget": amount,
 		"rate": float(payload.heat_rate) * float(payload.heat_transfer) * float(payload.contact_scale)}
 	state.active[key] = true
-	state.dirty = true
+	state["dirty"] = true
 	return ok("原有限接觸待火勢邊界結算", {"accepted": true, "contact_id": event_id, "unit_key": key, "generation": int(unit.generation)})
 
 static func _fire_has_contact(state: Dictionary, key: String) -> bool:
@@ -5144,8 +5144,8 @@ static func fire_advance(data: TerrainData, completed_action_end: float, closed_
 		var stepped := _fire_step(data, state, int(state.step_index) + 1, damage_sink)
 		if not stepped.ok: return stepped
 		steps += 1
-	state.observed_action_end = completed_action_end
-	state.receipt_floor = closed_projectile_prefix
+	state["observed_action_end"] = completed_action_end
+	state["receipt_floor"] = closed_projectile_prefix
 	for sequence: int in state.receipt_ids.keys():
 		if sequence <= closed_projectile_prefix: state.receipt_ids.erase(sequence)
 	data.set_meta(&"fire_completed_action_end", completed_action_end)
@@ -5287,17 +5287,17 @@ static func _fire_step(data: TerrainData, state: Dictionary, step_index: int, da
 		state.units[key] = next[key]
 		if float(next[key].heat) > FIRE_EPS or _fire_has_contact({"contacts": contacts}, key): state.active[key] = true
 		else: state.active.erase(key)
-	state.contacts = contacts
-	if state.has("suppression_pending"): state.suppression_pending = suppression.pending
-	state.smoke = smoke.smoke
-	state.step_index = step_index
-	if not damage.is_empty() or state.has("structure_pending"): state.structure_pending = damage.duplicate(true)
+	state["contacts"] = contacts
+	if state.has("suppression_pending"): state["suppression_pending"] = suppression.pending
+	state["smoke"] = smoke.smoke
+	state["step_index"] = step_index
+	if not damage.is_empty() or state.has("structure_pending"): state["structure_pending"] = damage.duplicate(true)
 	var inventory_results := _fire_commit_inventory_preview(data, state, inventory_preview)
 	data.set_meta(&"fire_inventory_results", inventory_results)
 	for part_key: String in queued.get("results", {}):
 		if damage.has(part_key): fire_structure_outcome(data, damage[part_key], queued.results[part_key])
 	fire_hazard_invalidate(data)
-	if not keys.is_empty() or not state.get("smoke", {}).is_empty() or not smoke.smoke.is_empty(): state.dirty = true
+	if not keys.is_empty() or not state.get("smoke", {}).is_empty() or not smoke.smoke.is_empty(): state["dirty"] = true
 	if rebuild:
 		Env.rebuild_indexes(data)
 		rebuild_water(data)
@@ -5321,7 +5321,7 @@ static func _fire_resource_cleared(data: TerrainData, resource_key: String) -> v
 		# old events cannot create another contact or refill its finite budget.
 		if int(unit.residue_q) > 0: state.contacts[event_id].generation = int(unit.generation)
 		else: state.contacts.erase(event_id)
-	state.dirty = true
+	state["dirty"] = true
 	if float(unit.heat) <= FIRE_EPS and not supplied:
 		unit.residue_q = 0 # Cold discarded fractional material is never usable wood.
 		state.active.erase(key)
@@ -5342,7 +5342,7 @@ static func _fire_resource_restored(data: TerrainData, resource_key: String, pre
 	if not preview and residue > 0:
 		unit.fuel_remainder_q = residue
 		unit.residue_q = 0
-		state.dirty = true
+		state["dirty"] = true
 	return ok()
 
 static func _fire_regeneration_blocked(data: TerrainData, resource_key: String) -> bool:
@@ -5358,7 +5358,7 @@ static func _fire_resource_regenerated(data: TerrainData, resource_key: String, 
 	unit.fuel_remainder_q = new_fuel % FIRE_Q
 	if old_fuel == 0 and new_fuel > 0: unit.generation = int(unit.generation) + 1
 	unit.residue_q = 0
-	state.dirty = true
+	state["dirty"] = true
 	return floori(float(new_fuel) / FIRE_Q)
 
 static func _fire_feature_hot(data: TerrainData, feature_id: String) -> bool:
@@ -5410,7 +5410,7 @@ static func _fire_repair_finished(data: TerrainData, feature_id: String, part_id
 		for event_id: String in state.contacts.keys():
 			if str(state.contacts[event_id].unit_key) == key: state.contacts.erase(event_id)
 	state.repair_generations.erase(key)
-	state.dirty = true
+	state["dirty"] = true
 
 static func _fire_feature_removed(data: TerrainData, feature_id: String, retained_parts: Dictionary = {}) -> void:
 	fire_hazard_invalidate(data)
@@ -5431,7 +5431,7 @@ static func _fire_feature_removed(data: TerrainData, feature_id: String, retaine
 		state.repair_generations.erase(key)
 		for event_id: String in state.contacts.keys():
 			if str(state.contacts[event_id].unit_key) == key: state.contacts.erase(event_id)
-		state.dirty = true
+		state["dirty"] = true
 
 static func _fire_feature_completed(data: TerrainData, feature_id: String, previous: Dictionary, paid: Dictionary) -> void:
 	fire_hazard_invalidate(data)
@@ -5453,14 +5453,14 @@ static func _fire_feature_completed(data: TerrainData, feature_id: String, previ
 			rebuilt.generation = int(unit.generation) + 1
 			rebuilt.fuel_q = mini(new_maximum, int(paid_by_part.get(part_id, maxi(0, int(paid.get("wood", 0))) * FIRE_Q)))
 			state.units[key] = rebuilt
-			state.dirty = true
+			state["dirty"] = true
 			continue
 		var added := mini(maxi(0, new_maximum - int(unit.fuel_max_q)), int(paid_by_part.get(part_id, maxi(0, int(paid.get("wood", 0))) * FIRE_Q)))
 		unit.fuel_max_q = new_maximum
 		unit.fuel_q = mini(new_maximum, int(unit.fuel_q) + added)
 		if building_grade(previous) != building_grade(feature) or previous.get("cells", []) != feature.cells or previous.get("parts", {}).get(part_id, {}) != feature.parts[part_id]:
 			unit.generation = int(unit.generation) + 1
-		state.dirty = true
+		state["dirty"] = true
 
 
 # P3-A disposable projection. No fuel/HP/save authority and no time advancement.
@@ -5742,7 +5742,7 @@ static func fire_expand_feature(data: TerrainData, feature_id: String) -> Dictio
 			unit.surface_id = str(descriptor.surface_id)
 			unit.height = float(descriptor.height)
 			state.units[str(descriptor.key)] = unit
-		state.dirty = true
+		state["dirty"] = true
 	data.environment_revision += 1
 	fire_hazard_invalidate(data)
 	return ok("原建物已一次分區", {"feature": feature_id, "preserved_fuel_q": old_fuel})
@@ -5883,10 +5883,10 @@ const FIRE_COLLAPSE_DELAY_STEPS := 10
 const FIRE_COLLAPSE_HP_FRACTION := 0.25
 
 static func _fire_collapse_state(state: Dictionary) -> void:
-	if not state.has("collapse_warnings"): state.collapse_warnings = {}
-	if not state.has("collapse_receipts"): state.collapse_receipts = {}
-	if not state.has("collapse_next_sequence"): state.collapse_next_sequence = 1
-	if not state.has("structure_pending"): state.structure_pending = {}
+	if not state.has("collapse_warnings"): state["collapse_warnings"] = {}
+	if not state.has("collapse_receipts"): state["collapse_receipts"] = {}
+	if not state.has("collapse_next_sequence"): state["collapse_next_sequence"] = 1
+	if not state.has("structure_pending"): state["structure_pending"] = {}
 
 static func _fire_pending_damage(data: TerrainData, state: Dictionary) -> Dictionary:
 	var result := {}
@@ -5968,8 +5968,8 @@ static func fire_structure_outcome(data: TerrainData, request: Dictionary, resul
 		if float(result.new_hp) <= maximum * FIRE_COLLAPSE_HP_FRACTION:
 			state.collapse_warnings[key] = {"version": FIRE_COLLAPSE_VERSION, "generation": int(unit.generation),
 				"sequence": int(state.collapse_next_sequence), "due_step": int(state.step_index) + FIRE_COLLAPSE_DELAY_STEPS}
-			state.collapse_next_sequence = int(state.collapse_next_sequence) + 1
-			state.dirty = true
+			state["collapse_next_sequence"] = int(state.collapse_next_sequence) + 1
+			state["dirty"] = true
 			fire_hazard_invalidate(data)
 
 static func _fire_commit_collapse(data: TerrainData, state: Dictionary, feature_id: String, part_id: String) -> void:
@@ -5998,7 +5998,7 @@ static func _fire_commit_collapse(data: TerrainData, state: Dictionary, feature_
 	state.collapse_warnings.erase(key)
 	state.structure_pending.erase(feature_id + "|" + part_id)
 	state.repair_generations.erase(key)
-	state.dirty = true
+	state["dirty"] = true
 	fire_hazard_invalidate(data)
 
 static func _fire_debris_descriptor(data: TerrainData, unit: Dictionary) -> Dictionary:
@@ -6093,9 +6093,9 @@ static func apply_inventory_loss(data: TerrainData, request: Dictionary) -> Dict
 	var receipt := {"version": FIRE_INVENTORY_VERSION, "feature_id": str(request.feature_id), "source_unit_key": str(request.source_unit_key),
 		"source_generation": int(request.source_generation), "step": int(request.step), "holder_id": str(holder.holder),
 		"holder_version": int(holder.version), "resources": resources, "item_ids": items}
-	if not state.has("inventory_receipts"): state.inventory_receipts = {}
+	if not state.has("inventory_receipts"): state["inventory_receipts"] = {}
 	state.inventory_receipts[event_id] = receipt
-	state.dirty = true
+	state["dirty"] = true
 	return ok("原倉庫已一次提交有限火損", {"duplicate": false, "receipt": receipt.duplicate(true)})
 
 static func _fire_inventory_selection(data: TerrainData, stock: Dictionary, budget: int) -> Dictionary:
@@ -6166,8 +6166,8 @@ static func _fire_commit_inventory_preview(data: TerrainData, state: Dictionary,
 				result = apply_inventory_loss(data, request) # Same event ID; clamp current stock once.
 		if not result.ok and str(result.code) not in ["TARGET_INVALIDATED", "CONTENTS_PROTECTED"]: pending[key] = request
 		results.append(result)
-	if not preview.remainders.is_empty() or state.has("contents_remainders"): state.contents_remainders = preview.remainders
-	if not pending.is_empty() or state.has("inventory_pending"): state.inventory_pending = pending
+	if not preview.remainders.is_empty() or state.has("contents_remainders"): state["contents_remainders"] = preview.remainders
+	if not pending.is_empty() or state.has("inventory_pending"): state["inventory_pending"] = pending
 	return results
 
 # Original Runtime owns weather input history and sparse outdoor smoke alongside
@@ -6193,11 +6193,11 @@ static func fire_set_weather(data: TerrainData, action_time: float, wind: Vector
 	# because cold unmaterialized fuel must not assume today's rain in the past.
 	var state := _fire_state(data, action_time)
 	if old.is_empty():
-		state.weather = {"config_version": str(profile.config_version), "sequence": 0, "history": []}
+		state["weather"] = {"config_version": str(profile.config_version), "sequence": 0, "history": []}
 		if action_time > 0.0: state.weather.history.append({"action_time": 0.0, "wind_x": 0.0, "wind_y": 0.0, "rain": 0.0, "drying": 0.02})
 	state.weather.history.append(input)
 	state.weather.sequence = int(state.weather.sequence) + 1
-	state.dirty = true
+	state["dirty"] = true
 	return ok("原Site天氣區間已記錄", {"sequence": int(state.weather.sequence)})
 
 static func _fire_weather_index(history: Array, action_time: float) -> int:
@@ -6463,7 +6463,7 @@ static func validate_fire_snapshot(data: TerrainData, raw: Variant, action_curso
 		if not raw[field] is Dictionary or raw[field].size() > 65536: return fail("INVALID_FIRE_COLLECTION")
 	var state: Dictionary = raw.duplicate(true)
 	for field: String in ["version", "step_index", "receipt_floor"]: state[field] = int(raw[field])
-	state.receipt_ids = {}
+	state["receipt_ids"] = {}
 	for key: String in raw.receipt_ids:
 		if not _fire_snapshot_id(key, 1) or int(key) <= int(raw.receipt_floor) or not raw.receipt_ids[key] is bool or raw.receipt_ids[key] != true: return fail("INVALID_FIRE_RECEIPT")
 		state.receipt_ids[int(key)] = true
@@ -6497,11 +6497,11 @@ static func validate_fire_snapshot(data: TerrainData, raw: Variant, action_curso
 	if state.has("weather"):
 		var weather := _validate_fire_weather_snapshot(state.weather, action_cursor)
 		if not weather.ok: return weather
-		state.weather = weather.weather
+		state["weather"] = weather.weather
 	if state.has("smoke"):
 		var smoke := _validate_fire_smoke_snapshot(data, state.smoke)
 		if not smoke.ok: return smoke
-		state.smoke = smoke.smoke
+		state["smoke"] = smoke.smoke
 	var structures := _validate_fire_structure_snapshot(data, state)
 	if not structures.ok: return structures
 	var contents := _validate_fire_inventory_snapshot(data, state)
@@ -6564,7 +6564,7 @@ static func _validate_fire_inputs_snapshot(state: Dictionary, action_cursor: flo
 	if not state.has("suppression_pending"): return ok()
 	if not _building_integer(state.suppression_sequence, 1, 2147483646) or not state.suppression_pending is Array \
 		or state.suppression_pending.size() > int(SiteCombatRules.fire_work_profile().pending_cap): return fail("INVALID_FIRE_WORK_INPUT")
-	state.suppression_sequence = int(state.suppression_sequence)
+	state["suppression_sequence"] = int(state.suppression_sequence)
 	var last_sequence := 0
 	for raw: Variant in state.suppression_pending:
 		if not _fire_snapshot_keys(raw, ["sequence", "key", "generation", "mode", "begin", "end", "total_q", "remaining_q", "cooling_per_q", "heating_per_q", "moisture_per_q"]): return fail("INVALID_FIRE_WORK_INPUT")
@@ -6649,7 +6649,7 @@ static func _validate_fire_structure_snapshot(data: TerrainData, state: Dictiona
 		if not _building_integer(state.get("collapse_next_sequence"), 1, 2147483647) or not state.get("collapse_warnings") is Dictionary \
 			or not state.get("collapse_receipts") is Dictionary or state.collapse_warnings.size() > 65536 or state.collapse_receipts.size() > 65536:
 			return fail("INVALID_FIRE_COLLAPSE")
-		state.collapse_next_sequence = int(state.collapse_next_sequence)
+		state["collapse_next_sequence"] = int(state.collapse_next_sequence)
 		for key: String in state.collapse_warnings:
 			var row: Variant = state.collapse_warnings[key]
 			var unit: Dictionary = state.units.get(key, {})
@@ -14080,14 +14080,14 @@ static func publish_validated_fire_suppression(data: TerrainData, prepared: Dict
 	var unit := _fire_unit(data, state, check.descriptor)
 	holder[check.supply_field] = int(holder[check.supply_field]) - int(prepared.paid_q)
 	holder.version = int(holder.version) + 1
-	if not state.has("suppression_pending"): state.suppression_pending = []
+	if not state.has("suppression_pending"): state["suppression_pending"] = []
 	state.suppression_pending.append({"sequence": int(prepared.sequence), "key": str(prepared.key), "generation": int(unit.generation), "mode": mode,
 		"begin": float(prepared.action_begin), "end": float(prepared.action_end), "total_q": int(prepared.paid_q),
 		"remaining_q": float(prepared.paid_q), "cooling_per_q": float(check.cooling_per_q), "heating_per_q": float(check.heating_per_q),
 		"moisture_per_q": float(check.moisture_per_q)})
 	state.active[str(prepared.key)] = true
-	state.suppression_sequence = int(prepared.sequence)
-	state.dirty = true
+	state["suppression_sequence"] = int(prepared.sequence)
+	state["dirty"] = true
 	return ok("原人物有限工作已原子提交", {"paid_q": int(prepared.paid_q), "sequence": int(prepared.sequence),
 		"remaining_q": int(holder[check.supply_field]), "holder_version": int(holder.version)})
 
