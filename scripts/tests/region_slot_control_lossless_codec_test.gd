@@ -241,6 +241,10 @@ func _legacy(fields: int) -> bool:
 	var clock: Dictionary = fixture.clock.duplicate(true)
 	if fields < 4: clock.erase("region_gameplay")
 	if fields == 2: clock.erase("fire_clock")
+	# Historical bare clocks predate the faction-era control fields and the format-2 marker.
+	clock.erase("faction_registry")
+	clock.erase("person_allocator")
+	record["format"] = 1
 	# Deliberate historical bare JSON. Capture what that exact old text decodes to;
 	# the reader must retain it, never infer/round it back to a live body's 1/60.
 	record.control = clock
