@@ -1,5 +1,6 @@
 extends "res://scripts/tests/region_initial_world_transaction_test.gd"
 const Family = preload("res://scripts/terrain_lab/site_family_continuity.gd")
+const OrganizationRegistry = preload("res://scripts/region_lab/region_organization_registry.gd")
 ## Original inherited inner180 unchanged; real owner/people/bind, no fake receipts.
 
 func _ref(lab: TerrainLab, id: int) -> Dictionary:
@@ -39,6 +40,8 @@ func _run() -> void:
 		return
 	var members: Array = [_ref(lab, player), _ref(lab, npc)]
 	var registered: Dictionary = owner.register_members(members, true, player)
+	var registered_canonical: Dictionary = OrganizationRegistry.canonical(lab.terrain.site.family) if registered.ok else registered
+	_check(registered_canonical.ok, "Fresh original family registration writes JSON-canonical String keys", registered_canonical)
 	var saved: Dictionary = controller.save_to(controller.save_path) if registered.ok else registered
 	if not _check(saved.ok, "Original registration/save creates the legacy v1 family", saved):
 		_finish()
@@ -53,6 +56,8 @@ func _run() -> void:
 	_check(legacy_closed.ok, "Legacy private scope closes")
 	var founded: Dictionary = owner.appoint_head(player, player)
 	_check(founded.ok and int(lab.terrain.site.family.version) == 2, "Existing original live entry still establishes v1 offices", founded)
+	var founded_canonical: Dictionary = OrganizationRegistry.canonical(lab.terrain.site.family)
+	_check(founded_canonical.ok, "Live head appointment writes JSON-canonical String keys on the original family", founded_canonical)
 	var named: Dictionary = owner.establish_identity(player, "原家族")
 	saved = controller.save_to(controller.save_path) if named.ok else named
 	if not _check(saved.ok, "Original family identity and save establish the supported family", saved):

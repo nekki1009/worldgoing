@@ -336,7 +336,7 @@ func appoint_head(requester_id: int, person_id: int) -> Dictionary:
 	var planned: Dictionary = _prepare_head_appointment(family, requester_id, person_id)
 	if not planned.ok: return planned
 	family.version = int(planned.family_version)
-	family.offices = planned.offices
+	family["offices"] = planned.offices
 	return Runtime.ok("已指定家主 #%d" % person_id, {"revision": int(planned.revision)})
 
 ## First migrated writer sink: private-only, real live authority AND draft
@@ -354,7 +354,7 @@ func appoint_head_in_organization_edit(ticket: Dictionary, revision: int, reques
 	var draft_plan: Dictionary = _prepare_head_appointment(draft, requester_id, person_id, true)
 	if not draft_plan.ok: return draft_plan
 	var candidate: Dictionary = draft.duplicate(true)
-	candidate.offices = draft_plan.offices
+	candidate["offices"] = draft_plan.offices
 	# Existing typed version/lineage stays unchanged; live v1 upgrade remains above.
 	var changed: Dictionary = slot.call("mutate_organization_edit", ticket, revision, "family", target.reference, candidate)
 	if changed.ok:
@@ -388,7 +388,7 @@ func take_vacant_head(requester_id: int, person_id: int, authority: Variant) -> 
 		{"kind": "family", "site_id": str(lab.terrain.site.id), "org_id": str(lab.terrain.site.id)}, members)
 	if not losses.ok: return losses
 	family.version = maxi(2, int(family.get("version", 1)))
-	family.offices = committed.offices
+	family["offices"] = committed.offices
 	if not closed_episode.is_empty():
 		var episodes: Dictionary = lab.terrain.site.vacancy_episodes.duplicate(true)
 		episodes[str(closed_episode.episode_id)] = closed_episode
@@ -485,7 +485,7 @@ func apply_office_plan(requester_id: int, expected_revision: int, ops: Array) ->
 	var members := local_member_ids(family)
 	var result := SiteOffices.apply_plan(family.offices, "family", expected_revision, ops, func(identity: int, _office_class: String) -> bool: return members.has(identity))
 	if not bool(result.ok): return result
-	family.offices = result.offices
+	family["offices"] = result.offices
 	return Runtime.ok("已套用家族人事方案", {"revision": int(family.offices.revision), "refs": result.refs})
 
 ## Original non-delegable head predicate; default retains live upgrade-on-read.
@@ -508,7 +508,7 @@ func apply_office_plan_in_organization_edit(ticket: Dictionary, revision: int, r
 		func(identity: int, _office_class: String) -> bool: return live_members.has(identity) and draft_members.has(identity))
 	if not result.ok: return result
 	var candidate: Dictionary = draft.duplicate(true)
-	candidate.offices = result.offices
+	candidate["offices"] = result.offices
 	var changed: Dictionary = slot.call("mutate_organization_edit", ticket, revision, "family", target.reference, candidate)
 	if changed.ok:
 		changed["command"] = "family.apply_office_plan"
@@ -534,7 +534,7 @@ func set_duty_ai_enabled_in_organization_edit(ticket: Dictionary, revision: int,
 	if requester_id <= 0 or not _office_plan_authorized(lab.terrain.site.family, requester_id, true) or not _office_plan_authorized(draft, requester_id, true):
 		return Runtime.fail("NO_AUTHORITY", "職責 AI 開關屬家主的組織設定")
 	var candidate: Dictionary = draft.duplicate(true)
-	candidate.offices = family_offices(draft, true).duplicate(true)
+	candidate["offices"] = family_offices(draft, true).duplicate(true)
 	candidate.offices.duty_ai = enabled
 	var changed: Dictionary = slot.call("mutate_organization_edit", ticket, revision, "family", target.reference, candidate)
 	if changed.ok:
@@ -654,19 +654,19 @@ func register_members(members: Array, complete: bool, requester_id: int = -1) ->
 			if member is Dictionary and _integer(member.get("person_id"), 1, 2147483647): kept[int(member.person_id)] = true
 		SiteOffices.vacate_unless(offices, func(identity: int) -> bool: return kept.has(identity))
 		family.version = 2
-		family.offices = offices
+		family["offices"] = offices
 	var previous: Dictionary = lab.terrain.site.get("family", {})
 	if int(previous.get("version", 1)) == 4:
 		# Version 4 keeps its identity through every roster rewrite (offices already carried above).
 		family.version = 4
 		family.name = previous.name
 		family.lineage_id = previous.lineage_id
-		family.offices = offices
+		family["offices"] = offices
 	if int(previous.get("version", 1)) == 3:
 		family.version = 3
 		family.family_id = previous.family_id
 		family.technology = previous.technology.duplicate(true)
-		family.offices = offices
+		family["offices"] = offices
 		for project: Dictionary in family.technology.projects:
 			if bool(project.closed) or project.executor.is_empty(): continue
 			var kept := false
