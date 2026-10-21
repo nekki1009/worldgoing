@@ -127,6 +127,7 @@ func _check_failures_and_rest() -> void:
 		var original_holder := lab.npc.item_state
 		var original_stock: Dictionary = data.site.inventory
 		var wood := int(original_stock.wood)
+		var original_combat_left := float(data.site.get("combat_left", 0.0))
 		match fault:
 			"guard_ko": lab.character.knockout_left = 1.0
 			"captive_ko": lab.npc.knockout_left = 1.0
@@ -138,7 +139,7 @@ func _check_failures_and_rest() -> void:
 			"holder": lab.npc.item_state = original_holder.duplicate(true)
 			"stock": data.site.inventory = original_stock.duplicate(true)
 			"materials": original_stock.wood = 0
-			"allocation": data.item_transfer_guard = func(_change: Dictionary) -> Dictionary: return Runtime.fail("TEST_ALLOCATION")
+			"allocation": data.item_transfer_guard = func(_source: Dictionary, _destination: Dictionary, _resources: Dictionary, _items: Array) -> Dictionary: return Runtime.fail("TEST_ALLOCATION")
 		var before := var_to_bytes(data.site)
 		var bow_count := _bows(data)
 		var results := actions.settle_after_contacts()
@@ -154,6 +155,8 @@ func _check_failures_and_rest() -> void:
 		data.site.inventory = original_stock
 		original_stock.wood = wood
 		data.item_transfer_guard = Callable()
+		# A real contact opens the original Site combat clock; restore it with the other fixture fields.
+		data.site.combat_left = original_combat_left
 	# A real original third Actor is a guard-side threat; captive's retained
 	# faction alone must neither invent an enemy nor hide an actionable enemy.
 	var enemy := TerrainTestCharacter.new()
@@ -187,16 +190,32 @@ func _check_failures_and_rest() -> void:
 	_plan_step(lab, 10.0)
 	assert(is_equal_approx(float(actions.job_for(lab.npc.person_id).elapsed), partial) and _bows(data) == bows)
 	var at_rest := lab.npc.fatigue
-	lab._advance_fatigue(60.0)
+	# Idle recovery runs on the original shared step: its work plan keeps the REST
+	# latch; a bare _advance_fatigue() call has no plan and parks the job CLOCK_NOT_READY.
+	var speed := lab.simulation_speed
+	lab.simulation_speed = TerrainLab.SIMULATION_SPEEDS[-1]
+	var step := TerrainLab.EXCHANGE_ACTION_STEP if lab.exchange_enabled else TerrainLab.ACTION_STEP
+	var rest_start := Runtime.now(data) * 60.0
+	var rest_calls := 0
+	while Runtime.now(data) * 60.0 - rest_start < 60.0 and rest_calls < 4000:
+		rest_calls += 1
+		var rest_step: Dictionary = lab._advance_original_shared_step(step)
+		assert(bool(rest_step.get("ok", false)), str(rest_step))
+	lab.simulation_speed = speed
 	assert(lab.npc.fatigue < at_rest and lab.npc.work_resting and lab.npc.captive, "Original idle recovery must not see its legal guard as an enemy")
 	# The adapter does not pretend to own complete idle recovery: fixture brings
 	# the ORIGINAL pool to the 50 boundary while preserving the genuine latch.
 	lab.npc.fatigue = 50.0
 	_plan_step(lab, 1.0)
 	assert(float(actions.job_for(lab.npc.person_id).elapsed) > partial and not lab.npc.work_resting)
-	_plan_step(lab, 108.0)
+	# Fatigue slowdown (original work_seconds) makes the remaining 108 s of work take
+	# longer than 108 s; keep supplying original plan intervals until the job completes.
+	var finish_steps := 0
+	while float(actions.job_for(lab.npc.person_id).get("elapsed", 108.0)) < 108.0 - 0.00000001 and finish_steps < 4:
+		finish_steps += 1
+		_plan_step(lab, 108.0)
 	var results := actions.settle_after_contacts()
-	assert(results.size() == 1 and results[0].ok and lab.npc.captive and _bows(data) == bows + 1)
+	assert(results.size() == 1 and results[0].ok and lab.npc.captive and _bows(data) == bows + 1, str(results))
 	assert(_technology_bytes(lab) == tech_before)
 	lab.free()
 	var novice_data := _building_fixture()

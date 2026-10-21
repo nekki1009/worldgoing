@@ -3477,7 +3477,7 @@ func _commit_captive_craft(job: Dictionary) -> Dictionary:
 
 func stop_captive_craft(requester_id: int, participant_id: int) -> Dictionary:
 	if requester_id != _technology_controlled(): return Runtime.fail("NO_AUTHORITY")
-	var job := job_for(participant_id)
+	var job: Dictionary = _jobs.get(_job_key_for(participant_id), {}) # Identity guards need the original job, not the job_for() copy.
 	if str(job.get("kind", "")) != "captive_craft" or not is_same(lab.terrain, job.terrain) \
 		or not is_same(lab.terrain.site, job.site_state): return Runtime.fail("NO_TARGET")
 	var supervisor := _person(int(job.guard_id))
@@ -5038,7 +5038,7 @@ func technology_supervision_query(captive_id: int = 0, supervisor_id: int = 0, e
 	var captive_stop := Runtime.fail("NO_TARGET", "請明選本次受監管工單的原俘虜及真看守。")
 	if captive_id > 0 and supervisor_id > 0:
 		captive_begin = Runtime.fail("BUSY") if is_busy(captive_id) or is_busy(supervisor_id) else _captive_craft_context(requester_id, captive_id, supervisor_id, "bow")
-		var job := job_for(captive_id)
+		var job: Dictionary = _jobs.get(_job_key_for(captive_id), {}) # Original job for the identity guards below.
 		if job.get("kind") == "captive_craft" and int(job.get("guard_id", 0)) == supervisor_id \
 			and is_same(job.get("terrain"), lab.terrain) and is_same(job.get("site_state"), site):
 			var supervisor := _person(supervisor_id)
