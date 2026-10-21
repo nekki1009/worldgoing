@@ -4016,6 +4016,9 @@ static func advance(data: TerrainData, real_seconds: float, worker_ready: bool =
 		checked_clock.advanced = true
 	var combat_seconds := minf(real_seconds, float(data.site.combat_left))
 	data.site.combat_left = maxf(0.0, float(data.site.combat_left) - combat_seconds)
+	# Float residue below the clock epsilon is the same finished combat; left in place it reaches the native begin
+	# window as a sub-representable prefix that makes no progress (site_fire_native_admission_test, DIAG8).
+	if float(data.site.combat_left) <= 0.000000000001: data.site.combat_left = 0.0
 	while minutes > 0.00000001:
 		var slice := minf(minutes, 1.0 - float(data.site.phase))
 		data.site.phase = float(data.site.phase) + slice
@@ -4922,12 +4925,13 @@ static func _fire_new_unit(descriptor: Dictionary) -> Dictionary:
 		"surface_id": str(descriptor.surface_id), "height": float(descriptor.height), "heat": 0.0,
 		"state": "DORMANT", "intensity": 0.0, "moisture": float(descriptor.moisture), "moisture_action": 0.0,
 		"scorch": 0.0, "burn_remainder_q": 0.0, "fuel_remainder_q": 0, "residue_q": 0}
-	if str(descriptor.kind) == "resource": unit.resource = str(descriptor.resource)
+	# String keys: _fire_snapshot_keys requires String keys; dot assignment would create StringName keys.
+	if str(descriptor.kind) == "resource": unit["resource"] = str(descriptor.resource)
 	else:
-		unit.feature = str(descriptor.feature)
-		unit.part = str(descriptor.part)
-		unit.fuel_max_q = int(descriptor.fuel_max_q)
-		unit.fuel_q = int(descriptor.fuel_max_q)
+		unit["feature"] = str(descriptor.feature)
+		unit["part"] = str(descriptor.part)
+		unit["fuel_max_q"] = int(descriptor.fuel_max_q)
+		unit["fuel_q"] = int(descriptor.fuel_max_q)
 	return unit
 
 static func _fire_unit(_data: TerrainData, state: Dictionary, descriptor: Dictionary) -> Dictionary:
@@ -6512,13 +6516,14 @@ static func _validate_fire_unit_snapshot(data: TerrainData, key: String, raw: Va
 	var kind := str(raw.kind)
 	common.append_array(["resource"] if kind == "resource" else ["feature", "part", "fuel_max_q", "fuel_q"])
 	if not _fire_snapshot_keys(raw, common, ["moisture_action", "debris_version", "standing_generation"]): return fail("INVALID_FIRE_UNIT_FIELDS")
+	# moisture_action is an action-grid end (k / FIRE_HZ) while the cursor is a sum of frame deltas; allow the same FIRE_EPS as the cursor checks.
 	if not _building_integer(raw.generation, 1, 2147483647) or raw.profile not in ["TIMBER", "WOOD_COMPONENT"] or not raw.surface_id is String \
 		or not _building_number(raw.height, -1000000.0, 1000000.0) or not _building_number(raw.moisture, 0.0, 1.0) \
 		or not _building_number(raw.scorch, 0.0, 1.0) or not _building_number(raw.intensity, 0.0, 1.0) \
 		or not _building_number(raw.burn_remainder_q, 0.0, 1.0) or float(raw.burn_remainder_q) >= 1.0 \
 		or not _building_integer(raw.fuel_remainder_q, 0, FIRE_Q - 1) or not _building_integer(raw.residue_q, 0, 2147483647) \
 		or raw.state not in ["DORMANT", "HEATING", "BURNING", "EMBERS", "COOLING"] \
-		or raw.has("moisture_action") and not _building_number(raw.moisture_action, 0.0, action_cursor): return fail("INVALID_FIRE_UNIT")
+		or raw.has("moisture_action") and not _building_number(raw.moisture_action, 0.0, action_cursor + FIRE_EPS): return fail("INVALID_FIRE_UNIT")
 	if kind == "resource":
 		if not raw.resource is String or key != _fire_unit_key(kind, raw.resource): return fail("INVALID_FIRE_UNIT_OWNER")
 	else:
