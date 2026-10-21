@@ -618,7 +618,7 @@ static func duty_resolve(lab: Variant, duty_id: String, read_only: bool = false)
 static func apply_office_plan(lab: Variant, requester_id: int, expected_revision: int, ops: Array) -> Dictionary:
 	if _crowd_active(lab): return Runtime.fail("CROWD_ACTIVE", "群眾戰鬥中聚落頁唯讀")
 	var current := offices(lab)
-	if current.is_empty() or requester_id != head_executor(lab): return Runtime.fail("NO_AUTHORITY", "只有清醒自由的聚落首長可調整聚落職位")
+	if requester_id <= 0 or current.is_empty() or requester_id != head_executor(lab): return Runtime.fail("NO_AUTHORITY", "只有清醒自由的聚落首長可調整聚落職位")
 	var settlement := record(lab.terrain)
 	var result := SiteOffices.apply_plan(current, "settlement", expected_revision, ops, func(identity: int, _office_class: String) -> bool:
 		var person: Dictionary = lab.site_controller.person_actions._person(identity, false)
@@ -629,7 +629,7 @@ static func apply_office_plan(lab: Variant, requester_id: int, expected_revision
 
 static func set_duty_ai_enabled(lab: Variant, requester_id: int, enabled: bool) -> Dictionary:
 	var current := offices(lab)
-	if current.is_empty() or requester_id != head_executor(lab): return Runtime.fail("NO_AUTHORITY", "職責 AI 開關屬聚落首長的組織設定")
+	if requester_id <= 0 or current.is_empty() or requester_id != head_executor(lab): return Runtime.fail("NO_AUTHORITY", "職責 AI 開關屬聚落首長的組織設定")
 	current.duty_ai = enabled
 	return Runtime.ok("已%s聚落職責 AI" % ("開啟" if enabled else "關閉"))
 

@@ -68,8 +68,11 @@ func _run() -> void:
 	lab.character.hp = 0.0
 	var dead: Dictionary = owner.apply_office_plan_in_organization_edit(session.ticket, 0, player, office_revision, ops)
 	var sentinel: Dictionary = owner.apply_office_plan_in_organization_edit(session.ticket, 0, -1, office_revision, ops)
+	var live_sentinel: Dictionary = owner.apply_office_plan(-1, office_revision, ops)
+	var live_flag_sentinel: Dictionary = owner.set_duty_ai_enabled(-1, true)
 	lab.character.hp = hp
 	_check(not sentinel.ok and sentinel.code == "NO_AUTHORITY", "An unfit head sentinel cannot become a private caller")
+	_check(not live_sentinel.ok and live_sentinel.code == "NO_AUTHORITY" and not live_flag_sentinel.ok and live_flag_sentinel.code == "NO_AUTHORITY", "A -1 requester never matches the unfit-head sentinel on the live entries", {"plan": live_sentinel, "flag": live_flag_sentinel})
 	_check(not unconscious.ok and unconscious.code == "NO_AUTHORITY" and not held.ok and held.code == "NO_AUTHORITY" and not dead.ok and dead.code == "NO_AUTHORITY", "Actual original head body KO/captive/death each denies authority")
 	var stale: Dictionary = owner.apply_office_plan_in_organization_edit(session.ticket, 0, player, office_revision + 1, ops)
 	var nonmember: Dictionary = owner.apply_office_plan_in_organization_edit(session.ticket, 0, player, office_revision, [{"op": "appoint", "position_id": seat, "person_id": outsider}])

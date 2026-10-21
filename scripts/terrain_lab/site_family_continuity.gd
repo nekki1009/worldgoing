@@ -490,7 +490,7 @@ func apply_office_plan(requester_id: int, expected_revision: int, ops: Array) ->
 
 ## Original non-delegable head predicate; default retains live upgrade-on-read.
 func _office_plan_authorized(family: Variant, requester_id: int, read_only: bool = false) -> bool:
-	return not family_offices(family, read_only).is_empty() and requester_id == head_executor(family, read_only)
+	return requester_id > 0 and not family_offices(family, read_only).is_empty() and requester_id == head_executor(family, read_only)
 
 ## Actual live authority and membership cannot be granted by draft edits.
 func apply_office_plan_in_organization_edit(ticket: Dictionary, revision: int, requester_id: int, expected_revision: int, ops: Array) -> Dictionary:

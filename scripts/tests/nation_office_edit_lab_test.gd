@@ -87,8 +87,11 @@ func _run() -> void:
 	lab.character.hp = 0.0
 	var dead: Dictionary = orders.apply_nation_office_plan_in_organization_edit(session.ticket, 1, player, "n1", normalized, ops)
 	var sentinel: Dictionary = orders.apply_nation_office_plan_in_organization_edit(session.ticket, 1, -1, "n1", normalized, ops)
+	var live_sentinel: Dictionary = orders.apply_nation_office_plan(-1, "n1", normalized, ops)
+	var live_flag_sentinel: Dictionary = orders.set_nation_duty_ai(-1, "n1", true)
 	lab.character.hp = hp
 	_check(not unconscious.ok and unconscious.code == "NO_AUTHORITY" and not held.ok and held.code == "NO_AUTHORITY" and not dead.ok and dead.code == "NO_AUTHORITY" and not sentinel.ok and sentinel.code == "NO_AUTHORITY", "Actual original head HP/KO/captive and sentinel refusals")
+	_check(not live_sentinel.ok and live_sentinel.code == "NO_AUTHORITY" and not live_flag_sentinel.ok and live_flag_sentinel.code == "NO_AUTHORITY", "A -1 requester never matches the unfit-head sentinel on the live entries", {"plan": live_sentinel, "flag": live_flag_sentinel})
 	var rogue: SiteEquipmentOrders = Orders.new()
 	rogue.lab = lab
 	var impersonated: Dictionary = rogue.apply_nation_office_plan_in_organization_edit(session.ticket, 1, player, "n1", normalized, ops)

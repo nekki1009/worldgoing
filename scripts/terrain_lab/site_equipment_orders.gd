@@ -200,7 +200,7 @@ func leave_nation(nation_id: String, person_id: int, authority: Variant) -> Dict
 ## Organization adjustment is the head's own, non-delegable power (3.5).
 func apply_nation_office_plan(requester_id: int, nation_id: String, expected_revision: int, ops: Array) -> Dictionary:
 	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
-	if nation.is_empty() or not nation.has("offices") or requester_id != nation_head_executor(nation):
+	if requester_id <= 0 or nation.is_empty() or not nation.has("offices") or requester_id != nation_head_executor(nation):
 		return Runtime.fail("NO_AUTHORITY", "只有清醒自由的本國元首可調整國家職位")
 	var result := SiteOffices.apply_plan(nation.offices, "nation", expected_revision, ops,
 		func(person_id: int, _office_class: String) -> bool: return _member(nation, person_id))
@@ -217,7 +217,7 @@ func set_nation_duty_ai(requester_id: int, nation_id: String, enabled: bool) -> 
 
 ## Default keeps the original live upgrade/catalog side effects and sentinel comparison.
 func _nation_duty_ai_authorized(nation: Dictionary, requester_id: int, read_only: bool = false) -> bool:
-	return not nation.is_empty() and nation.has("offices") and requester_id == nation_head_executor(nation, read_only)
+	return requester_id > 0 and not nation.is_empty() and nation.has("offices") and requester_id == nation_head_executor(nation, read_only)
 
 ## Flag configuration only; original migration/catalog effects apply to the draft copy.
 func set_nation_duty_ai_in_organization_edit(ticket: Dictionary, revision: int, requester_id: int, nation_id: String, enabled: bool) -> Dictionary:
@@ -241,7 +241,7 @@ func set_nation_duty_ai_in_organization_edit(ticket: Dictionary, revision: int, 
 
 ## Original non-delegable head predicate; default retains live upgrade-on-read.
 func _nation_office_plan_authorized(nation: Dictionary, requester_id: int, read_only: bool = false) -> bool:
-	return not nation.is_empty() and nation.has("offices") and requester_id == nation_head_executor(nation, read_only)
+	return requester_id > 0 and not nation.is_empty() and nation.has("offices") and requester_id == nation_head_executor(nation, read_only)
 
 ## Actual live authority and membership cannot be granted by draft edits; the
 ## original upgrade/catalog revision applies to the draft copy before the plan.
