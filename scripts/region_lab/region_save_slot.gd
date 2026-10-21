@@ -12381,3 +12381,26 @@ func organization_family_edit_target(ticket: Dictionary, revision: int, data: Te
 	if not identity.ok: return identity
 	if RegionTravel.stable_key(identity.state.travel_identity.refs.family.get("controlled", {})) != key: return fail("ORGANIZATION_FAMILY_IDENTITY_CHANGED")
 	return {"ok": true, "family": _organization_stage.edit.registry.families[key].record.duplicate(true), "reference": saved.registry.families[key].reference.duplicate(true)}
+
+
+## Same B4 saved Site binding rule for the original EquipmentOrders nation owner.
+func organization_nation_edit_target(ticket: Dictionary, revision: int, data: TerrainData, nation_owner: RefCounted, nation_id: String) -> Dictionary:
+	var admitted: Dictionary = _organization_edit_guard(ticket, revision)
+	if not admitted.ok: return admitted
+	var original: TerrainLab = _organization_stage.lab.get_ref()
+	if data == null or original == null or _organization_stage.data.get_ref() != data or original.terrain != data or original.site_controller.equipment_orders != nation_owner or data.has_meta(&"region_party_owner"): return fail("ORGANIZATION_NATION_SITE_REQUIRED")
+	var owner: String = "site:" + str(data.site.id)
+	var saved: Dictionary = _organization_stage.proposal
+	if not saved.bindings.has(owner) or not saved.bindings[owner].nation_refs.has(nation_id): return fail("ORGANIZATION_SAVED_NATION_REQUIRED")
+	var key: String = str(saved.bindings[owner].nation_refs[nation_id])
+	if not _organization_stage.edit.registry.nations.has(key): return fail("ORGANIZATION_RECORD_RETIRED")
+	var nations: Variant = data.site.get("equipment_nations", {})
+	if not nations is Dictionary or not nations.get(nation_id) is Dictionary: return fail("ORGANIZATION_NATION_IDENTITY_CHANGED")
+	var schema: GDScript = preload("res://scripts/terrain_lab/site_equipment_orders.gd")
+	if not schema.valid_nations(nations, data.site.get("item_definitions", {}), RegionTravel._body_records(data.site), data.site): return fail("INVALID_ORIGINAL_NATIONS")
+	var operations: GDScript = preload("res://scripts/region_lab/region_organization_edit.gd")
+	if not operations.identity_same("nation", saved.registry.nations[key].record, nations[nation_id]): return fail("ORGANIZATION_NATION_IDENTITY_CHANGED")
+	var identity: Dictionary = RegionTravel.prepare_identity(data.site)
+	if not identity.ok: return identity
+	if RegionTravel.stable_key(identity.state.travel_identity.refs.nation.get(nation_id, {})) != key: return fail("ORGANIZATION_NATION_IDENTITY_CHANGED")
+	return {"ok": true, "nation": _organization_stage.edit.registry.nations[key].record.duplicate(true), "reference": saved.registry.nations[key].reference.duplicate(true)}

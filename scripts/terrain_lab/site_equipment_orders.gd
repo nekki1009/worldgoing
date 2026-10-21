@@ -137,7 +137,7 @@ func appoint_nation_head(nation_id: String, person_id: int) -> Dictionary:
 	SiteOffices.head_position(offices).holder = person_id
 	offices.revision = int(offices.revision) + 1
 	nation.erase("military_head")
-	nation.offices = offices
+	nation["offices"] = offices
 	return Runtime.ok("已設定元首", {"revision": int(offices.revision)})
 
 ## R5 S2: the nation head seat is taken only when vacant; an occupied seat refuses (BUSY) and is never overwritten.
@@ -163,7 +163,7 @@ func take_nation_head(requester_id: int, nation_id: String, person_id: int, auth
 		{"kind": "nation", "site_id": str(lab.terrain.site.id), "org_id": nation_id}, nation.members)
 	if not losses.ok: return losses
 	nation.erase("military_head")
-	nation.offices = committed.offices
+	nation["offices"] = committed.offices
 	if not closed_episode.is_empty():
 		var episodes: Dictionary = lab.terrain.site.vacancy_episodes.duplicate(true)
 		episodes[str(closed_episode.episode_id)] = closed_episode
@@ -205,15 +205,39 @@ func apply_nation_office_plan(requester_id: int, nation_id: String, expected_rev
 	var result := SiteOffices.apply_plan(nation.offices, "nation", expected_revision, ops,
 		func(person_id: int, _office_class: String) -> bool: return _member(nation, person_id))
 	if not bool(result.ok): return result
-	nation.offices = result.offices
+	nation["offices"] = result.offices
 	return Runtime.ok("已套用國家人事方案", {"revision": int(nation.offices.revision), "refs": result.refs})
 
 func set_nation_duty_ai(requester_id: int, nation_id: String, enabled: bool) -> Dictionary:
 	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
-	if nation.is_empty() or not nation.has("offices") or requester_id != nation_head_executor(nation):
+	if not _nation_duty_ai_authorized(nation, requester_id):
 		return Runtime.fail("NO_AUTHORITY", "職責 AI 開關屬元首的組織設定")
 	nation.offices.duty_ai = enabled
 	return Runtime.ok("已%s國家職責 AI" % ("開啟" if enabled else "關閉"))
+
+## Default keeps the original live upgrade/catalog side effects and sentinel comparison.
+func _nation_duty_ai_authorized(nation: Dictionary, requester_id: int, read_only: bool = false) -> bool:
+	return not nation.is_empty() and nation.has("offices") and requester_id == nation_head_executor(nation, read_only)
+
+## Flag configuration only; original migration/catalog effects apply to the draft copy.
+func set_nation_duty_ai_in_organization_edit(ticket: Dictionary, revision: int, requester_id: int, nation_id: String, enabled: bool) -> Dictionary:
+	if not is_instance_valid(lab) or not is_instance_valid(lab.site_controller) or lab.site_controller.equipment_orders != self or lab.site_controller.region_slot == null: return Runtime.fail("NO_ORIGINAL_NATION_OWNER", "須使用原 Controller 的國家 owner")
+	var slot: RefCounted = lab.site_controller.region_slot
+	var target: Dictionary = slot.call("organization_nation_edit_target", ticket, revision, lab.terrain, self, nation_id)
+	if not target.ok: return target
+	var live: Dictionary = lab.terrain.site.equipment_nations[nation_id]
+	var draft: Dictionary = target.nation
+	if requester_id <= 0 or not _nation_duty_ai_authorized(live, requester_id, true) or not _nation_duty_ai_authorized(draft, requester_id, true):
+		return Runtime.fail("NO_AUTHORITY", "職責 AI 開關屬元首的組織設定")
+	var candidate: Dictionary = draft.duplicate(true)
+	nation_offices(candidate) # Original successful path: upgrade + missing-duty revision once.
+	candidate.offices["duty_ai"] = enabled
+	var changed: Dictionary = slot.call("mutate_organization_edit", ticket, revision, "nation", target.reference, candidate)
+	if changed.ok:
+		changed["command"] = "nation.set_duty_ai"
+		changed["validation"] = "nation_duty_ai_command_preflight_only"
+		changed["office_revision"] = int(candidate.offices.revision)
+	return changed
 
 ## R4b-1 (OFFICE R4): the 贖務官 (nation.ransom) binds the nation's own treasury to one
 ## complete warehouse it owns. Binding only: no coin moves, nothing is paid or released.
