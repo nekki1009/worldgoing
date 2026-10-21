@@ -10,6 +10,7 @@ func _run() -> void:
 	var charcoal := _formal_feature(data, "charcoal", Vector2i(26, 14))
 	var weaver := _formal_feature(data, "weaver", Vector2i(32, 14))
 	var tannery := _formal_feature(data, "tannery", Vector2i(38, 14))
+	_formal_feature(data, "well", Vector2i(37, 14)) # The tannery recipe needs water; its own nearby original well.
 	var lab := _building_lab(data)
 	var actions: SitePersonActions = lab.site_controller.person_actions
 	var npc_id := int(lab.npc.person_id)
@@ -40,6 +41,7 @@ func _run() -> void:
 		task.cell = int(slot.cell)
 		task.mode = "work"
 		Runtime.set_operating_slots(data, [{"task": task}])
+		Runtime.allocate_water(data) # Original allocation publishes this demand from the real well before the full preflight.
 		var before := var_to_bytes([data.site, lab.npc.technology])
 		assert(not Runtime.work_preflight(data, task, lab.npc.ammo_inventory, Runtime.CARRY_CAPACITY, 1, npc_id).ok)
 		assert(var_to_bytes([data.site, lab.npc.technology]) == before, "An unlearned actual worker cannot pay or obtain this family method")
