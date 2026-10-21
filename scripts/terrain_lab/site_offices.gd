@@ -149,7 +149,7 @@ static func upgrade(offices: Dictionary) -> bool:
 		var military := false
 		for duty_id: String in duties:
 			military = military or MILITARY_DUTIES.has(duty_id) or default_class(duty_id) == "military"
-		entry.office_class = "military" if military else "civil"
+		entry["office_class"] = "military" if military else "civil"
 	offices.version = VERSION
 	return true
 

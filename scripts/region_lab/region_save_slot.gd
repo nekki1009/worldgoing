@@ -12358,3 +12358,26 @@ func rollback_organization_edit(ticket: Dictionary, revision: int, checkpoint_id
 	if not valid.ok: return valid
 	operations.rollback(edit, checkpoint_value)
 	return _organization_edit_snapshot()
+
+## The first domain writer may target only its actual bound Site/family.
+## This resolves identity; caller/physical eligibility stays in Family.
+func organization_family_edit_target(ticket: Dictionary, revision: int, data: TerrainData, family_owner: RefCounted) -> Dictionary:
+	var admitted: Dictionary = _organization_edit_guard(ticket, revision)
+	if not admitted.ok: return admitted
+	var original: TerrainLab = _organization_stage.lab.get_ref()
+	if data == null or original == null or _organization_stage.data.get_ref() != data or original.terrain != data or original.site_controller.family_continuity != family_owner or data.has_meta(&"region_party_owner"): return fail("ORGANIZATION_FAMILY_SITE_REQUIRED")
+	var owner: String = "site:" + str(data.site.id)
+	var saved: Dictionary = _organization_stage.proposal
+	if not saved.bindings.has(owner) or saved.bindings[owner].family_ref == null: return fail("ORGANIZATION_SAVED_FAMILY_REQUIRED")
+	var key: String = str(saved.bindings[owner].family_ref)
+	if not _organization_stage.edit.registry.families.has(key): return fail("ORGANIZATION_RECORD_RETIRED")
+	var live: Variant = data.site.get("family")
+	var family_schema: GDScript = preload("res://scripts/terrain_lab/site_family_continuity.gd")
+	if not family_schema.validate_family(live, str(data.site.id)): return fail("UNREGISTERED")
+	var operations: GDScript = preload("res://scripts/region_lab/region_organization_edit.gd")
+	if not operations.identity_same("family", saved.registry.families[key].record, live): return fail("ORGANIZATION_FAMILY_IDENTITY_CHANGED")
+	# Original issuer runs only on a detached state, never commits a new sequence.
+	var identity: Dictionary = RegionTravel.prepare_identity(data.site)
+	if not identity.ok: return identity
+	if RegionTravel.stable_key(identity.state.travel_identity.refs.family.get("controlled", {})) != key: return fail("ORGANIZATION_FAMILY_IDENTITY_CHANGED")
+	return {"ok": true, "family": _organization_stage.edit.registry.families[key].record.duplicate(true), "reference": saved.registry.families[key].reference.duplicate(true)}

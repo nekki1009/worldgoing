@@ -144,8 +144,8 @@ static func prepare_identity(state: Dictionary, identity_namespace: String = "")
 			var family_id := str(result.get("family", {}).get("family_id", "")) if kind == "family" else ""
 			identity.refs[kind][local] = {"type": kind, "namespace": "family:" + family_id if not family_id.is_empty() else str(identity.namespace), "lineage": 1 if not family_id.is_empty() else int(identity.next_sequence)}
 			identity.next_sequence = int(identity.next_sequence) + 1
-	result.travel_identity = identity
-	if not identity.has("family_members"): identity.family_members = {}
+	result["travel_identity"] = identity
+	if not identity.has("family_members"): identity["family_members"] = {}
 	for member: Dictionary in result.get("family", {}).get("members", []):
 		var key := JSON.stringify([str(member.site_id), int(member.person_id)])
 		if str(member.site_id) == str(result.get("id", "")) and identity.refs.person.has(str(int(member.person_id))): identity.family_members[key] = identity.refs.person[str(int(member.person_id))].duplicate(true)

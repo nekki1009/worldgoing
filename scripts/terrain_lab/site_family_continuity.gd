@@ -278,25 +278,64 @@ func duty_resolve(duty_id: String, read_only: bool = false) -> Dictionary:
 ## The head is named by the controlled family member while the seat is vacant
 ## or its holder cannot act (D7); a fit head hands over through the same entry.
 ## The first call founds the family's offices with the one-seat default.
-func appoint_head(requester_id: int, person_id: int) -> Dictionary:
-	var family: Variant = lab.terrain.site.get("family")
+## Original caller/physical preflight, shared by both explicit targets.
+## read_only=false preserves legacy office upgrade-on-read behavior.
+func _prepare_head_appointment(family: Variant, requester_id: int, person_id: int, read_only: bool = false) -> Dictionary:
 	if not validate_family(family, str(lab.terrain.site.id)): return Runtime.fail("UNREGISTERED", "先明確登錄家族名單")
-	var members := local_member_ids(family)
+	var members: Array[int] = local_member_ids(family)
 	if not members.has(person_id) or not members.has(requester_id) or requester_id != _controlled_id():
 		return Runtime.fail("NO_AUTHORITY", "須由目前受控的族人指定家主，人選也須是登錄族人")
-	var current := head_executor(family)
+	var current: int = head_executor(family, read_only)
 	if current > 0 and current != requester_id: return Runtime.fail("NO_AUTHORITY", "家主在任且清醒；只有家主本人可交接")
-	var person := _current_person(person_id)
+	var person: Dictionary = _current_person(person_id)
 	if person.is_empty() or float(person.hp) <= 0.0: return Runtime.fail("NO_TARGET", "家主人選須是在此地存活的原人物")
-	var offices: Dictionary = family_offices(family).duplicate(true)
-	if offices.is_empty(): offices = SiteOffices.default_offices("family", -1, person_id != _controlled_id())
-	var seat := SiteOffices.position_of(offices, person_id)
+	var offices: Dictionary = family_offices(family, read_only).duplicate(true)
+	var planned: Dictionary = head_offices_candidate(offices, person_id, _controlled_id())
+	if not planned.ok: return planned
+	planned["family_version"] = maxi(2, int(family.get("version", 1)))
+	return planned
+
+## Pure office construction only; this is not caller or physical qualification.
+static func head_offices_candidate(offices: Dictionary, person_id: int, controlled_id: int) -> Dictionary:
+	var candidate: Dictionary = offices.duplicate(true)
+	if not candidate.is_empty() and not SiteOffices.validate(candidate, "family"): return Runtime.fail("INVALID_OFFICES", "家族原職位紀錄無效")
+	if candidate.is_empty(): candidate = SiteOffices.default_offices("family", -1, person_id != controlled_id)
+	var seat: Dictionary = SiteOffices.position_of(candidate, person_id)
 	if not seat.is_empty() and not bool(seat.head): return Runtime.fail("DUPLICATE_HOLDER", "同一人在同一組織最多擔任一個職位；請先卸任「%s」" % seat.name)
-	SiteOffices.head_position(offices).holder = person_id
-	offices.revision = mini(SiteOffices.MAX_SEQ, int(offices.revision) + 1)
-	family.version = maxi(2, int(family.get("version", 1)))
-	family.offices = offices
-	return Runtime.ok("已指定家主 #%d" % person_id, {"revision": int(offices.revision)})
+	SiteOffices.head_position(candidate).holder = person_id
+	candidate.revision = mini(SiteOffices.MAX_SEQ, int(candidate.revision) + 1)
+	return Runtime.ok("", {"offices": candidate, "revision": int(candidate.revision), "validation": "office_candidate_only"})
+
+func appoint_head(requester_id: int, person_id: int) -> Dictionary:
+	var family: Variant = lab.terrain.site.get("family")
+	var planned: Dictionary = _prepare_head_appointment(family, requester_id, person_id)
+	if not planned.ok: return planned
+	family.version = int(planned.family_version)
+	family.offices = planned.offices
+	return Runtime.ok("已指定家主 #%d" % person_id, {"revision": int(planned.revision)})
+
+## First migrated writer sink: private-only, real live authority AND draft
+## authority must pass. No supplied candidate, validator or person facts.
+func appoint_head_in_organization_edit(ticket: Dictionary, revision: int, requester_id: int, person_id: int) -> Dictionary:
+	if not is_instance_valid(lab) or not is_instance_valid(lab.site_controller) or lab.site_controller.family_continuity != self or lab.site_controller.region_slot == null: return Runtime.fail("NO_ORIGINAL_FAMILY_OWNER", "須使用原 Controller 的家族 owner")
+	# Keep Family free of a circular preload of Slot/Registry/Edit.
+	var slot: RefCounted = lab.site_controller.region_slot
+	var target: Dictionary = slot.call("organization_family_edit_target", ticket, revision, lab.terrain, self)
+	if not target.ok: return target
+	var draft: Dictionary = target.family
+	if int(draft.get("version", 1)) < 2: return Runtime.fail("ORGANIZATION_IDENTITY_MIGRATION_REQUIRED", "本片不在 private 路徑建立 v1 家族職位")
+	var live_plan: Dictionary = _prepare_head_appointment(lab.terrain.site.family, requester_id, person_id, true)
+	if not live_plan.ok: return live_plan
+	var draft_plan: Dictionary = _prepare_head_appointment(draft, requester_id, person_id, true)
+	if not draft_plan.ok: return draft_plan
+	var candidate: Dictionary = draft.duplicate(true)
+	candidate.offices = draft_plan.offices
+	# Existing typed version/lineage stays unchanged; live v1 upgrade remains above.
+	var changed: Dictionary = slot.call("mutate_organization_edit", ticket, revision, "family", target.reference, candidate)
+	if changed.ok:
+		changed["command"] = "family.appoint_head"
+		changed["validation"] = "family_head_command_preflight_only"
+	return changed
 
 ## R5 S2: the family head seat is taken only when no awake head holds it (an absent or unfit head is replaced in one commit).
 ## Controlled authority only; the seated awake head refuses (BUSY).
