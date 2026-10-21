@@ -171,22 +171,35 @@ func _payload_fixture() -> bool:
 	# This fixture makes no construction clock or rate calibration claim.
 	SiteRuntime._feature_work(data, payload_prison, float(feature.work), Callable(), Callable(), task, {}, 20, 1)
 	if not _check(str(feature.stage) == "complete", "original Runtime commits its real initial prison work"): return false
-	if not _check(payload_owner.character.place(Vector2i(35, 38), true), "original guard occupies a legal actual cell"): return false
-	# The prison is declared owner_faction 1 above. Begin/admit require the guard to be of the
-	# managing faction (site_captive_escort.begin_prison, site_person_actions.admit_prison; ef39140).
-	# Set the real guard's faction before capture, so captor_faction is that same faction.
-	payload_owner.character.faction_id = 1
-	payload_guard = payload_owner.character.person_id
-	payload_owner._ensure_army_slots(1)
+	# The guard must be a real person present in THIS Site. The character is present only where P6 S1
+	# placed it (the live owner); a cold Site has no player (explicit absence). Live: the character guards,
+	# as before. Cold: a second Army team of the managing faction births the guard through the normal path.
+	var guard_is_character: bool = payload_owner.actor_present(payload_owner.character)
+	if guard_is_character:
+		if not _check(payload_owner.character.place(Vector2i(35, 38), true), "original guard occupies a legal actual cell"): return false
+		# The prison is declared owner_faction 1 above. Begin/admit require the guard to be of the
+		# managing faction (site_captive_escort.begin_prison, site_person_actions.admit_prison; ef39140).
+		# Set the real guard's faction before capture, so captor_faction is that same faction.
+		payload_owner.character.faction_id = 1
+		payload_guard = payload_owner.character.person_id
+	payload_owner._ensure_army_slots(1 if guard_is_character else 2)
 	var team: TerrainArmy = payload_owner.army
 	team.faction_id = 2
 	team.roster_size = 1
 	var positions: Array[Vector2i] = [Vector2i(34, 38)]
 	if not _check(team.deploy_at(data, null, null, positions) and team.enable_combat(false), "original Army births one actual target with original allocator"): return false
 	payload_owner.site_controller.initialize_team_items(team)
+	if not guard_is_character:
+		var guard_team: TerrainArmy = payload_owner.combat_armies[1]
+		guard_team.faction_id = 1
+		guard_team.roster_size = 1
+		var guard_positions: Array[Vector2i] = [Vector2i(35, 38)]
+		if not _check(guard_team.deploy_at(data, null, null, guard_positions) and guard_team.enable_combat(false), "original managing-faction Army births one present guard"): return false
+		payload_owner.site_controller.initialize_team_items(guard_team)
+		payload_guard = guard_team.combat_identity(0)
 	data.site.army_next_team = payload_owner._next_army_identity()
 	payload_captive = team.combat_identity(0)
-	return _check(payload_captive != payload_guard and payload_captive > 0 and not payload_owner.site_controller.person_actions._person(payload_captive, false).is_empty(), "distinct original guard and captive identities resolve")
+	return _check(payload_captive != payload_guard and payload_captive > 0 and not payload_owner.site_controller.person_actions._person(payload_captive, false).is_empty() and not payload_owner.site_controller.person_actions._person(payload_guard, false).is_empty(), "distinct original guard and captive identities resolve")
 
 func _payload_step() -> bool:
 	var request := TerrainLab.EXCHANGE_ACTION_STEP if lab.exchange_enabled else TerrainLab.ACTION_STEP
@@ -375,7 +388,10 @@ func _payload_reject_social() -> bool:
 	# payload_encoding), not the bare payload. Decode exactly as Store does.
 	var raw: Variant = _saved_payload(saved_path)
 	if not _check(raw is Dictionary and raw.get("state") is Dictionary, "selected original payload exists as real Store bytes"): return false
-	for kind: String in ["actor", "army"]:
+	# The "actor" refusal needs a player actor row in this Site. A cold Site has none (explicit absence, P6 S1),
+	# so only the army kind runs there; the actor kind still runs in every Site that holds a player row.
+	var social_kinds: Array = ["actor", "army"] if payload_owner.terrain.site.get("actors", {}).has("player") else ["army"]
+	for kind: String in social_kinds:
 		for schema: Dictionary in [{}, {"version": 1}, {"version": 2147483647, "necessary_relationships": [{"original_org": "unsupported-future-owner"}], "proven_progress_seconds": 2.0, "progress_endpoint": 10.0}]:
 			var bad := Env.navigation_for_state(payload_owner.terrain, payload_owner.terrain.site.duplicate(true))
 			var body: Dictionary = bad.site.actors.player if kind == "actor" else bad.site.armies[0].units[0]
