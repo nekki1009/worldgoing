@@ -173,18 +173,31 @@ func _run() -> void:
 		assert(controller._personal_opened_food(player_id).is_empty(), "Rejected pickup cannot create a private pool")
 	_begin_ui(lab, key)
 	var before_version := int(holder.version)
+	var pickup_window_start := Runtime.now(data) * 60.0
 	_finish_clock(lab)
 	var pool := controller._personal_opened_food(player_id)
-	assert(float(pool.open_rations) == 0.375 and Sustain._ids(pool) == [player_id])
+	# The new private cohort starts due (meal_until == at); the original sustain may pay that meal
+	# in the same quantum. Then exactly one meal for the remaining period, paid inside this window.
+	var cohort: Dictionary = pool.cohorts[0] if pool.get("cohorts", []).size() == 1 else {}
+	var paid := 0.375 - float(pool.open_rations)
+	var pickup_meal_end := float(cohort.get("meal_until", 0.0))
+	var unpaid: bool = paid == 0.0 and float(cohort.get("coverage", -1.0)) == 0.0
+	var paid_once: bool = float(cohort.get("coverage", 0.0)) == 1.0 and pickup_meal_end > pickup_window_start \
+		and paid >= (pickup_meal_end - Runtime.now(data) * 60.0) / Sustain.DAY - 0.000000001 and paid <= (pickup_meal_end - pickup_window_start) / Sustain.DAY + 0.000000001
+	assert((unpaid or paid_once) and Sustain._ids(pool) == [player_id], str(pool))
+	var picked_rations := float(pool.open_rations)
 	_near(float(pool.at), Runtime.now(data) * 60.0, "new private owner starts at current common clock")
 	assert(not data.site.ground_loot.has(key) and float(container.open_rations) == 0.0)
-	assert(int(holder.version) == before_version + 1 and is_same(cargo, data.site.manual.cargo) and is_same(holder, lab.character.item_state))
-	assert(cargo == {"stone": 19} and Runtime.carried_load(data.site, cargo, holder) == 19.375)
+	# A meal paid at pickup is a second original holder revision (as for the orphan pickup below).
+	assert(int(holder.version) == before_version + (2 if paid_once else 1) and is_same(cargo, data.site.manual.cargo) and is_same(holder, lab.character.item_state))
+	assert(cargo == {"stone": 19} and Runtime.carried_load(data.site, cargo, holder) == 19.0 + picked_rations)
 	assert(controller.person_actions.settle_after_contacts().is_empty() and not Runtime.clear_empty_ground_loot(data, key).ok)
 	# Fractions count against the same 20-item carrying bound before any job.
-	var full_key := _drop(lab, player_id, 0.75)
+	# Same overflow margin as an unpaid pickup: 0.125 over the bound.
+	var full_amount := 0.75 + (0.375 - picked_rations)
+	var full_key := _drop(lab, player_id, full_amount)
 	_begin_ui(lab, full_key, false)
-	assert(controller.message.text.begins_with(Runtime.fail("STORAGE_FULL").message) and float(data.site.ground_loot[full_key].open_rations) == 0.75, controller.message.text)
+	assert(controller.message.text.begins_with(Runtime.fail("STORAGE_FULL").message) and float(data.site.ground_loot[full_key].open_rations) == full_amount, controller.message.text)
 	controller.save_path = OPEN_SAVE
 	controller.save_current()
 	controller._auto_save_blocked = true
@@ -197,9 +210,9 @@ func _run() -> void:
 	cargo = data.site.manual.cargo
 	holder = lab.character.item_state
 	pool = controller._personal_opened_food(player_id)
-	assert(float(pool.open_rations) == 0.375 and cargo == {"stone": 19})
-	assert(float(data.site.ground_loot[full_key].open_rations) == 0.75 and lab.controlled_person_id() == player_id)
-	# The actual next small step pays the first meal once, without whole grain.
+	assert(float(pool.open_rations) == picked_rations and cargo == {"stone": 19})
+	assert(float(data.site.ground_loot[full_key].open_rations) == full_amount and lab.controlled_person_id() == player_id)
+	# The first meal is paid exactly once (at pickup or on this next small step), without whole grain.
 	_clock_step(lab)
 	assert(float(pool.open_rations) > 0.125 and float(pool.open_rations) < 0.126 and cargo == {"stone": 19})
 	var meal_before: Dictionary = pool.duplicate(true)
