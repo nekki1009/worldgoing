@@ -49,15 +49,15 @@ static func valid_person(raw: Variant) -> bool:
 static func normalize_person(raw: Dictionary) -> Dictionary:
 	if not valid_person(raw): return {}
 	var result: Dictionary = raw.duplicate(true)
-	result.version = int(result.version)
+	result["version"] = int(result.version)
 	for receipt: Dictionary in result.get("analysis", []):
-		receipt.rules_version = int(receipt.rules_version)
-		receipt.project_id = int(receipt.project_id)
-		receipt.original_work = float(receipt.original_work)
-		receipt.credited_work = float(receipt.credited_work)
+		receipt["rules_version"] = int(receipt.rules_version)
+		receipt["project_id"] = int(receipt.project_id)
+		receipt["original_work"] = float(receipt.original_work)
+		receipt["credited_work"] = float(receipt.credited_work)
 		# The earlier legal receipt never tracked unused credit. Treat it as spent,
 		# so a format upgrade cannot award the same person another allowance.
-		receipt.used_work = float(receipt.get("used_work", receipt.credited_work))
+		receipt["used_work"] = float(receipt.get("used_work", receipt.credited_work))
 	return result
 
 static func analysis_candidate(raw: Variant, tech_id: String, family_id: String, project: Dictionary, vehicle_id: String, capture_id: String) -> Dictionary:
@@ -66,8 +66,8 @@ static func analysis_candidate(raw: Variant, tech_id: String, family_id: String,
 		or project.get("tech_id") != tech_id or not integer(project.get("id"), 1) or not project.get("purpose") is String: return {}
 	var result := {"version": 2, "learned": [], "analysis": []} if raw.is_empty() else normalize_person(raw)
 	if int(result.version) == 1:
-		result.version = 2
-		result.analysis = []
+		result["version"] = 2
+		result["analysis"] = []
 	for prior: Dictionary in result.analysis:
 		if prior.tech_id == tech_id: return {}
 	var original := float(Catalog.research_budget(tech_id, str(project.get("route_id", "default"))).get("seconds", -1.0))
@@ -83,8 +83,8 @@ static func learned_candidate(raw: Variant, tech_id: String = "F07") -> Dictiona
 	if not FAMILY_IDS.has(tech_id) or not raw is Dictionary or (not raw.is_empty() and not valid_person(raw)): return {}
 	var result := {"version": VERSION, "learned": []} if raw.is_empty() else normalize_person(raw)
 	if tech_id != "F07" and int(result.version) == 1:
-		result.version = 2
-		result.analysis = []
+		result["version"] = 2
+		result["analysis"] = []
 	if not result.learned.has(tech_id): result.learned.append(tech_id)
 	return result
 
@@ -191,8 +191,8 @@ static func normalize_family_tech(raw: Dictionary) -> Dictionary:
 		for field: String in ["id", "rules_version", "next_attempt"]: project[field] = int(project[field])
 		if not project.executor.is_empty(): project.executor.person_id = int(project.executor.person_id)
 		for receipt: Dictionary in project.receipts:
-			receipt.person_id = int(receipt.person_id)
-			receipt.attempt = int(receipt.attempt)
+			receipt["person_id"] = int(receipt.person_id)
+			receipt["attempt"] = int(receipt.attempt)
 		if not project.budget.is_empty():
 			project.budget.authorization_id = int(project.budget.authorization_id)
 			project.budget.grantor.person_id = int(project.budget.grantor.person_id)
@@ -244,7 +244,7 @@ static func cold_jobs_candidate(raw: Variant, state: Dictionary, people: Diction
 	var family: Variant = state.get("family", {})
 	if not raw.jobs.is_empty() and (not family is Dictionary or not valid_family_id(family.get("family_id")) or not local_holder(family.get("technology"), str(state.get("id", "")))): return {"ok": false, "code": "STALE_PROJECT"}
 	var result: Dictionary = raw.duplicate(true)
-	result.version = 1
+	result["version"] = 1
 	for job: Variant in result.jobs:
 		if not keys(job, COLD_FIELDS) or not integer(job.executor_id, 1, 2147483647) or int(job.executor_id) == int(state.get("controlled_person_id", -1)) \
 			or not integer(job.executor_cell) or not integer(job.executor_hit) or not integer(job.executor_version) or job.recipe != "bow" \
@@ -280,7 +280,7 @@ static func _f15_cold_jobs_candidate(raw: Variant, state: Dictionary, people: Di
 	var record: Dictionary = family.get("technology", {})
 	if not valid_scope_record(record, "family") or record.holder_site_id != str(state.id): return {"ok": false, "code": "STALE_PROJECT"}
 	var result: Dictionary = raw.duplicate(true)
-	result.version = 2
+	result["version"] = 2
 	for job: Variant in result.jobs:
 		if not keys(job, F15_COLD_FIELDS) or not integer(job.executor_id, 1, 2147483647) or int(job.executor_id) == int(state.get("controlled_person_id", -1)) \
 			or not integer(job.executor_cell) or not integer(job.executor_hit) or not integer(job.executor_version) or job.recipe not in ["fire_arrow", "fire_pot", "crossbow"] \
@@ -373,7 +373,7 @@ static func scope_next_phase(project: Dictionary, reference: Dictionary, links: 
 			if receipt.get("phase_id") == phase.id and (not personal or same_person_ref({"site_id": receipt.site_id, "person_id": int(receipt.person_id)}, reference, links)): count += 1
 		if count < int(phase.repeat):
 			var result: Dictionary = phase.duplicate(true)
-			result.occurrence = count + 1
+			result["occurrence"] = count + 1
 			return result
 	return {}
 
@@ -516,10 +516,10 @@ static func family_traction_recorded(raw: Variant) -> bool:
 static func family_siege_history_candidate(raw: Dictionary, receipt: Dictionary) -> Dictionary:
 	if not valid_family_tech(raw) or is_holder_reference(raw) or not valid_family_siege_history([receipt]): return {}
 	var result := normalize_family_tech(raw)
-	if int(result.version) == 1: result.version = 2
-	if not result.has("person_links"): result.person_links = []
-	if not result.has("siege_history"): result.siege_history = []
-	result.version = 5
+	if int(result.version) == 1: result["version"] = 2
+	if not result.has("person_links"): result["person_links"] = []
+	if not result.has("siege_history"): result["siege_history"] = []
+	result["version"] = 5
 	for prior: Dictionary in result.siege_history:
 		if prior.binding == receipt.binding: return result
 	result.siege_history.append(receipt.duplicate(true))
@@ -532,16 +532,16 @@ static func normalize_scope_record(raw: Dictionary, scope: String) -> Dictionary
 	for link: Dictionary in result.get("person_links", []):
 		link.from.person_id = int(link.from.person_id)
 		link.to.person_id = int(link.to.person_id)
-	for receipt: Dictionary in result.get("siege_history", []): receipt.person_id = int(receipt.person_id)
+	for receipt: Dictionary in result.get("siege_history", []): receipt["person_id"] = int(receipt.person_id)
 	for project: Dictionary in result.projects:
 		for key: String in ["id", "rules_version", "next_attempt"]: project[key] = int(project[key])
 		if not project.executor.is_empty(): project.executor.person_id = int(project.executor.person_id)
 		for consent: Dictionary in project.consents:
 			for key: String in ["team_id", "person_id", "decider_id", "revision"]: consent[key] = int(consent[key])
 		for receipt: Dictionary in project.receipts:
-			receipt.person_id = int(receipt.person_id)
-			receipt.attempt = int(receipt.attempt)
-			if receipt.has("work_seconds"): receipt.work_seconds = float(receipt.work_seconds)
+			receipt["person_id"] = int(receipt.person_id)
+			receipt["attempt"] = int(receipt.attempt)
+			if receipt.has("work_seconds"): receipt["work_seconds"] = float(receipt.work_seconds)
 		if not project.budget.is_empty():
 			project.budget.authorization_id = int(project.budget.authorization_id)
 			project.budget.grantor.person_id = int(project.budget.grantor.person_id)
@@ -560,7 +560,7 @@ static func scope_prepare_candidate(raw: Variant, scope: String, tech_id: String
 	if raw is Dictionary and raw.is_empty(): candidate = empty_scope_record(str(reference.site_id))
 	elif scope == "family" and raw is Dictionary and integer(raw.get("version"), 1, 1) and valid_family_tech(raw):
 		candidate = normalize_family_tech(raw)
-		candidate.version = 2
+		candidate["version"] = 2
 	elif valid_scope_record(raw, scope): candidate = normalize_scope_record(raw, scope)
 	else: return {"ok": false, "code": "INVALID_TECHNOLOGY"}
 	if candidate.holder_site_id != reference.site_id: return {"ok": false, "code": "STALE_HOLDER"}
@@ -573,12 +573,12 @@ static func scope_prepare_candidate(raw: Variant, scope: String, tech_id: String
 		if int(candidate.next_project) >= MAX_ID: return {"ok": false, "code": "CAPACITY"}
 		project = {"id": int(candidate.next_project), "purpose": wanted, "tech_id": tech_id, "rules_version": 2, "closed": false,
 			"executor": reference.duplicate(), "next_attempt": 1, "receipts": [], "budget": {}, "consents": [], "route_id": route_id}
-		candidate.next_project = int(candidate.next_project) + 1
+		candidate["next_project"] = int(candidate.next_project) + 1
 		candidate.projects.append(project)
 	elif bool(project.closed): return {"ok": false, "code": "COMPLETED"}
 	elif project.route_id != route_id: return {"ok": false, "code": "ROUTE_FIXED"}
-	project.executor = reference.duplicate()
-	candidate.active = int(project.id)
+	project["executor"] = reference.duplicate()
+	candidate["active"] = int(project.id)
 	return {"ok": true, "state": normalize_scope_record(candidate, scope), "phase": scope_next_phase(project, reference, candidate.get("person_links", []))} if valid_scope_record(candidate, scope) else {"ok": false, "code": "INVALID_TECHNOLOGY"}
 
 static func scope_budget_candidate(raw: Dictionary, scope: String, grantor: Dictionary, holder: String, cap: Dictionary, operation: String = "grant") -> Dictionary:
@@ -600,7 +600,7 @@ static func scope_budget_candidate(raw: Dictionary, scope: String, grantor: Dict
 			if int(cap.get(resource, -1)) < int(spent[resource]): return {"ok": false, "code": "BUDGET_EXCEEDED"}
 		for resource: String in cap:
 			if not spent.has(resource): spent[resource] = 0
-		project.budget = {"authorization_id": int(project.id), "source_site_id": str(raw.holder_site_id), "holder": holder, "grantor": grantor.duplicate(),
+		project["budget"] = {"authorization_id": int(project.id), "source_site_id": str(raw.holder_site_id), "holder": holder, "grantor": grantor.duplicate(),
 			"status": "granted", "cap": cap.duplicate(), "spent": spent, "payments": project.budget.get("payments", []).duplicate(true)}
 	return {"ok": true, "state": normalize_scope_record(candidate, scope)} if valid_scope_record(candidate, scope) else {"ok": false, "code": "INVALID_TECHNOLOGY"}
 
@@ -612,7 +612,7 @@ static func scope_attempt_candidate(raw: Dictionary, scope: String, reference: D
 	var phase := scope_next_phase(project, reference, candidate.get("person_links", []))
 	if phase.is_empty(): return {"ok": false, "code": "COMPLETED"}
 	var attempt := int(project.next_attempt)
-	project.next_attempt = attempt + 1
+	project["next_attempt"] = attempt + 1
 	return {"ok": true, "state": normalize_scope_record(candidate, scope), "project_id": int(project.id), "attempt": attempt, "phase": phase}
 
 static func scope_payment_candidate(raw: Dictionary, scope: String, payment: Dictionary) -> Dictionary:
@@ -643,8 +643,8 @@ static func scope_receipt_candidate(raw: Dictionary, scope: String, receipt: Dic
 	if not valid_scope_record(candidate, scope): return {"ok": false, "code": "INVALID_RECEIPT"}
 	var complete := scope_next_phase(project, project.executor, candidate.get("person_links", [])).is_empty()
 	if complete:
-		project.closed = true
-		candidate.active = 0
+		project["closed"] = true
+		candidate["active"] = 0
 		if not candidate.known.has(project.tech_id): candidate.known.append(project.tech_id)
 		for other: Dictionary in candidate.projects:
 			if other.tech_id == project.tech_id and other.purpose == project.purpose: other.closed = true
@@ -751,15 +751,15 @@ static func _moving_ids(raw: Variant) -> Dictionary:
 static func _move_holder_candidate(raw: Dictionary, site_id: String, links: Array, advance_epoch: bool = true) -> Dictionary:
 	var result := normalize_family_tech(raw)
 	if result.is_empty() or is_holder_reference(result) or int(result.epoch) >= MAX_ID or not valid_person_links(links): return {}
-	result.version = 5 if result.has("siege_history") else 4
-	result.person_links = links.duplicate(true)
-	result.holder_site_id = site_id
-	if advance_epoch: result.epoch = int(result.epoch) + 1
-	result.active = 0
+	result["version"] = 5 if result.has("siege_history") else 4
+	result["person_links"] = links.duplicate(true)
+	result["holder_site_id"] = site_id
+	if advance_epoch: result["epoch"] = int(result.epoch) + 1
+	result["active"] = 0
 	for project: Dictionary in result.projects:
 		# The original active job is guarded separately before departure. A new
 		# holder never receives an implicit command, budget or team approval.
-		project.executor = {}
+		project["executor"] = {}
 		if not project.budget.is_empty(): project.budget.status = "revoked"
 		for consent: Dictionary in project.consents: consent.status = "revoked"
 	return normalize_family_tech(result) if valid_family_tech(result) else {}
@@ -780,7 +780,7 @@ static func prepare_holder_departure(source_site_id: String, family: Dictionary,
 			# stationary jobs, holder epoch and historical paid work stay intact.
 			for project: Dictionary in source.technology.projects:
 				if bool(project.closed) or project.executor.is_empty() or project.executor.site_id != source_site_id or not movers.has(int(project.executor.person_id)): continue
-				project.executor = {}
+				project["executor"] = {}
 				if int(source.technology.active) == int(project.id): source.technology.active = 0
 				if not project.budget.is_empty(): project.budget.status = "revoked"
 				for consent: Dictionary in project.consents: consent.status = "revoked"
