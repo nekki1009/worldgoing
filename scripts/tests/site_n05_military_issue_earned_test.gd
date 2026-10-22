@@ -15,10 +15,19 @@ func _military_earned_fixture() -> Dictionary:
 	var actions = lab.site_controller.person_actions
 	var orders = lab.site_controller.equipment_orders
 	_check(team.join_player(lab.character).ok, "Original living captain admits the actual controlled Actor through the true Army owner")
+	# The logistics post is a military office (office_class rules): its holder must be an officer.
+	# The original role writer may seat a new officer in a vacant cadre post; the plan moves that
+	# member to logistics in one whole-plan revision.
+	var promoted: Dictionary = team.set_military_role(control, "officer")
+	_check(promoted.ok, "Original role writer makes the actual controlled member an officer: " + str(promoted))
 	var offices := team.team_offices()
-	_check(team.apply_office_plan(team.combat_identity(team.formal_commander), int(offices.revision),
-		[{"op": "appoint", "position_id": str(offices.duties["team.logistics"]), "person_id": control}]).ok,
-		"Actual living original captain delegates only the existing logistics office to the actual member")
+	var ops: Array = []
+	var seated: Dictionary = SiteOffices.position_of(offices, control)
+	if not seated.is_empty(): ops.append({"op": "dismiss", "position_id": str(seated.id)})
+	ops.append({"op": "appoint", "position_id": str(offices.duties["team.logistics"]), "person_id": control})
+	var delegated: Dictionary = team.apply_office_plan(team.combat_identity(team.formal_commander), int(offices.revision), ops)
+	_check(delegated.ok and str(SiteOffices.position_of(team.team_offices(), control).get("id", "")) == str(offices.duties["team.logistics"]),
+		"Actual living original captain delegates only the existing logistics office to the actual member: " + str(delegated))
 	var center := Runtime.building_cells(data, "settlement_center", Vector2i(18, 10), Vector2i(5, 5), {"layout_version": 1, "quarter": 0, "owner_faction": 1})
 	var cells: Array[int] = []
 	cells.assign(center.cells)
@@ -44,13 +53,21 @@ func _military_earned_fixture() -> Dictionary:
 	_check(Runtime.request_feature_recipe(data, smithy, "bow", 1).ok and Runtime.operate_feature(data, smithy).ok,
 		"Existing ordinary S07 recipe and original work-zone APIs start a true sample operation")
 	var workers = lab.site_controller.work_team
-	_check(workers.assign(team, [executor], team.duty_decider("team.work")).ok, "Actual original work duty assigns the real ordinary sample producer")
+	var sample_workers: Array[int] = [executor] # WorkTeam.assign takes a typed Array[int].
+	_check(workers.assign(team, sample_workers, team.duty_decider("team.work")).ok, "Actual original work duty assigns the real ordinary sample producer")
 	workers.prepare_work_requests(30.0)
 	var task: Dictionary = row.work_task
 	_check(task.get("target") == "feature:" + smithy and task.get("action") == "operate", "Original WT selector chooses the genuine workshop task")
-	team.cells[1] = data.cell_from_index(int(task.work_cell))
-	task.cell = int(task.work_cell)
-	task.mode = "work"
+	# The ordinary (version 2) WorkTeam task re-plans travel from the worker's real position on every
+	# prepare, so a direct hot-cell write does not hold. Let the worker walk on original shared steps.
+	var walk_step := TerrainLab.EXCHANGE_ACTION_STEP if lab.exchange_enabled else TerrainLab.ACTION_STEP
+	var walk_calls := 0
+	while str(task.get("mode", "")) != "work" and walk_calls < 3000:
+		walk_calls += 1
+		var walked: Dictionary = lab._advance_original_shared_step(walk_step)
+		if not walked.get("ok", false): break
+		task = row.work_task
+	_check(str(task.get("mode", "")) == "work" and str(task.get("target", "")) == "feature:" + smithy, "The real worker reaches the genuine workshop slot on original shared steps")
 	var next_item := int(data.site.next_item)
 	var points := 0
 	while int(data.site.next_item) == next_item and points < 10:
@@ -67,6 +84,25 @@ func _military_earned_fixture() -> Dictionary:
 		"Legitimate known N04 certifies only the actual sample; no fake fixture certificate")
 	_check(orders.set_standard(control, "n1", "bow_line", "原有限弓標準", {"weapon": {"definition": "weapon:bow_01", "alternatives": []}}).ok,
 		"Original national standard names the original admitted bow definition")
+	# The sample walk left the executor outside the NPC captain's command radius; the team consent
+	# needs a present member, so it walks back to the captain's reference on real route edges.
+	var exec_index: int = team.index_for_identity(executor)
+	if not bool(team.combat_hot_get(exec_index, &"present", false)) and team.command_reference_valid:
+		var back: Array[Vector2i] = []
+		for direction: Vector2i in TerrainData.DIRECTIONS:
+			back = team._find_local_route(team.cells[exec_index], Vector2i(team.command_reference) + direction * 2, 256, false, exec_index)
+			if not back.is_empty(): break
+		_check(not back.is_empty() and back[0] == team.cells[exec_index], "Original executor route back to the captain retains its source vertex")
+		for edge: int in range(1, back.size()):
+			var reserved: bool = team._reserve_combat_step(exec_index, back[edge])
+			_check(reserved, "Original Army admits each genuine executor movement edge")
+			if not reserved: break
+			var landing := 0
+			while team.moving_to[exec_index] != TerrainArmy.INVALID_CELL and landing < 600:
+				lab._advance_action_time(TerrainLab.ACTION_STEP)
+				landing += 1
+		team._refresh_command_presence()
+	_check(bool(team.combat_hot_get(exec_index, &"present", false)), "The executor is present under the unchanged ordinary-member rule before the team consent")
 	_check(actions.prepare_scope_technology(control, executor, "N05", "n1").ok and actions.request_scope_technology_consent(control, "nation", "n1", executor).ok,
 		"The true national research duty and NPC team explicitly accept first N05")
 	var before := var_to_bytes([data.site, row])
@@ -90,6 +126,19 @@ func _military_earned_fixture() -> Dictionary:
 		and var_to_bytes([data.site, row, donor.holder, donor.cargo]) == before, "Stale actual localstock CAS refuses the same original transfer atomically")
 	_check(orders.supply_military_production(control, "n1", f.order_id, {"wood": 4, "fiber": 2}, int(donor.holder.version), int(stock.holder.version)).ok,
 		"Original source transfer funds this true localstock without manufacturing yet")
+	# The donor stands on the sole original workshop station after the transfer; it steps off on one
+	# legal Actor edge so the named worker can reach that station (as the military production test does).
+	var vacated := false
+	for direction: Vector2i in TerrainData.DIRECTIONS:
+		var destination: Vector2i = stock.cell + direction
+		if not data.can_step(stock.cell, destination) or not lab.character.can_enter_cell(destination) or lab.npc.occupies_cell(destination): continue
+		var stepped: bool = lab.character.step(direction)
+		_check(stepped, "Original donor accepts one legal Actor edge off the workshop station")
+		if not stepped: break
+		lab.character.advance_combat(lab.character.get_move_interval() + 0.00001)
+		vacated = lab.character.terrain_cell == destination and not lab.character.is_moving()
+		break
+	_check(vacated and not lab.site_controller.work_team._occupied(stock.cell, team, team.index_for_identity(executor)), "Original donor genuinely vacates the sole workshop station")
 	f.stock = stock
 	return f
 
@@ -122,10 +171,22 @@ func _n05_real_issue() -> void:
 	# transfer still checks both contacts, logistics duty and original holder CAS.
 	f.team.cells[1] = Vector2i(10, 9)
 	_check(lab.character.place(Vector2i(9, 9), true), "Actual delegated logistics member contacts the true original camp and maker")
+	# A person endpoint of the original transfer must be a dedicated logistics member; the actual
+	# logistics duty holder assigns the maker through the original team-logistics order.
+	var carriers: Array[int] = [f.executor]
+	var carried: Dictionary = lab.site_controller.order_team_logistics(f.team, carriers, f.control, true)
+	_check(carried.ok, "Actual logistics duty holder assigns the maker as a dedicated carrier: " + str(carried))
 	var person := actions._person(f.executor)
-	_check(lab.site_controller.vehicles.transfer("person:" + str(f.executor), "depot", {}, [str(next_item)], int(person.holder.version), int(data.site.depot_items.version), f.control).ok,
+	# Transfer authority stays with the captain or the carrier itself (office plan: only the
+	# logistics designation is delegated). The maker, now a dedicated carrier, delivers its own
+	# bow through the original NPC test dispatch.
+	_check(lab.site_controller.vehicles.transfer("person:" + str(f.executor), "depot", {}, [str(next_item)], int(person.holder.version), int(data.site.depot_items.version), f.executor, true).ok,
 		"True original logistics transaction transfers the specific order bow to actual camp, with no item clone")
 	_check(data.site.item_records[str(next_item)].holder == "depot" and data.site.depot_items.item_ids.has(str(next_item)), "The actual camp holds the exact original output before issue")
+	# A dedicated logistics member cannot serve the research consent; the same duty holder releases
+	# the maker back to ordinary service before the issue phase.
+	var released: Dictionary = lab.site_controller.order_team_logistics(f.team, carriers, f.control, false)
+	_check(released.ok and not bool(f.team.combat_units[1].get("logistics", false)), "Actual logistics duty holder releases the maker from dedicated carrying: " + str(released))
 	var before := var_to_bytes([data.site, f.row, actions._jobs.keys()])
 	_check(not actions.prepare_nation_military_issue_binding({"military_production_id": 0}).ok 
 		and not actions.nation_military_issue_receipt_query({"person": 7}, {}).ok 
