@@ -50,6 +50,13 @@ func set_nation_culture(requester_id: int, nation_id: String, culture: String) -
 	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
 	if not _nation_duty_ok(requester_id, nation, "nation.culture"):
 		return _nation_refusal(requester_id, nation, "nation.culture", "只有本國清醒自由的真實軍事首長可首次設定國家裝備文化")
+	var checked: Dictionary = _nation_culture_check(nation, culture)
+	if not checked.ok: return checked
+	nation["culture"] = culture
+	return Runtime.ok("本國裝備文化已固定為%s；材質可混搭，原持物及現役裝備未變" % CULTURES[culture])
+
+## Original first-setting rules; never mutates the nation.
+func _nation_culture_check(nation: Dictionary, culture: String) -> Dictionary:
 	if not CULTURES.has(culture):
 		return Runtime.fail("INVALID", "國家裝備文化須為中式、日式或西式")
 	if nation.has("culture"):
@@ -57,8 +64,28 @@ func set_nation_culture(requester_id: int, nation_id: String, culture: String) -
 	for standard: Dictionary in nation.standards.values():
 		if not _slots_match_culture(standard.slots, lab.terrain.site.item_definitions, culture):
 			return Runtime.fail("CULTURE_MISMATCH", "既有標準或替代物含其他文化；請先明確修訂標準，再固定國家文化，原物品未改")
-	nation.culture = culture
-	return Runtime.ok("本國裝備文化已固定為%s；材質可混搭，原持物及現役裝備未變" % CULTURES[culture])
+	return Runtime.ok()
+
+## The live and the draft culture decider must both be the requester; read-only
+## duty resolution, so no live or draft office upgrade happens on refusal.
+func set_nation_culture_in_organization_edit(ticket: Dictionary, revision: int, requester_id: int, nation_id: String, culture: String) -> Dictionary:
+	if not is_instance_valid(lab) or not is_instance_valid(lab.site_controller) or lab.site_controller.equipment_orders != self or lab.site_controller.region_slot == null: return Runtime.fail("NO_ORIGINAL_NATION_OWNER", "須使用原 Controller 的國家 owner")
+	var slot: RefCounted = lab.site_controller.region_slot
+	var target: Dictionary = slot.call("organization_nation_edit_target", ticket, revision, lab.terrain, self, nation_id)
+	if not target.ok: return target
+	var live: Dictionary = lab.terrain.site.equipment_nations[nation_id]
+	var draft: Dictionary = target.nation
+	if not _nation_duty_ok(requester_id, live, "nation.culture", true) or not _nation_duty_ok(requester_id, draft, "nation.culture", true):
+		return Runtime.fail("NO_AUTHORITY", "只有本國清醒自由的真實軍事首長可首次設定國家裝備文化")
+	var checked: Dictionary = _nation_culture_check(draft, culture)
+	if not checked.ok: return checked
+	var candidate: Dictionary = draft.duplicate(true)
+	candidate["culture"] = culture
+	var changed: Dictionary = slot.call("mutate_organization_edit", ticket, revision, "nation", target.reference, candidate)
+	if changed.ok:
+		changed["command"] = "nation.set_culture"
+		changed["validation"] = "nation_culture_command_preflight_only"
+	return changed
 
 func _can_set_standard(requester_id: int, nation: Dictionary) -> bool:
 	return _nation_duty_ok(requester_id, nation, "nation.equip_standard")
