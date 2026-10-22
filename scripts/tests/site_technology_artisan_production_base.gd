@@ -582,6 +582,14 @@ func _cold_resume(f: Dictionary, label: String) -> void:
 		return
 	_idle_all(f)
 	var controller: SiteController = f.lab.site_controller
+	# A real death earlier in this scenario leaves its original fall/remains timer pending; the
+	# save guard refuses until it settles. Let original shared steps run it out (bounded).
+	var settle_points := 0
+	while not controller._pending_deaths.is_empty() and settle_points < 4000:
+		settle_points += 1
+		var settled: Dictionary = f.lab._advance_original_shared_step(TerrainLab.ACTION_STEP)
+		_require(settled.ok and settled.get("completed", false), "Original shared step settles the pending death before the save boundary", settled)
+	_require(controller._pending_deaths.is_empty(), "Original pending death settles through real time before the cold save", {"pending": controller._pending_deaths})
 	var captured := controller._capture_for_save()
 	_require(captured.ok, "Original live owners capture actual current bodies/items", captured)
 	var facts := _facts(f.data.site)
