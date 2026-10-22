@@ -6329,7 +6329,7 @@ func grant_fire_pot_vehicle_budget(requester_id: int, vehicle_id: String, fire_p
 	# Preserve every previous lifetime cap, spend and payment. The only remaining
 	# F15 phase is the shot, so this entry grants no new former craft material.
 	var cap: Dictionary = project.budget.get("cap", {}).duplicate()
-	cap.fire_pot = fire_pot_cap
+	cap["fire_pot"] = fire_pot_cap # A new key written with dot syntax would be a StringName.
 	var candidate := Technology.scope_budget_candidate(raw, "family", _technology_ref(requester_id), "vehicle:" + vehicle_id, cap, operation)
 	if not candidate.ok: return candidate
 	owner.technology = candidate.state

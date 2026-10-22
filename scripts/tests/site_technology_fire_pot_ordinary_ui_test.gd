@@ -184,7 +184,7 @@ func _run() -> void:
 	var prior: Dictionary = _project(context).budget.duplicate(true)
 	_check(not context.actions.grant_fire_pot_vehicle_budget(context.control, str(vehicle.id), 3).ok, "Source grant cannot exceed actual loaded ammo plus lifetime spent")
 	_check(context.actions.grant_fire_pot_vehicle_budget(context.control, str(vehicle.id), 2).ok, "Actual source captain grants this real original vehicle's finite cargo")
-	_check(_project(context).budget.payments == prior.payments and _project(context).budget.spent == prior.spent and _project(context).budget.cap.arrow == prior.cap.arrow, "Changing material holder preserves every previous lifetime craft payment/cap/spend")
+	_check(_project(context).budget.payments == prior.payments and _lifetime_budget_preserved(prior, _project(context).budget), "Changing material holder preserves every previous lifetime craft payment/cap/spend")
 	var key := str(vehicle.id)
 	var target := {"type": "ground", "cell": [50, 20]}
 	var started: Dictionary = context.actions.begin_scope_technology_phase(context.control, "family", context.family_id, "fire_pot_shot", "vehicle:" + key, target)

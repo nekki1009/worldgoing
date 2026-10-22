@@ -145,3 +145,14 @@ func _run() -> void:
 	TerrainArmy.release_contact_source()
 	print("SITE_TECHNOLOGY_FIRE_POT_SCOPE_PASS checks=", checks, " original finite 60/90/90 crafts, one-pool cold0.5, exact JSON restore and holder CAS; no shot/Native/GPU claim")
 	quit(0)
+
+## Every previous lifetime cap and spend entry is unchanged; the original budget candidate may only add a
+## zero spend entry for the newly granted material.
+func _lifetime_budget_preserved(prior: Dictionary, now: Dictionary) -> bool:
+	for material: String in prior.spent:
+		if not now.spent.has(material) or int(now.spent[material]) != int(prior.spent[material]): return false
+	for material: String in now.spent:
+		if not prior.spent.has(material) and int(now.spent[material]) != 0: return false
+	for material: String in prior.cap:
+		if not now.cap.has(material) or int(now.cap[material]) != int(prior.cap[material]): return false
+	return true
