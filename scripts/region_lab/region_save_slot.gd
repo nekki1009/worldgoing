@@ -10882,10 +10882,17 @@ func refresh_original_region_siege_battle(original: TerrainLab) -> Dictionary:
 	var action := float(control.fire_clock.action_seconds)
 	var settled: Dictionary = validate_settlement(original.terrain.site, world)
 	var fire: Dictionary = original.terrain.site.get("fire_settlement", {})
+	# A world-accepted point whose original effects are still pending (GD mesh contacts) has not yet
+	# published its fire cursor: the cursor still sits at that SAME point's begin. That is the pending
+	# case below, not an incomplete point.
+	var pending_point: Dictionary = original._region_point_pending
+	var cursor_deferred: bool = not pending_point.is_empty() and not original._region_point_consuming \
+		and absf(original.fire_action_cursor - float(pending_point.get("fire_action_begin", -1.0))) <= 0.00000001 \
+		and absf(float(pending_point.get("fire_action_end", -1.0)) - action) <= 0.00000001
 	if not settled.ok or settled.get("legacy", true) or float(settled.get("pending", INF)) > 0.00000001 \
 		or str(fire.get("epoch", "")) != str(control.fire_clock.epoch) or int(fire.get("sequence", -1)) != int(control.fire_clock.sequence) \
 		or absf(float(fire.get("game_seconds", -1.0)) - world) > 0.00000001 or absf(float(fire.get("action_seconds", -1.0)) - action) > 0.00000001 \
-		or absf(original.fire_action_cursor - action) > 0.00000001 or int(mode.get("generation", -1)) != int(_marker.generation) \
+		or absf(original.fire_action_cursor - action) > 0.00000001 and not cursor_deferred or int(mode.get("generation", -1)) != int(_marker.generation) \
 		or absf(float(mode.get("game_seconds", -1.0)) - world) > 0.00000001 or absf(float(mode.get("action_seconds", -1.0)) - action) > 0.00000001:
 		return fail("INCOMPLETE_ORIGINAL_SIEGE_POINT")
 	if not region_player_barrier().is_empty() or not original._region_point_pending.is_empty() or original._region_point_consuming or original._region_point_dispatching \
