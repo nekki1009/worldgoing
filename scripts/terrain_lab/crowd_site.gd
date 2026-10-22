@@ -1515,7 +1515,7 @@ func _present_player(dt: float) -> void:
 			previous["time"] = 0.0
 		else: previous["time"] = float(previous.time) + dt
 		previous["slot"] = slot
-		previous["age"] = age
+		previous.age = age
 		_actor_slots[identity] = previous
 		if actor.editor == null: continue
 		actor.editor.set_preview_yaw_degrees(YAW[clampi(dir, 0, 3)])
@@ -2160,11 +2160,11 @@ static func _write_row_handoff(row: Dictionary, state: Dictionary, formation: Di
 		row[key] = float(state[key])
 	row["bandaged"] = bool(state.bandaged)
 	row["role"] = int(state.role)
-	row["captive"] = bool(state.captive)
-	row["exchange_stagger"] = float(state.stagger)
-	row["exchange_cooldown"] = float(state.exch_cd)
-	row["ranged_cooldown"] = float(state.ranged_cd)
-	row["exchange_skill_cooldown"] = float(state.skill_cd)
+	row.captive = bool(state.captive)
+	row.exchange_stagger = float(state.stagger)
+	row.exchange_cooldown = float(state.exch_cd)
+	row.ranged_cooldown = float(state.ranged_cd)
+	row.exchange_skill_cooldown = float(state.skill_cd)
 	row["command_abilities"] = _handoff_abilities(state)
 	if float(state.hp) > 0.0:
 		row["fatigue"] = float(formation.fatigue)
@@ -2175,14 +2175,14 @@ static func _write_row_handoff(row: Dictionary, state: Dictionary, formation: Di
 	var facing := Vector2i(int(signf(direction.x)), 0) if absf(direction.x) > absf(direction.y) else Vector2i(0, int(signf(direction.y)))
 	row["facing"] = [facing.x, facing.y]
 	if float(state.getup) > 0.0:
-		row["pose"] = "get_up"
-		row["age"] = maxf(0.0, float(D5Timings.POSE_SECONDS[&"get_up"]) - float(state.getup))
+		row.pose = "get_up"
+		row.age = maxf(0.0, float(D5Timings.POSE_SECONDS[&"get_up"]) - float(state.getup))
 	elif float(state.hp) <= 0.0 or float(state.ko) > 0.0:
-		row["pose"] = "down" if float(state.hp) <= 0.0 else "unconscious"
-		row["age"] = 0.0
+		row.pose = "down" if float(state.hp) <= 0.0 else "unconscious"
+		row.age = 0.0
 	elif str(row.get("pose", "")) in ["get_up", "down", "unconscious"]:
-		row["pose"] = "idle"
-		row["age"] = 0.0
+		row.pose = "idle"
+		row.age = 0.0
 
 
 static func _roster_index_for_person(roster: Dictionary, identity: int) -> int:
@@ -2520,10 +2520,10 @@ static func d5_prepare_existing(crowd_site: Variant) -> Dictionary:
 			if not actor.projectiles.is_empty() or actor._rescue_left > 0.0:
 				return D5Runtime.fail("BUSY", "原 actor 的彈體或救助尚未收束")
 			var saved: Dictionary = actor.capture_state()
-			saved["exchange_stagger"] = actor.exchange_stagger
-			saved["exchange_cooldown"] = actor.exchange_cooldown
-			saved["ranged_cooldown"] = actor.ranged_cooldown
-			saved["exchange_skill_cooldown"] = actor.exchange_skill_cooldown
+			saved.exchange_stagger = actor.exchange_stagger
+			saved.exchange_cooldown = actor.exchange_cooldown
+			saved.ranged_cooldown = actor.ranged_cooldown
+			saved.exchange_skill_cooldown = actor.exchange_skill_cooldown
 			var appearance := D5Runtime.equipment_appearance(scene_lab.terrain, actor.item_state, saved.appearance)
 			if appearance.is_empty():
 				return D5Runtime.fail("INVALID", "原 actor 實装不完整")

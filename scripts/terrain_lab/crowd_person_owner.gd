@@ -185,9 +185,9 @@ func _materialize(index: int, formation: PackedFloat64Array) -> Dictionary:
 			if value != null:
 				result[field] = value
 	var values := _soldier_values(index)
-	result["hp"] = values[0] if values.size() > 0 else 0.0
-	result["ko"] = values[3] if values.size() > 3 else 0.0
-	result["captive"] = values.size() > 6 and bool(values[6])
+	result.hp = values[0] if values.size() > 0 else 0.0
+	result.ko = values[3] if values.size() > 3 else 0.0
+	result.captive = values.size() > 6 and bool(values[6])
 	if float(result.hp) <= 0.0:
 		result["fatigue"] = _cold_get(index, "fatigue", 0.0)
 		result["fatigue_rest"] = _cold_get(index, "fatigue_rest", 0.0)

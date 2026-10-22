@@ -24,14 +24,14 @@ static func _actor_state(host: Node, actor: TerrainTestCharacter) -> Dictionary:
 		return snapshot
 	var hot: Dictionary = host.soldier_state(int(host._index_by_id[actor.person_id]))
 	var formation: Dictionary = host.formation_state(host.person_owner(actor.person_id).formation_index)
-	snapshot["hp"] = float(hot.hp)
+	snapshot.hp = float(hot.hp)
 	snapshot["_received_effective_hit"] = int(hot.hit_revision)
 	snapshot["military_role"] = host.military_role_name(int(hot.military_role))
-	snapshot["stun"] = float(hot.stun)
+	snapshot.stun = float(hot.stun)
 	snapshot["stun_grace"] = float(hot.grace)
 	snapshot["knockout_left"] = float(hot.ko)
 	snapshot["_getting_up"] = float(hot.getup) > 0.0
-	snapshot["captive"] = bool(hot.captive)
+	snapshot.captive = bool(hot.captive)
 	if float(hot.hp) > 0.0:
 		snapshot["fatigue"] = float(formation.fatigue)
 		snapshot["fatigue_rest"] = float(formation.fatigue_rest)
@@ -75,13 +75,13 @@ static func _ordinary_row(host: Node, original: Dictionary, formation: Dictionar
 	row["progress"] = 0.0
 	row["duration"] = TerrainArmy.MOVE_DURATION
 	row["move_curve"] = "quad_out"
-	row["attack"] = false
+	row.attack = false
 	if str(row.pose) not in ["down", "unconscious", "get_up"]:
-		row["pose"] = "idle"
-		row["age"] = 0.0
+		row.pose = "idle"
+		row.age = 0.0
 	var able: bool = float(hot.hp) > 0.0 and float(hot.ko) <= 0.0 and float(hot.getup) <= 0.0 and not bool(hot.captive)
-	row["present"] = able and bool(formation.ref_valid)
-	if int(formation.acting_person) >= 1 and int(row.person_id) == int(formation.formal_person): row["present"] = false
+	row.present = able and bool(formation.ref_valid)
+	if int(formation.acting_person) >= 1 and int(row.person_id) == int(formation.formal_person): row.present = false
 	# Ammo is a one-way handoff from the actual native soldier into the original
 	# cargo. The staged copy is validated before the original dictionary changes.
 	var ammo_key: String = str(host._ammo_keys.get(int(row.person_id), ""))

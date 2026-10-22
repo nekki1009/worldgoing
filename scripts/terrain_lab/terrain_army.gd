@@ -3177,7 +3177,7 @@ func recruit_from_team(source: TerrainArmy, requester_id: int, person_id: int) -
 		return SiteRuntime.fail("BUSY", "兩隊都須停止、HOLD 並脫戰")
 	var proposed := materialized_combat_rows()
 	var arriving: Dictionary = source.materialized_combat_rows()[index].duplicate()
-	arriving["member"] = true
+	arriving.member = true
 	proposed.append(arriving)
 	if single_troop_class(proposed, data, _troop_exempt_ids(), _troop_actor(player_member)) == &"mixed":
 		return SiteRuntime.fail("MIXED_TROOP", "入隊裝備與普通隊員兵種不同；原人物與持物未改")
@@ -6564,9 +6564,9 @@ func adopt_row_into(recipient: TerrainArmy, person_id: int) -> void:
 		else:
 			kept.append(combat_units[index])
 			kept_cells.append(cells[index])
-	moving["member"] = false
-	moving["captive"] = false
-	moving["present"] = false
+	moving.member = false
+	moving.captive = false
+	moving.present = false
 	var target_rows := recipient.combat_units.duplicate()
 	var target_cells := recipient.cells.duplicate()
 	target_rows.append(moving)
@@ -7130,7 +7130,7 @@ func _advance_exchange_visual(index: int, delta: float) -> void:
 	var visual: Dictionary = combat_hot_get(index, &"exchange_visual", {})
 	if visual.is_empty():
 		return
-	visual["age"] = float(visual.age) + delta
+	visual.age = float(visual.age) + delta
 	visual["left"] = maxf(0.0, float(visual.left) - delta)
 	if float(visual.left) <= 0.000000001:
 		combat_hot_erase(index, &"exchange_visual")
@@ -8379,7 +8379,7 @@ func prepare_combat(delta: float, game_seconds: float = -1.0) -> void:
 		if _combat_hot_store != null:
 			_borrow_combat_hot_row(index)
 		var unit: Dictionary = combat_units[index]
-		unit["age"] = float(unit.age) + delta
+		unit.age = float(unit.age) + delta
 		# Original idle ATTACK rear ranks have no active recovery/movement work.
 		# Normalize the same optional timers once, retain age/think exactly, and
 		# leave all rescue/guard/hit/KO/moving rows on the complete owner path.
@@ -8392,9 +8392,9 @@ func prepare_combat(delta: float, game_seconds: float = -1.0) -> void:
 			unit["exchange_stagger"] = 0.0
 			unit["exchange_skill_cooldown"] = 0.0
 			unit["ranged_cooldown"] = 0.0
-			unit["grace"] = 0.0
-			unit["stun"] = 0.0
-			unit["think"] = maxf(0.0, float(unit.think) - delta)
+			unit.grace = 0.0
+			unit.stun = 0.0
+			unit.think = maxf(0.0, float(unit.think) - delta)
 			if _combat_hot_store != null: _return_combat_hot_row()
 			continue
 		if exchange_enabled:
@@ -8411,10 +8411,10 @@ func prepare_combat(delta: float, game_seconds: float = -1.0) -> void:
 			if _combat_hot_store != null: _return_combat_hot_row()
 			continue
 		if float(unit.ko) > 0.0:
-			unit["ko"] = maxf(0.0, float(unit.ko) - game_seconds)
+			unit.ko = maxf(0.0, float(unit.ko) - game_seconds)
 			if str(unit.pose) == "down" and float(unit.age) >= float(CombatTimings.POSE_SECONDS[&"down"]):
-				unit["pose"] = "unconscious"
-				unit["age"] = 0.0
+				unit.pose = "unconscious"
+				unit.age = 0.0
 			if float(unit.ko) <= 0.0:
 				hold_rescue_candidates_checked = false; hold_rescue_cache_admission_checked = false
 				_wake_unit(index)
@@ -8434,15 +8434,15 @@ func prepare_combat(delta: float, game_seconds: float = -1.0) -> void:
 			if _combat_hot_store != null: _return_combat_hot_row()
 			continue
 		var decay := maxf(0.0, delta - float(unit.grace))
-		unit["grace"] = maxf(0.0, float(unit.grace) - delta)
-		unit["stun"] = maxf(0.0, float(unit.stun) - decay * SiteCombatRules.STUN_RECOVERY)
+		unit.grace = maxf(0.0, float(unit.grace) - delta)
+		unit.stun = maxf(0.0, float(unit.stun) - decay * SiteCombatRules.STUN_RECOVERY)
 		if exchange_enabled:
 			_advance_exchange_pose(index)
-			unit["think"] = maxf(0.0, float(unit.think) - delta)
+			unit.think = maxf(0.0, float(unit.think) - delta)
 			# Keep existing automatic safe rescue in HOLD without any pose/body
 			# sampling. Advancing combat units never run the old enemy scan.
 			if float(unit.think) <= 0.0 and is_member(index) and combat_order == CombatOrder.HOLD and str(unit.pose) == "idle" and combat_can_act(index) and not is_controlled_person(index) and not _ship_in_journey(index):
-				unit["think"] = 0.5
+				unit.think = 0.5
 				if not is_sustain_routed() and not (person_busy_query.is_valid() and bool(person_busy_query.call(combat_identity(index)))) and (_ship_embarked(index) or enemy_query.is_valid()):
 					if not hold_rescue_patient_checked:
 						hold_rescue_patient_checked = true
@@ -8479,18 +8479,18 @@ func prepare_combat(delta: float, game_seconds: float = -1.0) -> void:
 		if str(unit.pose) in ["get_up", "guard_break"]:
 			finished = float(unit.age) >= float(CombatTimings.POSE_SECONDS[StringName(str(unit.pose))])
 		if str(unit.pose) in ["guard_raise", "guard_lower"] and float(unit.age) >= SiteCombatRules.GUARD_TRANSITION:
-			unit["pose"] = "guard" if str(unit.pose) == "guard_raise" else "idle"
-			unit["age"] = 0.0
+			unit.pose = "guard" if str(unit.pose) == "guard_raise" else "idle"
+			unit.age = 0.0
 		if finished:
-			unit["pose"] = "idle"
-			unit["age"] = 0.0
-			unit["attack"] = false
+			unit.pose = "idle"
+			unit.age = 0.0
+			unit.attack = false
 			unit["previous"] = []
-			unit["think"] = 0.5
+			unit.think = 0.5
 			_command_dirty = true
-		unit["think"] = maxf(0.0, float(unit.think) - delta)
+		unit.think = maxf(0.0, float(unit.think) - delta)
 		if garrison_feature_id.is_empty() and not bool(unit.attack) and float(unit.think) <= 0.0 and combat_can_act(index) and not is_controlled_person(index) and _ship_attack_allowed(index) and (not is_member(index) or _order_delay <= 0.0) and enemy_query.is_valid():
-			unit["think"] = 0.5 * (1.0 - command_effect("tactics", 0.20)) if is_member(index) else 0.5
+			unit.think = 0.5 * (1.0 - command_effect("tactics", 0.20)) if is_member(index) else 0.5
 			var target: Dictionary = enemy_query.call(self, index)
 			if is_member(index) and target.is_empty() and combat_order == CombatOrder.HOLD and str(unit.pose) == "idle" and not is_sustain_routed() and not (person_busy_query.is_valid() and bool(person_busy_query.call(combat_identity(index)))):
 				for patient: int in command_members():

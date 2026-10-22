@@ -3944,8 +3944,8 @@ func _collect_exchange_batch_side(batches: Dictionary, person: Dictionary, other
 	var side_outcome := _exchange_side_outcome(other, result, stats, side)
 	if not batches.has(id):
 		var initial_outcome := side_outcome.duplicate()
-		initial_outcome["hp"] = 0.0
-		initial_outcome["stun"] = 0.0
+		initial_outcome.hp = 0.0
+		initial_outcome.stun = 0.0
 		initial_outcome["fatigue"] = 0.0
 		initial_outcome["stagger"] = 0.0
 		initial_outcome["knockback"] = false
@@ -4757,7 +4757,7 @@ func _trial_side_settings(setup: Dictionary, prefix: String) -> Dictionary:
 		else:
 			side[field] = int(value)
 	side["female_count"] = roundi(float(side.count) * float(side.female_percent) / 100.0)
-	side["attack"] = setup.get(prefix + "_attack", role == "combat")
+	side.attack = setup.get(prefix + "_attack", role == "combat")
 	if not side.attack is bool:
 		return SiteRuntime.fail("INVALID", "初始命令須為守位或接敵")
 	side["ai_enabled"] = setup.get(prefix + "_ai_enabled", false)
@@ -12914,7 +12914,7 @@ func _region_refresh_original_live_frame(party: Dictionary, original: TerrainLab
 					"from_facing": move.from_facing.duplicate(), "to_facing": move.facing.duplicate(),
 					"weight": float(actual.progress), "elapsed_action_seconds": float(move.elapsed),
 					"duration_action_seconds": float(move.duration)}, true)
-			record["pose"] = pose
+			record.pose = pose
 		vehicles[identity] = record
 	frame["people"] = people
 	frame["vehicles"] = vehicles

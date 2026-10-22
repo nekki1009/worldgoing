@@ -1759,7 +1759,7 @@ func _person(identity: int, require_items: bool = true) -> Dictionary:
 		return owner.person(unit, require_items)
 	var body: Variant = owner.combat_units[unit] if unit >= 0 else owner
 	if unit >= 0:
-		person["hp"] = float(owner.combat_hot_get(unit, &"hp"))
+		person.hp = float(owner.combat_hot_get(unit, &"hp"))
 	var holder: Variant = body.get("item_state")
 	if require_items and (not holder is Dictionary or not Runtime._item_holder_shape(holder)):
 		return {}

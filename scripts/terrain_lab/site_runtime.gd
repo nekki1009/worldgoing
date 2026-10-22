@@ -1123,7 +1123,7 @@ static func advance_ship_repair_work(data: TerrainData, identity: String, second
 	var applied: float = float(job.amount) * ratio
 	if preview: return ok("原岸工位可施作", {"consumed": consumed, "progress": progress, "applied": applied})
 	add_items(vehicle.cargo, consumed, -1)
-	naval["hp"] = minf(Ships.hull_hp(str(vehicle.ship_type)), float(naval.hp) + maxf(0.0, applied - float(job.applied)))
+	naval.hp = minf(Ships.hull_hp(str(vehicle.ship_type)), float(naval.hp) + maxf(0.0, applied - float(job.applied)))
 	job["progress"] = progress
 	job["applied"] = applied
 	var complete: bool = progress >= float(job.total_work)
@@ -1256,7 +1256,7 @@ static func advance_siege_work(data: TerrainData, identity: String, action: Stri
 	if spare and vehicle.has("tech_batch"): vehicle.tech_batch.work_seconds = json_stable_seconds(minf(300.0, float(vehicle.tech_batch.work_seconds) + seconds))
 	if field == "repair":
 		var applied := float(job.amount) * float(job.progress) / float(job.total_work)
-		vehicle["hp"] = minf(float(SIEGE_DEFINITIONS[str(vehicle.kind)].max_hp), float(vehicle.hp) + maxf(0.0, applied - float(job.applied)))
+		vehicle.hp = minf(float(SIEGE_DEFINITIONS[str(vehicle.kind)].max_hp), float(vehicle.hp) + maxf(0.0, applied - float(job.applied)))
 		job["applied"] = applied
 	var complete := float(job.progress) + 0.000000001 >= float(job.total_work)
 	if complete:
@@ -1278,7 +1278,7 @@ static func damage_siege_vehicle(data: TerrainData, identity: String, damage: fl
 	var vehicle: Dictionary = data.site.get("vehicles", {}).get(identity, {})
 	if not SIEGE_DEFINITIONS.has(str(vehicle.get("kind", ""))) or not is_finite(damage) or damage <= 0.0 or float(vehicle.get("hp", 0.0)) <= 0.0: return fail("NO_TARGET")
 	var old_hp := float(vehicle.hp)
-	vehicle["hp"] = maxf(0.0, old_hp - damage)
+	vehicle.hp = maxf(0.0, old_hp - damage)
 	vehicle["ever_hp_damaged"] = true
 	if float(vehicle.hp) <= 0.0:
 		vehicle["phase"] = "wrecked"
@@ -1310,7 +1310,7 @@ static func damage_ship_vehicle(data: TerrainData, identity: String, damage: flo
 	if damage >= old_hp and not naval.get("repair", {}).is_empty():
 		var repair_result: Dictionary = _release_ship_repair(data, vehicle, false)
 		if not repair_result.ok: return repair_result
-	naval["hp"] = maxf(0.0, old_hp - damage)
+	naval.hp = maxf(0.0, old_hp - damage)
 	if float(naval.hp) <= 0.0:
 		naval["state"] = "sinking"
 		# Receipt was settled above; all unused material stays in this cargo.

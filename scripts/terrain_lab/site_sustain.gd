@@ -399,7 +399,7 @@ static func _advance_with_life_sample(state: Dictionary, members: Dictionary, in
 						if hot_read.is_valid():
 							pending_hp[int(id)] = remaining
 						else:
-							body["hp"] = remaining
+							body.hp = remaining
 						if applied > 0.0:
 							result.damage[int(id)] = float(result.damage.get(int(id), 0.0)) + applied
 						if remaining > 0.0:

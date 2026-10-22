@@ -226,8 +226,8 @@ static func ranged_result(shooter: Dictionary, defender: Dictionary, distance: f
 	# A released shot keeps its launch weapon; the actual arrival target supplies
 	# current armor. A graze halves the shared tier/weapon effects, not accuracy.
 	var contact_scale := 1.0 if hit else 0.5
-	result["hp"] = exchange_hp(weapon, str(defender.get("armor", "none"))) * contact_scale
-	result["stun"] = exchange_stun(weapon) * contact_scale + (EXCHANGE_POWER_STUN if power else 0.0)
+	result.hp = exchange_hp(weapon, str(defender.get("armor", "none"))) * contact_scale
+	result.stun = exchange_stun(weapon) * contact_scale + (EXCHANGE_POWER_STUN if power else 0.0)
 	result["stagger"] = 0.35 if hit else 0.2
 	return result
 
@@ -357,8 +357,8 @@ static func exchange_result(a: Dictionary, b: Dictionary, roll: float = 0.0) -> 
 	var hp := exchange_hp(str(winner.get("weapon", "none")), str(loser.get("armor", "none")), big)
 	var stun := exchange_stun(str(winner.get("weapon", "none"))) \
 		+ (EXCHANGE_POWER_STUN if str(winner.get("skill", "")) == "power" else 0.0)
-	result["hp"] = hp # Compatibility summary: the losing side's HP effect.
-	result["stun"] = stun # Compatibility summary: the losing side's stun effect.
+	result.hp = hp # Compatibility summary: the losing side's HP effect.
+	result.stun = stun # Compatibility summary: the losing side's stun effect.
 	result["hp_b"] = hp if a_wins else 0.0
 	result["hp_a"] = 0.0 if a_wins else hp
 	result["stun_b"] = stun if a_wins else 0.0
