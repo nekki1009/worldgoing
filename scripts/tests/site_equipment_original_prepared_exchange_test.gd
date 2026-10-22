@@ -202,6 +202,8 @@ func _check_true_team_component() -> void:
 		var holder: Dictionary=f.team.combat_units[index].item_state
 		assert(int(holder.version)==int(versions[index])+1 and f.data.site.item_records[holder.equipped.weapon].holder==str(holder.holder))
 	assert(not f.orders.validate_team_equipment_change(actual).ok and not f.orders.validate_team_equipment_change(source,false).ok,"One whole atomic source/publisher, not two conflicting transfers or replay")
+	# The fixture asset-query lambda captures the original actions/data; drop it so that reference cycle does not outlive the Lab.
+	f.orders.equipment_team_apply_guard=Callable()
 	_cleanup_fixture(f.lab,f.team)
 
 
