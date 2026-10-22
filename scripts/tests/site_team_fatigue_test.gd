@@ -105,7 +105,11 @@ func _run() -> void:
 	recipient.exchange_enabled = true
 	recipient.controlled_person_query = team.controlled_person_query
 	var selected: Array[int] = [team.combat_identity(2), team.combat_identity(3)]
-	var transferred := team.split_members_to(recipient, selected, team.current_commander)
+	# A split team keeps a vacant captaincy unless an officer moves with it (v2 plan 3.5); the
+	# merge back needs the new team's own captain. Promote through the original role writer.
+	var promoted := team.set_military_role(team.combat_identity(2), "officer")
+	assert(promoted.ok, str(promoted))
+	var transferred := team.split_members_to(recipient, selected, team.current_commander, team.combat_identity(2))
 	assert(transferred.ok, str(transferred))
 	near(float(recipient.team_fatigue.fatigue), 42.5)
 	near(float(team.team_fatigue.fatigue), 42.5)
