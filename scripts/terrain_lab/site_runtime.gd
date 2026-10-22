@@ -4948,8 +4948,18 @@ static func _fire_fuel_q(data: TerrainData, unit: Dictionary) -> int:
 static func _fire_impact_descriptor(data: TerrainData, payload: Dictionary) -> Dictionary:
 	if str(payload.type) == "structure":
 		return _fire_feature_descriptor(data, str(payload.get("feature", "")), str(payload.get("part", "")))
-	if str(payload.type) != "ground" or not payload.get("cell") is Vector2i or not data.contains(payload.cell): return {}
-	var index := data.index(payload.cell)
+	var index := -1
+	if str(payload.type) == "ground":
+		if not payload.get("cell") is Vector2i or not data.contains(payload.cell): return {}
+		index = data.index(payload.cell)
+	elif str(payload.type) == "blocked":
+		# A side strike on a terrain cell heats that cell's own combustible resource (e.g. the tree it hit).
+		var target := str(payload.get("target_key", ""))
+		var raw := target.trim_prefix("terrain:")
+		if target == raw or not raw.is_valid_int() or int(raw) < 0 or int(raw) >= data.size.x * data.size.y: return {}
+		index = int(raw)
+	else:
+		return {}
 	if data.water_kind[index] != 0: return {}
 	var keys: Array = data.resources_at.get(index, []).duplicate()
 	keys.sort()

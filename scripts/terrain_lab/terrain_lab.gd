@@ -3140,7 +3140,7 @@ func _advance_siege(delta: float) -> void:
 
 func _launch_siege_projectile(vehicle: Dictionary, aim: Dictionary, attack_id: String, scatter_unit: Vector2 = Vector2.ZERO, ammo: String = "", technology_payment_id: String = "") -> void:
 	var flight := _siege_flight_snapshot(vehicle, aim, scatter_unit)
-	flight.attack_id = attack_id
+	flight["attack_id"] = attack_id # New key: dot syntax would make a StringName (fire impact payloads must be JSON).
 	if ammo == "fire_pot":
 		_fire_release_sequence += 1
 		flight.merge({"ammo": ammo, "projectile_id": _fire_release_sequence, "fire_profile": SiteCombatRules.fire_pot_profile(),
