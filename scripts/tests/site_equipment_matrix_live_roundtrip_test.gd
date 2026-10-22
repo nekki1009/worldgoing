@@ -73,6 +73,7 @@ func _setup() -> bool:
 	if not _check(DisplayServer.get_name() == "headless", "headless-only test"): return false
 	var scene: PackedScene = load("res://scenes/terrain_lab/TerrainLab.tscn")
 	lab = scene.instantiate()
+	lab.npc = TerrainTestNPC.new() # The scene no longer ships a default NPC; supply the original NPC body as other Lab tests do.
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	_freeze_simulation()
