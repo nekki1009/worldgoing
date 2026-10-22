@@ -503,6 +503,12 @@ func _station_named_member(f: Dictionary, identity: int, near: Vector2i) -> void
 
 func _siege_assign(f: Dictionary, key: String, identities: Array) -> void:
 	for identity: Variant in identities: _land_committed_step(f, int(identity))
+	# The original assignment refuses while ANY member (or the joined player) is mid-step; let the
+	# other members' committed steps land through real movement time as well.
+	var settle_steps := 0
+	while settle_steps < 600 and (f.team.moving_member_count() > 0 or is_instance_valid(f.team.player_member) and f.team.player_member.is_moving()):
+		f.lab._advance_action_time(TerrainLab.ACTION_STEP)
+		settle_steps += 1
 	var prepared: Dictionary = f.lab.site_controller.work_team.prepare_assign_vehicle(f.team, identities, int(f.commander), key)
 	_require(prepared.ok, "Current original team.work decider names true siege members", prepared)
 	_require(f.lab.site_controller.work_team.publish_assign_vehicle(prepared).ok, "Original fixed siege work slots published")
