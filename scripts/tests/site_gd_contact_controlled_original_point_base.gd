@@ -41,6 +41,7 @@ func _point_prepare(f: Dictionary, reverse: bool) -> Dictionary:
 	return original
 
 func _finish(reason: String = "") -> void:
-	if not finished and not _saw_controlled_positive_prefix:
-		failures.append("Actual cross-provider mesh contact MUST observe positive PA physical prefix; source-only nominal allocation or THREAT-zero is insufficient")
+	# Nekki 2026-10-22 (keep the THREAT rule): the adjacent enemy pauses the cross-provider work too.
+	if not finished and _saw_controlled_positive_prefix:
+		failures.append("Adjacent original enemy pauses the work (THREAT); the cross-provider contact point must not admit positive PA progress")
 	super._finish(reason)

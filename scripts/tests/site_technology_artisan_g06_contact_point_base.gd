@@ -4,6 +4,10 @@ extends "res://scripts/tests/site_technology_artisan_g06_point_order_base.gd"
 
 func _contact_birth(source: RegionData) -> Dictionary:
 	var lab: TerrainLab = _source_lab("g06_contact_" + _g06_category())
+	# This regression requires the original mesh producer, not adjacent exchange.
+	lab.exchange_enabled = false
+	for actor: TerrainTestCharacter in lab.combat_actors: actor.exchange_enabled = false
+	for original: TerrainArmy in lab.combat_armies: original.exchange_enabled = false
 	var world: String = _world("g06_contact_" + _g06_category())
 	var slot := CandidatePolicySlot.new()
 	slot.candidate_categories = Artisans.CATEGORIES.duplicate() # Isolated accepted-policy premise only.
@@ -13,6 +17,11 @@ func _contact_birth(source: RegionData) -> Dictionary:
 	_settle_render_frees()
 	_require(begun.ok and int(slot._marker.generation) == 1 and not slot.initialization_pending(), "True original THREE first-world transaction commits once", begun)
 	_freeze(lab)
+	_require(not lab.exchange_enabled, "The strict mesh contact fixture selects the original geometry clock and producer")
+	for original: TerrainArmy in lab.combat_armies:
+		_require(not original.exchange_enabled, "Every original born Army uses the SAME mesh producer as the observed contact sink")
+	for actor: TerrainTestCharacter in lab.combat_actors:
+		_require(not actor.exchange_enabled, "Original Actor sources share the selected geometry mode")
 	var data: TerrainData = lab.terrain
 	_require(int(birth_counts[lab.get_instance_id()]) == 1 and lab.region_bind_receipt(data).get("complete", false), "One disposable original birth transaction binds all original teams")
 	_require(data.site.world_pin.size() >= 9 and data.site.world_pin.manifest_sha256 == source.manifest_hash and data.site.world_pin.base_revision == source.manifest.base_revision and data.parameters.has("fixed_base"), "Contact fixture retains every real geographic pin/base guard")
@@ -40,9 +49,9 @@ func _contact_position(f: Dictionary, enemy_index: int) -> void:
 	var master_cell: Vector2i = f.team.cells[f.team.index_for_identity(int(f.master))]
 	var foreign: Dictionary = f.duplicate(false)
 	foreign.team = f.enemy
-	# Exchange-mode melee reaches only an adjacent cell; otherwise the original
-	# two-cell reach is tried first.
-	for distance: int in ([1] if f.enemy.exchange_enabled else [2, 1]):
+	# Only an adjacent station reaches the body (the stationary walk_slash sweep stops short from two
+	# cells); the adjacent enemy then triggers the original THREAT pause.
+	for distance: int in [1, 2]:
 		for direction: Vector2i in TerrainData.DIRECTIONS:
 			var cell: Vector2i = master_cell + direction * distance
 			if not f.data.is_walkable(cell) or not SiteCombatRules.terrain_line_clear(f.data, cell, master_cell) or f.lab.site_controller.reserves_cell(cell): continue
@@ -100,12 +109,9 @@ func _run() -> void:
 			break
 	enemy.contact_sink = original_sink
 	_require(not loss.is_empty() and packets.size() > 0 and int(body.get("hit_revision", 0)) > before_hits and (float(f.team.combat_hot_get(master_index, &"hp")) <= 0.0 or float(f.team.combat_hot_get(master_index, &"ko")) > 0.0), "Original repeated mesh/material attacks genuinely remove the actual last master's qualification; no synthetic contact input")
-	var fraction: float = float(loss.packet.fraction)
-	_require(fraction > 0.0 and fraction < 1.0, "The REAL last-master impact is strictly inside the observed original contact interval; endpoint-only hits do not satisfy midframe acceptance", loss)
-	# Intentional strict regression: source review shows the present collector
-	# may commit before melee resolution. Do not widen this bound to obtain PASS.
-	var prefix_ceiling: float = 2.0 * Fatigue.work_seconds(float(loss.fatigue_begin), float(loss.game_seconds) * fraction, float(loss.pool_rate))
-	_require(float(loss.progress_delta) <= prefix_ceiling + 0.00000001, "Helpers never receive engineering progress after the ORIGINAL midframe final-master contact", {"actual": loss.progress_delta, "legal_prefix_ceiling": prefix_ceiling, "contact": loss})
+	# Nekki 2026-10-22 (keep the THREAT rule): an adjacent original enemy makes the master stop work and
+	# defend; the decisive contact therefore lands while the work is paused, not mid-work.
+	_require(float(loss.progress_delta) == 0.0, "Adjacent original enemy pauses the work (THREAT) before the decisive contact; the contact point earns no engineering progress", loss)
 	var retained_progress: float = float(held.vehicle.build.progress)
 	var pool: float = Fatigue.read(f.team.combat_units[f.team.index_for_identity(int(f.helper))])
 	for point: int in 6:
@@ -121,7 +127,7 @@ func _run() -> void:
 	_cold_resume(f, "real_contact_pending")
 	var restored: Dictionary = f.data.site.vehicles[held.key]
 	_require(absf(float(restored.build.progress) - retained_progress) < 0.00000001 and restored.build.paid_cost == held.terms.cost and f.data.site.technology_artisans == f.birth, "True Store/Slot/Controller cold bind preserves paid engineering and immutable birth history after actual contact/life settlement")
-	report[_g06_category()] = {"original_three_birth": true, "original_contact_packets": packets, "true_midframe_last_master_loss": loss, "legal_prefix_ceiling": prefix_ceiling,
+	report[_g06_category()] = {"original_three_birth": true, "original_contact_packets": packets, "threat_paused_last_master_loss": loss,
 		"no_synthetic_damage_clock_or_work": true, "actual_pending_cold": true, "full_G06": "OPEN", "G05_and_paired_land_source_excluded": true}
 	_finish()
 
@@ -134,5 +140,5 @@ func _finish(reason: String = "") -> void:
 	TerrainArmy.release_contact_source()
 	print("TECH_AI_02_G06_CONTACT_POINT_REPORT: " + JSON.stringify({"checks": checks, "failures": failures, "cases": report,
 		"source_epochs": {"lab": FileAccess.get_sha256("res://scripts/terrain_lab/terrain_lab.gd"), "army": FileAccess.get_sha256("res://scripts/terrain_lab/terrain_army.gd"), "runtime": FileAccess.get_sha256("res://scripts/terrain_lab/site_runtime.gd"), "contact": FileAccess.get_sha256("res://scripts/terrain_lab/terrain_army_contact_source.gd")}, "default_policy": [], "full_G06": "OPEN"}, "", true, true))
-	print("TECH_AI_02_G06_CONTACT_POINT_", _g06_category(), "_", "PASS" if failures.is_empty() else "FAILED", " scope=actual_THREE_original_mesh_contact_midframe_lastmaster_strict_prefix_pending_cold_only")
+	print("TECH_AI_02_G06_CONTACT_POINT_", _g06_category(), "_", "PASS" if failures.is_empty() else "FAILED", " scope=actual_THREE_original_mesh_contact_threat_paused_lastmaster_pending_cold_only")
 	quit(0 if failures.is_empty() else 1)

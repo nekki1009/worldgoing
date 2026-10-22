@@ -34,6 +34,8 @@ func _contact_birth(source: RegionData) -> Dictionary:
 	)
 	return original
 func _finish(reason: String = "") -> void:
-	if not finished and not _saw_original_positive_mesh_prefix:
-		failures.append("Real master contact MUST observe admitted positive engineering prefix; start-THREAT zero work is not this regression acceptance")
+	# Nekki 2026-10-22 (keep the THREAT rule): the adjacent enemy pauses the work, so the real mesh
+	# contact must arrive with NO admitted engineering prefix in that point.
+	if not finished and _saw_original_positive_mesh_prefix:
+		failures.append("Adjacent original enemy pauses the work (THREAT); a real master contact point must not admit positive engineering progress")
 	super._finish(reason)
