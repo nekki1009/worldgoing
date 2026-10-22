@@ -37,3 +37,11 @@ func _walk_siege_helper_to_reference(f: Dictionary, identity: int) -> void:
 		_land_committed_step(f, identity)
 	team._refresh_command_presence()
 	_require(bool(team.combat_hot_get(member, &"present", false)), "Genuinely arrived original helper is present under the unchanged ordinary-member rule")
+
+# The named operator (master) must also stand within the commander's radius before the original
+# siege preview names it; walk an absent idle master the same real way.
+func _siege_anchor(f: Dictionary, kind: String, near: Vector2i) -> Vector2i:
+	var master: int = f.team.index_for_identity(int(f.master))
+	if master >= 0 and not bool(f.team.combat_hot_get(master, &"present", false)) and f.team.combat_units[master].get("work_task", {}).is_empty():
+		_walk_siege_helper_to_reference(f, int(f.master))
+	return super._siege_anchor(f, kind, near)
