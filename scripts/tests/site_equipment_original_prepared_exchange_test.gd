@@ -8,6 +8,8 @@ func _initialize() -> void:
 
 
 func _exchange_item(lab: TerrainLab, holder: Dictionary, asset: String, owner_id: int, worn: bool = false) -> String:
+	# Bodies now start with an original equipped weapon; that real item is the worn exchange source.
+	if worn and holder.get("equipped", {}).has("weapon"): return str(holder.equipped.weapon)
 	var made: Dictionary = Runtime.create_equipment(lab.terrain, holder, "weapon:" + asset,
 		{"slot": "weapon", "asset": asset, "tint": [1.0,1.0,1.0,1.0]}, owner_id, "weapon" if worn else "")
 	assert(made.ok,str(made))
@@ -17,7 +19,7 @@ func _exchange_item(lab: TerrainLab, holder: Dictionary, asset: String, owner_id
 func _exchange_fixture(with_team: bool = false) -> Dictionary:
 	var data: TerrainData = _material_natural_data()
 	data.site.inventory = {"grain":100}
-	data.site.capacity = 64
+	data.site.capacity = 128 # Bodies now carry their original starting kit; the team return must fit the depot.
 	var actual_lab: TerrainLab = _material_natural_lab(data)
 	var controller: SiteController = actual_lab.site_controller
 	var actions: SitePersonActions = controller.person_actions
@@ -54,8 +56,11 @@ func _exchange_fixture(with_team: bool = false) -> Dictionary:
 			_exchange_item(actual_lab,data.site.depot_items,"spear_01",identity)
 		team._rebuild_ground_cell_owners()
 		var head: int=team.combat_identity(team.formal_commander)
-		assert(controller._control_family_person(null,head).ok)
-		assert(team.issue_combat_order(head,TerrainArmy.CombatOrder.HOLD).ok)
+		var controlled_head: Dictionary = controller._control_family_person(null,head)
+		assert(controlled_head.ok,str(controlled_head))
+		team.settle_combat_command()
+		var held_order: Dictionary = team.issue_combat_order(team.current_commander,TerrainArmy.CombatOrder.HOLD) # Orders take the commander index.
+		assert(held_order.ok,str(held_order))
 		team.settle_combat_command()
 		var members: Array=[]
 		for index: int in team.combat_units.size():members.append(team.combat_identity(index))
