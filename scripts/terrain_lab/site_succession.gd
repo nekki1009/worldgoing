@@ -35,6 +35,6 @@ static func designate(record: Dictionary, seat_id: String, person_id: int, seat_
 
 ## JSON numbers load as floats; restore exact integers after validation.
 static func normalize_numbers(record: Dictionary) -> void:
-	record.version = int(record.version)
+	record["version"] = int(record.version)
 	for seat_id: String in record.heirs:
 		record.heirs[seat_id] = int(record.heirs[seat_id])

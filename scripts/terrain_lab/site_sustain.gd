@@ -19,7 +19,7 @@ static func create(at_seconds: float = 0.0, version: int = 1) -> Dictionary:
 		"morale": 100.0, "routed": false, "regroup_seconds": 0.0,
 		"commander_present": true, "last_combat_event": -1}
 	if version == 1:
-		state.open_rations = 0.0
+		state["open_rations"] = 0.0
 	return state
 
 static func _number(value: Variant, lower: float, upper: float = INF) -> bool:
@@ -88,7 +88,7 @@ static func _validate_sample(state: Dictionary, members: Dictionary, hot_read: C
 		if not sample.is_empty():
 			sample.counts.append(living)
 			sample.minimums.append(minimum)
-			sample.living = int(sample.living) + living
+			sample["living"] = int(sample.living) + living
 	return true
 
 static func _next_meal(at_seconds: float) -> float:
@@ -142,7 +142,7 @@ static func add_members(state: Dictionary, members: Dictionary, ids: Array) -> D
 		joining.append(int(value))
 	var before := _living(seen, members)
 	var arriving := _living(joining, members)
-	state.morale = weighted(float(state.morale), before, 100.0, arriving)
+	state["morale"] = weighted(float(state.morale), before, 100.0, arriving)
 	state.cohorts.append({"ids": joining, "hunger": 0.0, "coverage": 0.0,
 		"meal_until": float(state.at), "bonus_paid": false, "bonus_pending": false})
 	return _ok()
@@ -164,13 +164,13 @@ static func move_members(source: Dictionary, target: Dictionary, members: Dictio
 		moving.append(int(value))
 	var before := _living(existing, members)
 	var arriving := _living(moving, members)
-	target.morale = weighted(float(target.morale), before, float(source.morale), arriving)
+	target["morale"] = weighted(float(target.morale), before, float(source.morale), arriving)
 	if before == 0:
-		target.routed = source.routed
-		target.regroup_seconds = source.regroup_seconds
+		target["routed"] = source.routed
+		target["regroup_seconds"] = source.regroup_seconds
 	elif bool(target.routed) or bool(source.routed):
-		target.routed = true
-		target.regroup_seconds = 0.0
+		target["routed"] = true
+		target["regroup_seconds"] = 0.0
 	for cohort: Dictionary in source.cohorts:
 		var taken: Array[int] = []
 		for id: int in moving:
@@ -179,11 +179,11 @@ static func move_members(source: Dictionary, target: Dictionary, members: Dictio
 		if taken.is_empty():
 			continue
 		var copy := cohort.duplicate(true)
-		copy.ids = taken
+		copy["ids"] = taken
 		target.cohorts.append(copy)
 		for id: int in taken:
 			cohort.ids.erase(id)
-	source.cohorts = source.cohorts.filter(func(cohort: Dictionary) -> bool: return not cohort.ids.is_empty())
+	source["cohorts"] = source.cohorts.filter(func(cohort: Dictionary) -> bool: return not cohort.ids.is_empty())
 	_compact(target)
 	return _ok()
 
@@ -247,7 +247,7 @@ static func _position_cohorts(state: Dictionary, food_locations: Dictionary) -> 
 			var key: String = food_locations[int(id)]
 			if not groups.has(key):
 				var copy := cohort.duplicate(true)
-				copy.ids = []
+				copy["ids"] = []
 				groups[key] = copy
 				result.append(copy)
 			groups[key].ids.append(int(id))
@@ -268,7 +268,7 @@ static func _eat(state: Dictionary, inventory: Dictionary, demand: float) -> flo
 	var consumed := minf(demand, rations(state, inventory))
 	var remaining := consumed
 	var opened := minf(remaining, float(state.open_rations))
-	state.open_rations = float(state.open_rations) - opened
+	state["open_rations"] = float(state.open_rations) - opened
 	remaining -= opened
 	for food: String in FOODS:
 		if remaining <= 0.0:
@@ -276,7 +276,7 @@ static func _eat(state: Dictionary, inventory: Dictionary, demand: float) -> flo
 		var units := mini(int(inventory.get(food, 0)), ceili(remaining))
 		inventory[food] = int(inventory.get(food, 0)) - units
 		var used := minf(remaining, units)
-		state.open_rations = float(state.open_rations) + units - used
+		state["open_rations"] = float(state.open_rations) + units - used
 		remaining -= used
 	return consumed
 
@@ -289,11 +289,11 @@ static func resupply(state: Dictionary, members: Dictionary, inventory: Dictiona
 	var food_locations: Dictionary = context.get("food_locations", {}) if state.version == 2 else {}
 	if state.version == 2:
 		var positioned := state.duplicate()
-		positioned.cohorts = _position_cohorts(state, food_locations)
+		positioned["cohorts"] = _position_cohorts(state, food_locations)
 		sample = {"counts": [], "minimums": [], "living": 0}
 		if not _validate_sample(positioned, members, hot_read, pending_hp, sample):
 			return _fail("Invalid original life state during location preflight")
-		state.cohorts = positioned.cohorts
+		state["cohorts"] = positioned.cohorts
 	return _resupply_validated(state, inventory, due_only, sample.counts, food_locations)
 
 static func _resupply_validated(state: Dictionary, inventory: Dictionary, due_only: bool, counts: Array, food_locations: Dictionary = {}) -> Dictionary:
@@ -303,8 +303,8 @@ static func _resupply_validated(state: Dictionary, inventory: Dictionary, due_on
 	for index in range(state.cohorts.size()):
 		var cohort: Dictionary = state.cohorts[index]
 		if float(cohort.meal_until) <= float(state.at):
-			cohort.coverage = 0.0
-			cohort.meal_until = _next_meal(float(state.at))
+			cohort["coverage"] = 0.0
+			cohort["meal_until"] = _next_meal(float(state.at))
 			due.append(index)
 		elif not due_only:
 			due.append(index)
@@ -329,11 +329,11 @@ static func _resupply_validated(state: Dictionary, inventory: Dictionary, due_on
 	for index: int in due:
 		var cohort: Dictionary = state.cohorts[index]
 		var key: String = food_locations[int(cohort.ids[0])] if state.version == 2 else ""
-		cohort.coverage = float(cohort.coverage) + (1.0 - float(cohort.coverage)) * float(shares[key])
+		cohort["coverage"] = float(cohort.coverage) + (1.0 - float(cohort.coverage)) * float(shares[key])
 		if float(cohort.coverage) >= 1.0 - EPS:
-			cohort.coverage = 1.0
+			cohort["coverage"] = 1.0
 			if float(cohort.hunger) >= 6.0 and not bool(cohort.bonus_paid):
-				cohort.bonus_pending = true
+				cohort["bonus_pending"] = true
 	return _ok({"consumed_rations": consumed})
 
 static func advance_to(state: Dictionary, members: Dictionary, inventory: Dictionary, at_seconds: float, context: Dictionary = {}) -> Dictionary:
@@ -355,11 +355,11 @@ static func _advance_with_life_sample(state: Dictionary, members: Dictionary, in
 	var food_locations: Dictionary = context.get("food_locations", {}) if state.version == 2 else {}
 	if state.version == 2:
 		var positioned := state.duplicate()
-		positioned.cohorts = _position_cohorts(state, food_locations)
+		positioned["cohorts"] = _position_cohorts(state, food_locations)
 		sample = {"counts": [], "minimums": [], "living": 0}
 		if not _validate_sample(positioned, members, hot_read, pending_hp, sample):
 			return _fail("Invalid original life state during location preflight")
-		state.cohorts = positioned.cohorts
+		state["cohorts"] = positioned.cohorts
 	while float(state.at) < at_seconds:
 		var meal := _resupply_validated(state, inventory, true, sample.counts, food_locations)
 		result.consumed_rations += float(meal.consumed_rations)
@@ -384,7 +384,7 @@ static func _advance_with_life_sample(state: Dictionary, members: Dictionary, in
 				fully_fed = false
 			var prior := float(cohort.hunger)
 			if deficit > 0.0:
-				cohort.hunger = prior + hours * deficit
+				cohort["hunger"] = prior + hours * deficit
 				var damage := maxf(0.0, float(cohort.hunger) - 48.0) - maxf(0.0, prior - 48.0)
 				if damage > 0.0:
 					var remaining_living := 0
@@ -399,7 +399,7 @@ static func _advance_with_life_sample(state: Dictionary, members: Dictionary, in
 						if hot_read.is_valid():
 							pending_hp[int(id)] = remaining
 						else:
-							body.hp = remaining
+							body["hp"] = remaining
 						if applied > 0.0:
 							result.damage[int(id)] = float(result.damage.get(int(id), 0.0)) + applied
 						if remaining > 0.0:
@@ -407,33 +407,33 @@ static func _advance_with_life_sample(state: Dictionary, members: Dictionary, in
 							minimum = minf(minimum, remaining)
 					sample.counts[index] = remaining_living
 					sample.minimums[index] = minimum
-					sample.living = int(sample.living) + remaining_living - count
+					sample["living"] = int(sample.living) + remaining_living - count
 			else:
-				cohort.hunger = maxf(0.0, prior - hours * 0.5)
+				cohort["hunger"] = maxf(0.0, prior - hours * 0.5)
 			if float(cohort.hunger) == 0.0:
-				cohort.bonus_paid = false
-				cohort.bonus_pending = false
+				cohort["bonus_paid"] = false
+				cohort["bonus_pending"] = false
 		# AND across the actual post-resupply segments; an empty interval is neutral.
 		result.fully_fed = bool(result.fully_fed) and fully_fed
-		state.morale = maxf(0.0, float(state.morale) - (2.0 * hours * shortage / living if living > 0 else 0.0))
+		state["morale"] = maxf(0.0, float(state.morale) - (2.0 * hours * shortage / living if living > 0 else 0.0))
 		var safe := fully_fed and bool(context.get("safe", false)) and bool(context.get("stopped", false)) and not bool(context.get("committed_action", false))
 		if safe:
-			state.morale = minf(100.0, float(state.morale) + 5.0 * hours)
-			state.regroup_seconds = minf(1800.0, float(state.regroup_seconds) + seconds)
+			state["morale"] = minf(100.0, float(state.morale) + 5.0 * hours)
+			state["regroup_seconds"] = minf(1800.0, float(state.regroup_seconds) + seconds)
 		else:
-			state.regroup_seconds = 0.0
-		state.at = end
+			state["regroup_seconds"] = 0.0
+		state["at"] = end
 		for index in range(state.cohorts.size()):
 			var cohort: Dictionary = state.cohorts[index]
 			if float(cohort.meal_until) == end and bool(cohort.bonus_pending):
-				state.morale = minf(100.0, float(state.morale) + (2.0 * int(sample.counts[index]) / living if living > 0 else 0.0))
-				cohort.bonus_paid = true
-				cohort.bonus_pending = false
+				state["morale"] = minf(100.0, float(state.morale) + (2.0 * int(sample.counts[index]) / living if living > 0 else 0.0))
+				cohort["bonus_paid"] = true
+				cohort["bonus_pending"] = false
 		if float(state.morale) <= 20.0 and not bool(state.routed):
-			state.routed = true
+			state["routed"] = true
 			result.routed_now = true
 		if bool(state.routed) and safe and float(state.regroup_seconds) >= 1800.0 and float(state.morale) >= 50.0:
-			state.routed = false
+			state["routed"] = false
 			result.regrouped = true # Owner switches to HOLD, never reissues attack.
 	_compact(state)
 	return result
@@ -447,10 +447,10 @@ static func _advance_sample(state: Dictionary, members: Dictionary, hot_read: Ca
 		if kernel != null and kernel.has_method("sustain_life_sample"):
 			var packet: Array = kernel.sustain_life_sample(state, members, native_life.life, native_life.indices)
 			if packet.size() == 4:
-				sample.counts = packet[0]
-				sample.minimums = packet[1]
-				sample.living = packet[2]
-				native_life.checkpoints = packet[3]
+				sample["counts"] = packet[0]
+				sample["minimums"] = packet[1]
+				sample["living"] = packet[2]
+				native_life["checkpoints"] = packet[3]
 				return true
 			if packet.size() == 1 and packet[0] is bool and not packet[0]: return false
 	return _validate_sample(state, members, hot_read, pending_hp, sample)
@@ -466,11 +466,11 @@ static func combat_event(state: Dictionary, sequence: int, living_before: int, d
 	if bool(state.commander_present) and not commander_present:
 		loss += 10.0
 	loss *= 1.0 - Rules.diminishing(leadership, 0.25)
-	state.morale = maxf(0.0, float(state.morale) - loss)
-	state.commander_present = commander_present
-	state.last_combat_event = sequence
+	state["morale"] = maxf(0.0, float(state.morale) - loss)
+	state["commander_present"] = commander_present
+	state["last_combat_event"] = sequence
 	if float(state.morale) <= 20.0:
-		state.routed = true
+		state["routed"] = true
 	return _ok({"applied": true, "loss": loss})
 
 static func train(training: float, members: Dictionary, eligible_ids: Array, elapsed_seconds: float, context: Dictionary) -> Dictionary:
@@ -548,24 +548,24 @@ static func train(training: float, members: Dictionary, eligible_ids: Array, ela
 		var player := int(context.get("controlled_person_id", 0)) == int(id)
 		var effort := 0.0
 		while left > EPS:
-			body.work_resting = not player and Fatigue.needs_work_rest(float(body.fatigue), bool(body.get("work_resting", false)))
+			body["work_resting"] = not player and Fatigue.needs_work_rest(float(body.fatigue), bool(body.get("work_resting", false)))
 			if bool(body.work_resting):
 				var rest := minf(left, maxf(0.0, Fatigue.REST_DELAY - float(body.fatigue_rest)) + (float(body.fatigue) - Fatigue.WORK_RESUME_AT) / Fatigue.RECOVERY_RATE)
 				var recovered := Fatigue.advance(float(body.fatigue), float(body.fatigue_rest), rest, 0.0, true)
-				body.fatigue = recovered[0]
-				body.fatigue_rest = recovered[1]
+				body["fatigue"] = recovered[0]
+				body["fatigue_rest"] = recovered[1]
 				if float(body.fatigue) <= Fatigue.WORK_RESUME_AT + EPS:
-					body.fatigue = Fatigue.WORK_RESUME_AT
-					body.work_resting = false
+					body["fatigue"] = Fatigue.WORK_RESUME_AT
+					body["work_resting"] = false
 				left -= rest
 			else:
 				var work := left if player else minf(left, (Fatigue.WORK_REST_AT - float(body.fatigue)) / Fatigue.WORK_RATE)
 				productive += Fatigue.work_seconds(float(body.fatigue), work)
-				body.fatigue = minf(100.0, float(body.fatigue) + work * Fatigue.WORK_RATE)
-				body.fatigue_rest = 0.0
+				body["fatigue"] = minf(100.0, float(body.fatigue) + work * Fatigue.WORK_RATE)
+				body["fatigue_rest"] = 0.0
 				if not player and float(body.fatigue) >= Fatigue.WORK_REST_AT - EPS:
-					body.fatigue = Fatigue.WORK_REST_AT
-					body.work_resting = true
+					body["fatigue"] = Fatigue.WORK_REST_AT
+					body["work_resting"] = true
 				left -= work
 				effort += work
 		result.effort_seconds[int(id)] = effort
@@ -588,7 +588,7 @@ static func train(training: float, members: Dictionary, eligible_ids: Array, ela
 				shared.active = true
 			resting = float(shared.fatigue) >= Fatigue.WORK_REST_AT
 		for body: Dictionary in shared_bodies:
-			body.work_resting = resting
+			body["work_resting"] = resting
 			result.effort_seconds[int(body.person_id)] = effort
 	# The cap stops growth, not the existing order or its actual effort. This also
 	# keeps fatigue partition-independent when a long interval reaches the cap.
@@ -608,4 +608,4 @@ static func _compact(state: Dictionary) -> void:
 		else:
 			histories[key] = cohort
 			compact.append(cohort)
-	state.cohorts = compact
+	state["cohorts"] = compact

@@ -41,9 +41,9 @@ static func tick(raw: Variant, proven_day: int) -> Dictionary:
 	var timer: Dictionary = raw.duplicate(true)
 	if proven_day < int(timer.last_day): return {"ok": false, "code": "REGRESSED"}
 	if proven_day > int(timer.last_day):
-		timer.proven_days = int(timer.proven_days) + 1
-		timer.last_day = proven_day
-		timer.status = status_for(int(timer.proven_days))
+		timer["proven_days"] = int(timer.proven_days) + 1
+		timer["last_day"] = proven_day
+		timer["status"] = status_for(int(timer.proven_days))
 	return {"ok": true, "code": "", "timer": timer}
 
 ## JSON numbers load as floats; restore exact integers after validation.

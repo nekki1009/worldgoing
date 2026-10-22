@@ -144,8 +144,8 @@ static func publish(prepared: Dictionary) -> Dictionary:
 	# With nothing spent, ledger holds the unchanged values, so this write is a no-op.
 	if nation_id != "":
 		var ransom: Dictionary = data.site.equipment_nations[nation_id].ransom_data
-		ransom.spent_day = int(prepared.ledger.spent_day)
-		ransom.spent = int(prepared.ledger.spent)
+		ransom["spent_day"] = int(prepared.ledger.spent_day)
+		ransom["spent"] = int(prepared.ledger.spent)
 	if not data.site.get("trade_leg_receipts") is Dictionary: data.site["trade_leg_receipts"] = {}
 	var saved: Dictionary = data.site["trade_leg_receipts"]
 	var keys: Array = []

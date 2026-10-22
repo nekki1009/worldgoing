@@ -76,7 +76,7 @@ func propose_compound(owner: Object, plan: Dictionary, member_moves: Array) -> S
 func _reject_compound(identity: String, reason: int) -> void:
 	var group: Dictionary = compound_proposals.get(identity, {})
 	if group.is_empty(): return
-	group.accepted = false
+	group["accepted"] = false
 	for pid: int in group.proposal_ids:
 		var proposal = proposal_lookup.get(pid)
 		if proposal != null and proposal.status in [Types.MoveProposalStatus.PENDING, Types.MoveProposalStatus.ACCEPTED]: proposal.status = reason

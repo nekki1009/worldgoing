@@ -109,14 +109,14 @@ var fatigue := 0.0:
 	get: return float(_fatigue_pool.fatigue) if not _fatigue_pool.is_empty() else fatigue
 	set(value):
 		if _fatigue_pool.is_empty(): fatigue = value
-		else: _fatigue_pool.fatigue = value
+		else: _fatigue_pool["fatigue"] = value
 var fatigue_rest := 0.0:
 	get: return float(_fatigue_pool.fatigue_rest) if not _fatigue_pool.is_empty() else fatigue_rest
 	set(value):
 		if _fatigue_pool.is_empty(): fatigue_rest = value
 		else:
-			_fatigue_pool.fatigue_rest = value
-			if value == 0.0: _fatigue_pool.active = true
+			_fatigue_pool["fatigue_rest"] = value
+			if value == 0.0: _fatigue_pool["active"] = true
 var work_resting := false # Original person's work-only latch, not combat/forced player rest.
 var _fatigue_slowdown := 0.0 # Snapshot at action start; no mid-swing retiming.
 var training_query: Callable
@@ -1275,10 +1275,10 @@ func _update_projectile(delta: float) -> void:
 			var old_cell := Vector2i((arrow.ground as Vector2) / TerrainRenderer.CELL_PIXELS)
 			arrow.position += arrow.velocity * step_time
 			arrow.ground += arrow.ground_velocity * step_time
-			arrow.remaining = maxf(0.0, float(arrow.remaining) - (arrow.velocity as Vector2).length() * step_time)
+			arrow["remaining"] = maxf(0.0, float(arrow.remaining) - (arrow.velocity as Vector2).length() * step_time)
 			var next_cell := Vector2i((arrow.ground as Vector2) / TerrainRenderer.CELL_PIXELS)
 			if not SiteCombatRules.terrain_line_clear(data, old_cell, next_cell):
-				arrow.remaining = 0.0
+				arrow["remaining"] = 0.0
 				break
 			var previous: Array[PackedVector2Array] = [WeaponCollision.capsule(old, old, 1.0)]
 			var shapes: Array[PackedVector2Array] = [WeaponCollision.capsule(arrow.position, arrow.position, 1.0)]
@@ -1286,7 +1286,7 @@ func _update_projectile(delta: float) -> void:
 			if not contacts.is_empty():
 				var hit: Dictionary = contacts[0]
 				_submit_contact(hit.target, hit, arrow.profile)
-				arrow.remaining = 0.0
+				arrow["remaining"] = 0.0
 				combat_status = "Projectile contact"
 		if float(arrow.remaining) <= 0.0:
 			projectiles.remove_at(index)
@@ -1518,7 +1518,7 @@ func ranged_apply_hit(source_cell: Vector2i, packet: Dictionary) -> void:
 		guard_break_left = 0.0
 		_exchange_guard_hold = false
 	var contact := packet.duplicate()
-	contact.result = result.duplicate()
+	contact["result"] = result.duplicate()
 	contact.result["guard_break"] = false
 	contact["shield"] = false
 	apply_contact(contact)
@@ -1931,8 +1931,8 @@ func capture_state() -> Dictionary:
 static func normalize_saved_state(original: Dictionary) -> Dictionary:
 	var state := original.duplicate(true)
 	if state.get("schema") == 1:
-		state.knockout_left = float(state.knockout_left) / SiteCombatRules.LEGACY_KNOCKOUT_ACTION_SECONDS * SiteCombatRules.KNOCKOUT_GAME_SECONDS
-		state.schema = 2
+		state["knockout_left"] = float(state.knockout_left) / SiteCombatRules.LEGACY_KNOCKOUT_ACTION_SECONDS * SiteCombatRules.KNOCKOUT_GAME_SECONDS
+		state["schema"] = 2
 	return state
 
 static func valid_state(state: Variant, map: TerrainData) -> bool:

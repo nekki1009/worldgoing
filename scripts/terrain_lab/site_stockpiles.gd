@@ -49,7 +49,7 @@ static func set_local_supply(data: TerrainData, key: String, enabled: bool, fact
 			return Runtime.fail("BUSY", "先停止原加工工作區，才可切換供料位置")
 	var checked := ensure_storage(data, key, faction)
 	if not checked.ok: return checked
-	if enabled: feature.supply_mode = "local"
+	if enabled: feature["supply_mode"] = "local"
 	else: feature.erase("supply_mode")
 	data.environment_revision += 1
 	return Runtime.ok("加工由本人實際卸入的現場物資供料" if enabled else "加工沿原營地供料")

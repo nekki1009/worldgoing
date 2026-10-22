@@ -305,8 +305,8 @@ func admit_prison(guard_id: int, target_id: int, prison_id: String) -> Dictionar
 		if target.owner is CrowdOwner or guard.owner is CrowdOwner:
 			if not target.owner is CrowdOwner or not guard.owner is CrowdOwner or not bool(target.owner.crowd_site.crowd.admit_prison(int(target.unit), int(guard.unit), int(prison_id), lab.terrain.index(slot.cell), lab.terrain.index(slot.contact_cell))):
 				return Runtime.fail("BUSY", "原生人物尚未完成入監接觸")
-		relation.prison_id = prison_id
-		relation.admitted_at_game_seconds = Runtime.now(lab.terrain) * 60.0 # F02 / plan 6.1: true admission time, saved.
+		relation["prison_id"] = prison_id
+		relation["admitted_at_game_seconds"] = Runtime.now(lab.terrain) * 60.0 # F02 / plan 6.1: true admission time, saved.
 		return Runtime.ok("原俘虜已入監；原供養者與隨身物不變", {"person_id": target_id})
 	return Runtime.fail("UNREACHABLE", "須先真實行走至拘押格與接觸格")
 
@@ -581,7 +581,7 @@ func advance_structure_attacks(action_seconds: float) -> void:
 		if not check.ok:
 			_finish(key, check)
 			continue
-		job.elapsed = minf(float(job.duration), float(job.elapsed) + action_seconds)
+		job["elapsed"] = minf(float(job.duration), float(job.elapsed) + action_seconds)
 
 func begin_vehicle_attack(executor_id: int, vehicle_id: String) -> Dictionary:
 	var native_site: Variant = lab.get("crowd_site")
@@ -812,9 +812,9 @@ func _equipment_prepared(job: Dictionary, complete: bool) -> void:
 	elif not complete or not check.ok:
 		_finish(key, Runtime.fail("ATLAS_PREPARATION_FAILED", "共用裝備圖集準備失敗或仍未通過原驗證；本次換裝已取消，原裝與全部物品保留"))
 	else:
-		job.preparing = false
-		job.paused = ""
-		job.elapsed = 0.0 # Only the original clock/post-contact commit can equip.
+		job["preparing"] = false
+		job["paused"] = ""
+		job["elapsed"] = 0.0 # Only the original clock/post-contact commit can equip.
 
 func begin_ranged_craft(identity: int, recipe: String, technology_token: Dictionary = {}) -> Dictionary:
 	var crowd_guard := crowd_action_guard([identity])
@@ -1106,18 +1106,18 @@ func advance(seconds: float, work_plan: Dictionary = {}) -> Dictionary:
 			# This original custody timer never billed fatigue in advance(). Keep
 			# its watcher/reset contract outside positive-effort allocations.
 			if int(executor.hit) != int(job.executor_hit) or _escape_blocked(executor, threats):
-				job.elapsed = 0.0
-				job.paused = "WATCHED"
-				job.executor_hit = int(executor.hit)
+				job["elapsed"] = 0.0
+				job["paused"] = "WATCHED"
+				job["executor_hit"] = int(executor.hit)
 			else:
-				job.paused = ""
-				job.elapsed = minf(ESCAPE_SECONDS, float(job.elapsed) + seconds)
+				job["paused"] = ""
+				job["elapsed"] = minf(ESCAPE_SECONDS, float(job.elapsed) + seconds)
 			continue
 		if work_plan.get("jobs", {}).has(key):
 			var interval: Dictionary = work_plan.jobs[key]
-			job.paused = str(interval.get("paused", ""))
-			if job.paused == "THREAT": job.elapsed = 0.0
-			else: job.elapsed = minf(float(job.duration), float(job.elapsed) + float(interval.get("effective_seconds", 0.0)))
+			job["paused"] = str(interval.get("paused", ""))
+			if job.paused == "THREAT": job["elapsed"] = 0.0
+			else: job["elapsed"] = minf(float(job.duration), float(job.elapsed) + float(interval.get("effective_seconds", 0.0)))
 			settlement_food_prefix_progress(job)
 			for participant: Variant in interval.get("participant_seconds", {}):
 				handled[int(participant)] = float(interval.participant_seconds[participant])
@@ -1130,13 +1130,13 @@ func advance(seconds: float, work_plan: Dictionary = {}) -> Dictionary:
 					if not person.is_empty() and not bool(person.player):
 						_body_set(person, "work_resting", true)
 						if person.owner is CrowdOwner and _shared_work_prefix_consumption.is_empty(): person.owner.work_fatigue_rest(int(participant))
-				if float(job.elapsed) >= float(job.duration) - 0.00000001: job.paused = "" # Legal completion at the REST boundary.
+				if float(job.elapsed) >= float(job.duration) - 0.00000001: job["paused"] = "" # Legal completion at the REST boundary.
 			continue # The original shared collector charged each original pool once.
 		if not work_plan.is_empty():
-			job.paused = "CLOCK_NOT_READY"
+			job["paused"] = "CLOCK_NOT_READY"
 			continue # A planned interval never bills a missing original provider again.
 		if str(job.kind) in ["technology_lesson", "captive_craft", "water_schedule", "food_order"]:
-			job.paused = "CLOCK_NOT_READY"
+			job["paused"] = "CLOCK_NOT_READY"
 			continue # A joint course requires the complete original-pool work plan.
 		if str(job.kind) == "equipment" and str(job.order.mode) == "team_issue":
 			_advance_team_equipment(job, seconds, handled, threats)
@@ -1156,8 +1156,8 @@ func advance(seconds: float, work_plan: Dictionary = {}) -> Dictionary:
 			if work_seconds > 0.0 and not bool(executor.owner.crowd_site.crowd.charge_custody_work(int(executor.unit), work_seconds)):
 				_finish(key, Runtime.fail("BUSY", "原生拘押作業已中斷"))
 				continue
-			job.elapsed = minf(float(job.duration), float(job.elapsed) + work_seconds)
-			job.paused = ""
+			job["elapsed"] = minf(float(job.duration), float(job.elapsed) + work_seconds)
+			job["paused"] = ""
 			handled[int(job.executor_id)] = work_seconds
 			continue
 		var work := seconds
@@ -1167,14 +1167,14 @@ func advance(seconds: float, work_plan: Dictionary = {}) -> Dictionary:
 			var resting := Fatigue.needs_work_rest(fatigue, bool(_body_get(executor, "work_resting")))
 			_body_set(executor, "work_resting", resting)
 			if _threat(executor, threats):
-				job.paused = "THREAT"
-				job.elapsed = 0.0 # This batch must be continuous; completed earlier batches stand.
+				job["paused"] = "THREAT"
+				job["elapsed"] = 0.0 # This batch must be continuous; completed earlier batches stand.
 				continue
 			if resting:
-				job.paused = "REST"
+				job["paused"] = "REST"
 				continue
 			work = minf(work, maxf(0.0, Fatigue.WORK_REST_AT - fatigue) / work_rate)
-		job.paused = ""
+		job["paused"] = ""
 		var remaining := maxf(0.0, float(job.duration) - float(job.elapsed))
 		# Loot and handcraft share work productivity; binding retains its confirmed clock.
 		var productive_work := str(job.kind) in ["loot", "ranged_craft", "tent_deploy", "tent_pack"]
@@ -1193,7 +1193,7 @@ func advance(seconds: float, work_plan: Dictionary = {}) -> Dictionary:
 					high = middle
 			work = high
 			productive = remaining
-		job.elapsed = minf(float(job.duration), float(job.elapsed) + productive)
+		job["elapsed"] = minf(float(job.duration), float(job.elapsed) + productive)
 		var state := Fatigue.advance(fatigue, float(_body_get(executor, "fatigue_rest")), work, work_rate, false)
 		_body_set(executor, "fatigue", state[0])
 		_body_set(executor, "fatigue_rest", state[1])
@@ -1202,7 +1202,7 @@ func advance(seconds: float, work_plan: Dictionary = {}) -> Dictionary:
 			_body_set(executor, "fatigue", Fatigue.WORK_REST_AT)
 			_body_set(executor, "work_resting", true)
 			if float(job.elapsed) < float(job.duration) - 0.00000001:
-				job.paused = "REST"
+				job["paused"] = "REST"
 	return {"handled_seconds": handled}
 
 func _advance_team_equipment(job: Dictionary, seconds: float, handled: Dictionary, threats: Dictionary) -> void:
@@ -1218,11 +1218,11 @@ func _advance_team_equipment(job: Dictionary, seconds: float, handled: Dictionar
 			var resting := Fatigue.needs_work_rest(fatigue, bool(_body_get(person, "work_resting")))
 			_body_set(person, "work_resting", resting)
 			if _threat(person, threats):
-				job.elapsed = 0.0
-				job.paused = "THREAT"
+				job["elapsed"] = 0.0
+				job["paused"] = "THREAT"
 				return
 			if resting:
-				job.paused = "REST"
+				job["paused"] = "REST"
 				return
 		var pool := Fatigue.pool(person.body)
 		var group: Dictionary = {}
@@ -1232,18 +1232,18 @@ func _advance_team_equipment(job: Dictionary, seconds: float, handled: Dictionar
 		if group.is_empty():
 			group = {"pool": pool, "body": person.body, "count": 0, "limit": false}
 			pools.append(group)
-		group.count = int(group.count) + 1
-		group.limit = bool(group.limit) or not bool(person.player)
+		group["count"] = int(group.count) + 1
+		group["limit"] = bool(group.limit) or not bool(person.player)
 	var work := minf(seconds, maxf(0.0, float(job.duration) - float(job.elapsed)))
 	for group: Dictionary in pools:
 		if bool(group.limit):
 			var group_rate := Fatigue.effort_rate(group.body) * int(group.count)
 			work = minf(work, maxf(0.0, Fatigue.WORK_REST_AT - Fatigue.read(group.body)) / group_rate)
 	if work <= 0.0:
-		job.paused = "REST"
+		job["paused"] = "REST"
 		return
-	job.paused = ""
-	job.elapsed = minf(float(job.duration), float(job.elapsed) + work)
+	job["paused"] = ""
+	job["elapsed"] = minf(float(job.duration), float(job.elapsed) + work)
 	for person: Dictionary in people:
 		var fatigue := float(_body_get(person, "fatigue"))
 		var state := Fatigue.advance(fatigue, float(_body_get(person, "fatigue_rest")), work, Fatigue.effort_rate(person.body), false)
@@ -1253,7 +1253,7 @@ func _advance_team_equipment(job: Dictionary, seconds: float, handled: Dictionar
 		if not bool(person.player) and state[0] >= Fatigue.WORK_REST_AT - 0.000000001:
 			_body_set(person, "fatigue", Fatigue.WORK_REST_AT)
 			_body_set(person, "work_resting", true)
-			if float(job.elapsed) < float(job.duration) - 0.00000001: job.paused = "REST"
+			if float(job.elapsed) < float(job.duration) - 0.00000001: job["paused"] = "REST"
 
 func settle_after_contacts() -> Array[Dictionary]:
 	if bool(lab.terrain.site.get("paused", false)):
@@ -1289,17 +1289,17 @@ func settle_after_contacts() -> Array[Dictionary]:
 		if check.ok and str(job.kind) == "escape":
 			var person := _person(int(job.executor_id))
 			if int(person.hit) != int(job.executor_hit) or _escape_blocked(person, {}):
-				job.elapsed = 0.0
-				job.paused = "WATCHED"
-				job.executor_hit = int(person.hit)
+				job["elapsed"] = 0.0
+				job["paused"] = "WATCHED"
+				job["executor_hit"] = int(person.hit)
 		elif check.ok and str(job.kind) == "equipment" and str(job.order.mode) == "team_issue":
 			var identities: Array[int] = job.order.target_ids.duplicate()
 			if not identities.has(int(job.executor_id)): identities.append(int(job.executor_id))
 			for identity: int in identities:
 				var person := _person(identity)
 				if not bool(person.player) and _threat(person, {}):
-					job.elapsed = 0.0
-					job.paused = "THREAT"
+					job["elapsed"] = 0.0
+					job["paused"] = "THREAT"
 					break
 		elif check.ok and str(job.kind) == "captive_craft":
 			pass # Original context rechecks actual guard-side threat after contacts.
@@ -1307,14 +1307,14 @@ func settle_after_contacts() -> Array[Dictionary]:
 			for identity: int in [int(job.executor_id), int(job.target_id)]:
 				var participant := _person(identity)
 				if not bool(participant.player) and _threat(participant, {}):
-					job.elapsed = 0.0
-					job.paused = "THREAT"
+					job["elapsed"] = 0.0
+					job["paused"] = "THREAT"
 					break
 		elif check.ok and str(job.kind) not in ["structure_attack", "vehicle_attack", "siege_takeover"]:
 			var executor := _person(int(job.executor_id))
 			if not bool(executor.player) and _threat(executor, {}):
-				job.elapsed = 0.0
-				job.paused = "THREAT" # A new contact/wake threat wins the completion boundary.
+				job["elapsed"] = 0.0
+				job["paused"] = "THREAT" # A new contact/wake threat wins the completion boundary.
 		if not check.ok:
 			_finish(key, check)
 		elif str(job.paused).is_empty() and float(job.elapsed) >= float(job.duration) - 0.00000001:
@@ -1352,17 +1352,17 @@ func _finish(key: String, result: Dictionary) -> void:
 		if not original.is_empty() and float(original.hp) > 0.0:
 			# Failed terminal re-proof must retain the real person and paid point.
 			if not bool(result.get("ok", false)):
-				job.exit_blocked = true
-				job.link_exit = true
+				job["exit_blocked"] = true
+				job["link_exit"] = true
 				lab.site_controller.vehicles.prepare_boarding_exit(job)
 				return
 		if bool(job.get("link_exit", false)) or not original.is_empty() and original.row.has("ship_death_world"):
 			lab.site_controller.vehicles._boarding_exit_clear(job)
-			job.link_released = true
+			job["link_released"] = true
 		else:
 			lab.site_controller.vehicles.settle_link_position(job)
 			var released: Dictionary = lab.site_controller.vehicles.release_link_crosser(job)
-			job.link_released = bool(released.ok)
+			job["link_released"] = bool(released.ok)
 		result["link_released"] = bool(job.link_released)
 	_release_work_hold(job)
 	_jobs.erase(key)
@@ -1759,7 +1759,7 @@ func _person(identity: int, require_items: bool = true) -> Dictionary:
 		return owner.person(unit, require_items)
 	var body: Variant = owner.combat_units[unit] if unit >= 0 else owner
 	if unit >= 0:
-		person.hp = float(owner.combat_hot_get(unit, &"hp"))
+		person["hp"] = float(owner.combat_hot_get(unit, &"hp"))
 	var holder: Variant = body.get("item_state")
 	if require_items and (not holder is Dictionary or not Runtime._item_holder_shape(holder)):
 		return {}
@@ -1787,9 +1787,9 @@ func _person(identity: int, require_items: bool = true) -> Dictionary:
 		var vehicles: Variant = lab.site_controller.vehicles
 		var ship: Dictionary = vehicles.ship_for_person(identity)
 		if not ship.is_empty():
-			person.cell = vehicles.ship_person_cell(identity)
+			person["cell"] = vehicles.ship_person_cell(identity)
 			var job: Dictionary = _jobs.get(str(identity), {})
-			person.moving = vehicles._ship_in_journey(str(ship.id)) or not ship.move.is_empty() or str(job.get("kind", "")) in ["ship_helm", "ship_walk", "ship_cross", "ship_evac"]
+			person["moving"] = vehicles._ship_in_journey(str(ship.id)) or not ship.move.is_empty() or str(job.get("kind", "")) in ["ship_helm", "ship_walk", "ship_cross", "ship_evac"]
 	return person
 
 func _ready(person: Dictionary, allow_guard: bool = false) -> bool:
@@ -1994,8 +1994,8 @@ func _advance_boarding_link(key: String, job: Dictionary, seconds: float) -> voi
 	if str(job.paused) == "AWAIT_COMMIT":
 		_commit_boarding_link(key, job)
 		return
-	job.elapsed = minf(float(job.duration), float(job.elapsed) + seconds)
-	if float(job.elapsed) >= float(job.duration): job.paused = "AWAIT_COMMIT"
+	job["elapsed"] = minf(float(job.duration), float(job.elapsed) + seconds)
+	if float(job.elapsed) >= float(job.duration): job["paused"] = "AWAIT_COMMIT"
 
 ## B2S4: the held action commits on the next action tick, after the same re-proof.
 func _commit_boarding_link(key: String, job: Dictionary) -> void:
@@ -2059,7 +2059,7 @@ func _advance_ship_job(key: String, job: Dictionary, seconds: float) -> void:
 		_finish(key, _commit_ship_path(job))
 		return
 	var work := minf(seconds, maxf(0.0, float(job.duration) - float(job.elapsed)))
-	job.elapsed = minf(float(job.duration), float(job.elapsed) + work)
+	job["elapsed"] = minf(float(job.duration), float(job.elapsed) + work)
 	# This is movement on the original ACTION clock, not WORK on the game clock.
 	# Original fatigue handles its no-rest state; the boat's crew work is separate.
 
@@ -2151,9 +2151,9 @@ func _housing_job_context(job: Dictionary) -> Dictionary:
 	return checked
 
 func _cancel_housing_job(job: Dictionary, reason: String = "已取消返家") -> void:
-	job.cancelled = true
-	job.reason = reason
-	job.paused = "CANCELLED"
+	job["cancelled"] = true
+	job["reason"] = reason
+	job["paused"] = "CANCELLED"
 	var person := _person(int(job.executor_id), false)
 	if not person.is_empty() and person.owner is CrowdOwner and person.owner.crowd_site.crowd.has_method("cancel_housing_step"):
 		person.owner.crowd_site.crowd.cancel_housing_step(int(person.unit))
@@ -2179,18 +2179,18 @@ func advance_housing_jobs(action_seconds: float) -> void:
 		if bool(person.moving) or not _prison_stopped(person): continue
 		if not _ready(person): _cancel_housing_job(job, "原返家人物已開始其他動作"); continue
 		if lab.terrain.index(person.cell) == int(job.cell): continue
-		job.route_elapsed = float(job.route_elapsed) + action_seconds
+		job["route_elapsed"] = float(job.route_elapsed) + action_seconds
 		if float(job.route_elapsed) < 0.5: continue
-		job.route_elapsed = 0.0
+		job["route_elapsed"] = 0.0
 		var route: Array[Vector2i] = lab.terrain.path_between(person.cell, lab.terrain.cell_from_index(int(job.cell)), func(cell: Vector2i) -> bool: return prison_blocked(cell, [int(job.executor_id)]))
-		if route.is_empty(): job.paused = "WAIT_OCCUPANCY"; continue
+		if route.is_empty(): job["paused"] = "WAIT_OCCUPANCY"; continue
 		var committed := false
 		if person.owner is CrowdOwner:
 			committed = bool(person.owner.crowd_site.crowd.order_housing_step(int(person.unit), lab.terrain.index(route[0])))
 			if committed: person.owner.crowd_site._occupancy_cache.clear()
 		elif int(person.unit) >= 0: committed = person.owner._reserve_combat_step(int(person.unit), route[0])
 		else: committed = person.owner.step(route[0] - Vector2i(person.cell), false)
-		job.paused = "" if committed else "WAIT_OCCUPANCY"
+		job["paused"] = "" if committed else "WAIT_OCCUPANCY"
 
 func _settle_housing_job(key: String, job: Dictionary) -> void:
 	var person := _person(int(job.executor_id), false)
@@ -2251,7 +2251,7 @@ func _advance_ground_boundary(key: String, job: Dictionary, action_seconds: floa
 	if not context.ok:
 		_finish(key, context)
 		return
-	job.elapsed = minf(float(job.duration), float(job.elapsed) + action_seconds)
+	job["elapsed"] = minf(float(job.duration), float(job.elapsed) + action_seconds)
 
 func _settle_ground_boundary(key: String, job: Dictionary) -> void:
 	var context := _ground_boundary_context(job)
@@ -2403,11 +2403,11 @@ func _fire_suppress_context(job: Dictionary) -> Dictionary:
 	return Runtime.ok("", {"person": person, "movement": movement, "target": target, "target_cell": contact.target_cell})
 
 func _cancel_fire_suppress(job: Dictionary, result: Dictionary) -> void:
-	job.cancelled = true
-	job.cancel_result = result
-	job.pending = {}
-	job.paused = str(result.get("code", "CANCELLED"))
-	job.phase = "SETTLING"
+	job["cancelled"] = true
+	job["cancel_result"] = result
+	job["pending"] = {}
+	job["paused"] = str(result.get("code", "CANCELLED"))
+	job["phase"] = "SETTLING"
 	if is_instance_valid(job.executor_owner): job.executor_owner.release_suppress_approach(int(job.executor_id), int(job.job_token))
 	elif is_instance_valid(job.registry): job.registry.release_work_slot(job.lease)
 
@@ -2434,32 +2434,32 @@ func advance_fire_jobs(action_begin: float, action_end: float, game_seconds: flo
 		if str(job.kind) != "fire_suppress": continue
 		if bool(job.cancelled): _settle_cancelled_fire_suppress(key, job); continue
 		if action_end <= float(job.last_interval_end) + Runtime.FIRE_EPS: continue
-		job.pending = {}
-		job.last_interval_end = action_end
+		job["pending"] = {}
+		job["last_interval_end"] = action_end
 		if action_end > float(job.action_deadline): _cancel_fire_suppress(job, Runtime.fail("WORK_DEADLINE")); continue
 		var check := _fire_suppress_context(job)
 		if not check.ok: _cancel_fire_suppress(job, check); continue
 		if bool(check.target.complete): _cancel_fire_suppress(job, Runtime.ok("原工作目標已完成；原損壞與燃料保持")); continue
-		job.supply_q = int(check.person.holder.get(str(job.get("supply_field", "fire_lab_suppression_q")), 0))
+		job["supply_q"] = int(check.person.holder.get(str(job.get("supply_field", "fire_lab_suppression_q")), 0))
 		if int(job.supply_q) <= 0: _cancel_fire_suppress(job, Runtime.fail("NO_SUPPRESSION_SUPPLY")); continue
 		if str(check.movement.phase) != "ARRIVED":
 			if action_end > float(job.approach_deadline): _cancel_fire_suppress(job, Runtime.fail("WORK_APPROACH_DEADLINE")); continue
-			job.phase = "MOVING_TO_SLOT"
-			job.paused = "MOVING"
+			job["phase"] = "MOVING_TO_SLOT"
+			job["paused"] = "MOVING"
 			continue
 		if bool(check.person.moving) or check.person.cell != job.slot or not _ready(check.person):
 			_cancel_fire_suppress(job, Runtime.fail("INTERRUPTED")); continue
 		var fatigue := float(_body_get(check.person, "fatigue"))
 		var resting := Fatigue.needs_work_rest(fatigue, bool(_body_get(check.person, "work_resting")))
 		_body_set(check.person, "work_resting", resting)
-		if resting: job.phase = "REST"; job.paused = "REST"; continue
-		job.phase = "WORKING"
-		job.paused = ""
+		if resting: job["phase"] = "REST"; job["paused"] = "REST"; continue
+		job["phase"] = "WORKING"
+		job["paused"] = ""
 		var direction: Vector2i = check.target_cell - Vector2i(job.slot)
 		if check.person.owner is TerrainArmy:
 			check.person.owner.facing[int(check.person.unit)] = direction
 			check.person.owner._mark_visual_row(int(check.person.unit))
-		job.pending = {"begin": action_begin, "end": action_end, "game_seconds": game_seconds}
+		job["pending"] = {"begin": action_begin, "end": action_end, "game_seconds": game_seconds}
 
 func _fire_work_handled_seconds(job: Dictionary, game_seconds: float) -> float:
 	# Suppress jobs do not enter generic advance/commit. Reserve this original
@@ -2485,7 +2485,7 @@ func _settle_fire_suppress(key: String, job: Dictionary) -> void:
 	if not check.ok: _cancel_fire_suppress(job, check); _settle_cancelled_fire_suppress(key, job); return
 	if job.pending.is_empty(): return
 	var pending: Dictionary = job.pending
-	job.pending = {} # The same contact-completion callback cannot bill twice.
+	job["pending"] = {} # The same contact-completion callback cannot bill twice.
 	if str(check.movement.phase) != "ARRIVED" or bool(check.person.moving) or not _ready(check.person):
 		_cancel_fire_suppress(job, Runtime.fail("INTERRUPTED")); return
 	if bool(check.target.complete): _cancel_fire_suppress(job, Runtime.ok("原工作目標已完成")); return
@@ -2495,17 +2495,17 @@ func _settle_fire_suppress(key: String, job: Dictionary) -> void:
 	var game_ratio := float(pending.game_seconds) / action_seconds
 	var rate := Fatigue.effort_rate(person.body)
 	var work := minf(action_seconds, maxf(0.0, Fatigue.WORK_REST_AT - float(_body_get(person, "fatigue"))) / rate / game_ratio)
-	if work <= Runtime.FIRE_EPS: job.phase = "REST"; job.paused = "REST"; _body_set(person, "work_resting", true); return
+	if work <= Runtime.FIRE_EPS: job["phase"] = "REST"; job["paused"] = "REST"; _body_set(person, "work_resting", true); return
 	var exact := float(job.fraction_q) + work * int(profile.supply_q_per_second)
 	var requested := floori(exact + Runtime.FIRE_EPS)
 	if requested == 0:
-		job.fraction_q = exact
+		job["fraction_q"] = exact
 		_charge_fire_suppress_work(person, work * game_ratio)
 		return
 	var prepared := Runtime.fire_prepare_suppression(lab.terrain, str(job.target_key), int(job.generation),
 		float(pending.begin), float(pending.begin) + work, requested, person.holder, int(job.executor_version), str(job.get("fire_work_mode", "SUPPRESS")))
 	if not prepared.ok:
-		if str(prepared.get("code", "")) == "CAPACITY_DEFERRED": job.paused = "CAPACITY_DEFERRED"; return
+		if str(prepared.get("code", "")) == "CAPACITY_DEFERRED": job["paused"] = "CAPACITY_DEFERRED"; return
 		_cancel_fire_suppress(job, prepared); return
 	if int(prepared.get("paid_q", 0)) == 0:
 		if bool(prepared.get("complete", false)): _cancel_fire_suppress(job, Runtime.ok("原工作目標已完成"))
@@ -2526,13 +2526,13 @@ func _settle_fire_suppress(key: String, job: Dictionary) -> void:
 	var committed := Runtime.fire_commit_suppression(lab.terrain, prepared)
 	if not committed.ok: _cancel_fire_suppress(job, committed); return
 	var paid := int(committed.paid_q)
-	job.executor_version = int(person.holder.version)
-	job.supply_q = int(person.holder[str(profile.supply_field)])
-	job.committed_q = int(job.committed_q) + paid
-	job.fraction_q = maxf(0.0, exact - requested) if paid == requested else 0.0
+	job["executor_version"] = int(person.holder.version)
+	job["supply_q"] = int(person.holder[str(profile.supply_field)])
+	job["committed_q"] = int(job.committed_q) + paid
+	job["fraction_q"] = maxf(0.0, exact - requested) if paid == requested else 0.0
 	var effort := charged_work * game_ratio
 	_charge_fire_suppress_work(person, effort)
-	job.elapsed = float(job.elapsed) + float(paid) / int(profile.supply_q_per_second)
+	job["elapsed"] = float(job.elapsed) + float(paid) / int(profile.supply_q_per_second)
 	if int(job.supply_q) == 0: _cancel_fire_suppress(job, Runtime.fail("NO_SUPPRESSION_SUPPLY", "本人有限補給已用盡；既有已付效果保留"))
 
 func _charge_fire_suppress_work(person: Dictionary, game_seconds: float) -> void:
@@ -2565,7 +2565,7 @@ func export_fire_jobs(action_cursor: float) -> Dictionary:
 		for field: String in FIRE_JOB_NUMBER_FIELDS: row[field] = job[field]
 		for field: String in FIRE_JOB_STRING_FIELDS: row[field] = job[field]
 		if bool(job.cancelled):
-			row.cancel_result = {"ok": bool(job.cancel_result.get("ok", false)), "code": str(job.cancel_result.get("code", "CANCELLED")), "message": str(job.cancel_result.get("message", ""))}
+			row["cancel_result"] = {"ok": bool(job.cancel_result.get("ok", false)), "code": str(job.cancel_result.get("code", "CANCELLED")), "message": str(job.cancel_result.get("message", ""))}
 		rows.append(row)
 	var raw := {"version": 1, "config_version": FIRE_JOBS_CONFIG_VERSION, "site_id": str(lab.terrain.site.id), "action_cursor": action_cursor, "next_token": _next_fire_job_token, "jobs": rows}
 	var check := validate_fire_jobs_snapshot(raw, action_cursor)
@@ -2592,8 +2592,8 @@ func validate_fire_jobs_snapshot(raw: Variant, action_cursor: float) -> Dictiona
 	var tokens := {}
 	var used_tokens := {}
 	var state: Dictionary = raw.duplicate(true)
-	state.version = 1
-	state.next_token = int(raw.next_token)
+	state["version"] = 1
+	state["next_token"] = int(raw.next_token)
 	for row: Variant in state.jobs:
 		if not Runtime._fire_snapshot_keys(row, fields) or not Runtime._building_integer(row.team_id, 1, 2147483647) \
 			or not row.slot is Array or row.slot.size() != 2 or not Runtime._building_integer(row.slot[0], 0, lab.terrain.size.x - 1) \
@@ -2845,9 +2845,9 @@ func _technology_candidate() -> Dictionary:
 	SiteOffices.upgrade(result.offices)
 	SiteOffices.ensure_catalog(result.offices, "family")
 	if not result.has("technology"):
-		result.version = 3
-		result.family_id = Crypto.new().generate_random_bytes(16).hex_encode()
-		result.technology = {"version": 1, "known": [], "holder_site_id": _technology_site_id(), "epoch": 1, "next_project": 1, "active": 0, "projects": []}
+		result["version"] = 3
+		result["family_id"] = Crypto.new().generate_random_bytes(16).hex_encode()
+		result["technology"] = {"version": 1, "known": [], "holder_site_id": _technology_site_id(), "epoch": 1, "next_project": 1, "active": 0, "projects": []}
 	return result
 
 func _technology_source_key(family: Dictionary, project: Dictionary) -> String:
@@ -2891,10 +2891,10 @@ func prepare_technology(requester_id: int, executor_id: int, mode: String = "fir
 		selected = {"id": int(tech.next_project), "purpose": wanted, "tech_id": "F07", "rules_version": 1, "closed": false,
 			"executor": _technology_ref(executor_id), "next_attempt": 1, "receipts": [], "budget": {}, "consents": []}
 		tech.projects.append(selected)
-		tech.next_project = int(tech.next_project) + 1
+		tech["next_project"] = int(tech.next_project) + 1
 	if bool(selected.closed): return Runtime.fail("ALREADY_LEARNED", "此用途已完成，不重開或重發成果")
-	selected.executor = _technology_ref(executor_id)
-	tech.active = int(selected.id)
+	selected["executor"] = _technology_ref(executor_id)
+	tech["active"] = int(selected.id)
 	if not Technology.valid_family_tech(tech): return Runtime.fail("INVALID_TECHNOLOGY")
 	lab.terrain.site["family"] = family
 	return Runtime.ok("已選原項目與原人；尚未占人、扣料或授予技藝")
@@ -2985,7 +2985,7 @@ func _begin_technology_trial(_requester_id: int, executor_id: int) -> Dictionary
 	check = begin_ranged_craft(executor_id, "bow")
 	if not check.ok: return check
 	var job: Dictionary = _jobs[str(executor_id)]
-	job.duration = Technology.TRIAL_SECONDS
+	job["duration"] = Technology.TRIAL_SECONDS
 	job.merge({"technology_project": int(project.id), "technology_purpose": str(project.purpose), "technology_family_id": str(family.family_id),
 		"technology_epoch": int(family.technology.epoch), "technology_attempt": int(project.next_attempt),
 		"technology_executor_owner": _person(executor_id).owner, "technology_executor_body": _person(executor_id).body})
@@ -3034,7 +3034,7 @@ func _commit_technology_trial(job: Dictionary) -> Dictionary:
 		if person_candidate.is_empty(): return Runtime.fail("INVALID_TECHNOLOGY")
 		if not candidate.known.has("F07"): candidate.known.append("F07")
 		project.closed = true
-		candidate.active = 0
+		candidate["active"] = 0
 	if not Technology.valid_family_tech(candidate): return Runtime.fail("INVALID_TECHNOLOGY")
 	# Every technology failure is above the original synchronous real-item commit.
 	var result := Runtime.ranged_craft(lab.terrain, "bow", int(job.executor_id))
@@ -3141,7 +3141,7 @@ func technology_query() -> Dictionary:
 		projection = {"id": int(project.id), "purpose": str(project.purpose), "mode": Technology.mode(project), "tech_id": "F07", "executor_id": int(project.executor.get("person_id", -1)),
 			"stages": Technology.stages(project, project.executor, tech.get("person_links", [])), "consents": [], "status_text": "已選項目，等待合法試作", "block_reasons": []}
 		var budget: Dictionary = project.budget
-		projection.budget = {"cap": budget.get("cap", {"wood": 0, "fiber": 0}).duplicate(), "spent": budget.get("spent", {"wood": 0, "fiber": 0}).duplicate(),
+		projection["budget"] = {"cap": budget.get("cap", {"wood": 0, "fiber": 0}).duplicate(), "spent": budget.get("spent", {"wood": 0, "fiber": 0}).duplicate(),
 			"status": str(budget.get("status", "pending")), "source_site_id": str(budget.get("source_site_id", _technology_site_id())), "holder": "depot",
 			"grantor_id": int(budget.get("grantor", {}).get("person_id", -1)), "active": str(budget.get("status", "")) == "granted"}
 		for consent: Dictionary in project.consents:
@@ -3197,17 +3197,17 @@ func work_requests(seconds: float) -> Array[Dictionary]:
 		var request: Dictionary = {"provider": "person_actions", "key": key, "participants": participants, "remaining": maxf(0.0, float(job.duration) - float(job.elapsed)),
 			"productive_kind": kind, "progress_multiplier": _technology_work_multiplier(job), "max_game_seconds": seconds, "paused": paused}
 		if str(job.kind) == "ranged_craft" and paused.is_empty() and float(request.remaining) <= seconds * float(request.progress_multiplier) + Fatigue.WORK_PLAN_EPS:
-			request.payment_source = lab.terrain.site.inventory
-			request.payment = Runtime.RANGED_RECIPES[str(job.recipe)].cost.duplicate(true)
-			request.payment_key = "person_actions:" + key
+			request["payment_source"] = lab.terrain.site.inventory
+			request["payment"] = Runtime.RANGED_RECIPES[str(job.recipe)].cost.duplicate(true)
+			request["payment_key"] = "person_actions:" + key
 		if str(job.kind) == "technology_lesson" and job.has("nation_course_id") and paused.is_empty() \
 			and float(request.remaining) <= seconds * float(request.progress_multiplier) + Fatigue.WORK_PLAN_EPS:
 			var source: Dictionary = equipment_orders.prepare_funded_course_source(str(job.nation_course_nation), str(job.nation_course_id), job)
 			if source.ok:
-				request.payment_source = source.source_cargo
-				request.payment = {"grain": 2}
-				request.payment_key = "person_actions:" + key
-			else: request.paused = str(source.get("code", "MATERIALS"))
+				request["payment_source"] = source.source_cargo
+				request["payment"] = {"grain": 2}
+				request["payment_key"] = "person_actions:" + key
+			else: request["paused"] = str(source.get("code", "MATERIALS"))
 		requests.append(request)
 	return requests
 
@@ -3500,9 +3500,9 @@ func _captive_craft_request(job: Dictionary, seconds: float) -> Dictionary:
 		"remaining": maxf(0.0, float(job.duration) - float(job.elapsed)), "productive_kind": "joint",
 		"progress_multiplier": 1.0, "max_game_seconds": seconds, "paused": paused}
 	if paused.is_empty() and float(request.remaining) <= seconds + Fatigue.WORK_PLAN_EPS:
-		request.payment_source = lab.terrain.site.inventory
-		request.payment = Runtime.RANGED_RECIPES[str(job.recipe)].cost.duplicate(true)
-		request.payment_key = "person_actions:" + str(job.executor_id)
+		request["payment_source"] = lab.terrain.site.inventory
+		request["payment"] = Runtime.RANGED_RECIPES[str(job.recipe)].cost.duplicate(true)
+		request["payment_key"] = "person_actions:" + str(job.executor_id)
 	return request
 
 func captive_work_rest_allowed(identity: int) -> bool:
@@ -3920,9 +3920,9 @@ func prepare_scope_technology(requester_id: int, executor_id: int, tech_id: Stri
 			if candidate.has("technology_operations"): original_fields.append("technology_operations")
 		if candidate.has("technology_operations") and not SiteSettlement.valid_technology_operations(lab.terrain, candidate.technology_operations): return Runtime.fail("CORRUPT_STATE")
 		if not Technology.keys(candidate, original_fields): return Runtime.fail("CORRUPT_STATE", "原聚落欄位不符")
-	candidate.technology = prepared.state
+	candidate["technology"] = prepared.state
 	if scope == "settlement":
-		candidate.version = 2
+		candidate["version"] = 2
 		var fields: Array = SiteSettlement.FIELDS.duplicate()
 		fields.append("technology")
 		if candidate.has("technology_operations"): fields.append("technology_operations")
@@ -3980,7 +3980,7 @@ func _technology_phase_context(token: Dictionary, binding: bool = false, require
 		# Candidate/prepayment queries below still compare their held version;
 		# later work rechecks current authority and the SAME true owner references.
 		var current := source.duplicate()
-		current.holder_version = int(source.physical_holder.version)
+		current["holder_version"] = int(source.physical_holder.version)
 		var checked := _technology_original_source_query(token, current)
 		if not checked.ok or checked.holder != project.budget.holder or checked.grantor != project.budget.grantor: return Runtime.fail("STALE_SOURCE")
 		for resource: String in project.budget.cap:
@@ -4064,7 +4064,7 @@ func publish_phase_binding(prepared: Dictionary) -> void:
 	prepared.owner.technology = prepared.state
 	if not prepared.get("original_source", {}).is_empty():
 		var source: Dictionary = prepared.original_source.duplicate()
-		source.holder_version = int(source.physical_holder.version)
+		source["holder_version"] = int(source.physical_holder.version)
 		_technology_source_refs[str(prepared.source_key)] = source
 
 func begin_scope_technology_phase(requester_id: int, scope: String, scope_id: String, binding: String, target_id: String, work_target: Dictionary = {}) -> Dictionary:
@@ -4126,9 +4126,9 @@ func stop_scope_technology(requester_id: int, scope: String, scope_id: String, p
 			if person.body is Dictionary: lab.site_controller.work_team.cancel(executor_id)
 			else:
 				var task: Dictionary = lab.terrain.site.manual if person.owner == lab.character else lab.terrain.site.worker
-				task.mode = "idle"
-				task.target = ""
-				task.progress = 0.0
+				task["mode"] = "idle"
+				task["target"] = ""
+				task["progress"] = 0.0
 	var job: Dictionary = _jobs.get(_job_key_for(executor_id), {})
 	var job_token: Dictionary = job.get("nation_token", {})
 	# job_for() is a deep read projection; identity guards need the original job.
@@ -4175,7 +4175,7 @@ func publish_phase_payment(prepared: Dictionary) -> void:
 	prepared.owner.technology = prepared.state
 	if not prepared.get("original_source", {}).is_empty():
 		var source: Dictionary = prepared.original_source.duplicate()
-		source.holder_version = int(source.physical_holder.version)
+		source["holder_version"] = int(source.physical_holder.version)
 		_technology_source_refs[str(prepared.source_key)] = source
 
 func technology_phase_receipt_candidate(token: Dictionary, original: Dictionary) -> Dictionary:
@@ -4772,7 +4772,7 @@ func prepare_nation_procurement_delivery(nation_id: String, spec_id: String, nex
 	if not spec.has("tech_trial"):
 		binding = technology_phase_binding_candidate(token, source)
 		if not binding.ok: return binding
-		next_spec.tech_trial = token
+		next_spec["tech_trial"] = token
 	var payment := {}
 	var job := {}
 	if next_spec.receipts.size() == 2:
@@ -5172,13 +5172,13 @@ func prepare_gd_contact_job_segment(planned: Dictionary, seconds: float, defer_r
 			for prior: Dictionary in _gd_contact_job_capture.runtime_priors: already = already or is_same(prior.task, original.task)
 			if already: continue
 		var prefix: Dictionary = original.duplicate(false)
-		prefix.plan = planned
-		prefix.allocation = allocation
-		prefix.runtime_priors = _gd_contact_job_segment.priors
-		prefix.actual_seconds = actual
-		prefix.productive_seconds = productive
-		prefix.applied_productive_seconds = productive * float(original.entry.get("productivity", 1.0)) * float(original.entry.get("factor", 1.0))
-		prefix.group_actual_seconds = float(allocation.get("actual_seconds", 0.0))
+		prefix["plan"] = planned
+		prefix["allocation"] = allocation
+		prefix["runtime_priors"] = _gd_contact_job_segment.priors
+		prefix["actual_seconds"] = actual
+		prefix["productive_seconds"] = productive
+		prefix["applied_productive_seconds"] = productive * float(original.entry.get("productivity", 1.0)) * float(original.entry.get("factor", 1.0))
+		prefix["group_actual_seconds"] = float(allocation.get("actual_seconds", 0.0))
 		_gd_contact_job_segment.prefixes.append(prefix)
 	if defer_runtime: return Runtime.ok("同段真PA分配已登記", {"segment": _gd_contact_job_segment})
 	return validate_gd_contact_job_runtime_segment(_gd_contact_job_segment)
@@ -5283,14 +5283,14 @@ func prepare_checked_controlled_prefix_allocations(admitted: Dictionary, runtime
 		var identity: int = int(job.executor_id)
 		if entry.is_empty() or not is_same(entry.job, job) or not is_same(entry.task, held.task) or not held.people.has(identity): return Runtime.fail("STALE_SOURCE")
 		var start: Dictionary = held.people[identity].duplicate(false)
-		start.item_state = start.holder
-		start.cell = start.start_cell
-		start.occupied = _tent_occupied
-		start.carry_limit = int(entry.carry_limit)
-		start.row = start.body
+		start["item_state"] = start.holder
+		start["cell"] = start.start_cell
+		start["occupied"] = _tent_occupied
+		start["carry_limit"] = int(entry.carry_limit)
+		start["row"] = start.body
 		var target_ref: Dictionary = held.feature if held.kind == "technology_feature" else held.vehicle
 		var action: String = str(held.task.get("action", ""))
-		start.work_unit = target_ref.get("repair", {}) if action == "repair" else target_ref.get("pending_build", target_ref) if action == "construct" and held.kind == "technology_feature" else held.build if held.kind == "technology_vehicle" else target_ref
+		start["work_unit"] = target_ref.get("repair", {}) if action == "repair" else target_ref.get("pending_build", target_ref) if action == "construct" and held.kind == "technology_feature" else held.build if held.kind == "technology_vehicle" else target_ref
 		var actual: float = float(item.allocation.get("participant_seconds", {}).get(identity, 0.0))
 		var productive: float = float(item.allocation.get("participant_effective_seconds", {}).get(identity, 0.0))
 		var multiplier: float = float(entry.get("productivity", 1.0)) * float(entry.get("factor", 1.0))
@@ -5406,8 +5406,8 @@ func _prepare_ranged_technology_completion(job: Dictionary) -> Dictionary:
 	if complete:
 		if person_candidate.is_empty(): return Runtime.fail("INVALID_TECHNOLOGY")
 		if not candidate.known.has("F07"): candidate.known.append("F07")
-		project.closed = true
-		candidate.active = 0
+		project["closed"] = true
+		candidate["active"] = 0
 	if not Technology.valid_family_tech(candidate): return Runtime.fail("INVALID_TECHNOLOGY")
 	return Runtime.ok("", {"kind": "family", "owner": family, "record": record, "record_before": record.duplicate(true),
 		"state": candidate, "person": executor, "person_candidate": person_candidate, "complete": complete,
@@ -5420,7 +5420,7 @@ func _publish_ranged_technology_completion(prepared: Dictionary, result: Diction
 	elif prepared.kind == "family":
 		prepared.owner.technology = prepared.state
 		if bool(prepared.complete): _body_set(prepared.person, "technology", prepared.person_candidate)
-		result.message = str(prepared.message)
+		result["message"] = str(prepared.message)
 
 func _settle_ranged_terminal_chunk(keys: Array, first_key: String) -> Dictionary:
 	# Keep the ORIGINAL ascending person-ID order and stop at every other job
@@ -5653,12 +5653,12 @@ func prepare_gd_typed_terminal(job: Dictionary, source_only: bool = false) -> Di
 		"job_before": job.duplicate(true), "kind": kind, "people": people, "source_only": source_only, "runtime": {}, "equipment": {}, "food": {}, "custody": {}, "original_owner": 0, "published": false})
 	match kind:
 		"equipment":
-			prepared.equipment = equipment_orders.prepare_team_equipment_change(job.order, source_only) if job.order.mode == "team_issue" else equipment_orders.prepare_equipment_change(job.order, source_only)
+			prepared["equipment"] = equipment_orders.prepare_team_equipment_change(job.order, source_only) if job.order.mode == "team_issue" else equipment_orders.prepare_equipment_change(job.order, source_only)
 			if not prepared.equipment.ok: return prepared.equipment
 		"loot":
 			var source: Dictionary = _source(str(job.source_kind), str(job.source_id))
-			prepared.original_owner = int(source.get("person_id", source.holder.get("original_owner", 0)))
-			prepared.runtime = Runtime.prepare_loot_transfer(lab.terrain, source.holder, source.cargo, executor.holder, executor.cargo,
+			prepared["original_owner"] = int(source.get("person_id", source.holder.get("original_owner", 0)))
+			prepared["runtime"] = Runtime.prepare_loot_transfer(lab.terrain, source.holder, source.cargo, executor.holder, executor.cargo,
 				job.resources, job.item_ids, int(job.source_version), int(job.destination_version), float(job.open_amount))
 			if not prepared.runtime.ok: return prepared.runtime
 			if float(job.open_amount) > 0.0:
@@ -5666,16 +5666,16 @@ func prepare_gd_typed_terminal(job: Dictionary, source_only: bool = false) -> Di
 				# has accepted a pure, failure-free destination transaction.
 				if opened_food_pool != Callable(lab.site_controller, "_personal_opened_food") \
 					or opened_food_commit != Callable(lab.site_controller, "_receive_opened_food"): return Runtime.fail("UNSUPPORTED", "原開封餐份owner未接純提交")
-				prepared.food = lab.site_controller.prepare_received_opened_food(int(job.executor_id), float(job.open_amount), job.destination_pool, source_only)
+				prepared["food"] = lab.site_controller.prepare_received_opened_food(int(job.executor_id), float(job.open_amount), job.destination_pool, source_only)
 				if not prepared.food.ok: return prepared.food
 		"tent_deploy":
-			prepared.runtime = Runtime.prepare_deploy_tent(lab.terrain, job.cells, executor.cargo, executor.holder, int(job.executor_version), executor.cell, int(executor.faction), _tent_occupied, int(job.quarter))
+			prepared["runtime"] = Runtime.prepare_deploy_tent(lab.terrain, job.cells, executor.cargo, executor.holder, int(job.executor_version), executor.cell, int(executor.faction), _tent_occupied, int(job.quarter))
 			if not prepared.runtime.ok: return prepared.runtime
 		"tent_pack":
-			prepared.runtime = Runtime.prepare_pack_tent(lab.terrain, str(job.feature), executor.cargo, executor.holder, int(job.executor_version), executor.cell, int(executor.faction), _tent_occupied)
+			prepared["runtime"] = Runtime.prepare_pack_tent(lab.terrain, str(job.feature), executor.cargo, executor.holder, int(job.executor_version), executor.cell, int(executor.faction), _tent_occupied)
 			if not prepared.runtime.ok: return prepared.runtime
 		_:
-			prepared.custody = prepare_gd_custody_terminal(job, source_only)
+			prepared["custody"] = prepare_gd_custody_terminal(job, source_only)
 			if not prepared.custody.ok: return prepared.custody
 	var checked: Dictionary = validate_gd_typed_terminal(prepared, not source_only)
 	return prepared if checked.ok else checked
@@ -5785,7 +5785,7 @@ func publish_gd_typed_terminal(prepared: Dictionary) -> Dictionary:
 		"tent_deploy": result = Runtime.publish_prepared_deploy_tent(prepared.runtime)
 		"tent_pack": result = Runtime.publish_prepared_pack_tent(prepared.runtime)
 		_: result = publish_gd_custody_terminal(prepared.custody)
-	prepared.published = true
+	prepared["published"] = true
 	return result
 
 func _commit_gd_typed_terminal(job: Dictionary) -> Dictionary:
@@ -5883,21 +5883,21 @@ func prepare_gd_custody_terminal(job: Dictionary, source_only: bool = false) -> 
 	if capturing:
 		var sequence: Variant = site.get("capture_episode_next", 1)
 		if not sequence is int or int(sequence) < 1 or int(sequence) >= 2147483647: return Runtime.fail("STALE_SOURCE")
-		prepared.sequence = int(sequence)
-		prepared.sealed = _sealed_selection(target)
+		prepared["sequence"] = int(sequence)
+		prepared["sealed"] = _sealed_selection(target)
 		if not prepared.sealed.resources.is_empty() or not prepared.sealed.item_ids.is_empty():
-			prepared.loot = Runtime.prepare_leave_ground_loot(lab.terrain, target.holder, target.cargo, int(job.target_id), target.cell,
+			prepared["loot"] = Runtime.prepare_leave_ground_loot(lab.terrain, target.holder, target.cargo, int(job.target_id), target.cell,
 				"sealed", prepared.sealed.resources, prepared.sealed.item_ids, int(job.source_version))
 			if not prepared.loot.ok: return prepared.loot
-			prepared.container_id = str(prepared.loot.identity)
-		prepared.next_relation = {"version": 3, "captor_id": captor_id, "guard_id": int(job.guard_id),
+			prepared["container_id"] = str(prepared.loot.identity)
+		prepared["next_relation"] = {"version": 3, "captor_id": captor_id, "guard_id": int(job.guard_id),
 			"captor_faction": int(executor.faction), "sealed_container": prepared.container_id, "prison_id": ""}
 		prepared.next_relation.merge(_gd_custody_capture_fields(int(prepared.sequence)))
 	elif job.kind == "ransom":
-		prepared.query = _ransom_custody_query(executor, target, _person(int(job.representative_id)), job)
+		prepared["query"] = _ransom_custody_query(executor, target, _person(int(job.representative_id)), job)
 		if not prepared.query.ok: return prepared.query
-		prepared.source_before = prepared.query.source.duplicate(true)
-		prepared.destination_before = prepared.query.destination.duplicate(true)
+		prepared["source_before"] = prepared.query.source.duplicate(true)
+		prepared["destination_before"] = prepared.query.destination.duplicate(true)
 	var stable: Dictionary = validate_gd_custody_terminal(prepared)
 	return prepared if stable.ok else stable
 
@@ -6028,7 +6028,7 @@ func publish_gd_custody_terminal(prepared: Dictionary) -> Dictionary:
 	if prepared.capturing and bool(target.surrender_pending): _body_set(target, "surrender_pending", false)
 	target.holder.version = int(target.holder.version) + 1
 	captivity_supply_commit.call(int(job.target_id), int(prepared.captor_id), bool(prepared.capturing))
-	prepared.published = true
+	prepared["published"] = true
 	if equipment_changed.is_valid(): equipment_changed.call(int(job.target_id))
 	captivity_changed.call(int(job.target_id), int(prepared.captor_id), bool(prepared.capturing))
 	return Runtime.ok("已出監解綁；生命、昏迷、位置與實物維持原值" if job.kind == "prison_release" else ("已拘束；封存物留在原地" if prepared.capturing else "已解綁；生命與昏迷不變"), {"container_id": str(prepared.container_id)})
@@ -6058,9 +6058,9 @@ func _prepare_technology_lesson_completion(job: Dictionary) -> Dictionary:
 	if candidate.is_empty(): return Runtime.fail("INVALID_TECHNOLOGY")
 	var prepared: Dictionary = Runtime.ok("", {"job": job, "family": family, "record": record, "record_before": record.duplicate(true),
 		"state": candidate, "student": student, "previous": previous.duplicate(true), "learned": learned, "funding": {}, "phase_before": {}, "published": false})
-	prepared.funding = prepare_nation_funded_lesson(job, learned)
+	prepared["funding"] = prepare_nation_funded_lesson(job, learned)
 	if not prepared.funding.ok: return prepared.funding
-	if not prepared.funding.phase.is_empty(): prepared.phase_before = prepared.funding.phase.record.duplicate(true)
+	if not prepared.funding.phase.is_empty(): prepared["phase_before"] = prepared.funding.phase.record.duplicate(true)
 	var stable: Dictionary = _validate_technology_lesson_completion(prepared)
 	return prepared if stable.ok else stable
 
@@ -6115,7 +6115,7 @@ func _publish_technology_lesson_completion(prepared: Dictionary) -> void:
 	prepared.family.technology = prepared.state
 	_body_set(prepared.student, "technology", prepared.learned)
 	if not funding.phase.is_empty(): publish_phase_receipt(funding.phase)
-	prepared.published = true
+	prepared["published"] = true
 
 func _prepare_gd_funded_lesson_upper(runtime_priors: Array) -> Dictionary:
 	if _gd_contact_job_capture.is_empty() or not is_same(runtime_priors, lab.gd_mesh_work_upper_priors()): return Runtime.fail("STALE_SOURCE")
@@ -6161,7 +6161,7 @@ func _technology_lesson_family_candidate(record: Dictionary, job: Dictionary) ->
 	for project: Dictionary in candidate.projects:
 		if project.tech_id == tech_id and (str(project.purpose) == wanted or Technology.project_purpose_matches(project, _technology_ref(int(job.target_id)), candidate.get("person_links", []))) and not bool(project.closed):
 			project.closed = true
-			if int(candidate.active) == int(project.id): candidate.active = 0
+			if int(candidate.active) == int(project.id): candidate["active"] = 0
 	return candidate if Technology.valid_family_tech(candidate) else {}
 
 func _prepare_scope_phase_completion(token: Dictionary, payment: Dictionary, event_id: String, productive: float) -> Dictionary:
@@ -6690,22 +6690,22 @@ func prepare_shared_work_prefix(requests: Array, seconds: float) -> Dictionary:
 			if controlled.is_empty() or not is_same(controlled.job, job) or not is_same(controlled.task, task): return Runtime.fail("STALE_SOURCE")
 			var target_ref: Dictionary
 			if str(job.kind) == "technology_feature":
-				item.feature = job.feature_ref
-				item.zone = job.zone_ref
-				item.build = job.get("repair_ref", {})
+				item["feature"] = job.feature_ref
+				item["zone"] = job.zone_ref
+				item["build"] = job.get("repair_ref", {})
 				target_ref = item.feature
 			else:
-				item.vehicle = job.vehicle_ref
-				item.build = job.build_ref
+				item["vehicle"] = job.vehicle_ref
+				item["build"] = job.build_ref
 				target_ref = item.vehicle
-			item.trial_facts = Runtime.technology_trial_work_facts(lab.terrain, target_ref, task, int(job.executor_id)) if target_ref.has("tech_trial") else Runtime.ok("", {"policy_exception": ""})
+			item["trial_facts"] = Runtime.technology_trial_work_facts(lab.terrain, target_ref, task, int(job.executor_id)) if target_ref.has("tech_trial") else Runtime.ok("", {"policy_exception": ""})
 			if not item.trial_facts.ok: return item.trial_facts
-			item.selector = job.operation_selector.duplicate(true)
+			item["selector"] = job.operation_selector.duplicate(true)
 			if job.operation_selector.has("token"):
 				var token: Dictionary = job.operation_selector.token
 				var authority: Dictionary = technology_phase_active_guard(token) # original start-only query.
 				if not authority.ok: return authority
-				item.scope = {"token": token, "token_start": token.duplicate(true), "owner": authority.owner,
+				item["scope"] = {"token": token, "token_start": token.duplicate(true), "owner": authority.owner,
 					"record": authority.record, "project": authority.project, "project_start": authority.project.duplicate(true)}
 		held[key] = item
 	return Runtime.ok("原人物作業起點與held refs已純捕捉", {"owner": self, "terrain": lab.terrain,
@@ -6794,11 +6794,11 @@ func publish_gd_contact_job_segment(segment: Dictionary) -> void:
 	for candidate: Dictionary in segment.candidates:
 		var held: Dictionary = candidate.held
 		var job: Dictionary = held.job
-		job.elapsed = float(candidate.elapsed)
-		job.paused = str(candidate.allocation.get("paused", ""))
+		job["elapsed"] = float(candidate.elapsed)
+		job["paused"] = str(candidate.allocation.get("paused", ""))
 		settlement_food_prefix_progress(job)
-		if job.paused == "REST" and float(job.elapsed) >= float(held.duration) - Fatigue.WORK_PLAN_EPS: job.paused = ""
-		held.committed_elapsed = float(job.elapsed)
+		if job.paused == "REST" and float(job.elapsed) >= float(held.duration) - Fatigue.WORK_PLAN_EPS: job["paused"] = ""
+		held["committed_elapsed"] = float(job.elapsed)
 		for identity: int in held.people:
 			var person: Dictionary = _person(identity)
 			if person.is_empty() or bool(person.player): continue
@@ -6808,7 +6808,7 @@ func publish_gd_contact_job_segment(segment: Dictionary) -> void:
 				_body_set(person, "work_resting", true)
 	_gd_contact_job_capture.elapsed = float(_gd_contact_job_capture.elapsed) + float(segment.seconds)
 	_gd_contact_job_capture.published.append(segment)
-	segment.published = true
+	segment["published"] = true
 	_gd_contact_job_segment = {}
 
 func finish_gd_contact_job_prefix() -> void:
@@ -6828,7 +6828,7 @@ func finish_gd_contact_job_prefix() -> void:
 
 func finish_shared_nonwork_timers(prepared: Dictionary) -> void:
 	if prepared.get("owner") != self or bool(prepared.get("finished", false)): return
-	prepared.finished = true
+	prepared["finished"] = true
 	for held: Dictionary in prepared.held:
 		var job: Dictionary = _jobs.get(str(held.key), {})
 		if not is_same(job, held.job): continue
@@ -6836,12 +6836,12 @@ func finish_shared_nonwork_timers(prepared: Dictionary) -> void:
 		if not current.ok: _finish(str(held.key), current); continue
 		var person: Dictionary = _person(int(job.executor_id))
 		if bool(held.watched) or int(person.hit) != int(held.hit) or _escape_blocked(person, {}):
-			job.elapsed = 0.0
-			job.paused = "WATCHED"
-			job.executor_hit = int(person.hit)
+			job["elapsed"] = 0.0
+			job["paused"] = "WATCHED"
+			job["executor_hit"] = int(person.hit)
 		else:
-			job.paused = ""
-			job.elapsed = minf(ESCAPE_SECONDS, float(held.elapsed) + float(prepared.seconds))
+			job["paused"] = ""
+			job["elapsed"] = minf(ESCAPE_SECONDS, float(held.elapsed) + float(prepared.seconds))
 
 # ORIGINAL Lab caller supplement:
 # preWorld: nonwork = PA.prepare_shared_nonwork_timers(actual_game_seconds)
@@ -6961,8 +6961,8 @@ func _commit_settlement_food_work(job: Dictionary) -> Dictionary:
 	order.receipts.append(receipt)
 	order.payload.work_seconds = 300.0
 	order.payload.stage = "completed"
-	order.status = "completed"
-	order.revision = int(order.revision) + 1
+	order["status"] = "completed"
+	order["revision"] = int(order.revision) + 1
 	if not phase.is_empty(): publish_phase_receipt(phase)
 	lab.terrain.environment_revision += 1
 	return Runtime.ok("原有限糧食單完成；真轉移與工時各一次")
@@ -7162,7 +7162,7 @@ func prepare_controlled_vehicle_work(selector: Dictionary, vehicle: Dictionary, 
 	var held_selector := selector.duplicate()
 	if selector.has("token"):
 		if token.is_empty() or selector.token != token or token.target_id != "vehicle:" + key: return Runtime.fail("STALE_PROJECT")
-		held_selector.token = token
+		held_selector["token"] = token
 	var physical: int = lab.terrain.index(person.cell)
 	var selected := {}
 	var claims: Dictionary = lab.site_controller.work_team.reserved_targets()
@@ -7301,7 +7301,7 @@ func prepare_controlled_feature_work(selector: Dictionary, feature: Dictionary, 
 	if not feature_token is Dictionary or not feature.get("tech_batch", {}) is Dictionary: return Runtime.fail("INVALID_TECHNOLOGY")
 	if selector.has("token") and not feature_token.is_empty():
 		if feature_token != selector.token: return Runtime.fail("STALE_PROJECT")
-		held_selector.token = feature_token # Runtime's SAME actual prepared binding, not an equal token copy.
+		held_selector["token"] = feature_token # Runtime's SAME actual prepared binding, not an equal token copy.
 	if not (Technology.keys(zone, ["cells", "kind", "action", "feature", "active"]) or Technology.keys(zone, ["cells", "kind", "action", "feature", "active", "technology_owned"]) and zone.technology_owned == true and action == "operate") or zone.cells != feature.cells \
 		or not Technology.integer(zone.kind, -1, -1) or zone.action != action or zone.feature != key or not zone.active is bool: return Runtime.fail("NO_ZONE")
 	var zone_index := -1
@@ -7521,7 +7521,7 @@ func end_shared_work_prefix_consumption() -> void:
 func finish_shared_job_prefix_timers(admitted: Dictionary) -> void:
 	# After World publication only. Original endpoint settle follows separately.
 	if admitted.get("owner") != self or not bool(admitted.get("timers_published", false)) or bool(admitted.get("timers_finished", false)): return
-	admitted.timers_finished = true
+	admitted["timers_finished"] = true
 	for key: String in admitted.prepared.held:
 		var held: Dictionary = admitted.prepared.held[key]
 		if held.kind in ["technology_feature", "technology_vehicle", "fire_suppress"]: continue
@@ -7548,7 +7548,7 @@ func publish_checked_controlled_prefixes(prepared: Dictionary) -> void:
 		_controlled_feature_consumed[key] = true # Also zero/REST jobs: never legacy fallback in point tail.
 		held.job.paused = str(_checked_controlled_prefixes.plan.jobs.get("person_actions", {}).get(key, {}).get("paused", ""))
 	_publishing_checked_controlled = false
-	prepared.published = true
+	prepared["published"] = true
 
 func publish_shared_job_prefix_timers(admitted: Dictionary) -> Dictionary:
 	assert(admitted.get("owner") == self and admitted.ok and is_same(admitted, _shared_work_prefix_consumption))
@@ -7560,15 +7560,15 @@ func publish_shared_job_prefix_timers(admitted: Dictionary) -> Dictionary:
 		var allocation: Dictionary = admitted.plan.get("jobs", {}).get("person_actions", {}).get(key, {})
 		if allocation.is_empty(): continue # No allocation never reaches legacy charge/callback.
 		var job: Dictionary = held.job
-		job.paused = str(allocation.get("paused", ""))
-		job.elapsed = 0.0 if job.paused == "THREAT" else minf(float(held.duration), float(held.elapsed) + float(allocation.get("effective_seconds", 0.0)))
+		job["paused"] = str(allocation.get("paused", ""))
+		job["elapsed"] = 0.0 if job.paused == "THREAT" else minf(float(held.duration), float(held.elapsed) + float(allocation.get("effective_seconds", 0.0)))
 		settlement_food_prefix_progress(job)
-		if job.paused == "REST" and float(job.elapsed) >= float(job.duration) - 0.00000001: job.paused = ""
+		if job.paused == "REST" and float(job.elapsed) >= float(job.duration) - 0.00000001: job["paused"] = ""
 		for identity: int in held.people:
 			var actual: float = float(allocation.get("participant_seconds", {}).get(identity, 0.0))
 			if actual > 0.0: handled[identity] = actual
 		if admitted.admitted.has(key): admitted.admitted[key].advance_consumed = true
-	admitted.timers_published = true
+	admitted["timers_published"] = true
 	return {"handled_seconds": handled}
 
 func _settlement_food_event(job: Dictionary) -> Dictionary:
@@ -7894,8 +7894,8 @@ func _technology_native_consent_readonly(person: Dictionary, consents: Array, pu
 		if str(current_task.get("target", "")).is_empty(): current_task = {}
 	if not current_task.is_empty():
 		var view := person.duplicate() # original row reference, never a second body
-		view.body = actual.row if source_actor == null else source_actor
-		if source_actor != null: view.owner = source_actor # task selector only; all fitness below remains Native
+		view["body"] = actual.row if source_actor == null else source_actor
+		if source_actor != null: view["owner"] = source_actor # task selector only; all fitness below remains Native
 		if not _technology_matching_original_task(view, token) and not _technology_matching_public_task(person, order) and not _technology_matching_settlement_task(person, purpose): return false
 	if physical.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL or float(physical.combat_hot_get(int(person.unit), &"exchange_stagger", 0.0)) > 0.0 \
 		or bool(physical.combat_hot_get(int(person.unit), &"attack")) or str(physical.combat_hot_get(int(person.unit), &"pose")) != "idle": return false
@@ -8003,27 +8003,27 @@ func settle_fire_pot_trials() -> void:
 		var completed := _prepare_scope_phase_completion(token, payment, "F15:shot:" + str(proof.attack_id), 0.0)
 		if not completed.ok: continue
 		publish_phase_receipt(completed)
-		proof.phase = "complete"
+		proof["phase"] = "complete"
 
 func publish_native_fire_point(prepared: Dictionary) -> void:
 	# Original point no-failure tail only: no context queries, new planning,
 	# fatigue writes, Runtime reprepare or callbacks between actual holder debits.
 	if bool(prepared.published): return # SAME original point candidate cannot debit twice.
-	prepared.published = true
+	prepared["published"] = true
 	for row: Dictionary in prepared.rows:
 		var job: Dictionary = row.job
-		job.pending = {}
+		job["pending"] = {}
 		if str(row.status) == "WORK":
 			if int(row.paid_q) > 0:
 				var committed: Dictionary = Runtime.publish_validated_fire_suppression(lab.terrain, row.prepared, row.check)
-				job.executor_version = int(committed.holder_version)
-				job.supply_q = int(committed.remaining_q)
-				job.committed_q = int(job.committed_q) + int(row.paid_q)
+				job["executor_version"] = int(committed.holder_version)
+				job["supply_q"] = int(committed.remaining_q)
+				job["committed_q"] = int(job.committed_q) + int(row.paid_q)
 				var profile: Dictionary = SiteCombatRules.fire_work_profile(str(job.get("fire_work_mode", "SUPPRESS")))
-				job.elapsed = float(job.elapsed) + float(row.paid_q) / int(profile.supply_q_per_second)
-			job.fraction_q = float(row.fraction_after)
-			job.paused = str(row.get("paused", ""))
-		elif str(row.status) == "DEFER": job.paused = "CAPACITY_DEFERRED"
+				job["elapsed"] = float(job.elapsed) + float(row.paid_q) / int(profile.supply_q_per_second)
+			job["fraction_q"] = float(row.fraction_after)
+			job["paused"] = str(row.get("paused", ""))
+		elif str(row.status) == "DEFER": job["paused"] = "CAPACITY_DEFERRED"
 	# Post-tail original cancellation/release/REST owners run after all Native
 	# fatigue/progress publication. They never classify or debit this point again.
 
@@ -8046,7 +8046,7 @@ func native_fire_point_envelope_requests(game_seconds: float) -> Dictionary:
 
 func finish_native_fire_point(prepared: Dictionary) -> void:
 	if not bool(prepared.published) or bool(prepared.finished): return
-	prepared.finished = true
+	prepared["finished"] = true
 	for row: Dictionary in prepared.rows:
 		var job: Dictionary = row.job
 		if str(row.status) == "CANCEL": _cancel_fire_suppress(job, row.result)
@@ -8059,7 +8059,7 @@ func finish_native_fire_point(prepared: Dictionary) -> void:
 					float(_body_get(person, "fatigue")), bool(_body_get(person, "work_resting")))
 				_body_set(person, "work_resting", resting)
 				if resting:
-					job.phase = "REST"; job.paused = "REST"
+					job["phase"] = "REST"; job["paused"] = "REST"
 					person.owner.work_fatigue_rest(int(job.executor_id))
 			if int(job.supply_q) <= 0: _cancel_fire_suppress(job, Runtime.fail("NO_SUPPRESSION_SUPPLY", "本人有限補給已用盡"))
 		if bool(job.cancelled): _settle_cancelled_fire_suppress(str(row.key), job)
@@ -8073,21 +8073,21 @@ func _advance_controlled_feature_work(key: String, job: Dictionary, seconds: flo
 	var original_plan: Dictionary = lab.site_controller._shared_work_plan
 	if not is_same(original_plan, lab._shared_work_plan) or not bool(original_plan.get("ok", false)) \
 		or not is_equal_approx(float(original_plan.get("seconds", -1.0)), seconds) \
-		or not is_same(work_plan.get("jobs"), original_plan.get("jobs", {}).get("person_actions")): job.paused = "CLOCK_NOT_READY"; return
+		or not is_same(work_plan.get("jobs"), original_plan.get("jobs", {}).get("person_actions")): job["paused"] = "CLOCK_NOT_READY"; return
 	var held: Dictionary = _prepared_controlled_features.get(key, {})
-	if held.is_empty() or not is_same(held.job, job) or not is_same(_jobs.get(key), job): job.paused = "CLOCK_NOT_READY"; return
+	if held.is_empty() or not is_same(held.job, job) or not is_same(_jobs.get(key), job): job["paused"] = "CLOCK_NOT_READY"; return
 	var context := _controlled_feature_job_context(job)
 	if not context.ok: _finish(key, context); return
 	var current := Runtime.work_preflight(lab.terrain, job.work_task, held.cargo, int(held.carry_limit), int(context.person.faction), int(job.executor_id), _tent_occupied)
 	if not current.ok or not is_equal_approx(float(current.get("productivity", -1.0)), float(held.productivity)) \
-		or current.get("required_skill", "") != held.required_skill or bool(current.get("eligible_master", false)) != bool(held.eligible_master): job.paused = "STALE_SOURCE"; return
+		or current.get("required_skill", "") != held.required_skill or bool(current.get("eligible_master", false)) != bool(held.eligible_master): job["paused"] = "STALE_SOURCE"; return
 	var interval: Dictionary = work_plan.get("jobs", {}).get(key, {})
-	if interval.is_empty() and float(held.remaining) > 0.0: job.paused = "CLOCK_NOT_READY"; return
+	if interval.is_empty() and float(held.remaining) > 0.0: job["paused"] = "CLOCK_NOT_READY"; return
 	var identity := int(job.executor_id)
 	var effort := float(interval.get("participant_seconds", {}).get(identity, 0.0))
 	var base := float(interval.get("participant_effective_seconds", {}).get(identity, 0.0))
-	if not is_finite(effort) or effort < 0.0 or not is_finite(base) or base < 0.0: job.paused = "CLOCK_NOT_READY"; return
-	job.paused = str(interval.get("paused", ""))
+	if not is_finite(effort) or effort < 0.0 or not is_finite(base) or base < 0.0: job["paused"] = "CLOCK_NOT_READY"; return
+	job["paused"] = str(interval.get("paused", ""))
 	if not bool(context.person.player):
 		if effort > 0.0: _body_set(context.person, "work_resting", false)
 		if job.paused == "REST" or interval.get("participant_paused", {}).get(identity) == "REST":
@@ -8098,7 +8098,7 @@ func _advance_controlled_feature_work(key: String, job: Dictionary, seconds: flo
 	var consumed := {"used": false}
 	var work_time := func(_manual: bool, _minutes: float) -> float:
 		if consumed.used: return 0.0
-		consumed.used = true
+		consumed["used"] = true
 		handled[identity] = effort
 		return base / 60.0 # The original complete-pool collector charged fatigue once.
 	Runtime._work(lab.terrain, seconds / 60.0, true, false, _tent_occupied, work_time, job.work_task, held.cargo,
@@ -8113,7 +8113,7 @@ func _consume_shared_job_advance_prefix(key: String, job: Dictionary, seconds: f
 		or not is_same(work_plan.get("jobs"), _shared_work_prefix_consumption.plan.get("jobs", {}).get("person_actions")):
 		return {"duplicate": true} # Wrong interval must not consume the held prefix or fall back.
 	if bool(item.advance_consumed): return {"duplicate": true}
-	item.advance_consumed = true
+	item["advance_consumed"] = true
 	return {"duplicate": false, "prefix": item}
 
 func record_fire_pot_release(vehicle: Dictionary, flight: Dictionary) -> void:
@@ -8135,7 +8135,7 @@ func record_fire_pot_release(vehicle: Dictionary, flight: Dictionary) -> void:
 	if not paid: return
 	# Only the original launcher calls after its no-fail real ammo/payment tail.
 	# This persisted result belongs to that same original vehicle, not a new job.
-	vehicle.tech_fire_pot_shot = {"version": 1, "token": token, "attack_id": str(flight.attack_id),
+	vehicle["tech_fire_pot_shot"] = {"version": 1, "token": token, "attack_id": str(flight.attack_id),
 		"projectile_id": int(flight.projectile_id), "payment_id": str(flight.technology_payment_id), "phase": "flight",
 		"unit_key": "", "generation": 0, "scorch": 0.0, "impact_action": 0.0}
 
@@ -8158,15 +8158,15 @@ func native_fire_point_candidates(action_begin: float, action_end: float, game_s
 			or absf(float(job.pending.game_seconds) - game_seconds) > Runtime.FIRE_EPS:
 			return Runtime.fail("STALE_FIRE_INTERVAL")
 		if lab.native_checked_forecast_hp(int(job.executor_id)) <= 0.0:
-			row.status = "CANCEL"; row.result = Runtime.fail("DEAD"); continue
+			row["status"] = "CANCEL"; row["result"] = Runtime.fail("DEAD"); continue
 		var check: Dictionary = _fire_suppress_context(job) # TRUE end-contact qualification, no mutation.
 		if not check.ok:
-			row.status = "CANCEL"; row.result = check; continue
+			row["status"] = "CANCEL"; row["result"] = check; continue
 		if bool(check.target.complete):
-			row.status = "CANCEL"; row.result = Runtime.ok("原工作目標已完成"); continue
+			row["status"] = "CANCEL"; row["result"] = Runtime.ok("原工作目標已完成"); continue
 		if str(check.movement.phase) != "ARRIVED" or bool(check.person.moving) or not _ready(check.person) \
 			or not lab.crowd_site.work_fatigue_work_start_ready(int(job.executor_id)):
-			row.status = "CANCEL"; row.result = Runtime.fail("INTERRUPTED"); continue
+			row["status"] = "CANCEL"; row["result"] = Runtime.fail("INTERRUPTED"); continue
 		var participant: Dictionary = lab.crowd_site.work_fatigue_participant(int(job.executor_id), true)
 		if participant.is_empty(): return Runtime.fail("CLOCK_NOT_READY")
 		var profile: Dictionary = SiteCombatRules.fire_work_profile(str(job.get("fire_work_mode", "SUPPRESS")))
@@ -8175,7 +8175,7 @@ func native_fire_point_candidates(action_begin: float, action_end: float, game_s
 		var supply_field: String = str(profile.supply_field)
 		var stock: int = int(check.person.holder.get(supply_field, 0))
 		if stock <= 0:
-			row.status = "CANCEL"; row.result = Runtime.fail("NO_SUPPRESSION_SUPPLY"); continue
+			row["status"] = "CANCEL"; row["result"] = Runtime.fail("NO_SUPPRESSION_SUPPLY"); continue
 		var duration: float = minf(action_end - action_begin, maxf(0.0, float(stock) - fraction) / int(profile.supply_q_per_second))
 		if duration <= Runtime.FIRE_EPS: continue
 		var requested: int = floori(fraction + duration * int(profile.supply_q_per_second) + Runtime.FIRE_EPS)
@@ -8183,13 +8183,13 @@ func native_fire_point_candidates(action_begin: float, action_end: float, game_s
 			var paid: Dictionary = Runtime.fire_prepare_suppression(lab.terrain, str(job.target_key), int(job.generation),
 				action_begin, action_begin + duration, requested, check.person.holder, int(job.executor_version), str(job.get("fire_work_mode", "SUPPRESS")))
 			if not paid.ok:
-				row.status = "DEFER" if str(paid.get("code", "")) == "CAPACITY_DEFERRED" else "CANCEL"
-				row.result = paid; continue
+				row["status"] = "DEFER" if str(paid.get("code", "")) == "CAPACITY_DEFERRED" else "CANCEL"
+				row["result"] = paid; continue
 			if int(paid.get("paid_q", 0)) <= 0: continue
 			if int(paid.paid_q) < requested: duration = minf(duration, maxf(0.0, float(paid.paid_q) - fraction) / int(profile.supply_q_per_second))
-		row.status = "WORK"
-		row.limit = duration * float(row.ratio)
-		row.request = {"provider": "fire_suppress", "key": key, "participants": [participant],
+		row["status"] = "WORK"
+		row["limit"] = duration * float(row.ratio)
+		row["request"] = {"provider": "fire_suppress", "key": key, "participants": [participant],
 			"remaining": float(row.limit), "productive_kind": "raw", "progress_multiplier": 1.0, "max_game_seconds": float(row.limit)}
 		requests.append(row.request)
 	return Runtime.ok("原滅火接觸後努力候選", {"records": records, "requests": requests})
@@ -8203,34 +8203,34 @@ func prepare_native_fire_point(records: Array, plan: Dictionary) -> Dictionary:
 		var row: Dictionary = source.duplicate(false)
 		var job: Dictionary = row.job
 		if not is_same(_jobs.get(str(row.key), {}), job) or not is_same(job.pending, row.pending): return Runtime.fail("STALE_FIRE_JOB")
-		row.actual_game = 0.0; row.actual_action = 0.0; row.paid_q = 0; row.fraction_after = float(job.fraction_q)
-		row.prepared = {}; row.check = {}
+		row["actual_game"] = 0.0; row["actual_action"] = 0.0; row["paid_q"] = 0; row["fraction_after"] = float(job.fraction_q)
+		row["prepared"] = {}; row["check"] = {}
 		rows.append(row)
 		if str(row.status) != "WORK": continue
 		var allocation: Dictionary = plan.get("jobs", {}).get("fire_suppress", {}).get(str(row.key), {})
 		if allocation.is_empty(): return Runtime.fail("MISSING_FIRE_ALLOCATION")
-		row.paused = str(allocation.get("paused", ""))
-		row.actual_game = float(allocation.get("participant_seconds", {}).get(int(job.executor_id), 0.0))
+		row["paused"] = str(allocation.get("paused", ""))
+		row["actual_game"] = float(allocation.get("participant_seconds", {}).get(int(job.executor_id), 0.0))
 		if not is_finite(float(row.actual_game)) or float(row.actual_game) < 0.0 or float(row.actual_game) > float(row.limit) + Runtime.FIRE_EPS:
 			return Runtime.fail("INVALID_WORK")
 		if float(row.actual_game) <= Runtime.FIRE_EPS: continue
 		var context: Dictionary = _fire_suppress_context(job)
 		if not context.ok: return Runtime.fail("FIRE_POINT_RECLASSIFY", "原接觸結果已變，尚未支付")
 		var profile: Dictionary = SiteCombatRules.fire_work_profile(str(job.get("fire_work_mode", "SUPPRESS")))
-		row.actual_action = float(row.actual_game) / float(row.ratio)
+		row["actual_action"] = float(row.actual_game) / float(row.ratio)
 		var exact: float = float(job.fraction_q) + float(row.actual_action) * int(profile.supply_q_per_second)
 		var requested: int = floori(exact + Runtime.FIRE_EPS)
 		if requested == 0:
-			row.fraction_after = exact # Legitimate fraction work STILL has real effort.
+			row["fraction_after"] = exact # Legitimate fraction work STILL has real effort.
 			continue
 		var prepared: Dictionary = Runtime.fire_prepare_suppression(lab.terrain, str(job.target_key), int(job.generation),
 			float(row.pending.begin), float(row.pending.begin) + float(row.actual_action), requested, context.person.holder,
 			int(job.executor_version), str(job.get("fire_work_mode", "SUPPRESS")))
 		if not prepared.ok or int(prepared.get("paid_q", 0)) != requested:
 			return Runtime.fail("FIRE_POINT_RECLASSIFY", "原供給或目標候選已變，尚未支付")
-		row.prepared = prepared
-		row.paid_q = requested
-		row.fraction_after = maxf(0.0, exact - requested)
+		row["prepared"] = prepared
+		row["paid_q"] = requested
+		row["fraction_after"] = maxf(0.0, exact - requested)
 		paid_rows.append({"key": str(row.key), "prepared": prepared,
 			"fraction": float(job.fraction_q), "ratio": float(row.ratio), "supply_per_second": int(profile.supply_q_per_second)})
 	var batch: Dictionary = Runtime.prepare_fire_suppression_batch(lab.terrain, paid_rows)
@@ -8240,7 +8240,7 @@ func prepare_native_fire_point(records: Array, plan: Dictionary) -> Dictionary:
 	for row: Dictionary in rows:
 		if int(row.paid_q) <= 0: continue
 		var admitted: Dictionary = batch.jobs[str(row.key)]
-		row.prepared = admitted.prepared; row.check = admitted.check
+		row["prepared"] = admitted.prepared; row["check"] = admitted.check
 	return Runtime.ok("原滅火同點全部純預驗完成", {"rows": rows, "needs_replan": false, "published": false, "finished": false})
 
 func record_fire_pot_impact(flight: Dictionary, received: Dictionary, impact_action: float) -> void:
@@ -8248,7 +8248,7 @@ func record_fire_pot_impact(flight: Dictionary, received: Dictionary, impact_act
 	var proof: Dictionary = vehicle.get("tech_fire_pot_shot", {})
 	if proof.is_empty() or proof.attack_id != flight.attack_id or int(proof.projectile_id) != int(flight.projectile_id) \
 		or proof.token != flight.get("tech_trial", {}) or proof.phase != "flight": return
-	proof.phase = "miss"
+	proof["phase"] = "miss"
 	if not received.get("ok", false) or not received.get("accepted", false) or received.get("duplicate", false): return
 	var unit: Dictionary = lab.terrain.site.get("fire", {}).get("units", {}).get(str(received.unit_key), {})
 	if unit.is_empty() or int(unit.generation) != int(received.generation): return
@@ -8259,7 +8259,7 @@ func finish_checked_controlled_prefixes(prepared: Dictionary) -> void:
 	# Native already published. Original current product/receipt guard may now
 	# defer/cancel; it never discards the original paid completed progress.
 	if prepared.get("owner") != self or not bool(prepared.get("published", false)) or bool(prepared.get("finished", false)): return
-	prepared.finished = true
+	prepared["finished"] = true
 	for key: String in prepared.checked.admitted.prepared.held:
 		var held: Dictionary = prepared.checked.admitted.prepared.held[key]
 		if held.kind not in ["technology_feature", "technology_vehicle"]: continue
@@ -8285,7 +8285,7 @@ func finish_shared_work_prefix(admitted: Dictionary) -> void:
 	# Original cancellation/receipt logic still runs in settle_after_contacts.
 	if admitted.get("owner") != self or not is_same(admitted.prepared.site, lab.terrain.site): return
 	if bool(admitted.get("rest_finished", false)): return
-	admitted.rest_finished = true
+	admitted["rest_finished"] = true
 	for key: String in admitted.admitted:
 		var item: Dictionary = admitted.admitted[key]
 		for identity: int in item.held.people:
@@ -8302,22 +8302,22 @@ func _advance_controlled_vehicle_work(key: String, job: Dictionary, seconds: flo
 	var original_plan: Dictionary = lab.site_controller._shared_work_plan
 	if not is_same(original_plan, lab._shared_work_plan) or not bool(original_plan.get("ok", false)) \
 		or not is_equal_approx(float(original_plan.get("seconds", -1.0)), seconds) \
-		or not is_same(work_plan.get("jobs"), original_plan.get("jobs", {}).get("person_actions")): job.paused = "CLOCK_NOT_READY"; return
+		or not is_same(work_plan.get("jobs"), original_plan.get("jobs", {}).get("person_actions")): job["paused"] = "CLOCK_NOT_READY"; return
 	var held: Dictionary = _prepared_controlled_features.get(key, {})
-	if held.is_empty() or not is_same(held.job, job) or not is_same(_jobs.get(key), job): job.paused = "CLOCK_NOT_READY"; return
+	if held.is_empty() or not is_same(held.job, job) or not is_same(_jobs.get(key), job): job["paused"] = "CLOCK_NOT_READY"; return
 	var context := _controlled_vehicle_job_context(job)
 	if not context.ok: _finish(key, context); return
 	var current := Runtime.work_preflight(lab.terrain, job.work_task, held.cargo, int(held.carry_limit), int(context.person.faction), int(job.executor_id), _tent_occupied)
 	if not current.ok or not is_equal_approx(float(current.get("progress_multiplier", -1.0)), float(held.factor)) \
 		or not is_equal_approx(float(current.get("productivity", -1.0)), float(held.productivity)) \
-		or current.get("required_skill", "") != held.required_skill or bool(current.get("eligible_master", false)) != bool(held.eligible_master): job.paused = "STALE_SOURCE"; return
+		or current.get("required_skill", "") != held.required_skill or bool(current.get("eligible_master", false)) != bool(held.eligible_master): job["paused"] = "STALE_SOURCE"; return
 	var interval: Dictionary = work_plan.get("jobs", {}).get(key, {})
-	if interval.is_empty() and float(held.remaining) > 0.0: job.paused = "CLOCK_NOT_READY"; return
+	if interval.is_empty() and float(held.remaining) > 0.0: job["paused"] = "CLOCK_NOT_READY"; return
 	var identity := int(job.executor_id)
 	var effort := float(interval.get("participant_seconds", {}).get(identity, 0.0))
 	var base := float(interval.get("participant_effective_seconds", {}).get(identity, 0.0))
-	if not is_finite(effort) or effort < 0.0 or not is_finite(base) or base < 0.0: job.paused = "CLOCK_NOT_READY"; return
-	job.paused = str(interval.get("paused", ""))
+	if not is_finite(effort) or effort < 0.0 or not is_finite(base) or base < 0.0: job["paused"] = "CLOCK_NOT_READY"; return
+	job["paused"] = str(interval.get("paused", ""))
 	if not bool(context.person.player):
 		if effort > 0.0: _body_set(context.person, "work_resting", false)
 		if job.paused == "REST" or interval.get("participant_paused", {}).get(identity) == "REST": _body_set(context.person, "work_resting", true)
@@ -8329,7 +8329,7 @@ func _advance_controlled_vehicle_work(key: String, job: Dictionary, seconds: flo
 	_controlled_feature_allocation = {}
 	if _jobs.has(key):
 		job.work_task.status = str(result.message)
-		if not result.ok: job.paused = str(result.code)
+		if not result.ok: job["paused"] = str(result.code)
 
 # Original ordinary team.work command. Its current decider names an existing
 # member; membership/duty/fitness are re-queried, never a caller approval bool.

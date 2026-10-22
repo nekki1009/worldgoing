@@ -238,14 +238,14 @@ func _align(owner: Dictionary, at_seconds: float) -> bool:
 	# Event preflight reads every owner, but only participants need writable copies.
 	# Clone before even a clock-alignment write; a failed preflight stays atomic.
 	if not bool(owner.get("copied", true)):
-		owner.state = owner.state.duplicate(true)
-		owner.copied = true
+		owner["state"] = owner.state.duplicate(true)
+		owner["copied"] = true
 	return controller._align_supply_clock(owner.state, at_seconds)
 
 func _add(state: Dictionary, members: Dictionary, ids: Array) -> bool:
 	var morale := float(state.morale)
 	var result := Sustain.add_members(state, members, ids)
-	state.morale = morale # Opting into meals is not actual roster reinforcement.
+	state["morale"] = morale # Opting into meals is not actual roster reinforcement.
 	return bool(result.ok)
 
 func _move(identity: int, source: String, target: String, states: Dictionary, members: Dictionary, moves: Array, at_seconds: float, feeding: Variant = null) -> bool:
@@ -259,9 +259,9 @@ func _move(identity: int, source: String, target: String, states: Dictionary, me
 		return false
 	# Feeding a captive is not merging their army. Keep the destination's own
 	# morale/rout; only the original cohort's hunger and eaten credit move.
-	destination.morale = command[0]
-	destination.routed = command[1]
-	destination.regroup_seconds = command[2]
+	destination["morale"] = command[0]
+	destination["routed"] = command[1]
+	destination["regroup_seconds"] = command[2]
 	states[source].dirty = true
 	states[target].dirty = true
 	moves.append([identity, source, target])
@@ -396,9 +396,9 @@ func _prepare_change(target_id: int, captor_id: int, capturing: bool, event_cont
 		var active_crowd: Variant = controller.lab.get("crowd_site")
 		if bool(event_context.get("invalid", false)) or not is_same(event_context.get("site"), site) or not is_same(event_context.get("terrain"), controller.lab.terrain) or active_crowd == null or not is_same(event_context.get("native"), active_crowd.crowd) or int(event_context.get("step", -1)) != int(active_crowd._steps) or float(event_context.get("at", -1.0)) != Runtime.now(controller.lab.terrain) * 60.0:
 			event_context.erase("members")
-			event_context.invalid = true
+			event_context["invalid"] = true
 			return Runtime.fail("BUSY", "群眾供養批次已離開原 Site 或動作時段；未使用舊人物快照")
-		if not event_context.has("members"): event_context.members = _event_members()
+		if not event_context.has("members"): event_context["members"] = _event_members()
 		members = event_context.members
 	# Read the latest cohorts and validate every owner for every event. Copy only
 	# actual transaction participants before mutation; other owners stay read-only.
@@ -458,7 +458,7 @@ func _commit_states(plan: Dictionary) -> void:
 			if not site.has("team_supply"):
 				site["team_supply"] = {}
 			if bool(owner.created):
-				owner.entry = {"version": 2, "sustain": owner.state, "inventory": {}, "training_order": false,
+				owner["entry"] = {"version": 2, "sustain": owner.state, "inventory": {}, "training_order": false,
 					"training_requester": -1, "training_feature_id": "", "revision": 0, "delivery": {}, "life_checkpoint": {}}
 				site.team_supply[identity] = owner.entry
 			else:
@@ -481,9 +481,9 @@ func _commit_states(plan: Dictionary) -> void:
 			checkpoint = int(source.life_checkpoint.get(str(move[0]), checkpoint))
 			source.life_checkpoint.erase(str(move[0]))
 			if int(source.training_requester) == int(move[0]):
-				source.training_order = false
-				source.training_requester = -1
-				source.training_feature_id = ""
+				source["training_order"] = false
+				source["training_requester"] = -1
+				source["training_feature_id"] = ""
 		if not destination.is_empty():
 			destination.life_checkpoint[str(move[0])] = checkpoint
 	for owner: Dictionary in plan.states.values():
@@ -664,9 +664,9 @@ func _commit_membership_plan(plan: Dictionary) -> Dictionary:
 	_commit_states({"site": plan.site, "states": plan.states, "members": plan.members, "moves": plan.moves, "joined": plan.joined})
 	var source_entry: Dictionary = controller._supply_entry(plan.source)
 	if not source_entry.is_empty() and plan.selected.has(int(source_entry.training_requester)):
-		source_entry.training_order = false
-		source_entry.training_requester = -1
-		source_entry.training_feature_id = ""
+		source_entry["training_order"] = false
+		source_entry["training_requester"] = -1
+		source_entry["training_feature_id"] = ""
 	return Runtime.ok()
 
 func _authorized_team(identity: int) -> Variant:

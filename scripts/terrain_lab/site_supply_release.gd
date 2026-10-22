@@ -56,7 +56,7 @@ static func release_candidate(person_supply: Dictionary, person_id: int, org_key
 	candidate.erase(key)
 	if not leaver_cohort.is_empty():
 		var free_state: Dictionary = source_state.duplicate(true)
-		leaver_cohort.ids = [person_id]
-		free_state.cohorts = [leaver_cohort]
+		leaver_cohort["ids"] = [person_id]
+		free_state["cohorts"] = [leaver_cohort]
 		candidate[key] = free_state
 	return {"ok": true, "code": "", "message": "", "supply": candidate, "released_owners": released, "moved_dependents": dependents.size(), "leaver_state": not leaver_cohort.is_empty()}

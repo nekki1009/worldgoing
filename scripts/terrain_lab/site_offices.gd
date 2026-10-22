@@ -135,7 +135,7 @@ static func default_class(duty_id: String) -> String:
 
 static func _add_position(offices: Dictionary, wanted: String, head: bool, holder: int, office_class: String = "civil") -> String:
 	var id := "pos_%d" % int(offices.next_seq)
-	offices.next_seq = int(offices.next_seq) + 1
+	offices["next_seq"] = int(offices.next_seq) + 1
 	offices.positions.append({"id": id, "name": unique_name(offices, wanted), "head": head, "holder": holder, "office_class": office_class})
 	return id
 
@@ -150,7 +150,7 @@ static func upgrade(offices: Dictionary) -> bool:
 		for duty_id: String in duties:
 			military = military or MILITARY_DUTIES.has(duty_id) or default_class(duty_id) == "military"
 		entry["office_class"] = "military" if military else "civil"
-	offices.version = VERSION
+	offices["version"] = VERSION
 	return true
 
 ## Does this seat's holder need officer qualification: a 武官 seat, or any seat
@@ -278,24 +278,24 @@ static func resolve(offices: Dictionary, duty_id: String, head_executor: int, ho
 		"position_name": str(seat.get("name", "")), "holder": int(seat.get("holder", -1)), "decider": -1,
 		"acting": false, "revision": int(offices.get("revision", 0))}
 	if seat.is_empty():
-		result.message = "職責沒有負責職位"
+		result["message"] = "職責沒有負責職位"
 		return result
 	if bool(seat.head):
-		result.acting = head_acting
+		result["acting"] = head_acting
 	elif int(seat.holder) > 0 and holder_ok.is_valid() and bool(holder_ok.call(int(seat.holder))):
-		result.ok = true
-		result.code = ""
-		result.decider = int(seat.holder)
+		result["ok"] = true
+		result["code"] = ""
+		result["decider"] = int(seat.holder)
 		return result
 	else:
-		result.acting = true
+		result["acting"] = true
 	if head_executor <= 0:
-		result.code = "OFFICE_PAUSED"
-		result.message = "「%s」空缺或失格，首長亦無法代行" % seat.name
+		result["code"] = "OFFICE_PAUSED"
+		result["message"] = "「%s」空缺或失格，首長亦無法代行" % seat.name
 		return result
-	result.ok = true
-	result.code = ""
-	result.decider = head_executor
+	result["ok"] = true
+	result["code"] = ""
+	result["decider"] = head_executor
 	return result
 
 static func refusal(resolved: Dictionary, requester_id: int, offices: Dictionary) -> Dictionary:
@@ -321,7 +321,7 @@ static func vacate_unless(offices: Dictionary, keep: Callable) -> bool:
 		if int(entry.holder) > 0 and not bool(keep.call(int(entry.holder))):
 			entry.holder = -1
 			changed = true
-	if changed: offices.revision = mini(MAX_SEQ, int(offices.revision) + 1)
+	if changed: offices["revision"] = mini(MAX_SEQ, int(offices.revision) + 1)
 	return changed
 
 ## Whole personnel plan, validated once on its final state (3.3), pure.
@@ -362,7 +362,7 @@ static func apply_plan(offices: Dictionary, kind: String, expected_revision: int
 		if bool(entry.head) or holder <= 0 or appointed.has(holder) or not needs_officer(draft, entry): continue
 		if not candidate_ok.is_valid() or not bool(candidate_ok.call(holder, "military")):
 			return _plan_fail("NOT_ELIGIBLE", "「%s」負責的職責須由具軍官資格者擔任（人物 #%d）" % [str(entry.name), holder])
-	draft.revision = mini(MAX_SEQ, int(draft.revision) + 1)
+	draft["revision"] = mini(MAX_SEQ, int(draft.revision) + 1)
 	if not validate(draft, kind, stored_head_holder): return _plan_fail("INVALID", "方案結果不符合職位契約")
 	return {"ok": true, "code": "", "message": "已套用人事方案", "offices": draft, "refs": refs}
 
@@ -395,7 +395,7 @@ static func _apply_ops(draft: Dictionary, ops: Array, refs: Dictionary, appointe
 				var added_class := str(op.get("office_class", "civil"))
 				if not CLASSES.has(added_class): return _plan_fail("INVALID", "職位分類須為文官或武官")
 				var id := "pos_%d" % int(draft.next_seq)
-				draft.next_seq = int(draft.next_seq) + 1
+				draft["next_seq"] = int(draft.next_seq) + 1
 				draft.positions.append({"id": id, "name": op.name, "head": false, "holder": -1, "office_class": added_class})
 				if op.has("ref"): refs[str(op.ref)] = id
 			"abolish":

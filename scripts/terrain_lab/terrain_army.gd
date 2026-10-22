@@ -3177,7 +3177,7 @@ func recruit_from_team(source: TerrainArmy, requester_id: int, person_id: int) -
 		return SiteRuntime.fail("BUSY", "兩隊都須停止、HOLD 並脫戰")
 	var proposed := materialized_combat_rows()
 	var arriving: Dictionary = source.materialized_combat_rows()[index].duplicate()
-	arriving.member = true
+	arriving["member"] = true
 	proposed.append(arriving)
 	if single_troop_class(proposed, data, _troop_exempt_ids(), _troop_actor(player_member)) == &"mixed":
 		return SiteRuntime.fail("MIXED_TROOP", "入隊裝備與普通隊員兵種不同；原人物與持物未改")
@@ -4035,7 +4035,7 @@ func _auto_seat_officers(indices: Array[int], all_role_officers: bool = false) -
 			if not free.is_empty(): break
 		if free.is_empty(): break
 		_ensure_command_abilities(index)
-		free.holder = identity
+		free["holder"] = identity
 		changed = true
 	if changed:
 		offices.revision = int(offices.revision) + 1
@@ -4293,11 +4293,11 @@ static func prepare_handoff_geometry(snapshot: Dictionary, map: TerrainData, act
 	if not actor.is_empty() and float(actor.hp) > 0.0 and not bool(actor.captive):
 		positions.append(Vector2(float(actor.position[0]), float(actor.position[1])) / TerrainRenderer.CELL_PIXELS)
 		identities.append(int(actor.person_id))
-	result.command_reference_valid = not positions.is_empty()
+	result["command_reference_valid"] = not positions.is_empty()
 	var reference := Vector2(float(result.reference[0]), float(result.reference[1]))
 	if bool(result.command_reference_valid):
 		reference = _command_reference_from_positions(positions, identities)
-		result.reference = [reference.x, reference.y]
+		result["reference"] = [reference.x, reference.y]
 	for row: Dictionary in result.units:
 		var radius: float = float(result.command_radius) + (2.0 if bool(row.get("present", false)) else 0.0)
 		var member_position := Vector2(float(row.cell[0]) + 0.5, float(row.cell[1]) + 0.5)
@@ -4325,8 +4325,8 @@ static func prepare_handoff_presence(snapshot: Dictionary, map: TerrainData, act
 		fixed_cells: Dictionary, guarded_ids: Dictionary, original_positions: Dictionary,
 		components: Dictionary = {}) -> Dictionary:
 	var original: Dictionary = prepare_handoff_geometry(snapshot, map, actor_states)
-	original.relocations = []
-	original.presence_attempts = 0
+	original["relocations"] = []
+	original["presence_attempts"] = 0
 	if original.ok or str(original.get("code", "")) != "PRESENCE_CONFLICT": return original
 	var current: int = int(snapshot.current_commander)
 	var formal: int = int(snapshot.formal_commander)
@@ -4358,7 +4358,7 @@ static func prepare_handoff_presence(snapshot: Dictionary, map: TerrainData, act
 		var candidate: Dictionary = _handoff_presence_candidate(snapshot, map, actor_states, pair)
 		original.presence_attempts += 1
 		if candidate.ok:
-			candidate.presence_attempts = original.presence_attempts
+			candidate["presence_attempts"] = original.presence_attempts
 			return candidate
 	# ponytail: one same-team swap only; larger placement changes remain BUSY.
 	return original
@@ -4376,7 +4376,7 @@ static func _handoff_presence_candidate(snapshot: Dictionary, map: TerrainData, 
 		var row: Dictionary = result.snapshot.units[index]
 		relocations.append({"index": index, "person_id": int(row.person_id),
 			"before": snapshot.units[index].cell.duplicate(), "cell": row.cell.duplicate()})
-	result.relocations = relocations
+	result["relocations"] = relocations
 	return result
 
 static func _handoff_presence_reachable(map: TerrainData, source: Vector2i, target: Vector2i,
@@ -4481,9 +4481,9 @@ static func prepare_handoff_move(snapshot: Dictionary, map: TerrainData, actor_s
 	if not search.completed: return SiteRuntime.fail("SEARCH_LIMIT", "收兵 MOVE 出列排序搜尋尚未完成")
 	var prepared := {"anchor": anchor, "path": path, "plan": plan, "profile": profile, "short_translation": false}
 	var move: CombatMovePlan = _build_combat_move_plan(map, team, serial, goal, prepared, active_mids, member_cells, start, search.distances, exit_k, {}, controlled_ids)
-	result.combat_order_serial = serial
-	result.combat_deployment_plan = _serialize_deployment_plan(plan)
-	result.combat_move_plan = _serialize_move_plan(move)
+	result["combat_order_serial"] = serial
+	result["combat_deployment_plan"] = _serialize_deployment_plan(plan)
+	result["combat_move_plan"] = _serialize_move_plan(move)
 	for row: Dictionary in result.units: row.slot = row.cell.duplicate()
 	if not result.get("player_member", {}).is_empty(): result.player_member.goal = result.goal.duplicate()
 	# These derived initial transit fields deliberately are not in the disk schema.
@@ -5224,7 +5224,7 @@ func _reserve_combat_step(index: int, next: Vector2i, escort_guard_id: int = 0, 
 		var visual: Dictionary = combat_hot_get(index, &"exchange_visual", {})
 		if not visual.is_empty():
 			if ExchangeTimings.reaction_priority(StringName(str(visual.pose))) == 0:
-				visual.left = minf(float(visual.left), maxf(0.0, ExchangeTimings.MOVE_CORE_SECONDS - float(visual.age)))
+				visual["left"] = minf(float(visual.left), maxf(0.0, ExchangeTimings.MOVE_CORE_SECONDS - float(visual.age)))
 				if float(visual.left) <= 0.000000001:
 					combat_hot_erase(index, &"exchange_visual")
 				else:
@@ -5664,7 +5664,7 @@ func _update_ranged_orders() -> void:
 		var unit: Dictionary = combat_units[index]
 		if not unit.get("work_task", {}).is_empty() or (person_busy_query.is_valid() and bool(person_busy_query.call(combat_identity(index)))): continue
 		if int(unit.get("cargo", {}).get(str(profile.ammo), 0)) < 1:
-			unit.status = "彈藥耗盡；守位自衛，等待補給"
+			unit["status"] = "彈藥耗盡；守位自衛，等待補給"
 			continue
 		if moving_to[index] != INVALID_CELL or _combat_action_blocks_step(index) or _unit_rescues.has(index): continue
 		if scene.is_empty():
@@ -5684,16 +5684,16 @@ func _update_ranged_orders() -> void:
 				target = cell
 			if _ranged_can_shoot_from(cells[index], cell, profile, friendly): safe_shot = true
 		if target == INVALID_CELL:
-			unit.status = "附近沒有可接近的遠程目標"
+			unit["status"] = "附近沒有可接近的遠程目標"
 			continue
 		if safe_shot and _ranged_safe_cell(cells[index], enemies): continue
 		var step := _ranged_firing_step(index, target, profile, enemies, friendly)
 		searched += 1
 		if step != INVALID_CELL and _reserve_combat_step(index, step):
 			combat_slots[index] = step
-			unit.status = "拉開射擊距離" if nearest < 9.0 else "前往安全射位"
+			unit["status"] = "拉開射擊距離" if nearest < 9.0 else "前往安全射位"
 		else:
-			unit.status = "沒有合法安全射位；原地自衛"
+			unit["status"] = "沒有合法安全射位；原地自衛"
 		_planning_cursor = (index + 1) % combat_units.size()
 		if searched >= PLANNING_BUDGET: break
 
@@ -6243,7 +6243,7 @@ static func valid_person_ids(identities: Array, expected: int) -> bool:
 
 static func normalize_roster_snapshot(original: Dictionary) -> Dictionary:
 	var snapshot := original.duplicate(true)
-	if not snapshot.has("garrison_feature_id"): snapshot.garrison_feature_id = ""
+	if not snapshot.has("garrison_feature_id"): snapshot["garrison_feature_id"] = ""
 	var appointed: Array = [int(snapshot.get("formal_commander", -1)), int(snapshot.get("acting_commander", -1)), int(snapshot.get("current_commander", -1))]
 	if snapshot.get("officers") is Array: appointed.append_array(snapshot.officers)
 	if snapshot.get("officer_service") is Array: appointed.append_array(snapshot.officer_service)
@@ -6260,7 +6260,7 @@ static func normalize_roster_snapshot(original: Dictionary) -> Dictionary:
 		if legacy_ko_valid:
 			for row: Dictionary in snapshot.units:
 				row.ko = float(row.ko) / SiteCombatRules.LEGACY_KNOCKOUT_ACTION_SECONDS * SiteCombatRules.KNOCKOUT_GAME_SECONDS
-			snapshot.schema = 2
+			snapshot["schema"] = 2
 	if snapshot.get("units") is Array:
 		for row: Variant in snapshot.units:
 			# Old headless saves labelled the live captain female but stored the
@@ -6279,7 +6279,7 @@ static func normalize_roster_snapshot(original: Dictionary) -> Dictionary:
 		return snapshot
 	if not snapshot.get("units") is Array or snapshot.units.size() != SOLDIER_COUNT or not _combat_saved_integer(snapshot.get("team_id"), 1, 999999):
 		return snapshot # Invalid legacy state stays invalid; never invent missing people.
-	snapshot.roster_version = 1
+	snapshot["roster_version"] = 1
 	for index in range(snapshot.units.size()):
 		if not snapshot.units[index] is Dictionary:
 			return original.duplicate(true)
@@ -6453,9 +6453,9 @@ func transfer_members_to(recipient: TerrainArmy, identities: Array[int], request
 	var source_meta := _roster_metadata()
 	var target_meta := recipient._roster_metadata() if existing else source_meta.duplicate(true)
 	if not existing:
-		target_meta.player = null
-		target_meta.player_goal = INVALID_CELL
-		target_meta.player_present = false
+		target_meta["player"] = null
+		target_meta["player_goal"] = INVALID_CELL
+		target_meta["player_present"] = false
 		target_meta.erase("tactical_ai") # A new split team never inherits automatic command consent.
 		var captain := new_captain_id
 		if captain < 0:
@@ -6468,12 +6468,12 @@ func transfer_members_to(recipient: TerrainArmy, identities: Array[int], request
 			captain = moving_officers[0] if moving_officers.size() == 1 else -1
 		elif not selected.has(captain) or military_role(index_for_identity(captain)) != "officer" or member_gone(index_for_identity(captain)):
 			return SiteRuntime.fail("NOT_ELIGIBLE", "新隊隊長須是本次拆出的在世軍官")
-		target_meta.formal = captain
-		target_meta.acting = -1
-		target_meta.current = captain
-		target_meta.officers = []
-		target_meta.service = []
-		target_meta.established = true # No founding pick: vacant until a real claim.
+		target_meta["formal"] = captain
+		target_meta["acting"] = -1
+		target_meta["current"] = captain
+		target_meta["officers"] = []
+		target_meta["service"] = []
+		target_meta["established"] = true # No founding pick: vacant until a real claim.
 	else:
 		for field: String in ["facing", "slots", "abilities"]:
 			target_meta[field].merge(source_meta[field], false)
@@ -6564,9 +6564,9 @@ func adopt_row_into(recipient: TerrainArmy, person_id: int) -> void:
 		else:
 			kept.append(combat_units[index])
 			kept_cells.append(cells[index])
-	moving.member = false
-	moving.captive = false
-	moving.present = false
+	moving["member"] = false
+	moving["captive"] = false
+	moving["present"] = false
 	var target_rows := recipient.combat_units.duplicate()
 	var target_cells := recipient.cells.duplicate()
 	target_rows.append(moving)
@@ -6889,11 +6889,11 @@ func _ranged_release(index: int, target_cell: Vector2i, shot_id: int, ammo_mode:
 	var weapon := str(appearance.get("parts", {}).get("weapon", "none"))
 	var profile := SiteCombatRules.ranged_profile(weapon) if legacy else SiteCombatRules.fire_ranged_profile(weapon, ammo_mode)
 	if profile.is_empty():
-		if legacy: unit.status = "目前實裝不是遠程武器"
+		if legacy: unit["status"] = "目前實裝不是遠程武器"
 		return {}
 	if not _uses_live_presenter(index) and not supports_equipment_recipe(appearance):
 		if legacy:
-			unit.status = "此遠程實裝尚未准入完整圖集；未射擊也未扣彈"
+			unit["status"] = "此遠程實裝尚未准入完整圖集；未射擊也未扣彈"
 			_mark_visual_row(index)
 		return {}
 	var source_cell := _combat_attack_cell(index)
@@ -6914,7 +6914,7 @@ func _ranged_release(index: int, target_cell: Vector2i, shot_id: int, ammo_mode:
 		return {}
 	var ammunition := str(profile.ammo)
 	if not unit.get("cargo") is Dictionary or int(unit.cargo.get(ammunition, 0)) < 1:
-		if legacy: unit.status = "沒有本人實際攜帶的彈藥"
+		if legacy: unit["status"] = "沒有本人實際攜帶的彈藥"
 		return {}
 	# Original skill authority stays intact, and every release refusal has
 	# already run. A denied auto-power request does not cancel the legal shot.
@@ -6933,21 +6933,21 @@ func _ranged_release(index: int, target_cell: Vector2i, shot_id: int, ammo_mode:
 	unit.cargo[ammunition] = int(unit.cargo[ammunition]) - 1
 	PersonFatigue.charge(unit, 1.0)
 	if str(unit.get("exchange_skill", "")) == "power":
-		unit.exchange_skill = ""
+		unit["exchange_skill"] = ""
 		combat_hot_set(index, &"exchange_skill_cooldown", SiteCombatRules.EXCHANGE_SKILL_COOLDOWN)
 	facing[index] = Vector2i(signi(offset.x), 0) if absi(offset.x) >= absi(offset.y) else Vector2i(0, signi(offset.y))
 	var attack_pose := "attack_crossbow" if HumanCharacter3DEditor.WeaponMaterials.family(StringName(weapon)) == &"crossbow_01" else "attack_bow"
 	combat_hot_set(index, &"pose", attack_pose)
 	combat_hot_set(index, &"attack", true)
 	combat_hot_set(index, &"age", 0.0)
-	unit.blocked = false
-	unit.aim = []
-	unit.hits = {}
-	unit.previous = []
+	unit["blocked"] = false
+	unit["aim"] = []
+	unit["hits"] = {}
+	unit["previous"] = []
 	combat_hot_set(index, &"exchange_pose_duration", 1.0)
 	combat_hot_set(index, &"exchange_stagger", float(profile.hold))
 	combat_hot_set(index, &"ranged_cooldown", float(profile.cooldown)) # Reload rate never grants melee immunity.
-	unit.status = "射出弩矢" if ammunition == "bolt" else "射出箭矢"
+	unit["status"] = "射出弩矢" if ammunition == "bolt" else "射出箭矢"
 	_begin_exchange_visual(index, attack_pose)
 	var flight_data := {"mode": "cell", "source_cell": source_cell, "target_cell": target_cell,
 		"source_eye": data.effective_height(source_cell) + 1.0, "goal_eye": data.effective_height(target_cell) + 1.0,
@@ -6966,18 +6966,18 @@ func ranged_apply_hit(index: int, _source_cell: Vector2i, packet: Dictionary) ->
 		return
 	var unit: Dictionary = combat_units[index]
 	if str(unit.get("exchange_skill", "")) == "brace" and not bool(packet.get("siege", false)):
-		unit.exchange_skill = ""
+		unit["exchange_skill"] = ""
 		combat_hot_set(index, &"exchange_skill_cooldown", SiteCombatRules.EXCHANGE_SKILL_COOLDOWN)
 	var result: Dictionary = packet.result.duplicate()
-	result.guard_break = bool(result.get("guard_break", false))
+	result["guard_break"] = bool(result.get("guard_break", false))
 	var original_packet := packet.duplicate()
-	original_packet.result = result
-	original_packet.shield = bool(packet.get("shield", false))
+	original_packet["result"] = result
+	original_packet["shield"] = bool(packet.get("shield", false))
 	apply_unit_contact(index, original_packet)
 	if float(combat_hot_get(index, &"hp")) <= 0.0 or float(combat_hot_get(index, &"ko")) > 0.0 or str(combat_hot_get(index, &"pose")) == "get_up":
 		return # Original death/KO/get-up pose and recovery age remain authoritative.
 	if float(result.hp) <= 0.0:
-		unit.status = "遠射落空" if str(result.get("kind", "")) == "miss" else str(unit.status)
+		unit["status"] = "遠射落空" if str(result.get("kind", "")) == "miss" else str(unit.status)
 		return
 	_cancel_unit_rescue(index)
 	var committed_left := maxf(0.0, (1.0 - move_progress[index]) * move_duration[index]) if moving_to[index] != INVALID_CELL else 0.0
@@ -6985,13 +6985,13 @@ func ranged_apply_hit(index: int, _source_cell: Vector2i, packet: Dictionary) ->
 	combat_hot_set(index, &"exchange_stagger", stagger)
 	combat_hot_set(index, &"pose", "hit")
 	combat_hot_set(index, &"attack", false)
-	unit.blocked = false
+	unit["blocked"] = false
 	combat_hot_set(index, &"age", 0.0)
-	unit.aim = []
-	unit.hits = {}
-	unit.previous = []
+	unit["aim"] = []
+	unit["hits"] = {}
+	unit["previous"] = []
 	combat_hot_set(index, &"exchange_pose_duration", maxf(0.1, stagger))
-	unit.status = "箭矢命中"
+	unit["status"] = "箭矢命中"
 	_begin_exchange_visual(index, "hit", true)
 	_mark_visual_row(index)
 
@@ -7003,8 +7003,8 @@ func activate_exchange_skill(index: int, skill: String) -> bool:
 	var unit: Dictionary = combat_units[index]
 	if float(combat_hot_get(index, &"exchange_skill_cooldown", 0.0)) > 0.0 or not str(unit.get("exchange_skill", "")).is_empty():
 		return false
-	unit.exchange_skill = skill
-	unit.status = "蓄勢猛攻" if skill == "power" else "準備架穩"
+	unit["exchange_skill"] = skill
+	unit["status"] = "蓄勢猛攻" if skill == "power" else "準備架穩"
 	return true
 
 func apply_exchange(index: int, other_cell: Vector2i, outcome: Dictionary) -> void:
@@ -7042,15 +7042,15 @@ func exchange_batch_prepare(index: int, other_cell: Vector2i, outcome: Dictionar
 	combat_hot_set(index, &"exchange_cooldown", SiteCombatRules.EXCHANGE_ROUND_SECONDS)
 	if not str(unit.get("exchange_skill", "")).is_empty():
 		combat_hot_set(index, &"exchange_skill_cooldown", SiteCombatRules.EXCHANGE_SKILL_COOLDOWN)
-	unit.exchange_skill = ""
+	unit["exchange_skill"] = ""
 	# Receiving an exchange is self-defense, not a new persistent attack order.
 	# Keep an existing explicit target; never replace it with this opponent.
 	PersonFatigue.charge(unit, float(outcome.get("fatigue", 0.0)))
-	unit.aim = []
-	unit.previous = []
-	unit.hits = {}
+	unit["aim"] = []
+	unit["previous"] = []
+	unit["hits"] = {}
 	combat_hot_set(index, &"attack", false)
-	unit.blocked = false
+	unit["blocked"] = false
 	combat_event.emit(10.0)
 	return prepared
 
@@ -7100,7 +7100,7 @@ func exchange_batch_finish(index: int, _other_cell: Vector2i, outcome: Dictionar
 		combat_hot_set(index, &"exchange_pose_duration", maxf(SiteCombatRules.EXCHANGE_DRAW_HOLD, float(combat_hot_get(index, &"exchange_stagger", 0.0))))
 	combat_hot_set(index, &"pose", pose)
 	combat_hot_set(index, &"age", 0.0)
-	unit.status = "大勝" if outcome_role == "winner" and str(outcome.get("kind", "")) == "big" else ("小勝" if outcome_role == "winner" else ("平手防禦" if outcome_role == "draw" else "受擊硬直"))
+	unit["status"] = "大勝" if outcome_role == "winner" and str(outcome.get("kind", "")) == "big" else ("小勝" if outcome_role == "winner" else ("平手防禦" if outcome_role == "draw" else "受擊硬直"))
 	_begin_exchange_visual(index, pose)
 	_mark_visual_row(index)
 
@@ -7130,8 +7130,8 @@ func _advance_exchange_visual(index: int, delta: float) -> void:
 	var visual: Dictionary = combat_hot_get(index, &"exchange_visual", {})
 	if visual.is_empty():
 		return
-	visual.age = float(visual.age) + delta
-	visual.left = maxf(0.0, float(visual.left) - delta)
+	visual["age"] = float(visual.age) + delta
+	visual["left"] = maxf(0.0, float(visual.left) - delta)
 	if float(visual.left) <= 0.000000001:
 		combat_hot_erase(index, &"exchange_visual")
 	else:
@@ -7433,7 +7433,7 @@ func combat_shapes(index: int, kind: String) -> Array[PackedVector2Array]:
 			cache = {"sample": key}
 			_combat_pose_cache[combat_identity(index)] = cache
 			started = Time.get_ticks_usec()
-			cache.body = CombatGeometry.shifted(geometry.body_shapes(proxy), -live_origin)
+			cache["body"] = CombatGeometry.shifted(geometry.body_shapes(proxy), -live_origin)
 			combat_geometry_profile.live_body_usec += Time.get_ticks_usec() - started
 		if include_weapon and not cache.has("weapon"):
 			if not fresh:
@@ -7447,19 +7447,19 @@ func combat_shapes(index: int, kind: String) -> Array[PackedVector2Array]:
 				else: _sync_captain_combat(frame, index)
 				combat_geometry_profile.live_sync_usec += Time.get_ticks_usec() - started
 			started = Time.get_ticks_usec()
-			cache.weapon = CombatGeometry.shifted(geometry.weapon_shapes(proxy, attack_clip(index)), -live_origin)
+			cache["weapon"] = CombatGeometry.shifted(geometry.weapon_shapes(proxy, attack_clip(index)), -live_origin)
 			combat_geometry_profile.live_weapon_usec += Time.get_ticks_usec() - started
 			combat_geometry_profile.live_weapon_fills += 1
 		elif fresh and not include_weapon:
 			combat_geometry_profile.live_weapon_omissions += 1
 		if fresh:
 			started = Time.get_ticks_usec()
-			cache.shield = CombatGeometry.shifted(geometry.shield_shapes(proxy), -live_origin)
+			cache["shield"] = CombatGeometry.shifted(geometry.shield_shapes(proxy), -live_origin)
 			combat_geometry_profile.live_shield_usec += Time.get_ticks_usec() - started
 			started = Time.get_ticks_usec()
-			cache.parry = []
+			cache["parry"] = []
 			if str(combat_hot_get(index, &"pose")) == "guard" and cache.shield.is_empty() and attack_clip(index) not in [&"attack_unarmed", &"attack_bow", &"attack_crossbow"]:
-				cache.parry = CombatGeometry.shifted(geometry.weapon_shapes(proxy, attack_clip(index), true), -live_origin)
+				cache["parry"] = CombatGeometry.shifted(geometry.weapon_shapes(proxy, attack_clip(index), true), -live_origin)
 			combat_geometry_profile.live_parry_usec += Time.get_ticks_usec() - started
 		return CombatGeometry.shifted(cache.get(kind, []), live_origin)
 	var pose := _continuous_pose(index, kind == "weapon")
@@ -8015,14 +8015,14 @@ func start_unit_attack(index: int, target_cell: Vector2i, identity: int = -1, se
 	combat_hot_set(index, &"pose", str(attack_clip(index)))
 	combat_hot_set(index, &"age", 0.0)
 	combat_hot_set(index, &"attack", true)
-	unit.blocked = false
-	unit.hits = {}
-	unit.previous = []
-	unit.status = "Attacking"
-	unit.attack_reduction = SiteCombatRules.diminishing(training if is_member(index) else 0.0, 0.15)
-	unit.attack_fatigue = PersonFatigue.slowdown(PersonFatigue.read(unit))
-	unit.target = identity
-	unit.aim = []
+	unit["blocked"] = false
+	unit["hits"] = {}
+	unit["previous"] = []
+	unit["status"] = "Attacking"
+	unit["attack_reduction"] = SiteCombatRules.diminishing(training if is_member(index) else 0.0, 0.15)
+	unit["attack_fatigue"] = PersonFatigue.slowdown(PersonFatigue.read(unit))
+	unit["target"] = identity
+	unit["aim"] = []
 	if identity > 0 and combat_target_query.is_valid():
 		var target: Dictionary = combat_target_query.call(identity, true)
 		if not target.is_empty():
@@ -8043,7 +8043,7 @@ func start_unit_attack(index: int, target_cell: Vector2i, identity: int = -1, se
 				elif not _uses_live_presenter(index):
 					shoulder = _continuous_pose(index).shoulder + combat_ground(index) + combat_offset(index)
 			var aim := CombatGeometry.attack_aim_point(target.bodies, target.position, shoulder)
-			unit.aim = [aim.x, aim.y]
+			unit["aim"] = [aim.x, aim.y]
 	combat_event.emit(CombatTimings.action_duration(attack_clip(index), float(unit.attack_reduction), float(unit.attack_fatigue)) + 10.0)
 	return true
 
@@ -8140,7 +8140,7 @@ func _wake_unit(index: int) -> void:
 		combat_hot_set(index, &"ko", 0.1)
 		return
 	combat_hot_set(index, &"ko", 0.0)
-	unit.status = "Captive" if bool(combat_hot_get(index, &"captive")) else "Awake"
+	unit["status"] = "Captive" if bool(combat_hot_get(index, &"captive")) else "Awake"
 	if not embarked: _cell_owners[cells[index]] = index
 	combat_hot_set(index, &"pose", "get_up")
 	combat_hot_set(index, &"age", 0.0)
@@ -8379,7 +8379,7 @@ func prepare_combat(delta: float, game_seconds: float = -1.0) -> void:
 		if _combat_hot_store != null:
 			_borrow_combat_hot_row(index)
 		var unit: Dictionary = combat_units[index]
-		unit.age = float(unit.age) + delta
+		unit["age"] = float(unit.age) + delta
 		# Original idle ATTACK rear ranks have no active recovery/movement work.
 		# Normalize the same optional timers once, retain age/think exactly, and
 		# leave all rescue/guard/hit/KO/moving rows on the complete owner path.
@@ -8392,9 +8392,9 @@ func prepare_combat(delta: float, game_seconds: float = -1.0) -> void:
 			unit["exchange_stagger"] = 0.0
 			unit["exchange_skill_cooldown"] = 0.0
 			unit["ranged_cooldown"] = 0.0
-			unit.grace = 0.0
-			unit.stun = 0.0
-			unit.think = maxf(0.0, float(unit.think) - delta)
+			unit["grace"] = 0.0
+			unit["stun"] = 0.0
+			unit["think"] = maxf(0.0, float(unit.think) - delta)
 			if _combat_hot_store != null: _return_combat_hot_row()
 			continue
 		if exchange_enabled:
@@ -8411,10 +8411,10 @@ func prepare_combat(delta: float, game_seconds: float = -1.0) -> void:
 			if _combat_hot_store != null: _return_combat_hot_row()
 			continue
 		if float(unit.ko) > 0.0:
-			unit.ko = maxf(0.0, float(unit.ko) - game_seconds)
+			unit["ko"] = maxf(0.0, float(unit.ko) - game_seconds)
 			if str(unit.pose) == "down" and float(unit.age) >= float(CombatTimings.POSE_SECONDS[&"down"]):
-				unit.pose = "unconscious"
-				unit.age = 0.0
+				unit["pose"] = "unconscious"
+				unit["age"] = 0.0
 			if float(unit.ko) <= 0.0:
 				hold_rescue_candidates_checked = false; hold_rescue_cache_admission_checked = false
 				_wake_unit(index)
@@ -8434,15 +8434,15 @@ func prepare_combat(delta: float, game_seconds: float = -1.0) -> void:
 			if _combat_hot_store != null: _return_combat_hot_row()
 			continue
 		var decay := maxf(0.0, delta - float(unit.grace))
-		unit.grace = maxf(0.0, float(unit.grace) - delta)
-		unit.stun = maxf(0.0, float(unit.stun) - decay * SiteCombatRules.STUN_RECOVERY)
+		unit["grace"] = maxf(0.0, float(unit.grace) - delta)
+		unit["stun"] = maxf(0.0, float(unit.stun) - decay * SiteCombatRules.STUN_RECOVERY)
 		if exchange_enabled:
 			_advance_exchange_pose(index)
-			unit.think = maxf(0.0, float(unit.think) - delta)
+			unit["think"] = maxf(0.0, float(unit.think) - delta)
 			# Keep existing automatic safe rescue in HOLD without any pose/body
 			# sampling. Advancing combat units never run the old enemy scan.
 			if float(unit.think) <= 0.0 and is_member(index) and combat_order == CombatOrder.HOLD and str(unit.pose) == "idle" and combat_can_act(index) and not is_controlled_person(index) and not _ship_in_journey(index):
-				unit.think = 0.5
+				unit["think"] = 0.5
 				if not is_sustain_routed() and not (person_busy_query.is_valid() and bool(person_busy_query.call(combat_identity(index)))) and (_ship_embarked(index) or enemy_query.is_valid()):
 					if not hold_rescue_patient_checked:
 						hold_rescue_patient_checked = true
@@ -8479,18 +8479,18 @@ func prepare_combat(delta: float, game_seconds: float = -1.0) -> void:
 		if str(unit.pose) in ["get_up", "guard_break"]:
 			finished = float(unit.age) >= float(CombatTimings.POSE_SECONDS[StringName(str(unit.pose))])
 		if str(unit.pose) in ["guard_raise", "guard_lower"] and float(unit.age) >= SiteCombatRules.GUARD_TRANSITION:
-			unit.pose = "guard" if str(unit.pose) == "guard_raise" else "idle"
-			unit.age = 0.0
+			unit["pose"] = "guard" if str(unit.pose) == "guard_raise" else "idle"
+			unit["age"] = 0.0
 		if finished:
-			unit.pose = "idle"
-			unit.age = 0.0
-			unit.attack = false
-			unit.previous = []
-			unit.think = 0.5
+			unit["pose"] = "idle"
+			unit["age"] = 0.0
+			unit["attack"] = false
+			unit["previous"] = []
+			unit["think"] = 0.5
 			_command_dirty = true
-		unit.think = maxf(0.0, float(unit.think) - delta)
+		unit["think"] = maxf(0.0, float(unit.think) - delta)
 		if garrison_feature_id.is_empty() and not bool(unit.attack) and float(unit.think) <= 0.0 and combat_can_act(index) and not is_controlled_person(index) and _ship_attack_allowed(index) and (not is_member(index) or _order_delay <= 0.0) and enemy_query.is_valid():
-			unit.think = 0.5 * (1.0 - command_effect("tactics", 0.20)) if is_member(index) else 0.5
+			unit["think"] = 0.5 * (1.0 - command_effect("tactics", 0.20)) if is_member(index) else 0.5
 			var target: Dictionary = enemy_query.call(self, index)
 			if is_member(index) and target.is_empty() and combat_order == CombatOrder.HOLD and str(unit.pose) == "idle" and not is_sustain_routed() and not (person_busy_query.is_valid() and bool(person_busy_query.call(combat_identity(index)))):
 				for patient: int in command_members():
@@ -8506,7 +8506,7 @@ func prepare_combat(delta: float, game_seconds: float = -1.0) -> void:
 				continue
 			if not target.is_empty() and (is_member(index) and combat_attacking or bool(target.get("threat", false))):
 				if start_unit_attack(index, target.cell, int(target.identity), bool(target.get("threat", false))):
-					unit.target = int(target.identity)
+					unit["target"] = int(target.identity)
 		if _combat_hot_store != null: _return_combat_hot_row()
 	# A former crew may wake after it was safely detached without a destination.
 	# Derive missing participants from the current plan; retain no old slot copy.
@@ -8535,7 +8535,7 @@ func sample_combat() -> void:
 		# Outside active time the old current weapon was computed and discarded.
 		# Keep the exact history boundary without sampling an unused projection.
 		if sample < float(events.active_start) or sample > float(events.active_end):
-			unit.previous = []
+			unit["previous"] = []
 			continue
 		var sample_started := Time.get_ticks_usec()
 		var current := combat_shapes(index, "weapon")
@@ -8549,8 +8549,8 @@ func sample_combat() -> void:
 				continue
 			unit.hits[identity] = true
 			if int(hit.faction) == faction_id:
-				unit.blocked = true
-				unit.status = "Ally obstructs melee"
+				unit["blocked"] = true
+				unit["status"] = "Ally obstructs melee"
 				break
 			var profile := SiteCombatRules.attack_profile(attack_clip(index))
 			var protection: Vector2
@@ -8566,9 +8566,9 @@ func sample_combat() -> void:
 			if contact_sink.is_valid():
 				contact_sink.call(packet)
 			if bool(hit.shield):
-				unit.blocked = true
+				unit["blocked"] = true
 				break
-		unit.previous = current
+		unit["previous"] = current
 
 func apply_unit_contact(index: int, packet: Dictionary) -> void:
 	var region_sink: Variant = get_meta(&"region_contact_sink", Callable())
@@ -8590,7 +8590,7 @@ func apply_unit_contact(index: int, packet: Dictionary) -> void:
 	var result: Dictionary = packet.result
 	var effective_hit := not bool(packet.get("environmental", false)) and (float(result.hp) > 0.0 or float(result.stun) > 0.0)
 	if effective_hit:
-		unit.hit_revision = int(unit.get("hit_revision", 0)) + 1
+		unit["hit_revision"] = int(unit.get("hit_revision", 0)) + 1
 	if effective_hit or float(result.hp) >= hp:
 		if _external_rescuers.has(index):
 			(_external_rescuers[index] as TerrainTestCharacter)._cancel_rescue()
@@ -8615,11 +8615,11 @@ func apply_unit_contact(index: int, packet: Dictionary) -> void:
 		combat_hot_set(index, &"pose", "down")
 		combat_hot_set(index, &"age", 0.0)
 		combat_hot_set(index, &"attack", false)
-		unit.blocked = true
+		unit["blocked"] = true
 		combat_hot_erase(index, &"exchange_visual")
-		unit.status = "Dead" if hp <= 0.0 else "Unconscious"
+		unit["status"] = "Dead" if hp <= 0.0 else "Unconscious"
 		if hp <= 0.0 and not bool(packet.get("environmental", false)) and data != null:
-			unit.combat_death_minute = int(data.site.get("minute", 0)) # R2: a real battle death (not hunger/fire).
+			unit["combat_death_minute"] = int(data.site.get("minute", 0)) # R2: a real battle death (not hunger/fire).
 		if hp <= 0.0:
 			var shared := PersonFatigue.pool(unit)
 			if not shared.is_empty():
@@ -8638,9 +8638,9 @@ func apply_unit_contact(index: int, packet: Dictionary) -> void:
 	elif bool(result.guard_break) and not bool(combat_hot_get(index, &"attack")):
 		combat_hot_set(index, &"pose", "guard_break")
 		combat_hot_set(index, &"age", 0.0)
-		unit.status = "Guard broken"
+		unit["status"] = "Guard broken"
 	elif ko <= 0.0:
-		unit.status = "Shield blocked" if bool(packet.shield) else ("Armor blocked" if float(result.hp) <= 0.0 else "Hurt")
+		unit["status"] = "Shield blocked" if bool(packet.shield) else ("Armor blocked" if float(result.hp) <= 0.0 else "Hurt")
 	_mark_visual_row(index)
 	if audio_old_hp > 0.0 and audio_old_ko <= 0.0 and (hp <= 0.0 or ko > 0.0) \
 			and audio_sink.is_valid():
@@ -8933,24 +8933,24 @@ func capture_combat_state() -> Dictionary:
 		var unit: Dictionary = PersonFatigue.saved_body(logical_rows[index])
 		if logical_rows[index].has("fire_body"): unit["fire_body"] = SiteCombatRules.fire_body_capture(logical_rows[index].fire_body)
 		unit.erase("exchange_visual") # Short result visuals are not a second saved action/clock.
-		unit.hits = logical_rows[index].hits.keys()
-		unit.previous = []
+		unit["hits"] = logical_rows[index].hits.keys()
+		unit["previous"] = []
 		for polygon: PackedVector2Array in logical_rows[index].previous:
 			var vertices: Array = []
 			for point: Vector2 in polygon:
 				vertices.append([point.x, point.y])
 			unit.previous.append(vertices)
-		unit.cell = [cells[index].x, cells[index].y]
-		unit.slot = [combat_slots[index].x, combat_slots[index].y]
-		unit.destination = [moving_to[index].x, moving_to[index].y]
-		unit.facing = [facing[index].x, facing[index].y]
-		unit.progress = float(move_progress[index])
-		unit.duration = float(move_duration[index])
-		unit.move_curve = "legacy_smoothstep" if move_curve[index] == 1 else "quad_out"
+		unit["cell"] = [cells[index].x, cells[index].y]
+		unit["slot"] = [combat_slots[index].x, combat_slots[index].y]
+		unit["destination"] = [moving_to[index].x, moving_to[index].y]
+		unit["facing"] = [facing[index].x, facing[index].y]
+		unit["progress"] = float(move_progress[index])
+		unit["duration"] = float(move_duration[index])
+		unit["move_curve"] = "legacy_smoothstep" if move_curve[index] == 1 else "quad_out"
 		if logical_rows[index].has("ship_deck_position"):
-			unit.ship_deck_position = logical_rows[index].ship_deck_position.duplicate()
+			unit["ship_deck_position"] = logical_rows[index].ship_deck_position.duplicate()
 		if logical_rows[index].has("ship_guest"):
-			unit.ship_guest = logical_rows[index].ship_guest
+			unit["ship_guest"] = logical_rows[index].ship_guest
 		snapshot.units.append(unit)
 	if _combat_deployment_plan != null:
 		snapshot["combat_deployment_plan"] = _serialize_deployment_plan(_combat_deployment_plan)
@@ -8979,8 +8979,8 @@ func capture_combat_state() -> Dictionary:
 		var handoff: Dictionary = get_meta(&"crowd_return_handoff")
 		var store: Script = load("res://scripts/terrain_lab/site_store.gd")
 		if str(handoff.get("sha256", "")).length() == 64 and str(handoff.sha256) == store._crowd_roster_source_sha256(snapshot):
-			snapshot.crowd_state = handoff.formation.duplicate(true)
-			snapshot.crowd_source_sha256 = handoff.sha256
+			snapshot["crowd_state"] = handoff.formation.duplicate(true)
+			snapshot["crowd_source_sha256"] = handoff.sha256
 	return snapshot
 
 static func _serialize_deployment_plan(plan: CombatDeploymentPlan) -> Dictionary:
@@ -9820,16 +9820,16 @@ func restore_combat_state(snapshot: Dictionary, map: TerrainData, restored_playe
 		var saved: Dictionary = snapshot.units[index]
 		var unit: Dictionary = saved.duplicate(true)
 		unit.erase("exchange_visual") # Ignore any transient presentation payload on restore.
-		unit.fatigue = float(saved.get("fatigue", 0.0))
-		unit.fatigue_rest = float(saved.get("fatigue_rest", 0.0))
+		unit["fatigue"] = float(saved.get("fatigue", 0.0))
+		unit["fatigue_rest"] = float(saved.get("fatigue_rest", 0.0))
 		# Restore never invents a row field the saved body did not carry.
-		if saved.has("work_resting"): unit.work_resting = bool(saved.work_resting)
-		unit.attack_reduction = float(saved.get("attack_reduction", SiteCombatRules.diminishing(training if bool(saved.get("member", true)) else 0.0, 0.15)))
-		unit.attack_fatigue = float(saved.get("attack_fatigue", 0.0))
-		unit.hits = {}
+		if saved.has("work_resting"): unit["work_resting"] = bool(saved.work_resting)
+		unit["attack_reduction"] = float(saved.get("attack_reduction", SiteCombatRules.diminishing(training if bool(saved.get("member", true)) else 0.0, 0.15)))
+		unit["attack_fatigue"] = float(saved.get("attack_fatigue", 0.0))
+		unit["hits"] = {}
 		for identity: Variant in saved.hits:
 			unit.hits[int(identity)] = true
-		unit.previous = []
+		unit["previous"] = []
 		for polygon: Array in saved.previous:
 			var shape := PackedVector2Array()
 			for point: Array in polygon:
@@ -10291,7 +10291,7 @@ func _sync_pooled_captain(index: int, entry: Dictionary, inputs: Dictionary = {}
 	var appearance: Dictionary = inputs.appearance if not inputs.is_empty() else equipment_appearance(index)
 	if appearance.is_empty(): appearance = combat_units[index].get("appearance", {})
 	var captured: Dictionary = editor.capture_appearance()
-	if appearance.get("body") is float: captured.body = float(captured.body)
+	if appearance.get("body") is float: captured["body"] = float(captured.body)
 	if captured != appearance and not editor.restore_appearance(appearance):
 		push_error("TerrainArmy: cannot restore exact pooled captain appearance")
 		return false
@@ -17465,10 +17465,10 @@ func _fire_nav_update_members(now: float) -> void:
 		var entry: Dictionary = old.get(mid, {"route": [], "route_stamp": [], "target": INVALID_CELL,
 			"policy": "NORMAL", "reason": "PENDING", "defer_age": 0, "wait_age": 0,
 			"retry_at": 0.0, "proposal": -1, "next": INVALID_CELL, "lease": null})
-		entry.index = index
-		entry.band = _fire_nav_band(cells[index])
-		entry.category = "safe_queue"
-		entry.response = "NONE"
+		entry["index"] = index
+		entry["band"] = _fire_nav_band(cells[index])
+		entry["category"] = "safe_queue"
+		entry["response"] = "NONE"
 		var target := INVALID_CELL
 		var lease: Variant = null
 		var member_role := CombatMovementTypes.CombatDestinationRole.APPROACH_QUEUE
@@ -17491,35 +17491,35 @@ func _fire_nav_update_members(now: float) -> void:
 			else:
 				target = INVALID_CELL
 				lease = null
-			entry.category = "relocating"
-			entry.response = "EVACUATING"
+			entry["category"] = "relocating"
+			entry["response"] = "EVACUATING"
 			if _suppress_approaches.has(mid):
 				release_suppress_approach(mid, int(_suppress_approaches[mid].job_token))
 		elif _fire_nav_working(index):
-			entry.category = "working"
-			entry.response = "SUPPRESSING"
+			entry["category"] = "working"
+			entry["response"] = "SUPPRESSING"
 			target = INVALID_CELL
 		elif target != INVALID_CELL:
-			entry.category = "safe_platform" if member_role == CombatMovementTypes.CombatDestinationRole.PLATFORM else "safe_queue"
-			entry.response = "AVOIDING" if cells[index] != target else "NONE"
+			entry["category"] = "safe_platform" if member_role == CombatMovementTypes.CombatDestinationRole.PLATFORM else "safe_queue"
+			entry["response"] = "AVOIDING" if cells[index] != target else "NONE"
 		elif combat_order != CombatOrder.MOVE and not state.unsafe.has(combat_slots[index]) and _fire_nav_safe(combat_slots[index]):
 			target = combat_slots[index]
-			entry.response = "AVOIDING" if cells[index] != target else "NONE"
+			entry["response"] = "AVOIDING" if cells[index] != target else "NONE"
 		if is_controlled_person(index):
-			entry.reason = "MANUAL_CONTROL"
+			entry["reason"] = "MANUAL_CONTROL"
 			target = INVALID_CELL
-			if int(entry.band) >= int(profile.evacuate_band): entry.category = "trapped"; entry.response = "TRAPPED"
+			if int(entry.band) >= int(profile.evacuate_band): entry["category"] = "trapped"; entry["response"] = "TRAPPED"
 		if target != entry.target or policy != str(entry.policy) or not is_same(lease, entry.lease):
-			entry.route = []
-			entry.route_stamp = []
-			entry.retry_at = 0.0
-			entry.reason = "PENDING"
-		entry.target = target
-		entry.policy = policy
-		entry.lease = lease
-		entry.role = member_role
-		entry.next = INVALID_CELL
-		entry.proposal = -1
+			entry["route"] = []
+			entry["route_stamp"] = []
+			entry["retry_at"] = 0.0
+			entry["reason"] = "PENDING"
+		entry["target"] = target
+		entry["policy"] = policy
+		entry["lease"] = lease
+		entry["role"] = member_role
+		entry["next"] = INVALID_CELL
+		entry["proposal"] = -1
 		if target != INVALID_CELL and moving_to[index] == INVALID_CELL: combat_slots[index] = target
 		if target == INVALID_CELL and policy == "NORMAL" and str(entry.category) == "safe_queue" \
 			and not is_controlled_person(index) and _combat_deployment_plan != null \
@@ -17527,12 +17527,12 @@ func _fire_nav_update_members(now: float) -> void:
 			# No legal queue lease exists for this suspended original obligation.
 			# Keep any original committed edge; report its endpoint before trapping.
 			var settling := moving_to[index] != INVALID_CELL or _combat_batch_members.has(mid)
-			entry.category = "relocating" if settling else "trapped"
-			entry.response = "AVOIDING" if settling else "TRAPPED"
-			entry.reason = "NO_SAFE_CAPACITY"
+			entry["category"] = "relocating" if settling else "trapped"
+			entry["response"] = "AVOIDING" if settling else "TRAPPED"
+			entry["reason"] = "NO_SAFE_CAPACITY"
 		if str(entry.reason) == "NO_SAFE_ROUTE" and str(policy) == "EMERGENCY_ESCAPE" and now < float(entry.retry_at):
-			entry.category = "trapped"
-			entry.response = "TRAPPED"
+			entry["category"] = "trapped"
+			entry["response"] = "TRAPPED"
 		members[mid] = entry
 	for mid: int in old:
 		if members.has(mid) or not state.leases.has(mid): continue
@@ -17599,11 +17599,11 @@ func _fire_nav_publish_escape(member_id: int, target: Vector2i, entry: Dictionar
 	var old: Variant = state.leases.get(member_id)
 	if old != null and is_same(state.registry.owner_of(old.cell), old): previous.append(old)
 	var committed: Dictionary = state.registry.try_replace_hazard_subset(team_id, get_order_serial(), previous, assignments)
-	if not committed.ok: entry.reason = str(committed.code); return false
+	if not committed.ok: entry["reason"] = str(committed.code); return false
 	if needs_assignment: _combat_deployment_plan.publish_fire_assignments(assignments)
 	state.leases[member_id] = committed.leases[member_id]
-	entry.target = target
-	entry.lease = committed.leases[member_id]
+	entry["target"] = target
+	entry["lease"] = committed.leases[member_id]
 	return true
 
 func _fire_nav_search(member_id: int, quota: int, route_budget: Object) -> void:
@@ -17620,31 +17620,31 @@ func _fire_nav_search(member_id: int, quota: int, route_budget: Object) -> void:
 	var used := maxi(0, expanded_nodes - before)
 	var charge := mini(quota, maxi(int(SiteCombatRules.fire_navigation_profile().route_minimum_charge), used))
 	route_budget.record_route_result(get_formation_id(), 1, charge)
-	entry.last_actual_expansions = used
-	entry.last_charged_expansions = charge
-	entry.defer_age = 0
-	entry.route = []
-	entry.next = INVALID_CELL
+	entry["last_actual_expansions"] = used
+	entry["last_charged_expansions"] = charge
+	entry["defer_age"] = 0
+	entry["route"] = []
+	entry["next"] = INVALID_CELL
 	if route.size() >= 2:
 		if goal_test.is_valid() and not _fire_nav_publish_escape(member_id, route[-1], entry):
-			entry.retry_at = _fire_nav_now(state.snapshot) + float(SiteCombatRules.fire_navigation_profile().replan_seconds)
+			entry["retry_at"] = _fire_nav_now(state.snapshot) + float(SiteCombatRules.fire_navigation_profile().replan_seconds)
 			return
-		entry.route = route
-		entry.route_stamp = _fire_nav_route_stamp(entry)
-		entry.reason = "READY"
-		entry.next = route[1]
+		entry["route"] = route
+		entry["route_stamp"] = _fire_nav_route_stamp(entry)
+		entry["reason"] = "READY"
+		entry["next"] = route[1]
 		return
 	if bool(route_status.get("capped", false)) or str(route_status.get("outcome", "")) == "deferred":
-		entry.reason = "SEARCH_DEFERRED"
+		entry["reason"] = "SEARCH_DEFERRED"
 		return
 	var dynamic := bool(route_status.get("dependency_incomplete", false))
 	for values: Array in route_status.get("dependencies", {}).values():
 		if bool(values[0]) or values[1] != null or values[2] != null: dynamic = true; break
-	entry.reason = "WAIT_OCCUPANCY" if dynamic else "NO_SAFE_ROUTE"
-	entry.retry_at = _fire_nav_now(state.snapshot) + float(SiteCombatRules.fire_navigation_profile().retry_seconds)
+	entry["reason"] = "WAIT_OCCUPANCY" if dynamic else "NO_SAFE_ROUTE"
+	entry["retry_at"] = _fire_nav_now(state.snapshot) + float(SiteCombatRules.fire_navigation_profile().retry_seconds)
 	if not dynamic and str(entry.policy) == "EMERGENCY_ESCAPE":
-		entry.category = "trapped"
-		entry.response = "TRAPPED"
+		entry["category"] = "trapped"
+		entry["response"] = "TRAPPED"
 
 func _fire_nav_request_less(a: Dictionary, b: Dictionary) -> bool:
 	if int(a.age) != int(b.age): return int(a.age) > int(b.age)
@@ -17697,10 +17697,10 @@ func _fire_nav_schedule(route_budget: Object, now: float) -> void:
 		if moving_to[index] != INVALID_CELL or _combat_batch_members.has(mid) or is_controlled_person(index) \
 			or _combat_action_blocks_step(index) or str(entry.category) == "working" or now < float(entry.retry_at): continue
 		if str(entry.policy) == "NORMAL" and (entry.target == INVALID_CELL or cells[index] == entry.target): continue
-		if _fire_nav_route_valid(entry): entry.next = entry.route[1]; continue
-		entry.route = []
-		entry.route_stamp = []
-		entry.next = INVALID_CELL
+		if _fire_nav_route_valid(entry): entry["next"] = entry.route[1]; continue
+		entry["route"] = []
+		entry["route_stamp"] = []
+		entry["next"] = INVALID_CELL
 		var request := {"member": mid, "work": false, "age": int(entry.defer_age)}
 		if int(entry.band) < int(profile.immediate_band) or int(entry.defer_age) >= int(profile.aging_ticks): aging.append(request)
 		else: urgent.append(request)
@@ -17723,12 +17723,12 @@ func _fire_nav_schedule(route_budget: Object, now: float) -> void:
 		if bool(request.work):
 			var deferred_work: Dictionary = _suppress_approaches.get(int(request.member), {})
 			if not deferred_work.is_empty():
-				deferred_work.wait_age = mini(2147483647, int(deferred_work.wait_age) + 1)
-				deferred_work.route_status = "SCHEDULER_DEFERRED"
+				deferred_work["wait_age"] = mini(2147483647, int(deferred_work.wait_age) + 1)
+				deferred_work["route_status"] = "SCHEDULER_DEFERRED"
 		else:
 			var entry: Dictionary = state.members[int(request.member)]
-			entry.defer_age = mini(2147483647, int(entry.defer_age) + 1)
-			entry.reason = "SCHEDULER_DEFERRED"
+			entry["defer_age"] = mini(2147483647, int(entry.defer_age) + 1)
+			entry["reason"] = "SCHEDULER_DEFERRED"
 	# The original MOVE's stall/recovery never runs during this overlay. A
 	# missed Site slice therefore cannot accumulate STATIC_BLOCKED time.
 	if _combat_move_plan != null:
@@ -17798,13 +17798,13 @@ func _propose_fire_navigation(grid: Object) -> void:
 		var next: Vector2i = entry.next
 		if moving_to[index] != INVALID_CELL or next == INVALID_CELL or grid.member_proposal_map.has(mid): continue
 		if not _fire_nav_route_valid(entry) or grid.blocked_destinations.has(next) or _is_external_cell(next, mid):
-			entry.route = []
-			entry.wait_age = mini(2147483647, int(entry.wait_age) + 1)
-			entry.reason = "WAIT_OCCUPANCY"
+			entry["route"] = []
+			entry["wait_age"] = mini(2147483647, int(entry.wait_age) + 1)
+			entry["reason"] = "WAIT_OCCUPANCY"
 			continue
 		var occupant := int(grid.initial_occupancy.get(next, 0))
 		if occupant > 0 and index_for_identity(occupant) < 0: continue
-		entry.proposal = grid.propose_move(get_formation_id(), mid, get_order_serial(), cells[index], next,
+		entry["proposal"] = grid.propose_move(get_formation_id(), mid, get_order_serial(), cells[index], next,
 			1 if str(entry.policy) == "EMERGENCY_ESCAPE" else 0, int(entry.wait_age), 0, 0, formation_persistent_serial)
 		if int(entry.proposal) >= 0: proposal_count += 1
 
@@ -17840,11 +17840,11 @@ func _finalize_fire_navigation(grid: Object) -> void:
 		var entry: Dictionary = _fire_navigation.members[mid]
 		var proposal: Variant = grid.proposal_lookup.get(int(entry.proposal))
 		if proposal == null: continue
-		if proposal.status == CombatMovementTypes.MoveProposalStatus.ACCEPTED: entry.wait_age = 0
+		if proposal.status == CombatMovementTypes.MoveProposalStatus.ACCEPTED: entry["wait_age"] = 0
 		else:
-			entry.wait_age = mini(2147483647, int(entry.wait_age) + 1)
-			entry.reason = "WAIT_OCCUPANCY"
-			entry.route = []
+			entry["wait_age"] = mini(2147483647, int(entry.wait_age) + 1)
+			entry["reason"] = "WAIT_OCCUPANCY"
+			entry["route"] = []
 
 func _committed_intent_order(member_id: int) -> int:
 	var value: Variant = _combat_batch_members.get(member_id, -1)
@@ -17885,10 +17885,10 @@ func _finish_special_committed_intent(member_id: int, intent: Dictionary, old_ce
 	var entry: Dictionary = _fire_navigation.members[member_id]
 	var route: Array = entry.route
 	if route.size() > 1 and route[0] == old_cell and route[1] == new_cell: route.remove_at(0)
-	else: entry.route = []
-	entry.next = INVALID_CELL
-	entry.proposal = -1
-	entry.wait_age = 0
+	else: entry["route"] = []
+	entry["next"] = INVALID_CELL
+	entry["proposal"] = -1
+	entry["wait_age"] = 0
 
 func fire_threat_summary(action_end: float = -1.0) -> Dictionary:
 	var result := {"formation_id": get_formation_id(), "team_id": team_id, "order_serial": get_order_serial(),
@@ -17969,11 +17969,11 @@ func release_suppress_approach(member_id: int, job_token: int) -> Dictionary:
 	var state: Dictionary = _suppress_approaches.get(member_id, {})
 	if state.is_empty(): return suppress_approach_query(member_id, job_token)
 	if job_token != int(state.job_token): return SiteRuntime.fail("STALE_WORK_JOB")
-	state.cancelled = true
-	if str(state.reason).is_empty(): state.reason = "CANCELLED"
+	state["cancelled"] = true
+	if str(state.reason).is_empty(): state["reason"] = "CANCELLED"
 	state.route.clear()
-	state.next = INVALID_CELL
-	state.proposal_id = -1
+	state["next"] = INVALID_CELL
+	state["proposal_id"] = -1
 	state.registry.release_work_slot(state.lease)
 	var result := suppress_approach_query(member_id, job_token)
 	if bool(result.get("done", false)): _suppress_approaches.erase(member_id)
@@ -18017,13 +18017,13 @@ func _prepare_suppress_member(member_id: int, route_budget: Object, quota_limit:
 	var state: Dictionary = _suppress_approaches[member_id]
 	var query := suppress_approach_query(member_id, int(state.job_token))
 	if not query.ok:
-		state.reason = str(query.code)
+		state["reason"] = str(query.code)
 		release_suppress_approach(member_id, int(state.job_token))
 		return
 	var index := index_for_identity(member_id)
 	if moving_to[index] != INVALID_CELL or _combat_batch_members.has(member_id) or query.phase == "ARRIVED": return
-	state.next = INVALID_CELL
-	state.proposal_id = -1
+	state["next"] = INVALID_CELL
+	state["proposal_id"] = -1
 	var route: Array = state.route
 	var current: bool = int(state.navigation_revision) == data.navigation_revision and route.size() > 1 \
 		and route[0] == cells[index] and route[-1] == state.slot
@@ -18031,27 +18031,27 @@ func _prepare_suppress_member(member_id: int, route_budget: Object, quota_limit:
 		for at in range(1, route.size()):
 			if not data.can_step(route[at - 1], route[at]) or not _suppress_step_allowed(route[at - 1], route[at]): current = false; break
 	if not current:
-		state.route = []
+		state["route"] = []
 		var fid := get_formation_id()
 		if route_budget == null or not route_budget.can_request_route(fid):
-			state.route_status = "SCHEDULER_DEFERRED"
-			if route_budget != null: state.wait_age = mini(2147483647, int(state.wait_age) + 1)
+			state["route_status"] = "SCHEDULER_DEFERRED"
+			if route_budget != null: state["wait_age"] = mini(2147483647, int(state.wait_age) + 1)
 			return
 		var quota := mini(quota_limit, mini(256, int(route_budget.request_route_budget(fid))))
-		if quota <= 0: state.route_status = "SCHEDULER_DEFERRED"; return
+		if quota <= 0: state["route_status"] = "SCHEDULER_DEFERRED"; return
 		var expanded_before := expanded_nodes
 		var status := {}
 		var found := _find_local_route(cells[index], state.slot, quota, false, -1, 0, false, null, true, status, _suppress_route_extra_cost)
 		route_budget.record_route_result(fid, 1, mini(quota, maxi(minimum_charge, expanded_nodes - expanded_before)))
-		state.navigation_revision = data.navigation_revision
+		state["navigation_revision"] = data.navigation_revision
 		if found.size() < 2:
-			state.route_status = "SCHEDULER_DEFERRED" if bool(status.get("capped", false)) or str(status.get("outcome", "")) == "deferred" else "NO_SAFE_ROUTE"
-			state.wait_age = mini(2147483647, int(state.wait_age) + 1)
+			state["route_status"] = "SCHEDULER_DEFERRED" if bool(status.get("capped", false)) or str(status.get("outcome", "")) == "deferred" else "NO_SAFE_ROUTE"
+			state["wait_age"] = mini(2147483647, int(state.wait_age) + 1)
 			return
-		state.route = found
+		state["route"] = found
 		route = found
-	state.next = route[1]
-	state.route_status = "READY_TO_PROPOSE"
+	state["next"] = route[1]
+	state["route_status"] = "READY_TO_PROPOSE"
 
 func _propose_suppress_approach(grid: Object) -> void:
 	var ids: Array = _suppress_approaches.keys()
@@ -18068,10 +18068,10 @@ func _propose_suppress_member(member_id: int, grid: Object) -> void:
 	if not _suppress_step_allowed(cells[index], next) or grid.blocked_destinations.has(next) \
 		or grid.initial_occupancy.has(next) or _is_external_cell(next, member_id):
 		state.route.clear()
-		state.wait_age = mini(2147483647, int(state.wait_age) + 1)
-		state.route_status = "WAIT_OCCUPANCY"
+		state["wait_age"] = mini(2147483647, int(state.wait_age) + 1)
+		state["route_status"] = "WAIT_OCCUPANCY"
 		return
-	state.proposal_id = grid.propose_move(get_formation_id(), member_id, int(state.order_serial), cells[index], next,
+	state["proposal_id"] = grid.propose_move(get_formation_id(), member_id, int(state.order_serial), cells[index], next,
 		0, int(state.wait_age), 0, 0, formation_persistent_serial)
 	if int(state.proposal_id) >= 0: proposal_count += 1
 
@@ -18099,9 +18099,9 @@ func _finish_suppress_move(member_id: int, old_cell: Vector2i, new_cell: Vector2
 	var route: Array = state.route
 	if route.size() > 1 and route[0] == old_cell and route[1] == new_cell: route.remove_at(0)
 	else: route.clear()
-	state.next = INVALID_CELL
-	state.proposal_id = -1
-	state.wait_age = 0
+	state["next"] = INVALID_CELL
+	state["proposal_id"] = -1
+	state["wait_age"] = 0
 	var query := suppress_approach_query(member_id, int(state.job_token))
 	if not query.ok: release_suppress_approach(member_id, int(state.job_token))
 
@@ -18414,7 +18414,7 @@ func duty_resolve_readonly(duty_id: String, physical_owner: Variant = null) -> D
 			migration = migration or not current.duties.has(duty)
 		if migration:
 			current = current.duplicate(true)
-			if SiteOffices.ensure_catalog(current, "team"): current.revision = int(current.revision) + 1
+			if SiteOffices.ensure_catalog(current, "team"): current["revision"] = int(current.revision) + 1
 			SiteOffices.upgrade(current)
 	var head: int = physical.combat_identity(physical.current_commander) if physical.current_commander >= 0 and physical.command_eligible(physical.current_commander) else -1
 	var holder_ok := func(identity: int) -> bool:

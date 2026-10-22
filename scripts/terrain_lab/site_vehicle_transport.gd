@@ -123,10 +123,10 @@ func assign_crew(vehicle_id: String, person_id: int, slot: String, requester_id:
 	if not work_assets.ok: return work_assets
 	if person.owner is CrowdPersonOwner and not person.owner.siege_crew_assigned(person_id): return Runtime.fail("BUSY", "原人物的群眾承諾步尚未收束")
 	vehicle.crew_slots[slot] = person_id
-	vehicle.operator_id = int(vehicle.crew_slots.get("0", 0))
+	vehicle["operator_id"] = int(vehicle.crew_slots.get("0", 0))
 	if not person.owner is CrowdPersonOwner: person.owner.siege_crew_assigned(person_id)
-	vehicle.command = {"type": "crew"}
-	if str(vehicle.kind) != "siege_tower" or vehicle.get("deployed_pose", {}).is_empty(): vehicle.phase = "idle"
+	vehicle["command"] = {"type": "crew"}
+	if str(vehicle.kind) != "siege_tower" or vehicle.get("deployed_pose", {}).is_empty(): vehicle["phase"] = "idle"
 	return Runtime.ok("原隊員逐格前往器具操作位；人員編制不變")
 
 func _queue_crew_release(vehicle: Dictionary, people: Array, reason: String, resume_attack: bool = false) -> void:
@@ -136,12 +136,12 @@ func _queue_crew_release(vehicle: Dictionary, people: Array, reason: String, res
 	var pending: Array = vehicle.get("command", {}).get("people", []).duplicate() if str(vehicle.get("command", {}).get("type", "")) == "release" else []
 	for identity: int in people:
 		if not pending.has(identity): pending.append(identity)
-	vehicle.command = {"type": "release", "people": pending, "reason": reason}
+	vehicle["command"] = {"type": "release", "people": pending, "reason": reason}
 	if resume_attack and not resume.is_empty(): vehicle.command.resume = resume
 	var action: Dictionary = vehicle.get("action", {})
 	var committed := str(action.get("stage", "")) in ["rotate", "recovering"] or str(action.get("stage", "")) == "collision" and not str(action.get("attack_id", "")).is_empty()
-	if str(action.get("stage", "")) in ["tower_deploy", "tower_retract"] and not resume_attack: vehicle.phase = "wrecked" if float(vehicle.hp) <= 0.0 else str(action.get("settled_phase", "idle"))
-	if float(vehicle.hp) <= 0.0 and str(action.get("stage", "")) != "rotate" or not committed and not resume_attack: vehicle.action = {}
+	if str(action.get("stage", "")) in ["tower_deploy", "tower_retract"] and not resume_attack: vehicle["phase"] = "wrecked" if float(vehicle.hp) <= 0.0 else str(action.get("settled_phase", "idle"))
+	if float(vehicle.hp) <= 0.0 and str(action.get("stage", "")) != "rotate" or not committed and not resume_attack: vehicle["action"] = {}
 
 func _settle_crew_release(vehicle: Dictionary) -> void:
 	if str(vehicle.get("command", {}).get("type", "")) != "release" or not vehicle.get("move", {}).is_empty() or str(vehicle.get("action", {}).get("stage", "")) == "rotate": return
@@ -152,16 +152,16 @@ func _settle_crew_release(vehicle: Dictionary) -> void:
 		for slot: String in vehicle.crew_slots.keys():
 			if int(vehicle.crew_slots[slot]) == identity: vehicle.crew_slots.erase(slot)
 		pending.erase(identity)
-		vehicle.operator_id = int(vehicle.crew_slots.get("0", 0))
+		vehicle["operator_id"] = int(vehicle.crew_slots.get("0", 0))
 		if not person.is_empty(): person.owner.siege_crew_released(identity)
 	if pending.is_empty():
 		var tower_phase: String = str(vehicle.phase) if str(vehicle.kind) == "siege_tower" and not vehicle.get("deployed_pose", {}).is_empty() and float(vehicle.hp) > 0.0 else ""
 		var resume: Dictionary = vehicle.command.get("resume", {})
-		vehicle.command = resume if float(vehicle.hp) > 0.0 and not resume.is_empty() and crew_ready(vehicle) else {"type": "stop", "reason": str(vehicle.command.get("reason", "released"))}
-		vehicle.phase = "wrecked" if float(vehicle.hp) <= 0.0 else ("recovering" if str(vehicle.get("action", {}).get("stage", "")) == "recovering" else "idle")
-		if str(vehicle.command.get("type", "")) == "attack" and vehicle.action.is_empty(): vehicle.phase = "ready"
-		if float(vehicle.hp) <= 0.0: vehicle.command = {}
-		if not tower_phase.is_empty(): vehicle.phase = tower_phase
+		vehicle["command"] = resume if float(vehicle.hp) > 0.0 and not resume.is_empty() and crew_ready(vehicle) else {"type": "stop", "reason": str(vehicle.command.get("reason", "released"))}
+		vehicle["phase"] = "wrecked" if float(vehicle.hp) <= 0.0 else ("recovering" if str(vehicle.get("action", {}).get("stage", "")) == "recovering" else "idle")
+		if str(vehicle.command.get("type", "")) == "attack" and vehicle.action.is_empty(): vehicle["phase"] = "ready"
+		if float(vehicle.hp) <= 0.0: vehicle["command"] = {}
+		if not tower_phase.is_empty(): vehicle["phase"] = tower_phase
 
 func unassign_crew(vehicle_id: String, person_id: int, requester_id: int, test_dispatch: bool = false) -> Dictionary:
 	var guard := _siege_guard()
@@ -186,12 +186,12 @@ func order_siege(vehicle_id: String, kind: String, target: Dictionary = {}, requ
 		if str(vehicle.command.get("type", "")) == "release":
 			vehicle.command.erase("resume")
 			vehicle.command.reason = "ordered"
-		else: vehicle.command = {"type": "stop", "reason": "ordered"}
+		else: vehicle["command"] = {"type": "stop", "reason": "ordered"}
 		var stage := str(vehicle.get("action", {}).get("stage", ""))
-		if stage not in ["rotate", "recovering"] and not (stage == "collision" and not str(vehicle.action.get("attack_id", "")).is_empty()): vehicle.action = {}
-		if not vehicle.get("move", {}).is_empty(): vehicle.stop_pending = true
-		if vehicle.get("move", {}).is_empty() and not _crew_moving(vehicle) and vehicle.action.is_empty(): vehicle.phase = "wrecked" if float(vehicle.hp) <= 0.0 else (retained_phase if str(vehicle.kind) == "siege_tower" and not vehicle.get("deployed_pose", {}).is_empty() else "idle")
-		if float(vehicle.hp) <= 0.0 and vehicle.action.is_empty() and vehicle.crew_slots.is_empty(): vehicle.command = {}
+		if stage not in ["rotate", "recovering"] and not (stage == "collision" and not str(vehicle.action.get("attack_id", "")).is_empty()): vehicle["action"] = {}
+		if not vehicle.get("move", {}).is_empty(): vehicle["stop_pending"] = true
+		if vehicle.get("move", {}).is_empty() and not _crew_moving(vehicle) and vehicle.action.is_empty(): vehicle["phase"] = "wrecked" if float(vehicle.hp) <= 0.0 else (retained_phase if str(vehicle.kind) == "siege_tower" and not vehicle.get("deployed_pose", {}).is_empty() else "idle")
+		if float(vehicle.hp) <= 0.0 and vehicle.action.is_empty() and vehicle.crew_slots.is_empty(): vehicle["command"] = {}
 		return Runtime.ok("停止新攻城操作，已承諾動作安全收束")
 	if float(vehicle.hp) <= 0.0 or str(vehicle.phase) == "building" or not vehicle.get("move", {}).is_empty() or not vehicle.get("repair", {}).is_empty() or not vehicle.action.is_empty() or _crew_moving(vehicle) or str(vehicle.command.get("type", "")) == "release": return Runtime.fail("BUSY")
 	for identity: int in vehicle.get("crew_slots", {}).values():
@@ -205,8 +205,8 @@ func order_siege(vehicle_id: String, kind: String, target: Dictionary = {}, requ
 		if float(definition.move_speed) <= 0.0 or target.get("type") != "ground" or not value is Array or value.size() != 2: return Runtime.fail("INVALID_ORDER", "此器具不支援推運，或目標不是本 Site 地面格")
 		var goal := Vector2i(int(value[0]), int(value[1]))
 		if not lab.terrain.contains(goal) or crew_count(vehicle, false) < int(definition.min_crew): return Runtime.fail("UNREACHABLE", "未達最低可用原操作班，或目的格不合法")
-		vehicle.command = {"type": "move", "target": {"type": "ground", "cell": [goal.x, goal.y]}}
-		vehicle.phase = "ready" if crew_ready(vehicle) else "idle"
+		vehicle["command"] = {"type": "move", "target": {"type": "ground", "cell": [goal.x, goal.y]}}
+		vehicle["phase"] = "ready" if crew_ready(vehicle) else "idle"
 		return Runtime.ok("原操作班到位後，以原 Grid 整組推運到目標格")
 	if kind == "turn":
 		var value: Variant = target.get("facing", [])
@@ -214,9 +214,9 @@ func order_siege(vehicle_id: String, kind: String, target: Dictionary = {}, requ
 		var direction := Vector2i(int(value[0]), int(value[1]))
 		var old := Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1]))
 		if not TerrainData.DIRECTIONS.has(direction) or Vector2(direction).dot(Vector2(old)) != 0.0 or crew_count(vehicle, false) < int(definition.min_crew): return Runtime.fail("INVALID", "九十度轉向須達最低操作班")
-		vehicle.command = {"type": "turn", "facing": [direction.x, direction.y]}
-		vehicle.action = {"stage": "approach", "elapsed": 0.0, "facing": [direction.x, direction.y], "participants": vehicle.crew_slots.values().duplicate(), "sweep": []}
-		vehicle.phase = "turning"
+		vehicle["command"] = {"type": "turn", "facing": [direction.x, direction.y]}
+		vehicle["action"] = {"stage": "approach", "elapsed": 0.0, "facing": [direction.x, direction.y], "participants": vehicle.crew_slots.values().duplicate(), "sweep": []}
+		vehicle["phase"] = "turning"
 		return Runtime.ok("原人物先逐格走到轉向工位")
 	if kind == "attack":
 		if str(vehicle.kind) == "siege_tower" or str(target.get("type", "")) not in ["structure", "vehicle", "person", "ground"] or crew_count(vehicle, false) < int(definition.min_crew) or str(vehicle.kind) == "ram" and str(target.get("type", "")) != "structure": return Runtime.fail("INVALID")
@@ -225,11 +225,11 @@ func order_siege(vehicle_id: String, kind: String, target: Dictionary = {}, requ
 		if ammo == "fire_pot":
 			var admission: Dictionary = controller.person_actions.fire_pot_ammo_guard(vehicle, operator_id, technology_token)
 			if not admission.ok: return admission
-		vehicle.command = {"type": "attack", "target": target.duplicate(true)}
+		vehicle["command"] = {"type": "attack", "target": target.duplicate(true)}
 		if ammo == "fire_pot":
 			vehicle.command.merge({"ammo": ammo, "operator_id": operator_id})
 			if not technology_token.is_empty(): vehicle.command.tech_trial = technology_token
-		vehicle.phase = "ready" if crew_ready(vehicle) else "idle"
+		vehicle["phase"] = "ready" if crew_ready(vehicle) else "idle"
 		return Runtime.ok("器具按真實接觸目標操作；原 crew 先實際到位")
 	return Runtime.fail("INVALID_ORDER")
 
@@ -241,9 +241,9 @@ func _crew_walk(vehicle: Dictionary, turning: bool) -> bool:
 		var index := int(person.unit)
 		var goal := crew_cell(vehicle, slot, turning)
 		if not _crew_ground_station(vehicle, goal):
-			vehicle.command = {"type": "stop", "reason": "操作工位地面已改變"}
-			vehicle.action = {}
-			if str(vehicle.phase) != "deployed": vehicle.phase = "disabled"
+			vehicle["command"] = {"type": "stop", "reason": "操作工位地面已改變"}
+			vehicle["action"] = {}
+			if str(vehicle.phase) != "deployed": vehicle["phase"] = "disabled"
 			return false
 		if person.owner.moving_to[index] != TerrainArmy.INVALID_CELL: arrived = false; continue
 		if person.cell == goal: continue
@@ -366,8 +366,8 @@ func _tower_surface_preview(vehicle: Dictionary, kind: String) -> Dictionary:
 	if not crew_ready(vehicle): return Runtime.fail("BUSY", "最低四名原操作班須全員在合法地面工位")
 	var candidate: Dictionary = vehicle.duplicate(true)
 	if kind == "deploy":
-		candidate.deployed_pose = Runtime.siege_tower_pose(lab.terrain, vehicle)
-		candidate.phase = "deployed"
+		candidate["deployed_pose"] = Runtime.siege_tower_pose(lab.terrain, vehicle)
+		candidate["phase"] = "deployed"
 		var geometry: Dictionary = Runtime.siege_tower_geometry(lab.terrain, candidate)
 		if not bool(geometry.support_valid): return Runtime.fail("UNREACHABLE", str(geometry.reason))
 	elif kind != "retract" or vehicle.get("deployed_pose", {}).is_empty(): return Runtime.fail("NO_TARGET", "塔尚無可收束的原部署位姿")
@@ -380,9 +380,9 @@ func _order_tower_surface(vehicle: Dictionary, kind: String) -> Dictionary:
 	var preview := _tower_surface_preview(vehicle, kind)
 	if not preview.ok: return preview
 	if not lab._charge_siege_round(vehicle): return Runtime.fail("BUSY", "原操作班疲勞交易未通過；未開始塔具作業")
-	vehicle.command = {"type": kind}
-	vehicle.action = {"stage": "tower_" + kind, "elapsed": 0.0, "settled_phase": str(vehicle.phase)}
-	if kind == "deploy": vehicle.phase = "deploying"
+	vehicle["command"] = {"type": kind}
+	vehicle["action"] = {"stage": "tower_" + kind, "elapsed": 0.0, "settled_phase": str(vehicle.phase)}
+	if kind == "deploy": vehicle["phase"] = "deploying"
 	return Runtime.ok("原操作班按共同動作時間架設十五秒／收橋十秒；表面在提交時改變")
 
 func _advance_tower_surface(vehicle: Dictionary, delta: float) -> void:
@@ -390,18 +390,18 @@ func _advance_tower_surface(vehicle: Dictionary, delta: float) -> void:
 	var kind := "deploy" if str(action.stage) == "tower_deploy" else "retract"
 	var preview := _tower_surface_preview(vehicle, kind)
 	if not preview.ok:
-		vehicle.phase = "wrecked" if float(vehicle.hp) <= 0.0 else str(action.settled_phase)
-		vehicle.action = {}
-		vehicle.command = {"type": "stop", "reason": str(preview.get("message", "塔作業條件已改變"))}
+		vehicle["phase"] = "wrecked" if float(vehicle.hp) <= 0.0 else str(action.settled_phase)
+		vehicle["action"] = {}
+		vehicle["command"] = {"type": "stop", "reason": str(preview.get("message", "塔作業條件已改變"))}
 		return
-	action.elapsed = float(action.elapsed) + delta
+	action["elapsed"] = float(action.elapsed) + delta
 	if float(action.elapsed) + 0.000000001 < (15.0 if kind == "deploy" else 10.0): return
 	# This same pure preview checks current original people, reservations and
 	# supports before changing the same vehicle's sole deployed pose.
-	vehicle.deployed_pose = preview.pose.duplicate(true) if kind == "deploy" else {}
-	vehicle.phase = "deployed" if kind == "deploy" else "idle"
-	vehicle.action = {}
-	vehicle.command = {"type": "stop", "reason": "deployed" if kind == "deploy" else "retracted"}
+	vehicle["deployed_pose"] = preview.pose.duplicate(true) if kind == "deploy" else {}
+	vehicle["phase"] = "deployed" if kind == "deploy" else "idle"
+	vehicle["action"] = {}
+	vehicle["command"] = {"type": "stop", "reason": "deployed" if kind == "deploy" else "retracted"}
 	SiegeEnvironment.rebuild_indexes(lab.terrain)
 
 func blocks_person_cell(cell: Vector2i, ignore_operator: int = 0, ignore_team: int = 0) -> bool:
@@ -623,8 +623,8 @@ func begin_siege_compound(plan: Dictionary) -> void:
 		return
 	# One admitted original-owner primitive; native may join only with whole-group
 	# prepare/commit, never by invoking independent one-person order wrappers.
-	vehicle.move = plan.duplicate(true)
-	vehicle.phase = "moving"
+	vehicle["move"] = plan.duplicate(true)
+	vehicle["phase"] = "moving"
 	for movement: Dictionary in plan.participants:
 		var person := _operator(int(movement.person_id))
 		person.owner.begin_committed_move(int(movement.person_id), lab.terrain.cell_from_index(int(movement.from)), lab.terrain.cell_from_index(int(movement.to)), float(plan.duration))
@@ -751,51 +751,51 @@ func _advance_ram_action(vehicle: Dictionary, delta: float) -> void:
 	var action: Dictionary = vehicle.get("action", {})
 	if str(action.get("stage", "")) in ["approach", "rotate", "return"] or not vehicle.get("move", {}).is_empty(): return
 	if str(action.get("stage", "")) == "recovering":
-		action.elapsed = float(action.elapsed) + delta
+		action["elapsed"] = float(action.elapsed) + delta
 		if float(action.elapsed) + 0.000000001 >= 0.75 / float(action.multiplier):
-			vehicle.action = {}
-			vehicle.phase = "ready" if crew_ready(vehicle) and str(vehicle.command.get("type", "")) == "attack" else "idle"
+			vehicle["action"] = {}
+			vehicle["phase"] = "ready" if crew_ready(vehicle) and str(vehicle.command.get("type", "")) == "attack" else "idle"
 		return
 	var committed_collision := str(action.get("stage", "")) == "collision" and not str(action.get("attack_id", "")).is_empty()
 	if not committed_collision and (str(vehicle.command.get("type", "")) != "attack" or not crew_ready(vehicle)):
-		if str(action.get("stage", "")) in ["preparing", "collision"] and str(action.get("attack_id", "")).is_empty(): vehicle.action = {}
+		if str(action.get("stage", "")) in ["preparing", "collision"] and str(action.get("attack_id", "")).is_empty(): vehicle["action"] = {}
 		return
 	if not committed_collision:
 		var target: Dictionary = vehicle.command.target if action.is_empty() else action.target
 		var preview: Dictionary = lab.siege_ram_preview(vehicle, target, bool(vehicle.command.get("ai", false)))
 		if not bool(preview.get("ok", false)) or bool(vehicle.command.get("ai", false)) and not preview.get("friendly_ids", []).is_empty():
-			vehicle.action = {}
-			vehicle.phase = "disabled"
+			vehicle["action"] = {}
+			vehicle["phase"] = "disabled"
 			vehicle.command.reason = str(preview.get("message", "前端目標或友軍阻擋"))
 			return
 	if action.is_empty():
 		action = {"stage": "preparing", "elapsed": 0.0, "multiplier": crew_multiplier(vehicle), "target": vehicle.command.target.duplicate(true), "attack_id": "", "people": {}, "parts": {}}
 		if not lab._charge_siege_round(vehicle):
-			vehicle.action = {}
-			vehicle.phase = "disabled"
-			vehicle.command = {"type": "stop", "reason": "原操作班疲勞交易未通過；未開始撞擊"}
+			vehicle["action"] = {}
+			vehicle["phase"] = "disabled"
+			vehicle["command"] = {"type": "stop", "reason": "原操作班疲勞交易未通過；未開始撞擊"}
 			return
-		vehicle.action = action
+		vehicle["action"] = action
 	var remaining := delta
 	for _transition in range(3):
 		var duration := (2.0 if str(action.stage) == "preparing" else (0.25 if str(action.stage) == "collision" else 0.75)) / float(action.multiplier)
 		var previous := float(action.elapsed)
 		var consumed := minf(remaining, maxf(0.0, duration - previous))
-		action.elapsed = previous + consumed
+		action["elapsed"] = previous + consumed
 		remaining -= consumed
-		vehicle.phase = str(action.stage)
+		vehicle["phase"] = str(action.stage)
 		if str(action.stage) == "collision" and consumed > 0.0:
-			action.contact_step_offset = maxf(0.0, delta - remaining - consumed)
+			action["contact_step_offset"] = maxf(0.0, delta - remaining - consumed)
 			lab.siege_ram_hit(vehicle, action.target, str(action.attack_id), previous / duration, float(action.elapsed) / duration)
 		if float(action.elapsed) + 0.000000001 < duration: break
-		action.elapsed = 0.0
-		if str(action.stage) == "preparing": action.stage = "collision"
-		elif str(action.stage) == "collision": action.stage = "recovering"
+		action["elapsed"] = 0.0
+		if str(action.stage) == "preparing": action["stage"] = "collision"
+		elif str(action.stage) == "collision": action["stage"] = "recovering"
 		else:
-			vehicle.action = {}
-			vehicle.phase = "ready" if crew_ready(vehicle) else "idle"
+			vehicle["action"] = {}
+			vehicle["phase"] = "ready" if crew_ready(vehicle) else "idle"
 			break
-		vehicle.phase = str(action.stage)
+		vehicle["phase"] = str(action.stage)
 		if remaining <= 0.000000001: break
 
 func clear_siege_wreck(vehicle_id: String, executor_id: int, requester_id: int, test_dispatch: bool = false) -> Dictionary:
@@ -1024,12 +1024,12 @@ func deploy_plan(team: TerrainArmy, plan: Array) -> Dictionary:
 		var vehicle: Dictionary = plan[offset].duplicate(true)
 		var index := int(vehicle.operator_index)
 		vehicle.erase("operator_index")
-		vehicle.id = str(next + offset)
-		vehicle.operator_id = team.combat_identity(index) if index >= 0 and team.combat_can_act(index) else 0
-		vehicle.holder = Runtime.new_item_state("vehicle:" + vehicle.id)
-		vehicle.cargo = {}
-		vehicle.move = {}
-		vehicle.stop_pending = false
+		vehicle["id"] = str(next + offset)
+		vehicle["operator_id"] = team.combat_identity(index) if index >= 0 and team.combat_can_act(index) else 0
+		vehicle["holder"] = Runtime.new_item_state("vehicle:" + vehicle.id)
+		vehicle["cargo"] = {}
+		vehicle["move"] = {}
+		vehicle["stop_pending"] = false
 		lab.terrain.site.vehicles[vehicle.id] = vehicle
 	lab.terrain.site["next_vehicle"] = next + plan.size()
 	return Runtime.ok("已建立原車輛；沒有操作人的車輛保持停泊")
@@ -1083,12 +1083,12 @@ func assign_operator(vehicle_id: String, person_id: int, requester_id: int, test
 		return Runtime.fail("UNREACHABLE", "手推車須到車後；馬車須到馬格相鄰合法格後上馬")
 	if str(vehicle.kind) == "cart" and not lab.terrain.can_step(person.cell, lab.terrain.cell_from_index(int(vehicle.cell))): return Runtime.fail("UNREACHABLE")
 	var old_team := int(vehicle.team_id)
-	vehicle.team_id = team.team_id
-	vehicle.operator_id = person_id
-	vehicle.stop_pending = false
+	vehicle["team_id"] = team.team_id
+	vehicle["operator_id"] = person_id
+	vehicle["stop_pending"] = false
 	if boarding and not team._reserve_combat_step(int(person.unit), position):
-		vehicle.team_id = old_team
-		vehicle.operator_id = 0
+		vehicle["team_id"] = old_team
+		vehicle["operator_id"] = 0
 		return Runtime.fail("UNREACHABLE", "上馬一步被阻擋，車輛與名額未移轉")
 	return Runtime.ok("原人物已操作此車")
 
@@ -1099,9 +1099,9 @@ func unassign_operator(vehicle_id: String, requester_id: int, test_dispatch: boo
 		var original := ship_person(int(vehicle.operator_id))
 		if original.is_empty() or not _authorized(original.owner, requester_id, int(vehicle.operator_id), test_dispatch): return Runtime.fail("NO_AUTHORITY")
 		if not vehicle.move.is_empty() or not ship_job(vehicle_id).is_empty(): return Runtime.fail("BUSY")
-		vehicle.operator_id = 0
-		vehicle.command = {}
-		vehicle.revision = int(vehicle.revision) + 1
+		vehicle["operator_id"] = 0
+		vehicle["command"] = {}
+		vehicle["revision"] = int(vehicle.revision) + 1
 		return Runtime.ok("已解除駕駛職務；原人留原席")
 	if is_siege(vehicle): return unassign_crew(vehicle_id, 0, requester_id, test_dispatch)
 	if vehicle.is_empty(): return Runtime.fail("NO_TARGET")
@@ -1140,13 +1140,13 @@ func _stop_operator(vehicle: Dictionary, person: Dictionary) -> Dictionary:
 	if not _available(person) or person.owner.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL: return Runtime.fail("BUSY", "原人物須清醒且停止才能自行下馬／停車")
 	if str(vehicle.kind) == "wagon":
 		var previous_stop := bool(vehicle.stop_pending)
-		vehicle.stop_pending = true
+		vehicle["stop_pending"] = true
 		for direction: Vector2i in TerrainData.DIRECTIONS:
 			if person.owner._reserve_combat_step(int(person.unit), person.cell + direction): return Runtime.ok("原人物正走下馬匹；完成這一步後車輛停泊")
-		vehicle.stop_pending = previous_stop
+		vehicle["stop_pending"] = previous_stop
 		return Runtime.fail("NO_SPACE", "馬匹周圍沒有合法下馬格，保留原人車")
-	vehicle.operator_id = 0
-	vehicle.stop_pending = false
+	vehicle["operator_id"] = 0
+	vehicle["stop_pending"] = false
 	return Runtime.ok("車輛停泊，車上貨物保留")
 
 func _step_plan(team: TerrainArmy, index: int, next: Vector2i, route_from: Vector2i = TerrainArmy.INVALID_CELL, route_facing: Vector2i = Vector2i.ZERO, anticipate: bool = false, terrain_only: bool = false) -> Dictionary:
@@ -1207,8 +1207,8 @@ func _step_plan(team: TerrainArmy, index: int, next: Vector2i, route_from: Vecto
 			if x > minimum.x and not lab.terrain.can_step(cell - Vector2i.RIGHT, cell) or y > minimum.y and not lab.terrain.can_step(cell - Vector2i.DOWN, cell): return {"invalid": true}
 			sweep.append(lab.terrain.index(cell))
 	var result := {"cell": lab.terrain.index(destination), "facing": [direction.x, direction.y], "operator_from": lab.terrain.index(from), "operator_to": lab.terrain.index(next), "sweep": sweep}
-	if boarding: result.boarding = true
-	if dismount: result.dismount = true
+	if boarding: result["boarding"] = true
+	if dismount: result["dismount"] = true
 	return result
 
 func route_step(team: TerrainArmy, index: int, from: Vector2i, next: Vector2i, direction: Vector2i, anticipate: bool = false) -> Dictionary:
@@ -1597,7 +1597,7 @@ func _clear_link_b3(from_id: String, to_id: String) -> Dictionary:
 	for identity: String in [from_id, to_id]:
 		var naval: Dictionary = live[identity].naval.duplicate(true)
 		naval.erase("boarding_link")
-		naval.version = 1
+		naval["version"] = 1
 		prepared[identity] = naval
 	for identity: String in [from_id, to_id]:
 		live[identity].naval = prepared[identity]
@@ -1735,9 +1735,9 @@ func prepare_boarding_exit(job: Dictionary) -> Dictionary:
 		if bool(job.get("link_exit", false)) or not ship_afloat(source_dead) or not ship_afloat(target_dead) or _boarding_exit_frame(source_dead) != job.get("boarding_frames", {}).get(str(job.vehicle_id), {}) or _boarding_exit_frame(target_dead) != job.get("boarding_frames", {}).get(str(job.secondary_vehicle_id), {}):
 			person.row.ship_death_world = [point.x, point.y]
 		return Runtime.ok()
-	if float(person.owner.combat_hot_get(int(person.unit), &"ko", 0.0)) > 0.0: job.exit_ko = true
-	if bool(job.get("exit_ko", false)) and person.owner.patient_has_rescuer(int(person.unit)): job.exit_rescue_seen = true
-	if person.owner.combat_can_act(int(person.unit)): job.exit_ko = false
+	if float(person.owner.combat_hot_get(int(person.unit), &"ko", 0.0)) > 0.0: job["exit_ko"] = true
+	if bool(job.get("exit_ko", false)) and person.owner.patient_has_rescuer(int(person.unit)): job["exit_rescue_seen"] = true
+	if person.owner.combat_can_act(int(person.unit)): job["exit_ko"] = false
 	if bool(job.get("link_evacuation", false)):
 		if not person.owner.combat_can_act(int(person.unit)):
 			person.row.ship_death_world = [point.x, point.y]
@@ -1761,14 +1761,14 @@ func prepare_boarding_exit(job: Dictionary) -> Dictionary:
 			if evacuation.size() >= 2:
 				var distance: float = 0.0
 				for index: int in range(1, evacuation.size()): distance += evacuation[index - 1].distance_to(evacuation[index])
-				job.kind = "ship_evac"
-				job.path = evacuation
-				job.elapsed = 0.0
-				job.speed = minf(float(job.speed), 0.5)
-				job.duration = maxf(0.000001, distance / float(job.speed))
-				job.link_exit = true
-				job.link_evacuation = true
-				job.exit_blocked = false
+				job["kind"] = "ship_evac"
+				job["path"] = evacuation
+				job["elapsed"] = 0.0
+				job["speed"] = minf(float(job.speed), 0.5)
+				job["duration"] = maxf(0.000001, distance / float(job.speed))
+				job["link_exit"] = true
+				job["link_evacuation"] = true
+				job["exit_blocked"] = false
 				return Runtime.ok()
 		person.row.ship_death_world = [point.x, point.y]
 		_kill_ship_person(person)
@@ -1790,21 +1790,21 @@ func prepare_boarding_exit(job: Dictionary) -> Dictionary:
 		# A zero-length exit still commits at the next original settlement, never a synthetic step.
 		if path.size() == 1: path.append(path[0])
 		for index: int in range(1, path.size()): distance += path[index - 1].distance_to(path[index])
-		job.path = path
-		job.elapsed = 0.0
-		job.duration = maxf(0.000001, distance / float(job.speed))
-		job.secondary_vehicle_id = identity
-		job.target_revision = int(hull.revision)
-		job.berth_id = berth
-		job.link_exit = true
-		job.exit_blocked = false
+		job["path"] = path
+		job["elapsed"] = 0.0
+		job["duration"] = maxf(0.000001, distance / float(job.speed))
+		job["secondary_vehicle_id"] = identity
+		job["target_revision"] = int(hull.revision)
+		job["berth_id"] = berth
+		job["link_exit"] = true
+		job["exit_blocked"] = false
 		return Runtime.ok()
 	# Supported but occupied: retain this exact point and original busy job, including KO.
-	job.path = [point, point]
-	job.elapsed = 0.0
-	job.duration = 0.000001
-	job.link_exit = true
-	job.exit_blocked = true
+	job["path"] = [point, point]
+	job["elapsed"] = 0.0
+	job["duration"] = 0.000001
+	job["link_exit"] = true
+	job["exit_blocked"] = true
 	return Runtime.fail("BUSY", "Original supported exit has no free deck path or berth")
 
 func commit_boarding_exit(job: Dictionary) -> Dictionary:
@@ -1821,10 +1821,10 @@ func commit_boarding_exit(job: Dictionary) -> Dictionary:
 	person.row.erase("ship_deck_position")
 	if int(person.owner.team_id) != int(target.team_id): person.row.ship_guest = true
 	else: person.row.erase("ship_guest")
-	if not source.is_empty() and int(source.operator_id) == int(person.id): source.operator_id = 0
-	target.revision = int(target.revision) + 1
+	if not source.is_empty() and int(source.operator_id) == int(person.id): source["operator_id"] = 0
+	target["revision"] = int(target.revision) + 1
 	person.owner.ship_embarkation_changed(int(person.id))
-	job.link_released = true
+	job["link_released"] = true
 	var walked: Dictionary = Runtime.ok("原人沿仍有支撐的付時甲板路徑走出")
 	walked["link_released"] = true
 	return walked
@@ -1889,7 +1889,7 @@ func _write_link_b3(accepted: Dictionary, from_id: String, to_id: String, clear_
 		var naval: Dictionary = accepted.state.vehicles[identity].naval.duplicate(true)
 		if clear:
 			naval.erase("boarding_link")
-			naval.version = 1
+			naval["version"] = 1
 		live[identity].naval = naval
 
 ## B3S4 atomic completion. The ledger exit is computed on a copy first; the body move
@@ -1902,7 +1902,7 @@ func commit_link_crossing(job: Dictionary) -> Dictionary:
 	var moved: Dictionary = commit_ship_cross(job)
 	if not moved.ok: return moved
 	_write_link_b3(ended, from_id, to_id)
-	job.link_released = true
+	job["link_released"] = true
 	moved["link_released"] = true
 	return moved
 
@@ -1974,7 +1974,7 @@ func commit_ship_cross(job: Dictionary) -> Dictionary:
 	else: person.row.erase("ship_guest")
 	if int(source.operator_id) == int(person.id): source.operator_id = 0
 	source.revision = int(source.revision) + 1
-	target.revision = int(target.revision) + 1
+	target["revision"] = int(target.revision) + 1
 	person.owner.ship_embarkation_changed(int(person.id))
 	return Runtime.ok("同一原人物已沿接舷邊轉入另一船")
 
@@ -2035,9 +2035,9 @@ func _settle_ship_wreck(vehicle: Dictionary) -> void:
 	if not repair_result.ok:
 		controller.show_result(repair_result)
 		return
-	vehicle.operator_id = 0
-	vehicle.command = {}
-	vehicle.stop_pending = false
+	vehicle["operator_id"] = 0
+	vehicle["command"] = {}
+	vehicle["stop_pending"] = false
 	vehicle.naval.state = "wrecked"
 	_clear_wrecked_link_b3(vehicle)
 	if not ship_job(str(vehicle.id)).is_empty(): return
@@ -2339,10 +2339,10 @@ func commit_ship_person(job: Dictionary) -> Dictionary:
 		person.row.erase("berth_id")
 		person.row.erase("ship_deck_position")
 		person.row.erase("ship_guest")
-		if int(vehicle.operator_id) == int(person.id): vehicle.operator_id = 0
+		if int(vehicle.operator_id) == int(person.id): vehicle["operator_id"] = 0
 		team.ship_disembarked(index, job.shore)
 	else: return Runtime.fail("INVALID")
-	vehicle.revision = int(vehicle.revision) + 1
+	vehicle["revision"] = int(vehicle.revision) + 1
 	lab._audio_ship_person_completed(audio_source_data, audio_kind, audio_identity, team.combat_ground(index))
 	return Runtime.ok("已沿原人物完成登離船；人物及物品未複製", {"person_id": int(person.id)})
 
@@ -2363,8 +2363,8 @@ func commit_ship_helm(job: Dictionary) -> Dictionary:
 	if bool(job.get("retreat", false)):
 		authorized = person.owner.is_sustain_routed() and (bool(job.test_dispatch) or int(job.requester_id) == lab.controlled_person_id())
 	elif person.owner.is_sustain_routed(): authorized = false
-	vehicle.operator_id = int(person.id) if authorized and not bool(job.get("cancelled", false)) and int(vehicle.revision) == int(job.ship_revision) and _ship_capable(person, true) else 0
-	vehicle.revision = int(vehicle.revision) + 1
+	vehicle["operator_id"] = int(person.id) if authorized and not bool(job.get("cancelled", false)) and int(vehicle.revision) == int(job.ship_revision) and _ship_capable(person, true) else 0
+	vehicle["revision"] = int(vehicle.revision) + 1
 	return Runtime.ok("已實際到駕駛席；可行動且意圖有效才承職", {"operator_id": int(vehicle.operator_id)})
 
 func ship_order(vehicle_id: String, action: String, target: Vector2i, requester_id: int, test_dispatch: bool = false, retreat: bool = false) -> Dictionary:
@@ -2374,8 +2374,8 @@ func ship_order(vehicle_id: String, action: String, target: Vector2i, requester_
 	if not _authorized(team, requester_id, int(vehicle.operator_id), test_dispatch) and not (retreat and team.is_sustain_routed() and (test_dispatch or requester_id == lab.controlled_person_id())): return Runtime.fail("NO_AUTHORITY")
 	if _ship_journey_active(): return Runtime.fail("BUSY", "旅程期間來源水域凍結；原旅程請由同一旅程取消返航")
 	if action == "stop":
-		vehicle.command = {}
-		vehicle.stop_pending = not vehicle.move.is_empty()
+		vehicle["command"] = {}
+		vehicle["stop_pending"] = not vehicle.move.is_empty()
 		return Runtime.ok("已承諾船步完成後停止")
 	var b2_link_guard: Dictionary = boarding_link_query(str(vehicle.id))
 	if not b2_link_guard.ok: return b2_link_guard
@@ -2393,11 +2393,11 @@ func ship_order(vehicle_id: String, action: String, target: Vector2i, requester_
 	if action not in ["sail", "dock"] or not lab.terrain.can_navigate_water(target): return Runtime.fail("INVALID")
 	if action == "dock":
 		var candidate := vehicle.duplicate(true)
-		candidate.cell = lab.terrain.index(target)
+		candidate["cell"] = lab.terrain.index(target)
 		if ship_contacts(candidate).is_empty(): return Runtime.fail("UNREACHABLE", "目的須有合法岸上登離船接觸點")
 		if retreat and not controller.ship_retreat_shore_safe(team, ship_contacts(candidate)): return Runtime.fail("UNSAFE", "撤退靠岸須符合原安全判斷")
-	vehicle.command = {"goal": lab.terrain.index(target), "retreat": retreat, "docking": action == "dock"}
-	vehicle.stop_pending = false
+	vehicle["command"] = {"goal": lab.terrain.index(target), "retreat": retreat, "docking": action == "dock"}
+	vehicle["stop_pending"] = false
 	return Runtime.ok("船按原水域查詢逐步取得整船預約")
 
 func _commit_ship_step(vehicle: Dictionary, destination: Vector2i, facing: Vector2i, action: String, docking: bool = false) -> Dictionary:
@@ -2417,8 +2417,8 @@ func _commit_ship_step(vehicle: Dictionary, destination: Vector2i, facing: Vecto
 	var duration := Ship.turn_seconds(str(vehicle.ship_type), crew) if action == "turn" else 1.0 / speed
 	var indices: Array[int] = []
 	for cell: Vector2i in sweep: indices.append(lab.terrain.index(cell))
-	vehicle.move = {"from_cell": int(vehicle.cell), "from_facing": vehicle.facing.duplicate(), "cell": lab.terrain.index(destination), "facing": [facing.x, facing.y], "elapsed": 0.0, "duration": duration, "sweep": indices, "action": "dock" if docking else action}
-	vehicle.stop_pending = false
+	vehicle["move"] = {"from_cell": int(vehicle.cell), "from_facing": vehicle.facing.duplicate(), "cell": lab.terrain.index(destination), "facing": [facing.x, facing.y], "elapsed": 0.0, "duration": duration, "sweep": indices, "action": "dock" if docking else action}
+	vehicle["stop_pending"] = false
 	return Runtime.ok("已原子預約整船一步", {"seconds": duration})
 
 func update_ships(delta: float) -> void:
@@ -2628,11 +2628,11 @@ func _native_siege() -> bool:
 func _siege_plan_envelope(vehicle: Dictionary, plan: Dictionary) -> Dictionary:
 	var team: Variant = _siege_team(vehicle)
 	if team is CrowdPersonOwner:
-		plan.compound_id = "native-siege:%s:%d" % [str(vehicle.id), int(lab.crowd_site._steps)]
+		plan["compound_id"] = "native-siege:%s:%d" % [str(vehicle.id), int(lab.crowd_site._steps)]
 		return plan
-	plan.compound_id = "siege:%s:%d" % [str(vehicle.id), int(team._coordinator.current_logic_tick)]
-	plan.formation_id = team.get_formation_id()
-	plan.formation_serial = int(team.formation_persistent_serial)
+	plan["compound_id"] = "siege:%s:%d" % [str(vehicle.id), int(team._coordinator.current_logic_tick)]
+	plan["formation_id"] = team.get_formation_id()
+	plan["formation_serial"] = int(team.formation_persistent_serial)
 	return plan
 
 func _native_siege_route(vehicle: Dictionary, start: Vector2i, goal: Vector2i) -> Array[Vector2i]:
@@ -2694,9 +2694,9 @@ func _begin_native_siege_compound(vehicle: Dictionary, plan: Dictionary) -> void
 		vehicle.action.compound_id = str(plan.compound_id)
 		vehicle.action.native_token = token
 		return
-	vehicle.move = plan.duplicate(true)
+	vehicle["move"] = plan.duplicate(true)
 	vehicle.move.native_token = token
-	vehicle.phase = "moving"
+	vehicle["phase"] = "moving"
 
 func finish_native_siege_compounds() -> void:
 	if not _native_siege(): return
@@ -2710,7 +2710,7 @@ func finish_native_siege_compounds() -> void:
 		if state.is_empty():
 			lab.crowd_site.last_event_error = Runtime.fail("STALE", "原攻城複合步不存在；保留原交易等待診斷")
 			continue
-		if rotating: job.elapsed = float(state.elapsed) # Read-only projection of the native clock.
+		if rotating: job["elapsed"] = float(state.elapsed) # Read-only projection of the native clock.
 		if not bool(state.complete): continue
 		if bool(state.aborted):
 			if not lab.crowd_site.siege_settle_group(token): continue

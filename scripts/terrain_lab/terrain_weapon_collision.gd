@@ -594,7 +594,7 @@ func posed_vertices(part: MeshInstance3D, skeleton: Skeleton3D, native_rigid: bo
 					skinning_profile.rigid_vertices += vertices.size()
 				if hull_only and rigid_hull_dedup_enabled and part.get_blend_shape_count() == 0:
 					if not rigid_surface.has("hull_vertices"):
-						rigid_surface.hull_vertices = _unique_rigid_vertices(vertices)
+						rigid_surface["hull_vertices"] = _unique_rigid_vertices(vertices)
 					vertices = rigid_surface.hull_vertices
 				var binding: Transform3D
 				if palette.is_empty():

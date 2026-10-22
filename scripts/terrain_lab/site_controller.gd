@@ -887,18 +887,18 @@ func _refresh_formal_team_choices() -> void:
 func _build_formation_controls(column: Node, context_id: String) -> void:
 	var controls := {}
 	if context_id == "test":
-		controls.source = _options(column, ["所選測試隊", "我方測試指揮"], "FormationCommandSource")
+		controls["source"] = _options(column, ["所選測試隊", "我方測試指揮"], "FormationCommandSource")
 		controls.source.item_selected.connect(func(_index: int) -> void:
 			_use_formation_controls(context_id)
 			_formation_context_changed())
-	controls.preset = _options(column, ["自適應", "方陣", "圓陣", "錐行陣", "雁行陣", "鉤行陣", "疏陣"], "TrialFormationPreset" if context_id == "test" else "FormationPreset")
+	controls["preset"] = _options(column, ["自適應", "方陣", "圓陣", "錐行陣", "雁行陣", "鉤行陣", "疏陣"], "TrialFormationPreset" if context_id == "test" else "FormationPreset")
 	for index in range(controls.preset.item_count):
 		controls.preset.set_item_metadata(index, ["auto", "square", "circle", "wedge", "goose", "hook", "loose"][index])
 	controls.preset.item_selected.connect(func(index: int) -> void:
 		_use_formation_controls(context_id)
 		_select_formation_candidate(index))
-	controls.status = _label(column, "先選擇可下令的原隊伍。", 15)
-	controls.apply = _button(column, "套用陣型", "ApplyTrialFormation" if context_id == "test" else "ApplyFormation", func() -> void:
+	controls["status"] = _label(column, "先選擇可下令的原隊伍。", 15)
+	controls["apply"] = _button(column, "套用陣型", "ApplyTrialFormation" if context_id == "test" else "ApplyFormation", func() -> void:
 		_use_formation_controls(context_id)
 		_apply_formation_change())
 	_formation_views[context_id] = controls
@@ -2173,7 +2173,7 @@ func _show_team_deployment_result(result: Dictionary) -> void:
 		return
 	_team_info_report = str(result.get("message", ""))
 	var brief := result.duplicate()
-	brief.message = "隊伍已部署；詳細資訊見「隊伍資訊」視窗。"
+	brief["message"] = "隊伍已部署；詳細資訊見「隊伍資訊」視窗。"
 	show_result(brief)
 	open_window("team_info")
 
@@ -2750,10 +2750,10 @@ func _capture_positions() -> void:
 		var key := "player" if actor == lab.character else "npc"
 		if lab.terrain.site.actors.has(key):
 			var extra: Dictionary = actor.get_meta(&"crowd_handoff").duplicate(true)
-			extra.stagger = actor.exchange_stagger
-			extra.exch_cd = actor.exchange_cooldown
-			extra.ranged_cd = actor.ranged_cooldown
-			extra.skill_cd = actor.exchange_skill_cooldown
+			extra["stagger"] = actor.exchange_stagger
+			extra["exch_cd"] = actor.exchange_cooldown
+			extra["ranged_cd"] = actor.ranged_cooldown
+			extra["skill_cd"] = actor.exchange_skill_cooldown
 			lab.terrain.site.actors[key].crowd_handoff = extra
 	var armies: Array = []
 	for team: TerrainArmy in lab.combat_armies:
@@ -2907,7 +2907,7 @@ func _load_compatible_site(path: String) -> Dictionary:
 
 func _load_failure(result: Dictionary) -> Dictionary:
 	_auto_save_blocked = true
-	result.message = str(result.get("message", result.get("code", "載入失敗"))) + "；自動保存已暫停，原檔保留"
+	result["message"] = str(result.get("message", result.get("code", "載入失敗"))) + "；自動保存已暫停，原檔保留"
 	return result
 
 func load_from(path: String) -> Dictionary:
@@ -3210,7 +3210,7 @@ func update_ui(refresh_combat_window: bool = true) -> void:
 			toggle.text = "%d · %s · %d 格" % [index + 1, {"harvest": "採集", "capture": "活捉馬羊", "clear": "清理", "survey": "勘探", "construct": "施工", "operate": "生產"}.get(str(zone.action), "工作"), zone.cells.size()]
 			toggle.button_pressed = bool(zone.active)
 			toggle.toggled.connect(func(enabled: bool) -> void:
-				zone.active = enabled
+				zone["active"] = enabled
 				if not enabled and int(data.site.worker.zone) == index:
 					data.site.worker.target = ""
 					data.site.worker.mode = "idle"
@@ -3541,8 +3541,8 @@ func _open_equipment_inventory(identity: int = -1, host: Window = null) -> void:
 		var choice: Dictionary = items.get_item_metadata(items.get_selected_items()[0])
 		var result: Dictionary = equipment_orders.begin_personal(target_id, str(choice.slot), str(choice.id))
 		if result.ok:
-			context.pending = true
-			context.pending_mode = "personal"
+			context["pending"] = true
+			context["pending_mode"] = "personal"
 		show.call(result))
 	var remove := _button(column, "玩家卸下選取裝備至原行囊", "RemoveOwnedItem", func() -> void:
 		if not current_scope.call():
@@ -3555,8 +3555,8 @@ func _open_equipment_inventory(identity: int = -1, host: Window = null) -> void:
 			return
 		var result: Dictionary = equipment_orders.begin_personal(target_id, str(choice.slot), "")
 		if result.ok:
-			context.pending = true
-			context.pending_mode = "personal"
+			context["pending"] = true
+			context["pending_mode"] = "personal"
 		show.call(result))
 	var deposit := _button(column, "所選行囊實物入庫（不自動卸裝）", "DepositOwnedEquipment", func() -> void:
 		if not current_scope.call():
@@ -3567,8 +3567,8 @@ func _open_equipment_inventory(identity: int = -1, host: Window = null) -> void:
 			selected_items.append(str(items.get_item_metadata(row).id))
 		var result: Dictionary = deposit_owned_equipment(target_id, selected_items, int(context.holder_version))
 		if result.ok:
-			context.holder_version = int(context.holder.version)
-			context.depot_version = int(context.depot.version)
+			context["holder_version"] = int(context.holder.version)
+			context["depot_version"] = int(context.depot.version)
 			panel_callbacks.refresh_items.call()
 		show.call(result))
 	var standards := _options(column, ["選擇此人國家的領裝標準"], "IssueStandard")
@@ -3590,8 +3590,8 @@ func _open_equipment_inventory(identity: int = -1, host: Window = null) -> void:
 		var choice: Array = standards.get_item_metadata(standards.selected)
 		var result: Dictionary = equipment_orders.begin_issue(target_id, str(choice[0]), str(choice[1]))
 		if result.ok:
-			context.pending = true
-			context.pending_mode = "issue"
+			context["pending"] = true
+			context["pending_mode"] = "issue"
 		show.call(result))
 	var dye := _button(column, "套用所選國別配色到現有裝備", "ApplyStandardDyes", func() -> void:
 		if not current_scope.call():
@@ -3601,7 +3601,7 @@ func _open_equipment_inventory(identity: int = -1, host: Window = null) -> void:
 		var choice: Array = standards.get_item_metadata(standards.selected)
 		var result: Dictionary = equipment_orders.apply_standard_dyes(lab.controlled_person_id(), target_id, str(choice[0]), str(choice[1]))
 		if result.ok:
-			context.holder_version = int(context.holder.version)
+			context["holder_version"] = int(context.holder.version)
 			panel_callbacks.refresh_items.call()
 		show.call(result))
 	var cancel := _button(column, "取消此人物換裝作業", "CancelEquipmentAction", func() -> void:
@@ -3613,7 +3613,7 @@ func _open_equipment_inventory(identity: int = -1, host: Window = null) -> void:
 		if str(job.get("order", {}).get("mode", "")) == "team_issue": # F08: same authority as the team window.
 			show.call(equipment_orders.cancel_team_issue(lab.controlled_person_id(), target_id))
 			return
-		context.pending = false
+		context["pending"] = false
 		show.call(person_actions.cancel(target_id)))
 	var refresh_buttons := func() -> void:
 		var selected_rows: PackedInt32Array = items.get_selected_items()
@@ -3650,36 +3650,36 @@ func _open_equipment_inventory(identity: int = -1, host: Window = null) -> void:
 			items.set_item_metadata(row, {"slot": str(definition.slot), "id": item_id})
 			if selected_ids.has(item_id): items.select(row, false)
 		refresh_buttons.call()
-	panel_callbacks.refresh_items = refresh_items
+	panel_callbacks["refresh_items"] = refresh_items
 	items.multi_selected.connect(func(_row: int, _selected: bool) -> void: refresh_buttons.call())
 	standards.item_selected.connect(func(_index: int) -> void: refresh_buttons.call())
 	_equipment_sync = func() -> void:
 		if not current_scope.call():
-			context.stale = true
+			context["stale"] = true
 			status.text = "STALE：原人物／持物／營地已變更，請重新開啟裝備面板"
 			refresh_buttons.call()
 			return
 		var job: Dictionary = person_actions.job_for(target_id)
 		if not job.is_empty():
-			if str(job.kind) != "equipment": context.pending = false
+			if str(job.kind) != "equipment": context["pending"] = false
 			elif not bool(context.pending):
-				context.pending = true
-				context.pending_mode = str(job.order.mode)
+				context["pending"] = true
+				context["pending_mode"] = str(job.order.mode)
 			status.text = "準備共用裝備外觀；原裝保留" if str(job.get("paused", "")) == "PREPARING_ATLAS" else "作業進度：%.1f／%.1f 秒 %s" % [float(job.elapsed), float(job.duration), str(job.paused)]
 		elif bool(context.pending):
 			status.text = "作業已停止，等待原結算結果"
 		refresh_buttons.call()
 	_equipment_result = func(result: Dictionary) -> void:
 		if not bool(context.pending) or int(result.get("executor_id", -1)) != target_id: return
-		context.pending = false
+		context["pending"] = false
 		if bool(result.get("ok", false)):
 			var expected_depot: int = int(context.depot_version) + (1 if str(context.pending_mode) == "issue" else 0)
 			if int(context.holder.version) != int(context.holder_version) + 1 or int(context.depot.version) != expected_depot:
-				context.stale = true
+				context["stale"] = true
 				status.text = "STALE：作業完成後持物版本異常，請重新開啟核對"
 			else:
-				context.holder_version = int(context.holder.version)
-				context.depot_version = int(context.depot.version)
+				context["holder_version"] = int(context.holder.version)
+				context["depot_version"] = int(context.depot.version)
 				refresh_items.call()
 				status.text = str(result.get("message", "換裝完成"))
 		else:
@@ -4165,7 +4165,7 @@ static func _initial_uniform(appearance: Dictionary, faction_id: int) -> Diction
 	var dyes := {}
 	for slot: String in palette:
 		if uniform.parts.get(slot, "none") != "none": dyes[slot] = palette[slot]
-	uniform.equipment_dyes = dyes
+	uniform["equipment_dyes"] = dyes
 	return uniform
 
 func initialize_team_items(team: Variant) -> void:
@@ -4193,16 +4193,16 @@ func initialize_team_items(team: Variant) -> void:
 		var unit: Dictionary = team.combat_units[index]
 		if not unit.has("appearance"):
 			var presenter: Variant = team._unit_editor(index)
-			unit.appearance = presenter.capture_appearance() if team._uses_live_presenter(index) and presenter != null else (TerrainArmy.EquipmentAtlas.female_appearance() if str(unit.get("visual_role", "")).begins_with("female") else TerrainArmy._combat_bake.manifest.appearance.duplicate(true))
+			unit["appearance"] = presenter.capture_appearance() if team._uses_live_presenter(index) and presenter != null else (TerrainArmy.EquipmentAtlas.female_appearance() if str(unit.get("visual_role", "")).begins_with("female") else TerrainArmy._combat_bake.manifest.appearance.duplicate(true))
 		if not unit.has("item_state"):
-			unit.item_state = {}
+			unit["item_state"] = {}
 			# A newly created soldier receives an explicit initial uniform finish.
 			# Existing item records and faction changes never silently repaint gear.
 			var uniform := _initial_uniform(unit.appearance, team.faction_id)
 			if team._uses_live_presenter(index) or team.supports_equipment_recipe(uniform):
-				unit.appearance = uniform
+				unit["appearance"] = uniform
 		if not unit.has("cargo"):
-			unit.cargo = {}
+			unit["cargo"] = {}
 		var initialized := Runtime.seed_person_equipment(lab.terrain, unit.item_state, team.combat_identity(index), unit.appearance)
 		if not initialized.ok:
 			show_result(initialized)
@@ -4395,8 +4395,8 @@ func _open_team_equipment(team: TerrainArmy = null, trial: bool = false, host: W
 		var existing: Dictionary = person_actions.job_for(team.combat_identity(index))
 		var existing_order: Dictionary = existing.get("order", {})
 		if str(existing.get("kind", "")) == "equipment" and str(existing_order.get("mode", "")) == "team_issue" and is_same(existing_order.get("team"), team):
-			state.waiting = true
-			state.representative_id = int(existing_order.representative_id)
+			state["waiting"] = true
+			state["representative_id"] = int(existing_order.representative_id)
 			break
 	var scope := func() -> bool:
 		if lab.terrain != original_data or lab.controlled_person_id() != original_control or not is_instance_valid(team) or not team.has_army() or team.team_id != original_team_id:
@@ -4426,8 +4426,8 @@ func _open_team_equipment(team: TerrainArmy = null, trial: bool = false, host: W
 		else:
 			report.text = "%s：%s" % [str(result.get("code", "INVALID")), str(result.get("message", ""))]
 		if begin and result.ok:
-			state.waiting = true
-			state.representative_id = representative_id
+			state["waiting"] = true
+			state["representative_id"] = representative_id
 		show_result(result)
 	_button(column, "預覽全批實物與限制", "PreviewTeamEquipment", func() -> void: request.call(false))
 	_button(column, "開始整隊正式領裝", "BeginTeamEquipment", func() -> void: request.call(true))
@@ -4438,7 +4438,7 @@ func _open_team_equipment(team: TerrainArmy = null, trial: bool = false, host: W
 		var result := equipment_orders.cancel_team_issue(lab.controlled_person_id(), int(state.representative_id)) # F08: re-check now.
 		show_result(result)
 		if result.ok:
-			state.waiting = false
+			state["waiting"] = false
 			report.text = str(result.message))
 	_team_equipment_dialog = dialog
 	_team_equipment_sync = func() -> void:
@@ -4448,7 +4448,7 @@ func _open_team_equipment(team: TerrainArmy = null, trial: bool = false, host: W
 		report.text = "共用圖集準備中；原裝與實物保留" if bool(job.get("preparing", false)) else "整隊換裝 %.1f／5.0 秒%s" % [float(job.get("elapsed", 0.0)), " · " + str(job.paused) if not str(job.get("paused", "")).is_empty() else ""]
 	_team_equipment_result = func(result: Dictionary) -> void:
 		if bool(state.waiting) and int(result.get("executor_id", -1)) == int(state.representative_id) and person_actions.job_for(int(state.representative_id)).is_empty():
-			state.waiting = false
+			state["waiting"] = false
 			report.text = "%s：%s" % [str(result.get("code", "OK")), str(result.get("message", ""))]
 	dialog.tree_exiting.connect(func() -> void:
 		if _team_equipment_dialog == dialog:
@@ -5006,7 +5006,7 @@ func _equipment_apply_guard(identity: int, equipped: Dictionary, team_batch: boo
 		appearance.parts[slot] = str(definition.asset)
 		var dye := Runtime.item_dye(record, definition)
 		if not dye.is_empty():
-			if not appearance.has("equipment_dyes"): appearance.equipment_dyes = {}
+			if not appearance.has("equipment_dyes"): appearance["equipment_dyes"] = {}
 			appearance.equipment_dyes[slot] = dye
 	var result := _equipment_recipe_guard(person, appearance, team_batch)
 	if team_batch and (result.ok or str(result.get("code", "")) == "ATLAS_REQUIRED"):
@@ -5027,7 +5027,7 @@ func equipment_dye_guard(identity: int, changes: Dictionary) -> Dictionary:
 			else: dyes[slot] = default_dye
 		else: dyes[slot] = changes[slot]
 	if dyes.is_empty(): appearance.erase("equipment_dyes")
-	else: appearance.equipment_dyes = dyes
+	else: appearance["equipment_dyes"] = dyes
 	return _equipment_recipe_guard(person, appearance)
 
 func _request_person_dye(changes: Dictionary, identity: int) -> Dictionary:
@@ -5300,7 +5300,7 @@ func prepare_ship_supply(team: TerrainArmy, shore: Vector2i, preview: bool = fal
 		return Runtime.fail("INVALID_SUSTAIN", "原供養時段／口糧未同步，未改餐份或物資")
 	var location := {"inventory": entry.inventory.duplicate(true), "open_rations": float(state.open_rations)}
 	var locations := {"shore:%d" % lab.terrain.index(shore): location}
-	state.version = 2
+	state["version"] = 2
 	state.erase("open_rations")
 	if not _supply_locations_valid(team, locations) or not Sustain.validate(state, captivity_supply._all_members()):
 		return Runtime.fail("INVALID_SUSTAIN")
@@ -5312,9 +5312,9 @@ func prepare_ship_supply(team: TerrainArmy, shore: Vector2i, preview: bool = fal
 	entry.sustain.clear()
 	entry.sustain.merge(state)
 	entry.erase("inventory")
-	entry.locations = locations
-	entry.version = 3
-	entry.revision = int(entry.revision) + 1
+	entry["locations"] = locations
+	entry["version"] = 3
+	entry["revision"] = int(entry.revision) + 1
 	return Runtime.ok("舊共有糧已一次落在本人此岸格；船上仍須實際裝糧")
 
 func ship_retreat_shore_safe(team: TerrainArmy, shores: Array[Vector2i]) -> bool:
@@ -5644,7 +5644,7 @@ func _finish_delivery_step(team: TerrainArmy, entry: Dictionary, seconds: float)
 	if entry.delivery.is_empty() or bool(entry.delivery.get("pending", false)):
 		return
 	if not _delivery_valid(team, entry):
-		entry.delivery = {}
+		entry["delivery"] = {}
 		message.text = "交糧條件已變更，當批取消；來源未扣物"
 		return
 	if not _shared_work_plan.is_empty():
@@ -5732,10 +5732,10 @@ func order_team_training(team: Variant, requester: int, enabled: bool, training_
 	var prepared: Dictionary = captivity_supply.enable_team(checked.owner)
 	if not prepared.ok: return prepared
 	var entry: Dictionary = prepared.entry
-	if int(entry.version) < 2: entry.version = 2
-	entry.training_order = true
-	entry.training_requester = identity
-	entry.training_feature_id = str(checked.feature_id)
+	if int(entry.version) < 2: entry["version"] = 2
+	entry["training_order"] = true
+	entry["training_requester"] = identity
+	entry["training_feature_id"] = str(checked.feature_id)
 	var facility: Dictionary = lab.terrain.site.features.get(str(checked.feature_id), {})
 	return Runtime.ok("在%s #%s 訓練；離場、移動或原軍官離任即停止，缺糧／威脅／疲勞依原規則暫停" % [_building_name(facility), checked.feature_id])
 
@@ -5837,7 +5837,7 @@ func advance_team_sustain(team: TerrainArmy, elapsed_game_seconds: float) -> Dic
 		for id: Variant in members:
 			hp_before[id] = float(Sustain._member_value(members, int(id), &"hp", hot_read))
 		var context := {"safe": safe, "stopped": stopped, "hot_read": hot_read, "pending_hp": pending_hp}
-		if int(entry.version) == 3: context.food_locations = ship_food_locations(team, members)
+		if int(entry.version) == 3: context["food_locations"] = ship_food_locations(team, members)
 		var outcome := Sustain.advance_to(entry.sustain, members, _supply_stock(entry), float(entry.sustain.at) + seconds, context)
 		if not outcome.ok:
 			message.text = "隊伍供養資料無效，未推進：" + str(outcome.message)
@@ -5877,7 +5877,7 @@ func advance_team_sustain(team: TerrainArmy, elapsed_game_seconds: float) -> Dic
 				"safe": safe and bool(field.get("safe", false)), "stopped": stopped, "fed": fed, "routed": bool(entry.sustain.routed), "coach": _team_ability(team, "coach"),
 				"controlled_person_id": lab.controlled_person_id(), "hot_read": hot_read, "pending_hp": pending_hp,
 				"training_multiplier": field.get("training_multiplier", 1.0)}
-			if not _shared_work_plan.is_empty(): training_context.work_plan = _shared_work_plan
+			if not _shared_work_plan.is_empty(): training_context["work_plan"] = _shared_work_plan
 			var training := Sustain.train(team.training, members, eligible, seconds, training_context)
 			if training.ok:
 				team.training = float(training.training)
@@ -6081,7 +6081,7 @@ func _align_supply_clock(state: Dictionary, at_seconds: float) -> bool:
 			return false
 	if absf(float(state.at) - at_seconds) > 0.00001:
 		return false
-	state.at = at_seconds
+	state["at"] = at_seconds
 	for cohort: Dictionary in state.cohorts:
 		if absf(float(cohort.meal_until) - at_seconds) <= 0.00001:
 			cohort.meal_until = at_seconds
@@ -6163,9 +6163,9 @@ func _build_vehicle_controls(parent: Node, trial: bool = false) -> void:
 	parent.add_child(HSeparator.new())
 	_label(parent, "車輛操作／真實裝卸", 20)
 	_label(parent, ("測試調度由原隊長下令、原隊員操作。" if trial else "以目前受控原人物身份下令；無指揮權或距離不足時不能操作。") + "物資車容量100件、馬車300件；無人操作的車保持停泊。裝卸者須實際鄰接車輛與營地。", 15)
-	form.choice = _options(parent, ["尚無車輛"], ("TrialVehicle" if trial else "Vehicle"))
+	form["choice"] = _options(parent, ["尚無車輛"], ("TrialVehicle" if trial else "Vehicle"))
 	form.choice.item_selected.connect(func(_index: int) -> void: _refresh_vehicle_details(form))
-	form.status = _label(parent, "尚無車輛", 15)
+	form["status"] = _label(parent, "尚無車輛", 15)
 	form.status.name = ("TrialVehicleStatus" if trial else "VehicleStatus")
 	_button(parent, "更新車輛／原人員名單", ("RefreshTrialVehicles" if trial else "RefreshVehicles"), func() -> void: _refresh_vehicle_controls(form))
 	_button(parent, "定位所選車輛", ("FocusTrialVehicle" if trial else "FocusVehicle"), func() -> void:
@@ -6177,7 +6177,7 @@ func _build_vehicle_controls(parent: Node, trial: bool = false) -> void:
 		update_ui())
 	_label(parent, "操作人：物資車站車後；馬車先走到馬旁再指派上馬。停泊友車可由另一後勤隊接手。", 15)
 	_label(parent, "馬車騎姿目前支援標準男女步兵裝備與原染色；其他配裝須先下馬。騎手與馬車分別占名額。", 15)
-	form.operator = _options(parent, ["尚無可選原隊員"], ("TrialVehicleOperator" if trial else "VehicleOperator"))
+	form["operator"] = _options(parent, ["尚無可選原隊員"], ("TrialVehicleOperator" if trial else "VehicleOperator"))
 	var row := HBoxContainer.new()
 	parent.add_child(row)
 	_button(row, "指派操作／上馬", ("AssignTrialVehicleOperator" if trial else "AssignVehicleOperator"), func() -> void: _assign_trial_vehicle(form))
@@ -6186,12 +6186,12 @@ func _build_vehicle_controls(parent: Node, trial: bool = false) -> void:
 		if vehicle.is_empty(): return
 		show_result(vehicles.unassign_crew(str(vehicle.id), 0, _vehicle_requester(vehicle, false, form), trial) if SiteVehicleTransport.is_siege(vehicle) else vehicles.unassign_operator(str(vehicle.id), _vehicle_requester(vehicle, false, form), trial))
 		_refresh_vehicle_controls(form))
-	form.siege_slot = _options(parent, ["器具操作位 1", "器具操作位 2"], "SiegeSlot")
-	form.siege_ammo = _options(parent, ["原器具彈種"], "SiegeAmmoKind")
+	form["siege_slot"] = _options(parent, ["器具操作位 1", "器具操作位 2"], "SiegeSlot")
+	form["siege_ammo"] = _options(parent, ["原器具彈種"], "SiegeAmmoKind")
 	form.siege_ammo.set_item_metadata(0, "")
 	_label(parent, "明示彈種後用原人物装卸；火罐須在位本人已學 F15。", 15)
-	form.siege_target = _options(parent, ["所選原人物", "所選格牆／門部件", "所選格器具", "所選格地點"], "SiegeTarget")
-	form.siege_part = _options(parent, ["請更新所選格部件"], "SiegePart")
+	form["siege_target"] = _options(parent, ["所選原人物", "所選格牆／門部件", "所選格器具", "所選格地點"], "SiegeTarget")
+	form["siege_part"] = _options(parent, ["請更新所選格部件"], "SiegePart")
 	_button(parent, "更新所選格牆／門部件", "SiegeRefreshParts", func() -> void: _refresh_siege_parts(form))
 	row = HBoxContainer.new()
 	parent.add_child(row)
@@ -6229,11 +6229,11 @@ func _build_vehicle_controls(parent: Node, trial: bool = false) -> void:
 		_build_shipyard_controls(parent, form)
 		_build_region_travel_controls(parent)
 	_label(parent, "原營地物資（不自動補物）", 16)
-	form.resource = _options(parent, [], ("TrialVehicleResource" if trial else "VehicleResource"))
+	form["resource"] = _options(parent, [], ("TrialVehicleResource" if trial else "VehicleResource"))
 	for key: String in Env.ITEM_NAMES:
 		form.resource.add_item(str(Env.ITEM_NAMES[key]))
 		form.resource.set_item_metadata(form.resource.item_count - 1, key)
-	form.quantity = _number_input(parent, ("TrialVehicleQuantity" if trial else "VehicleQuantity"), 1, 300, 10)
+	form["quantity"] = _number_input(parent, ("TrialVehicleQuantity" if trial else "VehicleQuantity"), 1, 300, 10)
 	row = HBoxContainer.new()
 	parent.add_child(row)
 	_button(row, "營地 → 車輛", ("LoadTrialVehicleResources" if trial else "LoadVehicleResources"), func() -> void: _transfer_trial_vehicle(true, false, form))
@@ -6241,9 +6241,9 @@ func _build_vehicle_controls(parent: Node, trial: bool = false) -> void:
 	_button(parent, "所選原人物行囊 → 器具彈艙", "SupplySiegeAmmo", func() -> void: _siege_person_ammo_ui(form, true))
 	_button(parent, "器具彈艙 → 所選原人物行囊", "TakeSiegeAmmo", func() -> void: _siege_person_ammo_ui(form, false))
 	_label(parent, "原實物裝備（依實際物品ID搬運）", 16)
-	form.depot = _options(parent, ["營地尚無實物"], ("TrialVehicleDepotItem" if trial else "VehicleDepotItem"))
+	form["depot"] = _options(parent, ["營地尚無實物"], ("TrialVehicleDepotItem" if trial else "VehicleDepotItem"))
 	_button(parent, "將所選營地實物裝車", ("LoadTrialVehicleItem" if trial else "LoadVehicleItem"), func() -> void: _transfer_trial_vehicle(true, true, form))
-	form.loaded = _options(parent, ["車內尚無實物"], ("TrialVehicleLoadedItem" if trial else "VehicleLoadedItem"))
+	form["loaded"] = _options(parent, ["車內尚無實物"], ("TrialVehicleLoadedItem" if trial else "VehicleLoadedItem"))
 	_button(parent, "將所選車內實物卸回營地", ("UnloadTrialVehicleItem" if trial else "UnloadVehicleItem"), func() -> void: _transfer_trial_vehicle(false, true, form))
 	_label(parent, "工作隊沿原工作區尋工、採集與交庫；後勤隊由上方移動命令推車／駕車到目的地，再明確裝卸。車輛不自動往返，車上袋箱是固定外觀，實際庫存以上方載量為準。", 15)
 
@@ -6302,24 +6302,24 @@ func _build_tent_controls(parent: Node) -> void:
 func _build_siege_construction_controls(parent: Node, form: Dictionary) -> void:
 	parent.add_child(HSeparator.new())
 	_label(parent, "攻城器具施工", 18)
-	form.siege_kind = _options(parent, [], "SiegeBuildKind")
+	form["siege_kind"] = _options(parent, [], "SiegeBuildKind")
 	for kind: String in Runtime.SIEGE_DEFINITIONS:
 		var definition: Dictionary = Runtime.SIEGE_DEFINITIONS[kind]
 		form.siege_kind.add_item("%s · %d×%d格 · 最低%d／標準%d人 · %s · %.0f人工分鐘" % [definition.name, definition.size.x, definition.size.y, definition.min_crew, definition.standard_crew, Runtime.items_text(definition.cost), float(definition.work_seconds) / 60.0])
 		form.siege_kind.set_item_metadata(form.siege_kind.item_count - 1, kind)
 	_label(parent, "工具1件須保留；開工後派原工作隊施工，最多4人各站一個施工位。", 15)
-	form.siege_facing = _options(parent, ["朝東", "朝南", "朝西", "朝北"], "SiegeBuildFacing")
+	form["siege_facing"] = _options(parent, ["朝東", "朝南", "朝西", "朝北"], "SiegeBuildFacing")
 	if bool(form.trial):
-		form.siege_team = _options(parent, ["請更新原隊伍"], "SiegeBuildTeam")
+		form["siege_team"] = _options(parent, ["請更新原隊伍"], "SiegeBuildTeam")
 		_button(parent, "更新原隊伍", "SiegeRefreshTeams", func() -> void: _refresh_siege_teams(form))
-	form.siege_builder = _options(parent, ["請具名選擇原施工人員"], "SiegeBuildOperator")
+	form["siege_builder"] = _options(parent, ["請具名選擇原施工人員"], "SiegeBuildOperator")
 	form.siege_builder.set_item_metadata(0, 0)
 	_button(parent, "重新查詢原施工人員", "SiegeRefreshOperators", func() -> void: _refresh_siege_build_people(form))
 	form.siege_kind.item_selected.connect(func(_index: int) -> void: _refresh_siege_build_people(form))
 	if form.has("siege_team"):
 		form.siege_team.item_selected.connect(func(_index: int) -> void: _refresh_siege_build_people(form))
 	_label(parent, "本次備料只委派明示的原人；師傅須實際到位，助手沿原工作隊另行具名派工。", 15)
-	form.siege_method = _options(parent, ["原基本工法", "F11木接（本人新工時九折）"], "SiegeJoinery")
+	form["siege_method"] = _options(parent, ["原基本工法", "F11木接（本人新工時九折）"], "SiegeJoinery")
 	form.siege_method.set_item_metadata(0, "basic")
 	form.siege_method.set_item_metadata(1, "joinery")
 	_button(parent, "預覽所選格器具施工", "SiegeBuildPreview", func() -> void: _build_siege_ui(form, true))
@@ -6668,10 +6668,10 @@ func _refresh_vehicle_details(form: Dictionary = {}) -> void:
 	form.operator.clear()
 	form.depot.clear()
 	form.loaded.clear()
-	form.depot_version = int(lab.terrain.site.depot_items.version)
-	form.holder_version = -1
+	form["depot_version"] = int(lab.terrain.site.depot_items.version)
+	form["holder_version"] = -1
 	if not vehicle.is_empty():
-		form.holder_version = int(vehicle.holder.version)
+		form["holder_version"] = int(vehicle.holder.version)
 		for team: Variant in (_siege_ui_teams() if SiteVehicleTransport.is_siege(vehicle) else lab.combat_armies):
 			if not team.has_army(): continue
 			if SiteVehicleTransport.is_siege(vehicle):
@@ -7168,11 +7168,11 @@ func _open_feature_storage() -> void:
 		items.clear()
 		if left.is_empty() or right.is_empty():
 			status.text = "原庫存不存在或車輛尚未停妥；停止後重新整理。"
-			snapshot.source_version = -1
-			snapshot.destination_version = -1
+			snapshot["source_version"] = -1
+			snapshot["destination_version"] = -1
 			return
-		snapshot.source_version = int(left.holder.version)
-		snapshot.destination_version = int(right.holder.version)
+		snapshot["source_version"] = int(left.holder.version)
+		snapshot["destination_version"] = int(right.holder.version)
 		_vehicle_item_choices(items, left.holder)
 		status.text = "來源 格%s · 載量 %.0f／%d · %s\n目的 格%s · 載量 %.0f／%d · %s" % [
 			left.cell, Runtime.carried_load(lab.terrain.site, left.cargo, left.holder), int(left.capacity), Runtime.items_text(left.cargo),
@@ -7958,7 +7958,7 @@ func _build_ship_controls(parent: Node, form: Dictionary) -> void:
 	parent.add_child(HSeparator.new())
 	_label(parent, "單 Site 船艦運輸", 20)
 	_label(parent, "原人物登船、載物與供糧；船員包含在乘員人數內。先停隊並關閉 AI，再由岸邊登船。", 15)
-	form.ship_berth = _number_input(parent, "ShipBerth", -1, 99, -1)
+	form["ship_berth"] = _number_input(parent, "ShipBerth", -1, 99, -1)
 	form.ship_berth.prefix = "船席（-1 自動） "
 	var row := HBoxContainer.new()
 	parent.add_child(row)
@@ -7998,8 +7998,8 @@ func _build_ship_controls(parent: Node, form: Dictionary) -> void:
 		_build_ship_repair_controls(parent, form)
 	if bool(form.trial):
 		_label(parent, "測試灰模船：正式造船與美術待後续接入。僅標記已存在的水面通行權，不修改地形。", 15)
-		form.ship_type = _options(parent, ["渡船", "河船", "沿海貨船", "運兵船", "巡邏船", "樓船"], "ShipType")
-		form.ship_facing = _options(parent, ["朝東", "朝南", "朝西", "朝北"], "ShipFacing")
+		form["ship_type"] = _options(parent, ["渡船", "河船", "沿海貨船", "運兵船", "巡邏船", "樓船"], "ShipType")
+		form["ship_facing"] = _options(parent, ["朝東", "朝南", "朝西", "朝北"], "ShipFacing")
 		_button(parent, "開啟所選既有水體的測試通行", "ShipPermitWater", func() -> void: _ship_permit_water_ui())
 		_button(parent, "在所選水格部署測試船", "ShipDeploy", func() -> void: _ship_deploy_ui(form))
 
@@ -8065,7 +8065,7 @@ func begin_ship_repair(identity: String, feature_id: String, requester_id: int, 
 	if str(feature.get("kind", "")) not in Runtime.WATERFRONT_KINDS or int(feature.get("owner_faction", -1)) != int(authority.faction): return Runtime.fail("NO_AUTHORITY")
 	var candidate: Dictionary = vehicle.duplicate(true)
 	var naval: Dictionary = candidate.get("naval", {"version": 1, "hp": vehicles.Ship.hull_hp(str(vehicle.ship_type)), "state": "afloat", "repair": {}})
-	candidate.naval = naval
+	candidate["naval"] = naval
 	candidate.naval.repair = {"feature_id": feature_id}
 	var contact: bool = false
 	for station: Dictionary in Runtime.ship_repair_work_slots(lab.terrain, candidate):
@@ -8082,7 +8082,7 @@ func _build_ship_repair_controls(parent: Node, form: Dictionary) -> void:
 	parent.add_child(HSeparator.new())
 	_label(parent, "碼頭／船塢修理", 18)
 	_label(parent, "備料會放入本船船艙，由本隊工人到岸上施工。取消時仍會結算已用材料；餘料留在船艙，靠岸後可卸下。修理期間不能航行，沉船不能修復。", 15)
-	form.repair_facility = _options(parent, ["尚無水岸設施"], "ShipRepairFacility")
+	form["repair_facility"] = _options(parent, ["尚無水岸設施"], "ShipRepairFacility")
 	_button(parent, "檢查修理條件與材料", "ShipRepairPreview", func() -> void: _ship_repair_ui(form, true, false))
 	_button(parent, "投入原料，開始修理", "ShipRepairStart", func() -> void: _ship_repair_ui(form, false, false))
 	_button(parent, "派遣本隊工人…", "ShipRepairWorkers", func() -> void: _open_roster())
@@ -8133,11 +8133,11 @@ func _build_shipyard_controls(parent: Node, form: Dictionary) -> void:
 	parent.add_child(HSeparator.new())
 	_label(parent, "原船塢正式造船", 20)
 	_label(parent, "先在「建設與製作」建好岸上船塢。可用水道須已有來源許可；不會由造船開放水域。原工人施工，下水堵泊時保留已付材料與進度。", 15)
-	form.shipyard = _options(parent, ["尚無船塢"], "ShipyardFeature")
+	form["shipyard"] = _options(parent, ["尚無船塢"], "ShipyardFeature")
 	form.shipyard.item_selected.connect(func(_index: int) -> void: _refresh_shipyard_status(form))
-	form.build_ship_type = _options(parent, ["渡船", "河船", "沿海貨船", "運兵船", "巡邏船", "樓船"], "BuildShipType")
+	form["build_ship_type"] = _options(parent, ["渡船", "河船", "沿海貨船", "運兵船", "巡邏船", "樓船"], "BuildShipType")
 	form.build_ship_type.item_selected.connect(func(_index: int) -> void: _refresh_shipyard_status(form))
-	form.shipyard_status = _label(parent, "請選擇已完成船塢", 15)
+	form["shipyard_status"] = _label(parent, "請選擇已完成船塢", 15)
 	form.shipyard_status.name = "ShipyardStatus"
 	_button(parent, "查看船塢位置", "FocusShipyard", func() -> void:
 		var key: String = _selected_shipyard(form)
@@ -8225,14 +8225,14 @@ func _build_ship_deck_controls(parent: Node, form: Dictionary) -> void:
 	_label(parent, "只由目前受控原人物執行。船须停穩；行走與跨船仍沿原作業、通路與席位預約，不會切換人物或瞬移。", 15)
 	var row: HBoxContainer = HBoxContainer.new()
 	parent.add_child(row)
-	form.deck_x = _number_input(row, "ShipDeckAcross", 0, 5.25, 0.5)
+	form["deck_x"] = _number_input(row, "ShipDeckAcross", 0, 5.25, 0.5)
 	form.deck_x.prefix = "甲板橫向 "
 	form.deck_x.step = 0.25
-	form.deck_y = _number_input(row, "ShipDeckForward", 0, 15.25, 1.0)
+	form["deck_y"] = _number_input(row, "ShipDeckForward", 0, 15.25, 1.0)
 	form.deck_y.prefix = "往船首 "
 	form.deck_y.step = 0.25
 	_button(parent, "走到指定甲板位置", "ShipDeckWalk", func() -> void: _ship_deck_ui(form, "walk"))
-	form.deck_target_ship = _options(parent, ["尚無目的船"], "ShipDeckTarget")
+	form["deck_target_ship"] = _options(parent, ["尚無目的船"], "ShipDeckTarget")
 	_button(parent, "跨上目的船（使用船席選擇）", "ShipCross", func() -> void: _ship_deck_ui(form, "cross"))
 	_button(parent, "近接攻擊所選敵船體", "ShipAttackHull", func() -> void: _ship_deck_ui(form, "attack"))
 	_refresh_ship_deck_targets(form)
@@ -8837,7 +8837,7 @@ func _open_offices(host: Window = null) -> void:
 		if int(state.revision) != int(current.revision):
 			if not state.ops.is_empty(): check_label.text = "人事已由他處變更；待套用方案已清除，請重新編排。"
 			state.ops.clear()
-			state.revision = int(current.revision)
+			state["revision"] = int(current.revision)
 		var preview := SiteOffices.preview_plan(current, state.ops)
 		var shown: Dictionary = preview.offices
 		var keep: String = selected_seat.call()
@@ -8889,10 +8889,10 @@ func _open_offices(host: Window = null) -> void:
 			note.text += "\n⚠ 待分職幹部（MIGRATION_REQUIRED，舊存檔遷移）：%s。他們沒有指揮權；請任命到武官職位，或選取後按「解除待分職幹部」。" % "、".join(listed)
 		for button: Button in edit_buttons: button.disabled = not editable
 		name_input.editable = editable
-		state.syncing = true
+		state["syncing"] = true
 		ai_toggle.button_pressed = bool(current.get("duty_ai", false))
 		ai_toggle.disabled = not editable or not org.ai.is_valid()
-		state.syncing = false
+		state["syncing"] = false
 		plan_label.text = _office_plan_text(shown, state.ops)
 		if state.ops.is_empty():
 			if not check_label.text.begins_with("人事已由他處"): check_label.text = ""
@@ -8949,7 +8949,7 @@ func _open_offices(host: Window = null) -> void:
 		check_label.text = ("✓ " if bool(result.ok) else "⚠ ") + str(result.get("message", ""))
 		if bool(result.ok):
 			state.ops.clear()
-			state.revision = -1
+			state["revision"] = -1
 		refresh.call()))
 	edit_buttons.append(_button(apply_row, "清除方案", "OfficeClear", func() -> void:
 		state.ops.clear()
@@ -8962,7 +8962,7 @@ func _open_offices(host: Window = null) -> void:
 		var result: Dictionary = org.recruit.call(int(recruit_pick.get_item_metadata(recruit_pick.selected)))
 		show_result(result)
 		check_label.text = ("✓ " if bool(result.ok) else "⚠ ") + str(result.get("message", ""))
-		state.revision = -1
+		state["revision"] = -1
 		refresh.call())
 	release_button.pressed.connect(func() -> void:
 		if not context_ok.call(): return
@@ -8974,7 +8974,7 @@ func _open_offices(host: Window = null) -> void:
 		var result: Dictionary = org.release.call(person)
 		show_result(result)
 		check_label.text = ("✓ " if bool(result.ok) else "⚠ ") + str(result.get("message", ""))
-		state.revision = -1
+		state["revision"] = -1
 		refresh.call())
 	claim_button.pressed.connect(func() -> void:
 		if not context_ok.call(): return
@@ -8987,7 +8987,7 @@ func _open_offices(host: Window = null) -> void:
 		show_result(result)
 		check_label.text = ("✓ " if bool(result.ok) else "⚠ ") + str(result.get("message", ""))
 		state.ops.clear()
-		state.revision = -1
+		state["revision"] = -1
 		refresh.call())
 	ai_toggle.toggled.connect(func(enabled: bool) -> void:
 		if bool(state.syncing) or not context_ok.call(): return
@@ -8995,9 +8995,9 @@ func _open_offices(host: Window = null) -> void:
 		show_result(org.ai.call(enabled))
 		refresh.call())
 	org_choice.item_selected.connect(func(index: int) -> void:
-		state.org = orgs[index]
+		state["org"] = orgs[index]
 		state.ops.clear()
-		state.revision = -1
+		state["revision"] = -1
 		check_label.text = ""
 		refresh.call())
 	filter.item_selected.connect(func(_index: int) -> void: refresh.call())
@@ -9384,7 +9384,7 @@ func _release_disabled_journey_operators() -> void:
 	# branch skips fine navigation, so it must still release an incapacitated helm.
 	for identity: String in _ship_journey.get("boat_ids", []):
 		var boat: Dictionary = vehicles.records().get(identity, {})
-		if SiteVehicleTransport.is_ship(boat) and boat.move.is_empty() and not vehicles.ship_driver_ready(boat): boat.operator_id = 0
+		if SiteVehicleTransport.is_ship(boat) and boat.move.is_empty() and not vehicles.ship_driver_ready(boat): boat["operator_id"] = 0
 
 func ship_journey_waiting_for_crew(identity: String) -> bool:
 	if vehicles.has_region_ship_projection(identity):
@@ -9729,11 +9729,11 @@ func apply_created_character(data: Dictionary) -> Dictionary:
 	if not lab.actor_present(actor): return Runtime.fail("NO_TARGET", "新世界沒有玩家人物")
 	var state := actor.capture_state()
 	var appearance: Dictionary = state.appearance.duplicate(true)
-	appearance.body = int(data.get("body", appearance.body))
+	appearance["body"] = int(data.get("body", appearance.body))
 	appearance.parts.face = str(data.get("face", appearance.parts.face))
 	appearance.parts.hair = str(data.get("hair", appearance.parts.hair))
-	appearance.hair_dye = str(data.get("hair_dye", appearance.hair_dye))
-	appearance.hair_dyed = bool(data.get("hair_dyed", appearance.hair_dyed))
+	appearance["hair_dye"] = str(data.get("hair_dye", appearance.hair_dye))
+	appearance["hair_dyed"] = bool(data.get("hair_dyed", appearance.hair_dyed))
 	state.appearance = appearance
 	var person_name := str(data.get("name", "")).strip_edges()
 	if person_name.is_empty(): state.erase("name")
@@ -10185,7 +10185,7 @@ func _prepare_original_work_inputs() -> Dictionary:
 	var worker_limit := 0
 	if lab.actor_present(lab.npc):
 		var worker: Dictionary = data.site.worker
-		worker.cell = data.index(lab.npc.terrain_cell)
+		worker["cell"] = data.index(lab.npc.terrain_cell)
 		worker_limit = floori(Runtime.CARRY_CAPACITY - Runtime.carried_load(data.site, {}, lab.npc.item_state))
 		lab.npc.work_resting = PersonFatigue.needs_work_rest(lab.npc.fatigue, lab.npc.work_resting)
 		var capable: bool = lab.npc.can_act() and lab.npc.action_time <= 0 and not lab.npc.guarding and lab.npc.guard_transition_left <= 0.0 and lab.npc.guard_break_left <= 0.0 and lab.npc._rescue_left <= 0.0 and lab.npc.visible and not _person_has_duty(lab.npc.person_id)
@@ -10193,15 +10193,15 @@ func _prepare_original_work_inputs() -> Dictionary:
 			# STOP clears future navigation, not the committed step or original task/cargo.
 			if lab.npc.command != TerrainTestNPC.Command.STOP:
 				lab.npc.issue_command(TerrainTestNPC.Command.STOP)
-			worker.status = "疲勞輪休；安全休息至 50 後續作"
+			worker["status"] = "疲勞輪休；安全休息至 50 後續作"
 		if bool(worker.get("manual_control", false)):
 			if lab.controlled_person_id() == lab.npc.person_id and capable and not lab.npc.is_moving() and worker.cell == worker.work_cell and not str(worker.target).is_empty():
-				worker.mode = "work"
+				worker["mode"] = "work"
 				worker_ready = true
 			else:
-				worker.manual_control = false
-				worker.target = ""
-				worker.progress = 0.0
+				worker["manual_control"] = false
+				worker["target"] = ""
+				worker["progress"] = 0.0
 		elif bool(data.site.worker_enabled) and lab.controlled_person_id() != lab.npc.person_id and capable and not lab.npc.work_resting:
 			if str(worker.target).is_empty() and lab.npc.command != TerrainTestNPC.Command.STOP:
 				lab.npc.issue_command(TerrainTestNPC.Command.STOP)
@@ -10214,20 +10214,20 @@ func _prepare_original_work_inputs() -> Dictionary:
 					# Autonomous work owns this arrived body; user orders first release_worker().
 					if lab.npc.command != TerrainTestNPC.Command.STOP:
 						lab.npc.issue_command(TerrainTestNPC.Command.STOP)
-					worker.mode = "work"
+					worker["mode"] = "work"
 					worker_ready = true
 				elif not lab.npc.is_moving() and 0.5 - _work_elapsed <= lab.ACTION_TIME_EPSILON:
-					worker.mode = "travel"
+					worker["mode"] = "travel"
 					if not lab.npc.issue_command(TerrainTestNPC.Command.MOVE_TO_CELL, goal):
-						worker.target = ""
-						worker.mode = "idle"
-						worker.status = "路線受阻；等待重試"
+						worker["target"] = ""
+						worker["mode"] = "idle"
+						worker["status"] = "路線受阻；等待重試"
 					_work_elapsed = 0.0
 	var manual: Dictionary = data.site.manual
 	var manual_ready: bool = lab.actor_present(lab.character) and not str(manual.target).is_empty() and lab.character.can_act() and lab.character.action_time <= 0 and not lab.character.guarding and lab.character.guard_transition_left <= 0.0 and lab.character.guard_break_left <= 0.0 and lab.character._rescue_left <= 0.0 and not _person_has_duty(lab.character.person_id) and not lab.character.is_moving() and data.index(lab.character.terrain_cell) == int(manual.get("cell", -1))
 	if not manual_ready:
-		manual.target = ""
-		manual.progress = 0.0
+		manual["target"] = ""
+		manual["progress"] = 0.0
 	var manual_limit := floori(Runtime.CARRY_CAPACITY - Runtime.carried_load(data.site, {}, lab.character.item_state)) if lab.actor_present(lab.character) else 0
 	return {"worker_ready": worker_ready, "manual_ready": manual_ready, "worker_limit": worker_limit, "manual_limit": manual_limit, "worker_faction": lab.npc.faction_id if lab.actor_present(lab.npc) else -1}
 
@@ -10372,7 +10372,7 @@ func shared_supply_event_limit(maximum: float) -> Dictionary:
 		var members := _team_members(team)
 		var hot_read := _supply_hot_reader(team, members, {})
 		var context := {}
-		if int(entry.version) == 3: context.food_locations = ship_food_locations(team, members)
+		if int(entry.version) == 3: context["food_locations"] = ship_food_locations(team, members)
 		var supplied := Sustain.resupply(entry.sustain, members, _supply_stock(entry), true, hot_read, {}, context)
 		if not supplied.ok: return Runtime.fail("SUPPLY_PREFLIGHT", str(supplied.get("message", "")))
 		if float(supplied.get("consumed_rations", 0.0)) > 0.0: entry.revision = int(entry.revision) + 1
@@ -10810,7 +10810,7 @@ func _refresh_siege_ammo_choices(form: Dictionary, vehicle: Dictionary) -> void:
 	var previous: String = str(choice.get_item_metadata(choice.selected)) if choice.selected >= 0 else ""
 	if not is_same(form.get("siege_ammo_vehicle"), vehicle): previous = ""
 	choice.clear()
-	form.siege_ammo_vehicle = vehicle
+	form["siege_ammo_vehicle"] = vehicle
 	var ordinary: String = str(Runtime.SIEGE_DEFINITIONS.get(str(vehicle.get("kind", "")), {}).get("ammo", ""))
 	choice.add_item("原器具彈種 " + ordinary if not ordinary.is_empty() else "此器具不使用彈藥")
 	choice.set_item_metadata(0, ordinary)
@@ -10835,21 +10835,21 @@ func _install_irrigation_controls(column: VBoxContainer) -> void:
 	_label(column, "灌排渠道 · 原格路徑／同源有限延伸", 18)
 	var form := {"signature": ""}
 	column.set_meta(&"irrigation_form", form)
-	form.status = _label(column, "", 14)
-	form.source = _options(column, [], "IrrigationSource")
-	form.upstream = _options(column, [], "IrrigationUpstream")
-	form.source.item_selected.connect(func(_index: int) -> void: form.signature = ""; _refresh_irrigation_controls())
+	form["status"] = _label(column, "", 14)
+	form["source"] = _options(column, [], "IrrigationSource")
+	form["upstream"] = _options(column, [], "IrrigationUpstream")
+	form.source.item_selected.connect(func(_index: int) -> void: form["signature"] = ""; _refresh_irrigation_controls())
 	var row := HBoxContainer.new()
 	column.add_child(row)
-	form.add = _button(row, "加入目前真格", "IrrigationAppendCell", func() -> void: show_result(_irrigation_add_selected()); _refresh_irrigation_controls())
+	form["add"] = _button(row, "加入目前真格", "IrrigationAppendCell", func() -> void: show_result(_irrigation_add_selected()); _refresh_irrigation_controls())
 	_button(row, "清空渠道草稿", "IrrigationClearCells", func() -> void: build_cells.clear(); _refresh_irrigation_controls())
 	row = HBoxContainer.new()
 	column.add_child(row)
-	form.preview = _button(row, "预檢渠道", "IrrigationPreview", func() -> void: _irrigation_build_selected(true))
-	form.begin = _button(row, "本人於原工位開始", "IrrigationBegin", func() -> void: _irrigation_build_selected(false))
-	form.resume = _button(row, "接續所選已付渠道", "IrrigationResume", func() -> void:
+	form["preview"] = _button(row, "预檢渠道", "IrrigationPreview", func() -> void: _irrigation_build_selected(true))
+	form["begin"] = _button(row, "本人於原工位開始", "IrrigationBegin", func() -> void: _irrigation_build_selected(false))
+	form["resume"] = _button(row, "接續所選已付渠道", "IrrigationResume", func() -> void:
 		show_result(Runtime.resume_irrigation_channel(lab.terrain, int(lab.controlled_person_id()), feature_key)); view.refresh())
-	form.stop = _button(row, "本人停工（保留物資／進度）", "IrrigationStop", func() -> void:
+	form["stop"] = _button(row, "本人停工（保留物資／進度）", "IrrigationStop", func() -> void:
 		var identity := int(lab.controlled_person_id())
 		var job: Dictionary = person_actions._jobs.get(person_actions._job_key_for(identity), {})
 		if job.get("kind") == "technology_feature" and job.get("operation_selector", {}).has("irrigation"):
@@ -11066,7 +11066,7 @@ func prepare_gd_mesh_supply_window(seconds: float) -> Dictionary:
 		var members: Dictionary = _team_members(team)
 		var reader: Callable = _gd_mesh_supply_reader(members)
 		var context := {"hot_read": reader, "safe": _team_safe(team, members), "stopped": _team_stopped(team, true)}
-		if int(entry.version) == 3: context.food_locations = ship_food_locations(team, members)
+		if int(entry.version) == 3: context["food_locations"] = ship_food_locations(team, members)
 		rows.append({"kind": "team", "owner": team, "entry": entry, "state": entry.sustain, "members": members,
 			"stock": _supply_stock(entry), "context": context, "reader": reader, "seconds": seconds})
 	for row: Dictionary in rows:
@@ -11078,9 +11078,9 @@ func prepare_gd_mesh_supply_window(seconds: float) -> Dictionary:
 		if not sampled.ok: return sampled
 		var life: Dictionary = sampled.life
 		var context: Dictionary = row.context.duplicate(false)
-		context.hot_read = func(identity: int, field: StringName) -> Variant:
+		context["hot_read"] = func(identity: int, field: StringName) -> Variant:
 			return life[identity][String(field)] if life[identity].has(String(field)) else row.members[identity].get(String(field))
-		context.pending_hp = {}
+		context["pending_hp"] = {}
 		var forecast: Dictionary = Sustain.advance_to(state, row.members, stock, float(state.at) + seconds, context)
 		if not forecast.ok: return Runtime.fail("SUPPLY_PREFLIGHT", str(forecast.get("message", "")))
 		if float(forecast.consumed_rations) > 0.0 or not forecast.damage.is_empty(): return Runtime.fail("CONTACT_SUPPLY_COST_NOT_PREPARED")
@@ -11182,7 +11182,7 @@ func publish_gd_contact_training_segment(segment: Dictionary) -> void:
 			var person: Dictionary = person_actions._person(identity)
 			if not person.is_empty() and (str(allocation.get("paused", "")) == "REST" or float(allocation.get("actual_seconds", 0.0)) > 0.0):
 				person_actions._body_set(person, "work_resting", str(allocation.get("paused", "")) == "REST")
-	segment.published = true
+	segment["published"] = true
 	segment.supply.erase("training_segment")
 
 func finish_gd_contact_training_window(supply: Dictionary) -> void:
@@ -11246,15 +11246,15 @@ func refresh_shared_runtime_work_request(request: Dictionary) -> Dictionary:
 	var checked: Dictionary = Runtime.work_preflight(lab.terrain, source.task, person.cargo, int(source.carry_limit), int(person.faction), int(person.person_id), reserves_cell)
 	if not checked.ok: return {}
 	var updated: Dictionary = request.duplicate(false)
-	updated.participants = request.participants.duplicate(false)
+	updated["participants"] = request.participants.duplicate(false)
 	updated.participants[0] = request.participants[0].duplicate(false)
 	updated.participants[0].progress_multiplier = float(checked.get("productivity", 1.0))
-	updated.productive_kind = "sum"
-	updated.progress_multiplier = float(checked.get("progress_multiplier", 1.0))
-	updated.remaining = float(checked.remaining)
-	updated.payment = checked.get("payment", {})
-	updated.payment_source = checked.get("payment_source", {})
-	updated.payment_key = str(checked.get("payment_key", source.key))
+	updated["productive_kind"] = "sum"
+	updated["progress_multiplier"] = float(checked.get("progress_multiplier", 1.0))
+	updated["remaining"] = float(checked.remaining)
+	updated["payment"] = checked.get("payment", {})
+	updated["payment_source"] = checked.get("payment_source", {})
+	updated["payment_key"] = str(checked.get("payment_key", source.key))
 	return _shared_runtime_physical_request(updated, checked)
 
 func valid_checked_work_prefix(task: Dictionary, identity: int, prefix_ref: Dictionary) -> bool:
@@ -11284,12 +11284,12 @@ func validate_shared_runtime_work_prefix(prepared: Dictionary, planned: Dictiona
 func prepare_gd_contact_runtime_prefix(prepared: Dictionary, planned: Dictionary, runtime_priors: Array, pre_registered: Dictionary = {}) -> Dictionary:
 	if not _gd_contact_runtime_capture.is_empty() or not _gd_contact_runtime_segment.is_empty(): return Runtime.fail("CLOCK_NOT_READY")
 	var upper: Dictionary = planned.duplicate(false)
-	upper.jobs = {}
+	upper["jobs"] = {}
 	for provider: String in planned.jobs:
 		upper.jobs[provider] = {}
 		for key: String in planned.jobs[provider]:
 			var allocation: Dictionary = planned.jobs[provider][key].duplicate(false)
-			allocation.participant_effective_seconds = allocation.participant_seconds.duplicate()
+			allocation["participant_effective_seconds"] = allocation.participant_seconds.duplicate()
 			upper.jobs[provider][key] = allocation
 	var admitted: Dictionary = validate_shared_runtime_work_prefix(prepared, upper if pre_registered.is_empty() else _checked_runtime_work_preparing.plan, runtime_priors, pre_registered)
 	if not admitted.ok: return admitted
@@ -11332,13 +11332,13 @@ func prepare_gd_contact_runtime_segment(planned: Dictionary, seconds: float, def
 			for prior: Dictionary in _gd_contact_runtime_capture.priors: already = already or is_same(prior.task, original.task)
 			if already: continue
 		var prefix: Dictionary = original.duplicate(false)
-		prefix.plan = planned
-		prefix.allocation = allocation
-		prefix.actual_seconds = actual
-		prefix.productive_seconds = productive
-		prefix.applied_productive_seconds = productive * float(original.start.productivity) * float(original.start.progress_multiplier)
-		prefix.group_actual_seconds = float(allocation.get("actual_seconds", 0.0))
-		prefix.runtime_priors = segment.priors
+		prefix["plan"] = planned
+		prefix["allocation"] = allocation
+		prefix["actual_seconds"] = actual
+		prefix["productive_seconds"] = productive
+		prefix["applied_productive_seconds"] = productive * float(original.start.productivity) * float(original.start.progress_multiplier)
+		prefix["group_actual_seconds"] = float(allocation.get("actual_seconds", 0.0))
+		prefix["runtime_priors"] = segment.priors
 		segment.prefixes.append(prefix)
 	_gd_contact_runtime_segment = segment
 	if defer_runtime: return Runtime.ok("同段真本人分配已登記", {"segment": segment})
@@ -11350,9 +11350,9 @@ func _shared_runtime_physical_request(request: Dictionary, checked: Dictionary) 
 	if request.get("participants", []).size() != 1: return {}
 	var weight: float = float(checked.get("productivity", NAN)) * float(checked.get("progress_multiplier", 1.0))
 	if not is_finite(weight) or weight <= 0.0: return {}
-	request.productive_kind = "sum"
-	request.progress_multiplier = 1.0
-	request.remaining = float(physical.physical_remaining)
+	request["productive_kind"] = "sum"
+	request["progress_multiplier"] = 1.0
+	request["remaining"] = float(physical.physical_remaining)
 	request.participants[0].progress_multiplier = weight
 	return request
 
@@ -11454,7 +11454,7 @@ func prepare_gd_contact_delivery_window(supply: Dictionary, requests: Array, pla
 					"cell": person.cell, "hit": int(person.hit), "participant": participant}
 				held.people[identity] = source
 				people[identity] = source
-			held.request = request
+			held["request"] = request
 			accepted[str(row.owner.team_id)] = request
 	for request: Dictionary in requests:
 		if request.get("provider") == "delivery" and not is_same(accepted.get(str(request.get("key", ""))), request): return Runtime.fail("STALE_DELIVERY_SOURCE")
@@ -11547,7 +11547,7 @@ func publish_gd_contact_delivery_segment(segment: Dictionary) -> void:
 		if float(held.job.left) <= 0.00000001:
 			held.job.left = 0.0
 			held.job.pending = true
-	segment.published = true
+	segment["published"] = true
 	segment.supply.erase("delivery_segment")
 
 func finish_gd_contact_delivery_window(supply: Dictionary) -> void:
@@ -11578,7 +11578,7 @@ func prepare_received_opened_food(identity: int, amount: float, original: Dictio
 		var joined: Dictionary = Sustain.add_members(state, members, [identity])
 		if not joined.ok: return joined
 	if not Sustain._number(float(state.open_rations) + amount, 0.0, 1000000.0): return Runtime.fail("STORAGE_FULL")
-	state.open_rations = float(state.open_rations) + amount
+	state["open_rations"] = float(state.open_rations) + amount
 	return Runtime.ok("原私人開封餐份候選；尚未收物", {"owner": self, "terrain": lab.terrain, "site": site,
 		"identity": identity, "amount": amount, "original": original, "pool": pool, "pool_before": pool.duplicate(true),
 		"had_map": site.has("person_supply"), "map": site.get("person_supply", {}), "at_seconds": at_seconds,
@@ -11614,7 +11614,7 @@ func publish_received_opened_food(prepared: Dictionary) -> void:
 	else:
 		prepared.pool.clear()
 		prepared.pool.merge(prepared.state)
-	prepared.published = true
+	prepared["published"] = true
 
 func _refresh_siege_build_people(form: Dictionary) -> void:
 	if not form.has("siege_builder"): return
@@ -11751,11 +11751,11 @@ func _nation_ui_render(form: Dictionary) -> void:
 	for child: Node in form.body.get_children():
 		form.body.remove_child(child)
 		child.queue_free()
-	form.controls = {}
-	form.resources = {}
+	form["controls"] = {}
+	form["resources"] = {}
 	var nation_id := str(form.nation_choice.get_item_metadata(form.nation_choice.selected))
 	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
-	form.nation = nation
+	form["nation"] = nation
 	if nation.is_empty(): return
 	var tech_id := str(form.technology.get_item_metadata(form.technology.selected))
 	var ops: Dictionary = nation.get("technology_operations", {})
@@ -11973,7 +11973,7 @@ func publish_gd_contact_runtime_segment(segment: Dictionary) -> void:
 		if str(prefix.allocation.get("participant_paused", {}).get(int(prefix.person_id), prefix.allocation.get("paused", ""))) == "REST":
 			person_actions._body_set(person, "work_resting", true)
 	_gd_contact_runtime_capture.elapsed = float(_gd_contact_runtime_capture.elapsed) + float(segment.seconds)
-	segment.published = true
+	segment["published"] = true
 	_gd_contact_runtime_segment = {}
 
 func publish_gd_mesh_supply_segment(prepared: Dictionary, seconds: float) -> void:
@@ -11987,19 +11987,19 @@ func publish_gd_mesh_supply_segment(prepared: Dictionary, seconds: float) -> voi
 		var state: Dictionary = row.state.duplicate(true)
 		var stock: Dictionary = row.stock.duplicate(true)
 		var context: Dictionary = row.context.duplicate(false)
-		context.hot_read = row.reader
+		context["hot_read"] = row.reader
 		if row.kind == "team":
 			# Actual endpoint geometry/life, not optimistic BEGIN safe/stopped.
-			context.safe = _team_safe(row.owner, row.members)
-			context.stopped = _team_stopped(row.owner, true)
-		context.pending_hp = {}
+			context["safe"] = _team_safe(row.owner, row.members)
+			context["stopped"] = _team_stopped(row.owner, true)
+		context["pending_hp"] = {}
 		var outcome: Dictionary = Sustain.advance_to(state, row.members, stock, float(state.at) + seconds, context)
 		assert(outcome.ok and float(outcome.consumed_rations) == 0.0 and outcome.damage.is_empty())
 		row.state.clear()
 		row.state.merge(state)
 		if row.kind == "team":
 			_publish_sustain_team_commands(row.owner, row.entry, was_routed, outcome, seconds, bool(context.safe), bool(context.stopped))
-	prepared.elapsed = float(prepared.elapsed) + seconds
+	prepared["elapsed"] = float(prepared.elapsed) + seconds
 
 func finish_gd_contact_runtime_prefix() -> void:
 	if _gd_contact_runtime_capture.is_empty() or bool(_gd_contact_runtime_capture.finished): return
@@ -12326,7 +12326,7 @@ func _refresh_settlement_engineering_controls() -> void:
 			form.orders.add_item(key + " · " + str(order.status) + " · " + str(int(order.next_step)) + "/" + str(order.steps.size()))
 			form.orders.set_item_metadata(form.orders.item_count - 1, key)
 			if key == selected_order: form.orders.select(form.orders.item_count - 1)
-		form.signature = signature
+		form["signature"] = signature
 	form.status.text = str(view.read_only_reason) if not str(view.read_only_reason).is_empty() else "所選格 %s；所選建物 %s。方案每次重新核占地／人員／權限／完整材料。" % [str(selected), feature_key]
 	var lines: Array[String] = []
 	for step: Dictionary in form.steps:
@@ -12654,9 +12654,9 @@ func _native_sustain_point_projection(held: Dictionary, payments: Array) -> Dict
 	var revision_delta: int = 0
 	var damage: Dictionary = {}
 	while left > 0.0:
-		state.morale = 50.0
-		state.routed = false
-		state.regroup_seconds = 0.0
+		state["morale"] = 50.0
+		state["routed"] = false
+		state["regroup_seconds"] = 0.0
 		var seconds: float = minf(left, 600.0)
 		var at: float = float(state.at)
 		for cohort: Dictionary in state.cohorts:
@@ -12674,9 +12674,9 @@ func _native_sustain_point_projection(held: Dictionary, payments: Array) -> Dict
 		for identity: int in outcome.damage:
 			damage[identity] = float(damage.get(identity, 0.0)) + float(outcome.damage[identity])
 		left = maxf(0.0, left - seconds)
-	state.morale = float(held.state_values.morale)
-	state.routed = bool(held.state_values.routed)
-	state.regroup_seconds = float(held.state_values.regroup_seconds)
+	state["morale"] = float(held.state_values.morale)
+	state["routed"] = bool(held.state_values.routed)
+	state["regroup_seconds"] = float(held.state_values.regroup_seconds)
 	if int(held.revision) + revision_delta > 2147483647: return Runtime.fail("STALE_SOURCE")
 	return Runtime.ok("原Sustain純正時間候選；未扣物／HP", {"held": held, "state": state, "stock": stock,
 		"before_food": before_food, "fully_fed": fully_fed, "morale_delta": morale_delta,
@@ -12756,25 +12756,25 @@ func _install_settlement_engineering_controls(column: VBoxContainer) -> void:
 	_label(column, "施工方案與有限防禦清單", 18)
 	var form := {"steps": [], "signature": "", "caps": {}}
 	column.set_meta(&"settlement_engineering_form", form)
-	form.status = _label(column, "", 14)
-	form.name = LineEdit.new()
+	form["status"] = _label(column, "", 14)
+	form["name"] = LineEdit.new()
 	form.name.placeholder_text = "方案名稱（目前選中已完工建物）"
 	form.name.max_length = 48
 	column.add_child(form.name)
-	form.plans = _options(column, [], "SettlementEngineeringPlans")
+	form["plans"] = _options(column, [], "SettlementEngineeringPlans")
 	var row := HBoxContainer.new()
 	column.add_child(row)
-	form.save = _button(row, "保存幾何", "SaveSettlementBlueprint", func() -> void: show_result(save_selected_settlement_blueprint(str(form.name.text))); _refresh_settlement_engineering_controls())
-	form.delete = _button(row, "移除方案", "DeleteSettlementBlueprint", func() -> void: show_result(delete_selected_settlement_blueprint(_settlement_engineering_choice(form.plans))); _refresh_settlement_engineering_controls())
+	form["save"] = _button(row, "保存幾何", "SaveSettlementBlueprint", func() -> void: show_result(save_selected_settlement_blueprint(str(form.name.text))); _refresh_settlement_engineering_controls())
+	form["delete"] = _button(row, "移除方案", "DeleteSettlementBlueprint", func() -> void: show_result(delete_selected_settlement_blueprint(_settlement_engineering_choice(form.plans))); _refresh_settlement_engineering_controls())
 	row = HBoxContainer.new()
 	column.add_child(row)
-	form.preview = _button(row, "預檢重用", "PreviewSettlementBlueprint", func() -> void: show_result(preview_settlement_blueprint(_settlement_engineering_choice(form.plans))))
-	form.reuse = _button(row, "在所選格重用", "ReuseSettlementBlueprint", func() -> void: show_result(reuse_selected_settlement_blueprint(_settlement_engineering_choice(form.plans))); _refresh_settlement_engineering_controls())
-	form.steps_label = _label(column, "尚未加入清單步驟。每步使用目前選中的原人。", 14)
+	form["preview"] = _button(row, "預檢重用", "PreviewSettlementBlueprint", func() -> void: show_result(preview_settlement_blueprint(_settlement_engineering_choice(form.plans))))
+	form["reuse"] = _button(row, "在所選格重用", "ReuseSettlementBlueprint", func() -> void: show_result(reuse_selected_settlement_blueprint(_settlement_engineering_choice(form.plans))); _refresh_settlement_engineering_controls())
+	form["steps_label"] = _label(column, "尚未加入清單步驟。每步使用目前選中的原人。", 14)
 	row = HBoxContainer.new()
 	column.add_child(row)
-	form.add_build = _button(row, "加入防禦施工", "AddSettlementDefenseBuild", func() -> void: _settlement_engineering_add_step(form, "construct"))
-	form.add_repair = _button(row, "加入所選部件維護", "AddSettlementDefenseRepair", func() -> void: _settlement_engineering_add_step(form, "repair"))
+	form["add_build"] = _button(row, "加入防禦施工", "AddSettlementDefenseBuild", func() -> void: _settlement_engineering_add_step(form, "construct"))
+	form["add_repair"] = _button(row, "加入所選部件維護", "AddSettlementDefenseRepair", func() -> void: _settlement_engineering_add_step(form, "repair"))
 	_button(row, "清空草稿", "ClearSettlementDefenseDraft", func() -> void: form.steps.clear(); _refresh_settlement_engineering_controls())
 	_label(column, "本單材料上限（每步先預檢，開始才按完整原成本付款）", 14)
 	row = HBoxContainer.new()
@@ -12788,7 +12788,7 @@ func _install_settlement_engineering_controls(column: VBoxContainer) -> void:
 		amount.custom_minimum_size.x = 90
 		row.add_child(amount)
 		form.caps[resource] = amount
-	form.request = _button(column, "登記有限清單並明示本隊同意", "RequestSettlementDefense", func() -> void:
+	form["request"] = _button(column, "登記有限清單並明示本隊同意", "RequestSettlementDefense", func() -> void:
 		var cap := {}
 		for resource: String in form.caps:
 			var amount: int = int(form.caps[resource].value)
@@ -12800,13 +12800,13 @@ func _install_settlement_engineering_controls(column: VBoxContainer) -> void:
 		show_result(result)
 		if result.ok: form.steps.clear()
 		_refresh_settlement_engineering_controls())
-	form.orders = _options(column, [], "SettlementDefenseOrders")
+	form["orders"] = _options(column, [], "SettlementDefenseOrders")
 	row = HBoxContainer.new()
 	column.add_child(row)
-	form.begin = _button(row, "開始下一步", "BeginSettlementDefense", func() -> void: show_result(begin_settlement_defense_work(_settlement_engineering_choice(form.orders))); _refresh_settlement_engineering_controls())
-	form.resume = _button(row, "接續已付步驟", "ResumeSettlementDefense", func() -> void: show_result(resume_settlement_defense_work(_settlement_engineering_choice(form.orders))); _refresh_settlement_engineering_controls())
-	form.cancel = _button(row, "停止並解除本單", "CancelSettlementDefense", func() -> void: show_result(cancel_settlement_defense_work(_settlement_engineering_choice(form.orders))); _refresh_settlement_engineering_controls())
-	form.remove = _button(column, "移除完成／取消清單", "RemoveSettlementDefense", func() -> void: show_result(remove_settlement_defense_work(_settlement_engineering_choice(form.orders))); _refresh_settlement_engineering_controls())
+	form["begin"] = _button(row, "開始下一步", "BeginSettlementDefense", func() -> void: show_result(begin_settlement_defense_work(_settlement_engineering_choice(form.orders))); _refresh_settlement_engineering_controls())
+	form["resume"] = _button(row, "接續已付步驟", "ResumeSettlementDefense", func() -> void: show_result(resume_settlement_defense_work(_settlement_engineering_choice(form.orders))); _refresh_settlement_engineering_controls())
+	form["cancel"] = _button(row, "停止並解除本單", "CancelSettlementDefense", func() -> void: show_result(cancel_settlement_defense_work(_settlement_engineering_choice(form.orders))); _refresh_settlement_engineering_controls())
+	form["remove"] = _button(column, "移除完成／取消清單", "RemoveSettlementDefense", func() -> void: show_result(remove_settlement_defense_work(_settlement_engineering_choice(form.orders))); _refresh_settlement_engineering_controls())
 	_refresh_settlement_engineering_controls()
 
 func native_sustain_point_covers_person(prepared: Dictionary, identity: int) -> bool:
@@ -12827,7 +12827,7 @@ func publish_shared_runtime_work_prefix(admitted: Dictionary) -> Dictionary:
 			handled[int(prefix.person_id)] = float(prefix.actual_seconds)
 			if not prefix.start.owner is CrowdPersonOwner:
 				lab._fatigue_work_seconds[prefix.held.actor] = float(lab._fatigue_work_seconds.get(prefix.held.actor, 0.0)) + float(prefix.actual_seconds)
-	admitted.published = true
+	admitted["published"] = true
 	return {"handled_seconds": handled}
 
 func _native_sustain_original_person(identity: int) -> bool:
@@ -12916,7 +12916,7 @@ func finish_shared_native_training_prefix(prepared: Dictionary) -> void:
 
 func finish_shared_runtime_work_prefix(admitted: Dictionary) -> void:
 	if admitted.get("owner") != self or not bool(admitted.get("published", false)) or bool(admitted.get("finished", false)): return
-	admitted.finished = true
+	admitted["finished"] = true
 	for held: Dictionary in admitted.prepared.held:
 		var person: Dictionary = person_actions._person(int(held.person_id))
 		if person.is_empty() or bool(person.player): continue

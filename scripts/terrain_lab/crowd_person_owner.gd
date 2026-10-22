@@ -185,15 +185,15 @@ func _materialize(index: int, formation: PackedFloat64Array) -> Dictionary:
 			if value != null:
 				result[field] = value
 	var values := _soldier_values(index)
-	result.hp = values[0] if values.size() > 0 else 0.0
-	result.ko = values[3] if values.size() > 3 else 0.0
-	result.captive = values.size() > 6 and bool(values[6])
+	result["hp"] = values[0] if values.size() > 0 else 0.0
+	result["ko"] = values[3] if values.size() > 3 else 0.0
+	result["captive"] = values.size() > 6 and bool(values[6])
 	if float(result.hp) <= 0.0:
-		result.fatigue = _cold_get(index, "fatigue", 0.0)
-		result.fatigue_rest = _cold_get(index, "fatigue_rest", 0.0)
+		result["fatigue"] = _cold_get(index, "fatigue", 0.0)
+		result["fatigue_rest"] = _cold_get(index, "fatigue_rest", 0.0)
 	else:
-		result.fatigue = formation[2] if formation.size() > 2 else 0.0
-		result.fatigue_rest = formation[3] if formation.size() > 3 else 0.0
+		result["fatigue"] = formation[2] if formation.size() > 2 else 0.0
+		result["fatigue_rest"] = formation[3] if formation.size() > 3 else 0.0
 	return result
 
 func combat_hot_materialize(index: int) -> Dictionary:
@@ -344,8 +344,8 @@ func release_suppress_approach(member_id: int, job_token: int) -> Dictionary:
 	var state: Dictionary = _suppress_approaches.get(member_id, {})
 	if state.is_empty(): return suppress_approach_query(member_id, job_token)
 	if job_token != int(state.job_token): return Runtime.fail("STALE_WORK_JOB")
-	state.cancelled = true
-	if str(state.reason).is_empty(): state.reason = "CANCELLED"
+	state["cancelled"] = true
+	if str(state.reason).is_empty(): state["reason"] = "CANCELLED"
 	siege_cancel_step(index_for_identity(member_id))
 	state.registry.release_work_slot(state.lease)
 	return suppress_approach_query(member_id, job_token)
@@ -749,9 +749,9 @@ func exchange_stats(index: int) -> Dictionary:
 	var result: Dictionary = owner.exchange_stats(original_index) if owner is TerrainArmy else owner.exchange_stats() if owner is TerrainTestCharacter else {}
 	if result.is_empty(): return result
 	var formation: Dictionary = crowd_site.formation_state(formation_index)
-	result.training = float(formation.get("training", result.get("training", 0.0)))
-	result.fatigue = float(formation.get("fatigue", result.get("fatigue", 0.0)))
-	result.morale = float(formation.get("morale", result.get("morale", 100.0)))
+	result["training"] = float(formation.get("training", result.get("training", 0.0)))
+	result["fatigue"] = float(formation.get("fatigue", result.get("fatigue", 0.0)))
+	result["morale"] = float(formation.get("morale", result.get("morale", 100.0)))
 	return result
 
 func ranged_defense(index: int) -> Dictionary:
@@ -1041,7 +1041,7 @@ func publish_validated_host_ranged_release(prepared: Dictionary, receipt: Packed
 		_cold_set(index, "exchange_skill", "")
 		combat_hot_set(index, &"exchange_skill_cooldown", SiteCombatRules.EXCHANGE_SKILL_COOLDOWN)
 	var shooter: Dictionary = exchange_stats(index)
-	shooter.ability = receipt[0]
-	shooter.training = receipt[1]
-	shooter.fatigue = receipt[2]
+	shooter["ability"] = receipt[0]
+	shooter["training"] = receipt[1]
+	shooter["fatigue"] = receipt[2]
 	return {"shooter": shooter}

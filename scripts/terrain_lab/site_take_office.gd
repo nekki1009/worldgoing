@@ -66,7 +66,7 @@ static func commit_head(offices: Dictionary, person_id: int) -> Dictionary:
 	for entry: Dictionary in candidate.positions:
 		if int(entry.holder) == person_id and not bool(entry.head): entry.holder = -1
 	SiteOffices.head_position(candidate).holder = person_id
-	candidate.revision = mini(SiteOffices.MAX_SEQ, int(candidate.revision) + 1)
+	candidate["revision"] = mini(SiteOffices.MAX_SEQ, int(candidate.revision) + 1)
 	return {"ok": true, "code": "", "message": "", "offices": candidate}
 
 ## Settlement: the requester is the controlled person taking the head seat for himself (as claim_head does).
@@ -102,7 +102,7 @@ static func take_settlement_head(lab: Variant, requester_id: int, person_id: int
 		{"kind": "settlement", "site_id": str(data.site.id), "org_id": str(settlement.settlement_id)},
 		Settlement.faction_members(lab, int(settlement.owner_faction)).keys())
 	if not losses.ok: return losses
-	settlement.offices = committed.offices
+	settlement["offices"] = committed.offices
 	settlement.offices.duty_ai = not bool(person.player)
 	if not closed_episode.is_empty():
 		var episodes: Dictionary = data.site.vacancy_episodes.duplicate(true)
@@ -124,18 +124,18 @@ static func observe_seat(site: Dictionary, owner_kind: String, owner_id: String,
 			var cancelled: Dictionary = VacancyEpisode.cancel(open, "appointment")
 			if not cancelled.ok: return cancelled
 			episodes[str(open.episode_id)] = cancelled.episode
-			result.cancelled = true
+			result["cancelled"] = true
 			changed = true
 	elif heir_designated and not open.is_empty():
 		var heir_cancelled: Dictionary = VacancyEpisode.cancel(open, "heir_return")
 		if not heir_cancelled.ok: return heir_cancelled
 		episodes[str(open.episode_id)] = heir_cancelled.episode
-		result.cancelled = true
+		result["cancelled"] = true
 		changed = true
 	elif not heir_designated and open.is_empty():
 		var episode: Dictionary = VacancyEpisode.empty_episode(owner_kind, owner_id, "%s-%s-%d-%d" % [owner_kind, owner_id, onset_day, episodes.size()], onset_day)
 		episodes[str(episode.episode_id)] = episode
-		result.opened = true
+		result["opened"] = true
 		changed = true
 	if changed: site["vacancy_episodes"] = episodes
 	return result

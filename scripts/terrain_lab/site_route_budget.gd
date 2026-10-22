@@ -77,7 +77,7 @@ func begin_tick(active_formations: Array) -> void:
 				var alloc: Dictionary = _formation_allocations[fid]
 				if not alloc.deferred:
 					alloc.remaining_expansions += extra_per_formation
-					alloc.remaining_calls = MAX_LOCAL_ROUTE_CALLS_PER_FORMATION_TICK
+					alloc["remaining_calls"] = MAX_LOCAL_ROUTE_CALLS_PER_FORMATION_TICK
 
 func _extract_formation_id(formation: Object) -> int:
 	if formation == null:
@@ -115,10 +115,10 @@ func record_search(formation_id: int, expansions: int) -> void:
 	if not _formation_allocations.has(formation_id):
 		return
 	var alloc: Dictionary = _formation_allocations[formation_id]
-	alloc.remaining_calls = maxi(0, int(alloc.remaining_calls) - 1)
-	alloc.remaining_expansions = maxi(0, int(alloc.remaining_expansions) - expansions)
-	alloc.calls_used = int(alloc.calls_used) + 1
-	alloc.expansions_used = int(alloc.expansions_used) + expansions
+	alloc["remaining_calls"] = maxi(0, int(alloc.remaining_calls) - 1)
+	alloc["remaining_expansions"] = maxi(0, int(alloc.remaining_expansions) - expansions)
+	alloc["calls_used"] = int(alloc.calls_used) + 1
+	alloc["expansions_used"] = int(alloc.expansions_used) + expansions
 	site_expansions_used += expansions
 	site_calls_used += 1
 

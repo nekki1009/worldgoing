@@ -120,19 +120,19 @@ static func step_initialize(job: Dictionary, budget_usec: int = 2000, max_units:
 			if data.parameters.get("fixed_land_condition_rule", "") != "terrain_mapped_potential_v1":
 				data.fertility.fill(0); data.moisture.fill(0); data.drainage.fill(0)
 				data.foundation.fill(0); data.groundwater.fill(0)
-				job.stage = "state"
-			elif _step_soil(data, job.soil): job.stage = "state"
+				job["stage"] = "state"
+			elif _step_soil(data, job.soil): job["stage"] = "state"
 		elif job.stage == "state":
 			restore_author_land(data)
 			_initialize_state(data, str(job.site_id), true)
-			job.index = _begin_resource_index(data)
-			job.stage = "index"
+			job["index"] = _begin_resource_index(data)
+			job["stage"] = "index"
 		elif job.stage == "index":
 			if _step_resource_index(data, job.index):
 				# Fresh initialization has no feature/vehicle geometry.
 				_finish_index(data, job.index)
-				job.done = true
-				job.stage = "done"
+				job["done"] = true
+				job["stage"] = "done"
 		if bool(job.done): return true
 		if budget_usec > 0 and Time.get_ticks_usec() - started >= budget_usec: break
 	return false
@@ -177,16 +177,16 @@ static func _begin_resource_index(data: TerrainData) -> Dictionary:
 static func _step_resource_index(data: TerrainData, job: Dictionary) -> bool:
 	if int(job.key) >= job.keys.size(): return true
 	var key: String = job.keys[int(job.key)]
-	if job.resource.is_empty(): job.resource = resource(data, key)
+	if job.resource.is_empty(): job["resource"] = resource(data, key)
 	var r: Dictionary = job.resource
 	if int(job.cell) < r.cells.size():
 		var i := int(r.cells[int(job.cell)])
 		if not data.resources_at.has(i): data.resources_at[i] = []
 		data.resources_at[i].append(key)
-		job.cell = int(job.cell) + 1
+		job["cell"] = int(job.cell) + 1
 	else:
 		if bool(r.blocks) and int(r.remaining) > 0 and not bool(r.cleared): data.static_blocked[int(r.cell)] = 1
-		job.key = int(job.key) + 1; job.cell = 0; job.resource = {}
+		job["key"] = int(job.key) + 1; job["cell"] = 0; job["resource"] = {}
 	return int(job.key) >= job.keys.size()
 
 static func _finish_index(data: TerrainData, job: Dictionary) -> void:
@@ -577,7 +577,7 @@ static func rebuild_indexes(data: TerrainData) -> void:
 
 static func preview_navigation(data: TerrainData, key: String, candidate_feature: Dictionary) -> TerrainData:
 	var state := data.site.duplicate()
-	state.features = data.site.features.duplicate()
+	state["features"] = data.site.features.duplicate()
 	if candidate_feature.is_empty(): state.features.erase(key)
 	else: state.features[key] = candidate_feature
 	return navigation_for_state(data, state)
@@ -768,12 +768,12 @@ static func _step_soil(data: TerrainData, job: Dictionary) -> bool:
 		var i := int(job.cursor)
 		if i < job.distance.size():
 			if data.water_kind[i] != 0: job.distance[i] = 0; pending.append(i)
-			job.cursor = i + 1
-		else: job.stage = "bfs"
+			job["cursor"] = i + 1
+		else: job["stage"] = "bfs"
 	elif job.stage == "bfs":
 		if int(job.head) < pending.size():
 			var current := pending[int(job.head)]
-			job.head = int(job.head) + 1
+			job["head"] = int(job.head) + 1
 			for direction: Vector2i in TerrainData.DIRECTIONS:
 				var next := data.cell_from_index(current) + direction
 				if not data.contains(next): continue
@@ -781,13 +781,13 @@ static func _step_soil(data: TerrainData, job: Dictionary) -> bool:
 				if job.distance[j] > job.distance[current] + 1:
 					job.distance[j] = job.distance[current] + 1
 					pending.append(j)
-		else: job.stage = "cells"; job.cursor = 0
+		else: job["stage"] = "cells"; job["cursor"] = 0
 	elif job.stage == "cells":
 		var i := int(job.cursor)
 		if i < data.surface_types.size():
 			_apply_soil_cell(data, i, job.noise, bool(job.variation), job.distance)
-			job.cursor = i + 1
-		else: job.stage = "done"
+			job["cursor"] = i + 1
+		else: job["stage"] = "done"
 	return job.stage == "done"
 
 static func _apply_soil_cell(data: TerrainData, i: int, noise: FastNoiseLite, generated_variation: bool, wet_distance: Array[int]) -> void:
@@ -886,7 +886,7 @@ static func normalize_resource_definition(row: Dictionary) -> Dictionary:
 		if value.has(field): value[field] = int(value[field])
 	var cells: Array[int] = []
 	for index: Variant in value.cells: cells.append(int(index))
-	value.cells = cells
+	value["cells"] = cells
 	return value
 
 
@@ -910,7 +910,7 @@ static func prepare_author_resource_source(data: TerrainData, edits: Variant) ->
 			if int(previous.kind) == Kind.WILDLIFE:
 				var identity: int = int(previous.get("identity_cell", previous.cell))
 				if row.has("identity_cell") and (not resource_integer(row.identity_cell, 0, data.size.x * data.size.y - 1) or int(row.identity_cell) != identity): return SiteRuntime.fail("INVALID_RESOURCE", "物種身分不可改")
-				row.identity_cell = identity
+				row["identity_cell"] = identity
 		definitions[key] = row
 		strict.append(str(key))
 	var checked: Dictionary = validate_resource_definitions(data, definitions, strict)
@@ -982,7 +982,7 @@ static func prepare_author_resource_state(data: TerrainData, state: Dictionary, 
 	if not valid.ok: return valid
 	var checked_state: Dictionary = candidate.site.duplicate(true)
 	var base: Variant = candidate.parameters.get("fixed_base")
-	if RegionTerrainAdapter.has_author_identity(base): checked_state.world_pin = RegionData.author_projection_pin(base)
+	if RegionTerrainAdapter.has_author_identity(base): checked_state["world_pin"] = RegionData.author_projection_pin(base)
 	var checked: Dictionary = SiteStore._validate_state(candidate, checked_state)
 	if not checked.ok: return checked
 	SiteStore._normalize_state(candidate.site)

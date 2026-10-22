@@ -138,8 +138,8 @@ static func designate_heir_candidate(settlement: Dictionary, requester_id: int, 
 	var designated: Dictionary = Succession.designate(record, str(head.id), person_id, [str(head.id)], members, holder, alive)
 	if not bool(designated.ok): return designated
 	var candidate: Dictionary = settlement.duplicate(true)
-	candidate.version = VERSION_LATEST
-	candidate.succession = designated.record
+	candidate["version"] = VERSION_LATEST
+	candidate["succession"] = designated.record
 	candidate.offices.revision = mini(SiteOffices.MAX_SEQ, int(candidate.offices.revision) + 1)
 	return {"ok": true, "code": "", "settlement": candidate}
 
@@ -194,10 +194,10 @@ static func set_nation(data: TerrainData, requester_id: int, nation_id: Variant)
 	if holder <= 0 or requester_id != holder: return Runtime.fail("NO_AUTHORITY", "只有聚落首長可設定所屬國家")
 	if nation_id != null and not valid_nation_reference(nation_id, state): return Runtime.fail("NATION_UNKNOWN", "所屬國家須是現有正式國家（非測試國別）")
 	var candidate: Dictionary = current.duplicate(true)
-	candidate.version = setter_version(version)
-	candidate.nation_id = nation_id
-	if not candidate.has("technology"): candidate.technology = Technology.empty_scope_record(str(state.get("id", "")))
-	if not candidate.has("trade_tax_percent"): candidate.trade_tax_percent = 0
+	candidate["version"] = setter_version(version)
+	candidate["nation_id"] = nation_id
+	if not candidate.has("technology"): candidate["technology"] = Technology.empty_scope_record(str(state.get("id", "")))
+	if not candidate.has("trade_tax_percent"): candidate["trade_tax_percent"] = 0
 	if not valid_trade_tax_candidate(candidate, state): return Runtime.fail("CORRUPT_SAVE", "聚落紀錄格式")
 	current.clear()
 	current.merge(candidate, true)
@@ -214,10 +214,10 @@ static func set_trade_tax_percent(data: TerrainData, requester_id: int, percent:
 	if holder <= 0 or requester_id != holder: return Runtime.fail("NO_AUTHORITY", "只有聚落首長可設定貿易稅率")
 	if not valid_trade_tax_percent(percent): return Runtime.fail("INVALID", "稅率須為 0 至 50 的整數百分比")
 	var candidate: Dictionary = record.duplicate(true)
-	candidate.version = setter_version(version)
-	if not candidate.has("nation_id"): candidate.nation_id = null
-	if not candidate.has("technology"): candidate.technology = Technology.empty_scope_record(str(state.get("id", "")))
-	candidate.trade_tax_percent = int(percent)
+	candidate["version"] = setter_version(version)
+	if not candidate.has("nation_id"): candidate["nation_id"] = null
+	if not candidate.has("technology"): candidate["technology"] = Technology.empty_scope_record(str(state.get("id", "")))
+	candidate["trade_tax_percent"] = int(percent)
 	if not valid_trade_tax_candidate(candidate, state): return Runtime.fail("CORRUPT_SAVE", "聚落紀錄格式")
 	record.clear()
 	record.merge(candidate, true)
@@ -514,13 +514,13 @@ static func advance_capture_sample(data: TerrainData, sample: Dictionary, game_s
 	var attacker := int(sample.get("attacker", -1))
 	if attacker < 0:
 		if int(fall.contest_faction) >= 0: data.site.notices.append("%s攻陷計時中斷" % str(settlement.name))
-		fall.contest_faction = -1
-		fall.contest_seconds = 0.0
+		fall["contest_faction"] = -1
+		fall["contest_seconds"] = 0.0
 		return Runtime.ok()
 	if int(fall.contest_faction) != attacker:
-		fall.contest_faction = attacker
-		fall.contest_seconds = 0.0
-	fall.contest_seconds = minf(CAPTURE_SECONDS, float(fall.contest_seconds) + game_seconds)
+		fall["contest_faction"] = attacker
+		fall["contest_seconds"] = 0.0
+	fall["contest_seconds"] = minf(CAPTURE_SECONDS, float(fall.contest_seconds) + game_seconds)
 	return Runtime.ok("", {"pending": float(fall.contest_seconds) >= CAPTURE_SECONDS})
 
 static func settle_capture(lab: Variant) -> Dictionary:
@@ -559,7 +559,7 @@ static func fall_to(lab: Variant, attacker: int, leader_id: int) -> Dictionary:
 		var feature: Dictionary = data.site.features[key]
 		if int(feature.get("owner_faction", -1)) != defender or not feature_in_jurisdiction(data, feature) and key != str(settlement.center_id): continue
 		if key != str(settlement.center_id) and _keeps_defender(data, key, feature): kept.append(key); continue
-		feature.owner_faction = attacker
+		feature["owner_faction"] = attacker
 		changed.append(key)
 	var released: Array[int] = []
 	for identity: String in data.site.get("housing", {}).keys():
@@ -878,7 +878,7 @@ static func empty_technology_operations() -> Dictionary:
 static func publish_technology_operations(settlement: Dictionary, candidate: Dictionary) -> void:
 	# Original synchronous checked owner tail keeps accepted SAME refs alive.
 	if not settlement.has("technology_operations"):
-		settlement.technology_operations = candidate
+		settlement["technology_operations"] = candidate
 		return
 	var original: Dictionary = settlement.technology_operations
 	for collection: String in ["plans", "orders"]:
@@ -891,9 +891,9 @@ static func publish_technology_operations(settlement: Dictionary, candidate: Dic
 				value.clear()
 				value.merge(candidate[collection][key], true)
 			else: kept[key] = candidate[collection][key]
-	original.version = int(candidate.version)
-	original.next_plan = int(candidate.next_plan)
-	original.next_order = int(candidate.next_order)
+	original["version"] = int(candidate.version)
+	original["next_plan"] = int(candidate.next_plan)
+	original["next_order"] = int(candidate.next_order)
 
 
 const ENGINEERING_PLAN_LIMIT := 8

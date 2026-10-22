@@ -812,11 +812,11 @@ func _sample(clip: StringName, time: float, direction: Vector2i, aim: Vector2, w
 		# Preserve native key types too: dot keys are StringName, explicit keys
 		# are String. Full Dictionary byte equality includes that metadata.
 		result["shoulder"] = compiled.shoulder
-		result.body = compiled.body
+		result["body"] = compiled.body
 		if include_weapon:
-			result.weapon = compiled.weapon
-		result.shield = compiled.shield
-		result.parry = compiled.parry
+			result["weapon"] = compiled.weapon
+		result["shield"] = compiled.shield
+		result["parry"] = compiled.parry
 		result["hurt_bounds"] = compiled.hurt_bounds
 		if include_weapon:
 			query_profile.weapon_fills += 1
@@ -843,26 +843,26 @@ func _fill_native_geometry(result: Dictionary, include_weapon: bool, partial: bo
 	if not partial:
 		result["shoulder"] = geometry.project(proxy, skeleton.global_transform * skeleton.get_bone_global_pose(skeleton.find_bone("J_Bip_R_UpperArm")).origin)
 		started = Time.get_ticks_usec()
-		result.body = geometry.body_shapes(proxy)
+		result["body"] = geometry.body_shapes(proxy)
 		profile_usec.body += Time.get_ticks_usec() - started
 	var weapon_clip := editor._resolve_weapon_attack_animation()
 	if include_weapon:
 		started = Time.get_ticks_usec()
-		result.weapon = geometry.weapon_shapes(proxy, weapon_clip)
+		result["weapon"] = geometry.weapon_shapes(proxy, weapon_clip)
 		profile_usec.weapon += Time.get_ticks_usec() - started
 		query_profile.weapon_fills += 1
 	else:
 		query_profile.weapon_omissions += 1 # Absent is not a fabricated empty weapon.
 	if not partial:
 		started = Time.get_ticks_usec()
-		result.shield = geometry.shield_shapes(proxy)
+		result["shield"] = geometry.shield_shapes(proxy)
 		profile_usec.shield += Time.get_ticks_usec() - started
 		started = Time.get_ticks_usec()
-		result.parry = []
+		result["parry"] = []
 		# Shieldless melee parry remains a real weapon projection even when the
 		# damaging weapon field was not requested. Arrows still cannot use parry.
 		if result.shield.is_empty() and editor.selected_animation in [&"guard", &"guard_weapon", &"guard_polearm"] and weapon_clip not in [&"attack_unarmed", &"attack_bow", &"attack_crossbow"]:
-			result.parry = geometry.weapon_shapes(proxy, weapon_clip, true)
+			result["parry"] = geometry.weapon_shapes(proxy, weapon_clip, true)
 		profile_usec.parry += Time.get_ticks_usec() - started
 		var points := PackedVector2Array()
 		for kind: String in ["body", "shield", "parry"]:
@@ -978,7 +978,7 @@ func _compiled_sample_geometry(include_weapon: bool) -> Dictionary:
 			continue
 		if field == "parry" and not (result.shield.is_empty() and bool(view.binding.descriptor.parrying)
 			and str(view.binding.descriptor.weapon_clip) not in ["attack_unarmed", "attack_bow", "attack_crossbow"]):
-			result.parry = [] # Original non-parrying branch is intentionally untyped.
+			result["parry"] = [] # Original non-parrying branch is intentionally untyped.
 			continue
 		var polygons: Array[PackedVector2Array] = []
 		polygons.assign(result[field])

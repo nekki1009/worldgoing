@@ -95,7 +95,7 @@ static func _valid_references(references: Dictionary) -> bool:
 
 static func _encode(value: Variant, references: Dictionary, graph: Dictionary, depth: int, allow_reference: bool = true) -> Dictionary:
 	if depth > 48:
-		graph.error = "REGION_OWNER_DEPTH"
+		graph["error"] = "REGION_OWNER_DEPTH"
 		return {}
 	if value is float and (value == INF or value == -INF): return {"kind": "infinity", "sign": 1 if value == INF else -1}
 	if value is Callable and value.is_null(): return {"kind": "empty_callable"}
@@ -103,13 +103,13 @@ static func _encode(value: Variant, references: Dictionary, graph: Dictionary, d
 		for key: String in references:
 			if is_same(value, references[key]): return {"kind": "reference", "key": key, "type": typeof(value)}
 	if value is Object or value is Callable or value is Signal:
-		graph.error = "UNBOUND_REGION_REFERENCE"
+		graph["error"] = "UNBOUND_REGION_REFERENCE"
 		return {}
 	if value is Dictionary or value is Array:
 		for index: int in graph.seen.size():
 			if is_same(graph.seen[index], value): return {"kind": "node", "index": index}
 		if graph.nodes.size() >= LIMIT or value.size() > LIMIT:
-			graph.error = "REGION_OWNER_LIMIT"
+			graph["error"] = "REGION_OWNER_LIMIT"
 			return {}
 		var index: int = graph.nodes.size()
 		graph.seen.append(value)
@@ -118,14 +118,14 @@ static func _encode(value: Variant, references: Dictionary, graph: Dictionary, d
 		if value is Dictionary:
 			for key: Variant in value:
 				if key == null or key is Object or key is Dictionary or key is Array or key is Callable or key is Signal or not Checkpoint.supported(key):
-					graph.error = "INVALID_REGION_OWNER_KEY"
+					graph["error"] = "INVALID_REGION_OWNER_KEY"
 					return {}
 				node.entries.append([_encode(key, references, graph, depth + 1), _encode(value[key], references, graph, depth + 1)])
 		else:
 			for entry: Variant in value: node.entries.append(_encode(entry, references, graph, depth + 1))
 		return {"kind": "node", "index": index}
 	if not Checkpoint.supported(value):
-		graph.error = "UNSUPPORTED_REGION_OWNER_VALUE"
+		graph["error"] = "UNSUPPORTED_REGION_OWNER_VALUE"
 		return {}
 	return {"kind": "value", "wire": Checkpoint.wire(value)}
 
@@ -176,7 +176,7 @@ static func peek_values(snapshot: Variant, field: String, expected: Dictionary =
 	return _peek_value(selected, snapshot.nodes, [], 0, budget)
 
 static func _peek_value(value: Variant, nodes: Array, ancestors: Array, depth: int, budget: Dictionary) -> Dictionary:
-	budget.left = int(budget.left) - 1
+	budget["left"] = int(budget.left) - 1
 	if depth > 48 or int(budget.left) < 0 or not value is Dictionary: return Runtime.fail("INVALID_REGION_REFERENCE_VALUES")
 	if value.get("kind") == "value":
 		if value.size() != 2 or not Checkpoint.valid_wire(value.get("wire")): return Runtime.fail("INVALID_REGION_REFERENCE_VALUES")
@@ -249,24 +249,24 @@ static func _valid_bind_value(value: Variant, nodes: Array, validator: Callable,
 
 static func _encode_bind_roots(value: Variant, graph: Dictionary, depth: int) -> Dictionary:
 	if depth > 48:
-		graph.error = "REGION_OWNER_DEPTH"
+		graph["error"] = "REGION_OWNER_DEPTH"
 		return {}
 	if value is Dictionary and value.size() == 2 and value.get("@region_reference") is String and Checkpoint.integer(value.get("type")):
 		var kind := int(value.type)
 		if kind not in [TYPE_OBJECT, TYPE_CALLABLE, TYPE_DICTIONARY, TYPE_ARRAY] or str(value["@region_reference"]).is_empty():
-			graph.error = "INVALID_REGION_REFERENCE"
+			graph["error"] = "INVALID_REGION_REFERENCE"
 			return {}
 		return {"kind": "reference", "key": str(value["@region_reference"]), "type": kind}
 	if value is float and (value == INF or value == -INF): return {"kind": "infinity", "sign": 1 if value == INF else -1}
 	if value is Callable and value.is_null(): return {"kind": "empty_callable"}
 	if value is Object or value is Callable or value is Signal:
-		graph.error = "UNBOUND_REGION_REFERENCE"
+		graph["error"] = "UNBOUND_REGION_REFERENCE"
 		return {}
 	if value is Dictionary or value is Array:
 		for index: int in graph.seen.size():
 			if is_same(graph.seen[index], value): return {"kind": "node", "index": index}
 		if graph.nodes.size() >= LIMIT or value.size() > LIMIT:
-			graph.error = "REGION_OWNER_LIMIT"
+			graph["error"] = "REGION_OWNER_LIMIT"
 			return {}
 		var index: int = graph.nodes.size()
 		graph.seen.append(value)
@@ -275,14 +275,14 @@ static func _encode_bind_roots(value: Variant, graph: Dictionary, depth: int) ->
 		if value is Dictionary:
 			for key: Variant in value:
 				if key == null or key is Object or key is Dictionary or key is Array or key is Callable or key is Signal or not Checkpoint.supported(key):
-					graph.error = "INVALID_REGION_OWNER_KEY"
+					graph["error"] = "INVALID_REGION_OWNER_KEY"
 					return {}
 				node.entries.append([_encode_bind_roots(key, graph, depth + 1), _encode_bind_roots(value[key], graph, depth + 1)])
 		else:
 			for entry: Variant in value: node.entries.append(_encode_bind_roots(entry, graph, depth + 1))
 		return {"kind": "node", "index": index}
 	if not Checkpoint.supported(value):
-		graph.error = "UNSUPPORTED_REGION_OWNER_VALUE"
+		graph["error"] = "UNSUPPORTED_REGION_OWNER_VALUE"
 		return {}
 	return {"kind": "value", "wire": Checkpoint.wire(value)}
 

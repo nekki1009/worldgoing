@@ -218,17 +218,17 @@ static func ranged_result(shooter: Dictionary, defender: Dictionary, distance: f
 		- (20.0 if bool(defender.get("facility", false)) else 0.0) \
 		- (EXCHANGE_SKILL_BONUS if str(defender.get("skill", "")) == "brace" else 0.0)
 	chance = clampf(chance, 5.0, 95.0)
-	result.chance = chance
+	result["chance"] = chance
 	if roll >= chance:
 		return result
 	var hit := roll < chance * 0.6
-	result.kind = "hit" if hit else "graze"
+	result["kind"] = "hit" if hit else "graze"
 	# A released shot keeps its launch weapon; the actual arrival target supplies
 	# current armor. A graze halves the shared tier/weapon effects, not accuracy.
 	var contact_scale := 1.0 if hit else 0.5
-	result.hp = exchange_hp(weapon, str(defender.get("armor", "none"))) * contact_scale
-	result.stun = exchange_stun(weapon) * contact_scale + (EXCHANGE_POWER_STUN if power else 0.0)
-	result.stagger = 0.35 if hit else 0.2
+	result["hp"] = exchange_hp(weapon, str(defender.get("armor", "none"))) * contact_scale
+	result["stun"] = exchange_stun(weapon) * contact_scale + (EXCHANGE_POWER_STUN if power else 0.0)
+	result["stagger"] = 0.35 if hit else 0.2
 	return result
 
 static func ranged_cells(source: Vector2i, goal: Vector2i) -> Array[Vector2i]:
@@ -350,22 +350,22 @@ static func exchange_result(a: Dictionary, b: Dictionary, roll: float = 0.0) -> 
 	var big := absf(margin) >= EXCHANGE_BIG_MARGIN
 	var winner: Dictionary = a if a_wins else b
 	var loser: Dictionary = b if a_wins else a
-	result.winner = 1 if a_wins else -1
-	result.kind = "big" if big else "small"
-	result.fatigue_a = EXCHANGE_FATIGUE
-	result.fatigue_b = EXCHANGE_FATIGUE
+	result["winner"] = 1 if a_wins else -1
+	result["kind"] = "big" if big else "small"
+	result["fatigue_a"] = EXCHANGE_FATIGUE
+	result["fatigue_b"] = EXCHANGE_FATIGUE
 	var hp := exchange_hp(str(winner.get("weapon", "none")), str(loser.get("armor", "none")), big)
 	var stun := exchange_stun(str(winner.get("weapon", "none"))) \
 		+ (EXCHANGE_POWER_STUN if str(winner.get("skill", "")) == "power" else 0.0)
-	result.hp = hp # Compatibility summary: the losing side's HP effect.
-	result.stun = stun # Compatibility summary: the losing side's stun effect.
-	result.hp_b = hp if a_wins else 0.0
-	result.hp_a = 0.0 if a_wins else hp
-	result.stun_b = stun if a_wins else 0.0
-	result.stun_a = 0.0 if a_wins else stun
-	result.stagger = EXCHANGE_BIG_STAGGER if big else EXCHANGE_SMALL_STAGGER
-	result.hold = 0.0
-	result.knockback = big and str(loser.get("skill", "")) != "brace"
+	result["hp"] = hp # Compatibility summary: the losing side's HP effect.
+	result["stun"] = stun # Compatibility summary: the losing side's stun effect.
+	result["hp_b"] = hp if a_wins else 0.0
+	result["hp_a"] = 0.0 if a_wins else hp
+	result["stun_b"] = stun if a_wins else 0.0
+	result["stun_a"] = 0.0 if a_wins else stun
+	result["stagger"] = EXCHANGE_BIG_STAGGER if big else EXCHANGE_SMALL_STAGGER
+	result["hold"] = 0.0
+	result["knockback"] = big and str(loser.get("skill", "")) != "brace"
 	if big:
 		result["fatigue_b" if a_wins else "fatigue_a"] += EXCHANGE_BIG_LOSER_FATIGUE
 	return result
@@ -493,25 +493,25 @@ static func _fire_body_integrate(state: Dictionary, seconds: float, risk: float,
 		elif net_rate > 0.0: ignition_at = (float(FIRE_BODY.dose_threshold) - dose) / net_rate
 	var burn_damage := 0.0
 	if ignition_at <= seconds:
-		state.armed = false
-		state.episode_left = float(FIRE_BODY.episode_seconds)
-		state.burn_left = float(FIRE_BODY.burn_seconds)
+		state["armed"] = false
+		state["episode_left"] = float(FIRE_BODY.episode_seconds)
+		state["burn_left"] = float(FIRE_BODY.burn_seconds)
 		var burning_seconds := seconds - ignition_at
 		burn_damage = minf(burning_seconds, float(state.burn_left)) * float(FIRE_BODY.burn_hp_rate)
-		state.burn_left = maxf(0.0, float(state.burn_left) - burning_seconds)
-		state.episode_left = maxf(0.0, float(state.episode_left) - burning_seconds)
+		state["burn_left"] = maxf(0.0, float(state.burn_left) - burning_seconds)
+		state["episode_left"] = maxf(0.0, float(state.episode_left) - burning_seconds)
 	elif float(state.burn_left) > 0.0:
 		# An episode's remaining lifetime only decreases. Continuous heat cannot
 		# extend it indefinitely; cooling all the way to zero is required to rearm.
 		if net_rate > 0.0:
-			state.burn_left = minf(float(state.episode_left), maxf(float(state.burn_left), float(FIRE_BODY.burn_seconds)))
+			state["burn_left"] = minf(float(state.episode_left), maxf(float(state.burn_left), float(FIRE_BODY.burn_seconds)))
 		burn_damage = minf(seconds, float(state.burn_left)) * float(FIRE_BODY.burn_hp_rate)
-		state.burn_left = maxf(0.0, float(state.burn_left) - seconds)
-		state.episode_left = maxf(0.0, float(state.episode_left) - seconds)
-	state.dose = clampf(dose + net_rate * seconds, 0.0, float(FIRE_BODY.dose_limit))
+		state["burn_left"] = maxf(0.0, float(state.burn_left) - seconds)
+		state["episode_left"] = maxf(0.0, float(state.episode_left) - seconds)
+	state["dose"] = clampf(dose + net_rate * seconds, 0.0, float(FIRE_BODY.dose_limit))
 	if float(state.dose) <= 0.00000001 and float(state.burn_left) <= 0.00000001:
-		state.armed = true
-		state.episode_left = 0.0
+		state["armed"] = true
+		state["episode_left"] = 0.0
 	return maxf(0.0, risk) * float(FIRE_BODY.hazard_hp_rate) * protection * seconds + burn_damage
 
 static func fire_body_advance(state: Dictionary, sequence: int, action_begin: float, action_end: float,
@@ -564,10 +564,10 @@ static func fire_body_advance(state: Dictionary, sequence: int, action_begin: fl
 					active.erase(event_id)
 			var end := minf(float(segment.end), float(events[event_index].at)) if event_index < events.size() else float(segment.end)
 			if bool(segment.wet):
-				state.dose = 0.0
-				state.burn_left = 0.0
-				state.episode_left = 0.0
-				state.armed = true
+				state["dose"] = 0.0
+				state["burn_left"] = 0.0
+				state["episode_left"] = 0.0
+				state["armed"] = true
 				for event_id: String in active: state.contacts.erase(event_id)
 				active.clear()
 				contact_rate = 0.0
@@ -576,8 +576,8 @@ static func fire_body_advance(state: Dictionary, sequence: int, action_begin: fl
 			cursor = end
 	for event_id: String in state.contacts.keys():
 		if float(state.contacts[event_id].end) <= action_end + 0.00000001: state.contacts.erase(event_id)
-	state.last_interval = sequence
-	state.last_action_end = action_end
+	state["last_interval"] = sequence
+	state["last_action_end"] = action_end
 	return {"ok": true, "duplicate": false, "hp": hp, "active": fire_body_active(state)}
 
 static func fire_environment_packet(hp: float) -> Dictionary:
@@ -672,13 +672,13 @@ static func fire_body_capture(state: Dictionary) -> Dictionary:
 	if state.is_empty(): return {}
 	var saved := {}
 	for field: String in FIRE_BODY_SAVED_FIELDS: saved[field] = state[field]
-	saved.contacts = state.contacts.duplicate(true)
+	saved["contacts"] = state.contacts.duplicate(true)
 	return saved
 
 static func fire_body_restore(saved: Dictionary) -> Dictionary:
 	if saved.is_empty(): return {}
 	var result := saved.duplicate(true)
-	result.last_interval = int(saved.last_interval)
+	result["last_interval"] = int(saved.last_interval)
 	for field: String in ["dose", "burn_left", "episode_left", "last_action_end"]: result[field] = float(saved[field])
 	for contact: Dictionary in result.contacts.values():
 		for field: String in ["start", "end", "rate"]: contact[field] = float(contact[field])

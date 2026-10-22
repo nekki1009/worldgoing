@@ -21,7 +21,7 @@ static func _build(editor: HumanCharacter3DEditor, clip: String) -> Animation:
 	var idle: Animation = editor.animation_player.get_animation(&"idle")
 	if source == null or idle == null or source.length <= 0.0: return null
 	var result := source.duplicate(true) as Animation
-	result.resource_name = clip + "_v1_original_rig"
+	result["resource_name"] = clip + "_v1_original_rig"
 	var duration: float = DURATIONS[clip]
 	# Retain all existing equipment/morph/visibility tracks in a private copy.
 	# Retiming this new resource cannot alter a required original clip.
@@ -31,8 +31,8 @@ static func _build(editor: HumanCharacter3DEditor, clip: String) -> Animation:
 			keys.append([result.track_get_key_time(index, key) * duration / source.length, result.track_get_key_value(index, key), result.track_get_key_transition(index, key)])
 		for key in range(result.track_get_key_count(index) - 1, -1, -1): result.track_remove_key(index, key)
 		for key: Array in keys: result.track_insert_key(index, float(key[0]), key[1], float(key[2]))
-	result.length = duration
-	result.loop_mode = Animation.LOOP_LINEAR
+	result["length"] = duration
+	result["loop_mode"] = Animation.LOOP_LINEAR
 	var skeleton := editor.model_root.find_child("Skeleton3D", true, false) as Skeleton3D
 	if skeleton == null: return null
 	for bone: String in BONES:

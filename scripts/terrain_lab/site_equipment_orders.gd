@@ -110,7 +110,7 @@ static func nation_offices(nation: Dictionary, read_only: bool = false) -> Dicti
 		if read_only and (int(current.get("version", SiteOffices.VERSION)) < SiteOffices.VERSION or not _catalog_complete(current)): current = current.duplicate(true)
 		SiteOffices.upgrade(current)
 		if SiteOffices.ensure_catalog(current, "nation") and not read_only:
-			current.revision = mini(SiteOffices.MAX_SEQ, int(current.revision) + 1)
+			current["revision"] = mini(SiteOffices.MAX_SEQ, int(current.revision) + 1)
 		return current
 	return SiteOffices.legacy_nation_offices(int(nation.get("military_head", -1)))
 
@@ -162,7 +162,7 @@ func appoint_nation_head(nation_id: String, person_id: int) -> Dictionary:
 	if not seat.is_empty() and not bool(seat.head):
 		return Runtime.fail("DUPLICATE_HOLDER", "同一人在同一組織最多擔任一個職位；請先由人事方案卸任")
 	SiteOffices.head_position(offices).holder = person_id
-	offices.revision = int(offices.revision) + 1
+	offices["revision"] = int(offices.revision) + 1
 	nation.erase("military_head")
 	nation["offices"] = offices
 	return Runtime.ok("已設定元首", {"revision": int(offices.revision)})
@@ -305,7 +305,7 @@ func bind_nation_treasury(requester_id: int, nation_id: String, feature_id: Stri
 	var candidate: Dictionary = RansomData.bind_candidate(lab.terrain.site, nation_id, nation, feature_id)
 	if not bool(candidate.ok): return Runtime.fail(str(candidate.code), "國庫綁定未通過，原狀未變")
 	nation_offices(nation) # Stores the complete seat list (one revision step) only after authority is proven.
-	nation.ransom_data = candidate.nation.ransom_data
+	nation["ransom_data"] = candidate.nation.ransom_data
 	lab.terrain.site.stockpiles[feature_id].nation_id = nation_id
 	return Runtime.ok("已綁定本國國庫；硬幣仍在原倉，未付款", {"feature_id": feature_id})
 
@@ -318,7 +318,7 @@ func set_nation_ransom_policy(requester_id: int, nation_id: String, per_person: 
 	var candidate: Dictionary = RansomData.policy_candidate(lab.terrain.site, nation_id, nation, per_person, daily, reserve)
 	if not bool(candidate.ok): return Runtime.fail(str(candidate.code), "國庫政策未通過，原狀未變")
 	nation_offices(nation)
-	nation.ransom_data = candidate.nation.ransom_data
+	nation["ransom_data"] = candidate.nation.ransom_data
 	return Runtime.ok("已更新贖金政策上限", {"per_person": per_person, "daily": daily, "reserve": reserve})
 
 
@@ -332,7 +332,7 @@ func authorize_nation_ransom(requester_id: int, nation_id: String, authorized: b
 	var candidate: Dictionary = RansomData.authorize_candidate(lab.terrain.site, nation_id, nation, requester_id, authorized)
 	if not bool(candidate.ok): return Runtime.fail(str(candidate.code), "國庫授權未通過，原狀未變")
 	nation_offices(nation)
-	nation.ransom_data = candidate.nation.ransom_data
+	nation["ransom_data"] = candidate.nation.ransom_data
 	return Runtime.ok("已%s本國贖金付款授權；未付款、未移動硬幣、未解除拘押" % ("授權" if authorized else "撤銷"), {"authorized": authorized})
 
 
@@ -580,7 +580,7 @@ func prepare(identity: int, request: Dictionary) -> Dictionary:
 		if production.is_empty() or production.status != "complete" or int(production.recipient_id) != identity or production.standard_id != request.get("standard_id"): return Runtime.fail("STALE_ORDER")
 		military_products = _military_order_products(production)
 		if military_products.size() != 1: return Runtime.fail("MATERIALS")
-		order.military_production_id = request.military_production_id
+		order["military_production_id"] = request.military_production_id
 	if mode == "personal":
 		if not bool(person.player):
 			return Runtime.fail("NO_AUTHORITY", "個人自由換装只接受原玩家本人合法持物")
@@ -1061,7 +1061,7 @@ static func nation_departure_candidate(nation: Dictionary, person_id: int, autho
 		if int(member) != person_id: kept.append(member)
 	if kept.is_empty(): return Runtime.fail("NO_TARGET", "國家至少須保留一位國民")
 	var candidate: Dictionary = nation.duplicate(true)
-	candidate.members = kept
+	candidate["members"] = kept
 	var seat_vacated: bool = false
 	var changed: bool = false
 	if candidate.get("offices") is Dictionary:
@@ -1274,8 +1274,8 @@ func publish_procurement_spec(requester_id: int, nation_id: String, spec_id: Str
 	if not previous.is_empty():
 		if not previous.receipts.is_empty() and (previous.resources != spec.resources or previous.items != spec.items or previous.destination_feature_id != destination_feature_id):
 			return Runtime.fail("BUSY", "已交貨規格只能由現任者重新核准；新規格須另立ID，歷史和額度不清零")
-		spec.receipts = previous.receipts.duplicate(true)
-		if previous.has("tech_trial"): spec.tech_trial = previous.tech_trial.duplicate(true)
+		spec["receipts"] = previous.receipts.duplicate(true)
+		if previous.has("tech_trial"): spec["tech_trial"] = previous.tech_trial.duplicate(true)
 	candidate.specs[spec_id] = spec
 	if not valid_nation_operation_record(candidate, lab.terrain.site.item_definitions, {}): return Runtime.fail("INVALID", "批量／總量或真物品定義替代規格非法")
 	_publish_nation_operations(checked.nation, candidate)
@@ -1465,9 +1465,9 @@ func revoke_workshop_certificate(requester_id: int, nation_id: String, certifica
 	var certificate: Dictionary = candidate.certificates.get(certificate_id, {})
 	if certificate.is_empty() or int(certificate.revision) != expected_revision or expected_revision >= 2147483646: return Runtime.fail("STALE_CERTIFICATE")
 	if reason.is_empty() or reason.length() > 256: return Runtime.fail("INVALID", "撤銷須明列原因")
-	certificate.status = "revoked"
-	certificate.reason = reason
-	certificate.revision = expected_revision + 1
+	certificate["status"] = "revoked"
+	certificate["reason"] = reason
+	certificate["revision"] = expected_revision + 1
 	if not valid_nation_operation_record(candidate, lab.terrain.site.item_definitions, {}): return Runtime.fail("INVALID")
 	_publish_nation_operations(checked.nation, candidate)
 	return Runtime.ok("已撤銷原作坊資格；原產品與研究歷史保留")
@@ -1528,9 +1528,9 @@ func authorize_military_materials(grantor_id: int, nation_id: String, order_id: 
 	if not order.source.is_empty():
 		if int(order.source.person_id) != grantor_id or order.source.site_id != str(lab.terrain.site.id): return Runtime.fail("NO_AUTHORITY", "不能換人清零原來源累計支出")
 		spent = order.source.spent.duplicate()
-	order.source = {"site_id": str(lab.terrain.site.id), "person_id": grantor_id, "holder": "person:" + str(grantor_id), "status": "granted", "cap": cap.duplicate(), "spent": spent}
-	order.status = "active"
-	order.revision = int(order.revision) + 1
+	order["source"] = {"site_id": str(lab.terrain.site.id), "person_id": grantor_id, "holder": "person:" + str(grantor_id), "status": "granted", "cap": cap.duplicate(), "spent": spent}
+	order["status"] = "active"
+	order["revision"] = int(order.revision) + 1
 	if not valid_nation_operation_record(candidate, lab.terrain.site.item_definitions, {}): return Runtime.fail("INVALID", "只准一批原配方的有限上限，不能低於已交支出")
 	_publish_nation_operations(nation, candidate)
 	return Runtime.ok("本人已明示核准有限原材料用途；尚未移交或宣告營地國有")
@@ -1543,7 +1543,7 @@ func revoke_military_materials(grantor_id: int, nation_id: String, order_id: Str
 	if order.is_empty() or order.source.is_empty() or order.status not in ["awaiting_source", "active"]: return Runtime.fail("NO_TARGET")
 	if grantor_id != int(lab.controlled_person_id()) or int(order.source.person_id) != grantor_id or actions._person(grantor_id).is_empty(): return Runtime.fail("NO_AUTHORITY")
 	order.source.status = "revoked"
-	order.revision = int(order.revision) + 1
+	order["revision"] = int(order.revision) + 1
 	if not valid_nation_operation_record(candidate, lab.terrain.site.item_definitions, {}): return Runtime.fail("INVALID")
 	_publish_nation_operations(nation, candidate)
 	return Runtime.ok("本原來源已撤銷；已交原物資及累計支出保留，未完生产沿原守衛停用")
@@ -1603,8 +1603,8 @@ func prepare_military_output(nation_id: String, order_id: String, output_receipt
 	if order.receipt_ids.has(int(output_receipt.id)): return Runtime.fail("NO_CHANGE")
 	order.receipt_ids.append(int(output_receipt.id))
 	if int(candidate.version) == NATION_PUBLIC_VERSION: order.accepted_receipts.append(output_receipt.duplicate(true))
-	order.status = "complete"
-	order.revision = int(order.revision) + 1
+	order["status"] = "complete"
+	order["revision"] = int(order.revision) + 1
 	if not valid_nation_operation_record(candidate, lab.terrain.site.item_definitions, {}): return Runtime.fail("INVALID")
 	if not _operations_candidate_claims_valid(nation_id, candidate): return Runtime.fail("REPLAY", "原出貨／實物已屬另一有限國家訂單")
 	return Runtime.ok("", {"nation_ref": nation, "operations": candidate, "nation_id": nation_id, "order_id": order_id})
@@ -1639,10 +1639,10 @@ func renew_public_operation(requester_id: int, nation_id: String, order_id: Stri
 	if order.tech_id == "N12":
 		var fleet := _fleet_context(nation, str(order.payload.corps_id), order.payload.ship_ids, requester_id)
 		if not fleet.ok: return fleet
-	order.authorizer_id = requester_id
-	order.status = "active" if not order.receipts.is_empty() or not str(order.payload.get("feature_id", order.payload.get("target_id", ""))).is_empty() else "prepared"
-	order.reason = ""
-	order.revision = expected_revision + 1
+	order["authorizer_id"] = requester_id
+	order["status"] = "active" if not order.receipts.is_empty() or not str(order.payload.get("feature_id", order.payload.get("target_id", ""))).is_empty() else "prepared"
+	order["reason"] = ""
+	order["revision"] = expected_revision + 1
 	if not valid_nation_operation_record(candidate, lab.terrain.site.item_definitions, {}): return Runtime.fail("INVALID")
 	_publish_nation_operations(nation, candidate)
 	return Runtime.ok("現任者重新核准原單；原來源／支出／產品／收據與project引用保留")
@@ -1935,8 +1935,8 @@ static func normalize_nation_operations(state: Dictionary) -> Dictionary:
 		if nation.has("technology"): nation.technology = Technology.normalize_scope_record(nation.technology, "nation")
 		if not nation.has("technology_operations"): continue
 		var operations: Dictionary = nation.technology_operations
-		operations.version = int(operations.version)
-		operations.next_seq = int(operations.next_seq)
+		operations["version"] = int(operations.version)
+		operations["next_seq"] = int(operations.next_seq)
 		for spec: Dictionary in operations.specs.values():
 			spec.revision = int(spec.revision)
 			spec.authorizer_id = int(spec.authorizer_id)
@@ -1966,9 +1966,9 @@ static func normalize_nation_operations(state: Dictionary) -> Dictionary:
 	return Runtime.ok()
 
 static func _normalize_accepted_output(receipt: Dictionary) -> void:
-	receipt.id = int(receipt.id)
-	receipt.operator_id = int(receipt.operator_id)
-	receipt.work_seconds = float(receipt.work_seconds)
+	receipt["id"] = int(receipt.id)
+	receipt["operator_id"] = int(receipt.operator_id)
+	receipt["work_seconds"] = float(receipt.work_seconds)
 	for resource: String in receipt.resources: receipt.resources[resource] = int(receipt.resources[resource])
 
 func _military_issue_check(order: Dictionary) -> Dictionary:
@@ -2015,12 +2015,12 @@ func renew_military_production_order(requester_id: int, nation_id: String, order
 			if not team.has_method("technology_work_consent"): return Runtime.fail("UNSUPPORTED")
 			var response: Dictionary = team.technology_work_consent(int(order.operator_id), _nation_order_purpose("N05", str(lab.terrain.site.id), nation_id, order_id), int(lab.controlled_person_id()))
 			if not response.ok: return response
-			order.work_consent = response.consent.duplicate(true)
-		else: order.work_consent = {}
-	order.authorizer_id = requester_id
-	order.certificate_revision = int(certificate.certificate.revision)
-	order.standard_revision = int(standard.revision)
-	order.revision = expected_revision + 1
+			order["work_consent"] = response.consent.duplicate(true)
+		else: order["work_consent"] = {}
+	order["authorizer_id"] = requester_id
+	order["certificate_revision"] = int(certificate.certificate.revision)
+	order["standard_revision"] = int(standard.revision)
+	order["revision"] = expected_revision + 1
 	if not valid_nation_operation_record(candidate, lab.terrain.site.item_definitions, {}): return Runtime.fail("INVALID")
 	_publish_nation_operations(nation, candidate)
 	return Runtime.ok("現任者已重新核准本原訂單；來源、累計支出、成品及收據保留")
@@ -2139,7 +2139,7 @@ static func _site_operation_claims_valid(state: Dictionary) -> bool:
 func _operations_candidate_claims_valid(nation_id: String, operations: Dictionary) -> bool:
 	var nations: Dictionary = lab.terrain.site.get("equipment_nations", {}).duplicate()
 	var nation: Dictionary = nations.get(nation_id, {}).duplicate()
-	nation.technology_operations = operations
+	nation["technology_operations"] = operations
 	nations[nation_id] = nation
 	return _site_operation_claims_valid({"id": str(lab.terrain.site.id), "item_definitions": lab.terrain.site.item_definitions, "equipment_nations": nations})
 
@@ -2376,13 +2376,13 @@ static func _public_recipient_count(order: Dictionary) -> int:
 	return found.size()
 
 static func _normalize_public_order(order: Dictionary) -> void:
-	order.revision = int(order.revision)
-	order.project_id = int(order.project_id)
-	order.authorizer_id = int(order.authorizer_id)
+	order["revision"] = int(order.revision)
+	order["project_id"] = int(order.project_id)
+	order["authorizer_id"] = int(order.authorizer_id)
 	var payload: Dictionary = order.payload
 	for key: String in ["teacher_id", "driver_id", "recipient_id", "local_person_id", "office_revision", "operator_id"]:
 		if payload.has(key): payload[key] = int(payload[key])
-	if payload.has("expires_game_seconds"): payload.expires_game_seconds = float(payload.expires_game_seconds)
+	if payload.has("expires_game_seconds"): payload["expires_game_seconds"] = float(payload.expires_game_seconds)
 	for key: String in ["person_ids", "worker_ids", "student_ids", "recipient_ids"]:
 		for index: int in range(payload.get(key, []).size()): payload[key][index] = int(payload[key][index])
 	for consent: Dictionary in payload.get("consents", []):
@@ -2583,7 +2583,7 @@ func revoke_public_source(grantor_id: int, nation_id: String, order_id: String) 
 	if order.is_empty() or order.status in ["complete", "revoked"] or not order.payload.has("source") or order.payload.source.is_empty() \
 		or int(order.payload.source.person_id) != grantor_id: return Runtime.fail("NO_AUTHORITY")
 	order.payload.source.status = "revoked"
-	order.revision = int(order.revision) + 1
+	order["revision"] = int(order.revision) + 1
 	if not valid_nation_operation_record(candidate, lab.terrain.site.item_definitions, {}): return Runtime.fail("INVALID")
 	_publish_nation_operations(nation, candidate)
 	return Runtime.ok("本私人物資來源撤銷；已移交實物及支出保留")
@@ -2638,8 +2638,8 @@ func deliver_public_share(requester_id: int, nation_id: String, order_id: String
 	var candidate := _public_candidate(nation)
 	var next: Dictionary = candidate.public_orders[order_id]
 	next.receipts.append({"id": _public_event_id(order, order_id, "share", target_id), "site_id": str(order.scope_site_id), "binding": "aid_order" if order.tech_id == "N03" else "tax", "operator_id": recipient_id, "target_id": target_id, "work_seconds": 0.0, "item_ids": []})
-	next.status = "complete" if _public_order_complete(next) else "active"
-	next.revision = int(order.revision) + 1
+	next["status"] = "complete" if _public_order_complete(next) else "active"
+	next["revision"] = int(order.revision) + 1
 	if not valid_nation_operation_record(candidate, lab.terrain.site.item_definitions, {}): return Runtime.fail("INVALID")
 	var transport: Variant = _original_stock_transport()
 	if transport == null: return Runtime.fail("UNSUPPORTED")
@@ -2799,15 +2799,15 @@ func renew_settlement_mandate(requester_id: int, nation_id: String, order_id: St
 	if not consent.ok: return consent
 	var candidate := _public_candidate(nation)
 	var next: Dictionary = candidate.public_orders[order_id]
-	next.authorizer_id = requester_id
+	next["authorizer_id"] = requester_id
 	next.payload.local_person_id = local_person_id
 	next.payload.office_revision = int(Settlement.offices(lab).revision)
 	next.payload.expires_game_seconds = expires_game_seconds
 	next.payload.clock_ref = {"world_instance_id": str(lab.site_controller.region_slot.pin.world_instance_id), "slot_id": str(lab.site_controller.region_slot.pin.slot_id)}
 	next.payload.consents = consent.consents
-	next.status = "active" if not next.receipts.is_empty() or not next.payload.feature_id.is_empty() else "prepared"
-	next.reason = ""
-	next.revision = expected_revision + 1
+	next["status"] = "active" if not next.receipts.is_empty() or not next.payload.feature_id.is_empty() else "prepared"
+	next["reason"] = ""
+	next["revision"] = expected_revision + 1
 	if not valid_nation_operation_record(candidate, lab.terrain.site.item_definitions, {}): return Runtime.fail("INVALID")
 	_publish_nation_operations(nation, candidate)
 	return Runtime.ok("現任原地方職掌及新原World期限已明示再核；同項目／單號／真工作／歷史保留")
@@ -2850,8 +2850,8 @@ func begin_nation_construction(requester_id: int, nation_id: String, order_id: S
 	var candidate := _public_candidate(nation)
 	var next: Dictionary = candidate.public_orders[order_id]
 	next.payload.feature_id = str(int(lab.terrain.site.next_feature))
-	next.status = "active"
-	next.revision = int(order.revision) + 1
+	next["status"] = "active"
+	next["revision"] = int(order.revision) + 1
 	if not valid_nation_operation_record(candidate, lab.terrain.site.item_definitions, {}): return Runtime.fail("INVALID")
 	var request := {"cells": cells.duplicate(), "kind": "house" if order.tech_id == "N06" else "road", "requester_id": requester_id,
 		"order": next.duplicate(true), "operations": candidate}
@@ -2949,8 +2949,8 @@ func command_fleet_ship(requester_id: int, nation_id: String, order_id: String, 
 	var candidate := _public_candidate(context.nation)
 	var next: Dictionary = candidate.public_orders[order_id]
 	next.payload.steps[ship_id] = {"from_cell": from_cell, "to_cell": lab.terrain.index(destination), "driver_id": int(ship.operator_id), "accepted_revision": int(ship.revision)}
-	next.status = "active"
-	next.revision = int(order.revision) + 1
+	next["status"] = "active"
+	next["revision"] = int(order.revision) + 1
 	if not valid_nation_operation_record(candidate, lab.terrain.site.item_definitions, {}): return Runtime.fail("INVALID")
 	var result: Dictionary = fleet.transport.ship_order(ship_id, "forward", TerrainArmy.INVALID_CELL, requester_id)
 	if not result.ok: return result
@@ -2974,8 +2974,8 @@ func accept_fleet_ship_stop(requester_id: int, nation_id: String, order_id: Stri
 	var candidate := _public_candidate(context.nation)
 	var next: Dictionary = candidate.public_orders[order_id]
 	next.receipts.append({"id": _public_event_id(order, order_id, "fleet", ship_id), "site_id": str(order.scope_site_id), "binding": "fleet", "operator_id": int(ship.operator_id), "target_id": "vehicle:" + ship_id, "work_seconds": 0.0, "item_ids": []})
-	next.status = "complete" if _public_order_complete(next) else "active"
-	next.revision = int(order.revision) + 1
+	next["status"] = "complete" if _public_order_complete(next) else "active"
+	next["revision"] = int(order.revision) + 1
 	if not valid_nation_operation_record(candidate, lab.terrain.site.item_definitions, {}): return Runtime.fail("INVALID")
 	_publish_nation_operations(context.nation, candidate)
 	return Runtime.ok("此原船已真到本步終點且停穩；兩船完成才有本次編制實績", {"complete": next.status == "complete", "order_id": order_id})
@@ -3016,8 +3016,8 @@ func prepare_public_owner_receipt(nation_id: String, order_id: String, binding_i
 		if prior.id == event_id: return Runtime.fail("NO_CHANGE")
 	next.receipts.append({"id": event_id, "site_id": str(receipt.site_id), "binding": binding_id, "operator_id": int(receipt.operator_id), "target_id": target_id, "work_seconds": float(receipt.work_seconds), "item_ids": receipt.item_ids.duplicate()})
 	if receipt.has("effective_seconds"): next.receipts[next.receipts.size() - 1]["effective_seconds"] = float(receipt.effective_seconds)
-	next.status = "complete" if _public_order_complete(next) else "active"
-	next.revision = int(order.revision) + 1
+	next["status"] = "complete" if _public_order_complete(next) else "active"
+	next["revision"] = int(order.revision) + 1
 	if not valid_nation_operation_record(candidate, lab.terrain.site.item_definitions, {}): return Runtime.fail("INVALID")
 	if not _operations_candidate_claims_valid(nation_id, candidate): return Runtime.fail("REPLAY", "真原event／產品已用於另一國家或具名工單")
 	return Runtime.ok("", {"nation_ref": context.nation, "operations": candidate, "complete": next.status == "complete"})
@@ -3337,13 +3337,13 @@ func publish_equipment_change(prepared: Dictionary) -> void:
 			depot.item_ids.erase(identity)
 			holder.item_ids.append(identity)
 			source.records[identity].holder = str(holder.holder)
-		depot.version = int(depot.version) + 1
+		depot["version"] = int(depot.version) + 1
 	holder.equipped.clear()
 	holder.equipped.merge(order.planned)
-	holder.version = int(holder.version) + 1
+	holder["version"] = int(holder.version) + 1
 	_publish_military_issue(prepared.military)
 	if not prepared.phase.is_empty(): actions.publish_phase_receipt(prepared.phase)
-	prepared.published = true
+	prepared["published"] = true
 	# The original presentation observes only the fully committed owner graph.
 	source.notification.call(int(order.person_id))
 
@@ -3394,9 +3394,9 @@ func publish_team_equipment_change(prepared: Dictionary) -> void:
 			source.records[item_id].holder = str(holder.holder)
 		holder.equipped.clear()
 		holder.equipped.merge(entry.planned)
-		holder.version = int(holder.version) + 1
-	depot.version = int(depot.version) + 1
-	prepared.published = true
+		holder["version"] = int(holder.version) + 1
+	depot["version"] = int(depot.version) + 1
+	prepared["published"] = true
 	for identity: int in prepared.result.changed_ids: source.notification.call(identity)
 
 func _equipment_exchange_order_signature(order: Dictionary) -> Dictionary:
@@ -3408,7 +3408,7 @@ func _equipment_exchange_order_signature(order: Dictionary) -> Dictionary:
 			var pure: Dictionary = entry.duplicate(false)
 			for key: String in ["owner", "body", "holder", "cargo"]: pure.erase(key)
 			entries.append(pure)
-		signature.entries = entries
+		signature["entries"] = entries
 	return signature.duplicate(true)
 
 func _equipment_exchange_source(order: Dictionary) -> Dictionary:
@@ -3435,21 +3435,21 @@ func _equipment_exchange_source(order: Dictionary) -> Dictionary:
 		for item_id: String in person.holder.item_ids:
 			if not item_ids.has(item_id): item_ids.append(item_id)
 	if mode in ["issue", "team_issue"]:
-		source.depot = lab.terrain.site.depot_items
-		source.stock = lab.terrain.site.inventory
-		source.stock_before = source.stock.duplicate(true)
-		source.depot_before = source.depot.duplicate(true)
-		source.capacity = int(lab.terrain.site.capacity)
+		source["depot"] = lab.terrain.site.depot_items
+		source["stock"] = lab.terrain.site.inventory
+		source["stock_before"] = source.stock.duplicate(true)
+		source["depot_before"] = source.depot.duplicate(true)
+		source["capacity"] = int(lab.terrain.site.capacity)
 		for item_id: String in source.depot.item_ids:
 			if not item_ids.has(item_id): item_ids.append(item_id)
-		source.nation = lab.terrain.site.get("equipment_nations", {}).get(str(order.get("nation_id", "")), {})
-		source.standard = _standard(int(identities[0]), str(order.get("nation_id", "")), str(order.get("standard_id", "")))
-		source.standard_before = source.standard.duplicate(true)
-		source.culture = str(source.nation.get("culture", ""))
+		source["nation"] = lab.terrain.site.get("equipment_nations", {}).get(str(order.get("nation_id", "")), {})
+		source["standard"] = _standard(int(identities[0]), str(order.get("nation_id", "")), str(order.get("standard_id", "")))
+		source["standard_before"] = source.standard.duplicate(true)
+		source["culture"] = str(source.nation.get("culture", ""))
 	if order.has("military_production_id"):
 		var military: Dictionary = _military_issue_check(order)
 		if not military.ok: return military
-		source.military = {"nation": military.nation, "production": military.production, "before": military.production.duplicate(true),
+		source["military"] = {"nation": military.nation, "production": military.production, "before": military.production.duplicate(true),
 			"operations": military.nation.technology_operations, "technology": military.nation.technology,
 			"technology_before": military.nation.technology.duplicate(true)}
 	for item_id: String in item_ids:
@@ -3548,7 +3548,7 @@ func prepare_funded_course_source(nation_id: String, order_id: String, original_
 		"order_before": order.duplicate(true), "job": original_job, "teacher_body": teacher.body, "student_body": student.body,
 		"source": stock.holder, "source_cargo": stock.cargo, "destination": teacher.holder, "destination_cargo": teacher.cargo,
 		"terrain": lab.terrain, "site_state": lab.terrain.site, "transfer": {}})
-	source.transfer = Runtime.prepare_item_transfer(lab.terrain, stock.holder, stock.cargo, teacher.holder, teacher.cargo,
+	source["transfer"] = Runtime.prepare_item_transfer(lab.terrain, stock.holder, stock.cargo, teacher.holder, teacher.cargo,
 		{"grain": 2}, [], int(stock.holder.version), int(teacher.holder.version), Runtime.CARRY_CAPACITY)
 	if not source.transfer.ok: return source.transfer
 	var stable: Dictionary = validate_funded_course_source(source)
@@ -3591,8 +3591,8 @@ func _funded_course_operations_candidate(source: Dictionary) -> Dictionary:
 	next.receipts.append({"id": _public_event_id(order, str(source.order_id), "lesson", str(int(source.job.target_id))),
 		"site_id": str(order.scope_site_id), "binding": "funded_course", "operator_id": int(source.job.executor_id),
 		"target_id": "person:" + str(int(source.job.target_id)), "work_seconds": float(source.job.duration), "item_ids": []})
-	next.status = "complete" if _public_order_complete(next) else "active"
-	next.revision = int(order.revision) + 1
+	next["status"] = "complete" if _public_order_complete(next) else "active"
+	next["revision"] = int(order.revision) + 1
 	return candidate if valid_nation_operation_record(candidate, lab.terrain.site.item_definitions, {}) else {}
 
 func validate_funded_course_payment(prepared: Dictionary) -> Dictionary:
@@ -3613,11 +3613,11 @@ func publish_funded_course_payment(prepared: Dictionary) -> void:
 	# callback/rejection/yield can occur between the one stipend and its receipt.
 	Runtime.publish_item_transfer(prepared.course_source.transfer)
 	_publish_nation_operations(prepared.nation_ref, prepared.operations)
-	prepared.published = true
+	prepared["published"] = true
 
 func _publish_nation_operations(nation: Dictionary, candidate: Dictionary) -> void:
 	if not nation.has("technology_operations"):
-		nation.technology_operations = candidate
+		nation["technology_operations"] = candidate
 		return
 	var original: Dictionary = nation.technology_operations
 	assert(not is_same(original, candidate))
@@ -3706,8 +3706,8 @@ func prepare_public_owner_begin(nation_id: String, order_id: String, binding_id:
 	var next: Dictionary = candidate.public_orders[order_id]
 	if order.tech_id == "N11": next.payload.target_id = target_id
 	else: next.payload.feature_id = key
-	next.status = "active"
-	next.revision = int(order.revision) + 1
+	next["status"] = "active"
+	next["revision"] = int(order.revision) + 1
 	if not valid_nation_operation_record(candidate, lab.terrain.site.item_definitions, {}) \
 		or not _operations_candidate_claims_valid(nation_id, candidate): return Runtime.fail("INVALID")
 	return Runtime.ok("", {"terrain": lab.terrain, "site": lab.terrain.site, "nation_id": nation_id, "nation": checked.nation,
@@ -3797,8 +3797,8 @@ static func prepare_faction_nation(state: Dictionary, nation_id: String, faction
 		candidate.equipment_nations[nation_id] = original_nation.duplicate(true)
 	var nation: Dictionary = candidate.equipment_nations.get(nation_id, {})
 	if nation.is_empty() or nation.has("faction_id") or nation.has("faction_version"): return Runtime.fail("NO_TARGET")
-	nation.faction_version = 1
-	nation.faction_id = faction_id
+	nation["faction_version"] = 1
+	nation["faction_id"] = faction_id
 	var identity: Variant = RegionTravel.prepare_identity(candidate)
 	if not identity.ok: return identity
 	candidate = identity.state

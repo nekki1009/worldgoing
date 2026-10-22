@@ -424,16 +424,16 @@ static func _known_summaries(lab: TerrainLab, team: TerrainArmy, own: Dictionary
 				seen.append({"id": int(person.id), "cell": person.cell, "rank": int(person.get("rank", 0)), "power": 1.0})
 		if seen.is_empty(): continue
 		var known: Dictionary = other.duplicate(true)
-		known.people = seen
-		known.power = 0.0
-		known.minimum = seen[0].cell
-		known.maximum = seen[0].cell
+		known["people"] = seen
+		known["power"] = 0.0
+		known["minimum"] = seen[0].cell
+		known["maximum"] = seen[0].cell
 		for person: Dictionary in seen:
 			known.power += 1.0 # Count visible able bodies; unseen training/morale/HP is unknown.
-			known.minimum = Vector2i(mini(known.minimum.x, person.cell.x), mini(known.minimum.y, person.cell.y))
-			known.maximum = Vector2i(maxi(known.maximum.x, person.cell.x), maxi(known.maximum.y, person.cell.y))
-		known.recovering = false # An internal AI flag is not a visible observation.
-		known.order = TerrainArmy.CombatOrder.HOLD # Unknown command intent is not visible posture.
+			known["minimum"] = Vector2i(mini(known.minimum.x, person.cell.x), mini(known.minimum.y, person.cell.y))
+			known["maximum"] = Vector2i(maxi(known.maximum.x, person.cell.x), maxi(known.maximum.y, person.cell.y))
+		known["recovering"] = false # An internal AI flag is not a visible observation.
+		known["order"] = TerrainArmy.CombatOrder.HOLD # Unknown command intent is not visible posture.
 		var object_id := "team:%d" % other.team.team_id if other.team != null else "person:%d" % int(seen[0].id)
 		if receiver > 0:
 			var durable_seen: Array = []
@@ -446,8 +446,8 @@ static func _known_summaries(lab: TerrainLab, team: TerrainArmy, own: Dictionary
 					"faction": int(known.faction)}, "game_time": game_time, "expires_at": game_time + 60.0, "confidence": 1.0}
 			var original_ref := RegionPolicy.person_ref(lab.terrain.site, receiver)
 			if not original_ref.is_empty():
-				receipt.observer_ref = original_ref.duplicate(true)
-				receipt.receiver_ref = original_ref.duplicate(true)
+				receipt["observer_ref"] = original_ref.duplicate(true)
+				receipt["receiver_ref"] = original_ref.duplicate(true)
 			RegionPolicy.observe(ledger, receipt)
 		result.append(known)
 	return result

@@ -68,7 +68,7 @@ static func tick(raw: Variant, proven_day: int) -> Dictionary:
 	var advanced: Dictionary = Contest.tick(raw.timer, proven_day)
 	if not advanced.ok: return advanced
 	var episode: Dictionary = raw.duplicate(true)
-	episode.timer = advanced.timer
+	episode["timer"] = advanced.timer
 	return {"ok": true, "code": "", "message": "", "episode": episode}
 
 static func add_candidate(raw: Variant, person_id: int) -> Dictionary:
@@ -100,14 +100,14 @@ static func cancel(raw: Variant, reason: String) -> Dictionary:
 	if not open.ok: return open
 	if not CANCEL_REASONS.has(reason): return _fail("NO_AUTHORITY", "取消的理由須是合法任命或繼承人歸來")
 	var episode: Dictionary = raw.duplicate(true)
-	episode.status = "cancelled"
-	episode.cancel_reason = reason
+	episode["status"] = "cancelled"
+	episode["cancel_reason"] = reason
 	return {"ok": true, "code": "", "message": "", "episode": episode}
 
 ## JSON numbers load as floats; restore exact integers after validation.
 static func normalize_numbers(episode: Dictionary) -> void:
-	episode.version = int(episode.version)
-	if episode.has("winner"): episode.winner = int(episode.winner)
+	episode["version"] = int(episode.version)
+	if episode.has("winner"): episode["winner"] = int(episode.winner)
 	Contest.normalize_numbers(episode.timer)
 	for index in range(episode.candidates.size()):
 		episode.candidates[index] = int(episode.candidates[index])
@@ -174,6 +174,6 @@ static func close(episode: Variant, winner_id: int) -> Dictionary:
 	if str(episode.timer.status) != "deadline_reached": return _fail("NOT_AT_DEADLINE", "尚未到期")
 	if winner_id <= 0 or not episode.candidates.has(winner_id): return _fail("NO_TARGET", "得位者須是候選人")
 	var closed: Dictionary = episode.duplicate(true)
-	closed.status = "closed"
-	closed.winner = winner_id
+	closed["status"] = "closed"
+	closed["winner"] = winner_id
 	return {"ok": true, "code": "", "message": "", "episode": closed}

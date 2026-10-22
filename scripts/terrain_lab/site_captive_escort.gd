@@ -190,7 +190,7 @@ func _advance_release_walks() -> void:
 		if executor.cell == slot.slot.contact_cell:
 			# Arrived. The release itself starts after this step's supply settles
 			# (start_arrived_releases), exactly like a player pressing the button.
-			walk.arrived = true
+			walk["arrived"] = true
 			continue
 		var route := _route(executor, slot.slot.contact_cell, false, [], actions.prison_contacts(str(slot.prison_id), [executor_id, int(walk.target_id)]))
 		if route.is_empty():

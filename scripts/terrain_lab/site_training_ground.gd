@@ -4,9 +4,9 @@ const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const Sustain = preload("res://scripts/terrain_lab/site_sustain.gd")
 
 static func stop(entry: Dictionary) -> void:
-	entry.training_order = false
-	entry.training_requester = -1
-	entry.training_feature_id = ""
+	entry["training_order"] = false
+	entry["training_requester"] = -1
+	entry["training_feature_id"] = ""
 
 static func owner_for(controller: Variant, team_id: int) -> Variant:
 	if controller._crowd_active():
@@ -191,7 +191,7 @@ static func finish_native_work_prefix(controller: Variant, checked: Dictionary) 
 	# No apply_training_state, direct pool write, cold proxy or legacy charge.
 	var held: Dictionary = checked.get("held", {})
 	if held.is_empty() or bool(checked.get("finished", false)): return
-	checked.finished = true
+	checked["finished"] = true
 	for identity: int in held.people:
 		var allocation: Dictionary = checked.plan.get("jobs", {}).get("training", {}).get(str(identity), {})
 		var actual: float = float(allocation.get("participant_seconds", {}).get(identity, 0.0))

@@ -186,7 +186,7 @@ static func ecology_reconcile(data: TerrainData, keys: Array[String] = []) -> Di
 		var r := Env.resource(data, key)
 		if r.is_empty(): return fail("NO_TARGET", key)
 		var fields := {}
-		if (int(r.recover) == 0 or bool(r.cleared)) and int(r.next_recovery) != -1: fields.next_recovery = -1
+		if (int(r.recover) == 0 or bool(r.cleared)) and int(r.next_recovery) != -1: fields["next_recovery"] = -1
 		if int(r.kind) in Env.ECOLOGY_KINDS:
 			var capacity := Env.habitat_capacity(data, key)
 			if int(r.kind) in Env.POPULATION_KINDS and (not keys.is_empty() or data.site.changes.has(key) or capacity != int(r.capacity)):
@@ -416,7 +416,7 @@ static func equipment_appearance(data: TerrainData, holder: Dictionary, original
 		appearance.parts[slot] = str(definition.asset)
 		var dye := item_dye(record, definition)
 		if not dye.is_empty():
-			if not appearance.has("equipment_dyes"): appearance.equipment_dyes = {}
+			if not appearance.has("equipment_dyes"): appearance["equipment_dyes"] = {}
 			appearance.equipment_dyes[slot] = dye
 	if appearance.parts == validated_parts and appearance.get("equipment_dyes", {}) == validated_dyes:
 		return appearance
@@ -446,8 +446,8 @@ static func dye_equipment(data: TerrainData, holder: Dictionary, changes: Dictio
 	for slot: String in changes:
 		var record: Dictionary = data.site.item_records[holder.equipped[slot]]
 		if changes[slot] == "": record.erase("dye_color")
-		else: record.dye_color = str(changes[slot]).to_lower()
-	holder.version = expected_version + 1
+		else: record["dye_color"] = str(changes[slot]).to_lower()
+	holder["version"] = expected_version + 1
 	return ok("已保存實際裝備染色；轉手後仍保留")
 
 static func carried_size(cargo: Dictionary, item_state: Dictionary) -> int:
@@ -842,10 +842,10 @@ static func begin_siege_build(data: TerrainData, kind: String, anchor: Vector2i,
 	var method_guard := technology_siege_method_begin_guard(data, kind, team_id, actual_operator_id, work_method)
 	if not method_guard.ok: return method_guard
 	var candidate := {"kind": kind, "cell": data.index(anchor), "facing": [facing.x, facing.y], "team_id": team_id}
-	if operation_selector.has("token"): candidate.tech_trial = operation_selector.token
-	if work_method == "joinery": candidate.technology_siege_method = {"version": 1}
+	if operation_selector.has("token"): candidate["tech_trial"] = operation_selector.token
+	if work_method == "joinery": candidate["technology_siege_method"] = {"version": 1}
 	var selected_ground := technology_siege_ground_geometry(data, candidate)
-	if selected_ground.ok: candidate.technology_yard_id = str(selected_ground.key)
+	if selected_ground.ok: candidate["technology_yard_id"] = str(selected_ground.key)
 	var cells := siege_cells(data, candidate)
 	var stations := siege_work_slots(data, candidate)
 	if stations.size() not in [4, 6]: return fail("TERRAIN", "施工所有原工位必須留在本 Site")
@@ -891,25 +891,25 @@ static func begin_siege_build(data: TerrainData, kind: String, anchor: Vector2i,
 		"hp": float(definition.max_hp), "ever_hp_damaged": false, "phase": "building", "crew_slots": {},
 		"build": {"paid_cost": definition.cost.duplicate(), "total_work": float(definition.work_seconds), "progress": 0.0},
 		"repair": {}, "command": {}, "action": {}, "next_attack_seq": 1, "rng_state": maxi(1, (int(data.seed_value) + next * 104729) & 0x7fffffff)})
-	if kind == "siege_tower": candidate.deployed_pose = {}
+	if kind == "siege_tower": candidate["deployed_pose"] = {}
 	if not scope.is_empty():
-		candidate.tech_trial = scope.token
-		candidate.tech_batch = _technology_geometry_ledger(data, scope.token, scope.payment, "construct:" + kind, source.source)
+		candidate["tech_trial"] = scope.token
+		candidate["tech_batch"] = _technology_geometry_ledger(data, scope.token, scope.payment, "construct:" + kind, source.source)
 	if not operation_ref.is_empty():
-		candidate.technology_order = operation_ref.duplicate()
+		candidate["technology_order"] = operation_ref.duplicate()
 		if scope.is_empty():
 			var ledger := _technology_public_ledger(data, identity, "construct:" + kind, source, admission.admission)
 			if ledger.is_empty(): return fail("NO_WORK_SLOTS")
 			ledger.payment_id = str(data.site.id) + "|vehicle:" + identity + "|1"
-			candidate.tech_batch = ledger
+			candidate["tech_batch"] = ledger
 	if candidate.has("technology_yard_id") and scope.is_empty() and operation_ref.is_empty():
 		# One original finite ordinary paid batch, with shared effort rather than
 		# an invented named research executor. No Scope/Nation credit is admitted.
-		candidate.tech_batch = {"version": 1, "id": 1, "site_id": str(data.site.id), "feature_id": identity,
+		candidate["tech_batch"] = {"version": 1, "id": 1, "site_id": str(data.site.id), "feature_id": identity,
 			"operator_id": 0, "recipe_id": "construct:" + kind, "materials": definition.cost.duplicate(true),
 			"source_holder": str(source.holder.holder), "source_version": int(source.version), "work_seconds": 0.0,
 			"token": {}, "payment_id": str(data.site.id) + "|vehicle:" + identity + "|1"}
-	if not scope.is_empty(): selector.token = candidate.tech_trial
+	if not scope.is_empty(): selector["token"] = candidate.tech_trial
 	var had_vehicles := data.site.has("vehicles")
 	var original_vehicles: Dictionary = data.site.get("vehicles", {})
 	var named := _technology_prepare_named_vehicle(data, identity, candidate, selector, original_vehicles, actual_operator_id)
@@ -1013,7 +1013,7 @@ static func validate_ship_repair(data: TerrainData, vehicle: Dictionary, state: 
 	var holder: Variant = vehicle.get("holder", {})
 	if not holder is Dictionary or not _building_integer(holder.get("version"), 0, 2147483646): return fail("CORRUPT_SAVE", "原修理收據須保留一次材料結算版本")
 	var checked_holder: Dictionary = holder.duplicate()
-	checked_holder.version = int(holder.version)
+	checked_holder["version"] = int(holder.version)
 	if not _item_holder_shape(checked_holder): return fail("CORRUPT_SAVE", "原修理收據須保留一次材料結算版本")
 	var full_hp: float = Ships.hull_hp(str(vehicle.ship_type))
 	if not _building_number(naval.get("hp"), 0.0, full_hp) or not naval.get("state") is String: return fail("CORRUPT_SAVE", "船體修理耐久非法")
@@ -1061,9 +1061,9 @@ static func request_ship_repair(data: TerrainData, identity: String, feature_id:
 	if not _item_holder_shape(vehicle.get("holder", {})) or int(vehicle.holder.version) >= 2147483646 or not vehicle.get("cargo") is Dictionary or not _resource_stack(vehicle.cargo): return fail("STALE_SOURCE")
 	var terms: Dictionary = ship_repair_terms(vehicle, Ships.hull_hp(kind) - float(naval.hp))
 	if terms.is_empty(): return fail("INVALID", "完整船體無須修理")
-	terms.feature_id = feature_id
+	terms["feature_id"] = feature_id
 	var candidate: Dictionary = vehicle.duplicate(true)
-	candidate.naval = naval.duplicate(true)
+	candidate["naval"] = naval.duplicate(true)
 	candidate.naval.repair = terms
 	var stations: Array[Dictionary] = ship_repair_work_slots(data, candidate)
 	if stations.is_empty(): return fail("UNREACHABLE", "本船須停在原水岸設施的真實接觸處")
@@ -1079,9 +1079,9 @@ static func request_ship_repair(data: TerrainData, identity: String, feature_id:
 	add_items(vehicle.cargo, terms.paid_cost)
 	data.site.depot_items.version = int(data.site.depot_items.version) + 1
 	vehicle.holder.version = int(vehicle.holder.version) + 1
-	if not vehicle.has("naval"): vehicle.naval = naval
+	if not vehicle.has("naval"): vehicle["naval"] = naval
 	vehicle.naval.repair = terms
-	vehicle.revision = int(vehicle.revision) + 1
+	vehicle["revision"] = int(vehicle.revision) + 1
 	data.environment_revision += 1
 	return ok("修理備料已放入原船艙，等待本隊原工人", {"vehicle": identity, "repair": terms.duplicate(true)})
 
@@ -1106,8 +1106,8 @@ static func advance_ship_repair_work(data: TerrainData, identity: String, second
 	# Preview remains pure; zero settlement never debits cargo/holder again.
 	if float(job.progress) >= float(job.total_work):
 		if preview: return ok("原已付修理零端點可驗收", {"consumed": {}, "progress": float(job.progress), "applied": float(job.applied)})
-		naval.repair = {}
-		vehicle.revision = int(vehicle.revision) + 1
+		naval["repair"] = {}
+		vehicle["revision"] = int(vehicle.revision) + 1
 		data.environment_revision += 1
 		_refresh_siege_work_refs(data)
 		return ok("船體修理完成", {"vehicle": identity, "complete": true, "consumed": {}})
@@ -1123,13 +1123,13 @@ static func advance_ship_repair_work(data: TerrainData, identity: String, second
 	var applied: float = float(job.amount) * ratio
 	if preview: return ok("原岸工位可施作", {"consumed": consumed, "progress": progress, "applied": applied})
 	add_items(vehicle.cargo, consumed, -1)
-	naval.hp = minf(Ships.hull_hp(str(vehicle.ship_type)), float(naval.hp) + maxf(0.0, applied - float(job.applied)))
-	job.progress = progress
-	job.applied = applied
+	naval["hp"] = minf(Ships.hull_hp(str(vehicle.ship_type)), float(naval.hp) + maxf(0.0, applied - float(job.applied)))
+	job["progress"] = progress
+	job["applied"] = applied
 	var complete: bool = progress >= float(job.total_work)
-	if complete: naval.repair = {}
+	if complete: naval["repair"] = {}
 	vehicle.holder.version = int(vehicle.holder.version) + 1
-	vehicle.revision = int(vehicle.revision) + 1
+	vehicle["revision"] = int(vehicle.revision) + 1
 	data.environment_revision += 1
 	if complete: _refresh_siege_work_refs(data)
 	return ok("船體修理完成" if complete else "原岸上工人正在修理", {"vehicle": identity, "complete": complete, "consumed": consumed})
@@ -1160,7 +1160,7 @@ static func _commit_ship_repair_release(data: TerrainData, vehicle: Dictionary, 
 	add_items(vehicle.cargo, charge, -1)
 	vehicle.naval.repair = {}
 	vehicle.holder.version = int(vehicle.holder.version) + 1
-	vehicle.revision = int(vehicle.revision) + 1
+	vehicle["revision"] = int(vehicle.revision) + 1
 	data.environment_revision += 1
 
 static func _settle_ship_repair_feature_damage(data: TerrainData, feature_id: String) -> Dictionary:
@@ -1209,9 +1209,9 @@ static func request_siege_repair(data: TerrainData, identity: String, team_id: i
 	if preview: return ok("可修理", terms)
 	add_items(data.site.inventory, terms.paid_cost, -1)
 	data.site.depot_items.version = int(data.site.depot_items.version) + 1
-	vehicle.repair = terms
-	vehicle.phase = "idle"
-	vehicle.command = {}
+	vehicle["repair"] = terms
+	vehicle["phase"] = "idle"
+	vehicle["command"] = {}
 	data.environment_revision += 1
 	return ok("已備料，等待原工作者修理", {"vehicle": identity})
 
@@ -1252,12 +1252,12 @@ static func advance_siege_work(data: TerrainData, identity: String, action: Stri
 		if vehicle.has("technology_yard_id") and vehicle.has("tech_batch") and int(vehicle.tech_batch.operator_id) == 0 and vehicle.tech_batch.token.is_empty():
 			vehicle.tech_batch.work_seconds = json_stable_seconds(float(vehicle.tech_batch.work_seconds) + seconds)
 		else: technology_record_work(vehicle, seconds / 60.0, int(technology_guard.get("operator_id", 0)))
-	job.progress = minf(float(job.total_work), float(job.progress) + seconds * float(credit_facts.factor) * float(method_facts.factor))
+	job["progress"] = minf(float(job.total_work), float(job.progress) + seconds * float(credit_facts.factor) * float(method_facts.factor))
 	if spare and vehicle.has("tech_batch"): vehicle.tech_batch.work_seconds = json_stable_seconds(minf(300.0, float(vehicle.tech_batch.work_seconds) + seconds))
 	if field == "repair":
 		var applied := float(job.amount) * float(job.progress) / float(job.total_work)
-		vehicle.hp = minf(float(SIEGE_DEFINITIONS[str(vehicle.kind)].max_hp), float(vehicle.hp) + maxf(0.0, applied - float(job.applied)))
-		job.applied = applied
+		vehicle["hp"] = minf(float(SIEGE_DEFINITIONS[str(vehicle.kind)].max_hp), float(vehicle.hp) + maxf(0.0, applied - float(job.applied)))
+		job["applied"] = applied
 	var complete := float(job.progress) + 0.000000001 >= float(job.total_work)
 	if complete:
 		var technology_completed := prepare_technology_geometry_completion(data, vehicle, "vehicle:" + identity, "", original_identity) if field == "build" else ok("", {"phase": {}, "event": {}})
@@ -1266,7 +1266,7 @@ static func advance_siege_work(data: TerrainData, identity: String, action: Stri
 		if not history.ok: return history
 		if spare: publish_settlement_spare_completion(vehicle, spare_prepared)
 		vehicle[field] = {}
-		vehicle.phase = "idle"
+		vehicle["phase"] = "idle"
 		publish_technology_geometry_completion(technology_completed)
 		publish_technology_siege_history(history)
 		_technology_finish_named_vehicle(data, identity)
@@ -1278,13 +1278,13 @@ static func damage_siege_vehicle(data: TerrainData, identity: String, damage: fl
 	var vehicle: Dictionary = data.site.get("vehicles", {}).get(identity, {})
 	if not SIEGE_DEFINITIONS.has(str(vehicle.get("kind", ""))) or not is_finite(damage) or damage <= 0.0 or float(vehicle.get("hp", 0.0)) <= 0.0: return fail("NO_TARGET")
 	var old_hp := float(vehicle.hp)
-	vehicle.hp = maxf(0.0, old_hp - damage)
-	vehicle.ever_hp_damaged = true
+	vehicle["hp"] = maxf(0.0, old_hp - damage)
+	vehicle["ever_hp_damaged"] = true
 	if float(vehicle.hp) <= 0.0:
-		vehicle.phase = "wrecked"
-		vehicle.command = {}
-		vehicle.build = {}
-		vehicle.repair = {}
+		vehicle["phase"] = "wrecked"
+		vehicle["command"] = {}
+		vehicle["build"] = {}
+		vehicle["repair"] = {}
 		vehicle.erase("technology_spare_repair")
 		if vehicle.get("tech_trial", {}).get("binding") == "spare_repair":
 			vehicle.erase("tech_trial")
@@ -1301,7 +1301,7 @@ static func damage_ship_vehicle(data: TerrainData, identity: String, damage: flo
 	if str(vehicle.get("kind", "")) != "ship" or not Ships.is_kind(str(vehicle.get("ship_type", ""))) or not is_finite(damage) or damage <= 0.0:
 		return fail("NO_TARGET")
 	if not vehicle.has("naval"):
-		vehicle.naval = {"version": 1, "hp": Ships.hull_hp(str(vehicle.ship_type)), "state": "afloat", "repair": {}}
+		vehicle["naval"] = {"version": 1, "hp": Ships.hull_hp(str(vehicle.ship_type)), "state": "afloat", "repair": {}}
 	var naval: Dictionary = vehicle.naval
 	if str(naval.state) != "afloat" or float(naval.hp) <= 0.0: return fail("NO_TARGET")
 	var old_hp := float(naval.hp)
@@ -1310,13 +1310,13 @@ static func damage_ship_vehicle(data: TerrainData, identity: String, damage: flo
 	if damage >= old_hp and not naval.get("repair", {}).is_empty():
 		var repair_result: Dictionary = _release_ship_repair(data, vehicle, false)
 		if not repair_result.ok: return repair_result
-	naval.hp = maxf(0.0, old_hp - damage)
+	naval["hp"] = maxf(0.0, old_hp - damage)
 	if float(naval.hp) <= 0.0:
-		naval.state = "sinking"
+		naval["state"] = "sinking"
 		# Receipt was settled above; all unused material stays in this cargo.
-		vehicle.command = {}
-		vehicle.stop_pending = not vehicle.move.is_empty()
-	vehicle.revision = int(vehicle.revision) + 1
+		vehicle["command"] = {}
+		vehicle["stop_pending"] = not vehicle.move.is_empty()
+	vehicle["revision"] = int(vehicle.revision) + 1
 	data.environment_revision += 1
 	return ok("船體正在沉沒，原船步完成後撤離" if float(naval.hp) <= 0.0 else "船體受損", {"vehicle": identity, "old_hp": old_hp, "new_hp": float(naval.hp)})
 
@@ -1358,9 +1358,9 @@ static func release_siege_ammo(data: TerrainData, identity: String, expected_ver
 	var attack_id := str(data.site.id) + "|" + identity + "|" + str(int(sequence))
 	add_items(vehicle.cargo, {ammo: 1}, -1)
 	if int(vehicle.cargo[ammo]) == 0: vehicle.cargo.erase(ammo)
-	holder.version = expected_version + 1
-	vehicle.next_attack_seq = int(sequence) + 1
-	vehicle.rng_state = next_rng
+	holder["version"] = expected_version + 1
+	vehicle["next_attack_seq"] = int(sequence) + 1
+	vehicle["rng_state"] = next_rng
 	if not payment.is_empty(): _technology_actions(data).publish_phase_payment(payment)
 	return ok("已發射原實物彈藥", {"attack_id": attack_id, "seq": int(sequence), "scatter_unit": scatter, "rng_state": next_rng, "ammo": ammo, "technology_payment_id": str(payment.get("payment_id", ""))})
 
@@ -1375,7 +1375,7 @@ static func commit_siege_impact(data: TerrainData, identity: String, expected_se
 		or not vehicle.get("build", {}).is_empty() or not vehicle.get("repair", {}).is_empty() or bool(data.site.get("paused", false)): return fail("NO_TARGET")
 	if expected_sequence < 1 or expected_sequence >= 2147483647 or int(vehicle.get("next_attack_seq", 0)) != expected_sequence: return fail("STALE_SOURCE")
 	var attack_id := str(data.site.id) + "|" + identity + "|" + str(expected_sequence)
-	vehicle.next_attack_seq = expected_sequence + 1
+	vehicle["next_attack_seq"] = expected_sequence + 1
 	return ok("原衝頭已發生接觸", {"attack_id": attack_id, "seq": expected_sequence})
 
 static func takeover_siege(data: TerrainData, identity: String, expected: Dictionary, new_team: int) -> Dictionary:
@@ -1408,11 +1408,11 @@ static func takeover_siege(data: TerrainData, identity: String, expected: Dictio
 		if live_lab == null and team is Dictionary and int(team.get("team_id", 0)) == new_team: team_exists = true
 	if not team_exists: return fail("NO_AUTHORITY")
 	var technology_capture := _technology_takeover_capture(data, identity, expected, new_team, live_lab)
-	vehicle.vehicle_version = 3
-	if not vehicle.has("technology_capture"): vehicle.technology_capture = {}
-	if not technology_capture.is_empty(): vehicle.technology_capture = technology_capture
-	vehicle.team_id = new_team
-	holder.version = int(holder.version) + 1
+	vehicle["vehicle_version"] = 3
+	if not vehicle.has("technology_capture"): vehicle["technology_capture"] = {}
+	if not technology_capture.is_empty(): vehicle["technology_capture"] = technology_capture
+	vehicle["team_id"] = new_team
+	holder["version"] = int(holder.version) + 1
 	data.environment_revision += 1
 	return ok("原器具已完成易主；人物、彈藥與貨物保留", {"vehicle": identity, "team_id": new_team})
 
@@ -1435,7 +1435,7 @@ static func cancel_siege_job(data: TerrainData, identity: String, team_id: int, 
 	add_items(data.site.inventory, refund)
 	data.site.depot_items.version = int(data.site.depot_items.version) + 1
 	if field == "build": data.site.vehicles.erase(identity)
-	else: vehicle.repair = {}
+	else: vehicle["repair"] = {}
 	_refresh_siege_work_refs(data)
 	data.environment_revision += 1
 	return ok("已取消；受損器具不退建材", {"vehicle": identity, "refund": refund})
@@ -1511,7 +1511,7 @@ static func feature_recipe(feature: Dictionary) -> Dictionary:
 		if not FEATURE_RECIPES.get(kind, {}).has(recipe): return {}
 		definition.merge(FEATURE_RECIPES[kind][recipe], true)
 		definition["recipe_name"] = str(definition.name)
-		definition.name = str(FEATURES[kind].name)
+		definition["name"] = str(FEATURES[kind].name)
 	return definition
 
 static func _feature_operation_active(data: TerrainData, key: String) -> bool:
@@ -1529,7 +1529,7 @@ static func request_feature_recipe(data: TerrainData, key: String, recipe_id: St
 	if feature.has("pending_build") or feature.has("repair") or bool(feature.batch_paid) or float(feature.production) > 0.0 or _feature_has_work(data, key) or _feature_operation_active(data, key): return fail("BUSY", "先停工並完成原已付批次、交貨與在途工作")
 	if recipe_id.is_empty(): feature.erase("recipe_id")
 	else: feature["recipe_id"] = recipe_id
-	feature.status = "已切換配方；等待派工"
+	feature["status"] = "已切換配方；等待派工"
 	data.environment_revision += 1
 	rebuild_water(data)
 	return ok(str(feature.status), {"feature": key, "recipe_id": recipe_id})
@@ -1587,7 +1587,7 @@ static func request_upgrade(data: TerrainData, key: String, requester_faction: i
 	feature["pending_build"] = {"cells": feature.cells.duplicate(), "added_cells": [], "cost": terms.cost, "clearing": [],
 		"entrance": int(feature.entrance), "work": float(terms.work), "progress": 0.0, "target_grade": target_grade}
 	data.site.zones.append({"cells": feature.cells.duplicate(), "kind": -1, "action": "construct", "feature": key, "active": true})
-	feature.status = "升級至 %d 級；原建物與人物保持" % target_grade
+	feature["status"] = "升級至 %d 級；原建物與人物保持" % target_grade
 	data.environment_revision += 1
 	return ok(str(feature.status), {"feature": key, "target_grade": target_grade})
 
@@ -1610,7 +1610,7 @@ static func request_settlement_level(data: TerrainData, key: String, target_leve
 	feature["pending_build"] = {"cells": feature.cells.duplicate(), "added_cells": [], "cost": terms.cost, "clearing": [],
 		"entrance": int(feature.entrance), "work": float(terms.work), "progress": 0.0, "target_level": target_level}
 	data.site.zones.append({"cells": feature.cells.duplicate(), "kind": -1, "action": "construct", "feature": key, "active": true})
-	feature.status = "升級為 %d 級%s；中心照常運作" % [target_level, str(SETTLEMENT_LEVEL_NAMES[target_level])]
+	feature["status"] = "升級為 %d 級%s；中心照常運作" % [target_level, str(SETTLEMENT_LEVEL_NAMES[target_level])]
 	data.environment_revision += 1
 	return ok(str(feature.status), {"feature": key, "target_level": target_level})
 
@@ -1759,8 +1759,8 @@ static func pay_feature_inputs(data: TerrainData, feature: Dictionary, key: Stri
 	# Source, feature paid ledger and scope budget are one original synchronous tail.
 	add_items(source.cargo, inputs, -1)
 	source.holder.version = int(source.holder.version) + 1
-	feature.tech_batch = ledger
-	feature.batch_paid = true
+	feature["tech_batch"] = ledger
+	feature["batch_paid"] = true
 	if not prepared.is_empty(): actions.publish_phase_payment(prepared)
 	return ok("已從原來源支付本次完整材料", {"payment_id": payment_id})
 
@@ -1800,25 +1800,25 @@ static func building_spec(kind: String, options: Dictionary = {}) -> Dictionary:
 	if kind == "house":
 		result.merge(HOUSE_VARIANTS[variant], true)
 	if material == "stone" and kind == "warehouse":
-		result.cost = {"stone": 24, "wood": 8}
-		result.work = 30.0
+		result["cost"] = {"stone": 24, "wood": 8}
+		result["work"] = 30.0
 	elif material == "stone" and kind == "wall_stairs":
-		result.cost = {"stone": 12}
-		result.work = 24.0
+		result["cost"] = {"stone": 12}
+		result["work"] = 24.0
 	elif material == "stone" and kind == "bridge":
-		result.cost = {"stone": 8, "wood": 2}
-		result.work = 18.0
+		result["cost"] = {"stone": 8, "wood": 2}
+		result["work"] = 18.0
 	elif material == "stone" and kind == "gate":
-		result.cost = {"stone": 24, "wood": 8}
-		result.work = 45.0
+		result["cost"] = {"stone": 24, "wood": 8}
+		result["work"] = 45.0
 	var base_size: Vector2i = result.get("size", result.get("min_size", Vector2i.ONE))
 	result["base_size"] = base_size
 	result["size"] = Vector2i(base_size.y, base_size.x) if quarter % 2 else base_size
 	result["min_size"] = result.get("min_size", base_size)
 	result["max_size"] = result.get("max_size", base_size if str(result.placement) == "fixed" else Vector2i(36, 36))
 	if kind == "bridge" and quarter % 2:
-		result.min_size = Vector2i(result.min_size.y, result.min_size.x)
-		result.max_size = Vector2i(result.max_size.y, result.max_size.x)
+		result["min_size"] = Vector2i(result.min_size.y, result.min_size.x)
+		result["max_size"] = Vector2i(result.max_size.y, result.max_size.x)
 	result["max_cells"] = 2 if kind == "survey_stakes" else (2500 if kind in FARM_KINDS + PASTURE_KINDS + MILITARY_KINDS else 36)
 	result["variants"] = HOUSE_VARIANTS.keys() if kind == "house" else []
 	result["materials"] = ["wood", "stone"] if kind in ["wall_stairs", "gate", "bridge", "warehouse"] else [material]
@@ -1992,7 +1992,7 @@ static func validate_feature_layout(data: TerrainData, feature: Dictionary, chec
 		checked_cells.append(int(value))
 		current_members[int(value)] = true
 	feature = feature.duplicate()
-	feature.cells = checked_cells
+	feature["cells"] = checked_cells
 	if not _building_integer(feature.get("level"), 0, 5):
 		return fail("CORRUPT_SAVE", "建築基底高度")
 	if kind not in ["level", "bridge"]:
@@ -2327,7 +2327,7 @@ static func feature_geometry(data: TerrainData, feature: Dictionary) -> Dictiona
 	var complete := str(feature.get("stage", "")) == "complete"
 	if int(feature.get("layout_version", 0)) == 0:
 		if complete and bool(feature.get("solid", false)):
-			result.blocked = cells.duplicate()
+			result["blocked"] = cells.duplicate()
 		return result
 	var kind := str(feature.get("kind", ""))
 	if kind == "siege_ladder" and feature.has("ladder"):
@@ -2342,7 +2342,7 @@ static func feature_geometry(data: TerrainData, feature: Dictionary) -> Dictiona
 		var body_cells: Array[int] = []
 		body_cells.assign(cells)
 		result.parts["body"] = _geometry_part(feature, "body", body_cells, "building", base, civil_max_hp(feature))
-		if complete and bool(feature.get("solid", false)) and float(result.parts.body.hp) > 0.0: result.blocked = cells.duplicate()
+		if complete and bool(feature.get("solid", false)) and float(result.parts.body.hp) > 0.0: result["blocked"] = cells.duplicate()
 	elif kind == "bridge":
 		var bridge := bridge_layout(data, cells, quarter, false)
 		result["bridge_walkable"] = []
@@ -2371,7 +2371,7 @@ static func feature_geometry(data: TerrainData, feature: Dictionary) -> Dictiona
 		result["stair_upper"] = {"cell": upper, "height": base + 2}
 		result["external_lower"] = {"cell": external_lower, "height": base}
 		result["external_upper"] = {"cell": external_upper, "height": base + 2}
-		result.operation = [data.index(external_lower)] if data.contains(external_lower) else []
+		result["operation"] = [data.index(external_lower)] if data.contains(external_lower) else []
 		for cell: Vector2i in [lower, upper]:
 			if not data.contains(cell):
 				continue
@@ -2422,7 +2422,7 @@ static func feature_geometry(data: TerrainData, feature: Dictionary) -> Dictiona
 	elif kind == "prison":
 		var prison := _prison_geometry(data, feature)
 		result["prison"] = prison
-		result.prison_slots = prison.slots.map(func(slot: Dictionary) -> int: return data.index(slot.cell))
+		result["prison_slots"] = prison.slots.map(func(slot: Dictionary) -> int: return data.index(slot.cell))
 		if complete:
 			var member := {}
 			for index: int in cells:
@@ -2435,7 +2435,7 @@ static func feature_geometry(data: TerrainData, feature: Dictionary) -> Dictiona
 						continue
 					_geometry_edge(data, result.edge_blocks, cell, next)
 	elif complete and bool(feature.get("solid", false)):
-		result.blocked = cells.duplicate()
+		result["blocked"] = cells.duplicate()
 	_fire_layout_geometry(data, feature, result)
 	return result
 
@@ -2748,8 +2748,8 @@ static func _preview_build(data: TerrainData, kind: String, cells: Array[int], o
 		"level": min_height, "entrance": entrance}
 	candidate_feature.merge(spec.options, true)
 	if kind == "survey_stakes":
-		candidate_feature.cost = _building_cost(data, kind, cells, spec.options)
-		candidate_feature.work = _building_work(data, kind, cells, spec.options)
+		candidate_feature["cost"] = _building_cost(data, kind, cells, spec.options)
+		candidate_feature["work"] = _building_work(data, kind, cells, spec.options)
 		var survey_storage: Dictionary = validate_survey_stakes_storage(data, candidate_feature)
 		if not survey_storage.ok: return fail("INVALID", str(survey_storage.message))
 		var plan: Dictionary = normalized_survey_plan(data, spec.options.survey_plan)
@@ -2767,7 +2767,7 @@ static func _preview_build(data: TerrainData, kind: String, cells: Array[int], o
 				break
 		if entrance < 0:
 			return fail("UNREACHABLE", "軍事設施沒有可進入中庭的外部入口")
-		candidate_feature.entrance = entrance
+		candidate_feature["entrance"] = entrance
 		geometry.entry = entrance
 	if kind in ["wall_stairs", "siege_ladder"]:
 		var lower: Vector2i = geometry.external_lower.cell
@@ -2775,14 +2775,14 @@ static func _preview_build(data: TerrainData, kind: String, cells: Array[int], o
 		if not data.is_walkable(lower) or not data.is_walkable(upper) or data.effective_height(lower) != min_height or data.effective_height(upper) != min_height + WALL_RISE:
 			return fail("UNREACHABLE", "梯底須接地面，梯頂須接同高牆頂或天然平台")
 		entrance = data.index(lower)
-		candidate_feature.entrance = entrance
+		candidate_feature["entrance"] = entrance
 		geometry.entry = entrance
 	if kind == "prison":
 		var prison := _prison_geometry(data, candidate_feature)
 		if prison.slots.is_empty() or not data.is_walkable(prison.entry):
 			return fail("UNREACHABLE", "入口、接觸與合法拘押位置不足")
 		entrance = data.index(prison.entry)
-		candidate_feature.entrance = entrance
+		candidate_feature["entrance"] = entrance
 		geometry.entry = entrance
 	if kind in WATERFRONT_KINDS:
 		var waterfront := validate_waterfront(data, candidate_feature)
@@ -2916,9 +2916,9 @@ static func _building_cost(data: TerrainData, kind: String, cells: Array, option
 		for item: String in cost:
 			cost[item] = int(cost[item]) * cells.size()
 	elif kind in PASTURE_KINDS:
-		cost.wood = int(cost.wood) + maxi(0, _perimeter(data, cells) - (16 if kind == "horse_ranch" else 12))
+		cost["wood"] = int(cost.wood) + maxi(0, _perimeter(data, cells) - (16 if kind == "horse_ranch" else 12))
 	elif kind == "prison":
-		cost.wood = _perimeter(data, cells)
+		cost["wood"] = _perimeter(data, cells)
 	return cost
 
 static func _building_work(data: TerrainData, kind: String, cells: Array, options: Dictionary) -> float:
@@ -3052,18 +3052,18 @@ static func begin_ship_build(data: TerrainData, key: String, ship_type: String, 
 	if preview: return ok("可投入造船", {"cost": cost.duplicate(), "work_seconds": work})
 	var ledger := {} if scope.is_empty() else _technology_geometry_ledger(data, scope.token, scope.payment, "ship:" + ship_type)
 	_technology_publish_material_payment(source)
-	feature.ship_build = {"version": 1, "recipe_version": 1, "ship_type": ship_type, "team_id": team_id, "paid_cost": cost.duplicate(), "total_work": work}
-	if TechnologyCatalog.get_node("F13").get("enabled") == true: feature.technology_ship_method = {"version": 1}
-	feature.production = 0.0
-	feature.batch_paid = true
-	feature.status = "已付原料，等待原工人造船"
+	feature["ship_build"] = {"version": 1, "recipe_version": 1, "ship_type": ship_type, "team_id": team_id, "paid_cost": cost.duplicate(), "total_work": work}
+	if TechnologyCatalog.get_node("F13").get("enabled") == true: feature["technology_ship_method"] = {"version": 1}
+	feature["production"] = 0.0
+	feature["batch_paid"] = true
+	feature["status"] = "已付原料，等待原工人造船"
 	if selector.has("token"):
 		if zone_context.existing: zone_context.zone.active = true
 		else: data.site.zones.append(zone_context.zone)
 	else: _enable_ship_zone(data, key)
 	if not scope.is_empty():
-		feature.tech_trial = scope.token
-		feature.tech_batch = ledger
+		feature["tech_trial"] = scope.token
+		feature["tech_batch"] = ledger
 		_technology_actions(data).publish_phase_payment(scope.payment)
 	if selector.has("token"): _technology_publish_named_feature(named)
 	return ok("已投入原料並排入造船", {"feature": key})
@@ -3101,14 +3101,14 @@ static func _finish_ship_build(data: TerrainData, key: String, feature: Dictiona
 	feature.erase("technology_ship_method")
 	feature.erase("technology_settlement_order")
 	_technology_finish_named_feature(data, key)
-	feature.production = 0.0
-	feature.batch_paid = false
-	feature.status = status
+	feature["production"] = 0.0
+	feature["batch_paid"] = false
+	feature["status"] = status
 	_stop_feature_zones(data, key, "operate")
 	var worker: Dictionary = data.site.get("worker", {})
 	if str(worker.get("target", "")) == "feature:" + key:
-		worker.target = ""
-		worker.mode = "idle"
+		worker["target"] = ""
+		worker["mode"] = "idle"
 	if data.has_meta(&"site_work_team"):
 		var ref_value: Variant = data.get_meta(&"site_work_team")
 		if ref_value is WeakRef:
@@ -3123,7 +3123,7 @@ static func _launch_ship_build(data: TerrainData, key: String, feature: Dictiona
 	var job: Dictionary = feature.ship_build
 	var launch := _ship_launch_query(data, feature, str(job.ship_type), occupied)
 	if not launch.ok:
-		feature.status = "造船已完成，等待下水：" + str(launch.message)
+		feature["status"] = "造船已完成，等待下水：" + str(launch.message)
 		return launch
 	var record: Dictionary = Ships.make_record(str(launch.identity), int(job.team_id), str(job.ship_type), int(launch.cell), launch.facing)
 	if record.is_empty(): return fail("INVALID")
@@ -3148,32 +3148,32 @@ static func advance_ship_builds(data: TerrainData, occupied: Callable = Callable
 static func _ship_feature_work(data: TerrainData, key: String, feature: Dictionary, worker: Dictionary, minutes: float, occupied: Callable, work_time: Callable, original_identity: int = 0) -> void:
 	var checked := validate_ship_build(data, feature)
 	if not checked.ok or not feature.has("ship_build"):
-		worker.target = ""
-		worker.mode = "idle"
+		worker["target"] = ""
+		worker["mode"] = "idle"
 		return
 	var total_minutes := float(feature.ship_build.total_work) / 60.0
 	if float(feature.production) + 0.00000001 >= total_minutes:
 		_launch_ship_build(data, key, feature, occupied)
-		worker.status = str(feature.status)
+		worker["status"] = str(feature.status)
 		return
 	if not can_pay(data.site.inventory, {"tools": 1}):
-		worker.status = "缺少造船工具"
+		worker["status"] = "缺少造船工具"
 		return
 	var technology_guard := technology_geometry_operator_guard(data, feature, worker, original_identity)
 	if not technology_guard.ok:
-		worker.status = str(technology_guard.message)
+		worker["status"] = str(technology_guard.message)
 		return
 	var shipyard_facts := _technology_shipyard_work_facts(data, key, worker, original_identity)
 	if not shipyard_facts.ok or not str(shipyard_facts.get("required_skill", "")).is_empty() and not bool(shipyard_facts.get("eligible_master", false)):
-		worker.status = str(shipyard_facts.get("message", "須真F13師傅；助手只走原共同已核前綴"))
+		worker["status"] = str(shipyard_facts.get("message", "須真F13師傅；助手只走原共同已核前綴"))
 		return
 	var factor := float(shipyard_facts.get("factor", 1.0))
 	minutes = minf(minutes, (total_minutes - float(feature.production)) / factor)
 	if work_time.is_valid(): minutes = float(work_time.call(false, minutes))
 	technology_record_work(feature, minutes, int(technology_guard.get("operator_id", 0)))
-	feature.production = minf(total_minutes, float(feature.production) + minutes * factor)
-	feature.status = "造船 %.1f / %.1f 分" % [float(feature.production), total_minutes]
-	worker.status = str(feature.status)
+	feature["production"] = minf(total_minutes, float(feature.production) + minutes * factor)
+	feature["status"] = "造船 %.1f / %.1f 分" % [float(feature.production), total_minutes]
+	worker["status"] = str(feature.status)
 	if float(feature.production) + 0.00000001 >= total_minutes: _launch_ship_build(data, key, feature, occupied)
 
 static func build_work(kind: String, cell_count: int) -> float:
@@ -3228,7 +3228,7 @@ static func cancel_feature(data: TerrainData, key: String, occupied: Callable = 
 		add_items(data.site.inventory, refund_job)
 		feature.erase(field)
 		if field == "repair": data.site.get("fire", {}).get("repair_generations", {}).erase(_fire_unit_key("feature", key, str(job.part)))
-		if job.has("target_grade") or job.has("target_level"): feature.status = "已取消升級，原建物與已使用材料保留"
+		if job.has("target_grade") or job.has("target_level"): feature["status"] = "已取消升級，原建物與已使用材料保留"
 		_stop_feature_zones(data, key, "construct" if field == "pending_build" else "repair")
 		Env.rebuild_indexes(data)
 		if Env.ecology_active(data): ecology_reconcile(data)
@@ -3267,7 +3267,7 @@ static func cancel_feature(data: TerrainData, key: String, occupied: Callable = 
 	for zone_index: int in range(data.site.zones.size()):
 		var zone: Dictionary = data.site.zones[zone_index]
 		if str(zone.get("feature", "")) == key:
-			zone.active = false
+			zone["active"] = false
 			if int(data.site.worker.zone) == zone_index:
 				data.site.worker.target = ""
 				data.site.worker.progress = 0.0
@@ -3298,8 +3298,8 @@ static func _stop_feature_zones(data: TerrainData, key: String, action: String =
 # a zone the player already runs stays theirs and is never stopped.
 static func _technology_activate_zone(data: TerrainData, zone: Dictionary, existing: bool) -> void:
 	if existing:
-		if not bool(zone.active): zone.technology_owned = true
-		zone.active = true
+		if not bool(zone.active): zone["technology_owned"] = true
+		zone["active"] = true
 	else: data.site.zones.append(zone)
 
 # A completed named phase ends only the operate zone its own operation created.
@@ -3417,8 +3417,8 @@ static func preview_resize(data: TerrainData, key: String, new_cells: Array[int]
 	if not _depot_can_receive(data, refund):
 		return fail("STORAGE_FULL")
 	var candidate := feature.duplicate(true)
-	candidate.cells = new_cells.duplicate()
-	candidate.entrance = int(preview.entrance)
+	candidate["cells"] = new_cells.duplicate()
+	candidate["entrance"] = int(preview.entrance)
 	if candidate.has("parts"):
 		for part: String in candidate.parts.keys():
 			if part.begins_with("c:") and not new_cells.has(int(part.trim_prefix("c:"))):
@@ -3443,18 +3443,18 @@ static func request_resize(data: TerrainData, key: String, new_cells: Array[int]
 		feature["pending_build"] = {"cells": new_cells.duplicate(), "added_cells": preview.added_cells,
 			"cost": preview.cost, "clearing": preview.clearing, "entrance": int(preview.entrance), "work": float(preview.work), "progress": 0.0}
 		data.site.zones.append({"cells": preview.added_cells.duplicate(), "kind": -1, "action": "construct", "feature": key, "active": true})
-		feature.status = "擴建中；原範圍仍可使用"
+		feature["status"] = "擴建中；原範圍仍可使用"
 	else:
 		add_items(data.site.inventory, preview.refund)
-		feature.cells = new_cells.duplicate()
-		feature.entrance = int(preview.entrance)
+		feature["cells"] = new_cells.duplicate()
+		feature["entrance"] = int(preview.entrance)
 		if feature.has("parts"):
-			feature.parts = preview.candidate.parts
+			feature["parts"] = preview.candidate.parts
 			_fire_feature_removed(data, key, feature.parts)
 		for zone: Dictionary in data.site.zones:
 			if str(zone.get("feature", "")) == key:
 				zone.cells = new_cells.duplicate()
-		feature.status = "已縮小；原人物、畜種與物資保留"
+		feature["status"] = "已縮小；原人物、畜種與物資保留"
 	Env.rebuild_indexes(data)
 	if Env.ecology_active(data): ecology_reconcile(data)
 	rebuild_water(data)
@@ -3558,7 +3558,7 @@ static func advance_gate_operations(data: TerrainData, seconds: float, person_qu
 		var check := _gate_operator(data, feature, int(feature.gate.operator_id), person_query)
 		if not check.ok or _gate_occupied(data, feature, occupied):
 			_clear_gate_operation(feature)
-			feature.status = str(check.message) if not check.ok else "通道重新占用，已取消門操作"
+			feature["status"] = str(check.message) if not check.ok else "通道重新占用，已取消門操作"
 			Env.rebuild_indexes(data)
 			continue
 		feature.gate.progress = minf(GATE_SECONDS, float(feature.gate.progress) + seconds)
@@ -3574,10 +3574,10 @@ static func advance_gate_operations(data: TerrainData, seconds: float, person_qu
 		var guard := structure_change_guard(data, key, candidate, occupied, "gate")
 		if not guard.ok:
 			_clear_gate_operation(feature)
-			feature.status = str(guard.message)
+			feature["status"] = str(guard.message)
 		else:
-			feature.gate = candidate.gate
-			feature.status = "已開門" if bool(feature.gate.open) else "已關門"
+			feature["gate"] = candidate.gate
+			feature["status"] = "已開門" if bool(feature.gate.open) else "已關門"
 			audio_completed = true
 		Env.rebuild_indexes(data)
 		rebuild_water(data)
@@ -3627,7 +3627,7 @@ static func damage_structure_part(data: TerrainData, key: String, part_id: Strin
 			affected.append_array(geometry.parts[supported].cells)
 	if new_hp <= 0.0 and feature.has("gate"):
 		_clear_gate_operation(feature)
-	feature.status = "部件毀壞" if new_hp <= 0.0 else "部件受損"
+	feature["status"] = "部件毀壞" if new_hp <= 0.0 else "部件受損"
 	if new_hp <= 0.0:
 		Env.rebuild_indexes(data)
 		rebuild_water(data)
@@ -3701,7 +3701,7 @@ static func stock_pasture(data: TerrainData, feature_key: String, cargo: Diction
 	cargo[species] = held - transferred
 	if int(cargo[species]) == 0:
 		cargo.erase(species)
-	feature.residents = int(feature.residents) + transferred
+	feature["residents"] = int(feature.residents) + transferred
 	data.environment_revision += 1
 	return ok("已送入" + str(FEATURES[kind].name) + "：" + items_text({species: transferred}), {"species": species, "transferred": transferred})
 
@@ -3720,7 +3720,7 @@ static func unstock_pasture(data: TerrainData, feature_key: String, cargo: Dicti
 	if carry_limit < 0 or inventory_size(cargo) + count > carry_limit:
 		return fail("STORAGE_FULL", "原人物的實際攜帶空間不足")
 	var species := str(feature.species)
-	feature.residents = int(feature.residents) - count
+	feature["residents"] = int(feature.residents) - count
 	cargo[species] = int(cargo.get(species, 0)) + count
 	data.environment_revision += 1
 	return ok("已從原牧場帶走 " + items_text({species: count}), {"species": species, "transferred": count})
@@ -3847,7 +3847,7 @@ static func choose_task(data: TerrainData, from: Vector2i, occupied: Callable = 
 			if excluded_targets.has("feature:" + key):
 				continue
 			if not data.site.features.has(key):
-				zone.active = false
+				zone["active"] = false
 				continue
 			var feature: Dictionary = data.site.features[key]
 			if int(feature.get("owner_faction", -1)) >= 0 and int(feature.owner_faction) != worker_faction:
@@ -3856,7 +3856,7 @@ static func choose_task(data: TerrainData, from: Vector2i, occupied: Callable = 
 				continue
 			if str(zone.action) == "construct":
 				if str(feature.stage) == "complete" and not feature.has("pending_build"):
-					zone.active = false
+					zone["active"] = false
 					continue
 				var clearing_pending := false
 				for source_key: String in feature.get("pending_build", feature).clearing:
@@ -3876,7 +3876,7 @@ static func choose_task(data: TerrainData, from: Vector2i, occupied: Callable = 
 					continue # Another original worker still owns the uncleared source.
 			elif str(zone.action) == "repair":
 				if not feature.has("repair"):
-					zone.active = false
+					zone["active"] = false
 					continue
 			else:
 				if str(feature.stage) != "complete" or feature.has("pending_build") or feature.has("repair"):
@@ -3888,7 +3888,7 @@ static func choose_task(data: TerrainData, from: Vector2i, occupied: Callable = 
 				elif not definition.has("input"):
 					continue
 				if str(feature.kind) != "shipyard" and not bool(feature.batch_paid) and not can_pay(feature_input_inventory(data, feature, key), definition.input):
-					feature.status = "缺投入：" + items_text(definition.input)
+					feature["status"] = "缺投入：" + items_text(definition.input)
 					continue
 			var work_slots: Array[Dictionary] = []
 			if str(zone.action) == "operate":
@@ -3949,21 +3949,21 @@ static func _reachable_work(data: TerrainData, from: Vector2i, candidates: Array
 static func assign_task(data: TerrainData, task: Dictionary, worker_override: Variant = null) -> void:
 	var worker: Dictionary = data.site.worker if worker_override == null else worker_override
 	if not bool(task.get("ok", false)):
-		worker.mode = "idle"
-		worker.status = str(task.get("message", "待命"))
+		worker["mode"] = "idle"
+		worker["status"] = str(task.get("message", "待命"))
 		return
 	if str(worker.target) != str(task.target) or str(worker.get("action", "")) != str(task.action):
-		worker.progress = 0.0
-	worker.target = str(task.target)
-	worker.action = str(task.action)
-	worker.work_cell = int(task.cell)
-	worker.zone = int(task.get("zone", -1))
-	worker.mode = "travel"
-	worker.status = str(task.message)
+		worker["progress"] = 0.0
+	worker["target"] = str(task.target)
+	worker["action"] = str(task.action)
+	worker["work_cell"] = int(task.cell)
+	worker["zone"] = int(task.get("zone", -1))
+	worker["mode"] = "travel"
+	worker["status"] = str(task.message)
 	if task.has("work_slot") or int(worker.get("version", 0)) == 2:
 		worker["work_slot"] = int(task.get("work_slot", -1))
 		if worker.has("version"):
-			worker.version = 2
+			worker["version"] = 2
 
 static func begin_manual(data: TerrainData, key: String, cell: Vector2i, action: String = "harvest") -> Dictionary:
 	if action not in ["harvest", "survey", "clear", "capture", "restore"]:
@@ -4013,7 +4013,7 @@ static func advance(data: TerrainData, real_seconds: float, worker_ready: bool =
 		var ref: Variant = data.get_meta(&"site_controller", null) if data.has_meta(&"site_controller") else null
 		var original: Variant = ref.get_ref() if ref is WeakRef else null
 		if original == null or checked_clock.get("owner") != original or not original.has_method("valid_checked_runtime_clock") or bool(checked_clock.get("advanced", false)) or not original.valid_checked_runtime_clock(checked_clock, minutes * 60.0): return
-		checked_clock.advanced = true
+		checked_clock["advanced"] = true
 	var combat_seconds := minf(real_seconds, float(data.site.combat_left))
 	data.site["combat_left"] = maxf(0.0, float(data.site.combat_left) - combat_seconds)
 	# Float residue below the clock epsilon is the same finished combat; left in place it reaches the native begin
@@ -4023,7 +4023,7 @@ static func advance(data: TerrainData, real_seconds: float, worker_ready: bool =
 		var slice := minf(minutes, 1.0 - float(data.site.phase))
 		data.site["phase"] = float(data.site.phase) + slice
 		if checked_point:
-			checked_clock.ship_build_due = true
+			checked_clock["ship_build_due"] = true
 		else:
 			_work(data, slice, worker_ready, manual_ready, occupied, work_time, null, null, worker_limit, manual_limit, worker_faction, shared_operating_projection)
 			if crew_work.is_valid():
@@ -4033,14 +4033,14 @@ static func advance(data: TerrainData, real_seconds: float, worker_ready: bool =
 		if float(data.site.phase) >= 0.99999999:
 			data.site["phase"] = 0.0
 			data.site["minute"] = int(data.site.minute) + 1
-			if checked_point: checked_clock.minute_due = true
+			if checked_point: checked_clock["minute_due"] = true
 			else:
 				_regenerate(data, occupied)
 				allocate_water(data)
 	if checked_point:
-		checked_clock.minute_after = int(data.site.minute)
-		checked_clock.phase_after = float(data.site.phase)
-		checked_clock.combat_after = float(data.site.combat_left)
+		checked_clock["minute_after"] = int(data.site.minute)
+		checked_clock["phase_after"] = float(data.site.phase)
+		checked_clock["combat_after"] = float(data.site.combat_left)
 
 static func _work(data: TerrainData, minutes: float, worker_ready: bool, manual_ready: bool, occupied: Callable, work_time: Callable = Callable(), worker_override: Variant = null, cargo_override: Variant = null, carry_limit: int = CARRY_CAPACITY, manual_limit: int = CARRY_CAPACITY, worker_faction: int = -1, shared_operating_projection: bool = false, original_identity: int = 0) -> void:
 	var worker: Dictionary = data.site.worker if worker_override == null else worker_override
@@ -4058,74 +4058,74 @@ static func _work(data: TerrainData, minutes: float, worker_ready: bool, manual_
 			_feature_work(data, target.trim_prefix("feature:"), minutes, occupied, work_time, worker, cargo, carry_limit, worker_faction, original_identity)
 		elif target == "depot":
 			var result := deposit(data, cargo, cell)
-			worker.status = str(result.message)
+			worker["status"] = str(result.message)
 			if result.ok:
-				worker.target = ""
-				worker.mode = "idle"
+				worker["target"] = ""
+				worker["mode"] = "idle"
 		else:
 			if str(data.site.manual.target) == target:
-				worker.target = ""
-				worker.mode = "idle"
+				worker["target"] = ""
+				worker["mode"] = "idle"
 				return
 			var r := Env.resource(data, target)
 			var ready := harvest(data, target, cell, cargo, str(worker.action), true, carry_limit)
 			if not ready.ok:
-				worker.status = str(ready.message)
-				worker.target = ""
-				worker.mode = "idle"
+				worker["status"] = str(ready.message)
+				worker["target"] = ""
+				worker["mode"] = "idle"
 			else:
-				worker.progress = float(worker.progress) + (float(work_time.call(false, minutes)) if work_time.is_valid() else minutes)
+				worker["progress"] = float(worker.progress) + (float(work_time.call(false, minutes)) if work_time.is_valid() else minutes)
 				var required := resource_work_minutes(int(r.kind), str(worker.action))
-				worker.status = "%s %.1f / %.1f 分" % ["清理" if str(worker.action) == "clear" else "作業", float(worker.progress), required]
+				worker["status"] = "%s %.1f / %.1f 分" % ["清理" if str(worker.action) == "clear" else "作業", float(worker.progress), required]
 				if float(worker.progress) + 0.00000001 >= required:
 					if _fire_defer_resource_completion(data, worker, cargo, target, cell, str(worker.action), carry_limit, false):
-						worker.progress = required
-						worker.status = "原作業已完成工時，等待本輪燃燒後重驗採集"
+						worker["progress"] = required
+						worker["status"] = "原作業已完成工時，等待本輪燃燒後重驗採集"
 					else:
 						var result := harvest(data, target, cell, cargo, str(worker.action), false, carry_limit)
-						worker.status = str(result.message)
-						worker.progress = 0.0
-						worker.target = ""
-						worker.mode = "idle"
+						worker["status"] = str(result.message)
+						worker["progress"] = 0.0
+						worker["target"] = ""
+						worker["mode"] = "idle"
 	var manual: Dictionary = data.site.manual
 	if manual_ready and str(manual.target) != "" and not _fire_work_pending(data, manual):
 		var r := Env.resource(data, str(manual.target))
 		var ready := harvest(data, str(manual.target), data.cell_from_index(int(manual.cell)), manual.cargo, str(manual.action), true, manual_limit)
 		if not ready.ok:
 			data.site.notices.append(str(ready.message))
-			manual.target = ""
+			manual["target"] = ""
 			return
-		manual.progress = float(manual.progress) + (float(work_time.call(true, minutes)) if work_time.is_valid() else minutes)
+		manual["progress"] = float(manual.progress) + (float(work_time.call(true, minutes)) if work_time.is_valid() else minutes)
 		var required := resource_work_minutes(int(r.kind), str(manual.action))
 		if float(manual.progress) + 0.00000001 >= required:
 			if _fire_defer_resource_completion(data, manual, manual.cargo, str(manual.target), data.cell_from_index(int(manual.cell)), str(manual.action), manual_limit, true):
-				manual.progress = required
+				manual["progress"] = required
 			else:
 				var result := harvest(data, str(manual.target), data.cell_from_index(int(manual.cell)), manual.cargo, str(manual.action), false, manual_limit)
 				data.site.notices.append(str(result.message))
-				manual.target = ""
-				manual.progress = 0.0
+				manual["target"] = ""
+				manual["progress"] = 0.0
 
 static func _feature_work(data: TerrainData, key: String, minutes: float, occupied: Callable, work_time: Callable = Callable(), worker_override: Variant = null, cargo_override: Variant = null, carry_limit: int = CARRY_CAPACITY, worker_faction: int = -1, original_identity: int = 0) -> void:
 	var worker: Dictionary = data.site.worker if worker_override == null else worker_override
 	var cargo: Dictionary = worker.cargo if cargo_override == null else cargo_override
 	if not data.site.features.has(key):
-		worker.mode = "idle"
-		worker.target = ""
+		worker["mode"] = "idle"
+		worker["target"] = ""
 		return
 	var feature: Dictionary = data.site.features[key]
 	if int(feature.get("owner_faction", -1)) >= 0 and int(feature.owner_faction) != worker_faction:
-		worker.status = "不是此設施的管理方工作者"
-		worker.target = ""
-		worker.mode = "idle"
+		worker["status"] = "不是此設施的管理方工作者"
+		worker["target"] = ""
+		worker["mode"] = "idle"
 		return
 	var action := str(worker.get("action", "construct" if str(feature.stage) != "complete" else "operate"))
 	if feature.has("settlement_work"):
 		var defense_guard := settlement_defense_operator_guard(data, key, feature, worker, original_identity)
-		if not defense_guard.ok: worker.status = str(defense_guard.message); return
+		if not defense_guard.ok: worker["status"] = str(defense_guard.message); return
 	var ecology_guard := ecology_feature_work_guard(data, feature, action)
 	if not ecology_guard.ok:
-		worker.status = str(ecology_guard.message)
+		worker["status"] = str(ecology_guard.message)
 		return
 	var kind := str(feature.kind)
 	var definition: Dictionary = feature_recipe(feature)
@@ -4136,8 +4136,8 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 	if action == "operate" and int(feature.get("layout_version", 0)) == BUILDING_LAYOUT_VERSION and (kind in FARM_KINDS + PASTURE_KINDS or feature.has("technology_shipyard_work")):
 		var slots := feature_work_slots(data, feature)
 		if slot_id < 0 or slot_id >= slots.size():
-			worker.target = ""
-			worker.mode = "idle"
+			worker["target"] = ""
+			worker["mode"] = "idle"
 			return
 		expected_cell = int(slots[slot_id].cell)
 		service.assign(slots[slot_id].service_cells)
@@ -4151,28 +4151,28 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 		_deliver_feature_batch(data, feature, worker, cargo, carry_limit, original_identity)
 		return
 	if action != "repair" and str(feature.stage) == "complete" and not feature_usable(feature):
-		worker.status = "建物已毀壞，先取消升級或修復；原已付物資保留"
+		worker["status"] = "建物已毀壞，先取消升級或修復；原已付物資保留"
 		return
 	if not can_pay(data.site.inventory, {"tools": 1}):
-		worker.status = "缺少工具"
+		worker["status"] = "缺少工具"
 		return
 	if action == "repair":
 		if not feature.has("repair"):
-			worker.target = ""
-			worker.mode = "idle"
+			worker["target"] = ""
+			worker["mode"] = "idle"
 			return
 		var fire_guard := _fire_repair_guard(data, key, str(job.part), true)
 		if not fire_guard.ok:
-			worker.status = str(fire_guard.message)
+			worker["status"] = str(fire_guard.message)
 			return
 		if not _repair_contact(data, feature, feature_geometry(data, feature).parts[str(job.part)], data.cell_from_index(int(worker.cell))):
-			worker.status = "原修理接觸格已失效"
+			worker["status"] = "原修理接觸格已失效"
 			return
 		if work_time.is_valid():
 			minutes = float(work_time.call(false, minutes))
 		var audio_before_progress := float(job.progress)
-		job.progress = minf(float(job.work), float(job.progress) + minutes)
-		worker.status = "修理 %.1f / %.1f 分" % [float(job.progress), float(job.work)]
+		job["progress"] = minf(float(job.work), float(job.progress) + minutes)
+		worker["status"] = "修理 %.1f / %.1f 分" % [float(job.progress), float(job.work)]
 		_audio_p3_work_progress_notice(data, key, worker, feature, "repair", audio_before_progress, float(job.progress), original_identity, str(job.part))
 		if float(job.progress) + 0.00000001 < float(job.work):
 			return
@@ -4183,10 +4183,10 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 		candidate.erase("repair")
 		var guard := structure_change_guard(data, key, candidate, occupied, "repair")
 		if not guard.ok:
-			worker.status = str(guard.message)
+			worker["status"] = str(guard.message)
 			return
 		var defense_completion := prepare_settlement_defense_completion(data, key, feature, worker, original_identity)
-		if not defense_completion.ok: worker.status = str(defense_completion.message); return
+		if not defense_completion.ok: worker["status"] = str(defense_completion.message); return
 		# Only the existing successful structure transaction restores material.
 		var fire_old_hp := float(feature.parts[str(job.part)].hp)
 		var fire_full_cost: Dictionary = _repair_terms(feature, feature_geometry(data, feature).parts[str(job.part)], maximum).cost
@@ -4194,11 +4194,11 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 		_fire_repair_finished(data, key, str(job.part), fire_old_hp, float(feature.parts[str(job.part)].hp), maximum, job.cost, fire_full_cost)
 		feature.erase("repair")
 		publish_settlement_defense_completion(defense_completion)
-		feature.status = "修理完成"
+		feature["status"] = "修理完成"
 		_technology_finish_named_feature(data, key)
 		_stop_feature_zones(data, key, "repair")
-		worker.target = ""
-		worker.mode = "idle"
+		worker["target"] = ""
+		worker["mode"] = "idle"
 		Env.rebuild_indexes(data)
 		if Env.ecology_active(data): ecology_reconcile(data)
 		rebuild_water(data)
@@ -4206,67 +4206,67 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 		return
 	if str(feature.stage) != "complete" or action == "construct" and feature.has("pending_build"):
 		if feature.has("pending_build") and _fire_feature_hot(data, key):
-			worker.status = "原部件仍熱；升級／擴建保留已付款與進度"
+			worker["status"] = "原部件仍熱；升級／擴建保留已付款與進度"
 			return
 		for source: String in job.clearing:
 			if not bool(Env.resource(data, source).get("cleared", true)):
-				worker.status = "施工來源尚未清理，返回原工作派發"
-				worker.target = ""
-				worker.mode = "idle"
+				worker["status"] = "施工來源尚未清理，返回原工作派發"
+				worker["target"] = ""
+				worker["mode"] = "idle"
 				return
 		var construction_cells: Array = job.get("added_cells", feature.cells)
 		for index: int in construction_cells:
 			if occupied.is_valid() and bool(occupied.call(data.cell_from_index(index))):
-				worker.status = "施工占地有人／已預約，等待移開"
+				worker["status"] = "施工占地有人／已預約，等待移開"
 				return
 		var trial_guard := technology_geometry_operator_guard(data, feature, worker, original_identity)
 		if not trial_guard.ok:
-			worker.status = str(trial_guard.message)
+			worker["status"] = str(trial_guard.message)
 			return
 		if not feature.has("pending_build"):
-			feature.stage = "building"
+			feature["stage"] = "building"
 		if work_time.is_valid():
 			minutes = float(work_time.call(false, minutes))
 		technology_record_work(feature, minutes, int(trial_guard.get("operator_id", 0)))
 		var audio_before_progress := float(job.progress)
-		job.progress = minf(float(job.work), float(job.progress) + minutes)
-		worker.status = "施工 %.1f / %.1f 分" % [float(job.progress), float(job.work)]
+		job["progress"] = minf(float(job.work), float(job.progress) + minutes)
+		worker["status"] = "施工 %.1f / %.1f 分" % [float(job.progress), float(job.work)]
 		_audio_p3_work_progress_notice(data, key, worker, feature, "construct", audio_before_progress, float(job.progress), original_identity)
 		if float(job.progress) + 0.00000001 < float(job.work):
 			return
 		if _fire_defer_feature_completion(data, worker, cargo, key, job, occupied, carry_limit, worker_faction): return
 		ecology_guard = ecology_feature_work_guard(data, feature, action)
 		if not ecology_guard.ok:
-			worker.status = str(ecology_guard.message)
+			worker["status"] = str(ecology_guard.message)
 			return
 		var fire_previous := feature.duplicate(true) if str(feature.stage) == "complete" else {}
 		var fire_paid: Dictionary = job.get("cost", {}).duplicate(true)
 		var candidate := feature.duplicate(true)
-		candidate.stage = "complete"
+		candidate["stage"] = "complete"
 		if feature.has("pending_build"):
-			candidate.cells = job.cells.duplicate()
-			candidate.entrance = int(job.entrance)
+			candidate["cells"] = job.cells.duplicate()
+			candidate["entrance"] = int(job.entrance)
 			if job.has("target_grade"): candidate = _civil_upgrade_candidate(candidate, int(job.target_grade))
 			candidate.erase("pending_build")
 		var guard := structure_change_guard(data, key, candidate, occupied, "complete")
 		if not guard.ok:
-			worker.status = str(guard.message)
+			worker["status"] = str(guard.message)
 			return
 		var technology_completed := prepare_technology_geometry_completion(data, feature, "feature:" + key)
 		if not technology_completed.ok:
-			worker.status = str(technology_completed.message)
+			worker["status"] = str(technology_completed.message)
 			return
 		var defense_completion := prepare_settlement_defense_completion(data, key, feature, worker, original_identity)
-		if not defense_completion.ok: worker.status = str(defense_completion.message); return
+		if not defense_completion.ok: worker["status"] = str(defense_completion.message); return
 		if feature.has("pending_build"):
 			if job.has("target_grade"):
 				feature["civil_version"] = CIVIL_VERSION
 				feature["building_grade"] = int(job.target_grade)
 				feature["parts"] = candidate.parts
-			feature.cells = job.cells.duplicate()
-			feature.entrance = int(job.entrance)
-			feature.work = float(feature.work) + float(job.work)
-			feature.progress = float(feature.work)
+			feature["cells"] = job.cells.duplicate()
+			feature["entrance"] = int(job.entrance)
+			feature["work"] = float(feature.work) + float(job.work)
+			feature["progress"] = float(feature.work)
 			add_items(feature.cost, job.cost)
 			for source: String in job.clearing:
 				if not feature.clearing.has(source):
@@ -4280,11 +4280,11 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 			for zone: Dictionary in data.site.zones:
 				if str(zone.get("feature", "")) == key:
 					zone.cells = feature.cells.duplicate()
-		feature.stage = "complete"
+		feature["stage"] = "complete"
 		_fire_feature_completed(data, key, fire_previous, fire_paid)
 		publish_settlement_defense_completion(defense_completion)
 		publish_technology_geometry_completion(technology_completed)
-		feature.status = "已完成"
+		feature["status"] = "已完成"
 		if kind == "settlement_center": _settlement_center_completed(data, key, int(job.get("target_level", 1)))
 		if kind == "level":
 			for index: int in feature.cells:
@@ -4295,8 +4295,8 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 		# Release the named worker first: finish_named_feature_work matches the task by
 		# its "feature:<key>" target, which the lines below clear (repair already does this).
 		_technology_finish_named_feature(data, key)
-		worker.mode = "idle"
-		worker.target = ""
+		worker["mode"] = "idle"
+		worker["target"] = ""
 		_stop_feature_zones(data, key, "construct")
 		Env.rebuild_indexes(data)
 		if Env.ecology_active(data): ecology_reconcile(data)
@@ -4305,31 +4305,31 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 		_audio_p3_work_finished_notice(data, key, worker, feature, "construct", original_identity)
 		return
 	if not definition.has("cycle"):
-		worker.mode = "idle"
-		worker.target = ""
+		worker["mode"] = "idle"
+		worker["target"] = ""
 		return
 	if action != "operate" or feature.has("pending_build") or feature.has("repair"):
 		return
 	if feature.has("species") and (int(feature.residents) > grazing_capacity(data, feature.cells) or int(feature.residents) < (2 if str(feature.species) == "horse" else 1)):
-		worker.status = "牧地承載或種畜數量不足"
+		worker["status"] = "牧地承載或種畜數量不足"
 		return
 	var technology_guard := technology_batch_operator_guard(data, key, feature, worker, original_identity)
 	if not technology_guard.ok:
-		worker.status = str(technology_guard.message)
+		worker["status"] = str(technology_guard.message)
 		return
 	if not bool(feature.batch_paid):
 		if not can_pay(feature_input_inventory(data, feature, key), definition.input):
-			feature.status = "缺投入：" + items_text(definition.input)
-			worker.status = feature.status
-			worker.mode = "idle"
-			worker.target = ""
+			feature["status"] = "缺投入：" + items_text(definition.input)
+			worker["status"] = feature.status
+			worker["mode"] = "idle"
+			worker["target"] = ""
 			return
 		# ponytail: the original one camp store supplies a shared batch once.
 		var payment := pay_feature_inputs(data, feature, key, definition.input, worker, original_identity)
 		if not payment.ok:
-			worker.status = str(payment.message)
+			worker["status"] = str(payment.message)
 			return
-		feature.batch_paid = true
+		feature["batch_paid"] = true
 	var water: Dictionary = data.site.water_status.get(key, {})
 	if not service.is_empty():
 		water = water.get("slots", {}).get(str(slot_id), {})
@@ -4338,8 +4338,8 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 	if demand > 0.0:
 		water_ratio = clampf(float(water.get("supplied", 0.0)) / demand, 0.0, 1.0)
 	if water_ratio <= 0.0:
-		feature.status = "缺水，暫停運作"
-		worker.status = feature.status
+		feature["status"] = "缺水，暫停運作"
+		worker["status"] = feature.status
 		return
 	var productivity := 1.0
 	if kind in FARM_KINDS:
@@ -4355,24 +4355,24 @@ static func _feature_work(data: TerrainData, key: String, minutes: float, occupi
 		productivity = _pasture_scale(data, feature, total_service) * float(service.size()) / maxf(1.0, total_service)
 	productivity *= building_productivity(feature)
 	if productivity <= 0.0:
-		worker.status = "沒有到位的照料工作量"
+		worker["status"] = "沒有到位的照料工作量"
 		return
 	if work_time.is_valid() and float(feature.production) < float(definition.cycle):
 		minutes = float(work_time.call(false, minutes))
 	var production_minutes := feature_production_minutes(minutes, water_ratio, productivity)
 	technology_record_work(feature, minutes, int(technology_guard.get("operator_id", 0)), production_minutes)
 	var audio_before_production := float(feature.production)
-	feature.production = minf(float(definition.cycle), float(feature.production) + production_minutes)
-	feature.status = "生產 %.1f / %.1f 分" % [float(feature.production), float(definition.cycle)]
+	feature["production"] = minf(float(definition.cycle), float(feature.production) + production_minutes)
+	feature["status"] = "生產 %.1f / %.1f 分" % [float(feature.production), float(definition.cycle)]
 	_audio_p3_work_progress_notice(data, key, worker, feature, "operate", audio_before_production, float(feature.production), original_identity)
-	worker.status = feature.status
+	worker["status"] = feature.status
 	if float(feature.production) + 0.00000001 >= float(definition.cycle):
 		_deliver_feature_batch(data, feature, worker, cargo, carry_limit, original_identity)
 
 static func _deliver_feature_batch(data: TerrainData, feature: Dictionary, worker: Dictionary, cargo: Dictionary, carry_limit: int, original_identity: int = 0) -> void:
 	var checked := prepare_feature_output(data, feature, worker, cargo, carry_limit, original_identity)
 	if not checked.ok:
-		worker.status = str(checked.get("message", checked.code))
+		worker["status"] = str(checked.get("message", checked.code))
 		return
 	publish_feature_output(data, checked)
 
@@ -4563,13 +4563,13 @@ static func _siege_tower_underlay_height(data: TerrainData, cell: Vector2i) -> i
 static func siege_tower_geometry(data: TerrainData, vehicle: Dictionary) -> Dictionary:
 	var result := {"heights": {}, "blocked": [], "ramps": {}, "edge_blocks": {}, "active": false, "support_valid": false, "reason": "尚未部署", "physical": [], "top": [], "entry": [], "bridge": [], "supports": []}
 	if str(vehicle.get("kind", "")) != "siege_tower" or not validate_siege_tower_pose(data, vehicle).ok: return result
-	result.physical = siege_tower_physical_cells(data, vehicle)
+	result["physical"] = siege_tower_physical_cells(data, vehicle)
 	if vehicle.deployed_pose.is_empty(): return result
 	var pose: Dictionary = vehicle.deployed_pose
 	var base := int(pose.level)
 	for forward: int in range(4):
 		for side: int in range(3): result.top.append(_siege_tower_cell(data, vehicle, forward, side))
-	result.entry = [_siege_tower_cell(data, vehicle, -2, 1), _siege_tower_cell(data, vehicle, -1, 1)]
+	result["entry"] = [_siege_tower_cell(data, vehicle, -2, 1), _siege_tower_cell(data, vehicle, -1, 1)]
 	for side: int in range(3):
 		result.bridge.append(_siege_tower_cell(data, vehicle, 4, side))
 		result.supports.append(_siege_tower_cell(data, vehicle, 5, side))
@@ -4578,28 +4578,28 @@ static func siege_tower_geometry(data: TerrainData, vehicle: Dictionary) -> Dict
 	# may be the completed wall surface, but never become owned by this tower.
 	for cell: Vector2i in result.physical:
 		if not data.contains(cell) or not data.is_walkable(cell):
-			result.reason = "塔體／附屬結構地面受阻"; return result
+			result["reason"] = "塔體／附屬結構地面受阻"; return result
 		var index := data.index(cell)
 		if int(data.height_levels[index]) != base or int(data.feature_at[index]) != 0 or int(data.surface_types[index]) in [TerrainData.Surface.WATER, TerrainData.Surface.WETLAND]:
-			result.reason = "塔體／附屬結構需平整乾燥且無其他建築"; return result
+			result["reason"] = "塔體／附屬結構需平整乾燥且無其他建築"; return result
 	if not data.contains(approach) or not data.is_walkable(approach) or _siege_tower_underlay_height(data, approach) != base:
-		result.reason = "塔後入口地面不相容"; return result
+		result["reason"] = "塔後入口地面不相容"; return result
 	if _siege_vehicle_claims(data, approach, str(vehicle.get("id", ""))):
-		result.reason = "塔後入口被其他車具／掃掠占用"; return result
+		result["reason"] = "塔後入口被其他車具／掃掠占用"; return result
 	for cell: Vector2i in result.supports:
 		if not data.contains(cell) or not data.is_walkable(cell) or _siege_tower_underlay_height(data, cell) != base + WALL_RISE:
-			result.reason = "塔橋須接三格同高有效牆頂／平台"; return result
+			result["reason"] = "塔橋須接三格同高有效牆頂／平台"; return result
 		if _siege_vehicle_claims(data, cell, str(vehicle.get("id", ""))):
-			result.reason = "塔橋對接端被其他車具／掃掠占用"; return result
+			result["reason"] = "塔橋對接端被其他車具／掃掠占用"; return result
 	# Cross-collection/vehicle collisions are checked against complete physical
 	# footprints, including every other tower's appendages, independent of order.
 	for cell: Vector2i in result.physical:
 		if _siege_vehicle_claims(data, cell, str(vehicle.get("id", ""))):
-			result.reason = "塔與其他原車具占地／掃掠重疊"; return result
-	result.support_valid = true
-	result.reason = "支承合法"
+			result["reason"] = "塔與其他原車具占地／掃掠重疊"; return result
+	result["support_valid"] = true
+	result["reason"] = "支承合法"
 	if float(vehicle.hp) <= 0.0 or str(vehicle.phase) != "deployed": return result
-	result.active = true
+	result["active"] = true
 	for cell: Vector2i in result.top + result.bridge: result.heights[data.index(cell)] = base + WALL_RISE
 	result.heights[data.index(result.entry[0])] = base + 1
 	result.heights[data.index(result.entry[1])] = base + WALL_RISE
@@ -4657,8 +4657,8 @@ static func invalidate_siege_tower_supports(data: TerrainData) -> Array[String]:
 		var vehicle: Dictionary = data.site.vehicles[key]
 		if str(vehicle.get("kind", "")) != "siege_tower" or str(vehicle.get("phase", "")) != "deployed": continue
 		if not bool(siege_tower_geometry(data, vehicle).support_valid):
-			vehicle.phase = "disabled"
-			vehicle.command = {}
+			vehicle["phase"] = "disabled"
+			vehicle["command"] = {}
 			invalidated.append(key)
 	if not invalidated.is_empty(): Env.rebuild_indexes(data)
 	return invalidated
@@ -4728,7 +4728,7 @@ static func request_siege_ladder_action(data: TerrainData, key: String, action: 
 		feature.ladder.pending = action
 		feature.ladder.progress = 0.0
 		feature.ladder.workers = identities.duplicate()
-		feature.status = "等候兩名原隊員就位架梯" if action == "deploy" else "等候兩名原隊員就位收梯"
+		feature["status"] = "等候兩名原隊員就位架梯" if action == "deploy" else "等候兩名原隊員就位收梯"
 	return ok("兩人到外側工位後開始", {"seconds": 12.0 if action == "deploy" else 8.0, "slots": siege_ladder_work_slots(data, feature)})
 
 static func cancel_siege_ladder_action(data: TerrainData, key: String) -> Dictionary:
@@ -4778,8 +4778,8 @@ static func advance_siege_ladder_action(data: TerrainData, key: String, seconds:
 	if not guard.ok: return guard
 	var geometry := feature_geometry(data, candidate)
 	if str(candidate.ladder.phase) == "deployed" and (not data.is_walkable(geometry.external_upper.cell) or data.effective_height(geometry.external_upper.cell) != int(feature.level) + WALL_RISE): return fail("UNREACHABLE", "原梯頂支承已失效")
-	feature.ladder = candidate.ladder
-	feature.status = "梯具已架設" if str(feature.ladder.phase) == "deployed" else "梯具已原地收起"
+	feature["ladder"] = candidate.ladder
+	feature["status"] = "梯具已架設" if str(feature.ladder.phase) == "deployed" else "梯具已原地收起"
 	_refresh_siege_ladder_tasks(data, key)
 	Env.rebuild_indexes(data)
 	return ok(str(feature.status), {"complete": true})
@@ -5076,11 +5076,11 @@ static func fire_finish_boundary(data: TerrainData, completed_action_end: float,
 		var result := harvest(data, str(completion.key), completion.cell, completion.cargo, str(completion.action), false, int(completion.carry_limit))
 		results.append(result)
 		if bool(completion.manual): data.site.notices.append(str(result.message))
-		else: worker.status = str(result.message)
+		else: worker["status"] = str(result.message)
 		if result.ok:
-			worker.progress = 0.0
-			worker.target = ""
-			if not bool(completion.manual): worker.mode = "idle"
+			worker["progress"] = 0.0
+			worker["target"] = ""
+			if not bool(completion.manual): worker["mode"] = "idle"
 	for completion: Dictionary in boundary.get("features", []):
 		var worker: Dictionary = completion.worker
 		var feature: Dictionary = data.site.features.get(str(completion.key), {})
@@ -5179,7 +5179,7 @@ static func _fire_step(data: TerrainData, state: Dictionary, step_index: int, da
 			continue
 		var overlap := maxf(0.0, minf(end, float(contact.end_action)) - maxf(begin, float(contact.start_action)))
 		var dose := minf(float(contact.budget), float(contact.rate) * overlap)
-		contact.budget = maxf(0.0, float(contact.budget) - dose)
+		contact["budget"] = maxf(0.0, float(contact.budget) - dose)
 		incoming[key] = float(incoming.get(key, 0.0)) + dose
 		if end + FIRE_EPS >= float(contact.end_action) or float(contact.budget) <= FIRE_EPS: contacts.erase(event_id)
 	# Only old burning units distribute heat. A newly reached neighbor is read
@@ -5224,42 +5224,42 @@ static func _fire_step(data: TerrainData, state: Dictionary, step_index: int, da
 		var fuel := _fire_fuel_q(data, previous)
 		var demand := float(profile.burn_rate_q) * float(previous.intensity) * dt + float(previous.burn_remainder_q)
 		var burned := mini(fuel, floori(demand + FIRE_EPS))
-		unit.burn_remainder_q = maxf(0.0, demand - floorf(demand + FIRE_EPS)) if fuel > burned else 0.0
+		unit["burn_remainder_q"] = maxf(0.0, demand - floorf(demand + FIRE_EPS)) if fuel > burned else 0.0
 		var remaining := fuel - burned
 		if str(unit.kind) == "resource":
 			var resource := Env.resource(data, str(unit.resource))
 			if resource.is_empty(): return fail("STALE_FIRE_OWNER")
-			if bool(resource.cleared): unit.residue_q = remaining
+			if bool(resource.cleared): unit["residue_q"] = remaining
 			else:
-				unit.fuel_remainder_q = remaining % FIRE_Q
+				unit["fuel_remainder_q"] = remaining % FIRE_Q
 				var whole := floori(float(remaining) / FIRE_Q)
 				if whole != int(resource.remaining):
 					var fields := {"remaining": whole}
-					if int(resource.recover) > 0 and int(resource.next_recovery) < 0: fields.next_recovery = ceili(now(data)) + int(resource.recover)
+					if int(resource.recover) > 0 and int(resource.next_recovery) < 0: fields["next_recovery"] = ceili(now(data)) + int(resource.recover)
 					resource_changes[str(unit.resource)] = fields
-		else: unit.fuel_q = remaining
-		unit.moisture = fire_unit_moisture(data, previous, descriptor, begin)
+		else: unit["fuel_q"] = remaining
+		unit["moisture"] = fire_unit_moisture(data, previous, descriptor, begin)
 		var cooling := float(profile.cooling_rate) * (1.0 + float(profile.moisture_cooling) * float(unit.moisture)) * dt
 		cooling += fire_rain_integral(data, begin, end) * clampf(float(descriptor.get("rain_exposure", 1.0)), 0.0, 1.0) * float(SiteCombatRules.fire_environment_profile().rain_cooling_per_second)
-		unit.heat = clampf(float(previous.heat) + float(incoming.get(key, 0.0)) + burned * float(profile.heat_per_q)
+		unit["heat"] = clampf(float(previous.heat) + float(incoming.get(key, 0.0)) + burned * float(profile.heat_per_q)
 			- float(outgoing.get(key, 0.0)) - cooling - float(suppression.cooling.get(key, 0.0)) + float(suppression.heating.get(key, 0.0)), 0.0, float(profile.heat_limit))
-		unit.moisture = clampf(fire_unit_moisture(data, previous, descriptor, end)
+		unit["moisture"] = clampf(fire_unit_moisture(data, previous, descriptor, end)
 			+ float(suppression.moisture.get(key, 0.0)), 0.0, 1.0)
-		unit.moisture_action = end
+		unit["moisture_action"] = end
 		var ignition := float(profile.ignition_heat) * (1.0 + float(profile.moisture_ignition) * float(unit.moisture))
 		var sustain := float(profile.sustain_heat)
-		unit.intensity = 0.0
+		unit["intensity"] = 0.0
 		if remaining > 0 and (float(unit.heat) + FIRE_EPS >= ignition or str(previous.state) == "BURNING" and float(unit.heat) + FIRE_EPS >= sustain):
-			unit.state = "BURNING"
-			unit.intensity = clampf((float(unit.heat) - sustain) / maxf(FIRE_EPS, ignition - sustain), 0.25, 1.0)
+			unit["state"] = "BURNING"
+			unit["intensity"] = clampf((float(unit.heat) - sustain) / maxf(FIRE_EPS, ignition - sustain), 0.25, 1.0)
 		elif float(unit.heat) > FIRE_EPS:
-			unit.state = "EMBERS" if remaining > 0 and str(previous.state) in ["BURNING", "EMBERS"] else ("COOLING" if remaining == 0 else "HEATING")
-			if str(unit.state) == "EMBERS": unit.intensity = float(profile.ember_intensity)
+			unit["state"] = "EMBERS" if remaining > 0 and str(previous.state) in ["BURNING", "EMBERS"] else ("COOLING" if remaining == 0 else "HEATING")
+			if str(unit.state) == "EMBERS": unit["intensity"] = float(profile.ember_intensity)
 		else:
-			unit.heat = 0.0
-			unit.state = "DORMANT"
+			unit["heat"] = 0.0
+			unit["state"] = "DORMANT"
 		var maximum := int(descriptor.get("fuel_max_q", previous.get("fuel_max_q", FIRE_Q)))
-		unit.scorch = clampf(float(previous.scorch) + float(burned) / maxi(1, maximum), 0.0, 1.0)
+		unit["scorch"] = clampf(float(previous.scorch) + float(burned) / maxi(1, maximum), 0.0, 1.0)
 		if str(unit.kind) == "feature" and burned > 0 and float(profile.damage_per_q) > 0.0 and not descriptor.is_empty():
 			var feature: Dictionary = data.site.features.get(str(unit.feature), {})
 			if float(feature.get("parts", {}).get(str(unit.part), {}).get("hp", 0.0)) > 0.0:
@@ -5311,9 +5311,9 @@ static func _fire_resource_cleared(data: TerrainData, resource_key: String) -> v
 	if unit.is_empty(): return
 	# Original clear is only legal once original remaining is zero. The sole
 	# fractional remainder moves to this original resource's finite residue.
-	unit.residue_q = int(unit.get("residue_q", 0)) + int(unit.fuel_remainder_q)
-	unit.fuel_remainder_q = 0
-	unit.generation = int(unit.generation) + 1
+	unit["residue_q"] = int(unit.get("residue_q", 0)) + int(unit.fuel_remainder_q)
+	unit["fuel_remainder_q"] = 0
+	unit["generation"] = int(unit.generation) + 1
 	var supplied := _fire_has_contact(state, key)
 	for event_id: String in state.contacts.keys():
 		if str(state.contacts[event_id].unit_key) != key: continue
@@ -5323,7 +5323,7 @@ static func _fire_resource_cleared(data: TerrainData, resource_key: String) -> v
 		else: state.contacts.erase(event_id)
 	state["dirty"] = true
 	if float(unit.heat) <= FIRE_EPS and not supplied:
-		unit.residue_q = 0 # Cold discarded fractional material is never usable wood.
+		unit["residue_q"] = 0 # Cold discarded fractional material is never usable wood.
 		state.active.erase(key)
 
 ## Reclassify the same cold fractional fuel when its original cleared source is restored.
@@ -5340,8 +5340,8 @@ static func _fire_resource_restored(data: TerrainData, resource_key: String, pre
 	if residue < 0 or residue >= FIRE_Q or int(unit.get("fuel_remainder_q", 0)) != 0:
 		return fail("INVALID_FIRE_FUEL", "原冷餘料不能轉成完整可採生物量")
 	if not preview and residue > 0:
-		unit.fuel_remainder_q = residue
-		unit.residue_q = 0
+		unit["fuel_remainder_q"] = residue
+		unit["residue_q"] = 0
 		state["dirty"] = true
 	return ok()
 
@@ -5355,9 +5355,9 @@ static func _fire_resource_regenerated(data: TerrainData, resource_key: String, 
 	if unit.is_empty(): return target_remaining
 	var old_fuel := old_remaining * FIRE_Q + int(unit.fuel_remainder_q)
 	var new_fuel := mini(capacity * FIRE_Q, old_fuel + maxi(0, target_remaining - old_remaining) * FIRE_Q)
-	unit.fuel_remainder_q = new_fuel % FIRE_Q
-	if old_fuel == 0 and new_fuel > 0: unit.generation = int(unit.generation) + 1
-	unit.residue_q = 0
+	unit["fuel_remainder_q"] = new_fuel % FIRE_Q
+	if old_fuel == 0 and new_fuel > 0: unit["generation"] = int(unit.generation) + 1
+	unit["residue_q"] = 0
 	state["dirty"] = true
 	return floori(float(new_fuel) / FIRE_Q)
 
@@ -5398,15 +5398,15 @@ static func _fire_repair_finished(data: TerrainData, feature_id: String, part_id
 	if full_wood > 0 and maximum_hp > 0.0:
 		delta = mini(int(unit.fuel_max_q) - int(unit.fuel_q), mini(floori(int(unit.fuel_max_q) * maxf(0.0, new_hp - old_hp) / maximum_hp),
 			floori(float(unit.fuel_max_q) * int(paid.get("wood", 0)) / full_wood)))
-	unit.fuel_q = int(unit.fuel_q) + maxi(0, delta)
+	unit["fuel_q"] = int(unit.fuel_q) + maxi(0, delta)
 	if old_hp <= 0.0 and new_hp > 0.0:
 		_fire_retire_collapse_reference(state, key)
 		unit.erase("debris_version")
 		unit.erase("standing_generation")
 		var descriptor := _fire_feature_descriptor(data, feature_id, part_id)
-		unit.surface_id = str(descriptor.surface_id)
-		unit.height = float(descriptor.height)
-		unit.generation = int(unit.generation) + 1
+		unit["surface_id"] = str(descriptor.surface_id)
+		unit["height"] = float(descriptor.height)
+		unit["generation"] = int(unit.generation) + 1
 		for event_id: String in state.contacts.keys():
 			if str(state.contacts[event_id].unit_key) == key: state.contacts.erase(event_id)
 	state.repair_generations.erase(key)
@@ -5422,11 +5422,11 @@ static func _fire_feature_removed(data: TerrainData, feature_id: String, retaine
 		_fire_retire_collapse_reference(state, key)
 		unit.erase("debris_version")
 		unit.erase("standing_generation")
-		unit.generation = int(unit.generation) + 1
-		unit.fuel_q = 0
-		unit.heat = 0.0
-		unit.intensity = 0.0
-		unit.state = "DORMANT"
+		unit["generation"] = int(unit.generation) + 1
+		unit["fuel_q"] = 0
+		unit["heat"] = 0.0
+		unit["intensity"] = 0.0
+		unit["state"] = "DORMANT"
 		state.active.erase(key)
 		state.repair_generations.erase(key)
 		for event_id: String in state.contacts.keys():
@@ -5456,10 +5456,10 @@ static func _fire_feature_completed(data: TerrainData, feature_id: String, previ
 			state["dirty"] = true
 			continue
 		var added := mini(maxi(0, new_maximum - int(unit.fuel_max_q)), int(paid_by_part.get(part_id, maxi(0, int(paid.get("wood", 0))) * FIRE_Q)))
-		unit.fuel_max_q = new_maximum
-		unit.fuel_q = mini(new_maximum, int(unit.fuel_q) + added)
+		unit["fuel_max_q"] = new_maximum
+		unit["fuel_q"] = mini(new_maximum, int(unit.fuel_q) + added)
 		if building_grade(previous) != building_grade(feature) or previous.get("cells", []) != feature.cells or previous.get("parts", {}).get(part_id, {}) != feature.parts[part_id]:
-			unit.generation = int(unit.generation) + 1
+			unit["generation"] = int(unit.generation) + 1
 		state["dirty"] = true
 
 
@@ -5730,8 +5730,8 @@ static func fire_expand_feature(data: TerrainData, feature_id: String) -> Dictio
 	var old: Dictionary = state.get("units", {}).get(body_key, {})
 	var old_fuel := int(old.get("fuel_q", 0))
 	var allocations := _fire_part_allocation(candidate, old_fuel)
-	feature.fire_layout_version = candidate.fire_layout_version
-	feature.parts = candidate.parts
+	feature["fire_layout_version"] = candidate.fire_layout_version
+	feature["parts"] = candidate.parts
 	if not old.is_empty():
 		for part_id: String in _fire_layout_parts(feature):
 			var descriptor := _fire_feature_descriptor(data, feature_id, part_id)
@@ -5823,7 +5823,7 @@ static func _fire_layout_geometry(data: TerrainData, feature: Dictionary, geomet
 			"rain_exposure": 1.0 if roof or not covered else 0.0, "smoke_outdoor": true})
 		geometry.parts[key] = part
 	if kind in MILITARY_KINDS:
-		geometry.blocked = all_cells.duplicate() if str(feature.stage) == "complete" and float(feature.parts.body.hp) > 0.0 else []
+		geometry["blocked"] = all_cells.duplicate() if str(feature.stage) == "complete" and float(feature.parts.body.hp) > 0.0 else []
 
 static func _fire_supported_parts(feature: Dictionary, part_id: String) -> Array[String]:
 	var result: Array[String] = []
@@ -5990,9 +5990,9 @@ static func _fire_commit_collapse(data: TerrainData, state: Dictionary, feature_
 		"sequence": int(warning.get("sequence", 0)), "step": int(state.step_index)}
 	unit["debris_version"] = FIRE_COLLAPSE_VERSION
 	unit["standing_generation"] = generation
-	unit.generation = generation + 1
-	unit.surface_id = "ground"
-	unit.height = float(feature.level)
+	unit["generation"] = generation + 1
+	unit["surface_id"] = "ground"
+	unit["height"] = float(feature.level)
 	for contact: Dictionary in state.contacts.values():
 		if str(contact.unit_key) == key and int(contact.generation) == generation: contact.generation = int(unit.generation)
 	state.collapse_warnings.erase(key)
@@ -6089,7 +6089,7 @@ static func apply_inventory_loss(data: TerrainData, request: Dictionary) -> Dict
 		for slot: String in holder.equipped.keys():
 			if str(holder.equipped[slot]) == identity: holder.equipped.erase(slot)
 		data.site.item_records.erase(identity)
-	holder.version = int(holder.version) + 1
+	holder["version"] = int(holder.version) + 1
 	var receipt := {"version": FIRE_INVENTORY_VERSION, "feature_id": str(request.feature_id), "source_unit_key": str(request.source_unit_key),
 		"source_generation": int(request.source_generation), "step": int(request.step), "holder_id": str(holder.holder),
 		"holder_version": int(holder.version), "resources": resources, "item_ids": items}
@@ -6162,7 +6162,7 @@ static func _fire_commit_inventory_preview(data: TerrainData, state: Dictionary,
 		if not result.ok and str(result.code) == "STALE_SOURCE":
 			var stock: Dictionary = data.site.get("stockpiles", {}).get(str(request.feature_id), {})
 			if not stock.is_empty():
-				request.expected_version = int(stock.holder.version)
+				request["expected_version"] = int(stock.holder.version)
 				result = apply_inventory_loss(data, request) # Same event ID; clamp current stock once.
 		if not result.ok and str(result.code) not in ["TARGET_INVALIDATED", "CONTENTS_PROTECTED"]: pending[key] = request
 		results.append(result)
@@ -6555,8 +6555,8 @@ static func _validate_fire_unit_snapshot(data: TerrainData, key: String, raw: Va
 		or str(raw.state) in ["HEATING", "COOLING"] and float(raw.intensity) != 0.0: return fail("INVALID_FIRE_PHASE")
 	var unit: Dictionary = raw.duplicate(true)
 	for field: String in ["generation", "fuel_remainder_q", "residue_q"]: unit[field] = int(raw[field])
-	if kind == "feature": unit.fuel_q = int(raw.fuel_q); unit.fuel_max_q = int(raw.fuel_max_q)
-	if raw.has("debris_version"): unit.debris_version = 1; unit.standing_generation = int(raw.standing_generation)
+	if kind == "feature": unit["fuel_q"] = int(raw.fuel_q); unit["fuel_max_q"] = int(raw.fuel_max_q)
+	if raw.has("debris_version"): unit["debris_version"] = 1; unit["standing_generation"] = int(raw.standing_generation)
 	return ok("", {"unit": unit})
 
 static func _validate_fire_inputs_snapshot(state: Dictionary, action_cursor: float) -> Dictionary:
@@ -6609,7 +6609,7 @@ static func _validate_fire_weather_snapshot(raw: Variant, action_cursor: float) 
 			or absf(float(genesis.drying) - 0.02) > FIRE_EPS or float(raw.history[1].action_time) <= 0.0:
 			return fail("INVALID_FIRE_WEATHER_GENESIS")
 	var weather: Dictionary = raw.duplicate(true)
-	weather.sequence = int(raw.sequence)
+	weather["sequence"] = int(raw.sequence)
 	return ok("", {"weather": weather})
 
 static func _validate_fire_smoke_snapshot(data: TerrainData, raw: Variant) -> Dictionary:
@@ -6634,7 +6634,7 @@ static func capture_fire_snapshot(data: TerrainData, action_cursor: float) -> Di
 		for identity: Variant in raw.get("receipt_ids", {}):
 			if not identity is int: return fail("INVALID_FIRE_RECEIPT")
 			receipts[str(identity)] = raw.receipt_ids[identity]
-		raw.receipt_ids = receipts
+		raw["receipt_ids"] = receipts
 	var normalized: Variant = _fire_snapshot_json_copy(raw)
 	if not normalized is Dictionary or not _fire_snapshot_json(normalized): return fail("INVALID_FIRE_SNAPSHOT")
 	raw = normalized
@@ -6863,25 +6863,25 @@ static func _work_preflight(data: TerrainData, task: Dictionary, cargo: Dictiona
 			var trial_facts := (technology_trial_work_facts(data, vehicle, task, original_identity) if checked_prefix.is_empty() else _checked_trial_start_facts(checked_prefix)) if action == "construct" else ok("", {"required_skill": "", "eligible_master": false})
 			if not trial_facts.ok: return trial_facts
 			if checked_prefix.is_empty() and not category.is_empty() and policy.policy.categories.has(category) and str(trial_facts.get("policy_exception", "")) != category:
-				base.required_skill = category
-				base.eligible_master = not person.is_empty() and Technology.learned(actions._body_get(person, "technology"), category)
+				base["required_skill"] = category
+				base["eligible_master"] = not person.is_empty() and Technology.learned(actions._body_get(person, "technology"), category)
 			if not str(trial_facts.required_skill).is_empty():
 				if not str(base.required_skill).is_empty():
 					var original_master: Dictionary = actions._person(int(vehicle.tech_trial.person.person_id))
 					if original_master.is_empty() or not Technology.learned(actions._body_get(original_master, "technology"), category): return fail("NO_TECHNOLOGY")
-				base.required_skill = str(trial_facts.required_skill)
-				base.eligible_master = bool(trial_facts.eligible_master)
+				base["required_skill"] = str(trial_facts.required_skill)
+				base["eligible_master"] = bool(trial_facts.eligible_master)
 		if action == "construct":
 			var yard_facts := _technology_siege_yard_work_facts(data, vehicle, original_identity, checked_prefix, task)
 			if not yard_facts.ok: return yard_facts
-			base.required_skills = yard_facts.required_skills.duplicate()
-			base.eligible_skills = yard_facts.eligible_skills.duplicate()
+			base["required_skills"] = yard_facts.required_skills.duplicate()
+			base["eligible_skills"] = yard_facts.eligible_skills.duplicate()
 			if not str(base.required_skill).is_empty() and not str(base.required_skill).begins_with("trial:"):
 				if not base.required_skills.has(str(base.required_skill)): base.required_skills.append(str(base.required_skill))
 				if base.eligible_master and not base.eligible_skills.has(str(base.required_skill)): base.eligible_skills.append(str(base.required_skill))
 			if str(base.required_skill).is_empty() and not base.required_skills.is_empty():
-				base.required_skill = str(base.required_skills[0])
-				base.eligible_master = base.eligible_skills.has(base.required_skill)
+				base["required_skill"] = str(base.required_skills[0])
+				base["eligible_master"] = base.eligible_skills.has(base.required_skill)
 		# A true held prefix keeps its qualified start. Current life/authority is
 		# checked again only by the original zero completion endpoint.
 		if action == "repair" and vehicle.has("technology_spare_repair") and checked_prefix.is_empty():
@@ -6889,25 +6889,25 @@ static func _work_preflight(data: TerrainData, task: Dictionary, cargo: Dictiona
 			if not spare_guard.ok: return spare_guard
 		var credit_facts := technology_work_credit_facts(data, vehicle) if action == "construct" else ok("", {"factor": 1.0})
 		if not credit_facts.ok: return credit_facts
-		base.progress_multiplier = float(credit_facts.factor) * technology_cold_work_multiplier(data, vehicle, task)
+		base["progress_multiplier"] = float(credit_facts.factor) * technology_cold_work_multiplier(data, vehicle, task)
 		if action == "construct":
 			var method_facts := technology_siege_method_work_facts(data, vehicle, task, original_identity, checked_prefix)
 			if not method_facts.ok: return method_facts
-			base.productivity = float(method_facts.factor)
+			base["productivity"] = float(method_facts.factor)
 			if float(method_facts.factor) > 1.0 and not base.eligible_skills.has("F11"): base.eligible_skills.append("F11")
-		base.remaining = maxf(0.0, float(job.total_work) - float(job.progress))
+		base["remaining"] = maxf(0.0, float(job.total_work) - float(job.progress))
 		return ok("原器具共同工單預檢", base)
 	if not target.begins_with("feature:"):
 		var resource := Env.resource(data, target)
 		var ready := harvest(data, target, cell, cargo, action, true, carry_limit)
 		if not ready.ok: return ready
 		var required := resource_work_minutes(int(resource.kind), action)
-		base.remaining = maxf(0.0, required - float(task.get("progress", 0.0))) * 60.0
+		base["remaining"] = maxf(0.0, required - float(task.get("progress", 0.0))) * 60.0
 		return ok("原資源工作預檢", base)
 	var key := target.trim_prefix("feature:")
 	var feature: Dictionary = data.site.get("features", {}).get(key, {})
 	if feature.is_empty(): return fail("NO_TARGET")
-	base.progress_multiplier = technology_cold_work_multiplier(data, feature, task)
+	base["progress_multiplier"] = technology_cold_work_multiplier(data, feature, task)
 	if feature.get("kind") == "irrigation_channel" and action == "construct" and checked_prefix.is_empty():
 		var channel := technology_geometry_operator_guard(data, feature, task, original_identity)
 		if not channel.ok: return channel
@@ -6939,20 +6939,20 @@ static func _work_preflight(data: TerrainData, task: Dictionary, cargo: Dictiona
 	if action == "operate" and str(feature.stage) == "complete" and kind == "shipyard":
 		var checked := validate_ship_build(data, feature)
 		if not checked.ok or not feature.has("ship_build"): return fail("NO_TARGET")
-		base.remaining = maxf(0.0, float(feature.ship_build.total_work) - float(feature.production) * 60.0)
+		base["remaining"] = maxf(0.0, float(feature.ship_build.total_work) - float(feature.production) * 60.0)
 		var shipyard_facts := _technology_shipyard_work_facts(data, key, task, original_identity, checked_prefix) if float(base.remaining) > 0.0 else ok("", {"required_skill": "", "eligible_master": false})
 		if not shipyard_facts.ok: return shipyard_facts
 		if float(base.remaining) > 0.0 and not can_pay(data.site.inventory, {"tools": 1}): return fail("MATERIALS")
 		var trial_facts := (technology_trial_work_facts(data, feature, task, original_identity) if checked_prefix.is_empty() else _checked_trial_start_facts(checked_prefix))
 		if not trial_facts.ok: return trial_facts
-		base.required_skill = str(trial_facts.required_skill)
-		base.eligible_master = bool(trial_facts.eligible_master)
+		base["required_skill"] = str(trial_facts.required_skill)
+		base["eligible_master"] = bool(trial_facts.eligible_master)
 		if not str(shipyard_facts.required_skill).is_empty() and str(base.required_skill).is_empty():
-			base.required_skill = str(shipyard_facts.required_skill)
-			base.eligible_master = bool(shipyard_facts.eligible_master)
-		base.required_skills = shipyard_facts.get("required_skills", []).duplicate()
-		base.eligible_skills = shipyard_facts.get("eligible_skills", []).duplicate()
-		base.productivity = float(shipyard_facts.get("factor", 1.0))
+			base["required_skill"] = str(shipyard_facts.required_skill)
+			base["eligible_master"] = bool(shipyard_facts.eligible_master)
+		base["required_skills"] = shipyard_facts.get("required_skills", []).duplicate()
+		base["eligible_skills"] = shipyard_facts.get("eligible_skills", []).duplicate()
+		base["productivity"] = float(shipyard_facts.get("factor", 1.0))
 		return ok("原造船共同工作預檢", base)
 	if action != "repair" and str(feature.stage) == "complete" and not feature_usable(feature): return fail("DESTROYED")
 	if not can_pay(data.site.inventory, {"tools": 1}): return fail("MATERIALS")
@@ -6961,7 +6961,7 @@ static func _work_preflight(data: TerrainData, task: Dictionary, cargo: Dictiona
 		var fire_guard := _fire_repair_guard(data, key, str(job.part), true)
 		if not fire_guard.ok: return fire_guard
 		if not _repair_contact(data, feature, feature_geometry(data, feature).parts[str(job.part)], cell): return fail("UNREACHABLE")
-		base.remaining = maxf(0.0, float(job.work) - float(job.progress)) * 60.0
+		base["remaining"] = maxf(0.0, float(job.work) - float(job.progress)) * 60.0
 		return ok("原修理工作預檢", base)
 	if str(feature.stage) != "complete" or action == "construct" and feature.has("pending_build"):
 		if feature.has("pending_build") and _fire_feature_hot(data, key): return fail("FIRE_HOT")
@@ -6969,11 +6969,11 @@ static func _work_preflight(data: TerrainData, task: Dictionary, cargo: Dictiona
 			if not bool(Env.resource(data, source).get("cleared", true)): return fail("CLEARING")
 		for index: int in job.get("added_cells", feature.cells):
 			if occupied.is_valid() and bool(occupied.call(data.cell_from_index(index))): return fail("OCCUPIED")
-		base.remaining = maxf(0.0, float(job.work) - float(job.progress)) * 60.0
+		base["remaining"] = maxf(0.0, float(job.work) - float(job.progress)) * 60.0
 		var trial_facts := (technology_trial_work_facts(data, feature, task, original_identity) if checked_prefix.is_empty() else _checked_trial_start_facts(checked_prefix))
 		if not trial_facts.ok: return trial_facts
-		base.required_skill = str(trial_facts.required_skill)
-		base.eligible_master = bool(trial_facts.eligible_master)
+		base["required_skill"] = str(trial_facts.required_skill)
+		base["eligible_master"] = bool(trial_facts.eligible_master)
 		return ok("原施工工作預檢", base)
 	if action != "operate" or feature.has("pending_build") or feature.has("repair"): return fail("BUSY")
 	if not definition.has("cycle"): return fail("NO_TARGET")
@@ -7004,12 +7004,12 @@ static func _work_preflight(data: TerrainData, task: Dictionary, cargo: Dictiona
 	if productivity <= 0.0: return fail("NO_WORK_CELLS")
 	var inputs: Dictionary = _production_input_preflight(data, feature, key, definition, cargo, carry_limit)
 	if not inputs.ok: return inputs
-	base.payment = inputs.payment
-	base.payment_source = inputs.payment_source
-	base.payment_key = inputs.payment_key
-	base.productivity = productivity
+	base["payment"] = inputs.payment
+	base["payment_source"] = inputs.payment_source
+	base["payment_key"] = inputs.payment_key
+	base["productivity"] = productivity
 	var shared := slot >= 0 and kind in FARM_KINDS + PASTURE_KINDS
-	base.remaining = maxf(0.0, float(definition.cycle) - float(feature.production)) * 60.0 / (1.0 if shared else productivity)
+	base["remaining"] = maxf(0.0, float(definition.cycle) - float(feature.production)) * 60.0 / (1.0 if shared else productivity)
 	return ok("原現場生產預檢", base)
 
 static func _production_input_preflight(data: TerrainData, feature: Dictionary, key: String, definition: Dictionary, cargo: Dictionary, carry_limit: int) -> Dictionary:
@@ -7021,9 +7021,9 @@ static func _production_input_preflight(data: TerrainData, feature: Dictionary, 
 		if str(feature.get("supply_mode", "")) == "local":
 			var local: Dictionary = data.site.get("stockpiles", {}).get(key, {})
 			if not _item_holder_shape(local.get("holder", {})) or int(local.holder.get("version", 2147483646)) >= 2147483646: return fail("INVALID")
-		base.payment = definition.input.duplicate(true)
-		base.payment_source = stock
-		base.payment_key = "feature:" + key
+		base["payment"] = definition.input.duplicate(true)
+		base["payment_source"] = stock
+		base["payment_key"] = "feature:" + key
 	return ok("原配方／庫存／承載純預檢", base)
 
 static func technology_capture_valid(raw: Variant, allow_empty: bool = true) -> bool:
@@ -7123,7 +7123,7 @@ static func prepare_equipment_creation(data: TerrainData, destination: Dictionar
 		var checked: Dictionary = data.item_transfer_guard.call({}, destination, {}, ids)
 		if not checked.ok: return checked
 	if not is_same(state, data.site) or int(state.next_item) != next or destination != before: return fail("STALE_SOURCE")
-	candidate.version = int(destination.version) + 1
+	candidate["version"] = int(destination.version) + 1
 	return ok("", {"state_ref": state, "destination_ref": destination, "destination_before": before, "destination_candidate": candidate,
 		"expected_next_item": next, "next_item": next + ids.size(), "definitions": definitions, "records": records, "item_ids": ids})
 
@@ -7581,7 +7581,7 @@ static func _technology_geometry_payment(data: TerrainData, token: Dictionary, c
 	var actions: Variant = _technology_actions(data)
 	if actions == null or not actions.has_method("technology_phase_binding_candidate") or not actions.has_method("technology_phase_payment_candidate"): return fail("UNSUPPORTED")
 	var candidate: Dictionary = token.duplicate(true)
-	candidate.materials = cost.duplicate(true)
+	candidate["materials"] = cost.duplicate(true)
 	var binding: Dictionary = actions.technology_phase_binding_candidate(candidate, original_source)
 	if not binding.ok: return binding
 	var payment: Dictionary = actions.technology_phase_payment_candidate(candidate, cost, binding, original_source)
@@ -7610,8 +7610,8 @@ static func _begin_technology_geometry(data: TerrainData, token: Dictionary, wor
 			if not Technology.integer(value, 0, data.size.x * data.size.y - 1) or cells.has(int(value)): return fail("INVALID")
 			cells.append(int(value))
 		var options: Dictionary = work_target.options.duplicate(true)
-		options.owner_faction = int(person.faction)
-		options.layout_version = BUILDING_LAYOUT_VERSION
+		options["owner_faction"] = int(person.faction)
+		options["layout_version"] = BUILDING_LAYOUT_VERSION
 		var kind := str(TECHNOLOGY_BUILD_BINDINGS[binding])
 		var selected := {"token": token.duplicate(true)}
 		var checked := preview_build(data, kind, cells, actions.lab.site_controller.reserves_cell, options, {}, selected)
@@ -7648,7 +7648,7 @@ static func _begin_technology_geometry(data: TerrainData, token: Dictionary, wor
 		if not checked.ok: return checked
 		if work_target.has("order_id"):
 			var local := token.duplicate(true)
-			local.materials = checked.cost.duplicate(true)
+			local["materials"] = checked.cost.duplicate(true)
 			var source := _technology_material_source(data, {"token": local}, binding, local.materials)
 			if not source.ok: return source
 			if str(work_target.order_id) != str(source.operation_ref.get("order_id", "")): return fail("STALE_SOURCE")
@@ -7898,8 +7898,8 @@ static func prepare_farm_trial_protocol_output(data: TerrainData, key: String, f
 	var guard := farm_trial_protocol_operator_guard(data, key, feature, worker, person)
 	if not guard.ok: return guard
 	var packet: Dictionary = feature.farm_trial_protocol.duplicate(true)
-	packet.state = "complete"
-	packet.result = receipt.duplicate(true)
+	packet["state"] = "complete"
+	packet["result"] = receipt.duplicate(true)
 	if not valid_farm_trial_protocol(packet, data, key, feature): return fail("STALE_SOURCE", "須真原paid/output完成收據；不以預期收穫代驗")
 	return ok("", {"packet": packet})
 
@@ -8058,9 +8058,9 @@ static func normalize_technology_target_storage(target: Dictionary) -> void:
 	if target.has("settlement_work"): target.settlement_work.step = int(target.settlement_work.step)
 	if target.has("technology_spare_repair"):
 		var spare: Dictionary = target.technology_spare_repair
-		spare.version = int(spare.version)
+		spare["version"] = int(spare.version)
 		spare.operator.person_id = int(spare.operator.person_id)
-		spare.initial_hp = float(spare.initial_hp)
+		spare["initial_hp"] = float(spare.initial_hp)
 	if target.has("tech_trial"):
 		for field: String in ["project_id", "epoch", "attempt"]: target.tech_trial[field] = int(target.tech_trial[field])
 		target.tech_trial.person.person_id = int(target.tech_trial.person.person_id)
@@ -8163,9 +8163,9 @@ static func request_family_construction_method(data: TerrainData, key: String, r
 	var candidate := {"version": 1, "method": "F10", "operator": {"site_id": str(data.site.id), "person_id": operator_id}, "baseline_work": float(job.work)}
 	if improved and not valid_family_construction_method(candidate, data, feature, job): return fail("INVALID_WORK")
 	if preview: return ok("原新施工工法可選；未占人或改成本", {"feature": key, "operator_id": operator_id, "time_multiplier": 0.9 if improved else 1.0})
-	if improved: job.construction_method = candidate
+	if improved: job["construction_method"] = candidate
 	else: job.erase("construction_method")
-	job.status = "已明選丈量接榫；只改所選合格原人的新施工工作段" if improved else "已選原普通施工"
+	job["status"] = "已明選丈量接榫；只改所選合格原人的新施工工作段" if improved else "已選原普通施工"
 	data.environment_revision += 1
 	return ok(str(job.status))
 
@@ -8320,8 +8320,8 @@ static func begin_irrigation_channel(data: TerrainData, requester_id: int, sourc
 	var actions: Variant = _technology_actions(data)
 	if actions == null or requester_id != int(actions._technology_controlled()): return fail("NO_AUTHORITY")
 	var projected := options.duplicate(true)
-	projected.irrigation = {"version": 1, "settlement_id": str(data.site.get("settlement", {}).get("settlement_id", "")), "source_feature_id": source_feature_id, "upstream_feature_id": upstream_feature_id}
-	projected.owner_faction = int(data.site.get("settlement", {}).get("owner_faction", -1))
+	projected["irrigation"] = {"version": 1, "settlement_id": str(data.site.get("settlement", {}).get("settlement_id", "")), "source_feature_id": source_feature_id, "upstream_feature_id": upstream_feature_id}
+	projected["owner_faction"] = int(data.site.get("settlement", {}).get("owner_faction", -1))
 	var prepared := prepare_build_request(data, "irrigation_channel", cells, occupied, projected)
 	return prepared if not prepared.ok or preview else publish_build_request(data, prepared)
 
@@ -8392,7 +8392,7 @@ static func grant_settlement_operation_source(data: TerrainData, settlement_id: 
 		if not feature.get("tech_batch", {}).is_empty() and holder != refs.order.payload.source.holder: return fail("BUSY", "已付批次保留原來源史；完成後才可更換下一批來源")
 		candidate.payload.source = {"site_id": str(data.site.id), "holder": holder, "grantor_id": requester_id, "status": "granted"}
 		if candidate.payload.has("source_feature_id"): candidate.payload.source_feature_id = source_feature_id
-	candidate.revision = int(candidate.revision) + 1
+	candidate["revision"] = int(candidate.revision) + 1
 	if not valid_settlement_processing_order(data, data.site, candidate): return fail("CORRUPT_STATE")
 	if preview: return ok("原真接觸來源可明示調整；額度與已花費不重置")
 	# No charge, reserve, cap increase or replacement of accepted source refs.
@@ -8424,9 +8424,9 @@ static func prepare_settlement_processing_output(data: TerrainData, feature: Dic
 	var candidate: Dictionary = order.duplicate(true)
 	candidate.receipts.append(receipt.duplicate(true))
 	candidate.payload.completed = int(candidate.payload.completed) + 1
-	candidate.status = "completed" if int(candidate.payload.completed) == int(candidate.payload.max_batches) else "prepared"
-	if order.status == "cancelled": candidate.status = "cancelled"
-	candidate.revision = int(candidate.revision) + 1
+	candidate["status"] = "completed" if int(candidate.payload.completed) == int(candidate.payload.max_batches) else "prepared"
+	if order.status == "cancelled": candidate["status"] = "cancelled"
+	candidate["revision"] = int(candidate.revision) + 1
 	return ok("", {"state_ref": data.site, "operations_ref": refs.operations, "order_ref": order, "order_before": order.duplicate(true), "candidate": candidate})
 
 static func request_settlement_processing_order(data: TerrainData, kind: String, feature_id: String, operator_id: int, max_batches: int,
@@ -8484,7 +8484,7 @@ static func request_settlement_processing_order(data: TerrainData, kind: String,
 	if not consent.ok: return consent
 	if not consent.get("consent", {}).is_empty(): order.payload.consents.append(consent.consent.duplicate(true))
 	candidate.orders[id] = order
-	candidate.next_order = int(candidate.next_order) + 1
+	candidate["next_order"] = int(candidate.next_order) + 1
 	if not valid_settlement_processing_order(data, data.site, order) or not bool(settlement_script.call("valid_technology_operations", data, candidate, data.site)): return fail("CORRUPT_STATE")
 	if preview: return ok("原具名工單／有限來源與用途可登記；不預扣或保留物資", {"order_id": id, "cap": cap.duplicate(true)})
 	settlement_script.call("publish_technology_operations", settlement, candidate)
@@ -8548,7 +8548,7 @@ static func begin_settlement_metal_transfer(data: TerrainData, settlement_id: St
 		# A reissued generic begin request uses next_attempt. The second contact
 		# resumes the accepted first physical withdrawal; it never repays/rebinds.
 		var requested := token.duplicate(true)
-		requested.attempt = int(previous.get("attempt", -1))
+		requested["attempt"] = int(previous.get("attempt", -1))
 		if requested != previous or not Technology.integer(token.get("attempt"), int(previous.attempt), int(previous.attempt) + 1): return fail("STALE_PROJECT")
 		effective_token = previous
 	var prepared := prepare_settlement_metal_transfer(data, settlement_id, order_id, requester_id, effective_token)
@@ -8627,7 +8627,7 @@ static func request_settlement_metal_order(data: TerrainData, smelter_id: String
 	if not consent.ok: return consent
 	if not consent.get("consent", {}).is_empty(): order.payload.consents.append(consent.consent.duplicate(true))
 	candidate.orders[id] = order
-	candidate.next_order = int(candidate.next_order) + 1
+	candidate["next_order"] = int(candidate.next_order) + 1
 	if not valid_settlement_metal_order(data, data.site, order) or not bool(settlement_script.call("valid_technology_operations", data, candidate, data.site)): return fail("CORRUPT_STATE")
 	if preview: return ok("原同人冶鐵/搬運/製具有限鏈可登記；不預扣/保留材料", {"order_id": id, "cap": SETTLEMENT_METAL_CAP.duplicate(true)})
 	settlement_script.call("publish_technology_operations", settlement, candidate)
@@ -8727,7 +8727,7 @@ static func request_warehouse_food_order(data: TerrainData, warehouse_id: String
 	if not consent.get("consent", {}).is_empty(): order.payload.consents.append(consent.consent.duplicate(true))
 	if not valid_settlement_food_order(data, data.site, order): return fail("CORRUPT_STATE")
 	candidate.orders[id] = order
-	candidate.next_order = int(candidate.next_order) + 1
+	candidate["next_order"] = int(candidate.next_order) + 1
 	if not bool(settlement_script.call("valid_technology_operations", data, candidate, data.site)): return fail("CORRUPT_STATE")
 	if preview: return ok("原有限實物糧食單可登記", {"order_id": id, "quantity": int(order.payload.quantity)})
 	settlement_script.call("publish_technology_operations", settlement, candidate)
@@ -8762,21 +8762,21 @@ static func request_settlement_spare_repair(data: TerrainData, vehicle_id: Strin
 		if token.binding != "spare_repair" or token.target_id != "vehicle:" + vehicle_id or not Technology.material_equal(token.materials, terms.paid_cost): return fail("STALE_PHASE")
 		scope = _technology_geometry_payment(data, token, terms.paid_cost, preview)
 		if not scope.ok: return scope
-		projected.tech_trial = scope.token
-		projected.tech_batch = _technology_geometry_ledger(data, scope.token, scope.payment, "repair:ballista_spares")
+		projected["tech_trial"] = scope.token
+		projected["tech_batch"] = _technology_geometry_ledger(data, scope.token, scope.payment, "repair:ballista_spares")
 	var named := _prepare_settlement_spare_workers(data, vehicle_id, vehicle, admission, projected)
 	if not named.ok: return named
 	if preview: return ok("可用一包實物備件修復至多20HP", {"amount": float(terms.amount), "seconds": 300.0})
 	# All original person/slot/source/scope candidates are ready before payment.
 	add_items(data.site.inventory, terms.paid_cost, -1)
 	data.site.depot_items.version = int(data.site.depot_items.version) + 1
-	vehicle.repair = terms
-	vehicle.technology_spare_repair = projected.technology_spare_repair
-	vehicle.phase = "idle"
-	vehicle.command = {}
+	vehicle["repair"] = terms
+	vehicle["technology_spare_repair"] = projected.technology_spare_repair
+	vehicle["phase"] = "idle"
+	vehicle["command"] = {}
 	if not scope.is_empty():
-		vehicle.tech_trial = projected.tech_trial
-		vehicle.tech_batch = projected.tech_batch
+		vehicle["tech_trial"] = projected.tech_trial
+		vehicle["tech_batch"] = projected.tech_batch
 		context.actions.publish_phase_payment(scope.payment)
 	_technology_publish_named_vehicle(named)
 	data.environment_revision += 1
@@ -8811,7 +8811,7 @@ static func save_settlement_blueprint(data: TerrainData, requester_id: int, sour
 		"options": options, "source_feature": source_feature_id}
 	if not context.owner.call("valid_engineering_plan", data, plan): return fail("INVALID")
 	candidate.plans[key] = plan
-	candidate.next_plan = int(candidate.next_plan) + 1
+	candidate["next_plan"] = int(candidate.next_plan) + 1
 	if not context.owner.call("valid_technology_operations", data, candidate): return fail("INVALID")
 	if not preview: context.owner.call("publish_technology_operations", context.settlement, candidate)
 	return ok("已保存原合法施工幾何；沒有材料、進度或工人副本", {"plan_id": key})
@@ -8828,7 +8828,7 @@ static func settlement_blueprint_target(data: TerrainData, plan_id: String, anch
 		if not data.contains(cell) or not context.owner.call("cell_in_jurisdiction", data, cell): return fail("UNREACHABLE")
 		cells.append(data.index(cell))
 	var options: Dictionary = context.owner.call("engineering_options", plan.options)
-	options.owner_faction = int(context.settlement.owner_faction)
+	options["owner_faction"] = int(context.settlement.owner_faction)
 	return ok("", {"kind": str(plan.kind), "cells": cells, "options": options, "plan": plan})
 
 static func begin_settlement_defense_step(data: TerrainData, requester_id: int, order_id: String, preview: bool = false) -> Dictionary:
@@ -8875,23 +8875,23 @@ static func begin_settlement_defense_step(data: TerrainData, requester_id: int, 
 	var candidate: Dictionary = context.operations.duplicate(true)
 	var next: Dictionary = candidate.orders[order_id]
 	next.steps[int(next.next_step)].feature_id = key
-	next.paid = {"feature_id": key, "materials": cost.duplicate(), "work_seconds": seconds, "operator_id": int(step.operator_id)}
+	next["paid"] = {"feature_id": key, "materials": cost.duplicate(), "work_seconds": seconds, "operator_id": int(step.operator_id)}
 	add_items(next.spent, cost)
-	next.status = "active"
-	next.revision = int(next.revision) + 1
+	next["status"] = "active"
+	next["revision"] = int(next.revision) + 1
 	if not context.owner.call("valid_technology_operations", data, candidate): return fail("INVALID")
 	if not is_same(context.settlement.get("technology_operations"), context.operations) or not is_same(context.operations.orders.get(order_id), order): return fail("STALE_SOURCE")
 	if preview: return ok("具名原工位與本單有限材料可開始", {"cost": cost.duplicate(), "target_id": "feature:" + key})
 	var link := {"settlement_id": str(context.settlement.settlement_id), "order_id": order_id, "step": int(order.next_step)}
 	if step.action == "construct":
 		feature.settlement_work = link
-		prepared.named = named
-		prepared.settlement_publish = {"owner": context.owner, "settlement": context.settlement, "candidate": candidate}
+		prepared["named"] = named
+		prepared["settlement_publish"] = {"owner": context.owner, "settlement": context.settlement, "candidate": candidate}
 		return publish_build_request(data, prepared)
 	# This is the original repair commit tail, after its pure original guards.
-	prepared.named = named
-	prepared.settlement_link = link
-	prepared.settlement_publish = {"owner": context.owner, "settlement": context.settlement, "candidate": candidate}
+	prepared["named"] = named
+	prepared["settlement_link"] = link
+	prepared["settlement_publish"] = {"owner": context.owner, "settlement": context.settlement, "candidate": candidate}
 	return publish_feature_repair_request(data, prepared)
 
 static func cancel_settlement_defense_order(data: TerrainData, requester_id: int, order_id: String) -> Dictionary:
@@ -8937,7 +8937,7 @@ static func request_settlement_defense_order(data: TerrainData, requester_id: in
 	var order := {"id": key, "kind": "defense", "revision": 0, "authorizer_id": requester_id, "owner_faction": int(context.settlement.owner_faction), "person_ids": identities.duplicate(),
 		"consents": people.consents, "steps": steps.duplicate(true), "next_step": 0, "status": "prepared", "cap": cap.duplicate(), "spent": {}, "receipts": [], "purpose": purpose, "paid": {}}
 	candidate.orders[key] = order
-	candidate.next_order = int(candidate.next_order) + 1
+	candidate["next_order"] = int(candidate.next_order) + 1
 	if not context.owner.call("valid_technology_operations", data, candidate): return fail("INVALID")
 	# Every concrete new step is planning-checked; current source and slots are
 	# independently checked again by its later explicit dispatch.
@@ -9011,7 +9011,7 @@ static func configure_siege_yard(data: TerrainData, key: String, requester_id: i
 		# Revocation requires the current original head and a clear original
 		# plot, but does not require knowledge/effectiveness to recover a plot.
 	if preview: return ok("可指定器械場" if adopt else "可撤回器械場；原校場恢復", {"feature": key, "geometry_slots": 6 if adopt else 4})
-	if adopt: feature.technology_siege_yard = {"version": 1, "settlement_id": str(data.site.settlement.settlement_id)}
+	if adopt: feature["technology_siege_yard"] = {"version": 1, "settlement_id": str(data.site.settlement.settlement_id)}
 	else: feature.erase("technology_siege_yard")
 	data.environment_revision += 1
 	return ok("原校場已指定器械場" if adopt else "器械場已撤回；原校場恢復", {"feature": key, "geometry_slots": 6 if adopt else 4})
@@ -9054,7 +9054,7 @@ static func configure_shipyard_work(data: TerrainData, key: String, requester_id
 	else:
 		if not feature.has("technology_shipyard_work"): return fail("NO_TARGET")
 	if preview: return ok("可採用／撤回原船塢兩岸上席位", {"feature": key})
-	if adopt: feature.technology_shipyard_work = {"version": 1, "settlement_id": str(data.site.settlement.settlement_id)}
+	if adopt: feature["technology_shipyard_work"] = {"version": 1, "settlement_id": str(data.site.settlement.settlement_id)}
 	else: feature.erase("technology_shipyard_work")
 	data.environment_revision += 1
 	return ok("原船塢已採用兩造船席位" if adopt else "原船塢恢復既有一入口工位", {"feature": key})
@@ -9089,7 +9089,7 @@ static func prepare_settlement_ship_delivery(data: TerrainData, settlement_id: S
 		"source_version": int(a.holder.version), "destination_version": int(b.holder.version), "resources": resources.duplicate(true)}
 	var candidate: Dictionary = refs.order.duplicate(true)
 	candidate.payload.delivery_receipts.append(receipt)
-	candidate.revision = int(candidate.revision) + 1
+	candidate["revision"] = int(candidate.revision) + 1
 	if not valid_settlement_ship_order(data, data.site, candidate): return fail("CORRUPT_STATE")
 	return ok("原現場 transfer 與本單有限交付收據純候選", {"data": data, "site": data.site, "settlement": refs.settlement, "operations": refs.operations,
 		"order": refs.order, "candidate": candidate, "transfer": transfer, "revision": int(refs.order.revision), "published": false,
@@ -9112,10 +9112,10 @@ static func prepare_settlement_ship_output(data: TerrainData, feature: Dictionar
 	var launch := _ship_launch_query(data, feature, "ferry", _technology_actions(data).lab.site_controller.reserves_cell)
 	if not launch.ok: return launch
 	var candidate: Dictionary = current.order.duplicate(true)
-	candidate.status = "completed"
+	candidate["status"] = "completed"
 	candidate.payload.completed = 1
-	candidate.revision = int(candidate.revision) + 1
-	candidate.receipts = [{"id": "ship-output:" + JSON.stringify([str(data.site.id), str(current.order.id), str(launch.identity)]), "site_id": str(data.site.id),
+	candidate["revision"] = int(candidate.revision) + 1
+	candidate["receipts"] = [{"id": "ship-output:" + JSON.stringify([str(data.site.id), str(current.order.id), str(launch.identity)]), "site_id": str(data.site.id),
 		"shipyard_id": str(candidate.payload.feature_id), "ship_id": str(launch.identity), "operator_id": int(candidate.payload.operator_id), "materials": paid.materials.duplicate(true), "work_seconds": float(paid.work_seconds)}]
 	return ok("真完整船體／原 next_vehicle 的有限輸出候選", {"settlement": current.settlement, "operations": current.operations, "order": current.order,
 		"candidate": candidate, "finished_feature": feature, "product_id": "vehicle:" + str(launch.identity)})
@@ -9137,7 +9137,7 @@ static func publish_settlement_ship_delivery(prepared: Dictionary) -> Dictionary
 	if not stable.ok: return stable
 	publish_item_transfer(prepared.transfer)
 	publish_settlement_ship_order(prepared)
-	prepared.published = true
+	prepared["published"] = true
 	return ok("真搬料及唯一有限交付已同次提交")
 
 # The per-person rule an S12 order applies to its operator, helper and carrier;
@@ -9198,10 +9198,10 @@ static func request_settlement_ship_order(data: TerrainData, shipyard_id: String
 			"source_feature_id": shipyard_id, "donor_id": donor_id, "ship_type": "ferry", "team_id": int(team.team_id), "cap": Ships.build_cost("ferry"), "spent": {}, "consents": consents,
 			"purpose": purpose, "source": {"site_id": str(data.site.id), "holder": "feature:" + shipyard_id, "grantor_id": requester_id, "status": "revoked"}, "project_id": project_id, "delivery_receipts": [], "completed": 0}}
 	candidate.orders[id] = order
-	candidate.next_order = int(candidate.next_order) + 1
+	candidate["next_order"] = int(candidate.next_order) + 1
 	if not valid_settlement_ship_order(data, data.site, order) or not bool(script.call("valid_technology_operations", data, candidate, data.site)): return fail("CORRUPT_STATE")
 	if preview: return ok("原有限一艘、兩工人、一搬料者可採用；不造船、不預扣", {"order_id": id})
-	f.technology_shipyard_work = {"version": 1, "settlement_id": str(settlement.settlement_id)}
+	f["technology_shipyard_work"] = {"version": 1, "settlement_id": str(settlement.settlement_id)}
 	script.call("publish_technology_operations", settlement, candidate)
 	return ok("原單已登記；沿兩端真搬料後在船塢明示製造來源", {"order_id": id})
 
@@ -9484,9 +9484,9 @@ static func restrict_gd_contact_work_prefix(envelope: Dictionary, prefix: Dictio
 		# can only free resources/version space, never create a new allocation.
 		payment = {"holder": original.holder, "cargo": original.cargo, "version": version, "cost": original.cost}
 		ledger = envelope.ledger.duplicate(false)
-		ledger.source_version = version
+		ledger["source_version"] = version
 		ledger_operator_id = int(prefix.person_id)
-		ledger.operator_id = ledger_operator_id
+		ledger["operator_id"] = ledger_operator_id
 		ledger_seconds = 0.0
 		ledger_effective = 0.0
 	var endpoint: String = str(envelope.prepared.endpoint)
@@ -9501,19 +9501,19 @@ static func restrict_gd_contact_work_prefix(envelope: Dictionary, prefix: Dictio
 			ledger_seconds += productive
 			envelope_counted = true
 	var result: Dictionary = envelope.prepared.duplicate(false)
-	result.prefix_ref = prefix
-	result.prior_progress = previous
-	result.progress = minf(float(envelope.threshold), previous + applied * float(envelope.scale))
-	result.ledger = ledger
-	result.ledger_seconds = ledger_seconds
+	result["prefix_ref"] = prefix
+	result["prior_progress"] = previous
+	result["progress"] = minf(float(envelope.threshold), previous + applied * float(envelope.scale))
+	result["ledger"] = ledger
+	result["ledger_seconds"] = ledger_seconds
 	if bool(result.get("ledger_effective_tracked", false) and envelope_counted): ledger_effective += maxf(0.0, float(result.progress) - previous) * 60.0
-	result.ledger_effective = ledger_effective
-	result.ledger_operator_id = ledger_operator_id
-	result.payment = payment
-	result.repair = {}
+	result["ledger_effective"] = ledger_effective
+	result["ledger_operator_id"] = ledger_operator_id
+	result["payment"] = payment
+	result["repair"] = {}
 	if endpoint in ["siege", "ship_repair"] and action == "repair" and applied > 0.0:
 		var repaired: float = float(envelope.unit.amount) * float(result.progress) / float(envelope.threshold)
-		result.repair = {"hp": minf(float(envelope.repair_maximum), hp + maxf(0.0, repaired - prior_applied)), "applied": repaired}
+		result["repair"] = {"hp": minf(float(envelope.repair_maximum), hp + maxf(0.0, repaired - prior_applied)), "applied": repaired}
 		if endpoint == "ship_repair":
 			var consumed: Dictionary = {}
 			for resource: String in envelope.ship_paid_cost:
@@ -9526,8 +9526,8 @@ static func restrict_gd_contact_work_prefix(envelope: Dictionary, prefix: Dictio
 			result.repair.consumed = consumed
 			result.repair.holder_version = int(envelope.ship_holder_begin) + int(usage.commits)
 			result.repair.revision = revision
-	result.deferred_endpoint = float(result.progress) + 0.000000001 >= float(envelope.threshold)
-	result.published = false
+	result["deferred_endpoint"] = float(result.progress) + 0.000000001 >= float(envelope.threshold)
+	result["published"] = false
 	return result
 
 static func shared_physical_work_unit(data: TerrainData, task: Dictionary) -> Dictionary:
@@ -9714,7 +9714,7 @@ static func publish_prepared_ranged_craft(prepared: Dictionary) -> Dictionary:
 	var result: Dictionary = ok()
 	if not prepared.creation.is_empty():
 		_publish_equipment_creation(data, prepared.creation)
-		result.item_id = str(prepared.creation.item_ids[0])
+		result["item_id"] = str(prepared.creation.item_ids[0])
 	add_items(prepared.stock, prepared.cost, -1)
 	for resource: String in prepared.cost:
 		if int(prepared.stock[resource]) == 0: prepared.stock.erase(resource)
@@ -9722,8 +9722,8 @@ static func publish_prepared_ranged_craft(prepared: Dictionary) -> Dictionary:
 		add_items(prepared.stock, prepared.output)
 		prepared.depot.version = int(prepared.depot.version) + 1
 	data.environment_revision += 1
-	prepared.published = true
-	result.message = "已手作並存入原營地：" + str(prepared.recipe.name)
+	prepared["published"] = true
+	result["message"] = "已手作並存入原營地：" + str(prepared.recipe.name)
 	return result
 
 # Original public signature; preview and synchronous commit retain their
@@ -9768,7 +9768,7 @@ static func prepare_ranged_craft_batch(data: TerrainData, originals: Array) -> D
 			stock_after = next_stock
 			version += 1
 			accepted.append(original)
-			result.message = "已手作並存入原營地：" + str(recipe.name)
+			result["message"] = "已手作並存入原營地：" + str(recipe.name)
 			if equipment:
 				products.append({"definition_id": "weapon:" + str(recipe.asset), "definition": {"slot": "weapon", "asset": str(recipe.asset), "tint": [1.0, 1.0, 1.0, 1.0]}, "slot": ""})
 				product_owners.append(int(original.owner_id))
@@ -9833,14 +9833,14 @@ static func validate_prepared_ranged_craft_batch(batch: Dictionary) -> bool:
 			stock_after = next_stock
 			version += 1
 			accepted.append(original)
-			result.message = "已手作並存入原營地：" + str(original.recipe.name)
+			result["message"] = "已手作並存入原營地：" + str(original.recipe.name)
 			if equipment:
 				var identity: String = str(next_item + ids.size())
 				var definition_id: String = "weapon:" + str(original.recipe.asset)
 				ids.append(identity)
 				definitions[definition_id] = {"slot": "weapon", "asset": str(original.recipe.asset), "tint": [1.0, 1.0, 1.0, 1.0]}
 				records[identity] = {"definition": definition_id, "original_owner": int(original.owner_id), "holder": str(batch.depot.holder)}
-				result.item_id = identity
+				result["item_id"] = identity
 		results.append(result)
 	if stock_after != batch.get("stock_after") or version != int(batch.get("depot_version", -1)) or results != batch.get("results") \
 		or not batch.get("accepted") is Array or accepted.size() != batch.accepted.size(): return false
@@ -9856,7 +9856,7 @@ static func validate_prepared_ranged_craft_batch(batch: Dictionary) -> bool:
 			or int(creation.get("next_item", -1)) != next_item + ids.size(): return false
 		var destination: Dictionary = batch.depot.duplicate(true)
 		destination.item_ids.append_array(ids)
-		destination.version = int(batch.depot.version) + 1
+		destination["version"] = int(batch.depot.version) + 1
 		if creation.get("destination_candidate") != destination: return false
 		for definition_id: String in creation.get("definitions", {}):
 			if data.site.item_definitions.has(definition_id) and data.site.item_definitions[definition_id] != creation.definitions[definition_id]: return false
@@ -9877,7 +9877,7 @@ static func publish_prepared_ranged_craft_batch(batch: Dictionary) -> Array[Dict
 		batch.depot.version = int(batch.depot_version)
 		data.environment_revision += batch.accepted.size()
 	for original: Dictionary in batch.accepted: original.published = true
-	batch.published = true
+	batch["published"] = true
 	return batch.results
 
 static func validate_prepared_ranged_source(prepared: Dictionary) -> bool:
@@ -10148,8 +10148,8 @@ static func _loot_ground_cleanup_candidate(prepared: Dictionary) -> Dictionary:
 	for identity: String in prepared.item_ids: after.item_ids.erase(identity)
 	for slot: String in after.equipped.keys():
 		if prepared.item_ids.has(after.equipped[slot]): after.equipped.erase(slot)
-	after.version = int(prepared.source_version) + 1
-	if float(prepared.open_amount) > 0.0: after.open_rations = float(after.open_rations) - float(prepared.open_amount)
+	after["version"] = int(prepared.source_version) + 1
+	if float(prepared.open_amount) > 0.0: after["open_rations"] = float(after.open_rations) - float(prepared.open_amount)
 	if inventory_size(after.cargo) > 0 or not after.item_ids.is_empty() or float(after.get("open_rations", 0.0)) > 0.0: return {}
 	return ok("本次真搜刮之後的原空容器候選", {"terrain": data, "site_state": data.site, "ground": data.site.ground_loot,
 		"identity": str(prepared.container_id), "container": prepared.source, "before": after, "published": false, "notified": false})
@@ -10163,7 +10163,7 @@ static func publish_prepared_loot_transfer(prepared: Dictionary) -> Dictionary:
 		prepared.destination.version = int(prepared.destination_version) + 1
 	if float(prepared.open_amount) > 0.0:
 		prepared.source.open_rations = float(prepared.source.open_rations) - float(prepared.open_amount)
-	prepared.published = true
+	prepared["published"] = true
 	# Destination private food-pool publication stays with original PA/Controller.
 	return result
 
@@ -10244,7 +10244,7 @@ static func publish_prepared_leave_ground_loot(prepared: Dictionary) -> Dictiona
 	if not prepared.transfer.is_empty(): publish_item_transfer(prepared.transfer)
 	else:
 		prepared.source.version = int(prepared.expected_version) + 1
-		container.version = 1
+		container["version"] = 1
 	if float(prepared.open_amount) > 0.0:
 		prepared.source_open.open_rations = float(prepared.source_open.open_rations) - float(prepared.open_amount)
 		container["open_rations"] = float(prepared.open_amount)
@@ -10254,7 +10254,7 @@ static func publish_prepared_leave_ground_loot(prepared: Dictionary) -> Dictiona
 		if not data.ground_loot_at.has(int(container.cell)): data.ground_loot_at[int(container.cell)] = []
 		data.ground_loot_at[int(container.cell)].append(str(prepared.identity))
 		data.ground_loot_dirty_rows[prepared.cell.y] = true
-	prepared.published = true
+	prepared["published"] = true
 	return ok("物品留在現場", {"container_id": str(prepared.identity)})
 
 static func prepare_clear_empty_ground_loot(data: TerrainData, identity: String) -> Dictionary:
@@ -10289,12 +10289,12 @@ static func publish_prepared_clear_empty_ground_loot(prepared: Dictionary) -> Di
 			if str(person.get("remains_id", "")) == identity: person.remains_id = ""
 	for person: Dictionary in data.site.get("actors", {}).values():
 		if str(person.get("remains_id", "")) == identity: person.remains_id = ""
-	prepared.published = true
+	prepared["published"] = true
 	return ok()
 
 static func notify_cleared_ground_loot(prepared: Dictionary) -> void:
 	assert(prepared.published and not prepared.notified)
-	prepared.notified = true
+	prepared["notified"] = true
 	# Original Vehicles owns live ship/Army/Actor remains references. This is a
 	# post-transaction observation, not a pre-cost approval or Runtime authority.
 	var data: TerrainData = prepared.terrain
@@ -10343,7 +10343,7 @@ static func publish_prepared_deploy_tent(prepared: Dictionary) -> Dictionary:
 	prepared.holder.version = int(prepared.expected_version) + 1
 	prepared.site_state.next_feature = int(prepared.next_feature) + 1
 	prepared.features[str(prepared.feature_id)] = prepared.feature
-	prepared.published = true
+	prepared["published"] = true
 	Env.rebuild_indexes(prepared.terrain)
 	if Env.ecology_active(prepared.terrain): ecology_reconcile(prepared.terrain)
 	return ok("已由原行囊搭設營帳", {"feature": str(prepared.feature_id)})
@@ -10378,7 +10378,7 @@ static func publish_prepared_pack_tent(prepared: Dictionary) -> Dictionary:
 	prepared.features.erase(str(prepared.key))
 	add_items(prepared.cargo, {"camp_tent": 1})
 	prepared.holder.version = int(prepared.expected_version) + 1
-	prepared.published = true
+	prepared["published"] = true
 	Env.rebuild_indexes(prepared.terrain)
 	if Env.ecology_active(prepared.terrain): ecology_reconcile(prepared.terrain)
 	return ok("營帳已收回原行囊", {"feature": str(prepared.key)})
@@ -10661,10 +10661,10 @@ static func prepare_settlement_defense_completion(data: TerrainData, key: String
 	var next: Dictionary = candidate.orders[str(feature.settlement_work.order_id)]
 	next.receipts.append({"step": int(next.next_step), "feature_id": key, "operator_id": identity, "action": str(task.action),
 		"materials": next.paid.materials.duplicate(), "work_seconds": float(next.paid.work_seconds)})
-	next.next_step = int(next.next_step) + 1
-	next.paid = {}
-	next.status = "completed" if int(next.next_step) == next.steps.size() else "prepared"
-	next.revision = int(next.revision) + 1
+	next["next_step"] = int(next.next_step) + 1
+	next["paid"] = {}
+	next["status"] = "completed" if int(next.next_step) == next.steps.size() else "prepared"
+	next["revision"] = int(next.revision) + 1
 	var owner: Variant = load("res://scripts/terrain_lab/site_settlement.gd")
 	if not owner.call("valid_technology_operations", data, candidate): return fail("INVALID")
 	return ok("", {"owner": owner, "settlement": admission.settlement, "candidate": candidate, "feature": feature})
@@ -10736,7 +10736,7 @@ static func _technology_begin_feature_operation(data: TerrainData, selector: Dic
 		or float(feature.get("production", 0.0)) != 0.0 or _feature_has_work(data, key) or _feature_operation_active(data, key): return fail("BUSY", "先停止本原工區並領完原已付款批次")
 	var candidate := feature.duplicate(true)
 	if str(binding[1]).is_empty(): candidate.erase("recipe_id")
-	else: candidate.recipe_id = str(binding[1])
+	else: candidate["recipe_id"] = str(binding[1])
 	var definition := feature_recipe(candidate)
 	if definition.is_empty() or not definition.has("cycle"): return fail("INVALID")
 	if not can_pay(data.site.inventory, {"tools": 1}): return fail("MATERIALS", "原工作工具不足")
@@ -10762,7 +10762,7 @@ static func _technology_begin_feature_operation(data: TerrainData, selector: Dic
 		scope = _technology_geometry_payment(data, token, definition.get("input", {}), true, source.source)
 		if not scope.ok: return scope
 		token = scope.token
-		selected.token = token
+		selected["token"] = token
 	var zone := {}
 	var existing_zone := false
 	for current: Dictionary in data.site.zones:
@@ -10794,15 +10794,15 @@ static func _technology_begin_feature_operation(data: TerrainData, selector: Dic
 	# No admission can fail below: these SAME original refs form one paid batch.
 	_technology_publish_material_payment(source)
 	if str(binding[1]).is_empty(): feature.erase("recipe_id")
-	else: feature.recipe_id = str(binding[1])
-	if not token.is_empty(): feature.tech_trial = token
+	else: feature["recipe_id"] = str(binding[1])
+	if not token.is_empty(): feature["tech_trial"] = token
 	if not operation_ref.is_empty():
-		if operation_ref.has("settlement_id"): feature.technology_settlement_order = operation_ref.duplicate()
-		else: feature.technology_order = operation_ref.duplicate()
-	feature.tech_batch = ledger
-	feature.batch_paid = true
-	feature.production = 0.0
-	feature.status = "原完整材料已付；具名原人前往本工位"
+		if operation_ref.has("settlement_id"): feature["technology_settlement_order"] = operation_ref.duplicate()
+		else: feature["technology_order"] = operation_ref.duplicate()
+	feature["tech_batch"] = ledger
+	feature["batch_paid"] = true
+	feature["production"] = 0.0
+	feature["status"] = "原完整材料已付；具名原人前往本工位"
 	_technology_activate_zone(data, zone, existing_zone)
 	if not scope.is_empty(): actions.publish_phase_payment(scope.payment)
 	_technology_publish_public_begin(nation)
@@ -11037,7 +11037,7 @@ static func _technology_named_admission(data: TerrainData, selector: Dictionary)
 		or not Technology.integer(admitted.get("requester_id"), 1) or not admitted.get("operation_ref") is Dictionary: return fail("INVALID_OWNER")
 	# This is a projection from the actual original current control; a caller
 	# cannot select the controlled branch by supplying its own boolean.
-	admitted.controlled_worker = admitted.person_ids.size() == 1 and int(admitted.person_ids[0]) == int(actions._technology_controlled())
+	admitted["controlled_worker"] = admitted.person_ids.size() == 1 and int(admitted.person_ids[0]) == int(actions._technology_controlled())
 	if admitted.get("team") == null and not bool(admitted.get("controlled_worker", false)): return fail("NO_WORKER", "原具名工人須有真工作隊，或由當前受控本人站在原工位操作")
 	if not admitted.operation_ref.is_empty() and not Technology.keys(admitted.operation_ref, ["nation_id", "order_id"]) and not Technology.keys(admitted.operation_ref, ["settlement_id", "order_id"]): return fail("INVALID_OWNER")
 	return ok("", {"admission": admitted})
@@ -11212,7 +11212,7 @@ static func publish_technology_work_credit(original_target: Dictionary, prepared
 	if float(prepared.get("credit", 0.0)) <= 0.0: return
 	assert(not original_target.has("tech_work_credit") and original_target.get("tech_trial", {}) == prepared.token \
 		and prepared.actions.can_publish_phase_work_credit(prepared.person_prepared))
-	original_target.tech_work_credit = prepared.assistance.duplicate(true)
+	original_target["tech_work_credit"] = prepared.assistance.duplicate(true)
 	prepared.actions.publish_phase_work_credit(prepared.person_prepared)
 
 # Keeps original total_work/work/production units, refund and repair baselines.
@@ -11383,8 +11383,8 @@ static func _water_allocation_candidate(data: TerrainData, priority: Array) -> D
 				budgets[source] = float(budgets[source]) - portion
 				if supplied >= demand:
 					break
-			status.demand = float(status.demand) + demand
-			status.supplied = float(status.supplied) + supplied
+			status["demand"] = float(status.demand) + demand
+			status["supplied"] = float(status.supplied) + supplied
 			if int(request.slot) >= 0:
 				status.slots[str(request.slot)] = {"demand": demand, "supplied": supplied}
 		water_status[key] = status
@@ -11448,8 +11448,8 @@ static func _building_feature_candidate(kind: String, cells: Array[int], preview
 	if kind == "gate":
 		feature["gate"] = {"open": false, "pending": "", "progress": 0.0, "operator_id": -1}
 	if kind in ["pasture", "horse_ranch"]:
-		feature.species = "horse" if kind == "horse_ranch" else "sheep"
-		feature.residents = 2 if kind == "horse_ranch" else 1
+		feature["species"] = "horse" if kind == "horse_ranch" else "sheep"
+		feature["residents"] = 2 if kind == "horse_ranch" else 1
 	return feature
 
 static func prepare_build_request(data: TerrainData, kind: String, cells: Array[int], occupied: Callable = Callable(), options: Dictionary = {}, original_source: Dictionary = {}, operation_selector: Dictionary = {}) -> Dictionary:
@@ -11461,7 +11461,7 @@ static func prepare_build_request(data: TerrainData, kind: String, cells: Array[
 	if kind == "irrigation_channel" and operation_selector.is_empty():
 		var request: Dictionary = options.get("irrigation", {}).duplicate()
 		var actions: Variant = _technology_actions(data)
-		request.operator_id = int(actions._technology_controlled()) if actions != null else 0
+		request["operator_id"] = int(actions._technology_controlled()) if actions != null else 0
 		var authority: Dictionary = technology_irrigation_work_preflight(data, {"irrigation": request})
 		if not authority.ok: return authority
 	var preview: Dictionary = preview_build(data, kind, cells, occupied, options, original_source, operation_selector)
@@ -11486,19 +11486,19 @@ static func prepare_build_request(data: TerrainData, kind: String, cells: Array[
 	if selector.has("token"):
 		scope = _technology_geometry_payment(data, selector.token, preview.cost, true, source.source)
 		if not scope.ok: return scope
-		feature.tech_trial = scope.token
-		feature.tech_batch = _technology_geometry_ledger(data, scope.token, scope.payment, "construct:" + kind, source.source)
+		feature["tech_trial"] = scope.token
+		feature["tech_batch"] = _technology_geometry_ledger(data, scope.token, scope.payment, "construct:" + kind, source.source)
 	var named := _technology_prepare_named_feature(data, key, feature, zone, "construct", selector)
 	if kind == "irrigation_channel" and operation_selector.is_empty(): named = _irrigation_prepare_controlled(data, feature, zone)
 	if not named.ok: return named
 	var operation_ref: Dictionary = named.admission.get("operation_ref", source.operation_ref)
 	if not source.operation_ref.is_empty() and operation_ref != source.operation_ref: return fail("STALE_SOURCE")
 	if not operation_ref.is_empty():
-		feature.technology_order = operation_ref.duplicate()
+		feature["technology_order"] = operation_ref.duplicate()
 		if not selector.has("token"):
 			var ledger := _technology_public_ledger(data, key, "construct:" + kind, source, named.admission)
 			if ledger.is_empty(): return fail("NO_WORK_SLOTS")
-			feature.tech_batch = ledger
+			feature["tech_batch"] = ledger
 	var nation := _technology_prepare_public_begin(data, operation_ref, binding, "feature:" + key)
 	if not nation.ok: return nation
 	# Final source CAS is still before the first mutation, after all callbacks.
@@ -11670,7 +11670,7 @@ static func settlement_processing_preflight(data: TerrainData, settlement_id: St
 		if project.get("id") != order.payload.project_id or project.get("purpose") != order.payload.purpose or project.get("tech_id") != spec.tech_id \
 			or not Technology.same_person_ref(project.get("executor", {}), {"site_id": str(data.site.id), "person_id": int(person.person_id)}, refs.settlement.technology.get("person_links", [])): return fail("STALE_PROJECT")
 	var candidate: Dictionary = physical.feature.duplicate(true)
-	candidate.recipe_id = str(spec.recipe)
+	candidate["recipe_id"] = str(spec.recipe)
 	var recipe := feature_recipe(candidate)
 	if not Technology.material_equal(recipe.get("input", {}), spec.cost) or not Technology.material_equal(recipe.get("output", {}), spec.outputs) \
 		or not is_equal_approx(float(recipe.get("cycle", 0.0)) * 60.0, float(spec.seconds)): return fail("SPEC_MISMATCH", "原真配方、成本與一次個人改良工時尚未對齊")
@@ -11858,10 +11858,10 @@ static func prepare_settlement_metal_transfer(data: TerrainData, settlement_id: 
 	candidate.payload.carry_receipts.append(fact)
 	if legs == 0:
 		add_items(candidate.payload.spent, {"iron": 2})
-		candidate.status = "active"
+		candidate["status"] = "active"
 	else:
 		candidate.payload.feature_id = str(p.smithy_id)
-		candidate.status = "prepared"
+		candidate["status"] = "prepared"
 	var prepared := _settlement_metal_prepared(data, ready, candidate)
 	if not prepared.ok: return prepared
 	prepared.terrain = data
@@ -11917,7 +11917,7 @@ static func publish_settlement_metal_order(prepared: Dictionary) -> void:
 	for field: String in ["status", "revision"]: order[field] = candidate[field]
 	for field: String in ["feature_id", "completed"]: order.payload[field] = candidate.payload[field]
 	for field: String in ["spent", "carry_receipts"]: order.payload[field] = candidate.payload[field].duplicate(true)
-	order.receipts = candidate.receipts.duplicate(true)
+	order["receipts"] = candidate.receipts.duplicate(true)
 	if prepared.has("finished_feature"):
 		var finished: Dictionary = prepared.finished_feature
 		assert(finished.get("technology_settlement_order", {}) == {"settlement_id": str(order.payload.settlement_id), "order_id": str(order.id)})
@@ -12656,7 +12656,7 @@ static func _settlement_ship_begin(data: TerrainData, settlement_id: String, ord
 	if token.is_empty() and p.project_id != 0: return fail("NO_AUTHORITY")
 	if not can_pay(data.site.inventory, {"tools": 1}): return fail("MATERIALS")
 	var local_token := token.duplicate(true)
-	if not local_token.is_empty(): local_token.materials = p.cap.duplicate(true)
+	if not local_token.is_empty(): local_token["materials"] = p.cap.duplicate(true)
 	var source := _technology_material_source(data, {"token": local_token} if not token.is_empty() else selector, "ferry_build", p.cap)
 	if not source.ok: return source
 	var payment := prepare_settlement_ship_payment(data, current.operation_ref, p.cap)
@@ -12677,16 +12677,16 @@ static func _settlement_ship_begin(data: TerrainData, settlement_id: String, ord
 	# Every potential failure has completed. SAME original feature/zone/tasks,
 	# original material holder, Scope candidate and finite order publish once.
 	_technology_publish_material_payment(source)
-	feature.ship_build = {"version": 1, "recipe_version": 1, "ship_type": "ferry", "team_id": int(p.team_id), "paid_cost": p.cap.duplicate(true), "total_work": Ships.build_work_seconds("ferry")}
-	feature.technology_shipyard_work = {"version": 1, "settlement_id": settlement_id}
-	feature.technology_ship_method = {"version": 1}
-	feature.technology_settlement_order = current.operation_ref.duplicate()
-	feature.tech_batch = paid
-	feature.production = 0.0
-	feature.batch_paid = true
-	feature.status = "原有限 ferry 已付全料；兩工位、真 F13 一次效率"
+	feature["ship_build"] = {"version": 1, "recipe_version": 1, "ship_type": "ferry", "team_id": int(p.team_id), "paid_cost": p.cap.duplicate(true), "total_work": Ships.build_work_seconds("ferry")}
+	feature["technology_shipyard_work"] = {"version": 1, "settlement_id": settlement_id}
+	feature["technology_ship_method"] = {"version": 1}
+	feature["technology_settlement_order"] = current.operation_ref.duplicate()
+	feature["tech_batch"] = paid
+	feature["production"] = 0.0
+	feature["batch_paid"] = true
+	feature["status"] = "原有限 ferry 已付全料；兩工位、真 F13 一次效率"
 	if not scope.is_empty():
-		feature.tech_trial = scope.token
+		feature["tech_trial"] = scope.token
 		_technology_actions(data).publish_phase_binding(scope.binding)
 		_technology_actions(data).publish_phase_payment(scope.payment)
 	publish_settlement_ship_order(payment)
@@ -12843,9 +12843,9 @@ static func publish_settlement_ship_order(prepared: Dictionary) -> void:
 	order.payload.clear()
 	order.payload.merge(candidate.payload)
 	order.payload.source = source
-	order.status = candidate.status
-	order.revision = int(candidate.revision)
-	order.receipts = candidate.receipts.duplicate(true)
+	order["status"] = candidate.status
+	order["revision"] = int(candidate.revision)
+	order["receipts"] = candidate.receipts.duplicate(true)
 	if prepared.has("finished_feature"):
 		prepared.finished_feature.erase("technology_settlement_order")
 		prepared.finished_feature.erase("technology_ship_method")
@@ -13061,7 +13061,7 @@ static func _settlement_order_feature_spec(order: Dictionary, binding: String = 
 		var raw: Variant = runtime_script.call("settlement_metal_spec", order, binding)
 		if not raw is Dictionary or not Technology.keys(raw, ["feature_id", "feature_kind", "recipe", "binding", "cost", "outputs", "seconds"]): return {}
 		var result: Dictionary = raw.duplicate(true)
-		result.feature = str(raw.feature_kind)
+		result["feature"] = str(raw.feature_kind)
 		return result
 	return {}
 
@@ -13102,7 +13102,7 @@ static func normalize_settlement_food_order(raw: Dictionary) -> void:
 	for key: String in ["authorizer_id", "revision"]: raw[key] = int(raw[key])
 	var p: Dictionary = raw.payload
 	for key: String in ["operator_id", "project_id", "quantity", "initial_stock"]: p[key] = int(p[key])
-	p.work_seconds = float(p.work_seconds)
+	p["work_seconds"] = float(p.work_seconds)
 	p.source.grantor_id = int(p.source.grantor_id)
 	for stack: Dictionary in [p.cap, p.spent]:
 		for key: String in stack: stack[key] = int(stack[key])
@@ -13336,8 +13336,8 @@ static func prepare_settlement_processing_payment(data: TerrainData, selector: D
 		if int(source.spent.get(item, 0)) + int(cost[item]) > int(source.cap.get(item, -1)): return fail("NO_BUDGET")
 	var candidate: Dictionary = ready.order.duplicate(true)
 	add_items(candidate.payload.spent, cost)
-	candidate.status = "active"
-	candidate.revision = int(candidate.revision) + 1
+	candidate["status"] = "active"
+	candidate["revision"] = int(candidate.revision) + 1
 	return ok("", {"state_ref": data.site, "operations_ref": ready.operations, "order_ref": ready.order, "order_before": ready.order.duplicate(true), "candidate": candidate, "source": source})
 
 static func publish_settlement_processing_order(prepared: Dictionary) -> void:
@@ -13353,7 +13353,7 @@ static func publish_settlement_processing_order(prepared: Dictionary) -> void:
 	var candidate: Dictionary = prepared.candidate
 	for field: String in ["status", "revision"]: original[field] = candidate[field]
 	for field: String in ["completed", "spent"]: original.payload[field] = candidate.payload[field].duplicate(true) if candidate.payload[field] is Dictionary else candidate.payload[field]
-	original.receipts = candidate.receipts.duplicate(true)
+	original["receipts"] = candidate.receipts.duplicate(true)
 
 static func _water_consumer_order(data: TerrainData, keys: Array, priority: Array) -> Array[String]:
 	var consumers: Array[String] = ["camp"]
@@ -13384,7 +13384,7 @@ static func _irrigation_prepare_controlled(data: TerrainData, feature: Dictionar
 	var actions: Variant = _technology_actions(data)
 	if actions == null or not actions.has_method("prepare_controlled_feature_work"): return fail("UNSUPPORTED")
 	var request: Dictionary = feature.irrigation.duplicate()
-	request.operator_id = int(actions._technology_controlled())
+	request["operator_id"] = int(actions._technology_controlled())
 	var selector := {"irrigation": request}
 	var admission := technology_irrigation_work_preflight(data, selector)
 	if not admission.ok: return admission
@@ -13469,7 +13469,7 @@ static func settlement_metal_binding_valid(order: Dictionary, binding: String) -
 
 static func _settlement_metal_prepared(data: TerrainData, refs: Dictionary, candidate: Dictionary) -> Dictionary:
 	if int(refs.order.revision) >= 2147483646: return fail("LIMIT")
-	candidate.revision = int(refs.order.revision) + 1
+	candidate["revision"] = int(refs.order.revision) + 1
 	return ok("", {"state_ref": data.site, "operations_ref": refs.operations, "order_ref": refs.order, "order_before": refs.order.duplicate(true), "candidate": candidate})
 
 static func settlement_metal_paid_source_candidate(data: TerrainData, token: Dictionary, order_id: String) -> Dictionary:
@@ -13508,7 +13508,7 @@ static func publish_settlement_food_transfer(prepared: Dictionary) -> Dictionary
 	# Only a just-validated synchronous owner candidate enters this tail.
 	# Real transfer FIRST; no callback, guard, phase reprepare or timer advance after.
 	if bool(prepared.get("published", false)): return ok("同原糧食腿已發布", {"duplicate": true})
-	prepared.published = true
+	prepared["published"] = true
 	var transfer_result := publish_item_transfer(prepared.transfer)
 	var order: Dictionary = prepared.order
 	var p: Dictionary = prepared.payload
@@ -13518,18 +13518,18 @@ static func publish_settlement_food_transfer(prepared: Dictionary) -> Dictionary
 		"to": "person:" + str(int(p.operator_id)) if leg == "load" else "feature:" + str(p.warehouse_id), "quantity": int(p.quantity),
 		"source_version": int(transfer_result.source_version), "destination_version": int(transfer_result.destination_version), "work_seconds": 0.0}
 	order.receipts.append(receipt)
-	order.status = "active"
-	order.revision = int(order.revision) + 1
+	order["status"] = "active"
+	order["revision"] = int(order.revision) + 1
 	if leg == "load":
-		p.stage = "carrier"
-		p.spent = {"grain": int(p.quantity)}
-		p.token = prepared.token
-		p.paid = {"token": p.token, "payment_id": str(prepared.scope_payment.payment_id) if not prepared.scope_payment.is_empty() else receipt.id,
+		p["stage"] = "carrier"
+		p["spent"] = {"grain": int(p.quantity)}
+		p["token"] = prepared.token
+		p["paid"] = {"token": p.token, "payment_id": str(prepared.scope_payment.payment_id) if not prepared.scope_payment.is_empty() else receipt.id,
 			"operator_id": int(p.operator_id), "materials": p.spent.duplicate(true), "source_holder": str(p.source.holder),
 			"source_version": int(transfer_result.source_version), "carrier_version": int(transfer_result.destination_version)}
 		if not prepared.scope_payment.is_empty(): prepared.actions.publish_phase_payment(prepared.scope_payment)
 	else:
-		p.stage = "arrived"
+		p["stage"] = "arrived"
 		prepared.actions.publish_settlement_food_work(prepared.work)
 	prepared.data.environment_revision += 1
 	return ok("真實物已由原持有人完成這一腿；不再扣來源", {"leg": leg, "quantity": int(p.quantity)})
@@ -13661,8 +13661,8 @@ static func prepare_settlement_ship_payment(data: TerrainData, selector: Diction
 	if not Technology.material_equal(cost, current.order.payload.cap) or not current.order.payload.spent.is_empty(): return fail("NO_BUDGET")
 	var candidate: Dictionary = current.order.duplicate(true)
 	candidate.payload.spent = cost.duplicate(true)
-	candidate.status = "active"
-	candidate.revision = int(candidate.revision) + 1
+	candidate["status"] = "active"
+	candidate["revision"] = int(candidate.revision) + 1
 	if not Technology.integer(candidate.revision, 1): return fail("LIMIT")
 	return ok("原有限單付款候選；原 Runtime 同尾採用 paid ship_build", {"settlement": current.settlement, "operations": current.operations, "order": current.order, "candidate": candidate})
 
@@ -13734,7 +13734,7 @@ static func publish_checked_work_prefix(prepared: Dictionary) -> void:
 	if not is_same(prepared.task, prepared.site.get("manual", {})):
 		prepared.task.status = "原已核定工作前缀已提交；完成端点待原当前资格验收" if prepared.deferred_endpoint else "原工作者施工中"
 	prepared.data.environment_revision += 1
-	prepared.published = true
+	prepared["published"] = true
 
 # Called AFTER Native publication, with current original life/authority checks.
 # Rejection retains the already paid completed progress for a real zero retry.
@@ -13763,7 +13763,7 @@ static func finish_checked_work_clock(data: TerrainData, checked_clock: Dictiona
 	var ref: Variant = data.get_meta(&"site_controller", null) if data.has_meta(&"site_controller") else null
 	var original: Variant = ref.get_ref() if ref is WeakRef else null
 	assert(original != null and checked_clock.get("owner") == original and bool(checked_clock.get("advanced", false)) and original.valid_checked_runtime_clock(checked_clock, float(checked_clock.seconds)))
-	checked_clock.consumed = true
+	checked_clock["consumed"] = true
 	# ORIGINAL point is clipped at its next minute. Work endpoints have already
 	# settled with current people; these are original discrete clock endpoints.
 	if bool(checked_clock.ship_build_due): advance_ship_builds(data, occupied)
@@ -13928,7 +13928,7 @@ static func publish_checked_ladder_action_prefix(prepared: Dictionary) -> void:
 	# Lab has already admitted every provider and Native's no-failure tail.
 	if bool(prepared.published): return
 	if not bool(prepared.cancelled): prepared.ladder.progress = float(prepared.progress)
-	prepared.published = true
+	prepared["published"] = true
 
 static func prepare_checked_ladder_action_prefix(data: TerrainData, key: String, raw_seconds: float, prefix: Dictionary) -> Dictionary:
 	if not data.has_meta(&"site_work_team") or not is_finite(raw_seconds) or raw_seconds <= 0.0: return fail("STALE_WORK_PREFIX")
@@ -14079,7 +14079,7 @@ static func publish_validated_fire_suppression(data: TerrainData, prepared: Dict
 	var state := _fire_state(data, float(prepared.action_begin))
 	var unit := _fire_unit(data, state, check.descriptor)
 	holder[check.supply_field] = int(holder[check.supply_field]) - int(prepared.paid_q)
-	holder.version = int(holder.version) + 1
+	holder["version"] = int(holder.version) + 1
 	if not state.has("suppression_pending"): state["suppression_pending"] = []
 	state.suppression_pending.append({"sequence": int(prepared.sequence), "key": str(prepared.key), "generation": int(unit.generation), "mode": mode,
 		"begin": float(prepared.action_begin), "end": float(prepared.action_end), "total_q": int(prepared.paid_q),
@@ -14145,12 +14145,12 @@ static func prepare_fire_suppression_batch(data: TerrainData, rows: Array) -> Di
 			continue
 		var prepared: Dictionary = source.duplicate(false)
 		var check: Dictionary = checked.duplicate(false)
-		prepared.sequence = sequence + offset + 1
-		check.sequence = prepared.sequence
-		prepared.expected_holder_version = int(holder.version) + int(reserved.debits)
-		prepared.expected_supply_q = int(holder[field]) - already
+		prepared["sequence"] = sequence + offset + 1
+		check["sequence"] = prepared.sequence
+		prepared["expected_holder_version"] = int(holder.version) + int(reserved.debits)
+		prepared["expected_supply_q"] = int(holder[field]) - already
 		reserved.quantities[field] = already + paid
-		reserved.debits = int(reserved.debits) + 1
+		reserved["debits"] = int(reserved.debits) + 1
 		heat[heat_key] = float(heat.get(heat_key, 0.0)) + paid * per_q
 		offset += 1
 		jobs[key] = {"prepared": prepared, "check": check}
@@ -14258,7 +14258,7 @@ static func prepare_item_exchange(data: TerrainData, a_ref: Dictionary, b_ref: D
 	var allowance_a: int = int(a.capacity) + inventory_size(a_copy.resources) + a_copy.item_ids.size()
 	var leg_b: Dictionary = prepare_item_transfer(data, b.holder, b.cargo, a.holder, a.cargo, b_copy.resources, b_copy.item_ids, int(b_ref.expected_version), int(a_ref.expected_version), allowance_a)
 	if not leg_b.ok: return leg_b
-	prepared.legs = [leg_a, leg_b]
+	prepared["legs"] = [leg_a, leg_b]
 	var stable: Dictionary = validate_prepared_item_exchange(prepared)
 	return prepared if stable.ok else stable
 
@@ -14710,7 +14710,7 @@ static func prepare_author_building(data: TerrainData, work: Dictionary, action:
 		storage.stock.cargo = normalized
 	elif action == "owner":
 		if not _building_integer(options.get("owner_faction"), 0, 100000000): return fail("INVALID")
-		original.owner_faction = int(options.owner_faction)
+		original["owner_faction"] = int(options.owner_faction)
 		if str(original.kind) == "settlement_center":
 			var center_guard: Dictionary = _author_center_unbound(candidate)
 			if not center_guard.ok: return center_guard
@@ -14758,28 +14758,28 @@ static func prepare_author_building(data: TerrainData, work: Dictionary, action:
 		if not preview.ok: return preview
 		if not preview.clearing.is_empty(): return fail("AUTHOR_CLEARING_REQUIRED", str(preview.clearing))
 		var feature: Dictionary = _completed_tent_candidate(cells, preview) if kind == "tent" else _building_feature_candidate(kind, cells, preview)
-		feature.stage = "complete"
-		feature.progress = float(feature.work)
-		feature.status = "作者初始完工"
+		feature["stage"] = "complete"
+		feature["progress"] = float(feature.work)
+		feature["status"] = "作者初始完工"
 		if action == "copy" and int(original.get("civil_version", 0)) == CIVIL_VERSION:
 			feature = _civil_upgrade_candidate(feature, building_grade(original))
-			feature.cost = original.cost.duplicate(true)
-			feature.work = float(original.work)
-			feature.progress = float(feature.work)
+			feature["cost"] = original.cost.duplicate(true)
+			feature["work"] = float(original.work)
+			feature["progress"] = float(feature.work)
 		if action == "move":
 			feature = original.duplicate(true)
-			feature.cells = cells.duplicate()
-			feature.entrance = int(preview.entrance)
-			feature.source = str(preview.source)
-			feature.level = int(preview.level)
-			if kind in WATERFRONT_KINDS: feature.launch_cell = int(preview.options.launch_cell)
+			feature["cells"] = cells.duplicate()
+			feature["entrance"] = int(preview.entrance)
+			feature["source"] = str(preview.source)
+			feature["level"] = int(preview.level)
+			if kind in WATERFRONT_KINDS: feature["launch_cell"] = int(preview.options.launch_cell)
 			if original.has("parts"):
 				var parts: Dictionary = {}
 				for part_id: String in original.parts:
 					var mapped: String = part_id
 					if part_id.begins_with("c:") and part_id.get_slice(":", 1).is_valid_int(): mapped = "c:" + str(data.index(data.cell_from_index(int(part_id.get_slice(":", 1))) + offset))
 					parts[mapped] = original.parts[part_id].duplicate(true)
-				feature.parts = parts
+				feature["parts"] = parts
 			var guard: Dictionary = structure_change_guard(data, key, feature, Callable(), "move")
 			if not guard.ok: return guard
 		else:
@@ -14787,7 +14787,7 @@ static func prepare_author_building(data: TerrainData, work: Dictionary, action:
 			key = str(int(candidate.site.next_feature))
 			if candidate.site.features.has(key): return fail("STALE_SOURCE")
 			candidate.site["next_feature"] = int(candidate.site.next_feature) + 1
-			if action == "copy" and feature.has("residents"): feature.residents = 0
+			if action == "copy" and feature.has("residents"): feature["residents"] = 0
 			if kind == "settlement_center":
 				if candidate.site.has("settlement") or _settlement_center_count(candidate) > 0 or int(feature.owner_faction) < 0: return fail("AUTHOR_REFERENCED", "每Site只可有一座具明示管理方的中心")
 				candidate.site["settlement"] = {"version": SiteSettlement.VERSION, "settlement_id": "settlement_%s_%s" % [str(candidate.site.id).left(64), key], "center_id": key, "level": 1, "name": "初始聚落", "owner_faction": int(feature.owner_faction), "offices": SiteOffices.default_offices("settlement"), "fall_record": SiteSettlement.empty_fall_record()}

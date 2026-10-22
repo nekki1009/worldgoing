@@ -16,5 +16,5 @@ static func vacate_seats(offices: Dictionary, person_id: int) -> Dictionary:
 			entry.holder = -1
 			changed = true
 			if bool(entry.head): seat_vacated = true
-	if changed: candidate.revision = mini(SiteOffices.MAX_SEQ, int(candidate.revision) + 1)
+	if changed: candidate["revision"] = mini(SiteOffices.MAX_SEQ, int(candidate.revision) + 1)
 	return {"ok": true, "code": "", "message": "", "offices": candidate, "seat_vacated": seat_vacated, "changed": changed}

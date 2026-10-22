@@ -38,13 +38,13 @@ static func invite_losers(lab: Variant, owner_kind: String, owner_id: String, ow
 				if int(member.ballot) == loser and Admission.voter_eligible(member):
 					supporters.append(_supporter(lab, member, owner_ref, ambition, lawful))
 			var plan: Dictionary = Admission.invitation(supporters)
-			entry.invited = plan.members
-			entry.other_organisations = _other_organisations(lab, plan.members)
+			entry["invited"] = plan.members
+			entry["other_organisations"] = _other_organisations(lab, plan.members)
 			if not plan.members.is_empty() and owner_kind == "nation":
 				var requests: Array = []
 				for identity: Variant in plan.members:
 					requests.append({"person_id": int(identity), "owner_kind": "nation", "nation_id": owner_id})
-				entry.executed = Executor.execute(lab, requests)
+				entry["executed"] = Executor.execute(lab, requests)
 		summary.losers.append(entry)
 	last_summary = summary
 	return summary

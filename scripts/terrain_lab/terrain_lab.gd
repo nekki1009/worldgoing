@@ -862,7 +862,7 @@ func region_bind_receipt(data: TerrainData) -> Dictionary:
 	if terrain != data or _region_bound_data != data or _region_bind_receipt_value.get("complete") != true:
 		return SiteRuntime.fail("REGION_BIND_INCOMPLETE", "原人物／物品／租約／controller 尚未完整綁定")
 	var result := _region_bind_receipt_value.duplicate(true)
-	result.generation = int(site_controller.region_slot._marker.get("generation", 0)) if site_controller != null and site_controller.region_slot != null else 0
+	result["generation"] = int(site_controller.region_slot._marker.get("generation", 0)) if site_controller != null and site_controller.region_slot != null else 0
 	return result
 
 func _next_army_identity() -> int:
@@ -1720,7 +1720,7 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 				and float(terrain.site.get("combat_left", 0.0)) > 0.0
 	else:
 		if not fire_clock_step.is_empty():
-			fire_clock_step.fire_active = _fire_activity() or (indexed_fire_grace or fire_active_at_start) \
+			fire_clock_step["fire_active"] = _fire_activity() or (indexed_fire_grace or fire_active_at_start) \
 				and float(terrain.site.get("combat_left", 0.0)) > 0.0
 		recorded = site_controller.record_completed_region_step(elapsed, completed_game_seconds, permit, fire_clock_step)
 	if recorded.get("ok", false) and region_callers:
@@ -2390,8 +2390,8 @@ func _advance_fatigue(seconds: float, accepted_prefix_only: bool = false) -> voi
 			# In exchange mode only running accrues continuous effort. An exact
 			# zero walking/stationary row needs no eligibility/rest/formula query.
 			if fatigue_zero_fast_path_enabled and exchange_enabled and not crew_work and float(unit.fatigue) == 0.0 and (not moving or team.move_duration[index] > TerrainArmy.RUN_DURATION + 0.000001):
-				unit.fatigue = float(unit.fatigue)
-				unit.fatigue_rest = 0.0
+				unit["fatigue"] = float(unit.fatigue)
+				unit["fatigue_rest"] = 0.0
 				if combat_profile_enabled:
 					fatigue_zero_eligible_rows += 1
 					fatigue_zero_skipped_advances += 1
@@ -2413,8 +2413,8 @@ func _advance_fatigue(seconds: float, accepted_prefix_only: bool = false) -> voi
 				if fatigue_zero_fast_path_enabled:
 					# Original safe=false path returns [float(value), +0.0]. Keep
 					# the incoming fatigue's signed zero/type conversion, not a new zero.
-					unit.fatigue = float(unit.fatigue)
-					unit.fatigue_rest = 0.0
+					unit["fatigue"] = float(unit.fatigue)
+					unit["fatigue_rest"] = 0.0
 					if combat_profile_enabled:
 						fatigue_zero_skipped_advances += 1
 					continue
@@ -2430,8 +2430,8 @@ func _advance_fatigue(seconds: float, accepted_prefix_only: bool = false) -> voi
 				_combat_profile_stage("fatigue_threat", threat_started)
 			var housing_multiplier: float = Site.Housing.recovery_multiplier(self, [unit]) if safe else 1.0
 			var state := PersonFatigue.advance(float(unit.fatigue), float(unit.fatigue_rest), available, rate, safe, housing_multiplier)
-			unit.fatigue = state[0]
-			unit.fatigue_rest = state[1]
+			unit["fatigue"] = state[0]
+			unit["fatigue_rest"] = state[1]
 	# Inclusive of fatigue_threat; do not add that nested counter a second time.
 	_combat_profile_stage("fatigue_people_inclusive", fatigue_started)
 
@@ -2570,7 +2570,7 @@ func _fatigue_threat(cell: Vector2i, faction: int, rest_owner: Variant, unit_ind
 				if not frontier_distances.has(next) and terrain.can_step(current, next):
 					frontier_distances[next] = int(frontier_distances[current]) + 1
 					frontier_pending.append(next)
-		threat.cursor = cursor
+		threat["cursor"] = cursor
 		if threat.reachable.has(cell):
 			return true
 	for actor: TerrainTestCharacter in combat_actors:
@@ -2775,12 +2775,12 @@ func _exchange_context(person: Dictionary, occupied: Dictionary) -> Dictionary:
 		elif not person_owner.command_abilities.is_empty():
 			person_owner.activate_exchange_skill("brace" if sectors >= 2 else "power")
 	var stats: Dictionary = person_owner.exchange_stats(index) if index >= 0 else person_owner.exchange_stats()
-	stats.encirclement = sectors
-	stats.facility = SiteRuntime.exchange_facility_bonus(terrain, person.cell)
+	stats["encirclement"] = sectors
+	stats["facility"] = SiteRuntime.exchange_facility_bonus(terrain, person.cell)
 	if site_controller != null:
 		# Read the real feeding owner, including independent people and captives;
 		# an empty former personal/team pool must not supply stale morale.
-		stats.morale = _exchange_morale(int(person.id))
+		stats["morale"] = _exchange_morale(int(person.id))
 	return stats
 
 func _exchange_morale(identity: int) -> float:
@@ -2885,11 +2885,11 @@ func _resolve_exchanges() -> void:
 				var high := maxi(int(a.id), int(b.id))
 				var pair_key := "%d:%d" % [low, high]
 				if seen_pairs.has(pair_key): continue
-				if a.receive == null: a.receive = a.owner.exchange_can_receive(int(a.unit))
+				if a.receive == null: a["receive"] = a.owner.exchange_can_receive(int(a.unit))
 				if b.receive == null: b.receive = b.owner.exchange_can_receive(int(b.unit))
 				if not bool(a.receive) or not bool(b.receive): continue
 				# Distant people never need readiness or numerical context.
-				if a.ready == null: a.ready = a.owner.exchange_ready(int(a.unit))
+				if a.ready == null: a["ready"] = a.owner.exchange_ready(int(a.unit))
 				if b.ready == null: b.ready = b.owner.exchange_ready(int(b.unit))
 				if not (bool(a.ready) and _exchange_initiates(a, int(b.id), true)) and not (bool(b.ready) and _exchange_initiates(b, int(a.id), true)):
 					continue # Peaceful worker/player neighbours do not spontaneously duel.
@@ -3083,7 +3083,7 @@ func _advance_siege(delta: float) -> void:
 		if str(vehicle.get("phase", "")) in ["turning", "moving", "deploying"]: continue
 		var action: Dictionary = vehicle.get("action", {})
 		if str(action.get("stage", "")) == "recovering":
-			action.elapsed = float(action.elapsed) + delta * float(action.multiplier)
+			action["elapsed"] = float(action.elapsed) + delta * float(action.multiplier)
 			if float(action.elapsed) + 0.000000001 >= float(rule.recovering) and not _region_deferring_endpoint():
 				vehicle.action = {}
 				vehicle.phase = "ready" if str(vehicle.command.get("type", "")) == "attack" else "idle"
@@ -3122,19 +3122,19 @@ func _advance_siege(delta: float) -> void:
 		if str(action.stage) != "recovering" and (int(action.cargo_version) != int(vehicle.holder.version) or int(action.rng_state) != int(vehicle.rng_state)):
 			vehicle.action = {}; vehicle.phase = "ready"
 			continue
-		action.multiplier = site_controller.vehicles.crew_multiplier(vehicle)
-		action.elapsed = float(action.elapsed) + delta * float(action.multiplier)
+		action["multiplier"] = site_controller.vehicles.crew_multiplier(vehicle)
+		action["elapsed"] = float(action.elapsed) + delta * float(action.multiplier)
 		vehicle.phase = str(action.stage)
 		for _transition in range(3):
 			var duration := float(rule[str(action.stage)])
 			if float(action.elapsed) + 0.000000001 < duration or _region_deferring_endpoint(): break
-			action.elapsed = maxf(0.0, float(action.elapsed) - duration)
-			if str(action.stage) == "loading": action.stage = "aiming"
+			action["elapsed"] = maxf(0.0, float(action.elapsed) - duration)
+			if str(action.stage) == "loading": action["stage"] = "aiming"
 			elif str(action.stage) == "aiming":
 				var release := SiteRuntime.release_siege_ammo(terrain, str(vehicle.id), int(action.cargo_version), int(action.rng_state), ammo)
 				if not release.ok: vehicle.action = {}; vehicle.phase = "ready"; break
 				_launch_siege_projectile(vehicle, preview.aim, str(release.attack_id), release.get("scatter_unit", Vector2.ZERO), ammo, str(release.get("technology_payment_id", "")))
-				action.stage = "recovering"
+				action["stage"] = "recovering"
 			else: vehicle.action = {}; vehicle.phase = "ready"; break
 			vehicle.phase = str(action.stage)
 
@@ -3391,8 +3391,8 @@ func siege_ram_hit(vehicle: Dictionary, target: Dictionary, attack_id: String, p
 		action["attack_id"] = str(commit.attack_id)
 		attack_id = str(commit.attack_id)
 	if attack_id != str(action.attack_id): return SiteRuntime.fail("STALE_SOURCE")
-	if not action.has("people"): action.people = {}
-	if not action.has("parts"): action.parts = {}
+	if not action.has("people"): action["people"] = {}
+	if not action.has("parts"): action["parts"] = {}
 
 	var event: Dictionary = events[0]
 	if str(action.get("blocked_by", "")) == "person" and str(event.type) != "person":
@@ -3483,27 +3483,27 @@ func _resolve_siege_projectile_events(events: Array[Dictionary]) -> Dictionary:
 		if bool(flight.ended) and (kind == "ballista" or absf(float(event.fraction) - float(flight.get("stop_fraction", -1.0))) > 0.00000001): continue
 		if flight.get("ammo") == "fire_pot" and not bool(flight.get("fire_resolved", false)):
 			_settle_siege_fire_pot_impact(flight, event)
-			flight.ended = true
+			flight["ended"] = true
 			flight["stop_fraction"] = float(event.fraction)
-			flight.position = _siege_screen_at(flight, float(event.fraction))
+			flight["position"] = _siege_screen_at(flight, float(event.fraction))
 		if str(event.type) in ["body", "shield", "person"]:
 			_siege_person_contact(flight, event)
 			continue
 		if not bool(flight.ended):
-			flight.ended = true
+			flight["ended"] = true
 			flight["stop_fraction"] = float(event.fraction)
-			flight.position = _siege_screen_at(flight, float(event.fraction))
+			flight["position"] = _siege_screen_at(flight, float(event.fraction))
 		if str(event.type) == "structure":
 			var key := str(event.feature) + "|" + str(event.part)
 			if flight.get("parts", {}).has(key): continue
-			if not flight.has("parts"): flight.parts = {}
+			if not flight.has("parts"): flight["parts"] = {}
 			flight.parts[key] = true
 			if not part_damage.has(key): part_damage[key] = {"feature": event.feature, "part": event.part, "damage": 0.0}
 			part_damage[key].damage += SiteCombatRules.structure_damage("", str(event.material), kind)
 		elif str(event.type) == "vehicle":
 			var key := "vehicle:" + str(event.vehicle)
 			if flight.get("parts", {}).has(key): continue
-			if not flight.has("parts"): flight.parts = {}
+			if not flight.has("parts"): flight["parts"] = {}
 			flight.parts[key] = true
 			vehicle_damage[event.vehicle] = float(vehicle_damage.get(event.vehicle, 0.0)) + SiteCombatRules.structure_damage("", "wood", kind)
 	var settled := SiteRuntime.ok("原結構批次沒有接觸", {"results": {}})
@@ -3635,7 +3635,7 @@ func _advance_siege_projectiles(delta: float) -> void:
 					var base := float(terrain.effective_height(person.cell))
 					if height < base or height > base + 1.8: continue
 					hit.merge({"flight": flight, "type": kind, "person": person, "stable": "person:%012d:%s" % [int(person.id), "0" if kind == "shield" else "1"], "shield": kind == "shield"})
-					hit.fraction = fraction
+					hit["fraction"] = fraction
 					hit["protection"] = person.owner.contact_protection(int(person.unit), hit, SiteCombatRules.siege_profile(100.0)) if int(person.unit) >= 0 else person.owner.contact_protection(hit, SiteCombatRules.siege_profile(100.0))
 					collected.append(hit)
 		else: collected.append_array(_siege_stone_person_events(flight, before, after, people))
@@ -3670,13 +3670,13 @@ func _siege_person_contact(flight: Dictionary, event: Dictionary) -> void:
 		SiteRuntime.mark_combat(terrain, 10.0)
 		return
 	if not flight.people.has(identity):
-		if flight.people.size() >= int(SiteCombatRules.BALLISTA.people_limit): flight.ended = true; return
+		if flight.people.size() >= int(SiteCombatRules.BALLISTA.people_limit): flight["ended"] = true; return
 		flight.people[identity] = true
 	if str(event.type) == "shield":
 		if flight.shields.has(identity): return
 		flight.shields[identity] = true
 		var appearance: Dictionary = person.owner.equipment_appearance(int(person.unit)) if int(person.unit) >= 0 else site_controller.person_appearance(identity)
-		flight.budget = maxf(0.0, float(flight.budget) - SiteCombatRules.siege_shield_resistance(str(appearance.get("parts", {}).get("shield", ""))))
+		flight["budget"] = maxf(0.0, float(flight.budget) - SiteCombatRules.siege_shield_resistance(str(appearance.get("parts", {}).get("shield", ""))))
 	else:
 		if flight.bodies.has(identity): return
 		flight.bodies[identity] = true
@@ -3687,10 +3687,10 @@ func _siege_person_contact(flight: Dictionary, event: Dictionary) -> void:
 		var packet := {"result": damage, "siege": true, "shield": false, "attacker": null, "ranged": true}
 		if int(person.unit) >= 0: person.owner.ranged_apply_hit(int(person.unit), flight.source_cell, packet)
 		else: person.owner.ranged_apply_hit(flight.source_cell, packet)
-		flight.budget = maxf(0.0, float(flight.budget) - float(SiteCombatRules.BALLISTA.body_resistance))
+		flight["budget"] = maxf(0.0, float(flight.budget) - float(SiteCombatRules.BALLISTA.body_resistance))
 		siege_contacts += 1
 		SiteRuntime.mark_combat(terrain, 10.0)
-	if float(flight.budget) <= 0.0: flight.ended = true
+	if float(flight.budget) <= 0.0: flight["ended"] = true
 
 func _siege_prism_events(flight: Dictionary, from: Vector3, to: Vector3, begin: float = 0.0, end: float = 1.0) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
@@ -3854,8 +3854,8 @@ func _advance_ranged(delta: float) -> void:
 			var flight: Dictionary = projectile_owner.projectiles[index]
 			if str(flight.get("mode", "")) != "cell":
 				continue # Historical geometry arrows remain rejected at the load boundary.
-			flight.left = maxf(0.0, float(flight.left) - delta)
-			flight.position = (flight.origin as Vector2).lerp(flight.goal, 1.0 - float(flight.left) / float(flight.total))
+			flight["left"] = maxf(0.0, float(flight.left) - delta)
+			flight["position"] = (flight.origin as Vector2).lerp(flight.goal, 1.0 - float(flight.left) / float(flight.total))
 			changed = true
 			if float(flight.left) <= ACTION_TIME_EPSILON:
 				due.append({"owner": projectile_owner, "flight": flight})
@@ -3878,7 +3878,7 @@ func _resolve_ranged_arrival(shooter_owner: Node2D, flight: Dictionary, occupied
 	var goal_eye := float(flight.get("goal_eye", terrain.effective_height(flight.target_cell) + 1.0))
 	for cell: Vector2i in SiteCombatRules.ranged_cells(flight.source_cell, flight.target_cell):
 		if not SiteCombatRules.ranged_cell_clear(terrain, flight.source_cell, flight.target_cell, cell, source_eye, goal_eye):
-			result.kind = "blocked"
+			result["kind"] = "blocked"
 			break
 		if not SiteCombatRules.ranged_body_intersects(terrain, flight.source_cell, flight.target_cell, cell, source_eye, goal_eye): continue
 		for person: Dictionary in occupied.get(cell, []):
@@ -3892,7 +3892,7 @@ func _resolve_ranged_arrival(shooter_owner: Node2D, flight: Dictionary, occupied
 		var target_owner: Variant = target.owner
 		var index := int(target.unit)
 		var defense: Dictionary = target_owner.ranged_defense(index) if index >= 0 else target_owner.ranged_defense()
-		defense.facility = SiteRuntime.exchange_facility_bonus(terrain, target.cell) > 0.0
+		defense["facility"] = SiteRuntime.exchange_facility_bonus(terrain, target.cell) > 0.0
 		var noise := _region_legacy_noise(flight, int(target.id))
 		result = SiteCombatRules.ranged_result(flight.shooter, defense, Vector2(flight.target_cell - flight.source_cell).length(), float(posmod(noise, 10000)) / 100.0)
 		var shooter_index: int = shooter_owner.index_for_identity(int(flight.shooter_id)) if shooter_owner is TerrainArmy else -1
@@ -3944,11 +3944,11 @@ func _collect_exchange_batch_side(batches: Dictionary, person: Dictionary, other
 	var side_outcome := _exchange_side_outcome(other, result, stats, side)
 	if not batches.has(id):
 		var initial_outcome := side_outcome.duplicate()
-		initial_outcome.hp = 0.0
-		initial_outcome.stun = 0.0
-		initial_outcome.fatigue = 0.0
-		initial_outcome.stagger = 0.0
-		initial_outcome.knockback = false
+		initial_outcome["hp"] = 0.0
+		initial_outcome["stun"] = 0.0
+		initial_outcome["fatigue"] = 0.0
+		initial_outcome["stagger"] = 0.0
+		initial_outcome["knockback"] = false
 		batches[id] = {"person": person, "outcome": initial_outcome, "count": 0,
 			"losses": 0, "draws": 0, "big_wins": 0, "big_losses": 0, "reaction": {}}
 	var entry: Dictionary = batches[id]
@@ -3957,8 +3957,8 @@ func _collect_exchange_batch_side(batches: Dictionary, person: Dictionary, other
 	total.hp += float(side_outcome.hp)
 	total.stun += float(side_outcome.stun)
 	total.fatigue += float(side_outcome.fatigue)
-	total.stagger = maxf(float(total.stagger), float(side_outcome.stagger))
-	total.knockback = bool(total.knockback) or bool(side_outcome.knockback)
+	total["stagger"] = maxf(float(total.stagger), float(side_outcome.stagger))
+	total["knockback"] = bool(total.knockback) or bool(side_outcome.knockback)
 	match str(side_outcome.role):
 		"loser":
 			entry.losses += 1
@@ -3971,7 +3971,7 @@ func _collect_exchange_batch_side(batches: Dictionary, person: Dictionary, other
 		"hp": float(side_outcome.hp), "margin": absf(float(result.margin)),
 		"other_id": int(other.id), "other_cell": other.cell,
 		"attacker": other.owner, "attacker_unit": int(other.unit)}
-	if _exchange_reaction_better(candidate, entry.reaction): entry.reaction = candidate
+	if _exchange_reaction_better(candidate, entry.reaction): entry["reaction"] = candidate
 
 func _exchange_batch_person_matches(person: Dictionary) -> bool:
 	if not is_instance_valid(person.owner): return false
@@ -4012,13 +4012,13 @@ func _settle_exchange_batch(pending: Array[Dictionary]) -> bool:
 		var total: Dictionary = entry.outcome
 		var reaction: Dictionary = entry.reaction
 		var all_won := int(entry.losses) == 0 and int(entry.draws) == 0
-		total.role = "winner" if all_won else "draw" if int(entry.count) == 1 and int(entry.draws) == 1 else "loser"
-		total.kind = "big" if (all_won and int(entry.big_wins) > 0) or (not all_won and int(entry.big_losses) > 0) \
+		total["role"] = "winner" if all_won else "draw" if int(entry.count) == 1 and int(entry.draws) == 1 else "loser"
+		total["kind"] = "big" if (all_won and int(entry.big_wins) > 0) or (not all_won and int(entry.big_losses) > 0) \
 			else "draw" if int(entry.losses) == 0 and int(entry.draws) > 0 else "small"
-		total.other_identity = int(reaction.other_id)
-		total.attacker = reaction.attacker
-		total.attacker_unit = int(reaction.attacker_unit)
-		entry.other_cell = reaction.other_cell
+		total["other_identity"] = int(reaction.other_id)
+		total["attacker"] = reaction.attacker
+		total["attacker_unit"] = int(reaction.attacker_unit)
+		entry["other_cell"] = reaction.other_cell
 		if not _exchange_batch_person_matches(entry.person) or not _exchange_batch_outcome_valid(total):
 			push_error("Exchange batch participant changed or aggregate effect is invalid")
 			return false
@@ -4028,7 +4028,7 @@ func _settle_exchange_batch(pending: Array[Dictionary]) -> bool:
 	for id: Variant in identities:
 		var entry: Dictionary = batches[id]
 		if not _exchange_batch_phase_current(entry, "prepare"): return false
-		entry.prepared = entry.person.owner.exchange_batch_prepare(int(entry.person.unit), entry.other_cell, entry.outcome) \
+		entry["prepared"] = entry.person.owner.exchange_batch_prepare(int(entry.person.unit), entry.other_cell, entry.outcome) \
 			if int(entry.person.unit) >= 0 else entry.person.owner.exchange_batch_prepare(entry.other_cell, entry.outcome)
 		if (entry.prepared as Dictionary).is_empty():
 			push_error("Exchange batch owner rejected a preflighted participant")
@@ -4493,7 +4493,7 @@ func find_melee_trial_layout(friendly_count: int, enemy_count: int, friendly_spa
 			var third_custom := _third_trial_formation(third_spawn, third_count)
 			if not _third_trial_layout(third_custom, friendly_custom, enemy_custom, third_ranged_range):
 				return {}
-			custom_layout.third = third_custom
+			custom_layout["third"] = third_custom
 		return custom_layout
 	if friendly_spawn != TerrainArmy.INVALID_CELL or enemy_spawn != TerrainArmy.INVALID_CELL or third_spawn != TerrainArmy.INVALID_CELL:
 		return {}
@@ -4529,7 +4529,7 @@ func find_melee_trial_layout(friendly_count: int, enemy_count: int, friendly_spa
 						var third_auto := _auto_third_trial_formation(third_count, friendly_auto, enemy_auto, third_ranged_range)
 						if third_auto.is_empty():
 							continue
-						auto_layout.third = third_auto
+						auto_layout["third"] = third_auto
 					return auto_layout
 		return {}
 
@@ -4559,7 +4559,7 @@ func find_melee_trial_layout(friendly_count: int, enemy_count: int, friendly_spa
 		var third_cells := _find_directional_team_formation(t_dir, third_count, claimed, friendly_cells[0])
 		if third_cells.size() != third_count:
 			return {}
-		result.third = third_cells
+		result["third"] = third_cells
 
 	return result
 
@@ -4736,7 +4736,7 @@ func _trial_side_settings(setup: Dictionary, prefix: String) -> Dictionary:
 	var entry: Variant = setup.get(prefix + "_entry", "")
 	if not entry is String or not entry.strip_edges().is_empty() and _normalize_direction(entry).is_empty():
 		return SiteRuntime.fail("INVALID", "進場方位須為東、南、西或北")
-	side.entry = _normalize_direction(entry)
+	side["entry"] = _normalize_direction(entry)
 	for field: String in ["cart_count", "wagon_count"]:
 		var vehicles: Variant = setup.get(prefix + "_" + field, 0)
 		if not vehicles is int or vehicles < 0 or vehicles > 99 or role != "logistics" and vehicles > 0:
@@ -4756,21 +4756,21 @@ func _trial_side_settings(setup: Dictionary, prefix: String) -> Dictionary:
 			side.abilities[field] = int(value)
 		else:
 			side[field] = int(value)
-	side.female_count = roundi(float(side.count) * float(side.female_percent) / 100.0)
-	side.attack = setup.get(prefix + "_attack", role == "combat")
+	side["female_count"] = roundi(float(side.count) * float(side.female_percent) / 100.0)
+	side["attack"] = setup.get(prefix + "_attack", role == "combat")
 	if not side.attack is bool:
 		return SiteRuntime.fail("INVALID", "初始命令須為守位或接敵")
-	side.ai_enabled = setup.get(prefix + "_ai_enabled", false)
+	side["ai_enabled"] = setup.get(prefix + "_ai_enabled", false)
 	if not side.ai_enabled is bool or bool(side.ai_enabled) and role != "combat":
 		return SiteRuntime.fail("INVALID", "自主戰術 AI 僅限戰鬥隊，設定須為開啟或停用")
-	side.spawn = setup.get(prefix + "_spawn", TerrainArmy.INVALID_CELL)
+	side["spawn"] = setup.get(prefix + "_spawn", TerrainArmy.INVALID_CELL)
 	if not side.spawn is Vector2i:
 		return SiteRuntime.fail("INVALID", "出現位置須為地圖格位")
 	if prefix == "third":
 		var faction: Variant = setup.get("third_faction", 2)
 		if not faction is int or faction < 0 or faction > 2:
 			return SiteRuntime.fail("INVALID", "第三隊須選擇我方、敵方或第三勢力")
-		side.faction = faction
+		side["faction"] = faction
 	return SiteRuntime.ok("", {"side": side})
 
 func add_melee_trial_team(setup: Dictionary = {}) -> Dictionary:
@@ -5071,7 +5071,7 @@ func _deploy_trial_teams_candidate(sides: Array[Dictionary], formations: Array, 
 		values[side.prefix + "_slot_count"] = side.slot_count
 		values[side.prefix + "_role"] = side.role
 		values[side.prefix + "_troop_type"] = side.troop_type
-		if str(side.troop_type) != str(values.troop_type): values.troop_type = "per_team"
+		if str(side.troop_type) != str(values.troop_type): values["troop_type"] = "per_team"
 		values[side.prefix + "_cart_count"] = side.cart_count
 		values[side.prefix + "_wagon_count"] = side.wagon_count
 		values[side.prefix + "_female_count"] = side.female_count
@@ -5594,8 +5594,8 @@ func restore_original_site(data: TerrainData) -> Dictionary:
 	for field: String in ["height_levels", "surface_types", "flags", "cliff_drops", "ramp_edges", "detail_variation",
 		"fertility", "moisture", "drainage", "foundation", "groundwater", "water_kind", "water_body"]:
 		restored_data.set(field, data.get(field).duplicate())
-	restored_data.parameters = data.parameters.duplicate(true)
-	restored_data.resource_base = data.resource_base.duplicate(true)
+	restored_data["parameters"] = data.parameters.duplicate(true)
+	restored_data["resource_base"] = data.resource_base.duplicate(true)
 	var validation := SiteStore._validate_state(restored_data, restored_data.site)
 	if not validation.ok: return validation
 	var ecology := SiteStore.prepare_ecology_candidate(restored_data)
@@ -6335,8 +6335,8 @@ func _resolve_physical_ranged_fire(people: Array[Dictionary], draft: Dictionary 
 		_fire_round_robin = round_robin
 		fire_scheduler_result = result
 	else:
-		draft.round_robin = round_robin
-		draft.scheduler_result = result
+		draft["round_robin"] = round_robin
+		draft["scheduler_result"] = result
 	return result.duplicate(true)
 
 func _commit_fire_releases(draft: Dictionary = {}) -> void:
@@ -6369,9 +6369,9 @@ func _commit_fire_releases(draft: Dictionary = {}) -> void:
 		if sequence >= 2147483647:
 			reservations.erase(identity)
 			var exhausted: Dictionary = SiteRuntime.fail("PROJECTILE_ID_EXHAUSTED", "原投射物識別已達收據上限；未扣彈")
-			exhausted.person_id = identity
+			exhausted["person_id"] = identity
 			if draft.is_empty(): fire_scheduler_result = exhausted
-			else: draft.scheduler_result = exhausted
+			else: draft["scheduler_result"] = exhausted
 			continue
 		if fire_projectiles.size() + (0 if draft.is_empty() else draft.releases.size()) >= fire_projectile_capacity: continue
 		var source: Vector2i = owner_ref._combat_attack_cell(int(person.unit)) if int(person.unit) >= 0 else owner_ref.terrain_cell
@@ -6390,11 +6390,11 @@ func _commit_fire_releases(draft: Dictionary = {}) -> void:
 		var ground: Vector2 = geometry.ground
 		if not draft.is_empty():
 			if not owner_ref is CrowdPersonOwner:
-				draft.error = SiteRuntime.fail("NATIVE_BEGIN_NON_NATIVE_RELEASE")
+				draft["error"] = SiteRuntime.fail("NATIVE_BEGIN_NON_NATIVE_RELEASE")
 				return
 			var release: Dictionary = owner_ref.prepare_host_ranged_release(int(person.unit), aim.cell, sequence + 1, str(reservation.mode), auto_power)
 			if not release.ok:
-				draft.error = release
+				draft["error"] = release
 				return
 			draft.releases.append({"identity": identity, "person": person, "reservation": reservation,
 				"release": release, "geometry": geometry})
@@ -6409,7 +6409,7 @@ func _commit_fire_releases(draft: Dictionary = {}) -> void:
 		# Preflight already validated the finite trajectory inputs. Power only changes scatter;
 		# use the actual original-owner shooter snapshot after its atomic commit.
 		offset = SiteCombatRules.fire_aim_offset(released.shooter, float(profile.nominal_distance), bool(aim.moving), terrain.seed_value, identity, int(reservation.serial), sequence + 1, float(profile.scatter_multiplier))
-		flight.velocity = (nominal + right * offset.x + up * offset.y - origin) / float(flight.total) + Vector3(0, 0, 0.5 * float(profile.gravity) * float(flight.total))
+		flight["velocity"] = (nominal + right * offset.x + up * offset.y - origin) / float(flight.total) + Vector3(0, 0, 0.5 * float(profile.gravity) * float(flight.total))
 		sequence += 1
 		var source_formation_id := int(owner_ref.team_id) if owner_ref is TerrainArmy or owner_ref is CrowdPersonOwner and owner_ref.has_army() else 0
 		flight.merge({"projectile_id": sequence, "source_member_id": identity, "source_formation_id": source_formation_id,
@@ -6424,7 +6424,7 @@ func _commit_fire_releases(draft: Dictionary = {}) -> void:
 		_fire_release_sequence = sequence
 		_fire_committing = false
 		queue_redraw()
-	else: draft.sequence = sequence
+	else: draft["sequence"] = sequence
 
 func _fire_screen(point: Vector3, source_ground: float) -> Vector2:
 	return Vector2(point.x, point.y) * TerrainRenderer.CELL_PIXELS - Vector2(0, 48.0 * (point.z - source_ground))
@@ -6532,7 +6532,7 @@ func _finish_fire_motion(delta: float) -> void:
 			var admitted := _fire_owner_motion(person)
 			if not admitted.is_empty():
 				admitted.progress = maxf(0.0, float(admitted.progress) - delta / float(admitted.duration))
-				person.motion = admitted
+				person["motion"] = admitted
 
 func _fire_relative_screen(person: Dictionary, point: Vector3, fraction: float) -> Vector2:
 	var ground := _fire_motion_ground(person, fraction)
@@ -6657,7 +6657,7 @@ func _fire_first_contact(flight: Dictionary, from: Vector3, to: Vector3, interva
 				var hit_value := FatigueGeometry.segment_prism_contact(from, to, collider.bounds, float(collider.lower), float(collider.upper), 0.015)
 				if not hit_value.is_empty():
 					var event := collider.duplicate()
-					event.fraction = float(hit_value.fraction)
+					event["fraction"] = float(hit_value.fraction)
 					events.append(event)
 			var top := float(terrain.height_levels[terrain.index(cell)])
 			if terrain.static_blocked[terrain.index(cell)] != 0 and int(terrain.feature_at[terrain.index(cell)]) == 0: top += 2.0
@@ -6673,7 +6673,7 @@ func _fire_first_contact(flight: Dictionary, from: Vector3, to: Vector3, interva
 func _settle_fire_impact(flight: Dictionary, event: Dictionary) -> void:
 	if bool(flight.resolved): return
 	if _region_queue_original_endpoint("fire_impact", {"flight": flight, "event": event}): return
-	flight.resolved = true
+	flight["resolved"] = true
 	var result := {"kind": "empty", "hp": 0.0, "stun": 0.0, "stagger": 0.0, "heat_transfer": 1.0, "contact_scale": 1.0}
 	var target_id := 0
 	if str(event.type) == "person":
@@ -6685,9 +6685,9 @@ func _settle_fire_impact(flight: Dictionary, event: Dictionary) -> void:
 		if int(person.unit) >= 0: person.owner.ranged_apply_hit(int(person.unit), flight.source_cell, packet)
 		else: person.owner.ranged_apply_hit(flight.source_cell, packet)
 	elif str(event.type) == "blocked":
-		result.kind = "blocked"
+		result["kind"] = "blocked"
 	elif str(event.type) in ["structure", "vehicle"]:
-		result.kind = "blocked"
+		result["kind"] = "blocked"
 		var damage := SiteCombatRules.structure_damage(str(flight.shooter.weapon), str(event.material)) * float(flight.profile.kinetic_multiplier)
 		if str(event.type) == "structure":
 			var parts := {str(event.feature) + "|" + str(event.part): {"feature": event.feature, "part": event.part, "damage": damage}}
@@ -7372,20 +7372,20 @@ func _fire_policy_allows(person: Dictionary, target: Dictionary, draft: Dictiona
 		return true
 	var step := floori((fire_action_cursor + SiteRuntime.FIRE_EPS) * SiteRuntime.FIRE_HZ)
 	if step == int(policy.last_decision_step): return bool(policy.allow)
-	policy.last_decision_step = step
-	policy.allow = true
-	policy.reason = "EVALUATING"
+	policy["last_decision_step"] = step
+	policy["allow"] = true
+	policy["reason"] = "EVALUATING"
 	if str(policy.mode) == "DESTROY_FUNCTION":
 		var feature: Dictionary = terrain.site.features.get(str(target.get("feature_id", "")), {})
 		var observation := _fire_policy_observed(person, target)
-		if feature.is_empty(): policy.allow = false; policy.reason = "TARGET_INVALIDATED"
+		if feature.is_empty(): policy["allow"] = false; policy["reason"] = "TARGET_INVALIDATED"
 		elif not observation.is_empty() and SiteRuntime.feature_function_state(feature, str(policy.service)) in ["DISABLED", "DESTROYED"]:
-			policy.allow = false
-			policy.reason = "OBSERVED_FUNCTION_DISABLED"
+			policy["allow"] = false
+			policy["reason"] = "OBSERVED_FUNCTION_DISABLED"
 		return bool(policy.allow)
 	var targets := _fire_policy_targets(target)
 	var forecasts := fire_pending_ignition_estimate(owner_ref, targets)
-	policy.pending_estimate = forecasts # Disposable original-flight projection only.
+	policy["pending_estimate"] = forecasts # Disposable original-flight projection only.
 	var all_stable := not targets.is_empty()
 	var pending := 0.0
 	for part_target: Dictionary in targets:
@@ -7393,21 +7393,21 @@ func _fire_policy_allows(person: Dictionary, target: Dictionary, draft: Dictiona
 		var observation := _fire_policy_observed(person, part_target)
 		var prior: Dictionary = policy.confirmations.get(key, {"step": -1, "count": 0})
 		if not observation.is_empty() and int(observation.thermal_step) != int(prior.step):
-			prior.count = mini(3, int(prior.count) + 1) if bool(observation.burning) and int(observation.thermal_step) == int(prior.step) + 1 else (1 if bool(observation.burning) else 0)
-			prior.step = int(observation.thermal_step)
+			prior["count"] = mini(3, int(prior.count) + 1) if bool(observation.burning) and int(observation.thermal_step) == int(prior.step) + 1 else (1 if bool(observation.burning) else 0)
+			prior["step"] = int(observation.thermal_step)
 			policy.confirmations[key] = prior
 		if observation.is_empty() or int(prior.count) < 3: all_stable = false
 		pending += float(forecasts.get(key, 0.0))
 	if all_stable:
-		policy.allow = false
-		policy.reason = "OBSERVED_STABLE_BURNING"
+		policy["allow"] = false
+		policy["reason"] = "OBSERVED_STABLE_BURNING"
 	elif pending >= float(policy.pending_threshold):
-		if fire_action_cursor >= float(policy.wait_deadline): policy.wait_deadline = fire_action_cursor + 4.2
-		policy.allow = false
-		policy.reason = "PAID_FLIGHTS_PENDING"
+		if fire_action_cursor >= float(policy.wait_deadline): policy["wait_deadline"] = fire_action_cursor + 4.2
+		policy["allow"] = false
+		policy["reason"] = "PAID_FLIGHTS_PENDING"
 	elif fire_action_cursor < float(policy.wait_deadline):
-		policy.allow = false
-		policy.reason = "OBSERVATION_WAIT"
+		policy["allow"] = false
+		policy["reason"] = "OBSERVATION_WAIT"
 	return bool(policy.allow)
 
 func _fire_policy_cancel_unreleased(owner_ref: Variant, draft: Dictionary = {}) -> void:
@@ -7516,14 +7516,14 @@ static func _fire_transport_target(data: TerrainData, value: Variant, empty_allo
 	match target.get("type"):
 		"person":
 			if not _fire_transport_fields(target, ["type", "person_id"]) or not _fire_transport_whole(target.person_id, 1): return SiteRuntime.fail("CORRUPT_FIRE_TARGET")
-			target.person_id = int(target.person_id)
+			target["person_id"] = int(target.person_id)
 		"structure":
 			if not _fire_transport_fields(target, ["type", "feature_id", "part_id"]): return SiteRuntime.fail("CORRUPT_FIRE_TARGET")
 			for field: String in ["feature_id", "part_id"]:
 				if not target[field] is String or target[field].is_empty() or target[field].length() > 128: return SiteRuntime.fail("CORRUPT_FIRE_TARGET")
 		"ground":
 			if not _fire_transport_fields(target, ["type", "cell"]) or not _fire_transport_cell(data, target.cell): return SiteRuntime.fail("CORRUPT_FIRE_TARGET")
-			target.cell = [int(target.cell[0]), int(target.cell[1])]
+			target["cell"] = [int(target.cell[0]), int(target.cell[1])]
 		"area":
 			if not _fire_transport_fields(target, ["type", "cells"]) or not target.cells is Array or target.cells.is_empty() or target.cells.size() > 256: return SiteRuntime.fail("CORRUPT_FIRE_TARGET")
 			var seen := {}
@@ -7587,9 +7587,9 @@ static func _fire_transport_policy(data: TerrainData, raw: Variant, order: Dicti
 	if raw.reason in ["PAID_FLIGHTS_PENDING", "OBSERVATION_WAIT"] \
 		and float(raw.wait_deadline) <= float(raw.last_decision_step) / SiteRuntime.FIRE_HZ: return SiteRuntime.fail("CORRUPT_FIRE_POLICY_PROGRESS")
 	for field: String in ["serial", "main_serial", "last_decision_step"]: policy[field] = int(raw[field])
-	policy.wait_deadline = float(raw.wait_deadline)
-	policy.pending_threshold = threshold
-	policy.pending_estimate = {} # Recomputed by the original next policy decision.
+	policy["wait_deadline"] = float(raw.wait_deadline)
+	policy["pending_threshold"] = threshold
+	policy["pending_estimate"] = {} # Recomputed by the original next policy decision.
 	# Root physical validation compares main_serial with the prepared original Army.
 	return SiteRuntime.ok("", {"policy": policy})
 
@@ -7618,7 +7618,7 @@ static func validate_fire_transport(data: TerrainData, raw: Variant) -> Dictiona
 	var state: Dictionary = raw.duplicate(true)
 	var time_epsilon := _fire_transport_time_epsilon(float(raw.action_cursor))
 	for field: String in ["version", "release_sequence", "exposure_sequence", "round_robin"]: state[field] = int(raw[field])
-	state.action_cursor = float(raw.action_cursor)
+	state["action_cursor"] = float(raw.action_cursor)
 	var ids := {}
 	for index in range(state.projectiles.size()):
 		var flight: Variant = state.projectiles[index]
@@ -7726,9 +7726,9 @@ static func validate_fire_transport(data: TerrainData, raw: Variant) -> Dictiona
 		if not pair is Array or pair.size() != 2 or not _fire_transport_whole(pair[0], -2147483647) or int(pair[0]) == 0 \
 			or members.has(int(pair[0])) or not _fire_transport_whole(pair[1], 1): return SiteRuntime.fail("CORRUPT_FIRE_FAIRNESS")
 		members[int(pair[0])] = int(pair[1])
-	state.orders = orders
-	state.reservations = prepared
-	state.member_cursor = members
+	state["orders"] = orders
+	state["reservations"] = prepared
+	state["member_cursor"] = members
 	return SiteRuntime.ok("", {"state": state})
 
 func capture_fire_transport() -> Dictionary:
@@ -7751,11 +7751,11 @@ func _capture_fire_transport_payload() -> Dictionary:
 			var vector: Vector3 = current[field]
 			flight[field] = [vector.x, vector.y, vector.z]
 		var cell: Vector2i = current.source_cell
-		flight.source_cell = [cell.x, cell.y]
+		flight["source_cell"] = [cell.x, cell.y]
 		var profile: Dictionary = flight.profile
 		var json_profile := {}
 		for field: Variant in profile: json_profile[str(field)] = profile[field]
-		flight.profile = json_profile
+		flight["profile"] = json_profile
 		var json_flight: Variant = SiteRuntime._fire_snapshot_json_copy(flight)
 		if not json_flight is Dictionary or not SiteRuntime._fire_snapshot_json(json_flight):
 			return SiteRuntime.fail("CORRUPT_FIRE_TRANSPORT", "Fire flight is not JSON-safe")
@@ -8414,7 +8414,7 @@ func _region_capture_original_owner_state(context: Dictionary) -> Dictionary:
 		if actor_present(actor): roots.actor_hot[str(actor.person_id)] = _region_fields(actor, REGION_ACTOR_FIELDS)
 	if combat_movement_coordinator != null:
 		var original := combat_movement_coordinator
-		roots.coordinator = _region_fields(original, REGION_COORDINATOR_FIELDS)
+		roots["coordinator"] = _region_fields(original, REGION_COORDINATOR_FIELDS)
 		roots.coordinator.grid_committed_occupancy = original.movement_reservation_grid.committed_occupancy.duplicate()
 		roots.coordinator.egress = {}
 		for identity: int in original._egress_search_states:
@@ -8422,7 +8422,7 @@ func _region_capture_original_owner_state(context: Dictionary) -> Dictionary:
 		roots.coordinator.egress_retry = []
 		for request: Variant in original._egress_retry_queue: roots.coordinator.egress_retry.append(_region_plan_values(request))
 		var registry := original.deployment_registry
-		roots.registry = {"next_token": registry.next_token, "formation_slots": registry._formation_slots, "leases": []}
+		roots["registry"] = {"next_token": registry.next_token, "formation_slots": registry._formation_slots, "leases": []}
 		for cell: Vector2i in registry.slot_owners:
 			var lease: Variant = registry.slot_owners[cell]
 			roots.registry.leases.append([cell, [] if lease == null else registry._lease_values(lease)])
@@ -8433,9 +8433,9 @@ func _region_capture_original_owner_state(context: Dictionary) -> Dictionary:
 	var captured := RegionOwnerSnapshot.capture(roots, references, context)
 	if not captured.ok: return captured
 	var result := context.duplicate(true)
-	result.ok = true
-	result.state = captured.state
-	result.owner_states = {"scene": captured.state}
+	result["ok"] = true
+	result["state"] = captured.state
+	result["owner_states"] = {"scene": captured.state}
 	var boundary: Dictionary = roots.fire_meta.get("fire_boundary", {})
 	if not boundary.is_empty():
 		if bool(context.effects_complete) or boundary.get("flushing") != false or boundary.get("site_id") != str(terrain.site.id) or not boundary.get("resources") is Array or not boundary.get("features") is Array or absf(float(boundary.get("action_end", -1.0)) - float(context.action_seconds)) > SiteRuntime.FIRE_EPS:
@@ -8602,8 +8602,8 @@ func prepare_restore_region_owner_state(owners: Dictionary, context: Dictionary,
 			retries.append(request)
 		if not roots.registry.get("leases") is Array or not roots.registry.get("formation_slots") is Dictionary \
 			or not RegionCheckpoint.integer(roots.registry.get("next_token"), 1): return SiteRuntime.fail("INVALID_REGION_REGISTRY")
-		registry.next_token = int(roots.registry.next_token)
-		registry.formation_slots = roots.registry.formation_slots
+		registry["next_token"] = int(roots.registry.next_token)
+		registry["formation_slots"] = roots.registry.formation_slots
 		for row: Variant in roots.registry.leases:
 			if not row is Array or row.size() != 2 or not row[0] is Vector2i or not row[1] is Array or registry.slot_owners.has(row[0]):
 				return SiteRuntime.fail("INVALID_REGION_LEASE")
@@ -8722,7 +8722,7 @@ func _region_publish_original_owner_state(prepared: Dictionary) -> Dictionary:
 	for team_id: String in roots.deliveries:
 		var restored_delivery: Dictionary = roots.deliveries[team_id]
 		# A graph saved before the Site-owner name restores that owner as this terrain.
-		if is_same(restored_delivery.get("source_owner"), terrain): restored_delivery.source_owner = preload("res://scripts/terrain_lab/site_food_delivery.gd").SITE_OWNER
+		if is_same(restored_delivery.get("source_owner"), terrain): restored_delivery["source_owner"] = preload("res://scripts/terrain_lab/site_food_delivery.gd").SITE_OWNER
 		terrain.site.team_supply[team_id].delivery = restored_delivery
 	DutyAI.review_round = int(roots.duty.round)
 	DutyAI._seat_waits.clear(); DutyAI._seat_waits.merge(roots.duty.seat_waits)
@@ -8732,21 +8732,21 @@ func _region_publish_original_owner_state(prepared: Dictionary) -> Dictionary:
 	DutyAI.last_nation_trace = roots.duty.last_nation_trace
 	var cadence: Dictionary = DutyAI._cadence_state(self)
 	if not cadence.is_empty():
-		cadence.round = int(roots.duty.round)
+		cadence["round"] = int(roots.duty.round)
 		# Restore existing cadence fields without normalizing the selected sparse row.
-		if cadence.has("elapsed"): cadence.elapsed = float(_duty_ai_elapsed)
-		cadence.seat_waits = DutyAI._seat_waits.duplicate(true)
-		if cadence.has("inmate_since"): cadence.inmate_since = DutyAI._inmate_since.duplicate(true)
+		if cadence.has("elapsed"): cadence["elapsed"] = float(_duty_ai_elapsed)
+		cadence["seat_waits"] = DutyAI._seat_waits.duplicate(true)
+		if cadence.has("inmate_since"): cadence["inmate_since"] = DutyAI._inmate_since.duplicate(true)
 	_fatigue_work_seconds.clear()
 	for work: Array in roots.fatigue_work: _fatigue_work_seconds[refs["person:" + str(int(work[0])) + ":owner"]] = float(work[1])
 	for meta: StringName in [&"fire_boundary", &"fire_structure_step"]:
 		if terrain.has_meta(meta): terrain.remove_meta(meta)
 	for meta: String in roots.fire_meta: terrain.set_meta(StringName(meta), roots.fire_meta[meta])
 	var receipt: Dictionary = prepared.context.duplicate(true)
-	receipt.ok = true
-	receipt.owners_restored = true
-	receipt.effects_complete = bool(prepared.context.effects_complete)
-	receipt.bind_complete = false
+	receipt["ok"] = true
+	receipt["owners_restored"] = true
+	receipt["effects_complete"] = bool(prepared.context.effects_complete)
+	receipt["bind_complete"] = false
 	_region_owner_restore_receipt = receipt
 	return receipt
 
@@ -9264,8 +9264,8 @@ func _region_gameplay_owner_lab(site_id: String, requested_mode: String, travel_
 		if settled.ok and not settled.get("legacy", true) and float(settled.pending) <= 0.00000001 \
 				and str(fire.get("epoch", "")) == str(slot.control.fire_clock.epoch) and int(fire.get("sequence", -1)) == int(slot.control.fire_clock.sequence) \
 				and absf(original.fire_action_cursor - float(slot.control.fire_clock.action_seconds)) <= 0.00000001:
-			mode.game_seconds = float(slot.control.logical_game_seconds)
-			mode.action_seconds = float(slot.control.fire_clock.action_seconds)
+			mode["game_seconds"] = float(slot.control.logical_game_seconds)
+			mode["action_seconds"] = float(slot.control.fire_clock.action_seconds)
 	if str(mode.get("mode", "")) != requested_mode or int(mode.get("generation", -1)) != receipt.generation or not mode.get("activation", {}).get("complete", false):
 		var activated := slot.activate_region_mode(site_id, requested_mode, str(receipt.consumer), receipt)
 		if not activated.ok: return activated
@@ -9301,7 +9301,7 @@ func _region_gameplay_effect_owners(original: TerrainLab, battle: Dictionary) ->
 			var result: Dictionary = owner.call(effect)
 			original._region_point_consuming = consuming
 			return result
-	wrapped.siege_round = func(_effect: Dictionary) -> Dictionary:
+	wrapped["siege_round"] = func(_effect: Dictionary) -> Dictionary:
 		if original._region_point_consuming:
 			# This exact original consumer already owns the point. Complete only
 			# the previously integrated siege stage; its outer tail handles the
@@ -9309,7 +9309,7 @@ func _region_gameplay_effect_owners(original: TerrainLab, battle: Dictionary) ->
 			original._advance_siege(0.0)
 			return original.siege_flush_contact_batch()
 		return original.consume_region_point(false)
-	wrapped.order = func(effect: Dictionary) -> Dictionary:
+	wrapped["order"] = func(effect: Dictionary) -> Dictionary:
 		return original._region_gameplay_original_order(battle, effect)
 	return wrapped
 
@@ -9460,8 +9460,8 @@ static func _region_detached_bind_data(data: TerrainData) -> TerrainData:
 	var copy := SiteEnv.navigation_for_state(data, data.site.duplicate(true))
 	for field: String in ["height_levels", "surface_types", "flags", "cliff_drops", "ramp_edges", "detail_variation", "fertility", "moisture", "drainage", "foundation", "groundwater", "water_kind", "water_body"]:
 		copy.set(field, data.get(field).duplicate())
-	copy.parameters = data.parameters.duplicate(true)
-	copy.resource_base = data.resource_base.duplicate(true)
+	copy["parameters"] = data.parameters.duplicate(true)
+	copy["resource_base"] = data.resource_base.duplicate(true)
 	if data.has_meta(&"region_party_runtime_mapping"):
 		copy.set_meta(&"region_party_runtime_mapping", data.get_meta(&"region_party_runtime_mapping").duplicate(true))
 	return copy
@@ -9667,12 +9667,12 @@ func _region_prepare_original_bind(candidate: TerrainData, mode: String, slot: R
 	else:
 		target = child.terrain
 	context = context.duplicate(true)
-	context.purpose = "region_materialize" if mode == "live" or mode == "materializing" else "region_dematerialize"
-	context.mode = mode
-	context.source_generation = int(slot._marker.get("generation", 0))
-	context.runtime_revision = int(slot.region_registry().revision)
-	context.mode_revision = int(slot.region_registry().modes.get(str(target.site.id), {}).get("revision", 0))
-	context.token = "region_bind_" + Crypto.new().generate_random_bytes(16).hex_encode()
+	context["purpose"] = "region_materialize" if mode == "live" or mode == "materializing" else "region_dematerialize"
+	context["mode"] = mode
+	context["source_generation"] = int(slot._marker.get("generation", 0))
+	context["runtime_revision"] = int(slot.region_registry().revision)
+	context["mode_revision"] = int(slot.region_registry().modes.get(str(target.site.id), {}).get("revision", 0))
+	context["token"] = "region_bind_" + Crypto.new().generate_random_bytes(16).hex_encode()
 	child.site_controller._capture_positions()
 	var actual := child.capture_region_owner_state(context)
 	if not actual.ok: child.free(); return actual
@@ -9738,8 +9738,8 @@ func _region_write_bind_candidate(data: TerrainData, path: String, token: String
 	var check: Dictionary = slot._load_checked(path, coordinate.site)
 	if not check.ok or RegionCheckpoint.state_hash(check.data.site) != ticket.body_hash:
 		return SiteRuntime.fail("STALE_REGION_BIND_BODY")
-	ticket.saved_path = path
-	ticket.saved_sha256 = FileAccess.get_sha256(path)
+	ticket["saved_path"] = path
+	ticket["saved_sha256"] = FileAccess.get_sha256(path)
 	return SiteRuntime.ok("", {"data": ticket.data, "path": path, "sha256": ticket.saved_sha256})
 
 func _region_committed_bind_ticket(ticket: Dictionary, data: TerrainData) -> Dictionary:
@@ -9759,8 +9759,8 @@ func _region_publish_bind_candidate(data: TerrainData, token: String) -> Diction
 	if ticket.is_empty(): return SiteRuntime.fail("STALE_REGION_BIND_TICKET")
 	var committed := _region_committed_bind_ticket(ticket, data)
 	if not committed.ok: return committed
-	ticket.data = data # Exact readback was checked against the marker, body and full graph.
-	ticket.kind = "published"
+	ticket["data"] = data # Exact readback was checked against the marker, body and full graph.
+	ticket["kind"] = "published"
 	bind_terrain(data, {"ok": true, "crowd_site": null, "region_bind_token": token})
 	var result: Dictionary = _region_bind_receipt_value.duplicate(true)
 	if terrain != data or _region_bound_data != data or result.get("owners_restored") != true:
@@ -9774,7 +9774,7 @@ func _region_project_original_bind_child(child: TerrainLab, target: TerrainData,
 	if not pending_guard.ok: return pending_guard
 	var controlled_before := int(child.terrain.site.get("controlled_person_id", 0))
 	var context := source_context.duplicate(true)
-	context.mode = "cold_exact"
+	context["mode"] = "cold_exact"
 	target.site.erase("region_snapshot") # Private candidate, after full original source restore.
 	var core := SiteStore._validate_state(target, target.site.duplicate(true), 1, null, context)
 	if not core.ok: return core
@@ -9817,11 +9817,11 @@ func _region_project_original_bind_child(child: TerrainLab, target: TerrainData,
 	if child.terrain != target: return SiteRuntime.fail("REGION_CHILD_PROJECTION_FAILED")
 	# The core skeleton carries no old deferred queue until the full merge.
 	var baseline_context := context.duplicate(true)
-	baseline_context.purpose = "region_materialize"
-	baseline_context.action_seconds = child.fire_action_cursor
-	baseline_context.effects_complete = true
-	baseline_context.events = []
-	baseline_context.endpoint_payload = {}
+	baseline_context["purpose"] = "region_materialize"
+	baseline_context["action_seconds"] = child.fire_action_cursor
+	baseline_context["effects_complete"] = true
+	baseline_context["events"] = []
+	baseline_context["endpoint_payload"] = {}
 	var baseline_capture := child.capture_region_owner_state(baseline_context)
 	if not baseline_capture.ok: return baseline_capture
 	var fresh_refs := child._region_owner_references()
@@ -9850,9 +9850,9 @@ func _region_project_original_bind_child(child: TerrainLab, target: TerrainData,
 	if not old.coordinator.is_empty():
 		var movement := _region_merge_projected_movement(old, merged, retained_people)
 		if not movement.ok: return movement
-		merged.coordinator = movement.coordinator
+		merged["coordinator"] = movement.coordinator
 		merged.coordinator._next_formation_runtime_id = maximum_runtime
-		merged.registry = movement.registry
+		merged["registry"] = movement.registry
 	# Every surviving original script object keeps its original captured values.
 	# Added teams retain only descriptors from their original restored core.
 	for key: String in old.reference_objects:
@@ -9896,15 +9896,15 @@ static func _region_merge_projected_movement(old: Dictionary, fresh: Dictionary,
 			if cells.has(cell) and int(cells[cell]) != identity: return SiteRuntime.fail("REGION_OCCUPANCY_CONFLICT")
 			cells[cell] = identity
 		coordinator[field] = cells
-	coordinator._member_lookup = old.coordinator._member_lookup.duplicate()
+	coordinator["_member_lookup"] = old.coordinator._member_lookup.duplicate()
 	for identity: int in coordinator._member_lookup.keys():
 		if not people.has(identity): coordinator._member_lookup.erase(identity)
 	for identity: int in fresh.coordinator._member_lookup:
 		if not coordinator._member_lookup.has(identity): coordinator._member_lookup[identity] = fresh.coordinator._member_lookup[identity]
 	var registry: Dictionary = old.registry.duplicate()
-	registry.formation_slots = old.registry.formation_slots.duplicate()
-	registry.leases = old.registry.leases.duplicate()
-	registry.next_token = maxi(int(old.registry.next_token), int(fresh.registry.next_token))
+	registry["formation_slots"] = old.registry.formation_slots.duplicate()
+	registry["leases"] = old.registry.leases.duplicate()
+	registry["next_token"] = maxi(int(old.registry.next_token), int(fresh.registry.next_token))
 	var leased := {}
 	for row: Array in registry.leases: leased[row[0]] = row[1]
 	for team_id: int in fresh.registry.formation_slots:
@@ -10130,8 +10130,8 @@ func prepare_initial_artisan_birth(new_data: TerrainData, scenario_id: String, a
 		if not team.deploy_at(candidate, starter, null, positions) or not team.enable_combat(false): return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("BIRTH_DEPLOY_FAILED"))
 		for index: int in team.combat_units.size():
 			var body: Dictionary = team.combat_units[index]
-			body.cargo = {}
-			body.item_state = {}
+			body["cargo"] = {}
+			body["item_state"] = {}
 			var initial_items := SiteRuntime.seed_person_equipment(candidate, body.item_state, team.combat_identity(index), body.appearance)
 			if not initial_items.ok: return _initial_artisan_birth_dispose(staging, initial_items)
 		for assignment: Dictionary in config.assignments:
@@ -10143,7 +10143,7 @@ func prepare_initial_artisan_birth(new_data: TerrainData, scenario_id: String, a
 		"site_id": str(candidate.site.id), "scenario_id": scenario_id, "sources": selected}
 	var seeded := TechnologyArtisans.prepare(candidate.site, config, admitted_categories, selection)
 	if not seeded.ok: return _initial_artisan_birth_dispose(staging, seeded)
-	candidate.site = seeded.state
+	candidate["site"] = seeded.state
 	var actors_checked := SiteStore._validate_actors(candidate, candidate.site)
 	if not actors_checked.ok: return _initial_artisan_birth_dispose(staging, actors_checked)
 	var allocator_checked := SiteStore._validate_person_allocator(candidate.site)
@@ -10202,9 +10202,9 @@ func _region_verify_canonical_bind_source(data: TerrainData, slot: RegionSaveSlo
 	if not saved.ok: return saved
 	var context: Dictionary = saved.context.duplicate(true)
 	var registry: Dictionary = slot.region_registry()
-	context.source_generation = int(slot._marker.get("generation", 0))
-	context.runtime_revision = int(registry.revision)
-	context.mode_revision = int(registry.modes.get(str(data.site.id), {}).get("revision", 0))
+	context["source_generation"] = int(slot._marker.get("generation", 0))
+	context["runtime_revision"] = int(registry.revision)
+	context["mode_revision"] = int(registry.modes.get(str(data.site.id), {}).get("revision", 0))
 	# capture_region_owner_state itself verifies every current original clock.
 	# Only generation/revision advance across publishing the same frozen frame.
 	var actual: Dictionary = producer.capture_region_owner_state(context)
@@ -10273,32 +10273,32 @@ func prepare_region_party_original_owner(token: String, party: Dictionary, slot:
 		view.erase(field)
 	for field: String in ["features", "changes", "terrain_changes", "inventory", "water_status", "water_links", "building_economy", "housing", "captivity", "escort_orders"]:
 		view[field] = {}
-	view.zones = []
-	view.notices = []
-	view.total_produced = 0
-	view.combat_left = 0.0
+	view["zones"] = []
+	view["notices"] = []
+	view["total_produced"] = 0
+	view["combat_left"] = 0.0
 	for field: String in RegionPartyTravel.CONTENT_DICTS: view[field] = content.get(field, {}).duplicate(true)
-	view.armies = content.get("armies", []).duplicate(true)
-	view.id = "travel:" + token
-	view.actor_presence_version = 1
-	view.controlled_person_id = int(content.get("controlled_person_id", -1 if str(party.controller) == "npc" else party.leader_person_id))
-	view.army_trial_active = not view.armies.is_empty()
-	view.travel_identity = content.travel_identity.duplicate(true)
-	view.organization_refs = content.get("organization_refs", SiteEquipmentOrders._portable_empty()).duplicate(true)
-	view.housing = {}
-	view.captivity = {}
-	view.escort_orders = {}
+	view["armies"] = content.get("armies", []).duplicate(true)
+	view["id"] = "travel:" + token
+	view["actor_presence_version"] = 1
+	view["controlled_person_id"] = int(content.get("controlled_person_id", -1 if str(party.controller) == "npc" else party.leader_person_id))
+	view["army_trial_active"] = not view.armies.is_empty()
+	view["travel_identity"] = content.travel_identity.duplicate(true)
+	view["organization_refs"] = content.get("organization_refs", SiteEquipmentOrders._portable_empty()).duplicate(true)
+	view["housing"] = {}
+	view["captivity"] = {}
+	view["escort_orders"] = {}
 	view.manual.cargo = content.get("manual_cargo", {}).duplicate(true) if view.actors.has("player") else {}
 	view.worker.cargo = content.get("manual_cargo", {}).duplicate(true) if view.actors.has("npc") else {}
 	view.manual.target = ""
 	view.manual.progress = 0.0
 	view.worker.target = ""
 	view.worker.progress = 0.0
-	view.worker_enabled = false
-	view.paused = false
+	view["worker_enabled"] = false
+	view["paused"] = false
 	view.erase("family")
 	if content.has("family"):
-		view.family = content.family.duplicate(true)
+		view["family"] = content.family.duplicate(true)
 		for member: Dictionary in view.family.members:
 			if str(member.site_id) not in [origin, view.id] or int(member.person_id) not in party.person_ids: continue
 			var old := JSON.stringify([str(member.site_id), int(member.person_id)])
@@ -10315,9 +10315,9 @@ func prepare_region_party_original_owner(token: String, party: Dictionary, slot:
 	if not transport.is_empty():
 		if not transport.get("projectiles", []).is_empty() or not transport.get("reservations", []).is_empty():
 			return SiteRuntime.fail("PARTY_ACTION_OPEN", "原出發不能遺失已接受射擊／彈體進度")
-		transport.orders = content.get("fire_orders", []).duplicate(true)
-		transport.member_cursor = content.get("fire_member_cursor", []).duplicate(true)
-		view.fire_transport = transport
+		transport["orders"] = content.get("fire_orders", []).duplicate(true)
+		transport["member_cursor"] = content.get("fire_member_cursor", []).duplicate(true)
+		view["fire_transport"] = transport
 	else: view.erase("fire_transport")
 	# Borrow derived physical navigation only. No resource/feature/body/work
 	# owner from the historical origin is published or stepped by this graph.
@@ -10446,14 +10446,14 @@ func _region_gameplay_party_progress(token: String, before: Dictionary, after: D
 	# This records their completed ACTION point, without publishing world time.
 	original.fire_action_cursor = float(interval.action_end)
 	var result := after.duplicate(true)
-	result.content = captured.party.content
+	result["content"] = captured.party.content
 	result.upkeep.original_deaths = captured.party.upkeep.original_deaths
 	result.upkeep.owner_action_seconds = float(interval.action_end)
 	if str(before.upkeep.get("live", {}).get("upkeep", "")) == "mapBody": result.upkeep.live = captured.party.upkeep.live
 	# The accepted actual capture retains the same original runtime graph.
 	original._region_party_input_hash = _region_party_hash(result)
 	var meta: Dictionary = original.terrain.get_meta(&"region_party_owner", {})
-	meta.party_hash = original._region_party_input_hash
+	meta["party_hash"] = original._region_party_input_hash
 	original.terrain.set_meta(&"region_party_owner", meta)
 	return {"ok": true, "party": result, "complete": true, "token": token,
 		"game_seconds": float(interval.game_end), "action_seconds": float(interval.action_end)}
@@ -10465,15 +10465,15 @@ func _region_capture_original_party(original: TerrainLab, party: Dictionary, slo
 	var result := party.duplicate(true)
 	var content: Dictionary = result.content
 	for field: String in RegionPartyTravel.CONTENT_DICTS: content[field] = original.terrain.site.get(field, {}).duplicate(true)
-	content.armies = original.terrain.site.armies.duplicate(true)
-	content.controlled_person_id = int(original.terrain.site.controlled_person_id) if str(party.controller) == "player" else -1
-	content.manual_cargo = original.terrain.site.manual.cargo.duplicate(true) if content.actors.has("player") else original.terrain.site.worker.cargo.duplicate(true)
-	if party.content.has("family"): content.family = original.terrain.site.family.duplicate(true)
-	content.travel_identity = original.terrain.site.travel_identity.duplicate(true)
+	content["armies"] = original.terrain.site.armies.duplicate(true)
+	content["controlled_person_id"] = int(original.terrain.site.controlled_person_id) if str(party.controller) == "player" else -1
+	content["manual_cargo"] = original.terrain.site.manual.cargo.duplicate(true) if content.actors.has("player") else original.terrain.site.worker.cargo.duplicate(true)
+	if party.content.has("family"): content["family"] = original.terrain.site.family.duplicate(true)
+	content["travel_identity"] = original.terrain.site.travel_identity.duplicate(true)
 	for field: String in ["next_person_id", "army_next_team", "next_vehicle", "next_item", "next_loot"]: content.counters[field] = int(original.terrain.site.get(field, content.counters.get(field, 1)))
 	var identified := RegionPartyTravel.prepare_identity(content)
 	if not identified.ok: return identified
-	content.travel_identity = identified.state.travel_identity
+	content["travel_identity"] = identified.state.travel_identity
 	RegionPartyTravel._retain_identity(content)
 	if RegionPartyTravel.census(result).people != RegionPartyTravel.census(party).people: return SiteRuntime.fail("PARTY_BODY_CLOSURE")
 	result.upkeep.original_deaths = {}
@@ -10486,7 +10486,7 @@ func _region_capture_original_party(original: TerrainLab, party: Dictionary, slo
 		result = refreshed.party
 	original._region_party_input_hash = _region_party_hash(result)
 	var meta: Dictionary = original.terrain.get_meta(&"region_party_owner", {})
-	meta.party_hash = original._region_party_input_hash
+	meta["party_hash"] = original._region_party_input_hash
 	original.terrain.set_meta(&"region_party_owner", meta)
 	return {"ok": true, "party": result}
 
@@ -10696,11 +10696,11 @@ func prepare_initial_resident_roster(new_data: TerrainData) -> Dictionary:
 	team.combat_order = TerrainArmy.CombatOrder.HOLD
 	for index: int in team.combat_units.size():
 		var body: Dictionary = team.combat_units[index]
-		body.cargo = {}
+		body["cargo"] = {}
 		# Residents start with no items: an empty holder and no equipment records, so the item ledger
 		# is unchanged and every record stays located. Equipment is issued later, not at birth.
-		body.item_state = SiteRuntime.new_item_state("person:%d" % team.combat_identity(index))
-		body.military_role = "civilian"
+		body["item_state"] = SiteRuntime.new_item_state("person:%d" % team.combat_identity(index))
+		body["military_role"] = "civilian"
 		body["name"] = str(rows[index].name)
 		# Unarmed look: the game's own projection of this empty holder (SiteRuntime.equipment_appearance, the
 		# reconcile that site_store.gd _validate_army_assets and terrain_lab.gd _presentation_holder use). Every
@@ -10708,7 +10708,7 @@ func prepare_initial_resident_roster(new_data: TerrainData) -> Dictionary:
 		var unarmed: Dictionary = SiteRuntime.equipment_appearance(candidate, body.item_state, body.appearance)
 		if unarmed.is_empty() or not TerrainArmy.prepare_contact_source_for(unarmed):
 			return _initial_artisan_birth_dispose(staging, SiteRuntime.fail("RESIDENT_DEPLOY_FAILED", "居民外觀無法卸裝；未改變"))
-		body.appearance = unarmed
+		body["appearance"] = unarmed
 	var resident_team: Dictionary = team.capture_combat_state()
 	if not candidate.site.get("armies") is Array: candidate.site["armies"] = []
 	candidate.site.armies.append(resident_team)
@@ -10894,8 +10894,8 @@ func _region_advance_original_travel_interval(request: Dictionary) -> Dictionary
 	originals.assign(joint.originals)
 	var interval: Dictionary = joint.interval
 	var prepared: Dictionary = joint.prepared
-	prepared.travel_host = self
-	prepared.travel_party = party_original
+	prepared["travel_host"] = self
+	prepared["travel_party"] = party_original
 	var mode: Dictionary = slot.region_registry().modes.get("travel:" + token, {})
 	var player_permit: Dictionary = slot.GameplayClock.begin_permit(slot.region_registry(), "travel:" + token, str(mode.get("mode", "")), int(slot._marker.generation),
 		float(interval.game_begin), float(interval.action_begin), str(mode.get("consumer", "")), slot._region_positive_player_death_ids())
@@ -10920,8 +10920,8 @@ func _region_advance_original_travel_interval(request: Dictionary) -> Dictionary
 			if not retimed.ok: return _region_preflight_failure(originals, retimed)
 		prepared = slot.prepare_region_gameplay_interval(interval)
 		if not prepared.ok: return _region_preflight_failure(originals, prepared)
-		prepared.travel_host = self
-		prepared.travel_party = party_original
+		prepared["travel_host"] = self
+		prepared["travel_party"] = party_original
 		prepared.permits["travel:" + token] = player_permit
 		outcome = slot._region_live_party_candidate(interval, selected.party) if live_body else request.candidate.call(interval)
 		if not outcome is Dictionary or not outcome.get("ok", false):
@@ -11116,8 +11116,8 @@ func _region_gameplay_player_materialize(event: Dictionary) -> Dictionary:
 		if not npc_token.is_empty() and str(slot.region_registry().parties.get(npc_token, {}).get("phase", "")) == "travelling":
 			var npc_location: Dictionary = slot._region_npc_endpoint_location(npc_token, coordinate, queued)
 			if not npc_location.ok: return npc_location
-			endpoint.npc_token = npc_token
-			endpoint.npc_location = npc_location
+			endpoint["npc_token"] = npc_token
+			endpoint["npc_location"] = npc_location
 		var bind := func(candidate: TerrainData) -> Dictionary:
 			return activated.prepare_region_owner_bind(candidate, "live", slot)
 		var entered := slot.commit_region_arrival(activated.terrain, bind, endpoint)
@@ -11295,8 +11295,8 @@ func capture_region_fire_transport(context: Dictionary, expected_owners: Diction
 	var captured := _capture_fire_transport_payload()
 	if not captured.ok: return captured
 	var receipt := context.duplicate(true)
-	receipt.ok = true; receipt.state = captured.state
-	receipt.owner_graph_hash = RegionCheckpoint.state_hash({"graph": actual.state})
+	receipt["ok"] = true; receipt["state"] = captured.state
+	receipt["owner_graph_hash"] = RegionCheckpoint.state_hash({"graph": actual.state})
 	return receipt
 
 ## R2 original-owner calibration plus guarded formal fixed-target caller.
@@ -11779,17 +11779,17 @@ func _region_cold_quiet_journal(maximum_game_seconds: float) -> Dictionary:
 	# Keep a short remainder on the exact path. No rounding beyond a paid meal.
 	if count < 2: return SiteRuntime.fail("COLD_EXACT_REMAINDER")
 	var result := first.duplicate(true)
-	result.sequence = int(first.sequence) + count - 1
-	result.action_end = float(row.action_end) if count == remaining else float(first.action_begin) + action_step * count
-	result.game_end = float(row.game_end) if count == remaining else float(first.game_begin) + game_step * count
-	result.tactical_seconds = 0.0
-	result.consumed_steps = count
+	result["sequence"] = int(first.sequence) + count - 1
+	result["action_end"] = float(row.action_end) if count == remaining else float(first.action_begin) + action_step * count
+	result["game_end"] = float(row.game_end) if count == remaining else float(first.game_begin) + game_step * count
+	result["tactical_seconds"] = 0.0
+	result["consumed_steps"] = count
 	if float(result.game_end) - float(result.game_begin) > maximum_game_seconds + ACTION_TIME_EPSILON \
 		or absf((float(result.action_end) - float(result.action_begin)) * 60.0 * simulation_speed \
 			- (float(result.game_end) - float(result.game_begin))) > ACTION_TIME_EPSILON:
 		return SiteRuntime.fail("CLOCK_CONTRACT")
 	if _fire_replay_segment_index < _fire_replay_boundaries.size():
-		result.action_end = float(_fire_replay_boundaries[_fire_replay_segment_index][_fire_replay_segment_offset + count])
+		result["action_end"] = float(_fire_replay_boundaries[_fire_replay_segment_index][_fire_replay_segment_offset + count])
 		result["live_boundaries"] = _fire_replay_boundaries[_fire_replay_segment_index].slice(_fire_replay_segment_offset, _fire_replay_segment_offset + count + 1)
 	return SiteRuntime.ok("", result)
 
@@ -11860,9 +11860,9 @@ func _region_advance_live_party_host(maximum_action_seconds: float) -> Dictionar
 	if not accepted.ok or accepted.get("pending", false): return accepted
 	var committed: Dictionary = slot._region_accept_player_travel_interval(token, accepted)
 	if not committed.ok: return committed
-	committed.completed = bool(committed.get("complete", false))
-	committed.action_seconds = float(accepted.interval.action_end) - float(accepted.interval.action_begin)
-	committed.game_seconds = float(accepted.interval.game_end) - float(accepted.interval.game_begin)
+	committed["completed"] = bool(committed.get("complete", false))
+	committed["action_seconds"] = float(accepted.interval.action_end) - float(accepted.interval.action_begin)
+	committed["game_seconds"] = float(accepted.interval.game_end) - float(accepted.interval.game_begin)
 	return committed
 
 func _region_advance_original_party_body(original: TerrainLab, before: Dictionary, interval: Dictionary) -> Dictionary:
@@ -12064,7 +12064,7 @@ func _region_party_capture_fire_state(context: Dictionary) -> Dictionary:
 		if not raw.get("receipt_ids") is Dictionary: return SiteRuntime.fail("INVALID_FIRE_RECEIPT")
 		var receipts := {}
 		for identity: Variant in raw.receipt_ids: receipts[str(identity)] = raw.receipt_ids[identity]
-		raw.receipt_ids = receipts
+		raw["receipt_ids"] = receipts
 	var normalized: Variant = SiteRuntime._fire_snapshot_json_copy(raw)
 	if not normalized is Dictionary or not SiteRuntime._fire_snapshot_json(normalized): return SiteRuntime.fail("INVALID_FIRE_SNAPSHOT")
 	var valid := SiteRuntime.validate_fire_snapshot(terrain, normalized, fire_action_cursor)
@@ -12107,33 +12107,33 @@ func _region_party_domain_view(token: String, party: Dictionary, slot: RegionSav
 		view.erase(field)
 	for field: String in ["features", "changes", "terrain_changes", "inventory", "water_status", "water_links", "building_economy", "housing", "captivity", "escort_orders"]:
 		view[field] = {}
-	view.zones = []; view.notices = []; view.total_produced = 0; view.combat_left = 0.0
+	view["zones"] = []; view["notices"] = []; view["total_produced"] = 0; view["combat_left"] = 0.0
 	for field: String in RegionPartyTravel.CONTENT_DICTS: view[field] = content.get(field, {}).duplicate(true)
-	view.armies = content.get("armies", []).duplicate(true)
-	view.id = "travel:" + token
+	view["armies"] = content.get("armies", []).duplicate(true)
+	view["id"] = "travel:" + token
 	# Derived view of the SAME party GAME clock; never a Site publication.
 	var game := float(party.upkeep.at)
-	view.minute = floori(game / 60.0)
-	view.phase = game / 60.0 - float(view.minute)
-	view.actor_presence_version = 1
-	view.controlled_person_id = int(content.get("controlled_person_id", party.leader_person_id))
-	view.army_trial_active = not view.armies.is_empty()
-	view.travel_identity = content.travel_identity.duplicate(true)
-	view.organization_refs = content.get("organization_refs", SiteEquipmentOrders._portable_empty()).duplicate(true)
+	view["minute"] = floori(game / 60.0)
+	view["phase"] = game / 60.0 - float(view.minute)
+	view["actor_presence_version"] = 1
+	view["controlled_person_id"] = int(content.get("controlled_person_id", party.leader_person_id))
+	view["army_trial_active"] = not view.armies.is_empty()
+	view["travel_identity"] = content.travel_identity.duplicate(true)
+	view["organization_refs"] = content.get("organization_refs", SiteEquipmentOrders._portable_empty()).duplicate(true)
 	view.manual.cargo = content.get("manual_cargo", {}).duplicate(true) if view.actors.has("player") else {}
 	view.worker.cargo = content.get("manual_cargo", {}).duplicate(true) if view.actors.has("npc") else {}
 	for clocked: Dictionary in [view.manual, view.worker]: clocked.target = ""; clocked.progress = 0.0
-	view.worker_enabled = false; view.paused = false
-	if content.has("family"): view.family = content.family.duplicate(true)
+	view["worker_enabled"] = false; view["paused"] = false
+	if content.has("family"): view["family"] = content.family.duplicate(true)
 	for field: String in ["next_person_id", "army_next_team", "next_vehicle", "next_item", "next_loot"]:
 		view[field] = int(content.get("counters", {}).get(field, view.get(field, 1)))
 	var transport: Dictionary = content.get("fire_template", {}).duplicate(true)
 	if not graph.is_empty(): transport = graph.owners.transport.fire_transport.duplicate(true)
 	elif not transport.is_empty():
-		transport.orders = content.get("fire_orders", []).duplicate(true)
-		transport.member_cursor = content.get("fire_member_cursor", []).duplicate(true)
+		transport["orders"] = content.get("fire_orders", []).duplicate(true)
+		transport["member_cursor"] = content.get("fire_member_cursor", []).duplicate(true)
 	if transport.is_empty(): view.erase("fire_transport")
-	else: view.fire_transport = transport
+	else: view["fire_transport"] = transport
 	data.site = view
 	data.set_meta(&"region_party_runtime_mapping", party.upkeep.get("original_runtime_mapping", {}).duplicate(true))
 	data.resource_base = {}; data.resources_at = {}
@@ -12171,7 +12171,7 @@ func _region_party_domain_view(token: String, party: Dictionary, slot: RegionSav
 
 static func _region_party_scene_owners(owners: Dictionary) -> Dictionary:
 	var scene := {"scene": owners.scene}
-	if owners.has("fire_boundary_receipt"): scene.fire_boundary_receipt = owners.fire_boundary_receipt
+	if owners.has("fire_boundary_receipt"): scene["fire_boundary_receipt"] = owners.fire_boundary_receipt
 	return scene
 
 func _region_prepare_party_graph_bind(token: String, candidate: Dictionary, slot: RegionSaveSlot,
@@ -12259,7 +12259,7 @@ func _region_prepare_party_graph_bind(token: String, candidate: Dictionary, slot
 	var owners := {"scene": wire.state, "transport": {"version": 1, "fire_transport": transport.transport, "fire_state": fire.state}}
 	var boundary: Dictionary = merged.roots.fire_meta.get("fire_boundary", {})
 	if not boundary.is_empty():
-		owners.fire_boundary_receipt = {"site_id": "travel:" + token, "action_end": float(boundary.action_end),
+		owners["fire_boundary_receipt"] = {"site_id": "travel:" + token, "action_end": float(boundary.action_end),
 			"resource_count": boundary.resources.size(), "feature_count": boundary.features.size(),
 			"token": str(context.context.token), "action_start_cursor": float(merged.roots.lab.fire_action_cursor)}
 	var graph := {"version": 1, "token": token, "party_hash": _region_party_hash(candidate), "context": context.context, "owners": owners}
@@ -12363,8 +12363,8 @@ func _region_publish_party_bind(proof: Dictionary, nonce: String) -> Dictionary:
 		return SiteRuntime.fail("STALE_REGION_PARTY_COMMIT")
 	var graph := _region_validate_party_graph(ticket.data, ticket.party, ticket.graph)
 	if not graph.ok: return graph
-	ticket.kind = "party-published"
-	ticket.proof = proof.duplicate(true)
+	ticket["kind"] = "party-published"
+	ticket["proof"] = proof.duplicate(true)
 	_region_party_token = token
 	_region_party_input_hash = ticket.party_hash
 	bind_terrain(ticket.data, {"ok": true, "crowd_site": null, "region_bind_token": nonce})
@@ -12374,11 +12374,11 @@ func _region_publish_party_bind(proof: Dictionary, nonce: String) -> Dictionary:
 	_region_publish_party_owner_index(slot, token)
 	_region_discard_party_child(ticket.child)
 	_region_owner_bind_tickets.erase(nonce)
-	bound.owner = "travel:" + token
-	bound.generation = int(proof.generation)
-	bound.mode = "live"
-	bound.backend = "gd"
-	bound.consumer = "original_party"
+	bound["owner"] = "travel:" + token
+	bound["generation"] = int(proof.generation)
+	bound["mode"] = "live"
+	bound["backend"] = "gd"
+	bound["consumer"] = "original_party"
 	
 	return bound
 
@@ -12501,9 +12501,9 @@ func _region_bind_selected_party(token: String, party: Dictionary, slot: RegionS
 		return SiteRuntime.fail("COMMITTED_UNBOUND", "Selected original party graph remains the only resumable body")
 	_region_owner_bind_tickets.erase(nonce)
 	_region_publish_party_owner_index(slot, token)
-	bound.owner = "travel:" + token; bound.generation = generation; bound.mode = "live"
-	bound.backend = "gd"; bound.consumer = "original_party"
-	bound.proof = proof.duplicate(true)
+	bound["owner"] = "travel:" + token; bound["generation"] = generation; bound["mode"] = "live"
+	bound["backend"] = "gd"; bound["consumer"] = "original_party"
+	bound["proof"] = proof.duplicate(true)
 	# Fresh open invalidates persisted activations. This complete original bind
 	# acknowledges only the already-selected live GD Party in this process.
 	var mode: Dictionary = slot.region_registry().modes.get(str(bound.owner), {})
@@ -12632,8 +12632,8 @@ func _region_publish_party_departure_bind(proof: Dictionary, nonce: String) -> D
 	child._region_bind_receipt_value.mode = "live"
 	child._region_bind_receipt_value.consumer = "original_party"
 	var record: Dictionary = _region_party_bind_candidates.get(child.get_instance_id(), {})
-	record.proof = proof.duplicate(true)
-	record.graph = ticket.graph
+	record["proof"] = proof.duplicate(true)
+	record["graph"] = ticket.graph
 	_region_party_bind_candidates[child.get_instance_id()] = record
 	if is_instance_valid(old) and old != self and old != child and old.get_parent() == self: _region_discard_party_child(old)
 	_region_owner_bind_tickets.erase(nonce)
@@ -12694,9 +12694,9 @@ func _region_selected_party_owner(token: String, party: Dictionary, slot: Region
 	if not restored.ok: return restored.merged({"handled": true}, true)
 	# A fresh full-graph bootstrap restores the original owner, then re-admits its saved mode once.
 	var activation: Dictionary = restored.receipt.duplicate(true)
-	activation.owner = owner; activation.mode = str(prior.mode)
-	activation.generation = int(selected.proof.generation); activation.backend = "gd"
-	activation.consumer = str(prior.consumer)
+	activation["owner"] = owner; activation["mode"] = str(prior.mode)
+	activation["generation"] = int(selected.proof.generation); activation["backend"] = "gd"
+	activation["consumer"] = str(prior.consumer)
 	var enabled := slot.activate_region_mode(owner, str(prior.mode), str(prior.consumer), activation, "gd")
 	if not enabled.ok:
 		_region_discard_party_child(restored.child)
@@ -12704,8 +12704,8 @@ func _region_selected_party_owner(token: String, party: Dictionary, slot: Region
 	# Admission above uses the genuine complete restored receipt. The saved
 	# activation payload stays intact; only its validated session/revision renew.
 	var renewed_activation: Dictionary = activation_history.duplicate(true)
-	renewed_activation.session = enabled.mode.activation.session
-	renewed_activation.mode_revision = enabled.mode.activation.mode_revision
+	renewed_activation["session"] = enabled.mode.activation.session
+	renewed_activation["mode_revision"] = enabled.mode.activation.mode_revision
 	enabled.mode.activation = renewed_activation
 	enabled.mode.tactical_until_action = prior.tactical_until_action
 	cached[token] = restored.child
@@ -12824,7 +12824,7 @@ func _region_prepare_party_family_bind(token: String, candidate: Dictionary, slo
 	var full := original.capture_region_party_owner_graph(token, source.party, slot, context.context)
 	if not full.ok: _region_discard_party_child(original); return full
 	var graph: Dictionary = full.original_live_graph.duplicate(true)
-	graph.party_hash = _region_party_hash(candidate)
+	graph["party_hash"] = _region_party_hash(candidate)
 	# Original input/UI is applied only after the joint marker. This durable
 	# control state prevents a selected continuation from restoring the old wait.
 	var symbolic := RegionOwnerSnapshot.validate_for_bind(graph.owners.scene, func(_key: String, _kind: int) -> bool: return true, graph.context)
@@ -12914,13 +12914,13 @@ func _region_refresh_original_live_frame(party: Dictionary, original: TerrainLab
 					"from_facing": move.from_facing.duplicate(), "to_facing": move.facing.duplicate(),
 					"weight": float(actual.progress), "elapsed_action_seconds": float(move.elapsed),
 					"duration_action_seconds": float(move.duration)}, true)
-			record.pose = pose
+			record["pose"] = pose
 		vehicles[identity] = record
-	frame.people = people
-	frame.vehicles = vehicles
-	frame.game_seconds = float(slot.control.logical_game_seconds) if game_seconds < 0.0 else game_seconds
-	frame.action_seconds = float(slot.control.fire_clock.action_seconds) if action_seconds < 0.0 else action_seconds
-	live.upkeep = str(live.get("upkeep", "liveBody"))
+	frame["people"] = people
+	frame["vehicles"] = vehicles
+	frame["game_seconds"] = float(slot.control.logical_game_seconds) if game_seconds < 0.0 else game_seconds
+	frame["action_seconds"] = float(slot.control.fire_clock.action_seconds) if action_seconds < 0.0 else action_seconds
+	live["upkeep"] = str(live.get("upkeep", "liveBody"))
 	result.upkeep.at = frame.game_seconds
 	result.upkeep.owner_action_seconds = frame.action_seconds
 	# Region route distance and sea_cursor remain their exact historical values.
@@ -13070,7 +13070,7 @@ func prepare_region_party_map_motion(before: Dictionary, after: Dictionary, targ
 			var row: Dictionary = frame[group][identity]
 			if not RegionPartyTravel._frame_pair(row.get("world_cell")): return SiteRuntime.fail("INVALID_PARTY_FRAME")
 			var at := Vector2i(int(row.world_cell[0]), int(row.world_cell[1])) + movement
-			row.world_cell = [at.x, at.y]
+			row["world_cell"] = [at.x, at.y]
 			low = low.min(at).min(at - movement); high = high.max(at).max(at - movement)
 	var old_origin := Vector2i(int(old_frame.world_origin[0]), int(old_frame.world_origin[1]))
 	var sweep: Array[Vector2i] = []
@@ -13084,7 +13084,7 @@ func prepare_region_party_map_motion(before: Dictionary, after: Dictionary, targ
 	var size := Vector2i((RegionPartyGrid.floor_div(high.x, 100) + 1) * 100 - origin.x,
 		(RegionPartyGrid.floor_div(high.y, 100) + 1) * 100 - origin.y)
 	if size.x not in [100, 200] or size.y not in [100, 200]: return SiteRuntime.fail("PARTY_FRAME_BOUNDS")
-	frame.world_origin = [origin.x, origin.y]; frame.size = [size.x, size.y]
+	frame["world_origin"] = [origin.x, origin.y]; frame["size"] = [size.x, size.y]
 	var projected: Dictionary = RegionPartyTravel.project_party_frame(before, frame)
 	if not projected.ok: return projected
 	var context: Dictionary = slot.prepare_region_route_context(null, before)
@@ -13205,12 +13205,12 @@ func _prepare_gd_mesh_work_point(seconds: float) -> Dictionary:
 	var original: Dictionary = site_controller.work_team.prepare_shared_work_prefix(seconds)
 	if not original.ok: return original
 	var upper: Dictionary = _shared_work_plan.duplicate(false)
-	upper.jobs = {}
+	upper["jobs"] = {}
 	for provider: String in _shared_work_plan.jobs:
 		upper.jobs[provider] = {}
 		for key: String in _shared_work_plan.jobs[provider]:
 			var allocation: Dictionary = _shared_work_plan.jobs[provider][key].duplicate(false)
-			allocation.participant_effective_seconds = allocation.participant_seconds.duplicate()
+			allocation["participant_effective_seconds"] = allocation.participant_seconds.duplicate()
 			upper.jobs[provider][key] = allocation
 	var runtime_registered: Dictionary = site_controller.prepare_shared_runtime_prefix_allocations(captured, upper, runtime_priors)
 	if not runtime_registered.ok: return runtime_registered
@@ -13280,8 +13280,8 @@ func _advance_gd_mesh_work_to(fraction: float) -> void:
 		elif source.provider == "runtime": live = live and site_controller.gd_contact_runtime_person_ready(identity)
 		elif source.provider == "training": live = live and site_controller.gd_contact_training_person_ready(identity)
 		elif source.provider == "delivery": live = live and site_controller.gd_contact_delivery_person_ready(identity)
-		participant.effort_rate = PersonFatigue.effort_rate(source.body, float(source.base_rate)) if live else 0.0
-		participant.active_until_game_seconds = seconds if live else 0.0
+		participant["effort_rate"] = PersonFatigue.effort_rate(source.body, float(source.base_rate)) if live else 0.0
+		participant["active_until_game_seconds"] = seconds if live else 0.0
 		projection[identity] = participant
 	# Actual original bodies/counts after the PREVIOUS contact are the only
 	# fatigue inputs. No temporary HP, forged alive row, proxy pool, or seed.
@@ -13439,7 +13439,7 @@ func _gd_mesh_ship_repair_version_budget(envelopes: Array, priors: Array) -> Dic
 			targets.append(target_row)
 		if int(target_row.begin) != int(envelope.ship_revision_begin): return SiteRuntime.fail("STALE_SOURCE")
 		if float(envelope.prepared.prefix_ref.actual_seconds) <= 0.0: continue
-		target_row.workers = int(target_row.workers) + 1
+		target_row["workers"] = int(target_row.workers) + 1
 		var row: Dictionary = {}
 		for existing: Dictionary in holders:
 			if is_same(existing.holder, envelope.ship_holder): row = existing; break
@@ -13447,7 +13447,7 @@ func _gd_mesh_ship_repair_version_budget(envelopes: Array, priors: Array) -> Dic
 			row = {"holder": envelope.ship_holder, "cargo": envelope.ship_cargo, "begin": int(envelope.ship_holder_begin), "workers": 0}
 			holders.append(row)
 		if not is_same(row.cargo, envelope.ship_cargo) or int(row.begin) != int(envelope.ship_holder_begin): return SiteRuntime.fail("STALE_SOURCE")
-		row.workers = int(row.workers) + 1
+		row["workers"] = int(row.workers) + 1
 	for row: Dictionary in holders:
 		var ordinary_payments: int = 0
 		for prior: Dictionary in priors:
@@ -13504,9 +13504,9 @@ func _plan_shared_vehicle_work_interval(requests: Array, seconds: float, project
 			if projection.is_empty(): union_requests.append(request)
 			else:
 				var projected: Dictionary = request.duplicate(false)
-				projected.remaining = float(_gd_mesh_work_point.get("remaining", {}).get(str(request.provider) + ":" + str(request.key), request.remaining))
-				projected.max_game_seconds = maxf(0.0, float(request.max_game_seconds) - float(_gd_mesh_work_point.get("elapsed", 0.0)))
-				projected.participants = []
+				projected["remaining"] = float(_gd_mesh_work_point.get("remaining", {}).get(str(request.provider) + ":" + str(request.key), request.remaining))
+				projected["max_game_seconds"] = maxf(0.0, float(request.max_game_seconds) - float(_gd_mesh_work_point.get("elapsed", 0.0)))
+				projected["participants"] = []
 				for participant: Dictionary in request.participants: projected.participants.append(projection.get(int(participant.person_id), participant))
 				union_requests.append(projected)
 	var planned: Dictionary = PersonFatigue.plan_work_interval(union_requests, seconds)
@@ -13522,7 +13522,7 @@ func _plan_shared_vehicle_work_interval(requests: Array, seconds: float, project
 			var local_effective := 0.0
 			for participant: Dictionary in request.participants:
 				local_effective += float(allocation.participant_effective_seconds.get(int(participant.person_id), 0.0)) * float(participant.get("progress_multiplier", 1.0))
-			projected.effective_seconds = local_effective
+			projected["effective_seconds"] = local_effective
 			if not planned.jobs.has(str(request.provider)): planned.jobs[str(request.provider)] = {}
 			planned.jobs[str(request.provider)][str(request.key)] = projected
 		planned.jobs.shared_vehicle.erase(group.key)
@@ -13656,14 +13656,14 @@ func _publish_native_begin_shared_window(prepared: Dictionary) -> Dictionary:
 	site_controller.publish_native_sustain_inputs(prepared.sustain)
 	_exchange_phase += action
 	if _exchange_phase + ACTION_TIME_EPSILON >= EXCHANGE_QUERY_STEP: _exchange_phase = fposmod(_exchange_phase, EXCHANGE_QUERY_STEP)
-	prepared.published = true
+	prepared["published"] = true
 	return SiteRuntime.ok("", {"captured": prepared.captured, "plan": _shared_work_plan})
 
 func validate_native_begin_shared_window(prepared: Dictionary) -> Dictionary:
 	if not valid_native_begin_shared_window(prepared): return SiteRuntime.fail("STALE_NATIVE_BEGIN")
 	var ranged: Dictionary = validate_native_begin_ranged(prepared.ranged)
 	if not ranged.ok: return ranged
-	prepared.ranged_check = ranged.check
+	prepared["ranged_check"] = ranged.check
 	# SAME original captures and pure material candidates are rechecked BEFORE
 	# any arrow pulse debit. This is not accepted consumption or a World flag.
 	for held: Dictionary in prepared.captured.person_actions.held.values():
@@ -13978,7 +13978,7 @@ func prepare_native_begin_ranged(action_seconds: float, register_candidate: bool
 		"sequence": _fire_release_sequence, "original_projectiles": fire_projectiles,
 		"projectile_values": fire_projectiles.duplicate(true), "capacity": fire_projectile_capacity,
 		"policies": {}, "releases": [], "scheduler_result": {}, "error": {}, "published": false}
-	if query_override >= 0: draft.query_due = query_override == 1
+	if query_override >= 0: draft["query_due"] = query_override == 1
 	# Without a fire host _resolve_physical_ranged_fire refuses every query
 	# (UNSUPPORTED_AMMO); a host-less Crowd site has no ranged query to make.
 	if bool(draft.query_due) and crowd_site.fire_host_active():
@@ -14004,8 +14004,8 @@ func prepare_native_begin_ranged(action_seconds: float, register_candidate: bool
 			var shooter: Dictionary = row.geometry.shooter.duplicate(true)
 			# Original ordered sibling pulses change this shooter's pre-release
 			# fatigue, and therefore its original finite pre-power trajectory.
-			shooter.fatigue = float(preview[index * 10 + 4])
-			row.geometry = _prepare_fire_release_flight(row.person, row.reservation, int(row.release.shot_id), shooter)
+			shooter["fatigue"] = float(preview[index * 10 + 4])
+			row["geometry"] = _prepare_fire_release_flight(row.person, row.reservation, int(row.release.shot_id), shooter)
 			if row.geometry.is_empty(): return SiteRuntime.fail("NO_VALID_TRAJECTORY")
 	draft["native_inputs"] = native_inputs
 	draft["preview"] = preview
@@ -14065,7 +14065,7 @@ func publish_validated_native_begin_ranged(prepared: Dictionary, check: Dictiona
 		var flight: Dictionary = geometry.flight
 		var offset: Vector2 = SiteCombatRules.fire_aim_offset(released.shooter, float(profile.nominal_distance), bool(geometry.aim.moving),
 			terrain.seed_value, int(row.identity), int(row.reservation.serial), int(release.shot_id), float(profile.scatter_multiplier))
-		flight.velocity = (geometry.nominal + geometry.right * offset.x + geometry.up * offset.y - geometry.origin) / float(flight.total) \
+		flight["velocity"] = (geometry.nominal + geometry.right * offset.x + geometry.up * offset.y - geometry.origin) / float(flight.total) \
 			+ Vector3(0, 0, 0.5 * float(profile.gravity) * float(flight.total))
 		var source_formation_id: int = int(release.owner.team_id) if release.owner.has_army() else 0
 		flight.merge({"projectile_id": int(release.shot_id), "source_member_id": int(row.identity), "source_formation_id": source_formation_id,
@@ -14076,8 +14076,8 @@ func publish_validated_native_begin_ranged(prepared: Dictionary, check: Dictiona
 		_fire_unsaved = true
 		ranged_shots += 1
 	_fire_release_sequence = int(prepared.sequence)
-	prepared.published = true
-	check.published = true
+	prepared["published"] = true
+	check["published"] = true
 	_fire_committing = false
 	if not prepared.releases.is_empty():
 		# True accepted BEGIN combat mark classifies this body's original clock.
@@ -14095,7 +14095,7 @@ func _settle_native_checked_point_endpoint() -> Dictionary:
 	if not crowd_site.finish_work_fatigue_point_events(): return crowd_site.last_event_error
 	site_controller.person_actions.finish_native_fire_point(endpoint.fire)
 	_finish_original_shared_prefixes(endpoint.checked, false)
-	endpoint.finished = true
+	endpoint["finished"] = true
 	return SiteRuntime.ok()
 
 func _check_original_shared_prefixes(captured: Dictionary, planned: Dictionary, requests: Array, runtime_priors: Array, before_body: bool = false) -> Dictionary:
@@ -14240,15 +14240,15 @@ func _native_begin_interval_requests(requests: Array, action_seconds: float, gam
 			if not held.is_empty():
 				current = request.duplicate(false)
 				var duration: float = 12.0 if str(held.pending) == "deploy" else 8.0
-				current.remaining = maxf(0.0, duration - float(held.progress)) * game_seconds / action_seconds
-				current.max_game_seconds = game_seconds
+				current["remaining"] = maxf(0.0, duration - float(held.progress)) * game_seconds / action_seconds
+				current["max_game_seconds"] = game_seconds
 		elif str(request.provider) == "training":
 			current = request.duplicate(false)
-			current.remaining = game_seconds
-			current.max_game_seconds = game_seconds
+			current["remaining"] = game_seconds
+			current["max_game_seconds"] = game_seconds
 			# An actual successful BEGIN pulse establishes combat BEFORE this
 			# interval. It never grants peaceful training after that real event.
-			if combat > 0.0 and str(current.get("paused", "")).is_empty(): current.paused = "COMBAT"
+			if combat > 0.0 and str(current.get("paused", "")).is_empty(): current["paused"] = "COMBAT"
 		result.append(current)
 	return result
 
@@ -14265,14 +14265,14 @@ func _native_begin_participant_projection(requests: Array, preview: PackedFloat6
 			var formation: int = int(participant.native_snapshot.formation)
 			if not pools.has(formation): continue
 			var person: Dictionary = participant.duplicate(false)
-			person.body = {"_fatigue_pool": pools[formation], "work_resting": bool(participant.body.get("work_resting", false))}
+			person["body"] = {"_fatigue_pool": pools[formation], "work_resting": bool(participant.body.get("work_resting", false))}
 			projected[int(person.person_id)] = person
 	return projected
 
 func _settle_siege_fire_pot_impact(flight: Dictionary, event: Dictionary) -> void:
 	if flight.get("ammo") != "fire_pot" or bool(flight.get("fire_resolved", false)): return
 	if _region_queue_original_endpoint("siege_fire_pot_impact", {"flight": flight, "event": event}): return
-	flight.fire_resolved = true
+	flight["fire_resolved"] = true
 	var fraction := float(event.fraction)
 	var position := _siege_world_at(flight, fraction)
 	var elapsed := fraction * float(flight.total)
@@ -14293,8 +14293,8 @@ func _settle_siege_fire_pot_impact(flight: Dictionary, event: Dictionary) -> voi
 		"action_time": float(flight.spawn_action) + elapsed, "position": position, "remaining_heat_budget": heat,
 		"heat_rate": float(profile.contact_rate), "max_seconds": float(profile.contact_seconds),
 		"heat_transfer": float(thermal.get("heat_transfer", 1.0)), "contact_scale": float(thermal.get("contact_scale", 1.0)), "cell": cell}
-	if event.has("feature"): payload.feature = event.feature; payload.part = event.part
-	if event.has("person"): payload.person_id = int(event.person.id)
+	if event.has("feature"): payload["feature"] = event.feature; payload["part"] = event.part
+	if event.has("person"): payload["person_id"] = int(event.person.id)
 	var received := SiteRuntime.fire_receive_impact(terrain, payload)
 	if not received.ok: _latch_fire_boundary_error(received)
 	elif event.has("person") and not bool(received.get("duplicate", false)): _receive_fire_body_contact(event.person, payload)
@@ -14695,7 +14695,7 @@ func publish_region_party_map_motion(candidate: Dictionary, motion: Dictionary,
 	for index: int in prepared_sources.size():
 		for field: String in ["site", "offset", "visited", "navigation_hash"]:
 			if prepared_sources[index].get(field) != current_sources[index].get(field): return SiteRuntime.fail("STALE_REGION_MAP_GEOMETRY", field)
-	motion.geometry = current_geometry
+	motion["geometry"] = current_geometry
 	var projected: Dictionary = RegionPartyTravel.project_party_frame(actual.party, motion.frame)
 	if not projected.ok: return projected
 	motion.geometry.data.site = terrain.site.duplicate(true)
@@ -14735,7 +14735,7 @@ func publish_region_party_map_motion(candidate: Dictionary, motion: Dictionary,
 	if not restore.ok: return restore
 	# The preflight resolves every old lease/plan to the very same native Object.
 	# Its stale guard compares the current original table before publication.
-	restore.original_references = refs
+	restore["original_references"] = refs
 	var fields := _region_map_native_coordinate_values(projected.projection)
 	if not fields.ok: return fields
 	var old_geometry := _region_map_geometry_values(terrain)
@@ -14752,7 +14752,7 @@ func publish_region_party_map_motion(candidate: Dictionary, motion: Dictionary,
 	# still names the SAME lab/data/Objects. No new bind token is manufactured.
 	_region_owner_restore_receipt = old_receipt; _region_bind_receipt_value = old_bound
 	var frame: Dictionary = motion.frame.duplicate(true)
-	frame.game_seconds = game_seconds; frame.action_seconds = action_seconds
+	frame["game_seconds"] = game_seconds; frame["action_seconds"] = action_seconds
 	var result: Dictionary = candidate.duplicate(true)
 	result.upkeep.live.frame = frame
 	result.upkeep.live.upkeep = "mapBody"

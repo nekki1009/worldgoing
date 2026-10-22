@@ -177,21 +177,21 @@ static func _validate_fire_transport_snapshot(data: TerrainData, fire_state: Dic
 			if order.get("release_ids") is Dictionary:
 				var releases: Array = []
 				for identity: Variant in order.release_ids: releases.append([int(identity), int(order.release_ids[identity])])
-				order.release_ids = releases
-			order.group = int(group)
+				order["release_ids"] = releases
+			order["group"] = int(group)
 			orders.append(order)
-		wire.orders = orders
+		wire["orders"] = orders
 	if wire.get("reservations") is Dictionary:
 		var reservations: Array = []
 		for identity: Variant in wire.reservations:
 			var reservation: Dictionary = wire.reservations[identity]
-			reservation.person_id = int(identity)
+			reservation["person_id"] = int(identity)
 			reservations.append(reservation)
-		wire.reservations = reservations
+		wire["reservations"] = reservations
 	if wire.get("member_cursor") is Dictionary:
 		var cursors: Array = []
 		for group: Variant in wire.member_cursor: cursors.append([int(group), int(wire.member_cursor[group])])
-		wire.member_cursor = cursors
+		wire["member_cursor"] = cursors
 	# A loaded/validated Site may already carry typed flight coordinates. Convert
 	# those back to the JSON wire shape before passing through the same validator.
 	if wire.get("projectiles") is Array:
@@ -512,7 +512,7 @@ static func save(data: TerrainData, path: String = DEFAULT_PATH, native_candidat
 			return Runtime.fail("SAVE_TOO_LARGE", "未壓縮存檔超過 32 MiB，原檔保留")
 		var compressed := original.compress(FileAccess.COMPRESSION_ZSTD)
 		if compressed.is_empty(): return Runtime.fail("SAVE_IO", "存檔壓縮失敗，原檔保留")
-		wrapper.payload = Marshalls.raw_to_base64(compressed)
+		wrapper["payload"] = Marshalls.raw_to_base64(compressed)
 		wrapper["payload_encoding"] = CROWD_PAYLOAD_ENCODING
 		wrapper["payload_bytes"] = original.size()
 	var envelope := JSON.stringify(wrapper, "\t")
@@ -748,7 +748,7 @@ static func load_site(path: String = DEFAULT_PATH, fixed_base_loader: Callable =
 	if validation.has("crowd_native"):
 		# This detached candidate belongs to this load result only, never the Site
 		# snapshot or a persistent cache. Admission still rechecks its exact bytes.
-		loaded.crowd_native = validation.crowd_native
+		loaded["crowd_native"] = validation.crowd_native
 	return Runtime.ok("已載入地圖；接續保存時刻" + ("（舊地圖沒有角色快照，首次使用初始角色狀態）" if bool(payload.get("legacy_actor_state", false)) else "") + ("（舊版昏迷剩餘秒數已按比例一次轉為遊戲秒）" if legacy_ko_clock else ""), loaded)
 
 static func read_fixed_terrain_changes(path: String) -> Dictionary:
@@ -909,8 +909,8 @@ static func _retire_default_worker_copy(data: TerrainData) -> Dictionary:
 			if int(unit.get("target", -1)) == identity: unit.target = -1
 			unit.hits.erase(identity)
 	if state.has("next_person_id"):
-		state.next_person_id = maxi(int(state.next_person_id), identity + 1)
-	state.worker_enabled = false
+		state["next_person_id"] = maxi(int(state.next_person_id), identity + 1)
+	state["worker_enabled"] = false
 	state.worker.merge({"target": "", "action": "harvest", "progress": 0.0, "mode": "idle", "status": "開場測試工人已移除", "zone": -1, "manual_control": false}, true)
 	return _validate_state(data, state)
 
@@ -1109,7 +1109,7 @@ static func _normalize_trade_tax_receipts(state: Dictionary) -> void:
 	if not store is Dictionary: return
 	for key: Variant in store.keys():
 		var entry: Dictionary = store[key]
-		entry.percent = int(entry.percent)
+		entry["percent"] = int(entry.percent)
 		for field: String in ["received", "tax"]:
 			var amounts: Dictionary = entry[field]
 			for resource: Variant in amounts.keys(): amounts[resource] = int(amounts[resource])
@@ -1156,8 +1156,8 @@ static func _normalize_trade_leg_receipts(state: Dictionary) -> void:
 	if not store is Dictionary: return
 	for key: Variant in store.keys():
 		var entry: Dictionary = store[key]
-		entry.day = int(entry.day)
-		entry.treasury_spend = int(entry.treasury_spend)
+		entry["day"] = int(entry.day)
+		entry["treasury_spend"] = int(entry.treasury_spend)
 		for field: String in ["received", "given"]:
 			var amounts: Dictionary = entry[field]
 			for resource: Variant in amounts.keys(): amounts[resource] = int(amounts[resource])
@@ -1214,15 +1214,15 @@ static func _normalize_state(state: Dictionary) -> void:
 	# normalizer runs. Only detached integer metadata is canonicalized.
 	if state.has("travel_identity"):
 		var original: GDScript = load("res://scripts/region_lab/region_travel.gd")
-		state.travel_identity = original.normalize_identity(state.travel_identity)
+		state["travel_identity"] = original.normalize_identity(state.travel_identity)
 	# Portable organization references compare by value; their lineage and the
 	# container version are whole numbers like the travel identity they mirror.
 	if state.get("organization_refs") is Dictionary:
 		var portable: Dictionary = state.organization_refs
-		if portable.has("version"): portable.version = int(portable.version)
+		if portable.has("version"): portable["version"] = int(portable.version)
 		_normalize_portable_lineage(portable)
 	if state.has("ecology_version"):
-		state.ecology_version = int(state.ecology_version)
+		state["ecology_version"] = int(state.ecology_version)
 	# The validated world pin reads back with JSON numbers and an untyped list;
 	# restore the integer fields and the policy's own canonical form.
 	var world_pin: Variant = state.get("world_pin")
@@ -1239,7 +1239,7 @@ static func _normalize_state(state: Dictionary) -> void:
 		corps.commander_person_id = int(corps.commander_person_id)
 		corps.team_ids = _int_array(corps.team_ids)
 	if state.has("controlled_person_id"):
-		state.controlled_person_id = int(state.controlled_person_id)
+		state["controlled_person_id"] = int(state.controlled_person_id)
 	for event: Dictionary in state.get("region_life_events", []):
 		event.person_id = int(event.person_id)
 		event.sequence = int(event.sequence)
@@ -1261,13 +1261,13 @@ static func _normalize_state(state: Dictionary) -> void:
 			entry.minute = int(entry.minute)
 	if state.get("vacancy_episodes") is Dictionary: VacancyEpisode.normalize_episodes(state.vacancy_episodes)
 	if state.has("next_lineage"):
-		state.next_lineage = int(state.next_lineage)
+		state["next_lineage"] = int(state.next_lineage)
 	else:
 		# Legacy Site without the counter: continue after its one version 4 identity, else start at 1.
 		var legacy_family: Variant = state.get("family", {})
-		state.next_lineage = int(legacy_family.get("lineage_id", 0)) + 1 if legacy_family is Dictionary and int(legacy_family.get("version", 0)) == 4 else 1
+		state["next_lineage"] = int(legacy_family.get("lineage_id", 0)) + 1 if legacy_family is Dictionary and int(legacy_family.get("version", 0)) == 4 else 1
 	if state.has("next_person_id"):
-		state.next_person_id = int(state.next_person_id)
+		state["next_person_id"] = int(state.next_person_id)
 	if not state.has("team_supply"):
 		state["team_supply"] = {}
 	if not state.has("housing"): state["housing"] = {}
@@ -1300,8 +1300,8 @@ static func _normalize_state(state: Dictionary) -> void:
 	for field: String in ["item_storage_version", "next_loot", "next_item"]:
 		state[field] = int(state[field])
 	var item_holders: Array = [state.depot_items]
-	if not state.has("vehicles"): state.vehicles = {}
-	state.next_vehicle = int(state.get("next_vehicle", 1))
+	if not state.has("vehicles"): state["vehicles"] = {}
+	state["next_vehicle"] = int(state.get("next_vehicle", 1))
 	for vehicle: Dictionary in state.vehicles.values():
 		for field: String in ["cell", "team_id", "operator_id"]: vehicle[field] = int(vehicle[field])
 		vehicle.facing = _int_array(vehicle.facing)
@@ -1331,8 +1331,8 @@ static func _normalize_state(state: Dictionary) -> void:
 					if job.has(field): job[field] = float(job[field])
 				for resource: String in job.get("paid_cost", {}): job.paid_cost[resource] = int(job.paid_cost[resource])
 			var target: Dictionary = vehicle.command.get("target", {})
-			if target.get("type") == "person": target.person_id = int(target.person_id)
-			if target.get("type") == "ground": target.cell = _int_array(target.cell)
+			if target.get("type") == "person": target["person_id"] = int(target.person_id)
+			if target.get("type") == "ground": target["cell"] = _int_array(target.cell)
 		if not vehicle.move.is_empty():
 			if str(vehicle.kind) == "ship":
 				for field: String in ["from_cell", "cell"]: vehicle.move[field] = int(vehicle.move[field])
@@ -1374,7 +1374,7 @@ static func _normalize_state(state: Dictionary) -> void:
 			state.armies[team_index] = TerrainArmy.normalize_roster_snapshot(state.armies[team_index])
 		else:
 			var roster: Dictionary = state.armies[team_index]
-			if not roster.has("garrison_feature_id"): roster.garrison_feature_id = ""
+			if not roster.has("garrison_feature_id"): roster["garrison_feature_id"] = ""
 			for index in range(roster.units.size()):
 				if not roster.units[index].has("military_role"):
 					roster.units[index].military_role = _legacy_row_military_role(roster, index)
@@ -1398,24 +1398,24 @@ static func _normalize_state(state: Dictionary) -> void:
 		for field: String in ["version", "captor_id", "guard_id", "captor_faction"]:
 			relation[field] = int(relation[field])
 		if int(relation.version) == 1:
-			relation.version = 2
-			relation.prison_id = ""
+			relation["version"] = 2
+			relation["prison_id"] = ""
 		if int(relation.version) == 2:
 			# F02 / plan 6.1 one-time migration: true times, loyalty and rank of old
 			# records are unknown, so they count from this load (legacy_observed),
 			# with no loyal organization and an "unknown" rank; then saved as v3.
 			var seconds := (float(state.get("minute", 0)) + float(state.get("phase", 0.0))) * 60.0
-			relation.version = 3
-			relation.captured_at_game_seconds = seconds
-			relation.admitted_at_game_seconds = seconds if not str(relation.prison_id).is_empty() else -1.0
-			relation.episode = {"site_id": str(state.get("id", "")), "person_id": int(relation_key), "seq": 0}
-			relation.loyal_org = null
-			relation.rank_snapshot = "unknown"
-			relation.settled_days = 0
-			relation.legacy_observed = true
-		relation.captured_at_game_seconds = float(relation.captured_at_game_seconds)
-		relation.admitted_at_game_seconds = float(relation.admitted_at_game_seconds)
-		relation.settled_days = int(relation.settled_days)
+			relation["version"] = 3
+			relation["captured_at_game_seconds"] = seconds
+			relation["admitted_at_game_seconds"] = seconds if not str(relation.prison_id).is_empty() else -1.0
+			relation["episode"] = {"site_id": str(state.get("id", "")), "person_id": int(relation_key), "seq": 0}
+			relation["loyal_org"] = null
+			relation["rank_snapshot"] = "unknown"
+			relation["settled_days"] = 0
+			relation["legacy_observed"] = true
+		relation["captured_at_game_seconds"] = float(relation.captured_at_game_seconds)
+		relation["admitted_at_game_seconds"] = float(relation.admitted_at_game_seconds)
+		relation["settled_days"] = int(relation.settled_days)
 		relation.episode.person_id = int(relation.episode.person_id)
 		relation.episode.seq = int(relation.episode.seq)
 	for nation: Dictionary in state.get("equipment_nations", {}).values():
@@ -1455,19 +1455,19 @@ static func _normalize_state(state: Dictionary) -> void:
 			actor.cargo[item] = int(actor.cargo[item])
 	for key: String in state.features:
 		var feature: Dictionary = state.features[key]
-		feature.cells = _int_array(feature.cells)
-		feature.entrance = int(feature.entrance)
-		feature.level = int(feature.level)
+		feature["cells"] = _int_array(feature.cells)
+		feature["entrance"] = int(feature.entrance)
+		feature["level"] = int(feature.level)
 		if str(feature.get("kind", "")) == "survey_stakes":
 			feature.survey_plan.cells = _int_array(feature.survey_plan.cells)
 			for field: String in feature.survey_plan.options:
 				if field not in ["variant", "material", "camp_type"]: feature.survey_plan.options[field] = int(feature.survey_plan.options[field])
 			feature.survey_operator.person_id = int(feature.survey_operator.person_id)
 		if feature.has("barracks_layout_version"):
-			feature.barracks_layout_version = int(feature.barracks_layout_version)
+			feature["barracks_layout_version"] = int(feature.barracks_layout_version)
 		if feature.has("waterfront_version"):
-			feature.waterfront_version = int(feature.waterfront_version)
-			feature.launch_cell = int(feature.launch_cell)
+			feature["waterfront_version"] = int(feature.waterfront_version)
+			feature["launch_cell"] = int(feature.launch_cell)
 		if feature.has("ship_build"):
 			for field: String in ["version", "recipe_version", "team_id"]: feature.ship_build[field] = int(feature.ship_build[field])
 			feature.ship_build.total_work = float(feature.ship_build.total_work)
@@ -1476,7 +1476,7 @@ static func _normalize_state(state: Dictionary) -> void:
 			if feature.has(field): feature[field] = int(feature[field])
 		if feature.get("gate") is Dictionary and feature.gate.has("operator_id"): feature.gate.operator_id = int(feature.gate.operator_id)
 		if feature.has("residents"):
-			feature.residents = int(feature.residents)
+			feature["residents"] = int(feature.residents)
 		for item: String in feature.cost:
 			feature.cost[item] = int(feature.cost[item])
 		for field: String in ["pending_build", "repair"]:
@@ -1497,9 +1497,9 @@ static func _normalize_state(state: Dictionary) -> void:
 	for zone: Dictionary in state.zones:
 		zone.cells = _int_array(zone.cells)
 		zone.kind = int(zone.kind)
-	state.total_produced = int(state.total_produced)
+	state["total_produced"] = int(state.total_produced)
 	if state.has("player_cell"):
-		state.player_cell = int(state.player_cell)
+		state["player_cell"] = int(state.player_cell)
 
 static func _int_array(values: Array) -> Array[int]:
 	var result: Array[int] = []
@@ -1508,8 +1508,8 @@ static func _int_array(values: Array) -> Array[int]:
 	return result
 
 static func _normalize_sustain(state: Dictionary) -> void:
-	state.version = int(state.version)
-	state.last_combat_event = int(state.last_combat_event)
+	state["version"] = int(state.version)
+	state["last_combat_event"] = int(state.last_combat_event)
 	for cohort: Dictionary in state.cohorts:
 		cohort.ids = _int_array(cohort.ids)
 
@@ -2180,8 +2180,8 @@ static func prepare_ecology_candidate(data: TerrainData, region_context: Diction
 	var candidate := Env.navigation_for_state(data, data.site.duplicate(true))
 	for field: String in ["height_levels", "surface_types", "flags", "cliff_drops", "ramp_edges", "detail_variation", "fertility", "moisture", "drainage", "foundation", "groundwater", "water_kind", "water_body"]:
 		candidate.set(field, data.get(field).duplicate())
-	candidate.parameters = data.parameters.duplicate(true)
-	candidate.resource_base = data.resource_base.duplicate(true)
+	candidate["parameters"] = data.parameters.duplicate(true)
+	candidate["resource_base"] = data.resource_base.duplicate(true)
 	if not candidate.site.has("ecology_version"):
 		candidate.site["ecology_version"] = Env.ECOLOGY_VERSION
 	else:
@@ -4372,7 +4372,7 @@ static func restore_region_deliveries(data: TerrainData, rehydrate: Callable) ->
 			if job.get(field) != recipe.get(field): return Runtime.fail("STALE_REGION_DELIVERY", field)
 		for field: String in ["source_owner", "receiver_owner", "source_body", "receiver_body", "source_cargo", "source_holder", "source_open"]:
 			if not job.has(field): return Runtime.fail("REGION_BIND_PENDING", field)
-		entry.delivery = job
+		entry["delivery"] = job
 	return Runtime.ok()
 
 static func _region_fire_guard(data: TerrainData, captured: Dictionary) -> Dictionary:
@@ -4403,7 +4403,7 @@ static func _region_capture_fire(data: TerrainData, cursor: float, captured: Dic
 		for identity: Variant in raw.receipt_ids:
 			if not identity is int: return Runtime.fail("INVALID_FIRE_RECEIPT")
 			receipts[str(identity)] = raw.receipt_ids[identity]
-		raw.receipt_ids = receipts
+		raw["receipt_ids"] = receipts
 	var normalized: Variant = Runtime._fire_snapshot_json_copy(raw)
 	if not normalized is Dictionary or not Runtime._fire_snapshot_json(normalized): return Runtime.fail("INVALID_FIRE_SNAPSHOT")
 	var checked := Runtime.validate_fire_snapshot(data, normalized, cursor)

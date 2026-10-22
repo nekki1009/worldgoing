@@ -188,15 +188,15 @@ func soldier_state(index: int) -> Dictionary:
 	var values: PackedFloat64Array = crowd.get_soldier_state(index)
 	var refs: PackedInt64Array = crowd.soldier_refs(index)
 	var result := {}
-	result.military_role = int(crowd.get_military_role(index))
-	result.post_holder = int(crowd.get_post_holder(index))
-	result.hit_revision = int(crowd.contact_revision(index))
+	result["military_role"] = int(crowd.get_military_role(index))
+	result["post_holder"] = int(crowd.get_post_holder(index))
+	result["hit_revision"] = int(crowd.contact_revision(index))
 	for k in range(mini(values.size(), SOLDIER_FIELDS.size())):
 		result[SOLDIER_FIELDS[k]] = values[k]
 	if refs.size() >= 2:
-		result.person_id = refs[0]
-		result.captor_person = refs[1]
-		result.prison_id = refs[2] if refs.size() >= 3 else 0
+		result["person_id"] = refs[0]
+		result["captor_person"] = refs[1]
+		result["prison_id"] = refs[2] if refs.size() >= 3 else 0
 	return result
 
 
@@ -233,15 +233,15 @@ func formation_state(index: int) -> Dictionary:
 	var values: PackedFloat64Array = crowd.get_formation_state(index)
 	var refs: PackedInt64Array = crowd.formation_refs(index)
 	var result := {}
-	result.garrisoned = bool(crowd.get_garrisoned(index))
+	result["garrisoned"] = bool(crowd.get_garrisoned(index))
 	for k in range(mini(values.size(), FORMATION_FIELDS.size())):
 		result[FORMATION_FIELDS[k]] = values[k]
 	if refs.size() >= 4:
-		result.formal_person = refs[0]
-		result.acting_person = refs[1]
-		result.current_person = refs[2]
-		result.target_person = refs[3]
-		result.officer_persons = Array(refs.slice(4))
+		result["formal_person"] = refs[0]
+		result["acting_person"] = refs[1]
+		result["current_person"] = refs[2]
+		result["target_person"] = refs[3]
+		result["officer_persons"] = Array(refs.slice(4))
 	return result
 
 
@@ -474,9 +474,9 @@ func deploy(sides: Array, formations: Array) -> Dictionary:
 		var roster := {"schema": 2, "roster_version": 1, "crowd": true, "team_id": next_team + slot,
 			"faction_id": faction, "crowd_formation": formation, "units": [], "officer_service": [], "formal_commander": 0}
 		# Match the original Army's deployment radius for terrain-shaped formations.
-		roster.command_radius = 8.0
+		roster["command_radius"] = 8.0
 		for cell: Vector2i in formations[slot]:
-			roster.command_radius = maxf(float(roster.command_radius), centres[slot].distance_to(Vector2(cell) + Vector2.ONE * 0.5) + 2.0)
+			roster["command_radius"] = maxf(float(roster.command_radius), centres[slot].distance_to(Vector2(cell) + Vector2.ONE * 0.5) + 2.0)
 		var equip := PackedInt32Array()
 		var roles := PackedByteArray()
 		var ammo := PackedInt32Array()
@@ -840,9 +840,9 @@ func _import_actor(identity: int) -> Dictionary:
 		formation.merge(saved, true)
 	formation.merge({"fatigue": actor.fatigue, "fatigue_rest": actor.fatigue_rest, "training": actor.training}, true)
 	if solo:
-		formation.no_orders = true
-		formation.ai_enabled = false
-		formation.host_center = identity == int(lab.controlled_person_id())
+		formation["no_orders"] = true
+		formation["ai_enabled"] = false
+		formation["host_center"] = identity == int(lab.controlled_person_id())
 	var cargo: Dictionary = lab.terrain.site.manual.cargo if actor == lab.character else lab.terrain.site.worker.cargo
 	var hot := _actor_native_fields(actor, lab.terrain.site.get("captivity", {}), _appearance(identity), cargo)
 	if solo and not actor.has_meta(&"crowd_handoff") and actor.command_abilities.is_empty():
@@ -1512,10 +1512,10 @@ func _present_player(dt: float) -> void:
 		var previous: Dictionary = _actor_slots.get(identity, {"slot": -1, "age": 0.0, "time": 0.0})
 		if slot != int(previous.slot) or slot >= 3 and slot <= 8 and age + 0.001 < float(previous.age):
 			actor.play_pose(clip)
-			previous.time = 0.0
-		else: previous.time = float(previous.time) + dt
-		previous.slot = slot
-		previous.age = age
+			previous["time"] = 0.0
+		else: previous["time"] = float(previous.time) + dt
+		previous["slot"] = slot
+		previous["age"] = age
 		_actor_slots[identity] = previous
 		if actor.editor == null: continue
 		actor.editor.set_preview_yaw_degrees(YAW[clampi(dir, 0, 3)])
@@ -1887,8 +1887,8 @@ func _freeze_dead_person_fatigue(identity: int, value: float, rested: float) -> 
 	else:
 		var row: Dictionary = _records[identity]
 		row.erase("_fatigue_pool")
-		row.fatigue = value
-		row.fatigue_rest = rested
+		row["fatigue"] = value
+		row["fatigue_rest"] = rested
 
 
 func _advance_dead_person_fatigue(seconds: float) -> void:
@@ -1943,7 +1943,7 @@ func _commit_captivity(event: Dictionary, event_context: Dictionary = {}) -> Dic
 		if not visual.ok: return visual
 	if capturing and not bool(event.ammo_synced):
 		_sync_ammo(identity)
-		event.ammo_synced = true
+		event["ammo_synced"] = true
 	var relations: Dictionary = lab.terrain.site.captivity
 	var captor := int(event.other) if capturing else int(relations.get(str(identity), {}).get("captor_id", -1))
 	var guard: Dictionary = controller.captivity_supply.event_change_guard(identity, captor, capturing, event_context)
@@ -2031,7 +2031,7 @@ func _prepare_captivity_atlas(key: String, appearance: Dictionary, job: Dictiona
 	var complete: bool = await prepare_captivity_recipe(lab, appearance)
 	# An old scene's completion may populate the shared validated cache only.
 	if not _captivity_atlas_context(key, job): return
-	job.state = "ready" if complete and _ensure_kit(appearance) >= 0 else "failed"
+	job["state"] = "ready" if complete and _ensure_kit(appearance) >= 0 else "failed"
 	# No item/event commit here. settle_events rechecks the current person and supply.
 
 
@@ -2103,7 +2103,7 @@ func _sync_actor(identity: int, handoff: bool = true, state: Dictionary = {}, fo
 		for key: String in ["face", "knock_t", "act_t", "stagger", "exch_cd", "ranged_cd", "skill_cd"]:
 			extra[key] = float(state[key])
 		if bool(_team_by_id(person_source.team_id).get("solo", false)):
-			extra.solo_formation = _formation_handoff_snapshot(formation)
+			extra["solo_formation"] = _formation_handoff_snapshot(formation)
 		actor.set_meta(&"crowd_handoff", extra)
 
 
@@ -2154,35 +2154,35 @@ static func _formation_handoff_snapshot(state: Dictionary) -> Dictionary:
 
 
 static func _write_row_handoff(row: Dictionary, state: Dictionary, formation: Dictionary) -> void:
-	row.military_role = military_role_name(int(state.military_role))
-	row.hit_revision = int(state.hit_revision)
+	row["military_role"] = military_role_name(int(state.military_role))
+	row["hit_revision"] = int(state.hit_revision)
 	for key: String in ["hp", "stun", "grace", "ko", "getup", "escape_t", "knock_t", "act_t", "face"]:
 		row[key] = float(state[key])
-	row.bandaged = bool(state.bandaged)
-	row.role = int(state.role)
-	row.captive = bool(state.captive)
-	row.exchange_stagger = float(state.stagger)
-	row.exchange_cooldown = float(state.exch_cd)
-	row.ranged_cooldown = float(state.ranged_cd)
-	row.exchange_skill_cooldown = float(state.skill_cd)
-	row.command_abilities = _handoff_abilities(state)
+	row["bandaged"] = bool(state.bandaged)
+	row["role"] = int(state.role)
+	row["captive"] = bool(state.captive)
+	row["exchange_stagger"] = float(state.stagger)
+	row["exchange_cooldown"] = float(state.exch_cd)
+	row["ranged_cooldown"] = float(state.ranged_cd)
+	row["exchange_skill_cooldown"] = float(state.skill_cd)
+	row["command_abilities"] = _handoff_abilities(state)
 	if float(state.hp) > 0.0:
-		row.fatigue = float(formation.fatigue)
-		row.fatigue_rest = float(formation.fatigue_rest)
-	row.cell = [floori(float(state.px)), floori(float(state.py))]
-	row.crowd_position = [float(state.px), float(state.py)]
+		row["fatigue"] = float(formation.fatigue)
+		row["fatigue_rest"] = float(formation.fatigue_rest)
+	row["cell"] = [floori(float(state.px)), floori(float(state.py))]
+	row["crowd_position"] = [float(state.px), float(state.py)]
 	var direction := Vector2.from_angle(float(state.face))
 	var facing := Vector2i(int(signf(direction.x)), 0) if absf(direction.x) > absf(direction.y) else Vector2i(0, int(signf(direction.y)))
-	row.facing = [facing.x, facing.y]
+	row["facing"] = [facing.x, facing.y]
 	if float(state.getup) > 0.0:
-		row.pose = "get_up"
-		row.age = maxf(0.0, float(D5Timings.POSE_SECONDS[&"get_up"]) - float(state.getup))
+		row["pose"] = "get_up"
+		row["age"] = maxf(0.0, float(D5Timings.POSE_SECONDS[&"get_up"]) - float(state.getup))
 	elif float(state.hp) <= 0.0 or float(state.ko) > 0.0:
-		row.pose = "down" if float(state.hp) <= 0.0 else "unconscious"
-		row.age = 0.0
+		row["pose"] = "down" if float(state.hp) <= 0.0 else "unconscious"
+		row["age"] = 0.0
 	elif str(row.get("pose", "")) in ["get_up", "down", "unconscious"]:
-		row.pose = "idle"
-		row.age = 0.0
+		row["pose"] = "idle"
+		row["age"] = 0.0
 
 
 static func _roster_index_for_person(roster: Dictionary, identity: int) -> int:
@@ -2211,41 +2211,41 @@ static func _write_roster_handoff(roster: Dictionary, state: Dictionary) -> Dict
 		var index := _roster_index_for_person(roster, int(identity))
 		if index < 0: return SiteRuntime.fail("INVALID", "原生幹部引用找不到原名冊人物")
 		officers.append(index)
-	roster.crowd_state = _formation_handoff_snapshot(state)
-	roster.formal_commander = int(indices.formal_person)
-	roster.acting_commander = int(indices.acting_person)
-	roster.current_commander = int(indices.current_person)
-	roster.officers = officers
+	roster["crowd_state"] = _formation_handoff_snapshot(state)
+	roster["formal_commander"] = int(indices.formal_person)
+	roster["acting_commander"] = int(indices.acting_person)
+	roster["current_commander"] = int(indices.current_person)
+	roster["officers"] = officers
 	var shared: Dictionary = roster.get("team_fatigue", {})
-	shared.version = 2
-	shared.fatigue = float(state.fatigue)
-	shared.fatigue_rest = float(state.fatigue_rest)
-	shared.count = int(state.fatigue_count)
-	if not shared.has("active"): shared.active = false
+	shared["version"] = 2
+	shared["fatigue"] = float(state.fatigue)
+	shared["fatigue_rest"] = float(state.fatigue_rest)
+	shared["count"] = int(state.fatigue_count)
+	if not shared.has("active"): shared["active"] = false
 	shared.erase("excluded_player_id")
-	roster.team_fatigue = shared
-	roster.training = float(state.training)
-	roster.needs_attack_order = bool(state.needs_attack_order)
-	roster.command_reference_valid = bool(state.ref_valid)
-	roster.reference = [float(state.ref_x), float(state.ref_y)]
-	roster.origin = [float(state.origin_x), float(state.origin_y)]
-	roster.pursuit_left = float(state.pursuit_left)
-	roster.pursuit_target = int(state.target_person)
-	roster._order_delay = float(state.order_delay)
-	roster.combat_attacking = bool(state.attacking)
-	roster.goal = [floori(float(state.goal_x)), floori(float(state.goal_y))]
-	if bool(state.get("garrisoned", false)): roster.goal = [-1, -1]
+	roster["team_fatigue"] = shared
+	roster["training"] = float(state.training)
+	roster["needs_attack_order"] = bool(state.needs_attack_order)
+	roster["command_reference_valid"] = bool(state.ref_valid)
+	roster["reference"] = [float(state.ref_x), float(state.ref_y)]
+	roster["origin"] = [float(state.origin_x), float(state.origin_y)]
+	roster["pursuit_left"] = float(state.pursuit_left)
+	roster["pursuit_target"] = int(state.target_person)
+	roster["_order_delay"] = float(state.order_delay)
+	roster["combat_attacking"] = bool(state.attacking)
+	roster["goal"] = [floori(float(state.goal_x)), floori(float(state.goal_y))]
+	if bool(state.get("garrisoned", false)): roster["goal"] = [-1, -1]
 	var orders := [TerrainArmy.CombatOrder.HOLD, TerrainArmy.CombatOrder.MOVE, TerrainArmy.CombatOrder.ATTACK,
 		TerrainArmy.CombatOrder.PURSUE, TerrainArmy.CombatOrder.RETREAT, TerrainArmy.CombatOrder.RETURN]
-	roster.combat_order = int(orders[int(state.order)])
+	roster["combat_order"] = int(orders[int(state.order)])
 	var ai: Dictionary = roster.get("tactical_ai", {})
-	ai.enabled = bool(state.ai_enabled)
-	roster.tactical_ai = ai
+	ai["enabled"] = bool(state.ai_enabled)
+	roster["tactical_ai"] = ai
 	var abilities: Array[Dictionary] = []
 	for index in range(roster.units.size()):
 		var values: Dictionary = roster.units[index].get("command_abilities", {})
 		if not values.is_empty(): abilities.append({"unit": index, "values": values.duplicate()})
-	roster.abilities = abilities
+	roster["abilities"] = abilities
 	return SiteRuntime.ok()
 
 
@@ -2289,7 +2289,7 @@ func sync_to_site() -> Dictionary:
 		if int(state.get("prison_id", 0)) != int(relation.get("prison_id", "0")):
 			return SiteRuntime.fail("INVALID_PRISON", "原生拘禁與原人物拘押關係不符")
 		if not relation.is_empty() and int(state.captor_person) >= 1:
-			relation.guard_id = int(state.captor_person)
+			relation["guard_id"] = int(state.captor_person)
 	for roster: Dictionary in rosters:
 		var state: Dictionary = formations[int(roster.crowd_formation)]
 		var result := _write_roster_handoff(roster, state)
@@ -2520,10 +2520,10 @@ static func d5_prepare_existing(crowd_site: Variant) -> Dictionary:
 			if not actor.projectiles.is_empty() or actor._rescue_left > 0.0:
 				return D5Runtime.fail("BUSY", "原 actor 的彈體或救助尚未收束")
 			var saved: Dictionary = actor.capture_state()
-			saved.exchange_stagger = actor.exchange_stagger
-			saved.exchange_cooldown = actor.exchange_cooldown
-			saved.ranged_cooldown = actor.ranged_cooldown
-			saved.exchange_skill_cooldown = actor.exchange_skill_cooldown
+			saved["exchange_stagger"] = actor.exchange_stagger
+			saved["exchange_cooldown"] = actor.exchange_cooldown
+			saved["ranged_cooldown"] = actor.ranged_cooldown
+			saved["exchange_skill_cooldown"] = actor.exchange_skill_cooldown
 			var appearance := D5Runtime.equipment_appearance(scene_lab.terrain, actor.item_state, saved.appearance)
 			if appearance.is_empty():
 				return D5Runtime.fail("INVALID", "原 actor 實装不完整")
@@ -2610,9 +2610,9 @@ static func d5_append_existing(crowd_site: Variant, plans: Array) -> Dictionary:
 		# Each person's troop is derived from actual gear by the native equip setter;
 		# the formation's class remains the original first member's weapon class.
 		var roster: Dictionary = snapshot.duplicate()
-		roster.crowd = true
-		roster.roster_version = 1
-		roster.crowd_formation = formation
+		roster["crowd"] = true
+		roster["roster_version"] = 1
+		roster["crowd_formation"] = formation
 		plan.roster = roster
 		crowd_site.rosters.append(roster)
 		crowd_site.teams.append({"slot": crowd_site.teams.size(), "team_id": int(snapshot.team_id),
@@ -2740,7 +2740,7 @@ static func d5_commit_existing(crowd_site: Variant, plans: Array) -> void:
 					row[key] = entry.saved[key]
 			row.erase("_fatigue_pool")
 			rows.append(row)
-		roster.units = rows
+		roster["units"] = rows
 		source._release_combat_hot_store(false)
 		source.combat_enabled = false
 		source.set_process(false)
@@ -2796,9 +2796,9 @@ func siege_original_person(identity: int) -> Dictionary:
 	var index := int(_index_by_id.get(identity, -1))
 	var result: Dictionary = owner_ref.person(index, false)
 	if result.is_empty(): return {}
-	result.id = identity
+	result["id"] = identity
 	# Only the original metadata row is exposed. Native hot fields keep their owner.
-	result.row = owner_ref.records.get(index, {})
+	result["row"] = owner_ref.records.get(index, {})
 	return result
 
 var _siege_cell_masks: Dictionary = {}
@@ -2859,8 +2859,8 @@ func siege_begin_group(plan: Dictionary) -> int:
 	var target := PackedInt32Array()
 	for cell: Vector2i in SiteRuntime.siege_cells(lab.terrain, vehicle): source.append(lab.terrain.index(cell))
 	var next: Dictionary = vehicle.duplicate(true)
-	next.cell = int(plan.cell)
-	next.facing = plan.facing.duplicate()
+	next["cell"] = int(plan.cell)
+	next["facing"] = plan.facing.duplicate()
 	for cell: Vector2i in SiteRuntime.siege_cells(lab.terrain, next): target.append(lab.terrain.index(cell))
 	var sweep := PackedInt32Array()
 	for value: int in plan.sweep:

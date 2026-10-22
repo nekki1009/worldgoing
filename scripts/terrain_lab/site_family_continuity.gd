@@ -78,7 +78,7 @@ static func designate_heir_candidate(family: Dictionary, site_id: String, reques
 	var designated: Dictionary = Succession.designate(record, str(head.id), person_id, [str(head.id)], members, holder, alive)
 	if not bool(designated.ok): return designated
 	var candidate: Dictionary = family.duplicate(true)
-	candidate.version = 5
+	candidate["version"] = 5
 	candidate["succession"] = designated.record
 	candidate.offices.revision = mini(SiteOffices.MAX_SEQ, int(candidate.offices.revision) + 1)
 	return {"ok": true, "code": "", "family": candidate}
@@ -193,7 +193,7 @@ static func roster_plan(family: Variant, site_id: String, requested: Array) -> D
 		refused.references = references
 		return refused
 	var candidate: Dictionary = family.duplicate(true)
-	candidate.members = []
+	candidate["members"] = []
 	for candidate_member: Dictionary in requested:
 		candidate.members.append({"site_id": str(candidate_member.site_id), "person_id": int(candidate_member.person_id),
 			"path": str(candidate_member.path), "label": str(candidate_member.label), "age_years": int(candidate_member.age_years)})
@@ -217,7 +217,7 @@ static func departure_candidate(family: Dictionary, site_id: String, person_id: 
 	for member: Dictionary in candidate.members:
 		if not (str(member.site_id) == site_id and int(member.person_id) == person_id): kept.append(member)
 	if kept.is_empty(): return Runtime.fail("NO_TARGET", "家族至少須保留一位族人")
-	candidate.members = kept
+	candidate["members"] = kept
 	var seat_vacated: bool = false
 	var changed: bool = false
 	if candidate.get("offices") is Dictionary:
@@ -328,7 +328,7 @@ static func head_offices_candidate(offices: Dictionary, person_id: int, controll
 	var seat: Dictionary = SiteOffices.position_of(candidate, person_id)
 	if not seat.is_empty() and not bool(seat.head): return Runtime.fail("DUPLICATE_HOLDER", "同一人在同一組織最多擔任一個職位；請先卸任「%s」" % seat.name)
 	SiteOffices.head_position(candidate).holder = person_id
-	candidate.revision = mini(SiteOffices.MAX_SEQ, int(candidate.revision) + 1)
+	candidate["revision"] = mini(SiteOffices.MAX_SEQ, int(candidate.revision) + 1)
 	return Runtime.ok("", {"offices": candidate, "revision": int(candidate.revision), "validation": "office_candidate_only"})
 
 func appoint_head(requester_id: int, person_id: int) -> Dictionary:
@@ -447,19 +447,19 @@ func observe_vacancy(onset_day: int) -> Dictionary:
 			var cancelled: Dictionary = VacancyEpisode.cancel(open, "appointment")
 			if not cancelled.ok: return cancelled
 			episodes[str(open.episode_id)] = cancelled.episode
-			result.cancelled = true
+			result["cancelled"] = true
 			changed = true
 	elif heir_designated and not open.is_empty():
 		# R5 S5F (D7): the designated heir is in place; the open episode is cancelled and kept, the seat is not overwritten.
 		var heir_cancelled: Dictionary = VacancyEpisode.cancel(open, "heir_return")
 		if not heir_cancelled.ok: return heir_cancelled
 		episodes[str(open.episode_id)] = heir_cancelled.episode
-		result.cancelled = true
+		result["cancelled"] = true
 		changed = true
 	elif not heir_designated and open.is_empty():
 		var episode: Dictionary = VacancyEpisode.empty_episode("family", str(site.id), "family-%d-%d" % [onset_day, episodes.size()], onset_day)
 		episodes[str(episode.episode_id)] = episode
-		result.opened = true
+		result["opened"] = true
 		changed = true
 	if changed: site["vacancy_episodes"] = episodes
 	return result
@@ -585,18 +585,18 @@ func _observation(member_reference: Dictionary, source: Dictionary) -> Dictionar
 	var result := member_reference.duplicate(true)
 	result.merge({"status": "UNKNOWN", "selectable": false, "message": "", "kind": ""})
 	if not bool(source.get("ok", false)):
-		result.message = str(source.get("message", "原人物資料不可讀取"))
-		result.code = str(source.get("code", "NO_SOURCE"))
+		result["message"] = str(source.get("message", "原人物資料不可讀取"))
+		result["code"] = str(source.get("code", "NO_SOURCE"))
 		return result
 	var person: Dictionary = source.get("person", {}) if source.has("person") else (_current_person(int(member_reference.person_id)) if bool(source.get("local", false)) else _saved_person(source.data, int(member_reference.person_id)))
 	if person.is_empty():
-		result.message = "已驗證快照中找不到原人物；不視為死亡"
-		result.code = "NO_PERSON"
+		result["message"] = "已驗證快照中找不到原人物；不視為死亡"
+		result["code"] = "NO_PERSON"
 		return result
 	result.merge(person)
-	result.status = "ALIVE" if float(person.hp) > 0.0 else "DEAD"
-	result.selectable = float(person.hp) > 0.0 and not (str(member_reference.site_id) == str(lab.terrain.site.id) and int(member_reference.person_id) == _controlled_id())
-	result.code = "OK"
+	result["status"] = "ALIVE" if float(person.hp) > 0.0 else "DEAD"
+	result["selectable"] = float(person.hp) > 0.0 and not (str(member_reference.site_id) == str(lab.terrain.site.id) and int(member_reference.person_id) == _controlled_id())
+	result["code"] = "OK"
 	return result
 
 func _inspect_family(family: Dictionary) -> Dictionary:
@@ -653,19 +653,19 @@ func register_members(members: Array, complete: bool, requester_id: int = -1) ->
 		for member: Variant in members:
 			if member is Dictionary and _integer(member.get("person_id"), 1, 2147483647): kept[int(member.person_id)] = true
 		SiteOffices.vacate_unless(offices, func(identity: int) -> bool: return kept.has(identity))
-		family.version = 2
+		family["version"] = 2
 		family["offices"] = offices
 	var previous: Dictionary = lab.terrain.site.get("family", {})
 	if int(previous.get("version", 1)) == 4:
 		# Version 4 keeps its identity through every roster rewrite (offices already carried above).
-		family.version = 4
-		family.name = previous.name
-		family.lineage_id = previous.lineage_id
+		family["version"] = 4
+		family["name"] = previous.name
+		family["lineage_id"] = previous.lineage_id
 		family["offices"] = offices
 	if int(previous.get("version", 1)) == 3:
-		family.version = 3
-		family.family_id = previous.family_id
-		family.technology = previous.technology.duplicate(true)
+		family["version"] = 3
+		family["family_id"] = previous.family_id
+		family["technology"] = previous.technology.duplicate(true)
 		family["offices"] = offices
 		for project: Dictionary in family.technology.projects:
 			if bool(project.closed) or project.executor.is_empty(): continue

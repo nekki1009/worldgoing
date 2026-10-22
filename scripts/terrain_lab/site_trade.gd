@@ -136,7 +136,7 @@ static func _legal(legal: Callable, receive: Dictionary, give: Dictionary) -> bo
 
 static func _limit(evaluations: int) -> Dictionary:
 	var rejected: Dictionary = Runtime.fail("NEGOTIATION_LIMIT", "候選評估已用盡")
-	rejected.evaluations = evaluations
+	rejected["evaluations"] = evaluations
 	return rejected
 
 static func counter_offer(receive: Dictionary, give: Dictionary, stock: Dictionary, targets: Dictionary, available: Dictionary, legal: Callable,
@@ -320,8 +320,8 @@ static func job_unit_count(goods: Dictionary) -> int:
 static func normalize_snapshot(state: Dictionary) -> void:
 	if not state.has("trade"): return
 	var raw: Dictionary = state.trade
-	raw.version = int(raw.version)
-	raw.next_seq = int(raw.next_seq)
+	raw["version"] = int(raw.version)
+	raw["next_seq"] = int(raw.next_seq)
 	for offer: Dictionary in raw.offers.values():
 		offer.revision = int(offer.revision)
 		for side: String in ["a", "b"]:

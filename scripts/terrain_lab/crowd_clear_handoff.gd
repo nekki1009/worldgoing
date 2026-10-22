@@ -8,7 +8,7 @@ const META := &"crowd_return_handoff"
 
 static func _busy(reason: String, detail: String, values: Dictionary = {}) -> Dictionary:
 	var result: Dictionary = Runtime.fail("BUSY", "收兵交接：" + detail)
-	result.reason = reason
+	result["reason"] = reason
 	result.merge(values)
 	return result
 
@@ -16,7 +16,7 @@ static func _actor_state(host: Node, actor: TerrainTestCharacter) -> Dictionary:
 	var snapshot: Dictionary = actor.capture_state()
 	if not host.contains_person(actor.person_id):
 		if actor.has_meta(&"crowd_handoff"):
-			snapshot.crowd_handoff = actor.get_meta(&"crowd_handoff").duplicate(true)
+			snapshot["crowd_handoff"] = actor.get_meta(&"crowd_handoff").duplicate(true)
 			snapshot.crowd_handoff.stagger = actor.exchange_stagger
 			snapshot.crowd_handoff.exch_cd = actor.exchange_cooldown
 			snapshot.crowd_handoff.ranged_cd = actor.ranged_cooldown
@@ -24,37 +24,37 @@ static func _actor_state(host: Node, actor: TerrainTestCharacter) -> Dictionary:
 		return snapshot
 	var hot: Dictionary = host.soldier_state(int(host._index_by_id[actor.person_id]))
 	var formation: Dictionary = host.formation_state(host.person_owner(actor.person_id).formation_index)
-	snapshot.hp = float(hot.hp)
-	snapshot._received_effective_hit = int(hot.hit_revision)
-	snapshot.military_role = host.military_role_name(int(hot.military_role))
-	snapshot.stun = float(hot.stun)
-	snapshot.stun_grace = float(hot.grace)
-	snapshot.knockout_left = float(hot.ko)
-	snapshot._getting_up = float(hot.getup) > 0.0
-	snapshot.captive = bool(hot.captive)
+	snapshot["hp"] = float(hot.hp)
+	snapshot["_received_effective_hit"] = int(hot.hit_revision)
+	snapshot["military_role"] = host.military_role_name(int(hot.military_role))
+	snapshot["stun"] = float(hot.stun)
+	snapshot["stun_grace"] = float(hot.grace)
+	snapshot["knockout_left"] = float(hot.ko)
+	snapshot["_getting_up"] = float(hot.getup) > 0.0
+	snapshot["captive"] = bool(hot.captive)
 	if float(hot.hp) > 0.0:
-		snapshot.fatigue = float(formation.fatigue)
-		snapshot.fatigue_rest = float(formation.fatigue_rest)
-	snapshot.training = float(formation.training)
-	snapshot.position = [float(hot.px) * host.CELL, float(hot.py) * host.CELL]
-	snapshot.cell = [floori(float(hot.px)), floori(float(hot.py))]
+		snapshot["fatigue"] = float(formation.fatigue)
+		snapshot["fatigue_rest"] = float(formation.fatigue_rest)
+	snapshot["training"] = float(formation.training)
+	snapshot["position"] = [float(hot.px) * host.CELL, float(hot.py) * host.CELL]
+	snapshot["cell"] = [floori(float(hot.px)), floori(float(hot.py))]
 	var direction: Vector2 = Vector2.from_angle(float(hot.face))
 	var facing: Vector2i = Vector2i(int(signf(direction.x)), 0) if absf(direction.x) > absf(direction.y) else Vector2i(0, int(signf(direction.y)))
-	snapshot.facing = [facing.x, facing.y]
-	snapshot.command_abilities = host._handoff_abilities(hot)
-	snapshot.action_time = float(hot.getup) if bool(snapshot._getting_up) else (0.0 if float(hot.hp) <= 0.0 or float(hot.ko) > 0.0 else float(hot.stagger))
-	if float(hot.hp) <= 0.0 or float(hot.ko) > 0.0: snapshot.guarding = false
+	snapshot["facing"] = [facing.x, facing.y]
+	snapshot["command_abilities"] = host._handoff_abilities(hot)
+	snapshot["action_time"] = float(hot.getup) if bool(snapshot._getting_up) else (0.0 if float(hot.hp) <= 0.0 or float(hot.ko) > 0.0 else float(hot.stagger))
+	if float(hot.hp) <= 0.0 or float(hot.ko) > 0.0: snapshot["guarding"] = false
 	# Old pre-crowd movement is no longer an in-flight ordinary reservation.
-	snapshot.movement_left = 0.0
-	snapshot.movement_from = snapshot.cell.duplicate()
-	snapshot.movement = {"duration": 0.0, "elapsed": 0.0, "start": snapshot.position.duplicate(),
+	snapshot["movement_left"] = 0.0
+	snapshot["movement_from"] = snapshot.cell.duplicate()
+	snapshot["movement"] = {"duration": 0.0, "elapsed": 0.0, "start": snapshot.position.duplicate(),
 		"linear": false, "ride": false, "ride_running": false, "start_speed": 0.0, "end_speed": 0.0}
-	snapshot.ride_speed = 0.0
+	snapshot["ride_speed"] = 0.0
 	var extra: Dictionary = {"version": 1, "bandaged": bool(hot.bandaged), "escape_t": float(hot.escape_t), "role": int(hot.role)}
 	for field: String in ["face", "knock_t", "act_t", "stagger", "exch_cd", "ranged_cd", "skill_cd"]: extra[field] = float(hot[field])
 	if bool(host._team_by_id(host.person_owner(actor.person_id).team_id).get("solo", false)):
-		extra.solo_formation = host._formation_handoff_snapshot(formation)
-	snapshot.crowd_handoff = extra
+		extra["solo_formation"] = host._formation_handoff_snapshot(formation)
+	snapshot["crowd_handoff"] = extra
 	return snapshot
 
 static func _ordinary_row(host: Node, original: Dictionary, formation: Dictionary, index: int) -> Dictionary:
@@ -67,21 +67,21 @@ static func _ordinary_row(host: Node, original: Dictionary, formation: Dictionar
 		"status": "Ready", "member": true, "logistics": false, "departed": false, "site_exited": false, "surrender_pending": false}
 	row.merge(defaults, false)
 	row.erase("_fatigue_pool")
-	if row.hits is Dictionary: row.hits = row.hits.keys()
+	if row.hits is Dictionary: row["hits"] = row.hits.keys()
 	# The native owner has no ordinary committed cell edge. Its current cell is
 	# the handoff cell; old pre-crowd edges/slot leases must not resume.
-	if not bool(formation.get("garrisoned", false)): row.slot = row.cell.duplicate()
-	row.destination = [-1, -1]
-	row.progress = 0.0
-	row.duration = TerrainArmy.MOVE_DURATION
-	row.move_curve = "quad_out"
-	row.attack = false
+	if not bool(formation.get("garrisoned", false)): row["slot"] = row.cell.duplicate()
+	row["destination"] = [-1, -1]
+	row["progress"] = 0.0
+	row["duration"] = TerrainArmy.MOVE_DURATION
+	row["move_curve"] = "quad_out"
+	row["attack"] = false
 	if str(row.pose) not in ["down", "unconscious", "get_up"]:
-		row.pose = "idle"
-		row.age = 0.0
+		row["pose"] = "idle"
+		row["age"] = 0.0
 	var able: bool = float(hot.hp) > 0.0 and float(hot.ko) <= 0.0 and float(hot.getup) <= 0.0 and not bool(hot.captive)
-	row.present = able and bool(formation.ref_valid)
-	if int(formation.acting_person) >= 1 and int(row.person_id) == int(formation.formal_person): row.present = false
+	row["present"] = able and bool(formation.ref_valid)
+	if int(formation.acting_person) >= 1 and int(row.person_id) == int(formation.formal_person): row["present"] = false
 	# Ammo is a one-way handoff from the actual native soldier into the original
 	# cargo. The staged copy is validated before the original dictionary changes.
 	var ammo_key: String = str(host._ammo_keys.get(int(row.person_id), ""))
@@ -181,12 +181,12 @@ static func prepare_guarded_presence(snapshot: Dictionary, map: TerrainData, act
 		fixed: Dictionary, guards: Dictionary, people: Array, layout: Dictionary,
 		guard_range: Callable, components: Dictionary = {}, search_budget: int = -1) -> Dictionary:
 	var original: Dictionary = TerrainArmy.prepare_handoff_geometry(snapshot, map, actor_states)
-	original.relocations = []
-	original.presence_attempts = 0
-	original.pair_attempts = 0
-	original.searched_cells = 0
-	original.guard_searched_cells = 0
-	original.guard_search_budget = map.size.x * map.size.y if map != null else 0
+	original["relocations"] = []
+	original["presence_attempts"] = 0
+	original["pair_attempts"] = 0
+	original["searched_cells"] = 0
+	original["guard_searched_cells"] = 0
+	original["guard_search_budget"] = map.size.x * map.size.y if map != null else 0
 	if original.ok or str(original.get("code", "")) != "PRESENCE_CONFLICT": return original
 	var by_id: Dictionary = {}
 	for person: Dictionary in people: by_id[int(person.person_id)] = person
@@ -199,16 +199,16 @@ static func prepare_guarded_presence(snapshot: Dictionary, map: TerrainData, act
 		if not captive_groups.has(guard): captive_groups[guard] = []
 		captive_groups[guard].append(identity)
 	var budget: int = maxi(1024, map.size.x * map.size.y * 128) if search_budget < 0 else search_budget
-	original.search_budget = budget
+	original["search_budget"] = budget
 	var limit: int = mini(TerrainArmy.MAX_ROSTER_SIZE - 1, snapshot.units.size() - 1)
-	original.pair_budget = limit
+	original["pair_budget"] = limit
 	var tried: Dictionary = {}
 	var groups: Array = []
 	var seen_guards: Dictionary = {}
 	# Prefer the bounded original same-team swaps before changing the cell set.
 	for commander: int in [int(snapshot.current_commander), int(snapshot.formal_commander)]:
 		if commander == TerrainArmy.PLAYER_MEMBER and captive_groups.has(int(snapshot.get("player_member", {}).get("id", -1))):
-			original.guard_layout_reason = "PLAYER_MEMBER_GUARD_UNSUPPORTED"
+			original["guard_layout_reason"] = "PLAYER_MEMBER_GUARD_UNSUPPORTED"
 			continue
 		if commander < 0 or commander >= snapshot.units.size(): continue
 		var guard_row: Dictionary = snapshot.units[commander]
@@ -267,12 +267,12 @@ static func prepare_guarded_presence(snapshot: Dictionary, map: TerrainData, act
 				budget - int(original.searched_cells))
 			original.searched_cells += int(placed.get("searched_cells", 0))
 			if not placed.ok:
-				original.guard_layout_reason = str(placed.get("reason", placed.get("code", "")))
+				original["guard_layout_reason"] = str(placed.get("reason", placed.get("code", "")))
 				if original.guard_layout_reason == "SEARCH_LIMIT": return _guard_presence_limit(original, "看守群組候選已達格位搜尋預算")
 				continue
 			for field: String in ["presence_attempts", "pair_attempts", "searched_cells", "guard_searched_cells", "guard_search_budget"]:
 				placed[field] = original[field]
-			placed.guard_group = {"guard_id": guard_id, "captives": captives, "donor_id": donor_id, "mode": "same_team_swap"}
+			placed["guard_group"] = {"guard_id": guard_id, "captives": captives, "donor_id": donor_id, "mode": "same_team_swap"}
 			return placed
 	# ponytail: a bounded nearest-source BFS for one guard group; no global matching.
 	# A free guard cell may change its team's median, so every candidate runs the
@@ -307,27 +307,27 @@ static func prepare_guarded_presence(snapshot: Dictionary, map: TerrainData, act
 			original.presence_attempts += 1
 			var geometry: Dictionary = TerrainArmy.prepare_handoff_geometry(trial, map, actor_states)
 			if not geometry.ok: continue
-			geometry.relocations = [{"index": commander, "person_id": guard_id,
+			geometry["relocations"] = [{"index": commander, "person_id": guard_id,
 				"before": snapshot.units[commander].cell.duplicate(), "cell": [cell.x, cell.y]}]
 			var placed: Dictionary = _place_guard_group(geometry, map, fixed, group, layout, guard_range, components,
 				budget - int(original.searched_cells))
 			original.searched_cells += int(placed.get("searched_cells", 0))
 			if not placed.ok:
-				original.guard_layout_reason = str(placed.get("reason", placed.get("code", "")))
+				original["guard_layout_reason"] = str(placed.get("reason", placed.get("code", "")))
 				if original.guard_layout_reason == "SEARCH_LIMIT": return _guard_presence_limit(original, "看守群組候選已達格位搜尋預算")
 				continue
 			for field: String in ["presence_attempts", "pair_attempts", "searched_cells", "guard_searched_cells", "guard_search_budget"]:
 				placed[field] = original[field]
-			placed.guard_group = {"guard_id": guard_id, "captives": group.captives.duplicate(), "donor_id": -1, "mode": "free_cell"}
+			placed["guard_group"] = {"guard_id": guard_id, "captives": group.captives.duplicate(), "donor_id": -1, "mode": "free_cell"}
 			return placed
-	original.free_guard_component_exhausted = true
+	original["free_guard_component_exhausted"] = true
 	return original
 
 
 static func _guard_presence_limit(result: Dictionary, detail: String) -> Dictionary:
-	result.code = "SEARCH_LIMIT"
-	result.reason = "SEARCH_LIMIT"
-	result.message = detail
+	result["code"] = "SEARCH_LIMIT"
+	result["reason"] = "SEARCH_LIMIT"
+	result["message"] = detail
 	return result
 
 static func _place_guard_group(geometry: Dictionary, map: TerrainData, fixed: Dictionary,
@@ -360,10 +360,10 @@ static func _place_guard_group(geometry: Dictionary, map: TerrainData, fixed: Di
 		if target != layout.cells[identity]:
 			var old: Vector2i = layout.cells[identity]
 			relocations.append({"index": -1, "person_id": identity, "before": [old.x, old.y], "cell": [target.x, target.y]})
-	geometry.cells = placed.cells
-	geometry.claimed = placed.claimed
-	geometry.relocations = relocations
-	geometry.searched_cells = placed.searched_cells
+	geometry["cells"] = placed.cells
+	geometry["claimed"] = placed.claimed
+	geometry["relocations"] = relocations
+	geometry["searched_cells"] = placed.searched_cells
 	return geometry
 
 static func _apply_presence_relocations(plans: Array, actors_by_id: Dictionary, layout: Dictionary,
@@ -378,8 +378,8 @@ static func _apply_presence_relocations(plans: Array, actors_by_id: Dictionary, 
 		if actors_by_id.has(identity): _apply_actor_cell(actors_by_id[identity], cell)
 		var entry: Dictionary = movements_by_id[identity]
 		var after := Vector2(cell) + Vector2.ONE * 0.5
-		entry.after = [after.x, after.y]
-		entry.distance = Vector2(float(entry.before[0]), float(entry.before[1])).distance_to(after)
+		entry["after"] = [after.x, after.y]
+		entry["distance"] = Vector2(float(entry.before[0]), float(entry.before[1])).distance_to(after)
 		layout.presence_relocations.append(relocation)
 	for plan: Dictionary in plans:
 		for row: Dictionary in plan.snapshot.units:
@@ -435,24 +435,24 @@ static func _measure_layout(layout: Dictionary) -> void:
 		total += float(entry.distance)
 		moved += int(float(entry.distance) > 0.000001)
 	distances.sort()
-	layout.moved_count = moved
-	layout.mean_distance = total / maxf(1.0, float(distances.size()))
-	layout.p95_distance = distances[mini(distances.size() - 1, ceili(distances.size() * 0.95) - 1)] if not distances.is_empty() else 0.0
-	layout.max_distance = distances.back() if not distances.is_empty() else 0.0
+	layout["moved_count"] = moved
+	layout["mean_distance"] = total / maxf(1.0, float(distances.size()))
+	layout["p95_distance"] = distances[mini(distances.size() - 1, ceili(distances.size() * 0.95) - 1)] if not distances.is_empty() else 0.0
+	layout["max_distance"] = distances.back() if not distances.is_empty() else 0.0
 
 static func _apply_actor_cell(snapshot: Dictionary, cell: Vector2i) -> void:
-	snapshot.cell = [cell.x, cell.y]
-	snapshot.position = [(cell.x + 0.5) * TerrainRenderer.CELL_PIXELS, (cell.y + 0.5) * TerrainRenderer.CELL_PIXELS]
-	snapshot.movement_from = snapshot.cell.duplicate()
-	snapshot.movement_left = 0.0
+	snapshot["cell"] = [cell.x, cell.y]
+	snapshot["position"] = [(cell.x + 0.5) * TerrainRenderer.CELL_PIXELS, (cell.y + 0.5) * TerrainRenderer.CELL_PIXELS]
+	snapshot["movement_from"] = snapshot.cell.duplicate()
+	snapshot["movement_left"] = 0.0
 	snapshot.movement.start = snapshot.position.duplicate()
 	if snapshot.get("crowd_handoff", {}).has("solo_formation"):
 		var formation: Dictionary = snapshot.crowd_handoff.solo_formation
-		formation.cx = cell.x + 0.5
-		formation.cy = cell.y + 0.5
+		formation["cx"] = cell.x + 0.5
+		formation["cy"] = cell.y + 0.5
 		if bool(formation.ref_valid):
-			formation.ref_x = cell.x + 0.5
-			formation.ref_y = cell.y + 0.5
+			formation["ref_x"] = cell.x + 0.5
+			formation["ref_y"] = cell.y + 0.5
 
 static func _fixed_layout(host: Node, state: Dictionary, returning_teams: Array) -> Dictionary:
 	var fixed: Dictionary = {}
@@ -487,7 +487,7 @@ static func prepare(host: Node) -> Dictionary:
 	var started: int = Time.get_ticks_usec()
 	var state: Dictionary = lab.terrain.site.duplicate(true)
 	state.erase("crowd")
-	state.actors = {}
+	state["actors"] = {}
 	var actors_by_id: Dictionary = {}
 	for actor: TerrainTestCharacter in lab.combat_actors:
 		var snapshot: Dictionary = _actor_state(host, actor)
@@ -515,33 +515,33 @@ static func prepare(host: Node) -> Dictionary:
 		var snapshot: Dictionary = defaults.duplicate(true)
 		snapshot.merge(original.duplicate(true), true)
 		if original.get("tactical_ai") is Dictionary:
-			snapshot.tactical_ai = defaults.tactical_ai.duplicate(true)
+			snapshot["tactical_ai"] = defaults.tactical_ai.duplicate(true)
 			snapshot.tactical_ai.merge(original.tactical_ai, true)
 		snapshot.erase("crowd")
 		snapshot.erase("crowd_formation")
-		snapshot.units = []
+		snapshot["units"] = []
 		for index in range(original.units.size()): snapshot.units.append(_ordinary_row(host, original.units[index], formation, index))
 		var mapped: Dictionary = host._write_roster_handoff(snapshot, formation)
 		if not mapped.ok: return mapped
-		snapshot.pursuit_left = maxf(0.0, float(snapshot.pursuit_left))
-		snapshot._order_delay = maxf(0.0, float(snapshot._order_delay))
+		snapshot["pursuit_left"] = maxf(0.0, float(snapshot.pursuit_left))
+		snapshot["_order_delay"] = maxf(0.0, float(snapshot._order_delay))
 		var service: Array = []
 		for index: Variant in original.get("officer_service", []):
 			if snapshot.officers.has(int(index)) and not service.has(int(index)): service.append(int(index))
 		for index: Variant in snapshot.officers:
 			if not service.has(int(index)): service.append(int(index))
-		snapshot.officer_service = service
+		snapshot["officer_service"] = service
 		for key: String in ["combat_deployment_plan", "combat_move_plan", "combat_absent_slots", "combat_batches", "combat_batch_move_members", "combat_batch_retreat_members", "rescues", "retreat_resolution", "retreat_pairs_used", "corps_reposition_source"]:
 			snapshot.erase(key)
-		snapshot.rescues = []
-		snapshot.vacancies = []
+		snapshot["rescues"] = []
+		snapshot["vacancies"] = []
 		returning.append(int(snapshot.team_id))
 		plans.append({"roster": original, "snapshot": snapshot, "source": source_by_id.get(int(original.team_id)),
 			"formation": formation, "snapshot_index": snapshots.size()})
 		snapshots.append(snapshot)
 	if snapshots.size() > Store.MAX_ARMIES or count > Store.MAX_ARMY_ROWS:
 		return _busy("SITE_CAPACITY", "普通模式容量為 %d 隊、%d 名冊人物" % [Store.MAX_ARMIES, Store.MAX_ARMY_ROWS])
-	state.armies = snapshots
+	state["armies"] = snapshots
 	var confined: Dictionary = {}
 	for identity: int in host._index_by_id:
 		var escort: PackedInt64Array = host.crowd.escort_state(int(host._index_by_id[identity]))
@@ -554,7 +554,7 @@ static func prepare(host: Node) -> Dictionary:
 			if not prison.ok: return _busy("INVALID_PRISON", "原在監人物關係或拘押格失效", {"person_id": identity})
 			confined[identity] = prison.slot.cell
 		var guard_id: int = int(host.soldier_state(int(host._index_by_id[identity])).captor_person)
-		if guard_id >= 1: relation.guard_id = guard_id
+		if guard_id >= 1: relation["guard_id"] = guard_id
 	var fixed: Dictionary = _fixed_layout(host, state, returning)
 	var people: Array = []
 	var guards: Dictionary = {}
@@ -577,10 +577,10 @@ static func prepare(host: Node) -> Dictionary:
 	var layout: Dictionary = plan_legal_positions(lab.terrain, people, fixed.blocked, guards, fixed.people,
 		lab.site_controller.person_actions._within_guard_range, move_goals.claimed)
 	if not layout.ok: return layout
-	layout.move_goal_exclusions = move_goals.goals
+	layout["move_goal_exclusions"] = move_goals.goals
 	for record: Dictionary in state.actors.values():
 		if host.contains_person(int(record.person_id)): _apply_actor_cell(record, layout.cells[int(record.person_id)])
-	state.player_cell = lab.terrain.index(_cell(state.actors.player.cell))
+	state["player_cell"] = lab.terrain.index(_cell(state.actors.player.cell))
 	if state.actors.has("npc"): state.worker.cell = lab.terrain.index(_cell(state.actors.npc.cell))
 	var guarded_ids: Dictionary = {}
 	for identity: int in confined: guarded_ids[identity] = true
@@ -592,12 +592,12 @@ static func prepare(host: Node) -> Dictionary:
 	var movements_by_id: Dictionary = {}
 	for entry: Dictionary in layout.movements: movements_by_id[int(entry.person_id)] = entry
 	var components: Dictionary = {}
-	layout.presence_relocations = []
-	layout.presence_attempts = 0
-	layout.guard_group_searches = 0
-	layout.guard_cell_searches = 0
-	layout.guard_group_search_budget = maxi(1024, lab.terrain.size.x * lab.terrain.size.y * 128)
-	layout.guard_groups = []
+	layout["presence_relocations"] = []
+	layout["presence_attempts"] = 0
+	layout["guard_group_searches"] = 0
+	layout["guard_cell_searches"] = 0
+	layout["guard_group_search_budget"] = maxi(1024, lab.terrain.size.x * lab.terrain.size.y * 128)
+	layout["guard_groups"] = []
 	# Install only detached candidate cells. All teams settle their geometry
 	# before any MOVE plan or reservation candidate is created.
 	for plan: Dictionary in plans:
@@ -629,7 +629,7 @@ static func prepare(host: Node) -> Dictionary:
 		if not geometry.relocations.is_empty():
 			var relocated_claims: Dictionary = _presence_claims(people, layout.cells, fixed.blocked, move_goals.claimed)
 			if not relocated_claims.ok: return relocated_claims
-			layout.claimed = relocated_claims.claimed
+			layout["claimed"] = relocated_claims.claimed
 			if geometry.has("claimed") and geometry.claimed != layout.claimed:
 				return _busy("NO_LEGAL_LAYOUT", "看守群組候選占格與全部原人物不一致")
 	# Captives may belong to an earlier team or an original Actor. Recheck every
@@ -644,8 +644,8 @@ static func prepare(host: Node) -> Dictionary:
 	# The complete candidate has kept these cells free. Only actual people may
 	# reach the original MOVE planner, Store validators or runtime occupancy.
 	for cell: Vector2i in move_goals.claimed: occupancy.claimed.erase(cell)
-	layout.claimed = occupancy.claimed
-	state.player_cell = lab.terrain.index(_cell(state.actors.player.cell))
+	layout["claimed"] = occupancy.claimed
+	state["player_cell"] = lab.terrain.index(_cell(state.actors.player.cell))
 	if state.actors.has("npc"): state.worker.cell = lab.terrain.index(_cell(state.actors.npc.cell))
 	var registry: SiteDeploymentReservationRegistry = lab.combat_movement_coordinator.deployment_registry
 	var leases: Dictionary = registry.prepare_handoff(returning)
@@ -675,11 +675,11 @@ static func prepare(host: Node) -> Dictionary:
 			if plan.runtime_move != null: plan.runtime_move.destination_plan.reservation_token = int(admitted.token)
 		var new_formation: Dictionary = plan.formation.duplicate(true)
 		var anchor: Vector2i = plan.geometry_anchor
-		new_formation.cx = anchor.x + 0.5
-		new_formation.cy = anchor.y + 0.5
-		new_formation.ref_x = float(plan.snapshot.reference[0])
-		new_formation.ref_y = float(plan.snapshot.reference[1])
-		new_formation.ref_valid = bool(plan.snapshot.command_reference_valid)
+		new_formation["cx"] = anchor.x + 0.5
+		new_formation["cy"] = anchor.y + 0.5
+		new_formation["ref_x"] = float(plan.snapshot.reference[0])
+		new_formation["ref_y"] = float(plan.snapshot.reference[1])
+		new_formation["ref_valid"] = bool(plan.snapshot.command_reference_valid)
 		plan.snapshot.crowd_state = host._formation_handoff_snapshot(new_formation)
 		plan.formation = new_formation
 		state.armies[int(plan.snapshot_index)] = plan.snapshot
@@ -839,8 +839,8 @@ static func commit(host: Node, prepared: Dictionary) -> Dictionary:
 	for identity: int in host._actors:
 		var actor_state: Dictionary = prepared.actors_by_id[identity]
 		var hot: Dictionary = host.soldier_state(int(host._index_by_id[identity]))
-		hot.px = float(actor_state.position[0]) / host.CELL
-		hot.py = float(actor_state.position[1]) / host.CELL
+		hot["px"] = float(actor_state.position[0]) / host.CELL
+		hot["py"] = float(actor_state.position[1]) / host.CELL
 		var formation: Dictionary = host.formation_state(host.person_owner(identity).formation_index)
 		if actor_state.get("crowd_handoff", {}).has("solo_formation"): formation = actor_state.crowd_handoff.solo_formation
 		host._sync_actor(identity, true, hot, formation)
@@ -887,12 +887,12 @@ static func commit(host: Node, prepared: Dictionary) -> Dictionary:
 			_copy_into(holder, plan.snapshot.units[row_index].item_state)
 			_copy_into(cargo, plan.snapshot.units[row_index].cargo)
 			_copy_into(original, restored)
-			original.item_state = holder
-			original.cargo = cargo
-			original.appearance = appearance
+			original["item_state"] = holder
+			original["cargo"] = cargo
+			original["appearance"] = appearance
 			original.erase("_fatigue_pool")
-			original.fatigue = float(plan.snapshot.units[row_index].fatigue)
-			original.fatigue_rest = float(plan.snapshot.units[row_index].fatigue_rest)
+			original["fatigue"] = float(plan.snapshot.units[row_index].fatigue)
+			original["fatigue_rest"] = float(plan.snapshot.units[row_index].fatigue_rest)
 			target.combat_units[row_index] = original
 		target.sync_shared_fatigue(true)
 		if not target.team_fatigue.is_empty():
@@ -929,7 +929,7 @@ static func commit(host: Node, prepared: Dictionary) -> Dictionary:
 		if handoff.has("solo_formation"):
 			# Only the frozen simulation group is conditional. Persistent native-only
 			# person fields remain authoritative through ordinary activity and saves.
-			handoff.solo_source_sha256 = Store._crowd_actor_source_sha256(actor.capture_state())
+			handoff["solo_source_sha256"] = Store._crowd_actor_source_sha256(actor.capture_state())
 			actor.set_meta(&"crowd_handoff", handoff)
 	lab._clear_movement_input()
 	lab._configure_army_blockers()
@@ -951,5 +951,5 @@ static func decorate_existing(source: TerrainArmy, snapshot: Dictionary) -> bool
 	if not source.has_meta(META): return false
 	var handoff: Dictionary = source.get_meta(META)
 	if str(handoff.get("sha256", "")).length() != 64 or str(handoff.sha256) != Store._crowd_roster_source_sha256(snapshot): return false
-	snapshot.crowd_state = handoff.formation.duplicate(true)
+	snapshot["crowd_state"] = handoff.formation.duplicate(true)
 	return true

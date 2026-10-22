@@ -138,7 +138,7 @@ static func remap_transport(raw: Dictionary, mapping: Dictionary, owner: String,
 		if pair.size() != 2: return Runtime.fail("INVALID_REGION_FIRE_RUNTIME_MAPPING")
 		pair[0] = _group(identity_maps, int(pair[0]))
 		pair[1] = _identity(identity_maps, "person", pair[1])
-	result.release_sequence = int(mapping.next.fire_projectile) - 1
+	result["release_sequence"] = int(mapping.next.fire_projectile) - 1
 	return Runtime.ok("", {"transport": result})
 
 static func _identity(maps: Dictionary, kind: String, old: Variant) -> Variant:
@@ -158,7 +158,7 @@ static func merge_transports(transports: Array) -> Dictionary:
 		if not raw is Dictionary: return Runtime.fail("INVALID_REGION_FIRE_RUNTIME_MAPPING")
 		for field: String in ["version", "config_version", "action_cursor", "physical_ranged_enabled", "release_sequence"]:
 			if raw.get(field) != result.get(field): return Runtime.fail("REGION_FIRE_CLOCK_CONFLICT")
-		result.exposure_sequence = maxi(int(result.exposure_sequence), int(raw.exposure_sequence))
+		result["exposure_sequence"] = maxi(int(result.exposure_sequence), int(raw.exposure_sequence))
 		for pair: Array in [["projectiles", "projectile_id"], ["reservations", "person_id"], ["orders", "group"], ["member_cursor", ""]]:
 			for value: Variant in raw[pair[0]]:
 				var identity: int = int(value[0]) if str(pair[1]).is_empty() else int(value[pair[1]])
@@ -352,7 +352,7 @@ static func _map_value(value: Variant, field: String, row: Dictionary, maps: Dic
 static func _person_pair(value: String, maps: Dictionary, error: Dictionary) -> String:
 	var parts := value.split(":")
 	if parts.size() != 2 or not parts[0].is_valid_int() or not parts[1].is_valid_int():
-		error.code = "INVALID_REGION_RETREAT_PAIR"
+		error["code"] = "INVALID_REGION_RETREAT_PAIR"
 		return value
 	var first := int(_identity(maps, "person", parts[0]))
 	var second := int(_identity(maps, "person", parts[1]))
@@ -394,18 +394,18 @@ static func merge_owner_roots(inputs: Array, destination_owner: String) -> Dicti
 		for pair: Array in [["controller", ["_work_elapsed", "_settlement_elapsed", "_settlement_game_seconds", "_save_elapsed", "_family_wait"]],
 				["lab", ["_action_time_remainder", "_exchange_phase", "_exchange_round", "_tactical_ai_elapsed", "_duty_ai_elapsed", "fire_action_cursor", "_region_point_pending", "_region_point_consuming", "_fire_motion_delta"]]]:
 			for field: String in pair[1]:
-				if result[pair[0]][field] != incoming[pair[0]][field]: error.code = "REGION_PARTY_CADENCE_CONFLICT"
+				if result[pair[0]][field] != incoming[pair[0]][field]: error["code"] = "REGION_PARTY_CADENCE_CONFLICT"
 		for field: String in ["_pending_deaths", "_supply_rout_review"]: _union(result.controller[field], incoming.controller[field], error)
 		for field: String in ["_settlement_capture_sample", "_crew_handled", "_ground_crossing", "_ship_journey"]:
-			if result.controller[field] != incoming.controller[field]: error.code = "REGION_PARTY_ENDPOINT_CONFLICT"
+			if result.controller[field] != incoming.controller[field]: error["code"] = "REGION_PARTY_ENDPOINT_CONFLICT"
 		_union(result.actions._jobs, incoming.actions._jobs, error)
 		result.actions._results.append_array(incoming.actions._results)
 		for field: String in result.work:
 			if result.work[field] is Dictionary: _union(result.work[field], incoming.work[field], error)
 			elif result.work[field] is Array: result.work[field].append_array(incoming.work[field])
-			elif result.work[field] != incoming.work[field]: error.code = "REGION_PARTY_WORK_CONFLICT"
+			elif result.work[field] != incoming.work[field]: error["code"] = "REGION_PARTY_WORK_CONFLICT"
 		_union(result.escort._release_walks, incoming.escort._release_walks, error)
-		if result.escort._check_left != incoming.escort._check_left: error.code = "REGION_PARTY_CADENCE_CONFLICT"
+		if result.escort._check_left != incoming.escort._check_left: error["code"] = "REGION_PARTY_CADENCE_CONFLICT"
 		for field: String in ["siege_projectiles", "_siege_contact_batch", "_region_point_contacts", "_region_point_wakes"]:
 			result.lab[field].append_array(incoming.lab[field])
 		for field: String in ["exchange_results", "ranged_results"]:
@@ -416,7 +416,7 @@ static func merge_owner_roots(inputs: Array, destination_owner: String) -> Dicti
 		result.lab._fire_exposure_sequence = maxi(int(result.lab._fire_exposure_sequence), int(incoming.lab._fire_exposure_sequence))
 		result.lab._fire_unsaved = bool(result.lab._fire_unsaved) or bool(incoming.lab._fire_unsaved)
 		for field: String in ["_siege_collect_contacts", "_fire_boundary_error", "_fire_exposure_snapshot"]:
-			if result.lab[field] != incoming.lab[field]: error.code = "REGION_PARTY_ENDPOINT_CONFLICT"
+			if result.lab[field] != incoming.lab[field]: error["code"] = "REGION_PARTY_ENDPOINT_CONFLICT"
 		for cell: Variant in incoming.lab._fire_body_buckets:
 			if not result.lab._fire_body_buckets.has(cell): result.lab._fire_body_buckets[cell] = []
 			result.lab._fire_body_buckets[cell].append_array(incoming.lab._fire_body_buckets[cell])
@@ -424,24 +424,24 @@ static func merge_owner_roots(inputs: Array, destination_owner: String) -> Dicti
 			_union(result.coordinator[field], incoming.coordinator[field], error)
 		for field: String in ["_inflight_batches", "egress_retry"]: result.coordinator[field].append_array(incoming.coordinator[field])
 		for field: String in ["current_logic_tick", "_occupancy_rebuild_pending"]:
-			if result.coordinator[field] != incoming.coordinator[field]: error.code = "REGION_PARTY_MOVEMENT_CONFLICT"
+			if result.coordinator[field] != incoming.coordinator[field]: error["code"] = "REGION_PARTY_MOVEMENT_CONFLICT"
 		_union(result.registry.formation_slots, incoming.registry.formation_slots, error)
 		var occupied := {}
 		for lease: Array in result.registry.leases: occupied[lease[0]] = true
 		for lease: Array in incoming.registry.leases:
-			if occupied.has(lease[0]): error.code = "REGION_PARTY_LEASE_CONFLICT"
+			if occupied.has(lease[0]): error["code"] = "REGION_PARTY_LEASE_CONFLICT"
 			result.registry.leases.append(lease)
 		result.fatigue_work.append_array(incoming.fatigue_work)
-		if result.duty != incoming.duty: error.code = "REGION_PARTY_DUTY_CONFLICT"
-		if result.fire_meta != incoming.fire_meta: error.code = "REGION_PARTY_FIRE_BOUNDARY_CONFLICT"
+		if result.duty != incoming.duty: error["code"] = "REGION_PARTY_DUTY_CONFLICT"
+		if result.fire_meta != incoming.fire_meta: error["code"] = "REGION_PARTY_FIRE_BOUNDARY_CONFLICT"
 	if not str(error.code).is_empty(): return Runtime.fail(str(error.code))
-	result.site_id = destination_owner
+	result["site_id"] = destination_owner
 	return Runtime.ok("", {"roots": result})
 
 static func _union(destination: Dictionary, incoming: Dictionary, error: Dictionary) -> void:
 	for key: Variant in incoming:
 		if destination.has(key):
-			if not is_same(destination[key], incoming[key]): error.code = "REGION_PARTY_OWNER_COLLISION"
+			if not is_same(destination[key], incoming[key]): error["code"] = "REGION_PARTY_OWNER_COLLISION"
 		else: destination[key] = incoming[key]
 
 
@@ -465,7 +465,7 @@ static func compose_candidate(candidate: Dictionary, sources: Array, mapping: Di
 			var key := old
 			if vehicles.has(key): return Runtime.fail("PARTY_VEHICLE_COLLISION")
 			var vehicle: Dictionary = remapped.content.vehicles[old]
-			if vehicle.has("id"): vehicle.id = key
+			if vehicle.has("id"): vehicle["id"] = key
 			vehicles[key] = vehicle
 	result.content.actors = actors
 	result.content.armies = armies
@@ -507,9 +507,9 @@ static func merge_fire_states(sources: Array, mapping: Dictionary, destination_o
 			if raw.has(field) and not raw[field].is_empty(): return Runtime.fail("REGION_PARTY_SITE_FIRE_DEPENDENCY")
 		if result.is_empty():
 			result = raw.duplicate(true)
-			result.site_id = destination_owner
-			result.receipt_floor = int(raw.receipt_floor) if index == 0 else 0
-			result.receipt_ids = {}
+			result["site_id"] = destination_owner
+			result["receipt_floor"] = int(raw.receipt_floor) if index == 0 else 0
+			result["receipt_ids"] = {}
 		for field: String in ["config_version", "step_index", "observed_action_end"]:
 			if result[field] != raw[field]: return Runtime.fail("REGION_FIRE_CLOCK_CONFLICT")
 		var row: Dictionary = mapping.sources[index]
@@ -521,7 +521,7 @@ static func merge_fire_states(sources: Array, mapping: Dictionary, destination_o
 			var identity := current(row, "fire_projectile", int(old))
 			if identity < 1: return Runtime.fail("UNMAPPED_REGION_FIRE_RECEIPT")
 			if identity > int(result.receipt_floor): result.receipt_ids[str(identity)] = true
-		result.dirty = bool(result.dirty) or bool(raw.dirty)
+		result["dirty"] = bool(result.dirty) or bool(raw.dirty)
 	return Runtime.ok("", {"state": result})
 
 

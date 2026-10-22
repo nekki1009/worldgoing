@@ -226,7 +226,7 @@ static func plan_work_interval(requests: Array, seconds: float) -> Dictionary:
 				if resting_now: job.participant_paused[int(person.person_id)] = "REST"
 				else: available.append(person)
 			if (resting or interrupted) and str(request.productive_kind) != "sum" or available.is_empty():
-				job.paused = "CONTACT" if interrupted else "REST"
+				job["paused"] = "CONTACT" if interrupted else "REST"
 				continue
 			var masters_working := true
 			for group: Array in request.master_groups:
@@ -234,7 +234,7 @@ static func plan_work_interval(requests: Array, seconds: float) -> Dictionary:
 				for person: Dictionary in available: group_working = group_working or group.has(int(person.person_id))
 				masters_working = masters_working and group_working
 			if not masters_working:
-				job.paused = "CONTACT" if interrupted else "REST"
+				job["paused"] = "CONTACT" if interrupted else "REST"
 				continue # Every original requirement needs a working member; unrelated pool activities remain active.
 			# Independent shared-batch workers stop individually; a joint lesson
 			# still requires both original participants for its whole interval.
@@ -278,8 +278,8 @@ static func plan_work_interval(requests: Array, seconds: float) -> Dictionary:
 			var job: Dictionary = jobs[request.provider][request.key]
 			var productive := minf(float(request.remaining), _work_plan_productive(request, pools, rates, duration))
 			if productive > 0.0 and float(request.remaining) - productive <= WORK_PLAN_EPS: productive = float(request.remaining)
-			job.actual_seconds = float(job.actual_seconds) + duration
-			job.effective_seconds = float(job.effective_seconds) + productive
+			job["actual_seconds"] = float(job.actual_seconds) + duration
+			job["effective_seconds"] = float(job.effective_seconds) + productive
 			request.source.remaining = maxf(0.0, float(request.remaining) - productive)
 			for person: Dictionary in request.participants:
 				var identity := int(person.person_id)
@@ -312,7 +312,7 @@ static func plan_work_interval(requests: Array, seconds: float) -> Dictionary:
 			var group_available := false
 			for identity: int in available_ids: group_available = group_available or group.has(identity)
 			master_available = master_available and group_available
-		if float(request.remaining) > 0.0 and (not master_available or resting_count + interrupted_count > 0 and (str(request.productive_kind) != "sum" or resting_count + interrupted_count == request.participants.size())): job.paused = "CONTACT" if interrupted_count > 0 else "REST"
+		if float(request.remaining) > 0.0 and (not master_available or resting_count + interrupted_count > 0 and (str(request.productive_kind) != "sum" or resting_count + interrupted_count == request.participants.size())): job["paused"] = "CONTACT" if interrupted_count > 0 else "REST"
 	for group: Dictionary in pools: group.erase("work_resting")
 	return {"ok": true, "seconds": seconds, "jobs": jobs, "pools": pools}
 
@@ -372,10 +372,10 @@ static func _work_plan_segment(pools: Array[Dictionary], rates: Array[float], co
 		var effort := counts[index] * seconds
 		if not is_finite(effort) or not is_finite(float(group.effort_seconds) + effort): return false
 		group.segments.append({"begin": begin, "seconds": seconds, "rate": rates[index], "effort_seconds": effort})
-		group.effort_seconds = float(group.effort_seconds) + effort
+		group["effort_seconds"] = float(group.effort_seconds) + effort
 		if counts[index] > 0:
-			group.fatigue = minf(LIMIT, float(group.fatigue) + rates[index] * seconds)
-			group.fatigue_rest = 0.0
+			group["fatigue"] = minf(LIMIT, float(group.fatigue) + rates[index] * seconds)
+			group["fatigue_rest"] = 0.0
 	return true
 
 # All members, including the controlled person and rider, borrow one Army state.
@@ -423,6 +423,6 @@ static func unbind(body: Variant) -> void:
 static func saved_body(body: Dictionary) -> Dictionary:
 	var saved := body.duplicate()
 	saved.erase("_fatigue_pool")
-	saved.fatigue = read(body)
-	saved.fatigue_rest = read(body, "fatigue_rest")
+	saved["fatigue"] = read(body)
+	saved["fatigue_rest"] = read(body, "fatigue_rest")
 	return saved.duplicate(true)

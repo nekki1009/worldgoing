@@ -302,7 +302,7 @@ func drop_excess(team: TerrainArmy) -> Dictionary:
 	var result := Runtime.leave_ground_loot(controller.lab.terrain, bearer.holder, entry.inventory,
 		int(bearer.person_id), bearer.cell, "cargo", items, [], int(bearer.holder.version), entry.sustain, opened)
 	if result.ok:
-		entry.revision = int(entry.revision) + 1
+		entry["revision"] = int(entry.revision) + 1
 	return result
 
 func _drop_location_excess(team: TerrainArmy, entry: Dictionary) -> Dictionary:
@@ -373,7 +373,7 @@ func _drop_location_excess(team: TerrainArmy, entry: Dictionary) -> Dictionary:
 		var person: Dictionary = plan.bearer
 		result = Runtime.leave_ground_loot(controller.lab.terrain, person.holder, plan.stock.inventory, int(person.person_id), plan.cell, "cargo", plan.items, [], int(person.holder.version), plan.stock, float(plan.opened), false, plan.ship_location)
 		assert(result.ok, "Preflighted location supply drop must commit synchronously")
-	entry.revision = int(entry.revision) + 1
+	entry["revision"] = int(entry.revision) + 1
 	return result
 
 
@@ -405,7 +405,7 @@ func prepare_completion(team: TerrainArmy, entry: Dictionary, require_endpoint: 
 	var context := {}
 	if int(entry.version) == 3:
 		if not controller._supply_locations_valid(team, stock): return Runtime.fail("INVALID_SUSTAIN")
-		context.food_locations = controller.ship_food_locations(team, members, stock)
+		context["food_locations"] = controller.ship_food_locations(team, members, stock)
 	var supplied := Sustain.resupply(state, members, stock, false, controller._supply_hot_reader(team, members, {}), {}, context)
 	if not supplied.ok:
 		return supplied
@@ -465,9 +465,9 @@ func publish_prepared_completion(prepared: Dictionary) -> Dictionary:
 		entry.inventory.merge(stock)
 	entry.sustain.clear()
 	entry.sustain.merge(state)
-	entry.revision = int(entry.revision) + 1
-	entry.delivery = {}
+	entry["revision"] = int(entry.revision) + 1
+	entry["delivery"] = {}
 	if str(resolved.kind) == "ground":
 		Runtime.clear_empty_ground_loot(controller.lab.terrain, str(job.source_spec.container_id))
-	prepared.published = true
+	prepared["published"] = true
 	return Runtime.ok("已實際交付；原餐份與缺餐信用守恆", {"consumed_rations": supplied.consumed_rations})

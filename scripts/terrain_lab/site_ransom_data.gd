@@ -73,9 +73,9 @@ static func valid_nations(nations: Dictionary, state: Dictionary) -> bool:
 static func normalize_numbers(record: Dictionary) -> void:
 	# Store validates raw JSON before normalization; never synthesize a missing record.
 	if not valid_record(record): return
-	record.version = int(record.version)
-	record.spent_day = int(record.spent_day)
-	record.spent = int(record.spent)
+	record["version"] = int(record.version)
+	record["spent_day"] = int(record.spent_day)
+	record["spent"] = int(record.spent)
 	for field: String in ["per_person", "daily", "reserve"]: record.policy[field] = int(record.policy[field])
 	if record.policy.has("authorized_by"): record.policy.authorized_by = int(record.policy.authorized_by)
 
@@ -120,11 +120,11 @@ static func bind_candidate(site: Dictionary, nation_id: String, nation: Dictiona
 	if not Technology.integer(feature.get("owner_faction"), 0, 2147483647) or int(feature.owner_faction) != int(nation.faction_id): return {"ok": false, "code": "FOREIGN_FACTION"}
 	if stock.has("nation_id"): return {"ok": false, "code": "STOCK_CLAIMED"}
 	var candidate_record: Dictionary = record.duplicate(true)
-	candidate_record.treasury = {"site_id": str(site.get("id", "")), "feature_id": feature_id, "holder": Stocks.identity(feature_id)}
+	candidate_record["treasury"] = {"site_id": str(site.get("id", "")), "feature_id": feature_id, "holder": Stocks.identity(feature_id)}
 	var candidate_nation: Dictionary = nation.duplicate(true)
-	candidate_nation.ransom_data = candidate_record
+	candidate_nation["ransom_data"] = candidate_record
 	var candidate_stock: Dictionary = stock.duplicate(true)
-	candidate_stock.nation_id = nation_id
+	candidate_stock["nation_id"] = nation_id
 	if not valid_nations({nation_id: candidate_nation}, _view(site, feature_id, candidate_stock)): return {"ok": false, "code": "CORRUPT_STATE"}
 	return {"ok": true, "code": "", "nation": candidate_nation, "stock": candidate_stock}
 
@@ -142,7 +142,7 @@ static func policy_candidate(site: Dictionary, nation_id: String, nation: Dictio
 	candidate_record.policy.erase("authorized_by")
 	if not valid_record(candidate_record): return {"ok": false, "code": "INVALID_POLICY"}
 	var candidate_nation: Dictionary = nation.duplicate(true)
-	candidate_nation.ransom_data = candidate_record
+	candidate_nation["ransom_data"] = candidate_record
 	if not valid_nations({nation_id: candidate_nation}, _view(site, "", {})): return {"ok": false, "code": "CORRUPT_STATE"}
 	return {"ok": true, "code": "", "nation": candidate_nation}
 
@@ -168,7 +168,7 @@ static func authorize_candidate(site: Dictionary, nation_id: String, nation: Dic
 	if authorized: candidate_record.policy.authorized_by = requester_id
 	else: candidate_record.policy.erase("authorized_by")
 	var candidate_nation: Dictionary = nation.duplicate(true)
-	candidate_nation.ransom_data = candidate_record
+	candidate_nation["ransom_data"] = candidate_record
 	if not valid_nations({nation_id: candidate_nation}, _view(site, "", {})): return {"ok": false, "code": "CORRUPT_STATE"}
 	return {"ok": true, "code": "", "nation": candidate_nation}
 
@@ -195,6 +195,6 @@ static func spend_candidate(site: Dictionary, nation_id: String, nation: Diction
 	var held: int = int(stock.get("cargo", {}).get("coin", 0))
 	if held - price < int(record.policy.reserve): return {"ok": false, "code": "RESERVE"}
 	var candidate_record: Dictionary = record.duplicate(true)
-	candidate_record.spent_day = day
-	candidate_record.spent = spent + price
+	candidate_record["spent_day"] = day
+	candidate_record["spent"] = spent + price
 	return {"ok": true, "code": "", "record": candidate_record, "coin_after": held - price}

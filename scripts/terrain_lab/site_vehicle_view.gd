@@ -251,7 +251,7 @@ func siege_art_frame(kind: String, facing: Vector2i, state: String = "") -> Dict
 		"scale_xy": Vector2(float(frame.get("scale_xy", [frame.scale, frame.scale])[0]), float(frame.get("scale_xy", [frame.scale, frame.scale])[1])),
 		"parts": frame.get("parts", {}), "deck_region": _siege_rect(frame.get("deck_region", [0, 0, 0, 0])),
 		"deck_height_pixels": float(frame.get("deck_height_pixels", 0))}
-	if frame.has("muzzle"): result.muzzle = Vector2(float(frame.muzzle[0]), float(frame.muzzle[1]))
+	if frame.has("muzzle"): result["muzzle"] = Vector2(float(frame.muzzle[0]), float(frame.muzzle[1]))
 	for attachment: String in ["lower_attachment", "upper_attachment"]:
 		if frame.has(attachment): result[attachment] = Vector2(float(frame[attachment][0]), float(frame[attachment][1]))
 	_siege_frames[key] = result
@@ -403,8 +403,8 @@ func _refresh_tower_parts(node: Node2D, vehicle: Dictionary, facing: Vector2i, s
 	var query: Dictionary = vehicle
 	if query.get("deployed_pose", {}).is_empty():
 		query = vehicle.duplicate(true)
-		query.deployed_pose = SiteRuntime.siege_tower_pose(lab.terrain, vehicle)
-		query.phase = "deployed"
+		query["deployed_pose"] = SiteRuntime.siege_tower_pose(lab.terrain, vehicle)
+		query["phase"] = "deployed"
 	var geometry: Dictionary = SiteRuntime.siege_tower_geometry(lab.terrain, query)
 	if not bool(geometry.support_valid) or geometry.entry.size() != 2 or geometry.bridge.size() != 3: return
 	var frame: Dictionary = siege_art_frame("siege_tower", facing)

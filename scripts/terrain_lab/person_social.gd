@@ -81,10 +81,10 @@ static func upgraded(packet: Dictionary) -> Dictionary:
 ## unproven progress (obs) restarts at 0 unless an intent was already formed.
 static func migrated_v2(packet: Dictionary) -> Dictionary:
 	var result := packet.duplicate(true)
-	result.version = VERSION
-	result.evidence = {}
-	result.proven = {}
-	result.unexecuted = {"days": 0, "events": 0}
+	result["version"] = VERSION
+	result["evidence"] = {}
+	result["proven"] = {}
+	result["unexecuted"] = {"days": 0, "events": 0}
 	for entry: Dictionary in result.orgs.values():
 		entry.obs_from = -1
 		if not bool(entry.intent): entry.obs = 0 # Unproven observation progress is not carried over; a formed intent stays.
@@ -94,7 +94,7 @@ static func migrated_v2(packet: Dictionary) -> Dictionary:
 static func next_capture_seq(body: Variant) -> int:
 	var packet := read(body).duplicate(true)
 	if packet.is_empty(): packet = {"version": 1, "capture_seq": 0}
-	packet.capture_seq = int(packet.capture_seq) + 1
+	packet["capture_seq"] = int(packet.capture_seq) + 1
 	if body is Dictionary: body.social_state = packet
 	elif body is Object: body.set("social_state", packet)
 	return int(packet.capture_seq)

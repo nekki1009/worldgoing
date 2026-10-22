@@ -216,9 +216,9 @@ static func _preflight_transfer(lab: TerrainLab, selected: Dictionary, identitie
 static func _stop_training(lab: TerrainLab, team: TerrainArmy) -> void:
 	var entry: Dictionary = lab.site_controller._supply_entry(team)
 	if entry.is_empty(): return
-	entry.training_order = false
-	entry.training_requester = -1
-	if entry.has("training_feature_id"): entry.training_feature_id = ""
+	entry["training_order"] = false
+	entry["training_requester"] = -1
+	if entry.has("training_feature_id"): entry["training_feature_id"] = ""
 
 static func _empty_team(lab: TerrainLab, requested: int = -1) -> TerrainArmy:
 	for team: TerrainArmy in lab.combat_armies:

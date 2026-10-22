@@ -111,11 +111,11 @@ func refresh_vehicle_tasks() -> void:
 			if bool(task.get("named", false)):
 				cancel(identity)
 				continue
-			task.target = ""
-			task.progress = 0.0
-			task.zone = -1
-			task.work_slot = -1
-			task.mode = "idle"
+			task["target"] = ""
+			task["progress"] = 0.0
+			task["zone"] = -1
+			task["work_slot"] = -1
+			task["mode"] = "idle"
 			_routes.erase(identity)
 
 func refresh_ship_tasks() -> void:
@@ -126,11 +126,11 @@ func refresh_ship_tasks() -> void:
 		if str(task.get("action", "")) != "operate" or not str(task.get("target", "")).begins_with("feature:"): continue
 		var feature: Dictionary = lab.terrain.site.features.get(str(task.target).trim_prefix("feature:"), {})
 		if str(feature.get("kind", "")) != "shipyard" or feature.has("ship_build"): continue
-		task.target = ""
-		task.progress = 0.0
-		task.zone = -1
-		task.work_slot = -1
-		task.mode = "idle"
+		task["target"] = ""
+		task["progress"] = 0.0
+		task["zone"] = -1
+		task["work_slot"] = -1
+		task["mode"] = "idle"
 		_routes.erase(identity)
 
 func _choose_vehicle_task(team: Variant, from: Vector2i, occupied: Callable, claims: Dictionary) -> Dictionary:
@@ -287,7 +287,7 @@ func _advance_selected(seconds: float, prepare_only: bool = false) -> Dictionary
 		var prior_target := SiteRuntime.work_claim_key(task)
 		var manual := bool(task.get("manual", false))
 		var named := bool(task.get("named", false))
-		task.cell = lab.terrain.index(person.cell)
+		task["cell"] = lab.terrain.index(person.cell)
 		if str(task.target).begins_with("feature:"):
 			var feature: Dictionary = lab.terrain.site.features.get(str(task.target).trim_prefix("feature:"), {})
 			var ended := feature.is_empty()
@@ -299,10 +299,10 @@ func _advance_selected(seconds: float, prepare_only: bool = false) -> Dictionary
 				if named:
 					cancel(identity)
 					continue
-				task.target = ""
-				task.progress = 0.0
-				task.zone = -1
-				task.mode = "idle"
+				task["target"] = ""
+				task["progress"] = 0.0
+				task["zone"] = -1
+				task["mode"] = "idle"
 				_routes.erase(identity)
 		if not manual and int(task.zone) >= 0 and (int(task.zone) >= lab.terrain.site.zones.size() or not bool(lab.terrain.site.zones[int(task.zone)].active)):
 			# The original zone toggle applies to Army workers as well as the
@@ -311,11 +311,11 @@ func _advance_selected(seconds: float, prepare_only: bool = false) -> Dictionary
 			if named:
 				cancel(identity)
 				continue
-			task.target = ""
-			task.progress = 0.0
-			task.zone = -1
-			task.mode = "idle"
-			task.status = "工作区已停用，等待其他工作"
+			task["target"] = ""
+			task["progress"] = 0.0
+			task["zone"] = -1
+			task["mode"] = "idle"
+			task["status"] = "工作区已停用，等待其他工作"
 			_routes.erase(identity)
 			_retry_left.erase(identity)
 		if manual and (not team.combat_can_act(index) or float(team.combat_hot_get(index, &"exchange_stagger", 0.0)) > 0.0 or _moving(person) or int(task.cell) != int(task.work_cell) or bool(team.combat_hot_get(index, &"attack")) or str(team.combat_hot_get(index, &"pose")) != "idle" or int(row.get("hit_revision", 0)) != int(_manual_hits.get(identity, row.get("hit_revision", 0)))):
@@ -326,7 +326,7 @@ func _advance_selected(seconds: float, prepare_only: bool = false) -> Dictionary
 			_release_claim(claims, prior_target, identity)
 			cancel(identity)
 			continue
-		row.work_resting = PersonFatigue.needs_work_rest(_fatigue(person), bool(row.get("work_resting", false)))
+		row["work_resting"] = PersonFatigue.needs_work_rest(_fatigue(person), bool(row.get("work_resting", false)))
 		if not team.combat_can_act(index) or float(team.combat_hot_get(index, &"exchange_stagger", 0.0)) > 0.0:
 			_release_claim(claims, prior_target, identity)
 			_pause(task, "失能／已离场，停止作业")
@@ -350,8 +350,8 @@ func _advance_selected(seconds: float, prepare_only: bool = false) -> Dictionary
 		if not manual and bool(row.work_resting):
 			_release_claim(claims, prior_target, identity)
 			if _native_person(person): person.owner.work_fatigue_rest(identity)
-			task.mode = "rest"
-			task.status = "疲劳达80休息；降至50恢复"
+			task["mode"] = "rest"
+			task["status"] = "疲劳达80休息；降至50恢复"
 			continue
 		if bool(team.combat_hot_get(index, &"attack")) or str(team.combat_hot_get(index, &"pose")) not in ["idle", "walk"]:
 			_release_claim(claims, prior_target, identity)
@@ -365,7 +365,7 @@ func _advance_selected(seconds: float, prepare_only: bool = false) -> Dictionary
 				continue
 			person = _person(identity)
 		if _moving(person):
-			task.mode = "idle" if str(task.target).is_empty() else "travel"
+			task["mode"] = "idle" if str(task.target).is_empty() else "travel"
 			continue
 		var occupied := func(cell: Vector2i) -> bool:
 			return _occupied(cell, team, index) or bool(lab._fatigue_threat(cell, team.faction_id, team, index, threats))
@@ -392,20 +392,20 @@ func _advance_selected(seconds: float, prepare_only: bool = false) -> Dictionary
 				cancel(identity)
 				continue
 			if float(task.progress) <= 0.0:
-				task.target = ""
+				task["target"] = ""
 			_pause(task, "目标已由另一原人物处理")
 			continue
 		claims[claim] = identity
 		var destination: Vector2i = lab.terrain.cell_from_index(int(task.work_cell))
 		if person.cell != destination:
-			task.mode = "travel"
+			task["mode"] = "travel"
 			if not _work_retry_ready(identity, person, seconds, prepare_only):
 				continue
 			var next := _next_step(identity, person.cell, destination, occupied)
 			if next == TerrainArmy.INVALID_CELL or not _work_step(person, next):
 				_routes.erase(identity)
 				_retry_left[identity] = RETRY_SECONDS
-				task.status = "路程或原步进预约受阻，等待"
+				task["status"] = "路程或原步进预约受阻，等待"
 			continue
 		_routes.erase(identity)
 		if str(task.target) == "depot":
@@ -413,7 +413,7 @@ func _advance_selected(seconds: float, prepare_only: bool = false) -> Dictionary
 			if destination != depot and not lab.terrain.can_step(destination, depot):
 				_pause(task, "营地邻格有高差／障碍，无法交库")
 				continue
-		task.mode = "work"
+		task["mode"] = "work"
 		if str(task.action) in ["ladder_deploy", "ladder_retract"]:
 			continue # Shared action phase advances the two-person 12/8-second job.
 		var carry_limit := floori(SiteRuntime.CARRY_CAPACITY - SiteRuntime.carried_load(lab.terrain.site, {}, row.item_state))
@@ -431,7 +431,7 @@ func _advance_selected(seconds: float, prepare_only: bool = false) -> Dictionary
 			var state := PersonFatigue.advance(PersonFatigue.read(row), PersonFatigue.read(row, "fatigue_rest"), effort, work_rate, false)
 			PersonFatigue.write(row, "fatigue", state[0] if manual else minf(PersonFatigue.WORK_REST_AT, state[0]))
 			PersonFatigue.write(row, "fatigue_rest", state[1])
-			row.work_resting = PersonFatigue.needs_work_rest(PersonFatigue.read(row), bool(row.work_resting))
+			row["work_resting"] = PersonFatigue.needs_work_rest(PersonFatigue.read(row), bool(row.work_resting))
 			if effort > 0.0:
 				handled[identity] = float(handled.get(identity, 0.0)) + effort
 				_working[identity] = true
@@ -456,8 +456,8 @@ func _advance_selected(seconds: float, prepare_only: bool = false) -> Dictionary
 					continue
 			var work_seconds: float = float(work_time.call(false, minf(seconds, float(job.total_work) - float(job.progress)) / 60.0)) * 60.0
 			var result: Dictionary = SiteRuntime.advance_ship_repair_work(lab.terrain, key, work_seconds, person.cell, int(task.work_slot), team.team_id) if ship_repair else SiteRuntime.advance_siege_work(lab.terrain, key, str(task.action), work_seconds, person.cell, int(task.work_slot), team.team_id, task, identity)
-			task.status = str(result.message)
-			if not result.ok: task.mode = "paused"
+			task["status"] = str(result.message)
+			if not result.ok: task["mode"] = "paused"
 			continue
 		if str(task.action) == "operate" and int(task.get("work_slot", -1)) >= 0:
 			production_jobs.append({"task": task, "row": row, "team": team, "identity": identity,
@@ -828,9 +828,9 @@ func apply_shared_preflight(requests: Array) -> Array[Dictionary]:
 			request.remaining = remaining
 			for update: Dictionary in updates:
 				var entry: Dictionary = update.entry
-				entry.productivity = float(update.productivity)
-				entry.progress_multiplier = float(update.progress_multiplier)
-				entry.zero_work = remaining == 0.0
+				entry["productivity"] = float(update.productivity)
+				entry["progress_multiplier"] = float(update.progress_multiplier)
+				entry["zero_work"] = remaining == 0.0
 				if str(request.productive_kind) == "sum":
 					for person: Dictionary in request.participants:
 						if int(person.person_id) == int(entry.identity): person.progress_multiplier = float(update.weight)
@@ -938,7 +938,7 @@ func advance(seconds: float, work_plan: Dictionary = {}) -> Dictionary:
 		var consumed := {"used": false}
 		var work_time := func(_manual: bool, _minutes: float) -> float:
 			if bool(consumed.used): return 0.0
-			consumed.used = true
+			consumed["used"] = true
 			_record_planned_work(entry, interval, handled)
 			return base / 60.0 # Pool fatigue was admitted once by the shared collector.
 		if str(entry.target).begins_with("vehicle:"):
@@ -1005,7 +1005,7 @@ func _next_step(identity: int, from: Vector2i, destination: Vector2i, occupied: 
 	var route: Dictionary = _routes.get(identity, {})
 	if not route.is_empty() and not route.cells.is_empty() and route.cells[0] == from:
 		route.cells.pop_front()
-		route.from = from # Observe a completed native step; never commit one here.
+		route["from"] = from # Observe a completed native step; never commit one here.
 	if route.is_empty() or route.from != from or route.goal != destination or route.cells.is_empty() or not lab.terrain.can_step(from, route.cells[0]) or bool(occupied.call(route.cells[0])):
 		# The noncombat Army route quota does not advance in combat-enabled HOLD.
 		# Reuse the map's existing pathfinder; only failed requests are retried.
@@ -1099,8 +1099,8 @@ func _native_work_minutes(person: Dictionary, manual: bool, minutes: float, hand
 	return productive / 60.0
 
 func _pause(task: Dictionary, message: String) -> void:
-	task.mode = "paused"
-	task.status = message
+	task["mode"] = "paused"
+	task["status"] = message
 
 static func valid_task(data: TerrainData, state: Dictionary, value: Variant) -> bool:
 	if not value is Dictionary:
@@ -1260,8 +1260,8 @@ static func normalize_task(value: Dictionary) -> Dictionary:
 	for field: String in ["version", "zone", "cell", "work_cell"]:
 		result[field] = int(result[field])
 	if result.has("work_slot"):
-		result.work_slot = int(result.work_slot)
-	result.progress = float(result.progress)
+		result["work_slot"] = int(result.work_slot)
+	result["progress"] = float(result.progress)
 	result["manual"] = bool(result.get("manual", false))
 	return result
 
@@ -1433,7 +1433,7 @@ func advance_ladder_actions(action_seconds: float, game_seconds: float, work_pla
 			var task: Dictionary = person.row.get("work_task", {})
 			var entry := {"identity": int(person.row.person_id), "row": person.row, "task": task}
 			_record_planned_work(entry, interval, handled)
-			if not task.is_empty() and str(interval.get("paused", "")).is_empty(): task.status = str(result.message)
+			if not task.is_empty() and str(interval.get("paused", "")).is_empty(): task["status"] = str(result.message)
 		if bool(result.get("complete", false)): _clear_ladder_tasks(key)
 	return handled
 
@@ -1489,13 +1489,13 @@ func prepare_gd_contact_work_segment(planned: Dictionary, seconds: float, defer_
 			for prior: Dictionary in _gd_contact_work_capture.priors: already = already or is_same(prior.task, original.task)
 			if already: continue
 		var prefix: Dictionary = original.duplicate(false)
-		prefix.plan = planned
-		prefix.runtime_priors = segment.priors
-		prefix.allocation = allocation
-		prefix.actual_seconds = actual
-		prefix.productive_seconds = productive
-		prefix.applied_productive_seconds = productive * float(original.start.productivity) * float(original.start.progress_multiplier)
-		prefix.group_actual_seconds = float(allocation.get("actual_seconds", 0.0))
+		prefix["plan"] = planned
+		prefix["runtime_priors"] = segment.priors
+		prefix["allocation"] = allocation
+		prefix["actual_seconds"] = actual
+		prefix["productive_seconds"] = productive
+		prefix["applied_productive_seconds"] = productive * float(original.start.productivity) * float(original.start.progress_multiplier)
+		prefix["group_actual_seconds"] = float(allocation.get("actual_seconds", 0.0))
 		segment.prefixes.append(prefix)
 	_gd_contact_work_segment = segment
 	if defer_runtime: return SiteRuntime.ok("同段真本人分配已登記", {"segment": segment})
@@ -1596,12 +1596,12 @@ func cold_technology_work_checkpoint_guard() -> Dictionary:
 func prepare_gd_contact_work_prefix(prepared: Dictionary, planned: Dictionary, runtime_priors: Array = [], pre_registered: Dictionary = {}) -> Dictionary:
 	if not _gd_contact_work_capture.is_empty(): return SiteRuntime.fail("CLOCK_NOT_READY")
 	var upper: Dictionary = planned.duplicate(false)
-	upper.jobs = {}
+	upper["jobs"] = {}
 	for provider: String in planned.jobs:
 		upper.jobs[provider] = {}
 		for key: String in planned.jobs[provider]:
 			var allocation: Dictionary = planned.jobs[provider][key].duplicate(false)
-			allocation.participant_effective_seconds = allocation.participant_seconds.duplicate()
+			allocation["participant_effective_seconds"] = allocation.participant_seconds.duplicate()
 			upper.jobs[provider][key] = allocation
 	var registered: Dictionary = pre_registered
 	if registered.is_empty(): registered = prepare_shared_work_prefix_allocations(prepared, upper, runtime_priors)
@@ -1710,7 +1710,7 @@ func publish_gd_contact_work_segment(segment: Dictionary) -> void:
 		var allocation: Dictionary = _plan_jobs(segment.plan).get(str(entry.plan_key), {})
 		if not allocation.is_empty(): _record_planned_work(entry, allocation, handled)
 	_gd_contact_work_capture.elapsed = float(_gd_contact_work_capture.elapsed) + float(segment.seconds)
-	segment.published = true
+	segment["published"] = true
 	_gd_contact_work_segment = {}
 
 func finish_gd_contact_work_prefix() -> void:
@@ -2324,7 +2324,7 @@ func publish_shared_ladder_prefix(admitted: Dictionary) -> Dictionary:
 		for person: Dictionary in prefix.held.people:
 			handled[int(person.person_id)] = float(prefix.actual_seconds)
 			_working[int(person.person_id)] = true
-	admitted.published = true
+	admitted["published"] = true
 	return {"handled_seconds": handled}
 
 func prepare_shared_ladder_prefix(seconds: float, action_seconds: float) -> Dictionary:
@@ -2378,8 +2378,8 @@ func publish_shared_work_prefix(admitted: Dictionary) -> Dictionary:
 		_working[identity] = true
 	_publishing_shared_prefix = false
 	_consuming_work_plan = {}
-	admitted.published = true
-	admitted.handled_seconds = handled
+	admitted["published"] = true
+	admitted["handled_seconds"] = handled
 	return {"handled_seconds": handled}
 
 func validate_shared_ladder_prefix(captured: Dictionary, planned: Dictionary) -> Dictionary:
@@ -2451,7 +2451,7 @@ func _prepared_skill_groups(key: String, shared_requests: Array = []) -> Diction
 func finish_shared_ladder_prefix(admitted: Dictionary) -> void:
 	if not is_same(admitted, _checked_ladder_prefix_admission) or not bool(admitted.get("published", false)) \
 		or bool(admitted.get("finished", false)): return
-	admitted.finished = true
+	admitted["finished"] = true
 	var handled: Dictionary = {}
 	for held: Dictionary in admitted.capture.held:
 		var allocation: Dictionary = _plan_jobs(admitted.plan).get(str(held.plan_key), {})
@@ -2467,7 +2467,7 @@ func finish_shared_work_prefix(admitted: Dictionary) -> void:
 	# AFTER Native publisher. Original REST release/cancel and current endpoint
 	# checks may now run; never consume this interval's effort or progress twice.
 	if not is_same(admitted, _checked_work_prefix_admission) or not bool(admitted.get("published", false)) or bool(admitted.get("finished", false)): return
-	admitted.finished = true
+	admitted["finished"] = true
 	var handled := {}
 	for held: Dictionary in admitted.prepared.held:
 		var entry: Dictionary = held.entry

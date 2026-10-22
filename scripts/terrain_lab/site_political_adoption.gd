@@ -121,7 +121,7 @@ static func command(lab: Variant, target_id: int, offer: Dictionary, requester_i
 	if admission_id != requester_id and not bool(nation.offices.get("duty_ai", false)):
 		return Runtime.fail("NEEDS_CONSENT", "戶籍官尚未明示接受；職責 AI 關閉時不能代其同意")
 	var submitted := offer.duplicate(true)
-	submitted.consent = target_id == requester_id and bool(offer.get("consent", false))
+	submitted["consent"] = target_id == requester_id and bool(offer.get("consent", false))
 	return adopt(lab, target_id, submitted, jail_id, admission_id)
 
 ## Only this proven GD-row/prison path has the R3 assessment policy. Actor and

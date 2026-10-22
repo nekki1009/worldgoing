@@ -20,7 +20,7 @@ static func prepare(data: TerrainData, interval: Dictionary, mode: String = "col
 	if residents.ok:
 		plan.capabilities.append("resident_sustain")
 		plan.capabilities.append("resident_fatigue")
-		plan.assumptions = ["same-faction stationary GD Actors", "original P0/actions remain stable", "no active research, captivity, Army or production job", "stop before hunger damage", "original shared exact tail"]
+		plan["assumptions"] = ["same-faction stationary GD Actors", "original P0/actions remain stable", "no active research, captivity, Army or production job", "stop before hunger damage", "original shared exact tail"]
 	var inputs: Variant = data.get_meta(&"region_cold_inputs", {})
 	# Production remains on the original shared exact consumer until an admitted event wrapper exists.
 	data.set_meta(&"region_cold_plan", plan)
@@ -74,7 +74,7 @@ static func _summary(data: TerrainData, plan: Dictionary, target: float, budget:
 		if due > final_minute: break
 		if steps >= budget:
 			var completed := maxf(float(plan.cursor), float(plan.start) + cursor_minute * 60.0 - float(plan.site_seconds))
-			plan.cursor = completed
+			plan["cursor"] = completed
 			data.site["phase"] = 0.0
 			data.set_meta(&"region_cold_plan", plan)
 			return _receipt(plan, target, "resource_events", steps)
@@ -84,11 +84,11 @@ static func _summary(data: TerrainData, plan: Dictionary, target: float, budget:
 		Runtime.allocate_water(data)
 		cursor_minute = due
 		steps += 1
-		plan.steps = int(plan.steps) + 1
+		plan["steps"] = int(plan.steps) + 1
 	data.site["minute"] = final_minute
 	data.site["phase"] = clampf(site_end / 60.0 - final_minute, 0.0, 0.999999999)
 	Runtime.allocate_water(data)
-	plan.cursor = target
+	plan["cursor"] = target
 	data.set_meta(&"region_cold_plan", plan)
 	return _receipt(plan, target, "resource_events", steps)
 
@@ -187,13 +187,13 @@ static func _resident_prefix(data: TerrainData, plan: Dictionary, target: float,
 			if float(outcome.consumed_rations) > 0.0:
 				var holder: Dictionary = body.get("item_state", {})
 				if not Checkpoint.integer(holder.get("version")) or int(holder.version) >= 2147483646: return Runtime.fail("STALE_SOURCE")
-				holder.version = int(holder.version) + 1
+				holder["version"] = int(holder.version) + 1
 		for body: Dictionary in original.members.values():
 			var fatigue := Fatigue.advance(float(body.get("fatigue", 0.0)), float(body.get("fatigue_rest", 0.0)), elapsed, 0.0, true)
-			body.fatigue = fatigue[0]
-			body.fatigue_rest = fatigue[1]
+			body["fatigue"] = fatigue[0]
+			body["fatigue_rest"] = fatigue[1]
 		steps += 1
-		plan.steps = int(plan.steps) + 1
+		plan["steps"] = int(plan.steps) + 1
 		if not resources.interval_complete: return _receipt(plan, target, "resident_resource_prefix", steps)
 	data.set_meta(&"region_cold_plan", plan)
 	return _receipt(plan, target, "resident_sustain_prefix", steps)

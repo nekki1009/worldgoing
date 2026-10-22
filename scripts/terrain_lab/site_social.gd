@@ -114,11 +114,11 @@ static func _mark_unexecuted(packet: Dictionary, through: int) -> void:
 	for entry: Dictionary in packet.pending:
 		if int(entry.day) > through: kept.append(entry)
 		else: dropped += 1
-	packet.pending = kept
+	packet["pending"] = kept
 	var record: Dictionary = packet.unexecuted
-	record.days = int(record.days) + count
-	record.events = int(record.events) + dropped
-	packet.settled_day = through
+	record["days"] = int(record.days) + count
+	record["events"] = int(record.events) + dropped
+	packet["settled_day"] = through
 
 static func _settle_day(body: Variant, packet: Dictionary, day: int, evidence: Dictionary, end_minute: int) -> void:
 	var positive := {}
@@ -134,18 +134,18 @@ static func _settle_day(body: Variant, packet: Dictionary, day: int, evidence: D
 		else: negative[key] = int(negative.get(key, 0)) + int(entry.amount)
 		bonus[key] = int(bonus.get(key, 0)) + int(entry.l)
 		packet.seen.append(str(entry.id))
-	packet.pending = kept
+	packet["pending"] = kept
 	while packet.seen.size() > PersonSocial.MAX_SEEN: packet.seen.pop_front()
 	# 野心≥70, qualified, seven straight days without a post: +2/day from day 8.
 	var team_ref_value: Variant = evidence.get("team_ref")
 	var has_team: bool = team_ref_value is Dictionary and not (team_ref_value as Dictionary).is_empty()
 	if bool(evidence.get("eligible_for_post", false)) and not bool(evidence.get("holds_post", false)) and _axis(body, "ambition") >= 70:
-		packet.no_post_days = int(packet.no_post_days) + 1
+		packet["no_post_days"] = int(packet.no_post_days) + 1
 		if int(packet.no_post_days) > 7 and has_team:
 			var key := org_key(team_ref_value)
 			positive[key] = int(positive.get(key, 0)) + 2
 	else:
-		packet.no_post_days = 0
+		packet["no_post_days"] = 0
 	var captive := bool(evidence.get("captive", false))
 	for key: String in packet.orgs:
 		var entry: Dictionary = packet.orgs[key]
@@ -172,16 +172,16 @@ static func _omen(body: Variant, entry: Dictionary, controlled: bool, end_minute
 	var threshold := leave_threshold(body)
 	if bool(entry.intent):
 		if int(entry.G) < threshold - 10:
-			entry.intent = false
-			entry.obs = 0
-			entry.obs_from = -1
+			entry["intent"] = false
+			entry["obs"] = 0
+			entry["obs_from"] = -1
 	elif int(entry.G) >= threshold:
-		if int(entry.obs) == 0: entry.obs_from = end_minute
-		entry.obs = mini(int(entry.obs) + int(DAY_SECONDS), OMEN_DAYS * int(DAY_SECONDS))
-		if int(entry.obs) >= OMEN_DAYS * int(DAY_SECONDS): entry.intent = true
+		if int(entry.obs) == 0: entry["obs_from"] = end_minute
+		entry["obs"] = mini(int(entry.obs) + int(DAY_SECONDS), OMEN_DAYS * int(DAY_SECONDS))
+		if int(entry.obs) >= OMEN_DAYS * int(DAY_SECONDS): entry["intent"] = true
 	else:
-		entry.obs = 0
-		entry.obs_from = -1
+		entry["obs"] = 0
+		entry["obs_from"] = -1
 
 ## §8.2/8.3: each complete 24 h in enemy custody costs 100 loyalty to the
 ## organization saved at capture; counted from the capture time, never twice.
@@ -194,7 +194,7 @@ static func _settle_captivity_days(packet: Dictionary, context: Dictionary) -> v
 	if delta <= 0: return
 	var entry := relation(packet, relation_value.loyal_org)
 	entry.L = clampi(int(entry.L) - 100 * delta, 0, 10000)
-	relation_value.settled_days = complete
+	relation_value["settled_days"] = complete
 
 ## R3 §6.2: is this captive willing to surrender? Pure: the candidate loyalty
 ## includes the complete custody days not yet settled (settled only on commit).

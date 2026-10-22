@@ -133,7 +133,7 @@ static func _family_candidate(candidate: Dictionary, grants: Array) -> Dictionar
 	if int(family.version) != 3: return _fail("FAMILY_TECH_UNINITIALIZED")
 	if not Technology.local_holder(family.technology, str(candidate.id)): return _fail("REMOTE_FAMILY_HOLDER")
 	var tech: Dictionary = Technology.normalize_family_tech(family.technology)
-	if int(tech.version) == 1: tech.version = 2
+	if int(tech.version) == 1: tech["version"] = 2
 	for category: String in known:
 		if not tech.known.has(category): tech.known.append(category)
 	if not Technology.valid_family_tech(tech): return _fail("INVALID_ORIGINAL_FAMILY_TECHNOLOGY")
@@ -190,7 +190,7 @@ static func prepare(state: Dictionary, config: Dictionary, admitted_categories: 
 			"person_id": identity, "technology_before": original.body.get("technology", {}).duplicate(true)})
 	var family := _family_candidate(candidate, grants)
 	if not family.ok: return family
-	candidate.technology_artisans = {"version": 1, "config_version": 1, "scenario_id": checked_config.scenario_id,
+	candidate["technology_artisans"] = {"version": 1, "config_version": 1, "scenario_id": checked_config.scenario_id,
 		"world_id": world.world_id, "site_id": state.id, "categories": world.policy.categories.duplicate(), "grants": grants.duplicate(true)}
 	if not validate_receipt(candidate.technology_artisans, candidate): return _fail("INVALID_ARTISAN_RECEIPT")
 	return {"ok": true, "changed": true, "code": "PREPARED", "state": candidate, "grants": grants, "expected": expected}

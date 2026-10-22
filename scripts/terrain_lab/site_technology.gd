@@ -417,7 +417,7 @@ static func _scope_budget(raw: Variant, project: Dictionary, site_id: String, li
 		if not raw.spent.has(resource) or int(raw.spent[resource]) != int(totals[resource]): return false
 	var events := {}
 	var accepted: Dictionary = project.duplicate(true)
-	accepted.receipts = []
+	accepted["receipts"] = []
 	var receipt_attempts := {}
 	for receipt: Variant in project.receipts:
 		if not keys(receipt, ["site_id", "person_id", "attempt", "phase_id", "event_id", "work_seconds", "payment_id"]) \
@@ -442,7 +442,7 @@ static func _scope_budget(raw: Variant, project: Dictionary, site_id: String, li
 		receipt_attempts[int(receipt.attempt)] = true
 	for payment: Dictionary in raw.payments:
 		var prior: Dictionary = project.duplicate(true)
-		prior.receipts = []
+		prior["receipts"] = []
 		for receipt: Dictionary in project.receipts:
 			if receipt.payment_id == payment.payment_id: break
 			# Family phases are personal. Another original person's already-paid
@@ -785,7 +785,7 @@ static func prepare_holder_departure(source_site_id: String, family: Dictionary,
 				if not project.budget.is_empty(): project.budget.status = "revoked"
 				for consent: Dictionary in project.consents: consent.status = "revoked"
 			if not valid_family_tech(source.technology): return {"ok": false, "code": "INVALID_TECHNOLOGY"}
-		moving.technology = _holder_reference(family.technology)
+		moving["technology"] = _holder_reference(family.technology)
 		return {"ok": true, "source_family": source, "moving_family": moving}
 	if not local_holder(family.technology, source_site_id): return {"ok": false, "code": "STALE_HOLDER"}
 	var transit := "travel:" + token
@@ -794,8 +794,8 @@ static func prepare_holder_departure(source_site_id: String, family: Dictionary,
 		if not _append_person_link(links, {"site_id": source_site_id, "person_id": identity}, {"site_id": transit, "person_id": identity}): return {"ok": false, "code": "INVALID_MAPPING"}
 	var candidate := _move_holder_candidate(family.technology, transit, links)
 	if candidate.is_empty(): return {"ok": false, "code": "INVALID_TRANSFER"}
-	source.technology = _holder_reference(candidate)
-	moving.technology = candidate
+	source["technology"] = _holder_reference(candidate)
+	moving["technology"] = candidate
 	return {"ok": true, "source_family": source, "moving_family": moving}
 
 static func _family_reference(raw: Variant, family_id: String) -> bool:
@@ -814,12 +814,12 @@ static func prepare_holder_arrival(source_family_ref: Dictionary, incoming_famil
 	if is_holder_reference(incoming):
 		# A traveling NPC has an original family reference, never a second full
 		# archive. Arrival beside its current holder must preserve that holder.
-		if destination_family.is_empty(): destination.technology = normalize_family_tech(incoming)
+		if destination_family.is_empty(): destination["technology"] = normalize_family_tech(incoming)
 		else:
 			if not is_holder_reference(destination.technology) and not local_holder(destination.technology, new_site_id): return {"ok": false, "code": "STALE_HOLDER"}
 			if int(destination.technology.epoch) == int(incoming.epoch) and destination.technology.holder_site_id != incoming.holder_site_id: return {"ok": false, "code": "HOLDER_CONFLICT"}
 			if not is_holder_reference(destination.technology) and int(destination.technology.epoch) < int(incoming.epoch): return {"ok": false, "code": "STALE_HOLDER"}
-			if is_holder_reference(destination.technology) and int(destination.technology.epoch) < int(incoming.epoch): destination.technology = normalize_family_tech(incoming)
+			if is_holder_reference(destination.technology) and int(destination.technology.epoch) < int(incoming.epoch): destination["technology"] = normalize_family_tech(incoming)
 		return {"ok": true, "destination_family": destination, "moving_family": incoming_family.duplicate(true)}
 	if not str(incoming.holder_site_id).begins_with("travel:"): return {"ok": false, "code": "STALE_HOLDER"}
 	if not destination_family.is_empty() and (not is_holder_reference(destination.technology) or int(destination.technology.epoch) > int(incoming.epoch)):
@@ -848,9 +848,9 @@ static func prepare_holder_arrival(source_family_ref: Dictionary, incoming_famil
 		if not found: return {"ok": false, "code": "INVALID_MAPPING"}
 	var candidate := _move_holder_candidate(incoming, new_site_id, links)
 	if candidate.is_empty(): return {"ok": false, "code": "INVALID_TRANSFER"}
-	destination.technology = candidate
+	destination["technology"] = candidate
 	var moving := incoming_family.duplicate(true)
-	moving.technology = _holder_reference(candidate)
+	moving["technology"] = _holder_reference(candidate)
 	return {"ok": true, "destination_family": destination, "moving_family": moving}
 
 # Append to ORIGINAL SiteTechnology. Control moves; no original body moves.
@@ -887,8 +887,8 @@ static func prepare_holder_control_transition(source_family_ref: Dictionary,
 	if candidate.is_empty(): return {"ok": false, "code": "INVALID_TRANSFER"}
 	var source_result := source_family.duplicate(true)
 	var destination_result := destination_family.duplicate(true)
-	source_result.technology = _holder_reference(candidate)
-	destination_result.technology = candidate
+	source_result["technology"] = _holder_reference(candidate)
+	destination_result["technology"] = candidate
 	return {"ok": true, "source_family": source_result, "destination_family": destination_result,
 		"source_epoch": int(original.epoch), "destination_epoch": int(candidate.epoch)}
 
