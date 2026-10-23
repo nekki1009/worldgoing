@@ -1,0 +1,537 @@
+{
+"admission": {
+"ok": true
+},
+"battle": {
+"attackers": [4, 5, 6, 7, 8],
+"completed_game_time": 200.0,
+"defenders": [1],
+"id": "siege:earth_tw_tm2_121_v1:1:0:1:13",
+"kind": "siege",
+"loss_coefficient": 0.0016666666666666668,
+"mode": "formula_active",
+"pending": [],
+"phase": "siege",
+"policy": {},
+"receipts": {},
+"revision": 53,
+"rng_state": 1851914896,
+"round_end": 700.0,
+"round_inputs": {},
+"rules_revision": "region_battle_v1",
+&"siege": {
+"arrivals": {},
+"attacker_faction": 1,
+"bodies": {
+"1": {
+"captive": false,
+"cell": [80, 80],
+&"commander": -1,
+"faction": 2,
+"holder_sha256": "fd8ba0a09025cf154ddf65e6a8eb354067407ce9835954cce1a07fe97bd28784",
+"hp": 100.0,
+"ko": 0.0,
+"moving": false,
+&"moving_from": [80, 80],
+&"moving_to": [80, 80],
+&"order": -1,
+"person_id": 1,
+"role": "civilian",
+"surface": 2,
+"team_id": -1
+},
+"4": {
+"captive": false,
+"cell": [17, 44],
+&"commander": 4,
+"faction": 1,
+"holder_sha256": "95077fae129f3a222123c787d08f7346e84384dfd689c178abe504e2486cb2ce",
+"hp": 100.0,
+"ko": 0.0,
+"moving": false,
+&"moving_from": [17, 44],
+&"moving_to": [-1, -1],
+&"order": 0,
+"person_id": 4,
+"role": "officer",
+"surface": 2,
+"team_id": 2
+},
+"5": {
+"captive": false,
+"cell": [19, 41],
+&"commander": 4,
+"faction": 1,
+"holder_sha256": "5246f7f2d333a3c7872bf0e3566c401d36a71537f8e1066c8929ee818edce798",
+"hp": 100.0,
+"ko": 0.0,
+"moving": false,
+&"moving_from": [19, 41],
+&"moving_to": [-1, -1],
+&"order": 0,
+"person_id": 5,
+"role": "soldier",
+"surface": 2,
+"team_id": 2
+},
+"6": {
+"captive": false,
+"cell": [19, 42],
+&"commander": 4,
+"faction": 1,
+"holder_sha256": "ed978a025e07815cf636b7e0a6ffdb4d71f9f1df4bdd130d4e290bdd10f33ff6",
+"hp": 100.0,
+"ko": 0.0,
+"moving": false,
+&"moving_from": [19, 42],
+&"moving_to": [-1, -1],
+&"order": 0,
+"person_id": 6,
+"role": "soldier",
+"surface": 2,
+"team_id": 2
+}
+},
+"capture": {
+"elapsed_action": 0.08333333333333615,
+"fall_sha256": "ab09f34a5290ee9ffefa8386f3a23a7ad1d8cf3b7362f7bc5ab355d16334e5ce",
+"sample": {
+"attacker": -1,
+"leader": -1,
+"owner": 2
+},
+"unconsumed_game_seconds": 0.0
+},
+"center_id": "1",
+"defender_faction": 2,
+"flights": {},
+"phase": "siege",
+"resolution": "original_exact_gd",
+"routes": {},
+"source": {
+"action_seconds": 2.083333333333336,
+"environment_revision": 100,
+"fire_epoch": "fire_b6d3c69e972b8a7bf52ee7b4b7205d52",
+"fire_sequence": 64,
+"game_seconds": 200.0,
+"generation": 11,
+"navigation_revision": 49,
+"owner": "earth_tw_tm2_121_v1:1:0",
+"runtime_revision": 117
+},
+"source_sha256": "2c17900d7e18976c675f9eb6d4a689c4358f07734acb74b6c99a67d6880ff880",
+"structures": {
+"1": {
+"kind": "settlement_center",
+"owner_faction": 2,
+"parts": {
+"body": "68caf32bfff91fc3e57698dde61294b1a4e8c293007f20759c1599cb7282746e"
+},
+"sha256": "711547ed7f327432d4a15d6fdf066712669100eee8da4be751ab39aa4ed5b7df"
+},
+"10": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:1624": "ad80b3191833cbb7a4b86cc2d36f2496970abba53ea7f98366ab75a259c63307"
+},
+"sha256": "22a52ef401275d97efa52cb49b83e39667dc435a5a1d780b75cfb3b44f697dd3"
+},
+"11": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:1625": "5c16492706a0edd987c886346c983bfdbc6533ba9a7e11b06eaca32bc04a4e00"
+},
+"sha256": "521202c5213976f4fa23d86842b3de494ea31b8c6e857dd055016aec8b399dde"
+},
+"12": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:1626": "9383038cae7649c093dceee223231c5874d0cc0fc12b0a461b502482bdd7da8f"
+},
+"sha256": "38c7dadc0a61c70793a072ee307d80e245b09d2ddd7af9858f061082cb184c9c"
+},
+"13": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:1627": "c3429edfddc53f12f717037bf7f5bc1a00c30956fc16df9e67d653dc4f741d81"
+},
+"sha256": "4425d87bb6cd59d2978ccb906dc7bd2cb173a65498920e6ad2e9e018409f3cf3"
+},
+"14": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:1628": "d829e5a492f59aeed191e1d78572a9f450acfa60abf3b13c85f58d37b66a92da"
+},
+"sha256": "a77ccdcd0b93c937e2ce9e504843d9ec93d41185618341fdbdd08f9bfdb5a802"
+},
+"15": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:1716": "239ac9e0ba6a57bc3aa46ef26d38c738f7a0edf03383992a8f1e7758bc1b1fc1"
+},
+"sha256": "8febc24bc2f6ab56570b4489f24a4d99f5f6abe46fc3bed38aa6368b7de39799"
+},
+"16": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:1728": "ee155c0740de66baca1cfcf768b5e1aec5453d7a50b47f6e4503a4b9fabf996f"
+},
+"sha256": "3031e24c7e0a6eb046c80849a577f983b53147034062a21910cac2419d213240"
+},
+"17": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:1816": "7e73eb21e7d7e7498d4020335a124fcbdcb0f05d85960172be50547d5b26ae76"
+},
+"sha256": "0dded8d5690fda90a1fae3b735f751aea41a259573f65d07eb94783b3c44b591"
+},
+"18": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:1828": "d222279498391a3928efb71cb30dc57c36c96592790831e33657bb6fd9ac93db"
+},
+"sha256": "6a7f8647c5375120f4c8a388c5f2996ea8b09b4a81d6808413254f5f5103d011"
+},
+"19": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:1916": "b0e75685d6220931ce64d8dcf0fd240bd87192ecd54036334c8976a915ba86f1"
+},
+"sha256": "09f84aeb875dd1220f4e7ef248143d286fdd1e283a42c8390258ea64e5844393"
+},
+"2": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:1616": "c74ba615000915c1723b3f04edc40a887f8607ba5efacb660229a8a432450335"
+},
+"sha256": "e70976409665166bd4643cbecd80764ab6b8165ed17ddeb4aed8dd5c9335bb1c"
+},
+"20": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:1928": "fb94afbcac389f6fc325e44e6f48049079f6057baa430b94a65d9a95ba6b9fd1"
+},
+"sha256": "240ecf8ce878e3b5d2bc243dc963b7bc71044e80dd79f62c05a39488d7b54d90"
+},
+"21": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2016": "3031a9cd95eb66599bbd7d4cde6b73c8e911a8d2066c28182e363a3dff175898"
+},
+"sha256": "6a923b6f37c1cc07a008d84a6f8b7ff7986b433425d3cccba4c5dc39d74a13c8"
+},
+"22": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2028": "480190892e04124f2bdcdf8e84cd5440600d87c829f94be231d04eded40185eb"
+},
+"sha256": "326f87760218bdb12af358c3415f1e4d56d66e4945b5a2d0f1a95db685a12a4a"
+},
+"23": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2116": "04de6a79b843bfb69abc0b39b7eccc8b2c5ad7f54edcfca6ade3b1103b84b52c"
+},
+"sha256": "1cdbf07c645d0506e095121ff5dff58c1d17ae4fa4dd2a3d49156b83e896e4e2"
+},
+"24": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2128": "5e786cf271ed2a10c1d47a46efe99191e30aac577464a8791f160e42bfff8cbd"
+},
+"sha256": "d7b79f0713a1d4beca3482b03f87b38399b9b42623d7845ad925df7b8af13998"
+},
+"25": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2216": "4641cbeaf1c7ae4286953d5806b70c78fcf6fec10461fee642239d2a96b0b132"
+},
+"sha256": "06b2049192081e636b0dbdd8a863281dabbf74dc21d1f5d5755287718d091732"
+},
+"26": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2228": "ccbde300b6e1fb53e88122d7cfc0909b8f8f1887fc8651b5de9b77131decb494"
+},
+"sha256": "a819306e4dc8b10902e13a049614d5041ea27d4e6a22935af87d88f335d1f6bc"
+},
+"27": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2316": "6489b9d05b5d6dd2130fc234c6a3a62c60a48fa1c244cf4cc80844a9be0b1a8f"
+},
+"sha256": "a3e1a35ebe23fa34986ee14a596d5b00967063e1370cc25e72e2d76372d88b08"
+},
+"28": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2328": "9bf24473c790339659f8085aba875ff5f83dee50f3e159bc80320842a52bf8d4"
+},
+"sha256": "2fe4ba983b08b9ac4b9b3532da55527d00dd1d7afd761ae39be325af06f35c43"
+},
+"29": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2416": "7a35d97503825f7637306886535fc7168bfe024368ad01c9ed3373f47e221d3d"
+},
+"sha256": "9eeb3bdb5057a3dfb3a9519a66240ada9d3eaf8d979eb77aa602d8ea8b2b2301"
+},
+"3": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:1617": "1d077c8d1fae66299aea74bd1ea40c4470b9b9e14370feda5cd272ab4c5de297"
+},
+"sha256": "c53ac0dec1655cf7e3ab503d3fbea1d688070142ab4225bcf9e5b1a45e7e7fa6"
+},
+"30": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2428": "45e0a4b1036002de9dac25ae890bd828b805966c5147df4c2f8edff73404be68"
+},
+"sha256": "ff3276cec31ba4f74d005b004b3dd6e5bde847eb6a6c52abd5b4f884340c9712"
+},
+"31": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2516": "60359385c3965deaf480d2a0cd59e5b9bbc1ae8e1145f7f6b6a14e168e735160"
+},
+"sha256": "d6106fd47c038686b08a65e21a523ad33c32d50034a252f945d33c8dad13ca50"
+},
+"32": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2528": "5ea6aebbf5c8e277f176e744aba22b8c11e0f51ead028f913e2959e092197032"
+},
+"sha256": "482c7ba407346766a68e1e59b2b888a3c2863b6babe577fef115e3c2a6ed8397"
+},
+"33": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2616": "97d9276ea497134887b766b8ec18ee25e92d7979442f21ddefc2a62e7bb34cf2"
+},
+"sha256": "fadb9ff5702fe8782313c4387fc8bed5a9a08f742e41e9578523146d646bc8e2"
+},
+"34": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2628": "5c57ef044443f530e4d2f7d46086977b17cd395c204a1457cdf5f59abaf773ee"
+},
+"sha256": "7af15e477aa11e312805438c2ea5f39523c785e4803fb0f80401f4370b711973"
+},
+"35": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2716": "ef454bfb0fcdfa8e6546f1ae5c0a80ef1f6da41fab81b07045230ab97d4f1894"
+},
+"sha256": "dbe7f7cd6879157a9856d01e6b159e63327129be70ddfe74485ee9cda989b155"
+},
+"36": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2728": "504e34be912942928b5f5113e6ea386d13774aecbb5d535e69fc7afaf1d1c002"
+},
+"sha256": "98d0cf5c876b2a800ce0037595a0e83bb5a0f9834ca8d999a7a43c354ebafb79"
+},
+"37": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2816": "d412ca1e57e2ec5c38e429ab9cd57782d7949e3acddc6a94b378c6df3c403771"
+},
+"sha256": "a2d5cf7126a157702ff8747d7e38c04bcffad1062df1c8f63113efd9cda25671"
+},
+"38": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2817": "98bbe8eff4f740c73eb0c7dfd402a9fc5658d3c5da21cdd252747cec23f77f94"
+},
+"sha256": "4a8b31ed8432719f565e119687edd58ff1d15dddd80214fd72693c5f4339f2cf"
+},
+"39": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2818": "c61bf7d5a55fa62ab19fe9b0244565d2055277582cda6c048a71a5f1263da647"
+},
+"sha256": "8c76e09308a146bce1b9ac7feff5e5e3ed9c37bf20b74f55cf601b56640406cc"
+},
+"4": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:1618": "3e2f79f979273a8c5f901e6c8660bc2643bb5645d5179fe1fe205b0f75cf0539"
+},
+"sha256": "14d0185cc9b3704a6c572aa17cf44c109e2b530caa2495364ed52ef1bd4ed2b8"
+},
+"40": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2819": "49fa0930d2abb574155349271bf17ff1aea80e7274b1558be5fe327efb468a42"
+},
+"sha256": "6d95ed21646031b99fa5f2faea7dcbf0523e58aeb4bf7f8f01547603d5bc5436"
+},
+"41": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2820": "42dc24b01a4edb24ac85a15acb17d8e6173a300a658e5a2b7d0d39f79dcd6f4b"
+},
+"sha256": "03763d0950cf99b643b8c495098988c23c445504b9053fa07911f3a2224a18a9"
+},
+"42": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2821": "a48b6c461a7f54bc70aaf3877184d84967056a050e2bbaeb66a3adbb8724ba06"
+},
+"sha256": "1115a2414d7d078171d5c6b139a7fb77dd9eac41deb42b917a85bd3e1599dbcf"
+},
+"43": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2822": "c24c3f1f5289beb866cfdf8d7cf2aa5970b3cbe6bc720b791e67c286f7cad5c1"
+},
+"sha256": "e674b4dedd0b5e3100885c82d77452f13a16bb2719d464a8667ddcb99b22e471"
+},
+"44": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2823": "595453b86ff5f75321de3be981ad070af21be049bec736e564844bf1453c38ee"
+},
+"sha256": "5b220ff7cb4adb2ab2f9d2367ad92f6c79b0534f46249565a3c35dcead17deca"
+},
+"45": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2824": "d7ba46fcc99dcffbebe210be7e4383d379adf98ef5e3e8b04b1dc600ad7035c8"
+},
+"sha256": "f505bef8b3eda0684cdafd7d639a3ce5be5a14c8bf3c3f98e025195e23252f5a"
+},
+"46": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2825": "ff464f7223219b4e781c04c578687d9691390c61915a401acd17b79818bb2593"
+},
+"sha256": "ce721611777a62af7d66c8871f5f2ac4a731e88ca5d3a3efad9aa6bef1b24bd2"
+},
+"47": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2826": "34146273f2b8baef2d5425a30c240d609d54aed02210b037e9bf99ea67c45d5c"
+},
+"sha256": "6661e3891b44268745cbc3e40e9e14a08e60f27f9da8f10ec2daa589484af2d7"
+},
+"48": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2827": "eb79296cda65d0e253f07b8b99ea80925cedfb212af93fc31fa402f0bd9eaad5"
+},
+"sha256": "9bebe657de9ae59043ed1d2255f6844d11740f7eba63d33525a9381f454dded8"
+},
+"49": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:2828": "7d9d22d647c0e46c311cf203052a4ee13ffe5c68e7d1e27b29251607552a5b8b"
+},
+"sha256": "8da4b456e031e23fe686830d3caac736c1e02475928be996165758efbf14de66"
+},
+"5": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:1619": "df8606cdb08f7792de519738694dd51ca39c448924f2adddef2914448fd7934a"
+},
+"sha256": "9ddb73686ecf1015bbe1f76f46c0800cf2bfc0ff72483ec558ad34e1c4023673"
+},
+"6": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:1620": "2ca557c8884e7561aa981271101cc7a07109b734116f60b2e80fad579b48ebff"
+},
+"sha256": "ac66d1d67bae60dda193bbfd71cff53191ff254831a3ea58fef6ad55d806ee0b"
+},
+"7": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:1621": "2ea33708afb428b104b1b065b0d5b3c65b598f34bc49c82eb584dcdad3a390eb"
+},
+"sha256": "58398df06b9e4094d5923910557e6a44fb83595108af2c58fe887a64f06668c3"
+},
+"8": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:1622": "a51ddfc1c3eae91fd5ef83a9c545f7ae1e206648f7d2998a6fe040b15895afa8"
+},
+"sha256": "63050bd086b986afcb7b576327ee16ea2e519a278ec5dbdb1ecb8df865f9db63"
+},
+"9": {
+"kind": "stone_wall",
+"owner_faction": 2,
+"parts": {
+"c:1623": "b67e5f423df3487fdf86b51ecaedf9f20634ae38f94e78d7fbd69a779da4ad05"
+},
+"sha256": "ad6ed26f72481e6c75c4c3fa1135e44e124c033d49a4940844014642cd74f2f6"
+}
+},
+"vehicles": {
+"1": {
+"attack_seq": 1,
+"faction": 1,
+"holder_version": 1,
+"kind": "ballista",
+"sha256": "04a01f2a97ff50f1a488d119da6378993fd31f623d8583c28e4112dad0247735",
+"team_id": 2
+}
+},
+"version": 1,
+"work": {}
+},
+"site_id": "earth_tw_tm2_121_v1:1:0",
+"start_game_time": 100.0,
+"version": 1
+},
+"caller": "Slot._publish",
+"registry_revision": 119,
+"world_argument": 200.0
+}

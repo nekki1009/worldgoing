@@ -12,6 +12,16 @@ func _run() -> void:
 		if str(battle.get("site_id", "")) == owner and str(battle.get("kind", "")) == "siege" and str(battle.get("mode", "")) == "cold_exact": exact_battle = true
 	if not _check(exact_battle and str(slot.region_registry().modes[owner].mode) == "cold_exact", "real paid siege starts in its admitted exact consumer"): _finish(); return
 	if not _action_step(): _finish(); return
+	var body_count: int = 0
+	for saved: Dictionary in slot.region_registry().battles.values():
+		if saved.get("kind") != "siege" or saved.get("site_id") != owner: continue
+		for key: Variant in saved.keys():
+			if not _check(key is String, "new original siege battle keys are String"): _finish(); return
+		for body: Dictionary in saved.siege.bodies.values():
+			body_count += 1
+			for key: Variant in body.keys():
+				if not _check(key is String, "new original siege person-reference keys are String"): _finish(); return
+	if not _check(body_count > 0, "String-key observation covers real original siege bodies"): _finish(); return
 	var settled: Dictionary = slot.validate_settlement(action_owner.terrain.site, float(slot.control.logical_game_seconds))
 	var fire: Dictionary = action_owner.terrain.site.fire_settlement
 	var mode: Dictionary = slot.region_registry().modes[owner]

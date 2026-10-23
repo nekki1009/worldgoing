@@ -503,15 +503,15 @@ static func _siege_person_ref(lab: TerrainLab, identity: int) -> Dictionary:
 		"captive": bool(person.captive), "moving": bool(person.moving), "team_id": int(owner.team_id) if owner is TerrainArmy else -1,
 		"holder_sha256": _siege_hash(person.get("holder", {})), "role": SiteSettlement._role(person)}
 	if owner is TerrainArmy:
-		ref.order = int(owner.combat_order)
-		ref.commander = int(owner.combat_identity(owner.current_commander)) if owner.current_commander >= 0 else -1
-		ref.moving_from = [owner.cells[unit].x, owner.cells[unit].y]
-		ref.moving_to = [owner.moving_to[unit].x, owner.moving_to[unit].y]
+		ref["order"] = int(owner.combat_order)
+		ref["commander"] = int(owner.combat_identity(owner.current_commander)) if owner.current_commander >= 0 else -1
+		ref["moving_from"] = [owner.cells[unit].x, owner.cells[unit].y]
+		ref["moving_to"] = [owner.moving_to[unit].x, owner.moving_to[unit].y]
 	else:
-		ref.order = -1
-		ref.commander = -1
-		ref.moving_from = [owner.movement_from_cell.x, owner.movement_from_cell.y]
-		ref.moving_to = [cell.x, cell.y]
+		ref["order"] = -1
+		ref["commander"] = -1
+		ref["moving_from"] = [owner.movement_from_cell.x, owner.movement_from_cell.y]
+		ref["moving_to"] = [cell.x, cell.y]
 	return ref
 
 ## A path is the actual original person's source/goal-purpose navigation proof.

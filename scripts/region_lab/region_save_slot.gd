@@ -6210,7 +6210,7 @@ func _region_arrival_battle_candidate(before: Dictionary, after: Dictionary, par
 		if str(battle.get("site_id", "")) == site_id and str(battle.get("phase", "")) != "finished":
 			if not existing.is_empty(): return fail("BATTLE_OWNER_CONFLICT", "同Site多場原戰鬥須原GD完整消費者")
 			existing = battle.duplicate(true)
-	var seed := existing
+	var seed: Dictionary = existing.duplicate(true)
 	if seed.is_empty():
 		var defenders: Array[int] = []
 		var defender_factions := {}
@@ -6242,7 +6242,8 @@ func _region_arrival_battle_candidate(before: Dictionary, after: Dictionary, par
 		for identity: int in incoming:
 			if not seed[side].has(identity): seed[side].append(identity)
 		seed.round_inputs = {}
-		seed.mode = "live" if player_present else "formula_active"
+		# An ordinary arrival cannot replace the existing exact siege consumer.
+		seed.mode = "live" if player_present else ("cold_exact" if str(seed.get("kind", "")) == "siege" else "formula_active")
 		seed.revision = int(seed.revision) + 1
 	if player_present:
 		seed.mode = "live"
@@ -10965,7 +10966,7 @@ func refresh_original_region_siege_battle(original: TerrainLab) -> Dictionary:
 	if same_point: return {"ok": true, "changed": false, "battle_id": identifier}
 	battle.kind = "siege"
 	battle.phase = str(siege.phase)
-	battle.siege = siege
+	battle["siege"] = siege
 	battle.attackers = result.attackers
 	battle.defenders = result.defenders
 	battle.mode = "live" if owner == str(control.active_site_id) else "cold_exact"
@@ -11457,20 +11458,28 @@ func _faction_site_source(path: String, site: Vector2i, checksum: String, with_p
 	if not loaded.ok:
 		Store.invalidate_faction_summary_path(path)
 		return loaded
-	# Region's paid endpoint is captured from the same Slot clock, not rebuilt
-	# by multiplying the independently accumulated minute/phase projection.
-	var source_context: Dictionary = loaded.data.site.get("region_snapshot", {}).get("context", {})
-	var source_seconds: float = float(source_context.game_seconds) if not source_context.is_empty() else _site_seconds(loaded.data)
 	if with_persons: _remember_person_source(key, person_projection(loaded.data.site))
-	var summarized: Dictionary = _faction_summary(loaded.data.site, str(loaded.data.site.id), source_seconds, RegionFactionQuery.whole_or_null(source_context.get("runtime_revision")))
+	var summarized: Dictionary = _faction_site_summary(loaded.data)
 	if not summarized.ok:
 		Store.invalidate_faction_summary_path(path)
 		return summarized
-	if not source_context.is_empty():
-		summarized.summary.source_clock = {"fire_epoch": source_context.fire_epoch, "fire_sequence": source_context.fire_sequence,
-			"game_seconds": source_context.game_seconds, "action_seconds": source_context.action_seconds}
 	if not shared_record.is_empty(): _faction_static_site_remember(shared_record, summarized.summary)
 	return _faction_remember(key, summarized.summary)
+
+func _faction_site_summary(data: TerrainData) -> Dictionary:
+	var context: Dictionary = data.site.get("region_snapshot", {}).get("context", {})
+	var fire: Dictionary = data.site.get("fire_settlement", {})
+	# Departure removes the old body snapshot; its paid fire receipt still owns time.
+	var at: float = float(context.game_seconds) if not context.is_empty() else (float(fire.game_seconds) if not fire.is_empty() else _site_seconds(data))
+	var summarized: Dictionary = _faction_summary(data.site, str(data.site.id), at, RegionFactionQuery.whole_or_null(context.get("runtime_revision")))
+	if not summarized.ok: return summarized
+	if not context.is_empty():
+		summarized.summary["source_clock"] = {"fire_epoch": context.fire_epoch, "fire_sequence": context.fire_sequence,
+			"game_seconds": context.game_seconds, "action_seconds": context.action_seconds}
+	elif not fire.is_empty():
+		summarized.summary["source_clock"] = {"fire_epoch": fire.epoch, "fire_sequence": fire.sequence,
+			"game_seconds": fire.game_seconds, "action_seconds": fire.action_seconds}
+	return summarized
 
 func _faction_remember_captured_source(path: String, site: Vector2i, checksum: String, data: TerrainData, context: Dictionary) -> Dictionary:
 	if not _faction_digest_valid(checksum) or _faction_file_sha256(path) != checksum:

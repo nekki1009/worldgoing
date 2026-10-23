@@ -1,6 +1,7 @@
 extends "res://scripts/tests/region_npc_static_siege_entry_original_test.gd"
 ## Strict continuation of the original player departure/panel/bind lane.
 ## Queries only observe the genuine queue; the original consumer owns effects.
+const PlayerContactBattle = preload("res://scripts/region_lab/region_gameplay_battle.gd")
 const PlayerContactPanel = preload("res://scripts/region_lab/region_travel_panel.gd")
 var player_witness_case := "positive"
 var player_contact_token := ""
@@ -83,6 +84,31 @@ func _player_ground_route(status: Dictionary, context: Dictionary) -> Dictionary
 func _player_wire_consumer() -> void:
 	player_contact_original_consumer = slot.region_player_event_consumer
 	slot.region_player_event_consumer = _player_observe_original_consumer
+
+## Walk the existing successor away from the arrival edge before publishing hostile fixtures.
+func _player_walk_to_departure() -> bool:
+	var identity: int = lab.controlled_person_id()
+	var goal := Vector2i(10, 50)
+	var started: float = float(slot.control.logical_game_seconds)
+	for edge: int in range(200):
+		if Time.get_ticks_msec() > deadline: return _check(false, "original player departure positioning exceeded deadline")
+		var person: Dictionary = controller.person_actions._person(identity, false)
+		if not _check(not person.is_empty(), "same original successor owns departure positioning"): return false
+		if Vector2i(person.cell) == goal:
+			return _check(float(slot.control.logical_game_seconds) > started and lab.controlled_person_id() == identity,
+				"original paid movement places the same successor inside the source Site before hostile genesis")
+		var path: Array[Vector2i] = PlayerContactBattle.original_siege_path(lab, identity, goal)
+		if not _check(not path.is_empty(), "original local navigation reaches the interior departure cell", person.cell): return false
+		var next: Vector2i = path[0]
+		lab._try_move(next - Vector2i(person.cell))
+		var committed: Dictionary = controller.person_actions._person(identity, false)
+		if not _check(not committed.is_empty() and bool(committed.moving), "original controlled input commits one lawful positioning edge"): return false
+		if not await _action_until(func() -> bool:
+			var current: Dictionary = controller.person_actions._person(identity, false)
+			return not current.is_empty() and Vector2i(current.cell) == next and not bool(current.moving),
+			"original common producer pays each complete departure-positioning edge"): return false
+	return _check(false, "departure positioning exceeded its bounded original edges")
+
 
 func _player_depart_and_plan() -> bool:
 	var controlled := lab.controlled_person_id()
@@ -216,6 +242,7 @@ func _run() -> void:
 	if not _check(player_witness_case in ["positive", "moved", "dead", "ended"], "one original real player witness case", player_witness_case): _finish(); return
 	if not _write_manifest(): _finish(); return
 	if not await _setup_action_world(): _finish(); return
+	if not await _player_walk_to_departure(): _finish(); return
 	if not _player_static_genesis(): _finish(); return
 	if not _player_depart_and_plan() or not _player_public_fault(): _finish(); return
 	var first: Dictionary = slot.advance_region_travel(1)

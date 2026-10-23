@@ -104,19 +104,31 @@ func _fixture_action_owner() -> bool:
 	var target := _action_target()
 	if target.is_empty(): return false
 	action_target_hp = _actual_target_hp(target)
+	var preserved: Dictionary = {}
+	for original: TerrainArmy in action_owner.combat_armies:
+		if original.combat_enabled or not original.combat_units.is_empty(): preserved[str(original.team_id)] = var_to_bytes(original.capture_combat_state(true))
+	var team: TerrainArmy = null
+	for slot_index: int in range(action_owner.combat_armies.size() + 1):
+		action_owner._ensure_army_slots(slot_index + 1)
+		var candidate: TerrainArmy = action_owner.combat_armies[slot_index]
+		if not candidate.combat_enabled and candidate.combat_units.is_empty():
+			team = candidate
+			break
+	if not _check(team != null, "a free original slot holds the siege crew without replacing the successor"): return false
+	team.team_id = action_owner._next_army_identity()
 	var needs_ram_contact := action_kind == "ram" and action_case not in ["approach", "rotate", "return", "crew_release"]
-	var pose: Dictionary = _action_ram_pose(target) if needs_ram_contact else {"start": Vector2i(20, 41), "goal": Vector2i(20, 41), "facing": Vector2i.RIGHT}
+	var pose: Dictionary = _action_ram_pose(target, team.team_id) if needs_ram_contact else {"start": Vector2i(20, 41), "goal": Vector2i(20, 41), "facing": Vector2i.RIGHT}
 	if pose.is_empty(): return false
 	var definition: Dictionary = SiteRuntime.SIEGE_DEFINITIONS[action_kind]
 	var inventory_before: Dictionary = data.site.inventory.duplicate(true)
-	var built := SiteRuntime.begin_siege_build(data, action_kind, pose.start, pose.facing, 1, 1)
+	var built: Dictionary = SiteRuntime.begin_siege_build(data, action_kind, pose.start, pose.facing, team.team_id, 1)
 	if not _check(built.ok, "original siege construction reserves real materials once", built): return false
 	var key := str(built.vehicle)
 	var vehicle: Dictionary = data.site.vehicles[key]
 	for resource: String in definition.cost:
 		if not _check(int(data.site.inventory.get(resource, 0)) == int(inventory_before.get(resource, 0)) - int(definition.cost[resource]), "original siege material debit is exact", resource): return false
 	var station: Dictionary = SiteRuntime.siege_work_slots(data, vehicle)[0]
-	var completed := SiteRuntime.advance_siege_work(data, key, "construct", float(definition.work_seconds), data.cell_from_index(int(station.cell)), 0, 1)
+	var completed: Dictionary = SiteRuntime.advance_siege_work(data, key, "construct", float(definition.work_seconds), data.cell_from_index(int(station.cell)), 0, team.team_id)
 	if not _check(completed.ok and vehicle.build.is_empty(), "initial paid fixture construction completes through original work owner", completed): return false
 	var ammo := str(definition.ammo)
 	if not ammo.is_empty():
@@ -128,8 +140,6 @@ func _fixture_action_owner() -> bool:
 	var count := int(definition.min_crew) if action_min_crew else int(definition.standard_crew)
 	var positions: Array[Vector2i] = [pose.start - pose.facing * 3 + Vector2i(-pose.facing.y, pose.facing.x) * 3]
 	for number: int in count: positions.append(SiteRuntime.siege_crew_cell(data, vehicle, number) - pose.facing)
-	action_owner._ensure_army_slots(1)
-	var team: TerrainArmy = action_owner.army
 	team.faction_id = 1
 	team.roster_size = positions.size()
 	if not _check(team.deploy_at(data, null, null, positions) and team.enable_combat(false), "original actual army births captain and original crew rows"): return false
@@ -150,6 +160,9 @@ func _fixture_action_owner() -> bool:
 			data.height_levels[data.index(support)] = 2
 		SiteRuntime.rebuild_terrain_edges(data)
 		SiteEnvironment.rebuild_indexes(data)
+	for original: TerrainArmy in action_owner.combat_armies:
+		if preserved.has(str(original.team_id)):
+			if not _check(preserved[str(original.team_id)] == var_to_bytes(original.capture_combat_state(true)), "siege setup preserves every existing original roster and identity"): return false
 	action_context = {"key": key, "target": target, "goal": pose.goal, "facing": pose.facing, "commander": commander, "crew": crew, "count": count}
 	action_initial_sequence = int(vehicle.next_attack_seq)
 	action_initial_holder = int(vehicle.holder.version)
@@ -180,7 +193,7 @@ func _action_target() -> Dictionary:
 	if not _check(str(feature.stage) == "complete" and geometry.parts.has(part), "actual paid target part completes", geometry.get("parts", {})): return {}
 	return {"type": "structure", "feature_id": key, "part_id": part}
 
-func _action_ram_pose(target: Dictionary) -> Dictionary:
+func _action_ram_pose(target: Dictionary, team_id: int = 1) -> Dictionary:
 	var data := action_owner.terrain
 	var feature: Dictionary = data.site.features[str(target.feature_id)]
 	var part: Dictionary = SiteRuntime.feature_geometry(data, feature).parts[str(target.part_id)]
@@ -204,7 +217,7 @@ func _action_ram_pose(target: Dictionary) -> Dictionary:
 				if not clear: continue
 				for back: int in range(1, 5):
 					var start := anchor - facing * back
-					if SiteRuntime.begin_siege_build(data, "ram", start, facing, 1, 1, Callable(), true).ok: return {"start": start, "goal": anchor, "facing": facing}
+					if SiteRuntime.begin_siege_build(data, "ram", start, facing, team_id, 1, Callable(), true).ok: return {"start": start, "goal": anchor, "facing": facing}
 	_check(false, "actual RAM prism finds a legal paid target approach", target)
 	return {}
 
