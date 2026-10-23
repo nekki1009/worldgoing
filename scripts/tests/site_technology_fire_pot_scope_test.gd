@@ -113,6 +113,7 @@ func _run() -> void:
 	PersonFatigue.write(context.team.combat_units[1], "fatigue", 80.0)
 	context.team.combat_units[1].work_resting = true
 	plan = _advance_job(context, 30.0)
+	job = context.actions.job_for(context.executor) # job_for() returns a copy; read the current job.
 	_check(job.paused == "REST" and float(job.elapsed) == 20.0 and float(plan.pools[0].effort_seconds) == 0.0 and stock == baseline, "Original 80 REST state pauses cold work and preserves unfinished progress with zero effort/materials")
 	var captured: Dictionary = context.actions.export_cold_technology_jobs()
 	_check(captured.ok and captured.state.version == 2 and captured.state.config_version == Technology.F15_COLD_CONFIG, "Original cold export carries the strict typed F15 job")
