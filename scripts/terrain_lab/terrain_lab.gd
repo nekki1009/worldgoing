@@ -10463,17 +10463,18 @@ func _region_gameplay_party_progress(token: String, before: Dictionary, after: D
 
 
 func _region_capture_original_party(original: TerrainLab, party: Dictionary, slot: RegionSaveSlot,
-		game_seconds: float = -1.0, action_seconds: float = -1.0) -> Dictionary:
-	original.site_controller._capture_positions()
+		game_seconds: float = -1.0, action_seconds: float = -1.0, read_only: bool = false) -> Dictionary:
+	var state: Dictionary = original.terrain.site.duplicate(true) if read_only else original.terrain.site
+	original.site_controller._capture_positions(state, read_only)
 	var result := party.duplicate(true)
 	var content: Dictionary = result.content
-	for field: String in RegionPartyTravel.CONTENT_DICTS: content[field] = original.terrain.site.get(field, {}).duplicate(true)
-	content["armies"] = original.terrain.site.armies.duplicate(true)
-	content["controlled_person_id"] = int(original.terrain.site.controlled_person_id) if str(party.controller) == "player" else -1
-	content["manual_cargo"] = original.terrain.site.manual.cargo.duplicate(true) if content.actors.has("player") else original.terrain.site.worker.cargo.duplicate(true)
-	if party.content.has("family"): content["family"] = original.terrain.site.family.duplicate(true)
-	content["travel_identity"] = original.terrain.site.travel_identity.duplicate(true)
-	for field: String in ["next_person_id", "army_next_team", "next_vehicle", "next_item", "next_loot"]: content.counters[field] = int(original.terrain.site.get(field, content.counters.get(field, 1)))
+	for field: String in RegionPartyTravel.CONTENT_DICTS: content[field] = state.get(field, {}).duplicate(true)
+	content["armies"] = state["armies"].duplicate(true)
+	content["controlled_person_id"] = int(state["controlled_person_id"]) if str(party.controller) == "player" else -1
+	content["manual_cargo"] = state["manual"]["cargo"].duplicate(true) if content.actors.has("player") else state["worker"]["cargo"].duplicate(true)
+	if party.content.has("family"): content["family"] = state["family"].duplicate(true)
+	content["travel_identity"] = state["travel_identity"].duplicate(true)
+	for field: String in ["next_person_id", "army_next_team", "next_vehicle", "next_item", "next_loot"]: content.counters[field] = int(state.get(field, content.counters.get(field, 1)))
 	var identified := RegionPartyTravel.prepare_identity(content)
 	if not identified.ok: return identified
 	content["travel_identity"] = identified.state.travel_identity
@@ -10484,13 +10485,14 @@ func _region_capture_original_party(original: TerrainLab, party: Dictionary, slo
 	result.upkeep.at = float(slot.control.logical_game_seconds) if game_seconds < 0.0 else game_seconds
 	result.upkeep.owner_action_seconds = float(slot.control.fire_clock.action_seconds) if action_seconds < 0.0 else action_seconds
 	if not result.upkeep.get("live", {}).is_empty():
-		var refreshed := _region_refresh_original_live_frame(result, original, slot, float(result.upkeep.at), float(result.upkeep.owner_action_seconds))
+		var refreshed: Dictionary = _region_refresh_original_live_frame(result, original, slot, float(result.upkeep.at), float(result.upkeep.owner_action_seconds), read_only)
 		if not refreshed.ok: return refreshed
 		result = refreshed.party
-	original._region_party_input_hash = _region_party_hash(result)
-	var meta: Dictionary = original.terrain.get_meta(&"region_party_owner", {})
-	meta["party_hash"] = original._region_party_input_hash
-	original.terrain.set_meta(&"region_party_owner", meta)
+	if not read_only:
+		original._region_party_input_hash = _region_party_hash(result)
+		var meta: Dictionary = original.terrain.get_meta(&"region_party_owner", {})
+		meta["party_hash"] = original._region_party_input_hash
+		original.terrain.set_meta(&"region_party_owner", meta)
 	return {"ok": true, "party": result}
 
 
@@ -12439,7 +12441,7 @@ func bind_selected_region_party(token: String, party: Dictionary, slot: RegionSa
 	return result
 
 func capture_region_party_owner_graph(token: String, party: Dictionary, slot: RegionSaveSlot,
-		context: Dictionary) -> Dictionary:
+		context: Dictionary, read_only: bool = false) -> Dictionary:
 	if slot == null or site_controller.region_slot != slot or token != _region_party_token \
 			or token != str(party.get("party_id", "")) or _region_party_hash(party) != _region_party_input_hash:
 		return SiteRuntime.fail("STALE_REGION_PARTY_OWNER")
@@ -12452,9 +12454,10 @@ func capture_region_party_owner_graph(token: String, party: Dictionary, slot: Re
 	# _capture_positions records existing bodies and does not progress any work.
 	var old_hash := _region_party_input_hash
 	var old_owner: Dictionary = terrain.get_meta(&"region_party_owner", {}).duplicate(true)
-	var original := _region_capture_original_party(self, party, slot)
-	_region_party_input_hash = old_hash
-	terrain.set_meta(&"region_party_owner", old_owner)
+	var original: Dictionary = _region_capture_original_party(self, party, slot, -1.0, -1.0, read_only)
+	if not read_only:
+		_region_party_input_hash = old_hash
+		terrain.set_meta(&"region_party_owner", old_owner)
 	if not original.ok: return original
 	if var_to_bytes(original.party) != var_to_bytes(party):
 		return SiteRuntime.fail("STALE_REGION_PARTY_BODY", "Original body/holder closure differs from submitted party")
@@ -12880,7 +12883,7 @@ func _region_prepare_party_family_bind(token: String, candidate: Dictionary, slo
 		"discard": _region_discard_party_bind.bind(nonce)})
 
 func _region_refresh_original_live_frame(party: Dictionary, original: TerrainLab,
-		slot: RegionSaveSlot, game_seconds: float = -1.0, action_seconds: float = -1.0) -> Dictionary:
+		slot: RegionSaveSlot, game_seconds: float = -1.0, action_seconds: float = -1.0, read_only: bool = false) -> Dictionary:
 	var result := party.duplicate(true)
 	var live: Dictionary = result.upkeep.get("live", {})
 	if live.is_empty(): return {"ok": true, "party": result}
@@ -12927,11 +12930,11 @@ func _region_refresh_original_live_frame(party: Dictionary, original: TerrainLab
 	result.upkeep.at = frame.game_seconds
 	result.upkeep.owner_action_seconds = frame.action_seconds
 	# Region route distance and sea_cursor remain their exact historical values.
-	original.terrain.set_meta(&"region_party_world_frame", frame.duplicate(true))
+	if not read_only: original.terrain.set_meta(&"region_party_world_frame", frame.duplicate(true))
 	var poses := {}
 	for identity: String in vehicles:
 		if not vehicles[identity].pose.is_empty(): poses[identity] = vehicles[identity].pose.duplicate(true)
-	original.terrain.set_meta(&"region_party_hull_poses", poses)
+	if not read_only: original.terrain.set_meta(&"region_party_hull_poses", poses)
 	return {"ok": true, "party": result}
 
 func prepare_region_party_family_bind(token: String, candidate: Dictionary, slot: RegionSaveSlot,

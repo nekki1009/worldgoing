@@ -6696,7 +6696,7 @@ func combat_hot_index_for_identity(identity: int) -> int:
 	_combat_identity_indices[identity] = -1
 	return -1
 
-func materialized_combat_rows() -> Array[Dictionary]:
+func materialized_combat_rows(count_stats: bool = true) -> Array[Dictionary]:
 	assert(_combat_hot_borrowed_index < 0)
 	var rows: Array[Dictionary] = []
 	var hot: Array = _combat_hot_store.capture_rows() if combat_hot_active() else []
@@ -6705,7 +6705,7 @@ func materialized_combat_rows() -> Array[Dictionary]:
 		if not hot.is_empty():
 			row.merge(hot[index], true)
 		rows.append(row)
-	_combat_hot_materialized_rows += rows.size()
+	if count_stats: _combat_hot_materialized_rows += rows.size()
 	return rows
 
 func combat_hot_materialize(index: int) -> Dictionary:
@@ -8890,8 +8890,8 @@ const COMBAT_SAVED_INTS := ["team_id", "faction_id", "combat_order", "formal_com
 const COMBAT_SAVED_FLOATS := ["training", "command_radius", "pursuit_left", "_command_elapsed", "_order_delay"]
 const COMBAT_SAVED_BOOLS := ["combat_attacking", "needs_attack_order", "command_reference_valid"]
 
-func capture_combat_state() -> Dictionary:
-	sync_shared_fatigue()
+func capture_combat_state(read_only: bool = false) -> Dictionary:
+	if not read_only: sync_shared_fatigue()
 	var snapshot := {"schema": 2, "roster_version": 1, "visual_version": 1, "loadout": "standard_soldier_v2", "units": [], "abilities": [],
 		"officers": officer_order.duplicate(), "officer_service": officer_service.duplicate(), "vacancies": [], "rng": str(command_rng.state),
 		"reference": [command_reference.x, command_reference.y], "origin": [pursuit_origin.x, pursuit_origin.y],
@@ -8901,7 +8901,7 @@ func capture_combat_state() -> Dictionary:
 	snapshot["tactical_ai"] = _capture_tactical_ai_state()
 	snapshot["cadre_seated"] = true # R1b auto-appointment already applied to this team.
 	if not social_cohort.is_empty(): snapshot["social_cohort"] = social_cohort.duplicate(true)
-	var saved_offices := _capture_offices()
+	var saved_offices: Dictionary = team_offices(true).duplicate(true) if read_only else _capture_offices()
 	if not saved_offices.is_empty(): snapshot["offices"] = saved_offices
 	snapshot["formation_preset_id"] = formation_preset_id
 	if formation_intent_version > 0:
@@ -8928,7 +8928,7 @@ func capture_combat_state() -> Dictionary:
 		snapshot.abilities.append({"unit": index, "values": command_abilities[index].duplicate()})
 	for slot_index: int in _vacancy_assignments:
 		snapshot.vacancies.append([slot_index, int(_vacancy_assignments[slot_index])])
-	var logical_rows := materialized_combat_rows()
+	var logical_rows: Array[Dictionary] = materialized_combat_rows(not read_only)
 	for index in range(combat_units.size()):
 		var unit: Dictionary = PersonFatigue.saved_body(logical_rows[index])
 		if logical_rows[index].has("fire_body"): unit["fire_body"] = SiteCombatRules.fire_body_capture(logical_rows[index].fire_body)

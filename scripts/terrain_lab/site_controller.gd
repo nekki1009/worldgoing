@@ -334,6 +334,7 @@ func setup(scene: Node2D) -> void:
 	family_continuity.load_site_query = _load_compatible_site
 	family_continuity.archive_current = _archive_family_site
 	family_continuity.control_selected = _control_family_person
+	family_continuity.commit_live_handover = _handover_family_person
 	work_team.unavailable = _work_person_unavailable
 	work_team.vehicle_blocked = vehicles.blocks_cell
 	for actor: TerrainTestCharacter in lab.combat_actors:
@@ -2737,29 +2738,30 @@ func _open_officer_priority(host: Window = null) -> void:
 	dialog.canceled.connect(dialog.queue_free)
 	_show_dialog(dialog, "officer", ui_context, host)
 
-func _capture_positions() -> void:
-	lab.terrain.site["actors"] = {}
+func _capture_positions(state: Dictionary = {}, read_only: bool = false) -> void:
+	if state.is_empty(): state = lab.terrain.site
+	state["actors"] = {}
 	if lab.actor_present(lab.character):
-		lab.terrain.site["player_cell"] = lab.terrain.index(lab.character.terrain_cell)
-		lab.terrain.site.actors["player"] = lab.character.capture_state()
+		state["player_cell"] = lab.terrain.index(lab.character.terrain_cell)
+		state["actors"]["player"] = lab.character.capture_state(read_only)
 	if lab.actor_present(lab.npc):
-		lab.terrain.site.worker.cell = lab.terrain.index(lab.npc.terrain_cell)
-		lab.terrain.site.actors["npc"] = lab.npc.capture_state()
+		state["worker"]["cell"] = lab.terrain.index(lab.npc.terrain_cell)
+		state["actors"]["npc"] = lab.npc.capture_state(read_only)
 	for actor: TerrainTestCharacter in lab.combat_actors:
 		if not actor.has_meta(&"crowd_handoff"): continue
 		var key := "player" if actor == lab.character else "npc"
-		if lab.terrain.site.actors.has(key):
+		if state["actors"].has(key):
 			var extra: Dictionary = actor.get_meta(&"crowd_handoff").duplicate(true)
 			extra["stagger"] = actor.exchange_stagger
 			extra["exch_cd"] = actor.exchange_cooldown
 			extra["ranged_cd"] = actor.ranged_cooldown
 			extra["skill_cd"] = actor.exchange_skill_cooldown
-			lab.terrain.site.actors[key].crowd_handoff = extra
+			state["actors"][key]["crowd_handoff"] = extra
 	var armies: Array = []
 	for team: TerrainArmy in lab.combat_armies:
 		if team.combat_enabled:
-			armies.append(team.capture_combat_state())
-	lab.terrain.site["armies"] = armies
+			armies.append(team.capture_combat_state(read_only))
+	state["armies"] = armies
 
 func supply_save_guard(ignore_ground_crossing: bool = false, allow_dirty_fire_save: bool = false,
 		allow_checkpointed_fire_jobs: bool = false) -> Dictionary:
@@ -4723,6 +4725,91 @@ func _control_family_person(data: Variant, identity: int) -> Dictionary:
 	get_tree().paused = false
 	return Runtime.ok("已接續原人物 #%d；保留生命、年齡、拘押、實物與原職位" % identity)
 
+## Same-Site control is not a departure, appointment or death settlement.
+func _live_family_handover_guard(person_id: int) -> Dictionary:
+	var prepared: Dictionary = family_continuity.prepare_live_handover(lab.controlled_person_id(), str(lab.terrain.site["id"]), person_id)
+	if not prepared["ok"]: return prepared
+	if lab.restore_only or _crowd_active() or lab.terrain.has_meta(&"region_party_owner"):
+		return Runtime.fail("UNSUPPORTED", "請在原活動 Site 到站後交接")
+	if ship_journey_active() or not _ground_crossing.is_empty() or _family_wait or lab._region_point_consuming or not lab._region_point_pending.is_empty():
+		return Runtime.fail("BUSY", "先收束原旅行或共同步進")
+	if is_instance_valid(lab._movement_input_actor) and absf(lab._movement_input_actor.ride_speed) > TerrainLab.ACTION_TIME_EPSILON:
+		return Runtime.fail("BUSY", "先釋放原騎乘移動輸入")
+	var guard: Dictionary = supply_save_guard()
+	if not guard["ok"]: return guard
+	guard = vehicles.boarding_save_guard()
+	if not guard["ok"]: return guard
+	for identity: int in [lab.controlled_person_id(), person_id]:
+		var target: Dictionary = lab._combat_target(identity)
+		if target.is_empty(): return Runtime.fail("NO_TARGET")
+		if int(target["unit"]) < 0:
+			var actor: TerrainTestCharacter = target["owner"]
+			if not lab.actor_present(actor) or actor.data != lab.terrain: return Runtime.fail("NO_TARGET")
+			if actor.is_moving() or actor.action_time > 0.0 or actor.guarding or actor.guard_transition_left > 0.0:
+				return Runtime.fail("BUSY", "先完成原人物動作")
+		else:
+			var team: TerrainArmy = target["owner"]
+			var index: int = int(target["unit"])
+			if team.member_gone(index): return Runtime.fail("NO_TARGET")
+			if team.moving_to[index] != TerrainArmy.INVALID_CELL or bool(team.combat_hot_get(index, &"attack")) or str(team.combat_hot_get(index, &"pose")) in ["guard", "guard_raise", "guard_lower"]:
+				return Runtime.fail("BUSY", "先完成原隊員動作")
+		var person: Dictionary = person_actions._person(identity, false)
+		if person.is_empty(): return Runtime.fail("NO_TARGET")
+		if bool(person.get("surrender_pending", false)): return Runtime.fail("UNAVAILABLE", "原人物投降尚未結束")
+		if person["body"].get("departed") == true or person["body"].get("site_exited") == true:
+			return Runtime.fail("NO_TARGET")
+		if _person_has_duty(identity): return Runtime.fail("BUSY", "先完成或解除原人物作業")
+	return prepared
+
+## Store calls this actual owner again; a caller cannot supply an arbitrary body.
+func live_family_handover_state(person_id: int) -> Dictionary:
+	var guard: Dictionary = _live_family_handover_guard(person_id)
+	if not guard["ok"]: return guard
+	var state: Dictionary = lab.terrain.site.duplicate(true)
+	_capture_positions(state, true)
+	state["controlled_person_id"] = person_id
+	return Runtime.ok("", {"state": state})
+
+func _handover_family_person(requester_id: int, site_id: String, person_id: int) -> Dictionary:
+	var prepared: Dictionary = family_continuity.prepare_live_handover(requester_id, site_id, person_id)
+	if not prepared["ok"]: return prepared
+	var guard: Dictionary = _live_family_handover_guard(person_id)
+	if not guard["ok"]: return guard
+	var selected: Dictionary
+	if region_slot != null:
+		selected = region_slot.commit_live_family_handover(lab, requester_id, person_id)
+	else:
+		selected = Store.save(lab.terrain, "", null, false, {}, true, person_id)
+	if not selected["ok"]: return selected
+	# No yield, callback or fallible operation after the Slot's single publication.
+	var state: Dictionary = selected["state"]
+	lab.terrain.site["actors"] = state["actors"]
+	lab.terrain.site["armies"] = state["armies"]
+	lab.terrain.site["player_cell"] = state["player_cell"]
+	lab.terrain.site["worker"]["cell"] = state["worker"]["cell"]
+	if state.has("region_snapshot"): lab.terrain.site["region_snapshot"] = state["region_snapshot"]
+	for team: TerrainArmy in lab.combat_armies:
+		if not team.combat_enabled or not team.offices.is_empty(): continue
+		for saved: Dictionary in state["armies"]:
+			if int(saved["team_id"]) == team.team_id: team.offices = saved["offices"].duplicate(true)
+	lab.terrain.site["controlled_person_id"] = person_id
+	person_executor_id = person_id
+	lab._clear_movement_input()
+	lab.camera.position = lab._combat_target(person_id)["position"]
+	invalidate_ui_context()
+	if is_instance_valid(_family_dialog): _family_dialog.queue_free()
+	_family_dialog = null
+	return Runtime.ok("已交接控制給原家人 #%d；原人物、住宅、職位與隊伍保留" % person_id, {"person_id": person_id, "generation": selected.get("generation", -1)})
+
+func _live_family_ui_context() -> Dictionary:
+	return {"data": lab.terrain, "requester": lab.controlled_person_id(), "family": lab.terrain.site.get("family", {}).duplicate(true),
+		"slot": region_slot, "generation": int(region_slot._marker.get("generation", 0)) if region_slot != null else -1,
+		"revision": int(region_slot.region_registry()["revision"]) if region_slot != null else -1}
+
+func _submit_live_family_handover(context: Dictionary, site_id: String, person_id: int) -> Dictionary:
+	if context != _live_family_ui_context(): return Runtime.fail("STALE_CONTEXT", "原場景、家族、控制者或保存世代已改變；請重開家族窗")
+	return family_continuity.handover(int(context["requester"]), site_id, person_id)
+
 func check_family_death() -> void:
 	if is_instance_valid(_family_dialog) or (_pending_deaths.has(lab.controlled_person_id()) if _crowd_active() else not _pending_deaths.is_empty()):
 		return
@@ -4753,7 +4840,7 @@ func _open_family(host: Window = null) -> void:
 	dialog.name = "FamilyDialog"
 	_family_dialog = dialog
 	dialog.process_mode = Node.PROCESS_MODE_ALWAYS
-	dialog.title = "原家人接續" if dead else "已登錄家族（在世時不能换人）"
+	dialog.title = "原家人接續" if dead else "家族與控制交接"
 	dialog.min_size = Vector2i(620, 430)
 	var column := VBoxContainer.new()
 	dialog.add_child(column)
@@ -4761,7 +4848,7 @@ func _open_family(host: Window = null) -> void:
 		"DATA_MISSING": "部分家族資料缺失／名單未確認完整，不能判定 Game Over。",
 		"GAME_OVER": "Game Over：已確認的完整家族名單沒有其他在世成員。",
 		"CHOOSE": "請選在世原家人。未成年不成年、被俘不解綁、死者遺物不轉送。",
-		"ALIVE": "只有真正死亡才允許接續；昏迷與被俘不能換人。"}
+		"ALIVE": "能履職的家主可把控制交給同站清醒自由的家人。原家主保留住宅與職位；受方非家主則不能再次交接。死亡接續仍只限真正死亡。"}
 	_label(column, str(messages.get(str(observation.status), observation.status)), 17)
 	var list := ItemList.new()
 	list.name = "FamilyMembers"
@@ -4777,6 +4864,12 @@ func _open_family(host: Window = null) -> void:
 			return
 		var member: Dictionary = list.get_item_metadata(list.get_selected_items()[0])
 		show_result(family_continuity.choose(str(member.site_id), int(member.person_id))))
+	if not dead:
+		var context: Dictionary = _live_family_ui_context()
+		_button(column, "交接控制給選取的家人（原人物留站）", "LiveFamilyHandover", func() -> void:
+			if list.get_selected_items().is_empty(): return
+			var member: Dictionary = list.get_item_metadata(list.get_selected_items()[0])
+			show_result(_submit_live_family_handover(context, str(member["site_id"]), int(member["person_id"]))))
 	if dead:
 		_button(column, "繼續原場景，等待脫戰安全歸檔後再選", "WaitForFamilyArchive", func() -> void:
 			_family_wait = true
@@ -10157,7 +10250,7 @@ func _trial_fire_weather() -> void:
 
 
 func capture_region_checkpoint(purpose: String, effects_complete: bool = true,
-		endpoint_payload: Dictionary = {}, token: String = "") -> Dictionary:
+		endpoint_payload: Dictionary = {}, token: String = "", read_only: bool = false) -> Dictionary:
 	if region_slot == null or lab.terrain == null: return Runtime.fail("NO_REGION_SLOT")
 	var boarding: Dictionary = vehicles.boarding_save_guard()
 	if not boarding.ok: return boarding
@@ -10165,11 +10258,11 @@ func capture_region_checkpoint(purpose: String, effects_complete: bool = true,
 	if token.is_empty(): token = "region_" + Crypto.new().generate_random_bytes(16).hex_encode()
 	var request: Dictionary = region_slot.region_checkpoint_context(lab.terrain, purpose, token, effects_complete, endpoint_payload)
 	if not request.ok: return request
-	_capture_positions() # Capture original presenters; no ordinary-save guard is bypassed.
+	if not read_only: _capture_positions() # Original presenters; ordinary-save guards remain.
 	var captured: Dictionary = lab.capture_region_owner_state(request.context)
 	if not captured.ok: return captured
 	var states: Dictionary = captured.get("owner_states", {"scene": captured.state})
-	return Store.capture_region_snapshot(lab.terrain, request.context, states)
+	return Store.capture_region_snapshot(lab.terrain, request.context, states, read_only)
 
 func checkpoint_region_internal(purpose: String, effects_complete: bool = true,
 		endpoint_payload: Dictionary = {}, token: String = "") -> Dictionary:

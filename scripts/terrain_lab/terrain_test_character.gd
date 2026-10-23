@@ -1871,7 +1871,7 @@ func _cancel_rescue() -> void:
 	if was_rescuing and can_act():
 		play_pose(&"idle")
 
-func capture_state() -> Dictionary:
+func capture_state(read_only: bool = false) -> Dictionary:
 	var state := {"schema": 2, "cell": [terrain_cell.x, terrain_cell.y], "facing": [facing.x, facing.y],
 		"military_role": military_role,
 		"attack_target": attack_target_id,
@@ -1909,12 +1909,14 @@ func capture_state() -> Dictionary:
 			var point: Vector2 = Vector2(arrow[field])
 			serialized[field] = [point.x, point.y]
 		state.projectiles.append(serialized)
+	var appearance: Dictionary = _saved_appearance.duplicate(true) if read_only else _saved_appearance
 	if editor != null:
-		_saved_appearance = editor.capture_appearance()
-	elif _saved_appearance.is_empty():
-		_saved_appearance = HumanCharacter3DEditor.default_appearance(visual_state.body_index)
-	_saved_appearance.mounted = is_mounted()
-	state["appearance"] = _saved_appearance.duplicate(true)
+		appearance = editor.capture_appearance()
+	elif appearance.is_empty():
+		appearance = HumanCharacter3DEditor.default_appearance(visual_state.body_index)
+	appearance["mounted"] = is_mounted()
+	if not read_only: _saved_appearance = appearance
+	state["appearance"] = appearance.duplicate(true)
 	state["command_abilities"] = command_abilities.duplicate()
 	if not display_name.is_empty(): state["name"] = display_name
 	var saved_personality := PersonPersonality.saved(personality)

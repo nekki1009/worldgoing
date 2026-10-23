@@ -301,13 +301,26 @@ static func siege_save_guard(data: TerrainData, allow_dirty_fire_save: bool = fa
 	return Runtime.ok()
 
 static func save(data: TerrainData, path: String = DEFAULT_PATH, native_candidate: Variant = null,
-	allow_dirty_fire_save: bool = false, region_context: Dictionary = {}, capture_only: bool = false) -> Dictionary:
+	allow_dirty_fire_save: bool = false, region_context: Dictionary = {}, capture_only: bool = false, live_family_target: int = 0, capture_read_only: bool = false) -> Dictionary:
 	if data == null or data.site.is_empty():
 		return Runtime.fail("NO_TARGET")
 	var boarding: Dictionary = Boarding.data_save_guard(data)
 	if not boarding.ok: return boarding
 	var definitions: Dictionary = Env.validate_resource_definitions(data, data.resource_base)
 	if not definitions.ok: return Runtime.fail("CORRUPT_SAVE", str(definitions.get("message", "Invalid resource definitions")))
+	var live_state := {}
+	if live_family_target != 0 or capture_read_only:
+		var original: Variant = data.get_meta(&"site_garrison_lab") if data.has_meta(&"site_garrison_lab") else null
+		if original is WeakRef: original = original.get_ref()
+		if original == null or not is_instance_valid(original) or original.get("terrain") != data or original.get("site_controller") == null:
+			return Runtime.fail("NO_ORIGINAL_OWNER")
+		if live_family_target != 0:
+			var prepared: Dictionary = original.site_controller.live_family_handover_state(live_family_target)
+			if not prepared["ok"]: return prepared
+			live_state = prepared["state"]
+		else:
+			live_state = data.site.duplicate(true)
+			original.site_controller._capture_positions(live_state, true)
 	var source_data: TerrainData = data
 	var region_capture := _region_capture_owners(region_context) if not region_context.is_empty() else Runtime.ok()
 	if not region_capture.ok: return region_capture
@@ -338,7 +351,7 @@ static func save(data: TerrainData, path: String = DEFAULT_PATH, native_candidat
 	# This synchronous save only writes top-level defaults/transient removals.
 	# Nested validators are read-only; legacy normalizers make their own copies.
 	var crowd_snapshot: bool = data.site.has("crowd")
-	var state: Dictionary = data.site.duplicate(not crowd_snapshot)
+	var state: Dictionary = data.site.duplicate(not crowd_snapshot) if live_state.is_empty() else live_state
 	state.erase("region_snapshot")
 	if hot:
 		var delivery_snapshot := _region_prepare_deliveries(state)
@@ -4190,10 +4203,10 @@ static func _validate_siege_tower_people(data: TerrainData, vehicle: Dictionary,
 	return Runtime.ok()
 
 ## Region captures keep the original payload and validators; no ordinary-save bypass flag.
-static func capture_region_snapshot(data: TerrainData, context: Dictionary, owners: Dictionary = {}) -> Dictionary:
+static func capture_region_snapshot(data: TerrainData, context: Dictionary, owners: Dictionary = {}, read_only: bool = false) -> Dictionary:
 	var request := context.duplicate(true)
 	request["owners"] = owners if not owners.is_empty() else context.get("owners", {})
-	return save(data, "", null, false, request, true)
+	return save(data, "", null, false, request, true, 0, read_only)
 
 static func save_region_snapshot(data: TerrainData, path: String, context: Dictionary, owners: Dictionary = {}) -> Dictionary:
 	var request := context.duplicate(true)

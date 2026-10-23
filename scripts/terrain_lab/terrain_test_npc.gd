@@ -140,8 +140,8 @@ func _rebuild_path(goal: Vector2i) -> void:
 		return not can_enter_cell(cell, goal, from_cell, original_source)
 	_path = data.path_between(original_source, goal, Callable(), blocked)
 
-func capture_state() -> Dictionary:
-	var state := super.capture_state()
+func capture_state(read_only: bool = false) -> Dictionary:
+	var state: Dictionary = super.capture_state(read_only)
 	var route: Array = []
 	for cell: Vector2i in _path:
 		route.append([cell.x, cell.y])

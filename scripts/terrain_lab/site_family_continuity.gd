@@ -1,5 +1,5 @@
 extends RefCounted
-## References and death-only control continuity, never another person's body.
+## Explicit family references and separate death/live control transactions.
 ## Original SiteStore loads and the Lab's control/bind transaction are injected
 ## so Store can reuse validate_family without a circular preload dependency.
 
@@ -14,6 +14,7 @@ var archive_current: Callable # () -> guarded original snapshot/save result.
 var control_selected: Callable # (validated_data_or_null, identity) -> atomic Lab result.
 var resolve_owner: Callable # (reference) -> original Slot/Site/Party observation.
 var commit_control_transition: Callable # (reference, source, family) -> original atomic commit.
+var commit_live_handover: Callable # (requester, site_id, person_id) -> original Controller transaction.
 var _seen_death: Array = []
 
 func init(scene: Variant) -> void:
@@ -696,6 +697,27 @@ func death_tick() -> Dictionary:
 	# Root pauses the selection UI after original committed death work settles.
 	# No offline catch-up, forced combat-clock reset, or implicit second clock.
 	return Runtime.ok("原受控人物已死亡", {"status": "DEAD", "changed": changed, "person_id": identity})
+
+## A live handover never changes kinship, offices, residence or the original body.
+func prepare_live_handover(requester_id: int, site_id: String, person_id: int) -> Dictionary:
+	if lab == null or lab.terrain == null: return Runtime.fail("NO_TARGET")
+	if requester_id <= 0 or requester_id != _controlled_id(): return Runtime.fail("NO_AUTHORITY", "只有目前受控家主本人可交接")
+	var family: Variant = lab.terrain.site.get("family", {})
+	if not validate_family(family, str(lab.terrain.site["id"])): return Runtime.fail("INVALID_FAMILY")
+	if head_executor(family, true) != requester_id: return Runtime.fail("NO_AUTHORITY", "存活交接由能履職的家主本人發起")
+	if site_id != str(lab.terrain.site["id"]): return Runtime.fail("LOCAL_REQUIRED", "先循原旅行到站；控制交接不搬移人物")
+	if person_id == requester_id: return Runtime.fail("SAME_PERSON")
+	if not local_member_ids(family).has(person_id): return Runtime.fail("NO_MEMBER")
+	var person: Dictionary = _current_person(person_id)
+	if person.is_empty() or float(person["hp"]) <= 0.0: return Runtime.fail("NO_TARGET")
+	if float(person["ko"]) > 0.0 or bool(person["captive"]): return Runtime.fail("UNAVAILABLE", "受方須清醒、自由且非俘虜")
+	return Runtime.ok("", {"requester_id": requester_id, "site_id": site_id, "person_id": person_id})
+
+func handover(requester_id: int, site_id: String, person_id: int) -> Dictionary:
+	var prepared: Dictionary = prepare_live_handover(requester_id, site_id, person_id)
+	if not prepared["ok"]: return prepared
+	if not commit_live_handover.is_valid(): return Runtime.fail("UNAVAILABLE", "原控制交易尚未綁定")
+	return commit_live_handover.call(requester_id, site_id, person_id)
 
 func choose(site_id: String, identity: int) -> Dictionary:
 	var current := _current_person(_controlled_id())

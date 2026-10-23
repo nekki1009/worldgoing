@@ -458,6 +458,9 @@ func _load_checked(path: String, site: Vector2i) -> Dictionary:
 	return loaded if policy_guard.ok else policy_guard
 
 func _save_checked(data: TerrainData, site: Vector2i, path: String, reuse_entry: Dictionary = {}) -> Dictionary:
+	return _save_checked_owner_capture(data, site, path, reuse_entry, false)
+
+func _save_checked_owner_capture(data: TerrainData, site: Vector2i, path: String, reuse_entry: Dictionary = {}, read_only: bool = false) -> Dictionary:
 	var coordinate := _coordinate(data)
 	if not coordinate.ok or coordinate.site != site: return coordinate if not coordinate.ok else fail("SAVE_VERSION", "候選位置不符")
 	var original := _region_bound_original_lab(data)
@@ -466,14 +469,18 @@ func _save_checked(data: TerrainData, site: Vector2i, path: String, reuse_entry:
 	if original != null:
 		var effects_complete := original._region_point_pending.is_empty() and not original._region_point_consuming and pending_region_events().is_empty()
 		var capture: Dictionary = original.site_controller.capture_region_checkpoint("region_checkpoint" if effects_complete else "region_barrier",
-			effects_complete, original._region_point_pending)
+			effects_complete, original._region_point_pending, "", read_only)
 		if not capture.ok: return capture
 		source_context = capture.context
 		if not reuse_entry.is_empty():
 			var reused: Dictionary = _reuse_ship_checkpoint_source(site, reuse_entry, capture)
 			if not reused.ok: return reused
 			if bool(reused.get("reused", false)): return reused
-		saved = Store.save_region_snapshot(data, path, capture.context, capture.owners)
+		var durable: TerrainData = data
+		if read_only:
+			durable = TerrainLab._region_detached_bind_data(data)
+			durable.site = capture["state"]
+		saved = Store.save_region_snapshot(durable, path, capture.context, capture.owners)
 	elif data.site.has("region_snapshot"):
 		var captured := Store.validate_region_snapshot(data, {})
 		if not captured.ok:
@@ -1699,7 +1706,7 @@ func _sync_cold_fire_sites() -> Dictionary:
 	_fire_sync_target.clear()
 	return {"ok": true}
 
-func _collect_cold_checkpoint(generation: int, sites: Dictionary, next_control: Dictionary) -> Dictionary:
+func _collect_cold_checkpoint(generation: int, sites: Dictionary, next_control: Dictionary, read_only: bool = false) -> Dictionary:
 	if not _fire_sync_target.is_empty(): return fail("BUSY", "冷原 owner 尚未完成共同區間")
 	# Register every actual cached original, including peaceful work Sites.
 	# Their actual full graph is captured by _save_checked below.
@@ -1717,6 +1724,10 @@ func _collect_cold_checkpoint(generation: int, sites: Dictionary, next_control: 
 	identities.sort()
 	for identity: String in identities:
 		var candidate: Dictionary = _fire_cold_candidates[identity]
+		if read_only and _region_bound_original_lab(candidate.data) != null:
+			var aligned: Dictionary = validate_settlement(candidate["data"].site, float(control["logical_game_seconds"]))
+			if not aligned.ok or bool(aligned.get("legacy", true)) or float(aligned.get("pending", 1.0)) > 0.00000001:
+				return fail("UNSETTLED_SITE", "先循原共同步進完成冷 owner；交接不推進時間")
 		var settled := _settle_cold_candidate(candidate.data, float(control.logical_game_seconds))
 		if not settled.ok: return settled
 		# Retain even a subsequently failed checkpoint's completed original result.
@@ -1724,7 +1735,7 @@ func _collect_cold_checkpoint(generation: int, sites: Dictionary, next_control: 
 		_fire_cold_candidates[identity] = candidate
 		var coordinate: Vector2i = candidate.coordinate
 		var path := _generation_path(generation, coordinate)
-		var saved := _save_checked(candidate.data, coordinate, path)
+		var saved: Dictionary = _save_checked_owner_capture(candidate.data, coordinate, path, {}, true) if read_only else _save_checked(candidate.data, coordinate, path)
 		if not saved.ok: return saved
 		sites[_site_key(coordinate)] = _file_entry(path)
 		if candidate.data.site.has("fire_settlement"):
@@ -3485,7 +3496,7 @@ func region_checkpoint_context(data: TerrainData, purpose: String, token: String
 	if not checked.ok: return checked
 	return {"ok": true, "context": context}
 
-func checkpoint_region_site(data: TerrainData, context: Dictionary, owner_states: Dictionary, faction_candidate: Dictionary = {}) -> Dictionary:
+func checkpoint_region_site(data: TerrainData, context: Dictionary, owner_states: Dictionary, faction_candidate: Dictionary = {}, read_only_owners: bool = false) -> Dictionary:
 	var expected := {"source_generation": int(_marker.get("generation", 0)), "runtime_revision": int(region_registry().revision),
 		"game_seconds": float(control.logical_game_seconds), "action_seconds": float(control.fire_clock.action_seconds),
 		"fire_epoch": str(control.fire_clock.epoch), "fire_sequence": int(control.fire_clock.sequence)}
@@ -3513,15 +3524,40 @@ func checkpoint_region_site(data: TerrainData, context: Dictionary, owner_states
 		next_clock.faction_registry = faction_candidate.duplicate(true)
 	var sites: Dictionary = _marker.get("sites", {}).duplicate(true)
 	sites[_site_key(coordinate.site)] = _file_entry(path)
-	var collected := _collect_cold_checkpoint(generation, sites, next_clock)
+	var collected: Dictionary = _collect_cold_checkpoint(generation, sites, next_clock, read_only_owners)
 	if not collected.ok: return collected
 	# The active checkpoint selects the completed party bodies at this same endpoint.
-	var parties := collect_region_party_checkpoint(generation, next_clock)
+	var parties: Dictionary = collect_region_party_checkpoint(generation, next_clock, "", read_only_owners)
 	if not parties.ok: return parties
 	var published := _publish(sites, next_clock, str(_marker.get("transfer_token", "")), _marker.get("journey", {}))
 	if not published.ok: return published
 	return {"ok": true, "path": path, "generation": published.generation, "data": loaded.data, "snapshot": validated.snapshot}
 
+
+## Same-Site living control uses the original complete active/cold checkpoint.
+func commit_live_family_handover(original: TerrainLab, requester_id: int, person_id: int) -> Dictionary:
+	if not is_instance_valid(original) or original.terrain == null or original.site_controller == null \
+		or original.site_controller.region_slot != self or _region_bound_original_lab(original.terrain) != original:
+		return fail("REGION_SOURCE")
+	var prepared: Dictionary = original.site_controller.family_continuity.prepare_live_handover(requester_id, str(original.terrain.site["id"]), person_id)
+	if not prepared["ok"]: return prepared
+	if str(control["active_site_id"]) != str(original.terrain.site["id"]): return fail("REGION_SOURCE")
+	var token: String = "region_live_family_" + Crypto.new().generate_random_bytes(16).hex_encode()
+	var request: Dictionary = region_checkpoint_context(original.terrain, "region_family", token)
+	if not request["ok"]: return request
+	var captured: Dictionary = original.capture_region_owner_state(request["context"])
+	if not captured["ok"]: return captured
+	var context: Dictionary = request["context"].duplicate(true)
+	context["owners"] = captured["owner_states"]
+	var snapshot: Dictionary = Store.save(original.terrain, "", null, false, context, true, person_id)
+	# The actual original graph is required, never an empty save bypass context.
+	# Store receives it through the same original capture contract as checkpoints.
+	if not snapshot["ok"]: return snapshot
+	var candidate: TerrainData = TerrainLab._region_detached_bind_data(original.terrain)
+	candidate.site = snapshot["state"]
+	var committed: Dictionary = checkpoint_region_site(candidate, request["context"], snapshot["owners"], {}, true)
+	if not committed["ok"]: return committed
+	return {"ok": true, "state": committed["data"].site, "generation": committed["generation"]}
 
 ## Technology owner must admit its real unique-holder epoch before any copy.
 func region_family_transfer_guard(first: Dictionary, second: Dictionary) -> Dictionary:
@@ -4558,7 +4594,7 @@ func scoped_region_intel(lab: TerrainLab, at: float) -> Dictionary:
 # Files without the common marker remain unreferenced; a BUSY active checkpoint
 # must not publish these bodies by itself. No body is embedded in control JSON.
 
-func collect_region_party_checkpoint(generation: int, next_control: Dictionary, composed_token: String = "") -> Dictionary:
+func collect_region_party_checkpoint(generation: int, next_control: Dictionary, composed_token: String = "", read_only: bool = false) -> Dictionary:
 	for token: String in _region_npc_party_runtime:
 		# Its new complete composed graph is already written by the same commit.
 		if token == composed_token: continue
@@ -4574,7 +4610,7 @@ func collect_region_party_checkpoint(generation: int, next_control: Dictionary, 
 				"party_game": upkeep.get("at"), "party_action": upkeep.get("owner_action_seconds"),
 				"world_game": next_control.logical_game_seconds, "world_action": next_control.fire_clock.action_seconds}
 			return refused
-		var capture := _region_capture_party_graph(token, party)
+		var capture: Dictionary = _region_capture_party_graph(token, party, {}, read_only)
 		if not capture.ok: return capture
 		var actual: Dictionary = capture.get("party", party)
 		var document := _region_party_document(token, actual, capture.original_live_graph)
@@ -6364,7 +6400,7 @@ func _region_positive_player_death_ids() -> Array[String]:
 	if not proof.is_empty() and not bool(proof.point_pending): result.assign(proof.event_ids)
 	return result
 
-func _region_capture_party_graph(token: String, party: Dictionary, endpoint_payload: Dictionary = {}) -> Dictionary:
+func _region_capture_party_graph(token: String, party: Dictionary, endpoint_payload: Dictionary = {}, read_only: bool = false) -> Dictionary:
 	var originals: Dictionary = get_meta(&"region_party_owner_labs", {})
 	var original: TerrainLab = originals.get(token)
 	if not is_instance_valid(original):
@@ -6374,7 +6410,7 @@ func _region_capture_party_graph(token: String, party: Dictionary, endpoint_payl
 	var context := region_party_checkpoint_context(token, "region_checkpoint" if complete else "region_barrier", complete,
 		endpoint_payload if not endpoint_payload.is_empty() else {"party_checkpoint": token})
 	if not context.ok: return context
-	return original.capture_region_party_owner_graph(token, party, self, context.context)
+	return original.capture_region_party_owner_graph(token, party, self, context.context, read_only)
 
 func _region_join_npc_party_reference(clock: Dictionary, token: String, destination_token: String,
 		mapping: Dictionary, source_proof: Dictionary) -> Dictionary:
