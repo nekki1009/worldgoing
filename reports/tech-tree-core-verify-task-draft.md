@@ -1,16 +1,18 @@
-# 任務 CC-20261009-TBD（草案，待指揮中心編號）
+# 任務 CC-20261009-001（草案）
 
-任務 ID：CC-20261009-TBD（科技樹 Core 整包 154 次串行驗證）
+任務 ID：CC-20261009-001（科技樹 Core 整包 154 次串行驗證加 C06 五個 profile）
 
 模式：VERIFY
 
-> 草案說明：由科技樹討論串（Claude）起草，經協調者轉交指揮中心審核、編號後派給 Codex。**目前不可執行**，必須先滿足下方「開跑前置」。本單只負責驗證，不寫程式；程式接入 D 由科技樹討論串另外施工。
+> 草案說明：由科技樹討論串（Claude）起草，指揮中心已定編號 CC-20261009-001、目標為正式 D、C06 併入。執行由指揮中心派給 Codex，科技樹討論串不自行執行佇列命令。**目前不可執行**，必須先滿足下方「開跑前置」。本單只負責驗證，不寫程式；程式接入 D 由科技樹討論串另外施工。
 
 ## 目標
 
 在 Core 整包接入完成的目標專案上，依序執行原定的 154 次串行驗證（142 個不同測試，加 12 次刻意重跑），取得每一次的嚴格 PASS 證據與收據。用來判定科技樹 v2.4 的 Core 整包，含 P1 的 F07 首包 A01–A20 對應測試，是否通過整合驗收。
 
-C06 的 5 個獨立 profile 不算在 154 次內，見附錄 B；是否併入本單由指揮中心決定。
+**C06 的 5 個獨立 profile 併入本單**（指揮中心 2026-10-08 決定）。它們不算在 154 次內，在第 154 次之後依附錄 B 的順序執行，驗收規則相同。
+
+**驗證目標：接入 Core 之後的正式 D（`D:\worldgoing`）**（指揮中心決定）。只有 D 的收據算驗收；隔離 C 上的結果只能當參考。
 
 ## 可改檔案
 
@@ -19,7 +21,7 @@ C06 的 5 個獨立 profile 不算在 154 次內，見附錄 B；是否併入本
 ## 開跑前置（全部成立才可轉 RUNNING）
 
 1. **目標專案已綁定。** 描述檔 `future_actual_binding` 原本全是 `PENDING_*`。執行前必須寫定：
-   - 目標專案根目錄：隔離 C 或接入後的 D，由指揮中心擇一；
+   - 目標專案根目錄：`D:\worldgoing`。描述檔與 wrapper 參數中的 `-ProjectRoot` 原本指向隔離 C，必須改綁到 D，並在收據記錄改綁後的參數；
    - manifest 的路徑與 SHA256；
    - audit 的路徑與 SHA256；
    - source epoch 的檔案數；
@@ -58,10 +60,11 @@ C06 的 5 個獨立 profile 不算在 154 次內，見附錄 B；是否併入本
 5. 測試檔、owner 與相依來源的雜湊，和開跑前置第 2 點的釘選完全一致；每批前後的 source audit 一致。
 6. 缺少外部相依直接判失敗，不能當成 skip，也不能升級為 PASS。
 7. 禁止：修改 assertion 或期望值、跳過或隔離測試、延長 timeout、放寬 marker、用舊結果冒充新結果。
+8. **邊跑邊歸檔。** 驗證器 `.godot-temp/godot_verify` 只保留最新 100 次，舊結果會被清掉。154 次和 C06 的 5 個 profile，每跑完一次，就要立刻把該次的完整執行資料夾複製到 `D:\worldgoing\output\project_command_center\evidence\CC-20261009-001\<serial>_<id>_<catalog_stage>_<cohort>\`，並記錄歸檔前後的 SHA256。只有複製出來的歸檔算驗收證據；**缺歸檔或雜湊不符的那一次，即使原本 PASS 也不算通過**，必須重跑並歸檔。
 
-整單 PASS 的條件：154 次全部 PASS，而且三段交接都有收據。部分通過時逐列列出，不換算成百分比完成度。
+整單 PASS 的條件：154 次和 C06 的 5 個 profile 全部 PASS，而且三段交接都有收據。部分通過時逐列列出，不換算成百分比完成度。
 
-本單**不含**：C06 的 5 個 profile（除非指揮中心併入）、正式 D 的語意合併回歸、效能與發布驗收、Audio V27、D10 G01–G08 與 TECH-AI-01／02 的專項實測、Ecology 第 8–31 項。
+本單**不含**：正式 D 的語意合併回歸、效能與發布驗收、Audio V27、D10 G01–G08 與 TECH-AI-01／02 的專項實測、Ecology 第 8–31 項。
 
 ## 來源
 
@@ -84,14 +87,14 @@ C06 的 5 個獨立 profile 不算在 154 次內，見附錄 B；是否併入本
 
 ## 回報
 
-- 主收據寫入 `D:\worldgoing\output\project_command_center\receipts\CC-20261009-TBD.json`，內容包含：
+- 主收據寫入 `D:\worldgoing\output\project_command_center\receipts\CC-20261009-001.json`，內容包含：
   - 目標專案，以及 manifest、audit、preflight、inspector 的雜湊；
   - 每列的 serial、id、script、mode、timeout、實際耗時、exit code、canonical 結果、marker 是否命中、是否超時；
   - 每列的 stdout、stderr、result 的 SHA256；
   - 每列前後的 source epoch 雜湊；
   - 三段交接的紀錄；
   - 失敗列的診斷摘要。
-- 每次跑完立刻把該次完整的五個檔案歸檔，放到 `D:\worldgoing\output\project_command_center\evidence\CC-20261009-TBD\<serial 三位數>_<id>_<catalog_stage>_<cohort>\`。原記錄不覆寫，因為 canonical 只保留最新 100 次。
+- 每次跑完立刻把該次完整的五個檔案歸檔，放到 `D:\worldgoing\output\project_command_center\evidence\CC-20261009-001\<serial 三位數>_<id>_<catalog_stage>_<cohort>\`。原記錄不覆寫，因為 canonical 只保留最新 100 次。
 - 回報給指揮中心與科技樹討論串：通過幾次、失敗幾次（逐列列出）、哪些超時、下一步。
 
 ## 附錄 A：154 次串行清單（依執行順序）
@@ -183,9 +186,9 @@ C06 的 5 個獨立 profile 不算在 154 次內，見附錄 B；是否併入本
 | 81 | `site_technology_f13_named_ferry_test.gd` | visual | 210 | enabled_isolated | v4 | `SITE_TECHNOLOGY_F13_NAMED_FERRY_PASS` | `791AB98DD320FA88…` |  |
 | 82 | `site_technology_family_ai_original_test.gd` | visual | 240 | enabled_isolated | v4 | `SITE_TECHNOLOGY_FAMILY_AI_ORIGINAL_PASS` | `C53512B3F63FD079…` |  |
 | 83 | `site_technology_feature_output_test.gd` | visual | 120 | enabled_isolated | v4 | `SITE_TECHNOLOGY_FEATURE_OUTPUT_PASS` | `9FAB2E2883032EB7…` |  |
-| 84 | `site_technology_fire_pot_ordinary_ui_test.gd` | visual | 120 | enabled_isolated | v4 | `SITE_TECHNOLOGY_FIRE_POT_ORDINARY_UI_PASS` | `653072598DAD669D…` |  |
+| 84 | `site_technology_fire_pot_ordinary_ui_test.gd` | visual | 210 | enabled_isolated | v4 | `SITE_TECHNOLOGY_FIRE_POT_ORDINARY_UI_PASS` | `653072598DAD669D…` |  |
 | 85 | `site_technology_fire_pot_scope_test.gd` | visual | 120 | enabled_isolated | v4 | `SITE_TECHNOLOGY_FIRE_POT_SCOPE_PASS` | `91DE0BFB0226518F…` |  |
-| 86 | `site_technology_fire_pot_trial_test.gd` | visual | 120 | enabled_isolated | v4 | `SITE_TECHNOLOGY_FIRE_POT_TRIAL_PASS` | `16E8692729E29EB4…` |  |
+| 86 | `site_technology_fire_pot_trial_test.gd` | visual | 210 | enabled_isolated | v4 | `SITE_TECHNOLOGY_FIRE_POT_TRIAL_PASS` | `16E8692729E29EB4…` |  |
 | 87 | `site_technology_g06_paired_source_test.gd` | visual | 210 | enabled_isolated | v4 | `G06_PAIRED_SOURCE_ORIGINAL_READER_PIN_COLD_PASS` | `2842BE6BCD2BA3A9…` |  |
 | 88 | `site_technology_holder_test.gd` | visual | 120 | enabled_isolated | v4 | `TECHNOLOGY_HOLDER_CANDIDATE PASS` | `83C340FBCE3FEFC0…` |  |
 | 89 | `site_technology_military_production_test.gd` | visual | 120 | enabled_isolated | v4 | `SITE_TECHNOLOGY_MILITARY_PRODUCTION_PASS` | `499182DB8F2DAE4E…` |  |
@@ -255,7 +258,7 @@ C06 的 5 個獨立 profile 不算在 154 次內，見附錄 B；是否併入本
 | 153 | `site_native_begin_source_endpoint_v6_test.gd` | visual | 120 | enabled_isolated | v4 | `NATIVE_BEGIN_SOURCE_ENDPOINT_V6_PASS` | `7CC8251AF57C4C0E…` | Native 9E21；內部 90s |
 | 154 | `site_scope_native_consent_test.gd` | visual | 120 | enabled_isolated | v4 | `SITE_SCOPE_NATIVE_CONSENT_PASS` | `6C80C3DBF7E9AA26…` | Native 9E21；內部 90s |
 
-## 附錄 B：C06 獨立 profile（不在 154 次內）
+## 附錄 B：C06 獨立 profile（已併入本單，在第 154 次之後執行，編號 C06-1 到 C06-5）
 
 | # | 測試 | 參數 | 模式 | 內部／外部秒數 | marker |
 |---|---|---|---|---|---|

@@ -3076,6 +3076,9 @@ func _advance_siege(delta: float) -> void:
 		_advance_siege_projectiles(delta)
 		site_controller.vehicles.advance_ram_actions(delta)
 	if own_batch: siege_flush_contact_batch()
+	# Flights already advanced above; a round released below starts at elapsed 0
+	# at the end of this slice, so its Fire clock origin is the slice end.
+	var launch_action := fire_action_cursor + delta
 	for vehicle: Dictionary in terrain.site.get("vehicles", {}).values():
 		if _ship_vehicle_in_journey(str(vehicle.get("id", ""))): continue
 		var rule := SiteCombatRules.siege_attack(str(vehicle.get("kind", "")))
@@ -3133,18 +3136,18 @@ func _advance_siege(delta: float) -> void:
 			elif str(action.stage) == "aiming":
 				var release := SiteRuntime.release_siege_ammo(terrain, str(vehicle.id), int(action.cargo_version), int(action.rng_state), ammo)
 				if not release.ok: vehicle.action = {}; vehicle.phase = "ready"; break
-				_launch_siege_projectile(vehicle, preview.aim, str(release.attack_id), release.get("scatter_unit", Vector2.ZERO), ammo, str(release.get("technology_payment_id", "")))
+				_launch_siege_projectile(vehicle, preview.aim, str(release.attack_id), release.get("scatter_unit", Vector2.ZERO), ammo, str(release.get("technology_payment_id", "")), launch_action)
 				action["stage"] = "recovering"
 			else: vehicle.action = {}; vehicle.phase = "ready"; break
 			vehicle.phase = str(action.stage)
 
-func _launch_siege_projectile(vehicle: Dictionary, aim: Dictionary, attack_id: String, scatter_unit: Vector2 = Vector2.ZERO, ammo: String = "", technology_payment_id: String = "") -> void:
+func _launch_siege_projectile(vehicle: Dictionary, aim: Dictionary, attack_id: String, scatter_unit: Vector2 = Vector2.ZERO, ammo: String = "", technology_payment_id: String = "", spawn_action: float = -1.0) -> void:
 	var flight := _siege_flight_snapshot(vehicle, aim, scatter_unit)
 	flight["attack_id"] = attack_id # New key: dot syntax would make a StringName (fire impact payloads must be JSON).
 	if ammo == "fire_pot":
 		_fire_release_sequence += 1
 		flight.merge({"ammo": ammo, "projectile_id": _fire_release_sequence, "fire_profile": SiteCombatRules.fire_pot_profile(),
-			"spawn_action": fire_action_cursor, "fire_resolved": false, "tech_trial": vehicle.command.get("tech_trial", {}),
+			"spawn_action": spawn_action if spawn_action >= 0.0 else fire_action_cursor, "fire_resolved": false, "tech_trial": vehicle.command.get("tech_trial", {}),
 			"source_member_id": int(vehicle.command.get("operator_id", 0)), "technology_payment_id": technology_payment_id})
 		_fire_unsaved = true
 	siege_projectiles.append(flight)
