@@ -233,6 +233,34 @@ func _phase_infantry() -> TerrainArmy:
 
 func _phase_ready_engine() -> bool:
 	if not await _action_until(func() -> bool: return action_owner.site_controller.vehicles.crew_ready(_action_vehicle()), "true original crew reaches the prepaid engine stations"): return false
+	var vehicle: Dictionary = _action_vehicle()
+	var captain: Dictionary = action_owner.site_controller.person_actions._person(int(action_context.commander), false)
+	if not _check(not captain.is_empty() and captain.owner is TerrainArmy and int(captain.unit) >= 0, "original rotation has its same actual Army captain"): return false
+	var team: TerrainArmy = captain.owner
+	if not _check(team.combat_identity(team.current_commander) == int(action_context.commander), "rotation clearance uses the same original legal captain"): return false
+	var sweep: Array[int] = SiteRuntime.siege_turn_sweep(action_owner.terrain, vehicle, Vector2i.UP)
+	var crew_before: PackedByteArray = var_to_bytes(vehicle.crew_slots)
+	# The authored captain stands in the real sweep; only paid original movement clears it.
+	if sweep.has(action_owner.terrain.index(captain.cell)):
+		var facing: Vector2i = Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1]))
+		var radius: int = int(SiteRuntime.SIEGE_DEFINITIONS[str(vehicle.kind)].turn_radius)
+		var goal: Vector2i = action_owner.terrain.cell_from_index(int(vehicle.cell)) - facing * (radius + 1) + Vector2i(-facing.y, facing.x) * radius
+		if not _check(not sweep.has(action_owner.terrain.index(goal)), "captain clearing goal lies outside the original complete rotation sweep"): return false
+		var action_before: float = float(slot.control.fire_clock.action_seconds)
+		var clear: Dictionary = team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.MOVE, goal)
+		if not _check(clear.ok, "same original captain accepts its legal clearing movement", clear): return false
+		if not await _action_until(func() -> bool:
+			var current: Dictionary = action_owner.site_controller.person_actions._person(int(action_context.commander), false)
+			return not current.is_empty() and current.cell == goal and not current.moving,
+			"original paid captain movement clears the rotation sweep"): return false
+		captain = action_owner.site_controller.person_actions._person(int(action_context.commander), false)
+		if not _check(not captain.is_empty() and captain.owner is TerrainArmy, "paid clearing resolves the current original captain owner"): return false
+		team = captain.owner
+		if not _check(team.combat_identity(team.current_commander) == int(action_context.commander), "paid clearing preserves original captain authority"): return false
+		var held: Dictionary = team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.HOLD)
+		if not _check(held.ok and float(slot.control.fire_clock.action_seconds) > action_before, "captain holds outside the sweep after a genuinely paid original edge", held): return false
+	captain = action_owner.site_controller.person_actions._person(int(action_context.commander), false)
+	if not _check(not captain.is_empty() and crew_before == var_to_bytes(_action_vehicle().crew_slots) and not sweep.has(action_owner.terrain.index(captain.cell)), "clearing preserves every original crew assignment and leaves the captain outside the sweep"): return false
 	var turned: Dictionary = action_owner.site_controller.vehicles.order_siege(str(action_context.key), "turn", {"facing": [0, -1]}, int(action_context.commander), true)
 	if not _check(turned.ok, "original captain turns the actual engine toward its real wall target", turned): return false
 	return await _action_until(func() -> bool: return _action_vehicle().action.is_empty() and _action_vehicle().facing == [0, -1] and action_owner.site_controller.vehicles.crew_ready(_action_vehicle()), "original paid rotation and actual crew return finish")

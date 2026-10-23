@@ -142,7 +142,7 @@ func _player_depart_and_plan() -> bool:
 	if not _check(body_host.ok, "actual player party has its complete current original sparse body host", body_host): return false
 	var horizon := float(slot.control.logical_game_seconds) + float(player_contact_route.metres) / Travel.WALK_MPS + 1.0
 	player_contact_forecast = slot._region_first_player_siege_contact(horizon)
-	if not _check(player_contact_forecast.ok and player_contact_forecast.get("contact", false) and player_contact_forecast.contact_receipt.kind == "siege_channel" and player_contact_forecast.contact_receipt.second.position.site == [1, 0] and float(player_contact_forecast.at) - float(slot.control.logical_game_seconds) > Settlement.CAPTURE_SECONDS, "original earliest source witness is genuine hostile ground contact at the intermediate Site before final arrival", player_contact_forecast): return false
+	if not _check(player_contact_forecast.ok and player_contact_forecast.get("contact", false) and player_contact_forecast.contact_receipt.kind == "siege_channel" and _player_contact_is_intermediate_site(player_contact_forecast.contact_receipt.second.position.site) and float(player_contact_forecast.at) - float(slot.control.logical_game_seconds) > Settlement.CAPTURE_SECONDS, "original earliest source witness is genuine hostile ground contact at the intermediate Site before final arrival", player_contact_forecast): return false
 	var queued: Dictionary = slot.queue_region_gameplay_endpoints(horizon)
 	if not _check(queued.ok, "existing original publisher queues its own real future player siege endpoint", queued): return false
 	for event: Dictionary in slot.region_registry().events:
@@ -263,3 +263,7 @@ func _finish(ok: bool = true, message: String = "") -> void:
 	if finished: return
 	print("REGION_PLAYER_FIRST_CONTACT_PHYSICAL_", "FAILED" if failed or not ok else "PASS", " ", JSON.stringify(report))
 	super._finish(ok, message)
+
+static func _player_contact_is_intermediate_site(value: Variant) -> bool:
+	# Saved route coordinates may be JSON floats; keep exact numeric identity without truncation.
+	return value is Array and value.size() == 2 and (value[0] is int or value[0] is float) and (value[1] is int or value[1] is float) and value[0] == 1 and value[1] == 0
