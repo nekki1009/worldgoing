@@ -403,7 +403,9 @@ func _phase_player_intervene() -> bool:
 			if not _check(selected_now.ok, "same actual party remains selected during the phase approach"): return false
 			var actual_speed := maxf(0.000001, float(selected_now.party.speed_mps))
 			var remaining := float(current.remaining_metres) / actual_speed
-			var due := remaining <= (30.0 if phase_observe == "capture" else 0.5)
+			# Issue at the last original map boundary before its next full step crosses the command window.
+			var command_window: float = 30.0 if phase_observe == "capture" else 0.5
+			var due: bool = remaining <= maxf(command_window, RegionTravel.step_game_seconds())
 			if due:
 				var original_order: Dictionary
 				if phase_observe == "breach": original_order = action_owner.site_controller.vehicles.order_siege(str(action_context.key), "attack", action_context.target, int(action_context.commander), true)
