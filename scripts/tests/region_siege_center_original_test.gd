@@ -5,6 +5,7 @@ extends "res://scripts/tests/region_controlled_death_restriction_test.gd"
 ## siege-arrival, all-phase materialize or main-menu input acceptance claim.
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
 const Housing = preload("res://scripts/terrain_lab/site_housing.gd")
+const GenesisPanel = preload("res://scripts/region_lab/region_travel_panel.gd")
 var capture_scenes: Array[TerrainLab] = []
 var capture_results: Array[Dictionary] = []
 var center_owner: TerrainLab
@@ -13,9 +14,14 @@ var center_house := ""
 var center_prison_seat := ""
 var center_office_holder := -1
 var center_defender := -1
+var center_founder := -1
+var center_heir := -1
+var center_attackers: TerrainArmy
+var genesis_panel: GenesisPanel
 
 func _initialize() -> void:
 	deadline = Time.get_ticks_msec() + 360000
+	fixture_land_condition_rule = "terrain_mapped_potential_v1" # Original founding needs mapped land.
 	out = "res://.godot-temp/region_siege_center_original/run_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
 	last_world_exists = FileAccess.file_exists(Entry.LAST_WORLD)
 	if last_world_exists: last_world_bytes = FileAccess.get_file_as_bytes(Entry.LAST_WORLD)
@@ -62,29 +68,23 @@ func _run() -> void:
 	_finish()
 
 func _case(spec: Dictionary) -> bool:
-	lab = _shell()
-	if not _check(lab != null, "actual original restore shell exists"): return false
-	controller = lab.site_controller
-	var archive := TerrainGenerator.generate(TerrainPreset.Kind.PLAINS, 12345, {"size": Vector2i(32, 32)})
-	Env.initialize(archive, "center-original:archive")
-	lab.bind_terrain(archive)
-	lab.restore_only = false
-	controller.save_root = out.path_join("archive_%d" % capture_scenes.size())
-	world_id = "r0_center_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
-	var opened: Dictionary = controller.open_fixed_world(manifest_path, world_id, "main", Vector2i.ZERO, true)
-	if not _check(opened.ok, "original Controller creates and live-binds a genuine pinned world", opened): return false
-	_freeze(lab)
-	slot = controller.region_slot
-	var wired := lab._wire_region_gameplay_adapters(slot)
-	if not _check(wired.ok, "same original Slot and owners wire", wired): return false
 	center_coordinate = Vector2i.ZERO if str(spec.mode) == "live" else Vector2i(1, 0)
+	if not _open_center_world(center_coordinate): return false
 	center_owner = lab
+	if not _center_fixture(center_owner, str(spec.mode) != "cold_exact"): return false
 	if str(spec.mode) == "cold_exact":
+		if not _birth_successor(): return false
+		# A cold remote Site has no people, so its defender settlement is founded while that Site
+		# is hot; the founder then hands control to a living family member who leaves for the
+		# source Site (Nekki 2026-10-23 decision A). The founder stays as the cold defender.
+		if not await _hand_over_and_leave(Vector2i.ZERO): return false
 		var created: Dictionary = lab._region_gameplay_owner_lab(Grid.site_id(str(slot.pin.atlas_id), center_coordinate), "cold_exact")
 		if not _check(created.ok and created.lab is TerrainLab, "actual cached original cold factory completes", created): return false
 		center_owner = created.lab
 		_freeze(center_owner)
-	if not _center_fixture(center_owner): return false
+		if not _check(center_owner.actor_present(center_owner.character) and center_owner.character.person_id == center_founder,
+			"the living founder remains the cold defender Site's original person", center_owner.character.person_id): return false
+		if not _deploy_center_attackers(center_owner): return false
 	center_defender = -1
 	if str(spec.qualifier) in ["knocked_defender", "captive_defender"]:
 		if not _birth_original_knocked_defender(): return false
@@ -104,7 +104,7 @@ func _case(spec: Dictionary) -> bool:
 		and source_elapsed < 0.25 and center_owner.site_controller._settlement_game_seconds == 0.0,
 		"actual original capture reaches 59/59.x while quarter-second UI cadence is incomplete", {"spec": spec, "fall": source_fall, "actual_ui_elapsed": source_elapsed}): return false
 	if bool(spec.defender):
-		var defender: Dictionary = center_owner.site_controller.person_actions._person(1, false)
+		var defender: Dictionary = center_owner.site_controller.person_actions._person(center_founder, false)
 		if not _check(not defender.is_empty() and defender.owner == center_owner.character
 			and center_owner.character.military_role == "civilian" and float(defender.hp) > 0.0 and float(defender.ko) <= 0.0,
 			"actual ordinary civilian defender supplies original conscious qualification", defender.get("person_id")): return false
@@ -171,7 +171,7 @@ func _case(spec: Dictionary) -> bool:
 			and int(center_owner.terrain.site.features[str(final.center_id)].owner_faction) == 2,
 			"one original fall transaction changes actual center and appoints the actual occupying leader", final.fall_record): return false
 		if not _check(int(center_owner.terrain.site.features[center_house].owner_faction) == 2
-			and not center_owner.terrain.site.housing.has("1") and int(SiteOffices.position(final.offices, center_prison_seat).holder) == -1
+			and not center_owner.terrain.site.housing.has(str(center_founder)) and int(SiteOffices.position(final.offices, center_prison_seat).holder) == -1
 			and not final.offices.positions.any(func(seat: Dictionary) -> bool: return int(seat.holder) == center_office_holder),
 			"The same original transaction transfers its paid house, releases the real registered resident and vacates the old actual officer"): return false
 		var unchanged := var_to_bytes([final, center_owner.terrain.site.features, center_owner.terrain.site.housing])
@@ -187,16 +187,141 @@ func _case(spec: Dictionary) -> bool:
 		"final_fall": center_owner.terrain.site.settlement.fall_record.duplicate(true)}
 	return true
 
-func _center_fixture(original: TerrainLab) -> bool:
+func _open_center_world(start: Vector2i, prefix: String = "r0_center") -> bool:
+	lab = _shell()
+	if not _check(lab != null, "actual original restore shell exists"): return false
+	controller = lab.site_controller
+	var archive := TerrainGenerator.generate(TerrainPreset.Kind.PLAINS, 12345, {"size": Vector2i(32, 32)})
+	Env.initialize(archive, "center-original:archive")
+	lab.bind_terrain(archive)
+	lab.restore_only = false
+	controller.save_root = out.path_join("archive_%d" % capture_scenes.size())
+	world_id = "%s_%d_%d" % [prefix, OS.get_process_id(), Time.get_ticks_usec()]
+	var opened: Dictionary = controller.open_fixed_world(manifest_path, world_id, "main", start, true)
+	if not _check(opened.ok, "original Controller creates and live-binds a genuine pinned world", opened): return false
+	_freeze(lab)
+	slot = controller.region_slot
+	var wired := lab._wire_region_gameplay_adapters(slot)
+	return _check(wired.ok, "same original Slot and owners wire", wired)
+
+func _genesis_cells(near: Vector2i, count: int) -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	for radius: int in range(1, 12):
+		for y: int in range(-radius, radius + 1):
+			for x: int in range(-radius, radius + 1):
+				var cell := near + Vector2i(x, y)
+				if cells.size() < count and lab.terrain.contains(cell) and lab.terrain.is_walkable(cell) and not cells.has(cell) and cell != lab.character.terrain_cell:
+					cells.append(cell)
+	return cells
+
+## The successor's real team is born before any fixture combat or work starts.
+func _birth_successor() -> bool:
+	var cells := _genesis_cells(lab.character.terrain_cell + Vector2i(3, 0), 2)
+	if not _check(cells.size() == 2, "actual free cells beside the founder", cells): return false
+	# The successor is the defender's own living family, so it shares the founder's faction.
+	var side: Dictionary = {"prefix": "friendly", "count": 2, "slot_count": 2, "female_count": 0, "faction": int(lab.character.faction_id), "training": 0.0,
+		"role": "combat", "troop_type": "melee_infantry", "attack": false, "cart_count": 0, "wagon_count": 0, "abilities": {}, "ai_enabled": false}
+	var sides: Array[Dictionary] = [side]
+	# Slots 0-2 are the scenario's attackers, officials and defenders; the successor uses its own.
+	var born: Dictionary = lab._deploy_trial_teams(sides, [cells], 4)
+	if not _check(born.ok, "original named genesis births the successor's real team", born): return false
+	var team: TerrainArmy = null
+	for candidate: TerrainArmy in lab.combat_armies:
+		if candidate.combat_enabled and candidate.cells.has(cells[0]): team = candidate
+	if not _check(team != null, "the successor's original team is present"): return false
+	var heir := team.combat_identity(team.formal_commander)
+	center_heir = heir
+	return true
+
+## The founder hands control to a living family member born beside them, who travels to
+## destination through the original Region route; lab/controller/slot then belong to it.
+func _hand_over_and_leave(destination: Vector2i) -> bool:
+	var head := lab.controlled_person_id()
+	var heir := center_heir
+	var site_id := str(lab.terrain.site.id)
+	var family = controller.family_continuity
+	var registered: Dictionary = family.register_members([{"site_id": site_id, "person_id": head, "path": "", "label": "創辦人", "age_years": -1},
+		{"site_id": site_id, "person_id": heir, "path": "", "label": "接班人", "age_years": -1}], true)
+	if not _check(registered.ok, "original family registers the founder and the successor", registered): return false
+	var appointed: Dictionary = family.appoint_head(head, head)
+	if not _check(appointed.ok, "original head appointment gives the founder family authority", appointed): return false
+	var due: Dictionary = slot.consume_due_region_events()
+	if not _check(due.ok and bool(due.get("complete", false)), "original due endpoints finish before the handover", due): return false
+	var settled: Dictionary = controller.checkpoint_region_internal("region_checkpoint")
+	if not _check(settled.ok, "original complete checkpoint captures the founded Site before the handover", settled): return false
+	var handed: Dictionary = family.handover(head, site_id, heir)
+	if not _check(handed.ok and lab.controlled_person_id() == heir, "original living handover gives control to the successor", handed): return false
+	lab.terrain.site["paused"] = false
+	paused = false
+	var departed_lab := lab
+	var departed: Dictionary = RegionTravelSite.depart(controller)
+	if not _check(departed.ok, "the successor departs through the original Region travel", departed): return false
+	if is_instance_valid(genesis_panel): genesis_panel.free()
+	genesis_panel = GenesisPanel.new()
+	root.add_child(genesis_panel)
+	genesis_panel.setup(genesis_panel)
+	genesis_panel.set_process(false)
+	var opened: Dictionary = genesis_panel.start({"world_id": world_id, "slot_id": "main", "manifest": manifest_path})
+	if not _check(opened.ok and is_instance_valid(genesis_panel._original_adapter_host), "production travel panel restores the original map host", opened): return false
+	lab = genesis_panel._original_adapter_host
+	controller = lab.site_controller
+	slot = genesis_panel.slot
+	var selected: Dictionary = slot.region_travel_party()
+	if not _check(selected.ok, "original map selects the successor's party", selected): return false
+	var current: Dictionary = slot.region_travel_status()
+	var route_context: Dictionary = slot.prepare_region_route_context(null, selected.party)
+	if not _check(route_context.ok, "original party route context", route_context): return false
+	var search := RegionRoute.Search.new()
+	search.source = slot.source
+	search.start_site = current.site
+	search.start_component = int(current.component)
+	search.goal_site = destination
+	search.context = route_context.context
+	var route: Dictionary = search.run()
+	if not _check(route.ok, "original route producer reaches the source Site", route): return false
+	var planned: Dictionary = slot.set_region_travel_plan(route.steps)
+	if not _check(planned.ok, "original Slot admits the successor's route", planned): return false
+	for iteration: int in range(18000):
+		current = slot.region_travel_status()
+		if not _check(current.ok, "the successor's route has one original status", current): return false
+		if bool(current.get("arrived", false)): break
+		var advanced: Dictionary = slot.advance_region_travel(37)
+		if not _check(advanced.ok, "original map caller advances one common interval", advanced): return false
+		if bool(advanced.get("arrived", false)): break
+		if iteration % 60 == 0: await process_frame
+	if not _check(bool(slot.region_travel_status().get("arrived", false)), "the successor genuinely arrives at the source Site"): return false
+	var stored: Dictionary = slot.checkpoint_region_travel()
+	if not _check(stored.ok, "the original travel publisher stores the arrived party", stored): return false
+	# The departed scene's own Controller opens the arrival, as the real world-open path does.
+	var visible := departed_lab
+	var visible_open: Dictionary = visible.site_controller.open_fixed_world(manifest_path, world_id, "main", Vector2i(-1, -1), false)
+	for retry: int in range(200000):
+		if str(visible_open.get("code", "")) != "PENDING" and not visible.site_controller.region_operation_pending(): break
+		visible_open = visible.site_controller.resume_region_operation()
+		if retry % 60 == 0: await process_frame
+	if not _check(visible_open.ok and bool(visible_open.get("arrived", false)), "production world-open binds the arrived source Site", visible_open): return false
+	_freeze(visible)
+	lab = visible
+	controller = visible.site_controller
+	slot = controller.region_slot
+	var wired := lab._wire_region_gameplay_adapters(slot)
+	if not _check(wired.ok, "arrived Site wires the same original Slot owners", wired): return false
+	return _check(lab.controlled_person_id() == heir and str(slot.control.active_site_id) == str(lab.terrain.site.id), "the successor controls the arrived source Site")
+
+func _center_fixture(original: TerrainLab, with_attackers: bool = true) -> bool:
 	var data := original.terrain
 	for key: String in data.resource_base: Env.change(data, key, {"cleared": true, "remaining": 0})
 	data.site.capacity = 100000
 	for item: String in Env.ITEM_NAMES: data.site.inventory[item] = 1000
 	if not _check(SiteRuntime.initialize_item_storage(data.site).ok, "original depot owns explicitly authored initial fixture stock"): return false
+	# New worlds birth the starter in faction 0; this scenario's defender side is faction 1 (as the
+	# phase scenario explicitly sets its founder faction).
+	original.character.faction_id = 1
 	if not _check(original.character.place(Vector2i(20, 15), true), "actual founder is near the true center build"): return false
 	var layout := SiteRuntime.building_cells(data, "settlement_center", Vector2i(20, 20), Vector2i(5, 5), {"layout_version": 1, "quarter": 0, "owner_faction": 1})
 	if not _check(layout.ok, "original complete center geometry is legal", layout): return false
 	var cells: Array[int] = []; cells.assign(layout.cells)
+	center_founder = original.controlled_person_id()
 	var founded := Settlement.found(original, original.controlled_person_id(), cells, {"layout_version": 1, "quarter": 0}, Callable(), "原中心測試")
 	if not _check(founded.ok, "original founder reserves real center materials", founded): return false
 	var feature: Dictionary = data.site.features[str(founded.feature)]
@@ -217,7 +342,25 @@ func _center_fixture(original: TerrainLab) -> bool:
 		if not _check(original.site_controller.person_actions.equipment_changed.is_valid(), "Original equipment presentation callback is wired"): return false
 		original.site_controller.person_actions.equipment_changed.call(original.controlled_person_id())
 	if not _check(original.character.place(Vector2i(80, 80), true), "actual founder leaves capture zone before source interval"): return false
+	return _deploy_center_attackers(original) if with_attackers else true
+
+## The attackers arrive at the real center last: a cold genesis deploys them only after the
+## successor has left, so no capture accrues during that journey.
+func _deploy_center_attackers(original: TerrainLab) -> bool:
+	var data := original.terrain
 	var attackers := original.army
+	if attackers.combat_enabled or not attackers.combat_units.is_empty():
+		# A restored cold owner already fills its first slot with the saved officials.
+		attackers = null
+		for slot_index: int in range(original.combat_armies.size() + 1):
+			original._ensure_army_slots(slot_index + 1)
+			var candidate: TerrainArmy = original.combat_armies[slot_index]
+			if not candidate.combat_enabled and candidate.combat_units.is_empty():
+				attackers = candidate
+				break
+		if not _check(attackers != null, "a free original Army slot holds the arriving attackers"): return false
+		attackers.team_id = original._next_army_identity() # A new formation identity, not a saved one.
+	center_attackers = attackers
 	attackers.faction_id = 2
 	attackers.roster_size = 2
 	var positions: Array[Vector2i] = [Vector2i(20, 18), Vector2i(21, 18)]
@@ -280,7 +423,7 @@ func _birth_original_knocked_defender() -> bool:
 		"Actual original contact causes knockout and the existing center rule admits capture", {"identity": center_defender, "ko": person.get("ko")})
 
 func _pay_original_capture() -> bool:
-	var executor := center_owner.army.combat_identity(0)
+	var executor := center_attackers.combat_identity(0)
 	var started: Dictionary = center_owner.site_controller.person_actions.begin_capture(executor, center_defender, executor)
 	if not _check(started.ok, "Original person action begins lawful custody of the actual knocked defender", started): return false
 	var count := 0
@@ -305,9 +448,9 @@ func _change_original_capture_qualification(spec: Dictionary, paid_fall: Diction
 			and int(Settlement.capture_sample(center_owner).attacker) == 2, "True original KO/custody qualification remains correct at 59.x", qualifier): return false
 	if qualifier in ["same_faction_replacement", "invalid_attackers"]:
 		if qualifier == "invalid_attackers":
-			var demoted := center_owner.army.set_military_role(center_owner.army.combat_identity(1), "civilian")
+			var demoted := center_attackers.set_military_role(center_attackers.combat_identity(1), "civilian")
 			if not _check(demoted.ok, "Original remaining attacker changes its real role before the next sample", demoted): return false
-		center_owner.army.apply_unit_contact(0, {"result": {"hp": 1.0, "stun": 110.0, "guard_break": false}, "shield": false, "environmental": true})
+		center_attackers.apply_unit_contact(0, {"result": {"hp": 1.0, "stun": 110.0, "guard_break": false}, "shield": false, "environmental": true})
 		var sample := Settlement.capture_sample(center_owner)
 		if not _check(int(sample.attacker) == (2 if qualifier == "same_faction_replacement" else -1)
 			and center_owner.terrain.site.settlement.fall_record == paid_fall,
@@ -351,6 +494,13 @@ func _drive_capture(target: float) -> bool:
 		if remaining > TerrainLab.ACTION_TIME_EPSILON:
 			requested = minf(maximum, RegionSaveSlot.GameplayClock.action_for_game(remaining, lab.simulation_speed, tactical))
 		var result: Dictionary = lab._advance_original_shared_step(requested)
+		if result.get("ok", false) and str(result.get("status", "")) == "REGION_EVENT_PENDING" and int(center_owner.terrain.site.settlement.owner_faction) == 1:
+			# A due Region event (e.g. the arrived party's scheduled evaluation) is consumed by the
+			# same original zero-time consumer the map caller uses; no interval is paid.
+			var consumed: Dictionary = slot.consume_due_region_events()
+			if not _check(consumed.ok, "original zero-time consumer takes the due Region event", consumed): return false
+			steps += 1
+			continue
 		var paid: bool = result.get("ok", false) and result.get("completed", false) and float(result.get("action_seconds", 0.0)) > 0.0 and float(result.get("game_seconds", 0.0)) > 0.0
 		var actual_zero_fall: bool = result.get("ok", false) and not result.get("completed", false) and target == Settlement.CAPTURE_SECONDS and int(center_owner.terrain.site.settlement.owner_faction) == 2 and float(result.get("action_seconds", 0.0)) == 0.0 and float(result.get("game_seconds", 0.0)) == 0.0
 		if not _check(paid or actual_zero_fall, "actual common producer pays one interval or consumes its real completed center endpoint", result): return false
@@ -379,6 +529,7 @@ func _finish(ok: bool = true, message: String = "") -> void:
 	failed = failed or not ok
 	if not message.is_empty(): printerr(message)
 	paused = false
+	if is_instance_valid(genesis_panel): genesis_panel.free()
 	for scene: TerrainLab in capture_scenes:
 		if is_instance_valid(scene): scene.free()
 	var current: Variant = JSON.parse_string(FileAccess.get_file_as_string(Entry.LAST_WORLD)) if FileAccess.file_exists(Entry.LAST_WORLD) else null

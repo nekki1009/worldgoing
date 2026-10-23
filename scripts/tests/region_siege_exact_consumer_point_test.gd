@@ -4,7 +4,8 @@ extends "res://scripts/tests/region_siege_original_phase_test.gd"
 func _run() -> void:
 	RegionTravelSite.scene_handoff = false
 	RegionRoute.clear_memory_cache()
-	if not _write_manifest() or not _setup_action_world(): _finish(); return
+	if not _write_manifest(): _finish(); return
+	if not await _setup_action_world(): _finish(); return
 	var owner: String = str(action_owner.terrain.site.id)
 	var exact_battle: bool = false
 	for battle: Dictionary in slot.region_registry().battles.values():

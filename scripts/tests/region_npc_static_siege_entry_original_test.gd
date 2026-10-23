@@ -12,6 +12,7 @@ var land_source_refs: Dictionary = {}
 func _initialize() -> void:
 	deadline = Time.get_ticks_msec() + 480000
 	out = "res://.godot-temp/region_npc_static_siege_entry/run_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
+	fixture_land_condition_rule = "terrain_mapped_potential_v1" # Original founding needs mapped land.
 	last_world_exists = FileAccess.file_exists(Entry.LAST_WORLD)
 	if last_world_exists: last_world_bytes = FileAccess.get_file_as_bytes(Entry.LAST_WORLD)
 	action_speed = 1.0
@@ -22,8 +23,10 @@ func _initialize() -> void:
 func _run() -> void:
 	RegionTravelSite.scene_handoff = false
 	RegionRoute.clear_memory_cache()
-	if not _write_manifest() or not _setup_action_world() or not _nation_initial_bodies(): _finish(); return
-	if not _center_fixture(action_owner): _finish(); return
+	if not _write_manifest(): _finish(); return
+	if not await _setup_action_world(): _finish(); return
+	if not _nation_initial_bodies(): _finish(); return
+	if not _deploy_center_attackers(action_owner): _finish(); return
 	# Actual initial founder protects the real center. This is declared
 	# GENESIS placement before any positive interval, not route relocation.
 	if not _check(action_owner.character.place(Vector2i(19, 19), true)
@@ -81,23 +84,15 @@ func _run() -> void:
 		"game_seconds": slot.control.logical_game_seconds, "action_seconds": slot.control.fire_clock.action_seconds}
 	_finish()
 
+## Decision A: the intermediate Site is founded hot with its founder; the founder hands control to a
+## living family member who travels to the source Site, and the founder stays as the cold defender.
 func _setup_action_world() -> bool:
-	lab = _shell()
-	if not _check(lab != null, "actual original pinned restore shell exists"): return false
-	controller = lab.site_controller
-	var archive := TerrainGenerator.generate(TerrainPreset.Kind.PLAINS, 12345, {"size": Vector2i(32, 32)})
-	Env.initialize(archive, "npc-static-entry-original:archive")
-	lab.bind_terrain(archive)
-	lab.restore_only = false
-	controller.save_root = out.path_join("archive")
-	world_id = "r0_siege_action_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
-	var opened := controller.open_fixed_world(manifest_path, world_id, "main", Vector2i.ZERO, true)
-	if not _check(opened.ok, "original Controller creates one genuine fixed world", opened): return false
-	_freeze(lab)
-	slot = controller.region_slot
+	if not _open_center_world(action_coordinate, "r0_siege_action"): return false
 	lab.simulation_speed = action_speed
-	var wired := lab._wire_region_gameplay_adapters(slot)
-	if not _check(wired.ok, "same original common Slot adapters wire", wired): return false
+	action_owner = lab
+	if not _center_fixture(lab, false): return false
+	if not _birth_successor(): return false
+	if not await _hand_over_and_leave(Vector2i.ZERO): return false
 	var cold := lab._region_gameplay_owner_lab(Grid.site_id(str(slot.pin.atlas_id), action_coordinate), "cold_exact")
 	if not _check(cold.ok and cold.lab is TerrainLab, "actual intermediate Site has its complete original owner", cold): return false
 	action_owner = cold.lab

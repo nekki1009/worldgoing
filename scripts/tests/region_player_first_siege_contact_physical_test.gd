@@ -14,6 +14,7 @@ var player_contact_route: Dictionary = {}
 func _initialize() -> void:
 	deadline = Time.get_ticks_msec() + 480000
 	out = "res://.godot-temp/region_player_first_contact/run_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
+	fixture_land_condition_rule = "terrain_mapped_potential_v1" # Original founding needs mapped land.
 	last_world_exists = FileAccess.file_exists(Entry.LAST_WORLD)
 	if last_world_exists: last_world_bytes = FileAccess.get_file_as_bytes(Entry.LAST_WORLD)
 	action_speed = 1.0
@@ -29,7 +30,7 @@ func _player_static_genesis() -> bool:
 	nation_goal = goal.lab
 	_freeze(nation_goal)
 	if not _check(nation_goal.character.place(Vector2i(80, 80), true), "initial final-Site founder stays on genuine dry ground outside all real route entries"): return false
-	if not _center_fixture(action_owner): return false
+	if not _deploy_center_attackers(action_owner): return false
 	if player_witness_case != "ended":
 		if not _check(action_owner.character.place(Vector2i(19, 19), true) and int(Settlement.capture_sample(action_owner).attacker) == -1, "initial real founder protects the original center before paid player travel"): return false
 	action_owner._ensure_army_slots(4)
@@ -47,7 +48,7 @@ func _player_static_genesis() -> bool:
 		action_owner.site_controller.initialize_team_items(defense)
 	action_owner.terrain.site.army_next_team = action_owner._next_army_identity()
 	if not _check(controller.checkpoint_region_internal("region_checkpoint", true).ok, "original marker publishes actual center, stock, holders and all initial bodies before any paid interval"): return false
-	var attackers: TerrainArmy = action_owner.army
+	var attackers: TerrainArmy = center_attackers # Slot 0 holds the successor's team after the handover.
 	var begun: Dictionary = attackers.issue_combat_order(attackers.current_commander, TerrainArmy.CombatOrder.ATTACK)
 	if not _check(begun.ok, "actual center attacker captain creates its real original siege activity before the player forecast", begun): return false
 	var battle: Dictionary = slot.refresh_original_region_siege_battle(action_owner)
@@ -213,7 +214,9 @@ func _player_visible_bind() -> bool:
 func _run() -> void:
 	RegionTravelSite.scene_handoff = false; RegionRoute.clear_memory_cache()
 	if not _check(player_witness_case in ["positive", "moved", "dead", "ended"], "one original real player witness case", player_witness_case): _finish(); return
-	if not _write_manifest() or not _setup_action_world() or not _player_static_genesis(): _finish(); return
+	if not _write_manifest(): _finish(); return
+	if not await _setup_action_world(): _finish(); return
+	if not _player_static_genesis(): _finish(); return
 	if not _player_depart_and_plan() or not _player_public_fault(): _finish(); return
 	var first: Dictionary = slot.advance_region_travel(1)
 	if not _check(first.ok and player_contact_results.is_empty() and float(slot.control.logical_game_seconds) < float(player_contact_event.at), "original map caller accepts a genuine partial positive approach before the earliest contact", first): _finish(); return

@@ -45,7 +45,8 @@ func _run() -> void:
 	RegionRoute.clear_memory_cache()
 	if not _check(phase_case in ["all", "flight_wreck", "flight_removed", "flight_crew_invalid", "player"] and phase_topology in ["closed", "thick"]
 		and phase_observe in ["siege", "breach", "assault", "capture"], "one genuine bounded phase/caller case", {"case": phase_case, "topology": phase_topology, "phase": phase_observe}): _finish(); return
-	if not _write_manifest() or not _setup_action_world(): _finish(); return
+	if not _write_manifest(): _finish(); return
+	if not await _setup_action_world(): _finish(); return
 	if not await _phase_dispatch_original_infantry(): _finish(); return
 	if not await _phase_ready_engine(): _finish(); return
 	if not _phase_no_path() or not _phase_observe_actual("siege"): _finish(); return
@@ -106,16 +107,39 @@ func _run() -> void:
 		"calibrated_casualty_coefficient": false, "numeric_balance_tolerance": null, "resolution": "original_exact_gd"}
 	_finish()
 
+## Decision A: the defender Site is born hot at action_coordinate with its founder. The founder hands
+## control to a living family member who travels to the source Site; the founder stays as the cold defender.
+func _setup_action_world() -> bool:
+	if not _open_center_world(action_coordinate, "r0_siege_action"): return false
+	lab.simulation_speed = action_speed
+	action_owner = lab
+	if not _phase_found_defender(): return false
+	if not _birth_successor(): return false
+	if not await _hand_over_and_leave(Vector2i.ZERO): return false
+	var cold: Dictionary = lab._region_gameplay_owner_lab(Grid.site_id(str(slot.pin.atlas_id), action_coordinate), "cold_exact")
+	if not _check(cold.ok and cold.lab is TerrainLab, "actual cached cold defender owner completes after the founder leaves", cold): return false
+	action_owner = cold.lab
+	_freeze(action_owner)
+	return _fixture_action_owner()
+
+func _phase_found_defender() -> bool:
+	var data := action_owner.terrain
+	for key: String in data.resource_base: Env.change(data, key, {"cleared": true, "remaining": 0})
+	data.site.capacity = 100000
+	for resource: String in Env.ITEM_NAMES: data.site.inventory[resource] = 1000
+	if not _check(SiteRuntime.initialize_item_storage(data.site).ok, "original Depot owns explicit initial fixture stock"): return false
+	action_owner.character.faction_id = 2
+	if not _check(action_owner.character.place(Vector2i(20, 15), true), "actual original defender founder starts in founding jurisdiction"): return false
+	var center_layout: Dictionary = SiteRuntime.building_cells(data, "settlement_center", Vector2i(20, 20), Vector2i.ONE)
+	if not _check(center_layout.ok, "genuine center layout is legal", center_layout): return false
+	var center_cells: Array[int] = []; center_cells.assign(center_layout.cells)
+	center_founder = action_owner.controlled_person_id()
+	var founded: Dictionary = SiteSettlement.found(action_owner, center_founder, center_cells, {}, Callable(), "原據點")
+	if not _check(founded.ok, "actual original founding command pays original center materials", founded): return false
+	return _phase_complete_initial_work(str(founded.feature))
+
 func _action_target() -> Dictionary:
 	var data := action_owner.terrain
-	action_owner.character.faction_id = 2
-	if not _check(action_owner.character.place(Vector2i(20, 15), true), "actual original defender founder starts in founding jurisdiction"): return {}
-	var center_layout: Dictionary = SiteRuntime.building_cells(data, "settlement_center", Vector2i(20, 20), Vector2i.ONE)
-	if not _check(center_layout.ok, "genuine center layout is legal", center_layout): return {}
-	var center_cells: Array[int] = []; center_cells.assign(center_layout.cells)
-	var founded: Dictionary = SiteSettlement.found(action_owner, action_owner.controlled_person_id(), center_cells, {}, Callable(), "原據點")
-	if not _check(founded.ok, "actual original founding command pays original center materials", founded): return {}
-	if not _phase_complete_initial_work(str(founded.feature)): return {}
 	if not _check(action_owner.character.place(Vector2i(80, 80), true), "original defender body is initially outside the assault and capture zone"): return {}
 	var target := {}
 	for y: int in range(16, 29):

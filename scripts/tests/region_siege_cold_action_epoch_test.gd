@@ -58,7 +58,8 @@ func _run() -> void:
 	if not _check((action_kind == "ram" if action_case in ["translate", "crew_approach", "preparing", "collision"] else true)
 		and (action_kind == "siege_tower" if action_case in ["tower_deploy", "tower_retract"] else true)
 		and (action_kind in ["ballista", "traction_trebuchet", "counterweight_trebuchet"] if action_case in ["loading", "aiming", "flight"] else true), "actual mechanic supports the requested partial stage"): _finish(); return
-	if not _write_manifest() or not _setup_action_world(): _finish(); return
+	if not _write_manifest(): _finish(); return
+	if not await _setup_action_world(): _finish(); return
 	if not await _enter_actual_partial(): _finish(); return
 	if not _apply_actual_fault(): _finish(); return
 	if not await _reopen_actual_partial(): _finish(); return
@@ -86,6 +87,11 @@ func _setup_action_world() -> bool:
 	if not _check(cold.ok and cold.lab is TerrainLab, "actual cached cold owner completes its full original graph", cold): return false
 	action_owner = cold.lab
 	_freeze(action_owner)
+	return _fixture_action_owner()
+
+## Builds the siege engine, walls and attacker crew in the cold owner. A subclass that founds
+## the defender first calls this only after the founder has handed over and left.
+func _fixture_action_owner() -> bool:
 	if not _check(action_owner.crowd_site == null or not action_owner.crowd_site.active, "this actual partial continuation uses admitted GD bodies"): return false
 	var data := action_owner.terrain
 	for key: String in data.resource_base: Env.change(data, key, {"cleared": true, "remaining": 0})

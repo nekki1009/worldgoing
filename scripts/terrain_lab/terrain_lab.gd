@@ -1618,7 +1618,9 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 		var settled_capture: Dictionary = site_controller.settle_settlement_endpoint()
 		if not settled_capture.ok: return settled_capture
 		return {"ok": true, "completed": false, "status": "REGION_EVENT_PENDING", "action_seconds": 0.0, "game_seconds": 0.0}
-	if capture_limit < capture_game_window:
+	# The joint Region planner already clipped at this limit; its GAME width can come back a few
+	# ULPs wider after the action/game round trip, which is the same interval, not an unclipped one.
+	if capture_limit < capture_game_window - ACTION_TIME_EPSILON:
 		if region_callers or formula_interval:
 			return _region_preflight_failure(region_originals, SiteRuntime.fail("REGION_UNCLIPPED_CAPTURE"))
 		elapsed = RegionSaveSlot.GameplayClock.action_for_game(capture_limit, simulation_speed, minf(elapsed, pre_step_combat_left))

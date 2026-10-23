@@ -526,7 +526,9 @@ static func advance_capture_sample(data: TerrainData, sample: Dictionary, game_s
 static func settle_capture(lab: Variant) -> Dictionary:
 	var data: TerrainData = lab.terrain
 	var settlement := record(data)
-	if settlement.is_empty() or float(settlement.fall_record.contest_seconds) < CAPTURE_SECONDS: return {}
+	# The shared-step producers stop paying once the remaining capture time is within the
+	# action epsilon (1e-12); a total that lands that close below 60 is the completed endpoint.
+	if settlement.is_empty() or float(settlement.fall_record.contest_seconds) < CAPTURE_SECONDS - 0.000000000001: return {}
 	var sample := capture_sample(lab)
 	if sample.is_empty(): return Runtime.fail("STALE_CAPTURE_SAMPLE")
 	if int(sample.attacker) != int(settlement.fall_record.contest_faction):
