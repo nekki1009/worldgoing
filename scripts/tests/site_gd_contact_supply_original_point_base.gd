@@ -36,7 +36,10 @@ func _cold_resume(f: Dictionary, label: String) -> void:
 	var old_state: Dictionary = old_entry.duplicate(true)
 	super._cold_resume(f, label)
 	var restored: Dictionary = f.lab.site_controller._supply_entry(f.team)
-	_require(not restored.is_empty() and not is_same(restored, old_entry) and restored == old_state, "True Store/Slot/bind rebuilds a new original supply entry retaining actual clock/casualty/meal history")
+	# The cold entry is read back from the saved JSON, so compare in that saved domain: a float
+	# such as cohort hunger can come back a few ulps off after the original JSON write/parse.
+	var saved_domain := func(value: Variant) -> String: return JSON.stringify(JSON.parse_string(JSON.stringify(value, "", true, true)), "", true, true)
+	_require(not restored.is_empty() and not is_same(restored, old_entry) and saved_domain.call(restored) == saved_domain.call(old_state), "True Store/Slot/bind rebuilds a new original supply entry retaining actual clock/casualty/meal history")
 	_supply_cold = true
 
 func _finish(reason: String = "") -> void:
