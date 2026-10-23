@@ -64,16 +64,20 @@ func _begin(context: Dictionary, binding: String) -> void:
 	_check(begun.ok, "Actual original named phase starts: " + str(begun))
 
 func _advance_job(context: Dictionary, seconds: float) -> Dictionary:
+	_check(context.lab._shared_work_plan.is_empty(), "Fixture work interval begins only with no original shared prefix pending")
 	var requests: Array[Dictionary] = context.actions.work_requests(seconds)
 	_check(requests.size() == 1, "Exactly the true original active craft request enters this fixture interval")
 	var plan := PersonFatigue.plan_work_interval(requests, seconds)
 	_check(plan.ok, "Original pure full-pool planner admits the actual finite interval")
-	context.lab._shared_work_plan = plan
+	# Keep the returned plan intact when the original interval owner clears its temporary wrapper.
+	context.lab._shared_work_plan = plan.duplicate()
 	context.lab._shared_work_pools_committed = false
 	context.lab._commit_shared_work_pools()
 	var own: Dictionary = plan.jobs.person_actions
 	context.actions.advance(seconds, {"jobs": own})
 	context.actions.settle_after_contacts()
+	context.lab._clear_shared_work_step()
+	_check(context.lab._shared_work_plan.is_empty() and context.lab.site_controller._shared_work_plan.is_empty(), "Completed fixture work interval releases its original shared preparation after real work and contact settlement")
 	return plan
 
 func _complete_job(context: Dictionary) -> void:
