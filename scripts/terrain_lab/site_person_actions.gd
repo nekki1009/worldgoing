@@ -8253,7 +8253,7 @@ func record_fire_pot_impact(flight: Dictionary, received: Dictionary, impact_act
 	var unit: Dictionary = lab.terrain.site.get("fire", {}).get("units", {}).get(str(received.unit_key), {})
 	if unit.is_empty() or int(unit.generation) != int(received.generation): return
 	proof.merge({"phase": "contact", "unit_key": str(received.unit_key), "generation": int(received.generation),
-		"scorch": float(unit.scorch), "impact_action": impact_action})
+		"scorch": float(unit.scorch), "impact_action": impact_action}, true)
 
 func finish_checked_controlled_prefixes(prepared: Dictionary) -> void:
 	# Native already published. Original current product/receipt guard may now

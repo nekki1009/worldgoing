@@ -4,6 +4,16 @@ extends "res://scripts/tests/site_technology_fire_pot_scope_test.gd"
 ## finite loot+crew cargo transfer, actual trebuchet flight, contact and burn.
 ## Warm biomass is an explicit historical fixture precondition, not tuned heat.
 
+# Read the original accepted contact, never re-run receive/record or invent a hit.
+func _original_fire_pot_contact(context: Dictionary, flight: Dictionary) -> Dictionary:
+	var matches: Array[Dictionary] = []
+	for payload: Dictionary in context.lab.fire_impact_recorder:
+		if str(payload.get("site_id", "")) == str(context.data.site.id) and int(payload.get("projectile_id", -1)) == int(flight.projectile_id) \
+				and str(payload.get("event_id", "")) == "arrow:%d" % int(flight.projectile_id):
+			matches.append(payload)
+	_check(matches.size() == 1, "One SAME-site SAME-projectile original terminal contact is recorded exactly once")
+	return matches[0] if matches.size() == 1 else {}
+
 func _real_payload(data: TerrainData, cell: Vector2i, identity: int, at: float, heat: float) -> Dictionary:
 	return {"site_id": str(data.site.id), "event_id": "arrow:%d" % identity, "projectile_id": identity,
 		"type": "ground", "action_time": at, "cell": cell, "remaining_heat_budget": heat,
@@ -34,6 +44,18 @@ func _ready_engine(context: Dictionary) -> Dictionary:
 	var station: Dictionary = Runtime.siege_work_slots(context.data, vehicle)[0]
 	_check(Runtime.advance_siege_work(context.data, key, "construct", float(Runtime.SIEGE_DEFINITIONS.traction_trebuchet.work_seconds), context.data.cell_from_index(int(station.cell)), 0, team.team_id).ok, "Original vehicle build owner completes the explicit existing-engine precondition")
 	_check(lab.character.place(Vector2i(16, 18), true), "Actual source captain stays physically present beside its original formation")
+	# The original crew command boundary prepares the real push/load/rope work assets before any
+	# crew commit (headless verifies mechanics only); this fixture calls that same preparation.
+	var crew_ids: Array = []
+	for slot: int in 8: crew_ids.append(team.combat_identity(slot + 1))
+	# The fixture seeds item states directly, so the original presentation owner publishes each
+	# crew appearance (as initialize_team_items does) before the preparation reads it.
+	for identity: Variant in crew_ids: lab.site_controller.equipment_changed(int(identity))
+	var assets_ready: bool = await lab.site_controller._prepare_siege_work_people(crew_ids)
+	_check(assets_ready, "Original siege work assets are prepared for each actual crew member before crew commit")
+	# The preparation resumes this coroutine inside the capture node's completion signal; leave that
+	# emission before the fixture continues (and later frees the Lab).
+	await process_frame
 	for slot: int in 8:
 		# Travel is outside this fixture. Set the ORIGINAL hot cell to the actual
 		# computed station; retain all original body/identity/cargo references.
@@ -48,7 +70,7 @@ func _ready_engine(context: Dictionary) -> Dictionary:
 func _run() -> void:
 	var context := _scope_fixture()
 	_craft_all(context)
-	var vehicle: Dictionary = _ready_engine(context)
+	var vehicle: Dictionary = await _ready_engine(context)
 	var prior: Dictionary = _project(context).budget.duplicate(true)
 	_check(not context.actions.grant_fire_pot_vehicle_budget(context.control, str(vehicle.id), 3).ok, "Source grant cannot exceed actual loaded ammo plus lifetime spent")
 	_check(context.actions.grant_fire_pot_vehicle_budget(context.control, str(vehicle.id), 2).ok, "Actual source captain grants this real original vehicle's finite cargo")
@@ -84,13 +106,24 @@ func _run() -> void:
 	var unit: Dictionary = context.data.site.fire.units["resource:" + resource_key]
 	var scorch := float(unit.scorch)
 	context.lab._advance_siege_projectiles(float(flight.total))
-	_check(flight.fire_resolved and vehicle.tech_fire_pot_shot.phase == "contact", "Actual original first ground contact admits one finite thermal event")
-	_check(vehicle.tech_fire_pot_shot.impact_action == float(flight.spawn_action) + float(flight.total), "Saved evidence uses the actual terminal contact time")
+	_check(flight.fire_resolved and vehicle.tech_fire_pot_shot.phase == "contact", "Actual original first contact admits one finite thermal event")
+	var original_contact: Dictionary = _original_fire_pot_contact(context, flight)
+	var contact_fraction: float = float(flight.get("stop_fraction", -1.0))
+	var contact_action: float = float(original_contact.get("action_time", -1.0))
+	_check(contact_fraction > 0.0 and contact_fraction <= 1.0 and contact_action == float(flight.spawn_action) + contact_fraction * float(flight.total), "Original terminal payload uses its actual contact fraction and action clock")
+	_check(vehicle.tech_fire_pot_shot.impact_action == contact_action, "Saved evidence uses the actual terminal contact time")
+	var accepted_contact: Dictionary = context.data.site.fire.contacts.get("arrow:%d" % int(flight.projectile_id), {})
+	_check(not accepted_contact.is_empty() and vehicle.tech_fire_pot_shot.unit_key == "resource:" + resource_key \
+		and vehicle.tech_fire_pot_shot.unit_key == accepted_contact.unit_key and int(vehicle.tech_fire_pot_shot.generation) == int(accepted_contact.generation) \
+		and float(vehicle.tech_fire_pot_shot.scorch) == scorch and contact_action == float(accepted_contact.start_action), "Saved contact replaces every pending default with the SAME accepted thermal unit/generation/scorch/clock")
 	_check(not Technology.learned(context.team.combat_units[1].get("technology", {}), "F15"), "Contact alone cannot grant knowledge before actual subsequent burning")
 	var at := maxf(0.2, float(vehicle.tech_fire_pot_shot.impact_action))
 	for index: int in 40:
 		at += 0.2
 		_check(Runtime.fire_advance(context.data, at, 0).ok, "Original Fire boundary integrates finite contact and physical biomass burning")
+		# Fire commits replace unit dictionaries; observe the original accepted generation after each boundary.
+		unit = context.data.site.fire.units["resource:" + resource_key]
+		_check(int(unit["generation"]) == int(vehicle.tech_fire_pot_shot["generation"]), "Burn evidence remains on the SAME accepted resource generation")
 		if float(unit.scorch) > scorch: break
 	_check(float(unit.scorch) > scorch, "Real post-contact biomass consumption is required, never a fake hit boolean")
 	var saved_hp := float(context.team.combat_hot_get(1, &"hp"))

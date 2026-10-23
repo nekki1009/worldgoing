@@ -180,7 +180,7 @@ func _ordinary_public_ui(context: Dictionary, vehicle: Dictionary) -> void:
 func _run() -> void:
 	var context := _scope_fixture()
 	_craft_all(context)
-	var vehicle: Dictionary = _ready_engine(context)
+	var vehicle: Dictionary = await _ready_engine(context)
 	var prior: Dictionary = _project(context).budget.duplicate(true)
 	_check(not context.actions.grant_fire_pot_vehicle_budget(context.control, str(vehicle.id), 3).ok, "Source grant cannot exceed actual loaded ammo plus lifetime spent")
 	_check(context.actions.grant_fire_pot_vehicle_budget(context.control, str(vehicle.id), 2).ok, "Actual source captain grants this real original vehicle's finite cargo")
@@ -216,13 +216,24 @@ func _run() -> void:
 	var unit: Dictionary = context.data.site.fire.units["resource:" + resource_key]
 	var scorch := float(unit.scorch)
 	context.lab._advance_siege_projectiles(float(flight.total))
-	_check(flight.fire_resolved and vehicle.tech_fire_pot_shot.phase == "contact", "Actual original first ground contact admits one finite thermal event")
-	_check(vehicle.tech_fire_pot_shot.impact_action == float(flight.spawn_action) + float(flight.total), "Saved evidence uses the actual terminal contact time")
+	_check(flight.fire_resolved and vehicle.tech_fire_pot_shot.phase == "contact", "Actual original first contact admits one finite thermal event")
+	var original_contact: Dictionary = _original_fire_pot_contact(context, flight)
+	var contact_fraction: float = float(flight.get("stop_fraction", -1.0))
+	var contact_action: float = float(original_contact.get("action_time", -1.0))
+	_check(contact_fraction > 0.0 and contact_fraction <= 1.0 and contact_action == float(flight.spawn_action) + contact_fraction * float(flight.total), "Original terminal payload uses its actual contact fraction and action clock")
+	_check(vehicle.tech_fire_pot_shot.impact_action == contact_action, "Saved evidence uses the actual terminal contact time")
+	var accepted_contact: Dictionary = context.data.site.fire.contacts.get("arrow:%d" % int(flight.projectile_id), {})
+	_check(not accepted_contact.is_empty() and vehicle.tech_fire_pot_shot.unit_key == "resource:" + resource_key \
+		and vehicle.tech_fire_pot_shot.unit_key == accepted_contact.unit_key and int(vehicle.tech_fire_pot_shot.generation) == int(accepted_contact.generation) \
+		and float(vehicle.tech_fire_pot_shot.scorch) == scorch and contact_action == float(accepted_contact.start_action), "Saved contact replaces every pending default with the SAME accepted thermal unit/generation/scorch/clock")
 	_check(not Technology.learned(context.team.combat_units[1].get("technology", {}), "F15"), "Contact alone cannot grant knowledge before actual subsequent burning")
 	var at := maxf(0.2, float(vehicle.tech_fire_pot_shot.impact_action))
 	for index: int in 40:
 		at += 0.2
 		_check(Runtime.fire_advance(context.data, at, 0).ok, "Original Fire boundary integrates finite contact and physical biomass burning")
+		# Fire commits replace unit dictionaries; observe the original accepted generation after each boundary.
+		unit = context.data.site.fire.units["resource:" + resource_key]
+		_check(int(unit["generation"]) == int(vehicle.tech_fire_pot_shot["generation"]), "Burn evidence remains on the SAME accepted resource generation")
 		if float(unit.scorch) > scorch: break
 	_check(float(unit.scorch) > scorch, "Real post-contact biomass consumption is required, never a fake hit boolean")
 	var saved_hp := float(context.team.combat_hot_get(1, &"hp"))
