@@ -146,9 +146,10 @@ func _cleanup_fixture(lab: TerrainLab, team: TerrainArmy) -> void:
 	controller.work_team.vehicle_blocked = Callable()
 	controller.equipment_orders.nation_arsenal_request = Callable()
 	controller.equipment_orders.nation_owner_receipt_query = Callable()
-	team.controlled_person_query = Callable()
-	team.person_busy_query = Callable()
-	team.queue_free()
+	if team != null: # Actor-only fixtures have no Army.
+		team.controlled_person_query = Callable()
+		team.person_busy_query = Callable()
+		team.queue_free()
 	lab.queue_free()
 
 func _research_private_source() -> void:

@@ -19,8 +19,12 @@ func _checked_controlled_endpoint() -> void:
 	var feature: Dictionary = data.site.features[key]
 	_check(lab.character.place(data.cell_from_index(int(feature.entrance)), true) and actions.begin_scope_technology_phase(control, "family", family_id, "charcoal", "feature:" + key).ok, "True stationed actor starts the genuine paid batch")
 	var requests = actions.work_requests(600.0)
-	lab._shared_work_requests = requests
-	_check(lab._refresh_shared_work_preflight().ok and requests.size() == 1, "Original final shared preflight admits exactly one held actor task")
+	# The shared preflight runs against the original WorkTeam interval of the same step; the
+	# real main caller prepares it (with the PA requests) before the refresh.
+	var wt_requests = lab.site_controller.work_team.prepare_work_requests(600.0, 0.0, requests)
+	_check(wt_requests.is_empty(), "No ordinary WorkTeam request competes with the held actor task")
+	lab._shared_work_requests.assign(requests)
+	_check(lab._refresh_shared_work_preflight().ok and lab._shared_work_requests.size() == 1, "Original final shared preflight admits exactly one held actor task")
 	requests = lab._shared_work_requests
 	var captured = actions.prepare_shared_work_prefix(requests, 600.0)
 	var planned := PersonalFatigue.plan_work_interval(requests, 600.0)
@@ -32,7 +36,9 @@ func _checked_controlled_endpoint() -> void:
 	var before := var_to_bytes([data.site, lab.character.technology, lab.character.ammo_inventory])
 	var admitted = actions.validate_shared_work_prefix(captured, planned, requests)
 	var priors: Array = []
-	var checked = actions.prepare_checked_controlled_prefixes(admitted, priors) if admitted.ok else admitted
+	# The original registry now registers the allocation first, then validates the Runtime prefix.
+	var registered = actions.prepare_checked_controlled_prefix_allocations(admitted, priors) if admitted.ok else admitted
+	var checked = actions.validate_checked_controlled_runtime_prefixes(registered) if registered.ok else registered
 	_check(admitted.ok and checked.ok and var_to_bytes([data.site, lab.character.technology, lab.character.ammo_inventory]) == before, "The real registry prepares only the earlier legal prefix without cost, products or progress")
 	_check(priors.size() == 1 and is_same(priors[0], checked.checked.runtime[0]), "Sole original provider appends its real Runtime candidate to the same finite sequence")
 	var candidate: Dictionary = priors[0]
