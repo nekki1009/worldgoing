@@ -23,10 +23,30 @@ func _start_field(anchor: Vector2i) -> String:
 	_lab.site_controller.enable_worker()
 	return str(begun.feature)
 
+# The ordinary building Lab, but in the historical GD geometry mode this mesh-contact proof
+# needs (exchange is the default rule since 2026-09-14); set before the Lab enters the tree.
+func _gd_lab(data: TerrainData) -> TerrainLab:
+	var lab: TerrainLab = TerrainLab.new()
+	lab.exchange_enabled = false
+	lab.npc = TerrainTestNPC.new()
+	lab.pause_when_unfocused = false
+	root.add_child(lab)
+	lab.set_process(false)
+	lab.character.set_process(false)
+	lab.npc.set_process(false)
+	lab.site_controller._auto_save_blocked = true
+	lab.bind_terrain(data)
+	lab.character.faction_id = 1
+	lab.npc.faction_id = 1
+	var placed: bool = lab.character.place(Vector2i(10, 10), true) and lab.npc.place(Vector2i(10, 9), true)
+	assert(placed)
+	lab.site_controller.release_worker()
+	return lab
+
 func _run() -> void:
 	deadline = Time.get_ticks_msec() + 180000
 	var data: TerrainData = _building_fixture()
-	_lab = _building_lab(data)
+	_lab = _gd_lab(data)
 	_lab.fixed_action_steps_enabled = false
 	var first: String = _start_field(Vector2i(20, 20))
 	for index: int in 20000:
@@ -61,7 +81,10 @@ func _run() -> void:
 	var enemy: TerrainArmy = _lab.opposing_army
 	enemy.roster_size = 1
 	enemy.faction_id = 2
-	assert(enemy.deploy_at(data, _lab.character, _lab.npc, [Vector2i(21, 26)]))
+	# Adjacent to the captain: a stationary GD melee sweep does not reach two cells (walk_slash bounds stop
+	# short of the body), and the expected training pause is the same THREAT result either way.
+	var enemy_deployed: bool = enemy.deploy_at(data, _lab.character, _lab.npc, [Vector2i(22, 26)])
+	assert(enemy_deployed)
 	assert(enemy.enable_combat(false))
 	enemy.set_process(false)
 	enemy.settle_combat_command()
@@ -77,7 +100,9 @@ func _run() -> void:
 		if is_same(packet.get("target"), team): observed.count = int(observed.count) + 1
 		original_sink.call(packet) # SAME real geometry/material packet.
 	var field_progress: float = float(data.site.features[second].progress)
-	for index: int in 120:
+	# One point advances the swing by one action step (age +1/120 s); walk_slash first becomes active
+	# at 0.83 s, so the search spans the whole 3.42 s clip.
+	for index: int in 420:
 		_point()
 		if int(observed.count) > 0: break
 	enemy.contact_sink = original_sink

@@ -1616,7 +1616,7 @@ func prepare_gd_contact_work_prefix(prepared: Dictionary, planned: Dictionary, r
 		envelopes.append(envelope)
 	_gd_contact_work_capture = SiteRuntime.ok("原工程同held纯源上界已核；未施工", {"owner": self, "prepared": prepared,
 		"admitted": admitted, "envelopes": envelopes, "seconds": float(prepared.seconds), "elapsed": 0.0,
-		"priors": [], "prefixes": [], "allocations": {}, "finished": false})
+		"priors": [], "prefixes": [], "published": [], "allocations": {}, "finished": false})
 	return _gd_contact_work_capture
 
 func prepare_shared_work_prefix(seconds: float) -> Dictionary:
@@ -1710,6 +1710,7 @@ func publish_gd_contact_work_segment(segment: Dictionary) -> void:
 		var allocation: Dictionary = _plan_jobs(segment.plan).get(str(entry.plan_key), {})
 		if not allocation.is_empty(): _record_planned_work(entry, allocation, handled)
 	_gd_contact_work_capture.elapsed = float(_gd_contact_work_capture.elapsed) + float(segment.seconds)
+	_gd_contact_work_capture["published"].append(segment)
 	segment["published"] = true
 	_gd_contact_work_segment = {}
 
@@ -1725,8 +1726,6 @@ func finish_gd_contact_work_prefix() -> void:
 	for candidate: Dictionary in last: SiteRuntime.settle_checked_work_prefix(candidate)
 	refresh_vehicle_tasks()
 	refresh_ship_tasks()
-	_gd_contact_work_capture = {}
-	_gd_contact_work_segment = {}
 	discard_checked_work_prefix()
 
 func _checked_work_target(entry: Dictionary) -> Dictionary:

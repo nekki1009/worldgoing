@@ -11306,7 +11306,7 @@ func prepare_gd_contact_runtime_prefix(prepared: Dictionary, planned: Dictionary
 		people[int(prefix.person_id)] = {"prefix": prefix, "hit": int(person.hit), "intent": intent}
 	_gd_contact_runtime_capture = Runtime.ok("原camp/manual來源與有限材料上界已純核", {"owner": self, "prepared": prepared,
 		"admitted": admitted, "seconds": float(prepared.seconds), "elapsed": 0.0, "envelopes": envelopes,
-		"people": people, "priors": [], "finished": false})
+		"people": people, "priors": [], "published": [], "finished": false})
 	return _gd_contact_runtime_capture
 
 func prepare_gd_contact_runtime_segment(planned: Dictionary, seconds: float, defer_runtime: bool = false) -> Dictionary:
@@ -11973,6 +11973,7 @@ func publish_gd_contact_runtime_segment(segment: Dictionary) -> void:
 		if str(prefix.allocation.get("participant_paused", {}).get(int(prefix.person_id), prefix.allocation.get("paused", ""))) == "REST":
 			person_actions._body_set(person, "work_resting", true)
 	_gd_contact_runtime_capture.elapsed = float(_gd_contact_runtime_capture.elapsed) + float(segment.seconds)
+	_gd_contact_runtime_capture["published"].append(segment)
 	segment["published"] = true
 	_gd_contact_runtime_segment = {}
 
@@ -12010,6 +12011,7 @@ func finish_gd_contact_runtime_prefix() -> void:
 			if is_same(last[index].unit, candidate.unit): last.remove_at(index)
 		last.append(candidate)
 	for candidate: Dictionary in last: Runtime.settle_checked_work_prefix(candidate)
+	Runtime.release_checked_segment_links(_gd_contact_runtime_capture.get("published"))
 	_gd_contact_runtime_capture = {}
 	_gd_contact_runtime_segment = {}
 
@@ -12270,6 +12272,7 @@ func checked_runtime_clock_interval() -> Dictionary:
 func discard_checked_runtime_work_prefix() -> void:
 	Runtime.release_checked_prefix_links(_checked_runtime_work_preparing.get("prefixes"))
 	Runtime.release_checked_prefix_links(_gd_contact_runtime_segment.get("prefixes"))
+	Runtime.release_checked_segment_links(_gd_contact_runtime_capture.get("published"))
 	_checked_runtime_work_capture = {}
 	_gd_contact_runtime_capture = {}
 	_gd_contact_runtime_segment = {}
