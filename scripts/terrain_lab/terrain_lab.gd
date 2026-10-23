@@ -9119,11 +9119,11 @@ func _region_original_interval_guard(interval: Dictionary) -> Dictionary:
 			return SiteRuntime.fail("REGION_OWNER_FIRE_SOURCE")
 	else:
 		var settled := RegionSaveSlot.validate_settlement(terrain.site, float(interval.game_begin))
-		if not settled.ok or settled.get("legacy", true) or float(settled.get("pending", INF)) > ACTION_TIME_EPSILON: return SiteRuntime.fail("REGION_OWNER_SOURCE")
+		if not settled.ok or settled.get("legacy", true) or _replay_pending_residue(float(settled.get("pending", INF))) > 0.0: return SiteRuntime.fail("REGION_OWNER_SOURCE")
 	if not _region_point_pending.is_empty() or not terrain.get_meta(&"fire_boundary", {}).is_empty(): return SiteRuntime.fail("REGION_ENDPOINT_PENDING")
 	if not is_finite(fire_action_cursor) or absf(fire_action_cursor - float(interval.action_begin)) > ACTION_TIME_EPSILON: return SiteRuntime.fail("REGION_OWNER_FIRE_SOURCE")
 	var fire: Dictionary = terrain.site.get("fire_settlement", {})
-	if not party_owner and (fire.is_empty() or str(fire.get("epoch", "")) != str(interval.get("epoch", "")) or int(fire.get("sequence", -1)) != int(interval.get("sequence", 0)) - 1 or absf(float(fire.get("action_seconds", -1.0)) - float(interval.action_begin)) > ACTION_TIME_EPSILON or absf(float(fire.get("game_seconds", -1.0)) - float(interval.game_begin)) > ACTION_TIME_EPSILON): return SiteRuntime.fail("REGION_OWNER_FIRE_SOURCE")
+	if not party_owner and (fire.is_empty() or str(fire.get("epoch", "")) != str(interval.get("epoch", "")) or int(fire.get("sequence", -1)) != int(interval.get("sequence", 0)) - 1 or absf(float(fire.get("action_seconds", -1.0)) - float(interval.action_begin)) > ACTION_TIME_EPSILON or _replay_pending_residue(absf(float(fire.get("game_seconds", -1.0)) - float(interval.game_begin))) > 0.0): return SiteRuntime.fail("REGION_OWNER_FIRE_SOURCE")
 	var fire_guard := _fire_step_guard()
 	if not fire_guard.ok: return fire_guard
 	var demand := minf(elapsed, maxf(0.0, float(terrain.site.get("combat_left", 0.0))))
