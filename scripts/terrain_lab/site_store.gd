@@ -882,6 +882,16 @@ static func _retire_default_worker_copy(data: TerrainData) -> Dictionary:
 		for vehicle: Dictionary in state.get("vehicles", {}).values():
 			if int(vehicle.get("operator_id", -1)) == identity:
 				return Runtime.fail("BUSY", "舊工人仍是原車輛操作人；原存檔保留")
+		var transport: Variant = state.get("fire_transport", {})
+		if transport is Dictionary and not transport.is_empty():
+			var reservations: Variant = transport.get("reservations", [])
+			if reservations is Dictionary and reservations.has(identity): return Runtime.fail("BUSY", "舊工人仍有原射擊準備；原存檔保留")
+			for reservation: Variant in (reservations.values() if reservations is Dictionary else reservations):
+				if reservation is Dictionary and int(reservation.get("person_id", 0)) == identity:
+					return Runtime.fail("BUSY", "舊工人仍有原射擊準備；原存檔保留")
+			for flight: Variant in transport.get("projectiles", []):
+				if flight is Dictionary and int(flight.get("source_member_id", 0)) == identity:
+					return Runtime.fail("BUSY", "舊工人仍有飛行中的原射擊；原存檔保留")
 		for key: String in state.get("person_supply", {}):
 			for member: int in Sustain._ids(state.person_supply[key]):
 				if int(key) == identity and member != identity or int(key) != identity and member == identity:
@@ -901,6 +911,22 @@ static func _retire_default_worker_copy(data: TerrainData) -> Dictionary:
 	if not dropped.ok and str(dropped.code) != "EMPTY": return dropped
 	state.get("person_supply", {}).erase(str(identity))
 	actors.erase("npc")
+	# The retired actor's own idle Fire order and cursor leave with it; the shared
+	# release watermark (release_sequence) is unchanged.
+	var fire_transport: Variant = state.get("fire_transport", {})
+	if fire_transport is Dictionary and not fire_transport.is_empty():
+		# Loaded state keys orders/cursors by group; the wire form lists them.
+		var retired_group := -identity
+		for field: String in ["orders", "member_cursor"]:
+			var entries: Variant = fire_transport.get(field)
+			if entries is Dictionary:
+				entries.erase(retired_group)
+			elif entries is Array:
+				var kept: Array = []
+				for entry: Variant in entries:
+					var group: Variant = entry.get("group") if entry is Dictionary else (entry[0] if entry is Array and not entry.is_empty() else null)
+					if group == null or int(group) != retired_group: kept.append(entry)
+				fire_transport[field] = kept
 	for actor: Dictionary in actors.values():
 		if int(actor.get("attack_target", 0)) == identity: actor.attack_target = 0
 		actor.hit_ids.erase(identity)
