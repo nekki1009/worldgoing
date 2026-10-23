@@ -3135,6 +3135,11 @@ func begin_region_travel(source_data: TerrainData, spec: Dictionary, start_compo
 		"plan_path": "", "plan_sha256": "", "plan_started_game_seconds": now, "plans": 0}
 	var sites: Dictionary = _marker.get("sites", {}).duplicate(true)
 	sites[_site_key(from)] = _file_entry(from_path)
+	# The map handoff must select every current complete original, not old cold files.
+	var cold: Dictionary = _collect_cold_checkpoint(generation, sites, next_clock, true)
+	if not cold.ok: return cold
+	var parties: Dictionary = collect_region_party_checkpoint(generation, next_clock, "", true)
+	if not parties.ok: return parties
 	var published := _publish(sites, next_clock, str(_marker.get("transfer_token", "")), journey)
 	if not published.ok: return published
 	_travel_party_runtime = extracted.party

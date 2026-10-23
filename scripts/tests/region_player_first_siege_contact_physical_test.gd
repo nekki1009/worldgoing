@@ -192,9 +192,10 @@ func _player_partial_reopen() -> bool:
 	var graphs := _nation_graphs()
 	var selected: Dictionary = slot.region_travel_party()
 	var party_bytes := var_to_bytes(selected.party)
-	var captured: Dictionary = slot._region_capture_party_graph(player_contact_token, selected.party)
+	var captured: Dictionary = slot._region_capture_party_graph(player_contact_token, selected.party, {}, true)
 	if not _check(captured.ok and not captured.original_live_graph.is_empty(), "actual partial player host captures full body, stock, work and reservation graph", captured): return false
 	var owners: Dictionary = captured.original_live_graph.owners.duplicate(true)
+	var comparison_context: Dictionary = captured.original_live_graph.context.duplicate(true)
 	var event_bytes := var_to_bytes(slot.region_registry().events)
 	var clock := [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence]
 	var reopened := PlayerContactPanel.new(); root.add_child(reopened); reopened.setup(reopened); reopened.set_process(false)
@@ -209,8 +210,29 @@ func _player_partial_reopen() -> bool:
 		else: nation_goal = restored.lab
 	selected = slot.region_travel_party()
 	var original: Dictionary = lab.prepare_region_party_original_owner(player_contact_token, selected.party, slot)
-	var next: Dictionary = slot._region_capture_party_graph(player_contact_token, selected.party)
+	if not _check(original.ok and original.get("lab") is TerrainLab, "partial reopen resolves the original complete party capture owner", original): return false
+	var party_owner: TerrainLab = original.lab
+	var bind_receipt: Dictionary = party_owner.region_bind_receipt(party_owner.terrain)
+	# Retain the Slot wrapper's actual-owner, token, completion and context gates.
+	var originals: Dictionary = slot.get_meta(&"region_party_owner_labs", {})
+	var complete: bool = slot.pending_region_events().is_empty() and party_owner._region_point_pending.is_empty() and party_owner.site_controller._pending_deaths.is_empty()
+	var purpose: String = "region_checkpoint" if complete else "region_barrier"
+	if not _check(slot._safe_part(player_contact_token) and is_instance_valid(party_owner) and originals.get(player_contact_token) == party_owner
+		and party_owner.has_method("capture_region_party_owner_graph") and party_owner.site_controller.region_slot == slot
+		and original.get("receipt", {}).get("complete") == true and bind_receipt.get("complete") == true
+		and int(bind_receipt.get("generation", -1)) == int(slot._marker.generation)
+		and comparison_context.purpose == purpose and comparison_context.effects_complete == complete
+		and comparison_context.endpoint_payload == {"party_checkpoint": player_contact_token},
+		"same-context observation retains fresh complete Slot owner and wrapper admission"): return false
+	# Reuse the same accepted request context; a new request deliberately has a new nonce.
+	var next: Dictionary = party_owner.capture_region_party_owner_graph(player_contact_token, selected.party, slot, comparison_context, true)
 	if not _check(original.ok and next.ok and owners == next.original_live_graph.owners and party_bytes == var_to_bytes(selected.party) and graphs == _nation_graphs() and event_bytes == var_to_bytes(slot.region_registry().events) and clock == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "full original partial cold keeps route, queued witness, all aliases, reservations, bodies, stock and both clocks"): return false
+	for field: String in ["source_generation", "runtime_revision", "mode_revision", "fire_sequence", "fire_epoch", "game_seconds", "action_seconds"]:
+		var invalid_context: Dictionary = comparison_context.duplicate(true)
+		invalid_context[field] = "wrong_epoch" if field == "fire_epoch" else float(invalid_context[field]) + 1.0
+		var unchanged: PackedByteArray = var_to_bytes([slot.control, selected.party, party_owner.terrain.site])
+		var rejected: Dictionary = party_owner._region_party_capture_clock(invalid_context)
+		if not _check(not rejected.ok and unchanged == var_to_bytes([slot.control, selected.party, party_owner.terrain.site]), "reused capture context still rejects changed generation, revision, epoch or future clocks without mutation: " + field, rejected): return false
 	_player_wire_consumer()
 	var before := var_to_bytes([slot.control, _nation_graphs(), selected.party])
 	var retry: Dictionary = slot.consume_due_region_events()
