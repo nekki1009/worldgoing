@@ -189,6 +189,11 @@ static func world_opened(controller: Node, candidate: RegionSaveSlot, manifest_p
 	var attached := candidate.attach_active_site(data)
 	if not attached.ok: return attached
 	controller.region_slot = candidate
+	# The arrival bound host may have no panel adapter yet; wire the same bound
+	# original host the Slot's endpoint consumers call (no new owner is created).
+	if not candidate.region_original_party_zero.is_valid():
+		var wired: Dictionary = lab.call("_wire_region_gameplay_adapters", candidate)
+		if not wired.get("ok", false): return wired
 	controller._ship_journey.clear()
 	var receipt: Dictionary = lab.region_bind_receipt(data)
 	if not receipt.get("complete", false) or str(receipt.get("owner", "")) != str(data.site.id) \

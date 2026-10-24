@@ -62,6 +62,9 @@ var test_placement_enabled := false
 var terrain: TerrainData
 var _region_bound_data: TerrainData
 var _region_bind_receipt_value: Dictionary = {}
+# The arrival publish binds with its ticket's Slot before the controller adopts it.
+var _region_receipt_slot: RegionSaveSlot = null
+var _region_receipt_data: TerrainData = null # Valid only for the exact terrain that published it.
 var renderer: TerrainRenderer
 var character: TerrainTestCharacter
 var npc: TerrainTestNPC
@@ -839,7 +842,7 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 		"effects_complete": bool(region_restored.get("effects_complete", true)), "zero_world_only": bool(region_restored.get("zero_world_only", false)), "owner": str(terrain.site.get("id", "")),
 		"mode": "cold_exact" if restore_only else "live", "consumer": "original_replay" if restore_only else "original_site",
 		"backend": "native" if crowd_site != null and crowd_site.active else "gd",
-		"generation": int(site_controller.region_slot._marker.get("generation", 0)) if site_controller.region_slot != null else 0,
+		"generation": _region_receipt_generation(),
 		"session": str(OS.get_process_id()) + ":" + str(get_instance_id()),
 		"parts": ["actors", "armies", "movement", "items", "supply", "controller", "fire_transport", "fire_owners", "region_owners"]}
 	terrain.set_meta(&"region_bind_receipt", Callable(self, "region_bind_receipt"))
@@ -862,8 +865,13 @@ func region_bind_receipt(data: TerrainData) -> Dictionary:
 	if terrain != data or _region_bound_data != data or _region_bind_receipt_value.get("complete") != true:
 		return SiteRuntime.fail("REGION_BIND_INCOMPLETE", "原人物／物品／租約／controller 尚未完整綁定")
 	var result := _region_bind_receipt_value.duplicate(true)
-	result["generation"] = int(site_controller.region_slot._marker.get("generation", 0)) if site_controller != null and site_controller.region_slot != null else 0
+	result["generation"] = _region_receipt_generation()
 	return result
+
+func _region_receipt_generation() -> int:
+	var published: bool = is_instance_valid(_region_receipt_slot) and _region_receipt_data == terrain
+	var slot: RegionSaveSlot = _region_receipt_slot if published else (site_controller.region_slot if site_controller != null else null)
+	return int(slot._marker.get("generation", 0)) if slot != null else 0
 
 func _next_army_identity() -> int:
 	var next_team := int(terrain.site.get("army_next_team", 1))
@@ -9766,6 +9774,8 @@ func _region_publish_bind_candidate(data: TerrainData, token: String) -> Diction
 	if not committed.ok: return committed
 	ticket["data"] = data # Exact readback was checked against the marker, body and full graph.
 	ticket["kind"] = "published"
+	_region_receipt_slot = ticket.slot # Marker generation was checked against this ticket above.
+	_region_receipt_data = data
 	bind_terrain(data, {"ok": true, "crowd_site": null, "region_bind_token": token})
 	var result: Dictionary = _region_bind_receipt_value.duplicate(true)
 	if terrain != data or _region_bound_data != data or result.get("owners_restored") != true:
