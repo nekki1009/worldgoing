@@ -3,6 +3,8 @@ extends RefCounted
 const Checkpoint = preload("res://scripts/terrain_lab/site_region_checkpoint.gd")
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const LIMIT := 100000
+const VERSION: int = 2
+const MAX_ATOM_BYTES: int = 33554432
 
 static func capture(roots: Dictionary, references: Dictionary, context: Dictionary) -> Dictionary:
 	var stamp := context.duplicate(true)
@@ -13,24 +15,24 @@ static func capture(roots: Dictionary, references: Dictionary, context: Dictiona
 	var graph := {"nodes": [], "seen": [], "error": ""}
 	var encoded := _encode(roots, references, graph, 0, false)
 	if not str(graph.error).is_empty(): return Runtime.fail(str(graph.error))
-	var snapshot := {"version": 1, "context": stamp, "root": encoded, "nodes": graph.nodes}
+	var snapshot: Dictionary = {"version": VERSION, "context": stamp, "root": encoded, "nodes": graph.nodes}
 	return Runtime.ok("", {"state": snapshot, "snapshot": snapshot})
 
 static func prepare_restore(snapshot: Variant, references: Dictionary, expected: Dictionary = {}) -> Dictionary:
-	if not snapshot is Dictionary or snapshot.size() != 4 or not Checkpoint.integer(snapshot.get("version"), 1) or int(snapshot.version) != 1 or not snapshot.get("nodes") is Array or snapshot.nodes.size() > LIMIT:
+	if not snapshot is Dictionary or snapshot.size() != 4 or not Checkpoint.integer(snapshot.get("version"), 1) or int(snapshot.version) not in [1, VERSION] or not snapshot.get("nodes") is Array or snapshot.nodes.size() > LIMIT:
 		return Runtime.fail("INVALID_REGION_OWNER_SNAPSHOT")
 	var checked := Checkpoint.validate_context(snapshot.get("context"), expected)
 	if not checked.ok: return checked
 	if not _valid_references(references): return Runtime.fail("INVALID_REGION_REFERENCE")
 	var nodes: Array = snapshot.nodes
-	if not _valid_value(snapshot.get("root"), nodes, references): return Runtime.fail("INVALID_REGION_OWNER_SNAPSHOT")
+	if not _valid_value(snapshot.get("root"), nodes, references, false, int(snapshot.version)): return Runtime.fail("INVALID_REGION_OWNER_SNAPSHOT")
 	for node: Variant in nodes:
 		if not node is Dictionary or node.size() != 2 or str(node.get("kind", "")) not in ["dictionary", "array"] or not node.get("entries") is Array or node.entries.size() > LIMIT:
 			return Runtime.fail("INVALID_REGION_OWNER_SNAPSHOT")
 		for entry: Variant in node.entries:
 			if node.kind == "dictionary":
-				if not entry is Array or entry.size() != 2 or not _valid_value(entry[0], nodes, references, true) or not _valid_value(entry[1], nodes, references): return Runtime.fail("INVALID_REGION_OWNER_SNAPSHOT")
-			elif not _valid_value(entry, nodes, references): return Runtime.fail("INVALID_REGION_OWNER_SNAPSHOT")
+				if not entry is Array or entry.size() != 2 or not _valid_value(entry[0], nodes, references, true, int(snapshot.version)) or not _valid_value(entry[1], nodes, references, false, int(snapshot.version)): return Runtime.fail("INVALID_REGION_OWNER_SNAPSHOT")
+			elif not _valid_value(entry, nodes, references, false, int(snapshot.version)): return Runtime.fail("INVALID_REGION_OWNER_SNAPSHOT")
 	# Allocate all payload containers before connecting aliases; no original owner is mutated.
 	var decoded: Array = []
 	for node: Dictionary in nodes: decoded.append({} if node.kind == "dictionary" else [])
@@ -127,9 +129,9 @@ static func _encode(value: Variant, references: Dictionary, graph: Dictionary, d
 	if not Checkpoint.supported(value):
 		graph["error"] = "UNSUPPORTED_REGION_OWNER_VALUE"
 		return {}
-	return {"kind": "value", "wire": Checkpoint.wire(value)}
+	return {"kind": "atom", "bytes": Marshalls.raw_to_base64(var_to_bytes(value))}
 
-static func _valid_value(value: Variant, nodes: Array, references: Dictionary, dictionary_key: bool = false) -> bool:
+static func _valid_value(value: Variant, nodes: Array, references: Dictionary, dictionary_key: bool = false, version: int = 1) -> bool:
 	if not value is Dictionary: return false
 	match str(value.get("kind", "")):
 		"infinity": return not dictionary_key and value.size() == 2 and Checkpoint.integer(value.get("sign"), -1) and value.sign in [-1, 1]
@@ -138,6 +140,9 @@ static func _valid_value(value: Variant, nodes: Array, references: Dictionary, d
 			return not dictionary_key and value.size() == 3 and value.get("key") is String and references.has(value.key) and Checkpoint.integer(value.get("type")) and typeof(references[value.key]) == int(value.type)
 		"node":
 			return not dictionary_key and value.size() == 2 and Checkpoint.integer(value.get("index")) and int(value.index) < nodes.size()
+		"atom":
+			if version != VERSION or not _valid_atom(value): return false
+			return not dictionary_key or bytes_to_var(Marshalls.base64_to_raw(value["bytes"])) != null
 		"value":
 			if value.size() != 2 or not Checkpoint.valid_wire(value.get("wire")): return false
 			var decoded: Variant = Checkpoint.unwire(value.wire)
@@ -150,12 +155,13 @@ static func _decode(value: Dictionary, nodes: Array, references: Dictionary) -> 
 		"empty_callable": return Callable()
 		"reference": return references[value.key]
 		"node": return nodes[int(value.index)]
+		"atom": return bytes_to_var(Marshalls.base64_to_raw(value["bytes"]))
 		"value": return Checkpoint.unwire(value.wire)
 	return null
 ## Read one pure descriptor field before binding original object references.
 ## This never resolves a Node, holder or callable and never mutates any owner.
 static func peek_values(snapshot: Variant, field: String, expected: Dictionary = {}) -> Dictionary:
-	if not snapshot is Dictionary or snapshot.size() != 4 or not Checkpoint.integer(snapshot.get("version"), 1) or int(snapshot.version) != 1 or not snapshot.get("nodes") is Array or snapshot.nodes.size() > LIMIT:
+	if not snapshot is Dictionary or snapshot.size() != 4 or not Checkpoint.integer(snapshot.get("version"), 1) or int(snapshot.version) not in [1, VERSION] or not snapshot.get("nodes") is Array or snapshot.nodes.size() > LIMIT:
 		return Runtime.fail("INVALID_REGION_OWNER_SNAPSHOT")
 	var checked := Checkpoint.validate_context(snapshot.get("context"), expected)
 	if not checked.ok: return checked
@@ -167,17 +173,20 @@ static func peek_values(snapshot: Variant, field: String, expected: Dictionary =
 	var budget := {"left": LIMIT}
 	for pair: Variant in node.entries:
 		if not pair is Array or pair.size() != 2: return Runtime.fail("INVALID_REGION_OWNER_SNAPSHOT")
-		var key := _peek_value(pair[0], snapshot.nodes, [], 0, budget)
+		var key: Dictionary = _peek_value(pair[0], snapshot.nodes, [], 0, budget, int(snapshot.version))
 		if not key.ok: return key
 		if key.value == field:
 			if selected != null: return Runtime.fail("INVALID_REGION_OWNER_SNAPSHOT")
 			selected = pair[1]
 	if selected == null: return Runtime.fail("MISSING_REGION_REFERENCE_VALUES")
-	return _peek_value(selected, snapshot.nodes, [], 0, budget)
+	return _peek_value(selected, snapshot.nodes, [], 0, budget, int(snapshot.version))
 
-static func _peek_value(value: Variant, nodes: Array, ancestors: Array, depth: int, budget: Dictionary) -> Dictionary:
+static func _peek_value(value: Variant, nodes: Array, ancestors: Array, depth: int, budget: Dictionary, version: int = 1) -> Dictionary:
 	budget["left"] = int(budget.left) - 1
 	if depth > 48 or int(budget.left) < 0 or not value is Dictionary: return Runtime.fail("INVALID_REGION_REFERENCE_VALUES")
+	if value.get("kind") == "atom":
+		if version != VERSION or not _valid_atom(value): return Runtime.fail("INVALID_REGION_REFERENCE_VALUES")
+		return Runtime.ok("", {"value": bytes_to_var(Marshalls.base64_to_raw(value["bytes"]))})
 	if value.get("kind") == "value":
 		if value.size() != 2 or not Checkpoint.valid_wire(value.get("wire")): return Runtime.fail("INVALID_REGION_REFERENCE_VALUES")
 		return Runtime.ok("", {"value": Checkpoint.unwire(value.wire)})
@@ -191,32 +200,32 @@ static func _peek_value(value: Variant, nodes: Array, ancestors: Array, depth: i
 	for entry: Variant in node.entries:
 		if node.kind == "dictionary":
 			if not entry is Array or entry.size() != 2: return Runtime.fail("INVALID_REGION_REFERENCE_VALUES")
-			var key := _peek_value(entry[0], nodes, next, depth + 1, budget)
-			var item := _peek_value(entry[1], nodes, next, depth + 1, budget)
+			var key: Dictionary = _peek_value(entry[0], nodes, next, depth + 1, budget, version)
+			var item: Dictionary = _peek_value(entry[1], nodes, next, depth + 1, budget, version)
 			if not key.ok or not item.ok or key.value == null or key.value is Array or key.value is Dictionary or result.has(key.value): return Runtime.fail("INVALID_REGION_REFERENCE_VALUES")
 			result[key.value] = item.value
 		else:
-			var item := _peek_value(entry, nodes, next, depth + 1, budget)
+			var item: Dictionary = _peek_value(entry, nodes, next, depth + 1, budget, version)
 			if not item.ok: return item
 			result.append(item.value)
 	return Runtime.ok("", {"value": result})
 ## Validate the entire graph and its original identity manifest without Nodes
 ## or holder copies. Symbolic values are used only for the caller's schema check.
 static func validate_for_bind(snapshot: Variant, reference_validator: Callable, expected: Dictionary = {}) -> Dictionary:
-	if not reference_validator.is_valid() or not snapshot is Dictionary or snapshot.size() != 4 or not Checkpoint.integer(snapshot.get("version"), 1) or int(snapshot.version) != 1 or not snapshot.get("nodes") is Array or snapshot.nodes.size() > LIMIT:
+	if not reference_validator.is_valid() or not snapshot is Dictionary or snapshot.size() != 4 or not Checkpoint.integer(snapshot.get("version"), 1) or int(snapshot.version) not in [1, VERSION] or not snapshot.get("nodes") is Array or snapshot.nodes.size() > LIMIT:
 		return Runtime.fail("INVALID_REGION_OWNER_SNAPSHOT")
 	var checked := Checkpoint.validate_context(snapshot.get("context"), expected)
 	if not checked.ok: return checked
 	var nodes: Array = snapshot.nodes
 	var reference_types := {}
-	if not _valid_bind_value(snapshot.get("root"), nodes, reference_validator, reference_types): return Runtime.fail("INVALID_REGION_OWNER_SNAPSHOT")
+	if not _valid_bind_value(snapshot.get("root"), nodes, reference_validator, reference_types, false, int(snapshot.version)): return Runtime.fail("INVALID_REGION_OWNER_SNAPSHOT")
 	for node: Variant in nodes:
 		if not node is Dictionary or node.size() != 2 or node.get("kind") not in ["dictionary", "array"] or not node.get("entries") is Array or node.entries.size() > LIMIT:
 			return Runtime.fail("INVALID_REGION_OWNER_SNAPSHOT")
 		for entry: Variant in node.entries:
 			if node.kind == "dictionary":
-				if not entry is Array or entry.size() != 2 or not _valid_bind_value(entry[0], nodes, reference_validator, reference_types, true) or not _valid_bind_value(entry[1], nodes, reference_validator, reference_types): return Runtime.fail("INVALID_REGION_OWNER_SNAPSHOT")
-			elif not _valid_bind_value(entry, nodes, reference_validator, reference_types): return Runtime.fail("INVALID_REGION_OWNER_SNAPSHOT")
+				if not entry is Array or entry.size() != 2 or not _valid_bind_value(entry[0], nodes, reference_validator, reference_types, true, int(snapshot.version)) or not _valid_bind_value(entry[1], nodes, reference_validator, reference_types, false, int(snapshot.version)): return Runtime.fail("INVALID_REGION_OWNER_SNAPSHOT")
+			elif not _valid_bind_value(entry, nodes, reference_validator, reference_types, false, int(snapshot.version)): return Runtime.fail("INVALID_REGION_OWNER_SNAPSHOT")
 	var decoded: Array = []
 	for node: Dictionary in nodes: decoded.append({} if node.kind == "dictionary" else [])
 	var symbols := {}
@@ -235,9 +244,9 @@ static func validate_for_bind(snapshot: Variant, reference_validator: Callable, 
 	return Runtime.ok("", {"roots": roots, "context": checked.context, "reference_types": reference_types, "symbols": symbols,
 		"graph_hash": Checkpoint.state_hash({"graph": snapshot}), "graph_prepared": true})
 
-static func _valid_bind_value(value: Variant, nodes: Array, validator: Callable, reference_types: Dictionary, dictionary_key: bool = false) -> bool:
+static func _valid_bind_value(value: Variant, nodes: Array, validator: Callable, reference_types: Dictionary, dictionary_key: bool = false, version: int = 1) -> bool:
 	if not value is Dictionary: return false
-	if value.get("kind") != "reference": return _valid_value(value, nodes, {}, dictionary_key)
+	if value.get("kind") != "reference": return _valid_value(value, nodes, {}, dictionary_key, version)
 	if dictionary_key or value.size() != 3 or not value.get("key") is String or not Checkpoint.integer(value.get("type")) or str(value.key).is_empty() or str(value.key).length() > 4096: return false
 	var key := str(value.key)
 	var kind := int(value.type)
@@ -284,7 +293,7 @@ static func _encode_bind_roots(value: Variant, graph: Dictionary, depth: int) ->
 	if not Checkpoint.supported(value):
 		graph["error"] = "UNSUPPORTED_REGION_OWNER_VALUE"
 		return {}
-	return {"kind": "value", "wire": Checkpoint.wire(value)}
+	return {"kind": "atom", "bytes": Marshalls.raw_to_base64(var_to_bytes(value))}
 
 static func capture_bind_roots(roots: Dictionary, context: Dictionary) -> Dictionary:
 	var checked := Checkpoint.validate_context(context)
@@ -292,5 +301,17 @@ static func capture_bind_roots(roots: Dictionary, context: Dictionary) -> Dictio
 	var graph := {"nodes": [], "seen": [], "error": ""}
 	var encoded := _encode_bind_roots(roots, graph, 0)
 	if not str(graph.error).is_empty(): return Runtime.fail(str(graph.error))
-	var snapshot := {"version": 1, "context": context.duplicate(true), "root": encoded, "nodes": graph.nodes}
+	var snapshot: Dictionary = {"version": VERSION, "context": context.duplicate(true), "root": encoded, "nodes": graph.nodes}
 	return Runtime.ok("", {"state": snapshot})
+
+## v1 value/wire descriptors remain validated unchanged; v2 atoms avoid JSON numeric coercion.
+static func _valid_atom(value: Dictionary) -> bool:
+	if value.size() != 2 or value.get("kind") != "atom" or not value.get("bytes") is String or str(value["bytes"]).length() > 44739244: return false
+	var raw: PackedByteArray = Marshalls.base64_to_raw(value["bytes"])
+	if raw.size() < 4 or raw.size() > MAX_ATOM_BYTES or Marshalls.raw_to_base64(raw) != value["bytes"]: return false
+	var kind: int = int(raw.decode_u32(0)) & 65535
+	if kind in [TYPE_OBJECT, TYPE_CALLABLE, TYPE_SIGNAL, TYPE_DICTIONARY, TYPE_ARRAY]: return false
+	# The no-object decoder and original supported-value guard both remain mandatory.
+	var decoded: Variant = bytes_to_var(raw)
+	return not (decoded is Dictionary or decoded is Array or decoded is Object or decoded is Callable or decoded is Signal) \
+		and Checkpoint.supported(decoded) and var_to_bytes(decoded) == raw

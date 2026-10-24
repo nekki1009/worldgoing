@@ -392,7 +392,7 @@ static func scoped_controlled_person(lab: TerrainLab) -> Dictionary:
 ## remains responsible for people as well as finite siege/work/contact tails.
 
 
-const SIEGE_VERSION := 1
+const SIEGE_VERSION: int = 2
 
 const SIEGE_PHASES := ["siege", "breach", "assault", "capture", "finished"]
 
@@ -402,6 +402,22 @@ const SiegeCheckpoint = preload("res://scripts/terrain_lab/site_region_checkpoin
 
 
 static func _siege_hash(value: Variant) -> String:
+	return Marshalls.raw_to_base64(var_to_bytes(SiegeCheckpoint.wire(_siege_order(value)))).sha256_text()
+
+static func _siege_order(value: Variant) -> Variant:
+	if value is Dictionary:
+		var keys: Array = value.keys()
+		keys.sort_custom(func(left: Variant, right: Variant) -> bool: return var_to_bytes(SiegeCheckpoint.wire(left)).hex_encode() < var_to_bytes(SiegeCheckpoint.wire(right)).hex_encode())
+		var ordered: Dictionary = {}
+		for key: Variant in keys: ordered[key] = _siege_order(value[key])
+		return ordered
+	if value is Array:
+		var ordered: Array = []
+		for entry: Variant in value: ordered.append(_siege_order(entry))
+		return ordered
+	return value
+
+static func _siege_legacy_hash(value: Variant) -> String:
 	return JSON.stringify(SiegeCheckpoint._hash_numbers(SiegeCheckpoint.wire(value)), "", true, true).sha256_text()
 
 
@@ -409,7 +425,7 @@ static func validate_siege_metadata(value: Variant) -> Dictionary:
 	if not value is Dictionary or value.size() != SIEGE_FIELDS.size(): return _fail("INVALID_SIEGE_SOURCE")
 	for field: String in SIEGE_FIELDS:
 		if not value.has(field): return _fail("INVALID_SIEGE_SOURCE")
-	if not SiegeCheckpoint.integer(value.version, 1) or int(value.version) != SIEGE_VERSION or value.phase not in SIEGE_PHASES or not value.center_id is String or value.center_id.is_empty() \
+	if not SiegeCheckpoint.integer(value.version, 1) or int(value.version) not in [1, SIEGE_VERSION] or value.phase not in SIEGE_PHASES or not value.center_id is String or value.center_id.is_empty() \
 		or not SiegeCheckpoint.integer(value.defender_faction) or not SiegeCheckpoint.integer(value.attacker_faction) \
 		or int(value.defender_faction) == int(value.attacker_faction) or value.resolution != "original_exact_gd":
 		return _fail("INVALID_SIEGE_SOURCE")
@@ -489,7 +505,7 @@ static func _siege_source_hash(value: Dictionary) -> String:
 	var fields := {}
 	for field: String in SIEGE_FIELDS:
 		if field != "source_sha256": fields[field] = value[field]
-	return _siege_hash(fields)
+	return _siege_legacy_hash(fields) if int(value["version"]) == 1 else _siege_hash(fields)
 
 
 static func _siege_person_ref(lab: TerrainLab, identity: int) -> Dictionary:
