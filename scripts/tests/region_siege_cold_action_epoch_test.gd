@@ -221,10 +221,23 @@ func _action_ram_pose(target: Dictionary, team_id: int = 1) -> Dictionary:
 	_check(false, "actual RAM prism finds a legal paid target approach", target)
 	return {}
 
+var action_cold_pending: Dictionary = {}
+
 func _action_step() -> bool:
 	var request := TerrainLab.EXCHANGE_ACTION_STEP if lab.exchange_enabled else TerrainLab.ACTION_STEP
 	var result: Dictionary = lab._advance_original_shared_step(request)
 	if not _check(result.get("ok", false), "actual common producer accepts original work or its due zero endpoint", result): return false
+	if result.get("status") == "REGION_EVENT_PENDING" and result.has("cold_replay"):
+		if not _check(lab._region_original_cold_pending(result), "pending receipt is the actual retained original replay on this source/target", result): return false
+		var steps: int = int(result.cold_replay.exact_steps) + int(result.cold_replay.prefix_steps)
+		if not action_cold_pending.is_empty() and action_cold_pending.source == result.source_sha256 and action_cold_pending.site == result.site_id and action_cold_pending.target == result.target:
+			if not _check(steps > int(action_cold_pending.steps) or float(result.pending) < float(action_cold_pending.pending), "bounded original continuation makes real replay progress, never a silent PENDING spin", result): return false
+		for field: String in ["source_sha256", "target", "site_id"]:
+			var changed: Dictionary = result.duplicate(true)
+			changed[field] = "foreign" if field != "target" else float(result.target) + 1.0
+			if not _check(not lab._region_original_cold_pending(changed), "original replay pending refuses incompatible source/target: " + field): return false
+		action_cold_pending = {"source": result.source_sha256, "site": result.site_id, "target": result.target, "steps": steps, "pending": result.pending}
+	else: action_cold_pending.clear()
 	if result.get("completed", false):
 		if not _check(float(result.get("action_seconds", 0.0)) > 0.0 and float(result.get("game_seconds", 0.0)) > 0.0 and float(result.action_seconds) <= request + EPS, "actual common interval pays positive bounded ACTION and GAME", result): return false
 		action_paid += float(result.action_seconds)

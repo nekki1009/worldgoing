@@ -1363,6 +1363,11 @@ static func _normalize_state(state: Dictionary) -> void:
 				for field: String in ["version", "cell", "level"]: vehicle.deployed_pose[field] = int(vehicle.deployed_pose[field])
 				vehicle.deployed_pose.facing = _int_array(vehicle.deployed_pose.facing)
 			for field: String in ["vehicle_version", "definition_version", "next_attack_seq", "rng_state"]: vehicle[field] = int(vehicle[field])
+			# The raw ranged-action schema already admitted these bounded integers.
+			# Restore their original types at the same JSON boundary as the vehicle.
+			if str(vehicle.kind) in ["ballista", "traction_trebuchet", "counterweight_trebuchet"] \
+				and str(vehicle.action.get("stage", "")) in ["loading", "aiming", "recovering"]:
+				for field: String in ["cargo_version", "rng_state"]: vehicle.action[field] = int(vehicle.action[field])
 			vehicle.hp = float(vehicle.hp)
 			for slot: String in vehicle.crew_slots: vehicle.crew_slots[slot] = int(vehicle.crew_slots[slot])
 			for job: Dictionary in [vehicle.build, vehicle.repair]:

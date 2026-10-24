@@ -212,8 +212,29 @@ func _player_contact_barrier_graphs(event: Dictionary) -> Dictionary:
 		graphs[str(original.terrain.site.id)] = captured.owner_states.scene.duplicate(true)
 	return graphs
 
+func _player_boundary_owner_controls(event: Dictionary) -> bool:
+	if not _check(slot.region_original_boundary_location.is_valid(), "original boundary provider is wired after the genuine fresh-Slot bind"): return false
+	var selected: Dictionary = slot.region_travel_party()
+	if not _check(selected.ok, "boundary controls use the actual current party"): return false
+	var raw: Array = event.payload.site
+	var coordinate: Vector2i = Vector2i(int(raw[0]), int(raw[1]))
+	var before: PackedByteArray = var_to_bytes([slot.control, selected.party])
+	var copied: Dictionary = selected.party.duplicate(true)
+	var wrong_body: Dictionary = slot.region_original_boundary_location.call("player", player_contact_token, copied, coordinate, event)
+	var wrong_owner: Dictionary = slot.region_original_boundary_location.call("npc", player_contact_token, selected.party, coordinate, event)
+	var wrong_site: Dictionary = slot.region_original_boundary_location.call("player", player_contact_token, selected.party, coordinate + Vector2i.RIGHT, event)
+	var future: Dictionary = event.duplicate(true)
+	future["at"] = float(event.at) + 1.0
+	var wrong_clock: Dictionary = slot.region_original_boundary_location.call("player", player_contact_token, selected.party, coordinate, future)
+	var foreign: RegionSaveSlot = RegionSaveSlot.new()
+	var provider: TerrainLab = slot.region_original_boundary_location.get_object()
+	var wrong_slot: Dictionary = provider._region_gameplay_boundary_location("player", player_contact_token, selected.party, coordinate, event, weakref(foreign))
+	return _check(not wrong_body.ok and not wrong_owner.ok and not wrong_site.ok and not wrong_clock.ok and not wrong_slot.ok
+		and before == var_to_bytes([slot.control, selected.party]), "original boundary rejects copied body, wrong controller/site, future clock and stale Slot without mutation")
+
 func _player_observe_original_consumer(event: Dictionary) -> Dictionary:
 	if str(event.id) != str(player_contact_event.id): return player_contact_original_consumer.call(event)
+	if not _player_boundary_owner_controls(event): return {"ok": false, "code": "BOUNDARY_OWNER_CONTROL"}
 	var clock := [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence]
 	var contact: Dictionary = event.payload.contact_receipt
 	var witness: Dictionary = contact.witness

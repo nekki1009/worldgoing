@@ -1555,7 +1555,13 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 	if not _region_point_pending.is_empty():
 		var prior_point := consume_region_point()
 		if not prior_point.ok: return prior_point
-		if not bool(prior_point.get("complete", false)): return {"ok": true, "completed": false, "status": "REGION_EVENT_PENDING", "action_seconds": 0.0, "game_seconds": 0.0}
+		if not bool(prior_point.get("complete", false)):
+			var waiting: Dictionary = prior_point.duplicate(true)
+			waiting["completed"] = false
+			waiting["status"] = "REGION_EVENT_PENDING"
+			waiting["action_seconds"] = 0.0
+			waiting["game_seconds"] = 0.0
+			return waiting
 	if not replaying and site_controller.region_slot != null and not site_controller.region_slot.pending_region_events().is_empty():
 		var due: Dictionary = site_controller.region_slot.consume_due_region_events()
 		if not due.ok: return due
@@ -1743,7 +1749,11 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 			var consumed_point := consume_region_point()
 			if not consumed_point.ok: site_controller.latch_original_step_fault(consumed_point)
 			if not consumed_point.ok: recorded = consumed_point
-			elif not bool(consumed_point.get("complete", false)): recorded.status = "REGION_EVENT_PENDING"
+			elif not bool(consumed_point.get("complete", false)):
+				recorded["status"] = "REGION_EVENT_PENDING"
+				recorded["complete"] = false
+				if _region_original_cold_pending(consumed_point):
+					for field: String in ["code", "pending", "target", "site_id", "source_sha256", "cold_replay"]: recorded[field] = consumed_point[field]
 	if recorded.get("ok", false) and _region_point_pending.is_empty(): _clear_shared_work_step()
 	if region_callers:
 		# Only the successful publisher on the same source/Slot may close a quantum.
@@ -2153,7 +2163,8 @@ func _advance_duty_ai(game_seconds: float) -> void:
 	_region_duty_leave(duty_scope)
 
 func _region_advance_original_duty_ai(game_seconds: float) -> void:
-	if game_seconds <= 0.0 or terrain == null or site_controller == null or bool(terrain.site.get("paused", false)) 		or (is_inside_tree() and get_tree().paused):
+	if game_seconds <= 0.0 or terrain == null or site_controller == null or bool(terrain.site.get("paused", false)) \
+		or (is_inside_tree() and get_tree().paused):
 		return
 	site_controller.captive_escort.start_arrived_releases() # Supply for this step is settled by now.
 	_duty_ai_elapsed += game_seconds
@@ -7938,6 +7949,24 @@ func _region_point_effect(event: Dictionary) -> Dictionary:
 
 ## No time advances here. Already-paid projectiles and original completed work
 ## stay in the original queues until this one consumer acknowledges them.
+## A retained original cold replay is a bounded pending endpoint, never an accepted failure or a new paid step.
+func _region_original_cold_pending(result: Dictionary) -> bool:
+	var slot: RegionSaveSlot = site_controller.region_slot if site_controller != null else null
+	if slot == null or result.get("code") != "PENDING" or not result.get("cold_replay") is Dictionary or not slot.cold_site_advance.is_valid(): return false
+	var provider: Object = slot.cold_site_advance.get_object()
+	if not provider is TerrainLab or provider.site_controller == null or provider.site_controller.region_slot != slot: return false
+	var replay: TerrainLab = provider._cold_replay_lab
+	var receipt: Dictionary = result.cold_replay
+	if not is_instance_valid(replay) or not RegionCheckpoint.time(result.get("pending")) or not RegionCheckpoint.time(result.get("target")) \
+		or float(result.pending) <= 0.0 or float(result.target) != float(slot.control.logical_game_seconds) \
+		or result.get("site_id") != provider._cold_replay_id or result.get("source_sha256") != provider._cold_replay_signature \
+		or float(result.target) != provider._cold_replay_target or receipt.get("source_sha256") != provider._cold_replay_signature \
+		or receipt.get("target") != result.target or receipt.get("method") not in ["original_shared_exact", "quiet_original_minute_prefix_exact_tail"]: return false
+	var retained: Dictionary = replay._region_cold_isolated
+	if retained.is_empty() or receipt.get("exact_steps") != retained.get("exact_steps") or receipt.get("prefix_steps") != retained.get("prefix_steps"): return false
+	var progress: Dictionary = replay.region_cold_actual_progress()
+	return float(result.pending) == maxf(0.0, float(result.target) - float(progress.game_seconds))
+
 func consume_region_point(dispatch_world: bool = true) -> Dictionary:
 	if _region_point_pending.is_empty(): return SiteRuntime.ok("", {"complete": true})
 	if _region_point_consuming or dispatch_world and _region_point_dispatching: return SiteRuntime.fail("REENTRANT_REGION_ENDPOINT")
@@ -7954,7 +7983,14 @@ func consume_region_point(dispatch_world: bool = true) -> Dictionary:
 			var down: Dictionary = site_controller.region_slot._region_player_down_settlement()
 			restricted = not down.is_empty() and down.lab == self and bool(down.point_pending)
 		_region_point_dispatching = false
-		if not dispatched.ok or terrain != original or bool(dispatched.get("player_barrier", false)) and not restricted: return dispatched
+		if not dispatched.ok:
+			if not _region_original_cold_pending(dispatched): return dispatched
+			var waiting: Dictionary = dispatched.duplicate(true)
+			waiting["ok"] = true
+			waiting["complete"] = false
+			waiting["status"] = "REGION_EVENT_PENDING"
+			return waiting
+		if terrain != original or bool(dispatched.get("player_barrier", false)) and not restricted: return dispatched
 	# A world handoff may have legitimately drained this old owner's point.
 	if _region_point_pending.is_empty(): return SiteRuntime.ok("", {"complete": true})
 	_region_point_consuming = true
@@ -9175,6 +9211,91 @@ func _advance_region_original_stages(interval: Dictionary, suppress_melee: bool)
 
 var _region_owner_interval_active := false
 
+## A read-only view of the SAME bound party, including its native reservation/plan graph.
+func _region_gameplay_boundary_location(controller: String, token: String, party: Dictionary, coordinate: Vector2i,
+		event: Dictionary, expected_slot: WeakRef) -> Dictionary:
+	var slot: RegionSaveSlot = site_controller.region_slot if site_controller != null else null
+	if slot == null or expected_slot == null or expected_slot.get_ref() != slot: return SiteRuntime.fail("WRONG_BOUNDARY_SLOT")
+	if controller not in ["player", "npc"] or party.get("controller") != controller or party.get("party_id") != token: return SiteRuntime.fail("INVALID_BOUNDARY_OWNER")
+	if event.get("at") != float(slot.control.logical_game_seconds): return SiteRuntime.fail("STALE_REGION_CONTACT")
+	var requested: Variant = event.get("payload", {}).get("site", [coordinate.x, coordinate.y])
+	if not requested is Array or requested.size() != 2 or requested[0] != coordinate.x or requested[1] != coordinate.y: return SiteRuntime.fail("WRONG_BOUNDARY_SITE")
+	var actual: Dictionary = slot.region_original_party_runtime_proof(token, party)
+	if not actual.ok: return actual
+	var original: TerrainLab = actual.lab
+	var live: Dictionary = party.get("upkeep", {}).get("live", {})
+	var frame: Dictionary = live.get("frame", {})
+	if frame.is_empty(): return SiteRuntime.fail("MISSING_ORIGINAL_BOUNDARY_VIEW", "原完整 body frame 尚未准入；保留原 live-party materializer")
+	if not RegionPartyTravel._frame_pair(frame.get("world_origin")) or not RegionPartyTravel._frame_pair(frame.get("size")) \
+		or frame.get("game_seconds") != float(slot.control.logical_game_seconds) or frame.get("action_seconds") != float(slot.control.fire_clock.action_seconds): return SiteRuntime.fail("STALE_PARTY_FRAME")
+	var geometry: Dictionary = slot.region_live_party_geometry(party, live.get("geometry_proof", {}))
+	if not geometry.ok: return geometry
+	var local_origin: Vector2i = Vector2i(coordinate.x * RegionPartyGrid.SITE_CELLS, -coordinate.y * RegionPartyGrid.SITE_CELLS)
+	var origin: Vector2i = Vector2i(int(frame.world_origin[0]), int(frame.world_origin[1]))
+	var refs: Dictionary = party.content.travel_identity.refs
+	var bodies: Dictionary = RegionPartyTravel._body_records(party.content)
+	var leader: Dictionary = frame.get("people", {}).get(str(int(party.leader_person_id)), {})
+	if not RegionPartyTravel._frame_pair(leader.get("world_cell")) or leader.get("reference") != refs.person.get(str(int(party.leader_person_id))): return SiteRuntime.fail("PARTY_FRAME_IDENTITY")
+	for identity: Variant in bodies:
+		var person: Dictionary = original._original_person_target(int(identity))
+		var row: Dictionary = frame.get("people", {}).get(str(identity), {})
+		if person.is_empty() or not RegionPartyTravel._frame_pair(row.get("world_cell")) or row.get("reference") != refs.person.get(str(identity)) \
+			or origin + (Vector2i(person.owner.cells[int(person.unit)]) if int(person.unit) >= 0 else person.owner.terrain_cell) != Vector2i(int(row.world_cell[0]), int(row.world_cell[1])): return SiteRuntime.fail("PARTY_FRAME_IDENTITY")
+	# Extend the original bounded geometry window, not the bodies. Every world position and paid step stays fixed.
+	if original.terrain.size != Vector2i(int(frame.size[0]), int(frame.size[1])): return SiteRuntime.fail("STALE_PARTY_FRAME")
+	var view_origin: Vector2i = origin.min(local_origin)
+	var view_end: Vector2i = (origin + original.terrain.size).max(local_origin + Vector2i(100, 100))
+	var view_size: Vector2i = view_end - view_origin
+	if view_size.x not in [100, 200] or view_size.y not in [100, 200]: return SiteRuntime.fail("PARTY_FRAME_BOUNDS")
+	var view_frame: Dictionary = frame.duplicate(true)
+	view_frame["world_origin"] = [view_origin.x, view_origin.y]
+	view_frame["size"] = [view_size.x, view_size.y]
+	var navigation: Dictionary = slot._region_party_frame_context(party)
+	if not navigation.ok: return navigation
+	var view_geometry: Dictionary = RegionRoute.party_frame_geometry(slot.source, view_frame, navigation.context)
+	if not view_geometry.ok: return view_geometry
+	var projected_party: Dictionary = RegionPartyTravel.project_party_frame(party, view_frame)
+	if not projected_party.ok: return projected_party
+	projected_party.party.upkeep.live["frame"] = view_frame.duplicate(true)
+	projected_party.party.upkeep.live["geometry_proof"] = view_geometry.geometry_proof.duplicate(true)
+	var projection: Dictionary = projected_party.projection
+	var request: Dictionary = slot.region_party_checkpoint_context(token, "region_barrier", false, {"boundary_view": str(event.get("id", ""))})
+	if not request.ok: return request
+	var captured: Dictionary = original.capture_region_owner_state(request.context)
+	if not captured.ok: return captured
+	var references: Dictionary = original._region_owner_references()
+	var decoded: Dictionary = RegionOwnerSnapshot.validate_for_bind(captured.owner_states.scene,
+		func(key: String, kind: int) -> bool: return references.has(key) and typeof(references[key]) == kind, request.context)
+	if not decoded.ok: return decoded
+	var projected_owner: Dictionary = RegionPartyTravel.project_owner_coordinates(decoded.roots, projection)
+	if not projected_owner.ok: return projected_owner
+	var view_graph: Dictionary = RegionOwnerSnapshot.capture_bind_roots(projected_owner.roots, request.context)
+	if not view_graph.ok: return view_graph
+	var view_owners: Dictionary = {"scene": view_graph.state}
+	if captured.owner_states.has("fire_boundary_receipt"): view_owners["fire_boundary_receipt"] = captured.owner_states.fire_boundary_receipt.duplicate(true)
+	var poses: Dictionary = {}
+	for identity: String in party.content.get("vehicles", {}):
+		var row: Dictionary = frame.get("vehicles", {}).get(identity, {})
+		if not RegionPartyTravel._frame_pair(row.get("world_cell")) or row.get("reference") != refs.vehicle.get(identity): return SiteRuntime.fail("PARTY_FRAME_IDENTITY")
+		var native_vehicle: Dictionary = original.terrain.site.get("vehicles", {}).get(identity, {})
+		if native_vehicle.is_empty() or origin + original.terrain.cell_from_index(int(native_vehicle.cell)) != Vector2i(int(row.world_cell[0]), int(row.world_cell[1])): return SiteRuntime.fail("PARTY_FRAME_IDENTITY")
+		var pose: Dictionary = row.get("pose", {}).duplicate(true)
+		var world_anchor: Array = pose.get("world_anchor", row.world_cell)
+		if not world_anchor is Array or world_anchor.size() != 2: return SiteRuntime.fail("MISSING_ORIGINAL_SHIP_POSE")
+		pose["anchor"] = [world_anchor[0] - local_origin.x, world_anchor[1] - local_origin.y]
+		pose["facing"] = party.content.vehicles[identity].facing.duplicate()
+		for field: String in ["from", "to"]:
+			if not pose.has(field): continue
+			if not RegionPartyTravel._frame_pair(pose[field]): return SiteRuntime.fail("MISSING_ORIGINAL_SHIP_POSE")
+			pose[field] = [int(pose[field][0]) - local_origin.x, int(pose[field][1]) - local_origin.y]
+		poses[identity] = pose
+	var still_current: Dictionary = slot.region_original_party_runtime_proof(token, party)
+	if not still_current.ok or still_current.lab != original or still_current.proof != actual.proof: return SiteRuntime.fail("STALE_BOUNDARY_OWNER")
+	return {"ok": true, "geometry_complete": true, "read_only": true, "entry": Vector2i(int(leader.world_cell[0]), int(leader.world_cell[1])) - local_origin,
+		"vehicle_poses": poses, "source_frame": frame.duplicate(true), "view_frame": view_frame, "geometry_proof": view_geometry.geometry_proof.duplicate(true), "source_geometry_proof": geometry.geometry_proof.duplicate(true),
+		"source_proof": actual.proof.duplicate(true), "projection": projection, "site_offset": local_origin - view_origin, "party_view": {"encoding": "godot_var_v1", "value": Marshalls.raw_to_base64(var_to_bytes(projected_party.party))},
+		"owner_states": view_owners, "reference_types": decoded.reference_types, "context": request.context}
+
 func _wire_region_gameplay_adapters(slot: RegionSaveSlot) -> Dictionary:
 	if slot == null or site_controller == null: return SiteRuntime.fail("NO_REGION_SLOT")
 	slot.region_owner_lab = Callable(self, "_region_gameplay_owner_lab")
@@ -9187,6 +9308,7 @@ func _wire_region_gameplay_adapters(slot: RegionSaveSlot) -> Dictionary:
 	slot.region_original_endpoint_checkpoint = Callable(self, "_region_gameplay_endpoint_checkpoint")
 	slot.region_original_player_materialize = Callable(self, "_region_gameplay_player_materialize")
 	slot.region_contact_active_data = Callable(self, "_region_gameplay_contact_active_data")
+	slot.region_original_boundary_location = Callable(self, "_region_gameplay_boundary_location").bind(weakref(slot))
 	slot.region_party_life_consumer = Callable(self, "_region_gameplay_party_life")
 	slot.region_formula_effect_owners = Callable(self, "_region_gameplay_effect_owners")
 	slot.region_dispatch_intents = Callable(self, "_region_gameplay_dispatch_intents")
@@ -11862,7 +11984,7 @@ func _region_advance_live_party_host(maximum_action_seconds: float) -> Dictionar
 	var current: Dictionary = slot.region_original_party_runtime_proof(token, selected.party)
 	if not current.ok or current.get("lab") != self: return current if not current.ok else SiteRuntime.fail("INVALID_TRAVEL_HOST")
 	# Wire the SAME original host before copying its callback into the request.
-	if not slot.region_owner_lab.is_valid() or not slot.region_original_travel_interval.is_valid() or not slot.region_original_party_progress.is_valid():
+	if not slot.region_owner_lab.is_valid() or not slot.region_original_travel_interval.is_valid() or not slot.region_original_party_progress.is_valid() or not slot.region_original_boundary_location.is_valid():
 		var wired: Dictionary = _wire_region_gameplay_adapters(slot)
 		if not wired.ok: return wired
 	var live_body := str(selected.party.upkeep.get("live", {}).get("upkeep", "")) == "liveBody"
