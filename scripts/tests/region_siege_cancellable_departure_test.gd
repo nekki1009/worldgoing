@@ -176,6 +176,11 @@ func _departure_leave_reopen_reenter() -> bool:
 	if not _check(not _departure_body_moving(person) and idle and not RegionTravelSite._hostile_near(lab, int(person.owner.faction_id), [Vector2i(person.cell)]), "departing selection is actually closed and outside the original hostile guard"): return false
 	var battle_id := str(_phase_battle().id)
 	var stable_player_ref: Dictionary = report.player_intervention.real_player_reference.duplicate(true)
+	# Decision A hands control to the real heir; captain departure owns its full team.
+	var expected: Dictionary = _departure_heir_team(person)
+	var chosen: Dictionary = RegionTravelSite.selected_departure(controller)
+	if not _check(expected.ok and chosen.ok and chosen.people == expected.people and identity == center_heir and not expected.people.has(center_founder), "living heir departure selects exactly its original team and excludes the founder", {"expected": expected, "chosen": chosen.get("people"), "founder": center_founder, "heir": center_heir}): return false
+	var source_census: Dictionary = RegionTravel.census({"content": lab.terrain.site})
 	var asked := RegionTravelSite.request_departure(controller)
 	if not _check(asked.ok and asked.get("pending", false), "public departure request accepts only the actual typed siege source", asked): return false
 	for count: int in range(18000):
@@ -191,7 +196,16 @@ func _departure_leave_reopen_reenter() -> bool:
 	var selected := slot.region_bind_proof(action_owner.terrain)
 	var generation := int(slot._marker.generation)
 	var census := RegionTravel.census(slot.region_travel_party().party)
-	if not _check(census.people.size() == 1 and not _phase_battle().attackers.has(identity) and not _phase_battle().defenders.has(identity), "true player closure has one owner and is not inserted into the original NPC roster", census): return false
+	var party_roles: Dictionary = _departure_saved_team_roles(slot.region_travel_party().party.content)
+	var remaining_census: Dictionary = RegionTravel.census({"content": action_owner.terrain.site})
+	var remaining_people: Array[int] = _departure_native_people(action_owner)
+	if not _check(census.people == expected.people and party_roles == expected.roles and not census.people.has(center_founder) and remaining_people.count(center_founder) == 1, "true heir closure preserves its exact team identities and roles while the living founder has one cold owner", {"expected": expected, "party": census, "roles": party_roles, "remaining": remaining_people}): return false
+	for traveller: int in expected.people:
+		if not _check(not remaining_people.has(traveller) and not _phase_battle().attackers.has(traveller) and not _phase_battle().defenders.has(traveller), "every travelling team member is disjoint from the remaining original bodies and NPC siege rosters", traveller): return false
+	for field: String in ["people", "items", "vehicles"]:
+		var joined: Array = census[field].duplicate()
+		joined.append_array(remaining_census[field]); joined.sort()
+		if not _check(joined == source_census[field], "departure partitions the complete original census without duplicate, foreign or missing " + field, {"before": source_census[field], "after": joined}): return false
 	var panel := PhasePanel.new()
 	root.add_child(panel)
 	panel.setup(panel)
@@ -208,6 +222,8 @@ func _departure_leave_reopen_reenter() -> bool:
 	action_owner = restored.lab
 	_freeze(action_owner)
 	if not _check(generation == int(slot._marker.generation) and facts == _action_facts() and graph == _action_graph() and selected == slot.region_bind_proof(action_owner.terrain) and clock == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "actual positive cold reopen preserves every original root, paid partial, watermark and selected source bytes"): return false
+	var reopened_party: Dictionary = slot.region_travel_party()
+	if not _check(reopened_party.ok and RegionTravel.census(reopened_party.party) == census and _departure_saved_team_roles(reopened_party.party.content) == expected.roles and _departure_native_people(action_owner) == remaining_people, "positive reopen preserves the exact party census, team roles and disjoint original cold roster", reopened_party.get("code")): return false
 	departure_evidence.departure = {"battle_id": battle_id, "generation": generation, "selected": selected, "clock": clock, "facts": facts, "graph_sha256": SiegeCheckpoint.state_hash(graph)}
 	# A true public route to the visited neighbouring Site and back exercises real
 	# journey bodies, ration costs, original cold elapsed and selected re-entry.
@@ -712,3 +728,41 @@ func _departure_army_row_partial_and_cancel(team: TerrainArmy, person: Dictionar
 	if not _check(team.moving_to[row_index] == moving_to and float(team.move_progress[row_index]) > 0.0 and float(team.move_progress[row_index]) < 1.0 and not _action_vehicle().action.is_empty(), "cancel returns while the original selected row and unrelated NPC siege are still genuinely paid partial"): return false
 	departure_evidence["captain_row_cancel"] = {"nonce": nonce, "person_id": row_id, "paid_before": paid_before, "paid_after": action_paid, "hold_point": hold_point, "row_before_cancel": row_before, "captain_before_cancel": actor_before}
 	return true
+
+## Read the actual living heir's native team BEFORE the departure request.
+func _departure_heir_team(person: Dictionary) -> Dictionary:
+	if int(person.unit) < 0 or not person.owner is TerrainArmy: return {"ok": false}
+	var team: TerrainArmy = person.owner
+	if not team.combat_enabled or team.formal_commander != int(person.unit): return {"ok": false}
+	var people: Array[int] = []
+	var rows: Dictionary = {}
+	for index: int in team.combat_units.size():
+		var identity: int = team.combat_identity(index)
+		if team.member_gone(index) or identity <= 0 or people.has(identity): return {"ok": false}
+		people.append(identity)
+		rows[str(identity)] = {"military_role": str(team.combat_hot_get(index, &"military_role", "")), "member": bool(team.combat_hot_get(index, &"member", true))}
+	people.sort()
+	var roles: Dictionary = {str(team.team_id): {"rows": rows, "formal": team.formal_commander, "current": team.current_commander}}
+	return {"ok": true, "people": people, "roles": roles}
+
+
+func _departure_saved_team_roles(content: Dictionary) -> Dictionary:
+	var roles: Dictionary = {}
+	for team: Dictionary in content.get("armies", []):
+		var rows: Dictionary = {}
+		for row: Dictionary in team.get("units", []):
+			rows[str(int(row.person_id))] = {"military_role": str(row.military_role), "member": bool(row.member)}
+		roles[str(int(team.team_id))] = {"rows": rows, "formal": int(team.formal_commander), "current": int(team.current_commander)}
+	return roles
+
+
+func _departure_native_people(original: TerrainLab) -> Array[int]:
+	var people: Array[int] = []
+	for actor: TerrainTestCharacter in original.combat_actors:
+		if original.actor_present(actor): people.append(actor.person_id)
+	for team: TerrainArmy in original.combat_armies:
+		if not team.combat_enabled: continue
+		for index: int in team.combat_units.size():
+			if not team.member_gone(index): people.append(team.combat_identity(index))
+	people.sort()
+	return people
