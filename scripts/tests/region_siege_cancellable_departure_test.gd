@@ -99,6 +99,12 @@ func _departure_walk_clear() -> bool:
 		for direction: Vector2i in [Vector2i.UP, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT]:
 			var next := cell + direction
 			if not lab.terrain.contains(next) or not lab.terrain.is_walkable(next): continue
+			if int(person.unit) >= 0:
+				var own: TerrainArmy = person.owner
+				var occupant: int = int(own._cell_owners.get(next, -1))
+				var reservation: int = int(own._reserved_cells.get(next, -1))
+				if not _check(occupant != int(person.unit) and reservation != int(person.unit), "candidate edge is not a stale self cell/reservation", {"cell": cell, "next": next, "unit": person.unit, "occupant": occupant, "reservation": reservation}): return false
+				if own.blocks_person_cell(next): continue
 			var nearest := INF
 			for other: TerrainTestCharacter in lab.combat_actors:
 				if not lab.actor_present(other) or other.faction_id == faction or not other.can_act(): continue

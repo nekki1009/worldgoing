@@ -201,13 +201,24 @@ func _player_public_fault() -> bool:
 		return _check(attack.ok, "existing actual defender captain orders real original melee after the old witness was queued", attack)
 	return true
 
+## This callback owns a pending P0 point; only an original barrier graph is admitted here.
+func _player_contact_barrier_graphs(event: Dictionary) -> Dictionary:
+	var graphs: Dictionary = {}
+	for original: TerrainLab in [lab, action_owner, nation_goal]:
+		var context: Dictionary = slot.region_checkpoint_context(original.terrain, "region_barrier", "player_contact_observer", false, {"accepted_contact": str(event.id)})
+		if not _check(context.ok, "original pending contact observer obtains its truthful barrier context", context): return {}
+		var captured: Dictionary = original.capture_region_owner_state(context.context)
+		if not _check(captured.ok, "original pending contact observer captures the full barrier graph", captured.get("code")): return {}
+		graphs[str(original.terrain.site.id)] = captured.owner_states.scene.duplicate(true)
+	return graphs
+
 func _player_observe_original_consumer(event: Dictionary) -> Dictionary:
 	if str(event.id) != str(player_contact_event.id): return player_contact_original_consumer.call(event)
 	var clock := [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence]
 	var contact: Dictionary = event.payload.contact_receipt
 	var witness: Dictionary = contact.witness
 	var body: Dictionary = action_owner._original_person_target(int(witness.person_id))
-	var graph_before := var_to_bytes(_nation_graphs())
+	var graph_before: PackedByteArray = var_to_bytes(_player_contact_barrier_graphs(event))
 	var validated: Dictionary = slot._region_validate_player_siege_contact(event)
 	if not _check(float(event.at) == float(slot.control.logical_game_seconds) and contact.kind == "siege_channel" and witness.party_token == player_contact_token and witness.party_source is Dictionary and not witness.party_source.is_empty() and witness.navigation_revision >= 0 and witness.source_generation <= int(slot._marker.generation) and witness.runtime_revision <= int(slot.region_registry().revision), "true common producer clips at the original first event with real source/body/navigation witness"): return {"ok": false, "code": "PLAYER_CONTACT_WITNESS"}
 	if not _check(validated.ok and bool(validated.valid) == (player_witness_case == "positive"), "original consumer rechecks current physical body, route and siege channel rather than trusting its old witness", validated): return {"ok": false, "code": "PLAYER_CONTACT_VALIDATION"}
@@ -220,7 +231,7 @@ func _player_observe_original_consumer(event: Dictionary) -> Dictionary:
 		if player_witness_case == "moved" and not _check(not body.is_empty() and body.cell != Vector2i(int(witness.person_cell[0]), int(witness.person_cell[1])), "actual paid public MOVE changed the old witness body cell"): return {"ok": false}
 		if player_witness_case == "dead" and not _check(body.is_empty() or float(body.hp) <= 0.0, "actual original accepted melee caused death without HP or person-state fabrication"): return {"ok": false}
 		if player_witness_case == "ended" and not _check(slot.region_registry().battles[str(witness.battle_id)].phase == "finished" and int(action_owner.terrain.site.settlement.owner_faction) == 2, "actual paid original center capture ended its siege channel"): return {"ok": false}
-		if not _check(result.ok and result.receipt.complete and result.receipt.skipped_contact and not slot.has_meta(&"region_player_materialized") and graph_before == var_to_bytes(_nation_graphs()), "original stale moved/dead/ended witness consumes a truthful no-effect endpoint and leaves all body/work/stock graphs unchanged", result): return {"ok": false}
+		if not _check(result.ok and result.receipt.complete and result.receipt.skipped_contact and not slot.has_meta(&"region_player_materialized") and graph_before == var_to_bytes(_player_contact_barrier_graphs(event)), "original stale moved/dead/ended witness consumes a truthful no-effect endpoint and leaves all body/work/stock graphs unchanged", result): return {"ok": false}
 	if not _check(clock == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "original contact consumer owns zero extra time"): return {"ok": false}
 	player_contact_results.append({"event": event.duplicate(true), "validated": validated.duplicate(true), "result": result.duplicate(true), "clock": clock})
 	return result
