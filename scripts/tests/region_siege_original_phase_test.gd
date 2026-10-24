@@ -425,11 +425,25 @@ func _phase_player_intervene() -> bool:
 	if not _check(endpoint_due.ok, "same actual queued endpoint is consumed by the existing public zero-time P0 owner", endpoint_due): return false
 	current = slot.region_travel_status()
 	if not _check(current.ok, "same accepted original endpoint remains readable after its true consumer", current): return false
-	var endpoint_body: Dictionary = action_owner._original_person_target(action_owner.controlled_person_id())
-	var materialized_cell: Vector2i = endpoint_body.get("cell", TerrainArmy.INVALID_CELL)
-	if not _check(slot.has_meta(&"region_player_materialized") and not endpoint_body.is_empty()
-		and action_owner.terrain.contains(materialized_cell) and action_owner.terrain.is_walkable(materialized_cell)
-		and not SiteSettlement.capture_zone(action_owner.terrain).has(materialized_cell), "existing original materializer has placed the true player body at its incoming ground entry before visible bind", endpoint_body.get("cell")): return false
+	var endpoint_materialized: bool = slot.has_meta(&"region_player_materialized")
+	var endpoint_body: Dictionary = {}
+	var materialized_cell: Vector2i = TerrainArmy.INVALID_CELL
+	if endpoint_materialized:
+		var active_owner: Dictionary = lab._region_gameplay_active_player_lab()
+		if not _check(active_owner.ok and active_owner.get("lab") is TerrainLab, "materialized endpoint resolves its current complete original Site owner", active_owner): return false
+		action_owner = active_owner["lab"]
+		endpoint_body = _phase_reference_body(action_owner, player_reference)
+		materialized_cell = endpoint_body.get("cell", TerrainArmy.INVALID_CELL)
+		if not _check(not endpoint_body.is_empty() and action_owner.terrain.contains(materialized_cell) and action_owner.terrain.is_walkable(materialized_cell)
+			and not SiteSettlement.capture_zone(action_owner.terrain).has(materialized_cell), "existing original materializer has placed the true player body at its incoming ground entry before visible bind", endpoint_body.get("cell")): return false
+	else:
+		# Own final arrival is materialized by the original world-open, never by a cold owner.
+		var own_arrival_complete: bool = false
+		for event: Dictionary in slot.region_registry().events:
+			if event.get("kind") == "player_arrival" and event.get("status") == "complete" and event.get("payload", {}).get("player_token") == player_token \
+				and float(event.get("at", -1.0)) == float(slot.control.logical_game_seconds): own_arrival_complete = true
+		if not _check(current.get("pending", false) and current.get("arrived", false) and str(slot.control.active_site_id).is_empty() and own_arrival_complete,
+			"actual own-final-arrival consumer completed and deferred the sole player materialization to world-open", current): return false
 	var event_clock := {"game": float(slot.control.logical_game_seconds), "action": float(slot.control.fire_clock.action_seconds), "sequence": int(slot.control.fire_clock.sequence)}
 	var checkpoint: Dictionary = slot.checkpoint_region_travel() if current.get("pending", false) else action_owner._region_gameplay_endpoint_checkpoint({"phase_observer": true})
 	if not _check(checkpoint.ok, "original common publisher stores the real player endpoint and paid siege graph together", checkpoint): return false
@@ -458,13 +472,27 @@ func _phase_player_intervene() -> bool:
 	var scope: Dictionary = PhaseBattle.scoped_controlled_person(visible)
 	var controlled := visible.controlled_person_id()
 	if not _check(scope.ok and int(scope.person_id) == controlled and not _phase_battle().attackers.has(controlled) and not _phase_battle().defenders.has(controlled), "same real player scope stays excluded from formula roster after positive P0 bind", scope): return false
-	var actual_body: Dictionary = visible._original_person_target(controlled)
+	var actual_body: Dictionary = _phase_reference_body(visible, player_reference)
+	if not endpoint_materialized:
+		endpoint_body = actual_body
+		materialized_cell = endpoint_body.get("cell", TerrainArmy.INVALID_CELL)
+		if not _check(not endpoint_body.is_empty() and visible.terrain.contains(materialized_cell) and visible.terrain.is_walkable(materialized_cell)
+			and not SiteSettlement.capture_zone(visible.terrain).has(materialized_cell), "original world-open materializer places the same travelling player at its genuine incoming ground entry", endpoint_body.get("cell")): return false
 	if not _check(not actual_body.is_empty() and actual_body.cell == materialized_cell and visible.terrain.contains(actual_body.cell)
 		and visible.terrain.is_walkable(actual_body.cell) and not SiteSettlement.capture_zone(visible.terrain).has(actual_body.cell), "actual visible body retains its selected original materializer entry outside the center zone", actual_body.get("cell")): return false
 	report["player_intervention"] = {"phase": phase_observe, "real_player_reference": player_reference, "route_steps": route.steps, "source_battle": source_battle,
 		"selected_battle": _phase_battle().duplicate(true), "actual_controlled": controlled, "actual_cell": actual_body.cell, "original_materialized_entry": materialized_cell, "clocks": event_clock,
-		"actual_visible_bind": visible.region_bind_receipt(visible.terrain), "original_endpoint_consumer": endpoint_due, "event_consumer": consumed}
+		"actual_visible_bind": visible.region_bind_receipt(visible.terrain), "original_endpoint_consumer": endpoint_due, "event_consumer": consumed, "endpoint_materialized_before_world_open": endpoint_materialized}
 	return true
+
+func _phase_reference_body(owner: TerrainLab, reference: Dictionary) -> Dictionary:
+	var people: Dictionary = owner.terrain.site.get("travel_identity", {}).get("refs", {}).get("person", {})
+	var matches: Array[int] = []
+	for identity: String in people:
+		if people[identity] == reference: matches.append(int(identity))
+	if not _check(not reference.is_empty() and matches.size() == 1 and owner.controlled_person_id() == matches[0],
+		"selected original body is the unique travelling player reference and current controller", {"reference": reference, "matches": matches, "controlled": owner.controlled_person_id()}): return {}
+	return owner._original_person_target(matches[0])
 
 func _finish(ok: bool = true, message: String = "") -> void:
 	if finished: return
