@@ -9256,6 +9256,16 @@ static func _saved_ship_deck_position(body: Dictionary, kind: String) -> Vector2
 	var point := Vector2(float(saved[0]), float(saved[1]))
 	return point if ShipDefinitions.deck_contains(kind, point) else Vector2.INF
 
+## Saved JSON carries whole person ids and cells as floats; compare them in the integer domain.
+static func _saved_person_in(values: Array, identity: int) -> bool:
+	for candidate_id: Variant in values:
+		if _combat_saved_integer(candidate_id, 1, 2147483647) and int(candidate_id) == identity: return true
+	return false
+
+static func _saved_cell_is(value: Variant, cell: Vector2i) -> bool:
+	return value is Array and value.size() == 2 and _combat_saved_integer(value[0], -2147483648, 2147483647) and _combat_saved_integer(value[1], -2147483648, 2147483647) \
+		and int(value[0]) == cell.x and int(value[1]) == cell.y
+
 static func valid_saved_siege_compound(snapshot: Dictionary, map: TerrainData, vehicle: Dictionary) -> bool:
 	# A slow row borrows only its original whole-crew transaction, never a free duration.
 	if map == null or not _combat_saved_integer(snapshot.get("team_id"), 1, 999999) or not _combat_saved_integer(snapshot.get("formation_persistent_serial"), 0, 100000000): return false
@@ -9297,14 +9307,14 @@ static func valid_saved_siege_compound(snapshot: Dictionary, map: TerrainData, v
 		if not member is Dictionary or not member.get("slot") is String or not _combat_saved_integer(member.get("person_id"), 1, 2147483647): return false
 		var identity: int = int(member.person_id)
 		if not member.slot.is_valid_int() or str(int(member.slot)) != member.slot or int(member.slot) < 0 or int(member.slot) >= int(definition.standard_crew): return false
-		if not _combat_saved_integer(slots.get(member.slot), identity, identity) or seen.has(identity) or not rows.has(identity) or not batch.has(identity): return false
-		if deployment.get("member_slot_map", {}).has(str(identity)) or deployment.get("member_slot_map", {}).has(identity) or deployment.get("slot_lease_owner_map", {}).values().has(identity): return false
+		if not _combat_saved_integer(slots.get(member.slot), identity, identity) or seen.has(identity) or not rows.has(identity) or not _saved_person_in(batch, identity): return false
+		if deployment.get("member_slot_map", {}).has(str(identity)) or deployment.get("member_slot_map", {}).has(identity) or _saved_person_in(deployment.get("slot_lease_owner_map", {}).values(), identity): return false
 		if not _combat_saved_integer(member.get("from"), 0, map.size.x * map.size.y - 1) or not _combat_saved_integer(member.get("to"), 0, map.size.x * map.size.y - 1): return false
 		var row: Dictionary = rows[identity]
 		if not TerrainTestCharacter._saved_cell(row.get("cell"), map) or not TerrainTestCharacter._saved_cell(row.get("destination"), map): return false
 		var source: Vector2i = map.cell_from_index(int(member.from))
 		var destination: Vector2i = map.cell_from_index(int(member.to))
-		if source != SiteRuntime.siege_crew_cell(map, vehicle, member.slot) or destination - source != shift or row.cell != [source.x, source.y] or row.destination != [destination.x, destination.y]: return false
+		if source != SiteRuntime.siege_crew_cell(map, vehicle, member.slot) or destination - source != shift or not _saved_cell_is(row.cell, source) or not _saved_cell_is(row.destination, destination): return false
 		if row.get("move_curve") != "quad_out" or not TerrainTestCharacter._saved_number(row.get("duration"), 0.000001, 1000000.0) or float(row.duration) != float(move.duration): return false
 		if not TerrainTestCharacter._saved_number(row.get("progress"), 0.0, 1.0): return false
 		if progress >= 0.0 and float(row.progress) != progress: return false
@@ -9509,7 +9519,7 @@ static func valid_combat_state(snapshot: Variant, map: TerrainData, actor: Dicti
 		var duration_compound_seen: bool = false
 		if state.get("vehicles") is Dictionary:
 			for saved_vehicle: Variant in state.vehicles.values():
-				if not saved_vehicle is Dictionary or not saved_vehicle.get("move") is Dictionary or saved_vehicle.move.is_empty() or not saved_vehicle.get("crew_slots") is Dictionary or not saved_vehicle.crew_slots.values().has(int(unit.person_id)): continue
+				if not saved_vehicle is Dictionary or not saved_vehicle.get("move") is Dictionary or saved_vehicle.move.is_empty() or not saved_vehicle.get("crew_slots") is Dictionary or not _saved_person_in(saved_vehicle.crew_slots.values(), int(unit.person_id)): continue
 				if duration_compound_seen: return false
 				duration_compound_seen = true
 				valid_duration = curve == "quad_out" and valid_saved_siege_compound(snapshot, map, saved_vehicle)
