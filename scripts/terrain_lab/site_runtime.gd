@@ -390,7 +390,7 @@ static func seed_person_equipment(data: TerrainData, holder: Dictionary, person_
 		assert(created.ok) # Complete preflight above; no callbacks/yields in commit.
 		var slot := str(definitions[key].slot)
 		if appearance.get("equipment_dyes", {}).has(slot):
-			data.site.item_records[created.item_id].dye_color = appearance.equipment_dyes[slot]
+			data.site.item_records[created.item_id]["dye_color"] = appearance.equipment_dyes[slot]
 	return ok("原有配裝已登記為實物")
 
 # Read-only projection. Body/face/hair remain the original person's appearance;
