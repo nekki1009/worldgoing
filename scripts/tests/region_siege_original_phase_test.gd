@@ -22,7 +22,7 @@ var phase_flight_id := ""
 var phase_flight_snapshot: Dictionary = {}
 
 func _initialize() -> void:
-	deadline = Time.get_ticks_msec() + 360000
+	deadline = Time.get_ticks_msec() + 540000 # Nekki 2026-10-24: in-file 540 s, outer 600 s.
 	out = "res://.godot-temp/region_siege_original_phase/run_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
 	fixture_land_condition_rule = "terrain_mapped_potential_v1" # Original founding needs mapped land.
 	last_world_exists = FileAccess.file_exists(Entry.LAST_WORLD)
@@ -37,7 +37,7 @@ func _initialize() -> void:
 	_run.call_deferred()
 
 func _process(_delta: float) -> bool:
-	if not finished and Time.get_ticks_msec() > deadline: _finish(false, "360-second original siege phase deadline")
+	if not finished and Time.get_ticks_msec() > deadline: _finish(false, "original siege phase deadline")
 	return false
 
 func _run() -> void:
