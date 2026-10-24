@@ -1762,8 +1762,119 @@ func region_registry_view() -> Dictionary:
 	if source == null and not control.has("region_gameplay"): return {}
 	return region_registry()
 
+## The first admitted endpoint is a typed immutable capsule, not a renewed observation.
+func _region_decode_accepted_siege_contact(event: Dictionary) -> Dictionary:
+	var checked: Dictionary = GameplayClock.validate_event(event)
+	if not checked.ok or event.get("kind") != "player_encounter" or event.get("player") != true: return fail("INVALID_ACCEPTED_SIEGE_CONTACT")
+	var payload: Dictionary = event.get("payload", {})
+	var encoded: Variant = payload.get("accepted_siege_contact")
+	if not encoded is String or encoded.is_empty() or encoded.length() > 131072: return fail("INVALID_ACCEPTED_SIEGE_CONTACT")
+	var origin: Variant = bytes_to_var(Marshalls.base64_to_raw(encoded))
+	if not origin is Dictionary or origin.get("version") != 1 or not origin.get("payload") is Dictionary or not origin.get("pin") is Dictionary: return fail("INVALID_ACCEPTED_SIEGE_CONTACT")
+	for field: String in ["id", "kind", "at", "owner", "player"]:
+		if var_to_bytes(origin.get(field)) != var_to_bytes(event.get(field)): return fail("REGION_EVENT_CONFLICT")
+	var content: Dictionary = payload.duplicate(true)
+	content.erase("accepted_siege_contact")
+	if RegionBattle._siege_hash(content) != RegionBattle._siege_hash(origin.payload): return fail("REGION_EVENT_CONFLICT")
+	var contact: Dictionary = content.get("contact_receipt", {})
+	var witness: Dictionary = contact.get("witness", {})
+	if contact.get("kind") != "siege_channel" or contact.get("at") != event.at or contact.get("first", {}).get("at") != event.at or contact.get("second", {}).get("at") != event.at \
+		or witness.get("battle_id") != content.get("battle_id") or witness.get("party_token") != content.get("player_token") \
+		or not witness.get("party_source") is Dictionary: return fail("INVALID_ACCEPTED_SIEGE_CONTACT")
+	return {"ok": true, "origin": origin, "payload": content, "witness": witness}
+
+func _region_accepted_siege_lineage(event: Dictionary, status: Dictionary, party: Dictionary, actual_proof: Dictionary) -> Dictionary:
+	var decoded: Dictionary = _region_decode_accepted_siege_contact(event)
+	if not decoded.ok: return decoded
+	var origin: Dictionary = decoded.origin
+	var token: String = str(decoded.payload.player_token)
+	var proof: Dictionary = decoded.witness.party_source
+	var journey: Dictionary = status.get("journey", {})
+	if not _same_pin(origin.pin, pin) or status.get("token") != token or party.get("party_id") != token \
+		or origin.get("plan_path") != journey.get("plan_path") or origin.get("plan_sha256") != journey.get("plan_sha256") \
+		or str(origin.get("plan_path", "")).is_empty(): return fail("ACCEPTED_SIEGE_ROUTE_CHANGED")
+	for field: String in ["token", "owner", "controller", "phase"]:
+		if proof.get(field) != actual_proof.get(field): return fail("ACCEPTED_SIEGE_SOURCE_CHANGED")
+	if proof.get("token") != token or proof.get("owner") != "travel:" + token or proof.get("controller") != "player" \
+		or decoded.witness.get("source_generation") != proof.get("generation") or decoded.witness.get("runtime_revision") != proof.get("revision") \
+		or decoded.witness.get("game_seconds") != proof.get("game_seconds") or decoded.witness.get("action_seconds") != proof.get("action_seconds"): return fail("ACCEPTED_SIEGE_SOURCE_CHANGED")
+	for field: String in ["generation", "revision", "game_seconds", "action_seconds"]:
+		if not proof.get(field) is int and not proof.get(field) is float: return fail("ACCEPTED_SIEGE_SOURCE_CHANGED")
+		if not actual_proof.get(field) is int and not actual_proof.get(field) is float: return fail("ACCEPTED_SIEGE_SOURCE_CHANGED")
+		if proof[field] > actual_proof[field]: return fail("ACCEPTED_SIEGE_SOURCE_CHANGED")
+	var historical: Dictionary = _region_life_party_document(token, str(proof.get("path", "")), str(proof.get("sha256", "")))
+	if not historical.ok: return historical
+	var reference: Dictionary = party.content.get("travel_identity", {}).get("refs", {}).get("person", {}).get(str(int(party.leader_person_id)), {})
+	if reference.is_empty() or reference != origin.get("leader_reference") or historical.party.get("controller") != "player" \
+		or _region_life_reference_id(historical.party.content.travel_identity, reference) < 0: return fail("ACCEPTED_SIEGE_SOURCE_CHANGED")
+	return {"ok": true, "origin": origin}
+
+func _region_stamp_siege_contact(identity: String, at: float, owner: String, payload: Dictionary) -> Dictionary:
+	var token: String = str(payload.get("player_token", ""))
+	var status: Dictionary = region_travel_status()
+	var selected: Dictionary = region_travel_party()
+	if not status.ok or not selected.ok or not status.get("pending", false) or status.get("token") != token: return fail("INVALID_ORIGINAL_PARTY_PROOF")
+	var actual: Dictionary = region_original_party_runtime_proof(token, selected.party)
+	if not actual.ok: return actual
+	var contact: Dictionary = payload.get("contact_receipt", {})
+	var witness: Dictionary = contact.get("witness", {})
+	if identity != "siege:%s:player:%s:%.9f" % [str(payload.get("battle_id", "")), token, at] or contact.get("at") != at \
+		or contact.get("first", {}).get("at") != at or contact.get("second", {}).get("at") != at or witness.get("legal_ground_melee") != true \
+		or contact.get("first", {}).get("position", {}).get("site") != payload.get("site") or contact.get("second", {}).get("position", {}).get("site") != payload.get("site") \
+		or contact.get("first", {}).get("position", {}).get("cell") != witness.get("person_cell") or contact.get("second", {}).get("position", {}).get("cell") != witness.get("entry"):
+		return fail("INVALID_SIEGE_CONTACT")
+
+	if witness.get("party_token") != token or witness.get("battle_id") != payload.get("battle_id") \
+		or RegionBattle._siege_hash(witness.get("party_source", {})) != RegionBattle._siege_hash(actual.proof) \
+		or witness.get("source_generation") != int(_marker.generation) or witness.get("runtime_revision") != int(region_registry().revision) \
+		or witness.get("game_seconds") != float(control.logical_game_seconds) or witness.get("action_seconds") != float(control.fire_clock.action_seconds): return fail("INVALID_ORIGINAL_PARTY_PROOF")
+	var battle: Dictionary = region_registry().battles.get(str(payload.get("battle_id", "")), {})
+	var original: TerrainLab = _region_original_labs.get(owner)
+	if battle.get("kind") != "siege" or battle.get("phase") == "finished" or battle.get("site_id") != owner or not is_instance_valid(original) or _region_bound_original_lab(original.terrain) != original: return fail("COMMITTED_UNBOUND")
+	var person: Dictionary = original.site_controller.person_actions._person(int(witness.get("person_id", -1)), false)
+	var traveller: Dictionary = actual.lab.site_controller.person_actions._person(int(selected.party.leader_person_id), false)
+	if person.is_empty() or traveller.is_empty() or int(person.faction) == int(traveller.faction) or not SiteSettlement._fit(person) or bool(person.moving) \
+		or not (battle.attackers + battle.defenders).has(int(witness.get("person_id", -1))) or SiteSettlement._role(person) == "civilian" \
+		or original.site_controller.vehicles.is_siege_crew(int(witness.get("person_id", -1))): return fail("INVALID_SIEGE_CONTACT")
+	if witness.get("person_cell") != [person.cell.x, person.cell.y] or not witness.get("entry") is Array or witness.entry.size() != 2 \
+		or witness.get("navigation_revision") != int(original.terrain.navigation_revision): return fail("INVALID_SIEGE_CONTACT")
+	var entry: Vector2i = Vector2i(int(witness.entry[0]), int(witness.entry[1]))
+	var route_index: Variant = contact.get("second", {}).get("position", {}).get("step_index")
+	if not GameplayClock.whole(route_index, 0) or int(route_index) >= status.plan.get("steps", []).size(): return fail("INVALID_SIEGE_CONTACT")
+	var step: Dictionary = status.plan.steps[int(route_index)]
+	if payload.get("site") != step.get("site") or Grid.site_id(str(pin.atlas_id), Vector2i(int(step.site[0]), int(step.site[1]))) != owner: return fail("INVALID_SIEGE_CONTACT")
+	var route_entry: Vector2i = RegionRoute.entry_cell(step)
+	if route_entry.x < 0 and owner == str(selected.party.get("origin_site_id", "")):
+		var body: Dictionary = RegionTravel._body_records(selected.party.content).get(int(selected.party.leader_person_id), {})
+		if body.get("cell") is Array and body.cell.size() == 2: route_entry = Vector2i(int(body.cell[0]), int(body.cell[1]))
+	if route_entry != entry: return fail("INVALID_SIEGE_CONTACT")
+	var gap: Vector2i = entry - Vector2i(person.cell)
+	var ready: bool = person.owner.exchange_ready(int(person.unit)) if person.owner is TerrainArmy else person.owner.exchange_ready()
+	if not ready or absi(gap.x) + absi(gap.y) != 1 or not original.terrain.can_attack_across(person.cell, entry) \
+		or original.site_controller.vehicles.blocks_person_step(int(witness.person_id), person.cell, person.cell, entry, entry): return fail("INVALID_SIEGE_CONTACT")
+	var reference: Dictionary = selected.party.content.travel_identity.refs.person.get(str(int(selected.party.leader_person_id)), {})
+	if reference.is_empty(): return fail("INVALID_ORIGINAL_PARTY_PROOF")
+	var origin: Dictionary = {"version": 1, "id": identity, "kind": "player_encounter", "at": at, "owner": owner, "player": true,
+		"payload": payload.duplicate(true), "pin": pin.duplicate(true), "plan_path": str(status.journey.plan_path), "plan_sha256": str(status.journey.plan_sha256),
+		"leader_reference": reference.duplicate(true), "basis": {"world": float(control.logical_game_seconds), "action": float(control.fire_clock.action_seconds), "distance": selected.party.upkeep.get("distance", 0.0), "route_node": selected.party.upkeep.get("route_node", {}).duplicate(true), "accepted_at": at}}
+	var stamped: Dictionary = payload.duplicate(true)
+	stamped["accepted_siege_contact"] = Marshalls.raw_to_base64(var_to_bytes(origin))
+	return {"ok": true, "payload": stamped}
+
 func queue_region_event(identity: String, kind: String, at: float, owner: String, payload: Dictionary = {}, player: bool = false) -> Dictionary:
 	if at < float(control.logical_game_seconds) - 0.00000001: return fail("REGION_EVENT", "新事件不能倒填已完成區間")
+	if kind == "player_encounter" and player and payload.get("contact_receipt", {}).get("kind") == "siege_channel" and payload.has("player_token"):
+		var prior: Dictionary = {}
+		for event: Dictionary in region_registry().events:
+			if event.id == identity: prior = event; break
+		if payload.has("accepted_siege_contact"):
+			if prior.is_empty(): return fail("UNADMITTED_PLAYER_CONTACT")
+			var decoded: Dictionary = _region_decode_accepted_siege_contact(prior)
+			if not decoded.ok: return decoded
+		elif prior.is_empty():
+			var stamped: Dictionary = _region_stamp_siege_contact(identity, at, owner, payload)
+			if not stamped.ok: return stamped
+			payload = stamped.payload
 	return GameplayClock.queue_event(region_registry(), identity, kind, at, owner, payload, player)
 
 func pending_region_events() -> Array[Dictionary]:
@@ -4173,7 +4284,12 @@ func queue_region_gameplay_endpoints(unclipped_game_end: float, interval: Dictio
 	var siege_contact: Dictionary = _region_first_player_siege_contact(unclipped_game_end, interval)
 	if not siege_contact.ok: return siege_contact
 	if siege_contact.get("contact", false):
-		var contact_event: Dictionary = queue_region_event("siege:%s:player:%s:%.9f" % [str(siege_contact.battle_id), str(region_travel_journey().token), float(siege_contact.at)], "player_encounter", float(siege_contact.at), str(siege_contact.site_id), {"player_token": str(region_travel_journey().token), "battle_id": str(siege_contact.battle_id), "site": siege_contact.site.duplicate(), "component": int(siege_contact.component), "contact_receipt": siege_contact.contact_receipt.duplicate(true)}, true)
+		var contact_event: Dictionary
+		if siege_contact.has("accepted_event"):
+			var accepted: Dictionary = siege_contact.accepted_event
+			contact_event = queue_region_event(str(accepted.id), str(accepted.kind), float(accepted.at), str(accepted.owner), accepted.payload, true)
+		else:
+			contact_event = queue_region_event("siege:%s:player:%s:%.9f" % [str(siege_contact.battle_id), str(region_travel_journey().token), float(siege_contact.at)], "player_encounter", float(siege_contact.at), str(siege_contact.site_id), {"player_token": str(region_travel_journey().token), "battle_id": str(siege_contact.battle_id), "site": siege_contact.site.duplicate(), "component": int(siege_contact.component), "contact_receipt": siege_contact.contact_receipt.duplicate(true)}, true)
 		if not contact_event.ok: return contact_event
 	for id: String in registry.battles:
 		var battle: Dictionary = registry.battles[id]
@@ -5333,10 +5449,10 @@ func _region_contact_position(party: Dictionary, plan: Dictionary, route_positio
 				break
 	if label < 0: return fail("STALE_ROUTE", "原接觸位置已無合法導航 component")
 	var result: Dictionary = route_position.duplicate(true)
-	result.component = label
-	result.route_component = int(route_position.get("component", -1))
-	result.mode = mode
-	result.cell = [cell.x, cell.y]
+	result["component"] = label
+	result["route_component"] = int(route_position.get("component", -1))
+	result["mode"] = mode
+	result["cell"] = [cell.x, cell.y]
 	return {"ok": true, "position": result}
 
 
@@ -10678,6 +10794,15 @@ func _region_first_player_siege_contact(to: float, interval: Dictionary = {}) ->
 	var raw_proof: Variant = call("region_original_party_runtime_proof", str(status.token), party)
 	if not raw_proof is Dictionary or not raw_proof.get("ok", false) or not raw_proof.get("lab") is TerrainLab:
 		return raw_proof if raw_proof is Dictionary else fail("INVALID_ORIGINAL_PARTY_PROOF")
+	for accepted: Dictionary in region_registry().events:
+		if accepted.get("status") != "pending" or accepted.get("kind") != "player_encounter" or accepted.get("payload", {}).get("player_token") != str(status.token) 			or accepted.get("payload", {}).get("contact_receipt", {}).get("kind") != "siege_channel": continue
+		var lineage: Dictionary = _region_accepted_siege_lineage(accepted, status, party, raw_proof.proof)
+		if not lineage.ok: return lineage
+		if float(accepted.at) > to: return {"ok": true, "contact": false}
+		var saved: Dictionary = accepted.payload
+		return {"ok": true, "contact": true, "at": float(accepted.at), "site": saved.site.duplicate(), "component": int(saved.component),
+			"route_component": int(saved.contact_receipt.second.position.get("route_component", saved.component)), "site_id": str(accepted.owner),
+			"battle_id": str(saved.battle_id), "contact_receipt": saved.contact_receipt.duplicate(true), "accepted_event": accepted.duplicate(true)}
 	var party_lab: TerrainLab = raw_proof.lab
 	var traveller: Dictionary = party_lab.site_controller.person_actions._person(int(party.leader_person_id), false)
 	if traveller.is_empty(): return fail("INVALID_ORIGINAL_SIEGE_TRAVELLER")

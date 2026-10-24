@@ -315,7 +315,42 @@ func _action_graph() -> Dictionary:
 func _saved_json_domain(value: Variant) -> String:
 	return JSON.stringify(JSON.parse_string(JSON.stringify(value, "", true, true)), "", true, true)
 
+## Only integral int/float carrier differences are allowed; no float rounding or key conversion.
+func _action_saved_facts_equal(left: Variant, right: Variant) -> bool:
+	if left is int and right is float:
+		return is_finite(right) and right >= -9223372036854775808.0 and right < 9223372036854775808.0 and right == floor(right) and left == int(right)
+	if left is float and right is int: return _action_saved_facts_equal(right, left)
+	if typeof(left) != typeof(right): return false
+	if left is Dictionary:
+		if left.size() != right.size(): return false
+		for key: Variant in left:
+			var matched: bool = false
+			for other: Variant in right:
+				if typeof(key) == typeof(other) and key == other:
+					if not _action_saved_facts_equal(left[key], right[other]): return false
+					matched = true
+					break
+			if not matched: return false
+		return true
+	if left is Array:
+		if left.size() != right.size(): return false
+		for index: int in left.size():
+			if not _action_saved_facts_equal(left[index], right[index]): return false
+		return true
+	return left == right
+
+func _action_saved_facts_controls() -> bool:
+	return _check(_action_saved_facts_equal({"cargo_version": 1, "rng_state": 2147483647}, {"cargo_version": 1.0, "rng_state": 2147483647.0})
+		and not _action_saved_facts_equal(9007199254740993, 9007199254740992.0)
+		and not _action_saved_facts_equal({"person_id": 8}, {"person_id": 9.0})
+		and not _action_saved_facts_equal({"source": "old"}, {"source": "new"})
+		and not _action_saved_facts_equal({"status": "aiming"}, {"status": "flight"})
+		and not _action_saved_facts_equal([1, 2], [2.0, 1.0])
+		and not _action_saved_facts_equal({1: "value"}, {"1": "value"})
+		and not _action_saved_facts_equal(1.0, 1.0000000000000002), "saved facts retain exact numeric identities, keys, source, status, array order and float bits")
+
 func _reopen_actual_partial() -> bool:
+	if not _action_saved_facts_controls(): return false
 	var source_facts := _action_facts()
 	var source_clock := {"world": float(slot.control.logical_game_seconds), "action": float(slot.control.fire_clock.action_seconds), "sequence": int(slot.control.fire_clock.sequence)}
 	var checkpoint: Dictionary = controller.checkpoint_region_internal("region_checkpoint", true)
@@ -349,7 +384,7 @@ func _reopen_actual_partial() -> bool:
 	# The graph comparison replaces an exact equality that cannot hold across a
 	# JSON reopen (number types and last-ulp floats change in the store round
 	# trip); facts, clocks, proof and partial progress stay compared value by value.
-	if not _check(source_facts == _action_facts() and _saved_json_domain(source_graph) == _saved_json_domain(restored_graph) and (_partial_ready() if action_fault == "none" else true)
+	if not _check(_action_saved_facts_equal(source_facts, _action_facts()) and _saved_json_domain(source_graph) == _saved_json_domain(restored_graph) and (_partial_ready() if action_fault == "none" else true)
 		and float(slot.control.logical_game_seconds) == float(source_clock.world) and float(slot.control.fire_clock.action_seconds) == float(source_clock.action) and int(slot.control.fire_clock.sequence) == int(source_clock.sequence)
 		and selected == slot.region_bind_proof(action_owner.terrain), "positive reopen restores exact hot graph, partial progress, stable items, reserved cells and both clocks", {"source_graph_sha": SiegeCheckpoint.state_hash(source_graph), "restored_graph_sha": SiegeCheckpoint.state_hash(restored_graph), "clock": source_clock}): return false
 	# A manual fresh-Slot reopen wires the restored main original as the common

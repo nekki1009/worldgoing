@@ -150,8 +150,45 @@ func _player_depart_and_plan() -> bool:
 	for event: Dictionary in slot.region_registry().events:
 		if event.payload.get("contact_receipt", {}).get("kind") == "siege_channel" and event.payload.get("player_token") == player_contact_token: player_contact_event = event.duplicate(true)
 	if not _check(not player_contact_event.is_empty() and player_contact_event.kind == "player_encounter" and player_contact_event.status == "pending" and float(player_contact_event.at) == float(player_contact_forecast.at), "genuine queued player event retains the original first chronological forecast point", player_contact_event): return false
+	if not _player_accepted_contact_controls(): return false
 	_player_wire_consumer()
 	return true
+
+func _player_accepted_contact_controls() -> bool:
+	var original: Dictionary = player_contact_event
+	var before: PackedByteArray = var_to_bytes(slot.control)
+	var decoded: Dictionary = slot._region_decode_accepted_siege_contact(original)
+	if not _check(decoded.ok and decoded.origin.basis.accepted_at == original.at and not decoded.origin.basis.is_empty(), "first admitted exact endpoint and full witness survive in the original durable event capsule", decoded.get("code")): return false
+	for field: String in ["time", "person", "position", "source", "kind", "owner", "player"]:
+		var changed: Dictionary = original.duplicate(true)
+		if field == "time":
+			var bits: PackedByteArray = var_to_bytes(float(changed.at))
+			bits[4] = int(bits[4]) ^ 1
+			changed["at"] = bytes_to_var(bits)
+		elif field == "person": changed.payload.contact_receipt.witness["person_id"] = int(changed.payload.contact_receipt.witness.person_id) + 1
+		elif field == "position": changed.payload.contact_receipt.second.position.cell[0] = int(changed.payload.contact_receipt.second.position.cell[0]) + 1
+		elif field == "source": changed.payload.contact_receipt.witness.party_source["owner"] = "travel:foreign"
+		elif field == "kind": changed["kind"] = "intel"
+		elif field == "owner": changed["owner"] = "foreign"
+		else: changed["player"] = false
+		var rejected: Dictionary = slot._region_decode_accepted_siege_contact(changed)
+		if not _check(not rejected.ok and before == var_to_bytes(slot.control), "accepted contact rejects true changed envelope/content without mutation: " + field, rejected.get("code")): return false
+		var registry: Dictionary = slot.region_registry().duplicate(true)
+		var conflict: Dictionary = PlayerClock.queue_event(registry, str(changed.id), str(changed.kind), float(changed.at), str(changed.owner), changed.payload, bool(changed.player))
+		if not _check(not conflict.ok and conflict.get("code") == "REGION_EVENT_CONFLICT", "generic queue remains exact for changed same-id content: " + field, conflict): return false
+	var selected: Dictionary = slot.region_travel_party()
+	var status: Dictionary = slot.region_travel_status()
+	var actual: Dictionary = slot.region_original_party_runtime_proof(player_contact_token, selected.party)
+	if not _check(selected.ok and status.ok and actual.ok, "accepted contact controls use the real current original party proof"): return false
+	var renewed: Dictionary = slot._region_accepted_siege_lineage(original, status, selected.party, actual.proof)
+	if not _check(renewed.ok and before == var_to_bytes(slot.control), "real current owner and immutable route admit the original first witness without resigning", renewed.get("code")): return false
+	var changed_route: Dictionary = status.duplicate(true)
+	changed_route.journey["plan_sha256"] = "foreign"
+	var refused_route: Dictionary = slot._region_accepted_siege_lineage(original, changed_route, selected.party, actual.proof)
+	var changed_proof: Dictionary = actual.proof.duplicate(true)
+	changed_proof["owner"] = "travel:foreign"
+	var refused_source: Dictionary = slot._region_accepted_siege_lineage(original, status, selected.party, changed_proof)
+	return _check(not refused_route.ok and not refused_source.ok and before == var_to_bytes(slot.control), "accepted endpoint rejects incompatible immutable route or actual source lineage without changing the queue")
 
 func _player_public_fault() -> bool:
 	if player_witness_case == "moved":
@@ -192,6 +229,8 @@ func _player_partial_reopen() -> bool:
 	var published: Dictionary = slot.checkpoint_region_travel()
 	if not _check(published.ok, "original common checkpoint stores true partial player/whole Site graphs", published): return false
 	var graphs := _nation_graphs()
+	var graph_generation: int = int(slot._marker.generation)
+	if not _check(not graphs.is_empty() and _nation_capture_contexts(graphs, graph_generation), "original Site graph contexts name their selected source generation and legal mode revisions"): return false
 	var selected: Dictionary = slot.region_travel_party()
 	var party_bytes := var_to_bytes(selected.party)
 	var captured: Dictionary = slot._region_capture_party_graph(player_contact_token, selected.party, {}, true)
@@ -233,7 +272,8 @@ func _player_partial_reopen() -> bool:
 	var next_context: Dictionary = next["original_live_graph"]["context"]
 	var after_mode: Dictionary = slot.region_registry().modes.get("travel:" + player_contact_token, {})
 	if not _player_admission_transition(before_mode, after_mode, comparison_context, next_context): return false
-	if not _check(original.ok and next.ok and _player_durable_owners_equal(owners, next.original_live_graph.owners, comparison_context, next_context) and party_bytes == var_to_bytes(selected.party) and graphs == _nation_graphs() and event_bytes == var_to_bytes(slot.region_registry().events) and clock == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "full original partial cold keeps route, queued witness, all aliases, reservations, bodies, stock and both clocks"): return false
+	var renewed_graphs: Dictionary = _nation_graphs()
+	if not _check(_nation_capture_contexts(renewed_graphs, int(slot._marker.generation)) and original.ok and next.ok and _player_durable_owners_equal(owners, next.original_live_graph.owners, comparison_context, next_context) and party_bytes == var_to_bytes(selected.party) and _nation_canonical(graphs) == _nation_canonical(renewed_graphs) and event_bytes == var_to_bytes(slot.region_registry().events) and clock == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "full original partial cold keeps route, queued witness, all aliases, reservations, bodies, stock and both clocks"): return false
 	for field: String in ["source_generation", "runtime_revision", "mode_revision", "fire_sequence", "fire_epoch", "game_seconds", "action_seconds"]:
 		var invalid_context: Dictionary = next_context.duplicate(true)
 		invalid_context[field] = "wrong_epoch" if field == "fire_epoch" else float(invalid_context[field]) + 1.0
