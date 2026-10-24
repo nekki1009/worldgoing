@@ -1,4 +1,5 @@
 extends "res://scripts/tests/region_siege_center_original_test.gd"
+const NativeProgressCodec = preload("res://scripts/terrain_lab/site_region_owner_snapshot.gd")
 ## True common Slot and cold original owners. Every observed partial state is
 ## paid by the original shared step, then reopened and continued by that owner.
 ## Initial fixture construction pays original materials/work without claiming
@@ -352,8 +353,39 @@ func _action_saved_facts_equal(left: Variant, right: Variant) -> bool:
 		return true
 	return left == right
 
+## Isolated codec/schema controls use the exact adjacent binary64 operands from D.
+## No original owner is assigned and no clock, checkpoint or effect is advanced.
+func _action_native_progress_controls() -> bool:
+	var native_progress: float = PackedByteArray([16, 17, 17, 17, 17, 17, 145, 63]).decode_double(0)
+	var adjacent_progress: float = PackedByteArray([15, 17, 17, 17, 17, 17, 145, 63]).decode_double(0)
+	var exact: Dictionary = {"move_progress": PackedFloat64Array([native_progress])}
+	var proxy: Variant = JSON.parse_string(JSON.stringify(native_progress, "", true, true))
+	var rows: Array = [{"progress": proxy}]
+	var request: Dictionary = slot.region_checkpoint_context(action_owner.terrain, "region_checkpoint", "siege_progress_control", true, {})
+	if not _check(request.ok, "native progress control derives the original context", request.get("code")): return false
+	var captured: Dictionary = NativeProgressCodec.capture(exact, {}, request.context)
+	if not _check(captured.ok, "existing v2 codec captures native binary64 progress", captured.get("code")): return false
+	var transported: Variant = JSON.parse_string(JSON.stringify(captured.state, "", true, true))
+	var restored: Dictionary = NativeProgressCodec.prepare_restore(transported, {}, request.context)
+	if not _check(restored.ok, "existing v2 codec prepares native progress after JSON", restored.get("code")): return false
+	return _check(var_to_bytes(restored.roots.move_progress) == var_to_bytes(exact.move_progress)
+		and not _action_saved_facts_equal(native_progress, adjacent_progress)
+		and TerrainLab._region_valid_army_progress(exact, rows)
+		and TerrainLab._region_valid_army_progress({}, rows)
+		and not TerrainLab._region_valid_army_progress({"move_progress": [native_progress]}, rows)
+		and not TerrainLab._region_valid_army_progress({"move_progress": PackedFloat64Array()}, rows)
+		and not TerrainLab._region_valid_army_progress({"move_progress": PackedFloat64Array([NAN])}, rows)
+		and not TerrainLab._region_valid_army_progress({"move_progress": PackedFloat64Array([INF])}, rows)
+		and not TerrainLab._region_valid_army_progress({"move_progress": PackedFloat64Array([-0.1])}, rows)
+		and not TerrainLab._region_valid_army_progress({"move_progress": PackedFloat64Array([1.1])}, rows)
+		and not TerrainLab._region_valid_army_progress({"move_progress": PackedFloat64Array([0.5])}, rows),
+		"native progress atom retains exact bits; schema rejects type, length, nonfinite, range and Site proxy drift")
+
 func _action_saved_facts_controls() -> bool:
-	return _check(_action_saved_facts_equal({"cargo_version": 1, "rng_state": 2147483647}, {"cargo_version": 1.0, "rng_state": 2147483647.0})
+	if not _action_native_progress_controls(): return false
+	var typed_values: Array[int] = [1, 2]
+	return _check(_action_saved_facts_equal({"facing": typed_values, "status": "aiming"}, {"status": "aiming", "facing": [1.0, 2.0]})
+		and _action_saved_facts_equal({"cargo_version": 1, "rng_state": 2147483647}, {"cargo_version": 1.0, "rng_state": 2147483647.0})
 		and not _action_saved_facts_equal(9007199254740993, 9007199254740992.0)
 		and not _action_saved_facts_equal({"person_id": 8}, {"person_id": 9.0})
 		and not _action_saved_facts_equal({"source": "old"}, {"source": "new"})

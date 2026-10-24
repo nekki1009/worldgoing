@@ -221,7 +221,7 @@ func _departure_leave_reopen_reenter() -> bool:
 	if not _check(restored.ok and restored.lab is TerrainLab, "the existing original factory binds the complete selected remaining cold graph", restored.get("code")): return false
 	action_owner = restored.lab
 	_freeze(action_owner)
-	if not _check(generation == int(slot._marker.generation) and facts == _action_facts() and graph == _action_graph() and selected == slot.region_bind_proof(action_owner.terrain) and clock == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "actual positive cold reopen preserves every original root, paid partial, watermark and selected source bytes"): return false
+	if not _check(generation == int(slot._marker.generation) and _action_saved_facts_equal(facts, _action_facts()) and graph == _action_graph() and selected == slot.region_bind_proof(action_owner.terrain) and clock == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "actual positive cold reopen preserves every original root, paid partial, watermark and selected source bytes"): return false
 	var reopened_party: Dictionary = slot.region_travel_party()
 	if not _check(reopened_party.ok and RegionTravel.census(reopened_party.party) == census and _departure_saved_team_roles(reopened_party.party.content) == expected.roles and _departure_native_people(action_owner) == remaining_people, "positive reopen preserves the exact party census, team roles and disjoint original cold roster", reopened_party.get("code")): return false
 	departure_evidence.departure = {"battle_id": battle_id, "generation": generation, "selected": selected, "clock": clock, "facts": facts, "graph_sha256": SiegeCheckpoint.state_hash(graph)}
@@ -526,7 +526,7 @@ func _departure_captain_cancel_and_leave() -> bool:
 	action_owner = restored.lab
 	_freeze(action_owner)
 	var reopened: Dictionary = slot.region_travel_party()
-	if not _check(reopened.ok and RegionTravel.census(reopened.party).people == expected and generation == int(slot._marker.generation) and facts == _action_facts() and graph == _action_graph() and clock == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "true public captain reopen keeps both original people, remaining paid full graph and both clocks byte exact"): return false
+	if not _check(reopened.ok and RegionTravel.census(reopened.party).people == expected and generation == int(slot._marker.generation) and _action_saved_facts_equal(facts, _action_facts()) and graph == _action_graph() and clock == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "true public captain reopen keeps both original people, remaining paid full graph and both clocks byte exact"): return false
 	if not await _departure_travel_and_open(Vector2i.ZERO): return false
 	var departed := RegionTravelSite.depart(controller)
 	if not _check(departed.ok, "unchanged public peace departure continues the actual captain whole party", departed): return false
@@ -611,7 +611,7 @@ func _departure_army_captain_cancel_and_leave(person: Dictionary) -> bool:
 	action_owner = restored.lab
 	_freeze(action_owner)
 	var reopened: Dictionary = slot.region_travel_party()
-	if not _check(reopened.ok and RegionTravel.census(reopened.party).people == expected and generation == int(slot._marker.generation) and facts == _action_facts() and graph == _action_graph() and clock == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "true public captain reopen keeps the complete original census, remaining paid full graph and both clocks byte exact"): return false
+	if not _check(reopened.ok and RegionTravel.census(reopened.party).people == expected and generation == int(slot._marker.generation) and _action_saved_facts_equal(facts, _action_facts()) and graph == _action_graph() and clock == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "true public captain reopen keeps the complete original census, remaining paid full graph and both clocks byte exact"): return false
 	if not await _departure_travel_and_open(Vector2i.ZERO): return false
 	var departed: Dictionary = RegionTravelSite.depart(controller)
 	if not _check(departed.ok, "unchanged public peace departure continues the actual captain whole party", departed): return false

@@ -8457,6 +8457,8 @@ func _region_capture_original_owner_state(context: Dictionary) -> Dictionary:
 	for team: TerrainArmy in combat_armies:
 		if not team.combat_enabled: continue
 		roots.army_hot[str(team.team_id)] = _region_fields(team, REGION_ARMY_FIELDS)
+		# Packed native progress must use the existing exact atom codec, not the Site JSON proxy.
+		roots.army_hot[str(team.team_id)]["move_progress"] = team.move_progress.duplicate()
 		roots.plans[str(team.team_id)] = {"move": _region_plan_values(team._combat_move_plan),
 			"deployment": _region_plan_values(team._combat_deployment_plan), "profile": _region_plan_values(team._formation_movement_profile), "runtime_id": team.formation_runtime_id}
 	for actor: TerrainTestCharacter in combat_actors:
@@ -8517,6 +8519,26 @@ static func _region_action_clock_valid(values: Dictionary) -> bool:
 	if not (remainder is float or remainder is int) or not is_finite(float(remainder)) or not RegionCheckpoint.time(tail): return false
 	# Tail is already part of the retained backlog; epsilon admits only the original boundary error.
 	return float(tail) <= maxf(ACTION_STEP, EXCHANGE_ACTION_STEP) and float(tail) <= float(remainder) + ACTION_TIME_EPSILON
+
+## Old graphs omit native progress and retain their original Site-row restore path.
+## New graphs carry the packed array as one exact v2 atom; no decimal conversion.
+static func _region_army_saved_fields(values: Variant) -> Array:
+	return REGION_ARMY_FIELDS + ["move_progress"] if values is Dictionary and values.has("move_progress") else REGION_ARMY_FIELDS
+
+static func _region_valid_army_progress(values: Variant, rows: Array) -> bool:
+	if not values is Dictionary: return false
+	if not values.has("move_progress"): return true
+	var progress: Variant = values["move_progress"]
+	if not progress is PackedFloat64Array or progress.size() != rows.size(): return false
+	for index: int in progress.size():
+		var value: float = progress[index]
+		if not is_finite(value) or value < 0.0 or value > 1.0 or not rows[index] is Dictionary: return false
+		var saved: Variant = rows[index].get("progress")
+		if not TerrainTestCharacter._saved_number(saved, 0.0, 1.0): return false
+		# Require the original value or its exact Store JSON transport image.
+		# This validates the proxy only; restore still assigns the unmodified atom.
+		if float(saved) != value and JSON.parse_string(JSON.stringify(value, "", true, true)) != float(saved): return false
+	return true
 
 static func _region_valid_fields(values: Variant, owner: Object, fields: Array) -> bool:
 	if not values is Dictionary or values.size() != fields.size(): return false
@@ -8615,8 +8637,20 @@ func prepare_restore_region_owner_state(owners: Dictionary, context: Dictionary,
 		if not team.combat_enabled: continue
 		team_count += 1
 		var key := str(team.team_id)
-		if not roots.army_hot.has(key) or not roots.plans.has(key) or not _region_valid_fields(roots.army_hot[key], team, REGION_ARMY_FIELDS):
+		if not roots.army_hot.has(key) or not roots.plans.has(key) or not _region_valid_fields(roots.army_hot[key], team, _region_army_saved_fields(roots.army_hot[key])):
 			return SiteRuntime.fail("INVALID_REGION_ARMY")
+		if roots.army_hot[key].has("move_progress"):
+			# Native combat_units deliberately erase packed fields on reconstruction.
+			# Compare against this restore domain's original serialized rows instead.
+			var saved_rows: Array = []
+			for saved_team: Dictionary in domain.site.get("armies", []):
+				if int(saved_team.get("team_id", 0)) == team.team_id:
+					saved_rows = saved_team.get("units", [])
+					break
+			if not _region_valid_army_progress(roots.army_hot[key], saved_rows) or saved_rows.size() != team.combat_units.size():
+				return SiteRuntime.fail("INVALID_REGION_ARMY")
+			for index: int in saved_rows.size():
+				if int(saved_rows[index].get("person_id", 0)) != int(team.combat_units[index].person_id): return SiteRuntime.fail("INVALID_REGION_ARMY")
 		var move_owner: Object = refs.get("team:" + key + ":move")
 		var deployment_owner: Object = refs.get("team:" + key + ":deployment")
 		var move := _region_prepare_plan(roots.plans[key].get("move", {}), move_owner, true)
@@ -8982,7 +9016,7 @@ func validate_region_owner_bind_payload(data: TerrainData, owners: Dictionary, c
 	var team_schema := TerrainArmy.new()
 	for team_id: int in teams:
 		var key := str(team_id)
-		if not roots.army_hot.has(key) or not _region_valid_bind_fields(roots.army_hot[key], team_schema, REGION_ARMY_FIELDS, graph.symbols) or not roots.plans.get(key) is Dictionary or roots.plans[key].size() != 4 or not RegionCheckpoint.integer(roots.plans[key].get("runtime_id"), 1):
+		if not roots.army_hot.has(key) or not _region_valid_bind_fields(roots.army_hot[key], team_schema, _region_army_saved_fields(roots.army_hot[key]), graph.symbols) or not _region_valid_army_progress(roots.army_hot[key], teams[team_id].get("units", [])) or not roots.plans.get(key) is Dictionary or roots.plans[key].size() != 4 or not RegionCheckpoint.integer(roots.plans[key].get("runtime_id"), 1):
 			team_schema.free()
 			return SiteRuntime.fail("INVALID_REGION_ARMY")
 		for field: String in ["move", "deployment", "profile"]:
