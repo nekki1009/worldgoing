@@ -1390,6 +1390,8 @@ static func _normalize_state(state: Dictionary) -> void:
 				for member: Dictionary in vehicle.move.participants:
 					for field: String in ["person_id", "from", "to"]: member[field] = int(member[field])
 				for key: String in vehicle.move.source_heights: vehicle.move.source_heights[key] = int(vehicle.move.source_heights[key])
+				# Raw validation proved move.command == vehicle.command; keep that equality after the command's ids/cells are restored to ints.
+				if vehicle.move.has("command"): vehicle.move["command"] = vehicle.command.duplicate(true)
 			else:
 				for field: String in ["cell", "operator_from", "operator_to"]: vehicle.move[field] = int(vehicle.move[field])
 			vehicle.move.facing = _int_array(vehicle.move.facing)
@@ -3850,6 +3852,11 @@ static func _serial(value: Variant, next_value: int) -> bool:
 
 ## Raw saves hold crew ids as JSON floats and hot state holds ints; both name the
 ## same person only when the slot value is an integral id equal to the identity.
+## A raw save holds a cell pair as JSON floats ([44.0, 41.0]); Array equality is type-strict.
+static func _cell_pair_is(value: Variant, cell: Vector2i) -> bool:
+	return value is Array and value.size() == 2 and _integer(value[0], -2147483648, 2147483647) and _integer(value[1], -2147483648, 2147483647) \
+		and int(value[0]) == cell.x and int(value[1]) == cell.y
+
 static func _crew_slots_hold(crew_slots: Variant, identity: Variant) -> bool:
 	if not crew_slots is Dictionary or not _integer(identity, 1, 2147483647): return false
 	for slot_person: Variant in crew_slots.values():
@@ -4325,7 +4332,7 @@ static func _region_siege_transient(data: TerrainData, state: Dictionary, vehicl
 		if person.is_empty(): return false
 		var body: Dictionary = person.body
 		var destination := data.cell_from_index(int(member.to))
-		if destination - data.cell_from_index(int(member.from)) != shift or Vector2i(int(body.cell[0]), int(body.cell[1])) != data.cell_from_index(int(member.from)) or body.get("destination") != [destination.x, destination.y]: return false
+		if destination - data.cell_from_index(int(member.from)) != shift or Vector2i(int(body.cell[0]), int(body.cell[1])) != data.cell_from_index(int(member.from)) or not _cell_pair_is(body.get("destination"), destination): return false
 	for cell: Variant in move.sweep:
 		if not _valid_cell(data, cell): return false
 	for key: Variant in move.source_heights:
