@@ -2935,7 +2935,7 @@ static func _valid_combat_movement_snapshot(data: TerrainData, team: Dictionary,
 					if not vehicle is Dictionary or not TerrainArmy.valid_saved_siege_compound(team, data, vehicle) or vehicle.crew_slots.size() != group.size(): continue
 					var same_members: bool = true
 					for member: Variant in group:
-						if not vehicle.crew_slots.values().has(int(member)): same_members = false
+						if not _crew_slots_hold(vehicle.crew_slots, member): same_members = false
 					if same_members: compound_bound = true; break
 			if not compound_bound: return false
 	for mid: int in retreat_member_set:
@@ -3237,7 +3237,7 @@ static func _validate_siege_vehicle(data: TerrainData, state: Dictionary, identi
 		if not _valid_siege_job(vehicle.repair, terms.paid_cost, float(terms.total_work), true, float(definition.max_hp), hot and _region_due_work(region_context, str(identity))): return Runtime.fail("CORRUPT_SAVE", "攻城修理投入／進度")
 	if not (_region_siege_command(data, state, vehicle.command, people) if hot else _valid_siege_command(data, state, vehicle.command, people)): return Runtime.fail("CORRUPT_SAVE", "攻城命令／目標引用")
 	if Runtime.inventory_size(vehicle.cargo) > int(definition.capacity): return Runtime.fail("CORRUPT_SAVE", "原石彈與火罐合計超過同一彈艙容量")
-	if vehicle.command.get("ammo") == "fire_pot" and (not Runtime.siege_ammo_valid(str(vehicle.kind), "fire_pot") or not vehicle.crew_slots.values().has(int(vehicle.command.operator_id)) or vehicle.command.has("tech_trial") and vehicle.command.tech_trial.target_id != "vehicle:" + str(vehicle.id)): return Runtime.fail("CORRUPT_SAVE", "火罐命令必須綁同一原投石機與原操作班本人")
+	if vehicle.command.get("ammo") == "fire_pot" and (not Runtime.siege_ammo_valid(str(vehicle.kind), "fire_pot") or not _crew_slots_hold(vehicle.crew_slots, vehicle.command.operator_id) or vehicle.command.has("tech_trial") and vehicle.command.tech_trial.target_id != "vehicle:" + str(vehicle.id)): return Runtime.fail("CORRUPT_SAVE", "火罐命令必須綁同一原投石機與原操作班本人")
 	if tower and vehicle.command.get("type") == "attack": return Runtime.fail("CORRUPT_SAVE", "攻城塔無攻擊命令")
 	for resource: Variant in vehicle.cargo:
 		if not Runtime.siege_ammo_valid(str(vehicle.kind), str(resource)) or not _integer(vehicle.cargo[resource], 0, int(definition.capacity)): return Runtime.fail("CORRUPT_SAVE", "攻城器具僅接受定義內的原實物彈藥")
@@ -3848,6 +3848,14 @@ static func _saved_resource_stack(cargo: Variant) -> bool:
 static func _serial(value: Variant, next_value: int) -> bool:
 	return value is String and value.is_valid_int() and str(int(value)) == value and int(value) > 0 and int(value) < next_value
 
+## Raw saves hold crew ids as JSON floats and hot state holds ints; both name the
+## same person only when the slot value is an integral id equal to the identity.
+static func _crew_slots_hold(crew_slots: Variant, identity: Variant) -> bool:
+	if not crew_slots is Dictionary or not _integer(identity, 1, 2147483647): return false
+	for slot_person: Variant in crew_slots.values():
+		if _integer(slot_person, 1, 2147483647) and int(slot_person) == int(identity): return true
+	return false
+
 static func _valid_cell(data: TerrainData, value: Variant) -> bool:
 	return _integer(value, 0, data.size.x * data.size.y - 1)
 
@@ -4299,7 +4307,7 @@ static func _region_siege_transient(data: TerrainData, state: Dictionary, vehicl
 		if str(action.stage) in ["approach", "rotate", "return"]:
 			if not _vehicle_facing(action.get("facing")) or not action.get("participants") is Array or not action.get("sweep") is Array: return false
 			for identity: Variant in action.participants:
-				if not _integer(identity, 1, 2147483647) or not vehicle.crew_slots.values().has(int(identity)): return false
+				if not _integer(identity, 1, 2147483647) or not _crew_slots_hold(vehicle.crew_slots, identity): return false
 			for cell: Variant in action.sweep:
 				if not _valid_cell(data, cell): return false
 			if action.stage == "rotate" and (not action.get("source_heights") is Dictionary or not action.get("compound_id") is String or str(action.compound_id).is_empty()): return false
@@ -4311,7 +4319,7 @@ static func _region_siege_transient(data: TerrainData, state: Dictionary, vehicl
 	var shift := data.cell_from_index(int(move.cell)) - data.cell_from_index(int(move.from))
 	if absi(shift.x) + absi(shift.y) != 1: return false
 	for member: Variant in move.participants:
-		if not member is Dictionary or not _integer(member.get("person_id"), 1, 2147483647) or not vehicle.crew_slots.values().has(int(member.person_id)) or seen.has(int(member.person_id)) or not _valid_cell(data, member.get("from")) or not _valid_cell(data, member.get("to")): return false
+		if not member is Dictionary or not _integer(member.get("person_id"), 1, 2147483647) or not _crew_slots_hold(vehicle.crew_slots, member.person_id) or seen.has(int(member.person_id)) or not _valid_cell(data, member.get("from")) or not _valid_cell(data, member.get("to")): return false
 		seen[int(member.person_id)] = true
 		var person: Dictionary = people.get(int(member.person_id), {})
 		if person.is_empty(): return false
