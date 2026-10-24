@@ -3215,7 +3215,7 @@ static func _validate_siege_vehicle(data: TerrainData, state: Dictionary, identi
 	if not _integer(vehicle.next_attack_seq, 1, 2147483647) or not _integer(vehicle.rng_state, 0, 2147483647): return Runtime.fail("CORRUPT_SAVE", "攻城攻擊序號／隨機狀態")
 	for field: String in ["move", "action", "crew_slots", "build", "repair", "command", "cargo", "holder"]:
 		if not vehicle[field] is Dictionary: return Runtime.fail("CORRUPT_SAVE", "攻城器具 " + field)
-	if not vehicle.stop_pending is bool or not vehicle.phase is String or (not _region_siege_transient(data, state, vehicle, people) if hot else (vehicle.stop_pending or not vehicle.move.is_empty() or not vehicle.action.is_empty() or str(vehicle.phase) not in ["building", "idle", "ready", "disabled", "wrecked", "deployed"])) or str(vehicle.phase) == "deployed" and not tower: return Runtime.fail("CORRUPT_SAVE", "攻城作業尚未收束")
+	if not vehicle.stop_pending is bool or not vehicle.phase is String or (not _region_siege_transient(data, state, vehicle, people, region_context) if hot else (vehicle.stop_pending or not vehicle.move.is_empty() or not vehicle.action.is_empty() or str(vehicle.phase) not in ["building", "idle", "ready", "disabled", "wrecked", "deployed"])) or str(vehicle.phase) == "deployed" and not tower: return Runtime.fail("CORRUPT_SAVE", "攻城作業尚未收束")
 	var phase := str(vehicle.phase)
 	if (float(vehicle.hp) == 0.0) != (phase == "wrecked") and not (hot and float(vehicle.hp) == 0.0 and str(vehicle.action.get("stage", "")) in ["rotate", "collision", "recovering"]): return Runtime.fail("CORRUPT_SAVE", "攻城殘骸與耐久矛盾")
 	if vehicle.crew_slots.size() > int(definition.standard_crew) or int(vehicle.operator_id) != int(vehicle.crew_slots.get("0", 0)): return Runtime.fail("CORRUPT_SAVE", "攻城主槽／角色關係")
@@ -4274,12 +4274,17 @@ static func _region_siege_command(data: TerrainData, state: Dictionary, command:
 			return not command.has("resume") or command.resume is Dictionary and _region_siege_command(data, state, command.resume, people, depth + 1)
 	return false
 
-static func _region_siege_transient(data: TerrainData, state: Dictionary, vehicle: Dictionary, people: Dictionary) -> bool:
-	if str(vehicle.phase) not in ["building", "idle", "ready", "disabled", "wrecked", "deployed", "turning", "moving", "preparing", "collision", "recovering", "deploying"]: return false
+static func _region_siege_transient(data: TerrainData, state: Dictionary, vehicle: Dictionary, people: Dictionary, context: Dictionary = {}) -> bool:
+	if str(vehicle.phase) not in ["building", "idle", "ready", "disabled", "wrecked", "deployed", "turning", "moving", "preparing", "collision", "recovering", "deploying", "loading", "aiming"]: return false
 	var action: Dictionary = vehicle.action
+	if str(vehicle.kind) in ["ballista", "traction_trebuchet", "counterweight_trebuchet"] and str(vehicle.phase) == "recovering" and action.get("stage") != "recovering": return false
+	if str(vehicle.phase) in ["loading", "aiming"] and str(action.get("stage", "")) != str(vehicle.phase): return false
 	if not action.is_empty():
-		if str(action.get("stage", "")) not in ["approach", "rotate", "return", "preparing", "collision", "recovering", "tower_deploy", "tower_retract"] or not _number(action.get("elapsed"), 0.0, 1000000.0) or action.has("native_token"): return false
-		if str(action.stage) in ["preparing", "collision", "recovering"]:
+		if str(action.get("stage", "")) not in ["approach", "rotate", "return", "preparing", "collision", "recovering", "tower_deploy", "tower_retract", "loading", "aiming"] or not _number(action.get("elapsed"), 0.0, 1000000.0) or action.has("native_token"): return false
+		var ranged: bool = str(vehicle.kind) in ["ballista", "traction_trebuchet", "counterweight_trebuchet"]
+		if str(action.stage) in ["loading", "aiming"] or ranged and str(action.stage) == "recovering":
+			if not _region_ranged_siege_action(data, state, vehicle, people, context): return false
+		elif str(action.stage) in ["preparing", "collision", "recovering"]:
 			if str(vehicle.kind) != "ram" or not _number(action.get("multiplier"), 0.5, 1.0) or not action.get("target") is Dictionary or not _valid_siege_command(data, state, {"type": "attack", "target": action.target}, people) or not action.get("attack_id") is String or not action.get("people") is Dictionary or not action.get("parts") is Dictionary: return false
 			var attack_id := str(action.attack_id)
 			if not attack_id.is_empty():
@@ -4313,6 +4318,33 @@ static func _region_siege_transient(data: TerrainData, state: Dictionary, vehicl
 	for key: Variant in move.source_heights:
 		if not key is String or not key.is_valid_int() or not _valid_cell(data, int(key)) or not _integer(move.source_heights[key], 0, 10): return false
 	return true
+
+## Original ranged work uses scaled work elapsed, with an already-paid source retained in recovery.
+static func _region_ranged_siege_action(data: TerrainData, state: Dictionary, vehicle: Dictionary, people: Dictionary, context: Dictionary = {}) -> bool:
+	var action: Dictionary = vehicle["action"]
+	var rule: Dictionary = SiteCombatRules.siege_attack(str(vehicle["kind"]))
+	var stage: String = str(action.get("stage", ""))
+	if rule.get("projectile") not in ["bolt", "stone"] or stage not in ["loading", "aiming", "recovering"] or action.size() != 6 or not vehicle["move"].is_empty(): return false
+	if stage == "recovering" and str(vehicle["phase"]) not in ["recovering", "wrecked"]: return false
+	if stage != "recovering" and str(vehicle["phase"]) not in [stage, "disabled"]: return false
+	for field: String in ["stage", "elapsed", "cargo_version", "rng_state", "multiplier", "target"]:
+		if not action.has(field): return false
+	if not _number(action["elapsed"], 0.0, 1000000.0) or not _number(action["multiplier"], 0.5, 1.0) \
+		or not _integer(action["cargo_version"], 0, 2147483646) or not _integer(action["rng_state"], 0, 2147483647) \
+		or not action["target"] is Dictionary or not _valid_siege_command(data, state, {"type": "attack", "target": action["target"]}, people): return false
+	var maximum: float = float(rule[stage])
+	if float(action["elapsed"]) > maximum:
+		# Deferral retains one already-paid shared interval before its original P0 transition.
+		var point: Dictionary = context.get("endpoint_payload", {})
+		if context.get("effects_complete", true) or point.get("interval_complete") != true or point.get("epoch") != context.get("fire_epoch") \
+			or point.get("sequence") != context.get("fire_sequence") or point.get("game_end") != context.get("game_seconds") \
+			or point.get("action_end") != context.get("action_seconds") or point.get("fire_action_end") != context.get("action_seconds") \
+			or not _number(point.get("fire_action_begin"), 0.0, float(context.get("action_seconds", -1.0))): return false
+		var paid: float = float(context["action_seconds"]) - float(point["fire_action_begin"])
+		maximum += paid * float(action["multiplier"])
+		if float(action["elapsed"]) > maximum: return false
+	if stage == "recovering": return int(action["cargo_version"]) < int(vehicle["holder"]["version"]) and int(vehicle["next_attack_seq"]) >= 2
+	return int(action["cargo_version"]) == int(vehicle["holder"]["version"]) and int(action["rng_state"]) == int(vehicle["rng_state"])
 
 static func _region_siege_claim(data: TerrainData, vehicle: Dictionary, cell: Vector2i, identity: Variant) -> bool:
 	if not _integer(identity, 1, 2147483647): return false
