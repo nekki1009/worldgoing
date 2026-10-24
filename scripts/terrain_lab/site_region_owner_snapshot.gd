@@ -190,6 +190,11 @@ static func _peek_value(value: Variant, nodes: Array, ancestors: Array, depth: i
 	if value.get("kind") == "value":
 		if value.size() != 2 or not Checkpoint.valid_wire(value.get("wire")): return Runtime.fail("INVALID_REGION_REFERENCE_VALUES")
 		return Runtime.ok("", {"value": Checkpoint.unwire(value.wire)})
+	if value.get("kind") == "reference":
+		# Only an original Object reference is admitted as a symbol. Nodes, holders and callables are never resolved in peek.
+		if value.size() != 3 or not value.has("key") or not value.has("type") or not value.get("key") is String or str(value.key).is_empty() or str(value.key).length() > 4096 or not Checkpoint.integer(value.get("type")) or int(value.type) != TYPE_OBJECT:
+			return Runtime.fail("INVALID_REGION_REFERENCE_VALUES")
+		return Runtime.ok("", {"value": {"@region_reference": str(value.key), "type": TYPE_OBJECT}})
 	if value.size() != 2 or value.get("kind") != "node" or not Checkpoint.integer(value.get("index")) or int(value.index) >= nodes.size() or ancestors.has(int(value.index)):
 		return Runtime.fail("INVALID_REGION_REFERENCE_VALUES")
 	var node: Variant = nodes[int(value.index)]

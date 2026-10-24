@@ -8535,7 +8535,11 @@ static func _region_valid_fields(values: Variant, owner: Object, fields: Array) 
 		if not _region_compatible(old, value): return false
 	return true
 
-static func _region_prepare_plan(values: Dictionary, plan: Object) -> Dictionary:
+## Owners that a plan field may reference, such as CombatMovePlan.destination_plan.
+const REGION_PLAN_REFERENCE_KINDS := ["move", "deployment", "profile"]
+
+## plan_references admits a resolved plan-kind Object into a field that is currently null (a fresh owner).
+static func _region_prepare_plan(values: Dictionary, plan: Object, plan_references: bool = false) -> Dictionary:
 	if values.is_empty(): return {"ok": plan == null, "values": {}}
 	if plan == null: return SiteRuntime.fail("MISSING_REGION_PLAN")
 	var schema := _region_plan_values(plan)
@@ -8549,8 +8553,15 @@ static func _region_prepare_plan(values: Dictionary, plan: Object) -> Dictionary
 			if not old is float or field not in ["previous_median_path_s", "previous_upper_quartile_path_s", "last_macro_replan_time_sec"] or value.region_plan_sentinel not in ["negative_infinity", "positive_infinity"]:
 				return SiteRuntime.fail("INVALID_REGION_PLAN")
 			value = -INF if value.region_plan_sentinel == "negative_infinity" else INF
+		elif plan_references and value is Object and is_instance_valid(value) and old == null and _region_reference_kind(value) in REGION_PLAN_REFERENCE_KINDS:
+			pass # A resolved plan reference into a fresh owner; the publish guard still checks the original owner table.
 		elif not _region_compatible(old, value):
 			return SiteRuntime.fail("INVALID_REGION_PLAN")
+		if plan is CombatMovePlan and field == "member_paths":
+			for member: Variant in value:
+				if not value[member] is Array: return SiteRuntime.fail("INVALID_REGION_PLAN")
+				for cell: Variant in value[member]:
+					if not cell is Vector2i: return SiteRuntime.fail("INVALID_REGION_PLAN")
 		prepared[field] = value
 	return {"ok": true, "values": prepared}
 
@@ -8608,14 +8619,14 @@ func prepare_restore_region_owner_state(owners: Dictionary, context: Dictionary,
 			return SiteRuntime.fail("INVALID_REGION_ARMY")
 		var move_owner: Object = refs.get("team:" + key + ":move")
 		var deployment_owner: Object = refs.get("team:" + key + ":deployment")
-		var move := _region_prepare_plan(roots.plans[key].get("move", {}), move_owner)
-		var deployment := _region_prepare_plan(roots.plans[key].get("deployment", {}), deployment_owner)
+		var move := _region_prepare_plan(roots.plans[key].get("move", {}), move_owner, true)
+		var deployment := _region_prepare_plan(roots.plans[key].get("deployment", {}), deployment_owner, true)
 		var profile_values: Dictionary = roots.plans[key].get("profile", {})
 		var profile_owner: Object = refs.get("team:" + key + ":profile")
 		for field: String in ["move", "deployment", "profile"]:
 			if roots.plans[key].get(field, {}) != roots.reference_objects.get("team:" + key + ":" + field, {}).get("values", {}):
 				return SiteRuntime.fail("INVALID_REGION_PLAN", "Original current plan descriptor differs")
-		var profile := {"ok": true, "values": {}} if profile_values.is_empty() else _region_prepare_plan(profile_values, profile_owner)
+		var profile := {"ok": true, "values": {}} if profile_values.is_empty() else _region_prepare_plan(profile_values, profile_owner, true)
 		if not move.ok or not deployment.ok or not profile.ok: return SiteRuntime.fail("INVALID_REGION_PLAN")
 		if not RegionCheckpoint.integer(roots.plans[key].get("runtime_id"), 1): return SiteRuntime.fail("INVALID_REGION_FORMATION")
 		plans[key] = {"team": team, "move": move.values, "move_owner": move_owner, "deployment": deployment.values, "deployment_owner": deployment_owner, "profile": profile.values, "profile_owner": profile_owner if not profile_values.is_empty() else null, "runtime_id": int(roots.plans[key].runtime_id)}
@@ -8715,7 +8726,19 @@ static func _region_apply_values(owner: Object, values: Dictionary) -> void:
 		var original: Variant = owner.get(field)
 		if original is Array and original.is_typed() and values[field] is Array:
 			original.assign(values[field])
+		elif owner is CombatMovePlan and field == "member_paths" and values[field] is Dictionary:
+			owner.set(field, _region_typed_member_paths(values[field]))
 		else: owner.set(field, values[field])
+
+## The owner snapshot stores nested arrays untyped; member routes are Array[Vector2i]
+## (validated by _region_prepare_plan) and are rebuilt with their original element type.
+static func _region_typed_member_paths(paths: Dictionary) -> Dictionary:
+	var typed_paths := {}
+	for member: Variant in paths:
+		var route: Array[Vector2i] = []
+		route.assign(paths[member])
+		typed_paths[member] = route
+	return typed_paths
 
 func publish_restore_region_owner_state(prepared: Dictionary) -> Dictionary:
 	var duty_scope := _region_duty_enter()
@@ -8845,10 +8868,39 @@ func _region_reference_objects(refs: Dictionary) -> Dictionary:
 			_region_register_reference_object(refs, descriptors, prefix + ":fire_lease:" + str(identity), team._fire_navigation.leases[identity])
 	return descriptors
 
+## Replaces each plan-reference symbol with the owner of its key, taken from this batch or the existing refs.
+## It builds a new tree, so the peeked raw descriptors stay symbolic for the bind-time comparisons.
+static func _region_resolve_reference_symbols(value: Variant, owners: Dictionary, depth: int) -> Dictionary:
+	if depth > 48: return SiteRuntime.fail("INVALID_REGION_REFERENCE_VALUES")
+	if value is Dictionary and value.size() == 2 and value.has("@region_reference"):
+		if not value["@region_reference"] is String or not value.get("type") is int or int(value.type) != TYPE_OBJECT:
+			return SiteRuntime.fail("INVALID_REGION_REFERENCE_VALUES")
+		var owner: Variant = owners.get(str(value["@region_reference"]))
+		if not owner is Object or not is_instance_valid(owner) or _region_reference_kind(owner) not in REGION_PLAN_REFERENCE_KINDS:
+			return SiteRuntime.fail("INVALID_REGION_REFERENCE_VALUES")
+		return SiteRuntime.ok("", {"value": owner})
+	if value is Dictionary:
+		var result := {}
+		for key: Variant in value:
+			var item: Dictionary = _region_resolve_reference_symbols(value[key], owners, depth + 1)
+			if not item.ok: return item
+			result[key] = item.value
+		return SiteRuntime.ok("", {"value": result})
+	if value is Array:
+		var items: Array = []
+		for entry: Variant in value:
+			var item: Dictionary = _region_resolve_reference_symbols(entry, owners, depth + 1)
+			if not item.ok: return item
+			items.append(item.value)
+		return SiteRuntime.ok("", {"value": items})
+	return SiteRuntime.ok("", {"value": value})
+
 func _region_prepare_reference_objects(raw: Variant, refs: Dictionary, candidate: TerrainData = null) -> Dictionary:
 	if not raw is Dictionary or raw.size() > 100000: return SiteRuntime.fail("INVALID_REGION_REFERENCE_VALUES")
 	var domain := candidate if candidate != null else terrain
-	var objects := {}
+	# First pass: every descriptor owner exists before any plan-reference symbol is resolved.
+	var owners: Dictionary = refs.duplicate()
+	var pending: Dictionary = {}
 	for key: Variant in raw:
 		var descriptor: Variant = raw[key]
 		if not key is String or not (str(key).begins_with("team:") or str(key).begins_with("lease:")) or not descriptor is Dictionary or descriptor.size() != 2 or not descriptor.get("values") is Dictionary:
@@ -8863,12 +8915,23 @@ func _region_prepare_reference_objects(raw: Variant, refs: Dictionary, candidate
 				"profile": owner = FormationMovementProfile.new()
 				"lease": owner = FireMovementTypes.DeploymentSlotLease.new()
 				_: return SiteRuntime.fail("INVALID_REGION_REFERENCE_VALUES")
-		var prepared := _region_prepare_plan(descriptor.values, owner)
+		owners[key] = owner
+		pending[key] = {"kind": kind, "owner": owner, "values": descriptor.values}
+	# Second pass: resolve symbols, then run the compatibility checks on the resolved values.
+	var objects := {}
+	for key: String in pending:
+		var entry: Dictionary = pending[key]
+		var kind: String = entry.kind
+		var owner: Object = entry.owner
+		var resolved: Dictionary = _region_resolve_reference_symbols(entry.values, owners, 0)
+		if not resolved.ok: return resolved
+		var values: Dictionary = resolved.value
+		var prepared := _region_prepare_plan(values, owner, kind != "lease")
 		if not prepared.ok: return prepared
 		if kind == "lease" and (domain == null or not prepared.values.get("cell") is Vector2i or not domain.contains(prepared.values.cell) or not RegionCheckpoint.integer(prepared.values.get("formation_id"), 1) or not RegionCheckpoint.integer(prepared.values.get("member_id")) or not RegionCheckpoint.integer(prepared.values.get("order_serial"), 1) or not RegionCheckpoint.integer(prepared.values.get("role")) or int(prepared.values.role) > FireMovementTypes.CombatDestinationRole.SUPPRESS_WORK or not RegionCheckpoint.time(prepared.values.get("temporary_absence_remaining_sec"))):
 			return SiteRuntime.fail("INVALID_REGION_LEASE")
-		refs[key] = owner
 		objects[key] = {"owner": owner, "values": prepared.values}
+	for key: String in objects: refs[key] = objects[key].owner
 	return SiteRuntime.ok("", {"objects": objects})
 
 ## Read-only admission of a validated original Store body and its owner graph.
