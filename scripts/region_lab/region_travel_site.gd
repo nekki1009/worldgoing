@@ -244,9 +244,22 @@ static func _open_selected_live_party(controller: Node, candidate: RegionSaveSlo
 static func request_departure(controller: Node) -> Dictionary:
 	if not controller._region_departure_intent.is_empty():
 		return cancel_departure(controller, str(controller._region_departure_intent.nonce))
-	if controller.lab.terrain != null and float(controller.lab.terrain.site.get("combat_left", 0.0)) <= 0.0:
-		return depart(controller)
-	return controller._request_region_departure()
+	if controlled_departure_step_remaining(controller) > 0.0:
+		return controller._request_region_departure()
+	return depart(controller)
+
+## One original committed-step proof for the actual controlled body only.
+## Closure waiting (other rows, jobs or flights) is not request eligibility.
+static func controlled_departure_step_remaining(controller: Node) -> float:
+	var lab: TerrainLab = controller.lab
+	var slot: RegionSaveSlot = controller.region_slot
+	if lab == null or slot == null or lab.terrain == null: return 0.0
+	if controller._crowd_active(): return 0.0 # Original immediate path retains native refusal.
+	# The original proof consumes PA's canonical moving/reservation descriptor.
+	# controlled_target() is a combat target and deliberately has no moving key.
+	var person: Dictionary = controller.person_actions._person(lab.controlled_person_id(), false)
+	if person.is_empty(): return 0.0
+	return slot._region_player_committed_close_action(person)
 
 static func cancel_departure(controller: Node, nonce: String) -> Dictionary:
 	return controller._cancel_region_departure(nonce)

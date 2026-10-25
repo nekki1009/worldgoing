@@ -2,6 +2,14 @@ extends "res://scripts/tests/region_siege_original_phase_test.gd"
 ## SOURCE_ONLY authored C07 positive. Inherits every real phase-player assertion.
 ## All progress comes from original commands and the common accepted shared step.
 const OriginalGarrison = preload("res://scripts/terrain_lab/site_garrison.gd")
+
+## Thin dispatch observer; body/reservation proof still reads the actual owner.
+class DepartureRouteProbe extends SiteController:
+	func _request_region_departure() -> Dictionary:
+		return {"ok": true, "route": "intent"}
+	func original_step_fault_guard() -> Dictionary:
+		return {"ok": false, "code": "CC178_IMMEDIATE_PROBE"}
+
 var departure_evidence: Dictionary = {}
 var departure_intent_exercised := false
 
@@ -80,10 +88,15 @@ func _departure_body_step(person: Dictionary, direction: Vector2i) -> bool:
 	return team.moving_to[index] == destination
 
 func _departure_body_hold(person: Dictionary) -> bool:
-	if int(person.unit) < 0: return true
-	var team: TerrainArmy = person.owner
-	var held: Dictionary = team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.HOLD)
-	return _check(held.ok, "actual commander closes the original Army MOVE with HOLD", held)
+	var held: Dictionary
+	if int(person.unit) < 0:
+		var team: TerrainArmy = lab.player_army()
+		if team == null or lab.controlled_member_index(team) != team.formal_commander: return true
+		held = lab.issue_player_army_order(TerrainArmy.CombatOrder.HOLD)
+	else:
+		var team: TerrainArmy = person.owner
+		held = team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.HOLD)
+	return _check(held.ok, "actual commander closes future Army orders with public HOLD before departure intent", held)
 
 func _departure_walk_clear() -> bool:
 	var person: Dictionary = _departure_controlled_body()
@@ -94,6 +107,7 @@ func _departure_walk_clear() -> bool:
 	for edge: int in range(512):
 		var cell: Vector2i = lab.controlled_target().cell
 		if not RegionTravelSite._hostile_near(lab, faction, [cell]):
+			if not await _departure_team_clear(person): return false
 			if not _departure_body_hold(person): return false
 			return _check(true, "actual controlled body reaches legal nonengaged departure cells through original paid movement", cell)
 		# One committed route per walk. A one-step score has no memory and ping-pongs between two cells.
@@ -152,9 +166,44 @@ func _departure_safe_path(person: Dictionary) -> Array[Vector2i]:
 		walk = Vector2i(came_from[walk])
 	return path
 
-func _departure_cancel_paid_edge() -> bool:
-	var person: Dictionary = _departure_controlled_body()
-	if person.is_empty(): return false
+func _departure_team_clear(person: Dictionary) -> bool:
+	var team: TerrainArmy = person.owner if int(person.unit) >= 0 else lab.player_army()
+	if team == null or lab.controlled_member_index(team) != team.formal_commander: return true
+	var selected: Dictionary = RegionTravelSite.selected_departure(controller)
+	if selected.ok and not selected.waiting and team.combat_order == TerrainArmy.CombatOrder.HOLD: return true
+	var gathered: Dictionary = lab.issue_player_army_order(TerrainArmy.CombatOrder.MOVE, Vector2i(lab.controlled_target().cell))
+	if not _check(gathered.ok, "original captain MOVE rallies all selected rows before the request", gathered): return false
+	if not await _action_until(func() -> bool: return team.moving_member_count() == 0 and not _departure_team_engaged(team), "original paid formation reaches actual departure-safe cells"): return false
+	if not _departure_body_hold(person): return false
+	selected = RegionTravelSite.selected_departure(controller)
+	return _check(selected.ok and not selected.waiting and team.combat_order == TerrainArmy.CombatOrder.HOLD, "actual selected team is rallied and held before any intent", selected)
+
+func _departure_team_engaged(team: TerrainArmy) -> bool:
+	for row: int in team.combat_units.size():
+		if bool(team.combat_hot_get(row, &"attack", false)): return true
+	return RegionTravelSite._hostile_near(lab, team.faction_id, team.cells)
+
+## Counterfactual grace is restored before checking; no tick/save/intent is run.
+## Only dispatch endpoints are observed; the paid-step proof is the real body.
+func _departure_route_controls(paid: bool) -> bool:
+	var probe: DepartureRouteProbe = DepartureRouteProbe.new()
+	probe.lab = lab
+	probe.region_slot = slot
+	probe.person_actions = controller.person_actions # Borrow the same original descriptor service.
+	var original_grace: Variant = lab.terrain.site.get("combat_left", 0.0)
+	var before: PackedByteArray = var_to_bytes([slot.control, slot._marker, lab.terrain.site, _departure_body_state(lab.controlled_target())])
+	var results: Array[Dictionary] = []
+	for grace: float in [0.0, 1.0]:
+		lab.terrain.site.combat_left = grace
+		results.append(RegionTravelSite.request_departure(probe))
+	lab.terrain.site.combat_left = original_grace
+	probe.free()
+	var correct: bool = true
+	for result: Dictionary in results:
+		correct = correct and (result.get("route") == "intent" if paid else result.get("code") == "CC178_IMMEDIATE_PROBE")
+	return _check(correct and before == var_to_bytes([slot.control, slot._marker, lab.terrain.site, _departure_body_state(lab.controlled_target())]), "new A dispatch depends only on real controlled committed step at grace0 and grace>0; isolated probes restore every clock/body/source byte", results)
+
+func _departure_start_paid_edge(person: Dictionary) -> bool:
 	var faction: int = int(person.owner.faction_id)
 	var accepted := false
 	for direction: Vector2i in [Vector2i.UP, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT]:
@@ -165,6 +214,17 @@ func _departure_cancel_paid_edge() -> bool:
 	var paid_before := action_paid
 	if not await _action_until(func() -> bool: return action_paid > paid_before, "original queue reaches the first accepted positive paid movement interval"): return false
 	if not _check(_departure_body_moving(person) and action_paid > paid_before and _departure_body_remaining(person) > 0.0, "the actual body owns positively paid partial movement before departure request"): return false
+	var step_before: float = RegionTravelSite.controlled_departure_step_remaining(controller)
+	var destination_before: Vector2i = person.owner.moving_to[int(person.unit)] if int(person.unit) >= 0 else person.owner.terrain_cell
+	if not _departure_body_hold(person): return false
+	if not _check(RegionTravelSite.controlled_departure_step_remaining(controller) == step_before and step_before > 0.0 and destination_before == (person.owner.moving_to[int(person.unit)] if int(person.unit) >= 0 else person.owner.terrain_cell), "public HOLD preserves the actual paid body/reservation before nonce/order snapshot"): return false
+	return _departure_route_controls(true)
+
+func _departure_cancel_paid_edge() -> bool:
+	var person: Dictionary = _departure_controlled_body()
+	if person.is_empty(): return false
+	var paid_before: float = action_paid
+	if not await _departure_start_paid_edge(person): return false
 	var requested := RegionTravelSite.request_departure(controller)
 	if not _check(requested.ok and requested.get("pending", false) and str(requested.get("nonce", "")) != "", "new public request records one cancellable intent while the paid edge is unfinished", requested): return false
 	departure_intent_exercised = true
@@ -211,6 +271,7 @@ func _departure_leave_reopen_reenter() -> bool:
 	var chosen: Dictionary = RegionTravelSite.selected_departure(controller)
 	if not _check(expected.ok and chosen.ok and chosen.people == expected.people and identity == center_heir and not expected.people.has(center_founder), "living heir departure selects exactly its original team and excludes the founder", {"expected": expected, "chosen": chosen.get("people"), "founder": center_founder, "heir": center_heir}): return false
 	var source_census: Dictionary = RegionTravel.census({"content": lab.terrain.site})
+	if not await _departure_start_paid_edge(person): return false
 	var asked := RegionTravelSite.request_departure(controller)
 	if not _check(asked.ok and asked.get("pending", false), "public departure request accepts only the actual typed siege source", asked): return false
 	for count: int in range(18000):
@@ -528,7 +589,7 @@ func _departure_captain_cancel_and_leave() -> bool:
 	var asked := RegionTravelSite.request_departure(controller)
 	if not _check(asked.ok and asked.get("pending", false) and controller._region_departure_intent.people == expected, "true public captain request includes its role-only Actor exactly once alongside the original soldier row", asked): return false
 	var row_query := RegionTravelSite.selected_departure(controller)
-	if not _check(row_query.ok and row_query.waiting and team.moving_to[0] != TerrainArmy.INVALID_CELL and float(team.move_progress[0]) > 0.0 and float(team.move_progress[0]) < 1.0 and not actor.is_moving() and actor.action_time <= 0.0, "second public captain request waits on the same unfinished actual NPC row while its Actor remains idle", row_query.get("waiting")): return false
+	if not _check(row_query.ok and row_query.waiting and team.moving_to[0] != TerrainArmy.INVALID_CELL and float(team.move_progress[0]) > 0.0 and float(team.move_progress[0]) < 1.0 and actor.is_moving() and actor.action_time <= 0.0, "second public captain request waits on both original controlled and NPC paid edges", row_query.get("waiting")): return false
 	var actor_before := actor.capture_state()
 	lab._try_move(Vector2i.RIGHT)
 	if not _check(actor.capture_state() == actor_before and controller._region_departure_defers_person(identity), "same pending captain intent defers the actual controlled Actor's new input without retiming its body"): return false
@@ -610,7 +671,7 @@ func _departure_army_captain_cancel_and_leave(person: Dictionary) -> bool:
 	var asked: Dictionary = RegionTravelSite.request_departure(controller)
 	if not _check(asked.ok and asked.get("pending", false) and controller._region_departure_intent.people == expected, "inherited captain public request selects each actual Army person exactly once", asked): return false
 	var row_query: Dictionary = RegionTravelSite.selected_departure(controller)
-	if not _check(row_query.ok and row_query.waiting and selected_row >= 0 and team.moving_to[selected_row] != TerrainArmy.INVALID_CELL and float(team.move_progress[selected_row]) > 0.0 and float(team.move_progress[selected_row]) < 1.0 and not _departure_body_moving(person), "idle inherited captain waits on the same positively paid noncontrolled row", row_query.get("waiting")): return false
+	if not _check(row_query.ok and row_query.waiting and selected_row >= 0 and team.moving_to[selected_row] != TerrainArmy.INVALID_CELL and float(team.move_progress[selected_row]) > 0.0 and float(team.move_progress[selected_row]) < 1.0 and _departure_body_moving(person), "inherited captain intent waits on its own real paid step and the selected noncontrolled row", row_query.get("waiting")): return false
 	var body_before: Dictionary = _departure_body_state(person)
 	lab._try_move(Vector2i.RIGHT)
 	if not _check(body_before == _departure_body_state(person) and controller._region_departure_defers_person(identity), "pending inherited captain intent defers new input without retiming its actual Army body"): return false
@@ -671,6 +732,15 @@ func _departure_army_captain_cancel_and_leave(person: Dictionary) -> bool:
 	departure_evidence.captain_departure = {"people": expected, "team_id": team_id, "battle_id": battle_id, "generation": generation, "clock": clock, "facts": facts, "graph_sha256": SiegeCheckpoint.state_hash(graph), "actual_reentry_army": team.capture_combat_state(true)}
 	return true
 
+func _departure_other_row_refuses() -> bool:
+	if not _departure_route_controls(false): return false
+	var before: PackedByteArray = var_to_bytes([slot.control, slot._marker, lab.terrain.site, _action_graph(), _departure_body_state(lab.controlled_target())])
+	var expected_code: String = "IN_COMBAT" if float(lab.terrain.site.combat_left) > 0.0 else "BUSY"
+	var refused: Dictionary = RegionTravelSite.request_departure(controller)
+	return _check(not refused.ok and str(refused.get("code")) == expected_code and controller._region_departure_intent.is_empty()
+		and before == var_to_bytes([slot.control, slot._marker, lab.terrain.site, _action_graph(), _departure_body_state(lab.controlled_target())]),
+		"other row paid movement alone cannot create intent; original immediate combat/BUSY authority refuses atomically", refused)
+
 func _departure_captain_row_partial_and_cancel(team: TerrainArmy, actor: TerrainTestCharacter) -> bool:
 	# The controlled role Actor is absent from the original Army movement roster.
 	# Public MOVE commits the actual NPC row; public HOLD retains its paid edge.
@@ -696,15 +766,17 @@ func _departure_captain_row_partial_and_cancel(team: TerrainArmy, actor: Terrain
 	var held: Dictionary = lab.issue_player_army_order(TerrainArmy.CombatOrder.HOLD)
 	if not _check(held.ok and team.combat_order == TerrainArmy.CombatOrder.HOLD and team.cells[0] == cell and team.moving_to[0] == moving_to and float(team.move_progress[0]) == progress and float(team.move_duration[0]) == duration and hold_point == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "public HOLD stops only uncommitted orders and preserves the same positively paid row edge and clocks", held): return false
 	if not _check(not actor.is_moving() and actor.action_time <= 0.0 and actor.projectiles.is_empty() and not RegionTravelSite._hostile_near(lab, team.faction_id, [actor.terrain_cell, cell, moving_to]), "Actor stays genuinely idle and every current selected row endpoint remains outside the actual hostile guard"): return false
+	if not _departure_other_row_refuses(): return false
+	if not await _departure_start_paid_edge(lab.controlled_target()): return false
 	var asked := RegionTravelSite.request_departure(controller)
 	if not _check(asked.ok and asked.get("pending", false) and controller._region_departure_intent.people.has(actor.person_id) and controller._region_departure_intent.people.has(row_id), "public captain request positively keeps both original people while its NPC row owns an unfinished paid edge", asked): return false
 	var nonce := str(asked.nonce)
 	var query := RegionTravelSite.selected_departure(controller)
-	if not _check(query.ok and query.waiting, "the actual selected closure reports waiting on its real NPC row despite Actor unit=-1", query.get("waiting")): return false
+	if not _check(query.ok and query.waiting, "the actual selected closure reports waiting on its real NPC row alongside the actual controlled Actor paid step", query.get("waiting")): return false
 	var wait_paid := action_paid
 	var wait_clock := float(slot.control.logical_game_seconds)
 	if not await _action_until(func() -> bool: return action_paid > wait_paid, "captain row intent reaches the next original accepted positive interval after any real zero endpoints"): return false
-	if not _check(team.moving_to[0] != TerrainArmy.INVALID_CELL and float(team.move_progress[0]) > progress and float(team.move_progress[0]) < 1.0 and not actor.is_moving() and actor.action_time <= 0.0 and float(slot.control.logical_game_seconds) > wait_clock and str(controller._region_departure_intent.get("nonce", "")) == nonce and slot.region_travel_journey().is_empty(), "real finish_tick retains this nonce and advances its selected paid row without premature extract or rejection"): return false
+	if not _check(team.moving_to[0] != TerrainArmy.INVALID_CELL and float(team.move_progress[0]) > progress and float(team.move_progress[0]) < 1.0 and actor.is_moving() and actor.action_time <= 0.0 and float(slot.control.logical_game_seconds) > wait_clock and str(controller._region_departure_intent.get("nonce", "")) == nonce and slot.region_travel_journey().is_empty(), "real finish_tick retains this nonce and advances its selected paid row without premature extract or rejection"): return false
 	var row_before := team.capture_combat_state()
 	var actor_before := actor.capture_state()
 	var graph_before := _action_graph()
@@ -746,15 +818,17 @@ func _departure_army_row_partial_and_cancel(team: TerrainArmy, person: Dictionar
 	var held: Dictionary = lab.issue_player_army_order(TerrainArmy.CombatOrder.HOLD)
 	if not _check(held.ok and team.combat_order == TerrainArmy.CombatOrder.HOLD and team.cells[row_index] == cell and team.moving_to[row_index] == moving_to and float(team.move_progress[row_index]) == progress and float(team.move_duration[row_index]) == duration and hold_point == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "public HOLD stops only uncommitted orders and preserves the same positively paid row edge and clocks", held): return false
 	if not _check(not _departure_body_moving(person) and not team._combat_action_blocks_step(int(person.unit)) and team.projectiles.is_empty() and not RegionTravelSite._hostile_near(lab, team.faction_id, [Vector2i(lab.controlled_target().cell), cell, moving_to]), "Army captain stays genuinely idle and every current selected row endpoint remains outside the actual hostile guard"): return false
+	if not _departure_other_row_refuses(): return false
+	if not await _departure_start_paid_edge(person): return false
 	var asked: Dictionary = RegionTravelSite.request_departure(controller)
 	if not _check(asked.ok and asked.get("pending", false) and controller._region_departure_intent.people.has(lab.controlled_person_id()) and controller._region_departure_intent.people.has(row_id), "public captain request positively keeps both original people while its NPC row owns an unfinished paid edge", asked): return false
 	var nonce: String = str(asked.nonce)
 	var query: Dictionary = RegionTravelSite.selected_departure(controller)
-	if not _check(query.ok and query.waiting, "the actual selected closure reports waiting on its real NPC row while the actual Army captain is idle", query.get("waiting")): return false
+	if not _check(query.ok and query.waiting, "the actual selected closure reports waiting on its real NPC row while its actual Army captain owns a paid step", query.get("waiting")): return false
 	var wait_paid: float = action_paid
 	var wait_clock: float = float(slot.control.logical_game_seconds)
 	if not await _action_until(func() -> bool: return action_paid > wait_paid, "captain row intent reaches the next original accepted positive interval after any real zero endpoints"): return false
-	if not _check(team.moving_to[row_index] != TerrainArmy.INVALID_CELL and float(team.move_progress[row_index]) > progress and float(team.move_progress[row_index]) < 1.0 and not _departure_body_moving(person) and not team._combat_action_blocks_step(int(person.unit)) and float(slot.control.logical_game_seconds) > wait_clock and str(controller._region_departure_intent.get("nonce", "")) == nonce and slot.region_travel_journey().is_empty(), "real finish_tick retains this nonce and advances its selected paid row without premature extract or rejection"): return false
+	if not _check(team.moving_to[row_index] != TerrainArmy.INVALID_CELL and float(team.move_progress[row_index]) > progress and float(team.move_progress[row_index]) < 1.0 and _departure_body_moving(person) and not team._combat_action_blocks_step(int(person.unit)) and float(slot.control.logical_game_seconds) > wait_clock and str(controller._region_departure_intent.get("nonce", "")) == nonce and slot.region_travel_journey().is_empty(), "real finish_tick retains this nonce and advances its selected paid row without premature extract or rejection"): return false
 	var row_before: Dictionary = team.capture_combat_state(true)
 	var actor_before: Dictionary = _departure_body_state(person)
 	var graph_before: Dictionary = _action_graph()

@@ -13123,6 +13123,7 @@ func _request_region_departure() -> Dictionary:
 	if str(mode.get("mode", "")) != "live" or str(mode.get("backend", "")) != "gd": return Runtime.fail("REGION_MODE")
 	var siege := RegionSaveSlot.RegionBattle.prepare_original_siege(lab)
 	if not siege.ok or not siege.get("present", false): return Runtime.fail("IN_COMBAT", "非已准入的原攻城 owner")
+	if RegionTravelSite.controlled_departure_step_remaining(self) <= 0.0: return Runtime.fail("BUSY", "受控本人沒有未完成的原已承諾步")
 	var nonce := "depart_" + Crypto.new().generate_random_bytes(16).hex_encode()
 	_region_departure_intent = {"nonce": nonce, "source": lab.terrain, "slot": region_slot, "lab": weakref(lab),
 		"owner": str(lab.terrain.site.id), "selection": selected.selection, "people": selected.people.duplicate(), "candidate": {}}
