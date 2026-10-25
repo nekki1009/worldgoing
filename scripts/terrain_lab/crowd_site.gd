@@ -333,12 +333,14 @@ func siege_admission_guard(candidate: TerrainData = null) -> Dictionary:
 		if data.site.get("housing", {}) is Dictionary and not data.site.get("housing", {}).is_empty():
 			for method: StringName in [&"order_housing_step", &"cancel_housing_step", &"controlled_step_state", &"set_housing_recovery_input", &"set_housing_attendance_input"]:
 				if not ClassDB.class_has_method(&"ArmyCrowd", method): return SiteRuntime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少住宅返家／出席介面；原住房與人物須保留一般模式")
+		# Released Siege events retain their specific original authority before
+		# Fire's generic non-Fire projectile refusal; neither path admits them.
+		var events: Dictionary = SiteStore.siege_event_guard(data)
+		if not events.ok: return events
 		# A prepared Native replacement becomes lab.terrain before its original owners reactivate.
 		if not (data == live and _host_fire_active):
 			var fire := SiteStore.fire_event_guard(data)
 			if not fire.ok: return fire
-		var events := SiteStore.siege_event_guard(data)
-		if not events.ok: return events
 		if SiteStore.has_siege_vehicles(data.site) and not siege_native_supported(): return SiteRuntime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少原人物攻城／複合步介面")
 		for vehicle: Dictionary in data.site.get("vehicles", {}).values():
 			if str(vehicle.get("kind", "")) == "ship": return SiteRuntime.fail("BUSY", "首版船艦須留在原 Army 人物模式")
