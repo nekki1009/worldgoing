@@ -11993,13 +11993,31 @@ func advance_region_cold_actual_fixed(source_data: TerrainData, target: float,
 		if not ledger.ok:
 			_region_cold_formal = {}
 			return ledger
-	elif _region_cold_formal.get("slot") != slot or str(_region_cold_formal.source_sha256) != str(identity.source_sha256):
+	elif not _region_cold_formal_same_slot(slot, source_data) or str(_region_cold_formal.source_sha256) != str(identity.source_sha256):
 		return SiteRuntime.fail("STALE_COLD_TRANSACTION")
-	# Each pending retry receives a fresh detached copy of the same durable source
-	# (same Slot, site and source SHA-256); keep the proof on the current copy.
-	elif _region_cold_formal.get("source_data") != source_data:
-		_region_cold_formal.source_data = source_data
+	else:
+		# A resumed PENDING retry reopens the same durable Slot as a new RegionSaveSlot
+		# object (resume_region_operation -> open_fixed_world). Adopt that object only
+		# after the durable identity above matched.
+		_region_cold_formal["slot"] = slot
+		# Each pending retry receives a fresh detached copy of the same durable source
+		# (same Slot, site and source SHA-256); keep the proof on the current copy.
+		if _region_cold_formal.get("source_data") != source_data:
+			_region_cold_formal.source_data = source_data
 	return _region_advance_original_cold_budget(target, budget_usec, max_steps, tail_seconds)
+
+## Object identity is not the Slot identity: each resumed open loads a new
+## RegionSaveSlot from the same folder. The durable identity is the Slot folder,
+## the committed generation, and the selected bind proof (file path and SHA-256).
+func _region_cold_formal_same_slot(slot: RegionSaveSlot, source_data: TerrainData) -> bool:
+	if slot == null or _region_cold_formal.is_empty(): return false
+	var stored: RegionSaveSlot = _region_cold_formal.get("slot")
+	if stored == slot: return true
+	if stored == null or stored.folder.simplify_path() != slot.folder.simplify_path(): return false
+	if int(slot._marker.get("generation", -1)) != int(_region_cold_formal.generation): return false
+	var proof: Dictionary = slot.region_bind_proof(source_data)
+	if proof != _region_cold_formal.selected_proof: return false
+	return FileAccess.get_sha256(slot.folder.path_join(str(proof.get("path", "")))) == str(proof.get("sha256", ""))
 
 ## Live keeps each owner's duty cadence in the Slot registry and reviews it at the
 ## owner's hourly evaluation. The formal replay reproduces both against a private
