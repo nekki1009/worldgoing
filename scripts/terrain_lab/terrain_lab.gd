@@ -9786,8 +9786,16 @@ func _region_selected_bind_source(data: TerrainData, slot: RegionSaveSlot) -> Di
 ## for its actual completed body, not a metadata switch that admits a caller copy.
 func _region_register_replayed_bind_source(input_source: TerrainData, accepted: TerrainData,
 		slot: RegionSaveSlot, producer: TerrainLab) -> Dictionary:
-	if producer == null or not producer.restore_only or producer.get_parent() != self or producer.terrain == null or accepted == null or str(producer.terrain.site.id) != str(accepted.site.id):
+	if producer == null or not producer.restore_only or producer.terrain == null or accepted == null or str(producer.terrain.site.id) != str(accepted.site.id):
 		return SiteRuntime.fail("INVALID_REGION_REPLAY_SOURCE")
+	# A cached cold original may stage its own completed zero-time endpoint.
+	# This is the same full owner/body receipt as a retained replay child, not
+	# permission to relabel a selected old graph with current clocks.
+	var cached_original: bool = producer == self and slot != null and site_controller != null \
+		and site_controller.region_slot == slot and _region_bound_data == terrain \
+		and slot._region_original_labs.get(str(terrain.site.id)) == self
+	if producer.get_parent() != self and not cached_original: return SiteRuntime.fail("INVALID_REGION_REPLAY_SOURCE")
+	if cached_original and _region_point_dispatching: return SiteRuntime.fail("REGION_REPLAY_PENDING")
 	var selected := _region_selected_bind_source(input_source, slot)
 	if not selected.ok: return selected
 	var settlement := RegionSaveSlot.validate_settlement(accepted.site, slot.control.logical_game_seconds)
@@ -11424,6 +11432,14 @@ func _region_gameplay_player_materialize(event: Dictionary) -> Dictionary:
 		if not own_point.ok: return own_point
 		var captured: Dictionary = activated.site_controller.capture_region_checkpoint("region_barrier", false, {"player_event": str(queued.id)})
 		if not captured.ok: return captured
+		# Stage this real completed owner snapshot for the existing arrival
+		# transaction. Its old selected source remains byte-authenticated;
+		# no global checkpoint, marker publication or paid interval is repeated.
+		var proof: Dictionary = slot.region_bind_proof(activated.terrain)
+		var selected_source: Dictionary = slot._load_checked(slot.folder.path_join(str(proof.path)), coordinate)
+		if not selected_source.ok: return selected_source
+		var completed_source: TerrainData = _region_detached_bind_data(activated.terrain)
+		completed_source.site = captured.state
 		var player := slot.region_travel_party()
 		if not player.ok: return player
 		var player_location: Dictionary = slot._region_player_endpoint_location(status, player.party, coordinate, queued)
@@ -11436,7 +11452,33 @@ func _region_gameplay_player_materialize(event: Dictionary) -> Dictionary:
 			endpoint["npc_location"] = npc_location
 		var bind := func(candidate: TerrainData) -> Dictionary:
 			return activated.prepare_region_owner_bind(candidate, "live", slot)
-		var entered := slot.commit_region_arrival(activated.terrain, bind, endpoint)
+		# Only a still-owned recovery ticket may retain a previous endpoint source.
+		# Ordinary pre-commit failures are discarded below and can retry fresh.
+		for source_receipt: Dictionary in activated._region_owner_source_receipts.values():
+			if source_receipt.get("endpoint_event") == str(queued.id):
+				return source_receipt.get("endpoint_result", SiteRuntime.fail("REGION_BIND_NOT_CANCELLABLE"))
+		var admitted_source: Dictionary = activated._region_register_replayed_bind_source(selected_source.data, completed_source, slot, activated)
+		if not admitted_source.ok: return admitted_source
+		var staged_receipt: Dictionary = activated._region_owner_source_receipts[completed_source.get_instance_id()]
+		staged_receipt["endpoint_event"] = str(queued.id)
+		var staged_generation: int = int(slot._marker.get("generation", 0))
+		var entered: Dictionary = slot.commit_region_arrival(completed_source, bind, endpoint)
+		var uncommitted: bool = int(slot._marker.get("generation", 0)) == staged_generation
+		if not entered.ok and uncommitted:
+			for ticket_token: String in activated._region_owner_bind_tickets.keys():
+				var source_ticket: Dictionary = activated._region_owner_bind_tickets[ticket_token]
+				if source_ticket.get("source") != completed_source: continue
+				var discarded: Dictionary = activated._region_discard_bind_candidate(ticket_token)
+				if not discarded.ok: entered["source_cleanup"] = discarded
+		var retained_ticket: bool = false
+		for source_ticket: Dictionary in activated._region_owner_bind_tickets.values():
+			if source_ticket.get("source") == completed_source: retained_ticket = true
+		if entered.ok or uncommitted and not retained_ticket:
+			activated._region_owner_source_receipts.erase(completed_source.get_instance_id())
+		else:
+			# A marker may already own the arrival. Keep its original recovery,
+			# bounded to this one event, rather than replaying or publishing again.
+			staged_receipt["endpoint_result"] = entered.duplicate(true)
 		if not entered.ok: return entered
 		slot._region_original_labs[identity] = activated
 		var wired := activated._wire_region_gameplay_adapters(slot)
@@ -11468,6 +11510,10 @@ func _region_gameplay_player_materialize(event: Dictionary) -> Dictionary:
 	# itself stays pending until actual visible bind and original continuity.
 	var checkpoint := activated._region_gameplay_endpoint_checkpoint({"player_event": str(queued.id), "effects_complete": true})
 	if not checkpoint.ok: return checkpoint
+	# Only a successful real endpoint checkpoint retires any retained arrival source.
+	for source_key: Variant in activated._region_owner_source_receipts.keys():
+		if activated._region_owner_source_receipts[source_key].get("endpoint_event") == str(queued.id):
+			activated._region_owner_source_receipts.erase(source_key)
 	if activated.restore_only:
 		var location: Dictionary = slot._coordinate(activated.terrain)
 		if not location.ok: return location
