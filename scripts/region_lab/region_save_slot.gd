@@ -1899,9 +1899,16 @@ func acknowledge_region_bind(data: TerrainData, receipt: Dictionary) -> Dictiona
 	var original: Variant = getter.call(data)
 	if not original is Dictionary or original != receipt or receipt.get("complete") != true:
 		return fail("REGION_BIND", "原 owner 綁定尚未完成")
+	# The activation mode is the one the original owner really bound in. A restore-only
+	# (cold) owner's receipt is cold_exact / original_replay and stays so until the
+	# world-open live bind; only a live receipt may activate as live / original_site.
+	var bound_mode: String = str(receipt.get("mode", ""))
+	var bound_consumer: String = str(receipt.get("consumer", ""))
+	var legal_pair: bool = (bound_mode == "live" and bound_consumer == "original_site") or (bound_mode == "cold_exact" and bound_consumer == "original_replay")
+	if not legal_pair: return fail("REGION_BIND", "原 owner 綁定模式與 consumer 不合")
 	var activation := receipt.duplicate(true)
 	activation.generation = int(_marker.get("generation", 0))
-	var enabled := activate_region_mode(str(data.site.id), "live", "original_site", activation, str(receipt.get("backend", "gd")))
+	var enabled := activate_region_mode(str(data.site.id), bound_mode, bound_consumer, activation, str(receipt.get("backend", "gd")))
 	if not enabled.ok: return enabled
 	if data.site.has("region_life_events"):
 		var consume: Variant = data.get_meta(&"region_life_consumer", Callable())

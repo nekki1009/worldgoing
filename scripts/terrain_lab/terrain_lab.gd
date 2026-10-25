@@ -11427,6 +11427,11 @@ func _region_gameplay_player_materialize(event: Dictionary) -> Dictionary:
 			var genesis: Dictionary = slot.publish_region_destination_genesis(activated.terrain)
 			if not genesis.ok: return genesis
 			if slot.region_bind_proof(activated.terrain).is_empty(): return SiteRuntime.fail("UNSELECTED_REGION_SOURCE")
+		# The dispatching original owner (this Lab, the old active owner) may still hold
+		# the completed endpoint that opened the siege batch. Its zero-time closer runs
+		# here so the activated owner's pre-bind capture sees no open batch.
+		var dispatcher_point: Dictionary = _region_flush_bound_point()
+		if not dispatcher_point.ok: return dispatcher_point
 		# The owner's own completed point must close before its pre-bind save.
 		var own_point: Dictionary = activated._region_flush_bound_point()
 		if not own_point.ok: return own_point
