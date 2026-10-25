@@ -266,13 +266,24 @@ func _enemy_takeover() -> bool:
 	for step in range(19):
 		actions.advance_structure_attacks(0.5)
 		if not _expect(actions.settle_after_contacts().is_empty() and vehicle == before and actions.is_busy(original_ids[1]), "enemy engine remains unchanged before ten action seconds", step): return false
+	var takeover_source: Dictionary = actions._siege_takeover_snapshot(vehicle)
+	if not _expect(actions.technology_capture_for_submit(roster_engine, takeover_source, team.team_id).is_empty(), "unfinished original takeover cannot publish provenance before ten action seconds"): return false
 	actions.advance_structure_attacks(0.5)
+	var capture_expected: Dictionary = actions.technology_capture_for_submit(roster_engine, takeover_source, team.team_id)
+	if not _expect(SiteRuntime.technology_capture_valid(capture_expected, false)
+		and capture_expected.vehicle == {"site_id": str(data.site.id), "vehicle_id": roster_engine}
+		and int(capture_expected.source_team_id) == enemy.team_id and int(capture_expected.source_faction) == enemy.faction_id
+		and int(capture_expected.recipient_team_id) == team.team_id and int(capture_expected.recipient_faction) == team.faction_id
+		and capture_expected.capture_id == JSON.stringify([str(data.site.id), roster_engine, int(holder.version) + 1]),
+		"completed original job independently proves exact source, recipient, engine and next holder version before commit", capture_expected): return false
 	var settled: Array[Dictionary] = actions.settle_after_contacts()
 	if not _expect(settled.size() == 1 and settled[0].ok and not actions.is_busy(original_ids[1]), "ten continuous original action seconds commit exactly once", settled): return false
 	var expected := before.duplicate(true)
+	expected["vehicle_version"] = 3
+	expected["technology_capture"] = capture_expected.duplicate(true)
 	expected.team_id = team.team_id
 	expected.holder.version = int(expected.holder.version) + 1
-	if not _expect(vehicle == expected and is_same(data.site.vehicles[roster_engine], vehicle) and is_same(vehicle.holder, holder) and is_same(vehicle.cargo, cargo), "only engine team and its required holder version change; ID/HP/history/ammo/items stay original"): return false
+	if not _expect(vehicle == expected and is_same(data.site.vehicles[roster_engine], vehicle) and is_same(vehicle.holder, holder) and is_same(vehicle.cargo, cargo), "only engine team, required holder version and independently proven capture receipt change; ID/HP/history/ammo/items stay original"): return false
 	for index in range(roundtrip_lab.combat_armies.size()):
 		if not _expect(roundtrip_lab.combat_armies[index].capture_combat_state() == all_snapshots[index], "both complete original Army snapshots survive enemy takeover"): return false
 	if not _expect(roundtrip_lab.combat_actors.size() == actor_states.size(), "takeover creates or removes no original Actors"): return false
