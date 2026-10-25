@@ -10893,6 +10893,11 @@ func _region_validate_player_siege_contact(event: Dictionary) -> Dictionary:
 	if battle.is_empty() or str(battle.get("kind", "")) != "siege" or str(battle.get("phase", "")) == "finished": return {"ok": true, "valid": false, "reason": "SIEGE_CHANNEL_ENDED"}
 	var owner := str(battle.site_id)
 	var original: TerrainLab = _region_original_labs.get(owner)
+	# A Slot reopened by the visible world-open owns its active Site through the
+	# bound main lab (as the family transition target resolves it), not a cached cold entry.
+	if not is_instance_valid(original) and owner == str(control.active_site_id) and region_owner_lab.is_valid():
+		var main_owner: Object = region_owner_lab.get_object()
+		if main_owner is TerrainLab and main_owner.terrain != null and str(main_owner.terrain.site.id) == owner: original = main_owner
 	if not is_instance_valid(original) or _region_bound_original_lab(original.terrain) != original: return fail("COMMITTED_UNBOUND")
 	var bind: Dictionary = original.region_bind_receipt(original.terrain)
 	if bind.get("complete") != true or bind.get("owners_restored") != true: return fail("COMMITTED_UNBOUND")

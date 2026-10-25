@@ -9791,6 +9791,12 @@ func open_fixed_world(manifest_path: String, world_id: String, slot_id: String, 
 		save_path = candidate.site_path(coordinate)
 		_auto_save_blocked = false
 		return Runtime.ok("原已提交開局首代已恢復並完整綁定", {"archive": str(archived.get("path", "")), "site": [coordinate.x, coordinate.y], "initial_generation": 1})
+	# A selected hot body may still hold its accepted original P0 endpoint. As on
+	# the arrival path (RegionTravelSite.world_opened), the bound main lab wires the
+	# Slot's endpoint consumers before any dispatch; no new owner is created.
+	if selected_restore and not candidate.region_original_party_zero.is_valid():
+		var wired: Dictionary = lab._wire_region_gameplay_adapters(candidate)
+		if not wired.get("ok", false): return wired
 	if not _boot_request.is_empty(): _auto_save_blocked = false
 	if site.data.site.has("region_snapshot"):
 		return Runtime.ok("原已提交世界已綁定；待原端點處理完成才保存新世代", {"site": [coordinate.x, coordinate.y], "region_recovery": true})
