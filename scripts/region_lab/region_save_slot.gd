@@ -3560,6 +3560,10 @@ func commit_region_arrival(destination_data: TerrainData, bind_guard: Callable =
 		return fail("STALE_REGION_BIND_TICKET")
 	var published := _publish(sites, next_clock, str(status.token))
 	if not published.ok: return published
+	# The committed arrival is now the active owner. Its earlier cold candidate
+	# (captured while it was a cold original) is superseded by this generation and
+	# must not be settled again as an unbound copy at the next common checkpoint.
+	_fire_cold_candidates.erase(identity)
 	# The marker now owns the arrival exactly once, including failures below.
 	_travel_party_cache.clear()
 	_travel_plan_cache.clear()
