@@ -346,7 +346,8 @@ func _player_durable_owners_equal(previous: Dictionary, current: Dictionary, pre
 	return previous == comparable
 
 func _player_visible_bind() -> bool:
-	var original: Dictionary = lab._region_gameplay_owner_lab(str(player_contact_event.owner), "live")
+	# The accepted consumer bound action_owner; lab still hosts the old map source.
+	var original: Dictionary = action_owner._region_gameplay_owner_lab(str(player_contact_event.owner), "live")
 	if not _check(original.ok, "actual accepted player endpoint resolves its original live body owner", original): return false
 	action_owner = original.lab
 	var actual: Dictionary = action_owner._original_person_target(action_owner.controlled_person_id())
