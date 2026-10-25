@@ -434,7 +434,7 @@ func _departure_army_captain_genesis_at_peace(actual: TerrainArmy, person: Dicti
 				var candidate: Vector2i = origin + Vector2i(x, y)
 				if cells.has(candidate) or maxi(absi(x), absi(y)) != radius: continue
 				var single: Array[Vector2i] = [candidate]
-				if lab._melee_trial_formation_legal(single, {}): cells.append(candidate)
+				if not lab._armies_block_cell(candidate) and lab._melee_trial_formation_legal(single, {}): cells.append(candidate)
 				if cells.size() == 2: break
 			if cells.size() == 2: break
 		if cells.size() == 2: break
