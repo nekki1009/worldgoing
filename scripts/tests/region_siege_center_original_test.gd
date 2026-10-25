@@ -204,14 +204,26 @@ func _open_center_world(start: Vector2i, prefix: String = "r0_center") -> bool:
 	var wired := lab._wire_region_gameplay_adapters(slot)
 	return _check(wired.ok, "same original Slot and owners wire", wired)
 
-func _genesis_cells(near: Vector2i, count: int) -> Array[Vector2i]:
+func _genesis_cells(near: Vector2i, count: int, source_owner: TerrainLab = null) -> Array[Vector2i]:
+	var original: TerrainLab = lab if source_owner == null else source_owner
 	var cells: Array[Vector2i] = []
-	for radius: int in range(1, 12):
+	# Existing callers retain their exact radius. A different original Site may
+	# have water at the old gate hint; inspect only that Site's genuine ground.
+	var limit: int = 12 if source_owner == null else maxi(original.terrain.size.x, original.terrain.size.y) + 1
+	for radius: int in range(1, limit):
 		for y: int in range(-radius, radius + 1):
 			for x: int in range(-radius, radius + 1):
+				if source_owner != null and absi(x) != radius and absi(y) != radius: continue
 				var cell := near + Vector2i(x, y)
-				if cells.size() < count and lab.terrain.contains(cell) and lab.terrain.is_walkable(cell) and not cells.has(cell) and cell != lab.character.terrain_cell:
+				if cells.size() < count and original.terrain.contains(cell) and original.terrain.is_walkable(cell) and not cells.has(cell) and cell != original.character.terrain_cell:
+					if source_owner != null:
+						if original._armies_block_cell(cell): continue
+						var occupied: bool = false
+						for actor: TerrainTestCharacter in original.combat_actors:
+							if actor.occupies_cell(cell): occupied = true
+						if occupied: continue
 					cells.append(cell)
+					if source_owner != null and cells.size() == count: return cells
 	return cells
 
 ## The successor's real team is born before any fixture combat or work starts.

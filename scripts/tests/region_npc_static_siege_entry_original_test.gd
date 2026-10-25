@@ -32,8 +32,15 @@ func _run() -> void:
 	if not _check(action_owner.character.place(Vector2i(19, 19), true)
 		and int(Settlement.capture_sample(action_owner).attacker) == -1,
 		"original finite center founder prevents a fabricated capture timer during this route fixture"): _finish(); return
-	action_owner._ensure_army_slots(3)
-	var enemy: TerrainArmy = action_owner.combat_armies[2]
+	var enemy: TerrainArmy = null
+	for slot_index: int in range(action_owner.combat_armies.size() + 1):
+		action_owner._ensure_army_slots(slot_index + 1)
+		var candidate: TerrainArmy = action_owner.combat_armies[slot_index]
+		if not candidate.has_army() and not candidate.combat_enabled and candidate.combat_units.is_empty():
+			enemy = candidate
+			break
+	if not _check(enemy != null, "static hostile body uses an empty original slot without replacing actual attackers"): _finish(); return
+	enemy.team_id = action_owner._next_army_identity()
 	enemy.faction_id = 2
 	enemy.roster_size = 1
 	var cells: Array[Vector2i] = [Vector2i(1, 50)]

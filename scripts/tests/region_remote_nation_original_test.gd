@@ -106,23 +106,47 @@ func _nation_initial_bodies() -> bool:
 	lab.terrain.site.capacity = 100000
 	for item: String in Env.ITEM_NAMES: lab.terrain.site.inventory[item] = 1000
 	if not _check(SiteRuntime.initialize_item_storage(lab.terrain.site).ok, "finite initial Source Depot is owned by the actual item allocator"): return false
-	lab._ensure_army_slots(3)
+	var existing_teams: Array[TerrainArmy] = []
+	var existing_snapshots: Array[PackedByteArray] = []
+	for existing: TerrainArmy in lab.combat_armies:
+		if existing.has_army() or existing.combat_enabled or not existing.combat_units.is_empty():
+			existing_teams.append(existing)
+			existing_snapshots.append(var_to_bytes(existing.capture_combat_state(true)))
+	var genesis_teams: Array[TerrainArmy] = []
 	var positions: Array = [[Vector2i(98, 52), Vector2i(97, 52)], [Vector2i(99, 50), Vector2i(99, 51)], [Vector2i(99, 52), Vector2i(99, 53)]]
 	var members: Array[int] = []
 	for index: int in 3:
-		var original: TerrainArmy = lab.combat_armies[index]
+		var original: TerrainArmy = null
+		for slot_index: int in range(lab.combat_armies.size() + 1):
+			lab._ensure_army_slots(slot_index + 1)
+			var candidate: TerrainArmy = lab.combat_armies[slot_index]
+			if not candidate.has_army() and not candidate.combat_enabled and candidate.combat_units.is_empty():
+				original = candidate
+				break
+		if not _check(original != null, "finite source Genesis uses an empty original slot without replacing existing heirs", index): return false
+		original.team_id = lab._next_army_identity()
 		original.faction_id = 1
 		original.roster_size = 2
 		var cells: Array[Vector2i] = []
-		cells.assign(positions[index])
+		for cell: Vector2i in _genesis_cells(positions[index][0], 64):
+			if lab._armies_block_cell(cell): continue
+			var occupied: bool = false
+			for actor: TerrainTestCharacter in lab.combat_actors:
+				if actor.occupies_cell(cell): occupied = true
+			if not occupied: cells.append(cell)
+			if cells.size() == 2: break
+		if not _check(cells.size() == 2, "new initial cohort uses actual unoccupied source cells without moving any existing body", index): return false
 		if not _check(original.deploy_at(lab.terrain, null, null, cells) and original.enable_combat(false, 0), "actual initial source HQ, remote cohort and independent courier use the original body allocator", index): return false
+		genesis_teams.append(original)
 		lab.site_controller.initialize_team_items(original)
 		for row: int in original.combat_units.size(): members.append(original.combat_identity(row))
+	for index: int in existing_teams.size():
+		if not _check(var_to_bytes(existing_teams[index].capture_combat_state(true)) == existing_snapshots[index], "new finite Genesis preserves every pre-existing original Army body, identity, gear and command", existing_teams[index].team_id): return false
 	lab.terrain.site.army_next_team = lab._next_army_identity()
-	var headquarters: TerrainArmy = lab.combat_armies[0]
+	var headquarters: TerrainArmy = genesis_teams[0]
 	nation_head = headquarters.combat_identity(headquarters.current_commander)
 	nation_guard = headquarters.combat_identity(1)
-	nation_courier_team = lab.combat_armies[2].team_id
+	nation_courier_team = genesis_teams[2].team_id
 	nation_id = "source_nation_%d" % OS.get_process_id()
 	if not lab.terrain.site.has("equipment_nations"): lab.terrain.site.equipment_nations = {}
 	lab.terrain.site.equipment_nations[nation_id] = {"members": members, "standards": {}, "offices": SiteOffices.default_offices("nation", nation_head, true)}
@@ -130,7 +154,7 @@ func _nation_initial_bodies() -> bool:
 	var explicit_head: Dictionary = lab.site_controller.equipment_orders.apply_nation_office_plan(nation_head, nation_id, int(offices.revision),
 		[{"op": "assign", "duty_id": "nation.dispatch", "position_id": str(SiteOffices.head_position(offices).id)}])
 	if not _check(explicit_head.ok, "initial original Nation office plan explicitly keeps strategic dispatch with its true resident head", explicit_head): return false
-	var remote: TerrainArmy = lab.combat_armies[1]
+	var remote: TerrainArmy = genesis_teams[1]
 	if not _check(remote.set_tactical_ai_enabled(remote.current_commander, true).ok, "actual remote captain enables its own original local tactical policy before departure"): return false
 	var created: Dictionary = lab._region_gameplay_owner_lab(Grid.site_id(str(slot.pin.atlas_id), nation_goal_coordinate), "cold_exact")
 	if not _check(created.ok and created.lab is TerrainLab, "actual strategic Site has its own complete original cold owner", created.get("code")): return false
@@ -139,15 +163,41 @@ func _nation_initial_bodies() -> bool:
 	for key: String in nation_goal.terrain.resource_base: Env.change(nation_goal.terrain, key, {"cleared": true, "remaining": 0})
 	if not _check(nation_goal.character.place(Vector2i(80, 80), true), "authored local founder stays outside all possible original route entry poses"): return false
 	nation_goal.character.faction_id = 1
-	nation_goal._ensure_army_slots(5)
+	var goal_existing: Array[TerrainArmy] = []
+	var goal_snapshots: Array[PackedByteArray] = []
+	for existing: TerrainArmy in nation_goal.combat_armies:
+		if existing.has_army() or existing.combat_enabled or not existing.combat_units.is_empty():
+			goal_existing.append(existing)
+			goal_snapshots.append(var_to_bytes(existing.capture_combat_state(true)))
 	var gates: Array[Vector2i] = [Vector2i(1, 50), Vector2i(50, 1), Vector2i(98, 50), Vector2i(50, 98)]
 	for index: int in gates.size():
-		var enemy: TerrainArmy = nation_goal.combat_armies[index + 1]
+		var enemy: TerrainArmy = null
+		for slot_index: int in range(nation_goal.combat_armies.size() + 1):
+			nation_goal._ensure_army_slots(slot_index + 1)
+			var candidate: TerrainArmy = nation_goal.combat_armies[slot_index]
+			if not candidate.has_army() and not candidate.combat_enabled and candidate.combat_units.is_empty():
+				enemy = candidate
+				break
+		if not _check(enemy != null, "target enemy Genesis uses an empty original slot and preserves every resident", gates[index]): return false
+		enemy.team_id = nation_goal._next_army_identity()
 		enemy.faction_id = 2
 		enemy.roster_size = 1
-		var cells: Array[Vector2i] = [gates[index]]
+		var cells: Array[Vector2i] = []
+		var candidates: Array[Vector2i] = [gates[index]]
+		candidates.append_array(_genesis_cells(gates[index], 1, nation_goal))
+		for cell: Vector2i in candidates:
+			if not nation_goal.terrain.is_walkable(cell) or nation_goal._armies_block_cell(cell): continue
+			var occupied: bool = false
+			for actor: TerrainTestCharacter in nation_goal.combat_actors:
+				if actor.occupies_cell(cell): occupied = true
+			if not occupied:
+				cells.append(cell)
+				break
+		if not _check(cells.size() == 1, "target Genesis resolves genuine unoccupied ground without changing its original terrain or residents", gates[index]): return false
 		if not _check(enemy.deploy_at(nation_goal.terrain, null, null, cells) and enemy.enable_combat(false, 0), "initial unknown enemy body exists in the target's original owner", gates[index]): return false
 		nation_goal.site_controller.initialize_team_items(enemy)
+	for index: int in goal_existing.size():
+		if not _check(var_to_bytes(goal_existing[index].capture_combat_state(true)) == goal_snapshots[index], "target enemy Genesis preserves original resident bodies, IDs, gear and orders", goal_existing[index].team_id): return false
 	nation_goal.terrain.site.army_next_team = nation_goal._next_army_identity()
 	if not _check(controller.checkpoint_region_internal("region_checkpoint", true).ok, "initial Source, receiver and strategic target whole graphs publish together"): return false
 	# Stable nation/team refs come from the original travel identity allocator,
