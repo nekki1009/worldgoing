@@ -21,7 +21,7 @@ func _run() -> void:
 		"hp": 140.0, "ever_hp_damaged": false, "phase": "building", "crew_slots": {},
 		"build": {"paid_cost": definition.cost.duplicate(), "total_work": definition.work_seconds, "progress": 0.0},
 		"repair": {}, "command": {}, "action": {}, "next_attack_seq": 1, "rng_state": 1}
-	data.site = {"vehicles": {"1": vehicle}, "next_vehicle": 2, "actors": {}, "armies": [], "features": {}}
+	data.site = {"vehicles": {"1": vehicle}, "next_vehicle": 2, "actors": {}, "armies": [], "features": {}, "next_feature": 1}
 	assert(Store._validate_vehicles(data, data.site).ok, "Original neutral construction record is stable")
 	var baseline := data.site.duplicate(true)
 	vehicle.hp = 1.0
@@ -38,13 +38,15 @@ func _run() -> void:
 	vehicle.cargo = {"siege_bolt": 3}
 	assert(Store._validate_vehicles(data, data.site).ok, "Wrecks preserve their original cargo")
 	var station: int = int(Runtime.siege_work_slots(data, vehicle)[0].cell)
-	data.feature_at[station] = 9
+	# Block actual source ground; feature_at is only a rebuilt derived index.
+	var station_flags: int = int(data.flags[station])
+	data.flags[station] = station_flags & ~TerrainData.Flag.WALKABLE
 	assert(Store._validate_vehicles(data, data.site, true).ok, "Stable wrecks do not reserve abandoned construction stations")
 	vehicle.hp = 140.0
 	vehicle.phase = "building"
 	vehicle.build = baseline.vehicles["1"].build.duplicate(true)
 	assert(not Store._validate_vehicles(data, data.site, true).ok, "Active construction still requires its original stations")
-	data.feature_at[station] = 0
+	data.flags[station] = station_flags
 	vehicle.hp = 0.0
 	vehicle.phase = "wrecked"
 	vehicle.build = {}
