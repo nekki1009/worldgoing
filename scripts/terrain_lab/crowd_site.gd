@@ -2389,7 +2389,7 @@ func activate_loaded() -> void:
 		if source == null or source.combat_enabled:
 			last_event_error = SiteRuntime.fail("INVALID_CROWD_OWNER", "存檔原隊伍命令 owner 未就緒")
 			return
-		_original_team_plans.append({"source": source})
+		_original_team_plans.append({"source": source, "roster": roster})
 	_actors.clear()
 	for actor: TerrainTestCharacter in lab.combat_actors:
 		if int(crowd.soldier_index(actor.person_id)) >= 0: _actors[actor.person_id] = actor
