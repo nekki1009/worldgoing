@@ -40,6 +40,9 @@ class ClockController extends Controller:
 		work_seconds += seconds
 
 class ClockLab extends QueryLab:
+	# A tree-owned clock probe keeps production interruption guards intact.
+	# Its explicit fixture supplies all owners; do not run the formal UI/genesis _ready.
+	func _ready() -> void: pass
 	var received_game_seconds := 0.0
 	var received_action_seconds := 0.0
 	var combat_calls := 0
@@ -90,11 +93,19 @@ func _ballista_fixture(crew_count: int = 2, clock_probe: bool = false) -> Dictio
 	assert(controller.vehicles.crew_count(vehicle, true) == crew_count)
 	vehicle.cargo.siege_bolt = 4 # Explicit fixture stock in the original cargo.
 	vehicle.holder.version = int(vehicle.holder.version) + 1
+	if clock_probe:
+		lab.process_mode = Node.PROCESS_MODE_DISABLED
+		root.add_child(lab)
+		lab.set_process(false)
+		lab.set_process_unhandled_input(false)
+		assert(lab.is_inside_tree() and lab.get_tree() == self and not lab.is_processing(), "Original shared-step clock probe has a real tree and no autonomous processing")
 	return {"data": data, "key": key, "lab": lab, "controller": controller,
 		"fixture": fixture, "vehicle": vehicle, "commander": commander}
 
 func _close_ballista(context: Dictionary) -> void:
 	var lab: QueryLab = context.lab
+	# Run original tree-exit cleanup while the fixture Controller and crew still exist.
+	if lab.is_inside_tree(): lab.get_parent().remove_child(lab)
 	for actor: TerrainTestCharacter in lab.combat_actors: actor.free()
 	lab.combat_actors.clear()
 	lab.siege_projectiles.clear()
