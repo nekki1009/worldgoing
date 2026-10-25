@@ -152,12 +152,20 @@ static func world_opened(controller: Node, candidate: RegionSaveSlot, manifest_p
 		if not proof.get("ok", false):
 			_release_arrival_host(host_panel)
 			return _staged(proof, "arrival_party_proof")
+	# The cold fire replay (TerrainLab._region_advance_original_cold_site) reads the
+	# original clock through controller.region_slot while the destination opens.
+	# A freshly reloaded shell has no slot until commit, so wire this same
+	# candidate for the open and roll back if the open fails (PENDING keeps it:
+	# the pending replay still needs the slot).
+	var previous_slot: RegionSaveSlot = controller.region_slot
+	controller.region_slot = candidate
 	var opened: Dictionary
 	if FileAccess.file_exists(candidate.site_path(destination)):
 		opened = candidate.open_site(destination) # Original exact cold replay (may be PENDING).
 	else:
 		var fresh: Dictionary = candidate.source.make_terrain_data(destination.x, destination.y)
 		if not bool(fresh.get("ok", false)):
+			controller.region_slot = previous_slot
 			_release_arrival_host(host_panel)
 			return fresh
 		opened = candidate._ground_destination(fresh.data, now)
@@ -167,10 +175,12 @@ static func world_opened(controller: Node, candidate: RegionSaveSlot, manifest_p
 			# published-source rule.
 			var genesis := candidate.publish_region_destination_genesis(opened.data)
 			if not genesis.ok:
+				if str(genesis.get("code", "")) != "PENDING": controller.region_slot = previous_slot
 				_release_arrival_host(host_panel)
 				return controller._remember_region_pending(_staged(genesis, "destination_genesis"), request)
 			if genesis.get("data") is TerrainData: opened.data = genesis.data # Continue from the selected canonical body.
 	if not opened.ok:
+		if str(opened.get("code", "")) != "PENDING": controller.region_slot = previous_slot
 		_release_arrival_host(host_panel)
 		return controller._remember_region_pending(_staged(opened, "open_destination"), request)
 	var preflight: Dictionary = controller._journey_arrival_preflight(opened.data)
