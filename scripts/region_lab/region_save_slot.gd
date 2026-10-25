@@ -11648,7 +11648,9 @@ func _faction_remember_captured_source(path: String, site: Vector2i, checksum: S
 		return fail("CORRUPT_SAVE", "faction captured source time")
 	var recorded: Dictionary = data.site.get("region_snapshot", {}).get("context", {})
 	for field: String in ["game_seconds", "action_seconds", "fire_epoch", "fire_sequence", "source_generation", "runtime_revision"]:
-		var encoded: Variant = JSON.parse_string(JSON.stringify(context.get(field), "", false, true))
+		# Context clocks are decoded from their original full-precision literals.
+		# Do not send those exact values through the lossy JSON number reader again.
+		var encoded: Variant = context.get(field) if field in ["game_seconds", "action_seconds"] else JSON.parse_string(JSON.stringify(context.get(field), "", false, true))
 		if recorded.get(field) != encoded: return fail("CORRUPT_SAVE", "faction captured source context")
 	# This immutable file was just validated; retain its actual capture clock.
 	var summarized: Dictionary = _faction_summary(data.site, str(data.site.id), context.game_seconds, RegionFactionQuery.whole_or_null(context.get("runtime_revision")))

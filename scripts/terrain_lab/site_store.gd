@@ -1600,6 +1600,7 @@ static func _read(path: String) -> Dictionary:
 		return Runtime.fail("SAVE_VERSION", "生成／存檔版本不同，原檔保留")
 	if not payload.get("state") is Dictionary or not payload.get("parameters") is Dictionary:
 		return Runtime.fail("CORRUPT_SAVE")
+	_read_exact_region_context_clocks(body, payload.state)
 	if int(payload.format) < 4:
 		for nation: Variant in payload.state.get("equipment_nations", {}).values():
 			if nation is Dictionary and (nation.has("faction_version") or nation.has("faction_id")): return Runtime.fail("SAVE_VERSION", "formal faction binding requires Site format 4")
@@ -4795,3 +4796,145 @@ static func clear_faction_summary_cache() -> void:
 	faction_summary_metadata.clear()
 	_faction_summary_serial += 1 # Prevent an in-flight old validation repopulating cleared facts.
 	_faction_summary_mutex.unlock()
+
+## JSON's numeric reader can move a 17-digit clock literal by one ulp.
+## Invert the original full-precision writer exactly for these metadata fields.
+## Body/owner normalization, legacy noncanonical values and all guards stay put.
+static func _read_exact_region_context_clocks(body: String, state: Dictionary) -> void:
+	var snapshot: Variant = state.get("region_snapshot")
+	if not snapshot is Dictionary or not snapshot.get("context") is Dictionary: return
+	var context: Dictionary = snapshot["context"]
+	var located: Vector3i = _region_json_path(body, 0, ["state", "region_snapshot", "context"], 0)
+	var span: Vector2i = Vector2i(located.y, located.z)
+	if span.x < 0: return
+	for field: String in ["game_seconds", "action_seconds"]:
+		var value: Variant = context.get(field)
+		if not (value is int or value is float) or not is_finite(float(value)) or float(value) < 0.0 or float(value) > 1000000000000.0: continue
+		var number: Vector2i = _region_json_member(body, span, field)
+		if number.x < 0: continue
+		var token: String = body.substr(number.x, number.y - number.x)
+		# A duplicate/escaped/nested locator may never switch the parsed authority.
+		var original: Variant = JSON.parse_string(token)
+		if original != value: continue
+		var exact: Dictionary = _region_clock_number(token, float(value))
+		if exact["matched"]: context[field] = exact["value"]
+
+## Skip one already-validated JSON value. Strings are skipped in native-sized
+## chunks; braces inside quoted/escaped values never become structural tokens.
+static func _region_json_end(text: String, begin: int) -> int:
+	if begin < 0 or begin >= text.length(): return -1
+	var character: String = text.substr(begin, 1)
+	if character == "\"":
+		var quote: int = text.find("\"", begin + 1)
+		while quote >= 0:
+			var slashes: int = 0
+			var previous: int = quote - 1
+			while previous > begin and text.unicode_at(previous) == 92:
+				slashes += 1
+				previous -= 1
+			if slashes % 2 == 0: return quote + 1
+			quote = text.find("\"", quote + 1)
+		return -1
+	var cursor: int = begin
+	if character in ["{", "["]:
+		var depth: int = 1
+		cursor += 1
+		while cursor < text.length():
+			character = text.substr(cursor, 1)
+			if character == "\"":
+				cursor = _region_json_end(text, cursor)
+				if cursor < 0: return -1
+				continue
+			if character in ["{", "["]: depth += 1
+			elif character in ["}", "]"]:
+				depth -= 1
+				if depth == 0: return cursor + 1
+			cursor += 1
+		return -1
+	while cursor < text.length() and text.substr(cursor, 1) not in [",", "}", "]", " ", "\t", "\r", "\n"]: cursor += 1
+	return cursor
+
+static func _region_json_member(text: String, object_span: Vector2i, member: String) -> Vector2i:
+	var located: Vector3i = _region_json_path(text, object_span.x, [member], 0)
+	if located.x < 0 or located.x > object_span.y: return Vector2i(-1, -1)
+	return Vector2i(located.y, located.z)
+
+## Return object end and selected span in one traversal. Matching subobjects
+## recurse instead of being scanned again. Last duplicate key wins, as in JSON.
+static func _region_json_path(text: String, begin: int, path: Array, level: int) -> Vector3i:
+	if begin < 0: return Vector3i(-1, -1, -1)
+	if text.substr(begin, 1) != "{": return Vector3i(_region_json_end(text, begin), -1, -1)
+	var cursor: int = begin + 1
+	var found := Vector2i(-1, -1)
+	while cursor < text.length():
+		while cursor < text.length() and text.substr(cursor, 1) in [" ", "\t", "\r", "\n", ","]: cursor += 1
+		if text.substr(cursor, 1) == "}": return Vector3i(cursor + 1, found.x, found.y)
+		if text.substr(cursor, 1) != "\"": break
+		var key_end: int = _region_json_end(text, cursor)
+		if key_end < 0: break
+		var key: Variant = JSON.parse_string(text.substr(cursor, key_end - cursor)) # String only.
+		cursor = key_end
+		while cursor < text.length() and text.substr(cursor, 1) in [" ", "\t", "\r", "\n"]: cursor += 1
+		if text.substr(cursor, 1) != ":": break
+		cursor += 1
+		while cursor < text.length() and text.substr(cursor, 1) in [" ", "\t", "\r", "\n"]: cursor += 1
+		var value_end: int
+		if key == path[level] and level + 1 < path.size():
+			var nested: Vector3i = _region_json_path(text, cursor, path, level + 1)
+			value_end = nested.x
+			found = Vector2i(nested.y, nested.z)
+		else:
+			value_end = _region_json_end(text, cursor)
+			if key == path[level]: found = Vector2i(cursor, value_end)
+		if value_end <= cursor: break
+		cursor = value_end
+	return Vector3i(-1, -1, -1)
+
+## Positive decimal comparison uses digits and exponent, never float arithmetic.
+static func _region_decimal_key(token: String) -> Array:
+	var pieces: PackedStringArray = token.to_lower().split("e")
+	if pieces.is_empty() or pieces.size() > 2 or pieces[0].begins_with("-"): return []
+	if pieces.size() == 2 and pieces[1].length() > 8: return []
+	var mantissa: String = pieces[0]
+	var dot: int = mantissa.find(".")
+	var order: int = (mantissa.length() if dot < 0 else dot) + (int(pieces[1]) if pieces.size() == 2 else 0)
+	var digits: String = mantissa.replace(".", "")
+	while digits.begins_with("0"):
+		digits = digits.substr(1)
+		order -= 1
+	if digits.is_empty(): return [0, "0"]
+	while digits.ends_with("0"): digits = digits.left(digits.length() - 1)
+	return [order, digits]
+
+static func _region_decimal_compare(left: Array, right: Array) -> int:
+	if str(left[1]) == "0" or str(right[1]) == "0": return 0 if left[1] == right[1] else (-1 if left[1] == "0" else 1)
+	if int(left[0]) != int(right[0]): return -1 if int(left[0]) < int(right[0]) else 1
+	var width: int = maxi(str(left[1]).length(), str(right[1]).length())
+	var a: String = str(left[1]).rpad(width, "0")
+	var b: String = str(right[1]).rpad(width, "0")
+	return 0 if a == b else (-1 if a < b else 1)
+
+static func _region_clock_number(token: String, parsed: float) -> Dictionary:
+	# Full-precision binary64 writer literals are short. Long legacy numbers
+	# keep the original parser; they cannot cause unbounded digit processing.
+	if token.length() > 64: return {"matched": false, "value": parsed}
+	var wanted: Array = _region_decimal_key(token)
+	if wanted.is_empty(): return {"matched": false, "value": parsed}
+	var current: Array = _region_decimal_key(JSON.stringify(parsed, "", false, true))
+	if not current.is_empty() and _region_decimal_compare(current, wanted) == 0: return {"matched": true, "value": parsed}
+	# Positive finite binary64 bit patterns are monotone. At most 63 steps;
+	# acceptance requires the writer's complete decimal value to match exactly.
+	var bytes: PackedByteArray = PackedFloat64Array([1000000000000.0]).to_byte_array()
+	var low: int = 0
+	var high: int = bytes.decode_u64(0)
+	while low <= high:
+		var middle: int = low + ((high - low) >> 1)
+		bytes.encode_u64(0, middle)
+		var value: float = bytes.decode_double(0)
+		var encoded: Array = _region_decimal_key(JSON.stringify(value, "", false, true))
+		var comparison: int = _region_decimal_compare(encoded, wanted)
+		if comparison == 0: return {"matched": true, "value": value}
+		if comparison < 0: low = middle + 1
+		else: high = middle - 1
+	# Older noncanonical literals keep the original reader behavior/validation.
+	return {"matched": false, "value": parsed}
