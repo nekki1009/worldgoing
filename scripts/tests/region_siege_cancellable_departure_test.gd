@@ -276,6 +276,14 @@ func _departure_travel_and_open(goal: Vector2i) -> bool:
 		var advanced: Dictionary = slot.advance_region_travel(1)
 		if not _check(advanced.ok, "public original producer advances the same world/party/cold owners", advanced): return false
 		if count % 60 == 0: await process_frame
+	# Production RegionTravelPanel checkpoints an arrived journey before it opens
+	# the destination (region_travel_panel.gd advance -> _checkpoint -> arrive).
+	# advance_region_travel only mutates the in-memory party, so the public
+	# world-open (which reloads the Slot from disk) needs this durable checkpoint.
+	current = slot.region_travel_status()
+	if bool(current.get("arrived", false)):
+		var arrival_saved: Dictionary = slot.checkpoint_region_travel()
+		if not _check(arrival_saved.ok, "arrived party is durably checkpointed before the selected world-open", arrival_saved): return false
 	var due: Dictionary = slot.consume_due_region_events()
 	if not _check(due.ok, "original public zero owner accepts actual route/encounter events before selected visible bind", due): return false
 	var point := [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence]
