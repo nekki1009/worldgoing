@@ -2836,6 +2836,13 @@ func _save_path_guard(path: String) -> Dictionary:
 func _archive_path() -> String:
 	return save_root.path_join(str(lab.terrain.site.id).validate_filename() + ".json")
 
+func _archive_live_site() -> Dictionary:
+	# A controller with no bound terrain (a fresh visible window before its first
+	# bind) has no live Site to publish, so there is nothing to archive. Calling
+	# _archive_path() there would dereference the null terrain.
+	if lab == null or lab.terrain == null: return Runtime.ok()
+	return save_to(_archive_path())
+
 func _crowd_active() -> bool:
 	return lab != null and lab.get("crowd_site") != null and lab.crowd_site.active
 
@@ -9720,7 +9727,7 @@ func open_fixed_world(manifest_path: String, world_id: String, slot_id: String, 
 		var preflight: Dictionary = _journey_arrival_preflight(prepared.data)
 		if not preflight.ok: return preflight
 		if _initial_world_archive.is_empty():
-			var archived := Runtime.ok() if not _boot_request.is_empty() else save_to(_archive_path())
+			var archived := Runtime.ok() if not _boot_request.is_empty() else _archive_live_site()
 			if not archived.ok: return archived
 			_initial_world_archive = archived
 		var committed: Dictionary = candidate.commit_initial_site()
@@ -9765,7 +9772,7 @@ func open_fixed_world(manifest_path: String, world_id: String, slot_id: String, 
 	# commit is the truth). Archiving the live Site there would publish a newer
 	# generation into the same slot and stale the selected ticket prepared above.
 	var same_slot := region_slot != null and region_slot.folder.simplify_path() == candidate.folder.simplify_path()
-	var archived := Runtime.ok() if not _boot_request.is_empty() or same_slot else save_to(_archive_path())
+	var archived := Runtime.ok() if not _boot_request.is_empty() or same_slot else _archive_live_site()
 	if not archived.ok: return archived
 	if not selected_restore:
 		var attached: Dictionary = candidate.attach_active_site(site.data)
