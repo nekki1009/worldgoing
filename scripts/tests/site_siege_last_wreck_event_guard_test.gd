@@ -204,8 +204,11 @@ func _blocked_unchanged(label: String, pending: bool) -> bool:
 		and original == SiteRuntime.fail("BUSY", EVENT_BUSY_MESSAGE) and store_guard == original and admission == original
 		and lab.has_siege_projectiles() and (not pending or not lab._siege_contact_batch.is_empty()),
 		label + ": specific original siege-event guard is the refusal authority", {"guard": original, "flights": lab.siege_projectiles.size(), "pending": lab._siege_contact_batch.size()}): return false
+	# Store checks Fire first. GD's non-Fire flight refuses there; active Native
+	# delegates to its earlier specific Siege owner. Neither path may be skipped.
+	var expected_save: Dictionary = original if lab.crowd_site.active else SiteRuntime.fail("BUSY", "原非 Fire 投射物仍未到保存邊界")
 	var saved: Dictionary = lab.site_controller.save_to(lab.site_controller.save_path)
-	if not _check(saved == original and _edge_state() == before and _same_aliases(aliases)
+	if not _check(saved == expected_save and _edge_state() == before and _same_aliases(aliases)
 		and is_same(flight, lab.siege_projectiles[0]), label + ": Controller save refuses atomically with true IDs/holders/clock/endpoints/flight intact", saved): return false
 	var started: Dictionary = lab.crowd_site.deploy(candidates, [[Vector2i(65, 65)]])
 	if not _check(started == original and _edge_state() == before and _same_aliases(aliases)
