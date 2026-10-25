@@ -89,38 +89,68 @@ func _departure_walk_clear() -> bool:
 	var person: Dictionary = _departure_controlled_body()
 	if person.is_empty(): return false
 	var faction: int = int(person.owner.faction_id)
+	var path: Array[Vector2i] = []
+	var replans: int = 0
 	for edge: int in range(512):
 		var cell: Vector2i = lab.controlled_target().cell
 		if not RegionTravelSite._hostile_near(lab, faction, [cell]):
 			if not _departure_body_hold(person): return false
 			return _check(true, "actual controlled body reaches legal nonengaged departure cells through original paid movement", cell)
-		var best := Vector2i.ZERO
-		var score := -INF
-		for direction: Vector2i in [Vector2i.UP, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT]:
-			var next := cell + direction
-			if not lab.terrain.contains(next) or not lab.terrain.is_walkable(next): continue
-			if int(person.unit) >= 0:
-				var own: TerrainArmy = person.owner
-				var occupant: int = int(own._cell_owners.get(next, -1))
-				var reservation: int = int(own._reserved_cells.get(next, -1))
-				if not _check(occupant != int(person.unit) and reservation != int(person.unit), "candidate edge is not a stale self cell/reservation", {"cell": cell, "next": next, "unit": person.unit, "occupant": occupant, "reservation": reservation}): return false
-				if own.blocks_person_cell(next): continue
-			var nearest := INF
-			for other: TerrainTestCharacter in lab.combat_actors:
-				if not lab.actor_present(other) or other.faction_id == faction or not other.can_act(): continue
-				var delta: Vector2i = other.terrain_cell - next
-				nearest = minf(nearest, maxi(absi(delta.x), absi(delta.y)))
-			for team: TerrainArmy in lab.combat_armies:
-				if not team.combat_enabled or team.faction_id == faction: continue
-				for index: int in range(team.combat_units.size()):
-					if not team.combat_can_act(index) or bool(team.combat_hot_get(index, &"site_exited", false)): continue
-					var delta: Vector2i = team.cells[index] - next
-					nearest = minf(nearest, maxi(absi(delta.x), absi(delta.y)))
-			if nearest > score: best = direction; score = nearest
-		var moved: bool = best != Vector2i.ZERO and _departure_body_step(person, best)
-		if not _check(moved, "original public actor step accepts a real safe-direction edge", {"cell": cell, "direction": best}): return false
+		# One committed route per walk. A one-step score has no memory and ping-pongs between two cells.
+		if path.is_empty() or _departure_cell_gap(path[0], cell) != 1:
+			replans += 1
+			if not _check(replans <= 16, "departure walk replans stay bounded", {"cell": cell, "replans": replans}): return false
+			path = _departure_safe_path(person)
+			if not _check(not path.is_empty(), "a legal nonengaged departure cell is reachable through unblocked walkable cells", cell): return false
+		var next: Vector2i = path[0]
+		if int(person.unit) >= 0:
+			var own: TerrainArmy = person.owner
+			var occupant: int = int(own._cell_owners.get(next, -1))
+			var reservation: int = int(own._reserved_cells.get(next, -1))
+			if not _check(occupant != int(person.unit) and reservation != int(person.unit), "candidate edge is not a stale self cell/reservation", {"cell": cell, "next": next, "unit": person.unit, "occupant": occupant, "reservation": reservation}): return false
+		var moved: bool = _departure_body_step(person, next - cell)
+		if not _check(moved, "original public actor step accepts a real route departure edge", {"cell": cell, "next": next}): return false
+		path.pop_front()
 		if not await _action_until(func() -> bool: return not _departure_body_moving(person), "original common body owner completes each safe departure edge"): return false
 	return _check(false, "legal nonengaged departure cells were not reachable within 512 actual edges")
+
+func _departure_cell_gap(first: Vector2i, second: Vector2i) -> int:
+	return absi(first.x - second.x) + absi(first.y - second.y)
+
+func _departure_actor_at(cell: Vector2i) -> bool:
+	for actor: TerrainTestCharacter in lab.combat_actors:
+		if lab.actor_present(actor) and actor.terrain_cell == cell: return true
+	return false
+
+## Breadth-first route over real walkable, unoccupied cells to the nearest cell outside the hostile guard.
+func _departure_safe_path(person: Dictionary) -> Array[Vector2i]:
+	var faction: int = int(person.owner.faction_id)
+	var start: Vector2i = lab.controlled_target().cell
+	var came_from: Dictionary = {start: start}
+	var frontier: Array[Vector2i] = [start]
+	var head: int = 0
+	var goal_cell: Vector2i = TerrainArmy.INVALID_CELL
+	while head < frontier.size():
+		var cell: Vector2i = frontier[head]
+		head += 1
+		if not RegionTravelSite._hostile_near(lab, faction, [cell]):
+			goal_cell = cell
+			break
+		for direction: Vector2i in [Vector2i.UP, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT]:
+			var next: Vector2i = cell + direction
+			if came_from.has(next): continue
+			if not lab.terrain.contains(next) or not lab.terrain.is_walkable(next): continue
+			if int(person.unit) >= 0 and person.owner.blocks_person_cell(next): continue
+			if _departure_actor_at(next): continue
+			came_from[next] = cell
+			frontier.append(next)
+	var path: Array[Vector2i] = []
+	if goal_cell == TerrainArmy.INVALID_CELL: return path
+	var walk: Vector2i = goal_cell
+	while walk != start:
+		path.push_front(walk)
+		walk = Vector2i(came_from[walk])
+	return path
 
 func _departure_cancel_paid_edge() -> bool:
 	var person: Dictionary = _departure_controlled_body()
