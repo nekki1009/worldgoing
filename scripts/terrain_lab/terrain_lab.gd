@@ -11511,6 +11511,12 @@ func _region_gameplay_player_materialize(event: Dictionary) -> Dictionary:
 			var life := activated._region_gameplay_site_life_effect(queued)
 			if not life.ok: return life
 	activated.site_controller.settle_person_deaths(0.0)
+	# P0's own effects are applied above. Close only the other original cold
+	# points before their full graphs join this checkpoint; do not dispatch
+	# lower-priority party/Nation events or advance another paid interval.
+	var cold_points: Dictionary = slot._close_original_cold_region_points()
+	if not cold_points.get("ok", false): return cold_points
+	if not cold_points.get("complete", false): return SiteRuntime.fail("REGION_POINT_INCOMPLETE", "原冷 owner endpoint 尚未完成，未保存")
 	# Save the true full graph and accepted effect receipt together. The event
 	# itself stays pending until actual visible bind and original continuity.
 	var checkpoint := activated._region_gameplay_endpoint_checkpoint({"player_event": str(queued.id), "effects_complete": true})

@@ -4756,7 +4756,7 @@ func collect_region_party_checkpoint(generation: int, next_control: Dictionary, 
 		# its runtime identity for original callers spanning this common marker.
 	return {"ok": true}
 
-func _finish_original_cold_region_points() -> Dictionary:
+func _close_original_cold_region_points() -> Dictionary:
 	for owner: String in _region_original_labs:
 		if owner == str(control.active_site_id): continue
 		if str(region_registry().modes.get(owner, {}).get("mode", "")) != "cold_exact": continue
@@ -4765,6 +4765,11 @@ func _finish_original_cold_region_points() -> Dictionary:
 		if original._region_point_pending.is_empty(): continue
 		var consumed: Dictionary = original.consume_region_point(false)
 		if not consumed.get("ok", false) or not consumed.get("complete", false): return consumed
+	return {"ok": true, "complete": true}
+
+func _finish_original_cold_region_points() -> Dictionary:
+	var closed: Dictionary = _close_original_cold_region_points()
+	if not closed.get("ok", false) or not closed.get("complete", false): return closed
 	if not region_registry().parties.is_empty():
 		if not region_original_party_zero.is_valid(): return fail("MISSING_REGION_PARTY_ENDPOINT")
 		var settled: Variant = region_original_party_zero.call()
