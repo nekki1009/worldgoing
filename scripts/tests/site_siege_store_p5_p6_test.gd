@@ -618,7 +618,7 @@ func _bad_cases() -> bool:
 			{"label": "hp_negative", "mutate": func(state: Dictionary) -> void: state.vehicles[ballista].hp = -1.0},
 			{"label": "hp_above_definition", "mutate": func(state: Dictionary) -> void: state.vehicles[ballista].hp = 141.0},
 			{"label": "unknown_kind", "mutate": func(state: Dictionary) -> void: state.vehicles[ballista].kind = "unregistered_siege_engine"},
-			{"label": "unknown_vehicle_version", "mutate": func(state: Dictionary) -> void: state.vehicles[ballista].vehicle_version = 3},
+			{"label": "unknown_vehicle_version", "mutate": func(state: Dictionary) -> void: state.vehicles[ballista].vehicle_version = 4},
 			{"label": "unknown_definition_version", "mutate": func(state: Dictionary) -> void: state.vehicles[ballista].definition_version = 2},
 			{"label": "illegal_facing", "mutate": func(state: Dictionary) -> void: state.vehicles[ballista].facing = [1, 1]},
 			{"label": "illegal_footprint_edge", "mutate": func(state: Dictionary) -> void: state.vehicles[ballista].cell = roundtrip_lab.terrain.size.x * roundtrip_lab.terrain.size.y - 1},
