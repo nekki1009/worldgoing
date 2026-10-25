@@ -11346,6 +11346,23 @@ func _region_gameplay_contact_active_data() -> Dictionary:
 	return {"ok": true, "data": active.terrain, "cell": cell, "person_id": identity, "mode": mode, "receipt": selected.receipt}
 
 
+## Closes this lab's own completed point before the pre-bind checkpoint of an
+## activated cold owner. The travel accept path reaches that checkpoint outside
+## any point dispatch, so the open siege batch of a completed point would be
+## refused by capture_region_fire_transport. Only a point that is neither
+## dispatching nor consuming, and whose interval is complete, is finished here
+## through its original zero-time consumer. Every other state changes nothing.
+func _region_flush_bound_point() -> Dictionary:
+	if _region_point_pending.is_empty() or _region_point_consuming or _region_point_dispatching:
+		return SiteRuntime.ok()
+	if not bool(_region_point_pending.get("interval_complete", false)):
+		return SiteRuntime.ok()
+	var finished: Dictionary = consume_region_point(false)
+	if not finished.get("ok", false): return finished
+	if not finished.get("complete", false): return SiteRuntime.fail("REGION_POINT_INCOMPLETE", "原 P0 endpoint 尚未完成，未保存")
+	return SiteRuntime.ok()
+
+
 func _region_gameplay_endpoint_checkpoint(payload: Dictionary = {}) -> Dictionary:
 	var slot: RegionSaveSlot = site_controller.region_slot
 	if slot == null: return SiteRuntime.fail("NO_REGION_SLOT")
@@ -11402,6 +11419,9 @@ func _region_gameplay_player_materialize(event: Dictionary) -> Dictionary:
 			var genesis: Dictionary = slot.publish_region_destination_genesis(activated.terrain)
 			if not genesis.ok: return genesis
 			if slot.region_bind_proof(activated.terrain).is_empty(): return SiteRuntime.fail("UNSELECTED_REGION_SOURCE")
+		# The owner's own completed point must close before its pre-bind save.
+		var own_point: Dictionary = activated._region_flush_bound_point()
+		if not own_point.ok: return own_point
 		var captured: Dictionary = activated.site_controller.capture_region_checkpoint("region_barrier", false, {"player_event": str(queued.id)})
 		if not captured.ok: return captured
 		var player := slot.region_travel_party()
