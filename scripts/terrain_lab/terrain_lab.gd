@@ -9322,13 +9322,23 @@ func _region_gameplay_boundary_location(controller: String, token: String, party
 	var original: TerrainLab = actual.lab
 	var live: Dictionary = party.get("upkeep", {}).get("live", {})
 	var frame: Dictionary = live.get("frame", {})
-	if frame.is_empty(): return SiteRuntime.fail("MISSING_ORIGINAL_BOUNDARY_VIEW", "原完整 body frame 尚未准入；保留原 live-party materializer")
+	# A seam contact on a land party with no admitted frame yet gets a detached, read-only frame
+	# built from the contact's own leader position. Admitted frames keep their exact checks.
+	var detached: bool = frame.is_empty()
+	if detached:
+		var seam: Dictionary = _region_detached_boundary_frame(slot, token, party, event)
+		if not seam.ok: return seam
+		frame = seam.frame
 	if not RegionPartyTravel._frame_pair(frame.get("world_origin")) or not RegionPartyTravel._frame_pair(frame.get("size")) \
 		or frame.get("game_seconds") != float(slot.control.logical_game_seconds) or frame.get("action_seconds") != float(slot.control.fire_clock.action_seconds): return SiteRuntime.fail("STALE_PARTY_FRAME")
-	var geometry: Dictionary = slot.region_live_party_geometry(party, live.get("geometry_proof", {}))
+	var navigation: Dictionary = slot._region_party_frame_context(party)
+	if not navigation.ok: return navigation
+	var geometry: Dictionary = RegionRoute.party_frame_geometry(slot.source, frame, navigation.context) if detached \
+		else slot.region_live_party_geometry(party, live.get("geometry_proof", {}))
 	if not geometry.ok: return geometry
 	var local_origin: Vector2i = Vector2i(coordinate.x * RegionPartyGrid.SITE_CELLS, -coordinate.y * RegionPartyGrid.SITE_CELLS)
 	var origin: Vector2i = Vector2i(int(frame.world_origin[0]), int(frame.world_origin[1]))
+	var frame_size: Vector2i = Vector2i(int(frame.size[0]), int(frame.size[1]))
 	var refs: Dictionary = party.content.travel_identity.refs
 	var bodies: Dictionary = RegionPartyTravel._body_records(party.content)
 	var leader: Dictionary = frame.get("people", {}).get(str(int(party.leader_person_id)), {})
@@ -9336,23 +9346,24 @@ func _region_gameplay_boundary_location(controller: String, token: String, party
 	for identity: Variant in bodies:
 		var person: Dictionary = original._original_person_target(int(identity))
 		var row: Dictionary = frame.get("people", {}).get(str(identity), {})
-		if person.is_empty() or not RegionPartyTravel._frame_pair(row.get("world_cell")) or row.get("reference") != refs.person.get(str(identity)) \
-			or origin + (Vector2i(person.owner.cells[int(person.unit)]) if int(person.unit) >= 0 else person.owner.terrain_cell) != Vector2i(int(row.world_cell[0]), int(row.world_cell[1])): return SiteRuntime.fail("PARTY_FRAME_IDENTITY")
+		if person.is_empty() or not RegionPartyTravel._frame_pair(row.get("world_cell")) or row.get("reference") != refs.person.get(str(identity)): return SiteRuntime.fail("PARTY_FRAME_IDENTITY")
+		# A detached frame places its bodies from the contact leader, so only admitted frames match the native cells.
+		if not detached and origin + (Vector2i(person.owner.cells[int(person.unit)]) if int(person.unit) >= 0 else person.owner.terrain_cell) != Vector2i(int(row.world_cell[0]), int(row.world_cell[1])): return SiteRuntime.fail("PARTY_FRAME_IDENTITY")
 	# Extend the original bounded geometry window, not the bodies. Every world position and paid step stays fixed.
-	if original.terrain.size != Vector2i(int(frame.size[0]), int(frame.size[1])): return SiteRuntime.fail("STALE_PARTY_FRAME")
+	if not detached and original.terrain.size != frame_size: return SiteRuntime.fail("STALE_PARTY_FRAME")
 	var view_origin: Vector2i = origin.min(local_origin)
-	var view_end: Vector2i = (origin + original.terrain.size).max(local_origin + Vector2i(100, 100))
+	var view_end: Vector2i = (origin + frame_size).max(local_origin + Vector2i(100, 100))
 	var view_size: Vector2i = view_end - view_origin
 	if view_size.x not in [100, 200] or view_size.y not in [100, 200]: return SiteRuntime.fail("PARTY_FRAME_BOUNDS")
 	var view_frame: Dictionary = frame.duplicate(true)
 	view_frame["world_origin"] = [view_origin.x, view_origin.y]
 	view_frame["size"] = [view_size.x, view_size.y]
-	var navigation: Dictionary = slot._region_party_frame_context(party)
-	if not navigation.ok: return navigation
 	var view_geometry: Dictionary = RegionRoute.party_frame_geometry(slot.source, view_frame, navigation.context)
 	if not view_geometry.ok: return view_geometry
 	var projected_party: Dictionary = RegionPartyTravel.project_party_frame(party, view_frame)
 	if not projected_party.ok: return projected_party
+	# The projected copy only; the party itself keeps no live frame.
+	if not projected_party.party.upkeep.has("live"): projected_party.party.upkeep["live"] = {"version": 1, "phase": "live", "upkeep": "liveBody"}
 	projected_party.party.upkeep.live["frame"] = view_frame.duplicate(true)
 	projected_party.party.upkeep.live["geometry_proof"] = view_geometry.geometry_proof.duplicate(true)
 	var projection: Dictionary = projected_party.projection
@@ -9392,6 +9403,54 @@ func _region_gameplay_boundary_location(controller: String, token: String, party
 		"vehicle_poses": poses, "source_frame": frame.duplicate(true), "view_frame": view_frame, "geometry_proof": view_geometry.geometry_proof.duplicate(true), "source_geometry_proof": geometry.geometry_proof.duplicate(true),
 		"source_proof": actual.proof.duplicate(true), "projection": projection, "site_offset": local_origin - view_origin, "party_view": {"encoding": "godot_var_v1", "value": Marshalls.raw_to_base64(var_to_bytes(projected_party.party))},
 		"owner_states": view_owners, "reference_types": decoded.reference_types, "context": request.context}
+
+## Read-only frame for a land seam contact whose party has no admitted body frame.
+## The contact's second position names the leader's route node; the same
+## translation as the joint admission places the bodies relative to it. The
+## party, its checkpoint and its paid steps are not written.
+## The contact site is a JSON float pair ([1.0, 0.0]) on a loaded document, so it
+## is validated as integral numbers instead of typed int pairs.
+func _region_detached_boundary_frame(slot: RegionSaveSlot, token: String, party: Dictionary, event: Dictionary) -> Dictionary:
+	var missing: Dictionary = SiteRuntime.fail("MISSING_ORIGINAL_BOUNDARY_VIEW", "原完整 body frame 尚未准入；保留原 live-party materializer")
+	var contact: Dictionary = event.get("payload", {}).get("contact_receipt", {})
+	if str(party.get("mode", "land")) != "land" or str(contact.get("kind", "")) != "siege_channel" or not party.content.get("vehicles", {}).is_empty():
+		return missing
+	var second: Dictionary = contact.get("second", {}).get("position", {})
+	if not _region_joint_integral_in_range(second.get("site"), -2147483648, 2147483647) or not _region_joint_integral_in_range(second.get("cell"), 0, 99):
+		return missing
+	var planned: Dictionary = slot.region_travel_plan() if str(party.get("controller", "")) == "player" else slot._region_npc_plan(token)
+	if not planned.ok: return planned
+	var world: Dictionary = slot._region_live_party_world(token, party, planned.plan, event, "second")
+	if not world.ok: return world
+	var leader: Dictionary = world.people.get(str(int(party.leader_person_id)), {})
+	var seam_world: Vector2i = Vector2i(int(second.site[0]) * 100 + int(second.cell[0]), -int(second.site[1]) * 100 + int(second.cell[1]))
+	if not RegionPartyTravel._frame_pair(leader.get("world_cell")): return missing
+	if Vector2i(int(leader.world_cell[0]), int(leader.world_cell[1])) != seam_world:
+		return SiteRuntime.fail("PARTY_FRAME_IDENTITY")
+	var minimum: Vector2i = Vector2i(2147483647, 2147483647)
+	var maximum: Vector2i = Vector2i(-2147483647, -2147483647)
+	for identity: Variant in world.people:
+		var record: Dictionary = world.people[identity]
+		var at: Vector2i = Vector2i(int(record.world_cell[0]), int(record.world_cell[1]))
+		minimum = minimum.min(at)
+		maximum = maximum.max(at)
+	var origin: Vector2i = Vector2i(RegionPartyGrid.floor_div(minimum.x, 100), RegionPartyGrid.floor_div(minimum.y, 100)) * 100
+	var frame_size: Vector2i = (Vector2i(RegionPartyGrid.floor_div(maximum.x, 100), RegionPartyGrid.floor_div(maximum.y, 100)) + Vector2i.ONE) * 100 - origin
+	if frame_size.x not in [100, 200] or frame_size.y not in [100, 200]:
+		return SiteRuntime.fail("PARTY_FRAME_TOO_WIDE", "原 body closure 超過本次連續 frame 範圍")
+	var frame: Dictionary = {"version": 1, "world_origin": [origin.x, origin.y], "size": [frame_size.x, frame_size.y],
+		"game_seconds": float(slot.control.logical_game_seconds), "action_seconds": float(slot.control.fire_clock.action_seconds),
+		"people": world.people.duplicate(true), "vehicles": {}}
+	return {"ok": true, "frame": frame}
+
+# Integral-number pair in an inclusive range. Used for JSON-loaded seam positions.
+func _region_joint_integral_in_range(value: Variant, low: int, high: int) -> bool:
+	if not value is Array or value.size() != 2: return false
+	for axis: int in range(2):
+		var number: Variant = value[axis]
+		if not (number is int or number is float) or not is_finite(float(number)) or float(number) != floorf(float(number)) \
+				or float(number) < low or float(number) > high: return false
+	return true
 
 func _wire_region_gameplay_adapters(slot: RegionSaveSlot) -> Dictionary:
 	if slot == null or site_controller == null: return SiteRuntime.fail("NO_REGION_SLOT")
@@ -11326,7 +11385,8 @@ func _region_gameplay_player_materialize(event: Dictionary) -> Dictionary:
 	var activated: TerrainLab = null
 	if bool(status.get("pending", false)):
 		var raw: Variant = queued.payload.get("site", [status.site.x, status.site.y])
-		if not raw is Array or raw.size() != 2: return SiteRuntime.fail("INVALID_JOINT_ENDPOINT")
+		# A loaded joint site is a JSON float pair; see RegionSaveSlot.joint_integral_pair.
+		if not RegionSaveSlot.joint_integral_pair(raw): return SiteRuntime.fail("INVALID_JOINT_ENDPOINT")
 		var coordinate := Vector2i(int(raw[0]), int(raw[1]))
 		var identity := RegionPartyGrid.site_id(str(slot.pin.atlas_id), coordinate)
 		var owner: Dictionary = slot.region_owner_lab.call(identity, "cold_exact", true)

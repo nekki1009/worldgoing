@@ -6230,6 +6230,19 @@ func _region_joint_npc_reference(clock: Dictionary, token: String, mapping: Dict
 
 var region_original_boundary_location: Callable
 
+# A loaded JSON joint position is a float pair ([1.0, 0.0]). Typed Array equality
+# treats 1.0 and 1 as different, so joint positions are checked as integral
+# numbers and then compared in the integer domain. Int-valued pairs keep their result.
+static func joint_integral_pair(value: Variant) -> bool:
+	if not value is Array or value.size() != 2: return false
+	for axis: int in range(2):
+		var number: Variant = value[axis]
+		if not (number is int or number is float) or not is_finite(float(number)) or float(number) != floorf(float(number)): return false
+	return true
+
+static func joint_pair_equals(value: Variant, coordinate: Vector2i) -> bool:
+	return joint_integral_pair(value) and int(value[0]) == coordinate.x and int(value[1]) == coordinate.y
+
 func _region_player_endpoint_location(status: Dictionary, party: Dictionary, coordinate: Vector2i, event: Dictionary) -> Dictionary:
 	if str(party.get("mode", "land")) == "sea":
 		return _region_endpoint_sea_location(status.get("plan", {}), party, coordinate)
@@ -6237,10 +6250,11 @@ func _region_player_endpoint_location(status: Dictionary, party: Dictionary, coo
 	if not contact.is_empty():
 		if float(contact.get("at", -1.0)) != float(control.logical_game_seconds): return fail("STALE_REGION_CONTACT")
 		var position: Dictionary = contact.get("second", {}).get("position", {})
-		if position.get("site") != [coordinate.x, coordinate.y] or status.site != coordinate:
+		if not joint_pair_equals(position.get("site"), coordinate) or status.site != coordinate:
 			return _region_original_boundary_location("player", status.token, party, coordinate, event)
-		if not position.get("cell") is Array or position.cell.size() != 2: return fail("INVALID_JOINT_ENDPOINT")
-		return {"ok": true, "entry": Vector2i(int(position.cell[0]), int(position.cell[1])),
+		var cell: Variant = position.get("cell")
+		if not joint_integral_pair(cell): return fail("INVALID_JOINT_ENDPOINT")
+		return {"ok": true, "entry": Vector2i(int(cell[0]), int(cell[1])),
 			"vehicle_poses": status.get("vehicle_poses", status.get("plan", {}).get("steps", [])[int(status.step_index)].get("vehicle_poses", {}) if not status.get("plan", {}).is_empty() else {})}
 	if status.site != coordinate: return fail("STALE_REGION_CONTACT")
 	var current := status.duplicate(true)
@@ -7215,7 +7229,7 @@ func region_live_party_required(event: Dictionary, status: Dictionary) -> Dictio
 	if not player.ok: return player
 	if not player.party.get("upkeep", {}).get("live", {}).is_empty(): return {"ok": true, "required": true}
 	var raw: Variant = event.get("payload", {}).get("site", [status.site.x, status.site.y])
-	if not RegionTravel._frame_pair(raw): return fail("INVALID_JOINT_ENDPOINT")
+	if not joint_integral_pair(raw): return fail("INVALID_JOINT_ENDPOINT")
 	var coordinate := Vector2i(int(raw[0]), int(raw[1]))
 	var player_location := _region_player_endpoint_location(status, player.party, coordinate, event)
 	if not player_location.ok:
