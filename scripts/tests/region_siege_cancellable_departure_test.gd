@@ -6,7 +6,7 @@ var departure_evidence: Dictionary = {}
 var departure_intent_exercised := false
 
 func _initialize() -> void:
-	deadline = Time.get_ticks_msec() + 360000
+	deadline = Time.get_ticks_msec() + 540000 # Nekki 2026-10-25: in-file 540 s, outer 600 s.
 	out = "res://.godot-temp/region_c07_departure/run_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
 	last_world_exists = FileAccess.file_exists(Entry.LAST_WORLD)
 	if last_world_exists: last_world_bytes = FileAccess.get_file_as_bytes(Entry.LAST_WORLD)
