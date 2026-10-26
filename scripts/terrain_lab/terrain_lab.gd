@@ -8201,7 +8201,14 @@ func _prepare_shared_work_step(action_seconds: float, game_seconds: float, tacti
 	return SiteRuntime.ok("", {"action_seconds": action_seconds, "game_seconds": game_seconds, "work_plan": planned})
 
 func _retime_shared_work_step(action_seconds: float, game_seconds: float) -> Dictionary:
-	if _shared_work_game_seconds <= 0.0 or game_seconds <= 0.0 or game_seconds > _shared_work_game_seconds + ACTION_TIME_EPSILON \
+	# "Only shorten" is checked on ACTION, the domain ACTION_TIME_EPSILON belongs to.
+	# A clipped Region interval's action width is a difference of absolute action
+	# clocks (one ulp of the clock: 1.4e-14 s near 72 s). Its game width is that
+	# action width times 60 x speed, so at 4x the same one-ulp step is 3.4e-12 game
+	# seconds and broke a game-side 1e-12 bound. The ratio check below still pins
+	# game to the prepared action/game ratio, and the work team still refuses a longer game.
+	if _shared_work_game_seconds <= 0.0 or game_seconds <= 0.0 \
+		or action_seconds > _shared_work_action_seconds + ACTION_TIME_EPSILON \
 		or absf(action_seconds - _shared_work_action_seconds * game_seconds / _shared_work_game_seconds) > ACTION_TIME_EPSILON:
 		return SiteRuntime.fail("SHARED_WORK_RETIME")
 	var retimed: Dictionary = site_controller.work_team.retime_prepared_interval(game_seconds, action_seconds)

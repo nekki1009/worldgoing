@@ -3843,6 +3843,14 @@ func prepare_npc_region_dispatch(lab: TerrainLab, nation_id: String, team_id: in
 	var window := validate_settlement(lab.terrain.site, control.logical_game_seconds)
 	if not window.ok or bool(window.get("legacy", true)) or float(window.get("pending", INF)) > 0.0000001:
 		return fail("UNSETTLED_SITE", "派遣前原 Site 須完成同一原區間")
+	# This capture writes the current presenters into the Site body (positions and
+	# each team's own serialization) that the departure below extracts. It runs
+	# before the source probe, so the probe and the publish decision see exactly
+	# that body. Run after the probe, it could change the body the probe had
+	# accepted, and the bind preflight then refused it as STALE_REGION_SOURCE_BODY.
+	var captured: Dictionary = lab.site_controller.capture_region_checkpoint("region_barrier", false,
+		{"npc_dispatch": true, "token": token, "owner": str(lab.terrain.site.id)}, token)
+	if not captured.ok: return captured
 	# A source with progress its selected publication lacks (an earlier frame, or
 	# owners changed at this same time) is published at this point first; no clock
 	# moves. The probe is the bind preflight's own canonical source check, so the
@@ -3854,9 +3862,6 @@ func prepare_npc_region_dispatch(lab: TerrainLab, nation_id: String, team_id: in
 		var published: Variant = region_original_endpoint_checkpoint.call({"region_source_publish": "npc_dispatch", "token": token})
 		if not published is Dictionary or not published.get("ok", false): return published if published is Dictionary else fail("INVALID_REGION_RECEIPT")
 		if clocks != [float(control.logical_game_seconds), float(control.fire_clock.action_seconds), int(control.fire_clock.sequence)]: return fail("CLOCK_CONTRACT", "派遣前發布不得推進時鐘")
-	var captured: Dictionary = lab.site_controller.capture_region_checkpoint("region_barrier", false,
-		{"npc_dispatch": true, "token": token, "owner": str(lab.terrain.site.id)}, token)
-	if not captured.ok: return captured
 	var original: Dictionary = lab.terrain.site.duplicate(true)
 	var fire_capture := _capture_transfer_fire_snapshots(lab.terrain, original)
 	if not fire_capture.ok: return fire_capture
@@ -8713,7 +8718,12 @@ func _region_revalidate_completed_land_outcome(token: String, outcome: Dictionar
 		return fail("CORRUPT_ROUTE_ENTRY", "已付原入口缺同一 source node／端點 proof")
 	var coordinates: Array[Vector2i] = [Vector2i(int(plan.steps[index].site[0]), int(plan.steps[index].site[1])),
 		Vector2i(int(plan.steps[index + 1].site[0]), int(plan.steps[index + 1].site[1]))]
-	var prepared := prepare_region_route_context(null, party, coordinates)
+	# This seam check is the authority for a paid entry, so it reads every Site's
+	# current body. Cold Sites already come from their bound original Labs. With a
+	# null active_data the active Site came from its last publication instead, so a
+	# paid change there (a gate closed after the last checkpoint) was invisible until
+	# a later publication in the same point flipped the verdict.
+	var prepared := prepare_region_route_context(_region_live_active_route_data(coordinates), party, coordinates)
 	if not prepared.ok: return prepared
 	var context: Dictionary = prepared.context
 	context.capabilities.start_cell = Vector2i(int(node.cell[0]), int(node.cell[1]))
@@ -8745,6 +8755,23 @@ func _region_revalidate_completed_land_outcome(token: String, outcome: Dictionar
 	if outcome.has("source_party"): result.source_party = outcome.source_party
 	result.position = _region_current_land_position(captured.party, plan, path)
 	return {"ok": true, "outcome": result, "blocked": not entry.ok, "entry": entry}
+
+## The active Site's live original body when one of `coordinates` is that Site and
+## its original Lab is bound, through the same owner adapter the dispatchers use.
+## With no active Site (a player journey) or no wired adapter there is no live
+## active body, and the route context keeps the selected publication as before.
+func _region_live_active_route_data(coordinates: Array[Vector2i]) -> TerrainData:
+	var active_id := str(control.get("active_site_id", ""))
+	if active_id.is_empty() or not region_owner_lab.is_valid(): return null
+	var active_coordinate: Variant = null
+	for coordinate: Vector2i in coordinates:
+		if Grid.site_id(str(pin.atlas_id), coordinate) == active_id: active_coordinate = coordinate
+	if active_coordinate == null: return null
+	var selected: Variant = region_owner_lab.call(active_id, "live")
+	if not selected is Dictionary or not bool(selected.get("ok", false)) or not selected.get("lab") is TerrainLab: return null
+	var lab: TerrainLab = selected.lab
+	if lab.terrain == null or str(lab.terrain.site.get("id", "")) != active_id or lab.site_controller == null or lab.site_controller.region_slot != self: return null
+	return lab.terrain
 
 func acknowledge_region_original_party_bind(token: String, party: Dictionary, original: TerrainLab, receipt: Dictionary) -> Dictionary:
 	var selected := region_live_party_proof(token)

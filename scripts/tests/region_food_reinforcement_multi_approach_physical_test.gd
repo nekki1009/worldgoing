@@ -262,7 +262,13 @@ func _sea_graphs(in_transit: bool) -> Dictionary:
 		if not owner.ok: return {}
 		var captured: Dictionary = slot._region_capture_party_graph(multi_foot_token, selected.party)
 		if not _check(captured.ok and not captured.original_live_graph.is_empty(), "same common checkpoint captures the full independent blocked foot party graph", captured): return {}
-		graphs["foot_party"] = {"selected": var_to_bytes(selected.party), "owners": captured.original_live_graph.owners.duplicate(true), "reference": reference.duplicate(true)}
+		# Same owner fields the inherited sea party graph records (scene root/nodes and
+		# transport). The scene's capture context carries a fresh random capture token
+		# on every capture (region_party_checkpoint_context), so it cannot be part of a
+		# byte comparison between two observations of the same unchanged state.
+		var owners: Dictionary = captured.original_live_graph.owners
+		graphs["foot_party"] = {"selected": var_to_bytes(selected.party), "reference": reference.duplicate(true),
+			"owners": {"root": owners.scene.root.duplicate(true), "nodes": owners.scene.nodes.duplicate(true), "transport": owners.transport.duplicate(true)}}
 	return graphs
 
 func _multi_actual_exchange(first: int, second: int, result: Dictionary) -> void:

@@ -17,6 +17,12 @@ var fleet_main_actor := 0
 var fleet_primary := ""
 var fleet_live_lab: TerrainLab
 var fleet_max_attempts := 48000
+## The shared step each _fleet_step requests. ACTION_STEP everywhere except the
+## friendly case's coarse approach to its meal boundary (_fleet_coarse_to_meal).
+var fleet_step_request: float = TerrainLab.ACTION_STEP
+## Fine-cadence game seconds kept before the next meal boundary. It is larger than
+## one coarse step (EXCHANGE_ACTION_STEP x 60 x 4 = 8 game s), so no coarse step crosses it.
+const FLEET_FINE_MEAL_MARGIN := 16.0
 
 func _initialize() -> void:
 	deadline = Time.get_ticks_msec() + 600000
@@ -273,10 +279,10 @@ func _fleet_step() -> bool:
 	var exchange_begin: int = fleet_exchanges.size()
 	var paid_begin: float = action_paid
 	var sequence_begin: int = int(slot.control.fire_clock.sequence)
-	var stepped: Dictionary = lab._advance_original_shared_step(TerrainLab.ACTION_STEP)
+	var stepped: Dictionary = lab._advance_original_shared_step(fleet_step_request)
 	if not _check(stepped.ok, "original main caller accepts the actual common interval or due-zero endpoint", stepped): return false
 	if stepped.get("completed", false):
-		if not _check(float(stepped.action_seconds) > 0.0 and float(stepped.action_seconds) <= TerrainLab.ACTION_STEP + EPS and float(stepped.game_seconds) > 0.0, "genuine original accepted interval pays both clocks once", stepped): return false
+		if not _check(float(stepped.action_seconds) > 0.0 and float(stepped.action_seconds) <= fleet_step_request + EPS and float(stepped.game_seconds) > 0.0, "genuine original accepted interval pays both clocks once", stepped): return false
 		action_paid += float(stepped.action_seconds); action_game_paid += float(stepped.game_seconds)
 	else:
 		if not _check(float(stepped.get("action_seconds", 0.0)) == 0.0 and float(stepped.get("game_seconds", 0.0)) == 0.0, "same-point completion consumes no elapsed duration", stepped): return false
@@ -733,6 +739,41 @@ func _melee_effect_applied(exchange: Dictionary) -> bool:
 			or float(before.cooldown) != float(after.cooldown) or float(before.stun) != float(after.stun) or float(before.hold) != float(after.hold)
 	return changed
 
+## Nekki 2026-10-26 decision B (NEKKI_DECISION_20261026T0919Z_two_npc_sea_friendly_B.md).
+## Meals fall only on 6 h world boundaries (site_sustain.gd _next_meal), so at the
+## 0.5 game s fine cadence the friendly case idled about 34k steps. The same main
+## caller now pays genuine accepted intervals at the coarsest legal cadence
+## (EXCHANGE_ACTION_STEP, the shared-step cap for this exchange-enabled Lab, at
+## the original player speed control's 4x) until FLEET_FINE_MEAL_MARGIN game
+## seconds before the boundary. It then restores 1x and ACTION_STEP, and the
+## unchanged wait below observes the child Controller's own meal result.
+## Nothing here creates a meal or moves a clock outside an accepted interval.
+func _fleet_coarse_to_meal() -> bool:
+	var boundary: float = FleetSustain._next_meal(float(slot.control.logical_game_seconds))
+	var stop_at: float = boundary - FLEET_FINE_MEAL_MARGIN
+	if float(slot.control.logical_game_seconds) >= stop_at or fleet_live_meals > 0.0: return true
+	lab.change_simulation_speed(1)
+	lab.change_simulation_speed(1)
+	if not _check(lab.simulation_speed == 4.0, "original player speed control selects its 4x cadence for the coarse meal approach", lab.simulation_speed): return false
+	fleet_step_request = TerrainLab.EXCHANGE_ACTION_STEP
+	var advanced := true
+	for attempt: int in range(fleet_max_attempts):
+		if fleet_live_meals > 0.0 or float(slot.control.logical_game_seconds) >= stop_at: break
+		if Time.get_ticks_msec() > deadline:
+			advanced = _check(false, "coarse accepted intervals reach the fine margin before the next meal boundary deadline", {"world": slot.control.logical_game_seconds, "stop_at": stop_at})
+			break
+		if not _fleet_step():
+			advanced = false
+			break
+		if attempt % 60 == 0: await process_frame
+	fleet_step_request = TerrainLab.ACTION_STEP
+	lab.change_simulation_speed(-1)
+	lab.change_simulation_speed(-1)
+	if not advanced: return false
+	return _check(lab.simulation_speed == 1.0 and (fleet_live_meals > 0.0 or float(slot.control.logical_game_seconds) >= stop_at and float(slot.control.logical_game_seconds) < boundary),
+		"coarse accepted intervals stop inside the fine margin before the meal boundary and restore the 1x cadence",
+		{"world": slot.control.logical_game_seconds, "stop_at": stop_at, "boundary": boundary, "meals": fleet_live_meals})
+
 func _real_melee() -> bool:
 	var contact_a: Dictionary = _crew(0, 1)
 	var contact_b: Dictionary = _crew(1, 1)
@@ -750,6 +791,7 @@ func _real_melee() -> bool:
 	if not _check(not a.owner.exchange_initiates(int(a.unit), int(helm.id), true) and not a.owner.exchange_initiates(int(a.unit), -999999, true) and not a.owner.exchange_initiates(int(a.unit), int(b.id), false), "friendly same-boat, absent identity and nonmelee queries do not gain a naval defense order"): return false
 	if fleet_case == "friendly":
 		if not _check(not a.owner.exchange_initiates(int(a.unit), int(b.id), true) and not b.owner.exchange_initiates(int(b.unit), int(a.id), true), "real friendly frame contacts do not authorize combat"): return false
+		if not await _fleet_coarse_to_meal(): return false
 		if not await _fleet_until(func() -> bool: return fleet_live_meals > 0.0, "actual original NPC child Controller publishes a genuine accepted meal result"): return false
 		return _check(fleet_exchanges.is_empty(), "friendly actual paid frame produces no hostile exchange")
 	if not _check(a.owner.exchange_initiates(int(a.unit), int(b.id), true) and b.owner.exchange_initiates(int(b.unit), int(a.id), true), "actual lawful nonhelm HOLD crews receive only original current defensive contact authorization"): return false
@@ -819,8 +861,12 @@ func _fleet_reservation_observation(paid: bool) -> bool:
 		boats.append(vehicles.records()[str(person.row.embarked_vehicle_id)])
 	var first: Dictionary = vehicles._claims(boats[0])
 	var second: Dictionary = vehicles._claims(boats[1])
+	# One check per observed step names every shared cell (none expected), rather
+	# than one evidence row per claimed cell; the per-step proof is unchanged.
+	var shared: Array[Vector2i] = []
 	for cell: Vector2i in first:
-		if not _check(not second.has(cell), "actual current hulls and accepted original sweeps never share a reserved cell", cell): return false
+		if second.has(cell): shared.append(cell)
+	if not _check(shared.is_empty(), "actual current hulls and accepted original sweeps never share a reserved cell", shared): return false
 	for boat: Dictionary in boats:
 		if boat.move.is_empty(): continue
 		if not _check(float(boat.move.elapsed) >= 0.0 and (not paid or float(boat.move.elapsed) > 0.0) and float(boat.move.elapsed) <= float(boat.move.duration) and not boat.move.sweep.is_empty(), "actual original Vehicle reservation is advanced only by a genuine accepted positive interval"): return false
