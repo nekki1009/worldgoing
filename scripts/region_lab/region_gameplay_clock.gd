@@ -41,7 +41,7 @@ static func validate_registry(raw: Variant, world: float) -> Dictionary:
 		if not checked.ok: return checked
 		if ids.has(event.id) or sequences.has(int(event.sequence)) or int(event.sequence) >= int(raw.next_sequence):
 			return fail("REGION_SCHEMA", "Region 事件重號／序號超前")
-		if str(event.status) == "complete" and float(event.at) > world + 0.00000001:
+		if str(event.status) == "complete" and not reached(float(event.at), world):
 			return fail("REGION_SCHEMA", "Region 已完成事件超前世界")
 		ids[event.id] = true
 		sequences[int(event.sequence)] = true
@@ -102,10 +102,17 @@ static func queue_event(registry: Dictionary, identity: String, kind: String, at
 	registry.next_sequence = int(registry.next_sequence) + 1
 	return {"ok": true, "event": event, "duplicate": false}
 
+## The one rule for "this event's time has been reached at world". The dispatcher
+## (pending_at), the consumer (complete_event), the registry check and the
+## checkpoint context validator (site_region_checkpoint.gd) all use it, so an
+## event the dispatcher hands out can also be listed in a context at that world.
+static func reached(at: float, world: float) -> bool:
+	return at <= world + 0.00000001
+
 static func pending_at(registry: Dictionary, world: float) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	for event: Dictionary in registry.events:
-		if str(event.status) == "pending" and float(event.at) <= world + 0.00000001: result.append(event)
+		if str(event.status) == "pending" and reached(float(event.at), world): result.append(event)
 	result.sort_custom(before)
 	return result
 
@@ -126,7 +133,7 @@ static func next_endpoint(registry: Dictionary, begin: float, end: float, held_p
 static func complete_event(registry: Dictionary, identity: String, world: float) -> Dictionary:
 	for event: Dictionary in registry.events:
 		if str(event.id) != identity: continue
-		if float(event.at) > world + 0.00000001: return fail("REGION_EVENT", "未到事件時間不能消費")
+		if not reached(float(event.at), world): return fail("REGION_EVENT", "未到事件時間不能消費")
 		var duplicate := str(event.status) == "complete"
 		event.status = "complete"
 		return {"ok": true, "duplicate": duplicate}

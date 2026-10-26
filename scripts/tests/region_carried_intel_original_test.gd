@@ -112,17 +112,29 @@ func _action_target() -> Dictionary:
 	return {"type": "structure", "feature_id": str(built.feature), "part_id": "c:%d" % data.index(Vector2i(48, 41))}
 
 func _delivery_receiver_office() -> bool:
-	delivery_receiver = int(action_owner.character.person_id)
-	action_owner.character.faction_id = 1
+	# P6 S1 (84722fe7): a cold Site opened after world genesis has no implicit
+	# founder (actor_presence_version 1; its Actor template keeps person_id 0), so
+	# the old recipient action_owner.character.person_id was 0 and the Nation
+	# record failed CORRUPT_SAVE. The recipient is a real resident that the
+	# original Army allocator births with a world-unique id. It is the guard
+	# team's second row, not its captain, so its receiving office stays the Nation
+	# head seat. The gate cases birth it on the gate operator square.
+	var gate_x := 1 if delivery_case == "blocked" else 0
+	var receiver_cell := Vector2i(gate_x + 3, 49) if delivery_case in ["blocked", "expiry"] else Vector2i(78, 80)
 	action_owner._ensure_army_slots(2)
 	var guard: TerrainArmy = action_owner.combat_armies[1]
 	guard.faction_id = 1
-	guard.roster_size = 1
-	var positions: Array[Vector2i] = [Vector2i(79, 80)]
-	if not _check(guard.deploy_at(action_owner.terrain, null, null, positions) and guard.enable_combat(false, 0), "actual original recipient's nearby guard births in the existing NPC owner"): return false
+	guard.roster_size = 2
+	var positions: Array[Vector2i] = [Vector2i(79, 80), receiver_cell]
+	if not _check(guard.deploy_at(action_owner.terrain, null, null, positions) and guard.enable_combat(false, 0), "actual original recipient and its nearby guard birth in the existing NPC owner"): return false
 	action_owner.site_controller.initialize_team_items(guard)
 	action_owner.terrain.site.army_next_team = action_owner._next_army_identity()
 	delivery_guard = guard.combat_identity(guard.current_commander)
+	delivery_receiver = -1
+	for row: int in guard.combat_units.size():
+		if row != guard.current_commander and guard.cells[row] == receiver_cell: delivery_receiver = guard.combat_identity(row)
+	if not _check(delivery_receiver > 0 and delivery_guard > 0 and delivery_receiver != delivery_guard,
+		"the recipient is a born resident with a world-unique id who is not the guard team's captain", {"receiver": delivery_receiver, "guard": delivery_guard, "captain_row": guard.current_commander}): return false
 	delivery_receiver_nation = "receiver_nation_%d" % OS.get_process_id()
 	if not action_owner.terrain.site.has("equipment_nations"): action_owner.terrain.site.equipment_nations = {}
 	action_owner.terrain.site.equipment_nations[delivery_receiver_nation] = {"members": [delivery_receiver, delivery_guard], "standards": {}, "offices": SiteOffices.default_offices("nation", delivery_receiver, false)}
@@ -162,7 +174,8 @@ func _delivery_initial_gate() -> bool:
 	feature.progress = float(feature.work)
 	feature.gate.open = true
 	Env.rebuild_indexes(data)
-	if not _check(action_owner.character.place(Vector2i(gate_x + 3, 49), true), "real original recipient stands at the actual gate operator square"): return false
+	var receiver_body := action_owner._combat_target_in_site(delivery_receiver)
+	if not _check(not receiver_body.is_empty() and receiver_body.cell == Vector2i(gate_x + 3, 49), "real original recipient stands at the actual gate operator square", receiver_body.get("cell")): return false
 	var ready := SiteRuntime._gate_operator(data, feature, delivery_receiver, action_owner.site_controller._building_person_query)
 	return _check(ready.ok and controller.checkpoint_region_internal("region_checkpoint", true).ok, "true open gate and operator share one original initial checkpoint", ready)
 
@@ -197,8 +210,11 @@ func _delivery_blocked_seal() -> bool:
 		{"feature": key, "entry": entry, "height": data.effective_height(entry), "gate": data.site.features[delivery_gate].gate.duplicate(true)})
 
 func _delivery_partial_binding() -> bool:
-	action_owner.character.apply_contact({"result": {"hp": 1.0, "stun": 110.0, "guard_break": false}, "shield": false, "environmental": true})
-	if not _check(action_owner.character.knockout_left > 0.0 and action_owner.character.hp > 0.0, "actual original contact supplies receiver KO before its genuine binding job"): return false
+	var receiver_body := action_owner._combat_target_in_site(delivery_receiver)
+	if not _check(not receiver_body.is_empty() and receiver_body.owner is TerrainArmy, "actual original recipient row resolves before its contact", receiver_body.get("cell")): return false
+	receiver_body.owner.apply_unit_contact(int(receiver_body.unit), {"result": {"hp": 1.0, "stun": 110.0, "guard_break": false}, "shield": false, "environmental": true})
+	var knocked: Dictionary = action_owner.site_controller.person_actions._person(delivery_receiver, false)
+	if not _check(not knocked.is_empty() and float(knocked.ko) > 0.0 and float(knocked.hp) > 0.0, "actual original contact supplies receiver KO before its genuine binding job", {"hp": knocked.get("hp"), "ko": knocked.get("ko")}): return false
 	var binding: Dictionary = action_owner.site_controller.person_actions.begin_capture(delivery_guard, delivery_receiver, delivery_guard)
 	if not _check(binding.ok, "actual nearby original guard starts a real paid custody action", binding): return false
 	return await _action_until(Callable(self, "_delivery_binding_prefix_ready"), "ordinary shared work reaches the actual binding prefix before a fresh source report is sent")

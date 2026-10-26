@@ -31,7 +31,11 @@ static func validate_context(value: Variant, expected: Dictionary = {}) -> Dicti
 	var pending: Array = []
 	var previous: Dictionary = {}
 	for event: Variant in value.events:
-		if not Clock.validate_event(event).ok or seen.has(event.id) or sequences.has(int(event.sequence)) or float(event.at) > float(value.game_seconds) or not previous.is_empty() and Clock.before(event, previous):
+		# Same "reached" rule as the dispatcher that listed these events
+		# (Clock.pending_at). A strict at <= game_seconds here refused a context
+		# whose world sits one ulp below an event the dispatcher already treats
+		# as due, e.g. an arrival at 200.0 consumed at 199.99999999999997.
+		if not Clock.validate_event(event).ok or seen.has(event.id) or sequences.has(int(event.sequence)) or not Clock.reached(float(event.at), float(value.game_seconds)) or not previous.is_empty() and Clock.before(event, previous):
 			return Runtime.fail("REGION_EVENT_PENDING")
 		seen[event.id] = true
 		sequences[int(event.sequence)] = true
