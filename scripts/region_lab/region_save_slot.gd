@@ -3766,8 +3766,51 @@ func _region_npc_plan(token: String) -> Dictionary:
 	var plan: Dictionary = document.payload
 	if str(plan.get("token", "")) != token or not plan.get("steps") is Array or plan.steps.size() < 2:
 		return fail("CORRUPT_SAVE", "原 NPC 路線非法")
+	var restored := _region_restore_land_plan_integers(plan)
+	if not restored.ok: return restored
+	plan = restored.plan
 	_region_npc_plan_runtime[token] = plan
 	return {"ok": true, "plan": plan}
+
+## The committed land plan is stored as JSON, which returns every number as a
+## float. The original compiled plan (commit keeps it as the runtime plan) holds
+## its route coordinates as ints, and the party's binary route_node copies them.
+## Restore exactly those integral fields so a reopened plan equals the plan the
+## same process held before the reopen. Non-integral values are corrupt.
+static func _region_restore_land_plan_integers(document: Dictionary) -> Dictionary:
+	if str(document.get("mode", "land")) == "sea": return {"ok": true, "plan": document}
+	var plan: Dictionary = document.duplicate(true)
+	var version: Variant = _region_integral(plan.get("version"))
+	if version == null: return fail("CORRUPT_SAVE", "原 NPC 路線版本非法")
+	plan["version"] = version
+	if plan.has("destination"):
+		var destination: Variant = _region_integral_pair(plan["destination"])
+		if destination == null: return fail("CORRUPT_SAVE", "原 NPC 路線目的地非法")
+		plan["destination"] = destination
+	for raw: Variant in plan.steps:
+		if not raw is Dictionary: return fail("CORRUPT_SAVE", "原 NPC 路線步驟非法")
+		var step: Dictionary = raw
+		var site: Variant = _region_integral_pair(step.get("site"))
+		if site == null: return fail("CORRUPT_SAVE", "原 NPC 路線 Site 非法")
+		step["site"] = site
+		for field: String in ["component", "edge", "offset"]:
+			if not step.has(field): continue
+			var value: Variant = _region_integral(step[field])
+			if value == null: return fail("CORRUPT_SAVE", "原 NPC 路線入口非法")
+			step[field] = value
+	return {"ok": true, "plan": plan}
+
+static func _region_integral(value: Variant) -> Variant:
+	if value is int: return value
+	if value is float and is_finite(value) and value == floorf(value) and absf(value) <= 9007199254740992.0: return int(value)
+	return null
+
+static func _region_integral_pair(value: Variant) -> Variant:
+	if not value is Array or value.size() != 2: return null
+	var first: Variant = _region_integral(value[0])
+	var second: Variant = _region_integral(value[1])
+	if first == null or second == null: return null
+	return [first, second]
 
 func _region_route_position(plan: Dictionary, distance: float) -> Dictionary:
 	var travelled := 0.0
@@ -11200,6 +11243,10 @@ func _region_first_npc_siege_contact(token: String, to: float, interval: Diction
 	var party_lab: TerrainLab = raw_proof.lab
 	var traveller: Dictionary = party_lab.site_controller.person_actions._person(int(party.leader_person_id), false)
 	if traveller.is_empty() or not SiteSettlement._fit(traveller): return {"ok": true, "contact": false}
+	# Extraction indexes every departing body; a leader without its stable
+	# reference is an invalid party, never a contact without a witness.
+	var party_reference: Variant = party.content.get("travel_identity", {}).get("refs", {}).get("person", {}).get(str(int(party.leader_person_id)))
+	if not party_reference is Dictionary: return fail("INVALID_IDENTITY", "原 NPC 隊長缺穩定身分")
 	var prepared: Dictionary = prepare_region_route_context(null, party)
 	if not prepared.ok: return prepared
 	var cache := {}
@@ -11227,12 +11274,18 @@ func _region_first_npc_siege_contact(token: String, to: float, interval: Diction
 				var gap: Vector2i = entry - Vector2i(person.cell)
 				if not ready or absi(gap.x) + absi(gap.y) != 1 or not original.terrain.can_attack_across(person.cell, entry): continue
 				if original.site_controller.vehicles.blocks_person_step(int(identity), person.cell, person.cell, entry, entry): continue
+				# Site stable references are issued only by the original travel identity
+				# allocator; this read-only probe never issues one. The NPC consumer
+				# requires the witnessed body's reference, so an unindexed body is not
+				# an NPC channel candidate.
+				var static_reference: Variant = original.terrain.site.get("travel_identity", {}).get("refs", {}).get("person", {}).get(str(int(identity)))
+				if not static_reference is Dictionary: continue
 				var cell: Vector2i = person.cell
 				var witness := {"battle_id": id, "source_generation": int(_marker.generation), "runtime_revision": int(region_registry().revision),
 					"navigation_revision": int(original.terrain.navigation_revision), "person_id": int(identity), "person_cell": [cell.x, cell.y],
 					"entry": [entry.x, entry.y], "party_token": token, "party_source": raw_proof.get("proof", {}).duplicate(true),
-					"party_reference": party.content.travel_identity.refs.person[str(int(party.leader_person_id))].duplicate(),
-					"static_reference": original.terrain.site.travel_identity.refs.person[str(int(identity))].duplicate(),
+					"party_reference": party_reference.duplicate(),
+					"static_reference": static_reference.duplicate(),
 					"game_seconds": float(control.logical_game_seconds), "action_seconds": float(control.fire_clock.action_seconds), "legal_ground_melee": true}
 				var contact := {"kind": "npc_siege_channel", "at": float(point.at),
 					"first": point.duplicate(true),
