@@ -14,7 +14,7 @@ var departure_evidence: Dictionary = {}
 var departure_intent_exercised := false
 
 func _initialize() -> void:
-	deadline = Time.get_ticks_msec() + 540000 # Nekki 2026-10-25: in-file 540 s, outer 600 s.
+	deadline = Time.get_ticks_msec() + 780000 # Nekki 2026-10-26: in-file 780 s, outer 840 s.
 	out = "res://.godot-temp/region_c07_departure/run_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
 	last_world_exists = FileAccess.file_exists(Entry.LAST_WORLD)
 	if last_world_exists: last_world_bytes = FileAccess.get_file_as_bytes(Entry.LAST_WORLD)
@@ -40,7 +40,7 @@ func _phase_player_intervene() -> bool:
 	if not _check(float(lab.terrain.site.combat_left) > 0.0 and not _phase_battle().is_empty(), "original positive intervention selected an actually ongoing siege"): return false
 	var legacy := RegionTravelSite.depart(controller)
 	if not _check(not legacy.ok and str(legacy.get("code", "")) == "IN_COMBAT", "legacy immediate departure still refuses active combat", legacy): return false
-	if not await _departure_walk_clear(): return false
+	if not await _departure_walk_clear(0): return false
 	if not await _departure_cancel_paid_edge(): return false
 	if not await _departure_leave_reopen_reenter(): return false
 	if not await _departure_captain_cancel_and_leave(): return false
@@ -98,7 +98,7 @@ func _departure_body_hold(person: Dictionary) -> bool:
 		held = team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.HOLD)
 	return _check(held.ok, "actual commander closes future Army orders with public HOLD before departure intent", held)
 
-func _departure_walk_clear() -> bool:
+func _departure_walk_clear(margin: int) -> bool:
 	var person: Dictionary = _departure_controlled_body()
 	if person.is_empty(): return false
 	var faction: int = int(person.owner.faction_id)
@@ -106,7 +106,7 @@ func _departure_walk_clear() -> bool:
 	var replans: int = 0
 	for edge: int in range(512):
 		var cell: Vector2i = lab.controlled_target().cell
-		if not RegionTravelSite._hostile_near(lab, faction, [cell]):
+		if _departure_cell_settled(faction, cell, margin):
 			if not await _departure_team_clear(person): return false
 			if not _departure_body_hold(person): return false
 			return _check(true, "actual controlled body reaches legal nonengaged departure cells through original paid movement", cell)
@@ -114,7 +114,7 @@ func _departure_walk_clear() -> bool:
 		if path.is_empty() or _departure_cell_gap(path[0], cell) != 1:
 			replans += 1
 			if not _check(replans <= 16, "departure walk replans stay bounded", {"cell": cell, "replans": replans}): return false
-			path = _departure_safe_path(person)
+			path = _departure_safe_path(person, margin)
 			if not _check(not path.is_empty(), "a legal nonengaged departure cell is reachable through unblocked walkable cells", cell): return false
 		var next: Vector2i = path[0]
 		if int(person.unit) >= 0:
@@ -131,13 +131,57 @@ func _departure_walk_clear() -> bool:
 func _departure_cell_gap(first: Vector2i, second: Vector2i) -> int:
 	return absi(first.x - second.x) + absi(first.y - second.y)
 
+## Captain-phase placement margin (cells) beyond the original ENEMY_RADIUS guard.
+## The captain row-partial issues a formation MOVE (goal up to 4 cells away) whose
+## follower rows take their own first edges toward formation slots (OPUS43 D:
+## row 9 (1,69)->(1,68) for a goal at (4,69)), plus one controlled formation step.
+## A party parked exactly on the guard boundary (walk-clear stops at the first
+## legal cell) can therefore finish a committed edge inside the guard, and
+## production correctly refuses that endpoint (IN_COMBAT) and clears the intent.
+## The solo/leave phase keeps margin 0, i.e. exactly the HEAD placement.
+## Legality is still proven only by the original RegionTravelSite guard/selection.
+const DEPARTURE_GUARD_MARGIN: int = 8
+
+## True when no cell within `margin` (Chebyshev) of `cell` lies in the
+## original hostile guard. Centre plus square perimeter is exact: an enemy inside
+## the square is within the margin (< ENEMY_RADIUS) of the centre, and for an enemy
+## outside it the nearest square cell is the clamped cell on the perimeter.
+func _departure_cell_settled(faction: int, cell: Vector2i, margin: int) -> bool:
+	var square: Array[Vector2i] = [cell]
+	for offset: int in range(-margin, margin + 1):
+		if margin <= 0: break
+		square.append(cell + Vector2i(offset, -margin))
+		square.append(cell + Vector2i(offset, margin))
+		square.append(cell + Vector2i(-margin, offset))
+		square.append(cell + Vector2i(margin, offset))
+	return not RegionTravelSite._hostile_near(lab, faction, square)
+
+## Every cell the actual selection occupies now or once its committed paid edges
+## close: the controlled body (and its own committed edge) plus, for a captain, each
+## Army row's cell and committed moving_to. Mirrors selected_departure's closure.
+func _departure_selected_endpoints(extra: Array[Vector2i]) -> Array[Vector2i]:
+	var person: Dictionary = lab.controlled_target()
+	var cells: Array[Vector2i] = [Vector2i(person.cell)]
+	cells.append_array(extra)
+	var team: TerrainArmy = lab.player_army()
+	if team == null and int(person.unit) >= 0: team = person.owner
+	if int(person.unit) >= 0 and person.owner.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL:
+		cells.append(person.owner.moving_to[int(person.unit)])
+	if team == null: return cells
+	var index: int = lab.controlled_member_index(team)
+	if index == -1 or team.formal_commander != index: return cells
+	for row: int in range(team.combat_units.size()):
+		cells.append(team.cells[row])
+		if team.moving_to[row] != TerrainArmy.INVALID_CELL: cells.append(team.moving_to[row])
+	return cells
+
 func _departure_actor_at(cell: Vector2i) -> bool:
 	for actor: TerrainTestCharacter in lab.combat_actors:
 		if lab.actor_present(actor) and actor.terrain_cell == cell: return true
 	return false
 
-## Breadth-first route over real walkable, unoccupied cells to the nearest cell outside the hostile guard.
-func _departure_safe_path(person: Dictionary) -> Array[Vector2i]:
+## Breadth-first route over real walkable, unoccupied cells to the nearest settled cell (outside the hostile guard by DEPARTURE_GUARD_MARGIN).
+func _departure_safe_path(person: Dictionary, margin: int) -> Array[Vector2i]:
 	var faction: int = int(person.owner.faction_id)
 	var start: Vector2i = lab.controlled_target().cell
 	var came_from: Dictionary = {start: start}
@@ -147,7 +191,7 @@ func _departure_safe_path(person: Dictionary) -> Array[Vector2i]:
 	while head < frontier.size():
 		var cell: Vector2i = frontier[head]
 		head += 1
-		if not RegionTravelSite._hostile_near(lab, faction, [cell]):
+		if _departure_cell_settled(faction, cell, margin):
 			goal_cell = cell
 			break
 		for direction: Vector2i in [Vector2i.UP, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT]:
@@ -206,10 +250,14 @@ func _departure_route_controls(paid: bool) -> bool:
 func _departure_start_paid_edge(person: Dictionary) -> bool:
 	var faction: int = int(person.owner.faction_id)
 	var accepted := false
+	var chosen: Array[Vector2i] = []
 	for direction: Vector2i in [Vector2i.UP, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT]:
 		var next: Vector2i = Vector2i(lab.controlled_target().cell) + direction
 		if not lab.terrain.contains(next) or not lab.terrain.is_walkable(next) or RegionTravelSite._hostile_near(lab, faction, [next]): continue
-		if _departure_body_step(person, direction): accepted = true; break
+		if _departure_body_step(person, direction):
+			accepted = true
+			chosen.append(next)
+			break
 	if not _check(accepted, "original controlled command commits a real departure-safe movement edge"): return false
 	var paid_before := action_paid
 	if not await _action_until(func() -> bool: return action_paid > paid_before, "original queue reaches the first accepted positive paid movement interval"): return false
@@ -218,6 +266,8 @@ func _departure_start_paid_edge(person: Dictionary) -> bool:
 	var destination_before: Vector2i = person.owner.moving_to[int(person.unit)] if int(person.unit) >= 0 else person.owner.terrain_cell
 	if not _departure_body_hold(person): return false
 	if not _check(RegionTravelSite.controlled_departure_step_remaining(controller) == step_before and step_before > 0.0 and destination_before == (person.owner.moving_to[int(person.unit)] if int(person.unit) >= 0 else person.owner.terrain_cell), "public HOLD preserves the actual paid body/reservation before nonce/order snapshot"): return false
+	var endpoints: Array[Vector2i] = _departure_selected_endpoints(chosen)
+	if not _check(not RegionTravelSite._hostile_near(lab, faction, endpoints), "every selected body's cell and committed paid-edge endpoint stays outside the actual hostile guard before the request", endpoints): return false
 	return _departure_route_controls(true)
 
 func _departure_cancel_paid_edge() -> bool:
@@ -278,6 +328,8 @@ func _departure_leave_reopen_reenter() -> bool:
 		if not slot.region_travel_journey().is_empty(): break
 		if Time.get_ticks_msec() > deadline: return _check(false, "departure endpoint exceeded the bounded deadline")
 		if not _action_step(): return false
+		if controller._region_departure_intent.is_empty() and slot.region_travel_journey().is_empty():
+			return _check(false, "pending departure intent ended without the original whole-party commit (endpoint refused)", RegionTravelSite.selected_departure(controller))
 		if count % 60 == 0: await process_frame
 	if not _check(not slot.region_travel_journey().is_empty() and str(slot.control.active_site_id).is_empty() and lab.restore_only and controller._region_departure_intent.is_empty(), "real finish_tick commits exactly one party plus remaining original cold owner"): return false
 	if not _check(not _action_vehicle().action.is_empty() and _phase_battle().id == battle_id and str(_phase_battle().mode) == "cold_exact", "legal departure preserves the ongoing paid partial, same battle and actual cold activation", _action_facts()): return false
@@ -568,7 +620,7 @@ func _departure_captain_cancel_and_leave() -> bool:
 	var actor: TerrainTestCharacter = lab.controlled_target().owner
 	var team: TerrainArmy = lab.player_army()
 	if not _check(team != null and team.player_member == actor and lab.controlled_member_index(team) == TerrainArmy.PLAYER_MEMBER and team.formal_commander == TerrainArmy.PLAYER_MEMBER and team.combat_units.size() == 1, "real public journey/re-entry retains the PLAYER_MEMBER captain and original single row"): return false
-	if not await _departure_walk_clear(): return false
+	if not await _departure_walk_clear(DEPARTURE_GUARD_MARGIN): return false
 	var relocated: Dictionary = lab.issue_player_army_order(TerrainArmy.CombatOrder.MOVE, actor.terrain_cell)
 	if not _check(relocated.ok, "real PLAYER_MEMBER captain issues the original paid formation relocation toward its departure-safe Actor", relocated): return false
 	if not await _action_until(func() -> bool: return team.moving_member_count() == 0 and not RegionTravelSite._hostile_near(lab, team.faction_id, team.cells), "original paid Army movement brings every selected row outside the actual hostile guard"): return false
@@ -597,6 +649,8 @@ func _departure_captain_cancel_and_leave() -> bool:
 		if not slot.region_travel_journey().is_empty(): break
 		if Time.get_ticks_msec() > deadline: return _check(false, "captain departure endpoint exceeded its bounded deadline")
 		if not _action_step(): return false
+		if controller._region_departure_intent.is_empty() and slot.region_travel_journey().is_empty():
+			return _check(false, "pending departure intent ended without the original whole-party commit (endpoint refused)", RegionTravelSite.selected_departure(controller))
 		if count % 60 == 0: await process_frame
 	if not _check(not slot.region_travel_journey().is_empty() and lab.restore_only and str(slot.control.active_site_id).is_empty() and controller._region_departure_intent.is_empty(), "original accepted finish_tick closes and commits the actual captain whole party"): return false
 	var selected: Dictionary = slot.region_travel_party()
@@ -657,7 +711,7 @@ func _departure_army_captain_cancel_and_leave(person: Dictionary) -> bool:
 		if not team.member_gone(index) and team.is_member(index): expected.append(team.combat_identity(index))
 	expected.sort()
 	if not _check(not expected.is_empty() and expected.has(identity) and not stable_reference.is_empty(), "inherited captain resolves the complete real Army party and original person reference", expected): return false
-	if not await _departure_walk_clear(): return false
+	if not await _departure_walk_clear(DEPARTURE_GUARD_MARGIN): return false
 	var solo_cancel: Dictionary = departure_evidence.cancel
 	if not await _departure_cancel_paid_edge(): return false
 	departure_evidence["captain_cancel"] = departure_evidence.cancel
@@ -679,6 +733,8 @@ func _departure_army_captain_cancel_and_leave(person: Dictionary) -> bool:
 		if not slot.region_travel_journey().is_empty(): break
 		if Time.get_ticks_msec() > deadline: return _check(false, "captain departure endpoint exceeded its bounded deadline")
 		if not _action_step(): return false
+		if controller._region_departure_intent.is_empty() and slot.region_travel_journey().is_empty():
+			return _check(false, "pending departure intent ended without the original whole-party commit (endpoint refused)", RegionTravelSite.selected_departure(controller))
 		if count % 60 == 0: await process_frame
 	if not _check(not slot.region_travel_journey().is_empty() and lab.restore_only and str(slot.control.active_site_id).is_empty() and controller._region_departure_intent.is_empty(), "original finish_tick commits the complete inherited captain party only after its real row closes"): return false
 	var selected: Dictionary = slot.region_travel_party()
@@ -765,7 +821,7 @@ func _departure_captain_row_partial_and_cancel(team: TerrainArmy, actor: Terrain
 	var hold_point := [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence]
 	var held: Dictionary = lab.issue_player_army_order(TerrainArmy.CombatOrder.HOLD)
 	if not _check(held.ok and team.combat_order == TerrainArmy.CombatOrder.HOLD and team.cells[0] == cell and team.moving_to[0] == moving_to and float(team.move_progress[0]) == progress and float(team.move_duration[0]) == duration and hold_point == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "public HOLD stops only uncommitted orders and preserves the same positively paid row edge and clocks", held): return false
-	if not _check(not actor.is_moving() and actor.action_time <= 0.0 and actor.projectiles.is_empty() and not RegionTravelSite._hostile_near(lab, team.faction_id, [actor.terrain_cell, cell, moving_to]), "Actor stays genuinely idle and every current selected row endpoint remains outside the actual hostile guard"): return false
+	if not _check(not actor.is_moving() and actor.action_time <= 0.0 and actor.projectiles.is_empty() and not RegionTravelSite._hostile_near(lab, team.faction_id, _departure_selected_endpoints([actor.terrain_cell, cell, moving_to])), "Actor stays genuinely idle and every current selected row endpoint remains outside the actual hostile guard", _departure_selected_endpoints([actor.terrain_cell, cell, moving_to])): return false
 	if not _departure_other_row_refuses(): return false
 	if not await _departure_start_paid_edge(lab.controlled_target()): return false
 	var asked := RegionTravelSite.request_departure(controller)
@@ -817,7 +873,7 @@ func _departure_army_row_partial_and_cancel(team: TerrainArmy, person: Dictionar
 	var hold_point: Array = [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence]
 	var held: Dictionary = lab.issue_player_army_order(TerrainArmy.CombatOrder.HOLD)
 	if not _check(held.ok and team.combat_order == TerrainArmy.CombatOrder.HOLD and team.cells[row_index] == cell and team.moving_to[row_index] == moving_to and float(team.move_progress[row_index]) == progress and float(team.move_duration[row_index]) == duration and hold_point == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "public HOLD stops only uncommitted orders and preserves the same positively paid row edge and clocks", held): return false
-	if not _check(not _departure_body_moving(person) and not team._combat_action_blocks_step(int(person.unit)) and team.projectiles.is_empty() and not RegionTravelSite._hostile_near(lab, team.faction_id, [Vector2i(lab.controlled_target().cell), cell, moving_to]), "Army captain stays genuinely idle and every current selected row endpoint remains outside the actual hostile guard"): return false
+	if not _check(not _departure_body_moving(person) and not team._combat_action_blocks_step(int(person.unit)) and team.projectiles.is_empty() and not RegionTravelSite._hostile_near(lab, team.faction_id, _departure_selected_endpoints([cell, moving_to])), "Army captain stays genuinely idle and every current selected row endpoint remains outside the actual hostile guard", _departure_selected_endpoints([cell, moving_to])): return false
 	if not _departure_other_row_refuses(): return false
 	if not await _departure_start_paid_edge(person): return false
 	var asked: Dictionary = RegionTravelSite.request_departure(controller)

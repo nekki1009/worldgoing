@@ -48,6 +48,17 @@ static var _terrain_memo: Dictionary = {} # key -> TerrainData (shared, read-onl
 static var _terrain_memo_order: Array[String] = []
 static var _terrain_memo_owner: Dictionary = {} # TerrainData instance id -> key
 static var _table_memo: Dictionary = {} # key|cover|effective -> table Dictionary
+## Pristine fixed-geography loader bases (RegionData.make_terrain_data results)
+## for save readback/load. Same key contract as _terrain_memo: cache_key(source)
+## (manifest + resource hashes, rule revisions, author identity) plus the Site.
+## Entries are never handed out; every caller receives a fresh deep copy because
+## SiteStore.load_site mutates the TerrainData it is given.
+const FIXED_BASE_MEMO_LIMIT := 16
+static var _fixed_base_memo: Dictionary = {} # key -> make_terrain_data result (private copy)
+static var _fixed_base_memo_order: Array[String] = []
+const _PACKED_TYPES := [TYPE_PACKED_BYTE_ARRAY, TYPE_PACKED_INT32_ARRAY, TYPE_PACKED_INT64_ARRAY,
+	TYPE_PACKED_FLOAT32_ARRAY, TYPE_PACKED_FLOAT64_ARRAY, TYPE_PACKED_STRING_ARRAY, TYPE_PACKED_VECTOR2_ARRAY,
+	TYPE_PACKED_VECTOR3_ARRAY, TYPE_PACKED_COLOR_ARRAY, TYPE_PACKED_VECTOR4_ARRAY]
 
 ## Shared new-entry policy. Fine water never derives from coarse `mixed`.
 ## Missing mandatory source files are rejected by RegionData before this call.
@@ -403,6 +414,46 @@ static func unregister_readonly_body(data: TerrainData) -> void:
 			if table_key.begins_with(owner_key + "#"): _table_memo.erase(table_key)
 	_mutex.unlock()
 
+## RegionData.make_terrain_data(site) for a loader that will mutate the result.
+## Only the exact RegionData script with a pinned manifest is memoized (a
+## subclass may override make_terrain_data); anything else is built as before.
+static func fresh_fixed_base(source: RefCounted, site: Vector2i) -> Dictionary:
+	if not source is RegionData or source.get_script() != RegionData or str(source.manifest_hash).is_empty():
+		return source.make_terrain_data(site.x, site.y)
+	var key: String = "%s|%d,%d" % [cache_key(source), site.x, site.y]
+	_mutex.lock()
+	var cached: Variant = _fixed_base_memo.get(key)
+	_mutex.unlock()
+	if cached is Dictionary: return _fixed_base_copy(cached)
+	var built: Dictionary = source.make_terrain_data(site.x, site.y)
+	if not bool(built.get("ok", false)) or not built.get("data") is TerrainData: return built
+	var pristine: Dictionary = _fixed_base_copy(built)
+	_mutex.lock()
+	if not _fixed_base_memo.has(key):
+		_fixed_base_memo[key] = pristine
+		_fixed_base_memo_order.append(key)
+		while _fixed_base_memo_order.size() > FIXED_BASE_MEMO_LIMIT:
+			_fixed_base_memo.erase(_fixed_base_memo_order.pop_front())
+	_mutex.unlock()
+	return built
+
+## Deep copy of a make_terrain_data result: every TerrainData script variable
+## (containers and packed arrays duplicated), plus the rest of the result.
+static func _fixed_base_copy(result: Dictionary) -> Dictionary:
+	var copy: Dictionary = result.duplicate(true)
+	var original: TerrainData = result["data"]
+	var data: TerrainData = TerrainData.new()
+	for property: Dictionary in original.get_property_list():
+		if (int(property["usage"]) & PROPERTY_USAGE_SCRIPT_VARIABLE) == 0: continue
+		var field: String = str(property["name"])
+		var value: Variant = original.get(field)
+		if value is Dictionary or value is Array: value = value.duplicate(true)
+		elif typeof(value) in _PACKED_TYPES: value = value.duplicate()
+		data.set(field, value)
+	for meta: StringName in original.get_meta_list(): data.set_meta(meta, original.get_meta(meta))
+	copy["data"] = data
+	return copy
+
 static func memo_terrain(source: RegionData, site: Vector2i, mode: String = "base") -> Dictionary:
 	if mode not in ["base", "author_initial"]: return {"ok": false, "code": "INVALID_TERRAIN_MODE"}
 	var key: String = "%s|%s|%d,%d" % [cache_key(source), mode, site.x, site.y]
@@ -635,6 +686,8 @@ static func clear_memory_cache() -> void:
 	_terrain_memo_owner.clear()
 	_table_memo.clear()
 	_table_memo_order.clear()
+	_fixed_base_memo.clear()
+	_fixed_base_memo_order.clear()
 	_mutex.unlock()
 
 static func _node_key(site: Vector2i, component: int) -> int:

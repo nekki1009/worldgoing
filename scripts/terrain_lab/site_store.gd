@@ -513,6 +513,12 @@ static func save(data: TerrainData, path: String = DEFAULT_PATH, native_candidat
 		"preset": data.preset, "seed": data.seed_value, "parameters": params, "state": state}
 	if capture_only:
 		return Runtime.ok("", {"state": state, "context": region_capture.get("context", {}), "snapshot": state.get("region_snapshot", {}), "payload": payload, "owners": region_capture.get("owners", {})})
+	return _write_payload(source_data, path, payload, state, crowd_snapshot)
+
+
+## save()'s unchanged write tail: encode the validated payload, write, verify and
+## replace. Shared by save() and write_region_capture() so both write the same bytes.
+static func _write_payload(source_data: TerrainData, path: String, payload: Dictionary, state: Dictionary, crowd_snapshot: bool) -> Dictionary:
 	# The checksum covers the exact stored JSON text, not sorted key order.
 	# Keep full float precision and the ordinary snapshot encoding unchanged.
 	var body := _stringify_crowd_payload(payload) if crowd_snapshot else JSON.stringify(payload, "", true, true)
@@ -564,6 +570,20 @@ static func save(data: TerrainData, path: String = DEFAULT_PATH, native_candidat
 	source_data.set_meta(&"fire_owner_checkpoint", committed_fire_owners.duplicate(true) if committed_fire_owners is Dictionary else {})
 	invalidate_faction_summary_path(absolute)
 	return Runtime.ok("地圖已保存", {"path": path})
+
+## Write a hot capture produced in the SAME synchronous call by
+## save(data, "", null, false, request, true) (capture_region_snapshot) for the
+## same unchanged data. That capture already ran every save() validator, owner
+## guard, fire/transport capture and RegionCheckpoint.make; repeating save() with
+## the capture's own context/owners recomputes the identical payload (same data,
+## same owners, idempotent validate_context, deterministic make), so writing the
+## capture payload yields byte-identical files. Write-tail refusals (size, IO,
+## verification) still run here. Hot captures never carry crowd state.
+static func write_region_capture(data: TerrainData, path: String, capture: Dictionary) -> Dictionary:
+	if data == null or not bool(capture.get("ok", false)) or not capture.get("payload") is Dictionary or not capture.get("state") is Dictionary \
+		or not is_same(capture.payload.get("state"), capture.state) or capture.state.has("crowd"):
+		return Runtime.fail("INVALID_REGION_CAPTURE")
+	return _write_payload(data, path, capture.payload, capture.state, false)
 
 class CrowdJsonBatch extends RefCounted:
 	var values: Array = []

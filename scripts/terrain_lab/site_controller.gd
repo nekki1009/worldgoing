@@ -10281,7 +10281,7 @@ func checkpoint_region_internal(purpose: String, effects_complete: bool = true,
 		endpoint_payload: Dictionary = {}, token: String = "") -> Dictionary:
 	var captured := capture_region_checkpoint(purpose, effects_complete, endpoint_payload, token)
 	if not captured.ok: return captured
-	return region_slot.checkpoint_region_site(lab.terrain, captured.context, captured.owners)
+	return region_slot.checkpoint_region_site(lab.terrain, captured.context, captured.owners, {}, false, captured)
 
 
 func _prepare_original_work_inputs() -> Dictionary:

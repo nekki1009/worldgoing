@@ -448,7 +448,7 @@ func _coordinate(data: TerrainData) -> Dictionary:
 func _load_checked(path: String, site: Vector2i) -> Dictionary:
 	var loaded := Store.load_site(path, func(base: Dictionary) -> Dictionary:
 		if not _matches_base(base, site): return fail("SAVE_VERSION", "提交候選使用另一固定地圖")
-		var rebuilt: Dictionary = source.make_terrain_data(site.x, site.y)
+		var rebuilt: Dictionary = RegionRoute.fresh_fixed_base(source, site)
 		if not bool(rebuilt.get("ok", false)) or not _matches_base(rebuilt.get("base", {}), site) \
 				or str(rebuilt.base.terrain_fingerprint) != str(base.get("terrain_fingerprint", "")):
 			return fail("SAVE_VERSION", "提交候選的固定來源不可重建")
@@ -480,7 +480,10 @@ func _save_checked_owner_capture(data: TerrainData, site: Vector2i, path: String
 		if read_only:
 			durable = TerrainLab._region_detached_bind_data(data)
 			durable.site = capture["state"]
-		saved = Store.save_region_snapshot(durable, path, capture.context, capture.owners)
+		# Non-read-only: durable is `data`, the bound original's own terrain that
+		# capture_region_checkpoint just captured in this same call.
+		if not read_only and capture.get("payload") is Dictionary: saved = Store.write_region_capture(durable, path, capture)
+		else: saved = Store.save_region_snapshot(durable, path, capture.context, capture.owners)
 	elif data.site.has("region_snapshot"):
 		var captured := Store.validate_region_snapshot(data, {})
 		if not captured.ok:
@@ -2803,6 +2806,8 @@ static func validate_fire_clock(value: Variant, world_game: Variant) -> Dictiona
 		or not _seconds(value.action_seconds) or not _whole(value.sequence, 0, 2147483647) \
 		or not _seconds(value.base_game_seconds) or not value.journal is Array or value.journal.size() > 65536 \
 		or not value.index is Dictionary or value.index.size() > 65536: return _fail("CORRUPT_FIRE_CLOCK", "火攻共同時間版本")
+	if not _whole(value.get("base_sequence", 0), 0, int(value.sequence)) or not _seconds(value.get("base_action_seconds", 0.0)):
+		return _fail("CORRUPT_FIRE_CLOCK", "火攻歷程基點型別非法")
 	var base_sequence: int = int(value.get("base_sequence", 0))
 	var base_action: float = float(value.get("base_action_seconds", 0.0))
 	if not _whole(base_sequence, 0, int(value.sequence)) or not _seconds(base_action) or base_action > float(value.action_seconds) \
@@ -2858,6 +2863,14 @@ static func validate_fire_settlement(state: Dictionary, clock: Dictionary) -> Di
 	if not value is Dictionary or value.size() != FIRE_SETTLEMENT_FIELDS.size(): return _fail("MISSING_FIRE_HISTORY", "火攻地點缺少雙時間水印")
 	for field: String in FIRE_SETTLEMENT_FIELDS:
 		if not value.has(field): return _fail("CORRUPT_FIRE_SETTLEMENT", "火攻結算欄位")
+	# Validate the original clock before any typed journal iteration or key read.
+	var clock_game: Variant = clock.get("base_game_seconds")
+	var journal: Variant = clock.get("journal")
+	if journal is Array and not journal.is_empty():
+		var last: Variant = journal.back()
+		if last is Dictionary: clock_game = last.get("game_end")
+	var clock_check: Dictionary = validate_fire_clock(clock, clock_game)
+	if not clock_check.ok: return clock_check
 	if not _whole(value.version, 1, 1) or value.epoch != clock.epoch \
 		or not _whole(value.sequence, 0, int(clock.sequence)) or not _seconds(value.action_seconds) or not _seconds(value.game_seconds) \
 		or _fire_watermark_after_clock(value.action_seconds, clock.action_seconds): return _fail("CORRUPT_FIRE_SETTLEMENT", "火攻結算版本或端點")
@@ -3242,7 +3255,9 @@ func begin_region_travel(source_data: TerrainData, spec: Dictionary, start_compo
 	var fire_clock: Dictionary = next_clock.get("fire_clock", {})
 	var source_id := str(source_data.site.id)
 	if checked.data.site.has("fire_settlement") and fire_clock.get("index") is Dictionary:
-		var settlement: Dictionary = checked.data.site.fire_settlement
+		var endpoint: Dictionary = _region_departure_fire_endpoint(checked.data.site.fire_settlement, fire_clock)
+		if not endpoint["ok"]: return endpoint
+		var settlement: Dictionary = endpoint["watermark"]
 		fire_clock.index[source_id] = {"coordinate": [from.x, from.y], "active": false, "fire_active": false,
 			"sequence": int(settlement.sequence), "action_seconds": float(settlement.action_seconds), "game_seconds": float(settlement.game_seconds)}
 	next_clock.active_site_id = ""
@@ -3623,7 +3638,9 @@ func region_checkpoint_context(data: TerrainData, purpose: String, token: String
 	if not checked.ok: return checked
 	return {"ok": true, "context": context}
 
-func checkpoint_region_site(data: TerrainData, context: Dictionary, owner_states: Dictionary, faction_candidate: Dictionary = {}, read_only_owners: bool = false) -> Dictionary:
+## `capture`: the same-call capture_region_checkpoint result whose context/owners
+## are exactly `context`/`owner_states` (see SiteStore.write_region_capture).
+func checkpoint_region_site(data: TerrainData, context: Dictionary, owner_states: Dictionary, faction_candidate: Dictionary = {}, read_only_owners: bool = false, capture: Dictionary = {}) -> Dictionary:
 	var expected := {"source_generation": int(_marker.get("generation", 0)), "runtime_revision": int(region_registry().revision),
 		"game_seconds": float(control.logical_game_seconds), "action_seconds": float(control.fire_clock.action_seconds),
 		"fire_epoch": str(control.fire_clock.epoch), "fire_sequence": int(control.fire_clock.sequence)}
@@ -3634,7 +3651,8 @@ func checkpoint_region_site(data: TerrainData, context: Dictionary, owner_states
 	if str(data.site.id) != str(control.active_site_id): return fail("REGION_SOURCE", "非活動原 owner 不能單檔發布")
 	var generation := int(_marker.get("generation", 0)) + 1
 	var path := _generation_path(generation, coordinate.site)
-	var saved := Store.save_region_snapshot(data, path, context, owner_states)
+	var same_capture: bool = capture.get("payload") is Dictionary and is_same(capture.get("context"), context) and is_same(capture.get("owners"), owner_states)
+	var saved: Dictionary = Store.write_region_capture(data, path, capture) if same_capture else Store.save_region_snapshot(data, path, context, owner_states)
 	if not saved.ok: return saved
 	# Same mode-aware readback as resume; never a normal cold catch-up.
 	var source_checksum: String = _faction_file_sha256(path)
@@ -12623,3 +12641,27 @@ func organization_nation_edit_target(ticket: Dictionary, revision: int, data: Te
 	if not identity.ok: return identity
 	if RegionTravel.stable_key(identity.state.travel_identity.refs.nation.get(nation_id, {})) != key: return fail("ORGANIZATION_NATION_IDENTITY_CHANGED")
 	return {"ok": true, "nation": _organization_stage.edit.registry.nations[key].record.duplicate(true), "reference": saved.registry.nations[key].reference.duplicate(true)}
+
+## Departure strips the former body snapshot. Its JSON fire stamp still names
+## the original journal point; preserve that binary point in the new index.
+static func _region_departure_fire_endpoint(watermark: Dictionary, clock: Dictionary) -> Dictionary:
+	var checked: Dictionary = validate_fire_settlement({"fire_settlement": watermark}, clock)
+	if not checked.ok: return checked
+	var sequence: int = int(watermark.sequence)
+	var original: Dictionary = {}
+	if sequence == int(clock.get("base_sequence", 0)):
+		original = {"game_seconds": clock.get("base_game_seconds"), "action_seconds": clock.get("base_action_seconds", 0.0)}
+	else:
+		for row: Dictionary in clock.get("journal", []):
+			if int(row.last_sequence) == sequence:
+				original = {"game_seconds": row.game_end, "action_seconds": row.action_end}
+				break
+	# An interior compressed point has no exact binary endpoint here. Do not
+	# interpolate, clamp, or substitute the current world's time.
+	for field: String in ["game_seconds", "action_seconds"]:
+		if not _seconds(original.get(field)): return {"ok": true, "watermark": watermark}
+		var encoded: Variant = JSON.parse_string(JSON.stringify(float(original[field]), "", false, true))
+		if encoded != watermark.get(field): return {"ok": true, "watermark": watermark}
+	var exact: Dictionary = watermark.duplicate(true)
+	for field: String in ["game_seconds", "action_seconds"]: exact[field] = float(original[field])
+	return {"ok": true, "watermark": exact}
