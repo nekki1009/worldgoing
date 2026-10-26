@@ -77,9 +77,47 @@ func _setup_action_world() -> bool:
 	for team: TerrainArmy in [foot, operator]:
 		for unit: int in team.combat_units.size(): data.site.equipment_nations[sea_nation_id].members.append(team.combat_identity(unit))
 	if not _check(SiteRuntime._gate_operator(data, feature, multi_gate_operator, lab.site_controller._building_person_query).ok, "true gate owner, actual qualified NPC and exact operation geometry admit the original public gate caller"): return false
+	# Decision A (Nekki 2026-10-26): the destination center and its hostile body are
+	# born later, after the founder stands the destination up hot
+	# (_multi_destination_decision_a).
+	return _check(action_paid == 0.0 and action_game_paid == 0.0 and controller.checkpoint_region_internal("region_checkpoint", true).ok, "finite boats, gate, foot cohort and real Nation birth precede every original productive interval")
+
+## Decision A for the destination (Nekki 2026-10-26, same pattern as the phase and
+## center tests). Since P6 S1 a cold Site opened after world genesis has no people,
+## and only the controlled person founds a settlement (site_settlement.gd found).
+## The shore Actor has finished its own public ship work and left the crew. It walks
+## out through the same paid gate, travels to the destination, founds the center
+## there while that Site is hot, and hands living control to a newly born family
+## member, who returns to the shore Site. The founder stays at the destination as
+## its living defender; from here on the shore Site's human control is the heir.
+## The paid gate opening and the Region journeys now come before the destination's
+## birth, so its zero-paid gate is measured from the founder's departure instead.
+func _multi_destination_decision_a() -> bool:
+	if not await _multi_gate_to(true): return false
+	var paid := [action_paid, action_game_paid]
+	var goal_site := Grid.site_id(str(slot.pin.atlas_id), sea_goal_coordinate)
+	if not await _multi_travel_controlled(sea_goal_coordinate): return false
+	lab.simulation_speed = action_speed
+	if not _check(lab.controlled_person_id() == ship_actor_id and str(slot.control.active_site_id) == goal_site and str(lab.terrain.site.id) == goal_site,
+		"the same shore Actor arrives at and controls the hot destination Site"): return false
+	# Explicit scenario faction of the destination center's founder.
+	lab.character.faction_id = 1
+	if not _multi_center_genesis(lab): return false
+	center_founder = lab.controlled_person_id()
+	if not _birth_successor(): return false
+	if not await _hand_over_and_leave(Vector2i.ZERO): return false
+	lab.simulation_speed = action_speed
+	action_owner = lab
+	ship_actor_id = lab.controlled_person_id()
+	if not _check(ship_actor_id == center_heir and str(slot.control.active_site_id) == str(lab.terrain.site.id) and str(slot.control.active_site_id) != goal_site and not lab.controlled_target().is_empty(),
+		"the living heir holds the shore Site's human control and the destination is cold", {"heir": center_heir, "controlled": ship_actor_id, "active": slot.control.active_site_id}): return false
 	var goal: Dictionary = _sea_goal()
-	if not goal.ok or not _multi_center_genesis(goal.lab): return false
+	if not _check(goal.ok and goal.lab is TerrainLab, "the destination's actual complete cold owner binds after the heir leaves", goal.get("code")): return false
 	var destination: TerrainLab = goal.lab
+	var center: Dictionary = Settlement.record(destination.terrain)
+	if not _check(destination.actor_present(destination.character) and destination.character.person_id == center_founder
+		and not center.is_empty() and int(center.level) == 1 and int(center.owner_faction) == 1,
+		"the founder stays as the cold destination's living original person and its completed center keeps faction 1", {"founder": center_founder, "present": destination.character.person_id}): return false
 	destination._ensure_army_slots(3)
 	var hostile: TerrainArmy = destination.combat_armies[2]
 	hostile.faction_id = 2; hostile.roster_size = 1
@@ -88,13 +126,78 @@ func _setup_action_world() -> bool:
 	destination.site_controller.initialize_team_items(hostile)
 	multi_enemy_id = hostile.combat_identity(0)
 	destination.terrain.site.army_next_team = destination._next_army_identity()
-	if not _check(action_paid == 0.0 and action_game_paid == 0.0 and controller.checkpoint_region_internal("region_checkpoint", true).ok, "finite boats, gate, foot cohort, hostile center and real Nation birth precede every original productive interval"): return false
+	if not _check([action_paid, action_game_paid] == paid and controller.checkpoint_region_internal("region_checkpoint", true).ok,
+		"the destination center, its staying founder and the hostile body are born before any paid interval after the founder's departure and before either NPC route"): return false
 	var begun: Dictionary = hostile.issue_combat_order(hostile.current_commander, TerrainArmy.CombatOrder.ATTACK)
 	if not _check(begun.ok, "actual hostile captain accepts the original siege attack before its real registry publication", begun): return false
 	var siege: Dictionary = slot.refresh_original_region_siege_battle(destination)
 	if not _check(siege.ok and not str(siege.get("battle_id", "")).is_empty(), "actual destination bodies and center create the original shared siege registry", siege): return false
 	var held: Dictionary = hostile.issue_combat_order(hostile.current_commander, TerrainArmy.CombatOrder.HOLD)
 	return _check(held.ok, "same actual hostile captain holds its real body for the independent arriving contact through the original public order", held)
+
+## The controlled Actor's own original Region travel (the travel half of
+## _hand_over_and_leave, without a handover): depart, route, paid map
+## intervals, then the production world-open binds the arrived Site.
+func _multi_travel_controlled(destination: Vector2i) -> bool:
+	var traveller := lab.controlled_person_id()
+	var due: Dictionary = slot.consume_due_region_events()
+	if not _check(due.ok and bool(due.get("complete", false)), "original due endpoints finish before the Actor's own departure", due): return false
+	var settled: Dictionary = controller.checkpoint_region_internal("region_checkpoint")
+	if not _check(settled.ok, "original complete checkpoint captures the source Site before the Actor departs", settled): return false
+	var departed_lab := lab
+	var departed: Dictionary = RegionTravelSite.depart(controller)
+	if not _check(departed.ok, "the controlled Actor departs through the original Region travel", departed): return false
+	if is_instance_valid(genesis_panel): genesis_panel.free()
+	genesis_panel = GenesisPanel.new()
+	root.add_child(genesis_panel)
+	genesis_panel.setup(genesis_panel)
+	genesis_panel.set_process(false)
+	var opened: Dictionary = genesis_panel.start({"world_id": world_id, "slot_id": "main", "manifest": manifest_path})
+	if not _check(opened.ok and is_instance_valid(genesis_panel._original_adapter_host), "production travel panel restores the original map host", opened): return false
+	lab = genesis_panel._original_adapter_host
+	controller = lab.site_controller
+	slot = genesis_panel.slot
+	var selected: Dictionary = slot.region_travel_party()
+	if not _check(selected.ok, "original map selects the Actor's party", selected): return false
+	var current: Dictionary = slot.region_travel_status()
+	var route_context: Dictionary = slot.prepare_region_route_context(null, selected.party)
+	if not _check(route_context.ok, "original party route context", route_context): return false
+	var search := RegionRoute.Search.new()
+	search.source = slot.source
+	search.start_site = current.site
+	search.start_component = int(current.component)
+	search.goal_site = destination
+	search.context = route_context.context
+	var route: Dictionary = search.run()
+	if not _check(route.ok, "original route producer reaches the destination Site", route): return false
+	var planned: Dictionary = slot.set_region_travel_plan(route.steps)
+	if not _check(planned.ok, "original Slot admits the Actor's route", planned): return false
+	for iteration: int in range(18000):
+		current = slot.region_travel_status()
+		if not _check(current.ok, "the Actor's route has one original status", current): return false
+		if bool(current.get("arrived", false)): break
+		var advanced: Dictionary = slot.advance_region_travel(37)
+		if not _check(advanced.ok, "original map caller advances one common interval", advanced): return false
+		if bool(advanced.get("arrived", false)): break
+		if iteration % 60 == 0: await process_frame
+	if not _check(bool(slot.region_travel_status().get("arrived", false)), "the Actor genuinely arrives at the destination Site"): return false
+	var stored: Dictionary = slot.checkpoint_region_travel()
+	if not _check(stored.ok, "the original travel publisher stores the arrived party", stored): return false
+	# The departed scene's own Controller opens the arrival, as the real world-open path does.
+	var visible := departed_lab
+	var visible_open: Dictionary = visible.site_controller.open_fixed_world(manifest_path, world_id, "main", Vector2i(-1, -1), false)
+	for retry: int in range(200000):
+		if str(visible_open.get("code", "")) != "PENDING" and not visible.site_controller.region_operation_pending(): break
+		visible_open = visible.site_controller.resume_region_operation()
+		if retry % 60 == 0: await process_frame
+	if not _check(visible_open.ok and bool(visible_open.get("arrived", false)), "production world-open binds the arrived destination Site", visible_open): return false
+	_freeze(visible)
+	lab = visible
+	controller = visible.site_controller
+	slot = controller.region_slot
+	var wired := lab._wire_region_gameplay_adapters(slot)
+	if not _check(wired.ok, "arrived Site wires the same original Slot owners", wired): return false
+	return _check(lab.controlled_person_id() == traveller and str(slot.control.active_site_id) == str(lab.terrain.site.id), "the same Actor controls the arrived Site")
 
 func _multi_source_gate() -> Dictionary:
 	return lab.terrain.site.features.get(multi_gate, {})
@@ -105,7 +208,9 @@ func _multi_gate_to(open: bool) -> bool:
 	return await _ship_until(func() -> bool: return bool(_multi_source_gate().gate.open) == open and str(_multi_source_gate().gate.pending).is_empty(), "original accepted common work completes the true gate operation")
 
 func _multi_prepare_routes() -> bool:
-	if not await _multi_gate_to(true): return false
+	# Decision A already opened this gate (paid) for the founder's own departure.
+	if not bool(_multi_source_gate().gate.open):
+		if not await _multi_gate_to(true): return false
 	if not _check(not lab.terrain.path_between(Vector2i(30, 49), Vector2i(0, 50)).is_empty(), "actual paid original open gate makes the foot source leg legally reachable"): return false
 	# Keep the inherited genuine unknown-target refusal before its first
 	# original observation; that same observation then also admits the foot route.
@@ -208,6 +313,7 @@ func _run() -> void:
 	if not await _ship_board(0, true) or not await _ship_public_food() or not await _ship_board(1, false): _finish(); return
 	if not _check(not _ship_supply().locations.has("vehicle:" + ship_ids[1]), "second true boat still has no invented own food pool"): _finish(); return
 	if not await _ship_helm(0, false) or not await _ship_helm(1, true) or not await _ship_open_sea_positive() or not await _ship_original_two_boat_closure(): _finish(); return
+	if not await _multi_destination_decision_a(): _finish(); return
 	if not await _multi_prepare_routes(): _finish(); return
 	ship_observation = "region_sea"
 	if not await _ship_until(_multi_land_blocked, "actual original closed land entry produces its genuine no-effect navigation receipt"): _finish(); return
@@ -225,5 +331,6 @@ func _run() -> void:
 
 func _finish(ok: bool = true, message: String = "") -> void:
 	if finished: return
+	if is_instance_valid(genesis_panel): genesis_panel.free()
 	print("REGION_FOOD_REINFORCEMENT_MULTI_APPROACH_", "FAILED" if failed or not ok else "PASS", " ", JSON.stringify(report))
 	super._finish(ok, message)

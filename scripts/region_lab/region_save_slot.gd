@@ -3546,6 +3546,10 @@ func commit_region_arrival(destination_data: TerrainData, bind_guard: Callable =
 	if not mapped.ok: return mapped
 	var mapped_civil := _region_n08_map_player_arrival(next_clock, str(status.token), checked.data.site)
 	if not mapped_civil.ok: return mapped_civil
+	# The player journey's party owner ends with this arrival, as an NPC party's
+	# does in _region_joint_npc_reference. Its travel:<token> mode has no owner
+	# Lab from now on; leaving it would keep a stale activation in the registry.
+	if next_clock.has("region_gameplay"): next_clock.region_gameplay.modes.erase("travel:" + str(status.token))
 	if not npc_token.is_empty():
 		var transferred := _region_joint_npc_reference(next_clock, npc_token, npc_mapping, identity)
 		if not transferred.ok: return transferred
