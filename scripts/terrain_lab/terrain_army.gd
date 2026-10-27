@@ -4613,6 +4613,10 @@ func issue_formation_change(requester: int, preset_id: String) -> Dictionary:
 	if formation_preset_id == preset_id and not _formation_change_pending and _combat_deployment_plan != null \
 		and _combat_deployment_plan.formation_preset_id == preset_id and _combat_deployment_plan.terrain_revision == data.navigation_revision \
 		and _combat_deployment_plan.requested_count == _get_active_member_ids().size() and _settled_deployment_leases_valid():
+		# An accepted identical formation command is still a manual command: it takes control from the
+		# tactical AI exactly like the rebuilding path below, without rebuilding the route.
+		if not _issuing_tactical_ai_order:
+			_stop_tactical_ai()
 		return SiteRuntime.ok("已選擇此陣型")
 	formation_preset_id = preset_id
 	formation_intent_version = 1

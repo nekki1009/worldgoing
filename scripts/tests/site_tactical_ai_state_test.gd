@@ -119,7 +119,13 @@ func _run() -> void:
 	split.team_id = 2
 	split.role = "logistics"
 	var ids: Array[int] = [team.combat_identity(3)]
-	assert(team.split_members_to(split, ids, team.current_commander).ok)
+	# R1b: a split-off team is commanded only by an officer captain named at the split (otherwise it is
+	# leaderless and nobody holds team.roster for the merge below: NO_AUTHORITY). Promote the moving
+	# member through the original role transaction and name it, as site_army_roster_test does.
+	var promoted: Dictionary = team.set_military_role(ids[0], "officer")
+	assert(promoted.ok, "Moving member becomes an officer through the original role transaction: " + str(promoted))
+	var split_result: Dictionary = team.split_members_to(split, ids, team.current_commander, ids[0])
+	assert(split_result.ok, "Officer-captained split: " + str(split_result))
 	assert(team._capture_tactical_ai_state() == before and team.role == "combat", "Rebuilding an existing roster preserves its own AI state")
 	assert(not split.tactical_ai_enabled and split.role == "logistics", "A split does not copy AI consent or overwrite the recipient role")
 	assert(split.merge_into(team, split.current_commander, team.current_commander).ok)
