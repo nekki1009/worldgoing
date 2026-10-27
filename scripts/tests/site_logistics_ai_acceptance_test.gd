@@ -108,6 +108,8 @@ func _move_all(team: TerrainArmy, displacement: Vector2i, label: String) -> bool
 	var ui: SiteController = lab.site_controller
 	var expected: Array[Vector2i] = []
 	for cell: Vector2i in team.cells: expected.append(cell + displacement)
+	var starts: Array[Vector2i] = []
+	starts.assign(team.cells)
 	ui.trial_command_team.select(0)
 	ui.selected = Vector2i(team.command_reference.floor()) + displacement
 	_press("TrialTeamMove")
@@ -130,7 +132,19 @@ func _move_all(team: TerrainArmy, displacement: Vector2i, label: String) -> bool
 			ui.toggle_pause()
 			paused_checks += 1
 		arrived = team.moving_count() == 0
-		for index in range(expected.size()): arrived = arrived and team.cells[index] == expected[index]
+		# Each original person/member must stand on its own assigned goal (combat_slots), not a rigid translation of its start cell.
+		for index in range(team.cells.size()): arrived = arrived and team.cells[index] == team.combat_slots[index] and team.moving_to[index] == TerrainArmy.INVALID_CELL
+		# Movement must be real: the formation centroid lands within 2 cells (Chebyshev) of start centroid + displacement, and someone actually left its start cell.
+		var final_centroid := Vector2.ZERO
+		var start_centroid := Vector2.ZERO
+		var any_moved := false
+		for index in range(team.cells.size()):
+			final_centroid += Vector2(team.cells[index])
+			start_centroid += Vector2(starts[index])
+			if team.cells[index] != starts[index]: any_moved = true
+		var count := float(maxi(team.cells.size(), 1))
+		var centroid_error := final_centroid / count - (start_centroid / count + Vector2(displacement))
+		arrived = arrived and any_moved and maxf(absf(centroid_error.x), absf(centroid_error.y)) <= 2.0
 		if team.combat_order == TerrainArmy.CombatOrder.HOLD: break
 	var state := _state(team)
 	state["expected"] = expected.map(func(cell: Vector2i) -> Array: return [cell.x, cell.y])
