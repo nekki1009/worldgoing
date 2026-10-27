@@ -31,11 +31,13 @@ func _initialize() -> void:
 	if last_world_exists: last_world_bytes = FileAccess.get_file_as_bytes(Entry.LAST_WORLD)
 	for argument: String in OS.get_cmdline_args() + OS.get_cmdline_user_args():
 		if argument.begins_with("--sea-case="): fleet_case = argument.trim_prefix("--sea-case=")
+	# Nekki 2026-10-27: the friendly case waits for a real meal and runs 592-610 s; in-file 720 s, outer 780 s.
+	if fleet_case == "friendly": deadline = Time.get_ticks_msec() + 720000
 	action_speed = 1.0
 	_run.call_deferred()
 
 func _process(_delta: float) -> bool:
-	if not finished and Time.get_ticks_msec() > deadline: _finish(false, "600-second genuine two-NPC sea deadline")
+	if not finished and Time.get_ticks_msec() > deadline: _finish(false, "%d-second genuine two-NPC sea deadline" % (720 if fleet_case == "friendly" else 600))
 	return false
 
 func _write_manifest() -> bool:
