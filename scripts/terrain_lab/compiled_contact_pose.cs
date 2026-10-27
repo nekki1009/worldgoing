@@ -79,7 +79,7 @@ public partial class compiled_contact_pose : RefCounted
             Vector3[] scales = Read(descriptor, "initial_scales", Variant.Type.PackedVector3Array).AsVector3Array();
             string[] morphNames = Read(descriptor, "morph_names", Variant.Type.PackedStringArray).AsStringArray();
             float[] morphs = Read(descriptor, "initial_morphs", Variant.Type.PackedFloat32Array).AsFloat32Array();
-            Require(morphNames.Length == morphs.Length && morphs.Length <= 4096, "morph_count");
+            Require(morphNames.Length == morphs.Length && morphs.Length <= 16384, "morph_count"); // Current captain rig: 6018 morph channels.
             Require(new HashSet<string>(morphNames, StringComparer.Ordinal).Count == morphNames.Length, "duplicate_morph_name");
             _mixerPositions = Read(descriptor, "mixer_positions", Variant.Type.PackedVector3Array).AsVector3Array();
             _mixerRotations = Quaternions(Read(descriptor, "mixer_rotations", Variant.Type.Array).AsGodotArray());

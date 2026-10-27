@@ -39,6 +39,10 @@ func run() -> void:
 		data.static_blocked[index] = 0
 	data.ramp_edges.fill(0)
 	lab.terrain = data
+	# The batch-sampling contract is the original GD mesh sample/resolve branch of _advance_combat;
+	# exchange (the default since 2026-09-14) resolves through _resolve_exchanges and never calls
+	# Army.sample_combat, so select the sampling branch explicitly (as the GD contact tests do).
+	lab.exchange_enabled = false
 	var actor := TerrainTestCharacter.new()
 	root.add_child(actor)
 	actor.set_process(false)
@@ -72,7 +76,7 @@ func check_batch_lifetime(lab: TerrainLab, actor: TerrainTestCharacter) -> void:
 	var direct := lab._collect_unit_contacts(army.previous, army.current, Vector2i(10, 10), Vector2.ZERO, army, -1)
 	assert(direct.size() == 1 and geometry.projections == 1)
 	lab._advance_combat(1.0 / 120.0)
-	assert(army.last_hits == direct and geometry.projections == 2, "Eight army queries must share exactly one projection")
+	assert(army.last_hits == direct and geometry.projections == 2, "Eight army queries must share exactly one projection " + str({"batches": army.batches, "projections": geometry.projections, "hits": army.last_hits.size(), "exchange": lab.exchange_enabled}))
 	assert(not lab._sampling_army_contacts and lab._army_contact_geometry.is_empty(), "No geometry survives the collection phase")
 	actor.position = Vector2(500, 0)
 	lab._advance_combat(1.0 / 120.0)
