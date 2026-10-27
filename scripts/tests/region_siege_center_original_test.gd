@@ -442,17 +442,21 @@ func _pay_original_capture() -> bool:
 	if not _check(started.ok, "Original person action begins lawful custody of the actual knocked defender", started): return false
 	var count := 0
 	var paid_action := 0.0
+	var paid_game := 0.0
 	while center_owner.site_controller.person_actions._jobs.has(str(executor)):
 		if count >= 3000 or Time.get_ticks_msec() > deadline: return _check(false, "Actual custody did not finish within the common-step bound")
 		var step: Dictionary = lab._advance_original_shared_step(TerrainLab.EXCHANGE_ACTION_STEP)
 		if not _check(step.ok and step.get("completed", false) and float(step.action_seconds) > 0.0, "Original common step pays the custody work and all owner endpoints", step): return false
 		paid_action += float(step.action_seconds)
+		paid_game += float(step.game_seconds)
 		count += 1
 		if count % 60 == 0: await process_frame
 	var person: Dictionary = center_owner.site_controller.person_actions._person(center_defender, false)
+	# BIND_SECONDS (started.seconds) is paid in accepted GAME seconds: person_actions.advance receives
+	# the step's game seconds (terrain_lab.gd _advance_fatigue(game_seconds)), not its ACTION width.
 	return _check(bool(person.captive) and center_owner.terrain.site.captivity.has(str(center_defender))
-		and paid_action >= float(started.seconds) - EPS and int(Settlement.capture_sample(center_owner).attacker) == 2,
-		"Actual paid custody creates its original holder/supply reference and never becomes a capture blocker", {"paid_action": paid_action, "custody": center_owner.terrain.site.captivity.get(str(center_defender), {})})
+		and paid_action > 0.0 and paid_game >= float(started.seconds) - EPS and int(Settlement.capture_sample(center_owner).attacker) == 2,
+		"Actual paid custody creates its original holder/supply reference and never becomes a capture blocker", {"paid_action": paid_action, "paid_game": paid_game, "custody": center_owner.terrain.site.captivity.get(str(center_defender), {})})
 
 func _change_original_capture_qualification(spec: Dictionary, paid_fall: Dictionary) -> bool:
 	var qualifier := str(spec.qualifier)

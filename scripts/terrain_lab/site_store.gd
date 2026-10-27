@@ -999,6 +999,13 @@ static func _validate_army_assets(data: TerrainData, state: Dictionary, fresh: b
 			if checked.has(key): continue
 			var baseline: bool = not appearance.is_empty() and appearance.get("body") == 0 and HumanCharacter3DEditor.EquipmentDye.geometry_appearance(appearance) == TerrainArmy._combat_bake.manifest.appearance and TerrainArmy.EquipmentAtlas.DyeAtlas.supports(appearance)
 			if not baseline and not TerrainArmy.EquipmentAtlas.supports(appearance):
+				# Custody sealing (Nekki 2026-10-27): a captive's stripped look needs a shared atlas that only
+				# a GPU can build, so headless verifies mechanics only, as SiteController._equipment_recipe_guard
+				# does for custody and SiteVehicleTransport._siege_work_assets_guard does for siege work. Not
+				# cached in `checked`: another non-captive row with the same look is still checked.
+				var custody_row: bool = bool(unit.get("captive", false)) or state.get("captivity", {}).has(str(int(unit.person_id)))
+				if custody_row and DisplayServer.get_name() == "headless" and not TerrainArmy.EquipmentAtlas.mixed_plan(appearance).is_empty():
+					continue
 				return Runtime.fail("MISSING_ASSET", "人物 #%d 的實際配裝缺少完整圖集／染色；未替換目前地圖或存檔" % int(unit.person_id))
 			checked[key] = true
 	return Runtime.ok()

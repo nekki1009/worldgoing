@@ -28,6 +28,7 @@ const FOODS := ["fish", "meat", "wild_food", "grain"]
 
 var lab: Variant
 var equipment_removal_guard: Callable # (person_id, item_ids) -> typed result; pure.
+var custody_removal_guard: Callable # Same contract for custody sealing; falls back to equipment_removal_guard.
 var equipment_changed: Callable # (person_id); synchronous original visual/hit update.
 var opened_food_pool: Callable # (person_id) -> the original private food pool, or empty.
 var opened_food_commit: Callable # (person_id, amount, original pool); infallible after checks.
@@ -810,7 +811,7 @@ func _equipment_prepared(job: Dictionary, complete: bool) -> void:
 	if not check.ok and str(check.code) != "ATLAS_REQUIRED":
 		_finish(key, check)
 	elif not complete or not check.ok:
-		_finish(key, Runtime.fail("ATLAS_PREPARATION_FAILED", "共用裝備圖集準備失敗或仍未通過原驗證；本次換裝已取消，原裝與全部物品保留"))
+		_finish(key, Runtime.fail("ATLAS_PREPARATION_FAILED", "被拘押者卸裝外觀的共用圖集準備失敗或仍未通過原驗證；本次拘束已取消，原裝與全部物品保留" if str(job.kind) == "capture" else "共用裝備圖集準備失敗或仍未通過原驗證；本次換裝已取消，原裝與全部物品保留"))
 	else:
 		job["preparing"] = false
 		job["paused"] = ""
@@ -1054,14 +1055,41 @@ func _begin_binding(executor_id: int, target_id: int, guard_id: int, capturing: 
 	var executor := _person(executor_id)
 	var target := _person(target_id)
 	var check := _binding_context(executor, target, guard_id, capturing)
-	if not check.ok:
+	# Same preparation phase as begin_equipment: the captive's sealed (stripped) look needs a complete
+	# shared atlas first. Every other custody condition has already passed (_binding_context reports
+	# ATLAS_REQUIRED last); preparation is not work time, fatigue or a reservation.
+	var stripped_look: Variant = check.get(&"appearance", check.get("appearance")) if not check.ok else null
+	var preparing: bool = capturing and str(check.get("code", "")) == "ATLAS_REQUIRED" and stripped_look is Dictionary
+	if not check.ok and not preparing:
 		return check
 	var job := _new_job(executor, "capture" if capturing else "unbind", target_id)
 	job.merge({"guard_id": guard_id, "duration": BIND_SECONDS,
 		"source_version": int(target.holder.version), "target_hit": int(target.hit),
 		"source_cell": lab.terrain.index(target.cell)})
 	_jobs[str(executor_id)] = job
+	if preparing:
+		job["preparing"] = true
+		job["paused"] = "PREPARING_ATLAS"
+		_prepare_custody_atlas.call_deferred(job, stripped_look)
+		return Runtime.ok("正在準備被拘押者卸裝後的共用圖集；完成後才開始拘束，原裝與物品保留", {"seconds": BIND_SECONDS, "preparing": true})
 	return Runtime.ok("開始拘束" if capturing else "開始解綁", {"seconds": BIND_SECONDS})
+
+## Mirrors _prepare_equipment_atlas for the captive's stripped look (the original job, never a copy).
+func _prepare_custody_atlas(job: Dictionary, appearance: Dictionary) -> void:
+	var key := str(job.executor_id)
+	if not is_same(_jobs.get(key), job) or not bool(job.get("preparing", false)): return
+	var check := _job_context(job)
+	if not check.ok and str(check.code) != "ATLAS_REQUIRED":
+		_finish(key, check)
+		return
+	var complete := false
+	if is_instance_valid(lab) and lab is Node and lab.is_inside_tree():
+		complete = await TerrainArmy.EquipmentAtlas.prepare_recipe(lab, appearance)
+		if complete and lab.site_controller != null:
+			var target := _person(int(job.target_id))
+			var team_id := int(target.owner.team_id) if not target.is_empty() and int(target.unit) >= 0 else 0
+			complete = await lab.site_controller.prepare_siege_equipment_work(appearance, team_id)
+	_equipment_prepared(job, complete)
 
 func _new_job(executor: Dictionary, kind: String, target_id: int) -> Dictionary:
 	return {"version": 1, "kind": kind, "executor_id": int(executor.person_id), "target_id": target_id,
@@ -1628,6 +1656,16 @@ func _selection(executor: Dictionary, source: Dictionary, resources: Dictionary,
 		return Runtime.fail("STORAGE_FULL")
 	return lab.terrain.item_transfer_guard.call(source.holder, executor.holder, resources, item_ids, open_amount) if lab.terrain.item_transfer_guard.is_valid() else Runtime.ok()
 
+## Custody sealing of a living captive's worn items: the controller's custody guard when wired
+## (headless shared-atlas check is mechanics-only there), otherwise the ordinary removal guard.
+func _custody_removal_guard(target: Dictionary, item_ids: Array) -> Dictionary:
+	var owner_id := int(target.get("person_id", 0))
+	if not custody_removal_guard.is_valid() or owner_id <= 0 or item_ids.is_empty():
+		return _removal_guard(target, item_ids)
+	if not equipment_changed.is_valid():
+		return Runtime.fail("UNSUPPORTED", "尚未接好原人物實裝／命中更新")
+	return custody_removal_guard.call(owner_id, item_ids)
+
 func _removal_guard(source: Dictionary, item_ids: Array) -> Dictionary:
 	var owner_id := int(source.get("person_id", 0))
 	if owner_id <= 0 and str(source.holder.get("kind", "")) == "remains":
@@ -1641,6 +1679,7 @@ func _removal_guard(source: Dictionary, item_ids: Array) -> Dictionary:
 	return equipment_removal_guard.call(owner_id, item_ids)
 
 func _binding_context(executor: Dictionary, target: Dictionary, guard_id: int, capturing: bool) -> Dictionary:
+	var atlas_required: Dictionary = {}
 	var relation: Dictionary = lab.terrain.site.captivity.get(str(target.get("person_id", -1)), {})
 	var own_guard_release: bool = not capturing and not executor.is_empty() and not target.is_empty() \
 		and int(relation.get("guard_id", -1)) == int(executor.person_id) and str(relation.get("prison_id", "")).is_empty()
@@ -1658,16 +1697,20 @@ func _binding_context(executor: Dictionary, target: Dictionary, guard_id: int, c
 		if count >= GUARD_CAPACITY or (guard_id != int(executor.person_id) and is_busy(guard_id)):
 			return Runtime.fail("GUARD", "看守已滿四人或有其他作業")
 		var sealed := _sealed_selection(target)
-		var equipment_check := _removal_guard(target, sealed.item_ids)
+		var equipment_check := _custody_removal_guard(target, sealed.item_ids)
 		if not equipment_check.ok:
-			return equipment_check
+			if str(equipment_check.get("code", "")) != "ATLAS_REQUIRED": return equipment_check
+			# A missing shared atlas is reported only after every other custody condition passes,
+			# so the original preparation phase can start (begin_capture) or keep waiting (advance).
+			atlas_required = equipment_check
 	else:
 		if not bool(target.captive) or not lab.terrain.site.captivity.has(str(target.person_id)) or int(target.faction) != int(executor.faction):
 			return Runtime.fail("NO_TARGET", "外部解綁只適用原友方俘虜")
 	if not captivity_change_guard.is_valid() or not captivity_supply_commit.is_valid() or not captivity_changed.is_valid():
 		return Runtime.fail("UNSUPPORTED", "尚未接好原人物拘押／供養提交")
 	var captor_id := int(executor.person_id) if capturing else int(lab.terrain.site.captivity[str(target.person_id)].captor_id)
-	return captivity_change_guard.call(int(target.person_id), captor_id, capturing)
+	var changed: Dictionary = captivity_change_guard.call(int(target.person_id), captor_id, capturing)
+	return changed if atlas_required.is_empty() or not bool(changed.get("ok", false)) else atlas_required
 
 func _escape_context(person: Dictionary) -> Dictionary:
 	if person.is_empty() or float(person.hp) <= 0.0 or float(person.ko) > 0.0 or not bool(person.captive) or bool(person.moving) or not lab.terrain.site.captivity.has(str(person.person_id)):

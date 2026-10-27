@@ -308,6 +308,7 @@ func setup(scene: Node2D) -> void:
 	for actor: TerrainTestCharacter in lab.combat_actors:
 		actor.escort_step_guard = captive_escort.permits_step
 	person_actions.equipment_removal_guard = equipment_removal_guard
+	person_actions.custody_removal_guard = custody_removal_guard
 	person_actions.equipment_changed = equipment_changed
 	person_actions.opened_food_pool = _personal_opened_food
 	person_actions.opened_food_commit = _receive_opened_food
@@ -3119,6 +3120,8 @@ func update_ui(refresh_combat_window: bool = true) -> void:
 	if not job.is_empty():
 		if job.kind == "equipment" and job.paused == "PREPARING_ATLAS":
 			details.text += "\n人物 #%d 作業：正在準備共用裝備外觀；完成後開始五秒換裝，可取消" % person_executor_id
+		elif job.kind == "capture" and job.paused == "PREPARING_ATLAS":
+			details.text += "\n人物 #%d 作業：正在準備被拘押者卸裝後的共用外觀；完成後開始拘束，可取消" % person_executor_id
 		else:
 			details.text += "\n人物 #%d 作業：%s %.1f／%.1f 秒 %s" % [person_executor_id, job.kind, float(job.elapsed), float(job.duration), str(job.paused)]
 	if view.selection.get_area() > 1:
@@ -5069,6 +5072,14 @@ func cape_policy_guard() -> Dictionary:
 	return Runtime.ok()
 
 func equipment_removal_guard(identity: int, item_ids: Array) -> Dictionary:
+	return _removal_holder_guard(identity, item_ids, false)
+
+## Capture/custody sealing of a captive's worn items (Nekki 2026-10-27). Same holder/recipe guard as an
+## ordinary removal; only its shared-atlas requirement is mechanics-only in headless (see _equipment_recipe_guard).
+func custody_removal_guard(identity: int, item_ids: Array) -> Dictionary:
+	return _removal_holder_guard(identity, item_ids, true)
+
+func _removal_holder_guard(identity: int, item_ids: Array, custody: bool) -> Dictionary:
 	var person := person_actions._person(identity)
 	if person.is_empty():
 		return Runtime.ok() # Historical owner no longer has a scene body; ground items remain real.
@@ -5076,7 +5087,7 @@ func equipment_removal_guard(identity: int, item_ids: Array) -> Dictionary:
 	for slot: String in proposed.equipped.keys():
 		if item_ids.has(proposed.equipped[slot]):
 			proposed.equipped.erase(slot)
-	return _equipment_holder_guard(person, proposed)
+	return _equipment_holder_guard(person, proposed, custody)
 
 func equipment_apply_guard(identity: int, equipped: Dictionary) -> Dictionary:
 	return _equipment_apply_guard(identity, equipped, false)
@@ -5135,14 +5146,14 @@ func _request_person_dye(changes: Dictionary, identity: int) -> Dictionary:
 	show_result(result)
 	return result
 
-func _equipment_holder_guard(person: Dictionary, proposed: Dictionary) -> Dictionary:
+func _equipment_holder_guard(person: Dictionary, proposed: Dictionary, custody: bool = false) -> Dictionary:
 	var original: Dictionary
 	if _crowd_active() and lab.crowd_site.contains_person(int(person.person_id)):
 		original = person.owner.combat_hot_get(int(person.unit), &"appearance", {})
 	else:
 		original = person.body.appearance if int(person.unit) >= 0 else person.owner._saved_appearance
 	var appearance := Runtime.equipment_appearance(lab.terrain, proposed, original)
-	return _equipment_recipe_guard(person, appearance)
+	return _equipment_recipe_guard(person, appearance, false, custody)
 
 func _equipment_team_external_duty_guard(identity: int) -> bool:
 	return work_team.is_assigned(identity) or _is_delivering_person(identity) or vehicles.is_operator(identity)
@@ -5150,7 +5161,7 @@ func _equipment_team_external_duty_guard(identity: int) -> bool:
 func _equipment_team_holder_guard(identity: int, proposed: Dictionary) -> Dictionary:
 	return _equipment_apply_guard(identity, proposed, true)
 
-func _equipment_recipe_guard(person: Dictionary, appearance: Dictionary, team_batch: bool = false) -> Dictionary:
+func _equipment_recipe_guard(person: Dictionary, appearance: Dictionary, team_batch: bool = false, custody: bool = false) -> Dictionary:
 	if _crowd_active() and lab.crowd_site.contains_person(int(person.person_id)):
 		return lab.crowd_site.equipment_recipe_guard(int(person.person_id), appearance)
 	if appearance.is_empty() or not HumanCharacter3DEditor.valid_appearance(appearance):
@@ -5176,6 +5187,10 @@ func _equipment_recipe_guard(person: Dictionary, appearance: Dictionary, team_ba
 	if int(person.unit) >= 0 and not person.owner._uses_live_presenter(int(person.unit)):
 		if not person.owner.supports_equipment_recipe(appearance):
 			if not TerrainArmy.EquipmentAtlas.mixed_plan(appearance).is_empty():
+				# Custody sealing: headless verifies mechanics only, exactly as the siege-work asset gate
+				# below (DisplayServer headless) and SiteVehicleTransport._siege_work_assets_guard do. A shared
+				# atlas can only be built with a GPU; visual runs keep the gate and prepare it first.
+				if custody and DisplayServer.get_name() == "headless": return Runtime.ok()
 				var missing := Runtime.fail("ATLAS_REQUIRED", "此配裝須先準備完整共用圖集；原裝與物品保留")
 				missing.appearance = appearance.duplicate(true)
 				return missing

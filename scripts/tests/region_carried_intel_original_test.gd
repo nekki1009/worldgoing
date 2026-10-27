@@ -221,7 +221,11 @@ func _delivery_partial_binding() -> bool:
 
 func _delivery_binding_prefix_ready() -> bool:
 	var jobs: Dictionary = action_owner.site_controller.person_actions._jobs
-	return jobs.has(str(delivery_guard)) and float(jobs[str(delivery_guard)].elapsed) >= SitePersonActions.BIND_SECONDS - TerrainLab.ACTION_STEP - EPS
+	# The binding timer accrues the accepted GAME seconds of each common interval (person_actions.advance
+	# receives game seconds), not one ACTION_STEP: "within one interval of completion" is the last paid
+	# interval's GAME width, so the still-open binding prefix is observable before the commit.
+	var interval_game: float = float(action_trace.back().game) if not action_trace.is_empty() else TerrainLab.ACTION_STEP
+	return jobs.has(str(delivery_guard)) and float(jobs[str(delivery_guard)].elapsed) >= SitePersonActions.BIND_SECONDS - maxf(interval_game, TerrainLab.ACTION_STEP) - EPS
 
 func _delivery_prepare_and_commit() -> bool:
 	for key: String in lab.terrain.resource_base: Env.change(lab.terrain, key, {"cleared": true, "remaining": 0})
