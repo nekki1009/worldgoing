@@ -21,6 +21,7 @@ func _require(condition: bool, message: String) -> bool:
 		if _coordinator != null:
 			_coordinator.unregister_formation(_army)
 		_army.free()
+	TerrainArmy.release_contact_source() # Headless teardown: release the shared contact rig before the post-quit frame (as f219902).
 	quit(1)
 	return false
 
@@ -239,4 +240,5 @@ func _run() -> void:
 	coordinator.unregister_formation(army)
 	army.free()
 	_army = null
+	TerrainArmy.release_contact_source() # Headless teardown: release the shared contact rig before the post-quit frame (as f219902).
 	quit(0)

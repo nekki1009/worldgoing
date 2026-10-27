@@ -13,6 +13,9 @@ const PRESET_IDS := ["auto", "square", "wedge", "goose", "circle", "hook", "loos
 const INGRESS_BUFFER_LENGTH := 3
 const PLATFORM_RECOVERY_STALL_SEC := 1.75
 const PLATFORM_RECOVERY_COOLDOWN_SEC := 0.5
+## A head-on meeting on a bent ingress buffer is exchanged only after the platform has
+## made no admission/settlement progress for this long (100_platform_arrival deadlock).
+const FRONT_EXCHANGE_HEAD_ON_STALL_SEC := 5.0
 const PLATFORM_BFS_MAX_CELLS := 128
 const PLATFORM_BFS_CACHE_STARTS := 128
 
@@ -916,6 +919,7 @@ static func exchange_front_queue_role(move_plan: CombatMovePlan, plan: CombatDep
 		var queue_cell: Vector2i = current_cells[queue_id]
 		if not choke_cells.has(queue_cell):
 			continue
+		var queue_buffer_index: int = plan.ingress_buffer_cells.find(queue_cell)
 		var best_member := -1
 		var best_rear_projection := 0
 		for platform_id in plan.pending_platform_member_ids:
@@ -923,7 +927,15 @@ static func exchange_front_queue_role(move_plan: CombatMovePlan, plan: CombatDep
 				continue
 			var platform_cell: Vector2i = current_cells[platform_id]
 			var rear_projection: int = (platform_cell.x - queue_cell.x) * approach_dir.x + (platform_cell.y - queue_cell.y) * approach_dir.y
-			if rear_projection >= 0:
+			# The last buffer step's direction measures "behind" only on a straight approach. On a bent
+			# ingress buffer an entrant on the PREVIOUS buffer cell meets this queue member head-on in a
+			# one-cell link while its projection is zero (100_platform_arrival: entrant (42,29), queue
+			# member (42,30), last step (43,30)->(44,30)). Exchange that pair only when both stand still
+			# (no in-flight proposal, checked above) and the platform has stalled; flowing arrivals keep
+			# the original rule (multi_team_arrival).
+			var head_on_on_buffer: bool = queue_buffer_index > 0 and plan.ingress_buffer_cells.find(platform_cell) == queue_buffer_index - 1 \
+				and move_plan.planning_time_sec - move_plan.last_platform_progress_time_sec >= FRONT_EXCHANGE_HEAD_ON_STALL_SEC
+			if rear_projection >= 0 and not head_on_on_buffer:
 				continue
 			if best_member < 0 or rear_projection < best_rear_projection or (rear_projection == best_rear_projection and platform_id < best_member):
 				best_member = platform_id
