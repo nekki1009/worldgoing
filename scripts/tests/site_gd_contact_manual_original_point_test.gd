@@ -137,7 +137,13 @@ func _run() -> void:
 		var before_now: float = Runtime.now(data)
 		var before_hits: int = int(controller.person_actions._person(1).hit)
 		var before_count: int = _packets.size()
-		var stepped: Dictionary = lab._advance_original_shared_step(TerrainLab.ACTION_STEP)
+		# Center decision 2026-10-27 (B): the first original point after the attack BEGIN is half
+		# a step, so later samples sit half a step off the boundaries of the original run. In the
+		# visual live rig the first impact otherwise landed exactly on a point boundary (the blade
+		# stopped ~0.01 px short and the skinned body's sub-pixel motion closed the gap: fraction 0).
+		# Every point is still one complete actual shared step; no assertion changes.
+		var width: float = TerrainLab.ACTION_STEP * 0.5 if point == 0 else TerrainLab.ACTION_STEP
+		var stepped: Dictionary = lab._advance_original_shared_step(width)
 		if not _guard(): return
 		if not _require(stepped.ok and stepped.get("completed", false), "Actual shared main caller completes once", stepped): return
 		if not stepped.ok or not stepped.get("completed", false): break

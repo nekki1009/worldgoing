@@ -299,15 +299,27 @@ static func contact(previous: Array[PackedVector2Array], current: Array[PackedVe
 				continue
 			var fraction := 0.0
 			# Recover sub-sample contact order, not array/scene iteration order.
-			if before.size() == shape.size() and Geometry2D.intersect_polygons(before, bodies[body_index]).is_empty():
+			# Equal vertex counts keep the original per-vertex sweep exactly. Different counts
+			# (both parts non-empty) use the Minkowski interpolation below instead of fraction 0.
+			if (before.size() == shape.size() or (not before.is_empty() and not shape.is_empty())) and Geometry2D.intersect_polygons(before, bodies[body_index]).is_empty():
 				var low := 0.0
 				var high := 1.0
 				for refinement in range(8):
 					var middle := (low + high) * 0.5
 					if not partials.has(middle):
 						var sweep := before.duplicate()
-						for vertex in range(shape.size()):
-							sweep.append(before[vertex].lerp(shape[vertex], middle))
+						if before.size() == shape.size():
+							for vertex in range(shape.size()):
+								sweep.append(before[vertex].lerp(shape[vertex], middle))
+						else:
+							# A live CPU-skinned weapon hull can gain or lose a vertex between samples.
+							# Interpolate the convex parts by their Minkowski combination
+							# (1 - t) * before + t * shape: it is before at 0 and shape at 1, and its
+							# swept hull with before grows monotonically in t, so the same eight
+							# refinements recover the sub-sample contact instead of falling to 0.
+							for before_vertex: Vector2 in before:
+								for shape_vertex: Vector2 in shape:
+									sweep.append(before_vertex.lerp(shape_vertex, middle))
 						partials[middle] = Geometry2D.convex_hull(sweep)
 					var partial := Geometry2D.intersect_polygons(partials[middle], bodies[body_index])
 					if partial.is_empty():
