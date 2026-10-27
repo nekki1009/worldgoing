@@ -404,6 +404,34 @@ const SiegeCheckpoint = preload("res://scripts/terrain_lab/site_region_checkpoin
 static func _siege_hash(value: Variant) -> String:
 	return Marshalls.raw_to_base64(var_to_bytes(SiegeCheckpoint.wire(_siege_order(value)))).sha256_text()
 
+## The original siege snapshot is compared across a selected reopen. Saved
+## Sites come back through the Store's JSON reader, which can move a fractional
+## binary64 by one ulp (a decayed knockout 0x40cc1f7851eb8526 reads back as
+## ...25), while the Slot keeps the snapshot as computed. The snapshot builder
+## therefore takes every fractional number of the stored snapshot and of each
+## fresh candidate in its persisted form: the Store's own writer->reader round
+## trip (SiteRuntime.json_stable_seconds), which one more round trip does not
+## change. A restored body and the body it was saved from then give the same
+## snapshot exactly when their saved forms are equal. Integral values in the
+## exact-integer range are already persisted exactly; the source stamp keeps
+## the exact clock. Only the snapshot builder uses this domain.
+static func _siege_persisted(value: Variant) -> Variant:
+	if value is float:
+		if not is_finite(value) or value == floorf(value) and absf(value) < 9007199254740992.0: return value
+		return SiteRuntime.json_stable_seconds(value)
+	if value is Dictionary:
+		var mapped: Dictionary = {}
+		for key: Variant in value: mapped[key] = _siege_persisted(value[key])
+		return mapped
+	if value is Array:
+		var listed: Array = []
+		for entry: Variant in value: listed.append(_siege_persisted(entry))
+		return listed
+	return value
+
+static func _siege_persisted_hash(value: Variant) -> String:
+	return _siege_hash(_siege_persisted(value))
+
 static func _siege_order(value: Variant) -> Variant:
 	if value is Dictionary:
 		var keys: Array = value.keys()
@@ -517,7 +545,7 @@ static func _siege_person_ref(lab: TerrainLab, identity: int) -> Dictionary:
 	var ref := {"person_id": identity, "faction": int(person.faction), "cell": [cell.x, cell.y],
 		"surface": int(lab.terrain.effective_height(cell)), "hp": float(person.hp), "ko": float(person.ko),
 		"captive": bool(person.captive), "moving": bool(person.moving), "team_id": int(owner.team_id) if owner is TerrainArmy else -1,
-		"holder_sha256": _siege_hash(person.get("holder", {})), "role": SiteSettlement._role(person)}
+		"holder_sha256": _siege_persisted_hash(person.get("holder", {})), "role": SiteSettlement._role(person)}
 	if owner is TerrainArmy:
 		ref["order"] = int(owner.combat_order)
 		ref["commander"] = int(owner.combat_identity(owner.current_commander)) if owner.current_commander >= 0 else -1
@@ -602,10 +630,10 @@ static func prepare_original_siege(lab: TerrainLab, battle: Dictionary = {}) -> 
 		var feature: Dictionary = data.site.features[key]
 		var geometry := SiteRuntime.feature_geometry(data, feature)
 		var parts := {}
-		for part: String in geometry.parts: parts[part] = _siege_hash(geometry.parts[part])
+		for part: String in geometry.parts: parts[part] = _siege_persisted_hash(geometry.parts[part])
 		structures[key] = {"kind": str(feature.kind), "owner_faction": int(feature.get("owner_faction", -1)),
-			"sha256": _siege_hash(feature), "parts": parts}
-		if not feature.get("repair", {}).is_empty() or str(feature.get("stage", "")) != "complete": work["feature:" + key] = _siege_hash(feature)
+			"sha256": _siege_persisted_hash(feature), "parts": parts}
+		if not feature.get("repair", {}).is_empty() or str(feature.get("stage", "")) != "complete": work["feature:" + key] = _siege_persisted_hash(feature)
 	var vehicles := {}
 	var breach := false
 	var activity := false
@@ -619,8 +647,8 @@ static func prepare_original_siege(lab: TerrainLab, battle: Dictionary = {}) -> 
 		# Read the SAME existing team reference; this grants no command/crew duty.
 		var faction: int = int(team.faction_id) if team != null else lab._siege_faction(vehicle)
 		vehicles[key] = {"kind": str(vehicle.kind), "team_id": int(vehicle.team_id), "faction": faction,
-			"sha256": _siege_hash(vehicle), "holder_version": int(vehicle.holder.version), "attack_seq": int(vehicle.next_attack_seq)}
-		if not vehicle.build.is_empty() or not vehicle.repair.is_empty(): work["vehicle:" + key] = _siege_hash([vehicle.build, vehicle.repair])
+			"sha256": _siege_persisted_hash(vehicle), "holder_version": int(vehicle.holder.version), "attack_seq": int(vehicle.next_attack_seq)}
+		if not vehicle.build.is_empty() or not vehicle.repair.is_empty(): work["vehicle:" + key] = _siege_persisted_hash([vehicle.build, vehicle.repair])
 		if faction != attacker: continue
 		activity = true
 		var target: Dictionary = vehicle.action.get("target", vehicle.command.get("target", {}))
@@ -637,7 +665,7 @@ static func prepare_original_siege(lab: TerrainLab, battle: Dictionary = {}) -> 
 		# Original flight snapshot owns its paid rule/faction/geometry/attack ID.
 		# Legal wreck clearing may erase the source vehicle while this continues.
 		flights[attack_id] = {"source_vehicle": key, "kind": str(flight.get("kind", "")), "faction": int(flight.get("faction", -1)),
-			"rule_version": int(flight.get("rule_version", -1)), "source_cell": [source_cell.x, source_cell.y], "sha256": _siege_hash(flight)}
+			"rule_version": int(flight.get("rule_version", -1)), "source_cell": [source_cell.x, source_cell.y], "sha256": _siege_persisted_hash(flight)}
 		if int(flight.get("faction", -1)) == attacker:
 			activity = true
 			breach = breach or str(existing.get("phase", "")) == "breach"
@@ -651,7 +679,7 @@ static func prepare_original_siege(lab: TerrainLab, battle: Dictionary = {}) -> 
 		if not own_arrival: continue
 		arrivals[token] = {"origin": ref.get("origin", []).duplicate(), "plan_path": str(ref.get("plan_path", "")),
 			"plan_sha256": str(ref.get("plan_sha256", "")), "arrival_game_seconds": float(ref.get("arrival_game_seconds", 0.0)),
-			"mapping_sha256": _siege_hash(ref.get("arrival_mapping", {}))}
+			"mapping_sha256": _siege_persisted_hash(ref.get("arrival_mapping", {}))}
 		activity = true
 	var capture := SiteSettlement.capture_sample(lab)
 	var fall: Dictionary = settlement.fall_record
@@ -696,8 +724,12 @@ static func prepare_original_siege(lab: TerrainLab, battle: Dictionary = {}) -> 
 	var value := {"version": SIEGE_VERSION, "center_id": str(settlement.center_id), "defender_faction": defender,
 		"attacker_faction": attacker, "phase": phase, "source": source, "bodies": bodies, "structures": structures,
 		"vehicles": vehicles, "flights": flights, "work": work, "routes": paths, "arrivals": arrivals,
-		"capture": {"sample": capture, "fall_sha256": _siege_hash(fall), "elapsed_action": float(lab.site_controller._settlement_elapsed),
+		"capture": {"sample": capture, "fall_sha256": _siege_persisted_hash(fall), "elapsed_action": float(lab.site_controller._settlement_elapsed),
 			"unconsumed_game_seconds": float(lab.site_controller._settlement_game_seconds)}, "source_sha256": "", "resolution": "original_exact_gd"}
+	# Every snapshot field except its exact source stamp is kept in the persisted
+	# number domain (_siege_persisted), for the stored snapshot and the candidate alike.
+	for field: String in value.keys():
+		if field != "source": value[field] = _siege_persisted(value[field])
 	value.source_sha256 = _siege_source_hash(value)
 	var valid := validate_siege_metadata(value)
 	if not valid.ok: return valid

@@ -4314,6 +4314,23 @@ func _region_first_player_route_contact(token: String, to: float, interval: Dict
 # The P0 handler re-reads its now-accepted ORIGINAL sea_cursor/action at contact.at
 # and restores that exact partial original action/pose/reservation before bind.
 
+## The NPC static siege-contact producer. Queues the earliest contact of this
+## travelling party up to `to` under its stable (token, battle, point) id. The
+## endpoint producer and the blocked-entry retry share it; both queue it before
+## the same-point arrival, so the contact is consumed first.
+func _region_queue_npc_siege_contact(token: String, to: float, interval: Dictionary = {}) -> Dictionary:
+	var siege := _region_first_npc_siege_contact(token, to, interval)
+	if not siege.ok: return siege
+	if not bool(siege.get("contact", false)): return {"ok": true, "contact": false}
+	var registry := region_registry()
+	var contact_id := "npc-siege:" + Marshalls.raw_to_base64(var_to_bytes([token, str(siege.battle_id), float(siege.at)])).sha256_text()
+	if not registry.events.any(func(existing_event: Dictionary) -> bool: return str(existing_event.id) == contact_id):
+		var queued_siege := queue_region_event(contact_id, "reinforcement", float(siege.at), str(siege.site_id),
+			{"token": token, "battle_id": str(siege.battle_id), "site": siege.site.duplicate(),
+			"component": int(siege.component), "contact_receipt": siege.contact_receipt.duplicate(true)})
+		if not queued_siege.ok: return queued_siege
+	return {"ok": true, "contact": true, "id": contact_id}
+
 func queue_region_gameplay_endpoints(unclipped_game_end: float, interval: Dictionary = {}) -> Dictionary:
 	var retried := _region_retry_blocked_npc_land_entries()
 	if not retried.ok: return retried
@@ -4324,15 +4341,8 @@ func queue_region_gameplay_endpoints(unclipped_game_end: float, interval: Dictio
 		if str(registry.parties[token].get("phase", "")) != "travelling": continue
 		var forecast := _preview_npc_party_to(token, unclipped_game_end, interval)
 		if not forecast.ok: return forecast
-		var siege := _region_first_npc_siege_contact(token, unclipped_game_end, interval)
+		var siege := _region_queue_npc_siege_contact(token, unclipped_game_end, interval)
 		if not siege.ok: return siege
-		if bool(siege.get("contact", false)):
-			var contact_id := "npc-siege:" + Marshalls.raw_to_base64(var_to_bytes([token, str(siege.battle_id), float(siege.at)])).sha256_text()
-			if not registry.events.any(func(existing_event: Dictionary) -> bool: return str(existing_event.id) == contact_id):
-				var queued_siege := queue_region_event(contact_id, "reinforcement", float(siege.at), str(siege.site_id),
-					{"token": token, "battle_id": str(siege.battle_id), "site": siege.site.duplicate(),
-					"component": int(siege.component), "contact_receipt": siege.contact_receipt.duplicate(true)})
-				if not queued_siege.ok: return queued_siege
 		var contact := _region_first_player_route_contact(token, unclipped_game_end, interval)
 		if not contact.ok: return contact
 		if bool(contact.get("contact", false)):
@@ -4561,10 +4571,12 @@ func commit_region_gameplay_progress(prepared: Dictionary) -> Dictionary:
 		_fire_cold_candidates[owner] = {"data": _region_original_labs[owner].terrain,
 			"coordinate": Vector2i(int(fire_updates[owner].coordinate[0]), int(fire_updates[owner].coordinate[1])),
 			"target": float(interval.game_end), "sequence": int(interval.sequence), "epoch": str(interval.epoch)}
+	var reopened_entries: Array[Dictionary] = []
 	for token: String in prepared.parties:
 		var candidate: Dictionary = prepared.parties[token]
 		var planned := _region_npc_plan(token)
 		if not planned.ok: return planned
+		var entry_was_blocked: bool = candidate.get("party", {}).get("upkeep", {}).has("route_blocked")
 		var validated := _region_revalidate_completed_land_outcome(token, candidate, planned.plan, str(registry.parties[token].plan_path))
 		if not validated.ok: return validated
 		candidate = validated.outcome
@@ -4577,8 +4589,16 @@ func commit_region_gameplay_progress(prepared: Dictionary) -> Dictionary:
 			if not registry.events.any(func(event: Dictionary) -> bool: return str(event.id) == event_id):
 				var owner := Grid.site_id(str(pin.atlas_id), Vector2i(int(candidate.position.site[0]), int(candidate.position.site[1])))
 				var player_present := owner == str(control.active_site_id)
+				var arrival_payload := {"token": token, "site": candidate.position.site.duplicate(), "component": int(candidate.position.component)}
+				if entry_was_blocked and registry.battles.values().any(func(battle: Dictionary) -> bool: return str(battle.get("kind", "")) == "siege" and str(battle.get("phase", "")) != "finished" and str(battle.get("site_id", "")) == owner):
+					# The live seam check admitted a previously blocked entry at this
+					# endpoint. The forecast read the published closed entry and could not
+					# queue this attempt's static contact, so it is queued below, before
+					# this arrival, once every owner mode has reached the endpoint.
+					reopened_entries.append({"token": token, "event_id": event_id, "owner": owner, "player": player_present, "payload": arrival_payload})
+					continue
 				var queued := queue_region_event(event_id, "player_arrival" if player_present else "arrival", float(interval.game_end), owner,
-					{"token": token, "site": candidate.position.site.duplicate(), "component": int(candidate.position.component)}, player_present)
+					arrival_payload, player_present)
 				if not queued.ok: return queued
 	for id: String in prepared.battles:
 		registry.battles[id].prepared_endpoint = prepared.battles[id].prepared.duplicate(true)
@@ -4587,6 +4607,14 @@ func commit_region_gameplay_progress(prepared: Dictionary) -> Dictionary:
 	for owner: String in prepared.permits:
 		registry.modes[owner].game_seconds = float(interval.game_end)
 		registry.modes[owner].action_seconds = float(interval.action_end)
+	# A reopened entry's own static contact precedes its same-point arrival, as
+	# the endpoint producer and the blocked-entry retry order them.
+	for reopened: Dictionary in reopened_entries:
+		var static_contact := _region_queue_npc_siege_contact(str(reopened.token), float(interval.game_end))
+		if not static_contact.ok: return static_contact
+		var reopened_arrival := queue_region_event(str(reopened.event_id), "player_arrival" if bool(reopened.player) else "arrival", float(interval.game_end), str(reopened.owner),
+			reopened.payload, bool(reopened.player))
+		if not reopened_arrival.ok: return reopened_arrival
 	# Only this successful original commit accepts its actual per-call results.
 	for token: String in prepared.parties:
 		var candidate: Dictionary = prepared.parties[token]
@@ -4624,7 +4652,7 @@ func consume_due_region_events() -> Dictionary:
 		if not navigation.ok: return navigation
 		if bool(navigation.get("handled", false)):
 			for original: Dictionary in region_registry().events:
-				if str(original.id) == str(event.id): original.payload.navigation_result = navigation.receipt.duplicate(true)
+				if str(original.id) == str(event.id): original.payload["navigation_result"] = navigation.receipt.duplicate(true)
 			var completed := complete_region_event(str(event.id))
 			if not completed.ok: return completed
 			consumed += 1
@@ -4655,7 +4683,7 @@ func consume_due_region_events() -> Dictionary:
 			var joined: Dictionary = host._region_gameplay_npc_sea_materialize(event)
 			if not joined.ok: return joined
 			for original: Dictionary in region_registry().events:
-				if str(original.id) == str(event.id): original.payload.contact_result = joined.get("receipt", {}).duplicate(true)
+				if str(original.id) == str(event.id): original.payload["contact_result"] = joined.get("receipt", {}).duplicate(true)
 			var complete := complete_region_event(str(event.id))
 			if not complete.ok: return complete
 			var checkpoint := _region_checkpoint_carried_delivery(str(event.id))
@@ -4741,7 +4769,7 @@ func consume_due_region_events() -> Dictionary:
 					if not channel.ok: return channel
 					if not bool(channel.valid):
 						for original_event: Dictionary in registry.events:
-							if str(original_event.id) == str(event.id): original_event.payload.contact_result = {"complete": true, "no_effect": true, "reason": str(channel.get("reason", "STALE_NPC_CONTACT"))}
+							if str(original_event.id) == str(event.id): original_event.payload["contact_result"] = {"complete": true, "no_effect": true, "reason": str(channel.get("reason", "STALE_NPC_CONTACT"))}
 						var no_effect := complete_region_event(str(event.id))
 						if not no_effect.ok: return no_effect
 						consumed += 1
@@ -4750,7 +4778,7 @@ func consume_due_region_events() -> Dictionary:
 				if not prepared_arrival.ok:
 					if not npc_contact or str(prepared_arrival.get("code", "")) not in ["PARTY_FRAME_BOUNDS", "CONTACT_FOOT_UNPLACED", "CONTACT_FOOT_UNSUPPORTED"]: return prepared_arrival
 					for original_event: Dictionary in registry.events:
-						if str(original_event.id) == str(event.id): original_event.payload.contact_result = {"complete": true, "no_effect": true, "reason": str(prepared_arrival.code)}
+						if str(original_event.id) == str(event.id): original_event.payload["contact_result"] = {"complete": true, "no_effect": true, "reason": str(prepared_arrival.code)}
 					var no_placement := complete_region_event(str(event.id))
 					if not no_placement.ok: return no_placement
 					consumed += 1
@@ -5569,7 +5597,7 @@ func _region_contact_land_points(party: Dictionary, plan: Dictionary, to: float,
 		var index := int(original.position.step_index)
 		if previous_index >= 0 and index != previous_index:
 			if index != previous_index + 1: return fail("CONTACT_INTERVAL", "原路段界限預檢漏了中間 Site")
-			point.seam = {"edge": RegionRoute.opposite(int(plan.steps[index].edge)), "offset": int(plan.steps[index].offset)}
+			point["seam"] = {"edge": RegionRoute.opposite(int(plan.steps[index].edge)), "offset": int(plan.steps[index].offset)}
 		points.append(point)
 		previous_index = index
 	return {"ok": true, "points": points, "until": float(breaks.until)}
@@ -5596,7 +5624,7 @@ func _region_contact_sea_points(party: Dictionary, plan: Dictionary, to: float,
 		if not located.ok: return located
 		if points.is_empty() or leg != prior_leg:
 			var point := {"at": now, "position": located.position}
-			if prior_leg >= 0: point.seam = {"edge": RegionRoute.opposite(int(plan.steps[leg].edge)), "offset": int(plan.steps[leg].offset)}
+			if prior_leg >= 0: point["seam"] = {"edge": RegionRoute.opposite(int(plan.steps[leg].edge)), "offset": int(plan.steps[leg].offset)}
 			points.append(point)
 			prior_leg = leg
 		if complete or now >= to - 0.00000001: return {"ok": true, "points": points, "until": now if now < to else to}
@@ -8933,6 +8961,12 @@ func _region_consume_blocked_land_event(event: Dictionary) -> Dictionary:
 		if str(payload.get("contact_receipt", {}).get("kind", "")) != "npc_siege_channel" or str(region_registry().parties.get(str(payload.get("token", "")), {}).get("phase", "")) != "travelling": return {"ok": true, "handled": false}
 	if str(event.kind) == "player_encounter" and (not payload.has("contact_receipt") or payload.has("battle_id")):
 		return {"ok": true, "handled": false}
+	# The same-point static contact is consumed before its arrival. Once the NPC
+	# party has entered, its arrival event is that entry's duplicate (validated by
+	# prepare_npc_region_arrival), not a navigation attempt.
+	if str(event.kind) == "arrival" and str(payload.get("player_token", "")).is_empty() \
+			and str(region_registry().parties.get(str(payload.get("token", "")), {}).get("phase", "")) == "entered":
+		return {"ok": true, "handled": false}
 	var published := _region_land_event_committed_endpoint(event)
 	if not published.ok: return published
 	if bool(published.get("committed", false)): return {"ok": true, "handled": false}
@@ -9027,6 +9061,12 @@ func _region_retry_blocked_npc_land_entries() -> Dictionary:
 		if not captured.ok: return captured
 		_region_npc_party_runtime[token] = captured.party
 		reference.position = {"site": resumed.position.site.duplicate(), "component": int(resumed.position.component)}
+		# A blocked attempt's contact completed as a navigation no-effect at its own
+		# point. This retry is a new paid attempt at the same entry, so its own
+		# contact (if the static body still holds the channel) is a new event, and it
+		# is queued before the arrival so the same-point contact is consumed first.
+		var static_contact := _region_queue_npc_siege_contact(token, float(control.logical_game_seconds))
+		if not static_contact.ok: return static_contact
 		var owner := Grid.site_id(str(pin.atlas_id), Vector2i(int(resumed.position.site[0]), int(resumed.position.site[1])))
 		var player_present := owner == str(control.active_site_id)
 		var queued := queue_region_event(_region_arrival_attempt_id(token, captured.party, false), "player_arrival" if player_present else "arrival",

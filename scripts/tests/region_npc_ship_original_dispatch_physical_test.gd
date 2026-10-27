@@ -108,11 +108,104 @@ func _reopen_actual_partial() -> bool:
 	if not await super._reopen_actual_partial(): return false
 	return _restore_sea_goal_owner()
 
+## Test-only failure evidence: the first differing path between two states,
+## comparing key names, key types, sizes and values.
+func _sea_first_difference(first: Variant, second: Variant, path: String) -> String:
+	if typeof(first) != typeof(second): return "%s type %d != %d" % [path, typeof(first), typeof(second)]
+	if first is Dictionary:
+		var first_names: Dictionary = {}
+		var second_names: Dictionary = {}
+		for key: Variant in first: first_names[str(key)] = key
+		for key: Variant in second: second_names[str(key)] = key
+		for label: String in first_names:
+			if not second_names.has(label): return "%s/%s missing after" % [path, label]
+			var own_key: Variant = first_names[label]
+			var other: Variant = second_names[label]
+			if typeof(own_key) != typeof(other): return "%s/%s key type %d != %d" % [path, label, typeof(own_key), typeof(other)]
+			var inner: String = _sea_first_difference(first[own_key], second[other], path + "/" + label)
+			if not inner.is_empty(): return inner
+		for label: String in second_names:
+			if not first_names.has(label): return "%s/%s added after" % [path, label]
+		return ""
+	if first is Array:
+		if first.size() != second.size(): return "%s size %d != %d" % [path, first.size(), second.size()]
+		for index: int in range(first.size()):
+			var inner: String = _sea_first_difference(first[index], second[index], "%s[%d]" % [path, index])
+			if not inner.is_empty(): return inner
+		return ""
+	if first is PackedByteArray and first != second:
+		return _sea_first_difference(bytes_to_var(first), bytes_to_var(second), path + "<bytes>")
+	return "" if first == second else "%s value %s != %s" % [path, str(first).left(200), str(second).left(200)]
+
+## Test-only failure evidence: up to `cap` differing paths, in walk order.
+func _sea_differences(first: Variant, second: Variant, path: String, cap: int) -> Array:
+	var found: Array = []
+	_sea_collect_differences(first, second, path, cap, found)
+	return found
+
+func _sea_collect_differences(first: Variant, second: Variant, path: String, cap: int, found: Array) -> void:
+	if found.size() >= cap: return
+	if typeof(first) != typeof(second):
+		found.append("%s type %d != %d" % [path, typeof(first), typeof(second)])
+		return
+	if first is Dictionary:
+		var first_names: Dictionary = {}
+		var second_names: Dictionary = {}
+		for key: Variant in first: first_names[str(key)] = key
+		for key: Variant in second: second_names[str(key)] = key
+		for label: String in first_names:
+			if found.size() >= cap: return
+			if not second_names.has(label):
+				found.append("%s/%s missing after" % [path, label])
+				continue
+			var own_key: Variant = first_names[label]
+			var other: Variant = second_names[label]
+			if typeof(own_key) != typeof(other):
+				found.append("%s/%s key type %d != %d" % [path, label, typeof(own_key), typeof(other)])
+				continue
+			_sea_collect_differences(first[own_key], second[other], path + "/" + label, cap, found)
+		for label: String in second_names:
+			if found.size() >= cap: return
+			if not first_names.has(label): found.append("%s/%s added after" % [path, label])
+		return
+	if first is Array:
+		if first.size() != second.size():
+			found.append("%s size %d != %d" % [path, first.size(), second.size()])
+			return
+		for index: int in range(first.size()): _sea_collect_differences(first[index], second[index], "%s[%d]" % [path, index], cap, found)
+		return
+	if first is PackedByteArray and first != second:
+		_sea_collect_differences(bytes_to_var(first), bytes_to_var(second), path + "<bytes>", cap, found)
+		return
+	if first != second: found.append("%s value %s != %s" % [path, str(first).left(200), str(second).left(200)])
+
+## The changed fields of every stored siege snapshot, without its own source
+## stamp and hash, so the readout names the original body/structure field.
+func _sea_siege_differences(before_control: Dictionary, after_control: Dictionary, cap: int) -> Array:
+	var found: Array = []
+	var before_battles: Dictionary = before_control.get("region_gameplay", {}).get("battles", {})
+	var after_battles: Dictionary = after_control.get("region_gameplay", {}).get("battles", {})
+	for id: Variant in before_battles:
+		var old_siege: Dictionary = before_battles[id].get("siege", {})
+		var new_siege: Dictionary = after_battles.get(id, {}).get("siege", {})
+		for field: Variant in old_siege:
+			if str(field) in ["source", "source_sha256"]: continue
+			_sea_collect_differences(old_siege[field], new_siege.get(field), "battles/%s/siege/%s" % [str(id), str(field)], cap, found)
+	return found
+
+## Test-only hooks for subclass evidence; the base records nothing.
+func _sea_after_checkpoint() -> void:
+	pass
+
+func _sea_retry_failure_extra() -> Dictionary:
+	return {}
+
 func _sea_reopen(in_transit: bool) -> bool:
 	if not _observe_ship_food_results(): return false
 	var clock := [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence]
 	var saved: Dictionary = controller.checkpoint_region_internal("region_checkpoint", true)
 	if not _check(saved.ok and clock == [slot.control.logical_game_seconds, slot.control.fire_clock.action_seconds, slot.control.fire_clock.sequence], "actual joint sea checkpoint consumes zero extra time", saved): return false
+	_sea_after_checkpoint()
 	var graphs := _sea_graphs(in_transit)
 	if graphs.is_empty(): return false
 	var reference: Dictionary = slot.region_registry().parties[sea_token].duplicate(true)
@@ -149,9 +242,15 @@ func _sea_reopen(in_transit: bool) -> bool:
 	var rewired := lab._wire_region_gameplay_adapters(slot)
 	if not _check(rewired.ok, "fresh Slot adapters wire to the positively restored main original", rewired): return false
 	if not _observe_ship_food_results(): return false
-	var before := var_to_bytes([slot.control, _sea_graphs(in_transit)])
+	var before_state := [slot.control.duplicate(true), _sea_graphs(in_transit)]
+	var before := var_to_bytes(before_state)
 	var retry: Dictionary = slot.consume_due_region_events()
-	if not _check(retry.ok and retry.get("complete", false) and before == var_to_bytes([slot.control, _sea_graphs(in_transit)]), "same selected sea endpoint retry owns zero time and no duplicate physical arrival", retry): return false
+	var after_state := [slot.control.duplicate(true), _sea_graphs(in_transit)]
+	var unchanged := before == var_to_bytes(after_state)
+	if not _check(retry.ok and retry.get("complete", false) and unchanged, "same selected sea endpoint retry owns zero time and no duplicate physical arrival",
+		retry if unchanged else {"retry": retry, "first_difference": _sea_first_difference(before_state, after_state, "[control, graphs]"),
+		"differences": _sea_differences(before_state, after_state, "[control, graphs]", 10), "siege_differences": _sea_siege_differences(before_state[0], after_state[0], 10),
+		"extra": _sea_retry_failure_extra()}): return false
 	if not _observe_ship_food_results(): return false
 	sea_cold_evidence.append({"in_transit": in_transit, "clock": clock, "reference": reference, "graphs": graphs, "proof": proof})
 	return true

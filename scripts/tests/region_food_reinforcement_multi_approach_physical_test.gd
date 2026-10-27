@@ -13,6 +13,22 @@ var multi_enemy_id := 0
 var multi_arrived_person := 0
 var multi_melee: Array[Dictionary] = []
 var multi_static_contact: Dictionary = {}
+var multi_static_before: Dictionary = {}
+var multi_shore_faction := false
+var multi_original: TerrainLab
+var multi_pair_trace: Array[Dictionary] = []
+var multi_pair_polls := 0
+var multi_wait_impossible := ""
+var multi_siege_id := ""
+var multi_ko_probe: Dictionary = {}
+
+func _initialize() -> void:
+	super()
+	deadline = Time.get_ticks_msec() + 540000 # Nekki 2026-10-26: in-file 540 s, outer 600 s (the sea sail alone is ~4900 steps).
+
+func _process(_delta: float) -> bool:
+	if not finished and Time.get_ticks_msec() > deadline: _finish(false, "540-second original multi-approach reinforcement deadline")
+	return false
 
 func _multi_center_genesis(original: TerrainLab) -> bool:
 	var data: TerrainData = original.terrain
@@ -33,7 +49,26 @@ func _multi_center_genesis(original: TerrainLab) -> bool:
 	SiteRuntime._feature_work(data, str(founded.feature), float(feature.work), Callable(), Callable(), task, {}, 20, 1)
 	return _check(feature.stage == "complete" and int(data.site.settlement.level) == 1 and original.character.place(Vector2i(19, 29), true) and int(Settlement.capture_sample(original).attacker) == -1, "original GENESIS work completes the real center and its actual live founder protects the true capture zone")
 
+## Explicit GENESIS scenario faction (OPUS72). Both approaches reinforce the
+## destination center of faction 1, so the whole shore side is faction 1: the
+## Actor, its crew team (the Actor is that team's PLAYER_MEMBER, so both change
+## together) and the transfer recipient. It runs at the first barrier request,
+## after the inherited typed genesis births those teams and before any structure
+## or paid interval, so the walls share the gate's owner faction. Otherwise the
+## sea crew enters the destination as a third faction (0) and the original siege
+## owner rightly refuses the roster (EXACT_FACTION_TOPOLOGY).
+func _multi_shore_faction() -> bool:
+	multi_shore_faction = true
+	var crew: TerrainArmy = lab.combat_armies[0]
+	var recipient: TerrainArmy = lab.combat_armies[1]
+	lab.character.faction_id = 1
+	crew.faction_id = 1
+	recipient.faction_id = 1
+	return _check(crew.player_member == lab.character and action_paid == 0.0 and action_game_paid == 0.0,
+		"explicit GENESIS scenario faction 1 covers the shore Actor, its crew and the transfer recipient before any structure or paid interval")
+
 func _ship_build_barrier(anchor: Vector2i, length: int) -> bool:
+	if not multi_shore_faction and not _multi_shore_faction(): return false
 	# The same finite original wall has one authored gate span, closed at birth.
 	var begin := anchor.y
 	var end := anchor.y + length
@@ -128,6 +163,22 @@ func _multi_destination_decision_a() -> bool:
 	destination.terrain.site.army_next_team = destination._next_army_identity()
 	if not _check([action_paid, action_game_paid] == paid and controller.checkpoint_region_internal("region_checkpoint", true).ok,
 		"the destination center, its staying founder and the hostile body are born before any paid interval after the founder's departure and before either NPC route"): return false
+	# Stable Site person references come only from the original travel identity
+	# allocator, which a departure or arrival runs. This Site was indexed by the
+	# founder's arrival and the heir's departure, before the hostile was born, and
+	# the NPC static-contact gate skips an unindexed body (8e9577b). As in
+	# region_npc_static_siege_entry_original_test, index the captured armies after
+	# the whole-graph checkpoint and publish them before any paid interval.
+	var held_refs: Dictionary = destination.terrain.site.get("travel_identity", {}).get("refs", {}).get("person", {}).duplicate(true)
+	var indexed := RegionTravel.prepare_identity(destination.terrain.site)
+	var refs_kept: bool = indexed.ok
+	if refs_kept:
+		for local: String in held_refs: refs_kept = refs_kept and indexed.state.travel_identity.refs.person.get(local) == held_refs[local]
+	if not _check(refs_kept and indexed.state.travel_identity.refs.person.get(str(multi_enemy_id)) is Dictionary,
+		"original identity allocator indexes the destination's hostile body and keeps every existing destination reference", indexed.get("code")): return false
+	destination.terrain.site["travel_identity"] = indexed.state.travel_identity
+	if not _check([action_paid, action_game_paid] == paid and controller.checkpoint_region_internal("region_checkpoint", true).ok,
+		"the indexed destination identity publishes with the same whole graphs before any paid interval"): return false
 	var begun: Dictionary = hostile.issue_combat_order(hostile.current_commander, TerrainArmy.CombatOrder.ATTACK)
 	if not _check(begun.ok, "actual hostile captain accepts the original siege attack before its real registry publication", begun): return false
 	var siege: Dictionary = slot.refresh_original_region_siege_battle(destination)
@@ -273,11 +324,174 @@ func _sea_graphs(in_transit: bool) -> Dictionary:
 
 func _multi_actual_exchange(first: int, second: int, result: Dictionary) -> void:
 	if [mini(first, second), maxi(first, second)] != [mini(multi_arrived_person, multi_enemy_id), maxi(multi_arrived_person, multi_enemy_id)]: return
-	multi_melee.append({"first": first, "second": second, "result": result.duplicate(true), "game": slot.control.logical_game_seconds, "action": slot.control.fire_clock.action_seconds, "sequence": slot.control.fire_clock.sequence})
+	var entry := {"first": first, "second": second, "result": result.duplicate(true), "game": slot.control.logical_game_seconds, "action": slot.control.fire_clock.action_seconds, "sequence": slot.control.fire_clock.sequence, "pair_legal": false}
+	if is_instance_valid(multi_original):
+		var a: Dictionary = multi_original._original_person_target(first)
+		var b: Dictionary = multi_original._original_person_target(second)
+		if not a.is_empty() and not b.is_empty():
+			entry["cells"] = [str(a.cell), str(b.cell)]
+			entry["pair_legal"] = MultiBattle._legal_melee_pair(multi_original, {"id": first, "cell": a.cell, "faction": int(a.owner.faction_id)}, {"id": second, "cell": b.cell, "faction": int(b.owner.faction_id)})
+	multi_melee.append(entry)
+
+## Test-only bounded readout (OPUS74) of the actual pair's original exchange
+## state; read-only. Sampled at every 10th poll of the paid waits that involve
+## the pair, at most 80 samples, so a failed wait always carries evidence.
+func _multi_pair_state() -> Dictionary:
+	var state := {"world": float(slot.control.logical_game_seconds), "action": float(slot.control.fire_clock.action_seconds), "exchanges": multi_melee.size()}
+	if not is_instance_valid(multi_original): return state
+	for identity: int in [multi_arrived_person, multi_enemy_id]:
+		var person: Dictionary = multi_original._original_person_target(identity)
+		if person.is_empty() or not person.owner is TerrainArmy:
+			state[str(identity)] = "MISSING" if person.is_empty() else "NOT_ARMY"
+			continue
+		var team: TerrainArmy = person.owner
+		var unit := int(person.unit)
+		var row := {"cell": str(person.cell), "receive": team.exchange_can_receive(unit), "ready": team.exchange_ready(unit), "order": int(team.combat_order)}
+		for field: StringName in [&"hp", &"stun", &"ko", &"exchange_cooldown", &"exchange_stagger", &"pose", &"captive", &"surrender_pending"]:
+			row[String(field)] = str(team.combat_hot_get(unit, field, null))
+		state[str(identity)] = row
+	return state
+
+## Effects the recorded original exchanges dealt to the hostile (result a/b
+## follow the emitted pair order).
+func _multi_hostile_dealt() -> Dictionary:
+	var dealt := {"hp": 0.0, "stun": 0.0, "hostile_lost": 0}
+	for entry: Dictionary in multi_melee:
+		var result: Dictionary = entry.get("result", {})
+		var hostile_is_a: bool = int(entry.get("first", -1)) == multi_enemy_id
+		dealt.hp = float(dealt.hp) + float(result.get("hp_a" if hostile_is_a else "hp_b", 0.0))
+		dealt.stun = float(dealt.stun) + float(result.get("stun_a" if hostile_is_a else "stun_b", 0.0))
+		if int(result.get("winner", 0)) == (-1 if hostile_is_a else 1): dealt.hostile_lost = int(dealt.hostile_lost) + 1
+	return dealt
+
+## Why a body can no longer take part in the paid wait, or "" while it can.
+func _multi_body_down(identity: int) -> String:
+	if not is_instance_valid(multi_original): return "NO_ORIGINAL"
+	var person: Dictionary = multi_original._original_person_target(identity)
+	if person.is_empty(): return "MISSING"
+	if not person.owner is TerrainArmy: return ""
+	var team: TerrainArmy = person.owner
+	var unit := int(person.unit)
+	if float(team.combat_hot_get(unit, &"hp", 0.0)) <= 0.0: return "DEAD"
+	if bool(team.combat_hot_get(unit, &"captive", false)): return "CAPTIVE"
+	if float(team.combat_hot_get(unit, &"ko", 0.0)) > 0.0: return "KO"
+	return ""
+
+func _multi_trace_pair() -> void:
+	multi_pair_polls += 1
+	if multi_pair_polls % 10 == 1 and multi_pair_trace.size() < 80: multi_pair_trace.append(_multi_pair_state())
+
+## Test-only failure evidence (OPUS67). Reads, without changing any owner, clock,
+## order or body, each condition the production static-contact gate
+## (_region_first_npc_siege_contact) applies to the hostile body at the foot entry.
+func _multi_static_probe() -> Dictionary:
+	var goal_owner := Grid.site_id(str(slot.pin.atlas_id), sea_goal_coordinate)
+	var probe := {"world": float(slot.control.logical_game_seconds), "action": float(slot.control.fire_clock.action_seconds)}
+	var battles: Array = []
+	for id: String in slot.region_registry().battles:
+		var battle: Dictionary = slot.region_registry().battles[id]
+		if str(battle.get("site_id", "")) != goal_owner: continue
+		battles.append({"id": id, "kind": str(battle.get("kind", "")), "phase": str(battle.get("phase", "")), "mode": str(battle.get("mode", "")),
+			"attackers": str(battle.get("attackers", [])), "defenders": str(battle.get("defenders", [])), "revision": int(battle.get("revision", -1))})
+	probe["battles"] = battles
+	var events: Array = []
+	for event: Dictionary in slot.region_registry().events:
+		if str(event.payload.get("token", "")) != multi_foot_token: continue
+		events.append({"id": str(event.id), "kind": str(event.kind), "at": float(event.at), "status": str(event.status),
+			"contact": str(event.payload.get("contact_receipt", {}).get("kind", "")),
+			"navigation_blocked": bool(event.payload.get("navigation_result", {}).get("navigation_blocked", false))})
+	probe["foot_events"] = events
+	var foot_reference: Dictionary = slot.region_registry().parties.get(multi_foot_token, {})
+	probe["foot"] = {"phase": str(foot_reference.get("phase", "")), "position": str(foot_reference.get("position", {})), "arrival_game_seconds": str(foot_reference.get("arrival_game_seconds", ""))}
+	var foot_party: Dictionary = slot._region_npc_party_runtime.get(multi_foot_token, {})
+	var foot_upkeep: Dictionary = foot_party.get("upkeep", {})
+	probe["foot_upkeep"] = {"at": str(foot_upkeep.get("at", "")), "distance": str(foot_upkeep.get("distance", "")), "route_blocked": foot_upkeep.has("route_blocked"),
+		"pending_route_entry": foot_upkeep.has("pending_route_entry"), "route_node": str(foot_upkeep.get("route_node", {})),
+		"live": not foot_upkeep.get("live", {}).is_empty(), "attempt": str(foot_upkeep.get("route_entry_attempt", 0))}
+	var bound: Variant = slot._region_original_labs.get(goal_owner)
+	if not is_instance_valid(bound) or not bound is TerrainLab:
+		probe["destination"] = "UNBOUND"
+		return probe
+	var destination: TerrainLab = bound
+	var refs: Dictionary = destination.terrain.site.get("travel_identity", {}).get("refs", {}).get("person", {})
+	probe["hostile_indexed"] = refs.get(str(multi_enemy_id)) is Dictionary
+	var person: Dictionary = destination.site_controller.person_actions._person(multi_enemy_id, false)
+	if person.is_empty():
+		probe["hostile"] = "MISSING"
+		return probe
+	var entry := Vector2i(99, 50)
+	var cell: Vector2i = person.cell
+	var gap: Vector2i = entry - cell
+	var hostile := {"cell": [cell.x, cell.y], "faction": int(person.faction), "fit": Settlement._fit(person), "moving": bool(person.moving),
+		"role": Settlement._role(person), "siege_crew": destination.site_controller.vehicles.is_siege_crew(multi_enemy_id),
+		"gap": absi(gap.x) + absi(gap.y), "attack_across": destination.terrain.can_attack_across(cell, entry),
+		"vehicle_blocks": destination.site_controller.vehicles.blocks_person_step(multi_enemy_id, cell, cell, entry, entry)}
+	if person.owner is TerrainArmy:
+		var team: TerrainArmy = person.owner
+		var unit := int(person.unit)
+		hostile["exchange_ready"] = team.exchange_ready(unit)
+		hostile["exchange_enabled"] = team.exchange_enabled
+		hostile["combat_enabled"] = team.combat_enabled
+		hostile["combat_can_act"] = team.combat_can_act(unit)
+		hostile["combat_order"] = int(team.combat_order)
+		hostile["garrison"] = str(team.garrison_feature_id)
+		hostile["cooldown"] = float(team.combat_hot_get(unit, &"exchange_cooldown", 0.0))
+		hostile["stagger"] = float(team.combat_hot_get(unit, &"exchange_stagger", 0.0))
+		hostile["pose"] = str(team.combat_hot_get(unit, &"pose"))
+	probe["hostile"] = hostile
+	return probe
+
+## Test-only exact readout (OPUS78): the IEEE-754 bits of a float.
+func _multi_bits(value: Variant) -> String:
+	if not (value is float or value is int): return "<%s>" % str(value)
+	var bytes := PackedByteArray()
+	bytes.resize(8)
+	bytes.encode_double(0, float(value))
+	return "%s (%s)" % [bytes.hex_encode(), String.num(float(value), 17)]
+
+## The hostile's ko, the stored snapshot ko and the destination's own clocks,
+## each as exact bits, read from the given destination Lab (read-only).
+func _multi_ko_stage(destination: Variant) -> Dictionary:
+	var stage := {"world": _multi_bits(slot.control.logical_game_seconds), "action": _multi_bits(slot.control.fire_clock.action_seconds)}
+	var battle: Dictionary = slot.region_registry().battles.get(multi_siege_id, {})
+	stage["stored_ko"] = _multi_bits(battle.get("siege", {}).get("bodies", {}).get(str(multi_enemy_id), {}).get("ko"))
+	stage["stored_source_game"] = _multi_bits(battle.get("siege", {}).get("source", {}).get("game_seconds"))
+	if not is_instance_valid(destination) or not destination is TerrainLab:
+		stage["destination"] = "UNBOUND"
+		return stage
+	var lab_d: TerrainLab = destination
+	var person: Dictionary = lab_d._original_person_target(multi_enemy_id)
+	if not person.is_empty() and person.owner is TerrainArmy:
+		var team: TerrainArmy = person.owner
+		var unit := int(person.unit)
+		stage["live_ko"] = _multi_bits(team.combat_hot_get(unit, &"ko", null))
+		stage["row_ko"] = _multi_bits(team.combat_units[unit].get("ko"))
+		stage["json_round_trip_ko"] = _multi_bits(JSON.parse_string(JSON.stringify(float(team.combat_hot_get(unit, &"ko", 0.0)), "", false, true)))
+	var fire: Dictionary = lab_d.terrain.site.get("fire_settlement", {})
+	stage["site_fire_game"] = _multi_bits(fire.get("game_seconds"))
+	stage["site_fire_action"] = _multi_bits(fire.get("action_seconds"))
+	stage["fire_action_cursor"] = _multi_bits(lab_d.fire_action_cursor)
+	stage["site_minute"] = str(lab_d.terrain.site.get("minute", ""))
+	stage["site_phase"] = _multi_bits(lab_d.terrain.site.get("phase"))
+	stage["lab"] = str(lab_d.get_instance_id())
+	return stage
+
+func _sea_after_checkpoint() -> void:
+	if multi_siege_id.is_empty(): return
+	multi_ko_probe["after_checkpoint"] = _multi_ko_stage(multi_original)
+
+func _sea_retry_failure_extra() -> Dictionary:
+	if multi_siege_id.is_empty(): return {}
+	multi_ko_probe["after_retry"] = _multi_ko_stage(slot._region_original_labs.get(Grid.site_id(str(slot.pin.atlas_id), sea_goal_coordinate)))
+	return multi_ko_probe
 
 func _multi_original_reinforcement() -> bool:
+	multi_static_before = _multi_static_probe()
 	if not await _multi_gate_to(true): return false
-	if not await _ship_until(func() -> bool: return slot.region_registry().parties[multi_foot_token].phase == "entered", "original blocked route retry pays its true independent approach and full arrival after actual gate reopening"): return false
+	if not await _ship_until(func() -> bool:
+		if slot.region_registry().parties[multi_foot_token].phase == "entered": return true
+		multi_static_before = _multi_static_probe()
+		return false, "original blocked route retry pays its true independent approach and full arrival after actual gate reopening"): return false
 	var reference: Dictionary = slot.region_registry().parties[multi_foot_token]
 	var goal: Dictionary = _sea_goal()
 	var original: TerrainLab = goal.lab
@@ -286,29 +500,91 @@ func _multi_original_reinforcement() -> bool:
 	if not _check(reference.destination_site == str(original.terrain.site.id) and person.cell == Vector2i(99, 50) and original.terrain.site.travel_identity.refs.person[str(multi_arrived_person)] == multi_foot_refs.person[str(multi_foot_person)] and original._region_bind_receipt_value.owners_restored and person.owner.combat_units.size() == 1, "true original independent entry capacity binds the entire same finite foot formation at its exact actual east entry"): return false
 	for event: Dictionary in slot.region_registry().events:
 		if event.payload.get("token") == multi_foot_token and event.payload.get("contact_receipt", {}).get("kind") == "npc_siege_channel": multi_static_contact = event.duplicate(true)
-	if not _check(not multi_static_contact.is_empty() and multi_static_contact.kind == "reinforcement" and multi_static_contact.status == "complete" and float(multi_static_contact.at) == float(reference.arrival_game_seconds), "original Slot consumes its own true earliest NPC static siege-contact event at the exact accepted foot insertion point", multi_static_contact): return false
+	var static_detail := {"event": multi_static_contact, "last_before_entry": multi_static_before, "after_entry": _multi_static_probe()}
+	if not _check(not multi_static_contact.is_empty() and multi_static_contact.kind == "reinforcement" and multi_static_contact.status == "complete" and float(multi_static_contact.at) == float(reference.arrival_game_seconds), "original Slot consumes its own true earliest NPC static siege-contact event at the exact accepted foot insertion point", static_detail): return false
 	var contact: Dictionary = multi_static_contact.payload.contact_receipt
 	var witness: Dictionary = contact.witness
 	var actual_enemy: Dictionary = original._original_person_target(multi_enemy_id)
 	if not _check(witness.party_token == multi_foot_token and witness.person_id == multi_enemy_id and witness.person_cell == [98, 50] and witness.entry == [99, 50] and witness.party_reference == multi_foot_refs.person[str(multi_foot_person)] and witness.static_reference == original.terrain.site.travel_identity.refs.person[str(multi_enemy_id)] and witness.party_source is Dictionary and not witness.party_source.is_empty() and witness.navigation_revision >= 0 and witness.source_generation <= int(slot._marker.generation) and witness.runtime_revision <= int(slot.region_registry().revision) and contact.first.position.mode == "land" and contact.second.position.mode == "land" and float(contact.at) == float(multi_static_contact.at) and not actual_enemy.is_empty() and actual_enemy.cell == Vector2i(98, 50) and original.terrain.can_attack_across(person.cell, actual_enemy.cell), "real source/body/entry/navigation witness and current original body prove earliest lawful ground contact before later local melee work", contact): return false
+	multi_original = original
 	var callback := Callable(self, "_multi_actual_exchange")
 	if not original.exchange_resolved.is_connected(callback): original.exchange_resolved.connect(callback)
 	var team: TerrainArmy = person.owner
 	var move: Dictionary = team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.MOVE, Vector2i(98, 51))
 	if not _check(move.ok, "same real arrived captain orders public formation MOVE toward the actual local hostile body", move): return false
-	if not await _ship_until(func() -> bool:
+	multi_wait_impossible = ""
+	var approached: bool = await _ship_until(func() -> bool:
+		_multi_trace_pair()
+		multi_wait_impossible = _multi_body_down(multi_arrived_person)
+		if not multi_wait_impossible.is_empty(): return true
 		var current: Dictionary = original._original_person_target(multi_arrived_person)
-		return not current.is_empty() and current.cell == Vector2i(98, 51) and team.moving_member_count() == 0, "actual paid original formation completes its real local melee approach"): return false
+		return not current.is_empty() and current.cell == Vector2i(98, 51) and team.moving_member_count() == 0, "actual paid original formation completes its real local melee approach")
+	if not approached or not multi_wait_impossible.is_empty():
+		_check(false, "actual pair readout at the failed melee approach", {"impossible": multi_wait_impossible, "trace": multi_pair_trace, "last": _multi_pair_state()})
+		return false
 	var held: Dictionary = team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.HOLD)
 	if not _check(held.ok, "existing arrived captain stops the real complete foot formation before actual contact", held): return false
 	var refreshed: Dictionary = slot.refresh_original_region_siege_battle(original)
-	if not _check(refreshed.ok, "original siege owner refreshes its actual newly arrived body roster", refreshed): return false
+	if not _check(refreshed.ok and not str(refreshed.get("battle_id", "")).is_empty() and slot.region_registry().battles.has(str(refreshed.get("battle_id", ""))),
+		"original siege owner refreshes its actual newly arrived body roster", refreshed): return false
 	var battle: Dictionary = slot.region_registry().battles[str(refreshed.battle_id)]
-	var resolved: Dictionary = MultiBattle.resolve_people(original, battle)
-	if not _check(battle.defenders.has(multi_arrived_person) and not battle.attackers.has(multi_arrived_person) and battle.attackers.has(multi_enemy_id) and resolved.ok and resolved.people[multi_arrived_person].legal_targets.has(multi_enemy_id), "real original body geometry and opposite battle sides admit the actual hostile melee target rather than food flags, rank or shared component", resolved): return false
+	if not _check(battle.defenders.has(multi_arrived_person) and not battle.attackers.has(multi_arrived_person) and battle.attackers.has(multi_enemy_id),
+		"the refreshed original siege holds the arrived reinforcement as defender and the actual hostile as attacker", {"attackers": str(battle.attackers), "defenders": str(battle.defenders)}): return false
+	# The arrived body stood adjacent to the hostile from its entry cell, so the
+	# original self-defence melee (HOLD) already resolved exchanges between them
+	# during the paid approach. An original exchange fires only for an adjacent,
+	# opposite-faction pair with a clear melee line where both bodies can receive
+	# and one can initiate (terrain_lab exchange round). Each recorded exchange
+	# also carries the resolver's pair rule (_legal_melee_pair) at that accepted
+	# point. Stun and cooldown renew on every exchange, so a step boundary never
+	# shows both bodies receivable (OPUS73); the accepted exchanges are the
+	# original's own admission of this legal pair.
+	var legal_exchanges: Array = multi_melee.filter(func(entry: Dictionary) -> bool: return bool(entry.get("pair_legal", false)))
+	if not _check(not multi_melee.is_empty() and legal_exchanges.size() == multi_melee.size(),
+		"real original body geometry and opposite battle sides admit the actual hostile melee target rather than food flags, rank or shared component", {"exchanges": multi_melee.size(), "legal": legal_exchanges.size(), "first": multi_melee.front() if not multi_melee.is_empty() else {}, "trace": multi_pair_trace, "last": _multi_pair_state()}): return false
+	# The accepted exchanges' own effects are visible on the actual hostile body.
+	var dealt := _multi_hostile_dealt()
+	var hostile_now: Dictionary = original._original_person_target(multi_enemy_id)
+	var hostile_team: TerrainArmy = hostile_now.owner if not hostile_now.is_empty() and hostile_now.owner is TerrainArmy else null
+	var hostile_unit := int(hostile_now.get("unit", -1))
+	var hostile_hp: float = float(hostile_team.combat_hot_get(hostile_unit, &"hp", 100.0)) if hostile_team != null else 100.0
+	var hostile_stun: float = float(hostile_team.combat_hot_get(hostile_unit, &"stun", 0.0)) if hostile_team != null else 0.0
+	var hostile_ko: float = float(hostile_team.combat_hot_get(hostile_unit, &"ko", 0.0)) if hostile_team != null else 0.0
+	if not _check(hostile_team != null and (float(dealt.hp) > 0.0 or float(dealt.stun) > 0.0)
+		and (float(dealt.hp) <= 0.0 or hostile_hp < 100.0) and (float(dealt.stun) <= 0.0 or hostile_stun > 0.0 or hostile_ko > 0.0),
+		"the accepted original exchanges' damage and stun are visible on the actual hostile body", {"dealt": dealt, "hp": hostile_hp, "stun": hostile_stun, "ko": hostile_ko, "last": _multi_pair_state()}): return false
+	# The public ATTACK order for the same hostile is still issued. When the
+	# self-defence exchanges have already knocked the hostile out, no exchange can
+	# follow (an original exchange needs both bodies receivable), so the test
+	# asserts the original's actual response and the target's real state, and
+	# does not wait for an exchange that cannot happen.
+	var target_state := _multi_body_down(multi_enemy_id)
 	var attacked: Dictionary = team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.ATTACK, TerrainArmy.INVALID_CELL, multi_enemy_id)
-	if not _check(attacked.ok, "same actual NPC captain issues its original public attack order for the real legal hostile body", attacked): return false
-	if not await _ship_until(func() -> bool: return not multi_melee.is_empty(), "original shared paid step emits a true accepted melee resolution between the physically arrived reinforcement and actual hostile body"): return false
+	var hostile_receives: bool = hostile_team != null and hostile_team.exchange_can_receive(hostile_unit)
+	if not _check(attacked.get("ok", false) and (target_state.is_empty() or not hostile_receives),
+		"same actual NPC captain issues its original public attack order for the real legal hostile body", {"response": attacked, "target_state": target_state, "target_receives": hostile_receives, "last": _multi_pair_state()}): return false
+	if target_state.is_empty():
+		# A hostile still standing must meet the ordered melee as a new accepted exchange.
+		var melee_before := multi_melee.size()
+		multi_wait_impossible = ""
+		var ordered: bool = await _ship_until(func() -> bool:
+			_multi_trace_pair()
+			for identity: int in [multi_arrived_person, multi_enemy_id]:
+				if multi_wait_impossible.is_empty() and not _multi_body_down(identity).is_empty(): multi_wait_impossible = str(identity) + ":" + _multi_body_down(identity)
+			return multi_melee.size() > melee_before or not multi_wait_impossible.is_empty(), "original shared paid step emits a true accepted melee resolution between the physically arrived reinforcement and actual hostile body")
+		if not ordered or multi_melee.size() <= melee_before:
+			_check(false, "actual pair readout at the failed ordered melee", {"impossible": multi_wait_impossible, "trace": multi_pair_trace, "last": _multi_pair_state()})
+			return false
+		if not _check(bool(multi_melee.back().get("pair_legal", false)), "the ordered melee exchange is the same legal original pair", multi_melee.back()): return false
+	# The ATTACK order changed a body's original order after the roster refresh
+	# at HOLD. The original siege owner admits that metadata at its next consumer
+	# call; publish it here, at the same point and before the final selected
+	# reopen, so the reopen's zero-time retry compares a settled registry.
+	var ordered_refresh: Dictionary = slot.refresh_original_region_siege_battle(original)
+	if not _check(ordered_refresh.ok and str(ordered_refresh.get("battle_id", "")) == str(refreshed.battle_id),
+		"original siege owner publishes the ordered roster at the same point before the final selected reopen", ordered_refresh): return false
+	multi_siege_id = str(refreshed.battle_id)
+	multi_ko_probe["after_ordered_refresh"] = _multi_ko_stage(multi_original)
 	if not await _sea_reopen(false): return false
 	return _check(not multi_melee.is_empty() and multi_blocked_event.payload.navigation_result.no_effect and lab.controlled_person_id() == ship_actor_id, "true melee and full selected cold preserve blocked-route history and actual human control")
 

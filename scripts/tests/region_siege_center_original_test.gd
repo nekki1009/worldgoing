@@ -310,7 +310,9 @@ func _hand_over_and_leave(destination: Vector2i) -> bool:
 	for retry: int in range(200000):
 		if str(visible_open.get("code", "")) != "PENDING" and not visible.site_controller.region_operation_pending(): break
 		visible_open = visible.site_controller.resume_region_operation()
-		if retry % 60 == 0: await process_frame
+		if retry % 60 == 0:
+			await process_frame
+			if finished or not is_instance_valid(visible): return false # The deadline already finished the test and freed its scenes.
 	if not _check(visible_open.ok and bool(visible_open.get("arrived", false)), "production world-open binds the arrived source Site", visible_open): return false
 	_freeze(visible)
 	lab = visible
