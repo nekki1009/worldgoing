@@ -1,5 +1,6 @@
 extends "res://scripts/tests/site_siege_formal_visual_test.gd"
 ## Independent GPU entrypoint; reuses only the existing capture/walk helpers.
+# FORMAL_ENTRY_SCENE / ORIGINAL_SITE_SCENE are inherited from the parent fixture.
 const RealCollision = preload("res://scripts/terrain_lab/terrain_weapon_collision.gd")
 var finished := false
 
@@ -53,12 +54,12 @@ func _body_aim(vehicle: Dictionary, target_actor: TerrainTestCharacter) -> Dicti
 
 func _run() -> void:
 	assert(DisplayServer.get_name() != "headless", "This test requires the GPU viewport")
-	assert(ProjectSettings.get_setting("application/run/main_scene") == "res://scenes/terrain_lab/TerrainLab.tscn")
+	assert(ProjectSettings.get_setting("application/run/main_scene") == FORMAL_ENTRY_SCENE)
 	assert(DirAccess.make_dir_recursive_absolute(OUT) == OK)
 	root.size = Vector2i(1800, 1100)
 	root.content_scale_size = root.size
 	root.gui_embed_subwindows = true
-	var main: PackedScene = load(ProjectSettings.get_setting("application/run/main_scene"))
+	var main: PackedScene = load(ORIGINAL_SITE_SCENE)
 	lab = main.instantiate()
 	lab.npc = TerrainTestNPC.new() # Explicit original-NPC fixture before main-scene setup.
 	lab.pause_when_unfocused = false

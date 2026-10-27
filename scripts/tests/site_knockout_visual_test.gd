@@ -1,4 +1,8 @@
 extends SceneTree
+# The formal entry point is the main menu since ef39140 (World / Region / Site layers). This fixture
+# drives the original TerrainLab scene directly and only checks that the entry was not changed.
+const FORMAL_ENTRY_SCENE := "res://scenes/main_menu/MainMenu.tscn"
+const ORIGINAL_SITE_SCENE := "res://scenes/terrain_lab/TerrainLab.tscn"
 
 const OUT := "res://output/site_knockout_recovery_20260926/visual"
 const CENTER := Vector2i(60, 60)
@@ -11,11 +15,11 @@ func _initialize() -> void:
 
 func _run() -> void:
 	assert(DisplayServer.get_name() != "headless")
-	assert(ProjectSettings.get_setting("application/run/main_scene") == "res://scenes/terrain_lab/TerrainLab.tscn")
+	assert(ProjectSettings.get_setting("application/run/main_scene") == FORMAL_ENTRY_SCENE)
 	assert(DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUT)) == OK)
 	root.size = Vector2i(1600, 900)
 	root.content_scale_size = root.size
-	lab = (load(ProjectSettings.get_setting("application/run/main_scene")) as PackedScene).instantiate() as TerrainLab
+	lab = (load(ORIGINAL_SITE_SCENE) as PackedScene).instantiate() as TerrainLab
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	current_scene = lab
@@ -81,13 +85,14 @@ func _run() -> void:
 	await _capture("01_unconscious.png")
 	assert(player.start_rescue_unit(friendly, 1))
 	player.advance_combat(4.0)
-	assert(friendly.combat_units[1].ko == 3600.0 and friendly.combat_units[1].pose == "unconscious")
+	# ko/pose are hot-store fields (terrain_army.gd COMBAT_HOT_FIELDS), read through combat_hot_get.
+	assert(float(friendly.combat_hot_get(1, &"ko")) == 3600.0 and str(friendly.combat_hot_get(1, &"pose")) == "unconscious")
 	friendly.advance_frame(0.0)
 	caption.text = "救助完成｜普通兵仍昏迷，剩餘一遊戲小時"
 	await _capture("02_rescued_still_unconscious.png")
 	friendly.prepare_combat(0.1, 14397.0)
 	enemy.prepare_combat(0.1, 14397.0)
-	assert(friendly.combat_units[0].pose == "get_up" and friendly.combat_units[1].pose == "get_up" and enemy.combat_units[0].pose == "get_up")
+	assert(str(friendly.combat_hot_get(0, &"pose")) == "get_up" and str(friendly.combat_hot_get(1, &"pose")) == "get_up" and str(enemy.combat_hot_get(0, &"pose")) == "get_up")
 	friendly.prepare_combat(1.1, 0.0)
 	enemy.prepare_combat(1.1, 0.0)
 	friendly.advance_frame(1.1)

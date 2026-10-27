@@ -1,5 +1,9 @@
 extends SceneTree
 ## GPU-only captures of the real main scene and original people/vehicle owners.
+# The formal entry point is the main menu since ef39140 (World / Region / Site layers). This fixture
+# drives the original TerrainLab scene directly and only checks that the entry was not changed.
+const FORMAL_ENTRY_SCENE := "res://scenes/main_menu/MainMenu.tscn"
+const ORIGINAL_SITE_SCENE := "res://scenes/terrain_lab/TerrainLab.tscn"
 const OUT := "res://output/site_siege_generated_art_20261003/integration/legacy_visual"
 const Helper = preload("res://scripts/tests/fixtures/combat_movement_test_helper.gd")
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
@@ -102,12 +106,12 @@ func _ram_proportion_proposal() -> void:
 
 func _run() -> void:
 	assert(DisplayServer.get_name() != "headless", "This test needs the GPU viewport")
-	assert(ProjectSettings.get_setting("application/run/main_scene") == "res://scenes/terrain_lab/TerrainLab.tscn")
+	assert(ProjectSettings.get_setting("application/run/main_scene") == FORMAL_ENTRY_SCENE)
 	assert(DirAccess.make_dir_recursive_absolute(OUT) == OK)
 	root.size = Vector2i(1800, 1100)
 	root.content_scale_size = root.size
 	root.gui_embed_subwindows = true
-	var main: PackedScene = load(ProjectSettings.get_setting("application/run/main_scene"))
+	var main: PackedScene = load(ORIGINAL_SITE_SCENE)
 	lab = main.instantiate()
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
@@ -156,8 +160,16 @@ func _run() -> void:
 	assert(Runtime.advance_siege_work(data, identity, "construct", float(vehicle.build.total_work),
 		team.cells[0], int(station.slot), team.team_id).ok)
 	assert(vehicle.phase == "idle" and vehicle.build.is_empty() and float(vehicle.hp) == 140.0)
+	# Visual crew commit requires each crew member's published appearance and prepared siege work
+	# assets, exactly as the UI crew path prepares them (headless verifies mechanics only).
+	var crew_ids: Array = [team.combat_identity(0), team.combat_identity(1)]
+	for crew_id: Variant in crew_ids: ui.equipment_changed(int(crew_id))
+	var crew_assets_ready: bool = await ui._prepare_siege_work_people(crew_ids)
+	assert(crew_assets_ready, "Original Controller prepares the actual crew work assets before assignment")
+	await process_frame # Leave the preparation's completion signal before continuing.
 	for slot in range(2):
-		assert(ui.vehicles.assign_crew(identity, team.combat_identity(slot), str(slot), team.combat_identity(0), true).ok)
+		var crew_assigned: Dictionary = ui.vehicles.assign_crew(identity, team.combat_identity(slot), str(slot), team.combat_identity(0), true)
+		assert(crew_assigned.ok, str(crew_assigned))
 	for _step in range(600):
 		_tick()
 		if ui.vehicles.crew_ready(vehicle) and vehicle.command.get("type", "") == "stop": break

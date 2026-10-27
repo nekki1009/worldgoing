@@ -1,5 +1,6 @@
 extends "res://scripts/tests/site_siege_generated_art_visual_test.gd"
 ## A separate GPU fixture for manual ground landmarks; no siege gameplay records.
+# FORMAL_ENTRY_SCENE / ORIGINAL_SITE_SCENE are inherited from the parent fixture.
 const CALIBRATION_OUT := "res://output/site_siege_direction_calibration_20261004/visual"
 const AXIS_CROSS_LIMIT := 0.02
 const GROUND_EPSILON_PIXELS := 1.0
@@ -217,7 +218,7 @@ func _calibration_gallery(kind: String, title: String, number: int) -> bool:
 
 func _run() -> void:
 	if not _check(DisplayServer.get_name() != "headless", "GPU viewport required"): return
-	if not _check(ProjectSettings.get_setting("application/run/main_scene") == "res://scenes/terrain_lab/TerrainLab.tscn", "Original main scene required"): return
+	if not _check(ProjectSettings.get_setting("application/run/main_scene") == FORMAL_ENTRY_SCENE, "Formal entry point is unchanged; the fixture loads the original TerrainLab scene"): return
 	if not _check(DirAccess.make_dir_recursive_absolute(CALIBRATION_OUT) == OK and FileAccess.file_exists(MANIFEST), "Missing calibration output or art manifest"): return
 	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(MANIFEST))
 	if not _check(parsed is Dictionary and int(parsed.get("schema_version", 0)) == 1 and parsed.get("entries") is Dictionary, "Art manifest schema"): return
@@ -225,7 +226,7 @@ func _run() -> void:
 	root.size = Vector2i(1800, 1100)
 	root.content_scale_size = root.size
 	root.gui_embed_subwindows = true
-	var main: PackedScene = load(ProjectSettings.get_setting("application/run/main_scene"))
+	var main: PackedScene = load(ORIGINAL_SITE_SCENE)
 	lab = main.instantiate()
 	lab.pause_when_unfocused = false
 	root.add_child(lab)

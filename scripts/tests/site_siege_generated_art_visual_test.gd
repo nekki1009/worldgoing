@@ -1,5 +1,9 @@
 extends SceneTree
 ## GPU integration proof using the original main scene, Army and VehicleView.
+# The formal entry point is the main menu since ef39140 (World / Region / Site layers). This fixture
+# drives the original TerrainLab scene directly and only checks that the entry was not changed.
+const FORMAL_ENTRY_SCENE := "res://scenes/main_menu/MainMenu.tscn"
+const ORIGINAL_SITE_SCENE := "res://scenes/terrain_lab/TerrainLab.tscn"
 const OUT := "res://output/site_siege_generated_art_20261003/integration/visual"
 const MANIFEST := "res://assets/vehicles/siege/v1/siege_art.json"
 const Helper = preload("res://scripts/tests/fixtures/combat_movement_test_helper.gd")
@@ -262,14 +266,14 @@ func _gallery(kind: String, title: String, number: int) -> bool:
 
 func _run() -> void:
 	if not _check(DisplayServer.get_name() != "headless", "GPU viewport required"): return
-	if not _check(ProjectSettings.get_setting("application/run/main_scene") == "res://scenes/terrain_lab/TerrainLab.tscn", "Original main scene required"): return
+	if not _check(ProjectSettings.get_setting("application/run/main_scene") == FORMAL_ENTRY_SCENE, "Formal entry point is unchanged; the fixture loads the original TerrainLab scene"): return
 	if not _check(DirAccess.make_dir_recursive_absolute(OUT) == OK and FileAccess.file_exists(MANIFEST), "Missing output directory or formal art manifest"): return
 	var manifest: Variant = JSON.parse_string(FileAccess.get_file_as_string(MANIFEST))
 	if not _check(manifest is Dictionary and int(manifest.get("schema_version", 0)) == 1, "Art manifest schema"): return
 	root.size = Vector2i(1800, 1100)
 	root.content_scale_size = root.size
 	root.gui_embed_subwindows = true
-	var main: PackedScene = load(ProjectSettings.get_setting("application/run/main_scene"))
+	var main: PackedScene = load(ORIGINAL_SITE_SCENE)
 	lab = main.instantiate()
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
@@ -315,6 +319,13 @@ func _run() -> void:
 	if not _walk(0, data.cell_from_index(int(station.cell))): return
 	var worked: Dictionary = Runtime.advance_siege_work(data, identity, "construct", float(vehicle.build.total_work), team.cells[0], int(station.slot), team.team_id)
 	if not _check(worked.ok and vehicle.phase == "idle" and vehicle.build.is_empty(), "Original worker completion", worked): return
+	# Visual crew commit requires each crew member's published appearance and prepared siege work
+	# assets, exactly as the UI crew path prepares them (headless verifies mechanics only).
+	var crew_ids: Array = [original_ids[0], original_ids[1]]
+	for crew_id: Variant in crew_ids: ui.equipment_changed(int(crew_id))
+	var crew_assets_ready: bool = await ui._prepare_siege_work_people(crew_ids)
+	if not _check(crew_assets_ready, "Original Controller prepares the actual crew work assets before assignment"): return
+	await process_frame # Leave the preparation's completion signal before continuing.
 	for slot in range(2):
 		var assigned: Dictionary = ui.vehicles.assign_crew(identity, original_ids[slot], str(slot), original_ids[0], true)
 		if not _check(assigned.ok, "Original Army crew assignment", assigned): return

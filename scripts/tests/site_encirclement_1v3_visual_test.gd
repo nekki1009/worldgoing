@@ -3,6 +3,10 @@ extends SceneTree
 ## owner and the original Army owner with one live captain and two baked soldiers.
 ## The headless simultaneous-exchange test owns the complete result matrix; this
 ## fixture checks that a mixed 1v3 round leaves the surrounded actor visibly hit.
+# The formal entry point is the main menu since ef39140 (World / Region / Site layers). This fixture
+# drives the original TerrainLab scene directly and only checks that the entry was not changed.
+const FORMAL_ENTRY_SCENE := "res://scenes/main_menu/MainMenu.tscn"
+const ORIGINAL_SITE_SCENE := "res://scenes/terrain_lab/TerrainLab.tscn"
 
 const OUT := "res://output/encirclement_simultaneous_20260925/visual_1v3"
 const SOURCES := ["res://project.godot", "res://scripts/terrain_lab/terrain_lab.gd",
@@ -53,12 +57,12 @@ func _run() -> void:
 		await _run_extended(case_name)
 		return
 	assert(DisplayServer.get_name() != "headless", "GPU window required")
-	assert(ProjectSettings.get_setting("application/run/main_scene") == "res://scenes/terrain_lab/TerrainLab.tscn")
+	assert(ProjectSettings.get_setting("application/run/main_scene") == FORMAL_ENTRY_SCENE)
 	assert(DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUT)) == OK)
 	root.size = Vector2i(1600, 900)
 	root.content_scale_size = root.size
 	var hashes := _hashes()
-	lab = (load(ProjectSettings.get_setting("application/run/main_scene")) as PackedScene).instantiate() as TerrainLab
+	lab = (load(ORIGINAL_SITE_SCENE) as PackedScene).instantiate() as TerrainLab
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	current_scene = lab
@@ -264,14 +268,14 @@ func _run_extended(case_name: String) -> void:
 	assert(case_name in ["1v4-all-win", "1v4-mixed", "1v4-draw", "1v4-blocked-push",
 		"army-center-mixed", "army-center-draw"], "Unknown encirclement visual case: " + case_name)
 	assert(DisplayServer.get_name() != "headless", "GPU window required")
-	assert(ProjectSettings.get_setting("application/run/main_scene") == "res://scenes/terrain_lab/TerrainLab.tscn")
+	assert(ProjectSettings.get_setting("application/run/main_scene") == FORMAL_ENTRY_SCENE)
 	var directory := GAP_OUT + "/" + case_name
 	assert(DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(directory)) == OK)
 	deadline_ms = Time.get_ticks_msec() + 140000
 	root.size = Vector2i(1600, 900)
 	root.content_scale_size = root.size
 	var hashes := _hashes()
-	lab = (load(ProjectSettings.get_setting("application/run/main_scene")) as PackedScene).instantiate() as TerrainLab
+	lab = (load(ORIGINAL_SITE_SCENE) as PackedScene).instantiate() as TerrainLab
 	lab.pause_when_unfocused = false
 	root.add_child(lab)
 	current_scene = lab

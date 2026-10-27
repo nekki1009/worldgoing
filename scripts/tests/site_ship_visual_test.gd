@@ -1,5 +1,9 @@
 extends SceneTree
 ## GPU-only: real main scene, original Army people, Transport and VehicleView.
+# The formal entry point is the main menu since ef39140 (World / Region / Site layers). This fixture
+# drives the original TerrainLab scene directly and only checks that the entry was not changed.
+const FORMAL_ENTRY_SCENE := "res://scenes/main_menu/MainMenu.tscn"
+const ORIGINAL_SITE_SCENE := "res://scenes/terrain_lab/TerrainLab.tscn"
 const OUT := "res://output/site_ship_implementation_20261003/visual"
 const Helper = preload("res://scripts/tests/fixtures/combat_movement_test_helper.gd")
 const Data = preload("res://scripts/terrain_lab/terrain_data.gd")
@@ -133,10 +137,13 @@ func _capture(name_value: String, details: Dictionary = {}) -> bool:
 	var vehicles: SiteVehicleTransport = lab.site_controller.vehicles
 	for vehicle_id: String in [first_id, second_id]:
 		var node: Node2D = lab.site_controller.vehicle_view._ship_nodes.get(vehicle_id)
-		if not _require(node != null and node.has_meta("ship_debug_geometry") and node.get_node("Hull") is Polygon2D, "Capture requires both actual original boat presenters"): return false
-		var hull: Polygon2D = node.get_node("Hull")
-		if not _require(hull.is_visible_in_tree() and node.z_index > 0 and hull.polygon.size() >= 3,
-			"Original boat hull must be visible above terrain: " + str({"vehicle_id": vehicle_id, "visible": hull.is_visible_in_tree(), "z_index": node.z_index, "points": hull.polygon.size()})): return false
+		# The published ship PNG replaced the gray debug hull (site_vehicle_view.gd: the gray Hull
+		# exists only while the original art is missing; formal art hides it). Require the formal art,
+		# as site_ship_formal_lifecycle_visual_test does.
+		if not _require(node != null and node.get_meta("ship_formal_art", false) and node.get_node_or_null("Body") is Sprite2D and node.get_node("Hull") is Polygon2D, "Capture requires both actual original boat presenters"): return false
+		var body: Sprite2D = node.get_node("Body")
+		if not _require(node.is_visible_in_tree() and body.is_visible_in_tree() and body.texture != null and node.z_index > 0 and not (node.get_node("Hull") as Polygon2D).visible,
+			"Original boat must be drawn with its formal art above terrain: " + str({"vehicle_id": vehicle_id, "visible": body.is_visible_in_tree(), "textured": body.texture != null, "z_index": node.z_index, "gray_hull": (node.get_node("Hull") as Polygon2D).visible})): return false
 	var picture := root.get_texture().get_image()
 	if not _require(not picture.is_empty() and picture.save_png(OUT + "/" + name_value + ".png") == OK, "GPU screenshot could not be saved: " + name_value): return false
 	details.merge({"file": name_value + ".png", "original_army_ids": people.duplicate(),
@@ -160,12 +167,12 @@ func _contact_sheet() -> bool:
 
 func _run() -> void:
 	if not _require(DisplayServer.get_name() != "headless", "This entrypoint requires the GPU viewport"): return
-	if not _require(ProjectSettings.get_setting("application/run/main_scene") == "res://scenes/terrain_lab/TerrainLab.tscn", "Fixture requires the original TerrainLab main scene"): return
+	if not _require(ProjectSettings.get_setting("application/run/main_scene") == FORMAL_ENTRY_SCENE, "Formal entry point is unchanged; the fixture loads the original TerrainLab scene"): return
 	if not _require(DirAccess.make_dir_recursive_absolute(OUT) == OK, "Visual output directory could not be created"): return
 	root.size = Vector2i(1800, 1100)
 	root.content_scale_size = root.size
 	root.gui_embed_subwindows = true
-	var main: PackedScene = load(ProjectSettings.get_setting("application/run/main_scene"))
+	var main: PackedScene = load(ORIGINAL_SITE_SCENE)
 	lab = main.instantiate()
 	lab.npc = TerrainTestNPC.new() # Original optional NPC, with its real visual initializer.
 	lab.pause_when_unfocused = false

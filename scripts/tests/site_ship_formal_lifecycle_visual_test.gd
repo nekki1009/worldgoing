@@ -1,5 +1,9 @@
 extends SceneTree
 ## OUTPUT CANDIDATE ONLY. Original nine owner-behaviour captures, adapted to approved formal art.
+# The formal entry point is the main menu since ef39140 (World / Region / Site layers). This fixture
+# drives the original TerrainLab scene directly and only checks that the entry was not changed.
+const FORMAL_ENTRY_SCENE := "res://scenes/main_menu/MainMenu.tscn"
+const ORIGINAL_SITE_SCENE := "res://scenes/terrain_lab/TerrainLab.tscn"
 const OUT := "res://output/site_ship_close_20261004/formal_lifecycle_visual"
 const MANIFEST := "res://assets/vehicles/ships/v1/ship_art.json"
 const Ships = preload("res://scripts/terrain_lab/site_vehicle_ship_definitions.gd")
@@ -283,7 +287,7 @@ func _contact_sheet() -> bool:
 
 func _run() -> void:
 	if not _require(DisplayServer.get_name() != "headless", "This entrypoint requires the GPU viewport"): return
-	if not _require(ProjectSettings.get_setting("application/run/main_scene") == "res://scenes/terrain_lab/TerrainLab.tscn", "Fixture requires the original TerrainLab main scene"): return
+	if not _require(ProjectSettings.get_setting("application/run/main_scene") == FORMAL_ENTRY_SCENE, "Formal entry point is unchanged; the fixture loads the original TerrainLab scene"): return
 	var manifest: Variant = JSON.parse_string(FileAccess.get_file_as_string(MANIFEST))
 	if not _require(manifest is Dictionary and manifest.get("schema_version") == 1 and manifest.get("definition_version") == Ships.VERSION and manifest.get("entries") is Dictionary and manifest.entries.size() == 6, "Missing or invalid approved formal manifest is a failure"): return
 	for kind: String in Ships.KINDS:
@@ -294,7 +298,7 @@ func _run() -> void:
 	root.size = Vector2i(1800, 1100)
 	root.content_scale_size = root.size
 	root.gui_embed_subwindows = true
-	var main: PackedScene = load(ProjectSettings.get_setting("application/run/main_scene"))
+	var main: PackedScene = load(ORIGINAL_SITE_SCENE)
 	lab = main.instantiate()
 	lab.npc = TerrainTestNPC.new() # Original optional NPC, with its real visual initializer.
 	lab.pause_when_unfocused = false
