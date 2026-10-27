@@ -163,15 +163,22 @@ func _ground_refusals() -> bool:
 	var target: TerrainData = destination.data
 	target.site.actors = {"player": fixture.data.site.actors.player.duplicate(true)}
 	var occupied := slot._ground_transfer_pair(fixture.data, target, prepared.request, slot.site_path(fixture.to))
-	assert(not occupied.ok and str(occupied.code) == "ACTOR_SLOT_OCCUPIED")
+	# Current RegionTravel.insert contract: an occupied original actor slot is a genuine owner conflict.
+	assert(not occupied.ok and str(occupied.code) == "ID_CONFLICT", str(occupied))
 	target.site.actors = {}
 	var item_id := str(fixture.data.site.actors.player.item_state.item_ids[0])
 	target.site.item_records[item_id] = {"holder": "depot", "original_owner": 999, "definition": "test"}
 	var collision := slot._ground_transfer_pair(fixture.data, target, prepared.request, slot.site_path(fixture.to))
-	assert(not collision.ok and str(collision.code) == "ID_CONFLICT")
+	# A destination-local item id is remapped by the original arrival mapping (prepare_arrival), never merged:
+	# the incoming item takes a fresh id and the destination keeps its own record under the old id.
+	assert(collision.ok, str(collision))
+	var remapped := str(collision.mapping.maps.item.get(item_id, ""))
+	assert(not remapped.is_empty() and remapped != item_id and not target.site.item_records.has(remapped), str(collision.mapping))
+	assert(int(collision.destination_data.site.item_records[item_id].original_owner) == 999 and collision.destination_data.site.item_records.has(remapped))
 	target.site.item_records = {"999": {"holder": "depot", "original_owner": fixture.id, "definition": "test"}}
 	var history := slot._ground_transfer_pair(fixture.data, target, prepared.request, slot.site_path(fixture.to))
-	assert(not history.ok and str(history.code) == "ID_CONFLICT")
+	# A historical record naming the same world-unique person (P6 allocator) is not an id collision.
+	assert(history.ok and str(history.mapping.maps.item.get(item_id, "")) == item_id, str(history))
 	assert(JSON.stringify(fixture.data.site) == before and slot._marker.is_empty())
 	fixture.lab.free()
 	return true
