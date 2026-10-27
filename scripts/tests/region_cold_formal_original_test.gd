@@ -46,7 +46,27 @@ func _formal_same(first: Variant, second: Variant, path: String = "full_original
 		for index: int in range(first.size()):
 			if not _formal_same(first[index], second[index], path + "[%d]" % index): return false
 		return true
+	# The original owner graph stores each scalar as an exact var_to_bytes atom, base64 text
+	# (site_region_owner_snapshot.gd _encode: {"kind": "atom", "bytes": ...}). A numeric atom is
+	# still a number: compare it with the same numeric rule as above, every other atom exactly.
+	if first is String and second is String and first != second:
+		var numbers: Array[float] = _formal_numeric_atoms(first, second)
+		if numbers.size() == 2: return _check(absf(numbers[0] - numbers[1]) <= 0.00001, path + " (numeric owner atom)", [first, second, numbers])
 	return _check(first == second, path, [first, second])
+
+## Both strings must be complete var_to_bytes encodings of an int or float (Variant type 2 or 3,
+## 32- or 64-bit payload); anything else returns [] and keeps the exact comparison.
+func _formal_numeric_atoms(first: String, second: String) -> Array[float]:
+	var numbers: Array[float] = []
+	for text: String in [first, second]:
+		if text.length() not in [12, 16]: return []
+		var raw: PackedByteArray = Marshalls.base64_to_raw(text)
+		if raw.size() not in [8, 12] or raw[0] not in [TYPE_INT, TYPE_FLOAT] or raw[1] != 0 or raw[3] != 0 or raw[2] > 1: return []
+		if (raw[2] == 1) != (raw.size() == 12): return []
+		var value: Variant = bytes_to_var(raw)
+		if not (value is int or value is float): return []
+		numbers.append(float(value))
+	return numbers
 
 func _run() -> void:
 	RegionTravelSite.scene_handoff = false
