@@ -8895,6 +8895,11 @@ const COMBAT_SAVED_FLOATS := ["training", "command_radius", "pursuit_left", "_co
 const COMBAT_SAVED_BOOLS := ["combat_attacking", "needs_attack_order", "command_reference_valid"]
 
 func capture_combat_state(read_only: bool = false) -> Dictionary:
+	# A zero-time hit, custody or role change only marks the command dirty (it is settled at the next
+	# step). A written snapshot must already carry that settled presence and commander, which
+	# valid_combat_state requires (a present row is eligible; the current commander is eligible).
+	# settle_combat_command is a no-op when nothing is dirty; read-only captures stay untouched.
+	if not read_only: settle_combat_command()
 	if not read_only: sync_shared_fatigue()
 	var snapshot := {"schema": 2, "roster_version": 1, "visual_version": 1, "loadout": "standard_soldier_v2", "units": [], "abilities": [],
 		"officers": officer_order.duplicate(), "officer_service": officer_service.duplicate(), "vacancies": [], "rng": str(command_rng.state),
