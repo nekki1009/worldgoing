@@ -6,7 +6,9 @@ const FORMAL_ENTRY_SCENE := "res://scenes/main_menu/MainMenu.tscn"
 const ORIGINAL_SITE_SCENE := "res://scenes/terrain_lab/TerrainLab.tscn"
 const OUT := "res://output/npc_ai_acceptance_20260918/logistics"
 const Vehicles = preload("res://scripts/terrain_lab/site_vehicle_transport.gd")
+const DEADLINE_MS := 105000 # In-file budget. Synchronous loops below check it themselves, because SceneTree._process cannot run inside them.
 var deadline := 0
+var failure_recorded := false
 var lab: TerrainLab
 var results: Array[Dictionary] = []
 var paused_checks := 0
@@ -27,7 +29,7 @@ func _space_safe() -> bool:
 	return true
 
 func _initialize() -> void:
-	deadline = Time.get_ticks_msec() + 105000
+	deadline = Time.get_ticks_msec() + DEADLINE_MS
 	_run.call_deferred()
 
 func _process(_delta: float) -> bool:
@@ -36,13 +38,26 @@ func _process(_delta: float) -> bool:
 		quit(1)
 	return false
 
-func _check(value: bool, message: String) -> bool:
-	if not value:
+# The first failure wins: later checks in a short-circuited caller must not overwrite the reason.
+func _fail(message: String) -> bool:
+	if not failure_recorded:
+		failure_recorded = true
 		var file := FileAccess.open(OUT + "/result.json", FileAccess.WRITE)
 		file.store_string(JSON.stringify({"passed":false,"failure":message,"cases":results}, "\t"))
 		push_error(message)
 		quit(1)
+	return false
+
+func _check(value: bool, message: String) -> bool:
+	if not value:
+		return _fail(message)
 	return value
+
+# Called once per iteration of every synchronous loop. A slow run fails here with the place it reached.
+func _deadline_ok(where: String) -> bool:
+	if Time.get_ticks_msec() <= deadline:
+		return true
+	return _fail("Multi-vehicle logistics acceptance exceeded its %d ms in-file budget inside %s (slow run, not a logic failure)" % [DEADLINE_MS, where])
 
 func _press(name: String) -> void:
 	var button := lab.site_controller.combat_window.find_child(name, true, false) as Button
@@ -52,6 +67,7 @@ func _press(name: String) -> void:
 func _patch(width: int) -> Vector2i:
 	for y in range(1, lab.terrain.size.y - width):
 		for x in range(1, lab.terrain.size.x - width):
+			if not _deadline_ok("origin patch scan"): return TerrainArmy.INVALID_CELL
 			var legal := true
 			for row in range(width):
 				for column in range(width):
@@ -74,7 +90,15 @@ func _large_anchor() -> Vector2i:
 	# Read-only choose an actual original 96-person footprint whose requested goals are real ground.
 	for y in range(lab.terrain.size.y - 10):
 		for x in range(9, lab.terrain.size.x - 1):
+			if not _deadline_ok("96-person anchor scan"): return TerrainArmy.INVALID_CELL
 			var anchor := Vector2i(x, y)
+			# Exact prefilter: each footprint offset is itself the first cell of a candidate formation, so a blocked offset cannot be legal.
+			var offsets_free := true
+			for offset: Vector2i in [Vector2i.ZERO, Vector2i.RIGHT, Vector2i.ONE, Vector2i.DOWN]:
+				var cell := anchor + offset
+				if not lab.terrain.is_walkable(cell) or lab.character.occupies_cell(cell) or (is_instance_valid(lab.npc) and lab.npc.occupies_cell(cell)):
+					offsets_free = false
+			if not offsets_free: continue
 			var legal := true
 			for offset: Vector2i in [Vector2i.ZERO, Vector2i.RIGHT, Vector2i.ONE, Vector2i.DOWN]:
 				if not lab._melee_trial_formation_legal(lab._melee_trial_formation(anchor + offset, 96, true), {}):
@@ -120,6 +144,7 @@ func _move_all(team: TerrainArmy, displacement: Vector2i, label: String) -> bool
 	var initial_goods := {}
 	for vehicle: Dictionary in ui.vehicles.records().values(): initial_goods[vehicle.id] = [vehicle.holder.duplicate(true), vehicle.cargo.duplicate(true), vehicle.team_id, vehicle.operator_id]
 	for tick in range(1800):
+		if not _deadline_ok("%s, MOVE tick %d of 1800" % [label, tick]): return false
 		lab._process(1.0 / 30.0)
 		if not _space_safe(): return false
 		elapsed += 1.0 / 30.0
@@ -202,6 +227,7 @@ func _probe(slots: int) -> bool:
 	ui.trial_wagons.friendly.value = 1 if slots == 4 else 2
 	ui.trial_friendly_spawn = _camp_anchor() if slots == 4 else (origin + Vector2i(3,3) if slots == 12 else _large_anchor())
 	if not _check(ui.trial_friendly_spawn != TerrainArmy.INVALID_CELL, "Find untouched legal 96-person original formation and all three goal formations"): return false
+	if not _deadline_ok("StartMeleeTrial for %d slots" % slots): return false
 	_press("StartMeleeTrial")
 	var team := lab.army
 	var cars := 2 if slots == 4 else 4
