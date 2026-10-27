@@ -33,6 +33,7 @@ func _require(ok: bool, message: String) -> bool:
 	if not ok:
 		push_error(message)
 		_cleanup()
+		TerrainArmy.release_contact_source() # Headless teardown: release the shared contact rig before the post-quit frame (as 8ab42b0/54cd151).
 		quit(1)
 	return ok
 
@@ -127,4 +128,5 @@ func _run() -> void:
 	if not _require(visited.size() == 30 and TOUR[-1] == "square", "Did not cover all 30 directed preset pairs"): return
 	_cleanup()
 	print("COMBAT FORMATION 25 PAIRWISE SWITCH PASS: 30 directed pairs")
+	TerrainArmy.release_contact_source() # Headless teardown: release the shared contact rig before the post-quit frame (as 8ab42b0/54cd151).
 	quit(0)

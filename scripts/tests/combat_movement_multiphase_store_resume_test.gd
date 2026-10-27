@@ -21,6 +21,7 @@ func _require(condition: bool, message: String) -> bool:
 	if condition:
 		return true
 	push_error(message)
+	TerrainArmy.release_contact_source() # Headless teardown: release the shared contact rig before the post-quit frame (as 8ab42b0/54cd151).
 	quit(1)
 	return false
 
@@ -239,4 +240,5 @@ func _run() -> void:
 	print("COMBAT MOVEMENT MULTIPHASE STORE RESUME PASS observed_phases=", phase_snapshots.keys(), " deployed=true square_hold=true corrupt_load_preserved=true")
 	_source_coordinator.unregister_formation(_source)
 	_source.free()
+	TerrainArmy.release_contact_source() # Headless teardown: release the shared contact rig before the post-quit frame (as 8ab42b0/54cd151).
 	quit(0)

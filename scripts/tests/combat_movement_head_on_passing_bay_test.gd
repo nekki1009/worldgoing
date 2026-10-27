@@ -28,6 +28,7 @@ func _require(condition: bool, message: String) -> bool:
 		return true
 	push_error(message)
 	_dispose()
+	TerrainArmy.release_contact_source() # Headless teardown: release the shared contact rig before the post-quit frame (as 8ab42b0/54cd151).
 	quit(1)
 	return false
 
@@ -160,4 +161,5 @@ func _run() -> void:
 	if not _run_case(false): return
 	if not _run_case(true): return
 	print("COMBAT MOVEMENT HEAD ON PASSING BAY PASS")
+	TerrainArmy.release_contact_source() # Headless teardown: release the shared contact rig before the post-quit frame (as 8ab42b0/54cd151).
 	quit(0)

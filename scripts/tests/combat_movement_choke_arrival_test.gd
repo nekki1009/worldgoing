@@ -21,9 +21,11 @@ func _finish(ok: bool, message: String) -> void:
 		_army.free()
 	if ok:
 		print(message)
+		TerrainArmy.release_contact_source() # Headless teardown: release the shared contact rig before the post-quit frame (as 8ab42b0/54cd151).
 		quit(0)
 	else:
 		push_error(message)
+		TerrainArmy.release_contact_source() # Headless teardown: release the shared contact rig before the post-quit frame (as 8ab42b0/54cd151).
 		quit(1)
 
 func _require(condition: bool, message: String) -> bool:

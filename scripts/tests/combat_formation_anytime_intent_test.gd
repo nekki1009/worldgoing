@@ -256,4 +256,5 @@ func _run() -> void:
 		print("COMBAT FORMATION ANYTIME INTENT PASS: HOLD/MOVE/ATTACK/PURSUE/RETURN/morale-RETREAT/tree+Site-pause; committed edges and tactical clocks; latest pending A-B-C; real Store marker roundtrip")
 	else:
 		push_error("COMBAT FORMATION ANYTIME INTENT FAIL: " + str(_failures.size()) + " invariant failures; see ANYTIME FAILURE details")
+	TerrainArmy.release_contact_source() # Headless teardown: release the shared contact rig before the post-quit frame (as 8ab42b0/54cd151).
 	quit(0 if _failures.is_empty() else 1)

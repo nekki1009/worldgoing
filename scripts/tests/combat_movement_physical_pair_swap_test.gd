@@ -13,6 +13,7 @@ func _initialize() -> void:
 func _require(condition: bool, message: String) -> bool:
 	if not condition:
 		push_error("PHYSICAL PAIR SWAP FAIL: " + message)
+		TerrainArmy.release_contact_source() # Headless teardown: release the shared contact rig before the post-quit frame (as 8ab42b0/54cd151).
 		quit(1)
 	return condition
 
@@ -88,4 +89,5 @@ func _run() -> void:
 	print("COMBAT MOVEMENT PHYSICAL PAIR SWAP PASS")
 	coordinator.unregister_formation(army)
 	army.free()
+	TerrainArmy.release_contact_source() # Headless teardown: release the shared contact rig before the post-quit frame (as 8ab42b0/54cd151).
 	quit(0)

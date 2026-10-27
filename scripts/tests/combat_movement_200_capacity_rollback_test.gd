@@ -24,6 +24,7 @@ func _finish(ok: bool, message: String) -> void:
 	if is_instance_valid(_army):
 		_coordinator.unregister_formation(_army)
 		_army.free()
+	TerrainArmy.release_contact_source() # Headless teardown: release the shared contact rig before the post-quit frame (as 8ab42b0/54cd151).
 	quit(0 if ok else 1)
 
 func _require(condition: bool, message: String) -> bool:

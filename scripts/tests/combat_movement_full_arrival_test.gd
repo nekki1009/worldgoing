@@ -11,6 +11,7 @@ func _require(condition: bool, message: String) -> bool:
 	if condition:
 		return true
 	push_error(message)
+	TerrainArmy.release_contact_source() # Headless teardown: release the shared contact rig before the post-quit frame (as 8ab42b0/54cd151).
 	quit(1)
 	return false
 
@@ -64,4 +65,5 @@ func _run() -> void:
 	print("COMBAT MOVEMENT FULL ARRIVAL PASS: tick=", completed_tick)
 	coordinator.unregister_formation(army)
 	army.free()
+	TerrainArmy.release_contact_source() # Headless teardown: release the shared contact rig before the post-quit frame (as 8ab42b0/54cd151).
 	quit(0)

@@ -10,6 +10,7 @@ func _initialize() -> void:
 func _require(ok: bool, message: String) -> bool:
 	if not ok:
 		push_error(message)
+		TerrainArmy.release_contact_source() # Headless teardown: release the shared contact rig before the post-quit frame (as 8ab42b0/54cd151).
 		quit(1)
 	return ok
 
@@ -124,4 +125,5 @@ func _run() -> void:
 	print("COMBAT FORMATION SWITCH PASS")
 	coordinator.unregister_formation(army)
 	army.free()
+	TerrainArmy.release_contact_source() # Headless teardown: release the shared contact rig before the post-quit frame (as 8ab42b0/54cd151).
 	quit(0)

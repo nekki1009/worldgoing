@@ -16,6 +16,7 @@ func _require(ok: bool, message: String) -> bool:
 	if ok:
 		return true
 	push_error("COMMANDER VACANCY PARITY FAIL: " + message)
+	TerrainArmy.release_contact_source() # Headless teardown: release the shared contact rig before the post-quit frame (as 8ab42b0/54cd151).
 	quit(1)
 	return false
 
@@ -181,4 +182,5 @@ func _run() -> void:
 	if not _test_commander_actor(): return
 	if not _test_target_exchange_then_physical_step(): return
 	print("COMBAT MOVEMENT COMMANDER VACANCY PARITY PASS")
+	TerrainArmy.release_contact_source() # Headless teardown: release the shared contact rig before the post-quit frame (as 8ab42b0/54cd151).
 	quit(0)
