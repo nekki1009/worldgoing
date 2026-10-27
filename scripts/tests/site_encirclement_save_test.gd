@@ -7,6 +7,7 @@ const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const OUT := "res://output/encirclement_gap_closure_20260925/save"
 const SAVE := OUT + "/encirclement_roundtrip.json"
 const LEGACY := OUT + "/legacy_exact_arrow.json"
+const SITE_SCENE := "res://scenes/terrain_lab/TerrainLab.tscn"
 var deadline_ms := 0
 
 func _initialize() -> void:
@@ -115,7 +116,7 @@ func _separated(lab: TerrainLab) -> bool:
 	var center := lab.character.terrain_cell
 	for team: TerrainArmy in lab.combat_armies:
 		for index in range(team.combat_units.size()):
-			if float(team.combat_units[index].hp) > 0.0 and center.distance_to(team.cells[index]) <= 1.0:
+			if float(team.combat_hot_get(index, &"hp", 0.0)) > 0.0 and center.distance_to(team.cells[index]) <= 1.0:
 				return false
 	return true
 
@@ -140,13 +141,14 @@ func _empty_shot_cell(lab: TerrainLab) -> Vector2i:
 	return Vector2i(-1, -1)
 
 func _run() -> void:
-	if not _check(DisplayServer.get_name() == "headless"
-		and ProjectSettings.get_setting("application/run/main_scene") == "res://scenes/terrain_lab/TerrainLab.tscn",
-		"Formal headless TerrainLab entrypoint required"): return
-	var scene := load(ProjectSettings.get_setting("application/run/main_scene")) as PackedScene
+	# ef39140 made the main menu the project entry; the formal Site scene is the one every
+	# production Site entry (region_entry/region_lab/region_travel_panel SITE_SCENE) instantiates.
+	if not _check(DisplayServer.get_name() == "headless", "Formal headless TerrainLab entrypoint required"): return
+	var scene := load(SITE_SCENE) as PackedScene
 	if not _check(scene != null and DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUT)) == OK,
 		"Formal scene or named output unavailable"): return
 	var lab := scene.instantiate() as TerrainLab
+	if not _check(lab != null and lab.scene_file_path == SITE_SCENE, "Formal TerrainLab scene instantiates as the original Site"): return
 	lab.pause_when_unfocused = false
 	lab.set_process(false)
 	root.add_child(lab)
@@ -192,7 +194,11 @@ func _run() -> void:
 	weak.team_fatigue.fatigue = 100.0
 	var local_damage := SiteCombatRules.exchange_hp(str(player.exchange_stats().weapon), str(weak.exchange_stats(1).armor))
 	if not _check(local_damage > 0.0, "A real equipped bow must have a positive melee exchange effect"): return
-	weak.combat_units[1].hp = local_damage * 0.5
+	# The formal TerrainLab scene admits Army hot fields into the native ArmyCombatHot store (V0.5R);
+	# a row write would be ignored there, so hp goes through the canonical hot-field owner.
+	weak.combat_hot_set(1, &"hp", local_damage * 0.5)
+	if not _check(float(weak.combat_hot_get(1, &"hp")) == local_damage * 0.5 and float(strong.combat_hot_get(1, &"hp")) == 100.0,
+		"The original hot-field owner holds the wounded soldier's hp and the healthy opponent's full hp"): return
 	var weak_id := weak.combat_identity(1)
 	var strong_id := strong.combat_identity(1)
 	var dead_item_ids: Array = weak.combat_units[1].item_state.item_ids.duplicate()
@@ -229,8 +235,8 @@ func _run() -> void:
 		var result: Dictionary = event.result
 		winners[other_id] = 0 if int(result.winner) == 0 else int(event.a) if int(result.winner) == 1 else int(event.b)
 	if not _check(events.size() == 2 and lab.exchange_count == 2 and winners.get(weak_id) == player.person_id
-		and winners.get(strong_id) == strong_id and player.hp < player_hp and weak.combat_units[1].hp == 0.0
-		and strong.combat_units[1].hp == 100.0 and controller._pending_deaths.has(weak_id),
+		and winners.get(strong_id) == strong_id and player.hp < player_hp and float(weak.combat_hot_get(1, &"hp")) == 0.0
+		and float(strong.combat_hot_get(1, &"hp")) == 100.0 and controller._pending_deaths.has(weak_id),
 		"One real round must give the surrounded player a loss and a local kill, each pair once"): return
 	if not _check(float(strong.team_fatigue.fatigue) > strong_fatigue_before
 		and is_equal_approx(float(strong.exchange_stats(1).fatigue), float(strong.team_fatigue.fatigue)),

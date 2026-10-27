@@ -26,9 +26,9 @@ class CountedSlot extends RegionSaveSlot:
 	func _read_document(path: String, maximum: int = 1048576) -> Dictionary:
 		if path.contains("/commits/"): commit_reads += 1
 		return super._read_document(path, maximum)
-	func _faction_scan(sites: Dictionary, clock: Dictionary, journey: Dictionary, previous: Dictionary, reserved: Array = [], include_legacy: bool = true) -> Dictionary:
+	func _faction_scan(sites: Dictionary, clock: Dictionary, journey: Dictionary, previous: Dictionary, reserved: Array = [], include_legacy: bool = true, with_persons: bool = false, with_organization_sources: bool = false) -> Dictionary:
 		faction_scans += 1
-		return super._faction_scan(sites, clock, journey, previous, reserved, include_legacy)
+		return super._faction_scan(sites, clock, journey, previous, reserved, include_legacy, with_persons, with_organization_sources)
 	func _load_checked(path: String, site: Vector2i) -> Dictionary:
 		site_reads += 1
 		return super._load_checked(path, site)

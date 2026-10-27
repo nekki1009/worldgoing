@@ -670,7 +670,9 @@ func _recover_read_latest(preserve_live: bool, live_control: Dictionary) -> Dict
 		if clock.has("faction_registry"):
 			# The write-once digest selects fully validated facts across generations.
 			# A miss still checks the bytes and the original Store/World validator.
-			var selected: Dictionary = _faction_site_source(folder.path_join(relative), coordinate, str(entry.sha256))
+			# The faction scan below asks for person sources when the allocator is recorded; the
+			# same single validation records them, so a cold reopen reads each Site once.
+			var selected: Dictionary = _faction_site_source(folder.path_join(relative), coordinate, str(entry.sha256), clock.has("person_allocator"))
 			if not selected.ok: return selected
 		elif _faction_file_sha256(folder.path_join(relative)) != str(entry.sha256):
 			return fail("CORRUPT_SAVE", "提交地點檔案缺失／變更，拒絕重播舊移交")
