@@ -80,7 +80,9 @@ func _preflight() -> bool:
 	folder = OUTPUT.path_join(run_name)
 	if not _expect(not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(folder)), "fresh GPU output folder", folder): return false
 	if not _expect(DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(folder)) == OK, "create isolated capture folder"): return false
-	return _expect(ProjectSettings.get_setting("application/run/main_scene") == "res://scenes/terrain_lab/TerrainLab.tscn", "formal main scene remains the entry point")
+	# The formal entry point is the main menu since ef39140 (World / Region / Site layers); the test
+	# still drives the original TerrainLab scene directly and must not have changed the entry.
+	return _expect(ProjectSettings.get_setting("application/run/main_scene") == "res://scenes/main_menu/MainMenu.tscn", "formal main scene remains the entry point")
 
 var original_npc_fixture := false
 
