@@ -7,6 +7,10 @@ const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
 const Housing = preload("res://scripts/terrain_lab/site_housing.gd")
 const GenesisPanel = preload("res://scripts/region_lab/region_travel_panel.gd")
 var capture_scenes: Array[TerrainLab] = []
+var shells_opened := 0 # Unique archive folder per shell, also after earlier cases' scenes are released.
+var _diag_case := "" # DIAG_ONLY (HEADFIX18): current case label for phase timing.
+var _diag_case_started_ms := 0
+var _diag_initialized_ms := 0
 var capture_results: Array[Dictionary] = []
 var center_owner: TerrainLab
 var center_coordinate := Vector2i.ZERO
@@ -20,15 +24,22 @@ var center_attackers: TerrainArmy
 var genesis_panel: GenesisPanel
 
 func _initialize() -> void:
-	deadline = Time.get_ticks_msec() + 360000
+	# Nekki 2026-10-27 decision A: the visual run (eight cases, ~110 s each with live presenters)
+	# gets 1080 s in-file (1200 s outer); headless keeps 360 s.
+	deadline = Time.get_ticks_msec() + _deadline_seconds() * 1000
+	_diag_initialized_ms = Time.get_ticks_msec()
 	fixture_land_condition_rule = "terrain_mapped_potential_v1" # Original founding needs mapped land.
 	out = "res://.godot-temp/region_siege_center_original/run_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
 	last_world_exists = FileAccess.file_exists(Entry.LAST_WORLD)
 	if last_world_exists: last_world_bytes = FileAccess.get_file_as_bytes(Entry.LAST_WORLD)
 	_run.call_deferred()
 
+func _deadline_seconds() -> int:
+	return 360 if DisplayServer.get_name() == "headless" else 1080
+
 func _process(_delta: float) -> bool:
-	if not finished and Time.get_ticks_msec() > deadline: _finish(false, "360-second original center deadline")
+	if not finished and Time.get_ticks_msec() > deadline:
+		_finish(false, "%d-second original center deadline (%s mode)" % [_deadline_seconds(), "headless" if DisplayServer.get_name() == "headless" else "visual"])
 	return false
 
 func _check(condition: bool, message: String, detail: Variant = null) -> bool:
@@ -50,7 +61,48 @@ func _shell() -> TerrainLab:
 	root.add_child(scene)
 	_freeze(scene)
 	capture_scenes.append(scene)
+	shells_opened += 1
 	return scene
+
+## Each case opens its own pinned world. Scenes of a finished case (main shell, selected
+## restore shells and their cached owner Labs with per-person presenters) are not read again;
+## keeping them all until _finish exhausted the visual GPU descriptor heap. The finished case's
+## production travel panel owns its own original map host Lab (and that host's cached owner Labs);
+## HEADFIX3 DIAG showed it was the ~15k-node / ~2 GB holder carried into the next case.
+func _release_finished_case_scenes() -> void:
+	if is_instance_valid(genesis_panel): genesis_panel.free()
+	genesis_panel = null
+	for scene: TerrainLab in capture_scenes:
+		if is_instance_valid(scene): scene.free()
+	capture_scenes.clear()
+	lab = null
+	center_owner = null
+	center_attackers = null
+	cold = null
+	# No original Lab is alive between cases. Release the process-wide visual sources exactly as the
+	# production Lab does when its last contact-source user leaves in headless (terrain_lab.gd _exit_tree);
+	# visual mode keeps them for in-game navigation, which this 8-world test does not need. Each source
+	# is rebuilt lazily by the next case's first Army.
+	TerrainArmy.release_contact_source()
+	RuntimeHumanCharacter3DEditor.release_runtime_raw_cache()
+	TerrainArmy.SharedVisualSource.release_raw_cache()
+
+func _print_case_resources() -> void:
+	print("REGION_SIEGE_CENTER_CASE_RESOURCES ", JSON.stringify({"shells_opened": shells_opened,
+		"root_children": root.get_child_count(),
+		"texture_mem": Performance.get_monitor(Performance.RENDER_TEXTURE_MEM_USED),
+		"buffer_mem": Performance.get_monitor(Performance.RENDER_BUFFER_MEM_USED),
+		"nodes": Performance.get_monitor(Performance.OBJECT_NODE_COUNT),
+		"subviewports": root.find_children("*", "SubViewport", true, false).size(),
+		"objects": Performance.get_monitor(Performance.OBJECT_COUNT),
+		"video_mem": Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED)}))
+
+## DIAG_ONLY (HEADFIX18): measured wall time per case phase against the unchanged 360 s deadline.
+func _diag_mark(phase: String, detail: Variant = null) -> void:
+	var now: int = Time.get_ticks_msec()
+	print("DIAG_ONLY CENTER_PHASE ", JSON.stringify({"case": _diag_case, "phase": phase, "case_ms": now - _diag_case_started_ms,
+		"since_init_ms": now - _diag_initialized_ms, "deadline_left_ms": deadline - now, "display": DisplayServer.get_name(),
+		"detail": detail if not detail is Object else str(detail)}))
 
 func _run() -> void:
 	RegionTravelSite.scene_handoff = false
@@ -68,8 +120,16 @@ func _run() -> void:
 	_finish()
 
 func _case(spec: Dictionary) -> bool:
+	_release_finished_case_scenes()
+	await process_frame # Let the freed scenes' queued presenters/viewports and GPU RIDs drain.
+	await process_frame
+	_print_case_resources()
+	_diag_case = str(spec.mode) + "_" + str(spec.at) + "_" + str(spec.qualifier)
+	_diag_case_started_ms = Time.get_ticks_msec()
+	_diag_mark("case_start")
 	center_coordinate = Vector2i.ZERO if str(spec.mode) == "live" else Vector2i(1, 0)
 	if not _open_center_world(center_coordinate): return false
+	_diag_mark("world_open")
 	center_owner = lab
 	if not _center_fixture(center_owner, str(spec.mode) != "cold_exact"): return false
 	if str(spec.mode) == "cold_exact":
@@ -89,6 +149,7 @@ func _case(spec: Dictionary) -> bool:
 	if str(spec.qualifier) in ["knocked_defender", "captive_defender"]:
 		if not _birth_original_knocked_defender(): return false
 		if str(spec.qualifier) == "captive_defender" and not await _pay_original_capture(): return false
+	_diag_mark("owners_ready")
 	var due: Dictionary = slot.consume_due_region_events()
 	if not _check(due.ok and due.get("complete", false), "real same-point scheduled owners consume before positive capture", due): return false
 	if not await _drive_capture(float(spec.at)): return false
@@ -195,7 +256,7 @@ func _open_center_world(start: Vector2i, prefix: String = "r0_center") -> bool:
 	Env.initialize(archive, "center-original:archive")
 	lab.bind_terrain(archive)
 	lab.restore_only = false
-	controller.save_root = out.path_join("archive_%d" % capture_scenes.size())
+	controller.save_root = out.path_join("archive_%d" % shells_opened)
 	world_id = "%s_%d_%d" % [prefix, OS.get_process_id(), Time.get_ticks_usec()]
 	var opened: Dictionary = controller.open_fixed_world(manifest_path, world_id, "main", start, true)
 	if not _check(opened.ok, "original Controller creates and live-binds a genuine pinned world", opened): return false
@@ -443,7 +504,22 @@ func _pay_original_capture() -> bool:
 	var count := 0
 	var paid_action := 0.0
 	var paid_game := 0.0
+	var preparing_frames := 0
+	var preparing_started_ms := Time.get_ticks_msec()
 	while center_owner.site_controller.person_actions._jobs.has(str(executor)):
+		# Visual only: the captive's stripped look first prepares its shared atlas (site_person_actions.gd
+		# begin_capture -> _prepare_custody_atlas, same phase as begin_equipment). That phase is neither
+		# work time nor a common step; it completes on frames. Wait for it on frames, bounded by the same
+		# deadline, instead of spending the common-step bound on steps that cannot pay custody work.
+		var custody_job: Dictionary = center_owner.site_controller.person_actions._jobs.get(str(executor), {})
+		if str(custody_job.get("paused", "")) == "PREPARING_ATLAS":
+			if Time.get_ticks_msec() > deadline: return _check(false, "Actual custody atlas preparation did not finish before the deadline", {"frames": preparing_frames})
+			preparing_frames += 1
+			await process_frame
+			continue
+		if preparing_frames > 0:
+			_diag_mark("custody_atlas_prepared", {"frames": preparing_frames, "ms": Time.get_ticks_msec() - preparing_started_ms}) # DIAG_ONLY (HEADFIX18)
+			preparing_frames = -preparing_frames # Report once.
 		if count >= 3000 or Time.get_ticks_msec() > deadline: return _check(false, "Actual custody did not finish within the common-step bound")
 		var step: Dictionary = lab._advance_original_shared_step(TerrainLab.EXCHANGE_ACTION_STEP)
 		if not _check(step.ok and step.get("completed", false) and float(step.action_seconds) > 0.0, "Original common step pays the custody work and all owner endpoints", step): return false
@@ -489,10 +565,14 @@ func _change_original_capture_qualification(spec: Dictionary, paid_fall: Diction
 
 func _drive_capture(target: float) -> bool:
 	var steps := 0
+	_diag_mark("drive_begin", {"target": target, "accrued": float(center_owner.terrain.site.settlement.fall_record.contest_seconds)})
 	while int(center_owner.terrain.site.settlement.owner_faction) == 1:
 		var accrued := float(center_owner.terrain.site.settlement.fall_record.contest_seconds)
 		if target < Settlement.CAPTURE_SECONDS and accrued >= target - EPS: break
-		if steps >= 12000 or Time.get_ticks_msec() > deadline: return _check(false, "bounded original capture progress did not complete", target)
+		if steps >= 12000 or Time.get_ticks_msec() > deadline:
+			_diag_mark("drive_bound", {"target": target, "steps": steps, "step_cap": steps >= 12000, "deadline": Time.get_ticks_msec() > deadline, "accrued": accrued,
+				"owner_faction": int(center_owner.terrain.site.settlement.owner_faction)})
+			return _check(false, "bounded original capture progress did not complete", target)
 		var maximum := TerrainLab.EXCHANGE_ACTION_STEP if lab.exchange_enabled else TerrainLab.ACTION_STEP
 		var tactical := minf(maximum, float(lab.terrain.site.get("combat_left", 0.0)))
 		var actual_originals: Array[TerrainLab] = [lab]
@@ -524,6 +604,7 @@ func _drive_capture(target: float) -> bool:
 		if not _check(paid or actual_zero_fall, "actual common producer pays one interval or consumes its real completed center endpoint", result): return false
 		steps += 1
 		if steps % 60 == 0: await process_frame
+	_diag_mark("drive_end", {"target": target, "steps": steps})
 	var reached: bool = int(center_owner.terrain.site.settlement.owner_faction) == 2 if target == Settlement.CAPTURE_SECONDS else absf(float(center_owner.terrain.site.settlement.fall_record.contest_seconds) - target) <= EPS
 	return _check(reached, "original source reaches the requested actual capture observation", {"target": target, "steps": steps, "fall": center_owner.terrain.site.settlement.fall_record})
 
