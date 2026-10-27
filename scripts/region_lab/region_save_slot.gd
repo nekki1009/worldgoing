@@ -11752,13 +11752,16 @@ func _faction_site_source(path: String, site: Vector2i, checksum: String, with_p
 		Store.invalidate_faction_summary_path(path)
 		return fail("CORRUPT_SAVE", "faction source file missing")
 	var shared_record: Dictionary = _faction_static_site_record(path, site, checksum) if _faction_static_original_validator() else {}
-	if not with_persons and _faction_static_reading and not present and not shared_record.is_empty():
+	if _faction_static_reading and not present and not shared_record.is_empty():
 		var shared: Dictionary = _faction_static_site_cached(shared_record)
-		if not shared.is_empty():
+		# Person-allocator worlds also need the Site's person projection; only a process entry that
+		# carries the digest-checked projection of the same validated file can stand in for the load.
+		if not shared.is_empty() and (not with_persons or shared.get("persons") is Dictionary):
 			if _faction_file_sha256(path) != checksum:
 				Store.invalidate_faction_summary_path(path)
 				return fail("CORRUPT_SAVE", "faction source changed during validation")
 			if Store.faction_summary_serial() == int(shared_record.serial):
+				if with_persons: _remember_person_source(key, shared.persons)
 				return _faction_remember(key, shared.summary)
 	var loaded: Dictionary = _load_checked(path, site)
 	if _faction_file_sha256(path) != checksum:
@@ -11767,12 +11770,13 @@ func _faction_site_source(path: String, site: Vector2i, checksum: String, with_p
 	if not loaded.ok:
 		Store.invalidate_faction_summary_path(path)
 		return loaded
-	if with_persons: _remember_person_source(key, person_projection(loaded.data.site))
+	var persons: Variant = person_projection(loaded.data.site) if with_persons else null
+	if with_persons: _remember_person_source(key, persons)
 	var summarized: Dictionary = _faction_site_summary(loaded.data)
 	if not summarized.ok:
 		Store.invalidate_faction_summary_path(path)
 		return summarized
-	if not shared_record.is_empty(): _faction_static_site_remember(shared_record, summarized.summary)
+	if not shared_record.is_empty(): _faction_static_site_remember(shared_record, summarized.summary, persons)
 	return _faction_remember(key, summarized.summary)
 
 func _faction_site_summary(data: TerrainData) -> Dictionary:
@@ -12171,13 +12175,30 @@ func _faction_static_site_cached(record: Dictionary) -> Dictionary:
 	if bytes != memo.bytes or cached.digest != memo.digest or _faction_digest_bytes(bytes) != cached.digest:
 		_faction_static_site_drop(key)
 		return {}
-	return {"ok": true, "summary": cached.summary}
+	var result: Dictionary = {"ok": true, "summary": cached.summary}
+	if cached.has("persons") or memo.has("persons_bytes"):
+		# Optional person projection of the same validated file; checked like the summary.
+		if not cached.get("persons") is Dictionary or not cached.get("persons_digest") is String or not memo.get("persons_bytes") is PackedByteArray:
+			_faction_static_site_drop(key)
+			return {}
+		var person_bytes: PackedByteArray = var_to_bytes(cached.persons)
+		if person_bytes != memo.persons_bytes or _faction_digest_bytes(person_bytes) != cached.persons_digest:
+			_faction_static_site_drop(key)
+			return {}
+		result["persons"] = cached.persons
+	return result
 
-func _faction_static_site_remember(record: Dictionary, summary: Dictionary) -> void:
+func _faction_static_site_remember(record: Dictionary, summary: Dictionary, persons: Variant = null) -> void:
 	var key: String = str(record.key)
 	var bytes: PackedByteArray = var_to_bytes(summary)
 	var digest: String = _faction_digest_bytes(bytes)
 	var cached: Dictionary = {"summary": summary.duplicate(true), "digest": digest}
+	var memo: Dictionary = {"bytes": bytes, "digest": digest}
+	if persons is Dictionary:
+		var person_bytes: PackedByteArray = var_to_bytes(persons)
+		cached["persons"] = persons.duplicate(true)
+		cached["persons_digest"] = _faction_digest_bytes(person_bytes)
+		memo["persons_bytes"] = person_bytes
 	_faction_static_site_mutex.lock()
 	if int(record.serial) != Store._faction_summary_serial:
 		_faction_static_site_mutex.unlock()
@@ -12188,7 +12209,7 @@ func _faction_static_site_remember(record: Dictionary, summary: Dictionary) -> v
 		_faction_static_site_memo.erase(evicted)
 		_faction_static_site_metadata.erase(evicted)
 	_faction_static_site_cache[key] = cached
-	_faction_static_site_memo[key] = {"bytes": bytes, "digest": digest}
+	_faction_static_site_memo[key] = memo
 	_faction_static_site_metadata[key] = record.metadata.duplicate(true)
 	_faction_static_site_mutex.unlock()
 
