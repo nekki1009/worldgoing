@@ -260,7 +260,7 @@ func _run() -> void:
 	for kind: String in KINDS:
 		var definition: Variant = calibration_manifest.entries.get(kind)
 		if not _check(definition is Dictionary and _point(definition.get("body_footprint_cells")) and _v2(definition.body_footprint_cells) == Vector2(FOOTPRINTS[kind]), "Manifest footprint changed", {"kind": kind}): return
-		if not _check(bool(definition.get("gameplay_available", false)) == (kind == "ballista"), "Pure gallery does not add other kinds gameplay", {"kind": kind}): return
+		if not _check(bool(definition.get("gameplay_available", false)) == (Runtime.SIEGE_DEFINITIONS.has(kind) or Runtime.FEATURES.has(kind)), "Manifest gameplay flag differs from runtime-owned kinds", {"kind": kind}): return
 		for quarter in range(4):
 			if not _check_frame(kind, FACINGS[quarter], DIRECTIONS[quarter]): return
 			if kind == "ballista" and not _check_preserved_ballista(FACINGS[quarter], DIRECTIONS[quarter]): return

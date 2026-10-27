@@ -55,7 +55,8 @@ func _body_aim(vehicle: Dictionary, target_actor: TerrainTestCharacter) -> Dicti
 func _run() -> void:
 	assert(DisplayServer.get_name() != "headless", "This test requires the GPU viewport")
 	assert(ProjectSettings.get_setting("application/run/main_scene") == FORMAL_ENTRY_SCENE)
-	assert(DirAccess.make_dir_recursive_absolute(OUT) == OK)
+	var output_ready: int = DirAccess.make_dir_recursive_absolute(OUT)
+	assert(output_ready == OK, str(output_ready))
 	root.size = Vector2i(1800, 1100)
 	root.content_scale_size = root.size
 	root.gui_embed_subwindows = true
@@ -98,7 +99,9 @@ func _run() -> void:
 	team.team_id = lab._next_army_identity()
 	team.roster_size = 2
 	var initial: Array[Vector2i] = [anchor - Vector2i(3, 0), anchor - Vector2i(3, -1)]
-	assert(team.deploy_at(data, lab.character, lab.npc, initial) and team.enable_combat(false, 0))
+	var deployed: bool = team.deploy_at(data, lab.character, lab.npc, initial)
+	var combat_enabled: bool = deployed and team.enable_combat(false, 0)
+	assert(combat_enabled, "Original two-person Army fixture")
 	team.set_process(false)
 	var built := Runtime.begin_siege_build(data, "ballista", anchor, Vector2i.RIGHT, team.team_id, team.combat_identity(0), ui.reserves_cell)
 	assert(built.ok and int(data.site.inventory.wood) == 216, str(built))
@@ -106,9 +109,18 @@ func _run() -> void:
 	var vehicle: Dictionary = data.site.vehicles[identity]
 	var station: Dictionary = Runtime.siege_work_slots(data, vehicle)[0]
 	_walk(0, data.cell_from_index(int(station.cell)))
-	assert(Runtime.advance_siege_work(data, identity, "construct", float(vehicle.build.total_work), team.cells[0], int(station.slot), team.team_id).ok)
+	var worked: Dictionary = Runtime.advance_siege_work(data, identity, "construct", float(vehicle.build.total_work), team.cells[0], int(station.slot), team.team_id)
+	assert(worked.ok, str(worked))
+	# Visual crew commit requires each crew member's published appearance and prepared siege work
+	# assets, exactly as the formal parent and the UI crew path prepare them.
+	var crew_ids: Array = [team.combat_identity(0), team.combat_identity(1)]
+	for crew_id: Variant in crew_ids: ui.equipment_changed(int(crew_id))
+	var crew_assets_ready: bool = await ui._prepare_siege_work_people(crew_ids)
+	assert(crew_assets_ready, "Original Controller prepares the actual crew work assets before assignment")
+	await process_frame # Leave the preparation's completion signal before continuing.
 	for slot in range(2):
-		assert(ui.vehicles.assign_crew(identity, team.combat_identity(slot), str(slot), team.combat_identity(0), true).ok)
+		var crew_assigned: Dictionary = ui.vehicles.assign_crew(identity, team.combat_identity(slot), str(slot), team.combat_identity(0), true)
+		assert(crew_assigned.ok, str(crew_assigned))
 	var crew_commits := 0
 	for _step in range(600):
 		var before: Array[Vector2i] = team.cells.duplicate()
@@ -126,7 +138,8 @@ func _run() -> void:
 		return
 	assert(target_actor != null and target_actor.editor != null and target_actor.get_script() == TerrainTestNPC,
 		"The fixture requires the original NPC and its inherited real Actor geometry")
-	assert(target_actor.place(anchor + Vector2i(8, 0), true)) # Explicit initial target fixture.
+	var placed: bool = target_actor.place(anchor + Vector2i(8, 0), true) # Explicit initial target fixture.
+	assert(placed, "Explicit initial target placement")
 	target_actor.facing = Vector2i.RIGHT
 	target_actor.faction_id = team.faction_id # A real friendly body is still hittable.
 	ui.hide_tool_windows()

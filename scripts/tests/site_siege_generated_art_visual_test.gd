@@ -115,12 +115,13 @@ func _check_frame(kind: String, facing: Vector2i, direction: String) -> bool:
 	completed.frames += 1
 	return true
 
-func _check_sprite(sprite: Sprite2D, kind: String, facing: Vector2i) -> bool:
+func _check_sprite(sprite: Sprite2D, kind: String, facing: Vector2i, state: String = "") -> bool:
 	if not _check(sprite != null and sprite.is_visible_in_tree(), "Original View did not publish a visible art Sprite", {"kind": kind}): return false
-	var frame: Dictionary = view.siege_art_frame(kind, facing)
+	var frame: Dictionary = view.siege_art_frame(kind, facing, state)
 	if not _check(not frame.is_empty(), "Sprite lost source frame", {"kind": kind}): return false
-	if not _check(sprite.texture == frame.texture and sprite.region_enabled and sprite.region_rect == frame.region and not sprite.centered and sprite.offset == -frame.pivot and sprite.scale.is_equal_approx(Vector2.ONE * float(frame.scale)) and is_zero_approx(sprite.rotation), "Sprite differs from the shared View frame", {"kind": kind, "direction": frame.direction}): return false
-	if not _check(str(sprite.get_meta("siege_art_frame", "")) == kind + "/" + str(frame.direction), "Sprite frame metadata", {"kind": kind}): return false
+	if not _check(sprite.texture == frame.texture and sprite.region_enabled and sprite.region_rect == frame.region and not sprite.centered and sprite.offset == -frame.pivot and sprite.scale.is_equal_approx(frame.scale_xy) and is_zero_approx(sprite.rotation), "Sprite differs from the shared View frame", {"kind": kind, "direction": frame.direction}): return false
+	var frame_key: String = kind + "/" + str(frame.direction) + ("/" + state if not state.is_empty() else "")
+	if not _check(str(sprite.get_meta("siege_art_frame", "")) == frame_key, "Sprite frame metadata", {"kind": kind, "state": state}): return false
 	if not _check(sprite.get_meta("siege_art_exclusions", null) == frame.exclusions, "Sprite mask metadata differs from frame", {"kind": kind}): return false
 	if frame.exclusions.is_empty():
 		if not _check(sprite.material == null, "Unmasked frame must have no mask material", {"kind": kind}): return false
@@ -156,7 +157,9 @@ func _check_ballista(vehicle: Dictionary, turning: bool = false) -> bool:
 	if not _check_no_greybox(node): return false
 	var facing := Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1]))
 	var body: Sprite2D = node.get_node_or_null("Body") as Sprite2D
-	if not _check_sprite(body, "ballista", facing): return false
+	# A wreck publishes the original wrecked art state (manifest states.wrecked); a wreck cannot fire.
+	var art_state: String = "wrecked" if float(vehicle.hp) <= 0.0 else ""
+	if not _check_sprite(body, "ballista", facing, art_state): return false
 	var ground := (Vector2(lab.terrain.cell_from_index(int(vehicle.cell))) + Vector2.ONE * 0.5) * TerrainRenderer.CELL_PIXELS
 	if not _check(node.position.is_equal_approx(ground + lab.terrain.surface_visual_offset_at(ground)) and is_zero_approx(node.rotation), "Generated art moved the real ground pivot"): return false
 	if turning:
@@ -167,8 +170,9 @@ func _check_ballista(vehicle: Dictionary, turning: bool = false) -> bool:
 		var blend: float = float(vehicle.action.elapsed) / 3.0
 		if not _check(is_equal_approx(body.modulate.a, 1.0 - blend) and is_equal_approx(next.modulate.a, blend) and body.position.is_equal_approx(next.position), "Turn images do not share the original clock and presentation centre", {"elapsed": vehicle.action.elapsed, "body_alpha": body.modulate.a, "target_alpha": next.modulate.a}): return false
 	else:
-		var frame: Dictionary = view.siege_art_frame("ballista", facing)
+		var frame: Dictionary = view.siege_art_frame("ballista", facing, art_state)
 		if not _check(str(node.get_meta("siege_art_direction", "")) == str(frame.direction), "Real node directional publication"): return false
+		if art_state == "wrecked": return true # The wreck has no terminal point; its art and ground pivot were checked above.
 		if not _check(frame.has("muzzle") and frame.muzzle is Vector2, "Ballista frame has no calibrated terminal point"): return false
 		var screen_muzzle: Vector2 = body.to_global(frame.muzzle + body.offset)
 		var expected_muzzle: Vector2 = lab.siege_muzzle(vehicle) * TerrainRenderer.CELL_PIXELS + lab.terrain.surface_visual_offset_at(ground) - Vector2(0.0, 48.0)
