@@ -11228,7 +11228,7 @@ func refresh_original_region_siege_battle(original: TerrainLab) -> Dictionary:
 	if not settled.ok or settled.get("legacy", true) or float(settled.get("pending", INF)) > 0.00000001 \
 		or str(fire.get("epoch", "")) != str(control.fire_clock.epoch) or int(fire.get("sequence", -1)) != int(control.fire_clock.sequence) \
 		or absf(float(fire.get("game_seconds", -1.0)) - world) > 0.00000001 or absf(float(fire.get("action_seconds", -1.0)) - action) > 0.00000001 \
-		or absf(original.fire_action_cursor - action) > 0.00000001 and not cursor_deferred or int(mode.get("generation", -1)) != int(_marker.generation) \
+		or absf(original.fire_action_cursor - action) > 0.00000001 and not cursor_deferred or int(mode.get("generation", -1)) != int(_marker.get("generation", 0)) \
 		or absf(float(mode.get("game_seconds", -1.0)) - world) > 0.00000001 or absf(float(mode.get("action_seconds", -1.0)) - action) > 0.00000001:
 		return fail("INCOMPLETE_ORIGINAL_SIEGE_POINT")
 	if not region_player_barrier().is_empty() or not original._region_point_pending.is_empty() or original._region_point_consuming or original._region_point_dispatching \
@@ -11277,7 +11277,7 @@ func refresh_original_region_siege_battle(original: TerrainLab) -> Dictionary:
 	var activation := bind.duplicate(true)
 	activation.mode = str(battle.mode)
 	activation.consumer = "original_site" if battle.mode == "live" else "original_replay"
-	var activated := GameplayClock.activate_mode(candidate, owner, str(battle.mode), int(_marker.generation), "gd", str(activation.consumer),
+	var activated := GameplayClock.activate_mode(candidate, owner, str(battle.mode), int(_marker.get("generation", 0)), "gd", str(activation.consumer),
 		float(control.logical_game_seconds), float(control.fire_clock.action_seconds), activation)
 	if not activated.ok: return activated
 	candidate.revision = int(candidate.revision) + 1
