@@ -113,6 +113,10 @@ func run() -> void:
 	old_payload.state.erase("actors")
 	# The old map-only format has no person holders for this fixture's seeded gear.
 	old_payload.state.item_records.clear()
+	# Nor does it have Fire transport: every current save writes one Fire order per actor/Army owner
+	# (_capture_fire_transport_payload), and those owners are exactly the actors erased above.
+	assert(original.payload.state.has("fire_transport"), "Current save carries the per-owner Fire transport this fixture removes")
+	old_payload.state.erase("fire_transport")
 	var body := JSON.stringify(old_payload, "", true, true)
 	var old_file := FileAccess.open(SAVE + ".legacy", FileAccess.WRITE)
 	old_file.store_string(JSON.stringify({"checksum": body.sha256_text(), "payload": body}))

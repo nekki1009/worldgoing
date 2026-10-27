@@ -64,9 +64,13 @@ func _cross_wall(direction: Vector2i) -> bool:
 	var slot := RegionSaveSlot.new()
 	slot.source = source
 	slot.folder = bridge_output.path_join("direction_" + str(number))
-	slot.pin = {"world_instance_id": "boundary_world", "slot_id": "slot_a", "atlas_id": RegionGrid.ATLAS_ID,
+	# A verified format-1 slot (empty technology policy), as in site_ground_crossing_contract_test. Both Sites already
+	# carry the slot's world pin, so _admit_world_pin admits them without writing into the active source Site.
+	slot.pin = {"format": 1, "world_instance_id": "boundary_world", "slot_id": "slot_a", "atlas_id": RegionGrid.ATLAS_ID,
 		"grid_contract_version": 1, "base_revision": "bridge_contract_v1", "manifest_sha256": source.manifest_hash,
 		"ramp_rule_revision": RegionTerrainAdapter.RAMP_RULE_REVISION}
+	left.site["world_pin"] = slot.pin.duplicate(true)
+	right.site["world_pin"] = slot.pin.duplicate(true)
 	# These are two independently allocated original paid wall segments.
 	var left_key := _formal_feature(left, "stone_wall", from_cell, Vector2i.ONE, {"quarter": number})
 	var right_key := _formal_feature(right, "palisade", pair.cell, Vector2i.ONE, {"quarter": (number + 2) % 4})

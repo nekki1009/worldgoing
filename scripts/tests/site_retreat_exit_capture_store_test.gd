@@ -98,6 +98,8 @@ func _action_context(data: TerrainData, teams: Array[TerrainArmy], controlled: i
 	var controller := SiteController.new()
 	controller.lab = lab
 	lab.site_controller = controller
+	# SiteController.setup/bind always init the vehicle owner; the original person target reads ship embarkation through it.
+	controller.vehicles.init(controller)
 	controller.person_actions.init(lab)
 	controller.captivity_supply.init(controller)
 	controller.person_actions.captivity_change_guard = controller.captivity_supply.change_guard

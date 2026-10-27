@@ -44,8 +44,14 @@ func _initialize() -> void:
 		check(made.state.typed_ints.get_typed_builtin() == TYPE_INT and made.state.nested[1].values.get_typed_builtin() == TYPE_FLOAT
 			and made.state.packed is PackedFloat64Array and made.state.cell is Vector2i,
 			hex + " capture retains typed arrays, packed values and vector types")
-		check(Checkpoint.wire(owners) == made.snapshot.owners and made.snapshot.context == stamp,
+		# b1080d2 (CC-102): the owner graph is written in the settled save-codec form, like the state.
+		var settled_owners: Dictionary = Checkpoint._json_write_state(owners)
+		check(settled_owners.ok and Checkpoint.wire(settled_owners.state) == made.snapshot.owners and made.snapshot.context == stamp,
 			hex + " metadata preserves authoritative owner capture and context")
+		var owners_reloaded: Variant = JSON.parse_string(JSON.stringify(made.snapshot.owners, "", true, true))
+		check(owners_reloaded is Dictionary and owners_reloaded == made.snapshot.owners
+			and var_to_bytes(Checkpoint.unwire(owners_reloaded)) == var_to_bytes(Checkpoint.unwire(made.snapshot.owners)),
+			hex + " written owner metadata reloads exactly through ordinary Store JSON")
 		var persisted: Dictionary = made.state
 		persisted["region_snapshot"] = made.snapshot
 		check(Checkpoint.validate(persisted, made.snapshot).ok, hex + " capture-only state authenticates")

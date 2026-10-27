@@ -75,15 +75,24 @@ func _consumer_contract() -> bool:
 	var near_bits: PackedByteArray = PackedFloat64Array([step]).to_byte_array()
 	near_bits.encode_u64(0, near_bits.decode_u64(0) - 1)
 	var near: float = near_bits.decode_double(0)
+	var saw_open_tail: bool = false
+	var saw_sub_epsilon_tail: bool = false
 	for consumed: float in [step * 0.25, near]:
 		var probe: ReceiptProbe = _probe()
 		probe.receipts.append(_receipt(consumed, false, true))
 		probe._advance_action_time(step)
 		var tail: float = step - consumed
-		var valid: bool = probe.requests.size() == 1 and tail > 0.0 and probe._action_step_remaining == tail and probe._action_time_remainder == tail
+		# 6fed84f: an open quantum keeps a real tail exactly; a residue <= ACTION_TIME_EPSILON closes the quantum
+		# (requesting it makes no progress), while the exact unpaid tail stays in the backlog remainder.
+		var open_tail: float = tail if tail > TerrainLab.ACTION_TIME_EPSILON else 0.0
+		saw_open_tail = saw_open_tail or open_tail > 0.0
+		saw_sub_epsilon_tail = saw_sub_epsilon_tail or (tail > 0.0 and open_tail == 0.0)
+		var valid: bool = probe.requests.size() == 1 and tail > 0.0 and probe._action_step_remaining == open_tail and probe._action_time_remainder == tail
 		valid = valid and TerrainLab._region_action_clock_valid({"_action_time_remainder": tail, "_action_step_remaining": tail})
+		valid = valid and TerrainLab._region_action_clock_valid({"_action_time_remainder": probe._action_time_remainder, "_action_step_remaining": probe._action_step_remaining})
 		probe.free()
 		if not _check(valid, "Real prefix and positive sub-epsilon tail survive the original consumer exactly"): return false
+	if not _check(saw_open_tail and saw_sub_epsilon_tail, "Fixtures reproduce both an open real tail and a positive sub-epsilon backlog tail"): return false
 	var zero: ReceiptProbe = _probe()
 	zero.receipts.append(_receipt(0.0, true, true))
 	zero._advance_action_time(step)
