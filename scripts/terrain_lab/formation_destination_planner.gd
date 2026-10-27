@@ -1855,20 +1855,49 @@ static func _recover_isolated_final_vacancy(move_plan: CombatMovePlan, plan: Com
 				break
 		if owner_in_flight:
 			continue
-		# A turning chain cannot be committed as one Grid batch. Keep the
-		# assignment changes in vacancy order and issue only its last step.
-		var changed: Array[int] = _rotate_platform_vacancy_chain(move_plan, plan, [actors.back()], [targets.back()])
+		# The last stranded soldier of an otherwise settled platform: a straight chain
+		# (every step in one direction) is one Grid batch, exactly as
+		# _start_platform_vacancy_chain commits it, so rotate the whole chain at once and
+		# the waiting soldier takes the edge final beside the free area. While other
+		# platform members are still moving, keep the tail-first rotation below; a
+		# whole-chain move then competes with their routes (multi_team_arrival 96 -> 77).
+		var straight := true
+		for other in plan.admitted_platform_member_ids:
+			if other != waiting and current_cells.has(other) and not plan.settled_platform_member_ids.has(other):
+				straight = false
+				break
+		for other in plan.pending_platform_member_ids:
+			if other != waiting and current_cells.has(other):
+				straight = false
+				break
+		var first_step: Vector2i = targets[0] - current_cells[actors[0]]
+		for i in range(actors.size()):
+			if not straight or targets[i] - current_cells[actors[i]] != first_step:
+				straight = false
+				break
+		var moving_actors: Array[int] = []
+		var moving_targets: Array[Vector2i] = []
+		if straight:
+			moving_actors.append_array(actors)
+			moving_targets.append_array(targets)
+		else:
+			# A turning chain cannot be committed as one Grid batch. Keep the
+			# assignment changes in vacancy order and issue only its last step.
+			moving_actors.append(actors.back())
+			moving_targets.append(targets.back())
+		var changed: Array[int] = _rotate_platform_vacancy_chain(move_plan, plan, moving_actors, moving_targets)
 		if changed.is_empty():
 			continue
 		move_plan.queued_vacancy_steps.clear()
-		for i in range(actors.size() - 1):
-			move_plan.queued_vacancy_steps.append({"actor": actors[i], "from": current_cells[actors[i]], "to": targets[i]})
+		if not straight:
+			for i in range(actors.size() - 1):
+				move_plan.queued_vacancy_steps.append({"actor": actors[i], "from": current_cells[actors[i]], "to": targets[i]})
 		move_plan.vacancy_waiting_id = waiting
 		move_plan.member_recovery_hold[waiting] = true
-		_begin_vacancy_chain(move_plan, [actors.back()], current_cells)
+		_begin_vacancy_chain(move_plan, moving_actors, current_cells)
 		for mid in changed:
 			move_plan.note_assignment_change(mid)
-			if mid == actors.back():
+			if moving_actors.has(mid):
 				move_plan.member_vacancy_chain_target[mid] = plan.get_slot_for_member(mid)
 		move_plan.next_platform_recovery_time_sec = move_plan.planning_time_sec + PLATFORM_RECOVERY_COOLDOWN_SEC
 		return true

@@ -57,8 +57,12 @@ func _run() -> void:
 	plan.member_slot_locked.erase(1)
 	plan.slot_tactical_roles[plan.get_slot_for_member(1)] = Types.TacticalSlotRole.COMMANDER
 	Destination.late_bind_ingress_target(move, plan, cells, terrain)
-	if not _require(not move.member_entry_waypoint.has(1),
-		"A non-FLEX outer member must keep its designated final target"): return
+	# Center decision 2026-10-27 (A): officers may receive an outer waypoint, as production does
+	# (multi_team_arrival depends on it). The waypoint is temporary: the officer keeps its designated
+	# final, its tactical role and every physical cell.
+	if not _require(move.member_entry_waypoint.get(1, Vector2i(-1, -1)) == Vector2i(11, 6) and Destination.resolve_member_target(move, plan, 1, cells[1]).target == Vector2i(11, 6)
+		and plan.member_slot_map == owned_before and int(plan.slot_tactical_roles.get(plan.get_slot_for_member(1), -1)) == Types.TacticalSlotRole.COMMANDER and cells[1] == Vector2i(12, 6),
+		"A blocked outer officer receives the same temporary outer waypoint without changing its designated final, role or cell"): return
 	plan.slot_tactical_roles[plan.get_slot_for_member(1)] = Types.TacticalSlotRole.FLEX
 	occupied.erase(cells[1])
 	cells[1] = Vector2i(11, 6)
@@ -98,8 +102,12 @@ func _run() -> void:
 	if not _require(Destination._outer_approach_waypoint(move, plan, cells[1], plan.get_slot_for_member(1), occupied, {}, terrain) == cells[1],
 		"The outer approach must decline when every closer footprint cell is a final slot"): return
 	Destination.late_bind_ingress_target(move, plan, cells, terrain)
-	if not _require(move.member_entry_waypoint.get(1, Vector2i(-1, -1)) == Vector2i(8, 6),
-		"With no valid outer waypoint, existing late-bind entry recovery must still run"): return
+	# Center decision 2026-10-27 (A): with no platform member pending, late-bind entry recovery does
+	# not run (production rule against end-of-arrival oscillation), so no waypoint and no hold, and
+	# final ownership is unchanged.
+	if not _require(plan.pending_platform_member_ids.is_empty() and not move.member_entry_waypoint.has(1) and not move.member_entry_hold.has(1)
+		and plan.member_slot_map == owned_before and cells[1] == Vector2i(9, 6),
+		"With no valid outer waypoint and no pending platform member, no entry recovery waypoint or hold is created"): return
 	cells[1] = Vector2i(12, 6)
 	occupied = {cells[1]: true, cells[2]: true}
 	plan.ingress_buffer_cells[0] = Vector2i(0, 1)
@@ -135,6 +143,10 @@ func _run() -> void:
 	edge_move.destination_plan = edge_plan
 	edge_move.member_route_retry_count[1] = 12
 	edge_plan.lock_member_slot(2)
+	# Center decision 2026-10-27 (A): entry recovery runs only while a platform member is still pending.
+	# These fallback/side-step cases are about clearing the entrance for that following member, so the
+	# fixtures carry one (a pending entrant without a final yet), and every assertion stays as written.
+	edge_plan.pending_platform_member_ids.append(3)
 	var edge_cells: Dictionary = {1: Vector2i(36, 18), 2: Vector2i(29, 18)}
 	Destination.late_bind_ingress_target(edge_move, edge_plan, edge_cells, edge_terrain)
 	if not _require(not edge_move.member_entry_waypoint.has(1),
@@ -161,10 +173,11 @@ func _run() -> void:
 		side_plan.member_role_map[mid] = Types.CombatDestinationRole.PLATFORM
 		side_plan.slot_tactical_roles[slot] = Types.TacticalSlotRole.FLEX
 	side_plan.lock_member_slot(2)
+	side_plan.pending_platform_member_ids.append(3) # The following member 3 of the Grid check below.
 	var side_move := CombatMovePlan.new()
 	side_move.destination_plan = side_plan
 	side_move.member_route_retry_count[1] = 12
-	var side_cells: Dictionary = {1: Vector2i(30, 22), 2: Vector2i(30, 19)}
+	var side_cells: Dictionary = {1: Vector2i(30, 22), 2: Vector2i(30, 19), 3: Vector2i(29, 22)}
 	Destination.late_bind_ingress_target(side_move, side_plan, side_cells, edge_terrain)
 	var side_step: Vector2i = Vector2i(31, 22) - side_cells[1]
 	var side_toward: Vector2i = side_plan.get_slot_for_member(1) - side_cells[1]
@@ -190,6 +203,7 @@ func _run() -> void:
 		follow_plan.member_role_map[mid] = Types.CombatDestinationRole.PLATFORM
 		follow_plan.slot_tactical_roles[slot] = Types.TacticalSlotRole.FLEX
 	follow_plan.lock_member_slot(3)
+	follow_plan.pending_platform_member_ids.append(4) # A pending entrant, so the outward guard itself is what refuses.
 	var follow_move := CombatMovePlan.new()
 	follow_move.destination_plan = follow_plan
 	follow_move.member_route_retry_count[1] = 12
@@ -214,6 +228,7 @@ func _run() -> void:
 	ramp_move.destination_plan = ramp_plan
 	ramp_move.member_route_retry_count[1] = 12
 	ramp_move.macro_path.append(Vector2i(45, 5))
+	ramp_plan.pending_platform_member_ids.append(4) # The legacy inward step is entry recovery for a following entrant.
 	var ramp_cells: Dictionary = {1: Vector2i(44, 5), 2: Vector2i(46, 5)}
 	Destination.late_bind_ingress_target(ramp_move, ramp_plan, ramp_cells, edge_terrain)
 	if not _require(ramp_move.member_entry_waypoint.get(1, Vector2i(-1, -1)) == Vector2i(45, 5),
