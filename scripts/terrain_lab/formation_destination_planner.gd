@@ -2009,6 +2009,12 @@ static func recover_stalled_queue_slots(move_plan: CombatMovePlan, plan: CombatD
 	move_plan.next_queue_recovery_time_sec = move_plan.planning_time_sec + PLATFORM_RECOVERY_COOLDOWN_SEC
 	return false
 
+## True when the member's current final carries the commander/officer tactical role assigned by
+## the destination planner (swap_member_slots moves that role with the member).
+static func _holds_officer_final(plan: CombatDeploymentPlan, member_id: int) -> bool:
+	var role: int = int(plan.slot_tactical_roles.get(plan.get_slot_for_member(member_id), Types.TacticalSlotRole.FLEX))
+	return role == Types.TacticalSlotRole.COMMANDER or role == Types.TacticalSlotRole.OFFICER
+
 static func rebalance_provisional_slots(move_plan: CombatMovePlan, plan: CombatDeploymentPlan, current_cells: Dictionary, terrain: Object, admission_changed: bool = false, geometry: Dictionary = {}) -> bool:
 	if move_plan == null or plan == null or terrain == null:
 		return false
@@ -2039,6 +2045,12 @@ static func rebalance_provisional_slots(move_plan: CombatMovePlan, plan: CombatD
 		var a: int = mids[i]
 		var b: int = mids[i + 1]
 		if move_plan.planning_time_sec < float(move_plan.member_swap_cooldown_until_sec.get(a, 0.0)) or move_plan.planning_time_sec < float(move_plan.member_swap_cooldown_until_sec.get(b, 0.0)):
+			continue
+		# In-place re-formation (no march: the macro path is only the anchor) admits everyone at once and
+		# the commander ranks first. A pure-distance pair swap then trades its reserved rear final for the
+		# far tip (army100: (27,40) -> (27,49)), which it cannot reach once the rows settle. Officers keep
+		# their designated finals only in this case; march arrivals keep the existing exchange.
+		if move_plan.macro_path.size() <= 1 and (_holds_officer_final(plan, a) or _holds_officer_final(plan, b)):
 			continue
 		var ca: Vector2i = current_cells[a]
 		var cb: Vector2i = current_cells[b]
