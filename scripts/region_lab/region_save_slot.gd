@@ -2622,7 +2622,11 @@ func _ground_destination(geography: TerrainData, seconds: float) -> Dictionary:
 	var settled := _settle_cold_candidate(data, seconds)
 	# Same as open_site: a new Site starts its Fire settlement at this slot's
 	# current dual clock, so a later owner restores the true action cursor.
-	if fresh and settled.ok and not _marker.is_empty() and settled.data.site.get("fire_settlement", {}).is_empty() and _fire_history_empty(settled.data.site):
+	# That holds before the slot's first marker too (a single-Site slot that has
+	# not published yet): the arriving owner's next original shared step requires
+	# this watermark (TerrainLab._region_original_interval_guard). Only a slot
+	# that has no dual clock at all has nothing to stamp from.
+	if fresh and settled.ok and not control.get("fire_clock", {}).is_empty() and settled.data.site.get("fire_settlement", {}).is_empty() and _fire_history_empty(settled.data.site):
 		settled.data.site.fire_settlement = {"version": 1, "epoch": str(control.fire_clock.epoch), "sequence": int(control.fire_clock.sequence),
 			"action_seconds": float(control.fire_clock.action_seconds), "game_seconds": float(control.logical_game_seconds)}
 	if settled.ok: attach_person_allocator(settled.data)

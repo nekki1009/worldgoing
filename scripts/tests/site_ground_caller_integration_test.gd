@@ -61,6 +61,18 @@ func _caller_fixture(name: String, direction: Vector2i = Vector2i.RIGHT, with_np
 	data.site.worker_enabled = false
 	data.site.minute = floori(at / 60.0)
 	data.site.phase = at / 60.0 - float(data.site.minute)
+	# A Site born through RegionSaveSlot.open_site carries the Slot's fire_settlement stamp
+	# (region_save_slot.gd open_site); the original shared step's owner guard requires it
+	# (terrain_lab.gd _region_original_interval_guard, REGION_OWNER_FIRE_SOURCE). attach_active_site
+	# only re-stamps when it resets the fire clock (the at > 0 fixtures), so stamp the at = 0 birth here.
+	if at == float(slot.control.logical_game_seconds) and not data.site.has("fire_settlement"):
+		var birth_clock: Dictionary = slot.control.fire_clock
+		data.site["fire_settlement"] = {"version": 1, "epoch": str(birth_clock.epoch), "sequence": int(birth_clock.sequence),
+			"action_seconds": float(birth_clock.action_seconds), "game_seconds": float(slot.control.logical_game_seconds)}
+	# The fixture Site is the live active Site: bind it live (receipt live/original_site), not as a
+	# restore-only cold owner, so the Slot can admit it below exactly as bind_terrain does in the game.
+	lab.site_controller._auto_save_blocked = true # No formal/current save from the live bind.
+	lab.restore_only = false
 	lab.bind_terrain(data)
 	assert(lab.terrain == data and lab.actor_present(lab.character))
 	assert(lab.character.place(cell, true))
@@ -84,6 +96,11 @@ func _caller_fixture(name: String, direction: Vector2i = Vector2i.RIGHT, with_np
 	data.site.actor_presence_version = 1
 	assert(slot.attach_active_site(data).ok)
 	lab.site_controller.region_slot = slot
+	# attach_active_site leaves the owner committed-unbound; the original shared step's region permit
+	# (GameplayClock.begin_permit) requires the live/original_site mode that the complete bind admits.
+	# Same formal activation as bind_terrain with a slot present (and site_ship_travel_test).
+	var activated: Dictionary = slot.acknowledge_region_bind(data, lab.region_bind_receipt(data))
+	assert(activated.ok, "Original active Site was not admitted by its complete live bind: " + str(activated))
 	lab.site_controller.save_path = slot.site_path(coordinate)
 	lab.site_controller._auto_save_blocked = true
 	lab.restore_only = false
@@ -237,22 +254,46 @@ func _caller_cold_pending() -> void:
 	var fixture: Dictionary = _caller_fixture("cold_pending", Vector2i.RIGHT, false, 18000.0)
 	var lab: TerrainLab = fixture.lab
 	var slot: RegionSaveSlot = fixture.slot
-	var destination: TerrainData = _flat_site(Vector2i(fixture.to))
-	destination.site.actor_presence_version = 1
-	destination.site.actors = {}
-	destination.site.worker_enabled = false
-	destination.site.worker.target = ""
-	destination.site.worker.progress = 0.0
-	destination.site.minute = 0
-	destination.site.phase = 0.0
-	assert(RegionSaveSlot.attach_settlement(destination.site, 0.0).ok)
-	var path: String = slot.site_path(Vector2i(fixture.to))
-	assert(Store.save(destination, path).ok)
+	# Center decision (2026-10-27): a cold replay source must be a committed snapshot (b85549b), so the
+	# visited empty destination is born and committed through the original Slot, together with the active
+	# Site in one marker, and its debt is real elapsed world time on the active Site afterwards.
+	var saved_active: Dictionary = slot.save_site(fixture.data)
+	assert(saved_active.ok, "Initial active Site commit: " + str(saved_active))
+	var opened_destination: Dictionary = slot.open_site(Vector2i(fixture.to))
+	assert(opened_destination.ok, "Original birth of the visited destination: " + str(opened_destination))
+	var destination: TerrainData = opened_destination.data
+	destination.site["actor_presence_version"] = 1
+	destination.site["actors"] = {}
+	assert(Runtime.initialize_item_storage(destination.site).ok)
+	assert(RegionSaveSlot.attach_settlement(destination.site, float(slot.control.logical_game_seconds)).ok)
+	destination.site["fire_settlement"] = fixture.data.site.fire_settlement.duplicate(true)
+	var saved_destination: Dictionary = slot.save_site(destination)
+	assert(saved_destination.ok, "Committed visited destination: " + str(saved_destination))
+	var path: String = str(saved_destination.path)
 	var original: String = FileAccess.get_file_as_string(path)
+	# Real world time passes on the active Site only; the committed destination keeps its saved epoch.
+	# The debt must exceed one bounded call (advance_region_cold_actual_fixed: at most 128 original
+	# steps per call), so the actual replay spans frames and stays PENDING in PREPARE. 10 action
+	# seconds are 300 original 30 Hz steps (600 game seconds at speed 1), each replayed exactly.
+	var debt_from: float = float(slot.control.logical_game_seconds)
+	var debt_action: float = 10.0
+	lab._advance_action_time(debt_action)
+	assert(lab.site_controller._original_step_fault.is_empty())
+	assert(float(slot.control.logical_game_seconds) - debt_from > 128.0 * TerrainLab.EXCHANGE_ACTION_STEP * 60.0 * lab.simulation_speed,
+		"Cold destination debt does not span one bounded replay call: " + str(float(slot.control.logical_game_seconds) - debt_from))
+	var committed_generation: int = int(slot._marker.generation)
+	var committed_sites: int = slot._marker.sites.size()
 	lab._action_time_remainder = 0.19
 	lab._try_move(Vector2i(fixture.direction))
+	var diag_after_input: String = str(lab.site_controller._ground_crossing.get("stage", ""))
 	lab.site_controller.finish_tick()
-	assert(str(lab.site_controller._ground_crossing.stage) == "prepare")
+	if str(lab.site_controller._ground_crossing.get("stage", "")) != "prepare":
+		# DIAG_ONLY (HEADFIX15): why the committed-destination crossing is not PENDING in PREPARE.
+		print("DIAG_ONLY GROUND_COLD_QUEUE ", JSON.stringify({"after_input": diag_after_input,
+			"after_tick": str(lab.site_controller._ground_crossing.get("stage", "")), "message": lab.site_controller.message.text,
+			"fault": str(lab.site_controller._original_step_fault), "marker_generation": slot._marker.get("generation"),
+			"clock": float(slot.control.logical_game_seconds), "debt_from": debt_from}))
+	assert(str(lab.site_controller._ground_crossing.get("stage", "")) == "prepare")
 	assert(is_instance_valid(lab._cold_replay_lab))
 	var retained_hash: String = str(lab.site_controller._ground_crossing.pending_sha256)
 	assert(retained_hash.length() == 64 and retained_hash == lab._cold_replay_signature)
@@ -262,12 +303,12 @@ func _caller_cold_pending() -> void:
 	lab._advance_action_time(10.0)
 	lab._try_move(Vector2i.LEFT)
 	assert(lab._action_time_remainder == 0.19 and float(slot.control.logical_game_seconds) == at)
-	assert(var_to_bytes(fixture.data.site) == before and slot._marker.is_empty())
+	assert(var_to_bytes(fixture.data.site) == before and int(slot._marker.generation) == committed_generation)
 	assert(not lab.site_controller.save_to(lab.site_controller.save_path).ok)
 	assert(not lab.site_controller.load_from(path).ok)
 	assert(lab.site_controller.cancel_ground_crossing(int(fixture.id)).ok)
 	assert(not is_instance_valid(lab._cold_replay_lab) and lab.site_controller._ground_crossing.is_empty())
-	assert(FileAccess.get_file_as_string(path) == original and slot._marker.is_empty())
+	assert(FileAccess.get_file_as_string(path) == original and int(slot._marker.generation) == committed_generation)
 
 	lab._try_move(Vector2i(fixture.direction))
 	lab.site_controller.finish_tick()
@@ -275,7 +316,11 @@ func _caller_cold_pending() -> void:
 		_caller_deadline()
 		assert(float(slot.control.logical_game_seconds) == at and lab._action_time_remainder == 0.19)
 		lab._process(10.0) # The ORIGINAL frame retries finish_tick while input elapsed is zero.
-	assert(str(lab.site_controller._ground_crossing.stage) == "action")
+	if str(lab.site_controller._ground_crossing.get("stage", "")) != "action":
+		# DIAG_ONLY (HEADFIX15): the completed cold replay's refusal (see REPLAY_SOURCE_MISMATCH).
+		print("DIAG_ONLY GROUND_COLD_PREPARE_END ", JSON.stringify({"attempt": 1, "stage": str(lab.site_controller._ground_crossing.get("stage", "")),
+			"message": lab.site_controller.message.text, "fault": str(lab.site_controller._original_step_fault)}))
+	assert(str(lab.site_controller._ground_crossing.get("stage", "")) == "action")
 	lab._advance_action_time(TerrainTestCharacter.MOVE_DURATION + 0.25)
 	assert(str(lab.site_controller._ground_crossing.stage) == "commit")
 	var completed_at: float = float(slot.control.logical_game_seconds)
@@ -284,10 +329,10 @@ func _caller_cold_pending() -> void:
 	assert(str(lab.site_controller._ground_crossing.stage) == "commit" and is_instance_valid(lab._cold_replay_lab))
 	var commit_hash: String = str(lab.site_controller._ground_crossing.pending_sha256)
 	assert(commit_hash == lab._cold_replay_signature and float(lab._cold_replay_target) == completed_at)
-	assert(float(slot.control.logical_game_seconds) == completed_at and slot._marker.is_empty())
+	assert(float(slot.control.logical_game_seconds) == completed_at and int(slot._marker.generation) == committed_generation)
 	var completed_source: PackedByteArray = var_to_bytes(fixture.data.site)
 	assert(lab.site_controller.cancel_ground_crossing(int(fixture.id)).ok)
-	assert(not is_instance_valid(lab._cold_replay_lab) and slot._marker.is_empty())
+	assert(not is_instance_valid(lab._cold_replay_lab) and int(slot._marker.generation) == committed_generation)
 	assert(float(slot.control.logical_game_seconds) == completed_at and var_to_bytes(fixture.data.site) == completed_source)
 	assert(lab._action_time_remainder == earned and FileAccess.get_file_as_string(path) == original)
 	# A fresh attempt resumes the original actor at its earned source time.
@@ -297,7 +342,11 @@ func _caller_cold_pending() -> void:
 		_caller_deadline()
 		assert(float(slot.control.logical_game_seconds) == completed_at and lab._action_time_remainder == earned)
 		lab._process(10.0)
-	assert(str(lab.site_controller._ground_crossing.stage) == "action")
+	if str(lab.site_controller._ground_crossing.get("stage", "")) != "action":
+		# DIAG_ONLY (HEADFIX15): the completed cold replay's refusal (see REPLAY_SOURCE_MISMATCH).
+		print("DIAG_ONLY GROUND_COLD_PREPARE_END ", JSON.stringify({"attempt": 2, "stage": str(lab.site_controller._ground_crossing.get("stage", "")),
+			"message": lab.site_controller.message.text, "fault": str(lab.site_controller._original_step_fault)}))
+	assert(str(lab.site_controller._ground_crossing.get("stage", "")) == "action")
 	lab._advance_action_time(TerrainTestCharacter.MOVE_DURATION + 0.25)
 	assert(str(lab.site_controller._ground_crossing.stage) == "commit")
 	completed_at = float(slot.control.logical_game_seconds)
@@ -313,7 +362,7 @@ func _caller_cold_pending() -> void:
 		"ground=" + str(lab.site_controller._ground_crossing) + " message=" + lab.site_controller.message.text
 		+ " fault=" + str(lab.site_controller._original_step_fault) + " marker=" + str(slot._marker))
 	assert(float(slot.control.logical_game_seconds) == completed_at and lab._action_time_remainder == earned)
-	assert(int(slot._marker.generation) == 1 and slot._marker.sites.size() == 2)
+	assert(int(slot._marker.generation) == committed_generation + 1 and slot._marker.sites.size() == committed_sites)
 	assert(not is_instance_valid(lab._cold_replay_lab))
 	lab.free()
 	caller_checks += 1
@@ -329,15 +378,19 @@ func _caller_pruned_clock_commit() -> void:
 	var cold_opened := slot.open_site(cold_coordinate)
 	if not cold_opened.ok: _fire_prefix_fail("Open original cold Site", cold_opened); return
 	var cold_data: TerrainData = cold_opened.data
-	cold_data.site.actor_presence_version = 1
-	cold_data.site.actors = {}
+	cold_data.site["actor_presence_version"] = 1
+	cold_data.site["actors"] = {}
 	var item_storage := Runtime.initialize_item_storage(cold_data.site)
 	if not item_storage.ok: _fire_prefix_fail("Initialize original cold Site item owner", item_storage); return
 	var attached := RegionSaveSlot.attach_settlement(cold_data.site, float(slot.control.logical_game_seconds))
 	if not attached.ok: _fire_prefix_fail("Attach cold Site shared-step watermark", attached); return
-	cold_data.site.fire_settlement = data.site.fire_settlement.duplicate(true)
+	cold_data.site["fire_settlement"] = data.site.fire_settlement.duplicate(true)
 	var saved_cold := slot.save_site(cold_data)
 	if not saved_cold.ok: _fire_prefix_fail("Cold Site checkpoint and index", saved_cold); return
+	# The original cold replay accepts only the selected committed snapshot (terrain_lab.gd
+	# _region_selected_bind_source): continue from the Slot's own readback, not the pre-save draft,
+	# which lacks the fields the Store writes (armies, vehicles, supply, housing, lineage counters).
+	cold_data = saved_cold.data
 	var action_step := 1.0 / 30.0
 	lab.simulation_speed = 0.5
 	var first_step: Dictionary = lab._advance_original_shared_step(action_step)
@@ -452,7 +505,16 @@ func _caller_nonfixed_remainder() -> void:
 	assert(earned > 0.0)
 	lab.site_controller.finish_tick()
 	assert(lab.terrain != fixture.data and lab._action_time_remainder == earned)
+	var diag_action_before: float = float(fixture.slot.control.fire_clock.action_seconds)
 	lab._advance_action_time(0.01)
+	# DIAG_ONLY (HEADFIX12/15): values behind the nonfixed GAME-time expectation, printed only on failure.
+	if absf(float(fixture.slot.control.logical_game_seconds) - at - (earned + 0.01) * 60.0) >= 0.00001:
+		print("DIAG_ONLY GROUND_NONFIXED ", JSON.stringify({"fire_settlement": str(lab.terrain.site.get("fire_settlement", "<missing>")), "at": at, "clock": float(fixture.slot.control.logical_game_seconds),
+			"delta_game": float(fixture.slot.control.logical_game_seconds) - at, "expected": (earned + 0.01) * 60.0, "earned": earned,
+			"delta_action": float(fixture.slot.control.fire_clock.action_seconds) - diag_action_before, "remainder_after": lab._action_time_remainder,
+			"step_remaining": lab._action_step_remaining, "speed": lab.simulation_speed, "combat_left": float(lab.terrain.site.get("combat_left", 0.0)),
+			"exchange": lab.exchange_enabled, "fixed_steps": lab.fixed_action_steps_enabled, "fault": str(lab.site_controller._original_step_fault),
+			"message": lab.site_controller.message.text}))
 	assert(absf(float(fixture.slot.control.logical_game_seconds) - at - (earned + 0.01) * 60.0) < 0.00001)
 	assert(lab._action_time_remainder == 0.0, "Retained nonfixed remainder was never consumed")
 	lab.free()
