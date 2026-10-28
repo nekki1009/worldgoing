@@ -847,6 +847,11 @@ func operator_cell(vehicle: Dictionary, movement: bool = false) -> Vector2i:
 	return anchor + direction * 2 if str(vehicle.kind) == "wagon" else anchor - direction
 
 static func footprint(data: TerrainData, vehicle: Dictionary, movement: bool = false) -> Array[Vector2i]:
+	# Convoy-owned vehicles report the native body cells, synced each frame, so the GD view and the native body are one set.
+	if not movement and is_convoy(vehicle) and vehicle.has("convoy_body"):
+		var native_cells: Array[Vector2i] = []
+		for value: Variant in vehicle.convoy_body: native_cells.append(data.cell_from_index(int(value)))
+		return native_cells
 	if str(vehicle.get("kind", "")) == "siege_tower": return Runtime.siege_tower_physical_cells(data, vehicle)
 	if is_siege(vehicle): return Runtime.siege_cells(data, vehicle)
 	if is_ship(vehicle):
@@ -2801,6 +2806,23 @@ func _convoy_send(vehicle: Dictionary, point: Vector2, facing: float) -> void:
 	if not accepted: push_warning("G4DIAG convoy goal refused by native: %s target=(%.2f, %.2f) facing=%.3f" % [key, point.x, point.y, facing])
 	_convoy_sent[key] = target
 
+# Native facing is continuous. The record keeps the nearest grid direction, never a diagonal.
+static func cardinal_facing(angle: float) -> Array:
+	var quarter := posmod(roundi(angle / (PI * 0.5)), 4)
+	var table: Array = [[1, 0], [0, 1], [-1, 0], [0, -1]]
+	return table[quarter].duplicate()
+
+# The native body cells for a convoy record (empty when no convoy). Read-only: the native body is authoritative.
+func _native_body_cells(vehicle: Dictionary) -> Array:
+	var id := int(vehicle.get("convoy_id", 0))
+	if id <= 0 or not convoy_native_supported(): return []
+	var values: PackedInt32Array = lab.crowd_site.crowd.convoy_body(id)
+	return Array(values)
+
+# Public: re-read every convoy record from its native convoy (anchor, facing, body). Called after the native step.
+func sync_convoy_records() -> void:
+	_sync_convoys()
+
 func _sync_convoys() -> void:
 	for vehicle: Dictionary in records().values():
 		if not is_convoy(vehicle): continue
@@ -2831,7 +2853,8 @@ func _sync_convoys() -> void:
 		if pose.is_empty(): continue
 		var anchor: Vector2i = Vector2i(floori(float(pose.x)), floori(float(pose.y)))
 		vehicle["cell"] = int(lab.terrain.index(anchor))
-		vehicle["facing"] = [roundi(cos(float(pose.facing))), roundi(sin(float(pose.facing)))]
+		vehicle["facing"] = cardinal_facing(float(pose.facing))
+		vehicle["convoy_body"] = _native_body_cells(vehicle)
 		vehicle["move"] = {}
 		_convoy_order(vehicle, owner, pose)
 

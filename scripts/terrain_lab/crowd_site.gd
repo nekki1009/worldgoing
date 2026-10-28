@@ -1211,6 +1211,8 @@ func step(elapsed: float, game_seconds: float, combat_left: float) -> bool:
 	event_cost_max_us = maxi(event_cost_max_us, event_cost_last_us)
 	_step_ms += (Time.get_ticks_usec() - started) / 1000.0
 	_steps += 1
+	# Native advanced this slice: the vehicle records and their cached native bodies follow it, so the GD view never lags.
+	if lab.site_controller != null: lab.site_controller.vehicles.sync_convoy_records()
 	return true
 
 func _advance_garrison_returns(elapsed: float) -> void:
@@ -3020,7 +3022,7 @@ func sync_siege_inputs() -> Dictionary:
 	if not crowd.set_siege_navigation(inputs.blocked, inputs.wreck_exit): return SiteRuntime.fail("INVALID", "原攻城車體／塔面用途投影不合法")
 	return SiteRuntime.ok()
 
-const CONVOY_NATIVE_METHODS := ["add_convoy", "convoy_set_crew", "convoy_order_goal", "convoy_set_body", "convoy_state", "convoy_crew", "convoy_remove"]
+const CONVOY_NATIVE_METHODS := ["add_convoy", "convoy_set_crew", "convoy_order_goal", "convoy_set_body", "convoy_state", "convoy_crew", "convoy_body", "convoy_remove"]
 const SIEGE_NATIVE_METHODS := ["set_siege_crew","set_siege_crew_members", "siege_ground_cells", "begin_siege_compound", "siege_compound_state", "siege_person_state", "cancel_siege_compound", "settle_siege_compound", "siege_busy", "set_siege_navigation", "siege_occupancy_mask", "order_siege_step", "cancel_siege_step", "charge_siege_round", "charge_siege_work", "contact_pose_state", "apply_siege_contact"]
 
 func settle_external_contacts() -> void:

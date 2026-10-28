@@ -4694,7 +4694,7 @@ static func _region_scene_capture_guard(data: TerrainData, captured: Dictionary)
 const FS_TARGET_OPTIONALS := ["tech_fire_pot_shot", "technology_spare_repair", "settlement_work", "tech_trial", "tech_batch", "tech_work_credit", "technology_output", "technology_construction", "technology_product_id", "technology_order"]
 
 static func _fs_vehicle_optional_count(vehicle: Dictionary) -> int:
-	var count := int(vehicle.has("technology_yard_id")) + int(vehicle.has("technology_siege_method")) + int(vehicle.has("convoy_id"))
+	var count := int(vehicle.has("technology_yard_id")) + int(vehicle.has("technology_siege_method")) + int(vehicle.has("convoy_id")) + int(vehicle.has("convoy_body"))
 	for key: String in FS_TARGET_OPTIONALS: count += int(vehicle.has(key))
 	return count
 
