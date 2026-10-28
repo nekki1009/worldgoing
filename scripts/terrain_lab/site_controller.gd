@@ -2870,6 +2870,24 @@ func _capture_for_save() -> Dictionary:
 		lab.terrain.site["crowd"] = captured.section
 	return Runtime.ok()
 
+## Region checkpoint twin of the crowd tail of _capture_for_save(). It replaces,
+## never appends, the crowd rosters already on the live Site, so repeated
+## checkpoints keep exactly one roster per team. The cold writer is unchanged.
+func _apply_region_crowd_capture(captured: Dictionary) -> void:
+	for actor: Dictionary in lab.terrain.site.actors.values():
+		if not lab.crowd_site.contains_person(int(actor.person_id)): continue
+		actor.movement_left = 0.0
+		actor.movement_from = actor.cell.duplicate()
+		actor.movement = {"duration": 0.0, "elapsed": 0.0, "start": actor.position.duplicate(),
+			"linear": false, "ride": false, "ride_running": false, "start_speed": 0.0, "end_speed": 0.0}
+		actor.ride_speed = 0.0
+	var kept: Array = []
+	for roster: Variant in lab.terrain.site.armies:
+		if roster is Dictionary and not bool(roster.get("crowd", false)): kept.append(roster)
+	kept.append_array(captured.rosters)
+	lab.terrain.site["armies"] = kept
+	lab.terrain.site["crowd"] = captured.section
+
 func save_to(path: String) -> Dictionary:
 	var path_guard := _save_path_guard(path)
 	if not path_guard.ok: return path_guard
@@ -10282,15 +10300,25 @@ func capture_region_checkpoint(purpose: String, effects_complete: bool = true,
 	if region_slot == null or lab.terrain == null: return Runtime.fail("NO_REGION_SLOT")
 	var boarding: Dictionary = vehicles.boarding_save_guard()
 	if not boarding.ok: return boarding
-	if _crowd_active(): return Runtime.fail("REGION_BACKEND_UNADMITTED")
+	# A live CrowdSite joins the checkpoint only as a non-read-only capture. The same
+	# synchronous native capture as the cold save supplies state.crowd; a detached
+	# read-only copy would need its own section and stays refused.
+	var crowd_admitted := _crowd_active()
+	if crowd_admitted and read_only: return Runtime.fail("REGION_BACKEND_UNADMITTED")
 	if token.is_empty(): token = "region_" + Crypto.new().generate_random_bytes(16).hex_encode()
 	var request: Dictionary = region_slot.region_checkpoint_context(lab.terrain, purpose, token, effects_complete, endpoint_payload)
 	if not request.ok: return request
+	var crowd_captured := {}
+	if crowd_admitted:
+		# capture_save keeps the existing BUSY guards (arrows in flight, pending captivity, siege commit).
+		crowd_captured = lab.crowd_site.capture_save()
+		if not crowd_captured.ok: return crowd_captured
 	if not read_only: _capture_positions() # Original presenters; ordinary-save guards remain.
-	var captured: Dictionary = lab.capture_region_owner_state(request.context)
+	if crowd_admitted: _apply_region_crowd_capture(crowd_captured)
+	var captured: Dictionary = lab.capture_region_owner_state(request.context, crowd_admitted)
 	if not captured.ok: return captured
 	var states: Dictionary = captured.get("owner_states", {"scene": captured.state})
-	return Store.capture_region_snapshot(lab.terrain, request.context, states, read_only)
+	return Store.capture_region_snapshot(lab.terrain, request.context, states, read_only, crowd_admitted)
 
 func checkpoint_region_internal(purpose: String, effects_complete: bool = true,
 		endpoint_payload: Dictionary = {}, token: String = "") -> Dictionary:

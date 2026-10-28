@@ -8405,18 +8405,22 @@ static func _region_plan_values(plan: Object) -> Dictionary:
 		result[field] = value
 	return result
 
-func capture_region_owner_state(context: Dictionary) -> Dictionary:
+func capture_region_owner_state(context: Dictionary, crowd_admitted: bool = false) -> Dictionary:
 	if terrain == null or site_controller == null: return SiteRuntime.fail("NO_TARGET")
 	var boarding: Dictionary = site_controller.vehicles.boarding_save_guard()
 	if not boarding.ok: return boarding
 	var duty_scope := _region_duty_enter()
-	var captured := _region_capture_original_owner_state(context)
+	var captured := _region_capture_original_owner_state(context, crowd_admitted)
 	_region_duty_leave(duty_scope)
 	return captured
 
-func _region_capture_original_owner_state(context: Dictionary) -> Dictionary:
+func _region_capture_original_owner_state(context: Dictionary, crowd_admitted: bool = false) -> Dictionary:
 	if terrain == null or site_controller == null: return SiteRuntime.fail("NO_TARGET")
-	if crowd_site != null and crowd_site.active: return SiteRuntime.fail("REGION_BACKEND_UNADMITTED")
+	# crowd_admitted: site_controller already captured the native crowd section for this checkpoint.
+	# A live crowd is admitted once this checkpoint has written its native section to the Site
+	# (site_controller.capture_region_checkpoint); every re-verification of the same capture sees it.
+	if crowd_site != null and crowd_site.active and not crowd_admitted and not terrain.site.has("crowd"):
+		return SiteRuntime.fail("REGION_BACKEND_UNADMITTED")
 	if _region_point_consuming: return SiteRuntime.fail("REGION_EFFECT_RUNNING")
 	var checked := RegionCheckpoint.validate_context(context)
 	if not checked.ok: return checked

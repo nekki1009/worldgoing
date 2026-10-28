@@ -301,7 +301,7 @@ static func siege_save_guard(data: TerrainData, allow_dirty_fire_save: bool = fa
 	return Runtime.ok()
 
 static func save(data: TerrainData, path: String = DEFAULT_PATH, native_candidate: Variant = null,
-	allow_dirty_fire_save: bool = false, region_context: Dictionary = {}, capture_only: bool = false, live_family_target: int = 0, capture_read_only: bool = false) -> Dictionary:
+	allow_dirty_fire_save: bool = false, region_context: Dictionary = {}, capture_only: bool = false, live_family_target: int = 0, capture_read_only: bool = false, crowd_region_admitted: bool = false) -> Dictionary:
 	if data == null or data.site.is_empty():
 		return Runtime.fail("NO_TARGET")
 	var boarding: Dictionary = Boarding.data_save_guard(data)
@@ -333,7 +333,10 @@ static func save(data: TerrainData, path: String = DEFAULT_PATH, native_candidat
 	if not hot:
 		for event: Variant in data.site.get("region_life_events", []):
 			if event is Dictionary and event.get("status") == "pending": return Runtime.fail("BUSY", "原旅行生命端點須先完成，或經 Region barrier checkpoint 保存")
-	if hot and (data.site.has("crowd") or native_candidate != null): return Runtime.fail("REGION_BACKEND_UNADMITTED")
+	# A hot checkpoint carries state.crowd only when site_controller admitted this live
+	# capture; a crowd section without that admission (or the reverse) is refused.
+	if hot and (native_candidate != null or data.site.has("crowd") != crowd_region_admitted):
+		return Runtime.fail("REGION_BACKEND_UNADMITTED")
 	var siege_guard := _region_fire_guard(data, region_capture) if hot else siege_save_guard(data, allow_dirty_fire_save)
 	if not siege_guard.ok: return siege_guard
 	var fixed_base: Variant = data.parameters.get("fixed_base")
@@ -578,12 +581,13 @@ static func _write_payload(source_data: TerrainData, path: String, payload: Dict
 ## the capture's own context/owners recomputes the identical payload (same data,
 ## same owners, idempotent validate_context, deterministic make), so writing the
 ## capture payload yields byte-identical files. Write-tail refusals (size, IO,
-## verification) still run here. Hot captures never carry crowd state.
+## verification) still run here. An admitted crowd capture carries the same
+## state.crowd section as the cold writer, so it uses the same crowd encoding.
 static func write_region_capture(data: TerrainData, path: String, capture: Dictionary) -> Dictionary:
 	if data == null or not bool(capture.get("ok", false)) or not capture.get("payload") is Dictionary or not capture.get("state") is Dictionary \
-		or not is_same(capture.payload.get("state"), capture.state) or capture.state.has("crowd"):
+		or not is_same(capture.payload.get("state"), capture.state):
 		return Runtime.fail("INVALID_REGION_CAPTURE")
-	return _write_payload(data, path, capture.payload, capture.state, false)
+	return _write_payload(data, path, capture.payload, capture.state, capture.state.has("crowd"))
 
 class CrowdJsonBatch extends RefCounted:
 	var values: Array = []
@@ -707,7 +711,7 @@ static func load_site(path: String = DEFAULT_PATH, fixed_base_loader: Callable =
 	if payload.state.has("region_snapshot"):
 		region_loaded = RegionCheckpoint.validate(payload.state, payload.state.region_snapshot)
 		if not region_loaded.ok: return region_loaded
-		if payload.state.has("crowd"): return Runtime.fail("REGION_BACKEND_UNADMITTED")
+		# A crowd section is validated below by the same _validate_state/_validate_crowd path as a cold save.
 		preserve_simulation = true
 	_normalize_boarding_numbers(payload.state)
 	var validation := _validate_state(data, payload.state, crowd_workers, null, region_loaded.get("context", {}))
@@ -4251,10 +4255,10 @@ static func _validate_siege_tower_people(data: TerrainData, vehicle: Dictionary,
 	return Runtime.ok()
 
 ## Region captures keep the original payload and validators; no ordinary-save bypass flag.
-static func capture_region_snapshot(data: TerrainData, context: Dictionary, owners: Dictionary = {}, read_only: bool = false) -> Dictionary:
+static func capture_region_snapshot(data: TerrainData, context: Dictionary, owners: Dictionary = {}, read_only: bool = false, crowd_region_admitted: bool = false) -> Dictionary:
 	var request := context.duplicate(true)
 	request["owners"] = owners if not owners.is_empty() else context.get("owners", {})
-	return save(data, "", null, false, request, true, 0, read_only)
+	return save(data, "", null, false, request, true, 0, read_only, crowd_region_admitted)
 
 static func save_region_snapshot(data: TerrainData, path: String, context: Dictionary, owners: Dictionary = {}) -> Dictionary:
 	var request := context.duplicate(true)
@@ -4649,7 +4653,8 @@ static func _region_scene_capture_guard(data: TerrainData, captured: Dictionary)
 	var original: Variant = data.get_meta(&"site_garrison_lab") if data.has_meta(&"site_garrison_lab") else null
 	if original is WeakRef: original = original.get_ref()
 	if original != null and is_instance_valid(original) and original.get("terrain") == data and original.has_method("capture_region_owner_state"):
-		var actual: Dictionary = original.capture_region_owner_state(context)
+		# A live crowd checkpoint already carries its admitted native section on the Site.
+		var actual: Dictionary = original.capture_region_owner_state(context, data.site.has("crowd"))
 		if not actual.ok: return actual
 		if RegionCheckpoint.state_hash({"graph": actual.state}) != shape.graph_hash:
 			return Runtime.fail("STALE_REGION_SCENE_OWNER")
