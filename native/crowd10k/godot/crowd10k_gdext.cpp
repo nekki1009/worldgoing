@@ -1017,6 +1017,16 @@ void m_apply_siege_contact(CALL_ARGS) {
 	if (!arg_int(a[0],i) || i<0 || i>=w.soldier_count() || !arg_num(a[1],hp) || !arg_num(a[2],stun) || !arg_num(a[3],stagger)) { ret_bool(r,false); return; }
 	ret_bool(r, w.apply_siege_contact((int)i,hp,stun,stagger));
 }
+void m_apply_melee_contact(CALL_ARGS) {
+	SELF; NEED(3); WORLD; int64_t i; double hp, stun;
+	if (!arg_int(a[0],i) || i<0 || i>=w.soldier_count() || !arg_num(a[1],hp) || !arg_num(a[2],stun)) { ret_bool(r,false); return; }
+	ret_bool(r, w.apply_melee_contact((int)i,hp,stun));
+}
+void m_charge_exchange_fatigue(CALL_ARGS) {
+	SELF; NEED(2); WORLD; int64_t i; double amount;
+	if (!arg_int(a[0],i) || i<0 || i>=w.soldier_count() || !arg_num(a[1],amount)) { ret_bool(r,false); return; }
+	ret_bool(r, w.charge_exchange_fatigue((int)i,amount));
+}
 void m_charge_siege_round(CALL_ARGS) {
 	SELF; NEED(2); WORLD; double amount;
 	void *p = arg_packed(a[0],INTS);
@@ -1268,6 +1278,8 @@ void initialize(void *, GDExtensionInitializationLevel level) {
 	add_method("set_recovery_input", m_set_recovery_input, {{INT,"formation"},{FLOAT,"multiplier"}}, BOOL);
 	add_method("set_fire_safe_rest_input", m_set_fire_safe_rest_input, {{INT,"formation"},{BOOL,"safe"}}, BOOL);
 	add_method("apply_siege_contact",m_apply_siege_contact,{{INT,"soldier"},{FLOAT,"hp_loss"},{FLOAT,"stun_add"},{FLOAT,"stagger"}},BOOL);
+	add_method("apply_melee_contact",m_apply_melee_contact,{{INT,"soldier"},{FLOAT,"hp_loss"},{FLOAT,"stun_add"}},BOOL);
+	add_method("charge_exchange_fatigue",m_charge_exchange_fatigue,{{INT,"soldier"},{FLOAT,"amount"}},BOOL);
 	add_method("charge_siege_round",m_charge_siege_round,{{INTS,"members"},{FLOAT,"per_person"}},BOOL);
 	add_method("charge_siege_work",m_charge_siege_work,{{INT,"soldier"},{FLOAT,"game_seconds"}},BOOL);
 	add_method("contact_pose_state",m_contact_pose_state,{{INT,"soldier"}},DOUBLES);

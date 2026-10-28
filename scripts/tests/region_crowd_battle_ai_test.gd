@@ -101,18 +101,29 @@ func _run() -> void:
 	var target_cell: Array = people[target_id].get("contact_cell", [])
 	if not _check(source_cell.size() == 2 and target_cell.size() == 2, "resolved crowd people carry contact cells", people): return
 
-	# Still-refused paths return their named codes, never a crowd-side write.
+	# Admitted melee contact and exchange fatigue now write the native crowd person (G63 gaps A and B).
+	var target_index: int = enemy_owner.index_for_identity(target_id)
+	var hp_before: float = float(enemy_owner.combat_hot_get(target_index, &"hp"))
+	var fatigue_before: float = float(enemy_owner.combat_hot_get(target_index, &"fatigue"))
 	var witness := {"verified": true, "site_id": site_id, "source": source_id, "target": target_id,
 		"game_time": 5.0, "source_cell": source_cell, "target_cell": target_cell}
+	# A NaN effect is refused by name before any native write.
+	var refused: Dictionary = Battle._owned_damage(lab, battle, {"id": "probe_nan", "kind": "damage", "person_id": target_id,
+		"source_person_id": source_id, "attack_id": "probe", "hp": NAN, "stun": 0.0, "game_time": 10.0, "contact": witness})
+	if not _check(refused.get("code", "") == "INVALID_EFFECT", "NaN melee HP on a crowd person is refused before any write", refused): return
 	var damage: Dictionary = Battle._owned_damage(lab, battle, {"id": "probe_damage", "kind": "damage", "person_id": target_id,
 		"source_person_id": source_id, "attack_id": "probe", "hp": 1.0, "stun": 0.0, "game_time": 10.0, "contact": witness})
-	if not _check(damage.get("code", "") == "NATIVE_CONTACT_UNADMITTED", "melee contact on a crowd person refuses with its code", damage): return
+	if not _check(damage.get("ok", false) == true, "melee contact on a crowd person is applied natively", damage): return
+	var hp_after: float = float(enemy_owner.combat_hot_get(target_index, &"hp"))
+	if not _check(hp_after < hp_before, "native HP falls after melee contact", [hp_before, hp_after]): return
 	var fatigue: Dictionary = Battle._owned_fatigue(lab, battle, {"id": "probe_fatigue", "kind": "fatigue", "person_id": target_id, "amount": 1.0})
-	if not _check(fatigue.get("code", "") == "NATIVE_FATIGUE_UNADMITTED", "exchange fatigue on a crowd person refuses with its code", fatigue): return
+	if not _check(fatigue.get("ok", false) == true, "exchange fatigue on a crowd person is charged natively", fatigue): return
+	var fatigue_after: float = float(enemy_owner.combat_hot_get(target_index, &"fatigue"))
+	if not _check(fatigue_after > fatigue_before, "native formation fatigue rises after the exchange charge", [fatigue_before, fatigue_after]): return
 
 	# Original siege: without a Region slot the owner gate refuses first (crowd is not the cause).
 	var siege: Dictionary = Battle.prepare_original_siege(lab, {})
 	if not _check(siege.get("code", "") == "MISSING_ORIGINAL_SIEGE_OWNER", "prepare_original_siege reaches its owner gate under a crowd", siege): return
 
-	print("REGION_CROWD_BATTLE_AI_PASS: ", checks, " checks; crowd teams enumerated, AI gates passed, battle resolves crowd people, contact and fatigue refuse")
+	print("REGION_CROWD_BATTLE_AI_PASS: ", checks, " checks; crowd teams enumerated, AI gates passed, battle resolves crowd people, contact and fatigue apply natively")
 	quit(0)

@@ -309,6 +309,20 @@ bool World::charge_siege_work(int i, double seconds) {
 	return true;
 }
 
+// Exchange fatigue of an original melee hit or round. Dead members stay listed but are unbound
+// from the pool (GDScript PersonFatigue.unbind), so they are a no-op that succeeds.
+bool World::charge_exchange_fatigue(int i, double amount) {
+	if (work_point_finish_ready_) return false; // Native final admission precedes all original point costs.
+	if (i < 0 || i >= soldier_count() || !std::isfinite(amount) || amount < 0) return false;
+	const int fi = form[i];
+	if (fi < 0 || fi >= (int)formations.size()) return false;
+	const std::vector<int> &members = formations[fi].members;
+	if (std::find(members.begin(), members.end(), i) == members.end()) return false;
+	if (!alive(i)) return true;
+	if (amount > 0) charge(i, amount);
+	return true;
+}
+
 bool World::charge_custody_work(int i, double seconds) {
 	if (work_point_finish_ready_) return false; // Native final admission precedes all original point costs.
 	if (i < 0 || i >= soldier_count() || !can_act(i) || escort_mode[i] != 1 || !std::isfinite(seconds) || seconds < 0) return false;

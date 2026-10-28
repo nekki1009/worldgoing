@@ -24,6 +24,8 @@ int wg_crowd_set_housing_recovery_input(wg_crowd *c, int f, double multiplier);
 int wg_crowd_order_controlled_step(wg_crowd *c, int person, int destination, int kind);
 void wg_crowd_cancel_controlled_step(wg_crowd *c, int person, int kind);
 int wg_crowd_apply_environment_damage(wg_crowd *c, int i, double amount);
+int wg_crowd_apply_melee_contact(wg_crowd *c, int i, double hp_loss, double stun_add);
+int wg_crowd_charge_exchange_fatigue(wg_crowd *c, int i, double amount);
 int wg_crowd_has_projectiles(const wg_crowd *c);
 
 wg_crowd *wg_crowd_create(int threads, int64_t site_seed);

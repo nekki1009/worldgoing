@@ -263,8 +263,9 @@ static func _owned_damage(lab: TerrainLab, battle: Dictionary, effect: Dictionar
 	elif target.owner is TerrainTestCharacter and index < 0:
 		target.owner.apply_contact(packet)
 	elif target.owner is CrowdPersonOwner:
-		# Native melee contact is not yet exported (see G63_design.md, API gap A).
-		return _fail("NATIVE_CONTACT_UNADMITTED")
+		# Native melee contact (G63 API gap A); a DLL without it is refused, never written around.
+		if not ClassDB.class_has_method(&"ArmyCrowd", &"apply_melee_contact"): return _fail("CROWD_BUILD_MISMATCH")
+		if not target.owner.apply_unit_contact(index, packet): return _fail("NATIVE_CONTACT_REFUSED")
 	else: return _fail("UNSUPPORTED_BACKEND")
 	return {"ok": true, "code": "", "owner": "original_apply_contact", "person_id": target_id}
 
@@ -282,8 +283,9 @@ static func _owned_fatigue(lab: TerrainLab, battle: Dictionary, effect: Dictiona
 	elif person.owner is TerrainTestCharacter and index < 0:
 		PersonFatigue.charge(person.owner, amount)
 	elif person.owner is CrowdPersonOwner:
-		# Native exchange fatigue charge is not yet exported (see G63_design.md, API gap B).
-		return _fail("NATIVE_FATIGUE_UNADMITTED")
+		# Native exchange fatigue charge (G63 API gap B); a DLL without it is refused, never written around.
+		if not ClassDB.class_has_method(&"ArmyCrowd", &"charge_exchange_fatigue"): return _fail("CROWD_BUILD_MISMATCH")
+		if not person.owner.charge_fatigue(index, amount): return _fail("NATIVE_FATIGUE_REFUSED")
 	else: return _fail("UNSUPPORTED_BACKEND")
 	return {"ok": true, "code": "", "owner": "PersonFatigue.charge", "person_id": int(effect.person_id)}
 static func _validate_interval(battle: Dictionary, interval: Dictionary) -> Dictionary:

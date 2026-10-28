@@ -467,6 +467,8 @@ public:
 	MotionSegment motion_segment(int i) const { return i >= 0 && i < (int)action_motion.size() ? action_motion[i] : MotionSegment{}; }
 	bool set_contact_revision(int index, int64_t value);
 	bool apply_siege_contact(int i, double hp_loss, double stun_add, double stagger_seconds);
+	bool apply_melee_contact(int i, double hp_loss, double stun_add);
+	bool charge_exchange_fatigue(int i, double amount);
 	bool charge_siege_round(const std::vector<int> &members, double per_person);
 	bool charge_siege_work(int person, double game_seconds);
 	void contact_pose(int i, int movement, int &slot, double &age) const;

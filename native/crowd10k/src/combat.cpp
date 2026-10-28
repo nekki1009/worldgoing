@@ -170,6 +170,21 @@ bool World::apply_siege_contact(int i, double hp_loss, double stun_add, double s
 	return true; // Siege preserves the original brace skill; it provides no siege reduction.
 }
 
+// Original TerrainArmy.apply_unit_contact for a melee exchange hit (terrain_army.gd:8604-8640).
+// The shared apply_contact supplies the same revision, interruption, stun/grace, KO-at-STUN_LIMIT
+// and death rules. Melee sets no stagger.
+bool World::apply_melee_contact(int i, double hp_loss, double stun_add) {
+	if (i < 0 || i >= soldier_count() || !std::isfinite(hp_loss) || !std::isfinite(stun_add)
+	    || hp_loss < 0 || stun_add < 0) return false;
+	if (!alive(i)) return true;
+	apply_contact(i, hp_loss, stun_add); // Original revision, interruptions, KO/death and combat marks.
+	if (hp[i] > 0.0 && ko[i] <= 0.0 && getup[i] <= 0.0 && hp_loss > 0.0) {
+		set_visual(i, V_HIT);
+		if (rescue_of[i] >= 0) cancel_actions_involving(i);
+	}
+	return true;
+}
+
 bool World::apply_environment_damage(int i, double amount) {
 	if (i < 0 || i >= soldier_count() || !std::isfinite(amount) || amount < 0) return false;
 	if (!alive(i) || amount == 0) return true;

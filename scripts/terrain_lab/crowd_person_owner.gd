@@ -632,6 +632,27 @@ func contact_protection(index: int, hit: Dictionary, profile: Dictionary) -> Vec
 	var sample: Array = inputs.sample
 	return inputs.source.armor_at(sample[0], sample[1], sample[2], point - inputs.origin, str(profile.kind), Vector2.ZERO, 0.0, inputs.appearance)
 
+# Original TerrainArmy.apply_unit_contact for a melee hit, written by the native World (G6.3 gap A).
+# Refused during a Region endpoint deferral, which has no native queue for melee contact.
+func apply_unit_contact(index: int, packet: Dictionary) -> bool:
+	if not is_member(index) or crowd_site == null or crowd_site.crowd == null or crowd_site.lab._region_deferring_endpoint(): return false
+	if bool(packet.get("environmental", false)): return false
+	var result: Dictionary = packet.get("result", {})
+	var hp := float(result.get("hp", NAN))
+	var stun := float(result.get("stun", NAN))
+	if not is_finite(hp) or hp < 0.0 or not is_finite(stun) or stun < 0.0: return false
+	crowd_site._audio_native_prepare()
+	var accepted: bool = bool(crowd_site.crowd.apply_melee_contact(index, hp, stun))
+	crowd_site._consume_events()
+	return accepted
+
+# Original PersonFatigue.charge for an exchange round, written by the native World (G6.3 gap B).
+func charge_fatigue(index: int, amount: float) -> bool:
+	if not is_member(index) or crowd_site == null or crowd_site.crowd == null or crowd_site.lab._region_deferring_endpoint(): return false
+	if not is_finite(amount) or amount < 0.0: return false
+	var accepted: bool = bool(crowd_site.crowd.charge_exchange_fatigue(index, amount))
+	return accepted
+
 func ranged_apply_hit(index: int, _source_cell: Vector2i, packet: Dictionary) -> void:
 	if not combat_units.has(index): return
 	var result: Dictionary = packet.get("result", {})

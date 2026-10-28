@@ -74,6 +74,8 @@ int wg_crowd_set_housing_recovery_input(wg_crowd *c,int f,double multiplier) { r
 int wg_crowd_order_controlled_step(wg_crowd *c,int person,int destination,int kind) { return c && (kind == 3 || kind == 5) && c->world.order_controlled_step(person,destination,static_cast<wg::World::ControlledStepKind>(kind)) ? 1 : 0; }
 void wg_crowd_cancel_controlled_step(wg_crowd *c,int person,int kind) { if (c && (kind == 3 || kind == 5)) c->world.cancel_controlled_step(person,static_cast<wg::World::ControlledStepKind>(kind)); }
 int wg_crowd_apply_environment_damage(wg_crowd *c,int i,double d) { return c && c->world.apply_environment_damage(i,d) ? 1 : 0; }
+int wg_crowd_apply_melee_contact(wg_crowd *c,int i,double hp_loss,double stun_add) { return c && c->world.apply_melee_contact(i,hp_loss,stun_add) ? 1 : 0; }
+int wg_crowd_charge_exchange_fatigue(wg_crowd *c,int i,double amount) { return c && c->world.charge_exchange_fatigue(i,amount) ? 1 : 0; }
 int wg_crowd_has_projectiles(const wg_crowd *c) { return c && !c->world.projectiles.empty() ? 1 : 0; }
 double wg_crowd_combat_mark(const wg_crowd *c) { return c->world.combat_mark; }
 double wg_crowd_combat_left(const wg_crowd *c) { return c->world.combat_left; }

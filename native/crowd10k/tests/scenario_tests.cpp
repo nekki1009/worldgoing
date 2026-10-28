@@ -1481,6 +1481,47 @@ static void test_edge_deploy() {
 	CHECK(s.w.stats.illegal_cell == 0, "no illegal cells after the first steps");
 }
 
+// Native melee contact and exchange fatigue (Region battle adapter, G6.3 API gap A and B).
+static void test_melee_contact_and_exchange_fatigue() {
+	std::printf("[melee] melee contact: HP loss, stun to KO at STUN_LIMIT, HP 0 death, refusals; exchange fatigue charge\n");
+	Scene s;
+	s.formation(0, 10, 10, 0, 2, sword());
+	s.formation(1, 30, 30, 0, 1, sword());
+	s.w.finalize();
+	const double hp0 = s.w.hp[0];
+	CHECK(s.w.apply_melee_contact(0, 3.0, 0.0), "melee contact accepted");
+	CHECK(std::fabs(s.w.hp[0] - (hp0 - 3.0)) < 1e-9, "melee contact reduces HP (%.4f)", s.w.hp[0]);
+	CHECK(s.w.apply_melee_contact(0, 0.0, 60.0) && s.w.ko[0] == 0 && std::fabs(s.w.stun[0] - 60.0) < 1e-9,
+		"stun accumulates below STUN_LIMIT without KO (%.3f)", s.w.stun[0]);
+	CHECK(s.w.apply_melee_contact(0, 0.0, 50.0) && s.w.ko[0] == s.w.cfg.ko_seconds && s.w.stats.kos == 1,
+		"stun crossing STUN_LIMIT is KO (stun %.3f)", s.w.stun[0]);
+	const double hp1 = s.w.hp[1];
+	CHECK(s.w.apply_melee_contact(1, hp1, 0.0), "lethal melee contact accepted");
+	CHECK(s.w.hp[1] == 0 && s.w.ko[1] == 0 && s.w.stats.deaths == 1, "HP 0 is death, not KO");
+	CHECK(s.w.apply_melee_contact(1, 5.0, 0.0) && s.w.hp[1] == 0 && s.w.stats.deaths == 1, "contact on a dead soldier is a no-op that succeeds");
+	const double kept = s.w.hp[0];
+	CHECK(!s.w.apply_melee_contact(-1, 1.0, 0.0) && !s.w.apply_melee_contact(s.w.soldier_count(), 1.0, 0.0), "invalid soldier index refused");
+	CHECK(!s.w.apply_melee_contact(0, NAN, 0.0) && !s.w.apply_melee_contact(0, 1.0, NAN), "NaN refused");
+	CHECK(!s.w.apply_melee_contact(0, -1.0, 0.0) && !s.w.apply_melee_contact(0, 0.0, -1.0), "negative amount refused");
+	CHECK(s.w.hp[0] == kept, "refused contact writes nothing (%.4f)", s.w.hp[0]);
+
+	Scene t;
+	t.formation(0, 10, 10, 0, 2, sword());
+	t.formation(1, 30, 30, 0, 1, sword());
+	t.w.finalize();
+	const int fi = t.w.form[0];
+	const double f0 = t.w.formations[fi].fatigue;
+	CHECK(t.w.charge_exchange_fatigue(0, 1.0), "fatigue charge on a member accepted");
+	CHECK(t.w.formations[fi].fatigue > f0, "fatigue charge raises the shared pool (%.4f -> %.4f)", f0, t.w.formations[fi].fatigue);
+	t.w.apply_contact(1, t.w.hp[1], 0.0); // the second member dies
+	const double f1 = t.w.formations[fi].fatigue;
+	CHECK(t.w.charge_exchange_fatigue(1, 5.0) && t.w.formations[fi].fatigue == f1, "dead member: fatigue charge is a succeeding no-op");
+	CHECK(!t.w.charge_exchange_fatigue(-1, 1.0) && !t.w.charge_exchange_fatigue(t.w.soldier_count(), 1.0), "invalid soldier index refused for fatigue");
+	CHECK(!t.w.charge_exchange_fatigue(2, NAN) && !t.w.charge_exchange_fatigue(2, -1.0), "NaN and negative fatigue refused");
+	t.w.formations[fi].members.erase(t.w.formations[fi].members.begin()); // soldier 0 is no longer on the roster
+	CHECK(!t.w.charge_exchange_fatigue(0, 1.0), "fatigue on a non-member refused");
+}
+
 int main() {
 	#ifdef _WIN32
 	SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
@@ -1517,6 +1558,7 @@ int main() {
 	test_host_blocker();
 	test_host_soldier();
 	test_edge_deploy();
+	test_melee_contact_and_exchange_fatigue();
 	std::printf("\n%d checks, %d failures\n", checks, failures);
 	return failures ? 1 : 0;
 }
