@@ -156,7 +156,7 @@ static func apply_pending(battle: Dictionary, prepared: Dictionary, callbacks: D
 static func resolve_people(lab: TerrainLab, battle: Dictionary, eligibility_query: Callable = Callable(), scope: Dictionary = {}) -> Dictionary:
 	if lab == null or lab.terrain == null or str(lab.terrain.site.get("id", "")) != str(battle.get("site_id", "")):
 		return _fail("WRONG_BATTLE_SITE")
-	if lab.crowd_site != null and lab.crowd_site.active: return _fail("UNSUPPORTED_BACKEND")
+	# An active native crowd is admitted: its people resolve through CrowdPersonOwner.
 	var original_refs := {}
 	var values := {}
 	# A detached bind child has no Slot of its own; its caller supplies the scope.
@@ -171,7 +171,7 @@ static func resolve_people(lab: TerrainLab, battle: Dictionary, eligibility_quer
 			if person.is_empty(): continue
 			var owner: Variant = person.owner
 			var index := int(person.unit)
-			if not owner is TerrainArmy and not owner is TerrainTestCharacter: return _fail("UNSUPPORTED_BACKEND")
+			if not owner is TerrainArmy and not owner is TerrainTestCharacter and not owner is CrowdPersonOwner: return _fail("UNSUPPORTED_BACKEND")
 			var receives: bool = owner.exchange_can_receive(index) if index >= 0 else owner.exchange_can_receive()
 			var initiates: bool = owner.exchange_ready(index) if index >= 0 else owner.exchange_ready()
 			var restriction := not eligibility_query.is_valid() or bool(eligibility_query.call(identity, side, person))
@@ -196,6 +196,10 @@ static func resolve_people(lab: TerrainLab, battle: Dictionary, eligibility_quer
 	return {"ok": true, "code": "", "people": values, "scope": "original_melee_contacts"}
 
 static func _original_rank(owner: Variant, identity: int) -> int:
+	# A native crowd person ranks by its original command owner, as SiteArmyAI._person_rank does.
+	if owner is CrowdPersonOwner:
+		var source: Variant = owner._order_owner()
+		return _original_rank(source, identity) if source is TerrainArmy else 0
 	if not owner is TerrainArmy: return 0
 	var commander: int = int(owner.combat_identity(int(owner.current_commander)))
 	var officers: Array = []
@@ -258,6 +262,9 @@ static func _owned_damage(lab: TerrainLab, battle: Dictionary, effect: Dictionar
 		target.owner.apply_unit_contact(index, packet)
 	elif target.owner is TerrainTestCharacter and index < 0:
 		target.owner.apply_contact(packet)
+	elif target.owner is CrowdPersonOwner:
+		# Native melee contact is not yet exported (see G63_design.md, API gap A).
+		return _fail("NATIVE_CONTACT_UNADMITTED")
 	else: return _fail("UNSUPPORTED_BACKEND")
 	return {"ok": true, "code": "", "owner": "original_apply_contact", "person_id": target_id}
 
@@ -274,6 +281,9 @@ static func _owned_fatigue(lab: TerrainLab, battle: Dictionary, effect: Dictiona
 		PersonFatigue.charge(person.owner.combat_units[index], amount)
 	elif person.owner is TerrainTestCharacter and index < 0:
 		PersonFatigue.charge(person.owner, amount)
+	elif person.owner is CrowdPersonOwner:
+		# Native exchange fatigue charge is not yet exported (see G63_design.md, API gap B).
+		return _fail("NATIVE_FATIGUE_UNADMITTED")
 	else: return _fail("UNSUPPORTED_BACKEND")
 	return {"ok": true, "code": "", "owner": "PersonFatigue.charge", "person_id": int(effect.person_id)}
 static func _validate_interval(battle: Dictionary, interval: Dictionary) -> Dictionary:
@@ -544,13 +554,20 @@ static func _siege_person_ref(lab: TerrainLab, identity: int) -> Dictionary:
 	var unit := int(person.unit)
 	var ref := {"person_id": identity, "faction": int(person.faction), "cell": [cell.x, cell.y],
 		"surface": int(lab.terrain.effective_height(cell)), "hp": float(person.hp), "ko": float(person.ko),
-		"captive": bool(person.captive), "moving": bool(person.moving), "team_id": int(owner.team_id) if owner is TerrainArmy else -1,
+		"captive": bool(person.captive), "moving": bool(person.moving), "team_id": int(owner.team_id) if owner is TerrainArmy or owner is CrowdPersonOwner else -1,
 		"holder_sha256": _siege_persisted_hash(person.get("holder", {})), "role": SiteSettlement._role(person)}
 	if owner is TerrainArmy:
 		ref["order"] = int(owner.combat_order)
 		ref["commander"] = int(owner.combat_identity(owner.current_commander)) if owner.current_commander >= 0 else -1
 		ref["moving_from"] = [owner.cells[unit].x, owner.cells[unit].y]
 		ref["moving_to"] = [owner.moving_to[unit].x, owner.moving_to[unit].y]
+	elif owner is CrowdPersonOwner:
+		# Native crowd people have no TerrainArmy cell arrays or movement_from_cell.
+		ref["order"] = int(owner.combat_order)
+		ref["commander"] = int(owner.combat_identity(owner.current_commander)) if owner.current_commander >= 0 else -1
+		ref["moving_from"] = [cell.x, cell.y]
+		var crowd_goal: Vector2i = owner.moving_to.get(unit, cell)
+		ref["moving_to"] = [crowd_goal.x, crowd_goal.y]
 	else:
 		ref["order"] = -1
 		ref["commander"] = -1
@@ -582,7 +599,8 @@ static func prepare_original_siege(lab: TerrainLab, battle: Dictionary = {}) -> 
 	var slot: RegionSaveSlot = lab.site_controller.region_slot
 	var data := lab.terrain
 	if lab._region_bound_data != data or slot._region_bound_original_lab(data) != lab: return _fail("STALE_ORIGINAL_SIEGE_OWNER")
-	if lab.crowd_site != null and lab.crowd_site.active: return _fail("REGION_BACKEND_UNADMITTED")
+	var crowd_active: bool = lab.crowd_site != null and lab.crowd_site.active
+	if crowd_active and not lab.crowd_site.siege_native_supported(): return _fail("REGION_BACKEND_UNADMITTED")
 	var settlement := SiteSettlement.record(data)
 	var center := SiteSettlement.center(data)
 	if settlement.is_empty() or center.is_empty() or int(settlement.level) <= 0: return {"ok": true, "present": false}
@@ -599,13 +617,22 @@ static func prepare_original_siege(lab: TerrainLab, battle: Dictionary = {}) -> 
 	var controlled := int(scope.person_id)
 	var identities: Array[int] = []
 	for actor: TerrainTestCharacter in lab.combat_actors:
+		# An admitted crowd enumerates its own actors below; never count one twice.
+		if crowd_active and lab.crowd_site.contains_person(actor.person_id): continue
 		if lab.actor_present(actor) and not actor.site_exited and actor.person_id != controlled: identities.append(actor.person_id)
 	for team: TerrainArmy in lab.combat_armies:
 		if not team.combat_enabled: continue
 		for unit: int in team.combat_units.size():
 			if team.member_gone(unit): continue
-			var identity := team.combat_identity(unit)
+			var identity: int = team.combat_identity(unit)
 			if identity != controlled: identities.append(identity)
+	if crowd_active:
+		for owner_ref: CrowdPersonOwner in lab.crowd_site.person_owners():
+			if not owner_ref.combat_enabled: continue
+			for unit: int in owner_ref.combat_units:
+				if owner_ref.member_gone(unit): continue
+				var crowd_identity: int = owner_ref.combat_identity(unit)
+				if crowd_identity != controlled: identities.append(crowd_identity)
 	identities.sort()
 	for identity: int in identities:
 		if identity <= 0 or bodies.has(str(identity)): return _fail("INVALID_ORIGINAL_SIEGE_ROSTER")
@@ -690,6 +717,10 @@ static func prepare_original_siege(lab: TerrainLab, battle: Dictionary = {}) -> 
 	for identity: int in factions.get(attacker, []):
 		var person: Dictionary = lab.site_controller.person_actions._person(identity, false)
 		if not SiteSettlement._fit(person) or SiteSettlement._role(person) == "civilian" or lab.site_controller.vehicles.is_siege_crew(identity): continue
+		# Native crowd attackers have no admitted route/advance proof yet. Refuse conservatively
+		# instead of silently dropping them from the assault phase.
+		if person.owner is CrowdPersonOwner and person.owner.combat_order in [TerrainArmy.CombatOrder.ATTACK, TerrainArmy.CombatOrder.MOVE]:
+			return _fail("CROWD_SIEGE_ROUTE_UNADMITTED")
 		if not person.owner is TerrainArmy: continue
 		var original_attack: bool = person.owner.combat_order == TerrainArmy.CombatOrder.ATTACK
 		var original_advance: bool = person.owner.combat_order == TerrainArmy.CombatOrder.MOVE and SiteSettlement.capture_zone(data).has(person.owner.combat_goal)

@@ -784,6 +784,20 @@ func exchange_ready(index: int) -> bool:
 	if owner is TerrainArmy and owner.person_busy_query.is_valid() and bool(owner.person_busy_query.call(identity)): return false
 	return true
 
+# Native-state derivation of TerrainArmy.exchange_can_receive: a living person who
+# is not KO, captive, departed, exited, getting up, or in exchange cooldown can be
+# struck. Movement and rescue never block receiving. The team's combat_enabled flag
+# is ignored because a crowd's original TerrainArmy source is always disabled.
+func exchange_can_receive(index: int) -> bool:
+	if crowd_site == null or crowd_site.lab == null or not crowd_site.active or not is_member(index): return false
+	var source: Variant = _command_owner(index)
+	if source is TerrainArmy and source._ship_in_journey(_command_index(index)): return false
+	return bool(crowd_site.lab.exchange_enabled) and combat_enabled \
+		and float(combat_hot_get(index, &"hp")) > 0.0 and float(combat_hot_get(index, &"ko")) <= 0.0 \
+		and str(combat_hot_get(index, &"pose")) != "get_up" and not bool(combat_hot_get(index, &"captive")) \
+		and not bool(combat_hot_get(index, &"site_exited", false)) and not bool(combat_hot_get(index, &"departed", false)) \
+		and float(combat_hot_get(index, &"exchange_cooldown", 0.0)) <= 0.000000001
+
 func ranged_order_authorized(ignore_pause: bool = false) -> bool:
 	if not ranged_enabled or not crowd_site.fire_host_active() or current_commander < 0: return false
 	if not command_eligible(current_commander) or combat_identity(current_commander) != ranged_order_issuer_id: return false

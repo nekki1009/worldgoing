@@ -192,15 +192,10 @@ static func dispatch_context(lab: TerrainLab, nation_id: String, team_id: int, t
 		transfer_token: String, preflight: Callable, ledger: Dictionary = {}, game_time: float = -1.0) -> Dictionary:
 	if lab == null or lab.terrain == null or lab.site_controller == null or lab.site_controller.equipment_orders == null:
 		return _fail("MISSING_DISPATCH_OWNER")
-	if lab.crowd_site != null and lab.crowd_site.active: return _fail("UNSUPPORTED_BACKEND")
 	var equipment: SiteEquipmentOrders = lab.site_controller.equipment_orders
 	var nation: Dictionary = lab.terrain.site.get("equipment_nations", {}).get(nation_id, {})
 	if nation.is_empty() or not nation.has("offices"): return _fail("NO_AUTHORITY")
-	var team: TerrainArmy = null
-	for candidate: TerrainArmy in lab.combat_armies:
-		if int(candidate.team_id) == team_id:
-			team = candidate
-			break
+	var team: Variant = command_team_by_id(lab, team_id)
 	if team == null or not team.combat_enabled: return _fail("NO_TEAM")
 	# An existing catalog is resolved directly; missing later catalog is a
 	# detached preview and gets the original owner migration at prepare.
@@ -213,8 +208,7 @@ static func dispatch_context(lab: TerrainLab, nation_id: String, team_id: int, t
 		func(identity: int) -> bool: return equipment._nation_person_ok(nation, identity))
 	if not bool(resolved.get("ok", false)): return resolved
 	var player_id := lab.controlled_person_id()
-	var player_member := team.index_for_identity(player_id)
-	if player_member >= 0: return _fail("PLAYER_PARTY")
+	if _team_has_person(lab, team, player_id): return _fail("PLAYER_PARTY")
 	var registry := ledger
 	var stamp := game_time
 	if registry.is_empty():
@@ -239,7 +233,6 @@ const DISPATCH_POLICY_REVISION := "known_site_dispatch_v1"
 static func dispatch_candidates(lab: TerrainLab, scoped_intel: Dictionary, game_time: float) -> Dictionary:
 	if lab == null or lab.terrain == null or lab.site_controller == null or not _time(game_time):
 		return _fail("MISSING_DISPATCH_OWNER")
-	if lab.crowd_site != null and lab.crowd_site.active: return _fail("UNSUPPORTED_BACKEND")
 	var equipment: SiteEquipmentOrders = lab.site_controller.equipment_orders
 	if equipment == null: return _fail("MISSING_DISPATCH_OWNER")
 	var duty: Script = load("res://scripts/terrain_lab/site_duty_ai.gd")
@@ -264,11 +257,12 @@ static func dispatch_candidates(lab: TerrainLab, scoped_intel: Dictionary, game_
 		var decider := int(resolved.decider)
 		var thresholds := military_thresholds(duty.personality(decider, null, lab))
 		var targets := dispatch_known_targets(lab, scoped_intel, decider, game_time)
-		for team: TerrainArmy in lab.combat_armies:
-			if used_teams.has(team.team_id) or not team.combat_enabled or team.index_for_identity(actual_player) >= 0: continue
-			team.settle_combat_command()
+		for team: Variant in command_team_list(lab):
+			if used_teams.has(team.team_id) or not team.combat_enabled or _team_has_person(lab, team, actual_player): continue
+			# A native crowd settles its own command every World step; only GD armies settle here.
+			if team is TerrainArmy: team.settle_combat_command()
 			if not team.command_eligible(team.current_commander) or team.is_sustain_routed(): continue
-			var commander := team.combat_identity(team.current_commander)
+			var commander: int = team.combat_identity(team.current_commander)
 			if not equipment._member(nation, commander): continue
 			var own := dispatch_ready_summary(team, lab, thresholds, own_morale)
 			if own.is_empty(): continue
@@ -532,13 +526,78 @@ static func validate_carried_nation_execution(ledger: Dictionary, report: Dictio
 ## and current original own-cohort readiness. This reads no enemy army facts.
 
 
-static func dispatch_ready_summary(team: TerrainArmy, original: TerrainLab, thresholds: Dictionary, morale: Dictionary = {}) -> Dictionary:
+static func dispatch_ready_summary(team: Variant, original: TerrainLab, thresholds: Dictionary, morale: Dictionary = {}) -> Dictionary:
 	var military: Script = load("res://scripts/terrain_lab/site_army_ai.gd")
-	var own: Dictionary = military._team_summary(team, morale if not morale.is_empty() else military._morale_by_person(original.terrain), {})
+	var spirit: Dictionary = morale if not morale.is_empty() else military._morale_by_person(original.terrain)
+	var own: Dictionary = _crowd_team_summary(team, original, spirit) if team is CrowdPersonOwner else military._team_summary(team, spirit, {})
 	if int(own.ready) <= 0 or float(own.health) < float(thresholds.health) or float(own.ready_fraction) < float(thresholds.ready) \
 		or float(own.morale) < float(thresholds.morale) or float(own.fatigue) >= float(thresholds.fatigue): return {}
 	return own
 
+
+## One command owner per native formation with an original army record. Actor-only
+## formations have no army record and are not dispatchable teams.
+static func command_team_owners(lab: TerrainLab) -> Array:
+	var result: Array = []
+	if lab.crowd_site == null or not lab.crowd_site.active: return result
+	var formations := {}
+	for owner_ref: CrowdPersonOwner in lab.crowd_site.person_owners():
+		if formations.has(owner_ref.formation_index) or not owner_ref.has_army(): continue
+		formations[owner_ref.formation_index] = true
+		result.append(owner_ref)
+	return result
+
+static func command_team_list(lab: TerrainLab) -> Array:
+	if lab.crowd_site != null and lab.crowd_site.active: return command_team_owners(lab)
+	return lab.combat_armies
+
+static func command_team_by_id(lab: TerrainLab, team_id: int) -> Variant:
+	for team: Variant in command_team_list(lab):
+		if int(team.team_id) == team_id: return team
+	return null
+
+static func _team_has_person(lab: TerrainLab, team: Variant, identity: int) -> bool:
+	if team is CrowdPersonOwner:
+		var owner_ref: Variant = lab.crowd_site.person_owner(identity)
+		return owner_ref != null and int(owner_ref.formation_index) == int(team.formation_index)
+	return team.index_for_identity(identity) >= 0
+
+## Same fields and formula as SiteArmyAI._team_summary, read from native hot state.
+## Formation fatigue, morale and training are the shared native pool, not per-person GD bodies.
+static func _crowd_team_summary(team: CrowdPersonOwner, lab: TerrainLab, morale: Dictionary) -> Dictionary:
+	var formation: Dictionary = lab.crowd_site.formation_state(team.formation_index)
+	var fatigue := float(formation.get("fatigue", 0.0))
+	var training := float(formation.get("training", 0.0))
+	var count := 0
+	var ready := 0
+	var hp_sum := 0.0
+	var morale_sum := 0.0
+	var power := 0.0
+	var ranged_range := 0.0
+	var ranged_count := 0
+	var supplied_shooters := 0
+	for index: int in team.combat_units:
+		if not team.is_member(index): continue
+		count += 1
+		if not team.combat_can_act(index): continue
+		var identity: int = team.combat_identity(index)
+		var hp := clampf(float(team.combat_hot_get(index, &"hp", 0.0)), 0.0, 100.0)
+		var spirit := float(morale.get(identity, 100.0))
+		var score := SiteCombatRules.exchange_score({"ability": 50.0, "training": training, "morale": spirit, "fatigue": fatigue})
+		power += hp / 100.0 * maxf(0.1, score / 50.0)
+		hp_sum += hp
+		morale_sum += spirit
+		ready += 1
+		var ranged: Dictionary = team.ranged_profile(index)
+		if not ranged.is_empty():
+			ranged_count += 1
+			ranged_range = float(ranged.range) if ranged_range <= 0.0 else minf(ranged_range, float(ranged.range))
+			if int(team._cold_get(index, "cargo", {}).get(str(ranged.ammo), 0)) > 0: supplied_shooters += 1
+	if ranged_count * 2 <= ready: ranged_range = 0.0
+	return {"team": team, "faction": team.faction_id, "power": power, "ready": ready,
+		"ready_fraction": float(ready) / maxi(1, count), "health": hp_sum / (100.0 * maxi(1, ready)),
+		"fatigue": fatigue, "morale": morale_sum / maxi(1, ready), "range": ranged_range,
+		"ammunition_empty": ranged_range > 0.0 and supplied_shooters == 0, "order": team.combat_order, "recovering": false}
 
 static func dispatch_known_targets(lab: TerrainLab, scoped_intel: Dictionary, decider: int, game_time: float) -> Array[Dictionary]:
 	var targets: Array[Dictionary] = []
