@@ -9750,12 +9750,18 @@ func _region_remote_nation_source(command: Dictionary) -> Dictionary:
 ## cohort. Nation authority remains in its sole original source record.
 
 
-func _region_remote_team_membership(source_owner: Dictionary, original: TerrainLab, team: TerrainArmy, nation_ref: Dictionary) -> Dictionary:
-	if team == null or original.crowd_site != null and original.crowd_site.active or not SiteEquipmentOrders.valid_organization_refs(original.terrain.site): return fail("INVALID_REMOTE_MEMBERSHIP")
+## G6.4: an active crowd team is a CrowdPersonOwner of this exact crowd. A stale disabled
+## TerrainArmy never stands in for a crowd team, and a crowd team never stands in for a TerrainArmy.
+func _region_remote_team_membership(source_owner: Dictionary, original: TerrainLab, team: Variant, nation_ref: Dictionary) -> Dictionary:
+	var crowd_active: bool = original.crowd_site != null and original.crowd_site.active
+	if team == null or crowd_active != (team is CrowdPersonOwner) or team is CrowdPersonOwner and team.crowd_site != original.crowd_site \
+		or not SiteEquipmentOrders.valid_organization_refs(original.terrain.site): return fail("INVALID_REMOTE_MEMBERSHIP")
 	if not team.combat_enabled or team.current_commander < 0 or not team.command_eligible(team.current_commander): return fail("NO_COMMANDER")
 	var source_refs: Dictionary = source_owner.lab.terrain.site.get("travel_identity", {}).get("refs", {}).get("person", {})
 	var commander_ref := RegionAI.person_ref(original.terrain.site, team.combat_identity(team.current_commander))
-	for index: int in team.combat_units.size():
+	# Crowd combat_units keys are World indices and need not be 0..size-1.
+	var indices: Array = team.combat_units.keys() if team is CrowdPersonOwner else range(team.combat_units.size())
+	for index: int in indices:
 		if not team.is_member(index): continue
 		var person_ref := RegionAI.person_ref(original.terrain.site, team.combat_identity(index))
 		if not RegionAI.valid_person_ref(person_ref) or _region_carried_ref_is_player(person_ref): return fail("PLAYER_PARTY")

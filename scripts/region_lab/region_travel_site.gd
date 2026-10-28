@@ -9,15 +9,28 @@ const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const TravelPanel = preload("res://scripts/region_lab/region_travel_panel.gd")
 const ENEMY_RADIUS := 24 # cells (48 m): an able hostile this close means "not out of combat".
 
+## G6.4: an active crowd keeps its people in native hot state. Its members are read
+## from their native ground position (never from a disabled TerrainArmy's cells), and
+## a TerrainTestCharacter that is a crowd member is counted only through its crowd owner.
 static func _hostile_near(lab: Node, faction: int, cells: Array[Vector2i]) -> bool:
 	var enemies: Array[Vector2i] = []
+	var crowd: Variant = lab.get("crowd_site")
+	var crowd_active: bool = crowd != null and bool(crowd.active)
 	for actor: TerrainTestCharacter in lab.combat_actors:
+		if crowd_active and crowd.contains_person(actor.person_id): continue
 		if lab.actor_present(actor) and actor.faction_id != faction and actor.can_act(): enemies.append(actor.terrain_cell)
 	for team: TerrainArmy in lab.combat_armies:
 		if not team.combat_enabled or team.faction_id == faction: continue
 		for index: int in range(team.combat_units.size()):
 			if team.combat_can_act(index) and not bool(team.combat_hot_get(index, &"site_exited", false)):
 				enemies.append(team.cells[index])
+	if crowd_active:
+		for owner_ref: CrowdPersonOwner in crowd.person_owners():
+			if not owner_ref.combat_enabled or owner_ref.faction_id == faction: continue
+			for index: int in owner_ref.combat_units.keys():
+				if owner_ref.combat_can_act(index) and not bool(owner_ref.combat_hot_get(index, &"site_exited", false)):
+					var ground: Vector2 = owner_ref.combat_ground(index) / TerrainRenderer.CELL_PIXELS
+					enemies.append(Vector2i(floori(ground.x), floori(ground.y)))
 	for enemy: Vector2i in enemies:
 		for cell: Vector2i in cells:
 			if maxi(absi(enemy.x - cell.x), absi(enemy.y - cell.y)) <= ENEMY_RADIUS: return true
