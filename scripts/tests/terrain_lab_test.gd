@@ -37,7 +37,8 @@ func _run() -> void:
 					var i: int = data.index(cell)
 					maximum = maxi(maximum, data.height_levels[i])
 					if data.surface_types[i] == TerrainData.Surface.WATER:
-						assert(not actor.place(cell), "Character placed on water")
+						var placed_on_water := actor.place(cell, true)
+						assert(not placed_on_water, "Character placed on water")
 						continue
 					for d: int in range(4):
 						var next: Vector2i = cell + TerrainData.DIRECTIONS[d]
@@ -51,8 +52,11 @@ func _run() -> void:
 								assert(difference == 1 and (data.ramp_edges[j] & (1 << ((d + 2) % 4))) != 0)
 								ramp_count += 1
 							allowed = data.surface_types[j] != TerrainData.Surface.WATER and (difference == 0 or ramp)
-						assert(actor.place(cell))
-						assert(actor.step(TerrainData.DIRECTIONS[d]) == allowed, "Movement disagrees with height/water/ramp")
+						# Teleport between probes: an animated place() is still moving and step() refuses a moving actor.
+						var placed := actor.place(cell, true)
+						assert(placed)
+						var stepped := actor.step(TerrainData.DIRECTIONS[d])
+						assert(stepped == allowed, "Movement disagrees with height/water/ramp")
 						assert(actor.terrain_cell == (next if allowed else cell), "Blocked command changed position")
 						edge_checks += 1
 			if preset in [TerrainPreset.Kind.TERRACED_HIGHLAND, TerrainPreset.Kind.COASTAL_CLIFF, TerrainPreset.Kind.ROCKY_HIGHLAND, TerrainPreset.Kind.ISLAND]:
