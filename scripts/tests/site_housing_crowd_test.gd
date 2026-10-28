@@ -305,7 +305,9 @@ func _run() -> void:
 	data.site.phase = 0.0
 	var lab: TerrainLab = _building_lab(data)
 	lab.fixed_action_steps_enabled = true
-	lab.exchange_enabled = false
+	# Live combat is the exchange rule (Nekki 2026-10-28: the historical geometry mode is not maintained);
+	# a native crowd only opens its shared begin window under exchange.
+	lab.exchange_enabled = true
 	var controller: SiteController = lab.site_controller
 	var source: TerrainArmy = lab.army
 	_make_garrison_team(lab, source, [Vector2i(20, 28), Vector2i(21, 28)])
@@ -381,9 +383,7 @@ func _run() -> void:
 	assert(Housing.recovery_multiplier(lab, host.team_record(formation).units) == 1.25)
 	_housing_same_people(controller, original)
 	housing_groups += 1
-	for exchange: bool in [false, true]:
-		lab.exchange_enabled = exchange
-		_housing_common_loss(lab, captain, identities, 1.25)
+	_housing_common_loss(lab, captain, identities, 1.25)
 	var resident_index := int(host.crowd.soldier_index(resident))
 	var resident_saved: Dictionary = host.soldier_state(resident_index)
 	assert(host.set_soldier_fields(resident_index, {"ko": 1000.0, "bandaged": 1}))
