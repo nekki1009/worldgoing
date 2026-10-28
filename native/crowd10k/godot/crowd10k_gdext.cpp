@@ -737,6 +737,15 @@ void m_convoy_state(CALL_ARGS) {
 	if (!arg_i32(a[0], id) || !w.convoy_state(id, s)) { return_doubles(r, {}); return; }
 	return_doubles(r, {s.x, s.y, s.facing, double(s.moving), double(s.complete), double(s.stalled), double(s.reason)});
 }
+// Crew soldier indices as doubles (exact for indices); empty when the convoy is unknown.
+void m_convoy_crew(CALL_ARGS) {
+	SELF; NEED(1); WORLD;
+	int id = 0;
+	if (!arg_i32(a[0], id)) { return_doubles(r, {}); return; }
+	std::vector<double> crew;
+	for (int soldier : w.convoy_crew_soldiers(id)) crew.push_back(double(soldier));
+	return_doubles(r, crew);
+}
 void m_convoy_remove(CALL_ARGS) {
 	SELF; NEED(1); WORLD;
 	int id = 0;
@@ -1348,6 +1357,7 @@ void initialize(void *, GDExtensionInitializationLevel level) {
 	add_method("convoy_set_crew", m_convoy_set_crew, {{INT,"convoy"},{INT,"soldier"},{INT,"offset_x"},{INT,"offset_y"},{BOOL,"assigned"}}, BOOL);
 	add_method("convoy_order_goal", m_convoy_order_goal, {{INT,"convoy"},{FLOAT,"goal_x"},{FLOAT,"goal_y"},{FLOAT,"goal_facing"}}, BOOL);
 	add_method("convoy_set_body", m_convoy_set_body, {{INT,"convoy"},{INTS,"cells"}}, BOOL);
+	add_method("convoy_crew", m_convoy_crew, {{INT,"convoy"}}, DOUBLES);
 	add_method("convoy_state", m_convoy_state, {{INT,"convoy"}}, DOUBLES);
 	add_method("convoy_remove", m_convoy_remove, {{INT,"convoy"}}, BOOL);
 	add_method("charge_siege_round",m_charge_siege_round,{{INTS,"members"},{FLOAT,"per_person"}},BOOL);

@@ -101,6 +101,13 @@ func _siege_guard() -> Dictionary:
 		return Runtime.ok() if lab.crowd_site.siege_native_supported() else Runtime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少原人物攻城介面")
 	return Runtime.ok()
 
+## The team that holds a team id's cargo: the crowd owner while the crowd is active, otherwise the grid army.
+func _team_owner(team_id: int) -> Variant:
+	if _native_siege(): return lab.crowd_site.siege_team_owner(team_id)
+	for team: TerrainArmy in lab.combat_armies:
+		if team.team_id == team_id: return team
+	return null
+
 func _siege_team(vehicle: Dictionary) -> Variant:
 	if _native_siege(): return lab.crowd_site.siege_team_owner(int(vehicle.team_id))
 	for team: TerrainArmy in lab.combat_armies:
@@ -921,7 +928,9 @@ func checkpoint() -> Dictionary:
 
 func rollback(saved: Dictionary) -> void:
 	for identity: String in records().keys():
-		if identity not in saved.ids: records().erase(identity)
+		if identity not in saved.ids:
+			_convoy_release(records()[identity]) # S5: the native convoy goes with its record, never outlives it
+			records().erase(identity)
 	lab.terrain.site["next_vehicle"] = int(saved.next_vehicle)
 
 func plan_claims(plan: Array) -> Dictionary:
@@ -1377,11 +1386,14 @@ func _stock(identity: String, allow_independent_person: bool = false) -> Diction
 		if not value.is_valid_int() or str(int(value)) != value or int(value) <= 0: return {}
 		var person: Dictionary = controller.person_actions._person(int(value))
 		if person.is_empty(): return {}
-		if not person.owner is TerrainArmy:
+		if person.owner is CrowdPersonOwner:
+			# S5: a crowd person carries cargo only as the operator of a convoy (the crew of its vehicle record).
+			if int(person.unit) < 0 or not person.owner.is_member(int(person.unit)) or not is_convoy(_operated(int(value))): return {}
+		elif not person.owner is TerrainArmy:
 			if not allow_independent_person or not person.owner is TerrainTestCharacter: return {}
 		elif int(person.unit) < 0 or not person.owner.is_member(int(person.unit)) or not bool(person.body.get("logistics", false)) and not is_siege(_operated(int(value))): return {}
 		return {"holder": person.holder, "cargo": person.cargo, "cell": person.cell, "capacity": Runtime.CARRY_CAPACITY,
-			"team_id": int(person.owner.team_id) if person.owner is TerrainArmy else 0, "person_id": int(value)}
+			"team_id": int(person.owner.team_id) if person.owner is TerrainArmy or person.owner is CrowdPersonOwner else 0, "person_id": int(value)}
 	var vehicle: Dictionary = records().get(identity, {})
 	if vehicle.is_empty() or not vehicle.move.is_empty(): return {}
 	return {"holder": vehicle.holder, "cargo": vehicle.cargo, "cell": lab.terrain.cell_from_index(int(vehicle.cell)), "capacity": capacity_of(vehicle), "team_id": int(vehicle.team_id), "vehicle_id": identity}
@@ -2699,6 +2711,7 @@ var _convoy_checked: Dictionary = {} # Vehicle id -> true once its native anchor
 var _convoy_sent: Dictionary = {} # Vehicle id -> last goal (x, y, facing) accepted natively. Never saved.
 var _convoy_goal_orders: Dictionary = {} # Vehicle id -> explicit {point, facing} until complete. Never saved.
 var _convoy_refused: Dictionary = {} # Vehicle id -> input signature of the last refused creation. Never saved.
+var _convoy_adopted: Dictionary = {} # Vehicle id -> true while a goal restored from a save runs to completion. Never saved.
 
 static func is_convoy(vehicle: Variant) -> bool:
 	return vehicle is Dictionary and str(vehicle.get("kind", "")) in ["cart", "wagon"]
@@ -2753,6 +2766,7 @@ func _convoy_release(vehicle: Dictionary) -> void:
 	_convoy_sent.erase(key)
 	_convoy_goal_orders.erase(key)
 	_convoy_refused.erase(key)
+	_convoy_adopted.erase(key)
 
 func _convoy_order(vehicle: Dictionary, owner: Variant, pose: Dictionary) -> void:
 	var key := str(vehicle.get("id", ""))
@@ -2764,6 +2778,10 @@ func _convoy_order(vehicle: Dictionary, owner: Variant, pose: Dictionary) -> voi
 		var explicit: Dictionary = _convoy_goal_orders[key]
 		_convoy_send(vehicle, explicit.point, float(explicit.facing))
 		return
+	# S5: a goal restored from a save runs to completion. A hold sent now would replace it with the current pose.
+	if _convoy_adopted.has(key):
+		if not bool(pose.complete): return
+		_convoy_adopted.erase(key)
 	var point := Vector2(float(pose.x), float(pose.y)) # no order: hold at the current pose
 	var facing := float(pose.facing)
 	if owner.combat_order in [TerrainArmy.CombatOrder.MOVE, TerrainArmy.CombatOrder.RETREAT, TerrainArmy.CombatOrder.RETURN]:
@@ -2806,7 +2824,8 @@ func _sync_convoys() -> void:
 			var loaded_anchor: Vector2i = Vector2i(floori(float(pose.get("x", -1.0))), floori(float(pose.get("y", -1.0))))
 			var loaded_ok: bool = not pose.is_empty() and lab.terrain.contains(loaded_anchor) and int(lab.terrain.index(loaded_anchor)) == int(vehicle.cell)
 			if not loaded_ok:
-				push_error("G4 convoy record and native anchor disagree: " + key)
+				# Refused, not adopted: the record keeps its cell and the native convoy is left as the load gate found it.
+				lab.crowd_site.last_event_error = Runtime.fail("CONVOY_RECORD_MISMATCH", "後勤車隊記錄與原生錨點不符：" + key)
 				continue
 			_convoy_checked[key] = true
 		if pose.is_empty(): continue
@@ -2825,6 +2844,7 @@ func order_convoy_goal(vehicle_id: String, cell: Vector2i, facing: Vector2i, req
 	var rider: Vector2i = CONVOY_RIDER[str(vehicle.kind)]
 	var angle := _convoy_angle([facing.x, facing.y])
 	var order := {"point": Vector2(cell) + Vector2.ONE * 0.5 - _rotate_offset(rider, angle), "facing": angle, "sent": false}
+	_convoy_adopted.erase(str(vehicle.get("id", ""))) # an explicit order replaces any goal restored from a save
 	_convoy_goal_orders[str(vehicle.get("id", ""))] = order
 	_convoy_send(vehicle, order.point, angle) # the native goal changes now, not at the next step
 	order["sent"] = true
@@ -2838,6 +2858,47 @@ func convoy_save_guard() -> Dictionary:
 		var anchor: Vector2i = Vector2i(floori(float(pose.x)), floori(float(pose.y)))
 		if not lab.terrain.contains(anchor) or int(lab.terrain.index(anchor)) != int(vehicle.cell): return Runtime.fail("BUSY", "後勤車隊錨點尚未收束至車格")
 	return Runtime.ok()
+
+# S5 load gate, pure (changes nothing): every record with convoy_id must name a native convoy whose anchor cell is the
+# record cell and whose only crew member is the record's operator. Called by CrowdSite.prepare_load before install.
+static func convoy_record_check(data: TerrainData, crowd: Variant) -> Dictionary:
+	for vehicle: Dictionary in data.site.get("vehicles", {}).values():
+		if not is_convoy(vehicle) or int(vehicle.get("convoy_id", 0)) <= 0: continue
+		var key := str(vehicle.get("id", ""))
+		if crowd == null or not crowd.has_method("convoy_state") or not crowd.has_method("convoy_crew") or not crowd.has_method("soldier_index"):
+			return Runtime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少後勤車隊原生記錄介面")
+		var values: PackedFloat64Array = crowd.convoy_state(int(vehicle.convoy_id))
+		if values.size() != 7: return Runtime.fail("CONVOY_RECORD_MISMATCH", "後勤車隊記錄缺少原生車隊：" + key)
+		var anchor := Vector2i(floori(values[0]), floori(values[1]))
+		if not data.contains(anchor) or int(data.index(anchor)) != int(vehicle.get("cell", -1)):
+			return Runtime.fail("CONVOY_RECORD_MISMATCH", "後勤車隊錨點與車格不符：" + key)
+		var operator_id := int(vehicle.get("operator_id", 0))
+		var crew: PackedFloat64Array = crowd.convoy_crew(int(vehicle.convoy_id))
+		var operator_soldier: int = int(crowd.soldier_index(operator_id)) if operator_id > 0 else -1
+		if operator_soldier < 0 or crew.size() != 1 or int(crew[0]) != operator_soldier:
+			return Runtime.fail("CONVOY_RECORD_MISMATCH", "後勤車隊乘員與原操作者不符：" + key)
+	return Runtime.ok()
+
+# S5 bind: called once the loaded Site is the live Site (SiteController.load_from). The latches belong to the previous
+# Site and are cleared. A restored convoy that is not yet complete keeps its native goal until it completes.
+func bind_loaded_convoys() -> void:
+	_convoy_checked.clear()
+	_convoy_sent.clear()
+	_convoy_goal_orders.clear()
+	_convoy_refused.clear()
+	_convoy_adopted.clear()
+	if not convoy_native_supported(): return
+	var verdict := convoy_record_check(lab.terrain, lab.crowd_site.crowd)
+	if not verdict.ok:
+		lab.crowd_site.last_event_error = verdict
+		return
+	for vehicle: Dictionary in records().values():
+		if not is_convoy(vehicle) or int(vehicle.get("convoy_id", 0)) <= 0: continue
+		var key := str(vehicle.get("id", ""))
+		_convoy_checked[key] = true
+		var pose := convoy_state(vehicle)
+		# reason 1 is CONVOY_NO_GOAL (ConvoyReason in crowd_core.hpp): only a convoy that has a goal is adopted.
+		if not pose.is_empty() and not bool(pose.complete) and int(pose.reason) != 1: _convoy_adopted[key] = true
 
 func _siege_plan_envelope(vehicle: Dictionary, plan: Dictionary) -> Dictionary:
 	var team: Variant = _siege_team(vehicle)
@@ -3247,10 +3308,11 @@ func prepare_transfer(source_id: String, destination_id: String, resources: Dict
 		var facility_door: bool = stock.has("feature_id") and person.cell == stock.cell and lab.terrain.is_walkable(person.cell)
 		if not own_cargo and not aboard_own and not engine_contact and not facility_door and (absi(offset.x) + absi(offset.y) != 1 or not lab.terrain.can_step(person.cell, stock.cell)): return Runtime.fail("UNREACHABLE", "本人須實際相鄰庫存；騎乘人僅可從馬格裝卸本車，不能遠距搬運")
 		if int(stock.team_id) > 0:
-			var owned := false
-			for team: TerrainArmy in lab.combat_armies:
-				if team.team_id == int(stock.team_id) and _nation_route_transfer_authorized(team, requester_id, executor_id if own_cargo or not operated.is_empty() and int(operated.team_id) == team.team_id else 0, test_dispatch, nation_route_permit): owned = true
-			if not owned: return Runtime.fail("NO_AUTHORITY", "車載庫存由原隊合格指揮者調度")
+			# S5: the holder is the crowd owner while the crowd is active; grid armies never hold a crowd team's cargo.
+			var holder_team: Variant = _team_owner(int(stock.team_id))
+			var holder_operator := executor_id if own_cargo or not operated.is_empty() and int(operated.team_id) == int(stock.team_id) else 0
+			if holder_team == null or not _nation_route_transfer_authorized(holder_team, requester_id, holder_operator, test_dispatch, nation_route_permit):
+				return Runtime.fail("NO_AUTHORITY", "車載庫存由原隊合格指揮者調度")
 	return Runtime.prepare_item_transfer(lab.terrain, source.holder, source.cargo, destination.holder, destination.cargo, resources, item_ids, source_version, destination_version, int(destination.capacity))
 
 func _nation_route_transfer_authorized(team: Variant, requester_id: int, operator_id: int,

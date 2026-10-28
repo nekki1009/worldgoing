@@ -5,6 +5,7 @@ extends SceneTree
 const DT := 1.0 / 30.0
 const MAX_TICKS := 900
 const DIAG_EVERY := 30
+const Store = preload("res://scripts/terrain_lab/site_store.gd")
 var lab: TerrainLab
 var checks := 0
 
@@ -181,11 +182,56 @@ func _run() -> void:
 	var saved: Dictionary = lab.site_controller._capture_for_save()
 	if not check(saved.ok, "capture for save with live convoys", saved): return
 
+	# S5 reload round trip: order the cart a few cells, save mid-route with Store.save, load the Site through the
+	# live load path, check the record against the restored native convoy, then finish the route.
+	var reload_start: Vector2i = lab.terrain.cell_from_index(int(cart.cell))
+	var reload_facing := _straight_direction(reload_start, owner, soldier)
+	if not check(reload_facing != Vector2i.ZERO, "a three-cell reload route is free from the cart", {"start": reload_start}): return
+	var reload_anchor := reload_start + reload_facing * 3
+	var reload_ordered: Dictionary = vehicles.order_convoy_goal(cart_id, reload_anchor - reload_facing, reload_facing, operator_id, true)
+	if not check(reload_ordered.ok, "cart reload goal ordered", reload_ordered): return
+	_tick(12)
+	if not check(not bool(vehicles.convoy_state(cart).get("complete", true)), "cart is mid-route before the save", vehicles.convoy_state(cart)): return
+	var mid_pose: Dictionary = vehicles.convoy_state(cart)
+	var mid_cell: Vector2i = lab.terrain.cell_from_index(int(cart.cell))
+	if not check(lab.site_controller._capture_for_save().ok, "capture for the mid-route save"): return
+	var written: Dictionary = Store.save(lab.terrain, lab.site_controller.save_path, site.crowd)
+	if not check(written.get("ok", false) == true, "Store.save writes the mid-route Site", written): return
+	var loaded: Dictionary = lab.site_controller.load_from(lab.site_controller.save_path)
+	if not check(loaded.get("ok", false) == true, "the mid-route Site loads through the live load path", loaded): return
+	# The load replaced the crowd and the terrain: re-fetch every handle that points into them.
+	site = lab.crowd_site
+	cart = vehicles.records()[cart_id]
+	owner = vehicles._convoy_owner(cart)
+	soldier = int(owner.index_for_identity(operator_id))
+	var loaded_pose: Dictionary = vehicles.convoy_state(cart)
+	if not check(int(cart.get("convoy_id", 0)) > 0 and not loaded_pose.is_empty(), "the loaded cart record names a restored native convoy", cart.get("convoy_id", 0)): return
+	if not check(absf(float(loaded_pose.x) - float(mid_pose.x)) < 1e-6 and absf(float(loaded_pose.y) - float(mid_pose.y)) < 1e-6 and absf(float(loaded_pose.facing) - float(mid_pose.facing)) < 1e-6, "the native anchor pose survives the save", {"before": mid_pose, "after": loaded_pose}): return
+	if not check(lab.terrain.cell_from_index(int(cart.cell)) == mid_cell, "the loaded record cell equals the saved anchor cell", {"cell": mid_cell}): return
+	if not check(bool(loaded_pose.moving) and not bool(loaded_pose.complete), "the restored convoy is still under way", loaded_pose): return
+	if not check(vehicles.convoy_save_guard().ok, "the loaded record and native convoy agree (save guard)"): return
+	var crew: PackedFloat64Array = site.crowd.convoy_crew(int(cart.convoy_id))
+	if not check(crew.size() == 1 and int(crew[0]) == soldier, "the restored convoy's only crew member is the record operator", {"crew": Array(crew), "soldier": soldier}): return
+	var reload_ticks := 0
+	while true:
+		_tick(1)
+		reload_ticks += 1
+		if reload_ticks >= MAX_TICKS or bool(vehicles.convoy_state(cart).get("complete", false)): break # do-while: at least one tick before the complete reading
+	if not check(bool(vehicles.convoy_state(cart).get("complete", false)), "the restored cart completes its route", {"ticks": reload_ticks, "state": vehicles.convoy_state(cart)}): return
+	if not check(lab.terrain.cell_from_index(int(cart.cell)) == reload_anchor, "the restored cart reaches the ordered cell", {"cell": lab.terrain.cell_from_index(int(cart.cell)), "expected": reload_anchor}): return
+	# Cargo transfer distance: prepare_transfer accepts a vehicle stock for a crew member only when the operator cell is one
+	# orthogonal step from the stock cell over a steppable edge. Both cells come from the convoy-derived record here.
+	var rider_cell: Vector2i = vehicles.operator_cell(cart)
+	var stock_cell: Vector2i = lab.terrain.cell_from_index(int(cart.cell))
+	var stock_offset := stock_cell - rider_cell
+	if not check(absi(stock_offset.x) + absi(stock_offset.y) == 1 and lab.terrain.can_step(rider_cell, stock_cell), "the convoy operator stands one step from the cart stock", {"rider": rider_cell, "stock": stock_cell}): return
+	if not check(owner.person(soldier, false).cell == rider_cell, "the reloaded operator stands on the convoy-derived operator cell"): return
+
 	# Unassign: the convoy is removed and the cart is parked with cargo kept.
 	var old_convoy := int(cart.convoy_id)
 	var released: Dictionary = vehicles.unassign_operator(cart_id, operator_id, true)
 	if not check(released.ok and not cart.has("convoy_id") and int(cart.operator_id) == 0, "unassign removes the cart convoy", released): return
 	if not check(site.crowd.convoy_state(old_convoy).is_empty(), "native convoy is gone after unassign"): return
 	if not check(vehicles._operated(operator_id).is_empty() and vehicles.is_operator(operator_id) == false, "released person no longer operates a vehicle"): return
-	print("G4 CONVOY PASS: cart straight run, operator KO stall, wagon turn, save guard, unassign release; reload round trip NOT covered here")
+	print("G4 CONVOY PASS: cart straight run, operator KO stall, wagon turn, save guard, mid-route save and live load round trip (record, native anchor, crew checked), completion, cart stock distance, unassign release")
 	quit(0)

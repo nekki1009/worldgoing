@@ -2057,6 +2057,15 @@ bool World::rebuild_convoy_bodies() {
 	return true;
 }
 
+std::vector<int> World::convoy_crew_soldiers(int id) const {
+	std::vector<int> out;
+	const Convoy *c = convoy_at(id);
+	if (!c) return out;
+	out.reserve(c->crew.size());
+	for (const auto &k : c->crew) out.push_back(k.soldier);
+	return out;
+}
+
 bool World::convoy_state(int id, ConvoyState &out) const {
 	const Convoy *c = convoy_at(id);
 	if (!c) return false;

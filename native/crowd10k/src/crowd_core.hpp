@@ -442,6 +442,8 @@ public:
 	bool convoy_order_goal(int id, float gx, float gy, float gfacing);
 	bool convoy_set_body(int id, const std::vector<int> &cells);
 	bool convoy_state(int id, ConvoyState &out) const;
+	// Soldier indices of a convoy's crew, in crew order. Empty when the convoy is unknown.
+	std::vector<int> convoy_crew_soldiers(int id) const;
 	bool convoy_remove(int id);
 	// Absolute footprint of a convoy at its current pose (sorted); false if unknown.
 	bool convoy_body_at(int id, std::vector<int> &cells) const;

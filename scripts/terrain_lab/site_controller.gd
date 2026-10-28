@@ -2983,6 +2983,7 @@ func load_from(path: String) -> Dictionary:
 	_cancel_facing_move()
 	_clear_formation_candidate()
 	lab.bind_terrain(result.data, prepared)
+	vehicles.bind_loaded_convoys() # S5: the record check ran in prepare_load; this resets the previous Site's convoy latches
 	var bound: Dictionary = lab.region_bind_receipt(result.data)
 	if not bound.get("complete", false) or selected_restore and (int(bound.get("generation", -1)) != selected_generation
 			or str(bound.get("owner", "")) != str(region_slot.control.active_site_id) or str(bound.get("mode", "")) != "live"):

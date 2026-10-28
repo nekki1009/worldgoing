@@ -2433,6 +2433,10 @@ func prepare_load(data: TerrainData, native_candidate: Variant = null) -> Dictio
 		return SiteRuntime.fail("MISSING_ASSET", "士兵圖集不可用")
 	var candidate_host_fire := false
 	var candidate_crowd: Variant = checked.crowd_native
+	# S5: every convoy record must name the native convoy that the blob restored (same anchor cell, same operator as its only crew).
+	# Refused before anything is installed; the live Site is kept.
+	var convoy_check: Dictionary = SiteVehicleTransport.convoy_record_check(data, candidate_crowd)
+	if not convoy_check.ok: return convoy_check
 	if candidate_crowd.has_method("fire_host_protocol") and candidate_crowd.has_method("set_host_ranged_delegate") \
 		and candidate_crowd.has_method("set_fire_safe_rest_input") \
 		and int(candidate_crowd.fire_host_protocol()) == 1:
@@ -3016,7 +3020,7 @@ func sync_siege_inputs() -> Dictionary:
 	if not crowd.set_siege_navigation(inputs.blocked, inputs.wreck_exit): return SiteRuntime.fail("INVALID", "原攻城車體／塔面用途投影不合法")
 	return SiteRuntime.ok()
 
-const CONVOY_NATIVE_METHODS := ["add_convoy", "convoy_set_crew", "convoy_order_goal", "convoy_set_body", "convoy_state", "convoy_remove"]
+const CONVOY_NATIVE_METHODS := ["add_convoy", "convoy_set_crew", "convoy_order_goal", "convoy_set_body", "convoy_state", "convoy_crew", "convoy_remove"]
 const SIEGE_NATIVE_METHODS := ["set_siege_crew","set_siege_crew_members", "siege_ground_cells", "begin_siege_compound", "siege_compound_state", "siege_person_state", "cancel_siege_compound", "settle_siege_compound", "siege_busy", "set_siege_navigation", "siege_occupancy_mask", "order_siege_step", "cancel_siege_step", "charge_siege_round", "charge_siege_work", "contact_pose_state", "apply_siege_contact"]
 
 func settle_external_contacts() -> void:

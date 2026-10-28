@@ -1375,6 +1375,7 @@ static func _normalize_state(state: Dictionary) -> void:
 	state["next_vehicle"] = int(state.get("next_vehicle", 1))
 	for vehicle: Dictionary in state.vehicles.values():
 		for field: String in ["cell", "team_id", "operator_id"]: vehicle[field] = int(vehicle[field])
+		if vehicle.has("convoy_id"): vehicle["convoy_id"] = int(vehicle["convoy_id"]) # S5: JSON numbers load as floats
 		vehicle.facing = _int_array(vehicle.facing)
 		if vehicle.has("travel_patients"):
 			vehicle.travel_patients.version = int(vehicle.travel_patients.version)
@@ -3147,6 +3148,13 @@ static func _validate_vehicles(data: TerrainData, state: Dictionary, check_terra
 			total += 1
 			if int(team_counts[team_id]) > 100: return Runtime.fail("CORRUPT_SAVE", "車隊人物與車輛超過100名額")
 		elif operator_id > 0 or not vehicle.move.is_empty(): return Runtime.fail("CORRUPT_SAVE", "停泊無所屬車輛不能自行移動")
+		## S5: a cart or wagon driven by a native convoy takes its pose from the convoy record, not from a grid step plan.
+		# Its operator sits at the native rider slot, so the grid anchor relation, the shared-step reservation, the
+		# incapable-operator step rule and the claim and step-terrain checks below do not apply to it. The native record
+		# itself is verified by CrowdSite.prepare_load (SiteVehicleTransport.convoy_record_check) before a Site is installed.
+		var convoy_record: bool = vehicle.has("convoy_id")
+		if convoy_record and (not _integer(vehicle.convoy_id, 1, 2147483647) or str(vehicle.kind) not in ["cart", "wagon"] or team_id <= 0 or operator_id <= 0 or not vehicle.move.is_empty() or bool(vehicle.stop_pending)):
+			return Runtime.fail("CORRUPT_SAVE", "後勤車隊記錄須為同隊人力操作的車輛且無格步")
 		var patient_validation := _validate_travel_patients(vehicle, people, travel_patients)
 		if not patient_validation.ok: return patient_validation
 		var occupied := {}
@@ -3163,13 +3171,17 @@ static func _validate_vehicles(data: TerrainData, state: Dictionary, check_terra
 				return Runtime.fail("MISSING_ASSET", "原馬車騎手資料或固定布裝騎姿素材未就緒")
 			var cell := Vector2i(int(body.cell[0]), int(body.cell[1]))
 			var direction := Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1]))
-			if not bool(vehicle.move.get("boarding", false)) and data.cell_from_index(int(vehicle.cell)) != Vehicles.anchor_from_operator(str(vehicle.kind), cell, direction): return Runtime.fail("CORRUPT_SAVE", "人車相對格位失效")
-			var moving := Vector2i(int(body.destination[0]), int(body.destination[1])) != TerrainArmy.INVALID_CELL
-			if moving == vehicle.move.is_empty(): return Runtime.fail("CORRUPT_SAVE", "原人物與車輛必須共用同一步預約")
-			var incapable := float(body.hp) <= 0.0 or float(body.ko) > 0.0 or str(body.pose) == "get_up" or bool(body.captive) or bool(body.departed) or bool(body.get("site_exited", false)) or bool(body.get("surrender_pending", false)) or not bool(body.get("member", true))
-			var resting_rider: bool = str(vehicle.kind) == "wagon" and float(body.hp) > 0.0 and (float(body.ko) > 0.0 or str(body.pose) == "get_up" or bool(body.get("surrender_pending", false)) or bool(body.captive)) and not bool(body.departed) and not bool(body.get("site_exited", false)) and bool(body.get("member", true)) and vehicle.move.is_empty() and bool(vehicle.stop_pending)
-			if incapable and (vehicle.move.is_empty() or not bool(vehicle.stop_pending)) and not resting_rider: return Runtime.fail("CORRUPT_SAVE", "失能操作人不能開始新車步")
-			if vehicle.move.is_empty() and bool(vehicle.stop_pending) and not resting_rider: return Runtime.fail("CORRUPT_SAVE", "停止旗標僅限在途步進或原馬背失能／待俘者")
+			if not convoy_record and not bool(vehicle.move.get("boarding", false)) and data.cell_from_index(int(vehicle.cell)) != Vehicles.anchor_from_operator(str(vehicle.kind), cell, direction): return Runtime.fail("CORRUPT_SAVE", "人車相對格位失效")
+			# A convoy crew body has no grid destination; its motion is the native convoy state.
+			if not convoy_record:
+				var moving := Vector2i(int(body.destination[0]), int(body.destination[1])) != TerrainArmy.INVALID_CELL
+				if moving == vehicle.move.is_empty(): return Runtime.fail("CORRUPT_SAVE", "原人物與車輛必須共用同一步預約")
+			# Grid step rules read grid body fields that a native convoy crew body does not carry.
+			if not convoy_record:
+				var incapable := float(body.hp) <= 0.0 or float(body.ko) > 0.0 or str(body.pose) == "get_up" or bool(body.captive) or bool(body.departed) or bool(body.get("site_exited", false)) or bool(body.get("surrender_pending", false)) or not bool(body.get("member", true))
+				var resting_rider: bool = str(vehicle.kind) == "wagon" and float(body.hp) > 0.0 and (float(body.ko) > 0.0 or str(body.pose) == "get_up" or bool(body.get("surrender_pending", false)) or bool(body.captive)) and not bool(body.departed) and not bool(body.get("site_exited", false)) and bool(body.get("member", true)) and vehicle.move.is_empty() and bool(vehicle.stop_pending)
+				if incapable and (vehicle.move.is_empty() or not bool(vehicle.stop_pending)) and not resting_rider: return Runtime.fail("CORRUPT_SAVE", "失能操作人不能開始新車步")
+				if vehicle.move.is_empty() and bool(vehicle.stop_pending) and not resting_rider: return Runtime.fail("CORRUPT_SAVE", "停止旗標僅限在途步進或原馬背失能／待俘者")
 			if not body.get("work_task", {}).is_empty(): return Runtime.fail("CORRUPT_SAVE", "操作人不能兼任工作")
 		elif not vehicle.move.is_empty() or bool(vehicle.stop_pending): return Runtime.fail("CORRUPT_SAVE", "無真人操作卻有車步")
 		if not vehicle.move.is_empty():
@@ -3206,11 +3218,11 @@ static func _validate_vehicles(data: TerrainData, state: Dictionary, check_terra
 				occupied[data.cell_from_index(int(value))] = true
 			if expected != actual: return Runtime.fail("CORRUPT_SAVE", "車輛轉彎掃掠預約不完整")
 		for cell: Vector2i in occupied:
-			if not data.contains(cell) or check_terrain and not data.is_walkable(cell) or claims.has(cell) and claims[cell] != operator_id:
+			if not data.contains(cell) or check_terrain and not data.is_walkable(cell) or not convoy_record and claims.has(cell) and claims[cell] != operator_id:
 				return Runtime.fail("CORRUPT_SAVE", "車輛與人物／車輛占格預約衝突")
 			if check_terrain:
 				for direction: Vector2i in [Vector2i.RIGHT, Vector2i.DOWN]:
-					if occupied.has(cell + direction) and not data.can_step(cell, cell + direction): return Runtime.fail("CORRUPT_SAVE", "車輛跨越非法地勢")
+					if not convoy_record and occupied.has(cell + direction) and not data.can_step(cell, cell + direction): return Runtime.fail("CORRUPT_SAVE", "車輛跨越非法地勢")
 			claims[cell] = "vehicle:" + str(identity)
 	if total > MAX_ARMY_ROWS: return Runtime.fail("CORRUPT_SAVE", "軍隊人物與車輛合計超過%d名額" % MAX_ARMY_ROWS)
 	return Runtime.ok()
