@@ -1522,6 +1522,88 @@ static void test_melee_contact_and_exchange_fatigue() {
 	CHECK(!t.w.charge_exchange_fatigue(0, 1.0), "fatigue on a non-member refused");
 }
 
+// G6.4 site exit (native release): the exit gate, the release out of neighbour queries, exchange, formation and
+// the step loop, and the released flag surviving save / load.
+static void test_site_person_release() {
+	std::printf("[site exit] exit gate refuses KO, getting up, captive, exchange, committed step; release leaves pool, neighbours, formation; save/load keeps it\n");
+	Scene s;
+	s.formation(0, 10, 10, 0, 4, sword());   // soldiers 0..3, team 0
+	s.formation(1, 14, 10, kPi, 2, sword()); // soldiers 4..5, team 1
+	s.w.finalize();
+	const int n = s.w.soldier_count();
+	CHECK(n == 6, "six soldiers (%d)", n);
+	s.place(0, 2.5f, 2.5f); s.place(2, 2.5f, 4.5f); s.place(3, 4.5f, 2.5f);
+	s.place(1, 10.5f, 10.5f); s.place(4, 12.5f, 10.5f); s.place(5, 4.5f, 40.5f);
+	const double hp1 = s.w.hp[1];
+
+	CHECK(s.w.site_person_exit_ready(1), "a conscious idle soldier may leave");
+	CHECK(!s.w.site_person_exit_ready(-1) && !s.w.site_person_exit_ready(n), "invalid index refused");
+	s.w.ko[1] = 5.0;
+	CHECK(!s.w.site_person_exit_ready(1), "KO soldier refused");
+	s.w.ko[1] = 0.0;
+	s.w.getup[1] = 1.0;
+	CHECK(!s.w.site_person_exit_ready(1), "soldier getting up refused");
+	s.w.getup[1] = 0.0;
+	s.w.captive[1] = 1;
+	CHECK(!s.w.site_person_exit_ready(1), "captive soldier refused");
+	s.w.captive[1] = 0;
+	s.w.state[1] = S_FIGHT;
+	CHECK(!s.w.site_person_exit_ready(1), "soldier in melee exchange refused");
+	s.w.state[1] = S_SLOT;
+	s.w.state[4] = S_ENGAGE; s.w.target[4] = 1;
+	CHECK(!s.w.site_person_exit_ready(1), "soldier targeted in melee by an engaged enemy refused");
+	s.w.state[4] = S_SLOT; s.w.target[4] = -1;
+	s.w.captive[4] = 1; s.w.captor[4] = 1;
+	CHECK(!s.w.site_person_exit_ready(1), "soldier still holding a captive refused");
+	s.w.captive[4] = 0; s.w.captor[4] = -1;
+	s.w.escort_mode[1] = 1;
+	CHECK(!s.w.site_person_exit_ready(1), "soldier on a committed custody step refused");
+	s.w.escort_mode[1] = 0;
+	CHECK(s.w.site_person_exit_ready(1), "soldier is ready again once every condition is clear");
+
+	// release: enemy 4 is engaging soldier 1 under orders; soldier 1 stands 2 cells from it
+	s.w.formations[1].target_person = 1; s.w.target[4] = 1;
+	CHECK(s.w.nearest_hostile(4, 4.f) == 1, "before release the enemy finds soldier 1 (%d)", s.w.nearest_hostile(4, 4.f));
+	CHECK(s.w.standing_near(10.5f, 10.5f, 0.5f) == 1, "before release one standing soldier at the spot");
+	const int members0 = (int)s.w.formations[0].members.size();
+	const int roster0 = s.w.formations[0].roster;
+	const int fatigue_count0 = s.w.formations[0].fatigue_count;
+	SitePersonRelease rel;
+	CHECK(s.w.site_person_release(1, rel), "ready soldier released");
+	CHECK(s.w.released[1] == 1 && !s.w.alive(1) && !s.w.can_act(1), "released soldier is neither alive nor able to act");
+	CHECK(std::fabs(rel.hp - hp1) < 1e-9 && rel.cell_x == 10 && rel.cell_y == 10 && rel.ammo == 0,
+		"receipt keeps hp %.2f, cell (%d,%d), ammo %d", rel.hp, rel.cell_x, rel.cell_y, rel.ammo);
+	CHECK(s.w.nearest_hostile(4, 4.f) == -1, "neighbour query no longer finds the released soldier");
+	CHECK(s.w.standing_near(10.5f, 10.5f, 0.5f) == 0, "standing-soldier query excludes it");
+	bool listed = false;
+	for (int k : s.w.formations[0].members) if (k == 1) listed = true;
+	CHECK(!listed, "released soldier is off the formation member list");
+	CHECK((int)s.w.formations[0].members.size() == members0 - 1, "member count falls by one (%d)", (int)s.w.formations[0].members.size());
+	CHECK(s.w.formations[0].roster == roster0 - 1 && s.w.formations[0].fatigue_count == fatigue_count0 - 1,
+		"roster and shared-fatigue binding drop by one");
+	CHECK(s.w.soldier_count() == n && s.w.slot[1] == -1, "no array is reindexed and the slot is cleared");
+	CHECK(s.w.target[4] == -1 && s.w.formations[1].target_person == -1, "orders naming the released soldier are cleared");
+	CHECK(!s.w.charge_exchange_fatigue(1, 1.0), "exchange fatigue on the released soldier refused");
+	const double hp_released = s.w.hp[1];
+	CHECK(s.w.apply_melee_contact(1, 5.0, 0.0) && s.w.hp[1] == hp_released, "melee contact on the released soldier changes nothing");
+	CHECK(!s.w.site_person_exit_ready(1) && !s.w.site_person_release(1, rel), "released soldier cannot be released again");
+
+	// the step loop: the released soldier neither moves nor is hit while the enemy stands by
+	const float x1 = s.w.px[1], y1 = s.w.py[1];
+	s.run(2.0);
+	CHECK(s.w.hp[1] == hp_released && s.w.px[1] == x1 && s.w.py[1] == y1, "released soldier neither moves nor takes hits while stepping");
+
+	// the released flag is saved and loaded with the rest of the state
+	const std::vector<uint8_t> blob = s.w.save();
+	CHECK(!blob.empty(), "scene with a released soldier saves");
+	World loaded(1);
+	CHECK(loaded.load(blob), "blob with a released soldier loads");
+	CHECK(loaded.released[1] == 1 && !loaded.alive(1) && loaded.hp[1] == s.w.hp[1], "released flag and hp survive save/load");
+	CHECK(loaded.state_hash() == s.w.state_hash(), "reloaded state hash matches");
+	CHECK(!loaded.site_person_exit_ready(1) && !loaded.site_person_release(1, rel), "reloaded soldier is still released");
+	check_valid(loaded);
+}
+
 int main() {
 	#ifdef _WIN32
 	SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
@@ -1559,6 +1641,7 @@ int main() {
 	test_host_soldier();
 	test_edge_deploy();
 	test_melee_contact_and_exchange_fatigue();
+	test_site_person_release();
 	std::printf("\n%d checks, %d failures\n", checks, failures);
 	return failures ? 1 : 0;
 }

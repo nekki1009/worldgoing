@@ -76,6 +76,14 @@ void wg_crowd_cancel_controlled_step(wg_crowd *c,int person,int kind) { if (c &&
 int wg_crowd_apply_environment_damage(wg_crowd *c,int i,double d) { return c && c->world.apply_environment_damage(i,d) ? 1 : 0; }
 int wg_crowd_apply_melee_contact(wg_crowd *c,int i,double hp_loss,double stun_add) { return c && c->world.apply_melee_contact(i,hp_loss,stun_add) ? 1 : 0; }
 int wg_crowd_charge_exchange_fatigue(wg_crowd *c,int i,double amount) { return c && c->world.charge_exchange_fatigue(i,amount) ? 1 : 0; }
+int wg_crowd_site_person_exit_ready(const wg_crowd *c,int i) { return c && c->world.site_person_exit_ready(i) ? 1 : 0; }
+int wg_crowd_site_person_release(wg_crowd *c,int i,double *out) {
+	wg::SitePersonRelease r;
+	if (!c || !out || !c->world.site_person_release(i,r)) return 0;
+	out[0] = r.hp; out[1] = r.fatigue; out[2] = r.fatigue_rest; out[3] = static_cast<double>(r.ammo);
+	out[4] = static_cast<double>(r.cell_x); out[5] = static_cast<double>(r.cell_y); out[6] = r.x; out[7] = r.y;
+	return 1;
+}
 int wg_crowd_has_projectiles(const wg_crowd *c) { return c && !c->world.projectiles.empty() ? 1 : 0; }
 double wg_crowd_combat_mark(const wg_crowd *c) { return c->world.combat_mark; }
 double wg_crowd_combat_left(const wg_crowd *c) { return c->world.combat_left; }

@@ -133,7 +133,7 @@ template <class Ar> void io_formation(Ar &ar, Formation &f) {
 } // namespace
 
 template <class Ar> void World::serialize(Ar &ar) {
-	const uint32_t magic = 0x3830574Bu; // "KW08": per-person post holder (R1b command eligibility)
+	const uint32_t magic = 0x3930574Bu; // "KW09": released soldiers (G6.4 site exit); KW08: per-person post holder (R1b)
 	uint32_t m = magic;
 	ar.pod(m);
 	if (Ar::loading && m != magic) { ar.ok = false; return; }
@@ -164,6 +164,7 @@ template <class Ar> void World::serialize(Ar &ar) {
 	ar.vec(ability); ar.vec(person_id);
 	ar.vec(military_role);
 	ar.vec(post_holder);
+	ar.vec(released);
 	ar.vec(events);
 	uint64_t np = projectiles.size(); ar.pod(np); if (!count(ar, np, 65, 65536)) return;
 	if (Ar::loading) projectiles.resize((size_t)np); for (auto &p : projectiles) io_projectile(ar, p);
@@ -231,6 +232,8 @@ bool World::validate(std::string *error, bool allow_site_jobs) const {
 	for (uint8_t value : military_role) CHECK_VALID(value <= 2);
 	CHECK_VALID(post_holder.size() == n);
 	for (uint8_t value : post_holder) CHECK_VALID(value <= 1);
+	CHECK_VALID(released.size() == n);
+	for (uint8_t value : released) CHECK_VALID(value <= 1);
 	CHECK_VALID(prison_id.size() == n && escort_goal.size() == n && escort_mode.size() == n);
 	CHECK_VALID(contact_revision.size() == n);
 	if (allow_site_jobs) {
@@ -358,7 +361,8 @@ bool World::validate(std::string *error, bool allow_site_jobs) const {
 		}
 		CHECK_VALID(f.field >= -1 && f.field < (int)fields_.size()); if (f.field >= 0) used[f.field] = 1;
 	}
-	for (size_t i = 0; i < n; ++i) CHECK_VALID(hp[i] <= 0 || membership[i]);
+	for (size_t i = 0; i < n; ++i) CHECK_VALID(hp[i] <= 0 || membership[i] || released[i]);
+	for (size_t i = 0; i < n; ++i) CHECK_VALID(!released[i] || (!membership[i] && !captive[i]));
 	for (size_t k = 0; k < fields_.size(); ++k) {
 		const auto &f = fields_[k]; CHECK_VALID(f.last_used <= tick);
 		CHECK_VALID(f.goal >= -1 && f.goal < (int)cells);
@@ -418,7 +422,7 @@ void World::swap_state(World &o) {
 	swap(skill, o.skill);
 	swap(role, o.role);
 	swap(military_role, o.military_role);
-	swap(post_holder, o.post_holder);
+	swap(post_holder, o.post_holder); swap(released, o.released);
 	swap(captive, o.captive);
 	swap(present, o.present);
 	swap(troop, o.troop);

@@ -65,7 +65,7 @@ void World::refresh_presence(Formation &f) {
 
 int World::select_commander(Formation &f) {
 	for (int i : f.officer_order)
-		if (hp[i] > 0.0 && command_eligible(i)) return i;
+		if (alive(i) && command_eligible(i)) return i;
 	std::vector<int> cand;
 	for (int i : f.members)
 		if (command_eligible(i)) cand.push_back(i);
@@ -86,9 +86,9 @@ void World::settle_command(Formation &f, int fi) {
 	int old_current = f.current_cmd;
 	// officer order drops the dead and the formal commander (TerrainArmy._sync_officer_order)
 	f.officer_order.erase(std::remove_if(f.officer_order.begin(), f.officer_order.end(),
-	                                     [&](int i) { return hp[i] <= 0.0 || i == f.formal_cmd; }),
+	                                     [&](int i) { return !alive(i) || i == f.formal_cmd; }),
 	                      f.officer_order.end());
-	bool permanent_vacancy = f.formal_cmd < 0 || hp[f.formal_cmd] <= 0.0;
+	bool permanent_vacancy = f.formal_cmd < 0 || !alive(f.formal_cmd);
 	if (permanent_vacancy) {                                      // D40: eligible acting commander is promoted
 		f.formal_cmd = command_eligible(f.acting_cmd) ? f.acting_cmd : select_commander(f);
 		f.acting_cmd = -1;
@@ -199,7 +199,7 @@ void World::retreat_away(int fi) {
 bool World::team_threat(const Formation &f) const {
 	const float R = 8.f;
 	for (int i : f.members) {
-		if (hp[i] <= 0.0 || captive[i]) continue;
+		if (!alive(i) || captive[i]) continue;
 		int x = (int)px[i], y = (int)py[i];
 		if (!flight_cells_.empty() && flight_cells_[terrain.idx(x, y)]) return true;
 		if (!idle_near(enemy_block_[faction_slot_[team[i]]], px[i], py[i], R)) continue;
@@ -221,7 +221,7 @@ bool World::team_threat(const Formation &f) const {
 bool World::team_stopped(const Formation &f) const {
 	if (f.order != Order::HOLD) return false;
 	for (int i : f.members) {
-		if (hp[i] <= 0.0 || captive[i]) continue;
+		if (!alive(i) || captive[i]) continue;
 		if (vx[i] * vx[i] + vy[i] * vy[i] > 0.09f || rescue_of[i] >= 0 || capture_of[i] >= 0 || getup[i] > 0.0 || knock_t[i] > 0.0) return false;
 	}
 	return true;
@@ -320,6 +320,63 @@ bool World::charge_exchange_fatigue(int i, double amount) {
 	if (std::find(members.begin(), members.end(), i) == members.end()) return false;
 	if (!alive(i)) return true;
 	if (amount > 0) charge(i, amount);
+	return true;
+}
+
+// ---------------------------------------------------------------- G6.4 site exit (travel departure)
+// A soldier may leave the Site only when it is conscious and free, in a formation, not in a melee exchange and
+// with no committed step (escort / custody / rescue / capture / siege / stagger / knockback). Host-controlled
+// soldiers and captors are refused. Refusals change nothing.
+bool World::site_person_exit_ready(int i) const {
+	if (i < 0 || i >= soldier_count() || !can_act(i) || host_ctl[i]) return false;
+	const int fi = form[i];
+	if (fi < 0 || fi >= (int)formations.size()) return false;
+	const std::vector<int> &members = formations[fi].members;
+	if (std::find(members.begin(), members.end(), i) == members.end()) return false;
+	if (escort_mode[i] != 0 || escort_goal[i] >= 0 || prison_id[i] != 0) return false;
+	if (rescue_of[i] >= 0 || capture_of[i] >= 0 || is_siege_crew(i) || siege_group(i) >= 0) return false;
+	if (stagger[i] > 0.0 || knock_t[i] > 0.0) return false;
+	if (in_melee_exchange(i)) return false;
+	for (int j = 0; j < soldier_count(); ++j)
+		if (captive[j] && captor[j] == i) return false; // still holds a captive
+	return true;
+}
+
+bool World::in_melee_exchange(int i) const {
+	auto melee = [&](int j) { return state[j] == S_FIGHT || state[j] == S_ENGAGE || state[j] == S_ENCIRCLE; };
+	if (melee(i) || enc_target[i] >= 0) return true;
+	for (int j = 0; j < soldier_count(); ++j)
+		if (j != i && (target[j] == i || enc_target[j] == i) && melee(j)) return true;
+	return false;
+}
+
+// Removes a ready soldier from the live pool and its formation without reindexing any array: the soldier keeps
+// its slot in every SoA array, is marked released (alive / can_act / render / hash / exchange / ranged all skip
+// it), is dropped from formation members by compact_slots and loses its fatigue binding and roster place.
+// Its hp, ammo and position are kept in the receipt; the flag is saved, so a reload keeps it released.
+bool World::site_person_release(int i, SitePersonRelease &out) {
+	if (work_point_active_ || work_point_finish_ready_ || !site_person_exit_ready(i)) return false;
+	Formation &f = formations[form[i]];
+	out = SitePersonRelease{};
+	out.hp = hp[i]; out.fatigue = f.fatigue; out.fatigue_rest = f.fatigue_rest; out.ammo = ammo[i];
+	out.x = px[i]; out.y = py[i];
+	out.cell_x = (int)px[i]; out.cell_y = (int)py[i];
+	released[i] = 1;
+	f.fatigue_count = std::max(0, f.fatigue_count - 1); // unbound from the shared pool, as a death is
+	f.roster = std::max(0, f.roster - 1);               // leaves the formal roster; it is not a death
+	for (int j = 0; j < soldier_count(); ++j) { // no order or exchange keeps naming the departed soldier
+		if (target[j] == i) target[j] = -1;
+		if (enc_target[j] == i) enc_target[j] = -1;
+	}
+	for (auto &g : formations) if (g.target_person == i) g.target_person = -1;
+	f.officer_order.erase(std::remove(f.officer_order.begin(), f.officer_order.end(), i), f.officer_order.end());
+	state[i] = S_SLOT; target[i] = -1; enc_target[i] = -1; near_enemy[i] = 0; running[i] = 0;
+	vx[i] = vy[i] = 0; nx[i] = px[i]; ny[i] = py[i];
+	cell[i] = terrain.idx(out.cell_x, out.cell_y);
+	present[i] = 0;
+	compact_slots(f); // drops the released soldier from members and renumbers the slots of the rest
+	slot[i] = -1;
+	f.command_dirty = true;
 	return true;
 }
 
@@ -431,10 +488,10 @@ double World::fatigue_recovery_multiplier(int fi, double garrison, double housin
 	const Formation &f = formations[fi];
 	if (garrison > 1.0) {
 		if (!f.garrisoned) garrison = 1.0;
-		for (int i : f.members) if (hp[i] > 0.0 && !can_act(i)) { garrison = 1.0; break; }
+		for (int i : f.members) if (alive(i) && !can_act(i)) { garrison = 1.0; break; }
 	}
 	if (housing > 1.0) for (int i : f.members)
-		if (hp[i] > 0.0 && (!can_act(i) || escort_mode[i] != 0 || housing_attendance_cell[i] < 0 || cell[i] != housing_attendance_cell[i] || (host_ctl[i] && (host_vx[i] != 0 || host_vy[i] != 0 || host_engage[i])))) { housing = 1.0; break; }
+		if (alive(i) && (!can_act(i) || escort_mode[i] != 0 || housing_attendance_cell[i] < 0 || cell[i] != housing_attendance_cell[i] || (host_ctl[i] && (host_vx[i] != 0 || host_vy[i] != 0 || host_engage[i])))) { housing = 1.0; break; }
 	return std::max(garrison, housing);
 }
 
@@ -457,7 +514,7 @@ double World::work_fatigue_rest_limit(int fi, double target, double maximum, dou
 				state[i] == S_FIGHT || state[i] == S_ENGAGE || state[i] == S_ENCIRCLE || state[i] == S_RANGED;
 			threat |= near_enemy[i] != 0;
 		}
-		busy |= getup[i] > 0.0 && !captive[i] && hp[i] > 0.0;
+		busy |= getup[i] > 0.0 && !captive[i] && alive(i);
 	}
 	if (!safe_fatigue_rest(fi, busy, threat, f.host_fire_rest_safe, combat_now)) return maximum;
 	const double delay = std::max(0.0, FATIGUE_REST_DELAY - f.fatigue_rest);
@@ -492,7 +549,7 @@ void World::fatigue_stage(double gdt, const std::vector<WorkFatigueState> *work_
 		f.in_contact = fight[fi] != 0;
 		const bool host_fire_rest_safe = f.host_fire_rest_safe;
 		f.host_fire_rest_safe = false;
-		for (int i : f.members) if (getup[i] > 0.0 && !captive[i] && hp[i] > 0.0) { busy[fi] = 1; break; }
+		for (int i : f.members) if (getup[i] > 0.0 && !captive[i] && alive(i)) { busy[fi] = 1; break; }
 		if (gdt <= 0.0) { f.charged_this_step = false; continue; }
 		const WorkFatigueState *covered = nullptr;
 		if (work_plan && work_index < work_plan->size() && (*work_plan)[work_index].formation == (int)fi)

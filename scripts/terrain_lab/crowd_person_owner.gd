@@ -653,6 +653,23 @@ func charge_fatigue(index: int, amount: float) -> bool:
 	var accepted: bool = bool(crowd_site.crowd.charge_exchange_fatigue(index, amount))
 	return accepted
 
+# G6.4 native site exit gate: conscious, free, in a formation, not in melee, no committed step.
+func site_exit_ready(index: int) -> bool:
+	if not is_member(index) or crowd_site == null or crowd_site.crowd == null: return false
+	if not crowd_site.crowd.has_method("site_person_exit_ready"): return false
+	return bool(crowd_site.crowd.site_person_exit_ready(index))
+
+# G6.4 native release for a travel departure. The person leaves the live pool and formation and this owner stops
+# mapping it. Returns {} and changes nothing when refused or when the DLL predates site_person_release.
+# "fatigue" is the formation's shared pool: the native World keeps no per-person fatigue.
+func release_for_departure(index: int) -> Dictionary:
+	if not site_exit_ready(index) or crowd_site.lab._region_deferring_endpoint() or not crowd_site.crowd.has_method("site_person_release"): return {}
+	var receipt: PackedFloat64Array = crowd_site.crowd.site_person_release(index)
+	if receipt.size() != 8: return {}
+	combat_units.erase(index)
+	return {"hp": receipt[0], "fatigue": receipt[1], "fatigue_rest": receipt[2], "ammo": int(receipt[3]),
+		"cell": Vector2i(int(receipt[4]), int(receipt[5])), "position": Vector2(receipt[6], receipt[7])}
+
 func ranged_apply_hit(index: int, _source_cell: Vector2i, packet: Dictionary) -> void:
 	if not combat_units.has(index): return
 	var result: Dictionary = packet.get("result", {})

@@ -219,5 +219,5 @@ team. `command_eligible` is now officer rank and (`post_holder` or the formal ca
 TerrainArmy uses (v2 plan R1b, amended "文官也可以帶兵"). Acting, succession candidates,
 `command_effect` sums and the AI's "has a commander" check all follow from it. The host sets the flag
 from the team's `offices` at Crowd entry (`set_post_holder` / `get_post_holder`). Standalone callers
-default to 1, so benches and scenario tests keep the old behavior. The save magic is now KW08; as with
+default to 1, so benches and scenario tests keep the old behavior. The save magic is now KW09 (`released`, the G6.4 site exit; KW08 added `post_holder`); as with
 every native change, saves from an older DLL are rejected by the existing build guard.

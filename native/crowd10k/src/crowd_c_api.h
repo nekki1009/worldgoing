@@ -26,6 +26,11 @@ void wg_crowd_cancel_controlled_step(wg_crowd *c, int person, int kind);
 int wg_crowd_apply_environment_damage(wg_crowd *c, int i, double amount);
 int wg_crowd_apply_melee_contact(wg_crowd *c, int i, double hp_loss, double stun_add);
 int wg_crowd_charge_exchange_fatigue(wg_crowd *c, int i, double amount);
+/* G6.4 site exit: 1 when the soldier may leave the Site (conscious, free, in a formation, not in melee, no committed step). */
+int wg_crowd_site_person_exit_ready(const wg_crowd *c, int i);
+/* Releases a ready soldier from the live pool and formation. out[8] = {hp, fatigue, fatigue_rest, ammo, cell_x, cell_y, x, y}
+ * (fatigue = formation pool). Returns 1 on release; 0 refuses and writes nothing. */
+int wg_crowd_site_person_release(wg_crowd *c, int i, double *out);
 int wg_crowd_has_projectiles(const wg_crowd *c);
 
 wg_crowd *wg_crowd_create(int threads, int64_t site_seed);

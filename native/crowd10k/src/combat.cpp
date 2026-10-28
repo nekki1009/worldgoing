@@ -522,7 +522,7 @@ void World::projectiles_advance(float dt) {
 		if (r.kind == R_HIT) stats.hits++; else if (r.kind == R_GRAZE) stats.grazes++; else stats.misses++;
 		if (r.kind != R_MISS && !hostile(p.faction, team[tgt])) stats.friendly_hits++;
 		apply_contact(tgt, r.hp, r.stun);
-		if (hp[tgt] > 0.0 && ko[tgt] <= 0.0 && getup[tgt] <= 0.0 && r.hp > 0.0) {
+		if (alive(tgt) && ko[tgt] <= 0.0 && getup[tgt] <= 0.0 && r.hp > 0.0) {
 			set_visual(tgt, V_HIT);
 			if (rescue_of[tgt] >= 0) cancel_actions_involving(tgt);
 			stagger[tgt] = std::max(stagger[tgt], r.stagger);
@@ -533,7 +533,7 @@ void World::projectiles_advance(float dt) {
 
 // ---------------------------------------------------------------- actions: rescue / capture / escape (serial)
 bool World::order_capture(int g, int t) {
-	if (g < 0 || t < 0 || g >= soldier_count() || t >= soldier_count() || !can_act(g) || (escort_mode[g] != 0 || is_siege_crew(g)) || hp[t] <= 0.0 || ko[t] <= 0.0 || captive[t] || !hostile(team[g], team[t])) return false;
+	if (g < 0 || t < 0 || g >= soldier_count() || t >= soldier_count() || !can_act(g) || (escort_mode[g] != 0 || is_siege_crew(g)) || !alive(t) || ko[t] <= 0.0 || captive[t] || !hostile(team[g], team[t])) return false;
 	if (capture_of[g] >= 0 || rescue_of[g] >= 0 || capturing_by_[t] >= 0) return false;
 	float dx = px[t] - px[g], dy = py[t] - py[g];
 	if (dx * dx + dy * dy > 1.3f * 1.3f) return false;
@@ -552,7 +552,7 @@ bool World::order_escort_step(int i, int g, int destination) {
 	const int n = soldier_count(), cells = terrain.w * terrain.h;
 	if (i < 0 || i >= n || g < 0 || g >= n || destination < 0 || destination >= cells || !can_act(g)) return false;
 	if (escort_mode[i] >= 3 || escort_mode[g] >= 3 || is_siege_crew(i) || is_siege_crew(g) || siege_group(i) >= 0 || siege_group(g) >= 0) return false;
-	if (hp[i] <= 0 || ko[i] > 0 || getup[i] > 0 || stagger[i] > 0 || prison_id[i] != 0) return false;
+	if (!alive(i) || ko[i] > 0 || getup[i] > 0 || stagger[i] > 0 || prison_id[i] != 0) return false;
 	if ((captive[i] && captor[i] != g) || (!captive[i] && i != g) || rescue_of[i] >= 0 || capture_of[i] >= 0) return false;
 	if (escort_goal[i] >= 0) return escort_mode[i] == 1 && escort_goal[i] == destination;
 	const int x = int(std::floor(px[i])), y = int(std::floor(py[i]));
@@ -565,7 +565,7 @@ bool World::order_escort_step(int i, int g, int destination) {
 		if (rx * rx + ry * ry > 16.f) return false;
 	}
 	for (int j = 0; j < n; ++j) {
-		if (j == i || hp[j] <= 0) continue;
+		if (j == i || !alive(j)) continue;
 		if ((int(std::floor(px[j])) == gx && int(std::floor(py[j])) == gy) || (escort_mode[j] && escort_goal[j] == destination)) return false;
 	}
 	escort_goal[i] = (dx == 0 && dy == 0 && vx[i] * vx[i] + vy[i] * vy[i] <= 1e-6f
@@ -598,7 +598,7 @@ bool World::order_controlled_step(int i, int destination, ControlledStepKind kin
 	if ((dx || dy) && !terrain.edge(x, y, dx > 0 ? E : dx < 0 ? W : dy > 0 ? S : N)) return false;
 	for (int j = 0; j < n; ++j) {
 		if (j == i) continue;
-		if ((hp[j] > 0 && int(std::floor(px[j])) == gx && int(std::floor(py[j])) == gy) || (escort_mode[j] && escort_goal[j] == destination)) return false;
+		if ((alive(j) && int(std::floor(px[j])) == gx && int(std::floor(py[j])) == gy) || (escort_mode[j] && escort_goal[j] == destination)) return false;
 	}
 	escort_goal[i] = (dx == 0 && dy == 0 && vx[i] * vx[i] + vy[i] * vy[i] <= 1e-6f
 		&& std::abs(px[i] - (float(gx) + .5f)) <= 1e-5f && std::abs(py[i] - (float(gy) + .5f)) <= 1e-5f) ? -1 : destination;
@@ -617,14 +617,14 @@ void World::cancel_controlled_step(int i, ControlledStepKind kind) {
 bool World::admit_prison(int i, int g, int64_t prison, int slot_cell, int contact_cell) {
 	const int n = soldier_count(), cells = terrain.w * terrain.h;
 	if (i < 0 || i >= n || g < 0 || g >= n || i == g || prison <= 0 || prison > 2147483647) return false;
-	if (!captive[i] || prison_id[i] != 0 || captor[i] != g || hp[i] <= 0 || ko[i] > 0 || getup[i] > 0 || !can_act(g)) return false;
+	if (!captive[i] || prison_id[i] != 0 || captor[i] != g || !alive(i) || ko[i] > 0 || getup[i] > 0 || !can_act(g)) return false;
 	if (slot_cell < 0 || slot_cell >= cells || contact_cell < 0 || contact_cell >= cells || escort_goal[i] >= 0 || escort_goal[g] >= 0) return false;
 	const int x = slot_cell % terrain.w, y = slot_cell / terrain.w;
 	const int gx = contact_cell % terrain.w, gy = contact_cell / terrain.w, dx = gx - x, dy = gy - y;
 	if (std::abs(dx) + std::abs(dy) != 1 || !terrain.edge(x, y, dx > 0 ? E : dx < 0 ? W : dy > 0 ? S : N)) return false;
 	if (int(std::floor(px[i])) != x || int(std::floor(py[i])) != y || int(std::floor(px[g])) != gx || int(std::floor(py[g])) != gy) return false;
 	if (vx[i] * vx[i] + vy[i] * vy[i] > 1e-6f || vx[g] * vx[g] + vy[g] * vy[g] > 1e-6f) return false;
-	for (int j = 0; j < n; ++j) if (j != i && hp[j] > 0 && ((int(std::floor(px[j])) == x && int(std::floor(py[j])) == y) || (escort_mode[j] && escort_goal[j] == slot_cell))) return false;
+	for (int j = 0; j < n; ++j) if (j != i && alive(j) && ((int(std::floor(px[j])) == x && int(std::floor(py[j])) == y) || (escort_mode[j] && escort_goal[j] == slot_cell))) return false;
 	prison_id[i] = prison; escape_t[i] = 0; escort_mode[i] = 0; escort_goal[i] = -1;
 	vx[i] = vy[i] = 0; nx[i] = px[i]; ny[i] = py[i];
 	return true;
@@ -632,14 +632,14 @@ bool World::admit_prison(int i, int g, int64_t prison, int slot_cell, int contac
 
 bool World::release_prison(int i, int executor, int64_t prison, int contact_cell, int exit_cell) {
 	const int n = soldier_count(), cells = terrain.w * terrain.h;
-	if (i < 0 || i >= n || executor < 0 || executor >= n || i == executor || prison <= 0 || prison_id[i] != prison || !captive[i] || hp[i] <= 0 || !can_act(executor)) return false;
+	if (i < 0 || i >= n || executor < 0 || executor >= n || i == executor || prison <= 0 || prison_id[i] != prison || !captive[i] || !alive(i) || !can_act(executor)) return false;
 	if (contact_cell < 0 || contact_cell >= cells || exit_cell < 0 || exit_cell >= cells || escort_goal[executor] >= 0) return false;
 	const int x = int(std::floor(px[i])), y = int(std::floor(py[i]));
 	const int gx = contact_cell % terrain.w, gy = contact_cell / terrain.w, dx = gx - x, dy = gy - y;
 	if (std::abs(dx) + std::abs(dy) != 1 || !terrain.edge(x, y, dx > 0 ? E : dx < 0 ? W : dy > 0 ? S : N)) return false;
 	if (int(std::floor(px[executor])) != gx || int(std::floor(py[executor])) != gy || !terrain.walkable(exit_cell % terrain.w, exit_cell / terrain.w)) return false;
 	if (vx[executor] * vx[executor] + vy[executor] * vy[executor] > 1e-6f) return false;
-	for (int j = 0; j < n; ++j) if (j != i && j != executor && hp[j] > 0 && ((int(std::floor(px[j])) == exit_cell % terrain.w && int(std::floor(py[j])) == exit_cell / terrain.w) || (escort_mode[j] && escort_goal[j] == exit_cell))) return false;
+	for (int j = 0; j < n; ++j) if (j != i && j != executor && alive(j) && ((int(std::floor(px[j])) == exit_cell % terrain.w && int(std::floor(py[j])) == exit_cell / terrain.w) || (escort_mode[j] && escort_goal[j] == exit_cell))) return false;
 	// The synchronous Site action commits the original relationship and meals.
 	// Do not emit EV_ESCAPED and replay the same supply transfer a second time.
 	prison_id[i] = 0; captive[i] = 0; captor[i] = -1; escape_t[i] = 0;
@@ -685,7 +685,7 @@ void World::rescue_stage(float dt) {
 		float dx = px[r] - px[p], dy = py[r] - py[p];
 		// "stopped": the rescuer holds still (S_RESCUE zeroes its own motion); only crowd pushes move it
 		float lim = std::max(1.5f, cfg.rescue_seek_cells + 2.f);
-		bool ok = can_act(r) && hp[p] > 0.0 && ko[p] > 0.0 && !captive[p] && dx * dx + dy * dy <= lim * lim;
+		bool ok = can_act(r) && alive(p) && ko[p] > 0.0 && !captive[p] && dx * dx + dy * dy <= lim * lim;
 		if (!ok) { cancel_actions_involving(r); continue; }
 		if (dx * dx + dy * dy <= 1.5f * 1.5f) act_t[r] += dt; // the 4 s count only while adjacent and stopped
 		if (act_t[r] >= RESCUE_SECONDS) {
@@ -705,7 +705,7 @@ void World::rescue_stage(float dt) {
 		Formation &f = formations[fi];
 		if ((tick + (uint32_t)fi) % 15 != 0 || f.order != Order::HOLD || f.routed || f.garrisoned) continue;
 		for (int p : f.members) {
-			if (hp[p] <= 0.0 || ko[p] <= 0.0 || (bandaged[p] && ko[p] <= cfg.rescued_ko_seconds) || captive[p] || rescued_by_[p] >= 0) continue;
+			if (!alive(p) || ko[p] <= 0.0 || (bandaged[p] && ko[p] <= cfg.rescued_ko_seconds) || captive[p] || rescued_by_[p] >= 0) continue;
 			int best = -1;
 			float reach_r = std::max(1.3f, cfg.rescue_seek_cells);
 			if (!idle_near(idle_block_[faction_slot_[team[p]]], px[p], py[p], reach_r)) continue;
@@ -757,10 +757,10 @@ void World::person_actions_stage(double gdt) {
 		const int n = soldier_count();
 		bool held_built = false;
 		for (int t = (int)((15u - tick % 15u) % 15u); t < n; t += 15) {
-			if (hp[t] <= 0.0 || ko[t] <= 0.0 || captive[t] || capturing_by_[t] >= 0) continue;
+			if (!alive(t) || ko[t] <= 0.0 || captive[t] || capturing_by_[t] >= 0) continue;
 			if (!held_built) {
 				held_.assign((size_t)n, 0);
-				for (int c : captives_) if (captive[c] && prison_id[c] == 0 && hp[c] > 0.0 && captor[c] >= 0) held_[captor[c]]++;
+				for (int c : captives_) if (captive[c] && prison_id[c] == 0 && alive(c) && captor[c] >= 0) held_[captor[c]]++;
 				held_built = true;
 			}
 			const float reach_r = std::max(1.3f, cfg.capture_seek_cells);
@@ -802,7 +802,7 @@ void World::person_actions_stage(double gdt) {
 		if (t < 0) continue;
 		float dx = px[g] - px[t], dy = py[g] - py[t];
 		float lim = std::max(1.5f, cfg.capture_seek_cells + 2.f);
-		bool ok = can_act(g) && hp[t] > 0.0 && ko[t] > 0.0 && !captive[t] && dx * dx + dy * dy <= lim * lim;
+		bool ok = can_act(g) && alive(t) && ko[t] > 0.0 && !captive[t] && dx * dx + dy * dy <= lim * lim;
 		if (!ok) { cancel_actions_involving(g); continue; }
 		if (dx * dx + dy * dy <= 1.5f * 1.5f) act_t[g] += gdt; // the 4 s count only while adjacent and stopped
 		if (act_t[g] >= CAPTURE_SECONDS) {
@@ -822,7 +822,7 @@ void World::person_actions_stage(double gdt) {
 	// escape: awake captive, no effective guard within 4 cells and no near threat for 30 s
 	w = 0;
 	for (int c : captives_) {
-		if (!captive[c] || hp[c] <= 0.0) continue;
+		if (!captive[c] || !alive(c)) continue;
 		if (prison_id[c] > 0) { escape_t[c] = 0; captives_[w++] = c; continue; }
 		if (ko[c] > 0.0 || getup[c] > 0.0) { escape_t[c] = 0; captives_[w++] = c; continue; }
 		int g = captor[c];
@@ -861,7 +861,7 @@ void World::bleed_stage(double gdt) {
 	if (loss <= 0.0) return;
 	const int n = soldier_count();
 	for (int i = 0; i < n; ++i) {
-		if (hp[i] <= 0.0 || ko[i] <= 0.0 || captive[i] || bandaged[i]) continue;
+		if (!alive(i) || ko[i] <= 0.0 || captive[i] || bandaged[i]) continue;
 		if (hp[i] > loss) { hp[i] -= loss; continue; }
 		stats.bled_deaths++;
 		quiet_contact_ = true;

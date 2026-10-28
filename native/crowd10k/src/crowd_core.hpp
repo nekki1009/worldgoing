@@ -276,6 +276,9 @@ struct Projectile {
 	rules::RangedShooter stats;
 };
 struct MotionSegment { float from_x = 0, from_y = 0, to_x = 0, to_y = 0; };
+// Receipt of World::site_person_release: the travelling person's values at departure. fatigue values are the
+// formation's shared pool (the native World keeps no per-person fatigue).
+struct SitePersonRelease { double hp = 0, fatigue = 0, fatigue_rest = 0, x = 0, y = 0; int ammo = 0, cell_x = 0, cell_y = 0; };
 
 class World {
 public:
@@ -310,6 +313,9 @@ public:
 	// amended 2026-10-07 "文官也可以帶兵"). Command needs officer rank and either
 	// this post or the formal captaincy; standalone callers default to 1 (legacy).
 	std::vector<uint8_t> post_holder;
+	// 1 = departed the Site with a travelling person (site_person_release). Such a soldier is not alive, not
+	// able to act, not in its formation, and is not drawn; its hp and position are kept for the receipt. Saved.
+	std::vector<uint8_t> released;
 	std::vector<int64_t> person_id;
 	std::vector<uint8_t> life_ck; // morale checkpoint: 0 conscious, 1 unconscious, 2 dead
 	// presentation only (never read by the rules, not hashed, not saved)
@@ -469,6 +475,10 @@ public:
 	bool apply_siege_contact(int i, double hp_loss, double stun_add, double stagger_seconds);
 	bool apply_melee_contact(int i, double hp_loss, double stun_add);
 	bool charge_exchange_fatigue(int i, double amount);
+	// G6.4 site exit. Ready: a conscious, free soldier of a formation, not held, not in a melee exchange, with no
+	// committed step. Release refuses (returns false, writes nothing) unless ready.
+	bool site_person_exit_ready(int i) const;
+	bool site_person_release(int i, SitePersonRelease &out);
 	bool charge_siege_round(const std::vector<int> &members, double per_person);
 	bool charge_siege_work(int person, double game_seconds);
 	void contact_pose(int i, int movement, int &slot, double &age) const;
@@ -535,8 +545,8 @@ public:
 	int soldier_count() const { return (int)px.size(); }
 
 	// rule queries (public for tests)
-	bool alive(int i) const { return hp[i] > 0.0; }
-	bool can_act(int i) const { return hp[i] > 0.0 && ko[i] <= 0.0 && getup[i] <= 0.0 && !captive[i]; }
+	bool alive(int i) const { return hp[i] > 0.0 && !released[i]; } // a released soldier is out of every system
+	bool can_act(int i) const { return alive(i) && ko[i] <= 0.0 && getup[i] <= 0.0 && !captive[i]; }
 	bool can_receive(int i) const { return can_act(i) && exch_cd[i] <= 0.000000001; }
 	bool exchange_ready(int i) const;
 	bool host_ranged_ready(int i,int expected_ammo,int mode,int64_t release_id,int target_x,int target_y) const;
@@ -635,6 +645,7 @@ private:
 	void contact_stage(int ch);
 	void soldier_stage(float dt, int ch);
 	void compact_slots(Formation &f);
+	bool in_melee_exchange(int i) const; // G6.4: i fights in melee, is the melee target of one, or has an encircle target
 	bool los(float ax, float ay, float bx, float by, const std::vector<int> *rescue_domain = nullptr) const;
 	float ray_clip(float ax, float ay, float bx, float by) const;
 	void resolve(float ox, float oy, float &x, float &y, float margin) const;
