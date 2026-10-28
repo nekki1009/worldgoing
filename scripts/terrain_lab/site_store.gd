@@ -335,7 +335,8 @@ static func save(data: TerrainData, path: String = DEFAULT_PATH, native_candidat
 			if event is Dictionary and event.get("status") == "pending": return Runtime.fail("BUSY", "原旅行生命端點須先完成，或經 Region barrier checkpoint 保存")
 	# A hot checkpoint carries state.crowd only when site_controller admitted this live
 	# capture; a crowd section without that admission (or the reverse) is refused.
-	if hot and (native_candidate != null or data.site.has("crowd") != crowd_region_admitted):
+	# The checkpoint backend is "native" exactly when the crowd is admitted (G6.2), never "gd" on a native Site.
+	if hot and (native_candidate != null or data.site.has("crowd") != crowd_region_admitted or str(region_context.get("backend", "")) != ("native" if crowd_region_admitted else "gd")):
 		return Runtime.fail("REGION_BACKEND_UNADMITTED")
 	var siege_guard := _region_fire_guard(data, region_capture) if hot else siege_save_guard(data, allow_dirty_fire_save)
 	if not siege_guard.ok: return siege_guard

@@ -4,6 +4,8 @@ const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const Clock = preload("res://scripts/region_lab/region_gameplay_clock.gd")
 const PURPOSES := ["region_checkpoint", "region_barrier", "region_materialize", "region_dematerialize", "region_family"]
 const MODES := ["live", "formula_active", "cold_exact", "materializing", "dematerializing", "committed-unbound"]
+## "native" is admitted only as the checkpoint stamp of a live admitted CrowdSite (G6.2); the store cross-checks it.
+const BACKENDS := ["gd", "native"]
 const FIELDS := ["purpose", "mode", "source_generation", "runtime_revision", "token", "game_seconds", "action_seconds", "fire_epoch", "fire_sequence", "interval_complete", "effects_complete", "mode_revision", "backend", "events", "endpoint_payload"]
 
 static func integer(value: Variant, lower: int = 0) -> bool:
@@ -20,8 +22,8 @@ static func validate_context(value: Variant, expected: Dictionary = {}) -> Dicti
 		return Runtime.fail("INVALID_REGION_CONTEXT")
 	for field: String in ["source_generation", "runtime_revision", "fire_sequence", "mode_revision"]:
 		if not integer(value[field]): return Runtime.fail("INVALID_REGION_CONTEXT", field)
-	if not time(value.game_seconds) or not time(value.action_seconds) or not value.fire_epoch is String or str(value.fire_epoch).length() > 256 or value.backend != "gd":
-		return Runtime.fail("REGION_BACKEND_UNADMITTED" if value.get("backend") != "gd" else "INVALID_REGION_CONTEXT")
+	if not time(value.game_seconds) or not time(value.action_seconds) or not value.fire_epoch is String or str(value.fire_epoch).length() > 256 or value.backend not in BACKENDS:
+		return Runtime.fail("REGION_BACKEND_UNADMITTED" if value.get("backend") not in BACKENDS else "INVALID_REGION_CONTEXT")
 	if not value.interval_complete is bool or not value.effects_complete is bool or not bool(value.interval_complete):
 		return Runtime.fail("REGION_BARRIER_PENDING")
 	if not value.events is Array or value.events.size() > 100000 or not value.endpoint_payload is Dictionary:
