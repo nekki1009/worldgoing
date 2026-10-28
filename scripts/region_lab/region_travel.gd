@@ -1473,7 +1473,10 @@ static func resident_mover_guard(state: Dictionary, movers: Dictionary) -> Dicti
 static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dictionary:
 	var boarding_guard: Dictionary = boarding_departure_guard(state, spec)
 	if not boarding_guard.ok: return boarding_guard
-	if state.has("crowd"): return fail("UNSUPPORTED", "群眾模式（Crowd）暫不支援整隊出發")
+	# G6.4b: a crowd team leaves only as a whole land team (crowd_departure); its native section is filtered below.
+	var crowd_departure := bool(spec.get("crowd_departure", false))
+	if crowd_departure and (not state.has("crowd") or str(spec.get("mode", "land")) == "sea"): return fail("UNSUPPORTED", "群眾隊伍只支援陸路整隊出發")
+	if state.has("crowd") and not crowd_departure: return fail("UNSUPPORTED", "群眾模式（Crowd）暫不支援整隊出發")
 	if state.has("family"):
 		var version := int(state.family.get("version", 0))
 		if version not in [1, 2, 3, 4, 5] or version != 3 and not Family.validate_family(state.family, str(state.get("id", ""))): return fail("INVALID_FAMILY", "必要原家族 schema 未准入")
@@ -1518,7 +1521,7 @@ static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dicti
 		var remaining: Array = []
 		for army: Dictionary in origin.armies:
 			if not selected_teams.has(int(army.get("team_id", 0))): remaining.append(army); continue
-			if bool(army.get("crowd", false)) or not str(army.get("garrison_feature_id", "")).is_empty():
+			if bool(army.get("crowd", false)) != crowd_departure or not str(army.get("garrison_feature_id", "")).is_empty():
 				return fail("RELATION_OPEN", "駐營或群眾隊伍不能整隊出發")
 			if not army.get("rescues", []).is_empty(): return fail("BUSY", "隊伍仍在救助傷者")
 			if int(army.get("combat_order", 0)) != 0: return fail("BUSY", "隊伍須先停在守位（取消移動、追擊、撤退）")
@@ -1535,11 +1538,26 @@ static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dicti
 			# floats. The party owns int ids, so every later identity map and body index
 			# sees the same key; a non-integral id stays as is for validation to refuse.
 			_int_army_ids(army)
+			if crowd_departure: army.erase("crowd") # The travelling team is a plain TerrainArmy-shaped party army.
 			content.armies.append(army)
 			var member: Dictionary = army.get("player_member", {})
 			if not member.is_empty(): movers[int(member.id)] = true
 		if content.armies.size() != selected_teams.size(): return fail("NO_TARGET", "選定原隊容器缺失，拒絕部分船隊")
 		origin.armies = remaining
+	if crowd_departure:
+		# The departing team leaves the native section. Remaining crowd keeps its section and blob.
+		if selected_teams.is_empty(): return fail("NO_TARGET", "群眾整隊須指定隊伍")
+		var section: Dictionary = origin.crowd
+		# Tombstone, not removal: the native formation and its released people stay in the blob (SiteStore departed_ids).
+		for entry: Variant in section.get("teams", []):
+			if entry is Dictionary and selected_teams.has(int(entry.get("team_id", 0))): entry["departed"] = true
+		var crowd_remains := false
+		for army: Dictionary in origin.armies:
+			if bool(army.get("crowd", false)): crowd_remains = true
+		if not crowd_remains:
+			origin.erase("crowd")
+		elif movers.has(int(section.get("player", {}).get("person_id", -1))):
+			return fail("RELATION_OPEN", "群眾受控人物仍留在此地")
 	if not actor_key.is_empty():
 		var actor: Dictionary = origin.actors.get(actor_key, {})
 		if actor.is_empty() or int(actor.get("person_id", -1)) != int(spec.get("person_id", -1)):

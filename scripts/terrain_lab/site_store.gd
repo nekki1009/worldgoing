@@ -1775,6 +1775,7 @@ static func _validate_crowd(data: TerrainData, state: Dictionary, workers: int =
 	var teams_seen := {}
 	var slots := {}
 	var referenced_rosters := {}
+	var departed_ids := {} # G6.4b: people released by a travel departure; only tombstone teams may name them.
 	var escort_people := {}
 	for guard_key: String in state.get("escort_orders", {}):
 		escort_people[int(guard_key)] = true
@@ -1794,6 +1795,15 @@ static func _validate_crowd(data: TerrainData, state: Dictionary, workers: int =
 		if not bool(team.solo):
 			if slots.has(int(team.slot)): return Runtime.fail("INVALID_CROWD", "群眾隊伍 slot 重複")
 			slots[int(team.slot)] = true
+		if bool(team.get("departed", false)):
+			# G6.4b tombstone: the team's people left by travel and their native soldiers stay in the blob, released.
+			# It has no roster and no live records; every id must be a blob soldier that no live team references.
+			if bool(team.solo) or crowd_rosters.has(int(team.team_id)): return Runtime.fail("INVALID_CROWD", "離隊群眾隊伍不得保留名冊")
+			for identity: Variant in team.person_ids:
+				if not _integer(identity, 1, next_id - 1) or not native_indices.has(int(identity)) or references.has(int(identity)) or departed_ids.has(int(identity)):
+					return Runtime.fail("INVALID_CROWD", "離隊群眾人物引用不唯一")
+				departed_ids[int(identity)] = true
+			continue
 		var roster_ids := {}
 		for identity: Variant in team.person_ids:
 			if not _integer(identity, 1, next_id - 1) or not records.has(int(identity)) or references.has(int(identity)):
@@ -1874,10 +1884,10 @@ static func _validate_crowd(data: TerrainData, state: Dictionary, workers: int =
 				if not _integer(handoff_formation.officer_persons[index], 1, 2147483647) or int(handoff_formation.officer_persons[index]) != native_refs[index + 4]:
 					return Runtime.fail("INVALID_CROWD", "群眾隊伍交接軍官與原生陣列不符")
 	if referenced_rosters.size() != crowd_rosters.size(): return Runtime.fail("INVALID_CROWD", "未引用的群眾名冊")
-	if references.size() != blob_ids.size(): return Runtime.fail("INVALID_CROWD", "群眾 blob 與隊伍人数不符")
+	if references.size() + departed_ids.size() != blob_ids.size(): return Runtime.fail("INVALID_CROWD", "群眾 blob 與隊伍人数不符")
 	var native_seen := {}
 	for identity: int in blob_ids:
-		if not references.has(identity) or native_seen.has(identity): return Runtime.fail("INVALID_CROWD", "群眾 blob 人物集合不符")
+		if native_seen.has(identity) or not references.has(identity) and not departed_ids.has(identity): return Runtime.fail("INVALID_CROWD", "群眾 blob 人物集合不符")
 		native_seen[identity] = true
 	if not _integer(section.player.get("person_id"), 1, next_id - 1) or not _integer(section.player.get("soldier_index"), 0, blob_ids.size() - 1) or int(section.player.person_id) != int(state.get("controlled_person_id", state.actors.get("player", {}).get("person_id", -1))) or blob_ids[int(section.player.soldier_index)] != int(section.player.person_id):
 		return Runtime.fail("INVALID_CROWD", "群眾受控人物引用不符")

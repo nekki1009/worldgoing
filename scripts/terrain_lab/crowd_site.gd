@@ -770,18 +770,30 @@ func _append_actor_failed(before: Dictionary, failure: Dictionary) -> Dictionary
 	return failure if kits_restored else SiteRuntime.fail("INVALID", "原群眾外觀索引無法回復")
 
 
+## G6.4b: the person ids of every departed tombstone team. They stay in the native blob, released, and have no records.
+func _departed_people() -> Dictionary:
+	var result := {}
+	for team: Dictionary in teams:
+		if not bool(team.get("departed", false)): continue
+		for identity: Variant in team.person_ids: result[int(identity)] = true
+	return result
+
+
 func _bind_people() -> void:
 	owners.clear()
 	_owner_by_id.clear()
 	_index_by_id.clear()
 	var ids: PackedInt64Array = crowd.person_ids()
+	var departed := _departed_people()
 	for index in range(ids.size()):
+		if departed.has(int(ids[index])): continue # G6.4b: released by a travel departure; no record, no owner.
 		_index_by_id[ids[index]] = index
 		var appearance := _appearance(ids[index])
 		var family := WeaponMaterials.family(StringName(str(appearance.get("parts", {}).get("weapon", "none"))))
 		if family in [&"bow_01", &"crossbow_01"]:
 			_ammo_keys[ids[index]] = "arrow" if family == &"bow_01" else "bolt"
 	for team: Dictionary in teams:
+		if bool(team.get("departed", false)): continue
 		var records := {}
 		var actors := {}
 		for identity in team.person_ids:
@@ -1706,7 +1718,7 @@ func _solo_team_id() -> int:
 func command_teams() -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	for team: Dictionary in teams:
-		if bool(team.solo): continue
+		if bool(team.solo) or bool(team.get("departed", false)): continue
 		var state := formation_state(int(team.formation))
 		result.append({"team_id": team.team_id, "formation": team.formation, "faction": team.faction,
 			"count": team.person_ids.size(), "ai_enabled": bool(state.ai_enabled),
@@ -1716,7 +1728,7 @@ func command_teams() -> Array[Dictionary]:
 
 func _team_by_id(identity: int) -> Dictionary:
 	for team: Dictionary in teams:
-		if int(team.team_id) == identity: return team
+		if int(team.team_id) == identity and not bool(team.get("departed", false)): return team
 	return {}
 
 
@@ -1792,7 +1804,7 @@ func team_summaries() -> PackedStringArray:
 		for team: Dictionary in command_teams(): result.append(team_summary(int(team.team_id)))
 		return result
 	for team: Dictionary in teams:
-		if bool(team.solo): continue
+		if bool(team.solo) or bool(team.get("departed", false)): continue
 		result.append(_team_summary_text(int(team.team_id), formation_state(int(team.formation))))
 	return result
 
@@ -2305,6 +2317,91 @@ func sync_to_site() -> Dictionary:
 	return SiteRuntime.ok()
 
 
+## G6.4b: the crowd team a travelling commander leads. Read-only: nothing is released here.
+## Only a whole team whose commander is the controlled person is admitted. Every member must pass the native exit gate.
+func departure_plan(identity: int) -> Dictionary:
+	if not active or crowd == null: return SiteRuntime.fail("UNSUPPORTED", "群眾未啟用")
+	if _actors.has(identity) or not _index_by_id.has(identity): return SiteRuntime.fail("UNSUPPORTED", "群眾中的 actor 本體尚不能整隊出發")
+	if not pending_captivity.is_empty(): return SiteRuntime.fail("BUSY", "群眾俘虜事件尚未結束")
+	var roster: Dictionary = {}
+	for candidate: Dictionary in rosters:
+		if _roster_index_for_person(candidate, identity) >= 0:
+			roster = candidate
+			break
+	if roster.is_empty(): return SiteRuntime.fail("NO_TARGET", "群眾中沒有此人的隊伍")
+	if _roster_index_for_person(roster, identity) != int(roster.get("formal_commander", -1)):
+		return SiteRuntime.fail("UNSUPPORTED", "群眾隊伍只能由隊長整隊出發；部分隊員出發尚未支援")
+	var people: Array[int] = []
+	var cells: Array[Vector2i] = []
+	var controlled_cell := Vector2i(-1, -1)
+	for unit: Dictionary in roster.units:
+		var member := int(unit.person_id)
+		if not _index_by_id.has(member) or _actors.has(member) or has_pending_capture(member):
+			return SiteRuntime.fail("NOT_READY", "隊員尚有原生事件；保留原進度")
+		var owner: Variant = person_owner(member)
+		if owner == null or not bool(owner.site_exit_ready(int(_index_by_id[member]))):
+			return SiteRuntime.fail("NOT_READY", "隊員不在可出發狀態（倒地、交換中或有未完成動作）")
+		var state := soldier_state(int(_index_by_id[member]))
+		var cell := Vector2i(floori(float(state.px)), floori(float(state.py)))
+		people.append(member)
+		cells.append(cell)
+		if member == identity: controlled_cell = cell
+	return SiteRuntime.ok("", {"roster": roster, "team_id": int(roster.team_id), "faction": int(roster.faction_id),
+		"people": people, "cells": cells, "controlled_cell": controlled_cell})
+
+
+## G6.4b: releases every person of a plan that departure_plan passed. Release is irreversible, so callers must
+## pre-validate the extraction first. The receipts (hp, ammo, position) are written to the live roster rows,
+## then the released people leave every Site map, so the next capture_save omits them.
+func departure_release(plan: Dictionary) -> Dictionary:
+	if not plan.get("ok", false): return plan
+	var roster: Dictionary = plan.roster
+	var released: Array[int] = []
+	for identity: int in plan.people:
+		var index := int(_index_by_id[identity])
+		var owner: Variant = person_owner(identity)
+		var receipt: Dictionary = {}
+		if owner != null: receipt = owner.release_for_departure(index)
+		if receipt.is_empty():
+			return SiteRuntime.fail("RELEASE_REFUSED", "原生釋放被拒（已釋放 %d 人）；請重新檢查" % released.size())
+		released.append(identity)
+		_apply_release_receipt(roster, identity, receipt)
+		var record: Dictionary = _records.get(identity, {})
+		var key := str(_ammo_keys.get(identity, ""))
+		if not record.is_empty() and not key.is_empty():
+			var cargo: Dictionary = record.get("cargo", {})
+			if int(receipt.ammo) > 0: cargo[key] = int(receipt.ammo)
+			else: cargo.erase(key)
+	for identity: int in released:
+		_index_by_id.erase(identity)
+		_owner_by_id.erase(identity)
+		_records.erase(identity)
+	var formation := int(roster.crowd_formation)
+	var kept_owners: Array = []
+	for owner_ref: Variant in owners:
+		if int(owner_ref.formation_index) != formation: kept_owners.append(owner_ref)
+	owners = kept_owners
+	# Tombstone: the formation stays in the native World (no removal API), so the section keeps its entry.
+	for team: Dictionary in teams:
+		if int(team.formation) == formation: team["departed"] = true
+	var kept_rosters: Array[Dictionary] = []
+	for row: Dictionary in rosters:
+		if not is_same(row, roster): kept_rosters.append(row)
+	rosters = kept_rosters
+	return SiteRuntime.ok("", {"roster": roster, "released": released.size()})
+
+
+static func _apply_release_receipt(roster: Dictionary, identity: int, receipt: Dictionary) -> void:
+	for unit: Dictionary in roster.units:
+		if int(unit.person_id) != identity: continue
+		unit["hp"] = float(receipt.hp)
+		unit["fatigue"] = float(receipt.fatigue)
+		unit["fatigue_rest"] = float(receipt.fatigue_rest)
+		unit["cell"] = [receipt.cell.x, receipt.cell.y]
+		unit["crowd_position"] = [receipt.position.x, receipt.position.y]
+		return
+
+
 func capture_save() -> Dictionary:
 	var guard := save_guard()
 	if not guard.ok: return guard
@@ -2359,8 +2456,13 @@ func prepare_load(data: TerrainData, native_candidate: Variant = null) -> Dictio
 		if not bool(roster.get("crowd", false)): continue
 		rosters.append(roster)
 		for row: Dictionary in roster.units: _records[int(row.person_id)] = row
+	var departed := _departed_people()
 	for identity in crowd.person_ids():
-		if actor_ids.has(int(identity)):
+		if departed.has(int(identity)):
+			# G6.4b: a released soldier keeps its native slot but no kit, appearance or record.
+			appearances.append(null)
+			audio_mounts.append(0)
+		elif actor_ids.has(int(identity)):
 			var saved: Dictionary = actor_ids[int(identity)]
 			var appearance := SiteRuntime.equipment_appearance(data, saved.item_state, saved.appearance)
 			if not _prepare_contact_appearance(appearance, int(identity), true): return SiteRuntime.fail("MISSING_ASSET", "存檔原 actor 同 body 接觸資源未備妥")

@@ -3210,7 +3210,9 @@ func _boarding_current_party_guard() -> Dictionary:
 	if not original.ok: return original
 	return RegionTravel.boarding_travel_guard(original.party.content)
 
-func begin_region_travel(source_data: TerrainData, spec: Dictionary, start_component: int) -> Dictionary:
+## G6.4b: every refusal begin_region_travel can decide before it extracts, in the same order. It mutates nothing
+## but the control recovery that begin_region_travel also runs first. Crowd departure calls it before any native release.
+func region_travel_preflight(source_data: TerrainData, spec: Dictionary, start_component: int) -> Dictionary:
 	if source_data == null: return fail("INVALID", "Original source required")
 	var boarding_guard: Dictionary = RegionTravel.boarding_departure_guard(source_data.site, spec)
 	if not boarding_guard.ok: return boarding_guard
@@ -3229,6 +3231,14 @@ func begin_region_travel(source_data: TerrainData, spec: Dictionary, start_compo
 		if bool(row.get("fire_active", false)): return fail("BUSY", "仍有火場在燃燒；火勢結束前不能整隊出發")
 	if Runtime.fire_active(source_data) or not source_data.site.get("fire", {}).is_empty():
 		return fail("BUSY", "此地仍有火勢")
+	var fire_probe := _capture_transfer_fire_snapshots(source_data, source_data.site.duplicate(true))
+	if not fire_probe.ok: return fire_probe
+	return {"ok": true, "from": from}
+
+func begin_region_travel(source_data: TerrainData, spec: Dictionary, start_component: int) -> Dictionary:
+	var pre := region_travel_preflight(source_data, spec, start_component)
+	if not pre.ok: return pre
+	var from: Vector2i = pre.from
 	var token := "travel_" + Crypto.new().generate_random_bytes(16).hex_encode()
 	var captured := source_data.site.duplicate(true)
 	var fire_capture := _capture_transfer_fire_snapshots(source_data, captured)

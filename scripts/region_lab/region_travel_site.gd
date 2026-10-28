@@ -54,7 +54,7 @@ static func depart(controller: Node) -> Dictionary:
 	if slot == null or lab.restore_only: return Runtime.fail("NO_REGION_SLOT", "須在台灣地圖世界中才能整隊出發")
 	var fault: Dictionary = controller.original_step_fault_guard()
 	if not fault.ok: return fault
-	if controller._crowd_active(): return Runtime.fail("UNSUPPORTED", "群眾模式（Crowd）暫不支援整隊出發")
+	if controller._crowd_active(): return _depart_crowd(controller)
 	if controller.ship_journey_active() or controller.ground_crossing_blocks_input() or is_instance_valid(lab._cold_replay_lab):
 		return Runtime.fail("BUSY", "船隊旅程、跨界或補算尚未結束")
 	if controller.get_tree().paused or bool(lab.terrain.site.get("paused", false)): return Runtime.fail("PAUSED", "暫停時不能出發")
@@ -254,6 +254,82 @@ static func _open_selected_live_party(controller: Node, candidate: RegionSaveSlo
 	controller.save_path = ""
 	return Runtime.ok("已接回原旅隊即時場景", {"party_live": true, "token": token, "generation": int(candidate._marker.generation)})
 
+## G6.4b: 「整隊出發」 of the controlled crowd team. Every refusal is decided before any native release: the plan gate,
+## the combat check, the route, and a Travel.extract probe on a copy of the Site. Only then are the people released.
+static func _depart_crowd(controller: Node) -> Dictionary:
+	var lab: Node = controller.lab
+	var slot: RegionSaveSlot = controller.region_slot
+	if controller.ship_journey_active() or controller.ground_crossing_blocks_input() or is_instance_valid(lab._cold_replay_lab):
+		return Runtime.fail("BUSY", "船隊旅程、跨界或補算尚未結束")
+	if controller.get_tree().paused or bool(lab.terrain.site.get("paused", false)): return Runtime.fail("PAUSED", "暫停時不能出發")
+	if float(lab.terrain.site.get("combat_left", 0.0)) > 0.0: return Runtime.fail("IN_COMBAT", "戰鬥中不能整隊出發")
+	var identity: int = lab.controlled_person_id()
+	if controller.vehicles.is_embarked(identity): return Runtime.fail("UNSUPPORTED", "群眾隊伍尚不能海路出發")
+	var plan: Dictionary = lab.crowd_site.departure_plan(identity)
+	if not plan.ok: return plan
+	var faction: int = int(plan.faction)
+	if _hostile_near(lab, faction, plan.cells): return Runtime.fail("IN_COMBAT", "附近有敵人；脫離戰鬥後才能出發")
+	var guard: Dictionary = controller.supply_save_guard()
+	if not guard.ok: return guard
+	var captured: Dictionary = controller._capture_for_save()
+	if not captured.ok: return captured
+	var site: Vector2i = controller._current_region_site()
+	var component := start_component(slot, site, plan.controlled_cell, lab.terrain)
+	if component < 0 or component > 253: return Runtime.fail("NO_ROUTE", "出發位置沒有可走出此地的通道")
+	var spec := _crowd_spec(slot, identity, int(plan.team_id))
+	# Every refusal begin_region_travel decides before extraction runs first (no release yet).
+	var pre: Dictionary = slot.region_travel_preflight(lab.terrain, spec, component)
+	if not pre.ok: return pre
+	# Validate the whole extraction on a copy: nothing is released if this refuses.
+	var probe: Dictionary = RegionTravel.extract(lab.terrain.site.duplicate(true), spec, "crowd_probe")
+	if not probe.ok: return probe
+	var released: Dictionary = lab.crowd_site.departure_release(plan)
+	if not released.ok: return released
+	# The travelling roster is the released team's live record; the rest of the Site is captured again without it.
+	var departing: Dictionary = released.roster.duplicate(true)
+	var recaptured: Dictionary = lab.crowd_site.capture_save()
+	if not recaptured.ok: return recaptured
+	recaptured.rosters.append(departing)
+	controller._apply_region_crowd_capture(recaptured)
+	var result := slot.begin_region_travel(lab.terrain, spec, component)
+	if not result.ok: return result
+	controller._auto_save_blocked = true
+	lab.terrain.site.paused = true
+	open_travel_map(controller, str(slot.pin.world_instance_id), str(slot.pin.slot_id), controller._region_manifest_path)
+	var census := RegionTravel.census(result.party)
+	var note := "；已離開原住處" if not result.vacated_housing.is_empty() else ""
+	return Runtime.ok("已整隊出發（群眾 %d 人）%s" % [census.people.size(), note], {"token": result.token})
+
+
+static func _crowd_spec(slot: RegionSaveSlot, identity: int, team_id: int) -> Dictionary:
+	return {"person_id": identity, "actor_key": "", "team_id": team_id, "controller": "player", "mode": "land",
+		"crowd_departure": true, "family_transfer_guard": slot.region_family_transfer_guard,
+		"game_seconds": float(slot.control.logical_game_seconds)}
+
+
+## G6.4b: read-only selection for a crowd team, with the same gates as _depart_crowd and no release.
+static func _selected_crowd_departure(controller: Node) -> Dictionary:
+	var lab: TerrainLab = controller.lab
+	var slot: RegionSaveSlot = controller.region_slot
+	if controller.ship_journey_active() or controller.ground_crossing_blocks_input() or controller.region_operation_pending() or is_instance_valid(lab._cold_replay_lab): return Runtime.fail("BUSY")
+	if controller.get_tree().paused or bool(lab.terrain.site.get("paused", false)): return Runtime.fail("PAUSED")
+	var identity: int = lab.controlled_person_id()
+	if controller.vehicles.is_embarked(identity): return Runtime.fail("UNSUPPORTED", "群眾隊伍尚不能海路出發")
+	var plan: Dictionary = lab.crowd_site.departure_plan(identity)
+	if not plan.ok: return plan
+	if _hostile_near(lab, int(plan.faction), plan.cells): return Runtime.fail("IN_COMBAT")
+	var spec := _crowd_spec(slot, identity, int(plan.team_id))
+	var boarding_guard: Dictionary = RegionTravel.boarding_departure_guard(lab.terrain.site, spec)
+	if not boarding_guard.ok: return boarding_guard
+	var component := start_component(slot, controller._current_region_site(), plan.controlled_cell, lab.terrain)
+	if component < 0 or component > 253: return Runtime.fail("NO_ROUTE")
+	var people: Array[int] = []
+	for member: int in plan.people: people.append(member)
+	people.sort()
+	return {"ok": true, "spec": spec, "people": people, "component": component, "waiting": false,
+		"selection": var_to_bytes([identity, "", int(plan.team_id), 0, 0, people, []])}
+
+
 static func request_departure(controller: Node) -> Dictionary:
 	if not controller._region_departure_intent.is_empty():
 		return cancel_departure(controller, str(controller._region_departure_intent.nonce))
@@ -285,7 +361,7 @@ static func selected_departure(controller: Node) -> Dictionary:
 	if slot == null or lab.restore_only or lab.terrain == null: return Runtime.fail("NO_REGION_SLOT")
 	var fault: Dictionary = controller.original_step_fault_guard()
 	if not fault.ok: return fault
-	if controller._crowd_active(): return Runtime.fail("REGION_BACKEND_UNADMITTED")
+	if controller._crowd_active(): return _selected_crowd_departure(controller)
 	if controller.ship_journey_active() or controller.ground_crossing_blocks_input() or controller.region_operation_pending() or is_instance_valid(lab._cold_replay_lab): return Runtime.fail("BUSY")
 	if controller.get_tree().paused or bool(lab.terrain.site.get("paused", false)): return Runtime.fail("PAUSED")
 	var scope := RegionSaveSlot.RegionBattle.scoped_controlled_person(lab)
