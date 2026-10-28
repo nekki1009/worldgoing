@@ -4879,7 +4879,32 @@ func _deploy_trial_teams_candidate(sides: Array[Dictionary], formations: Array, 
 	var journey_guard := _ship_journey_guard()
 	if not journey_guard.ok: return journey_guard
 	if crowd_site != null:
-		return crowd_site.deploy(sides, formations) # same sides and cells, one native crowd
+		# Vehicles are planned exactly as the grid path plans them (same claims, same team ids), before any
+		# mutation. The crowd then deploys the people; the vehicle records and operator convoys follow.
+		var crowd_first_team := _next_army_identity()
+		var crowd_claims := {}
+		for team: TerrainArmy in combat_armies:
+			crowd_claims.merge(team._cell_owners)
+			crowd_claims.merge(team._reserved_cells)
+		for cells: Array in formations:
+			for cell: Vector2i in cells: crowd_claims[cell] = true
+		var crowd_plans: Array = []
+		for index in range(sides.size()):
+			var side: Dictionary = sides[index]
+			var cart_count := int(side.get("cart_count", 0))
+			var wagon_count := int(side.get("wagon_count", 0))
+			if cart_count + wagon_count == 0:
+				crowd_plans.append([])
+				continue
+			var formation: Array[Vector2i] = []
+			for cell: Vector2i in formations[index]: formation.append(cell)
+			var planned: Dictionary = site_controller.vehicles.plan_team(crowd_first_team + index, cart_count, wagon_count, formation, crowd_claims)
+			if not planned.ok: return planned
+			crowd_plans.append(planned.plan)
+			crowd_claims.merge(site_controller.vehicles.plan_claims(planned.plan))
+		var crowd_result: Dictionary = crowd_site.deploy(sides, formations) # same sides and cells, one native crowd
+		if not crowd_result.ok: return crowd_result
+		return site_controller.vehicles.deploy_crowd_plans(crowd_plans, crowd_first_team)
 	if sides.is_empty() or formations.size() != sides.size() or first_slot < 0 or first_slot + sides.size() > SiteStore.MAX_ARMIES:
 		return SiteRuntime.fail("INVALID", "隊伍部署清單或容量不合法")
 	# Every caller enters the same original typed vehicle/Army deployment API.

@@ -735,7 +735,7 @@ void m_convoy_state(CALL_ARGS) {
 	int id = 0;
 	wg::ConvoyState s;
 	if (!arg_i32(a[0], id) || !w.convoy_state(id, s)) { return_doubles(r, {}); return; }
-	return_doubles(r, {s.x, s.y, s.facing, double(s.moving), double(s.complete), double(s.stalled)});
+	return_doubles(r, {s.x, s.y, s.facing, double(s.moving), double(s.complete), double(s.stalled), double(s.reason)});
 }
 void m_convoy_remove(CALL_ARGS) {
 	SELF; NEED(1); WORLD;

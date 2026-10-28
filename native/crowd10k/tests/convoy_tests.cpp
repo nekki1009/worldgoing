@@ -23,9 +23,9 @@ static void place(World &w, int i, float x, float y) {
 
 // Flat 40 x 40 ground; wall_x >= 0 makes that whole column unwalkable. One formation far from the routes below
 // holds three soldiers (ids 0, 1, 2); soldiers 0 and 1 are the convoy crew in the tests that use one.
-static void setup(World &w, int wall_x = -1) {
-	w.terrain.allocate(40, 40);
-	if (wall_x >= 0) for (int y = 0; y < 40; ++y) w.terrain.flags[w.terrain.idx(wall_x, y)] = 0;
+static void setup(World &w, int wall_x = -1, int size = 40) {
+	w.terrain.allocate(size, size);
+	if (wall_x >= 0) for (int y = 0; y < size; ++y) w.terrain.flags[w.terrain.idx(wall_x, y)] = 0;
 	w.terrain.base_height = w.terrain.height;
 	w.cfg.ai = false; w.cfg.auto_capture = false; w.cfg.rescue_seek_cells = 0; w.cfg.bleed_per_game_hour = 0;
 	const int f = w.add_formation(0, 30.5f, 30.5f, 0, 3, 1, T_MELEE, 0);
@@ -337,6 +337,56 @@ static void save_load_mid_route_with_body() {
 	REQUIRE(w.validate() && loaded.validate());
 }
 
+#define REQUIRE_AT(c, msg) do { ++checks; if (!(c)) { ++failures; std::fprintf(stderr, "FAIL %s line %d setup: %s\n", test_case, __LINE__, msg); } } while (false)
+
+// G4 S4f repro: the GD straight run from the cart's native state. Anchor (2.5, 49.5) facing east, one crew at (-1, 0)
+// already in slot, body = the cart cell, goal anchor (2.5, 44.5) facing north, on a 60 x 60 flat map (the GD cell
+// row 49 is outside the 40-row map used by the other cases). Every setup call asserts its own result. Expected within
+// 300 steps: the anchor faces north and advances at least 3 cells, or it reports stalled with a nonzero reason.
+static void north_turn_from_cart_anchor(bool bystander) {
+	test_case = bystander ? "cart north turn with a same-team bystander south-west of the body" : "cart north turn without a bystander";
+	World w(1);
+	const int failures_before = failures;
+	setup(w, -1, 60);
+	REQUIRE_AT(w.soldier_count() == 3, "soldiers: the setup formation holds three soldiers");
+	REQUIRE_AT(w.terrain.walkable(2, 49) && w.terrain.walkable(2, 48) && w.terrain.walkable(2, 44), "terrain: cart cell (2,49) and the north column (2,44..48) are walkable");
+	REQUIRE_AT(w.terrain.walkable(1, 49) && w.terrain.walkable(1, 50), "terrain: crew slot (1,49) and its neighbour are walkable");
+	place(w, 0, 1.5f, 49.5f);
+	REQUIRE_AT(w.get_soldier_state(0).x == 1.5f && w.get_soldier_state(0).y == 49.5f, "soldiers: soldier 0 placed on the crew slot (1.5, 49.5)");
+	const int id = w.add_convoy(2.5f, 49.5f, 0.f);
+	REQUIRE_AT(id > 0, "add_convoy: anchor (2.5, 49.5) facing 0 refused (walkable route cell, finalized world)");
+	if (id <= 0) return;
+	REQUIRE_AT(w.convoy_set_crew(id, 0, -1, 0, true), "set_crew: soldier 0 at offset (-1, 0) refused");
+	REQUIRE_AT(w.convoy_set_body(id, {w.terrain.idx(2, 49)}), "set_body: cart cell (2,49) refused at the current pose");
+	if (bystander) {
+		place(w, 1, 1.3f, 50.3f);
+		REQUIRE_AT(w.get_soldier_state(1).x == 1.3f, "soldiers: bystander soldier 1 placed at (1.3, 50.3)");
+	}
+	const float north = std::atan2(-1.f, 0.f);
+	REQUIRE_AT(w.convoy_order_goal(id, 2.5f, 44.5f, north), "order_goal: goal (2.5, 44.5) facing north refused (reachable from the anchor)");
+	ConvoyState st{};
+	REQUIRE_AT(w.convoy_state(id, st), "convoy_state: the convoy id is not readable after setup");
+	if (failures != failures_before) return;
+	const double y0 = st.y;
+	const double tau = 6.283185307179586;
+	std::vector<ConvoyState> trace;
+	bool advanced = false;
+	for (int t = 1; t <= 300 && !advanced; ++t) {
+		step(w);
+		REQUIRE(w.convoy_state(id, st));
+		if (t % 30 == 0) trace.push_back(st);
+		advanced = y0 - st.y >= 3.0 && std::fabs(std::remainder(st.facing - north, tau)) < 0.2;
+	}
+	const bool ok = advanced || (st.stalled == 1 && st.reason != 0);
+	if (!ok) {
+		std::fprintf(stderr, "REPRO FAILED %s: start y=%.3f\n", test_case, y0);
+		for (size_t k = 0; k < trace.size(); ++k)
+			std::fprintf(stderr, "REPRO step %3zu anchor=(%.3f,%.3f) facing=%.3f moving=%d complete=%d stalled=%d reason=%d\n",
+				(k + 1) * 30, trace[k].x, trace[k].y, trace[k].facing, trace[k].moving, trace[k].complete, trace[k].stalled, trace[k].reason);
+	}
+	REQUIRE(ok);
+}
+
 int main() {
 	straight_line_five_cells();
 	ninety_degree_turn();
@@ -349,6 +399,8 @@ int main() {
 	crew_stand_on_their_own_body();
 	convoys_do_not_interpenetrate();
 	save_load_mid_route_with_body();
+	north_turn_from_cart_anchor(false);
+	north_turn_from_cart_anchor(true);
 	std::printf("CONVOY_NATIVE_CONTRACT checks=%d failures=%d\n", checks, failures);
 	return failures ? 1 : 0;
 }

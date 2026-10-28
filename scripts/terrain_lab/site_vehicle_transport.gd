@@ -93,7 +93,7 @@ func siege_save_guard() -> Dictionary:
 	for vehicle: Dictionary in records().values():
 		if is_siege(vehicle) and (not vehicle.get("move", {}).is_empty() or not vehicle.get("action", {}).is_empty() or _crew_moving(vehicle) or str(vehicle.get("command", {}).get("type", "")) in ["crew", "move", "turn", "release"]):
 			return Runtime.fail("BUSY", "攻城操作或 crew 原人物步尚未收束")
-	return Runtime.ok()
+	return convoy_save_guard()
 
 func _siege_guard() -> Dictionary:
 	if bool(lab.terrain.site.get("paused", false)): return Runtime.fail("BUSY")
@@ -273,6 +273,7 @@ func _turn_fits(vehicle: Dictionary, sweep: Array[int]) -> bool:
 
 func update_siege(delta: float) -> void:
 	if delta <= 0.0 or bool(lab.terrain.site.get("paused", false)): return
+	_sync_convoys()
 	for vehicle: Dictionary in records().values():
 		if not is_siege(vehicle): continue
 		var invalid: Array = []
@@ -1034,6 +1035,55 @@ func deploy_plan(team: TerrainArmy, plan: Array) -> Dictionary:
 	lab.terrain.site["next_vehicle"] = next + plan.size()
 	return Runtime.ok("已建立原車輛；沒有操作人的車輛保持停泊")
 
+# Crowd trial deployment. plans[slot] is the plan_team output for crowd side `slot`, whose team id is first_team + slot.
+# Records are written as deploy_plan writes them. Each operator then goes through assign_operator, and its
+# native convoy is created at once, so the crew is convoy-owned before any formation step.
+func deploy_crowd_plans(plans: Array, first_team: int) -> Dictionary:
+	var next := int(lab.terrain.site.get("next_vehicle", 1))
+	var total := 0
+	for plan: Variant in plans:
+		if plan is Array: total += plan.size()
+	if next < 1 or next + total > 2147483647: return Runtime.fail("NO_IDS")
+	var created: Array[String] = []
+	var operations: Array[Dictionary] = []
+	for slot in range(plans.size()):
+		var plan: Array = plans[slot]
+		if plan.is_empty(): continue
+		var owner: Variant = lab.crowd_site.siege_team_owner(first_team + slot)
+		if owner == null: return Runtime.fail("INVALID", "群眾隊未建立，車輛未生成")
+		for planned: Dictionary in plan:
+			var vehicle: Dictionary = planned.duplicate(true)
+			var index := int(vehicle.operator_index)
+			if index >= 0 and not owner.combat_units.has(index): return Runtime.fail("INVALID", "車輛操作人不屬本隊，未生成")
+			vehicle.erase("operator_index")
+			vehicle["id"] = str(next + created.size())
+			vehicle["operator_id"] = 0
+			vehicle["holder"] = Runtime.new_item_state("vehicle:" + vehicle.id)
+			vehicle["cargo"] = {}
+			vehicle["move"] = {}
+			vehicle["stop_pending"] = false
+			lab.terrain.site.vehicles[vehicle.id] = vehicle
+			created.append(str(vehicle.id))
+			if index >= 0: operations.append({"vehicle": str(vehicle.id), "person": int(owner.combat_identity(index))})
+	lab.terrain.site["next_vehicle"] = next + created.size()
+	for operation: Dictionary in operations:
+		var assigned: Dictionary = assign_operator(operation.vehicle, operation.person, operation.person, true)
+		if not assigned.ok:
+			_discard_crowd_vehicles(created)
+			return assigned
+		var convoy: Dictionary = _convoy_create(records()[operation.vehicle])
+		if not convoy.ok:
+			_discard_crowd_vehicles(created)
+			return convoy
+	return Runtime.ok("群眾隊車輛已建立；操作人已接入原生後勤車隊")
+
+func _discard_crowd_vehicles(ids: Array[String]) -> void:
+	for id: String in ids:
+		if not records().has(id): continue
+		_convoy_release(records()[id])
+		records().erase(id)
+	lab.terrain.site["next_vehicle"] = int(lab.terrain.site.get("next_vehicle", 1)) - ids.size()
+
 func _operator(identity: int) -> Dictionary:
 	if _native_siege() and lab.crowd_site.contains_person(identity): return lab.crowd_site.siege_original_person(identity)
 	var person: Dictionary = lab._combat_target(identity)
@@ -1050,9 +1100,12 @@ func _available(person: Dictionary) -> bool:
 func _authorized(team: Variant, requester_id: int, operator_id: int = 0, test_dispatch: bool = false) -> bool:
 	return (test_dispatch or requester_id == lab.controlled_person_id()) and (requester_id == operator_id or team.command_eligible(team.current_commander) and team.combat_identity(team.current_commander) == requester_id)
 
-func can_offer_operator_team(vehicle: Dictionary, team: TerrainArmy) -> bool:
+func can_offer_operator_team(vehicle: Dictionary, team: Variant) -> bool:
 	if is_ship(vehicle): return false # Water ownership uses a legal original boarding transaction.
-	if vehicle.is_empty() or team == null or not team.combat_enabled or team.role != "logistics" or int(vehicle.operator_id) > 0 or not vehicle.move.is_empty(): return false
+	if vehicle.is_empty() or team == null or not team.combat_enabled or int(vehicle.operator_id) > 0 or not vehicle.move.is_empty(): return false
+	# A crowd team may take over only its own convoys; transfers between crowd teams are not in G4.
+	if team is CrowdPersonOwner: return int(vehicle.team_id) == team.team_id
+	if team.role != "logistics": return false
 	var old_team := int(vehicle.team_id)
 	if old_team == team.team_id: return true
 	if team.combat_units.size() + team_vehicle_count(team) >= 100: return false
@@ -1071,7 +1124,7 @@ func assign_operator(vehicle_id: String, person_id: int, requester_id: int, test
 		return Runtime.fail("BUSY", "此器具操作位已滿")
 	var person := _operator(person_id)
 	if vehicle.is_empty() or not _available(person): return Runtime.fail("NO_TARGET")
-	var team: TerrainArmy = person.owner
+	var team: Variant = person.owner
 	if not _authorized(team, requester_id, person_id, test_dispatch): return Runtime.fail("NO_AUTHORITY")
 	if is_operator(person_id) or int(vehicle.operator_id) > 0 or not vehicle.move.is_empty() or team.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL:
 		return Runtime.fail("BUSY", "同隊清醒原人物一次只能操作一車；先完成原動作")
@@ -1082,6 +1135,8 @@ func assign_operator(vehicle_id: String, person_id: int, requester_id: int, test
 	if boarding and (absi(person.cell.x - position.x) + absi(person.cell.y - position.y) != 1 or not lab.terrain.can_step(person.cell, position)) or not boarding and person.cell != position:
 		return Runtime.fail("UNREACHABLE", "手推車須到車後；馬車須到馬格相鄰合法格後上馬")
 	if str(vehicle.kind) == "cart" and not lab.terrain.can_step(person.cell, lab.terrain.cell_from_index(int(vehicle.cell))): return Runtime.fail("UNREACHABLE")
+	# Crowd wagon boarding needs a native walk to the horse cell, which G4 S3 does not drive yet.
+	if boarding and team is CrowdPersonOwner: return Runtime.fail("UNREACHABLE", "群眾模式的馬車上馬步行尚未接入原生車隊")
 	var old_team := int(vehicle.team_id)
 	vehicle["team_id"] = team.team_id
 	vehicle["operator_id"] = person_id
@@ -1137,7 +1192,17 @@ func morale_retreat_terrain_trapped(team: TerrainArmy, index: int) -> bool:
 
 func _stop_operator(vehicle: Dictionary, person: Dictionary) -> Dictionary:
 	if not vehicle.move.is_empty(): return Runtime.fail("BUSY", "先完成原已預約人車一步")
-	if not _available(person) or person.owner.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL: return Runtime.fail("BUSY", "原人物須清醒且停止才能自行下馬／停車")
+	if not _available(person): return Runtime.fail("BUSY", "原人物須清醒且停止才能自行下馬／停車")
+	# A crowd crew member has no grid step; "stopped" means its native convoy has settled.
+	if person.owner is CrowdPersonOwner and vehicle.has("convoy_id") and not bool(convoy_state(vehicle).get("complete", false)):
+		return Runtime.fail("BUSY", "原人物須清醒且停止才能自行下馬／停車")
+	if not person.owner is CrowdPersonOwner and person.owner.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL: return Runtime.fail("BUSY", "原人物須清醒且停止才能自行下馬／停車")
+	if person.owner is CrowdPersonOwner:
+		# The native convoy owns its crew; releasing it returns the person to ordinary behaviour where they stand.
+		_convoy_release(vehicle)
+		vehicle["operator_id"] = 0
+		vehicle["stop_pending"] = false
+		return Runtime.ok("車輛停泊，車上貨物保留")
 	if str(vehicle.kind) == "wagon":
 		var previous_stop := bool(vehicle.stop_pending)
 		vehicle["stop_pending"] = true
@@ -1157,6 +1222,7 @@ func _step_plan(team: TerrainArmy, index: int, next: Vector2i, route_from: Vecto
 		# Only the original bounded vehicle A* asks for a hypothetical anchor edge.
 		# Ordinary crew approach/return remains an original one-person foot step.
 		return _siege_route_step(vehicle, route_from, next) if route_from != TerrainArmy.INVALID_CELL and float(Runtime.SIEGE_DEFINITIONS[str(vehicle.kind)].move_speed) > 0.0 else {}
+	if _convoy_owner(vehicle) != null: return {"invalid": true} # Native convoys steer their own crew; no grid step.
 	var person := _operator(team.combat_identity(index))
 	var escorted_dismount := bool(vehicle.stop_pending) and _retained_rider(vehicle) and bool(team.combat_hot_get(index, &"captive", false))
 	if not vehicle.move.is_empty() or not _available(person) and not escorted_dismount: return {"invalid": true}
@@ -1261,7 +1327,7 @@ func settle_operators() -> void:
 	for vehicle: Dictionary in records().values():
 		if is_siege(vehicle) or is_ship(vehicle): continue # update_siege owns safe crew/turn settlement.
 		lab._audio_vehicle_observed(lab.terrain, vehicle)
-		if int(vehicle.operator_id) <= 0: continue
+		if int(vehicle.operator_id) <= 0 or _convoy_owner(vehicle) != null: continue # Native convoy crew are not grid-settled.
 		var person := _operator(int(vehicle.operator_id))
 		# A relocation by the original person owner cannot leave remote vehicle control.
 		# Never relocate the person or vehicle to repair the relation.
@@ -2624,6 +2690,154 @@ func _transfer_ship(source_id: String, destination_id: String, resources: Dictio
 
 func _native_siege() -> bool:
 	return lab.crowd_site != null and lab.crowd_site.active
+
+# G4 logistics convoys: one native Convoy per cart or wagon whose operator is a
+# CrowdPersonOwner. The native anchor is the vehicle cell centre. The operator stands at
+# anchor + rotate(CONVOY_RIDER, facing), which equals operator_cell() for both kinds.
+const CONVOY_RIDER := {"cart": Vector2i(-1, 0), "wagon": Vector2i(2, 0)}
+var _convoy_checked: Dictionary = {} # Vehicle id -> true once its native anchor matched the record. Never saved.
+var _convoy_sent: Dictionary = {} # Vehicle id -> last goal (x, y, facing) accepted natively. Never saved.
+var _convoy_goal_orders: Dictionary = {} # Vehicle id -> explicit {point, facing} until complete. Never saved.
+var _convoy_refused: Dictionary = {} # Vehicle id -> input signature of the last refused creation. Never saved.
+
+static func is_convoy(vehicle: Variant) -> bool:
+	return vehicle is Dictionary and str(vehicle.get("kind", "")) in ["cart", "wagon"]
+
+func convoy_native_supported() -> bool:
+	return lab.crowd_site != null and lab.crowd_site.convoy_native_supported()
+
+func _convoy_owner(vehicle: Dictionary) -> Variant:
+	if not is_convoy(vehicle) or int(vehicle.get("operator_id", 0)) <= 0: return null
+	var person := _operator(int(vehicle.operator_id))
+	return person.owner if not person.is_empty() and person.owner is CrowdPersonOwner else null
+
+static func _convoy_angle(facing: Array) -> float:
+	return atan2(float(facing[1]), float(facing[0]))
+
+static func _rotate_offset(offset: Vector2i, angle: float) -> Vector2:
+	var c: float = cos(angle)
+	var s: float = sin(angle)
+	return Vector2(float(offset.x) * c - float(offset.y) * s, float(offset.x) * s + float(offset.y) * c)
+
+func convoy_state(vehicle: Dictionary) -> Dictionary:
+	var id := int(vehicle.get("convoy_id", 0))
+	if id <= 0 or not convoy_native_supported(): return {}
+	var values: PackedFloat64Array = lab.crowd_site.crowd.convoy_state(id)
+	if values.size() != 7: return {} # x, y, facing, moving, complete, stalled, reason (native ConvoyReason)
+	return {"x": values[0], "y": values[1], "facing": values[2], "moving": values[3] > 0.5, "complete": values[4] > 0.5, "stalled": values[5] > 0.5, "reason": int(values[6])}
+
+func _convoy_create(vehicle: Dictionary) -> Dictionary:
+	var owner: Variant = _convoy_owner(vehicle)
+	if owner == null or not convoy_native_supported(): return Runtime.fail("BUSY", "後勤車隊原生記錄尚未就緒")
+	var crowd: Variant = lab.crowd_site.crowd
+	var anchor: Vector2i = lab.terrain.cell_from_index(int(vehicle.cell))
+	var rider: Vector2i = CONVOY_RIDER[str(vehicle.kind)]
+	var id := int(crowd.add_convoy(float(anchor.x) + 0.5, float(anchor.y) + 0.5, _convoy_angle(vehicle.facing)))
+	if id <= 0: return Runtime.fail("BUSY", "原生車隊記錄建立失敗")
+	var soldier := int(owner.index_for_identity(int(vehicle.operator_id)))
+	var body := PackedInt32Array()
+	for cell: Vector2i in footprint(lab.terrain, vehicle): body.append(int(lab.terrain.index(cell)))
+	if soldier < 0 or not bool(crowd.convoy_set_crew(id, soldier, rider.x, rider.y, true)) or not bool(crowd.convoy_set_body(id, body)):
+		crowd.convoy_remove(id)
+		return Runtime.fail("BUSY", "原生車隊乘員或車體未接受；原人物保留一般行為")
+	vehicle["convoy_id"] = id
+	_convoy_checked[str(vehicle.get("id", ""))] = true
+	return Runtime.ok("後勤車隊已建立")
+
+func _convoy_release(vehicle: Dictionary) -> void:
+	var key := str(vehicle.get("id", ""))
+	var id := int(vehicle.get("convoy_id", 0))
+	if id > 0 and convoy_native_supported(): lab.crowd_site.crowd.convoy_remove(id)
+	vehicle.erase("convoy_id")
+	_convoy_checked.erase(key)
+	_convoy_sent.erase(key)
+	_convoy_goal_orders.erase(key)
+	_convoy_refused.erase(key)
+
+func _convoy_order(vehicle: Dictionary, owner: Variant, pose: Dictionary) -> void:
+	var key := str(vehicle.get("id", ""))
+	var rider: Vector2i = CONVOY_RIDER[str(vehicle.kind)]
+	# An explicit order stays active from the moment it is sent until the native convoy reports it complete. A reading
+	# taken before the order reached the native convoy cannot end it.
+	if _convoy_goal_orders.has(key) and bool(_convoy_goal_orders[key].sent) and bool(pose.complete): _convoy_goal_orders.erase(key)
+	if _convoy_goal_orders.has(key):
+		var explicit: Dictionary = _convoy_goal_orders[key]
+		_convoy_send(vehicle, explicit.point, float(explicit.facing))
+		return
+	var point := Vector2(float(pose.x), float(pose.y)) # no order: hold at the current pose
+	var facing := float(pose.facing)
+	if owner.combat_order in [TerrainArmy.CombatOrder.MOVE, TerrainArmy.CombatOrder.RETREAT, TerrainArmy.CombatOrder.RETURN]:
+		# Formation goal is the operator's goal; the anchor sits at the same offset the crew does.
+		var formation: Dictionary = lab.crowd_site.formation_state(int(owner.formation_index))
+		if formation.has("goal_x") and formation.has("goal_y") and formation.has("goal_facing"):
+			facing = float(formation.goal_facing)
+			point = Vector2(float(formation.goal_x), float(formation.goal_y)) - _rotate_offset(rider, facing)
+	_convoy_send(vehicle, point, facing)
+
+# The only path that changes the native goal. Equal targets are not resent; a refused target is reported once.
+func _convoy_send(vehicle: Dictionary, point: Vector2, facing: float) -> void:
+	var key := str(vehicle.get("id", ""))
+	var target := Vector3(point.x, point.y, facing)
+	if _convoy_sent.get(key, Vector3(INF, INF, INF)) == target: return
+	var accepted: bool = bool(lab.crowd_site.crowd.convoy_order_goal(int(vehicle.convoy_id), point.x, point.y, facing))
+	if not accepted: push_warning("G4DIAG convoy goal refused by native: %s target=(%.2f, %.2f) facing=%.3f" % [key, point.x, point.y, facing])
+	_convoy_sent[key] = target
+
+func _sync_convoys() -> void:
+	for vehicle: Dictionary in records().values():
+		if not is_convoy(vehicle): continue
+		var owner: Variant = _convoy_owner(vehicle)
+		if owner == null:
+			if int(vehicle.get("convoy_id", 0)) > 0: _convoy_release(vehicle)
+			continue
+		var key := str(vehicle.get("id", ""))
+		if int(vehicle.get("convoy_id", 0)) <= 0:
+			# A refused creation is latched on its inputs: retry only when the cell, facing or operator changes.
+			var signature := str([vehicle.get("cell", -1), vehicle.get("facing", []), vehicle.get("operator_id", 0)])
+			if convoy_native_supported() and _convoy_refused.get(key, "") != signature:
+				if _convoy_create(vehicle).ok: _convoy_refused.erase(key)
+				else:
+					_convoy_refused[key] = signature
+					push_warning("G4DIAG convoy create refused by native (add_convoy, set_crew or set_body): " + key)
+			continue
+		var pose := convoy_state(vehicle)
+		if not _convoy_checked.has(key):
+			# Loaded records: the native blob restored the convoy; the record must name the same anchor cell.
+			var loaded_anchor: Vector2i = Vector2i(floori(float(pose.get("x", -1.0))), floori(float(pose.get("y", -1.0))))
+			var loaded_ok: bool = not pose.is_empty() and lab.terrain.contains(loaded_anchor) and int(lab.terrain.index(loaded_anchor)) == int(vehicle.cell)
+			if not loaded_ok:
+				push_error("G4 convoy record and native anchor disagree: " + key)
+				continue
+			_convoy_checked[key] = true
+		if pose.is_empty(): continue
+		var anchor: Vector2i = Vector2i(floori(float(pose.x)), floori(float(pose.y)))
+		vehicle["cell"] = int(lab.terrain.index(anchor))
+		vehicle["facing"] = [roundi(cos(float(pose.facing))), roundi(sin(float(pose.facing)))]
+		vehicle["move"] = {}
+		_convoy_order(vehicle, owner, pose)
+
+# Test and team order entry: cell is the operator's goal cell, facing is a unit grid direction.
+func order_convoy_goal(vehicle_id: String, cell: Vector2i, facing: Vector2i, requester_id: int = 0, test_dispatch: bool = false) -> Dictionary:
+	var vehicle: Dictionary = records().get(vehicle_id, {})
+	var owner: Variant = _convoy_owner(vehicle)
+	if owner == null or int(vehicle.get("convoy_id", 0)) <= 0: return Runtime.fail("NO_TARGET", "此車沒有原生後勤車隊記錄")
+	if not _authorized(owner, requester_id, int(vehicle.operator_id), test_dispatch): return Runtime.fail("NO_AUTHORITY")
+	var rider: Vector2i = CONVOY_RIDER[str(vehicle.kind)]
+	var angle := _convoy_angle([facing.x, facing.y])
+	var order := {"point": Vector2(cell) + Vector2.ONE * 0.5 - _rotate_offset(rider, angle), "facing": angle, "sent": false}
+	_convoy_goal_orders[str(vehicle.get("id", ""))] = order
+	_convoy_send(vehicle, order.point, angle) # the native goal changes now, not at the next step
+	order["sent"] = true
+	return Runtime.ok("後勤車隊目標已下達")
+
+func convoy_save_guard() -> Dictionary:
+	for vehicle: Dictionary in records().values():
+		if not is_convoy(vehicle) or int(vehicle.get("convoy_id", 0)) <= 0: continue
+		var pose := convoy_state(vehicle)
+		if pose.is_empty() or _convoy_owner(vehicle) == null: return Runtime.fail("BUSY", "後勤車隊原生記錄與原人物尚未同步")
+		var anchor: Vector2i = Vector2i(floori(float(pose.x)), floori(float(pose.y)))
+		if not lab.terrain.contains(anchor) or int(lab.terrain.index(anchor)) != int(vehicle.cell): return Runtime.fail("BUSY", "後勤車隊錨點尚未收束至車格")
+	return Runtime.ok()
 
 func _siege_plan_envelope(vehicle: Dictionary, plan: Dictionary) -> Dictionary:
 	var team: Variant = _siege_team(vehicle)

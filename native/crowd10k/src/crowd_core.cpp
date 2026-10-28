@@ -1952,14 +1952,23 @@ bool World::convoy_set_body(int id, const std::vector<int> &cells) {
 		given.push_back(v);
 	}
 	std::sort(given.begin(), given.end());
-	const float fx = std::cos(c->facing), fy = std::sin(c->facing);
+	// One integer offset per cell, found with the same expression convoy_footprint uses for a single offset. The round
+	// trip therefore cannot disagree with rounding. A body may contain its own anchor cell (offset 0, 0).
 	Convoy trial = *c;
 	trial.body.clear();
+	const float fx = std::cos(c->facing), fy = std::sin(c->facing);
 	for (int v : cells) {
-		const float dx = (float)(v % terrain.w) + 0.5f - c->x, dy = (float)(v / terrain.w) + 0.5f - c->y;
-		const int ox = (int)std::lround(dx * fx + dy * fy), oy = (int)std::lround(-dx * fy + dy * fx);
-		if (std::abs(ox) > 8 || std::abs(oy) > 8) return false;
-		trial.body.push_back(ConvoyOffset{ox, oy});
+		bool found = false;
+		for (int oy = -8; oy <= 8 && !found; ++oy) {
+			for (int ox = -8; ox <= 8 && !found; ++ox) {
+				const float x = c->x + (float)ox * fx - (float)oy * fy, y = c->y + (float)ox * fy + (float)oy * fx;
+				if (!(x >= 0.f && y >= 0.f && x < (float)terrain.w && y < (float)terrain.h)) continue;
+				if (terrain.idx((int)x, (int)y) != v) continue;
+				trial.body.push_back(ConvoyOffset{ox, oy});
+				found = true;
+			}
+		}
+		if (!found) return false;
 	}
 	std::vector<int> derived;
 	if (!convoy_footprint(trial, c->x, c->y, c->facing, derived) || derived != given) return false;
@@ -2051,14 +2060,18 @@ bool World::rebuild_convoy_bodies() {
 bool World::convoy_state(int id, ConvoyState &out) const {
 	const Convoy *c = convoy_at(id);
 	if (!c) return false;
-	bool stalled = c->body_stalled;
-	for (const auto &k : c->crew) if (k.soldier < 0 || k.soldier >= soldier_count() || !can_act(k.soldier)) stalled = true;
 	const bool at_goal = c->has_goal && std::fabs(c->x - c->gx) < 1e-4f && std::fabs(c->y - c->gy) < 1e-4f;
 	const bool faced = c->has_goal && std::fabs(std::remainder(c->facing - c->gfacing, 2.f * kPi)) < 1e-3f;
 	const bool complete = at_goal && faced;
+	// A crew member that cannot act right now is reported live, even if the last step did not see it.
+	int reason = !c->has_goal ? CONVOY_NO_GOAL : c->stall_reason;
+	if (c->has_goal && !complete) for (const auto &k : c->crew) if (k.soldier < 0 || k.soldier >= soldier_count() || !can_act(k.soldier)) reason = CONVOY_CREW_CANNOT_ACT;
+	if (complete || (c->has_goal && reason == CONVOY_NO_GOAL)) reason = CONVOY_OK;
+	const bool stalled = c->has_goal && !complete && reason != CONVOY_OK && reason != CONVOY_CREW_OFF_SLOT;
 	out.x = c->x; out.y = c->y; out.facing = c->facing;
-	out.stalled = stalled ? 1 : 0;
+	out.stalled = stalled ? 1 : 0; // a crew member off its slot is a transient wait: reported in reason, not stalled
 	out.complete = complete ? 1 : 0;
+	out.reason = reason;
 	out.moving = (c->has_goal && !complete && !stalled && !c->crew.empty()) ? 1 : 0;
 	return true;
 }
@@ -2094,7 +2107,13 @@ bool World::convoy_crew_aligned(const Convoy &c) const {
 void World::convoy_stage(float dt) {
 	for (auto &c : convoys) {
 		c.body_stalled = false;
-		if (!c.has_goal || !convoy_crew_aligned(c)) continue; // stalled, or a crew member is not yet on its slot: the anchor waits
+		c.stall_reason = CONVOY_OK;
+		if (!c.has_goal) { c.stall_reason = CONVOY_NO_GOAL; continue; }
+		bool crew_ready = !c.crew.empty();
+		for (const auto &k : c.crew) if (k.soldier < 0 || k.soldier >= soldier_count() || !can_act(k.soldier)) crew_ready = false;
+		if (!crew_ready) { c.stall_reason = CONVOY_CREW_CANNOT_ACT; continue; }
+		// A crew member that is up but not yet on its slot: the anchor waits and reports it.
+		if (!convoy_crew_aligned(c)) { c.stall_reason = CONVOY_CREW_OFF_SLOT; continue; }
 		const float ex = c.gx - c.x, ey = c.gy - c.y, ed = std::sqrt(ex * ex + ey * ey);
 		// Body-blind sight and body-blind fields: a convoy's own body never blocks its own route. Another convoy's
 		// body is caught by convoy_cells_clear below and reported as stalled.
@@ -2113,7 +2132,8 @@ void World::convoy_stage(float dt) {
 			} else {
 				if (c.field < 0 || c.field >= (int)fields_.size() || fields_[c.field].goal != c.goal_cell || fields_[c.field].body_aware) c.field = request_field(c.goal_cell, false);
 				const FlowField &ff = fields_[c.field];
-				if (!ff.dir.empty()) {
+				const int here = terrain.idx((int)c.x, (int)c.y);
+				if (!ff.dir.empty() && ff.dir[here] != 255) {
 					int x = (int)c.x, y = (int)c.y, bx = -1, by = -1;
 					for (int k = 0; k < 6; ++k) {
 						const uint8_t d = ff.dir[terrain.idx(x, y)];
@@ -2127,34 +2147,77 @@ void World::convoy_stage(float dt) {
 						if (al > 1e-4f) { dirx = ax / al; diry = ay / al; have = true; }
 					}
 				}
+				// No usable field direction here (field unbuilt, or an edge the backward build did not reach): step to the
+				// forward neighbour closest to the goal instead of holding silently.
+				if (!have) have = convoy_greedy_direction(c, dirx, diry);
 			}
-			if (have) {
-				float qx = c.x + dirx * stride, qy = c.y + diry * stride;
-				resolve(c.x, c.y, qx, qy, cfg.wall_margin);
-				// the anchor never enters unwalkable ground or a cell the crowd may not route through (bodies: below)
-				if (terrain.walkable_f(qx, qy) && siege_nav_cell(terrain.idx((int)qx, (int)qy))) {
-					tx = qx; ty = qy;
-					desired = std::atan2(diry, dirx);
-				}
-			}
+			if (!have) { c.stall_reason = CONVOY_NO_ROUTE; continue; }
+			float qx = c.x + dirx * stride, qy = c.y + diry * stride;
+			resolve(c.x, c.y, qx, qy, cfg.wall_margin);
+			// the anchor never enters unwalkable ground or a cell the crowd may not route through (bodies: below)
+			if (!(terrain.walkable_f(qx, qy) && siege_nav_cell(terrain.idx((int)qx, (int)qy)))) { c.stall_reason = CONVOY_BLOCKED_TERRAIN; continue; }
+			tx = qx; ty = qy;
+			desired = std::atan2(diry, dirx);
 		}
 		const float mt = cfg.max_turn_rate * dt;
 		const float nf = c.facing + std::clamp(std::remainder(desired - c.facing, 2.f * kPi), -mt, mt);
 		if (tx != c.x || ty != c.y || nf != c.facing) {
 			// The whole footprint moves with the anchor and turns with it. The anchor cell and every footprint cell must
 			// not be another convoy's body, and the footprint may not cover a living non-crew soldier. Otherwise the
-			// anchor holds position and facing and reports stalled.
+			// anchor holds position and facing and reports why.
 			const int anchor_cell = terrain.idx((int)tx, (int)ty);
-			const bool anchor_in_other_body = convoy_body_cell(anchor_cell) && convoy_body_owner[anchor_cell] != c.id;
+			if (convoy_body_cell(anchor_cell) && convoy_body_owner[anchor_cell] != c.id) { c.body_stalled = true; c.stall_reason = CONVOY_BLOCKED_BODY; continue; }
 			std::vector<int> cells;
-			if (anchor_in_other_body || !convoy_footprint(c, tx, ty, nf, cells) || (cells != c.body_cells && !convoy_cells_clear(c, cells))) {
+			if (!convoy_footprint(c, tx, ty, nf, cells)) { c.body_stalled = true; c.stall_reason = CONVOY_BLOCKED_TERRAIN; continue; }
+			if (cells != c.body_cells && !convoy_cells_clear(c, cells)) {
 				c.body_stalled = true;
+				c.stall_reason = convoy_soldier_in(c, cells) ? CONVOY_BLOCKED_SOLDIER : CONVOY_BLOCKED_BODY;
 				continue;
 			}
 			set_convoy_cells(c, std::move(cells)); // no-op unless the cell set changed
 		}
 		c.x = tx; c.y = ty; c.facing = nf;
 	}
+}
+
+bool World::convoy_soldier_in(const Convoy &c, const std::vector<int> &cells) const {
+	for (int i = 0; i < soldier_count(); ++i) {
+		if (!alive(i) || (i < (int)convoy_of.size() && convoy_of[i] == c.id)) continue; // own crew stand in their own body
+		const int x = (int)std::floor(px[i]), y = (int)std::floor(py[i]);
+		if (!terrain.contains(x, y)) continue;
+		if (std::binary_search(cells.begin(), cells.end(), terrain.idx(x, y))) return true;
+	}
+	return false;
+}
+
+// Forward-edge fallback. It reads the same edges convoy_reachable checks at order time (edge_ok[here], bit d, towards
+// the neighbour), so the anchor can always leave along a route that was accepted, even when the backward field is absent.
+bool World::convoy_greedy_direction(const Convoy &c, float &dx, float &dy) const {
+	const int hx = (int)c.x, hy = (int)c.y;
+	if (!terrain.contains(hx, hy)) return false;
+	const int here = terrain.idx(hx, hy);
+	float best = (c.x - c.gx) * (c.x - c.gx) + (c.y - c.gy) * (c.y - c.gy);
+	bool found = false;
+	float bx = 0.f, by = 0.f;
+	for (int d = 0; d < 8; ++d) {
+		if (!((terrain.edge_ok[here] >> d) & 1)) continue;
+		const int nx = hx + DX[d], ny = hy + DY[d];
+		if (!terrain.contains(nx, ny)) continue;
+		if (!siege_nav_cell(terrain.idx(nx, ny))) continue;
+		if (d >= 4 && (!siege_nav_cell(here + DX[d]) || !siege_nav_cell(here + DY[d] * terrain.w))) continue;
+		const float gx = (float)nx + 0.5f - c.gx, gy = (float)ny + 0.5f - c.gy;
+		const float dist = gx * gx + gy * gy;
+		if (dist < best) {
+			best = dist;
+			bx = (float)nx + 0.5f - c.x; by = (float)ny + 0.5f - c.y;
+			found = true;
+		}
+	}
+	if (!found) return false;
+	const float len = std::sqrt(bx * bx + by * by);
+	if (len < 1e-4f) return false;
+	dx = bx / len; dy = by / len;
+	return true;
 }
 
 bool World::convoy_steer(int i, float dt) {
@@ -2298,7 +2361,7 @@ uint64_t World::state_hash() const {
 	mv(convoy_of); m(convoy_serial);
 	for (const auto &cv : convoys) {
 		m(cv.id); m(cv.x); m(cv.y); m(cv.facing); m(cv.has_goal); m(cv.gx); m(cv.gy); m(cv.gfacing); m(cv.goal_cell); m(cv.field);
-		mv(cv.crew); mv(cv.body); m(cv.body_stalled); // body_cells are derived from the hashed anchor, facing and offsets
+		mv(cv.crew); mv(cv.body); m(cv.body_stalled); m(cv.stall_reason); // body_cells are derived from the hashed anchor, facing and offsets
 	}
 	for (auto *v : {&form, &slot, &target, &cell, &enc_target, &rescue_of, &capture_of, &captor, &rescued_by_, &capturing_by_}) mv(*v);
 	mv(ammo); mv(person_id);

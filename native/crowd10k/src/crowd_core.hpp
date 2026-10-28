@@ -298,8 +298,14 @@ struct Convoy {
 	std::vector<ConvoyOffset> body;
 	std::vector<int> body_cells;       // sorted absolute footprint at the current pose. Derived: not saved, rebuilt on load.
 	bool body_stalled = false;         // the last step refused to advance or turn into another body or occupied cells. Saved.
+	int stall_reason = 0;              // CONVOY_* code from the last convoy_stage. Derived each step: not saved, not hashed.
 };
-struct ConvoyState { double x = 0, y = 0, facing = 0; int moving = 0, complete = 0, stalled = 0; };
+// Why a convoy with a goal is not advancing (ConvoyState::reason). CONVOY_OK means advancing, turning or complete.
+enum ConvoyReason : int {
+	CONVOY_OK = 0, CONVOY_NO_GOAL = 1, CONVOY_CREW_CANNOT_ACT = 2, CONVOY_CREW_OFF_SLOT = 3, CONVOY_NO_ROUTE = 4,
+	CONVOY_BLOCKED_TERRAIN = 5, CONVOY_BLOCKED_BODY = 6, CONVOY_BLOCKED_SOLDIER = 7
+};
+struct ConvoyState { double x = 0, y = 0, facing = 0; int moving = 0, complete = 0, stalled = 0, reason = 0; };
 
 class World {
 public:
@@ -748,6 +754,8 @@ private:
 	// set_cells: installs c's derived footprint into convoy_body_owner and refreshes body-aware fields when it changed.
 	bool convoy_footprint(const Convoy &c, float ax, float ay, float facing, std::vector<int> &cells) const;
 	bool convoy_cells_clear(const Convoy &c, const std::vector<int> &cells) const;
+	bool convoy_soldier_in(const Convoy &c, const std::vector<int> &cells) const; // a living non-crew soldier stands on one of cells
+	bool convoy_greedy_direction(const Convoy &c, float &dx, float &dy) const; // forward-edge fallback when no field direction exists
 	void set_convoy_cells(Convoy &c, std::vector<int> cells);
 	bool rebuild_convoy_bodies();   // load: re-derive every footprint and the owner map; false if they do not fit
 	void refresh_body_fields();     // body-aware fields are cleared and re-queued; LOS observations are reset

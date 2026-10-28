@@ -32,7 +32,7 @@ int wg_crowd_add_convoy(wg_crowd *c, float ax, float ay, float facing);
 int wg_crowd_convoy_set_crew(wg_crowd *c, int id, int soldier, int ox, int oy, int assigned);
 int wg_crowd_convoy_order_goal(wg_crowd *c, int id, float gx, float gy, float gfacing);
 int wg_crowd_convoy_set_body(wg_crowd *c, int id, const int32_t *cells, int count);
-/* out[6] = anchor x, y, facing, moving, complete, stalled. Returns 1 when the convoy exists. */
+/* out[7] = anchor x, y, facing, moving, complete, stalled, reason (ConvoyReason). Returns 1 when the convoy exists. */
 int wg_crowd_convoy_state(const wg_crowd *c, int id, double *out);
 int wg_crowd_convoy_remove(wg_crowd *c, int id);
 /* G6.4 site exit: 1 when the soldier may leave the Site (conscious, free, in a formation, not in melee, no committed step). */

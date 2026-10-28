@@ -132,13 +132,13 @@ template <class Ar> void io_formation(Ar &ar, Formation &f) {
 template <class Ar> void io_convoy(Ar &ar, Convoy &c) {
 	ar.pod(c.id); ar.pod(c.x); ar.pod(c.y); ar.pod(c.facing);
 	ar.pod(c.has_goal); ar.pod(c.gx); ar.pod(c.gy); ar.pod(c.gfacing); ar.pod(c.goal_cell); ar.pod(c.field);
-	ar.vec(c.crew); ar.vec(c.body); ar.pod(c.body_stalled); // body_cells are derived on load (rebuild_convoy_bodies)
+	ar.vec(c.crew); ar.vec(c.body); ar.pod(c.body_stalled); ar.pod(c.stall_reason); // body_cells are derived on load (rebuild_convoy_bodies); stall_reason is saved so the reported pose matches after load
 }
 
 } // namespace
 
 template <class Ar> void World::serialize(Ar &ar) {
-	const uint32_t magic = 0x3131574Bu; // "KW11": convoy body offsets, body_stalled, body-aware flow fields (G4 S2); KW10: logistics convoys (G4); KW09: released soldiers (G6.4 site exit); KW08: per-person post holder (R1b)
+	const uint32_t magic = 0x3231574Bu; // "KW12": convoy stall_reason (G4 S4f); KW11: convoy body offsets, body_stalled, body-aware flow fields (G4 S2); KW10: logistics convoys (G4); KW09: released soldiers (G6.4 site exit); KW08: per-person post holder (R1b)
 	uint32_t m = magic;
 	ar.pod(m);
 	if (Ar::loading && m != magic) { ar.ok = false; return; }

@@ -86,7 +86,7 @@ int wg_crowd_convoy_set_body(wg_crowd *c,int id,const int32_t *cells,int count) 
 int wg_crowd_convoy_state(const wg_crowd *c,int id,double *out) {
 	wg::ConvoyState s;
 	if (!c || !out || !c->world.convoy_state(id,s)) return 0;
-	out[0]=s.x; out[1]=s.y; out[2]=s.facing; out[3]=s.moving; out[4]=s.complete; out[5]=s.stalled;
+	out[0]=s.x; out[1]=s.y; out[2]=s.facing; out[3]=s.moving; out[4]=s.complete; out[5]=s.stalled; out[6]=s.reason;
 	return 1;
 }
 int wg_crowd_convoy_remove(wg_crowd *c,int id) { return c && c->world.convoy_remove(id) ? 1 : 0; }

@@ -344,7 +344,7 @@ func siege_admission_guard(candidate: TerrainData = null) -> Dictionary:
 		if SiteStore.has_siege_vehicles(data.site) and not siege_native_supported(): return SiteRuntime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少原人物攻城／複合步介面")
 		for vehicle: Dictionary in data.site.get("vehicles", {}).values():
 			if str(vehicle.get("kind", "")) == "ship": return SiteRuntime.fail("BUSY", "首版船艦須留在原 Army 人物模式")
-			if str(vehicle.get("kind", "")) in ["cart", "wagon"]: return SiteRuntime.fail("BUSY", "後勤車隊 G4 未完成")
+			if str(vehicle.get("kind", "")) in ["cart", "wagon"] and not convoy_native_supported(): return SiteRuntime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少後勤車隊原生記錄介面")
 		for feature: Dictionary in data.site.get("features", {}).values():
 			if feature.has("ship_build"): return SiteRuntime.fail("BUSY", "原船塢已付造船批次須留在原工人模式，先完成或取消")
 		for entry: Dictionary in data.site.get("team_supply", {}).values():
@@ -2866,6 +2866,7 @@ static func build_siege_navigation(data: TerrainData, ground_cells: PackedInt64A
 	var exits := PackedInt64Array()
 	if data == null or ground_cells.size() % 3 != 0: return SiteRuntime.fail("INVALID", "原人物格位投影不完整")
 	for vehicle: Dictionary in data.site.get("vehicles", {}).values():
+		if SiteVehicleTransport.is_convoy(vehicle) and int(vehicle.get("convoy_id", 0)) > 0: continue # a convoy anchor steps inside its own cell; its body blocks through the native convoy body owner instead
 		var physical: Array[Vector2i] = SiteVehicleTransport.footprint(data, vehicle)
 		var geometry: Dictionary = SiteRuntime.siege_tower_geometry(data, vehicle) if str(vehicle.get("kind", "")) == "siege_tower" else {}
 		if not geometry.is_empty(): physical.assign(geometry.physical)
@@ -2887,6 +2888,11 @@ static func build_siege_navigation(data: TerrainData, ground_cells: PackedInt64A
 
 func siege_native_supported() -> bool:
 	for method: String in SIEGE_NATIVE_METHODS:
+		if not (crowd.has_method(method) if crowd != null else ClassDB.class_has_method(&"ArmyCrowd", method)): return false
+	return true
+
+func convoy_native_supported() -> bool:
+	for method: String in CONVOY_NATIVE_METHODS:
 		if not (crowd.has_method(method) if crowd != null else ClassDB.class_has_method(&"ArmyCrowd", method)): return false
 	return true
 
@@ -3010,7 +3016,8 @@ func sync_siege_inputs() -> Dictionary:
 	if not crowd.set_siege_navigation(inputs.blocked, inputs.wreck_exit): return SiteRuntime.fail("INVALID", "原攻城車體／塔面用途投影不合法")
 	return SiteRuntime.ok()
 
-const SIEGE_NATIVE_METHODS := ["set_siege_crew", "set_siege_crew_members", "siege_ground_cells", "begin_siege_compound", "siege_compound_state", "siege_person_state", "cancel_siege_compound", "settle_siege_compound", "siege_busy", "set_siege_navigation", "siege_occupancy_mask", "order_siege_step", "cancel_siege_step", "charge_siege_round", "charge_siege_work", "contact_pose_state", "apply_siege_contact"]
+const CONVOY_NATIVE_METHODS := ["add_convoy", "convoy_set_crew", "convoy_order_goal", "convoy_set_body", "convoy_state", "convoy_remove"]
+const SIEGE_NATIVE_METHODS := ["set_siege_crew","set_siege_crew_members", "siege_ground_cells", "begin_siege_compound", "siege_compound_state", "siege_person_state", "cancel_siege_compound", "settle_siege_compound", "siege_busy", "set_siege_navigation", "siege_occupancy_mask", "order_siege_step", "cancel_siege_step", "charge_siege_round", "charge_siege_work", "contact_pose_state", "apply_siege_contact"]
 
 func settle_external_contacts() -> void:
 	# Same native slice, after the original siege/person contact batch and before save/death settlement.
