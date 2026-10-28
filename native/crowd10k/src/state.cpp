@@ -129,11 +129,16 @@ template <class Ar> void io_formation(Ar &ar, Formation &f) {
 	ar.pod(f.no_orders); ar.pod(f.host_center); ar.pod(f.fully_fed); ar.pod(f.sustain_morale_delta);
 	ar.pod(f.garrisoned);
 }
+template <class Ar> void io_convoy(Ar &ar, Convoy &c) {
+	ar.pod(c.id); ar.pod(c.x); ar.pod(c.y); ar.pod(c.facing);
+	ar.pod(c.has_goal); ar.pod(c.gx); ar.pod(c.gy); ar.pod(c.gfacing); ar.pod(c.goal_cell); ar.pod(c.field);
+	ar.vec(c.crew); ar.vec(c.body);
+}
 
 } // namespace
 
 template <class Ar> void World::serialize(Ar &ar) {
-	const uint32_t magic = 0x3930574Bu; // "KW09": released soldiers (G6.4 site exit); KW08: per-person post holder (R1b)
+	const uint32_t magic = 0x3031574Bu; // "KW10": logistics convoys (G4); KW09: released soldiers (G6.4 site exit); KW08: per-person post holder (R1b)
 	uint32_t m = magic;
 	ar.pod(m);
 	if (Ar::loading && m != magic) { ar.ok = false; return; }
@@ -191,6 +196,14 @@ template <class Ar> void World::serialize(Ar &ar) {
 		if (built > 1) { ar.ok = false; return; }
 		if (Ar::loading) { fl.cost.clear(); fl.dir.clear(); if (built) fl.dir.push_back(1); /* marker, rebuilt below */ }
 	}
+	// G4 logistics convoys (KW10): id counter, per-soldier membership, then the records.
+	ar.pod(convoy_serial);
+	ar.vec(convoy_of);
+	uint64_t nconvoy = convoys.size();
+	ar.pod(nconvoy);
+	if (!count(ar, nconvoy, 48, 256)) return;
+	if (Ar::loading) convoys.resize((size_t)nconvoy);
+	for (auto &cv : convoys) io_convoy(ar, cv);
 }
 
 std::vector<uint8_t> World::save() const {
@@ -382,6 +395,27 @@ bool World::validate(std::string *error, bool allow_site_jobs) const {
 		} else CHECK_VALID(e.fatigue == 0 && e.fatigue_rest == 0);
 	}
 	for (double v : {time,combat_left,game_dt,combat_mark}) CHECK_VALID(std::isfinite(v) && v >= 0);
+	CHECK_VALID(convoy_of.size() == n && convoy_serial >= 0 && convoys.size() <= 256);
+	{
+		std::vector<uint8_t> owned(n, 0);
+		std::unordered_set<int> convoy_ids;
+		for (const auto &cv : convoys) {
+			CHECK_VALID(cv.id > 0 && cv.id <= convoy_serial && convoy_ids.insert(cv.id).second);
+			CHECK_VALID(xy(cv.x, cv.y) && std::isfinite(cv.facing) && terrain.walkable((int)cv.x, (int)cv.y));
+			CHECK_VALID(std::isfinite(cv.gx) && std::isfinite(cv.gy) && std::isfinite(cv.gfacing));
+			CHECK_VALID(cv.goal_cell >= -1 && cv.goal_cell < (int)cells && cv.field >= -1 && cv.field < (int)fields_.size());
+			CHECK_VALID(!cv.has_goal || (xy(cv.gx, cv.gy) && cv.goal_cell == terrain.idx((int)cv.gx, (int)cv.gy)));
+			CHECK_VALID(cv.crew.size() <= 64 && cv.body.size() <= 64);
+			for (const auto &k : cv.crew) {
+				CHECK_VALID(k.soldier >= 0 && k.soldier < (int)n && convoy_of[k.soldier] == cv.id && !owned[k.soldier]);
+				CHECK_VALID(std::abs(k.ox) <= 8 && std::abs(k.oy) <= 8);
+				owned[k.soldier] = 1;
+			}
+			std::unordered_set<int> footprint;
+			for (int v : cv.body) CHECK_VALID(v >= 0 && v < (int)cells && terrain.walkable(v % terrain.w, v / terrain.w) && footprint.insert(v).second);
+		}
+		for (size_t i = 0; i < n; ++i) CHECK_VALID(convoy_of[i] == 0 ? !owned[i] : (owned[i] && convoy_ids.count(convoy_of[i]) == 1));
+	}
 	CHECK_VALID(exchange_round >= 0 && shot_serial >= 0);
 	CHECK_VALID(host_last_release_id >= 0 && host_last_release_id <= INT32_MAX);
 	CHECK_VALID(!host_ranged_delegate || projectiles.empty());
@@ -445,6 +479,7 @@ void World::swap_state(World &o) {
 	swap(captor, o.captor);
 	swap(prison_id, o.prison_id); swap(escort_goal, o.escort_goal); swap(escort_mode, o.escort_mode); swap(housing_attendance_cell, o.housing_attendance_cell);
 	swap(contact_revision, o.contact_revision);
+	swap(convoys, o.convoys); swap(convoy_of, o.convoy_of); swap(convoy_serial, o.convoy_serial);
 	swap(siege_crew,o.siege_crew); swap(siege_member_group,o.siege_member_group); swap(siege_step_source,o.siege_step_source); swap(siege_compounds,o.siege_compounds); swap(siege_serial,o.siege_serial); swap(siege_person_blocked,o.siege_person_blocked); swap(siege_wreck_exit,o.siege_wreck_exit);
 	swap(ammo, o.ammo);
 	swap(equip, o.equip);

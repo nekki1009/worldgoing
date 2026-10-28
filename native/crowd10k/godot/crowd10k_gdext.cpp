@@ -658,7 +658,7 @@ void m_set_siege_crew_members(CALL_ARGS) {
 	for(int i=0;i<w.soldier_count();++i) {
 		if((assigned[i]!=0)==w.is_siege_crew(i))continue;
 		if(!assigned[i] && (w.siege_group(i)>=0 || (w.escort_mode[i]>=5 && w.escort_goal[i]>=0))){ret_bool(r,false);return;}
-		if(assigned[i] && (!w.can_act(i) || (w.escort_mode[i]!=0 && w.escort_mode[i]!=5) || w.rescue_of[i]>=0 || w.capture_of[i]>=0 || w.prison_id[i]!=0)){ret_bool(r,false);return;}
+		if(assigned[i] && (!w.can_act(i) || (w.escort_mode[i]!=0 && w.escort_mode[i]!=5) || w.rescue_of[i]>=0 || w.capture_of[i]>=0 || w.prison_id[i]!=0 || w.is_convoy_crew(i))){ret_bool(r,false);return;}
 	}
 	w.siege_crew.swap(assigned); // assigned now retains the previous crew membership.
 	for(int i=0;i<w.soldier_count();++i)if(assigned[i] && !w.siege_crew[i] && w.escort_mode[i]==5 && w.escort_goal[i]<0)w.escort_mode[i]=0;
@@ -690,6 +690,57 @@ void m_siege_occupancy_mask(CALL_ARGS) {
 void m_set_siege_crew(CALL_ARGS) {
 	SELF; NEED(2); WORLD; int64_t i,v;
 	ret_bool(r,arg_int(a[0],i) && arg_int(a[1],v) && i>=0 && i<w.soldier_count() && (v==0 || v==1) && w.set_siege_crew((int)i,v!=0));
+}
+// G4 logistics convoys. Refusals return 0 / false / an empty array and change nothing.
+bool arg_i32(const void *v, int &out) {
+	int64_t x = 0;
+	if (!arg_int(v, x) || x < -2147483647LL - 1 || x > 2147483647LL) return false;
+	out = (int)x;
+	return true;
+}
+void m_add_convoy(CALL_ARGS) {
+	SELF; NEED(3); WORLD;
+	double ax = 0, ay = 0, facing = 0;
+	if (!arg_num(a[0], ax) || !arg_num(a[1], ay) || !arg_num(a[2], facing)) { ret_int(r, 0); return; }
+	ret_int(r, w.add_convoy((float)ax, (float)ay, (float)facing));
+}
+void m_convoy_set_crew(CALL_ARGS) {
+	SELF; NEED(5); WORLD;
+	int id = 0, soldier = 0, ox = 0, oy = 0;
+	int64_t assigned = 0;
+	if (!arg_i32(a[0], id) || !arg_i32(a[1], soldier) || !arg_i32(a[2], ox) || !arg_i32(a[3], oy) || !arg_int(a[4], assigned)) { ret_bool(r, false); return; }
+	ret_bool(r, w.convoy_set_crew(id, soldier, ox, oy, assigned != 0));
+}
+void m_convoy_order_goal(CALL_ARGS) {
+	SELF; NEED(4); WORLD;
+	int id = 0;
+	double gx = 0, gy = 0, gfacing = 0;
+	if (!arg_i32(a[0], id) || !arg_num(a[1], gx) || !arg_num(a[2], gy) || !arg_num(a[3], gfacing)) { ret_bool(r, false); return; }
+	ret_bool(r, w.convoy_order_goal(id, (float)gx, (float)gy, (float)gfacing));
+}
+void m_convoy_set_body(CALL_ARGS) {
+	SELF; NEED(2); WORLD;
+	int id = 0;
+	void *cells = arg_packed(a[1], INTS);
+	if (!arg_i32(a[0], id) || !cells) { ret_bool(r, false); return; }
+	const int64_t count = packed_size(size_ints, cells);
+	if (count > 64) { ret_bool(r, false); return; }
+	std::vector<int> footprint;
+	footprint.reserve((size_t)count);
+	for (int64_t k = 0; k < count; ++k) footprint.push_back((int)ints_read(cells, k)[0]);
+	ret_bool(r, w.convoy_set_body(id, footprint));
+}
+void m_convoy_state(CALL_ARGS) {
+	SELF; NEED(1); WORLD;
+	int id = 0;
+	wg::ConvoyState s;
+	if (!arg_i32(a[0], id) || !w.convoy_state(id, s)) { return_doubles(r, {}); return; }
+	return_doubles(r, {s.x, s.y, s.facing, double(s.moving), double(s.complete), double(s.stalled)});
+}
+void m_convoy_remove(CALL_ARGS) {
+	SELF; NEED(1); WORLD;
+	int id = 0;
+	ret_bool(r, arg_i32(a[0], id) && w.convoy_remove(id));
 }
 void m_begin_siege_compound(CALL_ARGS) {
 	SELF; NEED(5); WORLD;
@@ -1293,6 +1344,12 @@ void initialize(void *, GDExtensionInitializationLevel level) {
 	add_method("charge_exchange_fatigue",m_charge_exchange_fatigue,{{INT,"soldier"},{FLOAT,"amount"}},BOOL);
 	add_method("site_person_exit_ready",m_site_person_exit_ready,{{INT,"soldier"}},BOOL);
 	add_method("site_person_release",m_site_person_release,{{INT,"soldier"}},DOUBLES);
+	add_method("add_convoy", m_add_convoy, {{FLOAT,"anchor_x"},{FLOAT,"anchor_y"},{FLOAT,"facing"}}, INT);
+	add_method("convoy_set_crew", m_convoy_set_crew, {{INT,"convoy"},{INT,"soldier"},{INT,"offset_x"},{INT,"offset_y"},{BOOL,"assigned"}}, BOOL);
+	add_method("convoy_order_goal", m_convoy_order_goal, {{INT,"convoy"},{FLOAT,"goal_x"},{FLOAT,"goal_y"},{FLOAT,"goal_facing"}}, BOOL);
+	add_method("convoy_set_body", m_convoy_set_body, {{INT,"convoy"},{INTS,"cells"}}, BOOL);
+	add_method("convoy_state", m_convoy_state, {{INT,"convoy"}}, DOUBLES);
+	add_method("convoy_remove", m_convoy_remove, {{INT,"convoy"}}, BOOL);
 	add_method("charge_siege_round",m_charge_siege_round,{{INTS,"members"},{FLOAT,"per_person"}},BOOL);
 	add_method("charge_siege_work",m_charge_siege_work,{{INT,"soldier"},{FLOAT,"game_seconds"}},BOOL);
 	add_method("contact_pose_state",m_contact_pose_state,{{INT,"soldier"}},DOUBLES);

@@ -172,7 +172,7 @@ bool World::set_siege_crew(int i, bool assigned) {
 	if (siege_crew.size() != px.size()) siege_crew.assign(px.size(), 0);
 	if (siege_member_group.size() != px.size()) siege_member_group.assign(px.size(), -1);
 	if (!assigned && (siege_group(i) >= 0 || (escort_mode[i] >= 5 && escort_goal[i] >= 0))) return false;
-	if (assigned && (!can_act(i) || (escort_mode[i] != 0 && escort_mode[i] != 5) || rescue_of[i] >= 0 || capture_of[i] >= 0 || prison_id[i] != 0)) return false;
+	if (assigned && (!can_act(i) || (escort_mode[i] != 0 && escort_mode[i] != 5) || rescue_of[i] >= 0 || capture_of[i] >= 0 || prison_id[i] != 0 || is_convoy_crew(i))) return false;
 	siege_crew[i] = assigned ? 1 : 0;
 	if (!assigned && escort_mode[i] == 5 && escort_goal[i] < 0) escort_mode[i] = 0;
 	return true;
@@ -415,6 +415,8 @@ bool World::update_terrain(Terrain ground) {
 		if (!ground.contains(x, y) || !ground.walkable(x, y)) return false;
 		if (ground.height[ground.idx(x, y)] > terrain.height[source]) return false;
 	}
+	// A convoy anchor must stay on walkable ground; a terrain change that strands one is refused before any commitment is cancelled.
+	for (const auto &cv : convoys) if (!ground.contains((int)cv.x, (int)cv.y) || !ground.walkable((int)cv.x, (int)cv.y)) return false;
 	// Validate the entire new terrain before cancelling any original commitment.
 	for (size_t k=0;k<abort.size();++k) if (abort[k]) abort_siege_compound((int)k);
 	for(int i=0;i<soldier_count();++i)if(abort_single[i]) {
@@ -503,6 +505,7 @@ int World::add_soldier(int fi, const rules::Equip &e, Role r, int64_t person, ui
 	push(prison_id, int64_t(0)); push(escort_goal, -1); push(escort_mode, (uint8_t)0); push(housing_attendance_cell, -1);
 	push(contact_revision, int64_t(0));
 	push(siege_crew, (uint8_t)0); push(siege_member_group, -1); push(siege_step_source,-1);
+	push(convoy_of, (int32_t)0);
 	push(start_x, NAN); push(start_y, NAN);
 	push(host_ctl, (uint8_t)0); push(host_run, (uint8_t)0); push(host_engage, (uint8_t)0); push(host_vx, 0.f); push(host_vy, 0.f);
 	push(vis_kind, (uint8_t)V_IDLE); push(vis_t0, -1e9); push(kit, (int16_t)-1);
@@ -1082,6 +1085,7 @@ void World::soldier_stage(float dt, int ch) {
 	for (int i = a; i < b; ++i) {
 		running[i] = 0;
 		if (move_siege_member(i,dt)) continue;
+		if (convoy_steer(i, dt)) continue; // convoy crew: steered to their convoy slot, never by ordinary motion
 		if (is_siege_crew(i) && !controlled_step_pending(i)) {
 			nx[i]=px[i]; ny[i]=py[i]; vx[i]=vy[i]=0;
 			state[i]=!alive(i)?S_DEAD:ko[i]>0?S_DOWN:getup[i]>0?S_GETUP:stagger[i]>0?S_STAGGER:S_SLOT;
@@ -1796,6 +1800,7 @@ void World::step_body(float dt, const std::vector<WorkFatigueState> *work_plan) 
 	action_motion.resize(n);
 	for (int i = 0; i < n; ++i) action_motion[i] = {px[i], py[i], px[i], py[i]};
 	advance_siege_compounds(dt);
+	convoy_stage(dt); // convoy anchors advance before the crew are steered to their slots
 	pool_.run(chunks_, [&](int ch) { soldier_stage(dt, ch); });
 	std::swap(px, nx); std::swap(py, ny);
 	capture_work_point_runners(); // Same ORIGINAL motion phase; before projectile/exchange death.
@@ -1820,7 +1825,7 @@ void World::step_body(float dt, const std::vector<WorkFatigueState> *work_plan) 
 	pt.command = ms_since(t); t = Clock::now();
 
 	for (int i = 0; i < n; ++i) {
-		if (state[i] != S_SLOT || slot[i] < 0) continue;
+		if (state[i] != S_SLOT || slot[i] < 0 || is_convoy_crew(i)) continue; // convoy crew are not formation slot followers
 		float dx = slot_tx_[i] - px[i], dy = slot_ty_[i] - py[i];
 		lag_acc_[form[i]] += std::sqrt(dx * dx + dy * dy);
 		lag_cnt_[form[i]]++;
@@ -1850,6 +1855,218 @@ void World::build_flight_cells() {
 		rules::ranged_cells(p.source, p.target, cells);
 		for (auto &c : cells) if (terrain.contains(c.x, c.y)) flight_cells_[terrain.idx(c.x, c.y)] = 1;
 	}
+}
+
+// ---------------------------------------------------------------- G4 logistics convoys
+// A convoy is an anchor with crew slots (anchor + offset rotated by facing). convoy_stage (serial, before the
+// soldier pass) advances the anchor along the goal's flow field, turning toward its heading, only while it has a
+// goal, has crew, and every crew member can act and stands within convoy_tolerance of its slot. convoy_steer
+// (parallel soldier pass) moves each crew member toward its slot and writes only that soldier's arrays.
+Convoy *World::convoy_at(int id) {
+	for (auto &c : convoys) if (c.id == id) return &c;
+	return nullptr;
+}
+
+const Convoy *World::convoy_at(int id) const {
+	for (const auto &c : convoys) if (c.id == id) return &c;
+	return nullptr;
+}
+
+int World::add_convoy(float ax, float ay, float facing) {
+	if (!finalized_ || !std::isfinite(ax) || !std::isfinite(ay) || !std::isfinite(facing) || convoy_serial >= INT32_MAX - 1 || convoys.size() >= 256) return 0;
+	if (ax < 0 || ay < 0 || ax >= (float)terrain.w || ay >= (float)terrain.h) return 0;
+	if (!terrain.walkable((int)ax, (int)ay) || !siege_route_cell(terrain.idx((int)ax, (int)ay))) return 0;
+	Convoy c;
+	c.id = convoy_serial + 1; c.x = ax; c.y = ay; c.facing = facing;
+	convoys.push_back(std::move(c));
+	convoy_serial = convoys.back().id;
+	return convoy_serial;
+}
+
+bool World::convoy_set_crew(int id, int i, int ox, int oy, bool assigned) {
+	Convoy *c = convoy_at(id);
+	if (!c || i < 0 || i >= soldier_count() || convoy_of.size() != px.size()) return false;
+	auto at = std::find_if(c->crew.begin(), c->crew.end(), [i](const ConvoyCrew &k) { return k.soldier == i; });
+	if (!assigned) {
+		if (at == c->crew.end()) return false;
+		c->crew.erase(at);
+		convoy_of[i] = 0;
+		return true;
+	}
+	if (ox < -8 || ox > 8 || oy < -8 || oy > 8) return false;
+	if (at != c->crew.end()) { at->ox = ox; at->oy = oy; return true; }
+	if (c->crew.size() >= 64 || convoy_of[i] != 0 || is_siege_crew(i) || !can_act(i) || escort_mode[i] != 0 || escort_goal[i] >= 0 || siege_group(i) >= 0 ||
+	    rescue_of[i] >= 0 || capture_of[i] >= 0 || prison_id[i] != 0 || captive[i] || host_ctl[i] || formations[form[i]].garrisoned) return false;
+	c->crew.push_back(ConvoyCrew{i, ox, oy});
+	convoy_of[i] = id;
+	return true;
+}
+
+bool World::convoy_reachable(int start, int goal) const {
+	std::vector<uint8_t> seen(terrain.edge_ok.size(), 0);
+	std::vector<int> queue{start};
+	seen[start] = 1;
+	for (size_t k = 0; k < queue.size() && !seen[goal]; ++k) {
+		const int c = queue[k];
+		for (int d = 0; d < 8; ++d) if ((terrain.edge_ok[c] >> d) & 1) {
+			const int q = c + DY[d] * terrain.w + DX[d];
+			if (!seen[q] && siege_route_cell(q) && (d < 4 || (siege_route_cell(c + DX[d]) && siege_route_cell(c + DY[d] * terrain.w)))) { seen[q] = 1; queue.push_back(q); }
+		}
+	}
+	return seen[goal] != 0;
+}
+
+bool World::convoy_order_goal(int id, float gx, float gy, float gfacing) {
+	Convoy *c = convoy_at(id);
+	if (!c || !finalized_ || !std::isfinite(gx) || !std::isfinite(gy) || !std::isfinite(gfacing)) return false;
+	if (gx < 0 || gy < 0 || gx >= (float)terrain.w || gy >= (float)terrain.h) return false;
+	const int goal = terrain.idx((int)gx, (int)gy);
+	if (!terrain.walkable((int)gx, (int)gy) || !siege_route_cell(goal) || !convoy_reachable(terrain.idx((int)c->x, (int)c->y), goal)) return false;
+	c->has_goal = true;
+	c->gx = std::floor(gx) + 0.5f; c->gy = std::floor(gy) + 0.5f;
+	c->gfacing = gfacing; c->goal_cell = goal;
+	c->field = request_field(goal);
+	return true;
+}
+
+bool World::convoy_set_body(int id, const std::vector<int> &cells) {
+	Convoy *c = convoy_at(id);
+	if (!c || cells.size() > 64) return false;
+	const int count = terrain.w * terrain.h;
+	std::vector<int> footprint;
+	for (int v : cells) {
+		if (v < 0 || v >= count || !terrain.walkable(v % terrain.w, v / terrain.w) || std::find(footprint.begin(), footprint.end(), v) != footprint.end()) return false;
+		footprint.push_back(v);
+	}
+	c->body = std::move(footprint);
+	return true;
+}
+
+bool World::convoy_state(int id, ConvoyState &out) const {
+	const Convoy *c = convoy_at(id);
+	if (!c) return false;
+	bool stalled = false;
+	for (const auto &k : c->crew) if (k.soldier < 0 || k.soldier >= soldier_count() || !can_act(k.soldier)) stalled = true;
+	const bool at_goal = c->has_goal && std::fabs(c->x - c->gx) < 1e-4f && std::fabs(c->y - c->gy) < 1e-4f;
+	const bool faced = c->has_goal && std::fabs(std::remainder(c->facing - c->gfacing, 2.f * kPi)) < 1e-3f;
+	const bool complete = at_goal && faced;
+	out.x = c->x; out.y = c->y; out.facing = c->facing;
+	out.stalled = stalled ? 1 : 0;
+	out.complete = complete ? 1 : 0;
+	out.moving = (c->has_goal && !complete && !stalled && !c->crew.empty()) ? 1 : 0;
+	return true;
+}
+
+bool World::convoy_remove(int id) {
+	for (auto at = convoys.begin(); at != convoys.end(); ++at) if (at->id == id) {
+		for (const auto &k : at->crew) if (k.soldier >= 0 && k.soldier < (int)convoy_of.size()) convoy_of[k.soldier] = 0;
+		convoys.erase(at);
+		return true;
+	}
+	return false;
+}
+
+void World::convoy_slot(const Convoy &c, const ConvoyCrew &k, float &x, float &y) const {
+	const float fx = std::cos(c.facing), fy = std::sin(c.facing);
+	x = c.x + (float)k.ox * fx - (float)k.oy * fy;
+	y = c.y + (float)k.ox * fy + (float)k.oy * fx;
+}
+
+bool World::convoy_crew_aligned(const Convoy &c) const {
+	if (c.crew.empty()) return false;
+	for (const auto &k : c.crew) {
+		if (k.soldier < 0 || k.soldier >= soldier_count() || !can_act(k.soldier)) return false;
+		float sx = 0.f, sy = 0.f;
+		convoy_slot(c, k, sx, sy);
+		const float dx = px[k.soldier] - sx, dy = py[k.soldier] - sy;
+		if (dx * dx + dy * dy > convoy_tolerance * convoy_tolerance) return false;
+	}
+	return true;
+}
+
+void World::convoy_stage(float dt) {
+	for (auto &c : convoys) {
+		if (!c.has_goal || !convoy_crew_aligned(c)) continue; // stalled, or a crew member is not yet on its slot: the anchor waits
+		const float ex = c.gx - c.x, ey = c.gy - c.y, ed = std::sqrt(ex * ex + ey * ey);
+		const bool straight = los(c.x, c.y, c.gx, c.gy);
+		const float stride = cfg.march_speed * dt;
+		float desired = c.facing; // no movement this step: hold the facing
+		if (straight && ed <= stride) { // the goal is within one step on a clear line: land exactly on it
+			c.x = c.gx; c.y = c.gy;
+			desired = c.gfacing;
+		} else {
+			float dirx = 0.f, diry = 0.f;
+			bool have = false;
+			if (straight) {
+				dirx = ex / ed; diry = ey / ed; have = true;
+			} else {
+				if (c.field < 0 || c.field >= (int)fields_.size() || fields_[c.field].goal != c.goal_cell) c.field = request_field(c.goal_cell);
+				const FlowField &ff = fields_[c.field];
+				if (!ff.dir.empty()) {
+					int x = (int)c.x, y = (int)c.y, bx = -1, by = -1;
+					for (int k = 0; k < 6; ++k) {
+						const uint8_t d = ff.dir[terrain.idx(x, y)];
+						if (d == 255) break;
+						x += DX[d]; y += DY[d];
+						if (k == 0 || los(c.x, c.y, (float)x + 0.5f, (float)y + 0.5f)) { bx = x; by = y; }
+						else break;
+					}
+					if (bx >= 0) {
+						const float ax = (float)bx + 0.5f - c.x, ay = (float)by + 0.5f - c.y, al = std::sqrt(ax * ax + ay * ay);
+						if (al > 1e-4f) { dirx = ax / al; diry = ay / al; have = true; }
+					}
+				}
+			}
+			if (have) {
+				float tx = c.x + dirx * stride, ty = c.y + diry * stride;
+				resolve(c.x, c.y, tx, ty, cfg.wall_margin);
+				// the anchor never enters unwalkable ground or a cell the crowd may not route through
+				if (terrain.walkable_f(tx, ty) && siege_route_cell(terrain.idx((int)tx, (int)ty))) {
+					c.x = tx; c.y = ty;
+					desired = std::atan2(diry, dirx);
+				}
+			}
+		}
+		const float df = std::remainder(desired - c.facing, 2.f * kPi);
+		const float mt = cfg.max_turn_rate * dt;
+		c.facing += std::clamp(df, -mt, mt);
+	}
+}
+
+bool World::convoy_steer(int i, float dt) {
+	if (!is_convoy_crew(i)) return false;
+	const Convoy *c = convoy_at(convoy_of[i]);
+	if (!c) return false;
+	const ConvoyCrew *k = nullptr;
+	for (const auto &e : c->crew) if (e.soldier == i) { k = &e; break; }
+	if (!k) return false;
+	const float p_x = px[i], p_y = py[i];
+	if (!can_act(i) || stagger[i] > 0 || knock_t[i] > 0) { // held where it stands, as siege crew are
+		nx[i] = p_x; ny[i] = p_y; vx[i] = vy[i] = 0;
+		state[i] = captive[i] ? S_CAPTIVE : !alive(i) ? S_DEAD : ko[i] > 0 ? S_DOWN : getup[i] > 0 ? S_GETUP : stagger[i] > 0 ? S_STAGGER : S_SLOT;
+		anim_t[i] += dt;
+		return true;
+	}
+	float sx = 0.f, sy = 0.f;
+	convoy_slot(*c, *k, sx, sy);
+	const float sdx = sx - p_x, sdy = sy - p_y, sd = std::sqrt(sdx * sdx + sdy * sdy);
+	float dvx = 0.f, dvy = 0.f;
+	if (sd > 1e-4f) {
+		const float sp = std::min(cfg.march_speed * 1.25f, sd * 3.0f);
+		dvx = sdx / sd * sp; dvy = sdy / sd * sp;
+	}
+	float qx = p_x + dvx * dt, qy = p_y + dvy * dt;
+	resolve(p_x, p_y, qx, qy, cfg.wall_margin);
+	resolve_siege_person(i, p_x, p_y, qx, qy);
+	if (terrain.contains((int)std::floor(qx), (int)std::floor(qy)) && siege_claims_cell(terrain.idx((int)std::floor(qx), (int)std::floor(qy)), i)) { qx = p_x; qy = p_y; }
+	nx[i] = qx; ny[i] = qy;
+	vx[i] = (qx - p_x) / dt; vy[i] = (qy - p_y) / dt;
+	if (vx[i] * vx[i] + vy[i] * vy[i] > 0.04f) face[i] = std::atan2(vy[i], vx[i]);
+	else face[i] = c->facing;
+	state[i] = S_SLOT;
+	running[i] = 0;
+	anim_t[i] += dt;
+	return true;
 }
 
 // ---------------------------------------------------------------- present
@@ -1954,6 +2171,11 @@ uint64_t World::state_hash() const {
 		for (const auto &member:g.members) { m(member.soldier); m(member.person); m(member.from); m(member.to); }
 	}
 	mv(host_vx); mv(host_vy);
+	mv(convoy_of); m(convoy_serial);
+	for (const auto &cv : convoys) {
+		m(cv.id); m(cv.x); m(cv.y); m(cv.facing); m(cv.has_goal); m(cv.gx); m(cv.gy); m(cv.gfacing); m(cv.goal_cell); m(cv.field);
+		mv(cv.crew); mv(cv.body);
+	}
 	for (auto *v : {&form, &slot, &target, &cell, &enc_target, &rescue_of, &capture_of, &captor, &rescued_by_, &capturing_by_}) mv(*v);
 	mv(ammo); mv(person_id);
 	mv(military_role); mv(post_holder); mv(released);

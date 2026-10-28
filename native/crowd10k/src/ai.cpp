@@ -237,7 +237,7 @@ void World::encircle_review(Formation &f, int fi) {
 	const float R2 = cfg.encircle_cells * cfg.encircle_cells;
 	for (int i : f.members) {
 		if (budget == 0) break;
-		if (troop[i] != T_MELEE || !can_act(i) || is_siege_crew(i) || escort_mode[i] >= 3 || enc_target[i] >= 0 || stagger[i] > 0 || rescue_of[i] >= 0 || capture_of[i] >= 0) continue;
+		if (troop[i] != T_MELEE || !can_act(i) || is_crewed(i) || escort_mode[i] >= 3 || enc_target[i] >= 0 || stagger[i] > 0 || rescue_of[i] >= 0 || capture_of[i] >= 0) continue;
 		int t = target[i];
 		if (t >= 0) {
 			float dx = px[t] - px[i], dy = py[t] - py[i];

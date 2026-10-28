@@ -76,6 +76,20 @@ void wg_crowd_cancel_controlled_step(wg_crowd *c,int person,int kind) { if (c &&
 int wg_crowd_apply_environment_damage(wg_crowd *c,int i,double d) { return c && c->world.apply_environment_damage(i,d) ? 1 : 0; }
 int wg_crowd_apply_melee_contact(wg_crowd *c,int i,double hp_loss,double stun_add) { return c && c->world.apply_melee_contact(i,hp_loss,stun_add) ? 1 : 0; }
 int wg_crowd_charge_exchange_fatigue(wg_crowd *c,int i,double amount) { return c && c->world.charge_exchange_fatigue(i,amount) ? 1 : 0; }
+int wg_crowd_add_convoy(wg_crowd *c,float ax,float ay,float facing) { return c ? c->world.add_convoy(ax,ay,facing) : 0; }
+int wg_crowd_convoy_set_crew(wg_crowd *c,int id,int soldier,int ox,int oy,int assigned) { return c && c->world.convoy_set_crew(id,soldier,ox,oy,assigned!=0) ? 1 : 0; }
+int wg_crowd_convoy_order_goal(wg_crowd *c,int id,float gx,float gy,float gfacing) { return c && c->world.convoy_order_goal(id,gx,gy,gfacing) ? 1 : 0; }
+int wg_crowd_convoy_set_body(wg_crowd *c,int id,const int32_t *cells,int count) {
+	if (!c || count < 0 || (count > 0 && !cells)) return 0;
+	return c->world.convoy_set_body(id,std::vector<int>(cells,cells+count)) ? 1 : 0;
+}
+int wg_crowd_convoy_state(const wg_crowd *c,int id,double *out) {
+	wg::ConvoyState s;
+	if (!c || !out || !c->world.convoy_state(id,s)) return 0;
+	out[0]=s.x; out[1]=s.y; out[2]=s.facing; out[3]=s.moving; out[4]=s.complete; out[5]=s.stalled;
+	return 1;
+}
+int wg_crowd_convoy_remove(wg_crowd *c,int id) { return c && c->world.convoy_remove(id) ? 1 : 0; }
 int wg_crowd_site_person_exit_ready(const wg_crowd *c,int i) { return c && c->world.site_person_exit_ready(i) ? 1 : 0; }
 int wg_crowd_site_person_release(wg_crowd *c,int i,double *out) {
 	wg::SitePersonRelease r;

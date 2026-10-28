@@ -11,14 +11,14 @@ using namespace rules;
 
 // ---------------------------------------------------------------- readiness (TerrainArmy.exchange_ready / exchange_initiates)
 bool World::exchange_ready(int i) const {
-	if (!can_act(i) || is_siege_crew(i) || escort_mode[i] >= 3 || stagger[i] > 0.0 || exch_cd[i] > 0.0 || rescue_of[i] >= 0 || capture_of[i] >= 0 || knock_t[i] > 0.0)
+	if (!can_act(i) || is_crewed(i) || escort_mode[i] >= 3 || stagger[i] > 0.0 || exch_cd[i] > 0.0 || rescue_of[i] >= 0 || capture_of[i] >= 0 || knock_t[i] > 0.0)
 		return false;
 	const Formation &f = formations[form[i]];
 	return !(f.routed && f.order != Order::HOLD);
 }
 
 bool World::initiates(int i, bool melee) const {
-	if (formations[form[i]].garrisoned || is_siege_crew(i) || escort_mode[i] >= 3) return false;
+	if (formations[form[i]].garrisoned || is_crewed(i) || escort_mode[i] >= 3) return false;
 	if (host_ctl[i]) return host_engage[i] != 0; // the player's own wish to fight
 	const Formation &f = formations[form[i]];
 	if (f.routed) return false;
@@ -533,7 +533,7 @@ void World::projectiles_advance(float dt) {
 
 // ---------------------------------------------------------------- actions: rescue / capture / escape (serial)
 bool World::order_capture(int g, int t) {
-	if (g < 0 || t < 0 || g >= soldier_count() || t >= soldier_count() || !can_act(g) || (escort_mode[g] != 0 || is_siege_crew(g)) || !alive(t) || ko[t] <= 0.0 || captive[t] || !hostile(team[g], team[t])) return false;
+	if (g < 0 || t < 0 || g >= soldier_count() || t >= soldier_count() || !can_act(g) || (escort_mode[g] != 0 || is_crewed(g)) || !alive(t) || ko[t] <= 0.0 || captive[t] || !hostile(team[g], team[t])) return false;
 	if (capture_of[g] >= 0 || rescue_of[g] >= 0 || capturing_by_[t] >= 0) return false;
 	float dx = px[t] - px[g], dy = py[t] - py[g];
 	if (dx * dx + dy * dy > 1.3f * 1.3f) return false;
@@ -551,7 +551,7 @@ bool World::order_capture(int g, int t) {
 bool World::order_escort_step(int i, int g, int destination) {
 	const int n = soldier_count(), cells = terrain.w * terrain.h;
 	if (i < 0 || i >= n || g < 0 || g >= n || destination < 0 || destination >= cells || !can_act(g)) return false;
-	if (escort_mode[i] >= 3 || escort_mode[g] >= 3 || is_siege_crew(i) || is_siege_crew(g) || siege_group(i) >= 0 || siege_group(g) >= 0) return false;
+	if (escort_mode[i] >= 3 || escort_mode[g] >= 3 || is_crewed(i) || is_crewed(g) || siege_group(i) >= 0 || siege_group(g) >= 0) return false;
 	if (!alive(i) || ko[i] > 0 || getup[i] > 0 || stagger[i] > 0 || prison_id[i] != 0) return false;
 	if ((captive[i] && captor[i] != g) || (!captive[i] && i != g) || rescue_of[i] >= 0 || capture_of[i] >= 0) return false;
 	if (escort_goal[i] >= 0) return escort_mode[i] == 1 && escort_goal[i] == destination;
@@ -588,7 +588,7 @@ bool World::order_controlled_step(int i, int destination, ControlledStepKind kin
 	if ((mode != 3 && mode != 5) || i < 0 || i >= n || destination < 0 || destination >= cells || !can_act(i)) return false;
 	const Formation &f = formations[form[i]];
 	if ((mode == 3 ? f.order != Order::HOLD : f.order == Order::RETREAT) || f.garrisoned || f.routed || prison_id[i] != 0 || stagger[i] > 0 || knock_t[i] > 0 || rescue_of[i] >= 0 || capture_of[i] >= 0) return false;
-	if (siege_group(i) >= 0 || siege_claims_cell(destination,i) || (mode == 3 && is_siege_crew(i))) return false;
+	if (siege_group(i) >= 0 || siege_claims_cell(destination,i) || ((mode == 3 && is_siege_crew(i)) || is_convoy_crew(i))) return false;
 	if (escort_mode[i] != 0 && escort_mode[i] != mode) return false;
 	if (escort_goal[i] >= 0) return escort_mode[i] == mode && escort_goal[i] == destination;
 	const int x = int(std::floor(px[i])), y = int(std::floor(py[i]));
@@ -656,7 +656,7 @@ void World::build_idle_blocks() {
 	for (auto &b : idle_ai_block_) std::fill(b.begin(), b.end(), 0);
 	const int n = soldier_count();
 	for (int r = 0; r < n; ++r) {
-		if (!can_act(r) || (escort_mode[r] != 0 || is_siege_crew(r)) || stagger[r] > 0 || rescue_of[r] >= 0 || capture_of[r] >= 0 || target[r] >= 0 || state[r] != S_SLOT) continue;
+		if (!can_act(r) || (escort_mode[r] != 0 || is_crewed(r)) || stagger[r] > 0 || rescue_of[r] >= 0 || capture_of[r] >= 0 || target[r] >= 0 || state[r] != S_SLOT) continue;
 		const Formation &F = formations[form[r]];
 		if (F.order != Order::HOLD || F.routed) continue;
 		int s = faction_slot_[team[r]];
@@ -717,7 +717,7 @@ void World::rescue_stage(float dt) {
 					int c = terrain.idx(xx, yy);
 					for (int k = hash_start_[c]; k < hash_start_[c + 1]; ++k) {
 						int r = hash_items_[k];
-						if (form[r] != (int)fi || r == p || !can_act(r) || (escort_mode[r] != 0 || is_siege_crew(r)) || stagger[r] > 0 || rescue_of[r] >= 0 || capture_of[r] >= 0 ||
+						if (form[r] != (int)fi || r == p || !can_act(r) || (escort_mode[r] != 0 || is_crewed(r)) || stagger[r] > 0 || rescue_of[r] >= 0 || capture_of[r] >= 0 ||
 						    target[r] >= 0 || state[r] != S_SLOT)
 							continue;
 						float dx = px[r] - px[p], dy = py[r] - py[p], d2 = dx * dx + dy * dy;
@@ -776,7 +776,7 @@ void World::person_actions_stage(double gdt) {
 					int c = terrain.idx(xx, yy);
 					for (int k = hash_start_[c]; k < hash_start_[c + 1]; ++k) {
 						int r = hash_items_[k];
-						if (!hostile(team[r], team[t]) || !can_act(r) || (escort_mode[r] != 0 || is_siege_crew(r)) || stagger[r] > 0 || rescue_of[r] >= 0 || capture_of[r] >= 0 ||
+						if (!hostile(team[r], team[t]) || !can_act(r) || (escort_mode[r] != 0 || is_crewed(r)) || stagger[r] > 0 || rescue_of[r] >= 0 || capture_of[r] >= 0 ||
 						    target[r] >= 0 || state[r] != S_SLOT || held_[r] >= GUARD_CAPACITY)
 							continue;
 						const Formation &F = formations[form[r]];

@@ -300,7 +300,7 @@ bool World::charge_siege_work(int i, double seconds) {
 	if (work_point_finish_ready_) return false; // Native final admission precedes all original point costs.
 	if (i < 0 || i >= soldier_count() || !std::isfinite(seconds) || seconds < 0 || !can_act(i) || !present[i]) return false;
 	const Formation &f = formations[form[i]];
-	if (f.order != Order::HOLD || f.routed || f.garrisoned || is_siege_crew(i) || prison_id[i] != 0 || rescue_of[i] >= 0 || capture_of[i] >= 0) return false;
+	if (f.order != Order::HOLD || f.routed || f.garrisoned || is_crewed(i) || prison_id[i] != 0 || rescue_of[i] >= 0 || capture_of[i] >= 0) return false;
 	if ((escort_mode[i] != 0 && escort_mode[i] != 5) || escort_goal[i] >= 0 || siege_group(i) >= 0 ||
 		vx[i] * vx[i] + vy[i] * vy[i] > 1e-6f || stagger[i] > 0 || knock_t[i] > 0 || act_t[i] > 0 || exch_cd[i] > 0 || ranged_cd[i] > 0 || skill_cd[i] > 0) return false;
 	const double amount = seconds * (10.0 / 3600.0); // original PersonFatigue.WORK_RATE
@@ -334,7 +334,7 @@ bool World::site_person_exit_ready(int i) const {
 	const std::vector<int> &members = formations[fi].members;
 	if (std::find(members.begin(), members.end(), i) == members.end()) return false;
 	if (escort_mode[i] != 0 || escort_goal[i] >= 0 || prison_id[i] != 0) return false;
-	if (rescue_of[i] >= 0 || capture_of[i] >= 0 || is_siege_crew(i) || siege_group(i) >= 0) return false;
+	if (rescue_of[i] >= 0 || capture_of[i] >= 0 || is_crewed(i) || siege_group(i) >= 0) return false;
 	if (stagger[i] > 0.0 || knock_t[i] > 0.0) return false;
 	if (in_melee_exchange(i)) return false;
 	for (int j = 0; j < soldier_count(); ++j)

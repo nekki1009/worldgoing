@@ -26,6 +26,15 @@ void wg_crowd_cancel_controlled_step(wg_crowd *c, int person, int kind);
 int wg_crowd_apply_environment_damage(wg_crowd *c, int i, double amount);
 int wg_crowd_apply_melee_contact(wg_crowd *c, int i, double hp_loss, double stun_add);
 int wg_crowd_charge_exchange_fatigue(wg_crowd *c, int i, double amount);
+/* G4 logistics convoys. Ids start at 1; 0 / 0 result = refused with no state change. Crew stand at anchor + (ox, oy)
+ * rotated by facing; the anchor advances only while every crew member is able to act and on its slot. */
+int wg_crowd_add_convoy(wg_crowd *c, float ax, float ay, float facing);
+int wg_crowd_convoy_set_crew(wg_crowd *c, int id, int soldier, int ox, int oy, int assigned);
+int wg_crowd_convoy_order_goal(wg_crowd *c, int id, float gx, float gy, float gfacing);
+int wg_crowd_convoy_set_body(wg_crowd *c, int id, const int32_t *cells, int count);
+/* out[6] = anchor x, y, facing, moving, complete, stalled. Returns 1 when the convoy exists. */
+int wg_crowd_convoy_state(const wg_crowd *c, int id, double *out);
+int wg_crowd_convoy_remove(wg_crowd *c, int id);
 /* G6.4 site exit: 1 when the soldier may leave the Site (conscious, free, in a formation, not in melee, no committed step). */
 int wg_crowd_site_person_exit_ready(const wg_crowd *c, int i);
 /* Releases a ready soldier from the live pool and formation. out[8] = {hp, fatigue, fatigue_rest, ammo, cell_x, cell_y, x, y}

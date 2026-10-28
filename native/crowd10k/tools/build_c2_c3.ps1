@@ -35,7 +35,7 @@ $src='crowd_core combat command ai crowd_c_api state render'.Split(' ') | ForEac
 Invoke-Bounded 'compile_core' $compiler "$flags /c $($src -join ' ') /Fo$run/"
 $objects='crowd_core combat command ai crowd_c_api state render'.Split(' ') | ForEach-Object { "$run/$_.obj" }
 Invoke-Bounded 'compile_binding' $compiler "$flags /LD /I$run $root/native/crowd10k/godot/crowd10k_gdext.cpp $($objects -join ' ') /Fo$run/crowd10k_gdext.obj /Fe$run/crowd10k.windows.x86_64.dll /link /IMPLIB:$run/crowd10k.lib"
-foreach($test in 'scenario_tests','c2_c3_tests','rules_vectors') { Invoke-Bounded "build_$test" $compiler "$flags $root/native/crowd10k/tests/$test.cpp $($objects -join ' ') /Fo$run/$test.obj /Fe$run/$test.exe" }
+foreach($test in 'scenario_tests','c2_c3_tests','rules_vectors','convoy_tests') { Invoke-Bounded "build_$test" $compiler "$flags $root/native/crowd10k/tests/$test.cpp $($objects -join ' ') /Fo$run/$test.obj /Fe$run/$test.exe" }
 $cflags=$flags.Replace('/std:c++17','')
 Invoke-Bounded 'build_api_test' $compiler "$cflags $root/native/crowd10k/src/api_test.c $($objects -join ' ') /Fo$run/api_test.obj /Fe$run/api_test.exe"
 if($RunTests) {
@@ -47,6 +47,7 @@ if($RunTests) {
  Invoke-Bounded 'c2_c3_tests' "$run/c2_c3_tests.exe" '' 120
  Invoke-Bounded 'api_test' "$run/api_test.exe" '' 120
  Invoke-Bounded 'scenario_tests' "$run/scenario_tests.exe" '' 120
+ Invoke-Bounded 'convoy_tests' "$run/convoy_tests.exe" '' 120
  Invoke-Bounded 'c2_c3_fuzz' "$run/c2_c3_tests.exe" '--fuzz' 120
 }
 @{run=$run;build_id=$buildId;dll_sha256=(Get-FileHash "$run/crowd10k.windows.x86_64.dll" -Algorithm SHA256).Hash;tests_run=[bool]$RunTests;asan=[bool]$Asan} | ConvertTo-Json | Set-Content "$run/result.json"

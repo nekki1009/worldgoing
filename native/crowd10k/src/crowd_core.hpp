@@ -279,6 +279,19 @@ struct MotionSegment { float from_x = 0, from_y = 0, to_x = 0, to_y = 0; };
 // Receipt of World::site_person_release: the travelling person's values at departure. fatigue values are the
 // formation's shared pool (the native World keeps no per-person fatigue).
 struct SitePersonRelease { double hp = 0, fatigue = 0, fatigue_rest = 0, x = 0, y = 0; int ammo = 0, cell_x = 0, cell_y = 0; };
+// G4 logistics convoy (one wagon or cart). Crew member k stands at anchor + (ox, oy) rotated by the anchor facing.
+struct ConvoyCrew { int soldier = -1; int ox = 0, oy = 0; };
+struct Convoy {
+	int id = 0;
+	float x = 0, y = 0, facing = 0;    // anchor (cell coordinates) and facing in radians (0 = +x)
+	bool has_goal = false;
+	float gx = 0, gy = 0, gfacing = 0; // goal anchor (cell centre) and goal facing
+	int goal_cell = -1;
+	int field = -1;                    // flow field index for goal_cell; re-requested when evicted or stale
+	std::vector<ConvoyCrew> crew;
+	std::vector<int> body;             // footprint cells; stored only, blocking comes with the body step (G4 S2)
+};
+struct ConvoyState { double x = 0, y = 0, facing = 0; int moving = 0, complete = 0, stalled = 0; };
 
 class World {
 public:
@@ -398,6 +411,21 @@ public:
 	bool siege_person_cell(int person, int from, int to) const;
 	void resolve_siege_person(int person, float old_x, float old_y, float &x, float &y) const;
 	bool is_siege_crew(int person) const { return person >= 0 && person < (int)siege_crew.size() && siege_crew[person] != 0; }
+	// G4 logistics convoys. Ids start at 1; 0 / false = refused with no state change. Saved (KW10) and hashed.
+	// Crew are steered by their convoy (not by ordinary orders, slots or AI), like siege crew.
+	static constexpr float convoy_tolerance = 0.5f; // crew distance from its slot before the anchor may advance
+	std::vector<Convoy> convoys;
+	std::vector<int32_t> convoy_of; // per soldier: owning convoy id, 0 when not convoy crew
+	int convoy_serial = 0;
+	int add_convoy(float ax, float ay, float facing);
+	bool convoy_set_crew(int id, int soldier, int ox, int oy, bool assigned);
+	bool convoy_order_goal(int id, float gx, float gy, float gfacing);
+	bool convoy_set_body(int id, const std::vector<int> &cells);
+	bool convoy_state(int id, ConvoyState &out) const;
+	bool convoy_remove(int id);
+	bool is_convoy_crew(int person) const { return person >= 0 && person < (int)convoy_of.size() && convoy_of[person] != 0; }
+	// acting exclusions shared by siege crew and convoy crew (AI, exchange, rescue, capture, work)
+	bool is_crewed(int person) const { return is_siege_crew(person) || is_convoy_crew(person); }
 	int siege_group(int person) const { return person >= 0 && person < (int)siege_member_group.size() ? siege_member_group[person] : -1; }
 
 	bool admit_prison(int person, int guard, int64_t prison, int slot_cell, int contact_cell);
@@ -689,6 +717,15 @@ private:
 	double fatigue_recovery_multiplier(int formation, double garrison, double housing) const;
 	bool safe_fatigue_rest(int formation, bool busy, bool threat, bool fire_safe, double combat_left_now) const;
 	void charge(int i, double amount);
+
+	// G4 convoys (crowd_core.cpp)
+	Convoy *convoy_at(int id);
+	const Convoy *convoy_at(int id) const;
+	bool convoy_reachable(int start, int goal) const;
+	bool convoy_crew_aligned(const Convoy &c) const;
+	void convoy_slot(const Convoy &c, const ConvoyCrew &k, float &x, float &y) const;
+	void convoy_stage(float dt);
+	bool convoy_steer(int i, float dt);
 
 	// ai (ai.cpp)
 	void ai_review();
