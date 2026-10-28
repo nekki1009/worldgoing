@@ -70,6 +70,9 @@ struct FlowField {
 	uint32_t last_used = 0;
 	std::vector<uint32_t> cost; // integrated cost to goal, 10 orth / 14 diag
 	std::vector<uint8_t> dir;   // best next direction, 255 = goal or unreachable
+	// true: convoy bodies are impassable in this field (ordinary people route around them). false: built over
+	// terrain and siege cells only, used by convoy anchors so their own body never blocks their own route.
+	bool body_aware = true;
 };
 
 class Pool {
@@ -281,6 +284,7 @@ struct MotionSegment { float from_x = 0, from_y = 0, to_x = 0, to_y = 0; };
 struct SitePersonRelease { double hp = 0, fatigue = 0, fatigue_rest = 0, x = 0, y = 0; int ammo = 0, cell_x = 0, cell_y = 0; };
 // G4 logistics convoy (one wagon or cart). Crew member k stands at anchor + (ox, oy) rotated by the anchor facing.
 struct ConvoyCrew { int soldier = -1; int ox = 0, oy = 0; };
+struct ConvoyOffset { int ox = 0, oy = 0; };
 struct Convoy {
 	int id = 0;
 	float x = 0, y = 0, facing = 0;    // anchor (cell coordinates) and facing in radians (0 = +x)
@@ -289,7 +293,11 @@ struct Convoy {
 	int goal_cell = -1;
 	int field = -1;                    // flow field index for goal_cell; re-requested when evicted or stale
 	std::vector<ConvoyCrew> crew;
-	std::vector<int> body;             // footprint cells; stored only, blocking comes with the body step (G4 S2)
+	// Body footprint in convoy-local offsets (rotated by facing exactly like crew). Saved and hashed. The absolute
+	// cells are floor(anchor + rotate(offset)) and are re-derived every time the anchor or facing changes.
+	std::vector<ConvoyOffset> body;
+	std::vector<int> body_cells;       // sorted absolute footprint at the current pose. Derived: not saved, rebuilt on load.
+	bool body_stalled = false;         // the last step refused to advance or turn into another body or occupied cells. Saved.
 };
 struct ConvoyState { double x = 0, y = 0, facing = 0; int moving = 0, complete = 0, stalled = 0; };
 
@@ -407,15 +415,21 @@ public:
 	void advance_siege_compounds(float dt);
 	bool move_siege_member(int person, float dt);
 	bool set_siege_navigation(const std::vector<int> &blocked, const std::vector<int64_t> &exits);
-	bool siege_route_cell(int cell) const { return cell >= 0 && cell < (int)terrain.height.size() && (siege_person_blocked.empty() || !siege_person_blocked[cell]); }
+	// siege_nav_cell: terrain plus siege bodies. siege_route_cell additionally excludes convoy body cells; people and
+	// flow fields (body_aware) use it. Convoy anchors use siege_nav_cell and check bodies in convoy_cells_clear.
+	bool siege_nav_cell(int cell) const { return cell >= 0 && cell < (int)terrain.height.size() && (siege_person_blocked.empty() || !siege_person_blocked[cell]); }
+	bool convoy_body_cell(int cell) const { return cell >= 0 && cell < (int)convoy_body_owner.size() && convoy_body_owner[cell] != 0; }
+	bool siege_route_cell(int cell) const { return siege_nav_cell(cell) && !convoy_body_cell(cell); }
 	bool siege_person_cell(int person, int from, int to) const;
 	void resolve_siege_person(int person, float old_x, float old_y, float &x, float &y) const;
 	bool is_siege_crew(int person) const { return person >= 0 && person < (int)siege_crew.size() && siege_crew[person] != 0; }
-	// G4 logistics convoys. Ids start at 1; 0 / false = refused with no state change. Saved (KW10) and hashed.
+	// G4 logistics convoys. Ids start at 1; 0 / false = refused with no state change. Saved (KW11) and hashed.
 	// Crew are steered by their convoy (not by ordinary orders, slots or AI), like siege crew.
 	static constexpr float convoy_tolerance = 0.5f; // crew distance from its slot before the anchor may advance
 	std::vector<Convoy> convoys;
 	std::vector<int32_t> convoy_of; // per soldier: owning convoy id, 0 when not convoy crew
+	// Derived per cell: id of the convoy whose body covers it, 0 when none. Empty when no convoy has a body cell.
+	std::vector<int32_t> convoy_body_owner;
 	int convoy_serial = 0;
 	int add_convoy(float ax, float ay, float facing);
 	bool convoy_set_crew(int id, int soldier, int ox, int oy, bool assigned);
@@ -423,6 +437,8 @@ public:
 	bool convoy_set_body(int id, const std::vector<int> &cells);
 	bool convoy_state(int id, ConvoyState &out) const;
 	bool convoy_remove(int id);
+	// Absolute footprint of a convoy at its current pose (sorted); false if unknown.
+	bool convoy_body_at(int id, std::vector<int> &cells) const;
 	bool is_convoy_crew(int person) const { return person >= 0 && person < (int)convoy_of.size() && convoy_of[person] != 0; }
 	// acting exclusions shared by siege crew and convoy crew (AI, exchange, rescue, capture, work)
 	bool is_crewed(int person) const { return is_siege_crew(person) || is_convoy_crew(person); }
@@ -666,7 +682,7 @@ private:
 	std::vector<uint8_t> touch_;
 
 	// movement
-	int request_field(int goal_cell);
+	int request_field(int goal_cell, bool body_aware = true);
 	void build_field(FlowField &f);
 	void build_hash();
 	void formation_stage(float dt);
@@ -674,7 +690,8 @@ private:
 	void soldier_stage(float dt, int ch);
 	void compact_slots(Formation &f);
 	bool in_melee_exchange(int i) const; // G6.4: i fights in melee, is the melee target of one, or has an encircle target
-	bool los(float ax, float ay, float bx, float by, const std::vector<int> *rescue_domain = nullptr) const;
+	// body_blind: judge only terrain and siege bodies (convoy anchors pass true so their own body does not block them)
+	bool los(float ax, float ay, float bx, float by, const std::vector<int> *rescue_domain = nullptr, bool body_blind = false) const;
 	float ray_clip(float ax, float ay, float bx, float by) const;
 	void resolve(float ox, float oy, float &x, float &y, float margin) const;
 	int nearest_walkable(int goal_cell) const;
@@ -726,6 +743,14 @@ private:
 	void convoy_slot(const Convoy &c, const ConvoyCrew &k, float &x, float &y) const;
 	void convoy_stage(float dt);
 	bool convoy_steer(int i, float dt);
+	// G4 S2 bodies. footprint: sorted absolute cells of c's body for an anchor and facing; false if any is off-map.
+	// cells_clear: every cell walkable, not another convoy's body, and no living non-crew soldier standing on it.
+	// set_cells: installs c's derived footprint into convoy_body_owner and refreshes body-aware fields when it changed.
+	bool convoy_footprint(const Convoy &c, float ax, float ay, float facing, std::vector<int> &cells) const;
+	bool convoy_cells_clear(const Convoy &c, const std::vector<int> &cells) const;
+	void set_convoy_cells(Convoy &c, std::vector<int> cells);
+	bool rebuild_convoy_bodies();   // load: re-derive every footprint and the owner map; false if they do not fit
+	void refresh_body_fields();     // body-aware fields are cleared and re-queued; LOS observations are reset
 
 	// ai (ai.cpp)
 	void ai_review();

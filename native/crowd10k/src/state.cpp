@@ -132,13 +132,13 @@ template <class Ar> void io_formation(Ar &ar, Formation &f) {
 template <class Ar> void io_convoy(Ar &ar, Convoy &c) {
 	ar.pod(c.id); ar.pod(c.x); ar.pod(c.y); ar.pod(c.facing);
 	ar.pod(c.has_goal); ar.pod(c.gx); ar.pod(c.gy); ar.pod(c.gfacing); ar.pod(c.goal_cell); ar.pod(c.field);
-	ar.vec(c.crew); ar.vec(c.body);
+	ar.vec(c.crew); ar.vec(c.body); ar.pod(c.body_stalled); // body_cells are derived on load (rebuild_convoy_bodies)
 }
 
 } // namespace
 
 template <class Ar> void World::serialize(Ar &ar) {
-	const uint32_t magic = 0x3031574Bu; // "KW10": logistics convoys (G4); KW09: released soldiers (G6.4 site exit); KW08: per-person post holder (R1b)
+	const uint32_t magic = 0x3131574Bu; // "KW11": convoy body offsets, body_stalled, body-aware flow fields (G4 S2); KW10: logistics convoys (G4); KW09: released soldiers (G6.4 site exit); KW08: per-person post holder (R1b)
 	uint32_t m = magic;
 	ar.pod(m);
 	if (Ar::loading && m != magic) { ar.ok = false; return; }
@@ -192,7 +192,7 @@ template <class Ar> void World::serialize(Ar &ar) {
 	if (Ar::loading) fields_.assign((size_t)nfield, FlowField{});
 	for (auto &fl : fields_) {
 		uint8_t built = fl.dir.empty() ? 0 : 1;
-		ar.pod(fl.goal); ar.pod(fl.last_used); ar.pod(built);
+		ar.pod(fl.goal); ar.pod(fl.last_used); ar.pod(built); ar.pod(fl.body_aware);
 		if (built > 1) { ar.ok = false; return; }
 		if (Ar::loading) { fl.cost.clear(); fl.dir.clear(); if (built) fl.dir.push_back(1); /* marker, rebuilt below */ }
 	}
@@ -411,8 +411,11 @@ bool World::validate(std::string *error, bool allow_site_jobs) const {
 				CHECK_VALID(std::abs(k.ox) <= 8 && std::abs(k.oy) <= 8);
 				owned[k.soldier] = 1;
 			}
-			std::unordered_set<int> footprint;
-			for (int v : cv.body) CHECK_VALID(v >= 0 && v < (int)cells && terrain.walkable(v % terrain.w, v / terrain.w) && footprint.insert(v).second);
+			// G4 S2 body: offsets are bounded, and the derived footprint at the current pose is the one installed
+			for (const auto &o : cv.body) CHECK_VALID(std::abs(o.ox) <= 8 && std::abs(o.oy) <= 8);
+			std::vector<int> derived;
+			CHECK_VALID(convoy_footprint(cv, cv.x, cv.y, cv.facing, derived) && derived == cv.body_cells);
+			for (int v : cv.body_cells) CHECK_VALID(terrain.walkable(v % terrain.w, v / terrain.w) && convoy_body_owner.size() == cells && convoy_body_owner[v] == cv.id);
 		}
 		for (size_t i = 0; i < n; ++i) CHECK_VALID(convoy_of[i] == 0 ? !owned[i] : (owned[i] && convoy_ids.count(convoy_of[i]) == 1));
 	}
@@ -479,7 +482,7 @@ void World::swap_state(World &o) {
 	swap(captor, o.captor);
 	swap(prison_id, o.prison_id); swap(escort_goal, o.escort_goal); swap(escort_mode, o.escort_mode); swap(housing_attendance_cell, o.housing_attendance_cell);
 	swap(contact_revision, o.contact_revision);
-	swap(convoys, o.convoys); swap(convoy_of, o.convoy_of); swap(convoy_serial, o.convoy_serial);
+	swap(convoys, o.convoys); swap(convoy_of, o.convoy_of); swap(convoy_body_owner, o.convoy_body_owner); swap(convoy_serial, o.convoy_serial);
 	swap(siege_crew,o.siege_crew); swap(siege_member_group,o.siege_member_group); swap(siege_step_source,o.siege_step_source); swap(siege_compounds,o.siege_compounds); swap(siege_serial,o.siege_serial); swap(siege_person_blocked,o.siege_person_blocked); swap(siege_wreck_exit,o.siege_wreck_exit);
 	swap(ammo, o.ammo);
 	swap(equip, o.equip);
@@ -553,7 +556,8 @@ bool World::load_impl(const std::vector<uint8_t> &blob, const std::vector<int> *
 	if (work_point_active_ || blob.empty() || blob.size() > 16 * 1024 * 1024) return false;
 	try {
 		World candidate(1); Reader r(blob); candidate.serialize(r);
-		if (!r.ok || r.at != blob.size() || !candidate.validate(nullptr, false)) return false;
+		// convoy body cells are derived from the saved offsets, anchors and facings before validation checks them
+		if (!r.ok || r.at != blob.size() || !candidate.rebuild_convoy_bodies() || !candidate.validate(nullptr, false)) return false;
 		// Original Site navigation is restored only through this explicit prepare
 		// overload, before rebuilding derived directions. Serialized field order,
 		// queue, LOS observations and formation references remain untouched.

@@ -241,6 +241,102 @@ static void invalid_requests_change_nothing() {
 	REQUIRE(w.validate());
 }
 
+// G4 S2 bodies: the footprint of a convoy at its current pose (sorted absolute cells).
+static std::vector<int> body_of(const World &w, int id) {
+	std::vector<int> cells;
+	REQUIRE(w.convoy_body_at(id, cells));
+	return cells;
+}
+static int cell_of(const World &w, int i) { return w.terrain.idx((int)std::floor(w.px[i]), (int)std::floor(w.py[i])); }
+
+static void non_crew_detours_around_body() {
+	test_case = "a non-crew soldier ordered through a convoy body detours and never stands inside it";
+	World w(1); setup(w);
+	// no crew and no goal: the convoy holds and its body stands across the formation's straight route west
+	const int id = w.add_convoy(20.5f, 30.5f, 0.f);
+	REQUIRE(id > 0);
+	REQUIRE(w.convoy_set_body(id, {cell(20, 29), cell(20, 30), cell(20, 31)}));
+	const std::vector<int> body = body_of(w, id);
+	REQUIRE(body == std::vector<int>({cell(20, 29), cell(20, 30), cell(20, 31)}));
+	w.order_move(0, 10.5f, 30.5f, 0.f); // soldiers 0, 1 and 2 are all non-crew
+	for (int t = 0; t < 900; ++t) {
+		step(w);
+		for (int i = 0; i < 3; ++i) REQUIRE(!std::binary_search(body.begin(), body.end(), cell_of(w, i)));
+	}
+	REQUIRE(w.px[2] < 19.0f); // the rear member got past the body: it went around, it did not stop at it
+	REQUIRE(body_of(w, id) == body); // the held convoy did not move
+	REQUIRE(w.validate());
+}
+
+static void crew_stand_on_their_own_body() {
+	test_case = "crew are not blocked by their own convoy body, and the body moves with the anchor";
+	World w(1); setup(w);
+	const int id = straight_convoy(w);
+	// the body covers the anchor and both crew slots: offsets (0, 0), (-1, 0), (-2, 0)
+	REQUIRE(w.convoy_set_body(id, {cell(5, 5), cell(4, 5), cell(3, 5)}));
+	REQUIRE(w.convoy_order_goal(id, 10.5f, 5.5f, 0.f));
+	ConvoyState st{};
+	bool done = false;
+	for (int t = 0; t < 2400 && !done; ++t) {
+		step(w);
+		REQUIRE(w.convoy_state(id, st));
+		done = st.complete != 0;
+	}
+	REQUIRE(done);
+	REQUIRE(st.stalled == 0);
+	for (int t = 0; t < 60; ++t) step(w);
+	close_to(w.px[0], 9.5, 0.05); close_to(w.py[0], 5.5, 0.05);
+	close_to(w.px[1], 8.5, 0.05); close_to(w.py[1], 5.5, 0.05);
+	REQUIRE(body_of(w, id) == std::vector<int>({cell(8, 5), cell(9, 5), cell(10, 5)}));
+	REQUIRE(w.validate());
+}
+
+static void convoys_do_not_interpenetrate() {
+	test_case = "two convoys do not interpenetrate: the anchor refuses to advance into another body and reports stalled";
+	World w(1); setup(w);
+	const int a = straight_convoy(w);
+	REQUIRE(w.convoy_set_body(a, {cell(5, 4), cell(5, 5), cell(5, 6)}));
+	const int b = w.add_convoy(8.5f, 5.5f, 0.f); // no crew, no goal: it holds, its body stands on A's route
+	REQUIRE(b == a + 1);
+	REQUIRE(w.convoy_set_body(b, {cell(8, 4), cell(8, 5), cell(8, 6)}));
+	REQUIRE(w.convoy_order_goal(a, 10.5f, 5.5f, 0.f));
+	ConvoyState st{};
+	for (int t = 0; t < 900; ++t) {
+		step(w);
+		REQUIRE(w.convoy_state(a, st));
+		const std::vector<int> ca = body_of(w, a), cb = body_of(w, b);
+		for (int c : ca) REQUIRE(!std::binary_search(cb.begin(), cb.end(), c));
+	}
+	REQUIRE(w.convoy_state(a, st));
+	REQUIRE(st.stalled == 1 && st.complete == 0 && st.moving == 0);
+	REQUIRE(st.x >= 7.0 && st.x < 8.0); // its body reaches column 8 only when the anchor would pass x = 8
+	REQUIRE(w.validate());
+}
+
+static void save_load_mid_route_with_body() {
+	test_case = "save and load mid-route with a body: identical hash, body cells and steps";
+	World w(1); setup(w);
+	const int id = straight_convoy(w);
+	REQUIRE(w.convoy_set_body(id, {cell(5, 5), cell(4, 5), cell(3, 5)}));
+	REQUIRE(w.convoy_order_goal(id, 10.5f, 5.5f, 0.f));
+	for (int t = 0; t < 40; ++t) step(w);
+	ConvoyState before{};
+	REQUIRE(w.convoy_state(id, before) && before.moving == 1);
+	const std::vector<uint8_t> blob = w.save();
+	REQUIRE(!blob.empty());
+	World loaded(1);
+	REQUIRE(loaded.load(blob));
+	REQUIRE(loaded.state_hash() == w.state_hash());
+	REQUIRE(loaded.save() == blob);
+	REQUIRE(body_of(loaded, id) == body_of(w, id)); // rebuilt from the saved offsets, anchor and facing
+	for (int t = 0; t < 120; ++t) {
+		step(w);
+		step(loaded);
+		REQUIRE(loaded.state_hash() == w.state_hash());
+	}
+	REQUIRE(w.validate() && loaded.validate());
+}
+
 int main() {
 	straight_line_five_cells();
 	ninety_degree_turn();
@@ -249,6 +345,10 @@ int main() {
 	crew_ignore_ordinary_orders();
 	save_load_mid_route_matches();
 	invalid_requests_change_nothing();
+	non_crew_detours_around_body();
+	crew_stand_on_their_own_body();
+	convoys_do_not_interpenetrate();
+	save_load_mid_route_with_body();
 	std::printf("CONVOY_NATIVE_CONTRACT checks=%d failures=%d\n", checks, failures);
 	return failures ? 1 : 0;
 }
