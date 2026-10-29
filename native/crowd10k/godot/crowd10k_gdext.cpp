@@ -760,6 +760,51 @@ void m_convoy_remove(CALL_ARGS) {
 	int id = 0;
 	ret_bool(r, arg_i32(a[0], id) && w.convoy_remove(id));
 }
+// G4 formation following: attach (every crew member must be a member of the formation), detach, and the attached
+// formation (-1 detached, -2 unknown convoy). An explicit convoy_order_goal also detaches.
+void m_convoy_attach_formation(CALL_ARGS) {
+	SELF; NEED(2); WORLD;
+	int id = 0, formation = 0;
+	ret_bool(r, arg_i32(a[0], id) && arg_i32(a[1], formation) && w.convoy_attach_formation(id, formation));
+}
+void m_convoy_detach_formation(CALL_ARGS) {
+	SELF; NEED(1); WORLD;
+	int id = 0;
+	ret_bool(r, arg_i32(a[0], id) && w.convoy_detach_formation(id));
+}
+void m_convoy_formation(CALL_ARGS) {
+	SELF; NEED(1); WORLD;
+	int id = 0;
+	ret_int(r, arg_i32(a[0], id) ? w.convoy_formation(id) : -2);
+}
+// Diagnostics, read-only: a soldier's slot target [slot index, x, y, clip], empty when unknown; and every claimed cell
+// as [cell, owner convoy, ...].
+void m_soldier_slot_target(CALL_ARGS) {
+	SELF; NEED(1); WORLD;
+	int i = 0, s = -1;
+	float x = 0.f, y = 0.f, clip = 1.f;
+	if (!arg_i32(a[0], i) || !w.slot_target(i, s, x, y, clip)) { return_doubles(r, {}); return; }
+	return_doubles(r, {double(s), double(x), double(y), double(clip)});
+}
+void m_convoy_claim_cells(CALL_ARGS) {
+	SELF; NEED(0); WORLD;
+	std::vector<int32_t> out;
+	for (size_t v = 0; v < w.convoy_claim_owner.size(); ++v) if (w.convoy_claim_owner[v] != 0) { out.push_back((int32_t)v); out.push_back(w.convoy_claim_owner[v]); }
+	return_ints(r, out);
+}
+// Diagnostics, read-only: [has_goal, goal x, goal y, goal facing, goal cell, formation, slot index, blocked stages,
+// no_slot, reason]; empty when the convoy is unknown.
+void m_convoy_goal(CALL_ARGS) {
+	SELF; NEED(1); WORLD;
+	int id = 0;
+	wg::ConvoyState s;
+	if (!arg_i32(a[0], id) || !w.convoy_state(id, s)) { return_doubles(r, {}); return; }
+	for (const auto &c : w.convoys) if (c.id == id) {
+		return_doubles(r, {double(c.has_goal), c.gx, c.gy, c.gfacing, double(c.goal_cell), double(c.formation), double(c.slot_index), double(c.blocked), double(c.no_slot), double(s.reason)});
+		return;
+	}
+	return_doubles(r, {});
+}
 void m_begin_siege_compound(CALL_ARGS) {
 	SELF; NEED(5); WORLD;
 	void *people=arg_packed(a[0],LONGS),*source=arg_packed(a[1],INTS),*target=arg_packed(a[2],INTS),*sweep=arg_packed(a[3],INTS);
@@ -1370,6 +1415,12 @@ void initialize(void *, GDExtensionInitializationLevel level) {
 	add_method("convoy_state", m_convoy_state, {{INT,"convoy"}}, DOUBLES);
 	add_method("convoy_body", m_convoy_body, {{INT,"convoy"}}, INTS);
 	add_method("convoy_remove", m_convoy_remove, {{INT,"convoy"}}, BOOL);
+	add_method("convoy_attach_formation", m_convoy_attach_formation, {{INT,"convoy"},{INT,"formation"}}, BOOL);
+	add_method("convoy_detach_formation", m_convoy_detach_formation, {{INT,"convoy"}}, BOOL);
+	add_method("convoy_formation", m_convoy_formation, {{INT,"convoy"}}, INT);
+	add_method("convoy_goal", m_convoy_goal, {{INT,"convoy"}}, DOUBLES);
+	add_method("soldier_slot_target", m_soldier_slot_target, {{INT,"soldier"}}, DOUBLES);
+	add_method("convoy_claim_cells", m_convoy_claim_cells, {}, INTS);
 	add_method("charge_siege_round",m_charge_siege_round,{{INTS,"members"},{FLOAT,"per_person"}},BOOL);
 	add_method("charge_siege_work",m_charge_siege_work,{{INT,"soldier"},{FLOAT,"game_seconds"}},BOOL);
 	add_method("contact_pose_state",m_contact_pose_state,{{INT,"soldier"}},DOUBLES);

@@ -90,6 +90,9 @@ int wg_crowd_convoy_state(const wg_crowd *c,int id,double *out) {
 	return 1;
 }
 int wg_crowd_convoy_remove(wg_crowd *c,int id) { return c && c->world.convoy_remove(id) ? 1 : 0; }
+int wg_crowd_convoy_attach_formation(wg_crowd *c,int id,int formation) { return c && c->world.convoy_attach_formation(id,formation) ? 1 : 0; }
+int wg_crowd_convoy_detach_formation(wg_crowd *c,int id) { return c && c->world.convoy_detach_formation(id) ? 1 : 0; }
+int wg_crowd_convoy_formation(const wg_crowd *c,int id) { return c ? c->world.convoy_formation(id) : -2; }
 int wg_crowd_site_person_exit_ready(const wg_crowd *c,int i) { return c && c->world.site_person_exit_ready(i) ? 1 : 0; }
 int wg_crowd_site_person_release(wg_crowd *c,int i,double *out) {
 	wg::SitePersonRelease r;

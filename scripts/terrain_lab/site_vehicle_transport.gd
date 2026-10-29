@@ -2760,6 +2760,10 @@ func _convoy_create(vehicle: Dictionary) -> Dictionary:
 		return Runtime.fail("BUSY", "原生車隊乘員或車體未接受；原人物保留一般行為")
 	vehicle["convoy_id"] = id
 	_convoy_checked[str(vehicle.get("id", ""))] = true
+	# G4 OPUS: the vehicle joins its operator's formation layout. The native slot layout then owns its goal; GD sends none.
+	# Attaching is passive (the vehicle holds where it stands until the formation is ordered). A refusal leaves it detached.
+	if not bool(crowd.convoy_attach_formation(id, int(owner.formation_index))):
+		push_warning("G4DIAG convoy %s not attached to formation %d" % [str(vehicle.get("id", "")), int(owner.formation_index)])
 	return Runtime.ok("後勤車隊已建立")
 
 func _convoy_release(vehicle: Dictionary) -> void:
@@ -2773,9 +2777,19 @@ func _convoy_release(vehicle: Dictionary) -> void:
 	_convoy_refused.erase(key)
 	_convoy_adopted.erase(key)
 
-func _convoy_order(vehicle: Dictionary, owner: Variant, pose: Dictionary) -> void:
+# True while the native convoy follows its formation's vehicle slot (G4 OPUS). An explicit order detaches it natively.
+func convoy_attached(vehicle: Dictionary) -> bool:
+	var id := int(vehicle.get("convoy_id", 0))
+	return id > 0 and convoy_native_supported() and int(lab.crowd_site.crowd.convoy_formation(id)) >= 0
+
+func _convoy_order(vehicle: Dictionary, _owner: Variant, pose: Dictionary) -> void:
 	var key := str(vehicle.get("id", ""))
-	var rider: Vector2i = CONVOY_RIDER[str(vehicle.kind)]
+	# An attached convoy takes its goal from the native formation layout; GD sends nothing for it.
+	if convoy_attached(vehicle):
+		_convoy_goal_orders.erase(key)
+		_convoy_adopted.erase(key)
+		_convoy_sent.erase(key)
+		return
 	# An explicit order stays active from the moment it is sent until the native convoy reports it complete. A reading
 	# taken before the order reached the native convoy cannot end it.
 	if _convoy_goal_orders.has(key) and bool(_convoy_goal_orders[key].sent) and bool(pose.complete): _convoy_goal_orders.erase(key)
@@ -2787,15 +2801,8 @@ func _convoy_order(vehicle: Dictionary, owner: Variant, pose: Dictionary) -> voi
 	if _convoy_adopted.has(key):
 		if not bool(pose.complete): return
 		_convoy_adopted.erase(key)
-	var point := Vector2(float(pose.x), float(pose.y)) # no order: hold at the current pose
-	var facing := float(pose.facing)
-	if owner.combat_order in [TerrainArmy.CombatOrder.MOVE, TerrainArmy.CombatOrder.RETREAT, TerrainArmy.CombatOrder.RETURN]:
-		# Formation goal is the operator's goal; the anchor sits at the same offset the crew does.
-		var formation: Dictionary = lab.crowd_site.formation_state(int(owner.formation_index))
-		if formation.has("goal_x") and formation.has("goal_y") and formation.has("goal_facing"):
-			facing = float(formation.goal_facing)
-			point = Vector2(float(formation.goal_x), float(formation.goal_y)) - _rotate_offset(rider, facing)
-	_convoy_send(vehicle, point, facing)
+	# Detached (after an explicit vehicle order) and no order: hold at the current pose until the operator is reassigned.
+	_convoy_send(vehicle, Vector2(float(pose.x), float(pose.y)), float(pose.facing))
 
 # The only path that changes the native goal. Equal targets are not resent; a refused target is reported once.
 func _convoy_send(vehicle: Dictionary, point: Vector2, facing: float) -> void:

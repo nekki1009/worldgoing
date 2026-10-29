@@ -128,17 +128,22 @@ template <class Ar> void io_formation(Ar &ar, Formation &f) {
 	ar.pod(f.commander_present); ar.pod(f.resupplying);
 	ar.pod(f.no_orders); ar.pod(f.host_center); ar.pod(f.fully_fed); ar.pod(f.sustain_morale_delta);
 	ar.pod(f.garrisoned);
+	ar.pod(f.reslot_pending); ar.pod(f.rest_gx); ar.pod(f.rest_gy); ar.pod(f.rest_gf); ar.pod(f.rest_slots);
 }
 template <class Ar> void io_convoy(Ar &ar, Convoy &c) {
 	ar.pod(c.id); ar.pod(c.x); ar.pod(c.y); ar.pod(c.facing);
 	ar.pod(c.has_goal); ar.pod(c.gx); ar.pod(c.gy); ar.pod(c.gfacing); ar.pod(c.goal_cell); ar.pod(c.field);
 	ar.vec(c.crew); ar.vec(c.body); ar.pod(c.body_stalled); ar.pod(c.stall_reason); // body_cells are derived on load (rebuild_convoy_bodies); stall_reason is saved so the reported pose matches after load
+	// KW13: formation following (layout key, slot, wait counter, route region and route cost field, claimed cells)
+	ar.pod(c.formation); ar.pod(c.key_gx); ar.pod(c.key_gy); ar.pod(c.key_q); ar.pod(c.key_slots); ar.pod(c.key_count);
+	ar.pod(c.slot_index); ar.pod(c.blocked); ar.pod(c.no_slot); ar.pod(c.turn_to); ar.pod(c.move_to);
+	ar.pod(c.plan_x0); ar.pod(c.plan_y0); ar.pod(c.plan_w); ar.pod(c.plan_h); ar.vec(c.plan_cost); ar.vec(c.claim);
 }
 
 } // namespace
 
 template <class Ar> void World::serialize(Ar &ar) {
-	const uint32_t magic = 0x3231574Bu; // "KW12": convoy stall_reason (G4 S4f); KW11: convoy body offsets, body_stalled, body-aware flow fields (G4 S2); KW10: logistics convoys (G4); KW09: released soldiers (G6.4 site exit); KW08: per-person post holder (R1b)
+	const uint32_t magic = 0x3331574Bu; // "KW13": convoy formation following (G4 OPUS); KW12: convoy stall_reason (G4 S4f); KW11: convoy body offsets, body_stalled, body-aware flow fields (G4 S2); KW10: logistics convoys (G4); KW09: released soldiers (G6.4 site exit); KW08: per-person post holder (R1b)
 	uint32_t m = magic;
 	ar.pod(m);
 	if (Ar::loading && m != magic) { ar.ok = false; return; }
@@ -155,6 +160,7 @@ template <class Ar> void World::serialize(Ar &ar) {
 	for (auto &f : formations) io_formation(ar, f);
 	// soldiers
 	for (auto *v : {&px, &py, &nx, &ny, &vx, &vy, &face, &anim_t, &knock_dx, &knock_dy}) ar.vec(*v);
+	ar.vec(rest_hold); ar.vec(rest_x); ar.vec(rest_y); ar.vec(rest_best); ar.vec(rest_t);
 	for (auto *v : {&hp, &stun, &grace, &ko, &getup, &stagger, &exch_cd, &ranged_cd, &skill_cd, &knock_t, &act_t, &escape_t}) ar.vec(*v);
 	for (auto *v : {&team, &state, &los_ok, &skill, &role, &captive, &present, &troop, &running, &near_enemy, &fire_blocked, &bandaged, &life_ck})
 		ar.vec(*v);
@@ -231,7 +237,9 @@ bool World::validate(std::string *error, bool allow_site_jobs) const {
 	CHECK_VALID(cfg.wall_margin <= 0.5f);
 	for (double v : {double(cfg.radius),double(cfg.march_speed),double(cfg.run_speed),double(cfg.reach),cfg.speed,cfg.ko_seconds,cfg.rescued_ko_seconds}) CHECK_VALID(std::isfinite(v) && v > 0 && v <= 1e9);
 	for (double v : {double(cfg.wall_margin),double(cfg.max_turn_rate),double(cfg.engage_radius),double(cfg.leash),double(cfg.encircle_cells),double(cfg.ranged_keep),double(cfg.ranged_leash),double(cfg.ally_push),double(cfg.enemy_push),double(cfg.push_clamp),cfg.bleed_per_game_hour,double(cfg.rescue_seek_cells),double(cfg.capture_seek_cells),cfg.combat_grace,cfg.shot_grace}) CHECK_VALID(std::isfinite(v) && v >= 0 && v <= 1e9);
-	for (auto *v : {&px,&py,&nx,&ny,&vx,&vy,&face,&anim_t,&knock_dx,&knock_dy,&host_vx,&host_vy,&slot_tx_,&slot_ty_,&slot_clip_}) {
+	CHECK_VALID(rest_hold.size() == n);
+	for (uint8_t v : rest_hold) CHECK_VALID(v <= 1);
+	for (auto *v : {&px,&py,&nx,&ny,&vx,&vy,&face,&anim_t,&knock_dx,&knock_dy,&host_vx,&host_vy,&slot_tx_,&slot_ty_,&slot_clip_,&rest_x,&rest_y,&rest_best,&rest_t}) {
 		CHECK_VALID(v->size() == n); for (float x : *v) CHECK_VALID(std::isfinite(x));
 	}
 	for (auto *v : {&hp,&stun,&grace,&ko,&getup,&stagger,&exch_cd,&ranged_cd,&skill_cd,&knock_t,&act_t,&escape_t}) {
@@ -416,6 +424,13 @@ bool World::validate(std::string *error, bool allow_site_jobs) const {
 			std::vector<int> derived;
 			CHECK_VALID(convoy_footprint(cv, cv.x, cv.y, cv.facing, derived) && derived == cv.body_cells);
 			for (int v : cv.body_cells) CHECK_VALID(terrain.walkable(v % terrain.w, v / terrain.w) && convoy_body_owner.size() == cells && convoy_body_owner[v] == cv.id);
+			// G4 formation following: an attached convoy's crew are members of its formation; the route region is on the map
+			CHECK_VALID(cv.formation >= -1 && cv.formation < (int)nf && cv.slot_index >= -1 && cv.blocked >= 0 && cv.key_q >= -1 && cv.key_q < 4);
+			CHECK_VALID(std::isfinite(cv.key_gx) && std::isfinite(cv.key_gy) && cv.turn_to >= -1 && cv.turn_to < 4 && cv.move_to >= -1 && cv.move_to < (int)cells);
+			if (cv.formation >= 0) for (const auto &k : cv.crew) CHECK_VALID(form[k.soldier] == cv.formation);
+			CHECK_VALID(cv.plan_w >= 0 && cv.plan_h >= 0 && cv.plan_cost.size() == (size_t)cv.plan_w * (size_t)cv.plan_h * 4);
+			CHECK_VALID(cv.plan_cost.empty() || (cv.plan_x0 >= 0 && cv.plan_y0 >= 0 && cv.plan_x0 + cv.plan_w <= terrain.w && cv.plan_y0 + cv.plan_h <= terrain.h));
+			for (int v : cv.claim) CHECK_VALID(v >= 0 && v < (int)cells && convoy_claim_owner.size() == cells && convoy_claim_owner[v] == cv.id);
 		}
 		for (size_t i = 0; i < n; ++i) CHECK_VALID(convoy_of[i] == 0 ? !owned[i] : (owned[i] && convoy_ids.count(convoy_of[i]) == 1));
 	}
@@ -452,6 +467,7 @@ void World::swap_state(World &o) {
 	swap(act_t, o.act_t);
 	swap(escape_t, o.escape_t);
 	swap(knock_dx, o.knock_dx);
+	swap(rest_hold, o.rest_hold); swap(rest_x, o.rest_x); swap(rest_y, o.rest_y); swap(rest_best, o.rest_best); swap(rest_t, o.rest_t);
 	swap(knock_dy, o.knock_dy);
 	swap(team, o.team);
 	swap(state, o.state);
@@ -483,6 +499,7 @@ void World::swap_state(World &o) {
 	swap(prison_id, o.prison_id); swap(escort_goal, o.escort_goal); swap(escort_mode, o.escort_mode); swap(housing_attendance_cell, o.housing_attendance_cell);
 	swap(contact_revision, o.contact_revision);
 	swap(convoys, o.convoys); swap(convoy_of, o.convoy_of); swap(convoy_body_owner, o.convoy_body_owner); swap(convoy_serial, o.convoy_serial);
+	swap(convoy_claim_owner, o.convoy_claim_owner);
 	swap(siege_crew,o.siege_crew); swap(siege_member_group,o.siege_member_group); swap(siege_step_source,o.siege_step_source); swap(siege_compounds,o.siege_compounds); swap(siege_serial,o.siege_serial); swap(siege_person_blocked,o.siege_person_blocked); swap(siege_wreck_exit,o.siege_wreck_exit);
 	swap(ammo, o.ammo);
 	swap(equip, o.equip);

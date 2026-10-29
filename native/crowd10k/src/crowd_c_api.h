@@ -35,6 +35,11 @@ int wg_crowd_convoy_set_body(wg_crowd *c, int id, const int32_t *cells, int coun
 /* out[7] = anchor x, y, facing, moving, complete, stalled, reason (ConvoyReason). Returns 1 when the convoy exists. */
 int wg_crowd_convoy_state(const wg_crowd *c, int id, double *out);
 int wg_crowd_convoy_remove(wg_crowd *c, int id);
+/* G4 formation following: attach to a formation whose members are the whole crew (1 ok), detach, and the attached
+   formation (-1 detached, -2 unknown convoy). An explicit goal order detaches. */
+int wg_crowd_convoy_attach_formation(wg_crowd *c, int id, int formation);
+int wg_crowd_convoy_detach_formation(wg_crowd *c, int id);
+int wg_crowd_convoy_formation(const wg_crowd *c, int id);
 /* G6.4 site exit: 1 when the soldier may leave the Site (conscious, free, in a formation, not in melee, no committed step). */
 int wg_crowd_site_person_exit_ready(const wg_crowd *c, int i);
 /* Releases a ready soldier from the live pool and formation. out[8] = {hp, fatigue, fatigue_rest, ammo, cell_x, cell_y, x, y}

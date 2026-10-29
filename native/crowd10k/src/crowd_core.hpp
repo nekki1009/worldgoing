@@ -167,6 +167,11 @@ struct Formation {
 	// last observation; the per-member life checkpoint lives in World::life_ck
 	bool commander_present = true;
 	bool resupplying = false; // safe + stopped at the last sustain pass (reported)
+	// G4: a formation carrying vehicles re-assigns its soldier slots once, by least total distance, when it arrives after a
+	// layout change, so a turned block does not have to push members through each other to reach old slot numbers. Saved.
+	bool reslot_pending = false;
+	float rest_gx = 0, rest_gy = 0, rest_gf = 0; // layout the members' rest holds belong to (goal pose, slot count)
+	int rest_slots = -1;
 };
 
 struct Config {
@@ -298,12 +303,26 @@ struct Convoy {
 	std::vector<ConvoyOffset> body;
 	std::vector<int> body_cells;       // sorted absolute footprint at the current pose. Derived: not saved, rebuilt on load.
 	bool body_stalled = false;         // the last step refused to advance or turn into another body or occupied cells. Saved.
-	int stall_reason = 0;              // CONVOY_* code from the last convoy_stage. Derived each step: not saved, not hashed.
+	int stall_reason = 0;              // CONVOY_* code from the last convoy_stage. Saved so the reported pose matches after load.
+	// G4 formation following (OPUS). formation >= 0: the convoy is attached to that formation; its goal is its vehicle
+	// slot in the formation layout (convoy_plan_formation) and it steers by its own route field. Saved and hashed.
+	int formation = -1;
+	float key_gx = 0, key_gy = 0;      // layout key the current slot goal was computed from: formation goal, quarter and
+	int key_q = -1, key_slots = -1, key_count = -1; // soldier slot count (key_count: vehicles in that layout); key_q < 0 = replan
+	int slot_index = -1;               // assigned rank position, -1 none
+	int blocked = 0;                   // consecutive stages without progress (replan trigger)
+	bool no_slot = false;              // the layout found no feasible slot for this convoy
+	int turn_to = -1;                  // quarter of the turn under way about the pivot cell, -1 none
+	int move_to = -1;                  // pivot cell of the translation step under way, -1 none
+	int plan_x0 = 0, plan_y0 = 0, plan_w = 0, plan_h = 0; // route region (cells)
+	std::vector<uint32_t> plan_cost;   // route cost to the slot per (region cell of the pivot, quarter); UINT32_MAX = none
+	std::vector<int> claim;            // cells this convoy claimed (own-team soldiers step out, nobody else enters). Saved.
 };
 // Why a convoy with a goal is not advancing (ConvoyState::reason). CONVOY_OK means advancing, turning or complete.
+// YIELDING (own-team soldiers are stepping out of the claimed cells) and CREW_OFF_SLOT are waits, not stalls.
 enum ConvoyReason : int {
 	CONVOY_OK = 0, CONVOY_NO_GOAL = 1, CONVOY_CREW_CANNOT_ACT = 2, CONVOY_CREW_OFF_SLOT = 3, CONVOY_NO_ROUTE = 4,
-	CONVOY_BLOCKED_TERRAIN = 5, CONVOY_BLOCKED_BODY = 6, CONVOY_BLOCKED_SOLDIER = 7
+	CONVOY_BLOCKED_TERRAIN = 5, CONVOY_BLOCKED_BODY = 6, CONVOY_BLOCKED_SOLDIER = 7, CONVOY_YIELDING = 8, CONVOY_NO_SLOT = 9
 };
 struct ConvoyState { double x = 0, y = 0, facing = 0; int moving = 0, complete = 0, stalled = 0, reason = 0; };
 
@@ -317,6 +336,12 @@ public:
 	std::vector<float> px, py, nx, ny, vx, vy, face, anim_t;
 	std::vector<double> hp, stun, grace, ko, getup, stagger, exch_cd, ranged_cd, skill_cd, knock_t, act_t, escape_t;
 	std::vector<float> knock_dx, knock_dy;
+	// Rest rule (formation at rest in HOLD): a member whose target is contested (clipped by a wall or a step, or another
+	// member's clipped target within 0.6) and who makes no progress toward it for kRestSeconds within 2.5 of it stops
+	// pushing and holds: it stands where it is pushed, until pushed out a cell beyond its own slot's distance from the centre.
+	// Cleared when the formation moves or its layout changes. Saved.
+	std::vector<uint8_t> rest_hold;
+	std::vector<float> rest_x, rest_y, rest_best, rest_t; // held spot, best distance to the target, seconds without progress
 	std::vector<uint8_t> team, state, los_ok, skill, role, captive, present, troop, running, near_enemy, fire_blocked, bandaged;
 	// Host-controlled soldiers (the player, 2026-09-30 user decision: the player is one soldier of the crowd
 	// under every soldier rule; only the wish to move and to fight comes from the host's input instead of
@@ -447,6 +472,23 @@ public:
 	bool convoy_remove(int id);
 	// Absolute footprint of a convoy at its current pose (sorted); false if unknown.
 	bool convoy_body_at(int id, std::vector<int> &cells) const;
+	// G4 formation following. attach: every crew member must be a member of the formation; refusals change nothing.
+	// An explicit convoy_order_goal detaches. convoy_formation: -2 unknown convoy, -1 detached, else the formation.
+	bool convoy_attach_formation(int id, int formation);
+	bool convoy_detach_formation(int id);
+	int convoy_formation(int id) const;
+	// Diagnostics (read-only): a member's current slot target (slot index, world x / y, clip fraction); false if none.
+	bool slot_target(int i, int &slot_index, float &x, float &y, float &clip) const {
+		if (i < 0 || i >= soldier_count() || i >= (int)slot_tx_.size()) return false;
+		slot_index = slot[i]; x = slot_tx_[i]; y = slot_ty_[i]; clip = slot_clip_[i];
+		return true;
+	}
+	bool formation_has_convoys(int formation) const;
+	// Convoy occupancy in its own frame: body and crew offsets, their bounds and the body's middle (the turning pivot).
+	struct ConvoyShape { int min_ox = 0, max_ox = 0, min_oy = 0, max_oy = 0, mid_ox = 0, mid_oy = 0; std::vector<ConvoyOffset> occupancy; };
+	ConvoyShape convoy_shape(const Convoy &c) const;
+	// Derived per cell from the convoys' saved claims: id of the claiming convoy (own-team soldiers step out), 0 none.
+	std::vector<int32_t> convoy_claim_owner;
 	bool is_convoy_crew(int person) const { return person >= 0 && person < (int)convoy_of.size() && convoy_of[person] != 0; }
 	// acting exclusions shared by siege crew and convoy crew (AI, exchange, rescue, capture, work)
 	bool is_crewed(int person) const { return is_siege_crew(person) || is_convoy_crew(person); }
@@ -761,6 +803,24 @@ private:
 	void set_convoy_cells(Convoy &c, std::vector<int> cells);
 	bool rebuild_convoy_bodies();   // load: re-derive every footprint and the owner map; false if they do not fit
 	void refresh_body_fields();     // body-aware fields are cleared and re-queued; LOS observations are reset
+	// G4 formation following (OPUS)
+	enum FollowCheck : int { FOLLOW_CLEAR = 0, FOLLOW_YIELD, FOLLOW_BODY, FOLLOW_TERRAIN, FOLLOW_SOLDIER };
+	void convoy_plan_formation(int formation);
+	bool convoy_build_route(Convoy &c, const std::vector<uint8_t> &walls, int formation);
+	bool convoy_route_valid(const Convoy &c, int q, int cell, const std::vector<uint8_t> &walls) const;
+	std::vector<uint8_t> convoy_route_walls(const Convoy &c) const;
+	int convoy_team(const Convoy &c) const;
+	bool convoy_person_yields(int i, int my_team) const;
+	void convoy_mark_fixed_people(int my_team, std::vector<uint8_t> &walls) const;
+	int convoy_follow_check(const Convoy &c, float ax, float ay, float facing, std::vector<int> &cells, std::vector<int> &claim) const;
+	int convoy_follow_cells(const Convoy &c, const std::vector<int> &cells, const std::vector<int> &crew, std::vector<int> &claim) const;
+	bool convoy_pose_cells(const Convoy &c, float ax, float ay, float facing, std::vector<int> &cells, std::vector<int> &crew) const;
+	void convoy_post_claim(Convoy &c, const std::vector<int> &cells);
+	void convoy_release_claim(Convoy &c);
+	void convoy_follow_stage(Convoy &c, float dt);
+	void convoy_invalidate_plans();
+	void reslot_formation(Formation &f);
+	bool convoy_evacuation(int i, float &dvx, float &dvy) const;
 
 	// ai (ai.cpp)
 	void ai_review();

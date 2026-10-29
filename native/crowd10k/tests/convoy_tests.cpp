@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <string>
 #include <vector>
 
 using namespace wg;
@@ -387,7 +388,589 @@ static void north_turn_from_cart_anchor(bool bystander) {
 	REQUIRE(ok);
 }
 
-int main() {
+// ---------------------------------------------------------------- G4 vehicles in a formation (OPUS)
+// The GD crowd deploy at small scale: a connected blob of cells (TerrainLab._trial_connected_formation, directions up,
+// right, down, left), carts and wagons planned next to their operators exactly as SiteVehicleTransport.plan_team does
+// (first blob index and direction that fit; cart anchor = operator + d, wagon anchor = operator - 2d, body along d),
+// the formation centred on the blob, facing the enemy, cols = ceil(sqrt(count)), people starting on their blob cells.
+// Each convoy is created as _convoy_create does (rider: cart (-1, 0), wagon (2, 0)) and attached to the formation.
+namespace wg { struct WorldTestAccess {
+	static float stx(const World &w, int i) { return w.slot_tx_[i]; }
+	static float sty(const World &w, int i) { return w.slot_ty_[i]; }
+	static float clip(const World &w, int i) { return w.slot_clip_[i]; }
+	static int los(const World &w, int i) { return w.los(w.px[i], w.py[i], w.slot_tx_[i], w.slot_ty_[i]) ? 1 : 0; }
+}; }
+static bool formation_control = false;
+// D acceptance terrain (run 20261029_142014_245, the test's own 25 x 25 map around the centre, origin (43, 36)):
+// height levels, '#' not walkable, no ramps; the rest of the 100 x 100 map is level 4.
+static const char *D_MAP[25] = {
+	"4444#44444444444444444333", "4444445555444444444444333", "4444455555555544444444333", "4444555555555554444444433",
+	"44445555555#5555444444433", "4444555555555555544444433", "444455555#555555544444433", "4444455555555555544444443",
+	"444445555555555#444444444", "4444455555555555444444444", "4444555555555555554444444", "4555555555555555#55554444",
+	"5555555555555555555555444", "5555555555555555555555544", "5555555555555555555555554", "5555555555555555555555554",
+	"5555555555555555555555554", "5555555555555555555555544", "444555555555444444555#444", "444444444444444444#444444",
+	"4444444444444444444444444", "4444444444444444444444444", "4444444444444444444444444", "4444444444444444444444444",
+	"333444444444#444333333333"};
+static bool formation_d_map = false; // build_formation_scene paints D_MAP (size must be 100)
+static void paint_d_map(World &w) {
+	for (int y = 0; y < w.terrain.h; ++y) for (int x = 0; x < w.terrain.w; ++x) w.terrain.height[w.terrain.idx(x, y)] = 4;
+	for (int r = 0; r < 25; ++r) for (int c = 0; c < 25; ++c) {
+		const int v = w.terrain.idx(43 + c, 36 + r);
+		if (D_MAP[r][c] == '#') w.terrain.flags[v] = 0; else w.terrain.height[v] = (uint8_t)(D_MAP[r][c] - '0');
+	}
+	// row y = 35 from the p12 dump (run 20261029_144535_155)
+	const char *row35 = "#444444444444444444443333";
+	for (int c = 0; c < 25; ++c) {
+		const int v = w.terrain.idx(43 + c, 35);
+		if (row35[c] == '#') w.terrain.flags[v] = 0; else w.terrain.height[v] = (uint8_t)(row35[c] - '0');
+	}
+}
+// The Site player (host-controlled, its own one-person formation of the same faction) standing on this cell, or -1.
+// D p12 (run 20261029_144535_155): the player stood in front of a cart; the cart waited on it for ever.
+static int formation_player_x = -1, formation_player_y = -1;
+static float formation_face_bias = 0.35f; // deploy facing offset from the enemy direction (stress varies it)
+static bool formation_quiet = false;
+static int formation_worst = 0; // largest MOVE + settle ticks seen // --control: also run the scene without vehicles (diagnostics)
+struct FormationScene {
+	int formation = -1, enemy = -1;
+	std::vector<int> convoys, operators, rider_ox;
+};
+static const int GDX[4] = {0, 1, 0, -1}, GDY[4] = {-1, 0, 1, 0}; // TerrainData.DIRECTIONS: up, right, down, left
+
+static bool build_formation_scene(World &w, FormationScene &s, int people, int carts, int wagons, int size, int seed_x, int seed_y, const std::vector<int> &walls) {
+	w.terrain.allocate(size, size);
+	if (formation_d_map) paint_d_map(w);
+	for (int v : walls) { if (v >= 0) w.terrain.flags[v] = 0; else w.terrain.height[-v - 1] = 1; } // negative: a raised cell (a step without ramp)
+	w.terrain.base_height = w.terrain.height;
+	w.cfg.ai = false; w.cfg.auto_capture = false; w.cfg.rescue_seek_cells = 0; w.cfg.bleed_per_game_hour = 0;
+	w.terrain.build_edges();
+	std::vector<uint8_t> claimed((size_t)size * size, 0);
+	std::vector<std::pair<int, int>> blob{{seed_x, seed_y}};
+	claimed[w.terrain.idx(seed_x, seed_y)] = 1;
+	for (size_t k = 0; k < blob.size() && (int)blob.size() < people; ++k)
+		for (int d = 0; d < 4 && (int)blob.size() < people; ++d) {
+			const int x = blob[k].first + GDX[d], y = blob[k].second + GDY[d];
+			if (!w.terrain.contains(x, y) || !w.terrain.walkable(x, y) || claimed[w.terrain.idx(x, y)]) continue;
+			if (!w.terrain.edge(blob[k].first, blob[k].second, d)) continue; // TerrainLab: can_step(current, next)
+			claimed[w.terrain.idx(x, y)] = 1;
+			blob.push_back({x, y});
+		}
+	if ((int)blob.size() != people) return false;
+	struct Plan { bool wagon; int ax, ay, d, op; };
+	std::vector<Plan> plan;
+	std::vector<uint8_t> operator_used(people, 0);
+	for (int ordinal = 0; ordinal < carts + wagons; ++ordinal) {
+		const bool wagon = ordinal >= carts;
+		const int length = wagon ? 3 : 1;
+		bool chosen = false;
+		for (int index = 0; index < people && !chosen; ++index) {
+			if (operator_used[index]) continue;
+			for (int d = 0; d < 4 && !chosen; ++d) {
+				const int ox = blob[index].first, oy = blob[index].second;
+				const int ax = wagon ? ox - 2 * GDX[d] : ox + GDX[d], ay = wagon ? oy - 2 * GDY[d] : oy + GDY[d];
+				bool fits = true;
+				for (int k = 0; k < length && fits; ++k) {
+					const int x = ax + GDX[d] * k, y = ay + GDY[d] * k;
+					if (!w.terrain.contains(x, y) || !w.terrain.walkable(x, y)) { fits = false; break; }
+					if (claimed[w.terrain.idx(x, y)] && !(wagon && x == ox && y == oy)) fits = false;
+					if (k > 0 && !w.terrain.edge(x - GDX[d], y - GDY[d], d)) fits = false; // plan_team: consecutive cells step legally
+				}
+				if (fits && !wagon && !w.terrain.edge(ox, oy, d)) fits = false; // a cart is one legal step ahead of its operator
+				if (!fits) continue;
+				plan.push_back({wagon, ax, ay, d, index});
+				operator_used[index] = 1;
+				for (int k = 0; k < length; ++k) claimed[w.terrain.idx(ax + GDX[d] * k, ay + GDY[d] * k)] = 1;
+				chosen = true;
+			}
+		}
+		if (!chosen) return false;
+	}
+	float cx = 0, cy = 0;
+	for (const auto &b : blob) { cx += (float)b.first + 0.5f; cy += (float)b.second + 0.5f; }
+	cx /= (float)people; cy /= (float)people;
+	const float ex = (float)std::min(size - 3, seed_x + 22) + 0.5f, ey = cy;
+	const float face = std::atan2(ey - cy, ex - cx) + formation_face_bias; // a non-quarter deploy facing, as toward a real enemy
+	const int cols = std::max(1, (int)std::ceil(std::sqrt((double)people)));
+	s.formation = w.add_formation(0, cx, cy, face, cols, 1.f, T_MELEE, 0);
+	rules::Equip e; e.family = rules::F_LONGSWORD; e.material = rules::M_IRON;
+	for (int k = 0; k < people; ++k) w.add_soldier(s.formation, e, k == 0 ? R_CAPTAIN : (k <= 2 ? R_OFFICER : R_REGULAR), 5000 + k);
+	s.enemy = w.add_formation(1, ex, ey, kPi, 1, 1.f, T_MELEE, 0);
+	w.add_soldier(s.enemy, e, R_CAPTAIN, 9000);
+	int player = -1;
+	if (formation_player_x >= 0) {
+		if (claimed[w.terrain.idx(formation_player_x, formation_player_y)]) return false;
+		const int pf = w.add_formation(0, (float)formation_player_x + 0.5f, (float)formation_player_y + 0.5f, 0.f, 1, 1.f, T_MELEE, 0);
+		player = w.add_soldier(pf, e, R_CAPTAIN, 9100);
+		w.start_x[player] = (float)formation_player_x + 0.5f; w.start_y[player] = (float)formation_player_y + 0.5f;
+	}
+	for (int k = 0; k < people; ++k) { w.start_x[k] = (float)blob[k].first + 0.5f; w.start_y[k] = (float)blob[k].second + 0.5f; }
+	w.finalize();
+	if (player >= 0) w.set_host_control(player, true);
+	for (auto &f : w.formations) f.ai_enabled = false;
+	for (const auto &p : plan) {
+		const int id = w.add_convoy((float)p.ax + 0.5f, (float)p.ay + 0.5f, std::atan2((float)GDY[p.d], (float)GDX[p.d]));
+		const int rider = p.wagon ? 2 : -1;
+		std::vector<int> body;
+		for (int k = 0; k < (p.wagon ? 3 : 1); ++k) body.push_back(w.terrain.idx(p.ax + GDX[p.d] * k, p.ay + GDY[p.d] * k));
+		if (id <= 0 || !w.convoy_set_crew(id, p.op, rider, 0, true) || !w.convoy_set_body(id, body) || !w.convoy_attach_formation(id, s.formation)) return false;
+		s.convoys.push_back(id); s.operators.push_back(p.op); s.rider_ox.push_back(rider);
+	}
+	return true;
+}
+
+static std::vector<int> scene_body_union_check(const World &w, const FormationScene &s, bool &overlap) {
+	std::vector<int> all;
+	overlap = false;
+	for (int id : s.convoys) {
+		std::vector<int> cells;
+		w.convoy_body_at(id, cells);
+		for (int v : cells) { if (std::find(all.begin(), all.end(), v) != all.end()) overlap = true; all.push_back(v); }
+	}
+	std::sort(all.begin(), all.end());
+	return all;
+}
+
+struct PhaseReport {
+	int move_ticks = -1, settle_ticks = -1, max_stall = 0, max_wait = 0; bool overlap = false, soldier_in_body = false; float spread = 0;
+	int done_at[8] = {-1, -1, -1, -1, -1, -1, -1, -1}; int reasons[8][10] = {}; int soldiers_done = -1; int ticks = 0;
+};
+
+// One test phase as the GD acceptance runs it: MOVE from the formation reference, run to HOLD, explicit HOLD, settle.
+static bool run_phase(World &w, const FormationScene &s, int dx, int dy, PhaseReport &rep, int save_at = -1, std::vector<uint8_t> *blob = nullptr) {
+	Formation &f = w.formations[s.formation];
+	const float rx = f.ref_valid ? f.ref_x : f.cx, ry = f.ref_valid ? f.ref_y : f.cy;
+	const int gx = (int)std::floor(rx) + dx, gy = (int)std::floor(ry) + dy;
+	if (w.host_order(s.formation, 1, (float)gx + 0.5f, (float)gy + 0.5f, std::atan2((float)dy, (float)dx)) != OK) { rep.move_ticks = -2; return false; }
+	std::vector<int> stall(s.convoys.size(), 0), wait(s.convoys.size(), 0);
+	const auto watch = [&]() {
+		bool overlap = false;
+		const std::vector<int> bodies = scene_body_union_check(w, s, overlap);
+		rep.overlap = rep.overlap || overlap;
+		for (int i = 0; i < w.soldier_count(); ++i) {
+			if (!w.alive(i) || w.is_convoy_crew(i)) continue;
+			const int c = w.terrain.idx((int)std::floor(w.px[i]), (int)std::floor(w.py[i]));
+			if (std::binary_search(bodies.begin(), bodies.end(), c)) rep.soldier_in_body = true;
+		}
+		for (size_t k = 0; k < s.convoys.size(); ++k) {
+			ConvoyState st{};
+			w.convoy_state(s.convoys[k], st);
+			stall[k] = st.stalled ? stall[k] + 1 : 0;
+			wait[k] = (!st.complete && !st.moving) || st.reason != CONVOY_OK ? wait[k] + 1 : 0;
+			rep.max_stall = std::max(rep.max_stall, stall[k]);
+			rep.max_wait = std::max(rep.max_wait, wait[k]);
+			if (k < 8) {
+				if (st.complete && rep.done_at[k] < 0) rep.done_at[k] = rep.ticks;
+				if (!st.complete) rep.done_at[k] = -1;
+				if (st.reason >= 0 && st.reason < 10 && !st.complete) rep.reasons[k][st.reason]++;
+			}
+		}
+		++rep.ticks;
+		{
+			bool all = true;
+			for (int i : w.formations[s.formation].members) {
+				if (!w.alive(i) || w.is_convoy_crew(i)) continue;
+				const float v2 = w.vx[i] * w.vx[i] + w.vy[i] * w.vy[i];
+				if (w.state[i] != S_SLOT || v2 > 0.0025f) all = false;
+			}
+			if (all && rep.soldiers_done < 0) rep.soldiers_done = rep.ticks;
+			if (!all) rep.soldiers_done = -1;
+		}
+	};
+	int t = 0;
+	for (; t < 1800 && w.formations[s.formation].order != Order::HOLD; ++t) {
+		if (t == save_at && blob) *blob = w.save();
+		if (!w.step_clock(DT, 0, 0)) return false;
+		watch();
+		if (t == 0 && formation_control) for (const auto &c : w.convoys) {
+			const int ax = (int)std::floor(c.x), ay = (int)std::floor(c.y);
+			const bool in = !c.plan_cost.empty() && ax >= c.plan_x0 && ay >= c.plan_y0 && ax < c.plan_x0 + c.plan_w && ay < c.plan_y0 + c.plan_h;
+			const unsigned cost = in ? c.plan_cost[(size_t)(ay - c.plan_y0) * c.plan_w + (ax - c.plan_x0)] : 0u;
+			std::printf("  plan convoy %d from (%.1f,%.1f,%.2f) to (%.1f,%.1f,%.2f) straight=%.1f route_cost=%u\n", c.id, c.x, c.y, c.facing, c.gx, c.gy, c.gfacing, std::hypot(c.gx - c.x, c.gy - c.y), cost);
+		}
+	}
+	rep.move_ticks = t;
+	if (w.formations[s.formation].order != Order::HOLD) return false;
+	if (w.host_order(s.formation, 0, f.cx, f.cy, 0.0) != OK) return false;
+	for (int k = 0; k < 1800 - rep.move_ticks; ++k) { // the acceptance budget: MOVE plus settle within 1800 ticks
+		if (!w.step_clock(DT, 0, 0)) return false;
+		watch();
+		bool settled = true;
+		for (int i : w.formations[s.formation].members) {
+			if (!w.alive(i)) continue;
+			const float v2 = w.vx[i] * w.vx[i] + w.vy[i] * w.vy[i];
+			if (w.state[i] != S_SLOT || v2 > 0.0025f) settled = false; // the acceptance rest rule: |v| < 0.05 cells / s
+		}
+		for (size_t c = 0; c < s.convoys.size() && settled; ++c) {
+			ConvoyState st{};
+			if (!w.convoy_state(s.convoys[c], st) || !st.complete || st.moving || st.stalled) { settled = false; break; }
+			const float fx = std::cos((float)st.facing), fy = std::sin((float)st.facing);
+			const int op = s.operators[c];
+			const int rx2 = (int)std::floor((float)st.x + (float)s.rider_ox[c] * fx), ry2 = (int)std::floor((float)st.y + (float)s.rider_ox[c] * fy);
+			if ((int)std::floor(w.px[op]) != rx2 || (int)std::floor(w.py[op]) != ry2) settled = false;
+		}
+		if (settled) { rep.settle_ticks = k + 1; break; }
+	}
+	rep.spread = 0;
+	for (int i : w.formations[s.formation].members) if (w.alive(i) && !w.is_convoy_crew(i)) {
+		const float d = std::hypot(w.px[i] - w.formations[s.formation].cx, w.py[i] - w.formations[s.formation].cy);
+		if (d > 8.f) {
+			int si = -1; float tx = 0, ty = 0, clip = 1;
+			w.slot_target(i, si, tx, ty, clip);
+			std::fprintf(stderr, "FAR member %d pos=(%.2f,%.2f) slot=%d target=(%.2f,%.2f) clip=%.2f hold=%d\n", i, w.px[i], w.py[i], si, tx, ty, clip, (int)w.rest_hold[i]);
+		}
+		rep.spread = std::max(rep.spread, d);
+	}
+	return rep.settle_ticks > 0;
+}
+
+static void dump_scene(const World &w, const FormationScene &s, const char *label) {
+	const Formation &f = w.formations[s.formation];
+	std::fprintf(stderr, "SCENE %s order=%d centre=(%.2f,%.2f) goal=(%.2f,%.2f) facing=%.3f goal_facing=%.3f slots=%d\n", label, (int)f.order, f.cx, f.cy, f.goal_x, f.goal_y, f.facing, f.goal_facing, f.slot_count);
+	for (size_t k = 0; k < s.convoys.size(); ++k) {
+		ConvoyState st{};
+		w.convoy_state(s.convoys[k], st);
+		const Convoy *c = nullptr;
+		for (const auto &o : w.convoys) if (o.id == s.convoys[k]) c = &o;
+		std::fprintf(stderr, "  convoy %d pose=(%.3f,%.3f,%.3f) goal=(%.2f,%.2f,%.3f) slot=%d reason=%d moving=%d complete=%d stalled=%d blocked=%d op=(%.2f,%.2f)\n", s.convoys[k], st.x, st.y, st.facing,
+			c ? c->gx : 0, c ? c->gy : 0, c ? c->gfacing : 0, c ? c->slot_index : -9, st.reason, st.moving, st.complete, st.stalled, c ? c->blocked : -1, w.px[s.operators[k]], w.py[s.operators[k]]);
+	}
+	int shown = 0;
+	for (int i : f.members) {
+		if (!w.alive(i) || shown >= 12) continue;
+		const float v2 = w.vx[i] * w.vx[i] + w.vy[i] * w.vy[i];
+		if (w.state[i] == S_SLOT && v2 <= 0.0025f) continue;
+		float sx = 0, sy = 0;
+		if (w.slot[i] >= 0) w.slot_world(f, w.slot[i], f.slot_count, sx, sy);
+		std::fprintf(stderr, "  unsettled soldier %d pos=(%.2f,%.2f) v=(%.3f,%.3f) state=%d slot=%d target=(%.2f,%.2f) slot_t=(%.2f,%.2f) clip=%.2f los=%d/%d enc=%d tick=%u\n", i, w.px[i], w.py[i], w.vx[i], w.vy[i], (int)w.state[i], w.slot[i], sx, sy,
+			wg::WorldTestAccess::stx(w, i), wg::WorldTestAccess::sty(w, i), wg::WorldTestAccess::clip(w, i), (int)w.los_ok[i], wg::WorldTestAccess::los(w, i), w.enc_target[i], w.tick);
+		++shown;
+	}
+	for (size_t v = 0; v < w.convoy_claim_owner.size(); ++v) if (w.convoy_claim_owner[v]) std::fprintf(stderr, "    claim (%d,%d) by %d\n", (int)v % w.terrain.w, (int)v / w.terrain.w, w.convoy_claim_owner[v]);
+	for (size_t v = 0; v < w.convoy_body_owner.size(); ++v) if (w.convoy_body_owner[v]) std::fprintf(stderr, "    body (%d,%d) of %d\n", (int)v % w.terrain.w, (int)v / w.terrain.w, w.convoy_body_owner[v]);
+}
+
+static uint64_t formation_sequence(int people, int threads, int seed_x, int seed_y, const std::vector<int> &walls, const char *label, int vehicles = 2) {
+	World w(threads);
+	FormationScene s;
+	const bool built = build_formation_scene(w, s, people, vehicles, vehicles, formation_d_map ? 100 : 64, seed_x, seed_y, walls);
+	REQUIRE(built);
+	if (!built) return 0;
+	for (int i : s.operators) REQUIRE(w.slot[i] == -1); // crew hold vehicle slots, not soldier slots
+	REQUIRE(w.formations[s.formation].slot_count == people - 2 * vehicles);
+	const int moves[3][2] = {{5, 0}, {0, 4}, {-3, 0}};
+	for (int m = 0; m < 3; ++m) {
+		PhaseReport rep;
+		const bool ok = run_phase(w, s, moves[m][0], moves[m][1], rep);
+		formation_worst = std::max(formation_worst, rep.settle_ticks > 0 ? rep.move_ticks + rep.settle_ticks : 9999);
+		if (!formation_quiet || !ok) std::printf("FORMATION_PHASE %s people=%d threads=%d move=(%d,%d) move_ticks=%d settle_ticks=%d max_stall=%d max_wait=%d spread=%.2f overlap=%d soldier_in_body=%d\n",
+			label, people, threads, moves[m][0], moves[m][1], rep.move_ticks, rep.settle_ticks, rep.max_stall, rep.max_wait, rep.spread, (int)rep.overlap, (int)rep.soldier_in_body);
+		if (!formation_quiet || !ok) {
+			std::printf("  soldiers_settled_at=%d", rep.soldiers_done);
+			for (size_t k = 0; k < s.convoys.size() && k < 8; ++k) {
+				std::printf(" | convoy %d done_at=%d", s.convoys[k], rep.done_at[k]);
+				for (int r = 0; r < 10; ++r) if (rep.reasons[k][r]) std::printf(" r%d:%d", r, rep.reasons[k][r]);
+			}
+			std::printf("\n");
+		}
+		if (rep.move_ticks == -2 && formation_quiet) { std::printf("SKIP %s: the order goal is a rock\n", label); return 0; }
+		REQUIRE(ok);
+		REQUIRE(rep.move_ticks < 1800);
+		REQUIRE(!rep.overlap);
+		REQUIRE(!rep.soldier_in_body);
+		REQUIRE(rep.max_stall <= 150);
+		REQUIRE(rep.spread <= 8.f);
+		if (!ok || rep.overlap || rep.soldier_in_body || rep.max_stall > 150 || rep.spread > 8.f) {
+			dump_scene(w, s, label);
+			return 0;
+		}
+	}
+	REQUIRE(w.validate());
+	return w.state_hash();
+}
+
+static void formation_vehicles_follow_moves_and_turns() {
+	test_case = "vehicles in a formation: MOVE +5x, +4y with a 90-degree turn, -3x; settle, complete, no overlap, no long stall";
+	const std::vector<int> none;
+	if (formation_control) { formation_sequence(96, 1, 20, 30, none, "control96", 0); formation_sequence(30, 1, 20, 30, none, "control30", 0); }
+	const uint64_t a = formation_sequence(30, 1, 20, 30, none, "p30");
+	const uint64_t b = formation_sequence(30, 4, 20, 30, none, "p30");
+	REQUIRE(a != 0 && a == b); // 1 and 4 threads give the same state
+	formation_sequence(96, 1, 20, 30, none, "p96");
+	formation_sequence(8, 1, 20, 30, none, "p8");
+	// a rock where the vehicle rank lands after the first move, and a wall north of the blob: slots move to free
+	// places, routes go around
+	std::vector<int> wall;
+	for (int x = 10; x < 34; ++x) wall.push_back(64 * 22 + x);
+	for (int y = 29; y <= 32; ++y) for (int x = 17; x <= 20; ++x) wall.push_back(64 * y + x);
+	formation_sequence(30, 1, 23, 30, wall, "p30_rock");
+	formation_sequence(96, 1, 23, 30, wall, "p96_rock");
+	// the blob against the west map edge: no room behind the block at first
+	formation_sequence(30, 1, 3, 30, none, "p30_edge");
+	// D-like: a building just north of the deployment (wagons start between it and the block) and a wall on the line
+	// of the front row after the first move (a slot on a blocked cell boundary must be clipped, not left on the wall)
+	std::vector<int> camp;
+	for (int y = 17; y <= 21; ++y) for (int x = 15; x <= 26; ++x) camp.push_back(64 * y + x);
+	for (int y = 25; y <= 36; ++y) camp.push_back(64 * y + 30);
+	formation_sequence(96, 1, 20, 30, camp, "p96_camp");
+	formation_sequence(30, 1, 20, 26, camp, "p30_camp");
+	// scattered one-cell steps without ramps (D-like height changes): turns must not carry a body or crew point across
+	// an illegal edge, and people asked to step out find their way round the steps
+	std::vector<int> steps;
+	for (int y = 12; y < 50; ++y) for (int x = 8; x < 46; ++x)
+		if ((x * 7 + y * 13) % 17 == 0 && std::abs(x - 20) + std::abs(y - 30) > 7) steps.push_back(-(64 * y + x) - 1);
+	formation_sequence(30, 1, 20, 30, steps, "p30_steps");
+	formation_sequence(96, 1, 20, 30, steps, "p96_steps");
+	// D +4y: a terrace (one step up, no ramp) under the front rows after the turn. Slots beyond it are unreachable;
+	// clipped to the edge they would pile three rows onto one line and never settle
+	std::vector<int> terrace;
+	for (int y = 36; y <= 44; ++y) for (int x = 12; x <= 38; ++x) terrace.push_back(-(64 * y + x) - 1);
+	formation_sequence(96, 1, 20, 30, terrace, "p96_terrace");
+	formation_sequence(30, 1, 20, 30, terrace, "p30_terrace");
+	// the D acceptance terrain itself, with the vehicles, from deployments around the D blob
+	formation_d_map = true;
+	formation_sequence(96, 1, 50, 48, {}, "p96_dmap");
+	formation_sequence(96, 1, 51, 47, {}, "p96_dmap_b");
+	formation_sequence(8, 1, 50, 48, {}, "p8_dmap");
+	// D p12: the same cart pose as the D run (cart 2 at (49.5, 49.5) facing +x) with the player standing on its way
+	formation_player_x = 50; formation_player_y = 49;
+	formation_sequence(8, 1, 48, 48, {}, "p8_dmap_player");
+	formation_player_x = -1; formation_player_y = -1;
+	formation_d_map = false;
+}
+
+static void formation_vehicles_save_load_mid_turn() {
+	test_case = "vehicles in a formation: save and load mid-move and mid-turn (claims, routes, rotations), identical hash and continuation";
+	const int points[4] = {3, 20, 40, 90};
+	for (int p = 0; p < 4; ++p) {
+		World w(1);
+		FormationScene s;
+		REQUIRE(build_formation_scene(w, s, 30, 2, 2, 64, 20, 30, {}));
+		PhaseReport first;
+		REQUIRE(run_phase(w, s, 5, 0, first));
+		Formation &f = w.formations[s.formation];
+		const float rx = f.ref_valid ? f.ref_x : f.cx, ry = f.ref_valid ? f.ref_y : f.cy;
+		REQUIRE(w.host_order(s.formation, 1, std::floor(rx) + 0.5f, std::floor(ry) + 4.5f, 0.5f * kPi) == OK);
+		for (int t = 0; t < points[p]; ++t) step(w);
+		bool moving = false;
+		for (int id : s.convoys) { ConvoyState st{}; w.convoy_state(id, st); moving = moving || !st.complete; }
+		REQUIRE(moving);
+		const std::vector<uint8_t> blob = w.save();
+		REQUIRE(!blob.empty());
+		World loaded(1);
+		REQUIRE(loaded.load(blob));
+		REQUIRE(loaded.state_hash() == w.state_hash());
+		REQUIRE(loaded.save() == blob);
+		const auto claims = [](const World &x) { std::vector<std::pair<size_t, int>> out; for (size_t v = 0; v < x.convoy_claim_owner.size(); ++v) if (x.convoy_claim_owner[v]) out.push_back({v, x.convoy_claim_owner[v]}); return out; };
+		REQUIRE(claims(loaded) == claims(w)); // the claim owner map is rebuilt from the saved claims
+		for (int id : s.convoys) REQUIRE(loaded.convoy_formation(id) == s.formation);
+		for (int t = 0; t < 300; ++t) {
+			step(w);
+			step(loaded);
+			if (loaded.state_hash() != w.state_hash()) { REQUIRE(false); break; }
+		}
+		REQUIRE(w.validate() && loaded.validate());
+	}
+}
+
+// site_crowd_convoy_test's wagon step at small scale: an 8-person logistics team with one cart and one wagon deployed
+// against a map edge, people settled in their slots; the wagon is ordered to turn ninety degrees in place (goal anchor
+// = its anchor, facing turned left). It must complete; own soldiers standing in the swept cells step out.
+static void explicit_wagon_turn_among_own_soldiers() {
+	test_case = "explicit wagon turn in place next to its own settled team completes";
+	const int seeds[4][2] = {{3, 30}, {20, 30}, {3, 10}, {40, 52}};
+	for (const auto &seed : seeds) {
+		World w(1);
+		FormationScene s;
+		const bool built = build_formation_scene(w, s, 8, 1, 1, 64, seed[0], seed[1], {});
+		REQUIRE(built);
+		if (!built) continue;
+		for (int t = 0; t < 150; ++t) step(w); // the team settles into its slots around the parked vehicles
+		const int wagon = s.convoys[1];
+		ConvoyState st{};
+		REQUIRE(w.convoy_state(wagon, st));
+		const float turned = (float)st.facing + 0.5f * kPi;
+		REQUIRE(w.convoy_order_goal(wagon, (float)st.x, (float)st.y, turned));
+		REQUIRE(w.convoy_formation(wagon) == -1);
+		bool done = false;
+		int t = 0;
+		for (; t < 900 && !done; ++t) { step(w); REQUIRE(w.convoy_state(wagon, st)); done = st.complete != 0; }
+		if (!done) std::fprintf(stderr, "WAGON TURN seed=(%d,%d) pose=(%.2f,%.2f,%.3f) reason=%d\n", seed[0], seed[1], st.x, st.y, st.facing, st.reason);
+		REQUIRE(done);
+		for (int i = 0; i < w.soldier_count(); ++i) {
+			if (!w.alive(i) || w.is_convoy_crew(i)) continue;
+			std::vector<int> body;
+			w.convoy_body_at(wagon, body);
+			REQUIRE(!std::binary_search(body.begin(), body.end(), w.terrain.idx((int)std::floor(w.px[i]), (int)std::floor(w.py[i]))));
+		}
+	}
+}
+
+// D site_crowd_convoy_test step 301 (run 20261029_131832_022): at the west map edge a wagon at (0, 51) faces north
+// (body (0, 49..51)), its team's slots fill the cells beside it; ordered to turn east in place, the rear-pivot sweep
+// crosses cells where own soldiers stand. They must step out (claims) and the turn must complete.
+static void explicit_wagon_turn_at_map_edge() {
+	test_case = "explicit wagon turn at the map edge with own soldiers in the sweep";
+	World w(1);
+	w.terrain.allocate(64, 64);
+	w.terrain.base_height = w.terrain.height;
+	w.cfg.ai = false; w.cfg.auto_capture = false; w.cfg.rescue_seek_cells = 0; w.cfg.bleed_per_game_hour = 0;
+	const int f = w.add_formation(0, 1.5f, 49.0f, -0.5f * kPi, 3, 1.f, T_MELEE, 0);
+	rules::Equip e; e.family = rules::F_LONGSWORD; e.material = rules::M_IRON;
+	const float start[8][2] = {{1.5f, 50.5f}, {0.5f, 48.5f}, {1.5f, 47.5f}, {0.5f, 47.5f}, {1.5f, 48.5f}, {1.5f, 46.5f}, {2.5f, 50.5f}, {0.5f, 49.5f}};
+	for (int k = 0; k < 8; ++k) w.add_soldier(f, e, k == 0 ? R_CAPTAIN : R_REGULAR, 7000 + k);
+	const int enemy = w.add_formation(1, 50.5f, 49.5f, kPi, 1, 1.f, T_MELEE, 0);
+	w.add_soldier(enemy, e, R_CAPTAIN, 7999);
+	for (int k = 0; k < 8; ++k) { w.start_x[k] = start[k][0]; w.start_y[k] = start[k][1]; }
+	w.finalize();
+	for (auto &fm : w.formations) fm.ai_enabled = false;
+	const float north = -0.5f * kPi;
+	const int cart = w.add_convoy(2.5f, 49.5f, north);
+	REQUIRE(cart > 0 && w.convoy_set_crew(cart, 6, -1, 0, true) && w.convoy_set_body(cart, {w.terrain.idx(2, 49)}) && w.convoy_attach_formation(cart, f));
+	const int wagon = w.add_convoy(0.5f, 51.5f, north);
+	REQUIRE(wagon > 0 && w.convoy_set_crew(wagon, 7, 2, 0, true));
+	REQUIRE(w.convoy_set_body(wagon, {w.terrain.idx(0, 51), w.terrain.idx(0, 50), w.terrain.idx(0, 49)}) && w.convoy_attach_formation(wagon, f));
+	for (int t = 0; t < 150; ++t) step(w); // the team settles into its slots beside the parked vehicles
+	REQUIRE(w.convoy_order_goal(wagon, 0.5f, 51.5f, 0.f));
+	ConvoyState st{};
+	bool done = false;
+	for (int t = 0; t < 900 && !done; ++t) { step(w); REQUIRE(w.convoy_state(wagon, st)); done = st.complete != 0; }
+	if (!done) std::fprintf(stderr, "EDGE WAGON pose=(%.2f,%.2f,%.3f) reason=%d\n", st.x, st.y, st.facing, st.reason);
+	REQUIRE(done);
+	std::vector<int> body;
+	REQUIRE(w.convoy_body_at(wagon, body) && body == std::vector<int>({w.terrain.idx(0, 51), w.terrain.idx(1, 51), w.terrain.idx(2, 51)}));
+	REQUIRE(w.validate());
+}
+
+// D round 4 (HEAD has it too): a 92-man block without vehicles moves +5x to (55.5, 48.5) on the D terrain; front
+// slots lie behind a step and an unwalkable cell, several clipped targets meet on one spot. HEAD: 6 of 18 starts never
+// settle. Rest rule: everyone settles.
+static void rest_rule_on_d_steps() {
+	test_case = "rest rule: a block whose front slots lie behind steps settles (D terrain, no vehicles)";
+	int bad = 0;
+	for (float sx : {49.5f, 50.5f, 51.5f}) for (float sy : {47.5f, 48.5f, 49.5f}) {
+		World w(1);
+		w.terrain.allocate(100, 100);
+		paint_d_map(w);
+		w.terrain.base_height = w.terrain.height;
+		w.cfg.ai = false; w.cfg.auto_capture = false; w.cfg.rescue_seek_cells = 0; w.cfg.bleed_per_game_hour = 0;
+		const int f = w.add_formation(0, sx, sy, 0.f, 10, 1.f, T_MELEE, 0);
+		rules::Equip e; e.family = rules::F_LONGSWORD; e.material = rules::M_IRON;
+		for (int k = 0; k < 92; ++k) w.add_soldier(f, e, k == 0 ? R_CAPTAIN : R_REGULAR, 100 + k);
+		const int en = w.add_formation(1, 90.5f, 48.5f, kPi, 1, 1.f, T_MELEE, 0);
+		w.add_soldier(en, e, R_CAPTAIN, 999);
+		w.finalize();
+		for (auto &fm : w.formations) fm.ai_enabled = false;
+		for (int t = 0; t < 120; ++t) step(w);
+		REQUIRE(w.host_order(f, 1, 55.5f, 48.5f, 0.f) == OK);
+		int t = 0;
+		for (; t < 1800 && w.formations[f].order != Order::HOLD; ++t) step(w);
+		REQUIRE(w.host_order(f, 0, w.formations[f].cx, w.formations[f].cy, 0.0) == OK);
+		bool settled = false;
+		for (int k = 0; k < 1800 - t && !settled; ++k) {
+			step(w);
+			settled = true;
+			for (int i : w.formations[f].members) if (w.alive(i) && (w.state[i] != S_SLOT || w.vx[i] * w.vx[i] + w.vy[i] * w.vy[i] > 0.0025f)) settled = false;
+		}
+		if (!settled) { ++bad; std::fprintf(stderr, "REST start=(%.1f,%.1f) did not settle\n", sx, sy); }
+		REQUIRE(w.validate());
+	}
+	REQUIRE(bad == 0);
+}
+
+static void formation_explicit_order_detaches() {
+	test_case = "an explicit vehicle order detaches from the formation and completes with single-vehicle steering";
+	World w(1);
+	FormationScene s;
+	REQUIRE(build_formation_scene(w, s, 30, 2, 2, 64, 20, 30, {}));
+	const int id = s.convoys[0];
+	REQUIRE(w.convoy_formation(id) == s.formation);
+	REQUIRE(w.convoy_formation(999) == -2);
+	REQUIRE(!w.convoy_attach_formation(id, s.enemy)); // crew are not members of the enemy formation
+	REQUIRE(!w.convoy_attach_formation(999, s.formation));
+	ConvoyState st{};
+	REQUIRE(w.convoy_state(id, st) && st.complete == 1 && st.stalled == 0 && st.moving == 0); // attached and idle: holds its cell
+	for (int t = 0; t < 30; ++t) step(w);
+	ConvoyState still{};
+	REQUIRE(w.convoy_state(id, still) && still.x == st.x && still.y == st.y); // attaching moved nothing
+	// the cart goes three cells further out, away from the blob, in its own facing
+	const float fx = std::cos((float)st.facing), fy = std::sin((float)st.facing);
+	const float gx = std::floor((float)st.x + 3.f * fx) + 0.5f, gy = std::floor((float)st.y + 3.f * fy) + 0.5f;
+	ConvoyState others_before[3];
+	for (int k = 0; k < 3; ++k) REQUIRE(w.convoy_state(s.convoys[k + 1], others_before[k]));
+	REQUIRE(w.convoy_order_goal(id, gx, gy, (float)st.facing));
+	REQUIRE(w.convoy_formation(id) == -1);
+	for (int t = 0; t < 30; ++t) step(w);
+	for (int k = 0; k < 3; ++k) { // a vehicle leaving does not re-lay the others: they keep holding
+		ConvoyState now{};
+		REQUIRE(w.convoy_state(s.convoys[k + 1], now) && now.x == others_before[k].x && now.y == others_before[k].y && now.complete == 1);
+	}
+	bool done = false;
+	for (int t = 0; t < 900 && !done; ++t) { step(w); REQUIRE(w.convoy_state(id, st)); done = st.complete != 0; }
+	REQUIRE(done);
+	close_to(st.x, gx, 1e-4); close_to(st.y, gy, 1e-4);
+	// the others still follow: a formation order moves them, the detached cart stays at its explicit goal
+	Formation &f = w.formations[s.formation];
+	REQUIRE(w.host_order(s.formation, 1, std::floor(f.cx) + 5.5f, std::floor(f.cy) + 0.5f, 0.f) == OK);
+	for (int t = 0; t < 600; ++t) step(w);
+	REQUIRE(w.convoy_state(id, st));
+	close_to(st.x, gx, 1e-4); close_to(st.y, gy, 1e-4);
+	ConvoyState other{};
+	REQUIRE(w.convoy_state(s.convoys[1], other) && other.complete == 1);
+	REQUIRE(w.validate());
+}
+
+int main(int argc, char **argv) {
+	if (argc > 1 && std::string(argv[1]) == "--formation") {
+		formation_control = argc > 2 && std::string(argv[2]) == "--control";
+		if (argc > 2 && std::string(argv[2]) == "--stress") {
+			const int counts[4] = {8, 30, 60, 96};
+			int runs = 0, bad = 0;
+			formation_quiet = true;
+			uint32_t rng = 12345u;
+			for (int c = 0; c < 4; ++c) for (int bias = 0; bias < 8; ++bias) for (int rocks = 0; rocks < 4; ++rocks) {
+				const int before = failures;
+				formation_face_bias = 0.35f + 0.785f * (float)bias;
+				std::vector<int> walls;
+				for (int k = 0; k < (rocks == 3 ? 40 : rocks * 25); ++k) {
+					rng = rng * 1664525u + 1013904223u;
+					const int x = 10 + (int)((rng >> 8) % 34), y = 14 + (int)((rng >> 20) % 34);
+					if (std::abs(x - 28) + std::abs(y - 30) > 6) walls.push_back(rocks == 3 ? -(64 * y + x) - 1 : 64 * y + x); // rocks 3: raised steps
+				}
+				char label[64];
+				std::snprintf(label, sizeof(label), "stress_%d_b%d_r%d", counts[c], bias, rocks);
+				formation_quiet = !(argc > 3 && std::string(argv[3]) == label);
+				formation_sequence(counts[c], 1, 28, 30, walls, label);
+				formation_quiet = true;
+				++runs;
+				if (failures != before) {
+					// the same ground without vehicles: does the formation itself settle there?
+					const int vehicle_failures = failures;
+					char control[64];
+					std::snprintf(control, sizeof(control), "control_%d_b%d_r%d", counts[c], bias, rocks);
+					formation_sequence(counts[c], 1, 28, 30, walls, control, 0);
+					const bool control_fails = failures != vehicle_failures;
+					std::printf("STRESS_FAIL %s control_%s\n", label, control_fails ? "fails_too" : "passes");
+					if (!control_fails) ++bad;
+				}
+			}
+			std::printf("STRESS worst_move_plus_settle=%d\n", formation_worst);
+			std::printf("STRESS runs=%d bad=%d\n", runs, bad);
+			return bad ? 1 : 0;
+		}
+		if (argc > 2 && std::string(argv[2]) == "--control-only") {
+			formation_sequence(96, 1, 20, 30, {}, "control96", 0);
+			std::printf("CONVOY_FORMATION checks=%d failures=%d\n", checks, failures);
+			return failures ? 1 : 0;
+		}
+		formation_vehicles_follow_moves_and_turns();
+		formation_vehicles_save_load_mid_turn();
+		formation_explicit_order_detaches();
+		rest_rule_on_d_steps();
+		explicit_wagon_turn_among_own_soldiers();
+		explicit_wagon_turn_at_map_edge();
+		std::printf("CONVOY_FORMATION checks=%d failures=%d\n", checks, failures);
+		return failures ? 1 : 0;
+	}
 	straight_line_five_cells();
 	ninety_degree_turn();
 	crew_down_stalls_the_anchor();
@@ -401,6 +984,12 @@ int main() {
 	save_load_mid_route_with_body();
 	north_turn_from_cart_anchor(false);
 	north_turn_from_cart_anchor(true);
+	formation_vehicles_follow_moves_and_turns();
+	formation_vehicles_save_load_mid_turn();
+	formation_explicit_order_detaches();
+	rest_rule_on_d_steps();
+	explicit_wagon_turn_among_own_soldiers();
+	explicit_wagon_turn_at_map_edge();
 	std::printf("CONVOY_NATIVE_CONTRACT checks=%d failures=%d\n", checks, failures);
 	return failures ? 1 : 0;
 }
