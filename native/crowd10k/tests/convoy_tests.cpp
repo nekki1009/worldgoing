@@ -972,6 +972,30 @@ static void board_keeps_roster_fatigue_and_hp() {
 	REQUIRE(w.validate());
 }
 
+static void aboard_soldier_stays_present() {
+	test_case = "an aboard soldier stays present (command eligible) while its deck is far from the formation";
+	World w(1); setup(w);
+	REQUIRE(w.site_person_board(2, 0));
+	REQUIRE(w.site_person_set_deck(2, 2.5, 2.5));
+	for (int k = 0; k < 120; ++k) { w.site_person_set_deck(2, 2.5, 2.5); step(w); }
+	REQUIRE(w.present[2] == 1);
+	REQUIRE(w.validate());
+}
+
+static void aboard_formal_commander_resumes_command() {
+	test_case = "a formal commander who left the formation (not present) resumes command once aboard";
+	World w(1); setup(w);
+	Formation &f = w.formations[0];
+	REQUIRE(f.formal_cmd == 0 && f.current_cmd == 0);
+	place(w, 0, 2.5f, 2.5f); // far outside the presence radius around (30.5, 30.5)
+	for (int k = 0; k < 60; ++k) step(w);
+	REQUIRE(w.present[0] == 0 && f.current_cmd != 0);
+	REQUIRE(w.site_person_board(0, 7));
+	for (int k = 0; k < 60; ++k) { w.site_person_set_deck(0, 2.5, 2.5); step(w); }
+	REQUIRE(w.present[0] == 1 && f.formal_cmd == 0 && f.current_cmd == 0);
+	REQUIRE(w.validate());
+}
+
 static void board_ends_a_held_siege_step() {
 	test_case = "board ends an arrived (held) siege step; a pending siege step still refuses and changes nothing";
 	World w(1); setup(w);
@@ -1184,6 +1208,8 @@ int main(int argc, char **argv) {
 	board_refusals();
 	board_keeps_roster_fatigue_and_hp();
 	board_ends_a_held_siege_step();
+	aboard_soldier_stays_present();
+	aboard_formal_commander_resumes_command();
 	aboard_stays_while_formation_passes();
 	aboard_is_never_a_melee_target();
 	land_refusals_and_landing();

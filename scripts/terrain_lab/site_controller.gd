@@ -5335,7 +5335,7 @@ func _supply_shore_contact(first: Vector2i, second: Vector2i) -> bool:
 		return false
 	return first == second or absi(first.x - second.x) + absi(first.y - second.y) == 1 and lab.terrain.can_step(first, second)
 
-func _supply_location_valid(team: TerrainArmy, key: String) -> bool:
+func _supply_location_valid(team: Variant, key: String) -> bool:
 	if not Sustain._valid_location_key(key):
 		return false
 	if key.begins_with("shore:"):
@@ -5344,7 +5344,7 @@ func _supply_location_valid(team: TerrainArmy, key: String) -> bool:
 	var vehicle: Dictionary = lab.terrain.site.get("vehicles", {}).get(key.trim_prefix("vehicle:"), {})
 	return SiteVehicleTransport.is_ship(vehicle) and int(vehicle.get("team_id", -1)) == team.team_id
 
-func _supply_locations_valid(team: TerrainArmy, locations: Dictionary) -> bool:
+func _supply_locations_valid(team: Variant, locations: Dictionary) -> bool:
 	if not Sustain._valid_locations(locations):
 		return false
 	for key: String in locations:
@@ -5354,7 +5354,7 @@ func _supply_locations_valid(team: TerrainArmy, locations: Dictionary) -> bool:
 			if resource not in Sustain.FOODS: return false
 	return true
 
-func ship_food_locations(team: TerrainArmy, members: Dictionary, candidate_locations: Dictionary = {}) -> Dictionary:
+func ship_food_locations(team: Variant, members: Dictionary, candidate_locations: Dictionary = {}) -> Dictionary:
 	var result := {}
 	var entry := _supply_entry(team)
 	var locations: Dictionary = entry.get("locations", {}) if candidate_locations.is_empty() else candidate_locations
@@ -5414,8 +5414,6 @@ func prepare_ship_supply(team: Variant, shore: Vector2i, preview: bool = false, 
 			present = true
 			break
 	if not present: return Runtime.fail("UNREACHABLE", "未有原隊員在指定岸格，不能遠端搬移舊共有糧")
-	# G1 S2: crowd teams only read presence here. Their supply conversion belongs to G3; supply v3 stays refused by crowd_site.
-	if team is CrowdPersonOwner: return Runtime.ok()
 	var existing := _supply_entry(team)
 	if not existing.is_empty() and int(existing.version) == 3:
 		var checked: Dictionary = existing.sustain.duplicate(true)
@@ -5460,11 +5458,11 @@ func ship_retreat_shore_safe(team: Variant, shores: Array[Vector2i]) -> bool:
 			return true
 	return false
 
-func transfer_ship_supply(team: TerrainArmy, source_location: String, target_location: String, resources: Dictionary, open_amount: float, requester_id: int, test_dispatch: bool = false) -> Dictionary:
+func transfer_ship_supply(team: Variant, source_location: String, target_location: String, resources: Dictionary, open_amount: float, requester_id: int, test_dispatch: bool = false) -> Dictionary:
 	if region_operation_pending(): return Runtime.fail("BUSY", "原固定目標冷交換尚未完成，先等待再裝卸供養")
 	var entry := _supply_entry(team)
 	if entry.is_empty() or int(entry.version) != 3 or not entry.delivery.is_empty() or not _team_stopped(team): return Runtime.fail("BUSY")
-	var arrived_unload: bool = not test_dispatch and source_location.begins_with("vehicle:") and target_location.begins_with("shore:") and region_slot != null and region_slot._region_entered_npc_ship_unload_authorized(lab, team, requester_id, vehicles.records().get(source_location.trim_prefix("vehicle:"), {}))
+	var arrived_unload: bool = not test_dispatch and not (team is CrowdOwner) and source_location.begins_with("vehicle:") and target_location.begins_with("shore:") and region_slot != null and region_slot._region_entered_npc_ship_unload_authorized(lab, team, requester_id, vehicles.records().get(source_location.trim_prefix("vehicle:"), {}))
 	if not vehicles._authorized(team, requester_id, 0, test_dispatch) and not arrived_unload: return Runtime.fail("NO_AUTHORITY")
 	if source_location == target_location or not _supply_locations_valid(team, entry.locations) or not entry.locations.has(source_location) or not _supply_location_valid(team, target_location): return Runtime.fail("INVALID_SUSTAIN")
 	if not Runtime._resource_stack(resources) or not Sustain._number(open_amount, 0, 1000000.0) or resources.is_empty() and open_amount == 0.0: return Runtime.fail("INVALID")
@@ -5505,7 +5503,7 @@ func transfer_ship_supply(team: TerrainArmy, source_location: String, target_loc
 	var members := _team_members(team)
 	var context := {"food_locations": ship_food_locations(team, members, stock)}
 	if not _align_supply_clock(state, Runtime.now(lab.terrain) * 60.0) or not _supply_locations_valid(team, stock): return Runtime.fail("INVALID_SUSTAIN")
-	var supplied := Sustain.resupply(state, members, stock, false, _supply_hot_reader(team, members, {}), {}, context)
+	var supplied := Sustain.resupply(state, members, stock, false, _supply_team_hot_reader(team, members), {}, context)
 	if not supplied.ok: return supplied
 	for key: String in stock:
 		if entry.locations.has(key):
@@ -5519,7 +5517,10 @@ func transfer_ship_supply(team: TerrainArmy, source_location: String, target_loc
 	_observe_original_food_result("team", str(team.team_id), float(entry.sustain.at), supplied)
 	return Runtime.ok("共有糧已由原接觸點實際搬移，原餐份只補當期未吃部分", {"consumed_rations": supplied.consumed_rations})
 
-func _team_members(team: TerrainArmy) -> Dictionary:
+func _team_members(team: Variant) -> Dictionary:
+	# G3: a crowd team's members are its native rows; a crowd team has no grid player_member.
+	if team is CrowdOwner:
+		return captivity_supply.team_members(team, team.original_members())
 	var members := {}
 	for index: int in team.combat_units.size():
 		if team.is_member(index):
@@ -5527,6 +5528,16 @@ func _team_members(team: TerrainArmy) -> Dictionary:
 	if is_instance_valid(team.player_member):
 		members[team.player_member.person_id] = _actor_supply_adapter(team.player_member, team.player_present)
 	return captivity_supply.team_members(team, members)
+
+func _supply_team_hot_reader(team: Variant, members: Dictionary) -> Callable:
+	# G3: crowd members read native hp, ko, captive and fatigue; other fields stay on the member snapshot.
+	if team is CrowdOwner:
+		return func(identity: int, field: StringName) -> Variant:
+			if lab.crowd_site.contains_person(identity) and field in [&"hp", &"ko", &"captive", &"fatigue", &"fatigue_rest"]:
+				var person_owner: Variant = lab.crowd_site.person_owner(identity)
+				return person_owner.combat_hot_get(person_owner.index_for_identity(identity), field, 0.0)
+			return members[identity].get(String(field))
+	return _supply_hot_reader(team, members, {})
 
 func _supply_hot_reader(team: TerrainArmy, members: Dictionary, changed_ids: Dictionary) -> Callable:
 	var own_hot := team.combat_hot_active()
@@ -5606,6 +5617,9 @@ func _team_stopped(team: Variant, allow_sheltered: bool = false, ignored_ship_jo
 			continue
 		if team.moving_to[index] != TerrainArmy.INVALID_CELL or bool(team.combat_hot_get(index, &"attack")) or str(team.combat_hot_get(index, &"pose")) in ["guard", "guard_raise", "guard_lower", "guard_break", "rescue", "get_up"]:
 			return false
+	# G3: a crowd roster has no grid player member; its Actor is a native person checked by the loop above.
+	if team is CrowdPersonOwner:
+		return true
 	if not is_instance_valid(team.player_member):
 		return true
 	var actor: TerrainTestCharacter = team.player_member
@@ -6072,6 +6086,8 @@ func advance_crowd_sustain(elapsed_game_seconds: float) -> void:
 		for index: int in team_owner.actors:
 			originals[team_owner.combat_identity(index)] = _actor_supply_adapter(team_owner.actors[index])
 		var members: Dictionary = captivity_supply.team_members(team_owner, originals, feeding, lab.crowd_site._records)
+		# G3: split-shore and ship supply read each member's native cell; the grid path sets the same key.
+		var food_locations: Variant = ship_food_locations(team_owner, members) if int(entry.version) == 3 else null
 		var native_life: Dictionary = {"life": life, "indices": lab.crowd_site._index_by_id} if native_sample and team_owner.get_script() == CrowdPersonOwner \
 			and entry.get("life_checkpoint") is Dictionary and not entry.life_checkpoint.is_typed() and not entry.life_checkpoint.is_read_only() else {}
 		var hot_read := func(identity: int, field: StringName) -> Variant:
@@ -6135,6 +6151,7 @@ func advance_crowd_sustain(elapsed_game_seconds: float) -> void:
 						if until <= at: until = Sustain._next_meal(at)
 						seconds = minf(seconds, until - at)
 			var context := {"safe": false, "stopped": false, "hot_read": hot_read, "pending_hp": pending_hp}
+			if food_locations is Dictionary: context["food_locations"] = food_locations
 			var outcome := Sustain._advance_with_life_sample(entry.sustain, members, _supply_stock(entry), float(entry.sustain.at) + seconds, context, native_life) \
 				if not native_life.is_empty() else Sustain.advance_to(entry.sustain, members, _supply_stock(entry), float(entry.sustain.at) + seconds, context)
 			if not outcome.ok:

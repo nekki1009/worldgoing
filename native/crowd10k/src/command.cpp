@@ -57,6 +57,9 @@ void World::refresh_presence(Formation &f) {
 	float radius = std::max(8.f, std::sqrt(hx * hx + hy * hy) + 2.f);
 	for (int i : f.members) {
 		if (!can_act(i)) { present[i] = 0; continue; }
+		// G1/G3: an aboard soldier counts as present (as on the grid, a commander who boards keeps command);
+		// its deck point is not a formation position.
+		if (is_aboard(i)) { present[i] = 1; continue; }
 		float r = radius + (present[i] ? 2.f : 0.f);
 		float dx = px[i] - f.ref_x, dy = py[i] - f.ref_y;
 		present[i] = (uint8_t)(dx * dx + dy * dy <= r * r);

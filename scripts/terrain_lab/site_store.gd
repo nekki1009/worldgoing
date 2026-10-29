@@ -3468,8 +3468,6 @@ static func _validate_supply(state: Dictionary, data: TerrainData = null, region
 				return Runtime.fail("CORRUPT_SAVE", "供養生死事件引用")
 		if not teams.has(int(key)) and not supplied.is_empty():
 			return Runtime.fail("CORRUPT_SAVE", "已移除隊伍仍供養人物")
-		if positional and bool(teams.get(int(key), {}).get("crowd", false)):
-			return Runtime.fail("CORRUPT_SAVE", "首版位置供養只支援原 GDScript 隊伍")
 		if bool(supply.training_order):
 			if not supplied.has(str(int(supply.training_requester))):
 				return Runtime.fail("CORRUPT_SAVE", "訓練下令人已不在供養名冊")

@@ -344,9 +344,7 @@ func siege_admission_guard(candidate: TerrainData = null) -> Dictionary:
 		if SiteStore.has_siege_vehicles(data.site) and not siege_native_supported(): return SiteRuntime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少原人物攻城／複合步介面")
 		for vehicle: Dictionary in data.site.get("vehicles", {}).values():
 			if str(vehicle.get("kind", "")) in ["cart", "wagon"] and not convoy_native_supported(): return SiteRuntime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少後勤車隊原生記錄介面")
-		# G2: paid ship_build batches run under the native crowd model (crowd workers use the same feature work path).
-		for entry: Dictionary in data.site.get("team_supply", {}).values():
-			if int(entry.get("version", 0)) == 3: return SiteRuntime.fail("BUSY", "分岸／船供糧須由原 GD Supply 流程結算")
+		# G3: split-shore and ship supply (team_supply version 3) run under the crowd model too.
 		if not ClassDB.class_has_method(&"ArmyCrowd", &"set_recovery_input"):
 			var saved_rosters: Variant = data.site.get("armies", [])
 			var original_rosters: Array = saved_rosters.duplicate() if saved_rosters is Array else []
