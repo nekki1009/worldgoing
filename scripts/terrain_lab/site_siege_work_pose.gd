@@ -3,6 +3,8 @@ extends RefCounted
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const Clips = preload("site_siege_work_clips.gd")
 const INVALID_CELL := Vector2i(-1, -1)
+# Native crowd crew may stand off-centre, up to this distance (in cells) from the station centre.
+const CROWD_STATION_RADIUS := 0.75
 
 static func sample(data: TerrainData, vehicle: Dictionary, identity: int, person: Dictionary) -> Dictionary:
 	if vehicle.is_empty() or not Runtime.SIEGE_DEFINITIONS.has(str(vehicle.get("kind", ""))) or not vehicle.get("crew_slots", {}).values().has(identity): return {}
@@ -27,6 +29,13 @@ static func sample(data: TerrainData, vehicle: Dictionary, identity: int, person
 		return {}
 	if stage in ["loading", "preparing", "tower_deploy", "tower_retract"] and person.get("moving_to", INVALID_CELL) == INVALID_CELL:
 		for slot: String in vehicle.crew_slots:
-			if int(vehicle.crew_slots[slot]) == identity and cell == Runtime.siege_crew_cell(data, vehicle, slot):
+			if int(vehicle.crew_slots[slot]) == identity and _at_crew_station(data, vehicle, slot, cell, person):
 				return {"clip": "siege_load" if stage == "loading" else "siege_pull", "time": float(action.elapsed), "facing": facing}
 	return {}
+
+static func _at_crew_station(data: TerrainData, vehicle: Dictionary, slot: String, cell: Vector2i, person: Dictionary) -> bool:
+	var station: Vector2i = Runtime.siege_crew_cell(data, vehicle, slot)
+	# Grid people keep the exact cell test. Crowd input carries the native position, so its floor cell may be a neighbour.
+	if not bool(person.get("crowd", false)): return cell == station
+	var at: Vector2 = Vector2(person.get("position", Vector2.ZERO)) / 64.0
+	return at.distance_to(Vector2(station) + Vector2.ONE * 0.5) <= CROWD_STATION_RADIUS

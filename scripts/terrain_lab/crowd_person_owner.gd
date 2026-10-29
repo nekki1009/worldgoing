@@ -543,7 +543,7 @@ func siege_work_person_state(index: int) -> Dictionary:
 	var pose := str(combat_hot_get(index, &"pose", "idle"))
 	var original_pose: PackedFloat64Array = crowd_site.crowd.contact_pose_state(index) if crowd_site.crowd.has_method("contact_pose_state") else PackedFloat64Array()
 	var work_reaction := original_pose.size() != 2 or int(original_pose[0]) not in [0, 1, 2]
-	return {"cell": original.cell, "moving_to": work_moving_to, "progress": progress, "pose": pose, "hp": float(original.hp), "ko": float(original.ko), "reacting": work_reaction or float(combat_hot_get(index, &"exchange_stagger", 0.0)) > 0.0 or pose in ["down", "unconscious", "get_up"], "can_act": combat_can_act(index)}
+	return {"cell": original.cell, "crowd": true, "position": original.position, "moving_to": work_moving_to, "progress": progress, "pose": pose, "hp": float(original.hp), "ko": float(original.ko), "reacting": work_reaction or float(combat_hot_get(index, &"exchange_stagger", 0.0)) > 0.0 or pose in ["down", "unconscious", "get_up"], "can_act": combat_can_act(index)}
 
 func equipment_appearance(index: int) -> Dictionary:
 	return crowd_site._appearance(combat_identity(index)) if combat_units.has(index) else {}

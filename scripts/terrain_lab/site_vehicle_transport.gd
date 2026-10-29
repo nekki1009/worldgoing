@@ -439,6 +439,11 @@ func person_origin_exception(identity: int, cell: Vector2i) -> bool:
 		if person.owner.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL: return false
 	elif person.owner is TerrainTestCharacter:
 		if person.owner.is_moving() or person.owner.site_exited: return false
+	elif person.owner is CrowdPersonOwner:
+		# Native row: the same settled-cell rule, read from the stationary native person.
+		var row: Dictionary = person.owner.person(int(person.unit), false)
+		if row.is_empty() or row.cell != cell or bool(row.get("moving", true)) or person.owner.member_gone(int(person.unit)): return false
+		if person.owner.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL: return false
 	else: return false
 	for vehicle: Dictionary in records().values():
 		if str(vehicle.kind) != "siege_tower" or vehicle.get("deployed_pose", {}).is_empty() or not vehicle.move.is_empty() or not vehicle.action.is_empty(): continue
