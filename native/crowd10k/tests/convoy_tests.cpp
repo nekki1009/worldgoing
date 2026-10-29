@@ -919,6 +919,181 @@ static void formation_explicit_order_detaches() {
 	REQUIRE(w.validate());
 }
 
+// G1 S1 aboard: a ready soldier boards a vehicle and keeps its place on the roster; it does not move, push, block or
+// get targeted while aboard, and it lands back into its formation.
+static void board_refusals() {
+	test_case = "board refusals: no vehicle, convoy crew, KO, captive, released, already aboard; each changes nothing";
+	World w(1); setup(w);
+	straight_convoy(w);
+	const int roster = w.formations[0].roster, fatigue = w.formations[0].fatigue_count;
+	REQUIRE(!w.site_person_board(2, -1));
+	REQUIRE(!w.site_person_board(-1, 0) && !w.site_person_board(99, 0));
+	REQUIRE(!w.site_person_board(0, 0)); // convoy crew
+	REQUIRE(!w.site_person_board(1, 0)); // convoy crew
+	w.ko[2] = 30.0;
+	REQUIRE(!w.site_person_board(2, 0)); // knocked out
+	w.ko[2] = 0.0;
+	w.captive[2] = 1;
+	REQUIRE(!w.site_person_board(2, 0)); // captive
+	w.captive[2] = 0;
+	REQUIRE(!w.is_aboard(0) && !w.is_aboard(1) && !w.is_aboard(2));
+	REQUIRE(w.formations[0].roster == roster && w.formations[0].fatigue_count == fatigue);
+	SitePersonRelease rel{};
+	REQUIRE(w.site_person_release(2, rel));
+	REQUIRE(!w.site_person_board(2, 0)); // released
+	REQUIRE(w.released[2] == 1 && !w.is_aboard(2));
+	REQUIRE(w.validate());
+
+	World v(1); setup(v);
+	REQUIRE(v.site_person_board(2, 3));
+	REQUIRE(!v.site_person_board(2, 4)); // already aboard
+	REQUIRE(v.aboard[2] == 1 && v.aboard_vehicle[2] == 3);
+	REQUIRE(v.validate());
+}
+
+static void board_keeps_roster_fatigue_and_hp() {
+	test_case = "board keeps the roster, fatigue count, hp, presence and the soldier's formation; it drops only its slot";
+	World w(1); setup(w);
+	const int roster = w.formations[0].roster, fatigue = w.formations[0].fatigue_count, slots = w.formations[0].slot_count;
+	const double hp = w.hp[2];
+	REQUIRE(w.site_person_board(2, 0));
+	REQUIRE(w.aboard[2] == 1 && w.aboard_vehicle[2] == 0);
+	REQUIRE(w.alive(2) && w.present[2] == 1 && w.form[2] == 0 && w.hp[2] == hp);
+	REQUIRE(w.slot[2] == -1 && w.formations[0].slot_count == slots - 1);
+	REQUIRE(w.formations[0].roster == roster && w.formations[0].fatigue_count == fatigue);
+	REQUIRE(w.site_person_retarget_aboard(2, 4) && w.aboard_vehicle[2] == 4); // ship to ship
+	REQUIRE(!w.site_person_retarget_aboard(0, 4)); // not aboard
+	REQUIRE(!w.site_person_set_deck(0, 5.5, 5.5)); // not aboard
+	REQUIRE(w.validate());
+	REQUIRE(w.site_person_land(2, 20.5, 20.5));
+	REQUIRE(w.aboard[2] == 0 && w.aboard_vehicle[2] == -1 && w.slot[2] >= 0);
+	REQUIRE(w.formations[0].slot_count == slots && w.formations[0].roster == roster && w.formations[0].fatigue_count == fatigue);
+	REQUIRE(w.hp[2] == hp);
+	REQUIRE(w.validate());
+}
+
+static void aboard_stays_while_formation_passes() {
+	test_case = "an aboard soldier does not move while the formation marches through its cell, which the others pass";
+	World w(1); setup(w);
+	place(w, 2, 30.5f, 27.5f); // straight ahead of the formation's march north
+	REQUIRE(w.site_person_board(2, 0));
+	const float bx = w.px[2], by = w.py[2];
+	const int cx = (int)bx, cy = (int)by;
+	w.order_move(0, 30.5f, 20.5f, 0.f);
+	bool passed = false;
+	for (int t = 0; t < 300; ++t) {
+		step(w);
+		REQUIRE(w.px[2] == bx && w.py[2] == by && w.nx[2] == bx && w.ny[2] == by);
+		for (int j : {0, 1}) if ((int)w.px[j] == cx && (int)w.py[j] == cy) passed = true;
+	}
+	REQUIRE(passed);
+	REQUIRE(w.py[0] < 25.0 && w.py[1] < 25.0); // the formation itself carried on through
+	REQUIRE(w.validate());
+}
+
+static void aboard_is_never_a_melee_target() {
+	test_case = "an aboard soldier is never a melee target: an adjacent enemy formation ordered onto it takes no hit";
+	World w(1); setup(w);
+	place(w, 2, 33.5f, 30.5f);
+	REQUIRE(w.site_person_board(2, 0));
+	const int enemy = w.add_formation(1, 35.5f, 30.5f, 3.14159265f, 1, 1, T_MELEE, 0);
+	rules::Equip e; e.family = rules::F_LONGSWORD; e.material = rules::M_IRON;
+	const int foe = w.add_soldier(enemy, e, R_REGULAR, 2001);
+	w.formations[enemy].ai_enabled = false;
+	w.order_attack(enemy, 2);
+	const float bx = w.px[2], by = w.py[2];
+	const double hp = w.hp[2];
+	bool targeted = false;
+	for (int t = 0; t < 240; ++t) {
+		step(w);
+		for (int j = 0; j < w.soldier_count(); ++j) if (w.target[j] == 2 || w.enc_target[j] == 2) targeted = true;
+		REQUIRE(w.state[2] != S_FIGHT && w.state[2] != S_ENGAGE && w.state[2] != S_ENCIRCLE);
+	}
+	REQUIRE(!targeted);
+	REQUIRE(w.hp[2] == hp && w.px[2] == bx && w.py[2] == by);
+	REQUIRE(w.alive(foe));
+	REQUIRE(w.validate());
+}
+
+static void land_refusals_and_landing() {
+	test_case = "landing: unwalkable, occupied, out of bounds and non-aboard refused; a free cell rejoins and re-settles";
+	World w(1); setup(w, 20);
+	REQUIRE(w.site_person_board(2, 0));
+	REQUIRE(!w.site_person_land(2, 20.5, 5.5)); // unwalkable column
+	REQUIRE(!w.site_person_land(2, -1.5, 3.5));  // out of bounds
+	REQUIRE(!w.site_person_land(2, std::numeric_limits<double>::quiet_NaN(), 3.5)); // not finite
+	REQUIRE(!w.site_person_land(1, 25.5, 25.5)); // not aboard
+	REQUIRE(!w.site_person_land(2, std::floor(w.px[0]) + 0.5, std::floor(w.py[0]) + 0.5)); // occupied by soldier 0
+	REQUIRE(w.aboard[2] == 1 && w.aboard_vehicle[2] == 0 && w.slot[2] == -1);
+	REQUIRE(w.validate());
+	REQUIRE(w.site_person_land(2, 25.5, 25.5));
+	REQUIRE(w.aboard[2] == 0 && w.slot[2] >= 0 && w.px[2] == 25.5f && w.py[2] == 25.5f);
+	for (int t = 0; t < 600; ++t) step(w);
+	int slot_index = -1;
+	float sx = 0, sy = 0, clip = 0;
+	REQUIRE(w.slot_target(2, slot_index, sx, sy, clip) && slot_index == w.slot[2]);
+	const double gap = std::hypot(w.px[2] - sx, w.py[2] - sy);
+	REQUIRE(gap < 0.6); // back on its slot in the formation
+	REQUIRE(w.validate());
+}
+
+static void deck_position_moves_only_the_aboard_soldier() {
+	test_case = "set_deck moves the aboard soldier's position every tick and changes nothing for anyone else";
+	World a(1), b(1);
+	setup(a); setup(b);
+	place(a, 2, 30.5f, 27.5f); place(b, 2, 30.5f, 27.5f);
+	REQUIRE(a.site_person_board(2, 0) && b.site_person_board(2, 0));
+	a.order_move(0, 30.5f, 20.5f, 0.f); b.order_move(0, 30.5f, 20.5f, 0.f);
+	REQUIRE(!a.site_person_set_deck(2, -1.0, 5.0)); // outside the map
+	float dx = 0, dy = 0;
+	for (int t = 0; t < 120; ++t) {
+		dx = 5.5f + 0.01f * (float)t; dy = 6.5f;
+		REQUIRE(a.site_person_set_deck(2, dx, dy));
+		step(a); step(b);
+		for (int j : {0, 1}) REQUIRE(a.px[j] == b.px[j] && a.py[j] == b.py[j]);
+		REQUIRE(a.hp[2] == b.hp[2]);
+	}
+	REQUIRE(a.px[2] == dx && a.py[2] == dy && b.px[2] == 30.5f && b.py[2] == 27.5f);
+	REQUIRE(a.validate());
+}
+
+static void save_load_mid_aboard_matches() {
+	test_case = "save and load with a soldier aboard: equal hash, identical continuation over 200 steps";
+	World w(1); setup(w);
+	straight_convoy(w);
+	place(w, 2, 30.5f, 27.5f);
+	REQUIRE(w.site_person_board(2, 5));
+	w.order_move(0, 30.5f, 20.5f, 0.f);
+	for (int t = 0; t < 40; ++t) step(w);
+	const std::vector<uint8_t> blob = w.save();
+	REQUIRE(!blob.empty());
+	World loaded(1);
+	REQUIRE(loaded.load(blob));
+	REQUIRE(loaded.state_hash() == w.state_hash());
+	REQUIRE(loaded.save() == blob);
+	REQUIRE(loaded.aboard[2] == 1 && loaded.aboard_vehicle[2] == 5 && loaded.slot[2] == -1);
+	for (int t = 0; t < 200; ++t) {
+		step(w);
+		step(loaded);
+		REQUIRE(loaded.state_hash() == w.state_hash());
+	}
+	REQUIRE(w.validate() && loaded.validate());
+}
+
+static uint64_t aboard_scenario_hash(int threads) {
+	World w(threads); setup(w);
+	place(w, 2, 30.5f, 27.5f);
+	w.site_person_board(2, 0);
+	w.order_move(0, 30.5f, 20.5f, 0.f);
+	for (int t = 0; t < 200; ++t) step(w);
+	return w.state_hash();
+}
+
+static void aboard_hash_matches_across_thread_counts() {
+	test_case = "thread counts 1 and 4 give the same hash with a soldier aboard";
+	REQUIRE(aboard_scenario_hash(1) == aboard_scenario_hash(4));
+}
+
 int main(int argc, char **argv) {
 	if (argc > 1 && std::string(argv[1]) == "--formation") {
 		formation_control = argc > 2 && std::string(argv[2]) == "--control";
@@ -990,6 +1165,14 @@ int main(int argc, char **argv) {
 	rest_rule_on_d_steps();
 	explicit_wagon_turn_among_own_soldiers();
 	explicit_wagon_turn_at_map_edge();
+	board_refusals();
+	board_keeps_roster_fatigue_and_hp();
+	aboard_stays_while_formation_passes();
+	aboard_is_never_a_melee_target();
+	land_refusals_and_landing();
+	deck_position_moves_only_the_aboard_soldier();
+	save_load_mid_aboard_matches();
+	aboard_hash_matches_across_thread_counts();
 	std::printf("CONVOY_NATIVE_CONTRACT checks=%d failures=%d\n", checks, failures);
 	return failures ? 1 : 0;
 }

@@ -143,7 +143,7 @@ template <class Ar> void io_convoy(Ar &ar, Convoy &c) {
 } // namespace
 
 template <class Ar> void World::serialize(Ar &ar) {
-	const uint32_t magic = 0x3331574Bu; // "KW13": convoy formation following (G4 OPUS); KW12: convoy stall_reason (G4 S4f); KW11: convoy body offsets, body_stalled, body-aware flow fields (G4 S2); KW10: logistics convoys (G4); KW09: released soldiers (G6.4 site exit); KW08: per-person post holder (R1b)
+	const uint32_t magic = 0x3431574Bu; // "KW14": aboard soldiers (G1 S1 site boarding); KW13: convoy formation following (G4 OPUS); KW12: convoy stall_reason (G4 S4f); KW11: convoy body offsets, body_stalled, body-aware flow fields (G4 S2); KW10: logistics convoys (G4); KW09: released soldiers (G6.4 site exit); KW08: per-person post holder (R1b)
 	uint32_t m = magic;
 	ar.pod(m);
 	if (Ar::loading && m != magic) { ar.ok = false; return; }
@@ -176,6 +176,7 @@ template <class Ar> void World::serialize(Ar &ar) {
 	ar.vec(military_role);
 	ar.vec(post_holder);
 	ar.vec(released);
+	ar.vec(aboard); ar.vec(aboard_vehicle);
 	ar.vec(events);
 	uint64_t np = projectiles.size(); ar.pod(np); if (!count(ar, np, 65, 65536)) return;
 	if (Ar::loading) projectiles.resize((size_t)np); for (auto &p : projectiles) io_projectile(ar, p);
@@ -255,6 +256,8 @@ bool World::validate(std::string *error, bool allow_site_jobs) const {
 	for (uint8_t value : post_holder) CHECK_VALID(value <= 1);
 	CHECK_VALID(released.size() == n);
 	for (uint8_t value : released) CHECK_VALID(value <= 1);
+	CHECK_VALID(aboard.size() == n && aboard_vehicle.size() == n);
+	for (uint8_t value : aboard) CHECK_VALID(value <= 1);
 	CHECK_VALID(prison_id.size() == n && escort_goal.size() == n && escort_mode.size() == n);
 	CHECK_VALID(contact_revision.size() == n);
 	if (allow_site_jobs) {
@@ -434,6 +437,11 @@ bool World::validate(std::string *error, bool allow_site_jobs) const {
 		}
 		for (size_t i = 0; i < n; ++i) CHECK_VALID(convoy_of[i] == 0 ? !owned[i] : (owned[i] && convoy_ids.count(convoy_of[i]) == 1));
 	}
+	// G1 S1: an aboard soldier is a living member with no slot, no convoy crew role and a vehicle; nobody else is
+	for (size_t i = 0; i < n; ++i) {
+		if (aboard[i]) CHECK_VALID(aboard_vehicle[i] >= 0 && !released[i] && slot[i] < 0 && convoy_of[i] == 0);
+		else CHECK_VALID(aboard_vehicle[i] == -1);
+	}
 	CHECK_VALID(exchange_round >= 0 && shot_serial >= 0);
 	CHECK_VALID(host_last_release_id >= 0 && host_last_release_id <= INT32_MAX);
 	CHECK_VALID(!host_ranged_delegate || projectiles.empty());
@@ -475,7 +483,7 @@ void World::swap_state(World &o) {
 	swap(skill, o.skill);
 	swap(role, o.role);
 	swap(military_role, o.military_role);
-	swap(post_holder, o.post_holder); swap(released, o.released);
+	swap(post_holder, o.post_holder); swap(released, o.released); swap(aboard, o.aboard); swap(aboard_vehicle, o.aboard_vehicle);
 	swap(captive, o.captive);
 	swap(present, o.present);
 	swap(troop, o.troop);

@@ -479,7 +479,7 @@ std::vector<uint8_t> World::occupancy_mask(const std::vector<int64_t> &ignored) 
 	std::vector<uint8_t> result(size_t(terrain.w) * terrain.h, 0);
 	const float radius = cfg.radius + cfg.wall_margin;
 	for (int i = 0; i < soldier_count(); ++i) {
-		if (std::find(ignored.begin(), ignored.end(), person_id[i]) != ignored.end()) continue;
+		if (is_aboard(i) || std::find(ignored.begin(), ignored.end(), person_id[i]) != ignored.end()) continue; // aboard: on a deck, not on the ground
 		const float end_x = px[i] + vx[i] / 30.f, end_y = py[i] + vy[i] / 30.f;
 		for (int y = std::max(0, int(std::floor(std::min(py[i], end_y) - radius))); y <= std::min(terrain.h - 1, int(std::floor(std::max(py[i], end_y) + radius))); ++y)
 			for (int x = std::max(0, int(std::floor(std::min(px[i], end_x) - radius))); x <= std::min(terrain.w - 1, int(std::floor(std::max(px[i], end_x) + radius))); ++x) result[terrain.idx(x, y)] = 1;
@@ -539,6 +539,7 @@ int World::add_soldier(int fi, const rules::Equip &e, Role r, int64_t person, ui
 	push(military_role, (uint8_t)1);
 	push(post_holder, (uint8_t)1);
 	push(released, (uint8_t)0);
+	push(aboard, (uint8_t)0); push(aboard_vehicle, (int32_t)-1);
 	push(person_id, person >= 0 ? person : (int64_t)i);
 	if (finalized_) {
 		f.slot_count++; f.roster++; f.fatigue_count++;
@@ -905,13 +906,14 @@ void World::build_hash() {
 		int x = (int)px[i], y = (int)py[i];
 		int c = terrain.idx(x, y);
 		cell[i] = c;
+		if (is_aboard(i)) continue; // G1 S1: aboard soldiers are not in the spatial grid or the block counts
 		hash_start_[c + 1]++;
 		if (can_act(i)) block_count_[faction_slot_[team[i]]][(y >> 3) * bw_ + (x >> 3)]++;
 	}
 	for (int c = 0; c < cells; ++c) hash_start_[c + 1] += hash_start_[c];
 	std::vector<int32_t> fill(hash_start_.begin(), hash_start_.end() - 1);
 	for (int i = 0; i < n; ++i)
-		if (alive(i)) hash_items_[fill[cell[i]]++] = i;
+		if (alive(i) && !is_aboard(i)) hash_items_[fill[cell[i]]++] = i;
 	// enemy presence per block for each faction: sum of the factions hostile to it
 	const size_t K = slot_faction_.size(), B = (size_t)bw_ * bh_;
 	for (size_t a = 0; a < K; ++a) {
@@ -1128,7 +1130,7 @@ void World::contact_stage(int ch) {
 	const int n = soldier_count();
 	const int a = ch * cfg.chunk, b = std::min(n, a + cfg.chunk);
 	for (int i = a; i < b; ++i) {
-		if (!can_act(i)) { target[i] = -1; near_enemy[i] = 0; continue; }
+		if (!can_act(i) || is_aboard(i)) { target[i] = -1; near_enemy[i] = 0; continue; }
 		if ((tick + (uint32_t)i) % (uint32_t)cfg.contact_period) continue;
 		const uint16_t *eb = enemy_blocks(team[i]);
 		int x = (int)px[i], y = (int)py[i];
@@ -1171,6 +1173,11 @@ void World::soldier_stage(float dt, int ch) {
 	uint64_t bad_cell = 0, bad_step = 0;
 	for (int i = a; i < b; ++i) {
 		running[i] = 0;
+		if (is_aboard(i)) { // G1 S1: aboard soldiers ride the vehicle; they neither move, push, nor take a step
+			nx[i] = px[i]; ny[i] = py[i]; vx[i] = vy[i] = 0;
+			state[i] = !alive(i) ? S_DEAD : ko[i] > 0 ? S_DOWN : S_SLOT;
+			anim_t[i] += dt; continue;
+		}
 		if (move_siege_member(i,dt)) continue;
 		if (convoy_steer(i, dt)) continue; // convoy crew: steered to their convoy slot, never by ordinary motion
 		if (is_siege_crew(i) && !controlled_step_pending(i)) {
@@ -1445,7 +1452,7 @@ int World::nearest_hostile(int i, float r) const {
 	int best = -1;
 	float bd = r * r;
 	for (int j = 0; j < soldier_count(); ++j) {
-		if (j == i || !can_act(j) || !hostile(team[i], team[j])) continue;
+		if (j == i || !can_act(j) || is_aboard(j) || !hostile(team[i], team[j])) continue;
 		const float dx = px[j] - px[i], dy = py[j] - py[i], d2 = dx * dx + dy * dy;
 		if (d2 < bd) { bd = d2; best = j; }
 	}
@@ -1472,7 +1479,7 @@ int World::standing_near(float x, float y, float r) const {
 	const int x0 = std::max(0, (int)std::floor(x - r)), x1 = std::min(terrain.w - 1, (int)std::floor(x + r));
 	const int y0 = std::max(0, (int)std::floor(y - r)), y1 = std::min(terrain.h - 1, (int)std::floor(y + r));
 	for (int i = 0; i < soldier_count(); ++i) { // host query, not per step: a plain scan keeps it independent of the hash
-		if (!can_act(i)) continue;
+		if (!can_act(i) || is_aboard(i)) continue;
 		if (px[i] < (float)x0 || px[i] >= (float)x1 + 1.f || py[i] < (float)y0 || py[i] >= (float)y1 + 1.f) continue;
 		const float dx = px[i] - x, dy = py[i] - y;
 		if (dx * dx + dy * dy <= r * r) ++count;
@@ -1488,7 +1495,7 @@ void World::compact_slots(Formation &f) {
 	f.members.resize(w);
 	std::vector<int> able;
 	for (int i : f.members)
-		if ((can_act(i) || getup[i] > 0) && !is_convoy_crew(i)) able.push_back(i); // convoy crew hold vehicle slots, not soldier slots
+		if ((can_act(i) || getup[i] > 0) && !is_convoy_crew(i) && !is_aboard(i)) able.push_back(i); // convoy crew and aboard soldiers hold vehicle slots, not soldier slots
 		else slot[i] = -1;
 	std::stable_sort(able.begin(), able.end(), [&](int x, int y) {
 		int sx = slot[x] < 0 ? 1 << 30 : slot[x], sy = slot[y] < 0 ? 1 << 30 : slot[y];
@@ -2094,7 +2101,7 @@ bool World::convoy_cells_clear(const Convoy &c, const std::vector<int> &cells) c
 		if (!convoy_body_owner.empty() && convoy_body_owner[v] != 0 && convoy_body_owner[v] != c.id) return false;
 	}
 	for (int i = 0; i < soldier_count(); ++i) {
-		if (!alive(i) || (i < (int)convoy_of.size() && convoy_of[i] == c.id)) continue; // own crew stand in their own body
+		if (!alive(i) || is_aboard(i) || (i < (int)convoy_of.size() && convoy_of[i] == c.id)) continue; // own crew stand in their own body
 		const int x = (int)std::floor(px[i]), y = (int)std::floor(py[i]);
 		if (!terrain.contains(x, y)) continue;
 		if (std::binary_search(cells.begin(), cells.end(), terrain.idx(x, y))) return false;
@@ -2313,7 +2320,7 @@ void World::convoy_stage(float dt) {
 
 bool World::convoy_soldier_in(const Convoy &c, const std::vector<int> &cells) const {
 	for (int i = 0; i < soldier_count(); ++i) {
-		if (!alive(i) || (i < (int)convoy_of.size() && convoy_of[i] == c.id)) continue; // own crew stand in their own body
+		if (!alive(i) || is_aboard(i) || (i < (int)convoy_of.size() && convoy_of[i] == c.id)) continue; // own crew stand in their own body
 		const int x = (int)std::floor(px[i]), y = (int)std::floor(py[i]);
 		if (!terrain.contains(x, y)) continue;
 		if (std::binary_search(cells.begin(), cells.end(), terrain.idx(x, y))) return true;
@@ -2741,7 +2748,7 @@ std::vector<uint8_t> World::convoy_route_walls(const Convoy &c) const {
 // another team, a captive, an escort, a siege crew. Someone passing by (|v| > 0.2) is waited for instead.
 void World::convoy_mark_fixed_people(int my_team, std::vector<uint8_t> &walls) const {
 	for (int i = 0; i < soldier_count(); ++i) {
-		if (!alive(i) || is_convoy_crew(i) || convoy_person_yields(i, my_team)) continue;
+		if (!alive(i) || is_aboard(i) || is_convoy_crew(i) || convoy_person_yields(i, my_team)) continue;
 		if (vx[i] * vx[i] + vy[i] * vy[i] > 0.04f) continue;
 		const int x = (int)std::floor(px[i]), y = (int)std::floor(py[i]);
 		if (terrain.contains(x, y)) walls[terrain.idx(x, y)] = 1;
@@ -2917,7 +2924,7 @@ int World::convoy_follow_cells(const Convoy &c, const std::vector<int> &cells, c
 	const int my_team = convoy_team(c);
 	bool yield = false, body = false, other = false;
 	for (int i = 0; i < soldier_count(); ++i) {
-		if (!alive(i) || convoy_of[i] == c.id) continue;
+		if (!alive(i) || is_aboard(i) || convoy_of[i] == c.id) continue;
 		const int x = (int)std::floor(px[i]), y = (int)std::floor(py[i]);
 		if (!terrain.contains(x, y) || !std::binary_search(fresh.begin(), fresh.end(), terrain.idx(x, y))) continue;
 		if (is_convoy_crew(i)) {
@@ -3317,7 +3324,7 @@ uint64_t World::state_hash() const {
 	}
 	for (auto *v : {&form, &slot, &target, &cell, &enc_target, &rescue_of, &capture_of, &captor, &rescued_by_, &capturing_by_}) mv(*v);
 	mv(ammo); mv(person_id);
-	mv(military_role); mv(post_holder); mv(released);
+	mv(military_role); mv(post_holder); mv(released); mv(aboard); mv(aboard_vehicle);
 	for (const auto &e : equip) { m(e.family); m(e.material); m(e.armor); m(e.shield); }
 	for (const auto &c : ability) { m(c.tactics); m(c.leadership); m(c.coach); }
 	for (const auto &p : projectiles) {

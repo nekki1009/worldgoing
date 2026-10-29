@@ -94,6 +94,23 @@ int wg_crowd_convoy_attach_formation(wg_crowd *c,int id,int formation) { return 
 int wg_crowd_convoy_detach_formation(wg_crowd *c,int id) { return c && c->world.convoy_detach_formation(id) ? 1 : 0; }
 int wg_crowd_convoy_formation(const wg_crowd *c,int id) { return c ? c->world.convoy_formation(id) : -2; }
 int wg_crowd_site_person_exit_ready(const wg_crowd *c,int i) { return c && c->world.site_person_exit_ready(i) ? 1 : 0; }
+int wg_crowd_site_person_board(wg_crowd *c,int i,int vehicle) {
+	return c && i>=0 && i<c->world.soldier_count() && c->world.site_person_board(i,vehicle) ? 1 : 0;
+}
+int wg_crowd_site_person_land(wg_crowd *c,int i,double x,double y) {
+	return c && i>=0 && i<c->world.soldier_count() && c->world.site_person_land(i,x,y) ? 1 : 0;
+}
+int wg_crowd_site_person_set_deck(wg_crowd *c,int i,double x,double y) {
+	return c && i>=0 && i<c->world.soldier_count() && c->world.site_person_set_deck(i,x,y) ? 1 : 0;
+}
+int wg_crowd_site_person_retarget_aboard(wg_crowd *c,int i,int vehicle) {
+	return c && i>=0 && i<c->world.soldier_count() && c->world.site_person_retarget_aboard(i,vehicle) ? 1 : 0;
+}
+int wg_crowd_site_person_aboard(const wg_crowd *c,int i,double *out) {
+	if (!c || !out || i<0 || i>=c->world.soldier_count()) return 0;
+	out[0] = c->world.is_aboard(i) ? 1.0 : 0.0; out[1] = static_cast<double>(c->world.aboard_vehicle[i]);
+	return 1;
+}
 int wg_crowd_site_person_release(wg_crowd *c,int i,double *out) {
 	wg::SitePersonRelease r;
 	if (!c || !out || !c->world.site_person_release(i,r)) return 0;

@@ -45,6 +45,13 @@ int wg_crowd_site_person_exit_ready(const wg_crowd *c, int i);
 /* Releases a ready soldier from the live pool and formation. out[8] = {hp, fatigue, fatigue_rest, ammo, cell_x, cell_y, x, y}
  * (fatigue = formation pool). Returns 1 on release; 0 refuses and writes nothing. */
 int wg_crowd_site_person_release(wg_crowd *c, int i, double *out);
+/* G1 S1 aboard: board / land / set_deck / retarget_aboard return 1 on success, 0 refused with no change.
+ * site_person_aboard writes out[2] = {aboard, vehicle} and returns 1, or 0 for an unknown soldier. */
+int wg_crowd_site_person_board(wg_crowd *c, int i, int vehicle);
+int wg_crowd_site_person_land(wg_crowd *c, int i, double x, double y);
+int wg_crowd_site_person_set_deck(wg_crowd *c, int i, double x, double y);
+int wg_crowd_site_person_retarget_aboard(wg_crowd *c, int i, int vehicle);
+int wg_crowd_site_person_aboard(const wg_crowd *c, int i, double *out);
 int wg_crowd_has_projectiles(const wg_crowd *c);
 
 wg_crowd *wg_crowd_create(int threads, int64_t site_seed);

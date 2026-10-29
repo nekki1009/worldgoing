@@ -380,6 +380,68 @@ bool World::site_person_release(int i, SitePersonRelease &out) {
 	return true;
 }
 
+// ---------------------------------------------------------------- G1 S1 aboard (ship / vehicle)
+// Board: a soldier that could leave the Site (site_person_exit_ready) goes aboard a vehicle. Unlike a release it stays
+// alive, on the roster, fatigue-bound and in its formation's member list, as convoy crew do; it only gives up its slot
+// (compact_slots) and loses every order, target and encounter that names it. Refusals change nothing.
+bool World::site_person_board(int i, int vehicle) {
+	if (work_point_active_ || work_point_finish_ready_ || vehicle < 0 || is_aboard(i) || !site_person_exit_ready(i)) return false;
+	Formation &f = formations[form[i]];
+	for (int j = 0; j < soldier_count(); ++j) {
+		if (target[j] == i) target[j] = -1;
+		if (enc_target[j] == i) enc_target[j] = -1;
+	}
+	for (auto &g : formations) if (g.target_person == i) g.target_person = -1;
+	state[i] = S_SLOT; target[i] = -1; enc_target[i] = -1; near_enemy[i] = 0; running[i] = 0;
+	vx[i] = vy[i] = 0; nx[i] = px[i]; ny[i] = py[i];
+	aboard[i] = 1; aboard_vehicle[i] = vehicle;
+	compact_slots(f); // the aboard soldier holds no soldier slot; the rest renumber
+	f.command_dirty = true;
+	return true;
+}
+
+// Land: an aboard living soldier steps onto a free walkable cell that no living non-aboard soldier and no convoy body
+// occupies, and rejoins its formation (a soldier slot again, as convoy crew rejoin on release). Refusals change nothing.
+bool World::site_person_land(int i, double x, double y) {
+	if (work_point_active_ || work_point_finish_ready_ || !is_aboard(i) || !alive(i)) return false;
+	const float fx = (float)x, fy = (float)y;
+	if (!std::isfinite(fx) || !std::isfinite(fy)) return false;
+	const int cx = (int)std::floor(fx), cy = (int)std::floor(fy);
+	if (!terrain.contains(cx, cy) || !terrain.walkable(cx, cy)) return false;
+	const int c = terrain.idx(cx, cy);
+	if (convoy_body_cell(c)) return false;
+	for (int j = 0; j < soldier_count(); ++j) {
+		if (j == i || !alive(j) || is_aboard(j)) continue;
+		if ((int)std::floor(px[j]) == cx && (int)std::floor(py[j]) == cy) return false;
+	}
+	aboard[i] = 0; aboard_vehicle[i] = -1;
+	px[i] = nx[i] = fx; py[i] = ny[i] = fy;
+	vx[i] = vy[i] = 0; cell[i] = c;
+	Formation &f = formations[form[i]];
+	compact_slots(f); // rejoin: the landed soldier takes a soldier slot again
+	f.command_dirty = true;
+	return true;
+}
+
+// Deck position of an aboard soldier, set by the host every tick (presentation and ranged origin). Nothing else reads it.
+bool World::site_person_set_deck(int i, double x, double y) {
+	if (!is_aboard(i)) return false;
+	const float fx = (float)x, fy = (float)y;
+	if (!std::isfinite(fx) || !std::isfinite(fy)) return false;
+	const int cx = (int)std::floor(fx), cy = (int)std::floor(fy);
+	if (!terrain.contains(cx, cy)) return false;
+	px[i] = nx[i] = fx; py[i] = ny[i] = fy;
+	cell[i] = terrain.idx(cx, cy);
+	return true;
+}
+
+// Aboard to aboard: a ship-to-ship crossing changes the vehicle only.
+bool World::site_person_retarget_aboard(int i, int vehicle) {
+	if (!is_aboard(i) || vehicle < 0) return false;
+	aboard_vehicle[i] = vehicle;
+	return true;
+}
+
 bool World::charge_custody_work(int i, double seconds) {
 	if (work_point_finish_ready_) return false; // Native final admission precedes all original point costs.
 	if (i < 0 || i >= soldier_count() || !can_act(i) || escort_mode[i] != 1 || !std::isfinite(seconds) || seconds < 0) return false;

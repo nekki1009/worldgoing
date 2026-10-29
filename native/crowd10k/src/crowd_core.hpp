@@ -368,6 +368,11 @@ public:
 	// 1 = departed the Site with a travelling person (site_person_release). Such a soldier is not alive, not
 	// able to act, not in its formation, and is not drawn; its hp and position are kept for the receipt. Saved.
 	std::vector<uint8_t> released;
+	// G1 S1: 1 = aboard a ship / vehicle (site_person_board). Such a soldier stays alive, on the roster, fatigue-bound and
+	// in its formation's member list (as convoy crew are), but holds no soldier slot, is not moved, pushed, hashed or
+	// targeted; its position is the deck position the host sets. aboard_vehicle: vehicle id, -1 when not aboard. Saved.
+	std::vector<uint8_t> aboard;
+	std::vector<int32_t> aboard_vehicle;
 	std::vector<int64_t> person_id;
 	std::vector<uint8_t> life_ck; // morale checkpoint: 0 conscious, 1 unconscious, 2 dead
 	// presentation only (never read by the rules, not hashed, not saved)
@@ -491,7 +496,7 @@ public:
 	std::vector<int32_t> convoy_claim_owner;
 	bool is_convoy_crew(int person) const { return person >= 0 && person < (int)convoy_of.size() && convoy_of[person] != 0; }
 	// acting exclusions shared by siege crew and convoy crew (AI, exchange, rescue, capture, work)
-	bool is_crewed(int person) const { return is_siege_crew(person) || is_convoy_crew(person); }
+	bool is_crewed(int person) const { return is_siege_crew(person) || is_convoy_crew(person) || is_aboard(person); }
 	int siege_group(int person) const { return person >= 0 && person < (int)siege_member_group.size() ? siege_member_group[person] : -1; }
 
 	bool admit_prison(int person, int guard, int64_t prison, int slot_cell, int contact_cell);
@@ -573,6 +578,15 @@ public:
 	// committed step. Release refuses (returns false, writes nothing) unless ready.
 	bool site_person_exit_ready(int i) const;
 	bool site_person_release(int i, SitePersonRelease &out);
+	// G1 S1 aboard. Board: a ready soldier (the site_person_exit_ready guards) goes aboard vehicle >= 0; it keeps roster,
+	// fatigue binding, hp, ammo and team, and loses its slot. Land: an aboard living soldier steps onto a free walkable
+	// cell (no living non-aboard soldier, no convoy body) and rejoins its formation. set_deck: aboard only; moves the
+	// position (presentation and ranged origin). retarget_aboard: aboard only; changes the vehicle. Refusals change nothing.
+	bool is_aboard(int i) const { return i >= 0 && i < (int)aboard.size() && aboard[i] != 0; }
+	bool site_person_board(int i, int vehicle);
+	bool site_person_land(int i, double x, double y);
+	bool site_person_set_deck(int i, double x, double y);
+	bool site_person_retarget_aboard(int i, int vehicle);
 	bool charge_siege_round(const std::vector<int> &members, double per_person);
 	bool charge_siege_work(int person, double game_seconds);
 	void contact_pose(int i, int movement, int &slot, double &age) const;
@@ -641,7 +655,7 @@ public:
 	// rule queries (public for tests)
 	bool alive(int i) const { return hp[i] > 0.0 && !released[i]; } // a released soldier is out of every system
 	bool can_act(int i) const { return alive(i) && ko[i] <= 0.0 && getup[i] <= 0.0 && !captive[i]; }
-	bool can_receive(int i) const { return can_act(i) && exch_cd[i] <= 0.000000001; }
+	bool can_receive(int i) const { return can_act(i) && !is_aboard(i) && exch_cd[i] <= 0.000000001; }
 	bool exchange_ready(int i) const;
 	bool host_ranged_ready(int i,int expected_ammo,int mode,int64_t release_id,int target_x,int target_y) const;
 	bool initiates(int i, bool melee) const;
