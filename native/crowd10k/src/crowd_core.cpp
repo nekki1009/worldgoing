@@ -540,6 +540,7 @@ int World::add_soldier(int fi, const rules::Equip &e, Role r, int64_t person, ui
 	push(post_holder, (uint8_t)1);
 	push(released, (uint8_t)0);
 	push(aboard, (uint8_t)0); push(aboard_vehicle, (int32_t)-1);
+	push(absent, (uint8_t)0); push(absent_kind, (uint8_t)0);
 	push(person_id, person >= 0 ? person : (int64_t)i);
 	if (finalized_) {
 		f.slot_count++; f.roster++; f.fatigue_count++;
@@ -3324,7 +3325,7 @@ uint64_t World::state_hash() const {
 	}
 	for (auto *v : {&form, &slot, &target, &cell, &enc_target, &rescue_of, &capture_of, &captor, &rescued_by_, &capturing_by_}) mv(*v);
 	mv(ammo); mv(person_id);
-	mv(military_role); mv(post_holder); mv(released); mv(aboard); mv(aboard_vehicle);
+	mv(military_role); mv(post_holder); mv(released); mv(aboard); mv(aboard_vehicle); mv(absent); mv(absent_kind);
 	for (const auto &e : equip) { m(e.family); m(e.material); m(e.armor); m(e.shield); }
 	for (const auto &c : ability) { m(c.tactics); m(c.leadership); m(c.coach); }
 	for (const auto &p : projectiles) {

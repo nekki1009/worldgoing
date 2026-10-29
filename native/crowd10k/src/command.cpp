@@ -411,9 +411,10 @@ bool World::site_person_board(int i, int vehicle) {
 
 // Land: an aboard living soldier steps onto a free walkable cell that no living non-aboard soldier and no convoy body
 // occupies, and rejoins its formation (a soldier slot again, as convoy crew rejoin on release). Refusals change nothing.
-bool World::site_person_land(int i, double x, double y) {
-	if (work_point_active_ || work_point_finish_ready_ || !is_aboard(i) || !alive(i)) return false;
-	const float fx = (float)x, fy = (float)y;
+// The cell a soldier may stand on after landing or returning: finite, inside the map, walkable, no convoy body and no
+// other living non-aboard soldier (absent soldiers are not alive, so they hold no cell). Pure: changes nothing.
+bool World::landing_cell(int i, double x, double y, float &fx, float &fy, int &cell_index) const {
+	fx = (float)x; fy = (float)y;
 	if (!std::isfinite(fx) || !std::isfinite(fy)) return false;
 	const int cx = (int)std::floor(fx), cy = (int)std::floor(fy);
 	if (!terrain.contains(cx, cy) || !terrain.walkable(cx, cy)) return false;
@@ -423,6 +424,15 @@ bool World::site_person_land(int i, double x, double y) {
 		if (j == i || !alive(j) || is_aboard(j)) continue;
 		if ((int)std::floor(px[j]) == cx && (int)std::floor(py[j]) == cy) return false;
 	}
+	cell_index = c;
+	return true;
+}
+
+bool World::site_person_land(int i, double x, double y) {
+	if (work_point_active_ || work_point_finish_ready_ || !is_aboard(i) || !alive(i)) return false;
+	float fx = 0, fy = 0;
+	int c = -1;
+	if (!landing_cell(i, x, y, fx, fy, c)) return false;
 	aboard[i] = 0; aboard_vehicle[i] = -1;
 	px[i] = nx[i] = fx; py[i] = ny[i] = fy;
 	vx[i] = vy[i] = 0; cell[i] = c;
@@ -448,6 +458,105 @@ bool World::site_person_set_deck(int i, double x, double y) {
 bool World::site_person_retarget_aboard(int i, int vehicle) {
 	if (!is_aboard(i) || vehicle < 0) return false;
 	aboard_vehicle[i] = vehicle;
+	return true;
+}
+
+// ---------------------------------------------------------------- G5 S1 absent / return / move_member (roster)
+// Changes the formation of a living soldier (on the field or absent) and keeps both rosters honest: the leaving formation
+// drops the member, its commander references, its officer order entry and one roster place and fatigue binding; the
+// joining formation gains them. A soldier joining as a captain takes the formal command when there is none.
+void World::reassign_formation(int i, int to) {
+	const int from = form[i];
+	Formation &o = formations[from];
+	o.members.erase(std::remove(o.members.begin(), o.members.end(), i), o.members.end());
+	o.officer_order.erase(std::remove(o.officer_order.begin(), o.officer_order.end(), i), o.officer_order.end());
+	if (o.formal_cmd == i) o.formal_cmd = -1;
+	if (o.acting_cmd == i) o.acting_cmd = -1;
+	if (o.current_cmd == i) o.current_cmd = -1;
+	if (o.target_person == i) o.target_person = -1;
+	o.fatigue_count = std::max(0, o.fatigue_count - 1); // unbound from the old pool, as a departure is
+	o.roster = std::max(0, o.roster - 1);
+	slot[i] = -1;
+	compact_slots(o); // renumbers the rest; the leaving soldier is no longer a member
+	o.command_dirty = true;
+
+	form[i] = to;
+	Formation &n = formations[to];
+	n.members.push_back(i);
+	n.roster++; n.fatigue_count++;                      // bound to the new pool, as add_soldier binds a soldier
+	if (role[i] == R_OFFICER && std::find(n.officer_order.begin(), n.officer_order.end(), i) == n.officer_order.end()) n.officer_order.push_back(i);
+	if (role[i] == R_CAPTAIN && n.formal_cmd < 0) n.formal_cmd = i;
+	if (role[i] != R_REGULAR) ensure_ability(i, n);
+	slot[i] = -1;                                      // the joining soldier takes the last soldier slot
+	compact_slots(n);
+	n.command_dirty = true;
+}
+
+bool World::site_person_absent(int i, int kind) {
+	if (work_point_active_ || work_point_finish_ready_ || kind < 1 || kind > 4 || i < 0 || i >= soldier_count()) return false;
+	if (is_absent(i) || is_aboard(i) || !site_person_exit_ready(i)) return false;
+	Formation &f = formations[form[i]];
+	absent[i] = 1; absent_kind[i] = (uint8_t)kind;
+	for (int j = 0; j < soldier_count(); ++j) { // no order or exchange keeps naming the absent soldier
+		if (target[j] == i) target[j] = -1;
+		if (enc_target[j] == i) enc_target[j] = -1;
+	}
+	for (auto &g : formations) if (g.target_person == i) g.target_person = -1;
+	f.officer_order.erase(std::remove(f.officer_order.begin(), f.officer_order.end(), i), f.officer_order.end());
+	state[i] = S_SLOT; target[i] = -1; enc_target[i] = -1; near_enemy[i] = 0; running[i] = 0;
+	vx[i] = vy[i] = 0; nx[i] = px[i]; ny[i] = py[i];
+	present[i] = 0;
+	compact_slots(f); // drops the absent soldier from members (it is not alive) and renumbers the rest
+	slot[i] = -1;
+	f.command_dirty = true;
+	return true;
+}
+
+// Return: an absent living soldier lands on a free walkable cell (landing_cell, as site_person_land) of a formation of
+// its team that is not garrisoned, and rejoins it. Its roster place and fatigue binding were kept while absent.
+bool World::site_person_return(int i, int formation, double x, double y) {
+	if (work_point_active_ || work_point_finish_ready_ || !is_absent(i) || is_aboard(i) || hp[i] <= 0.0 || released[i]) return false;
+	if (formation < 0 || formation >= (int)formations.size()) return false;
+	if (formations[formation].team != formations[form[i]].team || formations[formation].garrisoned) return false;
+	float fx = 0, fy = 0;
+	int c = -1;
+	if (!landing_cell(i, x, y, fx, fy, c)) return false;
+	absent[i] = 0; absent_kind[i] = 0;
+	px[i] = nx[i] = fx; py[i] = ny[i] = fy; vx[i] = vy[i] = 0; cell[i] = c;
+	state[i] = S_SLOT; target[i] = -1; enc_target[i] = -1; near_enemy[i] = 0; running[i] = 0;
+	if (formation != form[i]) {
+		reassign_formation(i, formation);
+	} else {
+		Formation &f = formations[formation];
+		if (std::find(f.members.begin(), f.members.end(), i) == f.members.end()) f.members.push_back(i);
+		slot[i] = -1;
+		compact_slots(f);
+		f.command_dirty = true;
+	}
+	return true;
+}
+
+// Move: a living soldier on the field or absent changes formation atomically. Refused: same formation, another team,
+// dead or released, aboard, convoy crew, siege crew, and an on-field soldier into or out of a garrisoned formation
+// (a garrisoned roster is held in barracks; its reserve is absent, not on the field).
+bool World::move_member(int i, int to) {
+	if (work_point_active_ || work_point_finish_ready_ || i < 0 || i >= soldier_count() || to < 0 || to >= (int)formations.size()) return false;
+	const int from = form[i];
+	if (from < 0 || from >= (int)formations.size() || from == to) return false;
+	if (formations[from].team != formations[to].team) return false;
+	if (hp[i] <= 0.0 || released[i] || is_aboard(i) || is_convoy_crew(i) || is_siege_crew(i)) return false;
+	const bool on_field = !absent[i];
+	if (on_field && (formations[from].garrisoned || formations[to].garrisoned)) return false;
+	if (on_field) { // as site_person_absent: no order or exchange keeps naming a soldier that moves formation
+		for (int j = 0; j < soldier_count(); ++j) {
+			if (target[j] == i) target[j] = -1;
+			if (enc_target[j] == i) enc_target[j] = -1;
+		}
+		state[i] = S_SLOT; target[i] = -1; enc_target[i] = -1; near_enemy[i] = 0; running[i] = 0;
+		vx[i] = vy[i] = 0; nx[i] = px[i]; ny[i] = py[i];
+	}
+	for (auto &g : formations) if (g.target_person == i) g.target_person = -1;
+	reassign_formation(i, to);
 	return true;
 }
 

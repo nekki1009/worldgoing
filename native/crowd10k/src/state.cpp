@@ -143,7 +143,7 @@ template <class Ar> void io_convoy(Ar &ar, Convoy &c) {
 } // namespace
 
 template <class Ar> void World::serialize(Ar &ar) {
-	const uint32_t magic = 0x3431574Bu; // "KW14": aboard soldiers (G1 S1 site boarding); KW13: convoy formation following (G4 OPUS); KW12: convoy stall_reason (G4 S4f); KW11: convoy body offsets, body_stalled, body-aware flow fields (G4 S2); KW10: logistics convoys (G4); KW09: released soldiers (G6.4 site exit); KW08: per-person post holder (R1b)
+	const uint32_t magic = 0x3531574Bu; // "KW15": absent soldiers (G5 S1 detached / off-map / captive / garrison reserve); KW14: aboard soldiers (G1 S1 site boarding); KW13: convoy formation following (G4 OPUS); KW12: convoy stall_reason (G4 S4f); KW11: convoy body offsets, body_stalled, body-aware flow fields (G4 S2); KW10: logistics convoys (G4); KW09: released soldiers (G6.4 site exit); KW08: per-person post holder (R1b)
 	uint32_t m = magic;
 	ar.pod(m);
 	if (Ar::loading && m != magic) { ar.ok = false; return; }
@@ -177,6 +177,7 @@ template <class Ar> void World::serialize(Ar &ar) {
 	ar.vec(post_holder);
 	ar.vec(released);
 	ar.vec(aboard); ar.vec(aboard_vehicle);
+	ar.vec(absent); ar.vec(absent_kind);
 	ar.vec(events);
 	uint64_t np = projectiles.size(); ar.pod(np); if (!count(ar, np, 65, 65536)) return;
 	if (Ar::loading) projectiles.resize((size_t)np); for (auto &p : projectiles) io_projectile(ar, p);
@@ -260,6 +261,8 @@ bool World::validate(std::string *error, bool allow_site_jobs) const {
 	for (uint8_t value : released) CHECK_VALID(value <= 1);
 	CHECK_VALID(aboard.size() == n && aboard_vehicle.size() == n);
 	for (uint8_t value : aboard) CHECK_VALID(value <= 1);
+	CHECK_VALID(absent.size() == n && absent_kind.size() == n);
+	for (uint8_t value : absent) CHECK_VALID(value <= 1);
 	CHECK_VALID(prison_id.size() == n && escort_goal.size() == n && escort_mode.size() == n);
 	CHECK_VALID(contact_revision.size() == n);
 	if (allow_site_jobs) {
@@ -387,7 +390,12 @@ bool World::validate(std::string *error, bool allow_site_jobs) const {
 		}
 		CHECK_VALID(f.field >= -1 && f.field < (int)fields_.size()); if (f.field >= 0) used[f.field] = 1;
 	}
-	for (size_t i = 0; i < n; ++i) CHECK_VALID(hp[i] <= 0 || membership[i] || released[i]);
+	for (size_t i = 0; i < n; ++i) CHECK_VALID(hp[i] <= 0 || membership[i] || released[i] || absent[i]);
+	// G5 S1: an absent soldier is in no member list and holds no slot; a present one has no absent kind
+	for (size_t i = 0; i < n; ++i) {
+		if (absent[i]) CHECK_VALID(absent_kind[i] >= 1 && absent_kind[i] <= 4 && !membership[i] && slot[i] < 0 && !aboard[i] && !released[i] && !captive[i] && convoy_of[i] == 0 && hp[i] > 0);
+		else CHECK_VALID(absent_kind[i] == 0);
+	}
 	for (size_t i = 0; i < n; ++i) CHECK_VALID(!released[i] || (!membership[i] && !captive[i]));
 	for (size_t k = 0; k < fields_.size(); ++k) {
 		const auto &f = fields_[k]; CHECK_VALID(f.last_used <= tick);
@@ -486,6 +494,7 @@ void World::swap_state(World &o) {
 	swap(role, o.role);
 	swap(military_role, o.military_role);
 	swap(post_holder, o.post_holder); swap(released, o.released); swap(aboard, o.aboard); swap(aboard_vehicle, o.aboard_vehicle);
+	swap(absent, o.absent); swap(absent_kind, o.absent_kind);
 	swap(captive, o.captive);
 	swap(present, o.present);
 	swap(troop, o.troop);

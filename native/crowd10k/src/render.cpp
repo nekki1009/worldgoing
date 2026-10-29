@@ -85,7 +85,7 @@ int World::pack_rows(std::vector<float> &out, std::vector<int32_t> &spans, std::
 	static thread_local std::vector<float> auto_actors;
 	auto_actors.clear();
 	for (int i = 0; i < n; ++i) {
-		if (released[i]) continue; // departed with a travelling person: not drawn
+		if (released[i] || absent[i]) continue; // departed with a travelling person, or off the field (G5 S1): not drawn
 		int k = kit[i];
 		const bool has_kit = k >= 0 && k < (int)render_kits.size();
 		if (!has_kit && !host_ctl[i]) continue; // a host soldier without a kit is drawn by the host (soldier_view)

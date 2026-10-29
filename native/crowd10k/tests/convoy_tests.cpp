@@ -1151,6 +1151,281 @@ static void aboard_hash_matches_across_thread_counts() {
 	REQUIRE(aboard_scenario_hash(1) == aboard_scenario_hash(4));
 }
 
+// G5 S1 absent / return / move_member: absent keeps the roster place and fatigue binding, return and move keep both
+// formations honest, refusals change nothing, and save / load and thread counts agree.
+static int second_formation(World &w, int team, float x, float y) {
+	return w.add_formation(team, x, y, 0, 2, 1, T_MELEE, 0);
+}
+
+static void absent_refusals() {
+	test_case = "absent refusals: bad kind or soldier, knocked out, captive, aboard, released, already absent; each changes nothing";
+	World w(1); setup(w);
+	REQUIRE(!w.site_person_absent(-1, 1) && !w.site_person_absent(99, 1));
+	REQUIRE(!w.site_person_absent(2, 0) && !w.site_person_absent(2, 5));
+	w.ko[2] = 30.0;
+	REQUIRE(!w.site_person_absent(2, 1)); // knocked out
+	w.ko[2] = 0.0;
+	w.captive[2] = 1;
+	REQUIRE(!w.site_person_absent(2, 1)); // captive
+	w.captive[2] = 0;
+	REQUIRE(w.site_person_board(1, 0));
+	REQUIRE(!w.site_person_absent(1, 1)); // aboard
+	REQUIRE(w.site_person_land(1, 25.5, 25.5));
+	SitePersonRelease rel{};
+	REQUIRE(w.site_person_release(2, rel));
+	REQUIRE(!w.site_person_absent(2, 1)); // released
+	REQUIRE(w.released[2] == 1 && !w.is_absent(2) && w.absent_kind[2] == 0);
+	REQUIRE(w.validate());
+
+	World v(1); setup(v);
+	const int roster = v.formations[0].roster, fatigue = v.formations[0].fatigue_count;
+	REQUIRE(v.site_person_absent(2, 4));
+	REQUIRE(!v.site_person_absent(2, 1)); // already absent
+	REQUIRE(v.absent[2] == 1 && v.absent_kind[2] == 4 && v.slot[2] == -1);
+	REQUIRE(v.formations[0].roster == roster && v.formations[0].fatigue_count == fatigue);
+	REQUIRE(v.validate());
+}
+
+static void absent_soldier_is_inert() {
+	test_case = "an absent soldier does not move, is not targeted or blocked; roster and fatigue keep its place";
+	World w(1); setup(w);
+	place(w, 2, 30.5f, 27.5f); // straight ahead of the formation's march north
+	REQUIRE(w.site_person_absent(2, 1));
+	REQUIRE(w.is_absent(2) && !w.alive(2) && w.hp[2] == 100.0 && w.slot[2] == -1);
+	REQUIRE(w.formations[0].roster == 3 && w.formations[0].fatigue_count == 3 && w.formations[0].slot_count == 2);
+	REQUIRE((int)w.formations[0].members.size() == 2);
+	const float bx = w.px[2], by = w.py[2];
+	const int cx = (int)bx, cy = (int)by;
+	w.order_move(0, 30.5f, 20.5f, 0.f);
+	bool passed = false;
+	for (int t = 0; t < 300; ++t) {
+		step(w);
+		REQUIRE(w.px[2] == bx && w.py[2] == by && w.nx[2] == bx && w.ny[2] == by && w.hp[2] == 100.0);
+		for (int j : {0, 1}) if ((int)w.px[j] == cx && (int)w.py[j] == cy) passed = true;
+	}
+	REQUIRE(passed);
+	REQUIRE(w.formations[0].roster == 3 && w.formations[0].fatigue_count == 3);
+	REQUIRE(w.py[0] < 25.0 && w.py[1] < 25.0);
+	REQUIRE(w.validate());
+
+	World t(1); setup(t);
+	place(t, 2, 33.5f, 30.5f);
+	REQUIRE(t.site_person_absent(2, 2));
+	const int enemy = t.add_formation(1, 35.5f, 30.5f, 3.14159265f, 1, 1, T_MELEE, 0);
+	rules::Equip e; e.family = rules::F_LONGSWORD; e.material = rules::M_IRON;
+	const int foe = t.add_soldier(enemy, e, R_REGULAR, 2001);
+	t.formations[enemy].ai_enabled = false;
+	t.order_attack(enemy, 2);
+	bool targeted = false;
+	for (int k = 0; k < 240; ++k) {
+		step(t);
+		for (int j = 0; j < t.soldier_count(); ++j) if (t.target[j] == 2 || t.enc_target[j] == 2) targeted = true;
+		REQUIRE(t.hp[2] == 100.0 && !t.alive(2));
+	}
+	REQUIRE(!targeted);
+	REQUIRE(t.alive(foe));
+	REQUIRE(t.validate());
+}
+
+static void return_refusals_and_return() {
+	test_case = "return: not absent, unwalkable, occupied, other team, garrisoned, bad formation, not finite refused; a free cell rejoins and re-settles";
+	World w(1); setup(w, 20);
+	const int roster = w.formations[0].roster, fatigue = w.formations[0].fatigue_count;
+	REQUIRE(w.site_person_absent(2, 1));
+	REQUIRE(!w.site_person_return(1, 0, 25.5, 25.5)); // not absent
+	REQUIRE(!w.site_person_return(2, 0, 20.5, 5.5));  // unwalkable column
+	REQUIRE(!w.site_person_return(2, 0, -1.5, 3.5));  // out of bounds
+	REQUIRE(!w.site_person_return(2, 0, std::numeric_limits<double>::quiet_NaN(), 3.5)); // not finite
+	REQUIRE(!w.site_person_return(2, 0, std::floor(w.px[0]) + 0.5, std::floor(w.py[0]) + 0.5)); // occupied by soldier 0
+	const int foreign = second_formation(w, 1, 10.5f, 10.5f);
+	REQUIRE(!w.site_person_return(2, foreign, 25.5, 25.5)); // another team
+	REQUIRE(!w.site_person_return(2, 99, 25.5, 25.5) && !w.site_person_return(2, -1, 25.5, 25.5));
+	const int barracks = second_formation(w, 0, 5.5f, 35.5f);
+	REQUIRE(w.set_garrisoned(barracks, true));
+	REQUIRE(!w.site_person_return(2, barracks, 25.5, 25.5)); // garrisoned: its reserve stays in barracks
+	REQUIRE(w.is_absent(2) && w.absent_kind[2] == 1 && w.form[2] == 0 && w.absent[2] == 1);
+	REQUIRE(w.validate());
+
+	REQUIRE(w.site_person_return(2, 0, 25.5, 25.5));
+	REQUIRE(!w.is_absent(2) && w.alive(2) && w.absent_kind[2] == 0 && w.slot[2] >= 0);
+	REQUIRE(w.px[2] == 25.5f && w.py[2] == 25.5f);
+	REQUIRE(w.formations[0].roster == roster && w.formations[0].fatigue_count == fatigue && (int)w.formations[0].members.size() == 3);
+	for (int t = 0; t < 600; ++t) step(w);
+	int slot_index = -1;
+	float sx = 0, sy = 0, clip = 0;
+	REQUIRE(w.slot_target(2, slot_index, sx, sy, clip) && slot_index == w.slot[2]);
+	REQUIRE(std::hypot(w.px[2] - sx, w.py[2] - sy) < 0.6); // back on its slot in the formation
+	REQUIRE(w.validate());
+}
+
+static void absent_cell_does_not_block_landing() {
+	test_case = "an absent soldier holds no cell: a landing soldier may stand where it stands";
+	World w(1); setup(w);
+	place(w, 2, 25.5f, 25.5f);
+	REQUIRE(w.site_person_absent(2, 3));
+	REQUIRE(w.site_person_board(1, 0));
+	REQUIRE(w.site_person_land(1, 25.5, 25.5));
+	REQUIRE(w.validate());
+}
+
+static void move_commander_out_reselects() {
+	test_case = "move_member: a commander moving out re-selects in the old formation; roster and fatigue move with the soldier";
+	World w(1); setup(w);
+	const int g = second_formation(w, 0, 10.5f, 10.5f);
+	rules::Equip e; e.family = rules::F_LONGSWORD; e.material = rules::M_IRON;
+	REQUIRE(w.add_soldier(g, e, R_CAPTAIN, 1004) == 3);
+	REQUIRE(w.add_soldier(g, e, R_REGULAR, 1005) == 4);
+	w.formations[g].ai_enabled = false;
+	REQUIRE(w.formations[0].formal_cmd == 0 && w.formations[g].formal_cmd == 3);
+	REQUIRE(w.formations[0].roster == 3 && w.formations[0].fatigue_count == 3);
+	REQUIRE(w.formations[g].roster == 2 && w.formations[g].fatigue_count == 2);
+	REQUIRE(w.move_member(0, g));
+	REQUIRE(w.form[0] == g && w.formations[0].formal_cmd == -1 && w.formations[0].current_cmd == -1);
+	REQUIRE(w.formations[0].roster == 2 && w.formations[0].fatigue_count == 2 && (int)w.formations[0].members.size() == 2);
+	REQUIRE(w.formations[g].roster == 3 && w.formations[g].fatigue_count == 3 && (int)w.formations[g].members.size() == 3);
+	REQUIRE(w.formations[0].slot_count == 2 && w.formations[g].slot_count == 3);
+	REQUIRE(w.formations[0].command_dirty && w.formations[g].command_dirty);
+	REQUIRE(w.validate());
+	step(w);
+	const int re = w.formations[0].formal_cmd;
+	REQUIRE((re == 1 || re == 2) && w.form[re] == 0);
+	REQUIRE(w.formations[0].current_cmd == re);
+	REQUIRE(w.formations[g].formal_cmd == 3); // the other formation keeps its captain
+	REQUIRE(w.validate());
+}
+
+static void move_commander_in_takes_command() {
+	test_case = "move_member: a captain moving into a formation without a formal commander takes it at once";
+	World w(1); setup(w);
+	const int h = second_formation(w, 0, 20.5f, 20.5f);
+	w.formations[h].ai_enabled = false;
+	REQUIRE(w.formations[h].formal_cmd == -1);
+	REQUIRE(w.move_member(0, h));
+	REQUIRE(w.formations[h].formal_cmd == 0 && w.formations[h].roster == 1 && w.formations[h].fatigue_count == 1);
+	REQUIRE(w.validate());
+	step(w);
+	REQUIRE(w.formations[h].current_cmd == 0 && w.formations[h].formal_cmd == 0);
+	REQUIRE(w.validate());
+}
+
+static void regular_moving_into_empty_formation_commands_it() {
+	test_case = "move_member: the only eligible soldier moving into an empty formation becomes its commander on settle";
+	World w(1); setup(w);
+	const int h = second_formation(w, 0, 20.5f, 20.5f);
+	w.formations[h].ai_enabled = false;
+	REQUIRE(w.move_member(1, h));
+	REQUIRE(w.formations[h].formal_cmd == -1);
+	step(w);
+	REQUIRE(w.formations[h].formal_cmd == 1 && w.formations[h].current_cmd == 1);
+	REQUIRE(w.validate());
+}
+
+static void move_refusals() {
+	test_case = "move_member refusals: same formation, another team, bad ids, dead, released, aboard, convoy or siege crew, garrisoned; each changes nothing";
+	World w(1); setup(w);
+	const int g = second_formation(w, 0, 10.5f, 10.5f);
+	const int foreign = second_formation(w, 1, 10.5f, 20.5f);
+	const int barracks = second_formation(w, 0, 5.5f, 35.5f);
+	w.formations[g].ai_enabled = false; w.formations[barracks].ai_enabled = false;
+	const int roster0 = w.formations[0].roster, fat0 = w.formations[0].fatigue_count;
+	REQUIRE(!w.move_member(1, 0));                       // same formation
+	REQUIRE(!w.move_member(1, foreign));                 // another team
+	REQUIRE(!w.move_member(-1, g) && !w.move_member(99, g) && !w.move_member(1, -1) && !w.move_member(1, 99));
+	REQUIRE(w.form[1] == 0 && w.formations[0].roster == roster0 && w.formations[0].fatigue_count == fat0);
+	w.hp[1] = 0.0;
+	REQUIRE(!w.move_member(1, g)); // dead
+	w.hp[1] = 100.0;
+	SitePersonRelease rel{};
+	REQUIRE(w.site_person_release(2, rel));
+	REQUIRE(!w.move_member(2, g)); // released
+	REQUIRE(w.formations[0].roster == roster0 - 1);
+	REQUIRE(w.validate());
+
+	World v(1); setup(v);
+	const int gv = second_formation(v, 0, 10.5f, 10.5f);
+	v.formations[gv].ai_enabled = false;
+	REQUIRE(v.site_person_board(1, 0));
+	REQUIRE(!v.move_member(1, gv)); // aboard
+	REQUIRE(v.set_siege_crew(2, true));
+	REQUIRE(!v.move_member(2, gv)); // siege crew
+	REQUIRE(v.form[2] == 0 && v.form[1] == 0);
+	REQUIRE(v.validate());
+
+	World c(1); setup(c);
+	const int cg = second_formation(c, 0, 10.5f, 10.5f);
+	c.formations[cg].ai_enabled = false;
+	const int convoy = straight_convoy(c);
+	REQUIRE(convoy > 0);
+	REQUIRE(!c.move_member(0, cg)); // convoy crew
+	REQUIRE(c.form[0] == 0);
+	REQUIRE(c.validate());
+
+	World b(1); setup(b);
+	const int bg = second_formation(b, 0, 10.5f, 10.5f);
+	b.formations[bg].ai_enabled = false;
+	REQUIRE(b.set_garrisoned(bg, true));
+	REQUIRE(!b.move_member(1, bg));  // on the field into a garrisoned formation
+	REQUIRE(b.form[1] == 0 && b.validate());
+	REQUIRE(b.site_person_absent(2, 4));
+	REQUIRE(b.move_member(2, bg));   // the garrison reserve (absent) may move into barracks
+	REQUIRE(b.form[2] == bg && b.absent[2] == 1 && b.formations[bg].roster == 1 && b.formations[bg].fatigue_count == 1);
+	REQUIRE(b.formations[0].roster == 2 && b.formations[0].fatigue_count == 2); // the moved soldier left formation 0 (roster and fatigue)
+	REQUIRE(b.validate());
+}
+
+// Shared scenario for the save / load and thread checks: an absent soldier, a moved soldier, a return into the moved-to
+// formation and 200 steps of marching.
+static void absent_move_setup(World &w) {
+	setup(w);
+	const int g = second_formation(w, 0, 10.5f, 10.5f);
+	rules::Equip e; e.family = rules::F_LONGSWORD; e.material = rules::M_IRON;
+	w.add_soldier(g, e, R_CAPTAIN, 1004);
+	w.add_soldier(g, e, R_REGULAR, 1005);
+	w.formations[g].ai_enabled = false;
+	place(w, 2, 30.5f, 27.5f);
+	REQUIRE(w.site_person_absent(2, 1));
+	REQUIRE(w.move_member(1, g));
+	w.order_move(0, 30.5f, 20.5f, 0.f);
+}
+
+static void absent_save_load_matches() {
+	test_case = "save and load with an absent and a moved member: equal hash, identical continuation over 200 steps";
+	World w(1); absent_move_setup(w);
+	for (int t = 0; t < 40; ++t) step(w);
+	const std::vector<uint8_t> blob = w.save();
+	REQUIRE(!blob.empty());
+	World loaded(1);
+	REQUIRE(loaded.load(blob));
+	REQUIRE(loaded.state_hash() == w.state_hash());
+	REQUIRE(loaded.save() == blob);
+	REQUIRE(loaded.is_absent(2) && loaded.absent_kind[2] == 1 && loaded.slot[2] == -1 && loaded.form[1] == 1);
+	REQUIRE(loaded.formations[0].roster == 2 && loaded.formations[0].fatigue_count == 2); // soldier 1 moved out; absent 2 kept
+	REQUIRE(loaded.formations[1].roster == 3 && loaded.formations[1].fatigue_count == 3);
+	std::vector<uint8_t> older = blob;
+	older[3] = 0x34; // "KW14": the previous save magic is refused
+	REQUIRE(!World(1).load(older));
+	REQUIRE(w.site_person_return(2, 1, 25.5, 25.5) && loaded.site_person_return(2, 1, 25.5, 25.5));
+	for (int t = 0; t < 200; ++t) {
+		step(w);
+		step(loaded);
+		REQUIRE(loaded.state_hash() == w.state_hash());
+	}
+	REQUIRE(w.validate() && loaded.validate());
+}
+
+static uint64_t absent_scenario_hash(int threads) {
+	World w(threads); absent_move_setup(w);
+	for (int t = 0; t < 40; ++t) step(w);
+	REQUIRE(w.site_person_return(2, 1, 25.5, 25.5));
+	for (int t = 0; t < 200; ++t) step(w);
+	return w.state_hash();
+}
+
+static void absent_hash_matches_across_thread_counts() {
+	test_case = "thread counts 1 and 4 give the same hash with an absent and a moved member";
+	REQUIRE(absent_scenario_hash(1) == absent_scenario_hash(4));
+}
+
 int main(int argc, char **argv) {
 	if (argc > 1 && std::string(argv[1]) == "--formation") {
 		formation_control = argc > 2 && std::string(argv[2]) == "--control";
@@ -1234,6 +1509,16 @@ int main(int argc, char **argv) {
 	deck_position_moves_only_the_aboard_soldier();
 	save_load_mid_aboard_matches();
 	aboard_hash_matches_across_thread_counts();
+	absent_refusals();
+	absent_soldier_is_inert();
+	return_refusals_and_return();
+	absent_cell_does_not_block_landing();
+	move_commander_out_reselects();
+	move_commander_in_takes_command();
+	regular_moving_into_empty_formation_commands_it();
+	move_refusals();
+	absent_save_load_matches();
+	absent_hash_matches_across_thread_counts();
 	std::printf("CONVOY_NATIVE_CONTRACT checks=%d failures=%d\n", checks, failures);
 	return failures ? 1 : 0;
 }

@@ -373,6 +373,11 @@ public:
 	// targeted; its position is the deck position the host sets. aboard_vehicle: vehicle id, -1 when not aboard. Saved.
 	std::vector<uint8_t> aboard;
 	std::vector<int32_t> aboard_vehicle;
+	// G5 S1 absent: 1 = off the field but still in the formation roster (site_person_absent). An absent soldier is not
+	// alive (alive() is false), holds no slot and is not in members, but keeps its roster count, fatigue binding and hp;
+	// it can return (site_person_return) or change formation (move_member). absent_kind: 0 when present, else 1 detached,
+	// 2 off-map, 3 captive hold, 4 garrison reserve. Both saved and hashed.
+	std::vector<uint8_t> absent, absent_kind;
 	std::vector<int64_t> person_id;
 	std::vector<uint8_t> life_ck; // morale checkpoint: 0 conscious, 1 unconscious, 2 dead
 	// presentation only (never read by the rules, not hashed, not saved)
@@ -589,6 +594,15 @@ public:
 	bool site_person_land(int i, double x, double y);
 	bool site_person_set_deck(int i, double x, double y);
 	bool site_person_retarget_aboard(int i, int vehicle);
+	// G5 S1 absent. Absent: an exit-ready soldier (site_person_exit_ready, not aboard) leaves the field for kind 1..4;
+	// it keeps roster, fatigue binding and hp, and loses its slot and member entry. Return: an absent living soldier
+	// lands on a free walkable cell of formation `formation` (same team, not garrisoned) and rejoins it. Move: an
+	// on-field or absent living soldier changes formation atomically. Refusals change nothing.
+	bool site_person_absent(int i, int kind);
+	bool site_person_return(int i, int formation, double x, double y);
+	bool move_member(int i, int to_formation);
+	bool landing_cell(int i, double x, double y, float &fx, float &fy, int &cell_index) const;
+	void reassign_formation(int i, int to_formation);
 	bool charge_siege_round(const std::vector<int> &members, double per_person);
 	bool charge_siege_work(int person, double game_seconds);
 	void contact_pose(int i, int movement, int &slot, double &age) const;
@@ -655,7 +669,10 @@ public:
 	int soldier_count() const { return (int)px.size(); }
 
 	// rule queries (public for tests)
-	bool alive(int i) const { return hp[i] > 0.0 && !released[i]; } // a released soldier is out of every system
+	// a released or absent soldier is out of every system. G5 S1: absent is in alive() exactly as released is, so every
+	// rule path that skips released also skips absent. Death accounting (hp, fatigue_count) reads hp directly and is unchanged.
+	bool alive(int i) const { return hp[i] > 0.0 && !released[i] && !absent[i]; }
+	bool is_absent(int i) const { return i >= 0 && i < (int)absent.size() && absent[i] != 0; }
 	bool can_act(int i) const { return alive(i) && ko[i] <= 0.0 && getup[i] <= 0.0 && !captive[i]; }
 	bool can_receive(int i) const { return can_act(i) && !is_aboard(i) && exch_cd[i] <= 0.000000001; }
 	bool exchange_ready(int i) const;

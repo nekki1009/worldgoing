@@ -1174,6 +1174,24 @@ void m_site_person_aboard(CALL_ARGS) {
 	if (!arg_int(a[0],i) || i<0 || i>=w.soldier_count()) { return_doubles(r,{}); return; }
 	return_doubles(r,{double(w.aboard[i]), double(w.aboard_vehicle[i])});
 }
+// G5 S1 absent / return / move_member. Refusals return false and change nothing. site_person_absent_state: [absent, kind].
+void m_site_person_absent(CALL_ARGS) {
+	SELF; NEED(2); WORLD; int64_t i, kind;
+	ret_bool(r, arg_int(a[0],i) && arg_int(a[1],kind) && i>=0 && i<w.soldier_count() && kind>=1 && kind<=4 && w.site_person_absent((int)i,(int)kind));
+}
+void m_site_person_return(CALL_ARGS) {
+	SELF; NEED(4); WORLD; int64_t i, formation; double x = 0, y = 0;
+	ret_bool(r, arg_int(a[0],i) && arg_int(a[1],formation) && arg_num(a[2],x) && arg_num(a[3],y) && i>=0 && i<w.soldier_count() && formation>=0 && formation<=INT32_MAX && w.site_person_return((int)i,(int)formation,x,y));
+}
+void m_move_member(CALL_ARGS) {
+	SELF; NEED(2); WORLD; int64_t i, to;
+	ret_bool(r, arg_int(a[0],i) && arg_int(a[1],to) && i>=0 && i<w.soldier_count() && to>=0 && to<=INT32_MAX && w.move_member((int)i,(int)to));
+}
+void m_site_person_absent_state(CALL_ARGS) {
+	SELF; NEED(1); WORLD; int64_t i;
+	if (!arg_int(a[0],i) || i<0 || i>=w.soldier_count()) { return_doubles(r,{}); return; }
+	return_doubles(r,{double(w.absent[i]), double(w.absent_kind[i])});
+}
 void m_charge_siege_round(CALL_ARGS) {
 	SELF; NEED(2); WORLD; double amount;
 	void *p = arg_packed(a[0],INTS);
@@ -1434,6 +1452,10 @@ void initialize(void *, GDExtensionInitializationLevel level) {
 	add_method("site_person_set_deck",m_site_person_set_deck,{{INT,"soldier"},{FLOAT,"x"},{FLOAT,"y"}},BOOL);
 	add_method("site_person_retarget_aboard",m_site_person_retarget_aboard,{{INT,"soldier"},{INT,"vehicle"}},BOOL);
 	add_method("site_person_aboard",m_site_person_aboard,{{INT,"soldier"}},DOUBLES);
+	add_method("site_person_absent",m_site_person_absent,{{INT,"soldier"},{INT,"kind"}},BOOL);
+	add_method("site_person_return",m_site_person_return,{{INT,"soldier"},{INT,"formation"},{FLOAT,"x"},{FLOAT,"y"}},BOOL);
+	add_method("move_member",m_move_member,{{INT,"soldier"},{INT,"to_formation"}},BOOL);
+	add_method("site_person_absent_state",m_site_person_absent_state,{{INT,"soldier"}},DOUBLES);
 	add_method("add_convoy", m_add_convoy, {{FLOAT,"anchor_x"},{FLOAT,"anchor_y"},{FLOAT,"facing"}}, INT);
 	add_method("convoy_set_crew", m_convoy_set_crew, {{INT,"convoy"},{INT,"soldier"},{INT,"offset_x"},{INT,"offset_y"},{BOOL,"assigned"}}, BOOL);
 	add_method("convoy_order_goal", m_convoy_order_goal, {{INT,"convoy"},{FLOAT,"goal_x"},{FLOAT,"goal_y"},{FLOAT,"goal_facing"}}, BOOL);
