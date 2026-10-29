@@ -497,6 +497,8 @@ public:
 	bool is_convoy_crew(int person) const { return person >= 0 && person < (int)convoy_of.size() && convoy_of[person] != 0; }
 	// acting exclusions shared by siege crew and convoy crew (AI, exchange, rescue, capture, work)
 	bool is_crewed(int person) const { return is_siege_crew(person) || is_convoy_crew(person) || is_aboard(person); }
+	// G10: an arrived housing (3) or siege (5) step that holds its worker in place: no goal, no compound, no source.
+	bool held_site_step(int i) const { return (escort_mode[i] == 3 || escort_mode[i] == 5) && escort_goal[i] < 0 && siege_group(i) < 0 && (i >= (int)siege_step_source.size() || siege_step_source[i] < 0); }
 	int siege_group(int person) const { return person >= 0 && person < (int)siege_member_group.size() ? siege_member_group[person] : -1; }
 
 	bool admit_prison(int person, int guard, int64_t prison, int slot_cell, int contact_cell);

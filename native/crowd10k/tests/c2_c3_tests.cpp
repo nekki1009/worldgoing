@@ -287,7 +287,7 @@ static void safe_load() {
  corrupt([](World&w){w.cfg.encircle_budget=-1;});
  corrupt([](World&w){w.prison_id.pop_back();});
  corrupt([](World&w){w.prison_id[0]=1;});
- corrupt([](World&w){w.escort_mode[0]=3;});
+ corrupt([](World&w){w.escort_mode[0]=4;}); // G10: held 3/5 (no goal) is saveable; 4 without a goal is not
  corrupt([](World&w){w.escort_goal[0]=20;});
  corrupt([](World&w){w.contact_revision.pop_back();});
  corrupt([](World&w){w.contact_revision[0]=-1;});
@@ -316,7 +316,10 @@ static void safe_load() {
   World job(1);setup(job,1);auto person=job.get_soldier_state(0);person.x=3.5f;person.y=5.5f;job.set_soldier_state(0,person);
   const int here=job.terrain.idx(3,5),next=job.terrain.idx(4,5);std::string why;
   REQUIRE(siege?job.order_siege_step(0,here):job.order_housing_step(0,here));REQUIRE(job.escort_goal[0]==-1);
-  REQUIRE(job.validate(&why));REQUIRE(!job.validate(&why,false));REQUIRE(job.save().empty());
+  // G10 (Nekki 2026-10-30 A): an arrived, held step is saved and restored as held.
+  REQUIRE(job.validate(&why));REQUIRE(job.validate(&why,false));
+  {const auto held=job.save();REQUIRE(!held.empty());World back(1);REQUIRE(back.load(held));
+   REQUIRE(back.escort_mode[0]==job.escort_mode[0] && back.escort_goal[0]==-1 && back.state_hash()==job.state_hash());}
   if(siege)job.cancel_siege_step(0);else job.cancel_housing_step(0);
   REQUIRE(siege?job.order_siege_step(0,next):job.order_housing_step(0,next));job.apply_contact(0,0,rules::STUN_LIMIT);
   REQUIRE(job.ko[0]>0 && job.escort_goal[0]==next && job.escort_mode[0]==(siege?6:4));

@@ -216,7 +216,9 @@ template <class Ar> void World::serialize(Ar &ar) {
 std::vector<uint8_t> World::save() const {
 	if (work_point_active_) return {}; // Same original unfinished point is unsaveable.
 	if (!siege_compounds.empty()) return {};
-	for (uint8_t mode : escort_mode) if (mode >= 3) return {}; // Transient Site jobs are intentionally unsaveable until their original step settles.
+	// Transient Site jobs are unsaveable while a step is still moving (a goal is set). An arrived, held housing or
+	// siege step (G10, Nekki 2026-10-30 A: workers save at their station) is saved and restored as held.
+	for (int i = 0; i < soldier_count(); ++i) if (escort_mode[i] >= 3 && !held_site_step(i)) return {};
 	Writer w;
 	const_cast<World *>(this)->serialize(w);
 	return std::move(w.out);
@@ -285,7 +287,7 @@ bool World::validate(std::string *error, bool allow_site_jobs) const {
 		CHECK_VALID(anim_t[i] >= 0); CHECK_VALID(slot_clip_[i] >= 0);
 		CHECK_VALID(state[i] <= S_HOST && role[i] <= R_OFFICER && troop[i] <= T_CROSSBOW && skill[i] <= rules::SK_POWER && life_ck[i] <= 2 && eq(equip[i]));
 		CHECK_VALID(person_id[i] >= 0 && ids.insert(person_id[i]).second);
-		CHECK_VALID(prison_id[i] >= 0 && prison_id[i] <= 2147483647 && escort_mode[i] <= (allow_site_jobs ? 6 : 2));
+		CHECK_VALID(prison_id[i] >= 0 && prison_id[i] <= 2147483647 && (allow_site_jobs ? escort_mode[i] <= 6 : (escort_mode[i] <= 2 || held_site_step((int)i))));
 		CHECK_VALID(contact_revision[i] >= 0);
 		CHECK_VALID(escort_goal[i] >= -1 && escort_goal[i] < (int)cells && (escort_mode[i] != 0 || escort_goal[i] == -1));
 		CHECK_VALID(escort_mode[i] != 2 || escort_goal[i] >= 0);

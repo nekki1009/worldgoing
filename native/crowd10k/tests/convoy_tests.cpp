@@ -996,6 +996,23 @@ static void aboard_formal_commander_resumes_command() {
 	REQUIRE(w.validate());
 }
 
+static void held_siege_step_saves_and_loads() {
+	test_case = "G10: an arrived (held) siege step saves and loads; a pending step is still unsaveable";
+	World w(1); setup(w);
+	w.escort_mode[2] = 5; w.escort_goal[2] = w.cell[2]; // pending: a goal is set
+	REQUIRE(w.save().empty());
+	w.escort_goal[2] = -1; // arrived and held
+	const std::vector<uint8_t> blob = w.save();
+	REQUIRE(!blob.empty());
+	World v(1); setup(v);
+	REQUIRE(v.load(blob));
+	REQUIRE(v.escort_mode[2] == 5 && v.escort_goal[2] == -1);
+	REQUIRE(v.state_hash() == w.state_hash());
+	for (int k = 0; k < 60; ++k) { step(w); step(v); }
+	REQUIRE(v.state_hash() == w.state_hash());
+	REQUIRE(v.validate());
+}
+
 static void board_ends_a_held_siege_step() {
 	test_case = "board ends an arrived (held) siege step; a pending siege step still refuses and changes nothing";
 	World w(1); setup(w);
@@ -1208,6 +1225,7 @@ int main(int argc, char **argv) {
 	board_refusals();
 	board_keeps_roster_fatigue_and_hp();
 	board_ends_a_held_siege_step();
+	held_siege_step_saves_and_loads();
 	aboard_soldier_stays_present();
 	aboard_formal_commander_resumes_command();
 	aboard_stays_while_formation_passes();

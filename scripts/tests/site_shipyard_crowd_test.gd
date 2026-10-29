@@ -299,16 +299,24 @@ func _run() -> void:
 	var begun_second: Dictionary = SiteRuntime.begin_ship_build(data, yard_key, "ferry", int(owner.team_id), int(owner.faction_id), lab.site_controller.reserves_cell)
 	if not check(begun_second.ok, "a second ferry batch begins for the save and reload check", begun_second): return
 	if not check(_wait_progress(WALK_TICKS), "the save-check batch shows crowd progress before the save", _feature().get("production")): return
-	# Legal save point: the native save refuses while a worker holds its work step (escort mode >= 3). The work team
-	# stands the workers down (WorkTeam.cancel cancels each controlled step); the batch itself stays on the shipyard.
-	for identity: int in workers: lab.site_controller.work_team.cancel(identity)
-	if not check(_steps_settled(), "every crowd worker's controlled step settles before the save", _step_modes()): return
+	# G10 (Nekki 2026-10-30 A): workers holding their station step save with it; only a step still moving is
+	# unsaveable, and a save then retries on a later tick as autosave does.
 	var job_before: Dictionary = _feature().ship_build.duplicate(true)
 	var production_before := float(_feature().production)
 	if not check(production_before > 0.0 and production_before * 60.0 < float(job_before.total_work), "the save point is mid-batch", production_before): return
-	if not check(lab.site_controller._capture_for_save().ok, "capture for save with crowd workers mid-batch"): return
-	var written: Dictionary = Store.save(lab.terrain, lab.site_controller.save_path, lab.crowd_site.crowd)
-	if not check(written.get("ok", false) == true, "Store.save writes the mid-batch shipyard", written): return
+	var written: Dictionary = {}
+	var held_at_save := 0
+	for attempt in range(120):
+		if lab.site_controller._capture_for_save().ok:
+			written = Store.save(lab.terrain, lab.site_controller.save_path, lab.crowd_site.crowd)
+			if written.get("ok", false) == true: break
+		_tick(1)
+	if not check(written.get("ok", false) == true, "Store.save writes the mid-batch shipyard with workers at their stations", written): return
+	for identity: int in workers:
+		if lab.site_controller.work_team.is_assigned(identity): held_at_save += 1
+	if not check(held_at_save == workers.size(), "the workers are still assigned at the save point (not stood down)", held_at_save): return
+	job_before = _feature().ship_build.duplicate(true)
+	production_before = float(_feature().production)
 	var loaded: Dictionary = lab.site_controller.load_from(lab.site_controller.save_path)
 	if not check(loaded.get("ok", false) == true, "load_from restores the mid-batch shipyard", loaded): return
 	# Every reference is re-fetched: the load binds a new terrain, crowd and work team.
@@ -319,10 +327,9 @@ func _run() -> void:
 	if not check(_feature().ship_build.paid_cost == job_before.paid_cost and _feature().ship_build.ship_type == "ferry", "the reloaded batch keeps its paid cost", _feature().ship_build): return
 	if not check(is_equal_approx(float(_feature().ship_build.total_work), float(job_before.total_work)), "the reloaded batch keeps its total work"): return
 	if not check(is_equal_approx(float(_feature().production), production_before), "the reloaded batch keeps its progress", _feature().get("production")): return
-	# Scenario 3: the workers are reassigned on the reloaded Site and batch 2 runs to completion and launches.
-	var commander_after: int = owner.combat_identity(owner.current_commander)
-	var reassigned: Dictionary = lab.site_controller.work_team.assign(owner, workers, commander_after)
-	if not check(reassigned.ok, "the commander reassigns the crowd workers after the reload", reassigned): return
+	# Scenario 3: the workers are still assigned after the reload and carry batch 2 to completion and launch.
+	for identity: int in workers:
+		if not check(lab.site_controller.work_team.is_assigned(identity), "worker %d is still assigned after the reload" % identity): return
 	var ships_before: int = lab.terrain.site.vehicles.size()
 	var ids_before: Array = _vehicle_ids()
 	if not check(_finish_batch(ships_before), "the reloaded batch completes and launches under crowd work"): return
