@@ -8140,14 +8140,19 @@ func _build_ship_controls(parent: Node, form: Dictionary) -> void:
 		_button(parent, "在所選水格部署測試船", "ShipDeploy", func() -> void: _ship_deploy_ui(form))
 
 func begin_ship_build(key: String, ship_type: String, team_id: int, requester_id: int, preview: bool = false) -> Dictionary:
-	if _crowd_active() or get_tree().paused or bool(lab.terrain.site.paused): return Runtime.fail("BUSY", "造船須留在原人物模式並解除暫停")
-	var team: TerrainArmy = null
-	for original: TerrainArmy in lab.combat_armies:
-		if original.team_id == team_id: team = original; break
+	if get_tree().paused or bool(lab.terrain.site.paused): return Runtime.fail("BUSY", "造船須解除暫停")
+	# G2: under crowd the team is the native owner; its duty authority is the original TerrainArmy that commands the requester.
+	var owners: Array = lab.crowd_site.person_owners() if _crowd_active() else lab.combat_armies
+	var team: Variant = null
+	for original: Variant in owners:
+		if int(original.team_id) == team_id: team = original; break
 	var feature: Dictionary = lab.terrain.site.features.get(key, {})
 	if team == null or not team.has_army() or feature.is_empty(): return Runtime.fail("NO_TARGET")
 	if requester_id != lab.controlled_person_id() or not team.command_eligible(team.current_commander): return Runtime.fail("NO_AUTHORITY")
-	var ship_refused := team.duty_authority("team.ship", requester_id)
+	var duty_owner: Variant = team
+	if team is CrowdPersonOwner: duty_owner = team._command_owner(team.index_for_identity(requester_id))
+	if not duty_owner is TerrainArmy: return Runtime.fail("NO_AUTHORITY")
+	var ship_refused: Dictionary = duty_owner.duty_authority("team.ship", requester_id)
 	if not ship_refused.is_empty(): return ship_refused
 	var person: Dictionary = person_actions._person(requester_id)
 	if person.is_empty() or int(person.faction) != team.faction_id or int(feature.get("owner_faction", -1)) != team.faction_id: return Runtime.fail("NO_AUTHORITY")
@@ -8155,7 +8160,7 @@ func begin_ship_build(key: String, ship_type: String, team_id: int, requester_id
 	return Runtime.begin_ship_build(lab.terrain, key, ship_type, team_id, int(person.faction), reserves_cell, preview)
 
 func cancel_ship_build(key: String, requester_id: int, preview: bool = false) -> Dictionary:
-	if _crowd_active() or get_tree().paused or bool(lab.terrain.site.paused): return Runtime.fail("BUSY")
+	if get_tree().paused or bool(lab.terrain.site.paused): return Runtime.fail("BUSY")
 	var person: Dictionary = person_actions._person(requester_id)
 	var feature: Dictionary = lab.terrain.site.features.get(key, {})
 	if requester_id != lab.controlled_person_id() or person.is_empty() or feature.is_empty() or int(person.faction) != int(feature.get("owner_faction", -1)): return Runtime.fail("NO_AUTHORITY")
