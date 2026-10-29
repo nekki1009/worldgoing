@@ -21,6 +21,7 @@ static func _hostile_near(lab: Node, faction: int, cells: Array[Vector2i]) -> bo
 		if lab.actor_present(actor) and actor.faction_id != faction and actor.can_act(): enemies.append(actor.terrain_cell)
 	for team: TerrainArmy in lab.combat_armies:
 		if not team.combat_enabled or team.faction_id == faction: continue
+		if crowd_active and crowd.owns_original_team(team): continue # G8a: the crowd owns this original team's people.
 		for index: int in range(team.combat_units.size()):
 			if team.combat_can_act(index) and not bool(team.combat_hot_get(index, &"site_exited", false)):
 				enemies.append(team.cells[index])

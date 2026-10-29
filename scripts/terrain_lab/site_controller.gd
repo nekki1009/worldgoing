@@ -746,6 +746,10 @@ func _build_ui() -> void:
 	supply_quantity = _number_input(column, "SupplyRations", 1, 30, 1)
 	team_supply_label = _label(column, "先點選相鄰隊員，再從玩家行囊交糧；不會自取營地物資。", 15)
 	_button(column, "向選取隊員交付口糧", "DeliverTeamFood", func() -> void:
+		# G8a: food delivery (site_food_delivery.gd) is TerrainArmy-typed, so a crowd team is refused here, not returned.
+		if _crowd_active():
+			show_result(Runtime.fail("CROWD_UNSUPPORTED", "群體模型下口糧交付尚未接線；未扣物、未建立交付"))
+			return
 		var team := _chosen_supply_team()
 		var representative := -1
 		if team != null:
@@ -1105,7 +1109,9 @@ func install_test_window(host: Window, pages: Dictionary) -> void:
 		if host.visible: _refresh_vehicle_controls(_vehicle_forms.test)
 		elif _facing_order_source.is_empty() and _active_formation_view == "test": _clear_formation_candidate())
 
-func _selected_enemy_identity(source: TerrainArmy) -> int:
+func _selected_enemy_identity(source: Variant) -> int:
+	if _crowd_active():
+		return _crowd_selected_enemy_identity(source)
 	if source == null:
 		return -1
 	for actor: TerrainTestCharacter in lab.combat_actors:
@@ -1117,6 +1123,25 @@ func _selected_enemy_identity(source: TerrainArmy) -> int:
 		for index in range(team.combat_units.size()):
 			if team.cells[index] == selected and team.combat_can_act(index):
 				return team.combat_identity(index)
+	return -1
+
+# G8a: crowd mirror of the grid rule above (exact selected cell, hostile to the source team's faction,
+# able to act). Under crowd the player's grid army is null, so the controlled person's native owner
+# supplies the faction when no source team is given.
+func _crowd_selected_enemy_identity(source: Variant) -> int:
+	var crowd: Variant = lab.crowd_site
+	var faction_owner: Variant = source if source != null else crowd.person_owner(lab.controlled_person_id())
+	if faction_owner == null: return -1
+	var faction: int = int(faction_owner.faction_id)
+	for actor: TerrainTestCharacter in lab.combat_actors:
+		if not is_instance_valid(actor) or crowd.contains_person(actor.person_id): continue
+		if actor.faction_id != faction and actor.terrain_cell == selected and actor.can_act(): return actor.person_id
+	for owner_ref: CrowdPersonOwner in crowd.person_owners():
+		if not owner_ref.combat_enabled or owner_ref.faction_id == faction: continue
+		for index: int in owner_ref.combat_units.keys():
+			var ground: Vector2 = owner_ref.combat_ground(index) / TerrainRenderer.CELL_PIXELS
+			if Vector2i(floori(ground.x), floori(ground.y)) == selected and owner_ref.combat_can_act(index):
+				return owner_ref.combat_identity(index)
 	return -1
 
 func _open_combat_window() -> void:
@@ -5611,15 +5636,24 @@ func _team_stopped(team: Variant, allow_sheltered: bool = false, ignored_ship_jo
 			if not str(job.get("kind", "")).begins_with("ship_") or is_same(job, ignored_ship_job): continue
 			var person := vehicles.ship_person(int(job.get("executor_id", 0)))
 			if not person.is_empty() and is_same(person.owner, team): return false
+	# G8a: a crowd roster is checked natively before the grid member loop, which reads TerrainArmy-only
+	# moving_to/combat_units. person(index) supplies the hot moving state for each member.
+	if team is CrowdPersonOwner:
+		for index: int in team.combat_units.keys():
+			if not team.is_member(index) or bool(team.combat_hot_get(index, &"site_exited", false)) \
+				or bool(team.combat_hot_get(index, &"surrender_pending", false)) or bool(team.combat_hot_get(index, &"captive")):
+				continue
+			var state: Dictionary = team.person(index, false)
+			if bool(state.get("moving", true)) or team.moving_to[index] != TerrainArmy.INVALID_CELL or bool(team.combat_hot_get(index, &"attack")) \
+				or str(team.combat_hot_get(index, &"pose")) in ["guard", "guard_raise", "guard_lower", "guard_break", "rescue", "get_up"]:
+				return false
+		return true
 	for index: int in range(team.combat_units.size()):
 		if not team.is_member(index) or bool(team.combat_hot_get(index, &"site_exited", false)) \
 			or bool(team.combat_hot_get(index, &"surrender_pending", false)) or bool(team.combat_hot_get(index, &"captive")):
 			continue
 		if team.moving_to[index] != TerrainArmy.INVALID_CELL or bool(team.combat_hot_get(index, &"attack")) or str(team.combat_hot_get(index, &"pose")) in ["guard", "guard_raise", "guard_lower", "guard_break", "rescue", "get_up"]:
 			return false
-	# G3: a crowd roster has no grid player member; its Actor is a native person checked by the loop above.
-	if team is CrowdPersonOwner:
-		return true
 	if not is_instance_valid(team.player_member):
 		return true
 	var actor: TerrainTestCharacter = team.player_member
@@ -10029,10 +10063,15 @@ func fire_resource_owner_guard(worker: Dictionary, cargo: Dictionary, cell: Vect
 			and str(worker.get("mode", "")) == "work"
 	for identity: int in work_team.active_ids():
 		var person: Dictionary = work_team._person(identity)
-		if person.is_empty() or not person.owner is TerrainArmy: continue # Native remains guarded until P6.
+		if person.is_empty() or not (person.owner is TerrainArmy or person.owner is CrowdPersonOwner): continue
+		# G8a: a crowd person keeps its task and cargo in native-backed cold fields (combat_hot_get reads the
+		# same stored references as the original row), so the same identity and state checks apply to it.
+		var is_native: bool = person.owner is CrowdPersonOwner
 		var row: Dictionary = person.row
-		if not is_same(row.get("work_task", {}), worker) or not is_same(row.get("cargo", {}), cargo): continue
-		var team: TerrainArmy = person.owner
+		var task: Variant = person.owner.combat_hot_get(int(person.unit), &"work_task", {}) if is_native else row.get("work_task", {})
+		var held: Variant = person.owner.combat_hot_get(int(person.unit), &"cargo", {}) if is_native else row.get("cargo", {})
+		if not is_same(task, worker) or not is_same(held, cargo): continue
+		var team: Variant = person.owner
 		var unit := int(person.unit)
 		return team.combat_can_act(unit) and not team.member_gone(unit) and person.cell == cell \
 			and team.moving_to[unit] == TerrainArmy.INVALID_CELL and int(worker.cell) == data.index(cell) \

@@ -2866,7 +2866,9 @@ func _technology_consent_valid(identity: int, consents: Array, project_purpose: 
 			if not is_same(consents, bound_order.get("payload", {}).get("consents", [])): return false
 	var person := _person(identity)
 	if person.is_empty(): return false
-	if read_only and person.owner is CrowdOwner: return _technology_native_consent_readonly(person, consents, project_purpose, bound_token, bound_order)
+	# G8a: a crowd person is never consent-checked by the grid branch below (it skipped every fitness check).
+	# Both modes use the same native fitness and receipt validation; the grid branch stays unchanged.
+	if person.owner is CrowdOwner: return _technology_native_consent_readonly(person, consents, project_purpose, bound_token, bound_order)
 	var team: Variant = _technology_team(person)
 	if team == null: return true
 	var n08_driver: bool = _nation_n08_driver_context(identity, project_purpose).get("ok", false) == true
@@ -7925,7 +7927,15 @@ func _technology_native_consent_readonly(person: Dictionary, consents: Array, pu
 	var physical: CrowdOwner = person.owner
 	var original: Variant = physical._command_owner(int(person.unit))
 	if original is TerrainTestCharacter: original = _technology_team(person)
-	if not original is TerrainArmy: return _technology_team(person) == null
+	if not original is TerrainArmy:
+		if _technology_team(person) != null: return false
+		# G8a: a crowd-only team has no original army; its person still must be fit and still to consent.
+		# (Duty and order consent for crowd-only teams follows with the roster work, G5.)
+		var unit := int(person.unit)
+		if physical.member_gone(unit) or not physical.combat_can_act(unit) or physical.is_sustain_routed() or bool(physical.person(unit, false).get("moving", true)): return false
+		if float(physical.combat_hot_get(unit, &"exchange_stagger", 0.0)) > 0.0 or bool(physical.combat_hot_get(unit, &"attack")) or str(physical.combat_hot_get(unit, &"pose")) != "idle": return false
+		if lab.site_controller != null and (lab.site_controller.vehicles.is_siege_crew(int(person.person_id)) or lab.site_controller.vehicles.is_operator(int(person.person_id))): return false
+		return true
 	if original.data != lab.terrain or int(physical.team_id) != int(original.team_id) or not physical.crowd_site.owns_original_team(original) or physical.member_gone(int(person.unit)) \
 		or not physical.combat_can_act(int(person.unit)) or physical.combat_order != TerrainArmy.CombatOrder.HOLD or physical.is_sustain_routed() \
 		or original.get_active_move_plan() != null or original.has_ship_journey() or original._team_ship_activity() \
