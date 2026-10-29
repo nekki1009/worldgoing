@@ -2023,11 +2023,18 @@ func _boarding_context(job: Dictionary) -> Dictionary:
 	var vehicles: Variant = lab.site_controller.vehicles
 	if not is_same(job.terrain, lab.terrain) or not is_same(job.site_state, lab.terrain.site): return Runtime.fail("STALE")
 	var person: Dictionary = vehicles.ship_person(int(job.executor_id))
-	if person.is_empty() or int(person.hit) != int(job.executor_hit) or lab.terrain.index(person.cell) != int(job.executor_cell): return Runtime.fail("INTERRUPTED", "原人物受擊或位置已變；未提交接舷")
+	if person.is_empty() or int(person.hit) != int(job.executor_hit) or not _boarding_place_held(person, job): return Runtime.fail("INTERRUPTED", "原人物受擊或位置已變；未提交接舷")
 	var check: Dictionary = vehicles.boarding_begin_query(int(job.executor_id), str(job.vehicle_id), str(job.peer_vehicle_id), int(job.requester_id), bool(job.test_dispatch))
 	if not check.ok: return check
 	if int(check.source.revision) != int(job.ship_revision) or int(check.target.revision) != int(job.peer_revision): return Runtime.fail("STALE")
 	return Runtime.ok("", {"person": person})
+
+# G1 S4: a crowd person aboard has a native cell that the deck sync rewrites every tick (floored float), so the
+# GD embarkation row is its stable place. Grid persons, and crowd persons still on land, keep the cell check.
+func _boarding_place_held(person: Dictionary, job: Dictionary) -> bool:
+	if person.owner is CrowdPersonOwner and str(person.row.get("embarked_vehicle_id", "")) != "":
+		return str(person.row.embarked_vehicle_id) == str(job.vehicle_id)
+	return lab.terrain.index(person.cell) == int(job.executor_cell)
 
 func _advance_boarding_link(key: String, job: Dictionary, seconds: float) -> void:
 	var check: Dictionary = _boarding_context(job)
