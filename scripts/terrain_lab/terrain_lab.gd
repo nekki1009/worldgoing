@@ -2077,6 +2077,7 @@ func _advance_combat(delta: float, combat_clock: float = -1.0) -> void:
 			else: _advance_fatigue(game_seconds, true) # Original uncovered recovery once; covered effort awaits genuine contacts.
 			if site_controller != null:
 				site_controller.vehicles.update_ships(elapsed)
+				site_controller.vehicles.sync_ship_decks() # G1 S2: native deck points of crowd passengers follow this tick's ships
 				site_controller.person_actions.advance_ship_jobs(elapsed)
 			_advance_tactical_ai(elapsed)
 			_advance_duty_ai(game_seconds)

@@ -343,7 +343,6 @@ func siege_admission_guard(candidate: TerrainData = null) -> Dictionary:
 			if not fire.ok: return fire
 		if SiteStore.has_siege_vehicles(data.site) and not siege_native_supported(): return SiteRuntime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少原人物攻城／複合步介面")
 		for vehicle: Dictionary in data.site.get("vehicles", {}).values():
-			if str(vehicle.get("kind", "")) == "ship": return SiteRuntime.fail("BUSY", "首版船艦須留在原 Army 人物模式")
 			if str(vehicle.get("kind", "")) in ["cart", "wagon"] and not convoy_native_supported(): return SiteRuntime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少後勤車隊原生記錄介面")
 		for feature: Dictionary in data.site.get("features", {}).values():
 			if feature.has("ship_build"): return SiteRuntime.fail("BUSY", "原船塢已付造船批次須留在原工人模式，先完成或取消")
@@ -2439,6 +2438,9 @@ func prepare_load(data: TerrainData, native_candidate: Variant = null) -> Dictio
 	# Refused before anything is installed; the live Site is kept.
 	var convoy_check: Dictionary = SiteVehicleTransport.convoy_record_check(data, candidate_crowd)
 	if not convoy_check.ok: return convoy_check
+	# G1 S2: every saved ship passenger must match the native aboard state (same vehicle; no stray aboard soldier).
+	var ship_check: Dictionary = SiteVehicleTransport.ship_record_check(data, candidate_crowd)
+	if not ship_check.ok: return ship_check
 	if candidate_crowd.has_method("fire_host_protocol") and candidate_crowd.has_method("set_host_ranged_delegate") \
 		and candidate_crowd.has_method("set_fire_safe_rest_input") \
 		and int(candidate_crowd.fire_host_protocol()) == 1:

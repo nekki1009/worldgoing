@@ -3963,8 +3963,9 @@ static func _validate_ship_relationships(_data: TerrainData, state: Dictionary, 
 		if aboard != body.has("berth_id"):
 			return Runtime.fail("CORRUPT_SAVE", "原人物乘船關係須互存")
 		if not aboard: continue
-		if int(original.team) <= 0 or not original.has("snapshot") or bool(original.snapshot.get("crowd", false)):
-			return Runtime.fail("CORRUPT_SAVE", "首版乘載僅支持原 GD Army 人物；Actor/native 不得偷放")
+		# G1 S2: crowd rosters may carry aboard people; their native aboard state is checked by SiteVehicleTransport.ship_record_check.
+		if int(original.team) <= 0 or not original.has("snapshot"):
+			return Runtime.fail("CORRUPT_SAVE", "首版乘載僅支持原 GD Army 或群眾名冊人物；Actor 不得偷放")
 		if not body.embarked_vehicle_id is String or body.embarked_vehicle_id.is_empty():
 			return Runtime.fail("CORRUPT_SAVE", "船引用須為非空原車輛 ID")
 		var vehicle: Variant = state.get("vehicles", {}).get(body.embarked_vehicle_id)
@@ -3989,7 +3990,7 @@ static func _validate_ship_relationships(_data: TerrainData, state: Dictionary, 
 		if body.get("loot_settled", false) == true or bool(body.get("departed", false)) or bool(body.get("site_exited", false)) or bool(body.get("surrender_pending", false)) or bool(body.get("captive", false)):
 			return Runtime.fail("CORRUPT_SAVE", "乘載活人不得同時死亡結算／離場／投降／被俘")
 		var path: Variant = body.get("path", [])
-		if not _ship_saved_stopped(body) or not path is Array or not path.is_empty() or not body.get("work_task", {}).is_empty():
+		if not _ship_saved_stopped(body, bool(original.snapshot.get("crowd", false))) or not path is Array or not path.is_empty() or not body.get("work_task", {}).is_empty():
 			return Runtime.fail("CORRUPT_SAVE", "船上原人物仍有陸地步進／未承諾路徑／作業")
 		if _ship_saved_land_references(original.snapshot, identity):
 			return Runtime.fail("CORRUPT_SAVE", "船上原人物仍被陸地隊形／部署／批次預約引用")
@@ -4052,14 +4053,17 @@ static func _ship_saved_retired_person(state: Dictionary, identity: int) -> bool
 			if _integer(value, identity, identity): return true
 	return false
 
-static func _ship_saved_stopped(body: Dictionary) -> bool:
+static func _ship_saved_stopped(body: Dictionary, crowd: bool = false) -> bool:
+	# A crowd body has no grid destination; its aboard soldier is held still by the native aboard state (G1 S2),
+	# which SiteVehicleTransport.ship_record_check compares with the record.
+	if crowd: return not body.has("destination")
 	# JSON numbers may be floats. Require the exact integral sentinel, without
 	# relying on Array Variant-type equality or truncating malformed coordinates.
 	var destination: Variant = body.get("destination")
 	return destination is Array and destination.size() == 2 and _integer(destination[0], -1, -1) and _integer(destination[1], -1, -1)
 
-static func _ship_saved_body_can_act(body: Dictionary) -> bool:
-	return float(body.get("hp", 0.0)) > 0.0 and float(body.get("ko", 0.0)) <= 0.0 and str(body.get("pose", "")) != "get_up" and not bool(body.get("dead", false)) and not bool(body.get("captive", false)) and not bool(body.get("departed", false)) and not bool(body.get("site_exited", false)) and not bool(body.get("surrender_pending", false)) and _ship_saved_stopped(body) and body.get("work_task", {}).is_empty()
+static func _ship_saved_body_can_act(body: Dictionary, crowd: bool = false) -> bool:
+	return float(body.get("hp", 0.0)) > 0.0 and float(body.get("ko", 0.0)) <= 0.0 and str(body.get("pose", "")) != "get_up" and not bool(body.get("dead", false)) and not bool(body.get("captive", false)) and not bool(body.get("departed", false)) and not bool(body.get("site_exited", false)) and not bool(body.get("surrender_pending", false)) and _ship_saved_stopped(body, crowd) and body.get("work_task", {}).is_empty()
 
 static func _validate_ship_vehicle(data: TerrainData, state: Dictionary, identity: Variant, vehicle: Dictionary, people: Dictionary, team_counts: Dictionary, claims: Dictionary, operators: Dictionary, guards: Dictionary, check_terrain: bool) -> Dictionary:
 	const FIELDS := ["id", "kind", "team_id", "operator_id", "cell", "facing", "cargo", "holder", "move", "stop_pending", "ship_version", "ship_type", "definition_version", "revision", "command"]
@@ -4092,18 +4096,19 @@ static func _validate_ship_vehicle(data: TerrainData, state: Dictionary, identit
 		if operators.has(operator_id) or guards.has(operator_id) or not people.has(operator_id) or int(people[operator_id].team) != team_id:
 			return Runtime.fail("CORRUPT_SAVE", "船艦操作人重複／原 ID 或所屬不符")
 		var body: Dictionary = people[operator_id].body
-		var ready: bool = _ship_saved_body_can_act(body) and str(body.get("embarked_vehicle_id", "")) == str(identity) and _integer(body.get("berth_id"), ShipDefs.HELM_BERTH, ShipDefs.HELM_BERTH)
+		var operator_crowd: bool = people[operator_id].has("snapshot") and bool(people[operator_id].snapshot.get("crowd", false))
+		var ready: bool = _ship_saved_body_can_act(body, operator_crowd) and str(body.get("embarked_vehicle_id", "")) == str(identity) and _integer(body.get("berth_id"), ShipDefs.HELM_BERTH, ShipDefs.HELM_BERTH)
 		if body.has("ship_deck_position"):
 			ready = ready and Vector2(float(body.ship_deck_position[0]), float(body.ship_deck_position[1])).is_equal_approx(ShipDefs.local_position(str(vehicle.ship_type), ShipDefs.HELM_BERTH))
 		if not ready:
-			var historical: bool = not vehicle.move.is_empty() and bool(vehicle.stop_pending) and _ship_saved_stopped(body)
+			var historical: bool = not vehicle.move.is_empty() and bool(vehicle.stop_pending) and _ship_saved_stopped(body, operator_crowd)
 			if float(body.hp) <= 0.0:
 				historical = historical and body.get("loot_settled", false) == true and not body.has("embarked_vehicle_id") and not body.has("berth_id")
 				for other: Dictionary in people.values():
 					var other_body: Dictionary = other.body
 					if float(other_body.hp) > 0.0 and str(other_body.get("embarked_vehicle_id", "")) == str(identity) and _integer(other_body.get("berth_id"), ShipDefs.HELM_BERTH, ShipDefs.HELM_BERTH): historical = false
 			else:
-				historical = historical and not _ship_saved_body_can_act(body) and str(body.get("embarked_vehicle_id", "")) == str(identity) and _integer(body.get("berth_id"), ShipDefs.HELM_BERTH, ShipDefs.HELM_BERTH)
+				historical = historical and not _ship_saved_body_can_act(body, operator_crowd) and str(body.get("embarked_vehicle_id", "")) == str(identity) and _integer(body.get("berth_id"), ShipDefs.HELM_BERTH, ShipDefs.HELM_BERTH)
 			if not historical: return Runtime.fail("CORRUPT_SAVE", "失能操作引用僅限可驗證原半步；不要求死者必有 remains")
 		operators[operator_id] = true
 	elif not vehicle.move.is_empty() or not vehicle.command.is_empty():

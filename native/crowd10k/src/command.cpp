@@ -385,7 +385,13 @@ bool World::site_person_release(int i, SitePersonRelease &out) {
 // alive, on the roster, fatigue-bound and in its formation's member list, as convoy crew do; it only gives up its slot
 // (compact_slots) and loses every order, target and encounter that names it. Refusals change nothing.
 bool World::site_person_board(int i, int vehicle) {
-	if (work_point_active_ || work_point_finish_ready_ || vehicle < 0 || is_aboard(i) || !site_person_exit_ready(i)) return false;
+	if (work_point_active_ || work_point_finish_ready_ || vehicle < 0 || i < 0 || i >= soldier_count() || is_aboard(i)) return false;
+	// A crowd person walks to a ship contact by host siege steps, and an arrived siege step stays held (mode 5, no goal).
+	// Boarding ends that held step; a pending step (goal set) or any other escort still refuses.
+	const uint8_t held_mode = escort_mode[i];
+	const bool held_siege_step = held_mode == 5 && escort_goal[i] < 0;
+	if (held_siege_step) escort_mode[i] = 0;
+	if (!site_person_exit_ready(i)) { escort_mode[i] = held_mode; return false; }
 	Formation &f = formations[form[i]];
 	for (int j = 0; j < soldier_count(); ++j) {
 		if (target[j] == i) target[j] = -1;

@@ -1479,6 +1479,9 @@ static func capacity_of(vehicle: Dictionary) -> int:
 # Read original rows directly. Calling lab._combat_target here would recurse via
 # TerrainArmy.combat_ground, which consumes the projection below.
 func ship_person(identity: int) -> Dictionary:
+	# G1 S2: a crowd soldier with an original row is read through its CrowdPersonOwner (position from the native body).
+	var crowd_person := _crowd_ship_person(identity)
+	if not crowd_person.is_empty(): return crowd_person
 	for team: TerrainArmy in lab.combat_armies:
 		if not team.combat_enabled: continue
 		var index := team.index_for_identity(identity)
@@ -1491,6 +1494,76 @@ func ship_person(identity: int) -> Dictionary:
 			"moving": team.moving_to[index] != TerrainArmy.INVALID_CELL,
 			"holder": row.get("item_state", {}), "cargo": row.get("cargo", {})}
 	return {} # Native and independent Actor owners require their own admission.
+
+# G1 S2: the CrowdPersonOwner of an original-row soldier, or null. Actors have no ship row and do not board yet.
+func _crowd_owner_of(identity: int) -> Variant:
+	if not _native_siege(): return null
+	var owner: Variant = lab.crowd_site.person_owner(identity)
+	if not owner is CrowdPersonOwner: return null
+	return owner if int(owner.index_for_identity(identity)) >= 0 else null
+
+func _crowd_ship_person(identity: int) -> Dictionary:
+	var owner: Variant = _crowd_owner_of(identity)
+	if owner == null: return {}
+	var index: int = int(owner.index_for_identity(identity))
+	if not owner.records.has(index): return {}
+	var person: Dictionary = owner.person(index, false)
+	if person.is_empty(): return {}
+	person["id"] = identity
+	person["row"] = person.body
+	return person
+
+func _crowd_ship_people(vehicle: Dictionary, alive_only: bool) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	if not _native_siege(): return result
+	for owner: Variant in lab.crowd_site.person_owners():
+		if not owner is CrowdPersonOwner: continue
+		for index: int in owner.records:
+			if str(owner.records[index].get("embarked_vehicle_id", "")) != str(vehicle.get("id", "")): continue
+			var person := ship_person(owner.combat_identity(index))
+			if not person.is_empty() and (not alive_only or float(person.hp) > 0.0): result.append(person)
+	return result
+
+# A living, non-aboard crowd soldier stands in the cell. The native occupancy mask already leaves aboard soldiers out.
+func _crowd_people_block(cell: Vector2i) -> bool:
+	return _native_siege() and lab.crowd_site.reserves_cell(cell)
+
+# Landing or deck-fit blockers: land people (grid or crowd). Ship contacts deliberately ignore people, as before,
+# because the boarding person stands on the contact cell.
+func _ship_landing_blocked(cell: Vector2i) -> bool:
+	return _people_block(cell) or _crowd_people_block(cell)
+
+# G1 S2: each tick the native deck point of every living crowd passenger follows the GD deck point (in cell units).
+# Called once per tick right after update_ships. The native position is presentation and ranged origin only.
+func sync_ship_decks() -> void:
+	if not _native_siege(): return
+	for vehicle: Dictionary in records().values():
+		if not is_ship(vehicle): continue
+		for person: Dictionary in _crowd_ship_people(vehicle, true):
+			var point: Vector2 = ship_person_ground(int(person.id)) / TerrainRenderer.CELL_PIXELS
+			if point.x < 0.0 or point.y < 0.0: continue
+			person.owner.ship_set_deck(int(person.unit), point)
+
+# G1 S2 load gate, pure (changes nothing). Every crowd roster row that names an embarked vehicle must be native aboard on
+# that vehicle, and every native aboard soldier must be such a row. GD rows keep berth and deck; native holds aboard only.
+static func ship_record_check(data: TerrainData, crowd: Variant) -> Dictionary:
+	var expected := {}
+	for roster: Dictionary in data.site.get("armies", []):
+		if not bool(roster.get("crowd", false)): continue
+		for row: Dictionary in roster.get("units", []):
+			if not row.has("embarked_vehicle_id"): continue
+			if crowd == null or not crowd.has_method("site_person_aboard"):
+				return Runtime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少船上原生狀態介面")
+			var soldier: int = int(crowd.soldier_index(int(row.person_id)))
+			if soldier < 0: return Runtime.fail("CROWD_SHIP_MISMATCH", "乘船群眾人物不在原生群眾中")
+			expected[soldier] = int(str(row.embarked_vehicle_id))
+	for soldier: int in range(int(crowd.soldier_count()) if crowd != null else 0):
+		var state: PackedFloat64Array = crowd.site_person_aboard(soldier)
+		if state.size() != 2: return Runtime.fail("CROWD_SHIP_MISMATCH", "原生船上狀態讀取失敗")
+		var aboard := state[0] > 0.5
+		if aboard != expected.has(soldier) or aboard and int(state[1]) != int(expected[soldier]):
+			return Runtime.fail("CROWD_SHIP_MISMATCH", "原生船上狀態與原乘船記錄不符")
+	return Runtime.ok()
 
 func ship_for_person(identity: int) -> Dictionary:
 	var person := ship_person(identity)
@@ -2050,6 +2123,8 @@ func commit_ship_cross(job: Dictionary) -> Dictionary:
 	if person.is_empty() or not is_ship(source) or not ship_afloat(target) or float(person.hp) <= 0.0 or not source.move.is_empty() or not target.move.is_empty() or int(source.revision) != int(job.ship_revision) or int(target.revision) != int(job.target_revision) or not _ship_berth_free(target, int(job.berth_id), int(person.id)): return Runtime.fail("STALE")
 	var amount := Runtime.carried_load(lab.terrain.site, person.cargo, person.holder) + float(person.holder.equipped.size())
 	if ship_load(str(target.id)) + amount > float(capacity_of(target)): return Runtime.fail("CAPACITY")
+	# G1 S2: a crowd crosser changes vehicle natively first; a refusal leaves the rows on the source hull.
+	if person.owner is CrowdPersonOwner and not person.owner.ship_retarget_native(int(person.unit), int(target.id)): return Runtime.fail("STALE", "原生群眾未接受轉船")
 	person.row.embarked_vehicle_id = str(target.id)
 	person.row.berth_id = int(job.berth_id)
 	person.row.erase("ship_deck_position")
@@ -2141,7 +2216,11 @@ func commit_ship_evacuation(job: Dictionary) -> Dictionary:
 	if person.is_empty() or vehicle.is_empty() and not bool(job.get("link_evacuation", false)): return Runtime.fail("STALE")
 	if float(person.hp) <= 0.0: return Runtime.ok("死亡由原入口將物資留在殘骸")
 	var destination := Vector2i((job.path.back() as Vector2).round())
-	if not person.owner.combat_can_act(int(person.unit)) or not lab.terrain.is_walkable(destination) or _people_block(destination):
+	if not person.owner.combat_can_act(int(person.unit)) or not lab.terrain.is_walkable(destination) or _ship_landing_blocked(destination):
+		_kill_ship_person(person)
+		return Runtime.ok("未能合法撤岸，依原死亡入口結算")
+	# G1 S2: crowd landing is native and refused without changes; the same death entry then settles it.
+	if person.owner is CrowdPersonOwner and not person.owner.ship_land_native(int(person.unit), destination):
 		_kill_ship_person(person)
 		return Runtime.ok("未能合法撤岸，依原死亡入口結算")
 	person.row.erase("embarked_vehicle_id")
@@ -2161,9 +2240,10 @@ func ship_people(vehicle: Dictionary, alive_only: bool = true) -> Array[Dictiona
 	for team: TerrainArmy in lab.combat_armies:
 		for index in range(team.combat_units.size()):
 			var row: Dictionary = team.combat_units[index]
-			if str(row.get("embarked_vehicle_id", "")) != str(vehicle.id): continue
+			if str(row.get("embarked_vehicle_id", "")) != str(vehicle.id) or _crowd_owner_of(team.combat_identity(index)) != null: continue # crowd passengers: _crowd_ship_people
 			var person := ship_person(team.combat_identity(index))
 			if not alive_only or float(person.hp) > 0.0: result.append(person)
+	result.append_array(_crowd_ship_people(vehicle, alive_only))
 	return result
 
 func ship_job(vehicle_id: String) -> Dictionary:
@@ -2248,7 +2328,7 @@ func ship_load(vehicle_id: String) -> float:
 
 func _ship_capable(person: Dictionary, ignore_job: bool = false) -> bool:
 	if person.is_empty() or not person.owner.combat_can_act(int(person.unit)) or bool(person.captive) or bool(person.moving): return false
-	var owner: TerrainArmy = person.owner
+	var owner: Variant = person.owner # TerrainArmy or CrowdPersonOwner (G1 S2)
 	var index := int(person.unit)
 	if str(owner.combat_hot_get(index, &"pose")) != "idle" or bool(owner.combat_hot_get(index, &"attack")) or float(owner.combat_hot_get(index, &"exchange_stagger", 0.0)) > 0.0 or owner._unit_rescues.has(index) or owner.patient_has_rescuer(index): return false
 	var identity := int(person.id)
@@ -2310,16 +2390,15 @@ func ship_sweep(vehicle: Dictionary, destination: Vector2i, facing: Vector2i) ->
 func _ship_fits(vehicle: Dictionary, cells: Array[Vector2i]) -> bool:
 	if cells.is_empty() or not lab.terrain.can_place_water_vehicle(cells): return false
 	for cell: Vector2i in cells:
-		if _people_block(cell): return false
+		if _ship_landing_blocked(cell): return false
 		for other: Dictionary in records().values():
 			if str(other.get("id", "")) != str(vehicle.get("id", "")) and _claims(other).has(cell): return false
 	return true
 
-func deploy_ship(team: TerrainArmy, ship_type: String, anchor: Vector2i, facing: Vector2i, test_dispatch: bool = false) -> Dictionary:
+func deploy_ship(team: Variant, ship_type: String, anchor: Vector2i, facing: Vector2i, test_dispatch: bool = false) -> Dictionary:
 	if _ship_journey_active(): return Runtime.fail("BUSY", "原船隊旅程期間來源水域與下水位置凍結")
 	if not test_dispatch: return Runtime.fail("TEST_ONLY", "測試船須由明示測試入口建立；正式造船另接原生產")
 	if team == null or not team.has_army() or not Ship.is_kind(ship_type) or not Ship.valid_facing(facing): return Runtime.fail("INVALID")
-	if lab.crowd_site != null and lab.crowd_site.active: return Runtime.fail("CROWD_ACTIVE", "原生人物尚未准入乘船")
 	var next := int(lab.terrain.site.get("next_vehicle", 1))
 	if next < 1 or next >= 2147483647 or records().has(str(next)): return Runtime.fail("NO_IDS")
 	var vehicle := {"id": str(next), "kind": "ship", "ship_version": 1, "ship_type": ship_type, "definition_version": Ship.VERSION,
@@ -2362,6 +2441,8 @@ func ship_action_query(kind: String, person_id: int, vehicle_id: String, berth: 
 	var vehicle: Dictionary = records().get(vehicle_id, {})
 	if not is_ship(vehicle) or person.is_empty(): return Runtime.fail("NO_TARGET", "船與原 Army 人物不存在")
 	if kind != "ship_disembark" and not ship_afloat(vehicle): return Runtime.fail("NO_TARGET", "沉船不能登船或承職")
+	# G1 S2: as on the grid, the first ship version carries no Actor (player/NPC); a crowd Actor is a native soldier too.
+	if kind != "ship_disembark" and lab.crowd_site != null and lab.crowd_site.active and lab.crowd_site._actor(person_id) != null: return Runtime.fail("NO_AUTHORITY", "首版 Actor 不支持乘船")
 	var fixed: Dictionary = link_fixed_refusal(vehicle)
 	if not fixed.ok: return fixed
 	if _region_operation_pending() or (_ship_in_journey(vehicle_id) and not (kind == "ship_helm" and controller.ship_journey_waiting_for_crew(vehicle_id))) or not vehicle.get("naval", {}).get("repair", {}).is_empty(): return Runtime.fail("BUSY", "先完成原船旅程或岸上維修；失能待命時僅准原舵手接替")
@@ -2391,8 +2472,8 @@ func ship_action_query(kind: String, person_id: int, vehicle_id: String, berth: 
 		if routed and not retreat: return Runtime.fail("ROUTED", "潰退時須選撤退離船")
 		if shore == TerrainArmy.INVALID_CELL:
 			for cell: Vector2i in ship_contacts(vehicle):
-				if not _people_block(cell): shore = cell; break
-		if not ship_contacts(vehicle).has(shore) or _people_block(shore): return Runtime.fail("NO_SPACE", "沒有合法空岸格")
+				if not _ship_landing_blocked(cell): shore = cell; break
+		if not ship_contacts(vehicle).has(shore) or _ship_landing_blocked(shore): return Runtime.fail("NO_SPACE", "沒有合法空岸格")
 		berth = int(person.row.berth_id)
 	elif kind == "ship_helm":
 		if routed and not retreat: return Runtime.fail("ROUTED", "潰退時須以原撤退目的接替駕駛")
@@ -2406,7 +2487,7 @@ func commit_ship_person(job: Dictionary) -> Dictionary:
 	if not check.ok: return check
 	var person: Dictionary = check.person
 	var vehicle: Dictionary = check.vehicle
-	var team: TerrainArmy = person.owner
+	var team: Variant = person.owner # TerrainArmy or CrowdPersonOwner (G1 S2)
 	var index := int(person.unit)
 	var audio_source_data: TerrainData = lab.terrain
 	var audio_identity := int(person.id)
@@ -2414,10 +2495,14 @@ func commit_ship_person(job: Dictionary) -> Dictionary:
 	if str(job.kind) == "ship_board":
 		var prepared: Dictionary = controller.prepare_ship_supply(team, person.cell, false, job)
 		if not prepared.ok: return prepared
+		# G1 S2: the native aboard state is taken before any GD row is written; a refusal leaves the person on land.
+		if team is CrowdPersonOwner and not team.ship_ensure_aboard(index, int(vehicle.id)): return Runtime.fail("BUSY", "原生群眾未接受登船；原人物留在岸上")
 		person.row.embarked_vehicle_id = str(vehicle.id)
 		person.row.berth_id = int(job.berth_id)
 		team.ship_boarded(index)
 	elif str(job.kind) == "ship_disembark":
+		# G1 S2: the native landing is taken first; a refusal leaves the GD rows aboard.
+		if team is CrowdPersonOwner and not team.ship_land_native(index, job.shore): return Runtime.fail("NO_SPACE", "原生群眾未接受落岸；原人物留在船上")
 		person.row.erase("embarked_vehicle_id")
 		person.row.erase("berth_id")
 		person.row.erase("ship_deck_position")
@@ -2440,6 +2525,8 @@ func commit_ship_helm(job: Dictionary) -> Dictionary:
 	# Cancel/KO does not undo an already committed walk. The original person
 	# lands at the reserved berth even when they cannot accept the duty.
 	if not vehicle.move.is_empty() or not _ship_berth_free(vehicle, 0, int(person.id)): return Runtime.fail("STALE", "已承諾的駕駛通路被破壞")
+	# G1 S2: the operator is aboard natively too; boards only if not already aboard on this vehicle.
+	if person.owner is CrowdPersonOwner and not person.owner.ship_ensure_aboard(int(person.unit), int(vehicle.id)): return Runtime.fail("STALE", "原生群眾未能保持船上狀態")
 	person.row.berth_id = 0
 	person.row.erase("ship_deck_position")
 	var authorized := _authorized(person.owner, int(job.requester_id), int(person.id), bool(job.test_dispatch))

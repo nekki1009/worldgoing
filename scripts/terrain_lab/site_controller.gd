@@ -5393,7 +5393,7 @@ func _team_food_endpoint(team: TerrainArmy, identity: int, create_location: bool
 	var stock: Dictionary = entry.locations.get(key, {"inventory": {}, "open_rations": 0.0})
 	return {"inventory": stock.inventory, "opened": stock, "key": key, "exists": entry.locations.has(key)}
 
-func _supply_boarding_job_valid(team: TerrainArmy, shore: Vector2i, job: Dictionary) -> bool:
+func _supply_boarding_job_valid(team: Variant, shore: Vector2i, job: Dictionary) -> bool:
 	if job.is_empty(): return true
 	if str(job.get("kind", "")) != "ship_board" or not is_same(person_actions._jobs.get(str(job.get("executor_id", 0)), {}), job): return false
 	if not is_same(job.get("terrain"), lab.terrain) or not is_same(job.get("site_state"), lab.terrain.site) or job.get("shore") != shore or int(job.get("executor_cell", -1)) != lab.terrain.index(shore): return false
@@ -5401,7 +5401,7 @@ func _supply_boarding_job_valid(team: TerrainArmy, shore: Vector2i, job: Diction
 	var vehicle: Dictionary = vehicles.records().get(str(job.get("vehicle_id", "")), {})
 	return not person.is_empty() and is_same(person.owner, team) and team.is_member(int(person.unit)) and person.cell == shore and not vehicles.is_embarked(int(person.person_id)) and int(person.hit) == int(job.get("executor_hit", -1)) and SiteVehicleTransport.is_ship(vehicle) and int(vehicle.team_id) == team.team_id and int(vehicle.revision) == int(job.get("ship_revision", -1))
 
-func prepare_ship_supply(team: TerrainArmy, shore: Vector2i, preview: bool = false, boarding_job: Dictionary = {}) -> Dictionary:
+func prepare_ship_supply(team: Variant, shore: Vector2i, preview: bool = false, boarding_job: Dictionary = {}) -> Dictionary:
 	if region_operation_pending(): return Runtime.fail("BUSY", "原固定目標冷交換尚未完成，先等待再裝卸供養")
 	if team == null or not team.combat_enabled or not _supply_boarding_job_valid(team, shore, boarding_job) or get_tree().paused or bool(lab.terrain.site.paused):
 		return Runtime.fail("BUSY", "首次登船前須全隊停止並收束原動作")
@@ -5414,6 +5414,8 @@ func prepare_ship_supply(team: TerrainArmy, shore: Vector2i, preview: bool = fal
 			present = true
 			break
 	if not present: return Runtime.fail("UNREACHABLE", "未有原隊員在指定岸格，不能遠端搬移舊共有糧")
+	# G1 S2: crowd teams only read presence here. Their supply conversion belongs to G3; supply v3 stays refused by crowd_site.
+	if team is CrowdPersonOwner: return Runtime.ok()
 	var existing := _supply_entry(team)
 	if not existing.is_empty() and int(existing.version) == 3:
 		var checked: Dictionary = existing.sustain.duplicate(true)
@@ -5451,7 +5453,7 @@ func prepare_ship_supply(team: TerrainArmy, shore: Vector2i, preview: bool = fal
 	entry["revision"] = int(entry.revision) + 1
 	return Runtime.ok("舊共有糧已一次落在本人此岸格；船上仍須實際裝糧")
 
-func ship_retreat_shore_safe(team: TerrainArmy, shores: Array[Vector2i]) -> bool:
+func ship_retreat_shore_safe(team: Variant, shores: Array[Vector2i]) -> bool:
 	var threats := {}
 	for shore: Vector2i in shores:
 		if lab.terrain.is_walkable(shore) and not lab._fatigue_threat(shore, team.faction_id, team, -1, threats):
@@ -5586,7 +5588,7 @@ func _enable_team_supply(team: TerrainArmy) -> Dictionary:
 		return {}
 	return result.entry
 
-func _team_stopped(team: TerrainArmy, allow_sheltered: bool = false, ignored_ship_job: Dictionary = {}) -> bool:
+func _team_stopped(team: Variant, allow_sheltered: bool = false, ignored_ship_job: Dictionary = {}) -> bool:
 	if not team.combat_enabled or (team.combat_order != TerrainArmy.CombatOrder.HOLD and not (allow_sheltered and team.morale_retreat_sheltered())):
 		return false
 	if ignored_ship_job.is_empty():

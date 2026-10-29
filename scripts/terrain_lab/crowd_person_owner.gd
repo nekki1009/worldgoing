@@ -670,6 +670,55 @@ func release_for_departure(index: int) -> Dictionary:
 	return {"hp": receipt[0], "fatigue": receipt[1], "fatigue_rest": receipt[2], "ammo": int(receipt[3]),
 		"cell": Vector2i(int(receipt[4]), int(receipt[5])), "position": Vector2(receipt[6], receipt[7])}
 
+# G1 S2 ship glue. The native World owns the aboard state (site_person_board / land / set_deck / retarget_aboard).
+# Every mutator below refuses without changing anything, so the GD caller can stop before writing its rows.
+# Crowd soldiers have no GD rescue or patient bookkeeping, so the TerrainArmy ship readers see none.
+var _unit_rescues: Dictionary = {}
+
+func patient_has_rescuer(_index: int) -> bool:
+	return false
+
+func command_members() -> Array[int]:
+	var members: Array[int] = []
+	for index: int in combat_units:
+		if is_member(index): members.append(index)
+	return members
+
+func native_aboard(index: int) -> Array:
+	if crowd_site == null or crowd_site.crowd == null or not crowd_site.crowd.has_method("site_person_aboard"): return []
+	var state: PackedFloat64Array = crowd_site.crowd.site_person_aboard(index)
+	return [] if state.size() != 2 else [state[0] > 0.5, int(state[1])]
+
+# Board onto vehicle_id, or confirm an existing aboard state on that same vehicle.
+func ship_ensure_aboard(index: int, vehicle_id: int) -> bool:
+	if not is_member(index) or crowd_site == null or crowd_site.crowd == null or not crowd_site.crowd.has_method("site_person_board"): return false
+	var state: Array = native_aboard(index)
+	if state.size() == 2 and bool(state[0]): return int(state[1]) == vehicle_id
+	return bool(crowd_site.crowd.site_person_board(index, vehicle_id))
+
+func ship_land_native(index: int, shore: Vector2i) -> bool:
+	if not is_member(index) or crowd_site == null or crowd_site.crowd == null or not crowd_site.crowd.has_method("site_person_land"): return false
+	return bool(crowd_site.crowd.site_person_land(index, float(shore.x) + 0.5, float(shore.y) + 0.5))
+
+func ship_retarget_native(index: int, vehicle_id: int) -> bool:
+	if not is_member(index) or crowd_site == null or crowd_site.crowd == null or not crowd_site.crowd.has_method("site_person_retarget_aboard"): return false
+	return bool(crowd_site.crowd.site_person_retarget_aboard(index, vehicle_id))
+
+# Deck point in cell units. Presentation and ranged origin only; GD computes the point and remains the authority.
+func ship_set_deck(index: int, cell_point: Vector2) -> bool:
+	if not is_member(index) or crowd_site == null or crowd_site.crowd == null or not crowd_site.crowd.has_method("site_person_set_deck"): return false
+	return bool(crowd_site.crowd.site_person_set_deck(index, cell_point.x, cell_point.y))
+
+# The GD ship rows are the authority for embarkation, so the native state needs no separate GD bookkeeping.
+func ship_boarded(_index: int) -> void:
+	pass
+
+func ship_disembarked(_index: int, _shore: Vector2i) -> void:
+	pass
+
+func ship_embarkation_changed(_person_id: int) -> void:
+	pass
+
 func ranged_apply_hit(index: int, _source_cell: Vector2i, packet: Dictionary) -> void:
 	if not combat_units.has(index): return
 	var result: Dictionary = packet.get("result", {})

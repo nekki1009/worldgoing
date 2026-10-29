@@ -972,6 +972,22 @@ static void board_keeps_roster_fatigue_and_hp() {
 	REQUIRE(w.validate());
 }
 
+static void board_ends_a_held_siege_step() {
+	test_case = "board ends an arrived (held) siege step; a pending siege step still refuses and changes nothing";
+	World w(1); setup(w);
+	w.escort_mode[2] = 5; w.escort_goal[2] = w.cell[2]; // pending: a goal is still set
+	REQUIRE(!w.site_person_board(2, 0));
+	REQUIRE(w.escort_mode[2] == 5 && w.escort_goal[2] == w.cell[2] && !w.is_aboard(2));
+	w.escort_goal[2] = -1; // arrived and held
+	REQUIRE(w.site_person_board(2, 0));
+	REQUIRE(w.is_aboard(2) && w.escort_mode[2] == 0 && w.escort_goal[2] == -1);
+	REQUIRE(w.validate());
+	World h(1); setup(h);
+	h.escort_mode[2] = 3; h.escort_goal[2] = -1; // a held housing step is not a ship approach
+	REQUIRE(!h.site_person_board(2, 0));
+	REQUIRE(h.escort_mode[2] == 3 && !h.is_aboard(2));
+}
+
 static void aboard_stays_while_formation_passes() {
 	test_case = "an aboard soldier does not move while the formation marches through its cell, which the others pass";
 	World w(1); setup(w);
@@ -1167,6 +1183,7 @@ int main(int argc, char **argv) {
 	explicit_wagon_turn_at_map_edge();
 	board_refusals();
 	board_keeps_roster_fatigue_and_hp();
+	board_ends_a_held_siege_step();
 	aboard_stays_while_formation_passes();
 	aboard_is_never_a_melee_target();
 	land_refusals_and_landing();
