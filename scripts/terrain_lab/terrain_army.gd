@@ -6160,8 +6160,20 @@ static func load_contact_source(reference: HumanCharacter3DEditor = null) -> boo
 		return false
 	return true
 
+# CAV-3: a mounted ordinary soldier answers contact with its own body's foot source (same body, same parts,
+# foot contact clocks, at its ground point). The original sources never build a mount (SiegeWorkClips refuses
+# a mounted rig), so the rider's riding atlas admits it and the foot geometry stands in for the first version.
+static func contact_appearance(appearance: Dictionary) -> Dictionary:
+	if not bool(appearance.get("mounted", false)): return appearance
+	var foot := appearance.duplicate(true)
+	foot["mounted"] = false
+	return foot
+
 static func prepare_contact_source_for(appearance: Dictionary, reference: HumanCharacter3DEditor = null) -> bool:
 	# Deployment/load preparation only. Queries below never instantiate a rig.
+	if HumanCharacter3DEditor.valid_appearance(appearance) and bool(appearance.mounted):
+		if not SiteMountedSoldierAtlas.available(appearance): return false
+		appearance = contact_appearance(appearance)
 	if not HumanCharacter3DEditor.valid_appearance(appearance) or bool(appearance.mounted): return false
 	_retain_contact_sources_until_exit()
 	var body := int(appearance.body)
@@ -6181,7 +6193,10 @@ static func prepare_contact_source_for(appearance: Dictionary, reference: HumanC
 	return true
 
 static func contact_source_for(appearance: Dictionary) -> RefCounted:
-	# Preserve the original strict same-body/mounted/part guard.
+	# Preserve the original strict same-body/mounted/part guard; an admitted rider uses its foot source (contact_appearance).
+	if HumanCharacter3DEditor.valid_appearance(appearance) and bool(appearance.mounted):
+		if not SiteMountedSoldierAtlas.available(appearance): return null
+		appearance = contact_appearance(appearance)
 	if not HumanCharacter3DEditor.valid_appearance(appearance) or bool(appearance.mounted): return null
 	var body := int(appearance.body)
 	var source: RefCounted = _contact_source if body == 0 else _body_contact_sources.get(body)

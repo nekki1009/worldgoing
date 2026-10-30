@@ -5,11 +5,18 @@ extends SceneTree
 ##   dismount  a native dismount is written back to the GD row and the rider list
 ##   saveload  a rider mid-charge: capture_for_save is valid and the native state reloads still mounted
 ##   unmounted a team with no riders: no charge stats, no native mounted flag, no rider list
+## CAV-3 ordinary soldiers (mounted atlas res://assets/army/mounted_soldiers/v2/ must be baked):
+##   ordinary_mounts              a horse equipped through the equipment order flow (prepare/check/commit) makes the
+##                                soldier a native rider with a mounted crowd kit whose ride frames resolve
+##   ordinary_dismount_loses_horse a native dismount empties the mount slot; the horse is lost, not returned to goods
+##   ordinary_bow_rider_fires     a mounted archer fires under the ordinary ranged rules and stays mounted
+##   saveload_ordinary_rider      a mounted ordinary soldier saves and reloads still mounted with its horse item
 ## The charge-contact, through-3 and pike scenarios are verified by native scenario_tests (charge, penetration cap, pike).
 ## Their GD versions return with CAV-3 / CAV-4, when ordinary soldiers can ride and teams can be ordered into a line.
 ## Run: -- --crowd --crowd-test <fresh run_id> --cavalry-case <case> [--crowd-atlas-root res://output/site_siege_close_20261004/equipment_atlas_runtime]
 ## Fails fast on the first failed check. Not run in this change: Godot was not executed for this patch.
 const DT := 1.0 / 30.0
+const ORDINARY_CASES := ["ordinary_mounts", "ordinary_dismount_loses_horse", "ordinary_bow_rider_fires", "saveload_ordinary_rider"]
 var lab: TerrainLab
 var controller: SiteController
 var site: Node
@@ -70,7 +77,7 @@ func _run() -> void:
 	if not check(args.has("--crowd") and args.has("--crowd-test"), "isolated crowd startup required"): return
 	var pick := args.find("--cavalry-case")
 	if pick >= 0 and pick + 1 < args.size(): case_name = str(args[pick + 1])
-	if not check(case_name in ["turn", "palisade", "dismount", "saveload", "unmounted"], "a known cavalry case is selected", case_name): return
+	if not check(case_name in ["turn", "palisade", "dismount", "saveload", "unmounted"] + ORDINARY_CASES, "a known cavalry case is selected", case_name): return
 	lab = load("res://scenes/terrain_lab/TerrainLab.tscn").instantiate()
 	lab.npc = TerrainTestNPC.new()
 	lab.pause_when_unfocused = false
@@ -84,6 +91,9 @@ func _run() -> void:
 	# Mounted riders are original Actors: only they have prepared riding contact visuals (_prepare_contact_appearance).
 	# The controlled Actor is mounted before deploy, the way site_siege_native_mounted_contact_test.gd does it.
 	var actor: TerrainTestCharacter = lab.character
+	if case_name in ORDINARY_CASES:
+		_ordinary_case()
+		return
 	if case_name != "unmounted":
 		var initial: Dictionary = actor.capture_state()
 		initial.appearance = HumanCharacter3DEditor.default_appearance(0)
@@ -197,4 +207,155 @@ func _unmounted_case(friend_team: Dictionary) -> void:
 	if not check(stats[0] == 0.0 and stats[1] == 0.0 and stats[2] == 0.0 and stats[4] == 0.0, "an unmounted team records no charge outcomes", stats): return
 	if not check(site.rider_identities().is_empty(), "the unmounted team stays unlisted"): return
 	print("CAV2 GATE OK: unmounted")
+	quit(0)
+
+
+# ---------------------------------------------------------------- CAV-3 ordinary riders
+func _ordinary_case() -> void:
+	# The bow case is a one-archer team against one enemy (as crowd_c2_natural_ammo_test), male body: the
+	# runtime atlas root publishes the male bow foot recipe only.
+	var bow := case_name == "ordinary_bow_rider_fires"
+	var deployed: Dictionary = lab.deploy_trial_armies([
+		{"faction": 0, "count": 1 if bow else 4, "troop_type": "bow" if bow else "melee_infantry", "female_percent": 0, "training": 80.0, "ai_enabled": false, "attack": false, "entry": "west"},
+		{"faction": 1, "count": 1 if bow else 6, "female_percent": 0, "training": 80.0, "ai_enabled": false, "attack": false, "entry": "east"}])
+	if not check(deployed.ok and site.active and site.command_teams().size() == 2, "a crowd battle deploys two opposing teams", deployed): return
+	var friend_team: Dictionary = site._team_by_id(int(site.command_teams()[0].team_id))
+	var soldier_id := int(friend_team.person_ids[0 if bow else 1])
+	if not check(not site._actors.has(soldier_id), "the chosen rider is an ordinary soldier", soldier_id): return
+	var index := int(site._index_by_id[soldier_id])
+	if not check(_mount_by_order(soldier_id), "the ordinary soldier mounts through the order flow"): return
+	match case_name:
+		"ordinary_mounts":
+			_ordinary_mounts_case(soldier_id, index)
+		"ordinary_dismount_loses_horse":
+			_ordinary_dismount_case(soldier_id, index)
+		"ordinary_bow_rider_fires":
+			_ordinary_bow_case(friend_team, soldier_id, index)
+		"saveload_ordinary_rider":
+			_ordinary_saveload_case(soldier_id, index)
+
+# The equipment order flow, as the controlled player uses it for any slot: prepare, check (inside), commit.
+# The soldier is made the controlled person for the personal order (as site_g8a_crowd_test does), then control is restored.
+func _mount_by_order(soldier_id: int) -> bool:
+	var record: Dictionary = site._records[soldier_id]
+	if not record.get("cargo") is Dictionary: record["cargo"] = {}
+	record.cargo["horse"] = int(record.cargo.get("horse", 0)) + 1
+	var horses_before := int(record.cargo.horse)
+	var previous_control := lab.controlled_person_id()
+	lab.terrain.site["controlled_person_id"] = soldier_id
+	var prepared: Dictionary = controller.equipment_orders.prepare(soldier_id, {"mode": "personal", "slot": SiteRuntime.MOUNT_SLOT, "item_id": SiteRuntime.MOUNT_GOODS})
+	var committed: Dictionary = controller.equipment_orders.commit(prepared.order) if bool(prepared.get("ok", false)) else prepared
+	lab.terrain.site["controlled_person_id"] = previous_control
+	if not check(bool(prepared.get("ok", false)), "prepare/check admit the horse order", prepared): return false
+	if not check(bool(committed.get("ok", false)), "the horse order commits", committed): return false
+	var item_id := SiteRuntime.mount_item_id(record.item_state)
+	if not check(not item_id.is_empty() and lab.terrain.site.item_records.has(item_id), "the mount slot holds a real horse item", record.item_state): return false
+	return check(int(record.cargo.get("horse", 0)) == horses_before - 1, "exactly one horse left the soldier's goods", record.cargo)
+
+func _mounted_kit_ok(soldier_id: int, index: int) -> bool:
+	var appearance: Dictionary = site._appearance(soldier_id)
+	if not check(bool(appearance.get("mounted", false)), "the projected appearance is mounted", appearance): return false
+	var kit := int(site._kit_cache.get(JSON.stringify(appearance), -1))
+	if not check(kit >= 0 and site._kit_ids[index] == kit, "the soldier's crowd kit is the mounted kit", [kit, site._kit_ids[index]]): return false
+	var described: Dictionary = site.view._describe(appearance)
+	var page: Dictionary = site.view._pages[int(described.page)]
+	for clip: String in ["ride_idle", "ride_walk", "ride_run"]:
+		for direction: String in ["up", "right", "down", "left"]:
+			if not check(page.sequences.has(clip + "|" + direction), "the mounted page has " + clip + "|" + direction): return false
+	var frame: Dictionary = SiteMountedSoldierAtlas.frame(appearance, "ride_walk", "down", 0.5)
+	return check(not frame.is_empty() and frame.horse.texture is AtlasTexture, "rider and horse frames resolve", frame.get("key", ""))
+
+func _ordinary_mounts_case(soldier_id: int, index: int) -> void:
+	if not check(site.crowd.soldier_mounted(index) and site.rider_identities().has(soldier_id), "the native rider flag and rider list follow the mount slot"): return
+	if not _mounted_kit_ok(soldier_id, index): return
+	for step in range(30):
+		if not check(_tick(1), "live frame with an ordinary rider has no latched fault"): return
+	if not check(site.crowd.soldier_mounted(index), "the ordinary rider stays mounted"): return
+	print("CAV3 GATE OK: ordinary_mounts")
+	quit(0)
+
+func _ordinary_dismount_case(soldier_id: int, index: int) -> void:
+	var record: Dictionary = site._records[soldier_id]
+	var item_id := SiteRuntime.mount_item_id(record.item_state)
+	var horses := int(record.cargo.get("horse", 0))
+	if not check(bool(site.crowd.set_soldier_mounted(index, false)), "the native dismount is applied"): return
+	if not check(_tick(1), "the frame after the dismount has no latched fault"): return
+	if not check(not site.rider_identities().has(soldier_id) and not site._is_rider_row(soldier_id), "the rider list and row drop the dismounted soldier"): return
+	if not check(SiteRuntime.mount_item_id(record.item_state).is_empty() and not lab.terrain.site.item_records.has(item_id), "the mount slot is empty and the horse item is gone"): return
+	if not check(int(record.cargo.get("horse", 0)) == horses, "the lost horse is not returned to goods", record.cargo): return
+	var appearance: Dictionary = site._appearance(soldier_id)
+	if not check(not bool(appearance.get("mounted", false)) and site._kit_ids[index] == int(site._kit_cache.get(JSON.stringify(appearance), -1)), "the soldier is back on its foot kit"): return
+	print("CAV3 GATE OK: ordinary_dismount_loses_horse")
+	quit(0)
+
+func _ordinary_bow_case(friend_team: Dictionary, soldier_id: int, index: int) -> void:
+	var appearance: Dictionary = site._appearance(soldier_id)
+	if not check(str(appearance.parts.weapon).begins_with("bow"), "the rider is an archer", appearance.parts.weapon): return
+	if not check(site.crowd.soldier_mounted(index), "the archer is a native rider"): return
+	# The rider's kit shows the mounted bow clip on the shoot slot.
+	var kit_appearance: Dictionary = site._appearance(soldier_id)
+	var page: Dictionary = site.view._pages[int(site.view._describe(kit_appearance).page)]
+	if not check(SiteMountedSoldierAtlas.crowd_clip("shoot", kit_appearance) == "attack_bow" and page.sequences.has("attack_bow|right"), "the mounted kit carries the attack_bow shoot clip"): return
+	var enemy_team: Dictionary = site._team_by_id(int(site.command_teams()[1].team_id))
+	var enemy_id := int(enemy_team.person_ids[0])
+	var corridor := _find_corridor()
+	if not check(corridor.x >= 0 and _place(soldier_id, Vector2(corridor) + Vector2.ONE * 0.5) and _place(enemy_id, Vector2(corridor + Vector2i(6, 0)) + Vector2.ONE * 0.5), "a legal unobstructed six-cell ranged corridor", corridor): return
+	var ammo_before := float(site.soldier_state(index).ammo)
+	if not check(ammo_before > 0.0, "the archer carries arrows", ammo_before): return
+	var ordered: Dictionary = site.issue_order(int(friend_team.team_id), TerrainArmy.CombatOrder.ATTACK, Vector2i(-1, -1), enemy_id, "test")
+	if not check(bool(ordered.get("ok", false)), "the mounted archer is ordered to attack the enemy", ordered): return
+	# Native ranged rules (S_RANGED = 4): a mounted archer is a ranged soldier like any other archer, with no mounted
+	# refusal. Shot release belongs to the GD fire host (TerrainLab.issue_fire_order), which needs an original team
+	# owner; lab.fire_owner_view maps no TerrainArmy to these crowd trial teams, so a foot archer releases nothing here either.
+	var ranged := false
+	for step in range(300):
+		if not check(_tick(1), "live frame has no latched fault"): return
+		var state: Dictionary = site.soldier_state(index)
+		if int(state.state) == 4:
+			ranged = bool(site.crowd.soldier_mounted(index))
+			if ranged: break
+	if not check(ranged, "the mounted archer takes the native ranged state while still mounted", site.soldier_state(index)): return
+	for step in range(60):
+		if not check(_tick(1), "live frame in the ranged state has no latched fault"): return
+	if not check(site.crowd.soldier_mounted(index) and int(site.soldier_state(index).state) == 4, "the archer stays mounted in the ranged state", site.soldier_state(index)): return
+	print("CAV3 GATE OK: ordinary_bow_rider_fires (native ranged state from horseback; release not wired for trial teams)")
+	quit(0)
+
+# As crowd_c2_natural_ammo_test: nine walkable, steppable cells in three rows, away from the controlled person.
+func _find_corridor() -> Vector2i:
+	var player_state: Dictionary = site.soldier_state(site.player_index)
+	var player := Vector2(float(player_state.px), float(player_state.py))
+	for y in range(4, lab.terrain.size.y - 4):
+		for x in range(4, lab.terrain.size.x - 10):
+			var start := Vector2i(x, y)
+			if player.distance_to(Vector2(start)) < 24.0: continue
+			var legal := true
+			for row in range(-1, 2):
+				for offset in range(9):
+					var here := start + Vector2i(offset, row)
+					if not lab.terrain.is_walkable(here): legal = false
+					if offset > 0 and not lab.terrain.can_step(here - Vector2i.RIGHT, here): legal = false
+			if legal: return start
+	return Vector2i(-1, -1)
+
+func _place(identity: int, position: Vector2) -> bool:
+	var owner: RefCounted = site.person_owner(identity)
+	return site.set_soldier_fields(owner.index_for_identity(identity), {"px": position.x, "py": position.y}) and site.set_formation_fields(owner.formation_index,
+		{"cx": position.x, "cy": position.y, "goal_x": position.x, "goal_y": position.y, "origin_x": position.x, "origin_y": position.y, "ref_x": position.x, "ref_y": position.y, "ref_valid": true, "ai_enabled": false})
+
+func _ordinary_saveload_case(soldier_id: int, index: int) -> void:
+	for step in range(30):
+		if not check(_tick(1), "live frame before the save has no latched fault"): return
+	var item_id := SiteRuntime.mount_item_id(site._records[soldier_id].item_state)
+	var captured: Dictionary = controller._capture_for_save()
+	if not check(bool(captured.get("ok", false)), "the save capture is valid with an ordinary rider", captured.get("code", "OK")): return
+	var blob: PackedByteArray = site.crowd.save_state()
+	if not check(site.crowd.load_state(blob), "the native state reloads"): return
+	site.crowd.render_set_kits(site._kit_ids)
+	site._rebuild_rider_ids()
+	if not check(site.crowd.soldier_mounted(index) and site.rider_identities().has(soldier_id), "the reloaded native rider stays mounted"): return
+	if not check(SiteRuntime.mount_item_id(site._records[soldier_id].item_state) == item_id and site._is_rider_row(soldier_id), "the horse item and row survive"): return
+	if not _mounted_kit_ok(soldier_id, index): return
+	if not check(_tick(1), "the frame after the reload has no latched fault"): return
+	print("CAV3 GATE OK: saveload_ordinary_rider")
 	quit(0)

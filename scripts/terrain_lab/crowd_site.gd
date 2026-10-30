@@ -948,7 +948,11 @@ func _appearance(identity: int) -> Dictionary:
 	# The original presentation owner keeps worn gear on the remains holder.
 	if hp <= 0.0 and bool(body.get("loot_settled")):
 		holder = data.site.ground_loot.get(str(body.get("remains_id")), SiteRuntime.new_item_state("empty-remains"))
-	return SiteRuntime.equipment_appearance(data, holder, original)
+	var projected := SiteRuntime.equipment_appearance(data, holder, original)
+	# CAV-3: an ordinary person rides only by the mount slot. A controlled Actor also keeps its live-editor
+	# riding state (toggle_mount), which equipment_appearance alone would clear.
+	if _actors.has(identity) and not projected.is_empty() and bool(original.get("mounted", false)): projected["mounted"] = true
+	return projected
 
 func _prepare_contact_appearance(appearance: Dictionary, identity: int, saved_actor: bool = false) -> bool:
 	var actor := _actor(identity)
@@ -1591,6 +1595,12 @@ func _register_kits(kit_keys: Array, audio_mounts: PackedByteArray = PackedByteA
 		if reuse: registered_keys.append(key)
 		if seen.has(key): continue
 		seen[key] = true
+		# CAV-3: a rider is admitted by its own complete riding atlas, never by the foot admission (no foot capture is queued).
+		if bool(appearance.get("mounted", false)):
+			if not SiteMountedSoldierAtlas.available(appearance):
+				printerr("Crowd atlas rejected a rider: the mounted soldier atlas is incomplete: ", key)
+				return false
+			continue
 		required.append(appearance)
 		var unarmed: Dictionary = appearance.duplicate(true)
 		unarmed.parts.weapon = "none"
@@ -1691,9 +1701,12 @@ func _make_kit(page_index: int, palette: int, appearance: Dictionary, windows: P
 	var page: Dictionary = view._pages[page_index]
 	var tracks := PackedInt32Array()
 	var exchange_slots := ["attack", "attack_heavy", "guard", "hit", "knockback", "shoot"]
+	var mounted := bool(appearance.get("mounted", false))
 	for si in range(SLOTS.size()):
 		var slot: String = SLOTS[si]
-		var clip := _clip_for(slot, appearance)
+		# CAV-3: a rider's page holds the ride clips (SiteMountedSoldierAtlas); slots without one fall back to idle natively.
+		# _clip_for stays the foot mapping that contact clocks use.
+		var clip := SiteMountedSoldierAtlas.crowd_clip(slot, appearance) if mounted else _clip_for(slot, appearance)
 		for dir: String in DIRS:
 			var track := -1
 			if not clip.is_empty():
@@ -1716,7 +1729,7 @@ func _make_kit(page_index: int, palette: int, appearance: Dictionary, windows: P
 					if slot in exchange_slots:
 						var window := ExchangeTimings.duration(StringName(clip))
 						if window > 0.0:
-							windows[si] = window
+							if not mounted: windows[si] = window # Slot windows are shared by every kit; riders never redefine them.
 							var age := 0.0
 							while age <= window + 0.0001:
 								time_map.append(ExchangeTimings.sample_time(StringName(clip), age, duration))
@@ -1861,6 +1874,9 @@ func on_control_changed(old_identity: int, identity: int) -> Dictionary:
 func equipment_recipe_guard(identity: int, appearance: Dictionary) -> Dictionary:
 	if not HumanCharacter3DEditor.valid_appearance(appearance): return SiteRuntime.fail("INVALID")
 	if _actor(identity) != null: return SiteRuntime.ok() # Original actors retain their live presenter.
+	if bool(appearance.get("mounted", false)):
+		if not SiteMountedSoldierAtlas.available(appearance): return SiteRuntime.fail("MISSING_ASSET", "騎乘圖集未備妥；原裝與物品保留")
+		if not TerrainArmy.prepare_contact_source_for(appearance): return SiteRuntime.fail("MISSING_ASSET", "騎乘接觸資源未備妥；原裝與物品保留")
 	if view != null and view._describe(appearance).is_empty(): return SiteRuntime.fail("MISSING_ASSET", "士兵外觀不被圖集接受")
 	return SiteRuntime.ok()
 
@@ -1882,6 +1898,24 @@ func equipment_changed(identity: int) -> void:
 		_audio_mount_update(int(_index_by_id[identity]), bool(appearance.get("mounted", false)))
 	elif not _building:
 		_update_kit(int(_index_by_id[identity]), appearance)
+	_sync_native_mount(identity, appearance)
+
+
+# CAV-3: after a committed equipment change, the native rider flag follows the projected appearance.
+# The order guard (equipment_recipe_guard) already admitted the atlas and contact source.
+func _sync_native_mount(identity: int, appearance: Dictionary) -> void:
+	if crowd == null or _building: return
+	var index := int(_index_by_id.get(identity, -1))
+	if index < 0 or float(soldier_state(index).hp) <= 0.0: return
+	var on := bool(appearance.get("mounted", false))
+	if bool(crowd.soldier_mounted(index)) == on: return
+	if on and _actors.has(identity):
+		var actor: TerrainTestCharacter = _actors[identity]
+		if actor.editor != null and actor.editor.is_mounted: _live_contact_actor_ids[identity] = true
+	if not bool(crowd.set_soldier_mounted(index, on)):
+		last_event_error = SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕騎乘狀態")
+		return
+	_rebuild_rider_ids()
 
 
 func captivity_changed(identity: int, _captor_id: int, _capturing: bool) -> void:
@@ -2045,6 +2079,7 @@ func _captivity_atlas_guard(identity: int, appearance: Dictionary) -> Dictionary
 	if appearance.is_empty(): return SiteRuntime.fail("INVALID", "俘虜卸裝後的原持物外觀不完整")
 	if _actors.has(identity): return SiteRuntime.ok() # Original actors keep their live presenter.
 	if _ensure_kit(appearance) >= 0: return SiteRuntime.ok()
+	if bool(appearance.get("mounted", false)): return SiteRuntime.fail("MISSING_ASSET", "騎乘圖集未備妥；不排入步兵圖集準備，原實物保留")
 	var key := Atlas._mixed_key(appearance)
 	if key.is_empty(): return SiteRuntime.fail("MISSING_ASSET", "俘虜卸裝外觀無精確圖集配方；原實物保留")
 	var job: Dictionary = _captivity_atlas_jobs.get(key, {})
@@ -3923,21 +3958,32 @@ func _is_rider_row(identity: int) -> bool:
 	if _actors.has(identity):
 		var actor: TerrainTestCharacter = _actors[identity]
 		return bool(actor._saved_appearance.get("mounted", false))
-	var row: Dictionary = _records.get(identity, {})
-	var appearance: Dictionary = row.get("appearance", {})
-	return bool(appearance.get("mounted", false))
+	# CAV-3a: an ordinary person rides only while its mount slot holds a horse (appearance.mounted is derived from the slot).
+	return bool(_appearance(identity).get("mounted", false))
 
 func _set_row_mounted(identity: int, on: bool) -> void:
+	# Actors only. An Actor's riding state is its visual_state (toggle_mount / clip); the saved appearance follows it.
+	# Ordinary persons are mounted only through the mount slot (_apply_row_mount); no second writer exists for them.
+	if not _actors.has(identity): return
+	var actor: TerrainTestCharacter = _actors[identity]
+	actor._saved_appearance["mounted"] = on
+	actor.visual_state.mounted = on
+	if actor.editor != null: actor.editor.set_mount_enabled(on)
+
+# CAV-3a: the only writer of an ordinary person's riding state. on=true draws a horse from goods, on=false returns it to goods,
+# lost=true (dismount in a charge, or death) removes the horse without returning it. Refusals change nothing.
+func _apply_row_mount(identity: int, on: bool, lost: bool = false) -> Dictionary:
 	if _actors.has(identity):
-		# An Actor's riding state is its visual_state (toggle_mount / clip); the saved appearance follows it.
-		var actor: TerrainTestCharacter = _actors[identity]
-		actor._saved_appearance["mounted"] = on
-		actor.visual_state.mounted = on
-		if actor.editor != null: actor.editor.set_mount_enabled(on)
-		return
-	var row: Dictionary = _records[identity]
-	var appearance: Dictionary = row["appearance"]
-	appearance["mounted"] = on
+		_set_row_mounted(identity, on)
+		return SiteRuntime.ok()
+	var body: Dictionary = _records[identity]
+	if on == (not SiteRuntime.mount_item_id(body["item_state"]).is_empty()): return SiteRuntime.ok()
+	var data: TerrainData = _staged_data if _staged_data != null else lab.terrain
+	var holder: Dictionary = body.item_state
+	var version := int(holder.get("version", -1))
+	if on: return SiteRuntime.equip_mount(data, holder, body.cargo, identity, version)
+	if lost: return SiteRuntime.lose_mount(data, holder, version)
+	return SiteRuntime.unequip_mount(data, holder, body.cargo, version)
 
 # Deploy import: living riders take the native flag. A refused rider fails the whole import (as the surrender import does).
 func import_mounted_riders() -> Dictionary:
@@ -3945,6 +3991,8 @@ func import_mounted_riders() -> Dictionary:
 		if not _is_rider_row(identity): continue
 		var index := int(_index_by_id.get(identity, -1))
 		if index < 0 or float(soldier_state(index).hp) <= 0.0: continue
+		if not _actors.has(identity) and not SiteMountedSoldierAtlas.available(_appearance(identity)):
+			return SiteRuntime.fail("MISSING_ASSET", "騎乘圖集未備妥；隊伍未交接")
 		if not bool(crowd.set_soldier_mounted(index, true)):
 			return SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕騎乘人物；原隊伍未交接")
 	_rebuild_rider_ids()
@@ -3964,30 +4012,45 @@ func set_rider(identity: int, on: bool) -> Dictionary:
 	if _actors.has(identity): return SiteRuntime.fail("UNSUPPORTED", "受控 actor 騎乘尚未接線")
 	var index := int(_index_by_id[identity])
 	var before := _is_rider_row(identity)
-	_set_row_mounted(identity, on)
-	if on and not _prepare_contact_appearance(_appearance(identity), identity):
-		_set_row_mounted(identity, before)
-		return SiteRuntime.fail("MISSING_ASSET", "騎乘接觸資源未備妥；原人物未變更")
+	if on == before and bool(crowd.soldier_mounted(index)) == on: return SiteRuntime.ok()
+	# CAV-3a: the mount slot (horse from goods) is applied first; the atlas admits the ride, else the slot is rolled back.
+	var applied := _apply_row_mount(identity, on)
+	if not applied.ok: return applied
+	if on and not SiteMountedSoldierAtlas.available(_appearance(identity)):
+		_apply_row_mount(identity, false)
+		return SiteRuntime.fail("MISSING_ASSET", "騎乘圖集未備妥；原人物未變更")
 	if not bool(crowd.set_soldier_mounted(index, on)):
-		_set_row_mounted(identity, before)
+		_apply_row_mount(identity, before)
 		return SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕騎乘狀態；原人物未變更")
 	_rebuild_rider_ids()
 	_update_kit(index, _appearance(identity))
 	return SiteRuntime.ok()
 
-# Write-back of native dismounts. A dead rider keeps its row as it was (death clears the native flag, it is not a dismount).
+# Write-back of native dismounts and deaths. A native dismount or a death empties the mount slot and the horse is lost
+# (not returned to goods). A dead rider keeps its appearance except for the lost horse.
 func sync_rider_dismounts() -> void:
 	if _rider_ids.is_empty() or crowd == null: return
 	var kept: Array[int] = []
 	for identity: int in _rider_ids:
 		var index := int(_index_by_id.get(identity, -1))
 		if index < 0: continue
-		if bool(crowd.soldier_mounted(index)):
+		var alive := float(soldier_state(index).hp) > 0.0
+		if bool(crowd.soldier_mounted(index)) and alive:
 			kept.append(identity)
-		elif float(soldier_state(index).hp) > 0.0:
+		elif _actors.has(identity):
+			# An Actor rider loses its horse like an ordinary one: the worn horse item (if any) is lost, not returned,
+			# and its live riding state ends, on a native dismount or on death.
+			var actor: TerrainTestCharacter = _actors[identity]
+			if not SiteRuntime.mount_item_id(actor.item_state).is_empty():
+				var data: TerrainData = _staged_data if _staged_data != null else lab.terrain
+				var lost := SiteRuntime.lose_mount(data, actor.item_state, int(actor.item_state.get("version", -1)))
+				if not lost.ok: last_event_error = lost
 			_set_row_mounted(identity, false)
-			if _actors.has(identity): _audio_mount_update(index, false) # an actor keeps its live presentation
-			else: _update_kit(index, _appearance(identity))
+			_audio_mount_update(index, false) # an actor keeps its live presentation
+		else:
+			var lost := _apply_row_mount(identity, false, true)
+			if not lost.ok: last_event_error = lost
+			_update_kit(index, _appearance(identity)) # A dead rider lies on its foot kit; the horse is gone.
 	_rider_ids = kept
 
 func _audio_mount_install(rows: PackedByteArray) -> void:

@@ -627,6 +627,7 @@ func _siege_contact_inputs(index: int) -> Dictionary:
 		if inputs.is_empty(): crowd_site.last_event_error = Runtime.fail("MISSING_ASSET", "Original mounted Actor contact pose unavailable")
 		return inputs
 	if TerrainArmy._combat_bake.is_empty(): return {}
+	appearance = TerrainArmy.contact_appearance(appearance) # CAV-3: a rider's contact is sampled on its same-body foot source.
 	var source: RefCounted = TerrainArmy.contact_source_for(appearance)
 	if source == null:
 		crowd_site.last_event_error = Runtime.fail("MISSING_ASSET", "原人物同 body 接觸資源未備妥；未替換形體")

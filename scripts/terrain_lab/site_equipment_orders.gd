@@ -588,14 +588,22 @@ func prepare(identity: int, request: Dictionary) -> Dictionary:
 		var identity_to_wear := str(request.get("item_id", ""))
 		if slot.is_empty() or slot.length() > 64:
 			return Runtime.fail("INVALID", "裝備槽")
-		if not identity_to_wear.is_empty():
+		# CAV-3: the mount slot is filled from the person's own horse goods (Runtime.MOUNT_GOODS) and emptied
+		# back into them. A horse never waits as an unequipped item, so no item id can be worn there.
+		if slot == Runtime.MOUNT_SLOT and not identity_to_wear.is_empty():
+			if identity_to_wear != Runtime.MOUNT_GOODS: return Runtime.fail("INVALID", "坐騎只能由本人的馬匹貨物裝備")
+			if before.has(slot): return Runtime.fail("OCCUPIED", "坐騎槽已有馬匹")
+			if int(person.cargo.get("horse", 0)) < 1: return Runtime.fail("MATERIALS", "本人沒有馬匹貨物")
+			planned[slot] = Runtime.MOUNT_GOODS
+		elif not identity_to_wear.is_empty():
 			if not person.holder.item_ids.has(identity_to_wear) or person.holder.equipped.values().has(identity_to_wear):
 				return Runtime.fail("NO_TARGET", "只能穿戴本人實際持有且尚未穿戴的物品")
 			var definition := _held_definition(identity_to_wear, str(person.holder.holder))
 			if definition.is_empty() or str(definition.slot) != slot:
 				return Runtime.fail("INVALID", "物品不屬於本人或槽位不合")
-		planned.erase(slot)
-		if not identity_to_wear.is_empty():
+		if identity_to_wear.is_empty():
+			planned.erase(slot)
+		elif identity_to_wear != Runtime.MOUNT_GOODS:
 			planned[slot] = identity_to_wear
 	elif mode == "issue":
 		var nation_id := str(request.get("nation_id", ""))
@@ -609,6 +617,13 @@ func prepare(identity: int, request: Dictionary) -> Dictionary:
 		order.merge({"nation_id": nation_id, "standard_id": standard_id,
 			"standard_revision": int(standard.revision), "depot_version": int(depot.version)})
 		for slot: String in standard.slots:
+			if slot == Runtime.MOUNT_SLOT:
+				# CAV-3: a standard mount is any horse. One already worn stays; otherwise one horse is drawn from depot goods.
+				if before.has(slot): continue
+				if int(lab.terrain.site.inventory.get("horse", 0)) < 1:
+					return Runtime.fail("MATERIALS", "缺少標準槽位 mount（營地無馬匹貨物）；原裝全部保留")
+				planned[slot] = Runtime.MOUNT_GOODS
+				continue
 			var requirement: Dictionary = standard.slots[slot]
 			var candidates: Array = [str(requirement.definition)] + requirement.alternatives
 			var selected := ""
@@ -683,6 +698,7 @@ func prepare_team_issue(team: TerrainArmy, requester_id: int, representative_id:
 		"entries": [], "take": [], "return": [], "records": {}}
 	var assigned := {}
 	var missing: Array[Dictionary] = []
+	var horses_needed := 0
 	for identity: int in target_ids:
 		var person: Dictionary = actions._person(identity)
 		var before: Dictionary = person.holder.equipped.duplicate()
@@ -693,6 +709,12 @@ func prepare_team_issue(team: TerrainArmy, requester_id: int, representative_id:
 			"before": before, "planned": before.duplicate(), "take": [], "return": []}
 		order.entries.append(entry)
 		for slot: String in standard.slots:
+			if slot == Runtime.MOUNT_SLOT:
+				# CAV-3: any worn horse meets the standard; otherwise one horse is drawn from depot goods at commit.
+				if before.has(slot): continue
+				entry.planned[slot] = Runtime.MOUNT_GOODS
+				horses_needed += 1
+				continue
 			var requirement: Dictionary = standard.slots[slot]
 			var candidates: Array = [str(requirement.definition)] + requirement.alternatives
 			var current := str(before.get(slot, ""))
@@ -704,6 +726,8 @@ func prepare_team_issue(team: TerrainArmy, requester_id: int, representative_id:
 				missing.append({"entry": entry, "slot": slot, "candidates": candidates})
 	# Reserve all already compliant real equipment before assigning any depot item.
 	var shortages: Array[String] = []
+	if horses_needed > int(lab.terrain.site.inventory.get("horse", 0)):
+		shortages.append("mount ×%d（營地馬匹貨物 %d）" % [horses_needed, int(lab.terrain.site.inventory.get("horse", 0))])
 	for needed: Dictionary in missing:
 		var chosen := ""
 		for definition_id: String in needed.candidates:
@@ -735,6 +759,7 @@ func prepare_team_issue(team: TerrainArmy, requester_id: int, representative_id:
 	if changed_ids.is_empty(): return Runtime.fail("NO_CHANGE", "全隊原實裝已符合本次標準")
 	for entry: Dictionary in order.entries:
 		for item_id: String in entry.before.values() + entry.planned.values():
+			if item_id == Runtime.MOUNT_GOODS: continue
 			order.records[item_id] = lab.terrain.site.item_records.get(item_id, {}).duplicate(true)
 	var checked := check_team_issue(order)
 	if not checked.ok and str(checked.get("code", "")) != "ATLAS_REQUIRED": return checked
@@ -863,6 +888,7 @@ func check_team_issue(order: Dictionary) -> Dictionary:
 	var recipes := {}
 	var missing_recipes := {}
 	var appearances: Array[Dictionary] = []
+	var horses_needed := 0
 	for entry: Dictionary in order.entries:
 		var identity := int(entry.person_id)
 		if not context.target_ids.has(identity) or _standard(identity, str(order.nation_id), str(order.standard_id)).is_empty():
@@ -872,14 +898,25 @@ func check_team_issue(order: Dictionary) -> Dictionary:
 			return Runtime.fail("INTERRUPTED", "#%d 原人物受擊、移動或持物已替換" % identity)
 		if int(person.holder.version) != int(entry.holder_version) or person.holder.item_ids != entry.holder_ids or person.holder.equipped != entry.before or person.cargo != entry.cargo_before or int(person.holder.version) >= 2147483646:
 			return Runtime.fail("STALE_SOURCE", "#%d 原人物持物或貨物已變更" % identity)
+		var mount := _mount_change(entry.before, entry.planned)
+		if not mount.ok or str(mount.change) == "unequip": return Runtime.fail("INVALID", "#%d 整隊領裝不得卸下坐騎" % identity)
+		if str(mount.change) == "equip":
+			if not standard.slots.has(Runtime.MOUNT_SLOT): return Runtime.fail("INVALID", "非標準槽位不得在領裝時更改")
+			horses_needed += 1
+			var creation := Runtime.prepare_equipment_creation(lab.terrain, person.holder, [{"definition_id": Runtime.MOUNT_DEFINITION_ID, "definition": Runtime.mount_definition(), "slot": ""}], identity)
+			if not creation.ok: return creation
 		for slot: String in standard.slots:
 			var chosen := str(entry.planned.get(slot, ""))
+			if slot == Runtime.MOUNT_SLOT:
+				if chosen != Runtime.MOUNT_GOODS and not Runtime.mount_item_id(person.holder) == chosen: return Runtime.fail("INVALID", "#%d 的坐騎槽無合法馬匹" % identity)
+				continue
 			var record: Dictionary = lab.terrain.site.item_records.get(chosen, {})
 			var requirements: Dictionary = standard.slots[slot]
 			if chosen.is_empty() or str(record.get("definition", "")) not in [str(requirements.definition)] + requirements.alternatives:
 				return Runtime.fail("INVALID", "#%d 的標準槽位無合法原實物" % identity)
 		for slot: String in entry.planned:
 			var item_id := str(entry.planned[slot])
+			if item_id == Runtime.MOUNT_GOODS: continue # Drawn from depot goods at commit; counted above.
 			var owner_key := "depot" if entry.take.has(item_id) else str(person.holder.holder)
 			var definition := _held_definition(item_id, owner_key)
 			if seen_equipped.has(item_id) or definition.is_empty() or str(definition.slot) != slot:
@@ -904,7 +941,7 @@ func check_team_issue(order: Dictionary) -> Dictionary:
 			if all_return.has(item_id) or not person.holder.item_ids.has(item_id) or _held_definition(item_id, str(person.holder.holder)).is_empty():
 				return Runtime.fail("STALE_SOURCE", "原退庫實物已失效或重複")
 			all_return.append(item_id)
-		var held_count: int = person.holder.item_ids.size() - entry["return"].size() + entry.take.size()
+		var held_count: int = person.holder.item_ids.size() - entry["return"].size() + entry.take.size() + (1 if str(mount.change) == "equip" else 0)
 		if Runtime.inventory_size(person.cargo) + held_count - entry.planned.size() + Runtime.opened_food(lab.terrain.site, person.holder) > Runtime.CARRY_CAPACITY:
 			return Runtime.fail("STORAGE_FULL", "#%d 換裝後行囊超過容量" % identity)
 		var cape_guard := cape_wear_guard(identity, entry.planned)
@@ -926,6 +963,8 @@ func check_team_issue(order: Dictionary) -> Dictionary:
 					appearances.append(appearance)
 	if all_take != order.take or all_return != order["return"]:
 		return Runtime.fail("INVALID", "整隊原物品分配已改變")
+	if horses_needed > int(lab.terrain.site.inventory.get("horse", 0)):
+		return Runtime.fail("MATERIALS", "營地馬匹貨物不足；全隊原裝保留")
 	for item_id: String in order.records:
 		if lab.terrain.site.item_records.get(item_id, {}) != order.records[item_id]:
 			return Runtime.fail("STALE_SOURCE", "原實物定義、染色或持有人已變更")
@@ -997,8 +1036,20 @@ func check(order: Dictionary) -> Dictionary:
 		if after_size > int(lab.terrain.site.capacity):
 			return Runtime.fail("STORAGE_FULL", "原補給點無法容納整批退裝")
 	var seen := {}
+	var mount := _mount_change(order.before, order.planned)
+	if not mount.ok: return mount
+	if str(mount.change) == "equip":
+		var goods: Dictionary = person.cargo if str(order.mode) == "personal" else lab.terrain.site.inventory
+		if int(goods.get("horse", 0)) < 1: return Runtime.fail("MATERIALS", "馬匹貨物已不足；原裝保留")
+		var creation := Runtime.prepare_equipment_creation(lab.terrain, person.holder, [{"definition_id": Runtime.MOUNT_DEFINITION_ID, "definition": Runtime.mount_definition(), "slot": ""}], int(order.person_id))
+		if not creation.ok: return creation
+	elif str(mount.change) == "unequip":
+		if str(order.mode) != "personal": return Runtime.fail("INVALID", "只有本人換裝可卸下坐騎")
+		var removable := Runtime._mount_remove_check(lab.terrain, person.holder, int(person.holder.version))
+		if not removable.ok: return removable
 	for slot: String in order.planned:
 		var identity := str(order.planned[slot])
+		if identity == Runtime.MOUNT_GOODS: continue # Checked above; created only at commit.
 		var expected_owner := "depot" if order.take.has(identity) else str(person.holder.holder)
 		var definition := _held_definition(identity, expected_owner)
 		if seen.has(identity) or definition.is_empty() or str(definition.slot) != slot:
@@ -1009,7 +1060,11 @@ func check(order: Dictionary) -> Dictionary:
 				return Runtime.fail("CULTURE_MISMATCH", "本次領取的原實物文化已不符合國別；原裝與持物保留")
 		seen[identity] = true
 	var held_count: int = person.holder.item_ids.size() - order["return"].size() + order.take.size()
-	if Runtime.inventory_size(person.cargo) + held_count - order.planned.size() + Runtime.opened_food(lab.terrain.site, person.holder) > Runtime.CARRY_CAPACITY:
+	var cargo_size := Runtime.inventory_size(person.cargo)
+	if str(mount.change) == "equip":
+		held_count += 1 # The new horse item, worn at once.
+		if str(order.mode) == "personal": cargo_size -= 1 # It leaves the person's own goods.
+	if cargo_size + held_count - order.planned.size() + Runtime.opened_food(lab.terrain.site, person.holder) > Runtime.CARRY_CAPACITY:
 		return Runtime.fail("STORAGE_FULL", "卸下後超過本人的二十件行囊")
 	var applied: Dictionary = equipment_apply_guard.call(int(order.person_id), order.planned)
 	if not applied.ok: return applied
@@ -1022,6 +1077,31 @@ func commit(order: Dictionary) -> Dictionary:
 	publish_equipment_change(prepared)
 	return prepared.result
 
+
+# CAV-3 mount slot change between two equipped maps: "", "equip" (planned holds Runtime.MOUNT_GOODS),
+# "keep" or "unequip" (the worn horse returns to the person's own goods). Anything else is refused.
+func _mount_change(before: Dictionary, planned: Dictionary) -> Dictionary:
+	var had := str(before.get(Runtime.MOUNT_SLOT, ""))
+	var wants := str(planned.get(Runtime.MOUNT_SLOT, ""))
+	for slot: String in planned:
+		if slot != Runtime.MOUNT_SLOT and str(planned[slot]) == Runtime.MOUNT_GOODS: return Runtime.fail("INVALID", "馬匹貨物只可放入坐騎槽")
+	if wants == Runtime.MOUNT_GOODS:
+		return Runtime.ok("", {"change": "equip"}) if had.is_empty() else Runtime.fail("OCCUPIED", "坐騎槽已有馬匹")
+	if wants.is_empty(): return Runtime.ok("", {"change": "unequip" if not had.is_empty() else ""})
+	return Runtime.ok("", {"change": "keep"}) if wants == had else Runtime.fail("INVALID", "坐騎只能由馬匹貨物裝備")
+
+# One horse leaves goods and becomes the worn horse item (the caller sets the equipped map). Returns its item id.
+func _publish_mount_draw(holder: Dictionary, goods: Dictionary, person_id: int) -> String:
+	var created := Runtime.create_equipment(lab.terrain, holder, Runtime.MOUNT_DEFINITION_ID, Runtime.mount_definition(), person_id, "")
+	assert(created.ok, "Mount creation was checked by prepare/check: %s" % str(created))
+	Runtime.add_items(goods, {"horse": 1}, -1)
+	if int(goods.get("horse", 0)) <= 0: goods.erase("horse")
+	return str(created.get("item_id", ""))
+
+# The worn horse item is removed and the horse returns to the person's own goods.
+func _publish_mount_return(holder: Dictionary, cargo: Dictionary) -> void:
+	var returned := Runtime.unequip_mount(lab.terrain, holder, cargo, int(holder.version))
+	assert(returned.ok, "Mount return was checked by prepare/check: %s" % str(returned))
 
 func _ready(person: Dictionary) -> Dictionary:
 	if person.is_empty() or not actions._ready(person) or float(lab.terrain.site.get("combat_left", 0.0)) > 0.0:
@@ -1190,6 +1270,9 @@ static func _valid_key(value: String) -> bool:
 static func valid_definition(identity: String, definition: Variant) -> bool:
 	if not Runtime.valid_item_definition(identity, definition) or str(definition.slot) not in Runtime.EQUIPMENT_SLOTS or str(definition.asset) == "none":
 		return false
+	# CAV-3a: the horse is the only legal mount item; no appearance PART_SLOT carries the mount slot.
+	if str(definition.slot) == Runtime.MOUNT_SLOT:
+		return str(definition.asset) == Runtime.MOUNT_ASSET
 	for slot: Dictionary in Visual.PART_SLOTS:
 		if str(slot.id) == str(definition.slot):
 			for option: Dictionary in slot.options:
@@ -3327,6 +3410,13 @@ func publish_equipment_change(prepared: Dictionary) -> void:
 	var holder: Dictionary = source.people[0].holder
 	# The original synchronous swap is indivisible; two separate transfers would
 	# wrongly reject an exchange that frees and fills capacity in the same tail.
+	var planned: Dictionary = order.planned.duplicate()
+	var mount := _mount_change(order.before, planned)
+	if str(mount.change) == "equip":
+		var goods: Dictionary = source.people[0].cargo if str(order.mode) == "personal" else source.stock
+		planned[Runtime.MOUNT_SLOT] = _publish_mount_draw(holder, goods, int(order.person_id))
+	elif str(mount.change) == "unequip":
+		_publish_mount_return(holder, source.people[0].cargo)
 	if str(order.mode) == "issue":
 		var depot: Dictionary = source.depot
 		for identity: String in order["return"]:
@@ -3339,7 +3429,7 @@ func publish_equipment_change(prepared: Dictionary) -> void:
 			source.records[identity].holder = str(holder.holder)
 		depot["version"] = int(depot.version) + 1
 	holder.equipped.clear()
-	holder.equipped.merge(order.planned)
+	holder.equipped.merge(planned)
 	holder["version"] = int(holder.version) + 1
 	_publish_military_issue(prepared.military)
 	if not prepared.phase.is_empty(): actions.publish_phase_receipt(prepared.phase)
@@ -3392,8 +3482,11 @@ func publish_team_equipment_change(prepared: Dictionary) -> void:
 			depot.item_ids.erase(item_id)
 			holder.item_ids.append(item_id)
 			source.records[item_id].holder = str(holder.holder)
+		var planned: Dictionary = entry.planned.duplicate()
+		if str(planned.get(Runtime.MOUNT_SLOT, "")) == Runtime.MOUNT_GOODS:
+			planned[Runtime.MOUNT_SLOT] = _publish_mount_draw(holder, source.stock, int(entry.person_id))
 		holder.equipped.clear()
-		holder.equipped.merge(entry.planned)
+		holder.equipped.merge(planned)
 		holder["version"] = int(holder.version) + 1
 	depot["version"] = int(depot.version) + 1
 	prepared["published"] = true

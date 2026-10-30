@@ -3689,7 +3689,8 @@ func _open_equipment_inventory(identity: int = -1, host: Window = null) -> void:
 		deposit.disabled = not available or target_id != lab.controlled_person_id() or selected_rows.is_empty()
 		if not deposit.disabled:
 			for row: int in selected_rows:
-				if context.holder.equipped.values().has(str(items.get_item_metadata(row).id)):
+				var row_id := str(items.get_item_metadata(row).id)
+				if context.holder.equipped.values().has(row_id) or row_id == Runtime.MOUNT_GOODS:
 					deposit.disabled = true
 					break
 		issue.disabled = not available or standards.selected <= 0
@@ -3713,6 +3714,12 @@ func _open_equipment_inventory(identity: int = -1, host: Window = null) -> void:
 			var row := items.add_item("%s #%s（%s）" % [_item_label(definition), item_id, "穿戴" if context.holder.equipped.values().has(item_id) else "行囊"])
 			items.set_item_metadata(row, {"slot": str(definition.slot), "id": item_id})
 			if selected_ids.has(item_id): items.select(row, false)
+		# CAV-3: the mount slot is filled from the person's own horse goods (one generic slot row, worn with the same button).
+		var horses := int(context.cargo.get("horse", 0))
+		if horses > 0 and not context.holder.equipped.has(Runtime.MOUNT_SLOT):
+			var horse_row := items.add_item("馬匹貨物 ×%d（坐騎槽，穿戴時取一匹）" % horses)
+			items.set_item_metadata(horse_row, {"slot": Runtime.MOUNT_SLOT, "id": Runtime.MOUNT_GOODS})
+			if selected_ids.has(Runtime.MOUNT_GOODS): items.select(horse_row, false)
 		refresh_buttons.call()
 	panel_callbacks["refresh_items"] = refresh_items
 	items.multi_selected.connect(func(_row: int, _selected: bool) -> void: refresh_buttons.call())
@@ -5159,9 +5166,13 @@ func _equipment_apply_guard(identity: int, equipped: Dictionary, team_batch: boo
 		original = person.body.appearance if int(person.unit) >= 0 else person.owner._saved_appearance
 	var appearance := original.duplicate(true)
 	appearance.erase("equipment_dyes")
-	for slot: String in Runtime.EQUIPMENT_SLOTS:
+	for slot: String in Runtime.APPEARANCE_EQUIPMENT_SLOTS:
 		appearance.parts[slot] = "none"
+	appearance["mounted"] = equipped.has(Runtime.MOUNT_SLOT) # CAV-3a: derived from the mount slot only.
 	for slot: String in equipped:
+		# CAV-3: the mount slot only sets mounted (above). Its horse is a worn horse item or Runtime.MOUNT_GOODS
+		# (drawn from goods at commit); SiteEquipmentOrders.check validates both before this guard.
+		if slot == Runtime.MOUNT_SLOT: continue
 		var record: Dictionary = lab.terrain.site.item_records.get(equipped[slot], {})
 		var definition: Dictionary = lab.terrain.site.item_definitions.get(str(record.get("definition", "")), {})
 		if definition.get("slot") != slot:

@@ -10,7 +10,13 @@ const TechnologyCatalog = preload("res://scripts/terrain_lab/site_technology_cat
 const COMBAT_GRACE := 10.0
 const CARRY_CAPACITY := 20
 const ITEM_STORAGE_VERSION := 1
-const EQUIPMENT_SLOTS := ["helmet", "outfit", "armor", "cape", "weapon", "shield", "boots"]
+const APPEARANCE_EQUIPMENT_SLOTS := ["helmet", "outfit", "armor", "cape", "weapon", "shield", "boots"] # Slots that are PART_SLOTS of the appearance.
+# CAV-3a: the mount slot is an item slot only. It is not an appearance part; appearance.mounted is derived from it.
+const MOUNT_SLOT := "mount"
+const MOUNT_ASSET := "horse_standard_01"
+const MOUNT_GOODS := "goods:horse" # Order-only placeholder in a planned mount slot: one horse drawn from goods at commit, never an item id.
+const MOUNT_DEFINITION_ID := "mount:horse_standard_01"
+const EQUIPMENT_SLOTS := ["helmet", "outfit", "armor", "cape", "weapon", "shield", "boots", "mount"]
 const ITEM_FIELDS := ["item_storage_version", "item_definitions", "item_records", "ground_loot", "next_loot", "next_item", "depot_items"]
 const EXCHANGE_FIGHTING_POSITION_BONUS := 10.0
 const RANGED_RECIPES := {
@@ -370,7 +376,7 @@ static func seed_person_equipment(data: TerrainData, holder: Dictionary, person_
 	if not initialized.ok:
 		return initialized
 	var definitions := {}
-	for slot: String in EQUIPMENT_SLOTS:
+	for slot: String in APPEARANCE_EQUIPMENT_SLOTS:
 		var asset := str(appearance.parts[slot])
 		if asset == "none":
 			continue
@@ -379,6 +385,12 @@ static func seed_person_equipment(data: TerrainData, holder: Dictionary, person_
 		if data.site.item_definitions.has(key) and data.site.item_definitions[key] != definition:
 			return fail("INVALID", "既有裝備定義衝突")
 		definitions[key] = definition
+	# CAV-3a: an original mounted body is registered with its real horse, as its other original gear is.
+	if bool(appearance.get("mounted", false)):
+		var mount_key := MOUNT_SLOT + ":" + MOUNT_ASSET
+		if data.site.item_definitions.has(mount_key) and data.site.item_definitions[mount_key] != mount_definition():
+			return fail("INVALID", "既有裝備定義衝突")
+		definitions[mount_key] = mount_definition()
 	if int(data.site.next_item) + definitions.size() >= 2147483647:
 		return fail("INVALID", "物品序號已用盡")
 	for offset in range(definitions.size()):
@@ -404,8 +416,10 @@ static func equipment_appearance(data: TerrainData, holder: Dictionary, original
 	var validated_dyes: Dictionary = appearance.get("equipment_dyes", {}).duplicate()
 	var state := data.site if saved_state.is_empty() else saved_state
 	appearance.erase("equipment_dyes")
-	for slot: String in EQUIPMENT_SLOTS:
+	for slot: String in APPEARANCE_EQUIPMENT_SLOTS:
 		appearance.parts[slot] = "none"
+	# CAV-3a: mounted is derived only from the mount slot (the one source of truth).
+	appearance["mounted"] = false
 	for slot: String in holder.equipped:
 		if slot not in EQUIPMENT_SLOTS:
 			return {}
@@ -413,6 +427,10 @@ static func equipment_appearance(data: TerrainData, holder: Dictionary, original
 		var definition: Dictionary = state.get("item_definitions", {}).get(str(record.get("definition", "")), {})
 		if record.get("holder") != holder.holder or definition.get("slot") != slot:
 			return {}
+		if slot == MOUNT_SLOT:
+			if str(definition.asset) != MOUNT_ASSET: return {}
+			appearance["mounted"] = true
+			continue
 		appearance.parts[slot] = str(definition.asset)
 		var dye := item_dye(record, definition)
 		if not dye.is_empty():
@@ -427,6 +445,53 @@ static func item_dye(record: Dictionary, definition: Dictionary) -> String:
 		return str(record.dye_color)
 	var tint: Array = definition.get("tint", [1.0, 1.0, 1.0, 1.0])
 	return "" if tint == [1.0, 1.0, 1.0, 1.0] else Color(tint[0], tint[1], tint[2], tint[3]).to_html()
+
+# CAV-3a mount slot. Equipping draws one horse from horse goods (cargo) and creates it as a real item in the mount slot;
+# unequipping returns it to goods. A death or a native dismount loses the horse (lose_mount): it is not returned.
+static func mount_definition() -> Dictionary:
+	return {"slot": MOUNT_SLOT, "asset": MOUNT_ASSET, "tint": [1.0, 1.0, 1.0, 1.0]}
+
+static func mount_item_id(holder: Dictionary) -> String:
+	return str(holder.get("equipped", {}).get(MOUNT_SLOT, ""))
+
+static func equip_mount(data: TerrainData, holder: Dictionary, cargo: Dictionary, original_owner: int, expected_version: int) -> Dictionary:
+	if data == null or not _item_holder_shape(holder) or int(holder.version) != expected_version or expected_version >= 2147483646: return fail("STALE_SOURCE")
+	if holder.equipped.has(MOUNT_SLOT): return fail("OCCUPIED", "坐騎槽已有馬匹")
+	if int(cargo.get("horse", 0)) < 1: return fail("MATERIALS", "缺少馬匹貨物")
+	var created := create_equipment(data, holder, MOUNT_SLOT + ":" + MOUNT_ASSET, mount_definition(), original_owner, MOUNT_SLOT)
+	if not created.ok: return created
+	add_items(cargo, {"horse": 1}, -1)
+	if int(cargo.horse) == 0: cargo.erase("horse")
+	return ok("已以馬匹實物裝備坐騎", {"item_id": str(created.item_id)})
+
+static func unequip_mount(data: TerrainData, holder: Dictionary, cargo: Dictionary, expected_version: int) -> Dictionary:
+	var checked := _mount_remove_check(data, holder, expected_version)
+	if not checked.ok: return checked
+	_mount_remove(data, holder, str(checked.item_id))
+	add_items(cargo, {"horse": 1})
+	return ok("已卸下坐騎，馬匹退回貨物", {"item_id": str(checked.item_id)})
+
+static func lose_mount(data: TerrainData, holder: Dictionary, expected_version: int) -> Dictionary:
+	var checked := _mount_remove_check(data, holder, expected_version)
+	if not checked.ok: return checked
+	_mount_remove(data, holder, str(checked.item_id))
+	return ok("坐騎已喪失，馬匹不退回貨物", {"item_id": str(checked.item_id)})
+
+static func _mount_remove_check(data: TerrainData, holder: Dictionary, expected_version: int) -> Dictionary:
+	if data == null or not _item_holder_shape(holder) or int(holder.version) != expected_version or expected_version >= 2147483646: return fail("STALE_SOURCE")
+	var item_id := mount_item_id(holder)
+	if item_id.is_empty(): return fail("NO_TARGET", "坐騎槽為空")
+	var record: Dictionary = data.site.item_records.get(item_id, {})
+	var definition: Dictionary = data.site.item_definitions.get(str(record.get("definition", "")), {})
+	if record.get("holder") != holder.holder or str(definition.get("asset", "")) != MOUNT_ASSET or str(definition.get("slot", "")) != MOUNT_SLOT:
+		return fail("STALE_SOURCE")
+	return ok("", {"item_id": item_id})
+
+static func _mount_remove(data: TerrainData, holder: Dictionary, item_id: String) -> void:
+	holder.item_ids.erase(item_id)
+	holder.equipped.erase(MOUNT_SLOT)
+	data.site.item_records.erase(item_id)
+	holder["version"] = int(holder.version) + 1
 
 # Atomic cosmetic edit on the existing real holder; the scene owner checks
 # authority/readiness and renderer admission before requesting this commit.

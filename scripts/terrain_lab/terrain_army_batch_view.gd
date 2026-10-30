@@ -843,6 +843,7 @@ func prewarm_dye_maps(appearances: Array) -> Array[ImageTexture]:
 	var total_bytes := 0.0
 	for appearance: Dictionary in appearances:
 		if not appearance.is_empty() and not HumanCharacter3DEditor.valid_appearance(appearance): return []
+		if bool(appearance.get("mounted", false)): continue # The mounted atlas owns its own composed mask.
 		var geometry := DyeAtlas.Dye.geometry_appearance(appearance)
 		if appearance.is_empty(): geometry = _army._combat_bake.manifest.appearance
 		if not Atlas.wagon_foot_recipe(appearance).is_empty(): continue
@@ -987,6 +988,8 @@ static func _shared_dye_map(record: Dictionary) -> ImageTexture:
 
 func _describe(appearance: Dictionary) -> Dictionary:
 	if not appearance.is_empty() and not HumanCharacter3DEditor.valid_appearance(appearance): return {}
+	# CAV-3: a mounted ordinary soldier is drawn from the mounted atlas (horse under rider), never a foot recipe.
+	if bool(appearance.get("mounted", false)): return _describe_mounted(appearance)
 	var geometry := DyeAtlas.Dye.geometry_appearance(appearance)
 	var base: Dictionary = _army._combat_bake.manifest
 	if appearance.is_empty(): geometry = base.appearance
@@ -1078,6 +1081,9 @@ func _describe(appearance: Dictionary) -> Dictionary:
 		_idle_samples.append(native_samples.slice(0, 4))
 		_idle_and_unconscious_samples.append(native_samples.slice(0, 8))
 		_crowd_samples.append(native_samples)
+	return _describe_palette(appearance, int(_page_keys[key]))
+
+func _describe_palette(appearance: Dictionary, page_index: int) -> Dictionary:
 	var colors: Dictionary = appearance.get("equipment_dyes", {})
 	var palette_key := str(colors)
 	if not _palette_keys.has(palette_key):
@@ -1089,7 +1095,69 @@ func _describe(appearance: Dictionary) -> Dictionary:
 			_palette_image.set_pixel(slot_index, palette_index, Color(color.x, color.y, color.z, color.w))
 		_palette_keys[palette_key] = palette_index
 		_palette_dirty = true
-	return {"page": int(_page_keys[key]), "palette": int(_palette_keys[palette_key])}
+	return {"page": page_index, "palette": int(_palette_keys[palette_key])}
+
+# CAV-3: one page per mounted body/family. The reader composes horse then rider into one frame per
+# clip/direction/frame on a single texture, with the rider's slot-dye mask (the horse is undyed).
+# Sequences are keyed by the ride clip names that CrowdSite._clip_for gives a mounted kit.
+func _describe_mounted(appearance: Dictionary) -> Dictionary:
+	var recipe := SiteMountedSoldierAtlas.crowd_recipe(appearance)
+	if recipe.is_empty(): return {}
+	var key := str(recipe.key)
+	if not _page_keys.has(key):
+		var texture: Texture2D = recipe.texture
+		var mask_texture: Texture2D = recipe.dye
+		var sequences: Dictionary = recipe.sequences
+		var scale := float(recipe.map_scale)
+		if texture == null or mask_texture == null or sequences.is_empty() or mask_texture.get_size() != texture.get_size(): return {}
+		var metadata := Image.create(129, sequences.size(), false, Image.FORMAT_RGBAF)
+		var pixel_size := Vector2(1.0 / texture.get_width(), 1.0 / texture.get_height())
+		var lookup := {}
+		var sequence_index := 0
+		var margin := 1.0
+		for sequence_key: String in sequences:
+			var frames: Array = sequences[sequence_key]
+			if frames.is_empty() or frames.size() > 64: return {}
+			var first: Dictionary = frames[0]
+			var loop := float(frames.back().sample_time) < float(first.duration) - 0.000001
+			metadata.set_pixel(0, sequence_index, Color(float(frames.size()), float(first.duration), float(loop), scale))
+			for frame_index in range(frames.size()):
+				var frame: Dictionary = frames[frame_index]
+				metadata.set_pixel(1 + frame_index * 2, sequence_index, Color(float(frame.rect.x), float(frame.rect.y), float(frame.rect.w), float(frame.rect.h)))
+				var source_position := Vector2(frame.rect.x, frame.rect.y) * pixel_size
+				var source_size := Vector2(frame.rect.w, frame.rect.h) * pixel_size
+				metadata.set_pixel(2 + frame_index * 2, sequence_index, Color(source_position.x, source_position.y, source_size.x, source_size.y))
+				margin = maxf(margin, (maxf(float(frame.rect.w), float(frame.rect.h)) + absf(float(frame.anchor_offset.x)) + absf(float(frame.anchor_offset.y))) * scale)
+			lookup[sequence_key] = sequence_index
+			sequence_index += 1
+		var page_material := ShaderMaterial.new()
+		page_material.shader = _shader
+		page_material.set_shader_parameter("sequence_data", ImageTexture.create_from_image(metadata))
+		page_material.set_shader_parameter("palette_data", _palette_texture)
+		page_material.set_shader_parameter("dye_map", mask_texture)
+		_page_keys[key] = _pages.size()
+		_pages.append({"texture": texture, "material": page_material, "mask_texture": mask_texture,
+			"sequences": lookup, "samples": sequences.values(), "scale": scale, "margin": margin})
+		# Grid-army native sample columns (idle, unconscious, walk, run): the ride clips, no lying pose.
+		var native_samples: Array = []
+		for clip: String in ["ride_idle", "", "ride_walk", "ride_run"]:
+			for direction: String in ["up", "right", "down", "left"]:
+				var sample_key := clip + "|" + direction
+				if clip.is_empty() or not lookup.has(sample_key):
+					native_samples.append([])
+					continue
+				var frames: Array = sequences[sample_key]
+				var times := PackedFloat64Array()
+				var anchors := PackedVector2Array()
+				for frame: Dictionary in frames:
+					times.append(float(frame.sample_time))
+					anchors.append(Vector2(float(frame.anchor_offset.x), float(frame.anchor_offset.y)) * scale)
+				native_samples.append([int(lookup[sample_key]), float(frames[0].duration),
+					float(frames.back().sample_time) < float(frames[0].duration) - 0.000001, times, anchors])
+		_idle_samples.append(native_samples.slice(0, 4))
+		_idle_and_unconscious_samples.append(native_samples.slice(0, 8))
+		_crowd_samples.append(native_samples)
+	return _describe_palette(appearance, int(_page_keys[key]))
 
 
 # Read-only render projection from original Army rows. No new person, Near role,
