@@ -31,6 +31,7 @@ const ExchangeTimings := preload("res://scripts/terrain_lab/character_exchange_t
 const Site := preload("res://scripts/terrain_lab/site_controller.gd")
 const PersonOwner := preload("res://scripts/terrain_lab/crowd_person_owner.gd")
 const SiteSocial := preload("res://scripts/terrain_lab/site_social.gd")
+const PoliticalAdoption := preload("res://scripts/terrain_lab/site_political_adoption.gd")
 const ClearHandoff := preload("res://scripts/terrain_lab/crowd_clear_handoff.gd")
 const WeaponMaterials := preload("res://scripts/ui/weapon_materials.gd")
 const DLL_PATH := "res://native/crowd10k/bin/crowd10k.windows.x86_64.dll"
@@ -2568,7 +2569,10 @@ func native_transfer_records(identities: Array, source: Dictionary, destination:
 ## member. The native transfer_member goes first and refuses without change. Then the GD rows follow the soldier (team
 ## person ids, roster row, owners via _bind_people), and the captivity ends as a release ends it (custody days settled,
 ## relation erased, holder version, supply and change hooks). Refusals before the native change change nothing.
-func transfer_captive(identity: int, captor_id: int, destination_formation: int) -> Dictionary:
+## `adoption` is the grid adoption plan (SitePoliticalAdoption: nation_id, old_nations, corps), computed before any change.
+## It is committed in the grid order: supply (adoption_guard, as political adoption's final home), captivity erase, national
+## posts vacated, nation membership moved, corps ended, holder version, then the change hooks.
+func transfer_captive(identity: int, captor_id: int, destination_formation: int, adoption: Dictionary) -> Dictionary:
 	if not active or crowd == null or not contains_person(identity) or _actors.has(identity) or not _owner_by_id.has(identity):
 		return SiteRuntime.fail("UNSUPPORTED", "原人員不在原生群眾名冊")
 	if not crowd.has_method("transfer_member"): return SiteRuntime.fail("UNSUPPORTED", "原生群眾未提供跨隊移入")
@@ -2585,9 +2589,10 @@ func transfer_captive(identity: int, captor_id: int, destination_formation: int)
 	var row_before := -1
 	for row_index in range(source_roster.units.size()):
 		if int(source_roster.units[row_index].get("person_id", -1)) == identity: row_before = row_index
-	# Same pairing as _commit_captivity (non-capturing): the supply guard prepares the change first and refuses with no
-	# change; every later failure discards it; only a published transfer commits it.
-	var guard: Dictionary = lab.site_controller.captivity_supply.event_change_guard(identity, captor_id, false)
+	# Same pairing as the grid adoption (SitePoliticalAdoption.prepare/commit): the final-home supply guard prepares the change
+	# first and refuses with no change; every later failure discards it; only a published transfer commits it.
+	var row: Dictionary = owner.combat_hot_materialize(index)
+	var guard: Dictionary = lab.site_controller.captivity_supply.adoption_guard(identity, captor_id, row)
 	if not guard.ok: return guard
 	if not bool(crowd.transfer_member(index, destination_formation)):
 		lab.site_controller.captivity_supply.discard(identity)
@@ -2597,8 +2602,13 @@ func transfer_captive(identity: int, captor_id: int, destination_formation: int)
 		source_roster["formal_commander"] = int(source_roster.formal_commander) - 1
 	if body is Dictionary: SiteSocial.settle_before_release(body, relation, int(lab.terrain.site.get("minute", 0)))
 	lab.terrain.site.captivity.erase(str(identity))
-	if holder is Dictionary: holder.version = int(holder.get("version", 0)) + 1
 	lab.site_controller.captivity_supply.commit_change(identity, captor_id, false)
+	var nations: Dictionary = lab.terrain.site.get("equipment_nations", {})
+	var old_nations: Array = adoption.get("old_nations", [])
+	PoliticalAdoption.vacate_national_posts(nations, old_nations, identity)
+	PoliticalAdoption.move_nation_membership(nations, old_nations, str(adoption.get("nation_id", "")), identity)
+	PoliticalAdoption.end_corps(lab.terrain.site, adoption.get("corps", []))
+	if holder is Dictionary: holder.version = int(holder.get("version", 0)) + 1
 	equipment_changed(identity)
 	captivity_changed(identity, captor_id, false)
 	return SiteRuntime.ok("", {"person_id": identity, "formation": destination_formation})

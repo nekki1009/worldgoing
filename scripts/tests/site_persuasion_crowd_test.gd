@@ -3,9 +3,12 @@ extends SceneTree
 ## routed and captured by one enemy inside the crowd (the G5 S4 surrender fixture). The battle is then ended (combat_left 0)
 ## and one persuasion case runs per process, selected with `--persuasion-case <name>`:
 ##   commoner_roll, loyal_commoner_rolls, officer_willing, officer_unwilling, head_never, loyal_never, lawful_never,
-##   window_closed, once_only, defeat_drop, saveload.
+##   window_closed, once_only, defeat_drop, saveload, officer_posts_cleared, supply_home_adopted.
 ## A PERSUADED soldier joins the captor formation natively (transfer_member): not captive, in the captor team, roster and
 ## captivity record moved, and the site still validates. Fails fast on the first failure.
+## officer_posts_cleared: the officer holds a national post in their own nation and commands a corps; after the join the post
+## is vacant, the old nation membership is gone, the captor's nation holds them, and the corps has ended (grid adoption rules).
+## supply_home_adopted: after the join the person is fed from their own personal owner (the adoption_guard final home).
 ## Run: --crowd --crowd-test <fresh run_id> --persuasion-case <name>.
 const DT := 1.0 / 30.0
 const PersuadeModule = preload("res://scripts/terrain_lab/site_persuasion.gd")
@@ -145,6 +148,7 @@ func _run() -> void:
 	site_data["combat_left"] = 0.0
 
 	var personality := PersonPersonality.neutral()
+	var seats: Dictionary = {}
 	if case_name == "commoner_roll" or case_name == "saveload":
 		relation.rank_snapshot = "commoner"
 	elif case_name == "officer_willing":
@@ -175,6 +179,12 @@ func _run() -> void:
 		SiteSocial.relation(SiteSocial.state_of(body), relation.loyal_org).L = 8500
 	elif case_name == "once_only":
 		relation.rank_snapshot = "commoner"
+	elif case_name == "officer_posts_cleared" or case_name == "supply_home_adopted":
+		# Willing officer (L 2500 <= T): PERSUADED by personality, so the join itself is what these cases check.
+		relation.rank_snapshot = "officer"
+		body["personality"] = personality
+		SiteSocial.relation(SiteSocial.state_of(body), relation.loyal_org).L = 2500
+		if case_name == "officer_posts_cleared": seats = _seat_national_posts(friend_a, enemy_id)
 	else:
 		check(false, "known persuasion case", case_name)
 		return
@@ -222,10 +232,13 @@ func _run() -> void:
 		"officer_willing": expected_code = "PERSUADED"
 		"officer_unwilling": expected_code = "REFUSED"
 		"head_never", "lawful_never", "loyal_never": expected_code = "NEVER"
+		"officer_posts_cleared", "supply_home_adopted": expected_code = "PERSUADED"
 	var decided: Dictionary = PersuadeModule.persuade(lab, enemy_id, friend_a)
 	if not check(str(decided.code) == expected_code, "case %s gives %s" % [case_name, expected_code], decided): return
 	if expected_code == "PERSUADED":
 		if not _check_joined(friend_a, enemy_id, decided): return
+		if case_name == "officer_posts_cleared" and not _check_posts_cleared(friend_a, seats): return
+		if case_name == "supply_home_adopted" and not _check_supply_home(friend_a): return
 	else:
 		if not check(site_data.captivity.has(str(friend_a)), "a refused or never captive stays a captive"): return
 	print("PERSUADE GATE OK: %s" % case_name)
@@ -255,3 +268,40 @@ func _check_joined(captive_id: int, captor_id: int, result: Dictionary) -> bool:
 	# Save: the joined site captures through the live save path. The store validator is not re-run here: it rebuilds
 	# the native terrain from the seed, and this fixture edits walls in TerrainData, which the seed never contains.
 	return true
+
+# Officer fixture: the captive holds a national post (the admission office) in their own nation and commands a corps
+# (trial_<id>). The captor's faction has a formal nation whose head is the captor commander, so the join also moves
+# nationality, exactly as the grid adoption does. Returns the references the post-join check needs.
+func _seat_national_posts(captive_id: int, captor_id: int) -> Dictionary:
+	var site_data: Dictionary = lab.terrain.site
+	var own_offices: Dictionary = SiteOffices.default_offices("nation", -1, false)
+	var seat_id: String = str(own_offices.duties["nation.admission"])
+	var seat: Dictionary = SiteOffices.position(own_offices, seat_id)
+	seat["holder"] = captive_id
+	var captor_offices: Dictionary = SiteOffices.default_offices("nation", captor_id, false)
+	if not site_data.has("equipment_nations"): site_data["equipment_nations"] = {}
+	var nations: Dictionary = site_data.equipment_nations
+	nations["own_nation"] = {"members": [captive_id], "offices": own_offices}
+	nations["captor_nation"] = {"members": [captor_id], "offices": captor_offices}
+	var captor_formation: int = int(site.person_owner(captor_id).formation_index)
+	var team_id: int = int(site.team_record(captor_formation).get("team_id", -1))
+	var corps_key := "trial_%d" % captive_id
+	site_data["corps"] = {corps_key: {"version": 1, "commander_person_id": captive_id, "team_ids": [team_id]}}
+	return {"own_offices": own_offices, "seat_id": seat_id, "own_nation": "own_nation", "captor_nation": "captor_nation", "corps_key": corps_key}
+
+# Grid adoption result for an officer: the seat is vacant, the old nation no longer holds the person, the captor's nation does,
+# and the corps the person commanded has ended.
+func _check_posts_cleared(captive_id: int, seats: Dictionary) -> bool:
+	var site_data: Dictionary = lab.terrain.site
+	var nations: Dictionary = site_data.equipment_nations
+	var holder: int = int(SiteOffices.position(seats.own_offices, str(seats.seat_id)).get("holder", -2))
+	if not check(holder == -1, "the captive's national post is vacant after the join", holder): return false
+	if not check(not nations[str(seats.own_nation)].members.has(captive_id), "the captive leaves the old nation"): return false
+	if not check(nations[str(seats.captor_nation)].members.has(captive_id), "the captive joins the captor's nation"): return false
+	return check(not site_data.get("corps", {}).has(str(seats.corps_key)), "the corps the captive commanded has ended")
+
+# The joined person is fed from their own personal owner (the adoption_guard final home), not from a team cohort.
+func _check_supply_home(captive_id: int) -> bool:
+	var index: Dictionary = controller.captivity_supply.feeding_index()
+	var owner_key: String = str(index.owners.get(captive_id, ""))
+	return check(owner_key == "person:%d" % captive_id, "the joined captive is fed from the personal owner", owner_key)

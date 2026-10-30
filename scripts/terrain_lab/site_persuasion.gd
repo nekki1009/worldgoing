@@ -97,8 +97,8 @@ static func _join_grid(lab: Variant, captive_id: int, captor_id: int, relation: 
 
 ## Crowd (NEKKI 2026-10-30 v2): the captive joins the captor's formation as a normal member. Order: the captor's
 ## nation (a head present, admission by the head acting) is checked first; then the native transfer and the captivity
-## end (CrowdSite.transfer_captive, which refuses without change); then the nationality moves. Nothing is changed
-## before every check passed.
+## end, national posts vacated, nationality moved and corps ended (CrowdSite.transfer_captive, which refuses without
+## change and commits in the grid adoption order). Nothing is changed before every check passed.
 static func join_crowd(lab: Variant, captive_id: int, captor_id: int) -> Dictionary:
 	var host: Variant = lab.crowd_site
 	var actions: Variant = lab.site_controller.person_actions
@@ -113,14 +113,13 @@ static func join_crowd(lab: Variant, captive_id: int, captor_id: int) -> Diction
 	# without one keeps the captive's nationality unchanged (no nation admission to satisfy). Both are checked first.
 	var offer := _nation_for_faction(lab, int(relation.get("captor_faction", -1)))
 	var nations: Dictionary = site.get("equipment_nations", {})
-	var joined: Dictionary = host.transfer_captive(captive_id, captor_id, int(captor_owner.formation_index))
-	if not joined.ok: return {"ok": false, "code": str(joined.code)}
 	var nation_id := str(offer.get("nation_id", ""))
-	if not nation_id.is_empty():
-		for old_id: String in nations.keys():
-			if old_id != nation_id and nations[old_id].get("members", []).has(captive_id): nations[old_id].members.erase(captive_id)
-		var nation: Dictionary = nations[nation_id]
-		if not nation.get("members", []).has(captive_id): nation.members.append(captive_id)
+	# Grid order (SitePoliticalAdoption.prepare): the target nation refuses a person it already has, then the plan is read.
+	if not nation_id.is_empty() and nations[nation_id].get("members", []).has(captive_id): return {"ok": false, "code": "NO_CHANGE"}
+	var adoption: Dictionary = {"nation_id": nation_id, "old_nations": PoliticalAdoption.nations_containing(nations, captive_id),
+		"corps": PoliticalAdoption.corps_commanded_by(site, captive_id)}
+	var joined: Dictionary = host.transfer_captive(captive_id, captor_id, int(captor_owner.formation_index), adoption)
+	if not joined.ok: return {"ok": false, "code": str(joined.code)}
 	return {"ok": true, "code": "OK", "nation_id": nation_id, "formation": int(captor_owner.formation_index)}
 
 ## The first nation (sorted id) of `faction` whose head is present and whose admission office acts; {} when none.

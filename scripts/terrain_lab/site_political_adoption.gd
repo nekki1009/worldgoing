@@ -80,12 +80,8 @@ static func prepare(lab: Variant, target_id: int, offer: Dictionary, jail_reques
 	if not actions.captivity_changed.is_valid(): return Runtime.fail("UNSUPPORTED", "原拘押通知尚未安裝")
 	var supply: Dictionary = lab.site_controller.captivity_supply.adoption_guard(target_id, int(relation.captor_id), source.combat_hot_materialize(unit))
 	if not supply.ok: return supply
-	var old_nations: Array[String] = []
-	for other_id: String in nations:
-		if nations[other_id].get("members", []).has(target_id): old_nations.append(other_id)
-	var corps_keys: Array[String] = []
-	for key: String in site.get("corps", {}):
-		if int(site.corps[key].get("commander_person_id", -1)) == target_id: corps_keys.append(key)
+	var old_nations: Array[String] = nations_containing(nations, target_id)
+	var corps_keys: Array[String] = corps_commanded_by(site, target_id)
 	return Runtime.ok("", {"target_id": target_id, "relation": relation, "source": source, "destination": destination,
 		"nation_id": nation_id, "old_nations": old_nations, "corps": corps_keys, "minute": minute, "person": person,
 		"willingness": willing})
@@ -136,6 +132,42 @@ static func prison_policy_supported(lab: Variant, target_id: int) -> bool:
 	var person: Dictionary = lab.site_controller.person_actions._person(target_id, false)
 	return not person.is_empty() and person.owner is TerrainArmy and int(person.unit) >= 0 and person.owner.garrison_feature_id.is_empty() 		and bool(lab.site_controller.person_actions.prison_slot(target_id).get("ok", false))
 
+## Shared lookups and commit steps. The grid prepare/commit above and the crowd join (CrowdSite.transfer_captive,
+## called by SitePersuasion.join_crowd) both use these, so the national posts and corps change identically.
+## Nations whose member list holds the person (pure).
+static func nations_containing(nations: Dictionary, target_id: int) -> Array[String]:
+	var result: Array[String] = []
+	for other_id: String in nations:
+		if nations[other_id].get("members", []).has(target_id): result.append(other_id)
+	return result
+
+## Corps keys whose commander is the person (pure).
+static func corps_commanded_by(site: Dictionary, target_id: int) -> Array[String]:
+	var result: Array[String] = []
+	for key: String in site.get("corps", {}):
+		if int(site.corps[key].get("commander_person_id", -1)) == target_id: result.append(key)
+	return result
+
+## Old national posts: the person's own seat is vacated in each old nation that has offices.
+static func vacate_national_posts(nations: Dictionary, old_nations: Array, target_id: int) -> void:
+	for old_id: String in old_nations:
+		if nations[old_id].get("offices") is Dictionary:
+			SiteOffices.vacate_unless(nations[old_id].offices, func(holder: int) -> bool: return holder != target_id)
+
+## Leaves every old nation; joins `nation_id` when it is not empty (no join leaves nationality unchanged).
+static func move_nation_membership(nations: Dictionary, old_nations: Array, nation_id: String, target_id: int) -> void:
+	for old_id: String in old_nations:
+		nations[old_id].members.erase(target_id)
+	if not nation_id.is_empty() and not nations[nation_id].get("members", []).has(target_id):
+		nations[nation_id].members.append(target_id)
+
+## Only the listed corps end (the ones this person commanded).
+static func end_corps(site: Dictionary, corps_keys: Array) -> void:
+	if corps_keys.is_empty(): return
+	var corps: Dictionary = site.corps.duplicate(true)
+	for key: Variant in corps_keys: corps.erase(key)
+	site["corps"] = corps
+
 ## Commit (no fallible step after prepare). Called in the same step as prepare.
 static func commit(lab: Variant, prepared: Dictionary) -> Dictionary:
 	var site: Dictionary = lab.terrain.site
@@ -149,15 +181,9 @@ static func commit(lab: Variant, prepared: Dictionary) -> Dictionary:
 	lab.site_controller.captivity_supply.commit_change(target_id, captor_id, false)
 	source.adopt_row_into(prepared.destination, target_id)
 	var nations: Dictionary = site.equipment_nations
-	for old_id: String in prepared.old_nations:
-		nations[old_id].members.erase(target_id)
-		if nations[old_id].get("offices") is Dictionary:
-			SiteOffices.vacate_unless(nations[old_id].offices, func(holder: int) -> bool: return holder != target_id)
-	nations[str(prepared.nation_id)].members.append(target_id)
-	if not prepared.corps.is_empty():
-		var corps: Dictionary = site.corps.duplicate(true)
-		for key: String in prepared.corps: corps.erase(key) # Only corps this person commanded end.
-		site["corps"] = corps
+	vacate_national_posts(nations, prepared.old_nations, target_id)
+	move_nation_membership(nations, prepared.old_nations, str(prepared.nation_id), target_id)
+	end_corps(site, prepared.corps)
 	var holder: Variant = prepared.person.get("holder")
 	if holder is Dictionary: holder.version = int(holder.get("version", 0)) + 1
 	var actions: Variant = lab.site_controller.person_actions
