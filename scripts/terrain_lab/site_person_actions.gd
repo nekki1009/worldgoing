@@ -329,7 +329,11 @@ func capture_fields(target_id: int, target: Dictionary) -> Dictionary:
 	var unit := int(target.get("unit", -1))
 	if owner != null and unit >= 0 and owner.has_method("is_member") and owner.is_member(unit):
 		loyal = {"kind": "team", "site_id": site_id, "org_id": str(owner.get("team_id"))}
-		if int(owner.get("formal_commander")) == unit: rank = "head"
+		# A crowd roster has no formal_commander field; its formal commander is the native formal person.
+		var formal: Variant = owner.get("formal_commander")
+		if formal != null:
+			if int(formal) == unit: rank = "head"
+		elif owner is CrowdOwner and int(owner.crowd_site.formation_state(int(owner.formation_index)).get("formal_person", -1)) == int(owner.combat_identity(unit)): rank = "head"
 	elif unit < 0:
 		for team: TerrainArmy in lab.combat_armies:
 			if is_instance_valid(team) and team.player_member == body:

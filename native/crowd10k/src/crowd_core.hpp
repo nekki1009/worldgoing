@@ -379,7 +379,9 @@ public:
 	// 2 off-map, 3 captive hold, 4 garrison reserve. Both saved and hashed.
 	std::vector<uint8_t> absent, absent_kind;
 	// G5 S4 surrender (NEKKI 2026-10-30 A): 1 = routed and terrain-trapped (World::retreat_trapped). A surrendered soldier
-	// stands in place, is not a target, does not act (can_act is false) and leaves command. Only capture clears it. Saved and hashed.
+	// stands in place, is not a target, does not act (can_act is false) and leaves command. It is settled at once by
+	// World::settle_surrender (a captive of the nearest hostile formation's able member) or, when no captor exists, retried
+	// every 15 steps; death also clears it. Saved and hashed.
 	std::vector<uint8_t> surrendered;
 	std::vector<int64_t> person_id;
 	std::vector<uint8_t> life_ck; // morale checkpoint: 0 conscious, 1 unconscious, 2 dead
@@ -822,7 +824,10 @@ private:
 	void begin_rout(Formation &f, int fi);
 	void retreat_away(int fi);
 	bool retreat_trapped(int i) const;          // G5 S4 terrain-trap test (command.cpp)
-	void surrender_trapped(int fi);              // G5 S4: trapped members of a routed formation surrender
+	void surrender_trapped(int fi);              // G5 S4: trapped members of a routed formation surrender; surrendered members are settled
+	bool settle_surrender(int t, std::vector<uint8_t> &held);  // G5 S4: surrendered member becomes a captive now (command.cpp)
+	int surrender_captor(int t, const std::vector<uint8_t> &held) const;  // G5 S4: nearest hostile formation's nearest able member
+	bool surrender_captor_able(int g, int t) const;               // G5 S4: may take t as prisoner
 	void fatigue_stage(double gdt, const std::vector<WorkFatigueState> *work_plan = nullptr);
 	double fatigue_recovery_multiplier(int formation, double garrison, double housing) const;
 	bool safe_fatigue_rest(int formation, bool busy, bool threat, bool fire_safe, double combat_left_now) const;

@@ -224,12 +224,72 @@ bool World::retreat_trapped(int i) const {
 }
 
 // Checked every 15 steps per member (tick-staggered): a pure function of state, so thread counts cannot change it.
+// NEKKI 2026-10-30: a trapped member surrenders and at once becomes a captive (settle_surrender). A surrendered member
+// that found no captor is retried on the same 15-step stagger, in any formation (a rallied formation keeps its members).
 void World::surrender_trapped(int fi) {
+	std::vector<uint8_t> held; // captives per captor; built on first use in this call
 	for (int i : formations[fi].members) {
-		if ((tick + (uint32_t)i) % 15 != 0 || !can_act(i) || prison_id[i] != 0 || escort_mode[i] != 0 || rescue_of[i] >= 0 || capture_of[i] >= 0 ||
+		if ((tick + (uint32_t)i) % 15 != 0) continue;
+		if (is_surrendered(i)) { settle_surrender(i, held); continue; }
+		if (!formations[fi].routed || !can_act(i) || prison_id[i] != 0 || escort_mode[i] != 0 || rescue_of[i] >= 0 || capture_of[i] >= 0 ||
 		    is_crewed(i) || siege_group(i) >= 0 || controlled_step_pending(i)) continue;
-		if (retreat_trapped(i)) set_surrendered(i, true);
+		if (retreat_trapped(i) && set_surrendered(i, true)) settle_surrender(i, held);
 	}
+}
+
+// Captor for a surrendered member t: the hostile formation nearest t (distance from t to the formation centre, ties to
+// the lower formation index) that has an able member with guard room; inside it, the nearest such member (ties to the
+// lower person_id). A formation with no able member is passed over. Returns -1 when no hostile formation can supply one.
+int World::surrender_captor(int t, const std::vector<uint8_t> &held) const {
+	std::vector<std::pair<float, int>> by_formation;
+	for (size_t fi = 0; fi < formations.size(); ++fi) {
+		const Formation &f = formations[fi];
+		if (f.members.empty() || !hostile(team[t], f.team)) continue;
+		const float dx = f.cx - px[t], dy = f.cy - py[t];
+		by_formation.push_back({dx * dx + dy * dy, (int)fi});
+	}
+	std::sort(by_formation.begin(), by_formation.end());
+	for (const auto &entry : by_formation) {
+		int best = -1;
+		float best_d2 = 0.f;
+		int64_t best_person = 0;
+		for (int g : formations[entry.second].members) {
+			if (!surrender_captor_able(g, t) || held[g] >= GUARD_CAPACITY) continue;
+			const float dx = px[g] - px[t], dy = py[g] - py[t], d2 = dx * dx + dy * dy;
+			if (best < 0 || d2 < best_d2 || (d2 == best_d2 && person_id[g] < best_person)) { best = g; best_d2 = d2; best_person = person_id[g]; }
+		}
+		if (best >= 0) return best;
+	}
+	return -1;
+}
+
+// A soldier that can take a surrendered prisoner: the same guard conditions as auto-capture, minus its idle requirement.
+bool World::surrender_captor_able(int g, int t) const {
+	return g != t && can_act(g) && hostile(team[g], team[t]) && escort_mode[g] == 0 && !is_crewed(g) && siege_group(g) < 0 &&
+	       stagger[g] <= 0.0 && rescue_of[g] < 0 && capture_of[g] < 0 && prison_id[g] == 0;
+}
+
+// G5 S4 (NEKKI 2026-10-30): a surrendered member becomes a captive of its captor at once. The state is the one a completed
+// capture leaves in person_actions_stage (captive, captor, escape timer, captives_, command, target, capture count and the
+// capture event). A surrender with no captor stays surrendered and returns false. A dead member loses the flag.
+// held: captives per captor, built here on first use (scratch, sized to the soldiers).
+bool World::settle_surrender(int t, std::vector<uint8_t> &held) {
+	if (!alive(t) || captive[t]) { surrendered[t] = 0; return false; }
+	if (held.empty()) {
+		held.assign((size_t)soldier_count(), 0);
+		for (int c : captives_) if (captive[c] && prison_id[c] == 0 && alive(c) && captor[c] >= 0) held[captor[c]]++;
+	}
+	const int g = surrender_captor(t, held);
+	if (g < 0) return false;
+	cancel_actions_involving(t); // a rescue or capture aimed at t is cancelled, as the completed capture cancels its rescuer
+	captive[t] = 1; captor[t] = g; escape_t[t] = 0; surrendered[t] = 0;
+	captives_.push_back(t);
+	formations[form[t]].command_dirty = true;
+	enc_target[t] = -1; target[t] = -1;
+	stats.captures_done++;
+	push_event(EV_CAPTURED, t, g);
+	held[g]++;
+	return true;
 }
 
 bool World::set_surrendered(int i, bool on) {
@@ -302,7 +362,7 @@ void World::sustain_stage(double gdt) {
 		if (ok) f.morale = std::min(100.0, f.morale + MORALE_RESUPPLY_PER_HOUR / 3600.0 * gdt);
 		// Original Site sustain records safe fed rest even before a rout, capped at 30 minutes.
 		f.rally_rest = ok ? std::min(RALLY_REST_SECONDS, f.rally_rest + gdt) : 0.0;
-		if (f.routed) surrender_trapped((int)fi);
+		surrender_trapped((int)fi); // routed members are tested here; surrendered members are retried in any formation
 		if (f.routed) {
 			if (f.rally_rest >= RALLY_REST_SECONDS && f.morale >= MORALE_RALLY) {
 				f.routed = false; f.needs_attack_order = true;

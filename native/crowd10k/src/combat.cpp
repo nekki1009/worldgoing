@@ -119,6 +119,7 @@ void World::apply_contact(int i, double hp_loss, double stun_add, bool environme
 		if (hp[i] <= 0.0) {
 			knock_t[i] = 0;
 			ko[i] = 0.0;
+			surrendered[i] = 0; // G5 S4: a dead member is no surrender (validate requires a living one)
 			stats.deaths++;
 			f.fatigue_count = std::max(0, f.fatigue_count - 1);
 			push_event(EV_DEATH, i, captive[i] ? captor[i] : -1);

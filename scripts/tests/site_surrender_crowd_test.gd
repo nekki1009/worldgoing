@@ -1,8 +1,9 @@
 extends SceneTree
-## G5 S4: a routed crowd soldier with no escape route surrenders. Walls box a 3 x 3 corner pocket on the west edge before
-## the battle is deployed; the west team (one member under host control) and one enemy are placed inside it. Routed, the
-## pocket members report surrender_pending, stand still and are not hit; an enemy capture settles the surrender and clears
-## the flag. Fails fast on the first failure.
+## G5 S4 (NEKKI 2026-10-30): a routed crowd soldier with no escape route surrenders and at once becomes a captive of the
+## nearest enemy. Walls box a 3 x 3 corner pocket on the west edge before the battle is deployed; the west team (one member
+## under host control) and one enemy are placed inside it. Routed, both pocket members become captives of the enemy through
+## the normal capture event and settle path (captivity record, no pending capture, surrender_pending cleared). The captive
+## then follows its captor when the captor moves. Fails fast on the first failure.
 ## Run: --crowd --crowd-test <fresh run_id>.
 const DT := 1.0 / 30.0
 var lab: TerrainLab
@@ -84,62 +85,66 @@ func _run() -> void:
 	site.crowd.set_host_control(b_index, true)
 	site.set_input(Vector2.ZERO, false)
 
-	# Rout the team (native morale setter) inside the pocket: no escape route.
+	# Headless captures need the captive atlas admitted from a published GPU cache before the event can commit
+	# (crowd_c2_c3_test admits its capture kits the same way). Admit the exact captive appearances now.
+	var capture_appearances: Array = []
+	for identity: int in [friend_a, friend_b]:
+		var holder_index: int = friend_owner.index_for_identity(identity)
+		capture_appearances.append(site._captivity_appearance(identity, friend_owner.person(holder_index, false).holder, []))
+	site._prewarm_captivity_atlases(capture_appearances, false)
+
+	# Rout the team (native morale setter) inside the pocket: no escape route. The trapped members are captured by the
+	# enemy inside the pocket within one stagger cycle (15 frames per member), so 60 frames is the bound.
 	if not check(bool(site.set_formation_fields(friend_owner.formation_index, {"morale": 5.0})), "the friendly team is routed by morale"): return
-
-	var surrendered := false
-	for step in range(300):
-		if not check(_tick(1), "live frame has no latched fault"): return
-		if bool(friend_owner.combat_hot_get(a_index, &"surrender_pending", false)) and bool(friend_owner.combat_hot_get(b_index, &"surrender_pending", false)):
-			surrendered = true
-			break
-	if not check(surrendered, "both trapped routed members report surrender_pending, the host-controlled one included",
-			{"a": bool(friend_owner.combat_hot_get(a_index, &"surrender_pending", false)), "b": bool(friend_owner.combat_hot_get(b_index, &"surrender_pending", false))}): return
-
-	# A surrendered member stands still, does not attack, and is not hit while the enemy stands beside it.
-	var hp_a: float = float(friend_owner.combat_hot_get(a_index, &"hp"))
-	var hp_b: float = float(friend_owner.combat_hot_get(b_index, &"hp"))
-	var rest_a: Vector2i = friend_owner.person(a_index, false).cell
-	var rest_b: Vector2i = friend_owner.person(b_index, false).cell
-	for step in range(120):
-		if not check(_tick(1), "live frame has no latched fault"): return
-	var moved_a: Vector2i = friend_owner.person(a_index, false).cell
-	var moved_b: Vector2i = friend_owner.person(b_index, false).cell
-	if not check(moved_a == rest_a and moved_b == rest_b, "surrendered members stand in place", [rest_a, moved_a, rest_b, moved_b]): return
-	if not check(not bool(friend_owner.person(a_index, false).get("moving", true)) and not bool(friend_owner.combat_hot_get(a_index, &"attack", false)), "a surrendered member is not moving or attacking"): return
-	if not check(float(friend_owner.combat_hot_get(a_index, &"hp")) == hp_a and float(friend_owner.combat_hot_get(b_index, &"hp")) == hp_b, "surrendered members are not hit"): return
-
-	# Native auto-capture (cfg.auto_capture, on by default): an AI-enabled enemy formation in HOLD captures an adjacent
-	# surrendered member, as it does an unconscious one. Enable the enemy AI, then tick until the member is captive.
-	# Native tactical AI would walk the one-person guard back toward its slot, so it is off for this check (it sets no order
-	# of its own here). Auto-capture still needs the guard formation to be ai_enabled, idle and in HOLD (order 0).
-	site.crowd.set_ai(false)
-	# Place the guard inside the pocket on a free cell beside the surrendered member, then the formation centre and goal there.
-	var guard_cell := Vector2i(-1, -1)
-	for candidate: Vector2i in [Vector2i(1, mid), Vector2i(1, mid - 1), Vector2i(1, mid + 1), Vector2i(2, mid)]:
-		if candidate != a_cell and candidate != b_cell and absi(candidate.x - a_cell.x) <= 1 and absi(candidate.y - a_cell.y) <= 1:
-			guard_cell = candidate
-			break
-	if not check(guard_cell.x >= 0, "a free pocket cell beside the surrendered member exists", [a_cell, b_cell]): return
-	var guard_point := Vector2(guard_cell.x + 0.5, guard_cell.y + 0.5)
-	if not check(bool(site.set_soldier_fields(enemy_index, {"px": guard_point.x, "py": guard_point.y})), "the enemy guard is placed inside the pocket"): return
-	if not check(bool(site.set_formation_fields(enemy_owner.formation_index, {"cx": guard_point.x, "cy": guard_point.y, "goal_x": guard_point.x, "goal_y": guard_point.y, "ai_enabled": 1.0, "no_orders": 0.0, "order": 0.0})), "the enemy guard formation is AI-enabled, holds at the pocket cell (HOLD)"): return
 	var captured := false
-	for step in range(1200):
+	for step in range(60):
 		if not check(_tick(1), "live frame has no latched fault"): return
-		if bool(friend_owner.combat_hot_get(a_index, &"captive", false)):
+		if bool(friend_owner.combat_hot_get(a_index, &"captive", false)) and bool(friend_owner.combat_hot_get(b_index, &"captive", false)):
 			captured = true
 			break
-	var guard_state: Dictionary = site.soldier_state(enemy_index)
-	var guard_formation: Dictionary = site.formation_state(enemy_owner.formation_index)
-	if not check(captured, "native auto-capture takes the adjacent surrendered member within 1200 frames",
-		{"captive": bool(friend_owner.combat_hot_get(a_index, &"captive", false)), "surrender_pending": bool(friend_owner.combat_hot_get(a_index, &"surrender_pending", false)),
-		"guard_state": guard_state.get("state"), "guard_hp": guard_state.get("hp"), "guard_ko": guard_state.get("ko"), "guard_captive": guard_state.get("captive"),
-		"guard_order": guard_formation.get("order"), "guard_ai_enabled": guard_formation.get("ai_enabled"), "guard_no_orders": guard_formation.get("no_orders"),
-		"guard_routed": guard_formation.get("routed"), "guard_px": guard_state.get("px"), "guard_py": guard_state.get("py")}): return
-	if not check(not bool(friend_owner.combat_hot_get(a_index, &"surrender_pending", false)), "the capture clears surrender_pending"): return
-	var captor: int = int(site.soldier_state(a_index).captor_person)
-	if not check(captor == enemy_id, "the captive names the enemy as captor", {"captor": captor, "enemy": enemy_id}): return
+	if not check(captured, "both trapped routed members become captives within 60 frames",
+			{"a_captive": bool(friend_owner.combat_hot_get(a_index, &"captive", false)), "b_captive": bool(friend_owner.combat_hot_get(b_index, &"captive", false)),
+			"a_surrender_pending": bool(friend_owner.combat_hot_get(a_index, &"surrender_pending", false)),
+			"b_surrender_pending": bool(friend_owner.combat_hot_get(b_index, &"surrender_pending", false))}): return
+	if not check(not bool(friend_owner.combat_hot_get(a_index, &"surrender_pending", false)) and not bool(friend_owner.combat_hot_get(b_index, &"surrender_pending", false)),
+			"the capture clears surrender_pending for both members"): return
 
-	print("GATE OK: G5S4 trapped routed members surrender, stand still, and a capture clears the flag")
+	# The captor is the enemy inside the pocket, and the capture went through the normal settle path: the captivity record
+	# names the enemy as captor, and no capture event is left pending.
+	var captor_a: int = int(site.soldier_state(a_index).captor_person)
+	var captor_b: int = int(site.soldier_state(b_index).captor_person)
+	if not check(captor_a == enemy_id and captor_b == enemy_id, "the captives name the enemy as captor", {"captor_a": captor_a, "captor_b": captor_b, "enemy": enemy_id}): return
+	# Settlement runs in the lab step (as in crowd_c2_d11_guard_test): tick until the capture events are committed.
+	for step in range(30):
+		if site.pending_captivity.is_empty(): break
+		if not check(_tick(1), "live frame has no latched fault"): return
+	var relations: Dictionary = lab.terrain.site.captivity
+	var record: Dictionary = relations.get(str(friend_a), {})
+	var settle_details := {"pending": site.pending_captivity.size(), "last_event_error": site.last_event_error,
+		"relation_keys": relations.keys(), "record_a": record, "relation_b": relations.get(str(friend_b), {}), "enemy": enemy_id}
+	if not check(site.pending_captivity.is_empty() and not site.has_pending_capture(friend_a) and not site.has_pending_capture(friend_b),
+			"the capture events are settled, none pending", settle_details): return
+	if not check(int(record.get("captor_id", -1)) == enemy_id, "the captivity record for the first captive names the enemy", settle_details): return
+
+	# The captive follows its captor: the enemy moves inside the pocket (formation and soldier together), and the captive
+	# keeps within two cells of it.
+	var enemy_cell: Vector2i = enemy_owner.person(enemy_index, false).cell
+	var target := Vector2i(-1, -1)
+	for candidate: Vector2i in [Vector2i(1, mid), Vector2i(1, mid - 1), Vector2i(1, mid + 1), Vector2i(2, mid), Vector2i(2, mid - 1)]:
+		if candidate != a_cell and candidate != b_cell and absi(candidate.x - enemy_cell.x) + absi(candidate.y - enemy_cell.y) >= 2:
+			target = candidate
+			break
+	if not check(target.x >= 0, "a free pocket cell away from the enemy exists", [enemy_cell, a_cell, b_cell]): return
+	var target_point := Vector2(target.x + 0.5, target.y + 0.5)
+	if not check(bool(site.set_soldier_fields(enemy_index, {"px": target_point.x, "py": target_point.y})), "the captor is moved inside the pocket"): return
+	if not check(bool(site.set_formation_fields(enemy_owner.formation_index, {"cx": target_point.x, "cy": target_point.y, "goal_x": target_point.x, "goal_y": target_point.y})),
+			"the captor formation moves with it"): return
+	if not check(_tick(90), "live frame has no latched fault"): return
+	var captor_cell: Vector2i = enemy_owner.person(enemy_index, false).cell
+	var captive_cell: Vector2i = friend_owner.person(a_index, false).cell
+	if not check(Vector2(captive_cell).distance_to(Vector2(captor_cell)) <= 2.0, "the captive follows the moved captor within two cells", [captor_cell, captive_cell]): return
+	if not check(bool(friend_owner.combat_hot_get(a_index, &"captive", false)) and int(site.soldier_state(a_index).captor_person) == enemy_id,
+			"the captive is still held by the same captor after the move"): return
+
+	print("GATE OK: G5S4 trapped routed members are captured at once by the enemy, settled, and follow the captor")
 	quit(0)
