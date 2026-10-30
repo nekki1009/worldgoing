@@ -113,49 +113,57 @@ func _run() -> void:
 	assert(host.active and host.crowd.save_state() == before_failure)
 	var meals := _meal_history(controller)
 	var all_ids_before := _actual_ids(lab)
-	# A real military operation uses the original lossless clear-to-GD handoff.
+	# G5 S3: form runs on the native roster. The crowd stays active; reserves leave the garrison by absence.
 	var formed := Garrison.form(lab, key, [captain, soldier], captain)
-	assert(formed.ok and not host.active, str(formed))
+	assert(formed.ok and host.active, str(formed))
 	assert(_actual_ids(lab) == all_ids_before, "A returning native roster must not be overwritten by a previously empty GD slot")
 	assert(_meal_history(controller) == meals)
-	var formed_team: TerrainArmy = Garrison._team(lab, int(formed.team_id))
-	assert(formed_team.combat_identity(formed_team.current_commander) == captain)
-	assert(source.garrison_feature_id == key and source.combat_units.size() == 1)
+	var formed_owner: Variant = host.person_owner(captain)
+	var formed_formation: int = int(formed_owner.formation_index)
+	var garrison_formation: int = int(host.person_owner(patient).formation_index)
+	assert(int(formed.team_id) == int(formed_owner.team_id) and formed_formation != garrison_formation)
+	assert(int(host.person_owner(soldier).formation_index) == formed_formation)
+	assert(not bool(host.crowd.get_garrisoned(formed_formation)) and int(host.formation_state(formed_formation).formal_person) == captain)
+	assert(bool(host.crowd.get_garrisoned(garrison_formation)))
+	var garrison_roster: Dictionary = host.team_record(garrison_formation)
+	assert(garrison_roster.garrison_feature_id == key and garrison_roster.units.size() == 1)
+	var returned_roster: Dictionary = host.team_record(formed_formation)
+	assert(returned_roster.garrison_feature_id == "" and returned_roster.units.size() == 2)
+	for identity: int in [captain, soldier]:
+		assert(int(host.crowd.site_person_absent_state(int(host.crowd.soldier_index(identity)))[0]) == 0)
+	# Mid-garrison save: the native blob and the GD mirror validate together.
+	assert(controller._capture_for_save().ok)
+	var mid_save: Dictionary = Store._validate_crowd(data, data.site, 1)
+	assert(mid_save.ok and mid_save.native.save_state() == host.crowd.save_state(), str(mid_save))
 	for identity: int in original:
 		var person: Dictionary = controller.person_actions._person(identity)
-		assert(is_same(person.body, original[identity].row) and is_same(person.holder, original[identity].holder) and is_same(person.cargo, original[identity].cargo))
+		assert(is_same(host._records[identity], original[identity].row) and is_same(person.holder, original[identity].holder) and is_same(person.cargo, original[identity].cargo))
 		assert(person.cell == original[identity].cell and person.holder == original[identity].items and person.cargo == original[identity].cargo_copy)
 		if identity == patient: assert(person.hp == after_patient.hp and person.ko == after_patient.ko)
-	# The guarded clear disposes a non-startup host. Re-enter through a fresh
-	# original CrowdSite, just as this fixture's first explicit native entry.
-	assert(lab.crowd_site == null)
-	await process_frame
-	lab.crowd_site = CrowdHost.new()
-	lab.add_child(lab.crowd_site)
-	lab.crowd_site.setup(lab)
-	host = lab.crowd_site
-	imported = lab.deploy_trial_armies([{"faction": 1, "count": 1, "female_percent": 0,
-		"attack": false, "ai_enabled": false, "spawn": Vector2i(44, 40)}])
-	assert(imported.ok and host.active, str(imported))
+	# G5 S3: the native roster stays authoritative; there is no clear-to-grid round trip after a native form
+	# (the grid command contract cannot re-place a natively formed team: PRESENCE_CONFLICT). Continue in the crowd.
 	assert(bool(host.crowd.get_garrisoned(host.person_owner(patient).formation_index)))
 	assert(not bool(host.crowd.get_garrisoned(host.person_owner(captain).formation_index)))
 	assert(controller._capture_for_save().ok)
 	assert(Store._validate_crowd(data, data.site, 1).ok)
 	all_ids_before = _actual_ids(lab)
+	# G5 S3: admit of the formed native team garrisons its formation in place; the crowd stays active.
 	var returned := Garrison.admit(lab, key, int(formed.team_id))
-	assert(returned.ok and not host.active, str(returned))
+	assert(returned.ok and host.active, str(returned))
 	assert(_actual_ids(lab) == all_ids_before)
+	assert(bool(host.crowd.get_garrisoned(int(host.person_owner(captain).formation_index))))
 	var queried := Garrison.query(lab, key)
 	assert(queried.people_count == 3 and queried.officers.size() == 1 and queried.soldier_count == 2)
 	for identity: int in original:
 		var person: Dictionary = controller.person_actions._person(identity)
-		assert(is_same(person.body, original[identity].row) and is_same(person.holder, original[identity].holder) and is_same(person.cargo, original[identity].cargo))
+		assert(is_same(host._records[identity], original[identity].row) and is_same(person.holder, original[identity].holder) and is_same(person.cargo, original[identity].cargo))
 		if identity == patient: assert(person.hp == after_patient.hp and person.ko == after_patient.ko)
-	controller._capture_positions()
+	# Under the crowd the save capture is _capture_for_save (grid positions plus the native rosters and blob).
+	assert(controller._capture_for_save().ok)
 	var final_save: Dictionary = Store._validate_state(data, data.site)
 	assert(final_save.ok, str(final_save))
 	for _warmup: int in range(3): await process_frame
 	lab.free()
 	TerrainArmy.release_contact_source()
-	print("SITE_GARRISON_CROWD_PASS: original garrison D5, native qualification/membership/lifecycle, stationary positions, 1/4-worker save parity, corrupt mirrors rejected, actual form/admit via clear, original rows/items/meals survive re-D5")
+	print("SITE_GARRISON_CROWD_PASS: original garrison D5, native qualification/membership/lifecycle, stationary positions, 1/4-worker save parity, corrupt mirrors rejected, native form/admit keep the crowd active with absent reserves, mid-garrison save parity, original rows/items/meals survive re-D5")
 	quit(0)

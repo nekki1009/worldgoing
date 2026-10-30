@@ -1782,7 +1782,7 @@ static func _validate_crowd(data: TerrainData, state: Dictionary, workers: int =
 		escort_people[int(guard_key)] = true
 		for captive_id: Variant in state.escort_orders[guard_key].get("captives", []): escort_people[int(captive_id)] = true
 	for team: Variant in section.teams:
-		if not team is Dictionary or not _integer(team.get("formation"), 0, section.teams.size() - 1) or formations.has(int(team.get("formation", -1))) or not _integer(team.get("team_id"), 1, 999999) or teams_seen.has(int(team.get("team_id", -1))) or not team.get("solo") is bool or not team.get("person_ids") is Array or team.person_ids.is_empty() or not _integer(team.get("faction"), 0, 100000000) or not _integer(team.get("troop"), 0, 3) or not _integer(team.get("slot"), -1, 10000):
+		if not team is Dictionary or not _integer(team.get("formation"), 0, section.teams.size() - 1) or formations.has(int(team.get("formation", -1))) or not _integer(team.get("team_id"), 1, 999999) or teams_seen.has(int(team.get("team_id", -1))) or not team.get("solo") is bool or not team.get("person_ids") is Array or (team.person_ids.is_empty() and (bool(team.solo) or not crowd_rosters.has(int(team.get("team_id", -1))) or not crowd_rosters[int(team.team_id)].get("units", []).is_empty())) or not _integer(team.get("faction"), 0, 100000000) or not _integer(team.get("troop"), 0, 3) or not _integer(team.get("slot"), -1, 10000):
 			return Runtime.fail("INVALID_CROWD", "群眾隊伍引用格式")
 		var native_formation: PackedInt32Array = native.call("formation_info", int(team.formation))
 		if native_formation.size() < 2 or native_formation[0] != int(team.faction) or native_formation[1] != int(team.troop):

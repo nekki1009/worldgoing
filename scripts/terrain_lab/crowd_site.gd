@@ -2316,6 +2316,176 @@ func sync_to_site() -> Dictionary:
 	return SiteRuntime.ok()
 
 
+## G5 S3: native garrison operations. Each native move is followed by its GD record move (native_transfer_records),
+## so sync_to_site and save/load see one membership. Callers validate every refusal before the first native write.
+func native_roster(team_id: int) -> Dictionary:
+	for roster: Dictionary in rosters:
+		if int(roster.team_id) == team_id: return roster
+	return {}
+
+
+func native_owner(team_id: int) -> Variant:
+	for owner: Variant in owners:
+		if int(owner.team_id) == team_id: return owner
+	return null
+
+
+func native_team(team_id: int) -> Dictionary:
+	return _team_by_id(team_id)
+
+
+func native_next_team_id() -> int:
+	return _solo_team_id()
+
+
+# GD-only destination for the supply transaction; it has no people until native_transfer_records binds them.
+func native_pending_owner(team_id: int, faction: int) -> Variant:
+	var pending := PersonOwner.new()
+	pending.setup(self, -1, team_id, faction, {}, {})
+	return pending
+
+
+func native_empty_garrison(feature_id: String, faction: int) -> Dictionary:
+	for roster: Dictionary in rosters:
+		if str(roster.get("garrison_feature_id", "")) == feature_id and int(roster.faction_id) == faction and roster.units.is_empty():
+			return roster
+	return {}
+
+
+func native_empty_formation(team_id: int, faction: int) -> Dictionary:
+	if team_id <= 0: return {}
+	for roster: Dictionary in rosters:
+		if int(roster.team_id) == team_id and int(roster.faction_id) == faction and roster.units.is_empty() \
+			and str(roster.get("garrison_feature_id", "")).is_empty() and not bool(crowd.get_garrisoned(int(roster.crowd_formation))):
+			return roster
+	return {}
+
+
+# A new native formation of `faction` with its GD roster and team record. Formations are never removed.
+func native_add_team(team_id: int, faction: int, troop: int, training: float, cell: Vector2, garrison_feature_id: String) -> Dictionary:
+	if not active or crowd == null: return SiteRuntime.fail("UNSUPPORTED", "群眾未啟用")
+	var formation: int = crowd.add_formation(faction, cell.x, cell.y, 0.0, 1, 1.0, troop, training)
+	if formation < 0: return SiteRuntime.fail("NO_SPACE", "原生群眾無法新增隊伍")
+	crowd.set_order_owner(formation, false)
+	var roster := {"schema": 2, "roster_version": 1, "crowd": true, "team_id": team_id, "faction_id": faction,
+		"crowd_formation": formation, "units": [], "officer_service": [], "formal_commander": 0,
+		"command_radius": 8.0, "garrison_feature_id": garrison_feature_id}
+	var slot := 0
+	for team: Dictionary in teams: slot = maxi(slot, int(team.get("slot", 0)) + 1)
+	teams.append({"slot": slot, "team_id": team_id, "formation": formation, "faction": faction,
+		"troop": troop, "person_ids": [], "solo": false})
+	rosters.append(roster)
+	lab.terrain.site.armies.append(roster)
+	lab.terrain.site["army_next_team"] = maxi(int(lab.terrain.site.get("army_next_team", 0)), team_id + 1)
+	return SiteRuntime.ok("", {"formation": formation, "roster": roster})
+
+
+func _absent_kind(index: int) -> int:
+	var absent: Array = Array(crowd.site_person_absent_state(index))
+	return int(absent[1]) if absent.size() >= 2 and int(absent[0]) == 1 else 0
+
+
+# Absence of every identity as `kind`. Members already absent with this kind are kept. All refusals are checked
+# before the first native change; a late refusal restores the members already absent.
+func native_absent(identities: Array, kind: int) -> Dictionary:
+	for identity: Variant in identities:
+		var id := int(identity)
+		var index := int(_index_by_id.get(id, -1))
+		if index < 0 or _actors.has(id) or not _owner_by_id.has(id): return SiteRuntime.fail("UNSUPPORTED", "原人員不在原生群眾名冊")
+		var reserve := _absent_kind(index)
+		if reserve == kind: continue
+		if reserve != 0: return SiteRuntime.fail("BUSY", "原人員已因其他原因離場")
+		if not bool(_owner_by_id[id].site_exit_ready(index)): return SiteRuntime.fail("BUSY", "原人員作業或動作尚未收束，不能移入駐營")
+	var applied: Array = []
+	for identity: Variant in identities:
+		var id := int(identity)
+		var index := int(_index_by_id[id])
+		if _absent_kind(index) == kind: continue
+		var state := soldier_state(index)
+		var formation := int(_owner_by_id[id].formation_index)
+		if not bool(crowd.site_person_absent(index, kind)):
+			for undo: Array in applied: crowd.site_person_return(int(undo[0]), int(undo[1]), float(undo[2]), float(undo[3]))
+			return SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕離場；已還原本次離場")
+		applied.append([index, formation, float(state.px), float(state.py)])
+	return SiteRuntime.ok()
+
+
+func native_move(identities: Array, formation: int) -> Dictionary:
+	for identity: Variant in identities:
+		var index := int(_index_by_id.get(int(identity), -1))
+		if index < 0 or _actors.has(int(identity)) or not bool(crowd.move_member(index, formation)):
+			return SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕移動隊員；原人員未完整移動")
+	return SiteRuntime.ok()
+
+
+# Each absent member lands on its own last cell (the cell the grid transfer keeps) in `formation`.
+func native_return(identities: Array, formation: int) -> Dictionary:
+	for identity: Variant in identities:
+		var index := int(_index_by_id.get(int(identity), -1))
+		var state := soldier_state(index)
+		if state.is_empty() or not bool(crowd.site_person_return(index, formation, float(state.px), float(state.py))):
+			return SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕歸隊；原人員未完整歸隊")
+	return SiteRuntime.ok()
+
+
+func _team_for_formation(formation: int) -> Dictionary:
+	for team: Dictionary in teams:
+		if int(team.formation) == formation and not bool(team.get("departed", false)): return team
+	return {}
+
+
+# Moves the GD unit records (the same objects the native sync reads) and the team membership of `identities`
+# from roster `source` to roster `destination`. Officer seats follow their person; the source indices are remapped.
+func native_transfer_records(identities: Array, source: Dictionary, destination: Dictionary) -> void:
+	var moving := {}
+	for identity: Variant in identities: moving[int(identity)] = true
+	var old_units: Array = source.units.duplicate()
+	var old_service := {}
+	for index: Variant in source.get("officer_service", []): old_service[int(index)] = true
+	var kept_units: Array = []
+	var kept_service: Array = []
+	var joined_service: Array = []
+	for index in range(old_units.size()):
+		var row: Dictionary = old_units[index]
+		if moving.has(int(row.person_id)):
+			if old_service.has(index): joined_service.append(destination.units.size())
+			destination.units.append(row)
+		else:
+			if old_service.has(index): kept_service.append(kept_units.size())
+			kept_units.append(row)
+	source.units.clear()
+	source.units.append_array(kept_units)
+	source["officer_service"] = kept_service
+	var service: Array = destination.get("officer_service", [])
+	service.append_array(joined_service)
+	destination["officer_service"] = service
+	var source_team := _team_for_formation(int(source.crowd_formation))
+	var destination_team := _team_for_formation(int(destination.crowd_formation))
+	var kept_ids: Array = []
+	for identity: Variant in source_team.person_ids:
+		if not moving.has(int(identity)): kept_ids.append(int(identity))
+	source_team["person_ids"] = kept_ids
+	for identity: Variant in identities: destination_team.person_ids.append(int(identity))
+	_bind_people()
+
+
+func native_set_garrisoned(roster: Dictionary, feature_id: String) -> Dictionary:
+	var formation := int(roster.crowd_formation)
+	if not bool(crowd.get_garrisoned(formation)) and not bool(crowd.set_garrisoned(formation, 1)):
+		return SiteRuntime.fail("BUSY", "原生隊伍尚有移動作業，不能駐營")
+	roster["garrison_feature_id"] = feature_id
+	return SiteRuntime.ok()
+
+
+func native_set_military_role(identity: int, role: String) -> Dictionary:
+	var index := int(_index_by_id.get(identity, -1))
+	var record: Dictionary = _records.get(identity, {})
+	if index < 0 or record.is_empty() or _actors.has(identity) or not bool(crowd.set_military_role(index, military_role_code(role))):
+		return SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕更改軍職")
+	record["military_role"] = role
+	return SiteRuntime.ok()
+
+
 ## G6.4b: the crowd team a travelling commander leads. Read-only: nothing is released here.
 ## Only a whole team whose commander is the controlled person is admitted. Every member must pass the native exit gate.
 func departure_plan(identity: int) -> Dictionary:

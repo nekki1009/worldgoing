@@ -43,7 +43,7 @@ static func _armies(lab: TerrainLab) -> Array:
 		for roster: Dictionary in native.rosters:
 			result.append({"team_id": int(roster.team_id), "faction_id": int(roster.faction_id),
 				"garrison_feature_id": str(roster.get("garrison_feature_id", "")), "rows": roster.units,
-				"player_member": roster.get("player_member", {}), "native": true})
+				"player_member": roster.get("player_member", {}), "native": true, "roster": roster})
 	for team: TerrainArmy in lab.combat_armies:
 		if not team.combat_enabled or not team.has_army(): continue
 		if native != null and native.active and native.owns_original_team(team): continue
@@ -96,8 +96,14 @@ static func query(lab: TerrainLab, feature_id: String) -> Dictionary:
 			elif military == "civilian": civilians += 1
 			else: soldiers += 1
 	var empty_ids: Array[int] = []
-	for team: TerrainArmy in lab.combat_armies:
-		if not team.has_army() and team.combat_units.is_empty(): empty_ids.append(team.team_id)
+	var crowd_host: Variant = lab.crowd_site
+	if crowd_host != null and crowd_host.active:
+		# G5 S3: under the crowd only native empty formations are usable; disabled grid slots are not spare capacity.
+		for roster: Dictionary in crowd_host.rosters:
+			if roster.units.is_empty() and str(roster.get("garrison_feature_id", "")).is_empty(): empty_ids.append(int(roster.team_id))
+	else:
+		for team: TerrainArmy in lab.combat_armies:
+			if not team.has_army() and team.combat_units.is_empty(): empty_ids.append(team.team_id)
 	return Runtime.ok("軍營原人員名冊", {"feature_id": feature_id, "officers": officers, "soldier_count": soldiers,
 		"civilian_count": civilians, "people_count": people.size(), "dead_count": dead, "capacity": int(layout.capacity),
 		"present_count": present, "captive_count": captives, "away_count": away,
@@ -192,7 +198,7 @@ static func _source_ready(lab: TerrainLab, source: Dictionary) -> Dictionary:
 			return Runtime.fail("BUSY", "原隊員動作尚未收束")
 	return Runtime.ok()
 
-static func _preflight_transfer(lab: TerrainLab, selected: Dictionary, identities: Array, target: TerrainArmy, commander_id: int) -> Dictionary:
+static func _preflight_transfer(lab: TerrainLab, selected: Dictionary, identities: Array, target: Variant, commander_id: int, key_team: int = -1) -> Dictionary:
 	var projected_count := _armies(lab).size() + 1
 	var incoming: Array[Dictionary] = []
 	for source_id: int in selected.groups:
@@ -204,8 +210,11 @@ static func _preflight_transfer(lab: TerrainLab, selected: Dictionary, identitie
 	for identity: Variant in identities: incoming.append(selected.people[int(identity)].row)
 	if commander_id > 0 and TerrainArmy.single_troop_class(incoming, lab.terrain, [commander_id]) == &"mixed":
 		return Runtime.fail("MIXED_TROOP", "新編隊伍普通兵須維持同一兵種；原人員與裝備未改")
-	var next_team := int(lab._next_army_identity())
-	for source: Dictionary in _armies(lab): next_team = maxi(next_team, int(source.team_id) + 1)
+	# G5 S3: a native destination names its own team id (the supply key must match the roster it creates).
+	var next_team := key_team
+	if next_team <= 0:
+		next_team = int(lab._next_army_identity())
+		for source: Dictionary in _armies(lab): next_team = maxi(next_team, int(source.team_id) + 1)
 	if next_team >= 999999: return Runtime.fail("ID_EXHAUSTED")
 	var typed_ids: Array[int] = []
 	for identity: Variant in identities: typed_ids.append(int(identity))
@@ -213,7 +222,7 @@ static func _preflight_transfer(lab: TerrainLab, selected: Dictionary, identitie
 	return lab.site_controller.captivity_supply._change_membership_supply(original_owner,
 		{"key": "team:%d" % next_team, "team": target}, typed_ids, true)
 
-static func _stop_training(lab: TerrainLab, team: TerrainArmy) -> void:
+static func _stop_training(lab: TerrainLab, team: Variant) -> void:
 	var entry: Dictionary = lab.site_controller._supply_entry(team)
 	if entry.is_empty(): return
 	entry["training_order"] = false
@@ -247,6 +256,7 @@ static func admit(lab: TerrainLab, feature_id: String, source_team_id: int, pers
 	for chosen: Dictionary in selected.people.values(): living += int(float(chosen.person.hp) > 0.0)
 	if int(current.registered_count) + living > int(layout.capacity): return Runtime.fail("NO_SPACE", "軍營容量不足；原人物未變更")
 	var whole: bool = identities.size() == sources[0].rows.size()
+	if bool(sources[0].get("native", false)): return _admit_native(lab, feature_id, layout, sources[0], selected, identities, whole)
 	var destination := _empty_team(lab) if not whole else null
 	if not whole and destination == null: return Runtime.fail("NO_SPACE", "沒有原Army空槽可接收選取的人員")
 	var checked := _source_ready(lab, sources[0]) if whole else _preflight_transfer(lab, selected, identities, destination, -1)
@@ -278,6 +288,8 @@ static func form(lab: TerrainLab, feature_id: String, person_ids: Array, command
 	if not selected.ok: return selected
 	if not selected.people.has(commander_id) or _role(selected.people[commander_id].row) != "officer":
 		return Runtime.fail("NOT_OFFICER", "須從所選原軍官明確指定隊長")
+	if _all_native(selected):
+		return _form_native(lab, feature_id, selected, person_ids, commander_id, target_team_id)
 	var destination := _empty_team(lab, target_team_id)
 	if destination == null: return Runtime.fail("NO_SPACE", "須選原Army空槽作為新編隊伍")
 	var checked := _preflight_transfer(lab, selected, person_ids, destination, commander_id)
@@ -287,6 +299,116 @@ static func form(lab: TerrainLab, feature_id: String, person_ids: Array, command
 	selected = _selected(lab, layout, _armies(lab), person_ids, true)
 	if not selected.ok: return selected
 	return _transfer(lab, selected.groups, person_ids, destination, "", commander_id)
+
+static func _typed_ids(identities: Array) -> Array[int]:
+	var result: Array[int] = []
+	for identity: Variant in identities: result.append(int(identity))
+	return result
+
+
+static func _all_native(selected: Dictionary) -> bool:
+	if selected.people.is_empty(): return false
+	for chosen: Dictionary in selected.people.values():
+		if not bool(chosen.source.get("native", false)): return false
+	return true
+
+
+# G5 S3: a new native formation for `team_id`, same faction and troop as the source team. Its roster starts empty.
+static func _native_new_team(lab: TerrainLab, team_id: int, source: Dictionary, identities: Array) -> Dictionary:
+	var host: Variant = lab.crowd_site
+	var owner: Variant = host.native_owner(int(source.team_id))
+	if owner == null: return Runtime.fail("INVALID_TEAM", "原生隊伍不存在")
+	var state: Dictionary = host.formation_state(int(owner.formation_index))
+	var first: Dictionary = host.soldier_state(int(host.crowd.soldier_index(int(identities[0]))))
+	var entry: Dictionary = host.native_team(int(source.team_id))
+	return host.native_add_team(team_id, int(source.faction_id), int(entry.get("troop", 0)), float(state.training),
+		Vector2(float(first.px), float(first.py)), "") # garrisoning, if any, follows via native_set_garrisoned
+
+
+# G5 S3: native sources never leave the crowd. Whole: the formation is garrisoned in place. Partial: each reserve
+# becomes absent (kind 4) and moves into a garrisoned formation of the same faction; an empty one is reused.
+static func _admit_native(lab: TerrainLab, feature_id: String, layout: Dictionary, source: Dictionary, selected: Dictionary, identities: Array, whole: bool) -> Dictionary:
+	var host: Variant = lab.crowd_site
+	var ready := _source_ready(lab, source)
+	if not ready.ok: return ready
+	var owner: Variant = host.native_owner(int(source.team_id))
+	if owner == null: return Runtime.fail("INVALID_TEAM", "原生隊伍不存在")
+	var team_id := int(source.team_id)
+	if whole:
+		_stop_training(lab, owner)
+		var garrisoned: Dictionary = host.native_set_garrisoned(source.roster, feature_id)
+		if not garrisoned.ok: return garrisoned
+	else:
+		var faction := int(source.faction_id)
+		var destination: Dictionary = host.native_empty_garrison(feature_id, faction)
+		team_id = int(destination.get("team_id", host.native_next_team_id()))
+		var checked := _preflight_transfer(lab, selected, identities, host.native_pending_owner(team_id, faction), -1, team_id)
+		if not checked.ok: return checked
+		var supplied: Dictionary = lab.site_controller.captivity_supply._change_membership_supply(owner,
+			{"key": "team:%d" % team_id, "team": host.native_pending_owner(team_id, faction)}, _typed_ids(identities))
+		if not supplied.ok: return supplied
+		if destination.is_empty():
+			var created: Dictionary = _native_new_team(lab, team_id, source, identities)
+			if not created.ok: return created
+			destination = created.roster
+		var moved: Dictionary = host.native_absent(identities, 4)
+		if not moved.ok: return moved
+		moved = host.native_move(identities, int(destination.crowd_formation))
+		if not moved.ok: return moved
+		host.native_transfer_records(identities, source.roster, destination)
+		var set_garrison: Dictionary = host.native_set_garrisoned(destination, feature_id)
+		if not set_garrison.ok: return set_garrison
+	lab._forget_corps_team(int(source.team_id))
+	var synced: Dictionary = host.sync_to_site()
+	if not synced.ok: return synced
+	return Runtime.ok("原人員已駐營；保留生命、軍官資格、裝備與供養", {"feature_id": feature_id, "person_ids": identities, "team_id": team_id})
+
+
+# G5 S3: reserves (absent kind 4 when garrisoned; on the field when the whole team is garrisoned) move out of their
+# garrison into a new or empty non-garrisoned formation, then land on their own cells. The commander is set natively.
+static func _form_native(lab: TerrainLab, feature_id: String, selected: Dictionary, identities: Array, commander_id: int, target_team_id: int) -> Dictionary:
+	var host: Variant = lab.crowd_site
+	var first: Dictionary = selected.people[int(identities[0])].source
+	var faction := int(first.faction_id)
+	var destination: Dictionary = host.native_empty_formation(target_team_id, faction)
+	var team_id := int(destination.get("team_id", host.native_next_team_id()))
+	var checked := _preflight_transfer(lab, selected, identities, host.native_pending_owner(team_id, faction), commander_id, team_id)
+	if not checked.ok: return checked
+	var original_owner: Variant = selected.people[int(identities[0])].person.owner
+	var supplied: Dictionary = lab.site_controller.captivity_supply._change_membership_supply(original_owner,
+		{"key": "team:%d" % team_id, "team": host.native_pending_owner(team_id, faction)}, _typed_ids(identities))
+	if not supplied.ok: return supplied
+	if destination.is_empty():
+		var created: Dictionary = _native_new_team(lab, team_id, first, identities)
+		if not created.ok: return created
+		destination = created.roster
+	var formation := int(destination.crowd_formation)
+	for source_id: int in selected.groups:
+		var group: Array = selected.groups[source_id]
+		var source: Dictionary = selected.people[int(group[0])].source
+		var moved: Dictionary = host.native_absent(group, 4)
+		if not moved.ok: return moved
+		moved = host.native_move(group, formation)
+		if not moved.ok: return moved
+		moved = host.native_return(group, formation)
+		if not moved.ok: return moved
+		host.native_transfer_records(group, source.roster, destination)
+	if not bool(host.set_formation_fields(formation, {"formal_person": commander_id})):
+		return Runtime.fail("NATIVE_REFUSED", "原生群眾拒絕指定隊長；原人員已移入新隊，請重試指定隊長")
+	var synced: Dictionary = host.sync_to_site()
+	if not synced.ok: return synced
+	return Runtime.ok("原人員已編成新隊；位置、生命、持物與餐份均保留", {"team_id": team_id, "person_ids": identities})
+
+
+static func _set_role_native(lab: TerrainLab, person_id: int, role: String) -> Dictionary:
+	var host: Variant = lab.crowd_site
+	if role != "officer" and host._roster_post_holders().has(person_id): return Runtime.fail("HAS_APPOINTMENT", "請先解除現有職位")
+	var changed: Dictionary = host.native_set_military_role(person_id, role)
+	if not changed.ok: return changed
+	var synced: Dictionary = host.sync_to_site()
+	if not synced.ok: return synced
+	return Runtime.ok("已更新原人物軍官資格；能力與持物保留")
+
 
 static func _transfer(lab: TerrainLab, groups: Dictionary, identities: Array, target: TerrainArmy, garrison_id: String, commander_id: int) -> Dictionary:
 	if target == null or target.has_army() or not target.combat_units.is_empty() or not target.cells.is_empty():
@@ -369,6 +491,10 @@ static func recruit(lab: TerrainLab, feature_id: String, person_ids: Array, targ
 	var authority := _authority(lab, layout)
 	if not authority.ok: return authority
 	var target := _team(lab, target_team_id)
+	var crowd_host: Variant = lab.crowd_site
+	if crowd_host != null and crowd_host.active and not crowd_host.native_roster(target_team_id).is_empty():
+		# G5 S3: native moves exist, but team.recruit's decider (offices, head, acting) is not ported to the native roster.
+		return Runtime.fail("CROWD_RECRUIT_AUTHORITY", "群眾隊伍的募兵職權（team.recruit）尚未移植為原生判定；原人員未移動，請先切回一般模擬再募兵")
 	var requester := int(lab.controlled_person_id())
 	if target == null or not target.has_army() or not target.combat_enabled or not target.garrison_feature_id.is_empty() or int(target.faction_id) != int(layout.owner_faction):
 		return Runtime.fail("INVALID_TEAM", "接收須是同陣營、未駐營的既有隊伍")
@@ -456,6 +582,8 @@ static func set_military_role(lab: TerrainLab, person_id: int, role: String) -> 
 				var formation: Dictionary = lab.crowd_site.formation_state(person.owner.formation_index)
 				if person_id in [int(formation.formal_person), int(formation.acting_person), int(formation.current_person)] or formation.officer_persons.has(person_id):
 					return Runtime.fail("HAS_APPOINTMENT", "請先解除現有隊長或幹部職務")
+			if bool(source.native): return _set_role_native(lab, person_id, role) # G5 S3: no clear to GD.
+	if lab.crowd_site != null and lab.crowd_site.active: return Runtime.fail("CROWD_UNSUPPORTED", "群眾模擬中此人物不在原生名冊；請先切回一般模擬")
 	var ordinary := _ordinary(lab)
 	if not ordinary.ok: return ordinary
 	for team: TerrainArmy in lab.combat_armies:
