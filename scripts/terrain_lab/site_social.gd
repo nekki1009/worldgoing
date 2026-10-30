@@ -17,6 +17,8 @@ const DAY_MINUTES := 1440
 const DAY_SECONDS := 86400.0
 const BASE_LOYALTY := 6000
 const OMEN_DAYS := 3
+## Persuasion rules (NEKKI 2026-10-30): loyalty to the own organization lost at capture (out of 10000).
+const CAPTURE_LOYALTY_DROP := 2500
 
 static func org_key(ref: Dictionary) -> String:
 	return "%s:%s:%s" % [str(ref.kind), str(ref.site_id), str(ref.org_id)]

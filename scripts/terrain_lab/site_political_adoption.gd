@@ -37,9 +37,11 @@ static func prepare(lab: Variant, target_id: int, offer: Dictionary, jail_reques
 	var minute := int(site.get("minute", 0))
 	var controlled := int(lab.controlled_person_id())
 	var willing := SiteSocial.surrender_willingness(source.combat_units[unit], relation, minute)
+	# Persuasion (site_persuasion.gd) already decided willingness by its own rules; only that caller sets "persuaded".
+	var persuaded := bool(offer.get("persuaded", false)) and target_id != controlled
 	if target_id == controlled:
 		if not bool(offer.get("consent", false)): return Runtime.fail("NEEDS_CONSENT", "受控人物須自行明示接受歸降")
-	elif not bool(willing.willing):
+	elif not persuaded and not bool(willing.willing):
 		return Runtime.fail("NOT_WILLING", "本人目前不願歸降（忠誠 %.2f／門檻 %.2f）" % [float(willing.get("L", 0)) / 100.0, float(willing.get("T", 0)) / 100.0])
 	# Captor side (§6.3): the settlement 典獄 of the captor faction, else the captor.
 	var settlement: Dictionary = Settlement.record(lab.terrain)

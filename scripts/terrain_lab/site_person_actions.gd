@@ -345,6 +345,11 @@ func capture_fields(target_id: int, target: Dictionary) -> Dictionary:
 			loyal = {"kind": "nation", "site_id": site_id, "org_id": nation_id}
 			if nations[nation_id].get("offices") is Dictionary and int(SiteOffices.head_position(nations[nation_id].offices).get("holder", -1)) == target_id: rank = "head"
 			break
+	# Persuasion rules (NEKKI 2026-10-30): the defeat drops loyalty to the own organization once, at capture.
+	if loyal is Dictionary and body != null:
+		var social := SiteSocial.state_of(body)
+		var entry := SiteSocial.relation(social, loyal)
+		entry["L"] = clampi(int(entry.L) - SiteSocial.CAPTURE_LOYALTY_DROP, 0, 10000)
 	return {"captured_at_game_seconds": Runtime.now(data) * 60.0, "admitted_at_game_seconds": -1.0,
 		"episode": {"site_id": site_id, "person_id": target_id, "seq": sequence}, "loyal_org": loyal,
 		"rank_snapshot": rank, "settled_days": 0, "legacy_observed": false}

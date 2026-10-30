@@ -399,6 +399,7 @@ namespace wg { struct WorldTestAccess {
 	static float sty(const World &w, int i) { return w.slot_ty_[i]; }
 	static float clip(const World &w, int i) { return w.slot_clip_[i]; }
 	static int los(const World &w, int i) { return w.los(w.px[i], w.py[i], w.slot_tx_[i], w.slot_ty_[i]) ? 1 : 0; }
+	static std::vector<int> &captives(World &w) { return w.captives_; }
 }; }
 static bool formation_control = false;
 // D acceptance terrain (run 20261029_142014_245, the test's own 25 x 25 map around the centre, origin (43, 36)):
@@ -1373,6 +1374,69 @@ static void move_refusals() {
 	REQUIRE(b.validate());
 }
 
+// NEKKI 2026-10-30 persuasion transfer: a captive of team 0 joins team 1's formation as a normal member. Refusals change
+// nothing; the success ends the captivity like a release does and moves the roster, team and hostility with the soldier.
+static void transfer_scenario(World &w, int &foreign_out) {
+	setup(w);
+	const int foreign = second_formation(w, 1, 10.5f, 20.5f);
+	rules::Equip e; e.family = rules::F_LONGSWORD; e.material = rules::M_IRON;
+	w.add_soldier(foreign, e, R_CAPTAIN, 1004); // index 3: the captor, team 1
+	w.formations[foreign].ai_enabled = false;
+	w.captive[2] = 1; w.captor[2] = 3; w.escape_t[2] = 5.0; WorldTestAccess::captives(w).push_back(2);
+	foreign_out = foreign;
+}
+
+static void transfer_refusals_and_transfer() {
+	test_case = "transfer_member: refusals change nothing; a captive of another team joins its formation and is a normal member";
+	World w(1); int foreign = -1; transfer_scenario(w, foreign);
+	REQUIRE(w.validate());
+	REQUIRE(!w.transfer_member(-1, foreign) && !w.transfer_member(99, foreign) && !w.transfer_member(2, -1) && !w.transfer_member(2, 99));
+	REQUIRE(!w.transfer_member(2, 0));                  // same formation
+	REQUIRE(!w.transfer_member(1, foreign));            // not a captive
+	w.ko[2] = 30.0;
+	REQUIRE(!w.transfer_member(2, foreign));            // knocked out
+	w.ko[2] = 0.0;
+	w.hp[2] = 0.0;
+	REQUIRE(!w.transfer_member(2, foreign));            // dead
+	w.hp[2] = 100.0;
+	REQUIRE(w.set_garrisoned(foreign, true));
+	REQUIRE(!w.transfer_member(2, foreign));            // garrisoned target
+	REQUIRE(w.set_garrisoned(foreign, false));
+	REQUIRE(w.captive[2] == 1 && w.form[2] == 0 && w.team[2] == 0 && w.captor[2] == 3 && w.formations[0].roster == 3);
+	REQUIRE(w.validate());
+	const float hp_before = (float)w.hp[2];
+	REQUIRE(w.transfer_member(2, foreign));
+	REQUIRE(w.captive[2] == 0 && w.captor[2] == -1 && w.escape_t[2] == 0.0 && w.team[2] == 1 && w.form[2] == foreign);
+	REQUIRE(std::find(WorldTestAccess::captives(w).begin(), WorldTestAccess::captives(w).end(), 2) == WorldTestAccess::captives(w).end());
+	REQUIRE(w.formations[0].roster == 2 && w.formations[0].fatigue_count == 2 && (int)w.formations[0].members.size() == 2);
+	REQUIRE(w.formations[foreign].roster == 2 && w.formations[foreign].fatigue_count == 2 && (int)w.formations[foreign].members.size() == 2);
+	REQUIRE(std::find(w.formations[foreign].members.begin(), w.formations[foreign].members.end(), 2) != w.formations[foreign].members.end());
+	REQUIRE((float)w.hp[2] == hp_before && !w.is_absent(2) && !w.released[2]);
+	REQUIRE(w.validate());
+	for (int t = 0; t < 60; ++t) step(w);
+	REQUIRE(w.validate());
+	REQUIRE(!w.transfer_member(2, foreign)); // already in that formation
+}
+
+static uint64_t transfer_scenario_hash(int threads) {
+	World w(threads); int foreign = -1; transfer_scenario(w, foreign);
+	REQUIRE(w.transfer_member(2, foreign));
+	for (int t = 0; t < 120; ++t) step(w);
+	return w.state_hash();
+}
+
+static void transfer_hash_matches_across_thread_counts() {
+	test_case = "transfer_member: thread counts 1 and 4 give the same hash, and save / load keeps the transferred member";
+	REQUIRE(transfer_scenario_hash(1) == transfer_scenario_hash(4));
+	World w(1); int foreign = -1; transfer_scenario(w, foreign);
+	REQUIRE(w.transfer_member(2, foreign));
+	const std::vector<uint8_t> blob = w.save();
+	World loaded(1);
+	REQUIRE(loaded.load(blob));
+	REQUIRE(loaded.state_hash() == w.state_hash() && loaded.team[2] == 1 && loaded.form[2] == foreign && loaded.captive[2] == 0);
+	REQUIRE(loaded.validate());
+}
+
 // Shared scenario for the save / load and thread checks: an absent soldier, a moved soldier, a return into the moved-to
 // formation and 200 steps of marching.
 static void absent_move_setup(World &w) {
@@ -1517,6 +1581,8 @@ int main(int argc, char **argv) {
 	move_commander_in_takes_command();
 	regular_moving_into_empty_formation_commands_it();
 	move_refusals();
+	transfer_refusals_and_transfer();
+	transfer_hash_matches_across_thread_counts();
 	absent_save_load_matches();
 	absent_hash_matches_across_thread_counts();
 	std::printf("CONVOY_NATIVE_CONTRACT checks=%d failures=%d\n", checks, failures);

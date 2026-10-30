@@ -1680,7 +1680,7 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 	# All remaining guards passed before the first original body mutation.
 	if (gd_original or formula_interval) and _siege_tactical_active(): SiteRuntime.mark_combat(terrain, 10.0)
 	if fire_active_at_start: SiteRuntime.mark_combat(terrain, SiteRuntime.COMBAT_GRACE, true)
-	if bool(permit.get("cold_fire_active", false)): terrain.site["combat_left"] = maxf(float(terrain.site.get("combat_left", 0.0)), elapsed)
+	if bool(permit.get("cold_fire_active", false)): SiteRuntime.start_combat(terrain.site, elapsed)
 	if (not replaying or formula_interval) and not region_interval.is_empty() and gd_original:
 		_region_point_pending = region_interval.duplicate(true)
 		_region_point_pending.fire_action_begin = fire_action_cursor
@@ -1898,7 +1898,7 @@ func replay_site_to(target_game_seconds: float, budget_usec: int = 0, max_steps:
 			return SiteRuntime.fail("MISSING_FIRE_HISTORY", "Site 尚有共同時間欠秒，但原火攻 journal 已耗盡")
 		# Recreate the world-wide tactical permit recorded by this original interval.
 		if _fire_replay_tracking:
-			terrain.site["combat_left"] = maxf(float(terrain.site.get("combat_left", 0.0)), float(fire_interval.tactical_seconds))
+			SiteRuntime.start_combat(terrain.site, float(fire_interval.tactical_seconds))
 		var combat_left := float(terrain.site.get("combat_left", 0.0))
 		if _siege_active(): combat_left = maxf(combat_left, 10.0)
 		if _fire_activity(): combat_left = maxf(combat_left, SiteRuntime.COMBAT_GRACE)

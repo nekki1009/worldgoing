@@ -674,6 +674,32 @@ bool World::move_member(int i, int to) {
 	return true;
 }
 
+// ---------------------------------------------------------------- persuasion transfer (NEKKI 2026-10-30, captive joins captor)
+// Transfer: an awake captive on the field of one team becomes a normal living member of another team's formation. The
+// captivity ends as a release ends it (captive, captor, escape timer, escort, captives_ and targets are cleared), the
+// soldier takes the target team (team[] too, so hostility follows the new team) and the formation roster through
+// reassign_formation, keeping position, hp, ammo, equipment, person id and absent / released flags (none set).
+// Refusals change nothing: not captive, dead, knocked out, absent, aboard, released, convoy or siege crew, in a prison,
+// under housing or siege escort, surrendered, same team, same formation, garrisoned target, bad ids.
+bool World::transfer_member(int i, int to) {
+	if (work_point_active_ || work_point_finish_ready_ || i < 0 || i >= soldier_count() || to < 0 || to >= (int)formations.size()) return false;
+	const int from = form[i];
+	if (from < 0 || from >= (int)formations.size() || from == to || formations[from].team == formations[to].team) return false;
+	if (formations[to].garrisoned) return false;
+	if (!captive[i] || !alive(i) || ko[i] > 0.0 || getup[i] > 0.0 || surrendered[i]) return false;
+	if (is_absent(i) || is_aboard(i) || is_convoy_crew(i) || is_siege_crew(i) || prison_id[i] != 0) return false;
+	if (escort_mode[i] == 3 || escort_mode[i] == 4 || escort_mode[i] == 5 || escort_mode[i] == 6) return false;
+	cancel_actions_involving(i);
+	captive[i] = 0; captor[i] = -1; escape_t[i] = 0;
+	escort_mode[i] = 0; escort_goal[i] = -1;
+	captives_.erase(std::remove(captives_.begin(), captives_.end(), i), captives_.end());
+	reassign_formation(i, to);
+	team[i] = (uint8_t)formations[to].team;
+	state[i] = S_SLOT; target[i] = -1; enc_target[i] = -1; near_enemy[i] = 0; running[i] = 0;
+	vx[i] = vy[i] = 0; nx[i] = px[i]; ny[i] = py[i];
+	return true;
+}
+
 bool World::charge_custody_work(int i, double seconds) {
 	if (work_point_finish_ready_) return false; // Native final admission precedes all original point costs.
 	if (i < 0 || i >= soldier_count() || !can_act(i) || escort_mode[i] != 1 || !std::isfinite(seconds) || seconds < 0) return false;

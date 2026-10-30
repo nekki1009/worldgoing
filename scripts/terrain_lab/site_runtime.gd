@@ -3994,10 +3994,19 @@ static func begin_manual(data: TerrainData, key: String, cell: Vector2i, action:
 	data.site.manual.cell = data.index(cell)
 	return ok("開始手動作業；移動或交戰將中斷")
 
+## The only way combat time starts or extends on a Site (every combat writer calls this; grep combat_left for writers).
+## NEKKI 2026-10-30 persuasion window: a start from no combat (combat_left <= 0) opens a new post-battle window, so every
+## earlier persuasion attempt on the captivity relations is cleared.
+static func start_combat(site: Dictionary, seconds: float) -> void:
+	if float(site.get("combat_left", 0.0)) <= 0.0 and seconds > 0.0:
+		for relation: Variant in site.get("captivity", {}).values():
+			if relation is Dictionary: relation.erase("persuasion")
+	site["combat_left"] = maxf(float(site.get("combat_left", 0.0)), seconds)
+
 static func mark_combat(data: TerrainData, duration: float = COMBAT_GRACE, preserve_manual: bool = false) -> void:
 	if data.site.is_empty():
 		return
-	data.site["combat_left"] = maxf(float(data.site.combat_left), duration)
+	start_combat(data.site, duration)
 	if not preserve_manual:
 		data.site.manual.target = ""
 		data.site.manual.progress = 0.0

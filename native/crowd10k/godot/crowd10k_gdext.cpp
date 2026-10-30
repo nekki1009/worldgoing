@@ -1187,6 +1187,11 @@ void m_move_member(CALL_ARGS) {
 	SELF; NEED(2); WORLD; int64_t i, to;
 	ret_bool(r, arg_int(a[0],i) && arg_int(a[1],to) && i>=0 && i<w.soldier_count() && to>=0 && to<=INT32_MAX && w.move_member((int)i,(int)to));
 }
+// NEKKI 2026-10-30 persuasion: captive of another team joins to_formation as a normal member. Refusals change nothing.
+void m_transfer_member(CALL_ARGS) {
+	SELF; NEED(2); WORLD; int64_t i, to;
+	ret_bool(r, arg_int(a[0],i) && arg_int(a[1],to) && i>=0 && i<w.soldier_count() && to>=0 && to<=INT32_MAX && w.transfer_member((int)i,(int)to));
+}
 void m_site_person_absent_state(CALL_ARGS) {
 	SELF; NEED(1); WORLD; int64_t i;
 	if (!arg_int(a[0],i) || i<0 || i>=w.soldier_count()) { return_doubles(r,{}); return; }
@@ -1493,6 +1498,7 @@ void initialize(void *, GDExtensionInitializationLevel level) {
 	add_method("site_person_absent",m_site_person_absent,{{INT,"soldier"},{INT,"kind"}},BOOL);
 	add_method("site_person_return",m_site_person_return,{{INT,"soldier"},{INT,"formation"},{FLOAT,"x"},{FLOAT,"y"}},BOOL);
 	add_method("move_member",m_move_member,{{INT,"soldier"},{INT,"to_formation"}},BOOL);
+	add_method("transfer_member",m_transfer_member,{{INT,"soldier"},{INT,"to_formation"}},BOOL);
 	add_method("site_person_absent_state",m_site_person_absent_state,{{INT,"soldier"}},DOUBLES);
 	add_method("soldier_surrendered",m_soldier_surrendered,{{INT,"soldier"}},BOOL);
 	add_method("set_soldier_surrendered",m_set_soldier_surrendered,{{INT,"soldier"},{INT,"on"}},BOOL);

@@ -58,6 +58,8 @@ int wg_crowd_site_person_aboard(const wg_crowd *c, int i, double *out);
 int wg_crowd_site_person_absent(wg_crowd *c, int i, int kind);
 int wg_crowd_site_person_return(wg_crowd *c, int i, int formation, double x, double y);
 int wg_crowd_move_member(wg_crowd *c, int i, int to_formation);
+/* NEKKI 2026-10-30 persuasion: a captive of another team joins to_formation as a normal member. 1 on success, 0 refused. */
+int wg_crowd_transfer_member(wg_crowd *c, int i, int to_formation);
 int wg_crowd_site_person_absent_state(const wg_crowd *c, int i, double *out);
 /* G5 S4 surrender. soldier_surrendered writes out[0] = 0/1 and returns 1, or 0 for an unknown soldier.
  * set_soldier_surrendered(i, on) returns 1 on success, 0 refused with no change (on needs a living, uncaptured,

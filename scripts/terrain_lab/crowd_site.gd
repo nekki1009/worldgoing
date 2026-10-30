@@ -30,6 +30,7 @@ const Atlas := preload("res://scripts/terrain_lab/terrain_army_equipment_atlas.g
 const ExchangeTimings := preload("res://scripts/terrain_lab/character_exchange_timings.gd")
 const Site := preload("res://scripts/terrain_lab/site_controller.gd")
 const PersonOwner := preload("res://scripts/terrain_lab/crowd_person_owner.gd")
+const SiteSocial := preload("res://scripts/terrain_lab/site_social.gd")
 const ClearHandoff := preload("res://scripts/terrain_lab/crowd_clear_handoff.gd")
 const WeaponMaterials := preload("res://scripts/ui/weapon_materials.gd")
 const DLL_PATH := "res://native/crowd10k/bin/crowd10k.windows.x86_64.dll"
@@ -2562,6 +2563,45 @@ func native_transfer_records(identities: Array, source: Dictionary, destination:
 	for identity: Variant in identities: destination_team.person_ids.append(int(identity))
 	_bind_people()
 
+
+## NEKKI 2026-10-30 persuasion: a captive of another team joins `destination_formation` (the captor's formation) as a normal
+## member. The native transfer_member goes first and refuses without change. Then the GD rows follow the soldier (team
+## person ids, roster row, owners via _bind_people), and the captivity ends as a release ends it (custody days settled,
+## relation erased, holder version, supply and change hooks). Refusals before the native change change nothing.
+func transfer_captive(identity: int, captor_id: int, destination_formation: int) -> Dictionary:
+	if not active or crowd == null or not contains_person(identity) or _actors.has(identity) or not _owner_by_id.has(identity):
+		return SiteRuntime.fail("UNSUPPORTED", "原人員不在原生群眾名冊")
+	if not crowd.has_method("transfer_member"): return SiteRuntime.fail("UNSUPPORTED", "原生群眾未提供跨隊移入")
+	var index := int(_index_by_id[identity])
+	var owner: Variant = _owner_by_id[identity]
+	var source_roster := team_record(int(owner.formation_index))
+	var destination_roster := team_record(destination_formation)
+	if source_roster.is_empty() or destination_roster.is_empty() or not str(destination_roster.get("garrison_feature_id", "")).is_empty():
+		return SiteRuntime.fail("INVALID_TEAM", "須有同地圖、未駐營的原接收隊伍")
+	var relation: Dictionary = lab.terrain.site.captivity.get(str(identity), {})
+	if relation.is_empty(): return SiteRuntime.fail("NO_TARGET", "沒有此人的原拘押紀錄")
+	var body: Variant = owner.combat_units.get(index)
+	var holder: Variant = owner.person(index, false).get("holder")
+	var row_before := -1
+	for row_index in range(source_roster.units.size()):
+		if int(source_roster.units[row_index].get("person_id", -1)) == identity: row_before = row_index
+	# Same pairing as _commit_captivity (non-capturing): the supply guard prepares the change first and refuses with no
+	# change; every later failure discards it; only a published transfer commits it.
+	var guard: Dictionary = lab.site_controller.captivity_supply.event_change_guard(identity, captor_id, false)
+	if not guard.ok: return guard
+	if not bool(crowd.transfer_member(index, destination_formation)):
+		lab.site_controller.captivity_supply.discard(identity)
+		return SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕跨隊移入；原人員未移動")
+	native_transfer_records([identity], source_roster, destination_roster)
+	if row_before >= 0 and int(source_roster.get("formal_commander", 0)) > row_before:
+		source_roster["formal_commander"] = int(source_roster.formal_commander) - 1
+	if body is Dictionary: SiteSocial.settle_before_release(body, relation, int(lab.terrain.site.get("minute", 0)))
+	lab.terrain.site.captivity.erase(str(identity))
+	if holder is Dictionary: holder.version = int(holder.get("version", 0)) + 1
+	lab.site_controller.captivity_supply.commit_change(identity, captor_id, false)
+	equipment_changed(identity)
+	captivity_changed(identity, captor_id, false)
+	return SiteRuntime.ok("", {"person_id": identity, "formation": destination_formation})
 
 func native_set_garrisoned(roster: Dictionary, feature_id: String) -> Dictionary:
 	var formation := int(roster.crowd_formation)

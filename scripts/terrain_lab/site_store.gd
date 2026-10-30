@@ -3754,8 +3754,15 @@ static func _validate_captivity(data: TerrainData, state: Dictionary, region_con
 	var prison_claims := {}
 	for key: Variant in relations:
 		var relation: Variant = relations[key]
-		if not _serial(key, 2147483648) or not relation is Dictionary or not _integer(relation.get("version"), 1, 3) or relation.size() != [5, 6, 13][int(relation.version) - 1]:
+		if not _serial(key, 2147483648) or not relation is Dictionary or not _integer(relation.get("version"), 1, 3):
 			return Runtime.fail("CORRUPT_SAVE", "拘押身分／版本")
+		# Persuasion (NEKKI 2026-10-30): one optional attempt record on a v3 relation, cleared by a new battle.
+		var persuasion_size := 1 if relation.has("persuasion") and int(relation.version) == 3 else 0
+		if relation.size() != [5, 6, 13][int(relation.version) - 1] + persuasion_size:
+			return Runtime.fail("CORRUPT_SAVE", "拘押身分／版本")
+		if persuasion_size == 1 and (not relation.persuasion is Dictionary or relation.persuasion.size() != 1 \
+			or str(relation.persuasion.get("outcome", "")) not in ["PERSUADED", "REFUSED", "NEVER"]):
+			return Runtime.fail("CORRUPT_SAVE", "勸降紀錄")
 		if int(relation.version) >= 2 and not relation.get("prison_id") is String: return Runtime.fail("CORRUPT_SAVE", "監禁引用欄位")
 		# v3 (F02 / plan 6.1): capture and admission game seconds, episode, legacy marker.
 		if int(relation.version) == 3:
