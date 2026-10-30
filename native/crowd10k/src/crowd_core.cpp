@@ -203,6 +203,83 @@ bool World::siege_claims_cell(int c, int ignore) const {
 	return false;
 }
 
+// SIEGE-YIELD: the team of a compound's crew is the team whose own soldiers step out of its claims. Only a turn
+// (every member stationary, from == to) yields; a translated body keeps the original refusal for any outsider.
+int World::siege_claim_team(int c) const {
+	for (const auto &g : siege_compounds) {
+		if (g.members.empty() || std::find(g.claims.begin(), g.claims.end(), c) == g.claims.end()) continue;
+		for (const auto &m : g.members) if (m.from != m.to) return -1;
+		return (int)team[g.members.front().soldier];
+	}
+	return -1;
+}
+
+// SIEGE-YIELD: a standing own-team soldier (not crew of any kind) may stand in, and walk through, a cell that a
+// siege compound claims. Enemies, other teams, host-controlled people and convoy crew never may.
+bool World::siege_yields(int i, int c) const {
+	if (i < 0 || i >= soldier_count() || !siege_claims_cell(c, i) || is_convoy_crew(i) || is_siege_crew(i)) return false;
+	return convoy_person_yields(i, siege_claim_team(c));
+}
+
+// SIEGE-YIELD v4/v5: Site's person navigation (build_siege_navigation) blocks the vehicle footprint and, while the turn
+// rotates, its whole sweep. A yielder may stand on and step through the sweep cells it yields to (so the step-out can
+// cross a deep sweep), including the future target body (v5: a person standing where the turned body will be must
+// cross it, and it is still empty), but never the vehicle's current source body nor a convoy body. Everyone else keeps
+// the mask.
+bool World::siege_yield_passable(int i, int c) const {
+	if (c < 0 || c >= terrain.w * terrain.h || convoy_body_cell(c) || !siege_yields(i, c)) return false;
+	// Only while stepping out: the person stands in a claim it yields to now (an outsider never walks in).
+	const int hx = (int)std::floor(px[i]), hy = (int)std::floor(py[i]);
+	if (!terrain.contains(hx, hy) || !siege_yields(i, terrain.idx(hx, hy))) return false;
+	for (const auto &g : siege_compounds)
+		if (std::find(g.claims.begin(), g.claims.end(), c) != g.claims.end())
+			return std::find(g.source_body.begin(), g.source_body.end(), c) == g.source_body.end();
+	return false;
+}
+
+// SIEGE-YIELD v6: while its own formation's crew turn the vehicle, a yielding member stays with the formation instead
+// of chasing its slot around the turn: inside the claims it steps out toward the formation's presence reference
+// (refresh_presence), outside it holds where it stands. Its slot may lie beyond the presence radius of the crew at
+// their turning stations (command.cpp refresh_presence), and walking there would cost the formation its commander.
+// The hold ends when the compound is settled; then the ordinary slot target returns. HOLD formations only.
+bool World::siege_turn_hold(int i) const {
+	if (i < 0 || i >= soldier_count() || is_convoy_crew(i) || is_siege_crew(i) || !convoy_person_yields(i, (int)team[i])) return false;
+	if (formations[form[i]].order != Order::HOLD) return false; // ordered formations keep following their orders
+	for (const auto &g : siege_compounds) {
+		if (g.members.empty()) continue;
+		bool turn = true;
+		for (const auto &m : g.members) if (m.from != m.to) { turn = false; break; }
+		const int crew = g.members.front().soldier;
+		if (turn && team[crew] == team[i] && form[crew] == form[i]) return true;
+	}
+	return false;
+}
+
+// SIEGE-YIELD: a turn-slot target inside a claim a soldier yields to moves to the nearest free cell (ring search, at
+// most 12 cells). Targets outside any claim, or of anybody who does not yield, are unchanged.
+void World::siege_slot_clear(int i, float &x, float &y) const {
+	if (siege_compounds.empty() || !std::isfinite(x) || !std::isfinite(y)) return;
+	if (siege_turn_hold(i)) {
+		const int hx = (int)std::floor(px[i]), hy = (int)std::floor(py[i]);
+		if (!terrain.contains(hx, hy) || !siege_yields(i, terrain.idx(hx, hy))) { x = px[i]; y = py[i]; return; } // hold
+		const Formation &f = formations[form[i]];
+		if (f.ref_valid && std::isfinite(f.ref_x) && std::isfinite(f.ref_y)) { x = f.ref_x; y = f.ref_y; } // step out toward the formation
+	}
+	const int ox = (int)std::floor(x), oy = (int)std::floor(y);
+	if (!terrain.contains(ox, oy) || !siege_yields(i, terrain.idx(ox, oy))) return;
+	for (int r = 1; r <= 12; ++r) // v5: the widest turn sweep (radius 7) plus its body
+		for (int dy = -r; dy <= r; ++dy)
+			for (int dx = -r; dx <= r; ++dx) {
+				if (std::max(std::abs(dx), std::abs(dy)) != r) continue;
+				const int cx = ox + dx, cy = oy + dy;
+				if (!terrain.contains(cx, cy) || !terrain.walkable(cx, cy)) continue;
+				const int v = terrain.idx(cx, cy);
+				if (!siege_route_cell(v) || siege_claims_cell(v, i)) continue;
+				x = (float)cx + 0.5f; y = (float)cy + 0.5f;
+				return;
+			}
+}
+
 int64_t World::begin_siege_compound(const std::vector<SiegeMember> &members,
 	const std::vector<int> &source_body, const std::vector<int> &target_body,
 	const std::vector<int> &sweep, double duration) {
@@ -211,6 +288,7 @@ int64_t World::begin_siege_compound(const std::vector<SiegeMember> &members,
 	std::vector<uint8_t> participants(count, 0), claims(cells, 0), destinations(cells, 0), swept(cells, 0), body_phase(cells, 0);
 	SiegeCompound g;
 	g.members = members; g.duration = duration;
+	g.source_body = source_body;
 	for (int c : sweep) { if (c < 0 || c >= cells || swept[c]) return 0; swept[c] = 1; }
 	int minx = terrain.w, miny = terrain.h, maxx = -1, maxy = -1;
 	uint8_t phase = 1;
@@ -265,10 +343,13 @@ int64_t World::begin_siege_compound(const std::vector<SiegeMember> &members,
 		if (siege_claims_cell(c)) return 0;
 		g.claims.push_back(c); g.heights.push_back(terrain.height[c]);
 	}
-	// Include every original body (KO and dead included), plus committed goals.
+	// Include every original body (KO and dead included), plus committed goals. SIEGE-YIELD: an own-team soldier
+	// standing in a claimed cell is admitted (it steps out in the stages that follow); any other body refuses.
+	const int crew_team=translating ? -1 : (int)team[members.front().soldier]; // turns only (see siege_claim_team)
 	for (int i=0;i<count;++i) if (!participants[i]) {
 		const int here=terrain.idx((int)std::floor(px[i]),(int)std::floor(py[i]));
-		if (claims[here] || (escort_goal[i]>=0 && claims[escort_goal[i]])) return 0;
+		const bool yields=claims[here] && !is_convoy_crew(i) && escort_goal[i]<0 && convoy_person_yields(i,crew_team);
+		if ((claims[here] && !yields) || (escort_goal[i]>=0 && claims[escort_goal[i]])) return 0;
 	}
 	if (siege_member_group.size()!=px.size()) siege_member_group.assign(px.size(),-1);
 	g.token=++siege_serial;
@@ -399,11 +480,13 @@ void World::resolve_siege_person(int i,float ox,float oy,float &x,float &y) cons
 	if(siege_person_blocked.empty() && convoy_body_owner.empty())return;
 	int cx=(int)std::floor(ox),cy=(int)std::floor(oy);const int source=terrain.idx(cx,cy);
 	int nx=(int)std::floor(x),ny=(int)std::floor(y);
-	if(nx!=cx){if(!terrain.contains(nx,cy) || !siege_person_cell(i,source,terrain.idx(nx,cy)))x=ox;else cx=nx;}
-	if(ny!=cy){if(!terrain.contains(cx,ny) || !siege_person_cell(i,source,terrain.idx(cx,ny)))y=oy;else cy=ny;}
+	// SIEGE-YIELD v4: a yielder stepping out crosses the Site-blocked sweep it yields to (siege_yield_passable).
+	const auto open=[&](int c){return siege_person_cell(i,source,c) || siege_yield_passable(i,c);};
+	if(nx!=cx){if(!terrain.contains(nx,cy) || !open(terrain.idx(nx,cy)))x=ox;else cx=nx;}
+	if(ny!=cy){if(!terrain.contains(cx,ny) || !open(terrain.idx(cx,ny)))y=oy;else cy=ny;}
 	for(int d=0;d<4;++d) {
 		const int tx=cx+DX[d],ty=cy+DY[d];
-		if(!terrain.contains(tx,ty) || siege_person_cell(i,source,terrain.idx(tx,ty)))continue;
+		if(!terrain.contains(tx,ty) || open(terrain.idx(tx,ty)))continue;
 		if(d==E)x=std::min(x,cx+1.f-cfg.wall_margin);if(d==W)x=std::max(x,cx+cfg.wall_margin);
 		if(d==S)y=std::min(y,cy+1.f-cfg.wall_margin);if(d==N)y=std::max(y,cy+cfg.wall_margin);
 	}
@@ -959,6 +1042,7 @@ void World::formation_stage(float dt) {
 				if ((tick + (uint32_t)i) % 4 == 0) slot_clip_[i] = ray_clip(f.cx, f.cy, x, y);
 				float c = slot_clip_[i];
 				if (c < 1.f) { x = f.cx + (x - f.cx) * c; y = f.cy + (y - f.cy) * c; }
+				siege_slot_clear(i, x, y); // SIEGE-YIELD
 				slot_tx_[i] = x; slot_ty_[i] = y;
 			}
 			continue;
@@ -1095,6 +1179,7 @@ void World::formation_stage(float dt) {
 			if ((tick + (uint32_t)i) % 4 == 0) slot_clip_[i] = ray_clip(f.cx, f.cy, x, y);
 			float c = slot_clip_[i];
 			if (c < 1.f) { x = f.cx + (x - f.cx) * c; y = f.cy + (y - f.cy) * c; if (resting) { clipped_x.push_back(x); clipped_y.push_back(y); } }
+			siege_slot_clear(i, x, y); // SIEGE-YIELD: a claim-yielding soldier's slot target avoids the compound claims
 			slot_tx_[i] = x; slot_ty_[i] = y;
 		}
 		if (resting) for (int i : f.members) {
@@ -1480,7 +1565,8 @@ void World::soldier_stage(float dt, int ch) {
 				if (qd2 < R * R && pd2 >= qd2) { qx = p_x; qy = p_y; break; }
 			}
 		}
-		if (terrain.contains(int(qx),int(qy)) && siege_claims_cell(terrain.idx(int(qx),int(qy)),i)) { qx=p_x; qy=p_y; }
+		// SIEGE-YIELD: a yielding soldier already inside a claim may walk through claimed cells while it steps out.
+		if (terrain.contains(int(qx),int(qy)) && siege_claims_cell(terrain.idx(int(qx),int(qy)),i) && !siege_yields(i,terrain.idx(int(p_x),int(p_y)))) { qx=p_x; qy=p_y; }
 		nx[i] = qx; ny[i] = qy;
 		vx[i] = (qx - p_x) / dt; vy[i] = (qy - p_y) / dt;
 		if (mounted[i]) { // CAV-1 heading history: one ring slot per step; the charge reads the window (cav_straight)
@@ -3231,9 +3317,15 @@ void World::convoy_follow_stage(Convoy &c, float dt) {
 // The step-out wish of a standing person whose cell a convoy claimed: toward the nearest unclaimed standable cell (legal
 // steps, through claimed cells when needed), the one nearest the person's slot, at run speed. Writes only the caller's velocity wish (parallel soldier pass).
 bool World::convoy_evacuation(int i, float &dvx, float &dvy) const {
-	if (convoy_claim_owner.empty() || cell[i] < 0 || cell[i] >= (int)convoy_claim_owner.size()) return false;
+	// SIEGE-YIELD: the same step-out serves siege claims. A cell claimed by a convoy is "claimed by another" unless it is
+	// the person's own convoy; a siege-claimed cell counts only for a soldier that yields to it (siege_yields).
+	const bool convoy_on = !convoy_claim_owner.empty();
+	if (i < 0 || i >= soldier_count() || cell[i] < 0 || cell[i] >= terrain.w * terrain.h) return false;
 	const int here = cell[i];
-	if (convoy_claim_owner[here] == 0 || convoy_claim_owner[here] == convoy_of[i]) return false;
+	const bool here_convoy = convoy_on && convoy_claim_owner[here] != 0 && convoy_claim_owner[here] != convoy_of[i];
+	const bool here_siege = siege_claims_cell(here, i);
+	if (!here_convoy && !here_siege) return false;
+	if (here_siege && !siege_yields(i, here)) return false;
 	const int hx = here % terrain.w, hy = here / terrain.w;
 	float tx = slot[i] >= 0 ? slot_tx_[i] : px[i], ty = slot[i] >= 0 ? slot_ty_[i] : py[i];
 	if (is_convoy_crew(i)) { // a crew member steps toward the side of its own crew slot
@@ -3244,7 +3336,8 @@ bool World::convoy_evacuation(int i, float &dvx, float &dvy) const {
 	const auto standable = [&](int x, int y) {
 		if (!terrain.contains(x, y) || !terrain.walkable(x, y)) return false;
 		const int v = terrain.idx(x, y);
-		return siege_route_cell(v) && !siege_claims_cell(v, i);
+		if (siege_yield_passable(i, v)) return true; // SIEGE-YIELD v4: through the Site-blocked sweep, never a body
+		return siege_route_cell(v) && (!siege_claims_cell(v, i) || siege_yields(i, v));
 	};
 	const auto step_ok = [&](int x, int y, int d) {
 		const int nx_ = x + DX[d], ny_ = y + DY[d];
@@ -3253,7 +3346,9 @@ bool World::convoy_evacuation(int i, float &dvx, float &dvy) const {
 	};
 	// breadth-first over legal steps, through claimed cells, to the nearest unclaimed cell (at most 6 steps): the free
 	// cell nearest the person's slot among the closest ones is the goal; the person steps toward its first cell
-	const int R = 6, S = 2 * R + 1;
+	// SIEGE-YIELD v5: a turn sweep reaches 7 cells from the anchor (counterweight); 12 steps cover its widest detour
+	// around the source body. Convoy claims keep the original 6.
+	const int R = here_siege ? 12 : 6, S = 2 * R + 1;
 	std::vector<int> dist((size_t)S * S, -1), first((size_t)S * S, -1);
 	std::vector<int> queue;
 	const auto key = [&](int x, int y) { return (y - hy + R) * S + (x - hx + R); };
@@ -3272,7 +3367,7 @@ bool World::convoy_evacuation(int i, float &dvx, float &dvy) const {
 			dist[(size_t)k] = cd + 1;
 			first[(size_t)k] = cd == 0 ? d : first[(size_t)key(cx, cy)];
 			const int v = terrain.idx(nx_, ny_);
-			if (convoy_claim_owner[v] == 0) {
+			if ((!convoy_on || convoy_claim_owner[v] == 0) && !siege_claims_cell(v, i)) {
 				const float ex = (float)nx_ + 0.5f - tx, ey = (float)ny_ + 0.5f - ty, score = ex * ex + ey * ey;
 				if (found_dist < 0 || score < best) { found_dist = cd + 1; best = score; bfirst = first[(size_t)k]; }
 			} else queue.push_back(v);

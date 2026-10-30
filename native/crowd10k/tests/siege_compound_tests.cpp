@@ -348,9 +348,304 @@ static void original_contact_revision_import() {
     REQUIRE(loaded.contact_revision[0]==prior+2);close(loaded.hp[0],hp-4.0);
 }
 
+// SIEGE-YIELD fixture: a stationary 2x2 turn sweep (x 9..11, y 10..11 plus a historical cell) with crew at (7,7),(8,7).
+// Soldier 2 (team 0, not crew) stands at (11,11) inside the sweep unless a test moves it.
+static void yield_turn(World &w, int64_t &token, double duration = 2) {
+	auto c = tail_case(w, E);
+	place(w, 0, 7, 7); place(w, 1, 8, 7);
+	c.members = {{0, 1001, cell(7, 7), cell(7, 7)}, {1, 1002, cell(8, 7), cell(8, 7)}};
+	c.source.clear(); c.target.clear();
+	for (int depth = 0; depth < 2; ++depth) for (int width = 0; width < 2; ++width) {
+		c.source.push_back(cell(10 + depth, 10 + width));
+		c.target.push_back(cell(10 - width, 10 + depth));
+	}
+	full_sweep(c);
+	place(w, 2, 11, 11);
+	token = w.begin_siege_compound(c.members, c.source, c.target, c.swept, duration);
+}
+static bool outside_sweep(const World &w, int i) {
+	const int c = w.terrain.idx((int)std::floor(w.px[i]), (int)std::floor(w.py[i]));
+	return !w.siege_claims_cell(c, -1);
+}
+
+static void own_team_yields_and_turn_completes() {
+	test_case = "SIEGE-YIELD: an own-team non-crew soldier in a turn sweep is admitted, steps out, the turn completes and the crew stays";
+	World one(1), four(4);
+	int64_t a = 0, b = 0;
+	yield_turn(one, a); yield_turn(four, b);
+	REQUIRE(a > 0 && b > 0);
+	if (a <= 0 || b <= 0) return;
+	REQUIRE(one.siege_claims_cell(cell(11, 11)) && one.siege_claims_cell(cell(9, 10)));
+	REQUIRE(one.save().empty()); // a pending compound refuses save, as before: no mid-yield save exists
+	for (int tick = 1; tick <= 12; ++tick) {
+		step(one); step(four);
+		REQUIRE(one.state_hash() == four.state_hash());
+		std::string error;
+		REQUIRE(one.validate(&error, true) && four.validate(&error, true));
+		close(one.px[0], 7.5); close(one.py[0], 7.5); close(one.px[1], 8.5); close(one.py[1], 7.5);
+	}
+	// After 3 s the own-team soldier has walked out of every claimed cell and is still standing (not KO, no damage).
+	REQUIRE(outside_sweep(one, 2) && outside_sweep(four, 2));
+	REQUIRE(one.person_id[2] == 2001 && one.hp[2] == 100 && one.ko[2] == 0);
+	REQUIRE(one.px[2] == four.px[2] && one.py[2] == four.py[2]);
+	const auto *g = one.siege_compound_state(a);
+	REQUIRE(g && g->complete && !g->cancelled && !g->aborted);
+	REQUIRE(one.settle_siege_compound(a) && four.settle_siege_compound(b));
+	REQUIRE(!one.siege_claims_cell(cell(10, 10)) && !four.siege_claims_cell(cell(10, 10)));
+	// The yielded soldier may now return into the old sweep: the claims are gone.
+	REQUIRE(one.set_siege_crew(0, false) && one.set_siege_crew(1, false));
+	REQUIRE(four.set_siege_crew(0, false) && four.set_siege_crew(1, false));
+	auto blob = one.save();
+	REQUIRE(!blob.empty());
+	World loaded(1);
+	REQUIRE(loaded.load(blob));
+	REQUIRE(loaded.state_hash() == one.state_hash());
+}
+
+static void enemy_in_sweep_still_blocks() {
+	test_case = "SIEGE-YIELD: an enemy or other-team person in the sweep still refuses the turn and changes nothing";
+	World w(1);
+	auto c = tail_case(w, E);
+	place(w, 0, 7, 7); place(w, 1, 8, 7);
+	c.members = {{0, 1001, cell(7, 7), cell(7, 7)}, {1, 1002, cell(8, 7), cell(8, 7)}};
+	c.source.clear(); c.target.clear();
+	for (int depth = 0; depth < 2; ++depth) for (int width = 0; width < 2; ++width) {
+		c.source.push_back(cell(10 + depth, 10 + width));
+		c.target.push_back(cell(10 - width, 10 + depth));
+	}
+	full_sweep(c);
+	place(w, 2, 11, 11);
+	w.team[2] = 7; // another team: not yielding
+	const auto before = w.state_hash();
+	REQUIRE(w.begin_siege_compound(c.members, c.source, c.target, c.swept, 2) == 0);
+	REQUIRE(w.state_hash() == before);
+	REQUIRE(!w.siege_claims_cell(cell(11, 11)));
+	// The same enemy is never moved by a claim: its slot target stays where the layout put it.
+	float x = 11.5f, y = 11.5f;
+	w.siege_slot_clear(2, x, y);
+	REQUIRE(x == 11.5f && y == 11.5f);
+	// An admitted own-team soldier stops yielding the moment its team changes (enemy inside a live claim).
+	World v(1);
+	int64_t token = 0;
+	yield_turn(v, token);
+	REQUIRE(token > 0);
+	if (token <= 0) return;
+	REQUIRE(v.siege_yields(2, cell(11, 11)));
+	v.team[2] = 7;
+	REQUIRE(!v.siege_yields(2, cell(11, 11)));
+}
+
+static void yield_slot_targets_avoid_claims() {
+	test_case = "SIEGE-YIELD: a yielding soldier's slot target inside the claims moves to the nearest free cell; others unchanged";
+	World w(1);
+	int64_t token = 0;
+	yield_turn(w, token);
+	REQUIRE(token > 0);
+	if (token <= 0) return;
+	float x = 10.5f, y = 10.5f;
+	w.siege_slot_clear(2, x, y);
+	REQUIRE(!w.siege_claims_cell(w.terrain.idx((int)x, (int)y), 2));
+	REQUIRE(std::abs(x - 10.5f) <= 6 && std::abs(y - 10.5f) <= 6);
+	float cx = 20.5f, cy = 20.5f;
+	w.siege_slot_clear(2, cx, cy);
+	REQUIRE(cx == 20.5f && cy == 20.5f); // outside every claim: untouched
+	float crew_x = 9.5f, crew_y = 10.5f;
+	w.siege_slot_clear(0, crew_x, crew_y); // siege crew: never yields
+	REQUIRE(crew_x == 9.5f && crew_y == 10.5f);
+	REQUIRE(w.settle_siege_compound(token) == false); // still pending: nothing settled
+}
+
+// SIEGE-YIELD v4 fixture, mirroring the Site integration turn: the commander (index 0, captain, NOT crew) leads the
+// same HOLD formation as the two stationary crew, stands in a turn sweep cell outside both bodies, and Site's person
+// navigation blocks the vehicle footprint plus the whole rotating sweep (build_siege_navigation, stage "rotate").
+struct YieldSite { std::vector<World::SiegeMember> members; std::vector<int> source, target, sweep, blocked; };
+static YieldSite yield_site(World &w) {
+	w.terrain.allocate(40,40);
+	std::fill(w.terrain.height.begin(),w.terrain.height.end(),(uint8_t)0);
+	w.terrain.base_height=w.terrain.height;
+	w.cfg.ai=false;w.cfg.auto_capture=false;w.cfg.rescue_seek_cells=0;w.cfg.bleed_per_game_hour=0;
+	const int f=w.add_formation(0,13.5f,13.5f,0,3,1,T_MELEE,0);
+	const int other=w.add_formation(0,30.5f,30.5f,0,1,1,T_MELEE,0);
+	rules::Equip e;e.family=rules::F_LONGSWORD;e.material=rules::M_IRON;
+	w.add_soldier(f,e,R_CAPTAIN,1000);w.add_soldier(f,e,R_REGULAR,1001);w.add_soldier(f,e,R_REGULAR,1002);w.add_soldier(other,e,R_CAPTAIN,2001);
+	w.finalize();for(auto &formation:w.formations)formation.ai_enabled=false;
+	place(w,0,13,12);place(w,1,7,7);place(w,2,8,7);place(w,3,30,30);
+	REQUIRE(w.set_siege_crew(1,true));REQUIRE(w.set_siege_crew(2,true));w.events.clear();
+	YieldSite s;
+	s.members={{1,1001,cell(7,7),cell(7,7)},{2,1002,cell(8,7),cell(8,7)}};
+	for(int y=9;y<=11;++y)for(int x=10;x<=11;++x)s.source.push_back(cell(x,y)); // 2 x 3, facing up
+	for(int y=10;y<=11;++y)for(int x=10;x<=12;++x)s.target.push_back(cell(x,y)); // 3 x 2, facing right
+	for(int y=8;y<=15;++y)for(int x=8;x<=15;++x)s.sweep.push_back(cell(x,y));     // the turn circle (radius 4) square
+	s.blocked=s.sweep; // footprint (inside the sweep) plus the rotating sweep
+	return s;
+}
+static bool in_cells(const World &w,int i,const std::vector<int> &cells) {
+	const int c=w.terrain.idx((int)std::floor(w.px[i]),(int)std::floor(w.py[i]));
+	return std::find(cells.begin(),cells.end(),c)!=cells.end();
+}
+
+static void commander_steps_out_under_site_navigation() {
+	test_case="SIEGE-YIELD v4: a formation-leading own-team commander steps out of a Site-blocked turn sweep, then returns";
+	World one(1),four(4);
+	auto s=yield_site(one);yield_site(four);
+	// Before the turn: the commander holds its slot, inside the future sweep but outside both bodies.
+	for(int k=0;k<8;++k){step(one);step(four);}
+	REQUIRE(in_cells(one,0,s.sweep) && !in_cells(one,0,s.source) && !in_cells(one,0,s.target));
+	int slot_index=-1;float home_x=0,home_y=0,clip=0;
+	REQUIRE(one.slot_target(0,slot_index,home_x,home_y,clip));
+	REQUIRE(slot_index>=0 && in_cells(one,0,{one.terrain.idx((int)home_x,(int)home_y)}));
+	const int64_t a=one.begin_siege_compound(s.members,s.source,s.target,s.sweep,3);
+	const int64_t b=four.begin_siege_compound(s.members,s.source,s.target,s.sweep,3);
+	REQUIRE(a>0 && b>0);
+	if(a<=0 || b<=0) return;
+	// Site syncs its person navigation after the turn begins: footprint plus the rotating sweep (stage "rotate").
+	REQUIRE(one.set_siege_navigation(s.blocked,{}) && four.set_siege_navigation(s.blocked,{}));
+	// The mask exemption is the yielder's only: never the current body, never for crew or a person of another team.
+	// v5: the future (target-only) body is still empty and passable; the current (source) body never is.
+	REQUIRE(one.siege_yield_passable(0,cell(13,13)) && !one.siege_yield_passable(0,cell(11,10)) && one.siege_yield_passable(0,cell(12,11)));
+	REQUIRE(!one.siege_person_cell(0,cell(13,12),cell(14,12))); // committed Site steps keep the mask (order_*_step)
+	REQUIRE(!one.siege_yield_passable(1,cell(13,13)) && !one.siege_yield_passable(3,cell(15,12))); // crew; own team outside the sweep
+	World enemy(1);yield_site(enemy);enemy.team[3]=7;place(enemy,3,16,12);
+	REQUIRE(enemy.begin_siege_compound(s.members,s.source,s.target,s.sweep,3)>0);
+	REQUIRE(enemy.set_siege_navigation(s.blocked,{}));
+	place(enemy,3,13,12);REQUIRE(!enemy.siege_yield_passable(3,cell(13,13)) && !enemy.siege_yields(3,cell(13,12))); // other team inside: no exemption
+	bool left=false;
+	for(int tick=1;tick<=12;++tick) {
+		step(one);step(four);
+		REQUIRE(one.state_hash()==four.state_hash());
+		std::string error;REQUIRE(one.validate(&error,true) && four.validate(&error,true));
+		close(one.px[1],7.5);close(one.py[1],7.5);close(one.px[2],8.5);close(one.py[2],7.5);
+		if(!one.siege_compound_state(a)->complete && !in_cells(one,0,s.sweep)) left=true;
+		REQUIRE(!in_cells(one,0,s.source) && !in_cells(one,0,s.target)); // never through the turning vehicle's bodies
+	}
+	REQUIRE(left); // stepped out while the turn was still rotating
+	REQUIRE(!in_cells(one,0,s.sweep) && !in_cells(four,0,s.sweep));
+	REQUIRE(one.px[0]==four.px[0] && one.py[0]==four.py[0] && one.hp[0]==100 && one.ko[0]==0);
+	REQUIRE(one.siege_compound_state(a)->complete && !one.siege_compound_state(a)->cancelled);
+	REQUIRE(one.settle_siege_compound(a) && four.settle_siege_compound(b));
+	// Site releases the sweep and keeps only the turned footprint.
+	REQUIRE(one.set_siege_navigation(s.target,{}) && four.set_siege_navigation(s.target,{}));
+	for(int k=0;k<16;++k){step(one);step(four);REQUIRE(one.state_hash()==four.state_hash());}
+	REQUIRE(std::abs(one.px[0]-home_x)<0.25f && std::abs(one.py[0]-home_y)<0.25f); // back at its slot
+}
+
+// SIEGE-YIELD v5: the Site integration geometry. A traction (3 x 4, radius 5) or counterweight (4 x 6, radius 7)
+// trebuchet at anchor (18,20) faces up and turns right; the sweep is the anchor's radius square (siege_turn_sweep). The
+// formation-leading commander stands at anchor + (1,1), as (21,42) does at anchor (20,41): inside the FUTURE body, so it
+// must cross target-body cells (still empty) and up to 8 sweep cells to step out; the current body stays impassable.
+static void commander_in_target_body_steps_out(int size_x, int size_y, int radius, double duration) {
+	test_case="SIEGE-YIELD v5: a commander standing in the future body of a Site-blocked turn steps out during the rotation";
+	World one(1),four(4);
+	std::vector<World::SiegeMember> members;
+	std::vector<int> source,target,sweep,blocked;
+	for(World *w:{&one,&four}) {
+		w->terrain.allocate(40,40);
+		std::fill(w->terrain.height.begin(),w->terrain.height.end(),(uint8_t)0);
+		w->terrain.base_height=w->terrain.height;
+		w->cfg.ai=false;w->cfg.auto_capture=false;w->cfg.rescue_seek_cells=0;w->cfg.bleed_per_game_hour=0;
+		const int f=w->add_formation(0,19.5f,22.5f,0,3,1,T_MELEE,0);
+		rules::Equip e;e.family=rules::F_LONGSWORD;e.material=rules::M_IRON;
+		w->add_soldier(f,e,R_CAPTAIN,1000);w->add_soldier(f,e,R_REGULAR,1001);w->add_soldier(f,e,R_REGULAR,1002);
+		w->finalize();for(auto &formation:w->formations)formation.ai_enabled=false;
+		place(*w,0,19,21);place(*w,1,10,30);place(*w,2,11,30);
+		REQUIRE(w->set_siege_crew(1,true));REQUIRE(w->set_siege_crew(2,true));w->events.clear();
+	}
+	members={{1,1001,cell(10,30),cell(10,30)},{2,1002,cell(11,30),cell(11,30)}};
+	for(int forward=0;forward<size_y;++forward)for(int across=0;across<size_x;++across) {
+		source.push_back(cell(18+across,20-forward));   // facing up, side right
+		target.push_back(cell(18+forward,20+across));   // facing right, side down
+	}
+	for(int y=-radius;y<=radius;++y)for(int x=-radius;x<=radius;++x)sweep.push_back(cell(18+x,20+y));
+	blocked=sweep;
+	REQUIRE(one.set_siege_navigation(source,{}) && four.set_siege_navigation(source,{}));
+	for(int k=0;k<8;++k){step(one);step(four);}
+	REQUIRE(in_cells(one,0,target) && !in_cells(one,0,source)); // stands where the turned body will be
+	const int64_t a=one.begin_siege_compound(members,source,target,sweep,duration);
+	const int64_t b=four.begin_siege_compound(members,source,target,sweep,duration);
+	REQUIRE(a>0 && b>0);
+	if(a<=0 || b<=0) return;
+	REQUIRE(one.set_siege_navigation(blocked,{}) && four.set_siege_navigation(blocked,{}));
+	REQUIRE(one.siege_yield_passable(0,cell(19,22)) && !one.siege_yield_passable(0,cell(19,20))); // target yes, source no
+	bool left=false;
+	const int ticks=(int)std::ceil(duration/.25);
+	for(int tick=1;tick<=ticks;++tick) {
+		step(one);step(four);
+		REQUIRE(one.state_hash()==four.state_hash());
+		std::string error;REQUIRE(one.validate(&error,true) && four.validate(&error,true));
+		close(one.px[1],10.5);close(one.py[1],30.5);close(one.px[2],11.5);close(one.py[2],30.5);
+		REQUIRE(!in_cells(one,0,source)); // never through the current body
+		if(!one.siege_compound_state(a)->complete && !in_cells(one,0,sweep)) left=true;
+	}
+	REQUIRE(left);
+	REQUIRE(!in_cells(one,0,sweep) && one.px[0]==four.px[0] && one.py[0]==four.py[0] && one.ko[0]==0);
+	REQUIRE(one.siege_compound_state(a)->complete && !one.siege_compound_state(a)->cancelled);
+	REQUIRE(one.settle_siege_compound(a) && four.settle_siege_compound(b));
+	REQUIRE(one.set_siege_navigation(target,{}) && four.set_siege_navigation(target,{}));
+	for(int k=0;k<12;++k){step(one);step(four);REQUIRE(one.state_hash()==four.state_hash());REQUIRE(!in_cells(one,0,target));}
+}
+
+// SIEGE-YIELD v6: the commander keeps command through the turn. As in the Site fixture, eight crew stand at their
+// turning stations behind the body (anchor + 6 or 8 back), the commander stands behind the body inside the sweep, and its
+// own formation slot lies north of the vehicle, beyond the presence radius (command.cpp refresh_presence) of the crew
+// row. Stepping out it stays with the formation (siege_turn_hold), so it stays present and command-eligible.
+static void commander_keeps_command_through_turn(int size_x, int size_y, int radius, int back, double duration) {
+	test_case="SIEGE-YIELD v6: a stepping-out commander stays with its turning crew and keeps command";
+	World one(1),four(4);
+	std::vector<World::SiegeMember> members;
+	std::vector<int> source,target,sweep;
+	for(int forward=0;forward<size_y;++forward)for(int across=0;across<size_x;++across) {
+		source.push_back(cell(18+across,20-forward)); target.push_back(cell(18+forward,20+across));
+	}
+	for(int y=-radius;y<=radius;++y)for(int x=-radius;x<=radius;++x)sweep.push_back(cell(18+x,20+y));
+	for(int k=0;k<8;++k)members.push_back({1+k,(int64_t)(1001+k),cell(16+k,20+back),cell(16+k,20+back)});
+	for(World *w:{&one,&four}) {
+		w->terrain.allocate(40,40);
+		std::fill(w->terrain.height.begin(),w->terrain.height.end(),(uint8_t)0);
+		w->terrain.base_height=w->terrain.height;
+		w->cfg.ai=false;w->cfg.auto_capture=false;w->cfg.rescue_seek_cells=0;w->cfg.bleed_per_game_hour=0;
+		const int f=w->add_formation(0,18.5f,8.5f,0,3,1,T_MELEE,0);
+		rules::Equip e;e.family=rules::F_LONGSWORD;e.material=rules::M_IRON;
+		w->add_soldier(f,e,R_CAPTAIN,1000);
+		for(int k=0;k<8;++k)w->add_soldier(f,e,R_REGULAR,1001+k);
+		w->finalize();for(auto &formation:w->formations)formation.ai_enabled=false;
+		place(*w,0,19,21);
+		for(int k=0;k<8;++k){place(*w,1+k,16+k,20+back);REQUIRE(w->set_siege_crew(1+k,true));}
+		w->events.clear();
+		REQUIRE(w->set_siege_navigation(source,{}));
+		step(*w);
+		place(*w,0,19,21); // the commander stands behind the body (Site: stuck there before the turn)
+	}
+	int slot_index=-1;float sx=0,sy=0,clip=0;
+	REQUIRE(one.slot_target(0,slot_index,sx,sy,clip) && sy<20.f-radius); // its own slot lies north, outside the sweep
+	REQUIRE(one.command_eligible(0) && one.formations[0].commander_present && in_cells(one,0,sweep) && in_cells(one,0,target));
+	const int64_t a=one.begin_siege_compound(members,source,target,sweep,duration);
+	const int64_t b=four.begin_siege_compound(members,source,target,sweep,duration);
+	REQUIRE(a>0 && b>0);
+	if(a<=0 || b<=0) return;
+	REQUIRE(one.set_siege_navigation(sweep,{}) && four.set_siege_navigation(sweep,{}));
+	REQUIRE(one.siege_turn_hold(0) && !one.siege_turn_hold(1));
+	bool left=false;
+	const int ticks=(int)std::ceil(duration/.25);
+	for(int tick=1;tick<=ticks;++tick) {
+		step(one);step(four);
+		REQUIRE(one.state_hash()==four.state_hash());
+		std::string error;REQUIRE(one.validate(&error,true) && four.validate(&error,true));
+		REQUIRE(!in_cells(one,0,source));
+		REQUIRE(one.present[0]==1 && one.command_eligible(0) && one.formations[0].commander_present); // never loses command
+		if(!one.siege_compound_state(a)->complete && !in_cells(one,0,sweep)) left=true;
+	}
+	REQUIRE(left);
+	REQUIRE(one.siege_compound_state(a)->complete && one.settle_siege_compound(a) && four.settle_siege_compound(b));
+	REQUIRE(!one.siege_turn_hold(0)); // settled: the ordinary slot returns
+}
+
 int main() {
 	admission_atomicity();phase_barrier_and_save();hit_death_cancel_finish();terrain_abort_one_fall();crew_exclusion_and_thread_determinism();approach_source_and_wreck_navigation();original_orders_are_preserved();
 	true_tail_four_directions();tail_rejections();stationary_rotation_keeps_full_sweep();tail_interruptions_finish_original_barrier();
 	original_contact_revision_import();
+	own_team_yields_and_turn_completes();enemy_in_sweep_still_blocks();yield_slot_targets_avoid_claims();
+	commander_steps_out_under_site_navigation();
+	commander_in_target_body_steps_out(3,4,5,6);commander_in_target_body_steps_out(4,6,7,10);
+	commander_keeps_command_through_turn(3,4,5,6,6);commander_keeps_command_through_turn(4,6,7,8,10);
 	std::printf("SIEGE_NATIVE_COMPOUND_CONTRACT checks=%d failures=%d\n",checks,failures);return failures?1:0;
 }

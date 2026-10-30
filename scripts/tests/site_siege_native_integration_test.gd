@@ -66,7 +66,7 @@ func _run() -> void:
 	create_timer(600.0).timeout.connect(func() -> void:
 		failed = true; _write_result(); printerr("SIEGE INTEGRATION FAIL: deadline"); quit(3))
 	if not _check(suite in ["native", "parity"], "known native/parity suite", suite): return
-	if not _check(case_name in ["ram_min", "ram_full", "ballista", "traction", "traction_offcentre", "counterweight", "tower_escape", "ladder", "takeover", "ai"], "one bounded case", case_name): return
+	if not _check(case_name in ["ram_min", "ram_full", "ballista", "traction", "traction_offcentre", "traction_turn", "traction_turn_blocked", "counterweight", "counterweight_turn", "tower_escape", "ladder", "takeover", "ai"], "one bounded case", case_name): return
 	if not _preflight(): return
 	if case_name == "tower_escape":
 		if not _check(suite == "native", "tower escape is a native integration case"): return
@@ -77,6 +77,9 @@ func _run() -> void:
 	elif case_name == "traction_offcentre":
 		if not _check(suite == "native", "off-centre crew traction is a native integration case"): return
 		await _exercise("traction_trebuchet", int(SiteRuntime.SIEGE_DEFINITIONS["traction_trebuchet"].standard_crew), true, "stone", true)
+	elif case_name == "traction_turn_blocked":
+		if not _check(suite == "native", "turn refusal is a native integration case"): return
+		await _turn_blocked_case()
 	elif case_name == "takeover":
 		if not _check(suite == "native", "takeover is a native integration case"): return
 		await _takeover_case()
@@ -84,7 +87,7 @@ func _run() -> void:
 		if not _check(suite == "native", "AI is a native integration case"): return
 		await _native_ai_case()
 	else:
-		var kind := "ram" if case_name.begins_with("ram_") else ("traction_trebuchet" if case_name in ["traction", "traction_offcentre"] else ("counterweight_trebuchet" if case_name == "counterweight" else "ballista"))
+		var kind := "ram" if case_name.begins_with("ram_") else ("traction_trebuchet" if case_name in ["traction", "traction_offcentre", "traction_turn"] else ("counterweight_trebuchet" if case_name in ["counterweight", "counterweight_turn"] else "ballista"))
 		var count := 2 if case_name == "ram_min" else int(SiteRuntime.SIEGE_DEFINITIONS[kind].standard_crew)
 		if suite == "parity":
 			var ordinary: Dictionary = await _exercise(kind, count, false, "wood" if kind == "ram" else "stone", false)
@@ -236,7 +239,7 @@ func _make_context(kind: String, count: int, native: bool, material: String, kil
 		target = {"type": "structure", "feature_id": backing, "part_id": "c:%d" % lab.terrain.index(backing_cell)}
 		if not _check(_part_hp(target) == 300.0 and absf(float(lab.siege_target(target).height) - 0.8) <= EPS,
 			"paid backing part supplies the real lower aim behind the original victim", {"target": target, "aim": lab.siege_target(target)}): return {}
-	var pose := _ram_pose(target) if kind == "ram" else {"start": Vector2i(20, 41), "goal": Vector2i(20, 41), "facing": Vector2i.RIGHT}
+	var pose := _ram_pose(target) if kind == "ram" else {"start": Vector2i(20, 41), "goal": Vector2i(20, 41), "facing": Vector2i.UP if _is_turn_case() else Vector2i.RIGHT}
 	if failed: return {}
 	var key := ""
 	var vehicle := {}
@@ -259,6 +262,7 @@ func _make_context(kind: String, count: int, native: bool, material: String, kil
 		positions[0] = lab.terrain.cell_from_index(int(part.cells[0])) + Vector2i.LEFT
 	else:
 		for slot in range(count): positions.append(SiteRuntime.siege_crew_cell(lab.terrain, vehicle, slot) - pose.facing)
+	# Turn fixtures keep the default commander cell, which lies inside the turn sweep: SIEGE-YIELD makes it step out before the turn completes.
 	var sides: Array[Dictionary] = [_side(positions.size(), 0)]
 	var formations: Array = [positions]
 	if kill_person:
@@ -318,6 +322,123 @@ func _make_context(kind: String, count: int, native: bool, material: String, kil
 
 # S3: one native crew member stands about 0.55 cell off its station centre, in the neighbouring floor cell.
 # The station rule (shared with the work pose) must still count it, and the round must still fire.
+# S4 helper: the fixture starts facing the wall perpendicular (UP); one 90-degree native turn faces it (RIGHT).
+func _turn_ninety(context: Dictionary) -> bool:
+	var vehicle := _vehicle(context)
+	var old := Vector2i(int(vehicle.facing[0]), int(vehicle.facing[1]))
+	var turned := Vector2i(-old.y, old.x)
+	if not _check(old == Vector2i.UP and turned == Vector2i.RIGHT, "turn fixture faces the wall perpendicular before the turn", {"old": old, "turned": turned}): return false
+	if not _sweep_clear(context, "turn sweep has no blocking person before the turn (own-team yielders allowed)"): return false
+	var ordered: Dictionary = lab.site_controller.vehicles.order_siege(context.key, "turn", {"facing": [turned.x, turned.y]}, int(context.commander), true)
+	if not _check(ordered.ok, "original 90-degree turn command admitted", ordered): return false
+	# SIEGE-YIELD: the own-team commander stands inside the sweep when the turn is planned; the native compound must start anyway.
+	context["turn_sweep"] = lab.site_controller.vehicles._turn_sweep(_vehicle(context))
+	if not _check(context.turn_sweep.has(_commander_cell_index(context)), "own-team commander stands inside the turn sweep at admission", context.turn_sweep): return false
+	if not await _until(func() -> bool: return lab.site_controller.vehicles._turn_crew_ready(_vehicle(context)), 90.0, "crew reaches the turning stations", true, func() -> Dictionary: return _turn_diagnostic(context)): return false
+	if not _sweep_clear(context, "turn sweep has no blocking person while the crew reaches the turning stations"): return false
+	context["turned"] = turned
+	context["commander_left_sweep"] = false
+	if not await _until(func() -> bool: return _turned_watching_commander(context), 150.0, "original native turn completes and the crew returns to firing stations", true, func() -> Dictionary: return _turn_diagnostic(context)): return false
+	# The yielder returns to its formation slot once the turn releases the sweep, so the step-out is observed during the rotation.
+	return _check(bool(context.commander_left_sweep), "own-team commander steps out of the turn sweep while the native turn rotates", _turn_diagnostic(context))
+
+# SIEGE-YIELD helper: _turned, also recording whether the commander stood outside the sweep during the native rotation.
+func _turned_watching_commander(context: Dictionary) -> bool:
+	var action: Dictionary = _vehicle(context).get("action", {})
+	if str(action.get("stage", "")) == "rotate" and int(action.get("native_token", 0)) > 0 and not context.turn_sweep.has(_commander_cell_index(context)):
+		context["commander_left_sweep"] = true
+	return _turned(context)
+
+# SIEGE-YIELD helper: the commander's current original cell index (native person, read-only).
+func _commander_cell_index(context: Dictionary) -> int:
+	var person: Dictionary = lab.site_controller.person_actions._person(int(context.commander), false)
+	return lab.terrain.index(person.get("cell", Vector2i(-1, -1))) if not person.is_empty() else -1
+
+# S4: read-only. A turn needs no blocking person in its sweep (SIEGE-YIELD: same-team non-crew soldiers excepted); no person is moved here.
+func _sweep_clear(context: Dictionary, label: String) -> bool:
+	var vehicle := _vehicle(context)
+	var vehicles = lab.site_controller.vehicles
+	var sweep: Array[int] = vehicles._turn_sweep(vehicle)
+	var block: Dictionary = vehicles._turn_block(vehicle, sweep, vehicles._turn_exempt(vehicle))
+	return _check(block.is_empty(), label, block)
+
+# S4 refusal case (own run, ends here): an ENEMY person inside the sweep blocks the proposal and is named; the own-team
+# commander standing in the same sweep does not (SIEGE-YIELD). The enemy is the kill_person victim side.
+func _turn_blocked_case() -> void:
+	var context := _make_context("traction_trebuchet", 8, true, "stone", true, false, 0)
+	if failed: return
+	var vehicle := _vehicle(context)
+	var vehicles = lab.site_controller.vehicles
+	if not await _until(func() -> bool: return vehicles.crew_ready(_vehicle(context)), 40.0, "crew walks to the firing stations"): return
+	var ordered: Dictionary = vehicles.order_siege(context.key, "turn", {"facing": [1, 0]}, int(context.commander), true)
+	if not _check(ordered.ok, "original 90-degree turn command admitted for the refusal check", ordered): return
+	if not await _until(func() -> bool: return vehicles._turn_crew_ready(_vehicle(context)), 90.0, "crew reaches the turning stations", true, func() -> Dictionary: return _turn_diagnostic(context)): return
+	if not _sweep_clear(context, "turn sweep has no blocking person before the intruder check"): return
+	var sweep: Array[int] = vehicles._turn_sweep(vehicle)
+	var exempt: Dictionary = vehicles._turn_exempt(vehicle)
+	var anchor := lab.terrain.cell_from_index(int(vehicle.cell))
+	var radius := int(SiteRuntime.SIEGE_DEFINITIONS[str(vehicle.kind)].turn_radius)
+	var inside := Vector2i(-1, -1)
+	for value: int in sweep:
+		var cell: Vector2i = lab.terrain.cell_from_index(value)
+		if maxi(absi(cell.x - anchor.x), absi(cell.y - anchor.y)) == radius - 1 and lab.terrain.is_walkable(cell) and vehicles._turn_people_at(cell, exempt).is_empty():
+			inside = cell
+			break
+	if not _check(inside != Vector2i(-1, -1), "a free walkable cell exists inside the sweep"): return
+	var own_block: Dictionary = vehicles._turn_block(vehicle, sweep, exempt)
+	_check(own_block.is_empty(), "own-team commander standing in the sweep does not block the turn", own_block)
+	var enemy := int(context.victim)
+	if _move_native_person(enemy, inside).is_empty(): return
+	var block: Dictionary = vehicles._turn_block(vehicle, sweep, exempt)
+	_check(str(block.get("reason", "")) == "person" and block.get("people", []).has("native:%d" % enemy), "enemy inside the sweep is named by turn_block", block)
+	_check(vehicles._siege_turn_plan(vehicle).is_empty(), "no turn is proposed while the enemy stands in the sweep")
+
+# Moves one native person through the original setter. Returns the previous state for restore, or empty on refusal.
+func _move_native_person(identity: int, cell: Vector2i) -> PackedFloat64Array:
+	var host: Node = lab.crowd_site
+	var unit: int = int(host.crowd.soldier_index(identity))
+	var previous: PackedFloat64Array = host.crowd.get_soldier_state(unit)
+	var values: PackedFloat64Array = previous.duplicate()
+	values[14] = float(cell.x) + 0.5
+	values[15] = float(cell.y) + 0.5
+	var refs: PackedInt64Array = host.crowd.soldier_refs(unit)
+	if not _check(host.crowd.set_soldier_state(unit, values, refs), "non-crew person moves through the original setter", {"identity": identity, "cell": cell}): return PackedFloat64Array()
+	host._occupancy_cache.clear()
+	host._siege_cell_masks.clear() # Test-only: a direct setter skips the per-step mask clear.
+	return previous
+
+# S4 diagnostic (failure path only): which turn stage stalled, the native group, and each crew member's station state.
+func _turn_diagnostic(context: Dictionary) -> Dictionary:
+	var vehicle := _vehicle(context)
+	var vehicles = lab.site_controller.vehicles
+	var action: Dictionary = vehicle.get("action", {})
+	var report := {"phase": str(vehicle.get("phase", "")), "command": str(vehicle.get("command", {}).get("type", "")), "stage": str(action.get("stage", "")), "native_token": int(action.get("native_token", 0)), "elapsed": float(action.get("elapsed", 0.0)), "facing": vehicle.facing, "cell": int(vehicle.cell), "last_event_error": lab.crowd_site.last_event_error if lab.crowd_site != null else {}}
+	if int(report.native_token) > 0: report["group"] = lab.crowd_site.siege_group_state(int(report.native_token))
+	report["turn_plan_empty"] = vehicles._siege_turn_plan(vehicle).is_empty()
+	report["turn_contacts_valid"] = vehicles._turn_contacts_valid(vehicle)
+	var sweep: Array[int] = vehicles._turn_sweep(vehicle)
+	report["turn_fits"] = vehicles._turn_fits(vehicle, sweep, vehicles._turn_exempt(vehicle))
+	report["turn_block"] = vehicles._turn_block(vehicle, sweep, vehicles._turn_exempt(vehicle))
+	report["turn_crew_ready"] = vehicles._turn_crew_ready(vehicle)
+	var crew: Array = []
+	for slot: String in vehicle.crew_slots:
+		var person: Dictionary = vehicles._operator(int(vehicle.crew_slots[slot]))
+		if person.is_empty():
+			crew.append({"slot": slot, "missing": true})
+			continue
+		var unit := int(person.unit)
+		var firing: Vector2i = vehicles.crew_cell(vehicle, slot, false)
+		var turning: Vector2i = vehicles.crew_cell(vehicle, slot, true)
+		crew.append({"slot": slot, "cell": person.cell, "position": person.get("position", Vector2.ZERO), "moving_to": person.owner.moving_to[unit], "pose": str(person.owner.combat_hot_get(unit, &"pose")), "firing_cell": firing, "firing_at_station": vehicles._crew_at_station(vehicle, slot, person, false), "firing_ground": vehicles._crew_ground_station(vehicle, firing), "turning_cell": turning, "turning_at_station": vehicles._crew_at_station(vehicle, slot, person, true), "turning_ground": vehicles._crew_ground_station(vehicle, turning), "turning_walkable": lab.terrain.contains(turning) and lab.terrain.is_walkable(turning), "turning_height": lab.terrain.effective_height(turning) if lab.terrain.contains(turning) else -1, "vehicle_base": lab.terrain.effective_height(lab.terrain.cell_from_index(int(vehicle.cell))), "turn_radius": int(SiteRuntime.SIEGE_DEFINITIONS[str(vehicle.kind)].turn_radius)})
+	report["crew"] = crew
+	var commander: Dictionary = lab.site_controller.person_actions._person(int(context.commander), false)
+	report["commander"] = {"cell": commander.get("cell", Vector2i(-1, -1)), "position": commander.get("position", Vector2.ZERO)}
+	return report
+
+func _turned(context: Dictionary) -> bool:
+	var current := _vehicle(context)
+	return Vector2i(int(current.facing[0]), int(current.facing[1])) == context.turned and current.action.is_empty() and lab.site_controller.vehicles.crew_ready(current)
+
 func _displace_crew_offcentre(context: Dictionary, vehicle: Dictionary, count: int) -> bool:
 	var station: Vector2i = lab.site_controller.vehicles.crew_cell(vehicle, "0")
 	var occupied_cells: Array = SiteRuntime.siege_cells(lab.terrain, vehicle)
@@ -364,6 +485,9 @@ func _until(predicate: Callable, seconds: float, label: String, combat: bool = t
 	if not passed and diagnostic.is_valid(): details["admission"] = diagnostic.call()
 	return _check(passed, label, details)
 
+func _is_turn_case() -> bool:
+	return case_name.contains("_turn")
+
 func _vehicle(context: Dictionary) -> Dictionary:
 	return lab.terrain.site.vehicles.get(str(context.key), {})
 
@@ -407,6 +531,8 @@ func _exercise(kind: String, count: int, native: bool, material: String, persist
 	if not await _until(func() -> bool: return lab.site_controller.vehicles.crew_ready(vehicle), 40.0, "real crew approach arrives at original stations"): return {}
 	if not _check(vehicle.crew_slots.size() == count, "crew count equals original assigned IDs", vehicle.crew_slots): return {}
 	if case_name == "traction_offcentre" and not _displace_crew_offcentre(context, vehicle, count): return {}
+	# S4: the 90-degree turn is planned from native positions (no grid planner) and must complete before the attack.
+	if _is_turn_case() and not await _turn_ninety(context): return {}
 	for identity: int in context.crew:
 		var before := _canonical()
 		var rejected: Dictionary = lab.site_controller.person_actions.begin_structure_attack(identity, str(context.target.get("feature_id", "missing")), str(context.target.get("part_id", "missing")))
@@ -442,6 +568,9 @@ func _exercise(kind: String, count: int, native: bool, material: String, persist
 		var release_elapsed := action_seconds - begun
 		if not _check(absf(release_elapsed - release_seconds) <= DT + EPS, "release action time equals actual crew multiplier", {"actual": release_elapsed, "expected": release_seconds}): return {}
 		flight_goal = lab.siege_projectiles[0].goal
+		if _is_turn_case():
+			var fired := Vector2(flight_goal.x, flight_goal.y) - lab.siege_muzzle(vehicle)
+			if not _check(fired.normalized().dot(Vector2(context.turned)) > 0.9, "round fires along the new facing after the native turn", {"fired": fired, "turned": context.turned}): return {}
 		if int(context.victim) > 0:
 			results.append({"ballista_victim_real_release": _ballista_victim_diagnostic(context)})
 		if not _check(int(vehicle.next_attack_seq) == sequence + 1 and int(vehicle.holder.version) == holder_version + 1 and int(vehicle.cargo.get(str(rule.ammo), 0)) == 0, "real release debits original ammunition/version/sequence once"): return {}

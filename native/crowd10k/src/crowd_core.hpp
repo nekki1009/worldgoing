@@ -488,6 +488,7 @@ public:
 		std::vector<SiegeMember> members;
 		std::vector<int> claims;
 		std::vector<uint8_t> heights;
+		std::vector<int> source_body; // SIEGE-YIELD: the vehicle's current body cells (subset of claims); transient like the compound
 		double elapsed = 0, duration = 0;
 		bool cancelled = false, complete = false, aborted = false;
 	};
@@ -506,6 +507,16 @@ public:
 	bool cancel_siege_compound(int64_t token);
 	bool settle_siege_compound(int64_t token);
 	bool siege_claims_cell(int cell, int ignore_person = -1) const;
+	// SIEGE-YIELD (decision 2026-10-30 A): own-team non-crew people standing in a compound's claimed cells step out
+	// (convoy_evacuation rules) and their slot targets avoid the claims. Derived from the saved claims: no new state.
+	int siege_claim_team(int cell) const;                       // team of the compound claiming cell, -1 none
+	bool siege_yields(int person, int cell) const;              // person may stand in / pass through cell's siege claim
+	void siege_slot_clear(int person, float &x, float &y) const; // slot target inside a yielded claim -> nearest free cell
+	bool siege_turn_hold(int person) const; // v6: yielder whose own formation's crew are turning: stays with the formation
+	// Site also blocks a rotating sweep in the person mask (build_siege_navigation); a yielder may still stand on and step
+	// through the sweep cells it yields to (the future target body included: it is still empty), never the vehicle's
+	// current (source) body.
+	bool siege_yield_passable(int person, int cell) const;
 	bool siege_compound_valid(const SiegeCompound &group, const Terrain &ground) const;
 	void abort_siege_compound(int index);
 	void advance_siege_compounds(float dt);

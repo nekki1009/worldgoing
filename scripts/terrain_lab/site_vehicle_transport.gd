@@ -298,7 +298,7 @@ func _turn_block(vehicle: Dictionary, sweep: Array[int], exempt: Dictionary = {}
 		elif height != int(lab.terrain.height_levels[value]): reason = "height_not_natural"
 		elif not Runtime.technology_siege_ground_cell_allowed(lab.terrain, vehicle, cell): reason = "technology_ground"
 		elif int(lab.terrain.surface_types[value]) in [TerrainData.Surface.WATER, TerrainData.Surface.WETLAND]: reason = "surface_water_or_wetland"
-		elif _siege_people_except(cell, exempt): reason = "person"
+		elif _turn_people_block(vehicle, cell, exempt): reason = "person"
 		if not reason.is_empty():
 			return {"cell": [cell.x, cell.y], "reason": reason, "height": height, "vehicle_base": base,
 				"natural": int(lab.terrain.height_levels[value]), "surface": int(lab.terrain.surface_types[value]),
@@ -307,6 +307,31 @@ func _turn_block(vehicle: Dictionary, sweep: Array[int], exempt: Dictionary = {}
 			if str(other.id) != str(vehicle.id) and _claims(other).has(cell):
 				return {"cell": [cell.x, cell.y], "reason": "claim", "claimed_by": str(other.id)}
 	return {}
+
+# SIEGE-YIELD (native turns): a same-team soldier that is not crew steps out of the sweep by itself (World claims the
+# sweep; convoy_evacuation rules), so it does not block. Enemies, other teams, Actors and army members still block.
+func _turn_people_block(vehicle: Dictionary, cell: Vector2i, exempt: Dictionary) -> bool:
+	if not _siege_people_except(cell, exempt): return false
+	if not _native_siege(): return true
+	var ignored := exempt.duplicate()
+	for identity: int in _turn_yielders_at(vehicle, cell, exempt): ignored[identity] = true
+	return _siege_people_except(cell, ignored)
+
+# Native people on cell who yield to this vehicle's turn: same team, not exempt crew of any vehicle, able to act.
+func _turn_yielders_at(vehicle: Dictionary, cell: Vector2i, exempt: Dictionary) -> Array[int]:
+	var found: Array[int] = []
+	if not _native_siege(): return found
+	var crew := {}
+	for other: Dictionary in records().values():
+		for identity: Variant in other.get("crew_slots", {}).values(): crew[int(identity)] = true
+	for team: Dictionary in lab.crowd_site.teams:
+		for identity: int in team.person_ids:
+			if exempt.has(identity) or crew.has(identity): continue
+			var person: Dictionary = lab.crowd_site.siege_original_person(identity)
+			if person.is_empty() or person.get("cell", Vector2i(-1, -1)) != cell: continue
+			if int(person.owner.team_id) != int(vehicle.team_id) or not person.owner.combat_can_act(int(person.unit)): continue
+			found.append(identity)
+	return found
 
 # Diagnostic only: identities standing on a cell (native teams, GD actors and army members).
 func _turn_people_at(cell: Vector2i, exempt: Dictionary) -> Array:
@@ -659,7 +684,8 @@ func can_commit_siege_compound(plan: Dictionary, occupancy: Dictionary, blocked:
 		var cell: Vector2i = lab.terrain.cell_from_index(value)
 		if blocked.has(cell) or occupancy.has(cell) and not ids.has(int(occupancy[cell])): return false
 		cells.append(cell)
-	if not _siege_cells_clear(vehicle, cells, ids, lab.terrain.effective_height(lab.terrain.cell_from_index(int(vehicle.cell)))): return false
+	# A turn's people are judged by _turn_fits (same-team soldiers yield); a translation keeps the full people check.
+	if not _siege_cells_clear(vehicle, cells, ids, lab.terrain.effective_height(lab.terrain.cell_from_index(int(vehicle.cell))), str(plan.mode) != "rotate"): return false
 	if str(plan.mode) == "rotate": return str(vehicle.action.get("stage", "")) == "approach" and _turn_crew_ready(vehicle) and _turn_contacts_valid(vehicle) and _turn_fits(vehicle, plan.sweep, _turn_exempt(vehicle))
 	if str(plan.mode) != "translate" or not crew_ready(vehicle) or str(vehicle.command.get("type", "")) != "move": return false
 	var source: Vector2i = lab.terrain.cell_from_index(int(plan.from))
@@ -798,11 +824,22 @@ func _turn_contacts_valid(vehicle: Dictionary) -> bool:
 				var point := start.lerp(attachment, float(index) / float(steps))
 				var cell := Vector2i(floori(point.x), floori(point.y))
 				if not segment.has(cell): segment.append(cell)
-			if not _siege_cells_clear(vehicle, segment, participants, lab.terrain.effective_height(lab.terrain.cell_from_index(int(vehicle.cell)))): return false
+			if not _siege_cells_clear(vehicle, segment, _turn_contact_ignored(vehicle, segment, participants), lab.terrain.effective_height(lab.terrain.cell_from_index(int(vehicle.cell)))): return false
 			found = true
 			break
 		if not found: return false
 	return not vehicle.crew_slots.is_empty()
+
+# SIEGE-YIELD: a same-team yielder on a contact segment cell inside the turn sweep steps out once World claims the
+# sweep, so it does not stop the turn from starting. Outside the sweep nobody yields and the person still blocks.
+func _turn_contact_ignored(vehicle: Dictionary, segment: Array[Vector2i], participants: Dictionary) -> Dictionary:
+	if not _native_siege(): return participants
+	var sweep := _turn_sweep(vehicle)
+	var ignored := participants.duplicate()
+	for cell: Vector2i in segment:
+		if not sweep.has(lab.terrain.index(cell)): continue
+		for identity: int in _turn_yielders_at(vehicle, cell, participants): ignored[identity] = true
+	return ignored
 
 func advance_ram_actions(delta: float) -> void:
 	if delta <= 0.0 or bool(lab.terrain.site.get("paused", false)): return
