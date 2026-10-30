@@ -69,6 +69,9 @@ int wg_crowd_set_soldier_surrendered(wg_crowd *c, int i, int on);
  * off clears the riding state). */
 int wg_crowd_soldier_mounted(const wg_crowd *c, int i, double *out);
 int wg_crowd_set_soldier_mounted(wg_crowd *c, int i, int on);
+/* CAV-2 charge read. soldier_charge writes out[0] = charging 0/1, out[1] = straight-run seconds, out[2] = penetrations of
+ * the current charge, out[3] = distinct recent victims; returns 1, or 0 for an unknown soldier. */
+int wg_crowd_soldier_charge(const wg_crowd *c, int i, double *out);
 int wg_crowd_has_projectiles(const wg_crowd *c);
 
 wg_crowd *wg_crowd_create(int threads, int64_t site_seed);

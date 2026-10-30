@@ -138,6 +138,14 @@ int wg_crowd_soldier_mounted(const wg_crowd *c,int i,double *out) {
 	out[0] = c->world.is_mounted(i) ? 1.0 : 0.0;
 	return 1;
 }
+int wg_crowd_soldier_charge(const wg_crowd *c,int i,double *out) {
+	if (!c || !out || i<0 || i>=c->world.soldier_count()) return 0;
+	out[0] = c->world.charge_state(i) ? 1.0 : 0.0;
+	out[1] = c->world.charge_straight_seconds(i);
+	out[2] = (double)c->world.charge_hits(i);
+	out[3] = (double)c->world.cav_distinct_victims(i);
+	return 1;
+}
 int wg_crowd_set_soldier_mounted(wg_crowd *c,int i,int on) {
 	return c && i>=0 && i<c->world.soldier_count() && c->world.set_mounted(i, on != 0) ? 1 : 0;
 }

@@ -1044,6 +1044,16 @@ rules::ExResult World::charge_result(int r, int v, double speed) const {
 	return exchange_result(a, b, exchange_roll(person_id[r], person_id[v], exchange_round, cfg.seed));
 }
 
+int World::cav_distinct_victims(int i) const {
+	if (i < 0 || i >= soldier_count()) return 0;
+	std::vector<int32_t> seen;
+	for (int k = 0; k < cav::RECENT_VICTIMS; ++k) {
+		const int32_t w = cav_hit_who[(size_t)i * cav::RECENT_VICTIMS + k];
+		if (w >= 0 && std::find(seen.begin(), seen.end(), w) == seen.end()) seen.push_back(w);
+	}
+	return (int)seen.size();
+}
+
 bool World::cav_may_hit(int r, int v) const { return r >= 0 && r < soldier_count() && v >= 0 && v < soldier_count() && cav_hit_free(r, v); }
 
 bool World::cav_hit_free(int r, int v) const {
@@ -1109,6 +1119,30 @@ void World::cav_fall(int i, double seconds) {
 	getup[i] = std::max(getup[i], seconds); // a fallen body cannot act, target or be hit (can_act)
 	cav_down[i] = std::max(cav_down[i], seconds);
 	formations[form[i]].command_dirty = true;
+}
+
+// 4.5 (Q5=A): a penetration costs the victim's formation MORALE_SHOCK morale when a living member other than the victim
+// stands within SHOCK_RADIUS of the impact. Native keeps morale per formation, so the shock is one -3 on that formation.
+// The same rider shocks the same formation at most once per SHOCK_SECONDS; the victim has just been recorded by cav_record,
+// so only other victims in the recent list count.
+void World::cav_morale_shock(int r, int v) {
+	if (v < 0 || v >= soldier_count() || form[v] < 0 || form[v] >= (int)formations.size()) return;
+	const int fv = form[v];
+	for (int k = 0; k < cav::RECENT_VICTIMS; ++k) {
+		const size_t at = (size_t)r * cav::RECENT_VICTIMS + k;
+		const int w = cav_hit_who[at];
+		if (w >= 0 && w != v && w < soldier_count() && form[w] == fv && time - cav_hit_t[at] < cav::SHOCK_SECONDS) return;
+	}
+	bool near = false;
+	for (int m : formations[fv].members) {
+		if (m == v || !alive(m)) continue;
+		const float dx = px[m] - px[v], dy = py[m] - py[v];
+		if (dx * dx + dy * dy <= cav::SHOCK_RADIUS * cav::SHOCK_RADIUS) { near = true; break; }
+	}
+	if (!near) return;
+	Formation &f = formations[fv];
+	f.morale = std::max(0.0, f.morale - cav::MORALE_SHOCK);
+	stats.cav_shocks++;
 }
 
 void World::cav_push(int i, float x, float y, float &kx, float &ky) const {
@@ -1192,6 +1226,7 @@ void World::cav_resolve(int r, int v, double speed, float ux, float uy) {
 			}
 			cav_fall(v, cav::FALL_SECONDS);
 			if (cav_down[v] > 0.0) stats.cav_falls++;
+			cav_morale_shock(r, v);
 			const float sp = std::sqrt(vx[r] * vx[r] + vy[r] * vy[r]);
 			const float ns = std::max(0.f, sp - (float)cav::LOSS_SPEED);
 			if (sp > 1e-4f) { vx[r] *= ns / sp; vy[r] *= ns / sp; } // the charge goes on while the speed stays at or above 4.5

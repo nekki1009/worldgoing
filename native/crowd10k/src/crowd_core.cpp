@@ -1392,6 +1392,8 @@ void World::soldier_stage(float dt, int ch) {
 				}
 			}
 			speed_cap = cap;
+			// CAV-2: a host-controlled rider steers by the wish heading and runs at the pace cap (cruise or gallop), so a
+			// foot-scale wish (run 4 cells/s) does not keep the rider below the charge speed. Other riders are unchanged.
 			const float v0 = std::sqrt(vx[i] * vx[i] + vy[i] * vy[i]);
 			if (dl0 > 1e-4f) {
 				float ang = std::atan2(cvy, cvx);
@@ -1400,7 +1402,8 @@ void World::soldier_stage(float dt, int ch) {
 					const float turn = cav::TURN_DEG_CELLS * kPi / 180.f / std::max(v0, 1.f) * dt;
 					ang = cur + std::clamp(cav::wrap_angle(ang - cur), -turn, turn);
 				}
-				const float tgt = std::min(dl0, speed_cap);
+				// CAV-2: a host rider holding run aims at its pace cap along the wish heading; a walking host rider and other riders keep the desired speed
+				const float tgt = st == S_HOST && host_run[i] ? speed_cap : std::min(dl0, speed_cap);
 				const float s = tgt > v0 ? std::min(tgt, v0 + cav::ACCEL * dt) : std::max(tgt, v0 - cav::BRAKE * dt);
 				cvx = std::cos(ang) * s; cvy = std::sin(ang) * s;
 			} else {

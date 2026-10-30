@@ -61,6 +61,9 @@ constexpr double SIDE_BONUS = 10.0, BACK_BONUS = 20.0; // 4.3 flank (> 60 deg) a
 constexpr double POLE_BONUS = 20.0;      // 4.3 pole-arm stand (Q3=A): spear, facing within 60 deg, speed < 0.5
 constexpr double REAR_BONUS = 5.0;       // 4.3 a living team-mate stands within 1 cell behind the defender
 constexpr float POLE_SPEED = 0.5f;
+constexpr double MORALE_SHOCK = 3.0;    // 4.5 morale shock per penetration on the victim's formation (Q5=A)
+constexpr float SHOCK_RADIUS = 3.f;     // 4.5 a formation member within 3 cells of the impact takes the shock
+constexpr double SHOCK_SECONDS = 1.0;   // 4.5 one shock per rider and victim formation per second
 constexpr float SLOPE_UP = 0.55f, SLOPE_DOWN = 0.8f; // terrain speed targets (old Actor values)
 // an angle difference wrapped into [-pi, pi]
 inline float wrap_angle(float a) { return std::remainder(a, 2.f * kPi); }
@@ -249,7 +252,7 @@ struct Stats {
 	uint64_t successions = 0, command_losses = 0, routs = 0, pursuits = 0, pursuit_ends = 0, ai_orders = 0,
 	         skills_used = 0, encircle_assigned = 0, fields_built = 0, cooldown_violations = 0;
 	int fighting = 0, engaging = 0, alive = 0, down = 0, captive = 0;
-	uint64_t cav_contacts = 0, cav_falls = 0, cav_dismounts = 0, cav_stops = 0; // CAV-1 charge outcomes (reporting)
+	uint64_t cav_contacts = 0, cav_falls = 0, cav_dismounts = 0, cav_stops = 0, cav_shocks = 0; // CAV-1 charge outcomes (reporting); cav_shocks: 4.5
 };
 
 // Events for the Godot side (SiteStore owner commits). `time` is the World action time of the step.
@@ -737,6 +740,10 @@ public:
 	bool cav_may_hit(int rider, int victim) const; // false while the rider's last hit on this victim is under 2 s old
 	// Charge state of a rider (4.1) from its current velocity and heading history; the candidate test is the same one the step uses.
 	bool charge_state(int i) const;
+	// CAV-2 read accessors: seconds the rider has been moving straight (cav_hold) and the penetrations of the current charge.
+	double charge_straight_seconds(int i) const { return i >= 0 && i < (int)cav_hold.size() ? cav_hold[i] : 0.0; }
+	int charge_hits(int i) const { return i >= 0 && i < (int)cav_hits.size() ? (int)cav_hits[i] : 0; }
+	int cav_distinct_victims(int i) const; // distinct victims in the rider's recent-victim ring (ids >= 0)
 	// Modifiers of a rider charging a victim at `speed` (4.3): ability, speed bonus, flank / rear bonus, basic mount bonus
 	// for the rider; pole-arm stand and rear support for the victim. Positions and facing are the current ones.
 	void charge_stats(int rider, int victim, double speed, rules::ExStats &a, rules::ExStats &b) const;
@@ -875,6 +882,7 @@ private:
 	bool cav_clear_cell(int victim, float x, float y) const; // no other living body within reach of (x, y)
 	void cav_record(int rider, int victim);
 	void cav_fall(int i, double seconds);
+	void cav_morale_shock(int rider, int victim); // 4.5: -3 morale on the victim's formation when a member stands within 3 cells
 	bool cav_straight(int i) const; // 4.1: moving for 0.4 s and every heading of that window within HEADING_TOL of the current one
 	void cav_resolve(int rider, int victim, double speed, float ux, float uy);
 	void cav_settle();

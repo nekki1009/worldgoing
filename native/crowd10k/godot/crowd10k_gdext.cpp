@@ -1210,6 +1210,26 @@ void m_set_soldier_mounted(CALL_ARGS) {
 	SELF; NEED(2); WORLD; int64_t i, on;
 	ret_bool(r, arg_int(a[0],i) && arg_int(a[1],on) && i>=0 && i<w.soldier_count() && w.set_mounted((int)i, on != 0));
 }
+// CAV-2: cav_stats() -> [contacts, falls, dismounts, stops, shocks]: the charge outcome counters of this crowd (reporting).
+void m_cav_stats(CALL_ARGS) {
+	SELF; NEED(0); WORLD;
+	const wg::Stats &st = w.stats;
+	const double v[] = {(double)st.cav_contacts, (double)st.cav_falls, (double)st.cav_dismounts, (double)st.cav_stops, (double)st.cav_shocks};
+	reset(r, DOUBLES);
+	void *buf = internal[DOUBLES](r);
+	packed_resize(resize_doubles, buf, (int64_t)(sizeof(v) / sizeof(v[0])));
+	std::memcpy(doubles_write(buf, 0), v, sizeof(v));
+}
+// CAV-2: soldier_charge(soldier) -> [charging, straight_seconds, penetrations_this_charge, distinct_recent_victims].
+void m_soldier_charge(CALL_ARGS) {
+	SELF; NEED(1); WORLD; int64_t i;
+	if (!arg_int(a[0],i) || i<0 || i>=w.soldier_count()) { reset(r, DOUBLES); return; }
+	const double v[] = {w.charge_state((int)i) ? 1.0 : 0.0, w.charge_straight_seconds((int)i), (double)w.charge_hits((int)i), (double)w.cav_distinct_victims((int)i)};
+	reset(r, DOUBLES);
+	void *buf = internal[DOUBLES](r);
+	packed_resize(resize_doubles, buf, (int64_t)(sizeof(v) / sizeof(v[0])));
+	std::memcpy(doubles_write(buf, 0), v, sizeof(v));
+}
 void m_charge_siege_round(CALL_ARGS) {
 	SELF; NEED(2); WORLD; double amount;
 	void *p = arg_packed(a[0],INTS);
@@ -1478,6 +1498,8 @@ void initialize(void *, GDExtensionInitializationLevel level) {
 	add_method("set_soldier_surrendered",m_set_soldier_surrendered,{{INT,"soldier"},{INT,"on"}},BOOL);
 	add_method("soldier_mounted",m_soldier_mounted,{{INT,"soldier"}},BOOL);
 	add_method("set_soldier_mounted",m_set_soldier_mounted,{{INT,"soldier"},{INT,"on"}},BOOL);
+	add_method("cav_stats",m_cav_stats,{},DOUBLES);
+	add_method("soldier_charge",m_soldier_charge,{{INT,"soldier"}},DOUBLES);
 	add_method("add_convoy", m_add_convoy, {{FLOAT,"anchor_x"},{FLOAT,"anchor_y"},{FLOAT,"facing"}}, INT);
 	add_method("convoy_set_crew", m_convoy_set_crew, {{INT,"convoy"},{INT,"soldier"},{INT,"offset_x"},{INT,"offset_y"},{BOOL,"assigned"}}, BOOL);
 	add_method("convoy_order_goal", m_convoy_order_goal, {{INT,"convoy"},{FLOAT,"goal_x"},{FLOAT,"goal_y"},{FLOAT,"goal_facing"}}, BOOL);

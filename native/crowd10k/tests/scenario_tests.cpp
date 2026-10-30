@@ -1821,6 +1821,100 @@ static void test_cavalry() {
 		CHECK(passed == (s.w.stats.cav_contacts >= 1 || s.w.getup[1] > 0.0), "passing the victim requires a contact (passed %d, contacts %llu)", passed, (unsigned long long)s.w.stats.cav_contacts);
 		CHECK(min_gap < 0.9f && s.w.stats.cav_contacts >= 1, "bodies met at gallop (closest gap %.3f)", min_gap);
 	}
+	{   // 4.5 morale shock: a penetration costs the victim's formation 3 morale when another member stands within 3 cells
+		Scene s(1, 64, 48);
+		int r = s.formation(0, 6, 24, 0, 1, sword(M_IRON, A_NONE));
+		int v = s.formation(1, 14, 24, kPi, 2, sword(M_WOOD, A_NONE), T_MELEE, 0, 2);
+		s.w.finalize();
+		s.w.formations[r].ai_enabled = false; s.w.formations[v].ai_enabled = false;
+		s.w.skill[0] = SK_POWER; // powered lance: the first contact is a penetration
+		s.w.set_mounted(0, true);
+		s.w.set_host_control(0, true);
+		for (int k = 0; k < 30 * 3 && s.w.stats.cav_falls == 0; ++k) {
+			s.w.host_input(0, 8.f, 0.f, true, false);
+			checked_step(s.w, DT);
+		}
+		CHECK(s.w.stats.cav_falls >= 1 && s.w.stats.cav_shocks >= 1, "penetration with a neighbour in the victim formation shocks it (falls %llu, shocks %llu)", (unsigned long long)s.w.stats.cav_falls, (unsigned long long)s.w.stats.cav_shocks);
+		CHECK(s.w.formations[v].morale <= 100.0 - cav::MORALE_SHOCK + 1e-9, "victim formation morale is down by at least 3 (%.2f)", s.w.formations[v].morale);
+		CHECK(s.w.stats.illegal_cell == 0 && s.w.stats.illegal_step == 0, "terrain invariant through the shock");
+	}
+	{   // 4.1 / N2: a sharp turn at gallop drops the charge before any contact; the victim ahead is never reached
+		Scene s(1, 64, 48);
+		int r = s.formation(0, 6, 24, 0, 1, sword(M_IRON, A_NONE));
+		int v = s.formation(1, 30, 24, kPi, 1, sword(M_WOOD, A_NONE));
+		s.w.finalize();
+		s.w.formations[r].ai_enabled = false; s.w.formations[v].ai_enabled = false;
+		s.w.set_mounted(0, true);
+		s.w.set_host_control(0, true);
+		for (int k = 0; k < 30 * 2; ++k) { s.w.host_input(0, 8.f, 0.f, true, false); checked_step(s.w, DT); }
+		CHECK(s.w.charge_state(0) && s.w.charge_straight_seconds(0) >= cav::STRAIGHT_SECONDS, "charging straight east before the turn (straight %.2f s)", s.w.charge_straight_seconds(0));
+		const uint64_t contacts0 = s.w.stats.cav_contacts;
+		bool charge_after_turn = false;
+		for (int k = 0; k < 30 * 2; ++k) { s.w.host_input(0, 0.f, 8.f, true, false); checked_step(s.w, DT); charge_after_turn = charge_after_turn || (k >= 10 && k < 30 && s.w.charge_state(0)); }
+		CHECK(!charge_after_turn, "the charge is lost while the heading turns (none from 1/3 s to 1 s after the turn)");
+		CHECK(s.w.stats.cav_contacts == contacts0 && s.w.stats.cav_falls == 0 && s.w.getup[1] <= 0.0, "a turned rider makes no penetration and the victim stays up");
+		CHECK(s.w.stats.illegal_cell == 0 && s.w.stats.illegal_step == 0, "terrain invariant through the turn");
+	}
+	{   // 4.3 pole-arm stand (Q3=A): a braced spearman in full steel stops the charge; the pole-arm counter applies, the rider recoils
+		Scene s(1, 64, 48);
+		int r = s.formation(0, 6, 24, 0, 1, sword(M_WOOD, A_NONE));
+		int v = s.formation(1, 14, 24, kPi, 1, spear_steel());
+		s.w.finalize();
+		s.w.formations[r].ai_enabled = false; s.w.formations[v].ai_enabled = false;
+		s.w.skill[v] = SK_BRACE;
+		s.w.set_mounted(0, true);
+		s.w.set_host_control(0, true);
+		ExStats a, b;
+		s.w.face[v] = kPi;
+		s.w.charge_stats(r, v, 8.0, a, b);
+		CHECK(b.armorbonus >= cav::POLE_BONUS, "the braced spearman facing the rider gets the pole-arm bonus (%.2f)", b.armorbonus);
+		const float hp0 = (float)s.w.hp[0];
+		uint64_t contacts0 = s.w.stats.cav_contacts;
+		for (int k = 0; k < 30 * 6 && s.w.stats.cav_contacts == contacts0; ++k) { s.w.host_input(0, 5.f, 0.f, false, false); checked_step(s.w, DT); }
+		CHECK(s.w.stats.cav_contacts > contacts0, "the charge reaches the pike line");
+		CHECK(s.w.stats.cav_stops >= 1 && std::hypot(s.w.vx[0], s.w.vy[0]) < 1e-4f, "the pike line stops the charge (speed %.4f)", std::hypot(s.w.vx[0], s.w.vy[0]));
+		CHECK(s.w.stats.cav_falls == 0 && s.w.getup[v] <= 0.0, "a stopped charge makes no penetration");
+		CHECK(s.w.hp[0] < hp0 || s.w.stats.cav_dismounts == 1 || s.w.stagger[0] > 0.0, "the rider is held (stagger) or recoils (hp %.2f)", s.w.hp[0]);
+		CHECK(s.w.stats.illegal_cell == 0 && s.w.stats.illegal_step == 0, "terrain invariant through the stop");
+	}
+	{   // CAV-2: a host-controlled rider with constant foot-scale run input (4 cells/s) rides up to gallop and charges an infantry line
+		Scene s(1, 64, 48);
+		int r = s.formation(0, 6, 24, 0, 1, sword(M_IRON, A_NONE));
+		std::vector<int> line;
+		for (int k = 0; k < 6; ++k) line.push_back(s.formation(1, 20, 21.5f + (float)k, kPi, 1, sword(M_WOOD, A_NONE)));
+		s.w.finalize();
+		s.w.formations[r].ai_enabled = false;
+		for (int f : line) s.w.formations[f].ai_enabled = false;
+		s.w.set_mounted(0, true);
+		s.w.set_host_control(0, true);
+		float vmax = 0.f;
+		bool charged = false;
+		for (int k = 0; k < 30 * 6 && s.w.stats.cav_contacts == 0; ++k) {
+			s.w.host_input(0, 4.f, 0.f, true, false);
+			checked_step(s.w, DT);
+			vmax = std::max(vmax, std::hypot(s.w.vx[0], s.w.vy[0]));
+			charged = charged || s.w.charge_state(0);
+		}
+		CHECK(vmax > cav::CHARGE_SPEED, "the mounted host rider rides past the charge speed on foot-scale input (max %.3f)", vmax);
+		CHECK(charged, "the host rider reaches the charge state");
+		CHECK(s.w.stats.cav_contacts >= 1, "the host rider charges the infantry line (contacts %llu)", (unsigned long long)s.w.stats.cav_contacts);
+	}
+	{   // terrain: a palisade (a column of blocked cells) stops the charge in front of it; no leak through, no penetration
+		Scene s(1, 64, 48);
+		for (int y = 0; y < 48; ++y) s.w.terrain.flags[s.w.terrain.idx(20, y)] = 0;
+		int r = s.formation(0, 12, 24, 0, 1, sword(M_IRON, A_NONE));
+		int v = s.formation(1, 25, 24, kPi, 1, sword(M_WOOD, A_NONE));
+		s.w.finalize();
+		s.w.formations[r].ai_enabled = false; s.w.formations[v].ai_enabled = false;
+		s.w.set_mounted(0, true);
+		s.w.set_host_control(0, true);
+		float furthest = 0.f;
+		for (int k = 0; k < 30 * 5; ++k) { s.w.host_input(0, 8.f, 0.f, true, false); checked_step(s.w, DT); furthest = std::max(furthest, s.w.px[0]); }
+		CHECK(furthest < 20.0f, "the rider never crosses the palisade column (furthest x %.3f)", furthest);
+		CHECK(std::hypot(s.w.vx[0], s.w.vy[0]) < cav::CHARGE_SPEED, "the rider brakes in front of the palisade (speed %.3f)", std::hypot(s.w.vx[0], s.w.vy[0]));
+		CHECK(!s.w.charge_state(0) && s.w.stats.cav_contacts == 0 && s.w.stats.cav_falls == 0, "no charge contact or penetration through the wall");
+		CHECK(s.w.stats.illegal_cell == 0 && s.w.stats.illegal_step == 0, "no illegal cell or edge at the palisade");
+	}
 	{   // 1 / 2 / 4 threads: identical hashes; save / load keeps the mounted state and continues identically
 		auto run = [](int threads, std::vector<uint8_t> *save_out) {
 			Scene s(threads, 64, 48);

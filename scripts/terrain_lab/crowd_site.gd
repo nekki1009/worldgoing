@@ -85,6 +85,7 @@ var _building := false
 var _kit_appearances: Array = []
 var _actor_slots := {}
 var _mounted_contact_visuals: Dictionary = {} # Candidate resources; never registered as people.
+var _rider_ids: Array[int] = [] # CAV-2: identities natively mounted. Derived from the native flag; never saved.
 var _prepared_live_contact_actor_ids: Dictionary = {} # Candidate preparation only.
 var _live_contact_actor_ids: Dictionary = {} # Adopted original live resources; retain after original dismount.
 var _draw_actors: Array[Node] = []
@@ -323,6 +324,12 @@ func has_pending_capture(identity: int) -> bool:
 func siege_admission_guard(candidate: TerrainData = null) -> Dictionary:
 	if ClassDB.class_exists(&"ArmyCrowd") and not ClassDB.class_has_method(&"ArmyCrowd", &"set_soldier_surrendered"):
 		return SiteRuntime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少投降狀態介面")
+	if ClassDB.class_exists(&"ArmyCrowd") and not ClassDB.class_has_method(&"ArmyCrowd", &"set_soldier_mounted"):
+		return SiteRuntime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少騎乘狀態介面")
+	if ClassDB.class_exists(&"ArmyCrowd") and not ClassDB.class_has_method(&"ArmyCrowd", &"cav_stats"):
+		return SiteRuntime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少衝鋒統計介面")
+	if ClassDB.class_exists(&"ArmyCrowd") and not ClassDB.class_has_method(&"ArmyCrowd", &"soldier_charge"):
+		return SiteRuntime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少衝鋒狀態讀取介面")
 	if ClassDB.class_exists(&"ArmyCrowd") and not ClassDB.class_has_method(&"ArmyCrowd", &"set_contact_revision"):
 		return SiteRuntime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少原人物受擊計數匯入介面")
 	if ClassDB.class_exists(&"ArmyCrowd"):
@@ -567,6 +574,9 @@ func deploy(sides: Array, formations: Array) -> Dictionary:
 	# G5 S4: surrender-pending rows become the native surrendered flag after every hot import.
 	var surrender_imported := d5_surrender_existing(self, prepared.plans)
 	if not surrender_imported.ok: return _deployment_failed(before, surrender_imported)
+	# CAV-2: every living rider (GD appearance.mounted) takes the native mounted flag after every hot import.
+	var riders_imported := import_mounted_riders()
+	if not riders_imported.ok: return _deployment_failed(before, riders_imported)
 	player_index = int(_index_by_id[controlled])
 	crowd.set_host_control(player_index, true)
 	# Admit every kit before mutating the original people or item owners.
@@ -765,6 +775,7 @@ func _append_actor_failed(before: Dictionary, failure: Dictionary) -> Dictionary
 	owners.assign(before.owners)
 	_owner_by_id = before.owner_by_id
 	_index_by_id = before.index_by_id
+	_rebuild_rider_ids()
 	_ammo_keys = before.ammo_keys
 	_kit_ids = before.kit_ids
 	# Native load preserves atlas tracks/kits, but resets per-person kit indices.
@@ -1209,6 +1220,7 @@ func step(elapsed: float, game_seconds: float, combat_left: float) -> bool:
 	if not work_fatigue_point_active():
 		if not _consume_events(): return false
 		settle_events()
+	sync_rider_dismounts()
 	event_cost_last_us = Time.get_ticks_usec() - events_started
 	event_cost_count += 1
 	event_cost_total_us += event_cost_last_us
@@ -2757,6 +2769,7 @@ func activate_loaded() -> void:
 		if int(crowd.soldier_index(actor.person_id)) >= 0: _actors[actor.person_id] = actor
 	_staged_data = null
 	_bind_people()
+	_rebuild_rider_ids()
 	var siege_inputs := sync_siege_inputs()
 	if not siege_inputs.ok:
 		last_event_error = siege_inputs
@@ -3847,6 +3860,85 @@ func _audio_native_deliver(snapshot: Dictionary) -> void:
 			view.offer(kinds[kind], ground, key, identity)
 	# offer only forms batch candidates. Original outer sameTerrain/active/
 	# completed/noPENDING/noFault/noPause guard alone commits them.
+
+# ---------------------------------------------------------------- CAV-2 mounted riders
+# A rider is a person whose GD appearance says mounted (the same flag the riding kit and audio read). Deploy imports every
+# living rider as the native mounted flag. The native flag is saved with the crowd; the GD rider list is derived from it.
+# A native dismount (a lost charge, 4.4 / 4.6) is written back to the row and the kit after each step.
+
+func rider_identities() -> Array[int]:
+	return _rider_ids.duplicate()
+
+func _is_rider_row(identity: int) -> bool:
+	if _actors.has(identity):
+		var actor: TerrainTestCharacter = _actors[identity]
+		return bool(actor._saved_appearance.get("mounted", false))
+	var row: Dictionary = _records.get(identity, {})
+	var appearance: Dictionary = row.get("appearance", {})
+	return bool(appearance.get("mounted", false))
+
+func _set_row_mounted(identity: int, on: bool) -> void:
+	if _actors.has(identity):
+		# An Actor's riding state is its visual_state (toggle_mount / clip); the saved appearance follows it.
+		var actor: TerrainTestCharacter = _actors[identity]
+		actor._saved_appearance["mounted"] = on
+		actor.visual_state.mounted = on
+		if actor.editor != null: actor.editor.set_mount_enabled(on)
+		return
+	var row: Dictionary = _records[identity]
+	var appearance: Dictionary = row["appearance"]
+	appearance["mounted"] = on
+
+# Deploy import: living riders take the native flag. A refused rider fails the whole import (as the surrender import does).
+func import_mounted_riders() -> Dictionary:
+	for identity: int in crowd.person_ids():
+		if not _is_rider_row(identity): continue
+		var index := int(_index_by_id.get(identity, -1))
+		if index < 0 or float(soldier_state(index).hp) <= 0.0: continue
+		if not bool(crowd.set_soldier_mounted(index, true)):
+			return SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕騎乘人物；原隊伍未交接")
+	_rebuild_rider_ids()
+	return SiteRuntime.ok()
+
+func _rebuild_rider_ids() -> void:
+	_rider_ids.clear()
+	if crowd == null: return
+	for identity: int in crowd.person_ids():
+		var index := int(_index_by_id.get(identity, -1))
+		if index >= 0 and bool(crowd.soldier_mounted(index)): _rider_ids.append(identity)
+
+# Sets a GD person riding (or not) and mirrors it natively. Refused when the riding visuals or native cannot hold it; then
+# nothing changes. Actors are not wired here.
+func set_rider(identity: int, on: bool) -> Dictionary:
+	if not _index_by_id.has(identity): return SiteRuntime.fail("INVALID", "原人物不在群眾中")
+	if _actors.has(identity): return SiteRuntime.fail("UNSUPPORTED", "受控 actor 騎乘尚未接線")
+	var index := int(_index_by_id[identity])
+	var before := _is_rider_row(identity)
+	_set_row_mounted(identity, on)
+	if on and not _prepare_contact_appearance(_appearance(identity), identity):
+		_set_row_mounted(identity, before)
+		return SiteRuntime.fail("MISSING_ASSET", "騎乘接觸資源未備妥；原人物未變更")
+	if not bool(crowd.set_soldier_mounted(index, on)):
+		_set_row_mounted(identity, before)
+		return SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕騎乘狀態；原人物未變更")
+	_rebuild_rider_ids()
+	_update_kit(index, _appearance(identity))
+	return SiteRuntime.ok()
+
+# Write-back of native dismounts. A dead rider keeps its row as it was (death clears the native flag, it is not a dismount).
+func sync_rider_dismounts() -> void:
+	if _rider_ids.is_empty() or crowd == null: return
+	var kept: Array[int] = []
+	for identity: int in _rider_ids:
+		var index := int(_index_by_id.get(identity, -1))
+		if index < 0: continue
+		if bool(crowd.soldier_mounted(index)):
+			kept.append(identity)
+		elif float(soldier_state(index).hp) > 0.0:
+			_set_row_mounted(identity, false)
+			if _actors.has(identity): _audio_mount_update(index, false) # an actor keeps its live presentation
+			else: _update_kit(index, _appearance(identity))
+	_rider_ids = kept
 
 func _audio_mount_install(rows: PackedByteArray) -> void:
 	if crowd == null or rows.size() != int(crowd.soldier_count()): return
