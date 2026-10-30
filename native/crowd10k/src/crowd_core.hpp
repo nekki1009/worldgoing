@@ -378,6 +378,9 @@ public:
 	// it can return (site_person_return) or change formation (move_member). absent_kind: 0 when present, else 1 detached,
 	// 2 off-map, 3 captive hold, 4 garrison reserve. Both saved and hashed.
 	std::vector<uint8_t> absent, absent_kind;
+	// G5 S4 surrender (NEKKI 2026-10-30 A): 1 = routed and terrain-trapped (World::retreat_trapped). A surrendered soldier
+	// stands in place, is not a target, does not act (can_act is false) and leaves command. Only capture clears it. Saved and hashed.
+	std::vector<uint8_t> surrendered;
 	std::vector<int64_t> person_id;
 	std::vector<uint8_t> life_ck; // morale checkpoint: 0 conscious, 1 unconscious, 2 dead
 	// presentation only (never read by the rules, not hashed, not saved)
@@ -673,7 +676,12 @@ public:
 	// rule path that skips released also skips absent. Death accounting (hp, fatigue_count) reads hp directly and is unchanged.
 	bool alive(int i) const { return hp[i] > 0.0 && !released[i] && !absent[i]; }
 	bool is_absent(int i) const { return i >= 0 && i < (int)absent.size() && absent[i] != 0; }
-	bool can_act(int i) const { return alive(i) && ko[i] <= 0.0 && getup[i] <= 0.0 && !captive[i]; }
+	bool is_surrendered(int i) const { return i >= 0 && i < (int)surrendered.size() && surrendered[i] != 0; }
+	bool can_act(int i) const { return alive(i) && ko[i] <= 0.0 && getup[i] <= 0.0 && !captive[i] && !is_surrendered(i); }
+	// G5 S4: an unconscious or surrendered living enemy can be captured (order_capture, auto-capture, progress).
+	bool capture_target(int t) const { return alive(t) && !captive[t] && (ko[t] > 0.0 || is_surrendered(t)); }
+	// G5 S4 native setter: on refuses a soldier that cannot surrender (dead, captive, KO, escorting, crewed); off clears it.
+	bool set_surrendered(int i, bool on);
 	bool can_receive(int i) const { return can_act(i) && !is_aboard(i) && exch_cd[i] <= 0.000000001; }
 	bool exchange_ready(int i) const;
 	bool host_ranged_ready(int i,int expected_ammo,int mode,int64_t release_id,int target_x,int target_y) const;
@@ -813,6 +821,8 @@ private:
 	void step_body(float dt, const std::vector<WorkFatigueState> *work_plan = nullptr);
 	void begin_rout(Formation &f, int fi);
 	void retreat_away(int fi);
+	bool retreat_trapped(int i) const;          // G5 S4 terrain-trap test (command.cpp)
+	void surrender_trapped(int fi);              // G5 S4: trapped members of a routed formation surrender
 	void fatigue_stage(double gdt, const std::vector<WorkFatigueState> *work_plan = nullptr);
 	double fatigue_recovery_multiplier(int formation, double garrison, double housing) const;
 	bool safe_fatigue_rest(int formation, bool busy, bool threat, bool fire_safe, double combat_left_now) const;

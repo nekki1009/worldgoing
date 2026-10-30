@@ -93,6 +93,12 @@ func _soldier_values(index: int) -> PackedFloat64Array:
 func _formation_values() -> PackedFloat64Array:
 	return crowd_site.crowd.get_formation_state(formation_index) if crowd_site != null and crowd_site.crowd != null else PackedFloat64Array()
 
+# G5 S4: the surrendered flag is native state for every crowd body (roster and actor alike).
+func _native_surrendered(index: int) -> bool:
+	if not combat_units.has(index) or crowd_site == null or crowd_site.crowd == null or not crowd_site.crowd.has_method("soldier_surrendered"):
+		return false
+	return bool(crowd_site.crowd.soldier_surrendered(index))
+
 func combat_hot_get(index: int, field: StringName, fallback: Variant = 0.0) -> Variant:
 	var key := String(field)
 	# G5 S2: roster people read member, present and site_exited from the native absence kind.
@@ -101,7 +107,7 @@ func combat_hot_get(index: int, field: StringName, fallback: Variant = 0.0) -> V
 	if key in COLD_FIELDS:
 		return _cold_get(index, key, fallback)
 	if key == "surrender_pending":
-		return false
+		return _native_surrendered(index)
 	if key in ["fatigue", "fatigue_rest"]:
 		var body_state := _soldier_values(index)
 		if body_state.size() > 0 and body_state[0] <= 0.0:
@@ -150,6 +156,10 @@ func combat_hot_set(index: int, field: StringName, value: Variant) -> void:
 		ignored_attack_writes += 1
 		return
 	if key == "surrender_pending":
+		# G5 S4: native owns the flag. A write that agrees with it (clearing after a native capture) is a no-op; any other is refused.
+		if bool(value) != _native_surrendered(index):
+			push_error("CrowdPersonOwner: surrender_pending write for person %d is native-owned" % combat_identity(index))
+			rejected_hot_writes += 1
 		return
 	if key in ["hp", "ko", "captive", "stun", "bandaged", "ammo", "exchange_stagger", "exchange_cooldown", "ranged_cooldown", "exchange_skill_cooldown"]:
 		var native_key: String = str({"exchange_stagger": "stagger", "exchange_cooldown": "exch_cd",
@@ -200,7 +210,7 @@ func _set_presence(index: int, key: String, value: Variant) -> void:
 
 func combat_can_act(index: int) -> bool:
 	var values := _soldier_values(index)
-	return values.size() > 6 and values[0] > 0.0 and values[3] <= 0.0 and values[4] <= 0.0 and not bool(values[6])
+	return values.size() > 6 and values[0] > 0.0 and values[3] <= 0.0 and values[4] <= 0.0 and not bool(values[6]) and not _native_surrendered(index)
 
 func person(index: int, require_items: bool = true) -> Dictionary:
 	if not combat_units.has(index):
@@ -225,7 +235,7 @@ func person(index: int, require_items: bool = true) -> Dictionary:
 	moving_to[index] = crowd_site.lab.terrain.cell_from_index(int(movement[5])) if committed and int(movement[5]) >= 0 else (cell if moving else INVALID_CELL)
 	return {"owner": self, "unit": index, "cell": cell, "position": ground * 64.0,
 		"hp": values[0], "body": combat_units[index], "holder": holder, "cargo": cargo, "person_id": identity,
-		"ko": values[3], "captive": bool(values[6]), "surrender_pending": false, "faction": faction_id,
+		"ko": values[3], "captive": bool(values[6]), "surrender_pending": _native_surrendered(index), "faction": faction_id,
 		"player": identity == int(crowd_site.lab.controlled_person_id()), "moving": moving, "hit": int(crowd_site.crowd.contact_revision(index))}
 
 func _materialize(index: int, formation: PackedFloat64Array) -> Dictionary:
@@ -241,6 +251,7 @@ func _materialize(index: int, formation: PackedFloat64Array) -> Dictionary:
 	result.hp = values[0] if values.size() > 0 else 0.0
 	result.ko = values[3] if values.size() > 3 else 0.0
 	result.captive = values.size() > 6 and bool(values[6])
+	result["surrender_pending"] = _native_surrendered(index)
 	if float(result.hp) <= 0.0:
 		result["fatigue"] = _cold_get(index, "fatigue", 0.0)
 		result["fatigue_rest"] = _cold_get(index, "fatigue_rest", 0.0)

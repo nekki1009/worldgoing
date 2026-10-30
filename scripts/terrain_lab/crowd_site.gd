@@ -321,6 +321,8 @@ func has_pending_capture(identity: int) -> bool:
 
 
 func siege_admission_guard(candidate: TerrainData = null) -> Dictionary:
+	if ClassDB.class_exists(&"ArmyCrowd") and not ClassDB.class_has_method(&"ArmyCrowd", &"set_soldier_surrendered"):
+		return SiteRuntime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少投降狀態介面")
 	if ClassDB.class_exists(&"ArmyCrowd") and not ClassDB.class_has_method(&"ArmyCrowd", &"set_contact_revision"):
 		return SiteRuntime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少原人物受擊計數匯入介面")
 	if ClassDB.class_exists(&"ArmyCrowd"):
@@ -562,6 +564,9 @@ func deploy(sides: Array, formations: Array) -> Dictionary:
 	# G5 S2: detached and off-map rows become absent natively after every hot import and state guard.
 	var absent_imported := d5_absent_existing(self, prepared.plans)
 	if not absent_imported.ok: return _deployment_failed(before, absent_imported)
+	# G5 S4: surrender-pending rows become the native surrendered flag after every hot import.
+	var surrender_imported := d5_surrender_existing(self, prepared.plans)
+	if not surrender_imported.ok: return _deployment_failed(before, surrender_imported)
 	player_index = int(_index_by_id[controlled])
 	crowd.set_host_control(player_index, true)
 	# Admit every kit before mutating the original people or item owners.
@@ -2494,6 +2499,17 @@ static func d5_absent_existing(crowd_site: Variant, plans: Array) -> Dictionary:
 	return D5Runtime.ok()
 
 
+# G5 S4: a surrender-pending roster row is imported as the native surrendered flag (refused when native cannot hold it).
+static func d5_surrender_existing(crowd_site: Variant, plans: Array) -> Dictionary:
+	for plan: Dictionary in plans:
+		for entry: Dictionary in plan.units:
+			if not bool(entry.saved.get("surrender_pending", false)): continue
+			var index := int(crowd_site._index_by_id.get(int(entry.person_id), -1))
+			if index < 0 or not bool(crowd_site.crowd.set_soldier_surrendered(index, true)):
+				return D5Runtime.fail("NATIVE_REFUSED", "原生群眾拒絕投降人物；原隊伍未交接")
+	return D5Runtime.ok()
+
+
 func _team_for_formation(formation: int) -> Dictionary:
 	for team: Dictionary in teams:
 		if int(team.formation) == formation and not bool(team.get("departed", false)): return team
@@ -2839,9 +2855,9 @@ static func d5_prepare_existing(crowd_site: Variant) -> Dictionary:
 			if seen.has(identity):
 				return D5Runtime.fail("INVALID", "原人物 ID 重複")
 			# G5 S2: a detached row (member=false) or an off-map row (site_exited) is imported as a native soldier and
-			# made absent by d5_absent_existing. Departed, surrender-pending and captive-pending rows stay refused.
+			# made absent by d5_absent_existing. Departed and captive-pending rows stay refused; a surrender-pending row imports as the native flag (G5 S4).
 			var absent_kind := d5_absent_kind(saved)
-			if bool(saved.get("departed", false)) or bool(saved.get("surrender_pending", false)) \
+			if bool(saved.get("departed", false)) \
 				or (absent_kind != 0 and bool(saved.get("captive", false))) or (not bool(saved.get("member", true)) and bool(saved.get("site_exited", false))):
 				return D5Runtime.fail("UNSUPPORTED", "原名冊含離隊、離圖或待俘人物；尚不能無損交接群眾")
 			if not saved.get("work_task", {}).is_empty():

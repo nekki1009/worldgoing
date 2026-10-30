@@ -196,6 +196,59 @@ void World::retreat_away(int fi) {
 	order_retreat(fi, gx, gy);
 }
 
+// G5 S4 surrender (NEKKI 2026-10-30 A). A routed member with no escape route surrenders, as the grid does when
+// prepare_morale_retreat fails and morale_retreat_terrain_trapped holds (terrain_army.gd). Trap test, deterministic:
+// walk the 8-direction legal edges (terrain.edge_ok) from the member's own cell. The member is trapped when no reachable
+// cell lies kTrapRadius (6) or more cells away (Euclidean on cell offsets). Walled pockets and boxed units are trapped;
+// open ground never is. The walk stays inside a 13 x 13 box, so its cost is bounded.
+constexpr int kTrapRadius = 6;
+bool World::retreat_trapped(int i) const {
+	constexpr int R = kTrapRadius, W = 2 * R + 1;
+	const int sx = (int)std::floor(px[i]), sy = (int)std::floor(py[i]);
+	if (sx < 0 || sy < 0 || sx >= terrain.w || sy >= terrain.h) return false;
+	uint8_t seen[W * W] = {};
+	int qx[W * W], qy[W * W], head = 0, tail = 0;
+	qx[tail] = 0; qy[tail] = 0; ++tail; seen[R * W + R] = 1;
+	while (head < tail) {
+		const int x = qx[head], y = qy[head]; ++head;
+		const uint8_t edges = terrain.edge_ok[terrain.idx(sx + x, sy + y)];
+		for (int dir = 0; dir < 8; ++dir) {
+			if (!((edges >> dir) & 1)) continue;
+			const int ox = x + DX[dir], oy = y + DY[dir];
+			if (ox * ox + oy * oy >= R * R) return false; // open ground within reach: an escape route
+			if (seen[(oy + R) * W + ox + R]) continue;
+			seen[(oy + R) * W + ox + R] = 1; qx[tail] = ox; qy[tail] = oy; ++tail;
+		}
+	}
+	return true;
+}
+
+// Checked every 15 steps per member (tick-staggered): a pure function of state, so thread counts cannot change it.
+void World::surrender_trapped(int fi) {
+	for (int i : formations[fi].members) {
+		if ((tick + (uint32_t)i) % 15 != 0 || !can_act(i) || prison_id[i] != 0 || escort_mode[i] != 0 || rescue_of[i] >= 0 || capture_of[i] >= 0 ||
+		    is_crewed(i) || siege_group(i) >= 0 || controlled_step_pending(i)) continue;
+		if (retreat_trapped(i)) set_surrendered(i, true);
+	}
+}
+
+bool World::set_surrendered(int i, bool on) {
+	if (i < 0 || i >= soldier_count()) return false;
+	if (!on) { surrendered[i] = 0; formations[form[i]].command_dirty = true; return true; }
+	if (!alive(i) || ko[i] > 0.0 || getup[i] > 0.0 || captive[i] || prison_id[i] != 0 || escort_mode[i] != 0 || rescue_of[i] >= 0 ||
+	    capture_of[i] >= 0 || is_crewed(i) || siege_group(i) >= 0) return false;
+	surrendered[i] = 1;
+	// Nobody keeps naming the surrendered soldier as a target (as site_person_absent does).
+	for (int j = 0; j < soldier_count(); ++j) {
+		if (target[j] == i) target[j] = -1;
+		if (enc_target[j] == i) enc_target[j] = -1;
+	}
+	for (auto &g : formations) if (g.target_person == i) g.target_person = -1;
+	target[i] = -1; enc_target[i] = -1; near_enemy[i] = 0; vx[i] = vy[i] = 0; nx[i] = px[i]; ny[i] = py[i];
+	formations[form[i]].command_dirty = true;
+	return true;
+}
+
 // _fatigue_threat / _exchange_rest_threat for every living, uncaptured member: an able hostile soldier
 // within 8 steps (Manhattan, legality not re-checked: a superset), or the member's cell on the path
 // of an arrow in flight.
@@ -249,6 +302,7 @@ void World::sustain_stage(double gdt) {
 		if (ok) f.morale = std::min(100.0, f.morale + MORALE_RESUPPLY_PER_HOUR / 3600.0 * gdt);
 		// Original Site sustain records safe fed rest even before a rout, capped at 30 minutes.
 		f.rally_rest = ok ? std::min(RALLY_REST_SECONDS, f.rally_rest + gdt) : 0.0;
+		if (f.routed) surrender_trapped((int)fi);
 		if (f.routed) {
 			if (f.rally_rest >= RALLY_REST_SECONDS && f.morale >= MORALE_RALLY) {
 				f.routed = false; f.needs_attack_order = true;
@@ -494,7 +548,7 @@ void World::reassign_formation(int i, int to) {
 
 bool World::site_person_absent(int i, int kind) {
 	if (work_point_active_ || work_point_finish_ready_ || kind < 1 || kind > 4 || i < 0 || i >= soldier_count()) return false;
-	if (is_absent(i) || is_aboard(i) || !site_person_exit_ready(i)) return false;
+	if (is_absent(i) || is_aboard(i) || is_surrendered(i) || !site_person_exit_ready(i)) return false;
 	Formation &f = formations[form[i]];
 	absent[i] = 1; absent_kind[i] = (uint8_t)kind;
 	for (int j = 0; j < soldier_count(); ++j) { // no order or exchange keeps naming the absent soldier

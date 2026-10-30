@@ -512,6 +512,82 @@ static void post_holder_contract() {
  w.post_holder[1]=0;REQUIRE(w.validate());
  std::printf("POST_HOLDER_NATIVE_PASS standalone default, captain or officer post holder commands, soldier post holder does not, effect sums seated only, succession skips unseated officer, save/load/validation\n");
 }
+// G5 S4 surrender (NEKKI 2026-10-30 A): trapped routed members surrender; a surrendered soldier is never a target,
+// never acts, keeps its hash across save/load; only a capture clears it; thread counts 1 and 4 agree.
+// Scenario (32 x 32): a walled 5 x 5 pocket (team 0 routed, 2 members, plus team 1 member inside it) and open ground
+// (team 0 routed, 3 members, retreating from team 1 member 6 cells east).
+static void surrender_world(World &w) {
+ w.terrain.allocate(32,32);w.cfg.ai=false;w.cfg.auto_capture=false;w.cfg.rescue_seek_cells=0;w.cfg.bleed_per_game_hour=0;w.combat_left=1e9;
+ for(int k=3;k<=9;++k){w.terrain.static_blocked[w.terrain.idx(3,k)]=1;w.terrain.static_blocked[w.terrain.idx(9,k)]=1;w.terrain.static_blocked[w.terrain.idx(k,3)]=1;w.terrain.static_blocked[w.terrain.idx(k,9)]=1;}
+ w.terrain.build_edges();
+ rules::Equip eq;eq.family=rules::F_LONGSWORD;eq.material=rules::M_IRON;
+ int pocket=w.add_formation(0,6.5f,6.5f,0,2,0.8f,T_MELEE,30);
+ int enemy_in=w.add_formation(1,6.5f,7.5f,kPi,1,1,T_MELEE,30);
+ int open=w.add_formation(0,16.5f,16.5f,0,3,0.8f,T_MELEE,30);
+ int enemy_out=w.add_formation(1,22.5f,16.5f,kPi,1,1,T_MELEE,30);
+ for(int i=0;i<2;++i) w.add_soldier(pocket,eq,i==0?R_CAPTAIN:R_REGULAR,100+i);   // soldiers 0, 1
+ w.add_soldier(enemy_in,eq,R_CAPTAIN,300);                                       // soldier 2
+ for(int i=0;i<3;++i) w.add_soldier(open,eq,i==0?R_CAPTAIN:R_REGULAR,400+i);     // soldiers 3, 4, 5
+ w.add_soldier(enemy_out,eq,R_CAPTAIN,500);                                      // soldier 6
+ w.finalize();
+ for(auto &f:w.formations) f.ai_enabled=false;
+ w.set_hostile(0,1,true);w.set_hostile(1,0,true);
+ w.formations[pocket].morale=10;w.formations[open].morale=10;
+ w.events.clear();
+}
+static void surrender_contract() {
+ // Trapped members surrender, untrapped ones keep retreating, and a surrendered soldier is neither hit nor targeted.
+ {
+  World w(1);surrender_world(w);
+  for(int n=0;n<150 && !(w.is_surrendered(0) && w.is_surrendered(1));++n) step(w);
+  REQUIRE(w.formations[0].routed && w.formations[2].routed);
+  REQUIRE(w.is_surrendered(0) && w.is_surrendered(1));
+  REQUIRE(!w.is_surrendered(3) && !w.is_surrendered(4) && !w.is_surrendered(5));
+  REQUIRE(!w.is_surrendered(2) && !w.is_surrendered(6));
+  const double hp0=w.hp[0], hp1=w.hp[1];
+  for(int n=0;n<120;++n) {
+   step(w);
+   REQUIRE(w.hp[0]==hp0 && w.hp[1]==hp1);
+   REQUIRE(w.target[2]!=0 && w.target[2]!=1);
+   REQUIRE(!w.can_act(0) && !w.can_act(1));
+   REQUIRE(w.vx[0]==0 && w.vy[0]==0 && w.vx[1]==0 && w.vy[1]==0);
+  }
+  REQUIRE(w.formations[2].cx<16.5f-1.0f); // open ground: the routed unit keeps retreating away from team 1
+  std::printf("SURRENDER trapped=%d,%d open_cx=%.3f\n",(int)w.is_surrendered(0),(int)w.is_surrendered(1),w.formations[2].cx);
+  continuation(w);
+ }
+ // An enemy capture clears surrendered, sets captive and names the captor.
+ {
+  World w(1);surrender_world(w);
+  for(int n=0;n<150 && !w.is_surrendered(0);++n) step(w);
+  REQUIRE(w.is_surrendered(0));
+  w.px[2]=w.nx[2]=w.px[0]+0.6f;w.py[2]=w.ny[2]=w.py[0];w.cell[2]=w.terrain.idx((int)w.px[2],(int)w.py[2]);w.vx[2]=w.vy[2]=0;
+  REQUIRE(w.order_capture(2,0));
+  for(int n=0;n<400 && !w.captive[0];++n) step(w);
+  REQUIRE(w.captive[0]==1 && !w.is_surrendered(0) && w.captor[0]==2);
+ }
+ // Native auto-capture (cfg.auto_capture, AI-enabled idle guard in HOLD) takes a surrendered member like an unconscious one.
+ {
+  World w(1);surrender_world(w);w.cfg.auto_capture=true;w.formations[1].ai_enabled=true;
+  for(int n=0;n<150 && !w.is_surrendered(0);++n) step(w);
+  REQUIRE(w.is_surrendered(0));
+  for(int n=0;n<600 && !w.captive[0];++n) step(w);
+  REQUIRE(w.captive[0]==1 && !w.is_surrendered(0) && w.captor[0]==2);
+  std::printf("SURRENDER_AUTO_CAPTURE captive=%d captor=%d\n",(int)w.captive[0],(int)w.captor[0]);
+ }
+ // Save and load mid-surrender keeps the hash; thread counts 1 and 4 agree step by step.
+ {
+  World w(1);surrender_world(w);
+  for(int n=0;n<150 && !w.is_surrendered(0);++n) step(w);
+  REQUIRE(w.is_surrendered(0));
+  World c(1);REQUIRE(c.load(w.save()));REQUIRE(c.is_surrendered(0) && c.state_hash()==w.state_hash());
+  continuation(w);
+  World a(1),b(4);surrender_world(a);surrender_world(b);
+  for(int n=0;n<150;++n){step(a);step(b);REQUIRE(a.state_hash()==b.state_hash());}
+  REQUIRE(a.is_surrendered(0) && b.is_surrendered(0));
+ }
+}
+
 static void fuzz() {
  World base(1);setup(base,1);auto blob=base.save();World numeric(1);REQUIRE(numeric.load(blob));numeric.hp[0]=77;auto mod=numeric.save();size_t hp_offset=0;while(hp_offset<blob.size() && blob[hp_offset]==mod[hp_offset])++hp_offset;
  // Find the complete double containing the changed byte using the uniquely known 100.0 bytes.
@@ -535,6 +611,6 @@ int main(int argc,char**argv) {
  setvbuf(stdout,nullptr,_IONBF,0);
  if(argc>1 && std::string(argv[1])=="--fuzz")fuzz();
  else if(argc>2 && std::string(argv[1])=="--replay")replay_blob(argv[2],argc>3?std::strtoull(argv[3],nullptr,10):0);
- else{orders();retreat_contract();c_api_order_codes();imports_append_sustain();append_after_death_roundtrip();hunger();death_fatigue_event_contract();safe_load();prison_contract();building_geometry_contract();military_building_contract();post_holder_contract();}
+ else{orders();retreat_contract();c_api_order_codes();imports_append_sustain();append_after_death_roundtrip();hunger();death_fatigue_event_contract();safe_load();prison_contract();building_geometry_contract();military_building_contract();post_holder_contract();surrender_contract();}
  std::printf("C2/C3 checks=%d failures=%d\n",checks,failures);return failures?1:0;
 }

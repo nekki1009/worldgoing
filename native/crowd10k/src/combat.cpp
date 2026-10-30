@@ -533,7 +533,7 @@ void World::projectiles_advance(float dt) {
 
 // ---------------------------------------------------------------- actions: rescue / capture / escape (serial)
 bool World::order_capture(int g, int t) {
-	if (g < 0 || t < 0 || g >= soldier_count() || t >= soldier_count() || !can_act(g) || (escort_mode[g] != 0 || is_crewed(g)) || !alive(t) || ko[t] <= 0.0 || captive[t] || !hostile(team[g], team[t])) return false;
+	if (g < 0 || t < 0 || g >= soldier_count() || t >= soldier_count() || !can_act(g) || (escort_mode[g] != 0 || is_crewed(g)) || !capture_target(t) || !hostile(team[g], team[t])) return false;
 	if (capture_of[g] >= 0 || rescue_of[g] >= 0 || capturing_by_[t] >= 0) return false;
 	float dx = px[t] - px[g], dy = py[t] - py[g];
 	if (dx * dx + dy * dy > 1.3f * 1.3f) return false;
@@ -757,7 +757,7 @@ void World::person_actions_stage(double gdt) {
 		const int n = soldier_count();
 		bool held_built = false;
 		for (int t = (int)((15u - tick % 15u) % 15u); t < n; t += 15) {
-			if (!alive(t) || ko[t] <= 0.0 || captive[t] || capturing_by_[t] >= 0) continue;
+			if (!capture_target(t) || capturing_by_[t] >= 0) continue;
 			if (!held_built) {
 				held_.assign((size_t)n, 0);
 				for (int c : captives_) if (captive[c] && prison_id[c] == 0 && alive(c) && captor[c] >= 0) held_[captor[c]]++;
@@ -802,11 +802,11 @@ void World::person_actions_stage(double gdt) {
 		if (t < 0) continue;
 		float dx = px[g] - px[t], dy = py[g] - py[t];
 		float lim = std::max(1.5f, cfg.capture_seek_cells + 2.f);
-		bool ok = can_act(g) && alive(t) && ko[t] > 0.0 && !captive[t] && dx * dx + dy * dy <= lim * lim;
+		bool ok = can_act(g) && capture_target(t) && dx * dx + dy * dy <= lim * lim;
 		if (!ok) { cancel_actions_involving(g); continue; }
 		if (dx * dx + dy * dy <= 1.5f * 1.5f) act_t[g] += gdt; // the 4 s count only while adjacent and stopped
 		if (act_t[g] >= CAPTURE_SECONDS) {
-			captive[t] = 1; captor[t] = g; escape_t[t] = 0;
+			captive[t] = 1; captor[t] = g; escape_t[t] = 0; surrendered[t] = 0; // capture settles a surrender (G5 S4)
 			capture_of[g] = -1; act_t[g] = 0; capturing_by_[t] = -1;
 			if (rescued_by_[t] >= 0) cancel_actions_involving(rescued_by_[t]);
 			captives_.push_back(t);

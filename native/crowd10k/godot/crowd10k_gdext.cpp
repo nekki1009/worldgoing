@@ -1192,6 +1192,15 @@ void m_site_person_absent_state(CALL_ARGS) {
 	if (!arg_int(a[0],i) || i<0 || i>=w.soldier_count()) { return_doubles(r,{}); return; }
 	return_doubles(r,{double(w.absent[i]), double(w.absent_kind[i])});
 }
+// G5 S4: soldier_surrendered(soldier) -> bool; set_soldier_surrendered(soldier, on) -> bool (refusal changes nothing).
+void m_soldier_surrendered(CALL_ARGS) {
+	SELF; NEED(1); WORLD; int64_t i;
+	ret_bool(r, arg_int(a[0],i) && i>=0 && i<w.soldier_count() && w.is_surrendered((int)i));
+}
+void m_set_soldier_surrendered(CALL_ARGS) {
+	SELF; NEED(2); WORLD; int64_t i, on;
+	ret_bool(r, arg_int(a[0],i) && arg_int(a[1],on) && i>=0 && i<w.soldier_count() && w.set_surrendered((int)i, on != 0));
+}
 void m_charge_siege_round(CALL_ARGS) {
 	SELF; NEED(2); WORLD; double amount;
 	void *p = arg_packed(a[0],INTS);
@@ -1456,6 +1465,8 @@ void initialize(void *, GDExtensionInitializationLevel level) {
 	add_method("site_person_return",m_site_person_return,{{INT,"soldier"},{INT,"formation"},{FLOAT,"x"},{FLOAT,"y"}},BOOL);
 	add_method("move_member",m_move_member,{{INT,"soldier"},{INT,"to_formation"}},BOOL);
 	add_method("site_person_absent_state",m_site_person_absent_state,{{INT,"soldier"}},DOUBLES);
+	add_method("soldier_surrendered",m_soldier_surrendered,{{INT,"soldier"}},BOOL);
+	add_method("set_soldier_surrendered",m_set_soldier_surrendered,{{INT,"soldier"},{INT,"on"}},BOOL);
 	add_method("add_convoy", m_add_convoy, {{FLOAT,"anchor_x"},{FLOAT,"anchor_y"},{FLOAT,"facing"}}, INT);
 	add_method("convoy_set_crew", m_convoy_set_crew, {{INT,"convoy"},{INT,"soldier"},{INT,"offset_x"},{INT,"offset_y"},{BOOL,"assigned"}}, BOOL);
 	add_method("convoy_order_goal", m_convoy_order_goal, {{INT,"convoy"},{FLOAT,"goal_x"},{FLOAT,"goal_y"},{FLOAT,"goal_facing"}}, BOOL);

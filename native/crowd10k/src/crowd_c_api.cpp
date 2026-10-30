@@ -125,6 +125,14 @@ int wg_crowd_site_person_absent_state(const wg_crowd *c,int i,double *out) {
 	out[0] = c->world.is_absent(i) ? 1.0 : 0.0; out[1] = static_cast<double>(c->world.absent_kind[i]);
 	return 1;
 }
+int wg_crowd_soldier_surrendered(const wg_crowd *c,int i,double *out) {
+	if (!c || !out || i<0 || i>=c->world.soldier_count()) return 0;
+	out[0] = c->world.is_surrendered(i) ? 1.0 : 0.0;
+	return 1;
+}
+int wg_crowd_set_soldier_surrendered(wg_crowd *c,int i,int on) {
+	return c && i>=0 && i<c->world.soldier_count() && c->world.set_surrendered(i, on != 0) ? 1 : 0;
+}
 int wg_crowd_site_person_release(wg_crowd *c,int i,double *out) {
 	wg::SitePersonRelease r;
 	if (!c || !out || !c->world.site_person_release(i,r)) return 0;
