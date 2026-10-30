@@ -559,6 +559,9 @@ func deploy(sides: Array, formations: Array) -> Dictionary:
 	desired.formations.merge(imported.formations, true)
 	var admitted := _source_state_guard(desired)
 	if not admitted.ok: return _deployment_failed(before, admitted)
+	# G5 S2: detached and off-map rows become absent natively after every hot import and state guard.
+	var absent_imported := d5_absent_existing(self, prepared.plans)
+	if not absent_imported.ok: return _deployment_failed(before, absent_imported)
 	player_index = int(_index_by_id[controlled])
 	crowd.set_host_control(player_index, true)
 	# Admit every kit before mutating the original people or item owners.
@@ -2298,6 +2301,7 @@ func sync_to_site() -> Dictionary:
 					return SiteRuntime.fail("MISSING_ASSET", "Original prepared Actor snapshot pose unavailable")
 		else:
 			_write_row_handoff(_records[identity], state, formations[person_source.formation_index])
+			_write_presence_handoff(_records[identity], Array(crowd.site_person_absent_state(int(_index_by_id[identity]))))
 		var relation: Dictionary = lab.terrain.site.get("captivity", {}).get(str(identity), {})
 		if int(state.get("prison_id", 0)) != int(relation.get("prison_id", "0")):
 			return SiteRuntime.fail("INVALID_PRISON", "原生拘禁與原人物拘押關係不符")
@@ -2426,6 +2430,68 @@ func native_return(identities: Array, formation: int) -> Dictionary:
 		if state.is_empty() or not bool(crowd.site_person_return(index, formation, float(state.px), float(state.py))):
 			return SiteRuntime.fail("NATIVE_REFUSED", "原生群眾拒絕歸隊；原人員未完整歸隊")
 	return SiteRuntime.ok()
+
+
+# G5 S2: one person's absence through the native op. Refusals change nothing and return false.
+func native_set_absent(index: int, kind: int) -> bool:
+	if index < 0 or crowd == null: return false
+	return bool(crowd.site_person_absent(index, kind))
+
+
+# G5 S2: rejoin at the person's own cell, or the nearest free walkable cell of the same formation. Each try is a
+# native op that changes nothing on refusal, so trying several cells is safe.
+func native_return_nearest(index: int, formation: int) -> bool:
+	var state := soldier_state(index)
+	if state.is_empty() or crowd == null: return false
+	var origin := Vector2(float(state.px), float(state.py))
+	var offsets: Array[Vector2] = []
+	for dy in range(-PRESENCE_RETURN_SEARCH, PRESENCE_RETURN_SEARCH + 1):
+		for dx in range(-PRESENCE_RETURN_SEARCH, PRESENCE_RETURN_SEARCH + 1):
+			offsets.append(Vector2(dx, dy))
+	offsets.sort_custom(func(a: Vector2, b: Vector2) -> bool: return a.length_squared() < b.length_squared())
+	for offset: Vector2 in offsets:
+		var target := origin + offset
+		if bool(crowd.site_person_return(index, formation, target.x, target.y)): return true
+	return false
+
+
+const PRESENCE_RETURN_SEARCH := 3
+
+
+# G5 S2: the native absence kind of a soldier index: 0 on the roster, else 1 detached, 2 off-map, 3 captive hold, 4 reserve.
+static func absent_kind_of(absent: Array) -> int:
+	return int(absent[1]) if absent.size() >= 2 and int(absent[0]) == 1 else 0
+
+
+# G5 S2: a GD row's absence kind: off-map (site_exited) is kind 2, a detached row (member=false) kind 1, else 0.
+static func d5_absent_kind(saved: Dictionary) -> int:
+	if bool(saved.get("site_exited", false)): return 2
+	return 0 if bool(saved.get("member", true)) else 1
+
+
+# G5 S2: member, present and site_exited of a roster row are written from the native absence kind (sync_to_site).
+static func _write_presence_handoff(row: Dictionary, absent: Array) -> void:
+	var kind := absent_kind_of(absent)
+	row["member"] = kind != 1
+	row["present"] = kind == 0
+	row["site_exited"] = kind == 2
+
+
+# G5 S2: the D5 import makes each detached or off-map imported row absent natively. Runs after the native hot import
+# and the state guard, and before the crowd is active. A refused native op fails the whole import.
+static func d5_absent_existing(crowd_site: Variant, plans: Array) -> Dictionary:
+	var controlled := int(crowd_site.lab.controlled_person_id())
+	for plan: Dictionary in plans:
+		for entry: Dictionary in plan.units:
+			if entry.actor != null: continue
+			var kind := d5_absent_kind(entry.saved)
+			if kind == 0: continue
+			var identity := int(entry.person_id)
+			if identity == controlled: return D5Runtime.fail("UNSUPPORTED", "受控人物已離隊或離圖，尚不能交接群眾")
+			var index := int(crowd_site._index_by_id.get(identity, -1))
+			if index < 0 or not bool(crowd_site.crowd.site_person_absent(index, kind)):
+				return D5Runtime.fail("NATIVE_REFUSED", "原生群眾拒絕離隊或離圖人物；原隊伍未交接")
+	return D5Runtime.ok()
 
 
 func _team_for_formation(formation: int) -> Dictionary:
@@ -2772,9 +2838,11 @@ static func d5_prepare_existing(crowd_site: Variant) -> Dictionary:
 			var identity := int(saved.person_id)
 			if seen.has(identity):
 				return D5Runtime.fail("INVALID", "原人物 ID 重複")
-			# Native has no detached/out-of-Site membership representation.
-			# Preserve these original owners instead of silently enrolling/reviving.
-			if not bool(saved.get("member", true)) or bool(saved.get("departed", false)) or bool(saved.get("site_exited", false)) or bool(saved.get("surrender_pending", false)):
+			# G5 S2: a detached row (member=false) or an off-map row (site_exited) is imported as a native soldier and
+			# made absent by d5_absent_existing. Departed, surrender-pending and captive-pending rows stay refused.
+			var absent_kind := d5_absent_kind(saved)
+			if bool(saved.get("departed", false)) or bool(saved.get("surrender_pending", false)) \
+				or (absent_kind != 0 and bool(saved.get("captive", false))) or (not bool(saved.get("member", true)) and bool(saved.get("site_exited", false))):
 				return D5Runtime.fail("UNSUPPORTED", "原名冊含離隊、離圖或待俘人物；尚不能無損交接群眾")
 			if not saved.get("work_task", {}).is_empty():
 				return D5Runtime.fail("BUSY", "原人物工作尚未收束，未切換模擬")

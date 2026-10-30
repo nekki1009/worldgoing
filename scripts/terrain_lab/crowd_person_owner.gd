@@ -4,6 +4,7 @@ extends RefCounted
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const SiegeWorkClips = preload("res://scripts/terrain_lab/site_siege_work_clips.gd")
 const INVALID_CELL := Vector2i(-1, -1)
+const PRESENCE_FIELDS := ["member", "present", "site_exited"] # G5 S2: native absence kind, see presence_state
 const COLD_FIELDS := ["loot_settled", "remains_id", "status", "work_task", "appearance", "item_state", "cargo", "hit_revision", "person_id", "work_resting", "command_abilities", "technology", "military_role", "logistics", "site_exited", "departed"]
 # Packed native ABI: CrowdSite.SOLDIER_FIELDS / FORMATION_FIELDS, no reference lookups for scalar reads.
 const HOT_INDEX := {"hp": 0, "stun": 1, "ko": 3, "getup": 4, "exchange_stagger": 5, "bandaged": 7, "ammo": 8,
@@ -94,6 +95,9 @@ func _formation_values() -> PackedFloat64Array:
 
 func combat_hot_get(index: int, field: StringName, fallback: Variant = 0.0) -> Variant:
 	var key := String(field)
+	# G5 S2: roster people read member, present and site_exited from the native absence kind.
+	if key in PRESENCE_FIELDS and _native_presence(index):
+		return presence_state(index)[key]
 	if key in COLD_FIELDS:
 		return _cold_get(index, key, fallback)
 	if key == "surrender_pending":
@@ -126,6 +130,16 @@ func combat_hot_get(index: int, field: StringName, fallback: Variant = 0.0) -> V
 
 func combat_hot_set(index: int, field: StringName, value: Variant) -> void:
 	var key := String(field)
+	if key in PRESENCE_FIELDS:
+		# G5 S2: roster people write presence only through native absence ops; actors keep their own properties.
+		if _native_presence(index):
+			_set_presence(index, key, value)
+		elif key == "site_exited":
+			_cold_set(index, key, value)
+		elif not (key == "present" and bool(value)):
+			push_error("CrowdPersonOwner: %s write for person %d has no native mapping" % [key, combat_identity(index)])
+			rejected_hot_writes += 1
+		return
 	if key in COLD_FIELDS:
 		_cold_set(index, key, value)
 		return
@@ -144,6 +158,45 @@ func combat_hot_set(index: int, field: StringName, value: Variant) -> void:
 			rejected_hot_writes += 1
 		return
 	unknown_field_accesses += 1
+
+# G5 S2: the presence fields of roster people (not actors). Kind 1 detached: not a member, not present. Kind 2
+# off-map: still a member, not present, site_exited. Kinds 3 and 4 (captive hold, garrison reserve): not present.
+func presence_state(index: int) -> Dictionary:
+	var kind: int = crowd_site.absent_kind_of(Array(crowd_site.crowd.site_person_absent_state(index)))
+	return {"member": kind != 1, "present": kind == 0, "site_exited": kind == 2}
+
+
+func _native_presence(index: int) -> bool:
+	return not actors.has(index) and combat_units.has(index) and crowd_site != null and crowd_site.crowd != null \
+		and crowd_site.crowd.has_method("site_person_absent_state")
+
+
+# Writes go through the native ops. present=false detaches (kind 1), site_exited takes kind 2, present=true returns.
+# Refusals push_error and change nothing, so no write is dropped silently.
+func _set_presence(index: int, key: String, value: Variant) -> void:
+	var identity := combat_identity(index)
+	var current := presence_state(index)
+	if key == "member":
+		if bool(value) != bool(current.member):
+			push_error("CrowdPersonOwner: member writes are not mapped; detach through present=false (person %d)" % identity)
+			rejected_hot_writes += 1
+		return
+	if key == "site_exited":
+		if bool(value) == bool(current.site_exited): return
+		if not bool(value) or not crowd_site.native_set_absent(index, 2):
+			push_error("CrowdPersonOwner: native refused site_exited=%s for person %d" % [str(value), identity])
+			rejected_hot_writes += 1
+		return
+	# key == "present"
+	if bool(value):
+		if bool(current.present): return
+		if bool(current.site_exited) or formation_index < 0 or not crowd_site.native_return_nearest(index, formation_index):
+			push_error("CrowdPersonOwner: native refused return of person %d" % identity)
+			rejected_hot_writes += 1
+		return
+	if bool(current.present) and not crowd_site.native_set_absent(index, 1):
+		push_error("CrowdPersonOwner: native refused detachment of person %d" % identity)
+		rejected_hot_writes += 1
 
 func combat_can_act(index: int) -> bool:
 	var values := _soldier_values(index)
@@ -515,7 +568,7 @@ func publish_fire_navigation_restore(prepared: Dictionary, registry: SiteDeploym
 
 
 func member_gone(index: int) -> bool:
-	return not is_member(index) or bool(_cold_get(index, "site_exited", false)) or bool(_cold_get(index, "departed", false))
+	return not is_member(index) or bool(combat_hot_get(index, &"site_exited", false)) or bool(_cold_get(index, "departed", false))
 
 func siege_work_person_state(index: int) -> Dictionary:
 	var original := person(index, false)

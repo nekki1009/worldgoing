@@ -1669,6 +1669,22 @@ static func _crowd_float_equal(left: Variant, right: Variant) -> bool:
 	var b := float(right)
 	return is_finite(a) and is_finite(b) and absf(a - b) <= CROWD_FLOAT_EPSILON * maxf(1.0, maxf(absf(a), absf(b)))
 
+# G5 S2: a roster row's member, present and site_exited must agree with its native absence kind. A kind 0 (on the
+# roster) soldier needs a member row that is not off-map; present is written from the native state by sync_to_site.
+static func _crowd_presence_matches(native: Object, index: int, row: Dictionary) -> bool:
+	if not native.has_method("site_person_absent_state"): return false
+	var absent: Array = Array(native.call("site_person_absent_state", index))
+	var kind := int(absent[1]) if absent.size() >= 2 and int(absent[0]) == 1 else 0
+	var member := bool(row.get("member", true))
+	var exited := bool(row.get("site_exited", false))
+	var present := bool(row.get("present", false))
+	match kind:
+		0: return member and not exited
+		1: return not member and not exited and not present
+		2: return member and exited and not present
+		_: return member and not exited and not present
+
+
 static func _validate_crowd(data: TerrainData, state: Dictionary, workers: int = 1, native_candidate: Variant = null) -> Dictionary:
 	var rosters: Variant = state.get("armies", [])
 	if not state.has("crowd"):
@@ -1815,6 +1831,8 @@ static func _validate_crowd(data: TerrainData, state: Dictionary, workers: int =
 				return Runtime.fail("INVALID_CROWD", "群眾人物所屬隊伍／陣營與原生陣列不符")
 			var hot: PackedFloat64Array = native.call("get_soldier_state", native_index)
 			var record: Dictionary = records[int(identity)]
+			if not actor_ids.has(int(identity)) and not _crowd_presence_matches(native, native_index, record):
+				return Runtime.fail("INVALID_CROWD", "群眾離隊／離圖旗標與原生駐在狀態不符")
 			var role: Variant = record.get("military_role")
 			if role == null:
 				if actor_ids.has(int(identity)):

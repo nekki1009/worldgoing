@@ -89,9 +89,11 @@ func _run() -> void:
 	if not _require(_site.set_formation_fields(formation, {"current_person": deputy, "acting_person": deputy, "commander_present": true}), "The original native setter authors the acting-captain fixture"): return
 	if not _require(_site.set_soldier_fields(formal_index, {"ko": 7.0}), "The original native setter authors an unconscious formal captain"): return
 	if not _focus(team_id, formal, false, "A living unconscious formal captain precedes the acting captain"): return
+	# G5 S2: off-map exit is a native kind-2 absence, which only an acting soldier may take (grid _finish_site_exit).
+	# The KO is cleared first. Native cannot un-exit, so the old cold reset to false is not restored here.
+	if not _require(_site.set_soldier_fields(formal_index, {"ko": 0.0}), "The native setter restores the formal captain to act before exit"): return
 	owner.combat_hot_set(formal_index, &"site_exited", true)
 	if not _focus(team_id, deputy, true, "An exited formal captain falls back to the current eligible captain"): return
-	owner.combat_hot_set(formal_index, &"site_exited", false)
 	if not _require(_site.set_soldier_fields(formal_index, {"hp": 0.0, "ko": 0.0}), "The native setter authors the deceased formal captain"): return
 	if not _focus(team_id, deputy, true, "A deceased formal captain falls back to the current eligible captain"): return
 	if not _require(_site.set_soldier_fields(formal_index, {"hp": 100.0}), "The native setter restores the formal body before a departure fixture"): return
