@@ -3085,6 +3085,10 @@ func siege_fire_preview(vehicle: Dictionary, target: Dictionary, include_friends
 	return SiteRuntime.ok("射線／石體可能傷及友軍：%s" % str(friends) if not friends.is_empty() else "射界合法", {"aim": aim, "friendly_ids": friends})
 
 func _siege_faction(vehicle: Dictionary) -> int:
+	# Under crowd the native owner of the vehicle's team is authoritative; grid shells may be stale.
+	if crowd_site != null and crowd_site.active:
+		var owner_ref: Variant = crowd_site.siege_team_owner(int(vehicle.team_id))
+		return int(owner_ref.faction_id) if owner_ref != null else -1
 	for team: TerrainArmy in combat_armies:
 		if team.team_id == int(vehicle.team_id): return team.faction_id
 	return -1

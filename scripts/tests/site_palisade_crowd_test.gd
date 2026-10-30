@@ -107,5 +107,87 @@ func _run() -> void:
 	check(not wall_step, "soldier ordered across the completed palisade cannot pass")
 	var open_step: bool = host.crowd.order_siege_step(unit, data.index(Vector2i(19, 19)))
 	check(open_step, "control: the same soldier can step to open ground")
-	print("SITE_PALISADE_CROWD_PASS: held completion, native sync, completion after the soldier moves off, wall refused for an ordered step")
+
+	# S2 (decision 3): a palisade destroyed by siege damage lowers native walk heights at once,
+	# and the soldier may then step onto the freed cell.
+	values = host.crowd.get_soldier_state(unit)
+	values[14] = 20.5
+	values[15] = 17.5
+	check(host.crowd.set_soldier_state(unit, values, refs), "soldier stands north of the completed wall before siege destruction")
+	host._occupancy_cache.clear()
+	_damage_palisade_by_siege(lab, data, wall_key, wall_cells)
+	for index: int in wall_cells:
+		check(data.navigation_heights()[index] == natural[index], "GD walk height returns to natural after siege destruction")
+	_check_native_heights(host, data, wall_cells, natural, "native walk heights return to natural after siege destruction")
+	values = host.crowd.get_soldier_state(unit)
+	values[14] = 20.5
+	values[15] = 19.5
+	check(host.crowd.set_soldier_state(unit, values, refs), "soldier placed north of the siege-destroyed wall")
+	host._occupancy_cache.clear()
+	check(host.crowd.order_siege_step(unit, data.index(WALL_ANCHOR)), "soldier steps onto the siege-destroyed palisade cell")
+
+	# S2: a second palisade on open ground, built through the same real work path, is destroyed by fire.
+	# The fire boundary queues its structure damage into the shared contact batch and the same step
+	# flushes it, so native terrain must agree before any further tick is advanced.
+	var second_anchor := Vector2i(30, 20)
+	var second_placement: Dictionary = Runtime.building_cells(data, "palisade", second_anchor, WALL_EXTENT, settings)
+	check(second_placement.ok, "second palisade placement is legal: %s" % str(second_placement))
+	var second_request: Dictionary = Runtime.request_build(data, "palisade", second_placement.cells, Callable(), settings)
+	check(second_request.ok, "second palisade build request accepted: %s" % str(second_request))
+	var second_key: String = str(second_request.feature)
+	var second_cells: Array[int] = []
+	second_cells.assign(second_placement.cells)
+	_advance_palisade(data, second_key, controller.reserves_cell)
+	check(_is_complete(data, second_key), "second palisade completes on open ground")
+	check(host.sync_terrain(), "second palisade completion syncs native terrain")
+	for index: int in second_cells:
+		check(data.navigation_heights()[index] == natural[index] + Runtime.WALL_RISE, "second palisade raises its wall cells before the fire")
+	_check_native_heights(host, data, second_cells, data.navigation_heights(), "native walls match GD before the fire")
+	_damage_palisade_by_fire(lab, data, second_key, second_cells)
+	for index: int in second_cells:
+		check(data.navigation_heights()[index] == natural[index], "GD walk height returns to natural on the tick of fire destruction")
+	_check_native_heights(host, data, second_cells, natural, "native walk heights return to natural on the tick of fire destruction")
+	values = host.crowd.get_soldier_state(unit)
+	values[14] = 30.5
+	values[15] = 19.5
+	check(host.crowd.set_soldier_state(unit, values, refs), "soldier placed north of the fire-destroyed wall")
+	host._occupancy_cache.clear()
+	check(host.crowd.order_siege_step(unit, data.index(second_anchor)), "soldier steps onto the fire-destroyed palisade cell")
+	print("SITE_PALISADE_CROWD_PASS: held completion, native sync, completion after the soldier moves off, wall refused for an ordered step, siege and fire destruction lower native walls")
 	quit(0)
+
+# S2 helper: each part of a completed palisade takes lethal siege damage through the real batch path.
+func _damage_palisade_by_siege(lab: TerrainLab, data: TerrainData, key: String, cells: Array[int]) -> void:
+	var parts := {}
+	for index: int in cells:
+		var part := "c:%d" % index
+		parts[key + "|" + part] = {"feature": key, "part": part, "damage": 1000.0}
+	var settled: Dictionary = lab.siege_apply_damage_batch(parts, {})
+	check(settled.ok, "siege damage batch settles the palisade: %s" % str(settled))
+	for index: int in cells:
+		var result: Dictionary = settled.results.get(key + "|c:%d" % index, {})
+		check(bool(result.get("ok", false)) and float(data.site.features[key].parts["c:%d" % index].hp) == 0.0, "siege lethal damage destroys part c:%d" % index)
+
+# S2 helper: the same fire-structure request that the fire sink receives, queued and flushed in one
+# contact batch exactly as the shared step does. No additional tick is advanced.
+func _damage_palisade_by_fire(lab: TerrainLab, data: TerrainData, key: String, cells: Array[int]) -> void:
+	var parts := {}
+	for index: int in cells:
+		var part := "c:%d" % index
+		var hp := float(data.site.features[key].parts[part].hp)
+		var generation := SiteRuntime.fire_generation(data, SiteRuntime._fire_unit_key("feature", key, part))
+		parts[key + "|" + part] = {"feature": key, "part": part, "damage": hp, "fire_damage": hp, "generation": generation, "collapse_generation": 0}
+	lab.siege_begin_contact_batch()
+	var queued: Dictionary = lab.siege_queue_damage(parts, {}, 0)
+	check(queued.ok, "fire structure damage is queued into the shared contact batch")
+	var flushed: Dictionary = lab.siege_flush_contact_batch()
+	check(flushed.ok, "shared contact batch flush applies fire destruction: %s" % str(flushed))
+	for index: int in cells:
+		check(float(data.site.features[key].parts["c:%d" % index].hp) == 0.0, "fire destroys part c:%d" % index)
+
+func _check_native_heights(host: Node, data: TerrainData, cells: Array[int], expected: PackedByteArray, label: String) -> void:
+	var native_state: PackedByteArray = host.crowd.terrain_state()
+	var nav: PackedByteArray = data.navigation_heights()
+	for index: int in cells:
+		check(int(native_state[8 + index]) == int(expected[index]), "%s (cell %d)" % [label, index])
+		check(int(native_state[8 + index]) == int(nav[index]), "native walk height matches GD navigation height (cell %d)" % index)

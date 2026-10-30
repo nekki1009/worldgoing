@@ -275,15 +275,54 @@ func _turn_sweep(vehicle: Dictionary) -> Array[int]:
 	var value: Array = vehicle.get("action", {}).get("facing", vehicle.facing)
 	return Runtime.siege_turn_sweep(lab.terrain, vehicle, Vector2i(int(value[0]), int(value[1])))
 
-func _turn_fits(vehicle: Dictionary, sweep: Array[int]) -> bool:
-	if sweep.is_empty(): return false
+# Native turns: the crew are the turning people; their stations lie inside the sweep, so they are exempt.
+func _turn_exempt(vehicle: Dictionary) -> Dictionary:
+	var exempt := {}
+	if not _native_siege(): return exempt
+	for identity: int in vehicle.crew_slots.values(): exempt[identity] = true
+	return exempt
+
+func _turn_fits(vehicle: Dictionary, sweep: Array[int], exempt: Dictionary = {}) -> bool:
+	return _turn_block(vehicle, sweep, exempt).is_empty()
+
+# First cell that blocks a turn sweep, with its reason. Empty when the sweep is clear.
+func _turn_block(vehicle: Dictionary, sweep: Array[int], exempt: Dictionary = {}) -> Dictionary:
+	if sweep.is_empty(): return {"reason": "empty_sweep"}
 	var base: int = lab.terrain.effective_height(lab.terrain.cell_from_index(int(vehicle.cell)))
 	for value: int in sweep:
 		var cell: Vector2i = lab.terrain.cell_from_index(value)
-		if not lab.terrain.is_walkable(cell) or lab.terrain.effective_height(cell) != base or lab.terrain.effective_height(cell) != int(lab.terrain.height_levels[value]) or not Runtime.technology_siege_ground_cell_allowed(lab.terrain, vehicle, cell) or int(lab.terrain.surface_types[value]) in [TerrainData.Surface.WATER, TerrainData.Surface.WETLAND] or _siege_people_except(cell, {}): return false
+		var height: int = lab.terrain.effective_height(cell)
+		var reason := ""
+		if not lab.terrain.is_walkable(cell): reason = "terrain_unwalkable"
+		elif height != base: reason = "height_differs_from_vehicle"
+		elif height != int(lab.terrain.height_levels[value]): reason = "height_not_natural"
+		elif not Runtime.technology_siege_ground_cell_allowed(lab.terrain, vehicle, cell): reason = "technology_ground"
+		elif int(lab.terrain.surface_types[value]) in [TerrainData.Surface.WATER, TerrainData.Surface.WETLAND]: reason = "surface_water_or_wetland"
+		elif _siege_people_except(cell, exempt): reason = "person"
+		if not reason.is_empty():
+			return {"cell": [cell.x, cell.y], "reason": reason, "height": height, "vehicle_base": base,
+				"natural": int(lab.terrain.height_levels[value]), "surface": int(lab.terrain.surface_types[value]),
+				"people": _turn_people_at(cell, exempt)}
 		for other: Dictionary in records().values():
-			if str(other.id) != str(vehicle.id) and _claims(other).has(cell): return false
-	return true
+			if str(other.id) != str(vehicle.id) and _claims(other).has(cell):
+				return {"cell": [cell.x, cell.y], "reason": "claim", "claimed_by": str(other.id)}
+	return {}
+
+# Diagnostic only: identities standing on a cell (native teams, GD actors and army members).
+func _turn_people_at(cell: Vector2i, exempt: Dictionary) -> Array:
+	var found: Array = []
+	if _native_siege():
+		for team: Variant in lab.crowd_site.teams:
+			for identity: int in team.person_ids:
+				if exempt.has(identity): continue
+				var person: Dictionary = lab.site_controller.person_actions._person(identity, false)
+				if not person.is_empty() and person.cell == cell: found.append("native:%d" % identity)
+	for actor: TerrainTestCharacter in lab.combat_actors:
+		if not exempt.has(actor.person_id) and actor.terrain_cell == cell: found.append("actor:%d" % actor.person_id)
+	for team: TerrainArmy in lab.combat_armies:
+		for index in range(team.cells.size()):
+			if team.cells[index] == cell: found.append("army:%d" % team.combat_identity(index))
+	return found
 
 func update_siege(delta: float) -> void:
 	if delta <= 0.0 or bool(lab.terrain.site.get("paused", false)): return
@@ -311,7 +350,7 @@ func update_siege(delta: float) -> void:
 				var current_height: int = lab.terrain.effective_height(lab.terrain.cell_from_index(int(value)))
 				source_changed = source_changed or old_height != current_height
 				drop = maxi(drop, old_height - current_height)
-			if source_changed or not _turn_fits(vehicle, sweep):
+			if source_changed or not _turn_fits(vehicle, sweep, _turn_exempt(vehicle)):
 				vehicle.action = {}
 				if drop > 0: Runtime.damage_siege_vehicle(lab.terrain, str(vehicle.id), float(Runtime.SIEGE_DEFINITIONS[str(vehicle.kind)].max_hp) * 0.25 * drop)
 				_queue_crew_release(vehicle, vehicle.crew_slots.values(), "terrain_changed")
@@ -558,7 +597,7 @@ func _siege_turn_plan(vehicle: Dictionary) -> Dictionary:
 	var team: Variant = _siege_team(vehicle)
 	if team == null or not _turn_crew_ready(vehicle) or not _turn_contacts_valid(vehicle): return {}
 	var sweep := _turn_sweep(vehicle)
-	if not _turn_fits(vehicle, sweep): return {}
+	if not _turn_fits(vehicle, sweep, _turn_exempt(vehicle)): return {}
 	var participants: Array[Dictionary] = []
 	var first := 2147483647
 	for slot: String in vehicle.crew_slots:
@@ -579,12 +618,15 @@ func propose_siege_compounds(grid: Object) -> void:
 	for vehicle: Dictionary in records().values():
 		if not is_siege(vehicle) or float(vehicle.hp) <= 0.0 or not vehicle.get("move", {}).is_empty(): continue
 		var team: Variant = _siege_team(vehicle)
-		if team == null or team._coordinator == null: continue
+		# Under crowd the team is the native owner: it has no grid coordinator and no grid A*.
+		# Its turn plan is built from native positions only (S4); moves stay on the grid path.
+		var native := _native_siege()
+		if team == null or (not native and team._coordinator == null): continue
 		var plan := {}
 		var members: Array[Dictionary] = []
 		if str(vehicle.get("action", {}).get("stage", "")) == "approach":
 			plan = _siege_turn_plan(vehicle)
-		elif str(vehicle.get("command", {}).get("type", "")) == "move" and vehicle.action.is_empty() and crew_ready(vehicle):
+		elif not native and str(vehicle.get("command", {}).get("type", "")) == "move" and vehicle.action.is_empty() and crew_ready(vehicle):
 			var pair: Array = vehicle.command.target.cell
 			var goal := Vector2i(int(pair[0]), int(pair[1]))
 			var anchor: Vector2i = lab.terrain.cell_from_index(int(vehicle.cell))
@@ -618,7 +660,7 @@ func can_commit_siege_compound(plan: Dictionary, occupancy: Dictionary, blocked:
 		if blocked.has(cell) or occupancy.has(cell) and not ids.has(int(occupancy[cell])): return false
 		cells.append(cell)
 	if not _siege_cells_clear(vehicle, cells, ids, lab.terrain.effective_height(lab.terrain.cell_from_index(int(vehicle.cell)))): return false
-	if str(plan.mode) == "rotate": return str(vehicle.action.get("stage", "")) == "approach" and _turn_crew_ready(vehicle) and _turn_contacts_valid(vehicle) and _turn_fits(vehicle, plan.sweep)
+	if str(plan.mode) == "rotate": return str(vehicle.action.get("stage", "")) == "approach" and _turn_crew_ready(vehicle) and _turn_contacts_valid(vehicle) and _turn_fits(vehicle, plan.sweep, _turn_exempt(vehicle))
 	if str(plan.mode) != "translate" or not crew_ready(vehicle) or str(vehicle.command.get("type", "")) != "move": return false
 	var source: Vector2i = lab.terrain.cell_from_index(int(plan.from))
 	var next: Vector2i = lab.terrain.cell_from_index(int(plan.cell))
