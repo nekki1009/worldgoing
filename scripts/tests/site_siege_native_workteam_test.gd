@@ -207,8 +207,8 @@ func _bulk_crew_hold_contract(source: Variant, data: TerrainData) -> bool:
 		"Actual noncrew WorkTeam and Housing same-cell holds enter their original modes"): return false
 	var held := _bulk_crew_snapshot(native)
 	if not _require(int(held.marks[3][0]) == 0 and int(held.marks[3][1]) == 5 and int(held.marks[3][2]) < 0
-		and int(held.marks[1][1]) == 3 and int(held.marks[1][2]) < 0 and held.blob.is_empty(),
-		"Held transient jobs remain noncrew and retain the original unsaveable boundary"): return false
+		and int(held.marks[1][1]) == 3 and int(held.marks[1][2]) < 0 and not held.blob.is_empty(),
+		"Held transient jobs remain noncrew and are saveable as held (G10, Nekki 2026-10-30 A)"): return false
 	for repeat in range(2):
 		var accepted: bool = native.set_siege_crew_members(PackedInt32Array())
 		var observed := _bulk_crew_snapshot(native)
@@ -219,7 +219,7 @@ func _bulk_crew_hold_contract(source: Variant, data: TerrainData) -> bool:
 	if not _require(native.set_siege_crew_members(PackedInt32Array([0])), "Add an unrelated actual crew member through bulk ABI"): return false
 	var added := _bulk_crew_snapshot(native)
 	if not _require(added.marks[3] == held.marks[3] and added.marks[1] == held.marks[1]
-		and added.people == held.people and added.ground == held.ground and added.blob.is_empty(),
+		and added.people == held.people and added.ground == held.ground and added.blob.is_empty() == held.blob.is_empty(),
 		"Unrelated crew addition leaves original jobs, people and positions unchanged"): return false
 	if not _require(native.set_siege_crew_members(PackedInt32Array([0])) and _bulk_crew_snapshot(native) == added
 		and native.set_siege_crew_members(PackedInt32Array()) and _bulk_crew_snapshot(native) == held,

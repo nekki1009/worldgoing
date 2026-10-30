@@ -66,7 +66,7 @@ func _run() -> void:
 	create_timer(600.0).timeout.connect(func() -> void:
 		failed = true; _write_result(); printerr("SIEGE INTEGRATION FAIL: deadline"); quit(3))
 	if not _check(suite in ["native", "parity"], "known native/parity suite", suite): return
-	if not _check(case_name in ["ram_min", "ram_full", "ballista", "traction", "counterweight", "tower_escape", "ladder", "takeover", "ai"], "one bounded case", case_name): return
+	if not _check(case_name in ["ram_min", "ram_full", "ballista", "traction", "traction_offcentre", "counterweight", "tower_escape", "ladder", "takeover", "ai"], "one bounded case", case_name): return
 	if not _preflight(): return
 	if case_name == "tower_escape":
 		if not _check(suite == "native", "tower escape is a native integration case"): return
@@ -74,6 +74,9 @@ func _run() -> void:
 	elif case_name == "ladder":
 		if not _check(suite == "native", "ladder is a native integration case"): return
 		await _ladder_case()
+	elif case_name == "traction_offcentre":
+		if not _check(suite == "native", "off-centre crew traction is a native integration case"): return
+		await _exercise("traction_trebuchet", int(SiteRuntime.SIEGE_DEFINITIONS["traction_trebuchet"].standard_crew), true, "stone", true)
 	elif case_name == "takeover":
 		if not _check(suite == "native", "takeover is a native integration case"): return
 		await _takeover_case()
@@ -81,7 +84,7 @@ func _run() -> void:
 		if not _check(suite == "native", "AI is a native integration case"): return
 		await _native_ai_case()
 	else:
-		var kind := "ram" if case_name.begins_with("ram_") else ("traction_trebuchet" if case_name == "traction" else ("counterweight_trebuchet" if case_name == "counterweight" else "ballista"))
+		var kind := "ram" if case_name.begins_with("ram_") else ("traction_trebuchet" if case_name in ["traction", "traction_offcentre"] else ("counterweight_trebuchet" if case_name == "counterweight" else "ballista"))
 		var count := 2 if case_name == "ram_min" else int(SiteRuntime.SIEGE_DEFINITIONS[kind].standard_crew)
 		if suite == "parity":
 			var ordinary: Dictionary = await _exercise(kind, count, false, "wood" if kind == "ram" else "stone", false)
@@ -313,6 +316,32 @@ func _make_context(kind: String, count: int, native: bool, material: String, kil
 			if not _check(assigned.ok, "native/GD crew assignment retains original roster member", assigned): return {}
 	return context
 
+# S3: one native crew member stands about 0.55 cell off its station centre, in the neighbouring floor cell.
+# The station rule (shared with the work pose) must still count it, and the round must still fire.
+func _displace_crew_offcentre(context: Dictionary, vehicle: Dictionary, count: int) -> bool:
+	var station: Vector2i = lab.site_controller.vehicles.crew_cell(vehicle, "0")
+	var occupied_cells: Array = SiteRuntime.siege_cells(lab.terrain, vehicle)
+	var neighbour := Vector2i(-1, -1)
+	for direction: Vector2i in [Vector2i.RIGHT, Vector2i.LEFT, Vector2i.DOWN, Vector2i.UP]:
+		if lab.terrain.contains(station + direction) and lab.terrain.is_walkable(station + direction) and not occupied_cells.has(station + direction):
+			neighbour = station + direction
+			break
+	if not _check(neighbour != Vector2i(-1, -1), "a walkable neighbouring floor cell exists beside the station", station): return false
+	var identity: int = int(vehicle.crew_slots["0"])
+	var host: Node = lab.crowd_site
+	var unit: int = int(host.crowd.soldier_index(identity))
+	var values: PackedFloat64Array = host.crowd.get_soldier_state(unit)
+	var refs: PackedInt64Array = host.crowd.soldier_refs(unit)
+	var offset := Vector2(neighbour - station) * 0.55
+	values[14] = float(station.x) + 0.5 + offset.x
+	values[15] = float(station.y) + 0.5 + offset.y
+	if not _check(host.crowd.set_soldier_state(unit, values, refs), "native crew member is displaced through the original setter", identity): return false
+	var person: Dictionary = lab.site_controller.person_actions._person(identity)
+	if not _check(person.cell == neighbour, "displaced crew member now floors in the neighbouring cell", {"cell": person.cell, "neighbour": neighbour, "station": station}): return false
+	var counted: int = lab.site_controller.vehicles.crew_count(vehicle)
+	if not _check(counted == count and lab.site_controller.vehicles.crew_ready(vehicle), "off-centre crew member still counts as at its station", {"counted": counted, "expected": count}): return false
+	return true
+
 func _step(combat: bool = true) -> bool:
 	if combat: SiteRuntime.mark_combat(lab.terrain, 10.0)
 	var step := lab._advance_original_shared_step(DT)
@@ -377,6 +406,7 @@ func _exercise(kind: String, count: int, native: bool, material: String, persist
 	var vehicle := _vehicle(context)
 	if not await _until(func() -> bool: return lab.site_controller.vehicles.crew_ready(vehicle), 40.0, "real crew approach arrives at original stations"): return {}
 	if not _check(vehicle.crew_slots.size() == count, "crew count equals original assigned IDs", vehicle.crew_slots): return {}
+	if case_name == "traction_offcentre" and not _displace_crew_offcentre(context, vehicle, count): return {}
 	for identity: int in context.crew:
 		var before := _canonical()
 		var rejected: Dictionary = lab.site_controller.person_actions.begin_structure_attack(identity, str(context.target.get("feature_id", "missing")), str(context.target.get("part_id", "missing")))
@@ -689,6 +719,20 @@ func _assert_nonzero_hit_counters(context: Dictionary, expected_victim: int, lab
 		exact = exact and victim.body is Dictionary and int(victim.body.get("hit_revision", -1)) == expected_victim
 	return _check(exact, label, details)
 
+func _restore_crew_centre(context: Dictionary) -> bool:
+	var vehicle: Dictionary = _vehicle(context)
+	var station: Vector2i = lab.site_controller.vehicles.crew_cell(vehicle, "0")
+	var identity: int = int(vehicle.crew_slots["0"])
+	var host: Node = lab.crowd_site
+	var unit: int = int(host.crowd.soldier_index(identity))
+	var values: PackedFloat64Array = host.crowd.get_soldier_state(unit)
+	var refs: PackedInt64Array = host.crowd.soldier_refs(unit)
+	values[14] = float(station.x) + 0.5
+	values[15] = float(station.y) + 0.5
+	if not _check(host.crowd.set_soldier_state(unit, values, refs), "displaced crew member returns to the station centre before the grid clear", identity): return false
+	host._occupancy_cache.clear()
+	return true
+
 func _stable_save_clear(context: Dictionary) -> bool:
 	if not _assert_nonzero_hit_counters(context, 8, "stable pre-save retains seeded original hit counters"): return false
 	var before := _canonical()
@@ -701,6 +745,9 @@ func _stable_save_clear(context: Dictionary) -> bool:
 	for identity: int in lab.crowd_site.crowd.person_ids():
 		var person: Dictionary = lab.site_controller.person_actions._person(identity)
 		aliases[identity] = {"holder": person.holder, "cargo": person.cargo}
+	# traction_offcentre only: the grid clear uses the exact station cell, so return the displaced crew member
+	# to the station centre first. Without this the crowd and grid rules differ on purpose and parity cannot hold.
+	if case_name == "traction_offcentre" and not _restore_crew_centre(context): return false
 	before = _canonical()
 	var cleared: Dictionary = lab.crowd_site.clear()
 	var after := _canonical()

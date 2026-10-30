@@ -40,12 +40,19 @@ func _crew_ground_station(vehicle: Dictionary, cell: Vector2i) -> bool:
 	var foundation: int = int(data.height_levels[int(vehicle.cell)]) if str(vehicle.kind) == "siege_tower" else data.effective_height(data.cell_from_index(int(vehicle.cell)))
 	return data.effective_height(cell) == foundation and data.effective_height(cell) == int(data.height_levels[index]) and Runtime.technology_siege_ground_cell_allowed(data, vehicle, cell) and int(data.surface_types[index]) not in [TerrainData.Surface.WATER, TerrainData.Surface.WETLAND]
 
+# Grid people stand exactly on the station cell. Crowd people count within the shared pose radius of its centre.
+func _crew_at_station(vehicle: Dictionary, slot: String, person: Dictionary, turning: bool = false) -> bool:
+	var owner_ref: Variant = person.owner
+	var crowd: bool = owner_ref is CrowdPersonOwner
+	var native_position := Vector2(person.get("position", Vector2.ZERO)) if crowd else Vector2.ZERO
+	return SiegeWorkPose.at_crew_station(lab.terrain, vehicle, slot, person.cell, crowd, native_position, turning)
+
 func crew_count(vehicle: Dictionary, ready_only: bool = true) -> int:
 	var count := 0
 	for slot: String in vehicle.get("crew_slots", {}):
 		var person := _operator(int(vehicle.crew_slots[slot]))
 		if not _available(person) or int(person.owner.team_id) != int(vehicle.team_id): continue
-		if ready_only and (person.owner.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL or person.cell != crew_cell(vehicle, slot) or not _crew_ground_station(vehicle, person.cell) or str(person.owner.combat_hot_get(int(person.unit), &"pose")) != "idle"): continue
+		if ready_only and (person.owner.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL or not _crew_at_station(vehicle, slot, person) or not _crew_ground_station(vehicle, crew_cell(vehicle, slot)) or str(person.owner.combat_hot_get(int(person.unit), &"pose")) != "idle"): continue
 		count += 1
 	return count
 
@@ -253,7 +260,7 @@ func _crew_walk(vehicle: Dictionary, turning: bool) -> bool:
 			if str(vehicle.phase) != "deployed": vehicle["phase"] = "disabled"
 			return false
 		if person.owner.moving_to[index] != TerrainArmy.INVALID_CELL: arrived = false; continue
-		if person.cell == goal: continue
+		if _crew_at_station(vehicle, slot, person, turning): continue # Same station rule as crew_count: no walk-back for an arrived crowd crew.
 		arrived = false
 		if person.owner is CrowdPersonOwner:
 			person.owner.siege_approach_step(index, goal)
@@ -544,7 +551,7 @@ func _turn_crew_ready(vehicle: Dictionary) -> bool:
 	if crew_count(vehicle, false) < int(Runtime.SIEGE_DEFINITIONS[str(vehicle.kind)].min_crew): return false
 	for slot: String in vehicle.crew_slots:
 		var person := _operator(int(vehicle.crew_slots[slot]))
-		if not _available(person) or person.owner.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL or person.cell != crew_cell(vehicle, slot, true) or str(person.owner.combat_hot_get(int(person.unit), &"pose")) != "idle" or not _crew_ground_station(vehicle, person.cell): return false
+		if not _available(person) or person.owner.moving_to[int(person.unit)] != TerrainArmy.INVALID_CELL or not _crew_at_station(vehicle, slot, person, true) or str(person.owner.combat_hot_get(int(person.unit), &"pose")) != "idle" or not _crew_ground_station(vehicle, crew_cell(vehicle, slot, true)): return false
 	return true
 
 func _siege_turn_plan(vehicle: Dictionary) -> Dictionary:

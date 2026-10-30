@@ -2675,7 +2675,9 @@ func tick(delta: float, accepted_game_seconds: float = -1.0) -> void:
 		for team: TerrainArmy in lab.combat_armies:
 			team.notify_terrain_changed()
 		if is_instance_valid(lab.crowd_site):
-			lab.crowd_site.sync_terrain()
+			# A refused native sync means GD navigation and native walls disagree; never drop it silently.
+			var native_synced: bool = lab.crowd_site.sync_terrain()
+			if not native_synced and lab.crowd_site.active: push_error("STRUCTURE_NATIVE_TERRAIN_REJECTED")
 	if not data.site.notices.is_empty():
 		if not lab.restore_only: message.text = str(data.site.notices.back())
 		data.site.notices.clear() # Same original consumption; no quiet UI update.

@@ -65,5 +65,13 @@ func _run() -> void:
 	result = SiegeWorkPose.sample(data, vehicle, 7, _person(station, false))
 	_check(str(result.get("clip", "")) == "siege_load", "grid person on the station cell keeps the work pose")
 
+	# Readiness (S3) uses the same shared helper as the pose: one station rule for both.
+	var native_centre := centre * CELL
+	_check(SiegeWorkPose.at_crew_station(data, vehicle, "0", neighbour, true, native_centre + Vector2(0.6, 0.0) * CELL), "shared readiness helper counts crowd crew 0.6 cells off-centre in the neighbouring floor cell")
+	_check(SiegeWorkPose.at_crew_station(data, vehicle, "0", station, true, native_centre), "shared readiness helper counts crowd crew at the station centre")
+	_check(not SiegeWorkPose.at_crew_station(data, vehicle, "0", neighbour, true, native_centre + Vector2(0.95, 0.0) * CELL), "shared readiness helper rejects crowd crew beyond the station radius")
+	_check(not SiegeWorkPose.at_crew_station(data, vehicle, "0", neighbour, false), "shared readiness helper keeps the exact grid cell test for grid crew off-centre")
+	_check(SiegeWorkPose.at_crew_station(data, vehicle, "0", station, false), "shared readiness helper accepts grid crew on the exact station cell")
+	_check(SiegeWorkPose.at_crew_station(data, vehicle, "0", neighbour, true, native_centre + Vector2(0.6, 0.0) * CELL) == (str(SiegeWorkPose.sample(data, vehicle, 7, off_centre).get("clip", "")) == "siege_load"), "readiness and work pose agree on the same crowd position")
 	print("G8B CROWD PASS: ", checks, " checks")
 	quit(0)

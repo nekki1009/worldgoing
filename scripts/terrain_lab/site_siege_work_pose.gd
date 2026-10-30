@@ -29,13 +29,13 @@ static func sample(data: TerrainData, vehicle: Dictionary, identity: int, person
 		return {}
 	if stage in ["loading", "preparing", "tower_deploy", "tower_retract"] and person.get("moving_to", INVALID_CELL) == INVALID_CELL:
 		for slot: String in vehicle.crew_slots:
-			if int(vehicle.crew_slots[slot]) == identity and _at_crew_station(data, vehicle, slot, cell, person):
+			if int(vehicle.crew_slots[slot]) == identity and at_crew_station(data, vehicle, slot, cell, bool(person.get("crowd", false)), Vector2(person.get("position", Vector2.ZERO))):
 				return {"clip": "siege_load" if stage == "loading" else "siege_pull", "time": float(action.elapsed), "facing": facing}
 	return {}
 
-static func _at_crew_station(data: TerrainData, vehicle: Dictionary, slot: String, cell: Vector2i, person: Dictionary) -> bool:
-	var station: Vector2i = Runtime.siege_crew_cell(data, vehicle, slot)
+static func at_crew_station(data: TerrainData, vehicle: Dictionary, slot: String, cell: Vector2i, crowd: bool, native_position: Vector2 = Vector2.ZERO, turning: bool = false) -> bool:
+	var station: Vector2i = Runtime.siege_crew_cell(data, vehicle, slot, turning)
 	# Grid people keep the exact cell test. Crowd input carries the native position, so its floor cell may be a neighbour.
-	if not bool(person.get("crowd", false)): return cell == station
-	var at: Vector2 = Vector2(person.get("position", Vector2.ZERO)) / 64.0
+	if not crowd: return cell == station
+	var at: Vector2 = native_position / 64.0
 	return at.distance_to(Vector2(station) + Vector2.ONE * 0.5) <= CROWD_STATION_RADIUS

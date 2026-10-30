@@ -2247,6 +2247,10 @@ static func structure_change_guard(data: TerrainData, key: String, candidate: Di
 		for index: int in original.get("cells", []):
 			if index not in candidate.get("cells", []) and bool(occupied.call(data.cell_from_index(index))):
 				return fail("OCCUPIED", "原營地占地仍有人或已預約步進")
+	# A walled completion raises walk height on every cell it claims. Hold it while any person stands there.
+	if str(candidate.get("kind", "")) in ["palisade", "stone_wall"] and str(candidate.get("stage", "")) == "complete" and str(original.get("stage", "")) != "complete":
+		for index: int in candidate.get("cells", []):
+			if bool(occupied.call(data.cell_from_index(index))): return fail("OCCUPIED", "有人站在將築成牆的格上")
 	var after: TerrainData = Env.preview_navigation(data, key, candidate)
 	if after == null:
 		return fail("INVALID", "候選導航不可用")
