@@ -14,7 +14,7 @@ extern "C" {
 #endif
 
 typedef struct wg_crowd wg_crowd;
-enum wg_order_result { WG_OK=0, WG_NOT_OWNER=1, WG_BAD_FORMATION=2, WG_BAD_ARGS=3, WG_NO_TARGET=4, WG_BLOCKED=5, WG_NOT_ROUTED=6, WG_ROUTED=7, WG_NO_ORDERS=8 };
+enum wg_order_result { WG_OK=0, WG_NOT_OWNER=1, WG_BAD_FORMATION=2, WG_BAD_ARGS=3, WG_NO_TARGET=4, WG_BLOCKED=5, WG_NOT_ROUTED=6, WG_ROUTED=7, WG_NO_ORDERS=8, WG_NO_COMMANDER=9, WG_NOT_CAVALRY=10 };
 int wg_crowd_host_order(wg_crowd *c, int f, int kind, float gx, float gy, double x);
 int wg_crowd_validate(const wg_crowd *c);
 int wg_crowd_set_sustain_input(wg_crowd *c, int f, int fully_fed, double delta);
@@ -105,6 +105,13 @@ int wg_crowd_order_attack(wg_crowd *c, int formation, int target_soldier);
 int wg_crowd_order_hold(wg_crowd *c, int formation);
 int wg_crowd_order_pursue(wg_crowd *c, int formation, int target_soldier);
 int wg_crowd_order_retreat(wg_crowd *c, int formation, float gx, float gy);
+/* CAV-4a cavalry charge (reports/cavalry-charge-plan.md section 5). CHARGE to a point (gx, gy) or to an enemy formation;
+ * RALLY pulls the formation back to a rally point behind the target, then HOLDs. The same host_order gate as the other
+ * orders, plus: the commander must be eligible and within 8 cells (WG_NO_COMMANDER), and at least half the able members
+ * mounted (WG_NOT_CAVALRY, CHARGE only). */
+int wg_crowd_order_charge(wg_crowd *c, int formation, float gx, float gy);
+int wg_crowd_order_charge_formation(wg_crowd *c, int formation, int enemy_formation);
+int wg_crowd_order_rally(wg_crowd *c, int formation);
 int wg_crowd_order_capture(wg_crowd *c, int guard, int target);
 
 /* Time. wg_crowd_step runs the Site clock itself (combat_left: 1:1, else 1 s = 60 game s, x speed).

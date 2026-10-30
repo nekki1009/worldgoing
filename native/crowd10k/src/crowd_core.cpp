@@ -628,6 +628,7 @@ int World::add_soldier(int fi, const rules::Equip &e, Role r, int64_t person, ui
 	for (int k = 0; k < cav::HEADING_WINDOW; ++k) cav_hist.push_back(0.f);
 	push(cav_hold, 0.0); push(cav_down, 0.0);
 	for (int k = 0; k < cav::RECENT_VICTIMS; ++k) { cav_hit_who.push_back(-1); cav_hit_t.push_back(-1e9); }
+	cav_spent.push_back(0); // CAV-4a
 	push(person_id, person >= 0 ? person : (int64_t)i);
 	if (finalized_) {
 		f.slot_count++; f.roster++; f.fatigue_count++;
@@ -644,14 +645,21 @@ int World::add_soldier(int fi, const rules::Equip &e, Role r, int64_t person, ui
 	return i;
 }
 
+void World::refresh_cav_layout(Formation &f) const {
+	int able = 0, riding = 0;
+	for (int i : f.members) if (can_act(i)) { ++able; riding += mounted[i] ? 1 : 0; }
+	f.cav_layout = able > 0 && riding == able;
+}
+
 void World::slot_world(const Formation &f, int s, int n, float &x, float &y) const {
 	n = std::max(1, n);
 	int cols = std::max(1, std::min(f.cols, n));
 	int rows = (n + cols - 1) / cols;
 	int row = s / cols, col = s % cols;
 	int in_row = (row == rows - 1) ? n - row * cols : cols;
-	float lat = ((float)col - (float)(in_row - 1) * 0.5f) * f.spacing;
-	float back = ((float)row - (float)(rows - 1) * 0.5f) * f.spacing;
+	const float sp = slot_spacing(f); // CAV-4a: a mounted layout is wider (infantry: f.spacing)
+	float lat = ((float)col - (float)(in_row - 1) * 0.5f) * sp;
+	float back = ((float)row - (float)(rows - 1) * 0.5f) * sp;
 	float fx = std::cos(f.facing), fy = std::sin(f.facing);
 	float rx = -fy, ry = fx;
 	x = f.cx + rx * lat - fx * back;
@@ -807,6 +815,7 @@ static void clear_encircle(World &w, Formation &f) {
 
 void World::order_move(int fi, float gx, float gy, float gfacing) {
 	Formation &f = formations[fi];
+	clear_charge(f); // CAV-4a
 	if (f.garrisoned) return;
 	if (formation_has_convoys(fi)) gfacing = quarter_angle(quarter_of(gfacing)); // G4: a formation with vehicles rests on a quarter facing
 	f.order = Order::MOVE; f.attacking = false; f.target_person = -1; f.goal_facing = gfacing;
@@ -816,6 +825,7 @@ void World::order_move(int fi, float gx, float gy, float gfacing) {
 }
 void World::order_attack(int fi, int tp) {
 	Formation &f = formations[fi];
+	clear_charge(f); // CAV-4a
 	if (f.garrisoned) return;
 	f.order = Order::ATTACK; f.attacking = true; f.needs_attack_order = false; f.target_person = tp;
 	f.order_delay = 0.5 * (1.0 - command_effect(fi, 0, 0.20));
@@ -823,6 +833,7 @@ void World::order_attack(int fi, int tp) {
 }
 void World::order_hold(int fi) {
 	Formation &f = formations[fi];
+	clear_charge(f); // CAV-4a
 	const bool was_arrived = f.arrived;
 	const float arrival_facing = f.goal_facing;
 	f.order = Order::HOLD; f.attacking = false; f.target_person = -1;
@@ -833,6 +844,7 @@ void World::order_hold(int fi) {
 }
 void World::order_pursue(int fi, int tp) {
 	Formation &f = formations[fi];
+	clear_charge(f); // CAV-4a
 	if (f.garrisoned) return;
 	f.order = Order::PURSUE; f.attacking = true; f.needs_attack_order = false; f.target_person = tp;
 	f.origin_x = f.ref_valid ? f.ref_x : f.cx; f.origin_y = f.ref_valid ? f.ref_y : f.cy;
@@ -843,6 +855,7 @@ void World::order_pursue(int fi, int tp) {
 }
 void World::order_retreat(int fi, float gx, float gy) {
 	Formation &f = formations[fi];
+	clear_charge(f); // CAV-4a
 	if (f.garrisoned) return;
 	f.order = Order::RETREAT; f.attacking = false; f.target_person = -1;
 	float dx = gx - f.cx, dy = gy - f.cy;
@@ -850,6 +863,287 @@ void World::order_retreat(int fi, float gx, float gy) {
 	if (formation_has_convoys(fi)) f.goal_facing = quarter_angle(quarter_of(f.goal_facing));
 	set_goal(f, gx, gy);
 	clear_encircle(*this, f);
+}
+
+// ---------------------------------------------------------------- CAV-4a charge cycle (reports/cavalry-charge-plan.md section 5)
+// Cycle of a CHARGE order: FORM (team flow field to a point FORM_CELLS in front of the target, line abreast) -> CHARGE
+// (riders steer straight at the target, no flow field; the formation goal lies PAST_CELLS beyond it) -> break-through
+// (the charge ends once no charging rider is still short of the target line by BREAK_CELLS, or CHARGE_SECONDS pass) ->
+// RALLY (flow field to a point behind the target or behind-flank, layout restored) -> FORM again. A RALLY order goes to
+// the rally point and then HOLDs. Riders stopped in a charge are spent (cav_spent) and follow the ordinary rules.
+static bool live_centre(const World &w, int form, float &x, float &y) {
+	const Formation &e = w.formations[form];
+	double sx = 0, sy = 0; int k = 0;
+	for (int i : e.members) if (w.can_act(i)) { sx += w.px[i]; sy += w.py[i]; ++k; }
+	if (k == 0) return false;
+	x = (float)(sx / k); y = (float)(sy / k);
+	return true;
+}
+
+void World::clear_charge(Formation &f) {
+	f.charge_stage = CS_NONE; f.charge_target_form = -1; f.charge_t = 0.0; // charge_runs keeps the history
+	if (f.charge_cols > 0) { f.cols = f.charge_cols; f.charge_cols = 0; }
+}
+
+bool World::cavalry_formation(int fi) const {
+	const Formation &f = formations[fi];
+	int able = 0, riding = 0;
+	for (int i : f.members) if (can_act(i)) { ++able; if (mounted[i]) ++riding; }
+	return able > 0 && riding * 2 >= able;
+}
+
+bool World::charge_commander_ok(int fi) const {
+	const Formation &f = formations[fi];
+	const int c = f.current_cmd;
+	if (c < 0 || c >= soldier_count() || !command_eligible(c)) return false;
+	const float dx = px[c] - f.cx, dy = py[c] - f.cy;
+	// a commander at his own slot is always with the formation: the reach is COMMAND_CELLS, or the half diagonal of the slot
+	// layout plus a cell when that is larger (a 10 x 10 mounted block at cav::SLOT_SPACING has its corners 8.4 cells out)
+	const float reach = std::max(cav::COMMAND_CELLS, layout_half_extent(f) + 1.f);
+	return dx * dx + dy * dy <= reach * reach;
+}
+
+bool World::charge_rider(int i) const {
+	if (i < 0 || i >= soldier_count() || !mounted[i] || cav_spent[i] || !can_act(i)) return false;
+	const Formation &f = formations[form[i]];
+	return f.order == Order::CHARGE && f.charge_stage == CS_CHARGE;
+}
+
+bool World::charge_target(int fi, float &tx, float &ty) const {
+	const Formation &f = formations[fi];
+	if (f.charge_target_form >= 0) {
+		if (f.charge_target_form >= (int)formations.size() || !hostile(formations[f.charge_target_form].team, f.team)) return false;
+		return live_centre(*this, f.charge_target_form, tx, ty);
+	}
+	tx = f.charge_tx; ty = f.charge_ty;
+	return true;
+}
+
+float World::layout_half_extent(const Formation &f) const {
+	const int m = std::max(1, f.slot_count), cols = std::max(1, std::min(f.cols, m)), rows = (m + cols - 1) / cols;
+	return 0.5f * slot_spacing(f) * std::sqrt((float)((cols - 1) * (cols - 1) + (rows - 1) * (rows - 1)));
+}
+
+int World::charge_line_cols(int n) { n = std::max(1, n); return std::max(std::min(n, 10), (n + cav::LINE_RANKS - 1) / cav::LINE_RANKS); }
+
+float World::charge_line_depth(const Formation &f) const {
+	const int n = std::max(1, f.slot_count), cols = charge_line_cols(n), rows = (n + cols - 1) / cols;
+	return 0.5f * (float)(rows - 1) * slot_spacing(f);
+}
+
+bool World::form_point(int fi, float tx, float ty, float &fx, float &fy) const {
+	const Formation &f = formations[fi];
+	const float depth = charge_line_depth(f); // the front rank stands FORM_CELLS (then nearby distances) from the target
+	float dx = tx - f.cx, dy = ty - f.cy, d = std::sqrt(dx * dx + dy * dy);
+	if (d < 1e-3f) { dx = f.charge_dx; dy = f.charge_dy; d = std::sqrt(dx * dx + dy * dy); }
+	if (d < 1e-3f) { dx = 1.f; dy = 0.f; d = 1.f; }
+	const float bx = -dx / d, by = -dy / d; // from the target back toward our side
+	static const float angles[] = {0.f, 0.2f, -0.2f, 0.4f, -0.4f};
+	static const float radii[] = {cav::FORM_CELLS, 9.f, 11.f, 8.f, 12.f};
+	// first pass: a point clear of every other hostile formation's body; second pass: any walkable point
+	for (int pass = 0; pass < 2; ++pass)
+		for (float r : radii)
+			for (float a : angles) {
+				const float vx = bx * std::cos(a) - by * std::sin(a), vy = bx * std::sin(a) + by * std::cos(a);
+				const float qx = tx + vx * (r + depth), qy = ty + vy * (r + depth);
+				if (!(qx >= 0.5f && qy >= 0.5f && qx < terrain.w - 0.5f && qy < terrain.h - 0.5f)) continue;
+				const int cx = (int)qx, cy = (int)qy;
+				if (!terrain.walkable(cx, cy) || !siege_route_cell(terrain.idx(cx, cy))) continue;
+				if (pass == 0 && !clear_of_enemy_bodies(fi, qx, qy, depth)) continue;
+				fx = qx; fy = qy;
+				return true;
+			}
+	return false;
+}
+
+bool World::clear_of_enemy_bodies(int fi, float x, float y, float own_r) const {
+	const Formation &f = formations[fi];
+	for (size_t o = 0; o < formations.size(); ++o) {
+		const Formation &g = formations[o];
+		if ((int)o == fi || (int)o == f.charge_target_form || g.slot_count == 0 || g.garrisoned || !hostile(f.team, g.team)) continue;
+		const float r = layout_half_extent(g) + own_r + 2.f * cav::RADIUS + 1.f;
+		const float dx = g.cx - x, dy = g.cy - y;
+		if (dx * dx + dy * dy < r * r) return false;
+	}
+	return true;
+}
+
+bool World::rally_point(int fi, float tx, float ty, float &rx, float &ry) const {
+	const Formation &f = formations[fi];
+	// the charge heading when a charge is running (the break-through may already lie past the target), else the line to the target
+	float dx = tx - f.cx, dy = ty - f.cy;
+	if (f.charge_stage == CS_CHARGE || f.charge_stage == CS_RALLY) { dx = f.charge_dx; dy = f.charge_dy; }
+	float d = std::sqrt(dx * dx + dy * dy);
+	if (d < 1e-3f) { dx = f.charge_dx; dy = f.charge_dy; d = std::sqrt(dx * dx + dy * dy); }
+	if (d < 1e-3f) { dx = 1.f; dy = 0.f; d = 1.f; }
+	const float bx = dx / d, by = dy / d; // beyond the target, as seen from the charge (the enemy's rear)
+	const float side = (f.charge_runs % 2) ? 1.f : -1.f; // alternate flanks between cycles
+	// After a charge of the cycle the riders stand on both sides of the enemy body (the stopped ones in front of it, the
+	// penetrating ones beyond it) and neither group can regroup through it: the rally point is behind-flank (60 degrees off
+	// the charge line) and clear of the target formation's own extent, so both groups ride round its flank; the next charge
+	// then comes in from that flank. A RALLY order outside the cycle keeps the plain behind-flank point.
+	const bool cycle = f.order == Order::CHARGE && (f.charge_stage == CS_CHARGE || f.charge_stage == CS_RALLY);
+	float base = 0.f;
+	if (cycle && f.charge_target_form >= 0 && f.charge_target_form < (int)formations.size()) base = layout_half_extent(formations[f.charge_target_form]);
+	// (then the front-flank and the front as a last resort, where the enemy's depth behind is held by other bodies)
+	static const float cycle_deg[] = {60.f, -60.f, 90.f, -90.f, 45.f, -45.f, 0.f, 120.f, -120.f, 180.f};
+	static const float order_deg[] = {45.f, -45.f, 0.f, 90.f, -90.f, 60.f, -60.f, 120.f, -120.f, 180.f};
+	const float *angles_deg = cycle ? cycle_deg : order_deg;
+	static const float radii[] = {cav::RALLY_CELLS, 8.f, 12.f};
+	// first pass: the point clear of every other hostile formation's body (the plain first walkable candidate of the old
+	// order otherwise); a RALLY order outside the cycle keeps its first five candidates in their old order
+	for (int pass = 0; pass < 2; ++pass)
+		for (float r : radii)
+			for (int k = 0; k < 10; ++k) {
+				if (pass == 1 && !cycle && k >= 5) break;
+				const float a = side * angles_deg[k] * kPi / 180.f;
+				const float vx = bx * std::cos(a) - by * std::sin(a), vy = bx * std::sin(a) + by * std::cos(a);
+				const float qx = tx + vx * (r + base), qy = ty + vy * (r + base);
+				if (!(qx >= 0.5f && qy >= 0.5f && qx < terrain.w - 0.5f && qy < terrain.h - 0.5f)) continue;
+				const int cx = (int)qx, cy = (int)qy;
+				if (!terrain.walkable(cx, cy) || !siege_route_cell(terrain.idx(cx, cy))) continue;
+				if (pass == 0 && !clear_of_enemy_bodies(fi, qx, qy, 0.f)) continue;
+				rx = qx; ry = qy;
+				return true;
+			}
+	return false;
+}
+
+bool World::begin_form(int fi, float tx, float ty) {
+	Formation &f = formations[fi];
+	float fx = 0, fy = 0;
+	if (!form_point(fi, tx, ty, fx, fy)) return false;
+	// the form-up timer scales with the march: the time to walk there at march speed, six times over (the flow-field route is longer and slower than the straight line), plus FORM_SECONDS
+	refresh_cav_layout(f);
+	f.charge_stage = CS_FORM;
+	f.charge_t = cav::FORM_SECONDS + 6.0 * std::hypot(fx - f.cx, fy - f.cy) / std::max(0.1, (double)march_pace(f));
+	f.charge_tx = tx; f.charge_ty = ty;
+	if (f.charge_cols == 0) f.charge_cols = f.cols; // the march layout walks to the point; the line is formed there
+	for (int i : f.members) cav_spent[i] = 0;
+	set_goal(f, fx, fy);
+	f.goal_facing = std::atan2(ty - f.cy, tx - f.cx);
+	stats.charge_forms++;
+	return true;
+}
+
+void World::enter_rally(int fi) {
+	Formation &f = formations[fi];
+	float tx = f.charge_tx, ty = f.charge_ty;
+	charge_target(fi, tx, ty); // a lost enemy keeps the last point
+	// the formation regroups where its riders are: after a charge the centre (which rode on at GALLOP to the charge goal)
+	// is set to the able members' mean when that point is walkable, so the slots of the rally walk start among the riders
+	float mx = 0, my = 0;
+	if (live_centre(*this, fi, mx, my) && terrain.walkable_f(mx, my) && siege_route_cell(terrain.idx((int)mx, (int)my))) { f.cx = mx; f.cy = my; }
+	float rx = f.cx, ry = f.cy;
+	rally_point(fi, tx, ty, rx, ry);
+	if (f.charge_cols > 0) { f.cols = f.charge_cols; f.charge_cols = 0; }
+	refresh_cav_layout(f);
+	f.charge_stage = CS_RALLY;
+	f.charge_t = cav::RALLY_SECONDS + 6.0 * std::hypot(rx - f.cx, ry - f.cy) / std::max(0.1, (double)march_pace(f));
+	f.rally_x = rx; f.rally_y = ry;
+	f.charge_runs++;
+	stats.charge_breaks++;
+	set_goal(f, rx, ry);
+	f.goal_facing = std::atan2(ty - ry, tx - rx);
+	reslot_formation(f); // riders scattered on both sides of the enemy take the nearest slots of the rally layout
+}
+
+bool World::order_charge(int fi, float gx, float gy, int form) {
+	Formation &f = formations[fi];
+	if (f.garrisoned) return false;
+	float tx = gx, ty = gy;
+	if (form >= 0) {
+		if (form >= (int)formations.size() || !hostile(formations[form].team, f.team) || !live_centre(*this, form, tx, ty)) return false;
+	}
+	refresh_cav_layout(f); // the layout of the riders mounted now (the form-up distance depends on it)
+	if (!form_point(fi, tx, ty, gx, gy)) return false;
+	clear_charge(f);
+	f.order = Order::CHARGE; f.attacking = false; f.target_person = -1; f.charge_target_form = form;
+	f.order_delay = 0.5 * (1.0 - command_effect(fi, 0, 0.20));
+	return begin_form(fi, tx, ty);
+}
+
+void World::order_rally(int fi) {
+	Formation &f = formations[fi];
+	if (f.garrisoned) return;
+	const bool was_charge = f.order == Order::CHARGE;
+	const int keep_form = was_charge ? f.charge_target_form : -1;
+	const float keep_x = f.charge_tx, keep_y = f.charge_ty;
+	clear_charge(f);
+	f.order = Order::RALLY; f.attacking = false; f.target_person = -1;
+	f.charge_target_form = keep_form; f.charge_tx = keep_x; f.charge_ty = keep_y;
+	f.order_delay = 0.0;
+	enter_rally(fi);
+}
+
+void World::charge_stage_step(int fi, float dt) {
+	Formation &f = formations[fi];
+	if (f.charge_stage == CS_NONE) return;
+	if (f.order != Order::CHARGE && f.order != Order::RALLY) { clear_charge(f); return; }
+	// a flow field evicted from the 256-field cache leaves a walking formation with no direction; re-request it here
+	// (set_goal does not run again for a long march), as the charge form-up and rally walks rely on the field
+	if (f.field < 0 && !f.arrived && f.charge_stage != CS_CHARGE)
+		f.field = request_field(nearest_walkable(terrain.idx(std::clamp((int)f.goal_x, 0, terrain.w - 1), std::clamp((int)f.goal_y, 0, terrain.h - 1))));
+	f.charge_t -= dt;
+	// form-up and rally walks ride round the target formation's body (its live centre and slot extent plus a rider)
+	if (f.order == Order::CHARGE && (f.charge_stage == CS_FORM || f.charge_stage == CS_RALLY) && f.charge_target_form >= 0 &&
+	    f.charge_target_form < (int)formations.size() && live_centre(*this, f.charge_target_form, f.avoid_x, f.avoid_y))
+		f.avoid_r = layout_half_extent(formations[f.charge_target_form]) + cav::RADIUS + cfg.radius;
+	float tx = 0, ty = 0;
+	switch (f.charge_stage) {
+	case CS_FORM: {
+		if (!charge_target(fi, tx, ty)) { order_hold(fi); return; }
+		const float mx = tx - f.charge_tx, my = ty - f.charge_ty;
+		if (mx * mx + my * my > cav::COMMAND_TARGET_CELLS * cav::COMMAND_TARGET_CELLS) {
+			f.charge_tx = tx; f.charge_ty = ty;
+			float fx = 0, fy = 0;
+			if (form_point(fi, tx, ty, fx, fy)) set_goal(f, fx, fy);
+		}
+		const float ax = f.goal_x - f.cx, ay = f.goal_y - f.cy;
+		const bool at_point = f.arrived || ax * ax + ay * ay <= 1.f;
+		if (!at_point) {
+			if (f.charge_t <= 0.0) order_hold(fi); // the form-up never got there
+			return;
+		}
+		// at the point the march layout deploys into the line abreast (at least ten wide, or one rank; at most LINE_RANKS
+		// deep). The line is formed when its riders stand near their slots (mean slot distance of the followers); a line
+		// that does not settle before the form-up timer runs out charges with the riders it has
+		const int line = charge_line_cols(f.slot_count);
+		if (f.cols != line) { f.cols = line; reslot_formation(f); return; } // nearest slots of the line: the riders deploy without crossing
+		if (f.lag > cav::FORM_READY_LAG && f.charge_t > 0.0) return;
+		// the charge: heading is the line from the formation centre to the target, fixed from here on
+		float dx = tx - f.cx, dy = ty - f.cy, d = std::sqrt(dx * dx + dy * dy);
+		if (d < 1e-3f) { dx = f.charge_dx; dy = f.charge_dy; d = std::sqrt(dx * dx + dy * dy); }
+		if (d < 1e-3f) { dx = 1.f; dy = 0.f; d = 1.f; }
+		f.charge_dx = dx / d; f.charge_dy = dy / d;
+		f.charge_stage = CS_CHARGE; f.charge_t = cav::CHARGE_SECONDS;
+		set_goal(f, tx + f.charge_dx * cav::PAST_CELLS, ty + f.charge_dy * cav::PAST_CELLS);
+		f.los_goal = true; // straight, no flow field
+		f.goal_facing = std::atan2(f.charge_dy, f.charge_dx);
+		break;
+	}
+	case CS_CHARGE: {
+		if (!charge_target(fi, tx, ty)) { order_hold(fi); return; }
+		bool short_of_line = false;
+		for (int i : f.members) {
+			if (!mounted[i] || cav_spent[i] || !can_act(i)) continue;
+			const float along = (px[i] - tx) * f.charge_dx + (py[i] - ty) * f.charge_dy;
+			if (along < cav::BREAK_CELLS) { short_of_line = true; break; }
+		}
+		if (!short_of_line || f.charge_t <= 0.0) enter_rally(fi); // break-through done (or the charge timed out)
+		break;
+	}
+	case CS_RALLY: {
+		const float rx = f.rally_x - f.cx, ry = f.rally_y - f.cy;
+		if (!(f.arrived || rx * rx + ry * ry <= 2.25f || f.charge_t <= 0.0)) break;
+		stats.charge_rallies++;
+		if (f.order == Order::RALLY) { order_hold(fi); return; }
+		// CHARGE cycle: form up again toward the live target
+		if (!charge_target(fi, tx, ty) || !begin_form(fi, tx, ty)) order_hold(fi);
+		break;
+	}
+	default: clear_charge(f); break;
+	}
 }
 
 // ---------------------------------------------------------------- geometry
@@ -1022,6 +1316,8 @@ void World::formation_stage(float dt) {
 		Formation &f = formations[fi];
 		f.lag = lag_cnt_[fi] ? (float)(lag_acc_[fi] / lag_cnt_[fi]) : 0.f;
 		lag_acc_[fi] = 0; lag_cnt_[fi] = 0;
+		refresh_cav_layout(f); // CAV-4a: mounted layout and pace follow the riders of this step
+		f.avoid_r = 0.f;
 		if (f.members.empty()) continue;
 		if (f.garrisoned) {
 			for (int i : f.members) { slot_tx_[i] = px[i]; slot_ty_[i] = py[i]; }
@@ -1050,6 +1346,7 @@ void World::formation_stage(float dt) {
 		if (f.reslot_pending && f.arrived) { reslot_formation(f); f.reslot_pending = false; } // G4 layout settle (vehicle formations only)
 		// encounter: hold while any member is in melee reach, not only in the 0.4 s after an exchange pair
 		bool contact = f.contact_age < 0.4 || f.in_contact;
+		charge_stage_step((int)fi, dt); // CAV-4a: form-up / charge / break-through / rally cycle of a CHARGE or RALLY order
 		// PURSUE limits (D74): 20 cells from the issue reference, 20 seconds, valid target
 		if (f.order == Order::PURSUE) {
 			f.pursuit_left -= dt;
@@ -1100,7 +1397,8 @@ void World::formation_stage(float dt) {
 			} else {
 				// The centre is a virtual point: convoy bodies never block its sight line, and inside a body cell (where a
 				// body-aware field has no direction) it goes straight, so a vehicle can never hold the centre (G4).
-				if ((tick + fi) % 8 == 0) f.los_goal = los(f.cx, f.cy, f.goal_x, f.goal_y, nullptr, true);
+				if (f.order == Order::CHARGE && f.charge_stage == CS_CHARGE) f.los_goal = true; // CAV-4a: straight charge, no flow field
+				else if ((tick + fi) % 8 == 0) f.los_goal = los(f.cx, f.cy, f.goal_x, f.goal_y, nullptr, true);
 				float dirx = dx / dist, diry = dy / dist;
 				const bool in_body = convoy_body_cell(terrain.idx((int)f.cx, (int)f.cy));
 				if (!f.los_goal && !in_body && f.field >= 0 && !fields_[f.field].dir.empty()) {
@@ -1120,8 +1418,16 @@ void World::formation_stage(float dt) {
 				} else if (!f.los_goal && !in_body) {
 					dirx = diry = 0;
 				}
-				float cohesion = std::clamp((3.5f - f.lag) / 2.0f, 0.15f, 1.0f);
-				float speed = (f.order == Order::RETREAT && f.routed) || f.order == Order::PURSUE ? cfg.run_speed * 0.8f : cfg.march_speed;
+				// CAV-4a: a mounted formation marches at CRUISE. Its slot followers trail by pace / FOLLOW_GAIN, so the lag a rider
+				// shows at that pace beyond what a foot soldier shows at march is not counted as loss of cohesion, and the rest is
+				// measured in slot spacings (the mounted layout is cav::SLOT_SPACING / spacing times wider). The centre rides at
+				// GALLOP with the charging riders (they steer by the charge heading, not by their slots).
+				const float pace = march_pace(f);
+				const float lag = f.cav_layout ? (f.lag - (pace - cfg.march_speed) / cav::FOLLOW_GAIN) * f.spacing / slot_spacing(f) : f.lag;
+				float cohesion = std::clamp((3.5f - lag) / 2.0f, f.cav_layout ? cav::COHESION_FLOOR : 0.15f, 1.0f);
+				float speed = (f.order == Order::RETREAT && f.routed) || f.order == Order::PURSUE ? cfg.run_speed * 0.8f : pace;
+				if (f.cav_layout && ((f.order == Order::RETREAT && f.routed) || f.order == Order::PURSUE)) speed *= pace / cfg.march_speed; // mounted: the same ratio to CRUISE
+				if (f.cav_layout && f.order == Order::CHARGE && f.charge_stage == CS_CHARGE) { speed = cav::GALLOP; cohesion = 1.f; }
 				float stepl = std::min(speed * cohesion * dt, dist);
 				float tx = f.cx + dirx * stepl, ty = f.cy + diry * stepl;
 				resolve(f.cx, f.cy, tx, ty, cfg.wall_margin);
@@ -1134,13 +1440,13 @@ void World::formation_stage(float dt) {
 		if (f.order != Order::HOLD) {
 			int m0 = std::max(1, f.slot_count);
 			int c0 = std::max(1, std::min(f.cols, m0)), r0 = (m0 + c0 - 1) / c0;
-			float ra = 0.5f * std::sqrt((float)(c0 * c0 + r0 * r0)) * f.spacing;
+			float ra = 0.5f * std::sqrt((float)(c0 * c0 + r0 * r0)) * slot_spacing(f);
 			float pxs = 0, pys = 0;
 			for (size_t o = 0; o < formations.size(); ++o) {
 				const Formation &g = formations[o];
 				if (o == fi || g.team != f.team || g.slot_count == 0) continue;
 				int m1 = g.slot_count, c1 = std::max(1, std::min(g.cols, m1)), r1 = (m1 + c1 - 1) / c1;
-				float rb = 0.5f * std::sqrt((float)(c1 * c1 + r1 * r1)) * g.spacing;
+				float rb = 0.5f * std::sqrt((float)(c1 * c1 + r1 * r1)) * slot_spacing(g);
 				float dx = f.cx - g.cx, dy = f.cy - g.cy, d2 = dx * dx + dy * dy, rs = (ra + rb) * 0.85f;
 				if (d2 >= rs * rs) continue;
 				float d = std::sqrt(d2);
@@ -1365,7 +1671,12 @@ void World::soldier_stage(float dt, int ch) {
 			if (qd > 1.1f) { dvx = qx / qd * cfg.march_speed; dvy = qy / qd * cfg.march_speed; } // walk to the prisoner
 		} else if (f.routed && f.order == Order::RETREAT) {
 			st = S_FLEE; // follow the fleeing formation's slot at run speed
-		} else if (in_reach && (f.order != Order::RETREAT && f.order != Order::RETURN)) {
+		} else if (in_reach && (f.order != Order::RETREAT && f.order != Order::RETURN && f.order != Order::RALLY &&
+		                        !(f.order == Order::CHARGE && mounted[i] && (f.charge_stage == CS_FORM || f.charge_stage == CS_RALLY || charge_rider(i))))) {
+			// RALLY pulls riders out of contact, and so do the form-up and rally stages of the CHARGE cycle (the cycle's own
+			// rally: a rider stopped or blocked in the charge fights as ordinary engagement while the charge stage lasts); a rider
+			// still charging (CS_CHARGE, not spent) rides on into contact at its charge speed (standing to fight would brake it
+			// to the CRUISE cap first, so every impact would be judged at 5 cells/s). It fights once its charge is spent.
 			st = S_FIGHT; // stand and exchange (initiating or receiving)
 		} else {
 			bool melee = troop[i] == T_MELEE;
@@ -1401,21 +1712,37 @@ void World::soldier_stage(float dt, int ch) {
 				dvx = -ey / ed * side * cfg.march_speed; dvy = ex / ed * side * cfg.march_speed;
 			} else if (!melee && can_init && tg >= 0) {
 				st = S_RANGED; // in range: stand and shoot
-			} else if (melee && can_init && tg >= 0 && (f.order == Order::ATTACK || f.order == Order::PURSUE) && sdist <= cfg.leash + 0.5f) {
-				st = S_ENGAGE;
+			} else if (melee && can_init && tg >= 0 && (f.order == Order::ATTACK || f.order == Order::PURSUE || (f.order == Order::CHARGE && f.charge_stage == CS_CHARGE && cav_spent[i])) && sdist <= cfg.leash + 0.5f) {
+				st = S_ENGAGE; // a spent charging rider engages as ordinary (CAV-4a)
 				float sp = cfg.run_speed * std::clamp((ed - cfg.reach * 0.85f) / 0.5f, 0.f, 1.f);
 				dvx = ex / ed * sp; dvy = ey / ed * sp;
 				speed_cap = cfg.run_speed;
 			}
-			if (st == S_SLOT && sdist > 1e-3f && slot[i] >= 0) {
+			if (st == S_SLOT && charge_rider(i)) { // CAV-4a: straight at the target, no flow field; a blocked next cell takes the flow field
+				float chx = f.charge_dx, chy = f.charge_dy;
+				const int nxc = (int)std::floor(p_x + chx * 0.6f), nyc = (int)std::floor(p_y + chy * 0.6f);
+				// a blocked cell, or a height step (a ramp is needed; the flow field knows the ramps), takes the flow field
+				if (!terrain.contains(nxc, nyc) || !terrain.walkable(nxc, nyc) ||
+				    (terrain.contains(nxc, nyc) && terrain.height[terrain.idx(nxc, nyc)] != terrain.height[cell[i]])) {
+					if (f.field >= 0 && !fields_[f.field].dir.empty()) {
+						uint8_t d = fields_[f.field].dir[cell[i]];
+						if (d != 255) { float l = d < 4 ? 1.f : 0.70710678f; chx = (float)DX[d] * l; chy = (float)DY[d] * l; }
+					}
+				}
+				dvx = chx * cav::GALLOP; dvy = chy * cav::GALLOP;
+				speed_cap = cfg.run_speed;
+			} else if (st == S_SLOT && sdist > 1e-3f && slot[i] >= 0) {
 				if ((tick + (uint32_t)i) % (uint32_t)cfg.los_period == 0) los_ok[i] = los(p_x, p_y, slot_tx_[i], slot_ty_[i]) ? 1 : 0;
 				float dirx = sdx / sdist, diry = sdy / sdist;
 				if (!los_ok[i] && f.field >= 0 && !fields_[f.field].dir.empty()) {
 					uint8_t d = fields_[f.field].dir[cell[i]];
 					if (d != 255) { float l = d < 4 ? 1.f : 0.70710678f; dirx = (float)DX[d] * l; diry = (float)DY[d] * l; }
 				}
-				float sp = std::min(cfg.march_speed * 1.25f, sdist * 3.0f);
+				// CAV-4a: a rider of a mounted layout follows at up to 1.25 x CRUISE (foot: 1.25 x march), same gain
+				const float follow = f.cav_layout && mounted[i] ? march_pace(f) * 1.25f : cfg.march_speed * 1.25f;
+				float sp = std::min(follow, sdist * cav::FOLLOW_GAIN);
 				dvx = dirx * sp; dvy = diry * sp;
+				if (f.cav_layout && mounted[i]) speed_cap = follow;
 			}
 		}
 		if (st == S_FLEE) {
@@ -1438,6 +1765,27 @@ void World::soldier_stage(float dt, int ch) {
 			evacuating = true;
 			speed_cap = cfg.run_speed;
 		}
+		// CAV-4a: a rider of a CHARGE form-up or rally whose way to its slot crosses the target formation's body circle rides
+		// round it on the side its slot lies (tangent), and out of it when inside; riders cannot pass through a standing body
+		if (st == S_SLOT && mounted[i] && f.avoid_r > 0.f && (dvx != 0.f || dvy != 0.f)) {
+			const float ox = p_x - f.avoid_x, oy = p_y - f.avoid_y, od = std::sqrt(ox * ox + oy * oy);
+			const float wl = std::sqrt(dvx * dvx + dvy * dvy), ux = dvx / wl, uy = dvy / wl;
+			const float sx = slot_tx_[i] - p_x, sy = slot_ty_[i] - p_y, sl = std::sqrt(sx * sx + sy * sy);
+			if (od > 1e-4f && sl > 1e-4f && od < f.avoid_r + 1.5f && ux * ox + uy * oy < 0.f) {
+				// closest approach of the straight way to the circle centre
+				const float tproj = std::clamp(-(ox * sx + oy * sy) / (sl * sl), 0.f, 1.f);
+				const float cx2 = ox + sx * tproj, cy2 = oy + sy * tproj;
+				if (cx2 * cx2 + cy2 * cy2 < f.avoid_r * f.avoid_r) {
+					const float nx0 = ox / od, ny0 = oy / od;
+					float tx2 = -ny0, ty2 = nx0; // tangent on the side of the slot
+					if (tx2 * sx + ty2 * sy < 0.f) { tx2 = -tx2; ty2 = -ty2; }
+					const float out = std::clamp((f.avoid_r - od) / f.avoid_r, 0.f, 1.f) * 2.f;
+					float wx = tx2 + nx0 * out, wy = ty2 + ny0 * out;
+					const float l2 = std::sqrt(wx * wx + wy * wy);
+					dvx = wx / l2 * wl; dvy = wy / l2 * wl;
+				}
+			}
+		}
 		// host blockers in the way: turn the wish toward the blocker's nearer side, fading in over 1.5 cells
 		if (!blockers.empty() && (!lying || committed) && (dvx != 0.f || dvy != 0.f)) {
 			for (const Blocker &B : blockers) {
@@ -1458,6 +1806,9 @@ void World::soldier_stage(float dt, int ch) {
 				if (ol > 1e-5f) { dvx = ox / ol * dl; dvy = oy / ol * dl; } else { dvx = dvy = 0.f; }
 			}
 		}
+		// CAV-4a: a charging rider held in contact below the charge speed (blocked in the press without an impact of its
+		// own) is spent: ordinary engagement from the next step
+		if (mounted[i] && f.order == Order::CHARGE && (st == S_FIGHT || charge_rider(i)) && in_reach && std::sqrt(vx[i] * vx[i] + vy[i] * vy[i]) < cav::CHARGE_SPEED) cav_spent[i] = 1;
 		const bool sliding = st == S_KNOCK || (st == S_DOWN && knock_t[i] > 0);
 		// CAV-1: a mounted soldier steers by its own kinematics below (desired velocity, then the limits of section CAV-1)
 		const bool cav_i = mounted[i] != 0 && !lying && !escorting && !evacuating && !sliding && !committed;
@@ -1669,9 +2020,22 @@ int World::host_order(int fi, int kind, float gx, float gy, double x) {
 	const Formation &f = formations[fi];
 	if (f.no_orders || f.garrisoned) return NO_ORDERS;
 	if (f.ai_enabled) return NOT_OWNER;
-	if (!finalized_ || kind < 0 || kind > 4 || !std::isfinite(gx) || !std::isfinite(gy) || !std::isfinite(x) || (kind == 1 && !std::isfinite((float)x))) return BAD_ARGS;
+	// kinds 5 CHARGE to point (gx, gy), 6 RALLY, 7 CHARGE the enemy formation x (CAV-4a)
+	if (!finalized_ || kind < 0 || kind > 7 || !std::isfinite(gx) || !std::isfinite(gy) || !std::isfinite(x) || (kind == 1 && !std::isfinite((float)x))) return BAD_ARGS;
 	if (kind == 3 && !f.routed) return NOT_ROUTED;
-	if (f.routed && (kind == 1 || kind == 2 || kind == 4)) return ROUTED;
+	if (f.routed && (kind == 1 || kind == 2 || kind == 4 || kind == 5 || kind == 7)) return ROUTED;
+	if (kind == 5 || kind == 6 || kind == 7) {
+		if (!charge_commander_ok(fi)) return NO_COMMANDER;
+		if (kind != 6 && !cavalry_formation(fi)) return NOT_CAVALRY;
+	}
+	if (kind == 7) {
+		if (x < 0 || x >= (double)formations.size() || x != std::floor(x)) return NO_TARGET;
+		const int enemy = (int)x;
+		if (!hostile(f.team, formations[enemy].team)) return NO_TARGET;
+		float ex = 0, ey = 0;
+		if (!live_centre(*this, enemy, ex, ey)) return NO_TARGET;
+		return order_charge(fi, ex, ey, enemy) ? OK : BLOCKED;
+	}
 	int target_index = -1;
 	if (kind == 2 || kind == 4) {
 		if (x < 0 || x >= soldier_count() || x != std::floor(x)) return NO_TARGET;
@@ -1684,7 +2048,7 @@ int World::host_order(int fi, int kind, float gx, float gy, double x) {
 		}
 		gx = px[target_index]; gy = py[target_index];
 	}
-	if (kind != 0 && kind != 3) {
+	if (kind != 0 && kind != 3 && kind != 6) {
 		if (!(gx >= 0 && gy >= 0 && gx < terrain.w && gy < terrain.h) || !terrain.walkable_f(gx, gy) || !siege_route_cell(terrain.idx((int)gx,(int)gy))) return BLOCKED;
 		const int goal = terrain.idx((int)gx, (int)gy), start = terrain.idx((int)f.cx, (int)f.cy);
 		std::vector<uint8_t> seen(terrain.edge_ok.size(), 0);
@@ -1704,6 +2068,8 @@ int World::host_order(int fi, int kind, float gx, float gy, double x) {
 	case 2: order_attack(fi, target_index); break;
 	case 3: retreat_away(fi); break;
 	case 4: order_pursue(fi, target_index); break;
+	case 5: return order_charge(fi, gx, gy, -1) ? OK : BLOCKED;
+	case 6: order_rally(fi); break;
 	}
 	return OK;
 }
@@ -2086,6 +2452,9 @@ void World::step_body(float dt, const std::vector<WorkFatigueState> *work_plan) 
 
 	for (int i = 0; i < n; ++i) {
 		if (state[i] != S_SLOT || slot[i] < 0 || is_convoy_crew(i)) continue; // convoy crew are not formation slot followers
+		// CAV-4a: a rider of a CHARGE cycle with an enemy within its engage radius is in the press, not a follower the
+		// formation waits for (the centre leads the form-up and rally walks out, and the riders work free and follow)
+		if (mounted[i] && target[i] >= 0 && formations[form[i]].order == Order::CHARGE) continue;
 		float dx = slot_tx_[i] - px[i], dy = slot_ty_[i] - py[i];
 		lag_acc_[form[i]] += std::sqrt(dx * dx + dy * dy);
 		lag_cnt_[form[i]]++;
@@ -2787,7 +3156,7 @@ bool World::convoy_build_route(Convoy &c, const std::vector<uint8_t> &walls, int
 		const int n = f.slot_count;
 		if (n > 0) {
 			const int cols = std::max(1, std::min(f.cols, n)), rows = (n + cols - 1) / cols;
-			ze = (float)(rows - 1) * 0.5f * f.spacing + 0.5f; zw = (float)(cols - 1) * 0.5f * f.spacing + 0.5f;
+			ze = (float)(rows - 1) * 0.5f * slot_spacing(f) + 0.5f; zw = (float)(cols - 1) * 0.5f * slot_spacing(f) + 0.5f;
 			zx = f.goal_x; zy = f.goal_y;
 		}
 	}
@@ -3494,7 +3863,7 @@ uint64_t World::state_hash() const {
 	for (auto *v : {&form, &slot, &target, &cell, &enc_target, &rescue_of, &capture_of, &captor, &rescued_by_, &capturing_by_}) mv(*v);
 	mv(ammo); mv(person_id);
 	mv(military_role); mv(post_holder); mv(released); mv(aboard); mv(aboard_vehicle); mv(absent); mv(absent_kind); mv(surrendered);
-	mv(mounted); mv(cav_hits); mv(cav_hist); mv(cav_hold); mv(cav_down); mv(cav_hit_who); mv(cav_hit_t);
+	mv(mounted); mv(cav_hits); mv(cav_hist); mv(cav_hold); mv(cav_down); mv(cav_hit_who); mv(cav_hit_t); mv(cav_spent); // CAV-1 / CAV-4a
 	for (const auto &e : equip) { m(e.family); m(e.material); m(e.armor); m(e.shield); }
 	for (const auto &c : ability) { m(c.tactics); m(c.leadership); m(c.coach); }
 	for (const auto &p : projectiles) {
@@ -3516,6 +3885,8 @@ uint64_t World::state_hash() const {
 		m(f.ai_target); m(f.ai_status); m(f.encircle_t);
 		m(f.no_orders); m(f.host_center); m(f.fully_fed); m(f.sustain_morale_delta);
 		m(f.garrisoned); m(f.reslot_pending); m(f.rest_gx); m(f.rest_gy); m(f.rest_gf); m(f.rest_slots);
+		m(f.charge_stage); m(f.charge_dx); m(f.charge_dy); m(f.charge_tx); m(f.charge_ty); m(f.rally_x); m(f.rally_y);
+		m(f.charge_target_form); m(f.charge_t); m(f.charge_cols); m(f.charge_runs); m(f.cav_layout); // CAV-4a charge cycle, mounted layout
 		m(f.cols); m(f.spacing); m(f.field); m(f.lag); m(f.command_dirty); m(f.commander_present); m(f.resupplying); m(f.charged_this_step);
 	}
 	m(tick); m(exchange_round); m(shot_serial); m(time);

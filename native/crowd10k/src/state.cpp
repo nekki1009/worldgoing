@@ -112,7 +112,7 @@ template <class Ar, class T> void nested(Ar &ar, std::vector<std::vector<T>> &v)
 	for (auto &x : v) ar.vec(x);
 }
 
-template <class Ar> void io_formation(Ar &ar, Formation &f) {
+template <class Ar> void io_formation(Ar &ar, Formation &f, bool legacy_kw17) {
 	ar.pod(f.team); ar.pod(f.troop); ar.pod(f.order); ar.pod(f.cx); ar.pod(f.cy); ar.pod(f.facing);
 	ar.pod(f.goal_x); ar.pod(f.goal_y); ar.pod(f.goal_facing); ar.pod(f.cols); ar.pod(f.spacing); ar.pod(f.field);
 	ar.pod(f.arrived); ar.pod(f.los_goal); ar.pod(f.lag); ar.vec(f.members); ar.pod(f.roster); ar.pod(f.slot_count);
@@ -129,6 +129,11 @@ template <class Ar> void io_formation(Ar &ar, Formation &f) {
 	ar.pod(f.no_orders); ar.pod(f.host_center); ar.pod(f.fully_fed); ar.pod(f.sustain_morale_delta);
 	ar.pod(f.garrisoned);
 	ar.pod(f.reslot_pending); ar.pod(f.rest_gx); ar.pod(f.rest_gy); ar.pod(f.rest_gf); ar.pod(f.rest_slots);
+	if (!legacy_kw17) { // KW18: CAV-4a charge cycle (KW17 blobs have none and load with the defaults)
+		ar.pod(f.charge_stage); ar.pod(f.charge_dx); ar.pod(f.charge_dy); ar.pod(f.charge_tx); ar.pod(f.charge_ty);
+		ar.pod(f.rally_x); ar.pod(f.rally_y); ar.pod(f.charge_target_form); ar.pod(f.charge_t); ar.pod(f.charge_cols); ar.pod(f.charge_runs);
+		ar.pod(f.cav_layout); // mounted layout of the last formation step (a host order between steps reads it)
+	}
 }
 template <class Ar> void io_convoy(Ar &ar, Convoy &c) {
 	ar.pod(c.id); ar.pod(c.x); ar.pod(c.y); ar.pod(c.facing);
@@ -143,10 +148,12 @@ template <class Ar> void io_convoy(Ar &ar, Convoy &c) {
 } // namespace
 
 template <class Ar> void World::serialize(Ar &ar) {
-	const uint32_t magic = 0x3731574Bu; // "KW17": mounted cavalry (CAV-1 mounted, heading / straight-run, charge hits, recent victims, fall timer); KW16: surrendered soldiers (G5 S4, saved, validated and hashed); KW15: absent soldiers (G5 S1 detached / off-map / captive / garrison reserve); KW14: aboard soldiers (G1 S1 site boarding); KW13: convoy formation following (G4 OPUS); KW12: convoy stall_reason (G4 S4f); KW11: convoy body offsets, body_stalled, body-aware flow fields (G4 S2); KW10: logistics convoys (G4); KW09: released soldiers (G6.4 site exit); KW08: per-person post holder (R1b)
-	uint32_t m = magic;
+	const uint32_t magic = 0x3831574Bu; // "KW18": formation charge cycle (CAV-4a: charge stage, heading, target and rally points, timers, cavalry spent flags); KW17: mounted cavalry (CAV-1 mounted, heading / straight-run, charge hits, recent victims, fall timer); KW16: surrendered soldiers (G5 S4, saved, validated and hashed); KW15: absent soldiers (G5 S1 detached / off-map / captive / garrison reserve); KW14: aboard soldiers (G1 S1 site boarding); KW13: convoy formation following (G4 OPUS); KW12: convoy stall_reason (G4 S4f); KW11: convoy body offsets, body_stalled, body-aware flow fields (G4 S2); KW10: logistics convoys (G4); KW09: released soldiers (G6.4 site exit); KW08: per-person post holder (R1b)
+	const uint32_t magic17 = 0x3731574Bu; // KW17 layout: loads with the KW18 charge fields at their defaults; written only by save_kw17 (tests)
+	uint32_t m = Ar::loading ? 0u : (kw17_write_ ? magic17 : magic);
 	ar.pod(m);
-	if (Ar::loading && m != magic) { ar.ok = false; return; }
+	const bool legacy_kw17 = kw17_write_ || (Ar::loading && m == magic17);
+	if (Ar::loading && m != magic && m != magic17) { ar.ok = false; return; }
 	io_config(ar, cfg);
 	// terrain (static during a battle, stored so a save is self-contained)
 	ar.pod(terrain.w); ar.pod(terrain.h);
@@ -157,7 +164,7 @@ template <class Ar> void World::serialize(Ar &ar) {
 	ar.pod(nf);
 	if (!count(ar, nf, 128, 65537)) return;
 	if (Ar::loading) formations.resize((size_t)nf);
-	for (auto &f : formations) io_formation(ar, f);
+	for (auto &f : formations) io_formation(ar, f, legacy_kw17);
 	// soldiers
 	for (auto *v : {&px, &py, &nx, &ny, &vx, &vy, &face, &anim_t, &knock_dx, &knock_dy}) ar.vec(*v);
 	ar.vec(rest_hold); ar.vec(rest_x); ar.vec(rest_y); ar.vec(rest_best); ar.vec(rest_t);
@@ -179,6 +186,8 @@ template <class Ar> void World::serialize(Ar &ar) {
 	ar.vec(aboard); ar.vec(aboard_vehicle);
 	ar.vec(absent); ar.vec(absent_kind); ar.vec(surrendered);
 	ar.vec(mounted); ar.vec(cav_hits); ar.vec(cav_hist); ar.vec(cav_hold); ar.vec(cav_down); ar.vec(cav_hit_who); ar.vec(cav_hit_t);
+	if (!legacy_kw17) ar.vec(cav_spent); // KW18 (CAV-4a)
+	else if (Ar::loading) cav_spent.assign(cav_hits.size(), 0);
 	ar.vec(events);
 	uint64_t np = projectiles.size(); ar.pod(np); if (!count(ar, np, 65, 65536)) return;
 	if (Ar::loading) projectiles.resize((size_t)np); for (auto &p : projectiles) io_projectile(ar, p);
@@ -224,6 +233,13 @@ std::vector<uint8_t> World::save() const {
 	Writer w;
 	const_cast<World *>(this)->serialize(w);
 	return std::move(w.out);
+}
+
+std::vector<uint8_t> World::save_kw17() const {
+	kw17_write_ = true;
+	std::vector<uint8_t> out = save();
+	kw17_write_ = false;
+	return out;
 }
 
 bool World::validate(std::string *error, bool allow_site_jobs) const {
@@ -274,6 +290,8 @@ bool World::validate(std::string *error, bool allow_site_jobs) const {
 	for (double value : cav_down) CHECK_VALID(std::isfinite(value) && value >= 0.0);
 	for (double value : cav_hit_t) CHECK_VALID(std::isfinite(value));
 	for (int32_t value : cav_hit_who) CHECK_VALID(value >= -1 && value < (int32_t)n);
+	CHECK_VALID(cav_spent.size() == n);
+	for (uint8_t value : cav_spent) CHECK_VALID(value <= 1);
 	for (uint8_t value : absent) CHECK_VALID(value <= 1);
 	CHECK_VALID(prison_id.size() == n && escort_goal.size() == n && escort_mode.size() == n);
 	CHECK_VALID(contact_revision.size() == n);
@@ -383,7 +401,13 @@ bool World::validate(std::string *error, bool allow_site_jobs) const {
 	for (int f : field_queue_) { CHECK_VALID(f >= 0 && f < (int)fields_.size()); used[f] = 1; }
 	for (size_t fi = 0; fi < nf; ++fi) {
 		const auto &f = formations[fi];
-		CHECK_VALID(f.team >= 0 && f.team <= 255 && f.troop <= T_CROSSBOW && f.order <= Order::RETURN && f.ai_status <= AI_WAIT_PATH);
+		CHECK_VALID(f.team >= 0 && f.team <= 255 && f.troop <= T_CROSSBOW && f.order <= Order::RALLY && f.ai_status <= AI_CHARGE);
+		// CAV-4a charge cycle: a stage only under its own order, targets finite, the followed formation exists
+		CHECK_VALID(f.charge_stage <= CS_RALLY && (f.charge_stage == CS_NONE || f.order == Order::CHARGE || f.order == Order::RALLY));
+		CHECK_VALID(f.order != Order::RALLY || f.charge_stage == CS_RALLY || f.charge_stage == CS_NONE);
+		CHECK_VALID(f.charge_target_form >= -1 && f.charge_target_form < (int)nf && f.charge_cols >= 0 && f.charge_runs >= 0);
+		CHECK_VALID(std::isfinite(f.charge_dx) && std::isfinite(f.charge_dy) && std::isfinite(f.charge_tx) && std::isfinite(f.charge_ty));
+		CHECK_VALID(std::isfinite(f.rally_x) && std::isfinite(f.rally_y) && std::isfinite(f.charge_t) && f.charge_t >= -1e6);
 		CHECK_VALID(f.cols >= 1 && f.cols <= 65536 && f.roster >= 0 && f.roster <= (int)n && f.slot_count >= 0 && f.slot_count <= (int)f.members.size());
 		CHECK_VALID(f.fatigue_count >= 0 && f.fatigue_count <= (int)n);
 		CHECK_VALID(xy(f.cx,f.cy) && xy(f.goal_x,f.goal_y) && xy(f.origin_x,f.origin_y));
@@ -509,7 +533,7 @@ void World::swap_state(World &o) {
 	swap(military_role, o.military_role);
 	swap(post_holder, o.post_holder); swap(released, o.released); swap(aboard, o.aboard); swap(aboard_vehicle, o.aboard_vehicle);
 	swap(absent, o.absent); swap(absent_kind, o.absent_kind); swap(surrendered, o.surrendered);
-	swap(mounted, o.mounted); swap(cav_hits, o.cav_hits); swap(cav_hist, o.cav_hist); swap(cav_hold, o.cav_hold);
+	swap(mounted, o.mounted); swap(cav_hits, o.cav_hits); swap(cav_hist, o.cav_hist); swap(cav_hold, o.cav_hold); swap(cav_spent, o.cav_spent);
 	swap(cav_down, o.cav_down); swap(cav_hit_who, o.cav_hit_who); swap(cav_hit_t, o.cav_hit_t);
 	swap(captive, o.captive);
 	swap(present, o.present);
@@ -610,6 +634,9 @@ bool World::load_impl(const std::vector<uint8_t> &blob, const std::vector<int> *
 		World candidate(1); Reader r(blob); candidate.serialize(r);
 		// convoy body cells are derived from the saved offsets, anchors and facings before validation checks them
 		if (!r.ok || r.at != blob.size() || !candidate.rebuild_convoy_bodies() || !candidate.validate(nullptr, false)) return false;
+		// a KW17 blob has no mounted layout flag: it is derived from the riders it holds (CAV-4a Formation::cav_layout)
+		if (blob.size() >= 4 && blob[0] == 'K' && blob[1] == 'W' && blob[2] == '1' && blob[3] == '7')
+			for (auto &f : candidate.formations) candidate.refresh_cav_layout(f);
 		// Original Site navigation is restored only through this explicit prepare
 		// overload, before rebuilding derived directions. Serialized field order,
 		// queue, LOS observations and formation references remain untouched.
@@ -734,6 +761,7 @@ void World::set_formation_state(int fi, const FormationState &s) {
 	if (s.no_orders >= 0) f.no_orders = s.no_orders != 0;
 	if (s.host_center >= 0) f.host_center = s.host_center != 0;
 	if (f.no_orders) f.ai_enabled = false;
+	if (f.order != Order::CHARGE && f.order != Order::RALLY) clear_charge(f); // CAV-4a: a state import never leaves a stale charge stage
 	if (f.garrisoned) {
 		f.formal_cmd = f.acting_cmd = f.current_cmd = -1;
 		f.officer_order.clear(); f.ai_enabled = false; f.host_center = false;

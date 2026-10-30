@@ -53,7 +53,7 @@ void World::refresh_presence(Formation &f) {
 	f.ref_x = px[best]; f.ref_y = py[best]; f.ref_valid = true;
 	int m = std::max(1, (int)f.members.size());
 	int cols = std::max(1, std::min(f.cols, m)), rows = (m + cols - 1) / cols;
-	float hx = (float)(cols - 1) * 0.5f * f.spacing, hy = (float)(rows - 1) * 0.5f * f.spacing;
+	float hx = (float)(cols - 1) * 0.5f * slot_spacing(f), hy = (float)(rows - 1) * 0.5f * slot_spacing(f); // CAV-4a mounted layout
 	float radius = std::max(8.f, std::sqrt(hx * hx + hy * hy) + 2.f);
 	for (int i : f.members) {
 		if (!can_act(i)) { present[i] = 0; continue; }

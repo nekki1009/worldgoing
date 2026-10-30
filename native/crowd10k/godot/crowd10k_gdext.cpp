@@ -212,13 +212,14 @@ void m_set_owner(CALL_ARGS) {
 }
 // set_ai(enabled: bool)
 void m_set_ai(CALL_ARGS) { SELF; NEED(1); WORLD; int64_t v; if (!arg_int(a[0], v)) return bad_args(e, 0); w.cfg.ai = v != 0; ret_bool(r, true); }
-// order: existing public kinds HOLD0 MOVE1 ATTACK2 RETREAT3 PURSUE4; exact result codes 0..8.
+// order: existing public kinds HOLD0 MOVE1 ATTACK2 RETREAT3 PURSUE4; CAV-4a kinds CHARGE-to-point5 (gx, gy), RALLY6,
+// CHARGE-to-enemy-formation7 (x = formation index); exact result codes 0..10 (9 NO_COMMANDER, 10 NOT_CAVALRY).
 void m_order(CALL_ARGS) {
 	SELF; NEED(5); if (!self->w) { ret_int(r, wg::BAD_FORMATION); return; } auto &w=*self->w;
 	int64_t f,kind; double gx,gy,x;
 	if (!arg_int(a[0],f) || !arg_int(a[1],kind) || !arg_num(a[2],gx) || !arg_num(a[3],gy) || !arg_num(a[4],x)) { ret_int(r,wg::BAD_ARGS); return; }
 	if(f<0 || f>=(int64_t)w.formations.size()) { ret_int(r,wg::BAD_FORMATION); return; }
-	ret_int(r,w.host_order((int)f,kind<0 || kind>4 ? -1 : (int)kind,(float)gx,(float)gy,x));
+	ret_int(r,w.host_order((int)f,kind<0 || kind>7 ? -1 : (int)kind,(float)gx,(float)gy,x));
 }
 // step(dt) : internal Site clock. step_clock(dt, game_seconds, combat_left) : host clock.
 void m_step(CALL_ARGS) {

@@ -65,6 +65,31 @@ constexpr double MORALE_SHOCK = 3.0;    // 4.5 morale shock per penetration on t
 constexpr float SHOCK_RADIUS = 3.f;     // 4.5 a formation member within 3 cells of the impact takes the shock
 constexpr double SHOCK_SECONDS = 1.0;   // 4.5 one shock per rider and victim formation per second
 constexpr float SLOPE_UP = 0.55f, SLOPE_DOWN = 0.8f; // terrain speed targets (old Actor values)
+// CAV-4a formation charge (section 5). Seconds are formation-layer timers; cells are distances from the target point.
+constexpr double FORM_SECONDS = 25.0, CHARGE_SECONDS = 6.0, RALLY_SECONDS = 25.0; // timeouts of each stage
+constexpr float FORM_CELLS = 10.f;       // form-up point: 8 to 12 cells in front of the target (10, then nearby cells)
+constexpr float PAST_CELLS = 8.f;        // straight charge goal beyond the target point
+constexpr float BREAK_CELLS = 5.f;       // break-through: the formation centre passes the target by this much, the charge ends
+constexpr float RALLY_CELLS = 10.f;      // rally point: behind the target (or behind-flank), this far from it
+constexpr float COMMAND_CELLS = 8.f;     // the commander must stand within this distance of the formation centre
+constexpr float CHARGE_RANGE = 30.f;     // native AI starts a charge against an enemy formation this close
+constexpr float COMMAND_TARGET_CELLS = 2.f; // the live target point moves the form-up goal only past this shift
+// CAV-4a mounted formation layout and pace (a formation whose able members all ride: Formation::cav_layout).
+// Slots sit a mounted body diameter plus a margin apart, so the riders' bodies (2 x RADIUS = 1.12) fit their slots; at the
+// infantry slot spacing of 1.0 neighbouring riders push each other out of their slots for ever, the formation lag grows and
+// the lag cohesion slows the whole formation to a crawl. The centre marches at CRUISE (riders follow at up to 1.25 x CRUISE,
+// as foot soldiers follow at 1.25 x march) and rides at GALLOP with the riders while a CHARGE runs.
+constexpr float SLOT_SPACING = 2.f * RADIUS + 0.2f;
+constexpr float FOLLOW_GAIN = 3.f;       // slot followers aim at sdist x 3 (the S_SLOT rule): steady lag = pace / 3
+// lag cohesion floor of a mounted layout: the centre keeps at least half of CRUISE, so a rider following at up to
+// 1.25 x CRUISE still closes on its slot at 0.75 x CRUISE (the foot floor of 0.15 x march left mounted form-up and rally
+// walks crawling at 0.75 cells/s behind a few riders working free of the press or of a neighbouring formation)
+constexpr float COHESION_FLOOR = 0.5f;
+constexpr float FORM_READY_LAG = SLOT_SPACING; // the charge line is formed once its riders stand within a slot spacing of their slots on average
+// CAV-4a charge line: line abreast at most LINE_RANKS deep (and at least ten wide, or one rank when fewer ride). The form-up
+// distance FORM_CELLS is the run-up of the FRONT rank: the centre stands that far plus the half depth of the line from the
+// target, so every rank has room to accelerate (from CRUISE to GALLOP takes (8^2 - 5^2) / (2 x ACCEL) = 6.1 cells).
+constexpr int LINE_RANKS = 4;
 // an angle difference wrapped into [-pi, pi]
 inline float wrap_angle(float a) { return std::remainder(a, 2.f * kPi); }
 }
@@ -130,15 +155,19 @@ private:
 };
 
 // ---------------------------------------------------------------- enums
-enum class Order : uint8_t { HOLD = 0, MOVE = 1, ATTACK = 2, PURSUE = 3, RETREAT = 4, RETURN = 5 };
-enum OrderResult : int { OK = 0, NOT_OWNER, BAD_FORMATION, BAD_ARGS, NO_TARGET, BLOCKED, NOT_ROUTED, ROUTED, NO_ORDERS };
+// CHARGE (6) and RALLY (7) are CAV-4a formation orders (reports/cavalry-charge-plan.md section 5); see cav_charge in crowd_core.cpp.
+enum class Order : uint8_t { HOLD = 0, MOVE = 1, ATTACK = 2, PURSUE = 3, RETREAT = 4, RETURN = 5, CHARGE = 6, RALLY = 7 };
+enum OrderResult : int { OK = 0, NOT_OWNER, BAD_FORMATION, BAD_ARGS, NO_TARGET, BLOCKED, NOT_ROUTED, ROUTED, NO_ORDERS,
+	NO_COMMANDER, NOT_CAVALRY }; // CAV-4a: commander ineligible (not present, not eligible or more than 8 cells away); formation not mostly mounted
+// CAV-4a charge stage of a formation (Formation::charge_stage)
+enum ChargeStage : uint8_t { CS_NONE = 0, CS_FORM = 1, CS_CHARGE = 2, CS_RALLY = 3 };
 enum Troop : uint8_t { T_MELEE = 0, T_BOW = 1, T_CROSSBOW = 2 };
 enum Role : uint8_t { R_REGULAR = 0, R_CAPTAIN = 1, R_OFFICER = 2 };
 // presentation / diagnostic state (derived every step, never read back as authority)
 enum SState : uint8_t { S_SLOT = 0, S_ENGAGE, S_FIGHT, S_ENCIRCLE, S_RANGED, S_RESCUE, S_CAPTURE, S_DOWN, S_DEAD, S_CAPTIVE,
 	S_GETUP, S_STAGGER, S_FLEE, S_KNOCK, S_HOST };
 enum AIStatus : uint8_t { AI_NONE = 0, AI_NO_COMMAND, AI_ROUTED, AI_RETURNING, AI_IDLE, AI_RECOVER, AI_OUTMATCHED, AI_PURSUE,
-	AI_ENGAGE, AI_APPROACH, AI_WAIT_PATH };
+	AI_ENGAGE, AI_APPROACH, AI_WAIT_PATH, AI_CHARGE };
 
 struct CommandAbility { int16_t tactics = -1, leadership = -1, coach = -1; bool has() const { return tactics >= 0; } };
 
@@ -153,6 +182,12 @@ struct Formation {
 	int field = -1;
 	bool arrived = true, los_goal = false;
 	float lag = 0;
+	// CAV-4a derived each step at the start of the formation layer (not saved or hashed; a function of `mounted`):
+	// every able member rides, so the layout and pace are the mounted ones (cav::SLOT_SPACING, cav::CRUISE)
+	bool cav_layout = false;
+	// CAV-4a derived each step by the formation layer (not saved or hashed): the target formation's body as a circle the
+	// riders of a CHARGE form-up or rally ride round (avoid_r 0: none)
+	float avoid_x = 0.f, avoid_y = 0.f, avoid_r = 0.f;
 	std::vector<int> members;   // every member ever enrolled (dead included; rules skip hp <= 0); slots only for able ones
 	int roster = 0;             // formal roster size incl. the dead (ready_fraction denominator)
 	int slot_count = 0;
@@ -207,6 +242,15 @@ struct Formation {
 	bool reslot_pending = false;
 	float rest_gx = 0, rest_gy = 0, rest_gf = 0; // layout the members' rest holds belong to (goal pose, slot count)
 	int rest_slots = -1;
+	// CAV-4a charge cycle (saved from KW18, hashed). charge_stage: ChargeStage. charge_dx/dy: unit heading of the charge,
+	// fixed from the start of CS_CHARGE. charge_tx/ty: target point last used; charge_target_form: enemy formation followed
+	// live (-1: fixed point). rally_x/y: rally point of CS_RALLY. charge_t: seconds left in the current stage.
+	// charge_cols: layout columns before the line-abreast form-up (0: unchanged). charge_runs: completed charge cycles.
+	uint8_t charge_stage = CS_NONE;
+	float charge_dx = 1.f, charge_dy = 0.f, charge_tx = 0.f, charge_ty = 0.f, rally_x = 0.f, rally_y = 0.f;
+	int charge_target_form = -1;
+	double charge_t = 0.0;
+	int charge_cols = 0, charge_runs = 0;
 };
 
 struct Config {
@@ -253,6 +297,8 @@ struct Stats {
 	         skills_used = 0, encircle_assigned = 0, fields_built = 0, cooldown_violations = 0;
 	int fighting = 0, engaging = 0, alive = 0, down = 0, captive = 0;
 	uint64_t cav_contacts = 0, cav_falls = 0, cav_dismounts = 0, cav_stops = 0, cav_shocks = 0; // CAV-1 charge outcomes (reporting); cav_shocks: 4.5
+	uint64_t charge_forms = 0, charge_breaks = 0, charge_rallies = 0, cav_penetrations = 0; // CAV-4a: form-ups begun, charges broken through (to RALLY), rally arrivals
+	double cav_impact_speed = 0.0; // CAV-4a reporting: sum of the impact speeds of the cavalry contacts
 };
 
 // Events for the Godot side (SiteStore owner commits). `time` is the World action time of the step.
@@ -430,6 +476,9 @@ public:
 	std::vector<float> cav_hist;
 	std::vector<double> cav_hold, cav_down, cav_hit_t;
 	std::vector<int32_t> cav_hit_who;
+	// CAV-4a: 1 once this rider's charge in the current cycle is over (stopped, or engaged in contact while charging).
+	// A spent rider follows the ordinary engagement and slot rules until the next form-up clears it. Saved from KW18, hashed.
+	std::vector<uint8_t> cav_spent;
 	// derived each step (never saved or hashed): the charge candidate of each rider and the impact velocity of it
 	std::vector<int32_t> cav_cand;
 	std::vector<float> cav_cand_vx, cav_cand_vy;
@@ -469,6 +518,15 @@ public:
 	void order_hold(int f);
 	void order_pursue(int f, int target_person);
 	void order_retreat(int f, float gx, float gy);
+	// CAV-4a (crowd_core.cpp, orders section). order_charge: target point (gx, gy), or the enemy formation `form` followed
+	// live (gx, gy then only seed the point). Returns false (no change) when no form-up point is walkable.
+	bool order_charge(int f, float gx, float gy, int form);
+	void order_rally(int f);             // RALLY: pick the rally point behind the target, go there, then HOLD
+	void clear_charge(Formation &f);     // any order other than CHARGE / RALLY drops the charge cycle
+	void charge_stage_step(int fi, float dt); // one step of the charge cycle of formation fi (before its movement)
+	bool cavalry_formation(int fi) const;     // at least half of the able members are mounted
+	bool charge_commander_ok(int fi) const;   // commander eligible (command_eligible) and within COMMAND_CELLS of the centre
+	bool charge_rider(int i) const;           // mounted, able, not spent, in the CS_CHARGE stage of a CHARGE order
 	bool order_capture(int guard, int target); // explicit order (inst. sec.6)
 	bool order_escort_step(int person, int guard, int destination_cell);
 	void cancel_escort(int person);
@@ -679,6 +737,9 @@ public:
 	bool host_may_order(int f) const { return f >= 0 && f < (int)formations.size() && !formations[f].ai_enabled; }
 	// complete save / load (same build): everything that feeds the next step
 	std::vector<uint8_t> save() const;
+	// CAV-4a test hook: the same state in the KW17 layout (no charge cycle, no cav_spent); loads with the defaults.
+	std::vector<uint8_t> save_kw17() const;
+	mutable bool kw17_write_ = false;
 	bool load(const std::vector<uint8_t> &blob);
 	bool load(const std::vector<uint8_t> &blob, const std::vector<int> &blocked, const std::vector<int64_t> &wreck_exit);
 	bool validate(std::string *error = nullptr, bool allow_site_jobs = true) const;
@@ -769,6 +830,10 @@ public:
 	double command_effect(int f, int kind, double cap) const; // 0 tactics, 1 leadership, 2 coach
 	void apply_contact(int i, double hp_loss, double stun_add, bool environmental = false);
 	void slot_world(const Formation &f, int s, int n, float &x, float &y) const;
+	// CAV-4a: slot spacing and march pace of a formation (infantry: f.spacing and cfg.march_speed, unchanged)
+	float slot_spacing(const Formation &f) const { return f.cav_layout ? std::max(f.spacing, cav::SLOT_SPACING) : f.spacing; }
+	float march_pace(const Formation &f) const { return f.cav_layout ? cav::CRUISE : cfg.march_speed; }
+	void refresh_cav_layout(Formation &f) const;
 	// Faction relations (full faction id 0..255; default: every other faction is hostile). Astra review
 	// 2026-09-29: never compare team parity; three or more factions and non-contiguous ids are legal.
 	bool hostile(int a, int b) const { return hostile_[((size_t)(a & 255) << 8) | (size_t)(b & 255)] != 0; }
@@ -899,6 +964,18 @@ private:
 	bool cav_straight(int i) const; // 4.1: moving for 0.4 s and every heading of that window within HEADING_TOL of the current one
 	void cav_resolve(int rider, int victim, double speed, float ux, float uy);
 	void cav_settle();
+	// CAV-4a helpers (crowd_core.cpp). charge_target: live target point of formation fi (followed formation centre, else the
+	// fixed point). form_point: the walkable point 10 cells in front of target from the formation centre, or false.
+	bool charge_target(int fi, float &tx, float &ty) const;
+	bool form_point(int fi, float tx, float ty, float &fx, float &fy) const;
+	bool rally_point(int fi, float tx, float ty, float &rx, float &ry) const;
+	float layout_half_extent(const Formation &f) const;  // half diagonal of the slot layout (CAV-4a)
+	// CAV-4a: (x, y) with a body of radius own_r stays clear of every hostile formation's body but the charge target's
+	bool clear_of_enemy_bodies(int fi, float x, float y, float own_r) const;
+	static int charge_line_cols(int n);                  // columns of the charge line of n riders (cav::LINE_RANKS)
+	float charge_line_depth(const Formation &f) const;   // half depth of that line (centre to front rank)
+	bool begin_form(int fi, float tx, float ty);  // enter CS_FORM toward the target: line abreast, spent riders cleared; false if no form-up point
+	void enter_rally(int fi);                     // enter CS_RALLY: break-through layout restored, rally point, charge_runs counted
 
 	// command / morale / fatigue (command.cpp)
 	void command_stage(float dt);

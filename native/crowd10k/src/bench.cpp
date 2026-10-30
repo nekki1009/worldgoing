@@ -29,26 +29,29 @@ struct Args {
 static uint32_t rng_state = 1;
 static uint32_t rnd() { rng_state ^= rng_state << 13; rng_state ^= rng_state >> 17; rng_state ^= rng_state << 5; return rng_state; }
 
-static void build_terrain(Terrain &t, int W, int H, bool features) {
+static void build_terrain(Terrain &t, int W, int H, bool features, bool open_ground = false) {
 	t.allocate(W, H);
 	if (!features) return;
-	int bridges[3][2] = {{(int)(0.25f * H), 6}, {(int)(0.5f * H), 8}, {(int)(0.75f * H), 5}};
-	for (int y = 0; y < H; ++y) {
-		int rx = (int)(0.45f * W + 3.0f * std::sin((float)y * 0.05f));
-		bool bridge = false;
-		for (auto &b : bridges) if (y >= b[0] - b[1] / 2 && y < b[0] - b[1] / 2 + b[1]) bridge = true;
-		for (int x = rx; x < rx + 4; ++x)
-			if (!bridge) t.flags[t.idx(x, y)] = 0;
-	}
 	int px0 = (int)(0.62f * W), px1 = (int)(0.92f * W), py0 = (int)(0.12f * H), py1 = (int)(0.88f * H);
-	for (int y = py0; y < py1; ++y)
-		for (int x = px0; x < px1; ++x) t.height[t.idx(x, y)] = 1;
-	int ramps[3][2] = {{(int)(0.3f * H), 8}, {(int)(0.5f * H), 10}, {(int)(0.7f * H), 8}};
-	for (auto &r : ramps)
-		for (int y = r[0] - r[1] / 2; y < r[0] - r[1] / 2 + r[1]; ++y) {
-			t.ramp_edges[t.idx(px0, y)] |= 1 << wg::Dir::W;
-			t.ramp_edges[t.idx(px0 - 1, y)] |= 1 << wg::Dir::E;
+	if (!open_ground) { // river with three bridges, and a plateau with three ramps
+		int bridges[3][2] = {{(int)(0.25f * H), 6}, {(int)(0.5f * H), 8}, {(int)(0.75f * H), 5}};
+		for (int y = 0; y < H; ++y) {
+			int rx = (int)(0.45f * W + 3.0f * std::sin((float)y * 0.05f));
+			bool bridge = false;
+			for (auto &b : bridges) if (y >= b[0] - b[1] / 2 && y < b[0] - b[1] / 2 + b[1]) bridge = true;
+			for (int x = rx; x < rx + 4; ++x)
+				if (!bridge) t.flags[t.idx(x, y)] = 0;
 		}
+		for (int y = py0; y < py1; ++y)
+			for (int x = px0; x < px1; ++x) t.height[t.idx(x, y)] = 1;
+		int ramps[3][2] = {{(int)(0.3f * H), 8}, {(int)(0.5f * H), 10}, {(int)(0.7f * H), 8}};
+		for (auto &r : ramps)
+			for (int y = r[0] - r[1] / 2; y < r[0] - r[1] / 2 + r[1]; ++y) {
+				t.ramp_edges[t.idx(px0, y)] |= 1 << wg::Dir::W;
+				t.ramp_edges[t.idx(px0 - 1, y)] |= 1 << wg::Dir::E;
+			}
+	}
+	// scattered rocks: the same random draws with or without the river and plateau, so the armies spawn alike
 	for (int k = 0; k < (W * H) / 900; ++k) {
 		int cx = (int)(rnd() % (uint32_t)W), cy = (int)(rnd() % (uint32_t)H), r = 1 + (int)(rnd() % 2);
 		if (std::abs(cx - (int)(0.45f * W)) < 12 || std::abs(cx - px0) < 6) continue;
@@ -142,8 +145,11 @@ int main(int argc, char **argv) {
 	w.cfg.auto_capture = a.auto_capture;
 	if (a.ko_seconds > 0) w.cfg.ko_seconds = a.ko_seconds;
 	int W = a.map, H = a.map;
-	bool battle = a.scenario == "battle", three = a.scenario == "three";
-	build_terrain(w.terrain, W, H, battle);
+	// CAV-4a: the battle armies (same draws) on open ground (no river or plateau; the scattered rocks stay), 1,000 riders
+	// wheel-charging a standing army
+	const bool cavalry = a.scenario == "cavalry";
+	bool battle = a.scenario == "battle" || cavalry, three = a.scenario == "three";
+	build_terrain(w.terrain, W, H, battle, cavalry);
 	int per_team = std::max(1, a.n / (three ? 300 : 200));
 	int64_t pid = 1000;
 	if (three) { // three factions with non-contiguous ids 0 / 2 / 5, all mutually hostile, open field
@@ -158,9 +164,46 @@ int main(int argc, char **argv) {
 		spawn_army(w, 1, per_team, 0.5f * (float)W + 15.f, 0.5f * (float)H, wg::kPi, a.spacing, a.ranged_share, 20.0, pid);
 	}
 	w.finalize();
+	if (cavalry) { // CAV-4a bench: every infantry formation of both teams stands (HOLD, native AI off). Every fifth team-0
+		// formation (ten, 100 men each: 1,000 riders) mounts and is moved round team 1's block (three north, three south,
+		// four west, about 25 cells out), and charges the nearest standing team-1 formation not taken by another: its live
+		// centre is followed (CHARGE to an enemy formation) and the formation layer cycles FORM / CHARGE / RALLY.
+		int riders = 0, ordered = 0;
+		for (int f = 0; f < (int)w.formations.size(); ++f) if (!(f < per_team && f % 5 == 0)) { w.formations[f].ai_enabled = false; w.host_order(f, 0, 0.f, 0.f, 0); } // everything but the riders stands (HOLD)
+		std::vector<int> taken;
+		for (int k = 0; k < 10; ++k) {
+			const int f = 5 * k;
+			if (f >= per_team || f >= (int)w.formations.size()) break;
+			static const float ring[10][2] = {{200, 46}, {224, 46}, {248, 46}, {200, 210}, {224, 210}, {248, 210}, {172, 86}, {172, 110}, {172, 134}, {172, 158}};
+			const float ncx = ring[k][0] * (float)W / 256.f, ncy = ring[k][1] * (float)H / 256.f; // round team 1 (x 195..253, y 69..187 on the 256 map)
+			const float dx = ncx - w.formations[f].cx, dy = ncy - w.formations[f].cy;
+			for (int i : w.formations[f].members) {
+				w.px[i] += dx; w.py[i] += dy; w.nx[i] += dx; w.ny[i] += dy;
+				// a shifted body on a random obstacle steps to the nearest walkable cell (bench set-up only)
+				for (int r = 0; r <= 3 && !w.terrain.walkable((int)w.px[i], (int)w.py[i]); ++r)
+					for (int ox = -r; ox <= r && !w.terrain.walkable((int)w.px[i], (int)w.py[i]); ++ox)
+						for (int oy = -r; oy <= r; ++oy)
+							if (w.terrain.walkable((int)(w.px[i] + ox), (int)(w.py[i] + oy))) { w.px[i] += ox; w.py[i] += oy; w.nx[i] = w.px[i]; w.ny[i] = w.py[i]; break; }
+				riders += w.set_mounted(i, true) ? 1 : 0;
+			}
+			w.formations[f].cx += dx; w.formations[f].cy += dy; w.formations[f].goal_x += dx; w.formations[f].goal_y += dy;
+			w.formations[f].ai_enabled = false;
+			int enemy = -1; float best = 1e30f; // nearest standing team-1 formation not yet taken by another rider formation
+			for (int e = per_team; e < (int)w.formations.size(); ++e) {
+				const float ex = w.formations[e].cx - ncx, ey = w.formations[e].cy - ncy, d2 = ex * ex + ey * ey;
+				if (d2 < best && std::find(taken.begin(), taken.end(), e) == taken.end()) { best = d2; enemy = e; }
+			}
+			if (enemy >= 0) taken.push_back(enemy); // each riding formation takes its own standing body
+			ordered += (enemy >= 0 && w.host_order(f, 7, 0.f, 0.f, (double)enemy) == OK) ? 1 : 0;
+		}
+		std::printf("cavalry: riders=%d formations_ordered=%d (CHARGE to the nearest standing team-1 formation)\n", riders, ordered);
+	}
 	const float dt = 1.f / 30.f;
 	const int steps = a.seconds * 30;
-	Series total;
+	Series total, impact, quiet; // CAV-4a: impact windows (a contact step and the 15 steps, 0.5 s, after it) and the other steps
+	int impact_left = 0, peak_gallop = 0;
+	double form_speed_sum = 0.0, charge_speed_sum = 0.0;
+	uint64_t form_speed_n = 0, charge_speed_n = 0;
 	PhaseTimes acc;
 	std::vector<float> buf;
 	FILE *dump = nullptr;
@@ -204,6 +247,7 @@ int main(int argc, char **argv) {
 	};
 	auto wall0 = Clock::now();
 	for (int s = 0; s < steps; ++s) {
+		const uint64_t c_before = w.stats.cav_contacts, pairs_before = w.stats.pairs;
 		w.step(dt);
 		auto t = Clock::now();
 		w.pack_render(buf, 64.f);
@@ -212,9 +256,37 @@ int main(int argc, char **argv) {
 		p.present = pr;
 		p.total += pr;
 		if (s >= 30) { total.add(p.total); acc.add(p); }
+		// impact window: a cavalry contact (cavalry) or a melee pair (battle) in this step or the 15 steps before it
+		if (cavalry ? w.stats.cav_contacts > c_before : w.stats.pairs > pairs_before) impact_left = 16;
+		if (s >= 30) (impact_left > 0 ? impact : quiet).add(p.total);
+		if (impact_left > 0) --impact_left;
+		if (cavalry) { // rider speeds: marching to the form-up point (CS_FORM, not yet there) and charging riders (CS_CHARGE)
+			int gallop = 0;
+			for (int f = 0; f < per_team && f < (int)w.formations.size(); f += 5) {
+				const Formation &F = w.formations[f];
+				for (int i : F.members) {
+					if (!w.mounted[i] || !w.can_act(i)) continue;
+					const double v = std::hypot(w.vx[i], w.vy[i]);
+					gallop += v >= 7.9 ? 1 : 0;
+					if (F.order == Order::CHARGE && F.charge_stage == CS_FORM && !F.arrived && w.state[i] == S_SLOT) { form_speed_sum += v; ++form_speed_n; }
+					if (w.charge_rider(i)) { charge_speed_sum += v; ++charge_speed_n; }
+				}
+			}
+			peak_gallop = std::max(peak_gallop, gallop);
+		}
 		seg_t = (double)(s + 1) / 30.0;
 		seg_tick("battle", p.total, seg_t);
 		if (std::getenv("WG_SPIKE") && p.total > 15.0) std::printf("spike s=%d total=%.2f hash=%.2f fields=%.2f cmd=%.2f ai=%.2f form=%.2f contact=%.2f soldier=%.2f timers=%.2f ex=%.2f ranged=%.2f act=%.2f fat=%.2f compact=%.2f\n", s, p.total, p.hash, p.fields, p.command, p.ai, p.formation, p.contact, p.soldier, p.timers, p.exchange, p.ranged, p.actions, p.fatigue, p.compact);
+		if (cavalry && std::getenv("WG_CAV_DEBUG") && s % 60 == 59) {
+			const Formation &F = w.formations[std::atoi(std::getenv("WG_CAV_DEBUG"))];
+			std::printf("dbg lag=%.2f spacing=%.2f cols=%d ", F.lag, F.spacing, F.cols); std::printf("dbg t=%d order=%d stage=%d t_left=%.1f centre=(%.1f,%.1f) goal=(%.1f,%.1f) arrived=%d field=%d los=%d contact=%d fight=%d\n",
+			            (s + 1) / 30, (int)F.order, (int)F.charge_stage, F.charge_t, F.cx, F.cy, F.goal_x, F.goal_y, (int)F.arrived,
+			            F.field, (int)F.los_goal, (int)F.in_contact, w.stats.fighting);
+			if (F.charge_target_form >= 0) { int able = 0; for (int i : w.formations[F.charge_target_form].members) able += w.can_act(i) ? 1 : 0; std::printf("  dbg target form=%d team=%d able=%d own_team=%d tx=%.1f ty=%.1f\n", F.charge_target_form, w.formations[F.charge_target_form].team, able, F.team, F.charge_tx, F.charge_ty); }
+			{ int spent = 0, fight = 0, slot = 0, charging = 0; double sp = 0, along = 0; int nrid = 0;
+			  for (int i : F.members) if (w.can_act(i) && w.mounted[i]) { ++nrid; spent += w.cav_spent[i]; fight += w.state[i] == S_FIGHT; slot += w.state[i] == S_SLOT; charging += w.charge_rider(i); sp += std::hypot(w.vx[i], w.vy[i]); }
+			  std::printf("  dbg riders=%d spent=%d fight=%d slot=%d charge_rider=%d mean_speed=%.2f\n", nrid, spent, fight, slot, charging, nrid ? sp / nrid : 0.0); (void)along; }
+		}
 		if (s % 30 == 29) {
 			w.measure();
 			max_overlap = std::max<uint64_t>(max_overlap, w.stats.deep_overlap_pairs);
@@ -361,6 +433,32 @@ int main(int argc, char **argv) {
 	std::printf("command: successions=%llu command_losses=%llu routs=%llu (now %d/%d) pursuits=%llu ends=%llu ai_orders=%llu\n",
 	            (unsigned long long)st.successions, (unsigned long long)st.command_losses, (unsigned long long)st.routs, routed_t[0],
 	            routed_t[1], (unsigned long long)st.pursuits, (unsigned long long)st.pursuit_ends, (unsigned long long)st.ai_orders);
+	if (cavalry) for (int f = 0; f < per_team && f < (int)w.formations.size(); f += 5) {
+		const Formation &F = w.formations[f];
+		int riding = 0, alive_r = 0;
+		for (int i : F.members) if (w.can_act(i)) { ++alive_r; riding += w.mounted[i] ? 1 : 0; }
+		std::printf("cav_formation %d: order=%d stage=%d charge_t=%.2f centre=(%.1f,%.1f) goal=(%.1f,%.1f) arrived=%d able=%d mounted=%d cmd_ok=%d hits=%d\n",
+		            f, (int)F.order, (int)F.charge_stage, F.charge_t, F.cx, F.cy, F.goal_x, F.goal_y, (int)F.arrived, alive_r, riding,
+		            (int)w.charge_commander_ok(f), 0);
+	}
+	if (cavalry) { // cycles per cavalry formation (completed charge cycles = breaks through to RALLY) and the impact-window timing
+		std::printf("cavalry_cycles:");
+		for (int f = 0; f < per_team && f < (int)w.formations.size(); f += 5) std::printf(" %d", w.formations[f].charge_runs);
+		std::printf("\n");
+	}
+	std::printf("impact_step_ms: n=%zu p50=%.3f p95=%.3f p99=%.3f max=%.3f mean=%.3f (window: a cavalry contact step (battle: a melee pair step) and 0.5 s after)\n",
+	            impact.v.size(), impact.pct(.5), impact.pct(.95), impact.pct(.99), impact.max(), impact.mean());
+	std::printf("quiet_step_ms: n=%zu p50=%.3f p95=%.3f p99=%.3f max=%.3f mean=%.3f (steps outside those windows)\n",
+	            quiet.v.size(), quiet.pct(.5), quiet.pct(.95), quiet.pct(.99), quiet.max(), quiet.mean());
+	if (cavalry)
+		std::printf("cavalry_speed: form_march_mean=%.2f (riders following slots while the form-up walks) charge_mean=%.2f (charging riders, from a standing line) impact_mean=%.2f peak_gallop_riders=%d (>= 7.9 cells/s in one step)\n",
+		            form_speed_n ? form_speed_sum / (double)form_speed_n : 0.0, charge_speed_n ? charge_speed_sum / (double)charge_speed_n : 0.0,
+		            w.stats.cav_contacts ? w.stats.cav_impact_speed / (double)w.stats.cav_contacts : 0.0, peak_gallop);
+	std::printf("step_ms: p50=%.3f p95=%.3f p99=%.3f max=%.3f mean=%.3f (steps %zu)\n", total.pct(.5), total.pct(.95), total.pct(.99), total.max(), total.mean(), total.v.size());
+	std::printf("cavalry_stats: contacts=%llu penetrations=%llu falls=%llu stops=%llu dismounts=%llu shocks=%llu charge_forms=%llu charge_breaks=%llu charge_rallies=%llu\n",
+	            (unsigned long long)w.stats.cav_contacts, (unsigned long long)w.stats.cav_penetrations, (unsigned long long)w.stats.cav_falls, (unsigned long long)w.stats.cav_stops,
+	            (unsigned long long)w.stats.cav_dismounts, (unsigned long long)w.stats.cav_shocks, (unsigned long long)w.stats.charge_forms,
+	            (unsigned long long)w.stats.charge_breaks, (unsigned long long)w.stats.charge_rallies);
 	std::printf("wall=%.1fs sim=%ds peak_fighting=%d\nstate_hash=%016llx\n", wall, a.seconds, peak_fight, (unsigned long long)w.state_hash());
 	std::string jp = a.out + "/result_" + a.scenario + "_n" + std::to_string(n) + "_t" + std::to_string(a.threads) + ".json";
 	if (FILE *j = std::fopen(jp.c_str(), "w")) {

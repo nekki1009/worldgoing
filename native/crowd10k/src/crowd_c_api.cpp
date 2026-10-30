@@ -58,6 +58,9 @@ int wg_crowd_order_attack(wg_crowd *c,int f,int t) { return wg_crowd_host_order(
 int wg_crowd_order_hold(wg_crowd *c,int f) { return wg_crowd_host_order(c,f,0,0,0,0); }
 int wg_crowd_order_pursue(wg_crowd *c,int f,int t) { return wg_crowd_host_order(c,f,4,0,0,t); }
 int wg_crowd_order_retreat(wg_crowd *c,int f,float x,float y) { return wg_crowd_host_order(c,f,3,x,y,0); }
+int wg_crowd_order_charge(wg_crowd *c,int f,float x,float y) { return wg_crowd_host_order(c,f,5,x,y,0); }
+int wg_crowd_order_charge_formation(wg_crowd *c,int f,int enemy) { return wg_crowd_host_order(c,f,7,0,0,enemy); }
+int wg_crowd_order_rally(wg_crowd *c,int f) { return wg_crowd_host_order(c,f,6,0,0,0); }
 int wg_crowd_order_capture(wg_crowd *c,int g,int t) {
 	if (!c || g < 0 || g >= c->world.soldier_count()) return WG_BAD_FORMATION;
 	const auto &f=c->world.formations[c->world.form[g]];

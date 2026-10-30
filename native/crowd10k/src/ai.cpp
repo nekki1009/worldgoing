@@ -167,6 +167,16 @@ void World::ai_review() {
 			f.ai_target = tgt; f.ai_chase_cd = 30.0; f.ai_status = AI_PURSUE;
 			continue;
 		}
+		// CAV-4a: a mostly mounted formation charges an enemy formation it is not yet in contact with; the formation layer then
+		// cycles FORM / CHARGE / RALLY by itself while the order lasts. In contact the usual engagement below applies.
+		if (cavalry_formation((int)fi) && charge_commander_ok((int)fi)) {
+			if (f.order == Order::RALLY) { f.ai_status = AI_CHARGE; continue; } // a host rally runs to its end first
+			if (f.order == Order::CHARGE) { if (f.charge_stage != CS_NONE) f.charge_target_form = nearest; f.ai_target = tgt; f.ai_status = AI_CHARGE; continue; }
+			if (!contact && distance <= cav::CHARGE_RANGE && f.ai_order_cd <= 0) {
+				if (order_charge((int)fi, 0.f, 0.f, nearest)) { f.ai_order_cd = ORDER_DELAY; stats.ai_orders++; f.ai_target = tgt; f.ai_status = AI_CHARGE; continue; }
+				f.ai_order_cd = FAILED_RETRY;
+			}
+		}
 		if (contact || (own.range > 0 && distance <= own.range - 1.0)) {
 			if (f.order != Order::ATTACK) issue(f, (int)fi, Order::ATTACK, 0, 0, tgt);
 			else if (f.target_person < 0 || !can_act(f.target_person)) f.target_person = tgt;

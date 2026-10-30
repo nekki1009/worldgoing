@@ -1950,6 +1950,253 @@ static void test_cavalry() {
 	}
 }
 
+// CAV-4a regression: a mounted formation marches at the cruise pace and its charge reaches the gallop (CAV-1 rules: cruise 5,
+// gallop 8 cells/s). The bench of v2 had 100-rider formations crawling at about 0.5 cells/s: the infantry slot spacing
+// (1.0) is narrower than two rider bodies (1.12), so riders never reached their slots, the formation lag stayed high and the
+// lag cohesion held the centre at its 0.15 floor of the infantry march; and riders came within reach of the line already
+// braked to the cruise cap, so every impact was judged at 5 cells/s.
+static void test_cavalry_speed() {
+	std::printf("[cavalry speed] CAV-4a: a 100-rider block marches at cruise, foot unchanged, the charge reaches gallop at impact\n");
+	auto centre_speed = [](Scene &s, int f, double seconds) {
+		const float x0 = s.w.formations[f].cx, y0 = s.w.formations[f].cy;
+		s.run(seconds);
+		return std::hypot(s.w.formations[f].cx - x0, s.w.formations[f].cy - y0) / (float)seconds;
+	};
+	for (int riding = 0; riding < 2; ++riding) { // MOVE across open ground: 100 men, 10 x 10 at the infantry spacing 1.0
+		Scene s(1, 200, 60);
+		int f = s.formation(0, 15, 30, 0, 100, sword(M_IRON, A_LEATHER));
+		s.w.finalize();
+		s.w.formations[f].ai_enabled = false;
+		if (riding) for (int i : s.w.formations[f].members) s.w.set_mounted(i, true);
+		s.run(1.0);
+		s.w.order_move(f, 185.f, 30.f, 0.f);
+		s.run(4.0); // accelerate and settle into the march (bounded: 4 s)
+		const float v = centre_speed(s, f, 3.0);
+		double rider = 0.0;
+		for (int i : s.w.formations[f].members) rider += std::hypot(s.w.vx[i], s.w.vy[i]);
+		rider /= 100.0;
+		if (riding) {
+			CHECK(v >= 0.95f * cav::CRUISE && v <= cav::CRUISE + 0.05f, "a mounted block marches at the cruise pace within 4 s of the order (centre %.2f cells/s)", v);
+			CHECK(rider >= 0.95 * cav::CRUISE, "its riders keep up with the centre (mean %.2f cells/s)", rider);
+		} else {
+			CHECK(std::fabs(v - s.w.cfg.march_speed) < 0.05f, "a foot block still marches at the infantry pace (centre %.2f, march %.2f)", v, s.w.cfg.march_speed);
+		}
+		CHECK(s.w.stats.illegal_cell == 0 && s.w.stats.illegal_step == 0, "terrain invariant on the march");
+		std::printf("  %s block of 100 on MOVE: centre %.2f cells/s, members %.2f cells/s\n", riding ? "mounted" : "foot", v, rider);
+	}
+	{   // CHARGE from 100 cells: the form-up walk is at cruise, the line forms, and the riders hit the line at gallop
+		Scene s(1, 200, 60);
+		int r = s.formation(0, 15, 30, 0, 100, sword(M_IRON, A_LEATHER));
+		int v = s.formation(1, 120, 30, kPi, 60, sword(M_WOOD, A_NONE), T_MELEE, 0, 20);
+		s.w.finalize();
+		s.w.formations[r].ai_enabled = false; s.w.formations[v].ai_enabled = false;
+		for (int i : s.w.formations[r].members) s.w.set_mounted(i, true);
+		s.run(1.0);
+		CHECK(s.w.host_order(r, 7, 0.f, 0.f, v) == OK, "a 100-rider block charges the enemy formation");
+		s.run(5.0);
+		const float walk = centre_speed(s, r, 3.0);
+		CHECK(s.w.formations[r].charge_stage == CS_FORM && walk >= 0.9f * cav::CRUISE, "the form-up walk goes at the cruise pace (centre %.2f cells/s)", walk);
+		int charge_step = -1, peak_gallop = 0;
+		for (int k = 0; k < 30 * 30 && s.w.stats.cav_contacts < 10; ++k) {
+			checked_step(s.w, DT);
+			if (charge_step < 0 && s.w.formations[r].charge_stage == CS_CHARGE) charge_step = k;
+			int gallop = 0;
+			for (int i : s.w.formations[r].members) gallop += s.w.charge_rider(i) && std::hypot(s.w.vx[i], s.w.vy[i]) >= cav::GALLOP - 0.1f ? 1 : 0;
+			peak_gallop = std::max(peak_gallop, gallop);
+		}
+		CHECK(charge_step >= 0 && charge_step <= 30 * 20, "the line forms and the charge starts within 25 s of the order (%.1f s after the walk check)", charge_step / 30.0);
+		CHECK(peak_gallop >= 20, "the charging line reaches the gallop (%d riders at %.1f cells/s together)", peak_gallop, cav::GALLOP - 0.1f);
+		const double impact = s.w.stats.cav_contacts ? s.w.stats.cav_impact_speed / (double)s.w.stats.cav_contacts : 0.0;
+		CHECK(s.w.stats.cav_contacts >= 10 && impact >= 0.5 * (cav::CHARGE_SPEED + cav::GALLOP), "impacts are judged at charge speed, not braked to cruise first (%llu contacts, mean %.2f cells/s)",
+		      (unsigned long long)s.w.stats.cav_contacts, impact);
+		CHECK(s.w.stats.illegal_cell == 0 && s.w.stats.illegal_step == 0, "terrain invariant through the charge");
+		std::printf("  CHARGE of 100 riders: form-up walk %.2f cells/s, charge %.1f s after the walk check, %d riders at gallop together, %llu contacts at %.2f cells/s mean, %llu penetrations\n",
+		            walk, charge_step / 30.0, peak_gallop, (unsigned long long)s.w.stats.cav_contacts, impact, (unsigned long long)s.w.stats.cav_penetrations);
+	}
+}
+
+// CAV-4a: CHARGE / RALLY formation orders (reports/cavalry-charge-plan.md section 5 and 6)
+static void test_cavalry_charge() {
+	std::printf("[cavalry charge] CAV-4a: form-up line, straight charge through the line, rally behind the target, recharge, spent rider, commander and cavalry gates, AI cycles, KW18 and KW17 save, thread parity\n");
+	{   // form up to the line, charge straight, break through, rally behind the target
+		Scene s(1, 64, 48);
+		int r = s.formation(0, 6, 24, 0, 6, sword(M_IRON, A_NONE), T_MELEE, 0, 6);
+		int v = s.formation(1, 40, 24, kPi, 3, sword(M_WOOD, A_NONE), T_MELEE, 0, 1);
+		s.w.finalize();
+		s.w.formations[r].ai_enabled = false; s.w.formations[v].ai_enabled = false;
+		for (int i : s.w.formations[r].members) s.w.set_mounted(i, true);
+		CHECK(s.w.cavalry_formation(r) && s.w.charge_commander_ok(r), "six riders with an eligible commander at the centre");
+		CHECK(s.w.host_order(r, 5, 40.5f, 24.5f, 0) == OK, "CHARGE to a point is accepted");
+		CHECK(s.w.formations[r].order == Order::CHARGE && s.w.formations[r].charge_stage == CS_FORM, "the order starts in form-up");
+		int formed_step = -1;
+		float cx_at_charge = 0.f;
+		for (int k = 0; k < 30 * 25 && formed_step < 0; ++k) {
+			checked_step(s.w, DT);
+			if (s.w.formations[r].charge_stage == CS_CHARGE) { formed_step = k; cx_at_charge = s.w.formations[r].cx; }
+		}
+		CHECK(formed_step >= 0, "the formation reaches the form-up point and starts the charge");
+		CHECK(formed_step >= 0 && cx_at_charge > 24.f && cx_at_charge < 36.f, "form-up point is 8 to 12 cells in front of the target (centre x %.2f)", cx_at_charge);
+		CHECK(s.w.formations[r].cols == 6 || s.w.formations[r].charge_cols == 6, "line abreast: one row while charging");
+		float max_ang = 0.f, max_x = 0.f, first_rx = 0.f;
+		bool saw_rally = false;
+		for (int k = 0; k < 30 * 12; ++k) {
+			checked_step(s.w, DT);
+			// the first charge of the cycle (heading +x); later cycles charge in from the rally flank
+			if (s.w.formations[r].charge_stage == CS_CHARGE && !saw_rally) {
+				for (int i : s.w.formations[r].members) {
+					if (!s.w.mounted[i] || s.w.px[i] < 20.f) continue;
+					const float sp = std::hypot(s.w.vx[i], s.w.vy[i]);
+					// at gallop (above 6 cells/s) and before the infantry line (x 40): the turn of a rider still lining up at the
+					// charge start, and the push of contact, are not counted
+					if (sp > 6.f && s.w.px[i] < 37.f) max_ang = std::max(max_ang, std::fabs(wrap_angle(std::atan2(s.w.vy[i], s.w.vx[i]))));
+					max_x = std::max(max_x, s.w.px[i]);
+				}
+			}
+			if (s.w.formations[r].charge_stage == CS_RALLY && !saw_rally) { saw_rally = true; first_rx = s.w.formations[r].rally_x; }
+		}
+		CHECK(max_ang < 25.f * kPi / 180.f, "charging riders keep to a straight heading, no flow field (max %.1f deg)", max_ang * 180.f / kPi);
+		CHECK(max_x > 41.f, "a rider charges through the target line, not stopped in front of it (furthest x %.2f)", max_x);
+		CHECK(s.w.stats.cav_contacts >= 1, "the charge reaches the infantry line (contacts %llu)", (unsigned long long)s.w.stats.cav_contacts);
+		CHECK(saw_rally && s.w.stats.charge_breaks >= 1, "break-through ends the charge in the rally stage");
+		const float rx = first_rx;
+		CHECK(rx > 40.f, "rally point of the first cycle lies behind the target (x %.2f)", rx);
+		bool back = false;
+		for (int k = 0; k < 30 * 25 && !back; ++k) {
+			checked_step(s.w, DT);
+			const Formation &f = s.w.formations[r];
+			back = f.charge_stage == CS_FORM || f.charge_stage == CS_CHARGE;
+		}
+		CHECK(back, "after rally the cycle forms up again and recharges");
+		CHECK(s.w.stats.charge_rallies >= 1 && s.w.stats.charge_forms >= 2, "rally arrival counted and a second form-up begun (forms %llu)", (unsigned long long)s.w.stats.charge_forms);
+		CHECK(s.w.stats.illegal_cell == 0 && s.w.stats.illegal_step == 0, "terrain invariant through the cycle");
+		CHECK(s.w.host_order(r, 6, 0.f, 0.f, 0) == OK && s.w.formations[r].order == Order::RALLY, "a RALLY order is accepted");
+		bool rallied = false;
+		for (int k = 0; k < 30 * 30 && !rallied; ++k) { checked_step(s.w, DT); rallied = s.w.formations[r].order == Order::HOLD; }
+		CHECK(rallied && s.w.formations[r].charge_stage == CS_NONE, "RALLY goes to its point and then holds");
+	}
+	{   // refusals: commander too far, not a cavalry formation, enemy formation target not hostile or missing
+		Scene s(1, 64, 48);
+		int r = s.formation(0, 6, 24, 0, 6, sword(M_IRON, A_NONE), T_MELEE, 0, 6);
+		int inf = s.formation(0, 6, 34, 0, 6, sword(M_IRON, A_NONE), T_MELEE, 0, 6);
+		int v = s.formation(1, 40, 24, kPi, 3, sword(M_WOOD, A_NONE), T_MELEE, 0, 1);
+		s.w.finalize();
+		for (int f : {r, inf, v}) s.w.formations[f].ai_enabled = false;
+		for (int i : s.w.formations[r].members) s.w.set_mounted(i, true);
+		const int cmd = s.w.formations[r].current_cmd;
+		CHECK(cmd >= 0, "the cavalry formation has a commander");
+		s.place(cmd, 40.f, 40.f); // the commander walks 34 cells away from the centre
+		CHECK(s.w.host_order(r, 5, 40.5f, 24.5f, 0) == NO_COMMANDER, "CHARGE refused with the commander out of reach");
+		CHECK(s.w.formations[r].order != Order::CHARGE, "a refused order changes nothing");
+		s.place(cmd, 6.5f, 24.5f);
+		CHECK(s.w.host_order(inf, 5, 40.5f, 24.5f, 0) == NOT_CAVALRY, "CHARGE refused for a foot formation");
+		CHECK(s.w.host_order(r, 7, 0.f, 0.f, v) == OK, "CHARGE to an enemy formation by index is accepted");
+		CHECK(s.w.host_order(r, 7, 0.f, 0.f, r) == NO_TARGET, "a formation cannot charge itself");
+		CHECK(s.w.host_order(r, 7, 0.f, 0.f, 1.5) == NO_TARGET, "a formation index must be whole");
+	}
+	{   // CHARGE form-up disengages: a rider already in melee contact rides out to the form-up line instead of fighting on
+		Scene s(1, 64, 48);
+		int r = s.formation(0, 10, 24, 0, 1, sword(M_IRON, A_NONE));
+		int v = s.formation(1, 11, 24, kPi, 1, sword(M_WOOD, A_NONE));
+		s.w.finalize();
+		s.w.formations[r].ai_enabled = false; s.w.formations[v].ai_enabled = false;
+		s.place(0, 10.5f, 24.5f); s.place(1, 11.5f, 24.5f);
+		s.w.set_mounted(0, true);
+		s.run(0.2);
+		CHECK(s.w.state[0] == S_FIGHT, "setup: the rider is in melee before the order (state %d)", (int)s.w.state[0]);
+		CHECK(s.w.host_order(r, 5, 30.5f, 24.5f, 0) == OK, "CHARGE to a point with the rider in contact is accepted");
+		s.run(1.0);
+		CHECK(s.w.state[0] != S_FIGHT, "the riding contact disengages during the form-up (state %d)", (int)s.w.state[0]);
+	}
+	{   // spent rider: a charge stopped in contact is ordinary engagement; RALLY pulls the riders out of contact
+		Scene s(1, 64, 48);
+		int r = s.formation(0, 12, 24, 0, 1, sword(M_IRON, A_NONE));
+		Equip pike = sword(M_WOOD, A_NONE); pike.family = F_SPEAR;
+		int v = s.formation(1, 25, 24, kPi, 5, pike, T_MELEE, 0, 1); // five pikes in one file, facing the rider
+		s.w.finalize();
+		s.w.formations[r].ai_enabled = false; s.w.formations[v].ai_enabled = false;
+		s.w.set_mounted(0, true);
+		CHECK(s.w.host_order(r, 7, 0.f, 0.f, v) == OK, "a lone cavalry formation charges an enemy by index");
+		int k = 0;
+		for (; k < 30 * 20 && s.w.stats.cav_stops == 0; ++k) checked_step(s.w, DT);
+		CHECK(s.w.stats.charge_forms >= 1, "the charge began (forms %llu)", (unsigned long long)s.w.stats.charge_forms);
+		CHECK(s.w.stats.cav_stops >= 1, "the pike line stops the charge (stops %llu, contacts %llu)", (unsigned long long)s.w.stats.cav_stops, (unsigned long long)s.w.stats.cav_contacts);
+		// checked on the step of the stop: a later form-up of the cycle would clear the flag again
+		CHECK(s.w.cav_spent[0] == 1 && !s.w.charge_rider(0), "the stopped rider is spent and no longer charges");
+		for (int m = 0; m < 30 * 20; ++m) checked_step(s.w, DT);
+		CHECK(s.w.stats.illegal_cell == 0 && s.w.stats.illegal_step == 0, "terrain invariant after the stop");
+		CHECK(s.w.stats.illegal_cell == 0 && s.w.stats.illegal_step == 0, "terrain invariant after the spent rider");
+	}
+	{   // AI: a mostly mounted native formation charges enemies in reach and keeps cycling
+		Scene s(1, 64, 48);
+		s.w.cfg.ai = true;
+		int r = s.formation(0, 8, 24, 0, 6, sword(M_IRON, A_NONE), T_MELEE, 0, 6);
+		int v = s.formation(1, 30, 24, kPi, 6, sword(M_WOOD, A_NONE), T_MELEE, 0, 3);
+		s.w.finalize();
+		for (int i : s.w.formations[r].members) s.w.set_mounted(i, true);
+		bool ai_charged = false;
+		for (int k = 0; k < 30 * 60; ++k) {
+			checked_step(s.w, DT);
+			ai_charged = ai_charged || s.w.formations[r].order == Order::CHARGE;
+		}
+		CHECK(ai_charged, "native AI issues CHARGE to a cavalry formation with an enemy in reach");
+		CHECK(s.w.stats.charge_forms >= 1 && s.w.stats.charge_breaks >= 1, "the AI cycle reaches break-through (forms %llu breaks %llu)",
+		      (unsigned long long)s.w.stats.charge_forms, (unsigned long long)s.w.stats.charge_breaks);
+		CHECK(s.w.stats.illegal_cell == 0 && s.w.stats.illegal_step == 0, "terrain invariant under AI cycling");
+	}
+	{   // KW18 save mid-charge loads with the same hash and continues identically; KW17 layout loads with the charge defaults
+		Scene s(1, 64, 48);
+		int r = s.formation(0, 6, 24, 0, 6, sword(M_IRON, A_NONE), T_MELEE, 0, 6);
+		int v = s.formation(1, 40, 24, kPi, 3, sword(M_WOOD, A_NONE), T_MELEE, 0, 1);
+		s.w.finalize();
+		s.w.formations[r].ai_enabled = false; s.w.formations[v].ai_enabled = false;
+		for (int i : s.w.formations[r].members) s.w.set_mounted(i, true);
+		s.w.host_order(r, 5, 40.5f, 24.5f, 0);
+		for (int k = 0; k < 30 * 25 && s.w.formations[r].charge_stage != CS_CHARGE; ++k) checked_step(s.w, DT);
+		for (int k = 0; k < 30 * 1; ++k) checked_step(s.w, DT); // mid-charge
+		CHECK(s.w.formations[r].charge_stage == CS_CHARGE, "the save point is inside the charge");
+		const std::vector<uint8_t> blob = s.w.save();
+		const uint64_t h0 = s.w.state_hash();
+		World back(1);
+		CHECK(!blob.empty() && back.load(blob), "a KW18 blob loads");
+		check_valid(back);
+		CHECK(back.state_hash() == h0, "load gives the same hash mid-charge");
+		CHECK(back.formations[r].charge_stage == CS_CHARGE && back.formations[r].order == Order::CHARGE, "charge stage and order survive the save");
+		for (int k = 0; k < 30 * 2; ++k) { checked_step(s.w, DT); checked_step(back, DT); }
+		CHECK(back.state_hash() == s.w.state_hash(), "the loaded copy and the original step identically through the charge");
+		// KW17: an older layout (no charge cycle) loads with the defaults and hashes as the same state
+		Scene q(1, 64, 48);
+		int fr = q.formation(0, 6, 24, 0, 6, sword(M_IRON, A_NONE), T_MELEE, 0, 6);
+		int fv = q.formation(1, 40, 24, kPi, 3, sword(M_WOOD, A_NONE), T_MELEE, 0, 1);
+		q.w.finalize();
+		q.w.formations[fr].ai_enabled = false; q.w.formations[fv].ai_enabled = false;
+		for (int i : q.w.formations[fr].members) q.w.set_mounted(i, true);
+		q.w.order_move(fr, 20.5f, 24.5f, 0.f);
+		for (int k = 0; k < 30 * 2; ++k) checked_step(q.w, DT);
+		const std::vector<uint8_t> old = q.w.save_kw17();
+		World oldback(1);
+		CHECK(!old.empty() && oldback.load(old), "a KW17 blob loads");
+		check_valid(oldback);
+		CHECK(oldback.state_hash() == q.w.state_hash(), "a KW17 blob loads as the same state (no charge cycle)");
+		CHECK(oldback.formations[fr].charge_stage == CS_NONE && oldback.cav_spent.size() == oldback.px.size(), "KW17 charge fields take their defaults");
+		CHECK(oldback.host_order(fr, 5, 40.5f, 24.5f, 0) == OK, "a loaded KW17 formation accepts a charge");
+	}
+	{   // 1 / 2 / 4 threads: identical state hash through the charge cycle
+		auto run = [](int threads) {
+			Scene s(threads, 64, 48);
+			int r = s.formation(0, 6, 24, 0, 6, sword(M_IRON, A_NONE), T_MELEE, 0, 6);
+			int v = s.formation(1, 40, 24, kPi, 6, sword(M_WOOD, A_NONE), T_MELEE, 0, 2);
+			s.w.finalize();
+			s.w.formations[r].ai_enabled = false; s.w.formations[v].ai_enabled = false;
+			for (int i : s.w.formations[r].members) s.w.set_mounted(i, true);
+			s.w.host_order(r, 5, 40.5f, 24.5f, 0);
+			for (int k = 0; k < 30 * 30; ++k) checked_step(s.w, DT);
+			return s.w.state_hash();
+		};
+		const uint64_t h1 = run(1), h2 = run(2), h4 = run(4);
+		CHECK(h1 == h2 && h1 == h4, "1 / 2 / 4 threads: identical hash through the charge cycle (%llx %llx %llx)", (unsigned long long)h1, (unsigned long long)h2, (unsigned long long)h4);
+	}
+}
+
 int main() {
 	#ifdef _WIN32
 	SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
@@ -1989,6 +2236,8 @@ int main() {
 	test_melee_contact_and_exchange_fatigue();
 	test_site_person_release();
 	test_cavalry();
+	test_cavalry_charge();
+	test_cavalry_speed();
 	std::printf("\n%d checks, %d failures\n", checks, failures);
 	return failures ? 1 : 0;
 }

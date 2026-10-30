@@ -1201,8 +1201,9 @@ void World::cav_detect(int i, float x, float y, float vx_now, float vy_now) {
 void World::cav_resolve(int r, int v, double speed, float ux, float uy) {
 	const rules::ExResult res = charge_result(r, v, speed);
 	stats.cav_contacts++;
+	stats.cav_impact_speed += speed; // CAV-4a reporting: mean impact speed = cav_impact_speed / cav_contacts
 	cav_record(r, v);
-	auto stop = [&]() { vx[r] = vy[r] = 0.f; stats.cav_stops++; }; // 4.4 brake to zero
+	auto stop = [&]() { vx[r] = vy[r] = 0.f; stats.cav_stops++; cav_spent[r] = 1; }; // 4.4 brake to zero; CAV-4a: the charge is spent
 	if (res.winner == 0) { // draw: both stunned, the horse is held up for 0.5 s
 		apply_contact(v, 0.0, res.stun_b);
 		apply_contact(r, 0.0, res.stun_a);
@@ -1225,6 +1226,7 @@ void World::cav_resolve(int r, int v, double speed, float ux, float uy) {
 				px[v] = rx; py[v] = ry;
 			}
 			cav_fall(v, cav::FALL_SECONDS);
+			stats.cav_penetrations++; // CAV-4a reporting: a penetration (4.4 big win)
 			if (cav_down[v] > 0.0) stats.cav_falls++;
 			cav_morale_shock(r, v);
 			const float sp = std::sqrt(vx[r] * vx[r] + vy[r] * vy[r]);
