@@ -541,6 +541,10 @@ int World::add_soldier(int fi, const rules::Equip &e, Role r, int64_t person, ui
 	push(released, (uint8_t)0);
 	push(aboard, (uint8_t)0); push(aboard_vehicle, (int32_t)-1);
 	push(absent, (uint8_t)0); push(absent_kind, (uint8_t)0); push(surrendered, (uint8_t)0);
+	push(mounted, (uint8_t)0); push(cav_hits, (uint8_t)0);
+	for (int k = 0; k < cav::HEADING_WINDOW; ++k) cav_hist.push_back(0.f);
+	push(cav_hold, 0.0); push(cav_down, 0.0);
+	for (int k = 0; k < cav::RECENT_VICTIMS; ++k) { cav_hit_who.push_back(-1); cav_hit_t.push_back(-1e9); }
 	push(person_id, person >= 0 ? person : (int64_t)i);
 	if (finalized_) {
 		f.slot_count++; f.roster++; f.fatigue_count++;
@@ -1169,11 +1173,12 @@ void World::contact_stage(int ch) {
 void World::soldier_stage(float dt, int ch) {
 	const int n = soldier_count();
 	const int a = ch * cfg.chunk, b = std::min(n, a + cfg.chunk);
-	const float D = 2 * cfg.radius, D2 = D * D;
+	const float D = 2 * cfg.radius;
 	const float reach2 = cfg.reach * cfg.reach;
 	uint64_t bad_cell = 0, bad_step = 0;
 	for (int i = a; i < b; ++i) {
 		running[i] = 0;
+		cav_cand[i] = -1; // CAV-1: this step's charge candidate, set by cav_detect below
 		if (is_aboard(i)) { // G1 S1: aboard soldiers ride the vehicle; they neither move, push, nor take a step
 			nx[i] = px[i]; ny[i] = py[i]; vx[i] = vy[i] = 0;
 			state[i] = !alive(i) ? S_DEAD : ko[i] > 0 ? S_DOWN : S_SLOT;
@@ -1369,15 +1374,63 @@ void World::soldier_stage(float dt, int ch) {
 			}
 		}
 		const bool sliding = st == S_KNOCK || (st == S_DOWN && knock_t[i] > 0);
+		// CAV-1: a mounted soldier steers by its own kinematics below (desired velocity, then the limits of section CAV-1)
+		const bool cav_i = mounted[i] != 0 && !lying && !escorting && !evacuating && !sliding && !committed;
 		float blend = sliding || escorting || evacuating ? 1.f : 0.4f;
 		float cvx = vx[i] + (dvx - vx[i]) * blend, cvy = vy[i] + (dvy - vy[i]) * blend;
+		if (cav_i) { cvx = dvx; cvy = dvy; }
 		if ((!committed && ((st == S_DOWN && !sliding) || st == S_GETUP || st == S_STAGGER)) || ((st == S_RESCUE || st == S_CAPTURE || escorting) && dvx == 0 && dvy == 0) || st == S_FIGHT) cvx = cvy = 0; // Only an existing Site step carries an incapacitated original body.
+		if (cav_i) { // CAV-1 kinematics: cap by stance and slope, accelerate or brake, turn no faster than TURN_DEG_CELLS / speed
+			float cap = speed_cap >= cfg.run_speed - 1e-4f ? cav::GALLOP : (speed_cap > 1e8f ? speed_cap : cav::CRUISE);
+			const float dl0 = std::sqrt(cvx * cvx + cvy * cvy);
+			if (dl0 > 1e-4f) {
+				const int c0x = (int)std::floor(p_x), c0y = (int)std::floor(p_y);
+				const int c1x = (int)std::floor(p_x + cvx / dl0 * 0.6f), c1y = (int)std::floor(p_y + cvy / dl0 * 0.6f);
+				if (terrain.contains(c0x, c0y) && terrain.contains(c1x, c1y)) {
+					const int h0 = terrain.height[terrain.idx(c0x, c0y)], h1 = terrain.height[terrain.idx(c1x, c1y)];
+					if (h1 > h0) cap *= cav::SLOPE_UP; else if (h1 < h0) cap *= cav::SLOPE_DOWN;
+				}
+			}
+			speed_cap = cap;
+			const float v0 = std::sqrt(vx[i] * vx[i] + vy[i] * vy[i]);
+			if (dl0 > 1e-4f) {
+				float ang = std::atan2(cvy, cvx);
+				if (v0 > 1e-4f) {
+					const float cur = std::atan2(vy[i], vx[i]);
+					const float turn = cav::TURN_DEG_CELLS * kPi / 180.f / std::max(v0, 1.f) * dt;
+					ang = cur + std::clamp(cav::wrap_angle(ang - cur), -turn, turn);
+				}
+				const float tgt = std::min(dl0, speed_cap);
+				const float s = tgt > v0 ? std::min(tgt, v0 + cav::ACCEL * dt) : std::max(tgt, v0 - cav::BRAKE * dt);
+				cvx = std::cos(ang) * s; cvy = std::sin(ang) * s;
+			} else {
+				const float s = std::max(0.f, v0 - cav::BRAKE * dt);
+				if (v0 > 1e-4f) { cvx = vx[i] / v0 * s; cvy = vy[i] / v0 * s; } else cvx = cvy = 0.f;
+			}
+		}
 		float cl = std::sqrt(cvx * cvx + cvy * cvy);
 		if (cl > speed_cap) { cvx *= speed_cap / cl; cvy *= speed_cap / cl; }
 		float qx = p_x + cvx * dt, qy = p_y + cvy * dt;
+		if (cav_i) {
+			// CAV-1 two sub-steps: each moves half the step, takes its push from the bodies around its own spot (the hash of
+			// the step start) and is solved against the terrain. Charge detection runs at each sub-step's spot.
+			const float cav_speed = std::sqrt(cvx * cvx + cvy * cvy);
+			const bool charging = cav_speed >= cav::CHARGE_SPEED && cav_straight(i) && cav_hits[i] < cav::MAX_HITS &&
+			                      can_act(i) && stagger[i] <= 0.0 && knock_t[i] <= 0.0 && !f.routed && !captive[i] && rescue_of[i] < 0 && capture_of[i] < 0;
+			float sx = p_x, sy = p_y;
+			for (int sub = 0; sub < 2; ++sub) {
+				if (charging) cav_detect(i, sx, sy, cvx, cvy);
+				float ex2 = 0, ey2 = 0;
+				cav_push(i, sx, sy, ex2, ey2);
+				float rx = sx + cvx * dt * 0.5f + ex2, ry = sy + cvy * dt * 0.5f + ey2;
+				resolve(sx, sy, rx, ry, cfg.wall_margin);
+				sx = rx; sy = ry;
+			}
+			qx = sx; qy = sy;
+		}
 		// separation against standing bodies only (D72: downed / dead no longer hold a standing place)
 		float kx = 0, ky = 0;
-		if (!lying) {
+		if (!lying && !cav_i) {
 			int cx = (int)p_x, cy = (int)p_y;
 			uint8_t my_team = team[i];
 			float ally_w = cfg.ally_push;
@@ -1387,12 +1440,16 @@ void World::soldier_stage(float dt, int ch) {
 					for (int k = hash_start_[c]; k < hash_start_[c + 1]; ++k) {
 						int j = hash_items_[k];
 						if (j == i || ko[j] > 0) continue;
+						// CAV-1: a mounted body is wider (0.56 + 0.35) and weighs three times an infantry body (share 3 / 4 of the overlap)
+						const bool big = mounted[j] != 0;
+						const float Dj = big ? cfg.radius + cav::RADIUS : D;
 						float dx = p_x - px[j], dy = p_y - py[j], d2 = dx * dx + dy * dy;
-						if (d2 >= D2) continue;
+						if (d2 >= Dj * Dj) continue;
 						float w = !hostile(my_team, team[j]) ? ally_w : cfg.enemy_push;
 						if (d2 < 1e-10f) { kx += (i < j ? 0.02f : -0.02f); continue; }
-						float d = std::sqrt(d2), pen = D - d;
-						kx += dx / d * pen * w * 0.5f; ky += dy / d * pen * w * 0.5f;
+						float d = std::sqrt(d2), pen = Dj - d;
+						const float share = big ? 0.75f : 0.5f;
+						kx += dx / d * pen * w * share; ky += dy / d * pen * w * share;
 					}
 				}
 			float kl = std::sqrt(kx * kx + ky * ky);
@@ -1423,6 +1480,12 @@ void World::soldier_stage(float dt, int ch) {
 		if (terrain.contains(int(qx),int(qy)) && siege_claims_cell(terrain.idx(int(qx),int(qy)),i)) { qx=p_x; qy=p_y; }
 		nx[i] = qx; ny[i] = qy;
 		vx[i] = (qx - p_x) / dt; vy[i] = (qy - p_y) / dt;
+		if (mounted[i]) { // CAV-1 heading history: one ring slot per step; the charge reads the window (cav_straight)
+			const float sp = std::sqrt(vx[i] * vx[i] + vy[i] * vy[i]);
+			if (sp < 1e-3f) cav_hold[i] = 0.0;
+			else { cav_hist[(size_t)i * cav::HEADING_WINDOW + tick % cav::HEADING_WINDOW] = std::atan2(vy[i], vx[i]); cav_hold[i] += dt; }
+			if (sp < cav::CHARGE_SPEED) cav_hits[i] = 0; // the charge is over once the rider slows below the charge speed
+		}
 		if (st == S_FIGHT || st == S_ENGAGE || st == S_RANGED) { if (tg >= 0) face[i] = std::atan2(ey, ex); }
 		else if (st == S_ENCIRCLE && enc_target[i] >= 0) face[i] = std::atan2(py[enc_target[i]] - p_y, px[enc_target[i]] - p_x);
 		else if (cvx * cvx + cvy * cvy > 0.04f) face[i] = std::atan2(cvy, cvx);
@@ -1904,12 +1967,14 @@ void World::step_body(float dt, const std::vector<WorkFatigueState> *work_plan) 
 	pt.contact = ms_since(t); t = Clock::now();
 
 	action_motion.resize(n);
+	cav_cand.resize(n, -1); cav_cand_vx.resize(n, 0.f); cav_cand_vy.resize(n, 0.f); // CAV-1 derived per-step buffers
 	for (int i = 0; i < n; ++i) action_motion[i] = {px[i], py[i], px[i], py[i]};
 	advance_siege_compounds(dt);
 	convoy_stage(dt); // convoy anchors advance before the crew are steered to their slots
 	pool_.run(chunks_, [&](int ch) { soldier_stage(dt, ch); });
 	std::swap(px, nx); std::swap(py, ny);
 	capture_work_point_runners(); // Same ORIGINAL motion phase; before projectile/exchange death.
+	cav_settle(); // CAV-1 charge outcomes, serial in rider index order, after this step's motion
 	for (int i = 0; i < n; ++i) { action_motion[i].to_x = px[i]; action_motion[i].to_y = py[i]; }
 	std::fill(housing_attendance_cell.begin(), housing_attendance_cell.end(), -1); // One host attendance reference serves fatigue then original motion, consumed for the next step.
 	pt.soldier = ms_since(t); t = Clock::now();
@@ -3331,6 +3396,7 @@ uint64_t World::state_hash() const {
 	for (auto *v : {&form, &slot, &target, &cell, &enc_target, &rescue_of, &capture_of, &captor, &rescued_by_, &capturing_by_}) mv(*v);
 	mv(ammo); mv(person_id);
 	mv(military_role); mv(post_holder); mv(released); mv(aboard); mv(aboard_vehicle); mv(absent); mv(absent_kind); mv(surrendered);
+	mv(mounted); mv(cav_hits); mv(cav_hist); mv(cav_hold); mv(cav_down); mv(cav_hit_who); mv(cav_hit_t);
 	for (const auto &e : equip) { m(e.family); m(e.material); m(e.armor); m(e.shield); }
 	for (const auto &c : ability) { m(c.tactics); m(c.leadership); m(c.coach); }
 	for (const auto &p : projectiles) {

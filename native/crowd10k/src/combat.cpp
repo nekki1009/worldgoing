@@ -39,6 +39,7 @@ ExStats World::ex_stats(int i) const {
 	s.fatigue = f.fatigue;
 	s.morale = f.morale;
 	s.armorbonus = armor_bonus(equip[i]);
+	if (mounted[i]) s.armorbonus += cav::MOUNTED_BASIC; // CAV-1 basic mount bonus (4.3 / 4.7), in every mounted exchange
 	s.facility = (cell[i] >= 0 && terrain.facility[cell[i]]) ? 10.0 : 0.0;
 	s.skill = skill[i];
 	s.equip = equip[i];
@@ -120,6 +121,7 @@ void World::apply_contact(int i, double hp_loss, double stun_add, bool environme
 			knock_t[i] = 0;
 			ko[i] = 0.0;
 			surrendered[i] = 0; // G5 S4: a dead member is no surrender (validate requires a living one)
+			mounted[i] = 0; cav_hits[i] = 0; // CAV-1: a dead rider is no rider
 			stats.deaths++;
 			f.fatigue_count = std::max(0, f.fatigue_count - 1);
 			push_event(EV_DEATH, i, captive[i] ? captor[i] : -1);
@@ -209,6 +211,7 @@ void World::timers_stage(float dt, double gdt, int ch) {
 		ranged_cd[i] = std::max(0.0, ranged_cd[i] - dt);
 		skill_cd[i] = std::max(0.0, skill_cd[i] - dt);
 		knock_t[i] = std::max(0.0, knock_t[i] - dt);
+		cav_down[i] = std::max(0.0, cav_down[i] - dt); // CAV-1 fall of a trampled body (its getup timer keeps it down)
 		if (hp[i] <= 0.0) continue;
 		if (ko[i] > 0.0) {
 			ko[i] -= gdt; // KO wait is game time (prepare_combat: ko -= game_seconds)
@@ -987,6 +990,249 @@ bool World::set_fire_visual_rows(const std::vector<int> &indices, const std::vec
 	if (fire_visual.size()!=size_t(soldier_count())) fire_visual.assign(soldier_count(),0);
 	for (size_t k=0;k<indices.size();++k) fire_visual[indices[k]]=flags[k];
 	return true; // Derived original 12-float atlas channel; no material/Transform owner.
+}
+
+// ---------------------------------------------------------------- CAV-1 mounted cavalry (reports/cavalry-charge-plan.md V0.5)
+// Detection (4.2) is parallel and writes only the rider's own candidate slot. Outcomes (4.4) are settled serially in rider
+// index order after the motion, so the result never depends on the thread count.
+bool World::set_mounted(int i, bool on) {
+	if (i < 0 || i >= soldier_count()) return false;
+	if (!on) { mounted[i] = 0; cav_hits[i] = 0; cav_hold[i] = 0.0; return true; }
+	if (!alive(i) || captive[i] || is_aboard(i)) return false;
+	mounted[i] = 1; cav_hits[i] = 0; cav_hold[i] = 0.0;
+	return true;
+}
+
+// 4.1: the newest heading sits in the ring slot before the current tick; a slot holds the heading of its own step.
+bool World::cav_straight(int i) const {
+	if (cav_hold[i] < cav::STRAIGHT_SECONDS) return false;
+	const size_t base = (size_t)i * cav::HEADING_WINDOW;
+	const float now = cav_hist[base + (tick + cav::HEADING_WINDOW - 1) % cav::HEADING_WINDOW];
+	for (int k = 0; k < cav::HEADING_WINDOW; ++k)
+		if (std::fabs(cav::wrap_angle(cav_hist[base + k] - now)) > cav::HEADING_TOL) return false;
+	return true;
+}
+
+bool World::charge_state(int i) const {
+	if (!is_mounted(i) || !can_act(i)) return false;
+	const double sp = std::sqrt((double)vx[i] * vx[i] + (double)vy[i] * vy[i]);
+	return sp >= cav::CHARGE_SPEED && cav_straight(i) && cav_hits[i] < cav::MAX_HITS && stagger[i] <= 0.0 &&
+	       knock_t[i] <= 0.0 && !formations[form[i]].routed && rescue_of[i] < 0 && capture_of[i] < 0;
+}
+
+void World::charge_stats(int r, int v, double speed, ExStats &a, ExStats &b) const {
+	a = ex_stats(r);
+	b = ex_stats(v);
+	a.armorbonus += std::min(std::max(0.0, speed - cav::CHARGE_SPEED) * cav::SPEED_BONUS, (double)cav::SPEED_BONUS_CAP);
+	// angle at the victim between its facing and the direction toward the rider: 0 = met head on, 180 = rider from behind
+	double angle = 0.0;
+	const double tx = px[r] - px[v], ty = py[r] - py[v], td = std::sqrt(tx * tx + ty * ty);
+	if (td > 1e-6) {
+		const double c = (std::cos((double)face[v]) * tx + std::sin((double)face[v]) * ty) / td;
+		angle = std::acos(std::clamp(c, -1.0, 1.0)) * 180.0 / (double)kPi;
+	}
+	if (angle > 120.0) a.armorbonus += cav::BACK_BONUS;
+	else if (angle > 60.0) a.armorbonus += cav::SIDE_BONUS;
+	const double vs = std::sqrt((double)vx[v] * vx[v] + (double)vy[v] * vy[v]);
+	if (equip[v].family == rules::F_SPEAR && angle <= 60.0 && vs < (double)cav::POLE_SPEED) b.armorbonus += cav::POLE_BONUS;
+	if (cav_rear_support(v, r)) b.armorbonus += cav::REAR_BONUS;
+}
+
+rules::ExResult World::charge_result(int r, int v, double speed) const {
+	ExStats a, b;
+	charge_stats(r, v, speed, a, b);
+	return exchange_result(a, b, exchange_roll(person_id[r], person_id[v], exchange_round, cfg.seed));
+}
+
+bool World::cav_may_hit(int r, int v) const { return r >= 0 && r < soldier_count() && v >= 0 && v < soldier_count() && cav_hit_free(r, v); }
+
+bool World::cav_hit_free(int r, int v) const {
+	for (int k = 0; k < cav::RECENT_VICTIMS; ++k) {
+		const size_t at = (size_t)r * cav::RECENT_VICTIMS + k;
+		if (cav_hit_who[at] == v && time - cav_hit_t[at] < cav::RECHARGE_SECONDS) return false;
+	}
+	return true;
+}
+
+void World::cav_record(int r, int v) {
+	cav_hits[r] = (uint8_t)std::min<int>(cav::MAX_HITS, cav_hits[r] + 1);
+	size_t pick = (size_t)r * cav::RECENT_VICTIMS;
+	double oldest = 1e300;
+	for (int k = 0; k < cav::RECENT_VICTIMS; ++k) {
+		const size_t at = (size_t)r * cav::RECENT_VICTIMS + k;
+		if (cav_hit_who[at] == v) { pick = at; break; }
+		if (cav_hit_t[at] < oldest) { oldest = cav_hit_t[at]; pick = at; }
+	}
+	cav_hit_who[pick] = v;
+	cav_hit_t[pick] = time;
+}
+
+// Mirrors the crowd's hash query: a mounted body reaches two cells out, an infantry body one.
+bool World::cav_rear_support(int v, int r) const {
+	const float tx = px[v] - px[r], ty = py[v] - py[r], td = std::sqrt(tx * tx + ty * ty);
+	if (td < 1e-6f) return false;
+	const float ax = tx / td, ay = ty / td; // rider to victim: behind the victim lies further along this
+	const int cx = (int)std::floor(px[v]), cy = (int)std::floor(py[v]);
+	for (int yy = std::max(0, cy - 1); yy <= std::min(terrain.h - 1, cy + 1); ++yy)
+		for (int xx = std::max(0, cx - 1); xx <= std::min(terrain.w - 1, cx + 1); ++xx) {
+			const int c = terrain.idx(xx, yy);
+			for (int k = hash_start_[c]; k < hash_start_[c + 1]; ++k) {
+				const int j = hash_items_[k];
+				if (j == v || j == r || !can_act(j) || is_aboard(j) || team[j] != team[v]) continue;
+				const float dx = px[j] - px[v], dy = py[j] - py[v], d2 = dx * dx + dy * dy;
+				if (d2 > 1.f || d2 < 1e-10f) continue; // within one cell
+				if (dx * ax + dy * ay > 0.f) return true;
+			}
+		}
+	return false;
+}
+
+bool World::cav_clear_cell(int v, float x, float y) const {
+	const float rv = mounted[v] ? cav::RADIUS : cfg.radius;
+	const int cx = (int)std::floor(x), cy = (int)std::floor(y);
+	for (int yy = std::max(0, cy - 2); yy <= std::min(terrain.h - 1, cy + 2); ++yy)
+		for (int xx = std::max(0, cx - 2); xx <= std::min(terrain.w - 1, cx + 2); ++xx) {
+			const int c = terrain.idx(xx, yy);
+			for (int k = hash_start_[c]; k < hash_start_[c + 1]; ++k) {
+				const int j = hash_items_[k];
+				if (j == v || !alive(j) || ko[j] > 0.0 || is_aboard(j)) continue;
+				const float Dj = rv + (mounted[j] ? cav::RADIUS : cfg.radius);
+				const float dx = x - px[j], dy = y - py[j];
+				if (dx * dx + dy * dy < Dj * Dj) return false;
+			}
+		}
+	return true;
+}
+
+void World::cav_fall(int i, double seconds) {
+	if (!alive(i) || ko[i] > 0.0 || captive[i]) return;
+	getup[i] = std::max(getup[i], seconds); // a fallen body cannot act, target or be hit (can_act)
+	cav_down[i] = std::max(cav_down[i], seconds);
+	formations[form[i]].command_dirty = true;
+}
+
+void World::cav_push(int i, float x, float y, float &kx, float &ky) const {
+	const int cx = (int)std::floor(x), cy = (int)std::floor(y);
+	const uint8_t my_team = team[i];
+	const float ri = cav::RADIUS;
+	for (int yy = std::max(0, cy - 2); yy <= std::min(terrain.h - 1, cy + 2); ++yy)
+		for (int xx = std::max(0, cx - 2); xx <= std::min(terrain.w - 1, cx + 2); ++xx) {
+			const int c = terrain.idx(xx, yy);
+			for (int k = hash_start_[c]; k < hash_start_[c + 1]; ++k) {
+				const int j = hash_items_[k];
+				if (j == i || ko[j] > 0 || cav_down[j] > 0.0) continue; // a trampled body exerts no push on a rider (weight 0)
+				const bool big = mounted[j] != 0;
+				const float Dj = ri + (big ? cav::RADIUS : cfg.radius);
+				const float dx = x - px[j], dy = y - py[j], d2 = dx * dx + dy * dy;
+				if (d2 >= Dj * Dj) continue;
+				const float w = !hostile(my_team, team[j]) ? cfg.ally_push : cfg.enemy_push;
+				if (d2 < 1e-10f) { kx += (i < j ? 0.02f : -0.02f); continue; }
+				const float d = std::sqrt(d2), pen = Dj - d;
+				const float share = big ? 0.5f : 0.25f; // rider weight 3 against a mounted body 3 / 6, against infantry 3 / 4 share of 1
+				kx += dx / d * pen * w * share; ky += dy / d * pen * w * share;
+			}
+		}
+	const float kl = std::sqrt(kx * kx + ky * ky);
+	if (kl > cfg.push_clamp) { kx *= cfg.push_clamp / kl; ky *= cfg.push_clamp / kl; }
+}
+
+void World::cav_detect(int i, float x, float y, float vx_now, float vy_now) {
+	if (cav_cand[i] >= 0 || cav_hits[i] >= cav::MAX_HITS) return; // one candidate per rider per step
+	const float sp = std::sqrt(vx_now * vx_now + vy_now * vy_now);
+	if (sp < 1e-6f) return;
+	const float ux = vx_now / sp, uy = vy_now / sp;
+	const float cos45 = 0.70710678f; // the 45 degree forward sector
+	const int cx = (int)std::floor(x), cy = (int)std::floor(y);
+	int best = -1;
+	float bestc = -2.f;
+	for (int yy = std::max(0, cy - 2); yy <= std::min(terrain.h - 1, cy + 2); ++yy)
+		for (int xx = std::max(0, cx - 2); xx <= std::min(terrain.w - 1, cx + 2); ++xx) {
+			const int c = terrain.idx(xx, yy);
+			for (int k = hash_start_[c]; k < hash_start_[c + 1]; ++k) {
+				const int j = hash_items_[k];
+				if (j == i || !can_act(j) || is_aboard(j) || !hostile(team[i], team[j])) continue;
+				const float Dj = cav::RADIUS + (mounted[j] ? cav::RADIUS : cfg.radius);
+				const float dx = px[j] - x, dy = py[j] - y, d2 = dx * dx + dy * dy;
+				if (d2 >= Dj * Dj || d2 < 1e-10f) continue; // the two bodies overlap
+				const float cs = (dx * ux + dy * uy) / std::sqrt(d2);
+				if (cs < cos45) continue;
+				if (best >= 0 && (cs < bestc || (cs == bestc && j > best))) continue; // nearest to dead ahead, ties to the lower index
+				if (!cav_hit_free(i, j) || !los(x, y, px[j], py[j])) continue;       // 2 s re-charge limit; legal ray
+				best = j; bestc = cs;
+			}
+		}
+	if (best >= 0) { cav_cand[i] = best; cav_cand_vx[i] = vx_now; cav_cand_vy[i] = vy_now; }
+}
+
+void World::cav_resolve(int r, int v, double speed, float ux, float uy) {
+	const rules::ExResult res = charge_result(r, v, speed);
+	stats.cav_contacts++;
+	cav_record(r, v);
+	auto stop = [&]() { vx[r] = vy[r] = 0.f; stats.cav_stops++; }; // 4.4 brake to zero
+	if (res.winner == 0) { // draw: both stunned, the horse is held up for 0.5 s
+		apply_contact(v, 0.0, res.stun_b);
+		apply_contact(r, 0.0, res.stun_a);
+		if (alive(r)) stagger[r] = std::max(stagger[r], cav::DRAW_STOP_SECONDS);
+		stop();
+		return;
+	}
+	if (res.winner == 1) { // the rider wins
+		apply_contact(v, res.hp_b, res.stun_b);
+		if (alive(v) && ko[v] <= 0.0) stagger[v] = std::max(stagger[v], res.stagger);
+		if (res.kind == rules::EX_BIG) {
+			// penetration: an impulse away from the rider's line on the side the victim stood, plus a little forward; 1.2 s down
+			const float dx = px[v] - px[r], dy = py[v] - py[r];
+			const float side = ux * dy - uy * dx >= 0.f ? 1.f : -1.f;
+			const float tx = px[v] + (-uy * side) * (float)cav::SIDE_LATERAL_CELLS + ux * (float)cav::SIDE_FORWARD_CELLS;
+			const float ty = py[v] + (ux * side) * (float)cav::SIDE_LATERAL_CELLS + uy * (float)cav::SIDE_FORWARD_CELLS;
+			if (alive(v)) {
+				float rx = tx, ry = ty;
+				resolve(px[v], py[v], rx, ry, cfg.wall_margin);
+				px[v] = rx; py[v] = ry;
+			}
+			cav_fall(v, cav::FALL_SECONDS);
+			if (cav_down[v] > 0.0) stats.cav_falls++;
+			const float sp = std::sqrt(vx[r] * vx[r] + vy[r] * vy[r]);
+			const float ns = std::max(0.f, sp - (float)cav::LOSS_SPEED);
+			if (sp > 1e-4f) { vx[r] *= ns / sp; vy[r] *= ns / sp; } // the charge goes on while the speed stays at or above 4.5
+		} else {
+			// small win: pushed back one cell along the rider's line; pinned against bodies it falls for 0.8 s instead
+			const float tx = px[v] + ux * (float)cav::PUSHBACK_CELLS, ty = py[v] + uy * (float)cav::PUSHBACK_CELLS;
+			float rx = tx, ry = ty;
+			resolve(px[v], py[v], rx, ry, cfg.wall_margin);
+			const bool clear_spot = alive(v) && std::fabs(rx - tx) + std::fabs(ry - ty) < 0.2f && cav_clear_cell(v, rx, ry);
+			if (clear_spot) { px[v] = rx; py[v] = ry; }
+			else { cav_fall(v, cav::SMALL_FALL_SECONDS); if (cav_down[v] > 0.0) stats.cav_falls++; }
+			stop();
+		}
+		return;
+	}
+	// the defender wins: the rider takes its exchange loss plus the recoil (1.5 x that loss), stops, and on a big loss dismounts
+	apply_contact(r, res.hp_a * (1.0 + cav::RECOIL), res.stun_a);
+	if (alive(r)) stagger[r] = std::max(stagger[r], res.stagger);
+	stop();
+	if (res.kind == rules::EX_BIG && alive(r)) {
+		mounted[r] = 0; cav_hits[r] = 0; cav_hold[r] = 0.0;
+		stats.cav_dismounts++;
+		cav_fall(r, cav::FALL_SECONDS);
+	}
+}
+
+void World::cav_settle() {
+	const int n = soldier_count();
+	bool any = false;
+	for (int i = 0; i < n && !any; ++i) any = cav_cand[i] >= 0;
+	if (!any) return;
+	build_hash(); // the outcomes read the bodies where this step left them
+	for (int i = 0; i < n; ++i) {
+		const int v = cav_cand[i];
+		if (v < 0) continue;
+		cav_cand[i] = -1;
+		if (!mounted[i] || !can_act(i) || !can_act(v) || cav_hits[i] >= cav::MAX_HITS || !cav_hit_free(i, v)) continue;
+		const float sp = std::sqrt(cav_cand_vx[i] * cav_cand_vx[i] + cav_cand_vy[i] * cav_cand_vy[i]);
+		if (sp < 1e-6f) continue;
+		cav_resolve(i, v, sp, cav_cand_vx[i] / sp, cav_cand_vy[i] / sp);
+	}
 }
 
 } // namespace wg

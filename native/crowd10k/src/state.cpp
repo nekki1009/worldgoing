@@ -143,7 +143,7 @@ template <class Ar> void io_convoy(Ar &ar, Convoy &c) {
 } // namespace
 
 template <class Ar> void World::serialize(Ar &ar) {
-	const uint32_t magic = 0x3631574Bu; // "KW16": surrendered soldiers (G5 S4, saved, validated and hashed); KW15: absent soldiers (G5 S1 detached / off-map / captive / garrison reserve); KW14: aboard soldiers (G1 S1 site boarding); KW13: convoy formation following (G4 OPUS); KW12: convoy stall_reason (G4 S4f); KW11: convoy body offsets, body_stalled, body-aware flow fields (G4 S2); KW10: logistics convoys (G4); KW09: released soldiers (G6.4 site exit); KW08: per-person post holder (R1b)
+	const uint32_t magic = 0x3731574Bu; // "KW17": mounted cavalry (CAV-1 mounted, heading / straight-run, charge hits, recent victims, fall timer); KW16: surrendered soldiers (G5 S4, saved, validated and hashed); KW15: absent soldiers (G5 S1 detached / off-map / captive / garrison reserve); KW14: aboard soldiers (G1 S1 site boarding); KW13: convoy formation following (G4 OPUS); KW12: convoy stall_reason (G4 S4f); KW11: convoy body offsets, body_stalled, body-aware flow fields (G4 S2); KW10: logistics convoys (G4); KW09: released soldiers (G6.4 site exit); KW08: per-person post holder (R1b)
 	uint32_t m = magic;
 	ar.pod(m);
 	if (Ar::loading && m != magic) { ar.ok = false; return; }
@@ -178,6 +178,7 @@ template <class Ar> void World::serialize(Ar &ar) {
 	ar.vec(released);
 	ar.vec(aboard); ar.vec(aboard_vehicle);
 	ar.vec(absent); ar.vec(absent_kind); ar.vec(surrendered);
+	ar.vec(mounted); ar.vec(cav_hits); ar.vec(cav_hist); ar.vec(cav_hold); ar.vec(cav_down); ar.vec(cav_hit_who); ar.vec(cav_hit_t);
 	ar.vec(events);
 	uint64_t np = projectiles.size(); ar.pod(np); if (!count(ar, np, 65, 65536)) return;
 	if (Ar::loading) projectiles.resize((size_t)np); for (auto &p : projectiles) io_projectile(ar, p);
@@ -264,6 +265,15 @@ bool World::validate(std::string *error, bool allow_site_jobs) const {
 	CHECK_VALID(absent.size() == n && absent_kind.size() == n);
 	CHECK_VALID(surrendered.size() == n);
 	for (uint8_t value : surrendered) CHECK_VALID(value <= 1);
+	CHECK_VALID(mounted.size() == n && cav_hits.size() == n && cav_hist.size() == n * (size_t)cav::HEADING_WINDOW && cav_hold.size() == n && cav_down.size() == n);
+	CHECK_VALID(cav_hit_who.size() == n * (size_t)cav::RECENT_VICTIMS && cav_hit_t.size() == n * (size_t)cav::RECENT_VICTIMS);
+	for (uint8_t value : mounted) CHECK_VALID(value <= 1);
+	for (uint8_t value : cav_hits) CHECK_VALID(value <= cav::MAX_HITS);
+	for (float value : cav_hist) CHECK_VALID(std::isfinite(value));
+	for (double value : cav_hold) CHECK_VALID(std::isfinite(value) && value >= 0.0);
+	for (double value : cav_down) CHECK_VALID(std::isfinite(value) && value >= 0.0);
+	for (double value : cav_hit_t) CHECK_VALID(std::isfinite(value));
+	for (int32_t value : cav_hit_who) CHECK_VALID(value >= -1 && value < (int32_t)n);
 	for (uint8_t value : absent) CHECK_VALID(value <= 1);
 	CHECK_VALID(prison_id.size() == n && escort_goal.size() == n && escort_mode.size() == n);
 	CHECK_VALID(contact_revision.size() == n);
@@ -327,6 +337,7 @@ bool World::validate(std::string *error, bool allow_site_jobs) const {
 			CHECK_VALID(std::abs(dx) + std::abs(dy) <= 1);
 			CHECK_VALID(terrain.walkable(escort_goal[i] % terrain.w, escort_goal[i] / terrain.w));
 		}
+		CHECK_VALID(!mounted[i] || hp[i] > 0);
 		CHECK_VALID(!surrendered[i] || (hp[i] > 0 && !captive[i] && !absent[i] && !released[i] && prison_id[i] == 0 && escort_mode[i] == 0 && !is_crewed((int)i)));
 		CHECK_VALID(prison_id[i] == 0 || (captive[i] && hp[i] > 0 && escort_mode[i] == 0 && escort_goal[i] == -1 && escape_t[i] == 0));
 		for (int x : {target[i],enc_target[i],rescue_of[i],capture_of[i],captor[i],rescued_by_[i],capturing_by_[i]}) CHECK_VALID(index(x));
@@ -498,6 +509,8 @@ void World::swap_state(World &o) {
 	swap(military_role, o.military_role);
 	swap(post_holder, o.post_holder); swap(released, o.released); swap(aboard, o.aboard); swap(aboard_vehicle, o.aboard_vehicle);
 	swap(absent, o.absent); swap(absent_kind, o.absent_kind); swap(surrendered, o.surrendered);
+	swap(mounted, o.mounted); swap(cav_hits, o.cav_hits); swap(cav_hist, o.cav_hist); swap(cav_hold, o.cav_hold);
+	swap(cav_down, o.cav_down); swap(cav_hit_who, o.cav_hit_who); swap(cav_hit_t, o.cav_hit_t);
 	swap(captive, o.captive);
 	swap(present, o.present);
 	swap(troop, o.troop);
@@ -650,6 +663,7 @@ void World::set_soldier_state(int i, const SoldierState &s) {
 	captive[i] = (uint8_t)(s.captive != 0 && now_alive);
 	captor[i] = captive[i] ? g : -1;
 	if (!now_alive || captive[i]) surrendered[i] = 0; // G5 S4: capture or death settles a surrender
+	if (!now_alive) { mounted[i] = 0; cav_hits[i] = 0; } // CAV-1: a dead soldier is no rider
 	prison_id[i] = captive[i] ? std::max(int64_t(0), s.prison_id) : 0;
 	escape_t[i] = prison_id[i] > 0 ? 0.0 : std::max(0.0, s.escape_t);
 	if ((!now_alive || ko[i] > 0 || captive[i]) && controlled_step_pending(i)) { if (escort_mode[i] & 1u) ++escort_mode[i]; }

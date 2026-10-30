@@ -34,6 +34,38 @@ namespace wg {
 
 constexpr float kPi = 3.14159265358979323846f; // (MSVC has no M_PI without _USE_MATH_DEFINES)
 
+// CAV-1 mounted cavalry (reports/cavalry-charge-plan.md V0.5, sections 3, 4 and 6). Values are cells and seconds.
+namespace cav {
+constexpr float RADIUS = 0.56f;          // mounted body (N1=A: about 1.6 x the 0.35 infantry radius)
+constexpr float CRUISE = 5.f, GALLOP = 8.f; // speed caps; the gallop cap applies to riders the host runs
+constexpr float ACCEL = 3.2f, BRAKE = 6.4f; // cells / s^2
+constexpr float TURN_DEG_CELLS = 576.f;  // max heading change in degrees = 576 / speed (360 x 1.6 / speed), N2=A
+constexpr float MASS = 3.f;              // push weight of a rider against an infantry body (1)
+constexpr float CHARGE_SPEED = 4.5f;     // 4.1 charge: speed along the heading
+constexpr double STRAIGHT_SECONDS = 0.4; // 4.1 charge: heading change within HEADING_TOL over this window (30 Hz steps)
+constexpr float HEADING_TOL = 20.f * kPi / 180.f;
+constexpr int HEADING_WINDOW = 12;       // 0.4 s of 30 Hz action steps
+constexpr int MAX_HITS = 3;              // 4.4 penetration cap per charge
+constexpr double RECHARGE_SECONDS = 2.0; // 4.2 one rider hits the same person at most once per 2 s
+constexpr int RECENT_VICTIMS = 8;        // recent victims remembered per soldier for the re-charge limit
+constexpr double FALL_SECONDS = 1.2;     // 4.4 penetrated (and 4.6 dismounted) bodies lie this long
+constexpr double SMALL_FALL_SECONDS = 0.8; // 4.4 small win pinned against a crowd
+constexpr double DRAW_STOP_SECONDS = 0.5;  // 4.4 draw: the horse is held up
+constexpr double PUSHBACK_CELLS = 1.0;   // 4.4 small win push
+constexpr double SIDE_LATERAL_CELLS = 1.0, SIDE_FORWARD_CELLS = 0.3; // 4.4 lateral impulse of a penetrated body
+constexpr float SPEED_BONUS = 7.f, SPEED_BONUS_CAP = 25.f; // 4.3 impact speed bonus: (speed - 4.5) x 7, capped at 25
+constexpr double LOSS_SPEED = 1.2;       // 4.4 rider speed lost by a penetration (cells / s)
+constexpr double RECOIL = 1.5;           // 4.4 defeated rider: extra recoil damage = 1.5 x the exchange loss
+constexpr double MOUNTED_BASIC = 5.0;    // 4.3 / 4.7 mounted basic bonus
+constexpr double SIDE_BONUS = 10.0, BACK_BONUS = 20.0; // 4.3 flank (> 60 deg) and rear (> 120 deg)
+constexpr double POLE_BONUS = 20.0;      // 4.3 pole-arm stand (Q3=A): spear, facing within 60 deg, speed < 0.5
+constexpr double REAR_BONUS = 5.0;       // 4.3 a living team-mate stands within 1 cell behind the defender
+constexpr float POLE_SPEED = 0.5f;
+constexpr float SLOPE_UP = 0.55f, SLOPE_DOWN = 0.8f; // terrain speed targets (old Actor values)
+// an angle difference wrapped into [-pi, pi]
+inline float wrap_angle(float a) { return std::remainder(a, 2.f * kPi); }
+}
+
 // ---------------------------------------------------------------- terrain
 // Mirrors scripts/terrain_lab/terrain_data.gd: 4-dir legality, height diff 0 or
 // diff 1 with reciprocal ramp bits, static_blocked. can_attack_across == 4-dir edge.
@@ -217,6 +249,7 @@ struct Stats {
 	uint64_t successions = 0, command_losses = 0, routs = 0, pursuits = 0, pursuit_ends = 0, ai_orders = 0,
 	         skills_used = 0, encircle_assigned = 0, fields_built = 0, cooldown_violations = 0;
 	int fighting = 0, engaging = 0, alive = 0, down = 0, captive = 0;
+	uint64_t cav_contacts = 0, cav_falls = 0, cav_dismounts = 0, cav_stops = 0; // CAV-1 charge outcomes (reporting)
 };
 
 // Events for the Godot side (SiteStore owner commits). `time` is the World action time of the step.
@@ -383,6 +416,20 @@ public:
 	// World::settle_surrender (a captive of the nearest hostile formation's able member) or, when no captor exists, retried
 	// every 15 steps; death also clears it. Saved and hashed.
 	std::vector<uint8_t> surrendered;
+	// CAV-1 mounted cavalry (saved, hashed, validated). mounted: 1 = riding (cav::RADIUS body, speed caps and
+	// acceleration / turn limits, two sub-steps); set by set_mounted, cleared on death. cav_hist: the last
+	// cav::HEADING_WINDOW headings of the rider, one ring slot per step (slot = tick % window); cav_hold: seconds the rider has
+	// been moving (the charge's 0.4 s straight run, see cav_straight). cav_hits: penetrations in the current charge
+	// (MAX_HITS, reset when the speed falls below CHARGE_SPEED). cav_hit_who / cav_hit_t: the eight most recent victims per
+	// soldier with the action time of each hit (2 s re-charge limit). cav_down: seconds left on the fall of a trampled
+	// body; a fallen body exerts no push on riders.
+	std::vector<uint8_t> mounted, cav_hits;
+	std::vector<float> cav_hist;
+	std::vector<double> cav_hold, cav_down, cav_hit_t;
+	std::vector<int32_t> cav_hit_who;
+	// derived each step (never saved or hashed): the charge candidate of each rider and the impact velocity of it
+	std::vector<int32_t> cav_cand;
+	std::vector<float> cav_cand_vx, cav_cand_vy;
 	std::vector<int64_t> person_id;
 	std::vector<uint8_t> life_ck; // morale checkpoint: 0 conscious, 1 unconscious, 2 dead
 	// presentation only (never read by the rules, not hashed, not saved)
@@ -684,6 +731,16 @@ public:
 	bool capture_target(int t) const { return alive(t) && !captive[t] && (ko[t] > 0.0 || is_surrendered(t)); }
 	// G5 S4 native setter: on refuses a soldier that cannot surrender (dead, captive, KO, escorting, crewed); off clears it.
 	bool set_surrendered(int i, bool on);
+	// CAV-1. set_mounted(i, true) refuses a dead, aboard or captive soldier (no change); false clears the riding state.
+	bool is_mounted(int i) const { return i >= 0 && i < (int)mounted.size() && mounted[i] != 0; }
+	bool set_mounted(int i, bool on);
+	bool cav_may_hit(int rider, int victim) const; // false while the rider's last hit on this victim is under 2 s old
+	// Charge state of a rider (4.1) from its current velocity and heading history; the candidate test is the same one the step uses.
+	bool charge_state(int i) const;
+	// Modifiers of a rider charging a victim at `speed` (4.3): ability, speed bonus, flank / rear bonus, basic mount bonus
+	// for the rider; pole-arm stand and rear support for the victim. Positions and facing are the current ones.
+	void charge_stats(int rider, int victim, double speed, rules::ExStats &a, rules::ExStats &b) const;
+	rules::ExResult charge_result(int rider, int victim, double speed) const; // the exchange result with those modifiers
 	bool can_receive(int i) const { return can_act(i) && !is_aboard(i) && exch_cd[i] <= 0.000000001; }
 	bool exchange_ready(int i) const;
 	bool host_ranged_ready(int i,int expected_ammo,int mode,int64_t release_id,int target_x,int target_y) const;
@@ -809,6 +866,18 @@ private:
 	void cancel_actions_involving(int i);
 	void activate_skill(int i, uint8_t s);
 	int enemy_sectors(int i) const;
+	// CAV-1 (combat.cpp). cav_push / cav_detect run in the parallel soldier stage and write only their own rider's slots;
+	// cav_settle runs serially after the motion and applies the outcomes in rider index order.
+	void cav_push(int i, float x, float y, float &kx, float &ky) const;
+	void cav_detect(int i, float x, float y, float vx_now, float vy_now);
+	bool cav_hit_free(int rider, int victim) const;
+	bool cav_rear_support(int victim, int rider) const;
+	bool cav_clear_cell(int victim, float x, float y) const; // no other living body within reach of (x, y)
+	void cav_record(int rider, int victim);
+	void cav_fall(int i, double seconds);
+	bool cav_straight(int i) const; // 4.1: moving for 0.4 s and every heading of that window within HEADING_TOL of the current one
+	void cav_resolve(int rider, int victim, double speed, float ux, float uy);
+	void cav_settle();
 
 	// command / morale / fatigue (command.cpp)
 	void command_stage(float dt);

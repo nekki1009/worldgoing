@@ -1604,6 +1604,258 @@ static void test_site_person_release() {
 	check_valid(loaded);
 }
 
+// CAV-1 mounted cavalry (reports/cavalry-charge-plan.md V0.5, section 9 acceptance). Each block states the rule it checks.
+static Equip spear_steel() { Equip e; e.family = F_SPEAR; e.material = M_IRON; e.armor = A_STEEL; return e; }
+static void place_start(Scene &s, const std::vector<std::pair<float, float>> &xy) {
+	s.w.start_x.assign(xy.size(), NAN); s.w.start_y.assign(xy.size(), NAN);
+	for (size_t k = 0; k < xy.size(); ++k) { s.w.start_x[k] = xy[k].first; s.w.start_y[k] = xy[k].second; }
+}
+static float wrap_angle(float a) { return std::remainder(a, 2.f * kPi); }
+
+static void test_cavalry() {
+	std::printf("[cavalry] mounted riders: speed / acceleration / turn limits, charge threshold, modifiers, penetration cap, 2 s re-charge, dismount, no illegal cell or edge, thread parity\n");
+	{   // 3.1 / N2 / N4: gallop 8 cells/s, accelerate 3.2 cells/s^2 (about 2.5 s from rest), turn at most 576 / speed deg/s
+		Scene s(1, 64, 48);
+		int r = s.formation(0, 10, 24, 0, 1, sword());
+		s.w.finalize();
+		s.w.formations[r].ai_enabled = false;
+		CHECK(s.w.set_mounted(0, true) && s.w.is_mounted(0), "a living soldier can be mounted");
+		s.w.set_host_control(0, true);
+		float vmax = 0.f, dv_max = 0.f, prev = 0.f, v1 = 0.f;
+		for (int k = 0; k < 30 * 4; ++k) {
+			s.w.host_input(0, 8.f, 0.f, true, false);
+			checked_step(s.w, DT);
+			const float v = std::hypot(s.w.vx[0], s.w.vy[0]);
+			if (k == 29) v1 = v;
+			vmax = std::max(vmax, v); dv_max = std::max(dv_max, std::fabs(v - prev)); prev = v;
+		}
+		CHECK(v1 <= cav::ACCEL + 0.05f && v1 > 2.5f, "after 1 s from rest the speed is within the acceleration limit (%.3f)", v1);
+		CHECK(vmax <= cav::GALLOP + 1e-3f && vmax > 7.5f, "gallop cap 8 reached and not exceeded (max %.3f)", vmax);
+		CHECK(dv_max <= cav::ACCEL * DT + 1e-3f, "speed changes by at most ACCEL per step (%.4f)", dv_max);
+		const float h0 = std::atan2(s.w.vy[0], s.w.vx[0]);
+		s.w.host_input(0, 0.f, 8.f, true, false);
+		checked_step(s.w, DT);
+		const float turn1 = std::fabs(wrap_angle(std::atan2(s.w.vy[0], s.w.vx[0]) - h0));
+		CHECK(turn1 <= cav::TURN_DEG_CELLS * kPi / 180.f / 8.f * DT + 1e-3f, "one step turns at most 576 / 8 deg/s (%.4f rad)", turn1);
+		float turned = 0.f;
+		for (int k = 0; k < 10; ++k) { s.w.host_input(0, 0.f, 8.f, true, false); checked_step(s.w, DT); }
+		turned = std::fabs(wrap_angle(std::atan2(s.w.vy[0], s.w.vx[0]) - h0));
+		CHECK(turned < 30.f * kPi / 180.f, "eleven steps turn less than 30 degrees at gallop (%.1f deg)", turned * 180.f / kPi);
+		CHECK(s.w.stats.illegal_cell == 0 && s.w.stats.illegal_step == 0, "terrain invariant on open ground");
+	}
+	{   // 4.1: charge needs 4.5 cells/s along the heading, and the heading held within 20 degrees for 0.4 s
+		Scene s(1, 64, 48);
+		int r = s.formation(0, 10, 24, 0, 1, sword());
+		s.w.finalize();
+		s.w.formations[r].ai_enabled = false;
+		s.w.set_mounted(0, true);
+		s.w.set_host_control(0, true);
+		bool slow_charges = false;
+		for (int k = 0; k < 30 * 4; ++k) { s.w.host_input(0, 4.4f, 0.f, false, false); checked_step(s.w, DT); slow_charges = slow_charges || s.w.charge_state(0); }
+		CHECK(!slow_charges && std::hypot(s.w.vx[0], s.w.vy[0]) > 4.2f, "a rider at 4.4 cells/s never charges (speed %.3f)", std::hypot(s.w.vx[0], s.w.vy[0]));
+		for (int k = 0; k < 30 * 2; ++k) { s.w.host_input(0, 8.f, 0.f, true, false); checked_step(s.w, DT); }
+		CHECK(s.w.charge_state(0), "straight at gallop: charge state on");
+		// the heading history of the test itself: the last 12 steps (0.4 s) must stay within 20 degrees of the newest heading
+		std::vector<float> hist = {0.f}; // straight east before the turn
+		bool charged_inside_window = false;
+		for (int k = 0; k < 60; ++k) {
+			s.w.host_input(0, 0.f, 8.f, true, false);
+			checked_step(s.w, DT);
+			const float now = std::atan2(s.w.vy[0], s.w.vx[0]);
+			hist.push_back(now);
+			float dev = 0.f;
+			for (size_t j = hist.size() > 12 ? hist.size() - 12 : 0; j < hist.size(); ++j) dev = std::max(dev, std::fabs(wrap_angle(hist[j] - now)));
+			if (dev > 21.f * kPi / 180.f && s.w.charge_state(0)) charged_inside_window = true;
+		}
+		CHECK(!charged_inside_window, "a heading that moved more than 20 degrees in 0.4 s does not charge");
+		CHECK(s.w.charge_state(0), "the heading settles and the charge resumes after 0.4 s straight");
+	}
+	{   // 4.3 modifiers, exact values (rider: iron sword, no armour; victim: iron sword, leather). No hash needed.
+		Scene s(1, 64, 48);
+		int r = s.formation(0, 10, 10, 0, 1, sword(M_IRON, A_NONE));
+		int v = s.formation(1, 11, 10, 0, 1, sword(M_IRON, A_LEATHER));
+		place_start(s, {{10.5f, 10.5f}, {11.5f, 10.5f}});
+		s.w.finalize();
+		s.w.formations[r].ai_enabled = false; s.w.formations[v].ai_enabled = false;
+		s.w.set_mounted(r, true);
+		s.w.face[v] = kPi; // the victim faces the rider: met head on
+		ExStats a, b;
+		s.w.charge_stats(r, v, 4.5, a, b);
+		CHECK(std::fabs(a.armorbonus - 5.0) < 1e-9, "rider: mounted basic +5 only, head on (%.2f)", a.armorbonus);
+		CHECK(std::fabs(b.armorbonus - 3.0) < 1e-9, "victim: leather iron sword, no bonus (%.2f)", b.armorbonus);
+		s.w.charge_stats(r, v, 6.0, a, b);
+		CHECK(std::fabs(a.armorbonus - (5.0 + 1.5 * 7.0)) < 1e-9, "impact speed 6 gives (6 - 4.5) x 7 (%.2f)", a.armorbonus);
+		s.w.charge_stats(r, v, 9.0, a, b);
+		CHECK(std::fabs(a.armorbonus - (5.0 + 25.0)) < 1e-9, "impact speed bonus is capped at 25 (%.2f)", a.armorbonus);
+		s.w.face[v] = -kPi / 2; // victim faces north, rider comes from the west: 90 degrees = flank
+		s.w.charge_stats(r, v, 4.5, a, b);
+		CHECK(std::fabs(a.armorbonus - 15.0) < 1e-9, "flank (> 60 degrees) +10 (%.2f)", a.armorbonus);
+		s.w.face[v] = 0; // facing away from the rider: rear
+		s.w.charge_stats(r, v, 4.5, a, b);
+		CHECK(std::fabs(a.armorbonus - 25.0) < 1e-9, "rear (> 120 degrees) +20 (%.2f)", a.armorbonus);
+		s.w.equip[v].family = F_SPEAR; s.w.face[v] = kPi; s.w.vx[v] = s.w.vy[v] = 0.f;
+		s.w.charge_stats(r, v, 4.5, a, b);
+		CHECK(std::fabs(b.armorbonus - 23.0) < 1e-9, "pole-arm stand: spear facing the rider and still +20 (%.2f)", b.armorbonus);
+		s.w.vx[v] = 1.0f;
+		s.w.charge_stats(r, v, 4.5, a, b);
+		CHECK(std::fabs(b.armorbonus - 3.0) < 1e-9, "a moving spearman gets no pole-arm bonus (%.2f)", b.armorbonus);
+		s.w.vx[v] = 0.f; s.w.face[v] = 0;
+		s.w.charge_stats(r, v, 4.5, a, b);
+		CHECK(std::fabs(b.armorbonus - 3.0) < 1e-9, "a spearman facing away gets no pole-arm bonus (%.2f)", b.armorbonus);
+	}
+	{   // 4.3 rear support: a living team-mate within one cell behind the victim (further from the rider)
+		Scene s(1, 64, 48);
+		int r = s.formation(0, 10, 10, 0, 1, sword(M_IRON, A_NONE));
+		int v = s.formation(1, 11, 10, 0, 2, sword(M_IRON, A_LEATHER));
+		place_start(s, {{10.5f, 10.5f}, {11.5f, 10.5f}, {12.3f, 10.5f}});
+		s.w.finalize();
+		s.w.formations[r].ai_enabled = false; s.w.formations[v].ai_enabled = false;
+		s.w.set_mounted(r, true);
+		s.w.face[1] = kPi;
+		ExStats a, b;
+		s.w.charge_stats(r, 1, 4.5, a, b);
+		CHECK(std::fabs(b.armorbonus - 8.0) < 1e-9, "a team-mate 0.8 cell behind the victim gives +5 (%.2f)", b.armorbonus);
+	}
+	{   // 4.4 penetration cap: at most three contacts per charge; the count resets once the rider drops below 4.5
+		Scene s(1, 64, 48);
+		int r = s.formation(0, 6, 24.5f, 0, 1, sword(M_IRON, A_NONE));
+		std::vector<int> file; // eight single-man formations in a file along his path, each holding its own spot
+		for (int k = 0; k < 8; ++k) file.push_back(s.formation(1, 16.5f + 1.1f * k, 24.5f, kPi, 1, sword(M_WOOD, A_NONE)));
+		s.w.finalize();
+		s.w.formations[r].ai_enabled = false;
+		for (int f : file) s.w.formations[f].ai_enabled = false;
+		s.w.skill[0] = SK_POWER; // a powered lance wins big, so the charge carries on through the file
+		s.w.set_mounted(0, true);
+		s.w.set_host_control(0, true);
+		uint64_t last = 0; int seg = 0, max_seg = 0, segments = 0;
+		for (int k = 0; k < 30 * 4; ++k) {
+			s.w.host_input(0, 8.f, 0.f, true, false);
+			checked_step(s.w, DT);
+			seg += (int)(s.w.stats.cav_contacts - last); last = s.w.stats.cav_contacts;
+			if (std::hypot(s.w.vx[0], s.w.vy[0]) < cav::CHARGE_SPEED) { max_seg = std::max(max_seg, seg); seg = 0; ++segments; }
+		}
+		max_seg = std::max(max_seg, seg);
+		std::printf("  file of eight: %llu contacts, largest charge %d, steps below the charge speed %d\n", (unsigned long long)last, max_seg, segments);
+		CHECK(last >= 1, "the rider charged the file (%llu contacts)", (unsigned long long)last);
+		CHECK(max_seg <= cav::MAX_HITS, "at most three penetrations per charge (largest %d)", max_seg);
+		CHECK(max_seg == cav::MAX_HITS, "a charge that goes through reaches the cap (largest %d)", max_seg);
+		CHECK(s.w.stats.illegal_cell == 0 && s.w.stats.illegal_step == 0, "no illegal cell or edge through the file");
+		(void)segments;
+	}
+	{   // 4.2 / 4.4: one rider hits the same person at most once per 2 s
+		Scene s(1, 64, 48);
+		int r = s.formation(0, 4, 24, 0, 1, sword(M_IRON, A_NONE));
+		int v = s.formation(1, 14, 24, kPi, 1, sword(M_WOOD, A_NONE));
+		s.w.finalize();
+		s.w.formations[r].ai_enabled = false; s.w.formations[v].ai_enabled = false;
+		s.w.set_mounted(0, true);
+		s.w.set_host_control(0, true);
+		double t0 = -1.0;
+		for (int k = 0; k < 30 * 6 && s.w.stats.cav_contacts == 0; ++k) {
+			const double before = s.w.time;
+			s.w.host_input(0, 8.f, 0.f, true, false);
+			const uint64_t c0 = s.w.stats.cav_contacts;
+			checked_step(s.w, DT);
+			if (s.w.stats.cav_contacts > c0) t0 = before;
+		}
+		CHECK(t0 >= 0.0, "the rider contacts the victim");
+		bool blocked_for_2s = true;
+		while (t0 >= 0.0 && s.w.time - t0 < 2.0 - 1e-3) {
+			blocked_for_2s = blocked_for_2s && !s.w.cav_may_hit(0, 1);
+			s.w.host_input(0, 0.f, 0.f, false, false);
+			checked_step(s.w, DT);
+		}
+		CHECK(blocked_for_2s, "no second hit on the same person within 2 s");
+		for (int k = 0; k < 30 && t0 >= 0.0 && !s.w.cav_may_hit(0, 1); ++k) { s.w.host_input(0, 0.f, 0.f, false, false); checked_step(s.w, DT); }
+		CHECK(t0 >= 0.0 && s.w.cav_may_hit(0, 1), "the same person may be charged again after 2 s");
+	}
+	{   // 4.4 / 4.6: a rider defeated by a big loss dismounts and lies 1.2 s; the recoil hits the rider
+		Scene s(1, 64, 48);
+		int r = s.formation(0, 2, 24, 0, 1, sword(M_WOOD, A_NONE));
+		int v = s.formation(1, 14, 24, kPi, 1, spear_steel());
+		s.w.finalize();
+		s.w.formations[r].ai_enabled = false; s.w.formations[v].ai_enabled = false;
+		s.w.skill[v] = SK_BRACE; // a braced spearman in full steel stands fast
+		s.w.set_mounted(0, true);
+		s.w.set_host_control(0, true);
+		for (int k = 0; k < 30 * 8 && s.w.stats.cav_dismounts == 0; ++k) {
+			s.w.host_input(0, 5.f, 0.f, false, false);
+			checked_step(s.w, DT);
+		}
+		CHECK(s.w.stats.cav_dismounts == 1 && !s.w.is_mounted(0), "big loss dismounts the rider");
+		CHECK(s.w.getup[0] > 0.0 && s.w.hp[0] < 100.0, "the rider lies up (get-up %.2f) and takes the recoil (hp %.2f)", s.w.getup[0], s.w.hp[0]);
+		CHECK(s.w.stats.illegal_cell == 0 && s.w.stats.illegal_step == 0, "terrain invariant through the defeat");
+	}
+	{   // 4.4 penetration: a rider beats a lone unarmoured victim, who is pushed or falls; the victim cannot act while down
+		Scene s(1, 64, 48);
+		int r = s.formation(0, 6, 24, 0, 1, sword(M_IRON, A_NONE));
+		int v = s.formation(1, 14, 24, kPi, 1, sword(M_WOOD, A_NONE));
+		s.w.finalize();
+		s.w.formations[r].ai_enabled = false; s.w.formations[v].ai_enabled = false;
+		s.w.set_mounted(0, true);
+		s.w.set_host_control(0, true);
+		bool down_seen = false;
+		for (int k = 0; k < 30 * 3; ++k) {
+			s.w.host_input(0, 8.f, 0.f, true, false);
+			checked_step(s.w, DT);
+			down_seen = down_seen || s.w.getup[1] > 0.0 || s.w.ko[1] > 0.0 || s.w.stats.cav_falls > 0;
+		}
+		CHECK(s.w.stats.cav_contacts >= 1 && down_seen, "the lone victim is hit and goes down (contacts %llu)", (unsigned long long)s.w.stats.cav_contacts);
+	}
+	{   // 2.1 / no tunnelling: a gallop rider never passes a victim without a registered contact
+		Scene s(1, 64, 48);
+		int r = s.formation(0, 6, 24, 0, 1, sword(M_IRON, A_NONE));
+		int v = s.formation(1, 14, 24, kPi, 1, sword(M_IRON, A_LEATHER));
+		s.w.finalize();
+		s.w.formations[r].ai_enabled = false; s.w.formations[v].ai_enabled = false;
+		s.w.set_mounted(0, true);
+		s.w.set_host_control(0, true);
+		bool passed = false;
+		float min_gap = 1e9f;
+		for (int k = 0; k < 30 * 3 && !passed; ++k) {
+			s.w.host_input(0, 8.f, 0.f, true, false);
+			checked_step(s.w, DT);
+			if (s.w.px[0] > s.w.px[1]) passed = true;
+			min_gap = std::min(min_gap, std::fabs(s.w.px[0] - s.w.px[1]));
+		}
+		CHECK(passed == (s.w.stats.cav_contacts >= 1 || s.w.getup[1] > 0.0), "passing the victim requires a contact (passed %d, contacts %llu)", passed, (unsigned long long)s.w.stats.cav_contacts);
+		CHECK(min_gap < 0.9f && s.w.stats.cav_contacts >= 1, "bodies met at gallop (closest gap %.3f)", min_gap);
+	}
+	{   // 1 / 2 / 4 threads: identical hashes; save / load keeps the mounted state and continues identically
+		auto run = [](int threads, std::vector<uint8_t> *save_out) {
+			Scene s(threads, 64, 48);
+			int r = s.formation(0, 6, 24, 0, 1, sword(M_IRON, A_NONE));
+			int v = s.formation(1, 16, 24, kPi, 8, sword(M_WOOD, A_NONE), T_MELEE, 0, 1);
+			int w2 = s.formation(0, 30, 40, 0, 6, sword(M_IRON, A_NONE), T_MELEE, 0, 3);
+			int foe = s.formation(1, 40, 40, kPi, 24, sword(M_WOOD, A_NONE), T_MELEE, 0, 6);
+			std::vector<std::pair<float, float>> at = {{6.5f, 24.5f}};
+			for (int k = 0; k < 8; ++k) at.push_back({16.5f, 20.5f + 0.8f * k});
+			place_start(s, at);
+			s.w.finalize();
+			for (int f : {r, v, w2, foe}) s.w.formations[f].ai_enabled = false;
+			for (int i : s.w.formations[w2].members) s.w.set_mounted(i, true);
+			s.w.set_mounted(0, true);
+			s.w.order_move(w2, 52.f, 40.f, 0.f);
+			s.w.set_host_control(0, true);
+			for (int k = 0; k < 30 * 5; ++k) {
+				s.w.host_input(0, k < 30 * 3 ? 8.f : 0.f, 0.f, true, false);
+				checked_step(s.w, DT);
+			}
+			if (save_out) *save_out = s.w.save();
+			return s.w.state_hash();
+		};
+		std::vector<uint8_t> blob;
+		const uint64_t h1 = run(1, &blob), h2 = run(2, nullptr), h4 = run(4, nullptr);
+		CHECK(h1 == h2 && h1 == h4, "1 / 2 / 4 threads: identical state hash (%llx %llx %llx)", (unsigned long long)h1, (unsigned long long)h2, (unsigned long long)h4);
+		World back(1);
+		CHECK(back.load(blob), "the mounted battle loads");
+		check_valid(back);
+		CHECK(back.state_hash() == h1, "load gives the same hash");
+		World again(1);
+		CHECK(again.load(blob) && again.is_mounted(0) && again.is_mounted(8 + 1), "mounted state survives the save");
+	}
+}
+
 int main() {
 	#ifdef _WIN32
 	SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
@@ -1642,6 +1894,7 @@ int main() {
 	test_edge_deploy();
 	test_melee_contact_and_exchange_fatigue();
 	test_site_person_release();
+	test_cavalry();
 	std::printf("\n%d checks, %d failures\n", checks, failures);
 	return failures ? 1 : 0;
 }

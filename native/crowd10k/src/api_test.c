@@ -41,6 +41,18 @@ int main(void) {
 	wg_crowd_set_soldier_state(c, 5, &st0);
 	wg_soldier_state st1; wg_crowd_get_soldier_state(c, 5, &st1);
 	int state_ok = st0.hp == st1.hp && st0.ko == st1.ko && st0.stun == st1.stun;
+	/* CAV-1 mounted import / write-back on the first living soldier: on, read back, off, read back */
+	int living = -1;
+	for (int i = 0; i < wg_crowd_soldier_count(c) && living < 0; ++i) {
+		float x, y; double hp, stun, ko; int captive, st, tg;
+		wg_crowd_get_soldier(c, i, &x, &y, &hp, &stun, &ko, &captive, &st, &tg);
+		if (hp > 0 && !captive) living = i;
+	}
+	double mounted_out = -1.0;
+	int mounted_ok = living >= 0 && wg_crowd_set_soldier_mounted(c, living, 1) && wg_crowd_soldier_mounted(c, living, &mounted_out) && mounted_out == 1.0;
+	mounted_ok = mounted_ok && wg_crowd_set_soldier_mounted(c, living, 0) && wg_crowd_soldier_mounted(c, living, &mounted_out) && mounted_out == 0.0;
+	mounted_ok = mounted_ok && !wg_crowd_set_soldier_mounted(c, wg_crowd_soldier_count(c), 1);
+	state_ok = state_ok && mounted_ok;
 	/* save, continue 10 s, load into a new instance, continue 10 s: same hash */
 	int64_t size = wg_crowd_save(c, NULL, 0);
 	uint8_t *blob = malloc((size_t)size);
