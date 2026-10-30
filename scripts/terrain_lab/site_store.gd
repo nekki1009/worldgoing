@@ -21,7 +21,7 @@ const WorkTeam = preload("res://scripts/terrain_lab/site_work_team.gd")
 const Vehicles = preload("res://scripts/terrain_lab/site_vehicle_transport.gd")
 const ShipDefs = preload("res://scripts/terrain_lab/site_vehicle_ship_definitions.gd")
 const RiderAtlas = preload("res://scripts/terrain_lab/site_vehicle_rider_atlas.gd")
-const Destination = preload("res://scripts/terrain_lab/formation_destination_planner.gd")
+const PresetGeometry = preload("res://scripts/terrain_lab/formation_preset_geometry.gd")
 const FORMAT := 4
 const TERRAIN_VERSION := 1
 const DEFAULT_PATH := "user://sites/current.json"
@@ -2704,7 +2704,7 @@ static func _valid_combat_movement_snapshot(data: TerrainData, team: Dictionary,
 	for unit: Dictionary in team.units:
 		people[int(unit.person_id)] = unit
 	var team_preset: Variant = team.get("formation_preset_id", "auto")
-	if not team_preset is String or not Destination.is_valid_preset(team_preset): return false
+	if not team_preset is String or not PresetGeometry.is_valid_preset(team_preset): return false
 	var separate_intent := team.has("formation_intent_version")
 	if separate_intent and not _integer(team.formation_intent_version, 1, 1): return false
 	var deployment: Variant = team.get("combat_deployment_plan", null)
@@ -2724,7 +2724,7 @@ static func _valid_combat_movement_snapshot(data: TerrainData, team: Dictionary,
 			if deployment.has("formation_preset_id") or (not separate_intent and team_preset != "auto"): return false
 		else:
 			var plan_preset: Variant = deployment.get("formation_preset_id", null)
-			if not team.has("formation_preset_id") or not plan_preset is String or not Destination.is_valid_preset(plan_preset) or (not separate_intent and plan_preset != team_preset): return false
+			if not team.has("formation_preset_id") or not plan_preset is String or not PresetGeometry.is_valid_preset(plan_preset) or (not separate_intent and plan_preset != team_preset): return false
 			deployment_preset = plan_preset
 		deployment_anchor = deployment.get("resolved_anchor")
 		if not _valid_walkable_pair(data, deployment_anchor):
@@ -2785,7 +2785,7 @@ static func _valid_combat_movement_snapshot(data: TerrainData, team: Dictionary,
 			var anchor := Vector2i(int(deployment_anchor[0]), int(deployment_anchor[1]))
 			var dimension_limit: int = maxi(data.size.x, data.size.y)
 			if partial_deployment:
-				dimension_limit = maxi(dimension_limit, Destination.MAX_PRESET_RADIUS * 2 + 1)
+				dimension_limit = maxi(dimension_limit, PresetGeometry.MAX_PRESET_RADIUS * 2 + 1)
 			if not _integer(width, 1, dimension_limit) or not _integer(depth, 1, dimension_limit): return false
 			if partial_deployment and member_slots.size() + followers.size() + absent_slots.size() > int(requested): return false
 			if deployment_preset == "auto":
@@ -2799,7 +2799,7 @@ static func _valid_combat_movement_snapshot(data: TerrainData, team: Dictionary,
 				if int(width) != auto_width or int(depth) != auto_depth: return false
 			else:
 				if (not partial_deployment and platform.size() != int(requested)) or platform.size() > int(requested): return false
-				var expected: Array[Vector2i] = Destination.shape_slots(deployment_preset, int(requested), anchor, facing)
+				var expected: Array[Vector2i] = PresetGeometry.shape_slots(deployment_preset, int(requested), anchor, facing)
 				if expected.size() != int(requested): return false
 				for cell: Vector2i in platform_set.keys():
 					if not expected.has(cell): return false

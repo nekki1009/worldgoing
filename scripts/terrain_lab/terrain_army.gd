@@ -113,6 +113,7 @@ const ContactSource = preload("res://scripts/terrain_lab/terrain_army_contact_so
 const EquipmentAtlas = preload("res://scripts/terrain_lab/terrain_army_equipment_atlas.gd")
 const VehicleRiderAtlas = preload("res://scripts/terrain_lab/site_vehicle_rider_atlas.gd")
 const ShipDefinitions = preload("res://scripts/terrain_lab/site_vehicle_ship_definitions.gd")
+const PresetGeometry = preload("res://scripts/terrain_lab/formation_preset_geometry.gd")
 const HELD_LOCOMOTION := {"idle": "combat_idle", "walk": "combat_walk", "run": "combat_run"}
 # Shared immutable bake, not one copy or one actor Node per soldier.
 static var _combat_bake: Dictionary = {}
@@ -9346,7 +9347,7 @@ static func valid_combat_state(snapshot: Variant, map: TerrainData, actor: Dicti
 		return false
 	if not snapshot is Dictionary or not _combat_saved_integer(snapshot.get("schema"), 1, 2) or snapshot.get("loadout") != "standard_soldier_v2":
 		return false
-	if snapshot.has("formation_preset_id") and (not snapshot.formation_preset_id is String or not FormationDestinationPlanner.is_valid_preset(snapshot.formation_preset_id)):
+	if snapshot.has("formation_preset_id") and (not snapshot.formation_preset_id is String or not PresetGeometry.is_valid_preset(snapshot.formation_preset_id)):
 		return false
 	if snapshot.has("formation_intent_version") and not _combat_saved_integer(snapshot.formation_intent_version, 1, 1):
 		return false

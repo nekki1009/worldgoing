@@ -123,5 +123,18 @@ func _run() -> void:
 	if not check(not controller.fire_resource_owner_guard(task, {}, at, false), "the fire guard refuses a crowd worker whose cargo reference changed"): return
 	if not check(not controller.fire_resource_owner_guard(task, held, at + Vector2i.RIGHT, false), "the fire guard refuses a crowd worker that is no longer at the cell"): return
 
+	# Item 7: a grid candidate armed before crowd activation must not turn a crowd MOVE into STALE.
+	# The arm mirrors _select_formation_candidate's stored fields; no grid team exists for the crowd command.
+	if not check(not controller._crowd_command_team("test").is_empty(), "the crowd command team exists for the stale-candidate MOVE"): return
+	controller._formation_candidate_id = "square"
+	controller._formation_candidate_source = "test"
+	controller._formation_candidate_team = null
+	controller._formation_candidate_team_id = -1
+	controller._formation_candidate_requester_identity = -1
+	controller._formation_candidate_terrain = lab.terrain
+	var stale_move: Dictionary = controller._crowd_order("test", TerrainArmy.CombatOrder.MOVE, friend_cell)
+	if not check(str(stale_move.get("code", "")) != "STALE", "a crowd MOVE is not refused as STALE by a grid candidate armed before crowd activation", stale_move): return
+	if not check(controller._formation_candidate_id.is_empty(), "the stale grid candidate is cleared by the crowd MOVE"): return
+
 	print("GATE OK: G8A crowd consent, enemy selection, team stop and fire guard")
 	quit(0)

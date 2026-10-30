@@ -1198,8 +1198,8 @@ func _crowd_order(source: String, order_id: int, goal: Vector2i = Vector2i(-1, -
 	var team := _crowd_command_team(source)
 	if team.is_empty(): return Runtime.fail("NO_TARGET", "尚未部署可下令的群眾隊伍")
 	if order_id == TerrainArmy.CombatOrder.MOVE:
-		var candidate := _formation_move_candidate(source, null)
-		if not candidate.ok: return candidate
+		# A grid candidate armed before crowd activation has no crowd owner; drop it instead of refusing the crowd MOVE as STALE.
+		_clear_formation_candidate()
 	if target_id < 0 and order_id == TerrainArmy.CombatOrder.PURSUE: target_id = _crowd_selected_enemy(team)
 	return lab.crowd_site.issue_order(int(team.team_id), order_id, selected if goal == Vector2i(-1, -1) else goal, target_id, source, facing)
 
@@ -1456,6 +1456,9 @@ func _trial_team_order(order_id: int) -> void:
 	_update_combat_window()
 
 func _player_corps_reposition() -> void:
+	if _crowd_active():
+		show_result(Runtime.fail("CROWD_UNSUPPORTED", "群體模型下軍團長轉進尚未接線；未下令"))
+		return
 	var team_id := int(formal_team_choice.get_item_metadata(formal_team_choice.selected)) if formal_team_choice != null and formal_team_choice.selected >= 0 else -1
 	if team_id < 0:
 		show_result(Runtime.fail("NO_TARGET", "先在正式隊伍窗選取原隊伍"))
@@ -1940,6 +1943,9 @@ func _update_formation_controls() -> void:
 	formation_status_label.text += _formation_preview_note
 
 func _apply_formation_change() -> void:
+	if _crowd_active():
+		show_result(Runtime.fail("CROWD_UNSUPPORTED", "群眾隊形由戰場維持；未改陣"))
+		return
 	var source := _formation_source()
 	var team := _formation_team(source)
 	if team == null or not team.combat_enabled or not team.has_army():
