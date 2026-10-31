@@ -7,7 +7,9 @@ extends SceneTree
 ## - officer_observation_crowd: the evaluation officer observation pass no longer refuses MISSING_ORIGINAL_OBSERVER,
 ##   and a crowd person resolves as a present delivery person;
 ## - region_siege_attack_move_crowd: crowd attackers in MOVE (goal in the capture zone) and ATTACK get original route
-##   proofs and the siege enters "assault" instead of CROWD_SIEGE_ROUTE_UNADMITTED.
+##   proofs and the siege enters "assault" instead of CROWD_SIEGE_ROUTE_UNADMITTED;
+##   the save-slot siege refresh admits that ATTACK siege (REGION_BACKEND_UNADMITTED gate on native);
+## - owner_lab_backend_crowd: the live owner-lab resolves with the native receipt backend.
 ## Run only with: --crowd --crowd-test <fresh_run_id>
 ## Output: REGION_CROWD_SAVE_SLOT_PASS on success; quit(1) on any failure.
 
@@ -225,6 +227,12 @@ func _run() -> void:
 		if not _check(not person.is_empty() and person.owner is CrowdPersonOwner and int(person.person_id) == controlled,
 			"a crowd person resolves as a present delivery person", person.keys()): return
 
+	# --- owner_lab_backend_crowd -----------------------------------------------------------------
+	# The live owner-lab resolves under the crowd: its receipt reports the live backend (native), not the bind-time gd.
+	var owner_lab: Dictionary = lab._region_gameplay_owner_lab(site_id, "live")
+	if not _check(owner_lab.get("ok", false) and owner_lab.get("lab") == lab and str(owner_lab.get("activation", {}).get("backend", "")) == "native",
+		"live owner-lab resolves under the crowd with the native receipt backend", owner_lab): return
+
 	# --- region_siege_attack_move_crowd ----------------------------------------------------------
 	var attacker_team := {}
 	var defender_id := -1
@@ -256,6 +264,9 @@ func _run() -> void:
 	if not _check(attacking.get("ok", false) and attacking.get("present", false) and str(attacking.siege.get("phase", "")) == "assault"
 		and attacking.siege.get("routes", {}).has(str(int(attacker_team.person_ids[0]))),
 		"crowd ATTACK attackers carry original route proofs and the siege is in assault", attacking): return
+	# The save-slot refresh admits the siege under the native mode (backend gate = region_backend_expected).
+	var refreshed: Dictionary = slot.refresh_original_region_siege_battle(lab)
+	if not _check(refreshed.get("ok", false), "crowd ATTACK siege refreshes the original region battle under the native mode", refreshed): return
 	var hold: Dictionary = lab.crowd_site.issue_order(int(attacker_team.team_id), TerrainArmy.CombatOrder.HOLD, Vector2i(-1, -1), -1, "test")
 	if not _check(hold.get("ok", false), "crowd attacker team returns to HOLD", hold): return
 	var holding: Dictionary = Battle.prepare_original_siege(lab, {})

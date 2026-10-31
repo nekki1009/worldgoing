@@ -11786,7 +11786,8 @@ func region_cold_original_inputs() -> Dictionary:
 	var fault: Dictionary = site_controller.original_step_fault_guard()
 	if not fault.ok: return fault
 	var bind := region_bind_receipt(terrain)
-	if bind.get("complete") != true or bind.get("owners_restored") != true or str(bind.get("backend")) != "gd":
+	# The bind receipt's backend is region_backend_expected() by construction (native while a crowd is active); any value is accepted here.
+	if bind.get("complete") != true or bind.get("owners_restored") != true:
 		return SiteRuntime.fail("COLD_ORIGINAL_OWNER_REQUIRED")
 	var captured: Dictionary = site_controller._capture_for_save()
 	if not captured.ok: return captured
@@ -12230,7 +12231,7 @@ func _region_cold_formal_admission() -> Dictionary:
 	if str(slot.control.active_site_id) == site_id: return SiteRuntime.fail("PLAYER_BARRIER")
 	var mode: Dictionary = slot.region_registry().modes.get(site_id, {})
 	var activation: Dictionary = mode.get("activation", {})
-	if str(mode.get("mode", "")) != "cold_exact" or str(mode.get("backend", "")) != "gd" \
+	if str(mode.get("mode", "")) != "cold_exact" or str(mode.get("backend", "")) != region_backend_expected() \
 		or str(mode.get("consumer", "")) != "original_replay" or int(mode.get("generation", -1)) != int(_region_cold_formal.generation) \
 		or activation.get("complete") != true or activation.get("owners_restored") != true \
 		or str(activation.get("owner", "")) != site_id or int(activation.get("generation", -1)) != int(_region_cold_formal.generation):

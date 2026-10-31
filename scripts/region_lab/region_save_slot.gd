@@ -11106,7 +11106,7 @@ func prepare_region_player_departure(controller: SiteController, nonce: String) 
 	if not _marker.get("journey", {}).is_empty() or not _prepared.is_empty(): return fail("BUSY")
 	var mode: Dictionary = region_registry().modes.get(str(lab.terrain.site.id), {})
 	var bind := lab.region_bind_receipt(lab.terrain)
-	if str(mode.get("mode", "")) != "live" or str(mode.get("backend", "")) != "gd" or bind.get("complete") != true or bind.get("owners_restored") != true or str(bind.get("mode", "")) != "live": return fail("COMMITTED_UNBOUND")
+	if str(mode.get("mode", "")) != "live" or str(mode.get("backend", "")) != lab.region_backend_expected() or bind.get("complete") != true or bind.get("owners_restored") != true or str(bind.get("mode", "")) != "live": return fail("COMMITTED_UNBOUND")
 	var siege := RegionBattle.prepare_original_siege(lab)
 	if not siege.ok or not siege.get("present", false): return fail("IN_COMBAT")
 	# Keep the original fire/transport admission; no generic combat or BUSY waiver.
@@ -11304,7 +11304,7 @@ func refresh_original_region_siege_battle(original: TerrainLab) -> Dictionary:
 	var activation := bind.duplicate(true)
 	activation.mode = str(battle.mode)
 	activation.consumer = "original_site" if battle.mode == "live" else "original_replay"
-	var activated := GameplayClock.activate_mode(candidate, owner, str(battle.mode), int(_marker.get("generation", 0)), "gd", str(activation.consumer),
+	var activated := GameplayClock.activate_mode(candidate, owner, str(battle.mode), int(_marker.get("generation", 0)), str(bind.backend), str(activation.consumer),
 		float(control.logical_game_seconds), float(control.fire_clock.action_seconds), activation)
 	if not activated.ok: return activated
 	candidate.revision = int(candidate.revision) + 1
