@@ -91,6 +91,22 @@ func crowd_equipment_guard(identities: Array) -> Dictionary:
 			return guard
 	return Runtime.ok()
 
+# Owner decision 2026-10-31 (NEKKI_DECISION_20261031_crowd_peacetime_systems): peacetime systems under crowd run as on the
+# grid. Contract: passes when the crowd is inactive. When the crowd is active it refuses with CROWD_ACTIVE if the Site is in
+# combat (combat_left > 0) or if any given identity is fighting. With [] it means "combat_left only".
+func crowd_peace_guard(identities: Array) -> Dictionary:
+	if not is_instance_valid(lab):
+		return Runtime.ok()
+	var crowd: Variant = lab.get("crowd_site")
+	if crowd == null or not bool(crowd.active):
+		return Runtime.ok()
+	if float(lab.terrain.site.get("combat_left", 0.0)) > 0.0:
+		return Runtime.fail("CROWD_ACTIVE", "群眾戰鬥中由戰場規則處理")
+	for identity: Variant in identities:
+		if crowd.contains_person(int(identity)) and crowd.person_fighting(int(identity)):
+			return Runtime.fail("CROWD_ACTIVE", "群眾戰鬥中由戰場規則處理")
+	return Runtime.ok()
+
 func is_busy(identity: int) -> bool:
 	return not _job_key_for(identity).is_empty()
 

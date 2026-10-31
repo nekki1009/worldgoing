@@ -5244,6 +5244,15 @@ func _original_person_target(identity: int, with_bodies: bool = false) -> Dictio
 				"hp": float(team.combat_hot_get(index, &"hp")), "bodies": team.combat_shapes(index, "body") if with_bodies else []}
 	return {}
 
+## P1a: the teams people are read from. While the native crowd is active these are its owners (armies and crowd actors,
+## which mimic the TerrainArmy team interface); otherwise the grid armies. Read-only.
+func team_owners() -> Array:
+	if crowd_site != null and crowd_site.active:
+		return crowd_site.person_owners()
+	var teams: Array = []
+	teams.assign(combat_armies)
+	return teams
+
 func _combat_target_in_site(identity: int, with_bodies: bool = false) -> Dictionary:
 	var person := _combat_target(identity)
 	if person.is_empty(): return {}

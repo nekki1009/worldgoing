@@ -2426,6 +2426,30 @@ func native_roster(team_id: int) -> Dictionary:
 	return {}
 
 
+# P1c (crowd_team_data_survey.md, Option A): refresh a dormant grid holder's team-level commander, officer, office and
+# cohort fields from crowd truth (native formation refs for commanders and officers, roster for offices and cohort) before a
+# crowd-side team call. Read-only for crowd: the holder's hot fields are never read here.
+func project_team_holder(holder: Variant) -> void:
+	if not is_instance_valid(holder): return
+	var owner: Variant = native_owner(int(holder.team_id))
+	var roster: Dictionary = native_roster(int(holder.team_id))
+	if owner == null or roster.is_empty(): return
+	var state: Dictionary = formation_state(int(owner.formation_index))
+	holder.formal_commander = int(owner.index_for_identity(int(state.get("formal_person", -1))))
+	holder.acting_commander = int(owner.index_for_identity(int(state.get("acting_person", -1))))
+	holder.current_commander = int(owner.index_for_identity(int(state.get("current_person", -1))))
+	var officers: Array[int] = []
+	for identity: Variant in state.get("officer_persons", []):
+		var index := int(owner.index_for_identity(int(identity)))
+		if index >= 0: officers.append(index)
+	holder.officer_order = officers
+	var service: Array[int] = []
+	for index: Variant in roster.get("officer_service", []): service.append(int(index))
+	holder.officer_service = service
+	holder.offices = roster.get("offices", {}).duplicate(true)
+	holder.social_cohort = roster.get("social_cohort", {}).duplicate(true)
+
+
 func native_owner(team_id: int) -> Variant:
 	for owner: Variant in owners:
 		if int(owner.team_id) == team_id: return owner
@@ -3926,6 +3950,10 @@ func _consume_events_original() -> bool:
 		if kind in [4, 5]:
 			pending_captivity.append({"kind": kind, "person": identity, "other": other, "ammo_synced": false})
 		elif kind == 0:
+			# P1c: the grid stamps battle deaths on the row (TA unit "combat_death_minute"). Crowd rows get the same stamp.
+			# Environmental deaths (hunger, fire) are not separated here; the grid excludes them by its packet flag.
+			if _records.has(identity) and _records[identity] is Dictionary:
+				_records[identity]["combat_death_minute"] = int(lab.terrain.site.get("minute", 0))
 			_freeze_dead_person_fatigue(identity, fatigue[offset >> 1], fatigue[(offset >> 1) + 1])
 			if not _death_notified.has(identity):
 				_death_notified[identity] = true

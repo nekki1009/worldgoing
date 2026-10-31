@@ -293,7 +293,7 @@ func cape_role_allowed(index: int) -> bool:
 		original_index = TerrainArmy.PLAYER_MEMBER
 	if original_index < 0:
 		return false
-	return original_index == int(team.get("formal_commander", -1)) or original_index in team.get("officer_service", []) or original_index in team.get("officer_order", [])
+	return original_index == int(team.get("formal_commander", -1)) or original_index in team.get("officer_service", []) or original_index in team.get("officers", [])
 
 
 # Read-only projections of the original native formation. Indices here are

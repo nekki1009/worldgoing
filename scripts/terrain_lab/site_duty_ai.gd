@@ -196,6 +196,10 @@ static func review(lab: Variant, review_game_time: float = -1.0, ledger: Diction
 		or (lab.is_inside_tree() and lab.get_tree().paused):
 		return
 	if lab.crowd_site != null and lab.crowd_site.active:
+		# P1c (NEKKI_DECISION_20261031_crowd_peacetime_systems + crowd_team_data_survey.md Option A): day settlement is
+		# bookkeeping and runs on every day, combat days included. Family vacancy runs at peace only. Duty review stays gated.
+		SiteSocial.settle_site(lab)
+		if lab.site_controller.person_actions.crowd_peace_guard([]).ok: settle_family_vacancy(lab)
 		return
 	SiteSocial.settle_site(lab) # R2 day settlement rides the same 60-second tick.
 	settle_family_vacancy(lab) # R5 S6: family vacancy episodes ride the same tick, after the G0 day settlement.

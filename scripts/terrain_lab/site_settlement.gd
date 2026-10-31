@@ -148,10 +148,16 @@ static func faction_members(lab: Variant, faction: int) -> Dictionary:
 	var result := {}
 	for actor: Variant in lab.combat_actors:
 		if is_instance_valid(actor) and int(actor.faction_id) == faction and int(actor.person_id) > 0: result[int(actor.person_id)] = true
-	for team: Variant in lab.combat_armies:
+	# P1a: team_owners() is the grid armies, or the native crowd owners (actors included) while the crowd is active.
+	for team: Variant in lab.team_owners():
 		if is_instance_valid(team) and int(team.faction_id) == faction:
-			for index: int in range(team.combat_units.size()):
-				if team.is_member(index) and int(team.combat_identity(index)) > 0: result[int(team.combat_identity(index))] = true
+			var indices: Array = []
+			if team.combat_units is Dictionary:
+				indices = team.combat_units.keys()
+			else:
+				for slot in range(team.combat_units.size()): indices.append(slot)
+			for index: Variant in indices:
+				if team.is_member(int(index)) and int(team.combat_identity(int(index))) > 0: result[int(team.combat_identity(int(index)))] = true
 	return result
 
 ## R5 S1B: the lab command. The head designates a living person of the owner faction, in place, in one commit.
