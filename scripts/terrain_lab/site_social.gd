@@ -315,7 +315,8 @@ static func _settle_crowd_site(lab: Variant) -> void:
 			crowd.project_team_holder(holder)
 			if full: _settle_crowd_cohort(owner, holder, site_id, today)
 			offices = holder.team_offices(true)
-			formal = int(holder.formal_commander)
+			# P1d: the holder's formal_commander is a roster index; the owner's units are native world indices. Compare people.
+			formal = int(crowd.formation_state(int(owner.formation_index)).get("formal_person", -1))
 		for key: Variant in owner.combat_units.keys():
 			var unit := int(key)
 			if owner.member_gone(unit): continue
@@ -326,7 +327,7 @@ static func _settle_crowd_site(lab: Variant) -> void:
 			var team_r: Variant = team_ref(site_id, owner.team_id) if member and holder != null else null
 			var affiliations: Array = [team_r] if team_r != null else []
 			_add_nation_refs(site, identity, site_id, affiliations)
-			var holds: bool = unit == formal or (not offices.is_empty() and not SiteOffices.position_of(offices, identity).is_empty())
+			var holds: bool = identity == formal or (not offices.is_empty() and not SiteOffices.position_of(offices, identity).is_empty())
 			settle_person(owner.combat_units[unit], {"minute": minute, "controlled": identity == controlled, "affiliations": affiliations,
 				"captive_relation": relation_value, "team_ref": team_r, "holds_post": holds,
 				"eligible_for_post": member and owner.combat_can_act(unit) and identity != controlled})

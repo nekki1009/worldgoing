@@ -199,7 +199,24 @@ static func review(lab: Variant, review_game_time: float = -1.0, ledger: Diction
 		# P1c (NEKKI_DECISION_20261031_crowd_peacetime_systems + crowd_team_data_survey.md Option A): day settlement is
 		# bookkeeping and runs on every day, combat days included. Family vacancy runs at peace only. Duty review stays gated.
 		SiteSocial.settle_site(lab)
-		if lab.site_controller.person_actions.crowd_peace_guard([]).ok: settle_family_vacancy(lab)
+		if not lab.site_controller.person_actions.crowd_peace_guard([]).ok: return
+		settle_family_vacancy(lab)
+		# P1d: team personnel at peace, on the grid review's own cadence: the same stamp gate, round counter (due() reads it)
+		# and seat waits. Logistics and training stay refused under crowd.
+		var crowd_cadence := _cadence_state(lab, ledger)
+		var crowd_stamp := review_game_time if review_game_time >= 0.0 else float(lab.terrain.site.get("minute", 0)) * 60.0
+		if not crowd_cadence.is_empty():
+			if crowd_stamp <= float(crowd_cadence.get("last_game_time", -1.0)): return
+			review_round = int(crowd_cadence.get("round", 0))
+			_seat_waits = crowd_cadence.get("seat_waits", {}).duplicate(true)
+			_inmate_since = crowd_cadence.get("inmate_since", {}).duplicate(true)
+		review_round += 1
+		review_crowd_personnel(lab, int(lab.controlled_person_id()))
+		if not crowd_cadence.is_empty():
+			crowd_cadence.round = review_round
+			crowd_cadence.seat_waits = _seat_waits.duplicate(true)
+			crowd_cadence.inmate_since = _inmate_since.duplicate(true)
+			crowd_cadence.last_game_time = crowd_stamp
 		return
 	SiteSocial.settle_site(lab) # R2 day settlement rides the same 60-second tick.
 	settle_family_vacancy(lab) # R5 S6: family vacancy episodes ride the same tick, after the G0 day settlement.
@@ -276,11 +293,15 @@ static func _trace(team: TerrainArmy, resolved: Dictionary, knobs: Dictionary, i
 ## Team head manages seats (head-only power, 3.5): fill a vacant seat that holds
 ## duties, replacing a holder who cannot return (captive/left the Site), or —
 ## with no candidate left — hand one vacant seat's duty to the best-suited holder.
-static func review_team_personnel(team: TerrainArmy, controlled: int) -> Dictionary:
+## physical: the crowd owner when the holder is a dormant crowd team (P1d). Its live order, movement and rout are read from it.
+static func review_team_personnel(team: TerrainArmy, controlled: int, physical: Variant = null) -> Dictionary:
 	var head := team.formal_commander
 	if head < 0 or head != team.current_commander or not team.command_eligible(head) or team.combat_identity(head) == controlled:
 		return {}
-	if team.combat_order != TerrainArmy.CombatOrder.HOLD or team.moving_member_count() > 0 or float(team.data.site.get("combat_left", 0.0)) > 0.0 or team.is_sustain_routed():
+	var order: int = team.combat_order if physical == null else int(physical.combat_order)
+	var moving: int = team.moving_member_count() if physical == null else int(physical.moving_member_count())
+	var routed: bool = team.is_sustain_routed() if physical == null else bool(physical.is_sustain_routed())
+	if order != TerrainArmy.CombatOrder.HOLD or moving > 0 or float(team.data.site.get("combat_left", 0.0)) > 0.0 or routed:
 		return {}
 	var head_mind := personality(team.combat_identity(head), team)
 	if not due(head_mind): return {}
@@ -336,11 +357,55 @@ static func review_team_personnel(team: TerrainArmy, controlled: int) -> Diction
 			decision = "assign %s to %d" % [duties[0], best]
 			break
 	if ops.is_empty(): return {}
-	var result := team.apply_office_plan(team.combat_identity(head), int(offices.revision), ops)
+	var result := team.apply_office_plan(team.combat_identity(head), int(offices.revision), ops, physical)
 	_trace(team, {"duty_id": "office.adjust", "position_id": str(SiteOffices.head_position(offices).get("id", "")),
 		"position_name": str(SiteOffices.head_position(offices).get("name", "")), "decider": team.combat_identity(head),
 		"acting": false, "revision": int(offices.revision)}, {}, {"candidates": candidates.size()}, decision, result)
 	return result
+
+## P1d: the team personnel review for crowd teams at peace. The native state is synced into the rows first (sync_to_site writes
+## the hot fields into the roster rows, which are the holder's combat_units), then each team's dormant holder is projected from
+## crowd truth and the same personnel rules run with its crowd owner as the physical source. Any office or cadre result is
+## committed back to crowd truth (roster offices and officer_service, native post flags and officer list).
+## Only a team with a bound holder (CrowdSite.team_holder: a D5-imported grid team or a loaded crowd roster) is reviewed: a team
+## deployed straight into the crowd has no grid object holding its rows, so there is no team-data holder to run the rules on.
+static func review_crowd_personnel(lab: Variant, controlled: int) -> void:
+	var crowd: Variant = lab.crowd_site
+	if not crowd.sync_to_site().ok: return
+	for owner: Variant in lab.team_owners():
+		if not is_instance_valid(owner) or not owner.has_army(): continue
+		var team_id := int(owner.team_id)
+		var holder: Variant = crowd.team_holder(team_id)
+		if holder == null: continue
+		# A garrisoned team has no command or posts in use (the grid review skips it); the roster and native are the truth.
+		var garrisoned: bool = not str(crowd.native_roster(team_id).get("garrison_feature_id", "")).is_empty()
+		if garrisoned or bool(crowd.formation_state(int(owner.formation_index)).get("garrisoned", false)): continue
+		crowd.project_team_holder(holder)
+		# P1f (command-center decision 2026-10-31): pending cadre is seated before the gate, as the grid's record_officer_service
+		# does on entry (R1b auto-appointment, TerrainArmy._auto_seat_officers). The seating is committed like any personnel result.
+		if not holder.pending_cadre().is_empty():
+			var before_seat: Dictionary = crowd.roster_post_holders(team_id)
+			_seat_pending_cadre(holder)
+			var seated: Dictionary = crowd.commit_team_personnel(team_id, holder, before_seat)
+			if not seated.ok: push_warning("P1f crowd cadre seating commit refused: %s" % str(seated.get("code", "")))
+		if not bool(holder.team_offices(true).duty_ai) or not holder.pending_cadre().is_empty(): continue
+		var before: Dictionary = crowd.roster_post_holders(team_id)
+		review_team_personnel(holder, controlled, owner)
+		# Always committed: the holder's team_offices() may also have vacated an unqualified holder, as it does on the grid.
+		var committed: Dictionary = crowd.commit_team_personnel(team_id, holder, before)
+		if not committed.ok: push_warning("P1d crowd personnel commit refused: %s" % str(committed.get("code", "")))
+
+## P1f: the grid's own auto-appointment for officers in service without a seat. The order matches record_officer_service:
+## sync the officer order, then auto-seat the officers (TerrainArmy._auto_seat_officers, terrain_army.gd). Only the holder changes
+## here; the caller commits it to crowd truth.
+static func _seat_pending_cadre(holder: Variant) -> void:
+	holder._sync_officer_order()
+	var indices: Array[int] = []
+	for identity: Variant in holder.pending_cadre():
+		var index: int = holder.index_for_identity(int(identity))
+		if index >= 0: indices.append(index)
+	holder._auto_seat_officers(indices)
+	holder._mark_serving_dirty()
 
 static func _stranded(team: TerrainArmy, person_id: int) -> bool:
 	var index := team.index_for_identity(person_id)

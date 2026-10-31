@@ -2429,25 +2429,78 @@ func native_roster(team_id: int) -> Dictionary:
 # P1c (crowd_team_data_survey.md, Option A): refresh a dormant grid holder's team-level commander, officer, office and
 # cohort fields from crowd truth (native formation refs for commanders and officers, roster for offices and cohort) before a
 # crowd-side team call. Read-only for crowd: the holder's hot fields are never read here.
+# P1d: the holder's indices are roster row indices (its combat_units are the roster rows, PLAYER_MEMBER for the roster's
+# player member), as _write_roster_handoff maps them. They are never CrowdPersonOwner (native world) indices.
 func project_team_holder(holder: Variant) -> void:
 	if not is_instance_valid(holder): return
 	var owner: Variant = native_owner(int(holder.team_id))
 	var roster: Dictionary = native_roster(int(holder.team_id))
 	if owner == null or roster.is_empty(): return
 	var state: Dictionary = formation_state(int(owner.formation_index))
-	holder.formal_commander = int(owner.index_for_identity(int(state.get("formal_person", -1))))
-	holder.acting_commander = int(owner.index_for_identity(int(state.get("acting_person", -1))))
-	holder.current_commander = int(owner.index_for_identity(int(state.get("current_person", -1))))
+	holder.formal_commander = _roster_index_for_person(roster, int(state.get("formal_person", -1)))
+	holder.acting_commander = _roster_index_for_person(roster, int(state.get("acting_person", -1)))
+	holder.current_commander = _roster_index_for_person(roster, int(state.get("current_person", -1)))
 	var officers: Array[int] = []
 	for identity: Variant in state.get("officer_persons", []):
-		var index := int(owner.index_for_identity(int(identity)))
-		if index >= 0: officers.append(index)
+		var index := _roster_index_for_person(roster, int(identity))
+		if index != -1: officers.append(index)
 	holder.officer_order = officers
 	var service: Array[int] = []
 	for index: Variant in roster.get("officer_service", []): service.append(int(index))
 	holder.officer_service = service
 	holder.offices = roster.get("offices", {}).duplicate(true)
 	holder.social_cohort = roster.get("social_cohort", {}).duplicate(true)
+
+
+# P1d: the dormant TerrainArmy that holds this crowd team's team data: the original team bound to the crowd (a grid team
+# imported by D5, or a crowd roster restored by a load, activate_loaded). A team deployed straight into the crowd has none:
+# no grid object holds its rows, and an unbound army slot that happens to carry the same team_id is not its holder.
+func team_holder(team_id: int) -> Variant:
+	for plan: Dictionary in _original_team_plans:
+		var source: Variant = plan.get("source")
+		if is_instance_valid(source) and int(source.team_id) == team_id: return source
+	return null
+
+# P1d: the post holders of one roster (offices seats when present, else the officer service), as _roster_post_holders reads them.
+func roster_post_holders(team_id: int) -> Dictionary:
+	var roster: Dictionary = native_roster(team_id)
+	var holders := {}
+	if roster.is_empty(): return holders
+	var offices: Variant = roster.get("offices", null)
+	if offices is Dictionary and not offices.is_empty(): return d5_post_holders(roster)
+	for index: Variant in roster.get("officer_service", []):
+		var identity := d5_person_id(roster, int(index))
+		if identity > 0: holders[identity] = true
+	return holders
+
+# P1d: write a personnel review's result from the holder back to crowd truth. The holder's offices and officer_service go to
+# the roster (saved with it). Native post-holder flags follow the roster (sync validates them). Native officer_persons follow
+# the holder's officer_order. Native commander refs are not touched by a personnel review.
+func commit_team_personnel(team_id: int, holder: Variant, before_posts: Dictionary) -> Dictionary:
+	var owner: Variant = native_owner(team_id)
+	var roster: Dictionary = native_roster(team_id)
+	if owner == null or roster.is_empty() or not is_instance_valid(holder): return SiteRuntime.fail("NO_TARGET", "群眾隊伍不存在")
+	roster["offices"] = holder.offices.duplicate(true)
+	var service: Array[int] = []
+	for index: Variant in holder.officer_service: service.append(int(index))
+	roster["officer_service"] = service
+	var after := roster_post_holders(team_id)
+	var changed := {}
+	for identity: Variant in before_posts: changed[int(identity)] = true
+	for identity: Variant in after: changed[int(identity)] = true
+	for identity: Variant in changed:
+		if not _index_by_id.has(int(identity)): continue
+		var flag := after.has(int(identity))
+		if before_posts.has(int(identity)) == flag: continue
+		if not bool(crowd.set_post_holder(int(_index_by_id[int(identity)]), int(flag))):
+			return SiteRuntime.fail("INVALID_ROLE", "原生職位旗標寫入失敗")
+	var officers: Array = []
+	for index: int in holder.officer_order:
+		var identity := int(holder.combat_identity(index)) # holder (roster) index, not a native world index
+		if identity > 0: officers.append(identity)
+	if not set_formation_fields(int(owner.formation_index), {"officer_persons": officers}):
+		return SiteRuntime.fail("INVALID_ROLE", "原生軍官列表寫入失敗")
+	return SiteRuntime.ok()
 
 
 func native_owner(team_id: int) -> Variant:

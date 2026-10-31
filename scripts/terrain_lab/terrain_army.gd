@@ -3935,7 +3935,9 @@ func duty_authority(duty_id: String, requester_id: int) -> Dictionary:
 
 ## Organization adjustment is the head's own power, not a duty (3.5): only the
 ## present formal commander, stopped and out of combat like reorder_officers.
-func apply_office_plan(requester_id: int, expected_revision: int, ops: Array) -> Dictionary:
+## physical (P1d): the CrowdPersonOwner when this is the dormant holder of a crowd team. The stopped test then reads its live
+## order, movement and rout; the holder's own order and moving_to are frozen at import or load and are not the team's state.
+func apply_office_plan(requester_id: int, expected_revision: int, ops: Array, physical: Variant = null) -> Dictionary:
 	if is_inside_tree() and get_tree().paused: return SiteRuntime.fail("BUSY")
 	if not garrison_feature_id.is_empty(): return SiteRuntime.fail("NO_AUTHORITY", "駐營兵員須先編成")
 	_command_dirty = true
@@ -3944,7 +3946,10 @@ func apply_office_plan(requester_id: int, expected_revision: int, ops: Array) ->
 	var requester := index_for_identity(requester_id)
 	if requester < 0 or requester != formal_commander or requester != current_commander or not command_eligible(requester):
 		return SiteRuntime.fail("NO_AUTHORITY", "只有在場正式隊長可調整本隊職位")
-	if moving_member_count() > 0 or (is_instance_valid(player_member) and player_member.is_moving()) or float(data.site.get("combat_left", 0.0)) > 0.0 or combat_order != CombatOrder.HOLD or is_sustain_routed():
+	var moving: int = moving_member_count() if physical == null else int(physical.moving_member_count())
+	var order: int = combat_order if physical == null else int(physical.combat_order)
+	var routed: bool = is_sustain_routed() if physical == null else bool(physical.is_sustain_routed())
+	if moving > 0 or (is_instance_valid(player_member) and player_member.is_moving()) or float(data.site.get("combat_left", 0.0)) > 0.0 or order != CombatOrder.HOLD or routed:
 		return SiteRuntime.fail("BUSY", "須於停止且脫戰時調整職位")
 	# Two-phase (v2 §3.5): rank changes in the same plan are checked on a virtual
 	# role map first; posts are validated against the final ranks; then both commit.

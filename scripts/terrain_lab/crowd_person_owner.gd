@@ -314,6 +314,17 @@ func has_army() -> bool:
 func is_sustain_routed() -> bool:
 	return bool(crowd_site.formation_state(formation_index).get("routed", false))
 
+## P1d: TerrainArmy.moving_member_count for a crowd team (a member whose moving_to is set). person() refreshes moving_to
+## from native, so each member is read once here; a member with no native sample keeps its last moving_to.
+func moving_member_count() -> int:
+	var count := 0
+	for key: Variant in combat_units.keys():
+		var index := int(key)
+		if not is_member(index): continue
+		person(index, false)
+		if moving_to.get(index, INVALID_CELL) != INVALID_CELL: count += 1
+	return count
+
 func command_eligible(index: int) -> bool:
 	if not is_member(index): return false
 	var state: Dictionary = crowd_site.formation_state(formation_index)
