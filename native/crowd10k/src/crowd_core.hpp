@@ -482,6 +482,10 @@ public:
 	// derived each step (never saved or hashed): the charge candidate of each rider and the impact velocity of it
 	std::vector<int32_t> cav_cand;
 	std::vector<float> cav_cand_vx, cav_cand_vy;
+	// NEKKI 2026-10-31 captive follow: the wish of each field captive walking behind its captor, planned serially before
+	// the soldier stage from start-of-step state (never saved or hashed; re-planned every step).
+	std::vector<uint8_t> follow_on_;
+	std::vector<float> follow_wx_, follow_wy_;
 	std::vector<int64_t> person_id;
 	std::vector<uint8_t> life_ck; // morale checkpoint: 0 conscious, 1 unconscious, 2 dead
 	// presentation only (never read by the rules, not hashed, not saved)
@@ -923,6 +927,7 @@ private:
 	void formation_stage(float dt);
 	void contact_stage(int ch);
 	void soldier_stage(float dt, int ch);
+	void plan_captive_follow(float dt);
 	void compact_slots(Formation &f);
 	bool in_melee_exchange(int i) const; // G6.4: i fights in melee, is the melee target of one, or has an encircle target
 	// body_blind: judge only terrain and siege bodies (convoy anchors pass true so their own body does not block them)

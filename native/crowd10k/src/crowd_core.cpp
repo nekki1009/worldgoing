@@ -1567,6 +1567,75 @@ void World::contact_stage(int ch) {
 	}
 }
 
+// ---------------------------------------------------------------- captive follow (NEKKI 2026-10-31)
+// A field captive (prison 0, no escort or controlled step, able to walk) keeps about kCaptiveFollowBehind cells behind
+// its captor, along the captor's heading, at walk pace. The route uses the escort step's legal moves: a walkable target
+// cell, the terrain edge, siege_person_cell (convoy claims included) and no siege claim. A bounded breadth-first search
+// finds the first legal cell; when there is none the captive waits. The wish then goes through the ordinary soldier
+// mover (resolve, separation, siege bodies). Planned serially before the soldier stage from start-of-step state, so the
+// captor heading (face) is never read while another chunk writes it. Scratch only: not saved, not hashed.
+static constexpr float kCaptiveFollowBehind = 1.5f; // cells behind the captor
+static constexpr float kCaptiveFollowArrive = .25f; // within this distance of the point the captive stands
+static constexpr int kCaptiveFollowMargin = 6;      // search box margin around the captive and the point (cells)
+static constexpr int kCaptiveFollowArea = 4096;     // larger boxes are not searched: the captive waits
+
+void World::plan_captive_follow(float dt) {
+	const int n = soldier_count();
+	follow_on_.assign((size_t)n, 0);
+	follow_wx_.assign((size_t)n, 0.f);
+	follow_wy_.assign((size_t)n, 0.f);
+	for (int i = 0; i < n; ++i) {
+		if (!captive[i] || prison_id[i] != 0 || escort_mode[i] != 0 || escort_goal[i] >= 0 || !alive(i) || ko[i] > 0.0 ||
+		    getup[i] > 0.0 || stagger[i] > 0.0 || knock_t[i] > 0.0 || rescue_of[i] >= 0 || capture_of[i] >= 0 || is_crewed(i))
+			continue;
+		const int g = captor[i];
+		if (g < 0 || g >= n || g == i || !can_act(g)) continue;
+		const float tx = px[g] - std::cos(face[g]) * kCaptiveFollowBehind, ty = py[g] - std::sin(face[g]) * kCaptiveFollowBehind;
+		const int gx = (int)std::floor(tx), gy = (int)std::floor(ty);
+		const int sx = (int)std::floor(px[i]), sy = (int)std::floor(py[i]);
+		if (!terrain.contains(gx, gy) || !terrain.walkable(gx, gy) || !terrain.contains(sx, sy)) continue;
+		const int x0 = std::max(0, std::min(sx, gx) - kCaptiveFollowMargin), x1 = std::min(terrain.w - 1, std::max(sx, gx) + kCaptiveFollowMargin);
+		const int y0 = std::max(0, std::min(sy, gy) - kCaptiveFollowMargin), y1 = std::min(terrain.h - 1, std::max(sy, gy) + kCaptiveFollowMargin);
+		const int bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+		if (bw * bh > kCaptiveFollowArea) continue;
+		const auto at = [&](int x, int y) { return (size_t)(y - y0) * (size_t)bw + (size_t)(x - x0); };
+		const int src = terrain.idx(sx, sy), goal = terrain.idx(gx, gy);
+		std::vector<int> parent((size_t)bw * (size_t)bh, -2), queue;
+		parent[at(sx, sy)] = -1;
+		queue.push_back(src);
+		bool found = src == goal;
+		for (size_t h = 0; h < queue.size() && !found; ++h) {
+			const int c = queue[h], cx = c % terrain.w, cy = c / terrain.w;
+			for (int d : {E, S, W, N}) {
+				const int nx2 = cx + DX[d], ny2 = cy + DY[d];
+				if (nx2 < x0 || nx2 > x1 || ny2 < y0 || ny2 > y1) continue;
+				const int nc = terrain.idx(nx2, ny2);
+				if (parent[at(nx2, ny2)] != -2 || !terrain.walkable(nx2, ny2) || !terrain.edge(cx, cy, d)) continue;
+				if (!siege_person_cell(i, c, nc) || siege_claims_cell(nc, i)) continue;
+				parent[at(nx2, ny2)] = c;
+				queue.push_back(nc);
+				if (nc == goal) { found = true; break; }
+			}
+		}
+		if (!found) continue; // no legal route inside the box: the captive waits
+		int next = goal; // the first legal cell on the route
+		if (src != goal) {
+			int c = goal;
+			while (parent[at(c % terrain.w, c / terrain.w)] != src) c = parent[at(c % terrain.w, c / terrain.w)];
+			next = c;
+		}
+		float wx = tx, wy = ty;
+		if (next != goal) { wx = (float)(next % terrain.w) + .5f; wy = (float)(next / terrain.w) + .5f; }
+		const float ex = wx - px[i], ey = wy - py[i], ed = std::sqrt(ex * ex + ey * ey);
+		if (next == goal && ed <= kCaptiveFollowArrive) continue; // at the point behind the captor: stands
+		if (ed <= 1e-5f) continue;
+		const float sp = std::min(cfg.march_speed, ed / dt); // walk pace, never past the wish point (escort step rule)
+		follow_wx_[i] = ex / ed * sp;
+		follow_wy_[i] = ey / ed * sp;
+		follow_on_[i] = 1;
+	}
+}
+
 // ---------------------------------------------------------------- soldier layer
 void World::soldier_stage(float dt, int ch) {
 	const int n = soldier_count();
@@ -1633,12 +1702,8 @@ void World::soldier_stage(float dt, int ch) {
 			}
 		} else if (captive[i]) {
 			st = S_CAPTIVE;
-			int g = captor[i];
-			if (!lying && g >= 0 && can_act(g)) { // escort: follow one cell behind the guard
-				float gx = px[g] - std::cos(face[g]) * 0.8f, gy = py[g] - std::sin(face[g]) * 0.8f;
-				float sx = gx - p_x, sy = gy - p_y, sd = std::sqrt(sx * sx + sy * sy);
-				if (sd > 0.2f) { float sp = std::min(cfg.march_speed * 1.2f, sd * 3.f); dvx = sx / sd * sp; dvy = sy / sd * sp; }
-			}
+			// NEKKI 2026-10-31: a field captive walks behind its captor (wish planned by plan_captive_follow); otherwise it stands
+			if (i < (int)follow_on_.size() && follow_on_[i]) { dvx = follow_wx_[i]; dvy = follow_wy_[i]; }
 		} else if (lying) {
 			st = S_DOWN;
 			if (knock_t[i] > 0) { dvx = knock_dx[i]; dvy = knock_dy[i]; speed_cap = 1e9f; } // a knockback still carries the falling body
@@ -2437,6 +2502,7 @@ void World::step_body(float dt, const std::vector<WorkFatigueState> *work_plan) 
 	for (int i = 0; i < n; ++i) action_motion[i] = {px[i], py[i], px[i], py[i]};
 	advance_siege_compounds(dt);
 	convoy_stage(dt); // convoy anchors advance before the crew are steered to their slots
+	plan_captive_follow(dt); // serial: captive wishes from start-of-step positions and captor headings
 	pool_.run(chunks_, [&](int ch) { soldier_stage(dt, ch); });
 	std::swap(px, nx); std::swap(py, ny);
 	capture_work_point_runners(); // Same ORIGINAL motion phase; before projectile/exchange death.

@@ -571,7 +571,7 @@ static void surrender_contract() {
   const float mdx=w.px[2]-cx0, mdy=w.py[2]-cy0;
   REQUIRE(mdx*mdx+mdy*mdy>0.25f);
   const float fx=w.px[0]-w.px[2], fy=w.py[0]-w.py[2];
-  REQUIRE(fx*fx+fy*fy<=1.6f*1.6f);
+  REQUIRE(fx*fx+fy*fy<=2.f*2.f); // NEKKI 2026-10-31: the point behind the captor is 1.5 cells (was 0.8; gap limit 1.6)
   REQUIRE(std::fabs(w.px[0]-vx0)+std::fabs(w.py[0]-vy0)>0.5f);
   std::printf("SURRENDER_FOLLOW captor_moved=%.3f captive_gap=%.3f\n",std::sqrt(mdx*mdx+mdy*mdy),std::sqrt(fx*fx+fy*fy));
  }
@@ -637,6 +637,115 @@ static void surrender_contract() {
  }
 }
 
+// NEKKI 2026-10-31: a field captive walks behind its captor (legal route, no wall crossing), stands when the captor dies,
+// yields to an explicit escort order, never moves in a prison, and keeps 1/4-thread parity.
+static void follow_world(World &w) {
+ w.terrain.allocate(16,12);w.cfg.ai=false;w.cfg.auto_capture=false;w.cfg.rescue_seek_cells=0;w.cfg.bleed_per_game_hour=0;w.combat_left=1e9;w.cfg.chunk=1; // one soldier per chunk: the parity legs cross chunk boundaries
+ rules::Equip eq;eq.family=rules::F_LONGSWORD;eq.material=rules::M_IRON;
+ int guard_f=w.add_formation(0,4.5f,6.5f,0,1,1,T_MELEE,30);
+ int prisoner_f=w.add_formation(1,3.5f,6.5f,0,1,1,T_MELEE,30);
+ w.add_soldier(guard_f,eq,R_CAPTAIN,100);   // soldier 0: captor
+ w.add_soldier(prisoner_f,eq,R_CAPTAIN,200); // soldier 1: captive
+ w.finalize();
+ for(auto &f:w.formations) f.ai_enabled=false;
+ w.set_hostile(0,1,true);w.events.clear();
+ auto captive=w.get_soldier_state(1);captive.x=3.5f;captive.y=6.5f;captive.captive=1;captive.captor_person=w.person_id[0];w.set_soldier_state(1,captive);
+ auto guard=w.get_soldier_state(0);guard.x=4.5f;guard.y=6.5f;w.set_soldier_state(0,guard);
+}
+static void captive_follow_contract() {
+ // Open ground: the captive trails 1.5 cells behind a walking captor, never beyond 2 cells, and stops when the captor stops.
+ {
+  World w(1);follow_world(w);
+  w.order_move(0,14.5f,6.5f,0);
+  float worst=0.f;
+  for(int n=0;n<400;++n) {
+   step(w);
+   if(n>=30) { const float dx=w.px[0]-w.px[1], dy=w.py[0]-w.py[1]; worst=std::max(worst,std::sqrt(dx*dx+dy*dy)); }
+  }
+  REQUIRE(w.captive[1]==1 && w.captor[1]==0);
+  REQUIRE(w.px[0]>12.f);            // the captor walked well east
+  REQUIRE(worst<=2.f);              // stayed within 2 cells while it walked
+  REQUIRE(w.px[1]>w.px[0]-2.f && w.px[1]<w.px[0]-.5f);
+  const float stop_x=w.px[1],stop_y=w.py[1];
+  for(int n=0;n<60;++n) step(w);
+  REQUIRE(std::fabs(w.px[1]-stop_x)<.05f && std::fabs(w.py[1]-stop_y)<.05f); // captor stopped: captive stands
+  REQUIRE(std::fabs(w.vx[1])<.01f && std::fabs(w.vy[1])<.01f);
+  std::printf("CAPTIVE_FOLLOW worst_gap=%.3f captor_x=%.3f captive_x=%.3f\n",worst,w.px[0],w.px[1]);
+  continuation(w);
+ }
+ // A wall with a gap at the bottom row: the captive goes around through legal cells, never through the wall.
+ {
+  World w(1);follow_world(w);
+  for(int y=0;y<11;++y) w.terrain.static_blocked[w.terrain.idx(8,y)]=1;
+  w.terrain.build_edges();
+  auto guard=w.get_soldier_state(0);guard.x=10.5f;guard.y=6.5f;w.set_soldier_state(0,guard);
+  w.order_move(0,10.5f,6.5f,0); // the captor walks round the gap itself; its formation slot would otherwise pull it through the wall
+  bool through_wall=false;
+  for(int n=0;n<600;++n) {
+   step(w);
+   const int cx=(int)std::floor(w.px[1]),cy=(int)std::floor(w.py[1]);
+   if(cx==8 && cy<11) through_wall=true;
+  }
+  REQUIRE(!through_wall);
+  REQUIRE(w.px[1]>8.f);                                     // went around to the captor's side
+  REQUIRE(std::hypot(w.px[0]-w.px[1],w.py[0]-w.py[1])<=2.5f);
+  std::printf("CAPTIVE_FOLLOW_GAP_ROUTE captive=(%.2f,%.2f) captor=(%.2f,%.2f)\n",w.px[1],w.py[1],w.px[0],w.py[0]);
+  continuation(w);
+ }
+ // A closed wall: no legal route, so the captive waits on its own side and never enters the wall.
+ {
+  World w(1);follow_world(w);
+  for(int y=0;y<12;++y) w.terrain.static_blocked[w.terrain.idx(8,y)]=1;
+  w.terrain.build_edges();
+  auto guard=w.get_soldier_state(0);guard.x=10.5f;guard.y=6.5f;w.set_soldier_state(0,guard);
+  w.order_move(0,10.5f,6.5f,0);
+  const float x0=w.px[1],y0=w.py[1];
+  for(int n=0;n<300;++n) { step(w); REQUIRE(w.px[1]<8.f); }
+  REQUIRE(std::fabs(w.px[1]-x0)<.1f && std::fabs(w.py[1]-y0)<.1f);
+  continuation(w);
+ }
+ // Captor dies: the captive stands where it is (the existing escape and recapture rules are untouched).
+ {
+  World w(1);follow_world(w);
+  for(int n=0;n<30;++n) step(w);
+  w.apply_contact(0,1000.0,0.0);
+  REQUIRE(!w.alive(0));
+  step(w);
+  const float x0=w.px[1],y0=w.py[1];
+  for(int n=0;n<60;++n) step(w);
+  REQUIRE(w.captive[1]==1);
+  REQUIRE(std::fabs(w.px[1]-x0)<.02f && std::fabs(w.py[1]-y0)<.02f);
+  continuation(w);
+ }
+ // An explicit escort order takes precedence: the captive walks to the ordered cell and does not drift behind the captor.
+ {
+  World w(1);follow_world(w);
+  REQUIRE(w.order_escort_step(1,0,w.terrain.idx(3,5)));
+  for(int n=0;n<60;++n) step(w);
+  REQUIRE(w.escort_mode[1]==1 && w.escort_goal[1]==-1);
+  REQUIRE(std::fabs(w.px[1]-3.5f)<.05f && std::fabs(w.py[1]-5.5f)<.05f);
+  continuation(w);
+ }
+ // A prisoner is a stationary body: no follow while confined, even with a moving captor.
+ {
+  World w(1);follow_world(w);
+  auto inmate=w.get_soldier_state(1);inmate.captive=1;inmate.captor_person=w.person_id[0];inmate.prison_id=7;w.set_soldier_state(1,inmate);
+  const float x0=w.px[1],y0=w.py[1];
+  w.order_move(0,14.5f,6.5f,0);
+  for(int n=0;n<120;++n) { step(w); REQUIRE(w.px[1]==x0 && w.py[1]==y0); }
+  REQUIRE(w.prison_id[1]==7);
+  continuation(w);
+ }
+ // 1, 2 and 4 threads agree step by step through a walk, a stop and a mid-walk save/load.
+ {
+  World a(1),b(2),d(4);follow_world(a);follow_world(b);follow_world(d);
+  a.order_move(0,14.5f,6.5f,0);b.order_move(0,14.5f,6.5f,0);d.order_move(0,14.5f,6.5f,0);
+  for(int n=0;n<200;++n) { step(a);step(b);step(d);REQUIRE(a.state_hash()==b.state_hash());REQUIRE(a.state_hash()==d.state_hash()); if(n==100){World c(1);REQUIRE(c.load(a.save()));REQUIRE(c.state_hash()==a.state_hash());} }
+  REQUIRE(a.captive[1]==1 && b.captive[1]==1 && d.captive[1]==1);
+  continuation(a);
+ }
+}
+
 static void fuzz() {
  World base(1);setup(base,1);auto blob=base.save();World numeric(1);REQUIRE(numeric.load(blob));numeric.hp[0]=77;auto mod=numeric.save();size_t hp_offset=0;while(hp_offset<blob.size() && blob[hp_offset]==mod[hp_offset])++hp_offset;
  // Find the complete double containing the changed byte using the uniquely known 100.0 bytes.
@@ -660,6 +769,6 @@ int main(int argc,char**argv) {
  setvbuf(stdout,nullptr,_IONBF,0);
  if(argc>1 && std::string(argv[1])=="--fuzz")fuzz();
  else if(argc>2 && std::string(argv[1])=="--replay")replay_blob(argv[2],argc>3?std::strtoull(argv[3],nullptr,10):0);
- else{orders();retreat_contract();c_api_order_codes();imports_append_sustain();append_after_death_roundtrip();hunger();death_fatigue_event_contract();safe_load();prison_contract();building_geometry_contract();military_building_contract();post_holder_contract();surrender_contract();}
+ else{orders();retreat_contract();c_api_order_codes();imports_append_sustain();append_after_death_roundtrip();hunger();death_fatigue_event_contract();safe_load();prison_contract();building_geometry_contract();military_building_contract();post_holder_contract();surrender_contract();captive_follow_contract();}
  std::printf("C2/C3 checks=%d failures=%d\n",checks,failures);return failures?1:0;
 }
