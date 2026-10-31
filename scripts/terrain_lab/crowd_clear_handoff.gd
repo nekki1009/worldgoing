@@ -519,6 +519,10 @@ static func prepare(host: Node) -> Dictionary:
 			snapshot.tactical_ai.merge(original.tactical_ai, true)
 		snapshot.erase("crowd")
 		snapshot.erase("crowd_formation")
+		# Pre-seating marker: defaults come from a fresh capture (cadre_seated true), so the returning cadre would skip the
+		# grid's entry auto-appointment and stay pending (MIGRATION_REQUIRED on the next deploy). Absent makes the restore run
+		# TerrainArmy._auto_seat_officers as the grid does on entry. valid_combat_state accepts absent, not false.
+		snapshot.erase("cadre_seated")
 		snapshot["units"] = []
 		for index in range(original.units.size()): snapshot.units.append(_ordinary_row(host, original.units[index], formation, index))
 		var mapped: Dictionary = host._write_roster_handoff(snapshot, formation)

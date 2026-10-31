@@ -10,12 +10,13 @@ extends SceneTree
 ##   duty_review_combat_skips   the same review changes nothing in combat, and appoints once the fight is over
 ##   cadre_auto_seated_peace    the deployed cadre (officers in service, no seat) is seated by the peaceful review, as on the grid
 ##   saveload_duty_review       the AI head's appointment survives a crowd save and the live load
+##   day_settlement_bound_holder day settlement uses the bound holder (CrowdSite.team_holder) when an unbound army slot shares its team_id
 ## Run: -- --crowd --crowd-test <fresh run_id> --peace-case <case> --crowd-atlas-root res://output/site_siege_close_20261004/equipment_atlas_runtime
 ## Fails fast on the first failed check.
 const DT := 1.0 / 30.0
 const CASES := ["family_vacancy_peace", "faction_members_crowd", "family_vacancy_combat_waits", "saveload", "peace_guard_contract",
 	"day_settlement_peace", "day_settlement_combat_day_bookkeeping", "family_vacancy_deadline", "saveload_day_settlement",
-	"duty_review_peace", "duty_review_combat_skips", "saveload_duty_review", "cadre_auto_seated_peace"]
+	"duty_review_peace", "duty_review_combat_skips", "saveload_duty_review", "cadre_auto_seated_peace", "day_settlement_bound_holder"]
 const DutyAI := preload("res://scripts/terrain_lab/site_duty_ai.gd")
 const SiteSocial := preload("res://scripts/terrain_lab/site_social.gd")
 const VacancyEpisode := preload("res://scripts/terrain_lab/site_vacancy_episode.gd")
@@ -106,6 +107,8 @@ func _run() -> void:
 			_duty_review_case(friend_team, true)
 		"cadre_auto_seated_peace":
 			_cadre_seated_case(friend_team)
+		"day_settlement_bound_holder":
+			_day_bound_holder_case(friend_team)
 		"saveload_duty_review":
 			_saveload_duty_case(friend_team)
 
@@ -302,6 +305,39 @@ func _day_settlement_case(friend_team: Dictionary, in_combat: bool) -> void:
 	if not check(site.person_owner(soldier).is_member(site.person_owner(soldier).index_for_identity(soldier)), "settlement moves nobody: the soldier stays a member"): return
 	site_dict["combat_left"] = 0.0
 	print("PEACE1 GATE OK: %s" % ("day_settlement_combat_day_bookkeeping" if in_combat else "day_settlement_peace"))
+	quit(0)
+
+# P1d: day settlement binds the team holder through CrowdSite.team_holder. An unbound army slot that shares the team_id is moved
+# to the front of combat_armies (where a team_id-only match finds it first). The bound holder's cohort reaches the roster; the decoy
+# stays untouched.
+func _day_bound_holder_case(friend_team: Dictionary) -> void:
+	var team_id := int(friend_team.team_id)
+	if not _bind_duty_team(team_id, int(friend_team.person_ids[0])): return
+	# The reload replaces the Site dictionary, so it is read after the bind (a dictionary taken before it goes stale).
+	var site_dict: Dictionary = lab.terrain.site
+	site_dict["combat_left"] = 0.0
+	var holder: Variant = site.team_holder(team_id)
+	var decoy: Variant = null
+	for army: Variant in lab.combat_armies:
+		if is_instance_valid(army) and army != holder and not army.has_army():
+			decoy = army
+			break
+	if decoy == null:
+		lab._ensure_army_slots(lab.combat_armies.size() + 1)
+		decoy = lab.combat_armies[lab.combat_armies.size() - 1]
+	if not check(decoy != null and decoy != holder and site.team_holder(team_id) == holder, "an unbound army slot is available as the decoy"): return
+	decoy.team_id = team_id
+	lab.combat_armies.erase(decoy)
+	lab.combat_armies.insert(0, decoy)
+	DutyAI.review(lab) # day D
+	site_dict.minute = int(site_dict.minute) + 1440
+	DutyAI.review(lab)
+	var roster: Dictionary = site.native_roster(team_id)
+	var day := int(site_dict.minute) / 1440
+	if not check(int(roster.get("social_cohort", {}).get("day", -1)) == day, "the day settlement writes the bound holder's cohort to the roster | %s" % _duty_diagnostic(team_id), roster.get("social_cohort", {})): return
+	if not check(decoy.social_cohort.is_empty(), "the unbound decoy sharing the team_id is not settled", decoy.social_cohort): return
+	site_dict["combat_left"] = 0.0
+	print("PEACE1 GATE OK: day_settlement_bound_holder day=%d" % day)
 	quit(0)
 
 # Family head vacant at peace for several days: the open episode's proven days come from the day settlement stamps.

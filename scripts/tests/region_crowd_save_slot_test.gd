@@ -117,19 +117,6 @@ func _deploy(defender_cells: Array[Vector2i], attacker_cells: Array[Vector2i], l
 	var entered: Dictionary = lab.crowd_site.deploy(sides, formations)
 	return _check(entered.get("ok", false) and lab.crowd_site.active, "two-faction native crowd deploys (%s)" % label, entered)
 
-## Clearing a crowd materializes its rostered officers (officer_service without seats) as
-## 待分職幹部 (MIGRATION_REQUIRED), and a new deploy refuses them. Resolve them through the
-## production office release API (site_controller _office_orgs "release" =
-## TerrainArmy.record_officer_service(..., false)); the deploy check itself stays unchanged.
-func _release_pending_cadre(label: String) -> bool:
-	for team: TerrainArmy in lab.combat_armies:
-		if not team.combat_enabled or not team.has_army(): continue
-		for identity: int in team.pending_cadre():
-			var released: Dictionary = team.record_officer_service([team.index_for_identity(identity)], false)
-			if not _check(released.get("ok", false) and not team.pending_cadre().has(identity), "pending cadre released through the office release API (%s)" % label,
-				{"team": team.team_id, "identity": identity, "result": released, "pending": team.pending_cadre()}): return false
-	return true
-
 func _mode() -> Dictionary:
 	return slot.region_registry().modes.get(site_id, {})
 
@@ -216,7 +203,11 @@ func _run() -> void:
 	var mode_back := _mode()
 	if not _check(str(mode_back.get("backend", "")) == "gd" and str(mode_back.get("mode", "")) == "live" and int(mode_back.get("revision", -1)) == int(mode_native.revision) + 1,
 		"crowd clear re-activates the live owner with backend gd", mode_back): return
-	if not _release_pending_cadre("after first clear"): return
+	# The clear seats its own cadre on the returning holder (no manual release): nothing is pending before the redeploy.
+	var pending_after_clear: Array = []
+	for team: TerrainArmy in lab.combat_armies:
+		if team.combat_enabled and team.has_army(): pending_after_clear.append_array(team.pending_cadre())
+	if not _check(pending_after_clear.is_empty(), "the clear seats its returning cadre; none is pending before the redeploy", pending_after_clear): return
 	var defenders: Array[Vector2i] = [Vector2i(40, 44), Vector2i(41, 44)]
 	var attackers: Array[Vector2i] = [Vector2i(70, 74), Vector2i(71, 74)]
 	if not _deploy(defenders, attackers, "second"): return

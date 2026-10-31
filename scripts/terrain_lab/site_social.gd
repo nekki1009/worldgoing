@@ -308,12 +308,14 @@ static func _settle_crowd_site(lab: Variant) -> void:
 	var crowd: Variant = lab.crowd_site
 	for owner: Variant in lab.team_owners():
 		if not is_instance_valid(owner): continue
-		var holder: Variant = _crowd_holder(lab, int(owner.team_id))
+		# P1d: the bound holder (CrowdSite.team_holder), never an unbound army slot that shares the team_id. A team with no bound
+		# holder (deployed straight into the crowd) still settles its cohort, through its roster alone.
+		var holder: Variant = crowd.team_holder(int(owner.team_id))
 		var offices: Dictionary = {}
 		var formal := -1
+		if holder != null: crowd.project_team_holder(holder)
+		if full: _settle_crowd_cohort(owner, holder, site_id, today)
 		if holder != null:
-			crowd.project_team_holder(holder)
-			if full: _settle_crowd_cohort(owner, holder, site_id, today)
 			offices = holder.team_offices(true)
 			# P1d: the holder's formal_commander is a roster index; the owner's units are native world indices. Compare people.
 			formal = int(crowd.formation_state(int(owner.formation_index)).get("formal_person", -1))
@@ -333,15 +335,14 @@ static func _settle_crowd_site(lab: Variant) -> void:
 				"eligible_for_post": member and owner.combat_can_act(unit) and identity != controlled})
 	if full: _last_full_day[lab_key] = today
 
-static func _crowd_holder(lab: Variant, team_id: int) -> Variant:
-	for holder: Variant in lab.combat_armies:
-		if is_instance_valid(holder) and int(holder.team_id) == team_id: return holder
-	return null
-
 ## §8.1 under crowd: the same casualty rule as _settle_cohort, on the owner's rows and native hp. The cohort is the holder's
 ## team-level value and is written back to the roster so a crowd save keeps it.
 static func _settle_crowd_cohort(owner: Variant, holder: Variant, site_id: String, today: int) -> void:
-	var cohort: Dictionary = holder.social_cohort
+	# The cohort is the bound holder's (projected from the roster) when one exists, else the roster's own value.
+	var roster: Dictionary = owner.crowd_site.native_roster(int(owner.team_id))
+	var cohort: Dictionary = {}
+	if holder != null: cohort = holder.social_cohort
+	else: cohort = roster.get("social_cohort", {})
 	if not cohort.is_empty() and int(cohort.day) < today and not (cohort.base as Array).is_empty():
 		var day := int(cohort.day)
 		var dead := 0
@@ -362,9 +363,9 @@ static func _settle_crowd_cohort(owner: Variant, holder: Variant, site_id: Strin
 		var base: Array = []
 		for key: Variant in owner.combat_units.keys():
 			if owner.is_member(int(key)) and not owner.member_gone(int(key)): base.append(owner.combat_identity(int(key)))
-		holder.social_cohort = {"day": today, "base": base}
-		var roster: Dictionary = owner.crowd_site.native_roster(int(owner.team_id))
-		if not roster.is_empty(): roster["social_cohort"] = holder.social_cohort.duplicate(true)
+		var fresh := {"day": today, "base": base}
+		if holder != null: holder.social_cohort = fresh.duplicate(true)
+		if not roster.is_empty(): roster["social_cohort"] = fresh.duplicate(true)
 
 ## §8.1 battle casualties: the cohort is who was alive at the day's start (or
 ## at the team's formation that day). Battle deaths are rows of this team killed
