@@ -17,15 +17,36 @@ func init(owner: Variant) -> void:
 func _person(identity: int) -> Dictionary:
 	return controller._supply_person(identity)
 
-func _member(team: TerrainArmy, identity: int) -> bool:
-	var index := team.index_for_identity(identity)
+func _member(team: Variant, identity: int) -> bool:
+	var index: int = team.index_for_identity(identity)
 	return index >= 0 and (index == TerrainArmy.PLAYER_MEMBER or team.is_member(index))
 
-func _team(identity: int) -> TerrainArmy:
-	for team: TerrainArmy in controller.lab.combat_armies:
-		if team.combat_enabled and team.team_id == identity:
+# P1e: a team is a grid army, or while the crowd is active a native crowd owner (lab.team_owners). Both expose the team
+# interface this file reads; the crowd owner has no player_member and keeps its members in a dictionary.
+func _team(identity: int) -> Variant:
+	for team: Variant in controller.lab.team_owners():
+		if is_instance_valid(team) and team.combat_enabled and int(team.team_id) == identity:
 			return team
 	return null
+
+# P1e: member indices of a team, in order. A crowd owner keys its rows by index; a grid army has a row per index.
+func _member_indices(team: Variant) -> Array:
+	if team.combat_units is Dictionary: return team.combat_units.keys()
+	var indices: Array = []
+	for index in range(team.combat_units.size()): indices.append(index)
+	return indices
+
+# P1e: the moving cell of a member. A crowd owner refreshes its moving state through person() (native movement).
+func _moving_cell(team: Variant, index: int) -> Vector2i:
+	if team is CrowdPersonOwner:
+		team.person(index, false)
+		return team.moving_to.get(index, TerrainArmy.INVALID_CELL)
+	return team.moving_to[index]
+
+# P1e: the player member of a grid army. A crowd owner has none (its controlled person is an ordinary crowd member).
+func _player_member(team: Variant) -> Variant:
+	if team is CrowdPersonOwner: return null
+	return team.player_member
 
 func _adjacent(first: Vector2i, second: Vector2i) -> bool:
 	var offset := second - first
@@ -37,8 +58,8 @@ func _command_receiver(receiver: Dictionary) -> bool:
 	if int(receiver.person_id) == controller.lab.controlled_person_id():
 		return true
 	# Joined Actors remain their actual Actor, not an invented Army row.
-	for team: TerrainArmy in controller.lab.combat_armies:
-		if team.combat_enabled and _member(team, int(receiver.person_id)):
+	for team: Variant in controller.lab.team_owners():
+		if is_instance_valid(team) and team.combat_enabled and _member(team, int(receiver.person_id)):
 			return team.command_eligible(team.current_commander) and team.combat_identity(team.current_commander) == controller.lab.controlled_person_id()
 	return false
 
@@ -63,11 +84,11 @@ func source(specification: Dictionary, receiver: Dictionary) -> Dictionary:
 			origin = sender.cell
 			original_owner = sender.owner
 		"team":
-			var team := _team(int(specification.get("team_id", -1)))
+			var team: Variant = _team(int(specification.get("team_id", -1)))
 			sender = _person(int(specification.get("representative_id", -1)))
 			if team == null or sender.is_empty() or not _member(team, int(sender.person_id)) or not controller._team_stopped(team):
 				return {}
-			var requester := team.index_for_identity(controller.lab.controlled_person_id())
+			var requester: int = team.index_for_identity(controller.lab.controlled_person_id())
 			if requester != team.current_commander or not team.command_eligible(requester):
 				return {}
 			var entry: Dictionary = controller._supply_entry(team)
@@ -86,7 +107,7 @@ func source(specification: Dictionary, receiver: Dictionary) -> Dictionary:
 		"vehicle":
 			var vehicle: Dictionary = data.site.get("vehicles", {}).get(str(specification.get("vehicle_id", "")), {})
 			if not controller.vehicles.is_ship(vehicle) or not vehicle.move.is_empty() or not controller.vehicles.ship_job(str(vehicle.id)).is_empty(): return {}
-			var team := _team(int(vehicle.team_id))
+			var team: Variant = _team(int(vehicle.team_id))
 			if team == null or not controller.vehicles._authorized(team, controller.lab.controlled_person_id(), 0): return {}
 			if not _command_receiver(receiver): return {}
 			sender = receiver
@@ -140,11 +161,25 @@ func source(specification: Dictionary, receiver: Dictionary) -> Dictionary:
 	return {"kind": kind, "sender": sender, "stock": stock, "opened": opened,
 		"version_owner": version_owner, "version_field": version_field, "origin": origin, "owner": original_owner, "source_ship": source_ship}
 
-func _destination(team: TerrainArmy, receiver_id: int, entry: Dictionary) -> Dictionary:
+## P1o diagnostic: why source() returns empty for a person source: the controlled sender, the receiver, their readiness clauses,
+## and the adjacency (Manhattan distance and terrain step). Writes nothing.
+func source_breakdown(specification: Dictionary, receiver: Dictionary) -> String:
+	var kind := str(specification.get("kind", "person"))
+	if kind != "person": return "kind=%s" % kind
+	var sender := _person(controller.lab.controlled_person_id())
+	if sender.is_empty(): return "sender_empty(controlled=%s)" % str(controller.lab.controlled_person_id())
+	var text := "sender[%s] receiver[%s]" % [controller.delivery_person_breakdown(sender), controller.delivery_person_breakdown(receiver)]
+	if not receiver.is_empty() and sender.cell != receiver.cell:
+		var offset: Vector2i = receiver.cell - sender.cell
+		text += " adjacent_manhattan=%d can_step=%s" % [absi(offset.x) + absi(offset.y), str(controller.lab.terrain.can_step(sender.cell, receiver.cell))]
+	text += " faction=%s/%s" % [str(sender.faction), str(receiver.faction)]
+	return text
+
+func _destination(team: Variant, receiver_id: int, entry: Dictionary) -> Dictionary:
 	if entry.is_empty(): return {"inventory": {}, "opened": {"open_rations": 0.0}, "key": "", "exists": false}
 	return controller._team_food_endpoint(team, receiver_id, true)
 
-func _capacity(team: TerrainArmy, entry: Dictionary, endpoint: Dictionary, resolved: Dictionary, quantity: float) -> bool:
+func _capacity(team: Variant, entry: Dictionary, endpoint: Dictionary, resolved: Dictionary, quantity: float) -> bool:
 	var internal := not entry.is_empty() and is_same(resolved.version_owner, entry)
 	var held := 0.0 if entry.is_empty() else Sustain.rations(entry.sustain, controller._supply_stock(entry))
 	if held + (0.0 if internal else quantity) > controller.team_food_capacity(team) + Sustain.EPS: return false
@@ -153,25 +188,33 @@ func _capacity(team: TerrainArmy, entry: Dictionary, endpoint: Dictionary, resol
 	var vehicle: Dictionary = controller.lab.terrain.site.vehicles.get(target_ship, {})
 	return controller.vehicles.ship_load(target_ship) + quantity <= float(controller.vehicles.capacity_of(vehicle)) + Sustain.EPS
 
-func prepare(team: TerrainArmy, quantity: float, receiver_id: int, specification: Dictionary) -> Dictionary:
+func prepare(team: Variant, quantity: float, receiver_id: int, specification: Dictionary) -> Dictionary:
 	if not is_finite(quantity) or quantity <= 0.0 or quantity > 30.0:
 		return Runtime.fail("INVALID", "每批1–30日份，或來源未滿1日份的整批已拆餐份")
+	# P1n: the peace guard comes before the reachability and source checks, as the other peacetime commands do: in combat the
+	# refusal is CROWD_ACTIVE, not UNREACHABLE. The controlled person and the representative are the identities that move.
+	var first_peace: Dictionary = controller.person_actions.crowd_peace_guard([controller.lab.controlled_person_id(), receiver_id])
+	if not first_peace.ok: return first_peace
 	var receiver := _person(receiver_id)
 	if team == null or not team.combat_enabled or receiver.is_empty() or not _member(team, receiver_id) or not controller._team_stopped(team):
 		return Runtime.fail("NO_TARGET", "接收者須是停止隊伍的實際自由成員")
 	var kind := str(specification.get("kind", "person"))
 	if kind == "team":
-		var supplying := _team(int(specification.get("team_id", -1)))
+		var supplying: Variant = _team(int(specification.get("team_id", -1)))
 		if supplying == null:
 			return Runtime.fail("NO_TARGET", "原供糧隊伍不存在")
-		var requester := supplying.index_for_identity(controller.lab.controlled_person_id())
+		var requester: int = supplying.index_for_identity(controller.lab.controlled_person_id())
 		if requester != supplying.current_commander or not supplying.command_eligible(requester):
 			return Runtime.fail("NO_AUTHORITY", "只有原供糧隊當前合格指揮者可調用其共有糧")
 	elif kind in ["depot", "ground"] and not _command_receiver(receiver):
 		return Runtime.fail("NO_AUTHORITY", "须由本人或本人有權指派的原代表實際搬取")
 	var resolved := source(specification, receiver)
 	if resolved.is_empty():
-		return Runtime.fail("UNREACHABLE", "來源權限／代表／實際相鄰可達位置不合；未遠端扣物")
+		return Runtime.fail("UNREACHABLE", "來源權限／代表／實際相鄰可達位置不合；未遠端扣物 | " + source_breakdown(specification, receiver))
+	# P1e (NEKKI_DECISION_20261031_crowd_peacetime_systems): under crowd a delivery starts in peace only. The carrier does not
+	# walk: the delivery is a timed job that needs the source and receiver adjacent at start and at commit (source/_adjacent).
+	var peace: Dictionary = controller.person_actions.crowd_peace_guard([int(resolved.sender.person_id), receiver_id])
+	if not peace.ok: return peace
 	if not Sustain._number(resolved.opened.get("open_rations", 0.0), 0.0, 1000000.0) or not Runtime._resource_stack(resolved.stock):
 		return Runtime.fail("INVALID_SUSTAIN", "原口糧／開封份資料無效")
 	if int(resolved.version_owner[resolved.version_field]) >= 2147483646:
@@ -225,7 +268,7 @@ func prepare(team: TerrainArmy, quantity: float, receiver_id: int, specification
 		"source_food": food, "source_open_amount": opened, "items": items, "open_amount": take_open,
 		"target_location": str(endpoint.key), "quantity": quantity, "left": 2.0 + 0.2 * quantity, "pending": false}})
 
-func valid(team: TerrainArmy, entry: Dictionary) -> bool:
+func valid(team: Variant, entry: Dictionary) -> bool:
 	var job: Dictionary = entry.delivery
 	if job.is_empty() or int(job.requester_id) != controller.lab.controlled_person_id() or not _member(team, int(job.representative_id)) or not controller._team_stopped(team):
 		return false
@@ -251,13 +294,50 @@ func valid(team: TerrainArmy, entry: Dictionary) -> bool:
 			return false
 	return int(entry.revision) < 2147483646 and Runtime.can_pay(resolved.stock, job.items) and _capacity(team, entry, endpoint, resolved, float(job.quantity))
 
-func commit(team: TerrainArmy, entry: Dictionary) -> Dictionary:
+## P1j diagnostic: the first condition of valid() that fails, with its values. Same reads as valid(), in the same order; writes nothing.
+func valid_breakdown(team: Variant, entry: Dictionary) -> String:
+	var job: Dictionary = entry.get("delivery", {})
+	if job.is_empty(): return "no_job"
+	if int(job.requester_id) != controller.lab.controlled_person_id(): return "requester %s != controlled %s" % [str(job.requester_id), str(controller.lab.controlled_person_id())]
+	if not _member(team, int(job.representative_id)): return "representative_not_member"
+	var stopped: String = controller.team_stopped_breakdown(team)
+	if stopped != "ok": return "team_not_stopped:" + stopped
+	var receiver := _person(int(job.representative_id))
+	var resolved := source(job.source_spec, receiver)
+	if resolved.is_empty(): return "source_empty receiver_cell=%s receiver_empty=%s" % [str(receiver.get("cell", "")), str(receiver.is_empty())]
+	var endpoint := _destination(team, int(job.representative_id), entry)
+	if endpoint.is_empty(): return "endpoint_empty"
+	if str(endpoint.key) != str(job.get("target_location", "")): return "location %s != %s" % [str(endpoint.key), str(job.get("target_location", ""))]
+	var sender: Dictionary = resolved.sender
+	if int(sender.person_id) != int(job.player_id): return "sender_id %s != %s" % [str(sender.person_id), str(job.player_id)]
+	if sender.cell != job.source_cell: return "source_cell %s != %s" % [str(sender.cell), str(job.source_cell)]
+	if receiver.cell != job.target_cell: return "target_cell %s != %s" % [str(receiver.cell), str(job.target_cell)]
+	if resolved.origin != job.source_origin: return "origin %s != %s" % [str(resolved.origin), str(job.source_origin)]
+	if int(sender.hit) != int(job.player_hit): return "player_hit %s != %s" % [str(sender.hit), str(job.player_hit)]
+	if int(receiver.hit) != int(job.target_hit): return "target_hit %s != %s" % [str(receiver.hit), str(job.target_hit)]
+	if not is_same(sender.body, job.source_body): return "source_body"
+	if not is_same(receiver.body, job.receiver_body): return "receiver_body"
+	if receiver.owner != job.receiver_owner: return "receiver_owner"
+	if resolved.owner != job.source_owner: return "source_owner"
+	if not is_same(resolved.stock, job.source_cargo): return "source_cargo"
+	if not is_same(resolved.version_owner, job.source_holder): return "source_holder"
+	if not resolved.opened.is_empty() and not is_same(resolved.opened, job.source_open): return "source_open"
+	if int(resolved.version_owner[resolved.version_field]) != int(job.source_version): return "source_version"
+	if float(resolved.opened.get("open_rations", 0.0)) != float(job.source_open_amount): return "open_amount"
+	for food: String in Sustain.FOODS:
+		if int(resolved.stock.get(food, 0)) != int(job.source_food[food]): return "food_%s %s != %s" % [food, str(resolved.stock.get(food, 0)), str(job.source_food[food])]
+	if int(entry.revision) >= 2147483646: return "revision_limit"
+	if not Runtime.can_pay(resolved.stock, job.items): return "cannot_pay"
+	if not _capacity(team, entry, endpoint, resolved, float(job.quantity)): return "capacity"
+	return "ok"
+
+func commit(team: Variant, entry: Dictionary) -> Dictionary:
 	var prepared: Dictionary = prepare_completion(team, entry)
 	if not prepared.ok: return prepared
 	if not validate_prepared_completion(prepared): return Runtime.fail("STALE_SOURCE", "原人物、來源或容量變更，當批未扣物")
 	return publish_prepared_completion(prepared)
 
-func drop_excess(team: TerrainArmy) -> Dictionary:
+func drop_excess(team: Variant) -> Dictionary:
 	var entry: Dictionary = controller._supply_entry(team)
 	if entry.is_empty():
 		return Runtime.ok()
@@ -276,8 +356,8 @@ func drop_excess(team: TerrainArmy) -> Dictionary:
 	# The last carrier may be dead: original bodies/cells still own the landing
 	# position. Wait for committed movement/down settlement, never use a centroid.
 	var bearer := {}
-	for index: int in range(team.combat_units.size()):
-		if not team.is_member(index) or bool(team.combat_hot_get(index, &"site_exited", false)) or team.moving_to[index] != TerrainArmy.INVALID_CELL:
+	for index: int in _member_indices(team):
+		if not team.is_member(index) or bool(team.combat_hot_get(index, &"site_exited", false)) or _moving_cell(team, index) != TerrainArmy.INVALID_CELL:
 			continue
 		var person := _person(team.combat_identity(index))
 		if person.is_empty() or controller._pending_deaths.has(int(person.person_id)) or not controller.lab.terrain.is_walkable(person.cell):
@@ -285,8 +365,8 @@ func drop_excess(team: TerrainArmy) -> Dictionary:
 		bearer = person
 		if float(person.hp) > 0.0:
 			break
-	if bearer.is_empty() and is_instance_valid(team.player_member) and not team.player_member.site_exited and not team.player_member.is_moving() and not controller._pending_deaths.has(team.player_member.person_id):
-		bearer = _person(team.player_member.person_id)
+	if bearer.is_empty() and is_instance_valid(_player_member(team)) and not _player_member(team).site_exited and not _player_member(team).is_moving() and not controller._pending_deaths.has(_player_member(team).person_id):
+		bearer = _person(_player_member(team).person_id)
 	if bearer.is_empty():
 		return Runtime.fail("BUSY", "超額共有口糧保留原處，等待原人物步進／倒地落點收束")
 	var items := {}
@@ -305,7 +385,7 @@ func drop_excess(team: TerrainArmy) -> Dictionary:
 		entry["revision"] = int(entry.revision) + 1
 	return result
 
-func _drop_location_excess(team: TerrainArmy, entry: Dictionary) -> Dictionary:
+func _drop_location_excess(team: Variant, entry: Dictionary) -> Dictionary:
 	if not controller._supply_locations_valid(team, entry.locations): return Runtime.fail("INVALID_SUSTAIN")
 	var held := Sustain.rations(entry.sustain, entry.locations)
 	var capacity: float = controller.team_food_capacity(team)
@@ -339,22 +419,22 @@ func _drop_location_excess(team: TerrainArmy, entry: Dictionary) -> Dictionary:
 			if bearer.is_empty():
 				# Food remains physically on this boat after its last carrier dies.
 				# Its original vehicle holder can drop it without inventing a person.
-				for index in range(team.combat_units.size()):
+				for index in _member_indices(team):
 					if not team.is_member(index): continue
-					var identity := team.combat_identity(index)
+					var identity: int = team.combat_identity(index)
 					bearer = {"person_id": identity, "holder": vehicle.holder, "cell": controller.lab.terrain.cell_from_index(int(vehicle.cell))}
 					var local := Ship.local_position(str(vehicle.ship_type), Ship.HELM_BERTH)
 					ship_location = {"vehicle_id": str(vehicle.id), "local_position": [local.x, local.y]}
 					break
 		else:
 			var shore: Vector2i = controller.lab.terrain.cell_from_index(int(key.trim_prefix("shore:")))
-			for index in range(team.combat_units.size()):
+			for index in _member_indices(team):
 				var person := _person(team.combat_identity(index))
 				if person.is_empty() or controller.vehicles.is_embarked(int(person.person_id)) or bool(person.moving) or controller._pending_deaths.has(int(person.person_id)) or not controller._supply_shore_contact(person.cell, shore): continue
 				bearer = person
 				break
-			if bearer.is_empty() and is_instance_valid(team.player_member):
-				var person := _person(team.player_member.person_id)
+			if bearer.is_empty() and is_instance_valid(_player_member(team)):
+				var person := _person(_player_member(team).person_id)
 				if not person.is_empty() and not bool(person.moving) and controller._supply_shore_contact(person.cell, shore): bearer = person
 		if bearer.is_empty(): return Runtime.fail("BUSY", "超額口糧保留原位置，等原人物可在現場處理")
 		var cell: Vector2i = bearer.cell if not ship_location.is_empty() else controller.lab.terrain.cell_from_index(int(key.trim_prefix("shore:")))
@@ -377,7 +457,7 @@ func _drop_location_excess(team: TerrainArmy, entry: Dictionary) -> Dictionary:
 	return result
 
 
-func prepare_completion(team: TerrainArmy, entry: Dictionary, require_endpoint: bool = false) -> Dictionary:
+func prepare_completion(team: Variant, entry: Dictionary, require_endpoint: bool = false) -> Dictionary:
 	if require_endpoint and (entry.get("delivery", {}).is_empty() or not bool(entry.delivery.get("pending", false)) or float(entry.delivery.get("left", -1.0)) != 0.0): return Runtime.fail("INCOMPLETE")
 	if not valid(team, entry):
 		return Runtime.fail("STALE_SOURCE", "原人物、來源或容量變更，當批未扣物")
@@ -406,7 +486,9 @@ func prepare_completion(team: TerrainArmy, entry: Dictionary, require_endpoint: 
 	if int(entry.version) == 3:
 		if not controller._supply_locations_valid(team, stock): return Runtime.fail("INVALID_SUSTAIN")
 		context["food_locations"] = controller.ship_food_locations(team, members, stock)
-	var supplied := Sustain.resupply(state, members, stock, false, controller._supply_hot_reader(team, members, {}), {}, context)
+	# P1q: the team's own hot reader. A grid army gets _supply_hot_reader(team, members, {}) unchanged; a crowd owner reads native
+	# hp, ko, captive and fatigue (G3, _supply_team_hot_reader), since _supply_hot_reader is TerrainArmy-typed.
+	var supplied := Sustain.resupply(state, members, stock, false, controller._supply_team_hot_reader(team, members), {}, context)
 	if not supplied.ok:
 		return supplied
 	return Runtime.ok("原交糧完成候選已核；尚未扣物", {"owner": self, "data": controller.lab.terrain, "team": team, "entry": entry, "job": job,
@@ -416,7 +498,7 @@ func prepare_completion(team: TerrainArmy, entry: Dictionary, require_endpoint: 
 		"source_open": resolved.opened.duplicate(true), "require_endpoint": require_endpoint, "published": false})
 
 func validate_prepared_completion(prepared: Dictionary) -> bool:
-	if prepared.get("owner") != self or prepared.get("published", true) or not is_same(prepared.get("data"), controller.lab.terrain) or not prepared.get("team") is TerrainArmy 		or not is_same(prepared.get("entry"), controller._supply_entry(prepared.team)) or not is_same(prepared.entry.get("delivery"), prepared.get("job")) 		or not prepared.get("require_endpoint") is bool: return false
+	if prepared.get("owner") != self or prepared.get("published", true) or not is_same(prepared.get("data"), controller.lab.terrain) or not (prepared.get("team") is TerrainArmy or prepared.get("team") is CrowdPersonOwner) 		or not is_same(prepared.get("entry"), controller._supply_entry(prepared.team)) or not is_same(prepared.entry.get("delivery"), prepared.get("job")) 		or not prepared.get("require_endpoint") is bool: return false
 	var expected: Dictionary = prepare_completion(prepared.team, prepared.entry, bool(prepared.require_endpoint))
 	if not expected.ok or prepared.size() != expected.size(): return false
 	for key: String in expected:
@@ -440,7 +522,7 @@ func publish_prepared_completion(prepared: Dictionary) -> Dictionary:
 	# Caller validates all original source/state/stock effects immediately before
 	# the first food cost. This tail contains no new guard, resupply, or callback.
 	assert(prepared.owner == self and not prepared.published)
-	var team: TerrainArmy = prepared.team
+	var team: Variant = prepared.team
 	var entry: Dictionary = prepared.entry
 	var job: Dictionary = prepared.job
 	var resolved: Dictionary = prepared.resolved

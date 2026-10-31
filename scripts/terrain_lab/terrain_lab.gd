@@ -14609,13 +14609,16 @@ func _check_original_shared_prefixes(captured: Dictionary, planned: Dictionary, 
 	if not ladders.ok: return ladders
 	var training: Dictionary = site_controller.validate_shared_native_training_prefix(planned, requests)
 	if not training.ok: return training
+	# P1p: crowd food deliveries of this point, pure check (their carriers' effort is in the native point's packet).
+	var delivery: Dictionary = site_controller.validate_shared_native_delivery_prefix(planned, requests)
+	if not delivery.ok: return delivery
 	# Preparing training must precede Native final READY. This attaches it to
 	# the ORIGINAL World point; the fatigue final gate then revalidates both.
 	if not before_body:
 		var native_training: Dictionary = crowd_site.prepare_work_training_point(training.checked)
 		if not native_training.ok: return native_training
 	return SiteRuntime.ok("原同held消费者均已纯预验", {"runtime": runtime, "work_team": wt, "person_actions": pa,
-		"controlled": controlled, "training": training, "runtime_priors": runtime_priors, "nonwork": captured.nonwork, "ladders": ladders})
+		"controlled": controlled, "training": training, "delivery": delivery, "runtime_priors": runtime_priors, "nonwork": captured.nonwork, "ladders": ladders})
 
 func valid_native_begin_shared_window(prepared: Dictionary) -> bool:
 	return is_same(prepared, _native_begin_shared_window_prepared) and prepared.get("owner") == self \
@@ -14802,6 +14805,7 @@ func _finish_original_shared_prefixes(checked: Dictionary, finish_clock: bool = 
 	site_controller.person_actions.finish_checked_controlled_prefixes(checked.controlled)
 	site_controller.person_actions.finish_shared_work_prefix(checked.person_actions)
 	site_controller.finish_shared_native_training_prefix(checked.training)
+	site_controller.finish_shared_native_delivery_prefix(checked.get("delivery", {})) # P1p: after the native publication
 	if finish_clock: site_controller.finish_shared_runtime_clock()
 	_shared_vehicle_groups.clear()
 	checked.runtime_priors.clear() # Original endpoint has used every candidate; break transient ledger cycles.

@@ -755,17 +755,11 @@ func _build_ui() -> void:
 	supply_quantity = _number_input(column, "SupplyRations", 1, 30, 1)
 	team_supply_label = _label(column, "先點選相鄰隊員，再從玩家行囊交糧；不會自取營地物資。", 15)
 	_button(column, "向選取隊員交付口糧", "DeliverTeamFood", func() -> void:
-		# G8a: food delivery (site_food_delivery.gd) is TerrainArmy-typed, so a crowd team is refused here, not returned.
-		if _crowd_active():
-			show_result(Runtime.fail("CROWD_UNSUPPORTED", "群體模型下口糧交付尚未接線；未扣物、未建立交付"))
-			return
-		var team := _chosen_supply_team()
+		# P1e: food delivery under crowd runs in peace only; begin_team_food refuses in combat (CROWD_ACTIVE).
+		var team: Variant = _chosen_supply_team()
 		var representative := -1
 		if team != null:
-			for index: int in team.combat_units.size():
-				if team.cells[index] == selected:
-					representative = team.combat_identity(index)
-					break
+			representative = _representative_at(team, selected)
 		show_result(begin_team_food(team, int(supply_quantity.value), representative)))
 	_button(column, "取消口糧交付", "CancelTeamFood", func() -> void: show_result(cancel_team_food()))
 	_button(column, "後勤調度：營地／隊伍／地面口糧", "OpenLogistics", _open_logistics)
@@ -5385,8 +5379,22 @@ func _receive_opened_food(identity: int, amount: float, original: Dictionary) ->
 	assert(checked.ok)
 	publish_received_opened_food(prepared)
 
-func _chosen_supply_team() -> TerrainArmy:
+func _chosen_supply_team() -> Variant:
+	# P1e: under crowd the player's team is the owner of the controlled person (a native crowd owner).
+	if _crowd_active() and lab.crowd_site.contains_person(lab.controlled_person_id()):
+		return lab.crowd_site.person_owner(lab.controlled_person_id())
 	return lab.player_army()
+
+# P1e: the representative standing on the selected cell, read from a crowd owner (cell and identity) or a grid army (cells).
+func _representative_at(team: Variant, cell: Vector2i) -> int:
+	if team is CrowdPersonOwner:
+		for key: Variant in team.combat_units.keys():
+			var person: Dictionary = team.person(int(key), false)
+			if not person.is_empty() and Vector2i(person.cell) == cell: return team.combat_identity(int(key))
+		return -1
+	for index: int in team.combat_units.size():
+		if team.cells[index] == cell: return team.combat_identity(index)
+	return -1
 
 func _supply_entry(team: Variant) -> Dictionary:
 	return lab.terrain.site.get("team_supply", {}).get(str(team.team_id), {}) if team != null else {}
@@ -5450,7 +5458,7 @@ func ship_food_locations(team: Variant, members: Dictionary, candidate_locations
 				break
 	return result
 
-func _team_food_endpoint(team: TerrainArmy, identity: int, create_location: bool = false) -> Dictionary:
+func _team_food_endpoint(team: Variant, identity: int, create_location: bool = false) -> Dictionary:
 	var entry := _supply_entry(team)
 	if entry.is_empty(): return {}
 	if int(entry.version) != 3:
@@ -5663,12 +5671,37 @@ func _life(body: Dictionary, hot_read: Callable = Callable(), pending_hp: Dictio
 		hp = pending_hp[identity]
 	return 2 if float(hp) <= 0 else (1 if float(ko) > 0 else 0)
 
-func _enable_team_supply(team: TerrainArmy) -> Dictionary:
+func _enable_team_supply(team: Variant) -> Dictionary:
 	var result: Dictionary = captivity_supply.enable_team(team)
 	if not result.ok:
 		show_result(result)
 		return {}
 	return result.entry
+
+## P1k diagnostic: the first clause of _team_stopped that fails, with the member index and its values. Same reads, same order,
+## writes nothing. Returns "ok" when _team_stopped would be true (for the crowd branch the same loop as _team_stopped).
+func team_stopped_breakdown(team: Variant) -> String:
+	if not team.combat_enabled: return "combat_enabled=false"
+	if team.combat_order != TerrainArmy.CombatOrder.HOLD: return "combat_order=%s" % str(team.combat_order)
+	if not vehicles.ships_stopped_for_team(team.team_id): return "ships_not_stopped"
+	if team is CrowdPersonOwner:
+		for index: int in team.combat_units.keys():
+			if not team.is_member(index) or bool(team.combat_hot_get(index, &"site_exited", false)) \
+				or bool(team.combat_hot_get(index, &"surrender_pending", false)) or bool(team.combat_hot_get(index, &"captive")):
+				continue
+			var state: Dictionary = team.person(index, false)
+			var speed: float = team.drift_speed(index)
+			if team.has_move_goal(index) or speed >= CrowdPersonOwner.SETTLE_SPEED:
+				var here: Vector2 = Vector2(state.get("position", Vector2.ZERO)) / 64.0
+				var last: Variant = crowd_probe_last.get(index)
+				crowd_probe_last[index] = here
+				var delta: float = (here - last).length() if last is Vector2 else -1.0
+				return "walking:%d:id=%d:controlled=%s:speed=%.4f:delta_since_last_probe=%.4f:goal=%s:native_moving=%s:cell=%s:moving_to=%s:movement=%s" % [index, team.combat_identity(index), str(team.combat_identity(index) == lab.controlled_person_id()), speed, delta, str(team.has_move_goal(index)), str(state.get("moving", "")), str(state.get("cell", "")), str(team.moving_to[index]), str(team.native_siege_state(index))]
+			if bool(team.combat_hot_get(index, &"attack")): return "attack:%d" % index
+			var pose := str(team.combat_hot_get(index, &"pose"))
+			if pose in ["guard", "guard_raise", "guard_lower", "guard_break", "rescue", "get_up"]: return "pose:%d:%s" % [index, pose]
+		return "ok"
+	return "grid_branch_not_diagnosed"
 
 func _team_stopped(team: Variant, allow_sheltered: bool = false, ignored_ship_job: Dictionary = {}) -> bool:
 	if not team.combat_enabled or (team.combat_order != TerrainArmy.CombatOrder.HOLD and not (allow_sheltered and team.morale_retreat_sheltered())):
@@ -5690,7 +5723,7 @@ func _team_stopped(team: Variant, allow_sheltered: bool = false, ignored_ship_jo
 				or bool(team.combat_hot_get(index, &"surrender_pending", false)) or bool(team.combat_hot_get(index, &"captive")):
 				continue
 			var state: Dictionary = team.person(index, false)
-			if bool(state.get("moving", true)) or team.moving_to[index] != TerrainArmy.INVALID_CELL or bool(team.combat_hot_get(index, &"attack")) \
+			if team.is_walking(index) or bool(team.combat_hot_get(index, &"attack")) \
 				or str(team.combat_hot_get(index, &"pose")) in ["guard", "guard_raise", "guard_lower", "guard_break", "rescue", "get_up"]:
 				return false
 		return true
@@ -5712,13 +5745,17 @@ func _team_stopped(team: Variant, allow_sheltered: bool = false, ignored_ship_jo
 func _supply_actor_ready(actor: TerrainTestCharacter) -> bool:
 	return actor.can_act() and not actor.is_moving() and actor.action_time <= 0.0 and not actor.guarding and actor.guard_transition_left <= 0.0 and actor.guard_break_left <= 0.0 and actor._rescue_left <= 0.0
 
-func team_food_capacity(team: TerrainArmy) -> float:
+func team_food_capacity(team: Variant) -> float:
 	var capacity := 0.0
-	for index: int in team.combat_units.size():
-		if team_carrier_contributes(team, index):
-			capacity += 6.0 if bool(team.combat_units[index].get("logistics", false)) else 3.0
-	if is_instance_valid(team.player_member):
-		var actor: TerrainTestCharacter = team.player_member
+	# P1e: a crowd owner keys its rows by index and keeps logistics in its cold row; it has no player_member.
+	var indices: Array = team.combat_units.keys() if team.combat_units is Dictionary else range(team.combat_units.size())
+	for index: Variant in indices:
+		if team_carrier_contributes(team, int(index)):
+			var logistic: bool = bool(team._cold_get(int(index), "logistics", false)) if team is CrowdPersonOwner else bool(team.combat_units[int(index)].get("logistics", false))
+			capacity += 6.0 if logistic else 3.0
+	var player_member: Variant = null if team is CrowdPersonOwner else team.player_member
+	if is_instance_valid(player_member):
+		var actor: TerrainTestCharacter = player_member
 		if actor.can_act() or actor.site_exited and actor.hp > 0.0 and actor.knockout_left <= 0.0 \
 			and not actor.captive and not actor.surrender_pending and not actor._getting_up:
 			capacity += 3.0
@@ -5728,7 +5765,7 @@ func team_food_capacity(team: TerrainArmy) -> float:
 ## logistics AI share, F03)? Leaving this Site removes spatial actions, not the
 ## original carrier or its share of this same Army's food. Death/KO/captivity
 ## still lose capacity.
-func team_carrier_contributes(team: TerrainArmy, index: int) -> bool:
+func team_carrier_contributes(team: Variant, index: int) -> bool:
 	var exited_carrier := bool(team.combat_hot_get(index, &"site_exited", false)) \
 		and float(team.combat_hot_get(index, &"hp")) > 0.0 and float(team.combat_hot_get(index, &"ko")) <= 0.0 \
 		and str(team.combat_hot_get(index, &"pose")) != "get_up" and not bool(team.combat_hot_get(index, &"captive")) \
@@ -5765,6 +5802,25 @@ func order_team_logistics(team: TerrainArmy, identities: Array[int], requester_i
 		team.combat_units[team.index_for_identity(identity)].logistics = enabled
 	return Runtime.ok("已指定原人物專職後勤，每名可搬運者6日份；不另生貨物" if enabled else "已解除原人物專職後勤，恢復3日份載量")
 
+## P1o: a member counts as walking for supply readiness. A crowd member uses the crowd settle rule (CrowdPersonOwner.is_walking);
+## a grid member keeps its strict moving flag, unchanged.
+func _supply_walking(person: Dictionary) -> bool:
+	if person.owner is CrowdPersonOwner and int(person.unit) >= 0: return bool(person.owner.is_walking(int(person.unit)))
+	return bool(person.moving)
+
+## P1o diagnostic: every clause of _delivery_person_ready for one person, with values. Writes nothing.
+func delivery_person_breakdown(person: Dictionary) -> String:
+	if person.is_empty(): return "empty"
+	var identity := int(person.person_id)
+	var text := "id=%d busy=%s guarding=%s assigned=%s operator=%s" % [identity, str(person_actions.is_busy(identity)), str(person_actions.is_guarding(identity)), str(work_team.is_assigned(identity)), str(vehicles.is_operator(identity))]
+	if int(person.unit) >= 0:
+		var unit := int(person.unit)
+		text += " cell=%s can_act=%s" % [str(person.cell), str(person.owner.combat_can_act(unit))]
+		if person.owner is CrowdPersonOwner: text += " speed=%.4f goal=%s walking=%s" % [float(person.owner.drift_speed(unit)), str(person.owner.has_move_goal(unit)), str(_supply_walking(person))]
+		else: text += " moving=%s" % str(person.moving)
+		text += " attack=%s pose=%s work_task_empty=%s" % [str(person_actions._body_get(person, "attack")), str(person_actions._body_get(person, "pose")), str(person.body.get("work_task", {}).is_empty())]
+	return text
+
 func _delivery_person_ready(person: Dictionary, ignored_job: Dictionary = {}) -> bool:
 	if person.is_empty(): return false
 	var own_job := not ignored_job.is_empty() and int(ignored_job.get("executor_id", 0)) == int(person.person_id) and is_same(person_actions._jobs.get(str(person.person_id), {}), ignored_job)
@@ -5772,8 +5828,8 @@ func _delivery_person_ready(person: Dictionary, ignored_job: Dictionary = {}) ->
 		return false
 	if int(person.unit) >= 0:
 		if vehicles.is_embarked(int(person.person_id)) and not person.owner.is_member(int(person.unit)):
-			return int(person.person_id) == lab.controlled_person_id() and float(person.hp) > 0.0 and float(person.ko) <= 0.0 and not bool(person.captive) and not bool(person.moving) and not bool(person_actions._body_get(person, "attack")) and str(person_actions._body_get(person, "pose")) == "idle" and person.body.get("work_task", {}).is_empty()
-		return person.owner.combat_can_act(int(person.unit)) and not bool(person.moving) and not bool(person_actions._body_get(person, "attack")) and str(person_actions._body_get(person, "pose")) == "idle" and person.body.get("work_task", {}).is_empty()
+			return int(person.person_id) == lab.controlled_person_id() and float(person.hp) > 0.0 and float(person.ko) <= 0.0 and not bool(person.captive) and not _supply_walking(person) and not bool(person_actions._body_get(person, "attack")) and str(person_actions._body_get(person, "pose")) == "idle" and person.body.get("work_task", {}).is_empty()
+		return person.owner.combat_can_act(int(person.unit)) and not _supply_walking(person) and not bool(person_actions._body_get(person, "attack")) and str(person_actions._body_get(person, "pose")) == "idle" and person.body.get("work_task", {}).is_empty()
 	if not _supply_actor_ready(person.owner):
 		return false
 	if person.owner == lab.npc and (int(lab.npc.command) != TerrainTestNPC.Command.STOP or not lab.npc._path.is_empty()):
@@ -5788,7 +5844,7 @@ func _is_delivering_person(identity: int) -> bool:
 			return true
 	return false
 
-func begin_team_food(team: TerrainArmy, quantity: float, representative_id: int, source: Dictionary = {}) -> Dictionary:
+func begin_team_food(team: Variant, quantity: float, representative_id: int, source: Dictionary = {}) -> Dictionary:
 	if get_tree().paused or bool(lab.terrain.site.paused):
 		return Runtime.fail("BUSY")
 	for existing: Dictionary in lab.terrain.site.get("team_supply", {}).values():
@@ -5814,7 +5870,7 @@ func cancel_team_food() -> Dictionary:
 			return Runtime.ok("已取消交糧；來源未扣物")
 	return Runtime.fail("NO_TARGET", "沒有進行中的交付")
 
-func _delivery_valid(team: TerrainArmy, entry: Dictionary) -> bool:
+func _delivery_valid(team: Variant, entry: Dictionary) -> bool:
 	return food_delivery.valid(team, entry)
 
 func _delivery_people(entry: Dictionary) -> Array[Dictionary]:
@@ -5870,7 +5926,7 @@ func _delivery_seconds(entry: Dictionary, maximum: float) -> float:
 			upper = middle
 	return upper
 
-func _finish_delivery_step(team: TerrainArmy, entry: Dictionary, seconds: float) -> void:
+func _finish_delivery_step(team: Variant, entry: Dictionary, seconds: float) -> void:
 	if entry.delivery.is_empty() or bool(entry.delivery.get("pending", false)):
 		return
 	if not _delivery_valid(team, entry):
@@ -5912,12 +5968,23 @@ func _finish_delivery_step(team: TerrainArmy, entry: Dictionary, seconds: float)
 func settle_supply_deliveries() -> void:
 	if get_tree().paused or bool(lab.terrain.site.paused):
 		return
-	for team: TerrainArmy in lab.combat_armies:
+	supply_settle_runs += 1
+	# P1e: grid armies, or the native crowd owners while the crowd is active (team_owners). Completion is not peace-gated: it only
+	# commits a delivery that was started in peace, and moves no one.
+	for team: Variant in lab.team_owners():
 		var entry := _supply_entry(team)
 		if entry.is_empty():
 			continue
 		if not entry.delivery.is_empty() and bool(entry.delivery.get("pending", false)):
+			supply_settle_pending += 1
+			# P1i diagnostic: why the completion commit refuses (the entry is cleared on refusal). Read before commit, no writes.
+			var pre_valid: bool = food_delivery.valid(team, entry)
+			var pre_stopped: bool = _team_stopped(team)
+			var pre_code := "" if pre_valid else ("STOPPED" if not pre_stopped else "VALID_FALSE")
+			var pre_why: String = food_delivery.valid_breakdown(team, entry)
 			var result := food_delivery.commit(team, entry)
+			supply_settle_result = result.duplicate(true) # P1r diagnostic: the last completion result (consumed_rations on success)
+			supply_settle_last = "owner=%d pre_valid=%s pre_stopped=%s pre_code=%s why=%s commit=%s msg=%s" % [int(team.team_id), str(pre_valid), str(pre_stopped), pre_code, pre_why, str(result.get("code", "")), str(result.get("message", ""))]
 			if result.ok: _observe_original_food_result("team", str(team.team_id), float(entry.sustain.at), result)
 			if not result.ok:
 				entry.delivery = {}
@@ -5932,7 +5999,7 @@ func order_controlled_training(enabled: bool, training_feature: String = "") -> 
 	if _crowd_active() and lab.crowd_site.contains_person(lab.controlled_person_id()):
 		var owner_ref: RefCounted = lab.crowd_site.person_owner(lab.controlled_person_id())
 		return order_team_training(owner_ref, owner_ref.index_for_identity(lab.controlled_person_id()), enabled, training_feature)
-	var team := _chosen_supply_team()
+	var team: Variant = _chosen_supply_team()
 	return order_team_training(team, lab.controlled_member_index(team), enabled, training_feature)
 
 func order_team_training(team: Variant, requester: int, enabled: bool, training_feature: String = "") -> Dictionary:
@@ -6136,8 +6203,26 @@ func advance_team_sustain(team: TerrainArmy, elapsed_game_seconds: float) -> Dic
 		left -= seconds
 	return {"handled_ids": handled.keys(), "handled_seconds": handled}
 
+# P1g diagnostics (read by the crowd food test): how often the crowd sustain runs, why it skipped, and the last delivery slice.
+var crowd_sustain_runs := 0
+var crowd_sustain_skip := ""
+var crowd_delivery_steps := 0
+var crowd_delivery_last := ""
+var supply_settle_runs := 0
+var supply_settle_pending := 0
+var supply_settle_last := ""
+var supply_settle_result: Dictionary = {}
+var crowd_probe_last: Dictionary = {} # P1m diagnostic: last member position (cells) per index, for the walking breakdown
+
+# P1p: the crowd food-delivery timer is not advanced per crowd step (that wrote the delivery state inside the prepared native
+# work point and latched STALE_NATIVE_WORK_POINT). It advances in the shared point tail: finish_shared_native_delivery_prefix.
+
+
 func advance_crowd_sustain(elapsed_game_seconds: float) -> void:
-	if not _crowd_active() or elapsed_game_seconds <= 0.0 or get_tree().paused or bool(lab.terrain.site.paused): return
+	if not _crowd_active() or elapsed_game_seconds <= 0.0 or get_tree().paused or bool(lab.terrain.site.paused):
+		crowd_sustain_skip = "active=%s elapsed=%.4f paused=%s site_paused=%s" % [str(_crowd_active()), elapsed_game_seconds, str(get_tree().paused), str(bool(lab.terrain.site.paused))]
+		return
+	crowd_sustain_runs += 1
 	# Same-call projection only. With observers, retain each first-read sample
 	# across damage callbacks; people not read yet must then sample current native state.
 	var deferred_native: bool = lab._region_deferring_endpoint()
@@ -6378,7 +6463,7 @@ func advance_person_supply(elapsed_game_seconds: float) -> void:
 func _update_team_supply_ui() -> void:
 	if team_supply_label == null:
 		return
-	var team := _chosen_supply_team()
+	var team: Variant = _chosen_supply_team()
 	var entry := _supply_entry(team)
 	if entry.is_empty():
 		team_supply_label.text = "尚未啟用供養。點選相鄰隊員交糧，或由合格隊長下訓練令。\n只取玩家指定交出的實際口糧；不動營地物資。"
@@ -6386,7 +6471,9 @@ func _update_team_supply_ui() -> void:
 	var maximum_hunger := 0.0
 	for cohort: Dictionary in entry.sustain.cohorts:
 		maximum_hunger = maxf(maximum_hunger, float(cohort.hunger))
-	team_supply_label.text = "本隊總餘糧 %.2f／%.0f 日份 · 士氣 %.1f\n最高等效缺糧 %.1f 小時 · 訓練 %.2f\n%s%s" % [Sustain.rations(entry.sustain, _supply_stock(entry)), team_food_capacity(team), float(entry.sustain.morale), maximum_hunger, team.training, "潰退；須安全足額整補 30 分且士氣≥50" if bool(entry.sustain.routed) else ("訓練令保留：缺糧／受威脅／缺實裝即停止增長" if bool(entry.training_order) else "未下訓練令"), "\n交糧剩餘 %.1f 有效秒；可取消，完成前不扣物" % float(entry.delivery.left) if not entry.delivery.is_empty() else ""]
+	# P1e: a crowd owner keeps its training on the native clock; the grid field is not projected, so it is not shown.
+	var training_text := "—" if team is CrowdPersonOwner else "%.2f" % float(team.training)
+	team_supply_label.text = "本隊總餘糧 %.2f／%.0f 日份 · 士氣 %.1f\n最高等效缺糧 %.1f 小時 · 訓練 %s\n%s%s" % [Sustain.rations(entry.sustain, _supply_stock(entry)), team_food_capacity(team), float(entry.sustain.morale), maximum_hunger, training_text, "潰退；須安全足額整補 30 分且士氣≥50" if bool(entry.sustain.routed) else ("訓練令保留：缺糧／受威脅／缺實裝即停止增長" if bool(entry.training_order) else "未下訓練令"), "\n交糧剩餘 %.1f 有效秒；可取消，完成前不扣物" % float(entry.delivery.left) if not entry.delivery.is_empty() else ""]
 	if int(entry.version) == 3:
 		team_supply_label.text += "\n乘員只吃本船共有糧；岸上代表只取現場可達的指定岸糧。"
 
@@ -10596,18 +10683,24 @@ func prepare_shared_owner_work_requests(seconds: float) -> Array[Dictionary]:
 					var request := _shared_person_request("training", str(int(identity)), [person], seconds, seconds)
 					if not request.is_empty(): requests.append(request)
 		if not entry.delivery.is_empty() and not bool(entry.delivery.get("pending", false)) and _delivery_valid(team, entry):
-			var people := _delivery_people(entry)
-			var request := _shared_person_request("delivery", str(team.team_id), people, float(entry.delivery.left), seconds,
-				"joint" if people.size() == 2 else "single")
-			if not request.is_empty():
-				# Original finite source reservation only for a possible positive
-				# terminal. Opened food and internal moves remain FoodDelivery's
-				# original scalar/locations transaction, not an integer recipe.
-				if str(request.paused).is_empty() and float(request.remaining) <= seconds + PersonFatigue.WORK_PLAN_EPS:
-					request.payment_source = entry.delivery.source_cargo
-					request.payment = entry.delivery.items.duplicate(true)
-					request.payment_key = "delivery:" + str(team.team_id)
-				requests.append(request)
+			var request := _shared_delivery_request(team, entry, seconds)
+			if not request.is_empty(): requests.append(request)
+	# P1p: a crowd team's delivery joins the SAME shared work point as the grid's. Its carriers are native participants
+	# (_shared_person_request -> CrowdSite.work_fatigue_participant), so their effort is charged once, to the formation's native
+	# fatigue pool, by the native point publisher. The job's own timer advances only in the point tail
+	# (finish_shared_native_delivery_prefix), from the point's final allocation, after the native publication.
+	_shared_native_delivery_prefixes = {}
+	if _crowd_active():
+		for team_owner: RefCounted in lab.crowd_site.person_owners():
+			var entry := _supply_entry(team_owner)
+			if entry.is_empty() or entry.get("delivery", {}).is_empty() or bool(entry.delivery.get("pending", false)) or not _delivery_valid(team_owner, entry): continue
+			var request := _shared_delivery_request(team_owner, entry, seconds)
+			if request.is_empty(): continue
+			var people: Array[Dictionary] = []
+			for person: Dictionary in _delivery_people(entry): people.append({"person_id": int(person.person_id), "unit": int(person.unit)})
+			_shared_native_delivery_prefixes[str(team_owner.team_id)] = {"owner": team_owner, "entry": entry, "job": entry.delivery,
+				"left": float(entry.delivery.left), "participants": request.participants, "people": people}
+			requests.append(request)
 	var guards := {}
 	for relation: Dictionary in lab.terrain.site.captivity.values():
 		if str(relation.get("prison_id", "")).is_empty(): guards[int(relation.guard_id)] = true
@@ -10617,6 +10710,22 @@ func prepare_shared_owner_work_requests(seconds: float) -> Array[Dictionary]:
 		var request := _shared_person_request("guard", str(identity), [person], seconds, seconds, "raw")
 		if not request.is_empty(): requests.append(request)
 	return requests
+
+## The shared-work request of one team's food delivery (grid army or crowd owner): its carriers, the effective seconds left and,
+## for a possible positive terminal, the source reservation.
+func _shared_delivery_request(team: Variant, entry: Dictionary, seconds: float) -> Dictionary:
+	var people := _delivery_people(entry)
+	var request := _shared_person_request("delivery", str(team.team_id), people, float(entry.delivery.left), seconds,
+		"joint" if people.size() == 2 else "single")
+	if not request.is_empty():
+		# Original finite source reservation only for a possible positive
+		# terminal. Opened food and internal moves remain FoodDelivery's
+		# original scalar/locations transaction, not an integer recipe.
+		if str(request.paused).is_empty() and float(request.remaining) <= seconds + PersonFatigue.WORK_PLAN_EPS:
+			request.payment_source = entry.delivery.source_cargo
+			request.payment = entry.delivery.items.duplicate(true)
+			request.payment_key = "delivery:" + str(team.team_id)
+	return request
 
 func shared_supply_event_limit(maximum: float) -> Dictionary:
 	var limit := maximum
@@ -12559,6 +12668,7 @@ var _gd_contact_runtime_capture: Dictionary = {}
 var _gd_contact_runtime_segment: Dictionary = {}
 
 var _shared_native_training_prefixes: Dictionary = {} # Same point only; never saved.
+var _shared_native_delivery_prefixes: Dictionary = {} # P1p: crowd deliveries of the same point only; never saved.
 
 var _checked_runtime_work_capture: Dictionary = {}
 
@@ -13150,6 +13260,59 @@ func _native_sustain_original_team(team: TerrainArmy) -> bool:
 	for plan: Dictionary in lab.crowd_site._original_team_plans:
 		if is_same(plan.source, team): return true
 	return false
+
+## P1p: pure check of every crowd delivery held for this point, against the point's final plan and requests. Called with the
+## training check, BEFORE the native final READY; no write. A job changed or cancelled since collection refuses the point
+## (STALE_DELIVERY_SOURCE), as the grid's gd-contact delivery window does.
+func validate_shared_native_delivery_prefix(planned: Dictionary, requests: Array) -> Dictionary:
+	var checked: Array[Dictionary] = []
+	var keys: Array = _shared_native_delivery_prefixes.keys()
+	keys.sort()
+	var seconds: float = float(planned.get("seconds", -1.0))
+	for key: Variant in keys:
+		var held: Dictionary = _shared_native_delivery_prefixes[key]
+		var found: Dictionary = {}
+		for request: Dictionary in requests:
+			if str(request.get("provider", "")) != "delivery" or str(request.get("key", "")) != str(key): continue
+			if not found.is_empty(): return Runtime.fail("STALE_DELIVERY_SOURCE")
+			found = request
+		if found.is_empty() or not is_same(found.get("participants"), held.participants): return Runtime.fail("STALE_DELIVERY_SOURCE")
+		if not is_same(_supply_entry(held.owner), held.entry) or not is_same(held.entry.get("delivery"), held.job) \
+			or bool(held.job.get("pending", false)) or float(held.job.left) != float(held.left): return Runtime.fail("STALE_DELIVERY_SOURCE")
+		var allocation: Dictionary = planned.get("jobs", {}).get("delivery", {}).get(str(key), {})
+		var actual: float = float(allocation.get("actual_seconds", 0.0))
+		var effective: float = float(allocation.get("effective_seconds", 0.0))
+		if not is_finite(actual) or not is_finite(effective) or actual < 0.0 or effective < 0.0 \
+			or actual > seconds + PersonFatigue.WORK_PLAN_EPS or effective > actual + PersonFatigue.WORK_PLAN_EPS \
+			or effective > float(held.left) + PersonFatigue.WORK_PLAN_EPS: return Runtime.fail("INVALID_WORK_PLAN")
+		checked.append({"held": held, "allocation": allocation, "actual": actual, "effective": effective, "left_after": maxf(0.0, float(held.left) - effective)})
+	return Runtime.ok("crowd delivery same-point prefix checked", {"checked": checked})
+
+## P1p: the crowd delivery's own state after the native point published (fatigue is already charged there, once, to the native
+## pool): work_resting as the grid's delivery publisher sets it, the left timer from the final allocation, pending at zero. Then the
+## endpoint validity, as the grid's finish_gd_contact_delivery_window. Never writes fatigue.
+func finish_shared_native_delivery_prefix(prepared: Dictionary) -> void:
+	for item: Dictionary in prepared.get("checked", []):
+		var held: Dictionary = item.held
+		if not is_same(_supply_entry(held.owner), held.entry) or not is_same(held.entry.get("delivery"), held.job): continue
+		var allocation: Dictionary = item.allocation
+		var paused: String = str(allocation.get("paused", ""))
+		for person: Dictionary in held.people:
+			var identity: int = int(person.person_id)
+			var actual: float = float(allocation.get("participant_seconds", {}).get(identity, 0.0))
+			if identity != lab.controlled_person_id() and int(person.unit) >= 0 and (paused == "REST" or actual > 0.0):
+				held.owner.combat_hot_set(int(person.unit), &"work_resting", paused == "REST")
+		var left_before: float = float(held.job.left)
+		held.job.left = float(item.left_after)
+		if float(held.job.left) <= 0.00000001:
+			held.job.left = 0.0
+			held.job.pending = true
+		crowd_delivery_steps += 1
+		crowd_delivery_last = "owner=%d point actual=%.4f effective=%.4f paused=%s left=%.4f->%.4f pending=%s" % [int(held.owner.team_id), float(item.actual), float(item.effective), paused, left_before, float(held.job.left), str(held.job.get("pending", false))]
+		if not _delivery_valid(held.owner, held.entry):
+			held.entry.delivery = {}
+			message.text = "交糧條件已變更，當批取消；來源未扣物"
+	_shared_native_delivery_prefixes.clear()
 
 func finish_shared_native_training_prefix(prepared: Dictionary) -> void:
 	# AFTER actual World common publisher, then current authority/cancellation.

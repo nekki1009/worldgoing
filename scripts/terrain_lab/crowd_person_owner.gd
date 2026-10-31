@@ -314,15 +314,14 @@ func has_army() -> bool:
 func is_sustain_routed() -> bool:
 	return bool(crowd_site.formation_state(formation_index).get("routed", false))
 
-## P1d: TerrainArmy.moving_member_count for a crowd team (a member whose moving_to is set). person() refreshes moving_to
-## from native, so each member is read once here; a member with no native sample keeps its last moving_to.
+## P1d: TerrainArmy.moving_member_count for a crowd team. P1s: it counts with the crowd settle rule (is_walking: a move goal, or
+## native speed >= SETTLE_SPEED), the same rule _team_stopped's crowd branch and the supply readiness use. person().moving counts any
+## residual drift (> 1e-6), so a team that _team_stopped reads as stopped could still count all its settling members as moving.
 func moving_member_count() -> int:
 	var count := 0
 	for key: Variant in combat_units.keys():
 		var index := int(key)
-		if not is_member(index): continue
-		person(index, false)
-		if moving_to.get(index, INVALID_CELL) != INVALID_CELL: count += 1
+		if is_member(index) and is_walking(index): count += 1
 	return count
 
 func command_eligible(index: int) -> bool:
@@ -333,6 +332,30 @@ func command_eligible(index: int) -> bool:
 func combat_ground(index: int) -> Vector2:
 	var values := _soldier_values(index)
 	return Vector2(values[14], values[15]) * 64.0 if values.size() > 15 else Vector2.ZERO
+
+## P1l (crowd only): a member is walking when it has a committed move goal (native siege plan or a controlled step commitment),
+## or when its native speed is at least SETTLE_SPEED. Below that, a member that the crowd nudges while holding is settling, not
+## walking. Walk pace is 2.63 cells/s (MARCH above); SETTLE_SPEED is well below it. Used by _team_stopped's crowd branch only.
+const SETTLE_SPEED := 0.1 # cells/s
+
+## Native speed of a member in cells/s (velocity fields vx, vy of SOLDIER_FIELDS, indices 22 and 23).
+func drift_speed(index: int) -> float:
+	var values := _soldier_values(index)
+	return Vector2(values[22], values[23]).length() if values.size() > 23 else 0.0
+
+## True when the member has a committed move goal, as person().moving derives it (siege plan or controlled step).
+func has_move_goal(index: int) -> bool:
+	var movement := native_siege_state(index)
+	if movement.size() == 8 and (int(movement[2]) >= 0 or int(movement[3]) > 0): return true
+	if crowd_site.crowd.has_method("controlled_step_state"):
+		var commitment: PackedInt64Array = crowd_site.crowd.controlled_step_state(index)
+		if commitment.size() == 2 and int(commitment[0]) >= 3 and int(commitment[1]) >= 0: return true
+	return false
+## P1o: the crowd settle rule in one place: walking when the member has a move goal or its speed is at least SETTLE_SPEED.
+## Used by _team_stopped's crowd branch and by the supply person readiness (controller _supply_walking).
+func is_walking(index: int) -> bool:
+	return has_move_goal(index) or drift_speed(index) >= SETTLE_SPEED
+
 
 func native_siege_state(index: int) -> PackedInt64Array:
 	return crowd_site.crowd.siege_person_state(index) if crowd_site.siege_native_supported() and is_member(index) else PackedInt64Array()
