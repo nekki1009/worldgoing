@@ -2483,8 +2483,9 @@ func _rectangle(a: Vector2i, b: Vector2i) -> Rect2i:
 	return Rect2i(Vector2i(mini(a.x, b.x), mini(a.y, b.y)), Vector2i(absi(a.x - b.x) + 1, absi(a.y - b.y) + 1)).intersection(Rect2i(Vector2i.ZERO, lab.terrain.size))
 
 func deposit_controlled_cargo() -> void:
-	if _crowd_active() and lab.crowd_site.contains_person(lab.controlled_person_id()):
-		show_result(Runtime.fail("CROWD_ACTIVE", "群眾戰鬥中由戰場規則處理"))
+	var peace := person_actions.crowd_peace_guard([lab.controlled_person_id()])
+	if not peace.ok:
+		show_result(peace)
 		return
 	var person := person_actions._person(lab.controlled_person_id())
 	if get_tree().paused or bool(lab.terrain.site.paused) or person.is_empty() or not person_actions._ready(person) or person_actions.is_busy(int(person.person_id)):
@@ -2496,8 +2497,9 @@ func deposit_controlled_cargo() -> void:
 	show_result(result)
 
 func stock_controlled_livestock() -> void:
-	if _crowd_active() and lab.crowd_site.contains_person(lab.controlled_person_id()):
-		show_result(Runtime.fail("CROWD_ACTIVE", "群眾戰鬥中由戰場規則處理"))
+	var peace := person_actions.crowd_peace_guard([lab.controlled_person_id()])
+	if not peace.ok:
+		show_result(peace)
 		return
 	var person := person_actions._person(lab.controlled_person_id())
 	if get_tree().paused or bool(lab.terrain.site.paused) or person.is_empty() or not person_actions._ready(person) or person_actions.is_busy(int(person.person_id)):
@@ -2509,8 +2511,9 @@ func stock_controlled_livestock() -> void:
 	show_result(result)
 
 func manual_work(action: String = "harvest") -> void:
-	if _crowd_active() and lab.crowd_site.contains_person(lab.controlled_person_id()):
-		show_result(Runtime.fail("CROWD_ACTIVE", "群眾戰鬥中由戰場規則處理"))
+	var peace := person_actions.crowd_peace_guard([lab.controlled_person_id()])
+	if not peace.ok:
+		show_result(peace)
 		return
 	var person := person_actions._person(lab.controlled_person_id())
 	if get_tree().paused or bool(lab.terrain.site.paused) or person.is_empty() or not person_actions._ready(person) or person_actions.is_busy(int(person.person_id)):
@@ -4677,7 +4680,9 @@ func _selected_worker_assignment() -> Dictionary:
 	if person.is_empty() or int(person.unit) < 0:
 		return Runtime.fail("NO_TARGET", "請先選取原隊伍成員")
 	if not person.owner is TerrainArmy:
-		return Runtime.fail("CROWD_ACTIVE", "原生群眾接管期間不提供農牧／建築派工；請先結束原生群眾接管")
+		# Crowd workers take the same original work-team path (G2/G10) in peace only.
+		var peace := person_actions.crowd_peace_guard([int(person.person_id)])
+		if not peace.ok: return peace
 	if not _can_command_person(person):
 		return Runtime.fail("NO_AUTHORITY", "須由原隊伍派工職責負責者派工")
 	if _work_person_unavailable(int(person.person_id)):
@@ -4686,7 +4691,11 @@ func _selected_worker_assignment() -> Dictionary:
 
 func _can_command_person(person: Dictionary) -> bool:
 	if region_operation_pending() or _region_player_input_blocks(): return false
-	if _crowd_active() and lab.crowd_site.contains_person(int(person.get("person_id", -1))): return false
+	if _crowd_active() and lab.crowd_site.contains_person(int(person.get("person_id", -1))):
+		# Crowd teams: only the team's current commander (the controlled person) orders work.
+		var crowd_owner: Variant = person.owner
+		return crowd_owner.current_commander >= 0 and crowd_owner.command_eligible(crowd_owner.current_commander) \
+			and crowd_owner.combat_identity(crowd_owner.current_commander) == lab.controlled_person_id()
 	if int(person.person_id) == lab.controlled_person_id():
 		return true
 	return int(person.unit) >= 0 and person.owner is TerrainArmy and person.owner.duty_decider("team.work") == lab.controlled_person_id()

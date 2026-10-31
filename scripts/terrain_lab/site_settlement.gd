@@ -347,12 +347,18 @@ static func next_level(lab: Variant) -> Dictionary:
 static func _crowd_active(lab: Variant) -> bool:
 	return lab.get("crowd_site") != null and lab.crowd_site.active
 
+# Peacetime settlement systems run under crowd; only combat (or a fighting identity) refuses.
+static func _peace_guard(lab: Variant, identities: Array) -> Dictionary:
+	if not _crowd_active(lab): return Runtime.ok()
+	return lab.site_controller.person_actions.crowd_peace_guard(identities)
+
 static func _fit(person: Dictionary) -> bool:
 	return not person.is_empty() and float(person.hp) > 0.0 and float(person.ko) <= 0.0 and not bool(person.captive) and not bool(person.get("surrender_pending", false)) \
 		and person.body.get("site_exited") != true and person.body.get("departed") != true
 
 static func _head_check(lab: Variant, requester_id: int) -> Dictionary:
-	if _crowd_active(lab): return Runtime.fail("CROWD_ACTIVE", "群眾戰鬥中聚落頁唯讀")
+	var peace := _peace_guard(lab, [requester_id])
+	if not peace.ok: return peace
 	var settlement := record(lab.terrain)
 	if settlement.is_empty(): return Runtime.fail("NO_TARGET", "尚未建制聚落")
 	if requester_id != int(lab.controlled_person_id()): return Runtime.fail("NO_AUTHORITY")
@@ -364,7 +370,8 @@ static func _head_check(lab: Variant, requester_id: int) -> Dictionary:
 
 ## Founding = building the center (level 1 terms) with the founder present.
 static func found(lab: Variant, founder_id: int, cells: Array[int], options: Dictionary = {}, occupied: Callable = Callable(), settlement_name: String = "新聚落") -> Dictionary:
-	if _crowd_active(lab): return Runtime.fail("CROWD_ACTIVE", "群眾戰鬥中不能建立聚落")
+	var peace := _peace_guard(lab, [founder_id])
+	if not peace.ok: return peace
 	var data: TerrainData = lab.terrain
 	if data.site.has("settlement"): return Runtime.fail("INVALID", "每個 Site 最多一座聚落中心")
 	if founder_id != int(lab.controlled_person_id()): return Runtime.fail("NO_AUTHORITY", "須由受控本人建立聚落")
@@ -393,7 +400,8 @@ static func request_upgrade(lab: Variant, requester_id: int, occupied: Callable 
 
 ## A vacant head seat may be taken by a fit same-faction person in jurisdiction.
 static func claim_head(lab: Variant, requester_id: int) -> Dictionary:
-	if _crowd_active(lab): return Runtime.fail("CROWD_ACTIVE", "群眾戰鬥中聚落頁唯讀")
+	var peace := _peace_guard(lab, [requester_id])
+	if not peace.ok: return peace
 	var data: TerrainData = lab.terrain
 	var settlement := record(data)
 	if settlement.is_empty() or int(settlement.level) <= 0: return Runtime.fail("NO_TARGET", "尚未建制聚落")
@@ -624,7 +632,8 @@ static func duty_resolve(lab: Variant, duty_id: String, read_only: bool = false)
 
 ## Head-only, non-delegable adjustment (3.5); candidates are living same-faction people.
 static func apply_office_plan(lab: Variant, requester_id: int, expected_revision: int, ops: Array) -> Dictionary:
-	if _crowd_active(lab): return Runtime.fail("CROWD_ACTIVE", "群眾戰鬥中聚落頁唯讀")
+	var peace := _peace_guard(lab, [])
+	if not peace.ok: return peace
 	var current := offices(lab)
 	if requester_id <= 0 or current.is_empty() or requester_id != head_executor(lab): return Runtime.fail("NO_AUTHORITY", "只有清醒自由的聚落首長可調整聚落職位")
 	var settlement := record(lab.terrain)
@@ -679,7 +688,8 @@ static func ecology_authority(lab: Variant, key: String, requester_id: int, expe
 	if not SiteEnvironment.ecology_active(data): return Runtime.fail("ECOLOGY_PENDING", "生態狀態仍待原存檔交接准入")
 	var resource := SiteEnvironment.resource(data, key)
 	if resource.is_empty() or int(resource.kind) not in SiteEnvironment.ECOLOGY_KINDS: return Runtime.fail("NO_TARGET", "此來源不適用生態管理")
-	if _crowd_active(lab): return Runtime.fail("CROWD_ACTIVE", "群眾戰鬥中生態命令尚未准入")
+	var peace := _peace_guard(lab, [requester_id])
+	if not peace.ok: return peace
 	var person: Dictionary = lab.site_controller.person_actions._person(requester_id, false)
 	if not _fit(person): return Runtime.fail("BUSY", "管理者須存活清醒自由")
 	var settlement := record(data)

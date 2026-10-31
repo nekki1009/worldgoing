@@ -92,14 +92,25 @@ func _assert_native_worker_unavailable(lab: TerrainLab, identity: int) -> void:
 	var original_executor := controller.person_executor_id
 	var original_workers := controller.work_team.active_ids()
 	var original_task: Dictionary = person.body.get("work_task", {}).duplicate(true)
+	# Owner decision 2026-10-31 (PEACE): crowd workers are refused only during combat. Combat: refused as before.
+	var original_combat: Variant = lab.terrain.site.get("combat_left", 0.0)
+	lab.terrain.site["combat_left"] = 30.0
 	lab.selected_army_target = identity
 	controller.update_ui()
-	assert(controller.assign_worker_button.disabled and controller.assign_worker_button.tooltip_text.contains("原生群眾"))
+	assert(controller.assign_worker_button.disabled and controller.assign_worker_button.tooltip_text.contains("群眾戰鬥"))
 	var check := controller._selected_worker_assignment()
 	assert(not check.ok and check.code == "CROWD_ACTIVE")
 	controller.assign_worker_button.pressed.emit() # Stale input must also respect the real owner type.
-	assert(controller.message.text.contains("原生群眾"))
+	assert(controller.message.text.contains("群眾戰鬥"))
 	assert(controller.work_team.active_ids() == original_workers and person.body.get("work_task", {}) == original_task)
+	# Peace: the crowd guard no longer refuses the worker; any refusal left is the duty authority (NO_AUTHORITY, BUSY).
+	lab.terrain.site["combat_left"] = original_combat
+	controller.update_ui()
+	var peace_check := controller._selected_worker_assignment()
+	assert(peace_check.code != "CROWD_ACTIVE", str(peace_check))
+	if not peace_check.ok:
+		controller.assign_worker_button.pressed.emit()
+		assert(controller.work_team.active_ids() == original_workers and person.body.get("work_task", {}) == original_task)
 	lab.selected_army_target = original_selection
 	controller.person_executor_id = original_executor
 	controller.update_ui()
