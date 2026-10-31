@@ -5288,7 +5288,7 @@ func _request_person_equipment(slot: String, asset: String, identity: int) -> St
 	if slot not in Runtime.EQUIPMENT_SLOTS:
 		return asset # Body/face/hair are not loot or manufactured equipment.
 	var current := str(person_appearance(identity).get("parts", {}).get(slot, "none"))
-	var crowd_guard := person_actions.crowd_action_guard([identity])
+	var crowd_guard := person_actions.crowd_equipment_guard([identity])
 	if not crowd_guard.ok:
 		show_result(crowd_guard)
 		return current

@@ -76,6 +76,21 @@ func crowd_action_guard(identities: Array) -> Dictionary:
 				return Runtime.fail("CROWD_ACTIVE", "群眾戰鬥中由戰場規則處理")
 	return Runtime.ok()
 
+# Owner decision 2026-10-31 (NEKKI_DECISION_20261031_crowd_equipment_orders): under crowd, equipment orders (every slot,
+# mount included) are allowed in peace only. Peace = Site combat_left == 0 and no crowd identity is fighting.
+# Otherwise the refusal is the same CROWD_ACTIVE as crowd_action_guard. Used only on equipment order paths.
+func crowd_equipment_guard(identities: Array) -> Dictionary:
+	var guard := crowd_action_guard(identities)
+	if guard.ok or not is_instance_valid(lab):
+		return guard
+	var crowd: Variant = lab.get("crowd_site")
+	if crowd == null or float(lab.terrain.site.get("combat_left", 0.0)) > 0.0:
+		return guard
+	for identity: Variant in identities:
+		if crowd.contains_person(int(identity)) and crowd.person_fighting(int(identity)):
+			return guard
+	return Runtime.ok()
+
 func is_busy(identity: int) -> bool:
 	return not _job_key_for(identity).is_empty()
 
@@ -720,7 +735,7 @@ func begin_unbind(executor_id: int, target_id: int) -> Dictionary:
 	return _begin_binding(executor_id, target_id, -1, false)
 
 func begin_equipment(identity: int, request: Dictionary) -> Dictionary:
-	var crowd_guard := crowd_action_guard([identity])
+	var crowd_guard := crowd_equipment_guard([identity])
 	if not crowd_guard.ok:
 		return crowd_guard
 	if is_busy(identity):
@@ -753,7 +768,7 @@ func begin_equipment(identity: int, request: Dictionary) -> Dictionary:
 	return Runtime.ok("開始換裝；完成前保留原實裝", {"seconds": 5.0})
 
 func begin_team_equipment(team: TerrainArmy, requester_id: int, representative_id: int, nation_id: String, standard_id: String, include_player: bool = false, selected_ids: Array[int] = [], simulate_npc_commander: bool = false) -> Dictionary:
-	var crowd_guard := crowd_action_guard([requester_id, representative_id] + selected_ids)
+	var crowd_guard := crowd_equipment_guard([requester_id, representative_id] + selected_ids)
 	if not crowd_guard.ok:
 		return crowd_guard
 	if equipment_orders == null: return Runtime.fail("UNSUPPORTED", "尚未接入整隊實際領裝規則")
@@ -1539,7 +1554,8 @@ func _job_context(job: Dictionary) -> Dictionary:
 	var ids := [job.get("executor_id", -1), job.get("target_id", -1), job.get("guard_id", -1), job.get("representative_id", -1)]
 	if str(job.get("source_kind", "")) == "person":
 		ids.append(int(job.get("source_id", -1)))
-	var crowd_guard := crowd_action_guard(ids)
+	# Equipment jobs follow the peacetime equipment guard, so a peaceful timed order is not cancelled at its own tick.
+	var crowd_guard := crowd_equipment_guard(ids) if str(job.kind) == "equipment" else crowd_action_guard(ids)
 	if not crowd_guard.ok:
 		return crowd_guard
 	if str(job.kind) == "equipment" and not is_instance_valid(lab):

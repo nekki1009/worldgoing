@@ -6,7 +6,7 @@ extends SceneTree
 ##   saveload  a rider mid-charge: capture_for_save is valid and the native state reloads still mounted
 ##   unmounted a team with no riders: no charge stats, no native mounted flag, no rider list
 ## CAV-3 ordinary soldiers (mounted atlas res://assets/army/mounted_soldiers/v2/ must be baked):
-##   ordinary_mounts              a horse equipped through the equipment order flow (prepare/check/commit) makes the
+##   ordinary_mounts              a horse equipped through the normal equipment order flow (begin, timed job) makes the
 ##                                soldier a native rider with a mounted crowd kit whose ride frames resolve
 ##   ordinary_dismount_loses_horse a native dismount empties the mount slot; the horse is lost, not returned to goods
 ##   ordinary_bow_rider_fires     a mounted archer fires under the ordinary ranged rules and stays mounted
@@ -251,9 +251,8 @@ func _ordinary_case() -> void:
 		"saveload_ordinary_rider":
 			_ordinary_saveload_case(soldier_id, index)
 
-# The equipment order flow, as the controlled player uses it for any slot: prepare, check (inside), commit.
-# The soldier is made the controlled person for the personal order (as site_g8a_crowd_test does), then control is restored.
-func _mount_by_order(soldier_id: int) -> bool:
+# Direct setup used by the charge cases (the f51133c helper): prepare, check and commit with no battle time.
+func _mount_direct(soldier_id: int) -> bool:
 	var record: Dictionary = site._records[soldier_id]
 	if not record.get("cargo") is Dictionary: record["cargo"] = {}
 	record.cargo["horse"] = int(record.cargo.get("horse", 0)) + 1
@@ -265,6 +264,40 @@ func _mount_by_order(soldier_id: int) -> bool:
 	lab.terrain.site["controlled_person_id"] = previous_control
 	if not check(bool(prepared.get("ok", false)), "prepare/check admit the horse order", prepared): return false
 	if not check(bool(committed.get("ok", false)), "the horse order commits", committed): return false
+	var item_id := SiteRuntime.mount_item_id(record.item_state)
+	if not check(not item_id.is_empty() and lab.terrain.site.item_records.has(item_id), "the mount slot holds a real horse item", record.item_state): return false
+	return check(int(record.cargo.get("horse", 0)) == horses_before - 1, "exactly one horse left the soldier's goods", record.cargo)
+
+# The equipment order flow, as the controlled player uses it for any slot: begin (guard, prepare, check), then live
+# frames run until the five-second job commits. The soldier is made the controlled person for the personal order.
+# Used by the ordinary single-soldier cases only.
+func _mount_by_order(soldier_id: int) -> bool:
+	var record: Dictionary = site._records[soldier_id]
+	if not record.get("cargo") is Dictionary: record["cargo"] = {}
+	record.cargo["horse"] = int(record.cargo.get("horse", 0)) + 1
+	var horses_before := int(record.cargo.horse)
+	# The deployed team marches in from its edge; equipment needs a stopped person (SitePersonActions._ready).
+	var stopped := false
+	for step in range(900):
+		if not _tick(1): return false
+		var person: Dictionary = controller.person_actions._person(soldier_id, false)
+		if not person.is_empty() and not bool(person.get("moving", false)):
+			stopped = true
+			break
+	if not check(stopped, "the ordinary soldier stops before the horse order"): return false
+	var previous_control := lab.controlled_person_id()
+	lab.terrain.site["controlled_person_id"] = soldier_id
+	var begun: Dictionary = controller.equipment_orders.begin_personal(soldier_id, SiteRuntime.MOUNT_SLOT, SiteRuntime.MOUNT_GOODS)
+	var finished := false
+	if bool(begun.get("ok", false)):
+		for step in range(300):
+			if not check(_tick(1), "the horse order runs without a latched fault"): return false
+			if not controller.person_actions.is_busy(soldier_id):
+				finished = true
+				break
+	lab.terrain.site["controlled_person_id"] = previous_control
+	if not check(bool(begun.get("ok", false)), "begin/check admit the horse order", begun): return false
+	if not check(finished, "the horse order job commits within its five seconds"): return false
 	var item_id := SiteRuntime.mount_item_id(record.item_state)
 	if not check(not item_id.is_empty() and lab.terrain.site.item_records.has(item_id), "the mount slot holds a real horse item", record.item_state): return false
 	return check(int(record.cargo.get("horse", 0)) == horses_before - 1, "exactly one horse left the soldier's goods", record.cargo)
@@ -391,7 +424,10 @@ func _charge_case() -> void:
 	if case_name != "charge_refused_infantry":
 		for identity: int in friend_team.person_ids:
 			if not check(not site._actors.has(identity), "every friend is an ordinary soldier", identity): return
-			if not check(_mount_by_order(identity), "the ordinary soldier mounts through the order flow", identity): return
+			# Charge setup mounts the whole team at once, so it keeps the direct prepare/commit setup (_mount_direct, the
+			# f51133c helper). The normal timed order flow runs one five-second job per soldier with the battle clock
+			# moving, which starts the charge late and changes the rally and real-picture fixtures.
+			if not check(_mount_direct(identity), "the ordinary soldier mounts through the order flow", identity): return
 	var cavalry := bool(site.is_cavalry_team(friend_team))
 	if not check(cavalry == (case_name != "charge_refused_infantry"), "the team reads as a cavalry formation only when its riders are mounted", cavalry): return
 	match case_name:

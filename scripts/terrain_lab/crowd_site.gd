@@ -1899,6 +1899,21 @@ func on_control_changed(old_identity: int, identity: int) -> Dictionary:
 	return SiteRuntime.ok()
 
 
+# Owner decision 2026-10-31: a crowd person is fighting when his native contact state is fight (交手, 2) or shoot
+# (射擊, 4), or an exchange timer (stun, stagger, knock, action) is running. Engage (接敵, 1) is an approach, not an
+# exchange: every soldier of a battle reads engage from afar, so it does not refuse equipment.
+func person_fighting(identity: int) -> bool:
+	if not contains_person(identity): return false
+	var index := int(_index_by_id[identity])
+	var state := soldier_state(index)
+	if state.is_empty(): return true
+	for field: String in ["stun", "stagger", "knock_t", "act_t"]:
+		if float(state.get(field, 0.0)) > 0.0: return true
+	if not crowd.has_method("contact_pose_state"): return true
+	var native: PackedFloat64Array = crowd.contact_pose_state(index)
+	return native.size() != 2 or int(native[0]) in [2, 4]
+
+
 func equipment_recipe_guard(identity: int, appearance: Dictionary) -> Dictionary:
 	if not HumanCharacter3DEditor.valid_appearance(appearance): return SiteRuntime.fail("INVALID")
 	if _actor(identity) != null: return SiteRuntime.ok() # Original actors retain their live presenter.
