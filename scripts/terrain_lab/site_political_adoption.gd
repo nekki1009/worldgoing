@@ -10,26 +10,34 @@ extends RefCounted
 ## authorities must consent. No officer post, cape, kit, knowledge or command is
 ## granted; recruitment and appointment use their own entries afterwards.
 ## First package: original Army-row captives only (an Actor captive waits for
-## its own transfer path; no third Actor is cloned). Crowd: CROWD_UNSUPPORTED.
+## its own transfer path; no third Actor is cloned). Crowd: at peace only (PEACE3c), through CrowdSite.transfer_captive.
 
 const Runtime = preload("res://scripts/terrain_lab/site_runtime.gd")
 const SiteSocial = preload("res://scripts/terrain_lab/site_social.gd")
 const Settlement = preload("res://scripts/terrain_lab/site_settlement.gd")
+const CrowdOwner = preload("res://scripts/terrain_lab/crowd_person_owner.gd")
 
 ## `offer`: {"nation_id": String, "destination_team_id": int, "consent": bool}.
 ## `consent` is only read for the controlled person, who must confirm explicitly.
+## PEACE3c (NEKKI_DECISION_20261031): under crowd the same adoption runs at peace. The person is a crowd person, the destination
+## is the native team of the destination holder, and the commit is the native transfer (CrowdSite.transfer_captive), which owns the
+## final-home supply guard and the nation, corps and captivity changes. Refused in combat by crowd_peace_guard.
 static func prepare(lab: Variant, target_id: int, offer: Dictionary, jail_requester: int, admission_requester: int) -> Dictionary:
 	if lab == null or lab.terrain == null or lab.site_controller == null: return Runtime.fail("NO_SITE")
 	var site: Dictionary = lab.terrain.site
-	if lab.crowd_site != null and lab.crowd_site.active: return Runtime.fail("CROWD_UNSUPPORTED", "群眾模擬中不處理政治歸降")
+	var crowd_on: bool = lab.crowd_site != null and lab.crowd_site.active
+	if crowd_on:
+		var peace: Dictionary = lab.site_controller.person_actions.crowd_peace_guard([target_id])
+		if not peace.ok: return peace
 	if bool(site.get("paused", false)) or float(site.get("combat_left", 0.0)) > 0.0: return Runtime.fail("BUSY", "須在停止、脫戰時處理歸降")
 	var relation: Dictionary = site.get("captivity", {}).get(str(target_id), {})
 	if relation.is_empty() or int(relation.get("version", 0)) < 3: return Runtime.fail("NO_TARGET", "沒有此人的原拘押紀錄")
 	var actions: Variant = lab.site_controller.person_actions
 	var person: Dictionary = actions._person(target_id)
-	if person.is_empty() or not person.owner is TerrainArmy or int(person.unit) < 0:
+	var crowd_person: bool = crowd_on and person.get("owner") is CrowdOwner
+	if person.is_empty() or int(person.unit) < 0 or not (person.owner is TerrainArmy or crowd_person):
 		return Runtime.fail("ACTOR_PENDING", "原 Actor 的歸降移交尚未提供；保留拘押，不複製人物")
-	var source: TerrainArmy = person.owner
+	var source: Variant = person.owner
 	var unit := int(person.unit)
 	if float(person.hp) <= 0.0 or float(person.ko) > 0.0 or actions.is_busy(target_id):
 		return Runtime.fail("BUSY", "本人須清醒且沒有進行中的作業")
@@ -69,22 +77,28 @@ static func prepare(lab: Variant, target_id: int, offer: Dictionary, jail_reques
 	var head: Dictionary = actions._person(orders.nation_head_executor(nation))
 	if destination == null or head.is_empty() or int(head.faction) != int(destination.faction_id):
 		return Runtime.fail("NO_DESTINATION", "須明示目標國勢力的合法接收隊伍")
+	var destination_formation := -1
+	if crowd_on:
+		destination_formation = int(lab.crowd_site.native_team(destination.team_id).get("formation", -1))
+		if destination_formation < 0: return Runtime.fail("NO_DESTINATION", "原生群眾中無此接收隊伍")
 	# The original prison owner proves contact, exit and current custody before
 	# Supply prepares the political transaction's final home (not old release home).
 	if not str(relation.get("prison_id", "")).is_empty():
 		if actions.is_busy(jail_requester): return Runtime.fail("BUSY", "典獄須先完成現有作業")
 		var exit: Dictionary = actions._prison_release_geometry(jail_requester, target_id)
 		if not exit.ok: return exit
-	var moved := source.adoption_row_check(destination, target_id)
+	# Crowd: the native transfer checks the roster row and takes the final-home supply guard itself (CrowdSite.transfer_captive);
+	# calling the guard here too would prepare the change twice.
+	var moved: Dictionary = {"ok": true} if crowd_person else source.adoption_row_check(destination, target_id)
 	if not moved.ok: return moved
 	if not actions.captivity_changed.is_valid(): return Runtime.fail("UNSUPPORTED", "原拘押通知尚未安裝")
-	var supply: Dictionary = lab.site_controller.captivity_supply.adoption_guard(target_id, int(relation.captor_id), source.combat_hot_materialize(unit))
+	var supply: Dictionary = {"ok": true} if crowd_person else lab.site_controller.captivity_supply.adoption_guard(target_id, int(relation.captor_id), source.combat_hot_materialize(unit))
 	if not supply.ok: return supply
 	var old_nations: Array[String] = nations_containing(nations, target_id)
 	var corps_keys: Array[String] = corps_commanded_by(site, target_id)
 	return Runtime.ok("", {"target_id": target_id, "relation": relation, "source": source, "destination": destination,
 		"nation_id": nation_id, "old_nations": old_nations, "corps": corps_keys, "minute": minute, "person": person,
-		"willingness": willing})
+		"willingness": willing, "crowd": crowd_person, "destination_formation": destination_formation})
 
 ## Formal direct/UI command: only the actual controlled person gives manual
 ## consent. Other sides use their existing enabled, deterministic R3 policy.
@@ -95,7 +109,6 @@ static func command(lab: Variant, target_id: int, offer: Dictionary, requester_i
 		or offer.has("consent") and not offer.consent is bool: return Runtime.fail("INVALID", "歸降提案須有目標國、真接收隊伍與布林本人同意")
 	for field: Variant in offer:
 		if field not in ["nation_id", "destination_team_id", "consent"]: return Runtime.fail("INVALID", "歸降提案含未知欄位")
-	if lab.crowd_site != null and lab.crowd_site.active: return Runtime.fail("CROWD_UNSUPPORTED")
 	if requester_id != target_id and not lab.site_controller.person_actions._ready(lab.site_controller.person_actions._person(requester_id)):
 		return Runtime.fail("BUSY", "明示下令者須清醒自由且可行動")
 	var relation: Dictionary = lab.terrain.site.get("captivity", {}).get(str(target_id), {})
@@ -173,6 +186,12 @@ static func commit(lab: Variant, prepared: Dictionary) -> Dictionary:
 	var site: Dictionary = lab.terrain.site
 	var target_id := int(prepared.target_id)
 	var relation: Dictionary = prepared.relation
+	if bool(prepared.get("crowd", false)):
+		var joined: Dictionary = lab.crowd_site.transfer_captive(target_id, int(relation.captor_id), int(prepared.destination_formation),
+			{"nation_id": str(prepared.nation_id), "old_nations": prepared.old_nations, "corps": prepared.corps})
+		if not joined.ok: return joined
+		return Runtime.ok("#%d 已歸降入國 %s（未編入隊、不自動授官）" % [target_id, str(prepared.nation_id)],
+			{"person_id": target_id, "team_id": prepared.destination.team_id, "nation_id": prepared.nation_id})
 	var source: TerrainArmy = prepared.source
 	var body: Dictionary = source.combat_units[source.index_for_identity(target_id)]
 	SiteSocial.settle_before_release(body, relation, int(prepared.minute)) # §8.2: complete custody days first.

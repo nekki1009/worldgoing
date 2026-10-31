@@ -25,6 +25,8 @@ func init(scene: Node2D, person_actions: RefCounted) -> void:
 	_check_left = 0.0
 
 func begin(requester_id: int, guard_id: int, destination: Vector2i, duty_authorized: bool = false) -> Dictionary:
+	var peace: Dictionary = actions.crowd_peace_guard([guard_id])
+	if not peace.ok: return peace
 	var guard: Dictionary = actions._person(guard_id)
 	if guard.is_empty() or not (duty_authorized or _authority(requester_id, guard)) or not actions._ready(guard, true) or not actions._prison_stopped(guard) or actions.is_busy(guard_id) or lab.terrain.site.escort_orders.has(str(guard_id)):
 		return Runtime.fail("NO_AUTHORITY", "須由原看守本人或其當前合格指揮者下令，停止其他作業")
@@ -153,7 +155,11 @@ func begin_release_walk(requester_id: int, executor_id: int, target_id: int) -> 
 	var refused: Dictionary = Settlement.prison_authority(lab, str(slot.prison_id), requester_id)
 	if not refused.is_empty(): return refused
 	var executor: Dictionary = actions._person(executor_id)
-	if executor.is_empty() or executor.owner is CrowdOwner: return Runtime.fail("UNSUPPORTED", "群眾人物尚無出監步行")
+	if executor.is_empty(): return Runtime.fail("UNSUPPORTED", "群眾人物尚無出監步行")
+	# PEACE3d: a crowd executor walks with the native escort steps (order_escort_step) at peace; combat is refused.
+	if executor.owner is CrowdOwner:
+		var peace: Dictionary = actions.crowd_peace_guard([executor_id, target_id])
+		if not peace.ok: return peace
 	if int(executor.faction) not in [int(slot.person.faction), int(slot.relation.captor_faction)]: return Runtime.fail("AUTHORITY")
 	if not actions._ready(executor) or actions.is_busy(executor_id) or lab.terrain.site.escort_orders.has(str(executor_id)) or _release_walks.has(executor_id):
 		return Runtime.fail("BUSY", "執行者須清醒自由、停止且沒有其他作業")

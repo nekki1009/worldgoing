@@ -4174,8 +4174,24 @@ func issue_player_corps_reposition(target_team_id: int, goal: Vector2i) -> Dicti
 	if _ship_person_in_journey(controlled_person_id()): return SiteRuntime.fail("BUSY", "旅程中的原人物不能下現場地面軍令")
 	for team: TerrainArmy in combat_armies:
 		if team.team_id == target_team_id:
+			if crowd_site != null and crowd_site.active: return _crowd_corps_reposition(team, goal)
 			return team.issue_corps_reposition(controlled_person_id(), goal)
 	return SiteRuntime.fail("NO_TARGET", "指定隊伍不在目前地圖")
+
+## PEACE3b (NEKKI_DECISION_20261031): at peace the corps reposition runs under crowd as on the grid. The dormant holder is refreshed
+## from crowd truth, the same corps authority is checked, then the native team gets the MOVE order. Refused in combat.
+func _crowd_corps_reposition(holder: TerrainArmy, goal: Vector2i) -> Dictionary:
+	var requester := controlled_person_id()
+	var peace: Dictionary = site_controller.person_actions.crowd_peace_guard([requester])
+	if not peace.ok: return peace
+	# The holder is dormant under crowd (combat_enabled false, crowd_site.gd retire path), so the native team record is the
+	# existence test, not the holder's grid flag. authorize_corps_reposition takes crowd_native for the same reason.
+	if crowd_site.native_team(holder.team_id).is_empty():
+		return SiteRuntime.fail("NO_TARGET", "指定隊伍不在目前地圖")
+	crowd_site.project_team_holder(holder)
+	var authority := SiteRuntime.authorize_corps_reposition(terrain, requester, holder, _combat_target_in_site, true)
+	if not bool(authority.get("ok", false)): return authority
+	return crowd_site.issue_order(holder.team_id, TerrainArmy.CombatOrder.MOVE, goal, -1, "corps")
 
 func _forget_corps_team(team_id: int) -> void:
 	if terrain == null or not terrain.site.get("corps", {}) is Dictionary:

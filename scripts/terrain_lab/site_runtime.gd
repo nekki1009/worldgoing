@@ -251,8 +251,10 @@ static func ecology_action_guard(data: TerrainData, key: String, action: String)
 
 # Only explicit original-person/team relationships grant corps authority.
 # The lookup is supplied by the live owner; saved Army snapshots are not live people.
-static func authorize_corps_reposition(data: TerrainData, requester_id: int, target_team: TerrainArmy, person_query: Callable) -> Dictionary:
-	if data == null or not is_instance_valid(target_team) or target_team.data != data or not target_team.combat_enabled:
+## crowd_native: the target is a dormant holder under crowd (its native team is the live one), so its grid combat_enabled flag is not the test.
+static func authorize_corps_reposition(data: TerrainData, requester_id: int, target_team: TerrainArmy, person_query: Callable, crowd_native: bool = false) -> Dictionary:
+	# Under crowd the dormant holder's data and combat flag are not live: the caller has checked the native team (terrain_lab.gd).
+	if data == null or not is_instance_valid(target_team) or (target_team.data != data and not crowd_native) or not (target_team.combat_enabled or crowd_native):
 		return fail("NO_TARGET", "轉進隊伍不在目前地圖")
 	var corps: Variant = data.site.get("corps", {})
 	if not _valid_corps_shape(corps):
@@ -277,6 +279,10 @@ static func authorize_corps_reposition(data: TerrainData, requester_id: int, tar
 	elif owner is TerrainTestCharacter:
 		eligible = unit == -1 and owner.data == data and owner.faction_id == target_team.faction_id \
 			and owner.combat_identity() == requester_id and owner.can_act()
+	elif owner.get("crowd_site") != null:
+		# PEACE3 (crowd, peacetime): a crowd person's owner mimics the team interface (crowd_person_owner.gd).
+		eligible = owner.data == data and owner.faction_id == target_team.faction_id and unit >= 0 and owner.is_member(unit) \
+			and owner.combat_identity(unit) == requester_id and owner.combat_can_act(unit)
 	if not eligible:
 		return fail("NO_AUTHORITY", "軍團長須為同陣營、在場且清醒自由的原人物")
 	return ok("軍團長轉進權限已確認", {"corps_id": corps_id})

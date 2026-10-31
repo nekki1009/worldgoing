@@ -1469,9 +1469,7 @@ func _trial_team_order(order_id: int) -> void:
 	_update_combat_window()
 
 func _player_corps_reposition() -> void:
-	if _crowd_active():
-		show_result(Runtime.fail("CROWD_UNSUPPORTED", "群體模型下軍團長轉進尚未接線；未下令"))
-		return
+	# PEACE3b: under crowd the lab routes the reposition (peace only; combat refused by crowd_peace_guard).
 	var team_id := int(formal_team_choice.get_item_metadata(formal_team_choice.selected)) if formal_team_choice != null and formal_team_choice.selected >= 0 else -1
 	if team_id < 0:
 		show_result(Runtime.fail("NO_TARGET", "先在正式隊伍窗選取原隊伍"))
