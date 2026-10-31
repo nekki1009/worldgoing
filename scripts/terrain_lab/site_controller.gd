@@ -10418,7 +10418,7 @@ func capture_region_checkpoint(purpose: String, effects_complete: bool = true,
 	if token.is_empty(): token = "region_" + Crypto.new().generate_random_bytes(16).hex_encode()
 	var request: Dictionary = region_slot.region_checkpoint_context(lab.terrain, purpose, token, effects_complete, endpoint_payload)
 	if not request.ok: return request
-	# G6.2: an admitted live crowd stamps its checkpoint "native"; the mode and bind receipt keep their bind-time backend.
+	# G6.2: an admitted live crowd stamps its checkpoint "native". G6: the live mode and bind receipt follow the crowd too.
 	if crowd_admitted: request.context["backend"] = "native"
 	var crowd_captured := {}
 	if crowd_admitted:

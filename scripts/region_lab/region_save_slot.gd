@@ -4193,7 +4193,7 @@ func commit_npc_region_arrival(prepared: Dictionary) -> Dictionary:
 	var final_mode := "live" if str(prepared.mode) == "live" else str(prepared.get("battle", {}).get("mode", "cold_exact"))
 	bound.mode = final_mode
 	bound.consumer = "original_site" if final_mode == "live" else ("original_formula_site" if final_mode == "formula_active" else "original_replay")
-	var activated := activate_region_mode(str(prepared.destination_site), final_mode, str(bound.consumer), bound)
+	var activated := activate_region_mode(str(prepared.destination_site), final_mode, str(bound.consumer), bound, str(bound.get("backend", "gd")))
 	if not activated.ok: return activated
 	_region_npc_party_runtime.erase(token)
 	_region_npc_plan_runtime.erase(token)
@@ -9290,7 +9290,7 @@ const DeliverySight = preload("res://scripts/terrain_lab/site_army_ai.gd")
 
 func record_region_officer_feature_observation(original: TerrainLab, observer_id: int, feature_id: String) -> Dictionary:
 	if not is_instance_valid(original) or original.site_controller == null or original.site_controller.region_slot != self \
-		or _region_bound_original_lab(original.terrain) != original or original.crowd_site != null and original.crowd_site.active: return fail("MISSING_ORIGINAL_OBSERVER")
+		or _region_bound_original_lab(original.terrain) != original: return fail("MISSING_ORIGINAL_OBSERVER")
 	var bind := original.region_bind_receipt(original.terrain)
 	var settled := validate_settlement(original.terrain.site, float(control.logical_game_seconds))
 	var fire: Dictionary = original.terrain.site.get("fire_settlement", {})
@@ -9340,9 +9340,9 @@ func record_region_officer_feature_observation(original: TerrainLab, observer_id
 
 func record_region_officer_feature_observations(original: TerrainLab) -> Dictionary:
 	var officers: Array[int] = []
-	for team: TerrainArmy in original.combat_armies:
+	for team: Variant in original.team_owners():
 		if team.combat_enabled and team.current_commander >= 0:
-			var identity := team.combat_identity(team.current_commander)
+			var identity: int = team.combat_identity(team.current_commander)
 			if identity > 0 and not officers.has(identity): officers.append(identity)
 	for nation: Dictionary in original.terrain.site.get("equipment_nations", {}).values():
 		if not SiteOffices.validate(nation.get("offices", {}), "nation"): continue
@@ -9507,13 +9507,17 @@ func _region_delivery_person(original: TerrainLab, reference: Dictionary) -> Dic
 		if person.is_empty(): continue
 		if person.owner is TerrainArmy:
 			if bool(person.owner.combat_hot_get(int(person.unit), &"departed", false)) or bool(person.owner.combat_hot_get(int(person.unit), &"site_exited", false)): continue
+		elif person.owner is CrowdPersonOwner:
+			# G6: a crowd person is present while it is a native member that has not left the map (departed or off-map absent).
+			if person.owner.member_gone(int(person.unit)) or bool(person.owner.combat_hot_get(int(person.unit), &"site_exited", false)): continue
 		elif not original.actor_present(person.owner) or bool(person.owner.site_exited): continue
 		return person
 	return {}
 
 
 func _region_delivery_office(original: TerrainLab, person: int) -> Dictionary:
-	for team: TerrainArmy in original.combat_armies:
+	# G6: team_owners() is the crowd command owners while a crowd is active, else the original TerrainArmy slots.
+	for team: Variant in original.team_owners():
 		if not team.combat_enabled or team.current_commander < 0 or team.combat_identity(team.current_commander) != person: continue
 		var reference: Dictionary = original.terrain.site.get("travel_identity", {}).get("refs", {}).get("team", {}).get(str(team.team_id), {})
 		if not RegionAI.delivery_reference(reference, "team"): return {}
@@ -9590,6 +9594,8 @@ func _region_consume_carried_report(report: Dictionary) -> Dictionary:
 		actual_effect = received_nation.effect
 	if str(transfer.kind) == "army_command":
 		var team := _region_delivery_team(original, transfer.team_ref)
+		# G6: a crowd-owned team's TerrainArmy slot is a disabled command source; it never takes a Region order.
+		if team != null and original.crowd_site != null and original.crowd_site.active and original.crowd_site.owns_original_team(team): team = null
 		if team == null or team.current_commander < 0 or team.combat_identity(team.current_commander) != int(receiver.person_id) \
 			or not team.command_eligible(team.current_commander): return {"ok": true, "delivered": false, "receipt": {"code": "COMMAND_AUTHORITY_CHANGED", "complete": true, "effects_complete": true}}
 		var command: Dictionary = transfer.command
@@ -10801,7 +10807,7 @@ func _region_n08_publish_delivery(token: String) -> Dictionary:
 			destination_lab.site_controller.latch_original_step_fault(fault)
 			return fault
 		var mode := "live" if str(data_candidates[index].site.id) == str(control.active_site_id) else "cold_exact"
-		var activated := activate_region_mode(str(data_candidates[index].site.id), mode, "original_site" if mode == "live" else "original_replay", bound)
+		var activated := activate_region_mode(str(data_candidates[index].site.id), mode, "original_site" if mode == "live" else "original_replay", bound, str(bound.get("backend", "gd")))
 		if not activated.ok: return activated
 	return {"ok": true, "complete": true, "event_id": event_id, "token": token, "generation": int(published.generation)}
 
@@ -10876,10 +10882,10 @@ func admit_original_region_contact_battle(original: TerrainLab) -> Dictionary:
 		return {"ok": true, "admitted": false, "reason": "PLAYER_BARRIER"}
 	var mode: Dictionary = region_registry().modes.get(owner, {})
 	if str(mode.get("mode", "")) != "cold_exact": return {"ok": true, "admitted": false, "reason": "OTHER_ORIGINAL_CONSUMER"}
-	if str(mode.get("backend", "")) != "gd":
+	if str(mode.get("backend", "")) != original.region_backend_expected():
 		return {"ok": true, "admitted": false, "reason": "EXACT_BACKEND_UNADMITTED"}
 	if original.crowd_site != null and original.crowd_site.active:
-		return fail("REGION_BACKEND_UNADMITTED", "原 GD mode 與 Native body 不一致")
+		return fail("REGION_BACKEND_UNADMITTED", "原接觸戰鬥尚未准入群眾 Native body")
 	if original.get_tree().paused or bool(original.terrain.site.get("paused", false)):
 		return {"ok": true, "admitted": false, "reason": "PAUSED_ORIGINAL"}
 	if not original._region_point_pending.is_empty() or not original._region_point_contacts.is_empty() or not original._region_point_wakes.is_empty() or original._region_point_consuming or original._region_point_dispatching or not original._combat_contacts.is_empty() or not original.terrain.get_meta(&"fire_boundary", {}).is_empty():
@@ -10889,7 +10895,7 @@ func admit_original_region_contact_battle(original: TerrainLab) -> Dictionary:
 	if original._siege_tactical_active() or original._fire_activity():
 		return {"ok": true, "admitted": false, "reason": "EXACT_SIEGE_FIRE_OWNER"}
 	var bind: Dictionary = original.region_bind_receipt(original.terrain)
-	if bind.get("ok") != true or bind.get("complete") != true or bind.get("owners_restored") != true or str(bind.get("backend", "")) != "gd" or int(bind.get("generation", -1)) != int(_marker.get("generation", 0)):
+	if bind.get("ok") != true or bind.get("complete") != true or bind.get("owners_restored") != true or str(bind.get("backend", "")) != original.region_backend_expected() or int(bind.get("generation", -1)) != int(_marker.get("generation", 0)):
 		return fail("COMMITTED_UNBOUND")
 	var world := float(control.logical_game_seconds)
 	var action := float(control.fire_clock.action_seconds)
@@ -10946,7 +10952,7 @@ func admit_original_region_contact_battle(original: TerrainLab) -> Dictionary:
 	var activation: Dictionary = bind.duplicate(true)
 	activation.mode = "formula_active"
 	activation.consumer = "original_formula_site"
-	var activated := GameplayClock.activate_mode(candidate, owner, "formula_active", int(_marker.generation), "gd", "original_formula_site", world, action, activation)
+	var activated := GameplayClock.activate_mode(candidate, owner, "formula_active", int(_marker.generation), str(bind.backend), "original_formula_site", world, action, activation)
 	if not activated.ok: return activated
 	candidate.revision = int(candidate.revision) + 1
 	var valid := GameplayClock.validate_registry(candidate, world)
@@ -11200,7 +11206,8 @@ func commit_region_player_departure(prepared: Dictionary) -> Dictionary:
 		fault.committed = true
 		controller.latch_original_step_fault(fault)
 		return fault
-	var activated := activate_region_mode(owner, "cold_exact", "original_replay", lab.region_bind_receipt(lab.terrain))
+	var cold_receipt := lab.region_bind_receipt(lab.terrain)
+	var activated := activate_region_mode(owner, "cold_exact", "original_replay", cold_receipt, str(cold_receipt.get("backend", "gd")))
 	if not activated.ok:
 		activated.committed = true
 		controller.latch_original_step_fault(activated)
@@ -11233,7 +11240,7 @@ func refresh_original_region_siege_battle(original: TerrainLab) -> Dictionary:
 	if _region_bound_original_lab(original.terrain) != original: return fail("STALE_ORIGINAL_SIEGE_OWNER")
 	var mode: Dictionary = region_registry().modes.get(owner, {})
 	if str(mode.get("mode", "")) not in ["live", "cold_exact", "formula_active"]: return {"ok": true, "changed": false, "reason": "ORIGINAL_MODE_PENDING"}
-	if str(mode.get("backend", "")) != "gd": return fail("REGION_BACKEND_UNADMITTED")
+	if str(mode.get("backend", "")) != original.region_backend_expected(): return fail("REGION_BACKEND_UNADMITTED")
 	var world := float(control.logical_game_seconds)
 	var action := float(control.fire_clock.action_seconds)
 	var settled: Dictionary = validate_settlement(original.terrain.site, world)
@@ -11264,7 +11271,7 @@ func refresh_original_region_siege_battle(original: TerrainLab) -> Dictionary:
 	if not result.ok: return result
 	if not result.get("present", false): return {"ok": true, "changed": false, "reason": str(result.get("reason", "NO_ORIGINAL_SIEGE"))}
 	var bind := original.region_bind_receipt(original.terrain)
-	if bind.get("complete") != true or bind.get("owners_restored") != true or str(bind.get("backend", "")) != "gd": return fail("COMMITTED_UNBOUND")
+	if bind.get("complete") != true or bind.get("owners_restored") != true or str(bind.get("backend", "")) != original.region_backend_expected(): return fail("COMMITTED_UNBOUND")
 	var siege: Dictionary = result.siege
 	var identifier := str(existing.get("id", "siege:%s:%s:%d" % [owner, str(siege.center_id), int(control.fire_clock.sequence)]))
 	var battle := existing.duplicate(true)

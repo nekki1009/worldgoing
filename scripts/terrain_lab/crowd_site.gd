@@ -611,6 +611,7 @@ func deploy(sides: Array, formations: Array) -> Dictionary:
 	_begin_player()
 	_make_panel()
 	_prewarm_captivity_atlases.call_deferred()
+	_region_mode_follow()
 	return SiteRuntime.ok("群眾模式：已部署 %d 隊、%d 人" % [sides.size(), total])
 
 
@@ -1087,7 +1088,17 @@ func clear(reserved_empty: TerrainArmy = null, validate_candidate: Callable = Ca
 		var valid: Dictionary = validate_candidate.call(prepared)
 		if not valid.ok: return valid
 	prepared.reserved_empty = reserved_empty
-	return ClearHandoff.commit(self, prepared)
+	var committed: Dictionary = ClearHandoff.commit(self, prepared)
+	if committed.get("ok", false) and not active: _region_mode_follow()
+	return committed
+
+
+## G6: the bound live Region mode follows this crowd (native while active, gd after clear). The crowd change
+## itself is already committed; a refused re-activation latches the original step fault instead of a silent mismatch.
+func _region_mode_follow() -> void:
+	if lab == null or not lab.has_method("region_sync_crowd_mode"): return
+	var synced: Dictionary = lab.region_sync_crowd_mode()
+	if not synced.get("ok", false) and lab.site_controller != null: lab.site_controller.latch_original_step_fault(synced)
 
 
 func _clear_mounted_contact_visuals() -> void:

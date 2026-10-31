@@ -161,6 +161,10 @@ func _run() -> void:
 	var crowd: Object = lab.crowd_site.crowd
 	var soldiers_before := int(crowd.soldier_count())
 	if not _check(soldiers_before >= 2, "crowd battle has at least two soldiers", soldiers_before): return
+	# G6 gate conflict: the live bind receipt reports the backend the active crowd requires,
+	# even though the bind itself happened before the crowd deployed (bind-time gd is stale).
+	var live_receipt: Dictionary = lab.region_bind_receipt(lab.terrain)
+	if not _check(live_receipt.get("complete") == true and str(live_receipt.get("backend", "")) == "native" and lab.region_backend_expected() == "native", "live bind receipt follows the active crowd: native", live_receipt): return
 	# Mode admission: the native backend is admitted through the Region mode registry
 	# (GameplayClock accepts "native"), with a receipt that names the same backend.
 	var generation := int(slot._marker.get("generation", 0))

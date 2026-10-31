@@ -582,6 +582,14 @@ static func _siege_person_ref(lab: TerrainLab, identity: int) -> Dictionary:
 ## It proves topology only; original movement/occupancy still admits each step.
 
 
+## The order goal of an original team: TerrainArmy.combat_goal, or the native formation goal cell of a crowd team.
+static func _siege_order_goal(owner: Variant) -> Vector2i:
+	if owner is TerrainArmy: return owner.combat_goal
+	var state: Dictionary = owner.crowd_site.formation_state(int(owner.formation_index))
+	if not state.has("goal_x") or not state.has("goal_y"): return TerrainArmy.INVALID_CELL
+	return Vector2i(floori(float(state.goal_x)), floori(float(state.goal_y)))
+
+
 static func original_siege_path(lab: TerrainLab, identity: int, goal: Vector2i) -> Array[Vector2i]:
 	var result: Array[Vector2i] = []
 	var person: Dictionary = lab.site_controller.person_actions._person(identity, false)
@@ -719,13 +727,11 @@ static func prepare_original_siege(lab: TerrainLab, battle: Dictionary = {}) -> 
 	for identity: int in factions.get(attacker, []):
 		var person: Dictionary = lab.site_controller.person_actions._person(identity, false)
 		if not SiteSettlement._fit(person) or SiteSettlement._role(person) == "civilian" or lab.site_controller.vehicles.is_siege_crew(identity): continue
-		# Native crowd attackers have no admitted route/advance proof yet. Refuse conservatively
-		# instead of silently dropping them from the assault phase.
-		if person.owner is CrowdPersonOwner and person.owner.combat_order in [TerrainArmy.CombatOrder.ATTACK, TerrainArmy.CombatOrder.MOVE]:
-			return _fail("CROWD_SIEGE_ROUTE_UNADMITTED")
-		if not person.owner is TerrainArmy: continue
+		# G6: a native crowd attacker takes the same ATTACK / MOVE-into-the-capture-zone rule. Its formation
+		# order and goal are the native formation's; its route proof is the same original path from its cell.
+		if not person.owner is TerrainArmy and not person.owner is CrowdPersonOwner: continue
 		var original_attack: bool = person.owner.combat_order == TerrainArmy.CombatOrder.ATTACK
-		var original_advance: bool = person.owner.combat_order == TerrainArmy.CombatOrder.MOVE and SiteSettlement.capture_zone(data).has(person.owner.combat_goal)
+		var original_advance: bool = person.owner.combat_order == TerrainArmy.CombatOrder.MOVE and SiteSettlement.capture_zone(data).has(_siege_order_goal(person.owner))
 		if not original_attack and not original_advance: continue
 		activity = true
 		var prior: Dictionary = existing.get("routes", {}).get(str(identity), {})

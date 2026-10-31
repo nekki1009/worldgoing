@@ -866,7 +866,38 @@ func region_bind_receipt(data: TerrainData) -> Dictionary:
 		return SiteRuntime.fail("REGION_BIND_INCOMPLETE", "原人物／物品／租約／controller 尚未完整綁定")
 	var result := _region_bind_receipt_value.duplicate(true)
 	result["generation"] = _region_receipt_generation()
+	# G6 backend convention: "native" exactly while a crowd is active, "gd" otherwise. The bind-time
+	# value alone goes stale when a crowd deploys after the bind, so the accessor reports the live state.
+	result["backend"] = region_backend_expected()
 	return result
+
+## The Region backend every receipt, mode and gate must agree with (G6 gate conflict resolution).
+func region_backend_expected() -> String:
+	return "native" if crowd_site != null and crowd_site.active else "gd"
+
+## G6: the live Region mode follows the crowd. A crowd that deploys, loads or clears after the bind
+## re-activates the same live owner/consumer with the backend the bind receipt now reports. Nothing
+## else of the mode changes; a pending tactical demand is kept. Not bound or not live: nothing to do.
+func region_sync_crowd_mode() -> Dictionary:
+	if restore_only or terrain == null or site_controller == null or terrain.has_meta(&"region_party_owner"): return SiteRuntime.ok()
+	var slot: RegionSaveSlot = site_controller.region_slot
+	if slot == null or _region_bound_data != terrain or _region_bind_receipt_value.get("complete") != true: return SiteRuntime.ok()
+	if slot._region_bound_original_lab(terrain) != self: return SiteRuntime.ok()
+	var owner := str(terrain.site.get("id", ""))
+	var prior: Dictionary = slot.region_registry().modes.get(owner, {})
+	if str(prior.get("mode", "")) != "live" or str(prior.get("consumer", "")) != "original_site": return SiteRuntime.ok()
+	var expected := region_backend_expected()
+	if str(prior.get("backend", "")) == expected: return SiteRuntime.ok()
+	var receipt := region_bind_receipt(terrain)
+	if receipt.get("complete") != true: return receipt
+	receipt["mode"] = "live"
+	receipt["consumer"] = "original_site"
+	receipt["generation"] = int(slot._marker.get("generation", 0))
+	var activated: Dictionary = slot.activate_region_mode(owner, "live", "original_site", receipt, expected)
+	if not activated.get("ok", false): return activated
+	var current: Dictionary = slot.region_registry().modes[owner]
+	current["tactical_until_action"] = maxf(float(current.tactical_until_action), float(prior.get("tactical_until_action", 0.0)))
+	return activated
 
 func _region_receipt_generation() -> int:
 	var published: bool = is_instance_valid(_region_receipt_slot) and _region_receipt_data == terrain
@@ -9608,7 +9639,7 @@ func _region_gameplay_owner_lab(site_id: String, requested_mode: String, travel_
 		return SiteRuntime.fail("STALE_REGION_OWNER")
 	var receipt := original.region_bind_receipt(original.terrain)
 	if not receipt.get("complete", false): return receipt
-	if str(receipt.get("backend", "")) != "gd": return SiteRuntime.fail("REGION_BACKEND_UNADMITTED")
+	if str(receipt.get("backend", "")) != original.region_backend_expected(): return SiteRuntime.fail("REGION_BACKEND_UNADMITTED")
 	receipt.mode = requested_mode
 	receipt.consumer = "original_formula_site" if requested_mode == "formula_active" else "original_replay"
 	receipt.generation = int(slot._marker.get("generation", 0))
@@ -9624,7 +9655,7 @@ func _region_gameplay_owner_lab(site_id: String, requested_mode: String, travel_
 			mode["game_seconds"] = float(slot.control.logical_game_seconds)
 			mode["action_seconds"] = float(slot.control.fire_clock.action_seconds)
 	if str(mode.get("mode", "")) != requested_mode or int(mode.get("generation", -1)) != receipt.generation or not mode.get("activation", {}).get("complete", false):
-		var activated := slot.activate_region_mode(site_id, requested_mode, str(receipt.consumer), receipt)
+		var activated := slot.activate_region_mode(site_id, requested_mode, str(receipt.consumer), receipt, str(receipt.backend))
 		if not activated.ok: return activated
 	return {"ok": true, "lab": original, "activation": receipt}
 
