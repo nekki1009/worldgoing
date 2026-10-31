@@ -39,7 +39,7 @@ const FORMATION_DESCRIPTIONS := {
 const PANEL_SCALE := 1.35
 const REGION_MAP_SCENE := "res://scenes/region_lab/RegionLab.tscn"
 const RegionEntry = preload("res://scripts/region_lab/region_entry.gd")
-const COMBAT_ORDER_NAMES := ["守位", "接敵", "移動", "撤退", "追擊", "返隊"]
+const COMBAT_ORDER_NAMES := ["守位", "接敵", "移動", "撤退", "追擊", "返隊", "衝鋒", "重整"]
 var lab: Node2D
 var view: Node2D
 var panel: PanelContainer
@@ -165,6 +165,11 @@ var _combat_ui_elapsed := 0.0
 var trial_ai_status_label: Label
 var trial_retreat_button: Button
 var player_retreat_button: Button
+# CAV-4b: crowd cavalry orders, enabled only for a cavalry team (site_controller _update_combat_window).
+var trial_charge_button: Button
+var trial_rally_button: Button
+var player_charge_button: Button
+var player_rally_button: Button
 var test_retreat_button: Button
 var formation_command_source: OptionButton
 var formation_preset_choice: OptionButton
@@ -729,7 +734,7 @@ func _build_ui() -> void:
 	formal_team_choice.set_item_metadata(0, -1)
 	formal_team_choice.item_selected.connect(func(_index: int) -> void: _sync_formal_captain_selection())
 	_build_formation_controls(column, "formal")
-	for entry: Array in [["玩家下令：守位", TerrainArmy.CombatOrder.HOLD], ["玩家下令：接敵", TerrainArmy.CombatOrder.ATTACK], ["玩家下令：前進至所選格", TerrainArmy.CombatOrder.MOVE], ["玩家下令：撤至地圖邊緣（士氣崩潰後）", TerrainArmy.CombatOrder.RETREAT], ["玩家下令：追擊所選敵兵", TerrainArmy.CombatOrder.PURSUE]]:
+	for entry: Array in [["玩家下令：守位", TerrainArmy.CombatOrder.HOLD], ["玩家下令：接敵", TerrainArmy.CombatOrder.ATTACK], ["玩家下令：前進至所選格", TerrainArmy.CombatOrder.MOVE], ["玩家下令：撤至地圖邊緣（士氣崩潰後）", TerrainArmy.CombatOrder.RETREAT], ["玩家下令：追擊所選敵兵", TerrainArmy.CombatOrder.PURSUE], ["玩家下令：衝鋒（騎兵隊，所選敵隊或所選格）", TerrainArmy.CombatOrder.CHARGE], ["玩家下令：重整（騎兵隊）", TerrainArmy.CombatOrder.RALLY]]:
 		var order_id := int(entry[1])
 		var order_button := _button(column, str(entry[0]), "PlayerArmyOrder%d" % order_id, func() -> void:
 			var identity := -1
@@ -738,6 +743,10 @@ func _build_ui() -> void:
 			_player_army_order(order_id, identity))
 		if order_id == TerrainArmy.CombatOrder.RETREAT:
 			player_retreat_button = order_button
+		elif order_id == TerrainArmy.CombatOrder.CHARGE:
+			player_charge_button = order_button
+		elif order_id == TerrainArmy.CombatOrder.RALLY:
+			player_rally_button = order_button
 	_button(column, "玩家下令：拖曳指定終點面向", "PlayerArmyFacingMove", func() -> void: _begin_facing_move("player"))
 	_button(column, "軍團長要求：所選隊伍轉進至所選格", "CorpsReposition", func() -> void: _player_corps_reposition())
 	column = _formal_columns.supply
@@ -1080,6 +1089,8 @@ func install_test_window(host: Window, pages: Dictionary) -> void:
 	_button(column, "所選隊伍接敵", "TrialTeamAttack", func() -> void: _trial_team_order(TerrainArmy.CombatOrder.ATTACK))
 	trial_retreat_button = _button(column, "所選隊伍撤至地圖邊緣（士氣崩潰後）", "TrialTeamRetreat", func() -> void: _trial_team_order(TerrainArmy.CombatOrder.RETREAT))
 	_button(column, "所選隊伍追擊所選敵兵", "TrialTeamPursue", func() -> void: _trial_team_order(TerrainArmy.CombatOrder.PURSUE))
+	trial_charge_button = _button(column, "所選騎兵隊衝鋒（所選敵隊或所選格）", "TrialTeamCharge", func() -> void: _trial_team_order(TerrainArmy.CombatOrder.CHARGE))
+	trial_rally_button = _button(column, "所選騎兵隊重整", "TrialTeamRally", func() -> void: _trial_team_order(TerrainArmy.CombatOrder.RALLY))
 	_label(column, "開發測試指揮（模擬 NPC 隊長下令，非玩家權限）", 15)
 	_button(column, "測試任命：本人為所選隊軍團長", "TrialCorpsAppointment", func() -> void: show_result(_appoint_trial_corps()))
 	_button(column, "我方守位", "ArmyCombatHold", func() -> void: _test_army_order(TerrainArmy.CombatOrder.HOLD))
@@ -1201,6 +1212,8 @@ func _crowd_order(source: String, order_id: int, goal: Vector2i = Vector2i(-1, -
 		# A grid candidate armed before crowd activation has no crowd owner; drop it instead of refusing the crowd MOVE as STALE.
 		_clear_formation_candidate()
 	if target_id < 0 and order_id == TerrainArmy.CombatOrder.PURSUE: target_id = _crowd_selected_enemy(team)
+	# CAV-4b: a picked enemy person charges that enemy team (native kind 7); otherwise the selected cell is a point (kind 5).
+	if target_id < 0 and order_id == TerrainArmy.CombatOrder.CHARGE: target_id = _crowd_selected_enemy(team)
 	return lab.crowd_site.issue_order(int(team.team_id), order_id, selected if goal == Vector2i(-1, -1) else goal, target_id, source, facing)
 
 func _sync_crowd_choices() -> void:
@@ -2124,8 +2137,15 @@ func _update_combat_window() -> void:
 			var team := _crowd_command_team(str(pair[1]))
 			if pair[0] != null:
 				pair[0].disabled = team.is_empty() or not bool(team.get("routed", false))
+		# CAV-4b: cavalry orders only for a team that is mostly mounted (native cavalry_formation).
+		for pair: Array in [[trial_charge_button, "trial"], [player_charge_button, "player"], [trial_rally_button, "trial"], [player_rally_button, "player"]]:
+			var cavalry_team := _crowd_command_team(str(pair[1]))
+			if pair[0] != null:
+				pair[0].disabled = cavalry_team.is_empty() or not bool(cavalry_team.get("cavalry", false))
 		_update_formation_controls()
 		return
+	for cavalry_button: Button in [trial_charge_button, trial_rally_button, player_charge_button, player_rally_button]:
+		if cavalry_button != null: cavalry_button.disabled = true
 	_sync_trial_team_choices()
 	var retreat_team := _selected_trial_team()
 	if retreat_team != null and trial_command_team.selected >= 0:

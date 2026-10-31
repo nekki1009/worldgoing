@@ -13,10 +13,24 @@ extends SceneTree
 ##   saveload_ordinary_rider      a mounted ordinary soldier saves and reloads still mounted with its horse item
 ## The charge-contact, through-3 and pike scenarios are verified by native scenario_tests (charge, penetration cap, pike).
 ## Their GD versions return with CAV-3 / CAV-4, when ordinary soldiers can ride and teams can be ordered into a line.
+## CAV-4b cavalry charge orders (native CHARGE 5/7, RALLY 6; reports/cavalry-charge-plan.md section 5), riders are mounted ordinary soldiers:
+##   charge_order                  a mounted team is ordered to CHARGE an enemy team through issue_order: gallop, then contact
+##   rally_order                   after contact, RALLY pulls the riders back and the formation HOLDs with no rider charging
+##   charge_refused_infantry       a team on foot is refused CHARGE as NOT_CAVALRY
+##   charge_refused_no_commander   the commander 20 cells out (GD gate still eligible) is refused CHARGE as NO_COMMANDER
+##   charge_saveload               a save taken mid-charge reloads with the CHARGE order and the charge resumes to contact
+##   charge_real_picture           visual: the command path (SiteController._crowd_order) charges a 12-rider team into 24 foot;
+##                                 contacts are produced and the p95 frame time stays under CHARGE_FRAME_MS_LIMIT
 ## Run: -- --crowd --crowd-test <fresh run_id> --cavalry-case <case> [--crowd-atlas-root res://output/site_siege_close_20261004/equipment_atlas_runtime]
-## Fails fast on the first failed check. Not run in this change: Godot was not executed for this patch.
+## Fails fast on the first failed check.
 const DT := 1.0 / 30.0
 const ORDINARY_CASES := ["ordinary_mounts", "ordinary_dismount_loses_horse", "ordinary_bow_rider_fires", "saveload_ordinary_rider"]
+const CHARGE_CASES := ["charge_order", "rally_order", "charge_refused_infantry", "charge_refused_no_commander", "charge_saveload", "charge_real_picture"]
+# The switch plan (output/project_command_center/CONTINUOUS_SWITCH/switch-plan.md) names no frame-time number. The real-picture
+# gate of SITE_CROWD_10K_PLAN_SOL.md (lines 237 and 409: whole frame p95 <= 33.3 ms, p99 <= 50 ms) is the sourced frame limit.
+# The "about 6 ms per tick" of NEKKI_DECISION_20261028_continuous_model_switch.md is the native 10k step cost, not a frame gate.
+const CHARGE_FRAME_MS_LIMIT := 33.3
+const CHARGE_FRAME_P99_MS_LIMIT := 50.0
 var lab: TerrainLab
 var controller: SiteController
 var site: Node
@@ -77,7 +91,7 @@ func _run() -> void:
 	if not check(args.has("--crowd") and args.has("--crowd-test"), "isolated crowd startup required"): return
 	var pick := args.find("--cavalry-case")
 	if pick >= 0 and pick + 1 < args.size(): case_name = str(args[pick + 1])
-	if not check(case_name in ["turn", "palisade", "dismount", "saveload", "unmounted"] + ORDINARY_CASES, "a known cavalry case is selected", case_name): return
+	if not check(case_name in ["turn", "palisade", "dismount", "saveload", "unmounted"] + ORDINARY_CASES + CHARGE_CASES, "a known cavalry case is selected", case_name): return
 	lab = load("res://scenes/terrain_lab/TerrainLab.tscn").instantiate()
 	lab.npc = TerrainTestNPC.new()
 	lab.pause_when_unfocused = false
@@ -93,6 +107,9 @@ func _run() -> void:
 	var actor: TerrainTestCharacter = lab.character
 	if case_name in ORDINARY_CASES:
 		_ordinary_case()
+		return
+	if case_name in CHARGE_CASES:
+		_charge_case()
 		return
 	if case_name != "unmounted":
 		var initial: Dictionary = actor.capture_state()
@@ -358,4 +375,143 @@ func _ordinary_saveload_case(soldier_id: int, index: int) -> void:
 	if not _mounted_kit_ok(soldier_id, index): return
 	if not check(_tick(1), "the frame after the reload has no latched fault"): return
 	print("CAV3 GATE OK: saveload_ordinary_rider")
+	quit(0)
+
+# ---------------------------------------------------------------- CAV-4b charge orders
+# Friends are ordinary soldiers mounted through the order flow (every friend rides, so the team is a cavalry formation).
+# The enemy side is foot. The commander is the formation's current person (native current_cmd).
+func _charge_case() -> void:
+	var real := case_name == "charge_real_picture"
+	var deployed: Dictionary = lab.deploy_trial_armies([
+		{"faction": 0, "count": 12 if real else 4, "female_percent": 0, "training": 80.0, "ai_enabled": false, "attack": false, "entry": "west"},
+		{"faction": 1, "count": 24 if real else 6, "female_percent": 0, "training": 80.0, "ai_enabled": false, "attack": false, "entry": "east"}])
+	if not check(deployed.ok and site.active and site.command_teams().size() == 2, "a crowd battle deploys two opposing teams", deployed): return
+	var friend_team: Dictionary = site._team_by_id(int(site.command_teams()[0].team_id))
+	var enemy_team: Dictionary = site._team_by_id(int(site.command_teams()[1].team_id))
+	if case_name != "charge_refused_infantry":
+		for identity: int in friend_team.person_ids:
+			if not check(not site._actors.has(identity), "every friend is an ordinary soldier", identity): return
+			if not check(_mount_by_order(identity), "the ordinary soldier mounts through the order flow", identity): return
+	var cavalry := bool(site.is_cavalry_team(friend_team))
+	if not check(cavalry == (case_name != "charge_refused_infantry"), "the team reads as a cavalry formation only when its riders are mounted", cavalry): return
+	match case_name:
+		"charge_refused_infantry":
+			_charge_refused_infantry(friend_team, enemy_team)
+		"charge_refused_no_commander":
+			_charge_no_commander(friend_team, enemy_team)
+		"charge_order":
+			_charge_order(friend_team, enemy_team)
+		"rally_order":
+			_rally_order(friend_team, enemy_team)
+		"charge_saveload":
+			_charge_saveload(friend_team, enemy_team)
+		"charge_real_picture":
+			_charge_real_picture(friend_team, enemy_team)
+
+func _issue_charge(friend_team: Dictionary, enemy_team: Dictionary) -> bool:
+	var ordered: Dictionary = site.issue_order(int(friend_team.team_id), TerrainArmy.CombatOrder.CHARGE, Vector2i(-1, -1), int(enemy_team.person_ids[0]), "test")
+	if not check(bool(ordered.get("ok", false)), "the mounted team is ordered to CHARGE the enemy formation (native kind 7)", ordered): return false
+	return check(int(site.formation_state(int(friend_team.formation)).order) == 6, "the formation reports the CHARGE order (native state 6)")
+
+func _riders_charging(friend_team: Dictionary) -> bool:
+	for identity: int in friend_team.person_ids:
+		var charge: PackedFloat64Array = site.crowd.soldier_charge(int(site._index_by_id[identity]))
+		if charge[0] == 1.0 and charge[1] >= 0.4: return true
+	return false
+
+# Ticks live frames until contact. The gallop must be seen before the first contact.
+func _charge_until_contact(friend_team: Dictionary) -> bool:
+	var contacts0 := float(site.crowd.cav_stats()[0])
+	var gallop := false
+	for step in range(2400):
+		if not check(_tick(1), "live frame during the charge has no latched fault"): return false
+		if _riders_charging(friend_team): gallop = true
+		if float(site.crowd.cav_stats()[0]) > contacts0:
+			return check(gallop, "the riders reached gallop before the first contact", site.crowd.cav_stats())
+	return check(false, "the charge makes contact within 80 s", site.crowd.cav_stats())
+
+func _charge_refused_infantry(friend_team: Dictionary, enemy_team: Dictionary) -> void:
+	var refused: Dictionary = site.issue_order(int(friend_team.team_id), TerrainArmy.CombatOrder.CHARGE, Vector2i(-1, -1), int(enemy_team.person_ids[0]), "test")
+	if not check(not bool(refused.get("ok", true)) and str(refused.get("code", "")) == "NOT_CAVALRY", "a team on foot is refused CHARGE as NOT_CAVALRY", refused): return
+	print("CAV4B GATE OK: charge_refused_infantry")
+	quit(0)
+
+func _charge_no_commander(friend_team: Dictionary, enemy_team: Dictionary) -> void:
+	# GD gate: the commander is present and can act, so the refusal is the native reach check (8 cells, layout half diagonal).
+	var commander := int(site.formation_state(int(friend_team.formation)).current_person)
+	var index := int(site._index_by_id[commander])
+	var state: Dictionary = site.soldier_state(index)
+	var away := float(state.px) + 20.0
+	if away > float(lab.terrain.size.x) - 2.0: away = float(state.px) - 20.0
+	if not check(site.set_soldier_fields(index, {"px": away, "py": float(state.py)}), "the commander is moved 20 cells from the formation centre"): return
+	var refused: Dictionary = site.issue_order(int(friend_team.team_id), TerrainArmy.CombatOrder.CHARGE, Vector2i(-1, -1), int(enemy_team.person_ids[0]), "test")
+	if not check(not bool(refused.get("ok", true)) and str(refused.get("code", "")) == "NO_COMMANDER", "a commander 20 cells out is refused CHARGE as NO_COMMANDER", refused): return
+	print("CAV4B GATE OK: charge_refused_no_commander")
+	quit(0)
+
+func _charge_order(friend_team: Dictionary, enemy_team: Dictionary) -> void:
+	if not _issue_charge(friend_team, enemy_team): return
+	if not _charge_until_contact(friend_team): return
+	print("CAV4B GATE OK: charge_order")
+	quit(0)
+
+func _rally_order(friend_team: Dictionary, enemy_team: Dictionary) -> void:
+	if not _issue_charge(friend_team, enemy_team): return
+	if not _charge_until_contact(friend_team): return
+	var rallied: Dictionary = site.issue_order(int(friend_team.team_id), TerrainArmy.CombatOrder.RALLY, Vector2i(-1, -1), -1, "test")
+	if not check(bool(rallied.get("ok", false)), "RALLY is accepted for the charging team", rallied): return
+	var returned := false
+	for step in range(1800):
+		if not check(_tick(1), "live frame during the rally has no latched fault"): return
+		if not _riders_charging(friend_team) and int(site.formation_state(int(friend_team.formation)).order) == 0:
+			returned = true
+			break
+	if not check(returned, "the rally brings the riders back and the formation HOLDs with no rider charging", site.formation_state(int(friend_team.formation)).order): return
+	print("CAV4B GATE OK: rally_order")
+	quit(0)
+
+func _charge_saveload(friend_team: Dictionary, enemy_team: Dictionary) -> void:
+	if not _issue_charge(friend_team, enemy_team): return
+	var gallop := false
+	for step in range(900):
+		if not check(_tick(1), "live frame before the save has no latched fault"): return
+		if _riders_charging(friend_team):
+			gallop = true
+			break
+	if not check(gallop, "the save is taken mid-charge with a rider at gallop"): return
+	var captured: Dictionary = controller._capture_for_save()
+	if not check(bool(captured.get("ok", false)), "the save capture is valid mid-charge", captured.get("code", "OK")): return
+	var blob: PackedByteArray = site.crowd.save_state()
+	if not check(site.crowd.load_state(blob), "the native state reloads"): return
+	site.crowd.render_set_kits(site._kit_ids)
+	site._rebuild_rider_ids()
+	if not check(int(site.formation_state(int(friend_team.formation)).order) == 6, "the reloaded formation still holds the CHARGE order"): return
+	if not _charge_until_contact(friend_team): return
+	print("CAV4B GATE OK: charge_saveload")
+	quit(0)
+
+# Visual acceptance through the command path the UI uses (SiteController._crowd_order, source "test" = the faction-0 team),
+# with a picked enemy person. Frame time is the whole lab frame (_tick), measured from the order to 60 frames after contact.
+func _charge_real_picture(friend_team: Dictionary, enemy_team: Dictionary) -> void:
+	var ordered: Dictionary = controller._crowd_order("test", TerrainArmy.CombatOrder.CHARGE, Vector2i(-1, -1), int(enemy_team.person_ids[0]))
+	if not check(bool(ordered.get("ok", false)), "the command path orders the 12-rider team to CHARGE the picked enemy formation", ordered): return
+	var contacts0 := float(site.crowd.cav_stats()[0])
+	var frame_ms: Array[float] = []
+	var contact_frame := -1
+	for step in range(2400):
+		var started := Time.get_ticks_usec()
+		if not check(_tick(1), "live frame during the charge has no latched fault"): return
+		frame_ms.append(float(Time.get_ticks_usec() - started) / 1000.0)
+		if contact_frame < 0 and float(site.crowd.cav_stats()[0]) > contacts0: contact_frame = step
+		if contact_frame >= 0 and step >= contact_frame + 60: break
+	if not check(contact_frame >= 0, "the charge produces contacts", site.crowd.cav_stats()): return
+	var ordered_ms: Array[float] = frame_ms.duplicate()
+	ordered_ms.sort()
+	var p95: float = ordered_ms[int(floor(0.95 * float(ordered_ms.size() - 1)))]
+	var worst: float = ordered_ms[ordered_ms.size() - 1]
+	var p99: float = ordered_ms[int(floor(0.99 * float(ordered_ms.size() - 1)))]
+	if not check(p95 <= CHARGE_FRAME_MS_LIMIT, "the p95 frame time stays under %.1f ms" % CHARGE_FRAME_MS_LIMIT, [p95, p99, worst, frame_ms.size()]): return
+	if not check(p99 <= CHARGE_FRAME_P99_MS_LIMIT, "the p99 frame time stays under %.1f ms" % CHARGE_FRAME_P99_MS_LIMIT, [p95, p99, worst, frame_ms.size()]): return
+	print("CAV4B frame ms p95 %.3f p99 %.3f worst %.3f frames %d contact_frame %d stats %s" % [p95, p99, worst, frame_ms.size(), contact_frame, str(site.crowd.cav_stats())])
+	print("CAV4B GATE OK: charge_real_picture")
 	quit(0)

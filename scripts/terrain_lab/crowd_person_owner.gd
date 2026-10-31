@@ -303,7 +303,7 @@ var current_commander: int:
 		return index_for_identity(int(crowd_site.formation_state(formation_index).get("current_person", -1)))
 var combat_order: int:
 	get:
-		return {0: TerrainArmy.CombatOrder.HOLD, 1: TerrainArmy.CombatOrder.MOVE, 2: TerrainArmy.CombatOrder.ATTACK, 3: TerrainArmy.CombatOrder.PURSUE, 4: TerrainArmy.CombatOrder.RETREAT, 5: TerrainArmy.CombatOrder.RETURN}.get(int(crowd_site.formation_state(formation_index).get("order", 0)), TerrainArmy.CombatOrder.HOLD)
+		return {0: TerrainArmy.CombatOrder.HOLD, 1: TerrainArmy.CombatOrder.MOVE, 2: TerrainArmy.CombatOrder.ATTACK, 3: TerrainArmy.CombatOrder.PURSUE, 4: TerrainArmy.CombatOrder.RETREAT, 5: TerrainArmy.CombatOrder.RETURN, 6: TerrainArmy.CombatOrder.CHARGE, 7: TerrainArmy.CombatOrder.RALLY}.get(int(crowd_site.formation_state(formation_index).get("order", 0)), TerrainArmy.CombatOrder.HOLD)
 var tactical_ai_enabled: bool:
 	get:
 		return bool(crowd_site.formation_state(formation_index).get("ai_enabled", false))

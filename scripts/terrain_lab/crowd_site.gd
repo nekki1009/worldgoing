@@ -37,7 +37,7 @@ const WeaponMaterials := preload("res://scripts/ui/weapon_materials.gd")
 const DLL_PATH := "res://native/crowd10k/bin/crowd10k.windows.x86_64.dll"
 const SOLDIER_FIELDS := ["hp", "stun", "grace", "ko", "getup", "stagger", "captive", "bandaged", "ammo", "tactics", "leadership", "coach", "escape_t", "role", "px", "py", "face", "exch_cd", "ranged_cd", "skill_cd", "knock_t", "act_t", "vx", "vy", "state", "vis_kind", "vis_age"]
 const FORMATION_FIELDS := ["morale", "rally_rest", "fatigue", "fatigue_rest", "training", "routed", "needs_attack_order", "commander_present", "fatigue_count", "order", "goal_x", "goal_y", "goal_facing", "pursuit_left", "origin_x", "origin_y", "ai_enabled", "cx", "cy", "facing", "no_orders", "order_delay", "attacking", "ref_x", "ref_y", "ref_valid", "resupplying", "host_center"]
-const RESULT_CODES := ["OK", "NOT_OWNER", "BAD_FORMATION", "BAD_ARGS", "NO_TARGET", "BLOCKED", "NOT_ROUTED", "ROUTED", "NO_ORDERS"]
+const RESULT_CODES := ["OK", "NOT_OWNER", "BAD_FORMATION", "BAD_ARGS", "NO_TARGET", "BLOCKED", "NOT_ROUTED", "ROUTED", "NO_ORDERS", "NO_COMMANDER", "NOT_CAVALRY"]
 const CELL := 64.0
 const MARCH := 2.63 # cells / s, crowd cfg.march_speed
 const RUN := 4.0    # cells / s, crowd cfg.run_speed
@@ -1756,8 +1756,22 @@ func command_teams() -> Array[Dictionary]:
 		var state := formation_state(int(team.formation))
 		result.append({"team_id": team.team_id, "formation": team.formation, "faction": team.faction,
 			"count": team.person_ids.size(), "ai_enabled": bool(state.ai_enabled),
-			"current_commander": int(state.current_person), "routed": bool(state.routed)})
+			"current_commander": int(state.current_person), "routed": bool(state.routed),
+			"cavalry": is_cavalry_team(team)})
 	return result
+
+
+# CAV-4b: the same rule as native World::cavalry_formation: able members exist and at least half of them ride.
+func is_cavalry_team(team: Dictionary) -> bool:
+	var able := 0
+	var riding := 0
+	for identity: int in team.person_ids:
+		if not _index_by_id.has(identity): continue
+		var index := int(_index_by_id[identity])
+		if not person_owner(identity).combat_can_act(index): continue
+		able += 1
+		if crowd.soldier_mounted(index): riding += 1
+	return able > 0 and riding * 2 >= able
 
 
 func _team_by_id(identity: int) -> Dictionary:
@@ -1776,7 +1790,8 @@ func issue_order(team_id: int, kind: int, goal: Vector2i = Vector2i(-1, -1), tar
 	if team.is_empty(): return SiteRuntime.fail("BAD_FORMATION")
 	var formation := int(team.formation)
 	var native_kind: int = {TerrainArmy.CombatOrder.HOLD: 0, TerrainArmy.CombatOrder.MOVE: 1,
-		TerrainArmy.CombatOrder.ATTACK: 2, TerrainArmy.CombatOrder.RETREAT: 3, TerrainArmy.CombatOrder.PURSUE: 4}.get(kind, -1)
+		TerrainArmy.CombatOrder.ATTACK: 2, TerrainArmy.CombatOrder.RETREAT: 3, TerrainArmy.CombatOrder.PURSUE: 4,
+		TerrainArmy.CombatOrder.CHARGE: 5, TerrainArmy.CombatOrder.RALLY: 6}.get(kind, -1)
 	if native_kind < 0: return SiteRuntime.fail("BAD_ARGS")
 	var state := formation_state(formation)
 	if bool(state.no_orders): return SiteRuntime.fail("NO_ORDERS", "一人隊伍由本人操作，不接受隊伍軍令")
@@ -1784,8 +1799,16 @@ func issue_order(team_id: int, kind: int, goal: Vector2i = Vector2i(-1, -1), tar
 	if native_kind == 3 and not bool(state.routed): return SiteRuntime.fail("NOT_ROUTED", "士氣尚未崩潰，隊長不能下令撤退")
 	if not _command_eligible(state) or (source == "player" and int(state.current_person) != int(lab.controlled_person_id())):
 		return SiteRuntime.fail("NO_AUTHORITY", "只有當前在場指揮者可下令或切換自主指揮")
-	if bool(state.routed) and native_kind in [1, 2, 4]: return SiteRuntime.fail("ROUTED", "隊伍尚未完成安全整補與重新集結；只能守位自衛或撤退")
-	if native_kind == 1 and not lab.terrain.is_walkable(goal): return SiteRuntime.fail("BLOCKED")
+	if bool(state.routed) and native_kind in [1, 2, 4, 5]: return SiteRuntime.fail("ROUTED", "隊伍尚未完成安全整補與重新集結；只能守位自衛或撤退")
+	# CAV-4b: a picked enemy person turns CHARGE into a formation charge on that enemy's formation (native kind 7).
+	var charge_formation := -1
+	if native_kind == 5 and target_id >= 0:
+		if not _index_by_id.has(target_id): return SiteRuntime.fail("NO_TARGET")
+		var charge_owner = person_owner(target_id)
+		if charge_owner.faction_id == int(team.faction) or not charge_owner.combat_can_act(int(_index_by_id[target_id])): return SiteRuntime.fail("NO_TARGET")
+		charge_formation = int(charge_owner.formation_index)
+		native_kind = 7
+	if native_kind in [1, 5] and not lab.terrain.is_walkable(goal): return SiteRuntime.fail("BLOCKED")
 	var target := int(_index_by_id.get(target_id, -1))
 	if target < 0 and native_kind == 2 and target_id == -1:
 		target = int(crowd.nearest_enemy(int(_index_by_id[int(state.current_person)]), 400.0))
@@ -1802,7 +1825,12 @@ func issue_order(team_id: int, kind: int, goal: Vector2i = Vector2i(-1, -1), tar
 	var manual := source in ["ui", "trial", "test", "player"]
 	if manual and was_ai: crowd.set_order_owner(formation, false)
 	order_calls += 1
-	var value := float(target) if native_kind in [2, 4] else (Vector2(facing).angle() if facing != Vector2i.ZERO else float(state.facing))
+	# x is the target for kinds 2/4, the enemy formation for 7, and carries no angle for the CAV-4b point charge (5) or RALLY (6).
+	var value := float(state.facing)
+	if native_kind in [2, 4]: value = float(target)
+	elif native_kind == 7: value = float(charge_formation)
+	elif native_kind in [5, 6]: value = 0.0
+	elif facing != Vector2i.ZERO: value = Vector2(facing).angle()
 	var code := test_order_failure if test_order_failure >= 0 else int(crowd.order(formation, native_kind, goal.x + 0.5, goal.y + 0.5, value))
 	if code != 0 and manual and was_ai: crowd.set_order_owner(formation, true)
 	return SiteRuntime.ok() if code == 0 else SiteRuntime.fail(RESULT_CODES[clampi(code, 0, RESULT_CODES.size() - 1)])
@@ -2306,7 +2334,8 @@ static func _write_roster_handoff(roster: Dictionary, state: Dictionary) -> Dict
 	roster["goal"] = [floori(float(state.goal_x)), floori(float(state.goal_y))]
 	if bool(state.get("garrisoned", false)): roster["goal"] = [-1, -1]
 	var orders := [TerrainArmy.CombatOrder.HOLD, TerrainArmy.CombatOrder.MOVE, TerrainArmy.CombatOrder.ATTACK,
-		TerrainArmy.CombatOrder.PURSUE, TerrainArmy.CombatOrder.RETREAT, TerrainArmy.CombatOrder.RETURN]
+		TerrainArmy.CombatOrder.PURSUE, TerrainArmy.CombatOrder.RETREAT, TerrainArmy.CombatOrder.RETURN,
+		TerrainArmy.CombatOrder.CHARGE, TerrainArmy.CombatOrder.RALLY]
 	roster["combat_order"] = int(orders[int(state.order)])
 	var ai: Dictionary = roster.get("tactical_ai", {})
 	ai["enabled"] = bool(state.ai_enabled)
@@ -3127,7 +3156,8 @@ static func d5_import_existing_hot(crowd_site: Variant, plans: Array) -> Diction
 	# Actor members do not make their entire original formation host-centred.
 	var orders := {TerrainArmy.CombatOrder.HOLD: 0, TerrainArmy.CombatOrder.ATTACK: 2,
 		TerrainArmy.CombatOrder.MOVE: 1, TerrainArmy.CombatOrder.RETREAT: 4,
-		TerrainArmy.CombatOrder.PURSUE: 3, TerrainArmy.CombatOrder.RETURN: 5}
+		TerrainArmy.CombatOrder.PURSUE: 3, TerrainArmy.CombatOrder.RETURN: 5,
+		TerrainArmy.CombatOrder.CHARGE: 6, TerrainArmy.CombatOrder.RALLY: 7}
 	var desired := {"people": {}, "formations": {}}
 	for plan: Dictionary in plans:
 		var snapshot: Dictionary = plan.snapshot

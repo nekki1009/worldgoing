@@ -2895,7 +2895,7 @@ var combat_geometry_profile := {"ordinary_bounds_calls": 0, "ordinary_bounds_use
 	"live_cache_misses": 0, "live_sync_usec": 0, "live_body_usec": 0, "live_weapon_usec": 0,
 	"live_shield_usec": 0, "live_parry_usec": 0, "live_weapon_fills": 0,
 	"live_weapon_omissions": 0, "live_partial_fills": 0}
-enum CombatOrder { HOLD, ATTACK, MOVE, RETREAT, PURSUE, RETURN }
+enum CombatOrder { HOLD, ATTACK, MOVE, RETREAT, PURSUE, RETURN, CHARGE, RALLY }
 var combat_order: int = CombatOrder.HOLD
 var tactical_ai_enabled := false
 var tactical_ai_recovering := false

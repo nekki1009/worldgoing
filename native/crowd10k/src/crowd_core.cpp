@@ -938,17 +938,24 @@ bool World::form_point(int fi, float tx, float ty, float &fx, float &fy) const {
 	if (d < 1e-3f) { dx = f.charge_dx; dy = f.charge_dy; d = std::sqrt(dx * dx + dy * dy); }
 	if (d < 1e-3f) { dx = 1.f; dy = 0.f; d = 1.f; }
 	const float bx = -dx / d, by = -dy / d; // from the target back toward our side
-	static const float angles[] = {0.f, 0.2f, -0.2f, 0.4f, -0.4f};
+	// the approach side first (within 0.4 rad of the line from the formation), then round the target in widening steps up
+	// to the far side: on a real Site the near side can lie beyond a cliff or a wall from the target (a hill terrace above a
+	// strip of low ground), and only a point beside or behind it has a straight run in. Pass 2 keeps the old five angles.
+	static const float angles[] = {0.f, 0.2f, -0.2f, 0.4f, -0.4f, 0.8f, -0.8f, 1.2f, -1.2f, 1.6f, -1.6f, 2.0f, -2.0f, 2.4f, -2.4f, 2.8f, -2.8f, kPi};
 	static const float radii[] = {cav::FORM_CELLS, 9.f, 11.f, 8.f, 12.f};
-	// first pass: a point clear of every other hostile formation's body; second pass: any walkable point
-	for (int pass = 0; pass < 2; ++pass)
-		for (float r : radii)
-			for (float a : angles) {
+	for (int pass = 0; pass < 3; ++pass)
+		for (int n = 0; n < (pass < 2 ? 18 : 5) * 5; ++n) {
+				// passes 0 and 1 go angle by angle (every radius of an angle before the next angle); pass 2 radius by radius
+				const float r = pass < 2 ? radii[n % 5] : radii[n / 5];
+				const float a = pass < 2 ? angles[n / 5] : angles[n % 5];
 				const float vx = bx * std::cos(a) - by * std::sin(a), vy = bx * std::sin(a) + by * std::cos(a);
 				const float qx = tx + vx * (r + depth), qy = ty + vy * (r + depth);
 				if (!(qx >= 0.5f && qy >= 0.5f && qx < terrain.w - 0.5f && qy < terrain.h - 0.5f)) continue;
 				const int cx = (int)qx, cy = (int)qy;
 				if (!terrain.walkable(cx, cy) || !siege_route_cell(terrain.idx(cx, cy))) continue;
+				// pass 0: clear of other enemy bodies and a straight run to the target the terrain allows (no cliff edge,
+				// wall or body cell on the line; the charge itself rides straight); pass 1: the straight run only; pass 2: any
+				if (pass < 2 && !los(qx, qy, tx, ty, nullptr, true)) continue;
 				if (pass == 0 && !clear_of_enemy_bodies(fi, qx, qy, depth)) continue;
 				fx = qx; fy = qy;
 				return true;
@@ -1721,9 +1728,13 @@ void World::soldier_stage(float dt, int ch) {
 			if (st == S_SLOT && charge_rider(i)) { // CAV-4a: straight at the target, no flow field; a blocked next cell takes the flow field
 				float chx = f.charge_dx, chy = f.charge_dy;
 				const int nxc = (int)std::floor(p_x + chx * 0.6f), nyc = (int)std::floor(p_y + chy * 0.6f);
-				// a blocked cell, or a height step (a ramp is needed; the flow field knows the ramps), takes the flow field
+				// a blocked cell, or an edge the terrain does not allow (a height step without a ramp; the flow field knows the
+				// ramps), takes the flow field. A step the edge allows (a ramp, a walkable slope of a real Site) is ridden straight.
+				const int ccx = cell[i] % terrain.w, ccy = cell[i] / terrain.w, ex = nxc - ccx, ey = nyc - ccy;
+				int ed = -1;
+				for (int d = 0; d < 8; ++d) if (DX[d] == ex && DY[d] == ey) ed = d;
 				if (!terrain.contains(nxc, nyc) || !terrain.walkable(nxc, nyc) ||
-				    (terrain.contains(nxc, nyc) && terrain.height[terrain.idx(nxc, nyc)] != terrain.height[cell[i]])) {
+				    ((ex != 0 || ey != 0) && (ed < 0 || !terrain.edge(ccx, ccy, ed)))) {
 					if (f.field >= 0 && !fields_[f.field].dir.empty()) {
 						uint8_t d = fields_[f.field].dir[cell[i]];
 						if (d != 255) { float l = d < 4 ? 1.f : 0.70710678f; chx = (float)DX[d] * l; chy = (float)DY[d] * l; }

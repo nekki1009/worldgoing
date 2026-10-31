@@ -2013,6 +2013,26 @@ static void test_cavalry_speed() {
 		std::printf("  CHARGE of 100 riders: form-up walk %.2f cells/s, charge %.1f s after the walk check, %d riders at gallop together, %llu contacts at %.2f cells/s mean, %llu penetrations\n",
 		            walk, charge_step / 30.0, peak_gallop, (unsigned long long)s.w.stats.cav_contacts, impact, (unsigned long long)s.w.stats.cav_penetrations);
 	}
+	{   // CAV-4b Site fixture: the enemy stands on a strip of low ground below a terrace edge (a cliff). The form-up point in
+		// front of it on the approach side lies on the terrace, with no straight run down; the form-up must pick a point with
+		// a straight run in (beside the target, on the strip) and the charge must reach the line.
+		Scene s(1, 64, 48);
+		for (int y = 10; y < 38; ++y) for (int x = 20; x < 56; ++x) s.w.terrain.height[s.w.terrain.idx(x, y)] = 1; // the terrace, no ramps
+		int r = s.formation(0, 6, 24, 0, 4, sword(M_IRON, A_LEATHER), T_MELEE, 0, 2);
+		int v = s.formation(1, 60, 24, kPi, 6, sword(M_WOOD, A_NONE), T_MELEE, 0, 2);
+		s.w.finalize();
+		s.w.formations[r].ai_enabled = false; s.w.formations[v].ai_enabled = false;
+		for (int i : s.w.formations[r].members) s.w.set_mounted(i, true);
+		s.run(0.5);
+		CHECK(s.w.host_order(r, 7, 0.f, 0.f, v) == OK, "riders charge a formation standing below a terrace edge");
+		const float gx = s.w.formations[r].goal_x, gy = s.w.formations[r].goal_y;
+		CHECK(s.w.terrain.height[s.w.terrain.idx((int)gx, (int)gy)] == 0, "the form-up point lies on the low ground with the target, not on the terrace (%.1f, %.1f)", gx, gy);
+		int k = 0;
+		for (; k < 30 * 60 && s.w.stats.cav_contacts == 0; ++k) checked_step(s.w, DT);
+		CHECK(s.w.stats.cav_contacts >= 1, "the charge reaches the line round the terrace (contact after %.1f s)", k / 30.0);
+		CHECK(s.w.stats.illegal_cell == 0 && s.w.stats.illegal_step == 0, "terrain invariant: no rider crosses the terrace edge");
+		std::printf("  below-terrace charge: form-up point (%.1f, %.1f), first contact after %.1f s\n", gx, gy, k / 30.0);
+	}
 }
 
 // CAV-4a: CHARGE / RALLY formation orders (reports/cavalry-charge-plan.md section 5 and 6)
