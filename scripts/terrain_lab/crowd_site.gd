@@ -528,6 +528,13 @@ func deploy(sides: Array, formations: Array) -> Dictionary:
 		rosters.append(roster)
 		teams.append({"slot": slot, "team_id": next_team + slot, "formation": formation, "faction": faction,
 			"troop": troop, "person_ids": ids, "solo": false})
+	return _finish_admission(sides, prepared, before, total, "群眾模式：已部署 %d 隊、%d 人" % [sides.size(), total])
+
+
+# Shared tail of deploy and convert_existing. Imports the prepared original rows (plus any new sides already
+# appended to teams/rosters) into the native crowd, then activates it. Failure restores the live Site.
+func _finish_admission(sides: Array, prepared: Dictionary, before: Dictionary, total: int, message: String) -> Dictionary:
+	var data: TerrainData = lab.terrain
 	var existing := d5_append_existing(self, prepared.plans)
 	if not existing.ok:
 		return _deployment_failed(before, existing)
@@ -614,7 +621,47 @@ func deploy(sides: Array, formations: Array) -> Dictionary:
 	_make_panel()
 	_prewarm_captivity_atlases.call_deferred()
 	_region_mode_follow()
-	return SiteRuntime.ok("群眾模式：已部署 %d 隊、%d 人" % [sides.size(), total])
+	return SiteRuntime.ok(message)
+
+
+# Legacy grid Site -> live crowd, with no new sides. Every grid team goes through the same D5 import as deploy.
+# Each refusal happens before any mutation, so the grid Site stays intact. Nothing here writes the save file.
+func convert_existing() -> Dictionary:
+	if active:
+		return SiteRuntime.fail("BUSY", "群眾模式已啟用；無需轉換")
+	var siege_guard := siege_admission_guard()
+	if not siege_guard.ok: return siege_guard
+	if not ClassDB.class_exists("ArmyCrowd"):
+		return SiteRuntime.fail("MISSING_ASSET", "群眾擴充未載入")
+	if not TerrainArmy.load_combat_bake() or not TerrainArmy.prewarm_soldier_atlas():
+		return SiteRuntime.fail("MISSING_ASSET", "士兵圖集不可用")
+	var data: TerrainData = lab.terrain
+	if float(data.site.get("combat_left", 0.0)) > 0.0:
+		return SiteRuntime.fail("BATTLE_IN_PROGRESS", "戰鬥尚未脫離，不能轉為群眾；原存檔保持一般模式")
+	if lab.has_ship_journey() or lab.site_controller.ship_journey_active():
+		return SiteRuntime.fail("SHIP_JOURNEY_PENDING", "船隊仍在跨區旅程中，不能轉為群眾；原存檔保持一般模式")
+	var prepared := d5_prepare_existing(self)
+	if not prepared.ok: return prepared
+	if prepared.plans.is_empty(): return SiteRuntime.fail("NO_GRID_TEAMS", "沒有可轉換的一般隊伍")
+	var total := 0
+	for plan: Dictionary in prepared.plans: total += plan.units.size()
+	# Same original-alias snapshot as deploy: rejection restores every live Site dictionary.
+	var before := {"site": data.site.duplicate(), "items": {},
+		"appearances": lab.site_controller._equipment_appearances.duplicate()}
+	for field: String in ["item_records", "item_definitions"]:
+		if data.site.get(field) is Dictionary: before.items[field] = data.site[field].duplicate()
+	crowd = ClassDB.instantiate("ArmyCrowd")
+	crowd.setup(clampi(OS.get_processor_count(), 1, 8), int(data.seed_value))
+	_terrain_revision = -1
+	if not sync_terrain():
+		return _deployment_failed(before, SiteRuntime.fail("INVALID", "群眾地形資料"))
+	teams.clear()
+	rosters.clear()
+	_records.clear()
+	_actors.clear()
+	_ammo_keys.clear()
+	_deploy_options = []
+	return _finish_admission([], prepared, before, total, "群眾模式：已轉換 %d 隊、%d 人" % [prepared.plans.size(), total])
 
 
 func _deployment_failed(before: Dictionary, failure: Dictionary) -> Dictionary:

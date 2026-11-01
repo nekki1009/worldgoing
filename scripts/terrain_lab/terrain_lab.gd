@@ -609,6 +609,11 @@ func prepare_crowd_load(value: TerrainData, native_candidate: Variant = null) ->
 		return prepared
 	return SiteRuntime.ok("", {"crowd_site": candidate})
 
+func _has_active_grid_team() -> bool:
+	for team: TerrainArmy in combat_armies:
+		if is_instance_valid(team) and team.combat_enabled and team.has_army(): return true
+	return false
+
 func actor_present(actor: TerrainTestCharacter) -> bool:
 	return is_instance_valid(actor) and actor.person_id > 0 and actor in combat_actors
 
@@ -818,6 +823,11 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 		add_child(crowd_site)
 		crowd_site.setup(self)
 	site_controller.bind()
+	# A legacy grid save (no crowd section) loaded under crowd becomes live here, after its grid armies were restored.
+	# A refusal keeps the grid Site and is shown; this conversion never writes the save file.
+	if crowd_startup_requested and crowd_site != null and not crowd_site.active and terrain.get_meta(&"legacy_grid_save", false) and not terrain.site.has("crowd") and _has_active_grid_team():
+		var converted: Dictionary = crowd_site.convert_existing()
+		if not converted.ok: site_controller.show_result(converted)
 	# Fire work snapshots use the original ranged-order serials stored by transport.
 	var restored_fire_transport := _publish_fire_transport_restore(prepared_fire_transport.prepared)
 	if not restored_fire_transport.ok:

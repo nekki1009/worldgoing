@@ -526,7 +526,8 @@ static func _write_payload(source_data: TerrainData, path: String, payload: Dict
 	# The checksum covers the exact stored JSON text, not sorted key order.
 	# Keep full float precision and the ordinary snapshot encoding unchanged.
 	var body := _stringify_crowd_payload(payload) if crowd_snapshot else JSON.stringify(payload, "", true, true)
-	var wrapper := {"checksum": body.sha256_text(), "payload": body}
+	# crowd_era marks saves written by this version; a save without it predates crowd and may convert on crowd load.
+	var wrapper := {"checksum": body.sha256_text(), "payload": body, "crowd_era": 1}
 	if state.has("crowd"):
 		# The original JSON payload and its checksum stay unchanged. Only its
 		# envelope is compressed; decoded size is bounded before allocation.
@@ -775,6 +776,8 @@ static func load_site(path: String = DEFAULT_PATH, fixed_base_loader: Callable =
 		if not ecology.ok: return ecology
 		data = ecology.data
 	var loaded := {"data": data}
+	# Only a save without the crowd_era envelope marker (written before this version) may convert under crowd.
+	data.set_meta(&"legacy_grid_save", not bool(decoded.get("crowd_era", false)))
 	if preserve_simulation and not data.site.has("ecology_version"):
 		loaded["ecology_migration_pending"] = true
 	if payload.state.has("region_snapshot"):
@@ -1658,7 +1661,7 @@ static func _read(path: String) -> Dictionary:
 		return Runtime.fail("CORRUPT_SAVE", "地圖大小非法")
 	if not _number(payload.parameters.get("max_height"), 1, 5) or not _number(payload.parameters.get("micro_strength"), 0, 0.04):
 		return Runtime.fail("CORRUPT_SAVE", "生成參數非法")
-	return Runtime.ok("", {"payload": payload, "checksum": str(envelope.checksum)})
+	return Runtime.ok("", {"payload": payload, "checksum": str(envelope.checksum), "crowd_era": envelope.has("crowd_era")})
 
 static func _crowd_float_equal(left: Variant, right: Variant) -> bool:
 	# JSON's decimal parser can move the final binary64 bit (for example long
