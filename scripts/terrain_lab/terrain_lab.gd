@@ -812,11 +812,18 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 		npc_allied_toggle.set_pressed_no_signal(npc.faction_id == character.faction_id)
 	if is_instance_valid(seed_input): seed_input.text = str(terrain.seed_value)
 	if is_instance_valid(preset_dropdown): preset_dropdown.select(terrain.preset)
+	# A selected restore stages its crowd only: activation waits until _region_finish_bind_ticket has passed every
+	# check against the saved body (the activation rewrites the crowd-owned Site keys). Normal reopen and publish
+	# keep the immediate add-and-activate order.
+	var deferred_crowd: Node = null
 	if is_instance_valid(prepared.get("crowd_site")):
 		crowd_site = prepared.crowd_site
 		crowd_site.name = "CrowdSite"
-		add_child(crowd_site)
-		crowd_site.activate_loaded()
+		if trusted_region and str(_region_owner_bind_tickets.get(str(region_admission.get("token", "")), {}).get("kind", "")) == "selected":
+			deferred_crowd = crowd_site
+		else:
+			add_child(crowd_site)
+			crowd_site.activate_loaded()
 	elif crowd_startup_requested:
 		crowd_site = CrowdSiteScript.new()
 		crowd_site.name = "CrowdSite"
@@ -860,6 +867,15 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 	if not region_restored.ok:
 		site_controller.show_result(region_restored)
 		return
+	if deferred_crowd != null:
+		# Every finish check passed on the saved body; now activate the staged crowd as a normal staged bind does.
+		add_child(deferred_crowd)
+		deferred_crowd.activate_loaded()
+		if not deferred_crowd.active:
+			var activation_failed := SiteRuntime.fail("CROWD_ACTIVATION_FAILED", str(deferred_crowd.last_event_error.get("message", "選定群眾啟用失敗；保留選定標記")))
+			_region_bind_receipt_value = activation_failed
+			site_controller.show_result(activation_failed)
+			return
 	_wire_region_point_owners()
 	_region_bound_data = terrain
 	if _region_owner_restore_receipt.is_empty():
@@ -11231,7 +11247,9 @@ func prepare_selected_region_owner_restore(data: TerrainData, slot: RegionSaveSl
 	return result
 
 func _region_prepare_selected_owner_restore(data: TerrainData, slot: RegionSaveSlot) -> Dictionary:
-	if data == null or slot == null or not data.site.has("region_snapshot") or data.site.has("crowd"):
+	# Only a non-snapshot Site or a missing slot is refused here. A native crowd section is staged below as a reopen
+	# stages it; SiteStore.validate_region_snapshot still refuses an unadmitted crowd (REGION_BACKEND_UNADMITTED).
+	if data == null or slot == null or not data.site.has("region_snapshot"):
 		return SiteRuntime.fail("INVALID_SELECTED_REGION_RESTORE")
 	var selected := _region_selected_bind_source(data, slot)
 	if not selected.ok: return selected
@@ -11267,6 +11285,9 @@ func _region_prepare_selected_owner_restore(data: TerrainData, slot: RegionSaveS
 	child.free()
 	if not graph.ok: return graph
 	if slot.region_bind_proof(canonical) != proof or FileAccess.get_sha256(path) != str(proof.sha256): return SiteRuntime.fail("STALE_SELECTED_REGION_COMMIT")
+	# The live Lab stages the canonical crowd exactly as a reopen does; the bind defers its activation to the finish.
+	var staged: Dictionary = prepare_crowd_load(canonical)
+	if not staged.ok: return staged
 	var token := "region_selected_" + Crypto.new().generate_random_bytes(16).hex_encode()
 	var clock: Dictionary = slot.control.fire_clock
 	var ticket := {"kind": "selected", "data": canonical, "slot": slot, "proof": proof.duplicate(true),
@@ -11276,9 +11297,11 @@ func _region_prepare_selected_owner_restore(data: TerrainData, slot: RegionSaveS
 		"body_hash": RegionCheckpoint.state_hash(canonical.site), "graph_hash": graph.graph_hash,
 		"context": snapshot.context, "owners": snapshot.owners}
 	var checked := _region_check_selected_restore_ticket(ticket, canonical)
-	if not checked.ok: return checked
+	if not checked.ok:
+		if is_instance_valid(staged.crowd_site): staged.crowd_site.free()
+		return checked
 	_region_owner_bind_tickets[token] = ticket
-	return SiteRuntime.ok("", {"data": canonical, "region_bind_token": token, "crowd_site": null,
+	return SiteRuntime.ok("", {"data": canonical, "region_bind_token": token, "crowd_site": staged.crowd_site,
 		"selected": true, "source_generation": int(proof.generation),
 		"effects_complete": bool(snapshot.context.effects_complete), "zero_world_only": not bool(snapshot.context.effects_complete)})
 
