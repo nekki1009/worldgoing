@@ -63,9 +63,11 @@ func _team_for(crowd: Variant, team_id: int) -> Dictionary:
 		if int(team.team_id) == team_id: return team
 	return {}
 
-## Makes the person at `index` a cadre: an officer_service entry and, when the team has a free non-head seat, that seat.
-func _make_cadre(roster: Dictionary, index: int) -> void:
+## Makes the person at `index` a cadre: a native officer (military role, as a cadre must be to command), an officer_service
+## entry and, when the team has a free non-head seat, that seat.
+func _make_cadre(crowd: Variant, roster: Dictionary, index: int) -> bool:
 	var person := int(roster.units[index].person_id)
+	if not bool(crowd.native_set_military_role(person, "officer").ok): return false
 	for seat: Dictionary in roster.get("offices", {}).get("positions", []):
 		if not bool(seat.get("head", false)) and int(seat.get("holder", 0)) <= 0:
 			seat["holder"] = person
@@ -73,17 +75,17 @@ func _make_cadre(roster: Dictionary, index: int) -> void:
 	var service: Array = roster.get("officer_service", [])
 	service.append(index)
 	roster["officer_service"] = service
+	return true
 
 ## The Site a split would produce, proven by Travel.extract on a copy of the captured Site (as depart_crowd_split):
-## nothing native or live changes.
+## nothing native or live changes. The party is the converted grid army (split_army_snapshot).
 func _probe(crowd: Variant, plan: Dictionary, team_id: int, successor: Dictionary) -> Dictionary:
+	var converted: Dictionary = crowd.split_army_snapshot(plan, team_id)
+	if not converted.ok: return converted
 	var site: Dictionary = lab.terrain.site.duplicate(true)
-	var departing: Dictionary = {}
-	for army: Variant in site.get("armies", []):
-		if army is Dictionary and bool(army.get("crowd", false)) and int(army.get("team_id", 0)) == int(plan.team_id):
-			departing = crowd.split_roster(army, plan.people, team_id)
-	if departing.is_empty(): return {"ok": false, "code": "NO_TARGET"}
-	site.armies.append(departing)
+	var party: Dictionary = converted.snapshot.duplicate(true)
+	party["crowd"] = true
+	site.armies.append(party)
 	return RegionTravel.extract(site, _spec(int(plan.people[0]), team_id, successor), "cadre_split_probe")
 
 func _run() -> void:
@@ -141,8 +143,7 @@ func _run() -> void:
 		if second < 0: second = identity
 		else: ordinary.append(identity)
 	# The controlled person and the second person become cadres; the rest are ordinary members.
-	_make_cadre(roster, _index_of(roster, leader))
-	_make_cadre(roster, _index_of(roster, second))
+	if not _check(_make_cadre(crowd, roster, _index_of(roster, leader)) and _make_cadre(crowd, roster, _index_of(roster, second)), "both cadres are native officers"): return
 	var before := {}
 	var native_index := {}
 	for unit: Dictionary in roster.units:
@@ -193,9 +194,18 @@ func _run() -> void:
 	if not _check(probe.get("ok", false) == true, "Travel.extract accepts the cadre's sub-party on a copy", probe): return
 	var released: Dictionary = crowd.split_departure_release(plan, team_id + 1000)
 	if not _check(released.get("ok", false) == true and int(released.released) == group.size(), "the sub-party is released", released): return
-	var departing: Dictionary = released.departing
-	if not _check(departing.units.size() == group.size() and int(departing.formal_commander) == 0, "the party's formal captain is the cadre"): return
-	if not _check(int(departing.units[0].person_id) == leader and int(departing.team_id) == team_id + 1000, "the party's first person is the cadre under the new team id"): return
+	# The travelling party is a complete grid army (the same conversion as a whole team's): it restores as a TerrainArmy
+	# through the owner lab's restore path, and its formal captain is the cadre.
+	var party_army: Dictionary = released.army
+	if not _check(party_army.units.size() == group.size() and int(party_army.formal_commander) == 0, "the party's formal captain is the cadre", party_army.get("formal_commander")): return
+	if not _check(int(party_army.units[0].person_id) == leader and int(party_army.team_id) == team_id + 1000, "the party's first person is the cadre under the new team id"): return
+	var restored_army := TerrainArmy.new()
+	restored_army.restore_combat_state(party_army.duplicate(true), lab.terrain, null, null)
+	if not _check(restored_army.combat_units.size() == group.size() and restored_army.team_id == team_id + 1000, "the travelling army restores as a TerrainArmy with every member", restored_army.combat_units.size()): return
+	if not _check(restored_army.formal_commander == 0 and restored_army.combat_identity(restored_army.formal_commander) == leader, "the restored army's formal commander is the cadre", restored_army.formal_commander): return
+	restored_army.free()
+	var departing: Dictionary = party_army.duplicate(true)
+	departing["crowd"] = true
 	for identity: int in group:
 		if not _check(not crowd.crowd.site_person_exit_ready(native_index[identity]) and not crowd.contains_person(identity), "a released person is native-released and off the Site maps", identity): return
 	var remaining_now: Array[int] = []

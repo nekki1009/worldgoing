@@ -348,12 +348,12 @@ static func depart_crowd_split(controller: Node, members: Array) -> Dictionary:
 	var pre: Dictionary = slot.region_travel_preflight(lab.terrain, spec, component)
 	if not pre.ok: return pre
 	# Probe on a copy of the captured Site with the split applied. Neither the native World nor the live rosters change.
+	# The travelling party is the converted grid army (the same conversion split_departure_release returns).
+	var converted: Dictionary = lab.crowd_site.split_army_snapshot(plan, team_id)
+	if not converted.ok: return converted
 	var probe_site: Dictionary = lab.terrain.site.duplicate(true)
-	var departing_probe: Dictionary = {}
-	for army: Variant in probe_site.get("armies", []):
-		if army is Dictionary and bool(army.get("crowd", false)) and int(army.get("team_id", 0)) == int(plan.team_id):
-			departing_probe = lab.crowd_site.split_roster(army, plan.people, team_id)
-	if departing_probe.is_empty(): return Runtime.fail("NO_TARGET", "群眾隊伍缺少名冊")
+	var departing_probe: Dictionary = converted.snapshot.duplicate(true)
+	departing_probe["crowd"] = true
 	probe_site.armies.append(departing_probe)
 	var probe: Dictionary = RegionTravel.extract(probe_site, spec, "crowd_split_probe")
 	if not probe.ok: return probe
@@ -362,7 +362,9 @@ static func depart_crowd_split(controller: Node, members: Array) -> Dictionary:
 	# The remaining crowd is captured again; the departing party joins the travel content as in _depart_crowd.
 	var recaptured: Dictionary = lab.crowd_site.capture_save()
 	if not recaptured.ok: return recaptured
-	recaptured.rosters.append(released.departing)
+	var departing: Dictionary = released.army.duplicate(true)
+	departing["crowd"] = true
+	recaptured.rosters.append(departing)
 	controller._apply_region_crowd_capture(recaptured)
 	var result: Dictionary = slot.begin_region_travel(lab.terrain, spec, component)
 	if not result.ok: return result

@@ -937,8 +937,16 @@ static func decorate_existing(source: TerrainArmy, snapshot: Dictionary) -> bool
 ## One live crowd roster as a complete grid army snapshot: the same conversion clear makes for each returning team. Defaults
 ## come from a fresh TerrainArmy capture; the roster and its native formation and soldier rows supply the rest. Nothing here
 ## defaults a missing field by hand. Returns {ok, snapshot}; the caller decides when the snapshot is used.
-static func roster_snapshot(host: Node, original: Dictionary) -> Dictionary:
+## `cadre` (>= 0) converts a cadre-led split group instead of a whole team: the native team formation still describes the
+## remaining team, so its command fields are read as the cadre's (the sub-party's formal captain, with no acting commander,
+## which would hide him from the grid) and its officer list is the cadre alone. The roster rows stay the split group's.
+static func roster_snapshot(host: Node, original: Dictionary, cadre: int = -1) -> Dictionary:
 	var formation: Dictionary = host.formation_state(int(original.crowd_formation))
+	if cadre >= 0:
+		formation["formal_person"] = cadre
+		formation["acting_person"] = 0
+		formation["current_person"] = cadre
+		formation["officer_persons"] = [cadre]
 	var defaults_owner: TerrainArmy = TerrainArmy.new()
 	var defaults: Dictionary = defaults_owner.capture_combat_state()
 	defaults_owner.free()

@@ -3009,11 +3009,16 @@ func split_departure_plan(leader: int, members: Array) -> Dictionary:
 ## remaining soldiers stay native, its entry keeps the rest in person_ids and names the released people in
 ## departed_person_ids, and the roster is rewritten in place to the remaining team. Returns the departing party roster
 ## (a copy with `team_id`, crowd = true). Release is irreversible: callers pre-validate the extraction on a copy first.
+## The travelling party is returned as `army`: a complete grid army snapshot (split_army_snapshot), converted before any
+## release, so a conversion refusal releases nobody.
 func split_departure_release(plan: Dictionary, team_id: int) -> Dictionary:
 	if not plan.get("ok", false): return plan
 	var roster: Dictionary = plan.roster
 	var group: Array = plan.people
 	var formation := int(roster.crowd_formation)
+	# Converted from the live rows before any release (it reads the native soldier state, which a release removes).
+	var army_conversion := split_army_snapshot(plan, team_id)
+	if not army_conversion.ok: return army_conversion
 	var released: Array[int] = []
 	for entry: Variant in group:
 		var identity := int(entry)
@@ -3051,8 +3056,20 @@ func split_departure_release(plan: Dictionary, team_id: int) -> Dictionary:
 		var gone: Array = team.get("departed_person_ids", [])
 		for identity: int in released: gone.append(identity)
 		team["departed_person_ids"] = gone
-	var departing: Dictionary = split_roster(roster, group, team_id)
-	return SiteRuntime.ok("", {"roster": roster, "departing": departing, "released": released.size()})
+	# The live roster becomes the remaining team (renumbered in place); the party itself is the converted army above.
+	split_roster(roster, group, team_id)
+	return SiteRuntime.ok("", {"roster": roster, "army": army_conversion.snapshot, "released": released.size()})
+
+
+## G6.5: the sub-party a split of `plan` travels with, as a complete grid army snapshot (the same conversion as a whole
+## team's, roster_snapshot). The input describes the split group only: split_roster of a copy, with the team's formation
+## index kept; the cadre (the group's first person) is the formal commander. Read-only: nothing is released and the live
+## roster is not changed. Returns {ok, snapshot} or a refusal.
+func split_army_snapshot(plan: Dictionary, team_id: int) -> Dictionary:
+	var roster: Dictionary = plan.roster
+	var group_input: Dictionary = split_roster(roster.duplicate(true), plan.people, team_id)
+	group_input["crowd_formation"] = int(roster.crowd_formation)
+	return ClearHandoff.roster_snapshot(self, group_input, int(plan.people[0]))
 
 
 ## G6.5: splits one roster for a sub-party. `group` lists the departing person ids, the cadre first. Returns the departing

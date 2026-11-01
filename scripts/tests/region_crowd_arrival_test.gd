@@ -165,7 +165,8 @@ func _run() -> void:
 	if not _check(int(successor.get("person_id", -1)) > 0, "control passes to the player actor body", successor): return
 	var released: Dictionary = crowd.split_departure_release(plan, team_id + 1000)
 	if not _check(released.get("ok", false) == true, "the sub-party is released", released): return
-	var departing: Dictionary = released.departing
+	var departing: Dictionary = released.army.duplicate(true)
+	departing["crowd"] = true
 	var captured: Dictionary = crowd.capture_save()
 	if not _check(captured.get("ok", false) == true, "the Site captures after the split", captured): return
 	captured.rosters.append(departing)
