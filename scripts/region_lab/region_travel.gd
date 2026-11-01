@@ -1561,7 +1561,8 @@ static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dicti
 			# G6.5 cadre split: the controlled cadre travels with his sub-party. Control on the Site passes to a saved
 			# actor body that stays (the rule below for an ordinary departure), with its native soldier index from the
 			# live caller; only a Site with no actor left keeps no controlled person.
-			if not bool(spec.get("crowd_split", false)): return fail("RELATION_OPEN", "群眾受控人物仍留在此地")
+			# A whole-team departure and a cadre split hand control over the same way: the caller names the saved actor
+			# body that stays as crowd_control_successor. Without one, a Site with actors left refuses below.
 			var successor: Dictionary = spec.get("crowd_control_successor", {})
 			var heir := int(successor.get("person_id", -1))
 			if heir > 0:

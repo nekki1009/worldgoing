@@ -512,33 +512,9 @@ static func prepare(host: Node) -> Dictionary:
 			return _busy("ROSTER_CAPACITY", "隊伍超過普通名冊上限", {"team_id": int(original.team_id)})
 		count += original.units.size()
 		var formation: Dictionary = host.formation_state(int(original.crowd_formation))
-		var snapshot: Dictionary = defaults.duplicate(true)
-		snapshot.merge(original.duplicate(true), true)
-		if original.get("tactical_ai") is Dictionary:
-			snapshot["tactical_ai"] = defaults.tactical_ai.duplicate(true)
-			snapshot.tactical_ai.merge(original.tactical_ai, true)
-		snapshot.erase("crowd")
-		snapshot.erase("crowd_formation")
-		# Pre-seating marker: defaults come from a fresh capture (cadre_seated true), so the returning cadre would skip the
-		# grid's entry auto-appointment and stay pending (MIGRATION_REQUIRED on the next deploy). Absent makes the restore run
-		# TerrainArmy._auto_seat_officers as the grid does on entry. valid_combat_state accepts absent, not false.
-		snapshot.erase("cadre_seated")
-		snapshot["units"] = []
-		for index in range(original.units.size()): snapshot.units.append(_ordinary_row(host, original.units[index], formation, index))
-		var mapped: Dictionary = host._write_roster_handoff(snapshot, formation)
-		if not mapped.ok: return mapped
-		snapshot["pursuit_left"] = maxf(0.0, float(snapshot.pursuit_left))
-		snapshot["_order_delay"] = maxf(0.0, float(snapshot._order_delay))
-		var service: Array = []
-		for index: Variant in original.get("officer_service", []):
-			if snapshot.officers.has(int(index)) and not service.has(int(index)): service.append(int(index))
-		for index: Variant in snapshot.officers:
-			if not service.has(int(index)): service.append(int(index))
-		snapshot["officer_service"] = service
-		for key: String in ["combat_deployment_plan", "combat_move_plan", "combat_absent_slots", "combat_batches", "combat_batch_move_members", "combat_batch_retreat_members", "rescues", "retreat_resolution", "retreat_pairs_used", "corps_reposition_source"]:
-			snapshot.erase(key)
-		snapshot["rescues"] = []
-		snapshot["vacancies"] = []
+		var converted: Dictionary = roster_snapshot(host, original)
+		if not converted.ok: return converted
+		var snapshot: Dictionary = converted.snapshot
 		returning.append(int(snapshot.team_id))
 		plans.append({"roster": original, "snapshot": snapshot, "source": source_by_id.get(int(original.team_id)),
 			"formation": formation, "snapshot_index": snapshots.size()})
@@ -957,3 +933,40 @@ static func decorate_existing(source: TerrainArmy, snapshot: Dictionary) -> bool
 	if str(handoff.get("sha256", "")).length() != 64 or str(handoff.sha256) != Store._crowd_roster_source_sha256(snapshot): return false
 	snapshot["crowd_state"] = handoff.formation.duplicate(true)
 	return true
+
+## One live crowd roster as a complete grid army snapshot: the same conversion clear makes for each returning team. Defaults
+## come from a fresh TerrainArmy capture; the roster and its native formation and soldier rows supply the rest. Nothing here
+## defaults a missing field by hand. Returns {ok, snapshot}; the caller decides when the snapshot is used.
+static func roster_snapshot(host: Node, original: Dictionary) -> Dictionary:
+	var formation: Dictionary = host.formation_state(int(original.crowd_formation))
+	var defaults_owner: TerrainArmy = TerrainArmy.new()
+	var defaults: Dictionary = defaults_owner.capture_combat_state()
+	defaults_owner.free()
+	var snapshot: Dictionary = defaults.duplicate(true)
+	snapshot.merge(original.duplicate(true), true)
+	if original.get("tactical_ai") is Dictionary:
+		snapshot["tactical_ai"] = defaults.tactical_ai.duplicate(true)
+		snapshot.tactical_ai.merge(original.tactical_ai, true)
+	snapshot.erase("crowd")
+	snapshot.erase("crowd_formation")
+	# Pre-seating marker: defaults come from a fresh capture (cadre_seated true), so the returning cadre would skip the
+	# grid's entry auto-appointment and stay pending (MIGRATION_REQUIRED on the next deploy). Absent makes the restore run
+	# TerrainArmy._auto_seat_officers as the grid does on entry. valid_combat_state accepts absent, not false.
+	snapshot.erase("cadre_seated")
+	snapshot["units"] = []
+	for index in range(original.units.size()): snapshot.units.append(_ordinary_row(host, original.units[index], formation, index))
+	var mapped: Dictionary = host._write_roster_handoff(snapshot, formation)
+	if not mapped.ok: return mapped
+	snapshot["pursuit_left"] = maxf(0.0, float(snapshot.pursuit_left))
+	snapshot["_order_delay"] = maxf(0.0, float(snapshot._order_delay))
+	var service: Array = []
+	for index: Variant in original.get("officer_service", []):
+		if snapshot.officers.has(int(index)) and not service.has(int(index)): service.append(int(index))
+	for index: Variant in snapshot.officers:
+		if not service.has(int(index)): service.append(int(index))
+	snapshot["officer_service"] = service
+	for key: String in ["combat_deployment_plan", "combat_move_plan", "combat_absent_slots", "combat_batches", "combat_batch_move_members", "combat_batch_retreat_members", "rescues", "retreat_resolution", "retreat_pairs_used", "corps_reposition_source"]:
+		snapshot.erase(key)
+	snapshot["rescues"] = []
+	snapshot["vacancies"] = []
+	return SiteRuntime.ok("", {"snapshot": snapshot})

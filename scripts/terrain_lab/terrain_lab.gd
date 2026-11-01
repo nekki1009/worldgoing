@@ -10677,7 +10677,7 @@ func prepare_region_party_original_owner(token: String, party: Dictionary, slot:
 	var view: Dictionary = opened.data.site.duplicate(true)
 	# The old Site's complete graph belongs to its own original Lab. It cannot
 	# describe this extracted party or authorize this ordinary original bind.
-	for field: String in ["region_snapshot", "region_life_events", "fire_owners", "fire", "fire_settlement", "initial_scenario"]:
+	for field: String in ["region_snapshot", "region_life_events", "fire_owners", "fire", "fire_settlement", "initial_scenario", "crowd"]:
 		view.erase(field)
 	for field: String in ["features", "changes", "terrain_changes", "inventory", "water_status", "water_links", "building_economy", "housing", "captivity", "escort_orders"]:
 		view[field] = {}

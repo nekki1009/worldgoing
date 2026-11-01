@@ -278,6 +278,9 @@ static func _depart_crowd(controller: Node) -> Dictionary:
 	var component := start_component(slot, site, plan.controlled_cell, lab.terrain)
 	if component < 0 or component > 253: return Runtime.fail("NO_ROUTE", "出發位置沒有可走出此地的通道")
 	var spec := _crowd_spec(slot, identity, int(plan.team_id))
+	# The controlled captain leaves with the team; a saved actor body that stays takes control of the Site (as in a split).
+	# Read after the full Site capture above, which writes those bodies.
+	spec["crowd_control_successor"] = split_control_successor(lab, identity)
 	# Every refusal begin_region_travel decides before extraction runs first (no release yet).
 	var pre: Dictionary = slot.region_travel_preflight(lab.terrain, spec, component)
 	if not pre.ok: return pre
@@ -287,7 +290,10 @@ static func _depart_crowd(controller: Node) -> Dictionary:
 	var released: Dictionary = lab.crowd_site.departure_release(plan)
 	if not released.ok: return released
 	# The travelling roster is the released team's live record; the rest of the Site is captured again without it.
-	var departing: Dictionary = released.roster.duplicate(true)
+	# The travelling team is the converted grid army (complete TerrainArmy fields), marked crowd for the origin selection.
+	# RegionTravel.extract erases the marker on the party army.
+	var departing: Dictionary = released.army.duplicate(true)
+	departing["crowd"] = true
 	var recaptured: Dictionary = lab.crowd_site.capture_save()
 	if not recaptured.ok: return recaptured
 	recaptured.rosters.append(departing)

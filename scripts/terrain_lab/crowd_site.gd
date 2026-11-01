@@ -2870,7 +2870,8 @@ func departure_plan(identity: int) -> Dictionary:
 		if not _index_by_id.has(member) or _actors.has(member) or has_pending_capture(member):
 			return SiteRuntime.fail("NOT_READY", "隊員尚有原生事件；保留原進度")
 		var owner: Variant = person_owner(member)
-		if owner == null or not bool(owner.site_exit_ready(int(_index_by_id[member]))):
+		# The controlled captain holds host control; _split_exit_ready hands it back for the query only.
+		if owner == null or not _split_exit_ready(owner, int(_index_by_id[member])):
 			return SiteRuntime.fail("NOT_READY", "隊員不在可出發狀態（倒地、交換中或有未完成動作）")
 		var state := soldier_state(int(_index_by_id[member]))
 		var cell := Vector2i(floori(float(state.px)), floori(float(state.py)))
@@ -2888,13 +2889,28 @@ func departure_release(plan: Dictionary) -> Dictionary:
 	if not plan.get("ok", false): return plan
 	var roster: Dictionary = plan.roster
 	var released: Array[int] = []
+	# The grid army snapshot is converted from the live rows before any release (it reads the native soldier state, which a
+	# release removes). A conversion refusal releases nobody.
+	var army_conversion := ClearHandoff.roster_snapshot(self, roster)
+	if not army_conversion.ok: return army_conversion
+	# The controlled captain (host control) is released first, so a refusal of his release leaves nobody released.
+	var order: Array[int] = []
 	for identity: int in plan.people:
+		if int(_index_by_id[identity]) == player_index: order.append(identity)
+	for identity: int in plan.people:
+		if not order.has(identity): order.append(identity)
+	for identity: int in order:
 		var index := int(_index_by_id[identity])
 		var owner: Variant = person_owner(identity)
 		var receipt: Dictionary = {}
+		# Same host-control handover as split_departure_release: released with host control handed back on refusal.
+		var host_held := index == player_index
+		if host_held: crowd.set_host_control(index, false)
 		if owner != null: receipt = owner.release_for_departure(index)
 		if receipt.is_empty():
+			if host_held: crowd.set_host_control(index, true)
 			return SiteRuntime.fail("RELEASE_REFUSED", "原生釋放被拒（已釋放 %d 人）；請重新檢查" % released.size())
+		if host_held: player_index = -1
 		released.append(identity)
 		_apply_release_receipt(roster, identity, receipt)
 		var record: Dictionary = _records.get(identity, {})
@@ -2919,7 +2935,7 @@ func departure_release(plan: Dictionary) -> Dictionary:
 	for row: Dictionary in rosters:
 		if not is_same(row, roster): kept_rosters.append(row)
 	rosters = kept_rosters
-	return SiteRuntime.ok("", {"roster": roster, "released": released.size()})
+	return SiteRuntime.ok("", {"roster": roster, "released": released.size(), "army": army_conversion.snapshot})
 
 
 ## G6.5 (2026-11-01): 幹部分隊. A cadre leads a sub-party out of one live crowd team. The cadre is the party's formal
