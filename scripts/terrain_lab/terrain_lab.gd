@@ -13621,6 +13621,30 @@ func prepare_region_party_map_motion(before: Dictionary, after: Dictionary, targ
 	_region_map_motion_proposal = accepted
 	return accepted
 
+## R9: crowd-only refusals for party map motion. Each code is the one the grid guard uses for the same state.
+func region_party_map_crowd_guard() -> Dictionary:
+	if not site_controller._crowd_active(): return SiteRuntime.ok()
+	# fire_host_active() is a standing host-delegate flag set at deploy, not an open action; in-flight shots are has_projectiles().
+	var crowd: Variant = crowd_site
+	if crowd.has_projectiles(): return SiteRuntime.fail("PARTY_ACTION_OPEN", "crowd projectile in flight")
+	if crowd.siege_native_supported() and crowd.crowd != null and bool(crowd.crowd.siege_busy()): return SiteRuntime.fail("PARTY_ACTION_OPEN", "crowd siege busy")
+	if crowd.work_fatigue_point_active(): return SiteRuntime.fail("PARTY_ACTION_OPEN", "crowd work point open")
+	if not crowd.pending_captivity.is_empty(): return SiteRuntime.fail("PENDING_EVENT", "crowd captivity pending")
+	return SiteRuntime.ok()
+
+## R9: the cells of crowd members on the controlled faction, measured like _hostile_near measures crowd enemies.
+func region_party_map_crowd_cells(faction: int) -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	if not site_controller._crowd_active(): return cells
+	for owner_ref: CrowdPersonOwner in crowd_site.person_owners():
+		if not owner_ref.combat_enabled or owner_ref.faction_id != faction: continue
+		for index: int in owner_ref.combat_units.keys():
+			# Released/departed people leave combat_units; dead or incapacitated ones fail combat_can_act and do not count.
+			if not owner_ref.combat_can_act(index): continue
+			var ground: Vector2 = owner_ref.combat_ground(index) / TerrainRenderer.CELL_PIXELS
+			cells.append(Vector2i(floori(ground.x), floori(ground.y)))
+	return cells
+
 func region_party_map_resume_guard(party: Dictionary) -> Dictionary:
 	var slot: RegionSaveSlot = site_controller.region_slot
 	if slot == null or terrain == null or not terrain.has_meta(&"region_party_owner"):
@@ -13632,7 +13656,10 @@ func region_party_map_resume_guard(party: Dictionary) -> Dictionary:
 			or not slot.pending_region_events().is_empty(): return SiteRuntime.fail("PENDING_EVENT")
 	var fault: Dictionary = site_controller.original_step_fault_guard()
 	if not fault.ok: return fault
-	if site_controller._crowd_active(): return SiteRuntime.fail("UNSUPPORTED_BACKEND")
+	# R9: party map motion is allowed while the origin Site keeps a crowd. The crowd-only refusals replace the old blanket UNSUPPORTED_BACKEND.
+	var crowd_refusal: Dictionary = region_party_map_crowd_guard()
+	if not crowd_refusal.ok: return crowd_refusal
+	var crowd_active: bool = site_controller._crowd_active()
 	if has_unpersisted_ranged_projectiles() or not fire_projectiles.is_empty() or not siege_projectiles.is_empty(): return SiteRuntime.fail("PARTY_ACTION_OPEN")
 	var actions: Dictionary = site_controller.person_actions.save_guard()
 	if not actions.ok: return actions
@@ -13645,8 +13672,10 @@ func region_party_map_resume_guard(party: Dictionary) -> Dictionary:
 	if controlled.is_empty(): return SiteRuntime.fail("NO_TARGET")
 	var faction: int = controlled.owner.faction_id
 	var cells: Array[Vector2i] = []
+	cells.append_array(region_party_map_crowd_cells(faction))
 	for actor: TerrainTestCharacter in combat_actors:
 		if not actor_present(actor): continue
+		if crowd_active and crowd_site.contains_person(actor.person_id): continue # crowd-owned actors are judged by the crowd checks
 		if actor.faction_id == faction: cells.append(actor.terrain_cell)
 		if actor.is_moving() or actor.action_time > ACTION_TIME_EPSILON and not actor._getting_up \
 				or is_instance_valid(actor._rescue_target) or is_instance_valid(actor._rescue_army) \
@@ -13654,6 +13683,7 @@ func region_party_map_resume_guard(party: Dictionary) -> Dictionary:
 			return SiteRuntime.fail("PARTY_ACTION_OPEN")
 	for team: TerrainArmy in combat_armies:
 		if not team.combat_enabled: continue
+		if crowd_active and crowd_site.owns_original_team(team): continue # the crowd owns this original team's people
 		if team.faction_id == faction: cells.append_array(team.cells)
 		if team.combat_order != TerrainArmy.CombatOrder.HOLD or not team._unit_rescues.is_empty() \
 				or not team.projectiles.is_empty() or not team._combat_batch_members.is_empty() \
