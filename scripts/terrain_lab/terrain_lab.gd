@@ -1593,7 +1593,8 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 		return SiteRuntime.fail("PAUSED_WORLD", "原世界暫停；保留補算欠秒")
 	var fire_step_guard := _fire_step_guard()
 	if not fire_step_guard.ok: return fire_step_guard
-	if not _region_point_pending.is_empty():
+	# A native crowd replay never consumes its own region point mid-interval; the slot consumes it after the commit.
+	if not _region_point_pending.is_empty() and not (replaying and crowd_site != null and crowd_site.active):
 		var prior_point := consume_region_point()
 		if not prior_point.ok: return prior_point
 		if not bool(prior_point.get("complete", false)):
@@ -1657,6 +1658,9 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 		pre_step_combat_left = float(region_joint_interval.tactical_seconds)
 	if formula_interval:
 		pre_step_combat_left = float(fire_replay_interval.get("tactical_seconds", 0.0))
+	# A native crowd replay takes the interval tactical boundary as its native combat begin, as the live region path does.
+	if replaying and not formula_interval and crowd_site != null and crowd_site.active and not fire_replay_interval.is_empty():
+		pre_step_combat_left = float(fire_replay_interval.get("tactical_seconds", 0.0))
 	if not gd_original and not formula_interval:
 		native_begin = _prepare_native_begin_shared_window(elapsed, pre_step_combat_left)
 		if not native_begin.ok: return _region_preflight_failure(region_originals, native_begin)
@@ -1713,7 +1717,7 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 		if not replaying or not _region_owner_interval_active or fire_replay_interval.is_empty(): return _region_preflight_failure(region_originals, SiteRuntime.fail("REGION_FORMULA_CONTRACT"))
 		region_interval = fire_replay_interval.duplicate(true)
 		if absf(completed_game_seconds - (float(region_interval.game_end) - float(region_interval.game_begin))) > 0.00000001: return _region_preflight_failure(region_originals, SiteRuntime.fail("REGION_FORMULA_CLOCK"))
-	if not native_begin.is_empty() and (elapsed != float(native_begin.action_seconds) or completed_game_seconds != float(native_begin.game_seconds)):
+	if not native_begin.is_empty() and (elapsed != float(native_begin.action_seconds) or absf(completed_game_seconds - float(native_begin.game_seconds)) > maxf(0.00000001, float(native_begin.game_seconds) * 0.000000001)):
 		return _region_preflight_failure(region_originals, SiteRuntime.fail("NATIVE_BEGIN_WINDOW_CHANGED"))
 	if gd_original and not formula_interval and _gd_mesh_work_needed():
 		var mesh_work: Dictionary = _prepare_gd_mesh_work_point(completed_game_seconds)
@@ -1786,7 +1790,7 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 	if not bool(recorded.get("ok", false)): site_controller.latch_original_step_fault(recorded)
 	if bool(recorded.get("ok", false)) and not _region_point_pending.is_empty():
 		_region_point_pending.interval_complete = true
-		if not formula_interval:
+		if not formula_interval and not (replaying and crowd_site != null and crowd_site.active):
 			var consumed_point := consume_region_point()
 			if not consumed_point.ok: site_controller.latch_original_step_fault(consumed_point)
 			if not consumed_point.ok: recorded = consumed_point
@@ -1795,7 +1799,8 @@ func _audio_original_shared_step(elapsed: float, replay_target: float = -1.0,
 				recorded["complete"] = false
 				if _region_original_cold_pending(consumed_point):
 					for field: String in ["code", "pending", "target", "site_id", "source_sha256", "cold_replay"]: recorded[field] = consumed_point[field]
-	if recorded.get("ok", false) and _region_point_pending.is_empty(): _clear_shared_work_step()
+	# A native crowd replay keeps its last point pending for the slot; its per-piece shared work is cleared here regardless.
+	if recorded.get("ok", false) and (_region_point_pending.is_empty() or replaying and crowd_site != null and crowd_site.active): _clear_shared_work_step()
 	if region_callers:
 		# Only the successful publisher on the same source/Slot may close a quantum.
 		recorded.completed_action_request = region_whole_action_request and bool(recorded.get("ok", false)) \
@@ -1866,7 +1871,7 @@ func _fire_replay_exact_step(action_step: float, target: float, interval: Dictio
 		return SiteRuntime.fail("REGION_OWNER_UNCLIPPED_ENDPOINT")
 	_region_owner_interval_active = true
 	_region_formula_active = false # advance_region_cold_stages: suppress_melee false.
-	var result := _advance_original_shared_step(elapsed, target, interval, true)
+	var result := _advance_original_shared_step(elapsed, target, interval, not (crowd_site != null and crowd_site.active))
 	_region_owner_interval_active = false
 	# Live then finishes this cold owner's point with consume_region_point(false)
 	# (_finish_original_cold_region_points); the replay finishes it the same way.
@@ -9311,6 +9316,8 @@ func _prepare_region_main_interval(maximum: float, local_tactical: float, travel
 		if float(stop.at) < float(interval.game_end) - 0.0000001:
 			limited = minf(limited, slot.GameplayClock.action_for_game(float(stop.at) - float(interval.game_begin), simulation_speed, float(interval.tactical_seconds)))
 	for original: TerrainLab in originals:
+		# A native crowd original prepares its own work inside its native begin window (as the live crowd does), never here.
+		if original.crowd_site != null and original.crowd_site.active: continue
 		var work: Dictionary = original._prepare_shared_work_step(accepted_action, accepted_game, float(interval.tactical_seconds))
 		if not work.get("ok", false): return _region_preflight_failure(originals, work)
 		limited = minf(limited, float(work.action_seconds))
@@ -9321,6 +9328,7 @@ func _prepare_region_main_interval(maximum: float, local_tactical: float, travel
 		accepted_action = float(interval.action_end) - float(interval.action_begin)
 		accepted_game = SiteRuntime.game_seconds(accepted_action, float(interval.tactical_seconds)) * simulation_speed
 		for original: TerrainLab in originals:
+			if original.crowd_site != null and original.crowd_site.active: continue
 			var retimed: Dictionary = original._retime_shared_work_step(accepted_action, accepted_game)
 			if not retimed.get("ok", false): return _region_preflight_failure(originals, retimed)
 	var prepared: Dictionary = slot.prepare_region_gameplay_interval(interval)
@@ -9344,7 +9352,7 @@ func _region_preflight_failure(originals: Array[TerrainLab], result: Dictionary)
 # prevents a supplied tactical prefix from being silently expanded downstream.
 
 func _region_original_interval_guard(interval: Dictionary) -> Dictionary:
-	if terrain == null or site_controller == null or crowd_site != null and crowd_site.active: return SiteRuntime.fail("REGION_OWNER_MODE")
+	if terrain == null or site_controller == null: return SiteRuntime.fail("REGION_OWNER_MODE")
 	for field: String in ["action_begin", "action_end", "game_begin", "game_end", "tactical_seconds", "scale"]:
 		if not interval.has(field) or not RegionSaveSlot.GameplayClock.seconds(interval[field]): return SiteRuntime.fail("REGION_OWNER_CLOCK")
 	var elapsed := float(interval.action_end) - float(interval.action_begin)
@@ -9399,7 +9407,7 @@ func advance_region_cold_stages(interval: Dictionary) -> Dictionary:
 	return _advance_region_original_stages(interval, false)
 
 func _advance_region_original_stages(interval: Dictionary, suppress_melee: bool) -> Dictionary:
-	if not restore_only or _region_owner_interval_active or terrain == null or crowd_site != null and crowd_site.active:
+	if not restore_only or _region_owner_interval_active or terrain == null:
 		return SiteRuntime.fail("REGION_OWNER_MODE")
 	var source_guard := _region_original_interval_guard(interval)
 	if not source_guard.ok: return _region_preflight_failure([], source_guard)
@@ -9407,11 +9415,27 @@ func _advance_region_original_stages(interval: Dictionary, suppress_melee: bool)
 	if _region_owner_action_limit(elapsed, float(interval.tactical_seconds)) + ACTION_TIME_EPSILON < elapsed: return _region_preflight_failure([], SiteRuntime.fail("REGION_OWNER_UNCLIPPED_ENDPOINT"))
 	_region_owner_interval_active = true
 	_region_formula_active = suppress_melee
-	var result := _advance_original_shared_step(elapsed, float(interval.game_end), interval, true)
+	# A native crowd owner runs the live native begin window (formula_interval false) and resumes a clipped step to the interval end; grid owners keep true.
+	var result: Dictionary = _advance_native_region_interval(interval) if crowd_site != null and crowd_site.active else _advance_original_shared_step(elapsed, float(interval.game_end), interval, true)
 	_region_formula_active = false
 	_region_owner_interval_active = false
 	result.complete = result.get("ok", false) and result.get("completed", false)
 	return result
+
+## A native crowd replay step can stop before the interval end (native begin query cadence, work boundary).
+## The grid path resumes such a step from the fire cursor; this resumes the same interval until the cursor
+## reaches action_end, so the fire settlement, cursor and watermark are stamped once, by the final piece.
+func _advance_native_region_interval(interval: Dictionary) -> Dictionary:
+	var end_action := float(interval.action_end)
+	for _round: int in range(4096):
+		var remaining := end_action - fire_action_cursor
+		if remaining <= ACTION_TIME_EPSILON: return {"ok": true, "completed": true}
+		var piece: Dictionary = interval.duplicate(true)
+		piece["action_begin"] = fire_action_cursor
+		piece["tactical_seconds"] = minf(float(interval.tactical_seconds), remaining)
+		var result: Dictionary = _advance_original_shared_step(remaining, float(interval.game_end), piece, false)
+		if not result.get("ok", false) or not result.get("completed", false): return result
+	return SiteRuntime.fail("REGION_CROWD_REPLAY_STALLED")
 
 var _region_owner_interval_active := false
 

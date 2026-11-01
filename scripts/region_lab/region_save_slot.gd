@@ -10919,8 +10919,6 @@ func admit_original_region_contact_battle(original: TerrainLab) -> Dictionary:
 	if str(mode.get("mode", "")) != "cold_exact": return {"ok": true, "admitted": false, "reason": "OTHER_ORIGINAL_CONSUMER"}
 	if str(mode.get("backend", "")) != original.region_backend_expected():
 		return {"ok": true, "admitted": false, "reason": "EXACT_BACKEND_UNADMITTED"}
-	if original.crowd_site != null and original.crowd_site.active:
-		return fail("REGION_BACKEND_UNADMITTED", "原接觸戰鬥尚未准入群眾 Native body")
 	if original.get_tree().paused or bool(original.terrain.site.get("paused", false)):
 		return {"ok": true, "admitted": false, "reason": "PAUSED_ORIGINAL"}
 	if not original._region_point_pending.is_empty() or not original._region_point_contacts.is_empty() or not original._region_point_wakes.is_empty() or original._region_point_consuming or original._region_point_dispatching or not original._combat_contacts.is_empty() or not original.terrain.get_meta(&"fire_boundary", {}).is_empty():
