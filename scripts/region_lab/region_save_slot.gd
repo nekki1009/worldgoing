@@ -545,7 +545,9 @@ func _read_document(path: String, maximum: int = 1048576) -> Dictionary:
 	file.close()
 	if envelope_error != OK: return fail("CORRUPT_SAVE", "存檔槽記錄格式損毀，原代保留")
 	var envelope: Variant = envelope_parser.data
-	if not envelope is Dictionary or envelope.size() != 2 or not envelope.get("payload") is String \
+	# A Site file written by SiteStore since 31c352b also carries "crowd_era": 1 in its envelope.
+	var era_ok: bool = envelope is Dictionary and (envelope.size() == 2 or envelope.size() == 3 and envelope.has("crowd_era") and int(envelope.crowd_era) == 1)
+	if not envelope is Dictionary or not era_ok or not envelope.get("payload") is String \
 			or not envelope.get("checksum") is String or str(envelope.payload).sha256_text() != str(envelope.checksum):
 		return fail("CORRUPT_SAVE", "存檔槽記錄校驗失敗，原代保留")
 	var payload_parser := JSON.new()
