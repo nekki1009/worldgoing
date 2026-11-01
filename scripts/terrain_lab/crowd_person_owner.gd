@@ -764,17 +764,26 @@ func charge_fatigue(index: int, amount: float) -> bool:
 	return accepted
 
 # G6.4 native site exit gate: conscious, free, in a formation, not in melee, no committed step.
-func site_exit_ready(index: int) -> bool:
+## SHIPSEA: aboard_vehicle >= 0 asks the sea-departure gate (site_person_exit_ready_aboard): the soldier must be aboard that
+## vehicle, which the land gate refuses. A DLL without the aboard gate refuses.
+func site_exit_ready(index: int, aboard_vehicle: int = -1) -> bool:
 	if not is_member(index) or crowd_site == null or crowd_site.crowd == null: return false
+	if aboard_vehicle >= 0:
+		if not crowd_site.crowd.has_method("site_person_exit_ready_aboard"): return false
+		return bool(crowd_site.crowd.site_person_exit_ready_aboard(index, aboard_vehicle))
 	if not crowd_site.crowd.has_method("site_person_exit_ready"): return false
 	return bool(crowd_site.crowd.site_person_exit_ready(index))
 
 # G6.4 native release for a travel departure. The person leaves the live pool and formation and this owner stops
 # mapping it. Returns {} and changes nothing when refused or when the DLL predates site_person_release.
 # "fatigue" is the formation's shared pool: the native World keeps no per-person fatigue.
-func release_for_departure(index: int) -> Dictionary:
-	if not site_exit_ready(index) or crowd_site.lab._region_deferring_endpoint() or not crowd_site.crowd.has_method("site_person_release"): return {}
-	var receipt: PackedFloat64Array = crowd_site.crowd.site_person_release(index)
+## SHIPSEA: aboard_vehicle >= 0 releases a soldier aboard that vehicle (site_person_release_aboard, sea departure); the
+## native aboard state is cleared and the receipt position is the deck point.
+func release_for_departure(index: int, aboard_vehicle: int = -1) -> Dictionary:
+	if not site_exit_ready(index, aboard_vehicle) or crowd_site.lab._region_deferring_endpoint(): return {}
+	var method := "site_person_release_aboard" if aboard_vehicle >= 0 else "site_person_release"
+	if not crowd_site.crowd.has_method(method): return {}
+	var receipt: PackedFloat64Array = crowd_site.crowd.site_person_release_aboard(index, aboard_vehicle) if aboard_vehicle >= 0 else crowd_site.crowd.site_person_release(index)
 	if receipt.size() != 8: return {}
 	combat_units.erase(index)
 	return {"hp": receipt[0], "fatigue": receipt[1], "fatigue_rest": receipt[2], "ammo": int(receipt[3]),
@@ -804,7 +813,14 @@ func ship_ensure_aboard(index: int, vehicle_id: int) -> bool:
 	if not is_member(index) or crowd_site == null or crowd_site.crowd == null or not crowd_site.crowd.has_method("site_person_board"): return false
 	var state: Array = native_aboard(index)
 	if state.size() == 2 and bool(state[0]): return int(state[1]) == vehicle_id
-	return bool(crowd_site.crowd.site_person_board(index, vehicle_id))
+	# SHIPSEA: the native exit gate refuses a host-controlled soldier, but the controlled person boards like any member
+	# (the grid lets the player board). As _split_exit_ready does, host control is handed back for the native board and
+	# restored at once, so the controlled person stays host-controlled aboard (or on land when the board refuses).
+	var host_held := index == int(crowd_site.player_index)
+	if host_held: crowd_site.crowd.set_host_control(index, false)
+	var boarded := bool(crowd_site.crowd.site_person_board(index, vehicle_id))
+	if host_held: crowd_site.crowd.set_host_control(index, true)
+	return boarded
 
 func ship_land_native(index: int, shore: Vector2i) -> bool:
 	if not is_member(index) or crowd_site == null or crowd_site.crowd == null or not crowd_site.crowd.has_method("site_person_land"): return false

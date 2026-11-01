@@ -445,13 +445,25 @@ bool World::charge_exchange_fatigue(int i, double amount) {
 // with no committed step (escort / custody / rescue / capture / siege / stagger / knockback). Host-controlled
 // soldiers and captors are refused. Refusals change nothing.
 bool World::site_person_exit_ready(int i) const {
+	return exit_ready_checks(i, false);
+}
+
+// SHIPSEA: the same exit gate for a soldier aboard `vehicle`. Aboard is the required state of a sea departure, so it
+// is accepted here (siege and convoy crew still refuse); every other guard is site_person_exit_ready's.
+bool World::site_person_exit_ready_aboard(int i, int vehicle) const {
+	if (i < 0 || i >= soldier_count() || vehicle < 0 || !is_aboard(i) || aboard_vehicle[i] != vehicle) return false;
+	return exit_ready_checks(i, true);
+}
+
+bool World::exit_ready_checks(int i, bool aboard_ok) const {
 	if (i < 0 || i >= soldier_count() || !can_act(i) || host_ctl[i]) return false;
 	const int fi = form[i];
 	if (fi < 0 || fi >= (int)formations.size()) return false;
 	const std::vector<int> &members = formations[fi].members;
 	if (std::find(members.begin(), members.end(), i) == members.end()) return false;
 	if (escort_mode[i] != 0 || escort_goal[i] >= 0 || prison_id[i] != 0) return false;
-	if (rescue_of[i] >= 0 || capture_of[i] >= 0 || is_crewed(i) || siege_group(i) >= 0) return false;
+	if (rescue_of[i] >= 0 || capture_of[i] >= 0 || siege_group(i) >= 0) return false;
+	if (aboard_ok ? (is_siege_crew(i) || is_convoy_crew(i)) : is_crewed(i)) return false;
 	if (stagger[i] > 0.0 || knock_t[i] > 0.0) return false;
 	if (in_melee_exchange(i)) return false;
 	for (int j = 0; j < soldier_count(); ++j)
@@ -473,6 +485,21 @@ bool World::in_melee_exchange(int i) const {
 // Its hp, ammo and position are kept in the receipt; the flag is saved, so a reload keeps it released.
 bool World::site_person_release(int i, SitePersonRelease &out) {
 	if (work_point_active_ || work_point_finish_ready_ || !site_person_exit_ready(i)) return false;
+	release_ready(i, out);
+	return true;
+}
+
+// SHIPSEA: a soldier aboard `vehicle` leaves the Site with its vessel (sea departure). The aboard flag and vehicle are
+// cleared first (a released soldier is not aboard), then the release is site_person_release's; the receipt position is
+// the deck point the host last set (site_person_set_deck). Refuses (writes nothing) unless site_person_exit_ready_aboard.
+bool World::site_person_release_aboard(int i, int vehicle, SitePersonRelease &out) {
+	if (work_point_active_ || work_point_finish_ready_ || !site_person_exit_ready_aboard(i, vehicle)) return false;
+	aboard[i] = 0; aboard_vehicle[i] = -1;
+	release_ready(i, out);
+	return true;
+}
+
+void World::release_ready(int i, SitePersonRelease &out) {
 	Formation &f = formations[form[i]];
 	out = SitePersonRelease{};
 	out.hp = hp[i]; out.fatigue = f.fatigue; out.fatigue_rest = f.fatigue_rest; out.ammo = ammo[i];
@@ -494,7 +521,6 @@ bool World::site_person_release(int i, SitePersonRelease &out) {
 	compact_slots(f); // drops the released soldier from members and renumbers the slots of the rest
 	slot[i] = -1;
 	f.command_dirty = true;
-	return true;
 }
 
 // ---------------------------------------------------------------- G1 S1 aboard (ship / vehicle)

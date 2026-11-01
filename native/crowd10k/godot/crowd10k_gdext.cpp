@@ -1165,6 +1165,17 @@ void m_site_person_release(CALL_ARGS) {
 	if (!arg_int(a[0],i) || i<0 || i>=w.soldier_count() || !w.site_person_release((int)i,rel)) { return_doubles(r,{}); return; }
 	return_doubles(r,{rel.hp, rel.fatigue, rel.fatigue_rest, double(rel.ammo), double(rel.cell_x), double(rel.cell_y), rel.x, rel.y});
 }
+// SHIPSEA sea departure: the exit gate and release of a soldier aboard `vehicle`; same array as site_person_release.
+void m_site_person_exit_ready_aboard(CALL_ARGS) {
+	SELF; NEED(2); WORLD; int64_t i, vehicle;
+	ret_bool(r, arg_int(a[0],i) && arg_int(a[1],vehicle) && i>=0 && i<w.soldier_count() && vehicle>=0 && vehicle<=INT32_MAX && w.site_person_exit_ready_aboard((int)i,(int)vehicle));
+}
+void m_site_person_release_aboard(CALL_ARGS) {
+	SELF; NEED(2); WORLD; int64_t i, vehicle;
+	wg::SitePersonRelease rel;
+	if (!arg_int(a[0],i) || !arg_int(a[1],vehicle) || i<0 || i>=w.soldier_count() || vehicle<0 || vehicle>INT32_MAX || !w.site_person_release_aboard((int)i,(int)vehicle,rel)) { return_doubles(r,{}); return; }
+	return_doubles(r,{rel.hp, rel.fatigue, rel.fatigue_rest, double(rel.ammo), double(rel.cell_x), double(rel.cell_y), rel.x, rel.y});
+}
 // G1 S1 aboard. Refusals return false / an empty array and change nothing. site_person_aboard: [aboard, vehicle].
 void m_site_person_board(CALL_ARGS) {
 	SELF; NEED(2); WORLD; int64_t i, vehicle;
@@ -1505,6 +1516,8 @@ void initialize(void *, GDExtensionInitializationLevel level) {
 	add_method("charge_exchange_fatigue",m_charge_exchange_fatigue,{{INT,"soldier"},{FLOAT,"amount"}},BOOL);
 	add_method("site_person_exit_ready",m_site_person_exit_ready,{{INT,"soldier"}},BOOL);
 	add_method("site_person_release",m_site_person_release,{{INT,"soldier"}},DOUBLES);
+	add_method("site_person_exit_ready_aboard",m_site_person_exit_ready_aboard,{{INT,"soldier"},{INT,"vehicle"}},BOOL);
+	add_method("site_person_release_aboard",m_site_person_release_aboard,{{INT,"soldier"},{INT,"vehicle"}},DOUBLES);
 	add_method("site_person_board",m_site_person_board,{{INT,"soldier"},{INT,"vehicle"}},BOOL);
 	add_method("site_person_land",m_site_person_land,{{INT,"soldier"},{FLOAT,"x"},{FLOAT,"y"}},BOOL);
 	add_method("site_person_set_deck",m_site_person_set_deck,{{INT,"soldier"},{FLOAT,"x"},{FLOAT,"y"}},BOOL);

@@ -265,9 +265,16 @@ static func _depart_crowd(controller: Node) -> Dictionary:
 	if controller.get_tree().paused or bool(lab.terrain.site.get("paused", false)): return Runtime.fail("PAUSED", "暫停時不能出發")
 	if float(lab.terrain.site.get("combat_left", 0.0)) > 0.0: return Runtime.fail("IN_COMBAT", "戰鬥中不能整隊出發")
 	var identity: int = lab.controlled_person_id()
-	if controller.vehicles.is_embarked(identity): return Runtime.fail("UNSUPPORTED", "群眾隊伍尚不能海路出發")
 	var plan: Dictionary = lab.crowd_site.departure_plan(identity)
 	if not plan.ok: return plan
+	# SHIPSEA: a team aboard its ships leaves by sea (the same extraction as a grid sea departure). Partial boarding refuses.
+	var sea: bool = controller.vehicles.team_has_embarked(int(plan.team_id))
+	if sea:
+		var aboard := 0
+		for member: int in plan.people:
+			if controller.vehicles.is_embarked(member): aboard += 1
+		if aboard == 0: return Runtime.fail("CROWD_SEA_NOT_EMBARKED", "群眾隊伍須全員上船才能海路出發")
+		if aboard < plan.people.size(): return Runtime.fail("CROWD_SEA_PARTIAL", "群眾隊伍部分隊員未上船；海路須全隊上船")
 	var faction: int = int(plan.faction)
 	if _hostile_near(lab, faction, plan.cells): return Runtime.fail("IN_COMBAT", "附近有敵人；脫離戰鬥後才能出發")
 	var guard: Dictionary = controller.supply_save_guard()
@@ -275,17 +282,30 @@ static func _depart_crowd(controller: Node) -> Dictionary:
 	var captured: Dictionary = controller._capture_for_save()
 	if not captured.ok: return captured
 	var site: Vector2i = controller._current_region_site()
-	var component := start_component(slot, site, plan.controlled_cell, lab.terrain)
-	if component < 0 or component > 253: return Runtime.fail("NO_ROUTE", "出發位置沒有可走出此地的通道")
+	# A sea party departs from the boat (component 0, as the grid sea departure does); a land party needs a route out.
+	var component := 0
+	if not sea:
+		component = start_component(slot, site, plan.controlled_cell, lab.terrain)
+		if component < 0 or component > 253: return Runtime.fail("NO_ROUTE", "出發位置沒有可走出此地的通道")
 	var spec := _crowd_spec(slot, identity, int(plan.team_id))
+	if sea: spec["mode"] = "sea"
 	# The controlled captain leaves with the team; a saved actor body that stays takes control of the Site (as in a split).
 	# Read after the full Site capture above, which writes those bodies.
 	spec["crowd_control_successor"] = split_control_successor(lab, identity)
 	# Every refusal begin_region_travel decides before extraction runs first (no release yet).
 	var pre: Dictionary = slot.region_travel_preflight(lab.terrain, spec, component)
 	if not pre.ok: return pre
-	# Validate the whole extraction on a copy: nothing is released if this refuses.
-	var probe: Dictionary = RegionTravel.extract(lab.terrain.site.duplicate(true), spec, "crowd_probe")
+	# Validate the whole extraction on a copy: nothing is released if this refuses. A sea probe uses the converted team
+	# as the release will (the Site's own army stub of this team is replaced by it, as the recaptured Site does below).
+	var probe_site: Dictionary = lab.terrain.site.duplicate(true)
+	if sea:
+		var probe_army: Dictionary = lab.crowd_site.departure_army_snapshot(plan)
+		if not probe_army.ok: return probe_army
+		probe_site.armies = probe_site.armies.filter(func(army: Variant) -> bool: return not (army is Dictionary and int(army.get("team_id", -1)) == int(plan.team_id)))
+		var probe_departing: Dictionary = probe_army.snapshot.duplicate(true)
+		probe_departing["crowd"] = true
+		probe_site.armies.append(probe_departing)
+	var probe: Dictionary = RegionTravel.extract(probe_site, spec, "crowd_probe")
 	if not probe.ok: return probe
 	var released: Dictionary = lab.crowd_site.departure_release(plan)
 	if not released.ok: return released
@@ -305,7 +325,8 @@ static func _depart_crowd(controller: Node) -> Dictionary:
 	open_travel_map(controller, str(slot.pin.world_instance_id), str(slot.pin.slot_id), controller._region_manifest_path)
 	var census := RegionTravel.census(result.party)
 	var note := "；已離開原住處" if not result.vacated_housing.is_empty() else ""
-	return Runtime.ok("已整隊出發（群眾 %d 人）%s" % [census.people.size(), note], {"token": result.token})
+	var text := ("已整隊出海（群眾 %d 人、%d 艘船）%s" % [census.people.size(), census.vehicles.size(), note]) if sea else ("已整隊出發（群眾 %d 人）%s" % [census.people.size(), note])
+	return Runtime.ok(text, {"token": result.token})
 
 
 static func _crowd_spec(slot: RegionSaveSlot, identity: int, team_id: int) -> Dictionary:
@@ -329,7 +350,7 @@ static func depart_crowd_split(controller: Node, members: Array) -> Dictionary:
 	if float(lab.terrain.site.get("combat_left", 0.0)) > 0.0: return Runtime.fail("IN_COMBAT", "戰鬥中不能分隊出發")
 	# The controlled person leads the sub-party: a non-cadre is refused CADRE_REQUIRED, the formal captain CAPTAIN_REQUIRED.
 	var leader: int = lab.controlled_person_id()
-	if controller.vehicles.is_embarked(leader): return Runtime.fail("UNSUPPORTED", "群眾隊伍尚不能海路出發")
+	if controller.vehicles.is_embarked(leader): return Runtime.fail("CROWD_SPLIT_SEA_UNSUPPORTED", "群眾分隊不支援海路出發；請整隊上船出發")
 	var plan: Dictionary = lab.crowd_site.split_departure_plan(leader, members)
 	if not plan.ok: return plan
 	if _hostile_near(lab, int(plan.faction), plan.cells): return Runtime.fail("IN_COMBAT", "附近有敵人；脫離戰鬥後才能分隊出發")
@@ -414,9 +435,10 @@ static func _selected_crowd_departure(controller: Node) -> Dictionary:
 	if controller.ship_journey_active() or controller.ground_crossing_blocks_input() or controller.region_operation_pending() or is_instance_valid(lab._cold_replay_lab): return Runtime.fail("BUSY")
 	if controller.get_tree().paused or bool(lab.terrain.site.get("paused", false)): return Runtime.fail("PAUSED")
 	var identity: int = lab.controlled_person_id()
-	if controller.vehicles.is_embarked(identity): return Runtime.fail("UNSUPPORTED", "群眾隊伍尚不能海路出發")
 	var plan: Dictionary = lab.crowd_site.departure_plan(identity)
 	if not plan.ok: return plan
+	# Only the land selection is read here; a sea team leaves through _depart_crowd, never through a deferred intent.
+	if controller.vehicles.team_has_embarked(int(plan.team_id)): return Runtime.fail("CROWD_SEA_SELECTION_UNSUPPORTED", "群眾海路出發不經延後意圖")
 	if _hostile_near(lab, int(plan.faction), plan.cells): return Runtime.fail("IN_COMBAT")
 	var spec := _crowd_spec(slot, identity, int(plan.team_id))
 	var boarding_guard: Dictionary = RegionTravel.boarding_departure_guard(lab.terrain.site, spec)

@@ -3302,6 +3302,9 @@ func begin_region_travel(source_data: TerrainData, spec: Dictionary, start_compo
 func set_region_travel_plan(steps: Array) -> Dictionary:
 	var recovered := _recover_control()
 	if not recovered.ok: return recovered
+	# SHIPSEA: the mandatory sea dispatch (see "Mandatory original Slot dispatches" below): a sea route (the route
+	# producer marks every step of a ship party "sea") is committed by the sea setter, never as a land plan.
+	if not steps.is_empty() and steps[0] is Dictionary and str(steps[0].get("mode", "land")) == "sea": return set_region_sea_travel_plan(steps)
 	var status := region_travel_status()
 	if not status.ok: return status
 	if not bool(status.get("pending", false)): return fail("NO_TARGET", "沒有旅隊")
@@ -3402,7 +3405,9 @@ func advance_region_travel(max_steps: int) -> Dictionary:
 	var initial := region_travel_status()
 	if not initial.ok: return initial
 	if not initial.get("pending", false): return fail("NO_TARGET")
-	if str(initial.get("mode", "land")) == "sea": return advance_region_sea_travel(max_steps)
+	# SHIPSEA: the status carries the mode on its plan (region_travel_status has no top-level "mode"), so the sea
+	# dispatch reads the loaded plan's mode.
+	if str(initial.get("plan", {}).get("mode", "land")) == "sea": return advance_region_sea_travel(max_steps)
 	if not region_original_travel_interval.is_valid() or not region_original_party_progress.is_valid():
 		return fail("MISSING_REGION_ADAPTER", "缺原所有Site／party共同旅行區間主人")
 	var before := float(control.logical_game_seconds)

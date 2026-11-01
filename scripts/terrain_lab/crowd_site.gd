@@ -2865,13 +2865,15 @@ func departure_plan(identity: int) -> Dictionary:
 	var people: Array[int] = []
 	var cells: Array[Vector2i] = []
 	var controlled_cell := Vector2i(-1, -1)
+	var team_sea: bool = lab.site_controller.vehicles.team_has_embarked(int(roster.team_id))
 	for unit: Dictionary in roster.units:
 		var member := int(unit.person_id)
 		if not _index_by_id.has(member) or _actors.has(member) or has_pending_capture(member):
 			return SiteRuntime.fail("NOT_READY", "隊員尚有原生事件；保留原進度")
 		var owner: Variant = person_owner(member)
 		# The controlled captain holds host control; _split_exit_ready hands it back for the query only.
-		if owner == null or not _split_exit_ready(owner, int(_index_by_id[member])):
+		# SHIPSEA: an embarked team leaves by sea, so an aboard member asks the aboard gate for its own vessel.
+		if owner == null or not _split_exit_ready(owner, int(_index_by_id[member]), _departure_vessel(owner, int(_index_by_id[member]), team_sea)):
 			return SiteRuntime.fail("NOT_READY", "隊員不在可出發狀態（倒地、交換中或有未完成動作）")
 		var state := soldier_state(int(_index_by_id[member]))
 		var cell := Vector2i(floori(float(state.px)), floori(float(state.py)))
@@ -2880,6 +2882,28 @@ func departure_plan(identity: int) -> Dictionary:
 		if member == identity: controlled_cell = cell
 	return SiteRuntime.ok("", {"roster": roster, "team_id": int(roster.team_id), "faction": int(roster.faction_id),
 		"people": people, "cells": cells, "controlled_cell": controlled_cell})
+
+
+## SHIPSEA: the boat fields a passenger keeps on its CrowdPersonOwner record. A crowd passenger's boat is not in the
+## roster rows, so the travelling snapshot copies these fields across (the grid sea party reads the same row keys).
+const SHIP_ROW_FIELDS := ["embarked_vehicle_id", "berth_id", "ship_deck_position", "ship_guest"]
+
+## SHIPSEA: the departing team as a complete grid army snapshot, read before any release. Read-only: nothing is released.
+## Passengers keep their boat (embarked_vehicle_id, berth_id, ship deck fields) so RegionTravel.extract carries the vessel
+## and its passengers as a grid sea party. Returns {ok, snapshot}.
+func departure_army_snapshot(plan: Dictionary) -> Dictionary:
+	if not plan.get("ok", false): return plan
+	var conversion: Dictionary = ClearHandoff.roster_snapshot(self, plan.roster)
+	if not conversion.ok: return conversion
+	var snapshot: Dictionary = conversion.snapshot
+	for row: Dictionary in snapshot.units:
+		var identity := int(row.person_id)
+		var owner: Variant = person_owner(identity)
+		if not owner is CrowdPersonOwner or int(owner.index_for_identity(identity)) < 0: continue
+		var record: Dictionary = owner.records.get(int(owner.index_for_identity(identity)), {})
+		for field: String in SHIP_ROW_FIELDS:
+			if record.has(field): row[field] = record[field]
+	return SiteRuntime.ok("", {"snapshot": snapshot})
 
 
 ## G6.4b: releases every person of a plan that departure_plan passed. Release is irreversible, so callers must
@@ -2891,7 +2915,7 @@ func departure_release(plan: Dictionary) -> Dictionary:
 	var released: Array[int] = []
 	# The grid army snapshot is converted from the live rows before any release (it reads the native soldier state, which a
 	# release removes). A conversion refusal releases nobody.
-	var army_conversion := ClearHandoff.roster_snapshot(self, roster)
+	var army_conversion: Dictionary = departure_army_snapshot(plan)
 	if not army_conversion.ok: return army_conversion
 	# The controlled captain (host control) is released first, so a refusal of his release leaves nobody released.
 	var order: Array[int] = []
@@ -2899,6 +2923,8 @@ func departure_release(plan: Dictionary) -> Dictionary:
 		if int(_index_by_id[identity]) == player_index: order.append(identity)
 	for identity: int in plan.people:
 		if not order.has(identity): order.append(identity)
+	# SHIPSEA: an embarked team leaves by sea; its aboard members are released with their vessel (the aboard release).
+	var team_sea: bool = lab.site_controller.vehicles.team_has_embarked(int(plan.team_id))
 	for identity: int in order:
 		var index := int(_index_by_id[identity])
 		var owner: Variant = person_owner(identity)
@@ -2906,7 +2932,7 @@ func departure_release(plan: Dictionary) -> Dictionary:
 		# Same host-control handover as split_departure_release: released with host control handed back on refusal.
 		var host_held := index == player_index
 		if host_held: crowd.set_host_control(index, false)
-		if owner != null: receipt = owner.release_for_departure(index)
+		if owner != null: receipt = owner.release_for_departure(index, _departure_vessel(owner, index, team_sea))
 		if receipt.is_empty():
 			if host_held: crowd.set_host_control(index, true)
 			return SiteRuntime.fail("RELEASE_REFUSED", "原生釋放被拒（已釋放 %d 人）；請重新檢查" % released.size())
@@ -2956,12 +2982,19 @@ static func cadre_index(roster: Dictionary, index: int) -> bool:
 
 ## G6.5: the native exit gate for a split. It refuses a host-controlled soldier, and the controlled cadre leads the split,
 ## so his host control is handed back for the query and then restored; nothing else changes.
-func _split_exit_ready(owner: Variant, index: int) -> bool:
+func _split_exit_ready(owner: Variant, index: int, aboard_vehicle: int = -1) -> bool:
 	var host_held := index == player_index
 	if host_held: crowd.set_host_control(index, false)
-	var ready := bool(owner.site_exit_ready(index))
+	var ready := bool(owner.site_exit_ready(index, aboard_vehicle))
 	if host_held: crowd.set_host_control(index, true)
 	return ready
+
+## SHIPSEA: the native vessel a member of a departing team is aboard, or -1 (land gate). Only an embarked team (a sea
+## departure) asks the aboard gate; a land departure keeps the land gate, which refuses an aboard soldier.
+func _departure_vessel(owner: Variant, index: int, team_sea: bool) -> int:
+	if not team_sea: return -1
+	var state: Array = owner.native_aboard(index)
+	return int(state[1]) if state.size() == 2 and bool(state[0]) else -1
 
 
 ## G6.5: read-only plan for a cadre-led sub-party. `leader` (the cadre) comes first in `people`; `members` are ordinary

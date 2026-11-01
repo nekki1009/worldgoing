@@ -726,6 +726,12 @@ public:
 	// committed step. Release refuses (returns false, writes nothing) unless ready.
 	bool site_person_exit_ready(int i) const;
 	bool site_person_release(int i, SitePersonRelease &out);
+	// SHIPSEA sea departure: the same gate and release for a soldier aboard `vehicle` (aboard accepted, siege / convoy
+	// crew refused). The release clears aboard / aboard_vehicle; the receipt position is the deck point.
+	bool site_person_exit_ready_aboard(int i, int vehicle) const;
+	bool site_person_release_aboard(int i, int vehicle, SitePersonRelease &out);
+	bool exit_ready_checks(int i, bool aboard_ok) const;
+	void release_ready(int i, SitePersonRelease &out); // the release body; callers have passed the exit gate
 	// G1 S1 aboard. Board: a ready soldier (the site_person_exit_ready guards) goes aboard vehicle >= 0; it keeps roster,
 	// fatigue binding, hp, ammo and team, and loses its slot. Land: an aboard living soldier steps onto a free walkable
 	// cell (no living non-aboard soldier, no convoy body) and rejoins its formation. set_deck: aboard only; moves the

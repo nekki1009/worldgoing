@@ -1474,9 +1474,12 @@ static func resident_mover_guard(state: Dictionary, movers: Dictionary) -> Dicti
 static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dictionary:
 	var boarding_guard: Dictionary = boarding_departure_guard(state, spec)
 	if not boarding_guard.ok: return boarding_guard
-	# G6.4b: a crowd team leaves only as a whole land team (crowd_departure); its native section is filtered below.
+	# G6.4b: a crowd team leaves only as a whole team (crowd_departure): by land, or by sea when every member is aboard
+	# its ships (SHIPSEA). Its native section is filtered below. A crowd cadre split does not leave by sea.
 	var crowd_departure := bool(spec.get("crowd_departure", false))
-	if crowd_departure and (not state.has("crowd") or str(spec.get("mode", "land")) == "sea"): return fail("UNSUPPORTED", "群眾隊伍只支援陸路整隊出發")
+	var crowd_sea := crowd_departure and str(spec.get("mode", "land")) == "sea"
+	if crowd_departure and not state.has("crowd"): return fail("UNSUPPORTED", "群眾隊伍只支援整隊出發")
+	if crowd_sea and bool(spec.get("crowd_split", false)): return fail("CROWD_SPLIT_SEA_UNSUPPORTED", "群眾分隊不支援海路出發；請整隊上船出發")
 	if state.has("crowd") and not crowd_departure: return fail("UNSUPPORTED", "群眾模式（Crowd）暫不支援整隊出發")
 	if state.has("family"):
 		var version := int(state.family.get("version", 0))
@@ -1526,6 +1529,8 @@ static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dicti
 				return fail("RELATION_OPEN", "駐營或群眾隊伍不能整隊出發")
 			if not army.get("rescues", []).is_empty(): return fail("BUSY", "隊伍仍在救助傷者")
 			if int(army.get("combat_order", 0)) != 0: return fail("BUSY", "隊伍須先停在守位（取消移動、追擊、撤退）")
+			var crowd_rows := 0
+			var crowd_boarded := 0
 			for row: Dictionary in army.get("units", []):
 				var independent := int(spec.get("solo_row", -1)) == int(row.person_id)
 				if not independent and _row_inert(row):
@@ -1535,6 +1540,12 @@ static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dicti
 				var reason := _row_ready(row, independent, sea)
 				if not reason.is_empty(): return fail("NOT_READY", reason)
 				movers[int(row.person_id)] = true
+				crowd_rows += 1
+				if not str(row.get("embarked_vehicle_id", "")).is_empty(): crowd_boarded += 1
+			if crowd_sea:
+				# A crowd team goes by sea only as a whole team aboard: nobody ashore, nobody left to walk.
+				if crowd_boarded == 0: return fail("CROWD_SEA_NOT_EMBARKED", "群眾隊伍須全員上船才能海路出發")
+				if crowd_boarded < crowd_rows: return fail("CROWD_SEA_PARTIAL", "群眾隊伍部分隊員未上船；海路須全隊上船")
 			# A Site state read back from its saved JSON carries whole-number ids as
 			# floats. The party owns int ids, so every later identity map and body index
 			# sees the same key; a non-integral id stays as is for validation to refuse.

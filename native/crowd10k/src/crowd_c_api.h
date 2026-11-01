@@ -45,6 +45,10 @@ int wg_crowd_site_person_exit_ready(const wg_crowd *c, int i);
 /* Releases a ready soldier from the live pool and formation. out[8] = {hp, fatigue, fatigue_rest, ammo, cell_x, cell_y, x, y}
  * (fatigue = formation pool). Returns 1 on release; 0 refuses and writes nothing. */
 int wg_crowd_site_person_release(wg_crowd *c, int i, double *out);
+/* SHIPSEA sea departure: exit_ready / release of a soldier aboard `vehicle` (aboard accepted). Same out[8] layout as
+ * wg_crowd_site_person_release; x, y are the deck point. The release clears the aboard state. 0 refuses, writes nothing. */
+int wg_crowd_site_person_exit_ready_aboard(const wg_crowd *c, int i, int vehicle);
+int wg_crowd_site_person_release_aboard(wg_crowd *c, int i, int vehicle, double *out);
 /* G1 S1 aboard: board / land / set_deck / retarget_aboard return 1 on success, 0 refused with no change.
  * site_person_aboard writes out[2] = {aboard, vehicle} and returns 1, or 0 for an unknown soldier. */
 int wg_crowd_site_person_board(wg_crowd *c, int i, int vehicle);
