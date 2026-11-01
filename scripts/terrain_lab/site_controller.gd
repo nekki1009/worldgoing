@@ -577,7 +577,8 @@ func _build_ui() -> void:
 		_formal_columns[id] = built.column
 		_button(launcher.column, str(titles[id]), "OpenSite_" + id, func() -> void: open_window(id))
 	_button(launcher.column, "台灣地圖", "OpenRegionMap", _open_region_map)
-	_button(launcher.column, "整隊出發", "DepartRegionTravel", func() -> void: show_result(RegionTravelSite.request_departure(self)))
+	region_travel_button = _button(launcher.column, "整隊出發", "DepartRegionTravel", func() -> void: show_result(RegionTravelSite.request_departure(self)))
+	_build_crowd_split_entry(launcher.column)
 	_resume_region_party_map_button = _button(launcher.column, "原旅隊繼續地圖旅行", "ResumeOriginalPartyMap", _resume_region_party_map)
 	_button(launcher.column, "回主選單", "ReturnMainMenu", func() -> void: _request_exit(RegionEntry.MAIN_MENU))
 	var column: VBoxContainer = _formal_columns.map
@@ -3154,6 +3155,7 @@ func update_ui(refresh_combat_window: bool = true) -> void:
 	if _ui_control_id != lab.controlled_person_id(): invalidate_ui_context()
 	if lab.terrain == null or details == null:
 		return
+	_refresh_crowd_split_ui()
 	if formal_windows.has("family") and formal_windows.family.visible: _tech_window.refresh()
 	if formal_windows.has("construction") and formal_windows.construction.visible:
 		_refresh_settlement_engineering_controls()
@@ -13543,6 +13545,61 @@ func prepare_nation_route_load(nation_id: String, order_id: String, original_ord
 	return region_slot.prepare_nation_route_load(lab, nation_id, order_id, original_order)
 
 var _region_departure_intent: Dictionary = {}
+
+## G6.6: the cadre-split entry in the 功能 window, beside 整隊出發. Built once; refreshed by update_ui.
+var region_travel_button: Button
+var crowd_split_members: ItemList
+var crowd_split_button: Button
+var crowd_split_status: Label
+var crowd_split_context: Array = []
+
+func _build_crowd_split_entry(parent: Node) -> void:
+	crowd_split_status = _label(parent, "", 15)
+	crowd_split_status.name = "CrowdSplitStatus"
+	crowd_split_members = ItemList.new()
+	crowd_split_members.name = "CrowdSplitMembers"
+	crowd_split_members.select_mode = ItemList.SELECT_MULTI
+	crowd_split_members.custom_minimum_size = Vector2(230, 120)
+	crowd_split_members.visible = false
+	parent.add_child(crowd_split_members)
+	crowd_split_members.multi_selected.connect(func(_index: int, _selected: bool) -> void: _refresh_crowd_split_ui())
+	crowd_split_button = _button(parent, "分隊出發", "DepartCrowdSplit", func() -> void:
+		show_result(RegionTravelSite.depart_crowd_split(self, _selected_crowd_split_members())))
+	crowd_split_button.visible = false
+	crowd_split_status.visible = false
+
+func _selected_crowd_split_members() -> Array:
+	var identities: Array = []
+	for item: int in crowd_split_members.get_selected_items():
+		identities.append(int(crowd_split_members.get_item_metadata(item)))
+	return identities
+
+## G6.6: shows the cadre-split entry only for a non-captain of a live crowd team. The whole-team button is for the captain only.
+func _refresh_crowd_split_ui() -> void:
+	if crowd_split_button == null or lab == null or lab.restore_only: return
+	var entry: Dictionary = RegionTravelSite.crowd_split_entry(self)
+	if region_travel_button != null:
+		var ordinary_crowd_member: bool = bool(entry.get("in_team", false)) and not bool(entry.get("captain", false))
+		region_travel_button.disabled = ordinary_crowd_member
+		region_travel_button.tooltip_text = "整隊出發僅限隊長；幹部請用分隊出發" if ordinary_crowd_member else ""
+	var shown: bool = bool(entry.get("show", false))
+	crowd_split_members.visible = shown
+	crowd_split_button.visible = shown
+	crowd_split_status.visible = shown
+	if not shown:
+		crowd_split_context = []
+		return
+	var context: Array = [entry.leader, entry.team_id]
+	if context != crowd_split_context:
+		crowd_split_context = context
+		crowd_split_members.clear()
+		for identity: int in entry.candidates:
+			var item := crowd_split_members.add_item("#%d 隊員（非幹部）" % identity)
+			crowd_split_members.set_item_metadata(item, identity)
+	var gate: Dictionary = RegionTravelSite.crowd_split_gate(self, _selected_crowd_split_members())
+	crowd_split_button.disabled = not gate.ok
+	crowd_split_status.text = "分隊：可帶 %d 名所選隊員" % _selected_crowd_split_members().size() if gate.ok \
+		else "%s：%s" % [str(gate.get("code", "")), str(gate.get("message", ""))]
 
 func _request_region_departure() -> Dictionary:
 	if not _region_departure_intent.is_empty(): return Runtime.fail("BUSY")

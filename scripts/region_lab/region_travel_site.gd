@@ -396,6 +396,46 @@ static func depart_crowd_split(controller: Node, members: Array) -> Dictionary:
 	return Runtime.ok("已分隊出發（群眾 %d 人）" % census.people.size(), {"token": result.token})
 
 
+## G6.6: the cadre-split entry of the controlled person. `show` only inside a live crowd team the controlled person belongs to
+## and only when he is not its formal captain (the captain leaves with the whole team). `candidates` are the team's ordinary
+## members (neither the captain nor a cadre) a cadre may take along; `team_id` names the team the split comes from.
+static func crowd_split_entry(controller: Node) -> Dictionary:
+	var lab: Node = controller.lab
+	var hidden := {"show": false, "in_team": false, "captain": false, "leader": -1, "team_id": -1, "candidates": []}
+	if not controller._crowd_active(): return hidden
+	var leader: int = lab.controlled_person_id()
+	for roster: Dictionary in lab.crowd_site.rosters:
+		var index := -1
+		for at in range(roster.units.size()):
+			if int(roster.units[at].person_id) == leader: index = at
+		if index < 0: continue
+		if index == int(roster.get("formal_commander", -1)):
+			return {"show": false, "in_team": true, "captain": true, "leader": leader, "team_id": int(roster.team_id), "candidates": []}
+		var candidates: Array[int] = []
+		for at in range(roster.units.size()):
+			if at == index or at == int(roster.formal_commander) or lab.crowd_site.cadre_index(roster, at): continue
+			candidates.append(int(roster.units[at].person_id))
+		return {"show": true, "in_team": true, "captain": false, "leader": leader, "team_id": int(roster.team_id), "candidates": candidates}
+	return hidden
+
+
+## G6.6: the gate of 「分隊出發」 for the chosen `members`, read-only with the same refusals as _selected_crowd_departure
+## and depart_crowd_split (before its release). Returns {ok: true, ...} or the refusal (CADRE_REQUIRED, CAPTAIN_REQUIRED, ...).
+static func crowd_split_gate(controller: Node, members: Array) -> Dictionary:
+	var lab: TerrainLab = controller.lab
+	var slot: RegionSaveSlot = controller.region_slot
+	if slot == null or lab.restore_only or lab.terrain == null: return Runtime.fail("NO_REGION_SLOT")
+	if controller.ship_journey_active() or controller.ground_crossing_blocks_input() or controller.region_operation_pending() or is_instance_valid(lab._cold_replay_lab): return Runtime.fail("BUSY")
+	if controller.get_tree().paused or bool(lab.terrain.site.get("paused", false)): return Runtime.fail("PAUSED")
+	if float(lab.terrain.site.get("combat_left", 0.0)) > 0.0: return Runtime.fail("IN_COMBAT")
+	var leader: int = lab.controlled_person_id()
+	if controller.vehicles.is_embarked(leader): return Runtime.fail("CROWD_SPLIT_SEA_UNSUPPORTED")
+	var plan: Dictionary = lab.crowd_site.split_departure_plan(leader, members)
+	if not plan.ok: return plan
+	if _hostile_near(lab, int(plan.faction), plan.cells): return Runtime.fail("IN_COMBAT")
+	return Runtime.ok("可分隊出發（帶隊員 %d 人）" % members.size(), {"plan": plan})
+
+
 ## G6.5: the controlled cadre leads the sub-party: a player spec like _crowd_spec, with the crowd_split flag and the
 ## Site body that takes control when he leaves.
 static func _split_spec(slot: RegionSaveSlot, leader: int, team_id: int, successor: Dictionary) -> Dictionary:
