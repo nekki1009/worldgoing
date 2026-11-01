@@ -9796,6 +9796,7 @@ func begin_ship_journey(boat_ids: Array[String], destination: Vector2i, anchor: 
 		checked[int(boat.team_id)] = true
 	var captured := _capture_for_save()
 	if not captured.ok: return captured
+	_wire_ship_transfer_crowd_adapter()
 	var prepared: Dictionary = region_slot.prepare_ship_transfer(lab.terrain, destination, boat_ids, anchor, facing, true)
 	if not prepared.ok: return _remember_region_pending(prepared, {"kind": "depart", "boat_ids": boat_ids.duplicate(), "destination": destination, "anchor": anchor, "facing": facing, "requester_id": requester_id})
 	var token := str(prepared.token)
@@ -9877,6 +9878,18 @@ func _finish_ship_journey_tick() -> void:
 		_invalidate_ship_journey_projection()
 		show_result(Runtime.ok("原船隊已完成等距返航；原人貨與來源位置恢復"))
 		return
+	# SHIPCROWD: a crowd fleet's passengers leave the native crowd now, at arrival (they sail aboard until here). The
+	# commit's own checks run first on copies, so a refusal releases nobody.
+	var crowd_released := _release_crowd_ship_passengers()
+	if not crowd_released.ok:
+		if str(crowd_released.get("code", "")) == "PENDING":
+			_remember_region_pending(crowd_released, {"kind": "arrival"})
+			show_result(crowd_released)
+			return
+		if str(crowd_released.get("code", "")) != "BUSY": _auto_save_blocked = true
+		show_result(crowd_released)
+		return
+	_wire_ship_transfer_crowd_adapter()
 	var committed: Dictionary = region_slot.commit_ship_transfer(str(_ship_journey.token), lab.terrain, _journey_arrival_preflight)
 	if not committed.ok:
 		if str(committed.get("code", "")) == "PENDING":
@@ -9901,6 +9914,69 @@ func _finish_ship_journey_tick() -> void:
 
 # Keep C save_to as the SINGLE wrapper. This body is reproduced for review only.
 
+
+## SHIPCROWD: the crowd adapter of the Slot's ship transfer is this live Site's owner (Callable() off crowd).
+func _wire_ship_transfer_crowd_adapter() -> void:
+	if region_slot == null: return
+	region_slot.ship_transfer_crowd_adapter = _crowd_ship_transfer_origin if lab != null and lab.get("crowd_site") != null else Callable()
+
+## SHIPCROWD: converts the controlled captain's crowd team aboard the selected ships inside a transfer origin copy, as
+## _depart_crowd's sea probe does: the team's army stub is replaced by its complete grid army snapshot (crowd marked, passenger
+## rows with embarked_vehicle_id / berth / deck fields from the crowd records). Read-only on the live Site. After the arrival
+## release (_release_crowd_ship_passengers) the Site armies already carry that converted team, so nothing is converted again.
+## Returns {ok, successor}: the actor body that takes control of the origin Site (RegionTravelSite.split_control_successor).
+func _crowd_ship_transfer_origin(origin: Dictionary, boat_ids: Array) -> Dictionary:
+	var crowd: Variant = lab.crowd_site
+	if crowd == null: return Runtime.fail("UNSUPPORTED", "群眾船隊旅程缺少原群眾 owner")
+	var identity: int = lab.controlled_person_id()
+	var successor: Dictionary = RegionTravelSite.split_control_successor(lab, identity)
+	if not crowd.active or not crowd.contains_person(identity): return Runtime.ok("", {"successor": successor})
+	var plan: Dictionary = crowd.departure_plan(identity)
+	if not plan.ok: return plan
+	for boat_id: Variant in boat_ids:
+		if int(vehicles.records().get(str(boat_id), {}).get("team_id", 0)) != int(plan.team_id):
+			return Runtime.fail("PARTIAL_FLEET", "群眾船隊旅程只帶受控隊長本隊的船")
+	for member: int in plan.people:
+		if not vehicles.is_embarked(member): return Runtime.fail("CROWD_SEA_PARTIAL", "群眾隊伍部分隊員未上船；海路須全隊上船")
+	var converted: Dictionary = crowd.departure_army_snapshot(plan)
+	if not converted.ok: return converted
+	var team_id: int = int(plan.team_id)
+	origin["armies"] = origin.get("armies", []).filter(func(army: Variant) -> bool: return not (army is Dictionary and int(army.get("team_id", -1)) == team_id))
+	var departing: Dictionary = converted.snapshot.duplicate(true)
+	departing["crowd"] = true
+	origin.armies.append(departing)
+	return Runtime.ok("", {"successor": successor})
+
+## SHIPCROWD: at arrival, the crowd fleet's passengers are released from the native crowd with their vessel (the aboard
+## release of departure_release), then the Site is captured again with the travelling team as its converted grid army, as
+## RegionTravelSite._depart_crowd does before begin_region_travel. A grid fleet, or a team already released, is unchanged.
+func _release_crowd_ship_passengers() -> Dictionary:
+	if not _crowd_active(): return Runtime.ok()
+	var crowd: Variant = lab.crowd_site
+	var identity: int = lab.controlled_person_id()
+	if not crowd.contains_person(identity): return Runtime.ok()
+	var plan: Dictionary = crowd.departure_plan(identity)
+	if not plan.ok: return plan
+	var boat_ids: Array = _ship_journey.get("boat_ids", [])
+	for boat_id: Variant in boat_ids:
+		if int(vehicles.records().get(str(boat_id), {}).get("team_id", 0)) != int(plan.team_id):
+			return Runtime.fail("PARTIAL_FLEET", "群眾船隊旅程只帶受控隊長本隊的船")
+	# The same conversion the transfer reads, checked on a copy before the irreversible release, then the commit's own
+	# checks and transfer pair on copies (ship_transfer_commit_preflight): a refusal there releases nobody.
+	var probe: Dictionary = _crowd_ship_transfer_origin(lab.terrain.site.duplicate(true), boat_ids)
+	if not probe.ok: return probe
+	_wire_ship_transfer_crowd_adapter()
+	var commit_probe: Dictionary = region_slot.ship_transfer_commit_preflight(str(_ship_journey.token), lab.terrain)
+	if not commit_probe.ok: return commit_probe
+	var released: Dictionary = crowd.departure_release(plan)
+	if not released.ok: return released
+	var departing: Dictionary = released.army.duplicate(true)
+	departing["crowd"] = true
+	var recaptured: Dictionary = crowd.capture_save()
+	if not recaptured.ok: return recaptured
+	recaptured.rosters.append(departing)
+	_apply_region_crowd_capture(recaptured)
+	return Runtime.ok()
 
 func ship_journey_status() -> Dictionary:
 	if _ship_journey.is_empty(): return Runtime.ok("沒有在途船隊", {"pending": false})
@@ -12987,9 +13063,13 @@ func _native_sustain_original_rows(seconds: float) -> Dictionary:
 			"stock": stock, "stock_values": stock.duplicate(true), "stock_sources": sources, "revision": int(entry.revision),
 			"members": members, "life": life, "seconds": seconds}
 		if int(entry.get("version", 0)) == 3:
-			var original: TerrainArmy = null
+			# The original grid team of a converted crowd team owns the ship food locations. SHIPUI: a natively deployed crowd
+			# team (CrowdSite.deploy) has no original grid plan; its locations are read through the crowd owner itself, which
+			# ship_food_locations accepts (team_id entry, crowd-aware _supply_person and is_embarked).
+			var original: Variant = null
 			for plan: Dictionary in lab.crowd_site._original_team_plans:
 				if int(plan.crowd_formation) == int(owner.formation_index) and int(plan.source.team_id) == int(owner.team_id): original = plan.source; break
+			if original == null and owner is CrowdPersonOwner and owner.has_army(): original = owner
 			if original == null: return Runtime.fail("STALE_SUPPLY_OWNER")
 			held["food_locations"] = ship_food_locations(original, members)
 		rows.append({"held": held})

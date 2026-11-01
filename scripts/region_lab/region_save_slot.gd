@@ -21,6 +21,10 @@ var control: Dictionary = {"logical_game_seconds": 0.0, "active_site_id": "", "f
 # This slot publishes snapshots; it never advances people or invents Actors.
 var cold_site_advance: Callable
 var ship_site_initialize: Callable
+## SHIPCROWD: the live Site's crowd owner converts a crowd team aboard the selected ships into its complete grid army
+## snapshot (passenger rows with their boat fields) inside a ship transfer's origin copy. Called as
+## (origin: Dictionary, boat_ids: Array) -> {ok, successor}; the origin is edited in place. Unset refuses a crowd Site.
+var ship_transfer_crowd_adapter: Callable
 var _marker: Dictionary = {}
 var _faction_source_cache: Dictionary = {}
 var _faction_clock_cache: Dictionary = {}
@@ -952,6 +956,15 @@ func _transfer_pair(source_data: TerrainData, destination_data: TerrainData, boa
 	var origin: Dictionary = source_data.site.duplicate(true)
 	var captured := _capture_transfer_fire_snapshots(source_data, origin)
 	if not captured.ok: return captured
+	# SHIPCROWD: a crowd Site's team travels as a whole crowd team (crowd_departure). Its passengers' boat fields live in the
+	# crowd owner records, so the live owner converts the team first; the extraction then filters the native section.
+	var crowd_spec := {}
+	if origin.has("crowd"):
+		if not ship_transfer_crowd_adapter.is_valid(): return fail("UNSUPPORTED", "群眾船隊旅程缺少原群眾 owner 轉換")
+		var adapted: Variant = ship_transfer_crowd_adapter.call(origin, boat_ids)
+		if not adapted is Dictionary or not adapted.get("ok") is bool: return fail("INVALID", "原群眾船隊轉換結果非法")
+		if not adapted.ok: return adapted
+		crowd_spec = {"crowd_departure": true, "crowd_control_successor": adapted.get("successor", {})}
 	var selected := {}
 	var teams: Array[int] = []
 	var slowest := INF
@@ -976,6 +989,7 @@ func _transfer_pair(source_data: TerrainData, destination_data: TerrainData, boa
 	var spec := {"person_id": controlled, "actor_key": actor_key, "team_id": teams[0], "team_ids": teams,
 		"controller": "player", "mode": "sea", "game_seconds": float(control.logical_game_seconds),
 		"family_transfer_guard": region_family_transfer_guard}
+	spec.merge(crowd_spec)
 	var extracted := RegionTravel.extract(origin, spec, transfer_token)
 	if not extracted.ok: return extracted
 	if extracted.party.vehicle_ids.size() != boat_ids.size(): return fail("PARTIAL_FLEET", "真原隊仍有未選定船，不拆船隊 owner")
@@ -1392,7 +1406,8 @@ func _reuse_ship_checkpoint_source(site: Vector2i, entry: Dictionary, captured: 
 	if FileAccess.get_sha256(selected_path) != str(entry.sha256): return fail("CONFLICT", "原 checkpoint source bytes 已變")
 	var selected: Dictionary = _load_checked(selected_path, site)
 	if not selected.ok: return selected
-	var previous: Dictionary = _read_document(selected_path, Store.MAX_BYTES)
+	# A Site file uses the SiteStore envelope (crowd_era, and zstd payload_encoding for a crowd section).
+	var previous: Dictionary = Store._read(selected_path)
 	if not previous.ok: return previous
 	if FileAccess.get_sha256(selected_path) != str(entry.sha256): return fail("CONFLICT", "原 checkpoint source 在完整驗證中已變")
 	if not captured.get("payload") is Dictionary or not previous.payload.get("state", {}).get("region_snapshot") is Dictionary:
@@ -1546,6 +1561,42 @@ func commit_ship_transfer(token: String, source_data: TerrainData, arrival_prefl
 	_prepared.erase(token)
 	return {"ok": true, "source_data": source_checked.data, "destination_data": destination_checked.data,
 		"active_site": request.to.duplicate(), "generation": published.generation, "prepared": prepared}
+
+## SHIPCROWD: commit_ship_transfer's own checks up to and including the transfer pair, on copies only: nothing is saved
+## or published. A crowd fleet runs it before the irreversible native release of its passengers; the live (unreleased) team is
+## converted by ship_transfer_crowd_adapter exactly as the commit after the release reads it. PENDING means a cold replay
+## of the destination is due first (as the commit would report).
+func ship_transfer_commit_preflight(token: String, source_data: TerrainData) -> Dictionary:
+	var recovered := _recover_control()
+	if not recovered.ok: return recovered
+	var requested := _request(token)
+	if not requested.ok: return requested
+	var request: Dictionary = requested.request
+	var journey: Dictionary = _marker.get("journey", {})
+	if str(journey.get("token", "")) != token or str(journey.get("phase", "outbound")) != "outbound" or float(journey.get("elapsed_action_seconds", 0.0)) + 0.000001 < float(request.seconds):
+		return fail("INCOMPLETE_JOURNEY", "原 ACTION 旅程尚未完成並 checkpoint，不能零時間轉場")
+	var coordinate := _coordinate(source_data)
+	var from := Vector2i(int(request.from[0]), int(request.from[1]))
+	var to := Vector2i(int(request.to[0]), int(request.to[1]))
+	if not coordinate.ok or coordinate.site != from or not str(control.active_site_id).is_empty() and str(control.active_site_id) != str(source_data.site.id):
+		return fail("CONFLICT", "原旅程活動來源已變更，未提交")
+	var destination_path := site_path(to)
+	var destination_hash := FileAccess.get_sha256(destination_path) if FileAccess.file_exists(destination_path) else ""
+	if destination_path != str(request.destination_path) or destination_hash != str(request.destination_sha256):
+		return fail("CONFLICT", "目的 Site 在準備後已有新保存，未覆寫")
+	if float(control.logical_game_seconds) < float(request.departure_game_seconds) - 0.00001: return fail("TIME_MISMATCH", "原旅程遊戲時鐘倒退")
+	var window := validate_settlement(source_data.site, control.logical_game_seconds)
+	if not window.ok or not window.legacy and float(window.pending) > 0.00001:
+		return window if not window.ok else fail("UNSETTLED_SITE", "原旅程來源尚未完成原步進")
+	var destination := _ship_destination(to, float(control.logical_game_seconds))
+	if not destination.ok: return destination
+	var boats: Array[String] = []
+	for identity: Variant in request.boat_ids:
+		if not identity is String: return fail("CORRUPT_SAVE", "旅程原船 ID 非法")
+		boats.append(str(identity))
+	var to_path := _generation_path(int(_marker.get("generation", 0)) + 1, to)
+	var pair := _transfer_pair(source_data, destination.data, boats, Vector2i(int(request.anchor[0]), int(request.anchor[1])), Vector2i(int(request.facing[0]), int(request.facing[1])), to_path, str(request.token))
+	return {"ok": true} if pair.ok else pair
 
 func begin_return_ship_transfer(token: String, source_data: TerrainData) -> Dictionary:
 	var status := ship_transfer_status(token)
