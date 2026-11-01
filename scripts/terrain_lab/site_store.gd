@@ -4325,10 +4325,10 @@ static func capture_region_snapshot(data: TerrainData, context: Dictionary, owne
 	request["owners"] = owners if not owners.is_empty() else context.get("owners", {})
 	return save(data, "", null, false, request, true, 0, read_only, crowd_region_admitted)
 
-static func save_region_snapshot(data: TerrainData, path: String, context: Dictionary, owners: Dictionary = {}) -> Dictionary:
+static func save_region_snapshot(data: TerrainData, path: String, context: Dictionary, owners: Dictionary = {}, crowd_region_admitted: bool = false) -> Dictionary:
 	var request := context.duplicate(true)
 	request["owners"] = owners if not owners.is_empty() else context.get("owners", {})
-	return save(data, path, null, false, request)
+	return save(data, path, null, false, request, false, 0, false, crowd_region_admitted)
 
 static func validate_region_snapshot(data: TerrainData, raw: Dictionary, expected: Dictionary = {}) -> Dictionary:
 	if data == null: return Runtime.fail("NO_TARGET")

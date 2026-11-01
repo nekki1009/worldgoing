@@ -2219,6 +2219,10 @@ static func insert(destination_state: Dictionary, party: Dictionary, nav: Terrai
 		elif admitted.destination_family != destination_state.get("family", {}):
 			return fail("NPC_FAMILY_AUTHORITY", "NPC 科技引用到站不能改寫原受控家族 holder")
 	var content: Dictionary = party.content.duplicate(true)
+	# A crowd-less destination takes these grid teams as armies. The mark persists in the Site and makes its next crowd bind
+	# (live or cold owner) convert every grid team to a native crowd team; the bind clears it only on success.
+	if not destination.has("crowd") and not content.get("armies", []).is_empty():
+		destination["crowd_convert_pending"] = true
 	destination.actor_presence_version = 1
 	Runtime.initialize_item_storage(destination)
 	for field: String in CONTENT_DICTS + ["captivity", "escort_orders"]:

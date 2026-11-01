@@ -823,11 +823,27 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 		add_child(crowd_site)
 		crowd_site.setup(self)
 	site_controller.bind()
-	# A legacy grid save (no crowd section) loaded under crowd becomes live here, after its grid armies were restored.
-	# A refusal keeps the grid Site and is shown; this conversion never writes the save file.
-	if crowd_startup_requested and crowd_site != null and not crowd_site.active and terrain.get_meta(&"legacy_grid_save", false) and not terrain.site.has("crowd") and _has_active_grid_team():
-		var converted: Dictionary = crowd_site.convert_existing()
-		if not converted.ok: site_controller.show_result(converted)
+	# A legacy grid save (no crowd section) loaded under crowd, or a crowd-less arrival marked crowd_convert_pending by
+	# RegionTravel.insert, becomes live here after its grid armies were restored. A cold owner (restore_only) has no
+	# CrowdSite under --crowd, so one is attached for the arrival mark only. A refusal keeps the grid Site and is shown
+	# (never on a cold owner). This conversion never writes the save file; the mark clears only on success.
+	var legacy_convert: bool = crowd_startup_requested and terrain.get_meta(&"legacy_grid_save", false)
+	var arrival_convert: bool = bool(terrain.site.get("crowd_convert_pending", false)) and CrowdSiteScript.requested()
+	if arrival_convert and (terrain.site.has("crowd") or not _has_active_grid_team()):
+		terrain.site.erase("crowd_convert_pending") # Nothing grid is left to convert.
+	elif (legacy_convert or arrival_convert) and not terrain.site.has("crowd") and _has_active_grid_team():
+		if crowd_site == null:
+			crowd_site = CrowdSiteScript.new()
+			crowd_site.name = "CrowdSite"
+			add_child(crowd_site)
+			crowd_site.setup(self)
+		if not crowd_site.active:
+			var converted: Dictionary = crowd_site.convert_existing()
+			if converted.ok: converted = _region_write_converted_crowd_section()
+			if converted.ok:
+				if arrival_convert: terrain.site.erase("crowd_convert_pending")
+			elif not restore_only:
+				site_controller.show_result(converted)
 	# Fire work snapshots use the original ranged-order serials stored by transport.
 	var restored_fire_transport := _publish_fire_transport_restore(prepared_fire_transport.prepared)
 	if not restored_fire_transport.ok:
@@ -870,6 +886,17 @@ func _region_bind_original_terrain(value: TerrainData, prepared: Dictionary = {}
 	_update_info()
 	_update_army_controls()
 	if _audio_live_requested: call_deferred("_audio_activate_live")
+
+## A bind-time conversion writes the native crowd section into the Site exactly as the live region checkpoint does
+## (site_controller.capture_region_checkpoint): capture_save, then _apply_region_crowd_capture. Without it the capture
+## guard refuses the active crowd as unadmitted. A failed write fails the conversion (the caller keeps the mark).
+func _region_write_converted_crowd_section() -> Dictionary:
+	var captured: Dictionary = crowd_site.capture_save()
+	if not captured.ok: return captured
+	site_controller._capture_positions()
+	site_controller._apply_region_crowd_capture(captured)
+	if not terrain.site.has("crowd"): return SiteRuntime.fail("REGION_BACKEND_UNADMITTED", "轉換後的群眾區段未寫入 Site")
+	return SiteRuntime.ok()
 
 func region_bind_receipt(data: TerrainData) -> Dictionary:
 	if terrain != data or _region_bound_data != data or _region_bind_receipt_value.get("complete") != true:
@@ -9104,7 +9131,9 @@ func validate_region_owner_bind_payload(data: TerrainData, owners: Dictionary, c
 		people[int(body.get("person_id", 0))] = {"body": body, "actor": true, "key": key}
 	for army: Dictionary in data.site.get("armies", []):
 		var team_id := int(army.get("team_id", 0))
-		teams[team_id] = army
+		# A crowd-owned roster is native state (the crowd section), never a grid army root: capture_region_owner_roots
+		# records only combat_enabled TerrainArmy teams, so the crowd roster stays out of the army count but keeps its persons.
+		if not bool(army.get("crowd", false)): teams[team_id] = army
 		for body: Dictionary in army.get("units", []): people[int(body.get("person_id", 0))] = {"body": body, "actor": false, "team_id": team_id}
 	var validate_reference := func(key: String, kind: int) -> bool:
 		return _region_validate_bind_reference(data, key, kind, people, teams, objects.objects)
@@ -10103,10 +10132,19 @@ func _region_prepare_original_bind(candidate: TerrainData, mode: String, slot: R
 	context["runtime_revision"] = int(slot.region_registry().revision)
 	context["mode_revision"] = int(slot.region_registry().modes.get(str(target.site.id), {}).get("revision", 0))
 	context["token"] = "region_bind_" + Crypto.new().generate_random_bytes(16).hex_encode()
+	# A bind-time crowd conversion (arrival or legacy) joins the snapshot as an admitted
+	# native capture, exactly as site_controller.capture_region_checkpoint admits a live crowd.
+	var crowd_admitted: bool = child.crowd_site != null and child.crowd_site.active
+	var crowd_captured := {}
+	if crowd_admitted:
+		context["backend"] = "native"
+		crowd_captured = child.crowd_site.capture_save()
+		if not crowd_captured.ok: child.free(); return crowd_captured
 	child.site_controller._capture_positions()
-	var actual := child.capture_region_owner_state(context)
+	if crowd_admitted: child.site_controller._apply_region_crowd_capture(crowd_captured)
+	var actual := child.capture_region_owner_state(context, crowd_admitted)
 	if not actual.ok: child.free(); return actual
-	var capture := SiteStore.capture_region_snapshot(target, context, actual.owner_states)
+	var capture := SiteStore.capture_region_snapshot(target, context, actual.owner_states, false, crowd_admitted)
 	if not capture.ok: child.free(); return capture
 	# The child retains its actual Site aliases while the ticket carries the
 	# ordinary validated Store payload. Replacing child.site would orphan jobs.
@@ -10160,7 +10198,8 @@ func _region_write_bind_candidate(data: TerrainData, path: String, token: String
 	if not is_instance_valid(child) or child.terrain == null: return SiteRuntime.fail("STALE_REGION_BIND_PRODUCER")
 	# Capture from the child that owns the original restored aliases. The
 	# detached ticket body is only the validated persistence candidate.
-	var saved := SiteStore.save_region_snapshot(child.terrain, path, ticket.context, ticket.owners)
+	# A bind-time crowd conversion was captured as an admitted native snapshot; persist it the same way.
+	var saved := SiteStore.save_region_snapshot(child.terrain, path, ticket.context, ticket.owners, str(ticket.context.get("backend", "")) == "native")
 	if not saved.ok: return saved
 	var slot: RegionSaveSlot = ticket.slot
 	var coordinate: Dictionary = slot._coordinate(ticket.data)
@@ -10193,7 +10232,12 @@ func _region_publish_bind_candidate(data: TerrainData, token: String) -> Diction
 	ticket["kind"] = "published"
 	_region_receipt_slot = ticket.slot # Marker generation was checked against this ticket above.
 	_region_receipt_data = data
-	bind_terrain(data, {"ok": true, "crowd_site": null, "region_bind_token": token})
+	# The published file's crowd section is staged exactly as a reopen stages it (prepare_crowd_load, native rebuilt from the
+	# saved bytes), so bind activates it. Crowd-less data stages no CrowdSite and keeps the bind's own startup path.
+	var staged: Dictionary = prepare_crowd_load(data)
+	if not staged.ok: return staged
+	staged["region_bind_token"] = token
+	bind_terrain(data, staged)
 	var result: Dictionary = _region_bind_receipt_value.duplicate(true)
 	if terrain != data or _region_bound_data != data or result.get("owners_restored") != true:
 		return SiteRuntime.fail("COMMITTED_UNBOUND", "Selected complete marker remains resumable; replay no transfer")
