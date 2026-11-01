@@ -355,6 +355,8 @@ func siege_admission_guard(candidate: TerrainData = null) -> Dictionary:
 		if SiteStore.has_siege_vehicles(data.site) and not siege_native_supported(): return SiteRuntime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少原人物攻城／複合步介面")
 		for vehicle: Dictionary in data.site.get("vehicles", {}).values():
 			if str(vehicle.get("kind", "")) in ["cart", "wagon"] and not convoy_native_supported(): return SiteRuntime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少後勤車隊原生記錄介面")
+			# Ship boarding, landing, deck and journey passengers call these bound native methods (crowd10k_gdext.cpp).
+			if str(vehicle.get("kind", "")) == "ship" and not ship_native_supported(): return SiteRuntime.fail("CROWD_BUILD_MISMATCH", "群眾模組缺少乘船原生介面")
 		# G3: split-shore and ship supply (team_supply version 3) run under the crowd model too.
 		if not ClassDB.class_has_method(&"ArmyCrowd", &"set_recovery_input"):
 			var saved_rosters: Variant = data.site.get("armies", [])
@@ -3394,6 +3396,11 @@ func convoy_native_supported() -> bool:
 		if not (crowd.has_method(method) if crowd != null else ClassDB.class_has_method(&"ArmyCrowd", method)): return false
 	return true
 
+func ship_native_supported() -> bool:
+	for method: String in SHIP_NATIVE_METHODS:
+		if not (crowd.has_method(method) if crowd != null else ClassDB.class_has_method(&"ArmyCrowd", method)): return false
+	return true
+
 func siege_team_owner(team_id: int) -> Variant:
 	for owner_ref: Variant in owners:
 		if int(owner_ref.team_id) == team_id and owner_ref.has_army(): return owner_ref
@@ -3515,6 +3522,7 @@ func sync_siege_inputs() -> Dictionary:
 	return SiteRuntime.ok()
 
 const CONVOY_NATIVE_METHODS := ["add_convoy", "convoy_set_crew", "convoy_order_goal", "convoy_set_body", "convoy_state", "convoy_crew", "convoy_body", "convoy_remove", "convoy_attach_formation", "convoy_formation", "convoy_goal"]
+const SHIP_NATIVE_METHODS := ["site_person_board", "site_person_land", "site_person_set_deck", "site_person_retarget_aboard", "site_person_aboard"]
 const SIEGE_NATIVE_METHODS := ["set_siege_crew","set_siege_crew_members", "siege_ground_cells", "begin_siege_compound", "siege_compound_state", "siege_person_state", "cancel_siege_compound", "settle_siege_compound", "siege_busy", "set_siege_navigation", "siege_occupancy_mask", "order_siege_step", "cancel_siege_step", "charge_siege_round", "charge_siege_work", "contact_pose_state", "apply_siege_contact"]
 
 func settle_external_contacts() -> void:

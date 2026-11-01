@@ -1791,6 +1791,11 @@ func boarding_save_guard() -> Dictionary:
 		for row: Dictionary in team.combat_units:
 			checked = Boarding.position_guard(row)
 			if not checked.ok: return checked
+	# Crowd rows are the CrowdPersonOwner records (crowd passengers are not in the grid armies above).
+	for owner: Variant in _crowd_person_owners():
+		for index: int in owner.records:
+			checked = Boarding.position_guard(owner.records[index])
+			if not checked.ok: return checked
 	return controller.person_actions.boarding_save_guard()
 
 ## B2S3 read-only begin gate for a player-side boarding link. Only a living person
@@ -2446,6 +2451,10 @@ func team_has_embarked(team_id: int) -> bool:
 		if team.team_id != team_id: continue
 		for row: Dictionary in team.combat_units:
 			if not str(row.get("embarked_vehicle_id", "")).is_empty(): return true
+	for owner: Variant in _crowd_person_owners():
+		if int(owner.team_id) != team_id: continue
+		for index: int in owner.records:
+			if not str(owner.records[index].get("embarked_vehicle_id", "")).is_empty(): return true
 	return false
 
 func team_has_ship_activity(team_id: int) -> bool:
@@ -2832,6 +2841,9 @@ func clear_ship_remains_reference(identity: String) -> void:
 	for team: TerrainArmy in lab.combat_armies:
 		for row: Dictionary in team.combat_units:
 			if str(row.get("remains_id", "")) == identity: row.remains_id = ""
+	for owner: Variant in _crowd_person_owners():
+		for index: int in owner.combat_units.keys():
+			if str(owner._cold_get(index, "remains_id", "")) == identity: owner._cold_set(index, "remains_id", "")
 	for actor: TerrainTestCharacter in lab.combat_actors:
 		if str(actor.get("remains_id")) == identity: actor.set("remains_id", "")
 
@@ -2885,6 +2897,14 @@ func _transfer_ship(source_id: String, destination_id: String, resources: Dictio
 
 func _native_siege() -> bool:
 	return lab.crowd_site != null and lab.crowd_site.active
+
+# Crowd roster owners while the native crowd is active; empty on the grid, so grid callers are unchanged.
+func _crowd_person_owners() -> Array:
+	var result: Array = []
+	if not _native_siege(): return result
+	for owner: Variant in lab.crowd_site.person_owners():
+		if owner is CrowdPersonOwner: result.append(owner)
+	return result
 
 # G4 logistics convoys: one native Convoy per cart or wagon whose operator is a
 # CrowdPersonOwner. The native anchor is the vehicle cell centre. The operator stands at

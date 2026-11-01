@@ -9670,6 +9670,11 @@ func ship_person_in_journey(identity: int) -> bool:
 	# No journey and no Region ship projection to read (including a controller
 	# whose lab is not bound yet) means nobody is aboard a travelling ship.
 	if _ship_journey.is_empty() and (lab == null or lab.terrain == null or SiteVehicleTransport._region_ship_frames(lab.terrain).is_empty()): return false
+	# Crowd passengers keep their embarked row in the CrowdPersonOwner records, not in a grid army.
+	var crowd_owner: Variant = vehicles._crowd_owner_of(identity) if vehicles != null else null
+	if crowd_owner != null:
+		var crowd_record: Dictionary = crowd_owner.records.get(int(crowd_owner.index_for_identity(identity)), {})
+		return ship_vehicle_in_journey(str(crowd_record.get("embarked_vehicle_id", "")))
 	for original: TerrainArmy in lab.combat_armies:
 		var index := original.index_for_identity(identity)
 		if index >= 0 and index < original.combat_units.size():
@@ -9746,13 +9751,27 @@ func ship_journey_claims(vehicle: Dictionary) -> Dictionary:
 		if lab.terrain.contains(cell): claims[cell] = true
 	return claims
 
+# Under crowd a journey starts in peace only (NEKKI_DECISION_20261031_crowd_peacetime_systems): combat refuses with CROWD_ACTIVE
+# through crowd_peace_guard. Requester and every passenger aboard the boats must not be fighting. The grid keeps its refusal.
+func _ship_journey_peace_guard(boat_ids: Array[String], requester_id: int) -> Dictionary:
+	if not _crowd_active():
+		return Runtime.ok() if float(lab.terrain.site.combat_left) <= 0.0 else Runtime.fail("BUSY", "船隊旅程須在活動、脫戰、一般人物場景開始")
+	var identities: Array = [requester_id if requester_id > 0 else lab.controlled_person_id()]
+	for identity: String in boat_ids:
+		var boat: Dictionary = vehicles.records().get(identity, {})
+		if boat.is_empty(): continue
+		for passenger: Dictionary in vehicles.ship_people(boat, false): identities.append(int(passenger.id))
+	return person_actions.crowd_peace_guard(identities)
+
 func begin_ship_journey(boat_ids: Array[String], destination: Vector2i, anchor: Vector2i, facing: Vector2i, requester_id: int = 0) -> Dictionary:
 	for linked_id: String in boat_ids:
 		if vehicles.records().get(linked_id, {}).get("naval", {}).has("boarding_link"): return Runtime.fail("BUSY", "接舷連結中船隻固定；先解除連結")
 	if ground_crossing_blocks_input(): return Runtime.fail("BUSY", "原地面跨界候選或共同步進故障尚未結束")
 	if region_slot == null: return Runtime.fail("NO_TARGET", "先在固定地圖世界開啟原存檔槽")
 	if region_operation_pending(): return Runtime.fail("BUSY", "原固定目標補算尚未完成")
-	if not _ship_journey.is_empty() or bool(lab.terrain.site.get("paused", false)) or _crowd_active() or float(lab.terrain.site.combat_left) > 0.0: return Runtime.fail("BUSY", "船隊旅程須在活動、脫戰、一般人物場景開始")
+	if not _ship_journey.is_empty() or bool(lab.terrain.site.get("paused", false)): return Runtime.fail("BUSY", "船隊旅程須在活動、脫戰、一般人物場景開始")
+	var peace := _ship_journey_peace_guard(boat_ids, requester_id)
+	if not peace.ok: return peace
 	var guard := supply_save_guard()
 	if not guard.ok: return guard
 	# Source geometry is frozen for the whole original Slot job. This keeps the
@@ -9771,9 +9790,8 @@ func begin_ship_journey(boat_ids: Array[String], destination: Vector2i, anchor: 
 		if not SiteVehicleTransport.is_ship(boat) or not SiteVehicleTransport.ship_afloat(boat) or not boat.move.is_empty() or not boat.command.is_empty() or bool(boat.stop_pending) or not boat.get("naval", {}).get("repair", {}).is_empty() or not vehicles.ship_job(identity).is_empty(): return Runtime.fail("BUSY", "原船須停穩、無修理與未來命令")
 		if not vehicles.ship_driver_ready(boat) or vehicles.ship_crew_count(boat) < int(Vehicles.Ship.definition(str(boat.ship_type)).min_crew): return Runtime.fail("NO_CREW", "每艘原船須有實際在原舵位的可行動舵手及在原船員位置的最低船員；先完成回席")
 		if checked.has(int(boat.team_id)): continue
-		var original: TerrainArmy = null
-		for team: TerrainArmy in lab.combat_armies:
-			if team.team_id == int(boat.team_id): original = team; break
+		# The team that holds the boat's cargo: the crowd owner under crowd, the grid army otherwise.
+		var original: Variant = vehicles._team_owner(int(boat.team_id))
 		if original == null or not vehicles._authorized(original, requester_id, 0, false): return Runtime.fail("NO_AUTHORITY", "須有選定每一原隊伍的船隊調度權")
 		checked[int(boat.team_id)] = true
 	var captured := _capture_for_save()
@@ -10126,7 +10144,7 @@ func _build_region_travel_controls(parent: Node) -> void:
 	_region_form.preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_region_form.preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	parent.add_child(_region_form.preview)
-	_label(parent, "出航前，本隊所有活人（含仍乘船的退隊者）與共用糧都須上船。此地所有船須停妥、取消航令，完成登離船、船內作業與修理；每艘船須有清醒且就位的舵手及足額船員。只能直航到東、西、南、北相鄰地點：先航到出發邊界，所有船保持相同朝向，目的地船體接對側入口，船隊相對位置不變。旅途中，此地水域整地與其他船操作暫停；岸上生產、糧食消耗與疲勞持續。群眾模式（Crowd）暫不支援。", 15)
+	_label(parent, "出航前，本隊所有活人（含仍乘船的退隊者）與共用糧都須上船。此地所有船須停妥、取消航令，完成登離船、船內作業與修理；每艘船須有清醒且就位的舵手及足額船員。只能直航到東、西、南、北相鄰地點：先航到出發邊界，所有船保持相同朝向，目的地船體接對側入口，船隊相對位置不變。旅途中，此地水域整地與其他船操作暫停；岸上生產、糧食消耗與疲勞持續。群眾模式（Crowd）下僅限無人戰鬥時出航；整隊群眾人物須上船，操控中的人物（Actor）不得乘船。", 15)
 	_region_form.anchor_x = _number_input(parent, "RegionArrivalAnchorX", 0, 99, 0)
 	_region_form.anchor_y = _number_input(parent, "RegionArrivalAnchorY", 0, 99, 99)
 	_region_form.facing = _options(parent, ["朝東", "朝南", "朝西", "朝北"], "RegionArrivalFacing")
