@@ -1815,6 +1815,14 @@ static func _validate_crowd(data: TerrainData, state: Dictionary, workers: int =
 		if not bool(team.solo):
 			if slots.has(int(team.slot)): return Runtime.fail("INVALID_CROWD", "群眾隊伍 slot 重複")
 			slots[int(team.slot)] = true
+		# G6.5 cadre-led split: a live team may name people a sub-party took out (released native soldiers, no roster row).
+		# Only a live non-solo team may have them; they count as departed in the membership equation below.
+		if not team.get("departed_person_ids", []) is Array or bool(team.solo) and not team.get("departed_person_ids", []).is_empty():
+			return Runtime.fail("INVALID_CROWD", "群眾分隊離隊人物格式")
+		for identity: Variant in team.get("departed_person_ids", []):
+			if not _integer(identity, 1, next_id - 1) or not native_indices.has(int(identity)) or references.has(int(identity)) or departed_ids.has(int(identity)):
+				return Runtime.fail("INVALID_CROWD", "群眾分隊離隊人物引用不唯一")
+			departed_ids[int(identity)] = true
 		if bool(team.get("departed", false)):
 			# G6.4b tombstone: the team's people left by travel and their native soldiers stay in the blob, released.
 			# It has no roster and no live records; every id must be a blob soldier that no live team references.
@@ -1911,7 +1919,10 @@ static func _validate_crowd(data: TerrainData, state: Dictionary, workers: int =
 	for identity: int in blob_ids:
 		if native_seen.has(identity) or not references.has(identity) and not departed_ids.has(identity): return Runtime.fail("INVALID_CROWD", "群眾 blob 人物集合不符")
 		native_seen[identity] = true
-	if not _integer(section.player.get("person_id"), 1, next_id - 1) or not _integer(section.player.get("soldier_index"), 0, blob_ids.size() - 1) or int(section.player.person_id) != int(state.get("controlled_person_id", state.actors.get("player", {}).get("person_id", -1))) or blob_ids[int(section.player.soldier_index)] != int(section.player.person_id):
+	# G6.5: a cadre split takes the controlled person out with the sub-party; the Site then holds no controlled person.
+	var no_controlled: bool = int(section.player.get("person_id", 0)) == -1 and int(section.player.get("soldier_index", 0)) == -1 \
+		and not state.has("controlled_person_id") and state.get("actors", {}).get("player", {}).is_empty()
+	if not no_controlled and (not _integer(section.player.get("person_id"), 1, next_id - 1) or not _integer(section.player.get("soldier_index"), 0, blob_ids.size() - 1) or int(section.player.person_id) != int(state.get("controlled_person_id", state.actors.get("player", {}).get("person_id", -1))) or blob_ids[int(section.player.soldier_index)] != int(section.player.person_id)):
 		return Runtime.fail("INVALID_CROWD", "群眾受控人物引用不符")
 	return Runtime.ok("", {"native": native})
 

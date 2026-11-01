@@ -1557,7 +1557,25 @@ static func extract(state: Dictionary, spec: Dictionary, token: String) -> Dicti
 		if not crowd_remains:
 			origin.erase("crowd")
 		elif movers.has(int(section.get("player", {}).get("person_id", -1))):
-			return fail("RELATION_OPEN", "群眾受控人物仍留在此地")
+			# G6.5 cadre split: the controlled cadre travels with his sub-party. Control on the Site passes to a saved
+			# actor body that stays (the rule below for an ordinary departure), with its native soldier index from the
+			# live caller; only a Site with no actor left keeps no controlled person.
+			if not bool(spec.get("crowd_split", false)): return fail("RELATION_OPEN", "群眾受控人物仍留在此地")
+			var successor: Dictionary = spec.get("crowd_control_successor", {})
+			var heir := int(successor.get("person_id", -1))
+			if heir > 0:
+				var stays := false
+				for key: String in origin.actors:
+					if int(origin.actors[key].get("person_id", -1)) == heir: stays = true
+				if not stays or movers.has(heir) or int(successor.get("soldier_index", -1)) < 0:
+					return fail("RELATION_OPEN", "群眾受控人物的繼承人不在此地")
+				section["player"] = {"person_id": heir, "soldier_index": int(successor.soldier_index)}
+				origin["controlled_person_id"] = heir
+			elif not origin.actors.is_empty():
+				return fail("RELATION_OPEN", "分隊出發後此地人物須有受控繼承人")
+			else:
+				section["player"] = {"person_id": -1, "soldier_index": -1}
+				origin.erase("controlled_person_id")
 	if not actor_key.is_empty():
 		var actor: Dictionary = origin.actors.get(actor_key, {})
 		if actor.is_empty() or int(actor.get("person_id", -1)) != int(spec.get("person_id", -1)):

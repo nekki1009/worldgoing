@@ -308,6 +308,97 @@ static func _crowd_spec(slot: RegionSaveSlot, identity: int, team_id: int) -> Di
 		"game_seconds": float(slot.control.logical_game_seconds)}
 
 
+## G6.5 (2026-11-01): 「分隊出發」 of a cadre-led sub-party of an active crowd team. The cadre becomes the party's formal
+## captain; the party is that cadre plus chosen ordinary members of the same team. The controlled person IS the leading cadre
+## and travels with the party, as in _depart_crowd (spec controller "player", crowd_split). The Site he leaves passes
+## control to a saved actor body that stays (split_control_successor).
+## Every refusal is decided before any native release: the plan gate, the combat check, the route, the preflight, and a
+## Travel.extract probe on a candidate copy of the captured Site. Only then are the people released.
+static func depart_crowd_split(controller: Node, members: Array) -> Dictionary:
+	var lab: Node = controller.lab
+	var slot: RegionSaveSlot = controller.region_slot
+	if controller.ship_journey_active() or controller.ground_crossing_blocks_input() or is_instance_valid(lab._cold_replay_lab):
+		return Runtime.fail("BUSY", "船隊旅程、跨界或補算尚未結束")
+	if controller.get_tree().paused or bool(lab.terrain.site.get("paused", false)): return Runtime.fail("PAUSED", "暫停時不能出發")
+	if float(lab.terrain.site.get("combat_left", 0.0)) > 0.0: return Runtime.fail("IN_COMBAT", "戰鬥中不能分隊出發")
+	# The controlled person leads the sub-party: a non-cadre is refused CADRE_REQUIRED, the formal captain CAPTAIN_REQUIRED.
+	var leader: int = lab.controlled_person_id()
+	if controller.vehicles.is_embarked(leader): return Runtime.fail("UNSUPPORTED", "群眾隊伍尚不能海路出發")
+	var plan: Dictionary = lab.crowd_site.split_departure_plan(leader, members)
+	if not plan.ok: return plan
+	if _hostile_near(lab, int(plan.faction), plan.cells): return Runtime.fail("IN_COMBAT", "附近有敵人；脫離戰鬥後才能分隊出發")
+	var guard: Dictionary = controller.supply_save_guard()
+	if not guard.ok: return guard
+	# As in _depart_crowd: the full Site capture writes the saved actor bodies that stay (the player body is a fire
+	# owner and the control successor), the crowd rosters and the crowd section.
+	var captured: Dictionary = controller._capture_for_save()
+	if not captured.ok: return captured
+	var site: Vector2i = controller._current_region_site()
+	var component := start_component(slot, site, plan.cells[0], lab.terrain)
+	if component < 0 or component > 253: return Runtime.fail("NO_ROUTE", "出發位置沒有可走出此地的通道")
+	var team_id := _fresh_team_id(lab)
+	if team_id < 1: return Runtime.fail("ID_LIMIT", "原隊伍容器編號已達上限")
+	var spec := _split_spec(slot, leader, team_id, split_control_successor(lab, leader))
+	var pre: Dictionary = slot.region_travel_preflight(lab.terrain, spec, component)
+	if not pre.ok: return pre
+	# Probe on a copy of the captured Site with the split applied. Neither the native World nor the live rosters change.
+	var probe_site: Dictionary = lab.terrain.site.duplicate(true)
+	var departing_probe: Dictionary = {}
+	for army: Variant in probe_site.get("armies", []):
+		if army is Dictionary and bool(army.get("crowd", false)) and int(army.get("team_id", 0)) == int(plan.team_id):
+			departing_probe = lab.crowd_site.split_roster(army, plan.people, team_id)
+	if departing_probe.is_empty(): return Runtime.fail("NO_TARGET", "群眾隊伍缺少名冊")
+	probe_site.armies.append(departing_probe)
+	var probe: Dictionary = RegionTravel.extract(probe_site, spec, "crowd_split_probe")
+	if not probe.ok: return probe
+	var released: Dictionary = lab.crowd_site.split_departure_release(plan, team_id)
+	if not released.ok: return released
+	# The remaining crowd is captured again; the departing party joins the travel content as in _depart_crowd.
+	var recaptured: Dictionary = lab.crowd_site.capture_save()
+	if not recaptured.ok: return recaptured
+	recaptured.rosters.append(released.departing)
+	controller._apply_region_crowd_capture(recaptured)
+	var result: Dictionary = slot.begin_region_travel(lab.terrain, spec, component)
+	if not result.ok: return result
+	controller._auto_save_blocked = true
+	lab.terrain.site.paused = true
+	open_travel_map(controller, str(slot.pin.world_instance_id), str(slot.pin.slot_id), controller._region_manifest_path)
+	var census := RegionTravel.census(result.party)
+	return Runtime.ok("已分隊出發（群眾 %d 人）" % census.people.size(), {"token": result.token})
+
+
+## G6.5: the controlled cadre leads the sub-party: a player spec like _crowd_spec, with the crowd_split flag and the
+## Site body that takes control when he leaves.
+static func _split_spec(slot: RegionSaveSlot, leader: int, team_id: int, successor: Dictionary) -> Dictionary:
+	return {"person_id": leader, "actor_key": "", "team_id": team_id, "controller": "player", "mode": "land",
+		"crowd_departure": true, "crowd_split": true, "crowd_control_successor": successor,
+		"family_transfer_guard": slot.region_family_transfer_guard, "game_seconds": float(slot.control.logical_game_seconds)}
+
+
+## G6.5: the saved actor body that takes control of the Site when the controlled cadre leads his sub-party away: the
+## first saved actor (as Travel.extract hands control to a remaining actor) that the live crowd holds as an actor
+## body, with its native soldier index. Read after a Site capture; {} when no such actor stays.
+static func split_control_successor(lab: Node, leader: int) -> Dictionary:
+	for actor: Variant in lab.terrain.site.get("actors", {}).values():
+		if not actor is Dictionary: continue
+		var identity := int(actor.get("person_id", -1))
+		if identity == leader or not lab.crowd_site._actors.has(identity) or not lab.crowd_site._index_by_id.has(identity): continue
+		return {"person_id": identity, "soldier_index": int(lab.crowd_site._index_by_id[identity])}
+	return {}
+
+
+## G6.5: the lowest team id no team, roster or the Site's own counter uses.
+static func _fresh_team_id(lab: Node) -> int:
+	var used := {}
+	for army: Variant in lab.terrain.site.get("armies", []):
+		if army is Dictionary: used[int(army.get("team_id", 0))] = true
+	for row: Variant in lab.crowd_site.rosters: used[int(row.team_id)] = true
+	for entry: Variant in lab.crowd_site.teams: used[int(entry.team_id)] = true
+	var team_id := maxi(1, int(lab.terrain.site.get("army_next_team", 1)))
+	while used.has(team_id): team_id += 1
+	return team_id if team_id <= 999999 else -1
+
+
 ## G6.4b: read-only selection for a crowd team, with the same gates as _depart_crowd and no release.
 static func _selected_crowd_departure(controller: Node) -> Dictionary:
 	var lab: TerrainLab = controller.lab

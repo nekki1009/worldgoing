@@ -842,8 +842,10 @@ func _append_actor_failed(before: Dictionary, failure: Dictionary) -> Dictionary
 func _departed_people() -> Dictionary:
 	var result := {}
 	for team: Dictionary in teams:
-		if not bool(team.get("departed", false)): continue
-		for identity: Variant in team.person_ids: result[int(identity)] = true
+		if bool(team.get("departed", false)):
+			for identity: Variant in team.person_ids: result[int(identity)] = true
+		# G6.5: a live team keeps its formation while a cadre-led sub-party has left it.
+		for identity: Variant in team.get("departed_person_ids", []): result[int(identity)] = true
 	return result
 
 
@@ -2918,6 +2920,199 @@ func departure_release(plan: Dictionary) -> Dictionary:
 		if not is_same(row, roster): kept_rosters.append(row)
 	rosters = kept_rosters
 	return SiteRuntime.ok("", {"roster": roster, "released": released.size()})
+
+
+## G6.5 (2026-11-01): 幹部分隊. A cadre leads a sub-party out of one live crowd team. The cadre is the party's formal
+## captain; the other members are ordinary people of the same team. An ordinary member never leaves alone, the formal
+## captain never leaves by a split (it departs with the whole team), and the controlled cadre leads the split and travels
+## with it (the Site passes control to an actor body that stays).
+## Cadre = the TerrainArmy definition: an officer_service / officers entry, or a holder of a non-head office seat.
+static func cadre_index(roster: Dictionary, index: int) -> bool:
+	if index < 0 or index >= roster.units.size(): return false
+	for field: String in ["officers", "officer_service"]:
+		for entry: Variant in roster.get(field, []):
+			if int(entry) == index: return true
+	var person := int(roster.units[index].person_id)
+	for seat: Variant in roster.get("offices", {}).get("positions", []):
+		if seat is Dictionary and not bool(seat.get("head", false)) and int(seat.get("holder", 0)) == person: return true
+	return false
+
+
+## G6.5: the native exit gate for a split. It refuses a host-controlled soldier, and the controlled cadre leads the split,
+## so his host control is handed back for the query and then restored; nothing else changes.
+func _split_exit_ready(owner: Variant, index: int) -> bool:
+	var host_held := index == player_index
+	if host_held: crowd.set_host_control(index, false)
+	var ready := bool(owner.site_exit_ready(index))
+	if host_held: crowd.set_host_control(index, true)
+	return ready
+
+
+## G6.5: read-only plan for a cadre-led sub-party. `leader` (the cadre) comes first in `people`; `members` are ordinary
+## members of the same team. Nothing is released here. Refusal codes: CADRE_REQUIRED, CAPTAIN_REQUIRED, MEMBER_CADRE,
+## INVALID_MEMBERS, WHOLE_TEAM, NOT_READY. The caller passes the controlled cadre as `leader`.
+func split_departure_plan(leader: int, members: Array) -> Dictionary:
+	if not active or crowd == null: return SiteRuntime.fail("UNSUPPORTED", "群眾未啟用")
+	if _actors.has(leader) or not _index_by_id.has(leader): return SiteRuntime.fail("UNSUPPORTED", "群眾中的 actor 本體尚不能分隊出發")
+	if not pending_captivity.is_empty(): return SiteRuntime.fail("BUSY", "群眾俘虜事件尚未結束")
+	var roster: Dictionary = {}
+	for candidate: Dictionary in rosters:
+		if _roster_index_for_person(candidate, leader) >= 0:
+			roster = candidate
+			break
+	if roster.is_empty(): return SiteRuntime.fail("NO_TARGET", "群眾中沒有此人的隊伍")
+	if not str(roster.get("garrison_feature_id", "")).is_empty(): return SiteRuntime.fail("BUSY", "駐營隊伍須整隊移動，尚不能分隊")
+	var leader_index := _roster_index_for_person(roster, leader)
+	if leader_index == int(roster.get("formal_commander", -1)): return SiteRuntime.fail("CAPTAIN_REQUIRED", "正式隊長須沿整隊出發")
+	if not cadre_index(roster, leader_index): return SiteRuntime.fail("CADRE_REQUIRED", "分隊須由幹部帶隊")
+	var group: Array[int] = [leader]
+	for entry: Variant in members:
+		var member := int(entry)
+		var member_index := _roster_index_for_person(roster, member)
+		if member < 1 or group.has(member) or member_index < 0: return SiteRuntime.fail("INVALID_MEMBERS", "分隊隊員須為同隊且不重複的人物")
+		if member_index == int(roster.get("formal_commander", -1)): return SiteRuntime.fail("CAPTAIN_REQUIRED", "正式隊長須沿整隊出發")
+		if cadre_index(roster, member_index): return SiteRuntime.fail("MEMBER_CADRE", "一次只能由一名幹部分隊")
+		group.append(member)
+	if group.size() >= roster.units.size(): return SiteRuntime.fail("WHOLE_TEAM", "全隊人員請整隊出發")
+	var people: Array[int] = []
+	var cells: Array[Vector2i] = []
+	for member: int in group:
+		if not _index_by_id.has(member) or _actors.has(member) or has_pending_capture(member):
+			return SiteRuntime.fail("NOT_READY", "隊員尚有原生事件；保留原進度")
+		var owner: Variant = person_owner(member)
+		if owner == null or not _split_exit_ready(owner, int(_index_by_id[member])):
+			return SiteRuntime.fail("NOT_READY", "隊員不在可出發狀態（倒地、交換中或有未完成動作）")
+		var state := soldier_state(int(_index_by_id[member]))
+		people.append(member)
+		cells.append(Vector2i(floori(float(state.px)), floori(float(state.py))))
+	return SiteRuntime.ok("", {"roster": roster, "team_id": int(roster.team_id), "faction": int(roster.faction_id),
+		"people": people, "cells": cells, "leader": leader})
+
+
+## G6.5: releases the people of a split plan that split_departure_plan passed. The team stays live: its formation and
+## remaining soldiers stay native, its entry keeps the rest in person_ids and names the released people in
+## departed_person_ids, and the roster is rewritten in place to the remaining team. Returns the departing party roster
+## (a copy with `team_id`, crowd = true). Release is irreversible: callers pre-validate the extraction on a copy first.
+func split_departure_release(plan: Dictionary, team_id: int) -> Dictionary:
+	if not plan.get("ok", false): return plan
+	var roster: Dictionary = plan.roster
+	var group: Array = plan.people
+	var formation := int(roster.crowd_formation)
+	var released: Array[int] = []
+	for entry: Variant in group:
+		var identity := int(entry)
+		var index := int(_index_by_id[identity])
+		var owner: Variant = person_owner(identity)
+		var receipt: Dictionary = {}
+		# The native exit gate refuses a host-controlled soldier, so the controlled leader's host control is handed back
+		# first. The leader is released first; if that refuses, the host control is restored and nobody has left.
+		var host_held := index == player_index
+		if host_held: crowd.set_host_control(index, false)
+		if owner != null: receipt = owner.release_for_departure(index)
+		if receipt.is_empty():
+			if host_held: crowd.set_host_control(index, true)
+			return SiteRuntime.fail("RELEASE_REFUSED", "原生釋放被拒（已釋放 %d 人）；請重新檢查" % released.size())
+		if host_held: player_index = -1
+		released.append(identity)
+		_apply_release_receipt(roster, identity, receipt)
+		var record: Dictionary = _records.get(identity, {})
+		var key := str(_ammo_keys.get(identity, ""))
+		if not record.is_empty() and not key.is_empty():
+			var cargo: Dictionary = record.get("cargo", {})
+			if int(receipt.ammo) > 0: cargo[key] = int(receipt.ammo)
+			else: cargo.erase(key)
+		if owner != null: owner.records.erase(index)
+	for identity: int in released:
+		_index_by_id.erase(identity)
+		_owner_by_id.erase(identity)
+		_records.erase(identity)
+	for team: Dictionary in teams:
+		if int(team.formation) != formation or bool(team.get("departed", false)): continue
+		var kept_ids: Array = []
+		for identity: Variant in team.person_ids:
+			if not released.has(int(identity)): kept_ids.append(int(identity))
+		team["person_ids"] = kept_ids
+		var gone: Array = team.get("departed_person_ids", [])
+		for identity: int in released: gone.append(identity)
+		team["departed_person_ids"] = gone
+	var departing: Dictionary = split_roster(roster, group, team_id)
+	return SiteRuntime.ok("", {"roster": roster, "departing": departing, "released": released.size()})
+
+
+## G6.5: splits one roster for a sub-party. `group` lists the departing person ids, the cadre first. Returns the departing
+## party as a copy (rows in group order, formal captain = 0, the cadre holds the captain's head seat). `roster` itself
+## becomes the remaining team: its rows and every index field are renumbered, and a departing cadre's seat is vacated.
+static func split_roster(roster: Dictionary, group: Array, team_id: int) -> Dictionary:
+	var leader := int(group[0])
+	var departing: Dictionary = roster.duplicate(true)
+	var go_map := {}
+	var departing_units: Array = []
+	for at in range(group.size()):
+		var index := _roster_index_for_person(roster, int(group[at]))
+		go_map[index] = at
+		departing_units.append(departing.units[index])
+	var keep_map := {}
+	var keep_rows: Array = []
+	for index in range(roster.units.size()):
+		if go_map.has(index): continue
+		keep_map[index] = keep_rows.size()
+		keep_rows.append(roster.units[index])
+	for row: Dictionary in departing_units: row["member"] = true
+	var leader_cell: Array = departing_units[0].get("cell", [0, 0])
+	departing["units"] = departing_units
+	departing["team_id"] = team_id
+	departing["crowd"] = true
+	departing["formal_commander"] = 0
+	departing["acting_commander"] = 0
+	departing["current_commander"] = 0
+	departing["officers"] = []
+	departing["officer_service"] = []
+	departing["abilities"] = _remap_abilities(departing.get("abilities", []), go_map)
+	departing["vacancies"] = []
+	departing["rescues"] = []
+	departing["player_member"] = {}
+	departing["offices"] = SiteOffices.default_offices("team", leader, false)
+	departing["combat_order"] = 0
+	departing["goal"] = [-1, -1]
+	departing["reference"] = [float(leader_cell[0]) + 0.5, float(leader_cell[1]) + 0.5]
+	departing.erase("team_fatigue")
+	departing.erase("crowd_formation")
+	departing.erase("crowd_state")
+	roster["units"] = keep_rows
+	for field: String in ["formal_commander", "acting_commander", "current_commander"]:
+		if roster.has(field): roster[field] = _remap_index(int(roster[field]), keep_map)
+	for field: String in ["officers", "officer_service"]:
+		if roster.has(field): roster[field] = _remap_list(roster[field], keep_map)
+	roster["abilities"] = _remap_abilities(roster.get("abilities", []), keep_map)
+	if roster.has("offices"):
+		SiteOffices.vacate_unless(roster.offices, func(holder: int) -> bool: return not group.has(holder))
+	return departing
+
+
+static func _remap_index(value: int, remap: Dictionary) -> int:
+	if value == TerrainArmy.PLAYER_MEMBER: return value
+	return int(remap[value]) if remap.has(value) else -1
+
+
+static func _remap_list(values: Array, remap: Dictionary) -> Array:
+	var kept: Array = []
+	for value: Variant in values:
+		var index := int(value)
+		if index == TerrainArmy.PLAYER_MEMBER: kept.append(index)
+		elif remap.has(index): kept.append(int(remap[index]))
+	return kept
+
+
+static func _remap_abilities(abilities: Array, remap: Dictionary) -> Array:
+	var kept: Array = []
+	for ability: Variant in abilities:
+		if not ability is Dictionary: continue
+		var unit := int(ability.get("unit", -1))
+		if unit != TerrainArmy.PLAYER_MEMBER:
+			if not remap.has(unit): continue
+			ability["unit"] = int(remap[unit])
+		kept.append(ability)
+	return kept
 
 
 static func _apply_release_receipt(roster: Dictionary, identity: int, receipt: Dictionary) -> void:
