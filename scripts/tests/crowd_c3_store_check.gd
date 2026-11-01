@@ -2,6 +2,7 @@ extends SceneTree
 
 const Controller = preload("res://scripts/terrain_lab/site_controller.gd")
 const Store = preload("res://scripts/terrain_lab/site_store.gd")
+const CrowdSite = preload("res://scripts/terrain_lab/crowd_site.gd")
 var checks := 0
 
 class ScriptedCandidate extends RefCounted:
@@ -59,19 +60,24 @@ func _run() -> void:
 		if cells.size() >= 2: break
 	_check(cells.size() == 2, "fixture has two walkable cells")
 	native.setup(1, 581)
-	var blocked := PackedByteArray()
-	blocked.resize(data.size.x * data.size.y)
-	_check(native.set_terrain(data.size.x, data.size.y, data.height_levels, data.flags, data.ramp_edges, blocked, PackedByteArray()), "native terrain accepted")
+	# Same derivation as crowd_site.sync_terrain and the validator: navigation view, static blocks, facilities, natural base.
+	_check(native.set_terrain(data.size.x, data.size.y, data.navigation_heights(), data.navigation_flags(), data.navigation_ramps(), data.static_blocked, data.facility_cells), "native terrain accepted")
+	_check(native.set_natural_heights(data.height_levels), "native natural heights accepted")
+	# Original records: actor 1 is a civilian (TerrainTestCharacter default, set explicitly); roster row 2 is a soldier.
+	var soldier_roles := ["civilian", "soldier"]
 	for index in range(2):
 		var point := Vector2(cells[index]) + Vector2(0.5, 0.5)
 		var formation: int = native.add_formation(0, point.x, point.y, 0.0, 1, 1.0, 0, 50.0)
-		var first: int = native.add_soldiers(formation, PackedInt64Array([index + 1]), PackedInt32Array([0]), PackedByteArray([1]), PackedInt32Array([0]))
+		var first: int = native.add_soldiers(formation, PackedInt64Array([index + 1]), PackedInt32Array([0]), PackedByteArray([0]), PackedInt32Array([0]))
+		# Same role and post-holder setters as crowd_site deploy and the actor import path.
+		_check(native.set_military_role(first, CrowdSite.military_role_code(soldier_roles[index])) and native.set_post_holder(first, 0), "native military role matches original record")
 		native.set_start_positions(first, PackedFloat32Array([point.x, point.y]))
 	native.finalize()
 	native.set_host_control(0, true)
 	var bytes: PackedByteArray = native.save_state()
 	var appearance := HumanCharacter3DEditor.default_appearance(0)
 	var actor := TerrainTestCharacter.new()
+	actor.military_role = soldier_roles[0]
 	actor.data = data
 	actor.person_id = 1
 	actor.terrain_cell = cells[0]
@@ -85,7 +91,7 @@ func _run() -> void:
 	data.site.army_next_team = 3
 	data.site.controlled_person_id = 1
 	data.site.armies = [{"schema": 2, "roster_version": 1, "crowd": true, "team_id": 2, "faction_id": 0,
-		"units": [{"person_id": 2, "hp": 100.0, "ko": 0.0, "captive": false, "cell": [cells[1].x, cells[1].y],
+		"units": [{"person_id": 2, "hp": 100.0, "ko": 0.0, "captive": false, "military_role": soldier_roles[1], "cell": [cells[1].x, cells[1].y],
 			"appearance": appearance, "item_state": SiteRuntime.new_item_state("person:2"), "cargo": {}, "loot_settled": false, "remains_id": ""}]}]
 	data.site.crowd = {"version": 1, "dll_sha256": FileAccess.get_sha256(Store.CROWD_DLL), "build_id": str(native.build_id()),
 		"blob": Marshalls.raw_to_base64(bytes), "blob_sha256": _digest(bytes), "deploy": [],
@@ -94,10 +100,12 @@ func _run() -> void:
 		"player": {"person_id": 1, "soldier_index": 0}}
 	var valid := Store._validate_crowd(data, data.site)
 	_check(valid.ok, "actor record plus team/player references is legal: " + str(valid))
-	var reused := Store._validate_crowd(data, data.site, 1, valid.native)
-	_check(reused.ok and is_same(reused.native, valid.native), "exact validated native candidate reused without recreate/load")
-	_check(valid.native.save_state() == bytes and native.save_state() == bytes, "candidate proof is read-only and preserves every native byte")
-	for forged: Variant in [{"ok": true, "native": valid.native}, RefCounted.new(), "validated", 1]:
+	# A failed validation has no "native" key; read it defensively so the failure above reports cleanly.
+	var valid_native: Variant = valid.get("native")
+	var reused := Store._validate_crowd(data, data.site, 1, valid_native)
+	_check(reused.ok and is_same(reused.get("native"), valid_native), "exact validated native candidate reused without recreate/load")
+	_check(valid_native is Object and valid_native.save_state() == bytes and native.save_state() == bytes, "candidate proof is read-only and preserves every native byte")
+	for forged: Variant in [{"ok": true, "native": valid_native}, RefCounted.new(), "validated", 1]:
 		var refused_candidate := Store._validate_crowd(data, data.site, 1, forged)
 		_check(not refused_candidate.ok and refused_candidate.code == "INVALID_CROWD", "forged native result or non-native object cannot authorize reuse")
 	var scripted_native: RefCounted = ClassDB.instantiate("ArmyCrowd")
@@ -164,7 +172,7 @@ func _run() -> void:
 			"bad_appearance": broken.armies[0].units[0].appearance.body = 999
 			"unknown_version": broken.crowd.version = 999
 		_check(not Store._validate_crowd(data, broken).ok, kind + " rejected without changing native world")
-		_check(not Store._validate_crowd(data, broken, 1, valid.native).ok, kind + " also rejected with an exact valid native candidate")
+		_check(not Store._validate_crowd(data, broken, 1, valid_native).ok, kind + " also rejected with an exact valid native candidate")
 		_check(native.state_hash() == before, kind + " leaves native state unchanged")
 	broken = data.site.duplicate(true)
 	var native_refs: PackedInt64Array = native.formation_refs(1)
@@ -281,14 +289,18 @@ func _full_store_copy_checks(data: TerrainData, controller: Node) -> void:
 	var path: String = controller.save_root.path_join("full_copy.json")
 	var saved: Dictionary = Store.save(data, path)
 	_check(saved.ok, "full crowd Store.save succeeds before isolation assertions: " + str(saved))
-	var checked_native := Store._validate_crowd(data, data.site)
-	_check(checked_native.ok, "full-save reuse candidate passes original crowd validation")
+	if not saved.ok: return
+	var checked := Store._validate_crowd(data, data.site)
+	_check(checked.ok, "full-save reuse candidate passes original crowd validation")
+	if not checked.ok: return
+	var checked_native: Variant = checked.get("native")
 	var reuse_path: String = controller.save_root.path_join("full_copy_reused.json")
-	var reuse_saved := Store.save(data, reuse_path, checked_native.native)
+	var reuse_saved := Store.save(data, reuse_path, checked_native)
 	_check(reuse_saved.ok and FileAccess.get_sha256(reuse_path) == FileAccess.get_sha256(path), "reused native save emits byte-identical complete envelope")
 	_check(is_same(data.site, source_state) and var_to_bytes([data.site, data.parameters]) == source_bytes, "successful crowd save leaves the live Site, nested holders, items, meals and parameters byte-identical")
 	var decoded: Dictionary = Store._read(path)
 	_check(decoded.ok and not decoded.payload.state.has("water_links") and not decoded.payload.state.has("water_status") and decoded.payload.state.notices.is_empty(), "only saved top-level transient fields are removed")
+	if not decoded.ok: return
 	var envelope: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(path))
 	var raw: PackedByteArray = Marshalls.base64_to_raw(envelope.payload).decompress(int(envelope.payload_bytes), FileAccess.COMPRESSION_ZSTD)
 	var text := raw.get_string_from_utf8()
@@ -300,7 +312,7 @@ func _full_store_copy_checks(data: TerrainData, controller: Node) -> void:
 	var invalid_bytes := var_to_bytes([data.site, data.parameters])
 	var refused: Dictionary = Store.save(data, path)
 	_check(not refused.ok and str(refused.code) == "CORRUPT_SAVE", "late full-save supply validation still refuses non-food stock")
-	var reuse_refused := Store.save(data, reuse_path, checked_native.native)
+	var reuse_refused := Store.save(data, reuse_path, checked_native)
 	_check(not reuse_refused.ok and reuse_refused.code == refused.code, "native reuse preserves the same late public supply-save rejection")
 	_check(FileAccess.get_sha256(reuse_path) == file_sha, "failed reused save preserves its original complete envelope")
 	_check(is_same(data.site, invalid) and var_to_bytes([data.site, data.parameters]) == invalid_bytes, "failed crowd save leaves even its invalid live source byte-identical")
@@ -309,12 +321,15 @@ func _full_store_copy_checks(data: TerrainData, controller: Node) -> void:
 	var first: Dictionary = Store.load_site(path)
 	var second: Dictionary = Store.load_site(path)
 	_check(first.ok and second.ok, "two independent complete crowd Store loads succeed: " + str([first.get("code"), second.get("code")]))
-	_check(first.has("crowd_native") and second.has("crowd_native") and not is_same(first.crowd_native, second.crowd_native), "each complete load supplies its own detached native candidate")
-	var loaded_reuse := Store._validate_crowd(first.data, first.data.site, 1, first.crowd_native)
-	_check(loaded_reuse.ok and is_same(loaded_reuse.native, first.crowd_native), "post-normalization full public crowd validation reuses the original load candidate")
+	if not (first.ok and second.ok): return
+	var first_native: Variant = first.get("crowd_native")
+	var second_native: Variant = second.get("crowd_native")
+	_check(first_native is Object and second_native is Object and not is_same(first_native, second_native), "each complete load supplies its own detached native candidate")
+	var loaded_reuse := Store._validate_crowd(first.data, first.data.site, 1, first_native)
+	_check(loaded_reuse.ok and is_same(loaded_reuse.get("native"), first_native), "post-normalization full public crowd validation reuses the original load candidate")
 	_check(not first.data.site.has("crowd_native") and not decoded.payload.state.has("crowd_native"), "detached candidate never enters serialized Site state or independent decoded payload")
 	var forged_path: String = controller.save_root.path_join("forged_native.json")
-	var forged_save := Store.save(data, forged_path, {"ok": true, "native": checked_native.native})
+	var forged_save := Store.save(data, forged_path, {"ok": true, "native": checked_native})
 	_check(not forged_save.ok and forged_save.code == "INVALID_CROWD" and not FileAccess.file_exists(forged_path), "public save rejects forged candidate Dictionary before file creation")
 	var first_state: Dictionary = first.data.site
 	var second_state: Dictionary = second.data.site
@@ -324,7 +339,7 @@ func _full_store_copy_checks(data: TerrainData, controller: Node) -> void:
 	first_state.armies[0].units[0].item_state.version = 77
 	first_state.armies[0].units[0].cargo.grain = 99
 	first_state.armies[0].units[0].appearance.body = 99
-	_check(not Store._validate_crowd(first.data, first_state, 1, first.crowd_native).ok, "valid native candidate cannot hide a mutated loaded record")
+	_check(not Store._validate_crowd(first.data, first_state, 1, first_native).ok, "valid native candidate cannot hide a mutated loaded record")
 	first_state.actors.player.item_state.item_ids.append("private_mutation")
 	first_state.team_supply["2"].sustain.cohorts[0].hunger = 42.0
 	if not first_state.item_records.is_empty(): first_state.item_records[first_state.item_records.keys()[0]].holder = "private_mutation"
