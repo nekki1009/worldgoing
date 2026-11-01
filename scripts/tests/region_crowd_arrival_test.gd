@@ -6,7 +6,11 @@ extends SceneTree
 ##   captain; the saved Site validates through SiteStore and reloads with the new formation;
 ## - a duplicate team id is refused ID_CONFLICT, a garrisoned team INVALID_GARRISON, an arriving actor
 ##   UNSUPPORTED_CROWD_ACTOR_ARRIVAL; every refusal leaves the destination file and blob hash unchanged.
-## Run only with: --crowd --crowd-test <fresh_run_id>
+## --case player (default npc): the controlled cadre stays in the party and arrives as the crowd's controlled soldier. The
+## destination's own controlled soldier first refuses the arrival ID_CONFLICT (nothing changes); its host control is then
+## released on its native and record, so the arrival takes control. The arrived Site keeps controlled_person_id, the crowd
+## player section (person id and native index) and the native host control through save, SiteStore load and reload.
+## Run only with: --crowd --crowd-test <fresh_run_id> [--case player]
 ## Output: REGION_CROWD_ARRIVAL_PASS on success; quit(1) on any failure.
 
 const Store = preload("res://scripts/terrain_lab/site_store.gd")
@@ -72,9 +76,37 @@ func _army(state: Dictionary, team_id: int) -> Dictionary:
 		if army is Dictionary and int(army.get("team_id", -1)) == team_id: return army
 	return {}
 
+func _sha(bytes: PackedByteArray) -> String:
+	var digest := HashingContext.new()
+	digest.start(HashingContext.HASH_SHA256)
+	digest.update(bytes)
+	return digest.finish().hex_encode()
+
+## Player case, state record: the Site's controlled person and its crowd player section name the leader's destination id.
+func _player_state_checks(state: Dictionary, leader: int) -> bool:
+	var section: Dictionary = state.crowd.get("player", {})
+	if not _check(int(state.get("controlled_person_id", -1)) == leader, "the destination's controlled_person_id is the leader's destination id", [int(state.get("controlled_person_id", -1)), leader]): return false
+	return _check(int(section.get("person_id", -1)) == leader, "the crowd player section names the leader's destination id", section)
+
+## Player case, native: the section's soldier index is the leader's native index, which alone has host control. The native has no
+## getter for host control, so host_input with zero wishes is the query: it returns true only for the host-controlled soldier and
+## writes nothing for the others.
+func _player_native_checks(state: Dictionary, native: Object, leader: int) -> bool:
+	var index := int(native.call("soldier_index", leader))
+	var section: Dictionary = state.crowd.get("player", {})
+	if not _check(index >= 0 and int(section.get("soldier_index", -1)) == index, "the crowd player section names the leader's native index", [section, index]): return false
+	if not _check(bool(native.call("host_input", index, 0.0, 0.0, false, false)), "the leader's native soldier has host control"): return false
+	var other := 0 if index != 0 else 1
+	return _check(not bool(native.call("host_input", other, 0.0, 0.0, false, false)), "no other native soldier has host control")
+
 func _run() -> void:
 	var args := OS.get_cmdline_user_args()
 	if not _check(args.has("--crowd") and args.has("--crowd-test"), "native startup and a fresh --crowd-test run id required"): return
+	var case_name := "npc"
+	var case_flag := args.find("--case")
+	if case_flag >= 0 and case_flag + 1 < args.size(): case_name = str(args[case_flag + 1])
+	if not _check(case_name in ["npc", "player"], "--case is npc (default) or player", case_name): return
+	var player_case := case_name == "player"
 	var packed := load("res://scenes/terrain_lab/TerrainLab.tscn") as PackedScene
 	if not _check(packed != null, "formal TerrainLab scene exists"): return
 	lab = packed.instantiate() as TerrainLab
@@ -141,8 +173,11 @@ func _run() -> void:
 	var extracted: Dictionary = RegionTravel.extract(lab.terrain.site.duplicate(true), _spec(leader, team_id + 1000, successor), "crowd_arrival")
 	if not _check(extracted.get("ok", false) == true, "the sub-party extracts from the Site", extracted): return
 	var party: Dictionary = extracted.party
-	# This arrival is an ordinary party: the cadre's control stays with the Site's player body (see report).
-	party.content.erase("controlled_person_id")
+	if not player_case:
+		# An ordinary party: the cadre's control stays with the Site's player body (see report).
+		party.content.erase("controlled_person_id")
+	elif not _check(int(party.content.get("controlled_person_id", -1)) == leader and str(party.controller) == "player", "the player party carries the controlled cadre", party.content.get("controlled_person_id")):
+		return
 	var party_team := int(party.content.armies[0].team_id)
 	if not _check(party.content.armies.size() == 1 and party.content.armies[0].units.size() == 3, "the party carries three people in one team"): return
 
@@ -197,6 +232,24 @@ func _run() -> void:
 	var blob_before := str(dest_state.crowd.blob_sha256)
 	var entry: Vector2i = loaded.data.spawn_cell
 	var nav: TerrainData = Env.navigation_for_state(loaded.data, dest_state)
+	if player_case:
+		# The destination's own controlled soldier (from its deploy) would clash with the arriving one: refused ID_CONFLICT,
+		# nothing changes. Its control is then released on the native and in the record, so the arrival can take control.
+		var own_identity := int(dest_state.crowd.player.get("person_id", -1))
+		# The crowd player section is the record of control (JSON gives floats: every id and index is read with int()).
+		var own_section: Dictionary = dest_state.crowd.get("player", {})
+		if not _check(own_identity > 0 and int(own_section.get("soldier_index", -1)) >= 0, "the destination starts with its own controlled soldier", own_section): return
+		var clash: Dictionary = RegionTravel.insert(dest_state, party.duplicate(true), nav, entry, dest_path, 0.0, 0.0, {})
+		if not _check(clash.get("ok", true) == false and clash.get("code", "") == "ID_CONFLICT", "a controlled arrival at a destination with a controlled soldier is refused ID_CONFLICT", clash): return
+		if not _check(FileAccess.get_sha256(dest_path) == file_before and str(dest_state.crowd.blob_sha256) == blob_before, "the ID_CONFLICT refusal leaves the destination file and blob hash unchanged"): return
+		var own_index := int(dest_native.call("soldier_index", own_identity))
+		if not _check(own_index >= 0 and bool(dest_native.call("set_host_control", own_index, false)), "the destination's own host control is released"): return
+		var cleared: PackedByteArray = dest_native.call("save_state")
+		dest_state.crowd["blob"] = Marshalls.raw_to_base64(cleared)
+		dest_state.crowd["blob_sha256"] = _sha(cleared)
+		dest_state.crowd["player"] = {"person_id": -1, "soldier_index": -1}
+		dest_state.erase("controlled_person_id")
+		blob_before = str(dest_state.crowd.blob_sha256)
 
 	# Refusals: each changes nothing.
 	var duplicate_party: Dictionary = party.duplicate(true)
@@ -238,6 +291,8 @@ func _run() -> void:
 	if not _check(captain_now == arrival_leader, "the arriving roster's formal captain is the party leader", {"expected": arrival_leader, "actual": captain_now, "origin_leader": leader}): return
 	if not _check(_team_entry(after_state.crowd, party_team).get("person_ids", []).size() == 3, "the arriving team entry names three people"): return
 
+	if player_case and not _player_state_checks(after_state, arrival_leader): return
+
 	# Save -> load: the Site validates and reloads with the new formation and three soldiers.
 	var arrival_path := "user://sites/crowd_arrival_after.json"
 	loaded.data.site = after_state
@@ -251,6 +306,9 @@ func _run() -> void:
 	var reloaded_arrived: Dictionary = _army(reloaded.data.site, party_team)
 	var reloaded_captain := int(reloaded_arrived.units[int(reloaded_arrived.formal_commander)].person_id)
 	if not _check(bool(reloaded_arrived.get("crowd", false)) and reloaded_captain == arrival_leader, "the reloaded roster is crowd=true with the leader as captain", {"expected": arrival_leader, "actual": reloaded_captain}): return
+	if player_case:
+		if not _player_state_checks(reloaded.data.site, arrival_leader): return
+		if not _player_native_checks(reloaded.data.site, restored, arrival_leader): return
 
-	print("REGION_CROWD_ARRIVAL_PASS: ", checks, " checks; an ordinary three-person party joins the live crowd Site as a native team with its leader as captain, the Site validates and reloads, and duplicate, garrisoned and actor arrivals are refused with unchanged files")
+	print("REGION_CROWD_ARRIVAL_PASS: ", checks, " checks (case ", case_name, "); an ordinary three-person party joins the live crowd Site as a native team with its leader as captain, the Site validates and reloads, and duplicate, garrisoned and actor arrivals are refused with unchanged files")
 	quit(0)

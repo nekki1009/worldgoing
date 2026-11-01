@@ -2007,8 +2007,16 @@ static func _crowd_arrival_gate(destination: Dictionary, party: Dictionary, opti
 			# Dead or gone rows have no native soldier here; the crowd roster would not close without one.
 			if row is Dictionary and (float(row.get("hp", 0.0)) <= 0.0 or bool(row.get("member_gone", false))):
 				return fail("UNSUPPORTED_CROWD_DEAD_ARRIVAL", "群眾目的地暫不接收已死或已離隊的到站人物")
-	if not arriving.get("actors", {}).is_empty() or int(arriving.get("controlled_person_id", -1)) > 0:
+	# A controlled roster member of an arriving player party is admitted: it becomes the crowd's controlled soldier. Any other
+	# actor, or a controlled person that an NPC party carries or that sits on no arriving roster, is refused as before.
+	var controlled_id := int(arriving.get("controlled_person_id", -1))
+	if not arriving.get("actors", {}).is_empty() or (controlled_id > 0 and (str(party.get("controller", "player")) != "player" or not _crowd_roster_holds(arriving, controlled_id))):
 		return fail("UNSUPPORTED_CROWD_ACTOR_ARRIVAL", "群眾目的地暫不接收受控或 NPC actor 到站")
+	# A destination that already has a controlled soldier refuses a controlled arrival, as the grid refuses a clashing controlled actor.
+	if controlled_id > 0:
+		var destination_player: Dictionary = destination.get("crowd", {}).get("player", {})
+		if int(destination.get("controlled_person_id", -1)) > 0 or int(destination_player.get("person_id", -1)) > 0 or int(destination_player.get("soldier_index", -1)) >= 0:
+			return fail("ID_CONFLICT", "目的地已有受控人物")
 	if not arriving.get("vehicles", {}).is_empty() or not arriving.get("captivity", {}).is_empty() or not arriving.get("escort_orders", {}).is_empty():
 		return fail("UNSUPPORTED", "群眾目的地暫不接收載具、俘虜或押送")
 	for army: Variant in arriving.get("armies", []):
@@ -2019,10 +2027,18 @@ static func _crowd_arrival_gate(destination: Dictionary, party: Dictionary, opti
 			if row is Dictionary and bool(row.get("captive", false)): return fail("UNSUPPORTED", "群眾目的地暫不接收俘虜")
 	return {"ok": true}
 
+## True when `identity` is a roster member of one of the arriving teams.
+static func _crowd_roster_holds(content: Dictionary, identity: int) -> bool:
+	for army: Variant in content.get("armies", []):
+		if not army is Dictionary: continue
+		for row: Variant in army.get("units", []):
+			if row is Dictionary and int(row.get("person_id", 0)) == identity: return true
+	return false
+
 ## Offline twin of CrowdSite.d5_append_existing for a crowd destination. Each ordinary arriving team becomes a native
 ## crowd team in a copy of the destination blob: formation, soldiers, roles, start cells, hot state, owner. The caller
 ## stores the returned blob, blob_sha256 and teams. Native work happens on a detached ArmyCrowd only.
-static func _crowd_arrival_teams(destination: Dictionary, nav: TerrainData, armies: Array, cells: Array[Vector2i], leader_person_id: int) -> Dictionary:
+static func _crowd_arrival_teams(destination: Dictionary, nav: TerrainData, armies: Array, cells: Array[Vector2i], leader_person_id: int, controlled_id: int) -> Dictionary:
 	var section: Dictionary = destination.crowd
 	if not ClassDB.class_exists("ArmyCrowd"): return fail("INVALID_CROWD", "群眾原生模組未載入")
 	var blob := Marshalls.base64_to_raw(str(section.get("blob", "")))
@@ -2040,6 +2056,7 @@ static func _crowd_arrival_teams(destination: Dictionary, nav: TerrainData, armi
 		slot = maxi(slot, int(team.get("slot", -1)) + 1)
 	var rosters: Array = []
 	var teams: Array = []
+	var controlled_index := -1 # Native soldier index of the arriving controlled person, set after its team is added.
 	var cursor := 0
 	var leader_cell := cells[0]
 	for army: Dictionary in armies:
@@ -2131,6 +2148,7 @@ static func _crowd_arrival_teams(destination: Dictionary, nav: TerrainData, armi
 			refs[2] = 0
 			if not bool(native.call("set_soldier_state", index, values, refs)): return fail("INVALID", "原人物熱狀態匯入失敗")
 			if identity == leader_person_id: leader_cell = cell
+			if identity == controlled_id: controlled_index = index
 		if not bool(native.call("set_order_owner", formation, false)): return fail("INVALID", "原隊伍命令 owner 匯入失敗")
 		army["crowd"] = true
 		army["schema"] = 2
@@ -2142,13 +2160,17 @@ static func _crowd_arrival_teams(destination: Dictionary, nav: TerrainData, armi
 			"troop": troop, "person_ids": Array(ids), "solo": false})
 		slot += 1
 		team_ids[team_id] = true
+	# The controlled soldier takes host control before the blob is saved; the native keeps one host at most.
+	if controlled_id > 0:
+		if controlled_index < 0: return fail("UNSUPPORTED_CROWD_ACTOR_ARRIVAL", "受控人物不在到站隊伍中")
+		if not bool(native.call("set_host_control", controlled_index, true)): return fail("INVALID", "原受控人物無法接入群眾")
 	if not native.has_method("validate") or not bool(native.call("validate")): return fail("INVALID_CROWD", "群眾候選原生內容非法")
 	var bytes: PackedByteArray = native.call("save_state")
 	if bytes.is_empty(): return fail("INVALID_CROWD", "群眾候選無法保存")
 	var digest := HashingContext.new()
 	digest.start(HashingContext.HASH_SHA256)
 	digest.update(bytes)
-	return {"ok": true, "blob": bytes, "blob_sha256": digest.finish().hex_encode(), "teams": teams, "armies": rosters, "leader_cell": leader_cell}
+	return {"ok": true, "blob": bytes, "blob_sha256": digest.finish().hex_encode(), "teams": teams, "armies": rosters, "leader_cell": leader_cell, "controlled_index": controlled_index}
 
 static func _crowd_packed_equip(appearance: Dictionary) -> int:
 	# Copy of CrowdSite._packed_equip (an instance method there); keep the two in step.
@@ -2255,10 +2277,13 @@ static func insert(destination_state: Dictionary, party: Dictionary, nav: Terrai
 		# R5/R12: on a crowd Site the ordinary teams join the native crowd, on the same entry cells in placement order.
 		var grid_armies: Array = content.armies
 		if destination.has("crowd"):
-			var crowd_arrival: Dictionary = _crowd_arrival_teams(destination, nav, content.armies, cells, int(party.leader_person_id))
+			var crowd_arrival: Dictionary = _crowd_arrival_teams(destination, nav, content.armies, cells, int(party.leader_person_id), int(content.get("controlled_person_id", -1)))
 			if not crowd_arrival.ok: return crowd_arrival
 			destination.crowd["blob"] = Marshalls.raw_to_base64(crowd_arrival.blob)
 			destination.crowd["blob_sha256"] = crowd_arrival.blob_sha256
+			# The arriving controlled soldier is the crowd's player; its person id is already the destination id (remapped above).
+			if int(content.get("controlled_person_id", -1)) > 0:
+				destination.crowd["player"] = {"person_id": int(content.controlled_person_id), "soldier_index": int(crowd_arrival.controlled_index)}
 			for team: Dictionary in crowd_arrival.teams: destination.crowd.teams.append(team)
 			# Every roster army is a fire owner and needs one command row (validator: one row per owner). An arriving team
 			# that has never fired gets the disabled row, merged below with the other fire rows.
