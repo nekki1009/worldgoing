@@ -213,6 +213,14 @@ void wg_crowd_get_formation_state(const wg_crowd *c, int f, wg_formation_state *
 	s->officer_count = (int)std::min<size_t>(16, t.officer_persons.size());
 	for (int k = 0; k < s->officer_count; ++k) s->officers[k] = t.officer_persons[k];
 }
+int wg_crowd_get_order_serials(const wg_crowd *c, int f, int64_t *order_serial, int64_t *ranged_order_serial) {
+	if (!c || !order_serial || !ranged_order_serial || f < 0 || f >= (int)c->world.formations.size()) return 0;
+	*order_serial = c->world.formations[f].order_serial; *ranged_order_serial = c->world.formations[f].ranged_order_serial;
+	return 1;
+}
+int wg_crowd_set_order_serials(wg_crowd *c, int f, int64_t order_serial, int64_t ranged_order_serial) {
+	return c && c->world.set_order_serials(f, order_serial, ranged_order_serial) ? 1 : 0;
+}
 int wg_crowd_get_officers(const wg_crowd *c,int f,int64_t *ids,int cap) {
 	if(!c || f<0 || f>=(int)c->world.formations.size()) return -1;
 	const auto v=c->world.get_formation_state(f).officer_persons;

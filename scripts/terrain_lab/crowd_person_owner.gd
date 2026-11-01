@@ -374,7 +374,18 @@ func siege_approach_step(index: int, goal: Vector2i, maximum_fire_risk: float = 
 func siege_cancel_step(index: int) -> void:
 	if is_member(index) and crowd_site.siege_native_supported(): crowd_site.crowd.cancel_siege_step(index)
 
+## ORDSERIAL: the native formation's issued-order counters (World Formation::order_serial / ranged_order_serial,
+## saved KW19). order_serial grows on every accepted crowd order (crowd_site.issue_order) and every native AI order.
+## An ArmyCrowd without the counters (older DLL, test doubles) keeps the original owner's values.
+func _native_order_serials() -> PackedInt64Array:
+	if crowd_site == null or crowd_site.crowd == null or formation_index < 0 or not crowd_site.crowd.has_method("order_serials"):
+		return PackedInt64Array()
+	var serials: PackedInt64Array = crowd_site.crowd.order_serials(formation_index)
+	return serials if serials.size() == 2 else PackedInt64Array()
+
 func get_order_serial() -> int:
+	var serials := _native_order_serials()
+	if serials.size() == 2: return int(serials[0])
 	var owner: Variant = _order_owner()
 	return int(owner.get_order_serial()) if owner is TerrainArmy else 0
 
@@ -881,11 +892,19 @@ var ranged_target: Dictionary:
 	set(value):
 		var owner: Variant = _order_owner()
 		if owner != null: owner.ranged_target = value
+## ORDSERIAL: the native formation keeps the ranged order counter (saved with the crowd); the original owner, when
+## there is one, gets the same value so its own readers agree.
 var ranged_order_serial: int:
 	get:
+		var serials := _native_order_serials()
+		if serials.size() == 2: return int(serials[1])
 		var owner: Variant = _order_owner()
 		return int(owner.ranged_order_serial) if owner != null else 0
 	set(value):
+		var serials := _native_order_serials()
+		if serials.size() == 2 and not bool(crowd_site.crowd.set_order_serials(formation_index, int(serials[0]), int(value))):
+			rejected_hot_writes += 1
+			return
 		var owner: Variant = _order_owner()
 		if owner != null: owner.ranged_order_serial = value
 var ranged_order_issuer_id: int:

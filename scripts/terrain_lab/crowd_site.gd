@@ -3317,6 +3317,14 @@ static func d5_import_existing_hot(crowd_site: Variant, plans: Array) -> Diction
 		desired.formations[int(plan.formation)] = state.duplicate(true)
 		if not crowd_site.set_formation_fields(int(plan.formation), state):
 			return D5Runtime.fail("INVALID", "原隊伍軍令／指揮／供養匯入失敗")
+		# ORDSERIAL: the native formation continues the original team's issued-order counters, so a stale Region
+		# command signed against the original team is still refused as superseded after the crowd takes the team over.
+		if crowd_site.crowd.has_method("set_order_serials"):
+			var source: Variant = plan.get("source")
+			var order_serial := clampi(int(source.get_order_serial()) if source is TerrainArmy else int(snapshot.get("combat_order_serial", 1)), 1, 2147483647)
+			var ranged_serial := clampi(int(source.ranged_order_serial) if source is TerrainArmy else 0, 0, 2147483647)
+			if not bool(crowd_site.crowd.set_order_serials(int(plan.formation), order_serial, ranged_serial)):
+				return D5Runtime.fail("INVALID", "原隊伍軍令序號匯入失敗")
 	return D5Runtime.ok("", desired)
 
 static func d5_commit_existing(crowd_site: Variant, plans: Array) -> void:

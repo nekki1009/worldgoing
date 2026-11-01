@@ -112,7 +112,8 @@ template <class Ar, class T> void nested(Ar &ar, std::vector<std::vector<T>> &v)
 	for (auto &x : v) ar.vec(x);
 }
 
-template <class Ar> void io_formation(Ar &ar, Formation &f, bool legacy_kw17) {
+// layout: the save magic the blob is read or written in (17, 18 or 19); see World::serialize.
+template <class Ar> void io_formation(Ar &ar, Formation &f, int layout) {
 	ar.pod(f.team); ar.pod(f.troop); ar.pod(f.order); ar.pod(f.cx); ar.pod(f.cy); ar.pod(f.facing);
 	ar.pod(f.goal_x); ar.pod(f.goal_y); ar.pod(f.goal_facing); ar.pod(f.cols); ar.pod(f.spacing); ar.pod(f.field);
 	ar.pod(f.arrived); ar.pod(f.los_goal); ar.pod(f.lag); ar.vec(f.members); ar.pod(f.roster); ar.pod(f.slot_count);
@@ -129,11 +130,12 @@ template <class Ar> void io_formation(Ar &ar, Formation &f, bool legacy_kw17) {
 	ar.pod(f.no_orders); ar.pod(f.host_center); ar.pod(f.fully_fed); ar.pod(f.sustain_morale_delta);
 	ar.pod(f.garrisoned);
 	ar.pod(f.reslot_pending); ar.pod(f.rest_gx); ar.pod(f.rest_gy); ar.pod(f.rest_gf); ar.pod(f.rest_slots);
-	if (!legacy_kw17) { // KW18: CAV-4a charge cycle (KW17 blobs have none and load with the defaults)
+	if (layout >= 18) { // KW18: CAV-4a charge cycle (KW17 blobs have none and load with the defaults)
 		ar.pod(f.charge_stage); ar.pod(f.charge_dx); ar.pod(f.charge_dy); ar.pod(f.charge_tx); ar.pod(f.charge_ty);
 		ar.pod(f.rally_x); ar.pod(f.rally_y); ar.pod(f.charge_target_form); ar.pod(f.charge_t); ar.pod(f.charge_cols); ar.pod(f.charge_runs);
 		ar.pod(f.cav_layout); // mounted layout of the last formation step (a host order between steps reads it)
 	}
+	if (layout >= 19) { ar.pod(f.order_serial); ar.pod(f.ranged_order_serial); } // KW19 ORDSERIAL (older blobs load 1 / 0)
 }
 template <class Ar> void io_convoy(Ar &ar, Convoy &c) {
 	ar.pod(c.id); ar.pod(c.x); ar.pod(c.y); ar.pod(c.facing);
@@ -148,12 +150,14 @@ template <class Ar> void io_convoy(Ar &ar, Convoy &c) {
 } // namespace
 
 template <class Ar> void World::serialize(Ar &ar) {
-	const uint32_t magic = 0x3831574Bu; // "KW18": formation charge cycle (CAV-4a: charge stage, heading, target and rally points, timers, cavalry spent flags); KW17: mounted cavalry (CAV-1 mounted, heading / straight-run, charge hits, recent victims, fall timer); KW16: surrendered soldiers (G5 S4, saved, validated and hashed); KW15: absent soldiers (G5 S1 detached / off-map / captive / garrison reserve); KW14: aboard soldiers (G1 S1 site boarding); KW13: convoy formation following (G4 OPUS); KW12: convoy stall_reason (G4 S4f); KW11: convoy body offsets, body_stalled, body-aware flow fields (G4 S2); KW10: logistics convoys (G4); KW09: released soldiers (G6.4 site exit); KW08: per-person post holder (R1b)
-	const uint32_t magic17 = 0x3731574Bu; // KW17 layout: loads with the KW18 charge fields at their defaults; written only by save_kw17 (tests)
-	uint32_t m = Ar::loading ? 0u : (kw17_write_ ? magic17 : magic);
+	const uint32_t magic = 0x3931574Bu; // "KW19": formation order serials (ORDSERIAL: order_serial, ranged_order_serial); KW18: formation charge cycle (CAV-4a: charge stage, heading, target and rally points, timers, cavalry spent flags); KW17: mounted cavalry (CAV-1 mounted, heading / straight-run, charge hits, recent victims, fall timer); KW16: surrendered soldiers (G5 S4, saved, validated and hashed); KW15: absent soldiers (G5 S1 detached / off-map / captive / garrison reserve); KW14: aboard soldiers (G1 S1 site boarding); KW13: convoy formation following (G4 OPUS); KW12: convoy stall_reason (G4 S4f); KW11: convoy body offsets, body_stalled, body-aware flow fields (G4 S2); KW10: logistics convoys (G4); KW09: released soldiers (G6.4 site exit); KW08: per-person post holder (R1b)
+	const uint32_t magic18 = 0x3831574Bu; // KW18 layout: loads with the KW19 order serials at their defaults (1, 0); written only by save_kw18 (tests)
+	const uint32_t magic17 = 0x3731574Bu; // KW17 layout: loads with the KW18 charge fields and KW19 serials at their defaults; written only by save_kw17 (tests)
+	uint32_t m = Ar::loading ? 0u : (kw17_write_ ? magic17 : kw18_write_ ? magic18 : magic);
 	ar.pod(m);
-	const bool legacy_kw17 = kw17_write_ || (Ar::loading && m == magic17);
-	if (Ar::loading && m != magic && m != magic17) { ar.ok = false; return; }
+	if (Ar::loading && m != magic && m != magic18 && m != magic17) { ar.ok = false; return; }
+	const int layout = m == magic17 ? 17 : m == magic18 ? 18 : 19;
+	const bool legacy_kw17 = layout == 17;
 	io_config(ar, cfg);
 	// terrain (static during a battle, stored so a save is self-contained)
 	ar.pod(terrain.w); ar.pod(terrain.h);
@@ -164,7 +168,7 @@ template <class Ar> void World::serialize(Ar &ar) {
 	ar.pod(nf);
 	if (!count(ar, nf, 128, 65537)) return;
 	if (Ar::loading) formations.resize((size_t)nf);
-	for (auto &f : formations) io_formation(ar, f, legacy_kw17);
+	for (auto &f : formations) io_formation(ar, f, layout);
 	// soldiers
 	for (auto *v : {&px, &py, &nx, &ny, &vx, &vy, &face, &anim_t, &knock_dx, &knock_dy}) ar.vec(*v);
 	ar.vec(rest_hold); ar.vec(rest_x); ar.vec(rest_y); ar.vec(rest_best); ar.vec(rest_t);
@@ -239,6 +243,13 @@ std::vector<uint8_t> World::save_kw17() const {
 	kw17_write_ = true;
 	std::vector<uint8_t> out = save();
 	kw17_write_ = false;
+	return out;
+}
+
+std::vector<uint8_t> World::save_kw18() const {
+	kw18_write_ = true;
+	std::vector<uint8_t> out = save();
+	kw18_write_ = false;
 	return out;
 }
 
@@ -415,6 +426,7 @@ bool World::validate(std::string *error, bool allow_site_jobs) const {
 		CHECK_VALID(std::isfinite(f.facing) && std::isfinite(f.goal_facing) && std::isfinite(f.spacing) && f.spacing > 0 && f.spacing <= 1024);
 		CHECK_VALID(std::isfinite(f.lag) && f.lag >= 0 && std::isfinite(f.sustain_morale_delta));
 		for (double v : {f.compact_t,f.pursuit_left,f.order_delay,f.encircle_t}) CHECK_VALID(std::isfinite(v) && v > -1);
+		CHECK_VALID(f.order_serial >= 1 && f.order_serial <= ORDER_SERIAL_MAX && f.ranged_order_serial >= 0 && f.ranged_order_serial <= ORDER_SERIAL_MAX); // ORDSERIAL
 		for (double v : {f.training,f.morale,f.rally_rest,f.fatigue,f.fatigue_rest,f.contact_age,f.ai_order_cd,f.ai_chase_cd}) CHECK_VALID(std::isfinite(v) && v >= 0);
 		CHECK_VALID(f.morale <= 100);
 		CHECK_VALID(index(f.target_person) && index(f.ai_target));
@@ -756,6 +768,10 @@ void World::set_formation_state(int fi, const FormationState &s) {
 		f.ref_valid = s.ref_valid != 0; f.resupplying = s.resupplying != 0;
 		f.pursuit_left = s.pursuit_left; f.order_delay = s.order_delay; f.attacking = s.attacking != 0;
 	}
+	// ORDSERIAL: an import carrying both counters restores them; -1 (the default) leaves them unchanged
+	if (s.order_serial >= 1 && s.order_serial <= ORDER_SERIAL_MAX && s.ranged_order_serial >= 0 && s.ranged_order_serial <= ORDER_SERIAL_MAX) {
+		f.order_serial = s.order_serial; f.ranged_order_serial = s.ranged_order_serial;
+	}
 	if (s.fatigue_count >= 0) f.fatigue_count = s.fatigue_count;
 	if (s.ai_enabled >= 0) f.ai_enabled = s.ai_enabled != 0;
 	if (s.no_orders >= 0) f.no_orders = s.no_orders != 0;
@@ -786,7 +802,16 @@ FormationState World::get_formation_state(int fi) const {
 	s.formal_person = f.formal_cmd >= 0 ? person_id[f.formal_cmd] : -1;
 	s.acting_person = f.acting_cmd >= 0 ? person_id[f.acting_cmd] : -1;
 	for (int i : f.officer_order) s.officer_persons.push_back(person_id[i]);
+	s.order_serial = f.order_serial; s.ranged_order_serial = f.ranged_order_serial; // ORDSERIAL
 	return s;
+}
+
+bool World::set_order_serials(int fi, int64_t order_serial, int64_t ranged_order_serial) {
+	if (fi < 0 || fi >= (int)formations.size() || order_serial < 1 || order_serial > ORDER_SERIAL_MAX
+		|| ranged_order_serial < 0 || ranged_order_serial > ORDER_SERIAL_MAX) return false;
+	formations[fi].order_serial = order_serial;
+	formations[fi].ranged_order_serial = ranged_order_serial;
+	return true;
 }
 
 } // namespace wg

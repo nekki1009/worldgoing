@@ -2217,6 +2217,132 @@ static void test_cavalry_charge() {
 	}
 }
 
+static void test_order_serial() {
+	std::printf("[order serial] ORDSERIAL: +1 per accepted host order and per AI order, refusals and internal orders unchanged, HOLD order delay, import, KW19 save / KW18 and KW17 load, hash, 1/2/4 thread parity\n");
+	{   // host orders
+		Scene s(1, 64, 48);
+		int a = s.formation(0, 10, 24, 0, 6, sword());
+		int b = s.formation(1, 40, 24, kPi, 6, sword());
+		s.w.finalize();
+		CHECK(s.w.formations[a].order_serial == 1 && s.w.formations[a].ranged_order_serial == 0, "a new formation starts at order serial 1, ranged 0 (TerrainArmy)");
+		CHECK(s.w.host_order(a, 0, 0.f, 0.f, 0) == NOT_OWNER && s.w.formations[a].order_serial == 1, "a refused order (AI owner) leaves the serial");
+		s.w.formations[a].ai_enabled = false; s.w.formations[b].ai_enabled = false;
+		s.w.formations[a].order_delay = 0;
+		CHECK(s.w.host_order(a, 0, 0.f, 0.f, 0) == OK && s.w.formations[a].order_serial == 2, "an accepted HOLD adds one");
+		const double prep = 0.5 * (1.0 - s.w.command_effect(a, 0, 0.20));
+		CHECK(prep > 0 && std::fabs(s.w.formations[a].order_delay - prep) < 1e-12, "an accepted host HOLD starts the D77 order delay %.6f (got %.6f)", prep, s.w.formations[a].order_delay);
+		CHECK(s.w.host_order(a, 1, 20.5f, 24.5f, 0) == OK && s.w.formations[a].order_serial == 3, "an accepted MOVE adds one");
+		CHECK(s.w.host_order(a, 1, 200.5f, 24.5f, 0) == BLOCKED && s.w.formations[a].order_serial == 3, "a BLOCKED MOVE leaves the serial");
+		CHECK(s.w.host_order(a, 2, 0.f, 0.f, 1.0) == NO_TARGET && s.w.formations[a].order_serial == 3, "an ATTACK on a friend (NO_TARGET) leaves the serial");
+		CHECK(s.w.host_order(a, 3, 0.f, 0.f, 0) == NOT_ROUTED && s.w.formations[a].order_serial == 3, "RETREAT while not routed leaves the serial");
+		CHECK(s.w.host_order(a, 9, 0.f, 0.f, 0) == BAD_ARGS && s.w.formations[a].order_serial == 3, "a bad kind leaves the serial");
+		CHECK(s.w.host_order(b, 0, 0.f, 0.f, 0) == OK && s.w.formations[b].order_serial == 2 && s.w.formations[a].order_serial == 3, "serials are per formation");
+		s.w.order_move(a, 30.5f, 24.5f, 0.f); s.w.order_hold(a);
+		CHECK(s.w.formations[a].order_serial == 3, "internal order_* calls (rout, return, charge end) do not count as issued orders");
+		s.run(1.0);
+		CHECK(s.w.formations[a].order_serial == 3 && s.w.formations[b].order_serial == 2, "stepping without orders leaves the serials");
+		// import / export
+		CHECK(!s.w.set_order_serials(a, 0, 0) && !s.w.set_order_serials(a, 1, -1) && !s.w.set_order_serials(a, World::ORDER_SERIAL_MAX + 1, 0)
+		      && !s.w.set_order_serials(a, 1, World::ORDER_SERIAL_MAX + 1) && !s.w.set_order_serials(-1, 1, 0) && !s.w.set_order_serials(2, 1, 0)
+		      && s.w.formations[a].order_serial == 3 && s.w.formations[a].ranged_order_serial == 0, "out-of-range serials are refused and write nothing");
+		CHECK(s.w.set_order_serials(a, 17, 5) && s.w.formations[a].order_serial == 17 && s.w.formations[a].ranged_order_serial == 5, "the host imports both counters");
+		FormationState st = s.w.get_formation_state(a);
+		CHECK(st.order_serial == 17 && st.ranged_order_serial == 5, "get_formation_state exports both counters");
+		FormationState keep = st; keep.order_serial = -1; keep.ranged_order_serial = -1;
+		s.w.set_formation_state(a, keep);
+		CHECK(s.w.formations[a].order_serial == 17 && s.w.formations[a].ranged_order_serial == 5, "an import without counters (-1) leaves them");
+		FormationState other = st; other.order_serial = 18; other.ranged_order_serial = 6;
+		s.w.set_formation_state(a, other);
+		CHECK(s.w.formations[a].order_serial == 18 && s.w.formations[a].ranged_order_serial == 6, "an import with both counters restores them");
+		const uint64_t before = s.w.state_hash();
+		CHECK(s.w.set_order_serials(a, 17, 6) && s.w.state_hash() != before, "the hash sees the order serial");
+		CHECK(s.w.set_order_serials(a, 18, 5) && s.w.state_hash() != before, "the hash sees the ranged serial");
+		CHECK(s.w.set_order_serials(a, 18, 6) && s.w.state_hash() == before, "the hash follows the counters back");
+		s.w.set_order_serials(a, 17, 5);
+		s.w.formations[a].order_serial = 0;
+		std::string reason;
+		CHECK(!s.w.validate(&reason), "validate refuses order serial 0");
+		s.w.formations[a].order_serial = 17;
+		s.w.formations[a].ranged_order_serial = -1;
+		CHECK(!s.w.validate(&reason), "validate refuses a negative ranged serial");
+		s.w.formations[a].ranged_order_serial = 5;
+		check_valid(s.w);
+		// KW19 save / load
+		const std::vector<uint8_t> blob = s.w.save();
+		CHECK(blob.size() > 4 && blob[0] == 'K' && blob[1] == 'W' && blob[2] == '1' && blob[3] == '9', "the save magic is KW19");
+		World back(1);
+		CHECK(back.load(blob) && back.state_hash() == s.w.state_hash(), "a KW19 blob loads with the same hash");
+		CHECK(back.formations[a].order_serial == 17 && back.formations[a].ranged_order_serial == 5 && back.formations[b].order_serial == 2, "the counters survive save / load");
+		CHECK(back.save() == blob, "a loaded world saves the same bytes");
+		CHECK(back.host_order(a, 1, 20.5f, 24.5f, 0) == OK && back.formations[a].order_serial == 18, "a loaded formation keeps counting");
+		std::vector<uint8_t> bad = blob;
+		bad[3] = '6';
+		CHECK(!World(1).load(bad), "an older magic than KW17 (KW16) is refused");
+		// KW18 / KW17 layouts: no counters; they load with 1 / 0
+		const std::vector<uint8_t> old18 = s.w.save_kw18(), old17 = s.w.save_kw17();
+		CHECK(old18.size() > 4 && old18[3] == '8' && old17.size() > 4 && old17[3] == '7', "the test hooks write the KW18 and KW17 layouts");
+		CHECK(old18.size() + 16 * s.w.formations.size() == blob.size(), "KW19 adds exactly two 8-byte counters per formation");
+		World b18(1), b17(1);
+		CHECK(b18.load(old18) && b17.load(old17), "KW18 and KW17 blobs load");
+		check_valid(b18); check_valid(b17);
+		CHECK(b18.formations[a].order_serial == 1 && b18.formations[a].ranged_order_serial == 0 && b18.formations[b].order_serial == 1, "a KW18 blob loads the counters at their defaults (1, 0)");
+		CHECK(b17.formations[a].order_serial == 1 && b17.formations[a].ranged_order_serial == 0, "a KW17 blob loads the counters at their defaults (1, 0)");
+		World ref(1);
+		CHECK(ref.load(blob) && ref.set_order_serials(a, 1, 0) && ref.set_order_serials(b, 1, 0) && ref.state_hash() == b18.state_hash(), "a KW18 blob is the same state as the KW19 one with default counters");
+		CHECK(b18.save().size() == blob.size() && b18.save()[3] == '9', "a loaded KW18 world saves as KW19");
+		CHECK(b18.host_order(a, 0, 0.f, 0.f, 0) == OK && b18.formations[a].order_serial == 2, "a loaded KW18 formation counts from 1");
+	}
+	{   // AI orders count
+		Scene s(1, 64, 48);
+		s.w.cfg.ai = true;
+		int a = s.formation(0, 10, 24, 0, 10, sword());
+		int b = s.formation(1, 30, 24, kPi, 10, sword());
+		s.w.finalize();
+		s.w.formations[b].ai_enabled = false;
+		s.w.order_hold(b);
+		const uint64_t ai0 = s.w.stats.ai_orders;
+		s.run(10.0);
+		const uint64_t issued = s.w.stats.ai_orders - ai0;
+		CHECK(issued > 0, "the AI orders its own formation");
+		CHECK(s.w.formations[a].order_serial == 1 + (int64_t)issued, "every AI order adds one (serial %lld, AI orders %llu)", (long long)s.w.formations[a].order_serial, (unsigned long long)issued);
+		CHECK(s.w.formations[b].order_serial == 1, "the host formation is not counted by the AI");
+	}
+	{   // 1 / 2 / 4 threads: identical hash and counters with AI and host orders
+		auto run = [](int threads, int64_t &sa, int64_t &sb) {
+			Scene s(threads, 64, 48);
+			s.w.cfg.ai = true; s.w.cfg.chunk = 1;
+			int a = s.formation(0, 10, 24, 0, 12, sword());
+			int b = s.formation(1, 30, 24, kPi, 12, sword());
+			s.w.finalize();
+			s.w.formations[b].ai_enabled = false;
+			for (int k = 0; k < 30 * 12; ++k) {
+				if (k % 45 == 0) s.w.host_order(b, (k / 45) % 2 ? 0 : 1, 25.5f, 20.5f + (float)((k / 45) % 3), 0);
+				checked_step(s.w, DT);
+			}
+			sa = s.w.formations[a].order_serial; sb = s.w.formations[b].order_serial;
+			return s.w.state_hash();
+		};
+		int64_t a1 = 0, b1 = 0, a2 = 0, b2 = 0, a4 = 0, b4 = 0;
+		const uint64_t h1 = run(1, a1, b1), h2 = run(2, a2, b2), h4 = run(4, a4, b4);
+		CHECK(h1 == h2 && h1 == h4, "1/2/4 threads give the same hash with order serials");
+		CHECK(a1 == a2 && a1 == a4 && b1 == b2 && b1 == b4 && a1 > 1 && b1 > 1, "1/2/4 threads give the same counters (AI %lld, host %lld)", (long long)a1, (long long)b1);
+	}
+	{   // mid-battle save / load continuation keeps counting identically
+		Scene s(2, 64, 48);
+		s.w.cfg.ai = true;
+		s.formation(0, 10, 24, 0, 10, sword());
+		s.formation(1, 30, 24, kPi, 10, sword());
+		s.w.finalize();
+		s.run(4.0);
+		const std::vector<uint8_t> blob = s.w.save();
+		World back(2);
+		CHECK(!blob.empty() && back.load(blob) && back.state_hash() == s.w.state_hash(), "mid-battle KW19 save loads with the same hash");
+		for (int k = 0; k < 30 * 8; ++k) { checked_step(s.w, DT); checked_step(back, DT); }
+		CHECK(back.state_hash() == s.w.state_hash() && back.formations[0].order_serial == s.w.formations[0].order_serial
+		      && back.formations[1].order_serial == s.w.formations[1].order_serial, "the loaded copy issues the same AI orders and counts identically");
+	}
+}
+
 int main() {
 	#ifdef _WIN32
 	SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
@@ -2258,6 +2384,7 @@ int main() {
 	test_cavalry();
 	test_cavalry_charge();
 	test_cavalry_speed();
+	test_order_serial();
 	std::printf("\n%d checks, %d failures\n", checks, failures);
 	return failures ? 1 : 0;
 }

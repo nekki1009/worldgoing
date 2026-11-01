@@ -33,9 +33,20 @@ int main(void) {
 		if (hp > 0 && ko > 0) ++down;
 	}
 	/* one decision owner: b is AI-owned (default) and refuses host orders; a is handed to the host */
+	int64_t serial_a0 = 0, ranged_a0 = 0, serial_b0 = 0, ranged_b0 = 0, serial_a1 = 0, ranged_a1 = 0, serial_b1 = 0, ranged_b1 = 0;
+	int serials_ok = wg_crowd_get_order_serials(c, a, &serial_a0, &ranged_a0) && wg_crowd_get_order_serials(c, b, &serial_b0, &ranged_b0);
 	int refused = wg_crowd_order_hold(c, b) == WG_NOT_OWNER;
 	wg_crowd_set_order_owner(c, a, 0);
 	int accepted = wg_crowd_order_hold(c, a) == WG_OK;
+	/* ORDSERIAL: the accepted host order adds one to a; the refused one leaves b as it was; ranged counters stay */
+	serials_ok = serials_ok && wg_crowd_get_order_serials(c, a, &serial_a1, &ranged_a1) && wg_crowd_get_order_serials(c, b, &serial_b1, &ranged_b1)
+		&& serial_a0 >= 1 && serial_a1 == serial_a0 + 1 && serial_b1 == serial_b0 && ranged_a1 == ranged_a0 && ranged_b1 == ranged_b0;
+	serials_ok = serials_ok && !wg_crowd_get_order_serials(c, 2, &serial_a1, &ranged_a1) && !wg_crowd_set_order_serials(c, a, 0, 0)
+		&& !wg_crowd_set_order_serials(c, a, 1, -1) && !wg_crowd_set_order_serials(c, a, 2147483648LL, 0) && !wg_crowd_set_order_serials(c, 2, 1, 0)
+		&& wg_crowd_get_order_serials(c, a, &serial_a1, &ranged_a1) && serial_a1 == serial_a0 + 1
+		&& wg_crowd_set_order_serials(c, a, serial_a0 + 1, ranged_a0 + 3) && wg_crowd_get_order_serials(c, a, &serial_a1, &ranged_a1)
+		&& serial_a1 == serial_a0 + 1 && ranged_a1 == ranged_a0 + 3;
+
 	/* SiteStore boundary round trip */
 	wg_soldier_state st0; wg_crowd_get_soldier_state(c, 5, &st0);
 	wg_crowd_set_soldier_state(c, 5, &st0);
@@ -62,7 +73,11 @@ int main(void) {
 	int loaded = wg_crowd_load(r, blob, size);
 	for (int s = 0; s < 300; ++s) if (!wg_crowd_step(r, 1.f / 30.f) || !wg_crowd_validate(r)) { fprintf(stderr,"invalid restored C API step\n"); return 2; }
 	int same = loaded && wg_crowd_state_hash(r) == wg_crowd_state_hash(c);
-	printf("owner refused=%d accepted=%d state_ok=%d save=%lld bytes load=%d same_after_load=%d\n", refused, accepted, state_ok, (long long)size, loaded, same);
+	{ /* ORDSERIAL: the loaded copy carries the saved counters */
+		int64_t so = 0, sr = 0, lo = 0, lr = 0;
+		serials_ok = serials_ok && wg_crowd_get_order_serials(c, a, &so, &sr) && wg_crowd_get_order_serials(r, a, &lo, &lr) && so == lo && sr == lr && sr == ranged_a0 + 3;
+	}
+	printf("owner refused=%d accepted=%d state_ok=%d serials_ok=%d save=%lld bytes load=%d same_after_load=%d\n", refused, accepted, state_ok, serials_ok, (long long)size, loaded, same);
 	wg_crowd_destroy(r);
 	free(blob);
 	double morale_b; int routed_b, cmd_b, order_b;
@@ -71,5 +86,5 @@ int main(void) {
 	       morale_b, routed_b, (unsigned long long)wg_crowd_state_hash(c));
 	free(buf);
 	wg_crowd_destroy(c);
-	return (bad == 0 && down + deaths > 0 && visible == 200 - deaths && refused && accepted && state_ok && same) ? 0 : 1;
+	return (bad == 0 && down + deaths > 0 && visible == 200 - deaths && refused && accepted && state_ok && serials_ok && same) ? 0 : 1;
 }

@@ -1032,6 +1032,18 @@ void m_formation_refs(CALL_ARGS) {
 	const auto f=w.get_formation_state((int)i); std::vector<int64_t> refs{f.formal_person,f.acting_person,f.current_person,f.target_person};
 	refs.insert(refs.end(),f.officer_persons.begin(),f.officer_persons.end()); return_longs(r,refs);
 }
+// ORDSERIAL: order_serials(formation) -> [order_serial, ranged_order_serial] (empty: no such formation);
+// set_order_serials(formation, order_serial, ranged_order_serial) -> World::set_order_serials.
+void m_order_serials(CALL_ARGS) {
+	SELF; NEED(1); WORLD; int64_t i;
+	if(!arg_int(a[0],i) || i<0 || i>=(int64_t)w.formations.size()) { return_longs(r,{}); return; }
+	return_longs(r,{w.formations[i].order_serial,w.formations[i].ranged_order_serial});
+}
+void m_set_order_serials(CALL_ARGS) {
+	SELF; NEED(3); WORLD; int64_t i,order,ranged;
+	ret_bool(r,arg_int(a[0],i) && arg_int(a[1],order) && arg_int(a[2],ranged) && i>=0 && i<(int64_t)w.formations.size()
+		&& w.set_order_serials((int)i,order,ranged));
+}
 void m_set_formation_state(CALL_ARGS) {
 	SELF; NEED(3); WORLD; int64_t i;
 	void *data=arg_packed(a[1],DOUBLES),*refs=arg_packed(a[2],LONGS);
@@ -1471,6 +1483,8 @@ void initialize(void *, GDExtensionInitializationLevel level) {
 	add_method("get_formation_state", m_get_formation_state, {{INT,"formation"}}, DOUBLES);
 	add_method("formation_refs", m_formation_refs, {{INT,"formation"}}, LONGS);
 	add_method("set_formation_state", m_set_formation_state, {{INT,"formation"},{DOUBLES,"values"},{LONGS,"refs"}}, BOOL);
+	add_method("order_serials", m_order_serials, {{INT,"formation"}}, LONGS);
+	add_method("set_order_serials", m_set_order_serials, {{INT,"formation"},{INT,"order_serial"},{INT,"ranged_order_serial"}}, BOOL);
 	add_method("set_garrisoned", m_set_garrisoned, {{INT,"formation"},{INT,"enabled"}}, BOOL);
 	add_method("get_garrisoned", m_get_garrisoned, {{INT,"formation"}}, BOOL);
 	add_method("set_military_role", m_set_military_role, {{INT,"soldier"},{INT,"role"}}, BOOL);

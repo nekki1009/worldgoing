@@ -2091,7 +2091,18 @@ void World::compact_slots(Formation &f) {
 }
 
 // External command boundary. Internal AI/rout/return callers retain clipped order_* semantics.
+// ORDSERIAL: every accepted order (OK) adds one to the formation's order_serial; a refusal changes nothing. An accepted HOLD
+// starts the same D77 order preparation (order_delay) as TerrainArmy._issue_combat_order gives every accepted order.
 int World::host_order(int fi, int kind, float gx, float gy, double x) {
+	const int code = host_order_impl(fi, kind, gx, gy, x);
+	if (code == OK) {
+		if (kind == 0) formations[fi].order_delay = 0.5 * (1.0 - command_effect(fi, 0, 0.20));
+		bump_order_serial(fi);
+	}
+	return code;
+}
+
+int World::host_order_impl(int fi, int kind, float gx, float gy, double x) {
 	if (fi < 0 || fi >= (int)formations.size()) return BAD_FORMATION;
 	const Formation &f = formations[fi];
 	if (f.no_orders || f.garrisoned) return NO_ORDERS;
@@ -3964,6 +3975,7 @@ uint64_t World::state_hash() const {
 		m(f.garrisoned); m(f.reslot_pending); m(f.rest_gx); m(f.rest_gy); m(f.rest_gf); m(f.rest_slots);
 		m(f.charge_stage); m(f.charge_dx); m(f.charge_dy); m(f.charge_tx); m(f.charge_ty); m(f.rally_x); m(f.rally_y);
 		m(f.charge_target_form); m(f.charge_t); m(f.charge_cols); m(f.charge_runs); m(f.cav_layout); // CAV-4a charge cycle, mounted layout
+		m(f.order_serial); m(f.ranged_order_serial); // ORDSERIAL
 		m(f.cols); m(f.spacing); m(f.field); m(f.lag); m(f.command_dirty); m(f.commander_present); m(f.resupplying); m(f.charged_this_step);
 	}
 	m(tick); m(exchange_round); m(shot_serial); m(time);

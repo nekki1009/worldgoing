@@ -43,7 +43,7 @@ void World::issue(Formation &f, int fi, Order o, float gx, float gy, int tgt) {
 	default: ok = false;
 	}
 	f.ai_order_cd = ok ? ORDER_DELAY : FAILED_RETRY;
-	if (ok) stats.ai_orders++;
+	if (ok) { stats.ai_orders++; bump_order_serial(fi); } // ORDSERIAL: an AI order is an issued order
 }
 
 void World::ai_review() {
@@ -173,7 +173,7 @@ void World::ai_review() {
 			if (f.order == Order::RALLY) { f.ai_status = AI_CHARGE; continue; } // a host rally runs to its end first
 			if (f.order == Order::CHARGE) { if (f.charge_stage != CS_NONE) f.charge_target_form = nearest; f.ai_target = tgt; f.ai_status = AI_CHARGE; continue; }
 			if (!contact && distance <= cav::CHARGE_RANGE && f.ai_order_cd <= 0) {
-				if (order_charge((int)fi, 0.f, 0.f, nearest)) { f.ai_order_cd = ORDER_DELAY; stats.ai_orders++; f.ai_target = tgt; f.ai_status = AI_CHARGE; continue; }
+				if (order_charge((int)fi, 0.f, 0.f, nearest)) { f.ai_order_cd = ORDER_DELAY; stats.ai_orders++; bump_order_serial((int)fi); f.ai_target = tgt; f.ai_status = AI_CHARGE; continue; }
 				f.ai_order_cd = FAILED_RETRY;
 			}
 		}

@@ -9500,6 +9500,39 @@ func _region_delivery_team(original: TerrainLab, reference: Dictionary) -> Terra
 	return null
 
 
+## ORDSERIAL: the receiving team of a Region nation command. Under an active crowd it is that crowd's command owner
+## (RegionAI.command_team_owners: one CrowdPersonOwner per native formation with an army record); the disabled
+## TerrainArmy slot of a crowd team never stands in for it. Otherwise the original TerrainArmy (_region_delivery_team).
+## _region_delivery_team itself stays the grid team of the army command paths (prepare_region_carried_command and its receive).
+func _region_nation_team(original: TerrainLab, reference: Dictionary) -> Variant:
+	if original.crowd_site == null or not original.crowd_site.active: return _region_delivery_team(original, reference)
+	var refs: Dictionary = original.terrain.site.get("travel_identity", {}).get("refs", {}).get("team", {})
+	for team: Variant in RegionAI.command_team_owners(original):
+		if refs.get(str(int(team.team_id)), {}) == reference: return team
+	return null
+
+
+## ORDSERIAL: the original order preparation still to pay: TerrainArmy._order_delay, or the native formation's
+## order_delay for a crowd team (the same D77 rule; a crowd HOLD starts it in World::host_order).
+static func _region_team_order_delay(team: Variant) -> float:
+	if team is CrowdPersonOwner: return float(team.crowd_site.formation_state(int(team.formation_index)).get("order_delay", 0.0))
+	return float(team._order_delay)
+
+
+## ORDSERIAL: the captain's own public HOLD. A crowd team takes it through crowd_site.issue_order with source "ui":
+## the formation leaves its tactical AI like TerrainArmy.issue_combat_order pauses the policy, and the accepted
+## order adds one to the native order serial.
+static func _region_team_hold(team: Variant) -> Dictionary:
+	if team is CrowdPersonOwner: return team.crowd_site.issue_order(int(team.team_id), TerrainArmy.CombatOrder.HOLD, Vector2i(-1, -1), -1, "ui")
+	return team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.HOLD)
+
+
+## ORDSERIAL: the captain restores the tactical policy it had before the command (crowd: the formation's AI owner).
+static func _region_team_restore_policy(team: Variant) -> Dictionary:
+	if team is CrowdPersonOwner: return team.crowd_site.set_team_ai(int(team.team_id), true)
+	return team.set_tactical_ai_enabled(team.current_commander, true)
+
+
 func _region_delivery_person(original: TerrainLab, reference: Dictionary) -> Dictionary:
 	for key: String in original.terrain.site.get("travel_identity", {}).get("refs", {}).get("person", {}):
 		if RegionAI.person_ref(original.terrain.site, int(key)) != reference: continue
@@ -9747,7 +9780,7 @@ func _region_remote_nation_source(command: Dictionary) -> Dictionary:
 	var bind := original.region_bind_receipt(original.terrain)
 	if _region_bound_original_lab(original.terrain) != original or original.site_controller.region_slot != self \
 		or not bind.get("complete", false) or int(bind.get("generation", -1)) != int(_marker.generation): return fail("COMMITTED_UNBOUND")
-	if original.crowd_site != null and original.crowd_site.active: return fail("UNSUPPORTED_BACKEND")
+	# ORDSERIAL: an active crowd source is admitted; its issuer and nation offices resolve through the crowd-aware person paths.
 	var issuer := _region_delivery_person(original, command.issuer_ref)
 	if issuer.is_empty(): return fail("SOURCE_COMMANDER_MISSING")
 	if float(issuer.hp) <= 0.0: return fail("SOURCE_COMMANDER_DEAD")
@@ -9815,10 +9848,10 @@ func prepare_region_carried_nation_command(courier_dispatch: Dictionary, source_
 	var actual_receiver: Dictionary = region_owner_lab.call(receiver_scope, requested_mode)
 	if not actual_receiver.get("ok", false) or not actual_receiver.get("lab") is TerrainLab: return actual_receiver
 	var receiver_lab: TerrainLab = actual_receiver.lab
-	var receiver_team := _region_delivery_team(receiver_lab, receiver_team_ref)
+	var receiver_team: Variant = _region_nation_team(receiver_lab, receiver_team_ref)
 	var membership := _region_remote_team_membership(authority, receiver_lab, receiver_team, nation_ref)
 	if not membership.ok: return membership
-	var receiver_id := receiver_team.combat_identity(receiver_team.current_commander)
+	var receiver_id: int = receiver_team.combat_identity(receiver_team.current_commander)
 	var prepared := prepare_region_carried_report(courier_dispatch, source_receipt_id, receiver_scope, receiver_id)
 	if not prepared.ok: return prepared
 	var report: Dictionary = courier_dispatch.carried_reports.pop_back()
@@ -9842,7 +9875,7 @@ func _region_receive_nation_command(report: Dictionary, original: TerrainLab, re
 	if not authority.ok:
 		if str(authority.get("code", "")) in ["COMMITTED_UNBOUND", "MISSING_REGION_ADAPTER", "UNSUPPORTED_BACKEND"]: return authority
 		return {"ok": true, "delivered": false, "receipt": {"code": str(authority.get("code", "SOURCE_AUTHORITY_CHANGED")), "complete": true, "effects_complete": true}}
-	var team := _region_delivery_team(original, command.receiver_team_ref)
+	var team: Variant = _region_nation_team(original, command.receiver_team_ref)
 	var membership := _region_remote_team_membership(authority, original, team, command.nation_ref)
 	if not membership.ok or membership.get("commander_ref") != report.delivery.receiver_ref: return {"ok": true, "delivered": false, "receipt": {"code": "REMOTE_MEMBERSHIP_CHANGED", "complete": true, "effects_complete": true}}
 	if int(team.get_order_serial()) != int(command.receiver_order_serial) or int(team.ranged_order_serial) != int(command.receiver_ranged_order_serial):
@@ -9850,14 +9883,14 @@ func _region_receive_nation_command(report: Dictionary, original: TerrainLab, re
 	var before_serial := int(team.get_order_serial())
 	var before_ranged := int(team.ranged_order_serial)
 	var prior_tactical_policy := bool(team.tactical_ai_enabled)
-	var accepted := team.issue_combat_order(team.current_commander, TerrainArmy.CombatOrder.HOLD)
+	var accepted := _region_team_hold(team)
 	if not accepted.ok: return {"ok": true, "delivered": false, "receipt": {"code": "ORIGINAL_COMMAND_REJECTED", "complete": true, "effects_complete": true}}
 	var effect := {"kind": "original_nation_dispatch", "execution": "pending", "nation_ref": command.nation_ref.duplicate(true),
 		"receiver_team_ref": command.receiver_team_ref.duplicate(true), "receiver_ref": report.delivery.receiver_ref.duplicate(true),
 		"before_order_serial": before_serial, "accepted_order_serial": int(team.get_order_serial()),
 		"before_ranged_order_serial": before_ranged, "accepted_ranged_order_serial": int(team.ranged_order_serial),
 		"prior_tactical_ai_enabled": prior_tactical_policy,
-		"original_order_delay": float(team._order_delay), "received_action_seconds": float(control.fire_clock.action_seconds),
+		"original_order_delay": _region_team_order_delay(team), "received_action_seconds": float(control.fire_clock.action_seconds),
 		"received_game_seconds": float(control.logical_game_seconds)}
 	return {"ok": true, "delivered": true, "effect": effect}
 
@@ -9872,13 +9905,13 @@ func _region_authorize_received_nation_dispatch(original: TerrainLab, team_id: i
 	var command: Dictionary = report.delivery.command
 	var authority := _region_remote_nation_source(command)
 	if not authority.ok: return authority
-	var team := _region_delivery_team(original, command.receiver_team_ref)
+	var team: Variant = _region_nation_team(original, command.receiver_team_ref)
 	var membership := _region_remote_team_membership(authority, original, team, command.nation_ref)
 	if not membership.ok: return membership
 	var effect: Dictionary = report.delivery.result.effect
-	if team.team_id != team_id or membership.commander_ref != report.delivery.receiver_ref \
+	if int(team.team_id) != team_id or membership.commander_ref != report.delivery.receiver_ref \
 		or int(team.get_order_serial()) != int(effect.accepted_order_serial) or int(team.ranged_order_serial) != int(effect.accepted_ranged_order_serial): return fail("COMMAND_SUPERSEDED")
-	if float(team._order_delay) > TerrainLab.ACTION_TIME_EPSILON: return fail("ORIGINAL_COMMAND_DELAY")
+	if _region_team_order_delay(team) > TerrainLab.ACTION_TIME_EPSILON: return fail("ORIGINAL_COMMAND_DELAY")
 	if float(report.receipt.expires_at) <= float(control.logical_game_seconds): return fail("SOURCE_COMMAND_EXPIRED")
 	if not RegionAI.receiver_matches(report.delivered_receipt, team.combat_identity(team.current_commander), str(original.terrain.site.id), membership.commander_ref) \
 		or not RegionAI.view(region_registry(), team.combat_identity(team.current_commander), float(control.logical_game_seconds), str(original.terrain.site.id), membership.commander_ref).has(target_site): return fail("UNKNOWN_COMMAND_TARGET")
@@ -9917,11 +9950,11 @@ func _region_commit_received_nation_execution(registry: Dictionary, prepared: Di
 	var original: TerrainLab = prepared.lab
 	var authority := _region_remote_nation_source(command)
 	if not authority.ok: return authority
-	var team := _region_delivery_team(original, command.receiver_team_ref)
+	var team: Variant = _region_nation_team(original, command.receiver_team_ref)
 	var membership := _region_remote_team_membership(authority, original, team, command.nation_ref)
 	if not membership.ok or membership.get("commander_ref") != report.delivery.receiver_ref: return fail("REMOTE_MEMBERSHIP_CHANGED")
 	var effect: Dictionary = report.delivery.result.effect
-	if float(team._order_delay) > TerrainLab.ACTION_TIME_EPSILON or int(team.get_order_serial()) != int(effect.accepted_order_serial) \
+	if _region_team_order_delay(team) > TerrainLab.ACTION_TIME_EPSILON or int(team.get_order_serial()) != int(effect.accepted_order_serial) \
 		or int(team.ranged_order_serial) != int(effect.accepted_ranged_order_serial): return fail("COMMAND_SUPERSEDED")
 	effect.execution = "dispatched"
 	effect.execution_receipt = {"code": "DISPATCHED", "complete": true, "effects_complete": true, "transfer_token": token,
@@ -9960,12 +9993,12 @@ func _region_finalize_received_nation_commands() -> Dictionary:
 		var owner: Dictionary = region_owner_lab.call(scope, mode)
 		if not owner.get("ok", false) or not owner.get("lab") is TerrainLab: return owner
 		var original: TerrainLab = owner.lab
-		var team := _region_delivery_team(original, command.receiver_team_ref)
+		var team: Variant = _region_nation_team(original, command.receiver_team_ref)
 		if team == null:
 			_region_nation_execution_failed(report, "RECEIVER_TEAM_MISSING")
 			changed = true
 			continue
-		if float(team._order_delay) > TerrainLab.ACTION_TIME_EPSILON: continue
+		if _region_team_order_delay(team) > TerrainLab.ACTION_TIME_EPSILON: continue
 		var authority := _region_remote_nation_source(command)
 		if not authority.ok:
 			if str(authority.get("code", "")) in ["COMMITTED_UNBOUND", "MISSING_REGION_ADAPTER", "UNSUPPORTED_BACKEND"]: return authority
@@ -9984,7 +10017,7 @@ func _region_finalize_received_nation_commands() -> Dictionary:
 		# order API. That API pauses tactical policy; restore the pre-existing
 		# policy through its original public caller after the paid delay.
 		if bool(report.delivery.result.effect.prior_tactical_ai_enabled) and not team.tactical_ai_enabled:
-			var restored_policy := team.set_tactical_ai_enabled(team.current_commander, true)
+			var restored_policy := _region_team_restore_policy(team)
 			if not restored_policy.ok:
 				_region_nation_execution_failed(report, "ORIGINAL_POLICY_REJECTED")
 				changed = true
@@ -9997,7 +10030,7 @@ func _region_finalize_received_nation_commands() -> Dictionary:
 			changed = true
 			continue
 		var component := RegionTravelSite.start_component(self, _coordinate(original.terrain).site, commander.cell, original.terrain)
-		var prepared := prepare_npc_region_dispatch(original, str(command.nation_id), team.team_id,
+		var prepared := prepare_npc_region_dispatch(original, str(command.nation_id), int(team.team_id),
 			Vector2i(int(command.target_coordinate[0]), int(command.target_coordinate[1])), component, [], transfer_token, str(report.id))
 		if not prepared.ok:
 			if str(prepared.get("code", "")) in ["BUSY", "NOT_READY", "PLAYER_BARRIER", "ORIGINAL_COMMAND_DELAY", "RELATION_OPEN"]: continue
@@ -10063,7 +10096,7 @@ func _region_produce_remote_nation_dispatch(source_lab: TerrainLab) -> Dictionar
 			var party := _region_npc_party(remote_token, true) # An entered cohort: read its frozen stable references.
 			if not party.ok: return party
 			var remote_ref: Dictionary = party.party.content.get("travel_identity", {}).get("refs", {}).get("team", {}).get(str(int(request.team_id)), {})
-			var remote_team := _region_delivery_team(original, remote_ref)
+			var remote_team: Variant = _region_nation_team(original, remote_ref)
 			var membership := _region_remote_team_membership(authority, original, remote_team, nation_ref)
 			if not membership.ok: continue
 			var own := RegionAI.dispatch_ready_summary(remote_team, original, thresholds)

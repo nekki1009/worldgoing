@@ -151,6 +151,12 @@ void wg_crowd_set_soldier_state(wg_crowd *c, int soldier, const wg_soldier_state
 void wg_crowd_get_soldier_state(const wg_crowd *c, int soldier, wg_soldier_state *s);
 void wg_crowd_set_formation_state(wg_crowd *c, int formation, const wg_formation_state *s);
 void wg_crowd_get_formation_state(const wg_crowd *c, int formation, wg_formation_state *s);
+/* ORDSERIAL: the formation's issued-order counter (starts at 1, +1 on every accepted host order and every native AI order)
+ * and the host's ranged order counter kept with it. Saved (KW19) and hashed. get: 1 and both values written, or 0 for a bad
+ * formation / NULL pointer. set: 1 on success; 0 (nothing written) unless 1 <= order_serial <= 2147483647 and
+ * 0 <= ranged_order_serial <= 2147483647. */
+int wg_crowd_get_order_serials(const wg_crowd *c, int formation, int64_t *order_serial, int64_t *ranged_order_serial);
+int wg_crowd_set_order_serials(wg_crowd *c, int formation, int64_t order_serial, int64_t ranged_order_serial);
 int wg_crowd_get_officers(const wg_crowd *c, int f, int64_t *ids, int capacity);
 int wg_crowd_set_officers(wg_crowd *c, int f, const int64_t *ids, int count);
 int wg_crowd_set_soldier_equip(wg_crowd *c, int i, int family, int material, int armor, int shield);

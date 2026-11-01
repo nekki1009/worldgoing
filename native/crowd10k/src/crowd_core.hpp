@@ -251,6 +251,11 @@ struct Formation {
 	int charge_target_form = -1;
 	double charge_t = 0.0;
 	int charge_cols = 0, charge_runs = 0;
+	// ORDSERIAL (saved from KW19, hashed): order_serial counts the issued orders, starting at 1 like TerrainArmy; it grows by
+	// one on every accepted host_order and every native AI order (World::bump_order_serial), so a host holding an older value
+	// knows a newer order was issued (G6 Region nation command, COMMAND_SUPERSEDED). ranged_order_serial is the original
+	// ranged-order counter the host keeps with the formation (CrowdPersonOwner.ranged_order_serial); native never changes it.
+	int64_t order_serial = 1, ranged_order_serial = 0;
 };
 
 struct Config {
@@ -340,6 +345,7 @@ struct FormationState {
 	float goal_x = NAN, goal_y = NAN, goal_facing = NAN, cx = NAN, cy = NAN, facing = NAN, origin_x = NAN, origin_y = NAN, ref_x = NAN, ref_y = NAN;
 	double pursuit_left = 0, order_delay = 0;
 	int attacking = 0, ref_valid = 0, resupplying = 0;
+	int64_t order_serial = -1, ranged_order_serial = -1; // ORDSERIAL: read back by get; an import with -1 leaves the counter as it is
 };
 
 // ---------------------------------------------------------------- presentation (atlas rendering, P2b)
@@ -688,6 +694,13 @@ public:
 	FormationState get_formation_state(int f) const;
 	// single decision owner: an AI-owned formation (ai_enabled) refuses host orders and vice versa
 	int host_order(int f, int kind, float gx, float gy, double x);
+	int host_order_impl(int f, int kind, float gx, float gy, double x); // admission and order of host_order, without ORDSERIAL
+	// ORDSERIAL: the issued-order counters of formation f (see Formation::order_serial). set_order_serials is the host import
+	// (an original team's serials when the crowd takes it over, and the host's ranged order counter): false, and nothing
+	// written, unless 1 <= order_serial <= ORDER_SERIAL_MAX and 0 <= ranged_order_serial <= ORDER_SERIAL_MAX.
+	static constexpr int64_t ORDER_SERIAL_MAX = 2147483647;
+	bool set_order_serials(int f, int64_t order_serial, int64_t ranged_order_serial);
+	void bump_order_serial(int f) { if (f >= 0 && f < (int)formations.size() && formations[f].order_serial < ORDER_SERIAL_MAX) ++formations[f].order_serial; }
 	bool set_sustain_input(int f, bool fully_fed, double delta);
 	bool set_recovery_input(int f, double multiplier);
 	bool set_housing_recovery_input(int f, double multiplier);
@@ -744,6 +757,9 @@ public:
 	// CAV-4a test hook: the same state in the KW17 layout (no charge cycle, no cav_spent); loads with the defaults.
 	std::vector<uint8_t> save_kw17() const;
 	mutable bool kw17_write_ = false;
+	// ORDSERIAL test hook: the same state in the KW18 layout (no order serials); loads with order_serial 1, ranged 0.
+	std::vector<uint8_t> save_kw18() const;
+	mutable bool kw18_write_ = false;
 	bool load(const std::vector<uint8_t> &blob);
 	bool load(const std::vector<uint8_t> &blob, const std::vector<int> &blocked, const std::vector<int64_t> &wreck_exit);
 	bool validate(std::string *error = nullptr, bool allow_site_jobs = true) const;
