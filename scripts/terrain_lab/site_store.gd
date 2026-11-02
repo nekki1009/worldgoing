@@ -3741,7 +3741,7 @@ static func _validate_captivity(data: TerrainData, state: Dictionary, region_con
 	var housing_people := {}
 	for actor: Dictionary in state.get("actors", {}).values():
 		var projection: Dictionary = actor.duplicate()
-		projection["_housing_faction"] = int(actor.faction_id)
+		projection["_housing_faction"] = int(actor.get("faction_id", -1))
 		housing_people[int(actor.person_id)] = projection
 	for team: Dictionary in state.get("armies", []):
 		var roster: Dictionary = team if team.get("crowd") == true else TerrainArmy.normalize_roster_snapshot(team)

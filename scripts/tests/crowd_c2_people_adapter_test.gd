@@ -56,6 +56,7 @@ class NativeFixture extends RefCounted:
 			return {}
 		return {"units": [], "officer_service": [], "officer_order": []}
 	func siege_native_supported() -> bool: return false # No siege crew or native siege methods in this fixture.
+	func person_fighting(_identity: int) -> bool: return false # No combat state is registered in this fixture; the guard reads the persons as peaceful.
 
 class Fixture extends RefCounted:
 	var lab: Variant

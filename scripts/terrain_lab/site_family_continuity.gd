@@ -545,7 +545,8 @@ func set_duty_ai_enabled_in_organization_edit(ticket: Dictionary, revision: int,
 	return changed
 
 func _controlled_id() -> int:
-	return int(lab.terrain.site.get("controlled_person_id", lab.character.person_id))
+	if lab.terrain.site.has("controlled_person_id"): return int(lab.terrain.site.controlled_person_id)
+	return int(lab.character.person_id) if is_instance_valid(lab.character) else -1
 
 func _current_person(identity: int) -> Dictionary:
 	var person: Dictionary = lab._combat_target(identity)

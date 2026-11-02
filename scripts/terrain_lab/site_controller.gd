@@ -6031,7 +6031,7 @@ func order_team_training(team: Variant, requester: int, enabled: bool, training_
 	var prepared: Dictionary = captivity_supply.enable_team(checked.owner)
 	if not prepared.ok: return prepared
 	var entry: Dictionary = prepared.entry
-	if int(entry.version) < 2: entry["version"] = 2
+	if int(entry.get("version", 1)) < 2: entry["version"] = 2
 	entry["training_order"] = true
 	entry["training_requester"] = identity
 	entry["training_feature_id"] = str(checked.feature_id)
@@ -6254,7 +6254,7 @@ func advance_crowd_sustain(elapsed_game_seconds: float) -> void:
 			originals[team_owner.combat_identity(index)] = _actor_supply_adapter(team_owner.actors[index])
 		var members: Dictionary = captivity_supply.team_members(team_owner, originals, feeding, lab.crowd_site._records)
 		# G3: split-shore and ship supply read each member's native cell; the grid path sets the same key.
-		var food_locations: Variant = ship_food_locations(team_owner, members) if int(entry.version) == 3 else null
+		var food_locations: Variant = ship_food_locations(team_owner, members) if int(entry.get("version", 1)) == 3 else null
 		var native_life: Dictionary = {"life": life, "indices": lab.crowd_site._index_by_id} if native_sample and team_owner.get_script() == CrowdPersonOwner \
 			and entry.get("life_checkpoint") is Dictionary and not entry.life_checkpoint.is_typed() and not entry.life_checkpoint.is_read_only() else {}
 		var hot_read := func(identity: int, field: StringName) -> Variant:
