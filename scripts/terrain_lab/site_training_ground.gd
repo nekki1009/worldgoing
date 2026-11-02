@@ -61,7 +61,9 @@ static func inspect(controller: Variant, team_id: int, feature_id: String = "", 
 	for identity: int in members:
 		var person: Dictionary = controller.person_actions._person(identity, false)
 		if person.is_empty() or owner.index_for_identity(identity) < 0 or float(person.hp) <= 0.0 or bool(person.captive): continue
-		if person.moving: stopped = false
+		# Under crowd a member is walking by the settle rule (move goal or SETTLE_SPEED), as _team_stopped reads it; residual drift is settling.
+		var walking: bool = bool(owner.is_walking(owner.index_for_identity(identity))) if owner is CrowdPersonOwner else bool(person.moving)
+		if walking: stopped = false
 		if not owner is TerrainArmy and bool(members[identity].get("present", false)) and not controller.lab.crowd_site.work_fatigue_work_start_ready(identity): stopped = false
 		if float(person.ko) > 0.0: continue
 		if controller.lab._fatigue_threat(person.cell, int(person.faction), person.owner, int(person.unit), threats): safe = false

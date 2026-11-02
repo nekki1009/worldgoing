@@ -24,6 +24,7 @@ static inline int quarter_of(float angle) {
 }
 static inline float quarter_angle(int q) { return q == 0 ? 0.f : q == 1 ? 0.5f * kPi : q == 2 ? kPi : -0.5f * kPi; }
 static const int QX[4] = {1, 0, -1, 0}, QY[4] = {0, 1, 0, -1};
+static constexpr float SEPARATION_REFERENCE_RATE = 30.f; // steps/s the ally/enemy push (cfg.*_push, push_clamp) is tuned at
 // integer offset (x forward, y lateral) rotated by quarter q; same convention as convoy_slot
 static inline void quarter_rotate(int q, int x, int y, int &ox, int &oy) { ox = x * QX[q] - y * QY[q]; oy = x * QY[q] + y * QX[q]; }
 static inline int floor_div(int a, int b) { return (a >= 0) ? a / b : -((-a + b - 1) / b); }
@@ -1969,6 +1970,11 @@ void World::soldier_stage(float dt, int ch) {
 				}
 			float kl = std::sqrt(kx * kx + ky * ky);
 			if (kl > cfg.push_clamp) { kx *= cfg.push_clamp / kl; ky *= cfg.push_clamp / kl; }
+			// The separation push is a displacement tuned per 1/30 s step, while the slot pull it balances is a velocity
+			// (x dt). Scale it to this step so a held soldier's equilibrium does not depend on the action step width:
+			// unscaled, a 1/60 s step (a Site interval clipped at a meal or event boundary) leaves half the push
+			// unbalanced and vx = displacement / dt throws settled HOLD members out at ~1.3 cells/s.
+			kx *= dt * SEPARATION_REFERENCE_RATE; ky *= dt * SEPARATION_REFERENCE_RATE;
 		}
 		qx += kx; qy += ky;
 		if (escorting && escort_goal[i] < 0) { qx = p_x; qy = p_y; }
