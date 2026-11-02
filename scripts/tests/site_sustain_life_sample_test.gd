@@ -7,6 +7,7 @@ const COUNT := 5000
 class LabFixture extends Node2D:
 	var terrain := TerrainData.new()
 	var crowd_site: Node
+	func _region_deferring_endpoint() -> bool: return false # No Region point is pending in this fixture.
 
 class KernelSpy extends RefCounted:
 	var native: RefCounted

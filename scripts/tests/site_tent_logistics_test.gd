@@ -5,6 +5,7 @@ const PersonTest = preload("res://scripts/tests/site_person_actions_test.gd")
 class CrowdFixture extends RefCounted:
 	var active := true
 	func contains_person(identity: int) -> bool: return identity == 3
+	func person_owner(_identity: int) -> Variant: return null # No crowd owner registered in this fixture; real lookup misses too.
 	func reserves_cell(_cell: Vector2i) -> bool: return false
 
 class Fixture extends Node2D:

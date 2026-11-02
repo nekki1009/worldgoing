@@ -29,6 +29,9 @@ class NativeQueryProxy extends RefCounted:
 			damage_started = true
 		native.apply_environment_damage(index, amount)
 	func drain_events() -> PackedInt64Array: return native.drain_events()
+	func peek_events() -> PackedInt64Array: return native.peek_events()
+	func event_fatigue() -> PackedFloat64Array: return native.event_fatigue()
+	func get_military_role(index: int) -> int: return int(native.get_military_role(index))
 	func set_sustain_input(formation: int, fully_fed: bool, delta: float) -> void:
 		native.set_sustain_input(formation, fully_fed, delta)
 

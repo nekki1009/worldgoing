@@ -55,6 +55,7 @@ class NativeFixture extends RefCounted:
 		if _formation in solo_formations:
 			return {}
 		return {"units": [], "officer_service": [], "officer_order": []}
+	func siege_native_supported() -> bool: return false # No siege crew or native siege methods in this fixture.
 
 class Fixture extends RefCounted:
 	var lab: Variant
@@ -106,6 +107,8 @@ class Fixture extends RefCounted:
 	func _combat_target(identity: int) -> Dictionary:
 		var owner: Variant = crowd_site.person_owner(identity)
 		return owner.person(owner.index_for_identity(identity), false) if owner != null else {}
+	func _original_person_target(identity: int, _with_bodies: bool = false) -> Dictionary: return _combat_target(identity) # Real lookup returns the same owner row for crowd people.
+	func _region_deferring_endpoint() -> bool: return false # No Region point is pending in this fixture.
 	func _supply_entry(team: Variant) -> Dictionary:
 		return terrain.site.team_supply.get(str(team.team_id), {})
 	func _align_supply_clock(state: Dictionary, at: float) -> bool:
