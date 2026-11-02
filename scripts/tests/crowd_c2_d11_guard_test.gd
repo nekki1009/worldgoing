@@ -235,7 +235,7 @@ func _natural_escape() -> bool:
 
 func _run() -> void:
 	var args: PackedStringArray = OS.get_cmdline_user_args()
-	if not _check(args.has("--crowd-test") and not args.has("--crowd"), "named isolated ordinary startup is required"): return
+	if not _check(args.has("--crowd-test") and args.has("--grid"), "named isolated grid startup is required"): return
 	out_dir = "res://output/crowd_c2_c3_20261001/d11_guard_%s_%d" % [Time.get_datetime_string_from_system().replace("-", "").replace(":", "").replace("T", "_"), Time.get_ticks_msec()]
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(out_dir))
 	var ignore: FileAccess = FileAccess.open(out_dir.path_join(".gdignore"), FileAccess.WRITE)

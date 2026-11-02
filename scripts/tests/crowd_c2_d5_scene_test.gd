@@ -15,7 +15,7 @@ func check(ok: bool, label: String, details: Variant = null) -> bool:
 
 func _run() -> void:
 	create_timer(180.0).timeout.connect(func() -> void: quit(3))
-	if not check(OS.get_cmdline_user_args().has("--crowd-test") and not OS.get_cmdline_user_args().has("--crowd"), "start with ordinary owners in isolated Site"): return
+	if not check(OS.get_cmdline_user_args().has("--crowd-test") and OS.get_cmdline_user_args().has("--grid"), "start with grid owners (--grid) in isolated Site"): return
 	# Native rule (RULES_COVERAGE.md:39): a MOVE formation pauses while any member is in melee reach.
 	# Phase 1 keeps the adjacent enemies and documents that rule. Phase 2 separates the sides so the MOVE can progress.
 	if not await _scenario(true): return

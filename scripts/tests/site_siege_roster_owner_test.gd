@@ -23,7 +23,7 @@ func _report() -> void:
 
 func _run() -> void:
 	create_timer(120.0).timeout.connect(func() -> void: _expect(false, "roster owner deadline"); quit(3))
-	if not _expect(not OS.get_cmdline_user_args().has("--crowd"), "original GD ownership fixture"): return
+	if not _expect(OS.get_cmdline_user_args().has("--grid"), "original GD ownership fixture"): return
 	if not _preflight(): return
 	if not _roster_scene() or not _attached_split_merge(): return
 	roundtrip_lab.free()

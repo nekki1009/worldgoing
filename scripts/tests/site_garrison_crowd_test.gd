@@ -18,7 +18,7 @@ func _actual_ids(lab: TerrainLab) -> Array[int]:
 func _run() -> void:
 	deadline = Time.get_ticks_msec() + 220000
 	var args := OS.get_cmdline_user_args()
-	assert(args.has("--crowd-test") and args.has("--crowd-atlas-root") and not args.has("--crowd"))
+	assert(args.has("--crowd-test") and args.has("--crowd-atlas-root") and args.has("--grid"))
 	assert(DisplayServer.get_name() != "headless")
 	var data := _building_fixture()
 	var lab := _building_lab(data)

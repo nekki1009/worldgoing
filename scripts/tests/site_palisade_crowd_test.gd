@@ -38,7 +38,7 @@ func _is_complete(data: TerrainData, key: String) -> bool:
 
 func _run() -> void:
 	var args := OS.get_cmdline_user_args()
-	check(args.has("--crowd-test") and args.has("--crowd-atlas-root") and not args.has("--crowd"), "isolated crowd test with atlas root and without --crowd")
+	check(args.has("--crowd-test") and args.has("--crowd-atlas-root") and args.has("--grid"), "grid-mode atlas test with atlas root and --grid")
 	check(DisplayServer.get_name() != "headless", "crowd appearance is prepared by the original GPU atlas owner")
 	var data: TerrainData = _building_fixture()
 	var lab: TerrainLab = _building_lab(data)

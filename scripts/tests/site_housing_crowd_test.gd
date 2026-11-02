@@ -293,7 +293,7 @@ func _housing_roundtrip(lab: TerrainLab, captain: int, identities: Array[int], o
 func _run() -> void:
 	deadline = Time.get_ticks_msec() + 600000 # Bound original atlas preparation before measuring gameplay.
 	var args := OS.get_cmdline_user_args()
-	assert(args.has("--crowd-test") and args.has("--crowd-atlas-root") and not args.has("--crowd"))
+	assert(args.has("--crowd-test") and args.has("--crowd-atlas-root") and args.has("--grid"))
 	assert(DisplayServer.get_name() != "headless", "Original native D5 visual/recipe fixture requires the bounded GPU verifier")
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	Engine.max_fps = 0

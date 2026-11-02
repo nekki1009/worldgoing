@@ -198,7 +198,7 @@ func _run() -> void:
 	if not _check(not gpu or DisplayServer.get_name() != "headless", "GPU case requires the actual renderer"): return
 	var at := args.find("--case")
 	if at >= 0 and at + 1 < args.size(): case_name = args[at + 1]
-	if not _check(args.has("--crowd-test") and not args.has("--crowd") and case_name in ["restore", "barrier"], "ordinary isolated startup and explicit fault case"): return
+	if not _check(args.has("--crowd-test") and args.has("--grid") and case_name in ["restore", "barrier"], "ordinary isolated startup and explicit fault case"): return
 	output = "res://output/crowd_c2_c3_b_atlas_20261001/clear_transaction_" + args[args.find("--crowd-test") + 1] + "_" + case_name
 	if not _check(not DirAccess.dir_exists_absolute(output) and DirAccess.make_dir_recursive_absolute(output) == OK, "fresh evidence directory"): return
 	create_timer(240.0).timeout.connect(func() -> void: _write(false); printerr("GATE FAIL: transaction deadline"); quit(3))

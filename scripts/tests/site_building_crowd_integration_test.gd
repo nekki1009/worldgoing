@@ -40,7 +40,7 @@ func _escort_trace(lab: TerrainLab, captive_id: int, prison_key: String, frame: 
 func _run() -> void:
 	deadline = Time.get_ticks_msec() + 220000
 	var args := OS.get_cmdline_user_args()
-	assert(args.has("--crowd-test") and args.has("--crowd-atlas-root") and not args.has("--crowd"))
+	assert(args.has("--crowd-test") and args.has("--crowd-atlas-root") and args.has("--grid"))
 	assert(DisplayServer.get_name() != "headless", "The exact captured appearance is prepared by the original GPU atlas owner")
 	var data: TerrainData = _building_fixture()
 	var lab: TerrainLab = _building_lab(data)

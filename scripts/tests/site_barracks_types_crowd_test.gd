@@ -27,7 +27,7 @@ func _types_persistent_fixture() -> TerrainData:
 
 func _types_require_native() -> void:
 	var args := OS.get_cmdline_user_args()
-	assert(args.has("--crowd-test") and args.has("--crowd-atlas-root") and not args.has("--crowd"))
+	assert(args.has("--crowd-test") and args.has("--crowd-atlas-root") and args.has("--grid"))
 	assert(DisplayServer.get_name() != "headless" and ClassDB.class_has_method(&"ArmyCrowd", &"set_recovery_input"), "Publish the accepted new DLL before this test")
 
 func _types_enter_crowd(lab: TerrainLab, row: Dictionary) -> Node:

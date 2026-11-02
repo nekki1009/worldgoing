@@ -548,7 +548,7 @@ func _run() -> void:
 	var args: PackedStringArray = OS.get_cmdline_user_args()
 	var at := args.find("--case")
 	if at >= 0 and at + 1 < args.size(): case_name = args[at + 1]
-	if not _check(args.has("--crowd-test") and not args.has("--crowd") and case_name in ["orders", "captivity", "capacity", "lifecycle", "missingasset"], "isolated ordinary startup and explicit boundary case are required"): return
+	if not _check(args.has("--crowd-test") and args.has("--grid") and case_name in ["orders", "captivity", "capacity", "lifecycle", "missingasset"], "isolated ordinary startup and explicit boundary case are required"): return
 	var stamp: String = Time.get_datetime_string_from_system().replace("-", "").replace(":", "").replace("T", "_")
 	out_dir = "res://output/crowd_c2_c3_b_atlas_20261001/boundary_%s_%s_%d" % [case_name, stamp, Time.get_ticks_msec()]
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(out_dir))

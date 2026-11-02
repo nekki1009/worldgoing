@@ -23,7 +23,7 @@ func _time() -> float:
 
 func _run() -> void:
 	var args := OS.get_cmdline_user_args()
-	crowd_mode = args.has("--crowd")
+	crowd_mode = not args.has("--grid")
 	if not _check(args.has("--crowd-test"), "isolated named test required"): quit(2); return
 	create_timer(240.0).timeout.connect(func() -> void: printerr("GATE FAIL: sustain scene deadline"); quit(3))
 	var stamp := Time.get_datetime_string_from_system().replace("-", "").replace(":", "").replace("T", "_")

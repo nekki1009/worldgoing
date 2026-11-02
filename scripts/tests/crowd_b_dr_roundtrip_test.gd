@@ -944,7 +944,7 @@ func _run() -> void:
 	if ignore != null: ignore.close()
 	create_timer(900.0).timeout.connect(func() -> void: failed = true; _write(); printerr("GATE FAIL: DR 900-second deadline"); quit(3))
 	if case_name == "dr-restart":
-		if not _check(not args.has("--crowd"), "independent ordinary restart must omit --crowd"): return
+		if not _check(args.has("--grid"), "independent ordinary restart must pass --grid"): return
 		if not await _restart(): return
 	else:
 		if not _ordinary_start() or not _sources(): return

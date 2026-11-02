@@ -4,8 +4,8 @@ signal events_received(events: PackedInt64Array)
 
 # crowd10k C1: the native crowd (ArmyCrowd) inside the formal TerrainLab Site scene.
 #
-# Enabled only when the game is started with the user argument --crowd (run_crowd_lab.bat); without it
-# TerrainLab is exactly the original TerrainArmy game.
+# Default Site army model since stage 1 (2026-11-02). Crowd is on unless the game is started with the user
+# argument --grid, which keeps the retired TerrainArmy grid path for debugging. --crowd is still accepted as a no-op.
 #
 # C1 scope:
 #  - Deploy: the Site's own trial-deployment UI (SiteController._deploy_trial_armies) and formation
@@ -145,7 +145,7 @@ func reserves_cell(cell: Vector2i, ignored_ids: Array = []) -> bool:
 
 
 static func requested() -> bool:
-	return OS.get_cmdline_user_args().has("--crowd")
+	return not OS.get_cmdline_user_args().has("--grid")
 
 
 func setup(lab_node: Node2D) -> void:

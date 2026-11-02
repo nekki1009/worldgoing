@@ -15,7 +15,7 @@ func _initialize() -> void:
 
 func _run() -> void:
 	create_timer(120.0).timeout.connect(func() -> void: _expect(false, "wreck loot bounded deadline"); quit(3))
-	if not _expect(loot_owner_case in ["present", "cleared"] and not OS.get_cmdline_user_args().has("--crowd"), "known GD original-person wreck case"): return
+	if not _expect(loot_owner_case in ["present", "cleared"] and OS.get_cmdline_user_args().has("--grid"), "known GD original-person wreck case"): return
 	if not _preflight() or not _new_lab() or not _loot_fixture(): return
 	if not _loot_boundaries() or not _roundtrip() or not _continue_loaded_loot(): return
 	if not _expect(loot_checks_done and test_roundtrips == 1 and not test_failed, "real loot, full file roundtrip and continuation all completed"): return

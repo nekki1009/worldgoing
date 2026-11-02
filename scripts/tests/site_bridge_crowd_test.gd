@@ -5,7 +5,7 @@ const CrowdHost = preload("res://scripts/terrain_lab/crowd_site.gd")
 func _run() -> void:
 	deadline = Time.get_ticks_msec() + 240000
 	var args := OS.get_cmdline_user_args()
-	assert(args.has("--crowd-test") and args.has("--crowd-atlas-root") and not args.has("--crowd"))
+	assert(args.has("--crowd-test") and args.has("--crowd-atlas-root") and args.has("--grid"))
 	assert(DisplayServer.get_name() != "headless")
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	Engine.max_fps = 0

@@ -866,7 +866,7 @@ func _restart_run() -> void:
 	if not _check(decoded is Dictionary and decoded.has("reference") and decoded.has("baseline_sha256"), "restart reference has expected shape"): return
 	var baseline: String = lab.site_controller.save_root.path_join("baseline.json")
 	if not _check(FileAccess.get_sha256(baseline) == str(decoded.baseline_sha256), "baseline hash unchanged before independent process load", {"expected": decoded.baseline_sha256, "actual": FileAccess.get_sha256(baseline)}): return
-	var ordinary := not args.has("--crowd")
+	var ordinary := args.has("--grid")
 	if ordinary and not _check(lab.crowd_site == null, "fresh ordinary process starts without crowd owner"): return
 	if args.has("--crowd-corrupt-load"):
 		var bad: Dictionary = Store._read(baseline)

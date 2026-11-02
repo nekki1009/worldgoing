@@ -848,7 +848,7 @@ func _run() -> void:
 	if args.has("--clear-ordinary-baseline-copy"): case_name = "ordinary-restart"
 	if args.has("--clear-crowd-baseline-copy"): case_name = "crowd-baseline"
 	if not _check(case_name in ["all", "baseline", "overlap", "actor", "move", "move-restart", "ordinary-restart", "crowd-baseline"], "supported clear case", case_name): return
-	if not _check(args.has("--crowd-test") and (not args.has("--crowd") if case_name in ["move-restart", "ordinary-restart", "crowd-baseline"] else args.has("--crowd")), "named isolated startup uses the requested crowd or ordinary path"): return
+	if not _check(args.has("--crowd-test") and (args.has("--grid") if case_name in ["move-restart", "ordinary-restart", "crowd-baseline"] else args.has("--crowd")), "named isolated startup uses the requested crowd or ordinary path"): return
 	var stamp: String = Time.get_datetime_string_from_system().replace("-", "").replace(":", "").replace("T", "_")
 	out_dir = "res://output/crowd_c2_c3_b_atlas_20261001/clear_handoff_%s_%d" % [stamp, Time.get_ticks_msec()]
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(out_dir))

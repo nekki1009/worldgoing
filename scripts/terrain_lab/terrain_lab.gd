@@ -294,8 +294,9 @@ func _region_original_ready() -> void:
 		add_child(crowd_site)
 		crowd_site.setup(self)
 	# A main-menu/Region request opens its fixed world over this placeholder;
-	# a direct scene run keeps the original default Site and save.
-	var world_request: Dictionary = {} if crowd_startup_requested else RegionEntry.take_pending()
+	# a direct scene run keeps the original default Site and save. An isolated --crowd-test run
+	# leaves a pending request alone, as before; the default crowd start (no arg) consumes it.
+	var world_request: Dictionary = {} if crowd_startup_requested and OS.get_cmdline_user_args().has("--crowd-test") else RegionEntry.take_pending()
 	generate_terrain(TerrainPreset.Kind.TERRACED_HIGHLAND, 12345)
 	if not world_request.is_empty():
 		site_controller.enter_requested_world(world_request)

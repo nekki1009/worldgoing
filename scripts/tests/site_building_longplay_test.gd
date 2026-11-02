@@ -338,8 +338,8 @@ func _write_report() -> void:
 	file.close()
 
 func _run() -> void:
-	if OS.get_cmdline_user_args().has("--crowd"):
-		_finish("INVALID_SCOPE", "This longplay proves the original GD work owner; native crowd is a separate test")
+	if not OS.get_cmdline_user_args().has("--grid"):
+		_finish("INVALID_SCOPE", "This longplay proves the original GD work owner; run it with --grid (crowd is the default); native crowd is a separate test")
 		return
 	var arguments: PackedStringArray = OS.get_cmdline_user_args()
 	var run_at: int = arguments.find("--crowd-test")
