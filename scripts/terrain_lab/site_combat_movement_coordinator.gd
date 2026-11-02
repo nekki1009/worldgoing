@@ -307,6 +307,7 @@ func _siege_transports() -> Array[Object]:
 	return result
 
 func combat_logic_tick(delta: float, external_blocked_cells: Dictionary = {}) -> void:
+	if (not _active_formations.is_empty() or not _inflight_batches.is_empty() or not _egress_retry_queue.is_empty()) and TerrainArmy.grid_simulation_retired("SiteCombatMovementCoordinator.combat_logic_tick"): return
 	var stage_started := Time.get_ticks_usec() if profile_enabled else 0
 	if _occupancy_rebuild_pending:
 		_resolve_occupancy_rebuild_barrier()
@@ -519,6 +520,7 @@ func _register_started_batches() -> void:
 func complete_committed_moves() -> void:
 	if _inflight_batches.is_empty():
 		return
+	if TerrainArmy.grid_simulation_retired("SiteCombatMovementCoordinator.complete_committed_moves"): return
 	var pending: Array[Array] = []
 	for group: Array in _inflight_batches:
 		var compound_id := str(group[0].get("compound_id", "")) if not group.is_empty() else ""

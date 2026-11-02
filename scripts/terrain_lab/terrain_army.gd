@@ -8,6 +8,7 @@ const SharedVisualSource = preload("res://scripts/terrain_lab/terrain_army_share
 const SiegeWorkClips = preload("res://scripts/terrain_lab/site_siege_work_clips.gd")
 const SiegeWorkAppend = preload("res://scripts/terrain_lab/site_siege_work_append.gd")
 const SiteSocial = preload("res://scripts/terrain_lab/site_social.gd")
+const CrowdSiteScript = preload("res://scripts/terrain_lab/crowd_site.gd") # Option C gate: CrowdSite.requested() decides grid retirement.
 const EXCHANGE_NATIVE_VISUAL_POSES := ["get_up", "down", "unconscious", "guard_break", "guard_raise", "guard_lower", "rescue"]
 
 ## Terrain Lab army: one grid-authoritative captain plus 99 soldiers.
@@ -6214,6 +6215,17 @@ static func clear_contact_samples() -> void:
 		_contact_source.clear_samples()
 	for source: RefCounted in _body_contact_sources.values(): source.clear_samples()
 
+## Option C (grid army simulation retired): crowd is the default; the --grid argument opts back in.
+## True means the caller must stop. The first refusal per entry is a test-visible error; repeats stay quiet.
+static var _grid_retired_reported: Dictionary = {}
+
+static func grid_simulation_retired(entry: String) -> bool:
+	if not CrowdSiteScript.requested(): return false
+	if not _grid_retired_reported.has(entry):
+		_grid_retired_reported[entry] = true
+		push_error("GRID_SIMULATION_RETIRED: " + entry)
+	return true
+
 static func begin_contact_step() -> void:
 	if _contact_source != null:
 		_contact_source.begin_contact_step()
@@ -8327,6 +8339,7 @@ func prepare_combat(delta: float, game_seconds: float = -1.0) -> void:
 	_invalidate_ship_projection()
 	if not combat_enabled or delta <= 0.0 or (is_inside_tree() and get_tree().paused):
 		return
+	if not combat_units.is_empty() and grid_simulation_retired("TerrainArmy.prepare_combat"): return
 	if game_seconds < 0.0:
 		game_seconds = delta # Direct owner tests and previews use a 1:1 fallback.
 	var hot_started := Time.get_ticks_usec() if combat_hot_diagnostics_enabled and combat_hot_active() else 0
@@ -8551,6 +8564,7 @@ func sample_combat() -> void:
 	if not garrison_feature_id.is_empty(): return
 	if exchange_enabled or not combat_enabled or not contact_query.is_valid():
 		return
+	if not combat_units.is_empty() and grid_simulation_retired("TerrainArmy.sample_combat"): return
 	for index in range(combat_units.size()):
 		var unit: Dictionary = combat_units[index]
 		if _ship_in_journey(index) or not combat_can_act(index) or not bool(combat_hot_get(index, &"attack")) or bool(unit.blocked):
@@ -17258,6 +17272,7 @@ func advance_frame(delta: float) -> void:
 		last_frame_cpu_usec = Time.get_ticks_usec() - frame_start_usec
 		combat_render_usec += last_frame_cpu_usec
 		return # All combat/movement time comes from TerrainLab's action step.
+	if grid_simulation_retired("TerrainArmy.advance_frame"): return # Non-combat grid movement (_simulate_step) is retired.
 	var structure_before := structure_search_expansions
 	var local_before := local_search_expansions
 	var push_before := push_search_expansions
