@@ -211,7 +211,7 @@ func _single_pair_direct(fixture: Dictionary) -> void:
 
 func _single_pair_gate() -> void:
 	# Fixed expected values are independent of the direct and Lab entry points.
-	# The existing site_exchange_army_test.gd also exercises the original row's
+	# The existing site_exchange_army_test.gd (retired 2026-11-02) also exercises the original row's
 	# direct draw/win/loss/reservation owner in a large deployed team.
 	var cases: Array[Dictionary] = [
 		{"name": "draw", "ability": 50.0, "kind": "draw", "winner": 0, "margin": 0.0,

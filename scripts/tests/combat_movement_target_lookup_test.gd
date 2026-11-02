@@ -175,7 +175,7 @@ func _run() -> void:
 	_army = Helper.create_test_army(data, 1, 0, 2, Vector2i(1, 5))
 	# This test covers the GD caller-local lookup, which starts empty and fills per
 	# call. The native movement_targets context pre-fills every member and is
-	# compared against GD by site_movement_native_core_test.
+	# compared against GD by site_movement_native_core_test (retired 2026-11-02).
 	_army.native_move_intent_enabled = false
 	var coordinator := SiteCombatMovementCoordinator.new()
 	_army.set_coordinator(coordinator)

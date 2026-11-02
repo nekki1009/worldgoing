@@ -102,7 +102,7 @@ func _case(kind: String) -> bool:
 	var cells: Array[Vector2i] = SiteRuntime.siege_cells(c.data, vehicle)
 	if kind == "protected":
 		# Original Army prepared passage descriptor, same fixture API used by
-		# site_army_navigation_test; the real owner predicate reads this record.
+		# site_army_navigation_test (retired 2026-11-02); the real owner predicate reads this record.
 		army._passage_descriptors = [{"entry": cells[0] + Vector2i.LEFT, "core": [cells[0]],
 			"exit": cells[0] + Vector2i.RIGHT, "protected": [cells[0]]}]
 		_expect(not c.controller._actor_people_blocked(cells[0], null) and army._passage_cell_is_protected(cells[0]), "Protected passage is distinct from an actual person")

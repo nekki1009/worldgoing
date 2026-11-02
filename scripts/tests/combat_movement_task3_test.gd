@@ -1,7 +1,7 @@
 extends SceneTree
 ## Unit test suite for Task 3: SiteMovementReservationGrid, dependency DAG,
 ## cycle rejection and same-cell arbitration. Physical commit is exercised by
-## combat_movement_physical_chain_test.gd with real Army owners.
+## combat_movement_physical_chain_test.gd (retired 2026-11-02) with real Army owners.
 
 const Types = preload("res://scripts/terrain_lab/combat_movement_types.gd")
 const ReservationGrid = preload("res://scripts/terrain_lab/site_movement_reservation_grid.gd")
