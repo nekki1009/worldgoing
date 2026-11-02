@@ -2156,12 +2156,10 @@ func _advance_combat(delta: float, combat_clock: float = -1.0) -> void:
 			_commit_fire_releases()
 			_capture_fire_motion()
 			_combat_contacts.clear()
-			# Grid actor steps are retired (option C) unless --grid; the crowd branch above keeps its own actor steps.
-			var grid_actors_retired := not combat_actors.is_empty() and _grid_army_active() and TerrainArmy.grid_simulation_retired("TerrainLab._advance_combat grid actors")
 			if not exchange_enabled:
 				TerrainArmy.begin_contact_step()
 			for actor: TerrainTestCharacter in combat_actors:
-				if not grid_actors_retired and not _shared_movement_prepared and actor is TerrainTestNPC and actor.combat_driven_by_lab and actor.person_id != controlled_person_id():
+				if not _shared_movement_prepared and actor is TerrainTestNPC and actor.combat_driven_by_lab and actor.person_id != controlled_person_id():
 					(actor as TerrainTestNPC).advance_navigation()
 			# Both held player input and autonomous NPC intent have now committed.
 			# Charge the same game-time slice before physically advancing either body.
@@ -2185,7 +2183,7 @@ func _advance_combat(delta: float, combat_clock: float = -1.0) -> void:
 			_combat_profile_stage("army_prepare", prepare_started)
 			stage_started = _combat_profile_stage("navigation_and_team_prepare", stage_started)
 			for actor: TerrainTestCharacter in combat_actors:
-				if is_instance_valid(actor) and not grid_actors_retired:
+				if is_instance_valid(actor):
 					actor.advance_combat(elapsed, true, game_seconds)
 			if combat_movement_coordinator != null:
 				combat_movement_coordinator.complete_committed_moves()
@@ -2920,17 +2918,9 @@ func _prepare_exchange_kernel(warm: bool = false) -> void:
 		# the first hit. No actual people, terrain, RNG or combat clock is read.
 		_exchange_kernel.FrontOrder(PackedInt32Array([0, 0, 1]), PackedInt32Array([0, 0, 0]), PackedInt64Array([0, 1, 1]), 0)
 
-## Option C: true only when a non-crowd owner has a combat-enabled grid team holding members.
-func _grid_army_active() -> bool:
-	if crowd_site != null and crowd_site.active: return false
-	for team: TerrainArmy in combat_armies:
-		if team.combat_enabled and not team.combat_units.is_empty(): return true
-	return false
-
 func _resolve_exchanges() -> void:
 	if terrain == null:
 		return
-	if _grid_army_active() and TerrainArmy.grid_simulation_retired("TerrainLab._resolve_exchanges"): return
 	_exchange_round += 1
 	var profile_started := Time.get_ticks_usec() if combat_profile_enabled else 0
 	var snapshot: RefCounted
@@ -4187,7 +4177,6 @@ func _settle_exchange_batch(pending: Array[Dictionary]) -> bool:
 	return true
 
 func _resolve_combat_contacts() -> void:
-	if _grid_army_active() and TerrainArmy.grid_simulation_retired("TerrainLab._resolve_combat_contacts"): return
 	_combat_contacts.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return float(a.fraction) < float(b.fraction))
 	var cursor := 0
 	while cursor < _combat_contacts.size():
@@ -10931,9 +10920,8 @@ func _region_gameplay_party_progress(token: String, before: Dictionary, after: D
 		team.person_busy_query = func(_person: int) -> bool: return true
 		team.prepare_combat(elapsed, 0.0)
 		team.person_busy_query = busy
-	var party_actors_retired := not original.combat_actors.is_empty() and original._grid_army_active() and TerrainArmy.grid_simulation_retired("TerrainLab._region_gameplay_party_progress actors")
 	for actor: TerrainTestCharacter in original.combat_actors:
-		if not party_actors_retired and original.actor_present(actor): actor.advance_combat(elapsed, true, 0.0)
+		if original.actor_present(actor): actor.advance_combat(elapsed, true, 0.0)
 	# Advance the ORIGINAL timer only. Original remains/contact/Family effects
 	# occur after the unique accepted world record, behind P0 ordering.
 	if not original.site_controller.has_method("advance_person_death_timers"):
@@ -12025,9 +12013,8 @@ func _region_advance_original_quiet_minute(target: float, game_seconds: float) -
 				_advance_duty_ai(SiteRuntime.game_seconds(sub_step, 0.0) * simulation_speed)
 	else:
 		_advance_duty_ai(game_seconds)
-	var cold_actors_retired := not combat_actors.is_empty() and _grid_army_active() and TerrainArmy.grid_simulation_retired("TerrainLab._region_advance_original_quiet_minute actors")
 	for actor: TerrainTestCharacter in combat_actors:
-		if not cold_actors_retired and actor_present(actor): actor.advance_combat(action_seconds, true, game_seconds)
+		if actor_present(actor): actor.advance_combat(action_seconds, true, game_seconds)
 	if exchange_enabled:
 		# The actual quiet admission proved no paid flight or enabled Fire order.
 		# Its original Fire boundary below completes this same idle action interval.
@@ -13899,7 +13886,6 @@ func _prepare_gd_mesh_work_point(seconds: float) -> Dictionary:
 
 func _advance_gd_mesh_work_to(fraction: float) -> void:
 	if _gd_mesh_work_point.is_empty(): return
-	if TerrainArmy.grid_simulation_retired("TerrainLab._advance_gd_mesh_work_to"): return
 	var end: float = float(_gd_mesh_work_point.seconds) * clampf(fraction, 0.0, 1.0)
 	var begin: float = float(_gd_mesh_work_point.elapsed)
 	var seconds: float = end - begin
