@@ -21,6 +21,16 @@ class NativeQueryProxy extends RefCounted:
 		return native.get_soldier_state(index)
 	func soldier_refs(index: int) -> PackedInt64Array: return native.soldier_refs(index)
 	func soldier_index(identity: int) -> int: return int(native.soldier_index(identity))
+	# Reached through CrowdSite.soldier_state/set_soldier_fields and CrowdPersonOwner hot reads.
+	# Each member delegates to the real native class, so has_method guards see the same answer.
+	func contact_revision(index: int) -> int: return int(native.contact_revision(index))
+	func set_contact_revision(index: int, revision: int) -> bool: return bool(native.set_contact_revision(index, revision))
+	func get_formation_state(formation: int) -> PackedFloat64Array: return native.get_formation_state(formation)
+	func soldier_surrendered(index: int) -> bool: return bool(native.soldier_surrendered(index))
+	func contact_pose_state(index: int) -> PackedFloat64Array: return native.contact_pose_state(index)
+	func controlled_step_state(index: int) -> PackedInt64Array: return native.controlled_step_state(index)
+	func site_person_absent_state(index: int) -> Variant: return native.site_person_absent_state(index)
+	func work_point_state() -> PackedFloat64Array: return native.work_point_state()
 	func set_soldier_state(index: int, values: PackedFloat64Array, refs: PackedInt64Array) -> bool:
 		return bool(native.set_soldier_state(index, values, refs))
 	func apply_environment_damage(index: int, amount: float) -> void:
