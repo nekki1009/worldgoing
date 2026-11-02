@@ -6715,8 +6715,7 @@ func prepare_existing_siege_work_assets(data: TerrainData = null) -> bool:
 
 func _build_siege_ui(form: Dictionary, preview: bool) -> void:
 	if _crowd_active() and not lab.crowd_site.siege_native_supported():
-		var returned: Dictionary = lab.crowd_site.clear()
-		if not returned.ok: show_result(returned); return
+		show_result(Runtime.fail("CROWD_UNSUPPORTED", "原生群眾模組不支援攻城器；請更新原生模組")); return # No clear to GD.
 	var context: Dictionary = _siege_build_person_context(form)
 	if not context.ok: show_result(context); return
 	var team: Variant = context.team
@@ -6919,12 +6918,7 @@ func _prepare_tent_person() -> Dictionary:
 		var missing := Runtime.fail("NO_TARGET", "請先選擇原後勤人員")
 		show_result(missing)
 		return missing
-	if _crowd_active():
-		var returned: Dictionary = lab.crowd_site.clear()
-		if not returned.ok:
-			show_result(returned)
-			return returned
-	return Runtime.ok("", {"person_id": identity})
+	return Runtime.ok("", {"person_id": identity}) # Crowd people transfer through their CrowdPersonOwner stock; no clear to GD.
 
 func _transfer_camp_tent(endpoint: String, take: bool) -> void:
 	var ready_now := _prepare_tent_person()

@@ -174,7 +174,7 @@ static func _candidate_inside(prepared: Dictionary, map: TerrainData, layout: Di
 
 static func _ordinary(lab: TerrainLab, reserved_empty: TerrainArmy = null, validate_candidate: Callable = Callable()) -> Dictionary:
 	if lab.crowd_site != null and lab.crowd_site.active:
-		return lab.crowd_site.clear(reserved_empty, validate_candidate) # Existing guarded, lossless owner handoff.
+		return Runtime.fail("CROWD_UNSUPPORTED", "群眾模擬中此人物不在原生名冊；請先切回一般模擬") # Option C: no clear to GD.
 	return Runtime.ok()
 
 static func _idle_team(team: TerrainArmy) -> Dictionary:

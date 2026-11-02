@@ -1025,10 +1025,11 @@ func clear_army() -> void:
 		if site_controller != null: site_controller.show_result(journey_guard)
 		return
 	if crowd_site != null and crowd_site.active:
+		# Option C: the crowd hands its people back only to remove the trial teams below in this same press.
 		var result: Dictionary = crowd_site.clear()
-		site_controller.show_result(result)
-		if bool(result.ok): site_controller.clear_team_info_report()
-		return
+		if not bool(result.ok):
+			site_controller.show_result(result)
+			return
 	if army == null:
 		return
 	for team: TerrainArmy in combat_armies:
